@@ -1,0 +1,56 @@
+Cheats: tests
+=============
+
+    make test         everything below, x86 and armhf (qemu-arm)
+    make unit   ARCH=x86|armhf
+    make e2e    ARCH=x86|armhf
+    make vita         compile the cheats sources with arm-vita-eabi-gcc
+    make db           rebuild ../../assets/cheats.db from libretro-database
+
+Needs: gcc/g++, arm-linux-gnueabihf-gcc/g++ and qemu-arm (armhf),
+arm-none-eabi-gcc (the GBA test cartridge), rgbds (the Game Boy one:
+make RGBDS=/path/to/rgbds/), python3.  The two cartridges are built from
+rom/ at test time; no ROM is committed.
+
+unit
+  test_engine   gpsp/cheat_engine.c alone.
+                - mGBA's own cheat suite (mgba/gba_test_cheats.c, unmodified,
+                  through mgba_shim.[ch]): 25 tests of Action Replay v3.
+                - the GameShark / Action Replay TEA and seed tables and the
+                  CodeBreaker cipher against VisualBoyAdvance-M's code
+                  (vbam_ref.cpp, unmodified excerpts) on random inputs.
+                - published codes whose plaintext proves itself: master
+                  codes decrypt to "<game id> 001DC0DE"; an encrypted
+                  CodeBreaker list (Mega Man Battle Network 6 Gregar)
+                  decrypts to the plain list the database has for Falzar.
+                - every code type, text in, memory out, over a fake bus;
+                  detection, placeholders, errors, seeds from a whole list.
+                - Game Boy GameShark and Game Genie.
+  test_list     vita/cheats_vita.c (-DCHEATS_VITA_NO_CORE) and
+                vita/cheatdb.c: a hostile .cht read, changed, written (a
+                golden file) and read back; the list's rules; a fixture
+                database built by tools/make_cheatdb.py from fixture/
+                (lookups by CRC-32, game code, title, name; the merge with
+                the player's file; the CRC cache); and the bundled
+                database: every block checksummed, every game found again
+                by its own name, every code through cheats_validate -- the
+                usable / unusable counts it prints are the measured ones.
+
+e2e
+  cheat_e2e     the real cores (../../corebuild.mk: both GBA instances,
+                both TGB Dual instances, fe_host), cheats_vita.c, cheatdb.c
+                and the fixture database, running rom/cheatrom.gba and
+                rom/gbcheat.gb.  Checked is what the GAME computes and
+                draws: a RAM write, conditional and button codes, ROM
+                patches of code and of a literal pool the dynarec had
+                already translated, a write into translated RAM code,
+                encrypted codes, cheats off, suspend, a state load, a reset,
+                the .cht and the next boot, the libretro entry points; then
+                the GBA part again on the interpreter; the link mirror's
+                two machines (codes on the player's only); Game Boy
+                GameShark and Game Genie (banked, with and without compare);
+                Game Boy Color work-RAM banks.
+                x86 = gpSP's x86 dynarec; armhf = the ARM dynarec the Vita
+                uses, under qemu-arm.
+
+Nothing here runs on a Vita.  "make vita" only compiles.

@@ -1,0 +1,535 @@
+# Super Street Fighter II Turbo Revival (USA) -- V.S. over the link cable, power-on, fresh cartridge.
+# Capcom logos, START x3 to the mode menu, RIGHT+DOWN = V.S., A; GAME LINK handshake; A through
+# character select (Ryu v Ryu), the VS menu and the versus screen; the fight starts near f2400.
+wait 300
+press START 4
+wait 76
+press START 4
+wait 76
+press START 4
+wait 76
+wait 60
+press RIGHT 4
+wait 20
+press DOWN 4
+wait 20
+evt menu
+press A 4
+wait 120
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+wait 20
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+press A 4
+wait 86
+wait 60
+evt fight
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+hold RIGHT 24
+press A 4
+wait 8
+press B 4
+wait 10
+hold UP+RIGHT 6
+wait 30
+press R 4
+wait 12
+hold DOWN 10
+press B 4
+wait 8
+hold LEFT 20
+press L 4
+wait 14
+press A 4
+wait 10
+evt fight_end
+wait 60

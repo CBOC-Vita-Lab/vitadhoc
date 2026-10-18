@@ -1,0 +1,25 @@
+# Mario Tennis: Power Tour (USA, Australia) -- Multiplayer > P1 vs. P2
+# singles, Hard court, 1 set of 2 games: ~125 s of rallies (both players
+# swing and wander; points, games and the "Return Winners" counter run on
+# both screens).  The owner's two consoles' battery images: host = the
+# PSP-3000's, join = the PSP-1000's (different saves, as in real play).
+NAME=mt
+TITLE="Mario Tennis - Power Tour (USA, Australia) (En,Fr,De,Es,It)"
+ROM=mt.gba
+ROM_MD5=928c0bd4cf82b3fd6f34b53d4fd02e69
+HOST_SAVE=mt-3000.sav
+HOST_SAVE_MD5=7eeefec01be220dac184c19ce53f0b71
+JOIN_SAVE=mt-1000.sav
+JOIN_SAVE_MD5=7ef5a8234c8cd26049fd0432ca342783
+HOST_STATE=mt.st0
+HOST_STATE_MD5=03deb910bd3603f4b4253ed065854083
+JOIN_STATE=mt.st0
+JOIN_STATE_MD5=03deb910bd3603f4b4253ed065854083
+HOST_SCRIPT=mt_host.txt
+JOIN_SCRIPT=mt_join.txt
+MARKS="linked match match_slice_done"
+FRAMES=15500
+GOLDEN_FRAME=12205
+GOLDEN_S0="r=cca74c2e i=287c7f68 e=cc37219a io=ae96f312 p=11f914ef o=5f5966e7 v=c4cd5f49"
+GOLDEN_S1="r=975c5225 i=f06ade2c e=5017daa6 io=5f0d5124 p=11f914ef o=666f9db8 v=562c6425"
+SIO="multi-player (16-bit); probes normal 32-bit for 31 frames (no transfer) on entering Multiplayer"

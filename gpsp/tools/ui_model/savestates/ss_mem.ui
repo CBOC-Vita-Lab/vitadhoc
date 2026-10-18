@@ -1,0 +1,18 @@
+# Heap census and VRAM tenancy around the Save States page (ss_mem.spec).
++600 census pre_menu
++2 dump game-pre
++2 menu
++12 census menu_open
++2 press DOWN
++2 press CROSS
++12 census page_open
++2 press DOWN
++12 dump landed-slot2
++2 press DOWN
++12 dump landed-slot3
++2 census page_after_reads
++2 press CIRCLE
++6 press CIRCLE
++30 census after_close
++2 dump game-post
++4 exit 0

@@ -1,0 +1,13 @@
+# MUTANT rw_window_4 -- a deliberately broken twin build (tools/drprof/dr_corpus.py
+# mutants).  Never applied to a real build; dr_build.sh DRPROF_PATCH only.
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -5091,6 +5091,8 @@
+              ? (lo_off - MAX_BLOCK_SIZE * 4) >> 1 : 0;
+     if (!smc_window_armed || span > MAX_BLOCK_SIZE * 4)
+       span = MAX_BLOCK_SIZE * 4;
++    if (smc_window_armed)
++      span = 4;
+     first = (lo_off > span) ? (lo_off - span) >> 1 : 0;
+ #ifdef SMC_RETIRE_WINDOW_CHECK
+     /* The assumption, checked: nothing live between the full window's start

@@ -1,0 +1,51 @@
+# Round trips on the Save States page (ss_rt.spec).  The page always opens
+# on slot 1 (as 3.1's did); UP from slot 1 wraps to slot 5.
++600 menu
++12 press DOWN
++2 press CROSS
++12 press DOWN
++2 press DOWN
++2 press DOWN
++12 press SQUARE
++2 dump saved4
++12 dump saved4-dwell
++2 press CIRCLE
++6 press CIRCLE
++60 dump A
++2 menu
++12 press DOWN
++2 press CROSS
++12 press DOWN
++2 press DOWN
++2 press DOWN
++12 press CROSS
++60 dump B
++2 menu
++12 press DOWN
++2 press CROSS
++12 press UP
++12 dump old-before
++2 press CROSS
++60 dump C
++2 menu
++12 press DOWN
++2 press CROSS
++12 press CROSS
++60 dump D
++2 menu
++12 press DOWN
++2 press CROSS
++12 press UP
++12 press SQUARE
++4 press CROSS
++2 dump old-saved
++12 dump old-saved-dwell
++2 press UP
++2 press UP
++2 press UP
++12 press TRIANGLE
++4 press CROSS
++12 dump deleted2
++2 press CIRCLE
++6 press CIRCLE
++30 exit 0

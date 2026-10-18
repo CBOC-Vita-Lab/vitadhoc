@@ -1,0 +1,8 @@
+# build products of Makefile and Makefile.armhf
+/gl_host
+/gl_host_arm
+/gl_host_armfar
+/gl_host_armctl
+/obj-*/
+/core_b.syms
+/ap_b.syms

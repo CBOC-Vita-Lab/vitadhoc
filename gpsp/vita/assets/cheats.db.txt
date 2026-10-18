@@ -1,0 +1,29 @@
+cheats.db: 1446598 bytes, 2190 games, 31918 cheats
+index: 2533 CRC-32, 808 GBA game codes, 4657 names; No-Intro entries read: 8512
+games tied to at least one No-Intro release: 1893 of 2190; GBA game codes that need the CRC to tell revisions apart: 0
+a game here is one distinct list: the .cht files of a title that fit a release's
+region and revision, merged (so a file can serve several games, and the per-system
+cheat counts below count such a file's entries once per game).
+largest list: 1000 cheats (Pokemon - Gelbe Edition - Special Pikachu Edition (Germany) (CGB+SGB Enhanced))
+largest block: 22062 bytes
+
+         .cht entries    games   cheats   usable   value?    encr.
+GBA       513    7017      511     6909     6539      177      193
+GB       1496   17516      970    14406    14062      344        0
+GBC       960   26864      709    10603    10101      502        0
+
+every entry of the .cht files, once (it may be in several games' lists):
+      entries  usable  value?  encr.  type  xploder  garbage  empty  dup.  >1000  long
+GBA      7017    6473     157    193     0        0       28      2   164      0     0
+GB      17516   12506     245      0     0      258       21    667  2057   1762     0
+GBC     26864    7387     242      0     0      505       11  17590  1129      0     0
+
+usable: the console's decoder runs it.  value?: the code has ?? / XX where the
+player chooses a value (shipped, greyed).  encr.: CodeBreaker lines encrypted with a
+seed code the database does not have (shipped, greyed).  type: a code type the
+decoder does not run (shipped, greyed).  Not shipped: xploder (Xploder GB: its
+byte substitution is not known here), garbage (not a code: typos, "N/A"), empty (no code
+at all), dup. (the same code again in the same list), >1000 (two German Pokemon
+files have 2575 and 1194 entries; a list holds 1000).
+
+titles whose every entry was left out (no list shipped): 84

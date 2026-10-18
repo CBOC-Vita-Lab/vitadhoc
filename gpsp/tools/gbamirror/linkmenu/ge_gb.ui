@@ -1,0 +1,19 @@
+# GE walk, a Game Boy game, backdrop = the design's GB capture.
++150 menu
++12 press DOWN
++4 press DOWN
++4 press CROSS
++14 dump gb-wireless
++2 fakescan GB07POKE,GC03AW2E,GPSP09
++2 press DOWN
++4 press CROSS
++14 press DOWN
++4 press CROSS
++8 dump gb-scan
++2 press CIRCLE
++6 press CIRCLE
++6 press CIRCLE
++10 linking gb_receive
++6 dump gb-connecting
++2 linking off
++20 exit 0

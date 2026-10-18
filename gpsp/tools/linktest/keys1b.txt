@@ -1,0 +1,11 @@
+# linktest input script, slot 1, a different one: a run with this in place of
+# keys1.txt must differ (the rig checks that inputs matter).
+wait 33
+repeat 700
+hold UP 5
+wait 5
+hold B+L 9
+hold START+RIGHT 3
+wait 2
+hold A 13
+endrepeat

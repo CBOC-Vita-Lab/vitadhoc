@@ -1,0 +1,9 @@
+# build products
+build/
+GBAdhoc.vpk
+*.vpk
+*.ppm
+*.wav
+# test cartridges are built, not committed
+*.gb
+*.gbc

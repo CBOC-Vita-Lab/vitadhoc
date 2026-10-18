@@ -1,0 +1,66 @@
+# sa1_host.txt -- Sonic Advance VS race, host (slot 0 = parent: it drives the lobby)
+# ---- common to both machines: power-on state (mkstate.sh, no battery) ----
+# language select (fresh cartridge): A = English
+wait 120
+press A 4
+# SEGA / Sonic Team / intro; the title takes START only from ~f1550, so
+# START is pressed every 14 frames until well after the menu is up (START
+# does not confirm on the main menu)
+wait 1300
+repeat 20
+press START 4
+wait 10
+endrepeat
+wait 120
+# main menu: GAME START / VS / ... -> VS
+press DOWN 4
+wait 30
+press A 4
+# first VS on a fresh cartridge: NAME? -> "AAA", START jumps to END, A
+wait 200
+press A 4
+wait 20
+press A 4
+wait 20
+press A 4
+wait 20
+press START 4
+wait 30
+press A 4
+# MULTI GAME PAK MODE (each GBA has a cartridge) -> the cable handshake
+wait 240
+press A 4
+wait 240
+evt lobby
+dump
+# the parent's PRESS START! (2 players found)
+press START 4
+wait 600
+# RACE (the join shows WAIT)
+press A 4
+wait 200
+# character: P1's default (Amy)
+press A 4
+wait 200
+# zone: Zone 1 Act 1
+press A 4
+wait 200
+# ---- the race: ~88 s of Neo Green Hill 1 for both, positions crossing the
+# cable every frame.  Blind input cannot clear the zone's loops, so nobody
+# finishes: the session is a fixed slice of a live race. ----
+evt race
+dump
+repeat 30
+hold RIGHT 100
+hold RIGHT+A 16
+hold RIGHT 30
+hold DOWN 6
+hold DOWN+A 3
+hold DOWN 3
+hold DOWN+A 3
+hold DOWN 3
+hold DOWN+A 3
+hold DOWN 6
+endrepeat
+dump
+evt race_slice_done

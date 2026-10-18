@@ -1,0 +1,5 @@
+cheats = 1
+
+cheat0_desc = "Work RAM Bank 1 Is AA"
+cheat0_code = "91AA00D0"
+cheat0_enable = false

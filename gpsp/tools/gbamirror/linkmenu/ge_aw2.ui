@@ -1,0 +1,46 @@
+# GE walk, a cable game (AW2), backdrop = the design's AW2 frame: every
+# not-linked AW2 screen of builds/linkmode-mockups, named as its PNG.
++150 menu
++12 press DOWN
++4 press DOWN
++4 press CROSS
++14 dump wireless-cable
++2 fakescan GPSP07,GC12AW2E,GC03AMKE
++2 press DOWN
++4 press CROSS
++14 press CROSS
++8 dump scan-adapter-room
++2 press CIRCLE
++4 fakescan -
++2 press DOWN
++4 press CROSS
++14 dump scan-empty
++2 press CIRCLE
++6 press CIRCLE
++6 press CIRCLE
++10 linking share
++6 dump connecting-cable
++2 linking check
++6 dump connecting-check
++2 linking fail_rom
++6 dump fail-rom
++2 linking fail_version
++6 dump fail-version
++2 linking fail_host_left
++6 dump fail-host-left
++2 linking cable_join
++6 dump x-bringup-cable-join
++2 linking off
++10 menu
++12 press DOWN
++4 press DOWN
++4 press CROSS
++8 press CROSS
++2 wait hosting
++150 menu
++12 press DOWN
++4 press DOWN
++4 press CROSS
++14 dump wireless-hosting
++4 press CROSS
++20 exit 0

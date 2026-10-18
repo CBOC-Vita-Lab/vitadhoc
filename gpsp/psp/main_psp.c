@@ -1,0 +1,14944 @@
+/* main_psp.c — native PSP frontend for the gpsp libretro core.
+ *
+ * Hosts the statically-linked core via frontend-common/fe_host:
+ *  - GU video layer in video_psp.c: RGB565→PSP-5650 staging conversion
+ *    (the hw color-order fix), scaling 1x/fit/stretch + nearest/bilinear
+ *    (Triangle cycles presets at runtime; persisted in config.ini)
+ *  - audio via sceAudioOutputBlocking on its own thread, fed by an SPSC
+ *    ring (core mixes at 65536 Hz; resampled to the PSP's 44100 Hz output)
+ *  - sceCtrl input mapped per FRONTEND-AUDIT §4 (Triangle/Square are
+ *    frontend keys: preset cycle + fast-forward; turbo A/B dropped)
+ *  - UI v1 (ui_psp.c, plan §8): ROM browser (no harness ini => browser),
+ *    in-game menu on Select+Start hold (Resume/Save state/Load state/
+ *    Wireless/Settings/Exit), wireless panel with Host + Join(scan/code),
+ *    OSD toasts + session/FF chips (osd_psp.c)
+ *  - fast-forward as a product feature (plan §4.4): Square hold (or
+ *    toggle), 3x / Unlimited / Unlimited Smooth from config, core frameskip
+ *    engaged while active, OSD chip, forced 1x during wireless sessions
+ *  - scePowerSetClockFrequency(333,333,166) at init (plan §9 / ADR-0004)
+ *  - EVT log at <appdir>/log/frontend.log (fflush per line)
+ *  - exit callback flushes SRAM — never lose a save
+ *  - .gpsp-harness.ini (harness channel, ADR-0036; presence also implies
+ *    "skip the ROM browser, boot the first ROM"): autoexit_frames /
+ *    dump_at / dump_every; marker file log/dump_frame triggers an
+ *    on-demand BMP framebuffer dump; gedump_at = N dumps the GE
+ *    DRAWBUFFER (post-GU-blit, PSP-native 5650 decode) at frame N — the
+ *    color-order regression check; testpat = 1 renders known color bars
+ *    through the blit path instead of booting the core
+ *    (run_gu_color_test.sh); script = <file> runs a scripted input
+ *    script; ff = 1 forces uncapped fast-forward (harness mode);
+ *    ui_demo = 1 opens the in-game menu at frame 300 and self-drives it
+ *    (run_ui_smoke.sh)
+ *  - wireless (harness keys host/join/nick/group/net_probe as in Phase
+ *    4; nettest = 1 transport echo).  The UI wireless panel calls the
+ *    same net_bringup/net_teardown.  FF interlocked off while a session
+ *    is active; scePowerTick during sessions; .sav backed up to .bak
+ *    before every session start (plan §4.5).
+ */
+#include <pspkernel.h>
+#include <systemctrl.h>   /* ADR-0071: sctrlKernelLoadExecVSHMs2 (profile restart) */
+#include <pspdisplay.h>
+#include <pspctrl.h>
+#include <pspaudio.h>
+#include <psppower.h>
+#include <pspiofilemgr.h>
+#include <pspsuspend.h>   /* sceKernelVolatileMemTryLock — engine buffers */
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <malloc.h>   /* ADR-0080: memalign for the ME double/stage buffers */
+#include <unistd.h>   /* sbrk -- heap_budget(), telemetry builds only */
+#include <string.h>
+
+#include "fe_host.h"
+#include "fe_linkprof.h"
+#include "fe_evt.h"
+#include <psprtc.h>
+#include <time.h>
+#include "fe_util.h"
+#include "fe_autopilot.h"
+#include "fe_gblink.h"
+#ifdef GBA_LINK
+#include "fe_gbadual.h"   /* fe_gbadual_probe: heartbeat / stall record */
+#endif
+#ifdef GPSP_CHEATS
+#include "fe_cheats.h"
+#endif
+#include "netpacket_host.h"
+#include "transport_adhoc.h"
+#include "netdrv.h"        /* netdrv_sizeof / netdrv_set_arena -- the boot reserve */
+#include "../gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
+#include "ff_psp.h"
+#include "ff_gate.h"
+#include "video_psp.h"
+#include "osd_psp.h"
+#include "ui_psp.h"
+#include "share_psp.h"     /* harness keys only; the feature is ui_share.inc */
+#include "room_label.h"
+#include "link_games.h"
+#include "rom_paths.h"
+#include "state_slots.h"
+#include "mgift_net.h"
+#include "mgift_cart.h"
+#include "me_host.h"
+#include "home_host.h"
+#include "me/me_mbox.h"   /* me_render_desc, ME_UNCACHED — for the render bench */
+#include "config_psp.h"
+#include "video_prof.h"   /* ADR-0034 renderer path profile (core-side) */
+#include "video.h"        /* me_capture_frame + capture-mode globals (the
+                           * u16/u32/s32 it needs come from psptypes.h) */
+
+PSP_MODULE_INFO("gpsp-adhoc", 0, 0, 1);
+PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
+PSP_MAIN_THREAD_STACK_SIZE_KB(256);
+/* Large-memory mode is requested via MEMSIZE=1 in PARAM.SFO — a Makefile
+ * concern (PSP_LARGE_MEMORY, playable only), not a module-info macro.  On a
+ * 2000+ the heap below then spans the 64 MiB layout and the ROM cache holds
+ * 32 MB carts fully resident. */
+/* Leave 1 MiB of heap free for thread stacks etc.: the core greedily mallocs
+ * ROM blocks at retro_init until malloc fails (FRONTEND-AUDIT §8 gotcha). */
+PSP_HEAP_SIZE_KB(-1024);
+
+/* All paths are derived from the EBOOT's own directory at runtime (argv[0])
+ * so per-game variant installs (docs/VARIANTS.md) work from any folder;
+ * falls back to the canonical install dir. */
+#include "usb_handoff.h"                                  /* ADR-0053 */
+#include "icprobe.h"
+#include <kubridge.h>        /* kuKernelGetModel: the rig's psp_model line */
+#include "perf_rig.h"
+
+/* LAYOUT_PAD_BYTES (psp/Makefile; docs/LAYOUT-PINNING.md): the layout
+ * STABILITY PROBE, off unless a build asks for it.  An N-byte function that
+ * nothing calls and that is never executed -- the stand-in for "an unrelated
+ * change elsewhere in the code".  It sits in main_psp.o, the first object
+ * linked, so without LAYOUT_PIN it moves every function after it (and, through
+ * the heap, the translation cache); with LAYOUT_PIN the pinned hot path must
+ * not move by a byte.  The hardware bench's "pad" arm is built with it. */
+#if defined(LAYOUT_PAD_BYTES) && LAYOUT_PAD_BYTES > 0
+#define LAYOUT_PAD_STR2(x) #x
+#define LAYOUT_PAD_STR(x) LAYOUT_PAD_STR2(x)
+__asm__(".pushsection .text.layout_pad_cold,\"ax\",@progbits\n"
+        ".globl layout_pad_cold\n"
+        ".type layout_pad_cold, @function\n"
+        "layout_pad_cold:\n"
+        "  jr $ra\n"
+        "  nop\n"
+        "  .fill (" LAYOUT_PAD_STR(LAYOUT_PAD_BYTES) " - 8) / 4, 4, 0\n"
+        ".size layout_pad_cold, . - layout_pad_cold\n"
+        ".popsection\n");
+#endif
+
+#define BASE_DIR_DEFAULT "ms0:/PSP/GAME/gpsp-adhoc"
+char g_dir_base[128] = BASE_DIR_DEFAULT;     /* also used by ui_psp */
+static char p_rom_dir[144], p_log_dir[144], p_log_path[160];
+static char p_harness[160], p_config[160], p_variant[160], p_marker[160];
+static char p_legacy_ap[160];
+static int g_perf_rig;
+
+/* THE HARNESS CONTROL CHANNEL — deliberately NOT a user-facing filename
+ * (ADR-0036).  This file can auto-host, auto-join, skip the ROM browser,
+ * force fast-forward and pin performance knobs; a stale copy on a memory
+ * stick silently brought a wireless session up during a SOLO benchmark, and
+ * had twice before skipped the browser or auto-hosted unexpectedly.
+ *
+ * It used to be called `autopilot.ini`, which sits in the same directory as
+ * `config.ini` and `variant.ini` and looks exactly like something a user is
+ * meant to edit.  That was the design error: an internal channel wearing a
+ * user-config name.  The leading dot and the `gpsp-` prefix now say
+ * "internal" to a human packaging a kit, and nobody creates this by accident.
+ *
+ * `variant.ini` is deliberately NOT renamed — that one is user-chosen. */
+#define HARNESS_INI p_harness
+/* Read-only: checked so a leftover can be REPORTED, never obeyed, never
+ * deleted (it is the user's file, even when it is in the way). */
+#define LEGACY_AUTOPILOT_INI p_legacy_ap
+#define ROM_DIR     p_rom_dir
+#define LOG_DIR     p_log_dir
+#define LOG_PATH    p_log_path
+#define CONFIG_INI  p_config
+#define VARIANT_INI p_variant
+#define DUMP_MARKER p_marker
+
+/* ---- ADR-0067: THE PLAYABLE BUILD -------------------------------------
+ *
+ * `-DGPSP_PLAYABLE` produces a binary for someone to actually PLAY, from the
+ * same tree as the harness build and with no runtime way to confuse the two:
+ *
+ *  * the harness ini path is pointed at a filename that cannot exist, so a
+ *    leftover `.gpsp-harness.ini` on the user's card is inert.  No autopilot,
+ *    no autoexit, no USB handoff, and the ROM browser comes up — none of which
+ *    depends on the user having cleaned their card;
+ *  * every harness-only key therefore returns its DEFAULT, so the shipping
+ *    values below are supplied as those defaults rather than by a second code
+ *    path.  There is exactly one place each knob is read, in both builds;
+ *  * telemetry is compiled out (`GPSP_NO_TELEMETRY`), and no log directory or
+ *    log file is created at all;
+ *  * `PCFG_SESSION_FPS_DEF` is NOT touched.  The 29.97 default stands for the
+ *    generic build; this build overrides its own copy of the setting.
+ *
+ * The four PLAY_* values are the FULLSPEED §28.2 ship stack.  In the harness
+ * build every one of them is 0, which is that build's existing default, so
+ * this block is provably behaviour-neutral there. */
+/* NOTE: `GPSP_NO_TELEMETRY` is derived from `GPSP_PLAYABLE` in fe_evt.c, NOT
+ * here.  It was here first, and it did nothing: `fe_evt.c` is a separate
+ * translation unit and never saw this file's #define, so the playable build
+ * linked with telemetry fully present while every token-presence check passed.
+ * Caught by `psp-nm -u frontend-common/fe_evt.o` still listing `fopen` /
+ * `fwrite` / `fflush` / `vsnprintf` — a BEHAVIOURAL check, which is the only
+ * kind that would have caught it. */
+#ifdef GPSP_PLAYABLE
+#define PLAY_EMU_PRIO        0x2B
+#define PLAY_IO_PRIO         0x2C
+#define PLAY_POLL_MIN_CYCLES 34952
+#define PLAY_BOOST_US        0
+/* ADR-0068 ON for a player.  Measured over 15 alternating runs at 59.73 with
+ * COMPLETE SEPARATION on both consoles (p = 0.0002): host srtt 2.02 -> 0.91
+ * emulated frames, join 1.45 -> 0.70.  Mechanism verified every run -- host
+ * mid-frame polls 0 without it, 7-8 with it.
+ *
+ * IT IS NOT FREE: host frames-over-budget rise ~6.5 points (median 9.49 ->
+ * 16.03 %, fixed 7000-frame prefix, distributions overlapping), which in
+ * practice is ~59.1 fps median falling to ~57.4 on the HOST only; the join is
+ * unchanged.  Included anyway because this build exists to complete trades by
+ * hand and the link-robustness evidence is far stronger than the frame cost.
+ * Set to 0 for the extra ~1.7 fps on the host. */
+#define PLAY_IDLE_POLL       34952
+#define PLAY_DUMP_MARKER     0          /* ADR-0066: OFF for a player */
+/* ADR-0075: VALIDATED on hardware (fs-pace pace arm — Gate A closed, send
+ * queue held <=1, gHeldKeyCodeToSend never nulled, trades clean).  ON for
+ * players: this is the input-eating fix. */
+#define PLAY_RFU_FRAME_PACE  1
+/* Bound on frame_pace's hold, in frames.  Now a config.ini key (the player
+ * owns the latency dial); this constant is only the harness-side default. */
+#define PLAY_RFU_PACE_MAX_HOLD 24
+/* Fixed-depth cushion (jitter buffer) PoC: hold each host packet N frames so a
+ * stall must drain the whole reserve before the client underruns.  OFF by
+ * default — UNVALIDATED on hardware; the desktop cannot exercise it (injected
+ * jitter starves rather than backlogs).  Set rfu_cushion=N in the harness ini
+ * to A/B it.  Keep N well under RFU_DEF_TIMEOUT (32). */
+#define PLAY_RFU_CUSHION     0
+/* Link shedding: keep at most 2 frames of standing depth in each RFU receive
+ * queue by removing content-free packets (rfu.c).  ON for players: this bounds
+ * the round-trip latency that otherwise ratchets up for a whole session. */
+#define PLAY_RFU_SHED_KEEP   2
+/* Hold, never discard: a packet that does not fit its RFU receive queue waits
+ * in an overflow ring instead of being thrown away (rfu.c rfu_hold).
+ * ON for players since 3.0.0: PPSSPP radio fades, 5/5 survived with it and
+ * 5/5 died without; on hardware (clean air, hold-ch11) it cost nothing, 4/4 on
+ * the floor.  The noisy-air hardware arm was not run (owner's call, 2026-09-27;
+ * docs/RIG-DOUBLE-BATTLE.md section 14).  The harness still sets it per arm. */
+#define PLAY_RFU_HOLD        1
+/* ADR-0076: NOT superseded after all.  Live-hardware 2026-08-10 (fs stage-live)
+ * proved exit_assist alone leaves the JOIN at rfu_discq mode=4 (grace expired)
+ * with the queue wiped and 1 discans (press-A) still.  disc_grace=60 drained
+ * the undelivered exit packets 64->3 but expired 3 short; 120 reached mode=5 —
+ * the game issues its own clean disconnect INSIDE the window, rcl=0x0101, zero
+ * discans on BOTH consoles.  Safe: exit_assist pins ka=0 so the 61-frame
+ * keepalive never fires during the wider window.  ON for players. */
+#define PLAY_RFU_DISC_GRACE  120
+/* ADR-0079: VALIDATED (run 317, re-confirmed live 2026-08-10 — both sides run
+ * the game's own READY_CLOSE_LINK handshake, rcl=0x0101, card stamped).  ON for
+ * players: this is the "press A to return to lobby" fix. */
+#define PLAY_EXIT_ASSIST     1
+/* ADR-0080c: the Media Engine video-staging offload.  ON for players — the
+ * ~750us/frame the ME frees is the performance headroom (join proven: blit
+ * stage 751->0us, 37,200 frames 0 drops, srtt champion-band, trades clean;
+ * host offload via the session-gated activation that dodges np_start).
+ * SELF-DISABLING: if the ME does not answer its boot handshake (250 ms) or
+ * the watchdog trips, the console silently runs single-core — so a model
+ * where the ME behaves differently degrades, it does not break.  Validated
+ * on a PSP-1000 pair; the fallback covers the rest until more models are
+ * tested. */
+#define PLAY_ME_BOOT         1
+#define PLAY_ME_VIDEO        1
+#else
+#define PLAY_EMU_PRIO        0
+#define PLAY_IO_PRIO         0
+#define PLAY_POLL_MIN_CYCLES 0
+#define PLAY_BOOST_US        0
+#define PLAY_IDLE_POLL       0          /* ADR-0068 off by default (harness) */
+/* ADR-0069: 0, not the historic 60.  The marker file's ONLY job was "let a
+ * human ask for a screenshot mid-run", and L+R+SELECT now does that for free
+ * off a pad we already read every frame — so the 12.4 ms stat is no longer
+ * buying a feature, it is only buying the involuntary yield it always came
+ * with.  `sched_yield_us` reconstructs that yield deliberately and at a size
+ * we choose.  Set `dump_marker_poll = 60` to get the old mechanism back. */
+#define PLAY_DUMP_MARKER     0
+#define PLAY_RFU_FRAME_PACE  0          /* ADR-0075 off by default (harness) */
+#define PLAY_RFU_PACE_MAX_HOLD 0        /* unbounded hold by default (harness) */
+#define PLAY_RFU_CUSHION     0          /* fixed-depth cushion PoC off (harness) */
+#define PLAY_RFU_SHED_KEEP   0          /* link shedding off (legacy harness) */
+#define PLAY_RFU_HOLD        0          /* historical discards (legacy harness) */
+#define PLAY_RFU_DISC_GRACE  0          /* ADR-0076 off by default (harness) */
+#define PLAY_EXIT_ASSIST     0          /* ADR-0079 off by default (harness) */
+#define PLAY_ME_BOOT         0          /* ME keys off by default (harness)  */
+#define PLAY_ME_VIDEO        0
+#endif
+
+static void init_paths(int argc, char *argv[])
+{
+   if (argc > 0 && argv && argv[0])
+   {
+      const char *slash = strrchr(argv[0], '/');
+      if (slash && (size_t)(slash - argv[0]) < sizeof(g_dir_base))
+      {
+         memcpy(g_dir_base, argv[0], (size_t)(slash - argv[0]));
+         g_dir_base[slash - argv[0]] = '\0';
+      }
+   }
+   snprintf(p_rom_dir, sizeof(p_rom_dir), "%s/roms", g_dir_base);
+   snprintf(p_log_dir, sizeof(p_log_dir), "%s/log", g_dir_base);
+   snprintf(p_log_path, sizeof(p_log_path), "%s/log/frontend.log", g_dir_base);
+#ifdef GPSP_PLAYABLE
+   /* ADR-0067: a name no file can have, so every fe_ini_get*(HARNESS_INI,...)
+    * in this binary returns its default and `have_harness` is 0.  Deliberately
+    * not a compile-time removal of the call sites: one code path, two
+    * behaviours, and no chance of the two builds drifting. */
+#ifndef GPSP_PERF_RIG
+   snprintf(p_harness, sizeof(p_harness), "%s/.playable-no-harness/x",
+            g_dir_base);
+#else
+   snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
+#endif
+#else
+   snprintf(p_harness, sizeof(p_harness), "%s/.gpsp-harness.ini", g_dir_base);
+#endif
+   snprintf(p_legacy_ap, sizeof(p_legacy_ap), "%s/autopilot.ini", g_dir_base);
+   snprintf(p_config, sizeof(p_config), "%s/config.ini", g_dir_base);
+   snprintf(p_variant, sizeof(p_variant), "%s/variant.ini", g_dir_base);
+   snprintf(p_marker, sizeof(p_marker), "%s/log/dump_frame", g_dir_base);
+}
+
+/* libretro joypad ids (kept local; matches libretro.h) */
+#define JP_B      0
+#define JP_Y      1
+#define JP_SELECT 2
+#define JP_START  3
+#define JP_UP     4
+#define JP_DOWN   5
+#define JP_LEFT   6
+#define JP_RIGHT  7
+#define JP_A      8
+#define JP_X      9
+#define JP_L      10
+#define JP_R      11
+
+volatile int g_running = 1;
+#ifdef GPSP_CATCH_SELFTEST
+/* A variable so the compiler cannot prove the self-test store faults. */
+volatile unsigned g_catch_selftest_addr = 0u;
+#endif
+
+/* STALL WATCH breadcrumbs (see stall_thread, harness `stall_watch_s`).  A
+ * counter bumped at the top of every main-loop iteration and the region the
+ * loop was last in; two plain stores per region, compiled out of a player
+ * build.  1 top, 2 core (retro_run, incl. the video/audio callbacks), 3 after
+ * the core, 4 pacing/swap, 5 menu, 7 me_rend_frame (inside 2). */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+    defined(GPSP_STALL_RECORDER)
+static volatile unsigned g_loop_iter;
+static volatile int      g_loop_phase;
+#define LOOP_TOP()      do { g_loop_iter++; g_loop_phase = 1; } while (0)
+#define LOOP_PHASE(p)   do { g_loop_phase = (p); } while (0)
+#else
+#define LOOP_TOP()      do { } while (0)
+#define LOOP_PHASE(p)   do { } while (0)
+#endif
+
+/* --- fast-forward state --------------------------------------------------
+ * 3x batches three emulated frames and presents the final capture.
+ * Unlimited and Unlimited Smooth run without vblank pacing and DRAW at most
+ * 30 / 60 frames a second (the draw gate, ff_gate.h, docs/FF-PRESETS.md): a
+ * frame the gate turns away is emulated but never captured or rendered.
+ * The 1-in-32 CPU presentation mask is retained only for the harness. */
+#define FF_PRESENT_MASK 31
+int g_ff_uncapped;
+int g_ff_mult;         /* multiplier FF active (user, paced) */
+static int g_ff_user;         /* distinguishes user profiles from the harness */
+static int g_ff_gate;         /* Unlimited / Smooth: the draw gate is on */
+static ff_gate_t g_ff_gate_st;
+static int g_blit_suppress;   /* skip blits of intermediate FF frames */
+static int g_drew;            /* a GU frame was drawn since the last swap */
+
+/* EVT ff_win (docs/FF-PRESETS.md): NEW images put in the back buffer -- an ME
+ * stage presented for the first time, or a CPU frame the core really drew.
+ * Re-presents of an unchanged picture are not counted.  Telemetry builds
+ * only; a player build compiles the counter out. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+static unsigned g_ffw_drawn, g_ffw_gated;
+#define FFW_DRAWN() (g_ffw_drawn++)
+#define FFW_GATED() (g_ffw_gated++)
+#else
+#define FFW_DRAWN() ((void)0)
+#define FFW_GATED() ((void)0)
+#endif
+
+/* ------------------------------------------------------------------- exit */
+
+static int exit_cb(int arg1, int arg2, void *common)
+{
+   (void)arg1; (void)arg2; (void)common;
+   /* Main loop notices, flushes SRAM, logs EVT exit, then exits the game. */
+   g_running = 0;
+   return 0;
+}
+
+/* ---- standby / resume --------------------------------------------------
+ *
+ * The PSP KEEPS RAM across suspend, so nothing about the emulated machine
+ * needs saving and restoring -- only peripherals die: the GU/display, the
+ * audio channels, WLAN, and the Media Engine.  Waking is therefore a
+ * re-initialisation problem, not a state problem.
+ *
+ * This first step does the half that is unambiguously safe: flush the .sav
+ * on the way down, and record what the power system actually told us.  A
+ * PSP Go's slider is a suspend request like any other, and today closing it
+ * mid-game can cost unsaved progress.
+ *
+ * THE CALLBACK MUST NOT DRAIN.  fe_host.h's contract is that exactly one
+ * thread calls fe_host_sram_service_io(), and that is the io thread.  So we
+ * raise the flag, WAKE the writer, and yield long enough for it to be
+ * scheduled before the machine goes down.  Draining from here would be a
+ * second writer and could interleave mid-block. */
+static volatile int g_pwr_suspend, g_pwr_resume;
+/* GB/GBC battery RAM on suspend.  The io thread's flush is GBA-only and
+ * the GB core's cartridge RAM may only be read on the emulation thread, so the
+ * callback raises this for EVERY suspend (standby teardown or not) and the
+ * main loop services it at the top of its next iteration, ahead of a park.
+ * Known gap: a main thread inside a GB link byte wait (<= 3 s) services it
+ * too late for that suspend. */
+static volatile int g_pwr_gb_flush_req;
+
+static int power_cb(int unknown, int pwrflags, void *common);
+/* The GBA cartridge clock's wall time (gba_memory.c gpsp_rtc_wall,
+ * rtc_clock.h): the console's local clock, refreshed at most five times a
+ * second from the main loop.  A reading that fails (0) leaves the last one
+ * in place; the core's guard holds the clock meanwhile. */
+extern volatile long long gpsp_rtc_wall;
+static int g_rtc_wall_on;
+static unsigned g_rtc_wall_us;
+static time_t psp_local_wallclock(void);
+static void rtc_wall_publish(int force)
+{
+   unsigned now = (unsigned)sceKernelGetSystemTimeLow();
+   time_t t;
+   if (!g_rtc_wall_on)
+   {
+      gpsp_rtc_wall = 0;
+      return;
+   }
+   if (!force && now - g_rtc_wall_us < 200000u)
+      return;
+   g_rtc_wall_us = now;
+   t = psp_local_wallclock();
+   if (t > 0)
+      gpsp_rtc_wall = (long long)t;
+}
+static unsigned g_stick_state;      /* ctl_stick_bits: engaged directions */
+#ifdef GPSP_PERF_RIG
+/* Harness: the stick's raw range over the run (`EVT stick_range`), for
+ * reading a real, worn stick's resting position. */
+static unsigned char g_stick_min[2] = { 255, 255 }, g_stick_max[2] = { 0, 0 };
+#endif
+
+static int cb_thread(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   int cbid = sceKernelCreateCallback("exit_cb", exit_cb, NULL);
+   int pcb  = sceKernelCreateCallback("power_cb", power_cb, NULL);
+   sceKernelRegisterExitCallback(cbid);
+   if (pcb >= 0)
+      scePowerRegisterCallback(0, pcb);
+   sceKernelSleepThreadCB();
+   return 0;
+}
+
+static void setup_exit_callback(void)
+{
+   int thid = sceKernelCreateThread("cb_thread", cb_thread, 0x11, 0xFA0,
+                                    THREAD_ATTR_USER, NULL);
+   if (thid >= 0)
+      sceKernelStartThread(thid, 0, NULL);
+}
+
+/* ------------------------------------------------- ms0 writer thread ----
+ * ADR-0024.  Every EVT/LOG line used to be an fprintf + fflush to the
+ * memory stick ON THE EMULATION THREAD.  The field priced it: `evt` maxima
+ * of 12002 us (PSP-1000) and 12525 us (PSP-3000) — three quarters of a
+ * 16.7 ms vblank period spent inside one flush, which in a vblank-locked
+ * loop costs a whole extra period (and a peer four frames of silence).
+ *
+ * So the line now goes into fe_evt's ring and this thread does the I/O.
+ * Priority 0x22 is BELOW main's 0x20 deliberately: signalling must not
+ * preempt the emulator, and the writes land in the slack the emulation
+ * thread already donates at sceDisplayWaitVblankStart — the same reasoning
+ * as ADR-0021's `deferred` TX placement, but here there is no latency cost
+ * to trade off, because nothing waits on a log line.
+ *
+ * Started only AFTER fe_host_boot(): boot diagnostics stay synchronous, so
+ * a failure to load the BIOS/ROM is on the stick even if we never reach the
+ * main loop.  config.ini `log_thread` (or `net_log_thread`) = 0 restores
+ * the inline behaviour for a hardware A/B with no rebuild. */
+#define IO_PRIO        0x22
+#define IO_STACK       0x1000
+#define IO_WAIT_US     250000     /* only bounds teardown latency */
+#define IO_SEMA_MAX    64
+
+static SceUID g_io_thid = -1, g_io_sema = -1;
+static volatile int g_io_run;
+/* ADR-0062c: harness-settable, because IO_PRIO's relationship to the
+ * EMULATION thread is no longer fixed.  `emu_prio` (ADR-0062b) moves main
+ * from 0x20 to 0x2B so the WLAN stack at 0x2A outranks it -- but on the PSP a
+ * higher number is a LOWER priority, so anything numerically past 0x2A is
+ * necessarily past 0x22 too.  Lowering main to reach the radio therefore
+ * yields to OUR OWN housekeeping as well, which was never the intent: this
+ * thread only drains the event log and the .sav and nothing waits on it.
+ * Measured cost of that accident on the join at 59.73 (FULLSPEED-FINDINGS
+ * §13.2): core 13871 -> 18819 us per frame.
+ * Set io_prio numerically ABOVE emu_prio to put our housekeeping back below
+ * the emulator while leaving the radio above it. */
+static int g_io_prio = IO_PRIO;
+
+static void io_wake(void)
+{
+   if (g_io_sema >= 0)
+      sceKernelSignalSema(g_io_sema, 1);
+}
+
+/* ADR-0025: the same thread drains the .sav.  Both are memory-stick work
+ * with nothing waiting on them, and one thread means one file-owning
+ * context to reason about at shutdown. */
+static void io_yield(void)
+{
+   sceKernelDelayThread(1000);
+}
+
+static const fe_host_io g_io_iface = { io_wake, io_yield };
+
+static int io_thread(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   while (g_io_run)
+   {
+      SceUInt tmo = IO_WAIT_US;
+      sceKernelWaitSema(g_io_sema, 1, &tmo);
+      if (g_pcfg.log_thread)
+         fe_evt_service();
+      if (g_pcfg.sram_thread)
+         fe_host_sram_service_io();
+   }
+   /* The other service can still belong to the main thread. A logging-only
+    * worker must never become a second consumer of the SRAM block queue. */
+   if (g_pcfg.sram_thread)
+      fe_host_sram_service_io();   /* last pass before we go away */
+   if (g_pcfg.log_thread)
+      fe_evt_service();
+   return 0;
+}
+
+static void io_thread_start(void)
+{
+   if (!g_pcfg.log_thread && !g_pcfg.sram_thread)
+   {
+      fe_evt("log_thread mode=0 sram_thread=0");
+      return;
+   }
+   g_io_run  = 1;
+   g_io_sema = sceKernelCreateSema("gpsp_io", 0, 0, IO_SEMA_MAX, NULL);
+   if (g_io_sema >= 0)
+   {
+      g_io_thid = sceKernelCreateThread("gpsp_io", io_thread, g_io_prio,
+                                        IO_STACK, THREAD_ATTR_USER, NULL);
+      if (g_io_thid < 0 || sceKernelStartThread(g_io_thid, 0, NULL) < 0)
+      {
+         if (g_io_thid >= 0)
+            sceKernelDeleteThread(g_io_thid);
+         g_io_thid = -1;
+         sceKernelDeleteSema(g_io_sema);
+         g_io_sema = -1;
+      }
+   }
+   if (g_io_thid < 0)
+   {
+      /* Never fail a run over an I/O optimisation: stay inline. */
+      g_io_run = 0;
+      fe_evt("log_thread mode=0 sram_thread=0 reason=thread_failed");
+      return;
+   }
+   if (g_pcfg.log_thread)
+      fe_evt_set_async(io_wake);
+   if (g_pcfg.sram_thread)
+      fe_host_set_io(&g_io_iface);
+   fe_evt("log_thread mode=%d sram_thread=%d prio=0x%02x",
+          g_pcfg.log_thread, g_pcfg.sram_thread, g_io_prio);
+}
+
+/* Stop the writer, then hand BOTH sinks back to the synchronous path and
+ * drain whatever is still queued on THIS thread — fe_evt and the .sav each
+ * tolerate exactly one consumer, so the order matters.  Idempotent.
+ *
+ * This is also the ADR-0025 ordering contract in code: after it returns, no
+ * other thread can touch the .sav or the SRAM buffer, which is what makes
+ * fe_host_shutdown()'s flush/sync/close and retro_unload_game() safe.  It
+ * must therefore run BEFORE fe_host_shutdown(), not after. */
+static void io_thread_stop(void)
+{
+   int had_thread = (g_io_thid >= 0);
+
+   if (had_thread)
+   {
+      SceUInt tmo = 5000000;   /* the last pass may be flushing 128 KiB */
+      g_io_run = 0;
+      sceKernelSignalSema(g_io_sema, 1);
+      if (sceKernelWaitThreadEnd(g_io_thid, &tmo) < 0)
+         sceKernelTerminateDeleteThread(g_io_thid);
+      else
+         sceKernelDeleteThread(g_io_thid);
+      g_io_thid = -1;
+   }
+   if (g_io_sema >= 0)
+   {
+      sceKernelDeleteSema(g_io_sema);
+      g_io_sema = -1;
+   }
+   fe_host_set_io(NULL);
+   fe_evt_set_async(NULL);
+   if (had_thread)
+   {
+      /* Belt over braces: whatever the writer had not finished (including
+       * the case where we had to terminate it) is completed here, on this
+       * thread, before anything is closed or freed.  Save integrity is not
+       * traded for smoothness — this is the line that guarantees it. */
+      fe_host_sram_sync();
+   }
+}
+
+/* Every exit path funnels through here so the log is always closed with the
+ * writer already stopped and the ring already drained. */
+static void evt_shutdown(void)
+{
+   io_thread_stop();
+   fe_evt_close();
+}
+
+/* ------------------------------------------------------------------ audio */
+
+/* OUT_RATE lives in ff_psp.h: the pacing engine needs it too. */
+#define OUT_CHUNK      1024                 /* output frames per blocking write */
+#define RING_FRAMES    32768                /* power of two, 1.0 s at the
+                                             * core's 32768 Hz (ADR-0028) */
+#define RING_MASK      (RING_FRAMES - 1)
+/* Audio-master pacing nudge (plan §4.4): skip an extra vblank when the ring
+ * holds more than the target — bleeds off the 59.94-vs-59.7275 Hz surplus.
+ *
+ * THE TARGET IS THE AUDIO LATENCY.  The loop is vblank-locked at 59.94 Hz
+ * and every frame produces 1/59.7275 s of sound, so the ring gains ~0.36 %
+ * (~116 frames a second at 32768 Hz) until the nudge holds it at this level,
+ * where it then stays for the rest of the session: sound plays this far
+ * behind the picture.  It was RING_FRAMES * 3 / 4 = 24576 = 0.75 s, reached
+ * ~3.5 minutes into every session -- the field reports "audio drifts out of
+ * sync after minutes, opening the menu resets it" (the menu drains the ring)
+ * and "bilinear delays audio" (docs/SA2-TITLE.md).  Hardware logs show the
+ * nudge firing 2-3 times per 600 frames from ~200 s on, exactly that.
+ *
+ * 4096 frames = 125 ms.  The first ~35 s of EVERY session have always run
+ * with less than this in the ring (it starts empty and grows at ~116/s), so
+ * this is not a smaller cushion than the one play already starts on; it only
+ * stops the cushion growing to 0.75 s.  Harness `audio_ring_target`
+ * overrides it for A/B arms. */
+#ifndef AUDIO_RING_TARGET
+#define AUDIO_RING_TARGET 4096
+#endif
+static unsigned g_ring_high_water = AUDIO_RING_TARGET;
+#define RING_HIGH_WATER g_ring_high_water
+
+static int16_t audio_ring[RING_FRAMES * 2];
+static volatile unsigned ring_w;            /* producer: emu thread  */
+static volatile unsigned ring_r;            /* consumer: audio thread */
+/* A link session's connecting / result screen: no game is running, so the
+ * ring is emptied once and the producer drops everything until the screen
+ * goes (hw2 W: the host's "buggy audio" through the transfer). */
+static volatile int g_link_mute;
+/* GB link telemetry (EVT gblink_win): netdrv datagrams waiting at a pump. */
+static unsigned g_gbl_rxq_max;
+static volatile int audio_running;
+/* Output frames the audio thread filled with silence because the ring was
+ * empty (telemetry only; EVT audio_ring). */
+static volatile unsigned g_audio_starved;
+/* ...and how many times it ran dry (a gap each; EVT gblink_win). */
+static volatile unsigned g_audio_underruns;
+/* A GB link session is running (gblink_audio_session): an underrun fades
+ * the last sample out over ~1.5 ms and the stream fades back in, instead of
+ * stepping to silence and back -- each step is a click, and a CPU-bound
+ * session made a stream of them (the owner's "crackly audio during frame
+ * drops").  Off outside sessions: single-player output stays exactly as it
+ * was. */
+static volatile int g_audio_soft;
+#define AUDIO_FADE_STEP (65536 / 64)       /* 64 output frames, 1.45 ms */
+/* A GB link session's rate follow holds the ring at its cushion and the
+ * high-water nudge is off (gblink_audio_frame).  What the follow's +0.5 %
+ * cannot drain quickly -- the few frames a console runs flat out to catch
+ * its vblank target up after the connecting screen put ~3000 frames in the
+ * ring at once in PPSSPP -- is not queued past this level: those samples
+ * are dropped (a skip, once) instead of playing 100 ms late for a minute or
+ * delaying the frame (a stall for the partner).  0 = no limit. */
+static unsigned g_audio_trim;
+static volatile int audio_output_error;
+/* Resampler input rate.  Seeded with the core's historical default only so
+ * the ring is sane before the core exists (audio_start runs before
+ * fe_host_boot — see main()); the REAL value is taken from
+ * fe_host_sample_rate() right after boot (ADR-0028).  Never hardcode this
+ * ratio anywhere else. */
+unsigned in_rate = 32768;
+static SceUID audio_thid = -1;
+
+/* Resampler phase increment, 16.16, read fresh by the audio thread on every
+ * output chunk.  Normally (in_rate << 16) / OUT_RATE.  ADR-0027 lowers it in
+ * proportion to the pace target: when the emulator deliberately runs at, say,
+ * 46.5 of the GBA's 59.7275 fps it also produces audio 46.5/59.7275 as fast,
+ * so a consumer running at the nominal rate would drain the ring and emit
+ * silence for ~22 % of every second.  Following the pace keeps the stream
+ * CONTINUOUS at the cost of a proportional pitch drop — see ADR-0027 §audio
+ * for why that beat the alternative. */
+volatile unsigned g_audio_step;
+
+/* Audio correctness oracle.  The frame-dump oracle proves the VIDEO output of
+ * a dynarec change is unaltered, and says nothing at all about sound — which
+ * matters because GBA sound engines (M4A/Sappy) classically live in IWRAM and
+ * SELF-MODIFY, patching per-channel volume/pitch immediates.  That is exactly
+ * the code partial invalidation retires, so audio is the likeliest place for
+ * a stale-jump bug to surface.  Rolling hash over every sample the core
+ * produces, logged at exit; deterministic for a scripted run, so it compares
+ * across builds the same way the frame hash does. */
+static uint32_t g_audio_hash = 2166136261u;
+static uint32_t g_audio_samples;
+static int g_audio_oracle;
+
+uint32_t plat_audio_hash(void)    { return g_audio_hash; }
+uint32_t plat_audio_sample_count(void) { return g_audio_samples; }
+
+static void plat_audio_frames(const int16_t *lr, size_t frames)
+{
+   size_t i;
+   /* Hash BEFORE the FF/ring early-outs: this must describe what the core
+    * generated, not what the output path happened to accept.  Bench-only —
+    * The dedicated perf build selects it with audio_oracle; older developer
+    * builds retain bench_mode. It is pure instrumentation and must stay off
+    * in scoring runs and absent from a shipping build. */
+#ifdef GPSP_PERF_RIG
+   if (g_audio_oracle)
+#else
+   if (g_pcfg.bench_mode)
+#endif
+   {
+      for (i = 0; i < frames * 2; i++)
+         g_audio_hash = (g_audio_hash ^ (uint16_t)lr[i]) * 16777619u;
+      g_audio_samples += (uint32_t)frames;
+   }
+
+   if ((g_ff_uncapped || g_ff_mult) && !g_pcfg.ff_audio)
+      return;   /* FF mutes audio: ring drains to silence */
+   if (g_link_mute)
+      return;   /* link screen: silence */
+   if (g_audio_trim && ring_w - ring_r > g_audio_trim)
+      return;   /* link session: over the latency bound, see g_audio_trim */
+   /* The worker has stopped (output error, see audio_thread): nothing drains
+    * the ring any more, and a ring held above RING_HIGH_WATER makes the pacer
+    * add a vblank to EVERY frame -- a silent game running at half speed. */
+   if (!audio_running)
+      return;
+   for (i = 0; i < frames; i++)
+   {
+      if (ring_w - ring_r >= RING_FRAMES)
+         break;                              /* full: drop the tail */
+      {
+         unsigned idx = ring_w & RING_MASK;
+         audio_ring[idx * 2 + 0] = lr[i * 2 + 0];
+         audio_ring[idx * 2 + 1] = lr[i * 2 + 1];
+         ring_w++;
+      }
+   }
+}
+
+/* Feed the core's audio-buffer-status hook once per main-loop iteration
+ * (ADR-0018, rescoped by ADR-0019).  It is a no-op unless the core is
+ * actually running auto/auto_threshold frameskip — which, since ADR-0019,
+ * a session no longer turns on by default: the field showed both consoles
+ * holding real time (58.9 fps emulated) while `auto` quietly dropped
+ * rendered frames on a transient buffer dip.  `active` is false while FF
+ * mutes audio, so FF keeps its own policy. */
+#define AUDIO_UNDERRUN_PCT 25
+
+static void audio_status_frame(void)
+{
+   unsigned level = ring_w - ring_r;
+   /* Occupancy of the INTENDED cushion (RING_HIGH_WATER), not of the whole
+    * ring: the pacer holds the level at the target, so measured against
+    * RING_FRAMES a healthy ring would read 12.5 % and `auto` would call it
+    * an underrun forever.  With the old 3/4 target this read 0-75 %. */
+   int pct = (int)((uint64_t)level * 100u / RING_HIGH_WATER);
+   int active = audio_running &&
+                (g_pcfg.ff_audio || (!g_ff_uncapped && !g_ff_mult));
+   if (pct > 100)
+      pct = 100;
+   fe_host_audio_buffer_status(active, pct, pct < AUDIO_UNDERRUN_PCT);
+}
+
+/* EVT audio_ring: the ring level as the pacer sees it, once per paced frame,
+ * reported every 600 frames.  There was no ring-level observable at all
+ * outside link sessions (frame_hist's `nudge` is session-only), which is how
+ * a 0.75 s audio lag went unseen.  lvl/min/max in ring frames (in_rate
+ * samples), starved = output frames the audio thread filled with silence. */
+static unsigned g_ar_n, g_ar_min = ~0u, g_ar_max, g_ar_nudge, g_ar_starved0;
+
+static void audio_ring_note(void)
+{
+   unsigned level = ring_w - ring_r;
+   if (level < g_ar_min)
+      g_ar_min = level;
+   if (level > g_ar_max)
+      g_ar_max = level;
+   if (++g_ar_n >= 600)
+   {
+      unsigned st = g_audio_starved;
+      fe_evt("audio_ring n=%u lvl=%u min=%u max=%u target=%u nudge=%u "
+             "starved=%u in_rate=%u", g_ar_n, level, g_ar_min, g_ar_max,
+             g_ring_high_water, g_ar_nudge, st - g_ar_starved0, in_rate);
+      g_ar_starved0 = st;
+      g_ar_n = 0;
+      g_ar_min = ~0u;
+      g_ar_max = 0;
+      g_ar_nudge = 0;
+   }
+}
+
+static int audio_thread(SceSize args, void *argp)
+{
+   static int16_t out[OUT_CHUNK * 2];
+   unsigned step;
+   unsigned frac = 0;
+   int ch;
+   int last_l = 0, last_r = 0;      /* g_audio_soft: the fade's start */
+   int fade = 65536;                /* 16.16 gain while fading in/out */
+   int dry = 0;                     /* the ring is empty (one gap) */
+
+   (void)args; (void)argp;
+
+   ch = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, OUT_CHUNK,
+                          PSP_AUDIO_FORMAT_STEREO);
+   if (ch < 0)
+   {
+      audio_output_error = ch;
+      audio_running = 0;
+      return 0;
+   }
+
+   while (audio_running)
+   {
+      int i;
+      /* ADR-0027: re-read once per chunk (~23 ms), not per sample — the pace
+       * target moves at most once a second and a chunk boundary is the
+       * natural place to take the step change. */
+      step = g_audio_step;
+      /* me_standby_down() flushes with `ring_r = ring_w` from the power
+       * callback thread, which outranks this one.  Landing between the
+       * `avail` check and `ring_r +=` below leaves ring_r AHEAD of ring_w:
+       * the level then reads ~4 G for good, the producer drops everything and
+       * the pacer's high-water nudge halves the frame rate.  Resynchronise. */
+      if (ring_w - ring_r > RING_FRAMES)
+         ring_r = ring_w;
+      for (i = 0; i < OUT_CHUNK; i++)
+      {
+         unsigned avail = ring_w - ring_r;
+         if (avail < 2)
+         {
+            if (!dry)
+            {
+               dry = 1;
+               g_audio_underruns++;          /* EVT gblink_win under= */
+            }
+            if (g_audio_soft && fade > 0)
+            {
+               /* the last sample, fading to silence: no step, no click */
+               fade = fade > AUDIO_FADE_STEP ? fade - AUDIO_FADE_STEP : 0;
+               out[i * 2 + 0] = (int16_t)((last_l * fade) >> 16);
+               out[i * 2 + 1] = (int16_t)((last_r * fade) >> 16);
+            }
+            else
+            {
+               out[i * 2 + 0] = 0;           /* starved: silence */
+               out[i * 2 + 1] = 0;
+               fade = 0;
+            }
+            g_audio_starved++;               /* EVT audio_ring starved= */
+            continue;
+         }
+         {
+            unsigned i0 = ring_r & RING_MASK;
+            unsigned i1 = (ring_r + 1) & RING_MASK;
+            int l0 = audio_ring[i0 * 2 + 0], l1 = audio_ring[i1 * 2 + 0];
+            int r0 = audio_ring[i0 * 2 + 1], r1 = audio_ring[i1 * 2 + 1];
+            int f = (int)(frac & 0xFFFF);
+            /* 64-bit product: |l1 - l0| reaches 65535 and f 65535, which
+             * overflows int (undefined behaviour; a click on this target). */
+            int sl = l0 + (int)(((int64_t)(l1 - l0) * f) >> 16);
+            int sr = r0 + (int)(((int64_t)(r1 - r0) * f) >> 16);
+            dry = 0;
+            if (g_audio_soft)
+            {
+               if (fade < 65536)
+               {
+                  /* back from a gap: fade in rather than jump */
+                  fade = fade + AUDIO_FADE_STEP < 65536
+                            ? fade + AUDIO_FADE_STEP : 65536;
+                  sl = (sl * fade) >> 16;
+                  sr = (sr * fade) >> 16;
+               }
+               last_l = sl;
+               last_r = sr;
+            }
+            else
+               fade = 65536;
+            out[i * 2 + 0] = (int16_t)sl;
+            out[i * 2 + 1] = (int16_t)sr;
+         }
+         frac += step;
+         ring_r += frac >> 16;
+         frac &= 0xFFFF;
+      }
+      {
+         int rc = sceAudioOutputBlocking(ch, PSP_AUDIO_VOLUME_MAX, out);
+         if (rc < 0)
+         {
+            /* A failed blocking write may return immediately.  This thread
+             * outranks emulation, so retrying would starve the main loop. */
+            audio_output_error = rc;
+            audio_running = 0;
+            break;
+         }
+      }
+   }
+
+   sceAudioChRelease(ch);
+   return 0;
+}
+
+static void audio_start(void)
+{
+   audio_output_error = 0;
+   audio_running = 1;
+   /* Nominal until the pace policy says otherwise (ADR-0027). */
+   g_audio_step = (unsigned)(((uint64_t)in_rate << 16) / OUT_RATE);
+   audio_thid = sceKernelCreateThread("gpsp_audio", audio_thread, 0x12,
+                                      0x4000, THREAD_ATTR_USER, NULL);
+   if (audio_thid >= 0)
+   {
+      int rc = sceKernelStartThread(audio_thid, 0, NULL);
+      if (rc < 0)
+      {
+         audio_output_error = rc;
+         audio_running = 0;
+         sceKernelDeleteThread(audio_thid);
+         audio_thid = -1;
+      }
+   }
+   else
+   {
+      audio_output_error = audio_thid;
+      audio_running = 0;
+   }
+}
+
+static void audio_ring_reset(void)
+{
+   ring_w = ring_r = 0;
+   g_audio_hash = 2166136261u;
+   g_audio_samples = 0;
+   in_rate = 32768;
+}
+
+static void audio_stop(void)
+{
+   audio_running = 0;
+   if (audio_thid >= 0)
+   {
+      /* Bounded: one chunk is ~23 ms, so a worker that has not returned from
+       * sceAudioOutputBlocking in a second never will -- do not hang exit. */
+      SceUInt tmo = 1000000;
+      if (sceKernelWaitThreadEnd(audio_thid, &tmo) < 0)
+         sceKernelTerminateDeleteThread(audio_thid);
+      else
+         sceKernelDeleteThread(audio_thid);
+      audio_thid = -1;
+   }
+}
+
+/* Report audio-device failures from the main thread, never the high-priority
+ * audio worker.  Emulation can continue silently after an output API error. */
+static void audio_report_error(void)
+{
+   int rc = audio_output_error;
+   if (rc)
+   {
+      audio_output_error = 0;
+      fe_evt("audio output disabled rc=%d", rc);
+      osd_toast("Audio output unavailable");
+   }
+}
+
+/* ------------------------------------------------- core perf counters ---- */
+
+/* ADR-0028.  gpsp's own monotonic counters, declared here rather than by
+ * including the core's private headers (main.h / gba_memory.h are not on the
+ * frontend include path, and frontend-common must stay core-agnostic — hence
+ * the callback in fe_host_config).  Same boundary discipline as the
+ * gpsp_rfu_link_down_hook weak symbol.
+ *   flush_rom_total    ROM translation-cache flushes.  One of these
+ *                      discards the whole ROM cache's generated code (2 MiB
+ *                      on the SMALL tier, 10 MiB on the LARGE one -- see
+ *                      `EVT jit_cache` for which this boot got),
+ *                      memsets a 256 KiB branch-hash table, and forces every
+ *                      subsequent block to be re-translated.
+ *   flush_ram_full     RAM cache flushes caused by the RAM JIT cache running
+ *                      out of room.  A bigger cache is the lever.
+ *   flush_ram_smc      RAM cache flushes caused by a CPU store into RAM that
+ *                      holds translated code.  The WHOLE RAM cache goes, plus
+ *                      a memset of up to 288 KiB of SMC shadow, and a bigger
+ *                      cache does nothing for these (ADR-0029).
+ *   flush_ram_dma      the same, but triggered by a DMA transfer.
+ *   gamepak_page_loads 32 KiB reads from the memory stick, mid-emulation,
+ *                      when the ROM does not fit in RAM.  ADR-0026 priced
+ *                      that stick at 34 ms for 4 KiB. */
+extern u32 flush_rom_total;
+extern u32 flush_ram_full;
+extern u32 flush_ram_smc;
+extern u32 flush_ram_dma;
+extern u32 gamepak_page_loads;
+/* What the flushes COST (main.h): time inside flush_translation_cache_ram(),
+ * the tag-memset volume, and how often it took the whole-region else-branch
+ * (32 KiB IWRAM / 256 KiB EWRAM).  smc_prof_clock is already installed below,
+ * so these have been accumulating all along — they were just never shown. */
+extern u32 smc_flush_us;
+extern u32 smc_flush_bytes;
+extern u32 smc_flush_wide;
+extern u32 smc_blk_xlat_total;   /* RAM blocks re-translated (monotonic) */
+extern u32 flush_rom_total;      /* ROM translation-cache wipes */
+extern u32 cph_jit_total;        /* dynarec compilation us (monotonic) */
+extern u32 smc_blk_watch;        /* 256-byte page the block/writer probe eyes */
+
+static void plat_core_counters(unsigned *rom_flush, unsigned *ram_full,
+                               unsigned *ram_smc, unsigned *ram_dma,
+                               unsigned *page_load)
+{
+   *rom_flush = (unsigned)flush_rom_total;
+   *ram_full  = (unsigned)flush_ram_full;
+   *ram_smc   = (unsigned)flush_ram_smc;
+   *ram_dma   = (unsigned)flush_ram_dma;
+   *page_load = (unsigned)gamepak_page_loads;
+}
+
+/* Translation-cache tier (cpu_threaded.c, dynarec_select_translation_caches).
+ * The core decides in retro_init, before the ROM page cache eats the heap;
+ * the frontend's only inputs are the harness override and the log line. */
+extern u32 jit_cache_tier;            /* 0 undecided, 1 small, 2 large */
+extern u32 jit_cache_force_small;
+extern const char *jit_cache_reason;
+extern u32 rom_translation_cache_size;
+extern u32 ram_translation_cache_size;
+extern unsigned char *rom_translation_cache;
+void dynarec_release_translation_caches(void);   /* cpu_threaded.c */
+void heap_trace_mark(void);                       /* heap_trace.c */
+void gbcore_prepare(void);                        /* gbcore/gbcore.h */
+void heap_trace_report(const char *where);
+
+/* Compiled into every build: the in-process return to the game list checks
+ * the heap with these before it trusts the unload (heap_snap below). */
+/* THE HEAP BUDGET, MEASURED.  `mem_free` (sceKernelTotalFreeMemSize) does not
+ * answer "how much can the frontend still malloc": newlib's heap is ONE
+ * partition block taken at the first malloc (all but PSP_HEAP_SIZE_KB's
+ * 1 MiB), so the kernel's free figure is only what lies outside it.  This is
+ * what lies inside: the free chunks newlib holds (fordblks) plus the part of
+ * the heap block it has not sbrk'd yet, found by bisecting sbrk and handing
+ * every probe straight back.  Under the (recursive) malloc lock, so no other
+ * thread can allocate while a probe is outstanding.  `top` is the largest
+ * block that is certainly allocatable: the releasable top chunk plus the
+ * un-sbrk'd tail.  Telemetry builds only. */
+static void heap_budget(unsigned *total, unsigned *top)
+{
+   struct mallinfo mi;
+   unsigned lo = 0, hi = 64u << 20;
+
+   __malloc_lock(_REENT);
+   mi = mallinfo();
+   while (hi - lo > 4096u)
+   {
+      unsigned mid = (lo + (hi - lo) / 2u) & ~4095u;
+      if (mid <= lo)
+         break;
+      if (sbrk((ptrdiff_t)mid) != (void *)-1)
+      {
+         sbrk(-(ptrdiff_t)mid);
+         lo = mid;
+      }
+      else
+         hi = mid;
+   }
+   __malloc_unlock(_REENT);
+   *total = (unsigned)mi.fordblks + lo;
+   *top   = (unsigned)mi.keepcost + lo;
+}
+
+/* The LARGEST block malloc can hand out right now, bisected by allocating it
+ * and handing it straight back (under the recursive malloc lock).  `top`
+ * above is only the top chunk plus the un-sbrk'd tail; a free hole lower in
+ * the heap can be bigger, and a live allocation stranded above a hole makes
+ * `free` larger than anything one malloc can get.  The residency probe is ONE
+ * malloc, so this is the number it is judged by. */
+static unsigned heap_largest(void)
+{
+   unsigned lo = 0, hi = 64u << 20;
+   __malloc_lock(_REENT);
+   while (hi - lo > 4096u)
+   {
+      unsigned mid = lo + (hi - lo) / 2u;
+      void * volatile p = malloc(mid);
+      if (p)
+      {
+         free(p);
+         lo = mid;
+      }
+      else
+         hi = mid;
+   }
+   __malloc_unlock(_REENT);
+   return lo;
+}
+
+/* THE HEAP, EXACTLY: everything that says whether two moments have the same
+ * heap.  `arena` (bytes newlib has sbrk'd), `used` (uordblks: bytes in live
+ * allocations), `chunks` (ordblks: free chunks -- the fragmentation count)
+ * and `fordblks` are newlib's own byte counts, not estimates; `free`, `top`
+ * and `largest` are the budget figures above (4 KiB bisection).  The
+ * in-process return compares a snapshot taken after the unload with the one
+ * taken before the ROM loaded (heap_snap_same). */
+typedef struct
+{
+   unsigned arena, used, chunks, fordblks, keep;
+   unsigned free, top, largest;
+   unsigned kfree, kmax;       /* the kernel partition, outside the heap */
+} heap_snap_t;
+
+static void heap_snap(heap_snap_t *s)
+{
+   struct mallinfo mi;
+   __malloc_lock(_REENT);
+   mi = mallinfo();
+   s->arena    = (unsigned)mi.arena;
+   s->used     = (unsigned)mi.uordblks;
+   s->chunks   = (unsigned)mi.ordblks;
+   s->fordblks = (unsigned)mi.fordblks;
+   s->keep     = (unsigned)mi.keepcost;
+   heap_budget(&s->free, &s->top);
+   s->largest  = heap_largest();
+   __malloc_unlock(_REENT);
+   s->kfree = (unsigned)sceKernelTotalFreeMemSize();
+   s->kmax  = (unsigned)sceKernelMaxFreeMemSize();
+}
+
+/* Every field but `arena` and `fordblks`: those two move with newlib's top
+ * trim (a probe that grew the heap leaves it a page longer or shorter), and
+ * `free` -- fordblks plus the un-sbrk'd tail -- already says the same thing
+ * without that noise.  `used` and `chunks` are exact byte and chunk counts. */
+static int heap_snap_same(const heap_snap_t *a, const heap_snap_t *b)
+{
+   return a->used == b->used && a->chunks == b->chunks &&
+          a->free == b->free && a->largest == b->largest &&
+          a->kfree == b->kfree && a->kmax == b->kmax;
+}
+
+#ifndef GPSP_NO_TELEMETRY
+static void heap_census(const char *where)
+{
+   heap_snap_t s;
+   heap_snap(&s);
+   fe_evt("heap_census at=%s free=%u top=%u largest=%u arena=%u used=%u "
+          "chunks=%u fordblks=%u kfree=%u kmax=%u", where, s.free, s.top,
+          s.largest, s.arena, s.used, s.chunks, s.fordblks, s.kfree, s.kmax);
+}
+#endif
+
+/* ---- BOOT MEMORY BUDGET (docs/MEMORY-BUDGET.md) --------------------------
+ *
+ * The Go's user partition gives this process 5 MiB less than PPSSPP's 64 MiB
+ * model, with the same EBOOT (docs/ROM-RESIDENCY.md, 2026-09-27).  PPSSPP
+ * cannot shrink its user memory, so `boot_ballast_kb = 5120` (harness only)
+ * holds that 5 MiB from the first statement of main(), before the netdrv
+ * arena, the renderer, the translation caches or the ROM: everything the
+ * process does afterwards sees the Go's heap.  (`rom_ballast_kb` is the older,
+ * later ballast: it is taken just before the JIT decision.) */
+#ifdef GPSP_PERF_RIG
+static unsigned g_boot_ballast_kb, g_boot_ballast_got;
+/* Kept in a global: a block nobody can reach is a block the compiler may
+ * delete, malloc and memset included (it did, in the first build). */
+static void * volatile g_boot_ballast;
+static void boot_ballast_take(void)
+{
+   g_boot_ballast_kb = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                "boot_ballast_kb", 0);
+   if (g_boot_ballast_kb)
+   {
+      /* Held for the life of the process, and touched so it is real. */
+      void *b = malloc((size_t)g_boot_ballast_kb << 10);
+      if (b)
+      {
+         memset(b, 0, (size_t)g_boot_ballast_kb << 10);
+         g_boot_ballast = b;
+         g_boot_ballast_got = g_boot_ballast_kb;
+      }
+   }
+}
+#endif
+
+#if defined(GBA_LINK) || defined(GPSP_MEM_BUDGET)
+/* THE GBA CORE'S MINIMUM, measured (MEMORY-BUDGET.md, PPSSPP boot_ballast
+ * sweep of the link build).  Just before retro_init, init_gamepak_buffer
+ * holds a 1 MiB post-load reserve and then takes 1 MiB ROM blocks until
+ * malloc fails.  With ZERO blocks it does not fail: gamepak_buffers[0] stays
+ * NULL and the first ROM page fault translates from address 0 -- PPSSPP shows
+ * "Bad memory access ... at translate_block_arm" forever, i.e. a hang
+ * (heap 1,977,912 B at the probe).  One block is enough to run (2,502,200 B:
+ * AW2 paged through a single block, exit 0).  So the gate is the reserve,
+ * one block and 64 KiB for the small allocations retro_init makes on the way
+ * (measured: 4.4 KB).  Asked the same way the core asks: separate mallocs. */
+#define MEM_GBA_CORE_MIN ((2u << 20) + (64u << 10))
+static int mem_budget_gba_ok(unsigned *largest)
+{
+   void * volatile a = malloc(1u << 20);
+   void * volatile b = a ? malloc(1u << 20) : NULL;
+   void * volatile c = b ? malloc(64u << 10) : NULL;
+   int ok = c != NULL;
+   unsigned lo = 0, hi = 64u << 20;
+   free(c);
+   free(b);
+   free(a);
+   if (!ok)
+      while (hi - lo > 4096u)   /* only for the message */
+      {
+         unsigned mid = lo + (hi - lo) / 2u;
+         void * volatile p = malloc(mid);
+         if (p)
+         {
+            free(p);
+            lo = mid;
+         }
+         else
+            hi = mid;
+      }
+   *largest = lo;
+   return ok;
+}
+#endif
+
+#ifndef GPSP_NO_TELEMETRY
+/* One line, the first thing after boot_ok: what this console gave this binary.
+ *   image   = the loaded ELF, text through .bss (__executable_start.._end)
+ *   k_free / k_max = the kernel's view OUTSIDE the heap block
+ *   heap    = newlib's heap block (arena already sbrk'd + the un-sbrk'd tail)
+ *   free / largest = what malloc can still hand out (heap_budget/_largest)
+ * MEMORY-BUDGET.md turns these into the per-model table. */
+extern char __executable_start[], _end[];
+static void boot_mem_census(void)
+{
+   struct mallinfo mi;
+   unsigned total = 0, top = 0, big;
+   heap_budget(&total, &top);
+   big = heap_largest();
+   mi = mallinfo();
+   fe_evt("mem_boot image=%u k_free=%d k_max=%d heap=%u free=%u largest=%u "
+          "ballast_kb=%u",
+          (unsigned)(_end - __executable_start),
+          sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize(),
+          (unsigned)mi.arena + (total - (unsigned)mi.fordblks), total, big,
+#ifdef GPSP_PERF_RIG
+          g_boot_ballast_got
+#else
+          0u
+#endif
+          );
+}
+#endif
+
+/* ---- ROM PAGE CACHE SIZE ------------------------------------------------
+ *
+ * init_gamepak_buffer (retro_init) takes 1 MiB blocks until malloc fails or
+ * gamepak_buffer_cap is reached.  The core's default cap is ROM_BUFFER_SIZE
+ * (15 on the PSP, root Makefile), so a 32 MiB cart pages on every model.
+ *
+ * `rom_resident` (CONFIG.INI, not written back; default 1 since 3.0.0, when the
+ * Go A/B rig passed 21/21) asks the core to hold the cart whole.  The wish is
+ * the cart's size in 1 MiB blocks (a 16 MiB Emerald asks for 16, Unbound for
+ * 32), so a cart never costs more than itself.  The core decides in
+ * init_gamepak_buffer, the last allocation of startup, AFTER any large
+ * translation-cache tier has taken its block: it takes the blocks one by one
+ * while holding the 1 MiB post-load reserve, and keeps them only if every one
+ * was granted -- the same >= 1 MiB post-load floor a PSP-1000 lives on.  A
+ * short heap hands the extra blocks straight back and the cart pages at the
+ * default cap.  A PSP-1000 (whose loop always stops at ~13) is unchanged.
+ * Decided by the memory actually granted, not the model number.  EVT
+ * rom_cache ... plan= says what the core did.
+ *
+ * Harness keys (GPSP_PERF_RIG builds only) for the hardware A/B:
+ *   rom_cap = N          force the cap to N blocks (1..32), no probe
+ *   swap_stubs = 1       resident carts still get the paged-ROM load stubs
+ *   cache_paranoid = 1   every JIT cache sync is a full D+I cache sync
+ *   rom_ballast_kb = N   hold N KiB of heap first, so the ROM lands higher
+ *   jit_coherency_scan = N   every N frames, count RAM-cache code words the
+ *                        D-cache holds but memory does not (EVT jit_coh)
+ *   jit_code_mode = M    JIT_CODE_AB cores only (docs/JIT-CODE-DISCIPLINE.md):
+ *                        0 legacy syncs, 1 + 8b48b48, 2 discipline (default),
+ *                        3 discipline without the ownership invalidate */
+extern u32 gamepak_buffer_cap;
+extern u32 gamepak_resident_wanted;
+extern const char *gamepak_cap_reason;
+extern u32 gamepak_force_swap_stubs;
+#ifdef PSP
+extern u32 platform_cache_paranoid;
+extern u32 jit_coherency_scan(u32 *first);
+#endif
+#ifdef GPSP_PERF_RIG
+static unsigned g_jit_coh_every;
+#endif
+/* JIT_CODE_AB / JIT_CODE_DISCIPLINE cores (weak: every core links). */
+extern u32 jit_code_mode __attribute__((weak));
+/* The cart's size in whole 1 MiB blocks (what gamepak_must_swap measures
+ * against), or 32 if it cannot be read -- the largest a cart can be. */
+static unsigned rom_cart_blocks(const char *path)
+{
+   SceIoStat st;
+   unsigned long long sz;
+   memset(&st, 0, sizeof(st));
+   if (sceIoGetstat(path, &st) < 0 || st.st_size <= 0)
+      return 32;
+   sz = (unsigned long long)st.st_size;
+   if (sz > (32ull << 20))
+      return 32;
+   return (unsigned)((sz + (1u << 20) - 1) >> 20);
+}
+
+static void rom_cache_select(const char *rom_path)
+{
+   unsigned cap = gamepak_buffer_cap;          /* the core default */
+   const char *why = "default";
+
+   /* The ATTEMPT is the core's (init_gamepak_buffer): it runs after the
+    * translation-cache tier has taken its block, so it sees what is really
+    * left.  The frontend only states the wish, sized to the cart. */
+   gamepak_resident_wanted = g_pcfg.rom_resident ? rom_cart_blocks(rom_path)
+                                                 : 0u;
+   if (gamepak_resident_wanted > cap)
+      why = "resident_requested";
+   else if (gamepak_resident_wanted)
+      why = "fits_default";   /* the default cap already holds the cart */
+#ifdef GPSP_PERF_RIG
+   {
+      int hcap = (int)fe_ini_get_int(HARNESS_INI, "rom_cap", 0);
+      unsigned ballast = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                  "rom_ballast_kb", 0);
+      if (hcap >= 1 && hcap <= 32)
+      {
+         cap = (unsigned)hcap;
+         why = "harness";
+         gamepak_resident_wanted = 0;   /* forced: no probe */
+      }
+      gamepak_force_swap_stubs =
+         fe_ini_get_int(HARNESS_INI, "swap_stubs", 0) ? 1u : 0u;
+      platform_cache_paranoid =
+         fe_ini_get_int(HARNESS_INI, "cache_paranoid", 0) ? 1u : 0u;
+      g_jit_coh_every =
+         (unsigned)fe_ini_get_int(HARNESS_INI, "jit_coherency_scan", 0);
+      unsigned ballast_got = 0;
+      if (ballast)
+      {
+         /* Held for the life of the process, and touched so it is real. */
+         void *b = malloc((size_t)ballast << 10);
+         if (b)
+         {
+            memset(b, 0, (size_t)ballast << 10);
+            ballast_got = ballast;
+         }
+         fe_evt("rom_ballast kb=%u at=%08x", ballast,
+                (unsigned)(uintptr_t)b);
+      }
+      /* APPLIED values, one line, every run: the rig compares these with what
+       * it staged (a key can be read and still clamped or refused). */
+      fe_evt("rom_diag rom_cap=%d swap_stubs=%u cache_paranoid=%u "
+             "jit_coh_every=%u ballast_kb=%u",
+             (hcap >= 1 && hcap <= 32) ? hcap : 0,
+             (unsigned)gamepak_force_swap_stubs,
+             (unsigned)platform_cache_paranoid, g_jit_coh_every, ballast_got);
+      /* Before fe_host_boot: the mode must hold from the first translation. */
+      if (&jit_code_mode)
+      {
+         int m = (int)fe_ini_get_int(HARNESS_INI, "jit_code_mode", -1);
+         if (m >= 0 && m <= 3)
+            jit_code_mode = (u32)m;
+         fe_evt("jit_code mode=%u key=%d", (unsigned)jit_code_mode, m);
+      }
+   }
+#endif
+   gamepak_buffer_cap = cap;
+   fe_evt("rom_cache_cap blocks=%u reason=%s want=%u", cap, why,
+          (unsigned)gamepak_resident_wanted);
+   (void)why;
+}
+
+#ifdef GPSP_PERF_RIG
+static void jit_coh_frame(unsigned frames)
+{
+   static unsigned total, scans;
+   u32 first = 0, n;
+   if (!g_jit_coh_every || frames % g_jit_coh_every)
+      return;
+   n = jit_coherency_scan(&first);
+   scans++;
+   total += n;
+   if (n || scans % 64 == 0)
+      fe_evt("jit_coh f=%u n=%u first=%08x total=%u scans=%u",
+             frames, (unsigned)n, (unsigned)first, total, scans);
+}
+#endif
+
+/* ADR-0030: same boundary trick for the SMC write-ADDRESS profile.  The core
+ * owns the buckets (main.c); this just forwards, and the take RESETS them, so
+ * each `EVT smc_addr` describes exactly one heartbeat window. */
+void smc_prof_take(unsigned *hits, unsigned *pages, unsigned *iw, unsigned *ew,
+                   unsigned *oth, unsigned *ovf,
+                   unsigned *hot_addr, unsigned *hot_cnt,
+                   unsigned *top_addr, unsigned *top_cnt, unsigned nhot);
+
+static void plat_smc_addr(unsigned *hits, unsigned *pages, unsigned *iw,
+                          unsigned *ew, unsigned *oth, unsigned *ovf,
+                          unsigned *hot_addr, unsigned *hot_cnt,
+                          unsigned *top_addr, unsigned *top_cnt, unsigned nhot)
+{
+   smc_prof_take(hits, pages, iw, ew, oth, ovf, hot_addr, hot_cnt,
+                 top_addr, top_cnt, nhot);
+}
+
+/* Phase 5g: same boundary trick for the SMC BLOCK profile (main.c). */
+void smc_blk_take(unsigned *watch, unsigned *xlat, unsigned *ovf,
+                  unsigned *start, unsigned *end, unsigned *mode,
+                  unsigned *reason, unsigned *cnt,
+                  unsigned *wpc, unsigned *waddr, unsigned *wcnt,
+                  unsigned *wovf,
+                  unsigned *head, unsigned *ctx, unsigned *snap,
+                  unsigned *fus, unsigned *fbytes, unsigned *fwide,
+                  unsigned *same, unsigned *diff, unsigned *unkn);
+
+static void plat_smc_block(unsigned *watch, unsigned *xlat, unsigned *ovf,
+                           unsigned *start, unsigned *end, unsigned *mode,
+                           unsigned *reason, unsigned *cnt,
+                           unsigned *wpc, unsigned *waddr, unsigned *wcnt,
+                           unsigned *wovf,
+                           unsigned *head, unsigned *ctx, unsigned *snap,
+                           unsigned *fus, unsigned *fbytes, unsigned *fwide,
+                           unsigned *same, unsigned *diff, unsigned *unkn)
+{
+   smc_blk_take(watch, xlat, ovf, start, end, mode, reason, cnt,
+                wpc, waddr, wcnt, wovf, head, ctx, snap,
+                fus, fbytes, fwide, same, diff, unkn);
+}
+
+/* The core's flush timer wants a plain u32-microsecond clock (main.h).
+ * Declared here rather than including the core's main.h, which pulls in the
+ * whole emulator header set -- same pattern as smc_prof_take above. */
+extern unsigned int (*smc_prof_clock)(void);
+
+static unsigned int plat_smc_clock(void)
+{
+   return (unsigned int)sceKernelGetSystemTimeLow();
+}
+
+/* Phase 5h: same boundary trick again for the per-PHASE frame bracket.  The
+ * core owns the accumulators and the probe level (main.c); this forwards the
+ * take, which RESETS them, so each `EVT core_phase` describes exactly one
+ * heartbeat window.  `core_phase_set_level` is called after the clock is
+ * installed -- the core refuses any nonzero level without one. */
+void core_phase_take(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
+                     unsigned *reads, unsigned *mean, unsigned *max,
+                     unsigned *worst, unsigned nph,
+                     unsigned *bkr, unsigned *bkw, unsigned *wbkr,
+                     unsigned *wbkw, unsigned *ugba, unsigned *dman,
+                     unsigned *stmr, unsigned *negc, unsigned *nego,
+                     unsigned *rfux, unsigned *rfut,
+                     unsigned *wrfux, unsigned *wrfut);
+void core_phase_set_level(unsigned lvl);
+
+static void plat_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
+                            unsigned *reads, unsigned *mean, unsigned *max,
+                            unsigned *worst, unsigned nph,
+                            unsigned *bkr, unsigned *bkw, unsigned *wbkr,
+                            unsigned *wbkw, unsigned *ugba, unsigned *dman,
+                            unsigned *stmr, unsigned *negc, unsigned *nego,
+                     unsigned *rfux, unsigned *rfut,
+                     unsigned *wrfux, unsigned *wrfut)
+{
+   core_phase_take(lvl, clk_ns, frames, reads, mean, max, worst, nph,
+                   bkr, bkw, wbkr, wbkw, ugba, dman, stmr, negc, nego, rfux, rfut, wrfux, wrfut);
+}
+
+/* ------------------------------------------------------------------ input */
+
+#include "mgift_shortcut.h"
+static unsigned g_pad;   /* raw SceCtrl buttons, sampled once per loop */
+static unsigned g_mgift_consumed;
+
+#ifdef GPSP_PERF_RIG
+/* HARNESS ONLY: RAW PAD REPLAY (`pad_script = <file>`).
+ *
+ * The autopilot injects GBA buttons AFTER the frontend's button mapping, so a
+ * script can never exercise what a player's thumb does: the PSP pad itself,
+ * the mapping table and every frontend shortcut read from g_pad (Triangle,
+ * Square, the SELECT chords).  PPSSPP cannot press Square either (see
+ * `simff`).  This ORs scripted PSP buttons into g_pad at the pad read, keyed
+ * to EMULATED frames so the game sees them at the same frame every run.
+ *
+ * One press per line: `<frame> <hold-frames> <BUTTONS>`, BUTTONS '+'-joined
+ * from SELECT START UP RIGHT DOWN LEFT L R TRIANGLE CIRCLE CROSS SQUARE, or a
+ * 0x mask.  '#' comments.  Not compiled into a release. */
+#define PAD_SCRIPT_MAX 256
+static struct { unsigned f, n, mask; } g_pad_script[PAD_SCRIPT_MAX];
+static int g_pad_script_n;
+
+#ifdef GPSP_PERF_RIG
+/* Menu = HOME harness keys (docs/CONTROL-REMAP.md section 10).
+ *   home_sim = 1          the menu behaves as if gbadhoc_home.prx were up
+ *                         (PPSSPP cannot run it), and a HOME bit in the pad --
+ *                         a pad_script line `<frame> 2 0x10000` -- is a press.
+ *   home_stall_frame = N  at emulated frame N the main loop blocks for
+ *   home_stall_ms = M     M ms (default 8000) WITHOUT beating: on hardware
+ *                         HOME must go back to the system after ~2 s (the
+ *                         heartbeat fallback), and come back to the menu ~1 s
+ *                         after the loop resumes. */
+static int      g_home_sim;
+static unsigned g_home_stall_frame, g_home_stall_ms;
+#endif
+
+static unsigned pad_script_buttons(const char *t)
+{
+   static const struct { const char *n; unsigned b; } names[] = {
+      { "SELECT", PSP_CTRL_SELECT }, { "START", PSP_CTRL_START },
+      { "UP", PSP_CTRL_UP }, { "RIGHT", PSP_CTRL_RIGHT },
+      { "DOWN", PSP_CTRL_DOWN }, { "LEFT", PSP_CTRL_LEFT },
+      { "L", PSP_CTRL_LTRIGGER }, { "R", PSP_CTRL_RTRIGGER },
+      { "TRIANGLE", PSP_CTRL_TRIANGLE }, { "CIRCLE", PSP_CTRL_CIRCLE },
+      { "CROSS", PSP_CTRL_CROSS }, { "SQUARE", PSP_CTRL_SQUARE },
+   };
+   char buf[96], *tok, *save = NULL;
+   unsigned m = 0, i;
+   if (t[0] == '0' && (t[1] == 'x' || t[1] == 'X'))
+      return (unsigned)strtoul(t, NULL, 16);
+   snprintf(buf, sizeof(buf), "%s", t);
+   for (tok = strtok_r(buf, "+", &save); tok; tok = strtok_r(NULL, "+", &save))
+   {
+      for (i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+         if (strcmp(tok, names[i].n) == 0)
+            break;
+      if (i == sizeof(names) / sizeof(names[0]))
+         return 0;                 /* unknown name: drop the whole line */
+      m |= names[i].b;
+   }
+   return m;
+}
+
+static void pad_script_load(const char *path)
+{
+   FILE *f = fopen(path, "r");
+   char line[160];
+   int bad = 0;
+   if (!f)
+   {
+      fe_evt("pad_script err=open path=%s", path);
+      return;
+   }
+   while (fgets(line, sizeof(line), f) && g_pad_script_n < PAD_SCRIPT_MAX)
+   {
+      unsigned fr, hold;
+      char btn[96];
+      if (line[0] == '#' || line[0] == '\n' || line[0] == '\r')
+         continue;
+      if (sscanf(line, "%u %u %95s", &fr, &hold, btn) != 3 ||
+          !pad_script_buttons(btn) || !hold)
+      {
+         bad++;
+         continue;
+      }
+      g_pad_script[g_pad_script_n].f = fr;
+      g_pad_script[g_pad_script_n].n = hold;
+      g_pad_script[g_pad_script_n].mask = pad_script_buttons(btn);
+      g_pad_script_n++;
+   }
+   fclose(f);
+   FE_EVT_ONLY(bad);
+   fe_evt("pad_script n=%d bad=%d", g_pad_script_n, bad);
+}
+
+/* Scripted buttons held at emulated frame `f`; logs each press as it starts. */
+static unsigned pad_script_mask(unsigned f)
+{
+   static unsigned last_f = ~0u;
+   unsigned m = 0;
+   int i;
+   for (i = 0; i < g_pad_script_n; i++)
+      if (f >= g_pad_script[i].f && f - g_pad_script[i].f < g_pad_script[i].n)
+      {
+         m |= g_pad_script[i].mask;
+         if (f == g_pad_script[i].f && f != last_f)
+            fe_evt("pad_script_press f=%u mask=0x%04x hold=%u", f,
+                   g_pad_script[i].mask, g_pad_script[i].n);
+      }
+   last_f = f;
+   return m;
+}
+#endif
+
+/* ctl_map.h restates the SDK's button bits so it can be host-tested; hold it
+ * to them. */
+typedef char ctl_bits_match_sdk[
+   (CTL_SELECT == PSP_CTRL_SELECT && CTL_START == PSP_CTRL_START &&
+    CTL_UP == PSP_CTRL_UP && CTL_RIGHT == PSP_CTRL_RIGHT &&
+    CTL_DOWN == PSP_CTRL_DOWN && CTL_LEFT == PSP_CTRL_LEFT &&
+    CTL_L == PSP_CTRL_LTRIGGER && CTL_R == PSP_CTRL_RTRIGGER &&
+    CTL_TRIANGLE == PSP_CTRL_TRIANGLE && CTL_CIRCLE == PSP_CTRL_CIRCLE &&
+    CTL_CROSS == PSP_CTRL_CROSS && CTL_SQUARE == PSP_CTRL_SQUARE) ? 1 : -1];
+typedef char ctl_retro_ids_match[
+   (JP_A == 8 && JP_B == 0 && JP_L == 10 && JP_R == 11 && JP_START == 3 &&
+    JP_SELECT == 2 && JP_UP == 4 && JP_DOWN == 5 && JP_LEFT == 6 &&
+    JP_RIGHT == 7) ? 1 : -1];
+
+/* Turbo buttons: which trains are running (ctl_map.h).  Stepped by
+ * turbo_frame() once per loop iteration that runs the game; not part of the
+ * emulated machine, never saved. */
+static ctl_turbo g_turbo;
+
+static uint32_t plat_input_bitmask(void)
+{
+   /* The player's mapping (Settings > Controls, psp/ctl_map.c): one table
+    * lookup per game button -- the same ten tests the hard-coded chain did,
+    * and with the default table the identical result (a 3.0 btn_swap
+    * config arrives here as an explicit bind_a/bind_b pair).
+    * Whatever the table says, this is the ONLY place a PSP button becomes a
+    * GBA/GB button: the core, the GB/GBC core and the GB link lockstep all
+    * read it through fe_host's input_bitmask, so a remap is local and what
+    * crosses the network is still just the resulting button state.
+    *
+    * TURBO BUTTONS (docs/CONTROL-REMAP.md section 13) are added here and
+    * nowhere else, so they too reach all three.  g_turbo.live is zero unless
+    * a bound turbo button is firing right now: with none bound this is the
+    * line above plus one flag test.  The pulse is a function of the emulated
+    * frame number, so every read of one frame agrees and fast-forward's
+    * three frames per pad sample each get their own phase. */
+   uint32_t m = ctl_game_mask(&g_pcfg.controls, g_pad & ~g_mgift_consumed);
+   if (g_turbo.live)
+      m |= ctl_turbo_mask(&g_pcfg.controls, &g_turbo, fe_host_frame_count());
+   return m;
+}
+
+/* The binding of a shortcut action (Mystery Gift's chord is read here; the
+ * others arrive as ctl_shortcuts() bits). */
+#define CTL_BIND(a)  ((unsigned)g_pcfg.controls.bind[(a)])
+
+/* ------------------------------------------------------------------ video */
+
+static const uint16_t *cur_frame;
+static unsigned cur_w = FE_GBA_WIDTH, cur_h = FE_GBA_HEIGHT;
+static size_t cur_pitch = FE_GBA_WIDTH * 2;
+
+/* ---- ADR-0080 Stage 1: video staging on the Media Engine ---------------
+ *
+ * The pipeline the mission brief asked for, mapped onto the real seams:
+ * the core's output buffer (`gba_screen_pixels`) is double-buffered by
+ * flipping the core's own pointer between frames, so the main CPU never
+ * copies a pixel.  Each completed frame is POSTED to the ME (non-blocking;
+ * busy = drop, exactly the brief's collision policy), the ME does the
+ * 480->512-stride staging copy into one of two main-RAM staging buffers,
+ * and the GE draws the LAST COMPLETED staging buffer — one frame of
+ * display latency, zero frames of main-CPU waiting.  The main-CPU path
+ * (vid_draw_frame) is never removed: it serves until the first ME frame
+ * completes and again forever if the watchdog trips.
+ *
+ * Coherency contract, one line each: SC writes core buffer cached ->
+ * ranged writeback before post (in me_host_post_pitch_copy); ME reads and
+ * writes uncached; GE reads physical RAM, which the ME's uncached stores
+ * already reached. */
+/* ADR-0080c: DEFER me_video ACTIVATION UNTIL A SESSION IS LIVE.
+ *
+ * me_video active on the HOST during np_start (ad-hoc group creation)
+ * deterministically broke session bring-up (fs-me auto332/333, 2/2 on the
+ * fixed EBOOT; the join was flawless).  The ME video path — buffer-pointer
+ * flips and per-frame copy posts — must not run while the WLAN session is
+ * being created.  It also has no reason to: single-player is unpaced with
+ * ample headroom; the offload only matters once a paced session is up.
+ *
+ * So split "configured" from "active": `_cfg` is set once at boot (PRX up,
+ * buffers allocated, key on); `g_me_video` (active offload) is switched on
+ * only when g_net_up is true — which net_bringup sets AFTER np_start
+ * succeeds — and switched back off (re-arming) when the session ends, so
+ * the offload dodges EVERY session's np_start, not just the first.  A
+ * watchdog/slow teardown is permanent for the boot (do not retry a dead
+ * ME); a session-end teardown re-arms. */
+int g_net_up;                         /* adhoc transport + netdrv live
+                                              * (defined here, above
+                                              * plat_video_frame, for the
+                                              * ADR-0080c session gate)      */
+static int g_me_video;                       /* actively offloading now      */
+static int g_me_video_cfg;                   /* configured + ME ready        */
+/* ADR-0080e: NO second core buffer.  We post the copy straight from the
+ * core's own frame (`pix`); the ME reads it in ~3 ms (uncached 160 KB) while
+ * the core does not re-render for ~16 ms, and the drop policy never lets two
+ * copies overlap — so there is no overwrite race and the 77 KB second buffer
+ * (which the host could not fit alongside np_start, auto346) is gone.  Two
+ * 82 KB staging buffers remain (GE draws the last-completed while the ME
+ * fills the next). */
+static uint16_t *g_me_stage[2];              /* 256x161 RGB565 staging       */
+static int g_me_stage_ready   = -1;          /* GE may draw this one         */
+static int g_me_stage_pending = -1;          /* ME is filling this one       */
+static unsigned g_me_vf, g_me_vdrops, g_me_census;
+/* ADR-0080b: consecutive frames a posted copy failed to finish within its
+ * frame.  This is the REAL "ME too slow for video" signal — distinct from
+ * the host watchdog's heartbeat-freeze (ME wedged).  The first me_video
+ * run (auto330) tore down at 8 because the OLD watchdog checked idle in the
+ * same frame it posted the job — always busy, always a false miss. */
+static unsigned g_me_vmiss;
+#define ME_VMISS_LIMIT 8
+static unsigned g_me_pw, g_me_ph;            /* frame dims for present (ADR-0082) */
+extern u16 *gba_screen_pixels;               /* core global (video.h)        */
+
+/* `permanent` = 1 kills the offload for the rest of the boot (a dead/too-slow
+ * ME); 0 just deactivates and RE-ARMS for the next session (ADR-0080c). */
+static void me_video_teardown(const char *why, int permanent)
+{
+   FE_EVT_ONLY(why);   /* the reason is reported, not acted on */
+   if (!g_me_video)
+   {
+      if (permanent)
+         g_me_video_cfg = 0;
+      return;
+   }
+   g_me_video = 0;
+   if (permanent)
+      g_me_video_cfg = 0;
+   /* No gba_screen_pixels to restore — ADR-0080e never reassigns it. */
+   g_me_stage_ready = g_me_stage_pending = -1;
+   g_me_vmiss = 0;
+   fe_evt("me_video off reason=%s frames=%u drops=%u rearm=%d", why, g_me_vf,
+          g_me_vdrops, permanent ? 0 : 1);
+}
+
+/* ADR-0080d: allocate the offload buffers LAZILY, at session-up — NOT at
+ * boot.  The host's np_start (ad-hoc group creation) needs more heap than
+ * the join's, and pre-allocating 242 KB at boot starved it: the host failed
+ * np_start even with me_video merely ARMED (session-gated, never active) —
+ * fs-me auto343 disproved the "activity collides" theory.  Allocating after
+ * np_start has taken its memory reverts the host to the exact heap profile
+ * of the working me_bench arm at the one moment that matters.  On failure
+ * (memory genuinely too tight post-session) the console just runs plain —
+ * graceful, never fatal. */
+static int me_video_alloc(void)
+{
+   if (g_me_stage[0] && g_me_stage[1])
+      return 0;   /* already allocated (a prior session this boot) */
+   g_me_stage[0] = (uint16_t *)memalign(64, 512 * 161);
+   g_me_stage[1] = (uint16_t *)memalign(64, 512 * 161);
+   if (!g_me_stage[0] || !g_me_stage[1])
+   {
+      free(g_me_stage[0]); free(g_me_stage[1]);
+      g_me_stage[0] = NULL; g_me_stage[1] = NULL;
+      return -1;
+   }
+   memset(g_me_stage[0], 0, 512 * 161);
+   memset(g_me_stage[1], 0, 512 * 161);
+   sceKernelDcacheWritebackInvalidateRange(g_me_stage[0], 512 * 161);
+   sceKernelDcacheWritebackInvalidateRange(g_me_stage[1], 512 * 161);
+   return 0;
+}
+
+/* Turn the offload ON for a live session (ADR-0080c/d/e).  Allocate the two
+ * staging buffers now (post-np_start); no second core buffer to flip. */
+static void me_video_activate(void)
+{
+   if (me_video_alloc() != 0)
+   {
+      fe_evt("me_video off reason=alloc session=up");
+      g_me_video_cfg = 0;                 /* cannot get buffers: give up */
+      return;
+   }
+   g_me_stage_ready   = -1;
+   g_me_stage_pending = -1;
+   g_me_vmiss         = 0;
+   g_me_video = 1;
+   fe_evt("me_video on stage_bytes=%u session=up", 512u * 161u);
+}
+
+/* ADR-0082: the offload is now a two-stage pipeline split across the loop.
+ *
+ *   me_video_post()  — end of retro_run (from plat_video_frame): hand this
+ *                      frame to the ME to stage.  NO GE work here.
+ *   me_video_present()— TOP of the next loop iteration, BEFORE retro_run:
+ *                      retire the just-staged buffer and issue its GE list.
+ *
+ * Because the list is issued at the top, the GE rasterises through the whole
+ * ~12 ms retro_run, so the pre-swap sync is ~0 even on heavy animation
+ * frames (the old end-of-run issue left the GE only the vblank slack, which
+ * is zero when a frame is over budget — that was the reappearing ~1.3 ms
+ * `wait`).  Still ONE frame of latency: a frame posted at the end of run N
+ * is presented at the top of run N+1 and shown at swap N+1.  Safe only
+ * because the ME copy is now the ~0.7 ms cached read (ADR-0082 PRX change),
+ * which finishes inside the vblank gap between post and present. */
+static void me_video_post(const uint16_t *pix, unsigned w, unsigned h,
+                          size_t pitch)
+{
+   g_me_vf++;
+   g_me_pw = w;
+   g_me_ph = h;
+
+   /* Post the new frame if the ME is free (no job in flight). */
+   if (g_me_video && pix && g_me_stage_pending < 0)
+   {
+      int nxt = (g_me_stage_ready == 0) ? 1 : 0;
+      if (me_host_post_pitch_copy(pix, g_me_stage[nxt], h, w * 2,
+                                  (unsigned)pitch, 512) == 0)
+         g_me_stage_pending = nxt;
+      else
+         g_me_vdrops++;
+   }
+   else if (g_me_video && pix)
+      g_me_vdrops++;
+
+   if (++g_me_census >= 600)
+   {
+      g_me_census = 0;
+      fe_evt("me_video frames=%u drops=%u vmiss=%u beat_ok=%d", g_me_vf,
+             g_me_vdrops, g_me_vmiss, me_host_up());
+   }
+}
+
+/* Called at the TOP of the main loop, before fe_host_run_frame (ADR-0082). */
+static void me_video_present(void)
+{
+   if (!g_me_video)
+      return;
+
+   /* Retire the copy posted last iteration.  The cached-read copy (~0.7 ms)
+    * completed during the vblank gap; if it somehow did not (a huge stall),
+    * keep the previous frame on screen (a repeat) and count a miss. */
+   if (g_me_stage_pending >= 0)
+   {
+      if (me_host_idle())
+      {
+         g_me_stage_ready   = g_me_stage_pending;
+         g_me_stage_pending = -1;
+         g_me_vmiss = 0;
+      }
+      else if (++g_me_vmiss >= ME_VMISS_LIMIT)
+      {
+         me_video_teardown("slow", 1);
+         return;
+      }
+   }
+
+   /* Issue the GE list now — it rasterises through the whole retro_run. */
+   if (g_me_stage_ready >= 0)
+   {
+      vid_draw_prestaged(g_me_stage[g_me_stage_ready], g_me_pw, g_me_ph);
+      g_drew = 1;
+   }
+
+   if (g_me_video && me_host_watchdog_frame())
+      me_video_teardown("watchdog", 1);   /* ME wedged (heartbeat frozen) */
+}
+
+/* ---- MEDIA ENGINE MODE: the live second-core renderer -------------------
+ *
+ * The user-facing engine (settings > "Media Engine mode", relaunch-to-apply;
+ * harness override `me_mode`).  Pipeline, one frame of latency:
+ *
+ *   emulate N   : core runs in capture mode 1 — logs the per-line LCD regs
+ *                 into g_cap[cur] and SKIPS the render (~6 ms stays here).
+ *   frame end N : retire the ME's render of N-1 -> present it; write back
+ *                 caches; post render(N) with capture=g_cap[cur]; wait for
+ *                 input_seq (ME has copied vram/oam/palette, ~1 ms); flip
+ *                 the capture buffer; emulation of N+1 proceeds while the
+ *                 ME renders N in parallel (~10 ms vs the 16.7 ms budget).
+ *
+ * Correctness lineage: capture set proven bit-exact on the desktop
+ * (RENDER_REPLAY ~81k + ME_CAP_VALIDATE ~61k frames, 0 mismatches); the
+ * ~1.7% mid-frame-DMA frames render from end-of-frame state — a one-frame
+ * transient during scene transitions, accepted for v1.
+ *
+ * Failure discipline (same as me_video): misses counted, never fatal —
+ * teardown returns to main-CPU rendering mid-run, seamlessly. */
+extern unsigned char  vram[];
+/* VRAM dirty map (gba_memory.c) -- set by the C store macros and the DMA
+ * path, NOT by translated code.  The probe below reports how much that
+ * misses, which is what decides whether the dynarec store stub has to be
+ * instrumented at all. */
+#define VRAM_DIRTY_SHIFT 10
+#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
+extern unsigned char vram_clean[];  /* 1=clean, 0=dirty; gba_memory.h */
+extern unsigned int  vram_dirty_marks;
+extern unsigned short io_registers[];
+extern unsigned short oam_ram[];
+extern unsigned short palette_ram_converted[];
+extern unsigned int   reg[];
+
+/* MUST equal video_psp.c's STAGE_STRIDE (256 px = 512-byte rows): the GE
+ * texture reads rows at that spacing.  The first engine run shipped 512 px
+ * here — a 2x stride mismatch, and the user's screen showed the textbook
+ * signature: alternating black scanlines + the bottom half of the frame
+ * falling off (each texture row pair = one real row + the empty half). */
+#define MER_STAGE_PITCH   256            /* GE texture stride, pixels */
+#define MER_RETIRE_US     9000           /* spin budget for a late ME frame */
+#define MER_REWIND_RETIRE_US 2500        /* ...for a frame a rewind re-runs */
+#define MER_INPUT_US      50000          /* input handshake hard ceiling */
+#define MER_MISS_LIMIT    120            /* consecutive drops -> teardown */
+
+static int g_me_rend_cfg;                /* wanted (pcfg/harness) */
+static int g_me_rend;                    /* active */
+
+/* STANDBY, STAGE 1: prove the resume path exists.
+ *
+ * The PSP cannot wake cleanly with the Media Engine running.  The kernel's
+ * suspend does not cover the second core: its state lives in memory the power
+ * manager does not preserve, and our engine buffers are carved out of the
+ * VOLATILE partition (the 4 MB OS pool at 0x08400000), which is precisely the
+ * memory the OS is free to reclaim while the machine is asleep.  So resume
+ * cannot be a restore -- it has to be a REBUILD.
+ *
+ * What survives is the part that matters: SRAM, the dynarec caches and every
+ * emulator structure live in the malloc heap, which the kernel does preserve.
+ * So the GAME does not need restoring at all; only the presentation layer
+ * does.  That is the claim stage 1 exists to test, and the failure mode if it
+ * is wrong is a black screen needing a battery pull -- which is why this is
+ * behind a config key rather than on by default.
+ *
+ * Split by thread, deliberately.  TEARDOWN runs here in the callback because
+ * the machine is going away and there is no later; the callback already does
+ * io_wake plus an 80 ms yield, so it is a context that tolerates real work.
+ * REBUILD only sets a flag: module loading and GU work belong on the main
+ * thread, and doing them from a callback is how you get a hang that looks
+ * like the hardware's fault. */
+static void me_standby_down(void);   /* defined with the ME globals below */
+static void me_standby_up(void);
+static int me_rend_active(void);
+static int me_rend_vmem_held(void);
+#ifdef REWIND
+static int psp_rewind_pool_tenant(void);   /* the pool's second tenant */
+#endif
+static int me_rend_release_vmem(void);
+static void standby_note(const char *fmt, ...);   /* defined below */
+static int  me_rend_active(void);                 /* renderer, defined below */
+static volatile int g_pwr_slept;     /* we tore the engine down for a sleep */
+static volatile int g_pwr_had_host;  /* the ME module was up when we slept */
+/* The GE samples power-of-two textures only, and vid_image uses stride ==
+ * texw, so the snapshot is stored 256 wide with the live 240x160 as its
+ * top-left sub-rect.  256x256 allocated because texh is declared 256. */
+#define WAKE_TEX     256
+#define WAKE_FRAME_BYTES (WAKE_TEX * WAKE_TEX * 2)
+static uint16_t *g_wake_frame;       /* the picture the overlay sits on */
+static int       g_wake_have;        /* 1 = it holds a real frame       */
+/* The snapshot's own size: 240x160 for a GBA, 160x144 for a GB/GBC.  It is
+ * stored at the texture's top-left and drawn with these dimensions, so it
+ * lands exactly where (and as large as) the live picture did. */
+static unsigned  g_wake_w = 240, g_wake_h = 160;
+/* The in-game menu's state-slot thumbnails (docs/UI-OVERLAY.md): five 64x64
+ * PSP-5650 textures, also carved from the netdrv arena's tail -- no heap. */
+#define UI_THUMB_BYTES (5u * 64u * 64u * 2u)
+static uint16_t *g_ui_thumbs;
+static int       g_wake_menu;        /* main loop: show the overlay     */
+static const uint16_t *g_last_pix;   /* last frame the core handed us    */
+/* 1 from the teardown until the overlay is dismissed: nothing else may present
+ * or swap, so the first thing the player sees after the screen lights is the
+ * overlay and not the frame we slept on.
+ *
+ * g_pwr_slept is what covers the START of that window.  The power callback
+ * blanks VRAM, releases the parked loop and then waits 80 ms for the .sav
+ * writer before the kernel takes the machine.  Holding only from
+ * RESUME_COMPLETE (g_pwr_rebuild) let the loop swap a few more frames of
+ * gameplay over the blank in those 80 ms, so the LCD lit with the old frame
+ * and the overlay replaced it ~0.4 s later (PSP-1000, 3.0.0, on video). */
+#define g_wake_hold  (g_pwr_slept || g_pwr_rebuild || g_wake_menu)
+static unsigned  g_last_pitch = 240;
+static unsigned  g_last_w = 240, g_last_h = 160;
+static volatile int g_pwr_rebuild;   /* main loop: rebuild it now */
+/* SUSPEND HANDSHAKE.  The callback sets park_req; the main loop, at the top
+ * of its next iteration, sets parked and waits until park_req clears.  See
+ * power_cb for why the teardown must not run while a frame is in flight. */
+static volatile int g_pwr_park_req;
+static volatile int g_pwr_parked;
+#ifdef REWIND
+/* When the callback asked (it waits PWR_PARK_WAIT_US for the answer): what
+ * the park point may spend landing a rewind first (psp_rewind_land). */
+static volatile unsigned g_pwr_park_t0;
+/* A resume found that the suspend before it tore nothing down while the
+ * rewind lived in the volatile pool (psp_rewind_pool_restart). */
+static volatile int g_rw_pool_suspect;
+static int psp_rewind_land(const char *why, unsigned budget_us);
+#endif
+#define PWR_PARK_WAIT_US 250000u
+
+static int power_cb(int unknown, int pwrflags, void *common)
+{
+   (void)unknown; (void)common;
+   if (pwrflags & PSP_POWER_CB_SUSPENDING)
+   {
+      /* Menu = HOME: HOME is the system's across a sleep.  The module turns
+       * the popup back on within one poll (16 ms), well inside the 60 ms
+       * delay below; the wake overlay keeps it there until Continue. */
+      home_host_disarm();
+      g_pwr_suspend++;
+      g_pwr_gb_flush_req = 1;   /* serviced on the emulation thread */
+      /* A GBA save made in the last seconds: ask the writer for its scan
+       * NOW.  The delays below were always meant to let the .sav land, but
+       * nothing asked for it -- the writer only scanned when its own 5 s
+       * came round -- so a console put to sleep right after "saved the
+       * game" slept with the save half on the stick or not at all. */
+      fe_host_sram_request_scan();
+      fe_evt("power suspending net=%d me=%d standby=%d",
+             g_net_up, me_rend_active(), g_pcfg.standby);
+      /* FLUSH BEFORE TOUCHING ANYTHING.  The first attempt did the teardown
+       * first and the console hard-reset -- taking the queued line with it, so
+       * the log said nothing at all about the failure it was there to record.
+       * A diagnostic that cannot survive the crash it diagnoses is not a
+       * diagnostic.  Every step below flushes as it goes, so the LAST line on
+       * the stick names the step that killed the machine. */
+      io_wake();
+      sceKernelDelayThread(60000);
+      if (g_pcfg.standby)
+      {
+         /* STOP THE FRAME BEFORE TAKING ITS MEMORY AWAY.
+          *
+          * The teardown clears the core's capture pointer and unlocks the
+          * volatile partition the capture and stage buffers live in.  This
+          * callback outranks the main thread and wakes from the delay above
+          * wherever that thread happens to be -- including mid-frame, with
+          * the core writing a scanline's registers through me_capture_buf or
+          * the post filling g_mer_desc, and with the ME itself still drawing
+          * into a stage.  Nothing stopped either, so a frame could land in
+          * memory the OS was given back: a console that never woke (0 of 6 on
+          * a PSP-3000), or one that woke and powered off a few steps after
+          * Continue (PSP-1000, PSP Go).
+          *
+          * It hid in 2.0 and 2.0.1 because every step used to write a line to
+          * the memory stick, and those writes blocked this callback long
+          * enough for the main loop to notice the renderer was gone and finish
+          * its frame first.  Removing the diagnostic file removed the accident.
+          *
+          * So: ask the loop to park between frames, wait for it, wait out the
+          * ME's current job the way me_rend_suspend already does, and only
+          * then tear down.  Both waits are bounded -- if the loop is inside a
+          * menu it will not park, and nothing is being emulated there. */
+         unsigned t0 = (unsigned)sceKernelGetSystemTimeLow(), park_us, idle_us;
+         int idle = 1;
+#ifdef REWIND
+         g_pwr_park_t0 = t0;
+#endif
+         g_pwr_park_req = 1;
+         while (!g_pwr_parked &&
+                (unsigned)sceKernelGetSystemTimeLow() - t0 < PWR_PARK_WAIT_US)
+            sceKernelDelayThread(2000);
+         park_us = (unsigned)sceKernelGetSystemTimeLow() - t0;
+         if (g_pwr_parked)
+         {
+            t0 = (unsigned)sceKernelGetSystemTimeLow();
+            if (me_host_loaded())
+               while (!(idle = me_host_idle()) &&
+                      (unsigned)sceKernelGetSystemTimeLow() - t0 < 50000u)
+                  sceKernelDelayThread(1000);
+            idle_us = (unsigned)sceKernelGetSystemTimeLow() - t0;
+            if (idle)
+            {
+               standby_note("suspend parked=1 park_us=%u me_idle=1 idle_us=%u",
+                            park_us, idle_us);
+               me_standby_down();
+            }
+            else
+               standby_note("suspend teardown_skipped reason=me_busy park_us=%u idle_us=%u",
+                            park_us, idle_us);
+         }
+#ifdef REWIND
+         else if (!me_rend_active() && !psp_rewind_pool_tenant())
+#else
+         else if (!me_rend_active())
+#endif
+         {
+            /* The loop did not park, but the renderer is off: the browser
+             * (after an in-process return the volatile partition is KEPT
+             * locked for the next game), the wake overlay, a GB game.
+             * Nothing reads the partition, and it does not survive a sleep
+             * (me_standby_down), so give it back now; the next me_rend_init
+             * locks it again as a fresh boot does.  Every main-thread path
+             * that can turn the renderer ON runs under pwr_hold, so this
+             * cannot race me_rend_init. */
+            int rel = me_rend_release_vmem();
+            FE_EVT_ONLY(rel);
+            standby_note("suspend unparked renderer=off vmem_released=%d "
+                         "park_us=%u", rel, park_us);
+            fe_evt("power unparked renderer=off vmem_released=%d", rel);
+         }
+         else
+         {
+            /* A timeout is not an acknowledgement. The frame may still be
+             * reading capture/stage memory, so leave those allocations and
+             * the ME alone; reclaiming them here races the main thread.
+             * pwr_hold keeps the switch away from every main-thread window
+             * that cannot park, so this should no longer be reachable. */
+            standby_note("suspend teardown_skipped reason=park_timeout park_us=%u",
+                         park_us);
+            fe_evt("power teardown_skipped reason=park_timeout park_us=%u",
+                   park_us);
+         }
+         /* Release the parked loop in either case; a suspend that never
+          * completes must not leave it waiting forever. */
+         g_pwr_park_req = 0;
+      }
+      /* Give the writer a real chance to land the .sav and this line before
+       * the kernel takes the machine away.  Not a guarantee -- the window is
+       * the kernel's to grant -- but it is the difference between usually
+       * losing progress and usually not. */
+      sceKernelDelayThread(80000);
+   }
+   /* Log the raw flag word too.  The PSP Go's slider offers "Resume Game",
+    * which is a different user-facing path from the other models' standby,
+    * and it is not obvious from the outside whether it delivers the same
+    * SUSPENDING/RESUME_COMPLETE pair, a different subset, or an exit.  The
+    * bits are the only way to tell. */
+   fe_evt("power flags=0x%08X susp=%d resuming=%d complete=%d",
+          (unsigned)pwrflags,
+          !!(pwrflags & PSP_POWER_CB_SUSPENDING),
+          !!(pwrflags & PSP_POWER_CB_RESUMING),
+          !!(pwrflags & PSP_POWER_CB_RESUME_COMPLETE));
+   if (pwrflags & PSP_POWER_CB_RESUMING)
+      fe_evt("power resuming");
+   if (pwrflags & PSP_POWER_CB_RESUME_COMPLETE)
+   {
+      g_pwr_resume++;
+      g_pwr_park_req = 0;
+      standby_note("resume_complete flags=0x%08X slept=%d",
+                   (unsigned)pwrflags, g_pwr_slept);
+      fe_evt("power resume_complete slept=%d", g_pwr_slept);
+#ifdef REWIND
+      /* Flag only (this is the callback's thread): see the main loop. */
+      if (!g_pwr_slept && psp_rewind_pool_tenant())
+         g_rw_pool_suspect = 1;
+#endif
+      /* Flag only -- the main loop rebuilds.  See the note above. */
+      if (g_pcfg.standby && g_pwr_slept)
+         g_pwr_rebuild = 1;
+      io_wake();
+   }
+   return 0;
+}
+
+/* ---- HOLDING THE POWER SWITCH OVER WINDOWS THAT CANNOT PARK ---------------
+ *
+ * power_cb's handshake (park_req / parked, above) only works where the main
+ * loop reaches its park point.  Several main-thread jobs run OUTSIDE it, for
+ * up to seconds, with the ME renderer's buffers live in the volatile
+ * partition (me_rend_suspend keeps a volatile-backed renderer running) and
+ * files open: a game's boot and ROM load, the GBA link session's start/end
+ * reloads (0.9-2 s on hardware), the quit/exit teardown and the in-process
+ * return, state save/load with its .thumb/.shot, the Save States page's
+ * reads, the wireless bring-up/teardown and Mystery Gift's.  A sleep landing
+ * in one used to time the park out (250 ms) and skip the standby teardown,
+ * so the renderer kept pointers into a partition the OS may hand to someone
+ * else while we sleep -- the exact failure the handshake was built against.
+ *
+ * scePowerLock defers the power switch: a request made while it is held is
+ * delivered when the last scePowerUnlock runs, i.e. at a point where the
+ * loop can park.  One nesting count, main thread only (every caller is on
+ * the main thread); the kernel lock is taken on 0 -> 1 and dropped on 1 -> 0.
+ * Every exit of the process (handoff_run, relaunch_eboot, sceKernelExitGame)
+ * drops it first (pwr_release_all), so no path can leave the console unable
+ * to sleep.  The longest hold is a big cart's boot (seconds); the player's
+ * standby lands when the game is up, which is what any game that holds the
+ * switch over a save does. */
+static int g_pwr_hold;
+static const char *g_pwr_hold_why = "";
+static unsigned g_pwr_hold_t0;
+static void sleep_sim_window_enter(const char *why);   /* harness, below */
+void pwr_hold(const char *why)
+{
+   if (g_pwr_hold++ == 0)
+   {
+      g_pwr_hold_why = why;
+      g_pwr_hold_t0 = (unsigned)sceKernelGetSystemTimeLow();
+      scePowerLock(0);
+   }
+   sleep_sim_window_enter(why);
+}
+void pwr_release(void)
+{
+   if (g_pwr_hold <= 0)
+      return;
+   if (--g_pwr_hold == 0)
+   {
+      unsigned ms = ((unsigned)sceKernelGetSystemTimeLow() - g_pwr_hold_t0) /
+                    1000u;
+      FE_EVT_ONLY(ms);
+      scePowerUnlock(0);
+      fe_evt("pwr_hold why=%s ms=%u", g_pwr_hold_why, ms);
+   }
+}
+static void pwr_release_all(void)
+{
+   if (g_pwr_hold > 0)
+   {
+      g_pwr_hold = 1;
+      pwr_release();
+   }
+}
+
+/* No process exit may leave the switch held: handoff_run (the USB handoff),
+ * relaunch_eboot and sceKernelExitGame drop every hold first.  (A macro's own
+ * name is not re-expanded inside it, so these call the real functions.) */
+#define handoff_run(code, why) (pwr_release_all(), handoff_run((code), (why)))
+#define sceKernelExitGame() (pwr_release_all(), sceKernelExitGame())
+
+#ifdef GPSP_PERF_RIG
+/* ---- THE SLEEP SIMULATOR (harness only) -----------------------------------
+ * PPSSPP never suspends, so power_cb's handshake, the standby teardown and
+ * rebuild, the wake overlay and the in-process return's "standby" refusal
+ * were reachable only on a console.  `sleep_sim_at = F` drives them: at game
+ * frame F (of in-process game `sleep_sim_game`, default 0) a thread calls
+ * power_cb exactly as the kernel's callback would -- SUSPENDING, then, after
+ * `sleep_sim_ms`, RESUME_COMPLETE -- and keeps the main loop parked in
+ * between, as a suspended CPU would be.  `sleep_sim_rom = 1` also closes the
+ * paged ROM's file handle while the loop is parked (the PSP-1000's handle
+ * does not survive a real sleep), so the next page read must take
+ * load_gamepak_page's reopen.  `sleep_sim_browser = 1` instead fires 300 ms
+ * after an in-process return, in the browser, where nothing parks.
+ * `sleep_sim_choice` = 0 Continue / 1 Quit to game list answers the wake
+ * overlay (ui_wake_inject; it reads the real pad, which PPSSPP has none of).
+ * `sleep_sim_window = NAME` fires it the moment pwr_hold(NAME) is entered
+ * (boot, teardown, session, state_save, state_load, ss_read, net, mgift,
+ * wake): the switch pressed inside that window.  Like the firmware it is
+ * deferred while a power hold is up (scePowerLock; PPSSPP does not implement
+ * it) -- `sleep_sim_nohold = 1` ignores the holds, i.e. the behaviour before
+ * them, for the A/B.
+ * `sleep_sim_rewind_tick = N` (REWIND) fires it at the Nth loop on which a
+ * rewind is in progress: the switch slid while the control is held
+ * (docs/REWIND.md 22); N < 0: at the -Nth loop on which the machine stands
+ * inside an old save sequence (fe_host_rewind_unvetted), the state the fix
+ * is about.  `rewind_park_land = 0` is the MUTANT "the park point's budget is
+ * spent": no landing, so the last resort has to act.
+ * `sleep_sim_nopark = 1`: the loop does not answer the
+ * park request and stands still until the resume, as a blocking loop that
+ * has no park point does (the pause overlay): power_cb then tears nothing
+ * down.  `sleep_sim_trash_pool = 1` overwrites the rewind's part of the
+ * volatile pool while "asleep", which is what the OS is entitled to do; and
+ * `rewind_pool_restart = 0` is the MUTANT that leaves the history as it was
+ * after such a sleep (docs/REWIND.md 23: the test must then fail).
+ * `sleep_sim_again_ms = M` fires a SECOND suspend M ms after the first
+ * resume -- with `sleep_sim_choice_frame` (ui_psp.c) late enough, that is
+ * the switch pressed while the wake overlay is still waiting for an answer.
+ * What it cannot simulate: the hardware actually losing power, the radio,
+ * VRAM and the Memory Stick across a suspend. */
+#include <streams/file_stream.h>
+extern RFILE *gamepak_file_large;                 /* gba_memory.c */
+static long g_ss_at, g_ss_ms = 1500, g_ss_again_ms;
+static int g_ss_rom, g_ss_game, g_ss_browser, g_ss_fired, g_ss_nohold;
+/* `sleep_sim_sav = 1`: the held-open .sav handle does not survive the sleep
+ * either (fe_host_sram_test_kill_handle), so the first save write after the
+ * wake fails as it does on a console. */
+static int g_ss_sav;
+static long g_ss_rw_tick, g_ss_rw_seen;
+static int g_ss_nopark, g_ss_trash_pool, g_ss_no_restart, g_ss_no_land;
+static void sleep_sim_trash_pool(void);
+static char g_ss_window[16];
+static volatile int g_ss_asleep, g_ss_trigger;
+/* The thread exists from the harness config on (sleep_sim_start) and never
+ * exits: creating or deleting it moves the kernel partition, which the
+ * in-process return's census compares (kfree / kmax). */
+static int sleep_sim_thread(SceSize args, void *argp)
+{
+   int closed = 0, cycle;
+   unsigned t0, waited = 0;
+   (void)args; (void)argp;
+   while (!g_ss_trigger)
+      sceKernelDelayThread(5000);
+   for (cycle = 0; cycle < (g_ss_again_ms > 0 ? 2 : 1); cycle++)
+   {
+   if (cycle)
+   {
+      sceKernelDelayThread((SceUInt)g_ss_again_ms * 1000u);
+      fe_evt("sleep_sim again after_ms=%ld wake_menu=%d rebuild=%d slept=%d "
+             "rend=%d vmem=%d", g_ss_again_ms, g_wake_menu, g_pwr_rebuild,
+             g_pwr_slept, me_rend_active(), me_rend_vmem_held());
+      waited = 0;
+   }
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   if (g_ss_browser)
+      sceKernelDelayThread(300000);
+   /* the firmware's part: a switch pressed under scePowerLock is delivered
+    * at the unlock (30 s cap: a hold that never ends is a bug to report) */
+   while (!g_ss_nohold && g_pwr_hold > 0 && waited < 30000000u)
+   {
+      sceKernelDelayThread(2000);
+      waited = (unsigned)sceKernelGetSystemTimeLow() - t0;
+   }
+   fe_evt("sleep_sim suspend ms=%ld rom=%d browser=%d window=%s "
+          "deferred_ms=%u hold=%d nohold=%d", g_ss_ms, g_ss_rom, g_ss_browser,
+          g_ss_window[0] ? g_ss_window : "-", waited / 1000u, g_pwr_hold,
+          g_ss_nohold);
+   if (g_pwr_hold > 0 && !g_ss_nohold)
+      fe_evt("sleep_sim hold_stuck why=%s", g_pwr_hold_why);
+   g_ss_asleep = 1;
+   power_cb(0, PSP_POWER_CB_SUSPENDING, NULL);
+   /* the loop is still parked here when it parked at all (g_ss_asleep) */
+   if (g_ss_rom && g_pwr_parked && gamepak_file_large)
+   {
+      filestream_close(gamepak_file_large);
+      gamepak_file_large = NULL;
+      closed = 1;
+   }
+   if (g_ss_sav)
+      fe_evt("sleep_sim sav_handle_killed=%d", fe_host_sram_test_kill_handle());
+   if (g_ss_trash_pool)
+      sleep_sim_trash_pool();
+   fe_evt("sleep_sim asleep parked=%d rom_closed=%d", g_pwr_parked, closed);
+   sceKernelDelayThread((SceUInt)g_ss_ms * 1000u);
+   g_ss_asleep = 0;
+   power_cb(0, PSP_POWER_CB_RESUMING, NULL);
+   power_cb(0, PSP_POWER_CB_RESUME_COMPLETE, NULL);
+   fe_evt("sleep_sim resumed cycle=%d slept=%d rebuild=%d rend=%d vmem=%d",
+          cycle, g_pwr_slept, g_pwr_rebuild, me_rend_active(),
+          me_rend_vmem_held());
+   }
+   for (;;)
+      sceKernelSleepThread();
+   return 0;
+}
+static void sleep_sim_start(void)
+{
+   int th = sceKernelCreateThread("sleep_sim", sleep_sim_thread, 0x11, 0x2000,
+                                  THREAD_ATTR_USER, NULL);
+   if (th >= 0)
+      sceKernelStartThread(th, 0, NULL);
+   fe_evt("sleep_sim thread th=%d", th);
+}
+static void sleep_sim_fire(void)
+{
+   if (g_ss_fired)
+      return;
+   g_ss_fired = 1;
+   g_ss_trigger = 1;
+   fe_evt("sleep_sim fire");
+}
+static void sleep_sim_window_enter(const char *why)
+{
+   if (g_ss_window[0] && !g_ss_fired && !strcmp(why, g_ss_window))
+      sleep_sim_fire();
+}
+#define SLEEP_SIM_ASLEEP() (g_ss_asleep)
+#define SLEEP_SIM_NOPARK() (g_ss_nopark)
+#else
+#define SLEEP_SIM_NOPARK() 0
+static void sleep_sim_window_enter(const char *why) { (void)why; }
+#define SLEEP_SIM_ASLEEP() 0
+#endif
+
+
+
+static me_capture_frame *g_mer_cap[2];
+/* One capture's slot in the volatile carve, 64-byte aligned.  This was the
+ * literal 20544 (the pre-ME_AFFINE_LINES struct, 20500 B, rounded up); a
+ * literal cannot follow the struct, and a struct that outgrew it would have
+ * had capture 0 overwrite the start of capture 1 on hardware only. */
+#define MER_CAP_BYTES ((int)((sizeof(me_capture_frame) + 63u) & ~63u))
+static uint16_t *g_mer_stage[2];
+#ifdef REWIND
+/* THE REWIND'S PICTURES ARE THE ENGINE'S OWN OUTPUT (docs/REWIND.md, 10.6).
+ * A stage is 256 x 161 pixels, and so is a slot of the rewind's picture
+ * windows.  While the rewind records, each frame the engine draws is drawn
+ * straight into that frame's slot: g_mer_stage[out] is pointed at it for
+ * the post (me_rend_fill_desc) and everything that presents or reads "the
+ * ready stage" follows the pointer.  No copy on either CPU.
+ *   g_mer_stage_own  the two stages the engine carved, used whenever a
+ *                    frame has no slot
+ *   g_mer_priv[i]    stage i is being drawn for a frame RE-RUN by the
+ *                    rewind: when it retires it is not promoted to
+ *                    "ready", because nobody is to see it yet
+ *   g_rw_slot        the slot of the frame being emulated (NULL: none);
+ *                    set by the rewind before the frame, consumed by the
+ *                    post
+ *   g_rw_flush_posts slots this CPU may still hold cache lines for (it
+ *                    filled them itself while the engine was down, or the
+ *                    memory is freshly carved): the next posts write back
+ *                    and drop their slot's lines first. */
+static uint16_t *g_mer_stage_own[2];
+static int       g_mer_priv[2];
+static uint16_t *g_rw_slot;
+static int       g_rw_slot_posted;
+/* measurement: a drawn re-run frame and the second core (EVT rewind_me) */
+static struct
+{
+   unsigned posts, post_us, retire_us, busy, show_waits, show_us;
+} g_rwm;
+static int g_rw_ring = 2;       /* which ring (psp_rewind_hud) */
+static int       g_rw_flush_posts;
+#endif
+static me_render_desc *g_mer_desc;
+/* Engine buffers live in the PSP's VOLATILE MEMORY when available — the 4 MB
+ * OS pool at 0x08400000 that games may lock and gpsp never touches.  Zero
+ * main-heap footprint, so np_start never contends with the engine: the host
+ * heap has NO margin (np_start passed with the engine fully freed, run 411,
+ * and failed with just the 41 KB captures resident, run 415-era).  With
+ * volatile backing the suspend/resume dance is unnecessary and skipped.
+ * Fallback when the lock fails: main heap + the suspend/resume path. */
+static int g_mer_vmem;
+#ifdef REWIND
+/* THE POOL HAS A SECOND TENANT IN A REWIND BUILD (docs/REWIND.md, "memory").
+ *
+ * The engine carves its buffers from the START of the 4 MiB pool upwards and
+ * uses well under a megabyte.  The rewind (its reference image, its ring, its
+ * buffers) lives at the END, carved downwards by fe_host.  The boundary is
+ * fixed: the first PSP_VM_ENGINE_BYTES belong to the engine, whatever it uses
+ * of them, and me_rend_init checks that it stayed inside (psp_rewind_pool_check
+ * takes the rewind out of the pool if it ever did not).
+ *
+ * One lock, taken by whichever tenant comes first (vm_lock is idempotent) and
+ * given back only on the way into a sleep, by me_rend_release_vmem, after the
+ * rewind has been told to let go.  The pool does not survive a sleep: the
+ * rewind's history starts again after a wake. */
+#define PSP_VM_ENGINE_BYTES (1024 * 1024)
+static void *g_vm_base;
+static int   g_vm_size, g_vm_locked;
+static unsigned g_vm_eng_top;            /* end of what the engine carved */
+static int   psp_rewind_pool_tenant(void);
+static void  psp_rewind_pool_back(void);
+static void  psp_rewind_pool_lost(void);
+static void  psp_rewind_pool_check(void);
+
+static int vm_lock(void **base, int *size)
+{
+   if (!g_vm_locked)
+   {
+      void *b = NULL;
+      int s = 0;
+      if (sceKernelVolatileMemTryLock(0, &b, &s) != 0)
+         return -1;
+      g_vm_base = b;
+      g_vm_size = s;
+      g_vm_locked = 1;
+   }
+   *base = g_vm_base;
+   *size = g_vm_size;
+   return 0;
+}
+
+static void vm_unlock(void)
+{
+   if (g_vm_locked)
+      sceKernelVolatileMemUnlock(0);
+   g_vm_locked = 0;
+}
+
+/* The engine found the pool unusable: give it back unless the rewind is in
+ * it. */
+static void vm_unlock_engine(void)
+{
+   if (!psp_rewind_pool_tenant())
+      vm_unlock();
+}
+#define MER_VM_TRYLOCK(b, s)   vm_lock((b), (s))
+#define MER_VM_REJECT()        vm_unlock_engine()
+#define MER_VM_UNLOCK()        vm_unlock()
+#else
+#define MER_VM_TRYLOCK(b, s)   sceKernelVolatileMemTryLock(0, (b), (s))
+#define MER_VM_REJECT()        sceKernelVolatileMemUnlock(0)
+#define MER_VM_UNLOCK()        sceKernelVolatileMemUnlock(0)
+#endif
+/* THE ENGINE'S WORK AREA (me/me_mbox.h): the renderer's VRAM mirror, OBJ lists
+ * and frame buffer, 278 KB that used to be static arrays in the kernel module
+ * and is why that module did not load on a PSP-1000 short of kernel memory.
+ * Carved from the same place as everything above and named in every render
+ * desc.
+ *
+ * void * ON PURPOSE: this CPU never reads or writes the area.  The ME works
+ * on it through its own cache, so anything read here would be stale and
+ * anything written here would be lost or, worse, written back over the ME's
+ * data later.  me_rend_init drops whatever lines this CPU's cache held for
+ * the range, once, and from then on the address is only ever handed to the
+ * ME.
+ *
+ * `gen` counts renderer builds.  The area's contents do not survive one (the
+ * pool goes back to the OS across a sleep), and the module can stay loaded
+ * right through it, so the ME is told when to stop believing them. */
+static void    *g_mer_work;
+static unsigned g_mer_work_gen;
+/* `me_vmem` (harness only, default 1): 0 skips the volatile pool so the heap
+ * fallback below -- and with it ME_CMD_SYNC, which only that path needs --
+ * can be run on purpose instead of waiting for a console where the lock
+ * fails. */
+static int g_mer_vmem_cfg = 1;
+static int g_mer_cur;                    /* capture buffer the core fills */
+static int g_mer_pending = -1;           /* stage being rendered by the ME */
+static int g_mer_ready   = -1;           /* stage ready to present */
+static int g_mer_last_presented = -1;
+static unsigned g_mer_watch_us;
+static int g_vhash_on;                   /* harness oracle enabled */
+/* harness vhash_legacy_rb = 1: hash each pixel with its red and blue fields
+ * exchanged, i.e. in the libretro RGB565 order the core's buffer had until
+ * ADR-0039 (594837a, 2026-08-03) made it the GE's 5650.  Only for comparing
+ * a run with a golden captured before that commit. */
+static int g_vhash_legacy_rb;
+static void mer_note_sum(void);          /* defined below vhash_frame */
+static unsigned g_mer_frames, g_mer_drops, g_mer_miss;
+static unsigned g_mer_wait_us, g_mer_wait_max, g_mer_census;
+/* ---- INPUT SHADOWS (kills the per-frame input spin) ---------------------
+ * The ME's phase 1 memcpy's vram+oam+palette out of MAIN RAM into its own
+ * eDRAM, and the main CPU SPINS for all of it -- measured 1415-1456 us EVERY
+ * frame on both consoles (EVT me_rend wait_mean_us, drops=0, so this is
+ * handshake latency and not the renderer being late).  It waits because the
+ * moment emulation resumes it starts writing those same arrays underneath
+ * the ME.
+ *
+ * Give the ME its own stable copy instead.  The main CPU snapshots the three
+ * arrays into volatile-memory shadows, points the descriptor at those, and
+ * resumes immediately -- there is nothing left for the ME to race against.
+ * A cached main-RAM memcpy of 98 KB costs far less than 1.45 ms of spinning
+ * on an UNCACHED read at ~67 MB/s, which is what we are paying today.
+ *
+ * Safe with a single (not double) shadow because me_rend_fill_desc() is only
+ * ever reached after step 1 has confirmed me_host_idle() -- the ME has
+ * finished the whole previous render, so it long ago finished reading its
+ * inputs.  Refilling cannot overtake a reader that does not exist.
+ *
+ * Volatile-backed only.  The heap fallback does NOT get shadows: a 96 KB
+ * malloc already fails on the host after np_start (observed run 418,
+ * `vram_probe off reason=alloc`), and quietly running the fast path on one
+ * console and the slow path on the other is exactly the split that makes a
+ * two-console measurement meaningless.  Off = today's behaviour exactly. */
+static unsigned char *g_mer_sh_vram, *g_mer_sh_oam, *g_mer_sh_pal;
+static int      g_mer_shadow;         /* wanted (harness key `me_shadow`)  */
+static int      g_mer_sh_on;          /* actually allocated + in use       */
+static unsigned g_mer_sh_us, g_mer_sh_max;
+/* ME RENDER DURATION -- the number the whole low-latency question turns on.
+ * The "~10 ms render" quoted in comments here was never measured. Uncapped
+ * smooth FF reaching 120+ fps implies <=8.3 ms, and that is a LOWER bound on
+ * the ME's speed: smooth FF renders every frame, so the ME can never outrun
+ * the rate the CPU feeds it (90 fps in battles is the CPU saturating, not
+ * the ME slowing).
+ *
+ * If the render is ~8 ms, handing the capture over at vcount==160 -- where
+ * it is already COMPLETE, 68 scanlines before we currently post it -- gives
+ * a 3.3 ms head start and leaves a ~4.7 ms wait, i.e. a ~15.7 ms frame that
+ * still fits 16.7. Chunking would be unnecessary. If it is ~10 ms it does
+ * not fit and the pipeline has to be split. One measurement, two very
+ * different designs.
+ *
+ * Sampled in the vblank wait, which is idle anyway. A render that outlasts
+ * the wait yields no sample, so `n` being small is itself informative --
+ * it means the render is longer than the frame's slack. */
+static unsigned g_mer_post_us, g_mer_rend_n, g_mer_rend_us, g_mer_rend_max;
+/* WHEN IS THE CAPTURE ACTUALLY READY?
+ *
+ * The plan to present a frame in its OWN frame hinges on handing the ME its
+ * capture at vcount==160, where it is already complete, instead of at the end
+ * of retro_run 68 scanlines later. The size of the ME's window is then
+ * (frame budget - GE blit) minus whenever line 160 falls.
+ *
+ * It is tempting to assume 160/228 of the frame -- 70% -- but CPU time is not
+ * proportional to scanlines. VBlank is where games run their logic, AI,
+ * sprite updates and librfu's exchange, so lines 160-227 plausibly cost far
+ * more than 30% of the time. If line 160 actually lands at ~40% of the frame
+ * the ME gets ~10.7 ms rather than ~7.5 ms, which is the difference between
+ * the idea fitting comfortably and not fitting at all.
+ *
+ * Measured against the frame's own start (frame_t0), so it reads directly as
+ * "the capture was ready N us into the frame". */
+static unsigned g_vis_n, g_vis_us, g_vis_max;
+/* The ME keeps a persistent eDRAM mirror of VRAM and we now patch it with
+ * dirty pages only. That is only valid if the mirror was ever correct, so
+ * force a full copy on the first frame and after any teardown/resume. */
+static int g_mer_full_copy = 1;
+/* `me_dirty` -- 1 = copy only dirty VRAM pages, 0 = always copy all 96 KB.
+ *
+ * Exists so ONE binary produces both arms of the correctness test. Rebuilding
+ * the previous build to get baseline frame hashes would compare two binaries
+ * that differ in more than this; with the switch, everything except the copy
+ * strategy is byte-identical, so any frame-hash difference is attributable. */
+static int g_mer_dirty_cfg = 1;
+/* `me_capmode` (harness only, default 1): the core's me_capture_mode while the
+ * engine is up.  2 = capture AND render on this CPU as well (the desktop
+ * validation mode); the ME still renders and presents exactly as in 1.  It
+ * exists for ONE experiment: it restores the CPU-side frame cost and cache
+ * pressure of ME-off while keeping the ME, its PRX, its bus traffic and its
+ * handshakes -- so a failure that follows `me_mode` can be split into "the
+ * second core" versus "what the second core does to this CPU's timing". */
+static unsigned g_mer_capmode = 1;
+/* SAME-FRAME PRESENTATION (`me_sameframe`, default 0).
+ *
+ * Today the capture is handed to the ME at the END of retro_run and the
+ * result is shown at the top of the NEXT frame -- one frame, 16.7 ms, of
+ * pure display latency. But the capture is COMPLETE at vcount 160
+ * (ioregs[0..159] are all written by then); we simply sit on it for another
+ * 68 scanlines of VBlank.
+ *
+ * Post it the moment it exists and the render lands in idle the CPU already
+ * had. Measured: capture ready 7.0 ms, ME render 3.2 ms, GE blit 1.5 ms =
+ * 11.7 ms of a 16.74 ms frame -- and the dirty-page copy widened that margin
+ * further by collapsing the ME's input phase from 1.45 ms to 0.15 ms.
+ *
+ * If the ME misses the deadline we present the PREVIOUS frame, which is
+ * exactly today's behaviour for that frame only: never a stutter, never a
+ * dropped emulated frame. The failure mode degrades to the shipping design
+ * rather than to something worse. */
+static int      g_mer_sameframe;      /* configured */
+
+/* Same-frame retirement stays off throughout FF. Each profile has ONE
+ * producer (3x: end of frame; the gated presets: the vcount-160 post, as at
+ * 1x) and loop-top presentation; a second producer would corrupt
+ * stage/capture ownership. */
+static int mer_sameframe_active(void)
+{
+   return g_mer_sameframe && !g_ff_mult && !g_ff_uncapped;
+}
+/* VISIBLE-END POST (`me_vispost`, harness only, default 1): hand the ME its
+ * render at vcount 160 even when presentation stays at the loop top.
+ *
+ * The ME reads vram/oam/palette when the render is POSTED, but the capture
+ * holds the LCD registers of lines 0-159 only.  Posted at the end of
+ * retro_run, the engine combined frame N's registers with graphics memory
+ * that had already been through frame N's VBlank -- where games write the
+ * NEXT frame.  Pokemon's battle animations ("monbg": Scratch, Tackle...) copy
+ * a battler into BG1's tiles and map in the same VBlank that moves BG1's
+ * scroll onto it; the engine drew the new map at the OLD scroll, and the
+ * battler flashed at the top-left of the screen for one frame.  Measured with
+ * the desktop model (ME_TIMING_SIM, docs/ME-RENDERER-DIVERGENCE.md): posting
+ * at vcount 160 renders exactly the frame the CPU renderer draws, which is
+ * where the capture is complete anyway.
+ *
+ * The work is the same work, moved 68 scanlines earlier; the previous render
+ * was posted a full frame before, as before, so step 1 of me_rend_frame
+ * waits no longer than it did.  3x fast-forward keeps the end-of-frame post
+ * it was validated with (docs/FF-ARTIFACT-FIX.md); the two unlimited presets'
+ * DRAWN frames post here, like any 1x frame (docs/FF-PRESETS.md). */
+static int g_mer_vispost = 1;
+/* MID-FRAME LOG (`me_midlog`, harness only, default 1 when the build has
+ * ME_MIDFRAME_LOG; video.h, docs/ME-MIDFRAME.md).  The entry buffers and the
+ * core's VRAM shadow are carved from the volatile partition after everything
+ * else; without room, or on the heap fallback, the log stays off and the
+ * engine behaves exactly as without the flag.  0 = the same off state, for a
+ * one-binary A/B. */
+#if ME_MIDFRAME_LOG
+#define MER_LOG_ENTRIES 12288                         /* = 144 KiB a capture */
+#define MER_LOG_BYTES   (MER_LOG_ENTRIES * (int)sizeof(me_log_entry))
+static int g_mer_midlog = 1;
+static me_log_entry *g_mer_log[2];
+#endif
+/* The render being posted right now is a vcount-160 post (the only kind the
+ * mid-frame log is valid for). */
+static int g_mer_in_vis;
+extern u32 skip_next_frame;     /* core: this frame is frameskipped (no capture) */
+static int mer_vispost_active(void)
+{
+   /* The draw gate's drawn frames post here too, exactly as at 1x: the gate
+    * decides at frame START whether a frame is drawn, so a drawn frame is an
+    * ordinary capture and gets the line-160 post and the mid-frame log.  3x
+    * keeps its end-of-frame post (g_ff_mult). */
+   return g_mer_vispost && (g_ff_gate || (!g_ff_mult && !g_ff_uncapped)) &&
+          !skip_next_frame;
+}
+static int g_mer_posted;        /* posted from the vcount-160 hook this frame */
+static unsigned g_mer_sf_hit, g_mer_sf_miss;
+/* Diagnostic for the same-frame gate.  `wouldhit` counts frames given up on
+ * while the ME was ALREADY IDLE -- it read 529/533 and 502/600 before the
+ * post-loop check below existed, and must stay at 0 now. */
+static unsigned g_mer_sf_noloop, g_mer_sf_wouldhit;
+static unsigned g_mer_wb_pages, g_mer_wb_n;
+/* Frame start at file scope. frame_t0 in the main loop is a LOCAL and is only
+ * taken while a session is up; this probe wants every frame. */
+static uint64_t g_frame_start_us;
+
+static int      g_mer_rend_seen;
+/* Heap buffers retained after a failed ME drain must not be reused until the
+ * in-flight command has completed. */
+static int      g_mer_heap_pending_drain;
+
+static void me_rend_teardown(const char *why)
+{
+   FE_EVT_ONLY(why);
+   if (!g_me_rend)
+      return;
+   g_me_rend = 0;
+#ifdef REWIND
+   /* The stages are the engine's own again: whoever frees or re-uses them
+    * next must not find a rewind slot there. */
+   if (g_mer_stage_own[0])
+   {
+      g_mer_stage[0] = g_mer_stage_own[0];
+      g_mer_stage[1] = g_mer_stage_own[1];
+   }
+   g_mer_priv[0] = g_mer_priv[1] = 0;
+#endif
+   g_mer_full_copy = 1;   /* eDRAM mirror is now stale; rebuild it in full */
+   me_capture_mode = 0;                  /* core renders on the CPU again */
+   me_capture_buf  = NULL;
+   g_mer_pending = g_mer_ready = g_mer_last_presented = -1;
+   fe_evt("me_rend off reason=%s frames=%u drops=%u", why,
+          g_mer_frames, g_mer_drops);
+}
+
+static int me_rend_init(void);   /* defined below */
+
+/* ---- RENDERER ENTRY POINTS FOR THE LIFECYCLE -----------------------------
+ * The wireless session has talked to the engine through me_rend_suspend() /
+ * me_rend_resume() since ADR-0080d.  The standby path did not: it read
+ * g_me_rend, g_mer_vmem, g_mer_ready and g_mer_stage directly and hand-rolled
+ * the volatile release.  Measured, comments stripped: ten renderer symbols
+ * reached into the lifecycle code, eight of them raw variables, 24 references.
+ * These four put standby on the same footing as the wireless path, so buffer
+ * ownership lives in exactly one place -- it is now six symbols, all
+ * functions, 11 references. */
+
+static int me_rend_active(void)    { return g_me_rend; }
+static int me_rend_vmem_held(void) { return g_mer_vmem; }
+
+/* IS THE ENGINE THE PRESENTER RIGHT NOW, and if so which buffer and what
+ * stride.  The three callers that used to ask this inline -- the wake overlay,
+ * the screenshot dumper and the vhash oracle -- each wrote their own copy of
+ * `g_me_rend && g_mer_ready >= 0`, and two of them disagreed with the third
+ * about whether a NULL stage counts.  So this is the loose form, matching what
+ * the dumpers did: it answers "yes, the engine" and hands back the pointer even
+ * when that pointer is NULL, because their own `if (!pix) return;` is what
+ * decides in that case.  Conflating the two questions changed what a screenshot
+ * does when they disagree.
+ *
+ * THE STRIDE IS IN PIXELS.  fe_host_last_frame() reports BYTES, so the two
+ * dumpers double it at the call site, visibly: passing pixels where bytes were
+ * wanted interleaved the left and right halves of every row in the first
+ * ME-mode dumps, and the display looked fine the whole time. */
+static int me_rend_presenting(const uint16_t **src, unsigned *pitch_px)
+{
+   if (!g_me_rend || g_mer_ready < 0)
+      return 0;
+   *src      = g_mer_stage[g_mer_ready];
+   /* The ME writes the stage UNCACHED, but every caller here (vhash,
+    * screenshot, state thumbnail, wake overlay) reads it through this CPU's
+    * cache -- which may still hold lines from the last read of the same stage
+    * two frames ago, i.e. a stale picture.  Drop them first.  Safe because
+    * this CPU never writes a stage after me_rend_init's writeback-invalidate,
+    * so there are no dirty lines to lose; base and size are 64-byte aligned. */
+   if (g_mer_stage[g_mer_ready])
+      sceKernelDcacheInvalidateRange(g_mer_stage[g_mer_ready],
+                                     MER_STAGE_PITCH * 161 * 2);
+   *pitch_px = MER_STAGE_PITCH;
+   return 1;
+}
+
+/* The strict form: the loose one plus "and it actually has a buffer".  The wake
+ * overlay wants this, because it copies unconditionally once it has a source
+ * and has no later NULL check to fall back on. */
+static const uint16_t *me_rend_present_src(unsigned *pitch)
+{
+   const uint16_t *src = NULL;
+   unsigned px = 0;
+   if (!me_rend_presenting(&src, &px) || !src)
+      return NULL;
+   *pitch = px;
+   return src;
+}
+
+/* Hand the volatile partition back and drop every pointer into it.  Returns
+ * whether there was anything to release, because the standby ladder logs the
+ * rung only when it actually descends one.
+ *
+ * Safe after the ME has stopped or acknowledged its cache flush. The OS owns
+ * the 4 MB pool
+ * at 0x08400000 and may re-hand it while we sleep, so a resume that skipped
+ * re-locking would rebuild onto a partition we no longer held -- which is a
+ * plausible way to reset the machine, and the machine did reset.  The full
+ * history is at the call site in me_standby_down(). */
+static int me_rend_release_vmem(void)
+{
+   /* Disabling rendering (including a watchdog fallback) does not stop an
+    * in-flight job or drop dirty work-cache lines. Do not return that memory
+    * to the OS until the engine has relinquished it. Normally standby >= 2
+    * has already unloaded the module, so no extra command is needed. */
+   if (g_mer_vmem && me_host_loaded() && me_host_sync(50000u) != 0)
+   {
+      fe_evt("me_rend release_deferred reason=me_sync");
+      return -1;
+   }
+#ifdef REWIND
+   /* The other tenant first: after this the rewind holds no pointer into
+    * the pool (its history is gone; it starts again after the wake). */
+   psp_rewind_pool_lost();
+   if (!g_mer_vmem)
+   {
+      vm_unlock();              /* the rewind may have been the only tenant */
+      return 0;
+   }
+#endif
+   if (!g_mer_vmem)
+      return 0;
+   MER_VM_UNLOCK();
+   g_mer_vmem   = 0;
+   g_mer_desc   = NULL;
+   g_mer_cap[0] = g_mer_cap[1] = NULL;
+   g_mer_stage[0] = g_mer_stage[1] = NULL;
+#ifdef REWIND
+   g_mer_stage_own[0] = g_mer_stage_own[1] = NULL;
+#endif
+   /* The ME's work area goes with it.  The module keeps no pointer to it
+    * between renders, and nothing can be posted until me_rend_init has
+    * carved a new one. */
+   g_mer_work = NULL;
+   /* The input shadows live in the same partition.  Leaving g_mer_sh_on set
+    * would let a heap-fallback rebuild after wake memcpy 98 KB a frame into
+    * memory we no longer hold. */
+   g_mer_sh_vram = g_mer_sh_oam = g_mer_sh_pal = NULL;
+   g_mer_sh_on  = 0;
+#if ME_MIDFRAME_LOG
+   g_mer_log[0] = g_mer_log[1] = NULL;
+   me_vram_shadow = NULL;
+#endif
+   g_mer_ready = g_mer_pending = g_mer_last_presented = -1;
+   return 1;
+}
+
+/* ADR-0080d, applied to the engine: the host's np_start needs a clean heap.
+ * The dual-engine gate run (host run 407) confirmed it — the engine's ~205 KB
+ * boot allocation starved session creation and the host exited net_failed.
+ * So the engine SUSPENDS around wireless bring-up: teardown + FREE everything,
+ * let np_start claim its memory, then re-init from the post-session heap
+ * (the exact profile me_video validated).  The CPU renders during the connect
+ * screen; a failed re-alloc afterwards is the usual graceful CPU fallback. */
+/* KEEP THE LAST FRAME for the wake overlay.
+ *
+ * It normally lives in the volatile partition we are about to hand back, so it
+ * has to be copied into memory that survives: 76.8 KB in the tail of the
+ * netdrv arena, which is 1 MiB while netdrv uses 516 KB.  No heap cost, which
+ * matters on the console with none to spare.
+ *
+ * Two sources, because the ME is not always the one drawing: its stage when
+ * the renderer is up, otherwise the core's own frame buffer (the CPU path, and
+ * what PPSSPP always uses -- which is what makes the overlay workshoppable off
+ * hardware at all). */
+static void wake_snapshot(void)
+{
+   const uint16_t *src = NULL;
+   unsigned pitch = 240;
+   unsigned src_w = 240, src_h = 160, y;
+
+   if (!g_wake_frame)
+      return;
+   src = me_rend_present_src(&pitch);
+   if (!src && g_last_pix)
+      { src = g_last_pix; pitch = g_last_pitch; src_w = g_last_w; src_h = g_last_h; }
+   if (!src)
+      return;
+   memset(g_wake_frame, 0, WAKE_FRAME_BYTES);
+   if (src_w > 240) src_w = 240;
+   if (src_h > 160) src_h = 160;
+   /* Top-left, at its own size: a GB picture centred inside 240x160 and
+    * drawn AS 240x160 came out smaller than the live one (and at 2x was
+    * cropped differently).  For a GBA frame this is the same copy as ever. */
+   for (y = 0; y < src_h; y++)
+   {
+      memcpy(g_wake_frame + y * WAKE_TEX, src + y * pitch, src_w * 2);
+      /* The staging buffer's edge texels (video_psp.c STAGE_STRIDE): a
+       * bilinear tap past the right edge reads the edge, not black. */
+      if (src_w < WAKE_TEX)
+         g_wake_frame[y * WAKE_TEX + src_w] = src[y * pitch + src_w - 1];
+   }
+   if (src_h < WAKE_TEX)
+      memcpy(g_wake_frame + src_h * WAKE_TEX,
+             g_wake_frame + (src_h - 1) * WAKE_TEX, (src_w + 1) * 2);
+   g_wake_w = src_w;
+   g_wake_h = src_h;
+   /* The GE reads main RAM directly; these texels were written through the
+    * CPU's cache, so they must be pushed out before it looks. */
+   sceKernelDcacheWritebackRange(g_wake_frame, WAKE_FRAME_BYTES);
+   g_wake_have = 1;
+}
+
+/* THE IN-GAME MENU OPENS OVER THE GAME (docs/UI-OVERLAY.md).  The same
+ * snapshot the wake overlay sits on is taken here -- the core is paused from
+ * this frame on, so it is the picture the player was looking at -- and the
+ * menu draws it, scrimmed, behind every screen until it closes.  No new
+ * memory: g_wake_frame is the netdrv arena's tail.  If it does not exist (the
+ * arena reservation failed) the menu falls back to a flat page. */
+static void menu_open(void)
+{
+   wake_snapshot();
+   ui_set_backdrop(g_wake_have ? g_wake_frame : NULL,
+                   (int)g_wake_w, (int)g_wake_h);
+   ui_open();
+}
+
+/* STANDBY halves.  See the note on power_cb for why the teardown runs in the
+ * callback and the rebuild runs on the main thread. */
+/* BREADCRUMBS THAT SURVIVE A HARD RESET.
+ *
+ * The event log did not, and the reason is FAT, not our ring: fe_evt_service
+ * does fwrite + fflush, so the BYTES reach the stick, but the directory entry
+ * is only updated when the file is closed.  A kernel reset therefore leaves
+ * frontend.log at its last-closed length -- which is why two standby attempts
+ * of different lengths both produced a byte-identical 2464-byte log ending at
+ * boot, and why every log that DID contain gameplay was one that exited
+ * cleanly.
+ *
+ * So the standby trail gets its own file and pays for a full open/write/close
+ * per line.  That is far too expensive for anything on the frame path and
+ * exactly right for six lines across a suspend. */
+static void standby_note(const char *fmt, ...)
+{
+#if defined(GPSP_NO_TELEMETRY) && !defined(GPSP_STANDBY_NOTES)
+   /* A player build writes no diagnostic files -- ADR-0067, the same rule
+    * that removes the event log.  This one was missed: every sleep and wake
+    * appended to log/standby.log on the memory stick, from the power
+    * callback, in 2.0 and 2.0.1. */
+   (void)fmt;
+#else
+   char path[160], line[192];
+   va_list ap;
+   FILE *fh;
+   int n;
+
+   va_start(ap, fmt);
+   n = vsnprintf(line, sizeof(line) - 2, fmt, ap);
+   va_end(ap);
+   if (n < 0)
+      return;
+   snprintf(path, sizeof(path), "%s/log/standby.log", g_dir_base);
+   fh = fopen(path, "a");
+   if (!fh)
+      return;
+   fprintf(fh, "%u %s\n", (unsigned)sceKernelGetSystemTimeLow(), line);
+   fclose(fh);                        /* the close IS the commit */
+#endif
+}
+
+/* A LADDER, NOT A SWITCH.  `standby` is 0-3 and each level does strictly more
+ * than the one below, so the level that kills the console is the answer --
+ * without a rebuild between attempts:
+ *
+ *   1  park the renderer, release volatile memory; module stays LOADED
+ *   2  + unload the module (me_host_shutdown)
+ *
+ * Releasing volatile memory is NOT a rung -- see the note where it happens.
+ *
+ * Level 3 was the first attempt and the PSP-1000 hard-reset to the Sony logo,
+ * which is the kernel giving up rather than anything being damaged.  The
+ * suspect is unloading a kernel module from the power callback while the
+ * kernel is already quiescing for suspend -- so the ladder exists to say
+ * whether that is really it, or whether merely parking the renderer is
+ * enough on its own.
+ *
+ * Each step logs and flushes BEFORE the next one runs. */
+static void me_standby_step(const char *what)
+{
+   fe_evt("standby step=%s", what);
+   standby_note("step %s", what);
+}
+
+static void me_standby_down(void)
+{
+   me_standby_step("begin");
+   /* Note what is running BEFORE tearing any of it down: the wake rebuilds
+    * this, and only this. */
+   g_pwr_had_host = me_host_up();
+   /* SNAPSHOT FIRST.  me_rend_teardown() sets g_mer_ready = -1, so taking the
+    * frame after it always found "nothing to copy" and the wake overlay came
+    * up on a flat background instead of the game.  Order is the whole fix. */
+   wake_snapshot();
+   if (me_rend_active())
+   {
+      me_rend_teardown("suspend");
+      me_standby_step("rend_down");
+   }
+   if (g_pcfg.standby >= 2)
+   {
+      me_host_shutdown();
+      me_standby_step("module_unloaded");
+   }
+   /* ALWAYS release the volatile partition -- this is not an optional rung.
+    *
+    * The engine's buffers are carved out of the 4 MB OS pool at 0x08400000,
+    * which the OS owns and is free to reclaim and re-hand to something else
+    * while we are asleep.  The first ladder kept g_mer_vmem set at level 1, so
+    * the resume path saw "volatile already locked", skipped re-locking, and
+    * rebuilt the renderer onto POINTERS INTO A PARTITION WE NO LONGER HELD.
+    * Writing there is a plausible way to reset the machine, and the machine
+    * did reset on resume.
+    *
+    * So releasing is the safe half and re-locking on wake is mandatory.  What
+    * remains genuinely questionable is unloading the module, which is what the
+    * ladder is now for. */
+   int release_result = me_rend_release_vmem();
+   if (release_result < 0)
+   {
+      me_standby_step("vmem_retained");
+      return;
+   }
+   if (release_result > 0)
+      me_standby_step("vmem_released");
+   /* The audio ring still holds sound from before the sleep, and the audio
+    * thread plays it the moment the machine comes back -- ~20 ms of the game
+    * you are no longer looking at, underneath a menu.  Drop it. */
+   ring_r = ring_w;
+   /* And leave the screen black rather than a stale frame of gameplay: the
+    * LCD shows whatever is in VRAM the instant it powers on, well before we
+    * are scheduled to draw anything. */
+   vid_blank_all();
+   g_pwr_slept = 1;
+   me_standby_step("done");
+}
+
+/* Main thread, once per wake -- AFTER the player answers the wake overlay
+ * with Continue, not before it.
+ *
+ * It used to run first, so the overlay waited for its answer with the
+ * renderer rebuilt, the Media Engine running and the volatile partition
+ * locked again.  The overlay is a blocking loop that never reaches the
+ * suspend handshake's park point, so a second press of the switch while it
+ * was up took power_cb's park_timeout branch: nothing torn down, g_pwr_slept
+ * left 0.  The console then slept holding the partition the OS reclaims
+ * across a suspend, with an engine that does not survive one, and the wake
+ * after that rebuilt nothing -- it restarted to the XMB.  (Measured with the
+ * sleep simulator on a PSP-3000: `power teardown_skipped reason=park_timeout`,
+ * then slept=0 rebuild=0 rend=1 vmem=1.)
+ *
+ * While the overlay is up the machine now stays exactly as the suspend left
+ * it: renderer down, partition released, g_pwr_slept still 1.  A second
+ * suspend finds nothing to tear down (power_cb's renderer=off branch) and
+ * its resume asks for the same single rebuild.  `Quit to game list` never
+ * rebuilds at all: the teardown it goes through shuts the engine down anyway.
+ *
+ * Every step is logged: if resume ever fails on a model we do not own, this
+ * line is the whole diagnosis. */
+static void me_standby_up(void)
+{
+   int host_rc, rend_rc = -1;
+
+   g_pwr_rebuild = 0;
+   g_pwr_slept   = 0;
+   /* Rebuild only what we tore down.  At level 1 the module is still loaded
+    * and me_host_init would be a second load of a module that never left.
+    *
+    * And never build what boot chose not to.  GB-family games and me_boot = 0
+    * run without the module, and g_me_rend_cfg = 0 means no renderer (GB-family,
+    * ME mode off, or a renderer that failed at boot).  Waking used to start
+    * both regardless: the renderer took over presentation (capture mode 1
+    * stops the core drawing) but only understands GBA 240x160 frames, so a GB
+    * game came back from sleep to a blank screen after Continue. */
+   standby_note("wake begin host_up=%d had_host=%d me_rend=%d cfg=%d vmem=%d",
+                me_host_up(), g_pwr_had_host, me_rend_active(), g_me_rend_cfg,
+                me_rend_vmem_held());
+   if (me_host_up())
+      host_rc = 0;
+   else if (g_pwr_had_host)
+      host_rc = me_host_init(g_dir_base);
+   else
+      host_rc = 1;   /* never up: leave it down */
+   standby_note("wake host=%d", host_rc);
+   if (host_rc == 0 && g_me_rend_cfg)
+      rend_rc = me_rend_active() ? 0 : me_rend_init();
+   standby_note("wake rend=%d vmem=%d free=%d", rend_rc, me_rend_vmem_held(),
+                sceKernelTotalFreeMemSize());
+   fe_evt("standby up host=%d rend=%d cfg=%d vmem=%d free=%d frame=%d",
+          host_rc, rend_rc, g_me_rend_cfg, me_rend_vmem_held(),
+          sceKernelTotalFreeMemSize(), g_wake_have);
+#ifdef REWIND
+   psp_rewind_pool_back();      /* after the engine has taken its end */
+#endif
+   /* Whatever the audio thread queued while the machine was coming back is
+    * also from before the sleep. */
+   ring_r = ring_w;
+   /* A failed rebuild is not fatal: g_me_rend stays 0 and the loop falls back
+    * to CPU rendering exactly as it does when the ME never boots.  Slow, but
+    * the game keeps running and the save is intact. */
+}
+
+/* Heap fallback only: give the work area back to malloc.  0 = freed (or there
+ * was none), -1 = it must be kept for now.
+ *
+ * Unlike every other engine buffer this one is WRITTEN by the ME through its
+ * cache, so "the ME is idle" is not enough: up to 16 KiB of it is still in
+ * dirty lines the ME would write back whenever it next needed them -- on top
+ * of the list pointers free() is about to put in the block.  So the ME drops
+ * its cache first, and a sync that does not come back means the block stays.
+ * A module that is not loaded has no cache to drain: the core is in reset.
+ *
+ * (The volatile pool needs none of this.  It is only ever handed back on the
+ * way into a sleep, with the ME idle and about to be reset, and whatever is
+ * carved from it next is ours again.) */
+static int mer_work_heap_free(void)
+{
+   if (!g_mer_work)
+      return 0;
+   if (me_host_loaded() && me_host_sync(50000u) != 0)
+      return -1;
+   free(g_mer_work);
+   g_mer_work = NULL;
+   return 0;
+}
+
+static void me_rend_suspend(void)
+{
+   int i, idle;
+   /* Volatile-backed: the engine owns no main heap, np_start is unaffected —
+    * keep rendering straight through the wireless bring-up. */
+   if (g_mer_vmem)
+      return;
+   if (g_me_rend)
+      me_rend_teardown("np_start");
+   /* Wait out any in-flight ME job before freeing the buffers under it. */
+   /* A watchdog timeout disables posting; it does not stop the second core. */
+   idle = !me_host_loaded();
+   if (!idle)
+   {
+      unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+      while (!(idle = me_host_idle()) &&
+             ((unsigned)sceKernelGetSystemTimeLow() - t0) < 50000u)
+         ;
+   }
+   if (!idle)
+   {
+      /* Keep the heap-backed buffers alive if the ME failed to finish.  The
+       * renderer is already disabled, so they can be reclaimed on a later
+       * successful suspend or process exit without racing an in-flight job. */
+      fe_evt("me_rend suspend_timeout buffers_retained=1");
+      g_mer_heap_pending_drain = 1;
+      return;
+   }
+   if (mer_work_heap_free() != 0)
+   {
+      fe_evt("me_rend suspend_timeout buffers_retained=1 reason=sync");
+      g_mer_heap_pending_drain = 1;
+      return;
+   }
+   /* Heap-backed fallback: free EVERYTHING.  The 41KB-resident experiment
+    * failed on hardware — the host's np_start needs the heap fully clean
+    * (passed at 0 KB held, run 411; failed at 41 KB held).  Resume may then
+    * fail on a fragmented post-session heap; that degrades the host to CPU
+    * rendering, which is safe.  The volatile path above makes all of this
+    * moot wherever the lock succeeds. */
+   for (i = 0; i < 2; i++)
+   {
+      free(g_mer_cap[i]);   g_mer_cap[i]   = NULL;
+      free(g_mer_stage[i]); g_mer_stage[i] = NULL;
+   }
+   free(g_mer_desc); g_mer_desc = NULL;
+}
+
+static void me_rend_resume(void)
+{
+   int i;
+   if (g_mer_heap_pending_drain)
+   {
+      /* A timed-out command may still hold the descriptor and both buffer
+       * pairs.  Never let init memset/reuse them until the ME is confirmed
+       * idle.  If it has drained, release the retained heap before rebuilding
+       * the renderer. */
+      if (!me_host_up() || !me_host_idle())
+      {
+         fe_evt("me_rend resume_deferred reason=me_busy");
+         return;
+      }
+      if (mer_work_heap_free() != 0)
+      {
+         fe_evt("me_rend resume_deferred reason=me_sync");
+         return;
+      }
+      for (i = 0; i < 2; i++)
+      {
+         free(g_mer_cap[i]);   g_mer_cap[i]   = NULL;
+         free(g_mer_stage[i]); g_mer_stage[i] = NULL;
+      }
+      free(g_mer_desc); g_mer_desc = NULL;
+      g_mer_heap_pending_drain = 0;
+   }
+   if (g_me_rend_cfg && !g_me_rend && me_host_up())
+      if (me_rend_init() != 0)
+         fe_evt("me_rend resume_failed (CPU rendering)");
+}
+
+static int me_rend_init(void)
+{
+   int i;
+   if (!me_host_up())
+      return -1;
+   /* First choice: carve everything from volatile memory (see g_mer_vmem). */
+   if (g_mer_vmem_cfg && !g_mer_vmem && !g_mer_cap[0])
+   {
+      void *vbase = NULL;
+      int vsize = 0;
+      /* 98 KB of shadows on top of the renderer's own 206 KB; the partition
+       * is 4 MB on every model (measured 4194304 on both consoles). */
+      const int shbytes = 1024 * 96 + 512 * 2 + 512 * 2;
+      /* The ME's work area is part of what MUST fit: without it the engine
+       * refuses every render. */
+      const int need    = 2 * MER_CAP_BYTES + 2 * (MER_STAGE_PITCH*161*2) + 128
+                          + (int)ME_WORK_BYTES;
+      if (MER_VM_TRYLOCK(&vbase, &vsize) == 0)
+      {
+         if (vbase && vsize >= need)
+         {
+            unsigned p = ((unsigned)vbase + 63u) & ~63u;
+            g_mer_desc     = (me_render_desc *)p;   p += 128;
+            g_mer_cap[0]   = (me_capture_frame *)p; p += MER_CAP_BYTES;
+            g_mer_cap[1]   = (me_capture_frame *)p; p += MER_CAP_BYTES;
+            g_mer_stage[0] = (uint16_t *)p;         p += MER_STAGE_PITCH*161*2;
+            g_mer_stage[1] = (uint16_t *)p;         p += MER_STAGE_PITCH*161*2;
+            /* Whole cache lines, start to end: p is 64-aligned here and
+             * ME_WORK_BYTES is a multiple of 64, so no line of the ME's
+             * area holds a byte of anything this CPU writes. */
+            g_mer_work     = (void *)p;             p += ME_WORK_BYTES;
+            g_mer_vmem = 1;
+            if (g_mer_shadow && vsize >= need + shbytes + 64)
+            {
+               p = (p + 63u) & ~63u;
+               g_mer_sh_vram = (unsigned char *)p;  p += 1024 * 96;
+               g_mer_sh_oam  = (unsigned char *)p;  p += 512 * 2;
+               g_mer_sh_pal  = (unsigned char *)p;  p += 512 * 2;
+               g_mer_sh_on   = 1;
+            }
+#if ME_MIDFRAME_LOG
+            p = (p + 63u) & ~63u;
+            if (g_mer_midlog &&
+                p + 2u * MER_LOG_BYTES + 1024u * 96u <= (unsigned)vbase + (unsigned)vsize)
+            {
+               g_mer_log[0]   = (me_log_entry *)p;  p += MER_LOG_BYTES;
+               g_mer_log[1]   = (me_log_entry *)p;  p += MER_LOG_BYTES;
+               me_vram_shadow = (u8 *)p;            p += 1024 * 96;
+            }
+#endif
+            fe_evt("me_rend vmem base=%08x size=%d shadow=%d",
+                   (unsigned)vbase, vsize, g_mer_sh_on);
+#ifdef REWIND
+            g_vm_eng_top = p;
+            psp_rewind_pool_check();
+#endif
+         }
+         else
+         {
+            /* TryLock succeeded but the region cannot hold our layout. */
+            MER_VM_REJECT();
+            fe_evt("me_rend vmem rejected size=%d", vsize);
+         }
+      }
+   }
+   for (i = 0; i < 2; i++)
+   {
+      if (!g_mer_cap[i])
+         g_mer_cap[i] = (me_capture_frame *)memalign(64, sizeof(me_capture_frame));
+      if (!g_mer_stage[i])
+         g_mer_stage[i] = (uint16_t *)memalign(64, MER_STAGE_PITCH * 161 * 2);
+   }
+   if (!g_mer_desc)
+      g_mer_desc = (me_render_desc *)memalign(64, sizeof(me_render_desc));
+   if (!g_mer_work)
+      g_mer_work = memalign(64, ME_WORK_BYTES);
+   if (!g_mer_cap[0] || !g_mer_cap[1] || !g_mer_stage[0] || !g_mer_stage[1] ||
+       !g_mer_desc || !g_mer_work)
+   {
+      fe_evt("me_rend off reason=alloc");
+      /* KEEP NOTHING OF A FAILED BUILD (review M8).  This is the heap
+       * fallback running out part-way (the pool carve cannot fail here: it
+       * sets every pointer).  The buffers it did get used to stay, so the
+       * next call found g_mer_cap[0] set, never tried the volatile pool
+       * again, and failed the same way: one busy TryLock on a wake meant
+       * CPU rendering until the game was quit.  Nothing has been posted on
+       * these yet; an area left from an earlier build is drained first, as
+       * me_rend_suspend does, and kept if the engine does not answer. */
+      if (!g_mer_vmem && !g_mer_heap_pending_drain && me_host_idle() &&
+          mer_work_heap_free() == 0)
+      {
+         for (i = 0; i < 2; i++)
+         {
+            free(g_mer_cap[i]);   g_mer_cap[i]   = NULL;
+            free(g_mer_stage[i]); g_mer_stage[i] = NULL;
+         }
+         free(g_mer_desc); g_mer_desc = NULL;
+      }
+      return -1;
+   }
+   memset(g_mer_cap[0], 0, sizeof(me_capture_frame));
+   memset(g_mer_cap[1], 0, sizeof(me_capture_frame));
+#if ME_MIDFRAME_LOG
+   /* NULL entries = logging off for that capture (heap fallback, no room,
+    * or me_midlog 0). */
+   me_capture_log_setup(g_mer_cap[0], g_mer_vmem ? g_mer_log[0] : NULL,
+                        MER_LOG_ENTRIES);
+   me_capture_log_setup(g_mer_cap[1], g_mer_vmem ? g_mer_log[1] : NULL,
+                        MER_LOG_ENTRIES);
+   fe_evt("me_rend midlog=%d", (g_mer_vmem && g_mer_log[0]) ? 1 : 0);
+#endif
+   memset(g_mer_stage[0], 0, MER_STAGE_PITCH * 161 * 2);
+   memset(g_mer_stage[1], 0, MER_STAGE_PITCH * 161 * 2);
+   sceKernelDcacheWritebackInvalidateRange(g_mer_stage[0], MER_STAGE_PITCH*161*2);
+   sceKernelDcacheWritebackInvalidateRange(g_mer_stage[1], MER_STAGE_PITCH*161*2);
+   /* The work area is the ME's from here on (see g_mer_work).  This CPU has
+    * not written it, but its cache may still hold lines for the range from
+    * whoever had the memory before -- heap blocks certainly, the pool
+    * possibly -- and a dirty one written back later would land in the middle
+    * of the ME's data.  Flush and drop them now, while nothing is there. */
+   sceKernelDcacheWritebackInvalidateRange(g_mer_work, ME_WORK_BYTES);
+   g_mer_work_gen++;      /* new build: the ME starts the area from nothing */
+   fe_evt("me_rend work base=%08x bytes=%u src=%s gen=%u vram=+%u obj=+%u "
+          "out=+%u", (unsigned)g_mer_work, (unsigned)ME_WORK_BYTES,
+          g_mer_vmem ? "vmem" : "heap", g_mer_work_gen,
+          (unsigned)ME_WORK_VRAM_OFF, (unsigned)ME_WORK_OBJ_OFF,
+          (unsigned)ME_WORK_OUT_OFF);
+   g_mer_cur = 0;
+   g_mer_full_copy = 1;   /* fresh ME: nothing to patch against */
+   g_mer_pending = g_mer_ready = g_mer_last_presented = -1;
+   me_capture_buf  = g_mer_cap[0];
+   me_capture_mode = g_mer_capmode;      /* 1: core stops rendering NOW */
+   if (g_mer_capmode != 1)
+      fe_evt("me_rend capmode=%u (CPU renders too)", g_mer_capmode);
+#ifdef REWIND
+   g_mer_stage_own[0] = g_mer_stage[0];
+   g_mer_stage_own[1] = g_mer_stage[1];
+   g_mer_priv[0] = g_mer_priv[1] = 0;
+   g_rw_flush_posts = 32;       /* (see g_rw_flush_posts) */
+#endif
+   g_me_rend = 1;
+   fe_evt("me_rend on stage_bytes=%u cap_bytes=%u",
+          (unsigned)(MER_STAGE_PITCH * 161 * 2) * 2,
+          (unsigned)sizeof(me_capture_frame) * 2);
+   return 0;
+}
+
+/* Write back the live inputs and fill the render desc for stage `out`. */
+static void me_rend_fill_desc(int out)
+{
+   /* Loop-top presentation queues a GE texture read from the ready stage.
+    * Retiring the other ME stage can then make that old ready stage `out`.
+    * A completed ME render does not mean the GE has finished reading its
+    * predecessor: drain those reads before allowing the ME to overwrite it.
+    * With no queued lists this is a no-op; it does not wait for vblank. */
+   vid_gu_flush();
+
+#ifdef REWIND
+   /* Where this frame is drawn: its slot in the rewind's windows, or one of
+    * the engine's own two stages.  `out` is never the ready stage, so the
+    * picture on screen is not touched either way. */
+   if (g_rw_slot)
+   {
+      g_mer_stage[out] = g_rw_slot;
+      if (g_rw_flush_posts)
+      {
+         sceKernelDcacheWritebackInvalidateRange(g_rw_slot,
+                                                 MER_STAGE_PITCH * 161 * 2);
+         g_rw_flush_posts--;
+      }
+   }
+   else
+      g_mer_stage[out] = g_mer_stage_own[out];
+   g_mer_priv[out] = g_rw_slot != NULL && fe_host_rewind_replaying();
+#endif
+   if (g_mer_sh_on)
+   {
+      /* Snapshot the live arrays so the ME has something stable to read and
+       * emulation can resume without waiting for it.  Cached->cached in main
+       * RAM; the writeback that follows is the whole coherency contract. */
+      unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+      unsigned d;
+      memcpy(g_mer_sh_vram, vram, 1024 * 96);
+      memcpy(g_mer_sh_oam, oam_ram, 512 * 2);
+      memcpy(g_mer_sh_pal, palette_ram_converted, 512 * 2);
+      sceKernelDcacheWritebackRange(g_mer_sh_vram, 1024 * 96);
+      sceKernelDcacheWritebackRange(g_mer_sh_oam, 512 * 2);
+      sceKernelDcacheWritebackRange(g_mer_sh_pal, 512 * 2);
+      d = (unsigned)sceKernelGetSystemTimeLow() - t0;
+      g_mer_sh_us += d;
+      if (d > g_mer_sh_max)
+         g_mer_sh_max = d;
+   }
+   else if (g_mer_full_copy || !g_mer_dirty_cfg)
+   {
+      /* Mirror not trustworthy: copy everything and tell the ME to do the
+       * same by passing no map. */
+      sceKernelDcacheWritebackRange(vram, 1024 * 96);
+      sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
+      sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
+   }
+   else
+   {
+      /* Write back ONLY the dirty pages -- the other half of the saving.
+       * The old code pushed 96 KB through the cache every frame purely so
+       * the ME could re-read data that had not changed. */
+      unsigned i, n = 0;
+      for (i = 0; i < VRAM_DIRTY_PAGES; i++)
+         if (!vram_clean[i])
+         {
+            sceKernelDcacheWritebackRange(vram + (i << VRAM_DIRTY_SHIFT),
+                                          1u << VRAM_DIRTY_SHIFT);
+            n++;
+         }
+      sceKernelDcacheWritebackRange(vram_clean, VRAM_DIRTY_PAGES);
+      sceKernelDcacheWritebackRange(oam_ram, 512 * 2);
+      sceKernelDcacheWritebackRange(palette_ram_converted, 512 * 2);
+      g_mer_wb_pages += n;
+      g_mer_wb_n++;
+   }
+#if ME_MIDFRAME_LOG
+   {
+      /* The log describes lines 0-160 relative to the line-160 memory, so it
+       * is only valid for a vcount-160 post.  Any other post (3x
+       * fast-forward's end-of-frame one) renders from the snapshot alone, as
+       * before the log existed. */
+      me_capture_frame *c = g_mer_cap[g_mer_cur];
+      if (!g_mer_in_vis)
+         c->log_n = 0;
+      if (c->log_n)
+         sceKernelDcacheWritebackRange((void *)c->log_addr,
+                                       c->log_n * sizeof(me_log_entry));
+   }
+#endif
+   sceKernelDcacheWritebackRange(g_mer_cap[g_mer_cur],
+                                 sizeof(me_capture_frame));
+   g_mer_desc->vram      = g_mer_sh_on ? (unsigned)g_mer_sh_vram
+                                       : (unsigned)vram;
+   g_mer_desc->oam       = g_mer_sh_on ? (unsigned)g_mer_sh_oam
+                                       : (unsigned)oam_ram;
+   g_mer_desc->palette   = g_mer_sh_on ? (unsigned)g_mer_sh_pal
+                                       : (unsigned)palette_ram_converted;
+   /* 0 = no map = copy all of VRAM. See g_mer_full_copy. */
+   g_mer_desc->vram_clean =
+      (g_mer_sh_on || g_mer_full_copy || !g_mer_dirty_cfg)
+      ? 0u : (unsigned)vram_clean;
+   g_mer_desc->capture   = (unsigned)g_mer_cap[g_mer_cur];
+   g_mer_desc->out       = (unsigned)g_mer_stage[out];
+   g_mer_desc->out_pitch = MER_STAGE_PITCH;
+   g_mer_desc->work       = (unsigned)g_mer_work;
+   g_mer_desc->work_bytes = ME_WORK_BYTES;
+   g_mer_desc->work_gen   = g_mer_work_gen;
+   sceKernelDcacheWritebackRange(g_mer_desc, sizeof(*g_mer_desc));
+}
+
+/* Complete frames actually rendered in the current fps window (ME: a retired
+ * render; CPU path: a frame the core really drew).  Reported beside the
+ * emulated rate so a frameskipped or ME-outrun measurement can never read as
+ * if every frame were being produced. */
+static unsigned g_fps_drawn;
+
+/* Loop-top presentation for Media Engine mode (ADR-0082). */
+static void me_rend_present(void)
+{
+   if (!g_me_rend || g_mer_ready < 0)
+      return;
+   if (g_ff_gate && g_mer_ready == g_mer_last_presented)
+      return; /* No new render: keep the LCD frame and let emulation run. */
+   if (g_mer_ready != g_mer_last_presented)
+      FFW_DRAWN();
+   vid_draw_prestaged(g_mer_stage[g_mer_ready], 240, 160);
+   g_mer_last_presented = g_mer_ready;
+   g_drew = 1;
+}
+
+/* SAME-FRAME RETIREMENT.  Promote the stage the ME has just finished to
+ * "ready" so this frame's own render is what gets presented this frame -- the
+ * whole point of the feature.
+ *
+ * This is the stage-ownership handoff, and it was written out twice: once at
+ * the ME's done-report inside the loop and once at the pre-swap blit.  Two
+ * identical copies of an ownership protocol is one edit away from two
+ * different protocols, so it lives here, in the renderer that owns the stages.
+ *
+ * It deliberately does NOT present.  The single present happens before the
+ * swap, so a frame that never retires still leaves something in the back
+ * buffer.  And there is exactly one producer: a second one from the
+ * visible-end hook would corrupt stage/capture ownership. */
+static void me_rend_retire_if_idle(void)
+{
+   if (!mer_sameframe_active() || !g_me_rend || g_mer_pending < 0
+       || !me_host_idle())
+      return;
+   if (me_host_render_refused())
+   {
+      me_rend_teardown("refused");     /* see step 1 of me_rend_frame */
+      return;
+   }
+#ifdef REWIND
+   /* (a stage drawn for a frame the rewind re-ran is not for the screen:
+    * it retires without becoming the one to present) */
+   if (g_mer_priv[g_mer_pending])
+      g_mer_priv[g_mer_pending] = 0;
+   else
+#endif
+   g_mer_ready   = g_mer_pending;
+   mer_note_sum();
+   g_mer_pending = -1;
+   g_mer_miss    = 0;
+   g_fps_drawn++;
+   g_mer_sf_hit++;
+}
+
+/* Called from plat_video_frame at the end of every emulated frame.
+ * `emulated` is false for duped/skipped frames (no capture happened). */
+static void me_rend_frame(int emulated)
+{
+   unsigned t0, t1;
+
+   if (!g_me_rend)
+      return;
+   LOOP_PHASE(7);
+   g_mer_frames++;
+
+   /* 1. Retire the previous post (render of frame N-1).  A full frame has
+    *    elapsed since the post, so the ~10 ms render is normally long done;
+    *    spin only for a genuinely late one.
+    *
+    *    Under the FF draw gate a frame the gate turned away (`emulated` 0)
+    *    only LOOKS: it has nothing to post, so it never waits.  A drawn frame
+    *    follows the previous post by a whole gate period (>= 16.7 ms), so its
+    *    wait is normally nil; it may spin to the hard ceiling for a late one,
+    *    because a drawn frame is a promise to the screen, not a best effort. */
+   if (g_mer_pending >= 0)
+   {
+      unsigned budget = g_ff_gate ? (emulated ? MER_INPUT_US : 0u) :
+                        MER_RETIRE_US;
+#ifdef REWIND
+      /* A frame re-run for a rewind does not stand and wait 9 ms for the
+       * picture before it: the pace leaves a display period between two
+       * drawn frames, and one that still finds the engine busy goes
+       * without a picture. */
+      if (fe_host_rewind_replaying())
+         budget = MER_REWIND_RETIRE_US;
+#endif
+      t0 = (unsigned)sceKernelGetSystemTimeLow();
+      while (!me_host_idle() &&
+             ((unsigned)sceKernelGetSystemTimeLow() - t0) < budget)
+         ;
+#ifdef REWIND
+      if (fe_host_rewind_replaying())
+      {
+         g_rwm.retire_us += (unsigned)sceKernelGetSystemTimeLow() - t0;
+         if (!me_host_idle())
+            g_rwm.busy++;
+      }
+#endif
+      if (me_host_idle())
+      {
+         /* The ME completed the command without drawing: it found no usable
+          * work area in the desc (me/me_mbox.h, refused_seq).  The stage
+          * holds no frame, so it is never promoted; the core draws again
+          * from the next frame, as after any other teardown. */
+         if (me_host_render_refused())
+         {
+            me_rend_teardown("refused");
+            goto present;
+         }
+#ifdef REWIND
+         /* (see me_rend_retire_if_idle: a re-run frame's stage) */
+         if (g_mer_priv[g_mer_pending])
+            g_mer_priv[g_mer_pending] = 0;
+         else
+#endif
+         g_mer_ready   = g_mer_pending;
+         mer_note_sum();
+         g_mer_pending = -1;
+         g_mer_miss    = 0;
+         g_fps_drawn++;             /* a complete rendered frame landed */
+      }
+      else
+      {
+         if (g_ff_gate)
+         {
+            if (!emulated)
+               goto present;   /* gated-out frame: look again next frame */
+            /* Every drawn frame must be posted. A hung renderer must not
+             * turn the gate into a silent dropping mode or stall the PSP
+             * forever: use the existing CPU fallback on this hard timeout. */
+            me_rend_teardown("ff_render_wedge");
+            goto present;
+         }
+#ifdef REWIND
+         /* A frame re-run by the rewind that found the engine busy simply
+          * has no picture; it is not a late renderer and must never count
+          * towards tearing the engine down. */
+         if (fe_host_rewind_replaying())
+            goto present;
+#endif
+         /* ME still busy: drop this frame (present the old one), do NOT
+          * flip the capture buffer — the next emulated frame overwrites
+          * the capture and we try again. */
+         g_mer_drops++;
+         /* Any fast-forward outruns the ME by design — drops there are the
+          * expected outcome, not a sick renderer, and a teardown would
+          * silently switch rendering paths mid-FF (or mid-measurement).
+          * Normal-speed lateness still trips the watchdog. */
+         if (++g_mer_miss >= MER_MISS_LIMIT &&
+             !g_ff_uncapped && !g_ff_mult && !g_pcfg.bench_mode)
+            me_rend_teardown("late");
+         goto present;
+      }
+   }
+
+   /* 2. Post this frame's render (only if the core actually captured it). */
+   if (emulated && me_host_up())
+   {
+      int out = (g_mer_ready == 0) ? 1 : 0;   /* render into the other stage */
+      me_rend_fill_desc(out);
+      if (me_host_post_render((unsigned)ME_UNCACHED(g_mer_desc)) == 0)
+      {
+         /* 3. Hand the capture buffer over and resume.
+          *
+          * With shadows the ME is reading copies nothing will touch, so there
+          * is NOTHING to wait for -- the ~1.45 ms spin below is skipped
+          * entirely and the capture flip is immediately safe (the captures
+          * were already double-buffered).  Without them we must still wait
+          * for the ME to finish reading the live arrays before emulation is
+          * allowed to write them again. */
+         if (!g_mer_sh_on)
+         {
+            t0 = (unsigned)sceKernelGetSystemTimeLow();
+            while (!me_host_input_done() &&
+                   ((t1 = (unsigned)sceKernelGetSystemTimeLow()) - t0) < MER_INPUT_US)
+               ;
+            t1 = (unsigned)sceKernelGetSystemTimeLow() - t0;
+            g_mer_wait_us += t1;
+            if (t1 > g_mer_wait_max)
+               g_mer_wait_max = t1;
+            if (!me_host_input_done())
+            {
+               me_rend_teardown("input_wedge");   /* watchdog-class failure */
+               goto present;
+            }
+            /* The ME has now copied. Only here is it safe to clear the map:
+             * clearing it before the copy would lose pages the ME had not
+             * read yet and leave its mirror stale. The core is blocked in the
+             * spin above, so no VRAM write can be missed in this window. */
+#if ME_MIDFRAME_LOG
+            me_vram_map_consumed();   /* same clear, keeps the log's shadow honest */
+#else
+            memset(vram_clean, 1, VRAM_DIRTY_PAGES);
+#endif
+            if (g_mer_dirty_cfg)
+               g_mer_full_copy = 0;   /* mirror is now valid to patch */
+         }
+         g_mer_pending = out;
+#ifdef REWIND
+         if (g_rw_slot)
+            g_rw_slot_posted = 1;
+#endif
+         g_mer_post_us = (unsigned)sceKernelGetSystemTimeLow();
+         g_mer_rend_seen = 0;
+         g_mer_cur ^= 1;
+         me_capture_buf = g_mer_cap[g_mer_cur];
+      }
+      else
+         g_mer_drops++;
+   }
+
+present:
+   /* 4. Presentation moved to loop-top (me_rend_present) — swap-phase
+    * discipline; see the FF triage note above. */
+   /* The gated presets may run many tiny guest frames during one valid ME
+    * render. Do not count those as 30 separate heartbeat failures in a few ms. */
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   if (g_me_rend && (!g_ff_gate || t0 - g_mer_watch_us >= 16667u))
+   {
+      g_mer_watch_us = t0;
+      if (me_host_watchdog_frame())
+         me_rend_teardown("watchdog");
+   }
+
+   if (++g_mer_census >= 600)
+   {
+      fe_evt("me_rend frames=%u drops=%u wait_mean_us=%u wait_max_us=%u "
+             "shadow=%d sh_mean_us=%u sh_max_us=%u "
+             "dirty=%d wb_pages=%u sf=%d sf_hit=%u sf_miss=%u "
+             "rend_n=%u rend_mean_us=%u rend_max_us=%u "
+             "vis_n=%u vis_mean_us=%u vis_max_us=%u",
+             g_mer_frames, g_mer_drops, g_mer_wait_us / g_mer_census,
+             g_mer_wait_max, g_mer_sh_on,
+             g_mer_sh_us / g_mer_census, g_mer_sh_max,
+             g_mer_dirty_cfg,
+             g_mer_wb_n ? g_mer_wb_pages / g_mer_wb_n : 0u,
+             g_mer_sameframe, g_mer_sf_hit, g_mer_sf_miss,
+             g_mer_rend_n, g_mer_rend_n ? g_mer_rend_us / g_mer_rend_n : 0,
+             g_mer_rend_max,
+             g_vis_n, g_vis_n ? g_vis_us / g_vis_n : 0, g_vis_max);
+#if ME_MIDFRAME_LOG
+      /* Cumulative recorder work (video.h me_log_stats_t): what the mid-frame
+       * log costs this CPU, in 1 KiB passes and per-line checks. */
+      fe_evt("me_midlog frames=%u tracked=%u pal=%u oam=%u scans=%u "
+             "diffs=%u copies=%u base=%u entries=%u overflows=%u",
+             me_log_stats.frames, me_log_stats.tracked_frames,
+             me_log_stats.pal_checks, me_log_stats.oam_checks,
+             me_log_stats.map_scans, me_log_stats.page_diffs,
+             me_log_stats.page_copies, me_log_stats.base_copies,
+             me_log_stats.entries, me_log_stats.overflows);
+#endif
+      g_mer_census = 0;
+      g_mer_wait_us = g_mer_wait_max = 0;
+      g_mer_sh_us = g_mer_sh_max = 0;
+      g_mer_rend_n = g_mer_rend_us = g_mer_rend_max = 0;
+      g_vis_n = g_vis_us = g_vis_max = 0;
+      g_mer_wb_pages = g_mer_wb_n = 0;
+      if (g_mer_sameframe)
+         fe_evt("me_sf_gate noloop=%u wouldhit=%u miss=%u",
+                g_mer_sf_noloop, g_mer_sf_wouldhit, g_mer_sf_miss);
+      g_mer_sf_hit = g_mer_sf_miss = 0;
+      g_mer_sf_noloop = g_mer_sf_wouldhit = 0;
+   }
+   LOOP_PHASE(2);   /* back in the core's frame (always called from it) */
+}
+
+/* FPS counter (Settings -> "FPS counter").  Counts EMULATED frames — the
+ * increment sits above the blit-suppress and FF-cadence returns, so during
+ * multiplier/uncapped FF the chip reads the true emulation speed (~179 at
+ * 3x), not the ~30 Hz presentation cadence. */
+static unsigned g_fps_emu_frames, g_fps_win_us, g_fps_last_pg, g_fps_last_smc,
+                g_fps_last_dma, g_fps_last_fus, g_fps_last_fkb, g_fps_last_wide,
+                g_fps_last_xlat, g_fps_last_rom, g_fps_last_jit;
+static int g_autoload_state;   /* harness `load_state = 1`: boot into .st0 */
+/* 1 when the autoload was asked for by the player (the browser's state
+ * shelf), not by a rig.  Decides what a failed load means -- see the
+ * autoload in the main loop. */
+static int g_autoload_from_shelf;
+
+/* ROM-cache stats from gba_memory.c (declared here rather than pulling the
+ * core's header chain into the frontend TU; gamepak_page_loads is already
+ * declared with the perf stats above). */
+extern u32 gamepak_size;
+extern u32 gamepak_buffer_count;
+extern u8 *gamepak_buffers[32];
+extern u32 gamepak_resident_got;
+extern u32 gamepak_static_blocks;
+int gamepak_must_swap(void);
+
+static void plat_video_frame(const uint16_t *pix, unsigned w, unsigned h,
+                             size_t pitch)
+{
+   static int rom_cache_logged;
+   if (!rom_cache_logged && g_pcfg.console == FE_CONSOLE_GBA)
+   {
+      /* One-shot: how much of the cart the ROM cache actually holds.  With
+       * PSP_LARGE_MEMORY on a 2000+ this should read resident=1 even for
+       * 32 MB carts; on a 1000 a 32 MB cart pages (resident=0). */
+      rom_cache_logged = 1;
+#ifndef GPSP_NO_TELEMETRY
+      {
+         /* Where the blocks landed: on a 64 MiB console the heap runs past
+          * 0x0A000000, so this says whether any of the cart lives up there. */
+         unsigned bi, blo = ~0u, bhi = 0;
+         for (bi = 0; bi < gamepak_buffer_count; bi++)
+         {
+            unsigned a = (unsigned)(uintptr_t)gamepak_buffers[bi];
+            if (a < blo) blo = a;
+            if (a > bhi) bhi = a;
+         }
+         fe_evt("rom_cache blocks=%u rom=%uKB resident=%d lo=%08x hi=%08x "
+                "plan=%s want=%u got=%u spare=%u",
+                gamepak_buffer_count, gamepak_size >> 10,
+                !gamepak_must_swap(), blo, bhi + (1u << 20),
+                gamepak_cap_reason, (unsigned)gamepak_resident_wanted,
+                (unsigned)gamepak_resident_got,
+                (unsigned)gamepak_static_blocks);
+      }
+#endif
+   }
+   /* A link session's stall re-presents the last picture (NULL) without
+    * emulating anything: counting it made the WAITING console's chip read
+    * ~60 while both ran at 45 (hw3 Y: the join showed 58-61, its log 45). */
+   if (!fe_host_gblink_stalled())
+      g_fps_emu_frames++;
+   if (pix)
+   {
+      /* Kept for the wake overlay's snapshot when the ME is not the one
+       * drawing -- the CPU path, and everything under PPSSPP. */
+      g_last_pix   = pix;
+      g_last_pitch = (unsigned)(pitch / 2);
+      g_last_w = w;
+      g_last_h = h;
+      cur_frame = pix;
+      cur_w = w;
+      cur_h = h;
+      cur_pitch = pitch;
+   }
+   if (g_blit_suppress)
+      return;   /* intermediate multiplier-FF frame */
+
+   /* All ME profiles share the capture/retire pipeline.  Under the draw gate
+    * a gated-out frame arrives here with pix == NULL (no capture): it only
+    * retires a finished render. */
+   if (g_me_rend)
+   {
+      if (!g_mer_posted)
+         me_rend_frame(pix != NULL);
+      return;
+   }
+
+   /* Preserve the harness's historical CPU presentation sampling. The user
+    * presets blit every frame the core drew (the gate already chose them). */
+   if (g_ff_uncapped && !g_ff_user &&
+       (fe_host_frame_count() & FF_PRESENT_MASK))
+      return;
+   if (g_ff_gate && !pix)
+      return; /* Gated-out frame: nothing new, so no duplicate GE blit. */
+
+   /* ADR-0080c: session-gated activation.  Offload runs ONLY while a WLAN
+    * session is live — which begins AFTER np_start, so the ME video path
+    * never touches ad-hoc group creation, on host or join alike.  Re-arms
+    * every session; a permanent teardown (dead/slow ME) leaves _cfg clear
+    * so this cannot flip it back on. */
+   if (g_me_video_cfg)
+   {
+      if (!g_me_video && g_net_up)
+         me_video_activate();
+      else if (g_me_video && !g_net_up)
+         me_video_teardown("session_end", 0);   /* re-arm for next session */
+   }
+
+   if (g_me_video)
+   {
+      /* ADR-0082: post only — the GE list is issued at the TOP of the next
+       * loop iteration (me_video_present), not here. */
+      me_video_post(pix, w, h, pitch);
+      return;
+   }
+   /* NULL = duped/skipped frame: re-draw the previous one (double-buffered
+    * display needs every frame drawn). */
+   if (cur_frame)
+   {
+      vid_draw_frame(cur_frame, cur_w, cur_h, cur_pitch);
+      g_drew = 1;
+      if (pix)
+      {
+         g_fps_drawn++;      /* a new image, not a re-present of the old one */
+         FFW_DRAWN();
+      }
+   }
+}
+
+/* ------------------------------------------------------------------- misc */
+
+static int find_first_rom(char *out, size_t out_sz)
+{
+   SceUID d = sceIoDopen(ROM_DIR);
+   SceIoDirent ent;
+   int found = 0;
+
+   if (d < 0)
+      return -1;
+   memset(&ent, 0, sizeof(ent));
+   while (sceIoDread(d, &ent) > 0)
+   {
+      size_t n = strlen(ent.d_name);
+      if (n > 4 && strcasecmp(ent.d_name + n - 4, ".gba") == 0)
+      {
+         if (psp_rom_path_join(out, out_sz, ROM_DIR, ent.d_name) == 0)
+         {
+            found = 1;
+            break;
+         }
+      }
+      memset(&ent, 0, sizeof(ent));
+   }
+   sceIoDclose(d);
+   return found ? 0 : -1;
+}
+
+static int make_suffixed_path(const char *rom, const char *suffix,
+                              char *out, size_t out_sz)
+{
+   return psp_rom_path_suffix(out, out_sz, rom, suffix);
+}
+
+static fe_console_t console_from_rom_path(const char *path)
+{
+   const char *dot = path ? strrchr(path, '.') : NULL;
+   if (dot && strcasecmp(dot, ".gbc") == 0)
+      return FE_CONSOLE_GBC;
+   if (dot && strcasecmp(dot, ".gb") == 0)
+      return FE_CONSOLE_GB;
+   return FE_CONSOLE_GBA;
+}
+
+static void dump_frame_bmp(void)
+{
+   size_t pitch;
+   const uint16_t *pix = fe_host_last_frame(&pitch);
+   unsigned w = g_last_w, h = g_last_h;
+   char path[176];
+   /* Media Engine mode: the core buffer is never written (capture mode skips
+    * the render) — dump the frame the ME actually presented instead, so
+    * screenshots show what the screen shows. */
+   {
+      const uint16_t *me = NULL;
+      unsigned mp = 0;
+      if (me_rend_presenting(&me, &mp))
+      {
+         pix   = me;
+         pitch = mp * 2;   /* fe_host_last_frame pitch is BYTES */
+         w = FE_GBA_WIDTH;
+         h = FE_GBA_HEIGHT;
+      }
+   }
+   if (!pix)
+      return;
+   snprintf(path, sizeof(path), "%s/frame_%06u.bmp", LOG_DIR,
+            fe_host_frame_count());
+   /* Decode the core buffer with the layout the core was BUILT to emit
+    * (ADR-0039), or every dumped BMP — and the harness comparisons built on
+    * them — comes out with R and B swapped. */
+#ifdef USE_PSP_RGB565_FORMAT
+   if (fe_bmp_write_psp565(path, pix, w, h, pitch) == 0)
+#else
+   if (fe_bmp_write_rgb565(path, pix, w, h, pitch) == 0)
+#endif
+      fe_evt("frame_dump file=%s", path);
+}
+
+/* The frame a state's previews are made from: the one the player last saw
+ * (the core's last frame, or the ME's READY stage when the renderer is up),
+ * its own size -- 240x160 for GBA, 160x144 for GB/GBC -- and its pitch in
+ * BYTES.  0 = there is one. */
+static int state_preview_src(const uint16_t **pix, size_t *pitch,
+                             unsigned *sw, unsigned *sh)
+{
+   const uint16_t *me = NULL;
+   unsigned me_pitch = 0;
+   *pix = fe_host_last_frame(pitch);
+   *sw = g_last_w ? g_last_w : FE_GBA_WIDTH;
+   *sh = g_last_h ? g_last_h : FE_GBA_HEIGHT;
+   if (me_rend_presenting(&me, &me_pitch))
+   {
+      *pix = me;
+      *pitch = (size_t)me_pitch * 2;
+      *sw = FE_GBA_WIDTH;
+      *sh = FE_GBA_HEIGHT;
+   }
+   return (!*pix || !*sw || !*sh || *pitch < *sw * sizeof(uint16_t)) ? -1 : 0;
+}
+
+/* Save a compact companion image for the browser's per-slot state shelf.
+ * The preview is deliberately separate from the savestate so old states
+ * remain loadable and a failed thumbnail write cannot invalidate a save. */
+static int state_thumb_write(const char *state_file)
+{
+   size_t pitch;
+   const uint16_t *pix;
+   uint16_t thumb[PSP_STATE_THUMB_WIDTH * PSP_STATE_THUMB_HEIGHT];
+   unsigned char hdr[PSP_STATE_THUMB_HEADER_SIZE] = {0};
+   char path[PSP_STATE_THUMB_PATH_CAP];
+   SceUID fd;
+   unsigned x, y, x0, dw;
+   size_t bytes = sizeof(thumb);
+   unsigned sw, sh;
+
+   if (state_preview_src(&pix, &pitch, &sw, &sh) != 0 ||
+       psp_state_thumb_path(path, sizeof(path), state_file) != 0)
+      return -1;
+
+   /* The thumbnail is 3:2 like a GBA screen.  A narrower frame keeps its
+    * shape and is pillarboxed: a GB/GBC screen becomes 47x42, centred on
+    * black, rather than stretched.  0 is black in either RGB565 order. */
+   dw = PSP_STATE_THUMB_WIDTH;
+   if (sw * PSP_STATE_THUMB_HEIGHT < dw * sh)
+      dw = (sw * PSP_STATE_THUMB_HEIGHT + sh / 2) / sh;
+   x0 = (PSP_STATE_THUMB_WIDTH - dw) / 2;
+   memset(thumb, 0, sizeof(thumb));
+   for (y = 0; y < PSP_STATE_THUMB_HEIGHT; y++)
+   {
+      unsigned sy = y * sh / PSP_STATE_THUMB_HEIGHT;
+      const uint16_t *src = (const uint16_t *)((const unsigned char *)pix +
+                                              (size_t)sy * pitch);
+      for (x = 0; x < dw; x++)
+         thumb[y * PSP_STATE_THUMB_WIDTH + x0 + x] = src[x * sw / dw];
+   }
+   memcpy(hdr, PSP_STATE_THUMB_MAGIC, 4);
+   hdr[4] = PSP_STATE_THUMB_WIDTH;
+   hdr[6] = PSP_STATE_THUMB_HEIGHT;
+   hdr[8] = PSP_STATE_THUMB_WIDTH;
+   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   if (fd < 0)
+      return -1;
+   if (sceIoWrite(fd, hdr, sizeof(hdr)) != sizeof(hdr) ||
+       sceIoWrite(fd, thumb, bytes) != (int)bytes)
+   {
+      sceIoClose(fd);
+      sceIoRemove(path);
+      return -1;
+   }
+   sceIoClose(fd);
+   return 0;
+}
+
+/* THE FULL-SIZE PREVIEW (state_slots.h; docs/UI-OVERLAY.md section 13):
+ * `<state>.shot`, the same frame as the .thumb at its own size, rows at the
+ * page texture's stride of 256 so the page reads the body in one pass.  Rows
+ * go out SHOT_ROWS_PER_WRITE at a time through a 4 KiB stack buffer (the
+ * padding past `sw` is zero): 20 writes for a GBA frame, nothing allocated.
+ * Any short write removes the file -- a torn .shot is never left to be
+ * drawn. */
+#define SHOT_ROWS_PER_WRITE 8
+static int state_shot_write(const char *state_file)
+{
+   size_t pitch;
+   const uint16_t *pix;
+   uint16_t rows[SHOT_ROWS_PER_WRITE * PSP_STATE_SHOT_STRIDE];
+   unsigned char hdr[PSP_STATE_THUMB_HEADER_SIZE];
+   char path[PSP_STATE_SHOT_PATH_CAP];
+   SceUID fd;
+   unsigned sw, sh, y, k, n;
+   int ok = 1;
+
+   if (state_preview_src(&pix, &pitch, &sw, &sh) != 0 ||
+       sw > PSP_STATE_SHOT_MAX_W || sh > PSP_STATE_SHOT_MAX_H ||
+       psp_state_shot_path(path, sizeof(path), state_file) != 0)
+      return -1;
+   psp_state_shot_header(hdr, sw, sh);
+   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   if (fd < 0)
+      return -1;
+   if (sceIoWrite(fd, hdr, sizeof(hdr)) != (int)sizeof(hdr))
+      ok = 0;
+   memset(rows, 0, sizeof(rows));
+   for (y = 0; ok && y < sh; y += n)
+   {
+      int bytes;
+      n = sh - y < SHOT_ROWS_PER_WRITE ? sh - y : SHOT_ROWS_PER_WRITE;
+      for (k = 0; k < n; k++)
+         memcpy(rows + k * PSP_STATE_SHOT_STRIDE,
+                (const unsigned char *)pix + (size_t)(y + k) * pitch,
+                sw * sizeof(uint16_t));
+      bytes = (int)(n * PSP_STATE_SHOT_STRIDE * sizeof(uint16_t));
+      if (sceIoWrite(fd, rows, (SceSize)bytes) != bytes)
+         ok = 0;
+   }
+   sceIoClose(fd);
+   if (!ok)
+   {
+      sceIoRemove(path);
+      return -1;
+   }
+   return 0;
+}
+
+static int state_save_slot_io(const char *slot1_path, unsigned slot)
+{
+   char path[PSP_FILE_PATH_CAP];
+   unsigned t0 = sceKernelGetSystemTimeLow(), t1, t2, t3;
+   int thumb_rc, shot_rc;
+   if (psp_state_path_for_slot(path, sizeof(path), slot1_path, slot) != 0 ||
+       fe_host_state_save(path) != 0)
+      return -1;
+   t1 = sceKernelGetSystemTimeLow();
+   thumb_rc = state_thumb_write(path);
+   if (thumb_rc != 0)
+   {
+      char thumb[PSP_STATE_THUMB_PATH_CAP];
+      if (psp_state_thumb_path(thumb, sizeof(thumb), path) == 0)
+         sceIoRemove(thumb); /* never leave a stale preview after overwrite */
+   }
+   t2 = sceKernelGetSystemTimeLow();
+   shot_rc = state_shot_write(path);
+   if (shot_rc != 0)
+   {
+      char shot[PSP_STATE_SHOT_PATH_CAP];
+      if (psp_state_shot_path(shot, sizeof(shot), path) == 0)
+         sceIoRemove(shot);  /* nor a stale picture: the 3.1 fallback shows */
+   }
+   t3 = sceKernelGetSystemTimeLow();
+   FE_EVT_ONLY(t0); FE_EVT_ONLY(t1); FE_EVT_ONLY(t2); FE_EVT_ONLY(t3);
+   FE_EVT_ONLY(thumb_rc); FE_EVT_ONLY(shot_rc);
+   fe_evt("state_save slot=%u state_us=%u thumb=%d thumb_us=%u shot=%d "
+          "shot_us=%u", slot, t1 - t0, thumb_rc, t2 - t1, shot_rc, t3 - t2);
+   return 0;
+}
+
+/* pwr_hold: see power_cb -- this runs outside the loop's park point. */
+static int state_save_slot(const char *slot1_path, unsigned slot)
+{
+   int rc;
+   pwr_hold("state_save");
+#ifdef REWIND
+   /* The state is the frame on screen, not the old frame the machine is
+    * re-running for a rewind (which may be the middle of an old save
+    * sequence: loaded later, it would finish that over a newer save). */
+   (void)psp_rewind_land("state_save", 0);
+#endif
+   rc = state_save_slot_io(slot1_path, slot);
+   pwr_release();
+   return rc;
+}
+
+/* The ME checksums every frame it renders.  Logging it at RETIRE gives one
+ * value per rendered frame, independent of when it is presented -- the only
+ * oracle that can tell "same-frame drew something different" apart from
+ * "same-frame drew the same thing earlier".  vhash samples at a fixed point
+ * in the frame loop and therefore conflates the two. */
+static void mer_note_sum(void)
+{
+   if (g_vhash_on)
+      fe_evt("mesum f=%u s=%08x", fe_host_frame_count(), me_host_result());
+}
+
+#ifdef GPSP_PERF_RIG
+/* Guest-state oracle (harness `shash = 1`): one line per frame hashing what
+ * the GUEST can observe -- r0-r15/CPSR, IWRAM and EWRAM data (not the SMC tag
+ * halves), I/O, palette, OAM, VRAM -- plus the rolling audio hash so far.
+ * Two builds fed the same state and inputs must print identical lines; the
+ * first line that differs names the frame, and the field names what diverged.
+ * Built for the paged-vs-resident ROM differential (ROM_BUFFER_SIZE 15/32). */
+static int g_shash_on;
+extern unsigned char iwram[];
+extern unsigned char ewram[];
+extern unsigned short palette_ram[];
+/* FNV-style over 32-bit words, not bytes: ~97K steps a frame instead of
+ * ~388K, so the oracle costs well under a millisecond on a PSP and does not
+ * push Unbound's frame past its budget.  Every region hashed is a multiple of
+ * 4 bytes and 4-aligned.  Change it and every stored shash.txt is void. */
+static uint32_t shash_fnv(const void *p, size_t n)
+{
+   const uint32_t *w = (const uint32_t *)p;
+   uint32_t h = 2166136261u;
+   size_t i;
+   for (i = 0; i < n / 4; i++)
+      h = (h ^ w[i]) * 16777619u;
+   return h;
+}
+static long g_shash_dump_from, g_shash_dump_to;
+static void shash_dump(void)
+{
+   /* `shash_dump_from`/`shash_dump_to`: raw guest memory for the frames the
+    * hashes disagree on -- IWRAM data, EWRAM data, I/O, reg[0..63]. */
+   char path[176];
+   FILE *fp;
+   unsigned f = fe_host_frame_count();
+   if (!g_shash_dump_to || f < (unsigned)g_shash_dump_from ||
+       f > (unsigned)g_shash_dump_to)
+      return;
+   snprintf(path, sizeof(path), "%s/gs_%06u.bin", LOG_DIR, f);
+   fp = fopen(path, "wb");
+   if (!fp)
+      return;
+   fwrite(iwram + 0x8000, 1, 0x8000, fp);
+   fwrite(ewram, 1, 0x40000, fp);
+   fwrite(io_registers, 1, 0x400, fp);
+   fwrite(reg, 4, 64, fp);
+   fwrite(iwram, 1, 0x8000, fp);          /* SMC tag half, for context */
+   fclose(fp);
+}
+/* Written straight to log/shash.txt from this thread, NOT through fe_evt:
+ * the event ring is lossy by design (it drops whole lines when the writer
+ * thread falls behind), and a differential oracle with holes cannot name the
+ * first differing frame. */
+static FILE *g_shash_fp;
+static char  g_shash_buf[64 * 1024];
+static unsigned g_shash_lines;
+static char  g_shash_id[112];      /* "run_id=.. arm=.. eboot_crc=.." */
+/* A freeze leaves the stdio buffer unwritten, so flush on a cadence: every
+ * 120 lines is ~13 KB, one Memory Stick write every two seconds. */
+#define SHASH_FLUSH_EVERY 120u
+/* Opened at boot when `shash = 1` (main), not at the first frame: a FILE
+ * opened mid-game holds a newlib lock object for as long as it stays open,
+ * and this one stays open across the in-process return to the game list, so
+ * its first game's census would read it as a leak (docs/INPROC-RETURN.md).
+ * The lazy open in shash_frame is the fallback if the boot one failed. */
+static void shash_open(void)
+{
+   if (!g_shash_fp)
+   {
+      char path[176];
+      snprintf(path, sizeof(path), "%s/shash.txt", LOG_DIR);
+      g_shash_fp = fopen(path, "w");
+      if (!g_shash_fp)
+         return;
+      setvbuf(g_shash_fp, g_shash_buf, _IOFBF, sizeof(g_shash_buf));
+      /* Identity first, so a file separated from its log still says which
+       * run, arm and binary wrote it. */
+      fprintf(g_shash_fp, "# shash v3 %s\n", g_shash_id);
+   }
+}
+
+static void shash_frame(void)
+{
+   shash_dump();
+   shash_open();
+   if (!g_shash_fp)
+      return;
+   /* c= : this frame's retro_run microseconds (fe_host_core_prof delta), so
+    * one run yields per-scene CPU cost beside the oracle (link bench,
+    * docs/GBA-LINK-FEASIBILITY.md).  The comparators ignore it. */
+   unsigned c_calls = 0; uint32_t c_tot = 0, c_max = 0;
+   static uint32_t c_prev;
+   fe_host_core_prof(&c_calls, &c_tot, &c_max);
+   fprintf(g_shash_fp, "f=%u c=%u a=%08x n=%u r=%08x pc=%08x i=%08x e=%08x "
+           "io=%08x p=%08x o=%08x v=%08x\n",
+           fe_host_frame_count(), (unsigned)(c_tot - c_prev),
+           (unsigned)plat_audio_hash(),
+           (unsigned)plat_audio_sample_count(),
+           (unsigned)shash_fnv(reg, 17 * 4), (unsigned)reg[15],
+           (unsigned)shash_fnv(iwram + 0x8000, 0x8000),
+           (unsigned)shash_fnv(ewram, 0x40000),
+           (unsigned)shash_fnv(io_registers, 0x400),
+           (unsigned)shash_fnv(palette_ram, 0x400),
+           (unsigned)shash_fnv(oam_ram, 0x400),
+           (unsigned)shash_fnv(vram, 1024 * 96));
+   c_prev = c_tot;
+   if (++g_shash_lines % SHASH_FLUSH_EVERY == 0)
+      fflush(g_shash_fp);
+}
+static void shash_close(void)
+{
+   if (g_shash_fp)
+      fclose(g_shash_fp);
+   g_shash_fp = NULL;
+}
+#endif
+
+/* ADR-0033: per-frame hash of the CORE's output buffer, taken upstream of the
+ * GU blit (fe_host_last_frame is the pointer retro_video_refresh handed us).
+ * This is the video regression oracle: a renderer change that alters ONE
+ * pixel changes the hash.  FNV-1a over the 240x160 halfwords — position- and
+ * bit-sensitive, ~38k iterations, and only ever run when a harness sets
+ * autopilot.ini's vhash=1.  Zero cost otherwise. */
+static void vhash_frame(void)
+{
+   size_t pitch;
+   const uint16_t *pix = fe_host_last_frame(&pitch);
+   unsigned w = g_last_w, h = g_last_h;
+   uint32_t hash = 2166136261u;
+   unsigned y;
+   /* MEDIA ENGINE MODE: the core buffer is NEVER WRITTEN (capture mode skips
+    * the render), so hashing it yields the same untouched buffer every frame.
+    * This oracle silently reported "0 frames differ" for every ME-mode run in
+    * the project -- 60 logs, all distinct=1 -- which is the answer it gives
+    * for a renderer that draws nothing at all.  dump_frame_bmp() already
+    * carries this switch; the oracle never got it.  Hash what was PRESENTED. */
+   {
+      const uint16_t *me = NULL;
+      unsigned mp = 0;
+      if (me_rend_presenting(&me, &mp))
+      {
+         pix   = me;
+         pitch = mp * 2;   /* pitch is BYTES here */
+         w = FE_GBA_WIDTH;
+         h = FE_GBA_HEIGHT;
+      }
+   }
+   if (!pix)
+      return;
+   for (y = 0; y < h; y++)
+   {
+      const uint16_t *row = (const uint16_t *)
+                            ((const uint8_t *)pix + (size_t)y * pitch);
+      unsigned x;
+      if (g_vhash_legacy_rb)
+         for (x = 0; x < w; x++)
+         {
+            unsigned px = row[x];
+            hash ^= ((px & 0x001Fu) << 11) | (px & 0x07E0u) | (px >> 11);
+            hash *= 16777619u;
+         }
+      else
+      for (x = 0; x < w; x++)
+      {
+         hash ^= row[x];
+         hash *= 16777619u;
+      }
+   }
+   fe_evt("vhash f=%u h=%08x", fe_host_frame_count(), hash);
+}
+
+/* ADR-0034: read the core renderer's per-path profile out once per window.
+ * Emits the window MEAN of every bucket plus the breakdown of the single
+ * worst scanline-render frame — the phase maxima must never be summed
+ * (ADR-0032), so `vid_worst` is what a max is allowed to be read against.
+ * All zero (and n==0) unless the core was built with -DVIDEO_PROF=1. */
+static unsigned vp_sum[VP_COUNT], vp_worst[VP_COUNT], vp_max_tot, vp_win_n;
+static unsigned vp_core_mean;
+static unsigned vp_build_crc;   /* CRC32 of the EBOOT actually running */
+
+/* ADR-0035: identify the BINARY in the profile line, not just the run.
+ * A stale EBOOT in a sandbox produced two "different" builds with identical
+ * timings and cost most of a session to spot.  A profile whose build cannot be
+ * identified is not a measurement, so the CRC of the running EBOOT goes in
+ * every `vid_prof` line and is emitted once at boot.  ~1.6 MiB of CRC, only
+ * when profiling is enabled. */
+static unsigned eboot_crc(void)
+{
+   char path[160];
+   static unsigned char buf[4096];
+   SceUID fd;
+   unsigned crc = 0, total = 0;
+   int n;
+
+   snprintf(path, sizeof(path), "%s/EBOOT.PBP", g_dir_base);
+   fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
+   if (fd < 0)
+      return 0;
+   while ((n = sceIoRead(fd, buf, sizeof(buf))) > 0)
+   {
+      crc = fe_crc32(crc, buf, (size_t)n);
+      total += (unsigned)n;
+   }
+   sceIoClose(fd);
+   fe_evt("build eboot_crc=%08x size=%u", crc, total);
+   return crc;
+}
+
+/* ---- VRAM DIRTY-PAGE PROBE ---------------------------------------------
+ *
+ * The question.  The ME renderer's input handshake costs a measured ~1.45 ms
+ * of MAIN-CPU SPIN every frame (`EVT me_rend wait_mean_us`, symmetric across
+ * both consoles, drops=0 -- so it is handshake latency, not render time).
+ * That wait exists because me_render_glue.cc does a flat
+ * `memcpy(vram, main_ram, 96 KB)` on the ME from uncached main RAM, ~67 MB/s.
+ * VRAM is 98 % of the 98 KB copied.
+ *
+ * IF a typical frame only dirties a small fraction of VRAM, copying just the
+ * dirty pages collapses that wait and hands ~1 ms/frame back on BOTH
+ * consoles -- more than the whole historical client-side deficit.  IF games
+ * rewrite most of VRAM every frame, the idea is dead and we stop here.
+ *
+ * Why a shadow compare and not write barriers.  Production dirty-tracking
+ * has to instrument the DYNAREC's store path (mips_emit.h `emit_pmemst_stub`,
+ * region 6) -- translated code does not go through gba_memory.c's
+ * `write_vram##type()` macros, so C-side instrumentation alone would
+ * undercount badly.  That is real work in the hottest store path and it is
+ * not worth doing speculatively.  This probe answers the same question with
+ * ZERO hot-path cost, and it either justifies that work or kills it.
+ *
+ * How.  Every `g_vp_period` frames, a two-frame cycle:
+ *   phase 1  copy VRAM to a shadow.
+ *   phase 2  the NEXT frame, compare page by page and count the pages that
+ *            differ.  Comparing consecutive frames is the point -- sampling
+ *            frame N against frame N-16 would measure a 16-frame union and
+ *            overstate a per-frame copy.
+ *
+ * Cost is confined to those two frames, is self-timed into `cost_us`, and is
+ * reported with the result so the instrument's own price is in its own
+ * output.  `vram_probe = 0` (the default) allocates nothing and never runs.
+ *
+ *   EVT vram_probe n=<samples> pages=<mean/96> max=<n> kb=<mean KB>
+ *                  cost_us=<mean> period=<n>
+ */
+#define VP_PAGE_SHIFT  10                 /* 1 KiB pages */
+#define VP_PAGES       (1024 * 96 >> VP_PAGE_SHIFT)   /* 96 */
+static int      g_vp_period;              /* harness key `vram_probe`, 0=off */
+static unsigned char *g_vp_shadow;
+static int      g_vp_phase;               /* 0 idle, 1 shadow taken          */
+static unsigned g_vp_ctr, g_vp_n, g_vp_sum, g_vp_max, g_vp_cost, g_vp_fail;
+static unsigned g_vp_marked, g_vp_missed, g_vp_marks0;
+
+static void vram_probe_frame(void)
+{
+   unsigned t0, i, dirty = 0;
+
+   if (!g_vp_period)
+      return;
+   if (!g_vp_shadow)
+   {
+      g_vp_shadow = (unsigned char *)malloc(1024 * 96);
+      if (!g_vp_shadow)
+      {
+         g_vp_period = 0;                 /* never let an instrument fail a run */
+         fe_evt("vram_probe off reason=alloc");
+         return;
+      }
+   }
+
+   if (g_vp_phase == 0)
+   {
+      if (++g_vp_ctr < (unsigned)g_vp_period)
+         return;
+      g_vp_ctr = 0;
+      t0 = (unsigned)sceKernelGetSystemTimeLow();
+      memcpy(g_vp_shadow, vram, 1024 * 96);
+      /* DO NOT clear the map here any more. It is now load-bearing: the ME
+       * copies exactly the pages it marks, and clearing it mid-frame would
+       * drop pages the ME has not read yet -- silent stale-VRAM rendering.
+       * Coverage has already been established (missed=0 over 255 marked
+       * pages on build 58026acf), so the probe reverts to its original job
+       * of counting how many pages actually change per frame. */
+      g_vp_marks0 = vram_dirty_marks;
+      g_vp_cost += (unsigned)sceKernelGetSystemTimeLow() - t0;
+      g_vp_phase = 1;
+      return;
+   }
+
+   /* phase 2: consecutive-frame delta */
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   for (i = 0; i < VP_PAGES; i++)
+   {
+      unsigned off = i << VP_PAGE_SHIFT;
+      int changed = memcmp(g_vp_shadow + off, vram + off,
+                           1u << VP_PAGE_SHIFT) != 0;
+      int marked  = vram_clean[i] == 0;   /* inverted map */
+      if (changed)
+         dirty++;
+      if (marked)
+         g_vp_marked++;
+      /* THE NUMBER THAT DECIDES THE DESIGN: a page that really changed and
+       * was never marked.  Copy only marked pages while this is non-zero and
+       * the ME renders stale VRAM -- silent corruption, not a crash. */
+      if (changed && !marked)
+         g_vp_missed++;
+   }
+   g_vp_cost += (unsigned)sceKernelGetSystemTimeLow() - t0;
+   g_vp_phase = 0;
+
+   g_vp_n++;
+   g_vp_sum += dirty;
+   if (dirty > g_vp_max)
+      g_vp_max = dirty;
+
+   if (g_vp_n >= 32)
+   {
+      fe_evt("vram_probe n=%u pages=%u.%u/%u max=%u kb=%u cost_us=%u "
+             "period=%u marked=%u missed=%u marks=%u",
+             g_vp_n,
+             g_vp_sum / g_vp_n, (g_vp_sum * 10u / g_vp_n) % 10u, VP_PAGES,
+             g_vp_max,
+             g_vp_sum / g_vp_n,        /* 1 KiB pages, so pages == KiB */
+             g_vp_cost / (g_vp_n * 2u),
+             (unsigned)g_vp_period,
+             g_vp_marked, g_vp_missed, vram_dirty_marks - g_vp_marks0);
+      g_vp_n = g_vp_sum = g_vp_max = g_vp_cost = 0;
+      g_vp_marked = g_vp_missed = 0;
+   }
+   (void)g_vp_fail;
+}
+
+static void vid_prof_frame(unsigned win)
+{
+   unsigned cur[VP_COUNT];
+   char line[768];
+   int n = video_prof_read_reset(cur, VP_COUNT);
+   int i, off = 0;
+
+   if (n <= 0)
+      return;
+   for (i = 0; i < n; i++)
+      vp_sum[i] += cur[i];
+   if (cur[VP_T_TOTAL] >= vp_max_tot)
+   {
+      vp_max_tot = cur[VP_T_TOTAL];
+      for (i = 0; i < n; i++)
+         vp_worst[i] = cur[i];
+   }
+   if (++vp_win_n < win)
+      return;
+
+   /* Cross-check against the whole retro_run call over the SAME window, so
+    * the renderer's share is a ratio of two measurements rather than of one
+    * measurement and a remembered number (ADR-0032). */
+   {
+      static unsigned prev_calls;
+      static uint32_t prev_total;
+      unsigned calls = 0; uint32_t total = 0, mx = 0;
+      unsigned d;
+      fe_host_core_prof(&calls, &total, &mx);
+      d = calls - prev_calls;
+      vp_core_mean = d ? (total - prev_total) / d : 0;
+      prev_calls = calls; prev_total = total;
+   }
+
+   for (i = 0; i < n && off < (int)sizeof(line) - 24; i++)
+      off += snprintf(line + off, sizeof(line) - off, "%s=%u ",
+                      video_prof_name(i), vp_sum[i] / win);
+   fe_evt("vid_prof f=%u bld=%08x core=%u tmax=%u %s", win, vp_build_crc,
+          vp_core_mean, vp_max_tot, line);
+
+   off = 0;
+   for (i = 0; i < n && off < (int)sizeof(line) - 24; i++)
+      off += snprintf(line + off, sizeof(line) - off, "%s=%u ",
+                      video_prof_name(i), vp_worst[i]);
+   fe_evt("vid_worst %s", line);
+
+   memset(vp_sum, 0, sizeof(vp_sum));
+   memset(vp_worst, 0, sizeof(vp_worst));
+   vp_max_tot = 0;
+   vp_win_n   = 0;
+}
+
+static void dump_ge_bmp(void)
+{
+   char path[176];
+   snprintf(path, sizeof(path), "%s/ge_%06u.bmp", LOG_DIR,
+            fe_host_frame_count());
+   if (vid_dump_ge(path) == 0)
+      fe_evt("ge_dump file=%s w=%d h=%d", path, VID_SCR_W, VID_SCR_H);
+   else
+      fe_evt("ge_dump file=%s FAILED", path);
+}
+
+static int file_exists(const char *path)
+{
+   SceIoStat st;
+   return sceIoGetstat(path, &st) >= 0;
+}
+
+/* Pre-session save backup (plan §4.5): copy <save>.sav -> <save>.sav.bak.
+ * Trading is the one operation users cannot afford to have corrupted. */
+static void backup_save(const char *save_path)
+{
+   static uint8_t buf[FE_SRAM_SIZE];
+   char bak[PSP_BACKUP_PATH_CAP];
+   FILE *in, *out;
+   size_t n;
+   int path_len;
+
+   in = fopen(save_path, "rb");
+   if (!in)
+      return;
+   n = fread(buf, 1, sizeof(buf), in);
+   fclose(in);
+   if (!n)
+      return;
+   path_len = snprintf(bak, sizeof(bak), "%s.bak", save_path);
+   if (path_len < 0 || (size_t)path_len >= sizeof(bak))
+   {
+      fe_evt("sav_backup skip=path_too_long");
+      return;
+   }
+   out = fopen(bak, "wb");
+   if (!out)
+      return;
+   fwrite(buf, 1, n, out);
+   fclose(out);
+   fe_evt("sav_backup file=%s size=%u", bak, (unsigned)n);
+}
+
+/* ----------------------------------------------------------- wireless --- */
+
+/* g_net_up moved up near the ME video globals (ADR-0080c session gate). */
+int g_net_is_host;
+static int g_group_lost_logged;
+static char g_session_info[48];
+static const char *g_save_path_for_backup;
+
+/* ---- link mode: Link Cable vs Wireless Adapter (docs/GBA-LINK-UI.md) ------
+ *
+ * THE GAME DECIDES (frontend-common/link_games.h), Settings > Link mode
+ * overrides it per game (roms/linkmode.txt), and the Wireless menu only asks
+ * the HOST of a game that links both ways.  The room's adhocctl name says
+ * the rest (psp/room_label.h): GPSPnn adapter (unchanged since 1.0), GCnnXXXX
+ * a GBA Link Cable room (the mirror) for game code XXXX, GBnnXXXX a GB/GBC
+ * one.  A cable HOST keeps playing while it waits; the session starts the
+ * moment the other PSP is on the channel.  The kind of the current session: */
+enum { LK_NONE = 0, LK_ADAPTER, LK_CABLE, LK_GB };
+static int  g_link_kind;
+static int  g_link_wait;      /* cable host: room up, nobody yet, game runs */
+static int  g_link_clear;     /* ...the PSP it just turned away still on it */
+static int  g_link_menu;      /* the session came from the Wireless menu    */
+static char g_link_room[ROOM_LABEL_CAP];
+static char g_game_code[5];   /* GBA header code (0xAC), "" on GB/GBC       */
+static char g_gb_title[17];   /* GB cartridge title (0x134)                 */
+static char g_game_key[100];  /* linkmode.txt key: the ROM under roms/      */
+static char g_game_name[64];  /* the table's title, else the ROM's name     */
+#define CABLE_PROTOCOL "GBAdhoc cable v1"   /* netdrv JOIN, exact match   */
+
+/* The session chip and the Wireless status read g_session_info.  A cable
+ * session names its mode, the room, and once linked the player number (the
+ * game itself says Player 1 / Player 2); an adapter one, mode and room. */
+static void link_chip(void)
+{
+   int st;
+   if (!g_net_up || g_link_kind == LK_NONE)
+      return;
+   st = fe_host_gblink_active() ? fe_host_gblink_state() : -1;
+   if (st == FE_GBLINK_SETUP || st == FE_GBLINK_DONE ||
+       st == FE_GBLINK_FAILED)
+   {
+      /* the LINKING screen says it all; the chip would sit on its footer */
+      osd_chip_session(NULL);
+      return;
+   }
+   if (g_link_kind == LK_ADAPTER)
+      snprintf(g_session_info, sizeof(g_session_info),
+               "Wireless Adapter  %s", g_link_room);
+   else if (g_link_wait)
+      snprintf(g_session_info, sizeof(g_session_info),
+               "Link Cable  %s  waiting", g_link_room);
+   else if (fe_host_gblink_state() == FE_GBLINK_RUNNING ||
+            fe_host_gblink_state() == FE_GBLINK_ENDING)
+      snprintf(g_session_info, sizeof(g_session_info),
+               "Link Cable  %s  P%d", g_link_room, g_net_is_host ? 1 : 2);
+   else
+      snprintf(g_session_info, sizeof(g_session_info), "Link Cable  %s",
+               g_link_room);
+   osd_chip_session(g_pcfg.osd_wireless ? g_session_info : NULL);
+}
+
+uint64_t net_now_us(void)
+{
+   /* Microseconds, monotonic (ADHOC-NOTES §11.13) — netdrv timers must
+    * never see wall-clock steps (ADR-0010). */
+   return (uint64_t)sceKernelGetSystemTimeWide();
+}
+
+static void gb_serial_yield(void)
+{
+   sceKernelDelayThread(1000);
+}
+
+/* Same clock, video_prof's prototype (ADR-0034 renderer profile). */
+static unsigned vprof_clock_us(void)
+{
+   return (unsigned)sceKernelGetSystemTimeLow();
+}
+
+/* Same clock, fe_evt's prototype (ADR-0021 log-I/O accounting).  The ADR-0067
+ * playable build never installs it, because there is no log to account for. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+static unsigned long long evt_clock_us(void)
+{
+   return (unsigned long long)sceKernelGetSystemTimeWide();
+}
+#endif
+
+static void net_error_evt(const char *what, int rc)
+{
+   FE_EVT_ONLY(what); FE_EVT_ONLY(rc);
+   fe_evt("net_error reason=%s stage=%s rc=%d sce=0x%08x",
+          rc == ADHOC_ERR_WLAN_OFF ? "wlan_off" : what,
+          adhoc_transport_stage(), rc,
+          (unsigned)adhoc_transport_last_sce_error());
+}
+
+static void adhoc_stats_evt(void)
+{
+   adhoc_stats st;
+   adhoc_transport_get_stats(&st);
+   fe_evt("adhoc_stats tx=%u txwb=%u txfail=%u rx=%u ringdrop=%u "
+          "oversize=%u rxerr=%u ctlevt=%u ctldisc=%u ctlerr=%u "
+          "faultdel=%u faultdrop=%u bulk_tx=%u bulk_txfail=%u bulk_rx=%u "
+          "bulk_drop=%u",
+          st.tx_pkts, st.tx_would_block, st.tx_fail, st.rx_pkts,
+          st.rx_ring_drop, st.rx_oversize, st.rx_err,
+          st.ctl_events, st.ctl_disconnects, st.ctl_errors,
+          st.fault_delayed, st.fault_dropped, st.bulk_tx, st.bulk_txfail,
+          st.bulk_rx, st.bulk_drop);
+}
+
+/* EVT sess_cost — where a wireless session's per-frame time actually goes
+ * (ADR-0021).
+ *
+ * The measurement that forced this line into existence: solo, no wireless,
+ * a PSP-1000 runs Emerald at 57.6-58.7 fps with everything rendered.  Bring
+ * a session up and it collapses to 34-47.  Skip 97 % of rendered frames and
+ * it only reaches 50-57 — so it was never about drawing.  ~20 fps, a third
+ * of the frame budget, went somewhere no log line could name.
+ *
+ * Emitted once per adhoc_stats window (600 frames, ~10 s).  Everything is
+ * an average per frame unless noted, in microseconds, integer:
+ *
+ *   clk_ns   cost of ONE sceKernelGetSystemTimeWide call, measured on this
+ *            console at session start.  Multiply by the call counts below
+ *            to price the instrumentation itself — and to price what the
+ *            pre-ADR-0021 poll path was paying (poll_n - work) times it.
+ *   frame    one main-loop iteration, vblank wait EXCLUDED.  This is the
+ *            number that has to stay under 16.7 ms; the loop is
+ *            vblank-locked, so a frame 1 us over budget costs a whole
+ *            16.7 ms.  That quantisation is why a few ms of session work
+ *            shows up as 20 fps.
+ *   pump     the once-per-frame fe_np_pump.
+ *   poll     n = poll_receive calls the core made; work = how many of them
+ *            found something to do; then avg/max of the ones that did.
+ *   rx       transport drain + parse + deliver into the core (both pumps).
+ *   arq      ARQ timers, retransmit scan, keepalive, roster (both pumps).
+ *   pdp      sceNetAdhocPdpSend: calls in the window, then MEAN AND MAX PER
+ *            CALL (not per frame).  This is the number PPSSPP cannot tell
+ *            us — there it is a host UDP sendto.
+ *   enq      what the EMULATION thread paid per send: the ring copy plus a
+ *            semaphore signal with the TX thread on, the whole PdpSend
+ *            without it.  Mean/max per call.
+ *   txq      queued / sent-inline / ring-was-full counts.
+ *   evt      EVT+LOG lines written in the window, then total and max us
+ *            paid BY THE EMULATION THREAD.  Before ADR-0024 that was the
+ *            whole fprintf+fflush to the memory stick (field max 12002 us
+ *            on the 1000, 12525 us on the 3000).  With log_thread=1 it is
+ *            only vsnprintf + a ring copy + a semaphore signal, so this
+ *            number collapsing to tens of us IS the proof the move worked.
+ *   evtio    the memory stick itself, now on the writer thread: total us in
+ *            the window / worst single flush / lines dropped because the
+ *            ring was full / ring high-water bytes.  `drop` must stay 0; if
+ *            it does not, FE_EVT_RING is too small for this log volume.
+ */
+/* Windows shorter than this are not divided into: opening or closing the
+ * in-game menu pauses the core but not the wireless tick, so the window can
+ * span a single frame and the per-frame averages come out as nonsense
+ * (`pump=14674 arq=8773` in the field log — microseconds of a whole menu
+ * charged to one frame).  `force` is teardown, which must always report. */
+#define SESS_COST_MIN_FRAMES 60
+
+/* The vblank target stays HERE: the present loop owns it, and the pacing
+ * engine in ff_psp.c does not touch it. */
+/* ADR-0047: the absolute vblank we intend to present the next frame on.
+ * Paced against sceDisplayGetVcount() so an overrunning frame consumes
+ * its budget instead of adding a whole vblank on top of it. */
+static unsigned g_vc_target;
+#define PACE_VC_RESYNC_VB 8   /* arrears past this are forgiven, not repaid */
+
+/* ---- ADR-0063: EVT frame_hist — the SHAPE of the frame-time distribution --
+ *
+ * Why this exists.  `EVT sess_cost frame=<mean>/<max>` reports a window mean
+ * and an ALL-TIME max and nothing in between, and `EVT core_prof
+ * core=<mean>/<winmax>/<max>` adds a per-window max.  Three sessions of work
+ * (CLIFF, OVERNIGHT, FULLSPEED) have shown the failure at 45.00-59.73 is
+ * probabilistic — 1.00 / 0.80 / 0.56 is a slope, not a step — so the quantity
+ * that decides a run is how OFTEN a frame overruns its budget, and a mean
+ * plus a max cannot see a change in that frequency.  A window whose one worst
+ * frame is 42 ms is indistinguishable from a window with fifty of them.
+ *
+ * Cost: this is fed from the work_us the main loop ALREADY computes for
+ * ADR-0021/ADR-0027 (`fe_np_prof_frame` / `pace_frame`), so it adds NO clock
+ * read.  Per frame it is <= 11 compares and one increment.  At 59.73 fps that
+ * is under 700 compares per wall second against a ~16.7 ms budget; the
+ * profiler this replaces (`core_phase`) cost ~500 us PER FRAME (FULLSPEED
+ * §20.4) and this is four orders of magnitude below that.
+ *
+ *   EVT frame_hist win=<frames> bud=<us> b=<b0>,..,<b10> ovb=<n> wmax=<us>
+ *                  late=<n> forgive=<n> nudge=<n>
+ *
+ *   b[]      frame WORK time (vblank wait excluded — the same number
+ *            `sess_cost frame=` averages), bucketed by the edges below.
+ *            Deltas over the window, so the buckets sum to `win`.
+ *   bud      the current pacing period in us (10^6 * 100 / pace target).
+ *   ovb      frames whose work exceeded `bud`.  This is the headline: at
+ *            59.73 the budget is 16740 us and the join's window MEAN is
+ *            already 16911-17196, so a threshold fixed at 16.7 ms would be
+ *            saturated — `ovb` follows the rate instead of assuming one.
+ *   wmax     worst work time IN THIS WINDOW (`sess_cost frame=`'s max is
+ *            all-time and latches on a boot frame; ADR-0028 was caught by
+ *            exactly that and had to add a window max for the same reason).
+ *   late     frames that arrived at the pacing wait ALREADY at or past
+ *            `g_vc_target` — i.e. the frame consumed its whole vblank budget
+ *            and we did not wait at all.  This is the over-budget count as
+ *            the PACER sees it, in vblanks rather than in microseconds, and
+ *            it needs no threshold at all.
+ *   forgive  times the ADR-0047 arrears forgiveness fired
+ *            (`vcount - target > PACE_VC_RESYNC_VB`): a stall so long the
+ *            debt was written off.  Every one of these is a hard divergence
+ *            from the peer's frame count.
+ *   nudge    times the audio-ring high-water nudge (plan §4.4,
+ *            `ring_w - ring_r > RING_HIGH_WATER`) added a whole extra vblank.
+ *            At 59.73 that HALVES the frame's rate, and until this counter
+ *            existed the nudge was completely unobservable — there is no
+ *            other log line anywhere that reports the ring level.  It is
+ *            listed as a suspect spike source and nobody has ever seen it
+ *            fire or not fire.
+ *
+ * Bucket edges straddle BOTH budgets in play: 16740 us (59.73 fps) and
+ * 33400 us (29.97 fps, the regression gate).  b5 is the "just over full
+ * speed" bucket and b8 the "just over the gate" bucket, so one line reads
+ * usefully at either rate.  The last bucket isolates the >100 ms save
+ * frames, which are known and are not the target. */
+#define FH_BINS 11
+static const uint32_t g_fh_edge[FH_BINS - 1] = {
+   10000, 12000, 14000, 15500, 16740, 20000, 25000, 33400, 50000, 100000
+};
+static unsigned g_fh_bin[FH_BINS];
+static unsigned g_fh_n;           /* frames binned since the last emit      */
+static unsigned g_fh_ovb;         /* frames over the CURRENT pacing budget */
+static uint32_t g_fh_wmax;        /* worst work_us in the current window */
+static unsigned g_fh_late;        /* pacing wait was already due          */
+static unsigned g_fh_forgive;     /* ADR-0047 arrears written off         */
+static unsigned g_fh_nudge;       /* audio-ring high-water extra vblank   */
+
+/* Called from the main loop with the work time it already measured.  No
+ * clock read, no division: the budget is recomputed only when the pace
+ * target moves, which is at most once a second (ADR-0033's glide). */
+static void frame_hist_note(uint32_t work_us)
+{
+   static unsigned cached_target;
+   static uint32_t cached_bud = 16740;
+   unsigned i;
+
+   if (ff_pace_target_x100() != cached_target)
+   {
+      cached_target = ff_pace_target_x100();
+      cached_bud    = cached_target
+                    ? (uint32_t)(100000000ull / cached_target)
+                    : 16740u;
+   }
+   for (i = 0; i < FH_BINS - 1; i++)
+      if (work_us < g_fh_edge[i])
+         break;
+   g_fh_bin[i]++;
+   g_fh_n++;
+   if (work_us > cached_bud)
+      g_fh_ovb++;
+   if (work_us > g_fh_wmax)
+      g_fh_wmax = work_us;
+}
+
+/* `win` is this line's OWN frame count, so b[] always sums to it.  It is not
+ * necessarily `sess_cost win=`: sess_cost only exists while a session is up,
+ * so the first frame_hist of a run also carries every frame since boot.
+ * `swin` is sess_cost's count, printed so the two can be lined up. */
+static void frame_hist_evt(unsigned swin)
+{
+   FE_EVT_ONLY(swin);
+   unsigned bud = ff_pace_target_x100()
+                ? (unsigned)(100000000ull / ff_pace_target_x100()) : 0u;
+   FE_EVT_ONLY(bud);
+   fe_evt("frame_hist win=%u swin=%u bud=%u "
+          "b=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u "
+          "ovb=%u wmax=%u late=%u forgive=%u nudge=%u",
+          g_fh_n, swin, bud,
+          g_fh_bin[0], g_fh_bin[1], g_fh_bin[2], g_fh_bin[3], g_fh_bin[4],
+          g_fh_bin[5], g_fh_bin[6], g_fh_bin[7], g_fh_bin[8], g_fh_bin[9],
+          g_fh_bin[10],
+          g_fh_ovb, g_fh_wmax, g_fh_late, g_fh_forgive, g_fh_nudge);
+   memset(g_fh_bin, 0, sizeof(g_fh_bin));
+   g_fh_n = g_fh_ovb = g_fh_late = g_fh_forgive = g_fh_nudge = 0;
+   g_fh_wmax = 0;
+}
+
+/* ---- ADR-0064: EVT preempt — HOW OFTEN IS THE EMULATION THREAD ACTUALLY
+ *      TAKEN OFF THE CPU, AND WHERE IN THE FRAME -------------------------
+ *
+ * Why this exists.  FULLSPEED §27.2 measured that `emu_prio = 0x2B` costs the
+ * join 3.5-4.0 ms of frame time (`core` 11.9-13.5 -> 16.2-17.2 ms) and called
+ * it "pure preemption overhead".  That is an INFERENCE from a difference of
+ * two means; nobody has ever counted a single preemption on this rig.  Every
+ * design that follows from it — the protected-window idea included — depends
+ * on whether the emulation thread is interrupted twice per frame or fifty
+ * times, and on whether those interruptions land inside `retro_run` or in the
+ * frontend.  Two prior recommendations in this project were built on
+ * unverified numbers and both were wrong, so this counts before anything is
+ * designed.
+ *
+ * How.  `sceKernelReferThreadRunStatus()` returns the kernel's own
+ * `threadPreemptCount` (times this thread was taken off the CPU by a
+ * higher-priority THREAD becoming runnable) and `intrPreemptCount` (times an
+ * INTERRUPT took it off).  Sampling those at four points in the loop splits
+ * one frame into four accounted regions:
+ *
+ *   pre    frame start -> just before the core-run block  (input, autopilot,
+ *          UI, fast-forward bookkeeping)
+ *   core   the `fe_host_run_frame()` block itself, plus pace_burn
+ *   post   after the core -> the point where `work_us` is taken (dump
+ *          checks, blit_prof, autopilot status)
+ *   wait   the point where `work_us` is taken -> the NEXT frame's start.
+ *          This is the pacing/vblank wait, i.e. the time we WANT the radio to
+ *          run in.  Preemptions here are free; preemptions in the other three
+ *          are the 3.5-4.0 ms.
+ *
+ * `pre`+`core`+`post` is exactly the region `work_us` measures, so the counts
+ * and the microseconds are commensurable.
+ *
+ * Cost and honesty about it.  Four kernel calls plus eight clock reads per
+ * frame, all of which are self-timed into `self=` and reported, so the
+ * instrument's own price is in its own output.  It is OFF unless
+ * `preempt_prof = 1` is set in the harness ini: with the key absent not one
+ * of these functions is entered and the loop is byte-for-byte the previous
+ * behaviour.
+ *
+ *   EVT preempt n=<frames> t=<pre>/<core>/<post>/<wait>
+ *               i=<pre>/<core>/<post>/<wait> wmax=<n> imax=<n>
+ *               h=<h0>,..,<h6> rel=<n> self=<us> calls=<n> prio=0x<xx>
+ *
+ *   t/i    window TOTALS (not per-frame) of thread / interrupt preemptions in
+ *          each region.  Divide by `n` for the per-frame figure.
+ *   wmax   worst single frame's thread-preemption count over pre+core+post.
+ *   imax   the same for interrupt preemptions.
+ *   h[]    histogram of per-frame thread preemptions over pre+core+post,
+ *          bins 0 / 1-2 / 3-4 / 5-8 / 9-16 / 17-32 / 33+.  A mean cannot tell
+ *          "every frame loses 8 slices" from "one frame in ten loses 80", and
+ *          those two want different fixes.
+ *   rel    releaseCount delta — times the thread was released from a wait.
+ *   self   microseconds this instrument itself spent inside the kernel calls.
+ *   prio   the emulation thread's priority at emit time (so a build running
+ *          the ADR-0065 boost window shows which side of the driver it is on).
+ */
+/* ADR-0066, see the main loop.  Frames between dump-marker polls; 0 = never.
+ * ADR-0069 moved the default to 0 — L+R+SELECT replaces the marker file and
+ * costs nothing.  Set `dump_marker_poll = 60` for the pre-0069 behaviour. */
+static int      g_dump_marker_every = PLAY_DUMP_MARKER;
+
+/* ADR-0069: the screenshot chord, and the yield the marker stat used to pay
+ * for by accident.  `g_yield_us` microseconds of sceKernelDelayThread once per
+ * `g_yield_every` frames; 0 us = off, which is the default in both builds. */
+static int      g_dump_chord_pending;
+static int      g_yield_us;
+static int      g_yield_every = 60;
+
+#define PE_BINS 7
+static SceUID   g_emu_thid = -1;
+static int      g_pe_on;            /* harness key `preempt_prof`           */
+static unsigned g_pe_n;
+static unsigned g_pe_t[4], g_pe_i[4];   /* pre / core / post / wait        */
+static unsigned g_pe_wmax, g_pe_imax;
+static unsigned g_pe_hist[PE_BINS];
+static unsigned g_pe_rel, g_pe_self_us, g_pe_calls;
+static unsigned g_pe_last_t, g_pe_last_i, g_pe_last_r;
+static int      g_pe_have;
+static unsigned g_pe_fr_t, g_pe_fr_i;   /* this frame's work-region totals */
+
+/* Sample once and attribute the delta since the previous sample to `slot`.
+ * slot 0..3 = pre/core/post/wait; slot < 0 = prime the counters only. */
+static void preempt_mark(int slot)
+{
+   SceKernelThreadRunStatus st;
+   uint64_t t0;
+   int rc;
+
+   if (!g_pe_on || g_emu_thid < 0)
+      return;
+   memset(&st, 0, sizeof(st));
+   st.size = sizeof(st);
+   t0 = net_now_us();
+   rc = sceKernelReferThreadRunStatus(g_emu_thid, &st);
+   g_pe_self_us += (unsigned)(net_now_us() - t0);
+   g_pe_calls++;
+   if (rc < 0)
+   {
+      g_pe_on = 0;                 /* never let an instrument fail a run */
+      fe_evt("preempt disabled rc=%d", rc);
+      return;
+   }
+   if (g_pe_have && slot >= 0 && slot < 4)
+   {
+      unsigned dt = st.threadPreemptCount - g_pe_last_t;
+      unsigned di = st.intrPreemptCount   - g_pe_last_i;
+      g_pe_t[slot] += dt;
+      g_pe_i[slot] += di;
+      g_pe_rel     += st.releaseCount - g_pe_last_r;
+      if (slot != 3)               /* 0..2 are the work region */
+      {
+         g_pe_fr_t += dt;
+         g_pe_fr_i += di;
+      }
+   }
+   g_pe_have   = 1;
+   g_pe_last_t = st.threadPreemptCount;
+   g_pe_last_i = st.intrPreemptCount;
+   g_pe_last_r = st.releaseCount;
+}
+
+/* Called once per frame, after the `post` mark, to close out the histogram. */
+static void preempt_frame_end(void)
+{
+   unsigned v;
+   if (!g_pe_on)
+      return;
+   v = g_pe_fr_t;
+   g_pe_n++;
+   if (v > g_pe_wmax) g_pe_wmax = v;
+   if (g_pe_fr_i > g_pe_imax) g_pe_imax = g_pe_fr_i;
+   g_pe_hist[v == 0 ? 0 : v <= 2 ? 1 : v <= 4 ? 2 : v <= 8 ? 3 :
+             v <= 16 ? 4 : v <= 32 ? 5 : 6]++;
+   g_pe_fr_t = g_pe_fr_i = 0;
+}
+
+static void preempt_evt(void)
+{
+   SceKernelThreadRunStatus st;
+   int prio = 0;
+   FE_EVT_ONLY(prio);
+   if (!g_pe_on)
+      return;
+   memset(&st, 0, sizeof(st));
+   st.size = sizeof(st);
+   if (sceKernelReferThreadRunStatus(g_emu_thid, &st) >= 0)
+      prio = st.currentPriority;
+   fe_evt("preempt n=%u t=%u/%u/%u/%u i=%u/%u/%u/%u wmax=%u imax=%u "
+          "h=%u,%u,%u,%u,%u,%u,%u rel=%u self=%u calls=%u prio=0x%02X",
+          g_pe_n,
+          g_pe_t[0], g_pe_t[1], g_pe_t[2], g_pe_t[3],
+          g_pe_i[0], g_pe_i[1], g_pe_i[2], g_pe_i[3],
+          g_pe_wmax, g_pe_imax,
+          g_pe_hist[0], g_pe_hist[1], g_pe_hist[2], g_pe_hist[3],
+          g_pe_hist[4], g_pe_hist[5], g_pe_hist[6],
+          g_pe_rel, g_pe_self_us, g_pe_calls, prio);
+   memset(g_pe_t, 0, sizeof(g_pe_t));
+   memset(g_pe_i, 0, sizeof(g_pe_i));
+   memset(g_pe_hist, 0, sizeof(g_pe_hist));
+   g_pe_n = g_pe_wmax = g_pe_imax = g_pe_rel = g_pe_self_us = g_pe_calls = 0;
+}
+
+/* ---- ADR-0065: THE PROTECTED WINDOW ------------------------------------
+ *
+ * The problem, from FULLSPEED §27/§28.3.  `emu_prio = 0x2B` is what makes
+ * full speed work at all (srtt 680 -> 20 ms, retx 27 % -> 0 %), because it
+ * puts the emulation thread BELOW the WLAN driver's 0x2A so the radio no
+ * longer has to live in the emulator's vanishing idle.  But it is a STANDING
+ * demotion: the driver can take the CPU at any instant for the whole frame,
+ * and that costs the join 3.5-4.0 ms of pure preemption overhead against a
+ * 16.74 ms budget whose actual emulation work is only ~13.4 ms.  The network
+ * fix created the frame overrun that is now the only remaining problem.
+ *
+ * The idea.  Keep the demotion as the DEFAULT state of the frame, but carve
+ * out a bounded window at the top of each frame in which the emulator is
+ * temporarily raised ABOVE the driver (`emu_prio_boost`, default 0x29), then
+ * dropped back to `emu_prio`.  The radio keeps preemptive priority for the
+ * rest of the frame.
+ *
+ * Why this direction and not the other.  If the window is mistuned it
+ * degrades toward TODAY'S WORKING behaviour (a shorter or absent window = the
+ * current standing demotion), not toward the broken pre-`emu_prio` state.  A
+ * knob that raises the emulator permanently would fail the other way.
+ *
+ * How the window is bounded.  Not by the main loop — it cannot check a clock
+ * from inside `retro_run`, which is ~13 ms of the frame in one call.  A
+ * warden thread at 0x13 -- deliberately BELOW our callback thread (0x11) and
+ * our audio thread (0x12) so it can never delay either, and above everything
+ * else we own -- waits on a semaphore, sleeps `emu_prio_boost_us`, and lowers
+ * the emulation thread from the outside.  The main loop ALSO closes the
+ * window when its work region ends, so the window is
+ *
+ *      min(emu_prio_boost_us, this frame's actual work time)
+ *
+ * and can never extend into the vblank wait, which is the time the radio is
+ * supposed to have.  Both closers are idempotent.
+ *
+ *   emu_prio_boost_us   0 = OFF, and with it off not one kernel call is made
+ *                       and no thread is created — today's behaviour exactly.
+ *   emu_prio_boost      priority during the window; default 0x29, i.e. one
+ *                       step above the 0x2A WLAN stack.
+ *
+ *   EVT boost open=<n> close_self=<n> close_warden=<n> us=<n> prio=0x<xx>
+ *                base=0x<xx> late=<n>
+ *     close_self / close_warden say WHICH end shut the window, and their
+ *     ratio is the result: all-self means the window is longer than the
+ *     frame's work and the knob is just "emu_prio off"; all-warden means the
+ *     window is genuinely bounded and the radio got the rest of the frame.
+ *     `late` counts frames where the warden was still asleep from the
+ *     PREVIOUS frame when a new one opened. */
+static int      g_boost_us;          /* harness key, 0 = off               */
+static int      g_boost_prio = 0x29;
+static int      g_boost_base = 0x2B; /* what we drop back TO = emu_prio    */
+static SceUID   g_boost_thid = -1, g_boost_sema = -1;
+static volatile int g_boost_run;
+static volatile int g_boost_open;    /* 1 while the window is raised       */
+static unsigned g_boost_n_open, g_boost_n_self, g_boost_n_warden, g_boost_late;
+
+/* Drop the emulation thread back to its standing priority.  Safe to call
+ * from either thread and safe to call twice: the flag is the interlock. */
+static void emu_boost_drop(void)
+{
+   if (!g_boost_open)
+      return;
+   g_boost_open = 0;
+   sceKernelChangeThreadPriority(g_emu_thid, g_boost_base);
+}
+
+static int boost_warden(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   while (g_boost_run)
+   {
+      SceUInt tmo = 500000;
+      if (sceKernelWaitSema(g_boost_sema, 1, &tmo) < 0)
+         continue;                        /* timeout: just re-arm */
+      if (!g_boost_run)
+         break;
+      sceKernelDelayThread((SceUInt)g_boost_us);
+      if (g_boost_open)
+      {
+         g_boost_n_warden++;
+         emu_boost_drop();
+      }
+   }
+   return 0;
+}
+
+static void emu_boost_open(void)
+{
+   if (!g_boost_us || g_boost_thid < 0 || !g_net_up)
+      return;
+   if (g_boost_open)
+      g_boost_late++;                     /* warden still asleep from last */
+   g_boost_open = 1;
+   sceKernelChangeThreadPriority(g_emu_thid, g_boost_prio);
+   g_boost_n_open++;
+   sceKernelSignalSema(g_boost_sema, 1);  /* max count 1: extras are lost */
+}
+
+static void emu_boost_close(void)
+{
+   if (!g_boost_us || !g_boost_open)
+      return;
+   g_boost_n_self++;
+   emu_boost_drop();
+}
+
+static void emu_boost_start(void)
+{
+   if (!g_boost_us)
+      return;
+   g_boost_run  = 1;
+   g_boost_sema = sceKernelCreateSema("gpsp_boost", 0, 0, 1, NULL);
+   if (g_boost_sema >= 0)
+   {
+      g_boost_thid = sceKernelCreateThread("gpsp_boost", boost_warden,
+                                           0x13, 0x800, THREAD_ATTR_USER,
+                                           NULL);
+      if (g_boost_thid < 0 || sceKernelStartThread(g_boost_thid, 0, NULL) < 0)
+      {
+         if (g_boost_thid >= 0)
+            sceKernelDeleteThread(g_boost_thid);
+         g_boost_thid = -1;
+         sceKernelDeleteSema(g_boost_sema);
+         g_boost_sema = -1;
+      }
+   }
+   if (g_boost_thid < 0)
+   {
+      g_boost_us = 0;             /* never fail a run over an optimisation */
+      fe_evt("boost disabled reason=thread_failed");
+      return;
+   }
+   fe_evt("boost armed us=%d prio=0x%02X base=0x%02X warden=0x13",
+          g_boost_us, g_boost_prio, g_boost_base);
+}
+
+static void emu_boost_stop(void)
+{
+   if (g_boost_thid < 0)
+      return;
+   emu_boost_drop();
+   g_boost_run = 0;
+   sceKernelSignalSema(g_boost_sema, 1);
+   {
+      SceUInt tmo = 1000000;
+      sceKernelWaitThreadEnd(g_boost_thid, &tmo);
+   }
+   sceKernelDeleteThread(g_boost_thid);
+   sceKernelDeleteSema(g_boost_sema);
+   g_boost_thid = -1;
+   g_boost_sema = -1;
+}
+
+static void boost_evt(void)
+{
+   if (!g_boost_us)
+      return;
+   fe_evt("boost open=%u close_self=%u close_warden=%u us=%d prio=0x%02X "
+          "base=0x%02X late=%u",
+          g_boost_n_open, g_boost_n_self, g_boost_n_warden,
+          g_boost_us, g_boost_prio, g_boost_base, g_boost_late);
+   g_boost_n_open = g_boost_n_self = g_boost_n_warden = g_boost_late = 0;
+}
+
+void sess_cost_evt(int force)
+{
+   static fe_np_prof  prev;
+   static adhoc_stats prev_a;
+   static unsigned    prev_evt_lines, prev_evt_us, prev_evt_io_us;
+   FE_EVT_ONLY(prev_evt_lines); FE_EVT_ONLY(prev_evt_us);
+   FE_EVT_ONLY(prev_evt_io_us);
+   static unsigned    prev_core_calls;
+   static uint32_t    prev_core_us;
+   FE_EVT_ONLY(prev_core_us);
+   fe_np_prof  p;
+   adhoc_stats a;
+   unsigned    el, eu, emx;
+   unsigned    eio, eiomx, edrop, ehi;
+   unsigned    f, dpdp = 0, denq = 0;
+   FE_EVT_ONLY(dpdp); FE_EVT_ONLY(denq);
+   unsigned    ccalls, dcc = 0;
+   FE_EVT_ONLY(dcc);
+   uint32_t    cus, cmax;
+   unsigned    srf, sff, ssf, sdf, spl;  /* counters, SLOWEST retro_run */
+   unsigned    crf, cff, csf, cdf, cpl;  /* cumulative, for window rates */
+   static unsigned prev_crf, prev_cff, prev_csf, prev_cdf, prev_cpl;
+   FE_EVT_ONLY(prev_crf); FE_EVT_ONLY(prev_cff); FE_EVT_ONLY(prev_csf);
+   FE_EVT_ONLY(prev_cdf); FE_EVT_ONLY(prev_cpl);
+
+   fe_np_prof_get(&p);
+   adhoc_transport_get_stats(&a);
+   fe_evt_prof(&el, &eu, &emx);
+   fe_evt_prof_io(&eio, &eiomx, &edrop, &ehi);
+   fe_host_core_prof(&ccalls, &cus, &cmax);        /* ADR-0027 §measurement */
+   fe_host_core_spike(NULL, &srf, &sff, &ssf, &sdf, &spl);    /* ADR-0028 */
+   plat_core_counters(&crf, &cff, &csf, &cdf, &cpl);
+
+   f = p.frames - prev.frames;
+   if (!force && f < SESS_COST_MIN_FRAMES)
+      return;      /* deliberately do NOT advance prev: fold into the next */
+   if (!f)
+      f = 1;
+   dpdp = a.tx_calls  - prev_a.tx_calls;
+   denq = a.tx_queued + a.tx_inline - (prev_a.tx_queued + prev_a.tx_inline);
+   dcc  = ccalls - prev_core_calls;
+
+   fe_evt("sess_cost win=%u clk_ns=%u frame=%u/%u pump=%u/%u "
+          "poll=%u/%u/%u/%u rx=%u/%u arq=%u/%u "
+          "pdp=%u/%u/%u enq=%u/%u txq=%u/%u/%u evt=%u/%u/%u "
+          "evtio=%u/%u/%u/%u txthr=%d core=%u/%u "
+          "corewin=%u/%u/%u/%u/%u corespike=%u/%u/%u/%u/%u "
+          "pace=%u.%02u/%u.%02u/%u.%02u/%d",
+          f, p.clk_ns,
+          (p.frame_us - prev.frame_us) / f, p.frame_max_us,
+          (p.pump_us  - prev.pump_us)  / f, p.pump_max_us,
+          (p.poll_n - prev.poll_n) / f,
+          (p.poll_work_n - prev.poll_work_n) / f,
+          (p.poll_us - prev.poll_us) / f, p.poll_max_us,
+          (p.rx_us  - prev.rx_us)  / f, p.rx_max_us,
+          (p.arq_us - prev.arq_us) / f, p.arq_max_us,
+          dpdp, dpdp ? (a.tx_us - prev_a.tx_us) / dpdp : 0u, a.tx_max_us,
+          denq ? (a.tx_enq_us - prev_a.tx_enq_us) / denq : 0u, a.tx_enq_max_us,
+          a.tx_queued - prev_a.tx_queued, a.tx_inline - prev_a.tx_inline,
+          a.tx_ring_full - prev_a.tx_ring_full,
+          el - prev_evt_lines, eu - prev_evt_us, emx,
+          eio - prev_evt_io_us, eiomx, edrop, ehi,
+          adhoc_transport_tx_thread_active(),
+          dcc ? (unsigned)((cus - prev_core_us) / dcc) : 0u, cmax,
+          crf - prev_crf, cff - prev_cff, csf - prev_csf, cdf - prev_cdf,
+          cpl - prev_cpl,
+          srf, sff, ssf, sdf, spl,
+          ff_pace_target_x100() / 100, ff_pace_target_x100() % 100,
+          ff_pace_cap_x100() / 100,    ff_pace_cap_x100() % 100,
+          ff_pace_peer_x100() / 100,   ff_pace_peer_x100() % 100,
+          ff_pace_engaged());
+
+   frame_hist_evt(f);                                       /* ADR-0063 */
+   preempt_evt();                                           /* ADR-0064 */
+   boost_evt();                                             /* ADR-0065 */
+
+   prev = p;
+   prev_a = a;
+   prev_evt_lines = el;
+   prev_evt_us = eu;
+   prev_evt_io_us = eio;
+   prev_core_calls = ccalls;
+   prev_core_us = cus;
+   prev_crf = crf;
+   prev_cff = cff;
+   prev_csf = csf;
+   prev_cdf = cdf;
+   prev_cpl = cpl;
+}
+
+/* The cell this console is in: two consoles in one group must report the
+ * SAME bssid and channel (hw3 run 9 / hw4: both "up" in GBLNK7, rx=0). */
+static void adhoc_ctl_evt(const char *at)
+{
+#ifdef GPSP_NO_TELEMETRY
+   /* two adhocctl calls a heartbeat for a line nobody reads: not in release */
+   FE_EVT_ONLY(at);
+#else
+   int ch = -1, peers = -1;
+   uint8_t b[6] = { 0 };
+   if (adhoc_transport_ctl_info(&ch, b, &peers) != 0)
+      return;
+   fe_evt("adhoc_ctl at=%s channel=%d bssid=%02x:%02x:%02x:%02x:%02x:%02x "
+          "ctl_peers=%d", at, ch, b[0], b[1], b[2], b[3], b[4], b[5], peers);
+#endif
+}
+
+static void log_adhoc_up(const char *group)
+{
+   FE_EVT_ONLY(group);
+   nd_transport tp;
+   uint8_t mac[6];
+   adhoc_transport_iface(&tp);
+   tp.local_addr(tp.ctx, mac);
+   fe_evt("adhoc_up group=%s mac=%02x:%02x:%02x:%02x:%02x:%02x",
+          group && group[0] ? group : ADHOC_GROUP_DEFAULT,
+          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+   adhoc_ctl_evt("up");
+}
+
+/* Start the netdrv/netpacket layer over the (already-up) transport. */
+/* Reason text from the last failed netdrv start, for the toast.  A release
+ * build has no log, so the message on screen is the only diagnosis the owner
+ * ever gets -- it has to be true and it has to be specific. */
+static char g_np_start_why[32];
+/* A GBA link-cable session (GBA_LINK builds, harness gblink_role + gba_dual:
+ * docs/GBA-LINK-MIRROR.md section 14): the GB link session's channel and
+ * flow on a GBA game, none of RFU's session pacing. */
+static int g_gba_cable;
+/* GBA-LINK-MIRROR.md 19: instance B loads at session start (harness
+ * gba_dual_late; the boot-time cable reserve is then not taken) */
+#ifdef GBA_LINK
+static int g_gba_late;
+#else
+#define g_gba_late 0
+#endif
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+static unsigned g_gblink_repeat_left;
+static int g_gblink_repeat_restart;
+static char g_script_path[192];
+#endif
+/* This boot can run one (instance B loaded for sessions): the harness's
+ * gblink_role + gba_dual, or the player's Wireless menu (docs/
+ * GBA-LINK-UI.md).  g_gba_cable is then per session: 1 while the session
+ * up (or being brought up) is a cable one, 0 for an adapter one. */
+static int g_gba_cable_ok;
+/* GBA link-cable session memory, reserved at boot (GBA-LINK-MIRROR.md 15.3).
+ * The core takes ROM blocks until malloc fails at load ("heap exhausted by
+ * design"), so a session's buffers allocated later fail on a console with no
+ * spare heap: on the PSP-1000 model AW2 (8 MiB) went resident and left
+ * 1.25 MB, and the join's fe_gblink_create failed.  A session holds, at its
+ * peak (end), its own and the pre-link state + battery, the partner's state
+ * + battery and the final copies: 2,284,912 B measured (PPSSPP, AW2,
+ * gblink_pre -> gblink_end).  The reserve is taken before the ROM cache and
+ * handed back the moment the session starts, so the session's allocations
+ * land in it; the ROM cache pages instead (pg= in EVT gblink_win).
+ * Harness cable_reserve_kb overrides (0 = none, the old behaviour). */
+#define CABLE_RESERVE_KB 2560u
+/* Section 20: a cable session's default translation-cache offsets mod 8 KiB
+ * (LAYOUT_PIN builds; -1 = keep the single-player pin).  hw6/hw7
+ * (GBA-LINK-MIRROR.md 20.1-20.2): the LARGE tier (3000/Go) is fastest at
+ * the pinned defaults; the SMALL tier (1000) with A at 0x1000 and B at
+ * 0x0000 (-1.13 ms core vs the unpinned build).  Pair: AW2 59.8 fps,
+ * Super Circuit 59.0 (unpinned 59.2 / 58.2). */
+#define GBA_SESS_PIN_A_SMALL 0x1000
+#define GBA_SESS_PIN_A_LARGE (-1)
+#define GBA_SESS_PIN_B_SMALL 0x0000
+#define GBA_SESS_PIN_B_LARGE (-1)
+static void *g_cable_reserve;
+
+/* LINK SPEED: what a player's build runs with (docs/GBA-LINK-MIRROR.md 21-28;
+ * 4.0.0 beta).  Each has a config.ini key of the same name as its kill
+ * switch (0 = the path every build up to 3.5.0 ran), and the harness key of
+ * that name overrides it for an A/B arm.  A harness build has the SAME
+ * defaults: it must be the emulator the player gets.
+ *   gba_link_fast = 3            cable fast path + lean hooks (link only)
+ *   gba_link_headless_audio = 2  the partner mixes no sound, ring not read
+ *   sched_fast = 1               update_gba skips the interrupt check when
+ *                                IE & IF == 0 (SCHED_FAST builds; every game)
+ *   irq_io_fast = 1              IE/IF/IME stores inline in the I/O store
+ *                                stub (IRQ_IO_FAST builds; every game)
+ *   nd_ack_ride_us = 30000       acks ride on input packets: a GBA Link
+ *                                Cable session, from RUNNING to its close
+ *                                (netpacket_host.c fe_np_ack_ride_session) */
+#define PLAY_GBA_LINK_FAST           3
+#define PLAY_GBA_LINK_HEADLESS_AUDIO 2
+#define PLAY_SCHED_FAST              1
+#define PLAY_IRQ_IO_FAST             1
+#define PLAY_ND_ACK_RIDE_US          30000
+/* One pump period: the transport is serviced once per emulated frame, so an
+ * ack that has waited out its ride leaves up to this much later.  The ride
+ * is clamped to the RTO floor minus this (and minus nothing for transit,
+ * which the adaptive RTO already contains). */
+#define ND_PUMP_PERIOD_US 17000
+/* The RTO floor a 0 in nd_rto_min_us means (netdrv's build-time default). */
+#define ND_RTO_FLOOR_DEFAULT_US 30000
+
+static int net_start_np(int is_host, const char *group, const char *nick,
+                        int probe)
+{
+   static nd_transport tp;               /* fe_np copies the vtable */
+   fe_np_config npc;
+
+   adhoc_transport_iface(&tp);
+   memset(&npc, 0, sizeof(npc));
+   npc.transport = &tp;
+   npc.is_host   = is_host;
+   npc.nick      = nick;
+   npc.now_us    = net_now_us;
+   npc.probe     = probe;
+   if ((g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable ?
+        fe_np_start(&npc) : fe_np_start_gb(&npc)) != 0)
+   {
+      /* Free memory goes in the log because "out of memory" is the reason a
+       * 32 MB console fails where a 64 MB one does not, and the number says
+       * whether it was exhaustion or fragmentation. */
+      fe_evt("net_error reason=np_start why=\"%s\" free=%d max_block=%d",
+             fe_np_start_reason(), sceKernelTotalFreeMemSize(),
+             sceKernelMaxFreeMemSize());
+      snprintf(g_np_start_why, sizeof(g_np_start_why), "%s",
+               fe_np_start_reason());
+      return ADHOC_ERR_NP_START;
+   }
+   g_net_up = 1;
+   g_net_is_host = is_host;
+   g_group_lost_logged = 0;
+   {
+      /* The chip and the Wireless status line name the room as the menus
+       * do ("Room 7", room_label.h); the group id itself is unchanged. */
+      char lbl[ROOM_LABEL_CAP];
+      snprintf(g_session_info, sizeof(g_session_info), "%s  %s",
+               is_host ? "hosting" : "joined",
+               room_label(group && group[0] ? group : ADHOC_GROUP_DEFAULT,
+                          lbl, sizeof(lbl)));
+   }
+   /* Settings -> "Session overlay" hides the chip; g_session_info itself is
+    * kept regardless — the wireless menu's status line reads it. */
+   osd_chip_session(g_pcfg.osd_wireless ? g_session_info : NULL);
+   link_chip();                 /* a menu session names its mode instead */
+   return 0;
+}
+
+/* Re-apply the session-chip visibility after a settings change, without
+ * touching the session itself. */
+void osd_session_chip_refresh(void)
+{
+   if (g_net_up && g_link_kind != LK_NONE)
+      link_chip();
+   else if (g_net_up)
+      osd_chip_session(g_pcfg.osd_wireless ? g_session_info : NULL);
+}
+
+/* The fast-forward and session-pacing engine moved to psp/ff_psp.c.
+ * 1052 lines and 23 state variables; see ff_psp.h for the interface and
+ * for the six host symbols it still reads. */
+static void blit_prof_evt(unsigned frames)
+{
+   static unsigned last;
+   unsigned n, st, stm, gu, gum, wt, wtm;
+
+   if (!frames || frames == last || (frames % 600) != 0)
+      return;
+   last = frames;
+   vid_blit_prof(&n, &st, &stm, &gu, &gum, &wt, &wtm);
+   if (!n)
+      return;
+   /* `wait` is a SUBSET of `gu` (ADR-0038), not another term of `tot` — the
+    * sum below is deliberately still stage+gu.  Read it as: of `gu`, `wait`
+    * is stalled-on-the-GE and the remainder is list building. */
+   fe_evt("blit_prof mode=%d name=%s n=%u stage=%u/%u gu=%u/%u wait=%u/%u "
+          "tot=%u",
+          vid_blit_mode(), vid_blit_mode_name(vid_blit_mode()), n,
+          st / n, stm, gu / n, gum, wt / n, wtm, (st + gu) / n);
+}
+
+/* Full wireless bring-up around the booted core.  Returns 0 on success. */
+static int g_gblink_role;    /* harness: 0 off, 1 host, 2 join (below) */
+
+static int net_bringup_io(int is_host, const char *group, const char *nick,
+                          int probe)
+{
+   int rc;
+
+
+   if (g_save_path_for_backup)
+      backup_save(g_save_path_for_backup);
+
+   /* ADR-0021: keep sceNetAdhocPdpSend off the emulation thread unless the
+    * user turned it off for an A/B.  Must precede init (the thread is part
+    * of the bring-up ladder). */
+   adhoc_transport_set_tx_thread(g_pcfg.net_tx_thread);
+
+   /* A join joins the host's scanned BSS and never creates a group:
+    * connect-by-name made a second GBLNK7 whenever its own quick scan
+    * missed the host (hw3 run 9, hw4 auto001/003: both consoles up in
+    * "GBLNK7", rx=0 for 30 s, even after a scan had found the host). */
+   if (is_host)
+      rc = adhoc_transport_init(group, 0);
+   else
+   {
+      int tries = 0, ch = 0;
+      uint32_t ms = 0;
+      uint8_t b[6] = { 0 };
+      /* Harness: 90 s, well past any relaunch skew (ejects up to 20 s
+       * apart) and the host's 30 s no-peer wait.  Player: 15 s -- the
+       * room was on the list a moment ago. */
+      rc = adhoc_transport_init_join(group, 0, g_gblink_role ? 90000u
+                                                              : 15000u);
+      adhoc_transport_join_info(&tries, &ms, &ch, b);
+      FE_EVT_ONLY(tries); FE_EVT_ONLY(ms); FE_EVT_ONLY(ch);
+      fe_evt("adhoc_join group=%s rc=%d tries=%d ms=%u channel=%d "
+             "bssid=%02x:%02x:%02x:%02x:%02x:%02x", group, rc, tries,
+             (unsigned)ms, ch, b[0], b[1], b[2], b[3], b[4], b[5]);
+   }
+   if (rc != ADHOC_OK)
+   {
+      net_error_evt("adhoc_init", rc);
+      return rc;
+   }
+   log_adhoc_up(group);
+
+   if (net_start_np(is_host, group, nick, probe) != 0)
+   {
+      adhoc_transport_term();
+      return -1;
+   }
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      skip_policy_session_begin();       /* ADR-0019 */
+   /* Order matters: the mode line first (it names the policy that is about to
+    * act), then the policy's own `EVT session_pace`. */
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+   {
+      /* Report the rate that will actually be APPLIED, with the request
+       * beside it — ADR-0035: the two differ whenever the snap fires, and a
+       * line that showed only the request would be the same silent lie the
+       * field caught. */
+      unsigned vb = 1;
+      unsigned req  = (unsigned)g_pcfg.net_session_fps_x100;
+      unsigned appl = pace_snap_x100(req, &vb);
+   FE_EVT_ONLY(appl);
+      fe_evt("net_pace_match mode=%d policy=%s nominal=%u.%02u floor=%u.%02u "
+             "fixed=%u.%02u req=%u.%02u snap=%d vblanks=%u ramp=%u.%02u",
+             g_pcfg.net_pace_match,
+             g_pcfg.net_pace_match == PACE_MODE_FIXED        ? "fixed"    :
+             g_pcfg.net_pace_match == PACE_MODE_ADAPTIVE     ? "adaptive" :
+             g_pcfg.net_pace_match == PACE_MODE_BACKPRESSURE ? "backpressure"
+                                                             : "off",
+             PACE_NOMINAL_X100 / 100, PACE_NOMINAL_X100 % 100,
+             PACE_FLOOR_X100 / 100, PACE_FLOOR_X100 % 100,
+             appl / 100, appl % 100, req / 100, req % 100,
+             g_pcfg.net_session_fps_snap, vb,
+             PACE_FIXED_RAMP_X100_PER_S / 100,
+             PACE_FIXED_RAMP_X100_PER_S % 100);
+   }
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      pace_session_begin();                         /* ADR-0033 / ADR-0027 */
+   fe_evt("net_tx_thread mode=%d", adhoc_transport_tx_thread_active());
+
+   /* Netdrv (ADR-0016 profile: 144 B slots, 384-deep ring) + the 128 KiB
+    * sceNet pool just landed: log what is left of the ADR-0007 headroom. */
+   fe_evt("mem_free=%d max_block=%d net=up",
+          sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+   return 0;
+}
+
+/* pwr_hold: see power_cb -- this runs outside the loop's park point. */
+static int net_bringup(int is_host, const char *group, const char *nick,
+                       int probe)
+{
+   int rc;
+   pwr_hold("net");
+   rc = net_bringup_io(is_host, group, nick, probe);
+   pwr_release();
+   return rc;
+}
+
+/* Disconnect-crash diagnosis: transport_adhoc.c calls this before each blocking
+ * WLAN teardown step.  fe_evt flushes every line, so a mid-run Disconnect that
+ * wedges (the force-quit black screen) leaves the offending step as the LAST
+ * line in the log — turning an un-reproducible hang into a one-run pinpoint. */
+void gpsp_adhoc_step(const char *step)
+{
+   FE_EVT_ONLY(step);
+   fe_evt("adhoc_step name=%s", step);
+}
+
+static void net_teardown_io(void)
+{
+   if (!g_net_up)
+      return;
+   fe_evt("td_step name=begin");
+   adhoc_stats_evt();
+   sess_cost_evt(1);                                         /* ADR-0021 */
+   fe_evt("td_step name=pre_np_stop");
+   fe_np_stop();
+   fe_evt("td_step name=pre_transport_term");
+   adhoc_transport_term();
+   fe_evt("td_step name=post_transport_term");
+   g_net_up = 0;
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      skip_policy_session_end();                            /* ADR-0019 */
+   fe_evt("td_step name=post_skip_policy");
+   /* ADR-0033: in fixed mode this only re-aims the goal at nominal — the
+    * glide back up runs from the main loop over the next ~5 s.  In mode 0/2
+    * it is the old hard reset. */
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      pace_session_end();
+   fe_evt("td_step name=post_pace");
+   osd_chip_session(NULL);
+   /* The next session picks its own kind (docs/GBA-LINK-UI.md); a harness
+    * gblink_role run keeps the one it booted with. */
+   if (!g_gblink_role)
+      g_gba_cable = 0;
+   g_link_kind = LK_NONE;
+   g_link_wait = g_link_clear = 0;   /* g_link_menu: link_end clears it */
+   fe_np_set_gb_protocol(NULL);
+   fe_evt("td_step name=done");
+}
+
+/* pwr_hold: see power_cb -- this runs outside the loop's park point. */
+static void net_teardown(void)
+{
+   pwr_hold("net");
+   net_teardown_io();
+   pwr_release();
+}
+
+/* harness `telemetry_period`: frames between the periodic telemetry lines
+ * (fe_host heartbeat + net_frame's adhoc_stats/sess_cost/frame_hist); 0 =
+ * the usual 600.  A timing arm sets it past the session's length, so the
+ * whole session reports once, at teardown, and the log writer sleeps. */
+static unsigned g_telemetry_period;
+
+/* Per-frame wireless service, called from the main loop (its own counter:
+ * core frames freeze while the menu is open, the pump must not). */
+static void net_frame(void)
+{
+   static unsigned ticks;
+   if (!g_net_up)
+      return;
+   ticks++;
+   {
+      unsigned depth = adhoc_transport_rx_depth();  /* EVT gblink_win rxq_max */
+      if (depth > g_gbl_rxq_max)
+         g_gbl_rxq_max = depth;
+   }
+   fe_np_pump();                          /* delivers + emits net_stats */
+
+   /* The driver could not honour the RELIABLE contract: the core's RFU
+    * state is unrecoverable from here (ADR-0016).  Say so and tear down
+    * rather than keep a dead link nominally "up" — the silent version of
+    * this is what produced the field's mystery comm-errors. */
+   if (fe_np_failed())
+   {
+      osd_toast("Wireless error: link overloaded");
+      net_teardown();
+      return;
+   }
+
+   if ((ticks % 60) == 0)
+      scePowerTick(PSP_POWER_TICK_ALL);                    /* no suspend
+                                            mid-session (plan §9) */
+   if ((ticks % (g_telemetry_period ? g_telemetry_period : 600u)) == 0)
+   {
+      adhoc_ctl_evt("hb");
+      adhoc_stats_evt();
+      sess_cost_evt(0);                    /* ADR-0021 */
+   }
+   if (g_pcfg.console == FE_CONSOLE_GBA && !g_gba_cable)
+      skip_policy_frame();                /* ADR-0019 */
+   if (!adhoc_transport_connected() && !g_group_lost_logged)
+   {
+      /* adhocctl DISCONNECT event (group dissolved / radio lost): netdrv
+       * will also see peer death — log the root cause once. */
+      fe_evt("adhoc_group_lost");
+      osd_toast("Wireless group lost");
+      g_group_lost_logged = 1;
+   }
+}
+
+/* ----- silent wireless (per-game variant builds; ADR-0013) ---------------
+ * When the game completes the RFU adapter login (weak core hook), the
+ * frontend auto-negotiates a session on a fixed group with zero UI:
+ * join first, and if no host answers within a jittered window, promote to
+ * host (contention backoff: the jitter makes simultaneous activations
+ * pick different promote times, so one side becomes host first and the
+ * other's still-running JOIN retry loop latches onto it).  role=host/join
+ * in variant.ini pins the role instead.  WLAN off => persistent overlay
+ * warning, no retry storm. */
+
+/* rfu.c, ADR-0042.  The core has no header; the frontend/core interface here
+ * is a set of loose externs, so this follows the existing convention. */
+extern void rfu_set_rx_cap(unsigned n);
+/* ADR-0075.  At most N non-empty host-packet deliveries to the game per
+ * emulated frame, gated consistently in RECV_DATA and rfu_data_avail() so the
+ * WAITEVENT re-poll spin that sank the rfu_rx_cap arms cannot occur.  1 equals
+ * both the game's drain rate and the real radio's cadence.  0 = off. */
+extern void rfu_set_frame_pace(unsigned n);
+extern void rfu_set_pace_max_hold(unsigned n);
+extern void rfu_set_cushion(unsigned n);     /* fixed-depth jitter buffer PoC */
+extern void rfu_set_shed_keep(unsigned n);   /* link shedding, 0 = off */
+extern void rfu_set_hold(unsigned on);        /* hold, never discard */
+extern void rfu_set_fault_corrupt(unsigned n); /* desync-detector validation */
+extern void rfu_set_fault_span(unsigned n);
+extern void rfu_set_fault_mode(unsigned m);
+extern void adhoc_set_disc_await(int on);    /* candidate mid-run-Disconnect fix */
+/* ADR-0059.  Percent, 100 = stock.  Stretches the emulated adapter's two
+ * cycle-counted deadlines to compensate for a radio ~10x slower than the one
+ * the game was written for.  See the long comment in rfu.c. */
+extern void rfu_set_timeout_scale(unsigned to_x100, unsigned rtx_x100);
+/* ADR-0062d.  Minimum emulated cycles between netpacket_poll_receive() calls
+ * while the adapter waits.  0 = every call, the historical behaviour. */
+extern void rfu_set_poll_min_cycles(unsigned n);
+/* ADR-0068.  The mirror knob: minimum emulated cycles between polls while the
+ * adapter is NOT waiting — the host's cadence, which is otherwise once per
+ * frame.  0 = never = the historical behaviour.  See rfu.c. */
+extern void rfu_set_idle_poll_cycles(unsigned n);
+/* ADR-0074.  1 = hold a peer disconnect until the client's queued host packets
+ * have been handed to the game, so the Union Room's exit negotiation is not
+ * deleted in transit.  0 = the historical immediate teardown. */
+extern void rfu_set_disc_defer(unsigned n);
+/* ADR-0076.  Hold the adapter in CLIENT state for N frames after the peer's
+ * disconnect so the game can finish its clock-master change and issue its OWN
+ * disconnect -- the clean, error-free exit.  The lobby error is a race the
+ * slow client loses (link_rfu_2.c:2492 fires unconditionally when our IDLE
+ * answer wins); this gives the game the window the real exit sequence needs.
+ * 0 = off = historical.  60 (~1 s) is the arm to try first. */
+extern void rfu_set_disc_grace(unsigned frames);
+
+/* ADR-0043 flight recorder.  Called from the EMULATION thread at the moment
+ * the adapter is reset out of an active session — i.e. after the game has
+ * already declared its fatal error.  Writing the log synchronously from here
+ * violates the standing "no ms0: I/O on the emu thread" rule, and that is
+ * deliberate and confined to this one call: the session is dead, there is no
+ * frame timing left to protect, and the alternative is losing the only record
+ * of what happened.  Emits a compact decoded transcript, oldest first. */
+/* ADR-0045: the core reads this once per emulated frame, never per command. */
+unsigned gpsp_rfu_now_us(void)
+{
+   return (unsigned)net_now_us();
+}
+
+void gpsp_rfu_flight_dump_hook(const unsigned *ring, unsigned cap,
+                               unsigned start, unsigned n)
+{
+   static const char *stn[] = { "idle", "host", "conn", "clnt" };
+   unsigned i;
+   unsigned prev_frame = 0, prev_us = 0;
+   unsigned worst_ms = 0, worst_frame = 0;
+   FE_EVT_ONLY(worst_frame);
+   int have_prev = 0;
+
+   /* EIGHT entries per line, not one.
+    *
+    * One-per-line lost 228 of 1024 entries to the event queue on the very
+    * first gated run -- `evtio=.../228/16383` -- and lost them SILENTLY: the
+    * transcript simply had holes, in a diagnostic whose entire value is being
+    * complete.  Packing cuts the line count 8x, which both fits the queue and
+    * makes the dump readable.
+    *
+    * Field order per entry:  <cmd>:<state>:<gap-in-frames>
+    * `cmd` >= 0xF0 is a state transition and its low nibble is the cause.
+    *
+    * Each LINE also carries `+<ms>`: wall-clock milliseconds since the
+    * previous line.  ADR-0045 -- the frame gap alone is blind to the failure
+    * the user could see happening.  During a save the core trips SMC detection
+    * ~4096 times and a frame stretches to 38 ms against a 33.4 ms budget; in
+    * frame-count that is identical to a healthy 16 ms frame, so a transcript
+    * can read "perfectly regular" while the console falls behind a peer that
+    * does not slow down with it.  Real time is the axis the peer lives on. */
+   fe_evt("rfu_flight begin n=%u first=%u net=%s fmt=cmd:state:gap +ms=wallclock",
+          n, start, g_net_up ? "up" : "down");
+
+   for (i = 0; i < n; i += 8)
+   {
+      char line[224];
+      int  off = 0;
+      unsigned j;
+      unsigned e0   = ((start + i) % cap) * 2;
+      unsigned base = ring[e0] & 0x3FFFFF;
+      unsigned bus  = ring[e0 + 1];
+      unsigned dms  = have_prev ? (bus - prev_us) / 1000u : 0u;
+
+      for (j = i; j < n && j < i + 8; j++)
+      {
+         unsigned e     = ((start + j) % cap) * 2;
+         unsigned cmd   = (ring[e] >> 24) & 0xFF;
+         unsigned st    = (ring[e] >> 22) & 0x3;
+         unsigned frame =  ring[e] & 0x3FFFFF;
+         unsigned gap   = have_prev ? frame - prev_frame : 0;
+         int      w     = snprintf(line + off, sizeof(line) - (size_t)off,
+                                   "%s%02x:%s:%u",
+                                   j == i ? "" : " ", cmd, stn[st], gap);
+         if (w < 0 || (size_t)w >= sizeof(line) - (size_t)off)
+            break;
+         off += w;
+         prev_frame = frame;
+         prev_us    = ring[e + 1];
+         have_prev  = 1;
+      }
+      if (dms > worst_ms) { worst_ms = dms; worst_frame = base; }
+      fe_evt("rfu_fl f=%u +%ums %s", base, dms, line);
+   }
+
+   /* The headline for a human: the longest real-time hole in the capture, and
+    * where.  Eight commands span well under a frame in steady state, so a line
+    * gap much above ~35 ms means the console stopped keeping up with its peer. */
+   fe_evt("rfu_flight end worst_gap_ms=%u at_frame=%u", worst_ms, worst_frame);
+}
+
+/* ADR-0071: set by UI_ACT_RELAUNCH; acted on after full teardown.
+ * RELAUNCH_GAMELIST: "Quit to game list", which may return to the browser
+ * IN THIS PROCESS instead (inproc_*, below). */
+static int g_relaunch;
+#define RELAUNCH_PROFILE   1
+#define RELAUNCH_GAMELIST  2
+
+/* ---- THE IN-PROCESS RETURN TO THE GAME LIST -----------------------------
+ * (docs/INPROC-RETURN.md)  "Quit to game list" used to relaunch the EBOOT:
+ * the screen went black for the whole firmware teardown and reload.  It now
+ * unloads the game in place -- the same teardown the exit path has always
+ * run (SRAM flushed, ME and HOME modules stopped and unloaded, threads
+ * stopped, the core's retro_deinit), plus the one allocation that teardown
+ * used to leave for the process (the LARGE translation-cache block) -- and
+ * goes back to the browser in this process.
+ *
+ * TRUSTED ONLY WHEN PROVEN, EVERY TIME.  The heap is snapshotted when the ROM
+ * is picked (heap_snap: newlib's own byte counts, the free-chunk count, the
+ * largest block, the kernel partition) and again after the unload; any
+ * difference in those counts (heap_snap_same) and the EBOOT is relaunched
+ * exactly as before, from a state that has already been flushed and torn
+ * down.  Also relaunched, without
+ * trying: after any network module was loaded (ad-hoc, Mystery Gift), after a
+ * guest fault was contained (BADJUMP recovery), after the Media Engine's
+ * watchdog gave up, after a standby, on a variant install, and whenever
+ * CONFIG.INI says `quick_return = 0` (the kill switch) or the build says
+ * GPSP_INPROC_RETURN=0. */
+#ifndef GPSP_INPROC_RETURN
+#define GPSP_INPROC_RETURN 1
+#endif
+extern volatile int gbadhoc_net_touched;         /* netdrv/transport_adhoc.c */
+extern u32 badjump_recoveries __attribute__((weak));
+
+/* Why this quit may not return in-process, or NULL when it may.  Checked
+ * after the teardown, so what it reads is final. */
+static const char *inproc_refusal(int have_variant)
+{
+   if (!GPSP_INPROC_RETURN)
+      return "build";
+   if (!g_pcfg.quick_return)
+      return "config";
+   if (have_variant)
+      return "variant";
+   if (gbadhoc_net_touched)
+      return "wireless";
+   if (&badjump_recoveries && badjump_recoveries)
+      return "guest_fault";
+   if (me_host_was_dead())
+      return "me_watchdog";
+   if (g_pwr_suspend)
+      return "standby";
+   return NULL;
+}
+
+/* Replace this process with a fresh boot of ourselves.  On CFW an EBOOT.PBP
+ * must be launched the way the FIRMWARE launches it; plain sceKernelLoadExec
+ * returns instead of replacing the process.  argp becomes the new argv[0],
+ * where every ms0 path is derived from.  Returns ONLY on failure.
+ *
+ * `gamelist`: this relaunch is "Quit to game list" falling back from the
+ * in-process return; argv[1] = "gamelist" tells the new process, whose
+ * browser then fades in from black instead of cutting in. */
+#define RELAUNCH_ARGV1 "gamelist"
+static void relaunch_eboot(int gamelist)
+{
+   pwr_release_all();
+   char eboot[160 + sizeof(RELAUNCH_ARGV1)];
+   size_t n;
+   struct SceKernelLoadExecVSHParam param;
+   snprintf(eboot, 160, "%s/EBOOT.PBP", g_dir_base);
+   n = strlen(eboot) + 1;
+   if (gamelist)
+   {
+      memcpy(eboot + n, RELAUNCH_ARGV1, sizeof(RELAUNCH_ARGV1));
+      n += sizeof(RELAUNCH_ARGV1);
+   }
+   memset(&param, 0, sizeof(param));
+   param.size = sizeof(param);
+   param.args = (SceSize)n;
+   param.argp = eboot;
+   param.key  = "game";
+   sctrlKernelLoadExecVSHMs2(eboot, &param);
+}
+
+volatile int g_rfu_activated;
+void gpsp_rfu_activated_hook(void)   /* overrides the weak rfu.c stub */
+{
+   g_rfu_activated = 1;
+}
+
+/* The emulated RFU link went down — i.e. the GAME ended the wireless
+ * session (the player walked out of the Union Room), as distinct from us
+ * tearing the transport down.  Both looked identical in the field logs.
+ * Called from the emulation thread, so only latch here; the main loop
+ * does the (fflushing) log write. */
+static volatile unsigned g_rfu_down_pending;   /* reason<<8 | slot, +1 */
+
+/* THE EXIT-STATE SNAPSHOT (fs-pace campaign, 2026-08-09).
+ *
+ * Run 305/309's flight recorder shows the CLIENT'S GAME issuing a deliberate
+ * RFU_CMD_DISCONNECT on a healthy link during the Trade Center walk-out, and
+ * the user sees the recoverable "press A" screen on both consoles.  The v9
+ * fixture probes sample too late: link_rfu_2.c:961 consumes disconnectMode
+ * and the post-warp game has re-cleaned status/errorState, so every
+ * after-the-fact read is zeros.  The only instant the causal state exists is
+ * the disconnect itself — which is EXACTLY when rfu.c calls this hook.
+ *
+ * So snapshot guest RAM here.  Emulation thread == the core's own thread, so
+ * fe_host_mem_read is an in-thread memcpy; five reads, link-down only (a
+ * handful per session).  ADDRESSES ARE EMERALD USA (pret symbols branch,
+ * validated against production gMain):
+ *   0x03000E19 sRfuKeepAliveTimer   61+ = overworld.c:2285's watchdog FIRED
+ *   0x03005CE4 gRfu.disconnectMode  2 = RFU_DISCONNECT_ERROR = LinkRfu_
+ *                                   FatalError (the watchdog path); 1 = NORMAL
+ *   0x030050F1 gRfu.status          2 = CONNECTION_ERROR
+ *   0x030050EE gRfu.errorState      1 = OCCURRED -> the press-A screen
+ *   0x03000E14 sPlayerKeyInterceptCallback  WHICH wait episode was installed
+ *   0x03000E10 sPlayerLinkStates[4] 2 = EXITING_ROOM, per byte
+ * Junk values on any other ROM are harmless: this is a read-only harness
+ * diagnostic keyed to a log line, not a behaviour change. */
+static volatile unsigned g_rfu_down_ka, g_rfu_down_dm, g_rfu_down_st;
+static volatile unsigned g_rfu_down_es, g_rfu_down_kcb, g_rfu_down_pls;
+static volatile unsigned g_rfu_down_rcl;   /* gRfu.readyCloseLink[0..3] */
+
+void gpsp_rfu_link_down_hook(unsigned reason, unsigned slot)
+{
+   unsigned char b = 0;
+   unsigned w = 0;
+   if (fe_host_mem_read(0x03000E19, &b, 1) == 0) g_rfu_down_ka = b;
+   if (fe_host_mem_read(0x03005CE4, &b, 1) == 0) g_rfu_down_dm = b;
+   if (fe_host_mem_read(0x030050F1, &b, 1) == 0) g_rfu_down_st = b;
+   if (fe_host_mem_read(0x030050EE, &b, 1) == 0) g_rfu_down_es = b;
+   if (fe_host_mem_read(0x03000E14, &w, 4) == 0) g_rfu_down_kcb = w;
+   if (fe_host_mem_read(0x03000E10, &w, 4) == 0) g_rfu_down_pls = w;
+   /* Did the peer's READY_CLOSE_LINK arrive before the death?  If rcl shows
+    * the host ready while pls shows our own echo missing, the stall is
+    * provably in the KEY channel alone, and a state-assist repair (write
+    * the local link state the protocol already agreed on) is safe. */
+   if (fe_host_mem_read(0x030050E4, &w, 4) == 0) g_rfu_down_rcl = w;
+   g_rfu_down_pending = ((reason & 0xFF) << 8) | (slot & 0xFF) | 0x10000;
+}
+
+static void rfu_link_down_drain(void)
+{
+   unsigned v = g_rfu_down_pending;
+   if (!v)
+      return;
+   g_rfu_down_pending = 0;
+   fe_evt("rfu_link_down reason=%u slot=%u net=%s",
+          (v >> 8) & 0xFF, v & 0xFF, g_net_up ? "up" : "down");
+   fe_evt("rfu_exit_state ka=%u dm=%u st=%u es=%u kcb=0x%08x pls=0x%08x "
+          "rcl=0x%08x",
+          g_rfu_down_ka, g_rfu_down_dm, g_rfu_down_st, g_rfu_down_es,
+          g_rfu_down_kcb, g_rfu_down_pls, g_rfu_down_rcl);
+}
+
+/* ---- ADR-0079: THE EXIT-ECHO STATE ASSIST -------------------------------
+ *
+ * The Trade Center exit dies the same way every run, and the death snapshot
+ * proved it three times over (runs 311/313/315, byte-identical):
+ * `rfu_exit_state ka=61 dm=1 kcb=0x080871c5 pls=0x81818183 rcl=0x0`.
+ * Decoded: the join is parked in KeyInterCB_WaitForPlayersToExit; it has
+ * ALREADY processed the host's EXIT_ROOM key (peer state 0x83 EXITING_ROOM);
+ * only its OWN key's round-trip echo is missing (local 0x81 BUSY); and the
+ * 61-frame keepalive watchdog (overworld.c:2285) then declares the link
+ * fatally dead — on a link that is alive and idle.
+ *
+ * WHY THE ECHO CANNOT ARRIVE.  On real hardware the child's key reaches the
+ * parent and the parent's SAME exchange returns the aggregated keys: the
+ * echo completes inside one frame, before the parent's game can move on.
+ * Over a transport with real latency the parent processes the key, sees all
+ * players exiting, and advances into the exit script — after which it stops
+ * relaying keys — before its last aggregated frame reaches the child.  The
+ * echo is not late; it is structurally unsendable.  This is why every run
+ * fails and why no watchdog-budget stretch can help.
+ *
+ * THE ASSIST.  When every condition of the lost-echo state is provably
+ * present, write the ONE BYTE the echo would have written.  Conditions,
+ * all read from guest RAM each frame (two loads in the common case):
+ *   1. `rfu_exit_assist` key on, wireless session up, game running;
+ *   2. sPlayerKeyInterceptCallback == KeyInterCB_WaitForPlayersToExit
+ *      (0x080871C5 — a thumb pointer unique to this ROM, which also makes
+ *      it the ROM-identity gate: no other game can present this value);
+ *   3. the LOCAL player's link state is BUSY while the PEER's is
+ *      EXITING_ROOM — i.e. the exit is mutually agreed and only the echo
+ *      is missing;
+ *   4. sRfuKeepAliveTimer >= 45 of 61 — the echo has had ~0.8 s to arrive;
+ *      a merely-late echo lands long before this and the assist never fires.
+ * Then sPlayerLinkStates[local] = EXITING_ROOM.  The game's own
+ * WaitForPlayersToExit sees all-exiting on its next frame and runs the
+ * REAL exit: EventScript_DoLinkRoomExit -> READY_CLOSE_LINK handshake with
+ * a host that is still linked and waiting for exactly that -> clean
+ * disconnect on both sides -> warp + trainer-card stamp.  Nothing is
+ * skipped: the game executes its own negotiated exit, one lost byte later.
+ *
+ * The failure mode if the write is wrong is the status quo (the watchdog
+ * fires at 61 as it does today).  Default OFF; Emerald USA only by the
+ * pointer gate. */
+static int g_exit_assist;              /* harness key rfu_exit_assist */
+static unsigned g_exit_assist_n;       /* fired this session */
+
+static void exit_assist_frame(void)
+{
+   unsigned kcb = 0;
+   unsigned char ka = 0, ls[4];
+   int local, peer_;
+
+   if (!g_exit_assist || !g_net_up)
+      return;
+   if (fe_host_mem_read(0x03000E14, &kcb, 4) != 0 || kcb != 0x080871C5u)
+      return;
+   if (fe_host_mem_read(0x03000E19, &ka, 1) != 0 || ka < 45)
+      return;
+   if (fe_host_mem_read(0x03000E10, ls, 4) != 0)
+      return;
+   /* Two-player Trade Center: parent is link player 0, child is 1. */
+   local = g_net_is_host ? 0 : 1;
+   peer_ = 1 - local;
+   if (ls[local] != 0x81 /* BUSY */ || ls[peer_] != 0x83 /* EXITING */)
+      return;
+   ls[local] = 0x83;
+   if (fe_host_mem_write(0x03000E10 + (unsigned)local, &ls[local], 1) == 0)
+   {
+      g_exit_assist_n++;
+      fe_evt("rfu_exit_assist local=%d ka=%u n=%u net=%s",
+             local, ka, g_exit_assist_n, g_net_up ? "up" : "down");
+   }
+}
+
+/* ----- emulated-adapter command/state trace (phase5j) --------------------
+ * rfu_link_down only ever reported the four paths that end a *connection*.
+ * The event that actually produces gen-3's UNRECOVERABLE link screen is the
+ * adapter answering a command with an ERROR: librfu turns any non-zero REQ
+ * result into LMAN_MSG_REQ_API_ERROR, pokeemerald maps that to
+ * RFU_STATUS_FATAL_ERROR, and CB2_LinkError then sets gWirelessCommType=3 —
+ * the variant of the error screen whose only exit is the power switch.  The
+ * recoverable "press A" variant needs RFU_STATUS_CONNECTION_ERROR instead.
+ * So the whole point of this trace is to make every ERROR answer, and every
+ * adapter state transition that could cause one, visible in a field log.
+ *
+ * Called from the emulation thread; a lock-free SPSC ring keeps it to a
+ * store and an index bump, and the main loop does the log write.  Entries
+ * are dropped rather than overwritten if the ring fills (the count says so),
+ * because the FIRST error is the interesting one. */
+#define RFU_TRACE_RING 64
+static volatile unsigned g_rfu_tr_buf[RFU_TRACE_RING];
+static volatile unsigned g_rfu_tr_head;   /* producer: emulation thread   */
+static volatile unsigned g_rfu_tr_tail;   /* consumer: main loop          */
+static volatile unsigned g_rfu_tr_lost;
+
+/* Fired by the core at vcount==160 -- see g_vis_n. Defined here, below
+ * frame_t0 and net_now_us. */
+void gpsp_visible_done_hook(void)
+{
+#ifdef REWIND
+   /* A frame the rewind is re-running is not for the screen.  If it has a
+    * slot its capture is posted here, at the end of its visible lines
+    * whatever the post mode, and drawn into the slot (me_rend_fill_desc);
+    * if not, it is not posted at all, like a suppressed fast-forward
+    * frame's. */
+   if (fe_host_rewind_replaying())
+   {
+      if (g_rw_slot && g_me_rend)
+      {
+         unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+         g_mer_in_vis = 1;
+         me_rend_frame(1);
+         g_mer_in_vis = 0;
+         g_rwm.posts++;
+         g_rwm.post_us += (unsigned)sceKernelGetSystemTimeLow() - t0;
+      }
+      return;
+   }
+#endif
+   /* SAME-FRAME: this is the earliest instant the ME can be given work. The
+    * capture is complete and the CPU still has all of VBlank to emulate, so
+    * the render overlaps real work instead of trailing it. */
+   if (mer_sameframe_active() && g_me_rend && !g_mer_posted)
+   {
+      g_mer_posted = 1;
+      g_mer_in_vis = 1;
+      me_rend_frame(1);
+      g_mer_in_vis = 0;
+   }
+   /* VISIBLE-END POST: same producer, same function, same once-per-frame
+    * guard -- only the moment moves, so the graphics memory the ME snapshots
+    * is the memory this frame was drawn with.  See g_mer_vispost. */
+   else if (mer_vispost_active() && g_me_rend && !g_mer_posted &&
+            !g_blit_suppress)
+   {
+      g_mer_posted = 1;
+      g_mer_in_vis = 1;
+      me_rend_frame(1);
+      g_mer_in_vis = 0;
+   }
+   if (!g_frame_start_us)
+      return;
+   {
+      unsigned d = (unsigned)(net_now_us() - g_frame_start_us);
+      g_vis_n++;
+      g_vis_us += d;
+      if (d > g_vis_max)
+         g_vis_max = d;
+   }
+}
+
+/* RELEASE-SAFE PEEK AT WHAT THE GAME IS ASKING THE ADAPTER FOR.
+ *
+ * The ring below is drained into fe_evt, which compiles out of a player build --
+ * so when Mystery Gift fails in the field there is nothing to go on.  These four
+ * values are the minimum needed to tell the three failure modes apart, and the
+ * Mystery Gift screen prints them:
+ *
+ *   cmd   the last adapter command the GAME issued (rfu.c's RFU_CMD_*)
+ *   st    rfu.c's state: 0 idle, 1 host, 2 connecting, 3 client
+ *   S     1 once the game has issued BCRD_START (0x1c) -- it is scanning
+ *   C     1 once the game has issued CONNECT (0x1f)   -- it found us
+ *
+ * S=0 means the game is not searching over RFU at all.  S=1 C=0 means it is
+ * searching and rejecting our beacon.  C=1 means discovery worked. */
+static volatile unsigned g_rfu_last_cmd = 0xFFF, g_rfu_last_state;
+static volatile unsigned g_rfu_seen_bcrd, g_rfu_seen_conn;
+
+void gpsp_rfu_trace_hook(unsigned ev, unsigned a, unsigned b)
+{
+   unsigned head = g_rfu_tr_head;
+
+   /* Flag-writes only, like the adhocctl handler: this runs on the emulation
+    * thread inside the adapter emulation and must not do work. */
+   if (ev == 5 || ev == 1)              /* RFU_TR_CMD / RFU_TR_CMDERR */
+   {
+      g_rfu_last_cmd   = a;
+      g_rfu_last_state = b;
+      if (a == 0x1c) g_rfu_seen_bcrd = 1;   /* RFU_CMD_BCRD_START */
+      if (a == 0x1f) g_rfu_seen_conn = 1;   /* RFU_CMD_CONNECT    */
+   }
+   else if (ev == 2)                    /* RFU_TR_STATE */
+      g_rfu_last_state = a;
+
+   if (head - g_rfu_tr_tail >= RFU_TRACE_RING)
+   {
+      g_rfu_tr_lost++;
+      return;
+   }
+   g_rfu_tr_buf[head % RFU_TRACE_RING] =
+      ((ev & 0xFF) << 24) | ((a & 0xFFF) << 12) | (b & 0xFFF);
+   g_rfu_tr_head = head + 1;
+}
+
+/* Reported, never branched on: gone with telemetry. */
+static const char *rfu_tr_state_name(unsigned s) __attribute__((unused));
+static const char *rfu_tr_state_name(unsigned s)
+{
+   static const char *n[] = { "idle", "host", "connecting", "client" };
+   return s < 4 ? n[s] : "?";
+}
+
+static void rfu_trace_drain(void)
+{
+   static unsigned reported_lost;
+
+   while (g_rfu_tr_tail != g_rfu_tr_head)
+   {
+      unsigned v  = g_rfu_tr_buf[g_rfu_tr_tail % RFU_TRACE_RING];
+      unsigned ev = (v >> 24) & 0xFF, a = (v >> 12) & 0xFFF, b = v & 0xFFF;
+   FE_EVT_ONLY(a); FE_EVT_ONLY(b);
+      g_rfu_tr_tail++;
+
+      switch (ev)
+      {
+      case 1: /* CMDERR — the one that becomes the fatal screen */
+         fe_evt("rfu_cmderr cmd=0x%02x state=%s net=%s",
+                a, rfu_tr_state_name(b), g_net_up ? "up" : "down");
+         break;
+      case 2: /* state transition */
+         fe_evt("rfu_state new=%s cause=%u net=%s",
+                rfu_tr_state_name(a), b, g_net_up ? "up" : "down");
+         break;
+      case 3:
+         fe_evt("rfu_unkcmd cmd=0x%02x state=%s", a, rfu_tr_state_name(b));
+         break;
+      case 4:
+         fe_evt("rfu_qdrop side=%s slot=%u", a ? "host_rx" : "client_rx", b);
+         break;
+      case 5:
+         fe_evt("rfu_cmd cmd=0x%02x state=%s", a, rfu_tr_state_name(b));
+         break;
+      case 6: /* adapter login (AgbRFU_SoftReset + AgbRFU_checkID) */
+      {
+         static const char *ph[] = { "reset", "handshake", "logged_in" };
+   FE_EVT_ONLY(ph);
+         fe_evt("rfu_login phase=%s prev_words=%u",
+                a < 3 ? ph[a] : "?", b);
+         break;
+      }
+      case 7:
+         /* New high-water of RECV_DATA commands served in ONE emulated
+          * frame.  The game drains its 32-slot recvQueue once per frame and
+          * `full` is a latch that turns into the game's UNRECOVERABLE error
+          * screen, so this is the number to watch: steady state is 1, and
+          * anything climbing toward 32 is the mechanism. */
+         fe_evt("rfu_rxburst frame_max=%u prev=%u net=%s",
+                a, b, g_net_up ? "up" : "down");
+         break;
+      case 8:
+         /* The per-frame delivery cap held a packet back for one frame
+          * (ADR-0042).  Seeing these is the cap working; seeing none while
+          * rfu_rx_cap is set means it never bound and the run tells us
+          * nothing about the hypothesis. */
+         fe_evt("rfu_rxhold frame_max=%u delivered=%u", a, b);
+         break;
+      case 9:
+         /* New deepest occupancy of an RFU receive queue (ADR-0044).  If this
+          * approaches RFU_PKT_QUEUE the next burst will be dropped, and a
+          * dropped RFU packet is payload the games cannot recover.  Read it
+          * next to rfu_qdrop: qdrop = 0 with a high mark means the depth is
+          * merely adequate, not generous. */
+         fe_evt("rfu_qhi side=%s depth=%u", a ? "host_rx" : "client_rx", b);
+         break;
+      case 10:
+         /* ADR-0055: a host packet waited this long in our queue before the
+          * game consumed it -- the CLIENT'S ANSWER LATENCY, reported as a new
+          * high-water with the running mean beside it.
+          *
+          * This is the quantity the rfu_rx_cap experiment identified as the
+          * one that matters.  Capping deliveries deliberately added a couple
+          * of frames of answer latency and the transport collapsed: txq_hi
+          * 465, spill 81, the project's first net_error.  The protocol
+          * punishes a late reply far harder than it punishes volume, so a
+          * multi-frame value here is the thing to chase -- not a busy frame. */
+         fe_evt("rfu_answer max_us=%u mean_us=%u", a, b);
+         break;
+      case 11:
+         /* ADR-0058: periodic census, emitted whether or not anything moved.
+          * n=0 means the probe never measured anything and its placement is
+          * wrong; n>0 with max_us=0 means answer latency is genuinely
+          * sub-frame.  Case 10 above cannot tell those apart -- it only fires
+          * on a new high-water, so an all-zero session is indistinguishable
+          * from a dead instrument, which is how runs 6-9 read. */
+         fe_evt("rfu_answer_census n=%u max_us=%u", a, b);
+         break;
+      case 12:
+         /* ADR-0059: the CLIENT's emulated adapter told the game
+          * RFU_CMD_RESP_TIMEO -- "your peer's data did not arrive in time".
+          * This is the central event of CLIFF-FINDINGS' surviving mechanism
+          * and it had no hook until now.  n is cumulative; t is the live
+          * rfu_timeout in GBA frames, whose wall-clock worth is t/session_fps
+          * seconds and therefore SHRINKS as the session rate rises. */
+         fe_evt("rfu_timeo n=%u t_frames=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 13:
+         /* ADR-0059: the game just configured the adapter's deadlines.  Once
+          * per run.  Every timing table in CLIFF-FINDINGS is parameterised on
+          * this number; this is the first time it is on the record. */
+         fe_evt("rfu_syscfg timeout_frames=%u rtx_max=%u", a, b);
+         break;
+      case 14:
+         /* ADR-0059: the HOST's rfu_resp_timeout (rtx_max/6 emulated frames)
+          * expired and we handed the game a synthetic "clients did not
+          * answer".  n is in units of 16.  Expected to be busy at every rate;
+          * the number that matters is its rate per emulated frame. */
+         fe_evt("rfu_noresp n16=%u rtx_max=%u", a, b);
+         break;
+      case 15:
+         /* ADR-0072: HOW OFTEN, AND FOR HOW LONG, THE GAME THREW THE PLAYER'S
+          * INPUT AWAY.
+          *
+          * pokeemerald's KeyInterCB_SelfIdle (src/overworld.c:2520) never
+          * reaches KeyInterCB_ReadButtons while GetLinkRecvQueueLength() > 4,
+          * and that queue drains exactly once per frame and exists only on the
+          * CHILD.  So the client's controls are dead for as long as our
+          * deliveries outrun the game's drain rate -- and the host cannot
+          * suffer it at all.
+          *
+          * `n` is frames over the gate in a 600-frame (~10 s) window; `run` is
+          * the longest unbroken stretch, which is what a human actually feels
+          * as "it ate my input".  RFU_TR_RXBURST already showed peaks of 9 on
+          * the join against 1-2 on the host, but a high-water cannot say
+          * whether that was constant or a one-off.  This can. */
+         /* ADR-0072 fix: peak moved to its own event (case 20) — the ring's
+          * 12-bit fields masked the old (peak<<16) packing to zero here too. */
+         fe_evt("rfu_rxgate n=%u/%u run_max=%u net=%s", a, 600u, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 16:
+         /* ADR-0072: the recoverable "press A to return to lobby" error, the
+          * first time it has ever been observable.  slots is the mask we told
+          * the game had dropped; state is our adapter state at the moment we
+          * said it. */
+         fe_evt("rfu_discans slots=0x%x state=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 17:
+         /* ADR-0072: CLUMPING, MEASURED AT THE WIRE.
+          *
+          * `clumped` is host packets that arrived in the SAME emulated frame
+          * as the previous one, out of `n`.  The game drains its receive queue
+          * once per frame, so a zero frame-delta is one unit of queue growth
+          * and a steady one-per-frame stream — at any rate — cannot grow it at
+          * all.  This is the number that decides whether OUR delivery pattern
+          * can reach pokeemerald's threshold of 4.
+          *
+          * It exists because RFU_TR_RXBURST could not answer it: that counter
+          * increments on every RECV_DATA command, so it measures how hard the
+          * game is POLLING, and the client polls hardest when it is waiting
+          * and receiving nothing.  A near-zero reading here retires the
+          * clumping hypothesis outright. */
+         fe_evt("rfu_arrival clumped=%u/%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 18:
+         /* ADR-0074: `queued` is how many host packets were still undelivered
+          * when the peer's disconnect arrived -- i.e. how much of the Union
+          * Room exit negotiation the immediate teardown destroyed.  mode 0 =
+          * wiped now (historical), 1 = deferral armed, 2 = deferral applied
+          * after the drain.  ADR-0076 adds: 3 = grace window armed, 4 = grace
+          * EXPIRED and the historical teardown ran, 5 = the game issued its
+          * own disconnect inside the window -- THE RACE WAS WON and the exit
+          * was clean.  A healthy grace arm shows 3 followed by 5. */
+         fe_evt("rfu_discq queued=%u mode=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 19:
+         /* ADR-0075: the pace census.  `n` = frames in a 600-frame window on
+          * which frame-paced delivery deferred an eligible packet; `q_hi` =
+          * the deepest OUR client queue got on those frames.  Emitted every
+          * window while rfu_frame_pace is on, including n=0, so a gate that
+          * never bound cannot be mistaken for a dead instrument.  Read next
+          * to rfu_arrival: n should track the clumped fraction, and q_hi
+          * bounds the extra latency (q_hi extra frames on the last packet of
+          * the worst clump). */
+         fe_evt("rfu_pace n=%u/%u q_hi=%u net=%s", a, 600u, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 20:
+         /* ADR-0072 fix: the GAME's recvQueue-depth PEAK on its own event so
+          * the 12-bit ring keeps it (peak>4 = Gate B input-eat, 32 = FATAL).
+          * over_gate = frames past the gate this window. */
+         fe_evt("rfu_gqpeak peak=%u over_gate=%u/%u net=%s", a, b, 600u,
+                g_net_up ? "up" : "down");
+         break;
+      case 23:
+         fe_evt("rfu_pacecatch n=%u q=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 22:
+         /* The bound on the pace hold (rfu.c rfu_pace_max_hold).  `n` =
+          * packets discarded this window because the client's undelivered
+          * queue was older than the bound; `hi` = the worst single frame.
+          *
+          * Read WITH rfu_pace: q_hi parked at the cap plus n>0 means the bound
+          * is doing its job -- the alternative was the hold crossing the
+          * game's 32-frame link timeout and the adapter being reset.  n
+          * climbing every window means the host is outrunning this game's ask
+          * rate persistently, which is a different problem from a clump. */
+         fe_evt("rfu_pacedrop n=%u hi=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 21:
+         /* SEND_DATA word count.  `hi` is the largest rfu_plen the guest put
+          * on the wire this window; `clamp` how many copies exceeded the
+          * 23-word tx buffer and were bounded.  hi<=24 means this ROM never
+          * reached the pre-fix overrun; hi>24 with clamp>0 means it did. */
+         fe_evt("rfu_txplen hi=%u clamp=%u net=%s",
+                a, b, g_net_up ? "up" : "down");
+         break;
+      case 24:
+         /* The client's STANDING host->client backlog (frames): `hi` the
+          * worst in this ~10 s window, `now` the current one.  This is the
+          * latency that did not drain -- `now` climbing window after window
+          * is the growing lag, and what the host's link governor acts on. */
+         /* now=0xFFF is rfu.c's "no complete sample yet" (a window that
+          * began outside client state): print it as none, never as a number
+          * a summarizer could average. */
+         if (b == 0xFFFu)
+            fe_evt("rfu_backlog hi=%u now=none net=%s", a,
+                   g_net_up ? "up" : "down");
+         else
+            fe_evt("rfu_backlog hi=%u now=%u net=%s", a, b,
+                   g_net_up ? "up" : "down");
+         break;
+      case 25:
+         /* Per-window answer latency: how long host packets waited in our
+          * queue before the game took them.  ms. */
+         fe_evt("rfu_answin mean_ms=%u max_ms=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 26:
+         /* Link-token census: packets this adapter transmitted as NEW data vs
+          * as an RTX_WAIT RESEND of the previous buffer. */
+         fe_evt("rfu_txmix new=%u rtx=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 27:
+         fe_evt("rfu_rxmix data=%u none=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 28:
+         /* HOST: standing client->host backlog, same definition as
+          * rfu_backlog.  The reverse half of the round trip. */
+         if (b == 0xFFFu)
+            fe_evt("rfu_hbacklog hi=%u now=none net=%s", a,
+                   g_net_up ? "up" : "down");
+         else
+            fe_evt("rfu_hbacklog hi=%u now=%u net=%s", a, b,
+                   g_net_up ? "up" : "down");
+         break;
+      case 29:
+         /* Received link packets with no game content (every librfu
+          * sub-frame UNI, every payload byte zero) out of all received. */
+         fe_evt("rfu_empty n=%u/%u net=%s", a, b, g_net_up ? "up" : "down");
+         break;
+      case 31:
+         fe_evt("rfu_fault corrupted=%u off=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      case 33:
+         /* Hold, never discard: the most packets waiting in the overflow ring
+          * at once this window, and how many entered it. */
+         fe_evt("rfu_hold hi=%u n=%u net=%s", a, b, g_net_up ? "up" : "down");
+         break;
+      case 34:
+         /* The hold could not take a packet, so it was DISCARDED after all;
+          * stale = entries purged because their link had gone. */
+         fe_evt("rfu_holdfail n=%u stale=%u net=%s", a, b, g_net_up ? "up" : "down");
+         break;
+      case 32:
+         /* The original bytes of the packet about to be corrupted. */
+         if (b == 0xFFFu)
+            fe_evt("rfu_fault_bytes off=%u b=%02x", a >> 8, a & 0xFF);
+         else
+            fe_evt("rfu_fault_bytes off=%u b=%02x%02x", a >> 8, a & 0xFF, b);
+         break;
+      case 30:
+         /* Link shedding: content-free packets removed from the queue this
+          * adapter reads, this window; keep = the rfu_shed_keep in force
+          * (0 = the A/B's off arm). */
+         fe_evt("rfu_shed n=%u keep=%u net=%s", a, b,
+                g_net_up ? "up" : "down");
+         break;
+      default:
+         break;
+      }
+   }
+   if (g_rfu_tr_lost != reported_lost)
+   {
+      reported_lost = g_rfu_tr_lost;
+      fe_evt("rfu_trace_lost n=%u", reported_lost);
+   }
+}
+
+enum { SIL_OFF = 0, SIL_AUTO, SIL_HOST, SIL_JOIN };
+enum { SILST_IDLE = 0, SILST_JOINING, SILST_UP, SILST_FAILED };
+
+static int g_silent_mode;   /* SIL_* */
+static int g_silent_state;  /* SILST_* */
+static unsigned g_silent_ticks, g_silent_deadline;
+static char g_silent_group[16], g_silent_nick[24];
+static int g_mg_on; /* listener up; also gates silent RFU bring-up */
+
+static void silent_frame(void)
+{
+   if (!g_silent_mode || g_silent_state == SILST_FAILED ||
+       g_silent_state == SILST_UP)
+      return;
+   if (!g_rfu_activated)
+      return;
+
+   /* Mystery Gift owns infrastructure Wi-Fi directly. This automatic path
+    * bypasses the menu interlock, so consume the attempt while MG is active
+    * instead of bringing up ad-hoc underneath its AP association. */
+   if (g_mg_on)
+   {
+      g_silent_state = SILST_FAILED;
+      fe_evt("silent_fail reason=mystery_gift_active");
+      return;
+   }
+
+   if (g_silent_state == SILST_IDLE)
+   {
+      int as_host = (g_silent_mode == SIL_HOST);
+      int rc;
+      if (g_net_up)                     /* user already connected via UI */
+      {
+         g_silent_state = SILST_UP;
+         return;
+      }
+      fe_evt("silent_activate role=%s group=%s",
+             as_host ? "host" : "join", g_silent_group);
+      /* Keep the same heap guarantee as UI- and boot-driven bring-up.  The
+       * renderer may hold the largest contiguous block on the 32 MB models;
+       * np_start needs that block for its netdrv arena.  Resume on both
+       * success and failure so a failed automatic join still restores ME. */
+      me_rend_suspend();
+      rc = net_bringup(as_host, g_silent_group, g_silent_nick, 0);
+      me_rend_resume();
+      if (rc == ADHOC_ERR_WLAN_OFF)
+      {
+         osd_chip_session("WLAN switch OFF");
+         osd_toast("Turn the WLAN switch ON for wireless");
+         fe_evt("silent_fail reason=wlan_off");
+         g_silent_state = SILST_FAILED;
+         return;
+      }
+      if (rc != 0)
+      {
+         osd_toast("Wireless start failed");
+         fe_evt("silent_fail reason=bringup stage=%s",
+                adhoc_transport_stage());
+         g_silent_state = SILST_FAILED;
+         return;
+      }
+      if (as_host)
+      {
+         char lbl[ROOM_LABEL_CAP];
+         fe_evt("silent_host promoted=0");
+         osd_toast("Wireless ready (hosting %s)",
+                   room_label(g_silent_group, lbl, sizeof(lbl)));
+         g_silent_state = SILST_UP;
+         return;
+      }
+      /* join-first: wait a jittered window for a WELCOME */
+      g_silent_ticks = 0;
+      g_silent_deadline = 240 +
+         (unsigned)((sceKernelGetSystemTimeWide() >> 5) % 120);
+      g_silent_state = SILST_JOINING;
+      return;
+   }
+
+   /* SILST_JOINING */
+   g_silent_ticks++;
+   if (fe_np_session_active())
+   {
+      char lbl[ROOM_LABEL_CAP];
+      fe_evt("silent_joined group=%s", g_silent_group);
+      osd_toast("Wireless linked (%s)",
+                room_label(g_silent_group, lbl, sizeof(lbl)));
+      g_silent_state = SILST_UP;
+      return;
+   }
+   if (g_silent_mode == SIL_AUTO && g_silent_ticks > g_silent_deadline)
+   {
+      /* Nobody hosting: promote.  Transport stays up; only the netdrv
+       * role restarts (core stop()/start() is part of the netpacket
+       * contract). */
+      fe_np_stop();
+      if (net_start_np(1, g_silent_group, g_silent_nick, 0) == 0)
+      {
+         char lbl[ROOM_LABEL_CAP];
+         fe_evt("silent_host promoted=1 waited=%u", g_silent_ticks);
+         osd_toast("Wireless ready (hosting %s)",
+                   room_label(g_silent_group, lbl, sizeof(lbl)));
+         g_silent_state = SILST_UP;
+      }
+      else
+      {
+         net_teardown();
+         fe_evt("silent_fail reason=promote");
+         g_silent_state = SILST_FAILED;
+      }
+   }
+}
+
+/* ---- GB/GBC link sessions (frontend-common/fe_gblink.h) ------------------
+ *
+ * A GB or GBC game's Wireless -> Host / Join brings the ad-hoc session up
+ * exactly as for GBA, then starts a link session: each PSP runs both
+ * players' Game Boys with their link ports cabled in memory, and only the
+ * buttons cross the radio.  While the session sets itself up (and after it
+ * has ended) the screen shows its status; the game restarts from its save
+ * when the session ends, with the trade (or whatever the players did)
+ * saved -- or, if the two PSPs ever disagreed, with nothing written.
+ *
+ * Harness keys (GPSP_PERF_RIG): gblink_role = host|join starts one
+ * automatically (group = the room); gblink_delay = input delay in frames
+ * (default 4); gblink_rtc_seed = the host's clock for both machines (fixes a
+ * run's clock); gblink_end_after = frames after the autopilot script ends
+ * before the host asks to end (default 300).  The run exits when the
+ * session is DONE (exit 0) or FAILED (exit 4). */
+#define GBLINK_DELAY_DEFAULT 4
+static unsigned g_gblink_delay = GBLINK_DELAY_DEFAULT;
+static int g_gblink_role;             /* harness: 0 off, 1 host, 2 join */
+static long long g_gblink_seed;       /* harness: 0 = this console's clock */
+static unsigned g_gblink_end_after = 300;
+static unsigned g_gblink_ended_ticks; /* frames since DONE/FAILED */
+static int g_gblink_screen;           /* draw the status screen this frame */
+#ifdef GPSP_PERF_RIG
+static unsigned g_gedump_loops, g_gedump_left = 64;  /* harness gedump_loops */
+#endif
+static int g_gblink_census;           /* this session's running census taken */
+static time_t g_gblink_clock;         /* harness: the frozen cartridge clock */
+static time_t gblink_seed_wallclock(void)
+{
+   return g_gblink_clock;
+}
+static int g_gblink_exiting;          /* harness: exiting, run no more frames */
+static int g_gblink_library = 1;      /* harness 0: never find the partner's
+                                       * cartridge locally (force a transfer) */
+
+/* The partner's cartridge in this console's library: roms/ and its first
+ * level of folders (the browser's reach), by exact size and header. */
+static int gblink_find_in(const char *dir, uint32_t size,
+                          const uint8_t header[0x1C], char *path, size_t cap,
+                          int depth)
+{
+   SceUID d = sceIoDopen(dir);
+   SceIoDirent ent;
+   int found = 0;
+   if (d < 0)
+      return 0;
+   memset(&ent, 0, sizeof(ent));
+   while (!found && sceIoDread(d, &ent) > 0)
+   {
+      char p[PSP_FILE_PATH_CAP];
+      const char *dot = strrchr(ent.d_name, '.');
+      if (ent.d_name[0] == '.')
+         continue;
+      if (snprintf(p, sizeof(p), "%s/%s", dir, ent.d_name) >= (int)sizeof(p))
+         continue;
+      if (FIO_S_ISDIR(ent.d_stat.st_mode))
+      {
+         if (depth == 0)
+            found = gblink_find_in(p, size, header, path, cap, 1);
+         continue;
+      }
+      if (!dot || (strcasecmp(dot, ".gb") && strcasecmp(dot, ".gbc")) ||
+          ent.d_stat.st_size != (SceOff)size)
+         continue;
+      {
+         SceUID f = sceIoOpen(p, PSP_O_RDONLY, 0);
+         uint8_t h[0x1C];
+         if (f < 0)
+            continue;
+         if (sceIoLseek(f, 0x134, PSP_SEEK_SET) == 0x134 &&
+             sceIoRead(f, h, sizeof(h)) == (int)sizeof(h) &&
+             !memcmp(h, header, sizeof(h)))
+         {
+            snprintf(path, cap, "%s", p);
+            found = 1;
+         }
+         sceIoClose(f);
+      }
+   }
+   sceIoDclose(d);
+   return found;
+}
+
+/* The link session's bulk lane (fe_gblink.h, transport_adhoc.h). */
+#define GBLINK_BULK_SLOTS 32
+static unsigned g_gblink_bulk_bytes = 1037;   /* 1024 data + 13 header */
+static unsigned g_gblink_bulk_rate;           /* 0 = adaptive */
+/* Scanline batching ON by default (154 = up to a whole frame while the cable
+ * is quiet): proven byte-exact off-hardware (GB-LINK.md section 8), hw3 arm K
+ * -1.7..-2.6 ms of core time in busy windows, and the owner found hw4's D
+ * noticeably smoother.  hw5 runs the player defaults (this, copies 0, pace
+ * slot 0 off); harness `gblink_batch = 1` is the strict control. */
+#define GBLINK_BATCH_DEFAULT 154u
+static unsigned g_gblink_batch = GBLINK_BATCH_DEFAULT; /* gbdual batch_lines */
+static int g_gblink_live = 1;                 /* link from the running game */
+/* Redundant input frames, OFF: hw2's paired A/B (V vs U, same states and
+ * scripts) measured the extra datagram at +0.7-1.4 ms of emulation-thread
+ * time per frame on the PSP-1000 and +1.4-1.8 ms on the 3000, and the join's
+ * stalls DOUBLED with it (34.3 vs 16.0 per 1000 frames) -- the radio lost
+ * only 1-2 %, so the copies rescued almost nothing.  Harness key kept. */
+static unsigned g_gblink_copies = 0;
+static int g_gblink_resume_boot;              /* harness gblink_resume = 2 */
+static int g_gblink_pace0;                    /* harness gblink_pace_slot0 */
+/* harness gblink_start_frames: the game RUNS this many frames before the
+ * session starts (no hold) -- the connecting screen then has a game to dim,
+ * as in a player's session.  0 = hold from boot (the rig's default). */
+static unsigned g_gblink_start_frames;
+static int g_gblink_keep_stamp;               /* harness A/B: the old stamp */
+static int g_gblink_auto_started;             /* harness: the one session */
+static unsigned g_gblink_after;               /* harness: frames to play on */
+static unsigned g_gblink_after_left;
+static int g_gblink_after_code;
+static const char *g_gblink_after_why;
+static int psp_gb_bulk_enable(int on)
+{
+   if (!on)
+   {
+      adhoc_transport_bulk_close();
+      return 0;
+   }
+   return adhoc_transport_bulk_open(GBLINK_BULK_SLOTS, FE_GBLINK_BULK_MAGIC);
+}
+static int psp_gb_bulk_send(const uint8_t mac[6], const void *buf, size_t len)
+{
+   return adhoc_transport_bulk_send(mac, buf, len);
+}
+static int psp_gb_bulk_recv(void *buf, size_t cap)
+{
+   return adhoc_transport_bulk_recv(buf, cap);
+}
+
+static int psp_gb_find_rom(uint32_t size, const uint8_t header[0x1C],
+                           char *path, size_t cap)
+{
+   if (!g_gblink_library)
+      return 0;
+   return gblink_find_in(p_rom_dir, size, header, path, cap, 0);
+}
+
+/* Start a link session over the session net_bringup just brought up. */
+/* The LINKING screen draws over the game as it stood when the link began:
+ * the menu's own snapshot (wake_snapshot, the netdrv arena's tail), taken
+ * before the session owns the cartridge -- the single machine and its frame
+ * may be gone after that (GB/GBC). */
+static void wake_snapshot(void);
+static void link_backdrop_take(void)
+{
+   wake_snapshot();
+   ui_set_backdrop(g_wake_have ? g_wake_frame : NULL, (int)g_wake_w,
+                   (int)g_wake_h);
+}
+
+#ifdef GBA_LINK
+/* Section 19: the screen while a session start or end reloads the game's
+ * core (fe_host's gba_session_mem): the LINKING screen (docs/GBA-LINK-UI.md)
+ * over the backdrop it already shows, its ring turning one step per stage.
+ * The renderer on the ME reads the core's memory, which is being torn down:
+ * suspended for the duration.  Each stage presents at once, because the main
+ * loop is not presenting while this runs.  No cancel: a half-done reload has
+ * nothing to go back to but its own end. */
+static unsigned g_reload_steps;
+static const char *g_reload_l1;
+static void gba_reload_draw(const char *what)
+{
+   ui_linking_view lv;
+   memset(&lv, 0, sizeof(lv));
+   lv.room = g_link_room[0] ? g_link_room : NULL;
+   lv.l1 = g_reload_l1;
+   lv.l2 = what;
+   lv.frac = -1;
+   lv.busy = 1;
+   lv.footer = "";
+   g_reload_steps++;
+   ui_linking_draw(&lv);
+   sceDisplayWaitVblankStart();
+   vid_swap();
+}
+
+static void gba_reload_note(int phase, const char *what)
+{
+   static uint64_t t0;
+   if (phase == 0)
+   {
+      t0 = net_now_us();
+      g_reload_steps = 0;
+      g_reload_l1 = what;
+      me_rend_suspend();
+   }
+   if (phase == 0)
+      gba_reload_draw(NULL);
+   else if (phase == 1)
+      gba_reload_draw(what);
+   if (phase == 2 || phase == -1)
+   {
+      me_rend_resume();
+      cur_frame = NULL;          /* the core's frame buffer was reallocated */
+      if (phase == -1 && what)
+         osd_toast("%s", what);
+   }
+   fe_evt("gba_reload phase=%d what=%s ms=%u", phase, what ? what : "-",
+          (unsigned)((net_now_us() - t0) / 1000u));
+   FE_EVT_ONLY(t0);
+}
+#endif
+
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+/* Harness sessmem_cycles = N (at frame sessmem_at, default 600): the session
+ * start / end reload N times with no radio, a heap census around each, then
+ * the run exits.  `heap_exact` is mallinfo's every counter plus the largest
+ * block: equal before and after a cycle means the cycle gave the heap back
+ * byte for byte (the GBA-LINK-MIRROR.md 19 gate). */
+static unsigned g_sessmem_cycles, g_sessmem_at = 600;
+static void heap_exact(const char *where, unsigned cyc)
+{
+   struct mallinfo mi = mallinfo();
+   unsigned total = 0, top = 0;
+   heap_budget(&total, &top);
+   fe_evt("heap_exact at=%s cyc=%u arena=%u ordblks=%u uord=%u ford=%u "
+          "keep=%u largest=%u free=%u blocks=%u", where, cyc,
+          (unsigned)mi.arena, (unsigned)mi.ordblks, (unsigned)mi.uordblks,
+          (unsigned)mi.fordblks, (unsigned)mi.keepcost, heap_largest(), total,
+          (unsigned)gamepak_buffer_count);
+}
+void heap_trace_mark(void);                       /* heap_trace.c */
+void heap_trace_report(const char *where);
+void heap_trace_mark0(void);
+static int sessmem_cycle_test(void)
+{
+   unsigned i;
+   int rc = 0;
+   heap_exact("pre", 0);
+   heap_trace_report("pre");          /* everything live (mark 0) */
+   heap_trace_mark();
+   for (i = 1; i <= g_sessmem_cycles && rc == 0; i++)
+   {
+      pwr_hold("session");
+      rc = fe_host_gba_sessmem_cycle(1);
+      pwr_release();
+      heap_exact("session", i);
+      if (rc == 0)
+      {
+         pwr_hold("session");
+         rc = fe_host_gba_sessmem_cycle(0);
+         pwr_release();
+      }
+      heap_exact("post", i);
+      if (i <= 4)
+      {
+         /* everything live again: diff against "pre" by size and caller */
+         char tag[8];
+         snprintf(tag, sizeof(tag), "post%u", i);
+         heap_trace_mark0();
+         heap_trace_report(tag);
+      }
+   }
+   fe_evt("sessmem_cycles done n=%u rc=%d", i - 1, rc);
+   return rc;
+}
+#endif
+/* Frontend-detected reasons a joiner's link did not form (the session only
+ * knows "nobody answered"), and the player's cancel. */
+enum { LW_NONE = 0, LW_FULL, LW_VERSION, LW_GBA_ROOM, LW_CANCEL };
+static int g_link_why;
+static unsigned g_link_setup_ticks;   /* frames of SETUP, this session */
+static unsigned g_link_prev_pad;      /* the LINKING screen's O edge   */
+static int g_link_fail_hold;          /* the failure screen waits for O */
+
+/* A session's end: the reload back to single-player (section 19) runs on
+ * this thread, outside the loop's park point -- under pwr_hold. */
+static int gblink_close_held(void)
+{
+   int rc;
+   pwr_hold("session");
+   rc = fe_host_gblink_close();
+   pwr_release();
+   return rc;
+}
+
+static int gblink_begin(int is_host)
+{
+   int rc;
+#ifndef GPSP_NO_TELEMETRY
+   heap_census("gblink_pre");
+   g_gblink_census = 0;
+#endif
+   link_backdrop_take();
+   g_link_why = LW_NONE;
+   g_link_setup_ticks = 0;
+   g_link_fail_hold = 0;
+   g_link_prev_pad = g_pad;          /* a held O is not a cancel */
+   if (g_cable_reserve)
+   {
+      /* the boot-time reserve becomes the session's memory */
+      free(g_cable_reserve);
+      g_cable_reserve = NULL;
+#ifndef GPSP_NO_TELEMETRY
+      heap_census("cable_reserve_freed");
+#endif
+   }
+   {
+      /* Fast link: the Wireless menu's setting, as it stands now.  It only
+       * decides when this console hosts; a guest runs the host's.  Harness
+       * gblink_input_batch = 2 forces it on, 0 or 1 off. */
+      long fb = fe_ini_get_int(HARNESS_INI, "gblink_input_batch", -1);
+      int fl = fb < 0 ? g_pcfg.fast_link : fb == 2;
+      fe_host_set_fast_link(fl);
+      fe_evt("fast_link_setting own=%d from=%s role=%s", fl,
+             fb < 0 ? "config" : "harness", is_host ? "host" : "guest");
+   }
+   pwr_hold("session");               /* A's reload + B's load (section 19) */
+   rc = fe_host_gblink_start(is_host, g_gblink_delay, (int64_t)g_gblink_seed);
+   pwr_release();
+   cur_frame = NULL;                 /* the single machine's frame is gone */
+   if (rc == -3)
+   {
+      /* section 19: the game could not be put back -- nothing to return to */
+      fe_evt("gblink_begin fatal reason=reload");
+      g_running = 0;
+   }
+   fe_evt("gblink_begin role=%s delay=%u rc=%d", is_host ? "host" : "guest",
+          g_gblink_delay, rc);
+   if (rc != 0)
+   {
+      osd_toast("Link could not start");
+      net_teardown();
+   }
+   link_chip();
+   return rc;
+}
+
+/* "x.x / y.y MB" or "x / y KB". */
+static void link_amount(char *out, size_t cap, uint32_t done, uint32_t total)
+{
+   if (total >= 1024u * 1024u)
+   {
+      /* tenths of a MiB, rounded */
+      unsigned d = (unsigned)(((uint64_t)done * 10u + 524288u) >> 20);
+      unsigned t = (unsigned)(((uint64_t)total * 10u + 524288u) >> 20);
+      snprintf(out, cap, "%u.%u / %u.%u MB", d / 10u, d % 10u, t / 10u,
+               t % 10u);
+   }
+   else
+      snprintf(out, cap, "%u / %u KB", (unsigned)((done + 512u) >> 10),
+               (unsigned)((total + 512u) >> 10));
+}
+
+/* A setup that did not become a link, in two lines (docs/GBA-LINK-UI.md,
+ * the wording table).  No RFU, mirror or lockstep anywhere. */
+static void link_fail_text(const fe_gblink_progress *pr, char *l1, size_t c1,
+                           char *l2, size_t c2)
+{
+   int e = pr->error == FE_GBLINK_E_PEER_ABORT && pr->peer_reason >= 0
+              ? pr->peer_reason : pr->error;
+   if (g_link_why == LW_FULL)
+   {
+      snprintf(l1, c1, "%s is full: 2 players.", g_link_room);
+      snprintf(l2, c2, "Wait for a seat, or host your own room.");
+   }
+   else if (g_link_why == LW_GBA_ROOM)
+   {
+      snprintf(l1, c1, "%s is a Game Boy Advance room.", g_link_room);
+      snprintf(l2, c2, "Open a Game Boy game there, or pick another room.");
+   }
+   else if (g_link_why == LW_VERSION || e == FE_GBLINK_E_PROTO)
+   {
+      snprintf(l1, c1, "The other PSP runs a different GBAdhoc version.");
+      snprintf(l2, c2, "Update both PSPs to the same release.");
+   }
+   else if (e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD)
+   {
+      snprintf(l1, c1, "The games do not match: a different version or "
+               "hack.");
+      snprintf(l2, c2, "Both PSPs need the same ROM.");
+   }
+   else if (e == FE_GBLINK_E_MEMORY || e == FE_GBLINK_E_START)
+   {
+      snprintf(l1, c1, "The link could not start: not enough memory.");
+      snprintf(l2, c2, "Quit to the game list, open the game, try again.");
+   }
+   else if (g_net_is_host && e == FE_GBLINK_E_NO_PEER)
+   {
+      snprintf(l1, c1, "Nobody joined %s.", g_link_room);
+      snprintf(l2, c2, "Host again when the other PSP is ready.");
+   }
+   else
+   {
+      snprintf(l1, c1, "The host left %s.", g_link_room);
+      snprintf(l2, c2, "Have them host again, then rescan.");
+   }
+}
+
+/* THE LINKING SCREEN, the same on both consoles and for every mode: what is
+ * happening, the step and its amount, the loading screen's bar.  Redrawn
+ * every loop while a session sets up (the busy ring turns, so a slow step
+ * never looks like a hang), and while a failure waits for O. */
+static void link_draw_facts(const fe_gblink_progress *ppr)
+{
+   fe_gblink_progress pr = *ppr;
+   ui_linking_view v;
+   char l1[80], l2[80], l3[80], amt[32];
+   int gb = g_pcfg.console != FE_CONSOLE_GBA;
+   const char *room = g_link_room[0] ? g_link_room : NULL;
+   char rl[ROOM_LABEL_CAP];
+   memset(&v, 0, sizeof(v));
+   if (!room)
+      room = room_label(g_silent_group, rl, sizeof(rl));
+   l1[0] = l2[0] = l3[0] = amt[0] = '\0';
+   v.room = room;
+   v.frac = -1;
+   v.busy = 1;
+   v.l1 = l1;
+   v.l2 = l2;
+   snprintf(l1, sizeof(l1), "Linking %s with the other PSP", room);
+   switch (pr.phase)
+   {
+   case FE_GBLINK_PH_CHECK:
+      snprintf(l2, sizeof(l2), "Checking the game...");
+      if (pr.total)
+         v.frac = (int)((uint64_t)pr.done * 100u / pr.total);
+      break;
+   case FE_GBLINK_PH_WAIT_PEER:
+      if (g_net_is_host)
+      {
+         snprintf(l1, sizeof(l1), "Hosting %s by Link Cable", room);
+         snprintf(l2, sizeof(l2), "Waiting for the other PSP...");
+      }
+      else
+         snprintf(l2, sizeof(l2), "Finding the room...");
+      break;
+   case FE_GBLINK_PH_HELLO:
+      snprintf(l2, sizeof(l2), "Checking the game...");
+      v.frac = 100;
+      break;
+   case FE_GBLINK_PH_ROM_RX:
+   case FE_GBLINK_PH_ROM_TX:
+      snprintf(l2, sizeof(l2), "%s %s...",
+               pr.phase == FE_GBLINK_PH_ROM_RX ? "Receiving" : "Sending",
+               pr.phase == FE_GBLINK_PH_ROM_RX
+                  ? (pr.peer_title[0] ? pr.peer_title : "the game")
+                  : (g_gb_title[0] ? g_gb_title : "your game"));
+      link_amount(amt, sizeof(amt), pr.done, pr.total);
+      v.amount = amt;
+      v.frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
+      snprintf(l3, sizeof(l3), "The game is kept in memory, not on the "
+               "Memory Stick.");
+      v.l3 = l3;
+      break;
+   case FE_GBLINK_PH_VERIFY:
+      snprintf(l2, sizeof(l2), "Checking %s...",
+               pr.peer_title[0] ? pr.peer_title : "the other game");
+      v.frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
+      break;
+   case FE_GBLINK_PH_SHARE:
+      snprintf(l2, sizeof(l2), "%s", gb ? "Exchanging saves..."
+                                       : "Sharing where you are...");
+      link_amount(amt, sizeof(amt), pr.done, pr.total);
+      v.amount = amt;
+      v.frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
+      if (!gb)
+      {
+         snprintf(l3, sizeof(l3), "Both games carry on from where they "
+                  "are.");
+         v.l3 = l3;
+      }
+      break;
+   case FE_GBLINK_PH_START:
+   case FE_GBLINK_PH_RUNNING:
+      snprintf(l2, sizeof(l2), "Starting together...");
+      v.frac = 1000;
+      break;
+   case FE_GBLINK_PH_ENDING:
+   case FE_GBLINK_PH_DONE:
+      snprintf(l1, sizeof(l1), "Ending the link...");
+      snprintf(l2, sizeof(l2), "%s", pr.phase == FE_GBLINK_PH_DONE
+               ? "Link ended. Game saved." : "Both PSPs agree where to stop.");
+      v.footer = "";
+      break;
+   default:
+      if (g_link_why == LW_CANCEL)
+      {
+         snprintf(l1, sizeof(l1), "Link cancelled.");
+         v.footer = "";
+         break;
+      }
+      link_fail_text(&pr, l1, sizeof(l1), l2, sizeof(l2));
+      v.fail = 1;
+      v.busy = 0;
+      if (g_gblink_role)
+         v.footer = "";                /* a harness run continues alone */
+      break;
+   }
+   ui_linking_draw(&v);
+   g_drew = 1;
+}
+
+static void gblink_draw_status(void)
+{
+   fe_gblink_progress pr;
+   fe_host_gblink_facts(&pr);
+   link_draw_facts(&pr);
+}
+
+/* ---- GB link: smoothness (docs/GB-LINK.md section 14) ---------------------
+ *
+ * The same policies run a GBA link-cable session (GBA_LINK builds,
+ * docs/GBA-LINK-MIRROR.md section 15): it is the same fe_gblink session with
+ * fe_gbadual's machines, and gblink_service drives both.  There the session
+ * audio owns the resampler step and the vblank pacing for its duration:
+ * ADR-0027's pace_frame / pace_extra_vblanks stand aside (they are parked at
+ * nominal in a cable session anyway -- net_bringup skips
+ * pace_session_begin -- so this only rules out a second controller).
+ *
+ * Three things a running session does here, each with a config.ini key
+ * (the player's kill switch) and a harness override:
+ *
+ *  gblink_absorb (1)   STALL ABSORPTION.  When the partner's buttons are
+ *     late, fe_gblink calls plat_gblink_wait instead of giving the display
+ *     frame up: pump the network and keep waiting while the frame can still
+ *     make its vblank (the frame's own work, estimated, still fits).  The
+ *     machines run on the inputs alone, so this changes when a step returns,
+ *     never what it computes.  0 = a late input loses the frame (<= 3.1).
+ *
+ *  gblink_audio_cushion (3072 frames of 32768 Hz, 94 ms)   The session
+ *     starts with this much silence in the audio ring, and the rate follow
+ *     holds it there.  The connecting screen empties the ring and before
+ *     this the session started at zero: the ring only grows by the
+ *     59.94-vs-59.73 Hz surplus (~120 frames a second), so every late frame
+ *     or stall of the first minute was a gap.  Below RING_HIGH_WATER so
+ *     the follow never meets the nudge.  0 = start empty.
+ *
+ *  gblink_audio_follow (60 = 6.0 %)   The resampler follows the ring (a
+ *     PI controller, gblink_audio_frame): a ring below the cushion plays up
+ *     to this much slower, above it up to 0.5 % faster (the vblank surplus).
+ *     ADR-0027's trade for GBA sessions: a slight pitch drop instead of gaps
+ *     while the session runs below 59.73 fps -- the game itself runs that
+ *     much slower then.  The bound only binds in a sustained CPU-bound
+ *     stretch: 3 % left PPSSPP at x300 (57.9 fps) at ~380 gaps a minute; 6 %
+ *     covers down to ~56 fps (tools/gblink/audio_follow_sim.py).  0 = fixed
+ *     rate (and the old high-water nudge).
+ *
+ *  gblink_nack (1)   RESEND REQUESTS.  A display frame lost waiting for
+ *     the partner's buttons asks for them on the bulk lane (fe_gblink.c
+ *     BK_NACK) instead of waiting out netdrv's retransmission timeout
+ *     behind a lost datagram.  0 = the ordered channel only.
+ *
+ *  gblink_audio_soft (1)   Underruns that remain fade out and back in
+ *     (g_audio_soft) instead of clicking.  0 = silence steps (<= 3.1).
+ */
+static int g_gbl_absorb = 1;
+static int g_gbl_soft = 1;                    /* soft underruns (fade) */
+static int g_gbl_nack = 1;                    /* resend requests (BK_NACK) */
+static unsigned g_gbl_hash_every;             /* harness: 0 = 240 */
+static int g_gbl_hash_legacy;                 /* harness: the beta's hash */
+static unsigned g_gbl_cushion = 3072;
+static unsigned g_gbl_follow = 60;            /* tenths of a percent */
+static unsigned g_gbl_win_ms = 10000;         /* EVT gblink_win period */
+static uint32_t g_gbl_work_ema;               /* frame work estimate, us */
+static int g_gbl_audio_on;                    /* the session's audio policy */
+static uint32_t g_gbl_rate_ema;               /* ring level, x16 */
+static int32_t g_gbl_rate_i;                  /* rate follow: integral, ppm */
+static uint64_t g_gw_t0;                      /* EVT gblink_win window start */
+
+/* fe_host_config.gblink_wait.  The deadline is this loop iteration's vblank
+ * (g_vc_target + 1): stop once it has passed, or once the rest of the frame
+ * (its usual work plus the present) would no longer fit before it. */
+#define GBL_FRAME_US      16683u
+#define GBL_PRESENT_US    1500u
+#define GBL_WAIT_MAX_US   12000u
+static uint64_t g_gbl_wait_prev;              /* last plat_gblink_wait call */
+static uint32_t g_gbl_frame_wait_us;          /* this frame's absorbed waiting */
+static int plat_gblink_wait(uint32_t waited_us)
+{
+   uint32_t elapsed;
+   unsigned depth;
+   uint64_t now = net_now_us();
+   if (waited_us && g_gbl_wait_prev)
+      g_gbl_frame_wait_us += (uint32_t)(now - g_gbl_wait_prev);
+   g_gbl_wait_prev = now;
+   if (!g_gbl_absorb || waited_us >= GBL_WAIT_MAX_US)
+      return 0;
+   if ((int)(sceDisplayGetVcount() - g_vc_target) >= 1)
+      return 0;
+   elapsed = (uint32_t)(now - g_frame_start_us);
+   if (elapsed + g_gbl_work_ema + GBL_PRESENT_US >= GBL_FRAME_US)
+      return 0;
+   depth = adhoc_transport_rx_depth();
+   if (depth > g_gbl_rxq_max)
+      g_gbl_rxq_max = depth;
+   fe_np_pump();
+   /* Nothing new: give the CPU up briefly (the radio's threads outrank us
+    * anyway; this lets the lower ones run instead of a spin). */
+   if (!adhoc_transport_rx_depth() && !adhoc_transport_bulk_depth())
+      sceKernelDelayThread(100);
+   return 1;
+}
+
+static unsigned audio_nominal_step(void)
+{
+   return (unsigned)(((uint64_t)in_rate << 16) / OUT_RATE);
+}
+
+/* The session's machines are running: the audio policy on (cushion, soft
+ * underruns, rate follow) or, at its end, off and nominal again. */
+static void gblink_audio_session(int on)
+{
+   if (on == g_gbl_audio_on)
+      return;
+   g_gbl_audio_on = on;
+   if (on)
+   {
+      unsigned i, n = g_gbl_cushion;
+      if (n > RING_FRAMES / 2)
+         n = RING_FRAMES / 2;
+      /* Producer side (this thread): fill, then publish. */
+      for (i = 0; i < n; i++)
+      {
+         unsigned idx = (ring_w + i) & RING_MASK;
+         audio_ring[idx * 2 + 0] = 0;
+         audio_ring[idx * 2 + 1] = 0;
+      }
+      ring_w += n;
+      g_gbl_rate_ema = (ring_w - ring_r) * 16u;
+      g_gbl_rate_i = 0;
+      g_audio_soft = g_gbl_soft;
+      g_audio_trim = g_gbl_follow ? RING_HIGH_WATER + 1024u : 0u;
+      {
+         /* the telemetry window starts with the machines */
+         fe_gblink_window w;
+         fe_host_gblink_window(&w);
+         g_gw_t0 = 0;
+         g_gbl_work_ema = 12000u;
+      }
+      fe_evt("gblink_audio on cushion=%u follow=%u absorb=%d soft=%d "
+             "level=%u", n, g_gbl_follow, g_gbl_absorb, g_gbl_soft,
+             ring_w - ring_r);
+   }
+   else
+   {
+      g_audio_soft = 0;
+      g_audio_trim = 0;
+      g_audio_step = audio_nominal_step();
+      fe_evt("gblink_audio off");
+   }
+}
+
+/* Once per loop iteration while the machines run: steer the resampler
+ * toward the cushion (gblink_audio_follow).  Proportional plus integral:
+ * a session that holds 58 fps for a while needs the step 2.9 % low for as
+ * long, and a proportional term alone only gets there with the ring empty
+ * (PPSSPP, CPU-bound: ~360 gaps a minute with P alone).  The integral
+ * carries the steady rate, the proportional term the moment-to-moment
+ * level; both are bounded by -follow/10 % .. +0.5 %.  The gains come from
+ * a simulation of this ring (docs/GB-LINK.md 14.4): a faster integral (1 %
+ * a second) rang -- a 12-20 s limit cycle swinging the pitch by 2.5 % --
+ * while 2 % proportional + 1 % in 6 s integral settles without ringing
+ * and, with the 3072-frame cushion, leaves no gaps up to 1 % of frames
+ * lost to stalls. */
+static void gblink_audio_frame(void)
+{
+   unsigned level = ring_w - ring_r;
+   int32_t target = (int32_t)(g_gbl_cushion ? g_gbl_cushion : 3072u);
+   int32_t lo = -(int32_t)g_gbl_follow * 1000, hi = 5000;
+   int64_t err_ppm, ppm;
+   if (level > RING_FRAMES)
+      level = 0;                     /* a flush in progress (see audio_thread) */
+   /* ~0.25 s smoothing: the level saw-tooths by a whole output chunk (761
+    * frames) as the audio thread pulls, which must not reach the pitch. */
+   g_gbl_rate_ema += level - g_gbl_rate_ema / 16u;
+   if (!g_gbl_follow)
+      return;
+   /* the level's error as a share of the cushion, in ppm (-1e6 = empty) */
+   err_ppm = ((int64_t)(g_gbl_rate_ema / 16u) - target) * 1000000 / target;
+   if (err_ppm > 1000000)
+      err_ppm = 1000000;
+   g_gbl_rate_i += (int32_t)(err_ppm / 18000);   /* 1 % in 6 s at a 50 % error */
+   if (g_gbl_rate_i < lo)
+      g_gbl_rate_i = lo;
+   if (g_gbl_rate_i > hi)
+      g_gbl_rate_i = hi;
+   ppm = g_gbl_rate_i + err_ppm / 50;             /* P: 2 % at full scale */
+   if (ppm < lo)
+      ppm = lo;
+   if (ppm > hi)
+      ppm = hi;
+   g_audio_step = (unsigned)(((uint64_t)audio_nominal_step() *
+                              (uint64_t)(1000000 + ppm)) / 1000000u);
+}
+
+/* EVT gblink_win: one line per g_gbl_win_ms of wall time while the machines
+ * run -- the attribution record (GB-LINK.md section 14):
+ *   frames/stalls/st_ep/st_max   display frames emulated / lost to a late
+ *                     input / stall episodes / longest run, this window
+ *   absorbed/abs_ms   late inputs waited for and still on time (gblink_absorb)
+ *   work_us mean/max  the loop's frame work (vblank wait excluded)
+ *   core_us mean/max  both machines (gbdual_advance, hooks and waits out)
+ *   step_us mean/max  the whole session step (core + hash + crc + sends)
+ *   hash_us n/max, crc_us n/max   the periodic sync hash / cartridge check
+ *   ovb/late          frames over 16.74 ms of work / that missed their vblank
+ *   delay lead_min/lead_mean   input delay; partner frames in hand
+ *   rxq_max           netdrv datagrams waiting at a pump, max
+ *   ar_min/ar_mean    audio ring level (frames); under = gaps, starved =
+ *                     output frames of silence; step = resampler ppm
+ *   pg=A/B            32 KiB ROM pages read from the stick this window by
+ *                     the player's / the partner's GBA (a GBA link-cable
+ *                     session whose ROM does not fit, i.e. the PSP-1000);
+ *                     0/0 in a GB session */
+#ifdef GBA_LINK
+extern uint32_t gbab_gamepak_page_loads;
+#define GW_PAGES_B() ((unsigned)gbab_gamepak_page_loads)
+#else
+#define GW_PAGES_B() 0u
+#endif
+static unsigned g_gw_pg0a, g_gw_pg0b;
+static unsigned g_gw_loops, g_gw_ar_min, g_gw_ovb, g_gw_late;
+static uint64_t g_gw_ar_sum, g_gw_work_sum;
+static uint32_t g_gw_work_max;
+static unsigned g_gw_starved0, g_gw_under0;
+
+static void gblink_win_reset(uint64_t now)
+{
+   g_gw_t0 = now;
+   g_gw_loops = 0;
+   g_gw_ar_min = ~0u;
+   g_gw_ar_sum = 0;
+   g_gw_work_sum = 0;
+   g_gw_work_max = 0;
+   g_gw_ovb = g_gw_late = 0;
+   g_gbl_rxq_max = 0;
+   g_gw_starved0 = g_audio_starved;
+   g_gw_under0 = g_audio_underruns;
+   g_gw_pg0a = (unsigned)gamepak_page_loads;
+   g_gw_pg0b = GW_PAGES_B();
+}
+
+/* The main loop's measured frame work (work_us), once per iteration, and
+ * whether the frame missed its vblank. */
+static void gblink_win_work(uint32_t work_us, int late)
+{
+   /* the absorbed wait is not work (fe_host's core_prof excludes it too) */
+   work_us = work_us > g_gbl_frame_wait_us ? work_us - g_gbl_frame_wait_us : 0;
+   g_gbl_frame_wait_us = 0;
+   g_gbl_wait_prev = 0;
+   if (!g_gbl_audio_on)
+      return;
+   /* plat_gblink_wait's estimate of a frame's work: 1/8 new */
+   g_gbl_work_ema = g_gbl_work_ema - g_gbl_work_ema / 8u + work_us / 8u;
+   g_gw_work_sum += work_us;
+   if (work_us > g_gw_work_max)
+      g_gw_work_max = work_us;
+   if (work_us > 16740u)
+      g_gw_ovb++;
+   if (late)
+      g_gw_late++;
+}
+
+static void gblink_win_note(void)
+{
+   uint64_t now = net_now_us();
+   unsigned level = ring_w - ring_r;
+   if (!g_gw_t0)
+      gblink_win_reset(now);
+   if (level > RING_FRAMES)
+      level = 0;
+   g_gw_loops++;
+   if (level < g_gw_ar_min)
+      g_gw_ar_min = level;
+   g_gw_ar_sum += level;
+   if (now - g_gw_t0 < (uint64_t)g_gbl_win_ms * 1000u)
+      return;
+#ifndef GPSP_NO_TELEMETRY
+   {
+      fe_gblink_window w;
+      unsigned loops = g_gw_loops ? g_gw_loops : 1;
+      unsigned fr;
+      memset(&w, 0, sizeof(w));
+      fe_host_gblink_window(&w);
+      fr = w.frames ? w.frames : 1;
+      fe_evt("gblink_win dt_ms=%u loops=%u frames=%u stalls=%u st_ep=%u "
+             "st_max=%u absorbed=%u abs_ms=%u abs_max_us=%u wait_ms=%u "
+             "work_us=%u/%u core_us=%u/%u step_us=%u/%u hash_us=%u/%u "
+             "crc_us=%u/%u ovb=%u late=%u delay=%u lead_min=%d "
+             "lead_mean_x10=%u rxq_max=%u ar_min=%u ar_mean=%u under=%u "
+             "starved=%u step_ppm=%d nacks=%u resends=%u pg=%u/%u",
+             (unsigned)((now - g_gw_t0) / 1000u), g_gw_loops, w.frames,
+             w.stalls, w.stall_episodes, w.streak_max, w.absorbed,
+             w.absorb_us / 1000u, w.absorb_us_max, w.wait_us / 1000u,
+             (unsigned)(g_gw_work_sum / loops), g_gw_work_max,
+             w.adv_us / fr, w.adv_us_max, w.step_us / (w.steps ? w.steps : 1),
+             w.step_us_max, w.hash_n, w.hash_us_max, w.crc_n, w.crc_us_max,
+             g_gw_ovb, g_gw_late, w.delay,
+             w.lead_n ? (int)w.lead_min : -1,
+             w.lead_n ? (unsigned)(w.lead_sum * 10u / w.lead_n) : 0u,
+             g_gbl_rxq_max, g_gw_ar_min == ~0u ? 0u : g_gw_ar_min,
+             (unsigned)(g_gw_ar_sum / loops),
+             g_audio_underruns - g_gw_under0,
+             g_audio_starved - g_gw_starved0,
+             (int)((int64_t)g_audio_step * 1000000 /
+                   (int64_t)audio_nominal_step()) - 1000000,
+             w.nacks, w.resends,
+             (unsigned)gamepak_page_loads - g_gw_pg0a,
+             GW_PAGES_B() - g_gw_pg0b);
+   }
+#endif
+   gblink_win_reset(now);
+}
+
+#ifdef GPSP_PERF_RIG
+/* Harness `gblink_cpu_x100` (PPSSPP only, docs/GB-LINK.md section 14): make
+ * a link session's frames cost N/100 of what they cost here, by busy-waiting
+ * after each emulated frame for (N-100)/100 of that frame's measured session
+ * step (core_prof).  PPSSPP runs the two Game Boys ~2.4x faster than a PSP,
+ * so without this it never shows a CPU-bound session at all; with it, heavy
+ * scenes overrun the frame as they do on the hardware, scaled.  It is not
+ * hardware timing: the I-cache, the radio and the WLAN threads are not
+ * modelled -- only "the step costs this much". */
+static unsigned g_gbl_cpu_x100;
+static void gblink_cpu_scale(void)
+{
+   static unsigned calls0;
+   static uint32_t tot0;
+   unsigned calls;
+   uint32_t tot, mx, d, burn;
+   uint64_t t0;
+   fe_host_core_prof(&calls, &tot, &mx);
+   if (g_gbl_cpu_x100 > 100 && fe_host_gblink_active() && calls == calls0 + 1)
+   {
+      d = tot - tot0;
+      burn = (uint32_t)((uint64_t)d * (g_gbl_cpu_x100 - 100) / 100);
+      if (burn > 50000)
+         burn = 50000;
+      t0 = net_now_us();
+      while (net_now_us() - t0 < burn)
+         ;
+   }
+   calls0 = calls;
+   tot0 = tot;
+}
+#endif
+
+/* ---- a menu session's setup and end (docs/GBA-LINK-UI.md) ----------------
+ *
+ * The room kind the joiner asked for (ROOM_*), and the harness's
+ * link_exit_after: frames to play on after a menu session ends, then exit
+ * (0 after an agreed end, 4 otherwise) -- the two-PPSSPP rig's end. */
+static int g_link_room_kind;
+static unsigned g_link_exit_after;
+
+/* While a menu session sets up: O cancels (the footer says so), and a
+ * joiner learns what the session cannot tell it -- netdrv refused us (the
+ * room has its two players), or nobody answered our JOIN while the room's
+ * radio cell is plainly there (the host runs another protocol: a different
+ * GBAdhoc release, or a GBA room seen from a GB console). */
+static void link_setup_watch(void)
+{
+   unsigned pad_new = g_pad & ~g_link_prev_pad;
+   fe_gblink_progress pr;
+   g_link_prev_pad = g_pad;
+   g_link_setup_ticks++;
+   if (g_link_why != LW_NONE)
+      return;
+   if (pad_new & PSP_CTRL_CIRCLE)
+   {
+      g_link_why = LW_CANCEL;
+      fe_evt("link_cancel ticks=%u", g_link_setup_ticks);
+      fe_host_gblink_request_end();
+      return;
+   }
+   if (g_net_is_host)
+      return;
+   fe_host_gblink_facts(&pr);
+   if (pr.peer_up)
+      return;
+   if (fe_np_stop_reason() == ND_STOP_REFUSED)
+      g_link_why = LW_FULL;
+   else if (g_link_setup_ticks > 12u * 60u && adhoc_transport_connected())
+      g_link_why = g_pcfg.console != FE_CONSOLE_GBA &&
+                   g_link_room_kind == ROOM_ADAPTER ? LW_GBA_ROOM
+                                                    : LW_VERSION;
+   if (g_link_why != LW_NONE)
+   {
+      fe_evt("link_join_refused why=%d stop=%d ticks=%u", g_link_why,
+             fe_np_stop_reason(), g_link_setup_ticks);
+      fe_host_gblink_request_end();
+   }
+}
+
+/* A menu session is DONE or FAILED.  What the player sees next:
+ *   - agreed end: the game, "Link ended. Game saved.";
+ *   - a cable host whose would-be partner never linked: it keeps hosting
+ *     (a toast says why), the game never stopped for long;
+ *   - a setup that did not link (joiner, or a GB host nobody joined): the
+ *     LINKING screen's failure lines until O;
+ *   - a link lost after it ran: GBA, each player carries on and saves as
+ *     usual (owner, 2026-10-03; fe_host gba_cable_close); GB, the GB link's
+ *     rule (both machines are clones: nothing saved).
+ * Never before the partner has acknowledged what we sent (our FINAL or
+ * ABORT), for at most ten seconds. */
+static int link_end(int st)
+{
+   fe_gblink_progress pr;
+   int host_cable = g_net_is_host && g_link_kind == LK_CABLE;
+   int fail_screen, keep_room, desync, was_cable;
+   fe_host_gblink_facts(&pr);
+   desync = pr.error == FE_GBLINK_E_DESYNC ||
+            (pr.error == FE_GBLINK_E_PEER_ABORT &&
+             pr.peer_reason == FE_GBLINK_E_DESYNC);
+   keep_room = st == FE_GBLINK_FAILED && !pr.ran && host_cable &&
+               g_link_why != LW_CANCEL && g_net_up;
+   fail_screen = st == FE_GBLINK_FAILED && !pr.ran && !keep_room &&
+                 g_link_why != LW_CANCEL;
+   if (g_gblink_ended_ticks++ == 0)
+   {
+      fe_evt("gblink_ended_screen state=%d ran=%d err=%s peer_reason=%d "
+             "why=%d keep_room=%d t_ms=%llu", st, pr.ran,
+             fe_gblink_error_text(pr.error), pr.peer_reason, g_link_why,
+             keep_room, (unsigned long long)(sceKernelGetSystemTimeWide() /
+                                             1000));
+      adhoc_ctl_evt("end");
+#ifndef GPSP_NO_TELEMETRY
+      heap_census("gblink_end");
+#endif
+   }
+   if (!fe_host_gblink_flushed() && g_gblink_ended_ticks <= 600)
+      return 0;
+   if (fail_screen)
+   {
+      unsigned pad_new = g_pad & ~g_link_prev_pad;
+      g_link_prev_pad = g_pad;
+      if (!g_link_fail_hold)
+      {
+         /* The radio goes now (the host is free for the next PSP); the
+          * screen stays until O. */
+         g_link_fail_hold = 1;
+         fe_evt("link_fail_screen");
+         net_teardown();
+         return 0;
+      }
+      if (!(pad_new & PSP_CTRL_CIRCLE))
+         return 0;
+   }
+   was_cable = g_link_kind == LK_CABLE || g_gba_cable;
+   if (!keep_room)
+      net_teardown();
+   if (gblink_close_held() == -3)
+   {
+      /* section 19: the game could not be reloaded after the session */
+      fe_evt("link_end fatal reason=reload");
+      g_running = 0;
+      return 0;
+   }
+   cur_frame = NULL;
+   g_gblink_ended_ticks = 0;
+   g_gblink_screen = 0;
+   g_link_mute = 0;
+   g_link_fail_hold = 0;
+   if (keep_room)
+   {
+      int e = pr.error == FE_GBLINK_E_PEER_ABORT && pr.peer_reason >= 0
+                 ? pr.peer_reason : pr.error;
+      g_link_wait = 1;
+      g_link_clear = 1;
+      osd_toast("%s", e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD
+                ? "A PSP with a different game tried to join."
+                : "The other PSP left before the link started.");
+      link_chip();
+      fe_evt("link_host_keeps_room room=%s", g_link_room);
+      g_link_why = LW_NONE;
+      return 0;
+   }
+   if (st == FE_GBLINK_DONE)
+      osd_toast("Link ended. Game saved.");
+   else if (g_link_why == LW_CANCEL)
+      osd_toast("Link cancelled.");
+   else if (pr.ran && desync)
+      osd_toast("The games fell out of step. Link ended, nothing saved.");
+   else if (pr.ran)
+      osd_toast("%s", was_cable && g_pcfg.console == FE_CONSOLE_GBA
+                ? "Link lost: the other PSP left. Your game carries on."
+                : "Link lost: the other PSP left. Nothing saved.");
+   g_link_why = LW_NONE;
+   g_link_menu = 0;
+   if (g_link_exit_after)
+   {
+      g_gblink_after_code = st == FE_GBLINK_DONE ? 0 : 4;
+      g_gblink_after_why = st == FE_GBLINK_DONE ? "gblink_done"
+                                                : "gblink_failed";
+      g_gblink_after_left = g_link_exit_after;
+      fe_evt("link_exit_after frames=%u code=%d", g_link_exit_after,
+             g_gblink_after_code);
+   }
+   return 0;
+}
+
+/* Once per loop iteration.  Returns 1 when a harness run should exit now,
+ * with *code set. */
+static int gblink_service(int have_script, int *code, const char **why)
+{
+   static unsigned ticks, script_done_ticks;
+   static int end_asked;
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+   if (g_gblink_repeat_restart)
+   {
+      /* gblink_repeat: the next session starts from scratch */
+      g_gblink_repeat_restart = 0;
+      end_asked = 0;
+      script_done_ticks = 0;
+   }
+#endif
+   int st;
+   ticks++;
+   g_gblink_screen = 0;
+   if (g_gblink_after_left)
+   {
+      /* harness: the game plays on after the session, then the run ends */
+      if (--g_gblink_after_left == 0)
+      {
+         g_gblink_exiting = 1;
+         *code = g_gblink_after_code;
+         *why = g_gblink_after_why;
+         return 1;
+      }
+      return 0;
+   }
+   /* The boot-time bring-up (host=1 / join=1) left the session to start
+    * here once the harness's save state was in. */
+   if (g_gblink_role && !g_gblink_auto_started && g_net_up &&
+       !g_autoload_state && !fe_host_gblink_active() &&
+       fe_host_frame_count() >= g_gblink_start_frames &&
+       (g_pcfg.console != FE_CONSOLE_GBA || g_gba_cable))
+   {
+      g_gblink_auto_started = 1;
+      if (gblink_begin(g_gblink_role == 1) != 0)
+      {
+         *code = 4;
+         *why = "gblink_start";
+         return 1;
+      }
+   }
+   if (g_gblink_role && !g_gblink_auto_started && !g_net_up && ticks >= 30 &&
+       !g_autoload_state &&
+       (g_pcfg.console != FE_CONSOLE_GBA || g_gba_cable) &&
+       fe_host_frame_count() >= g_gblink_start_frames)
+   {
+      int rc;
+      g_gblink_auto_started = 1;
+      /* a GBA cable room's protocol (docs/GBA-LINK-UI.md), as the menu's */
+      fe_np_set_gb_protocol(g_gba_cable ? CABLE_PROTOCOL : NULL);
+      me_rend_suspend();
+      rc = net_bringup(g_gblink_role == 1, g_silent_group, g_pcfg.nick, 0);
+      me_rend_resume();
+      if (rc != 0 || gblink_begin(g_gblink_role == 1) != 0)
+      {
+         fe_evt("gblink_auto_fail rc=%d stage=%s", rc, adhoc_transport_stage());
+         *code = 4;
+         *why = "gblink_start";
+         return 1;
+      }
+   }
+   /* A cable host waiting (docs/GBA-LINK-UI.md): its game runs; the session
+    * starts the moment the other PSP is on the channel -- unless that is
+    * the PSP it just turned away, which must leave first. */
+   if (g_link_wait && g_net_up && !fe_host_gblink_active())
+   {
+      int ready = fe_np_gb_peer_ready(NULL);
+      if (g_link_clear)
+      {
+         if (!ready)
+         {
+            g_link_clear = 0;
+            fe_evt("link_host_clear room=%s", g_link_room);
+         }
+      }
+      else if (ready)
+      {
+         g_link_wait = 0;
+         fe_evt("link_host_peer room=%s", g_link_room);
+         if (gblink_begin(1) != 0)
+            return 0;
+      }
+   }
+   if (!fe_host_gblink_active())
+   {
+      g_link_mute = 0;
+      gblink_audio_session(0);
+      return 0;
+   }
+   st = fe_host_gblink_state();
+   if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
+   {
+      char l1[64], l2[64];
+      g_link_mute = 0;
+      gblink_audio_session(1);
+      gblink_audio_frame();
+      gblink_win_note();
+      if (!g_gblink_census)
+      {
+         /* Both machines and (if it was sent) the partner's cartridge are
+          * in memory now: the number the PSP-1000 budget is about. */
+         g_gblink_census = 1;
+#ifndef GPSP_NO_TELEMETRY
+         heap_census("gblink_running");
+#endif
+      }
+      if (g_link_menu)
+         link_chip();               /* "Link Cable  Room 7  P1" */
+      else
+      {
+         fe_host_gblink_status(l1, sizeof(l1), l2, sizeof(l2));
+         if (g_pcfg.osd_wireless)
+            osd_chip_session(l1);
+      }
+      /* Harness: the script is over; let the games settle, then end. */
+      if ((g_gblink_role == 1 || (g_link_menu && g_net_is_host)) &&
+          have_script && !end_asked &&
+          fe_autopilot_status() == 1 &&
+          ++script_done_ticks >= g_gblink_end_after)
+      {
+         end_asked = 1;
+         fe_host_gblink_request_end();
+      }
+      return 0;
+   }
+   g_gblink_screen = 1;
+   gblink_audio_session(0);
+   if (!g_link_mute)
+   {
+      g_link_mute = 1;
+      ring_r = ring_w;           /* what was queued would replay stale */
+      fe_evt("gblink_mute on state=%d", st);
+   }
+   if (st == FE_GBLINK_SETUP && g_link_menu)
+      link_setup_watch();
+   if ((st == FE_GBLINK_DONE || st == FE_GBLINK_FAILED) && g_link_menu)
+      return link_end(st);
+   if (st == FE_GBLINK_DONE || st == FE_GBLINK_FAILED)
+   {
+      if (g_gblink_ended_ticks++ == 0)
+      {
+         osd_toast("%s", st == FE_GBLINK_DONE ? "Link ended. Game saved."
+                                              : "Link ended. Nothing saved.");
+         /* When THIS console showed the result (its own clock): hw4's Y
+          * ending showed it on the 1000 long before the 3000. */
+         fe_evt("gblink_ended_screen state=%d t_ms=%llu", st,
+                (unsigned long long)(sceKernelGetSystemTimeWide() / 1000));
+         /* The cell at the end: a NO_PEER names its BSSID and the adhocctl
+          * peer count here even with the periodic reporting off. */
+         adhoc_ctl_evt("end");
+#ifndef GPSP_NO_TELEMETRY
+         /* Before anything is freed: what the session left (a start that
+          * failed for memory is read here -- free vs largest block). */
+         heap_census("gblink_end");
+#endif
+      }
+      /* A second on a DONE screen (it was three), four on a failure (there
+       * is something to read), then the game again
+       * -- and never before the partner has acknowledged everything we sent
+       * (our FINAL above all), for at most ten seconds. */
+      if ((fe_host_gblink_flushed() || g_gblink_ended_ticks > 600) &&
+          (g_gblink_ended_ticks > (st == FE_GBLINK_DONE ? 60u : 240u) ||
+           g_gblink_role))
+      {
+         if (!fe_host_gblink_flushed())
+            fe_evt("gblink_linger_timeout ticks=%u", g_gblink_ended_ticks);
+         fe_evt("gblink_linger ticks=%u t_ms=%llu", g_gblink_ended_ticks,
+                (unsigned long long)(sceKernelGetSystemTimeWide() / 1000));
+         net_teardown();
+         if (gblink_close_held() == -3)
+         {
+            /* section 19: the game could not be reloaded after the session */
+            *code = 4;
+            *why = "gblink_reload_failed";
+            return 1;
+         }
+         cur_frame = NULL;
+         g_gblink_ended_ticks = 0;
+         g_gblink_screen = 0;
+         g_link_mute = 0;
+         if (g_gblink_role)
+         {
+            /* A harness run ends here, or plays on for gblink_after
+             * frames first (the live link's "keep playing" check). */
+            g_gblink_after_code = st == FE_GBLINK_DONE ? 0 : 4;
+            g_gblink_after_why = st == FE_GBLINK_DONE ? "gblink_done"
+                                                      : "gblink_failed";
+            if (g_gblink_after)
+            {
+               g_gblink_after_left = g_gblink_after;
+               fe_evt("gblink_play_on frames=%u", g_gblink_after);
+               return 0;
+            }
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+            /* Harness gblink_repeat = K (GBA-LINK-MIRROR.md 19): K more
+             * sessions in the same process, each from the saved state and
+             * the script's first line -- session N+1 must hash as a fresh
+             * boot's session does (instance B's static state is restored
+             * from its pristine copy and its block zeroed every time). */
+            if (g_gblink_repeat_left && st == FE_GBLINK_DONE &&
+                g_script_path[0])
+            {
+               g_gblink_repeat_left--;
+               fe_evt("gblink_repeat left=%u", g_gblink_repeat_left);
+               fe_autopilot_load(g_script_path);
+               g_autoload_state = 1;
+               g_gblink_auto_started = 0;
+               g_gblink_census = 0;
+               g_gblink_repeat_restart = 1;
+               return 0;
+            }
+#endif
+            g_gblink_exiting = 1;
+            *code = g_gblink_after_code;
+            *why = g_gblink_after_why;
+            return 1;
+         }
+      }
+   }
+   return 0;
+}
+
+/* A script's `disconnect`: ask the session to end before the next frame
+ * runs, exactly where sesssim asks (tools/gblink/sesssim.c), so the agreed
+ * end frame -- and the final hash -- match the reference run. */
+static void gblink_script_disconnect(void)
+{
+#ifdef GPSP_PERF_RIG
+   if (fe_autopilot_disconnect_pending() && fe_host_gblink_active())
+   {
+      fe_evt("gblink_script_disconnect");
+      fe_host_gblink_request_end();
+   }
+#endif
+}
+
+/* The LINKING screen while the radio comes up (it blocks: nothing to
+ * cancel yet).  g_link_kind is this session's. */
+static void link_bringup_view(int is_host, const char *room,
+                              ui_linking_view *lv, char *l1, size_t c1,
+                              char *l2, size_t c2)
+{
+   memset(lv, 0, sizeof(*lv));
+   lv->room = room;
+   lv->l1 = l1;
+   lv->l2 = l2;
+   lv->frac = -1;
+   lv->busy = 1;
+   lv->footer = "";
+   if (is_host)
+   {
+      snprintf(l1, c1, "Starting %s by %s", room,
+               g_link_kind == LK_ADAPTER ? "Wireless Adapter" : "Link Cable");
+      snprintf(l2, c2, "Opening the room...");
+   }
+   else
+   {
+      if (g_link_kind == LK_ADAPTER)
+         snprintf(l1, c1, "Joining %s by Wireless Adapter", room);
+      else
+         snprintf(l1, c1, "Linking %s with the other PSP", room);
+      snprintf(l2, c2, "Finding the room (up to 15 s)...");
+   }
+}
+
+/* UI-driven wireless action (host=1 / host=0 join).  docs/GBA-LINK-UI.md:
+ * the room's name is built from the mode (host) or read for it (join). */
+static void ui_net_action(int is_host)
+{
+   int rc, kind, num, gba = g_pcfg.console == FE_CONSOLE_GBA;
+   char room[ROOM_LABEL_CAP], group[9], code[5];
+   char l1[80], l2[80];
+   ui_linking_view lv;
+   if (g_net_up)
+   {
+      osd_toast("Already in a session");
+      return;
+   }
+   /* Interlock, direction 2 (see mgift_start for direction 1).  Mystery Gift
+    * has the radio associated with an access point; adhoc_transport_init would
+    * take it into IBSS mode underneath the listener.  Refuse rather than
+    * silently break one of the two. */
+   if (mgift_ui_active())
+   {
+      osd_toast("Stop Mystery Gift first");
+      return;
+   }
+   if (is_host)
+   {
+      int cable = gba && ui_host_cable();
+      num = room_number(g_pcfg.group);
+      if (num < 0)
+         snprintf(group, sizeof(group), "%.8s", g_pcfg.group);  /* verbatim */
+      else if (!gba)
+      {
+         room_code_gb(g_gb_title, sizeof(g_gb_title), code);
+         room_make(ROOM_CABLE_GB, num, code, group, sizeof(group));
+      }
+      else if (cable)
+      {
+         room_code_gba(g_game_code, code);
+         room_make(ROOM_CABLE_GBA, num, code, group, sizeof(group));
+      }
+      else
+         room_make(ROOM_ADAPTER, num, NULL, group, sizeof(group));
+      kind = !gba ? ROOM_CABLE_GB : cable ? ROOM_CABLE_GBA : ROOM_ADAPTER;
+   }
+   else
+   {
+      snprintf(group, sizeof(group), "%.8s", ui_group());
+      kind = room_parse(group, &num, code);
+   }
+   g_link_room_kind = kind;
+   g_link_kind = !gba ? LK_GB : kind == ROOM_CABLE_GBA ? LK_CABLE : LK_ADAPTER;
+   if (g_link_kind == LK_CABLE && !g_gba_cable_ok)
+   {
+      g_link_kind = LK_NONE;
+      osd_toast("Link Cable needs a restart of the game");
+      return;
+   }
+   g_gba_cable = g_link_kind == LK_CABLE;
+   fe_np_set_gb_protocol(g_gba_cable ? CABLE_PROTOCOL : NULL);
+   room_label(group, room, sizeof(room));
+   snprintf(g_link_room, sizeof(g_link_room), "%s", room);
+   fe_evt("link_action role=%s group=%s kind=%d link=%d", is_host ? "host"
+          : "join", group, kind, g_link_kind);
+
+   /* The LINKING screen for the blocking adhocctl bring-up (<= 15 s). */
+   link_bringup_view(is_host, room, &lv, l1, sizeof(l1), l2, sizeof(l2));
+   link_backdrop_take();
+   ui_linking_draw(&lv);
+   vid_swap();
+
+   me_rend_suspend();                  /* clean heap for np_start (run 407) */
+   rc = net_bringup(is_host, group, g_pcfg.nick, 0);
+   me_rend_resume();                   /* re-alloc from the post-session heap */
+   if (rc == 0)
+   {
+      g_link_menu = 1;
+      if (g_link_kind == LK_CABLE && is_host)
+      {
+         /* The host keeps playing; the session starts when the other PSP
+          * arrives (gblink_service). */
+         g_link_wait = 1;
+         g_link_clear = 0;
+         osd_toast("Hosting %s by Link Cable. Waiting for the other PSP.",
+                   room);
+         link_chip();
+      }
+      else if (g_link_kind == LK_ADAPTER)
+      {
+         osd_toast("%s %s", is_host ? "Hosting" : "Joined", room);
+         link_chip();
+      }
+      else
+         gblink_begin(is_host);         /* cable joiner, or GB/GBC */
+      return;
+   }
+   g_link_kind = LK_NONE;
+   if (!g_gblink_role)
+      g_gba_cable = 0;
+   fe_np_set_gb_protocol(NULL);
+   if (rc == ADHOC_ERR_WLAN_OFF)
+      osd_toast("WLAN switch is OFF");
+   else if (rc == ADHOC_ERR_NO_GROUP)
+      osd_toast("%s not found - is the host still there?", room);
+   else if (rc == ADHOC_ERR_NP_START)
+      osd_toast("Radio OK, netdrv failed: %s", g_np_start_why);
+   else
+      osd_toast("Wireless start failed (%s)", adhoc_transport_stage());
+}
+
+/* ---- Mystery Gift (2.0.5) ------------------------------------------------
+ *
+ * A Mystery Gift session is NOT a trading session and shares none of its state,
+ * but it does reuse the whole stack above the radio.  The phone plays a Pokemon
+ * distribution cart: it speaks netdrv's own GPN1 frames, with rfu.c's RFU1
+ * frames inside them and the game's Mystery Gift link protocol inside those.
+ * GBAdhoc translates the radio and nothing else -- infrastructure Wi-Fi to the
+ * phone's hotspot instead of the AGB-015 adapter the cart used -- and then
+ * FireRed's own Mystery Gift menu receives a real Wonder Card and saves it
+ * itself.  We never touch the save.
+ *
+ * OWNERSHIP, as implemented (this comment previously described a design that
+ * was not taken -- it named netdrv/transport_inet.c as a third nd_transport
+ * backend, and that file is not in psp/Makefile's OBJS and is never linked):
+ *
+ *   psp/mgift_net.c   brings up infrastructure Wi-Fi AND owns the UDP socket
+ *                     (sceNetInetSocket/Bind), talking to the phone directly.
+ *   psp/mgift_cart.c  connects the received parcel to the core's netpacket
+ *                     seam.
+ *
+ * NO netdrv session is created for Mystery Gift.  netdrv, rfu.c and the ad-hoc
+ * path are untouched, which is what keeps trading from regressing; the two
+ * modes are interlocked as mutually exclusive below because they cannot share
+ * the radio.
+ *
+ * Protocol spec: MysteryGiftStation/GBAdhoc_MysteryGift_Protocol_v2.md.
+ */
+static char       g_mg_l1[64];         /* screen line 1: what is happening */
+static char       g_mg_l2[64];         /* screen line 2: detail */
+static char       g_mg_game[5];        /* running ROM header code at 0xAC */
+static int        g_mg_linked;         /* the game connected to the cart */
+
+/* THE DISTRIBUTION NETWORK.
+ *
+ * The player names their Android Mobile Hotspot exactly this, with Security set
+ * to Open and Band 2.4 GHz, and we create a matching connection profile on the
+ * PSP automatically.  Two halves of one agreed constant: nothing to type on
+ * either device beyond naming the hotspot once.
+ *
+ * OPEN, not WPA.  Android's own hotspot screen offers Security: Open, and that
+ * is the only kind of access point a PSP can join with no key at all.  An
+ * app-started Wi-Fi Direct group was tried first and abandoned: it cannot be
+ * open (P2P mandates an 8-character passphrase), it is the same radio as the
+ * hotspot so Android refuses to run both, and -- decisively -- the PSP could not
+ * see the group when scanning at all. */
+static unsigned   g_mg_secs;           /* seconds spent waiting, for the UI */
+
+int         mgift_ui_active(void) { return g_mg_on; }
+const char *mgift_ui_line1(void)  { return g_mg_l1; }
+const char *mgift_ui_line2(void)  { return g_mg_l2; }
+
+/* The running game 4-character header code, read from the ROM FILE rather than
+ * from the core.  gba_memory.h declares `extern char gamepak_code[5]` but
+ * nothing ever defines it -- a stale declaration that would not link -- and the
+ * alternative is exporting a new core global for four bytes the frontend can
+ * read for itself.  Called once, at boot. */
+static void rom_loading_progress(unsigned loaded, unsigned total)
+{
+   ui_loading_update(total ? "Reading ROM" : "Checking cartridge", loaded, total);
+}
+
+static void rom_loading_stage(const char *stage)
+{
+   ui_loading_update(stage, 0, 0);
+}
+
+static void mgift_read_game_code(const char *rom_path)
+{
+   FILE *fh;
+
+   g_mg_game[0] = '\0';
+   if (!rom_path || !rom_path[0])
+      return;
+   fh = fopen(rom_path, "rb");
+   if (!fh)
+      return;
+   if (fseek(fh, 0xAC, SEEK_SET) == 0 && fread(g_mg_game, 1, 4, fh) == 4)
+      g_mg_game[4] = '\0';
+   else
+      g_mg_game[0] = '\0';
+   fclose(fh);
+}
+
+/* The OSD must read "Mystery Gift", not "joined" or "host" (user direction).
+ * It reuses the session chip because the two modes are mutually exclusive, so
+ * nothing can ever need both at once. */
+static void mgift_chip(void)
+{
+   snprintf(g_session_info, sizeof(g_session_info), "Mystery Gift");
+   osd_chip_session(g_pcfg.osd_wireless ? g_session_info : NULL);
+}
+
+static void mgift_stop_io(int quiet)
+{
+   if (!g_mg_on)
+      return;
+   /* Reverse order of mgift_start: the cart first (it tells the game goodbye
+    * through the netpacket seam, which must still be attached), then the card
+    * socket, then the association. */
+   mgift_cart_stop();
+   mgnet_card_close();
+   mgnet_wifi_down();
+   /* The profile STAYS.  It is named "GBAdhoc Mystery Gift" and carries the
+    * agreed SSID, so it shows up in the network row here and in the PSP's own
+    * settings, ready for next time -- which is the point: the player should
+    * never have to create it.  mgnet_profile_ensure adopts it again rather than
+    * making a second one. */
+   g_mg_on     = 0;
+   g_mg_linked = 0;
+   g_session_info[0] = '\0';
+   osd_chip_session(NULL);
+   snprintf(g_mg_l1, sizeof(g_mg_l1), "Not listening");
+   g_mg_l2[0] = '\0';
+   if (!quiet)
+      osd_toast("Mystery Gift off");
+   fe_evt("mg_stop linked=%d", g_mg_linked);
+}
+
+/* pwr_hold: see power_cb -- this runs outside the loop's park point. */
+static void mgift_stop(int quiet)
+{
+   pwr_hold("mgift");
+   mgift_stop_io(quiet);
+   pwr_release();
+}
+
+static void mgift_start_io(void)
+{
+   int rc;
+
+   /* Interlock, direction 1.  The trading link holds the radio in ad-hoc mode;
+    * associating with an AP would pull its IBSS out from under netdrv. */
+   if (g_net_up)
+   {
+      osd_toast("Leave the wireless session first");
+      return;
+   }
+   if (g_mg_on)
+   {
+      osd_toast("Mystery Gift is already listening");
+      return;
+   }
+
+   /* One feedback frame: the association blocks for seconds (DHCP + WPA against
+    * a phone hotspot) and silence there looks exactly like a hang. */
+   vid_overlay_begin(1);
+   vid_text_center(110, "Mystery Gift", 0xFFFF);
+   vid_text_center(140, "Joining your network...", 0x65BF);
+   vid_overlay_end();
+   vid_swap();
+
+   g_mg_linked = 0;
+   g_mg_secs   = 0;
+   snprintf(g_mg_l1, sizeof(g_mg_l1), "Joining your network...");
+   g_mg_l2[0] = '\0';
+
+   /* Automatic selects the exact open hotspot after the network stack is up.
+    * The saved profile label is independent of the phone's SSID. */
+   me_rend_suspend();
+   rc = mgnet_wifi_up(ui_mgift_conf(), 0);
+   me_rend_resume();
+
+   if (rc != MGNET_OK)
+   {
+      /* Every failure gets its own sentence.  A release build has no log, so
+       * the toast is the only diagnosis the owner will ever get, and "it did
+       * not work" is the one message that helps nobody. */
+      switch (rc)
+      {
+      case MGNET_ERR_WLAN_OFF:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "WLAN switch is OFF");
+         break;
+      case MGNET_ERR_NO_CONFIG:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not prepare the hotspot");
+         snprintf(g_mg_l2, sizeof(g_mg_l2), "Profile error %08X; check free slots", mgnet_last_sce());
+         break;
+      case MGNET_ERR_CONNECT:
+      case MGNET_ERR_CONNECT_TIMEOUT:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not join the network");
+         snprintf(g_mg_l2, sizeof(g_mg_l2), "Is the phone hotspot on?");
+         break;
+      default:
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Wi-Fi failed (%s)", mgnet_stage());
+         break;
+      }
+      osd_toast("%s", g_mg_l1);
+      mgnet_profile_release();
+      return;
+   }
+
+   /* The card socket: one datagram from the phone carrying a real 332-byte
+    * Wonder Card.  No netdrv and no session -- see mgift_net.h. */
+   if (mgnet_card_open() != 0)
+   {
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "Could not open the socket");
+      osd_toast("%s", g_mg_l1);
+      mgnet_wifi_down();
+      mgnet_profile_release();
+      return;
+   }
+
+   /* Now become a distribution cart to the emulated game.  This attaches to the
+    * core's netpacket seam; it does not touch netdrv or the ad-hoc path. */
+   if (mgift_cart_start() != 0)
+   {
+      snprintf(g_mg_l1, sizeof(g_mg_l1), "This game has no wireless");
+      snprintf(g_mg_l2, sizeof(g_mg_l2), "Mystery Gift needs FR/LG or Emerald");
+      osd_toast("%s", g_mg_l1);
+      mgnet_card_close();
+      mgnet_wifi_down();
+      mgnet_profile_release();
+      return;
+   }
+
+   g_mg_on = 1;
+   snprintf(g_mg_l1, sizeof(g_mg_l1), "Waiting for a gift");
+   snprintf(g_mg_l2, sizeof(g_mg_l2), "%s  game %s", mgnet_local_ip(),
+            g_mg_game[0] ? g_mg_game : "?");
+   mgift_chip();
+   osd_toast("Mystery Gift listening");
+   fe_evt("mg_start ip=%s game=%s port=%d", mgnet_local_ip(), g_mg_game,
+          MGNET_LISTEN_PORT);
+}
+
+/* pwr_hold: see power_cb -- this runs outside the loop's park point. */
+static void mgift_start(void)
+{
+   pwr_hold("mgift");
+   mgift_start_io();
+   pwr_release();
+}
+
+/* The running game as the link menus need it, read once at boot while the
+ * path is in scope: the GBA header code (g_mg_game, read just before), the
+ * GB title, the linkmode.txt key (the ROM under roms/, the key favourites
+ * use) and a name for screens (the table's title, else the ROM's). */
+static void link_read_identity(const char *rom_path)
+{
+   const char *base, *t;
+   size_t n = strlen(p_rom_dir);
+   g_game_code[0] = g_gb_title[0] = '\0';
+   if (g_pcfg.console == FE_CONSOLE_GBA)
+      snprintf(g_game_code, sizeof(g_game_code), "%.4s", g_mg_game);
+   else if (rom_path && rom_path[0])
+   {
+      FILE *fh = fopen(rom_path, "rb");
+      if (fh)
+      {
+         if (fseek(fh, 0x134, SEEK_SET) == 0 &&
+             fread(g_gb_title, 1, 16, fh) == 16)
+            g_gb_title[16] = '\0';
+         else
+            g_gb_title[0] = '\0';
+         fclose(fh);
+      }
+   }
+   if (!rom_path)
+      rom_path = "";
+   base = strrchr(rom_path, '/');
+   if (n && !strncmp(rom_path, p_rom_dir, n) && rom_path[n] == '/')
+      snprintf(g_game_key, sizeof(g_game_key), "%s", rom_path + n + 1);
+   else
+      snprintf(g_game_key, sizeof(g_game_key), "%s",
+               base ? base + 1 : rom_path);
+   t = g_game_code[0] ? link_game_title(g_game_code) : NULL;
+   if (t)
+      snprintf(g_game_name, sizeof(g_game_name), "%s", t);
+   else
+   {
+      char *dot;
+      snprintf(g_game_name, sizeof(g_game_name), "%s",
+               base ? base + 1 : rom_path);
+      dot = strrchr(g_game_name, '.');
+      if (dot && dot != g_game_name)
+         *dot = '\0';
+   }
+}
+
+/* Save and load states are locked while a session (or Mystery Gift) is up
+ * -- but not while a cable host only waits: the link starts from the live
+ * game whenever the other PSP arrives (docs/GBA-LINK-UI.md). */
+static int link_locks_states(void)
+{
+   return (g_net_up && !g_link_wait) || g_mg_on || fe_host_gblink_active();
+}
+
+/* Any link or wireless session at all, a cable host that is only WAITING
+ * and Mystery Gift included: the test cheats and turbo buttons share. */
+static int link_session_any(void)
+{
+   int on = g_net_up || g_mg_on || fe_host_gblink_active();
+#ifdef GBA_LINK
+   on = on || fe_gbadual_active();
+#endif
+   return on;
+}
+
+/* TURBO BUTTONS ARE OFF IN EVERY LINK OR WIRELESS SESSION, as cheats are and
+ * by the same test (docs/CONTROL-REMAP.md section 13): what crosses a link
+ * is the player's own presses.  While one is up a turbo button does nothing
+ * at all -- its PSP button is bound to nothing else (the conflict rule), so
+ * the game sees no input from it -- and pressing one says why.
+ *
+ * Called once per loop iteration that is about to run the game, with that
+ * iteration's pad.  A REWIND build passes `playing = 0` for the whole of a
+ * rewind gesture (control held, or a landing still in progress): every
+ * train stops, so nothing fires while the game runs backwards and a Toggle
+ * does not carry on by itself when play resumes.  psp_rewind_land() and the
+ * reset of docs/REWIND.md 22 stop them too.  The rewind's
+ * input log holds each frame's RESOLVED buttons, pulses included, so a
+ * replayed stretch is exact and no turbo state is ever part of a snapshot. */
+#ifdef GPSP_PERF_RIG
+/* Harness `ui_turbo_lock = 1`: turbo buttons behave, and the pages read, as
+ * they do in a link session -- which one PPSSPP cannot hold. */
+static int g_turbo_lock_sim;
+#else
+#define g_turbo_lock_sim 0
+#endif
+
+static void turbo_frame(unsigned pad, unsigned pad_new, int playing)
+{
+   uint8_t was[CTL_TURBO_N];
+   int locked, i;
+   if (!playing)
+   {
+      ctl_turbo_stop(&g_turbo);
+      return;
+   }
+   locked = link_session_any() || g_turbo_lock_sim;
+   ui_set_turbo_locked(locked);
+   memcpy(was, g_turbo.run, sizeof(was));
+   ctl_turbo_pad(&g_pcfg.controls, &g_turbo, pad, pad_new,
+                 fe_host_frame_count(), !locked);
+   if (locked && (pad_new & ctl_turbo_bound(&g_pcfg.controls)))
+   {
+      fe_evt("turbo_locked pad_new=0x%04x", pad_new);
+      osd_toast("Turbo is off for link play");
+      return;
+   }
+   /* A Toggle that starts or stops says so: auto-fire that is running with
+    * nothing held must never be a surprise. */
+   for (i = 0; i < CTL_TURBO_N; i++)
+      if (g_pcfg.controls.turbo_toggle[i] && was[i] != g_turbo.run[i])
+      {
+         const ctl_action_info *in = ctl_info(CTL_TURBO_FIRST + i);
+         fe_evt("turbo_toggle key=%s on=%d f=%u", in->key, g_turbo.run[i],
+                fe_host_frame_count());
+         osd_toast("%s: auto-fire %s", in->label,
+                   g_turbo.run[i] ? "on" : "off");
+      }
+}
+
+#ifdef GPSP_CHEATS
+/* CHEATS ARE OFF IN EVERY LINK OR WIRELESS SESSION (docs/CHEATS.md section 6).
+ * Wider than link_locks_states(): a cable host that is only WAITING counts
+ * too (the link starts from the live game the moment the other PSP arrives,
+ * and both consoles must then compute the same frames), and so does Mystery
+ * Gift.  Polled once per main-loop iteration rather than hooked into each
+ * way a session can start or end: there are a dozen of those, and a missed
+ * one would be a desync.  The player's choices are kept; they stop being
+ * applied, and are applied again when the session is over. */
+static void cheats_link_poll(void)
+{
+   int lock = link_session_any();
+   if (lock == fe_cheats_locked())
+      return;
+   fe_cheats_lock(lock);
+   fe_evt("cheats_lock on=%d enabled=%u", lock, fe_cheats_enabled_count());
+   if (fe_cheats_enabled_count())
+      osd_toast(lock ? "Cheats off for link play" : "Cheats back on");
+}
+#endif
+
+/* The session as the menus draw it (ui_set_link). */
+static void link_ui_view(void)
+{
+   ui_link_view v;
+   memset(&v, 0, sizeof(v));
+   if (g_net_up && g_link_kind != LK_NONE)
+   {
+      int st = fe_host_gblink_state();
+      v.state = g_link_wait ? UI_LINK_HOSTING : UI_LINK_LINKED;
+      v.cable = g_link_kind != LK_ADAPTER;
+      v.player = g_link_kind == LK_ADAPTER ? (g_net_is_host ? 1 : 2)
+               : (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
+                    ? (g_net_is_host ? 1 : 2) : 0;
+      v.room = g_link_room;
+      v.game = g_game_name;
+      v.fast = -1;
+      if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
+         v.fast = fe_host_fast_link(&v.fast_src);
+   }
+   ui_set_link(&v);
+}
+
+/* Once per frontend frame: poll the phone's parcel and advance the local cart.
+ * Keep this separate from net_frame(), which owns trading-session pacing. */
+static void mgift_frame(void)
+{
+   if (!g_mg_on)
+      return;
+
+   /* Acknowledge only after the cart accepts the complete parcel. Identical
+    * retries preserve an in-progress session; a different gift gets busy. */
+   {
+      static mgift_parcel parcel;
+      if (mgnet_card_poll(&parcel))
+      {
+         int rc = mgift_cart_set_parcel(&parcel);
+         mgnet_card_reply(parcel.id, rc == 0 ? 0 : 1);
+         if (rc == 0)
+         {
+            snprintf(g_mg_l1, sizeof(g_mg_l1), "Gift ready");
+            snprintf(g_mg_l2, sizeof(g_mg_l2), "Open MYSTERY GIFT in the game");
+            osd_toast("Gift uploaded from phone");
+         }
+      }
+   }
+
+   /* Drive the cart: advertise, handshake, and run the transfer once the game
+    * opens its own Mystery Gift menu. */
+   mgift_cart_frame();
+
+   {
+      /* DIAGNOSTICS THAT SURVIVE A RELEASE BUILD.
+       *
+       * fe_evt compiles out here, so if the game never sees the cart the owner
+       * has nothing to report but "it did not work" -- which is what happened
+       * the first time.  These three numbers split the whole problem:
+       *
+       *   b = broadcasts we have sent.  0 means the cart never attached to the
+       *       emulator's link layer at all (wrong game, or no RFU mode).
+       *   c = connection requests the GAME sent us.  0 with b rising means it
+       *       is not recognising the beacon -- the 24 broadcast bytes or the
+       *       distributor serial.
+       *   >0 means we are past discovery and into the block protocol. */
+      mgift_cart_stats s;
+      mgift_cart_get_stats(&s);
+      if (!g_mg_linked && s.linked)
+      {
+         g_mg_linked = 1;
+         snprintf(g_mg_l1, sizeof(g_mg_l1), "Game connected");
+         osd_toast("Game connected to the cart");
+      }
+      snprintf(g_mg_l2, sizeof(g_mg_l2), "%s b%u c%u cmd%02x st%u S%u C%u",
+               mgift_cart_status(), (unsigned)s.bcasts, (unsigned)s.connects,
+               g_rfu_last_cmd & 0xFF, g_rfu_last_state,
+               (unsigned)g_rfu_seen_bcrd, (unsigned)g_rfu_seen_conn);
+   }
+
+   /* Say how long we have been waiting.  "Looking for the Station" that never
+    * changes is indistinguishable from a hang, and the usual cause is the
+    * phone being on a different network rather than anything being broken. */
+   if (!g_mg_linked)
+   {
+      unsigned s = fe_host_frame_count() / 60u;
+      if (s != g_mg_secs)
+      {
+         g_mg_secs = s;
+         if (s >= 10u && (s % 5u) == 0u && !mgift_cart_has_card())
+            snprintf(g_mg_l2, sizeof(g_mg_l2),
+                     "%s  no gift yet (%us)", mgnet_local_ip(), s);
+      }
+   }
+
+   /* A gift transfer is seconds of mostly-silent waiting; do not let the
+    * console suspend in the middle of one. */
+   scePowerTick(PSP_POWER_TICK_ALL);
+}
+
+/* ---- GU color-order test pattern (testpat = 1; no core, no ROM) --------
+ * Renders 8 vertical 30px bars of known RGB565 values through the exact
+ * production blit path, then GE-dumps the drawbuffer.  The harness asserts
+ * the decoded bar colors — a channel-order regression fails loudly. */
+
+/* The bars are the blit path's INPUT, so they must be written in whatever
+ * layout the core emits (ADR-0039) — the harness then asserts the GE's
+ * output is really red where we asked for red, which is what pins the
+ * frontend's half of the format contract absolutely, with no core in the
+ * loop.  Spelled as channel triples rather than hex so the two lists cannot
+ * drift apart. */
+#ifdef USE_PSP_RGB565_FORMAT
+#define TESTPAT_PIX(r, g, b) \
+   (uint16_t)(((b) << 11) | ((g) << 5) | (r))
+#else
+#define TESTPAT_PIX(r, g, b) \
+   (uint16_t)(((r) << 11) | ((g) << 5) | (b))
+#endif
+
+static int run_testpat(void)
+{
+   static const uint16_t bar[8] = {
+      TESTPAT_PIX(31, 63, 31),   /* white   */
+      TESTPAT_PIX(31,  0,  0),   /* red     */
+      TESTPAT_PIX( 0, 63,  0),   /* green   */
+      TESTPAT_PIX( 0,  0, 31),   /* blue    */
+      TESTPAT_PIX(31, 63,  0),   /* yellow  */
+      TESTPAT_PIX( 0, 63, 31),   /* cyan    */
+      TESTPAT_PIX(31,  0, 31),   /* magenta */
+      TESTPAT_PIX(16, 32, 16)    /* gray    */
+   };
+   static uint16_t pat[FE_GBA_WIDTH * FE_GBA_HEIGHT];
+   int f, x, y;
+
+   for (y = 0; y < FE_GBA_HEIGHT; y++)
+      for (x = 0; x < FE_GBA_WIDTH; x++)
+         pat[y * FE_GBA_WIDTH + x] = bar[x / 30];
+
+   fe_evt("testpat_start bars=8");
+   for (f = 0; f < 120 && g_running; f++)
+   {
+      plat_video_frame(pat, FE_GBA_WIDTH, FE_GBA_HEIGHT, FE_GBA_WIDTH * 2);
+      if (f == 60)
+         dump_ge_bmp();
+      sceDisplayWaitVblankStart();
+      vid_swap();
+      g_drew = 0;
+   }
+   return 0;
+}
+
+/* ---- Gate-4E transport echo (nettest = 1; no core, no ROM) -------------
+ * Wire format: "GPNT" magic + type u8 (0 ping / 1 pong / 2 end) + seq u32
+ * LE + 15 pad bytes = 24 B.  The join side broadcasts pings at 10 Hz and
+ * asserts >= NETTEST_TARGET pongs; the host unicasts every ping back to
+ * its source MAC and passes on the same threshold.  Exercises exactly the
+ * surface netdrv needs: broadcast, unicast-to-src, RX thread + ring. */
+
+#define NETTEST_TARGET   30
+#define NETTEST_PKT_LEN  24
+
+static int run_nettest(int is_host, const char *group, long secs)
+{
+   nd_transport tp;
+   uint64_t start, last_ping = 0, last_tick = 0;
+   uint32_t seq = 0, pings = 0, pongs = 0, ends_sent = 0;
+   int done = 0, rc;
+
+   fe_evt("nettest_start role=%s group=%s", is_host ? "host" : "join",
+          group && group[0] ? group : ADHOC_GROUP_DEFAULT);
+   rc = is_host ? adhoc_transport_init(group, 0)
+                : adhoc_transport_init_join(group, 0, 15000u);
+   if (rc != ADHOC_OK)
+   {
+      net_error_evt("adhoc_init", rc);
+      return -1;
+   }
+   log_adhoc_up(group);
+   adhoc_transport_iface(&tp);
+
+   start = net_now_us();
+   while (!done && g_running && net_now_us() - start < (uint64_t)secs * 1000000ull)
+   {
+      uint8_t src[6], buf[ND_MAX_FRAME];
+      int n;
+      uint64_t now = net_now_us();
+
+      while ((n = tp.recv(tp.ctx, src, buf, sizeof(buf))) > 0)
+      {
+         uint32_t rseq = 0;
+   FE_EVT_ONLY(rseq);
+         if (n < NETTEST_PKT_LEN || memcmp(buf, "GPNT", 4) != 0)
+            continue;
+         rseq = (uint32_t)buf[5] | ((uint32_t)buf[6] << 8) |
+                ((uint32_t)buf[7] << 16) | ((uint32_t)buf[8] << 24);
+         if (is_host && buf[4] == 0)      /* ping -> pong to source MAC */
+         {
+            buf[4] = 1;
+            tp.send_to(tp.ctx, src, buf, NETTEST_PKT_LEN);
+            pings++;
+            if (pings == 1 || pings == NETTEST_TARGET)
+               fe_evt("nettest_echo n=%u seq=%u", pings, rseq);
+         }
+         else if (is_host && buf[4] == 2) /* joiner done */
+            done = 1;
+         else if (!is_host && buf[4] == 1)
+         {
+            pongs++;
+            if (pongs == 1 || pongs == NETTEST_TARGET)
+               fe_evt("nettest_pong n=%u seq=%u", pongs, rseq);
+         }
+      }
+
+      if (!is_host && now - last_ping >= 100000)
+      {
+         uint8_t pkt[NETTEST_PKT_LEN];
+         memset(pkt, 0, sizeof(pkt));
+         memcpy(pkt, "GPNT", 4);
+         if (pongs < NETTEST_TARGET)
+         {
+            pkt[4] = 0;
+            pkt[5] = (uint8_t)seq;        pkt[6] = (uint8_t)(seq >> 8);
+            pkt[7] = (uint8_t)(seq >> 16); pkt[8] = (uint8_t)(seq >> 24);
+            tp.broadcast(tp.ctx, pkt, sizeof(pkt));
+            seq++;
+         }
+         else                             /* enough echoes: tell the host */
+         {
+            pkt[4] = 2;
+            tp.broadcast(tp.ctx, pkt, sizeof(pkt));
+            if (++ends_sent >= 5)
+               done = 1;
+         }
+         last_ping = now;
+      }
+
+      if (now - last_tick >= 1000000)
+      {
+         scePowerTick(PSP_POWER_TICK_ALL);
+         last_tick = now;
+      }
+      sceKernelDelayThread(10000);
+   }
+
+   fe_evt("nettest_done role=%s sent=%u echoed=%u pongs=%u",
+          is_host ? "host" : "join", seq, pings, pongs);
+   adhoc_stats_evt();
+   adhoc_transport_term();
+   return (is_host ? pings : pongs) >= NETTEST_TARGET ? 0 : -1;
+}
+
+/* ------------------------------------------------------------------- main */
+
+/* The PSP's local wall clock as seconds since 1970, with no timezone applied
+ * (the core decodes it with gmtime).  Days from civil date: H. Hinnant's
+ * algorithm, valid for any proleptic Gregorian date. */
+static long long g_clock_fake;      /* harness psp_clock: this console's
+                                     * clock reads this at boot (seconds
+                                     * since 1970), then runs; 0 = real */
+static long long g_clock_fake_tz;   /* harness psp_clock_tz: with psp_clock,
+                                     * the seconds that clock is ahead of
+                                     * UTC (the console's zone); default 0 */
+static time_t psp_datetime_seconds(const ScePspDateTime *dt)
+{
+   long long y, m, era, yoe, doy, doe, days;
+   y   = (long long)dt->year - (dt->month <= 2);
+   m   = (long long)dt->month;
+   era = (y >= 0 ? y : y - 399) / 400;
+   yoe = y - era * 400;
+   doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + (long long)dt->day - 1;
+   doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+   days = era * 146097 + doe - 719468;
+   return (time_t)(days * 86400 + (long long)dt->hour * 3600 +
+                   (long long)dt->minute * 60 + (long long)dt->second);
+}
+
+static time_t psp_local_wallclock(void)
+{
+   ScePspDateTime dt;
+   if (g_clock_fake)
+      return (time_t)(g_clock_fake +
+                      (long long)(sceKernelGetSystemTimeWide() / 1000000ull));
+   if (sceRtcGetCurrentClockLocalTime(&dt) < 0)
+      return (time_t)0;             /* no reading: the clocks hold */
+   return psp_datetime_seconds(&dt);
+}
+
+/* The same clock as UTC: what the console's clock reads with its time zone
+ * and daylight-saving setting taken off.  The GB/GBC cartridge clock runs
+ * on this one, because its save stamps the time in UTC (fe_host.c); it
+ * counts elapsed seconds only, so the game shows the same time either way. */
+static time_t psp_utc_wallclock(void)
+{
+   ScePspDateTime dt;
+   if (g_clock_fake)
+      return (time_t)(g_clock_fake - g_clock_fake_tz +
+                      (long long)(sceKernelGetSystemTimeWide() / 1000000ull));
+   if (sceRtcGetCurrentClock(&dt, 0) < 0)
+      return (time_t)0;
+   return psp_datetime_seconds(&dt);
+}
+
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+    defined(GPSP_STALL_RECORDER)
+/* ---- STALL WATCH (harness `stall_watch_s`; 0 = off, the default) ---------
+ *
+ * The battle-cycle freeze leaves no badjump.txt, no exit line and no
+ * `me_rend off`, and a log that simply stops cannot tell apart
+ *   (a) the whole CPU halted (e.g. an unhandled exception),
+ *   (b) the main thread spinning -- inside translated code or a frontend
+ *       loop -- which starves every thread below 0x20, the log writer
+ *       included, so the log stops while the console still "runs", and
+ *   (c) the main thread blocked in a kernel wait that never returns.
+ * This thread outranks everything we own and sleeps a second at a time.  Only
+ * when the main loop has not begun an iteration for `stall_watch_s` seconds
+ * does it write one line to log/stall.txt (raw sceIo, open/write/close per
+ * line: no stdio lock the stuck thread could hold, and the close is the FAT
+ * commit -- see standby_note).  Reading the result:
+ *   no file                    -> (a)
+ *   main st=RUNNING/READY, run+ large, phase 2 -> (b) in the core/JIT
+ *   phase 7                    -> (b)/(c) inside me_rend_frame
+ *   main st=WAITING            -> (c); waitType/waitId say on what
+ *   me_beat moving, me_done==me_cmd -> the ME is alive and idle */
+static int      g_stall_s;
+/* HEARTBEAT (harness `heartbeat_s`, GPSP_PERF_RIG builds).  The same 0x10
+ * thread appends one line to log/heartbeat.txt every heartbeat_s seconds,
+ * whether or not anything is stuck: raw sceIo, open/append/close, so it owes
+ * nothing to the event ring or to stdio.  A rig judges liveness from THIS
+ * (and RESULT.TXT's frames=), never from frontend.log growing -- the log
+ * writer sits below the emulation thread and starves silently
+ * (log-starvation-false-freeze).  After a hard freeze the last line says how
+ * far the run got and whether the main loop was still turning. */
+#ifdef GPSP_PERF_RIG
+static int      g_hb_s;
+static char     g_hb_id[112];
+#endif
+static volatile int g_stall_run;
+static SceUID   g_stall_thid = -1;
+
+static int stall_refer(SceUID thid, SceKernelThreadInfo *ti)
+{
+   memset(ti, 0, sizeof(*ti));
+   ti->size = sizeof(*ti);
+   return thid < 0 ? -1 : sceKernelReferThreadStatus(thid, ti);
+}
+
+static void stall_record(unsigned iter)
+{
+   SceKernelThreadInfo m0, m1, au, io;
+   char line[512], path[176];
+   unsigned cs = 0, ds = 0, is = 0, b0 = 0, b1 = 0;
+   int n, fd, rm0, rm1, rau, rio;
+
+   me_host_diag(&cs, &ds, &is, &b0);
+   rm0 = stall_refer(g_emu_thid, &m0);
+   sceKernelDelayThread(100000);         /* is anything still moving? */
+   me_host_diag(NULL, NULL, NULL, &b1);
+   rm1 = stall_refer(g_emu_thid, &m1);
+   rau = stall_refer(audio_thid, &au);
+   rio = stall_refer(g_io_thid, &io);
+   n = snprintf(line, sizeof(line),
+                "stall t=%u iter=%u phase=%d frame=%u rend=%d "
+                "me_cmd=%u me_done=%u me_input=%u me_beat=%u->%u "
+                "ring=%u pc=%08x lr=%08x "
+                "main=%d/st%d/pri0x%02x/wt%d/wid%08x/run+%u "
+                "audio=%d/st%d/wt%d io=%d/st%d/wt%d\n",
+                (unsigned)sceKernelGetSystemTimeLow(), iter, g_loop_phase,
+                (unsigned)fe_host_frame_count(), g_me_rend, cs, ds, is, b0, b1,
+                ring_w - ring_r, reg[15], reg[14],
+                rm1, m1.status, (unsigned)m1.currentPriority, m1.waitType,
+                (unsigned)m1.waitId,
+                (rm0 >= 0 && rm1 >= 0)
+                   ? (unsigned)(m1.runClocks.low - m0.runClocks.low) : 0u,
+                rau, au.status, au.waitType, rio, io.status, io.waitType);
+   if (n <= 0)
+      return;
+   if (n >= (int)sizeof(line))
+      n = (int)sizeof(line) - 1;
+#ifdef GBA_LINK
+   /* the machine pair's position, appended to the same line */
+   if (n > 0 && line[n - 1] == '\n' && n < (int)sizeof(line) - 2)
+   {
+      int k;
+      line[n - 1] = ' ';
+      k = fe_gbadual_probe(line + n, sizeof(line) - (size_t)n - 1);
+      if (k > 0)
+         n += (k < (int)sizeof(line) - n - 1) ? k : (int)sizeof(line) - n - 2;
+      line[n++] = '\n';
+   }
+#endif
+   /* A main thread SPINNING at 0x20 starves the io thread (0x22), which may
+    * be parked inside the FAT driver holding its lock -- and then our own
+    * sceIoOpen below would block and read as "no file = CPU halted".  Drop
+    * main below io for the write (this also lets the writer drain the event
+    * ring into frontend.log), then put it back in case this was a false
+    * alarm. */
+   if (rm1 >= 0 && m1.currentPriority < 0x30)
+      sceKernelChangeThreadPriority(g_emu_thid, 0x30);
+   sceKernelDelayThread(300000);
+   snprintf(path, sizeof(path), "%s/stall.txt", LOG_DIR);
+   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+   if (fd >= 0)
+   {
+      sceIoWrite(fd, line, (SceSize)n);
+      sceIoClose(fd);
+   }
+   if (rm1 >= 0 && m1.currentPriority < 0x30)
+      sceKernelChangeThreadPriority(g_emu_thid, m1.currentPriority);
+}
+
+#ifdef GPSP_PERF_RIG
+static void heartbeat_write(unsigned secs)
+{
+   char line[384], path[176], pair[160] = "";
+   int n, fd;
+#ifdef GBA_LINK
+   /* GBA link mirror: where the machine pair is (docs/GBA-LINK-MIRROR.md
+    * section 13) -- a pair looping without frames shows sw= moving with f=
+    * still; a core stuck inside run() shows the same run= on every line. */
+   pair[0] = ' ';
+   fe_gbadual_probe(pair + 1, sizeof(pair) - 1);
+#endif
+   n = snprintf(line, sizeof(line),
+                "hb s=%u t_ms=%u iter=%u phase=%d frame=%u evt_drop=%u "
+                "shash=%u %s%s\n",
+                secs, (unsigned)(sceKernelGetSystemTimeWide() / 1000ull),
+                g_loop_iter, g_loop_phase, (unsigned)fe_host_frame_count(),
+                fe_evt_drops(), g_shash_lines, g_hb_id, pair);
+   if (n <= 0)
+      return;
+   if (n >= (int)sizeof(line))
+      n = (int)sizeof(line) - 1;
+   snprintf(path, sizeof(path), "%s/heartbeat.txt", LOG_DIR);
+   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+   if (fd >= 0)
+   {
+      sceIoWrite(fd, line, (SceSize)n);
+      sceIoClose(fd);
+   }
+}
+#endif
+
+#ifdef GPSP_PERF_RIG
+/* STALL EXIT (harness `stall_exit_s`; 0 = off, the default.  GBA-LINK-
+ * MIRROR.md 22).  A rig console that stops cannot be recovered by anyone but
+ * the owner, so a run may ask not to be left spinning: when the main loop
+ * has not begun an iteration for stall_exit_s seconds this thread
+ *   1. writes the stall record (stall.txt: thread states, phase, ME beat,
+ *      the pair) and a heartbeat line -- stall_record drops the main thread
+ *      below the io thread for the write, which also lets the log drain;
+ *   2. asks both link cores to stop at their next scheduler call
+ *      (fe_gbadual_abort): a pair that is spinning inside the machines then
+ *      fails E_OVERRUN and the bench ends through `gbadual_failed`, a
+ *      session through `gblink_failed`;
+ *   3. only with `stall_exit_hard = 1`, and only if the loop is still not
+ *      turning 3 s later, leaves the process (sceKernelExitGame from this
+ *      thread).  NOT YET RUN ON HARDWARE OR UNDER PSPLINK.
+ * It cannot help when this thread itself no longer runs (a halted CPU). */
+static int g_stall_exit_s, g_stall_exit_hard;
+static void stall_exit(unsigned iter)
+{
+   stall_record(iter);
+   if (g_hb_s > 0)
+      heartbeat_write(100000u + (unsigned)g_stall_exit_s);
+#ifdef GBA_LINK
+   fe_gbadual_abort();
+#endif
+   sceKernelDelayThread(3000000);
+   if (g_loop_iter != iter || !g_stall_exit_hard)
+      return;
+   if (g_hb_s > 0)
+      heartbeat_write(200000u + (unsigned)g_stall_exit_s);
+   sceKernelExitGame();
+}
+#endif
+
+static int stall_thread(SceSize args, void *argp)
+{
+   unsigned last = g_loop_iter, still_s = 0, records = 0;
+#ifdef GPSP_PERF_RIG
+   unsigned secs = 0, x_last = g_loop_iter, x_still = 0, x_done = 0;
+#endif
+   (void)args; (void)argp;
+   while (g_stall_run)
+   {
+      unsigned it;
+      sceKernelDelayThread(1000000);
+      if (!g_stall_run)
+         break;
+#ifdef GPSP_PERF_RIG
+      secs++;
+      if (g_hb_s > 0 && secs % (unsigned)g_hb_s == 0)
+         heartbeat_write(secs);
+      if (g_stall_exit_s > 0 && !x_done)
+      {
+         unsigned xi = g_loop_iter;
+         if (xi != x_last)
+         {
+            x_last = xi;
+            x_still = 0;
+         }
+         else if (++x_still >= (unsigned)g_stall_exit_s)
+         {
+            x_done = 1;
+            stall_exit(xi);
+         }
+      }
+      if (g_stall_s <= 0)
+         continue;              /* heartbeat only: no stall records */
+#endif
+      it = g_loop_iter;
+      if (it != last)
+      {
+         last = it;
+         still_s = 0;
+         continue;
+      }
+      if (++still_s < (unsigned)g_stall_s || records >= 8)
+         continue;
+      still_s = 0;              /* the next record needs another full window */
+      records++;
+      stall_record(it);
+   }
+   return 0;
+}
+
+static void stall_watch_start(void)
+{
+#ifdef GPSP_PERF_RIG
+   if (g_stall_s <= 0 && g_hb_s <= 0 && g_stall_exit_s <= 0)
+#else
+   if (g_stall_s <= 0)
+#endif
+      return;
+   g_stall_run  = 1;
+   g_stall_thid = sceKernelCreateThread("gpsp_stall", stall_thread, 0x10,
+                                        0x2000, THREAD_ATTR_USER, NULL);
+   if (g_stall_thid < 0 || sceKernelStartThread(g_stall_thid, 0, NULL) < 0)
+   {
+      if (g_stall_thid >= 0)
+         sceKernelDeleteThread(g_stall_thid);
+      g_stall_thid = -1;
+      g_stall_run  = 0;
+      fe_evt("stall_watch off reason=thread_failed");
+      return;
+   }
+   fe_evt("stall_watch on s=%d prio=0x10 file=stall.txt", g_stall_s);
+}
+
+static void stall_watch_stop(void)
+{
+   SceUInt tmo = 2000000;          /* the thread sleeps 1 s at a time */
+   if (g_stall_thid < 0)
+      return;
+   g_stall_run = 0;
+   if (sceKernelWaitThreadEnd(g_stall_thid, &tmo) < 0)
+      sceKernelTerminateDeleteThread(g_stall_thid);
+   else
+      sceKernelDeleteThread(g_stall_thid);
+   g_stall_thid = -1;
+}
+#else
+#define stall_watch_start() do { } while (0)
+#define stall_watch_stop()  do { } while (0)
+#endif
+
+/* ---- DRPROF_HW: the dynarec time-split sampler (docs/DYNAREC-PROFILE.md) --
+ *
+ * A thread above the emulator wakes every `drprof_us` microseconds (harness
+ * ini, default 1000), asks the kernel whether the emulation thread was RUNNING
+ * when it was preempted (it is then READY), and if so reads the phase word the
+ * core publishes in reg[40] (drprof.h: translated code 0, update_gba 1,
+ * lookup 2, flush 3, ...).  Samples taken while the emulator was WAITING are
+ * counted but not attributed.  The main loop turns the histogram into
+ *   EVT drprof f=<frame> n=<samples> run=<attributed> wait=<not running>
+ *               ph=<16 counts>
+ * every 300 frames (and at exit), so windows map onto the script's scenes by
+ * frame.  Cost: two thread switches and one syscall per sample -- priced by
+ * running the same fixture without DRPROF_HW (GBADHOC-DRPROF A vs S). */
+#ifdef DRPROF_HW
+static volatile int g_drs_run;
+static SceUID g_drs_thid = -1;
+static int g_drs_us = 1000;
+static volatile unsigned g_drs_hist[16], g_drs_n, g_drs_att, g_drs_wait;
+/* Link sessions (GBA-LINK-MIRROR.md 16): where the frontend is
+ * (fe_linkprof.h FELP_*), and inside the machines which instance runs and
+ * ITS phase word -- A's reg[40], B's gbab_reg[40]. */
+#ifdef GBA_LINK
+extern u32 gbab_reg[];
+int fe_gbadual_running_inst(void);
+#endif
+static volatile unsigned g_lps_fe[FELP_N], g_lps_a[16], g_lps_b[16],
+                         g_lps_pair, g_lps_l[FELP_LN];
+
+static int drprof_sampler(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   while (g_drs_run)
+   {
+      SceKernelThreadRunStatus st;
+      unsigned ph;
+      sceKernelDelayThread((SceUInt)g_drs_us);
+      ph = reg[40] & 15u;
+      memset(&st, 0, sizeof(st));
+      st.size = sizeof(st);
+      g_drs_n++;
+      if (g_emu_thid >= 0 &&
+          sceKernelReferThreadRunStatus(g_emu_thid, &st) == 0 &&
+          (st.status & PSP_THREAD_READY))
+      {
+         unsigned fe = fe_lp_phase & FELP_MASK;
+         if (fe >= FELP_N + FELP_LN)
+            fe = FELP_LOOP;
+         g_drs_hist[ph]++;
+         g_drs_att++;
+#ifdef GBA_LINK
+         {
+            /* inside the pair (a session's advance or the one-console
+             * bench's frame): the running instance's own phase word */
+            int inst = fe_gbadual_running_inst();
+            if (inst == 0)
+               g_lps_a[ph]++;
+            else if (inst == 1)
+               g_lps_b[gbab_reg[40] & 15u]++;
+            else if (fe == FELP_CORE)
+               g_lps_pair++;
+            if (inst >= 0 && (fe == FELP_LOOP || fe >= FELP_L0))
+               fe = FELP_CORE;          /* the bench never sets FELP_CORE */
+         }
+#else
+         if (fe == FELP_CORE)
+            g_lps_a[ph]++;
+#endif
+         /* the loop's own regions: `fe=` counts them as loop, `lp=` splits
+          * them (lp[15] = loop time outside every named region) */
+         if (fe >= FELP_L0)
+         {
+            g_lps_l[fe - FELP_L0]++;
+            fe = FELP_LOOP;
+         }
+         else if (fe == FELP_LOOP)
+            g_lps_l[FELP_LN - 1]++;
+         g_lps_fe[fe]++;
+      }
+      else
+         g_drs_wait++;
+   }
+   return 0;
+}
+
+/* Every user thread's own CPU time over the window (runClocks, us), so the
+ * sampler's phases -- which count a READY emulation thread, i.e. include
+ * whatever higher-priority thread preempted it -- can be told apart from
+ * other threads' work: `EVT thrcpu` one line per thread per window. */
+#define DRS_THR_MAX 40
+static SceUID   g_drt_id[DRS_THR_MAX];
+static uint64_t g_drt_clk[DRS_THR_MAX];
+static unsigned g_drt_n;
+static uint64_t g_drt_t0;
+static void drprof_threads(unsigned frame)
+{
+   SceUID ids[DRS_THR_MAX];
+   int cnt = 0, i;
+   uint64_t now = net_now_us();
+   unsigned wall = g_drt_t0 ? (unsigned)(now - g_drt_t0) : 0;
+   g_drt_t0 = now;
+   if (sceKernelGetThreadmanIdList(SCE_KERNEL_TMID_Thread, ids, DRS_THR_MAX,
+                                   &cnt) < 0)
+      return;
+   if (cnt > DRS_THR_MAX)
+      cnt = DRS_THR_MAX;
+   for (i = 0; i < cnt; i++)
+   {
+      SceKernelThreadInfo ti;
+      uint64_t clk;
+      unsigned j, us = 0;
+      memset(&ti, 0, sizeof(ti));
+      ti.size = sizeof(ti);
+      if (sceKernelReferThreadStatus(ids[i], &ti) < 0)
+         continue;
+      clk = ((uint64_t)ti.runClocks.hi << 32) | ti.runClocks.low;
+      for (j = 0; j < g_drt_n; j++)
+         if (g_drt_id[j] == ids[i])
+            break;
+      if (j < g_drt_n)
+         us = (unsigned)(clk - g_drt_clk[j]);
+      else if (g_drt_n < DRS_THR_MAX)
+      {
+         j = g_drt_n++;
+         g_drt_id[j] = ids[i];
+      }
+      else
+         continue;
+      g_drt_clk[j] = clk;
+      if (wall)
+         fe_evt("thrcpu f=%u wall=%u name=%.16s prio=0x%02X us=%u", frame,
+                wall, ti.name, (unsigned)ti.currentPriority, us);
+   }
+}
+
+static void drprof_window(unsigned frame)
+{
+   unsigned h[16], i, n = g_drs_n, a = g_drs_att, w = g_drs_wait;
+   for (i = 0; i < 16; i++)
+   {
+      h[i] = g_drs_hist[i];
+      g_drs_hist[i] = 0;
+   }
+   g_drs_n = g_drs_att = g_drs_wait = 0;
+   fe_evt("drprof f=%u n=%u run=%u wait=%u ph=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+          "%u,%u,%u,%u,%u,%u", frame, n, a, w, h[0], h[1], h[2], h[3], h[4],
+          h[5], h[6], h[7], h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15]);
+   {
+      /* EVT linkprof: fe = loop,core,hash,crc,net,sess,-,- ; a / b = the
+       * instances' drprof phases while inside the machines; pair = inside
+       * the machines but between the instances' runs (the pair's loop). */
+      unsigned fe[FELP_N], pa[16], pb[16], pr = g_lps_pair;
+      char sa[96], sb[96];
+      for (i = 0; i < FELP_N; i++)
+      {
+         fe[i] = g_lps_fe[i];
+         g_lps_fe[i] = 0;
+      }
+      for (i = 0; i < 16; i++)
+      {
+         pa[i] = g_lps_a[i];
+         pb[i] = g_lps_b[i];
+         g_lps_a[i] = g_lps_b[i] = 0;
+      }
+      g_lps_pair = 0;
+      snprintf(sa, sizeof(sa), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+               "%u", pa[0], pa[1], pa[2], pa[3], pa[4], pa[5], pa[6], pa[7],
+               pa[8], pa[9], pa[10], pa[11], pa[12], pa[13], pa[14], pa[15]);
+      snprintf(sb, sizeof(sb), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+               "%u", pb[0], pb[1], pb[2], pb[3], pb[4], pb[5], pb[6], pb[7],
+               pb[8], pb[9], pb[10], pb[11], pb[12], pb[13], pb[14], pb[15]);
+      fe_evt("linkprof f=%u n=%u run=%u wait=%u fe=%u,%u,%u,%u,%u,%u,%u,%u "
+             "a=%s b=%s pair=%u", frame, n, a, w, fe[0], fe[1], fe[2], fe[3],
+             fe[4], fe[5], fe[6], fe[7], sa, sb, pr);
+      {
+         /* EVT looprof: the loop's own regions (FELP_L_*, section 17) */
+         unsigned l[FELP_LN];
+         for (i = 0; i < FELP_LN; i++)
+         {
+            l[i] = g_lps_l[i];
+            g_lps_l[i] = 0;
+         }
+         fe_evt("looprof f=%u lp=%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,"
+                "%u,%u names=top,netf,gbls,misc,pres0,ap,run,post,shash,acct,"
+                "osd,retire,pres,swap,rign,other", frame, l[0], l[1], l[2],
+                l[3], l[4], l[5], l[6], l[7], l[8], l[9], l[10], l[11], l[12],
+                l[13], l[14], l[15]);
+      }
+      drprof_threads(frame);
+   }
+}
+
+static void drprof_start(void)
+{
+   g_drs_us = (int)fe_ini_get_int(HARNESS_INI, "drprof_us", 1000);
+   if (g_drs_us <= 0)
+   {
+      fe_evt("drprof off reason=drprof_us");
+      return;
+   }
+   if (g_drs_us < 200)
+      g_drs_us = 200;
+   g_drs_run = 1;
+   g_drs_thid = sceKernelCreateThread("gpsp_drprof", drprof_sampler, 0x0F,
+                                      0x1000, THREAD_ATTR_USER, NULL);
+   if (g_drs_thid < 0 || sceKernelStartThread(g_drs_thid, 0, NULL) < 0)
+   {
+      if (g_drs_thid >= 0)
+         sceKernelDeleteThread(g_drs_thid);
+      g_drs_thid = -1;
+      g_drs_run = 0;
+      fe_evt("drprof off reason=thread_failed");
+      return;
+   }
+   fe_evt("drprof on us=%d prio=0x0F phases=jit,upd,disp,flush,cmisc,-,xlat,"
+          "memc,sound,dma,serial,video,irq,retro,-,outside", g_drs_us);
+}
+
+static void drprof_stop(unsigned frame)
+{
+   SceUInt tmo = 200000;
+   if (g_drs_thid < 0)
+      return;
+   g_drs_run = 0;
+   if (sceKernelWaitThreadEnd(g_drs_thid, &tmo) < 0)
+      sceKernelTerminateDeleteThread(g_drs_thid);
+   else
+      sceKernelDeleteThread(g_drs_thid);
+   g_drs_thid = -1;
+   drprof_window(frame);
+}
+#define DRPROF_PHASE(p) (reg[40] = (p))
+#else
+#define drprof_start()       do { } while (0)
+#define drprof_stop(f)       do { (void)(f); } while (0)
+#define drprof_window(f)     do { (void)(f); } while (0)
+#define DRPROF_PHASE(p)      do { } while (0)
+#endif
+
+#ifdef GPSP_PERF_RIG
+/* HARNESS ONLY: the SMC gate table after every scripted state reload.  The
+ * ranked-gate learner keeps its counters across savestate loads by design
+ * (only a ROM load clears them), so a battle replayed N times keeps adding
+ * evidence and a gate can first appear at a FIXED cycle -- which is what a
+ * freeze at "cycle ~14 on both consoles" looks like from outside.  One line
+ * per reload says when the table changed; `smc_gates` at exit only ever
+ * showed the end state. */
+static void smc_gates_reload_evt(void)
+{
+   extern unsigned int translation_gate_targets;
+   extern unsigned int translation_gate_target_pc[];
+   char gates[16 * 10];
+   unsigned gn = translation_gate_targets, gi;
+   int gp = 0;
+   if (gn > 16)
+      gn = 16;
+   for (gi = 0; gi < gn; gi++)
+      gp += snprintf(gates + gp, sizeof(gates) - gp, "%s%08x",
+                     gi ? "," : "", translation_gate_target_pc[gi]);
+   if (!gp)
+      snprintf(gates, sizeof(gates), "-");
+   fe_evt("smc_gates_reload f=%u n=%u pcs=%s", fe_host_frame_count(),
+          translation_gate_targets, gates);
+}
+#endif
+
+/* ---- core_health: the soak line (round 2, agreed with FRONTEND/DYNAREC) --
+ *
+ *   EVT core_health at=<hb|load> f=<frame> reopens=<n> short_reads=<n>
+ *       badjump=<n> rom_flush=<n> [dma_flush=<n>]
+ *       [xlat_depth=<n> stack_used=<B> sp_min=<a>]
+ *
+ * Every 600 frames (fe_host's heartbeat cadence; a separate line so the
+ * parsed `heartbeat` format stays fixed) and right after every state load.
+ * All counters are monotonic since boot.  The xlat fields exist only when the
+ * core was built with DYNAREC's XLAT_DEPTH_PROBE (weak symbols, so every
+ * flavour links); they are per-window and reset after each line, so the line
+ * AFTER an `at=load` line prices the post-reload retranslation.  sp is
+ * sampled one frame above the deepest translate_block, so stack_used reads
+ * ~400 B LOW (DYNAREC). */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+extern u32 gamepak_reopens, gamepak_short_reads, badjump_contained;
+extern u32 xlat_depth_max __attribute__((weak));
+extern u32 xlat_sp_min __attribute__((weak));
+void xlat_depth_probe_reset(void) __attribute__((weak));
+/* DMA_SMC_FLUSH (DYNAREC #7): HBlank/VBlank DMAs that hit translated code and
+ * forced a full RAM flush.  Monotonic; ~1/frame on Unbound/H&S = a storm. */
+extern u32 dma_smc_flushes __attribute__((weak));
+/* JIT_CODE_DISCIPLINE (docs/JIT-CODE-DISCIPLINE.md): jit_code_stats_type is
+ * ten u32s -- publishes, spans, lines, whole_i, early, then the ownership
+ * changes by reason (ROM flush, RAM flush, rebuild, init, tier).  Weak, read
+ * as words so the frontend needs none of the core's headers. */
+extern u32 jit_code_stats[10] __attribute__((weak));
+/* BADJUMP_SAFE: unmappable guest pcs caught and turned into a GBA reset.  A
+ * run whose script reloads the state (reload_soak.txt) recovers from such a
+ * derail at the next load, so its last frame cannot show one; this can. */
+extern u32 badjump_recoveries __attribute__((weak));
+
+static void core_health_evt(const char *at)
+{
+   char xl[80] = "", dm[48] = "", jc[96] = "";
+   if (&dma_smc_flushes)
+      snprintf(dm, sizeof(dm), " dma_flush=%u", (unsigned)dma_smc_flushes);
+   if (&badjump_recoveries)
+      snprintf(dm + strlen(dm), sizeof(dm) - strlen(dm), " bjrec=%u",
+               (unsigned)badjump_recoveries);
+   if (&jit_code_stats)
+      snprintf(jc, sizeof(jc), " jitc=%u/%u/%u/%u own=%u/%u/%u",
+               (unsigned)jit_code_stats[0], (unsigned)jit_code_stats[2],
+               (unsigned)jit_code_stats[3], (unsigned)jit_code_stats[4],
+               (unsigned)jit_code_stats[5], (unsigned)jit_code_stats[6],
+               (unsigned)jit_code_stats[7]);
+   if (&xlat_depth_max && &xlat_sp_min)
+   {
+      static unsigned stack_top;
+      unsigned sp_min = xlat_sp_min, used = 0;
+      if (!stack_top && g_emu_thid >= 0)
+      {
+         SceKernelThreadInfo ti;
+         memset(&ti, 0, sizeof(ti));
+         ti.size = sizeof(ti);
+         if (sceKernelReferThreadStatus(g_emu_thid, &ti) >= 0)
+            stack_top = (unsigned)(uintptr_t)ti.stack + (unsigned)ti.stackSize;
+      }
+      if (sp_min && stack_top > sp_min)
+         used = stack_top - sp_min;
+      snprintf(xl, sizeof(xl), " xlat_depth=%u stack_used=%u sp_min=%08x",
+               (unsigned)xlat_depth_max, used, sp_min);
+      if (xlat_depth_probe_reset)
+         xlat_depth_probe_reset();
+   }
+   fe_evt("core_health at=%s f=%u reopens=%u short_reads=%u badjump=%u "
+          "rom_flush=%u%s%s%s", at, fe_host_frame_count(),
+          (unsigned)gamepak_reopens, (unsigned)gamepak_short_reads,
+          (unsigned)badjump_contained, (unsigned)flush_rom_total, dm, xl, jc);
+}
+#else
+#define core_health_evt(at) do { } while (0)
+#endif
+
+/* STATE LOADS WAIT FOR THE MEDIA ENGINE (FRONTEND lead #15).
+ *
+ * Proof first, from the code: the ME never WRITES guest memory -- it writes
+ * only its PRX data, the stage buffer and the mailbox -- and it reads guest
+ * VRAM/OAM/palette only in phase 1 of a render, which me_rend_frame waits out
+ * (input_seq) before emulation resumes; shadows, when on, are frontend
+ * copies.  So retro_unserialize cannot be corrupted by the ME, and a render
+ * in flight only reads its own PRX copies and a capture buffer the load does
+ * not touch.  The one exception is an `input_wedge` teardown, which gives up
+ * while the ME may still be reading live VRAM; its output is discarded.
+ *
+ * The wait below therefore buys determinism, not safety: a load never
+ * overlaps ME activity of any kind, whatever path got us here.  Bounded by
+ * the same 50 ms ceiling as the input handshake, costs at most one render
+ * per load, and a timeout only logs.  Saves need nothing: retro_serialize
+ * only reads guest memory, and the thumbnail reads the READY stage, which the
+ * ME is not writing. */
+static void me_rend_quiesce(const char *why)
+{
+   unsigned t0;
+   FE_EVT_ONLY(why);
+   if (!me_host_up() || me_host_idle())
+      return;
+   t0 = (unsigned)sceKernelGetSystemTimeLow();
+   while (!me_host_idle() &&
+          ((unsigned)sceKernelGetSystemTimeLow() - t0) < MER_INPUT_US)
+      ;
+   if (!me_host_idle())
+      fe_evt("me_rend quiesce_timeout why=%s", why);
+}
+
+/* The single state-load entry point for this frontend: quiesce, load, log. */
+static int psp_state_load_io(const char *path, const char *why)
+{
+   int rc;
+   me_rend_quiesce(why);
+   /* A loaded state starts with no turbo button firing: a Toggle is off
+    * until it is pressed again, a Hold still down starts a fresh train. */
+   ctl_turbo_stop(&g_turbo);
+   rc = fe_host_state_load(path);
+   core_health_evt("load");
+   return rc;
+}
+
+/* pwr_hold: see power_cb -- this runs outside the loop's park point. */
+static int psp_state_load(const char *path, const char *why)
+{
+   int rc;
+   pwr_hold("state_load");
+#ifdef REWIND
+   (void)psp_rewind_land("state_load", 0);   /* (a failed load goes on here) */
+#endif
+   rc = psp_state_load_io(path, why);
+   pwr_release();
+   return rc;
+}
+
+/* ---- RIG IDENTITY AND HONESTY (docs/RIG-DOUBLE-BATTLE.md §2) ------------
+ *
+ * Everything here exists so a hardware run cannot be misread:
+ *   rig_preserve_log   a relaunch used to truncate frontend.log; an
+ *                      uncollected log is now copied to frontend.prev.log
+ *   rig_boot_identity  psp_model (role verified by content, not drive letter),
+ *                      run_id / arm (pairing and A/B identity), eboot_crc
+ *   rig_rom_identity   which ROM image actually ran
+ *   rig_cfg_audit_*    every harness/config key echoed; a key nothing reads
+ *                      (a typo) is reported as cfg_unknown
+ *   rig_fail_probe     the game state at the moment a script gave up
+ *   rig_romload_evt    ROM page-ins from the stick per window (the PSP-1000)
+ * Telemetry builds only; a release build compiles none of it. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+static int g_log_input = 1;          /* harness `log_input`, 0 = no input lines */
+static char g_fail_probe[256];       /* harness `fail_probe`, read at boot */
+/* harness `watch_ram` (up to 4 x addr:size): every CHANGE of a watched value
+ * is logged with the frame it was first seen -- the link-room start-skew
+ * metric (who moves first, and how long a console's own step takes to come
+ * back through the link).  Capped so a busy address cannot flood the log. */
+static uint32_t g_watch_addr[4], g_watch_val[4];
+static uint8_t  g_watch_sz[4], g_watch_seen[4];
+static int      g_watch_n, g_watch_left = 400;
+
+/* FREEZE RIG: set at boot when log/frontend.log was still on the stick, i.e.
+ * the previous run never reached the handoff where the PC collects (and
+ * removes) it -- a hard freeze or a power loss.  See freeze_rig_recover
+ * (ported from claude/freeze-rig 2d5b84d for the GBA link mirror's hang,
+ * docs/GBA-LINK-MIRROR.md section 13). */
+static int g_rig_prev_uncollected;
+
+static void rig_preserve_log(void)
+{
+   char prev[200];
+   static char buf[4096];
+   SceUID in, out;
+   int n;
+
+   /* The per-frame oracle is truncated by the next run too, and after a
+    * freeze it is the evidence of WHERE the guest diverged.  Keep one
+    * generation (the rig collects and removes it after every clean run, so a
+    * shash.txt still here at boot is an uncollected one). */
+   {
+      char cur[200], old[200];
+      snprintf(cur, sizeof(cur), "%s/shash.txt", LOG_DIR);
+      snprintf(old, sizeof(old), "%s/shash.prev.txt", LOG_DIR);
+      if (file_exists(cur))
+      {
+         sceIoRemove(old);
+         sceIoRename(cur, old);
+      }
+   }
+   in = sceIoOpen(LOG_PATH, PSP_O_RDONLY, 0777);
+   if (in < 0)
+      return;
+   g_rig_prev_uncollected = 1;
+   snprintf(prev, sizeof(prev), "%s/frontend.prev.log", LOG_DIR);
+   out = sceIoOpen(prev, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   if (out >= 0)
+   {
+      while ((n = sceIoRead(in, buf, sizeof(buf))) > 0)
+         sceIoWrite(out, buf, n);
+      sceIoClose(out);
+   }
+   sceIoClose(in);
+}
+
+static const char *rig_model_name(int m)
+{
+   switch (m)
+   {
+   case 0:  return "PSP-1000";
+   case 1:  return "PSP-2000";
+   case 2: case 3: case 5: case 6: case 8: return "PSP-3000";
+   case 4:  return "PSP-Go";
+   case 10: return "PSP-E1000";
+   default: return "unknown";
+   }
+}
+
+static void rig_boot_identity(int have_harness)
+{
+   char rid[48] = "", arm[16] = "";
+   int m = kuKernelGetModel();
+   FE_EVT_ONLY(m);
+   fe_evt("psp_model code=%d name=%s", m, rig_model_name(m));
+   if (!have_harness)
+      return;
+   fe_ini_get(HARNESS_INI, "run_id", rid, sizeof(rid));
+   fe_ini_get(HARNESS_INI, "arm", arm, sizeof(arm));
+   fe_evt("rig run_id=%s arm=%s", rid[0] ? rid : "none", arm[0] ? arm : "none");
+   g_log_input = (int)fe_ini_get_int(HARNESS_INI, "log_input", 1) ? 1 : 0;
+   /* Read NOW, not at failure time: the key audit runs before the main loop,
+    * and a key first read after it would be reported as unknown. */
+   fe_ini_get(HARNESS_INI, "fail_probe", g_fail_probe, sizeof(g_fail_probe));
+   {
+      char wl[128], *p, *save = NULL;
+      if (fe_ini_get(HARNESS_INI, "watch_ram", wl, sizeof(wl)))
+         for (p = strtok_r(wl, ",", &save); p && g_watch_n < 4;
+              p = strtok_r(NULL, ",", &save))
+         {
+            char *c = strchr(p, ':');
+            unsigned sz = c ? (unsigned)strtoul(c + 1, NULL, 0) : 2;
+            g_watch_addr[g_watch_n] = (uint32_t)strtoul(p, NULL, 0);
+            g_watch_sz[g_watch_n] = (uint8_t)((sz == 1 || sz == 4) ? sz : 2);
+            g_watch_n++;
+         }
+      fe_evt("watch_ram n=%d", g_watch_n);
+   }
+   fe_evt("log_input n=%d", g_log_input);
+}
+
+static void rig_rom_identity(const char *path)
+{
+   uint8_t h[0xC0];
+   SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0777);
+   SceOff size;
+   if (fd < 0)
+   {
+      fe_evt("rom_id err=open");
+      return;
+   }
+   size = sceIoLseek(fd, 0, PSP_SEEK_END);
+   sceIoLseek(fd, 0, PSP_SEEK_SET);
+   if (sceIoRead(fd, h, sizeof(h)) != (int)sizeof(h))
+   {
+      sceIoClose(fd);
+      fe_evt("rom_id err=short");
+      return;
+   }
+   sceIoClose(fd);
+   fe_evt("rom_id code=%.4s rev=%02x size=%u hdr_crc=%08x",
+          (const char *)h + 0xAC, h[0xBC], (unsigned)size,
+          (unsigned)fe_crc32(0, h, sizeof(h)));
+}
+
+static void rig_cfg_line(void *user, const char *key, const char *raw,
+                         int asked, long ival, int is_int)
+{
+   (void)ival; (void)is_int;
+   if (asked == 2)
+      fe_evt("cfg_duplicate src=%s key=%s raw=%s ignored=1 (first line wins)",
+             (const char *)user, key, raw);
+   else if (asked)
+      fe_evt("cfg src=%s key=%s raw=%s", (const char *)user, key, raw);
+   else
+      fe_evt("cfg_unknown src=%s key=%s raw=%s", (const char *)user, key, raw);
+}
+
+static void rig_cfg_audit_report(void)
+{
+   int n = fe_ini_audit_report(HARNESS_INI, rig_cfg_line, (void *)"harness");
+   int c = fe_ini_audit_report(CONFIG_INI, rig_cfg_line, (void *)"config");
+   FE_EVT_ONLY(n); FE_EVT_ONLY(c);
+   fe_evt("cfg_audit harness_keys=%d config_keys=%d", n, c);
+}
+
+/* `fail_probe = 0x030030F4:4,0x02023E8A:1,...` (up to 8): read and print those
+ * words the moment a script fails, so the failure names the game state. */
+static void rig_fail_probe(void)
+{
+   char spec[256], out[320], *p, *save = NULL;
+   int o = 0, k = 0;
+   if (!g_fail_probe[0])
+      return;
+   strncpy(spec, g_fail_probe, sizeof(spec) - 1);
+   spec[sizeof(spec) - 1] = '\0';
+   for (p = strtok_r(spec, ",", &save); p && k < 8;
+        p = strtok_r(NULL, ",", &save), k++)
+   {
+      char *colon = strchr(p, ':');
+      uint32_t addr = (uint32_t)strtoul(p, NULL, 0), v = 0;
+      unsigned sz = colon ? (unsigned)strtoul(colon + 1, NULL, 0) : 4;
+      uint8_t b[4] = { 0, 0, 0, 0 };
+      if (sz != 1 && sz != 2 && sz != 4)
+         sz = 4;
+      if (fe_host_mem_read(addr, b, sz) != 0)
+         o += snprintf(out + o, sizeof(out) - o, " %08x=ERR", (unsigned)addr);
+      else
+      {
+         v = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
+             ((uint32_t)b[3] << 24);
+         o += snprintf(out + o, sizeof(out) - o, " %08x=%x", (unsigned)addr,
+                       (unsigned)v);
+      }
+      if (o >= (int)sizeof(out) - 24)
+         break;
+   }
+   out[o] = '\0';
+   fe_evt("fail_probe%s", out);
+}
+
+static void rig_watch_evt(unsigned frames)
+{
+   int i;
+   for (i = 0; i < g_watch_n && g_watch_left > 0; i++)
+   {
+      uint8_t b[4] = { 0, 0, 0, 0 };
+      uint32_t v;
+      if (fe_host_mem_read(g_watch_addr[i], b, g_watch_sz[i]) != 0)
+         continue;
+      v = (uint32_t)b[0] | ((uint32_t)b[1] << 8) | ((uint32_t)b[2] << 16) |
+          ((uint32_t)b[3] << 24);
+      if (g_watch_seen[i] && v == g_watch_val[i])
+         continue;
+      /* t_ms is the clock the autopilot's ap_mark lines carry, so a watch
+       * change lines up with a script step on the same console. */
+      fe_evt("watch a=%08x v=%x f=%u t_ms=%u", (unsigned)g_watch_addr[i],
+             (unsigned)v, frames, (unsigned)(fe_evt_now_us() / 1000ull));
+      g_watch_val[i] = v;
+      g_watch_seen[i] = 1;
+      g_watch_left--;
+   }
+}
+
+static void rig_romload_evt(unsigned frames)
+{
+   static unsigned last_pg, last_re, last_sh;
+   extern u32 gamepak_reopens, gamepak_short_reads;
+   if (frames % 600u || !gamepak_must_swap())
+      return;
+   fe_evt("romload win=600 pg=%u reopen=%u short=%u",
+          (unsigned)(gamepak_page_loads - last_pg),
+          (unsigned)(gamepak_reopens - last_re),
+          (unsigned)(gamepak_short_reads - last_sh));
+   last_pg = gamepak_page_loads;
+   last_re = gamepak_reopens;
+   last_sh = gamepak_short_reads;
+}
+#else
+#define g_log_input 0
+#define rig_preserve_log()          do { } while (0)
+#define rig_boot_identity(h)        do { (void)(h); } while (0)
+#define rig_rom_identity(p)         do { (void)(p); } while (0)
+#define rig_cfg_audit_report()      do { } while (0)
+#define rig_fail_probe()            do { } while (0)
+#define rig_romload_evt(f)          do { (void)(f); } while (0)
+#define rig_watch_evt(f)            do { (void)(f); } while (0)
+#endif
+
+/* EVT ff_win (docs/FF-PRESETS.md): one line per 10 s of wall time, so a
+ * fast-forward preset can be scored as emulated fps beside drawn fps (new
+ * images presented, g_ffw_drawn) and the mean retro_run cost.  `mode` is
+ * what the loop is doing over the window's LAST frame: off, 3x, unl, smooth,
+ * or harness (the `ff` key / autopilot `ff on`, which is not a user preset).
+ * `gated` counts frames the draw gate decided not to draw, `resync` the draws
+ * that found the gate a whole period behind (boundaries given up rather than
+ * repaid as a burst: the gap between drawn fps and 30/60).  Telemetry only. */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+#define FF_WIN_US 10000000u
+static void ff_win_note(void)
+{
+   static uint64_t t0;
+   static unsigned f0, d0, g0, c0, r0;
+   static uint32_t u0;
+   uint64_t now = net_now_us();
+   unsigned calls = 0, f, d, g, n;
+   uint32_t tot = 0, mx = 0;
+   unsigned dt, emu_x100, drawn_x100, core_us;
+   const char *mode;
+
+   fe_host_core_prof(&calls, &tot, &mx);
+   f = fe_host_frame_count();
+   if (!t0)
+   {
+      t0 = now; f0 = f; d0 = g_ffw_drawn; g0 = g_ffw_gated;
+      c0 = calls; u0 = tot; r0 = g_ff_gate_st.resyncs;
+      return;
+   }
+   if (now - t0 < FF_WIN_US)
+      return;
+   dt = (unsigned)(now - t0);
+   d = g_ffw_drawn - d0;
+   g = g_ffw_gated - g0;
+   n = calls - c0;
+   emu_x100   = (unsigned)((uint64_t)(f - f0) * 100000000ull / dt);
+   drawn_x100 = (unsigned)((uint64_t)d * 100000000ull / dt);
+   core_us    = n ? (unsigned)((tot - u0) / n) : 0u;
+   if (!g_ff_uncapped && !g_ff_mult)
+      mode = "off";
+   else if (g_ff_mult)
+      mode = "3x";
+   else if (!g_ff_user || g_pcfg.bench_mode)
+      mode = "harness";
+   else
+      mode = pcfg_ff_mode() == PCFG_FF_SMOOTH ? "smooth" : "unl";
+   fe_evt("ff_win mode=%s me=%d emu=%u.%02u drawn=%u.%02u core_us=%u "
+          "frames=%u drawn_n=%u gated=%u resync=%u win_ms=%u",
+          mode, g_me_rend, emu_x100 / 100, emu_x100 % 100,
+          drawn_x100 / 100, drawn_x100 % 100, core_us, f - f0, d, g,
+          g_ff_gate_st.resyncs - r0, dt / 1000u);
+   t0 = now; f0 = f; d0 = g_ffw_drawn; g0 = g_ffw_gated;
+   c0 = calls; u0 = tot; r0 = g_ff_gate_st.resyncs;
+}
+#else
+#define ff_win_note()               do { } while (0)
+#endif
+
+/* ---- boot timeline (docs/UI-OVERLAY.md §12.2.1) ---------------------------
+ * Microseconds since main() entry, and how many INI file opens (fe_ini_get
+ * without a bound document, plus document loads) had run and how many found
+ * no file, at each milestone up to the browser; doc_hits = the lookups
+ * answered from CONFIG.INI's in-memory copy instead.  One EVT line in telemetry builds; nothing in a release. */
+#define BOOT_MARKS 12
+static struct { const char *tag; unsigned us, ini, miss; } g_boot_mark[BOOT_MARKS];
+static int g_boot_marks;
+static uint64_t g_boot_t0;
+
+static void boot_mark(const char *tag)
+{
+   if (g_boot_marks < BOOT_MARKS)
+   {
+      g_boot_mark[g_boot_marks].tag = tag;
+      g_boot_mark[g_boot_marks].us =
+         (unsigned)(sceKernelGetSystemTimeWide() - g_boot_t0);
+      fe_ini_stats(&g_boot_mark[g_boot_marks].ini,
+                   &g_boot_mark[g_boot_marks].miss);
+      g_boot_marks++;
+   }
+}
+
+static void boot_timeline_emit(void)
+{
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   char line[400];
+   int i, o = 0;
+   for (i = 0; i < g_boot_marks && o < (int)sizeof(line) - 40; i++)
+      o += snprintf(line + o, sizeof(line) - (size_t)o, " %s=%u/%u/%u",
+                    g_boot_mark[i].tag, g_boot_mark[i].us,
+                    g_boot_mark[i].ini, g_boot_mark[i].miss);
+   fe_evt("boot_timeline us/opens/miss:%s doc_hits=%u", line,
+          fe_ini_doc_hits());
+#endif
+}
+
+#ifdef GPSP_PERF_RIG
+/* Harness `ui_script = <file>` (docs/GBA-LINK-UI.md): the in-game menus and
+ * the LINKING screen driven step by step, for the two-PPSSPP link rig and
+ * the GE dumps of every link screen.  `pad_script` is keyed to emulated
+ * frames, which stop while a menu is open or a link sets up; this one runs
+ * in order, each step `+N` main-loop iterations after the previous:
+ *     +N menu               open the in-game menu (the chord is off with a
+ *                           script driving the game)
+ *     +N press BTN[+BTN]    pressed for one loop (OR'd into the pad)
+ *     +N dump NAME          GE dump of this loop's frame -> log/NAME.bmp
+ *     +N wait COND          until COND: linked linking hosting ended
+ *                           failscreen ap_done net_up menu_open menu_closed
+ *     +N exit CODE
+ *     +N linking PRESET     the LINKING screen from fabricated facts
+ *                           (uiscript_linking_draw), until `linking off`
+ *     +N fakescan G1,G2,..  the scan list answers with these ("-" none)
+ *     +N census TAG         heap_census(TAG): EVT heap_census at=TAG
+ *                           (docs/UI-OVERLAY.md section 13's heap proof)
+ * '#' comments.  Not compiled into a release. */
+#define UISCRIPT_MAX 192
+enum { UIS_MENU = 1, UIS_PRESS, UIS_DUMP, UIS_WAIT, UIS_EXIT, UIS_LINKING,
+       UIS_FAKESCAN, UIS_CENSUS };
+static struct { unsigned delay, btn; unsigned char verb; char arg[64]; }
+   g_uis[UISCRIPT_MAX];
+static int g_uis_n, g_uis_i, g_uis_exit = -1;
+static unsigned g_uis_wait;
+static char g_uis_dump[24];
+static char g_uis_linking[24];     /* `linking PRESET` until `linking off` */
+
+static void uiscript_load(const char *path)
+{
+   FILE *f = fopen(path, "r");
+   char line[160];
+   if (!f)
+   {
+      fe_evt("ui_script err=open path=%s", path);
+      return;
+   }
+   while (fgets(line, sizeof(line), f) && g_uis_n < UISCRIPT_MAX)
+   {
+      char verb[16], arg[64];
+      unsigned d;
+      int n = sscanf(line, " +%u %15s %63s", &d, verb, arg);
+      if (line[0] == '#' || n < 2)
+         continue;
+      memset(&g_uis[g_uis_n], 0, sizeof(g_uis[0]));
+      g_uis[g_uis_n].delay = d;
+      if (n == 3)
+         snprintf(g_uis[g_uis_n].arg, sizeof(g_uis[0].arg), "%.63s", arg);
+      if (!strcmp(verb, "menu"))
+         g_uis[g_uis_n].verb = UIS_MENU;
+      else if (!strcmp(verb, "press") && n == 3 &&
+               (g_uis[g_uis_n].btn = pad_script_buttons(arg)) != 0)
+         g_uis[g_uis_n].verb = UIS_PRESS;
+      else if (!strcmp(verb, "dump") && n == 3)
+         g_uis[g_uis_n].verb = UIS_DUMP;
+      else if (!strcmp(verb, "wait") && n == 3)
+         g_uis[g_uis_n].verb = UIS_WAIT;
+      else if (!strcmp(verb, "exit"))
+         g_uis[g_uis_n].verb = UIS_EXIT;
+      else if (!strcmp(verb, "linking") && n == 3)
+         g_uis[g_uis_n].verb = UIS_LINKING;
+      else if (!strcmp(verb, "fakescan") && n == 3)
+         g_uis[g_uis_n].verb = UIS_FAKESCAN;
+      else if (!strcmp(verb, "census") && n == 3)
+         g_uis[g_uis_n].verb = UIS_CENSUS;
+      else
+         continue;
+      g_uis_n++;
+   }
+   fclose(f);
+   fe_evt("ui_script path=%s steps=%d", path, g_uis_n);
+}
+
+static int uiscript_cond(const char *c)
+{
+   int st = fe_host_gblink_active() ? fe_host_gblink_state() : -1;
+   if (!strcmp(c, "linked"))     return st == FE_GBLINK_RUNNING;
+   if (!strcmp(c, "linking"))    return st == FE_GBLINK_SETUP;
+   if (!strcmp(c, "hosting"))    return g_net_up && g_link_wait;
+   if (!strcmp(c, "ended"))      return st < 0 && !g_net_up;
+   if (!strcmp(c, "failscreen")) return g_link_fail_hold;
+   if (!strcmp(c, "ap_done"))    return fe_autopilot_status() == 1;
+   if (!strcmp(c, "net_up"))     return g_net_up;
+   if (!strcmp(c, "menu_open"))  return ui_active();
+   if (!strcmp(c, "menu_closed")) return !ui_active();
+   return 0;
+}
+
+/* At the pad read: the buttons to OR in this loop. */
+static unsigned uiscript_pad(void)
+{
+   unsigned m = 0;
+   int adv = 1;
+   if (g_uis_i >= g_uis_n)
+      return 0;
+   if (++g_uis_wait < g_uis[g_uis_i].delay)
+      return 0;
+   switch (g_uis[g_uis_i].verb)
+   {
+   case UIS_MENU:
+      if (!ui_active())
+         menu_open();
+      break;
+   case UIS_PRESS:
+      m = g_uis[g_uis_i].btn;
+      break;
+   case UIS_DUMP:
+      snprintf(g_uis_dump, sizeof(g_uis_dump), "%.23s", g_uis[g_uis_i].arg);
+      break;
+   case UIS_WAIT:
+      adv = uiscript_cond(g_uis[g_uis_i].arg);
+      break;
+   case UIS_EXIT:
+      g_uis_exit = atoi(g_uis[g_uis_i].arg);
+      break;
+   case UIS_LINKING:
+      snprintf(g_uis_linking, sizeof(g_uis_linking), "%.23s",
+               strcmp(g_uis[g_uis_i].arg, "off") ? g_uis[g_uis_i].arg : "");
+      break;
+   case UIS_FAKESCAN:
+      ui_scan_fake_set(g_uis[g_uis_i].arg);
+      break;
+   case UIS_CENSUS:
+#ifndef GPSP_NO_TELEMETRY
+      heap_census(g_uis[g_uis_i].arg);
+#endif
+      break;
+   }
+   if (adv)
+   {
+      fe_evt("ui_script step=%d verb=%u arg=%s loop=%u frame=%u", g_uis_i,
+             (unsigned)g_uis[g_uis_i].verb, g_uis[g_uis_i].arg,
+             (unsigned)g_loop_iter, fe_host_frame_count());
+      g_uis_i++;
+      g_uis_wait = 0;
+   }
+   return m;
+}
+
+/* Just before the present: this loop's frame, menus and OSD included. */
+static void uiscript_dump_now(void)
+{
+   char path[176];
+   if (!g_uis_dump[0])
+      return;
+   snprintf(path, sizeof(path), "%s/%s.bmp", LOG_DIR, g_uis_dump);
+   if (vid_dump_ge(path) == 0)
+      fe_evt("ge_dump file=%s.bmp ui_script=1", g_uis_dump);
+   g_uis_dump[0] = '\0';
+}
+/* `linking PRESET`: the LINKING screen drawn from fabricated session facts
+ * through the same composition a session uses (link_draw_facts,
+ * link_bringup_view), for the GE comparison with the design's frames
+ * (docs/GBA-LINK-UI.md).  Presets: share check gb_receive fail_rom
+ * fail_version fail_host_left adapter_join adapter_host cable_join. */
+static void uiscript_linking_draw(void)
+{
+   fe_gblink_progress pr;
+   const char *p = g_uis_linking;
+   int why = g_link_why, host = g_net_is_host;
+   if (!g_link_room[0])
+      snprintf(g_link_room, sizeof(g_link_room), "Room 7");
+   memset(&pr, 0, sizeof(pr));
+   pr.peer_reason = -1;
+   pr.state = FE_GBLINK_SETUP;
+   g_net_is_host = 0;
+   if (!strncmp(p, "adapter_", 8) || !strcmp(p, "cable_join"))
+   {
+      ui_linking_view lv;
+      char l1[80], l2[80];
+      int k = g_link_kind;
+      g_link_kind = p[0] == 'a' ? LK_ADAPTER : LK_CABLE;
+      link_bringup_view(!strcmp(p, "adapter_host"), g_link_room, &lv, l1,
+                        sizeof(l1), l2, sizeof(l2));
+      ui_linking_draw(&lv);
+      g_link_kind = k;
+      g_net_is_host = host;
+      g_drew = 1;
+      return;
+   }
+   if (!strcmp(p, "share"))
+   {
+      pr.phase = FE_GBLINK_PH_SHARE;
+      pr.done = 180u * 1024u;
+      pr.total = 412u * 1024u;
+   }
+   else if (!strcmp(p, "check"))
+      pr.phase = FE_GBLINK_PH_HELLO;
+   else if (!strcmp(p, "gb_receive"))
+   {
+      pr.phase = FE_GBLINK_PH_ROM_RX;
+      pr.done = 1258291u;
+      pr.total = 2097152u;
+      snprintf(pr.peer_title, sizeof(pr.peer_title), "Pokemon Crystal");
+   }
+   else
+   {
+      pr.state = FE_GBLINK_FAILED;
+      pr.phase = FE_GBLINK_PH_FAILED;
+      pr.error = !strcmp(p, "fail_rom") ? FE_GBLINK_E_ROM_MISSING
+                                        : FE_GBLINK_E_PEER_LOST;
+      if (!strcmp(p, "fail_version"))
+         g_link_why = LW_VERSION;
+   }
+   link_draw_facts(&pr);
+   g_link_why = why;
+   g_net_is_host = host;
+}
+#define UISCRIPT_DUMP() uiscript_dump_now()
+#else
+#define UISCRIPT_DUMP() do { } while (0)
+#endif
+
+#ifdef REWIND
+/* ---- rewind: measurement wiring (PROTOTYPE; docs/REWIND.md) ---------------
+ * Harness keys only, no menu yet.  The snapshots, the ring, the restores and
+ * the re-runs are the real thing; what is NOT here yet is the picture: this
+ * console's frames come from the second core's renderer, not from the core's
+ * video callback, so nothing is captured and the screen simply holds while a
+ * script rewinds (fe_host_rewind_opts.no_capture).
+ *
+ *   rewind            = 0|1   record (0 = nothing reserved, nothing runs)
+ *   rewind_mib        = 1..8  megabytes of history, raw (default 2: the
+ *                             player's Rewind length with rewind_product,
+ *                             Medium unless changed; 2 in the lab
+ *                             configuration too)
+ *   rewind_interval   = N     frames between snapshots (default 6)
+ *   rewind_burst      = N     most frames a rewind tick may run (default 2)
+ *   rewind_full_flush = 0|1   a restore empties both translation caches, as
+ *                             a state load does (default 0: ROM cache kept)
+ *   rewind_ff         = 0|1   record fast-forwarded frames (default 1)
+ *   rewind_save_quiet = N     frames the save chip (or the link port) must
+ *                             have been left alone before play may continue
+ *                             from a frame a rewind stops on (default 60)
+ *   rewind_rlog_bytes = N     the log of save bytes the game read, served
+ *                             again to re-run frames (default 131072)
+ *   rewind_sav_mutant = N     TESTS ONLY: 1 re-runs read the live save, 2
+ *                             re-runs write the save, 4 no snap
+ * (The save is permanent under rewind, docs/REWIND.md 17: there is no
+ * rewind_cross_save any more.)
+ * Capture optimisations, each its own key so they can be A/B'd (all default
+ * 0 = the first version's behaviour):
+ *   rewind_inplace    = 0|1   compare the big arrays where they lie instead
+ *                             of serialising the whole image first
+ *   rewind_dirty      = 0..3  (with rewind_inplace) do not read pages
+ *                             nothing wrote to since the last snapshot:
+ *                             1 = VRAM, 2 = EWRAM, 3 = both
+ *   rewind_pace_ms    = N     a snapshot needs N ms of wall clock since the
+ *                             last one as well as rewind_interval frames, so
+ *                             fast-forward takes them no faster than 1x does
+ *                             (0 = off; 100 = the 1x rate at interval 6)
+ *   rewind_vmem       = 0|1   the rewind's memory comes from the end of the
+ *                             volatile pool instead of the heap (history
+ *                             then starts again after a sleep)
+ * Checks and measurement:
+ *   rewind_verify     = 0|1   after every snapshot compare the whole machine
+ *                             with the reference; EVT rewind_verify_fail and
+ *                             a nonzero verify= at exit mean a written page
+ *                             was not marked.  Costs a full compare each.
+ *   rewind_gprof      = 0|1   (rewind_inplace = 0) EVT rewind_gprof: the
+ *                             serialised gather's clear / save / sound times
+ * Test instruments (slow: a line to the log folder every frame):
+ *   rewind_hash       = 0|1   log/rewind_hash.txt for tools/rewind_check.py
+ *   rewind_redo       = 0|1   replay rewound frames with their logged inputs
+ *   rewind_fuzz_from  = F, rewind_fuzz_seed = S   buttons are a function of
+ *                             the frame number from frame F on
+ * and the autopilot step `rewind N` holds the control for N ticks.
+ * Lines: EVT rewind_reserve / rewind_enable at boot, EVT rewind_win on the
+ * heartbeat cadence, EVT rewind_gesture after each scripted rewind,
+ * EVT rewind_stats / rewind_use / rewind_tick at exit. */
+static int g_rw_want, g_rw_on;
+static int g_rw_gb;             /* the setting is on, the game is GB / GBC */
+/* The cadence of a rewind: `s` frames back every `p` display ticks, chosen
+ * so that the game can be re-run as fast as it is shown (psp_rewind_tick). */
+static struct
+{
+   int      on, force_p, force_s, speed_max;
+   int      p, s;           /* in force */
+   int      phase;          /* ticks since the last tick that showed */
+   int      level;          /* the speed asked for: 1, 2, 4 */
+   int      bad;            /* recent ticks that fell short, weighted */
+   uint32_t scale;          /* the cost model, x100: raised when it was wrong */
+   unsigned shows, shorts, demotes, changes, ticks, stepped;
+   unsigned t_ticks, t_frames;   /* since the pace in force began */
+   unsigned t_shows, t_shorts;
+   unsigned last_us;        /* when the last held loop began */
+   unsigned fail;           /* speed x1000 shown not to hold, this hold */
+   unsigned held_ok;        /* fastest speed x1000 that has held, this game */
+   unsigned cap;            /* frames per 1000 ticks the game has shown it
+                             * can be re-run at (0 = not known) */
+   int      first_p, first_s;
+} g_rwc;
+#define RW_SOUND_DEFAULT 2
+static int g_rw_vmem;           /* key: live in the volatile pool */
+static int g_rw_pool;           /* the rewind is a tenant of the pool now */
+static int g_rw_asleep;         /* suspended for a sleep: resume on wake */
+static int g_rw_held;           /* the control's level, this loop */
+static fe_host_rewind_opts g_rw_opts;
+static char g_rw_hash_path[192], g_rw_dump_dir[192];
+
+/* ---- the pictures (fe_host_rewind_opts.pix_begin / pix_end / show) ------- */
+static const uint16_t *g_rw_show;   /* the slot on screen while rewinding */
+static int g_rw_showing;            /* a rewind is on screen */
+
+/* Before every frame the rewind runs or records: where its picture goes.
+ * 1 = the engine draws it there (g_rw_slot, taken by the post); 0 = the
+ * engine is down, fe_host copies the core's own picture into the slot. */
+static int psp_rw_pix_begin(uint16_t *slot)
+{
+   g_rw_slot_posted = 0;
+   if (g_me_rend)
+   {
+      g_rw_slot = slot;
+      return 1;
+   }
+   g_rw_slot = NULL;
+   if (slot)
+      g_rw_flush_posts = 32;    /* this CPU is writing slots through its cache */
+   return 0;
+}
+
+static int psp_rw_pix_end(void)
+{
+   int posted = g_rw_slot_posted;
+   g_rw_slot = NULL;
+   g_rw_slot_posted = 0;
+   return posted;
+}
+
+/* While rewinding: this slot is the picture (NULL: the frame has none, keep
+ * what is up).  It is drawn at the top of the next loop, where the engine's
+ * frame would be (psp_rewind_present). */
+static void psp_rw_show(const uint16_t *slot)
+{
+   if (!slot)
+      return;
+   if (g_me_rend)
+   {
+      /* Still being drawn?  Then wait for it: a few milliseconds at most,
+       * once per window, instead of showing half a frame. */
+      if (g_mer_pending >= 0 && g_mer_stage[g_mer_pending] == slot)
+      {
+         unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+         while (!me_host_idle() &&
+                (unsigned)sceKernelGetSystemTimeLow() - t0 < 12000u)
+            ;
+         g_rwm.show_waits++;
+         g_rwm.show_us += (unsigned)sceKernelGetSystemTimeLow() - t0;
+      }
+   }
+   else
+      /* this CPU filled it: the GE reads memory, not our cache */
+      sceKernelDcacheWritebackRange(slot, MER_STAGE_PITCH * 161 * 2);
+   g_rw_show = slot;
+}
+
+/* Loop top, in the place of the engine's present.  1 = drawn. */
+static int psp_rewind_present(void)
+{
+   if (!g_rw_showing || !g_rw_show)
+      return 0;
+   vid_draw_prestaged(g_rw_show, 240, 160);
+   g_drew = 1;
+   return 1;
+}
+
+/* Play resumes: the frame on screen stays up until the engine's next one
+ * lands.  The ready stage is pointed at the slot that is showing (it is the
+ * frame play resumes from); the stage a re-run was last drawn into is the
+ * other one and is never presented. */
+static void psp_rewind_show_end(void)
+{
+   if (g_me_rend && g_rw_show)
+   {
+      int r = g_mer_ready >= 0 ? g_mer_ready : (g_mer_pending == 0 ? 1 : 0);
+      if (r != g_mer_pending)
+      {
+         g_mer_stage[r] = (uint16_t *)g_rw_show;
+         g_mer_ready = r;
+         g_mer_last_presented = -1;
+      }
+   }
+   g_rw_show = NULL;
+   g_rw_showing = 0;
+}
+
+/* What the Settings toggle turns on: every optimisation, the pictures, the
+ * volatile pool.  `mb` = megabytes of history: the player's "Rewind length"
+ * (config_psp.h: Short 1; Medium 2, the default; Long 4).  The harness key
+ * rewind_mib overrides it with any size, as before. */
+static void psp_rewind_product(int mb)
+{
+   memset(&g_rw_opts, 0, sizeof(g_rw_opts));
+   g_rw_opts.ring_mib        = (uint32_t)mb;
+   g_rw_opts.interval        = 6;
+   g_rw_opts.burst           = 8;
+   g_rw_opts.tick_budget_us  = 14183;
+   g_rw_opts.save_quiet      = 60;
+   g_rw_opts.ff_rewindable   = 1;
+   g_rw_opts.inplace         = 1;
+   g_rw_opts.dirty           = 3;
+   g_rw_opts.fast_restore    = 1;
+   g_rw_opts.clock_frames    = 1;
+   g_rw_opts.pace_us         = 100000;
+   g_rw_opts.slack_margin_us = 2500;
+   g_rw_opts.max_span        = 48;
+   /* The history target (about ten seconds a megabyte whatever the scene:
+    * snapshots up to 24 frames apart while they are large) is OFF in the
+    * 4.0.0 beta: on a PSP-3000 it gave an intermittent ~0.8 s hitch after
+    * the control was released (catch-up of 46-52 ticks against 1-3 with it
+    * off; docs/REWIND.md 14), and the owner prefers smooth over long.
+    * Harness rewind_target_s = N turns it on.  The Settings row therefore
+    * names a length (Short / Medium / Long), not seconds. */
+   (void)mb;
+   g_rw_opts.target_s        = 0;
+   g_rw_opts.gap_max         = 18;
+   g_rw_vmem                 = 1;
+}
+
+static void psp_rewind_read_ini(void)
+{
+   int want = (int)fe_ini_get_int(HARNESS_INI, "rewind", -1);
+   int product = (int)fe_ini_get_int(HARNESS_INI, "rewind_product", want < 0);
+
+   /* No harness key: the player's setting, with everything on.  With one:
+    * the stage-2 behaviour (every optimisation off) unless rewind_product
+    * asks for the shipped configuration; single keys override either. */
+   if (product)
+      psp_rewind_product(g_pcfg.rewind_mb);
+   else
+   {
+      memset(&g_rw_opts, 0, sizeof(g_rw_opts));
+      g_rw_opts.ring_mib = 2;
+      g_rw_opts.interval = 6;
+      g_rw_opts.burst = 2;
+      g_rw_opts.save_quiet = 60;
+      g_rw_opts.ff_rewindable = 1;
+      g_rw_vmem = 0;
+   }
+   g_rw_want = want < 0 ? g_pcfg.rewind : want != 0;
+#define RW_KEY(field, key) \
+   g_rw_opts.field = (uint32_t)fe_ini_get_int(HARNESS_INI, key, (long)g_rw_opts.field)
+#define RW_FLAG(field, key) \
+   g_rw_opts.field = fe_ini_get_int(HARNESS_INI, key, g_rw_opts.field) != 0
+   RW_KEY(ring_mib, "rewind_mib");
+   RW_KEY(interval, "rewind_interval");
+   RW_KEY(burst, "rewind_burst");
+   RW_KEY(tick_budget_us, "rewind_tick_budget_us");
+   RW_FLAG(full_flush_restore, "rewind_full_flush");
+   RW_KEY(rlog_bytes, "rewind_rlog_bytes");
+   g_rw_opts.sav_mutant = (int)fe_ini_get_int(HARNESS_INI, "rewind_sav_mutant", 0);
+   RW_FLAG(ff_rewindable, "rewind_ff");
+   RW_KEY(save_quiet, "rewind_save_quiet");
+   RW_FLAG(inplace, "rewind_inplace");
+   g_rw_opts.dirty = (int)fe_ini_get_int(HARNESS_INI, "rewind_dirty",
+                                         g_rw_opts.dirty) & 3;
+   RW_FLAG(verify, "rewind_verify");
+   RW_FLAG(gather_prof, "rewind_gprof");
+   RW_FLAG(fast_restore, "rewind_fast_restore");
+   RW_FLAG(clock_frames, "rewind_clock");
+   RW_KEY(slack_margin_us, "rewind_slack_us");
+   RW_KEY(max_span, "rewind_max_span");
+   g_rw_vmem = fe_ini_get_int(HARNESS_INI, "rewind_vmem", g_rw_vmem) != 0;
+   /* The even cadence (psp_rewind_tick).  rewind_cadence = 0: the first
+    * version's ramp, a step every tick.  rewind_period / rewind_stride:
+    * force "stride frames back every period ticks" instead of choosing.
+    * rewind_speed_max: 1, 2 or 4.
+    * rewind_sound = 2 the frames gone over are heard backwards (only ever
+    * at one picture a frame a tick), 1 silence, 0 silence and our own sound
+    * synthesis is left out of the frames a held rewind re-runs. */
+   g_rwc.on = fe_ini_get_int(HARNESS_INI, "rewind_cadence", product) != 0;
+   g_rwc.force_p = (int)fe_ini_get_int(HARNESS_INI, "rewind_period", 0);
+   g_rwc.force_s = (int)fe_ini_get_int(HARNESS_INI, "rewind_stride", 0);
+   g_rwc.speed_max = (int)fe_ini_get_int(HARNESS_INI, "rewind_speed_max", 4);
+   /* rewind_ring = 1 gauge (default), 2 gauge + time left, 3 two rings,
+    * 0 the first version (psp_rewind_hud).
+    * rewind_head_skip = 0: frames re-run without a picture are still
+    * captured for the renderer, as before. */
+   g_rw_ring = (int)fe_ini_get_int(HARNESS_INI, "rewind_ring", 2);
+   /* rewind_target_s: seconds of history to aim for (0 = snapshots always
+    * rewind_interval apart, as before); rewind_gap_max: the most frames
+    * between two snapshots it may stretch to. */
+   g_rw_opts.target_s = (uint32_t)fe_ini_get_int(HARNESS_INI,
+                           "rewind_target_s", (long)g_rw_opts.target_s);
+   g_rw_opts.gap_max = (uint32_t)fe_ini_get_int(HARNESS_INI,
+                           "rewind_gap_max", (long)g_rw_opts.gap_max);
+   fe_host_rewind_set_head_skip(
+      fe_ini_get_int(HARNESS_INI, "rewind_head_skip", 1) != 0);
+   g_rw_opts.sound_mode = 2 - (int)fe_ini_get_int(HARNESS_INI, "rewind_sound",
+                                                  RW_SOUND_DEFAULT);
+   if (g_rw_opts.sound_mode < 0 || g_rw_opts.sound_mode > 2)
+      g_rw_opts.sound_mode = 0;
+   g_rw_opts.pace_us = (uint32_t)fe_ini_get_int(HARNESS_INI, "rewind_pace_ms",
+                          (long)(g_rw_opts.pace_us / 1000u)) * 1000u;
+#undef RW_KEY
+#undef RW_FLAG
+   /* The pictures.  rewind_pix = 0: keep none, the screen holds while
+    * rewinding (stage 2). */
+   g_rw_opts.no_capture = fe_ini_get_int(HARNESS_INI, "rewind_pix", 1) == 0;
+   g_rw_opts.pix_pitch = MER_STAGE_PITCH;
+   g_rw_opts.pix_rows  = 161;
+   g_rw_opts.pix_begin = psp_rw_pix_begin;
+   g_rw_opts.pix_end   = psp_rw_pix_end;
+   g_rw_opts.show      = psp_rw_show;
+   if (fe_ini_get_int(HARNESS_INI, "rewind_hash", 0))
+   {
+      snprintf(g_rw_hash_path, sizeof(g_rw_hash_path), "%s/log/rewind_hash.txt",
+               g_dir_base);
+      g_rw_opts.hash_path = g_rw_hash_path;
+      /* rewind_dump_frame = N: log/state_N_<k>.bin each time frame N runs */
+      g_rw_opts.dump_frame =
+         (uint32_t)fe_ini_get_int(HARNESS_INI, "rewind_dump_frame", 0);
+      snprintf(g_rw_dump_dir, sizeof(g_rw_dump_dir), "%s/log", g_dir_base);
+      g_rw_opts.dump_dir = g_rw_dump_dir;
+   }
+   g_rw_opts.redo_inputs = fe_ini_get_int(HARNESS_INI, "rewind_redo", 0) != 0;
+   g_rw_opts.fuzz_from = (uint32_t)fe_ini_get_int(HARNESS_INI,
+                                                  "rewind_fuzz_from", 0);
+   g_rw_opts.fuzz_seed = (uint32_t)fe_ini_get_int(HARNESS_INI,
+                                                  "rewind_fuzz_seed", 1);
+}
+
+/* ---- the rewind as a tenant of the volatile pool (see vm_lock) ------------ */
+static int psp_rewind_pool_tenant(void)
+{
+   return g_rw_pool;
+}
+
+/* Offer the rewind its end of the pool.  Before fe_host_rewind_reserve at
+ * boot; returns the block for fe_host_rewind_resume after a wake. */
+static void *psp_rewind_pool_offer(size_t *bytes)
+{
+   void *base = NULL;
+   int size = 0;
+   *bytes = 0;
+   g_rw_pool = 0;
+   if (!g_rw_vmem)
+      return NULL;
+   if (vm_lock(&base, &size) != 0 || !base || size <= PSP_VM_ENGINE_BYTES)
+   {
+      fe_evt("rewind_pool unavailable size=%d (heap)", size);
+      return NULL;
+   }
+   g_rw_pool = 1;
+   *bytes = (size_t)(size - PSP_VM_ENGINE_BYTES);
+   fe_evt("rewind_pool base=%08x bytes=%u engine_keeps=%u",
+          (unsigned)base + PSP_VM_ENGINE_BYTES, (unsigned)*bytes,
+          (unsigned)PSP_VM_ENGINE_BYTES);
+   return (char *)base + PSP_VM_ENGINE_BYTES;
+}
+
+/* The pool is about to go back to the OS (a sleep).  The main loop is
+ * parked between frames, or is not emulating at all. */
+static void psp_rewind_pool_lost(void)
+{
+   if (!g_rw_pool)
+      return;
+   if (g_rw_on)
+   {
+      fe_host_rewind_suspend();
+      g_rw_on = 0;
+      g_rw_asleep = 1;
+   }
+   /* the pictures were in the pool too */
+   g_rw_showing = 0;
+   g_rw_show = NULL;
+   g_rw_slot = NULL;
+   g_rw_pool = 0;
+}
+
+/* The last resort of docs/REWIND.md 22 was taken (the game was reset
+ * because a sleep ended a rewind with the machine inside an old save): say
+ * so once.  The reset itself happens at the first frame after the park,
+ * which may be before the machine has even gone to sleep. */
+static void psp_rewind_reset_said(void)
+{
+   static unsigned seen;
+   unsigned n = fe_host_rewind_resets();
+   if (n != seen)
+   {
+      osd_toast("Rewind interrupted: game restarted from its save");
+      ctl_turbo_stop(&g_turbo);   /* a restarted game has no auto-fire */
+   }
+   seen = n;
+}
+
+/* After a wake, once the engine is rebuilt. */
+static void psp_rewind_pool_back(void)
+{
+   void *base;
+   size_t bytes;
+   if (!g_rw_asleep)
+      return;
+   g_rw_asleep = 0;
+   base = psp_rewind_pool_offer(&bytes);
+   g_rw_on = fe_host_rewind_resume(base, bytes) == 0;
+   if (!g_rw_on)
+      g_rw_pool = 0;
+   fe_evt("rewind_wake on=%d pool=%d", g_rw_on, g_rw_pool);
+   psp_rewind_reset_said();
+}
+
+/* A SLEEP THAT TORE NOTHING DOWN (power_cb: the loop did not park in time,
+ * or the engine was busy, or standby = 0) left the rewind in the volatile
+ * pool across the suspend, and the pool is the OS's to use while the machine
+ * sleeps.  Nothing in it can be believed afterwards: the reference image,
+ * the ring, the read log and the picture windows are all there.  The history
+ * therefore starts again, in place: suspend drops every pointer, resume
+ * copies the reference from the machine as it is and empties the ring.
+ * A rewind that was in progress cannot be vetted from that memory either
+ * (fe_host_rewind_distrust): the game is reset.  Main thread, between
+ * frames, before the rewind is ticked or a frame is recorded.
+ * Which loops cannot park: docs/REWIND.md 23. */
+static void psp_rewind_pool_restart(void)
+{
+   void *base;
+   size_t bytes;
+   if (!g_rw_on || !g_rw_pool)
+   {
+      fe_evt("rewind_pool_restart skipped on=%d pool=%d", g_rw_on, g_rw_pool);
+      return;
+   }
+#ifdef GPSP_PERF_RIG
+   if (g_ss_no_restart)
+   {
+      fe_evt("rewind_pool_restart MUTANT: the history is left as it was");
+      return;
+   }
+#endif
+   if (g_rw_showing)
+      psp_rewind_show_end();
+   g_rw_showing = 0;
+   g_rw_show = NULL;
+   g_rw_slot = NULL;
+   fe_host_rewind_distrust();
+   fe_host_rewind_suspend();
+   base = psp_rewind_pool_offer(&bytes);
+   g_rw_on = fe_host_rewind_resume(base, bytes) == 0;
+   if (!g_rw_on)
+      g_rw_pool = 0;
+   psp_rewind_reset_said();
+   fe_evt("rewind_pool_restart why=sleep_without_teardown on=%d pool=%d",
+          g_rw_on, g_rw_pool);
+}
+
+#ifdef GPSP_PERF_RIG
+/* Harness: what the OS may do to a pool that was kept across a sleep. */
+static void sleep_sim_trash_pool(void)
+{
+   unsigned char *lo = (unsigned char *)fe_host_rewind_pool_low();
+   unsigned char *hi = (unsigned char *)g_vm_base + g_vm_size;
+   if (!g_rw_pool || !lo || !g_vm_base || lo >= hi)
+   {
+      fe_evt("sleep_sim trash_pool skipped pool=%d", g_rw_pool);
+      return;
+   }
+   memset(lo, 0xA5, (size_t)(hi - lo));
+   fe_evt("sleep_sim trash_pool from=%08x bytes=%u", (unsigned)lo,
+          (unsigned)(hi - lo));
+}
+#endif
+
+/* me_rend_init has carved the engine's buffers: they must end below the
+ * rewind's part.  They do by a wide margin today; if a later engine ever
+ * grows past the boundary the rewind leaves the pool rather than share a
+ * byte of it. */
+static void psp_rewind_pool_check(void)
+{
+   unsigned limit = (unsigned)g_vm_base + PSP_VM_ENGINE_BYTES;
+   unsigned low = (unsigned)fe_host_rewind_pool_low();
+   (void)low;
+   fe_evt("vmem engine_top=%08x boundary=%08x rewind_low=%08x %s",
+          g_vm_eng_top, limit, low,
+          g_vm_eng_top <= limit ? "ok" : "CONFLICT");
+   if (g_vm_eng_top > limit && g_rw_pool)
+   {
+      /* (From inside me_rend_init: no frame can be run here to land a
+       * rewind.  suspend applies the unlanded rule -- on from the machine's
+       * frame if that is one play may continue from, else the game is reset
+       * -- and abandon carries it out; docs/REWIND.md 22.) */
+      if (g_rw_on)
+      {
+         fe_host_rewind_suspend();
+         fe_host_rewind_abandon();
+      }
+      g_rw_on = 0;
+      g_rw_pool = 0;
+      g_rw_asleep = 0;
+   }
+}
+
+/* The game is gone (fe_host_shutdown dropped every rewind pointer): the pool
+ * has one tenant again, so a sleep in the browser can hand it back. */
+static void psp_rewind_pwr(void);
+#define PSP_REWIND_GAME_OVER() \
+   (g_rw_on = g_rw_pool = g_rw_asleep = 0, psp_rewind_pwr())
+
+/* ---- the control and the ring (docs/REWIND.md, 10.7) ----------------------
+ * The designer's "Big ring", alone: a hairline ring round the middle of the
+ * picture that draws itself on while the control is held and off when it is
+ * let go; its arc is the history left, a bright head with a short tail runs
+ * counter-clockwise as fast as the rewind goes, and one line under it says
+ * how far back.  No arrows, no button glyph.
+ *
+ * Everything is a scalar that moves a step a tick towards where it should
+ * be, so any pattern of taps only ever turns a motion round from where it
+ * is: nothing restarts, nothing flashes.
+ *   intensity  0..1, +1/8 a tick held, -1/12 let go.  The game holds its
+ *              frame while it rises and the rewind starts at 1, so a fresh
+ *              press takes 8 ticks to bite and a tap straight after a
+ *              release only the few it has fallen.
+ *   ui         the readout and the dim: +1/6 held; it lingers 36 ticks
+ *              after a release, then -1/10.
+ *   p          the ring's draw-on, +-1/6 towards held.
+ *   speed      x1 for the first 0.8 s of a hold, then up to x4 at 3.5 s.
+ *              What is shown (head speed, tail, the "x2") is what the
+ *              rewind actually managed, not what was asked. */
+static struct
+{
+   float    intensity, ui, p, head, sp, acc;
+   int      linger, held_ticks;
+   uint32_t anchor;        /* the frame the readout counts back from */
+   uint32_t avail0;        /* history there was when the ring came up */
+   uint32_t now, avail;
+   int      limit, limit_why, denied;
+   float    gauge;         /* share of the history still to go back to */
+   int      was_held;
+} g_rwh;
+
+#define RWH_PI2 6.2831853f
+
+/* periods: display periods this loop took (1 unless a tick ran long). */
+static void psp_rewind_hud_step(int held, int rewinding, uint32_t stepped,
+                                uint32_t periods,
+                                const fe_host_rewind_info *inf)
+{
+   float want = held ? 1.0f : 0.0f, d, frac;
+   if (held)
+   {
+      g_rwh.ui += 1.0f / 6.0f;
+      if (g_rwh.ui > 1.0f)
+         g_rwh.ui = 1.0f;
+      g_rwh.linger = 0;
+   }
+   else if (++g_rwh.linger > 36)
+   {
+      g_rwh.ui -= 0.1f;
+      if (g_rwh.ui < 0.0f)
+         g_rwh.ui = 0.0f;
+   }
+   d = want - g_rwh.p;
+   if (d > 1.0f / 6.0f)  d = 1.0f / 6.0f;
+   if (d < -1.0f / 6.0f) d = -1.0f / 6.0f;
+   g_rwh.p += d;
+   if (g_rwh.ui <= 0.0f && !held)
+   {
+      g_rwh.anchor = inf->now_frame;
+      g_rwh.avail0 = inf->avail_frames;
+   }
+   if (inf->now_frame > g_rwh.anchor)
+      g_rwh.anchor = inf->now_frame;
+   if (held && !g_rwh.was_held)
+   {
+      /* a new hold: the lap is what can be gone back NOW, however little,
+       * and the dot is at its start again */
+      g_rwh.avail0 = inf->avail_frames;
+      g_rwh.gauge = 1.0f;
+   }
+   g_rwh.was_held = held;
+   if (inf->avail_frames > g_rwh.avail0)
+      g_rwh.avail0 = inf->avail_frames;
+   g_rwh.now = inf->now_frame;
+   g_rwh.avail = inf->avail_frames;
+   g_rwh.limit = held && inf->at_limit;
+   g_rwh.limit_why = inf->limit_reason;
+   /* the gauge: the share of the history still behind the frame on screen,
+    * eased so that a step of several frames is a glide, not a jump */
+   frac = g_rwh.avail0 ? (float)g_rwh.avail / (float)g_rwh.avail0 : 0.0f;
+   if (frac > 1.0f) frac = 1.0f;
+   if (g_rwh.ui <= 0.0f && !held)
+      g_rwh.gauge = frac;
+   else
+      g_rwh.gauge += (frac - g_rwh.gauge) * 0.25f;
+   if (g_rwc.on)
+   {
+      /* an even cadence shows on some ticks only: the head runs at the
+       * pace, smoothly, and the pace is the mean of what was managed */
+      float per = (float)(periods ? periods : 1);
+      if (held && g_rwh.intensity >= 1.0f)
+         g_rwh.sp += ((rewinding ? (float)stepped / per : 0.0f) - g_rwh.sp) *
+                     (periods > 1 ? 0.2f : 0.1f);
+      else
+         g_rwh.sp += (1.0f - g_rwh.sp) * 0.2f;
+      if (rewinding && held && g_rwh.intensity >= 1.0f)
+         g_rwh.head -= 0.028f * g_rwh.sp * per;   /* counter-clockwise */
+   }
+   else
+   {
+   if (rewinding && stepped)
+      g_rwh.head -= 0.028f * (float)stepped;      /* counter-clockwise */
+   g_rwh.sp += ((rewinding ? (float)stepped : 1.0f) - g_rwh.sp) * 0.2f;
+   }
+   if (g_rwh.head < -RWH_PI2)
+      g_rwh.head += RWH_PI2;
+}
+
+/* Over the game picture, after it is drawn.
+ *
+ * g_rw_ring picks how the ring says how much history is left (the owner's
+ * request; all of them are the plain ring, counter-clockwise, no arrows):
+ *   1  GAUGE.  The ring is the history there was when the hold began.  It
+ *      is fully lit then; the lit part ends at a bright dot that leaves
+ *      the BOTTOM counter-clockwise as the game runs backwards, and what
+ *      is behind the dot is a faint track.  One lap is all of it, however
+ *      short; every new hold starts at the bottom again with a lap equal
+ *      to what is available then.  Dot back at the bottom = ring empty:
+ *      "Start of history".
+ *   2  GAUGE + TIME (the owner's choice, the default).  The same, and the
+ *      line under it reads "-0:05   0:27 left" -- or "0:27 to state load", "to cheat change", "to link use", "to sleep" when
+ *      that, not the size of the history, is where it ends.
+ *   3  TWO RINGS.  The moving ring of the first version (a head that keeps
+ *      turning at the speed of the rewind), and inside it a thin gauge ring
+ *      that drains as in 1.
+ *   0  the first version: the lit arc turns with the head, its length is
+ *      the history left. */
+#include <math.h>
+static void psp_rewind_hud(void)
+{
+   const float cx = 240.0f, cy = 130.0f, r = 92.0f;
+   /* The owner's rule for the gauge: the dot always starts at the BOTTOM,
+    * and one lap counter-clockwise back to the bottom is all the history
+    * there was when this hold began (psp_rewind_hud_step, avail0). */
+   const float top = 1.5707963f;
+   const uint16_t white = 0xFFFF, grey = 0x8C72, soft = 0xCE59;
+   float p = g_rwh.p, ui = g_rwh.ui, frac, len;
+   char t[64];
+   int a = (int)(ui * 255.0f), limit = g_rwh.limit;
+
+   if (g_rwh.denied)
+   {
+      const char *msg = g_rwh.denied == 2
+         ? "Rewind isn't available in Game Boy games yet"
+         : g_rwh.denied == 3 ? "Rewind isn't available right now"
+                             : "Rewind is off during link play";
+      vid_overlay_begin(0);
+      vid_arc(cx, cy, r, 3.0f, 0.0f, RWH_PI2, white, 90, 90, 0);
+      vid_seg(cx - r * 0.7f, cy + r * 0.7f, cx + r * 0.7f, cy - r * 0.7f,
+              3.0f, white, 255);
+      vid_text((480 - vid_text_w(msg)) / 2, (int)(cy + r) + 12, msg, white);
+      vid_overlay_end();
+      return;
+   }
+   if (p <= 0.01f && ui <= 0.01f)
+      return;
+   vid_overlay_begin(0);
+   vid_rect(0, 0, 480, 272, 0x0000, (int)(ui * 40.0f));
+   if (g_rw_ring == 0)
+   {
+      frac = g_rwh.avail0 ? (float)g_rwh.avail / (float)g_rwh.avail0 : 0.0f;
+      if (frac < 0.02f) frac = 0.02f;
+      if (frac > 1.0f)  frac = 1.0f;
+      len = p * RWH_PI2 * frac;
+      vid_arc(cx, cy, r, 3.0f, 0.0f, RWH_PI2, white, (int)(36.0f * p),
+              (int)(36.0f * p), 0);
+      vid_arc(cx, cy, r, 3.0f, g_rwh.head, g_rwh.head + len,
+              limit ? grey : white, (int)(255.0f * p), (int)(255.0f * p), 0);
+      if (!limit)
+      {
+         float L = 0.05f * g_rwh.sp * 6.0f;       /* the tail: six short steps */
+         vid_arc(cx, cy, r, 6.0f, g_rwh.head, g_rwh.head + L, white,
+                 (int)(128.0f * p), 0, 1);
+         vid_disc(cx + cosf(g_rwh.head) * r, cy + sinf(g_rwh.head) * r, 4.5f,
+                  white, (int)(255.0f * p));
+      }
+   }
+   else
+   {
+      /* The gauge.  Angles grow clockwise on the screen; the dot leaves
+       * the top counter-clockwise, so it stands at top - used, and the lit
+       * part is the rest of the way round, from there back to the top. */
+      float gr = g_rw_ring == 3 ? r - 9.0f : r;
+      float gw = g_rw_ring == 3 ? 2.0f : 3.0f;
+      float used, dot;
+      frac = g_rwh.gauge;
+      if (frac < 0.0f) frac = 0.0f;
+      if (frac > 1.0f) frac = 1.0f;
+      used = RWH_PI2 * (1.0f - frac);
+      dot = top - used;
+      vid_arc(cx, cy, gr, gw, 0.0f, RWH_PI2, white, (int)(40.0f * p),
+              (int)(40.0f * p), 0);
+      if (frac > 0.004f)
+         vid_arc(cx, cy, gr, gw, top - RWH_PI2 * p, top - RWH_PI2 * p +
+                 (RWH_PI2 * frac) * p, limit ? grey : white,
+                 (int)(255.0f * p), (int)(255.0f * p), 0);
+      if (g_rw_ring == 3)
+      {
+         /* the moving ring outside it, as before */
+         vid_arc(cx, cy, r, 3.0f, 0.0f, RWH_PI2, white, (int)(36.0f * p),
+                 (int)(36.0f * p), 0);
+         if (!limit)
+         {
+            float L = 0.05f * g_rwh.sp * 6.0f + 0.5f;
+            vid_arc(cx, cy, r, 3.0f, g_rwh.head, g_rwh.head + L, white,
+                    (int)(255.0f * p), 0, 1);
+            vid_disc(cx + cosf(g_rwh.head) * r, cy + sinf(g_rwh.head) * r,
+                     4.0f, white, (int)(255.0f * p));
+         }
+         vid_disc(cx + cosf(dot) * gr, cy + sinf(dot) * gr, 3.0f,
+                  limit ? grey : white, (int)(255.0f * p));
+      }
+      else if (!limit)
+      {
+         /* the dot, and behind it (where it has just been) a short tail
+          * as long as the rewind is fast */
+         float L = 0.05f * g_rwh.sp * 6.0f;
+         if (L > used)
+            L = used;
+         vid_arc(cx, cy, r, 6.0f, dot, dot + L, white, (int)(150.0f * p),
+                 0, 1);
+         vid_disc(cx + cosf(dot) * r, cy + sinf(dot) * r, 4.5f, white,
+                  (int)(255.0f * p));
+      }
+   }
+   if (limit)
+   {
+      /* a short history has a visible cause */
+      const char *why =
+         g_rwh.limit_why == FE_RW_LIMIT_STATE  ? "State loaded here" :
+         g_rwh.limit_why == FE_RW_LIMIT_CHEAT  ? "Cheats changed here" :
+         g_rwh.limit_why == FE_RW_LIMIT_SERIAL ? "Link port used here" :
+         g_rwh.limit_why == FE_RW_LIMIT_SLEEP  ? "Woke from sleep here" :
+         g_rwh.limit_why == FE_RW_LIMIT_OFF    ? "Rewind was off before this" :
+                                                 "Start of history";
+      static const char rel[] = "release to play";
+      vid_text_a((480 - vid_text_w(why)) / 2, (int)(cy + r) + 12, why, white, a);
+      vid_text_a((480 - vid_text_w(rel)) / 2, (int)(cy + r) + 28, rel, soft, a);
+   }
+   else
+   {
+      /* how far back from where the first press of this gesture was */
+      unsigned s = (unsigned)((float)(g_rwh.anchor - g_rwh.now) / 59.7275f);
+      unsigned l = (unsigned)((float)g_rwh.avail / 59.7275f);
+      int k = snprintf(t, sizeof(t), "-%u:%02u", s / 60, s % 60);
+      /* (No pace tag: "x2" came and went with a game on the margin between
+       * two paces, and the line is centred, so the readout jumped sideways
+       * with it.) */
+      if (g_rw_ring == 2)
+         (void)snprintf(t + k, sizeof(t) - (size_t)k, "   %u:%02u %s",
+                       l / 60, l % 60,
+                       g_rwh.limit_why == FE_RW_LIMIT_STATE  ? "to state load" :
+                       g_rwh.limit_why == FE_RW_LIMIT_CHEAT  ? "to cheat change" :
+                       g_rwh.limit_why == FE_RW_LIMIT_SERIAL ? "to link use" :
+                       g_rwh.limit_why == FE_RW_LIMIT_SLEEP  ? "to sleep" :
+                                                               "left");
+      vid_text_a((480 - vid_text_w(t)) / 2, (int)(cy + r) + 12, t, white, a);
+   }
+   vid_overlay_end();
+}
+
+/* ---- the cadence -----------------------------------------------------------
+ * A rewind shows frames it has to re-run first, a window of `interval` at a
+ * time: restore the snapshot below, run forward.  Shown faster than they
+ * can be re-run, the picture goes in bursts and stands still in between,
+ * which is what looks bad -- not the speed.  So the pace is chosen from what
+ * the game costs, and then kept: `s` frames back every `p` display periods,
+ * where only the frame landed on is drawn (the others are re-run without a
+ * picture, which is the cheaper kind).
+ *
+ * A pace FITS when the work for one step -- one drawn frame, s - 1 undrawn
+ * ones, their share of a restore -- takes less than the p periods the step
+ * lasts (less RWC_SLACK_US for the loop's own work).  With p > 1 the tick
+ * that shows is given the whole p periods to work in: it runs over the
+ * display periods in between, in which the picture would stand anyway.
+ * That is what lets a game whose frames are 9 ms be re-run three to two
+ * periods instead of one to one.
+ *
+ * Among the paces that fit and are no faster than the hold asks for (x1 for
+ * the first second, x2 to 2.5 s, x4 after), the fastest; at the same speed
+ * the one with more pictures a second.  Distance before picture rate: a
+ * heavy game gets x1 at 20 pictures a second rather than x1/2 at 30.
+ *
+ * The costs are measurements, so the model can be wrong.  If more than one
+ * show in four finds its frames not ready over at least 48 periods, that
+ * speed is ruled out for the rest of the hold -- and so is anything more
+ * than 15% above what was actually managed meanwhile -- and the fastest
+ * pace left that fits is taken: as far down as it has to go, in one step.  A speed that has held for 90
+ * periods is remembered for the game: later holds may take it whatever the
+ * model says, and are never started slower than it because of the model. */
+#define RWC_PERIOD_US  16683u
+#define RWC_SLACK_US   2500u
+
+static int psp_rwc_fits(int p, int s, const fe_host_rewind_info *inf)
+{
+   uint32_t e  = inf->frame_us ? inf->frame_us : 9000u;
+   uint32_t ep = inf->rerun_pic_us ? inf->rerun_pic_us : e;
+   uint32_t eh = inf->rerun_head_us ? inf->rerun_head_us : e - e / 8;
+   uint32_t rs = inf->restore_us ? inf->restore_us : 4000u;
+   uint32_t n = g_rw_opts.interval ? g_rw_opts.interval : 6;
+   uint32_t work = ep + (uint32_t)(s - 1) * eh + (uint32_t)s * rs / n;
+   uint32_t pics = (n + (uint32_t)s - 1) / (uint32_t)s;
+   uint32_t win = rs + pics * ep + (n - (pics < n ? pics : n)) * eh;
+   if (work + RWC_SLACK_US > (uint32_t)p * RWC_PERIOD_US)
+      return 0;
+   /* And the window before must be whole before the one on screen is used
+    * up (there are two buffers, so it cannot be begun earlier): a window's
+    * work, and half a period for where in a tick it happens to start,
+    * inside the time a window takes to show. */
+   return win + RWC_PERIOD_US / 2 + RWC_SLACK_US <=
+          n * (uint32_t)p * RWC_PERIOD_US / (uint32_t)s;
+}
+
+/* level: the speed the hold asks for (1, 2, 4). */
+static void psp_rwc_choose(int level, const fe_host_rewind_info *inf,
+                           const char *why)
+{
+   int p, s, bp = 4, bs = 1;
+   (void)why;
+   unsigned best = 0;
+
+   if (g_rwc.force_p > 0 && g_rwc.force_s > 0)
+   {
+      bp = g_rwc.force_p;
+      bs = g_rwc.force_s;
+   }
+   else
+      for (p = 1; p <= 5; p++)
+         for (s = 1; s <= 12; s++)
+         {
+            unsigned sp = (unsigned)s * 1000u / (unsigned)p;
+            if (p > 3 && s > 3)
+               continue;                  /* under 20 pictures a second only
+                                           * for the slow paces */
+            if (sp > (unsigned)level * 1000u)
+               continue;                  /* faster than asked */
+            if (g_rwc.fail && sp >= g_rwc.fail)
+               continue;                  /* shown not to hold, this hold */
+            if (!(g_rwc.held_ok && sp <= g_rwc.held_ok) &&
+                !psp_rwc_fits(p, s, inf))
+               continue;
+            if (sp > best)                /* (p ascends: more pictures wins
+                                           * a tie) */
+            {
+               best = sp;
+               bp = p;
+               bs = s;
+            }
+         }
+   if (bp != g_rwc.p || bs != g_rwc.s)
+   {
+      fe_evt("rewind_tier p=%d s=%d why=%s frame_us=%u pic_us=%u head_us=%u "
+             "restore_us=%u fail_x1000=%u held_x1000=%u", bp, bs, why,
+             (unsigned)inf->frame_us, (unsigned)inf->rerun_pic_us,
+             (unsigned)inf->rerun_head_us, (unsigned)inf->restore_us,
+             g_rwc.fail, g_rwc.held_ok);
+      g_rwc.changes++;
+      g_rwc.t_ticks = g_rwc.t_frames = 0;
+      g_rwc.t_shows = g_rwc.t_shorts = 0;
+   }
+   g_rwc.p = bp;
+   g_rwc.s = bs;
+   g_rwc.level = level;
+   fe_host_rewind_set_cadence((uint32_t)bs, !(bp == 1 && bs == 1));
+}
+
+/* One display tick's worth of the rewind control.  1 = run a normal frame. */
+static int psp_rewind_tick_run(int ff)
+{
+   fe_host_rewind_info inf;
+   int held = g_rw_held, eff, pre, r, was = g_rw_showing;
+   uint32_t step = 1, periods = 1;
+   unsigned now_us = (unsigned)sceKernelGetSystemTimeLow();
+   const char *why;
+
+   if (!g_rw_on)
+   {
+      g_rwh.denied = g_rw_gb && held ? 2 : 0;
+      return 1;
+   }
+   fe_host_rewind_set_ff(ff);
+   if ((why = fe_host_rewind_blocked()) != NULL)
+   {
+      /* The button says why nothing happens, and that is all it does: 1 a
+       * link session, 2 a GB / GBC game, 3 anything else. */
+      int code = !strcmp(why, "link") ? 1 : !strcmp(why, "gb") ? 2 : 3;
+      if (held && g_rwh.denied != code)
+         fe_evt("rewind_denied why=%s", why);
+      g_rwh.denied = held ? code : 0;
+      g_rwh.intensity = g_rwh.ui = g_rwh.p = 0.0f;
+      if (was)
+         psp_rewind_show_end();
+      return fe_host_rewind_tick(0) == 2;
+   }
+   g_rwh.denied = 0;
+   if (held)
+   {
+      g_rwh.intensity += 1.0f / 8.0f;
+      if (g_rwh.intensity > 1.0f)
+         g_rwh.intensity = 1.0f;
+   }
+   else
+   {
+      g_rwh.intensity -= 1.0f / 12.0f;
+      if (g_rwh.intensity < 0.0f)
+         g_rwh.intensity = 0.0f;
+   }
+   eff = held && g_rwh.intensity >= 1.0f;
+   /* half way up: the press is no accident, start getting the frames
+    * before ready (a held tick that goes back nothing) */
+   pre = g_rwc.on && held && !eff && g_rwh.intensity >= 0.5f;
+   if (g_rwc.on)
+      fe_host_rewind_set_tick_budget(RWC_PERIOD_US - RWC_SLACK_US);
+   if (eff && g_rwc.on)
+   {
+      int first = g_rwh.held_ticks == 0, level;
+      float secs;
+      if (!first)
+      {
+         /* how many display periods the last loop took: a tick that was
+          * given several to work in, or one that ran over */
+         periods = (now_us - g_rwc.last_us + RWC_PERIOD_US / 2) / RWC_PERIOD_US;
+         if (periods < 1) periods = 1;
+         if (periods > 6) periods = 6;
+      }
+      g_rwc.last_us = now_us;
+      g_rwh.held_ticks += (int)periods;
+      secs = (float)g_rwh.held_ticks / 60.0f;
+      level = secs < 1.0f ? 1 : secs < 2.5f ? 2 : 4;
+      if (level > g_rwc.speed_max)
+         level = g_rwc.speed_max;
+      fe_host_rewind_info_get(&inf);
+      if (first)
+      {
+         g_rwc.fail = 0;
+         g_rwc.p = g_rwc.s = 0;
+         psp_rwc_choose(1, &inf, "start");
+         g_rwc.first_p = g_rwc.p;
+         g_rwc.first_s = g_rwc.s;
+         g_rwc.phase = g_rwc.p;           /* the first step is due now */
+      }
+      else
+      {
+         g_rwc.phase += (int)periods;
+         if (level != g_rwc.level)
+            psp_rwc_choose(level, &inf, "ramp");
+      }
+      if (g_rwc.phase >= g_rwc.p)
+      {
+         step = (uint32_t)g_rwc.s;
+         g_rwc.phase -= g_rwc.p;
+         if (g_rwc.phase >= g_rwc.p)
+            g_rwc.phase = g_rwc.p - 1;    /* at most one step owed */
+      }
+      else
+         step = 0;
+      /* the tick may work until the next step is due */
+      fe_host_rewind_set_tick_budget((uint32_t)(g_rwc.p - g_rwc.phase) *
+                                     RWC_PERIOD_US - RWC_SLACK_US);
+   }
+   else if (eff)
+   {
+      float secs = (float)(++g_rwh.held_ticks) / 60.0f;
+      float speed = 1.0f + (secs - 0.8f) * (3.0f / 2.7f);
+      if (speed < 1.0f) speed = 1.0f;
+      if (speed > 4.0f) speed = 4.0f;
+      g_rwh.acc += speed;
+      step = (uint32_t)g_rwh.acc;
+      g_rwh.acc -= (float)step;
+      if (!step)
+         step = 1;
+   }
+   else
+   {
+      g_rwh.held_ticks = 0;
+      g_rwh.acc = 0.0f;
+   }
+   r = fe_host_rewind_tick_step(eff || pre, eff ? step : 0u);
+   fe_host_rewind_info_get(&inf);
+   g_rw_showing = inf.active;
+   if (eff && g_rwc.on)
+   {
+      unsigned sp = (unsigned)g_rwc.s * 1000u / (unsigned)g_rwc.p;
+      g_rwc.ticks += periods;
+      g_rwc.stepped += inf.stepped;
+      g_rwc.t_ticks += periods;
+      g_rwc.t_frames += inf.stepped;
+      if (step)
+      {
+         g_rwc.shows++;
+         g_rwc.t_shows++;
+         if (inf.stepped < step && !inf.at_limit)
+         {
+            g_rwc.shorts++;
+            /* (the first window of a hold is allowed its hiccup) */
+            if (g_rwh.held_ticks > 18)
+               g_rwc.t_shorts++;
+         }
+         if (g_rwc.t_ticks >= 48 && g_rwc.t_shorts * 4u > g_rwc.t_shows &&
+             !(g_rwc.force_p > 0 && g_rwc.force_s > 0))
+         {
+            /* It does not hold: this speed is out for the rest of the
+             * hold, and no longer remembered as one that held. */
+            unsigned got = g_rwc.t_frames * 1150u / g_rwc.t_ticks + 1u;
+            g_rwc.fail = got < sp ? got : sp;
+            if (g_rwc.held_ok >= g_rwc.fail)
+               g_rwc.held_ok = 0;
+            g_rwc.demotes++;
+            psp_rwc_choose(g_rwc.level, &inf, "short");
+         }
+         else if (g_rwc.t_ticks >= 90 && g_rwc.t_shorts * 8u <= g_rwc.t_shows)
+         {
+            if (sp > g_rwc.held_ok)
+               g_rwc.held_ok = sp;
+            if (g_rwc.t_ticks >= 240)
+            {
+               g_rwc.t_ticks /= 2;
+               g_rwc.t_frames /= 2;
+               g_rwc.t_shows /= 2;
+               g_rwc.t_shorts /= 2;
+            }
+         }
+      }
+      /* the ring turns at the pace kept, not in jumps */
+      psp_rewind_hud_step(held, !inf.at_limit, inf.stepped, periods, &inf);
+   }
+   else
+      psp_rewind_hud_step(held, eff && r == 1, inf.stepped, 1, &inf);
+   if (was && !g_rw_showing)
+   {
+      psp_rewind_show_end();
+      if (g_rwc.on && g_rwc.ticks)
+      {
+         fe_evt("rewind_cadence periods=%u show_ticks=%u short=%u frames=%u "
+                "demotes=%u tier_changes=%u first=p%ds%d last=p%ds%d "
+                "frames_per_period_x100=%u held_x1000=%u", g_rwc.ticks,
+                g_rwc.shows, g_rwc.shorts, g_rwc.stepped, g_rwc.demotes,
+                g_rwc.changes, g_rwc.first_p, g_rwc.first_s, g_rwc.p, g_rwc.s,
+                g_rwc.stepped * 100u / g_rwc.ticks, g_rwc.held_ok);
+         /* What a drawn re-run frame spent around the second core: the
+          * whole post, of it waiting for the frame before to finish, posts
+          * given up because it had not (no picture), and what showing a
+          * picture waited for one still being drawn. */
+         fe_evt("rewind_me posts=%u post_us=%u retire_wait_us=%u busy=%u "
+                "show_waits=%u show_wait_us=%u", g_rwm.posts,
+                g_rwm.posts ? g_rwm.post_us / g_rwm.posts : 0,
+                g_rwm.posts ? g_rwm.retire_us / g_rwm.posts : 0, g_rwm.busy,
+                g_rwm.show_waits,
+                g_rwm.show_waits ? g_rwm.show_us / g_rwm.show_waits : 0);
+         memset(&g_rwm, 0, sizeof(g_rwm));
+      }
+      g_rwc.ticks = g_rwc.shows = g_rwc.shorts = g_rwc.stepped = 0;
+      g_rwc.demotes = g_rwc.changes = 0;
+   }
+   if (r != 2)
+      return 0;
+   /* Not rewinding.  While a press is still rising the frame on screen
+    * holds; once it bites and there is nothing to go back to, the game
+    * simply plays. */
+   return !(held && !eff);
+}
+
+/* LAND A REWIND IN PROGRESS before anything else happens to the machine or
+ * to its history (docs/REWIND.md 22): the sleep handshake's park point, a
+ * state save or load, the menu, the pause overlay, Mystery Gift.  While a
+ * rewind is on screen the machine is on some OLD frame, re-running, with the
+ * save write-protected; only fe_rewind's landing brings it to a frame play
+ * may continue from.  Main thread, between frames.  budget_us 0 = as long as
+ * it takes (tens of milliseconds; a second if the frame on screen is inside
+ * a save and the landing has to go round it).  Returns 1 when landed. */
+/* THE POWER SWITCH WAITS while the machine stands inside an old save
+ * sequence (fe_host_rewind_unvetted): the one state in which a sleep could
+ * not be made safe within the callback's wait if the landing took too long
+ * (the game would have to be reset on the wake).  scePowerLock defers the
+ * request, as it does for every other window that cannot park (pwr_hold);
+ * it is delivered when the rewind has moved on or landed -- at the latest
+ * when the control is let go.  Outside that state nothing is held: the
+ * switch works at once, and the park point lands the rewind.  Main thread,
+ * every loop and after every rewind tick. */
+static int g_rw_pwr;
+static void psp_rewind_pwr(void)
+{
+   int want = g_rw_on && fe_host_rewind_unvetted();
+   if (want == g_rw_pwr)
+      return;
+   g_rw_pwr = want;
+   if (want)
+      pwr_hold("rewind");
+   else
+      pwr_release();
+}
+
+static int psp_rewind_land(const char *why, unsigned budget_us)
+{
+   int ok;
+   (void)why;
+   if (!g_rw_on || !fe_host_rewind_busy())
+      return 1;
+   /* Turbo buttons: a rewind that is landed is over, and so is any auto-
+    * fire (frontend state only; nothing of the landing depends on it). */
+   ctl_turbo_stop(&g_turbo);
+   fe_host_rewind_set_tick_budget(RWC_PERIOD_US - RWC_SLACK_US);
+   ok = fe_host_rewind_land(budget_us);
+   fe_evt("rewind_land_psp why=%s ok=%d budget_us=%u", why, ok, budget_us);
+   /* the control is up as far as the next loop is concerned */
+   g_rw_held = 0;
+   g_rwh.held_ticks = 0;
+   g_rwh.acc = 0.0f;
+   g_rwh.intensity = 0.0f;
+   g_rwc.ticks = g_rwc.shows = g_rwc.shorts = g_rwc.stepped = 0;
+   g_rwc.demotes = g_rwc.changes = 0;
+   if (ok && g_rw_showing)
+   {
+      psp_rewind_show_end();
+      g_rw_showing = 0;
+   }
+   psp_rewind_pwr();
+   return ok;
+}
+
+static int psp_rewind_tick(int ff)
+{
+   int r;
+   if (g_rw_pool_suspect)
+   {
+      /* (a blocking loop slept and came back inside this iteration) */
+      g_rw_pool_suspect = 0;
+      psp_rewind_pool_restart();
+   }
+   r = psp_rewind_tick_run(ff);
+   psp_rewind_pwr();
+   return r;
+}
+#endif /* REWIND */
+
+int main(int argc, char *argv[])
+{
+   char rom_path[PSP_FILE_PATH_CAP];
+   char save_path[PSP_FILE_PATH_CAP], state_path[PSP_FILE_PATH_CAP];
+   char script_name[64], script_path[192];
+   char nick[24], group[16] = "";
+   long autoexit, dump_at, dump_every, gedump_at, gedump_every, ff_ini, ui_demo, simff;
+   long ui_ctl_demo = 0;        /* harness: Settings > Controls self-drive */
+   long wake_shot = 0;          /* harness: open the wake overlay at frame N */
+   long vhash_from, vhash_to;   /* ADR-0033(coreopt) video regression oracle */
+   long vid_prof_win;           /* ADR-0034(coreopt) renderer path profile */
+   int have_script = 0, have_harness, have_variant;
+   int autoload_state_slot = 1;
+   int net_host = 0, net_join = 0, net_probe = 0;
+   int exit_code = 0;
+   const char *exit_reason = NULL;
+   int ff_engaged = 0, ff_toggled = 0, ff_last_mode = -1, ff_last_me = -1;
+   unsigned prev_pad = 0;
+   int chord_frames = 0;
+   fe_host_config cfg;
+   /* CONFIG.INI, read ONCE for the whole boot (fe_ini_doc): every
+    * pcfg_load key.  8 KiB of this stack, no heap; main() never returns, so
+    * it simply stays here. */
+   fe_ini_doc cfg_doc;
+   int cfg_ok;
+   /* The in-process return to the game list (inproc_refusal): how many
+    * times this process has done it, the per-game values a fresh boot
+    * starts every game from, and the heap as it was when this game's ROM
+    * was picked. */
+   int inproc_n = 0;
+   int me_rend_cfg_boot = 0, sram_thread_boot = 0, autoload_boot = 0;
+   long inproc_cycles = 0, inproc_frames = 0, state_save_at = 0;
+   int inproc_via_menu = 0, inproc_menu_armed = 0;
+   char inproc_roms[6][64];
+   int inproc_rom_n = 0;
+   heap_snap_t snap_pre;
+
+   g_boot_t0 = sceKernelGetSystemTimeWide();
+   /* stdout unbuffered: nothing reads it on a PSP, and a buffered stdout
+    * takes a 1 KiB heap buffer at its first printf and keeps it for the
+    * process -- possibly mid-game or mid-session (docs/INPROC-RETURN.md). */
+   setvbuf(stdout, NULL, _IONBF, 0);
+   setup_exit_callback();
+
+   scePowerSetClockFrequency(333, 333, 166);
+
+   init_paths(argc, argv);
+#ifdef GPSP_PERF_RIG
+   boot_ballast_take();              /* first heap use of the process */
+#endif
+   /* Relaunched by "Quit to game list" (relaunch_eboot): the browser fades
+    * in from the firmware's black instead of cutting in. */
+   if (argc > 1 && argv[1] && strcmp(argv[1], RELAUNCH_ARGV1) == 0)
+      ui_return_fade_in();
+#if defined(GPSP_PLAYABLE) && !defined(GPSP_PERF_RIG)
+   /* ADR-0067's harness path cannot exist in this build, and every one of
+    * main()'s ~130 harness keys used to pay a Memory Stick negative lookup
+    * to learn that, on a black screen, on every launch (boot timeline,
+    * docs/UI-OVERLAY.md).  The call sites still run -- one code path --
+    * they just no longer touch the stick.  file_exists() below still asks. */
+   fe_ini_never(HARNESS_INI);
+#endif
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   sceIoMkdir(LOG_DIR, 0777);
+   rig_preserve_log();               /* before fe_evt_init truncates it */
+   fe_evt_init(LOG_PATH, 0);
+   /* Every lookup of these two files is recorded from here on, so the report
+    * before the main loop can name a key nothing ever read. */
+   fe_ini_audit(HARNESS_INI);
+   fe_ini_audit(CONFIG_INI);
+   fe_evt_set_clock(evt_clock_us);   /* ADR-0021: price the ms0 flushes */
+#endif
+   /* ADR-0054: stamp WHICH BINARY produced this log.  The config line already
+    * records the parameters, so runs could be grouped into A/B arms by config
+    * -- and that silently mixed three different builds that happened to share
+    * a config into one "arm".  A run must carry its own build identity or the
+    * arm is not an arm.  __DATE__/__TIME__ are the compiler's, so they change
+    * on every rebuild and cost nothing at runtime. */
+   fe_evt("build stamp=%s_%s", __DATE__, __TIME__);
+   fe_evt("boot_ok");
+#ifndef GPSP_NO_TELEMETRY
+   boot_mem_census();                /* docs/MEMORY-BUDGET.md */
+#endif
+   fe_evt("clock=%d", scePowerGetCpuClockFrequency());
+   /* ADR-0039: the core/frontend pixel-layout contract is a build flag on
+    * both sides with nothing checking it at link time.  Say which one this
+    * binary was built for, so a field log with wrong colors is one grep from
+    * an answer instead of a rebuild. */
+#ifdef USE_PSP_RGB565_FORMAT
+   fe_evt("pixfmt=psp5650 stage=copy");
+#else
+   fe_evt("pixfmt=rgb565 stage=swap");
+#endif
+   fe_log("base_dir=%s", g_dir_base);
+
+   sceCtrlSetSamplingCycle(0);
+   sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
+   boot_mark("entry");
+
+   /* Frontend resources are allocated BEFORE retro_init eats the heap for
+    * ROM blocks (FRONTEND-AUDIT §8): GU uses VRAM + static list, audio ring
+    * is static, audio thread stack is created here.  CONFIG.INI is read
+    * once, into cfg_doc, and every pcfg_load key is answered from it
+    * (docs/UI-OVERLAY.md §12.8). */
+   cfg_ok = fe_ini_doc_load(&cfg_doc, CONFIG_INI) == 0;
+   pcfg_load_doc(CONFIG_INI, cfg_ok ? &cfg_doc : NULL);
+   boot_mark("config");
+
+   /* RESERVE THE NETDRV BLOCK WHILE THE HEAP IS STILL PRISTINE.
+    *
+    * netdrv is ~638 KiB in one piece (five peers x a 192-slot reliable
+    * backlog).  It used to be calloc'd when the user starts a session --
+    * after a 16 MiB ROM, the ME stages and the browser's 512 KiB art
+    * textures have been through the heap.  On a PSP-1000, with half the user
+    * partition of a 2000/3000/Go, the largest free hole at that moment can be
+    * under 638 KiB while total free memory still looks healthy, and wireless
+    * fails for a reason that has nothing to do with wireless.  Field report:
+    * the 1000 could neither host nor join, and (because np_start returned -1,
+    * which collides with ADHOC_ERR_WLAN_OFF) reported "WLAN switch is OFF"
+    * with the switch on.
+    *
+    * Taking it here costs every player 638 KiB they may never use, and buys
+    * that a session cannot fail on fragmentation.  If even this fails, leave
+    * the arena unset: netdrv_create falls back to calloc and behaves exactly
+    * as it did before. */
+   {
+      /* RESERVE EXACTLY ONE MEGABYTE, NOT THE STRUCT'S SIZE.
+       *
+       * The core's init_gamepak_buffer() mallocs 1 MiB blocks until one
+       * FAILS.  Write the heap as H = n*1MiB + R: the loop takes n blocks and
+       * leaves R, and R is the entire budget for everything allocated after
+       * it -- gba_screen_pixels (77,280 B), the sound ring, the ME stages.
+       *
+       * Take C bytes before the loop and the leftover becomes:
+       *     C <= R  ->  n blocks still fit, leftover R - C     (R is eaten)
+       *     C >  R  ->  one block fewer,   leftover R + 1MiB - C
+       *
+       * Reserving the struct's own 504 KiB landed in the first case on a
+       * PSP-1000 and took the slack that the frame buffer needed:
+       *     core[3]: Failed to allocate frame buffer (77280 bytes)
+       *     retro_load_game FAILED ... exit reason=load_failed
+       * -- Emerald dropped straight back to the XMB.
+       *
+       * C = 1 MiB is the only value that cannot do that: it exceeds every
+       * possible R, so the loop always takes exactly one block fewer and the
+       * leftover comes out at R again, less one malloc header.  The frontend's
+       * post-load budget is then bit-for-bit what it was before this existed,
+       * and the whole cost is one 1 MiB ROM page-cache block (on a 64 MiB
+       * console, where the loop stops at its 32-block cap with megabytes to
+       * spare, the cost is nothing at all).
+       *
+       * Do NOT "tighten" this to netdrv_sizeof(). The slack it leaves behind
+       * is the point, not the bytes it hands to netdrv. */
+      size_t need = netdrv_sizeof();
+      size_t take = 1024u * 1024u;
+      void  *blk  = (need <= take) ? malloc(take) : malloc(need);
+      if (blk)
+      {
+         netdrv_set_arena(blk, take > need ? take : need);
+         /* The tail is free real estate: netdrv uses `need`, the block is
+          * `take`.  The wake overlay's frozen frame lives there. */
+         if (take > need + WAKE_FRAME_BYTES + 64)
+            g_wake_frame = (uint16_t *)(((unsigned)blk + need + 63u) & ~63u);
+         /* ...and after it the menu's five state thumbnails (40 KiB), so the
+          * Save/Load state screens can show them in game, where the heap
+          * is gone (docs/UI-OVERLAY.md).  Same block, same zero cost. */
+         if (g_wake_frame &&
+             take > need + WAKE_FRAME_BYTES + UI_THUMB_BYTES + 128)
+            g_ui_thumbs = (uint16_t *)(((unsigned)g_wake_frame +
+                                        WAKE_FRAME_BYTES + 63u) & ~63u);
+         ui_set_thumb_buffer(g_ui_thumbs);
+      }
+      fe_evt("net_arena need=%u took=%u %s free=%d max_block=%d",
+             (unsigned)need, (unsigned)(take > need ? take : need),
+             blk ? "reserved" : "FAILED",
+             sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+   }
+
+   boot_mark("arena");
+   vid_init();
+   vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+   audio_start();
+
+   have_harness = file_exists(HARNESS_INI);
+   have_variant = file_exists(VARIANT_INI);
+   rig_boot_identity(have_harness);
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+   /* The binary's identity on EVERY harness run, not only vid_prof ones: the
+    * rig refuses to pair two consoles' logs unless their CRCs agree. */
+   if (have_harness && !vp_build_crc)
+      vp_build_crc = eboot_crc();
+#endif
+
+   /* ADR-0036.  A leftover `autopilot.ini` is IGNORED, never obeyed — and
+    * never deleted, because it is the user's file even when it is in the way.
+    * Say so on the very first line anyone will read: the failure this closes
+    * was a solo benchmark that silently came up in a wireless session, and
+    * the user had to infer it from the frame rate. */
+   if (file_exists(LEGACY_AUTOPILOT_INI))
+      fe_evt("legacy_autopilot_ignored file=%s — autopilot.ini is no longer "
+             "read; the harness channel is .gpsp-harness.ini (ADR-0036). "
+             "This file is being left alone, not deleted.",
+             LEGACY_AUTOPILOT_INI);
+
+   /* And the live channel is never silent either.  If a stale harness file
+    * is what is driving this boot, the log says so before anything it
+    * configures can surprise anyone. */
+   if (have_harness)
+      fe_evt("harness_ini active file=%s — automated control channel is "
+             "present; ROM browser suppressed and harness keys apply",
+             HARNESS_INI);
+   autoexit   = fe_ini_get_int(HARNESS_INI, "autoexit_frames", 0);
+   {
+      /* GB link session harness keys (see gblink_service). */
+      char gr[8] = "";
+      if (fe_ini_get(HARNESS_INI, "gblink_role", gr, sizeof(gr)))
+         g_gblink_role = !strcmp(gr, "host") ? 1 : !strcmp(gr, "join") ? 2 : 0;
+      /* config.ini gblink_delay: the player's own tuning (frames of input
+       * delay, 1-30); the harness key, when present, wins. */
+      g_gblink_delay = g_pcfg.gblink_delay_cfg >= 0
+                     ? (unsigned)g_pcfg.gblink_delay_cfg : GBLINK_DELAY_DEFAULT;
+      if (g_gblink_delay < 1 || g_gblink_delay > 30)
+         g_gblink_delay = GBLINK_DELAY_DEFAULT;
+      g_gblink_delay = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_delay",
+                                                g_gblink_delay);
+      if (g_gblink_delay > 60)
+         g_gblink_delay = 60;
+      g_gblink_seed = (long long)fe_ini_get_int(HARNESS_INI,
+                                                "gblink_rtc_seed", 0);
+      g_gblink_end_after = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                    "gblink_end_after", 300);
+      fe_host_gblink_tune((unsigned)fe_ini_get_int(HARNESS_INI,
+                                                   "gblink_bulk", 0));
+      /* 0: the partner's cartridge always crosses the radio, even when this
+       * card holds a copy -- the transfer arm of a rig whose cards carry
+       * every game for the other arms. */
+      g_gblink_library = fe_ini_get_int(HARNESS_INI, "gblink_library", 1) != 0;
+      /* psp_clock: pretend the console's clock read this at boot -- e.g.
+       * the PSP-1000's 2011 clock (1298863731) in PPSSPP, which is how the
+       * hw1 Gen 2 failure is reproduced and its fix checked. */
+      g_clock_fake = (long long)fe_ini_get_int(HARNESS_INI, "psp_clock", 0);
+      /* psp_clock_tz: that clock's zone, in seconds ahead of UTC (-18000 =
+       * New York in winter), so the GB cartridge clock's UTC arithmetic can
+       * be run at any offset in PPSSPP. */
+      g_clock_fake_tz = (long long)fe_ini_get_int(HARNESS_INI, "psp_clock_tz",
+                                                  0);
+      if (g_clock_fake)
+         fe_evt("psp_clock fake=%lld tz=%lld (harness)", g_clock_fake,
+                g_clock_fake_tz);
+      /* The bulk lane's datagram (bytes incl. the 13-byte header; 0 = the
+       * ordered channel carries transfers, 64+13..1472) and its rate
+       * (datagrams a frame, 0 = adaptive): the hardware rig's arms. */
+      {
+         long bb = fe_ini_get_int(HARNESS_INI, "gblink_bulk_bytes",
+                                  (long)g_gblink_bulk_bytes);
+         g_gblink_bulk_bytes = bb <= 0 ? 0u : bb < 77 ? 77u :
+                               bb > 1472 ? 1472u : (unsigned)bb;
+         g_gblink_bulk_rate = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                       "gblink_bulk_rate", 0);
+      }
+      /* Scanline batching while the cable is quiet (host decides for
+       * both): 1 = strict alternation (the control arm), default on. */
+      g_gblink_batch = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_batch",
+                                                GBLINK_BATCH_DEFAULT);
+      /* gblink_live = 0: power on from the battery images (the 3.0-era
+       * link); gblink_after = frames the game plays on after a session. */
+      g_gblink_live = fe_ini_get_int(HARNESS_INI, "gblink_live", 1) != 0;
+      g_gblink_after = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_after", 0);
+      g_gblink_copies = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                 "gblink_input_copies", 0);
+      g_gblink_resume_boot = fe_ini_get_int(HARNESS_INI, "gblink_resume",
+                                            0) == 2;
+      g_gblink_pace0 = fe_ini_get_int(HARNESS_INI, "gblink_pace_slot0", 0) != 0;
+      g_gblink_start_frames = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                      "gblink_start_frames", 0);
+      g_gblink_keep_stamp = fe_ini_get_int(HARNESS_INI,
+                                           "gblink_rtc_keep_session", 0) != 0;
+      /* Smoothness (gblink_service's block comment): config.ini is the
+       * player's kill switch, the harness key wins for an A/B arm. */
+      {
+         long v;
+         v = fe_ini_get_int(p_config, "gblink_absorb", 1);
+         g_gbl_absorb = fe_ini_get_int(HARNESS_INI, "gblink_absorb", v) != 0;
+         v = fe_ini_get_int(p_config, "gblink_audio_cushion", 3072);
+         v = fe_ini_get_int(HARNESS_INI, "gblink_audio_cushion", v);
+         g_gbl_cushion = v < 0 ? 0u : v > 16384 ? 16384u : (unsigned)v;
+         v = fe_ini_get_int(p_config, "gblink_audio_follow", 60);
+         v = fe_ini_get_int(HARNESS_INI, "gblink_audio_follow", v);
+         g_gbl_follow = v < 0 ? 0u : v > 100 ? 100u : (unsigned)v;
+         v = fe_ini_get_int(p_config, "gblink_nack", 1);
+         g_gbl_nack = fe_ini_get_int(HARNESS_INI, "gblink_nack", v) != 0;
+         v = fe_ini_get_int(p_config, "gblink_audio_soft", 1);
+         g_gbl_soft =
+            fe_ini_get_int(HARNESS_INI, "gblink_audio_soft", v) != 0;
+         /* harness only: the sync-hash A/B (both consoles alike) */
+         v = fe_ini_get_int(HARNESS_INI, "gblink_hash_every", 0);
+         g_gbl_hash_every = v < 0 ? 0u : (unsigned)v;
+         g_gbl_hash_legacy =
+            fe_ini_get_int(HARNESS_INI, "gblink_hash_legacy", 0) != 0;
+         v = fe_ini_get_int(HARNESS_INI, "gblink_win_ms", 10000);
+         g_gbl_win_ms = v < 1000 ? 1000u : (unsigned)v;
+         fe_evt("gblink_smooth absorb=%d audio_cushion=%u audio_follow=%u "
+                "audio_soft=%d nack=%d win_ms=%u hash_every=%u "
+                "hash_legacy=%d",
+                g_gbl_absorb, g_gbl_cushion, g_gbl_follow, g_gbl_soft,
+                g_gbl_nack,
+                g_gbl_win_ms, g_gbl_hash_every, g_gbl_hash_legacy);
+      }
+      fe_evt("gblink_harness role=%s delay=%u seed=%lld end_after=%u "
+             "library=%d bulk_bytes=%u bulk_rate=%u batch=%u",
+             g_gblink_role == 1 ? "host" :
+             g_gblink_role == 2 ? "join" : "none", g_gblink_delay,
+             g_gblink_seed, g_gblink_end_after, g_gblink_library,
+             g_gblink_bulk_bytes, g_gblink_bulk_rate, g_gblink_batch);
+   }
+   /* ADR-0053: harness-ini only and default OFF.  Putting this in CONFIG.INI
+    * would let a stale file toggle USB on a console someone is playing --
+    * the same failure ADR-0036 renamed autopilot.ini to prevent. */
+   handoff_config(fe_ini_get_int(HARNESS_INI, "handoff", 0),
+                  fe_ini_get_int(HARNESS_INI, "handoff_window_s", 90),
+                  fe_ini_get_int(HARNESS_INI, "handoff_max_runs", 20),
+                  fe_ini_get_int(HARNESS_INI, "handoff_total_s", 900),
+                  fe_ini_get_int(HARNESS_INI, "handoff_park_s", 0));
+   /* THE PSP GO'S INTERNAL STORAGE CANNOT BE HANDED OFF.  handoff_run exports
+    * the volume with usbstorms.prx, the MEMORY STICK driver, so an app on ef0
+    * finishes its run, writes RESULT.TXT to ef0 and then exports the M2 card
+    * instead: the PC watches the internal volume, never sees the result, and
+    * the Go parks forever on the run's last frame (2026-09-29, GBADHOC-DRPROF
+    * installed on G: = ef0; docs/ROM-RESIDENCY.md "Which Go volume").  Refuse
+    * it at boot, visibly, and run once to the XMB instead. */
+   if (fe_ini_get_int(HARNESS_INI, "handoff", 0) &&
+       (strncmp(g_dir_base, "ef0", 3) == 0 || strncmp(g_dir_base, "EF0", 3) == 0))
+   {
+      handoff_config(0, 0, 0, 0, 0);
+      fe_evt("handoff_refused base=%s reason=usb_export_serves_the_memory_stick "
+             "-- install the rig on the Memory Stick (M2), not internal storage",
+             g_dir_base);
+      osd_toast("Rig is on internal storage: USB loop OFF (use the Memory Stick)");
+   }
+   dump_at    = fe_ini_get_int(HARNESS_INI, "dump_at", 0);
+   dump_every = fe_ini_get_int(HARNESS_INI, "dump_every", 0);
+   gedump_at  = fe_ini_get_int(HARNESS_INI, "gedump_at", 0);
+#ifdef GPSP_PERF_RIG
+   g_gedump_loops = (unsigned)fe_ini_get_int(HARNESS_INI, "gedump_loops", 0);
+#endif
+   /* README shoot: the displayed screen (scaled game + OSD) every N frames,
+    * log/ge_%06u.bmp, so a clip can be cut from what the PSP actually shows. */
+   gedump_every = fe_ini_get_int(HARNESS_INI, "gedump_every", 0);
+   ff_ini     = fe_ini_get_int(HARNESS_INI, "ff", 0);
+#ifdef REWIND
+   psp_rewind_read_ini();
+#endif
+   /* Harness A/B for the startup-sized translation caches: `jit_small = 1`
+    * keeps a 64 MiB console on the PSP-1000's small tier, so one EBOOT can
+    * measure both on the same console and memory layout.  Must be set before
+    * fe_host_boot (the core decides in retro_init); the `jit_cache` line
+    * after boot echoes it as reason=forced, so a misspelt key shows up as
+    * reason=heap_ok instead of passing silently. */
+   jit_cache_force_small = fe_ini_get_int(HARNESS_INI, "jit_small", 0) ? 1u : 0u;
+   /* ADR-0033/0034 (coreopt): the video oracle and renderer path profile,
+    * grafted onto the harness channel — the branch predates ADR-0036's
+    * autopilot.ini -> .gpsp-harness.ini rename.  vhash=1 is shorthand for
+    * "hash every frame"; vid_prof only produces a line if the core was
+    * built with -DVIDEO_PROF=1. */
+   vid_prof_win = fe_ini_get_int(HARNESS_INI, "vid_prof", 0);
+   if (vid_prof_win > 0)
+   {
+      video_prof_set_clock(vprof_clock_us);
+      vp_build_crc = eboot_crc();
+   }
+   vhash_from = fe_ini_get_int(HARNESS_INI, "vhash_from", 0);
+   g_vhash_on = (int)fe_ini_get_int(HARNESS_INI, "vhash", 0);
+   g_vhash_legacy_rb = (int)fe_ini_get_int(HARNESS_INI, "vhash_legacy_rb", 0);
+   g_telemetry_period = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                 "telemetry_period", 0);
+#ifdef GPSP_PERF_RIG
+   g_shash_on = (int)fe_ini_get_int(HARNESS_INI, "shash", 0);
+   /* the sleep simulator (sleep_sim_thread) */
+   g_ss_at      = fe_ini_get_int(HARNESS_INI, "sleep_sim_at", 0);
+   g_ss_ms      = fe_ini_get_int(HARNESS_INI, "sleep_sim_ms", 1500);
+   g_ss_again_ms = fe_ini_get_int(HARNESS_INI, "sleep_sim_again_ms", 0);
+   ui_wake_inject_frame((int)fe_ini_get_int(HARNESS_INI,
+                                            "sleep_sim_choice_frame", 30));
+   g_ss_rom     = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_rom", 0);
+   g_ss_sav     = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_sav", 0);
+   fe_host_sram_test_exit_retry(
+      (int)fe_ini_get_int(HARNESS_INI, "sram_exit_retry", 1));
+   g_ss_game    = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_game", 0);
+   g_ss_browser = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_browser", 0);
+   g_ss_nohold  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nohold", 0);
+   g_ss_rw_tick = fe_ini_get_int(HARNESS_INI, "sleep_sim_rewind_tick", 0);
+   g_ss_nopark  = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_nopark", 0);
+   g_ss_trash_pool = (int)fe_ini_get_int(HARNESS_INI, "sleep_sim_trash_pool", 0);
+   g_ss_no_restart = !fe_ini_get_int(HARNESS_INI, "rewind_pool_restart", 1);
+   g_ss_no_land = !fe_ini_get_int(HARNESS_INI, "rewind_park_land", 1);
+   fe_ini_get(HARNESS_INI, "sleep_sim_window", g_ss_window,
+              sizeof(g_ss_window));
+   ui_wake_inject((int)fe_ini_get_int(HARNESS_INI, "sleep_sim_choice", -1));
+   ui_batt_inject((int)fe_ini_get_int(HARNESS_INI, "ui_batt", -1));
+   ui_ctl_warn_inject((int)fe_ini_get_int(HARNESS_INI, "ui_ctl_warn", 0));
+   ui_turbo_lock_inject((int)fe_ini_get_int(HARNESS_INI, "ui_turbo_lock", 0));
+#ifdef GPSP_PERF_RIG
+   g_turbo_lock_sim = fe_ini_get_int(HARNESS_INI, "ui_turbo_lock", 0) != 0;
+#endif
+   if (g_ss_at || g_ss_browser || g_ss_window[0] || g_ss_rw_tick)
+      sleep_sim_start();
+   if (g_ss_at || g_ss_browser || g_ss_window[0])
+      fe_evt("sleep_sim cfg at=%ld ms=%ld rom=%d game=%d browser=%d "
+             "window=%s nohold=%d", g_ss_at, g_ss_ms, g_ss_rom, g_ss_game,
+             g_ss_browser, g_ss_window[0] ? g_ss_window : "-", g_ss_nohold);
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+   g_sessmem_cycles = (unsigned)fe_ini_get_int(HARNESS_INI, "sessmem_cycles", 0);
+   g_gblink_repeat_left = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_repeat", 0);
+   g_sessmem_at = (unsigned)fe_ini_get_int(HARNESS_INI, "sessmem_at", 600);
+#endif
+   g_shash_dump_from = fe_ini_get_int(HARNESS_INI, "shash_dump_from", 0);
+   g_shash_dump_to   = fe_ini_get_int(HARNESS_INI, "shash_dump_to", 0);
+   {
+      char rid[48] = "", arm[16] = "";
+      fe_ini_get(HARNESS_INI, "run_id", rid, sizeof(rid));
+      fe_ini_get(HARNESS_INI, "arm", arm, sizeof(arm));
+      snprintf(g_shash_id, sizeof(g_shash_id),
+               "run_id=%s arm=%s eboot_crc=%08x model=%d",
+               rid[0] ? rid : "none", arm[0] ? arm : "none",
+               (unsigned)vp_build_crc, kuKernelGetModel());
+      snprintf(g_hb_id, sizeof(g_hb_id), "%s", g_shash_id);
+   }
+   g_hb_s = (int)fe_ini_get_int(HARNESS_INI, "heartbeat_s", 0);
+   if (g_hb_s < 0 || g_hb_s > 60)
+      g_hb_s = 0;
+   fe_evt("shash on=%d heartbeat_s=%d", g_shash_on, g_hb_s);
+   if (g_shash_on)
+      shash_open();
+#endif
+   vhash_to   = fe_ini_get_int(HARNESS_INI, "vhash_to", 0);
+   if (fe_ini_get_int(HARNESS_INI, "vhash", 0) && !vhash_to)
+   {
+      vhash_from = 1;
+      vhash_to   = 0x7FFFFFFF;
+   }
+   ui_demo    = fe_ini_get_int(HARNESS_INI, "ui_demo", 0);
+   if (ui_demo)
+      ui_demo_shots();   /* browser dumps the gallery + auto-picks (README) */
+   /* docs/CONTROL-REMAP.md: the Controls page walked end to end, with GE
+    * dumps.  Separate from ui_demo so run_ui_smoke.sh's ladder is untouched. */
+   ui_ctl_demo = fe_ini_get_int(HARNESS_INI, "ui_controls_demo", 0);
+   /* docs/UI-OVERLAY.md: the wake overlay, opened as SELECT+TRIANGLE opens
+    * it, photographed and dismissed -- a script cannot press the chord. */
+   wake_shot = fe_ini_get_int(HARNESS_INI, "wake_shot", 0);
+   if (ui_ctl_demo == 2)
+   {
+      ui_controls_browser_demo();   /* from the browser instead */
+      ui_ctl_demo = 0;
+   }
+   if (fe_ini_get_int(HARNESS_INI, "ui_browser_demo", 0))
+      ui_browser_demo_shots();   /* browser states shoot, then exit */
+   {
+      char bscript[64];
+#ifdef GPSP_PERF_RIG
+      char up_fake[96];
+#endif
+      if (fe_ini_get(HARNESS_INI, "ui_browser_script", bscript, sizeof(bscript)))
+         ui_browser_script_load(bscript);   /* README shoot: scripted browser */
+      /* Share game data (docs/SAVE-SHARE.md), for the two-PPSSPP rig:
+       * `share_burst` file datagrams a frame (1 = slow enough to interrupt),
+       * `share_build` a pretended build string (the mismatch screens with
+       * one EBOOT), `share_fail_write_after` a Memory Stick that fills up
+       * after N bytes of a fetched file. */
+      ui_share_burst((unsigned)fe_ini_get_int(HARNESS_INI, "share_burst", 0));
+      if (fe_ini_get(HARNESS_INI, "share_build", bscript, sizeof(bscript)) &&
+          bscript[0])
+         share_build_override(bscript);
+      share_fail_write_after((unsigned)fe_ini_get_int(
+         HARNESS_INI, "share_fail_write_after", 0));
+#ifdef GPSP_PERF_RIG
+      if (fe_ini_get(HARNESS_INI, "ui_script", bscript, sizeof(bscript)) &&
+          bscript[0])
+      {
+         char up[256];
+         snprintf(up, sizeof(up), "%s/%s", g_dir_base, bscript);
+         uiscript_load(up);               /* docs/GBA-LINK-UI.md */
+      }
+      if (fe_ini_get(HARNESS_INI, "ui_scan_fake", up_fake, sizeof(up_fake)) &&
+          up_fake[0])
+         ui_scan_fake_set(up_fake);
+#endif
+   }
+   /* Display-features shoot: GE-dump the first N loading-screen frames. */
+   ui_loading_dump_shots((int)fe_ini_get_int(HARNESS_INI, "loading_dump", 0));
+   /* Asset shoot / theme override: -1 (absent) leaves the build default. */
+   ui_set_theme_black((int)fe_ini_get_int(HARNESS_INI, "ui_theme_black", -1));
+   /* Menu-design check (docs/UI-OVERLAY.md): draw a fixed 480x272 picture
+    * behind the in-game menu instead of the game, so a GE dump can be
+    * compared pixel for pixel with the design model.  Read now, before the
+    * core takes the heap; never set in an identity run. */
+   {
+      char bd[64];
+      if (fe_ini_get(HARNESS_INI, "ui_backdrop", bd, sizeof(bd)))
+         ui_backdrop_inject(bd);
+   }
+   /* Price the Save states page's .shot read (docs/UI-OVERLAY.md 12). */
+   ui_shot_probe_arm((int)fe_ini_get_int(HARNESS_INI, "shot_probe", 0));
+   simff      = fe_ini_get_int(HARNESS_INI, "simff", 0);   /* harness: hold a
+                              virtual FF button for N frames from frame 300
+                              (PPSSPP can't press Square; run_ui_smoke.sh) */
+   /* Harness `ff_preset = 3x | unlimited | smooth`: the user FF preset a
+    * `simff` hold engages, without staging a config.ini (docs/FF-PRESETS.md).
+    * Echoed either way, so a misspelt value reads as bad= instead of
+    * silently measuring the config's preset (harness-ini key trap). */
+   {
+      char ffp[16];
+      if (fe_ini_get(HARNESS_INI, "ff_preset", ffp, sizeof(ffp)))
+      {
+         int m = !strcmp(ffp, "3x") ? PCFG_FF_3X :
+                 !strcmp(ffp, "unlimited") ? PCFG_FF_UNLIMITED :
+                 !strcmp(ffp, "smooth") ? PCFG_FF_SMOOTH : -1;
+         if (m >= 0)
+            pcfg_ff_set_mode(m);
+         fe_evt("ff_preset %s=%s now=%s", m >= 0 ? "set" : "bad", ffp,
+                pcfg_ff_name());
+      }
+   }
+   fe_evt("ff mode=%s", ff_ini ? "uncapped" : "normal");
+   if (fe_ini_get(HARNESS_INI, "script", script_name, sizeof(script_name)))
+      have_script = 1;
+#ifdef GPSP_PERF_RIG
+   {
+      /* Raw PSP pad replay.  NOT `have_script`: the point is to drive the
+       * player's path, chords included, which a script run switches off. */
+      char pad_name[64], pad_path[192];
+      if (fe_ini_get(HARNESS_INI, "pad_script", pad_name, sizeof(pad_name)))
+      {
+         snprintf(pad_path, sizeof(pad_path), "%s/%s", g_dir_base, pad_name);
+         pad_script_load(pad_path);
+      }
+   }
+   g_home_sim = (int)fe_ini_get_int(HARNESS_INI, "home_sim", 0);
+   g_home_stall_frame =
+      (unsigned)fe_ini_get_int(HARNESS_INI, "home_stall_frame", 0);
+   g_home_stall_ms =
+      (unsigned)fe_ini_get_int(HARNESS_INI, "home_stall_ms", 8000);
+   if (g_home_sim || g_home_stall_frame)
+      fe_evt("home_harness sim=%d stall_frame=%u stall_ms=%u", g_home_sim,
+             g_home_stall_frame, g_home_stall_ms);
+#endif
+   /* Perf-rig key: load the slot-0 savestate shortly after boot, so a run
+    * can start INSIDE a scene (mid-battle benchmarks) instead of scripting
+    * its way there through a title screen. */
+   g_autoload_state = (int)fe_ini_get_int(HARNESS_INI, "load_state", 0);
+#ifdef GPSP_PERF_RIG
+   g_perf_rig = have_harness && fe_ini_get_int(HARNESS_INI, "perf_rig", 0);
+#endif
+   if (g_perf_rig)
+   {
+      unsigned from=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_from",300);
+      unsigned to=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_to",3900);
+      unsigned timeout=(unsigned)fe_ini_get_int(HARNESS_INI,"perf_timeout_s",180);
+      char job[64]={0}, fixture[32]={0};
+      /* The ceiling used to be 36000 frames -- ten minutes of EMULATED time,
+       * which is only about three wall-clock minutes under 3x fast-forward.  A
+       * ten-minute soak asked for a window past it and got neither an error nor
+       * its window: the clause below silently substitutes the defaults, so the
+       * rig measured frames 300-3900 and stopped emitting perf_window lines for
+       * the rest of the run.  For a crash hunt those lines ARE the evidence --
+       * the last one written before the console stops is how far it got -- so
+       * the ceiling now allows a long run rather than quietly truncating it.
+       * The reset is kept for a genuinely nonsensical window. */
+      if(to<=from || to>600000) { from=300; to=3900; }
+      if(!timeout || timeout>3600) timeout=180;
+      rig_config(from,to,timeout,net_now_us());
+      fe_ini_get(HARNESS_INI,"perf_job",job,sizeof(job));
+      fe_ini_get(HARNESS_INI,"perf_fixture",fixture,sizeof(fixture));
+      fe_evt("perf_job id=%s fixture=%s from=%u to=%u timeout=%u",job,fixture,from,to,timeout);
+      g_audio_oracle = fe_ini_get_int(HARNESS_INI,"audio_oracle",0) ? 1 : 0;
+   }
+   /* Point the SMC block/writer probe at a 256-byte page of interest.  The
+    * default (0x03007D00) is nowhere near Unbound's storm, which `EVT
+    * smc_addr` localised to 0x03006200/0x03006300 in IWRAM — four addresses
+    * taking ~1450 writes/s between them.  Aiming the watch here fills in the
+    * `blk=` and `wr=` fields: which translated blocks cover the page, and
+    * which PCs are doing the writing. */
+   {
+      unsigned w = (unsigned)fe_ini_get_int(HARNESS_INI, "smc_watch", 0);
+      if (w)
+      {
+         smc_blk_watch = w;
+         fe_evt("smc_watch set=%08x", w);
+      }
+   }
+
+   /* Wireless keys (harness channel; the UI panel drives the same calls). */
+   net_host  = fe_ini_get_int(HARNESS_INI, "host", 0) != 0;
+   net_join  = fe_ini_get_int(HARNESS_INI, "join", 0) != 0;
+   net_probe = (int)fe_ini_get_int(HARNESS_INI, "net_probe", 0);
+   /* ADR-0062e: `core_phase` HAS BEEN IN EVERY HARNESS INI IN THIS PROJECT
+    * FOR THREE SESSIONS AND HAS NEVER BEEN READ.  It was only ever a
+    * config.ini key (config_psp.c), so `core_phase = 2` in a .gpsp-harness.ini
+    * was decorative and `core_phase = 0` did not turn the profiler off --
+    * the console kept logging `EVT core_phase lvl=2` either way, which is how
+    * this was caught (FULLSPEED-FINDINGS §18).  It is not free: the profiler
+    * takes ~344 timer reads per frame ON THE EMULATION THREAD, and at full
+    * speed the join's whole margin is about a millisecond. */
+   g_pcfg.core_phase = (int)fe_ini_get_int(HARNESS_INI, "core_phase",
+                                           g_pcfg.core_phase);
+   /* ADR-0019: let the harness pin the session frameskip policy without
+    * touching the user's config.ini (0 off / 1 adaptive / 2 auto). */
+   g_pcfg.net_frameskip = (int)fe_ini_get_int(HARNESS_INI, "net_frameskip",
+                                              g_pcfg.net_frameskip);
+   /* ADR-0024: same, for the EVT writer thread (0 inline / 1 threaded). */
+   g_pcfg.log_thread = (int)fe_ini_get_int(HARNESS_INI, "log_thread",
+                                           g_pcfg.log_thread);
+   /* ADR-0025: same, for the .sav block writer. */
+   g_pcfg.sram_thread = (int)fe_ini_get_int(HARNESS_INI, "sram_thread",
+                                            g_pcfg.sram_thread);
+   /* FF durability nudge A/B: 0 keeps detection and its EVT but never
+    * yields, i.e. the pre-fix behaviour on the same binary. */
+   {
+      long nudge = fe_ini_get_int(HARNESS_INI, "sram_ff_nudge", 1);
+      fe_host_sram_ff_nudge_enable(nudge != 0);
+      fe_evt("sram_ff_nudge on=%d", nudge != 0);
+   }
+   /* Same, for session pacing.  ADR-0033 REMAPPED THE VALUES: 0 off,
+    * 1 fixed-rate (default), 2 the ADR-0027/0028 adaptive matcher. */
+   g_pcfg.net_pace_match = (int)fe_ini_get_int(HARNESS_INI, "net_pace_match",
+                                               g_pcfg.net_pace_match);
+   if (g_pcfg.net_pace_match < 0 || g_pcfg.net_pace_match > 2)
+      g_pcfg.net_pace_match = PACE_MODE_FIXED;
+   g_pcfg.net_session_fps_x100 =
+      pcfg_fps_x100(HARNESS_INI, "net_session_fps",
+                    g_pcfg.net_session_fps_x100);
+   g_pcfg.net_session_fps_snap =
+      (int)fe_ini_get_int(HARNESS_INI, "net_session_fps_snap",
+                          g_pcfg.net_session_fps_snap);
+   if (g_pcfg.net_session_fps_snap < 0 || g_pcfg.net_session_fps_snap > 1)
+      g_pcfg.net_session_fps_snap = 1;
+#ifdef GPSP_PLAYABLE
+   /* ADR-0067: these four are config.ini keys, so unlike the harness-only
+    * knobs above they have a value even with no harness ini.  Forced, not
+    * defaulted, so a stale config.ini on the user's card cannot put a
+    * playing console back on 29.97 or turn the profiler back on.
+    *
+    * `core_phase` is not cosmetic here: with telemetry compiled out its EVT
+    * line disappears but its ~344 timer reads per frame do not, and that is
+    * ~500 us/frame (FULLSPEED §20.4) of pure measurement on a build that has
+    * nothing to measure. */
+   /* ADR-0071: the rate comes from the TRADING PROFILE, which the player owns
+    * and which persists in config.ini across relaunches.  The values are
+    * PCFG_PROFILE_FPS_X100 (config_psp.h): 5700 for the speed profile, which is
+    * the default, and 2997 for `profile = 1` (compatibility).
+    *
+    * Latched HERE, once, before the pacer and the netdrv timeout scaling read
+    * it — which is why switching profiles relaunches instead of taking effect
+    * live.  Two consoles that disagree about how long a frame is are exactly
+    * what gen-3's RFU cannot survive: it counts link timeouts in FRAMES. */
+   /* `net_session_fps_force = 1` in config.ini hands this back to the player;
+    * see the field's note.  Both consoles must carry the same value. */
+   if (!g_pcfg.net_session_fps_force)
+      g_pcfg.net_session_fps_x100 = PCFG_PROFILE_FPS_X100(g_pcfg.profile);
+   g_pcfg.net_session_fps_snap = 0;
+   if (!g_perf_rig) g_pcfg.core_phase = 0;
+   if (g_pcfg.core_phase < 0 || g_pcfg.core_phase > 3) g_pcfg.core_phase = 0;
+   /* `gu_defer = 1` was in the harness ini of ALL 17 full-speed runs behind
+    * the 16/34 number, but it is 0 in a stock config.ini.  Forced here so the
+    * playable build is the configuration that was actually measured, rather
+    * than one knob off it. */
+   g_pcfg.gu_defer             = 1;
+#endif
+   /* ADR-0034: same A/B channel for the blit staging placement. */
+   g_pcfg.blit_mode = (int)fe_ini_get_int(HARNESS_INI, "blit_mode",
+                                          g_pcfg.blit_mode);
+   if (g_pcfg.blit_mode < 0 || g_pcfg.blit_mode >= VID_BLIT_MODES)
+      g_pcfg.blit_mode = VID_BLIT_CACHED;
+   /* ADR-0040: and for the deferred GE sync, so the colour test can run the
+    * deferred path.  The rig cannot price it but it CAN prove that a list
+    * still in flight never reaches the swap or the readback. */
+   g_pcfg.gu_defer = (int)fe_ini_get_int(HARNESS_INI, "gu_defer",
+                                         g_pcfg.gu_defer);
+   g_pcfg.gu_defer = g_pcfg.gu_defer ? 1 : 0;
+   /* ADR-0042: per-frame RFU delivery cap, harness-overridable so the trade
+    * test can run both the capped and uncapped path. */
+   g_pcfg.rfu_rx_cap = (int)fe_ini_get_int(HARNESS_INI, "rfu_rx_cap",
+                                           g_pcfg.rfu_rx_cap);
+   if (g_pcfg.rfu_rx_cap < 0)  g_pcfg.rfu_rx_cap = 0;
+   if (g_pcfg.rfu_rx_cap > 16) g_pcfg.rfu_rx_cap = 16;
+   rfu_set_rx_cap((unsigned)g_pcfg.rfu_rx_cap);
+   fe_evt("rfu_rx_cap n=%d", g_pcfg.rfu_rx_cap);
+   /* ADR-0075: frame-boundary delivery admission.  The successor to the
+    * falsified rfu_rx_cap: same "at most N real deliveries per frame" idea,
+    * but the eligibility gate is applied identically in rfu_data_avail(), so
+    * the WAITEVENT spin that made every capped arm self-blinding cannot
+    * occur.  1 = match the game's drain rate (the arm to run first). */
+   {
+      int fp = (int)fe_ini_get_int(HARNESS_INI, "rfu_frame_pace",
+                                   PLAY_RFU_FRAME_PACE);
+      if (fp < 0)  fp = 0;
+      if (fp > 16) fp = 16;
+      rfu_set_frame_pace((unsigned)fp);
+      fe_evt("rfu_frame_pace n=%d", fp);
+      /* The bound on the hold.  frame_pace without it took the client's
+       * undelivered queue past the game's 32-frame link timeout on hardware
+       * (q_hi 1, 9, 13, 39 -> adapter reset).  Must stay well under 32; 0
+       * restores the unbounded hold, for an A/B against that failure. */
+      {
+         /* config.ini is the base (the player owns this dial), harness
+          * overrides -- the me_dirty / me_sameframe pattern. */
+         int mh = (int)fe_ini_get_int(HARNESS_INI, "rfu_pace_max_hold",
+                                      g_pcfg.rfu_pace_max_hold);
+         if (mh < 0)  mh = 0;
+         if (mh > 28) mh = 28;      /* 32 is the timeout; never sit on it */
+         rfu_set_pace_max_hold((unsigned)mh);
+         fe_evt("rfu_pace_max_hold n=%d", mh);
+      }
+   }
+   /* LINK SHEDDING (rfu.c rfu_shed_client): a receive queue deeper than N
+    * gives up content-free packets at the frame boundary.  The restoring force
+    * the emulated link never had -- without it, every stall and every radio
+    * retransmit is permanent round-trip latency (the field's "lag that grows
+    * until Communications failed").  0 = off = the historical queues, for the
+    * A/B; the arm is named in every rfu_shed census line. */
+   {
+      int sk = (int)fe_ini_get_int(HARNESS_INI, "rfu_shed_keep",
+                                   PLAY_RFU_SHED_KEEP);
+      if (sk < 0)  sk = 0;
+      if (sk > 16) sk = 16;
+      rfu_set_shed_keep((unsigned)sk);
+      fe_evt("rfu_shed_keep n=%d", sk);
+   }
+   /* HOLD, NEVER DISCARD (rfu.c rfu_hold): 1 = a packet that does not fit its
+    * receive queue waits in an overflow ring, and the client's pace backstop
+    * stops discarding; 0 = the historical discards, for the A/B. */
+   {
+      int hd = (int)fe_ini_get_int(HARNESS_INI, "rfu_hold", PLAY_RFU_HOLD);
+      rfu_set_hold(hd ? 1u : 0u);
+      fe_evt("rfu_hold n=%d", hd ? 1 : 0);
+   }
+   /* VALIDATION ONLY: corrupt the Nth content-bearing host packet this client
+    * receives, to prove the rig's cross-console desync detector fires.  0 in
+    * every real run; the value is echoed so a stray one cannot hide. */
+   {
+      int fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_corrupt", 0);
+      if (fc < 0)
+         fc = 0;
+      rfu_set_fault_corrupt((unsigned)fc);
+      fe_evt("rfu_fault_corrupt n=%d", fc);
+      fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_span", 1);
+      if (fc < 1)
+         fc = 1;
+      rfu_set_fault_span((unsigned)fc);
+      fe_evt("rfu_fault_span n=%d", fc);
+      fc = (int)fe_ini_get_int(HARNESS_INI, "rfu_fault_mode", 0);
+      rfu_set_fault_mode(fc > 0 ? (unsigned)fc : 0);
+      fe_evt("rfu_fault_mode n=%d (1 = SETMONDATA value byte)", fc > 0 ? fc : 0);
+   }
+   /* Fixed-depth cushion (jitter buffer) PoC — see PLAY_RFU_CUSHION. */
+   {
+      int cu = (int)fe_ini_get_int(HARNESS_INI, "rfu_cushion",
+                                   PLAY_RFU_CUSHION);
+      if (cu < 0)  cu = 0;
+      if (cu > 24) cu = 24;
+      rfu_set_cushion((unsigned)cu);
+      fe_evt("rfu_cushion n=%d", cu);
+   }
+   /* Candidate mid-run-Disconnect fix (default OFF): await the DISCONNECTED
+    * state before term/unload.  Run the breadcrumb-only build FIRST to confirm
+    * the wedge step, then set disc_await=1 to A/B the fix. */
+   {
+      int da = (int)fe_ini_get_int(HARNESS_INI, "disc_await", 0);
+      adhoc_set_disc_await(da);
+      fe_evt("disc_await on=%d", da);
+   }
+   /* Audio latency target (AUDIO_RING_TARGET): harness override for A/B. */
+   {
+      int rt = (int)fe_ini_get_int(HARNESS_INI, "audio_ring_target",
+                                   AUDIO_RING_TARGET);
+      if (rt >= 1024 && rt < RING_FRAMES)
+         g_ring_high_water = (unsigned)rt;
+      fe_evt("audio_ring_target frames=%u", g_ring_high_water);
+   }
+   /* Media Engine mode: pcfg (the settings toggle, applied via relaunch) with
+    * a harness override so the rig can A/B it per-arm. */
+   {
+      int mm = (int)fe_ini_get_int(HARNESS_INI, "me_mode", g_pcfg.me_mode);
+      g_me_rend_cfg = mm ? 1 : 0;
+      fe_evt("me_mode on=%d src=%s", g_me_rend_cfg,
+             mm == g_pcfg.me_mode ? "config" : "harness");
+   }
+   /* ADR-0059: stretch the emulated adapter's cycle-counted deadlines.
+    *
+    * Percent, 100 = stock = what every measurement to date was taken with, so
+    * omitting these changes nothing.  -1 = AUTO = session_fps / 29.97, which
+    * reproduces the known-good 29.97 wall-clock budget at any session rate
+    * (100 at 29.97, 150 at 45.00, 200 at 59.73).
+    *
+    * `rfu_timeout_scale` moves the CLIENT's budget (rfu_timeout_cycles ->
+    * RFU_CMD_RESP_TIMEO); `rfu_rtx_scale` moves the HOST's (rfu_resp_timeout
+    * -> the synthetic "clients did not answer").  Separate knobs on purpose:
+    * CLIFF-FINDINGS §14.3 records that host- and client-side timeouts were
+    * never separated, and they have the same 1/fps shape. */
+   {
+      int ts  = (int)fe_ini_get_int(HARNESS_INI, "rfu_timeout_scale", 100);
+      int rs  = (int)fe_ini_get_int(HARNESS_INI, "rfu_rtx_scale",     100);
+      int aut = (g_pcfg.net_session_fps_x100 > 0)
+                   ? (g_pcfg.net_session_fps_x100 * 100) / 2997 : 100;
+      if (aut < 100) aut = 100;
+      if (ts < 0) ts = aut;
+      if (rs < 0) rs = aut;
+      if (ts < 25)   ts = 25;
+      if (ts > 1600) ts = 1600;
+      if (rs < 25)   rs = 25;
+      if (rs > 1600) rs = 1600;
+      rfu_set_timeout_scale((unsigned)ts, (unsigned)rs);
+      fe_evt("rfu_timeout_scale to=%d rtx=%d auto=%d", ts, rs, aut);
+   }
+   /* ADR-0062: WHO GETS THE CPU THE EMULATOR IS NOT USING, and how fast a
+    * lost slot is recovered.  Both harness-only, both default to today's
+    * behaviour, both must be set BEFORE net bring-up (which happens after
+    * this function).  See FULLSPEED-FINDINGS §7 for the measurement that
+    * motivates the first one: the emulated core costs ~14.5 ms per frame at
+    * every session rate, so the idle time the WLAN driver lives in falls from
+    * 17.6 ms/frame at 29.97 fps to 2.3 ms at 59.73, and the mean cost of one
+    * sceNetAdhocPdpSend rises 60 us -> 1040 us across exactly that range. */
+   {
+      int np_ = (int)fe_ini_get_int(HARNESS_INI, "adhoc_net_prio", 0);
+      int rf  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_first_max_us", 0);
+      /* config.ini is the base, harness overrides -- and the base is no
+       * longer 0/build-time: see g_pcfg.nd_rto_min_us for why 200 ms is
+       * wrong at an 11 ms srtt. */
+      int rm  = (int)fe_ini_get_int(HARNESS_INI, "nd_rto_min_us",
+                                    g_pcfg.nd_rto_min_us);
+      if (rf < 0) rf = 0;
+      if (rm < 0) rm = 0;
+      adhoc_transport_set_net_prio(np_);
+      fe_np_set_arq_timers((uint32_t)rf, (uint32_t)rm);
+      /* 28: ack riding (0 = off): a bare ACK waits this long for a ride */
+      {
+         /* 4.0.0 beta: a GBA Link Cable session rides while it RUNS
+          * (hardware: SF 45.2 -> 47.6 fps with riding alone), Fast link or
+          * not: config.ini nd_ack_ride_us is that product value (0 = never).
+          * A harness nd_ack_ride_us is a FIXED value instead: every session
+          * of every kind, from its creation, 0 included.
+          * Clamp: a riding ack leaves at most ride + one pump period after
+          * the data it answers, and that must stay under the RTO floor or
+          * the sender retransmits what was received (rm == 0 means the
+          * transport's built-in floor). */
+         int floor_us = rm > 0 ? rm : ND_RTO_FLOOR_DEFAULT_US;
+         int ride_max = floor_us - ND_PUMP_PERIOD_US;
+         int ar = (int)fe_ini_get_int(p_config, "nd_ack_ride_us",
+                                      PLAY_ND_ACK_RIDE_US);
+         int hr = (int)fe_ini_get_int(HARNESS_INI, "nd_ack_ride_us", -1);
+         if (ride_max < 0) ride_max = 0;
+         if (ar < 0) ar = 0;
+         if (ar > ride_max) ar = ride_max;
+         fe_np_set_ack_ride_product((uint32_t)ar);
+         if (hr >= 0)
+         {
+            if (hr > ride_max) hr = ride_max;
+            fe_np_set_ack_ride((uint32_t)hr);
+         }
+         fe_evt("net_tuning ack_ride_cfg product_us=%d fixed_us=%d max_us=%d",
+                ar, hr, ride_max);
+      }
+      if (np_ || rf || rm)
+         fe_evt("net_tuning adhoc_net_prio=0x%02X rto_first_max_us=%d "
+                "rto_min_us=%d", adhoc_transport_net_prio(), rf, rm);
+   }
+   /* ADR-0062b: THE SAME LEVER FROM THE OTHER END — lower the EMULATION
+    * thread instead of raising the WLAN stack.
+    *
+    * `adhoc_net_prio = 0x1D` was tried first and it BREAKS THE HOST: with the
+    * stack above the emulation thread, `sceNetAdhocctlConnect` never reaches
+    * CONNECTED and bring-up dies at `stage=ctl_connect_wait rc=-9
+    * sce=0x80410002` after the full 30 s wait (measured, run 086; the JOIN
+    * came up fine at the same setting, so it is group CREATION that objects).
+    *
+    * Moving main from 0x20 to something numerically above ADHOC_NET_PRIO
+    * (0x2A) produces the same ORDERING without touching sceNetInit at all, so
+    * it cannot break bring-up the same way.  Our own RX (0x1E) and TX (0x1F)
+    * threads stay above everything, which is what they were placed for.
+    *
+    * Note this also drops main below the IO thread (0x22): a log or SRAM write
+    * will now preempt emulation.  That is visible in `EVT fps emu=` and is
+    * part of what the arm is measuring, not a hidden cost.
+    *
+    * 0 = leave main at its default 0x20. */
+   {
+      int ep = (int)fe_ini_get_int(HARNESS_INI, "emu_prio", PLAY_EMU_PRIO);
+      int ip = (int)fe_ini_get_int(HARNESS_INI, "io_prio",  PLAY_IO_PRIO);
+      /* ADR-0064/0065 both need the emulation thread's UID, and both are
+       * no-ops unless their key is set.  Taken here because this is the one
+       * place that already knows it is running ON that thread. */
+      g_emu_thid = sceKernelGetThreadId();
+      if (ep)
+      {
+         if (ep < 0x08) ep = 0x08;
+         if (ep > 0x77) ep = 0x77;
+         sceKernelChangeThreadPriority(g_emu_thid, ep);
+         fe_evt("emu_prio set=0x%02X (was 0x20; adhoc net stack is 0x%02X)",
+                ep, adhoc_transport_net_prio());
+      }
+      /* ADR-0062c: keep OUR housekeeping below the emulator even when the
+       * emulator has been put below the radio.  See g_io_prio. */
+      if (ip)
+      {
+         if (ip < 0x08) ip = 0x08;
+         if (ip > 0x77) ip = 0x77;
+         g_io_prio = ip;
+      }
+      /* VRAM dirty-page probe: frames between samples, 0 = off (default).
+       * See vram_probe_frame().  30 gives ~2 instrumented frames/second. */
+      /* ME input shadows: retained only as a diagnostic A/B.  Hardware
+       * rejected them: the 98 KiB host copy costs more than waiting for the
+       * ME, and it also bypasses the later dirty-page transfer path.  Keep
+       * the measured winner as the default; a harness may still set 1. */
+      g_mer_shadow = (int)fe_ini_get_int(HARNESS_INI, "me_shadow", 0);
+      g_mer_vmem_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_vmem", 1) != 0;
+      if (!g_mer_vmem_cfg)
+         fe_evt("me_vmem 0 (engine buffers from the heap)");
+      g_mer_dirty_cfg = (int)fe_ini_get_int(HARNESS_INI, "me_dirty",
+                                             g_pcfg.me_dirty);
+      /* Same-frame is retained as a harness-only A/B.  Hardware showed that
+       * issuing the GE list immediately before swap costs heavy games about
+       * 1.5 ms per frame.  The loop-top pipeline overlaps that work with the
+       * CPU, keeps exact output, and also holds full speed in light games. */
+      g_mer_sameframe = (int)fe_ini_get_int(HARNESS_INI, "me_sameframe", 0);
+      /* 0 restores the end-of-retro_run post for a one-binary A/B. */
+      g_mer_vispost = (int)fe_ini_get_int(HARNESS_INI, "me_vispost", 1) != 0;
+      if (!g_mer_vispost)
+         fe_evt("me_vispost 0 (render posted at frame end)");
+      g_mer_capmode = fe_ini_get_int(HARNESS_INI, "me_capmode", 1) == 2
+                      ? 2u : 1u;
+#if ME_MIDFRAME_LOG
+      g_mer_midlog = (int)fe_ini_get_int(HARNESS_INI, "me_midlog", 1) != 0;
+      {
+         extern int me_log_vram_always;
+         me_log_vram_always =
+            (int)fe_ini_get_int(HARNESS_INI, "me_vram_always", 1) != 0;
+         fe_evt("me_vram_always on=%d", me_log_vram_always);
+      }
+      if (!g_mer_midlog)
+         fe_evt("me_midlog 0 (mid-frame log off)");
+#endif
+      g_vp_period = (int)fe_ini_get_int(HARNESS_INI, "vram_probe", 0);
+      if (g_vp_period)
+         fe_evt("vram_probe period=%d", g_vp_period);
+
+      /* ADR-0066: frames between dump-marker polls.  ADR-0069 default = 0. */
+      {
+         int dm = (int)fe_ini_get_int(HARNESS_INI, "dump_marker_poll",
+                                      PLAY_DUMP_MARKER);
+         if (dm < 0) dm = 0;
+         g_dump_marker_every = dm;
+         fe_evt("dump_marker_poll n=%d", g_dump_marker_every);
+      }
+      /* ADR-0069: the deliberate yield.  `sched_yield_us` microseconds of
+       * sceKernelDelayThread once per `sched_yield_frames` frames, so the CPU
+       * the dump-marker stat used to hand the WLAN threads by accident can be
+       * handed to them on purpose, at a size we picked.  Both default off. */
+      {
+         int yu = (int)fe_ini_get_int(HARNESS_INI, "sched_yield_us", 0);
+         int yf = (int)fe_ini_get_int(HARNESS_INI, "sched_yield_frames", 60);
+         if (yu < 0) yu = 0;
+         if (yf < 1) yf = 1;
+         g_yield_us    = yu;
+         g_yield_every = yf;
+         if (yu)
+            fe_evt("sched_yield us=%d every=%d", g_yield_us, g_yield_every);
+      }
+      /* ADR-0064: the preemption census.  Off unless asked for. */
+      g_pe_on = (int)fe_ini_get_int(HARNESS_INI, "preempt_prof", 0) ? 1 : 0;
+      if (g_pe_on)
+         fe_evt("preempt_prof on thid=0x%08X", (unsigned)g_emu_thid);
+      /* ADR-0066 measurement: PRICE the negative ms0: lookup that used to run
+       * once a second inside the timed frame region.  SPIKE-FINDINGS §10.6
+       * recorded "I did not price sceIoGetstat on this device" as an
+       * unestablished claim; four samples at boot cost nothing and settle it.
+       * A negative lookup is a full directory resolution, so this is an
+       * upper-bound-ish figure for an idle stick — during a session the log
+       * writer is also queued on the same device. */
+      {
+         int k;
+         for (k = 0; k < 4; k++)
+         {
+            uint64_t t0 = net_now_us();
+            int hit = file_exists(DUMP_MARKER);
+   FE_EVT_ONLY(t0); FE_EVT_ONLY(hit);
+            fe_evt("msstat n=%d us=%u hit=%d",
+                   k, (unsigned)(net_now_us() - t0), hit);
+         }
+      }
+      /* ADR-0065: the protected window.  `base` is whatever the emulation
+       * thread's STANDING priority ends up being, so the window degrades to
+       * exactly today's behaviour when it is closed. */
+      {
+         int bu = (int)fe_ini_get_int(HARNESS_INI, "emu_prio_boost_us",
+                                      PLAY_BOOST_US);
+         int bp = (int)fe_ini_get_int(HARNESS_INI, "emu_prio_boost", 0x29);
+         g_boost_base = ep ? ep : 0x20;
+         if (bp < 0x08) bp = 0x08;
+         if (bp > 0x77) bp = 0x77;
+         g_boost_prio = bp;
+         if (bu < 0)     bu = 0;
+         if (bu > 15000) bu = 15000;   /* must never span a whole frame */
+         g_boost_us = bu;
+         emu_boost_start();
+      }
+   }
+   /* ADR-0062d: STOP THE CLIENT SPINNING ON THE RADIO.
+    *
+    * `rfu_update()` calls netpacket_poll_receive() on EVERY invocation while
+    * the adapter is in WAITEVENT, and update_serial() invokes it many times
+    * per emulated frame.  Measured (FULLSPEED-FINDINGS §14): the JOIN issues
+    * **587 polls per frame** and the HOST issues **0**, because only the
+    * client sits in WAITEVENT waiting on its peer.
+    *
+    * While the WLAN stack was starved those polls were nearly free (11-16 us
+    * per frame in total).  Once the stack is scheduled (ADR-0062b) each poll
+    * can actually do something and can be preempted inside the driver, and
+    * the same 587 polls cost the join **855 us per frame** -- 5 % of a
+    * 59.73 fps frame budget spent asking a radio 587 times whether one packet
+    * has arrived.
+    *
+    * This sets a MINIMUM number of emulated cycles between polls.  The
+    * original comment on that call ("otherwise we need to wait a full
+    * frame!") is the thing to preserve: a limit of one poll per 1/8 frame
+    * still checks the radio eight times per frame, which is eight times
+    * better than the latency the comment was worried about, at 1/70th of the
+    * calls.  0 = poll every time = the historical behaviour. */
+   {
+      int pm = (int)fe_ini_get_int(HARNESS_INI, "rfu_poll_min_cycles",
+                                   PLAY_POLL_MIN_CYCLES);
+      if (pm < 0) pm = 0;
+      rfu_set_poll_min_cycles((unsigned)pm);
+      if (pm)
+         fe_evt("rfu_poll_min_cycles n=%d (=1/%d emulated frame)",
+                pm, pm ? (16777216 / 60) / pm : 0);
+   }
+   /* ADR-0068: the same limit applied to the OTHER side of the asymmetry.
+    *
+    * The knob above throttles a client that polls 587 times a frame.  This one
+    * un-throttles a host that polls ZERO times a frame: the host is in
+    * WAITEVENT 0.6 % of the time, so the branch above is never its branch, and
+    * the single fe_np_pump() call site is the only place it reads the network
+    * all frame.  The host TRANSMITS immediately (netdrv txq_push, nothing
+    * Nagled) — it just does not look, so up to a whole host frame of "your
+    * command is still unread" lands inside the client's WAITEVENT dwell.
+    *
+    * Default 0 = never = byte-for-byte the historical behaviour, so this is
+    * inert until a run asks for it.  34952 (1/8 frame) matches the client
+    * knob's cadence and is the arm to try first. */
+   {
+      int dd = (int)fe_ini_get_int(HARNESS_INI, "rfu_disc_defer", 0);
+      rfu_set_disc_defer(dd ? 1u : 0u);
+      if (dd)
+         fe_evt("rfu_disc_defer on");
+      /* ADR-0079: the exit-echo state assist.  Default PLAY_EXIT_ASSIST — 1 in
+       * the playable build (nonexistent HARNESS_INI -> default), 0 for harness.
+       * Was hardcoded 0, which silently left the PLAYABLE build without the
+       * exit fix despite PLAY_EXIT_ASSIST=1 (the message-17 exit crash). */
+      g_exit_assist =
+         (int)fe_ini_get_int(HARNESS_INI, "rfu_exit_assist", PLAY_EXIT_ASSIST) ? 1 : 0;
+      fe_evt("rfu_exit_assist on=%d", g_exit_assist);
+      /* ADR-0078: net_pace_match was a config.ini-only key, so ARM B's
+       * harness ini silently ran mode 1 (run 315's lesson — the arm's own
+       * log said `mode=1 policy=fixed` while the ini said 3).  Same
+       * harness-overridable pattern as net_session_fps. */
+      int pmode = (int)fe_ini_get_int(HARNESS_INI, "net_pace_match",
+                                      g_pcfg.net_pace_match);
+      if (pmode >= 0 && pmode <= 3 && pmode != g_pcfg.net_pace_match)
+      {
+         fe_evt("net_pace_match harness override %d -> %d",
+                g_pcfg.net_pace_match, pmode);
+         g_pcfg.net_pace_match = pmode;
+      }
+      /* ADR-0076: the exit-race grace window, in emulated frames. */
+      int dg = (int)fe_ini_get_int(HARNESS_INI, "rfu_disc_grace",
+                                   PLAY_RFU_DISC_GRACE);
+      if (dg < 0)   dg = 0;
+      if (dg > 600) dg = 600;
+      rfu_set_disc_grace((unsigned)dg);
+      fe_evt("rfu_disc_grace frames=%d", dg);
+      int ip = (int)fe_ini_get_int(HARNESS_INI, "rfu_idle_poll_cycles",
+                                   PLAY_IDLE_POLL);
+      if (ip < 0) ip = 0;
+      rfu_set_idle_poll_cycles((unsigned)ip);
+      if (ip)
+         fe_evt("rfu_idle_poll_cycles n=%d (=1/%d emulated frame)",
+                ip, ip ? (16777216 / 60) / ip : 0);
+   }
+   /* ADR-0027 harness knob: burn N us of BUSY work per frame on this
+    * instance only.  The rig runs both instances at full speed, so it cannot
+    * reproduce the field's role asymmetry on its own and pace matching would
+    * never engage there.  This manufactures a genuinely slower peer — busy,
+    * not sleeping, so it lands in the same per-frame WORK time the
+    * capability estimate reads and the whole loop is exercised end to end.
+    * Harness only; never set in config.ini. */
+   ff_pace_set_slow_us((int)fe_ini_get_int(HARNESS_INI, "pace_slow_us", 0));
+#ifdef GPSP_PERF_RIG
+   g_gbl_cpu_x100 = (unsigned)fe_ini_get_int(HARNESS_INI, "gblink_cpu_x100", 0);
+   if (g_gbl_cpu_x100)
+      fe_evt("gblink_cpu_x100=%u (harness: PPSSPP slow-CPU emulation)",
+             g_gbl_cpu_x100);
+#endif
+   if (ff_pace_slow_us())
+      fe_evt("pace_slow_us=%d", ff_pace_slow_us());
+   if (!fe_ini_get(HARNESS_INI, "nick", nick, sizeof(nick)))
+      snprintf(nick, sizeof(nick), "%s", g_pcfg.nick);
+   if (!fe_ini_get(HARNESS_INI, "group", group, sizeof(group)))
+      snprintf(group, sizeof(group), "%s", g_pcfg.group);
+
+   /* Radio emulation for the PPSSPP rig (harness only — the desktop UDP
+    * backend has the same knobs).  PPSSPP's AdhocServer loopback RTT is
+    * microseconds; real PSP ad-hoc is tens of ms, which is the whole
+    * reason the ARQ storm of docs/HANDOFF.md issue #2 escaped the harness.
+    * Each side adds net_latency_ms to the one-way path -> RTT = 2x. */
+   {
+      int nl = (int)fe_ini_get_int(HARNESS_INI, "net_latency_ms", 0);
+      int nj = (int)fe_ini_get_int(HARNESS_INI, "net_jitter_ms", 0);
+      int np_ = (int)fe_ini_get_int(HARNESS_INI, "net_loss_pct", 0);
+      if (nl || nj || np_)
+      {
+         adhoc_transport_set_fault(nl, nj, np_,
+                                   0x243F6A88u ^ (uint32_t)(net_host ? 1 : 2));
+         fe_evt("net_fault latency_ms=%d jitter_ms=%d loss_pct=%d", nl, nj, np_);
+      }
+   }
+   {
+      int bo = (int)fe_ini_get_int(HARNESS_INI, "net_blackout_ms", 0);
+      int be = (int)fe_ini_get_int(HARNESS_INI, "net_blackout_every_ms", 20000);
+      if (bo > 0)
+      {
+         adhoc_transport_set_blackout(bo, be);
+         fe_evt("net_blackout ms=%d every_ms=%d", bo, be);
+      }
+   }
+
+   /* Causation test for the exit-Union-Room fatal screen (phase5j).  See
+    * netpacket_host.h: swallowing the parent's RFU DISCONNECT notice pins
+    * the child's emulated adapter in RFU_STATE_CLIENT, which is the state
+    * the field logs imply and which rfu.c has no other way out of. */
+   {
+      int dd = (int)fe_ini_get_int(HARNESS_INI, "rfu_drop_disconnect", 0);
+      if (dd)
+         fe_np_debug_drop_rfu_disconnect(dd);
+   }
+
+#if defined(GPSP_PERF_RIG) && \
+    (!defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY))
+   /* FREEZE RIG RECOVERY BOOT (harness `freeze_rig_recover = 1`; from
+    * claude/freeze-rig 2d5b84d).  The PC collects and removes
+    * log/frontend.log after every run that reaches the handoff, so finding
+    * one here means the previous run never got there: it hard-froze (or
+    * lost power) and a human power-cycled and relaunched us.  Hand off at
+    * once, without loading the ROM, so the PC collects frontend.prev.log,
+    * shash.prev.txt, heartbeat.txt and stall.txt as the frozen run's
+    * evidence before anything can overwrite them (freezerig.py: exit=7
+    * reason=prev_run_uncollected is a FROZE verdict). */
+   if (have_harness && g_rig_prev_uncollected &&
+       fe_ini_get_int(HARNESS_INI, "freeze_rig_recover", 0))
+   {
+      fe_evt("freeze_rig_recover prev_log=uncollected -- the previous run "
+             "never reached its handoff; handing off without running");
+      audio_stop();
+      vid_term();
+      fe_evt("exit code=7 reason=prev_run_uncollected");
+      evt_shutdown();
+      handoff_run(7, "prev_run_uncollected");
+      sceKernelExitGame();
+      return 0;
+   }
+#endif
+
+   /* testpat = 1: GU color-order test pattern — no core, no ROM. */
+   if (fe_ini_get_int(HARNESS_INI, "testpat", 0))
+   {
+      run_testpat();
+      audio_stop();
+      vid_term();
+      fe_evt("exit code=0");
+      evt_shutdown();
+      handoff_run(0, NULL);   /* ADR-0053 */
+      sceKernelExitGame();
+      return 0;
+   }
+
+#ifdef GPSP_PERF_RIG
+   /* icache_inval_probe = 1: does sceKernelIcacheInvalidateRange invalidate
+    * at and above 16 KiB?  (psp/icprobe.c, docs/JIT-COHERENCY.md) -- no core,
+    * no ROM. */
+   if (fe_ini_get_int(HARNESS_INI, "icache_inval_probe", 0))
+   {
+      int rc = icinv_probe_run();
+      audio_stop();
+      vid_term();
+      if (rc == 0)
+         fe_evt("exit code=0 reason=icache_inval_probe");
+      else
+         fe_evt("exit code=5 reason=icinv_fail");
+      evt_shutdown();
+      handoff_run(rc ? 5 : 0, rc ? "icinv_fail" : "icache_inval_probe");
+      sceKernelExitGame();
+      return 0;
+   }
+   /* icache_probe = 1: the I-cache geometry, measured (psp/icprobe.c,
+    * docs/CACHE-MAP.md) -- no core, no ROM. */
+   if (fe_ini_get_int(HARNESS_INI, "icache_probe", 0))
+   {
+      int rc = icprobe_run();
+      audio_stop();
+      vid_term();
+      if (rc == 0)
+         fe_evt("exit code=0 reason=icache_probe");
+      else
+         fe_evt("exit code=5 reason=icprobe_fail");
+      evt_shutdown();
+      handoff_run(rc ? 5 : 0, rc ? "icprobe_fail" : "icache_probe");
+      sceKernelExitGame();
+      return 0;
+   }
+#endif
+
+   /* nettest = 1: Gate-4E transport echo — no core, no ROM. */
+   if (fe_ini_get_int(HARNESS_INI, "nettest", 0))
+   {
+      long secs = fe_ini_get_int(HARNESS_INI, "nettest_secs", 90);
+      int rc = run_nettest(net_host, group, secs);
+      audio_stop();
+      vid_term();
+      if (rc == 0)
+         fe_evt("exit code=0");
+      else
+         fe_evt("exit code=5 reason=nettest_fail");
+      evt_shutdown();
+      handoff_run(5, "nettest_fail");   /* ADR-0053 */
+      sceKernelExitGame();
+      return 0;
+   }
+
+   /* Silent-wireless keys (variant.ini wins; harness silent=1 lets the
+    * harness exercise the policy on the generic build). */
+   {
+      const char *src = have_variant ? VARIANT_INI : HARNESS_INI;
+      long sil = fe_ini_get_int(src, have_variant ? "silent_wireless"
+                                                  : "silent", 0);
+      char role[8] = "";
+      fe_ini_get(src, "role", role, sizeof(role));
+      if (sil)
+         g_silent_mode = (strcmp(role, "host") == 0) ? SIL_HOST :
+                         (strcmp(role, "join") == 0) ? SIL_JOIN : SIL_AUTO;
+      if (!fe_ini_get(src, "group", g_silent_group, sizeof(g_silent_group)))
+         snprintf(g_silent_group, sizeof(g_silent_group), "%s",
+                  group[0] ? group : g_pcfg.group);
+      snprintf(g_silent_nick, sizeof(g_silent_nick), "%s", nick);
+   }
+
+   /* Harness: the in-process return driven without hands.  After
+    * `inproc_frames` frames of each game the loop quits to the game list,
+    * `inproc_cycles` times; game k is `inproc_roms` entry k (a|b|...|f,
+    * relative to roms/, cycling), each booted as `rom =` would boot it.
+    * docs/INPROC-RETURN.md has the census this exists for. */
+   inproc_cycles = fe_ini_get_int(HARNESS_INI, "inproc_cycles", 0);
+   /* Harness `state_save_at = N`: save slot 1 at frame N of every game (the
+    * in-process return's census covers a state save; fixtures for GB). */
+   state_save_at = fe_ini_get_int(HARNESS_INI, "state_save_at", 0);
+   /* `inproc_via_menu = 1`: each quit is the menu's own Quit to game list,
+    * driven by the UI demo engine, instead of a direct one. */
+   inproc_via_menu = (int)fe_ini_get_int(HARNESS_INI, "inproc_via_menu", 0);
+   ui_return_dumps((int)fe_ini_get_int(HARNESS_INI, "ret_dumps", 0));
+   /* The fallbacks, without a radio or a fault: `ret_fade_in = 1` draws the
+    * relaunched browser's fade from black; `inproc_fake_net = 1` marks this
+    * process as having loaded a network module (inproc_refusal). */
+   if (fe_ini_get_int(HARNESS_INI, "ret_fade_in", 0))
+      ui_return_fade_in();
+   if (fe_ini_get_int(HARNESS_INI, "inproc_fake_net", 0))
+      gbadhoc_net_touched = 1;
+   inproc_frames = fe_ini_get_int(HARNESS_INI, "inproc_frames", 240);
+   {
+      char list[6 * 64 + 6];
+      memset(inproc_roms, 0, sizeof(inproc_roms));
+      if (fe_ini_get(HARNESS_INI, "inproc_roms", list, sizeof(list)))
+      {
+         char *p = list;
+         while (*p && inproc_rom_n < 6)
+         {
+            char *bar = strchr(p, '|');
+            if (bar)
+               *bar = '\0';
+            snprintf(inproc_roms[inproc_rom_n++], sizeof(inproc_roms[0]),
+                     "%.63s", p);
+            if (!bar)
+               break;
+            p = bar + 1;
+         }
+      }
+      if (inproc_cycles)
+         fe_evt("inproc_harness cycles=%ld frames=%ld roms=%d",
+                inproc_cycles, inproc_frames, inproc_rom_n);
+   }
+   /* What every game starts from: the values below are per-game state the
+    * session edits (a GB game turns the renderer and the SRAM thread off,
+    * the autoload fires once), restored before each in-process return. */
+   me_rend_cfg_boot = g_me_rend_cfg;
+   sram_thread_boot = g_pcfg.sram_thread;
+   autoload_boot    = g_autoload_state;
+   /* The GB core's one process-lifetime allocation, taken now rather than by
+    * the first GB game, so no game's unload has anything to give back that
+    * a fresh boot would not also hold (docs/INPROC-RETURN.md). */
+   gbcore_prepare();
+
+session_top:
+   /* ROM selection: variant builds auto-boot their baked ROM with a
+    * separate save namespace (<base>/saves/, docs/VARIANTS.md); the
+    * harness ini boots the first ROM in roms/ directly (the
+    * historical Phase-1 behavior every e2e driver relies on); a human
+    * without either gets the browser (plan §8, Gate 2). */
+#ifndef GPSP_NO_TELEMETRY
+   {
+      extern void (*gpsp_heap_census)(const char *where);
+      gpsp_heap_census = heap_census;
+      heap_census("pre_select");
+   }
+#endif
+   if (have_variant)
+   {
+      char vrom[PSP_ROM_REL_PATH_CAP] = "", savedir[160];
+      char stem[PSP_ROM_REL_PATH_CAP];
+      const char *slash;
+      fe_ini_get(VARIANT_INI, "rom", vrom, sizeof(vrom));
+      if (!vrom[0])
+      {
+         fe_evt("exit code=2 reason=bad_variant");
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "bad_variant");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
+      if (psp_rom_path_join(rom_path, sizeof(rom_path), g_dir_base, vrom) != 0)
+      {
+         fe_evt("exit code=2 reason=rom_path_too_long rom=%s", vrom);
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "rom_path_too_long");
+         sceKernelExitGame();
+         return 0;
+      }
+      snprintf(savedir, sizeof(savedir), "%s/saves", g_dir_base);
+      sceIoMkdir(savedir, 0777);
+      slash = strrchr(vrom, '/');
+      snprintf(stem, sizeof(stem), "%s", slash ? slash + 1 : vrom);
+      snprintf(save_path, sizeof(save_path), "%s/saves/%s", g_dir_base, stem);
+      if (make_suffixed_path(save_path, ".sav", save_path,
+                             sizeof(save_path)) != 0)
+      {
+         fe_evt("exit code=2 reason=sidecar_path_too_long rom=%s", vrom);
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "sidecar_path_too_long");
+         sceKernelExitGame();
+         return 0;
+      }
+      snprintf(state_path, sizeof(state_path), "%s/saves/%s", g_dir_base,
+               stem);
+      if (make_suffixed_path(state_path, ".st0", state_path,
+                             sizeof(state_path)) != 0)
+      {
+         fe_evt("exit code=2 reason=sidecar_path_too_long rom=%s", vrom);
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "sidecar_path_too_long");
+         sceKernelExitGame();
+         return 0;
+      }
+      fe_evt("variant rom=%s silent=%d group=%s", vrom, g_silent_mode,
+             g_silent_group);
+   }
+   else if (have_harness && !fe_ini_get_int(HARNESS_INI, "browser", 0))
+   {
+      /* `browser = 1` overrides the ADR-0067 suppression: the gallery runs
+       * even with the harness channel present (asset capture / emulator
+       * shoots — combine with ui_demo=1 for the unattended gallery dump). */
+      /* `rom = <name.gba>` names the cart explicitly, relative to roms/.
+       * Without it find_first_rom() takes whatever the FILESYSTEM returns
+       * first, which is insertion order, not alphabetical -- a card holding
+       * emerald.gba + firered.gba + leafgreen.gba silently picks by luck.
+       * The key lets an arm switch games by staging the ini alone, which
+       * matters because ROMs are far too big to stage. */
+      char kr[PSP_ROM_REL_PATH_CAP] = "";
+      fe_ini_get(HARNESS_INI, "rom", kr, sizeof(kr));
+      if (inproc_rom_n)
+         snprintf(kr, sizeof(kr), "%s", inproc_roms[inproc_n % inproc_rom_n]);
+      if (kr[0])
+      {
+         if (psp_rom_path_join(rom_path, sizeof(rom_path), ROM_DIR, kr) != 0)
+         {
+            fe_evt("exit code=2 reason=rom_path_too_long rom=%s", kr);
+            evt_shutdown();
+            audio_stop();
+            handoff_run(2, "rom_path_too_long");
+            sceKernelExitGame();
+            return 0;
+         }
+         if (!file_exists(rom_path))
+         {
+            /* Loud, not a fallback to some other game: silently running the
+             * wrong cart would invalidate every number the run produces. */
+            fe_evt("exit code=2 reason=rom_missing rom=%s", kr);
+            evt_shutdown();
+            audio_stop();
+            handoff_run(2, "rom_missing");
+            sceKernelExitGame();
+            return 0;
+         }
+         fe_evt("rom selected=%s (harness key)", kr);
+      }
+      else if (find_first_rom(rom_path, sizeof(rom_path)) != 0)
+      {
+         fe_evt("exit code=2 reason=no_rom");
+         evt_shutdown();
+         audio_stop();
+         handoff_run(2, "no_rom");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
+   }
+   else
+   {
+      int browser_state_slot = 0;
+      fe_console_t selected_console = (fe_console_t)g_pcfg.console;
+      int br;
+      if (!inproc_n)
+      {
+         boot_mark("browser");
+         boot_timeline_emit();
+      }
+      br = ui_browser(ROM_DIR, rom_path, sizeof(rom_path),
+                          &browser_state_slot, &selected_console);
+      if (br > 0)
+      {
+         /* Settings changed Media Engine mode, which was latched above.
+          * Nothing is emulating yet -- no SRAM to flush, no core thread to
+          * stop.  Close the log and boot again. */
+         fe_evt("exit code=0 reason=ui_relaunch");
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         relaunch_eboot(0);
+         sceKernelExitGame();
+         return 0;
+      }
+      if (br != 0)
+      {
+         fe_evt("exit code=2 reason=no_rom");
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "no_rom");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
+      g_pcfg.console = (int)selected_console;
+      /* A slot picked on the browser's state shelf (any console). */
+      if (browser_state_slot > 0)
+      {
+         autoload_state_slot = browser_state_slot;
+         g_autoload_state = 1;
+         g_autoload_from_shelf = 1;
+      }
+   }
+   /* Baked variant and harness launches have no interactive filter, so the
+    * file type selects the matching GB hardware model. Browser launches use
+    * the model explicitly chosen by the player. */
+   if (have_variant || (have_harness &&
+       !fe_ini_get_int(HARNESS_INI, "browser", 0)))
+      g_pcfg.console = (int)console_from_rom_path(rom_path);
+   /* PER-CONSOLE DISPLAY PROFILE (docs/DISPLAY-FEATURES.md): the running
+    * ROM's console decides scale, filter, ambient bars and DMG palette.
+    * Before ui_loading_begin (which bakes the ambient texture) and before
+    * cfg.gb_palette is read below. */
+   pcfg_display_select(g_pcfg.console);
+   vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+   vid_ambient_mode(g_pcfg.ambient);
+   vid_ambient_fallback(ui_console_shade(g_pcfg.console));
+   fe_evt("display_profile console=%s scale=%s filter=%s ambient=%d "
+          "gb_palette=%d", pcfg_console_tag(g_pcfg.console),
+          vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),
+          g_pcfg.ambient, g_pcfg.gb_palette);
+   if (!have_variant)
+   {
+      const char *save_suffix =
+         g_pcfg.console == FE_CONSOLE_GBA ? ".sav" :
+         g_pcfg.console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav";
+      if (make_suffixed_path(rom_path, save_suffix, save_path,
+                             sizeof(save_path)) != 0 ||
+          make_suffixed_path(rom_path,
+                             psp_state_slot1_suffix(
+                                (fe_console_t)g_pcfg.console),
+                             state_path, sizeof(state_path)) != 0)
+      {
+         fe_evt("exit code=2 reason=sidecar_path_too_long rom=%s", rom_path);
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(2, "sidecar_path_too_long");
+         sceKernelExitGame();
+         return 0;
+      }
+   }
+   ui_set_state_base(state_path);
+   g_save_path_for_backup = save_path;
+   ui_loading_begin(rom_path); /* also covers harness/variant auto-boot */
+   /* Four bytes at 0xAC name the game for Mystery Gift: which title a card
+    * claims to be for, and what to call it on screen.  Read here, while the
+    * path is in scope, rather than exporting a core global. */
+   if (g_pcfg.console == FE_CONSOLE_GBA)
+      mgift_read_game_code(rom_path);
+   link_read_identity(rom_path);      /* docs/GBA-LINK-UI.md */
+
+   /* ME rendering, its capture format and FF synchronization consume GBA
+    * 240x160 frames. GB-family video uses the normal dimension-aware GE path. */
+   if (g_pcfg.console != FE_CONSOLE_GBA)
+   {
+      g_me_rend_cfg = 0;
+      g_me_video_cfg = 0;
+   }
+   fe_log("rom_path=%s save_path=%s", rom_path, save_path);
+
+   memset(&cfg, 0, sizeof(cfg));
+   cfg.console      = (fe_console_t)g_pcfg.console;
+   cfg.rom_path      = rom_path;
+   cfg.system_dir    = g_dir_base;
+   cfg.save_path     = save_path;
+   cfg.video_frame   = plat_video_frame;
+   cfg.audio_frames  = plat_audio_frames;
+   cfg.input_bitmask = plat_input_bitmask;
+   cfg.time_us       = net_now_us;   /* heartbeat t_us (hw perf baseline) */
+   cfg.yield_thread  = gb_serial_yield;
+   /* GB/GBC cartridge RTCs (MBC3: Gold/Silver/Crystal).  time() on real PSP
+    * firmware is roughly uptime, so without this the clock resets every boot
+    * -- the same trap gpsp_wallclock fixes for the GBA RTC below. */
+   cfg.wallclock     = psp_local_wallclock;
+   /* A GB/GBC cartridge clock counts seconds; the only date in it is the
+    * stamp in the save, which the format defines as UTC.  So that clock runs
+    * on UTC, and the saves 3.5.0 and earlier stamped with local time are
+    * recognised by when this install first ran a release that does
+    * (fe_host.c gb_rtc_from_legacy).  The GBA keeps local time: its RTC is
+    * a calendar. */
+   if (g_pcfg.console != FE_CONSOLE_GBA)
+   {
+      cfg.wallclock = psp_utc_wallclock;
+      cfg.wallclock_legacy = psp_local_wallclock;
+      cfg.gb_rtc_legacy_before =
+         (long long)pcfg_gb_rtc_utc_since((long)psp_local_wallclock());
+      fe_evt("gb_rtc utc=%lld local=%lld legacy_before=%lld",
+             (long long)psp_utc_wallclock(), (long long)psp_local_wallclock(),
+             cfg.gb_rtc_legacy_before);
+   }
+   /* A link-session harness run with gblink_rtc_seed: the cartridge clock
+    * is that seed, frozen, on BOTH consoles, from boot -- not the PSP's own
+    * clock.  The session takes each console's save from its running game,
+    * so the save's clock is whatever the console's clock made it: in
+    * hardware run hw1 the PSP-1000 (clock 2011) loaded the 2026-stamped
+    * Crystal save as "clock not real" and reset it, the session then
+    * advanced that 2011 stamp to the 2026 seed (15.6 years), the day
+    * counter overflowed, and Crystal stopped at "The clock's time may be
+    * wrong." -- the join's script failed at frame 2178 in both Gen 2 runs.
+    * A frozen seed gives the same save image on any console and in PPSSPP. */
+   if (g_gblink_seed)
+   {
+      g_gblink_clock = (time_t)g_gblink_seed;
+      cfg.wallclock = gblink_seed_wallclock;
+      cfg.wallclock_legacy = NULL;   /* one frozen clock: nothing to move */
+      fe_evt("gblink_wallclock frozen=%lld (harness gblink_rtc_seed)",
+             g_gblink_seed);
+   }
+   cfg.gb_palette    = g_pcfg.gb_palette;   /* GB/GBC DMG palette */
+   cfg.gbc_raw_colors = !g_pcfg.gbc_color_correction;
+   cfg.gb_find_rom   = psp_gb_find_rom;     /* GB link: partner cartridge */
+   cfg.gblink_batch  = g_gblink_batch;
+   cfg.gblink_live   = g_gblink_live;
+   cfg.gblink_input_copies = g_gblink_copies;
+   cfg.gblink_resume_boot = g_gblink_resume_boot;
+   cfg.gblink_pace_slot0 = g_gblink_pace0;
+   cfg.heartbeat_frames = g_telemetry_period;
+   cfg.gblink_rtc_keep_session_stamp = g_gblink_keep_stamp;
+   cfg.gblink_wait   = plat_gblink_wait;    /* stall absorption */
+   cfg.gblink_nack   = g_gbl_nack;          /* resend requests */
+   cfg.gblink_hash_every  = g_gbl_hash_every;   /* harness A/B */
+   cfg.gblink_hash_legacy = g_gbl_hash_legacy;
+   if (g_gblink_bulk_bytes)
+   {
+      cfg.gb_bulk_enable = psp_gb_bulk_enable;
+      cfg.gb_bulk_send   = psp_gb_bulk_send;
+      cfg.gb_bulk_recv   = psp_gb_bulk_recv;
+      cfg.gb_bulk_max    = g_gblink_bulk_bytes;
+      cfg.gb_bulk_rate   = g_gblink_bulk_rate;
+   }
+   /* host=1 / join=1 on a GB/GBC cartridge is a link-session run. */
+   if (g_pcfg.console != FE_CONSOLE_GBA && !g_gblink_role && (net_host || net_join))
+      g_gblink_role = net_host ? 1 : 2;
+   /* harness link_script_waits = 1: a menu-started session's rig holds the
+    * autopilot until the link runs, as gblink_role does (docs/
+    * GBA-LINK-UI.md); a release build reads no harness key. */
+   cfg.gblink_script_waits = g_gblink_role != 0 ||
+      fe_ini_get_int(HARNESS_INI, "link_script_waits", 0) != 0;
+   /* LINK SPEED defaults (PLAY_* above), every build: config.ini is the
+    * kill switch; the harness block below overrides for an A/B arm.  The
+    * two core switches are weak: a build without SCHED_FAST / IRQ_IO_FAST
+    * has no such variable.  irq_io_fast is read when the emitter builds its
+    * stubs, so it is set here, before any game loads. */
+   {
+      extern uint32_t sched_fast __attribute__((weak));
+      extern uint32_t irq_io_fast __attribute__((weak));
+      if (&sched_fast)
+         sched_fast = fe_ini_get_int(p_config, "sched_fast",
+                                     PLAY_SCHED_FAST) ? 1u : 0u;
+      if (&irq_io_fast)
+         irq_io_fast = fe_ini_get_int(p_config, "irq_io_fast",
+                                      PLAY_IRQ_IO_FAST) ? 1u : 0u;
+#ifdef GBA_LINK
+      {
+         long v = fe_ini_get_int(p_config, "gba_link_headless_audio",
+                                 PLAY_GBA_LINK_HEADLESS_AUDIO);
+         cfg.gba_dual_partner_audio = v == 2 ? -1 : (v ? 0 : 1);
+         v = fe_ini_get_int(p_config, "gba_link_fast", PLAY_GBA_LINK_FAST);
+         cfg.gba_dual_cable_fast = (v >= 0 && v <= 3) ? (int)v : 0;
+      }
+#endif
+   }
+#ifdef GPSP_PERF_RIG
+   /* Harness: the GB link session's machine pair without the network --
+    * gb_dual_rom = <full path> runs that cart headless beside the player's
+    * (fe_host.h), gb_dual_mirror = 1 hands it the player's buttons, and
+    * gb_dual_state = <full path of a .stN> starts it from a save state.  For
+    * measuring what the second machine costs. */
+   {
+      /* A value without a device (no ':') names a file in this app's roms
+       * folder, so one ini works on ms0: and on the Go's ef0:. */
+      static char dual_rom[352], dual_state[352];
+      char v[200];
+      /* gb_headless = 1: the single machine without picture or synthesis
+       * (what a link session's partner machine costs on its own). */
+      cfg.gb_bench_headless = (int)fe_ini_get_int(HARNESS_INI, "gb_headless", 0);
+      if (fe_ini_get(HARNESS_INI, "gb_dual_rom", v, sizeof(v)) && v[0])
+      {
+         snprintf(dual_rom, sizeof(dual_rom), "%s%s%s",
+                  strchr(v, ':') ? "" : p_rom_dir, strchr(v, ':') ? "" : "/",
+                  v);
+         cfg.gb_dual_rom = dual_rom;
+         cfg.gb_dual_mirror =
+            (int)fe_ini_get_int(HARNESS_INI, "gb_dual_mirror", 0);
+         cfg.gb_dual_batch =
+            (unsigned)fe_ini_get_int(HARNESS_INI, "gb_dual_batch", 1);
+         if (fe_ini_get(HARNESS_INI, "gb_dual_state", v, sizeof(v)) && v[0])
+         {
+            snprintf(dual_state, sizeof(dual_state), "%s%s%s",
+                     strchr(v, ':') ? "" : p_rom_dir,
+                     strchr(v, ':') ? "" : "/", v);
+            cfg.gb_dual_state = dual_state;
+         }
+      }
+   }
+#ifdef GBA_LINK
+   /* Harness: the GBA link mirror's machine pair without the network
+    * (docs/GBA-LINK-MIRROR.md).  gba_dual = 1 runs a second GBA core on this
+    * cartridge, cabled to the player's and started from every state it
+    * loads; its buttons are the player's (gba_dual_mirror = 1) or the
+    * frame-stamped gba_dual_script; gba_dual_lookahead in cycles;
+    * gba_dual_hash = 1 writes both machines' per-frame hashes to
+    * log/gbadual_hash.txt. */
+   {
+      static char gd_script[200], gd_hash[200], gd_ap[200];
+      cfg.gba_dual = (int)fe_ini_get_int(HARNESS_INI, "gba_dual", 0);
+      cfg.gba_dual_mirror =
+         (int)fe_ini_get_int(HARNESS_INI, "gba_dual_mirror", 0);
+      cfg.gba_dual_lookahead =
+         (unsigned)fe_ini_get_int(HARNESS_INI, "gba_dual_lookahead", 0);
+      cfg.gba_dual_own_rom =
+         (int)fe_ini_get_int(HARNESS_INI, "gba_dual_own_rom", 0);
+      /* GBA-LINK-MIRROR.md 16: the headless partner mixes no sound
+       * (config.ini kill switch; the harness key wins for an A/B arm) */
+      {
+         long v = fe_ini_get_int(p_config, "gba_link_headless_audio",
+                                 PLAY_GBA_LINK_HEADLESS_AUDIO);
+         v = fe_ini_get_int(HARNESS_INI, "gba_link_headless_audio", v);
+         /* 2 (section 23): as 1, and the partner's ring is not read out */
+         cfg.gba_dual_partner_audio = v == 2 ? -1 : (v ? 0 : 1);
+         v = fe_ini_get_int(p_config, "gba_link_sram_crc", 0);
+         cfg.gba_dual_sram_crc =
+            fe_ini_get_int(HARNESS_INI, "gba_link_sram_crc", v) != 0;
+         /* 17.5: instance B's translation cache offset mod 8 KiB (-1 = the
+          * build's JIT_PIN_OFFSET, the same sets as instance A) */
+         v = fe_ini_get_int(p_config, "gba_link_jit_pin_b", -1);
+         v = fe_ini_get_int(HARNESS_INI, "gba_link_jit_pin_b", v);
+         cfg.gba_dual_b_jit_pin_p1 = v >= 0 ? (unsigned)(v & 8191) + 1u : 0u;
+         /* 21: the cable fast path in both cores (pure speed, same
+          * machines; 0 = the path every build up to 3.5.0 used) */
+         v = fe_ini_get_int(p_config, "gba_link_fast", PLAY_GBA_LINK_FAST);
+         v = fe_ini_get_int(HARNESS_INI, "gba_link_fast", v);
+         /* 24: scheduler fast paths (SCHED_FAST builds only; default 0).
+          * Weak: a build without the switch has no such variable. */
+         {
+            extern uint32_t sched_fast __attribute__((weak));
+            long sf = fe_ini_get_int(HARNESS_INI, "sched_fast",
+                                     &sched_fast ? (long)sched_fast : 0);
+            if (&sched_fast)
+               sched_fast = sf ? 1u : 0u;
+            fe_evt("sched_fast built=%d on=%d", &sched_fast != NULL,
+                   &sched_fast ? (int)sched_fast : 0);
+         }
+         /* 26: PROTOTYPE, guest-visible (TIMER_LAZY builds only; default 0).
+          * Part of the session's core mask: both consoles must agree. */
+         {
+            extern uint32_t timer_lazy __attribute__((weak));
+            long tl = fe_ini_get_int(HARNESS_INI, "timer_lazy", 0);
+            if (&timer_lazy)
+               timer_lazy = tl ? 1u : 0u;
+            cfg.gba_core_mask = (&timer_lazy && timer_lazy) ? 1u : 0u;
+            /* 28/29: "Fast link" is NOT set here: it is the player's
+             * setting, read when a session starts (gblink_begin). */
+            fe_evt("timer_lazy built=%d on=%d core_mask=%08x",
+                   &timer_lazy != NULL, &timer_lazy ? (int)timer_lazy : 0,
+                   cfg.gba_core_mask);
+         }
+         /* 25: IE/IF/IME stores inline in the I/O store stub (IRQ_IO_FAST
+          * builds only; default 0).  Read by the emitter at game load. */
+         {
+            extern uint32_t irq_io_fast __attribute__((weak));
+            long qf = fe_ini_get_int(HARNESS_INI, "irq_io_fast",
+                                     &irq_io_fast ? (long)irq_io_fast : 0);
+            if (&irq_io_fast)
+               irq_io_fast = qf ? 1u : 0u;
+            fe_evt("irq_io_fast built=%d on=%d", &irq_io_fast != NULL,
+                   &irq_io_fast ? (int)irq_io_fast : 0);
+         }
+         /* 22: 2 = the checking mode (the full path decides, the fast
+          * path's answers are compared with it and disagreements counted) */
+         /* 23: 3 = the fast path plus the lean inline hooks */
+         cfg.gba_dual_cable_fast = (v >= 0 && v <= 3) ? (int)v : 0;
+         /* 22: the pair's wall-clock bound per step, ms (0 = 15000,
+          * negative = none) */
+         cfg.gba_dual_step_max_ms =
+            (int)fe_ini_get_int(HARNESS_INI, "gba_link_step_max_ms", 0);
+         /* 21: the one-console bench starts its pair at power-on (harness
+          * only; without it the pair waits for a state load) */
+         cfg.gba_dual_cold =
+            fe_ini_get_int(HARNESS_INI, "gba_dual_cold", 0) != 0;
+         /* 18: lend instance B's static block to the ROM cache while no
+          * session runs (kill switch gba_link_lend = 0) */
+         v = fe_ini_get_int(p_config, "gba_link_lend", 1);
+         v = fe_ini_get_int(HARNESS_INI, "gba_link_lend", v);
+         cfg.gba_link_nolend = v ? 0 : 1;
+      }
+      if (fe_ini_get(HARNESS_INI, "gba_dual_script", gd_script,
+                     sizeof(gd_script)) && gd_script[0])
+         cfg.gba_dual_script = gd_script;
+      /* gba_dual_autopilot = file: the partner's autopilot script (RAM
+       * predicates on the partner's machine); wins over gba_dual_script. */
+      if (fe_ini_get(HARNESS_INI, "gba_dual_autopilot", gd_ap,
+                     sizeof(gd_ap)) && gd_ap[0])
+         cfg.gba_dual_autopilot = gd_ap;
+      if (fe_ini_get_int(HARNESS_INI, "gba_dual_hash", 0))
+      {
+         snprintf(gd_hash, sizeof(gd_hash), "%s/gbadual_hash.txt", LOG_DIR);
+         cfg.gba_dual_hash = gd_hash;
+      }
+      /* gblink_role = host|join with gba_dual = 1 on a GBA game: a
+       * two-console link-cable session instead of the one-console bench.
+       * gblink_hash_every: slot-0 frames between the session's HASH
+       * messages (0 = 240, as a GB session). */
+      g_gba_cable = cfg.gba_dual && g_gblink_role &&
+                    g_pcfg.console == FE_CONSOLE_GBA;
+      cfg.gba_dual_session = g_gba_cable;
+      /* harness `link_avail = 1` (with gba_dual_late = 1): what a player's
+       * build does at every GBA game load -- a cable room CAN be hosted, no
+       * session is running.  For tests of everything that must keep
+       * working in that state (the rewind did not: fe_host_rewind_blocked). */
+      if (fe_ini_get_int(HARNESS_INI, "link_avail", 0) && !g_gba_cable &&
+          g_pcfg.console == FE_CONSOLE_GBA)
+      {
+         cfg.gba_dual = 1;
+         cfg.gba_dual_session = 1;
+      }
+      cfg.gblink_hash_every = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                       "gblink_hash_every", 0);
+      if (g_gba_cable)
+         fe_evt("gba_cable role=%s hash_every=%u", g_gblink_role == 1 ?
+                "host" : "join", cfg.gblink_hash_every);
+      fe_evt("gba_dual_cfg on=%d mirror=%d own_rom=%d lookahead=%u "
+             "script=%s hash=%d partner_audio=%d sram_crc=%d jit_pin_b=%d "
+             "fast=%d cold=%d",
+             cfg.gba_dual,
+             cfg.gba_dual_mirror, cfg.gba_dual_own_rom,
+             cfg.gba_dual_lookahead,
+             cfg.gba_dual_script ? cfg.gba_dual_script : "-",
+             cfg.gba_dual_hash != NULL, cfg.gba_dual_partner_audio,
+             cfg.gba_dual_sram_crc, (int)cfg.gba_dual_b_jit_pin_p1 - 1,
+             cfg.gba_dual_cable_fast, cfg.gba_dual_cold);
+   }
+#endif
+#endif
+   /* THE PLAYER'S LINK CABLE (docs/GBA-LINK-UI.md).  The Wireless menu can
+    * host or join a Link Cable room on any GBA game, so instance B is loaded
+    * for sessions at boot (idle until one starts: fe_gbadual's session mode
+    * never runs it alone; its JIT is the static small tier), and the
+    * session's memory is reserved below when the game can link by cable at
+    * all.  A release build does this for every GBA game; a harness build
+    * only with gba_link_menu = 1, so the rigs' single-player and role runs
+    * are what they were. */
+   ui_linkmode_load(p_rom_dir);
+#ifdef GBA_LINK
+   {
+#ifdef GPSP_PERF_RIG
+      int menu = (int)fe_ini_get_int(HARNESS_INI, "gba_link_menu", 0);
+      g_link_exit_after = (unsigned)fe_ini_get_int(HARNESS_INI,
+                                                   "link_exit_after", 0);
+      fe_host_gba_cable_rom_sampled(
+         !fe_ini_get_int(HARNESS_INI, "gba_link_rom_full", 0));
+#else
+      int menu = 1;
+#endif
+      if (menu && g_pcfg.console == FE_CONSOLE_GBA && !cfg.gba_dual)
+      {
+         cfg.gba_dual = 1;
+         cfg.gba_dual_session = 1;
+      }
+      g_gba_cable_ok = cfg.gba_dual && cfg.gba_dual_session;
+      /* Section 19: B loads at session start, its memory the session's.  A
+       * player's build always; a harness run with gba_dual_late = 1 (the
+       * rigs' role sessions keep B loaded at boot unless they ask). */
+#ifdef GPSP_PERF_RIG
+      g_gba_late = (int)fe_ini_get_int(HARNESS_INI, "gba_dual_late", 0) != 0;
+      cfg.gba_session_reserve_kb = (unsigned)fe_ini_get_int(HARNESS_INI,
+         "cable_reserve_kb", (long)CABLE_RESERVE_KB);
+      cfg.gba_sessmem_fail = (int)fe_ini_get_int(HARNESS_INI,
+                                                 "sessmem_fail", 0);
+      if (cfg.gba_sessmem_fail)
+         fe_evt("sessmem_fail mode=%d", cfg.gba_sessmem_fail);
+#else
+      g_gba_late = 1;
+      cfg.gba_session_reserve_kb = CABLE_RESERVE_KB;
+#endif
+      cfg.gba_dual_late = g_gba_late;
+      cfg.gba_reload_note = gba_reload_note;
+      /* Section 20: a cable session's translation-cache offsets mod 8 KiB per
+       * tier (A = this game's core, B = the partner's; -1 = A keeps the
+       * single-player pin, B the build's).  config.ini or harness keys
+       * gba_link_pin_{a,b}_{small,large}; the session's start applies them
+       * by reloading A, its end puts the single-player pin back. */
+      {
+         static const char *const kn[4] = {
+            "gba_link_pin_a_small", "gba_link_pin_a_large",
+            "gba_link_pin_b_small", "gba_link_pin_b_large" };
+         static const long def[4] = { GBA_SESS_PIN_A_SMALL, GBA_SESS_PIN_A_LARGE,
+                                      GBA_SESS_PIN_B_SMALL, GBA_SESS_PIN_B_LARGE };
+         int k;
+         for (k = 0; k < 4; k++)
+         {
+            long v = fe_ini_get_int(p_config, kn[k], def[k]);
+            unsigned p1;
+#ifdef GPSP_PERF_RIG
+            /* spelled out, not kn[k]: rig key audits (link_hw.py) look for
+             * the literal read of every harness key they emit */
+            switch (k)
+            {
+            case 0: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_a_small", v); break;
+            case 1: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_a_large", v); break;
+            case 2: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_b_small", v); break;
+            default: v = fe_ini_get_int(HARNESS_INI, "gba_link_pin_b_large", v); break;
+            }
+#endif
+            p1 = v >= 0 ? (unsigned)(v & 8191) + 1u : 0u;
+            if (k < 2)
+               cfg.gba_sess_pin_a_p1[k] = p1;
+            else
+               cfg.gba_sess_pin_b_p1[k - 2] = p1;
+         }
+         fe_evt("gba_sess_pin a=%d/%d b=%d/%d (small/large, -1 keep)",
+                (int)cfg.gba_sess_pin_a_p1[0] - 1,
+                (int)cfg.gba_sess_pin_a_p1[1] - 1,
+                (int)cfg.gba_sess_pin_b_p1[0] - 1,
+                (int)cfg.gba_sess_pin_b_p1[1] - 1);
+      }
+      fe_evt("gba_link_menu on=%d cable_ok=%d late=%d", menu, g_gba_cable_ok,
+             g_gba_late);
+   }
+#endif
+   cfg.core_counters = plat_core_counters;                   /* ADR-0028 */
+   cfg.boot_status   = rom_loading_stage;
+   cfg.smc_addr      = plat_smc_addr;                        /* ADR-0030 */
+   cfg.smc_block     = plat_smc_block;                       /* phase 5g */
+   cfg.core_phase    = plat_core_phase;                      /* phase 5h */
+   smc_prof_clock    = plat_smc_clock;                       /* phase 5g */
+   /* Order matters: the core clamps the level to 0 without a clock. */
+   core_phase_set_level((unsigned)g_pcfg.core_phase);         /* phase 5h */
+   /* ADR-0034: staging placement.  Logged with the mode ACTUALLY IN FORCE,
+    * not the one requested — VRAM silently falls back if it will not fit,
+    * and a field log that reported the request would be a lie. */
+   {
+      int bm = vid_set_blit_mode(g_pcfg.blit_mode);
+      fe_evt("blit_mode req=%d mode=%d name=%s", g_pcfg.blit_mode, bm,
+             vid_blit_mode_name(bm));
+      g_pcfg.blit_mode = bm;
+   }
+   vid_set_gu_defer(g_pcfg.gu_defer);
+   fe_evt("gu_defer=%d", vid_gu_defer());
+
+   /* THE CONSOLE'S CLOCK FOR THE GBA RTC -- see gpsp_wallclock in
+    * gba_memory.c.  Must be set before the cart loads, which is when the
+    * RTC takes its base. */
+   {
+      extern time_t (*gpsp_wallclock)(void);
+      gpsp_wallclock = psp_local_wallclock;
+      /* THE CARTRIDGE CLOCK IS THE CONSOLE'S (rtc_clock.h): published here
+       * so the very first read has it, then kept current by the main loop.
+       * A harness run keeps the repeatable frame clock unless it asks
+       * (`rtc_wall = 1`): every rig compares runs made at different hours,
+       * and a game that tints the screen by time of day would differ. */
+      g_rtc_wall_on = have_harness
+         ? (int)fe_ini_get_int(HARNESS_INI, "rtc_wall", 0) != 0
+         : g_pcfg.rtc_realtime != 0;
+      rtc_wall_publish(1);
+      fe_evt("rtc_wall on=%d src=%s", g_rtc_wall_on,
+             have_harness ? "harness" : "config");
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+      {
+         ScePspDateTime dt;
+         time_t libc_now = time(NULL);
+         memset(&dt, 0, sizeof(dt));
+         sceRtcGetCurrentClockLocalTime(&dt);
+         fe_evt("rtc_seed local=%04u-%02u-%02u %02u:%02u:%02u "
+                "wallclock=%lld libc_time=%lld",
+                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second,
+                (long long)psp_local_wallclock(), (long long)libc_now);
+      }
+#endif
+   }
+
+   /* The boot runs outside the loop's park point for up to seconds: the ROM
+    * load (a resident 32 MiB cart), the battery, the ME module and renderer
+    * (me_rend_init), the wireless bring-up of a harness role.  The power
+    * switch waits for the loop (pwr_hold, see power_cb); every failure exit
+    * below releases it through handoff_run / sceKernelExitGame. */
+   pwr_hold("boot");
+#ifndef GPSP_NO_TELEMETRY
+   heap_census("post_select");
+#endif
+   /* The heap this game's unload must give back, byte for byte -- taken
+    * before the GBA link's cable reserve, which the in-process return
+    * frees with the game (docs/INPROC-RETURN.md). */
+   heap_trace_mark();
+   heap_snap(&snap_pre);
+   fe_evt("inproc_session n=%d rom=%s", inproc_n, rom_path);
+#ifdef GBA_LINK
+   /* A menu cable session needs it too, unless this game can only host
+    * and join Wireless Adapter rooms (link_games.h + the override).  Not in
+    * late mode (GBA-LINK-MIRROR.md 19): a session's memory then comes from
+    * instance B's block, withdrawn from the ROM cache at session start. */
+   if (!g_gba_late &&
+       (g_gba_cable ||
+        (g_gba_cable_ok &&
+         ui_link_mode_for(g_game_code, g_game_key) != LINK_ADAPTER)))
+   {
+      /* Taken before the boot gate so the gate sees what the core will:
+       * a reserve that would leave the core below its minimum (a hang, see
+       * MEM_GBA_CORE_MIN) is handed back, and the session then fails to
+       * start with an EVT instead. */
+      long kb = fe_ini_get_int(HARNESS_INI, "cable_reserve_kb",
+                               (long)CABLE_RESERVE_KB);
+      unsigned left = 0;
+      if (kb > 0 && kb <= 16384)
+         g_cable_reserve = malloc((size_t)kb << 10);
+      if (g_cable_reserve && !mem_budget_gba_ok(&left))
+      {
+         free(g_cable_reserve);
+         g_cable_reserve = NULL;
+         fe_evt("cable_reserve released reason=core_min largest=%u", left);
+      }
+      fe_evt("cable_reserve kb=%ld got=%d", kb, g_cable_reserve != NULL);
+   }
+#endif
+#if defined(GBA_LINK) || defined(GPSP_MEM_BUDGET)
+   /* THE BOOT GATE (docs/MEMORY-BUDGET.md): a console that cannot give the
+    * core its minimum gets a screen that says so, not the NULL-page hang. */
+   if (g_pcfg.console == FE_CONSOLE_GBA)
+   {
+      unsigned have = 0;
+      if (!mem_budget_gba_ok(&have))
+      {
+         char l2[80], l3[80];
+         snprintf(l2, sizeof(l2), "A GBA game needs %u KiB of free memory",
+                  (unsigned)(MEM_GBA_CORE_MIN >> 10));
+         snprintf(l3, sizeof(l3), "to start; this console has %u KiB left.",
+                  have >> 10);
+         fe_evt("mem_budget FAIL need=%u largest=%u", (unsigned)MEM_GBA_CORE_MIN,
+                have);
+         ui_loading_finish(0);
+         ui_notice("NOT ENOUGH MEMORY", "This build cannot start a game here.",
+                   l2, l3, 15000);
+         fe_evt("exit code=8 reason=mem_budget");
+         evt_shutdown();
+         audio_stop();
+         vid_term();
+         handoff_run(1, "mem_budget");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
+   }
+#endif
+   /* THE ROM PAGE CACHE'S SIZE, chosen before retro_init takes it. */
+   rom_cache_select(rom_path);
+
+   /* Boot observer only: page faults and normal emulation never draw UI. */
+   extern void (*gpsp_rom_load_progress)(unsigned, unsigned);
+   gpsp_rom_load_progress = rom_loading_progress;
+#ifdef REWIND
+   /* Before the cartridge: the core fills the heap with it on a PSP-1000. */
+   g_rw_on = 0;
+   g_rw_asleep = 0;
+   g_rw_pool = 0;
+   g_rw_showing = 0;
+   g_rw_show = NULL;
+   g_rw_slot = NULL;
+   memset(&g_rwh, 0, sizeof(g_rwh));
+   g_rwh.head = -1.5707963f;            /* the ring's head starts at the top */
+   g_rwh.sp = 1.0f;
+   psp_rewind_read_ini();               /* the Settings toggle, as it is NOW */
+   if (g_rw_want && g_pcfg.console == FE_CONSOLE_GBA)
+   {
+      size_t pool_bytes;
+      void *pool = psp_rewind_pool_offer(&pool_bytes);
+      fe_host_rewind_set_pool(pool, pool_bytes);
+      (void)fe_host_rewind_reserve(&g_rw_opts);
+   }
+   else
+      fe_host_rewind_prepare(NULL);     /* off: the store paths carry no marks */
+#endif
+   int boot_rc = fe_host_boot(&cfg);
+   gpsp_rom_load_progress = NULL;
+#ifdef REWIND
+   if (boot_rc == 0 && g_rw_want && g_pcfg.console == FE_CONSOLE_GBA)
+      g_rw_on = fe_host_rewind_enable(&g_rw_opts) == 0;
+   g_rw_gb = boot_rc == 0 && g_rw_want && g_pcfg.console != FE_CONSOLE_GBA;
+   if (!g_rw_on)
+      g_rw_pool = 0;
+#endif
+   /* The Wireless menus' view of this game (docs/GBA-LINK-UI.md): can it
+    * host a Link Cable room in this boot (instance B loaded)? */
+   ui_set_game(g_pcfg.console == FE_CONSOLE_GBA ? g_game_code : NULL,
+               g_pcfg.console == FE_CONSOLE_GBA ? NULL : g_gb_title,
+               g_game_key, fe_host_gba_cable_ready());
+#ifdef GPSP_CHEATS
+   /* This game's cheat list and the player's choices (docs/CHEATS.md).  After
+    * the boot: the list is static, the file is read with sceIo, so the core's
+    * take-everything ROM allocation is undisturbed.  Codes first run at the
+    * top of the first emulated frame. */
+   if (boot_rc == 0)
+   {
+      int on = ui_cheats_load(rom_path, g_pcfg.console, 1);
+      /* A session that is already up (a harness boot that hosts) locks them
+       * before the first frame, and says so instead. */
+      cheats_link_poll();
+      if (on == 1 && !fe_cheats_locked())
+         osd_toast("1 cheat on");
+      else if (on > 1 && !fe_cheats_locked())
+         osd_toast("%d cheats on", on);
+   }
+#endif
+   if (boot_rc == 0)
+   {
+      rom_loading_stage("Starting renderer");
+      /* ADR-0028: adopt the core's real audio rate now that it exists. The
+       * audio thread re-reads g_audio_step every output chunk, so this is
+       * picked up without restarting it. */
+      unsigned r = fe_host_sample_rate();
+      if (r)
+      {
+         in_rate = r;
+         pace_audio_step(PACE_NOMINAL_X100);
+         fe_evt("audio_rate in=%u out=%u step=%u", in_rate, OUT_RATE,
+                g_audio_step);
+      }
+
+      /* ---- ADR-0080: Media Engine bring-up ---------------------------
+       * All three keys are harness-only and default OFF: the shipped
+       * binary is single-core byte-for-byte until an ini says otherwise.
+       * me_boot loads the kernel PRX and handshakes; me_bench runs the
+       * Stage-0 microbenchmark (boot-time only — the WLAN-contention arm
+       * runs it while a session is live, which is the go/no-go gate the
+       * MEDIAENGINE findings demand); me_video enables the Stage-1
+       * staging pipeline, which additionally needs the boot to have
+       * produced a core framebuffer to double-buffer. */
+      {
+         /* Defaults were hardcoded 0, which silently left the PLAYABLE build
+          * single-core despite PLAY_ME_BOOT/PLAY_ME_VIDEO=1 (the same latent
+          * bug class as the exit_assist default).  PLAY_* now reaches here. */
+         /* config.ini is the base, harness overrides.  It became a player
+          * key for the standby investigation: `me_mode = 0` turns the
+          * RENDERER off but the module still loads, so the first attempt to
+          * isolate "did we ever load a kernel module" was void -- the log said
+          * `me_init state=up` with me_mode=0.  This key is the real switch. */
+         int meb = (int)fe_ini_get_int(HARNESS_INI, "me_boot",
+                                       g_pcfg.me_boot);
+         int mbn = (int)fe_ini_get_int(HARNESS_INI, "me_bench", 0);
+         int mev = (int)fe_ini_get_int(HARNESS_INI, "me_video", PLAY_ME_VIDEO);
+         if (g_pcfg.console != FE_CONSOLE_GBA)
+            meb = mbn = mev = 0;
+         if (g_me_rend_cfg)
+         {
+            meb = 1;         /* the renderer needs the ME booted */
+            mev = 0;         /* and owns the ME: staging offload excluded */
+         }
+         /* me_boot = 0 IS AUTHORITATIVE, and it has to be, because the load is
+          * `meb || mbn || mev` and me_video defaults to 1 in a playable build.
+          * Two standby runs were spent on a switch that did not switch: the
+          * log said `me_init state=up` with me_boot = 0 because me_video had
+          * already voted yes.  A key that means "never touch the second core"
+          * must outrank every other vote, including the renderer's. */
+         if (!g_pcfg.me_boot)
+         {
+            meb = mbn = mev = 0;
+            g_me_rend_cfg = 0;
+         }
+         fe_evt("me_boot cfg=%d boot=%d bench=%d video=%d rend=%d standby=%d",
+                g_pcfg.me_boot, meb, mbn, mev, g_me_rend_cfg, g_pcfg.standby);
+         /* With standby armed the ME may only come up if it can take the
+          * kernel's SceMeRpc sysevent slot -- that handler is what puts the
+          * second core away on suspend, and a console that cannot do that
+          * hard-resets on wake.  Single-core is the safe degradation. */
+         me_host_require_sysevent(g_pcfg.standby ? 1 : 0);
+         if (meb || mbn || mev)
+         {
+            int me_rc = me_host_init(g_dir_base);
+            if (me_rc < 0 && g_pcfg.standby)
+            {
+               /* The one failure a player must be TOLD about.  With standby on
+                * the engine refuses to start unless it can take the kernel's
+                * sleep handler, so a console in this state is running
+                * single-core -- correct and safe, but visibly slower with no
+                * explanation, because a release build has no log to read.
+                * Silence here would read as "this emulator is slow". */
+               osd_toast("Sleep unsupported here: running single-core");
+               osd_toast("Set standby = 0 in CONFIG.INI for full speed");
+            }
+            if (me_rc == 0)
+            {
+               if (mbn)
+                  me_host_bench(76800, 32);
+               if (g_me_rend_cfg)
+               {
+                  /* MEDIA ENGINE MODE: allocate + go, right now.  Unlike
+                   * me_video this is a whole-app mode, not session-gated —
+                   * the np_start heap interaction is a known open question
+                   * (ADR-0080d); alloc failure or a mid-run wedge falls
+                   * back to CPU rendering, never breaks the app. */
+                  if (me_rend_init() != 0)
+                     g_me_rend_cfg = 0;
+               }
+               else if (mev && gba_screen_pixels)
+               {
+                  /* ADR-0080c/d: CONFIGURE only.  No allocation here — the
+                   * buffers (242 KB) are allocated at session-up in
+                   * me_video_activate, AFTER np_start has claimed its heap.
+                   * Pre-allocating at boot starved the host's np_start
+                   * (auto343).  Activation + alloc both wait for g_net_up,
+                   * so the ME video path never touches session creation on
+                   * host or join. */
+                  g_me_video_cfg = 1;
+                  fe_evt("me_video armed (alloc + activate when session up)");
+               }
+            }
+         }
+      }
+   }
+   else
+   {
+      int refusal = fe_host_battery_refusal();
+      ui_loading_finish(0);
+      /* A save that exists but could not be read stops the boot, so the
+       * game cannot overwrite it.  Say so: a bare return to the XMB left
+       * the player with a game that would not start and no reason. */
+      if (refusal == 1)
+         ui_notice("SAVE FILE COULD NOT BE READ",
+                   "The Memory Stick could not read its .sav file.",
+                   "The file has not been changed. Back it up,",
+                   "then rename it to start without the save.",
+                   30000);
+      else if (refusal == 2)
+         ui_notice("NOT ENOUGH MEMORY",
+                   "No memory is left to load this game's save.",
+                   "The save has not been changed.", NULL, 30000);
+      fe_evt("exit code=1 reason=load_failed battery=%d", refusal);
+      evt_shutdown();
+      audio_stop();
+      vid_term();
+      handoff_run(1, "load_failed");   /* ADR-0053 */
+      sceKernelExitGame();
+      return 0;
+   }
+
+   ui_loading_finish(1);
+   rig_rom_identity(rom_path);
+
+   /* Heap headroom after the core's greedy ROM-buffer allocation (Gate-1
+    * memory measurement; PPSSPP models more RAM than a PSP-1000 — the real
+    * verdict lands at Gate 4-H). */
+   fe_evt("mem_free=%d max_block=%d",
+          sceKernelTotalFreeMemSize(), sceKernelMaxFreeMemSize());
+#ifndef GPSP_NO_TELEMETRY
+   {
+      /* The same moment, inside the heap: this is the post-load budget the
+       * PSP-1000 lives on (see heap_budget).  Then the translation-cache
+       * tier the core chose in retro_init -- once per boot, since the core
+       * decides once per process.  tier=none: a GB/GBC game, no dynarec. */
+      unsigned hb_total = 0, hb_top = 0;
+      heap_budget(&hb_total, &hb_top);
+      fe_evt("heap_budget free=%u top=%u", hb_total, hb_top);
+      heap_census("post_load");
+      {
+         extern u32 rom_cache_watermark;
+         fe_evt("jit_cache tier=%s rom=%u ram=%u base=%p reason=%s forced=%u "
+                "mod8k=0x%04x stubs=%u",
+                jit_cache_tier == 2 ? "large" :
+                jit_cache_tier == 1 ? "small" : "none",
+                (unsigned)rom_translation_cache_size,
+                (unsigned)ram_translation_cache_size,
+                (void *)rom_translation_cache, jit_cache_reason,
+                (unsigned)jit_cache_force_small,
+                (unsigned)((uintptr_t)rom_translation_cache & 8191u),
+                (unsigned)rom_cache_watermark);
+      }
+   }
+#endif
+
+   /* From here on the memory stick is somebody else's thread (ADR-0024).
+    * Deliberately after boot: a BIOS/ROM failure must reach the stick even
+    * if we never get to the main loop. */
+   /* GB/GBC: the battery snapshot stays on the emulation thread (the core
+    * owns that RAM); the writer thread only writes the copy it is handed
+    * (fe_host.c, gb_save_flush_periodic). */
+   io_thread_start();
+
+   if (have_script)
+   {
+      snprintf(script_path, sizeof(script_path), "%s/%s", g_dir_base, script_name);
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+      snprintf(g_script_path, sizeof(g_script_path), "%s", script_path);
+#endif
+      if (fe_autopilot_load(script_path) != 0)
+      {
+         io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
+         fe_host_shutdown();
+#ifdef REWIND
+         PSP_REWIND_GAME_OVER();   /* fe_host let go of the pool */
+#endif
+         audio_stop();
+         vid_term();
+         fe_evt("exit code=2 reason=bad_script");
+         evt_shutdown();
+         handoff_run(2, "bad_script");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
+   }
+
+   if (net_host || net_join)
+   {
+      /* Bring the wireless session up around the booted core.  Blocks in
+       * adhocctl group join (<= 30 s); the game starts running while the
+       * netdrv JOIN/WELCOME handshake completes via per-frame pumps. */
+      me_rend_suspend();               /* clean heap for np_start (run 407) */
+      if (net_bringup(net_host, group, nick, net_probe) != 0)
+      {
+         io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
+         fe_host_shutdown();
+#ifdef REWIND
+         PSP_REWIND_GAME_OVER();   /* fe_host let go of the pool */
+#endif
+         audio_stop();
+         vid_term();
+         fe_evt("exit code=4 reason=net_failed");
+         evt_shutdown();
+         handoff_run(4, "net_failed");   /* ADR-0053 */
+         sceKernelExitGame();
+         return 0;
+      }
+      me_rend_resume();                /* re-alloc from the post-np_start heap */
+      /* GB/GBC: the link session -- after the harness's save state is in
+       * (gblink_service starts it then). */
+      if (g_pcfg.console != FE_CONSOLE_GBA && !g_autoload_state &&
+          !g_gblink_start_frames)
+      {
+         g_gblink_auto_started = 1;
+         gblink_begin(net_host);
+      }
+   }
+
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY) || \
+    defined(GPSP_STALL_RECORDER)
+   g_stall_s = (int)fe_ini_get_int(HARNESS_INI, "stall_watch_s", 0);
+#ifdef GPSP_PERF_RIG
+   g_stall_exit_s = (int)fe_ini_get_int(HARNESS_INI, "stall_exit_s", 0);
+   g_stall_exit_hard =
+      (int)fe_ini_get_int(HARNESS_INI, "stall_exit_hard", 0) != 0;
+   if (g_stall_exit_s > 0)
+      fe_evt("stall_exit on s=%d hard=%d", g_stall_exit_s, g_stall_exit_hard);
+#endif
+#ifdef GPSP_STALL_RECORDER
+   /* The release-layout stall recorder (a hard-freeze bisect arm): always on,
+    * 6 s, and nothing is written unless the main loop really stops. */
+   if (g_stall_s <= 0)
+      g_stall_s = 6;
+   sceIoMkdir(LOG_DIR, 0777);
+#endif
+#endif
+   /* A harness link run holds its game (as the pause menu would) from here
+    * until the session starts, so the state it links from is the loaded
+    * .st0 exactly, however long the radio takes. */
+   if (g_gblink_role && g_pcfg.console != FE_CONSOLE_GBA && !g_gblink_start_frames)
+      fe_host_gblink_hold(1);
+   stall_watch_start();
+   drprof_start();
+   rig_cfg_audit_report();   /* every harness key has been read by now */
+
+   pwr_release();            /* the boot's hold: the loop can park from here */
+   while (g_running)
+   {
+      unsigned frames;
+      SceCtrlData pd;
+      unsigned pad_new;
+      unsigned ctl_fired;   /* CTL_FIRE_*: the player's shortcuts this frame */
+      int home_mode;        /* Menu = HOME is in force this frame          */
+      int home_pressed;     /* ...and HOME was pressed (consumed once)     */
+      int session = fe_np_session_active();
+      int harness_ff = ff_ini || fe_autopilot_ff();
+      /* ADR-0021: the loop body without the vblank wait is the number that
+       * has to fit 16.7 ms.  Two clock reads per frame, and only while a
+       * session is up. */
+      unsigned rig_work_us = 0;
+      uint64_t frame_t0 = (g_net_up || g_perf_rig) ? net_now_us() : 0;
+      LOOP_TOP();
+      FE_LP_SET(FELP_L_TOP);
+      g_frame_start_us = frame_t0 ? frame_t0 : net_now_us();
+      if (g_perf_rig && rig_expired(g_frame_start_us))
+      {
+         exit_code=6; exit_reason="perf_timeout"; g_running=0; break;
+      }
+
+      /* SUSPEND HANDSHAKE, main-thread half: between frames nothing is being
+       * emulated, captured or posted, so this is where the power callback may
+       * take the renderer's memory.  Wait here until it has. */
+      if (g_pwr_gb_flush_req)
+      {
+         g_pwr_gb_flush_req = 0;
+         /* GB mode goes straight to gb_save_flush: writes only if cart RAM
+          * changed, never touches the io thread (FRONTEND round 2). */
+         if (g_pcfg.console != FE_CONSOLE_GBA)
+            (void)fe_host_sram_flush(0);
+      }
+      if (SLEEP_SIM_NOPARK() && (g_pwr_park_req || SLEEP_SIM_ASLEEP()))
+      {
+         /* harness: a blocking loop with no park point (the pause overlay) */
+         while ((g_pwr_park_req || SLEEP_SIM_ASLEEP()) && g_running)
+            sceKernelDelayThread(5000);
+      }
+      else
+      if (g_pwr_park_req)
+      {
+#ifdef REWIND
+         /* A rewind in progress LANDS before the history is taken away (the
+          * callback suspends the rewind once this loop is parked, and play
+          * would go on from wherever the machine stood: possibly the middle
+          * of an old save sequence, replayed over a newer save).  It gets
+          * what is left of the callback's wait, less a margin for the
+          * engine to go idle; what cannot land in that is decided by
+          * fe_host_rewind_suspend (vetted frame, or the game is reset). */
+         if (g_rw_on && fe_host_rewind_busy())
+         {
+            unsigned used = (unsigned)sceKernelGetSystemTimeLow() - g_pwr_park_t0;
+            unsigned room = used + 60000u < PWR_PARK_WAIT_US
+                          ? PWR_PARK_WAIT_US - 60000u - used : 0u;
+#ifdef GPSP_PERF_RIG
+            if (g_ss_no_land)
+               room = 0;
+#endif
+            if (room >= 10000u)
+               (void)psp_rewind_land("sleep", room);
+            else
+               fe_evt("rewind_land_psp why=sleep ok=0 budget_us=0 (no room)");
+         }
+#endif
+         g_pwr_parked = 1;
+         while ((g_pwr_park_req || SLEEP_SIM_ASLEEP()) && g_running)
+            sceKernelDelayThread(5000);
+         g_pwr_parked = 0;
+      }
+#ifdef REWIND
+      if (g_rw_pool_suspect)
+      {
+         g_rw_pool_suspect = 0;
+         psp_rewind_pool_restart();
+      }
+      psp_rewind_pwr();
+#endif
+#if defined(GPSP_STANDBY_NOTES)
+      {
+         /* Diagnostic build: say when a ROM page read had to reopen the
+          * file (gba_memory.c load_gamepak_page). */
+         extern u32 gamepak_reopens;
+         static u32 reopens_seen;
+         if (gamepak_reopens != reopens_seen)
+         {
+            reopens_seen = gamepak_reopens;
+            standby_note("rom reopened n=%u page_loads=%u",
+                         (unsigned)gamepak_reopens,
+                         (unsigned)gamepak_page_loads);
+         }
+      }
+#endif
+
+      /* ADR-0064: closes the PREVIOUS frame's `wait` region and opens this
+       * frame's `pre`.  ADR-0065: open the protected window here, before any
+       * of the frame's work — see emu_boost_open(). */
+      preempt_mark(3);
+      emu_boost_open();
+
+      rtc_wall_publish(0);
+      sceCtrlPeekBufferPositive(&pd, 1);
+      /* THE THUMBSTICK (ctl_map.h).  Its four direction bits are bits
+       * pad.Buttons does not use; clear them, then add what the stick says
+       * in the chosen mode.  OFF adds nothing: the word is 3.5.0's. */
+      g_pad = pd.Buttons & ~CTL_STICK_ALL;
+      if (g_pcfg.stick != CTL_STICK_OFF)
+         g_pad |= ctl_stick_bits(g_pcfg.stick, pd.Lx, pd.Ly, &g_stick_state);
+      else
+         g_stick_state = 0;
+#ifdef GPSP_PERF_RIG
+      if (pd.Lx < g_stick_min[0]) g_stick_min[0] = pd.Lx;
+      if (pd.Lx > g_stick_max[0]) g_stick_max[0] = pd.Lx;
+      if (pd.Ly < g_stick_min[1]) g_stick_min[1] = pd.Ly;
+      if (pd.Ly > g_stick_max[1]) g_stick_max[1] = pd.Ly;
+      if (g_pad_script_n)
+         g_pad |= pad_script_mask(fe_host_frame_count());
+      if (g_uis_n)
+      {
+         g_pad |= uiscript_pad();
+         if (g_uis_exit >= 0)
+         {
+            exit_code = g_uis_exit;
+            exit_reason = "ui_script";
+            g_running = 0;
+         }
+      }
+#endif
+      pad_new = g_pad & ~prev_pad;
+
+      /* ---- Menu = HOME (docs/CONTROL-REMAP.md section 10) -------------
+       * The kernel module is loaded the first time the setting is on --
+       * at the first frame of the game, or when the player flips it in the
+       * in-game Controls page -- and from then on this is one beat and one
+       * flag per frame.  HOME is OURS only in game: never on the wake
+       * overlay (g_wake_hold), never before this loop (browser, loading),
+       * never after it (teardown).  If the module is missing or refused,
+       * the menu stays on START+SELECT, which always works, and the player
+       * is told once. */
+      home_pressed = 0;
+      if (g_pcfg.controls.menu_home && !home_host_tried())
+         home_host_start(g_dir_base);
+      home_mode = g_pcfg.controls.menu_home && home_host_ok();
+#ifdef GPSP_PERF_RIG
+      if (g_home_sim && g_pcfg.controls.menu_home)
+         home_mode = 1;
+#endif
+      home_host_frame(home_mode && !g_wake_hold);
+      if (home_host_take_press())
+         home_pressed = 1;
+#ifdef GPSP_PERF_RIG
+      if (g_home_sim && home_mode && !g_wake_hold &&
+          (pad_new & PSP_CTRL_HOME))
+         home_pressed = 1;
+      if (g_home_stall_frame &&
+          fe_host_frame_count() >= g_home_stall_frame)
+      {
+         unsigned t0 = (unsigned)sceKernelGetSystemTimeLow();
+         g_home_stall_frame = 0;
+         fe_evt("home_stall begin ms=%u", g_home_stall_ms);
+         /* A SPIN, not a sleep: the frozen loop the fallback exists for is
+          * one that never yields, and the module's thread has to win the
+          * CPU from it by priority alone. */
+         while ((unsigned)sceKernelGetSystemTimeLow() - t0 <
+                g_home_stall_ms * 1000u)
+            ;
+         fe_evt("home_stall end fallbacks=%u", home_host_fallbacks());
+      }
+#endif
+      if (home_pressed)
+         fe_evt("home_press ui=%d", ui_active());
+      if (g_pcfg.controls.menu_home && !home_mode)
+      {
+         static int home_told;
+         static unsigned home_wait;
+         if (!home_told && ++home_wait > 60)
+         {
+            home_told = 1;
+            fe_evt("home_service fallback=start_select imp_rc=%d",
+                   home_host_imp_rc());
+            osd_toast("HOME menu unavailable: START+SELECT opens it");
+         }
+      }
+
+      /* Every remappable shortcut, evaluated ONCE from this frame's pad --
+       * exactly as the hard-coded tests below used to read g_pad/pad_new,
+       * which nothing changes during the iteration.  The trigger shape of
+       * each lives in ctl_shortcuts() (psp/ctl_map.c) so the host test runs
+       * the same code; the context gates stay at each site. */
+      ctl_fired = ctl_shortcuts(&g_pcfg.controls, g_pad, pad_new);
+      prev_pad = g_pad;
+
+      /* ADR-0069: SCREENSHOT ON DEMAND, WITHOUT TOUCHING THE FILESYSTEM.
+       *
+       * This replaces the dump-marker file.  That mechanism asked the Memory
+       * Stick "does this file exist?" once a second, on this thread, inside
+       * the timed region, and the answer was always no — a 12.4 ms synchronous
+       * negative lookup (PRIOWINDOW §6) to service a request a human makes
+       * perhaps twice a session.  The pad is already sampled two lines above,
+       * so reading a chord out of it is free.
+       *
+       * L+R+SELECT, on the EDGE, so holding it dumps one frame and not sixty.
+       * It cannot collide with START+SELECT (abort) or SELECT+START (parked
+       * handoff), which are the only other reserved gestures.  Deferred to the
+       * dump site below rather than fired here, so the captured buffer is the
+       * one the other dump paths capture: drawn and synced, not mid-frame. */
+      /* Remappable (Controls > Screenshot).  The START guard keeps it off the
+       * fixed START+SELECT menu chord whatever it is bound to; with the
+       * default L+R+SELECT this is the 3.0 test exactly.  Not while the
+       * Controls page is capturing a binding: the player is pressing the
+       * chord to TEACH it, not to use it. */
+      if ((ctl_fired & CTL_FIRE_SHOT) && !ui_capturing())
+         g_dump_chord_pending = 1;
+#ifdef GPSP_CATCH_SELFTEST
+      /* Bisect arm "catch self-test" only: L+R+UP+TRIANGLE stores to address
+       * 0 on purpose, so the owner can see the ME_CATCH exception screen work
+       * once before trusting its silence. */
+      if ((ctl_fired & CTL_FIRE_CATCH) && !ui_capturing())
+         *(volatile unsigned *)(uintptr_t)g_catch_selftest_addr = 0xDEADu;
+#endif
+
+      /* ADR-0057: ABORT A RUN WITHOUT A HARD RESET.
+       *
+       * HOME is registered (sceKernelRegisterExitCallback -> g_running = 0)
+       * but its system dialog is not reliably reachable while we are driving
+       * the display and an autopilot script owns the pad, so in practice the
+       * only way to stop a run has been holding POWER.  Hard-resetting a
+       * console mid-run is how a memory stick gets a corrupt FAT, which this
+       * project has already paid for twice.
+       *
+       * START+SELECT held is the same combo that leaves the parked handoff
+       * loop, so there is ONE gesture to remember for "stop, whatever you are
+       * doing".  It sets g_running = 0, which exits through the normal
+       * teardown -- SRAM flushed, log closed, handoff offered -- rather than
+       * yanking power. */
+      /* ADR-0057: keep the system idle timer alive for the WHOLE run.
+       *
+       * scePowerTick was only called while a netdrv session was up, so during
+       * everything before the link forms -- walking, the attendant, the save,
+       * the role menu -- nothing reset it.  The autopilot injects input into
+       * the emulator, not into sceCtrl, so the SYSTEM sees a console that has
+       * been untouched for minutes: it dims the screen and then suspends.  A
+       * suspend mid-run ends an unattended run and leaves the loop waiting for
+       * a handoff that will never come.  Tick unconditionally, once a second. */
+      {  /* own counter: `frames` is not yet assigned this early in the loop */
+         static unsigned pwr_tick;
+         if ((pwr_tick++ % 30) == 0)
+         {
+            /* PSP_POWER_TICK_ALL (0) is documented as "everything" but did not
+             * stop the backlight dimming on ARK 6.61 -- the display timer has
+             * its own tick type and evidently is not covered.  Kick both
+             * explicitly rather than trusting the combined constant. */
+            scePowerTick(PSP_POWER_TICK_SUSPEND);
+            scePowerTick(PSP_POWER_TICK_DISPLAY);
+         }
+      }
+
+      {
+         static unsigned abort_held;
+         if ((g_pad & (PSP_CTRL_START | PSP_CTRL_SELECT))
+               == (PSP_CTRL_START | PSP_CTRL_SELECT))
+         {
+            if (++abort_held == 90)      /* ~1.5 s at 60 Hz */
+            {
+               fe_evt("abort start+select held -- ending run cleanly");
+               exit_reason = "user_abort";
+               g_running = 0;
+            }
+         }
+         else
+            abort_held = 0;
+      }
+
+      /* ADR-0046: what the GAME was actually offered, logged on change only.
+       *
+       * The joining console drops most movement input in the Union Room --
+       * persistent pressing eventually registers -- and it has done so in
+       * every build.  Reading the code says our path is sound: the pad is
+       * sampled once per loop iteration and the core reads it live from
+       * input_state() every frame.  But "I read the code and it looks fine"
+       * is exactly the reasoning that has been wrong four times today, and
+       * the log has never carried a single byte about input.
+       *
+       * A held direction should appear here as ONE press line, then frames of
+       * silence, then ONE release line.  If the log shows UP held across 60
+       * frames while the character did not move, our path delivered it and
+       * the game declined it -- the throttle is the game's link-wait, not our
+       * bug.  If instead the mask flickers or the press never appears, it IS
+       * ours.  Those are opposite fixes and this is the cheapest way to
+       * choose between them.
+       *
+       * Cost: a compare per frame, and a line only when a button actually
+       * changes -- a few dozen lines a minute of real play. */
+      {
+         static uint32_t prev_gba_mask;
+         static int      gba_mask_primed;
+         uint32_t gm = fe_host_input_mask();
+         if (g_log_input && (!gba_mask_primed || gm != prev_gba_mask))
+         {
+            gba_mask_primed = 1;
+            fe_evt("input mask=0x%03x held=%u f=%u net=%s",
+                   (unsigned)gm, (unsigned)(gm & prev_gba_mask),
+                   fe_host_frame_count(), g_net_up ? "up" : "down");
+            prev_gba_mask = gm;
+         }
+      }
+
+      FE_LP_SET(FELP_L_NETF);
+      net_frame();
+      FE_LP_SET(FELP_L_GBLS);
+      if (g_pcfg.console != FE_CONSOLE_GBA || g_gba_cable || g_gba_cable_ok)
+      {
+         int gcode = 0;
+         const char *gwhy = NULL;
+         if (gblink_service(have_script, &gcode, &gwhy))
+         {
+            exit_code = gcode;
+            exit_reason = gwhy;
+            g_running = 0;
+         }
+      }
+      FE_LP_SET(FELP_L_MISC);
+      if (g_pcfg.console == FE_CONSOLE_GBA)
+      {
+         mgift_frame();    /* Mystery Gift is GBA cartridge-specific. */
+         silent_frame();   /* variant silent-wireless policy (ADR-0013) */
+         rfu_link_down_drain();
+         rfu_trace_drain();
+         exit_assist_frame();
+      }
+      audio_status_frame();   /* feeds core frameskip when engaged (ADR-0019) */
+      audio_report_error();   /* keeps output failures from starving emulation */
+
+      if (g_pcfg.console == FE_CONSOLE_GBA &&
+          mgift_shortcut_update_chord(g_pad, CTL_BIND(CTL_SC_MGIFT),
+                                      !ui_active() && !have_script &&
+                                      !g_wake_menu, &g_mgift_consumed))
+      {
+#ifdef REWIND
+         (void)psp_rewind_land("mgift", 0);
+#endif
+         if (g_mg_on) mgift_stop(0);
+         else mgift_start();
+      }
+
+      /* ---- SELECT+L save state / SELECT+R load state ------------------
+       *
+       * The menu already offers both, but a quick-save you have to open a
+       * menu for is not a quick-save. These shortcuts intentionally stay on
+       * slot 1 (.st0); the menu and browser can access all five slots.
+       *
+       * Edge-triggered on the shoulder button while SELECT is held, so
+       * holding the chord fires once rather than every frame.  SELECT+START
+       * (the menu) and L+R+SELECT (the screenshot) both stay distinct
+       * because each names a different third button.
+       *
+       * Deliberately NOT active while a script is driving: the harness holds
+       * button combinations the fixture never intended as chords. */
+      /* SELECT + TRIANGLE: open the wake overlay on demand.
+       *
+       * It exists to make the overlay workshoppable without a sleep cycle --
+       * and, more to the point, without hardware at all: PPSSPP has no Media
+       * Engine, but the CPU renderer still fills the frame the snapshot reads,
+       * so the overlay composes there exactly as it does on a console.  Every
+       * layout question about this screen was previously a full deploy, a
+       * sleep and a photograph. */
+      if (!ui_active() && !have_script &&
+          (ctl_fired & CTL_FIRE_PAUSE))
+      {
+         wake_snapshot();
+         g_wake_menu = 1;
+         fe_evt("wake_menu via=chord frame=%d", g_wake_have);
+      }
+
+      if (!ui_active() && !have_script && state_path[0])
+      {
+         /* EXCLUSIVE SHOULDERS.  L+R+SELECT is already the screenshot chord,
+          * and without this a screenshot would also fire a save on the way
+          * through.  3.0 required the other shoulder to be UP; the general
+          * form is the longer-chord rule (ctl_yields): a quick save/load
+          * stands down while any longer shortcut containing its chord is
+          * held, which for the defaults is exactly "the other shoulder". */
+         if (ctl_fired & CTL_FIRE_SAVE)
+         {
+            if (link_locks_states())
+               osd_toast("Cannot save during a wireless session");
+            else if (state_save_slot(state_path, 1) == 0)
+            {
+               osd_toast("State saved");
+            }
+            else
+               osd_toast("Save failed");
+         }
+         else if (ctl_fired & CTL_FIRE_LOAD)
+         {
+            /* NEVER LOAD DURING A WIRELESS SESSION. Restoring a state while
+             * a trade or Mystery Gift transfer is active rewinds the game's
+             * RFU state underneath a live transport. */
+            if (link_locks_states())
+               osd_toast("Cannot load during a wireless session");
+            else if (psp_state_load(state_path, "chord") == 0)
+            {
+               fe_evt("state_load via=chord");
+               osd_toast("State loaded");
+            }
+            else
+               osd_toast("No saved state");
+         }
+      }
+
+      /* Did we come back?  This line existing at all is the answer to
+       * "does the app survive a standby" -- the question that decides
+       * whether resuming is a re-init job or a much larger one. */
+      if (g_pwr_resume)
+      {
+         g_pwr_resume = 0;
+         fe_evt("power back frames=%u net=%d me=%d me_up=%d",
+                fe_host_frame_count(), g_net_up, g_me_rend, me_host_up());
+         osd_toast("Resumed");
+      }
+
+      /* ---- in-game menu (Select+Start held ~1/4 s, plan §8) ---------- */
+      if (!ui_active())
+      {
+         if (home_mode)
+         {
+            /* Menu = HOME: a START+SELECT tap is the GAME's (the hold above
+             * still ends the run), and HOME opens the menu. */
+            chord_frames = 0;
+            if (home_pressed && !have_script)
+            {
+               home_pressed = 0;
+               fe_evt("menu_open via=home");
+               menu_open();
+            }
+         }
+         else if ((g_pad & (PSP_CTRL_SELECT | PSP_CTRL_START)) ==
+             (PSP_CTRL_SELECT | PSP_CTRL_START) && !have_script)
+         {
+            if (++chord_frames >= 15)
+            {
+               chord_frames = 0;
+               menu_open();
+            }
+         }
+         else
+            chord_frames = 0;
+
+         if (ui_demo && fe_host_frame_count() >= 300)
+         {
+            ui_demo = 0;
+            menu_open();
+            ui_demo_start();
+         }
+         if (wake_shot && fe_host_frame_count() >= (unsigned)wake_shot)
+         {
+            wake_shot = 0;
+            ui_wake_shot_arm();
+            wake_snapshot();
+            g_wake_menu = 1;
+            fe_evt("wake_menu via=harness frame=%d", g_wake_have);
+         }
+         if (ui_ctl_demo && fe_host_frame_count() >= 300)
+         {
+            int which = (int)ui_ctl_demo;
+            ui_ctl_demo = 0;
+            menu_open();
+            if (which >= 3)
+               ui_home_demo_start(which);   /* 3 menu toggle, 4 delete */
+            else
+               ui_controls_demo_start();
+         }
+      }
+
+      if (state_save_at && fe_host_frame_count() == (unsigned)state_save_at)
+      {
+         int ss_rc = state_save_slot(state_path, 1);
+         FE_EVT_ONLY(ss_rc);
+         fe_evt("state_save_at f=%ld rc=%d", state_save_at, ss_rc);
+      }
+#ifdef GPSP_PERF_RIG
+      if (g_ss_at && !g_ss_browser && inproc_n == g_ss_game &&
+          fe_host_frame_count() >= (unsigned)g_ss_at)
+         sleep_sim_fire();
+#ifdef REWIND
+      if (g_ss_rw_tick && !g_ss_fired && g_rw_on && fe_host_rewind_busy() &&
+          (g_ss_rw_tick > 0 ? ++g_ss_rw_seen == g_ss_rw_tick
+                            : fe_host_rewind_unvetted() &&
+                              ++g_ss_rw_seen == -g_ss_rw_tick))
+      {
+         fe_host_rewind_info ri;
+         fe_host_rewind_info_get(&ri);
+         fe_evt("sleep_sim rewind_tick=%ld mach=%u now=%u unvetted=%d",
+                g_ss_rw_seen, (unsigned)ri.mach_frame, (unsigned)ri.now_frame,
+                fe_host_rewind_unvetted());
+         sleep_sim_fire();
+      }
+#endif
+#endif
+      /* Harness `inproc_cycles`: quit to the game list as the menu does. */
+      if (inproc_n < inproc_cycles && g_running &&
+          fe_host_frame_count() >= (unsigned)inproc_frames)
+      {
+         if (!inproc_via_menu)
+         {
+            fe_evt("inproc_harness quit n=%d frame=%u", inproc_n,
+                   fe_host_frame_count());
+            wake_snapshot();
+            g_relaunch = RELAUNCH_GAMELIST;
+            exit_reason = "game_list";
+            g_running = 0;
+         }
+         else if (!inproc_menu_armed && !ui_active())
+         {
+            fe_evt("inproc_harness menu n=%d frame=%u", inproc_n,
+                   fe_host_frame_count());
+            inproc_menu_armed = 1;
+            menu_open();
+            ui_home_demo_start(5);
+         }
+      }
+
+      /* Perf-rig autoload: one shot, ~half a second in, once video/audio/ME
+       * are all up.  The scripted run then starts inside the saved scene. */
+      if (g_autoload_state && (fe_host_frame_count() >= 30 ||
+                               (g_gblink_role &&
+                                g_pcfg.console != FE_CONSOLE_GBA)))
+      {
+         g_autoload_state = 0;
+         char autoload_path[PSP_FILE_PATH_CAP];
+         int state_rc = psp_state_path_for_slot(autoload_path,
+                                                sizeof(autoload_path),
+                                                state_path,
+                                                (unsigned)autoload_state_slot)
+            == 0 ? psp_state_load(autoload_path, "autoload") : -1;
+         fe_evt("autoload_state slot=%d rc=%d shelf=%d", autoload_state_slot,
+                state_rc, g_autoload_from_shelf);
+         /* A GBA cable session links from exactly the loaded state. */
+         if (state_rc == 0 && g_gba_cable)
+            fe_host_gblink_hold(1);
+         if (state_rc != 0 && g_autoload_from_shelf)
+         {
+            /* THE PLAYER ASKED FOR THIS STATE; THE RIG DID NOT.  For a rig
+             * (`load_state = 1`) a missing state invalidates the run, so it
+             * exits 6.  The state shelf used the same branch, so a state the
+             * core refused -- a GB state from before a DMG-palette change, a
+             * truncated file -- quit the app to the XMB, half a second after
+             * the game had booted.  The game is running and the core is
+             * untouched (every loader validates before it writes), so keep
+             * playing from the boot and say why, as the in-game Load does. */
+            osd_toast("Could not load state %d", autoload_state_slot);
+         }
+         else if (state_rc != 0)
+         {
+            exit_code=6; exit_reason="state_load_failed"; g_running=0; break;
+         }
+      }
+
+#ifdef GPSP_CHEATS
+      cheats_link_poll();
+#endif
+
+      /* Menu = HOME: HOME on the menu's top page closes it, like Resume, and
+       * this iteration carries on into the game. */
+      if (home_pressed && ui_active() && ui_home_press())
+         home_pressed = 0;
+
+#ifdef REWIND
+      /* The menu opened, or the pause overlay is about to, in the middle of
+       * a rewind: land first.  Everything they can do (a state save, a
+       * session start, a cheat switched, Share, Mystery Gift, quit) then
+       * finds the machine on the frame on screen, vetted. */
+      if ((ui_active() || g_wake_menu) && g_rw_on && fe_host_rewind_busy())
+         (void)psp_rewind_land(ui_active() ? "menu" : "pause", 0);
+#endif
+
+      if (ui_active())
+      {
+         /* Core paused; wireless keeps pumping; UI draws + acts. */
+         ui_action act;
+         LOOP_PHASE(5);
+         /* The menu is open: auto-fire stops, and no menu key (X is a
+          * likely turbo button) can start or toggle one from in here. */
+         if (g_turbo.live)
+            ctl_turbo_stop(&g_turbo);
+         ui_set_turbo_locked(link_session_any());
+         link_ui_view();
+         act = ui_frame(g_pad, link_locks_states(), g_session_info);
+         switch (act)
+         {
+         case UI_ACT_SAVESTATE:
+         {
+            /* The Save states page stays open and reports on its own
+             * plate (docs/UI-OVERLAY.md section 13); the toast is for any
+             * other caller. */
+            int rc = state_save_slot(state_path, (unsigned)ui_state_slot());
+            if (!ui_state_save_done(rc))
+               osd_toast(rc == 0 ? "State saved" : "State save FAILED");
+            break;
+         }
+         case UI_ACT_LOADSTATE:
+         {
+            char selected_state[PSP_FILE_PATH_CAP];
+            int rc;
+            rc = psp_state_path_for_slot(selected_state,
+                                         sizeof(selected_state),
+                                         state_path,
+                                         (unsigned)ui_state_slot()) == 0
+               ? psp_state_load(selected_state, "menu") : -1;
+            /* Loaded: the menu closes, back into the game. */
+            if (!ui_state_load_done(rc))
+               osd_toast(rc == 0 ? "State loaded" : "No state to load");
+            break;
+         }
+         case UI_ACT_NET_HOST:
+            ui_net_action(1);
+            break;
+         case UI_ACT_NET_JOIN:
+            ui_net_action(0);
+            break;
+         case UI_ACT_NET_DISCONNECT:
+            if (fe_host_gblink_active())
+            {
+               /* A link session ends by agreement, so both saves match:
+                * the teardown follows once it has (gblink_service). */
+               fe_host_gblink_request_end();
+               osd_toast("Ending the link...");
+               break;
+            }
+            if (g_link_wait)
+            {
+               char rm[ROOM_LABEL_CAP];
+               snprintf(rm, sizeof(rm), "%s", g_link_room);
+               net_teardown();
+               g_link_menu = 0;
+               osd_toast("Stopped hosting %s", rm);
+               break;
+            }
+            net_teardown();
+            osd_toast("Disconnected");
+            break;
+         case UI_ACT_NET_MGIFT:
+            if (g_pcfg.console == FE_CONSOLE_GBA)
+               mgift_start();
+            else
+               osd_toast("Mystery Gift needs GBA");
+            break;
+         case UI_ACT_NET_MGIFT_STOP:
+            if (g_pcfg.console == FE_CONSOLE_GBA)
+               mgift_stop(0);
+            break;
+         case UI_ACT_EXIT:
+            g_running = 0;
+            break;
+         case UI_ACT_GAMELIST:
+            /* Full clean shutdown (SRAM flushed, threads stopped), then
+             * back to the ROM browser -- in this process when the unload is
+             * proven (inproc_refusal), by the ADR-0071 relaunch otherwise.
+             * The hold screen after the loop says what is happening. */
+            pcfg_save();
+            g_relaunch = RELAUNCH_GAMELIST;
+            exit_reason = "game_list";
+            g_running = 0;
+            break;
+         case UI_ACT_RELAUNCH:
+            /* ADR-0071: the trading profile changed.  Persist it, then leave
+             * the loop by the NORMAL exit path — SRAM flushed, io thread
+             * stopped, log closed — and relaunch at the very end, where the
+             * USB handoff already proves it is safe to replace the process. */
+            pcfg_save();
+            g_relaunch = RELAUNCH_PROFILE;
+            exit_reason = "profile_change";
+            g_running = 0;
+            osd_toast("Restarting: Media Engine %s",
+                      g_pcfg.me_mode ? "ON" : "OFF");
+            break;
+         default:
+            break;
+         }
+         /* The menus carry the session themselves (the cluster says
+          * HOSTING / LINKED, the Wireless row its mode): the chip would sit
+          * on the footer's hints (docs/GBA-LINK-UI.md).  Toasts still show. */
+         osd_chip_session(NULL);
+         osd_draw();
+         if (g_link_kind != LK_NONE)
+            link_chip();              /* hidden again while LINKING */
+         else if ((g_net_up || g_mg_on) && g_pcfg.osd_wireless)
+            osd_chip_session(g_session_info);
+         UISCRIPT_DUMP();
+         sceDisplayWaitVblankStart();
+         if (!g_wake_hold)
+            vid_swap();
+         continue;
+      }
+
+      /* ---- Triangle: cycle video preset ------------------------------ */
+      /* Remappable, and unbindable -- the owner's own complaint was an
+       * accidental Triangle resizing the picture.  Deliberately NOT subject
+       * to the longer-chord rule: 3.0 also cycled on SELECT+TRIANGLE, and
+       * the defaults reproduce 3.0 exactly (docs/CONTROL-REMAP.md). */
+#ifdef REWIND
+      /* The rewind button: a level, read every loop.  Where the setting is
+       * off the same button cycles the video preset if nothing else is
+       * bound to that, so Triangle is never dead (ctl_map.h).  With the
+       * setting on in a GB / GBC game it says why nothing happens. */
+      g_rw_held = (g_rw_on || g_rw_gb) &&
+                  ((ctl_fired & CTL_FIRE_REWIND) || fe_autopilot_rewind());
+      if (!g_rw_on && !g_rw_gb && (ctl_fired & CTL_FIRE_REWIND_PRESS) &&
+          !g_pcfg.controls.bind[CTL_SC_VIDEO])
+         ctl_fired |= CTL_FIRE_VIDEO;
+#endif
+      if (ctl_fired & CTL_FIRE_VIDEO)
+      {
+         const char *name = vid_cycle_preset();
+         g_pcfg.scale  = vid_scale_mode();
+         g_pcfg.filter = vid_filter();
+         /* This console's profile only: 2-4 INI rewrites, not ~50. */
+         pcfg_display_save();
+         fe_evt("video_mode scale=%s filter=%s",
+                vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter));
+         osd_toast("Video: %s", name);
+      }
+
+      /* ---- fast-forward (plan §4.4) ---------------------------------- */
+      {
+         int want_ff;
+         int ff_press = (ctl_fired & CTL_FIRE_FF_PRESS) ? 1 : 0;
+         if (g_pcfg.ff_hold)
+            want_ff = (ctl_fired & CTL_FIRE_FF_HELD) ? 1 : 0;
+         else
+         {
+            if (ff_press)
+               ff_toggled = !ff_toggled;
+            want_ff = ff_toggled;
+         }
+         if (simff && fe_host_frame_count() >= 300 &&
+             fe_host_frame_count() < 300 + (unsigned)simff)
+            want_ff = 1;   /* harness-simulated FF hold */
+         if (session && want_ff)
+         {
+            /* Interlock: FF forced 1x during wireless sessions. */
+            if (ff_press)
+               osd_toast("Fast-forward locked: wireless session");
+            want_ff = 0;
+            ff_toggled = 0;
+         }
+         if (want_ff != ff_engaged ||
+             (want_ff && (ff_last_mode != pcfg_ff_mode() || ff_last_me != g_me_rend)))
+         {
+            ff_engaged = want_ff;
+            if (ff_engaged)
+            {
+               /* The core's own frameskip stays off throughout FF: 3x
+                * renders every frame, and the two unlimited presets choose
+                * their drawn frames with the draw gate below, which forces
+                * each frame's skip directly (fe_host_skip_override). */
+               fe_host_option_set_live("gpsp_frameskip", "disabled");
+               ff_last_mode = pcfg_ff_mode();
+               ff_last_me = g_me_rend;
+               osd_chip_ff(ff_chip_text());
+               fe_evt("ff_user on mult_x10=%d", g_pcfg.ff_mult_x10);
+            }
+            else
+            {
+               /* Hand frameskip back to the session policy if a session
+                * came up while FF was held (ADR-0019), else off.  The
+                * policy defaults to leaving it disabled. */
+               skip_policy_reapply();
+               osd_chip_ff(NULL);
+               fe_evt("ff_user off");
+            }
+         }
+         g_ff_uncapped = harness_ff || (ff_engaged && g_pcfg.bench_mode) ||
+                         (ff_engaged && g_pcfg.ff_mult_x10 == 0);
+         g_ff_mult = ff_engaged && !g_ff_uncapped;
+         g_ff_user = ff_engaged;
+         g_ff_gate = ff_engaged && !g_pcfg.bench_mode &&
+                     (pcfg_ff_mode() == PCFG_FF_SMOOTH ||
+                      pcfg_ff_mode() == PCFG_FF_UNLIMITED);
+         if (session)
+            g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_gate = 0;
+#ifdef REWIND
+         /* A rewind is always at display speed: while the button is down,
+          * or its press is still fading, or the picture is on its way back
+          * to play, this loop is an ordinary paced one.  Fast-forward
+          * itself stays engaged and takes over again afterwards. */
+         if (g_rw_on && (g_rw_held || g_rw_showing || g_rwh.intensity > 0.0f))
+            g_ff_uncapped = g_ff_mult = g_ff_gate = 0;
+#endif
+
+         /* THE DRAW GATE (ff_gate.h): decide, before the frame is emulated,
+          * whether it will be drawn -- at most 30 a second for Unlimited, 60
+          * for Smooth.  A frame turned away is emulated in full but the core
+          * neither renders nor captures it (no ME post, no mid-frame log).
+          * Off, the override is -1 and the frameskip option rules as before. */
+         {
+            unsigned period = !g_ff_gate ? 0u :
+               pcfg_ff_mode() == PCFG_FF_SMOOTH ? FF_GATE_PERIOD_SMOOTH_US :
+                                                  FF_GATE_PERIOD_UNLIMITED_US;
+            int draw = 1;
+            if (period != g_ff_gate_st.period_us)
+               ff_gate_arm(&g_ff_gate_st, period);
+            if (period)
+            {
+               draw = ff_gate_frame(&g_ff_gate_st, net_now_us());
+               if (!draw)
+                  FFW_GATED();
+            }
+            fe_host_skip_override(period ? !draw : -1);
+         }
+      }
+
+      /* ADR-0082: present the ME-staged frame BEFORE running the core, so
+       * the GE rasterises through the whole retro_run below and the
+       * pre-swap sync is ~0.  No-op unless me_video is active. */
+      /* One wake, one rebuild, on this thread.
+       *
+       * Ordering matters for how this LOOKS.  The LCD powers back on showing
+       * whatever is still in VRAM -- the frame from before the sleep -- so the
+       * overlay has to be the very next thing drawn.  The swap sites below are
+       * suppressed while a wake is pending (see g_wake_hold), otherwise the
+       * loop iteration that was in flight when the machine suspended finishes
+       * and puts the stale frame up first, which reads as a flicker. */
+      if (g_pwr_rebuild)
+      {
+         /* The rebuild itself waits for the overlay's answer (me_standby_up):
+          * g_pwr_slept stays 1 until then, which is also what keeps
+          * g_wake_hold up and makes a second resume ask again. */
+         g_pwr_rebuild = 0;
+         ring_r = ring_w;              /* sound from before the sleep */
+         g_wake_menu = 1;
+         fe_evt("standby wake overlay_first slept=%d rend=%d vmem=%d",
+                g_pwr_slept, me_rend_active(), me_rend_vmem_held());
+      }
+      /* THE WAKE OVERLAY.  Modal, and deliberately so: nothing needs to be
+       * emulated while it is up (the frame is a still and any link is long
+       * gone), so it owns the pad and the swap chain until the player picks.
+       * `Quit to game list` relaunches the EBOOT, which is how this build
+       * returns to the browser everywhere else -- the core cannot unload a
+       * ROM cleanly, and a relaunch flushes SRAM on the way out. */
+      if (g_wake_menu)
+      {
+         g_wake_menu = 0;
+         home_host_disarm();   /* the overlay is not the game: HOME is the system's */
+         ctl_turbo_stop(&g_turbo);   /* the console slept: auto-fire is over */
+         if (ui_wake_menu(g_wake_have ? g_wake_frame : NULL,
+                          (int)g_wake_w, (int)g_wake_h, g_pcfg.last_rom))
+         {
+            /* The same quit the menu's "Quit to game list" makes: through
+             * the teardown (SRAM flushed) to the browser.  It used to
+             * relaunch from here directly, skipping both. */
+            fe_evt("wake_menu choice=game_list slept=%d", g_pwr_slept);
+            /* Nothing is rebuilt for a game that is being left: the
+             * teardown below stops the engine and the next game starts it
+             * as a boot does.  Only the flags must not outlive the game
+             * (g_wake_hold would keep its swaps suppressed). */
+            g_pwr_slept = 0;
+            g_pwr_rebuild = 0;
+            g_relaunch = RELAUNCH_GAMELIST;
+            exit_reason = "game_list";
+            g_running = 0;
+            continue;
+         }
+         fe_evt("wake_menu choice=continue frame=%d slept=%d running=%d",
+                g_wake_have, g_pwr_slept, g_running);
+         g_wake_have = 0;
+         if (!g_running)
+         {
+            /* HOME / exit while the overlay was up: leaving, as above. */
+            g_pwr_slept = 0;
+            g_pwr_rebuild = 0;
+         }
+         else if (g_pwr_slept || g_pwr_rebuild)
+         {
+            unsigned up_t0 = (unsigned)sceKernelGetSystemTimeLow();
+            pwr_hold("wake");          /* renderer rebuild: me_rend_init */
+            me_standby_up();
+            pwr_release();
+            fe_evt("standby up_us=%u",
+                   (unsigned)sceKernelGetSystemTimeLow() - up_t0);
+            FE_EVT_ONLY(up_t0);
+         }
+      }
+      FE_LP_SET(FELP_L_PRES0);
+      me_video_present();
+      /* SAME-FRAME shows the frame at the END of its own frame, not at the
+       * top of the next one -- so the top-of-loop present is skipped and the
+       * GE draw happens in the vblank wait below, once the ME reports done. */
+#ifdef REWIND
+      if (psp_rewind_present())
+         ;                    /* a rewind is on screen: its frame, not the ME's */
+      else
+#endif
+      if (!mer_sameframe_active())
+         me_rend_present();   /* ME renderer: swap-phase present (FF triage) */
+#ifdef REWIND
+      if (g_drew && (g_rw_on || g_rwh.denied))
+         psp_rewind_hud();
+#endif
+      g_mer_posted = 0;
+
+      /* FPS chip: emulated-frame rate over a ~1 s window, one decimal (a
+       * healthy reading is the GBA's own 59.7).  A window with zero frames
+       * (menu time) re-arms silently instead of flashing "0.0". */
+      if (g_pcfg.show_fps)
+      {
+         unsigned fnow = (unsigned)sceKernelGetSystemTimeLow();
+         if (!g_fps_win_us)
+         {
+            g_fps_win_us = fnow ? fnow : 1;
+            g_fps_emu_frames = 0;
+            g_fps_drawn = 0;
+         }
+         else if (fnow - g_fps_win_us >= 1000000u)
+         {
+            if (g_fps_emu_frames)
+            {
+               char fbuf[64];
+               int  fn;
+               unsigned smc_now = flush_ram_smc;
+               unsigned dma_now = flush_ram_dma;
+               unsigned el    = fnow - g_fps_win_us;
+               unsigned fps10 = (unsigned)((unsigned long long)
+                  g_fps_emu_frames * 10000000ull / el);
+               unsigned drawn = (unsigned)((unsigned long long)
+                  g_fps_drawn * 1000000ull / el);
+               /* "emulated (rendered)" — the same pair FrogGBA's counter
+                * reports, so the two can be photographed side by side. */
+               fn = snprintf(fbuf, sizeof(fbuf), "%u.%u fps (%u)",
+                             fps10 / 10, fps10 % 10, drawn);
+               /* Cart bigger than the ROM cache: append the page-fault rate
+                * (32 KiB stick reads/window) — the cause of any hitching. */
+               if (gamepak_must_swap() && fn > 0)
+                  fn += snprintf(fbuf + fn, sizeof(fbuf) - fn, "  pg %u",
+                                 (unsigned)(gamepak_page_loads -
+                                            g_fps_last_pg));
+               /* Cache wipes per second, SPLIT BY SOURCE — they need
+                * different fixes (ADR-0029).  `s` = a CPU store from
+                * translated code hit a tagged halfword.  `d` = a DMA wrote
+                * into tagged IWRAM/EWRAM; a DMA knows its whole destination
+                * range up front, so that one is addressable by a range
+                * invalidate.  Shown only when non-zero. */
+               /* Dynarec diagnostics are for the lab, not the OSD: a player
+                * running a ROM hack should see "59.7 fps (60)", not a row of
+                * flush counters. */
+               if (g_pcfg.bench_mode &&
+                   (smc_now != g_fps_last_smc || dma_now != g_fps_last_dma) &&
+                   fn > 0)
+                  /* s = wipes/s, f = % of wall time INSIDE the flush (the
+                   * tag memset), M = MiB/s memset, w = whole-region wipes/s
+                   * (32K IWRAM / 256K EWRAM each). If f is large, the cost is
+                   * the memset, not the re-translation — and the fix is to
+                   * clear only the pages that carry tags, not the whole span. */
+                  snprintf(fbuf + fn, sizeof(fbuf) - fn,
+                           "  s%u x%u j%u%% f%u%%",
+                           smc_now - g_fps_last_smc,
+                           (unsigned)(smc_blk_xlat_total -
+                                      g_fps_last_xlat),
+                           /* j = % of wall time COMPILING code (needs
+                            * core_phase = 2 in config.ini; reads 0 without
+                            * it).  This is the cost the wipes force. */
+                           (unsigned)((unsigned long long)
+                              (cph_jit_total - g_fps_last_jit) * 100ull / el),
+                           (unsigned)((unsigned long long)
+                              (smc_flush_us - g_fps_last_fus) * 100ull / el));
+               osd_chip_fps(fbuf);
+            }
+            g_fps_last_pg  = gamepak_page_loads;
+            g_fps_last_smc  = flush_ram_smc;
+            g_fps_last_dma  = flush_ram_dma;
+            g_fps_last_fus  = smc_flush_us;
+            g_fps_last_fkb  = smc_flush_bytes;
+            g_fps_last_wide = smc_flush_wide;
+            g_fps_last_xlat = smc_blk_xlat_total;
+            g_fps_last_rom  = flush_rom_total;
+            g_fps_last_jit  = cph_jit_total;
+            g_fps_win_us = fnow ? fnow : 1;
+            g_fps_emu_frames = 0;
+            g_fps_drawn = 0;
+         }
+      }
+      else if (g_fps_win_us)
+      {
+         g_fps_win_us = 0;
+         osd_chip_fps(NULL);
+      }
+
+      /* ---- run the core ---------------------------------------------- */
+      preempt_mark(0);           /* ADR-0064: close `pre`, open `core` */
+      LOOP_PHASE(2);
+#ifdef GPSP_CHEATS
+      /* Again, immediately before the frame(s): whatever brought a session
+       * up earlier in this iteration, no frame of it runs with codes on. */
+      cheats_link_poll();
+#endif
+      /* Turbo buttons, from this iteration's pad -- the real pad (and the
+       * harness's raw pad replay, which stands in for it), never autopilot
+       * input, which is injected after the mapping.  Skipped outright while
+       * nothing is bound and nothing is firing. */
+      if (g_turbo.live || ctl_turbo_bound(&g_pcfg.controls))
+         turbo_frame(g_pad & ~g_mgift_consumed, pad_new & ~g_mgift_consumed,
+#ifdef REWIND
+                     /* A rewind GESTURE stops every train, from the press
+                      * of the control until a tick says PLAY -- so the
+                      * landing after the control is let go is covered too
+                      * (fe_host_rewind_busy: "no tick has said PLAY yet").
+                      * Nothing fires while the game runs backwards or
+                      * catches up (those frames take the LOGGED input
+                      * anyway), and a Toggle is off when play resumes.
+                      * g_rw_held alone would miss the landing; it is kept
+                      * for the loop the press arrives on, before the first
+                      * tick has made the gesture live. */
+                     !(g_rw_on && (g_rw_held || fe_host_rewind_busy()))
+#else
+                     1
+#endif
+                     );
+      if (g_gblink_exiting)
+      {
+         /* harness: the link session has ended; no more frames */
+      }
+      else if (g_ff_mult)
+      {
+         int i;
+         for (i = 0; i < 3; i++)
+         {
+            g_blit_suppress = (i != 2);
+            if (fe_host_autopilot_gate())
+               fe_autopilot_frame();
+            gblink_script_disconnect();
+            DRPROF_PHASE(13);        /* DRPH_RETRO until the CPU loop runs */
+#ifdef REWIND
+            if (!psp_rewind_tick(1))
+            {
+               DRPROF_PHASE(15);
+               break;                /* a rewind tick: one a loop, no frame */
+            }
+#endif
+            fe_host_run_frame();
+            DRPROF_PHASE(15);        /* DRPH_OUTSIDE */
+         }
+         g_blit_suppress = 0;
+      }
+      else
+      {
+         FE_LP_SET(FELP_L_AP);
+         if (fe_host_autopilot_gate())
+            fe_autopilot_frame();
+         gblink_script_disconnect();
+         FE_LP_SET(FELP_L_RUN);
+         DRPROF_PHASE(13);           /* DRPH_RETRO until the CPU loop runs */
+#ifdef REWIND
+         if (psp_rewind_tick(g_ff_uncapped))
+#endif
+         fe_host_run_frame();
+         DRPROF_PHASE(15);           /* DRPH_OUTSIDE */
+#ifdef GPSP_PERF_RIG
+         gblink_cpu_scale();         /* harness gblink_cpu_x100, else no-op */
+#endif
+      }
+      FE_LP_SET(FELP_L_POST);
+      if (g_gblink_screen)
+         gblink_draw_status();    /* link session: setting up or just ended */
+#ifdef GPSP_PERF_RIG
+      if (g_uis_linking[0])
+         uiscript_linking_draw();
+#endif
+      pace_burn();               /* ADR-0027 harness knob, normally a no-op */
+      /* A battery save made during fast-forward must not wait for FF to end
+       * to reach the stick: the writer runs below us and FF never blocks.
+       * No-op unless FF is on AND the game has an unpersisted save; then a
+       * ~1 ms yield every couple of frames until the writer confirms. */
+      (void)fe_host_sram_ff_nudge(g_ff_user || g_ff_uncapped);
+      {  /* the core reset the game after a guest fault (see fe_host.c) */
+         static unsigned faults_seen;
+         unsigned faults = fe_host_guest_faults();
+         if (faults != faults_seen)
+         {
+            faults_seen = faults;
+            osd_toast("Emulation fault - game was reset");
+         }
+      }
+      LOOP_PHASE(3);
+      preempt_mark(1);           /* ADR-0064: close `core`, open `post` */
+      frames = fe_host_frame_count();
+
+      if (vid_prof_win > 0)
+         vid_prof_frame((unsigned)vid_prof_win);
+      vram_probe_frame();        /* no-op unless `vram_probe` is set */
+#if !defined(GPSP_PLAYABLE) || defined(GPSP_KEEP_TELEMETRY)
+      {
+         /* core_health on fe_host's 600-frame heartbeat cadence.  A
+          * threshold, not `% 600`: 3x fast-forward advances 3 frames a loop. */
+         static unsigned health_next = 600;
+         if (frames >= health_next)
+         {
+            core_health_evt("hb");
+            health_next = frames - frames % 600u + 600u;
+         }
+      }
+#endif
+
+      if (vhash_to && frames >= (unsigned)vhash_from &&
+          frames <= (unsigned)vhash_to)
+         vhash_frame();
+#ifdef GPSP_PERF_RIG
+      /* Every frame, independent of vhash: vhash also logs a line per frame
+       * through the event ring, which is exactly the flood that starves it. */
+      FE_LP_SET(FELP_L_SHASH);
+      if (g_shash_on)
+         shash_frame();
+      jit_coh_frame(frames);
+      FE_LP_SET(FELP_L_POST);
+#endif
+#ifdef DRPROF_HW
+      if (frames % 300u == 0)
+         drprof_window(frames);
+#endif
+#ifdef DRPROF_HW
+      if (frames % 300u == 0)
+         drprof_window(frames);
+#endif
+
+      if (dump_at && frames >= (unsigned)dump_at)
+      {
+         dump_at = 0;
+         dump_frame_bmp();
+      }
+      if (dump_every && (frames % (unsigned)dump_every) == 0)
+         dump_frame_bmp();
+      if (fe_autopilot_dump_pending())
+         dump_frame_bmp();
+#ifdef GPSP_PERF_RIG
+      /* HARNESS ONLY.  A script asked to reload the savestate.  The R-trigger
+       * chord that does this for a player is disabled while a script runs, so
+       * this is the only route a script has.
+       *
+       * Deliberately NOT gated on g_net_up the way the chord is: the chord
+       * refuses mid-session because rewinding one console desynchronises the
+       * peer's trade protocol, and there is no peer here.  A stress script that
+       * wanted to reload during a session would be testing something else.
+       *
+       * Reloading is the point: it restores guest RAM under a translation cache
+       * that keeps its blocks, which is exactly where stale SMC evidence or a
+       * stale block would show itself. */
+      if (state_path[0] && fe_autopilot_state_pending())
+      {
+         int ap_rc = psp_state_load(state_path, "autopilot");
+         fe_evt("ap_state_load rc=%d", ap_rc);
+         FE_EVT_ONLY(ap_rc);
+         smc_gates_reload_evt();
+      }
+#endif
+      if (g_dump_chord_pending)      /* ADR-0069, set at the pad read above */
+      {
+         g_dump_chord_pending = 0;
+         dump_frame_bmp();
+      }
+      if (gedump_at && frames >= (unsigned)gedump_at && g_drew)
+      {
+         gedump_at = 0;
+         dump_ge_bmp();   /* drawbuffer is drawn + synced, not yet swapped */
+      }
+#ifdef GPSP_PERF_RIG
+      /* Harness `gedump_loops = N`: the displayed screen every N loop
+       * iterations, 64 at most -- counted in LOOPS, because a link session's
+       * connecting/transfer screen runs no emulated frames (gedump_at can
+       * never reach it). */
+      if (g_gedump_loops && g_drew && g_gedump_left &&
+          g_loop_iter % g_gedump_loops == 0)
+      {
+         char path[176];
+         g_gedump_left--;
+         snprintf(path, sizeof(path), "%s/gel_%06u.bmp", LOG_DIR, g_loop_iter);
+         if (vid_dump_ge(path) == 0)
+            fe_evt("ge_dump file=%s loop=%u frame=%u gblink_screen=%d", path,
+                   g_loop_iter, frames, g_gblink_screen);
+      }
+#endif
+      if (gedump_every && g_drew && (frames % (unsigned)gedump_every) == 0)
+         dump_ge_bmp();
+#ifdef REWIND
+      {
+         /* harness `rewind_gedump = N`: the screen every N loops while the
+          * ring is up (the frame count stands still during a rewind, so
+          * gedump_every cannot see one). */
+         static int every = -1, n;
+         if (every < 0)
+            every = (int)fe_ini_get_int(HARNESS_INI, "rewind_gedump", 0);
+         if (every > 0 && g_drew && g_rw_on && g_rwh.ui > 0.0f &&
+             (n++ % every) == 0)
+            dump_ge_bmp();
+      }
+#endif
+      /* ADR-0066 (SPIKE-FINDINGS §4/§8): a SYNCHRONOUS NEGATIVE
+       * `sceIoGetstat()` on ms0:, on the emulation thread, INSIDE the region
+       * `work_us` times, looking for a developer-convenience marker file that
+       * no automated run ever creates (`tools/hw_loop.py` does not know the
+       * path).  PRIOWINDOW §6 measured it on this device: **12.4 ms**, i.e.
+       * 74 % of a 59.73 fps frame budget, once a second, in every run of four
+       * sessions.
+       *
+       * BUT IT IS NOT FREE TO REMOVE, AND THAT IS THE POINT OF THE KNOB.
+       * While the stat blocks, the emulation thread is NOT RUNNING — so this
+       * was also an involuntary 12.4 ms/s of guaranteed CPU for the WLAN
+       * driver and our own RX/TX threads.  Deleting it deletes that yield.
+       * PRIOWINDOW §15 ran the 29.97 regression gate on a build that removed
+       * it unconditionally and got **7/14 against 7/7 historical**
+       * (Fisher p = 0.04).  That is not proof it was the cause — §16 is the
+       * A/B that tests it — but it is more than enough to say a change like
+       * this must not be a silent default.
+       *
+       * ADR-0069 SUPERSEDES THE DEFAULT, NOT THE REASONING.  The stat bought
+       * two things and they are now separated:
+       *
+       *  * the FEATURE ("a human wants a screenshot right now") is served by
+       *    L+R+SELECT above, off a pad we already read every frame, for free
+       *    and with no filesystem involved.  `dump_marker_poll` therefore
+       *    defaults to 0 and the stat is gone from the frame region;
+       *  * the YIELD is now `sched_yield_us`, an explicit sceKernelDelayThread
+       *    of a duration WE choose, rather than however long the Memory Stick
+       *    felt like blocking for that second.  Default 0.
+       *
+       * §16's A/B on the old binary came back 4/6 with the same failure
+       * signatures (Fisher p = 0.64), so the removal is no longer meaningfully
+       * implicated in the 29.97 gate — but if it turns out the WLAN threads
+       * genuinely miss the stall, `sched_yield_us = 12400` reconstructs it at
+       * the measured size and that is the arm to run.
+       *
+       * `dump_marker_poll = 60` still restores the old mechanism exactly. */
+      if (g_dump_marker_every &&
+          (frames % (unsigned)g_dump_marker_every) == 0 &&
+          file_exists(DUMP_MARKER))
+      {
+         dump_frame_bmp();
+         sceIoRemove(DUMP_MARKER);
+      }
+      /* ADR-0069: the yield, made deliberate.  Same cadence the stat had (once
+       * per `g_yield_every` frames) so an A/B against the historic build is a
+       * like-for-like comparison of a 12.4 ms stall that reads the Memory
+       * Stick against one that does not. */
+      if (g_yield_us && g_yield_every &&
+          (frames % (unsigned)g_yield_every) == 0)
+         sceKernelDelayThread((SceUInt)g_yield_us);
+      blit_prof_evt(frames);
+      rig_romload_evt(frames);
+      rig_watch_evt(frames);
+
+      if (have_script)
+      {
+         int st = fe_autopilot_status();
+         if (st == 1 && !g_gblink_role && !g_link_menu &&
+             !g_gblink_after_left)
+            g_running = 0;              /* script finished: clean exit
+                                         * (a GB link run exits when its
+                                         * session ends: gblink_service;
+                                         * a menu session's, link_exit_after
+                                         * frames after it ends) */
+         else if (st == -1)
+         {
+            rig_fail_probe();
+            exit_code = 3;
+            exit_reason = "ap_fail";
+            g_running = 0;
+         }
+      }
+      if (autoexit && frames >= (unsigned)autoexit)
+         g_running = 0;
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+      /* GBA-LINK-MIRROR.md 22: a bench pair that stopped on an error ends
+       * the run, with the reason where a starved log cannot lose it. */
+      if (!g_gba_cable_ok && fe_gbadual_fault() && g_running)
+      {
+         fe_evt("gbadual_failed err=%d frame=%u", fe_gbadual_fault(), frames);
+         if (g_hb_s > 0)
+            heartbeat_write(0);
+         exit_code = 7;
+         exit_reason = "gbadual_failed";
+         g_running = 0;
+      }
+#endif
+#if defined(GPSP_PERF_RIG) && defined(GBA_LINK)
+      /* loop iterations, not frames: a loaded state holds the game for
+       * the link (fe_host_gblink_hold), so no frame runs before a session */
+      if (g_sessmem_cycles && g_loop_iter >= g_sessmem_at)
+      {
+         int src = sessmem_cycle_test();
+         g_sessmem_cycles = 0;
+         exit_code = src ? 5 : 0;
+         exit_reason = "sessmem_done";
+         g_running = 0;
+      }
+#endif
+
+      FE_LP_SET(FELP_L_ACCT);
+      emu_boost_close();         /* ADR-0065: end the protected window */
+      LOOP_PHASE(4);
+      preempt_mark(2);           /* ADR-0064: close `post`, open `wait` */
+      preempt_frame_end();
+
+      if (frame_t0)
+      {
+         /* One clock read, two consumers: ADR-0021's profile and ADR-0027's
+          * capability estimate both want this frame's WORK time (every
+          * vblank wait below is deliberately excluded). */
+         uint32_t work_us = (uint32_t)(net_now_us() - frame_t0);
+         rig_work_us = work_us;
+         fe_np_prof_frame(work_us);
+         frame_hist_note(work_us);        /* ADR-0063: no extra clock read */
+         /* A link session's audio policy owns the step (GB-LINK.md 14). */
+         if (g_pcfg.console == FE_CONSOLE_GBA && !g_gbl_audio_on)
+            pace_frame(work_us);
+      }
+      else if (g_pcfg.console == FE_CONSOLE_GBA && !g_gbl_audio_on)
+         pace_frame(0);   /* ADR-0033: the glide OUT of the clamp runs after
+                           * teardown, when frame_t0 is no longer taken.  The
+                           * work time is unused off-session (pace_window is
+                           * only called while g_net_up), so 0 is honest. */
+
+      if (!g_ff_uncapped)
+      {
+         /* Pacing: vblank-locked (59.94 Hz) with an audio-ring high-water
+          * nudge toward the GBA's 59.7275 Hz (plan §4.4), plus ADR-0027's
+          * peer match — extra vblanks that pull this console down to the
+          * slowest peer's capability so the two games' frame-counted link
+          * timeouts stay mutually consistent. */
+         /* ADR-0047: pace against the ABSOLUTE vblank counter, not by counting
+          * waits.
+          *
+          * The old code called sceDisplayWaitVblankStart() once, plus once per
+          * `extra`.  That call blocks until the NEXT vblank edge -- so if the
+          * frame's work had already crossed an edge, the first wait landed on
+          * the edge AFTER the one we meant, and the period silently became
+          *
+          *     (ceil(work / 16.74ms) + extra)  instead of  (1 + extra)
+          *
+          * i.e. ANY frame costing more than one vblank bought a whole extra
+          * vblank, whatever the clamp was set to.  That is why the join console
+          * could sit on 10-15 ms of slack against a 33.4 ms budget and still
+          * land on 19.98: the threshold that mattered was never the budget, it
+          * was 16.74 ms.  It also explains why lowering the clamp never closed
+          * the gap -- the trigger is independent of the target -- and why the
+          * host (smaller frames, fewer crossings) always outran the client.
+          *
+          * Reproduced on the rig before this fix: --slow-join=12000 pushed the
+          * join instance's frame to ~18-23 ms and its rate fell 29.96 -> 19.97
+          * while the host held 29.97.  The control at --slow-join=0 held 29.96
+          * on both.
+          *
+          * Tracking the counter instead means an overrunning frame CONSUMES
+          * its budget rather than adding a fresh one on top. */
+         unsigned extra = g_ff_mult || g_gbl_audio_on
+                             ? 0u : pace_extra_vblanks();
+         unsigned want  = 1u + extra;
+         /* Not while a GB link session's rate follow holds the ring: there
+          * the surplus is consumed by the resampler, and a whole extra
+          * vblank here is a stall for the partner console. */
+         if (!g_ff_mult && ring_w - ring_r > RING_HIGH_WATER &&
+             !(g_gbl_audio_on && g_gbl_follow))
+         {
+            want++;               /* audio-ring nudge (plan §4.4), unchanged */
+            g_fh_nudge++;         /* ADR-0063: previously unobservable */
+            g_ar_nudge++;
+         }
+         audio_ring_note();
+         FE_LP_SET(FELP_L_OSD);
+         if (g_drew)
+            osd_draw();
+
+         g_vc_target += want;
+         /* If we have fallen further behind than we could ever repay, forgive
+          * the debt rather than sprinting.  Without this a console that is
+          * genuinely too slow would bank arrears and then run flat out the
+          * moment it caught a break -- visible as a speed-up after a stall,
+          * which is worse than being late. */
+         /* ADR-0063 folds its two pacing counters into the vcount read that
+          * was already here: `vc` replaces the first of the three calls this
+          * block used to make, so the instrumented build makes FEWER syscalls
+          * per frame than the uninstrumented one, not more. */
+         {
+            unsigned vc = sceDisplayGetVcount();
+            if ((int)(vc - g_vc_target) > PACE_VC_RESYNC_VB)
+            {
+               g_vc_target = vc;
+               g_fh_forgive++;
+            }
+            if ((int)(vc - g_vc_target) >= 0)
+               g_fh_late++;       /* budget already spent: we will not wait */
+            gblink_win_work(rig_work_us, (int)(vc - g_vc_target) >= 0);
+         }
+         /* PUMP THE TRANSPORT WHILE WE WAIT.
+          *
+          * netdrv is a single-threaded pump model (netdrv.h:16): the RX
+          * thread only feeds the transport ring, and everything -- delivery
+          * to the core AND the outbound ACK -- happens on the main thread
+          * inside fe_np_pump.  That pump ran exactly once per frame, so an
+          * arriving packet waited 0-16.7 ms (mean ~8) to be looked at, and
+          * the ACK waited the same again on the far side.  Two quantisations
+          * of ~8 ms is ~16 ms, which is most of the measured srtt of 17-23 ms
+          * -- and why srtt sits suspiciously near one frame time while
+          * rttvar stays tiny (quantisation is regular; radios are not).
+          *
+          * This wait is pure idle: the loop is parked on vblank with the
+          * frame's work already done.  Pumping here costs no emulation time,
+          * stays on the main thread so the threading contract holds, and
+          * roughly halves the quantisation on both sides.
+          *
+          * Falsifier: if srtt stays ~20 ms while pumpgap drops, the latency
+          * is genuinely in the radio and this whole line of reasoning is
+          * wrong. */
+         FE_LP_SET(FELP_VWAIT);
+         while ((int)(sceDisplayGetVcount() - g_vc_target) < 0)
+         {
+            if (g_net_up)
+               fe_np_pump();
+            /* SAME-FRAME, RETIRE ONLY.  Adopting the ME's output the moment
+             * it finishes is the whole feature -- this frame's render shown
+             * in this frame.  But it must NOT draw here: the single present
+             * happens below, before the swap, so that a frame which never
+             * retires still puts something in the back buffer. */
+            me_rend_retire_if_idle();
+            /* First moment the ME reports done: that IS the render duration
+             * (measured from the post), and this wait is idle anyway. */
+            if (g_me_rend && !g_mer_rend_seen && g_mer_post_us &&
+                me_host_idle())
+            {
+               unsigned d = (unsigned)sceKernelGetSystemTimeLow() -
+                            g_mer_post_us;
+               g_mer_rend_seen = 1;
+               g_mer_rend_n++;
+               g_mer_rend_us += d;
+               if (d > g_mer_rend_max)
+                  g_mer_rend_max = d;
+            }
+            sceDisplayWaitVblankStart();
+         }
+         FE_LP_SET(FELP_L_RETIRE);
+
+         /* Counted here, after the wait: still pending at the swap means the
+          * ME did not make its own frame, so the previous one goes out and
+          * this render lands next frame -- the shipping behaviour. */
+         /* ONE LAST LOOK BEFORE GIVING UP.
+          *
+          * The loop above checks the ME and then BLOCKS in
+          * sceDisplayWaitVblankStart().  The ME routinely finishes DURING
+          * that block, and the loop then exits on its vcount condition
+          * without ever re-checking -- so a frame that was rendered and
+          * ready got thrown away and the previous one went out instead.
+          * Measured before this existed: of 533 and 600 "misses" in two
+          * windows, 529 and 502 had the ME already idle (99%% and 84%%).
+          * Same-frame was not losing a race, it was not looking at the
+          * finish line.  Hit rate 10.9%% -> 85.7%% on this one check; the
+          * blit sits at the same vblank phase the in-loop present used, so
+          * nothing about timing changes. */
+         me_rend_retire_if_idle();
+         if (mer_sameframe_active() && g_me_rend && g_mer_pending >= 0)
+         {
+            g_mer_sf_miss++;
+            if (me_host_idle())
+               g_mer_sf_wouldhit++;   /* must stay 0 */
+         }
+
+         /* THE PRESENT.  Unconditional, once, immediately before the swap.
+          * Whatever is current goes into the back buffer -- a fresh render
+          * if one retired this frame, otherwise the one already showing.
+          * Re-drawing an unchanged frame costs a GE blit we would rather
+          * not spend, and buys the guarantee that the back buffer is never
+          * two frames stale.  That is a trade worth making every time. */
+         FE_LP_SET(FELP_L_PRES);
+#ifdef REWIND
+         if (mer_sameframe_active() && !g_rw_showing)
+#else
+         if (mer_sameframe_active())
+#endif
+         {
+            me_rend_present();
+#ifdef REWIND
+            if (g_drew && (g_rw_on || g_rwh.denied))
+               psp_rewind_hud();
+#endif
+            if (g_drew)
+               osd_draw();
+         }
+
+         FE_LP_SET(FELP_L_SWAP);
+         UISCRIPT_DUMP();
+         if (!g_wake_hold)
+            vid_swap();
+         g_drew = 0;
+      }
+      else if (g_drew)
+      {
+         /* UNCAPPED FF: swap only when a frame was actually blitted.
+          *
+          * No same-frame handling here.  mer_sameframe_active() is false
+          * whenever fast-forward is engaged, so the loop-top present ran
+          * as it always did and this branch is untouched shipping code. */
+         osd_draw();
+         UISCRIPT_DUMP();
+         if (!g_wake_hold)
+            vid_swap();
+         g_drew = 0;
+      }
+      FE_LP_SET(FELP_L_RIGN);
+      if (g_perf_rig)
+         rig_note(fe_host_frame_count(), (unsigned)(net_now_us()-g_frame_start_us), rig_work_us);
+      ff_win_note();
+      FE_LP_SET(FELP_LOOP);
+   }
+
+   if (g_perf_rig)
+   {
+      extern unsigned int translation_gate_targets;
+      extern unsigned int translation_gate_target_pc[];
+      char gates[16 * 10];
+      unsigned gn, gi;
+      int gp = 0;
+
+      rig_emit(fe_host_frame_count());
+      gn = translation_gate_targets;
+      if (gn > 16)
+         gn = 16;
+      for (gi = 0; gi < gn; gi++)
+         gp += snprintf(gates + gp, sizeof(gates) - gp, "%s%08x",
+                        gi ? "," : "", translation_gate_target_pc[gi]);
+      if (!gp)
+         snprintf(gates, sizeof(gates), "-");
+      fe_evt("smc_gates n=%u pcs=%s", translation_gate_targets, gates);
+      fe_evt("perf_done samples=%u expected=%u",rig_stats.total_n,rig_to-rig_from);
+   }
+   /* The quit / exit teardown runs outside the loop's park point (SRAM
+    * flush, the ME and HOME modules, the radio, the core's unload, the
+    * in-process return's census): the switch waits (pwr_hold, see power_cb).
+    * Released before the browser (goto session_top) or by the exit itself. */
+   pwr_hold("teardown");
+   /* "Quit to game list": the menu goes, the frame it sat on stays with a
+    * "Returning to game list..." chip, and the teardown below runs under it
+    * (ui_return_hold; docs/INPROC-RETURN.md).  The wake overlay and the
+    * harness quit come here with the snapshot taken but no menu backdrop. */
+   if (g_relaunch == RELAUNCH_GAMELIST)
+   {
+      ui_set_backdrop(g_wake_have ? g_wake_frame : NULL, (int)g_wake_w,
+                      (int)g_wake_h);
+      ui_return_hold();
+   }
+   /* Clean exit (incl. HOME): stop the netdrv session + full adhoc
+    * teardown first (BYE to peers while the radio is still up), then SRAM
+    * is flushed inside fe_host_shutdown (dirty-check). */
+   stall_watch_stop();   /* a clean exit is not a stall */
+   /* Menu = HOME: HOME goes back to the system FIRST, before anything below
+    * can block -- the handoff screen, a slow SRAM flush, a relaunch. */
+   home_host_stop();
+   drprof_stop(fe_host_frame_count());
+   /* ADR-0080: stop the ME, then free our staging buffers (ADR-0080e: no
+    * second core buffer to free; gba_screen_pixels was never reassigned). */
+   me_rend_teardown("exit");
+   me_video_teardown("exit", 1);
+   me_host_shutdown();
+   if (!me_host_loaded())
+   {
+      free(g_me_stage[0]);   g_me_stage[0] = NULL;
+      free(g_me_stage[1]);   g_me_stage[1] = NULL;
+   }
+   ui_return_tick();   /* the hold's ring keeps moving (no-op otherwise) */
+   net_teardown();
+   mgift_stop(1);      /* drops the AP association and unloads the net modules */
+   emu_boost_stop();   /* ADR-0065: before anything else changes priority */
+   io_thread_stop();   /* ADR-0025: no other thread may touch the .sav */
+   ui_return_tick();
+   /* The log's own loss, written SYNCHRONOUSLY now the writer is stopped, and
+    * the liveness facts into RESULT.TXT, which is written with sceIo after the
+    * log closes -- neither can be starved (RIG-DOUBLE-BATTLE §2.8 I6). */
+   {
+      char extra[128];
+      snprintf(extra, sizeof(extra), "frames=%u\nevt_drop=%u\nt_ms=%u\n",
+               fe_host_frame_count(), fe_evt_drops(),
+               (unsigned)(net_now_us() / 1000ull));
+      handoff_set_extra(extra);
+      fe_evt("evt_drop total=%u", fe_evt_drops());
+   }
+   fe_host_shutdown();
+#ifdef REWIND
+   PSP_REWIND_GAME_OVER();   /* fe_host let go of the pool */
+#endif
+   ui_return_tick();
+   if (g_relaunch == RELAUNCH_GAMELIST)
+   {
+      const char *why = inproc_refusal(have_variant);
+      heap_snap_t after;
+      fe_evt("audio_hash %08x samples=%u", plat_audio_hash(),
+             plat_audio_sample_count());
+      if (!why)
+      {
+         /* The rest of the unload: what the exit path leaves to the
+          * process ending. */
+         dynarec_release_translation_caches();
+#ifdef GBA_LINK
+         /* The GBA link's cable reserve (harness builds outside late mode;
+          * a player's build is late and never takes one) is per game: taken
+          * after the snapshot, given back with the game.  A session would
+          * have freed it, but a session also marks the radio used and so
+          * never gets here (inproc_refusal "wireless"). */
+         if (g_cable_reserve)
+         {
+            free(g_cable_reserve);
+            g_cable_reserve = NULL;
+         }
+         g_gba_cable = 0;
+#endif
+         /* The renderer's buffers: kept when they are the volatile
+          * partition's (the next game's me_rend_init reuses them, nothing
+          * of the heap's), freed when they fell back to the heap -- the
+          * exit path never had to. */
+         me_rend_suspend();
+         /* The next game's code is emitted into the same translation cache
+          * the last one ran from.  Every publish syncs its own range, but a
+          * relaunch also started the CPU caches from nothing, and the
+          * in-process return must not be the first path to bet otherwise
+          * (docs/RESIDENT-ICACHE-FIX.md: the resident-ROM crash was a stale
+          * I-cache line outside a publish range). */
+         sceKernelDcacheWritebackInvalidateAll();
+         sceKernelIcacheInvalidateAll();
+         home_host_forget();
+         fe_host_session_reset();
+         osd_reset();
+         ui_close();
+         vid_ambient_drop();
+         audio_stop();
+         audio_ring_reset();
+         audio_start();
+         heap_snap(&after);
+#ifndef GPSP_NO_TELEMETRY
+         heap_census("post_unload");
+#endif
+         heap_trace_report("post_unload");
+         if (!heap_snap_same(&after, &snap_pre))
+         {
+            /* Harness `inproc_force = 1` (diagnosis only): log, carry on. */
+            if (!fe_ini_get_int(HARNESS_INI, "inproc_force", 0))
+               why = "census";
+            fe_evt("inproc_census_mismatch arena=%u/%u used=%u/%u "
+                   "chunks=%u/%u fordblks=%u/%u free=%u/%u largest=%u/%u "
+                   "kfree=%u/%u kmax=%u/%u", snap_pre.arena, after.arena,
+                   snap_pre.used, after.used, snap_pre.chunks, after.chunks,
+                   snap_pre.fordblks, after.fordblks, snap_pre.free,
+                   after.free, snap_pre.largest, after.largest,
+                   snap_pre.kfree, after.kfree, snap_pre.kmax, after.kmax);
+         }
+      }
+      if (!why)
+      {
+         /* A fresh boot's per-game state, then the browser again. */
+         fe_evt("inproc_return n=%d", inproc_n);
+         inproc_n++;
+#ifdef GPSP_PERF_RIG
+         if (g_ss_browser && inproc_n == g_ss_game + 1)
+            sleep_sim_fire();        /* fires in the browser, 300 ms on */
+#endif
+         g_running = 1;
+         g_relaunch = 0;
+         exit_code = 0;
+         exit_reason = NULL;
+         ff_engaged = 0;
+         ff_toggled = 0;
+         ff_last_mode = -1;
+         ff_last_me = -1;
+         prev_pad = 0;
+         chord_frames = 0;
+         ctl_turbo_stop(&g_turbo);   /* the game was left: nothing auto-fires */
+         ui_set_turbo_locked(0);     /* ...and no session outlives it */
+         inproc_menu_armed = 0;
+         g_ff_uncapped = g_ff_mult = g_ff_user = g_ff_gate = 0;
+         g_blit_suppress = 0;
+         g_drew = 0;
+         memset(&g_ff_gate_st, 0, sizeof(g_ff_gate_st));
+         g_wake_have = 0;
+         g_wake_menu = 0;
+         g_last_pix = NULL;
+         g_me_rend_cfg = me_rend_cfg_boot;
+         g_me_video_cfg = 0;
+         g_me_video = 0;
+         g_pcfg.sram_thread = sram_thread_boot;
+         g_autoload_state = autoload_boot;
+         autoload_state_slot = 1;
+         g_autoload_from_shelf = 0;
+         emu_boost_start();
+         pwr_release();         /* the browser waits on the player: no hold */
+         goto session_top;
+      }
+      fe_evt("inproc_refused why=%s", why);
+      g_relaunch = RELAUNCH_GAMELIST;
+   }
+   audio_stop();
+   vid_term();
+   if (g_relaunch != RELAUNCH_GAMELIST)
+      fe_evt("audio_hash %08x samples=%u", plat_audio_hash(),
+             plat_audio_sample_count());
+#ifdef GPSP_PERF_RIG
+   shash_close();
+#endif
+   {
+      /* What the cartridge clock shows, what 3.5.0's frame clock would show
+       * (boot time + emulated frames), and the console's clock. */
+      extern void gpsp_rtc_peek(long long *, long long *, int *);
+      long long shown = 0, frames_t = 0;
+      int wall = 0;
+      gpsp_rtc_peek(&shown, &frames_t, &wall);
+      fe_evt("rtc_clock mode=%s shown=%lld frames_clock=%lld console=%lld "
+             "frames_ahead_s=%lld shown_ahead_s=%lld",
+             wall ? "wall" : "frames", shown, frames_t,
+             (long long)psp_local_wallclock(),
+             frames_t - (long long)psp_local_wallclock(),
+             shown - (long long)psp_local_wallclock());
+      FE_EVT_ONLY(shown); FE_EVT_ONLY(frames_t); FE_EVT_ONLY(wall);
+   }
+#ifdef GPSP_PERF_RIG
+   fe_evt("stick_range lx=%u..%u ly=%u..%u mode=%s", g_stick_min[0],
+          g_stick_max[0], g_stick_min[1], g_stick_max[1],
+          ctl_stick_name(g_pcfg.stick));
+#endif
+   if (exit_reason)
+      fe_evt("exit code=%d reason=%s", exit_code, exit_reason);
+   else
+      fe_evt("exit code=%d", exit_code);
+   evt_shutdown();
+   /* ADR-0053: last thing before the XMB.  Every ms0 writer is stopped and the
+    * log is closed, so it is safe to hand the stick to the PC here and nowhere
+    * earlier.  Does not return if the PC asks for another run. */
+   handoff_run(exit_code, exit_reason);
+   /* ADR-0071: relaunch ourselves so the new trading profile is latched at
+    * startup like any other boot.  Same call the USB handoff uses and for the
+    * same reason: on CFW an EBOOT.PBP is launched the way the FIRMWARE
+    * launches it, and plain sceKernelLoadExec returns instead of replacing the
+    * process.  argp becomes the new argv[0], which is where every ms0 path is
+    * derived from — passing NULL would silently fall back to the compiled-in
+    * default directory and lose a variant install's saves. */
+   /* Returns only if it failed: fall through to the XMB rather than hang. */
+   if (g_relaunch)
+      relaunch_eboot(g_relaunch == RELAUNCH_GAMELIST);
+   sceKernelExitGame();
+   return 0;
+}

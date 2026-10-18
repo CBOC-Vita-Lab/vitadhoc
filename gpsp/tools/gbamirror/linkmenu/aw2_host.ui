@@ -1,0 +1,24 @@
+# Console 1 hosts a Link Cable room on AW2 from the menu, keeps playing, links
+# when console 2 joins, plays the battle (autopilot), ends by agreement.
+# Dumps named as the design's screens (compare_mockups.py).
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press CROSS
++2 wait hosting
++30 dump hosting-game
++1 wait linking
++2 dump x-host-linking
++1 wait linked
++150 dump linked-game
++10 menu
++12 dump linked-menu
++4 press DOWN
++4 press DOWN
++4 press CROSS
++12 dump linked-wireless
++4 press CIRCLE
++6 press CIRCLE
++1 wait ended
++20 dump toast-ended

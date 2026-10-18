@@ -1,0 +1,58 @@
+﻿*.a
+*.o
+*.d
+*.so
+*.u
+*.z
+gpsp.gpe
+tags
+cscope.out
+pandora/linux
+tools/generate_cc_lut
+
+# gpsp-adhoc: user-supplied assets never enter git (plan section 3.4)
+testdata/**
+!testdata/fixtures/
+testdata/fixtures/*
+!testdata/fixtures/*.inputs
+!testdata/fixtures/*.inputs.md
+
+
+build/
+
+tools/e2e/hello/*.o
+tools/e2e/hello/*.elf
+tools/e2e/hello/EBOOT.PBP
+tools/e2e/hello/PARAM.SFO
+tools/e2e/sandboxes/
+tools/e2e/artifacts/
+
+
+# frontend build artifacts
+sdl/gpsp_sdl
+sdl/obj/
+psp/*.elf
+psp/EBOOT.PBP
+psp/PARAM.SFO
+psp/obj/
+
+# netdrv build artifacts
+netdrv/obj/
+netdrv/test_netdrv
+dist/
+
+# tools/run_host_tests.py caches the PSP SDK headers here (extracted from the
+# pspdev image) so the two SDK-dependent suites can run on the host.
+.sdk-include/
+host-test-results.json
+psp/build-manifest.json
+.build-*.log
+__pycache__/
+/.layout/
+# Menu = HOME kernel module: the .prx is tracked (packaging, like psp/me),
+# its intermediate .elf is not.
+psp/home/gbadhoc_home.elf
+# ...except libvita2d's seven precompiled shader programs, which are sources
+# here (no shader compiler exists outside Sony's SDK): third_party/vita2d.
+!vita/third_party/vita2d/shader/*_gxp.o
+.build-elf.nm

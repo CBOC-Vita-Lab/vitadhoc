@@ -1,0 +1,22 @@
+# Sonic Advance (USA) (En,Ja) -- VS > Multi Game Pak > Race, Neo Green Hill 1
+# Real-time: both characters' positions cross the cable every frame (the
+# stand-in for Mario Kart: Super Circuit's racing).  Fresh cartridge on both
+# (no battery), so the script also enters a name.
+NAME=sa1
+TITLE="Sonic Advance (USA) (En,Ja)"
+ROM=sa1.gba
+ROM_MD5=49ecc8ef1988e7ae81fbda1b4cf71eed
+HOST_SAVE=-
+JOIN_SAVE=-
+HOST_STATE=sa1.st0
+HOST_STATE_MD5=f59d8fd026570aba4de77f95f6123622
+JOIN_STATE=sa1.st0
+JOIN_STATE_MD5=f59d8fd026570aba4de77f95f6123622
+HOST_SCRIPT=sa1_host.txt
+JOIN_SCRIPT=sa1_join.txt
+MARKS="lobby race race_slice_done"
+FRAMES=12500
+GOLDEN_FRAME=9129
+GOLDEN_S0="r=705f476c i=e596fb05 e=88bc9f9e io=e583c90c p=9eb61040 o=aacc5c42 v=868fc287"
+GOLDEN_S1="r=705f476c i=65e911fa e=0cb090b5 io=aea2535f p=b4b1ae50 o=651a3882 v=49a9c3ac"
+SIO="multi-player (16-bit), from the cable handshake on"

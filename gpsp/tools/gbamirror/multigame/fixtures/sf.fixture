@@ -1,0 +1,34 @@
+# Super Street Fighter II Turbo Revival (USA) -- V.S. over the link cable, as
+# a ROLE session from power-on (the owner's hardware spec, builds/fix351-out
+# linkspecs/sf.json: both consoles load the power-on state sf_p0.st0 and hold
+# it until the link forms, then the fixed-wait scripts run; Ryu v Ryu, the
+# fight from ~f2500).  The heaviest pair in the set: each machine runs ~155k
+# of its 280,896 cycles a frame in the fight, 8 multi-player transfers a
+# frame (docs/GBA-LINK-MIRROR.md 21).  Fresh cartridge on both (no battery).
+# ROM in MG_ROMS as sf.gba (~/sfdev/sf.gba), state in MG_FX as sf_p0.st0.
+NAME=sf
+TITLE="Super Street Fighter II Turbo - Revival (USA)"
+ROM=sf.gba
+ROM_MD5=7a36a7486ef2c534111ee417b8acf9b7
+HOST_SAVE=-
+JOIN_SAVE=-
+HOST_STATE=sf_p0.st0
+HOST_STATE_MD5=50334b7e41abbe5ef9066719c2d836ea
+JOIN_STATE=sf_p0.st0
+JOIN_STATE_MD5=50334b7e41abbe5ef9066719c2d836ea
+HOST_SCRIPT=sf_host.txt
+JOIN_SCRIPT=sf_join.txt
+MARKS="menu fight fight_end"
+# The join's script runs to f8561 and the agreed end lands at f8559-8592
+# (gblink_end_after counts from the host's last step, radio-timed), so only
+# the host's autopilot is required to finish; both must reach fight_end.
+DONE="host"
+FRAMES=14000
+# 1500, not the hardware spec's 900: the agreed end is counted from the host's
+# last script step in the session's own time, and a fast or a loaded run put
+# it at f8442, before the join's fight_end (f8501).
+END_AFTER=1500
+GOLDEN_FRAME=6000
+GOLDEN_S0="r=50d8215c i=5024efad e=c9444db3 io=4cc163b8 p=472f679a o=d1072010 v=bdc4a7bb"
+GOLDEN_S1="r=f194a345 i=82325526 e=c9444db3 io=35cc2f3a p=472f679a o=d1072010 v=bdc4a7bb"
+SIO="multi-player (16-bit) from f786, 8 transfers a frame; general-purpose before"

@@ -1,0 +1,11 @@
+--- a/sound.c
++++ b/sound.c
+@@ -202,7 +202,7 @@
+    * its ring position ran away from the mixer's, round the whole ring every
+    * second, so that sound "in flight" lay anywhere in it (docs/REWIND.md
+    * 16.1: what broke a rewind, and a plain state load, in those games). */
+-  ds->fifo_fractional = fifo_fractional - 0x1000000u;
++  ds->fifo_fractional = fp8_24_fractional_part(fifo_fractional);
+ 
+   if(((ds->fifo_top - ds->fifo_base) % 32) <= 16)
+   {

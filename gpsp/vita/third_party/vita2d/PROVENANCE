@@ -1,0 +1,37 @@
+# libvita2d (core subset), vendored
+
+Upstream: https://github.com/xerpi/libvita2d, commit
+`a8f15ab09d5233f0a4e4ad0e8f6ade0da888cbed` (2021-11-26).  MIT licence, see
+`LICENSE`.  Built by `gpsp/vita/ui.mk` into the Vita frontend; used only by
+`gpsp/vita/vback_vita2d.c`.
+
+The VitaSDK on the build machine has no vita2d package (and no libpng,
+libjpeg or freetype to build the whole library against), so only the files
+the video layer needs are here:
+
+| here | upstream | |
+|---|---|---|
+| `source/vita2d.c` | `libvita2d/source/vita2d.c` | GXM set-up, scenes, clipping, the vertex pool |
+| `source/vita2d_draw.c` | same | coloured primitives |
+| `source/vita2d_texture.c` | same | textures, render targets, textured primitives |
+| `source/utils.c` | same | GPU memory, matrices |
+| `include/*.h` | `libvita2d/include/` | |
+| `shader/*_gxp.o` | `libvita2d/shader/compiled/` | the seven precompiled shader programs (ARM ELF objects holding the `.gxp` binaries); `shader/*.cg` are their sources, for reference |
+
+Not vendored: `vita2d_font.c` (FreeType), `vita2d_pgf.c`, `vita2d_pvf.c`,
+`vita2d_image_png.c`, `vita2d_image_jpeg.c`, `vita2d_image_bmp.c`,
+`texture_atlas.c`, `bin_packing_2d.c`, `int_htab.c`.  `vita2d.h` still
+declares their functions; nothing here calls them.  Text is drawn by
+`gpsp/vita/video_vita_text.c` (stb_truetype), images are decoded by
+`psp/stb_image.h`.
+
+## Local changes (two, both in `source/vita2d.c`, marked `GBAdhoc`)
+
+1. `vita2d_get_back_fb()` added (and declared in `include/vita2d.h`): the
+   display buffer being drawn, where upstream only exposes the front one.
+   `vid_dump_ge()` reads the finished frame back from it before the swap.
+2. With `-DVITA2D_NO_PGF` (which `ui.mk` passes) `vita2d_init` does not load
+   the system PGF font module: no PGF font is used.
+
+To take a newer upstream: copy the four sources and three headers again and
+re-apply those two hunks.

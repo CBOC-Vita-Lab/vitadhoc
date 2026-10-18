@@ -1,0 +1,27 @@
+# Pokemon Emerald (USA, Europe) -- Pokemon Center 2F Cable Club > COLOSSEUM >
+# SINGLE BATTLE: three turns of a link battle (each turn both pick FIGHT and
+# the first move; every turn's choices cross the cable before it plays),
+# owner's two rig saves (NICK vs CLONEB).  Stand-in for Ruby<->Ruby (see
+# em.fixture).  Oracle: each machine's own active-mon HP is the other's
+# opponent HP after the third turn.
+NAME=emb
+TITLE="Pokemon - Emerald Version (USA, Europe)"
+ROM=em.gba
+ROM_MD5=605b89b67018abcea91e693a4dd25be3
+HOST_SAVE=em-host.sav
+HOST_SAVE_MD5=2e3e2df2d42f0962d826d9bbf5754f50
+JOIN_SAVE=em-join.sav
+JOIN_SAVE_MD5=0476681cdd918b960b713c64de194151
+HOST_STATE=em.st0
+HOST_STATE_MD5=44c83c8522f12d992ab1a44ec090ca79
+JOIN_STATE=em.st0
+JOIN_STATE_MD5=44c83c8522f12d992ab1a44ec090ca79
+HOST_SCRIPT=emb_host.txt
+JOIN_SCRIPT=emb_join.txt
+MARKS="entry_saved in_colosseum on_spot battle_started turn move_chosen turns_done"
+CROSS="hp_player hp_enemy"
+FRAMES=11000
+GOLDEN_FRAME=6000
+GOLDEN_S0="r=8d6e76ca i=7e562200 e=49d4156d io=45d2ff0d p=018f28e3 o=d426496d v=cdfae673"
+GOLDEN_S1="r=fc4eac5b i=c35bda97 e=7e4118c2 io=ed81855a p=018f28e3 o=5bd9d0b3 v=70a7c15b"
+SIO="multi-player (16-bit); normal 32-bit wireless-adapter probe at boot"

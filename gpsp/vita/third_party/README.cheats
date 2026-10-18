@@ -1,0 +1,32 @@
+Cheats: what came from where
+============================
+
+gpsp/cheat_engine.c, cheat_engine_tables.h
+    Ported from mGBA (https://github.com/mgba-emu/mgba, commit c3c8e5e,
+    MPL-2.0, Copyright (c) 2013-2016 Jeffrey Pfau):
+      src/gba/cheats/codebreaker.c   CodeBreaker decoding and cipher
+      src/gba/cheats/gameshark.c     GameShark Advance / Action Replay v1-v2,
+                                     TEA, seed tables (verbatim)
+      src/gba/cheats/parv3.c         Pro Action Replay v3, seed tables
+      src/gba/cheats.c               GBACheatAddressIsReal, autodetection
+      src/core/cheats.c              the interpreter loop (mCheatRefresh)
+      src/gb/cheats.c                Game Boy GameShark / Game Genie
+    Changes are marked "GBAdhoc:" in the source.  The CodeBreaker button and
+    add-32 forms follow gpSP's own cheats.c (VBA-M semantics); the Game
+    Genie's 15-bit address compare follows Gambatte.
+
+gpsp/vita/tests/cheats/mgba/gba_test_cheats.c
+    mGBA src/gba/test/cheats.c, unmodified (MPL-2.0).
+
+gpsp/vita/tests/cheats/vbam_ref.cpp
+    Unmodified excerpts of VisualBoyAdvance-M src/core/gba/gbaCheats.cpp
+    (https://github.com/visualboyadvance-m/visualboyadvance-m, commit
+    6fe6bb4, GPL-2.0-or-later): the reference the ciphers are tested
+    against.  Test only; not in the app.
+
+gpsp/vita/assets/cheats.db
+    Built by tools/make_cheatdb.py from libretro-database
+    (https://github.com/libretro/libretro-database, commit d5bae90):
+    cht/Nintendo - Game Boy Advance, - Game Boy, - Game Boy Color, and
+    metadat/no-intro/Nintendo - Game Boy*.dat (names, CRC-32, serials).
+    assets/cheats.db.txt is that build's report.

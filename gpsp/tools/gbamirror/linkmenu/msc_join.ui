@@ -1,0 +1,15 @@
+# Console 2 joins console 1's room through the scan list.
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press DOWN
++4 press CROSS
++40 dump x-msc-join-scan
++4 press CROSS
++1 wait linking
++2 dump x-msc-join-linking
++1 wait linked
++150 dump x-msc-join-linked-game
++1 wait ended
++20 dump x-msc-join-ended

@@ -1,0 +1,118 @@
+# tools/gbamirror/Makefile.armhf -- gl_host for 32-bit ARM Linux.
+#
+# The same two-machine link tool as ./Makefile, built on the ARM32 dynarec
+# backend (arm/arm_emit.h, arm/arm_stub.S: the backend the PS Vita port runs)
+# and executed under qemu-arm:
+#
+#   make -f Makefile.armhf                 -> gl_host_arm gl_host_armfar gl_host_armctl
+#   qemu-arm -L /usr/arm-linux-gnueabihf ./gl_host_arm --rom R.gba --frames N ...
+#
+# Three variants of the core (docs: tools/linktest/README.md):
+#
+#   gl_host_arm     the core exactly as a generic ARM Linux libretro build
+#                   makes it (root Makefile platform=$(PLATFORM), MMAP_JIT_CACHE,
+#                   memmap.c places both caches next to .text).
+#   gl_host_armfar  -DARM_FAR_STUBS, and the translation caches are placed by
+#                   gl_jit.c instead of memmap.c: GL_JIT=far (default; every
+#                   instance's block > 64 MiB from .text and from the other
+#                   instance's), GL_JIT=split (also each instance's RAM cache
+#                   in its own block > 64 MiB from its ROM cache, which is
+#                   what makes the far veneers of arm_emit.h run), GL_JIT=near.
+#                   This is the Vita's situation: a VM block allocated far
+#                   from the application's .text.
+#   gl_host_armctl  control: gl_jit.c placement WITHOUT ARM_FAR_STUBS.  far
+#                   works (stubs are reached through the reg_base table);
+#                   split is expected to crash at the first cross-cache
+#                   branch -- the negative control for the far exits.
+#
+# The x86 Makefile builds the core in the source tree and cleans it first.
+# Here each variant is built out of tree, in obj-<variant>/core: a farm of
+# symlinks to the core sources that the ROOT Makefile is run in, so the
+# objects of one variant (or of the x86 build) never mix with another's.
+# The root Makefile tracks no header dependencies, so the farm is rebuilt
+# from scratch every time, exactly as ./Makefile does (`clean` then build).
+CORE_DIR := ../..
+CORE_ABS := $(abspath $(CORE_DIR))
+CROSS    ?= arm-linux-gnueabihf-
+ARM_CC   := $(CROSS)gcc
+ARM_CXX  := $(CROSS)g++
+ARM_AR   := $(CROSS)ar
+# The Vita's CPU is a Cortex-A9: ARMv7-A, NEON, hard float, ARM state.
+ARMFLAGS ?= -march=armv7-a -mfpu=neon -mfloat-abi=hard -marm
+PLATFORM ?= armv7-hardfloat-neon
+JOBS     ?= 2
+# 1 = build the core with the opt-in GBALINK_HALT_BLOCK_EXACT (gbalink_core.c:
+# a halted parent's transfer end no longer moves by a cycle with the pair's
+# lookahead).  The rig's lookahead rows need it; 0 = the 3.5.0 behaviour.
+LINK_EXACT ?= 1
+CFLAGS   := -O2 -g -Wall $(ARMFLAGS) -I$(CORE_DIR)/libretro/libretro-common/include
+
+VARIANTS := arm armfar armctl
+all: $(addprefix gl_host_,$(VARIANTS))
+
+# per variant: extra core flags, and whether gl_jit.c replaces memmap.c
+CORE_COMMON       := $(if $(filter 1,$(LINK_EXACT)),-DGBALINK_HALT_BLOCK_EXACT)
+CORE_EXTRA_arm    := $(CORE_COMMON)
+CORE_EXTRA_armfar := $(CORE_COMMON) -DARM_FAR_STUBS
+CORE_EXTRA_armctl := $(CORE_COMMON)
+RIGJIT_arm    := 0
+RIGJIT_armfar := 1
+RIGJIT_armctl := 1
+
+# Core sources the farm links (everything Makefile.common names lives in
+# these): top-level files, the three emitters, libretro/ with libretro-common.
+FARM_DIRS := arm x86 mips libretro bios
+
+define variant_rules
+obj-$(1)/core_a.o: FORCE
+	rm -rf obj-$(1)
+	mkdir -p obj-$(1)/core
+	cd obj-$(1)/core && for f in $(CORE_ABS)/*.c $(CORE_ABS)/*.cc \
+	    $(CORE_ABS)/*.h $(CORE_ABS)/*.S $(CORE_ABS)/Makefile \
+	    $(CORE_ABS)/Makefile.common $(CORE_ABS)/link.T; do ln -s $$$$f .; done
+	cd obj-$(1)/core && for d in $(FARM_DIRS); do cp -rs $(CORE_ABS)/$$$$d ./$$$$d; done
+	# objects an in-tree build (./Makefile, x86) left behind are not ours
+	find obj-$(1)/core -type l \( -name '*.o' -o -name '*.a' -o -name '*.so' \) -delete
+	$$(MAKE) -C obj-$(1)/core platform=$(PLATFORM) CC=$(ARM_CC) CXX=$(ARM_CXX) \
+	  AR=$(ARM_AR) GBA_LINK=1 STATIC_LINKING=1 \
+	  EXTRA_CFLAGS="$(ARMFLAGS) $$(CORE_EXTRA_$(1)) $(CORE_EXTRA)" -j$(JOBS)
+	$(CROSS)ld -r -o $$@ $$$$(find obj-$(1)/core -name '*.o' \
+	  $$(if $$(filter 1,$$(RIGJIT_$(1))),-not -name memmap.o))
+
+# Instance B: every DEFINED global renamed gbab_*, as in ./Makefile.
+obj-$(1)/core_b.o: obj-$(1)/core_a.o
+	$(CROSS)nm -g --defined-only $$< | awk 'NF == 3 { print $$$$3 " gbab_" $$$$3 }' > obj-$(1)/core_b.syms
+	$(CROSS)objcopy --redefine-syms=obj-$(1)/core_b.syms $$< $$@
+
+obj-$(1)/ap_a.o: $(FE)/fe_autopilot.c obj-$(1)/core_a.o
+	$(ARM_CC) $(AP_CFLAGS) -c -o $$@ $$<
+obj-$(1)/ap_b.o: obj-$(1)/ap_a.o
+	$(CROSS)nm -g --defined-only $$< | awk 'NF == 3 { print $$$$3 " gbab_" $$$$3 }' > obj-$(1)/ap_b.syms
+	printf '%s\n' 'fe_host_input_inject gbab_fe_host_input_inject' \
+	  'fe_host_mem_read gbab_fe_host_mem_read' \
+	  'fe_host_sram_crc_now gbab_fe_host_sram_crc_now' >> obj-$(1)/ap_b.syms
+	$(CROSS)objcopy --redefine-syms=obj-$(1)/ap_b.syms $$< $$@
+obj-$(1)/fe_evt.o: $(FE)/fe_evt.c obj-$(1)/core_a.o
+	$(ARM_CC) $(AP_CFLAGS) -c -o $$@ $$<
+
+gl_host_$(1): gl_host.c gl_jit.c obj-$(1)/core_a.o obj-$(1)/core_b.o \
+              obj-$(1)/ap_a.o obj-$(1)/ap_b.o obj-$(1)/fe_evt.o $(LINK_SRC)
+	$(ARM_CC) $(CFLAGS) -DGL_RIG_JIT=$$(RIGJIT_$(1)) -o $$@ gl_host.c \
+	  $$(if $$(filter 1,$$(RIGJIT_$(1))),gl_jit.c) $(LINK_SRC) \
+	  obj-$(1)/core_a.o obj-$(1)/core_b.o obj-$(1)/ap_a.o obj-$(1)/ap_b.o \
+	  obj-$(1)/fe_evt.o -lm -lpthread -lstdc++
+endef
+
+FE := $(CORE_DIR)/frontend-common
+AP_CFLAGS := -O2 -g -Wall $(ARMFLAGS) -DGPSP_PERF_RIG -I$(FE) -I$(CORE_DIR)/netdrv \
+             -I$(CORE_DIR)/libretro/libretro-common/include
+LINK_SRC := $(CORE_DIR)/gbalink/gbalink_bus.c $(CORE_DIR)/gbalink/gbalink_pair.c \
+            $(CORE_DIR)/gbalink/gbalink_script.c
+
+$(foreach v,$(VARIANTS),$(eval $(call variant_rules,$(v))))
+
+clean:
+	rm -rf $(addprefix obj-,$(VARIANTS)) $(addprefix gl_host_,$(VARIANTS))
+
+FORCE:
+.PHONY: all clean FORCE

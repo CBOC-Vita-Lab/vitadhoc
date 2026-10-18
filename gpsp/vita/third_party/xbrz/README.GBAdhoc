@@ -1,0 +1,16 @@
+xBRZ ("Scale by rules", Zenju), from the HqMAME project.  The files' own
+notice says "GNU General Public License" without naming a version (so any
+version may be chosen, as GPL-2 section 9 provides), with the HqMAME/MAME
+linking exception; PPSSPP ships this same code in its GPL-2.0-or-later
+emulator.  Here it is used under the GPL version 2, like the rest of the
+app.
+
+Taken from PPSSPP's ext/xbrz (which reads/writes R in the low byte, the
+byte order of this port's RGBA8 textures).  Changes, all marked "GBAdhoc":
+  - the 64 MB colour-distance table is 2 MB (sources are RGB565), built by
+    xbrz::init() instead of a guarded function-local static;
+  - single precision instead of double;
+  - makePixel() writes an opaque pixel;
+  - no <vector>, no PPSSPP headers;
+  - scaleRect: a rectangle of the source (rows and columns), optionally
+    written at any place and row pitch of a larger target.

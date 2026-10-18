@@ -1,0 +1,12 @@
+# linktest input script, slot 0 (gl_host --script0): the buttons are part of
+# what crosses the cable in phase 6, so they must reach the right machine on
+# the right frame.
+wait 40
+repeat 700
+hold A 7
+hold B+UP 5
+wait 3
+hold RIGHT+L 11
+hold START 2
+wait 9
+endrepeat

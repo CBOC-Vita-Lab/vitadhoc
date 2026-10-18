@@ -1,5 +1,5 @@
 VITADHOC
-Private build 21 / GBAD00001. Distribution review is still open.
+Private preview: build 21 / GBAD00001. Do not redistribute this package.
 
 FIRST INSTALL
 1. Extract this entire install ZIP on your computer. Do not unzip the VPK.
@@ -28,4 +28,4 @@ No separate shader compiler or HD model is needed for normal rendering.
 Artwork downloads and network play are optional. Keep the source archive,
 guides and licenses on your computer; do not copy them into ux0:app/.
 INSTALL.md has folder details and troubleshooting. PLAY-TOGETHER.md covers
-multiplayer. Open-BIOS fallback and full fresh-install acceptance remain open.
+multiplayer. Build and testing notes are separate in KNOWN-ISSUES.md.

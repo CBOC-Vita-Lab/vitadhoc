@@ -18,17 +18,8 @@ and two-player link modes.
   Scale3x or CPU xBRZ. GBA wide-view options are available for supported games.
 - Open the included cheat database and offline game descriptions without
   downloading a separate pack. Games, covers and Nintendo's BIOS are not included.
-- Link two Vitas or run two emulated handhelds on one Vita. These modes have
-  different requirements and testing limits: see [Play Together](PLAY-TOGETHER.md).
-
-## Current Status
-
-This private build-21 candidate keeps Claude's original executable, removes
-the separately packaged Nintendo BIOS and adds distribution notices. Package
-and host tests pass, and the source builds cleanly. The unchanged runtime has
-passed an in-place Vita update, launch and external-folder scan. Fresh installation, gameplay,
-save/load and the experimental GPU shader's license review remain pending.
-It is not a public release. See [Known Issues](KNOWN-ISSUES.md) for test limits.
+- Link two Vitas or run two emulated handhelds on one Vita.
+  See [Play Together](PLAY-TOGETHER.md) for the setup.
 
 ## Install
 
@@ -37,13 +28,17 @@ New to the package? Open [Start Here](START-HERE.txt).
 You need a homebrew-enabled PS Vita, VitaShell and games you may lawfully use.
 No BIOS download is required; an open replacement is built in.
 
-1. Once a release is available, install its `VitAdhoc-build21.vpk` with VitaShell.
+1. Install the private-preview `VitAdhoc-build21.vpk` with VitaShell.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
 3. Put `.gba`, `.gb` and `.gbc` files in `ux0:data/GBAdhoc/roms/`, or use an
    [existing ROM folder](INSTALL.md#existing-rom-folders).
 
 Back up saves before updating, including saves beside games in external
 folders. [Install](INSTALL.md) covers paths, optional art and troubleshooting.
+
+The bundle includes the open BIOS, databases, app artwork, source and guides.
+Build 21 remains a private preview; [Known Issues](KNOWN-ISSUES.md) has the
+testing and release notes.
 
 [Controls](CONTROLS.md) | [Technical Notes](TECHNICAL.md) |
 [Building](BUILDING.md) | [Assets And Licenses](ASSETS.md) |

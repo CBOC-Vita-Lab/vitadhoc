@@ -10,9 +10,8 @@ For the shortest path, open [Start Here](START-HERE.txt).
 - Wi-Fi only for optional artwork downloads and network features.
 - An open GBA BIOS is built in. Nintendo's BIOS, ROMs and saves are not supplied.
 
-The normal CPU renderer and filters do not require `libshacccg.suprx`. The
-experimental GPU xBRZ path does; it is slower on tested hardware and is off
-by default. Do not install that module just to run the standard app.
+No separate shader compiler is needed for the default renderer. Leave the
+experimental GPU option off for a normal installation.
 
 ## First Install
 
@@ -63,11 +62,8 @@ with its device prefix, such as `ux0:`. An explicit list replaces the
 automatic external list, not the primary `roms/` folder. `extra_roms = 0`
 or an empty value disables external roots.
 
-Each console list holds up to 2,048 games. External roots are truncated before
-the primary root. Same-name files in different folders can appear separately.
-Host tests cover these rules. Build 21 has also opened the game browser and
-found an existing external GBA library on a real Vita. The limit, custom-root
-settings and external save/load still need final hardware checks.
+For large libraries and same-name games, see [Technical Notes](TECHNICAL.md)
+and the save advice below.
 
 ## Data And Saves
 
@@ -101,8 +97,7 @@ The app prefers your optional BIOS in the data root, then any private
 package's `app0:gba_bios.bin`, then its built-in open BIOS. The shared package
 does not contain the original BIOS. If an older private VPK kept your BIOS
 inside the app, preserve your own copy in the data root before updating.
-The hardware launch check used a preserved data-root BIOS; open-BIOS fallback
-has not yet been checked on this final package.
+Build-specific testing notes are in [Known Issues](KNOWN-ISSUES.md).
 
 ## Optional Artwork And Previews
 

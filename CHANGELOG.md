@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-10-18: Simpler Setup
+
+- Shortened the front page and quick start; kept technical notes separate.
+- Included the complete source and linked guides with the existing private
+  VPK, open BIOS, databases, artwork and notices. No runtime change.
+
 ## 2026-10-18: Source Handoff
 
 - Added the source/export identity and a compact map of the complete guides.

@@ -1,5 +1,8 @@
 # Install And Update
 
+For the desktop app and matching ZIP, see [Desktop Install](DESKTOP-INSTALL.md).
+The manual method below remains available. Private preview access is required.
+
 For the shortest path, open [Start Here](START-HERE.txt).
 
 ## Requirements

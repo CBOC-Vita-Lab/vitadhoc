@@ -1,0 +1,31 @@
+VITADHOC
+Private build 21 / GBAD00001. Distribution review is still open.
+
+FIRST INSTALL
+1. Extract this entire install ZIP on your computer. Do not unzip the VPK.
+   CHECK-DOWNLOAD.md explains the optional offline download check.
+2. Using VitaShell USB or FTP, copy VitAdhoc-build21.vpk to ux0:VPK/
+   (create VPK if needed). End the transfer, then open the VPK in VitaShell
+   and install it.
+3. Open VitAdhoc once, then exit normally. Copy your legally usable games
+   into ux0:data/GBAdhoc/roms/. Existing standard ROM folders are also
+   scanned; see INSTALL.md before moving or duplicating an existing library.
+4. Reopen VitAdhoc. Triangle chooses GBA, GB or GBC; Cross starts a game.
+
+ALREADY INSTALLED?
+Back up ux0:data/GBAdhoc/ AND saves/states beside games in external folders.
+Install only the matching new VPK. Do not delete the bubble or data folder,
+rename games, replace config.ini/vita.ini, or import someone else's saves.
+If your own BIOS exists only inside an older app package, preserve it in
+ux0:data/GBAdhoc/gba_bios.bin before updating. See INSTALL.md.
+
+KEEP: games, adjacent .sav/.st0-.st4 files and previews, settings and artwork.
+INCLUDED: VPK, built-in open BIOS, bundled databases, artwork, notices,
+          source archive, guides and an optional offline download checker.
+NOT INCLUDED: commercial games, Nintendo BIOS, personal saves or firmware.
+
+No separate shader compiler or HD model is needed for normal rendering.
+Artwork downloads and network play are optional. Keep the source archive,
+guides and licenses on your computer; do not copy them into ux0:app/.
+INSTALL.md has folder details and troubleshooting. PLAY-TOGETHER.md covers
+multiplayer. Open-BIOS fallback and full fresh-install acceptance remain open.

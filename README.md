@@ -32,6 +32,8 @@ It is not a public release. See [Known Issues](KNOWN-ISSUES.md) for test limits.
 
 ## Install
 
+New to the package? Open [Start Here](START-HERE.txt).
+
 You need a homebrew-enabled PS Vita, VitaShell and games you may lawfully use.
 No BIOS download is required; an open replacement is built in.
 

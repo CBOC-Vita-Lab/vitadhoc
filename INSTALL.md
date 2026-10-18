@@ -1,5 +1,7 @@
 # Install And Update
 
+For the shortest path, open [Start Here](START-HERE.txt).
+
 ## Requirements
 
 - A homebrew-enabled PS Vita and VitaShell. The application ID is `GBAD00001`.
@@ -17,8 +19,11 @@ by default. Do not install that module just to run the standard app.
 This private candidate has no published release yet. Use the matching build-21
 package, not an unrelated older VPK.
 
-1. Check the VPK against its `SHA256SUMS`, copy it to the Vita and install it
-   with VitaShell.
+1. Extract the install ZIP on your computer and [check the download](CHECK-DOWNLOAD.md).
+   Leave `VitAdhoc-build21.vpk` intact. Copy it through VitaShell USB or FTP
+   to `ux0:VPK/` (create that folder if needed), then end the transfer.
+   In VitaShell, highlight the VPK, use the confirm button (usually Cross),
+   and confirm installation.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then exit normally.
 3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use an existing folder below.
 4. Reopen VitAdhoc, choose GBA, GB or GBC with Triangle, then select a game
@@ -112,6 +117,14 @@ in Settings > Interface > Game previews, or force them off with `clips = 0`
 in `vita.ini`. Fast-forward, rewind and link sessions are not recorded.
 
 ## Update Or Remove
+
+| Item | What To Do |
+| --- | --- |
+| `VitAdhoc-build21.vpk` | Install with VitaShell; no manual app-folder replacement. |
+| Games and their adjacent saves/states | Keep, including those in external folders. |
+| `config.ini` and `vita.ini` | Keep; no starter config is bundled. |
+| Your own BIOS, covers and previews | Keep in their existing data locations; see the BIOS note above. |
+| Source archive, guides and notices | Keep on your computer; no Vita copy step. |
 
 1. Exit VitAdhoc and back up `ux0:data/GBAdhoc/` plus all external ROM folders'
    saves/states. Do not assume an app-folder backup covers external saves.

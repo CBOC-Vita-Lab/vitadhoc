@@ -2,7 +2,9 @@
 
 These three station-authored parcels are exact outputs of Mystery Gift Station's
 `GiftBundleTest.parcelContainsCardAndBothScripts`. They contain no ROM/BIOS data.
-See [delivery protocol](../../../docs/MYSTERY-GIFT-DELIVERY.md).
+The parcel format implementation is in
+[mgift_payload.c](../../../psp/mgift_payload.c); the separate companion's
+delivery-protocol document is not included in this snapshot.
 
 Regenerate from the companion repository on `codex/mystery-gift-delivery`:
 

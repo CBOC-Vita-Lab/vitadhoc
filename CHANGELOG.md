@@ -1,5 +1,11 @@
 # Changes
 
+## 2026-10-18: Source Handoff
+
+- Added the source/export identity and a compact map of the complete guides.
+- Rechecked the upstream license question: no reply as of this date.
+- No source/runtime replacement, install or public-release change.
+
 ## Build 21 Publishing Candidate
 
 - Scan existing external game folders, including common RetroFlow roots.

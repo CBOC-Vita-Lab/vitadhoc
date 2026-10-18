@@ -47,7 +47,7 @@ folders. [Install](INSTALL.md) covers paths, optional art and troubleshooting.
 
 [Controls](CONTROLS.md) | [Technical Notes](TECHNICAL.md) |
 [Building](BUILDING.md) | [Assets And Licenses](ASSETS.md) |
-[Changes](CHANGELOG.md)
+[Changes](CHANGELOG.md) | [Source Record](SOURCE.md)
 
 CBOC, Claude and ChatGPT contributed to this release preparation; full roles
 and upstream acknowledgments are in [Credits](CREDITS.md). Code and databases

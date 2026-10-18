@@ -36,7 +36,8 @@ separately and are intended for upstream.
 - Add bounded, disabled-by-default GBA GS1/AR3 RAM cheats.
 
 Both PSPs must be updated for linking and sharing. See
-[release notes](docs/RELEASE-4.1.0.md) for validation scope.
+current [known issues](../KNOWN-ISSUES.md) for the publishing candidate's
+validation scope; the old 4.1.0 release notes are not part of this snapshot.
 
 ## [0.1.0] — unreleased
 

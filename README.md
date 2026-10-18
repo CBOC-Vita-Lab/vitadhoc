@@ -25,8 +25,8 @@ and two-player link modes.
 
 This private build-21 candidate keeps Claude's original executable, removes
 the separately packaged Nintendo BIOS and adds distribution notices. Package
-and host tests pass, and the source builds cleanly. An in-place Vita update,
-launch and external-folder scan are verified. Fresh installation, gameplay,
+and host tests pass, and the source builds cleanly. The unchanged runtime has
+passed an in-place Vita update, launch and external-folder scan. Fresh installation, gameplay,
 save/load and the experimental GPU shader's license review remain pending.
 It is not a public release. See [Known Issues](KNOWN-ISSUES.md) for test limits.
 

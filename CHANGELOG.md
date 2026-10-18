@@ -12,6 +12,10 @@
 - Add complete readable font, dependency and database notices, plus Wikipedia
   attribution. Correct the stale LiveArea generation target in the source copy.
 - Separate concise player guides from technical/build documentation.
+- Include the full CPU xBRZ notice and linked SDK runtime notices in the
+  VPK and install ZIP, with the SDK source lock. Keep the existing full
+  libvita2d/stb notices and verify their bytes against the vendored originals.
+  This notice-only repack changes no executable, game data or app resource.
 
 This candidate is not tagged as a finished public release. The selected
 original executable has passed an in-place Vita update, launch and game-browser

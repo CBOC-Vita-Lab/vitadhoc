@@ -17,6 +17,11 @@ Use GNU make and VitaSDK. The checked local toolchain is VitaSDK
 ```
 
 Obtain SDK tools from [VitaSDK](https://vitasdk.org/), not this repository.
+The SDK's [build lock](notices/VitaSDK-build-lock.json) records its complete
+source pins. Runtime notice sources are the pinned
+[VitaSDK headers](https://github.com/vitasdk/vita-headers/blob/e66ebe90b73d1fa4cce005a5b2072cec27322544/LICENSE.md),
+[newlib](https://github.com/vitasdk/newlib/blob/2e428297c0b6aefd830c5a75a7daa7e774562a42/COPYING.NEWLIB)
+and [GCC 15.2.0 exception](https://github.com/gcc-mirror/gcc/blob/releases/gcc-15.2.0/COPYING.RUNTIME).
 The full dependency notices and pins are in [Third-Party Notices](notices/THIRD-PARTY.md)
 and each vendored component's provenance file. The seven libvita2d shader
 objects are retained licensed upstream inputs with `.cg` source alongside them;

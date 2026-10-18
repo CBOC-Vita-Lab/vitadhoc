@@ -7,9 +7,11 @@
   GPL-2.0. The CPU xBRZ copy has a different unversioned notice. The GPU
   strings are embedded even when its setting is off; do not treat that
   default as a distribution exemption. No blanket rights-clearance claim.
-- The BIOS-free build-21 package has passed an in-place Vita installation,
-  file readback, launch and game-browser check. It still needs fresh-install,
-  open-BIOS fallback, gameplay, save/load and gameplay-relaunch acceptance.
+- The earlier BIOS-free build-21 package passed an in-place Vita installation,
+  file readback, launch and game-browser check. The current repack only adds
+  license notices; the executable and app resources are unchanged. This exact
+  package still needs installation, open-BIOS fallback, gameplay, save/load
+  and gameplay-relaunch acceptance.
 - Default external-folder scanning found an existing GBA library on hardware.
   Custom roots, the list limit and adjacent save/load have host coverage only.
 - The selected package retains the original executable. The independent

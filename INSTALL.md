@@ -60,7 +60,9 @@ or an empty value disables external roots.
 
 Each console list holds up to 2,048 games. External roots are truncated before
 the primary root. Same-name files in different folders can appear separately.
-These build-21 behaviours passed host tests; physical-Vita acceptance is pending.
+Host tests cover these rules. Build 21 has also opened the game browser and
+found an existing external GBA library on a real Vita. The limit, custom-root
+settings and external save/load still need final hardware checks.
 
 ## Data And Saves
 
@@ -92,7 +94,10 @@ these collisions matter. A second local player's separate save may use
 
 The app prefers your optional BIOS in the data root, then any private
 package's `app0:gba_bios.bin`, then its built-in open BIOS. The shared package
-does not contain the original BIOS.
+does not contain the original BIOS. If an older private VPK kept your BIOS
+inside the app, preserve your own copy in the data root before updating.
+The hardware launch check used a preserved data-root BIOS; open-BIOS fallback
+has not yet been checked on this final package.
 
 ## Optional Artwork And Previews
 

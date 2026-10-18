@@ -13,7 +13,9 @@
   attribution. Correct the stale LiveArea generation target in the source copy.
 - Separate concise player guides from technical/build documentation.
 
-This candidate is not tagged as a finished public release. The independent
-clean build succeeds; final candidate selection and physical-device acceptance
-remain open. Earlier
-build-20 test results are historical evidence, not acceptance of build 21.
+This candidate is not tagged as a finished public release. The selected
+original executable has passed an in-place Vita update, launch and game-browser
+check with external-folder scanning. Fresh installation, open-BIOS fallback,
+gameplay and save/load remain untested on this package. The independent build
+succeeds but is not byte-identical. Earlier build-20 results remain historical
+evidence, not acceptance of build 21.

@@ -37,19 +37,23 @@ version 4.1.1 / SFO 04.11, ATTRIBUTE2 12. The shared package must use empty
 
 `GIT_VERSION` defaults to the current source revision. A receipt must record
 an explicit override if one is used; do not represent a custom label as an
-upstream commit. The independent publishing build currently uses
-`GIT_VERSION=build21-clean1` for a distinguishable candidate. That full
-network-isolated Linux x86_64 build succeeded with the pinned SDK; no Vita was
-accessed. The BIOS-free repack is separately identified, not called a clean build.
+upstream commit. Two full, network-isolated Linux x86_64 builds succeeded
+with the pinned SDK: one uses `GIT_VERSION=build21-clean1` to distinguish it,
+and the other uses the original `GIT_VERSION=5f0fa23` label for comparison.
+Neither run accessed a Vita. The BIOS-free repack is separately identified,
+not called a clean build.
 
 | Candidate | Executable SHA-256 |
 | --- | --- |
 | Original build-21 runtime, BIOS-free repack | `d7b06b6cbb6242c702c27961878fc7deb4a9add0beb4090fb0798f88747ca016` |
 | Independent `build21-clean1` build | `03f8cc382e634edd47d75f98a4efa8b7bfa90403fbddf565f4e47090f1ab808a` |
+| Independent build with original `5f0fa23` label | `0b21c419ae0611c93578a9edff65bed0e06a905a86469e663f1f55620ac9bf57` |
 
-The independent build has a different version label and is not byte-identical
-to the original. Both archive/runtime privacy checks pass. Neither has final
-publishing-candidate hardware acceptance; do not transfer tests between them.
+The original-label rebuild matches all 5,463,744 decoded runtime bytes except
+four bytes in module-info metadata. The SELF headers also differ, so this is
+not a byte-identical reproduction. The other build has a different version
+label. Archive/runtime privacy checks pass, but no candidate has final
+publishing hardware acceptance; do not transfer tests between them.
 
 Committed LiveArea images allow a normal build without Python graphics tools.
 To regenerate them, install Pillow, CairoSVG and their normal dependencies,

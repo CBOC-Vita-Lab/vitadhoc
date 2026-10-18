@@ -23,18 +23,11 @@ and two-player link modes.
 
 ## Current Status
 
-This is the private build-21 publishing candidate, not a verified public
-release. The BIOS-free package retains the original build-21 executable;
-distribution notices have been added. Its package checks and cartridge
-database tests pass. A separate clean-source build also succeeds; it is a
-different candidate, not a substitute for hardware testing.
-
-Earlier hardware testing measured build 20 in one GBA game at approximately
-59.94 FPS at 500 MHz. That does not verify build 21, the full game library,
-two-Vita networking or every display option. [Known Issues](KNOWN-ISSUES.md)
-lists the remaining checks. No campaign-wide or universal compatibility claim
-is made. Distribution also waits for the experimental GPU shader's license
-compatibility to be resolved; it is distinct from the CPU xBRZ implementation.
+This private build-21 candidate keeps Claude's original executable, removes
+the separately packaged Nintendo BIOS and adds distribution notices. Package
+and host tests pass, and the source builds cleanly. Final Vita install/play
+checks and the experimental GPU shader's license review are still pending.
+It is not a public release. See [Known Issues](KNOWN-ISSUES.md) for test limits.
 
 ## Install
 
@@ -46,10 +39,8 @@ No BIOS download is required; an open replacement is built in.
 3. Put `.gba`, `.gb` and `.gbc` files in `ux0:data/GBAdhoc/roms/`, or use an
    [existing ROM folder](INSTALL.md#existing-rom-folders).
 
-Back up saves before updating. Installing the same `GBAD00001` application ID
-does not intentionally move your data, but the update path still needs final
-hardware acceptance. See [Install](INSTALL.md) for exact paths, optional art,
-updates and troubleshooting.
+Back up saves before updating, including saves beside games in external
+folders. [Install](INSTALL.md) covers paths, optional art and troubleshooting.
 
 [Controls](CONTROLS.md) | [Technical Notes](TECHNICAL.md) |
 [Building](BUILDING.md) | [Assets And Licenses](ASSETS.md) |

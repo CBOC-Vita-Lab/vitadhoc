@@ -14,13 +14,15 @@ by default. Do not install that module just to run the standard app.
 
 ## First Install
 
-1. Obtain the VPK and checksum from the project's reviewed release. This
-   staging tree has no published release yet; do not use an unrelated old package.
-2. Copy the VPK to the Vita, select it in VitaShell and install it.
-3. Open VitAdhoc once, then return to the game list and exit normally.
-4. Copy games to `ux0:data/GBAdhoc/roms/`, or leave them in a supported external
-   location below. Start VitAdhoc again to scan them.
-5. Choose GBA, GB or GBC with Triangle, select a game and press Cross.
+This private candidate has no published release yet. Use the matching build-21
+package, not an unrelated older VPK.
+
+1. Check the VPK against its `SHA256SUMS`, copy it to the Vita and install it
+   with VitaShell.
+2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then exit normally.
+3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use an existing folder below.
+4. Reopen VitAdhoc, choose GBA, GB or GBC with Triangle, then select a game
+   and press Cross.
 
 Keep the readable licenses/notices from the install ZIP with your copy. They
 are also included in the VPK under `licenses/` and `notices/`.

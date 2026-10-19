@@ -1,5 +1,9 @@
 # VitAdhoc
 
+The existing private ZIP is the earlier build-21 preview, not the newer
+build-21 covers runtime now installed on the owner's Vita. Keep that newer
+installation; its matching source/package review is not finished.
+
 Requires a homebrew-enabled Vita and VitaShell. An open GBA BIOS is included;
 no proprietary BIOS or shader compiler is needed for a normal installation.
 
@@ -18,6 +22,10 @@ copy for review. Leave the experimental GPU renderer off for normal use.
 
 Keep the computer and Vita awake through copying and checks. If disconnected,
 reconnect the same Vita and choose **Resume**.
+
+For compatible updates installed through this app, **Update app** keeps your
+ROMs, saves and settings. Use the same computer and Vita, then approve the
+update explicitly. Older/manual installs use **Full setup** instead.
 
 This is a private build-21 preview. Public release remains held pending
 license clarification and final package acceptance.

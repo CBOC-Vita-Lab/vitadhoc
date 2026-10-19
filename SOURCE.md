@@ -21,9 +21,11 @@ scan. The later notice-only repack did not change runtime bytes and was not
 installed again. Fresh installation, gameplay and save/load acceptance remain
 pending. See [Known Issues](KNOWN-ISSUES.md).
 
-The GPL-2.0 frontend / GPL-3.0 shader question remains unresolved.
-[Upstream issue](https://github.com/ShoshinFauteux/GBAdhoc/issues/14) had no
-reply when checked on 2026-10-18. No license was changed based on an assumption.
+On 2026-10-19, the GBAdhoc maintainer explicitly permitted their contributions
+under GPL-2.0-or-later, including GPL-3.0 use. [Licensing Status](LICENSING.md)
+records the permission and its scope. Matching source for the newer covers
+runtime and the remaining component/package review are still outstanding;
+this permission alone does not clear that binary.
 
 ## Guide Map
 

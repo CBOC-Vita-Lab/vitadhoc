@@ -2,11 +2,14 @@
 
 ## Before Public Release
 
-- Resolve the experimental GPU shader license against the rest of the app.
-  Its referenced upstream includes GPL-3.0, while the project advertises
-  GPL-2.0. The CPU xBRZ copy has a different unversioned notice. The GPU
-  strings are embedded even when its setting is off; do not treat that
-  default as a distribution exemption. No blanket rights-clearance claim.
+- Finish the remaining component and combined-package license review.
+  [GBAdhoc permission](LICENSING.md) now allows GPL-2.0-or-later for the
+  maintainer's contributions. It does not cover other authors' code. The
+  GPU shader's exact historical revision is still unrecorded; CPU xBRZ has
+  a separate notice. GPU strings are embedded even when its setting is off.
+- Recover matching source for the newer covers runtime. This earlier build-21
+  source and its hardware evidence do not establish that runtime's behaviour
+  or large-library responsiveness.
 - The earlier BIOS-free build-21 package passed an in-place Vita installation,
   file readback, launch and game-browser check. The current repack only adds
   license notices; the executable and app resources are unchanged. This exact

@@ -25,8 +25,9 @@ and two-player link modes.
 
 **Private source preview.** [Releases](https://github.com/CBOC-Vita-Lab/vitadhoc/releases)
 contains `VitAdhoc-build21-source-20261019.zip`, not a ready-made installer.
-The newer covers runtime still needs matching source and license clarification;
-do not replace it with this earlier build-21 version.
+The newer covers runtime still needs matching source and the remaining component
+review; do not replace it with this earlier build-21 version. The GBAdhoc
+maintainer's permission is now [recorded](LICENSING.md).
 
 New to the package? Open [Start Here](START-HERE.txt).
 
@@ -50,7 +51,7 @@ testing and release notes.
 
 [Controls](CONTROLS.md) | [Technical Notes](TECHNICAL.md) |
 [Building](BUILDING.md) | [Assets And Licenses](ASSETS.md) |
-[Changes](CHANGELOG.md) | [Source Record](SOURCE.md)
+[Changes](CHANGELOG.md) | [Source Record](SOURCE.md) | [Licensing Status](LICENSING.md)
 
 CBOC, Claude and ChatGPT contributed to this release preparation; full roles
 and upstream acknowledgments are in [Credits](CREDITS.md). Code and databases

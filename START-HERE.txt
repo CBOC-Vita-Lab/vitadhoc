@@ -1,6 +1,7 @@
 VITADHOC
 Private source preview: earlier build 21 / GBAD00001. No VPK is included.
-The newer covers runtime still needs matching source and license review.
+The newer covers runtime still needs matching source and final component review.
+GBAdhoc's maintainer permission is recorded in LICENSING.md.
 Keep a newer working installation; do not downgrade it to this build.
 BUILDING.md describes the available source. Installation steps below require
 an existing matching private VPK or your own compatible build.

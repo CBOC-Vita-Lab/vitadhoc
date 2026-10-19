@@ -2,7 +2,7 @@
 
 | Included | Basis / source |
 | --- | --- |
-| Emulator/frontend source | Existing GPL-2.0 notices; original headers preserved |
+| Emulator/frontend source | GBAdhoc maintainer's contributions are GPL-2.0-or-later; other components retain their terms. See [Licensing Status](LICENSING.md) |
 | Open GBA BIOS | GPL-2.0, Normmatt and VBA/VBA-M; `gpsp/bios/` source |
 | Vita LiveArea art | Original linked-handheld mark and generator, `gpsp/vita/tools/make_livearea.py` and `vstyle_art.py` |
 | Inter and Outfit fonts | SIL OFL 1.1; complete notices in `licenses/` |

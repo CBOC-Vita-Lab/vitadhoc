@@ -6,7 +6,7 @@
 - **ChatGPT:** publishing preparation, package/privacy checks, license inventory,
   documentation editing and independent verification recorded for this copy.
 
-VitAdhoc builds on **GBAdhoc by ShoshinFauteux**, **gpSP by Exophase** and the
+VitAdhoc builds on [**GBAdhoc by ShoshinFauteux**](https://github.com/ShoshinFauteux/GBAdhoc), **gpSP by Exophase** and the
 libretro contributors, **TGB Dual**, **ReGBA's open BIOS by Normmatt and the
 VBA/VBA-M team**, and many dependency contributors. It is not solely original
 work by the three credited above. Original author/copyright notices stay in

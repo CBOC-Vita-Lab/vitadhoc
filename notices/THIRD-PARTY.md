@@ -1,9 +1,19 @@
 # Third-Party Notices
 
-VitAdhoc is based on GBAdhoc and gpSP. The original copyright notices in
-the source remain in place. The application and open GBA BIOS use GPL
-version 2; see `licenses/GPL-2.0.txt` and `gpsp/COPYING`.
+VitAdhoc is based on GBAdhoc and gpSP. Original copyright and component
+license notices remain in place; the root GPL text is not a blanket license
+for every file. See [Licensing Status](../LICENSING.md) for the maintainer's
+clarification and the remaining package review.
 
+- **GBAdhoc:** ShoshinFauteux explicitly permitted their own contributions
+  under GPL-2.0-or-later on October 19, 2026, including GPL-3.0 use.
+  [Project](https://github.com/ShoshinFauteux/GBAdhoc) and
+  [permission](https://github.com/ShoshinFauteux/GBAdhoc/issues/14#issuecomment-6267226116).
+  Other contributors' terms are not changed by this grant.
+- **PSP-only source caveats:** `gpsp/psp/font_8x16.c` retains GPL-2.0-only
+  terms; `gpsp/psp/me` has unresolved provenance flagged by the maintainer.
+  Neither is linked by the reviewed build-21 Vita build. Their presence in
+  the source tree is not permission to relicense them.
 - **gpSP:** original work by Exophase, with libretro and other contributors.
   See source headers and `gpsp/original_readme.txt` for the original credits.
 - **Open GBA BIOS:** Normmatt and the VBA/VBA-M team, from

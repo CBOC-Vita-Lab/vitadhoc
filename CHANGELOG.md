@@ -1,5 +1,14 @@
 # Changes
 
+## 2026-10-19: GBAdhoc Permission
+
+- Recorded the maintainer's explicit GPL-2.0-or-later permission for their
+  contributions, with the original issue link and upstream credit.
+- Kept the Linux font and PSP Media Engine caveats separate from that grant.
+- Updated the release notes without relicensing unrelated components or
+  changing the runtime. Matching covers source and final package review
+  remain outstanding; the repository stays a private source preview.
+
 ## 2026-10-18: Simpler Setup
 
 - Shortened the front page and quick start; kept technical notes separate.

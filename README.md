@@ -23,12 +23,17 @@ and two-player link modes.
 
 ## Install
 
+**Private source preview.** [Releases](https://github.com/CBOC-Vita-Lab/vitadhoc/releases)
+contains `VitAdhoc-build21-source-20261019.zip`, not a ready-made installer.
+The newer covers runtime still needs matching source and license clarification;
+do not replace it with this earlier build-21 version.
+
 New to the package? Open [Start Here](START-HERE.txt).
 
 You need a homebrew-enabled PS Vita, VitaShell and games you may lawfully use.
 No BIOS download is required; an open replacement is built in.
 
-1. Install the private-preview `VitAdhoc-build21.vpk` with VitaShell.
+1. If you already have the matching private-preview `VitAdhoc-build21.vpk`, install it with VitaShell.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
 3. Put `.gba`, `.gb` and `.gbc` files in `ux0:data/GBAdhoc/roms/`, or use an
    [existing ROM folder](INSTALL.md#existing-rom-folders).
@@ -36,9 +41,12 @@ No BIOS download is required; an open replacement is built in.
 Back up saves before updating, including saves beside games in external
 folders. [Install](INSTALL.md) covers paths, optional art and troubleshooting.
 
-The bundle includes the open BIOS, databases, app artwork, source and guides.
+The source includes the open BIOS, databases, app artwork and guides.
 Build 21 remains a private preview; [Known Issues](KNOWN-ISSUES.md) has the
 testing and release notes.
+
+[Manual installation](INSTALL.md) has the exact paths and update steps.
+[Building](BUILDING.md) and [Technical notes](TECHNICAL.md) are the advanced route.
 
 [Controls](CONTROLS.md) | [Technical Notes](TECHNICAL.md) |
 [Building](BUILDING.md) | [Assets And Licenses](ASSETS.md) |

@@ -1,8 +1,8 @@
 # Check The Download
 
-Extract the **whole install ZIP** into a new folder on your computer.
-Leave the `.vpk` intact. The ZIP's `SHA256SUMS` lists every other bundled
-file, including the VPK, guides and notices.
+Extract the **whole source ZIP** into a new folder on your computer.
+The ZIP's `SHA256SUMS` lists every other bundled file. It has no VPK.
+An existing private install ZIP has its own checksum list; do not mix them.
 
 ## Optional Offline Checker
 
@@ -26,14 +26,14 @@ should extract a fresh copy into a new folder before installing.
 
 ## Without Python
 
-Check the VPK using your computer's built-in command and compare the result
+Check a file using your computer's built-in command and compare the result
 with its line in `SHA256SUMS` (letter case does not matter):
 
 | Computer | Command, From The Extracted Folder |
 | --- | --- |
-| Windows PowerShell | `Get-FileHash -Algorithm SHA256 *.vpk` |
-| macOS Terminal | `shasum -a 256 *.vpk` |
-| Linux Terminal | `sha256sum *.vpk` |
+| Windows PowerShell | `Get-FileHash -Algorithm SHA256 START-HERE.txt` |
+| macOS Terminal | `shasum -a 256 START-HERE.txt` |
+| Linux Terminal | `sha256sum START-HERE.txt` |
 
 A matching checksum checks file consistency, not the trustworthiness of
 the source, game compatibility or permission to redistribute. Get packages

@@ -1,8 +1,12 @@
 VITADHOC
-Private preview: build 21 / GBAD00001. Do not redistribute this package.
+Private source preview: earlier build 21 / GBAD00001. No VPK is included.
+The newer covers runtime still needs matching source and license review.
+Keep a newer working installation; do not downgrade it to this build.
+BUILDING.md describes the available source. Installation steps below require
+an existing matching private VPK or your own compatible build.
 
 FIRST INSTALL
-1. Extract this entire install ZIP on your computer. Do not unzip the VPK.
+1. Extract the source ZIP on your computer. Keep your separate VPK intact.
    CHECK-DOWNLOAD.md explains the optional offline download check.
 2. Using VitaShell USB or FTP, copy VitAdhoc-build21.vpk to ux0:VPK/
    (create VPK if needed). End the transfer, then open the VPK in VitaShell
@@ -20,9 +24,9 @@ If your own BIOS exists only inside an older app package, preserve it in
 ux0:data/GBAdhoc/gba_bios.bin before updating. See INSTALL.md.
 
 KEEP: games, adjacent .sav/.st0-.st4 files and previews, settings and artwork.
-INCLUDED: VPK, built-in open BIOS, bundled databases, artwork, notices,
-          source archive, guides and an optional offline download checker.
-NOT INCLUDED: commercial games, Nintendo BIOS, personal saves or firmware.
+INCLUDED: source, open BIOS, databases, app artwork, notices, guides
+          and an optional offline download checker.
+NOT INCLUDED: VPK, commercial games, Nintendo BIOS, personal saves or firmware.
 
 No separate shader compiler or HD model is needed for normal rendering.
 Artwork downloads and network play are optional. Keep the source archive,

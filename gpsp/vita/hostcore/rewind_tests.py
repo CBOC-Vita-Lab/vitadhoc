@@ -421,11 +421,12 @@ def t_guards(S):
             "the chip says so at the oldest point")
 
     # the menu's Settings row: GAMEPLAY > Rewind (wrapping upwards: Button
-    # mapping, Keep full speed, FPS counter, Rewind), stepped once to the
+    # mapping, THIS GAME's Display settings, Keep full speed, FPS counter,
+    # Rewind), stepped once to the
     # left of "1 min" is "30 s"; the game loop hears of it when the menu
     # closes
     r = S.run("rw_setting", menu_pick(4, wait=120) + "+20:up\n+8:up\n+8:up\n"
-              "+8:up\n+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
+              "+8:up\n+8:up\n+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
               "+4:circle\n+10:circle\n+60:rstick-left:30\n+40:quit\n",
               autoboot="gbadhoc-test.gba")
     S.clean(r)

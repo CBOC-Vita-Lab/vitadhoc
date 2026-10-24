@@ -1,4 +1,8 @@
 /* stb_image - v2.30 - public domain image loader - http://nothings.org/stb
+   (VitAdhoc: two local patches in stbi__decode_jpeg_image, marked
+    "VitAdhoc local patch": stray bytes between segments are skipped, and a
+    marker error before the first scan fails instead of returning an
+    uninitialised image.)
                                   no warranty implied; use at your own risk
 
    Do this:
@@ -3416,13 +3420,26 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
       j->img_comp[m].raw_data = NULL;
       j->img_comp[m].raw_coeff = NULL;
    }
+   int scans = 0;  /* VitAdhoc: scans decoded so far (see below) */
    j->restart_interval = 0;
    if (!stbi__decode_jpeg_header(j, STBI__SCAN_load)) return 0;
    m = stbi__get_marker(j);
    while (!stbi__EOI(m)) {
-      if (stbi__SOS(m)) {
+      if (m == STBI__MARKER_none) {
+         /* VitAdhoc local patch: stray bytes between segments.  The header
+          * loop above already skips such padding; libjpeg skips it too
+          * ("extraneous bytes before marker").  Without this the image phase
+          * read the padding as marker 0xFF, failed it, and returned success
+          * with no scan decoded: an uninitialised buffer as the picture. */
+         if (stbi__at_eof(j->s)) {
+            if (!scans) return stbi__err("expected marker", "Corrupt JPEG");
+            break;   /* data decoded, end missing: keep it, as upstream */
+         }
+         m = stbi__get_marker(j);
+      } else if (stbi__SOS(m)) {
          if (!stbi__process_scan_header(j)) return 0;
          if (!stbi__parse_entropy_coded_data(j)) return 0;
+         ++scans;
          if (j->marker == STBI__MARKER_none ) {
          j->marker = stbi__skip_jpeg_junk_at_end(j);
             // if we reach eof without hitting a marker, stbi__get_marker() below will fail and we'll eventually return 0
@@ -3437,10 +3454,14 @@ static int stbi__decode_jpeg_image(stbi__jpeg *j)
          if (NL != j->s->img_y) return stbi__err("bad DNL height", "Corrupt JPEG");
          m = stbi__get_marker(j);
       } else {
-         if (!stbi__process_marker(j, m)) return 1;
+         /* VitAdhoc local patch: upstream returns 1 here ("corrupt data
+          * rather than no data"); before the first scan there is no data at
+          * all, only uninitialised component buffers, so that is a failure. */
+         if (!stbi__process_marker(j, m)) return scans ? 1 : 0;
          m = stbi__get_marker(j);
       }
    }
+   if (!scans) return stbi__err("no SOS", "Corrupt JPEG");
    if (j->progressive)
       stbi__jpeg_finish(j);
    return 1;

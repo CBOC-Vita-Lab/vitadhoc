@@ -83,6 +83,8 @@ static struct
    unsigned tap_btn;          /* buttons tapped                             */
    int hover_row;             /* row id under the finger, or TCH_NONE       */
    int v256;                  /* drag velocity, px/frame * 256 (smoothed)   */
+   int vx256;                 /* horizontal velocity, independent of Y     */
+   int axis;                  /* first motion past slop: 1 horizontal, 2 Y  */
    int used;                  /* a touch has been seen in this run          */
 } g_tch;
 
@@ -258,6 +260,8 @@ static void tch_poll(void)
       g_tch.claimed = 0;
       g_tch.dead = 0;
       g_tch.v256 = 0;
+      g_tch.vx256 = 0;
+      g_tch.axis = 0;
       g_tch.land = tch_find(t.x, t.y);
       if (g_tch.land >= 0)
          g_tch.land_r = g_tch.prev[g_tch.land];
@@ -269,8 +273,13 @@ static void tch_poll(void)
       g_tch.x = t.x;
       g_tch.y = t.y;
       if (abs(t.x - g_tch.x0) > TCH_SLOP || abs(t.y - g_tch.y0) > TCH_SLOP)
+      {
+         if (!g_tch.moved)
+            g_tch.axis = abs(t.x - g_tch.x0) >= abs(t.y - g_tch.y0) ? 1 : 2;
          g_tch.moved = 1;
+      }
       g_tch.v256 = (g_tch.v256 + g_tch.dy * 256) / 2;
+      g_tch.vx256 = (g_tch.vx256 + g_tch.dx * 256) / 2;
    }
    if (g_tch.dead)
    {
@@ -410,8 +419,8 @@ static int tch_scroll(tch_scroll_t *s, int *off, int max, int vx, int vy,
 /* A list that moves a whole row at a time (the game list's carousel): the
  * same drag and coast, returned as rows to step -- positive = towards the
  * end of the list (the finger went up). */
-static int tch_steps(tch_scroll_t *s, int row_h, int vx, int vy, int vw,
-                     int vh)
+static int tch_steps_axis(tch_scroll_t *s, int row_h, int vx, int vy, int vw,
+                          int vh, int horizontal)
 {
    int n = 0;
    if (g_tch.down && !g_tch.was_down && s->on && abs(s->v256) >= 256 &&
@@ -420,12 +429,18 @@ static int tch_steps(tch_scroll_t *s, int row_h, int vx, int vy, int vw,
       g_tch.moved = 1;             /* stops the coast; not a tap */
       g_tch.claimed = 1;
       s->v256 = 0;
+      if (horizontal)
+      {
+         s->acc = 0;
+         g_tch.axis = 1;
+      }
    }
-   else if (g_tch.down && !g_tch.dead && g_tch.moved && tch_in(vx, vy, vw, vh))
+   else if (g_tch.down && !g_tch.dead && g_tch.moved &&
+            (!horizontal || g_tch.axis == 1) && tch_in(vx, vy, vw, vh))
    {
       g_tch.claimed = 1;
-      s->acc -= g_tch.dy;
-      s->v256 = g_tch.v256;
+      s->acc -= horizontal ? g_tch.dx : g_tch.dy;
+      s->v256 = horizontal ? g_tch.vx256 : g_tch.v256;
       s->on = 1;
    }
    else if (s->on && !g_tch.down && abs(s->v256) >= 256)
@@ -443,6 +458,12 @@ static int tch_steps(tch_scroll_t *s, int row_h, int vx, int vy, int vw,
    while (s->acc >= row_h) { s->acc -= row_h; n++; }
    while (s->acc <= -row_h) { s->acc += row_h; n--; }
    return n;
+}
+
+static int tch_steps(tch_scroll_t *s, int row_h, int vx, int vy, int vw,
+                     int vh)
+{
+   return tch_steps_axis(s, row_h, vx, vy, vw, vh, 0);
 }
 
 /* Stop a coast (the pad took over). */

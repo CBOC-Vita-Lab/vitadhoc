@@ -679,11 +679,20 @@ void reload_timing_info()
   }
 }
 
+#include "cart_sensor.h"
+
 u8 read_backup(u32 address)
 {
   DRPH_SCOPE(DRPH_MEMC);
   u8 value = 0;
   cph_bkr++;   /* phase 5h: counted, not timed -- see main.h */
+
+  if (cart_sensors & CART_SENSOR_TILT)
+  {
+    u8 tilt;
+    if (cart_tilt_read(address, &tilt))
+      return tilt;
+  }
 
   if(backup_type == BACKUP_EEPROM)
   {
@@ -1571,6 +1580,8 @@ void function_cc write_backup(u32 address, u32 value)
   DRPH_SCOPE(DRPH_MEMC);
   value &= 0xFF;
   cph_bkw++;   /* phase 5h */
+  if ((cart_sensors & CART_SENSOR_TILT) && cart_tilt_write(address, value))
+    return;     /* the sensor's register, not the save */
 #ifdef GBA_LINK
   backup_writes++;   /* gba_memory.h */
 #endif
@@ -2007,7 +2018,8 @@ static u8 rtc_encode_hour(const struct tm *current_time)
 }
 
 void update_gpio_romregs() {
-  if (rtc_enabled || rumble_enabled) {
+  if (rtc_enabled || rumble_enabled ||
+      (cart_sensors & (CART_SENSOR_SOLAR | CART_SENSOR_GYRO))) {
     // Update the registers in the ROM mapped buffer.
     u8 *map = memory_map_read[0x8000000 >> 15];
     if (map) {
@@ -2194,6 +2206,11 @@ void function_cc write_gpio(u32 address, u32 value) {
   if (rumble_enabled && (prev_value & 0x8) != (gpio_regs[0] & 0x8))
     write_rumble(prev_value & 0x8, gpio_regs[0] & 0x8);
 
+  /* Sensors read the pins on every data write, changed or not (a clock
+   * written high twice is still one edge: each keeps its own edge state). */
+  if (address == 0xC4 && (cart_sensors & (CART_SENSOR_SOLAR | CART_SENSOR_GYRO)))
+    cart_sensor_pins();
+
   // Reflect the values
   update_gpio_romregs();
 }
@@ -2351,6 +2368,9 @@ typedef struct
 #define FLAGS_RUMBLE         0x0200   // Enables GPIO3 rumble support.
 #define FLAGS_RTC            0x0400   // Enables RTC support by default.
 #define FLAGS_EEPROM         0x0800   // Forces EEPROM storage.
+#define FLAGS_SOLAR          0x1000   // Boktai's light sensor (cart_sensor.h).
+#define FLAGS_GYRO           0x2000   // WarioWare: Twisted!'s rotation sensor.
+#define FLAGS_TILT           0x4000   // Yoshi Topsy-Turvy's tilt sensor.
 
 #define FLAGS_SERIAL         0x8000   // Configure a serial mode by default.
 #define FLAGS_SERIAL_MASK    0x00FF
@@ -2393,6 +2413,10 @@ static void load_game_config_over(const char *gamecode)
 
      if (gbaover[i].flags & FLAGS_RUMBLE)
        rumble_enabled = true;
+
+     cart_sensors = ((gbaover[i].flags & FLAGS_SOLAR) ? CART_SENSOR_SOLAR : 0) |
+                    ((gbaover[i].flags & FLAGS_GYRO) ? CART_SENSOR_GYRO : 0) |
+                    ((gbaover[i].flags & FLAGS_TILT) ? CART_SENSOR_TILT : 0);
 
      if (gbaover[i].flags & FLAGS_EEPROM)
        backup_type_reset = BACKUP_EEPROM;
@@ -3649,6 +3673,9 @@ bool memory_check_savestate(const u8 *src)
   if (bson_find_key(bakdoc, "rtc-base-time") &&
       !bson_has_int32_array(bakdoc, "rtc-base-time", 2))
     return false;
+  if (bson_find_key(bakdoc, "sensor") &&
+      !bson_has_int32_array(bakdoc, "sensor", CART_SENSOR_WORDS))
+    return false;
 
   for (d = 0; d < DMA_CHAN_CNT; d++)
   {
@@ -3731,6 +3758,15 @@ bool memory_read_savestate(const u8 *src)
     u32 base_words[2] = {0, 0};
     if (bson_read_int32_array(bakdoc, "rtc-base-time", base_words, 2))
       rtc_base_time = (s64)((u64)base_words[0] | (((u64)base_words[1]) << 32));
+  }
+
+  /* Optional: written only by a sensor cartridge (cart_sensor.h). */
+  if (cart_sensors)
+  {
+    u32 words[CART_SENSOR_WORDS];
+    cart_sensor_state_load(bson_read_int32_array(bakdoc, "sensor", words,
+                                                 CART_SENSOR_WORDS)
+                           ? words : NULL);
   }
 
   for (i = 0; i < DMA_CHAN_CNT; i++)
@@ -3820,6 +3856,12 @@ unsigned memory_write_savestate(u8 *dst)
     u32 base_words[2] = { (u32)(u64)rtc_base_time,
                           (u32)(((u64)rtc_base_time) >> 32) };
     bson_write_int32array(dst, "rtc-base-time", base_words, 2);
+  }
+  if (cart_sensors)
+  {
+    u32 words[CART_SENSOR_WORDS];
+    cart_sensor_state_words(words);
+    bson_write_int32array(dst, "sensor", words, CART_SENSOR_WORDS);
   }
   bson_finish_document(dst, wbptr);
 
@@ -4245,6 +4287,8 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    flash_bank_cnt = FLASH_SIZE_64KB;
    rtc_enabled = false;
    rumble_enabled = false;
+   cart_sensors = 0;
+   cart_sensor_reset();
    backup_type_reset = BACKUP_UNKN;
    backup_type_eeprom_guessed = 0;
    eeprom_really_used = 0;

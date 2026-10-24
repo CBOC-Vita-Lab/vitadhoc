@@ -1,0 +1,19 @@
+{
+  "name": "VitAdhoc",
+  "version": "1.0",
+  "date": "2026-10-23",
+  "tag": "v1.0",
+  "title": "VitAdhoc 1.0",
+  "assets": [
+    "VitAdhoc.vpk",
+    "VitAdhoc-install.zip",
+    "cboc-release.json",
+    "SHA256SUMS"
+  ],
+  "package": {
+    "path": "VitAdhoc.vpk",
+    "sha256": "ba45181433f9d250f07e2316dea60e6acaa74010e53ae2c28b16c3fc6124baa4",
+    "runtimeSha256": "9069471e980c5b0616b48048dcad7c0446b3070ee63033bbcb1b528dd19bb9e8"
+  },
+  "titleId": "GBAD00001"
+}

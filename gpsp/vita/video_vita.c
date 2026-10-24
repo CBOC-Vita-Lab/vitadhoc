@@ -67,6 +67,8 @@ typedef char vv_scale_is_two[(VV_S * VID_SCR_W == VB_W &&
 static int g_inited;
 static int g_scale  = VID_SCALE_INT3;
 static int g_filter = VID_FILTER_NEAREST;
+static int g_requested_filter = VID_FILTER_NEAREST;
+static int g_quality;
 /* The smoothing the TRIANGLE presets use: the last non-nearest filter
  * vid_set_mode was given.  Sharp until the player picks another: at the
  * Vita's non-integer scales plain bilinear is the soft one. */
@@ -170,10 +172,22 @@ void vid_set_mode(int scale, int filter)
 {
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
-   g_filter = (filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES)
+   g_requested_filter = (filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES)
             ? filter : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
-   if (g_filter != VID_FILTER_NEAREST)
+   /* Original (quality 1) is no enhancement: whole-factor sizes draw plain
+    * nearest (picture_mode), and fit's 3.4x keeps every source pixel the
+    * same size through sharp bilinear instead of nearest's uneven 3- and
+    * 4-pixel columns, which shimmer as the picture scrolls. */
+   g_filter = g_quality == 1 ? VID_FILTER_SHARP : g_requested_filter;
+   if (g_quality != 1 && g_filter != VID_FILTER_NEAREST)
       g_smooth = g_filter;
+}
+
+void vid_set_quality(int quality)
+{
+   g_quality = quality >= 0 && quality <= 3 ? quality : 0;
+   upscale_quality(g_quality);
+   vid_set_mode(g_scale, g_requested_filter);
 }
 
 int vid_scale_mode(void) { return g_scale; }
@@ -231,6 +245,21 @@ const char *vid_cycle_preset(void)
    };
    static char name[32];
    int i;
+   if (g_quality != 0)
+   {
+      /* An explicit Image quality (Original, Enhanced 2x / 3x) owns the
+       * processing, so the preset steps the size alone: 3x -> fit ->
+       * stretch -> 3x (from 2x or 4x crop, on to fit).  Its smoothed steps
+       * would switch enhancement off, or smoothing on over Original, while
+       * Settings still showed the quality chosen. */
+      static const int size[3] = {
+         VID_SCALE_INT3, VID_SCALE_FIT, VID_SCALE_STRETCH
+      };
+      for (i = 0; i < 3 && size[i] != g_scale; i++)
+         ;
+      g_scale = size[(i + 1) % 3];
+      return vid_scale_name(g_scale);
+   }
    for (i = 0; i < 5; i++)
       if (preset[i].s == g_scale &&
           (preset[i].f ? g_smooth : VID_FILTER_NEAREST) == g_filter)
@@ -238,6 +267,11 @@ const char *vid_cycle_preset(void)
    i = (i + 1) % 5;
    g_scale  = preset[i].s;
    g_filter = preset[i].f ? g_smooth : VID_FILTER_NEAREST;
+   /* ...and it is the filter asked for now: a later vid_set_quality (the
+    * Colours or Wide rows re-apply the look) must not bring back the one
+    * from before the preset, which Settings and the profile no longer
+    * show. */
+   g_requested_filter = g_filter;
    if (!preset[i].f)
       return preset[i].name;
    snprintf(name, sizeof(name), "%s %s", preset[i].name,
@@ -1017,7 +1051,9 @@ static void backdrop_draw(int covers)
    int fresh = 0, kind = amb_kind();
    if (!vb_frame_open())
    {
-      vb_frame_begin(1);
+      /* The clear is a full-screen pass of its own: not wanted when the
+       * picture or the backdrop below paints every pixel anyway. */
+      vb_frame_begin(!(covers || kind == 1 || kind == 2));
       fresh = 1;
    }
    g_clear_req = 0;
@@ -1309,7 +1345,7 @@ void vid_gpu_time_stats(unsigned *samples, unsigned *avg_us, unsigned *max_us)
 
 static int gx_ready(void)
 {
-   if (!g_gx_on || g_filter != VID_FILTER_XBRZ)
+   if (!g_gx_on || g_filter != VID_FILTER_XBRZ || g_quality != 0)
       return 0;
    if (!g_gx_state)
    {
@@ -1339,7 +1375,7 @@ int vid_gpu_xbrz(unsigned *frames)
 {
    if (frames)
       *frames = g_gx_frames;
-   return g_gx_state > 0 && g_gx_on;
+   return g_gx_state > 0 && g_gx_on && g_quality == 0;
 }
 
 /* vita.ini gpu_probe = N >= 2: at the Nth GPU picture, what passes 0 and 1
@@ -1745,6 +1781,24 @@ static void up_drop(int slot)
    g_upt[slot].kind = UPSCALE_NONE;
    g_upt[slot].front = -1;
    g_upt[slot].pf = g_upt[slot].ff = 0;
+}
+
+/* The two-game view swapped which game is drawn in which rect (local
+ * play, large + small): what each rect remembers -- the motion blend's last
+ * frame, the upscaler's finished picture and its scroll history -- belongs
+ * to the other game now.  Forget it, so neither rect shows or mixes in the
+ * wrong game for a frame; the textures are kept. */
+void vid_pair_forget(void)
+{
+   int i;
+   g_look_w[0] = g_look_w[1] = 0;
+   for (i = 0; i < 2 && i < UPSCALE_SLOTS; i++)
+      if (g_upt[i].t[0] || g_upt[i].t[1])
+      {
+         upscale_forget(i);
+         g_upt[i].front = -1;
+         g_upt[i].pf = g_upt[i].ff = 0;
+      }
 }
 
 /* The picture handed over last is finished: it is the one to draw. */

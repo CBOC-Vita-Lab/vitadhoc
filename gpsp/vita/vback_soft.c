@@ -75,6 +75,11 @@ void vb_tex_destroy(vb_tex *t)
 
 int vb_tex_w(const vb_tex *t) { return t ? t->w : 0; }
 int vb_tex_h(const vb_tex *t) { return t ? t->h : 0; }
+int vb_tex_writable(const vb_tex *t) { return t != NULL; }
+void vb_ownership_get(vb_ownership_diag *out)
+{
+   if (out) { memset(out, 0, sizeof(*out)); out->pool_bank = ~0u; }
+}
 
 static uint32_t from565(unsigned c, int bgr)
 {
@@ -214,6 +219,14 @@ static inline uint32_t blend(uint32_t dst, unsigned r, unsigned g, unsigned b,
    g = (g * a + dg * ia + 127) / 255;
    b = (b * a + db * ia + 127) / 255;
    return VB_RGBA(r, g, b, 255);
+}
+
+void vb_cquads(const vb_cquad *q, int n)
+{
+   int i;
+   for (i = 0; q && i < n; i++)
+      vb_quad(q[i].x0, q[i].y0, q[i].x1, q[i].y1,
+              q[i].c_tl, q[i].c_tr, q[i].c_bl, q[i].c_br);
 }
 
 void vb_quad(float x0, float y0, float x1, float y1,

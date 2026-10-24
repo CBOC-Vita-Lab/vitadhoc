@@ -43,12 +43,13 @@
 #include "clip_vita.h"
 #include "gamedb.h"
 #include "artfetch.h"
+#include "menu_load.h"
+#include "menu_files_private.h"
+#include "plat.h"
+
+#define UI_VITA_HOME_ASYNC 1
 
 #define HM_X        44
-#define HM_ROW_Y    86
-#define HM_BIG      132
-#define HM_SMALL    96
-#define HM_GAP      14
 #define HM_TEX      160          /* a tile's texture edge                    */
 #define HM_TILES    16           /* tiles kept                               */
 #define HM_TITLE_Y  300
@@ -57,11 +58,124 @@
 #define HM_BLURB_W  600          /* ...which are this wide, three at most   */
 #define HM_LIFT     272          /* how far DOWN lifts the page              */
 
+typedef struct
+{
+   menu_load_meta value;
+   unsigned epoch, attempts;
+   int status;
+   uint64_t retry_us;
+} hm_meta;
+static hm_meta g_hm_meta[BROWSER_MAX];
+static unsigned g_hm_epoch[BROWSER_MAX], g_hm_generation = 1;
+/* Artwork has its own key, separate from the save-state epoch: a cover that
+ * arrives must not drop a game's save metadata or cancel the batch the loader
+ * is working on.  Arrivals only mark keys dirty (all of them for a coalesced
+ * arrival, including raw ROMs hidden by Find or Starred); hm_art_apply()
+ * advances the marked keys when no batch is outstanding, so the selected game
+ * is then reloaded first and its current picture stays until the new one is
+ * ready. */
+static unsigned g_hm_art_epoch[BROWSER_MAX];
+static unsigned char g_hm_art_dirty[BROWSER_MAX];
+static int g_hm_art_any, g_hm_art_all;
+static unsigned g_hm_load_serial, g_hm_load_dirty;
+static int g_hm_load_rom = -1, g_hm_load_open = -1, g_hm_load_active;
+/* The raw games of the batch in flight, in job order (hm_result_rom). */
+static int g_hm_batch_rom[1 + ML_NEIGHBORS];
+static unsigned g_hm_batch_n;
+static unsigned g_hm_load_left;
+static int g_hm_uploaded, g_hm_still_for = -1;
+
+static unsigned hm_epoch(int rom)
+{
+   return g_hm_epoch[rom] ? g_hm_epoch[rom] : 1;
+}
+static unsigned hm_art_epoch(int rom)
+{
+   return g_hm_art_epoch[rom] ? g_hm_art_epoch[rom] : 1;
+}
+/* 1 if an arrival marked this game's artwork and it has not been applied. */
+static int hm_art_pending(int rom)
+{
+   return rom >= 0 && rom < BROWSER_MAX &&
+          (g_hm_art_all || g_hm_art_dirty[rom]);
+}
+/* Advance every marked artwork key.  Only between batches (hm_load_pump),
+ * never while a request is outstanding, so arrivals cannot starve it. */
+static void hm_art_apply(void)
+{
+   if (!g_hm_art_any)
+      return;
+   for (int i = 0; i < BROWSER_MAX; i++)
+      if (hm_art_pending(i))
+      {
+         unsigned next = hm_art_epoch(i) + 1;
+         g_hm_art_epoch[i] = next ? next : 1;
+         g_hm_art_dirty[i] = 0;
+      }
+   g_hm_art_any = g_hm_art_all = 0;
+}
+/* When to ask again.  A failure that may pass (I/O, memory) after 1 s, then
+ * every 4 s; a missing picture after 30 s; content that can never decode
+ * (a corrupt cover) after 10 minutes -- new artwork for the game makes it
+ * due at once anyway (its art key changes). */
+#define HM_RETRY_INVALID_US 600000000u
+static uint64_t hm_retry(int status, unsigned *attempts)
+{
+   if (status == ML_ERROR)
+      return plat_time_us() + ((*attempts)++ ? 4000000u : 1000000u);
+   *attempts = 0;
+   if (status == ML_INVALID)
+      return plat_time_us() + HM_RETRY_INVALID_US;
+   return status == ML_ABSENT ? plat_time_us() + 30000000u : 0;
+}
+static const hm_meta *hm_metadata(int rom)
+{
+   return rom >= 0 && rom < BROWSER_MAX && g_hm_meta[rom].status &&
+          g_hm_meta[rom].epoch == hm_epoch(rom) ? &g_hm_meta[rom] : NULL;
+}
+static int home_cached_states(int rom)
+{
+   const hm_meta *m = hm_metadata(rom);
+   int any = 0, unknown = !m;
+   for (int i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   {
+      int state = m ? m->value.state[i] : ML_UNKNOWN;
+      g_browser_state_exists[i] = state == ML_PRESENT || state == ML_OLD_ONLY;
+      any |= g_browser_state_exists[i];
+      unknown |= state == ML_UNKNOWN;
+   }
+   return any || unknown; /* An unfinished query must not hide the shelf. */
+}
+/* 1 when the game's save-state metadata is current and it has no state at
+ * all: the shelf, opened before that was known, has nothing to offer. */
+static int home_states_known_empty(int rom)
+{
+   const hm_meta *m = hm_metadata(rom);
+   if (!m) return 0;
+   for (int i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+      if (m->value.state[i] != ML_MISSING) return 0;
+   return 1;
+}
+/* 1 when the game has a point to continue from (state_slots.h
+ * psp_state_resume_path), as its metadata says. */
+static int home_has_resume(int rom)
+{
+   const hm_meta *m = hm_metadata(rom);
+   return m && m->value.resume == ML_PRESENT;
+}
+static void home_state_invalidate(int rom)
+{
+   if (rom < 0 || rom >= BROWSER_MAX) return;
+   unsigned next = hm_epoch(rom) + 1;
+   g_hm_epoch[rom] = next ? next : 1;
+   g_hm_load_dirty = 1;
+}
+
 /* ---- pictures --------------------------------------------------------- */
 
 /* A .shot (state_slots.h: 16-byte header, then rows of PSP-order 565 at a
  * stride of 256) into RGBA.  0 = read. */
-static int hm_shot_read(const char *path, uint32_t *rgba, unsigned *w,
+static int hm_shot_read_inner(const char *path, uint32_t *rgba, unsigned *w,
                         unsigned *h)
 {
    unsigned char hdr[PSP_STATE_THUMB_HEADER_SIZE];
@@ -88,6 +202,14 @@ static int hm_shot_read(const char *path, uint32_t *rgba, unsigned *w,
    return ok ? 0 : -1;
 }
 
+static int hm_shot_read(const char *path, uint32_t *rgba, unsigned *w, unsigned *h)
+{
+   unsigned long long t = md_begin();
+   int rc = hm_shot_read_inner(path, rgba, w, h);
+   md_end(MD_ART_READ, t);
+   return rc;
+}
+
 /* The scene file of a game: scenes/<stem>.shot in the data folder. */
 static int hm_scene_path(int rom, char *out, size_t cap)
 {
@@ -109,6 +231,7 @@ static int hm_title_read(int rom, uint32_t *rgba, unsigned *ow, unsigned *oh)
    const char *base = g_roms[rom].base;
    char path[PSP_FILE_PATH_CAP];
    unsigned char *file, *pix;
+   unsigned long long t;
    int flen = 0, w = 0, h = 0, nc = 0, tw, th, x, y;
    if (snprintf(path, sizeof(path), "%s/titles/%.*s.png", g_dir_base,
                 (int)ui_rom_stem_length(base), base) >= (int)sizeof(path))
@@ -116,14 +239,17 @@ static int hm_title_read(int rom, uint32_t *rgba, unsigned *ow, unsigned *oh)
    file = art_slurp(path, &flen);
    if (!file)
       return -1;
+   t = md_begin();
    if (!stbi_info_from_memory(file, flen, &w, &h, &nc) || w <= 0 || h <= 0 ||
        w > 2048 || h > 2048)
    {
       free(file);
+      md_end(MD_DECODE, t);
       return -1;
    }
    pix = stbi_load_from_memory(file, flen, &w, &h, &nc, 4);
    free(file);
+   md_end(MD_DECODE, t);
    if (!pix)
       return -1;
    tw = w;
@@ -143,6 +269,7 @@ static int hm_title_read(int rom, uint32_t *rgba, unsigned *ow, unsigned *oh)
       if (tw < 1) tw = 1;
       if (th < 1) th = 1;
    }
+   t = md_begin();
    for (y = 0; y < th; y++)
       for (x = 0; x < tw; x++)
       {
@@ -151,6 +278,7 @@ static int hm_title_read(int rom, uint32_t *rgba, unsigned *ow, unsigned *oh)
          rgba[y * tw + x] = 0xFF000000u | ((uint32_t)p[2] << 16) |
                             ((uint32_t)p[1] << 8) | p[0];
       }
+   md_end(MD_RESAMPLE, t);
    stbi_image_free(pix);
    *ow = (unsigned)tw;
    *oh = (unsigned)th;
@@ -242,6 +370,9 @@ typedef struct
    vs_img *img;
    float x, s;         /* where it is drawn now (eased), native px         */
    int seen;           /* the frame it was last drawn                      */
+   unsigned epoch, attempts;
+   uint64_t retry_us;
+   unsigned art_epoch; /* hm_art_epoch when the picture was made           */
 } hm_tile;
 
 static hm_tile g_hm_tile[HM_TILES];
@@ -281,6 +412,43 @@ static hm_tile *hm_tile_find(int rom)
    g_hm_tile[oldest].rom = rom;
    g_hm_tile[oldest].x = -1.0f;
    return &g_hm_tile[oldest];
+}
+
+/* The tile from its thumbnail (art_thumb_load: a small copy made when the
+ * cover arrived).  One read and a centre crop, no decode.  1 = t has its
+ * picture; 0 = no thumbnail, and hm_tile_load makes the tile the slow way. */
+static int hm_thumb_tile(hm_tile *t)
+{
+   uint16_t *th;
+   uint32_t *big;
+   int tw = ART_THUMB_W, tht = ART_THUMB_H;
+   if (hm_scratch() != 0)
+      return 0;
+   th = (uint16_t *)malloc((size_t)ART_THUMB_W * ART_THUMB_H * 2);
+   if (!th)
+      return 0;
+   if (art_thumb_load(t->rom, th, ART_THUMB_W, &tw, &tht) != 0)
+   {
+      free(th);
+      return 0;
+   }
+   big = (uint32_t *)malloc((size_t)tw * tht * 4);
+   if (!big)
+   {
+      free(th);
+      return 0;
+   }
+   hm_from565(th, ART_THUMB_W, tw, tht, big);
+   free(th);
+   hm_square(big, tw, tht, g_hm_sq, HM_TEX);
+   free(big);
+   hm_round(g_hm_sq, HM_TEX, 20);
+   t->img = vs_img_new(HM_TEX, HM_TEX);
+   if (!t->img)
+      return 0;
+   vs_img_set(t->img, g_hm_sq, HM_TEX);
+   t->state = 1;
+   return 1;
 }
 
 /* Make the tile's picture: box art, else the scene.  One per frame. */
@@ -353,9 +521,14 @@ static struct
    vs_img *old;
    int old_w, old_h;
    float old_a;
-} g_hm_pic = { -1, 0, NULL, 0, 0, 0.0f, NULL, 0, 0, 0.0f };
+   int old_rom;
+   int old_state;
+   unsigned epoch, attempts;
+   uint64_t retry_us;
+   unsigned art_epoch;
+} g_hm_pic = { -1, 0, NULL, 0, 0, 0.0f, NULL, 0, 0, 0.0f, -1 };
 
-static void hm_pic_load(int rom)
+static void hm_pic_load_decode(int rom)
 {
    char path[PSP_FILE_PATH_CAP];
    unsigned w = 0, h = 0;
@@ -366,13 +539,17 @@ static void hm_pic_load(int rom)
    g_hm_pic.old_w = g_hm_pic.w;
    g_hm_pic.old_h = g_hm_pic.h;
    g_hm_pic.old_a = g_hm_pic.state == 1 ? g_hm_pic.a : 0.0f;
+   g_hm_pic.old_rom = g_hm_pic.rom;
    if (g_hm_pic.state != 1 && g_hm_pic.img)
       vs_img_free(g_hm_pic.img);
    g_hm_pic.img = NULL;
    g_hm_pic.rom = rom;
    g_hm_pic.state = -1;
    g_hm_pic.a = 0.0f;
-   if (hero_get(rom, 1) && g_hero_precomposed)
+   unsigned long long hero_t = md_begin();
+   const uint16_t *hero = hero_get(rom, 1);
+   md_end(MD_HERO, hero_t);
+   if (hero && g_hero_precomposed)
    {
       g_hm_pic.state = 2;         /* drawn from the browser's own hero */
       return;
@@ -393,13 +570,25 @@ static void hm_pic_load(int rom)
    }
 }
 
+static void hm_pic_load(int rom)
+{
+   unsigned started = sceKernelGetSystemTimeLow();
+   unsigned long long t = md_begin();
+   if (md_active()) fe_evt("home_still_begin rom=%d", rom);
+   hm_pic_load_decode(rom);
+   md_end(MD_STILL, t);
+   fe_evt("home_still rom=%d load_us=%u state=%d", rom,
+          (unsigned)(sceKernelGetSystemTimeLow() - started), g_hm_pic.state);
+}
+
 /* ---- the preview: the last ten seconds played -------------------------- */
+
+#include "preview_vita.h"
 
 #define HM_CLIP_WAIT   48       /* frames resting on a game after it is
                                  * selected (IDLE_SELECTED) before its clip
                                  * starts: about a second in all            */
 #define HM_CLIP_REST   2500000u /* us of the still between two plays        */
-#define HM_CLIP_READ   (128u * 1024u)   /* bytes of the file read a frame   */
 #define HM_CLIP_TEX    3        /* textures in turn: the GPU may still be
                                  * drawing the one before last              */
 
@@ -409,19 +598,24 @@ static struct
 {
    int rom;                 /* whose clip is open, -1 none                  */
    int none_for;            /* a game known to have none (this visit)       */
-   clip_player *p;
    vs_img *tex[HM_CLIP_TEX];
+   unsigned w, h;
    int shown;               /* the texture on screen, -1 none yet           */
    int phase;
    float a;                 /* fade, 0..255                                 */
-   const uint16_t *next;    /* decoded, waiting for its time                */
-   unsigned next_ticks;
+   clip_preview_frame next;
+   int have_next;
    unsigned acc_us;         /* time since the frame on screen came          */
    unsigned last_us;
    unsigned rest_us;
+   unsigned us_per_tick;
+   uint32_t token;
    int ended;
-} g_hm_clip = { -1, -1, NULL, { NULL, NULL, NULL }, -1, HC_OFF, 0.0f, NULL,
-                0, 0, 0, 0, 0 };
+} g_hm_clip = { .rom = -1, .none_for = -1, .shown = -1 };
+
+static uint32_t g_hm_clip_serial;
+static int g_hm_clip_selection = -1;
+static int g_hm_clip_disabled;
 
 static int hm_clip_path(int rom, char *out, size_t cap)
 {
@@ -432,116 +626,198 @@ static int hm_clip_path(int rom, char *out, size_t cap)
    return n > 0 && (size_t)n < cap ? 0 : -1;
 }
 
-static void hm_clip_drop(void)
+static void hm_clip_cancel(void)
 {
-   int i;
-   clip_close(g_hm_clip.p);
-   for (i = 0; i < HM_CLIP_TEX; i++)
-      if (g_hm_clip.tex[i])
-         vs_img_free(g_hm_clip.tex[i]);
-   memset(&g_hm_clip.tex, 0, sizeof(g_hm_clip.tex));
-   g_hm_clip.p = NULL;
+   if (g_hm_clip.have_next)
+      clip_preview_release(g_hm_clip.next.slot);
+   g_hm_clip.have_next = 0;
+   g_hm_clip.token = ++g_hm_clip_serial;
+   clip_preview_cancel(g_hm_clip.token);
    g_hm_clip.rom = -1;
    g_hm_clip.shown = -1;
    g_hm_clip.phase = HC_OFF;
    g_hm_clip.a = 0.0f;
-   g_hm_clip.next = NULL;
    g_hm_clip.ended = 0;
+   g_hm_clip.acc_us = 0;
+   g_hm_clip.rest_us = 0;
+   g_hm_clip.us_per_tick = 0;
+}
+
+static void hm_clip_drop(void)
+{
+   int i;
+   hm_clip_cancel();
+   for (i = 0; i < HM_CLIP_TEX; i++)
+   {
+      if (g_hm_clip.tex[i])
+         vs_img_free(g_hm_clip.tex[i]);
+      g_hm_clip.tex[i] = NULL;
+   }
+   g_hm_clip.w = g_hm_clip.h = 0;
+   g_hm_clip.none_for = -1;
+   g_hm_clip_selection = -1;
+}
+
+/* Selection invalidation happens before hero/scene loading can block. */
+static void hm_selection_tick(int rom)
+{
+   if (g_hm_clip_selection == rom)
+      return;
+   g_hm_clip_selection = rom;
+   hm_clip_cancel();
+   g_hm_clip.none_for = -1;
+   if (g_hm_pic.old)
+      vs_img_free(g_hm_pic.old);
+   g_hm_pic.old = NULL;
+   g_hm_pic.old_a = 0.0f;
+   g_hm_pic.old_rom = -1;
+   if (g_pcfg.previews)
+      (void)clip_preview_start();
 }
 
 static void hm_clip_open(int rom)
 {
    char path[PSP_FILE_PATH_CAP];
-   int i;
-   hm_clip_drop();
+   hm_clip_cancel();
    if (hm_clip_path(rom, path, sizeof(path)) != 0 ||
-       !(g_hm_clip.p = clip_open(path)))
+       clip_preview_request(g_hm_clip.token, path) != 0)
    {
       g_hm_clip.none_for = rom;
       return;
    }
-   for (i = 0; i < HM_CLIP_TEX; i++)
-      if (!(g_hm_clip.tex[i] = vs_img_new_565((int)clip_w(g_hm_clip.p),
-                                              (int)clip_h(g_hm_clip.p))))
-      {
-         hm_clip_drop();
-         g_hm_clip.none_for = rom;
-         return;
-      }
    g_hm_clip.rom = rom;
    g_hm_clip.phase = HC_PLAY;
    g_hm_clip.acc_us = 0;
    g_hm_clip.last_us = sceKernelGetSystemTimeLow();
-   fe_evt("home_clip open rom=%d frames=%u w=%u h=%u", rom,
-          clip_frames(g_hm_clip.p), clip_w(g_hm_clip.p), clip_h(g_hm_clip.p));
+   fe_evt("home_clip_request rom=%d token=%u path=%s", rom, g_hm_clip.token, path);
 }
 
-/* Once a frame of the home screen: open, read, decode, time, fade. */
+static int hm_clip_textures(unsigned w, unsigned h)
+{
+   int i;
+   if (g_hm_clip.w == w && g_hm_clip.h == h && g_hm_clip.tex[0])
+      return 0;
+   for (i = 0; i < HM_CLIP_TEX; i++)
+   {
+      if (g_hm_clip.tex[i])
+         vs_img_free(g_hm_clip.tex[i]);
+      g_hm_clip.tex[i] = NULL;
+   }
+   g_hm_clip.w = w;
+   g_hm_clip.h = h;
+   for (i = 0; i < HM_CLIP_TEX; i++)
+      if (!(g_hm_clip.tex[i] = vs_img_new_565((int)w, (int)h)))
+      {
+         int j;
+         for (j = 0; j < i; j++)
+         {
+            vs_img_free(g_hm_clip.tex[j]);
+            g_hm_clip.tex[j] = NULL;
+         }
+         return -1;
+      }
+   return 0;
+}
+
+/* Main thread only times, fades and publishes one immutable CPU frame. */
 static void hm_clip_tick(int rom, int idle)
 {
    unsigned now, dt, us;
    if (!g_pcfg.previews)
    {
-      if (g_hm_clip.p)
-         hm_clip_drop();
+      if (!g_hm_clip_disabled)
+         hm_clip_cancel();
+      g_hm_clip_disabled = 1;
       return;
    }
+   g_hm_clip_disabled = 0;
    if (g_hm_clip.rom != rom)
    {
       /* another game: the one before stops at once (its picture is
        * already fading out with the still) */
-      if (g_hm_clip.p)
-         hm_clip_drop();
+      if (g_hm_clip.rom >= 0)
+         hm_clip_cancel();
       if (idle >= IDLE_SELECTED + HM_CLIP_WAIT && g_hm_clip.none_for != rom)
          hm_clip_open(rom);
-      if (!g_hm_clip.p)
+      if (g_hm_clip.rom < 0)
          return;
+   }
+   if (idle < IDLE_SELECTED)
+   {
+      g_hm_clip.last_us = sceKernelGetSystemTimeLow();
+      return;                   /* retain the frame, not background disk reads */
    }
    now = sceKernelGetSystemTimeLow();
    dt = now - g_hm_clip.last_us;
    g_hm_clip.last_us = now;
    if (dt > 100000)
       dt = 100000;              /* a stall is not a reason to skip ahead */
-   if (clip_load(g_hm_clip.p, HM_CLIP_READ) < 0)
-   {
-      fe_evt("home_clip unreadable rom=%d", rom);
-      hm_clip_drop();
-      g_hm_clip.none_for = rom;
-      return;
-   }
-   us = clip_us_per_tick(g_hm_clip.p);
+   us = g_hm_clip.us_per_tick ? g_hm_clip.us_per_tick : 16743u;
 
    switch (g_hm_clip.phase)
    {
    case HC_PLAY:
-      if (!g_hm_clip.next && !g_hm_clip.ended)
-         g_hm_clip.next = clip_next(g_hm_clip.p, &g_hm_clip.next_ticks,
-                                    &g_hm_clip.ended);
-      g_hm_clip.acc_us += dt;
-      if (g_hm_clip.next &&
-          (g_hm_clip.shown < 0 ||
-           g_hm_clip.acc_us >= g_hm_clip.next_ticks * us))
+      if (!g_hm_clip.have_next && !g_hm_clip.ended)
+         g_hm_clip.have_next = clip_preview_take(g_hm_clip.token, &g_hm_clip.next);
+      if (g_hm_clip.have_next && g_hm_clip.next.ended)
       {
-         int t = (g_hm_clip.shown + 1) % HM_CLIP_TEX;
-         vs_img_set_565(g_hm_clip.tex[t], g_hm_clip.next,
-                        (int)clip_w(g_hm_clip.p));
+         int bad = g_hm_clip.next.bad;
+         clip_preview_release(g_hm_clip.next.slot);
+         g_hm_clip.have_next = 0;
+         g_hm_clip.ended = 1;
+         if (bad)
+         {
+            hm_clip_cancel();
+            g_hm_clip.none_for = rom;
+            return;
+         }
+      }
+      g_hm_clip.acc_us += dt;
+      if (g_hm_clip.have_next &&
+          (g_hm_clip.shown < 0 ||
+           g_hm_clip.acc_us >= g_hm_clip.next.ticks * us))
+      {
+         int t = -1;
+         if (g_hm_clip.next.token != g_hm_clip.token ||
+             hm_clip_textures(g_hm_clip.next.w, g_hm_clip.next.h) != 0)
+         {
+            hm_clip_cancel();
+            g_hm_clip.none_for = rom;
+            return;
+         }
+         if (g_hm_uploaded) break;
+         for (int step = 1; step <= HM_CLIP_TEX; step++)
+         {
+            int at = (g_hm_clip.shown + step) % HM_CLIP_TEX;
+            if (at != g_hm_clip.shown && vs_img_writable(g_hm_clip.tex[at]))
+            { t = at; break; }
+         }
+         if (t < 0) break; /* Keep the CPU pin and old frame; never wait. */
+         vs_img_set_565(g_hm_clip.tex[t], g_hm_clip.next.pixels,
+                        (int)g_hm_clip.next.w);
+         g_hm_uploaded = 1;
+         g_hm_clip.us_per_tick = g_hm_clip.next.us_per_tick;
+         if (g_hm_clip.shown < 0)
+            fe_evt("home_clip open rom=%d token=%u frames=%u w=%u h=%u", rom,
+                   g_hm_clip.token, g_hm_clip.next.frames, g_hm_clip.w, g_hm_clip.h);
          if (g_hm_clip.shown < 0 || g_hm_clip.acc_us > 4 * 2 * us)
             g_hm_clip.acc_us = 0;     /* the first frame, or a late one */
          else
-            g_hm_clip.acc_us -= g_hm_clip.next_ticks * us;
+            g_hm_clip.acc_us -= g_hm_clip.next.ticks * us;
          g_hm_clip.shown = t;
-         g_hm_clip.next = NULL;
+         clip_preview_release(g_hm_clip.next.slot);
+         g_hm_clip.have_next = 0;
       }
-      else if (!g_hm_clip.next && g_hm_clip.acc_us > 4 * 2 * us)
+      else if (!g_hm_clip.have_next && g_hm_clip.acc_us > 4 * 2 * us)
          g_hm_clip.acc_us = 4 * 2 * us;  /* still being read in */
       if (g_hm_clip.shown >= 0)
          hm_ease(&g_hm_clip.a, 255.0f, 0.12f);
-      if (g_hm_clip.ended && !g_hm_clip.next)
+      if (g_hm_clip.ended && !g_hm_clip.have_next)
       {
          if (g_hm_clip.shown < 0)
          {
             /* broken from the first frame */
-            hm_clip_drop();
+            hm_clip_cancel();
             g_hm_clip.none_for = rom;
             return;
          }
@@ -560,9 +836,14 @@ static void hm_clip_tick(int rom, int idle)
       g_hm_clip.rest_us += dt;
       if (g_hm_clip.rest_us >= HM_CLIP_REST)
       {
-         clip_restart(g_hm_clip.p);
+         if (clip_preview_restart(g_hm_clip.token) != 0)
+         {
+            hm_clip_cancel();
+            g_hm_clip.none_for = rom;
+            return;
+         }
          g_hm_clip.ended = 0;
-         g_hm_clip.next = NULL;
+         g_hm_clip.have_next = 0;
          g_hm_clip.shown = -1;
          g_hm_clip.acc_us = 0;
          g_hm_clip.phase = HC_PLAY;
@@ -597,12 +878,25 @@ static void hm_backdrop(int rom, float dy)
       vs_shadow(600, 110 + dy * 0.3f, 300, 300, 150, 150, hm_tint(con, 40));
       vs_icon(VS_I_CART, 760, 250 + dy * 0.3f, 300, VS_HEX(0xFFFFFF, 14));
    }
-   if (g_hm_pic.old && g_hm_pic.old_a > 0.5f)
-      hm_scene_draw(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h,
-                    g_hm_pic.old_a, dy);
+   if (g_hm_pic.old && g_hm_pic.old_rom == rom && g_hm_pic.old_a > 0.5f)
+   {
+      if (g_hm_pic.old_state == 3)
+         vs_img_draw(g_hm_pic.old, 0, 0, VS_W, VS_H,
+                      VS_HEX(0xFFFFFF, (int)g_hm_pic.old_a), 1);
+      else
+         hm_scene_draw(g_hm_pic.old, g_hm_pic.old_w, g_hm_pic.old_h,
+                       g_hm_pic.old_a, dy);
+   }
    if (g_hm_pic.rom == rom && g_hm_pic.state == 1)
       hm_scene_draw(g_hm_pic.img, g_hm_pic.w, g_hm_pic.h, g_hm_pic.a, dy);
-   else if (g_hm_pic.rom == rom && g_hm_pic.state == 2 && g_hero)
+   else if (g_hm_pic.rom == rom && g_hm_pic.state == 3)
+   {
+      int bh = VS_W * g_hm_pic.h / (g_hm_pic.w ? g_hm_pic.w : 1);
+      vs_img_draw(g_hm_pic.img, 0, (VS_H - bh) * 0.5f, VS_W, bh,
+                   VS_HEX(0xFFFFFF, (int)g_hm_pic.a), 1);
+   }
+   else if (g_hm_pic.rom == rom && g_hm_pic.state == 2 && g_hero &&
+            g_hero_idx == rom && g_hero_state > 0)
    {
       int bh = (int)((long)480 * g_hero_h / (g_hero_w ? g_hero_w : 1));
       vid_image(0, (272 - bh) / 2, 480, bh, g_hero, g_hero_tex, g_hero_tex,
@@ -610,8 +904,8 @@ static void hm_backdrop(int rom, float dy)
    }
    /* the preview, over the still it ends on */
    if (g_hm_clip.rom == rom && g_hm_clip.shown >= 0)
-      hm_scene_draw(g_hm_clip.tex[g_hm_clip.shown], (int)clip_w(g_hm_clip.p),
-                    (int)clip_h(g_hm_clip.p), g_hm_clip.a, dy);
+      hm_scene_draw(g_hm_clip.tex[g_hm_clip.shown], (int)g_hm_clip.w,
+                    (int)g_hm_clip.h, g_hm_clip.a, dy);
    /* veils: dark under the words on the left, under the row at the top and
     * under the buttons at the bottom -- lifted a little on the right while
     * a preview plays, so that it comes forward */
@@ -634,17 +928,20 @@ static float hm_topbar(float dy, int n_scan)
    static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC" };
    float x = HM_X, y = 18 + dy, cx;
    int c;
-   (void)n_scan;
 
-   /* Games | Starred: SELECT */
-   vs_text(VS_SUB, x, y, "Games", g_browser_favs ? HC_TEXT3 : HC_TEXT);
-   UI_TCH_BTN(g_browser_favs ? PSP_CTRL_SELECT : 0, (int)(x / 2) - 4,
-              (int)(y / 2), (int)(vs_text_w(VS_SUB, "Games") / 2) + 8, 22);
-   x += vs_text_w(VS_SUB, "Games") + 28;
-   vs_text(VS_SUB, x, y, "Starred", g_browser_favs ? HC_TEXT : HC_TEXT3);
-   UI_TCH_BTN(g_browser_favs ? 0 : PSP_CTRL_SELECT, (int)(x / 2) - 4,
-              (int)(y / 2), (int)(vs_text_w(VS_SUB, "Starred") / 2) + 8, 22);
-   x += vs_text_w(VS_SUB, "Starred") + 34;
+   /* Games | Starred | Recent: SELECT steps through them (Recent once a
+    * game has been played), a tap goes straight to one. */
+   {
+      static const char *const TAB[3] = { "Games", "Starred", "Recent" };
+      int t, on = browser_tab();
+      for (t = 0; t < 3; t++)
+      {
+         vs_text(VS_SUB, x, y, TAB[t], t == on ? HC_TEXT : HC_TEXT3);
+         UI_TCH_BTN(t == on ? 0 : BROWSER_TAB_BUTTON(t), (int)(x / 2) - 4,
+                    (int)(y / 2), (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 22);
+         x += vs_text_w(VS_SUB, TAB[t]) + (t < 2 ? 24 : 30);
+      }
+   }
 
    /* the consoles: TRIANGLE steps through them */
    cx = x;
@@ -668,6 +965,37 @@ static float hm_topbar(float dy, int n_scan)
    x = hm_status(VS_W - HM_X, y);
    vs_icon(VS_I_GEAR, x - 30, y + 19, 26, HC_TEXT2);
    VS_TCH_BTN(PSP_CTRL_START, x - 50, y, 44, 44);
+   vs_icon(VS_I_SEARCH, x - 80, y + 19, 26, HC_TEXT2);
+   VS_TCH_BTN(BROWSER_FIND_BUTTON, x - 102, y, 44, 44);
+   if (g_find[0])
+   {
+      /* The search in force, as a chip under the tabs: what was looked
+       * for, how many of the console's games it shows, and its X.  A tap
+       * on the words edits the search, on the X clears it. */
+      char find[96], count[32];
+      float count_x, qx = HM_X + 20;
+      snprintf(count, sizeof(count), "%d of %d", view_count(n_scan), scope_count(n_scan));
+      count_x = 414 - vs_text_w(VS_CAPTION, count);
+      vs_rrect(HM_X - 12, y + 38, 478 - HM_X, 24, 12, HC_GLASS);
+      vs_icon(VS_I_SEARCH, HM_X + 6, y + 50, 16, HC_TEXT2);
+      snprintf(find, sizeof(find), "\"%s\"", g_find);
+      vs_text_fit(VS_CAPTION, find, count_x - qx - 14);
+      vs_text(VS_CAPTION, qx, y + 39, find, HC_TEXT);
+      vs_text(VS_CAPTION, count_x, y + 39, count, HC_TEXT2);
+      VS_TCH_BTN(BROWSER_FIND_BUTTON, HM_X, y + 46, 380, 20);
+      vs_icon(VS_I_CLOSE, 446, y + 50, 16, HC_TEXT);
+      VS_TCH_BTN(PSP_CTRL_CIRCLE, 426, y + 46, 40, 20);
+   }
+   {
+      int seen = 0, total = 0, have = 0;
+      if (ui_cover_progress(&seen, &total, &have))
+      {
+         char status[64];
+         snprintf(status, sizeof(status), "Checking covers: %d of %d", seen, total);
+         vs_text(VS_CAPTION, VS_W - HM_X - vs_text_w(VS_CAPTION, status),
+                 y + 44, status, HC_TEXT2);
+      }
+   }
    return y;
 }
 
@@ -678,7 +1006,7 @@ static int g_hm_label_for = -1;
 
 static void hm_row(const char *rom_dir, int cur, int n, float dy, int idle)
 {
-   int k, first = cur > 0 ? -1 : 0, loaded = 0;
+   int k, first = cur > 0 ? -1 : 0;
    float tx = HM_X;
    char name[64];
    int rom_cur = view_rom(cur);
@@ -715,11 +1043,6 @@ static void hm_row(const char *rom_dir, int cur, int n, float dy, int idle)
       }
       hm_ease(&t->x, target, 0.28f);
       hm_ease(&t->s, s, 0.28f);
-      if (!t->state && !loaded && idle >= 3 && (k == 0 || idle >= 8))
-      {
-         hm_tile_load(rom_dir, t);
-         loaded = 1;
-      }
       {
          float y = HM_ROW_Y + dy + (HM_BIG - t->s) * 0.5f;
          float x = t->x;
@@ -776,6 +1099,7 @@ static void hm_row(const char *rom_dir, int cur, int n, float dy, int idle)
       else if (k > 0)
          tx += HM_SMALL + HM_GAP;
    }
+   (void)rom_dir; (void)idle;
 }
 
 /* ---- the focused game --------------------------------------------------- */
@@ -790,44 +1114,39 @@ static char g_hm_blurb[400];
 
 static const char *hm_blurb(const char *rom_dir, int rom)
 {
-   if (g_hm_blurb_for != rom)
+   unsigned long long began = md_begin();
+   const hm_meta *m = hm_metadata(rom);
+   if (m)
    {
-      char stem[PSP_FILE_PATH_CAP], name[256];
-      size_t n = ui_rom_stem_length(g_roms[rom].base);
       g_hm_blurb_for = rom;
-      g_hm_blurb[0] = '\0';
-      if (n >= sizeof(stem))
-         n = sizeof(stem) - 1;
-      memcpy(stem, g_roms[rom].base, n);
-      stem[n] = '\0';
-      if (!gamedb_blurb(stem, g_hm_blurb, sizeof(g_hm_blurb)))
-      {
-         char path[PSP_FILE_PATH_CAP];
-         if (psp_rom_path_join(path, sizeof(path), rom_dir,
-                               g_roms[rom].name) == 0 &&
-             gamedb_name_by_header(path, name, sizeof(name)))
-            gamedb_blurb(name, g_hm_blurb, sizeof(g_hm_blurb));
-      }
+      memcpy(g_hm_blurb, m->value.blurb, sizeof(g_hm_blurb));
    }
-   return g_hm_blurb;
+   (void)rom_dir;
+   md_end(MD_DESCRIPTION, began);
+   return g_hm_blurb_for == rom ? g_hm_blurb : "";
 }
 
-static void hm_focus(const char *rom_dir, int rom, float dy)
+static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
 {
    char title[80], buf[48];
-   const char *blurb = hm_blurb(rom_dir, rom);
+   const char *blurb = idle >= IDLE_SELECTED ? hm_blurb(rom_dir, rom)
+      : g_hm_blurb_for == rom ? g_hm_blurb : "";
    float x, y = HM_TITLE_Y + dy - (blurb[0] ? HM_BLURB_LIFT : 0);
    int la = (int)g_hm_label_a;
 
-   if (g_hm_states_for != rom)
+   const hm_meta *m = hm_metadata(rom);
+   unsigned long long meta_t = md_begin();
+   if (m)
    {
       int s;
       g_hm_states_for = rom;
       g_hm_states_n = 0;
-      if (browser_rom_has_state(rom_dir, rom))
-         for (s = 0; s < PSP_STATE_SLOT_COUNT; s++)
-            g_hm_states_n += g_browser_state_exists[s] ? 1 : 0;
+      (void)home_cached_states(rom);
+      for (s = 0; s < PSP_STATE_SLOT_COUNT; s++)
+         g_hm_states_n += g_browser_state_exists[s] ? 1 : 0;
    }
+   else { g_hm_states_for = -1; g_hm_states_n = 0; }
+   md_end(MD_META, meta_t);
 
    rom_display_name(&g_roms[rom], title, sizeof(title), 1);
    vs_text_fit(VS_HERO, title, VS_W - 2 * HM_X);
@@ -839,9 +1158,10 @@ static void hm_focus(const char *rom_dir, int rom, float dy)
    y += 76;
    meta_line(&g_roms[rom], buf, sizeof(buf));
    x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
-   x = hm_chip(x, y, rom_has_sav(rom) ? "Battery save" : "No save yet",
-               HC_GLASS, HC_TEXT2);
-   if (g_hm_states_n)
+   if (m && m->value.battery != ML_UNKNOWN)
+      x = hm_chip(x, y, m->value.battery == ML_PRESENT ? "Battery save" : "No save yet",
+                  HC_GLASS, HC_TEXT2);
+   if (g_hm_states_for == rom && g_hm_states_n)
    {
       snprintf(buf, sizeof(buf), g_hm_states_n == 1 ? "%d save state"
                                                     : "%d save states",
@@ -851,6 +1171,25 @@ static void hm_focus(const char *rom_dir, int rom, float dy)
    if (g_roms[rom].is_fav)
       x = hm_chip(x, y, "Starred", VS_ALPHA(hm_tint(g_pcfg.console, 255), 70),
                   HC_TEXT);
+   if (g_roms[rom].play_last)
+   {
+      /* play_log.h: when, and for how long */
+      char when[32], dur[32];
+      play_log_when(g_roms[rom].play_last, (uint32_t)plat_wallclock(),
+                    when, sizeof(when));
+      if (g_roms[rom].play_secs >= 60)
+      {
+         play_log_duration(g_roms[rom].play_secs, dur, sizeof(dur));
+         snprintf(buf, sizeof(buf), "Played %s, %s", when, dur);
+      }
+      else
+         snprintf(buf, sizeof(buf), "Played %s", when);
+      x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
+   }
+   if (m && m->value.patch)
+      x = hm_chip(x, y, m->value.patch == 1 ? "Patched (IPS)" :
+                        m->value.patch == 2 ? "Patched (BPS)" : "Patched (UPS)",
+                  HC_GLASS, HC_TEXT2);
 
    /* what the game is, in a few lines -- Wikipedia's (CC BY-SA), said so
     * in a chip of its own, readable over any picture */
@@ -863,8 +1202,16 @@ static void hm_focus(const char *rom_dir, int rom, float dy)
 
    /* the buttons */
    y = HM_BTN_Y + dy;
-   x = hm_button(HM_X, y, VS_I_PLAY, "Play", 1, PSP_CTRL_CROSS);
-   if (g_hm_states_n)
+   if (home_has_resume(rom))
+   {
+      /* Where the game was left: CROSS goes back to it; Start over (UP,
+       * or a tap) plays from the battery save as before. */
+      x = hm_button(HM_X, y, VS_I_PLAY, "Continue", 1, PSP_CTRL_CROSS);
+      x = hm_button(x, y, VS_I_REFRESH, "Start over", 0, BROWSER_FRESH_BUTTON);
+   }
+   else
+      x = hm_button(HM_X, y, VS_I_PLAY, "Play", 1, PSP_CTRL_CROSS);
+   if (g_hm_states_for == rom && g_hm_states_n)
       x = hm_button(x, y, VS_I_LAYERS, "Save states", 0, PSP_CTRL_DOWN);
    x = hm_button(x, y, g_roms[rom].is_fav ? VS_I_STAR : VS_I_STAR_O, NULL, 0,
                  PSP_CTRL_SQUARE);
@@ -880,6 +1227,8 @@ static struct
    vs_img *img[PSP_STATE_SLOT_COUNT];
    int w[PSP_STATE_SLOT_COUNT], h[PSP_STATE_SLOT_COUNT];
    char when[PSP_STATE_SLOT_COUNT][24];
+   unsigned epoch[PSP_STATE_SLOT_COUNT], attempts[PSP_STATE_SLOT_COUNT];
+   uint64_t retry_us[PSP_STATE_SLOT_COUNT];
 } g_hm_cards = { -1 };
 
 static void hm_cards_drop(void)
@@ -892,6 +1241,8 @@ static void hm_cards_drop(void)
       g_hm_cards.img[i] = NULL;
       g_hm_cards.status[i] = 0;
       g_hm_cards.when[i][0] = '\0';
+      g_hm_cards.epoch[i] = g_hm_cards.attempts[i] = 0;
+      g_hm_cards.retry_us[i] = 0;
    }
    g_hm_cards.rom = -1;
 }
@@ -939,8 +1290,6 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
    float y = VS_H + 42 + dy, x = HM_X, cw = 160, ch = 107;
    if (lift < 0.02f)
       return;
-   if (g_browser_state_open)
-      hm_cards_load_one(rom_dir, rom);
    vs_text(VS_SUB, HM_X, y - 54, "Save states", HC_TEXT);
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
    {
@@ -973,30 +1322,61 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
       vs_text(VS_CAPTION, x, y + ch + 42,
               have ? (g_hm_cards.rom == rom && g_hm_cards.when[i][0]
                          ? g_hm_cards.when[i] : "Saved")
-                   : "Empty", HC_TEXT3);
+                   : (!hm_metadata(rom) || hm_metadata(rom)->value.state[i] == ML_UNKNOWN
+                      ? "Checking..." : "Empty"), HC_TEXT3);
       if (g_browser_state_open && !g_shelf_del)
          UI_TCH_ROW(i, (int)(x / 2), (int)(y / 2), (int)(cw / 2),
                     (int)((ch + 60) / 2));
       x += cw + 22;
    }
+   (void)rom_dir;
 }
 
 /* ---- box art that arrives ---------------------------------------------- */
 
-/* The list's cartridges to artfetch.h, again whenever the list changes. */
+/* The raw console inventory is independent of Games/Starred and Find. */
 static int g_hm_af_n = -1, g_hm_af_first = -1, g_hm_af_con = -1;
+static unsigned g_hm_af_revision;
+static unsigned g_hm_af_generation;
+static int g_hm_af_focus = -1;
+static unsigned g_hm_af_retry_polls;
 
 static void hm_art_hand_over(const char *rom_dir, int n)
 {
    char (*paths)[PSP_FILE_PATH_CAP * 2];
    const char **pp, **np;
    int i;
-   if (n <= 0 || (n == g_hm_af_n && view_rom(0) == g_hm_af_first &&
-                  g_pcfg.console == g_hm_af_con))
+   if (!artfetch_active())
+   {
+      g_hm_af_generation = 0;
       return;
-   g_hm_af_n = n;
-   g_hm_af_first = view_rom(0);
-   g_hm_af_con = g_pcfg.console;
+   }
+   if (g_hm_af_retry_polls)
+   {
+      g_hm_af_retry_polls--;
+      return;
+   }
+   if (n < 0 || (g_hm_af_generation && n == g_hm_af_n &&
+                g_pcfg.console == g_hm_af_con &&
+                g_rom_view_revision == g_hm_af_revision))
+      return;
+   g_hm_af_generation = 0;
+   g_hm_af_focus = -1;
+   if (!n)
+   {
+      g_hm_af_generation = artfetch_list(NULL, NULL, 0);
+      if (!g_hm_af_generation)
+      {
+         g_hm_af_retry_polls = 60;
+         return;
+      }
+      g_hm_af_n = 0;
+      g_hm_af_first = -1;
+      g_hm_af_con = g_pcfg.console;
+      g_hm_af_revision = g_rom_view_revision;
+      g_hm_af_focus = -1;
+      return;
+   }
    paths = malloc((size_t)n * sizeof(*paths));
    pp = (const char **)malloc((size_t)n * sizeof(char *));
    np = (const char **)malloc((size_t)n * sizeof(char *));
@@ -1004,56 +1384,355 @@ static void hm_art_hand_over(const char *rom_dir, int n)
    {
       for (i = 0; i < n; i++)
       {
-         int r = view_rom(i);
+         int r = i;
          if (psp_rom_path_join(paths[i], sizeof(paths[i]), rom_dir,
                                g_roms[r].name) != 0)
             paths[i][0] = '\0';          /* (it cannot be opened: skipped) */
          pp[i] = paths[i];
          np[i] = g_roms[r].base;
       }
-      artfetch_list(pp, np, n);
+      g_hm_af_generation = artfetch_list(pp, np, n);
+      if (g_hm_af_generation)
+      {
+         g_hm_af_n = n;
+         g_hm_af_first = 0;
+         g_hm_af_con = g_pcfg.console;
+         g_hm_af_revision = g_rom_view_revision;
+         fe_evt("art_queue console=%d n=%d", g_pcfg.console, n);
+      }
    }
+   if (!g_hm_af_generation)
+      g_hm_af_retry_polls = 60;
    free(paths);
    free(pp);
    free(np);
 }
 
-/* A picture came for the cartridge called `base`: whatever was made without
- * it -- the art cache's "none", the tile, a cover-as-hero -- is made again. */
-static void hm_art_arrived(const char *base, int n)
+static void hm_art_focus(const char *rom_dir, int rom, int idle)
 {
-   int vi, i;
-   for (vi = 0; vi < n; vi++)
-   {
-      const int r = view_rom(vi);
-      if (strcmp(g_roms[r].base, base) != 0)
-         continue;
-      for (i = 0; i < ART_SLOTS; i++)
-         if (g_art[i].state && g_art[i].rom_idx == r)
-            g_art[i].state = 0;
-      for (i = 0; i < HM_TILES; i++)
-         if (g_hm_tile[i].rom == r)
-         {
-            if (g_hm_tile[i].img)
-               vs_img_free(g_hm_tile[i].img);
-            g_hm_tile[i].img = NULL;
-            g_hm_tile[i].state = 0;
-         }
-      if (g_hero_idx == r)
-         g_hero_state = 0;
-      if (g_hm_pic.rom == r)
-         g_hm_pic.rom = -1;          /* (its picture may be the cover) */
-   }
+   char path[PSP_FILE_PATH_CAP * 2];
+   if (idle < IDLE_SELECTED || !g_hm_af_generation ||
+       rom < 0 || rom >= g_hm_af_n || rom == g_hm_af_focus)
+      return;
+   if (psp_rom_path_join(path, sizeof(path), rom_dir, g_roms[rom].name) != 0)
+      return;
+   artfetch_focus(g_hm_af_generation, path, g_roms[rom].base);
+   g_hm_af_focus = rom;
 }
 
-static void hm_art_poll(const char *rom_dir, int n)
+static int hm_art_matches(int rom, const char *base, int count)
+{
+   return rom >= 0 && rom < count && g_roms[rom].base &&
+          !strcmp(g_roms[rom].base, base);
+}
+
+/* A picture came for `base` (NULL: all cached games after coalesced arrivals).
+ * Art made without it -- "none", tile, cover-as-hero -- is made again. */
+static void hm_art_arrived(const char *base, int n)
+{
+   int i, count = n;
+   /* Only artwork keys are marked: save metadata and shelf shots keep their
+    * epoch, and the loader's current batch is not cancelled (hm_art_apply).
+    * Visible textures stay until their replacement is adopted. */
+   if (!base)
+   {
+      /* Coalesced: every raw key, whatever count the caller had (a hidden
+       * Starred or Find row can own a cached "none" tile). */
+      g_hm_art_all = g_hm_art_any = 1;
+      for (i = 0; i < ART_SLOTS; i++)
+         g_art[i].state = 0;
+      g_hero_state = 0;
+      return;
+   }
+   /* Cache ownership is raw-ROM based, including games hidden by Find. */
+   for (i = 0; i < n && i < BROWSER_MAX; i++)
+      if (hm_art_matches(i, base, count))
+         g_hm_art_dirty[i] = 1, g_hm_art_any = 1;
+   for (i = 0; i < ART_SLOTS; i++)
+      if (g_art[i].state && hm_art_matches(g_art[i].rom_idx, base, count))
+         g_art[i].state = 0;
+   if (hm_art_matches(g_hero_idx, base, count))
+      g_hero_state = 0;
+}
+
+static void hm_art_poll(const char *rom_dir, int n, int idle)
 {
    char name[256], line[200];
    hm_art_hand_over(rom_dir, n);
-   while (artfetch_take(name, sizeof(name)))
-      hm_art_arrived(name, n);
+   /* Keep visible textures until navigation settles. The worker's bounded
+    * completion queue coalesces overflow and never waits for the UI. */
+   if (idle >= IDLE_SELECTED)
+   {
+      while (artfetch_take(name, sizeof(name)))
+         hm_art_arrived(name, n);
+      if (artfetch_resync())
+      {
+         hm_art_arrived(NULL, n);
+         fe_evt("art_resync console=%d n=%d", g_pcfg.console, n);
+      }
+   }
    while (artfetch_log(line, sizeof(line)))
       fe_evt("%s", line);
+}
+
+/* Paths are copied into requests. Neither the inventory pool nor a UI/GPU
+ * object is ever referenced by the local I/O thread. */
+static int hm_job(const char *rom_dir, int rom, menu_load_job *j)
+{
+   extern char g_dir_base[];
+   size_t stem = ui_rom_stem_length(g_roms[rom].base);
+   memset(j, 0, sizeof(*j));
+   if (stem >= sizeof(j->stem) || strlen(g_dir_base) >= sizeof(j->root) ||
+       psp_rom_path_join(j->rom, sizeof(j->rom), rom_dir, g_roms[rom].name) ||
+       browser_rom_state_path(rom_dir, rom, 1, j->state1, sizeof(j->state1)))
+      return 0;
+   memcpy(j->stem, g_roms[rom].base, stem);
+   strcpy(j->root, g_dir_base);
+   j->console = g_pcfg.console;
+   j->generation = g_hm_generation;
+   j->epoch = hm_epoch(rom);
+   j->art_epoch = hm_art_epoch(rom);
+   return 1;
+}
+static int hm_result_rom(const char *rom_dir, int n, const menu_load_result *r)
+{
+   char path[ML_PATH];
+   if (r->job.generation != g_hm_generation ||
+       r->job.focus != g_hm_load_serial || r->job.console != g_pcfg.console)
+      return -1;
+   /* Only the batch's own games (at most 1 + ML_NEIGHBORS), not every
+    * game in the library: the path joined per candidate was a whole-list
+    * snprintf + strcmp scan for each result, on the UI thread. */
+   for (unsigned k = 0; k < g_hm_batch_n; k++)
+   {
+      int i = g_hm_batch_rom[k];
+      if (i >= 0 && i < n && i < BROWSER_MAX &&
+          r->job.epoch == hm_epoch(i) &&
+          ((r->kind != ML_TILE && r->kind != ML_STILL) ||
+           r->job.art_epoch == hm_art_epoch(i)) &&
+          psp_rom_path_join(path, sizeof(path), rom_dir, g_roms[i].name) == 0 &&
+          !strcmp(path, r->job.rom))
+         return i;
+   }
+   return -1;
+}
+static void hm_adopt_meta(int rom, const menu_load_result *r)
+{
+   hm_meta *m = &g_hm_meta[rom];
+   m->value = r->meta;
+   m->status = r->status;
+   m->epoch = r->job.epoch;
+   m->retry_us = hm_retry(r->status, &m->attempts);
+   if (r->status == ML_OK)
+   {
+      int missing = m->value.battery == ML_MISSING;
+      for (int i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+         missing |= m->value.state[i] == ML_MISSING;
+      if (missing) m->retry_us = plat_time_us() + 30000000u;
+   }
+   if (m->value.battery != ML_UNKNOWN)
+      g_roms[rom].has_sav = m->value.battery == ML_PRESENT;
+}
+static void hm_adopt_image(int rom, menu_load_result *r)
+{
+   vs_img *im = NULL;
+   int status = r->status;
+   if (status == ML_OK)
+   {
+      im = vs_img_new((int)r->w, (int)r->h);
+      if (im) { vs_img_set(im, r->pixels, (int)r->w); g_hm_uploaded = 1; }
+      else status = ML_ERROR;
+   }
+   if (r->kind == ML_TILE)
+   {
+      hm_tile *t = hm_tile_find(rom);
+      if (im)
+      {
+         if (t->img) vs_img_free(t->img);
+         t->img = im; t->state = 1;
+      }
+      else if (!t->img) t->state = -1;
+      t->epoch = r->job.epoch;
+      t->art_epoch = r->job.art_epoch;
+      t->retry_us = hm_retry(status, &t->attempts);
+   }
+   else if (r->kind == ML_STILL)
+   {
+      g_hm_still_for = rom;
+      g_hm_pic.epoch = r->job.epoch;
+      g_hm_pic.art_epoch = r->job.art_epoch;
+      g_hm_pic.retry_us = hm_retry(status, &g_hm_pic.attempts);
+      if (im)
+      {
+         if (g_hm_pic.old) vs_img_free(g_hm_pic.old);
+         g_hm_pic.old = g_hm_pic.img;
+         g_hm_pic.old_rom = g_hm_pic.rom;
+         g_hm_pic.old_state = g_hm_pic.state;
+         g_hm_pic.old_w = g_hm_pic.w; g_hm_pic.old_h = g_hm_pic.h;
+         g_hm_pic.old_a = g_hm_pic.a;
+         g_hm_pic.img = im; g_hm_pic.rom = rom;
+         g_hm_pic.w = (int)r->w; g_hm_pic.h = (int)r->h;
+         g_hm_pic.state = r->source == ML_SOURCE_HERO ? 3 : 1;
+         g_hm_pic.a = 0;
+      }
+   }
+   else
+   {
+      unsigned i = 0;
+      while (i < PSP_STATE_SLOT_COUNT && r->kind != ((unsigned)ML_STATE0 << i)) i++;
+      if (i >= PSP_STATE_SLOT_COUNT || g_hm_cards.rom != rom)
+      { if (im) vs_img_free(im); return; }
+      if (im)
+      {
+         if (g_hm_cards.img[i]) vs_img_free(g_hm_cards.img[i]);
+         g_hm_cards.img[i] = im;
+         g_hm_cards.w[i] = (int)r->w; g_hm_cards.h[i] = (int)r->h;
+         g_hm_cards.status[i] = 1;
+      }
+      else if (!g_hm_cards.img[i]) g_hm_cards.status[i] = 2;
+      g_hm_cards.epoch[i] = r->job.epoch;
+      g_hm_cards.retry_us[i] = hm_retry(status, &g_hm_cards.attempts[i]);
+   }
+}
+static int hm_image_due(const hm_tile *t, int rom, uint64_t now)
+{
+   return t->epoch != hm_epoch(rom) || t->art_epoch != hm_art_epoch(rom) ||
+          (t->retry_us && now >= t->retry_us);
+}
+static int hm_still_due(int rom, uint64_t now)
+{
+   return g_hm_still_for != rom || g_hm_pic.epoch != hm_epoch(rom) ||
+          g_hm_pic.art_epoch != hm_art_epoch(rom) ||
+          (g_hm_pic.retry_us && now >= g_hm_pic.retry_us);
+}
+/* Only a result of the batch now outstanding counts toward finishing it
+ * (the worker's take already drops older revisions; this does not rely on
+ * that). */
+static int hm_result_current(const menu_load_result *r)
+{
+   return r->job.generation == g_hm_generation &&
+          r->job.focus == g_hm_load_serial;
+}
+static unsigned hm_task_count(unsigned tasks)
+{
+   unsigned n = 0;
+   while (tasks) { tasks &= tasks - 1; n++; }
+   return n;
+}
+static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int idle)
+{
+   menu_load_result r;
+   menu_load_job jobs[1 + ML_NEIGHBORS];
+   int rom = view_rom(cur);
+   unsigned count = 1, total = 0;
+   uint64_t now = plat_time_us();
+   g_hm_uploaded = 0;
+   if (idle < IDLE_SELECTED || g_hm_load_rom != rom || g_hm_load_dirty ||
+       g_hm_load_open != g_browser_state_open)
+   {
+      if (g_hm_load_active) menu_load_pause();
+      g_hm_load_active = 0; g_hm_load_left = 0;
+      g_hm_load_rom = rom; g_hm_load_open = g_browser_state_open;
+      g_hm_load_dirty = 0;
+      if (idle < IDLE_SELECTED) return;
+   }
+   menu_load_resume();
+   for (unsigned i = 0; i < 4 && menu_load_take(0, &r); i++)
+   {
+      unsigned long long began = md_begin();
+      int at = hm_result_rom(rom_dir, n_scan, &r);
+      if (at >= 0) hm_adopt_meta(at, &r);
+      if (hm_result_current(&r) && g_hm_load_left) g_hm_load_left--;
+      menu_load_release(r.slot);
+      md_end(MD_PUBLISH, began);
+   }
+   if (menu_load_take(1, &r))
+   {
+      unsigned long long began = md_begin();
+      int at = hm_result_rom(rom_dir, n_scan, &r);
+      if (at >= 0) hm_adopt_image(at, &r);
+      if (hm_result_current(&r) && g_hm_load_left) g_hm_load_left--;
+      menu_load_release(r.slot);
+      md_end(MD_PUBLISH, began);
+   }
+   if (!g_hm_load_left) g_hm_load_active = 0;
+   if (g_hm_load_active) return;
+   /* The batch boundary: artwork that arrived meanwhile becomes due now. */
+   hm_art_apply();
+   if (!hm_job(rom_dir, rom, &jobs[0])) return;
+   g_hm_batch_rom[0] = rom;
+   const hm_meta *m = hm_metadata(rom);
+   if (!m || (m->retry_us && now >= m->retry_us)) jobs[0].tasks |= ML_META;
+   hm_tile *t = hm_tile_find(rom);
+   if (hm_image_due(t, rom, now)) jobs[0].tasks |= ML_TILE;
+   if (hm_still_due(rom, now)) jobs[0].tasks |= ML_STILL;
+   if (g_browser_state_open)
+   {
+      if (g_hm_cards.rom != rom) { hm_cards_drop(); g_hm_cards.rom = rom; }
+      for (unsigned i = 0; m && i < PSP_STATE_SLOT_COUNT; i++)
+      {
+         strcpy(g_hm_cards.when[i], m->value.when[i]);
+         if ((m->value.state[i] == ML_PRESENT || m->value.state[i] == ML_OLD_ONLY) &&
+             (g_hm_cards.epoch[i] != hm_epoch(rom) ||
+              (g_hm_cards.retry_us[i] && now >= g_hm_cards.retry_us[i])))
+            jobs[0].tasks |= ML_STATE0 << i;
+      }
+   }
+   /* Only the nearby row is optional, distance-ordered and bounded: the
+    * one tile hm_row draws to the left and those to the right that are on
+    * screen (it shows up to five), wrapping round a list of more than ten
+    * exactly as hm_row does. */
+   if (idle >= IDLE_HERO && !g_browser_state_open)
+   {
+      for (int d = 1; d <= ML_NEIGHBORS && count < 1 + ML_NEIGHBORS; d++)
+         for (int side = 0; side < 2 && count < 1 + ML_NEIGHBORS; side++)
+         {
+            int vi = cur + (side ? -d : d), at;
+            if (side && d > 1) continue;
+            if (n > 10) vi = ((vi % n) + n) % n;
+            else if (vi < 0 || vi >= n) continue;
+            at = view_rom(vi);
+            if (at == rom) continue;
+            t = hm_tile_find(at);
+            if (t->x >= VS_W || !hm_image_due(t, at, now)) continue;
+            if (hm_job(rom_dir, at, &jobs[count]))
+            {
+               g_hm_batch_rom[count] = at;
+               jobs[count++].tasks = ML_TILE;
+            }
+         }
+   }
+   for (unsigned i = 0; i < count; i++) total += hm_task_count(jobs[i].tasks);
+   if (!total) return;
+   if (++g_hm_load_serial == 0) ++g_hm_load_serial;
+   for (unsigned i = 0; i < count; i++) jobs[i].focus = g_hm_load_serial;
+   if (menu_load_submit(jobs, count))
+   { g_hm_load_active = 1; g_hm_load_left = total; g_hm_batch_n = count; }
+   else
+      g_hm_batch_n = 0;
+}
+
+/* Settings and cheats cover Home.  Entering parks the loader without
+ * waiting for it (a read in progress is abandoned on its own thread, its
+ * result discarded) and forgets the outstanding batch, so nothing is read or
+ * published for a page that is not shown.  Leaving changes nothing at once:
+ * the next settled Home frame resumes the worker with a fresh batch.  After
+ * Settings every artwork key is marked (covers can be looked for again
+ * there); saves are not touched by either page. */
+static void home_modal_enter(void)
+{
+   menu_load_pause();
+   g_hm_load_active = 0;
+   g_hm_load_left = 0;
+   g_hm_load_dirty = 1;
+}
+static void home_modal_leave(int artwork_may_change)
+{
+   if (artwork_may_change)
+      g_hm_art_all = g_hm_art_any = 1;
+   g_hm_load_active = 0;
+   g_hm_load_left = 0;
+   g_hm_load_dirty = 1;
 }
 
 /* ---- the whole page ---------------------------------------------------- */
@@ -1066,6 +1745,10 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    int rom = view_rom(cur);
    float dy;
 
+   hm_selection_tick(rom);
+   hm_art_poll(rom_dir, n_scan, idle);
+   hm_art_focus(rom_dir, rom, idle);
+   hm_load_pump(rom_dir, cur, n, n_scan, idle);
    g_thm = &THM_DARK;
    g_hm_frame++;
    hm_ease(&g_hm_lift, g_browser_state_open ? 1.0f : 0.0f, 0.22f);
@@ -1074,8 +1757,6 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
       dy = -HM_LIFT;
 
    /* the picture: loaded when the row has settled on a game */
-   if (g_hm_pic.rom != rom && idle >= IDLE_SELECTED)
-      hm_pic_load(rom);
    if (g_hm_pic.rom == rom && g_hm_pic.state > 0)
       hm_ease(&g_hm_pic.a, 255.0f, 0.18f);
    if (g_hm_pic.old)
@@ -1088,12 +1769,11 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
       }
    }
 
-   hm_art_poll(rom_dir, n);
    hm_clip_tick(rom, idle);
    hm_backdrop(rom, dy);
    hm_topbar(dy, n_scan);
    hm_row(rom_dir, cur, n, dy, idle);
-   hm_focus(rom_dir, rom, dy);
+   hm_focus(rom_dir, rom, dy, idle);
    hm_cards(rom_dir, rom, dy, g_hm_lift);
 
    /* the pad's hints */
@@ -1126,8 +1806,8 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    }
    else
    {
-      static const int ic[3] = { VS_I_BTN_SQ, VS_I_BTN_TRI, -1 };
-      static const char *const w[3] = { "Star", "Console", "START  Settings" };
+      static const int ic[3] = { VS_I_BTN_O, VS_I_BTN_TRI, -1 };
+      const char *w[3] = { g_find[0] ? "Clear" : "Find", "Console", "START  Settings" };
       hm_hints(VS_W - HM_X, HM_BTN_Y + dy + 16, ic, w, 3);
    }
    (void)n_scan;
@@ -1141,12 +1821,58 @@ static void home_empty(const char *rom_dir, int n_scan)
    char msg[96], dir[PSP_FILE_PATH_CAP];
    float y = 150;
    int con = g_pcfg.console;
+   hm_selection_tick(-1);
    g_thm = &THM_DARK;
    vs_rect(0, 0, VS_W, VS_H, HC_BG);
    vs_shadow(330, 120, 300, 220, 110, 160, hm_tint(con, 60));
    hm_topbar(0, n_scan);
    vs_circle(VS_W * 0.5f, y + 20, 56, HC_GLASS);
-   if (g_browser_favs)
+   if (g_find[0])
+   {
+      char query[96];
+      vs_icon(VS_I_SEARCH, VS_W * 0.5f, y + 36, 56, HC_TEXT3);
+      vs_text_c(VS_SUB, VS_W * 0.5f, y + 94, "No games match", HC_TEXT);
+      int elsewhere = g_browser_favs || g_browser_recent
+                    ? browser_find_count_all(n_scan) : 0;
+      snprintf(query, sizeof(query), "\"%s\"", g_find);
+      vs_text_fit(VS_BODY, query, 760);
+      vs_text_c(VS_BODY, VS_W * 0.5f, y + 136, query, HC_TEXT2);
+      if (elsewhere > 0)
+      {
+         /* Nothing starred matches, but games do: one press shows them
+          * (SELECT keeps the search). */
+         float w1 = vs_text_w(VS_LABEL, "Clear") + 76;
+         float w2 = vs_text_w(VS_LABEL, "All games") + 76, x;
+         snprintf(msg, sizeof(msg), elsewhere == 1
+                  ? "1 game matches in All games"
+                  : "%d games match in All games", elsewhere);
+         vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174, msg, HC_TEXT2);
+         x = VS_W * 0.5f - (w1 + 14 + w2) * 0.5f;
+         x = hm_button(x, y + 216, VS_I_BACK, "Clear", 0, PSP_CTRL_CIRCLE);
+         hm_button(x, y + 216, VS_I_GRID, "All games", 1,
+                   g_browser_recent ? BROWSER_TAB_BUTTON(0) : PSP_CTRL_SELECT);
+      }
+      else
+      {
+         vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 174,
+                   "Try fewer words, or part of a word.", HC_TEXT3);
+         hm_button(VS_W * 0.5f - 90, y + 216, VS_I_BACK, "Clear", 1,
+                   PSP_CTRL_CIRCLE);
+      }
+      return;
+   }
+   else if (g_browser_recent)
+   {
+      vs_icon(VS_I_REWIND, VS_W * 0.5f, y + 20, 56, hm_tint(con, 255));
+      snprintf(msg, sizeof(msg), "No %s games played yet", sk->id);
+      vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
+      vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
+                "The games you play show up here, the latest first.", HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
+                BROWSER_TAB_BUTTON(0));
+      return;
+   }
+   else if (g_browser_favs)
    {
       vs_icon(VS_I_STAR_O, VS_W * 0.5f, y + 20, 56, hm_tint(con, 255));
       snprintf(msg, sizeof(msg), "No starred %s games yet", sk->id);
@@ -1213,6 +1939,7 @@ static unsigned home_remap(unsigned e)
       if (e & PSP_CTRL_LEFT)  out |= PSP_CTRL_UP;
       if (e & PSP_CTRL_RIGHT) out |= PSP_CTRL_DOWN;
       if (e & PSP_CTRL_DOWN)  out |= PSP_CTRL_LEFT;
+      if (e & PSP_CTRL_UP)    out |= BROWSER_FRESH_BUTTON;  /* Start over */
    }
    return out;
 }
@@ -1220,6 +1947,15 @@ static unsigned home_remap(unsigned e)
 static void home_free(void)
 {
    int i;
+   menu_load_pause();
+   if (++g_hm_generation == 0) ++g_hm_generation;
+   memset(g_hm_meta, 0, sizeof(g_hm_meta));
+   memset(g_hm_epoch, 0, sizeof(g_hm_epoch));
+   memset(g_hm_art_epoch, 0, sizeof(g_hm_art_epoch));
+   memset(g_hm_art_dirty, 0, sizeof(g_hm_art_dirty));
+   g_hm_art_any = g_hm_art_all = 0;
+   g_hm_load_rom = g_hm_load_open = g_hm_still_for = -1;
+   g_hm_load_active = 0; g_hm_load_left = g_hm_load_dirty = 0;
    for (i = 0; i < HM_TILES; i++)
    {
       if (g_hm_tile[i].img)
@@ -1236,6 +1972,8 @@ static void home_free(void)
    hm_cards_drop();
    hm_clip_drop();
    g_hm_states_for = -1;
+   g_hm_blurb_for = -1;
+   g_hm_blurb[0] = '\0';
    g_hm_label_for = -1;
    free(g_hm_buf);
    g_hm_buf = NULL;
@@ -1248,6 +1986,8 @@ static void home_free(void)
 static void home_reset(void)
 {
    home_free();
+   (void)menu_load_start(menu_files_load);
+   menu_load_resume();
    g_hm_clip.none_for = -1;
    g_hm_lift = 0.0f;
 }

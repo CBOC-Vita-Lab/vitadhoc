@@ -157,6 +157,35 @@ int       pc_io_dread(pc_uid d, pc_dirent *ent);
 int       pc_io_dclose(pc_uid d);
 int       pc_ctrl_peek(pc_ctrl *pad, int count);
 
+/* Completed compatibility-call boundaries, not lower-level host syscalls.
+ * Mark the main/menu owner once before creating workers. An unmarked caller
+ * counts as other; later mark attempts cannot change the owner. No paths,
+ * contents, allocation, logger calls, locks, or worker waits are involved.
+ * Errors mean negative public results; bytes mean returned bytes, not requested
+ * bytes. Counters use lock-free 32-bit atomics and wrap modulo 2^32 (except
+ * max_us). A single call's duration is also modulo 2^32 microseconds.
+ * A snapshot loads each scalar independently: concurrent fields need not be
+ * mutually consistent. Timing uses a real clock, not the host virtual clock. */
+enum
+{
+   PC_IO_OPEN, PC_IO_CLOSE, PC_IO_READ, PC_IO_WRITE,
+   PC_IO_LSEEK, PC_IO_LSEEK32, PC_IO_REMOVE, PC_IO_RENAME,
+   PC_IO_MKDIR, PC_IO_GETSTAT, PC_IO_DOPEN, PC_IO_DREAD, PC_IO_DCLOSE,
+   PC_IO_OP_COUNT
+};
+typedef struct
+{
+   uint32_t calls, errors, read_bytes, write_bytes, total_us, max_us;
+   uint32_t op_calls[PC_IO_OP_COUNT];
+} pc_io_diag_counts;
+typedef struct
+{
+   uint32_t owner_marked;
+   pc_io_diag_counts owner, other;
+} pc_io_diag;
+void pspcompat_io_mark_owner(void);
+void pspcompat_io_get_diag(pc_io_diag *out);
+
 /* video_vita.h */
 void vid_tex_invalidate(const void *p, size_t bytes);
 
@@ -203,6 +232,9 @@ int pspcompat_touch(pc_touch *out);
 enum { PC_IME_IDLE = 0, PC_IME_RUNNING, PC_IME_DONE, PC_IME_CANCELLED };
 #define PC_IME_MAX_CHARS 63
 int pspcompat_ime_open(const char *title, const char *initial, int max_chars);
+/* The same for a password: the field shows dots, starts empty, and what is
+ * typed is not kept by this file past the poll that returns it. */
+int pspcompat_ime_open_secret(const char *title, int max_chars);
 int pspcompat_ime_poll(char *out, size_t cap);
 
 /* What every system dialog needs once per process (sceAppUtilInit and

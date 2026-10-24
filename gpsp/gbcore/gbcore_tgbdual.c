@@ -59,6 +59,8 @@ struct gbcore {
   unsigned lines;              /* scanlines run in the current frame */
   uint8_t header[0x1C];        /* ROM 0x134..0x14F: identity for states */
   size_t rom_bytes;            /* the cartridge image's size (cheats) */
+  int tilt_set;                /* gbcore_set_tilt has published a sample */
+  uint32_t tilt;               /* MBC7 accelerometer: x | y << 16 */
 };
 
 static gbcore_t *active;
@@ -331,10 +333,106 @@ void gbe_reset(void)
   pad_state = 0;
 }
 
+/* The MBC7 accelerometer (Kirby Tilt 'n' Tumble), sampled when the game
+ * latches it: what the frontend published for this frame
+ * (gbcore_set_tilt), else a level console -- 0x81D0 on both axes (Pan
+ * Docs).  The original returned 2047 and only 12 bits. */
 word gbe_getSensor(char x_y)
 {
-  (void)x_y;
-  return 2047;   /* MBC7 tilt sensor at rest (Kirby Tilt 'n' Tumble) */
+  if (!active || !active->tilt_set)
+    return 0x81D0;
+  return (word)(x_y ? (active->tilt & 0xFFFF) : (active->tilt >> 16));
+}
+
+void gbcore_set_tilt(gbcore_t *core, uint32_t x_y)
+{
+  if (!core)
+    return;
+  core->tilt = x_y;
+  core->tilt_set = 1;
+}
+
+/* ---- the Super Game Boy's border (gbcore.h) -------------------------- */
+#ifdef TGB_SGB_BORDER
+extern unsigned short sgb_border_buffer[256 * 224];
+extern unsigned sgb_border_gen;
+extern byte sgb_border[2048];
+extern byte sgb_borderchar[32 * 256];
+extern int border_uploaded;
+void sgb_render_border(void);
+#define SGB_BLOB_BYTES (4 + 2048 + 32 * 256 + 64 * 2)
+
+unsigned gbcore_sgb_border(gbcore_t *core, const uint16_t **pixels)
+{
+  if (!core || core != active || now_gb_mode != 2 || !sgb_mode ||
+      !border_uploaded)
+    return 0;
+  if (pixels)
+    *pixels = sgb_border_buffer;
+  return sgb_border_gen ? sgb_border_gen : 1;
+}
+
+size_t gbcore_sgb_border_save(gbcore_t *core, void *buf, size_t cap)
+{
+  uint8_t *p = (uint8_t *)buf;
+  int i;
+  if (!gbcore_sgb_border(core, NULL) || !buf || cap < SGB_BLOB_BYTES)
+    return 0;
+  /* A reset clears the border's tiles but not that one was sent: until the
+   * game sends it again there is nothing worth keeping. */
+  for (i = 0; i < 32 * 256 && !((const uint8_t *)sgb_borderchar)[i]; i++)
+    ;
+  if (i == 32 * 256)
+    return 0;
+  memcpy(p, "SGBB", 4);
+  memcpy(p + 4, sgb_border, 2048);
+  memcpy(p + 4 + 2048, sgb_borderchar, 32 * 256);
+  for (i = 0; i < 64; i++)
+  {
+    p[4 + 2048 + 32 * 256 + i * 2] = (uint8_t)sgb_palette[64 + i];
+    p[4 + 2048 + 32 * 256 + i * 2 + 1] = (uint8_t)(sgb_palette[64 + i] >> 8);
+  }
+  return SGB_BLOB_BYTES;
+}
+
+int gbcore_sgb_border_load(gbcore_t *core, const void *buf, size_t n)
+{
+  const uint8_t *p = (const uint8_t *)buf;
+  int i;
+  if (!core || core != active || now_gb_mode != 2 || !sgb_mode || !buf ||
+      n != SGB_BLOB_BYTES || memcmp(p, "SGBB", 4))
+    return -1;
+  memcpy(sgb_border, p + 4, 2048);
+  memcpy(sgb_borderchar, p + 4 + 2048, 32 * 256);
+  for (i = 0; i < 64; i++)
+    sgb_palette[64 + i] = (unsigned short)(p[4 + 2048 + 32 * 256 + i * 2] |
+                                           (p[4 + 2048 + 32 * 256 + i * 2 + 1] << 8));
+  border_uploaded = 2;
+  sgb_render_border();
+  return 0;
+}
+#else
+unsigned gbcore_sgb_border(gbcore_t *core, const uint16_t **pixels)
+{
+  (void)core; (void)pixels;
+  return 0;
+}
+size_t gbcore_sgb_border_save(gbcore_t *core, void *buf, size_t cap)
+{
+  (void)core; (void)buf; (void)cap;
+  return 0;
+}
+int gbcore_sgb_border_load(gbcore_t *core, const void *buf, size_t n)
+{
+  (void)core; (void)buf; (void)n;
+  return -1;
+}
+#endif
+
+int gbcore_has_tilt(gbcore_t *core)
+{
+  return core && core == active && rom_get_loaded() &&
+         rom_get_info()->cart_type == 0x22;
 }
 
 void gbe_setBibrate(char bibrate)
@@ -1328,6 +1426,12 @@ int gbcore_state_load(gbcore_t *core, const void *source, size_t size)
   apu_restore_clock();
   if (now_gb_mode == 2 && sgb_mask >= 2)
     gb_fill_vframe(sgb_mask == 3 ? sgb_palette[0] : 0);
+#ifdef TGB_SGB_BORDER
+  /* The state brought its own palettes; the border is not in it (the
+   * format predates it) and stays, redrawn in them. */
+  if (now_gb_mode == 2 && border_uploaded)
+    sgb_render_border();
+#endif
   snd_stat_upd = 1;
   rebase_clocks();
   cpu_irq_check();
@@ -1379,6 +1483,51 @@ int gbcore_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len)
       return -1;
   }
   return 0;
+}
+
+/* RetroAchievements' view of the machine (rcheevos consoleinfo.c, "GameBoy"
+ * and "GameBoy Color"): the CPU's map with the RAM banks FIXED -- A000 is
+ * cartridge RAM bank 0, D000 work RAM bank 1 -- and the other banks past
+ * the end of the address space: 10000-15FFF work RAM banks 2-7 (GBC),
+ * 16000-33FFF cartridge RAM banks 1-15.  What is not there reads 0. */
+static uint8_t ra_byte(unsigned a)
+{
+  size_t cart = gbcore_cart_ram_size(active);
+  uint8_t v = 0;
+  if (rom_get_info()->cart_type == 0x22)
+    cart = 0;                               /* MBC7: an EEPROM, not RAM */
+  if (a >= 0xE000 && a < 0xFE00)
+    a -= 0x2000;                            /* echo */
+  if (a >= 0xA000 && a < 0xC000)
+    return (size_t)(a - 0xA000) < cart ? get_sram()[a - 0xA000] : 0;
+  if (a >= 0xC000 && a < 0xE000)
+    return ram[a - 0xC000];
+  if (a >= 0xFF00 && a < 0xFF80)
+    return 0;                               /* I/O: reads have effects */
+  if (a < 0x10000)
+  {
+    if (a == 0xFFFF)
+      return 0;
+    return gbcore_peek(active, (uint16_t)a, &v, 1) == 0 ? v : 0;
+  }
+  if (a < 0x16000)
+    return ram[0x2000 + (a - 0x10000)];
+  if (a < 0x34000 && (size_t)(0x2000 + (a - 0x16000)) < cart)
+    return get_sram()[0x2000 + (a - 0x16000)];
+  return 0;
+}
+
+uint32_t gbcore_ra_read(gbcore_t *core, uint32_t addr, uint8_t *out,
+                        uint32_t len)
+{
+  uint32_t i;
+  if (!core || core != active || !out || addr >= 0x34000)
+    return 0;
+  if (len > 0x34000 - addr)
+    len = 0x34000 - addr;
+  for (i = 0; i < len; i++)
+    out[i] = ra_byte(addr + i);
+  return len;
 }
 
 static uint8_t *poke_ptr(unsigned a)

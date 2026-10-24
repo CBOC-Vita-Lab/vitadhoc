@@ -35,12 +35,48 @@ clarification and the remaining package review.
 - **stb:** Sean Barrett and contributors, offered under MIT or public-domain
   terms. The complete dual notice is in
   `gpsp/vita/third_party/stb/LICENSE` and `licenses/stb.txt`;
-  individual headers retain their notices.
+  individual headers retain their notices. `gpsp/psp/stb_image.h` (v2.30)
+  carries two local changes in its JPEG image loop, marked in the file:
+  stray bytes between segments are skipped, and a marker error before the
+  first scan fails instead of returning an undecoded image.
 - **xBRZ:** Zenju, HqMAME and contributors, used under GPL version 2 with the
   original exception retained. The code and local-change notice are in
   `gpsp/vita/third_party/xbrz/`. The app does not claim the MAME exception as
   permission for unrelated game material. The original header is also in
   `licenses/CPU-xBRZ-notice.txt` inside the player package.
+- **rcheevos:** RetroAchievements.org, MIT. Release v12.5.0
+  (`1433173220a7eaede6a9ed7a18e94117be1821e0`), unchanged subset in
+  `gpsp/vita/third_party/rcheevos/` (`PROVENANCE` lists what was left out).
+  Its notice, which accompanies the source and every distribution:
+
+  > MIT License
+  >
+  > Copyright (c) 2018 RetroAchievements.org
+  >
+  > Permission is hereby granted, free of charge, to any person obtaining a
+  > copy of this software and associated documentation files (the
+  > "Software"), to deal in the Software without restriction, including
+  > without limitation the rights to use, copy, modify, merge, publish,
+  > distribute, sublicense, and/or sell copies of the Software, and to permit
+  > persons to whom the Software is furnished to do so, subject to the
+  > following conditions:
+  >
+  > The above copyright notice and this permission notice shall be included
+  > in all copies or substantial portions of the Software.
+  >
+  > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+  > OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  > MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+  > NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+  > DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+  > OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+  > USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+  The root CA certificates compiled into `gpsp/vita/ra_roots.h` (for
+  RetroAchievements' HTTPS) are the public certificates of their issuers,
+  taken from the Mozilla root store as packaged by Debian's ca-certificates;
+  `gpsp/vita/tools/ra_roots.py` names them. RetroAchievements is a separate
+  service; signing in is the player's choice and is not required to play.
 - **Inter:** The Inter Project Authors, SIL Open Font License 1.1.
   `licenses/Inter-OFL.txt`. Regular and SemiBold TTFs are embedded.
 - **Outfit:** The Outfit Project Authors, SIL Open Font License 1.1.

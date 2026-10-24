@@ -1303,6 +1303,19 @@ static void t_commit(void)
       put_file(DIRB, "Game.sav.old", 700, 7);
       CHECK(fe_share_recover(&fs, fin, ".gsp", scratch, sizeof(scratch)) == 0);
       CHECK(file_crc(fin) == c_bak && !exists(old));
+      /* both: a kept share .bak (older) and an interrupted save's .old
+       * (newer, the game's own last write): the .old comes back, the .bak
+       * stays the kept backup */
+      remove(fin);
+      put_file(DIRB, "Game.sav.bak", 600, 6);
+      put_file(DIRB, "Game.sav.old", 800, 5);
+      {
+         uint32_t c_old = file_crc(old), c_kept = file_crc(bak);
+         CHECK(fe_share_recover(&fs, fin, ".gsp", scratch, sizeof(scratch)) == 1);
+         CHECK(file_crc(fin) == c_old && !exists(old) &&
+               exists(bak) && file_crc(bak) == c_kept);
+      }
+      remove(bak);
       /* neither file: nothing appears */
       remove(fin);
       CHECK(fe_share_recover(&fs, fin, ".gsp", scratch, sizeof(scratch)) == 0);

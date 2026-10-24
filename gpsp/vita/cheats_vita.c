@@ -71,6 +71,7 @@ static int          g_loaded;
 static fe_console_t g_console;
 static int          g_dirty;
 static int          g_suspended;
+static int          g_hardcore;      /* cheats_hardcore(1): RetroAchievements */
 static int          g_file_existed;
 static char         g_cht_path[640];
 static char         g_cht_dir[600];
@@ -292,7 +293,7 @@ static int push(void)
    if (g_console == FE_CONSOLE_GBA)
    {
       unsigned n_ops = 0, n_patches = 0, n_entries = 0;
-      for (i = 0; i < g_count && !g_suspended; i++)
+      for (i = 0; i < g_count && !g_suspended && !g_hardcore; i++)
       {
          cheat_out out;
          if (!g_list[i].enabled || !g_list[i].usable)
@@ -319,7 +320,7 @@ static int push(void)
    else
    {
       unsigned n = 0;
-      for (i = 0; i < g_count && !g_suspended; i++)
+      for (i = 0; i < g_count && !g_suspended && !g_hardcore; i++)
       {
          unsigned k = 0;
          if (!g_list[i].enabled || !g_list[i].usable)
@@ -959,6 +960,7 @@ void cheats_unload(void)
    g_loaded = 0;
    g_dirty = 0;
    g_suspended = 0;
+   g_hardcore = 0;
    g_file_existed = 0;
 }
 
@@ -1036,7 +1038,7 @@ int cheats_set_enabled(int i, int on)
    if (i < 0 || i >= g_count)
       return CHEATS_E_RANGE;
    on = on ? 1 : 0;
-   if (on && g_suspended)
+   if (on && (g_suspended || g_hardcore))
       return CHEATS_E_SUSPENDED;
    if (on && !g_list[i].usable)
       return g_x[i].rc ? g_x[i].rc : CHEATS_E_UNSUPPORTED;
@@ -1168,7 +1170,7 @@ int cheats_add(const char *name, const char *code)
       return CHEATS_E_FULL;
    g_dirty = 1;
    validate_all();            /* it may be a master code: new seeds */
-   if (!g_suspended)
+   if (!g_suspended && !g_hardcore)
    {
       g_list[at].enabled = 1;
       if (push() >= 0)
@@ -1237,7 +1239,16 @@ void cheats_suspend(int on)
 
 int cheats_suspended(void)
 {
-   return g_suspended;
+   return g_suspended ? 1 : g_hardcore ? 2 : 0;
+}
+
+void cheats_hardcore(int on)
+{
+   on = on ? 1 : 0;
+   if (g_hardcore == on)
+      return;
+   g_hardcore = on;
+   push();
 }
 
 int cheats_flush(void)

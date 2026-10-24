@@ -82,6 +82,30 @@ their original encodings (Shift-JIS, some CP1252). `diff -w -B
   frame at VBlank (LY 144) rather than at LY 0, so a presented frame is
   lines 0-143 of one frame.
 
+### The Super Game Boy border on the Vita (2026-10-23)
+
+`sgb.c`: with `TGB_SGB_BORDER` (the Vita's builds, `vita/corebuild.mk`;
+the PSP still leaves it out) the border's pixels are stored in the
+frontend's RGB565, like the game's (`MAKE_COLOR`; they were the SNES's
+BGR555), and `sgb_border_gen` counts every render.  The adapter adds
+`gbcore_sgb_border` (the picture, while running as a Super Game Boy with a
+border sent) and `gbcore_sgb_border_save`/`_load` (the border's map, tiles
+and colours as data, which the frontend keeps for the game's next start --
+the state format has never held them), and redraws the border after a state
+load, whose palettes it uses.  Test: `vita/hostcore/app_tests.py sgb`
+(a cartridge that sends one, `testrom/sgbborder.py`).
+
+### The MBC7 accelerometer (2026-10-23)
+
+`mbc.c`: Kirby Tilt 'n' Tumble's sensor is latched as Pan Docs (MBC7)
+describes -- `$55` to `Ax0x` erases the sample to `$8000`, then `$AA` to
+`Ax1x` takes one through `gbe_getSensor`; without the erase nothing is taken
+-- and `Ax2x`-`Ax5x` read the latched sample's full 16 bits (the original
+read a live value and masked the high bytes to 4 bits, so a game saw `$07FF`
+instead of the `$81D0` a level cartridge gives).  The adapter's
+`gbe_getSensor` returns what the frontend published with `gbcore_set_tilt`
+(level `$81D0` before that).  Test: `gbcore/tests/mbc7.c`.
+
 ## Two machines in one program (GB link sessions)
 
 A link session runs both players' Game Boys on each console
@@ -159,3 +183,10 @@ On the PSP the core and its adapter are linked into one relocatable object
 --keep-global-symbol`): the core exports ~780 generic names (`vram`, `ram`,
 `oam`, `halt`, `info`...) and `vram` collided with the GBA core's
 `mips_stub.o` on the first link.
+
+## MBC7 EEPROM "write all" (WRAL)
+
+The vendored loop stored both bytes of the word at the even address
+(`get_sram()+i*2` twice): every word read back as its low byte twice.  The
+second store is now `+i*2+1`, as the single-word write (WRITE) already did.
+

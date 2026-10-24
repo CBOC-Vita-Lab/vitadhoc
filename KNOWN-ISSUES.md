@@ -1,50 +1,58 @@
-# Known Issues And Test Coverage
+# Known Issues
 
-## Before Public Release
+Found something else? Please tell us in
+[GitHub issues](https://github.com/CBOC-Vita-Lab/vitadhoc/issues), with the
+game, its region and what you did.
 
-- Finish the remaining component and combined-package license review.
-  [GBAdhoc permission](LICENSING.md) now allows GPL-2.0-or-later for the
-  maintainer's contributions. It does not cover other authors' code. The
-  GPU shader's exact historical revision is still unrecorded; CPU xBRZ has
-  a separate notice. GPU strings are embedded even when its setting is off.
-- Recover matching source for the newer covers runtime. This earlier build-21
-  source and its hardware evidence do not establish that runtime's behaviour
-  or large-library responsiveness.
-- The earlier BIOS-free build-21 package passed an in-place Vita installation,
-  file readback, launch and game-browser check. The current repack only adds
-  license notices; the executable and app resources are unchanged. This exact
-  package still needs installation, open-BIOS fallback, gameplay, save/load
-  and gameplay-relaunch acceptance.
-- Default external-folder scanning found an existing GBA library on hardware.
-  Custom roots, the list limit and adjacent save/load have host coverage only.
-- The selected package retains the original executable. The independent
-  original-label build succeeds but differs by four decoded module-metadata
-  bytes, with a different runtime hash. It is not a byte-identical rebuild
-  and does not inherit the selected package's hardware evidence.
+## Still Being Confirmed On A Vita
 
-## Feature Limits
+Version 1.0 passed its full test suite and plays at full speed on a Vita.
+These still need more time on a real console:
 
-- Two-Vita Wi-Fi/internet/ad hoc, save sharing, the system connection screen,
-  second-controller ports and the hardware keyboard lack final acceptance.
-- Wireless Adapter mode was brought up/torn down in tests, not accepted in
-  gameplay. No three/four-player or single-cartridge multiboot mode.
-- Full Mystery Gift reception from a real phone through the game's save flow
-  remains untested. A prior accepted computer parcel is narrower evidence.
-- Browser preview recording/playback is not yet accepted on physical Vita.
-- Only Emerald has prior commercial-game hardware measurements. Other
-  wide-view profiles, generic scouting and real Mode 7 racers remain unverified.
-- Wide-view edge sprites/weather can be incomplete; menus may use fallback
-  margins. Experimental GPU xBRZ is too slow for the earlier tested workload.
-- Unsupported cheat types are marked in the UI; GB Xploder codes are absent.
-  Some cheats need their enable/master code. Back up saves before using cheats.
-- Same-basename games share artwork/cheat/preview identifiers and some settings.
-  The full path distinguishes favourites, not every per-game resource.
-- The 2,048-entry limit applies per console list. External roots are cut first.
+- **Motion games:** whether turning and tilting go the right way and feel
+  strong enough. If one feels backwards, use Settings > This game >
+  Direction; Motion strength changes how much a tilt counts.
+- **RetroAchievements:** signing in over the Vita's own secure connection.
+  If sign-in fails, the reason is in `ux0:data/GBAdhoc/log/gbadhoc.log`
+  (lines starting with `ra_http`).
+- **Two Vitas linked together** (Wi-Fi, internet and ad hoc), sharing saves,
+  and Wireless Adapter games.
+- **Mystery Gift** from a phone, all the way into the game's save.
 
-## Report A Problem
+## Performance
 
-Give the build, console model, settings, game region/revision and shortest
-reproduction steps. Say whether it occurs on hardware or an emulator. Include
-only a reviewed log excerpt or permitted screenshot, not ROMs, BIOS files,
-private saves or entire unsanitized logs. State what you expected and what
-actually happened; an FPS counter without a duration/scenario is not enough.
+- The heaviest picture settings (xBRZ at full height plus the wide view) are
+  the most demanding. If a game slows down, try Image quality: Original.
+- The GPU version of xBRZ (`gpu_xbrz = 1`) is an experiment and too slow for
+  normal play. Leave it off.
+
+## Gameplay
+
+- **Hardcore mode** applies from the next game you start, and only to games
+  RetroAchievements knows.
+- **Achievements pause during link play** and start counting again afterwards,
+  as after loading a state.
+- **Wide view** is made for Pokémon Emerald and its siblings. In other games
+  the edges can miss people or weather.
+- Some cheats need their "Enable Code (Must Be On)" entry first; a few code
+  types are marked unsupported. Cheats switch off while linked and in Hardcore.
+- Three- and four-player links and single-cartridge multiboot aren't supported.
+- Two games with the same file name share box art, cheats and previews. Give
+  different games different names.
+- Each console's list shows up to 2,048 games.
+
+## Install
+
+- Back up `ux0:data/GBAdhoc/` and any saves next to games in other folders
+  before a big update.
+- A `Game.ips` that sits next to both `Game.gb` and `Game.gba` is not applied
+  to either. Name it after the whole file instead, for example `Game.gba.ips`.
+
+## If Something Goes Wrong
+
+- **Turn off the automatic box art:** add `art = 0` to `ux0:data/GBAdhoc/vita.ini`.
+- **Turn off previews:** Settings > Interface > Game previews, or `clips = 0`
+  in `vita.ini`.
+
+The log is `ux0:data/GBAdhoc/log/gbadhoc.log`. It can contain game names and
+network addresses, so read it before sharing.

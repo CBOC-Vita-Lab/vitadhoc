@@ -1360,7 +1360,12 @@ void fe_share_client_bye(fe_share_client *c)
 int fe_share_recover(const fe_share_fs *fs, const char *final,
                      const char *tmp_suffix, char *scratch, size_t cap)
 {
-   static const char *const suf[2] = { ".bak", ".old" };
+   /* .old first: it is the newer of the two -- an interrupted save's own
+    * previous file (fe_host's write-temp/move-aside/move-in), or this
+    * module's non-kept commit -- while a .bak is the backup a share pull
+    * keeps from before it, possibly long ago (fe_host save_recover_bak
+    * resolves them in the same order). */
+   static const char *const suf[2] = { ".old", ".bak" };
    int i, restored = 0;
    if (!fs || !final || !scratch)
       return 0;

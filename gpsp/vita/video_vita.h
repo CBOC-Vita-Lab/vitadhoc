@@ -53,6 +53,9 @@ extern "C" {
  * The ambient bars (or black) fill the rest.  Draws a whole frame, like
  * vid_draw_frame; OSD and vid_swap follow as usual. */
 enum { VID_PAIR_SIDE = 0, VID_PAIR_INSET = 1, VID_PAIR_LAYOUTS = 2 };
+/* The two-game view swapped its games between the rects: forget what
+ * each rect remembers of the game it showed (video_vita.c). */
+void vid_pair_forget(void);
 void vid_draw_frame_pair(const uint16_t *left, const uint16_t *right,
                          unsigned w, unsigned h, size_t pitch_bytes,
                          int layout);
@@ -62,6 +65,7 @@ void vid_pair_rects(unsigned w, unsigned h, int layout, vid_rect_t *left,
                     vid_rect_t *right);
 /* Where a single w x h picture lands at the current scale (native pixels). */
 void vid_picture_rect(unsigned w, unsigned h, vid_rect_t *out);
+void vid_set_quality(int quality);
 /* Of the `margin` extra columns a wide picture has on each side of the
  * console's w x h: how many fit on the screen at the scale in use. */
 int vid_margin_fit(unsigned w, unsigned h, int margin);

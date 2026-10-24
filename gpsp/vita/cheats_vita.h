@@ -128,7 +128,13 @@ void cheats_apply(void);
  * LOCAL link (both machines on this console) does not suspend: codes apply
  * to the player's own machine only. */
 void cheats_suspend(int on);
+/* 0 = codes apply; 1 = suspended by a link session; 2 = by Hardcore. */
 int  cheats_suspended(void);
+/* RetroAchievements' Hardcore mode is on for the running game: no code
+ * reaches the core and none can be switched on, until cheats_hardcore(0)
+ * or the game's end.  Independent of cheats_suspend (a link that ends does
+ * not bring the codes back). */
+void cheats_hardcore(int on);
 
 /* Write the .cht now if it changed (the main loop calls this when the menu
  * closes and when the game ends).  CHEATS_OK or CHEATS_E_IO. */

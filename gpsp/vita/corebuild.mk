@@ -166,6 +166,9 @@ $(CORE_R): $(B)/render/video_r.o $(B)/render/render_data.o
 # taken), no strict aliasing (VRAM/ROM read through word pointers).
 TGB_OPT    ?= -O3
 TGB_CFLAGS  = $(TGB_OPT) -fgnu89-inline -fno-strict-aliasing -Wno-unused-parameter
+# The Super Game Boy's border is shown on the Vita (gbcore.h gbcore_sgb_border);
+# the PSP keeps its 112 KiB (tgbdual/LOCAL-PATCHES.md).
+FE_FLAGS += -DTGB_SGB_BORDER
 TGB_OBJS   := $(addprefix $(B)/gbcore/tgbdual/,apu.o cpu.o gb.o lcd.o mbc.o rom.o sgb.o)
 GB_CORE_OBJS := $(B)/gbcore/gbcore_tgbdual.o $(TGB_OBJS)
 GB_OBJS    := $(B)/gbcore/gbcore_dual.o $(B)/gbcore/tgbdual/tgb_shared.o \

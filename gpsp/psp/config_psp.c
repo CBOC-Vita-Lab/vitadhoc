@@ -175,6 +175,9 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.ui_home     = (int)fe_ini_get_int(cfg_path, "ui_home", 1) ? 1 : 0;
    g_pcfg.previews    = (int)fe_ini_get_int(cfg_path, "previews", 1) ? 1 : 0;
    g_pcfg.full_speed  = (int)fe_ini_get_int(cfg_path, "full_speed", 1) ? 1 : 0;
+   g_pcfg.lib_sort    = (int)fe_ini_get_int(cfg_path, "lib_sort", 0);
+   if (g_pcfg.lib_sort < 0 || g_pcfg.lib_sort > 2)
+      g_pcfg.lib_sort = 0;
 #endif
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
@@ -589,6 +592,10 @@ void pcfg_save(void)
       return;
    pcfg_validate("save");
    pcfg_display_commit();
+#ifdef VITA
+   if (g_pgame.on)
+      (void)pcfg_game_save();
+#endif
    /* ONE read, ONE atomic write: every fe_ini_set below edits `doc`. */
    if (pcfg_doc_begin(&doc, "save") != 0)
       return;
@@ -625,6 +632,12 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "ui_home", g_pcfg.ui_home);
    fe_ini_set_int(cfg_path, "previews", g_pcfg.previews);
    fe_ini_set_int(cfg_path, "full_speed", g_pcfg.full_speed);
+   {
+      /* Written once someone changes it: older files stay byte-identical. */
+      char was[8];
+      if (g_pcfg.lib_sort || fe_ini_get(cfg_path, "lib_sort", was, sizeof(was)))
+         fe_ini_set_int(cfg_path, "lib_sort", g_pcfg.lib_sort);
+   }
 #endif
    PCFG_PSP_KEY(fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty));
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
@@ -786,7 +799,15 @@ static void pdisp_clamp(pcfg_display *d)
       d->gb_palette = 0;
 #ifdef VITA
    {
-      int c = (int)(d - g_pdisp);
+      /* a console's profile, or a game's own (pcfg_game: its console) */
+      int c = d >= g_pdisp && d < g_pdisp + FE_CONSOLE_COUNT
+            ? (int)(d - g_pdisp) : g_pgame.console;
+      d->sgb_border = c == FE_CONSOLE_GB && d->sgb_border ? 1 : 0;
+      if (d->quality < 0 || d->quality >= PCFG_QUALITY_MODES)
+         d->quality = PCFG_QUALITY_AUTO;
+      if (d->quality >= PCFG_QUALITY_2X &&
+          d->filter != VID_FILTER_XBRZ && d->filter != VID_FILTER_SCALE)
+         d->filter = VID_FILTER_XBRZ;
       if (d->color < 0 || d->color >= pcfg_color_modes(c))
          d->color = 0;
       d->blend = d->blend ? 1 : 0;
@@ -799,6 +820,13 @@ static void pdisp_clamp(pcfg_display *d)
 }
 
 #ifdef VITA
+const char *pcfg_quality_name(int quality)
+{
+   return quality == PCFG_QUALITY_ORIGINAL ? "Original"
+        : quality == PCFG_QUALITY_2X ? "Enhanced 2x"
+        : quality == PCFG_QUALITY_3X ? "Enhanced 3x" : "Auto";
+}
+
 int pcfg_wide_modes(int console)
 {
    return console == FE_CONSOLE_GBA ? 4 : 0;
@@ -851,6 +879,17 @@ static int pdisp_set(const char *what, int console, long v)
       ? fe_ini_set_int(cfg_path, key, v) : -1;
 }
 
+#ifdef VITA
+static int pdisp_seed(const char *what, int console, long value)
+{
+   char key[24], existing[24];
+   if (!pdisp_key(key, sizeof(key), what, console))
+      return -1;
+   return fe_ini_get(cfg_path, key, existing, sizeof(existing))
+      ? 0 : pdisp_set(what, console, value);
+}
+#endif
+
 /* MIGRATION lives in the defaults: each absent key falls back to the legacy
  * value pcfg_load has already read and clamped, independently, so a
  * hand-edited file that names only `scale_gb` keeps everything else.
@@ -872,6 +911,17 @@ static void pdisp_load(void)
       d->gb_palette = c == FE_CONSOLE_GBA ? g_pcfg.gb_palette
                     : (int)pdisp_get("gb_palette", c, g_pcfg.gb_palette);
 #ifdef VITA
+      {
+         char key[24], value[24];
+         int legacy = fe_ini_get(cfg_path, "scale", value, sizeof(value)) ||
+                      fe_ini_get(cfg_path, "filter", value, sizeof(value));
+         if (pdisp_key(key, sizeof(key), "scale", c))
+            legacy |= fe_ini_get(cfg_path, key, value, sizeof(value));
+         if (pdisp_key(key, sizeof(key), "filter", c))
+            legacy |= fe_ini_get(cfg_path, key, value, sizeof(value));
+         d->quality = (int)pdisp_get("quality", c, legacy
+                                      ? PCFG_QUALITY_AUTO : PCFG_QUALITY_ORIGINAL);
+      }
       /* The GBC's correction was a hidden key before it was a row. */
       d->color = c == FE_CONSOLE_GB ? 0
                : (int)pdisp_get("color", c, c == FE_CONSOLE_GBC
@@ -882,6 +932,8 @@ static void pdisp_load(void)
       d->wide_fill = c == FE_CONSOLE_GBA
               ? (int)pdisp_get("wide_fill", c, PCFG_WIDE_FILL_DEF)
               : PCFG_WIDE_FILL_DEF;
+      d->sgb_border = c == FE_CONSOLE_GB
+              ? (pdisp_get("sgb_border", c, 1) ? 1 : 0) : 0;
 #endif
       pdisp_clamp(d);
    }
@@ -898,37 +950,55 @@ static void pdisp_load(void)
           pcfg_console_tag(g_pdisp_live));
 }
 
+#ifdef VITA
+pcfg_game g_pgame;
+/* The profile the live console's settings are read from and written to: the
+ * running game's own when it has one, else the console's. */
+static pcfg_display *pdisp_target(int console)
+{
+   if (g_pgame.on && g_pgame.override && console == g_pgame.console)
+      return &g_pgame.disp;
+   return &g_pdisp[console];
+}
+#else
+#define pdisp_target(c) (&g_pdisp[(c)])
+#endif
+
 void pcfg_display_select(int console)
 {
    const pcfg_display *d;
    if (console < 0 || console >= FE_CONSOLE_COUNT)
       console = FE_CONSOLE_GBA;
    g_pdisp_live = console;
-   d = &g_pdisp[console];
+   d = pdisp_target(console);
    g_pcfg.scale      = d->scale;
    g_pcfg.filter     = d->filter;
    g_pcfg.ambient    = d->ambient;
    g_pcfg.gb_palette = d->gb_palette;
 #ifdef VITA
    g_pcfg.color      = d->color;
+   g_pcfg.quality    = d->quality;
    g_pcfg.blend      = d->blend;
    g_pcfg.wide       = d->wide;
    g_pcfg.wide_fill  = d->wide_fill;
+   g_pcfg.sgb_border = d->sgb_border;
 #endif
 }
 
 void pcfg_display_commit(void)
 {
-   pcfg_display *d = &g_pdisp[g_pdisp_live];
+   pcfg_display *d = pdisp_target(g_pdisp_live);
    d->scale      = g_pcfg.scale;
    d->filter     = g_pcfg.filter;
    d->ambient    = g_pcfg.ambient;
    d->gb_palette = g_pcfg.gb_palette;
 #ifdef VITA
    d->color      = g_pcfg.color;
+   d->quality    = g_pcfg.quality;
    d->blend      = g_pcfg.blend;
    d->wide       = g_pcfg.wide;
    d->wide_fill  = g_pcfg.wide_fill;
+   d->sgb_border = g_pcfg.sgb_border;
 #endif
    pdisp_clamp(d);
 #ifdef VITA
@@ -952,6 +1022,7 @@ static int pdisp_write(int c)
    if (c != FE_CONSOLE_GBA)
       rc |= pdisp_set("gb_palette", c, d->gb_palette);
 #ifdef VITA
+   rc |= pdisp_set("quality", c, d->quality);
    if (c != FE_CONSOLE_GB)
       rc |= pdisp_set("color", c, d->color);
    rc |= pdisp_set("blend", c, d->blend);
@@ -959,6 +1030,15 @@ static int pdisp_write(int c)
    {
       rc |= pdisp_set("wide", c, d->wide);
       rc |= pdisp_set("wide_fill", c, d->wide_fill);
+   }
+   if (c == FE_CONSOLE_GB)
+   {
+      /* written once someone turns it off: older files stay as they were */
+      char key[24], was[8];
+      if (!d->sgb_border ||
+          (pdisp_key(key, sizeof(key), "sgb_border", c) &&
+           fe_ini_get(cfg_path, key, was, sizeof(was))))
+         rc |= pdisp_set("sgb_border", c, d->sgb_border);
    }
 #endif
    return rc ? -1 : 0;
@@ -971,9 +1051,26 @@ int pcfg_display_save(void)
    if (!cfg_path[0])
       return -1;
    pcfg_display_commit();
+#ifdef VITA
+   if (pdisp_target(g_pdisp_live) == &g_pgame.disp)
+      return pcfg_game_save();       /* the game's own look: its file only */
+#endif
    if (pcfg_doc_begin(&doc, "display") != 0)
       return -1;
    rc = pdisp_write(g_pdisp_live);
+#ifdef VITA
+   {
+      int c;
+      /* Freeze absent profiles before writing legacy mirrors. Never replace
+       * another console's existing keys during this sparse save. */
+      for (c = 0; c < FE_CONSOLE_COUNT; c++)
+      {
+         rc |= pdisp_seed("quality", c, g_pdisp[c].quality);
+         rc |= pdisp_seed("scale", c, g_pdisp[c].scale);
+         rc |= pdisp_seed("filter", c, g_pdisp[c].filter);
+      }
+   }
+#endif
    /* Keep the legacy mirror honest (see pcfg_save). */
    if (g_pdisp_live == FE_CONSOLE_GBA)
    {
@@ -987,3 +1084,195 @@ int pcfg_display_save(void)
           g_pcfg.ambient, rc);
    return rc ? -1 : 0;
 }
+
+#ifdef VITA
+/* ---- PER-GAME SETTINGS (config_psp.h) ------------------------------------- */
+
+#define PGAME_DISP_KEYS 10
+static const char *const pgame_disp_keys[PGAME_DISP_KEYS] = {
+   "scale", "filter", "ambient", "gb_palette", "quality", "color", "blend",
+   "wide", "wide_fill", "sgb_border" };
+
+static int *pgame_disp_field(pcfg_display *d, int i)
+{
+   switch (i)
+   {
+      case 0: return &d->scale;
+      case 1: return &d->filter;
+      case 2: return &d->ambient;
+      case 3: return &d->gb_palette;
+      case 4: return &d->quality;
+      case 5: return &d->color;
+      case 6: return &d->blend;
+      case 7: return &d->wide;
+      case 8: return &d->wide_fill;
+      default: return &d->sgb_border;
+   }
+}
+
+const char *pcfg_sensor_mode_name(int m)
+{
+   return m == PCFG_SENSOR_STICK ? "right stick" : "tilt the Vita";
+}
+
+const char *pcfg_sens_name(int s)
+{
+   return s == PCFG_SENS_LOW ? "low" : s == PCFG_SENS_HIGH ? "high" : "normal";
+}
+
+static void pgame_defaults(void)
+{
+   g_pgame.override = 0;
+   g_pgame.sensor_mode = PCFG_SENSOR_MOTION;
+   g_pgame.sensor_sens = PCFG_SENS_NORMAL;
+   g_pgame.sensor_rev = 0;
+   g_pgame.sunlight = PCFG_SUN_DEF;
+   g_pgame.level_set = 0;
+   g_pgame.level_right = g_pgame.level_down = 0;
+}
+
+static int pgame_clampi(long v, int lo, int hi, int def)
+{
+   return v < lo || v > hi ? def : (int)v;
+}
+
+/* What the file held at load (or last write): a save writes nothing when
+ * nothing changed, and never creates a file for a game that only ever had
+ * the defaults. */
+static char pgame_written[512];
+
+static void pgame_render(char *out, size_t cap)
+{
+   int i, n;
+   n = snprintf(out, cap, "%d %d %d %d %d %d %d %d", g_pgame.override,
+                g_pgame.sensor_mode, g_pgame.sensor_sens, g_pgame.sensor_rev,
+                g_pgame.sunlight, g_pgame.level_set, g_pgame.level_right,
+                g_pgame.level_down);
+   for (i = 0; i < PGAME_DISP_KEYS && n > 0 && (size_t)n < cap; i++)
+      n += snprintf(out + n, cap - (size_t)n, " %d",
+                    g_pgame.override ? *pgame_disp_field(&g_pgame.disp, i) : 0);
+}
+
+void pcfg_game_begin(const char *path, int console)
+{
+   fe_ini_doc doc;
+   int i, loaded;
+   pcfg_game_end();
+   memset(&g_pgame, 0, sizeof(g_pgame));
+   pgame_defaults();
+   if (console < 0 || console >= FE_CONSOLE_COUNT)
+      console = FE_CONSOLE_GBA;
+   g_pgame.console = console;
+   snprintf(g_pgame.path, sizeof(g_pgame.path), "%s", path ? path : "");
+   g_pgame.disp = g_pdisp[console];
+   loaded = g_pgame.path[0] && fe_ini_doc_load(&doc, g_pgame.path) == 0 &&
+            doc.existed;
+   if (loaded)
+   {
+      g_pgame.override = fe_ini_doc_get_int(&doc, "override", 0) == 1;
+      for (i = 0; i < PGAME_DISP_KEYS; i++)
+         *pgame_disp_field(&g_pgame.disp, i) = (int)fe_ini_doc_get_int(
+               &doc, pgame_disp_keys[i], *pgame_disp_field(&g_pgame.disp, i));
+      pdisp_clamp(&g_pgame.disp);
+      g_pgame.sensor_mode = pgame_clampi(fe_ini_doc_get_int(&doc, "sensor_mode", 0),
+                                         0, PCFG_SENSOR_MODES - 1, 0);
+      g_pgame.sensor_sens = pgame_clampi(fe_ini_doc_get_int(&doc, "sensor_sens",
+                                         PCFG_SENS_NORMAL), 0,
+                                         PCFG_SENS_MODES - 1, PCFG_SENS_NORMAL);
+      g_pgame.sensor_rev = fe_ini_doc_get_int(&doc, "sensor_reverse", 0) == 1;
+      g_pgame.sunlight = pgame_clampi(fe_ini_doc_get_int(&doc, "sunlight",
+                                      PCFG_SUN_DEF), 0, PCFG_SUN_CLOCK,
+                                      PCFG_SUN_DEF);
+      g_pgame.level_set = fe_ini_doc_get_int(&doc, "level_set", 0) == 1;
+      g_pgame.level_right = pgame_clampi(fe_ini_doc_get_int(&doc, "level_right", 0),
+                                         -2000, 2000, 0);
+      g_pgame.level_down = pgame_clampi(fe_ini_doc_get_int(&doc, "level_down", 0),
+                                        -2000, 2000, 0);
+      if (!g_pgame.level_set)
+         g_pgame.level_right = g_pgame.level_down = 0;
+   }
+   g_pgame.on = 1;
+   pgame_render(pgame_written, sizeof(pgame_written));
+   if (!loaded)
+      pgame_written[0] = 0;         /* (a later change creates the file) */
+   pcfg_display_select(console);
+   fe_evt("game_settings load=%d override=%d sensor=%d/%d/%d sun=%d level=%d",
+          loaded, g_pgame.override, g_pgame.sensor_mode, g_pgame.sensor_sens,
+          g_pgame.sensor_rev, g_pgame.sunlight, g_pgame.level_set);
+}
+
+int pcfg_game_save(void)
+{
+   fe_ini_doc doc;
+   char now[512];
+   int i, rc = 0;
+   if (!g_pgame.on || !g_pgame.path[0])
+      return 0;
+   if (g_pgame.override && g_pdisp_live == g_pgame.console)
+      pcfg_display_commit();
+   pgame_render(now, sizeof(now));
+   if (!strcmp(now, pgame_written))
+      return 0;
+   {
+      /* Nothing but defaults and no file yet: nothing to keep. */
+      char def[512];
+      pcfg_game keep = g_pgame;
+      pgame_defaults();
+      pgame_render(def, sizeof(def));
+      g_pgame = keep;
+      if (!pgame_written[0] && !strcmp(now, def))
+         return 0;
+   }
+   if (fe_ini_doc_load(&doc, g_pgame.path) != 0)
+   {
+      fe_evt("game_settings_save rc=-1 reason=unreadable");
+      return -1;
+   }
+   rc |= fe_ini_doc_set_int(&doc, "override", g_pgame.override);
+   for (i = 0; i < PGAME_DISP_KEYS; i++)
+      rc |= fe_ini_doc_set_int(&doc, pgame_disp_keys[i],
+                               *pgame_disp_field(&g_pgame.disp, i));
+   rc |= fe_ini_doc_set_int(&doc, "sensor_mode", g_pgame.sensor_mode);
+   rc |= fe_ini_doc_set_int(&doc, "sensor_sens", g_pgame.sensor_sens);
+   rc |= fe_ini_doc_set_int(&doc, "sensor_reverse", g_pgame.sensor_rev);
+   rc |= fe_ini_doc_set_int(&doc, "sunlight", g_pgame.sunlight);
+   rc |= fe_ini_doc_set_int(&doc, "level_set", g_pgame.level_set);
+   rc |= fe_ini_doc_set_int(&doc, "level_right", g_pgame.level_right);
+   rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);
+   rc |= fe_ini_doc_save(&doc, g_pgame.path);
+   if (!rc)
+      snprintf(pgame_written, sizeof(pgame_written), "%s", now);
+   fe_evt("game_settings_save rc=%d override=%d sensor=%d/%d/%d sun=%d level=%d",
+          rc ? -1 : 0, g_pgame.override, g_pgame.sensor_mode,
+          g_pgame.sensor_sens, g_pgame.sensor_rev, g_pgame.sunlight,
+          g_pgame.level_set);
+   return rc ? -1 : 0;
+}
+
+void pcfg_game_set_override(int on)
+{
+   if (!g_pgame.on || !!on == !!g_pgame.override)
+      return;
+   if (on)
+   {
+      /* Start from what is on screen: the console's profile, now this
+       * game's own copy. */
+      pcfg_display_commit();
+      g_pgame.disp = g_pdisp[g_pgame.console];
+      g_pgame.override = 1;
+   }
+   else
+      g_pgame.override = 0;
+   pcfg_display_select(g_pgame.console);
+   (void)pcfg_game_save();
+}
+
+void pcfg_game_end(void)
+{
+   if (!g_pgame.on)
+      return;
+   (void)pcfg_game_save();
+   g_pgame.on = 0;
+   pcfg_display_select(g_pdisp_live);
+}
+#endif

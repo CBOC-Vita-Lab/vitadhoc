@@ -108,6 +108,26 @@ gbcore_t *gbcore_create_owned(uint8_t *rom_buffer, size_t rom_size,
                               fe_console_t console, unsigned audio_rate,
                               const gbcore_callbacks_t *callbacks);
 
+/* MBC7 cartridges (Kirby Tilt 'n' Tumble, Command Master): whether the
+ * loaded game has the accelerometer, and the sample it reads when it next
+ * latches one -- x | y << 16, 16 bits each, 0x81D0 level and about 0x70 per
+ * g (frontend-common/fe_sensor.h fe_sensor_mbc7).  Until the first call the
+ * game reads a level console. */
+int gbcore_has_tilt(gbcore_t *core);
+/* SUPER GAME BOY BORDER (builds with TGB_SGB_BORDER; the Vita's): a game
+ * running as a Super Game Boy that has sent its border.  Returns 0 when
+ * there is none, else a number that changes each time the border is drawn
+ * again (new tiles, map or colours); *pixels then is the 256x224 picture in
+ * the frontend's RGB565, the game's 160x144 belonging at (48, 40).
+ * gbcore_sgb_border_save / _load: the border as data (its map, tiles and
+ * colours; 10372 bytes), so a frontend can show it from the first frame of
+ * a later start, before the game sends it again -- or after a state load,
+ * which never carries it. */
+unsigned gbcore_sgb_border(gbcore_t *core, const uint16_t **pixels);
+size_t gbcore_sgb_border_save(gbcore_t *core, void *buf, size_t cap);
+int gbcore_sgb_border_load(gbcore_t *core, const void *buf, size_t n);
+void gbcore_set_tilt(gbcore_t *core, uint32_t x_y);
+
 /* Execute one emulated video frame with the current frontend button mask. */
 int gbcore_run_frame(gbcore_t *core, uint16_t buttons);
 /* Skip (1) or resume (0) drawing.  A skipped frame is fully emulated and
@@ -249,6 +269,12 @@ int gbcore_power_on(void);
  * -1 if any byte is refused.  For scripted play (autopilot RAM predicates)
  * and tests. */
 int gbcore_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len);
+/* RetroAchievements' address space for this machine (banks fixed, extra
+ * banks above 0x10000 -- gbcore_tgbdual.c ra_byte).  Returns the bytes
+ * written to `out` (0 = the address is past the map); bytes the machine
+ * does not have read 0. */
+uint32_t gbcore_ra_read(gbcore_t *core, uint32_t addr, uint8_t *out,
+                        uint32_t len);
 /* The writing counterpart, for building test fixtures only (a link
  * session never pokes): VRAM, mapped cartridge RAM, WRAM, OAM and HRAM;
  * ROM and I/O are refused.  Nothing is written unless every byte is

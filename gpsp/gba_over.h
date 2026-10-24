@@ -92,7 +92,7 @@ static const ini_t gbaover[] = {
    {
       // Shin Bokura no Taiyou: Gyakushuu no Sabata (J)
       "U33J",                      /* gamepak_code         */
-      FLAGS_RTC,                   /* flags                */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags     */
       0,                           /* idle_loop_target_pc  */
       0,                           /* translation_gate_target_1 */
       0,                           /* translation_gate_target_2 */
@@ -1735,7 +1735,7 @@ static const ini_t gbaover[] = {
    {
       // WarioWare: Twisted (U)
       "RZWE",                      /* gamepak_code         */
-      FLAGS_RUMBLE,                /* flags                */
+      FLAGS_RUMBLE | FLAGS_GYRO,   /* flags                */
       0,                           /* idle_loop_target_pc  */
       0,                           /* translation_gate_target_1 */
       0,                           /* translation_gate_target_2 */
@@ -1744,7 +1744,7 @@ static const ini_t gbaover[] = {
    {
       // WarioWare: Twisted (E)
       "RZWP",                      /* gamepak_code         */
-      FLAGS_RUMBLE,                /* flags                */
+      FLAGS_RUMBLE | FLAGS_GYRO,   /* flags                */
       0,                           /* idle_loop_target_pc  */
       0,                           /* translation_gate_target_1 */
       0,                           /* translation_gate_target_2 */
@@ -1753,7 +1753,7 @@ static const ini_t gbaover[] = {
    {
       // Mawaru Made in Wario (J)
       "RZWJ",                      /* gamepak_code         */
-      FLAGS_RUMBLE,                /* flags                */
+      FLAGS_RUMBLE | FLAGS_GYRO,   /* flags                */
       0,                           /* idle_loop_target_pc  */
       0,                           /* translation_gate_target_1 */
       0,                           /* translation_gate_target_2 */
@@ -1800,6 +1800,96 @@ static const ini_t gbaover[] = {
       "AYWE",                      /* gamepak_code         */
       0,                           /* flags                */
       0x8089792,                   /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Bokura no Taiyou (J) -- sensor cartridge (cart_sensor.h)
+      "U3IJ",                      /* gamepak_code         */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Boktai: The Sun Is in Your Hand (U) -- sensor cartridge (cart_sensor.h)
+      "U3IE",                      /* gamepak_code         */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Boktai: The Sun Is in Your Hand (E) -- sensor cartridge (cart_sensor.h)
+      "U3IP",                      /* gamepak_code         */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Zoku Bokura no Taiyou (J) -- sensor cartridge (cart_sensor.h)
+      "U32J",                      /* gamepak_code         */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Boktai 2: Solar Boy Django (U) -- sensor cartridge (cart_sensor.h)
+      "U32E",                      /* gamepak_code         */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Boktai 2: Solar Boy Django (E) -- sensor cartridge (cart_sensor.h)
+      "U32P",                      /* gamepak_code         */
+      FLAGS_RTC | FLAGS_SOLAR | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Yoshi no Banyuu Inryoku (J) -- sensor cartridge (cart_sensor.h)
+      "KYGJ",                      /* gamepak_code         */
+      FLAGS_TILT | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Yoshi Topsy-Turvy (U) -- sensor cartridge (cart_sensor.h)
+      "KYGE",                      /* gamepak_code         */
+      FLAGS_TILT | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Yoshi's Universal Gravitation (E) -- sensor cartridge (cart_sensor.h)
+      "KYGP",                      /* gamepak_code         */
+      FLAGS_TILT | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
+      0,                           /* translation_gate_target_1 */
+      0,                           /* translation_gate_target_2 */
+      0,                           /* translation_gate_target_3 */
+   },
+   {
+      // Koro Koro Puzzle Happy Panechu! (J) -- sensor cartridge (cart_sensor.h)
+      "KHPJ",                      /* gamepak_code         */
+      FLAGS_TILT | FLAGS_EEPROM, /* flags */
+      0,                           /* idle_loop_target_pc  */
       0,                           /* translation_gate_target_1 */
       0,                           /* translation_gate_target_2 */
       0,                           /* translation_gate_target_3 */

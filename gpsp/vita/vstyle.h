@@ -99,7 +99,7 @@ enum
    VS_I_PEOPLE, VS_I_FOLDER, VS_I_CHECK, VS_I_SAVE, VS_I_FAST,
    VS_I_TRASH, VS_I_PLUS, VS_I_BTN_X, VS_I_BTN_O, VS_I_BTN_TRI,
    VS_I_BTN_SQ, VS_I_REFRESH, VS_I_CART, VS_I_HOME, VS_I_PAUSE,
-   VS_I_CAMERA, VS_I_SIGNAL,
+   VS_I_CAMERA, VS_I_SIGNAL, VS_I_SEARCH, VS_I_CLOSE,
    VS_ICONS
 };
 void vs_icon(int id, float cx, float cy, float size, uint32_t rgba);
@@ -114,6 +114,7 @@ typedef struct vs_img vs_img;
 /* RGBA8 (bytes R,G,B,A); NULL when there is no memory. */
 vs_img *vs_img_new(int w, int h);
 void    vs_img_set(vs_img *im, const uint32_t *rgba, int stride_px);
+int     vs_img_writable(const vs_img *im);
 /* 16-bit, libretro RGB565 (R in the high bits): a game's own frames. */
 vs_img *vs_img_new_565(int w, int h);
 void    vs_img_set_565(vs_img *im, const uint16_t *pix, int stride_px);

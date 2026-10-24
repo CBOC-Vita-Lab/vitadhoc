@@ -20,6 +20,12 @@
 #ifndef UI_VITA_BROWSER_H
 #define UI_VITA_BROWSER_H
 
+/* Native-pixel geometry shared with Home's tile drawing below this header. */
+#define HM_ROW_Y    86
+#define HM_BIG      132
+#define HM_SMALL    96
+#define HM_GAP      14
+
 static tch_scroll_t g_br_ts;
 
 /* The list's drag area and row pitch for the current shell. */
@@ -41,14 +47,20 @@ static void vita_browser_list(int *x, int *y, int *w, int *h, int *row_h)
  * `busy`: a transition owns the list (console flare, favourites swap, the
  * crossfade from a game) -- nothing may move it. */
 static void vita_browser_touch(int *cur, int n, unsigned *edges, int *idle,
-                               int busy)
+                               unsigned pad, int busy)
 {
    int id, k, x, y, w, h, row_h;
+   unsigned nav = PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LTRIGGER |
+      PSP_CTRL_RTRIGGER | (g_ui_home ? PSP_CTRL_LEFT | PSP_CTRL_RIGHT : 0);
    if (busy)
    {
       int dummy;
       (void)tch_tapped_row(&dummy);
       tch_scroll_stop(&g_br_ts);
+      if (g_tch.down)
+         g_tch.dead = 1;
+      if (g_ui_home)
+         *idle = 0;
       return;
    }
    if (g_browser_state_open)
@@ -63,9 +75,19 @@ static void vita_browser_touch(int *cur, int n, unsigned *edges, int *idle,
    }
    if (n <= 0)
       return;
-   if (*edges & (PSP_CTRL_UP | PSP_CTRL_DOWN | PSP_CTRL_LTRIGGER |
-                 PSP_CTRL_RTRIGGER))
+   /* A command targets the game already under the cursor, not the next
+    * game an old coast would reach later in this frame. Keep its edge. */
+   if ((pad & nav) || (g_ui_home ? *edges != 0 : (*edges & nav) != 0))
+   {
+      int dummy;
       tch_scroll_stop(&g_br_ts);
+      if (g_tch.down)
+         g_tch.dead = 1;
+      (void)tch_tapped_row(&dummy);
+      if (g_ui_home)
+         *idle = 0;             /* includes gaps before/between repeats */
+      return;
+   }
    if (tch_tapped_row(&id) && id >= 0 && id < n)
    {
       if (id == *cur)
@@ -77,9 +99,18 @@ static void vita_browser_touch(int *cur, int n, unsigned *edges, int *idle,
       }
    }
    if (g_ui_home)
-      return;                   /* the home row has no list to drag */
-   vita_browser_list(&x, &y, &w, &h, &row_h);
-   k = tch_steps(&g_br_ts, row_h, x, y, w, h);
+   {
+      x = 0; y = HM_ROW_Y / 2; w = VID_SCR_W; h = HM_BIG / 2;
+      row_h = (HM_SMALL + HM_GAP) / 2;
+      k = tch_steps_axis(&g_br_ts, row_h, x, y, w, h, 1);
+      if ((g_tch.down && !g_tch.dead && tch_in(x, y, w, h)) || g_br_ts.on)
+         *idle = 0;
+   }
+   else
+   {
+      vita_browser_list(&x, &y, &w, &h, &row_h);
+      k = tch_steps(&g_br_ts, row_h, x, y, w, h);
+   }
    if (k)
    {
       *cur = ((*cur + k) % n + n) % n;
@@ -103,9 +134,9 @@ static int vita_browser_others(const char *rom_dir)
       return g_empty_others;
    g_empty_others = 0;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
-      if (c != g_pcfg.console && (k = rom_scan(rom_dir, (fe_console_t)c)) > 0)
+      if (c != g_pcfg.console && (k = rom_scan_cached(rom_dir, (fe_console_t)c)) > 0)
          g_empty_others += k;
-   (void)rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+   (void)rom_scan_cached(rom_dir, (fe_console_t)g_pcfg.console);
    g_empty_for = g_pcfg.console;
    return g_empty_others;
 }

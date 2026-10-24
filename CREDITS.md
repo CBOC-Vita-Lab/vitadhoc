@@ -1,25 +1,29 @@
 # Credits
 
-- **CBOC:** project direction, feature choices and device testing.
-- **Claude:** engineering of the Vita port and its upstream integration,
-  tooling and earlier test work.
-- **ChatGPT:** publishing preparation, package/privacy checks, license inventory,
-  documentation editing and independent verification recorded for this copy.
+VitAdhoc was built by AI agents (Claude), and directed and play-tested by a
+human (CBOC). ChatGPT helped prepare earlier releases: package and privacy
+checks, the licence inventory and documentation editing.
 
-VitAdhoc builds on [**GBAdhoc by ShoshinFauteux**](https://github.com/ShoshinFauteux/GBAdhoc), **gpSP by Exophase** and the
-libretro contributors, **TGB Dual**, **ReGBA's open BIOS by Normmatt and the
-VBA/VBA-M team**, and many dependency contributors. It is not solely original
-work by the three credited above. Original author/copyright notices stay in
-their files, including upstream names and contact information required by
-their licenses.
+It stands on the work of many people:
 
-The mGBA and VisualBoyAdvance-M authors contributed the cheat engine/reference
-work; xerpi and the libvita2d contributors the graphics subset; Sean Barrett
-and contributors stb; Zenju and contributors xBRZ; the Inter and Outfit
-authors the fonts. Wikipedia/Wikidata and libretro-database contributors
-provided the separately licensed catalogue/description data.
+- [**GBAdhoc by ShoshinFauteux**](https://github.com/ShoshinFauteux/GBAdhoc):
+  the PSP emulator VitAdhoc grew from, with its link play and frontend.
+- **gpSP by Exophase**, with the libretro contributors: the GBA emulator and
+  its ARM recompiler.
+- **TGB Dual:** the Game Boy and Game Boy Color emulator.
+- **Normmatt and the VBA/VBA-M team:** the open GBA BIOS from ReGBA.
+- [**rcheevos**](https://github.com/RetroAchievements/rcheevos) by
+  RetroAchievements: the achievements runtime.
+- **mGBA and VisualBoyAdvance-M** authors: the cheat engine and its reference.
+- **xerpi and the libvita2d contributors:** graphics. **Sean Barrett and
+  contributors:** stb. **Zenju and contributors:** xBRZ. **The Inter and Outfit
+  authors:** the fonts.
+- **Wikipedia, Wikidata and libretro-database contributors:** game
+  descriptions, the cartridge catalogue and the cheat database.
 
-[Third-Party Notices](notices/THIRD-PARTY.md) identifies their licenses,
-revisions and local changes. Nintendo and game publishers are not affiliated
-with or endorsing this unofficial project. No ownership of their games,
-firmware, artwork or trademarks is claimed.
+[Third-Party Notices](notices/THIRD-PARTY.md) has their licences, revisions and
+local changes. Original copyright notices stay in their files.
+
+An unofficial fan project. Nintendo, Sony, RetroAchievements and the game
+publishers are not affiliated with it and do not endorse it. No ownership of
+their games, firmware, artwork or trademarks is claimed.

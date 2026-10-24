@@ -98,6 +98,10 @@ ICONS = [
     # VS_I_SIGNAL: ad hoc / rooms, a beacon
     ('signal', '<g %s><circle cx="24" cy="26" r="3"/><path d="M16.5 33.5 a10.6 10.6 0 0 1 0 -15"/><path d="M31.5 18.5 a10.6 10.6 0 0 1 0 15"/>'
                '<path d="M11 39 a18.4 18.4 0 0 1 0 -26"/><path d="M37 13 a18.4 18.4 0 0 1 0 26"/></g>' % S),
+    # VS_I_SEARCH
+    ('search', '<g %s><circle cx="21" cy="21" r="13"/><path d="M31 31 L40 40"/></g>' % S),
+    # VS_I_CLOSE
+    ('close', '<g %s><path d="M14 14 L34 34 M34 14 L14 34"/></g>' % S),
 ]
 
 

@@ -10,6 +10,7 @@
 #define PSPCOMPAT_IMPL
 #include "pspcompat.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -148,6 +149,7 @@ static void ime_ascii(char *out, size_t cap, const unsigned char *utf8)
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 
 /* The flag values and the twelve button bits are the PSP's; if a future SDK
@@ -308,6 +310,7 @@ void pspcompat_user_name(char *out, size_t cap)
 static struct
 {
    int       on;
+   int       secret;          /* a password: returned as typed (UTF-8) */
    SceWChar16 title[64];
    SceWChar16 initial[PC_IME_MAX_CHARS + 1];
    /* maxTextLength characters and the terminator */
@@ -320,6 +323,26 @@ static void ime_to16(SceWChar16 *dst, size_t cap, const char *src)
    for (; src && *src && n + 1 < cap; src++)
       dst[n++] = (SceWChar16)(unsigned char)(*src < 0x7F ? *src : '?');
    dst[n] = 0;
+}
+
+/* A store the compiler may not drop as dead. */
+static void ime_wipe(void *p, size_t n)
+{
+   volatile unsigned char *v = (volatile unsigned char *)p;
+   while (n--)
+      *v++ = 0;
+}
+
+/* pspcompat_ime_open_secret: the next field shows dots, not letters. */
+static int g_ime_secret;
+
+int pspcompat_ime_open_secret(const char *title, int max_chars)
+{
+   int rc;
+   g_ime_secret = 1;
+   rc = pspcompat_ime_open(title, "", max_chars);
+   g_ime_secret = 0;
+   return rc;
 }
 
 int pspcompat_ime_open(const char *title, const char *initial, int max_chars)
@@ -340,6 +363,9 @@ int pspcompat_ime_open(const char *title, const char *initial, int max_chars)
    p.type = SCE_IME_TYPE_BASIC_LATIN;
    p.option = 0;
    p.title = g_ime.title;
+   g_ime.secret = g_ime_secret;
+   if (g_ime_secret)
+      p.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_PASSWORD;
    p.maxTextLength = (SceUInt32)max_chars;
    p.initialText = g_ime.initial;
    p.inputTextBuffer = g_ime.input;
@@ -365,7 +391,10 @@ int pspcompat_ime_poll(char *out, size_t cap)
    sceImeDialogTerm();
    g_ime.on = 0;
    if (!accepted)
+   {
+      ime_wipe(g_ime.input, sizeof(g_ime.input));
       return PC_IME_CANCELLED;
+   }
    for (i = 0; g_ime.input[i] && n + 4 < sizeof(utf8); i++)
    {
       unsigned c = g_ime.input[i];
@@ -384,34 +413,52 @@ int pspcompat_ime_poll(char *out, size_t cap)
       }
    }
    utf8[n] = 0;
-   ime_ascii(out, cap, utf8);
+   if (g_ime.secret)
+   {
+      /* a password is what was typed, every character and space of it:
+       * not reduced to what the UI's fonts can draw */
+      if (out && cap)
+      {
+         size_t k = n < cap - 1 ? n : cap - 1;
+         memcpy(out, utf8, k);
+         out[k] = '\0';
+      }
+   }
+   else
+      ime_ascii(out, cap, utf8);
+   /* nothing typed stays here (a password among it) */
+   ime_wipe(utf8, sizeof(utf8));
+   ime_wipe(g_ime.input, sizeof(g_ime.input));
    return PC_IME_DONE;
 }
 
-pc_uid pc_io_open(const char *path, int flags, int mode)
+static pc_uid pc_io_open_raw(const char *path, int flags, int mode)
 {
    return (pc_uid)sceIoOpen(path, flags, mode);
 }
 
-int pc_io_close(pc_uid fd)                       { return sceIoClose(fd); }
-int pc_io_read(pc_uid fd, void *buf, pc_size n)  { return sceIoRead(fd, buf, n); }
-int pc_io_write(pc_uid fd, const void *buf, pc_size n)
+static int pc_io_close_raw(pc_uid fd)            { return sceIoClose(fd); }
+static int pc_io_read_raw(pc_uid fd, void *buf, pc_size n)
+{
+   return sceIoRead(fd, buf, n);
+}
+static int pc_io_write_raw(pc_uid fd, const void *buf, pc_size n)
 {
    return sceIoWrite(fd, buf, n);
 }
 
-long long pc_io_lseek(pc_uid fd, long long off, int whence)
+static long long pc_io_lseek_raw(pc_uid fd, long long off, int whence)
 {
    return (long long)sceIoLseek(fd, (SceOff)off, whence);
 }
 
-int pc_io_lseek32(pc_uid fd, int off, int whence)
+static int pc_io_lseek32_raw(pc_uid fd, int off, int whence)
 {
    return (int)sceIoLseek32(fd, off, whence);
 }
 
-int pc_io_remove(const char *path)          { return sceIoRemove(path); }
-int pc_io_rename(const char *from, const char *to)
+static int pc_io_remove_raw(const char *path) { return sceIoRemove(path); }
+static int pc_io_rename_raw(const char *from, const char *to)
 {
    return sceIoRename(from, to);
 }
@@ -420,7 +467,10 @@ unsigned long long pspcompat_time_wide_us(void)
    return (unsigned long long)sceKernelGetProcessTimeWide();
 }
 void pspcompat_delay_us(unsigned us) { sceKernelDelayThread(us); }
-int pc_io_mkdir(const char *path, int mode) { return sceIoMkdir(path, mode); }
+static int pc_io_mkdir_raw(const char *path, int mode)
+{
+   return sceIoMkdir(path, mode);
+}
 
 /* sceIo stamps are UTC; the page shows the console's own clock. */
 static void stamp_local(pc_datetime *out, const SceDateTime *utc)
@@ -446,7 +496,7 @@ static void stat_out(pc_stat *out, const SceIoStat *in)
    stamp_local(&out->sce_st_mtime, &in->st_mtime);
 }
 
-int pc_io_getstat(const char *path, pc_stat *st)
+static int pc_io_getstat_raw(const char *path, pc_stat *st)
 {
    SceIoStat s;
    int rc;
@@ -457,10 +507,10 @@ int pc_io_getstat(const char *path, pc_stat *st)
    return rc;
 }
 
-pc_uid pc_io_dopen(const char *path) { return (pc_uid)sceIoDopen(path); }
-int    pc_io_dclose(pc_uid d)        { return sceIoDclose(d); }
+static pc_uid pc_io_dopen_raw(const char *path) { return (pc_uid)sceIoDopen(path); }
+static int pc_io_dclose_raw(pc_uid d) { return sceIoDclose(d); }
 
-int pc_io_dread(pc_uid d, pc_dirent *ent)
+static int pc_io_dread_raw(pc_uid d, pc_dirent *ent)
 {
    SceIoDirent e;
    int rc;
@@ -484,8 +534,8 @@ int pc_io_dread(pc_uid d, pc_dirent *ent)
 /*                            HOST TWIN (POSIX)                             */
 /* ======================================================================= */
 #include <dirent.h>
-#include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -539,6 +589,11 @@ void pspcompat_user_name(char *out, size_t cap)
 {
    if (out && cap)
       ime_ascii(out, cap, (const unsigned char *)g_user_name);
+}
+
+int pspcompat_ime_open_secret(const char *title, int max_chars)
+{
+   return pspcompat_ime_open(title, "", max_chars);
 }
 
 int pspcompat_ime_open(const char *title, const char *initial, int max_chars)
@@ -628,7 +683,7 @@ unsigned pspcompat_pad(void)
 }
 #endif /* PSPCOMPAT_PLAT */
 
-pc_uid pc_io_open(const char *path, int flags, int mode)
+static pc_uid pc_io_open_raw(const char *path, int flags, int mode)
 {
    int f = 0, fd;
    (void)mode;
@@ -642,9 +697,9 @@ pc_uid pc_io_open(const char *path, int flags, int mode)
    return fd < 0 ? -1 : fd;
 }
 
-int pc_io_close(pc_uid fd) { return close(fd); }
+static int pc_io_close_raw(pc_uid fd) { return close(fd); }
 
-int pc_io_read(pc_uid fd, void *buf, pc_size n)
+static int pc_io_read_raw(pc_uid fd, void *buf, pc_size n)
 {
    /* sceIoRead returns what the file had: loop over short reads. */
    size_t got = 0;
@@ -660,7 +715,7 @@ int pc_io_read(pc_uid fd, void *buf, pc_size n)
    return (int)got;
 }
 
-int pc_io_write(pc_uid fd, const void *buf, pc_size n)
+static int pc_io_write_raw(pc_uid fd, const void *buf, pc_size n)
 {
    size_t put = 0;
    while (put < n)
@@ -673,18 +728,18 @@ int pc_io_write(pc_uid fd, const void *buf, pc_size n)
    return (int)put;
 }
 
-long long pc_io_lseek(pc_uid fd, long long off, int whence)
+static long long pc_io_lseek_raw(pc_uid fd, long long off, int whence)
 {
    return (long long)lseek(fd, (off_t)off, whence);
 }
 
-int pc_io_lseek32(pc_uid fd, int off, int whence)
+static int pc_io_lseek32_raw(pc_uid fd, int off, int whence)
 {
    return (int)lseek(fd, (off_t)off, whence);
 }
 
-int pc_io_remove(const char *path) { return unlink(path) == 0 ? 0 : -1; }
-int pc_io_rename(const char *from, const char *to)
+static int pc_io_remove_raw(const char *path) { return unlink(path) == 0 ? 0 : -1; }
+static int pc_io_rename_raw(const char *from, const char *to)
 {
    return rename(from, to) == 0 ? 0 : -1;
 }
@@ -701,7 +756,7 @@ unsigned long long pspcompat_time_wide_us(void)
 }
 void pspcompat_delay_us(unsigned us) { pspcompat_host_advance(us); }
 
-int pc_io_mkdir(const char *path, int mode)
+static int pc_io_mkdir_raw(const char *path, int mode)
 {
    (void)mode;
    return mkdir(path, 0755) == 0 ? 0 : -1;
@@ -733,7 +788,7 @@ static void stat_out(pc_stat *out, const struct stat *in)
    stamp_local(&out->sce_st_mtime, in->st_mtime);
 }
 
-int pc_io_getstat(const char *path, pc_stat *st)
+static int pc_io_getstat_raw(const char *path, pc_stat *st)
 {
    struct stat s;
    if (stat(path, &s) != 0)
@@ -746,7 +801,7 @@ int pc_io_getstat(const char *path, pc_stat *st)
 #define PC_DIRS 8
 static struct { DIR *d; char path[512]; } g_dirs[PC_DIRS];
 
-pc_uid pc_io_dopen(const char *path)
+static pc_uid pc_io_dopen_raw(const char *path)
 {
    int i;
    for (i = 0; i < PC_DIRS; i++)
@@ -761,7 +816,7 @@ pc_uid pc_io_dopen(const char *path)
    return -1;
 }
 
-int pc_io_dread(pc_uid d, pc_dirent *ent)
+static int pc_io_dread_raw(pc_uid d, pc_dirent *ent)
 {
    struct dirent *e;
    struct stat s;
@@ -779,7 +834,7 @@ int pc_io_dread(pc_uid d, pc_dirent *ent)
    return 1;
 }
 
-int pc_io_dclose(pc_uid d)
+static int pc_io_dclose_raw(pc_uid d)
 {
    if (d < 0 || d >= PC_DIRS || !g_dirs[d].d)
       return -1;
@@ -789,3 +844,235 @@ int pc_io_dclose(pc_uid d)
 }
 
 #endif /* __vita__ */
+
+/* Keep accounting outside both implementations so every public boundary is
+ * counted once, including partial/error returns. Only scalar atomics cross
+ * threads; the owner identity is immutable once state 2 is published. */
+#if !defined(__GCC_ATOMIC_INT_LOCK_FREE) || __GCC_ATOMIC_INT_LOCK_FREE != 2
+#error "Compatibility I/O diagnostics require always-lock-free 32-bit atomics"
+#endif
+typedef char pc_io_atomic32_required[sizeof(uint32_t) == sizeof(unsigned) ? 1 : -1];
+static pc_io_diag_counts g_io_counts[2];
+static uint32_t g_io_owner_state; /* 0 unset, 1 publishing, 2 ready */
+#ifdef __vita__
+static SceUID g_io_owner_thread;
+#else
+static pthread_t g_io_owner_thread;
+#endif
+
+void pspcompat_io_mark_owner(void)
+{
+   uint32_t expected = 0;
+   int saved_errno = errno;
+#ifdef __vita__
+   SceUID caller = sceKernelGetThreadId();
+   if (caller < 0)
+   {
+      errno = saved_errno;
+      return;
+   }
+#else
+   pthread_t caller = pthread_self();
+#endif
+   if (__atomic_compare_exchange_n(&g_io_owner_state, &expected, 1, 0,
+                                    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+   {
+      g_io_owner_thread = caller;
+      __atomic_store_n(&g_io_owner_state, 2, __ATOMIC_RELEASE);
+   }
+   errno = saved_errno;
+}
+
+static int io_now_us(uint32_t *out)
+{
+#ifdef __vita__
+   *out = sceKernelGetProcessTimeLow();
+   return 1;
+#else
+   struct timespec ts;
+   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+      return 0;
+   *out = (uint32_t)((uint64_t)ts.tv_sec * 1000000u +
+                     (uint64_t)ts.tv_nsec / 1000u);
+   return 1;
+#endif
+}
+
+typedef struct
+{
+   pc_io_diag_counts *counts;
+   uint32_t start_us;
+   int clock_valid;
+} pc_io_call;
+
+static pc_io_call io_call_begin(void)
+{
+   pc_io_call call;
+   int owner = 0, saved_errno = errno;
+   if (__atomic_load_n(&g_io_owner_state, __ATOMIC_ACQUIRE) == 2)
+   {
+#ifdef __vita__
+      owner = sceKernelGetThreadId() == g_io_owner_thread;
+#else
+      owner = pthread_equal(pthread_self(), g_io_owner_thread);
+#endif
+   }
+   call.counts = &g_io_counts[owner ? 0 : 1];
+   call.start_us = 0;
+   call.clock_valid = io_now_us(&call.start_us);
+   errno = saved_errno;
+   return call;
+}
+
+static void io_call_end(const pc_io_call *call, unsigned op, long long rc)
+{
+   pc_io_diag_counts *c = call->counts;
+   uint32_t end_us, elapsed = 0, largest;
+   int saved_errno = errno;
+   if (io_now_us(&end_us) && call->clock_valid)
+      elapsed = end_us - call->start_us;
+   __atomic_fetch_add(&c->calls, 1, __ATOMIC_RELAXED);
+   __atomic_fetch_add(&c->op_calls[op], 1, __ATOMIC_RELAXED);
+   if (rc < 0)
+      __atomic_fetch_add(&c->errors, 1, __ATOMIC_RELAXED);
+   if (rc > 0 && op == PC_IO_READ)
+      __atomic_fetch_add(&c->read_bytes, (uint32_t)rc, __ATOMIC_RELAXED);
+   if (rc > 0 && op == PC_IO_WRITE)
+      __atomic_fetch_add(&c->write_bytes, (uint32_t)rc, __ATOMIC_RELAXED);
+   __atomic_fetch_add(&c->total_us, elapsed, __ATOMIC_RELAXED);
+   largest = __atomic_load_n(&c->max_us, __ATOMIC_RELAXED);
+   while (elapsed > largest &&
+          !__atomic_compare_exchange_n(&c->max_us, &largest, elapsed, 0,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+      ;
+   errno = saved_errno;
+}
+
+void pspcompat_io_get_diag(pc_io_diag *out)
+{
+   unsigned i, op;
+   if (!out)
+      return;
+   out->owner_marked =
+      __atomic_load_n(&g_io_owner_state, __ATOMIC_ACQUIRE) == 2;
+   for (i = 0; i < 2; i++)
+   {
+      const pc_io_diag_counts *src = &g_io_counts[i];
+      pc_io_diag_counts *dst = i == 0 ? &out->owner : &out->other;
+#define PC_IO_SNAPSHOT(field) \
+      dst->field = __atomic_load_n(&src->field, __ATOMIC_RELAXED)
+      PC_IO_SNAPSHOT(calls);
+      PC_IO_SNAPSHOT(errors);
+      PC_IO_SNAPSHOT(read_bytes);
+      PC_IO_SNAPSHOT(write_bytes);
+      PC_IO_SNAPSHOT(total_us);
+      PC_IO_SNAPSHOT(max_us);
+#undef PC_IO_SNAPSHOT
+      for (op = 0; op < PC_IO_OP_COUNT; op++)
+         dst->op_calls[op] = __atomic_load_n(&src->op_calls[op], __ATOMIC_RELAXED);
+   }
+}
+
+pc_uid pc_io_open(const char *path, int flags, int mode)
+{
+   pc_io_call call = io_call_begin();
+   pc_uid rc = pc_io_open_raw(path, flags, mode);
+   io_call_end(&call, PC_IO_OPEN, rc);
+   return rc;
+}
+
+int pc_io_close(pc_uid fd)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_close_raw(fd);
+   io_call_end(&call, PC_IO_CLOSE, rc);
+   return rc;
+}
+
+int pc_io_read(pc_uid fd, void *buf, pc_size n)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_read_raw(fd, buf, n);
+   io_call_end(&call, PC_IO_READ, rc);
+   return rc;
+}
+
+int pc_io_write(pc_uid fd, const void *buf, pc_size n)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_write_raw(fd, buf, n);
+   io_call_end(&call, PC_IO_WRITE, rc);
+   return rc;
+}
+
+long long pc_io_lseek(pc_uid fd, long long off, int whence)
+{
+   pc_io_call call = io_call_begin();
+   long long rc = pc_io_lseek_raw(fd, off, whence);
+   io_call_end(&call, PC_IO_LSEEK, rc);
+   return rc;
+}
+
+int pc_io_lseek32(pc_uid fd, int off, int whence)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_lseek32_raw(fd, off, whence);
+   io_call_end(&call, PC_IO_LSEEK32, rc);
+   return rc;
+}
+
+int pc_io_remove(const char *path)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_remove_raw(path);
+   io_call_end(&call, PC_IO_REMOVE, rc);
+   return rc;
+}
+
+int pc_io_rename(const char *from, const char *to)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_rename_raw(from, to);
+   io_call_end(&call, PC_IO_RENAME, rc);
+   return rc;
+}
+
+int pc_io_mkdir(const char *path, int mode)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_mkdir_raw(path, mode);
+   io_call_end(&call, PC_IO_MKDIR, rc);
+   return rc;
+}
+
+int pc_io_getstat(const char *path, pc_stat *st)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_getstat_raw(path, st);
+   io_call_end(&call, PC_IO_GETSTAT, rc);
+   return rc;
+}
+
+pc_uid pc_io_dopen(const char *path)
+{
+   pc_io_call call = io_call_begin();
+   pc_uid rc = pc_io_dopen_raw(path);
+   io_call_end(&call, PC_IO_DOPEN, rc);
+   return rc;
+}
+
+int pc_io_dread(pc_uid d, pc_dirent *ent)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_dread_raw(d, ent);
+   io_call_end(&call, PC_IO_DREAD, rc);
+   return rc;
+}
+
+int pc_io_dclose(pc_uid d)
+{
+   pc_io_call call = io_call_begin();
+   int rc = pc_io_dclose_raw(d);
+   io_call_end(&call, PC_IO_DCLOSE, rc);
+   return rc;
+}

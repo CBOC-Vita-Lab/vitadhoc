@@ -296,9 +296,72 @@ Vita-to-Vita only: a Vita and a PSP running GBAdhoc cannot link to each other.
 Bluetooth between two Vitas is not possible (the system's Bluetooth only serves controllers,
 headsets and keyboards); ad hoc is the no-router option.
 
+## Continue, Recent and play time
+- **Continue.** Leaving a game keeps the moment you left it (`<rom>.rsm`, beside the save), and
+  the point is renewed every two minutes of play and just after the game saves itself, so a
+  Vita closed from LiveArea still continues. On the Home page **X Continue** puts the game back
+  there; **Up** (or the Start over button) plays from the battery save instead. A patch put
+  beside the game after the point was made starts it from the save.
+- **Recent.** Once something has been played, Select on the Home page goes All games >
+  Starred > **Recent** (latest first). The game page says when a game was last played and for
+  how long (menus and a sleeping Vita not counted).
+- **Game order** (Settings > Library, from the game list): by name, last played first, or most
+  played first. The record is `playlog.txt` in the data folder.
+
+## Patches (ROM hacks and translations)
+Put the patch beside the game with the game's name: `Game.gba` + `Game.ips` (or `.bps`, `.ups`).
+The game is started patched; the original file is never changed (the patched copy is made once,
+in `patched/`, and made again when the patch changes). Saves and states keep the original's
+name. BPS and UPS patches are checked against the game they were made for and refused for
+another version; the game then starts unpatched and a message says why. The game page shows
+*Patched*. For link play both players need the same patch: the link compares the patched games.
+
+## Motion and light sensor cartridges
+Recognised by themselves: **Boktai 1-3** (light sensor), **WarioWare: Twisted!** (gyro),
+**Yoshi Topsy-Turvy** and **Koro Koro Puzzle** (tilt) and, on Game Boy Color, **Kirby Tilt 'n'
+Tumble**. Their rows appear in Settings > **This game** while one is running:
+- **Motion controls**: *tilt the Vita* (its motion sensor) or *right stick*.
+- **Motion strength** (low / normal / high) and **Direction** (normal / reversed, if a turn or
+  tilt feels backwards).
+- **Level**: hold the Vita the way level should be and press X.
+- **Sunlight** (Boktai): none to full sun in ten steps, or *follows the clock* (daylight by the
+  Vita's time of day).
+The reading is part of each frame, so rewind replays it. In a link session the other machine
+sees a still console in a dark room.
+
+## A look of its own (Settings > This game)
+**Display settings: just this game** gives the running game its own screen size, quality,
+filter, colours and palette; the Display rows then edit that game's look (the section's chip
+says *This game*). Back to *all GBA games* (or GB, GBC) and it follows the console again. Kept
+in `games/<rom>.ini`, with the game's sensor settings.
+
+## Super Game Boy borders
+Game Boy games made for the Super Game Boy (Pokemon Red, Blue and Yellow, Donkey Kong, Kirby's
+Dream Land 2, ...) are shown inside the border they send, in its colours. The border is
+kept (`borders/<rom>.sgb`), so it is there from the first frame next time, and after a loaded
+state. Settings > Display > **SGB border** (Game Boy only) turns it off.
+
+## RetroAchievements
+Earn [RetroAchievements](https://retroachievements.org) as you play. Settings > **RetroAchievements**
+(from the game list) > **Account**: X asks for your user name, then your password (shown as
+dots). The password is sent once and never kept: the app keeps the name and the server's token
+in `retroachievements.txt` and signs in with those when it starts. On the Account row, X twice
+signs out.
+- When a game starts, its file's fingerprint (MD5) is looked up; a game the site knows shows
+  "N of M achievements". An unlock is a message at the top of the screen and is sent at once,
+  or later if the Vita is offline. A patched game is looked up as patched (the site lists hacks
+  and translations separately).
+- In game, Settings > **Achievements** lists them, earned or not, with their points.
+- **Hardcore** (from the next game started): no loading of states (slots, the shelf, Continue),
+  no rewind and no cheats, as the site's rules ask; fast forward stays. A game the site does not
+  know is not restricted.
+- Achievements pause during link play and start over afterwards, as after a loaded state.
+- It needs Wi-Fi (not ad hoc). The connection is HTTPS through the Vita's own secure-connection
+  library; if that fails on your firmware, the log (`log/gbadhoc.log`, lines `ra_http`) says why.
+
 ## Save data
 Battery saves and save states live beside the ROM, with the PSP version's names
-(`<rom>.sav`, `.st0`–`.st4`). Five state slots, with previews, in the menu and on the game list.
+(`<rom>.sav`, `.st0`–`.st4`), and the Continue point (`<rom>.rsm`). Five state slots, with previews, in the menu and on the game list.
 For a game kept in another folder (see "Games in other folders") that is its own folder, not
 `roms/`: back up, or move, the game and its save files together.
 

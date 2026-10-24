@@ -25,7 +25,7 @@ VITA = os.path.dirname(HERE)
 FONTS = os.path.join(VITA, "..", "assets", "fonts")
 OUT = os.path.join(VITA, "vstyle_icons.h")
 
-COLS, ROWS = 8, 4
+COLS, ROWS = 8, 8
 SMALL, BIG = 32, 64
 MARK_H = 72
 MARKC = 128

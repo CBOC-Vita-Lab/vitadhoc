@@ -36,7 +36,13 @@ typedef struct
    int       line_h, ascent;
    stbtt_fontinfo font;
    float     scale;
+   /* Kerning between two printable ASCII characters, in font units, as
+    * stbtt answers it (each answer is a cmap lookup of both glyphs and a
+    * walk of the GPOS tables, and text is measured every frame).  Filled
+    * as asked; VS_KERN_UNSET until then. */
+   short     kc[VS_GLYPHS][VS_GLYPHS];
 } vs_face;
+#define VS_KERN_UNSET 0x7FFF
 
 static const struct
 {
@@ -56,6 +62,12 @@ static vs_face g_vf[VS_FACES];
 static int face_bake(int i)
 {
    vs_face *f = &g_vf[i];
+   {
+      int a, b;
+      for (a = 0; a < VS_GLYPHS; a++)
+         for (b = 0; b < VS_GLYPHS; b++)
+            f->kc[a][b] = VS_KERN_UNSET;
+   }
    unsigned char *px;
    int pen_x = 0, pen_y = 0, row_h = 0, c, asc, desc, gap, used_h;
    const unsigned char *ttf = FACE_SRC[i].ttf;
@@ -121,6 +133,18 @@ static vs_face *face(int i)
 
 static float kern(vs_face *f, int a, int b)
 {
+   if (a >= VS_FIRST && a <= VS_LAST && b >= VS_FIRST && b <= VS_LAST)
+   {
+      short *c = &f->kc[a - VS_FIRST][b - VS_FIRST];
+      if (*c == VS_KERN_UNSET)
+      {
+         int k = stbtt_GetCodepointKernAdvance(&f->font, a, b);
+         if (k <= -32768 || k >= VS_KERN_UNSET)
+            return (float)k * f->scale;     /* (no font has such a kern) */
+         *c = (short)k;
+      }
+      return (float)*c * f->scale;
+   }
    return (float)stbtt_GetCodepointKernAdvance(&f->font, a, b) * f->scale;
 }
 
@@ -211,26 +235,76 @@ void vs_text_r(int fi, float xr, float y, const char *s, uint32_t rgba)
    vs_text(fi, floorf(xr - vs_text_w(fi, s) + 0.5f), y, s, rgba);
 }
 
+/* The widths of every prefix of s, in one pass: pw[k] is vs_text_w of the
+ * first k characters, summed in the very order vs_text_w sums them (so the
+ * same float, bit for bit).  0 when s is longer than `cap` - 1. */
+#define VS_PREFIX_MAX 512
+static int prefix_widths(vs_face *f, const char *s, size_t len, float *pw)
+{
+   const unsigned char *p = (const unsigned char *)s;
+   float w = 0.0f;
+   size_t i;
+   if (len >= VS_PREFIX_MAX)
+      return 0;
+   pw[0] = 0.0f;
+   for (i = 0; i < len; i++)
+   {
+      w += f->g[glyph_index(p[i])].adv;
+      pw[i + 1] = w;
+      if (i + 1 < len)
+         w += kern(f, p[i], p[i + 1]);
+   }
+   return 1;
+}
+
 void vs_text_fit(int fi, char *s, float max_w)
 {
-   size_t n;
-   if (!s || vs_text_w(fi, s) <= max_w)
+   static float pw[VS_PREFIX_MAX];
+   vs_face *f = face(fi);
+   size_t n, len;
+   float dots;
+   if (!s)
       return;
-   n = strlen(s);
+   len = strlen(s);
+   if (!f || !prefix_widths(f, s, len, pw))
+   {
+      /* (no face, or a string past the table: measured as it was) */
+      if (vs_text_w(fi, s) <= max_w)
+         return;
+      n = len;
+      while (n > 0)
+      {
+         char keep;
+         n--;
+         while (n > 0 && s[n - 1] == ' ')
+            n--;
+         keep = s[n];
+         s[n] = '\0';
+         if (vs_text_w(fi, s) + vs_text_w(fi, "...") <= max_w)
+         {
+            strcat(s, "...");
+            return;
+         }
+         s[n] = keep;
+      }
+      s[0] = '\0';
+      return;
+   }
+   if (pw[len] <= max_w)
+      return;
+   dots = vs_text_w(fi, "...");
+   n = len;
    while (n > 0)
    {
-      char keep;
       n--;
       while (n > 0 && s[n - 1] == ' ')
          n--;
-      keep = s[n];
-      s[n] = '\0';
-      if (vs_text_w(fi, s) + vs_text_w(fi, "...") <= max_w)
+      if (pw[n] + dots <= max_w)
       {
+         s[n] = '\0';
          strcat(s, "...");
          return;
       }
-      s[n] = keep;
    }
    s[0] = '\0';
 }
@@ -242,17 +316,32 @@ int vs_text_wrap(int fi, float x, float y, float max_w, int max_lines,
    int lines = 0;
    const char *p = s;
    float lh = (float)vs_line_h(fi) + line_gap;
+   static float pw[VS_PREFIX_MAX];
+   vs_face *f = face(fi);
    while (p && *p && lines < max_lines)
    {
       size_t take = 0, best = 0, len = strlen(p);
+      /* every word end's width from one pass over the line's text (the
+       * first sizeof(line) characters are all a line can hold) */
+      size_t span = len < sizeof(line) ? len : sizeof(line) - 1;
+      int have = f && prefix_widths(f, p, span, pw);
       while (take < len && take < sizeof(line) - 4)
       {
          size_t next = take;
+         float w;
          while (next < len && p[next] != ' ')
             next++;
-         memcpy(line, p, next);
-         line[next] = '\0';
-         if (vs_text_w(fi, line) > max_w && best > 0)
+         if (have && next <= span)
+            w = pw[next];
+         else if (next >= sizeof(line))
+            w = max_w + 1.0f;            /* a word longer than a line */
+         else
+         {
+            memcpy(line, p, next);
+            line[next] = '\0';
+            w = vs_text_w(fi, line);
+         }
+         if (w > max_w && best > 0)
             break;
          best = next;
          take = next;
@@ -263,6 +352,8 @@ int vs_text_wrap(int fi, float x, float y, float max_w, int max_lines,
       }
       if (best == 0)
          best = len < sizeof(line) - 4 ? len : sizeof(line) - 4;
+      if (best > sizeof(line) - 4)
+         best = sizeof(line) - 4;
       memcpy(line, p, best);
       line[best] = '\0';
       if (lines == max_lines - 1 && best < len)
@@ -323,7 +414,9 @@ void vs_grad_h(float x, float y, float w, float h, uint32_t left,
 typedef struct
 {
    int kind, r, t;
-   int size;                  /* texture edge, px                          */
+   int size;                  /* the disc's edge, px                       */
+   int tsize;                 /* its texture's edge: size, or smaller for a
+                               * big soft disc (drawn linear)              */
    vb_tex *tex;
 } vs_disc;
 
@@ -331,9 +424,11 @@ typedef struct
 static vs_disc g_disc[VS_DISCS];
 static int g_disc_next;
 
+#define VS_SOFT_TEX 128
+
 static vs_disc *disc_get(int kind, int r, int t)
 {
-   int i, size, x, y;
+   int i, size, tsize, x, y;
    unsigned char *px;
    vs_disc *d;
    if (r < 1)
@@ -350,16 +445,22 @@ static vs_disc *disc_get(int kind, int r, int t)
       vb_tex_destroy(d->tex);
    memset(d, 0, sizeof(*d));
    size = kind == 2 ? 2 * (r + t) : 2 * r;
-   px = (unsigned char *)malloc((size_t)size * size);
+   /* A soft disc is a smooth ramp: past VS_SOFT_TEX texels it is baked at
+    * that size and drawn with linear filtering, which reproduces a linear
+    * ramp (the backdrop's glows asked for 600x600 and 540x540 textures:
+    * 650 thousand square roots on the first Home frame, and their memory). */
+   tsize = kind == 2 && size > VS_SOFT_TEX ? VS_SOFT_TEX : size;
+   px = (unsigned char *)malloc((size_t)tsize * tsize);
    if (!px)
       return NULL;
-   for (y = 0; y < size; y++)
-      for (x = 0; x < size; x++)
+   for (y = 0; y < tsize; y++)
+      for (x = 0; x < tsize; x++)
       {
          float c = (float)size * 0.5f, cov = 0.0f;
          if (kind == 2)
          {
-            float dx = (float)x + 0.5f - c, dy = (float)y + 0.5f - c;
+            float k = (float)size / (float)tsize;
+            float dx = ((float)x + 0.5f) * k - c, dy = ((float)y + 0.5f) * k - c;
             float dist = sqrtf(dx * dx + dy * dy);
             /* linear, as the straight edges' gradients are */
             cov = 1.0f - ((dist - (float)(r - t)) / (float)(2 * t));
@@ -381,16 +482,25 @@ static vs_disc *disc_get(int kind, int r, int t)
                }
             cov = (float)hits / 16.0f;
          }
-         px[(size_t)y * size + x] = (unsigned char)lroundf(cov * 255.0f);
+         px[(size_t)y * tsize + x] = (unsigned char)lroundf(cov * 255.0f);
       }
-   d->tex = vb_tex_create(size, size, VB_FMT_A8, 0);
+   d->tex = vb_tex_create(tsize, tsize, VB_FMT_A8, 0);
    if (d->tex)
-      vb_tex_update(d->tex, 0, 0, size, size, px, (size_t)size);
+      vb_tex_update(d->tex, 0, 0, tsize, tsize, px, (size_t)tsize);
    free(px);
    if (!d->tex)
       return NULL;
-   d->kind = kind; d->r = r; d->t = t; d->size = size;
+   d->kind = kind; d->r = r; d->t = t; d->size = size; d->tsize = tsize;
    return d;
+}
+
+/* Solid rectangles collected for one vb_cquads draw. */
+static void cq_add(vb_cquad *q, int *n, float x0, float y0, float x1,
+                   float y1, uint32_t rgba)
+{
+   q[*n].x0 = x0; q[*n].y0 = y0; q[*n].x1 = x1; q[*n].y1 = y1;
+   q[*n].c_tl = q[*n].c_tr = q[*n].c_bl = q[*n].c_br = rgba;
+   (*n)++;
 }
 
 /* The four corners of a w x h rect at x, y, each c x c, from disc d. */
@@ -398,7 +508,7 @@ static void corners(vs_disc *d, float x, float y, float w, float h, float c,
                     uint32_t rgba)
 {
    vb_tquad q[4];
-   float s = (float)d->size, m = s * 0.5f;
+   float s = (float)d->tsize, m = s * 0.5f;    /* in the texture's texels */
    int i;
    for (i = 0; i < 4; i++)
    {
@@ -412,7 +522,8 @@ static void corners(vs_disc *d, float x, float y, float w, float h, float c,
       q[i].v0 = bottom ? m : 0.0f;
       q[i].v1 = bottom ? s : m;
    }
-   vb_tquads(d->tex, q, 4, rgba, VB_NEAREST);
+   vb_tquads(d->tex, q, 4, rgba,
+             d->tsize != d->size ? VB_LINEAR : VB_NEAREST);
 }
 
 void vs_rrect(float x, float y, float w, float h, float r, uint32_t rgba)
@@ -440,12 +551,17 @@ void vs_rrect(float x, float y, float w, float h, float r, uint32_t rgba)
    corners(d, x, y, w, h, (float)ri, rgba);
    /* the middle column, full height; the two side columns between the
     * corners */
-   if (w > 2 * ri)
-      vb_quad(x + ri, y, x + w - ri, y + h, rgba, rgba, rgba, rgba);
-   if (h > 2 * ri)
    {
-      vb_quad(x, y + ri, x + ri, y + h - ri, rgba, rgba, rgba, rgba);
-      vb_quad(x + w - ri, y + ri, x + w, y + h - ri, rgba, rgba, rgba, rgba);
+      vb_cquad q[3];
+      int n = 0;
+      if (w > 2 * ri)
+         cq_add(q, &n, x + ri, y, x + w - ri, y + h, rgba);
+      if (h > 2 * ri)
+      {
+         cq_add(q, &n, x, y + ri, x + ri, y + h - ri, rgba);
+         cq_add(q, &n, x + w - ri, y + ri, x + w, y + h - ri, rgba);
+      }
+      vb_cquads(q, n);
    }
 }
 
@@ -522,25 +638,33 @@ void vs_rrect_line(float x, float y, float w, float h, float r, float t,
    if (ri < ti)
    {
       /* square corners: four bars */
-      vb_quad(x, y, x + w, y + ti, rgba, rgba, rgba, rgba);
-      vb_quad(x, y + h - ti, x + w, y + h, rgba, rgba, rgba, rgba);
-      vb_quad(x, y + ti, x + ti, y + h - ti, rgba, rgba, rgba, rgba);
-      vb_quad(x + w - ti, y + ti, x + w, y + h - ti, rgba, rgba, rgba, rgba);
+      vb_cquad q[4];
+      int n = 0;
+      cq_add(q, &n, x, y, x + w, y + ti, rgba);
+      cq_add(q, &n, x, y + h - ti, x + w, y + h, rgba);
+      cq_add(q, &n, x, y + ti, x + ti, y + h - ti, rgba);
+      cq_add(q, &n, x + w - ti, y + ti, x + w, y + h - ti, rgba);
+      vb_cquads(q, n);
       return;
    }
    d = disc_get(1, ri, ti);
    if (!d)
       return;
    corners(d, x, y, w, h, (float)ri, rgba);
-   if (w > 2 * ri)
    {
-      vb_quad(x + ri, y, x + w - ri, y + ti, rgba, rgba, rgba, rgba);
-      vb_quad(x + ri, y + h - ti, x + w - ri, y + h, rgba, rgba, rgba, rgba);
-   }
-   if (h > 2 * ri)
-   {
-      vb_quad(x, y + ri, x + ti, y + h - ri, rgba, rgba, rgba, rgba);
-      vb_quad(x + w - ti, y + ri, x + w, y + h - ri, rgba, rgba, rgba, rgba);
+      vb_cquad q[4];
+      int n = 0;
+      if (w > 2 * ri)
+      {
+         cq_add(q, &n, x + ri, y, x + w - ri, y + ti, rgba);
+         cq_add(q, &n, x + ri, y + h - ti, x + w - ri, y + h, rgba);
+      }
+      if (h > 2 * ri)
+      {
+         cq_add(q, &n, x, y + ri, x + ti, y + h - ri, rgba);
+         cq_add(q, &n, x + w - ti, y + ri, x + w, y + h - ri, rgba);
+      }
+      vb_cquads(q, n);
    }
 }
 
@@ -577,26 +701,35 @@ void vs_shadow(float x, float y, float w, float h, float r, float spread,
    /* Edges: the falloff as a gradient across 2*si, with the solid band
     * inside it.  The profile across an edge is the soft disc's radial one,
     * so a straight edge and a corner meet without a seam. */
-   if (ow > 2 * c)
    {
-      float a0 = ox + c, a1 = ox + ow - c;
-      /* top: from y-si (clear) to y+si (solid), then solid to the corner */
-      vb_quad(a0, oy, a1, oy + 2 * si, clear, clear, rgba, rgba);
-      vb_quad(a0, oy + 2 * si, a1, oy + c, rgba, rgba, rgba, rgba);
-      vb_quad(a0, oy + oh - c, a1, oy + oh - 2 * si, rgba, rgba, rgba, rgba);
-      vb_quad(a0, oy + oh - 2 * si, a1, oy + oh, rgba, rgba, clear, clear);
+      /* the edges and the middle: one draw (they were nine) */
+      vb_cquad e[9];
+      int n = 0;
+#define EQ(X0, Y0, X1, Y1, A, B, C, D) \
+      (e[n].x0 = (X0), e[n].y0 = (Y0), e[n].x1 = (X1), e[n].y1 = (Y1), \
+       e[n].c_tl = (A), e[n].c_tr = (B), e[n].c_bl = (C), e[n].c_br = (D), n++)
+      if (ow > 2 * c)
+      {
+         float a0 = ox + c, a1 = ox + ow - c;
+         /* top: from y-si (clear) to y+si (solid), then solid to the corner */
+         EQ(a0, oy, a1, oy + 2 * si, clear, clear, rgba, rgba);
+         EQ(a0, oy + 2 * si, a1, oy + c, rgba, rgba, rgba, rgba);
+         EQ(a0, oy + oh - c, a1, oy + oh - 2 * si, rgba, rgba, rgba, rgba);
+         EQ(a0, oy + oh - 2 * si, a1, oy + oh, rgba, rgba, clear, clear);
+      }
+      if (oh > 2 * c)
+      {
+         float b0 = oy + c, b1 = oy + oh - c;
+         EQ(ox, b0, ox + 2 * si, b1, clear, rgba, clear, rgba);
+         EQ(ox + 2 * si, b0, ox + c, b1, rgba, rgba, rgba, rgba);
+         EQ(ox + ow - c, b0, ox + ow - 2 * si, b1, rgba, rgba, rgba, rgba);
+         EQ(ox + ow - 2 * si, b0, ox + ow, b1, rgba, clear, rgba, clear);
+      }
+      if (ow > 2 * c && oh > 2 * c)
+         EQ(ox + c, oy + c, ox + ow - c, oy + oh - c, rgba, rgba, rgba, rgba);
+#undef EQ
+      vb_cquads(e, n);
    }
-   if (oh > 2 * c)
-   {
-      float b0 = oy + c, b1 = oy + oh - c;
-      vb_quad(ox, b0, ox + 2 * si, b1, clear, rgba, clear, rgba);
-      vb_quad(ox + 2 * si, b0, ox + c, b1, rgba, rgba, rgba, rgba);
-      vb_quad(ox + ow - c, b0, ox + ow - 2 * si, b1, rgba, rgba, rgba, rgba);
-      vb_quad(ox + ow - 2 * si, b0, ox + ow, b1, rgba, clear, rgba, clear);
-   }
-   if (ow > 2 * c && oh > 2 * c)
-      vb_quad(ox + c, oy + c, ox + ow - c, oy + oh - c, rgba, rgba, rgba,
-              rgba);
 }
 
 void vs_circle(float cx, float cy, float r, uint32_t rgba)
@@ -741,6 +874,11 @@ void vs_img_set(vs_img *im, const uint32_t *rgba, int stride_px)
    if (im && rgba && im->bpp == 4)
       vb_tex_update(im->tex, 0, 0, im->w, im->h, rgba,
                     (size_t)stride_px * 4);
+}
+
+int vs_img_writable(const vs_img *im)
+{
+   return im && vb_tex_writable(im->tex);
 }
 
 void vs_img_set_565(vs_img *im, const uint16_t *pix, int stride_px)

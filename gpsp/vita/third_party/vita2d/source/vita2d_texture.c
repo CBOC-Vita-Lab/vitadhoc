@@ -57,7 +57,11 @@ static vita2d_texture *_vita2d_create_empty_texture_format_advanced(unsigned int
 	if (w > GXM_TEX_MAX_SIZE || h > GXM_TEX_MAX_SIZE)
 		return NULL;
 
-	vita2d_texture *texture = malloc(sizeof(*texture));
+	/* GBAdhoc: zeroed.  A plain texture never sets gxm_rtgt or depth_UID,
+	 * but vita2d_free_texture reads both: from malloc, a reused heap chunk
+	 * made it destroy a render target it never owned and free another
+	 * texture's live GPU memory block. */
+	vita2d_texture *texture = calloc(1, sizeof(*texture));
 	if (!texture)
 		return NULL;
 

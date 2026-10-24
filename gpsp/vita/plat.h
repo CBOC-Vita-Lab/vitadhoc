@@ -148,6 +148,10 @@ int  plat_bg_start(void (*fn)(void *), void *arg);
 /* Wait up to timeout_us (real time) for it to end: 1 = it did and is gone,
  * 0 = it is still running (it is left to finish by itself). */
 int  plat_bg_join(uint32_t timeout_us);
+/* A second one, for the network's requests (ra_http.h: RetroAchievements),
+ * with the stack a TLS handshake needs.  Same contract. */
+int  plat_net_start(void (*fn)(void *), void *arg);
+int  plat_net_join(uint32_t timeout_us);
 /* Sleep in REAL time, on a thread other than the frame thread (on the twin
  * plat_sleep_us moves the simulated clock). */
 void plat_thread_sleep_us(uint32_t us);
@@ -161,6 +165,26 @@ void plat_thread_sleep_us(uint32_t us);
 int  plat_worker_start(void (*step)(void), uint32_t period_us);
 void plat_worker_wake(void);
 void plat_worker_stop(void);
+/* 1 = joined, 0 = still owns its storage after a bounded wait. Never start
+ * a replacement consumer or drain its data on main after a 0 result. */
+int  plat_worker_stop_checked(void);
+
+/* ---- the motion sensor (SceMotion) ----------------------------------------
+ *
+ * For the sensor cartridges (frontend-common/fe_sensor.h): a reading in that
+ * header's terms -- right_g / down_g = how much of gravity points to the
+ * screen's right / bottom edge (0 level, 1 that edge straight down),
+ * rate_z = rad/s about the axis through the screen, positive anticlockwise
+ * as the player looks at it.  The twin's come from its script (motion=). */
+typedef struct plat_motion
+{
+   float right_g, down_g, rate_z;
+} plat_motion;
+/* Start (1) or stop (0) sampling; sampling costs battery, so only while a
+ * sensor game runs.  0 = done; -1 = this console has no sensor (a PS TV). */
+int  plat_motion_enable(int on);
+/* This moment's reading.  0 = read; -1 = none (not sampling, or no sensor). */
+int  plat_motion_read(plat_motion *m);
 
 /* ---- the pad ------------------------------------------------------------- */
 

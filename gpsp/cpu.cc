@@ -574,6 +574,10 @@ static const u8 gba_header_logo[156] = {
   reg[REG_CPSR] = (n_flag << 31) | (z_flag << 30) | (c_flag << 29) |          \
    (v_flag << 28) | (reg[REG_CPSR] & 0xFF)                                    \
 
+/* Palette RAM and OAM: 1 KiB each, mirrored, with no 32 KiB read page in
+ * memory_map_read -- an instruction there is read with read_memory. */
+#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7)
+
 #define check_pc_region()                                                     \
   new_pc_region = (reg[REG_PC] >> 15);                                        \
   if(new_pc_region != pc_region)                                              \
@@ -582,7 +586,8 @@ static const u8 gba_header_logo[156] = {
     pc_address_block = memory_map_read[new_pc_region];                        \
     touch_gamepak_page(pc_region);                                            \
                                                                               \
-    if(!pc_address_block)                                                     \
+    /* palette RAM / OAM have no read page: fetched with read_memory */      \
+    if(!pc_address_block && !pc_unpaged(reg[REG_PC]))                         \
       pc_address_block = load_gamepak_page(pc_region & 0x3FF);                \
   }                                                                           \
 
@@ -788,13 +793,18 @@ static const u8 gba_header_logo[156] = {
 // In user mode some bits are read only
 // Bit #4 is always set to one (so all modes are 1XXXX)
 // Reserved bits are always zero and cannot be modified
+// The T bit (0x20) is writable in every mode: on the GBA's ARM7TDMI an MSR
+// that sets it carries on in Thumb at the next instruction (MSR + 4), as
+// mGBA does.  Packed start-up code relies on it (Pokemon Pinball: Ruby &
+// Sapphire's "msr cpsr_fc" into "bx r0"); each backend's
+// execute_store_cpsr_body resumes there.
 const u32 cpsr_masks[4][2] =
 {
   // User, Privileged
   {0x00000000, 0x00000000},
-  {0x00000020, 0x000000EF},
+  {0x00000020, 0x000000FF},
   {0xF0000000, 0xF0000000},
-  {0xF0000020, 0xF00000EF}
+  {0xF0000020, 0xF00000FF}
 };
 
 // SPSR is always a privileged instruction
@@ -812,6 +822,9 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
   {                                                                           \
     set_cpu_mode(cpu_modes[reg[REG_CPSR] & 0xF]);                             \
     check_for_interrupts();                                                   \
+    /* T set by MSR: Thumb from the next instruction (cpsr_masks) */          \
+    if(reg[REG_CPSR] & 0x20)                                                  \
+      goto thumb_loop;                                                        \
   }                                                                           \
 
 #define arm_psr_store_spsr(source)                                            \
@@ -1521,7 +1534,7 @@ static u32 execute_arm_internal(u32 cycles, bool vram_only)
   u32 update_ret;
   cpu_alert_type cpu_alert;
 
-  if(!pc_address_block)
+  if(!pc_address_block && !pc_unpaged(reg[REG_PC]))
     pc_address_block = load_gamepak_page(pc_region & 0x3FF);
   touch_gamepak_page(pc_region);
 
@@ -1548,7 +1561,7 @@ static u32 execute_arm_internal(u32 cycles, bool vram_only)
 arm_loop:
 
        collapse_flags();
-       if (vram_only && (reg[REG_PC] >> 24) != 0x06)
+       if (vram_only && !GBA_PC_UNCACHED(reg[REG_PC]))
           return cycles_remaining > 0 ? (u32)cycles_remaining : update_gba(cycles_remaining);
 
        /* Process cheats if we are about to execute the cheat hook */
@@ -1559,7 +1572,9 @@ arm_loop:
        using_instruction(arm);
        check_pc_region();
        reg[REG_PC] &= ~0x03;
-       opcode = readaddress32(pc_address_block, (reg[REG_PC] & 0x7FFF));
+       opcode = pc_address_block
+                ? readaddress32(pc_address_block, (reg[REG_PC] & 0x7FFF))
+                : read_memory32(reg[REG_PC]);
        condition = opcode >> 28;
 
        switch(condition)
@@ -3114,7 +3129,7 @@ skip_instruction:
 thumb_loop:
 
        collapse_flags();
-       if (vram_only && (reg[REG_PC] >> 24) != 0x06)
+       if (vram_only && !GBA_PC_UNCACHED(reg[REG_PC]))
           return cycles_remaining > 0 ? (u32)cycles_remaining : update_gba(cycles_remaining);
 
        /* Process cheats if we are about to execute the cheat hook */
@@ -3126,7 +3141,9 @@ thumb_loop:
        using_instruction(thumb);
        check_pc_region();
        reg[REG_PC] &= ~0x01;
-       opcode = readaddress16(pc_address_block, (reg[REG_PC] & 0x7FFF));
+       opcode = pc_address_block
+                ? readaddress16(pc_address_block, (reg[REG_PC] & 0x7FFF))
+                : read_memory16(reg[REG_PC]);
 
        #ifdef TRACE_INSTRUCTIONS
        interp_trace_instruction(reg[REG_PC], 0);
@@ -3609,7 +3626,7 @@ u32 function_cc execute_arm_vram(u32 cycles)
   u32 result;
   if ((s32)cycles <= 0) {
     result = update_gba(cycles);
-    if (!completed_frame(result) && (reg[REG_PC] >> 24) == 0x06)
+    if (!completed_frame(result) && GBA_PC_UNCACHED(reg[REG_PC]))
       result = execute_arm_internal(cycles_to_run(result), true);
   } else {
     result = execute_arm_internal(cycles, true);

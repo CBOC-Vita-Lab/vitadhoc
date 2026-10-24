@@ -17,12 +17,12 @@ Use GNU make and VitaSDK. The checked local toolchain is VitaSDK
 ```
 
 Obtain SDK tools from [VitaSDK](https://vitasdk.org/), not this repository.
-The SDK's [build lock](notices/VitaSDK-build-lock.json) records its complete
+The SDK's [build lock](../notices/VitaSDK-build-lock.json) records its complete
 source pins. Runtime notice sources are the pinned
 [VitaSDK headers](https://github.com/vitasdk/vita-headers/blob/e66ebe90b73d1fa4cce005a5b2072cec27322544/LICENSE.md),
 [newlib](https://github.com/vitasdk/newlib/blob/2e428297c0b6aefd830c5a75a7daa7e774562a42/COPYING.NEWLIB)
 and [GCC 15.2.0 exception](https://github.com/gcc-mirror/gcc/blob/releases/gcc-15.2.0/COPYING.RUNTIME).
-The full dependency notices and pins are in [Third-Party Notices](notices/THIRD-PARTY.md)
+The full dependency notices and pins are in [Third-Party Notices](../notices/THIRD-PARTY.md)
 and each vendored component's provenance file. The seven libvita2d shader
 objects are retained licensed upstream inputs with `.cg` source alongside them;
 they are not a bundled proprietary shader compiler.
@@ -40,25 +40,9 @@ Output: `gpsp/vita/VitAdhoc.vpk`; intermediate files are in
 version 4.1.1 / SFO 04.11, ATTRIBUTE2 12. The shared package must use empty
 `BIOS=`. Do not add a private BIOS to a public build.
 
-`GIT_VERSION` defaults to the current source revision. A receipt must record
-an explicit override if one is used; do not represent a custom label as an
-upstream commit. Two full, network-isolated Linux x86_64 builds succeeded
-with the pinned SDK: one uses `GIT_VERSION=build21-clean1` to distinguish it,
-and the other uses the original `GIT_VERSION=5f0fa23` label for comparison.
-Neither run accessed a Vita. The BIOS-free repack is separately identified,
-not called a clean build.
-
-| Candidate | Executable SHA-256 |
-| --- | --- |
-| Original build-21 runtime, BIOS-free repack | `d7b06b6cbb6242c702c27961878fc7deb4a9add0beb4090fb0798f88747ca016` |
-| Independent `build21-clean1` build | `03f8cc382e634edd47d75f98a4efa8b7bfa90403fbddf565f4e47090f1ab808a` |
-| Independent build with original `5f0fa23` label | `0b21c419ae0611c93578a9edff65bed0e06a905a86469e663f1f55620ac9bf57` |
-
-The original-label rebuild matches all 5,463,744 decoded runtime bytes except
-four bytes in module-info metadata. The SELF headers also differ, so this is
-not a byte-identical reproduction. The other build has a different version
-label. Archive/runtime privacy checks pass, but no candidate has final
-publishing hardware acceptance; do not transfer tests between them.
+`GIT_VERSION` defaults to the current source revision; it is the label the
+app writes in its log. Version 1.0 was built with
+`GIT_VERSION=library-r7-20261022` ([Source record](SOURCE.md) has its hashes).
 
 Committed LiveArea images allow a normal build without Python graphics tools.
 To regenerate them, install Pillow, CairoSVG and their normal dependencies,
@@ -69,15 +53,36 @@ record tool versions before claiming byte-for-byte artwork reproduction.
 ## Tests
 
 ```sh
+python3 -m unittest discover -s tests                     # download checker
+python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py
 make -C gpsp/vita/tests/gamedb test
-python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py -v
+make -C gpsp/vita/hostcore ARCH=x86 -j8                   # the app, built for Linux
+python3 gpsp/vita/hostcore/app_tests.py x86 --keep        # whole-app tests
 ```
 
-The package tests use the separately assembled build-21 repack. Set
-`RELEASE_VPK=/absolute/path/to/VitAdhoc-build21.vpk` when it is not in the
-private publishing workspace. They deliberately fail if no package exists;
-they do not silently skip binary checks. Its expected original-runtime hash
-is recorded in the test.
+The package test checks `VitAdhoc.vpk` at the repository root (or
+`RELEASE_VPK=/path/to/VitAdhoc.vpk`): no BIOS or games inside, the notices
+byte-identical to this tree, and the expected runtime hash.
+
+The whole-app tests run the real app on Linux with a scripted pad, touch and
+keyboard, and check its log and screenshots. They need the test cartridges:
+`make -C gpsp/vita/hostcore/testrom` (arm-none-eabi tools). The RetroAchievements
+test runs against a stand-in server on the loopback.
+
+Unit tests for the 1.0 features, each with `-fsanitize=address,undefined`,
+from `gpsp/`:
+
+```sh
+gcc -std=gnu99 -DINLINE=inline -ffunction-sections -fdata-sections \
+    -Ilibretro/libretro-common/include -Ifrontend-common -o /tmp/t_cart \
+    tools/tests/test_cart_sensors.c savestate.c -Wl,--gc-sections && /tmp/t_cart
+gcc -std=gnu99 -Ifrontend-common -o /tmp/t_patch tools/tests/test_rom_patch.c \
+    vita/rom_patch.c frontend-common/fe_util.c && /tmp/t_patch
+gcc -std=gnu99 -Ivita -Ifrontend-common -o /tmp/t_log \
+    vita/tests/playlog/test_play_log.c vita/play_log.c && /tmp/t_log
+(cd gbcore && gcc -std=gnu11 -fgnu89-inline -fno-strict-aliasing -I. -I../frontend-common \
+    -o /tmp/t_mbc7 tests/mbc7.c gbcore_tgbdual.c tgbdual/*.c && /tmp/t_mbc7)
+```
 
 The existing cheat suite's full supported command is:
 
@@ -92,23 +97,11 @@ cartridge. RGBDS 0.8.0 was built from its official archive, SHA-256
 `7097e713384376c324bb001707b4d3924dc7051358a54069eb0bfd424ebe3c4e`.
 It is not a native Apple Silicon test command.
 
-Both architectures passed fresh publishing-workspace runs: 33,202 engine,
-36,418 list/database and 202 end-to-end checks per architecture, with no
-failed checks. The final runs were serialized to avoid shared fixture writes.
-The ARM binaries were run by native ARM64-hosted qemu-arm; nested x86
-translation incorrectly lost arguments in the ARM list test, so that failed
-environment run is not counted as passed. RGBDS was built without LTO after
-the host compiler's LTO jobserver crashed; this affects the test assembler,
-not the Vita app.
-
-The Vita-only cheat compilation also passed, with an existing unused-variable
-warning in `gba_memory.c`. These are source tests, not physical-Vita gameplay
-acceptance. Generated test ROMs are not included in Git or the player VPK.
-
 ## Package Review
 
 Check safe/unique archive paths, `GBAD00001`, no original BIOS/ROM/save, the
 expected executable hash, all readable notices, fonts/art/database provenance
-and corresponding source. Keep VPKs/install ZIPs in Releases, not source
-history. Final acceptance must test the exact chosen package on physical Vita;
+and corresponding source. The release VPK sits at the repository root as
+`VitAdhoc.vpk`, beside the source it was built from; `SHA256SUMS` lists every
+file (`python3 tools/update-checksums.py`). Final acceptance must test the exact chosen package on physical Vita;
 a build, archive scan or emulator run does not replace that check.

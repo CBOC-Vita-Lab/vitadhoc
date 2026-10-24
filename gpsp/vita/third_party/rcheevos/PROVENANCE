@@ -1,0 +1,13 @@
+rcheevos -- the RetroAchievements runtime (MIT, LICENSE beside this file).
+
+Source:  https://github.com/RetroAchievements/rcheevos
+Release: v12.5.0 (2026-09-13), commit 1433173220a7eaede6a9ed7a18e94117be1821e0
+Taken:   2026-10-23, unchanged.
+
+The files here are the release's, as they are, minus what VitAdhoc does not
+build: the editor and RAIntegration APIs, the disc/zip/encrypted hashers
+(a GB/GBC/GBA game's hash is the MD5 of its file, made by ra_vita.c with
+md5.c), and the tests, the standalone validator tool and the project files.
+
+Built with RC_NO_THREADS: the client is only ever called from the game's
+thread (vita/ra_vita.c delivers the server's answers there).

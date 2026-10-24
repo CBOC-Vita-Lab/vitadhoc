@@ -418,6 +418,9 @@ const char *fe_host_gb_palette_name(int id);
  * fe_host_sram_service() to finish over the following frames (ADR-0020).
  * Returns 1 if a write was started/done, 0 if clean, -1 on I/O error. */
 int fe_host_sram_flush(int force_write);
+/* How many battery-save writes have failed to reach the card since boot
+ * (only ever grows): the platform tells the player when it does. */
+unsigned fe_host_save_failures(void);
 
 /* Advance an in-flight .sav write by a few 4 KiB blocks, bounded by a
  * wall-clock budget (ADR-0020).  Called automatically from
@@ -507,6 +510,10 @@ uint32_t fe_host_sram_crc_now(void);
  * EWRAM 0x02000000/0x40000), with retro_get_memory_data(SYSTEM_RAM) as the
  * EWRAM fallback. Returns 0 on success, -1 if unmapped. */
 int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len);
+/* RetroAchievements' view of the running machine (rcheevos' memory map of
+ * the console): the bytes copied (0 = past the map); what the machine
+ * does not have reads 0. */
+uint32_t fe_host_ra_read(uint32_t addr, uint8_t *out, uint32_t len);
 
 /* ADR-0079: the write twin.  Same descriptor mapping and bounds rules as
  * the read; returns 0 only if every byte landed.  Exists for exactly one
@@ -521,6 +528,30 @@ int fe_host_mem_write(uint32_t gba_addr, const void *in, unsigned len);
  * invisible to the harness, which injects. */
 uint32_t fe_host_input_mask(void);
 void fe_host_input_inject(uint32_t joypad_mask);
+
+/* SENSOR CARTRIDGES.  Which sensors the loaded game has: GBA cartridges
+ * FE_SENSOR_SOLAR / _GYRO / _TILT (gba_memory.h GPSP_SENSOR_*), the Game
+ * Boy's MBC7 accelerometer FE_SENSOR_MBC7; 0 for every other game and in a
+ * link session.  fe_host_sensor_set publishes the reading for the next
+ * frames, in the cartridge's units (fe_sensor.h): the GBA kinds the
+ * fe_sensor_solar / _gyro / _tilt value, MBC7 fe_sensor_mbc7's.  A GBA
+ * frame keeps the reading it started with, and a rewound frame gets back
+ * the one it had. */
+#define FE_SENSOR_SOLAR 1u
+#define FE_SENSOR_GYRO  2u
+#define FE_SENSOR_TILT  4u
+#define FE_SENSOR_MBC7  8u
+unsigned fe_host_sensor_kinds(void);
+void fe_host_sensor_set(uint32_t reading);
+
+/* THE SUPER GAME BOY'S BORDER (gbcore.h gbcore_sgb_border): 0 = none (no GB
+ * machine, a link session, not running as a Super Game Boy, nothing sent
+ * yet), else a number that changes when it is drawn again, with *pixels the
+ * 256x224 RGB565 picture (the game's at 48, 40).  _save / _load: the border
+ * as data, kept by the platform for the game's next start. */
+unsigned fe_host_sgb_border(const uint16_t **pixels);
+size_t   fe_host_sgb_border_save(void *buf, size_t cap);
+int      fe_host_sgb_border_load(const void *buf, size_t n);
 
 /* Netpacket interface the core registered via env call 78 during boot,
  * or NULL. Points at a struct retro_netpacket_callback (returned as void*

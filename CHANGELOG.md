@@ -1,46 +1,69 @@
-# Changes
+# What's New
 
-## 2026-10-19: GBAdhoc Permission
+## Version 1.0 — October 23, 2026
 
-- Recorded the maintainer's explicit GPL-2.0-or-later permission for their
-  contributions, with the original issue link and upstream credit.
-- Kept the Linux font and PSP Media Engine caveats separate from that grant.
-- Updated the release notes without relicensing unrelated components or
-  changing the runtime. Matching covers source and final package review
-  remain outstanding; the repository stays a private source preview.
+The big one: seven new features, and a library that feels like a console's own.
 
-## 2026-10-18: Simpler Setup
+**New ways to play**
+- **Continue where you left off.** Leaving a game keeps the moment you left it.
+  The point is refreshed every two minutes and right after the game saves, so
+  even a Vita closed from LiveArea continues. On the home screen, Cross
+  continues and Up starts from your battery save instead.
+- **RetroAchievements.** Sign in from Settings > RetroAchievements; your
+  password is sent once and never stored. Achievements unlock as you play, are
+  listed in the in-game Settings, and are sent again later if you were
+  offline. Hardcore mode turns off state loading, rewind and cheats.
+- **Tilt, turn and sunlight cartridges.** WarioWare: Twisted! (gyro), Yoshi
+  Topsy-Turvy and Koro Koro Puzzle (tilt), Kirby Tilt 'n' Tumble (GBC tilt) and
+  Boktai 1–3 (sunlight). Settings > This game: tilt the Vita or use the right
+  stick, strength, direction, set level, and how much sun Boktai sees.
+- **ROM hacks and translations.** `Game.ips`, `Game.bps` or `Game.ups` next to
+  `Game.gba` is applied as the game starts. Saves keep the original's name, and
+  a patch made for another version of the game is refused.
+- **Super Game Boy borders**, kept for next time. Settings > Display > SGB
+  border turns them off.
 
-- Shortened the front page and quick start; kept technical notes separate.
-- Included the complete source and linked guides with the existing private
-  VPK, open BIOS, databases, artwork and notices. No runtime change.
+**Your library**
+- **Recent tab and play time.** Select on the home screen cycles All games,
+  Starred and Recent. Each game shows when you last played and for how long.
+- **Game order:** by name, last played or most played (Settings > Library).
+- **Find** matches every word in any order and ignores accents and punctuation:
+  "zelda minish" finds The Minish Cap.
+- **A look for every game:** Settings > This game > Display settings.
+- **Faster browsing:** one card scan fills all three console tabs, and box art,
+  descriptions and previews load in the background.
 
-## 2026-10-18: Source Handoff
+**Better picture**
+- **Image quality: Original** draws crisp, even pixels at any size, including
+  the full-height fit.
+- **Smoother frames** with xBRZ and the wide view: each picture reaches the
+  screen sooner, and smoothing works less on fades and cut scenes.
 
-- Added the source/export identity and a compact map of the complete guides.
-- Rechecked the upstream license question: no reply as of this date.
-- No source/runtime replacement, install or public-release change.
+**Safer saves**
+- Game Boy and Game Boy Color saves reach the memory card within about two
+  seconds.
+- A save that can't be written (a full card) now tells you so.
+- Favourites, two-player saves and shared saves are written so that an
+  interrupted write can't lose them.
 
-## Build 21 Publishing Candidate
+**Fixes**
+- **Picking a game starts it straight away**, even before its background art
+  has loaded. Before, the press could wait several seconds with no sign it
+  was taken.
+- **Games that froze on a white screen at start now boot**, such as copies of
+  Pokémon Pinball: Ruby & Sapphire with an added intro. Two things the real
+  console does, and those intros rely on, now work the same way.
 
-- Scan existing external game folders, including common RetroFlow roots.
-- Support up to eight explicit `extra_roms` roots, or disable external scans.
-- Ignore hidden files and case-equivalent duplicate roots; cap each console
-  list at 2,048 games, retaining the primary root first.
-- Keep saves/states beside external ROMs; favourites distinguish full paths.
-- Shared package removes the original Nintendo BIOS while retaining the
-  original build-21 executable and its built-in open replacement.
-- Add complete readable font, dependency and database notices, plus Wikipedia
-  attribution. Correct the stale LiveArea generation target in the source copy.
-- Separate concise player guides from technical/build documentation.
-- Include the full CPU xBRZ notice and linked SDK runtime notices in the
-  VPK and install ZIP, with the SDK source lock. Keep the existing full
-  libvita2d/stb notices and verify their bytes against the vendored originals.
-  This notice-only repack changes no executable, game data or app resource.
+**Under the hood**
+- Many fixes from independent code reviews, and a much larger automated test
+  suite. Engineering details are in
+  [Technical notes](docs/TECHNICAL.md#version-10-changes).
 
-This candidate is not tagged as a finished public release. The selected
-original executable has passed an in-place Vita update, launch and game-browser
-check with external-folder scanning. Fresh installation, open-BIOS fallback,
-gameplay and save/load remain untested on this package. The independent build
-succeeds but is not byte-identical. Earlier build-20 results remain historical
-evidence, not acceptance of build 21.
+## Earlier versions
+
+- **Build 21 (October 2026):** finds games in other folders, including
+  `ux0:ROMS/` and RetroFlow's, without moving them; complete licence notices;
+  the GBAdhoc maintainer's licence permission recorded.
+- **Build 20 and before:** the native Vita app with its home screen, automatic
+  box art, previews, wide view, xBRZ, rewind, turbo buttons, cheats, Mystery
+  Gift and link play between two Vitas or two players on one Vita.

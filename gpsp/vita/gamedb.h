@@ -30,6 +30,11 @@ extern "C" {
 
 /* Read the file.  Returns the number of records (0: none there). */
 int  gamedb_open(const char *path);
+/* Remember the file; the first lookup (on whichever thread) reads it, and
+ * lookups made meanwhile wait for that read.  0 = remembered. */
+int  gamedb_open_later(const char *path);
+/* Records read, or -1 while the file has not been read yet. */
+int  gamedb_records(void);
 void gamedb_close(void);
 
 /* The value of `key`: 1 and a copy in out (cut to cap), or 0. */
@@ -73,6 +78,9 @@ int  gamedb_name_by_header(const char *path, char *out, size_t cap);
  * be NULL) is looked at between pieces: nonzero stops it (-1). */
 int  gamedb_file_crc(const char *path, uint32_t *crc,
                      volatile const int *abort);
+/* Worker cancellation predicate, tested before each bounded file chunk. */
+int  gamedb_file_crc_cancel(const char *path, uint32_t *crc,
+                            int (*abort)(void));
 
 #ifdef __cplusplus
 }

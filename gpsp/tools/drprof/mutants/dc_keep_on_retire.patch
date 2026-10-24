@@ -1,0 +1,12 @@
+# MUTANT dc_keep_on_retire -- a deliberately broken twin build (tools/drprof/dr_corpus.py
+# mutants).  Never applied to a real build; dr_build.sh DRPROF_PATCH only.
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -5030,7 +5030,6 @@
+ #ifdef DISPATCH_CACHE
+   /* A retired block's stable thunk jumps straight back into
+    * mips_indirect_branch_*: a surviving {pc -> thunk} entry would loop. */
+-  dispatch_cache_clear();
+ #endif
+ 
+   if (smc_partial_wrap_live ||

@@ -1,0 +1,21 @@
+# setup: in-process return through the real browser.  env: THEME SHELL_UI CONSOLE SCRIPT CYCLES FRAMES AUTOEXIT EXTRA
+cp "$FX/emerald.gba" "$GAME/roms/Pokemon - Emerald Version.gba"
+cp "$FX/aw2.gba" "$GAME/roms/Advance Wars 2.gba"
+cp "$FX/emerald_3000.sav" "$GAME/roms/Pokemon - Emerald Version.sav"
+cp "$FX/aw2.sav" "$GAME/roms/Advance Wars 2.sav"
+cp ~/inproc-fx/red.gb "$GAME/roms/Pokemon Red.gb"
+cp ~/inproc-fx/crystal.gbc "$GAME/roms/Pokemon Crystal.gbc"
+printf '%b\n' "${SCRIPT:-}" > "$GAME/bscript.txt"
+{
+  echo "browser = 1"
+  echo "heartbeat_s = 5"
+  echo "log_input = 0"
+  echo "ui_theme_black = 0"
+  echo "ui_browser_script = bscript.txt"
+  echo "inproc_cycles = ${CYCLES:-2}"
+  echo "inproc_frames = ${FRAMES:-200}"
+  echo "autoexit_frames = ${AUTOEXIT:-300}"
+  [ -n "${EXTRA:-}" ] && printf '%b\n' "$EXTRA"
+} > "$GAME/.gpsp-harness.ini"
+printf 'group = GPSP07\ntheme = %s\nui_shell = %s\nconsole = %s\n' "${THEME:-0}" "${SHELL_UI:-1}" "${CONSOLE:-0}" > "$GAME/config.ini"
+true

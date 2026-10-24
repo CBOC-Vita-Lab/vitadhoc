@@ -1,0 +1,11 @@
+# The per-game override decides what Host does: no chooser for Emerald set
+# to Link Cable, an adapter room for AW2 set to Wireless Adapter.
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++12 dump x-override-wireless
++4 press CROSS
++2 wait net_up
++40 dump x-override-hosting
++60 exit 0

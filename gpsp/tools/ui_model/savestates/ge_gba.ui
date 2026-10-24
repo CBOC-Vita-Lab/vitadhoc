@@ -1,0 +1,22 @@
+# GE walk of the Save States page, GBA (Fable's A-split scenes): the design's
+# card (slots 1-3 with .shot, 4 empty, 5 a 3.1 state) and backdrop.
++150 menu
++12 press DOWN
++12 dump menu
++2 press CROSS
++4 press DOWN
++12 dump filled
++2 press SQUARE
++4 dump overwrite
++2 press CIRCLE
++4 press TRIANGLE
++4 dump delete
++2 press CIRCLE
++4 press DOWN
++2 dump dwell
++12 dump dwell-landed
++2 press DOWN
++12 dump empty
++2 press DOWN
++12 dump old
++4 exit 0

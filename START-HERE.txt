@@ -1,0 +1,40 @@
+VitAdhoc 1.0
+Game Boy Advance, Game Boy and Game Boy Color for PS Vita
+
+Thanks for trying VitAdhoc! Here's everything you need to get playing.
+
+
+What You Need
+- A PS Vita with HENkaku or Enso, and VitaShell
+- Your own .gba, .gb or .gbc games
+- No BIOS needed: an open one is built in
+
+
+Easy Install
+Open the CBOC Vita Installer on your computer and drop VitAdhoc.vpk (or this
+whole ZIP) onto it. Add your games if you like. It finds your Vita and does
+the rest.
+https://github.com/CBOC-Vita-Lab/vita-installer/releases
+
+
+Manual Install
+1. Copy VitAdhoc.vpk to your Vita with VitaShell (USB or FTP) and install it.
+2. Start VitAdhoc once. It creates ux0:data/GBAdhoc/
+3. Put your games in ux0:data/GBAdhoc/roms/
+   (games already in ux0:ROMS/ or RetroFlow's folders are found by themselves)
+4. Start VitAdhoc again and pick a game.
+
+
+Updating
+Just install the new VPK over the old one. Your games, saves, states and
+settings stay where they are.
+
+
+Have Fun
+- Hold Start + Select (or tap the screen) for the menu.
+- Press Start on the home screen for Settings, including RetroAchievements.
+- Controls:       CONTROLS.md
+- Playing with a friend: PLAY-TOGETHER.md
+- Full install guide:    INSTALL.md
+- Known issues:          KNOWN-ISSUES.md
+- https://github.com/CBOC-Vita-Lab/vitadhoc

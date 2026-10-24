@@ -1,0 +1,25 @@
+﻿* text=auto
+*.sh text eol=lf
+Makefile text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+
+*.inputs text eol=lf
+
+bios/source/*.c -text
+bios/source/*.h -text
+*.patch text eol=lf
+*.py text eol=lf
+
+# Raw textures and XMB video: never text.
+*.565 binary
+*.pmf binary
+
+# The two-PPSSPP link-menu rig: sourced by bash in WSL (docs/GBA-LINK-UI.md).
+tools/gbamirror/linkmenu/*.spec text eol=lf
+tools/gbamirror/linkmenu/*.ui text eol=lf
+tools/ui_model/savestates/*.spec text eol=lf
+tools/ui_model/savestates/*.ui text eol=lf
+tools/ui_model/savestates/*.sh text eol=lf
+tools/e2e/goldens/*.hashes text eol=lf

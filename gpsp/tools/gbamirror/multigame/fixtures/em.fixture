@@ -1,0 +1,31 @@
+# Pokemon Emerald (USA, Europe) -- Pokemon Center 2F Cable Club > TRADE
+# CENTER, a one-for-one trade of party slot 0 (the Gen 3 cable trade: the
+# same link layer as Ruby/Sapphire).  STAND-IN for the requested Ruby<->Ruby
+# fixture: no Ruby battery on this PC reaches the Cable Club (it needs the
+# Pokedex and two Pokemon), while the owner's two Emerald rig saves (the
+# harness-kit golden saves, different parties, parked at Mauville PC 2F) do.
+# The script is the wireless Trade Center rig's (testdata/fixtures/
+# emerald_tradecenter_*.inputs) adapted to the cable: same RAM gates
+# (pret/pokeemerald symbols), no wireless adapter, so the attendant opens the
+# CABLE club.  Oracle: the two party-slot-0 personalities swap.
+NAME=em
+TITLE="Pokemon - Emerald Version (USA, Europe)"
+ROM=em.gba
+ROM_MD5=605b89b67018abcea91e693a4dd25be3
+HOST_SAVE=em-host.sav
+HOST_SAVE_MD5=2e3e2df2d42f0962d826d9bbf5754f50
+JOIN_SAVE=em-join.sav
+JOIN_SAVE_MD5=0476681cdd918b960b713c64de194151
+HOST_STATE=em.st0
+HOST_STATE_MD5=44c83c8522f12d992ab1a44ec090ca79
+JOIN_STATE=em.st0
+JOIN_STATE_MD5=44c83c8522f12d992ab1a44ec090ca79
+HOST_SCRIPT=em_host.txt
+JOIN_SCRIPT=em_join.txt
+MARKS="overworld_ok entry_saved in_trade_center seated trade_screen trade_anim post_save trade_done"
+SWAP="pre0 post0"
+FRAMES=9000
+GOLDEN_FRAME=5700
+GOLDEN_S0="r=cb572c84 i=4a5137a2 e=9a677360 io=9a7e02cc p=e6a1d1c5 o=5d6d3f85 v=78692c73"
+GOLDEN_S1="r=cb572c84 i=d4927c04 e=b8ba7dbd io=e73aa97d p=e6a1d1c5 o=8dd31c07 v=bb418758"
+SIO="multi-player (16-bit) for the Cable Club; normal 32-bit for the wireless-adapter probe at boot (944 transfers, IsWirelessAdapterConnected -> no adapter)"

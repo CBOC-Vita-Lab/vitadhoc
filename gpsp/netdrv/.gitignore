@@ -1,0 +1,12 @@
+# host test builds of the Vita transports (make test-lan / test-igd)
+obj-*/
+test_lan
+test_lan-*
+test_igd
+test_igd-*
+sesslan
+sesslan-obj/
+test_vadhoc
+test_vadhoc-*
+__pycache__/
+obj-vita/

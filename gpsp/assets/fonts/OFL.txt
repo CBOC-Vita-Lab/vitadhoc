@@ -1,0 +1,10 @@
+Inter is licensed under the SIL Open Font License, Version 1.1.
+Copyright (c) 2016-present The Inter Project Authors
+https://github.com/rsms/inter
+Full licence text: https://openfontlicense.org/open-font-license-official-text/
+
+The Vita executable embeds Inter Regular/SemiBold and Outfit Medium/SemiBold
+TTFs through vita/video_vita_fonts.S. The legacy PSP font atlas is generated
+by tools/bake_font.py. Outfit Bold is used to render the LiveArea wordmark.
+Complete Inter and Outfit license notices are in the root licenses/ folder
+and included with the binary distribution.

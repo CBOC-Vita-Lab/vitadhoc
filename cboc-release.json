@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "vitadhoc-v1.0",
+  "titleId": "GBAD00001",
+  "displayName": "VitAdhoc",
+  "version": "1.0",
+  "minInstallerVersion": "0.1.0",
+  "visibility": "public",
+  "releaseState": "ready",
+  "recipeId": "vitadhoc",
+  "package": {
+    "path": "VitAdhoc.vpk",
+    "sha256": "ba45181433f9d250f07e2316dea60e6acaa74010e53ae2c28b16c3fc6124baa4",
+    "runtimeSha256": "9069471e980c5b0616b48048dcad7c0446b3070ee63033bbcb1b528dd19bb9e8"
+  },
+  "appUpdateFrom": [],
+  "requiredInputs": [],
+  "optionalInputs": [
+    { "id": "roms", "label": "Your GB, GBC or GBA games", "kind": "roms" },
+    { "id": "bios", "label": "Your GBA BIOS", "kind": "gba-bios" }
+  ],
+  "destinations": { "data": "ux0:data/GBAdhoc/roms" },
+  "protectedPaths": [
+    "ux0:data/GBAdhoc/config.ini",
+    "ux0:data/GBAdhoc/vita.ini",
+    "ux0:data/GBAdhoc/boxart",
+    "ux0:data/GBAdhoc/titles",
+    "ux0:data/GBAdhoc/hero",
+    "ux0:data/GBAdhoc/clips",
+    "ux0:data/GBAdhoc/cheats",
+    "ux0:data/GBAdhoc/screenshots",
+    "ux0:data/GBAdhoc/games",
+    "ux0:data/GBAdhoc/borders",
+    "ux0:data/GBAdhoc/playlog.txt",
+    "ux0:data/GBAdhoc/retroachievements.txt"
+  ],
+  "prerequisites": [],
+  "limits": { "maxFiles": 10000, "maxFileBytes": 1073741824, "maxTotalBytes": 34359738368 }
+}

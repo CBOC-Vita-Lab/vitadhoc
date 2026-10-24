@@ -1,0 +1,31 @@
+# Mario Golf: Advance Tour -- Multiplayer > With Game Link (multigame fixture mg)
+# (spec for pair_script.py: H = host only, J = join only)
+wait 450
+press START 4
+wait 850
+press START 4
+wait 600
+# main menu: Story -> Quick Game -> Multiplayer
+press RIGHT 4
+wait 40
+press RIGHT 4
+wait 40
+press A 4
+wait 300
+# Without Game Link -> With Game Link
+press RIGHT 4
+wait 40
+press A 4
+evt link_screen
+wait 600
+dump
+# "Multiple Game Paks: please connect the Game Link cable" -- both press A
+# and wait; on the mirror the screen never changes (docs 16: the child
+# echoes the parent's words and never starts its own sync)
+press A 4
+wait 600
+dump
+press A 4
+wait 1200
+dump
+evt link_wait_done

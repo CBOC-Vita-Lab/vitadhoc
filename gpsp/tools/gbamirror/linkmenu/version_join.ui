@@ -1,0 +1,15 @@
+# Join a Link Cable room whose host speaks another link protocol (an older
+# GBAdhoc): no WELCOME while the room's radio cell is there -> the version
+# failure on the LINKING screen.
++60 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press DOWN
++4 press CROSS
++40 dump x-version-scan
++4 press CROSS
++1 wait failscreen
++10 dump x-version-fail
++4 press CIRCLE
++20 exit 0

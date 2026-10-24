@@ -1,0 +1,14 @@
+# MUTANT dc_keep_on_ram_flush -- a deliberately broken twin build (tools/drprof/dr_corpus.py
+# mutants).  Never applied to a real build; dr_build.sh DRPROF_PATCH only.
+--- a/cpu_threaded.c
++++ b/cpu_threaded.c
+@@ -4871,9 +4871,6 @@
+ #ifdef DRPROF_TWIN
+   drprof_forget_ram();
+ #endif
+-#ifdef DISPATCH_CACHE
+-  dispatch_cache_clear();
+-#endif
+   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
+   flush_ram_count++;
+   flush_ram_total++;

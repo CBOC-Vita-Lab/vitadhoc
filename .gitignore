@@ -1,0 +1,22 @@
+**/build/
+**/out/
+**/__pycache__/
+*.pyc
+*.vpk
+*.elf
+*.velf
+*.map
+*.log
+*.sav
+*.srm
+*.st[0-9]
+*.gba
+*.gb
+*.gbc
+**/gba_bios.bin
+gpsp/vita/tests/gamedb/gamedb_test
+gpsp/vita/tests/gamedb/keys.txt
+.DS_Store
+
+# the release package, kept beside its source
+!/VitAdhoc.vpk

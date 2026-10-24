@@ -1,0 +1,15 @@
+# GE comparison walk (docs/GBA-LINK-UI.md): one console, the design's
+# backdrop injected (ui_backdrop), theme 0.
+N=1
+D=$(dirname "$SPEC")
+I1_EB=${EB64:-/path/to/GBAdhoc/builds/gbalink-ui-out/u1-h64}
+I1_ROM=$HOME/gbamulti/roms/em.gba
+I1_ROMNAME="Pokemon - Emerald Version.gba"
+I1_STATE=$HOME/gbamulti/fx/em.st0
+I1_SAVE=$HOME/gbamulti/fx/em-host.sav
+I1_THEME=0
+I1_CONSOLE=0
+I1_BACKDROP=${FX:-/path/to/GBAdhoc/builds/gbalink-ui-out/fx}/emerald.565
+I1_UI=$D/ge_em.ui
+I1_CFG='standby = 0\nfilter = 2'
+TIMEOUT_S=300

@@ -1,0 +1,1172 @@
+/* gameplaySP
+ *
+ * Copyright (C) 2006 Exophase <exophase@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
+
+
+#include "common.h"
+
+direct_sound_struct direct_sound_channel[2];
+gbc_sound_struct gbc_sound_channel[4];
+
+u32 sound_frequency = GBA_SOUND_FREQUENCY;
+u32 sound_freq_bits = 16;
+
+u32 sound_on;
+#if defined(GBA_LINK) || defined(REWIND)
+u32 sound_synth_off;   /* sound.h */
+#endif
+/* Mix bus. Accumulates all six channels at full 16-bit output scale
+ * (PSG full swing +/-8192 per channel, direct sound +/-32768 per channel;
+ * worst-case |sum| = 4*8192 + 2*32768 = 98304, so s32 entries are required).
+ * Historically this was an s16 buffer at 12-bit scale with a x16 shift at
+ * readout, which quantized every channel to a 12-bit grid before mixing and
+ * left the bottom 4 bits of the libretro output permanently zero. */
+static s32 sound_buffer[BUFFER_SIZE];
+static u32 sound_buffer_base;
+
+static fixed16_16 gbc_sound_tick_step;
+
+#ifdef LINKBENCH
+/* tools/linkbench only (never a PSP build): DirectSound FIFO bytes queued per
+ * channel, reset by the bench every frame -- the audio a thin client would
+ * need if it mixed the GBA's own sample stream itself. */
+u32 lb_fifo_bytes[2];
+#endif
+
+/* Queue 4 samples to the top of the DS FIFO, wrap around circularly */
+
+void sound_timer_queue32(u32 channel, u32 value)
+{
+  direct_sound_struct *ds = &direct_sound_channel[channel];
+
+#ifdef LINKBENCH
+  lb_fifo_bytes[channel & 1] += 4;
+#endif
+
+  ds->fifo[ds->fifo_top++] = value & 0xFF;
+  ds->fifo_top &= 31;
+
+  ds->fifo[ds->fifo_top++] = (value >> 8) & 0xFF;
+  ds->fifo_top &= 31;
+
+  ds->fifo[ds->fifo_top++] = (value >> 16) & 0xFF;
+  ds->fifo_top &= 31;
+
+  ds->fifo[ds->fifo_top++] = (value >> 24);
+  ds->fifo_top &= 31;
+}
+
+
+unsigned sound_timer(fixed8_24 frequency_step, u32 channel)
+{
+  DRPH_SCOPE(DRPH_SOUND);
+  int ret = 0;
+  u32 sample_status = DIRECT_SOUND_INACTIVE;
+  direct_sound_struct *ds = &direct_sound_channel[channel];
+
+  /* Older or damaged states can carry a zero step, and it cannot make the
+   * accumulator below progress.  Disable this sample update safely instead
+   * of hanging the emulation thread in an infinite loop. */
+  if (!frequency_step)
+    return 0;
+
+  fixed8_24 fifo_fractional = ds->fifo_fractional;
+  u32 buffer_index = ds->buffer_index;
+  s32 current_sample, next_sample;
+
+  /* 8-bit FIFO samples placed at full 16-bit scale; x256 is exact, so no
+   * precision is created or lost here, but the interpolator below now
+   * resolves 4 more fractional bits than it did at the old x16 scale. */
+  current_sample = ds->fifo[ds->fifo_base] * 256;
+  ds->fifo_base = (ds->fifo_base + 1) % 32;
+  next_sample = ds->fifo[ds->fifo_base] * 256;
+
+  if(sound_on == 1)
+  {
+    current_sample >>= ds->volume_halve;
+    next_sample >>= ds->volume_halve;
+
+    sample_status = ds->status;
+  }
+#if defined(GBA_LINK) || defined(REWIND)
+  /* Headless: advance the phase and ring position exactly as the silent
+   * path does (the same quotient), write nothing.  The FIFO pop above and
+   * the DMA refill below are unchanged. */
+  if (sound_synth_off)
+    sample_status = DIRECT_SOUND_INACTIVE;
+#endif
+
+  // Unqueue 1 sample from the base of the DS FIFO and place it on the audio
+  // buffer for as many samples as necessary. If the DS FIFO is 16 bytes or
+  // smaller and if DMA is enabled for the sound channel initiate a DMA transfer
+  // to the DS FIFO.
+
+  switch(sample_status)
+  {
+     case DIRECT_SOUND_INACTIVE:
+        /* render samples NULL */
+        /* For a low timer step, a silent channel may span thousands of
+         * output samples between timer events.  No samples are written in
+         * this case, so advance the phase and ring position in one exact
+         * quotient instead of iterating once per silent sample.  The guards
+         * ensure at least 255 iterations would otherwise be required; for
+         * short spans the simple loop is cheaper than a 64-bit divide. */
+        if(frequency_step <= 0x10000 &&
+           fifo_fractional < frequency_step)
+        {
+           /* With phase < step <= 0x10000, the rounded numerator, product,
+            * and doubled ring advance all fit in u32; avoid a software 64-bit
+            * divide on the PSP's 32-bit CPU. */
+           u32 samples = (0x1000000u - fifo_fractional + frequency_step - 1) /
+                         frequency_step;
+           fifo_fractional += samples * frequency_step;
+           buffer_index = (buffer_index + samples * 2) & BUFFER_SIZE_MASK;
+           break;
+        }
+        while(fifo_fractional <= 0xFFFFFF)
+        {
+           fifo_fractional += frequency_step;
+           buffer_index = (buffer_index + 2) % BUFFER_SIZE;
+        }
+        break;
+
+     case DIRECT_SOUND_RIGHT:
+        /* render samples RIGHT */
+        while(fifo_fractional <= 0xFFFFFF)
+        {
+           /* diff can reach +/-65280 and the fraction 65535, so the
+            * product needs 64 bits (single smull/mulh on 32-bit targets). */
+           s32 dest_sample = current_sample + (s32)
+              ((((s64)(next_sample - current_sample) * (fifo_fractional >> 8)) + (1 << 15)) >> 16);
+
+           sound_buffer[buffer_index + 1]     += dest_sample;
+
+           fifo_fractional += frequency_step;
+           buffer_index = (buffer_index + 2) % BUFFER_SIZE;
+        }
+        break;
+
+     case DIRECT_SOUND_LEFT:
+        /* render samples LEFT */
+        while(fifo_fractional <= 0xFFFFFF)
+        {
+           s32 dest_sample = current_sample + (s32)
+              ((((s64)(next_sample - current_sample) * (fifo_fractional >> 8)) + (1 << 15)) >> 16);
+
+           sound_buffer[buffer_index]     += dest_sample;
+
+           fifo_fractional += frequency_step;
+           buffer_index = (buffer_index + 2) % BUFFER_SIZE;
+        }
+        break;
+
+     case DIRECT_SOUND_LEFTRIGHT:
+        /* render samples LEFT and RIGHT. */
+        while(fifo_fractional <= 0xFFFFFF)
+        {
+           s32 dest_sample = current_sample + (s32)
+              ((((s64)(next_sample - current_sample) * (fifo_fractional >> 8)) + (1 << 15)) >> 16);
+
+           sound_buffer[buffer_index]     += dest_sample;
+           sound_buffer[buffer_index + 1] += dest_sample;
+           fifo_fractional += frequency_step;
+           buffer_index = (buffer_index + 2) % BUFFER_SIZE;
+        }
+        break;
+  }
+
+  ds->buffer_index = buffer_index;
+  /* One output sample is owed per 1.0 of phase.  Every loop above leaves
+   * with the phase at 1.0 or more; take exactly one off.  For a step of 1.0
+   * or less (a FIFO rate up to the output rate) that is the fractional part,
+   * as it always was.  For a faster FIFO (Golden Sun: The Lost Age and The
+   * Lord of the Rings: The Third Age run theirs at 63 kHz against 32.768 kHz
+   * out) the phase stays above 1.0 and the next FIFO samples write nothing
+   * until it is used up.  Keeping only the fraction wrote one output sample
+   * per FIFO sample whatever the step: the channel played at half speed and
+   * its ring position ran away from the mixer's, round the whole ring every
+   * second, so that sound "in flight" lay anywhere in it (docs/REWIND.md
+   * 16.1: what broke a rewind, and a plain state load, in those games). */
+  ds->fifo_fractional = fifo_fractional - 0x1000000u;
+
+  if(((ds->fifo_top - ds->fifo_base) % 32) <= 16)
+  {
+    if(dma[1].direct_sound_channel == channel)
+      dma_transfer(1, &ret);
+
+    if(dma[2].direct_sound_channel == channel)
+      dma_transfer(2, &ret);
+  }
+  return ret;
+}
+
+void sound_reset_fifo(u32 channel)
+{
+  memset(direct_sound_channel[channel].fifo, 0, 32);
+}
+
+// Initial pattern data = 4bits (signed)
+// Channel volume = 12bits
+// Envelope volume = 14bits
+// Master volume = 2bits
+
+// Recalculate left and right volume as volume changes.
+// To calculate the current sample, use (sample * volume) >> 16
+
+// Square waves range from -8 (low) to 7 (high)
+
+const s8 square_pattern_duty[4][8] =
+{
+  { -8, -8, -8, -8,  7, -8, -8, -8 },
+  { -8, -8, -8, -8,  7,  7, -8, -8 },
+  { -8, -8,  7,  7,  7,  7, -8, -8 },
+  {  7,  7,  7,  7, -8, -8,  7,  7 },
+};
+
+s8 wave_samples[64];
+
+u32 noise_table15[1024];
+u32 noise_table7[4];
+
+const u32 gbc_sound_master_volume_table[4] = { 1, 2, 4, 0 };
+
+const u32 gbc_sound_channel_volume_table[8] =
+{
+  fixed_div(0, 7, 12),
+  fixed_div(1, 7, 12),
+  fixed_div(2, 7, 12),
+  fixed_div(3, 7, 12),
+  fixed_div(4, 7, 12),
+  fixed_div(5, 7, 12),
+  fixed_div(6, 7, 12),
+  fixed_div(7, 7, 12)
+};
+
+const u32 gbc_sound_envelope_volume_table[16] =
+{
+  fixed_div(0, 15, 14),
+  fixed_div(1, 15, 14),
+  fixed_div(2, 15, 14),
+  fixed_div(3, 15, 14),
+  fixed_div(4, 15, 14),
+  fixed_div(5, 15, 14),
+  fixed_div(6, 15, 14),
+  fixed_div(7, 15, 14),
+  fixed_div(8, 15, 14),
+  fixed_div(9, 15, 14),
+  fixed_div(10, 15, 14),
+  fixed_div(11, 15, 14),
+  fixed_div(12, 15, 14),
+  fixed_div(13, 15, 14),
+  fixed_div(14, 15, 14),
+  fixed_div(15, 15, 14)
+};
+
+u32 gbc_sound_buffer_index = 0;
+u32 gbc_sound_last_cpu_ticks = 0;
+u32 gbc_sound_partial_ticks = 0;
+
+u32 gbc_sound_master_volume_left;
+u32 gbc_sound_master_volume_right;
+u32 gbc_sound_master_volume;
+
+#define update_volume_channel_envelope(channel)                               \
+  volume_##channel = gbc_sound_envelope_volume_table[envelope_volume] *       \
+   gbc_sound_channel_volume_table[gbc_sound_master_volume_##channel] *        \
+   gbc_sound_master_volume_table[gbc_sound_master_volume]                     \
+
+#define update_volume_channel_noenvelope(channel)                             \
+  volume_##channel = gs->wave_volume *                                        \
+   gbc_sound_channel_volume_table[gbc_sound_master_volume_##channel] *        \
+   gbc_sound_master_volume_table[gbc_sound_master_volume]                     \
+
+#define update_volume(type)                                                   \
+  update_volume_channel_##type(left);                                         \
+  update_volume_channel_##type(right)                                         \
+
+#define update_tone_sweep()                                                   \
+  if(gs->sweep_status)                                                        \
+  {                                                                           \
+    u32 sweep_ticks = gs->sweep_ticks - 1;                                    \
+                                                                              \
+    if(sweep_ticks == 0)                                                      \
+    {                                                                         \
+      u32 rate = gs->rate;                                                    \
+                                                                              \
+      if(gs->sweep_direction)                                                 \
+        rate = rate - (rate >> gs->sweep_shift);                              \
+      else                                                                    \
+        rate = rate + (rate >> gs->sweep_shift);                              \
+                                                                              \
+      if(rate > 2047) {                                                       \
+        rate = 2047;                                                          \
+        gs->active_flag = 0;                                                  \
+        break;                                                                \
+      }                                                                       \
+                                                                              \
+      frequency_step = psg_tone_step(rate);                                   \
+                                                                              \
+      gs->frequency_step = frequency_step;                                    \
+      gs->rate = rate;                                                        \
+                                                                              \
+      sweep_ticks = gs->sweep_initial_ticks;                                  \
+    }                                                                         \
+    gs->sweep_ticks = sweep_ticks;                                            \
+  }                                                                           \
+
+#define update_tone_nosweep()                                                 \
+
+#define update_tone_envelope()                                                \
+  if(gs->envelope_status)                                                     \
+  {                                                                           \
+    u32 envelope_ticks = gs->envelope_ticks - 1;                              \
+    envelope_volume = gs->envelope_volume;                                    \
+                                                                              \
+    if(envelope_ticks == 0)                                                   \
+    {                                                                         \
+      if(gs->envelope_direction)                                              \
+      {                                                                       \
+        if(envelope_volume != 15)                                             \
+          envelope_volume = gs->envelope_volume + 1;                          \
+      }                                                                       \
+      else                                                                    \
+      {                                                                       \
+        if(envelope_volume != 0)                                              \
+          envelope_volume = gs->envelope_volume - 1;                          \
+      }                                                                       \
+                                                                              \
+      update_volume(envelope);                                                \
+                                                                              \
+      gs->envelope_volume = envelope_volume;                                  \
+      gs->envelope_ticks = gs->envelope_initial_ticks;                        \
+    }                                                                         \
+    else                                                                      \
+      gs->envelope_ticks = envelope_ticks;                                    \
+  }                                                                           \
+
+#define update_tone_noenvelope()                                              \
+
+#define update_tone_counters(envelope_op, sweep_op)                           \
+  tick_counter += gbc_sound_tick_step;                                        \
+  if(tick_counter > 0xFFFF)                                                   \
+  {                                                                           \
+    if(gs->length_status)                                                     \
+    {                                                                         \
+      u32 length_ticks = gs->length_ticks - 1;                                \
+      gs->length_ticks = length_ticks;                                        \
+                                                                              \
+      if(length_ticks == 0)                                                   \
+      {                                                                       \
+        gs->active_flag = 0;                                                  \
+        break;                                                                \
+      }                                                                       \
+    }                                                                         \
+                                                                              \
+    update_tone_##envelope_op();                                              \
+    update_tone_##sweep_op();                                                 \
+                                                                              \
+    tick_counter &= 0xFFFF;                                                   \
+  }                                                                           \
+
+/* Volume product carries 22 fractional bits below the old 12-bit grid;
+ * keep 4 of them by accumulating at 16-bit scale, rounding to nearest.
+ * Overflow-safe in s32: the product spans [-2^31, 7 * 2^28] and adding the
+ * half-LSB 2^17 cannot exceed INT32_MAX nor underflow INT32_MIN. */
+#define gbc_sound_render_sample_right()                                       \
+  sound_buffer[buffer_index + 1] +=                                           \
+   (current_sample * volume_right + (1 << 17)) >> 18                          \
+
+#define gbc_sound_render_sample_left()                                        \
+  sound_buffer[buffer_index] +=                                               \
+   (current_sample * volume_left + (1 << 17)) >> 18                           \
+
+#define gbc_sound_render_sample_both()                                        \
+  gbc_sound_render_sample_right();                                            \
+  gbc_sound_render_sample_left()                                              \
+
+/* sound_synth_off (GBA link headless machine): the per-sample loop still
+ * runs -- the length, envelope and sweep counters live in it and reach
+ * SOUNDCNT_X -- but nothing is mixed. */
+#define gbc_sound_render_sample_none()                                        \
+
+#if defined(GBA_LINK) || defined(REWIND)
+#define gbc_sound_render_case(type, side, sample_length, envelope_op, sweep_op) \
+  if (sound_synth_off)                                                        \
+    gbc_sound_render_##type(none, sample_length, envelope_op, sweep_op)       \
+  else                                                                        \
+    gbc_sound_render_##type(side, sample_length, envelope_op, sweep_op)       \
+
+#else
+#define gbc_sound_render_case(type, side, sample_length, envelope_op, sweep_op) \
+  gbc_sound_render_##type(side, sample_length, envelope_op, sweep_op)         \
+
+#endif
+#define gbc_sound_render_samples(type, sample_length, envelope_op, sweep_op)  \
+  for(i = 0; i < buffer_ticks; i++)                                           \
+  {                                                                           \
+    current_sample =                                                          \
+     sample_data[fp16_16_to_u32(sample_index) % sample_length];               \
+    gbc_sound_render_sample_##type();                                         \
+                                                                              \
+    sample_index += frequency_step;                                           \
+    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+                                                                              \
+    update_tone_counters(envelope_op, sweep_op);                              \
+  }                                                                           \
+
+#define gbc_noise_wrap_full 32767
+
+#define gbc_noise_wrap_half 126
+
+#define get_noise_sample_full()                                               \
+  current_sample =                                                            \
+   ((s32)(noise_table15[fp16_16_to_u32(sample_index) >> 5] <<                 \
+   (fp16_16_to_u32(sample_index) & 0x1F)) >> 31) ^ 0x07                       \
+
+#define get_noise_sample_half()                                               \
+  current_sample =                                                            \
+   ((s32)(noise_table7[fp16_16_to_u32(sample_index) >> 5] <<                  \
+   (fp16_16_to_u32(sample_index) & 0x1F)) >> 31) ^ 0x07                       \
+
+#define gbc_sound_render_noise(type, noise_type, envelope_op, sweep_op)       \
+  for(i = 0; i < buffer_ticks; i++)                                           \
+  {                                                                           \
+    get_noise_sample_##noise_type();                                          \
+    gbc_sound_render_sample_##type();                                         \
+                                                                              \
+    sample_index += frequency_step;                                           \
+                                                                              \
+    if(sample_index >= u32_to_fp16_16(gbc_noise_wrap_##noise_type))           \
+      sample_index -= u32_to_fp16_16(gbc_noise_wrap_##noise_type);            \
+                                                                              \
+    buffer_index = (buffer_index + 2) % BUFFER_SIZE;                          \
+    update_tone_counters(envelope_op, sweep_op);                              \
+  }                                                                           \
+
+#define gbc_sound_render_channel(type, sample_length, envelope_op, sweep_op)  \
+  buffer_index = gbc_sound_buffer_index;                                      \
+  sample_index = gs->sample_index;                                            \
+  frequency_step = gs->frequency_step;                                        \
+  tick_counter = gs->tick_counter;                                            \
+                                                                              \
+  update_volume(envelope_op);                                                 \
+                                                                              \
+  switch(gs->status)                                                          \
+  {                                                                           \
+    case GBC_SOUND_INACTIVE:                                                  \
+      break;                                                                  \
+                                                                              \
+    case GBC_SOUND_LEFT:                                                      \
+      gbc_sound_render_case(type, left, sample_length, envelope_op, sweep_op);\
+      break;                                                                  \
+                                                                              \
+    case GBC_SOUND_RIGHT:                                                     \
+      gbc_sound_render_case(type, right, sample_length, envelope_op, sweep_op);\
+      break;                                                                  \
+                                                                              \
+    case GBC_SOUND_LEFTRIGHT:                                                 \
+      gbc_sound_render_case(type, both, sample_length, envelope_op, sweep_op);\
+      break;                                                                  \
+  }                                                                           \
+                                                                              \
+  gs->sample_index = sample_index;                                            \
+  gs->tick_counter = tick_counter;                                            \
+
+static void render_gbc_sound_body(void);
+
+/* Phase 5h: one bracket here covers all 13 call sites (12 sound-register
+ * writes in gba_memory.c plus the once-per-frame flush in update_gba), which
+ * is why the timer is a wrapper rather than 13 edits.  The early-out for a
+ * zero tick delta is inside the body, so a no-op call still pays two clock
+ * reads at level FINE -- that is deliberate: the call count is part of what
+ * `amix` is measuring. */
+void render_gbc_sound()
+{
+  DRPH_SCOPE(DRPH_SOUND);
+  u32 cph_t = core_phase_enter(CORE_PHASE_FINE);
+  render_gbc_sound_body();
+  core_phase_leave(CORE_PHASE_FINE, &cph_amix, cph_t);
+}
+
+static void render_gbc_sound_body(void)
+{
+  u32 i, i2;
+  gbc_sound_struct *gs = gbc_sound_channel;
+  fixed16_16 sample_index, frequency_step;
+  fixed16_16 tick_counter;
+  u32 buffer_index;
+  s32 volume_left, volume_right;
+  u32 envelope_volume;
+  s32 current_sample;
+  u16 sound_status = read_ioreg(REG_SOUNDCNT_X) & 0xFFF0;
+  const s8 *sample_data;
+  u32 tick_delta = cpu_ticks - gbc_sound_last_cpu_ticks;
+  /* tick_delta * sound_frequency / GBC_BASE_RATE, in 16.16 fixed point.
+   * Done in 64-bit integer so the result is exact and bit-reproducible
+   * across toolchains/arches (the old float form depended on x87 vs SSE
+   * rounding and FMA contraction, and lost mantissa bits for large deltas
+   * in the overclock build). In the default build this is exactly
+   * tick_delta * 256 at 65536 Hz, tick_delta * 128 at 32768 Hz. */
+  fixed16_16 buffer_ticks = (fixed16_16)
+   ((((u64)tick_delta * sound_frequency) << 16) / GBC_BASE_RATE_INT);
+  if (!tick_delta)
+    return;
+
+  gbc_update_count++;
+  gbc_sound_partial_ticks += fp16_16_fractional_part(buffer_ticks);
+  buffer_ticks = fp16_16_to_u32(buffer_ticks);
+
+  if(gbc_sound_partial_ticks > 0xFFFF)
+  {
+    buffer_ticks += 1;
+    gbc_sound_partial_ticks &= 0xFFFF;
+  }
+
+  if(sound_on == 1)
+  {
+    s8 *wave_bank;
+    gs = gbc_sound_channel + 0;
+    if(gs->active_flag)
+    {
+      sound_status |= 0x01;
+      sample_data = &square_pattern_duty[gs->sample_table_idx][0];
+      envelope_volume = gs->envelope_volume;
+      gbc_sound_render_channel(samples, 8, envelope, sweep);
+    }
+
+    gs = gbc_sound_channel + 1;
+    if(gs->active_flag)
+    {
+      sound_status |= 0x02;
+      sample_data = &square_pattern_duty[gs->sample_table_idx][0];
+      envelope_volume = gs->envelope_volume;
+      gbc_sound_render_channel(samples, 8, envelope, nosweep);
+    }
+
+    gs = gbc_sound_channel + 2;
+    if(gbc_sound_wave_update)
+    {
+       unsigned bank = (gs->wave_bank == 1) ? 1 : 0;
+       u8 *wave_ram = ((u8 *)io_registers) + 0x90;
+
+       wave_bank = wave_samples + (bank * 32);
+       for(i = 0, i2 = 0; i < 16; i++, i2 += 2)
+       {
+          current_sample = wave_ram[i];
+          wave_bank[i2] = (((current_sample >> 4) & 0x0F) - 8);
+          wave_bank[i2 + 1] = ((current_sample & 0x0F) - 8);
+       }
+
+       gbc_sound_wave_update = 0;
+    }
+
+    if((gs->active_flag) && (gs->master_enable))
+    {
+      sound_status |= 0x04;
+      sample_data = wave_samples;
+      if(gs->wave_type == 0)
+      {
+        if(gs->wave_bank == 1)
+          sample_data += 32;
+
+        gbc_sound_render_channel(samples, 32, noenvelope, nosweep);
+      }
+      else
+      {
+        gbc_sound_render_channel(samples, 64, noenvelope, nosweep);
+      }
+    }
+
+    gs = gbc_sound_channel + 3;
+    if(gs->active_flag)
+    {
+      sound_status |= 0x08;
+      envelope_volume = gs->envelope_volume;
+
+      if(gs->noise_type == 1)
+      {
+        gbc_sound_render_channel(noise, half, envelope, nosweep);
+      }
+      else
+      {
+        gbc_sound_render_channel(noise, full, envelope, nosweep);
+      }
+    }
+  }
+
+  write_ioreg(REG_SOUNDCNT_X, sound_status);
+
+  gbc_sound_last_cpu_ticks = cpu_ticks;
+  gbc_sound_buffer_index =
+   (gbc_sound_buffer_index + (buffer_ticks * 2)) % BUFFER_SIZE;
+}
+
+// Special thanks to blarrg for the LSFR frequency used in Meridian, as posted
+// on the forum at http://meridian.overclocked.org:
+// http://meridian.overclocked.org/cgi-bin/wwwthreads/showpost.pl?Board=merid
+// angeneraldiscussion&Number=2069&page=0&view=expanded&mode=threaded&sb=4
+// Hope you don't mind me borrowing it ^_-
+
+static void init_noise_table(u32 *table, u32 period, u32 bit_length)
+{
+  u32 shift_register = 0xFF;
+  u32 mask = ~(1 << bit_length);
+  s32 table_pos, bit_pos;
+  u32 current_entry;
+  u32 table_period = (period + 31) / 32;
+
+  // Bits are stored in reverse order so they can be more easily moved to
+  // bit 31, for sign extended shift down.
+
+  for(table_pos = 0; table_pos < table_period; table_pos++)
+  {
+    current_entry = 0;
+    for(bit_pos = 31; bit_pos >= 0; bit_pos--)
+    {
+      current_entry |= (shift_register & 0x01) << bit_pos;
+
+      shift_register =
+       ((1 & (shift_register ^ (shift_register >> 1))) << bit_length) |
+       ((shift_register >> 1) & mask);
+    }
+
+    table[table_pos] = current_entry;
+  }
+}
+
+void reset_sound(void)
+{
+  direct_sound_struct *ds = direct_sound_channel;
+  gbc_sound_struct *gs = gbc_sound_channel;
+  u32 i;
+
+  sound_on = 0;
+  sound_buffer_base = 0;
+  memset(sound_buffer, 0, sizeof(sound_buffer));
+
+  for(i = 0; i < 2; i++, ds++)
+  {
+    ds->buffer_index = 0;
+    ds->status = DIRECT_SOUND_INACTIVE;
+    ds->fifo_top = 0;
+    ds->fifo_base = 0;
+    ds->fifo_fractional = 0;
+    ds->volume_halve = 1;
+    memset(ds->fifo, 0, 32);
+  }
+
+  gbc_sound_buffer_index = 0;
+  gbc_sound_last_cpu_ticks = 0;
+  gbc_sound_partial_ticks = 0;
+
+  gbc_sound_master_volume_left = 0;
+  gbc_sound_master_volume_right = 0;
+  gbc_sound_master_volume = 0;
+  memset(wave_samples, 0, 64);
+
+  memset(&gbc_sound_channel[0], 0, sizeof(gbc_sound_channel));
+  for(i = 0; i < 4; i++, gs++)
+  {
+    gs->status = GBC_SOUND_INACTIVE;
+    gs->sample_table_idx = 2;
+    gs->active_flag = 0;
+  }
+}
+
+void init_sound()
+{
+  /* 256 / sound_frequency in 16.16 == 256 (sound_frequency == 2^16). */
+  gbc_sound_tick_step = (fixed16_16)256u;
+
+  init_noise_table(noise_table15, 32767, 14);
+  init_noise_table(noise_table7, 127, 6);
+
+  reset_sound();
+}
+
+
+bool sound_check_savestate(const u8 *src)
+{
+  static const char *gvars[] = {
+    "on", "buf-base", "gbc-buf-idx", "gbc-last-cpu-ticks",
+    "gbc-partial-ticks", "gbc-ms-vol-left", "gbc-ms-vol-right", "gbc-ms-vol"
+  };
+  static const char *dsvars[] = {
+    "status", "volume", "fifo-base", "fifo-top", "fifo-frac", "buf-idx"
+  };
+  static const char *gsvars[] = {
+    "status", "rate", "freq-step", "sample-idx", "tick-cnt", "volume",
+    "active", "enable", "env-vol0", "env-vol", "env-dir", "env-status",
+    "env-ticks0", "env-ticks", "sweep-status", "sweep-dir", "sweep-ticks0",
+    "sweep-ticks","sweep-shift", "wav-type", "wav-bank", "wav-vol",
+    "len-status", "len-ticks", "noise-type", "sample-tbl"
+  };
+
+  int i, d, g, v;
+  u32 index;
+  const u8 *snddoc = bson_find_key(src, "sound");
+  if (!snddoc)
+    return false;
+
+  for (i = 0; i < sizeof(gvars)/sizeof(gvars[0]); i++)
+    if (!bson_contains_key(snddoc, gvars[i], BSON_TYPE_INT32))
+      return false;
+  if (!bson_has_bytes(snddoc, "wav-samples", sizeof(wave_samples)))
+    return false;
+
+  if (!bson_read_int32(snddoc, "buf-base", &index) ||
+      index >= BUFFER_SIZE || (index & 1))
+    return false;
+  if (!bson_read_int32(snddoc, "gbc-buf-idx", &index) ||
+      index >= BUFFER_SIZE || (index & 1))
+    return false;
+  /* These values directly index the mixer's tables. Register writes mask
+   * them, but imported/damaged states bypass those write paths. */
+  if (!bson_read_int32(snddoc, "gbc-ms-vol-left", &index) || index > 7 ||
+      !bson_read_int32(snddoc, "gbc-ms-vol-right", &index) || index > 7 ||
+      !bson_read_int32(snddoc, "gbc-ms-vol", &index) || index > 3)
+    return false;
+
+
+  for (d = 0; d < 2; d++)
+  {
+    char tn[4] = {'d', 's', '0' + d, 0};
+    const u8 *sndchan = bson_find_key(snddoc, tn);
+    if (!sndchan)
+      return false;
+
+    for (v = 0; v < sizeof(dsvars)/sizeof(dsvars[0]); v++)
+      if (!bson_contains_key(sndchan, dsvars[v], BSON_TYPE_INT32))
+        return false;
+
+    if (!bson_has_bytes(sndchan, "fifo-bytes",
+                         sizeof(direct_sound_channel[0].fifo)))
+      return false;
+    if (!bson_read_int32(sndchan, "fifo-base", &index) || index >= 32)
+      return false;
+    if (!bson_read_int32(sndchan, "fifo-top", &index) || index >= 32)
+      return false;
+    /* (below 256.0: a step is capped at 255.0 and is added to a phase
+     * under 1.0; sound_timer) */
+    if (!bson_read_int32(sndchan, "fifo-frac", &index))
+      return false;
+    if (!bson_read_int32(sndchan, "volume", &index) || index > 1)
+      return false;
+    if (!bson_read_int32(sndchan, "buf-idx", &index) ||
+        index >= BUFFER_SIZE || (index & 1))
+      return false;
+  }
+
+  for (g = 0; g < 4; g++)
+  {
+    char tn[4] = {'g', 's', '0' + g, 0};
+    const u8 *sndchan = bson_find_key(snddoc, tn);
+    if (!sndchan)
+      return false;
+
+    for (v = 0; v < sizeof(gsvars)/sizeof(gsvars[0]); v++)
+      if (!bson_contains_key(sndchan, gsvars[v], BSON_TYPE_INT32))
+        return false;
+    if (!bson_read_int32(sndchan, "sample-tbl", &index) || index >= 4)
+      return false;
+    if (!bson_read_int32(sndchan, "env-vol", &index) || index > 15)
+      return false;
+    if (!bson_read_int32(sndchan, "sweep-shift", &index) || index > 7)
+      return false;
+    /* Rate feeds 1/(2048-rate) when output frequency changes or a sweep
+     * advances. Wave volume must retain the mixer's signed-product bound. */
+    if (!bson_read_int32(sndchan, "rate", &index) || index > 2047 ||
+        !bson_read_int32(sndchan, "wav-vol", &index) || index > 16384)
+      return false;
+    if (g == 3)
+    {
+      u32 noise_type;
+      if (!bson_read_int32(sndchan, "noise-type", &noise_type) || noise_type > 1 ||
+          !bson_read_int32(sndchan, "sample-idx", &index) ||
+          index >= ((noise_type ? 126u : 32767u) << 16) ||
+          !bson_read_int32(sndchan, "freq-step", &index) || index > (16u << 16))
+        return false;
+    }
+  }
+
+  return true;
+}
+
+
+/* sound_read_savestate: how far a direct-sound channel's ring position may
+ * be from the mixer's in a state that is loaded as it is (entries; two per
+ * output sample). */
+#define DS_RESYNC_AHEAD   256u
+#define DS_RESYNC_BEHIND  512u   /* sound_read_samples' read-out holdback */
+
+bool sound_read_savestate(const u8 *src)
+{
+  int i;
+  const u8 *snddoc = bson_find_key(src, "sound");
+
+  /* The 256KiB ring buffer holding rendered samples is intentionally not
+   * serialized (it would inflate the savestate well beyond its hard size
+   * cap). Zero it on load so that the gbc_sound and direct_sound mixers,
+   * which use += into this buffer, do not pick up stale data from before
+   * the load. The saved buffer_base / buffer_index pair remains valid
+   * against this zero-filled ring: any range that was 'in flight' at save
+   * time decodes as silence after load instead of random pre-load mix.
+   * This makes audio output deterministic across save/load at the cost of
+   * up to one frame of silence at the load point. */
+#ifdef REWIND
+  /* A rewind's quick restore (docs/REWIND.md): the ring is zero everywhere
+   * but in the stretch still in flight -- the read-out zeroes what it takes
+   * -- and sound_rewind_clear_inflight() has just zeroed that stretch.
+   * Clearing all 256 KiB again was a millisecond of every restore. */
+  if (!gba_rewind_ring_cleared)
+#endif
+  memset(sound_buffer, 0, sizeof(sound_buffer));
+
+  if (!(
+    bson_read_int32(snddoc, "on", &sound_on) &&
+    bson_read_int32(snddoc, "buf-base", &sound_buffer_base) &&
+    bson_read_int32(snddoc, "gbc-buf-idx", &gbc_sound_buffer_index) &&
+    bson_read_int32(snddoc, "gbc-last-cpu-ticks", &gbc_sound_last_cpu_ticks) &&
+    bson_read_int32(snddoc, "gbc-partial-ticks", &gbc_sound_partial_ticks) &&
+    bson_read_int32(snddoc, "gbc-ms-vol-left", &gbc_sound_master_volume_left) &&
+    bson_read_int32(snddoc, "gbc-ms-vol-right", &gbc_sound_master_volume_right) &&
+    bson_read_int32(snddoc, "gbc-ms-vol", &gbc_sound_master_volume) &&
+    bson_read_bytes(snddoc, "wav-samples", wave_samples, sizeof(wave_samples))))
+    return false;
+
+  for (i = 0; i < 2; i++)
+  {
+    direct_sound_struct *ds = &direct_sound_channel[i];
+    char tn[4] = {'d', 's', '0' + i, 0};
+    const u8 *sndchan = bson_find_key(snddoc, tn);
+    if (!(
+      bson_read_int32(sndchan, "status", &ds->status) &&
+      bson_read_int32(sndchan, "volume", &ds->volume_halve) &&
+      bson_read_int32(sndchan, "fifo-base", &ds->fifo_base) &&
+      bson_read_int32(sndchan, "fifo-top", &ds->fifo_top) &&
+      bson_read_int32(sndchan, "fifo-frac", &ds->fifo_fractional) &&
+      bson_read_bytes(sndchan, "fifo-bytes", ds->fifo, sizeof(ds->fifo)) &&
+      bson_read_int32(sndchan, "buf-idx", &ds->buffer_index)))
+      return false;
+#ifdef REWIND
+    if (!gba_rewind_ring_cleared)   /* (a rewind's own restore: as saved) */
+#endif
+    {
+      /* A state saved by a build from before the fix in sound_timer, in a
+       * game whose FIFO runs faster than the output rate, carries a channel
+       * position that had run away from the mixer's, anywhere in the ring:
+       * loaded as it is, that channel would sound up to a second late for
+       * good.  A channel never is more than a few entries from the mixer
+       * (it is written up to its last FIFO sample, the mixer up to the end
+       * of the frame: 20 states from three consoles sit 6 entries behind
+       * to 32 ahead), so one further away is put back beside it and its
+       * phase taken below 1.0.
+       *
+       * The window is not symmetric (review A9; it was 4096 either way).
+       * BEHIND the mixer is where the harm is: read-out stops 512 entries
+       * short of the mixer, so anything written further back than that
+       * lands in ring the reader has already taken and is heard a lap --
+       * a second -- late, for good.  Up to 512 behind is still unread and
+       * plays in place.  AHEAD only delays the channel, and 256 entries
+       * (4 ms) is eight times what a healthy state shows.  A state inside
+       * the window is loaded exactly as saved: a load must stay equal to
+       * never having saved (link sessions and rewind both rest on it). */
+      u32 d = (ds->buffer_index - gbc_sound_buffer_index) & BUFFER_SIZE_MASK;
+      if (d > DS_RESYNC_AHEAD && d < BUFFER_SIZE - DS_RESYNC_BEHIND)
+      {
+        ds->buffer_index = gbc_sound_buffer_index;
+        ds->fifo_fractional &= 0xFFFFFF;
+      }
+    }
+  }
+
+  for (i = 0; i < 4; i++)
+  {
+    gbc_sound_struct *gs = &gbc_sound_channel[i];
+    char tn[4] = {'g', 's', '0' + i, 0};
+    const u8 *sndchan = bson_find_key(snddoc, tn);
+    if (!(
+      bson_read_int32(sndchan, "status", &gs->status) &&
+      bson_read_int32(sndchan, "rate", &gs->rate) &&
+      bson_read_int32(sndchan, "freq-step", &gs->frequency_step) &&
+      bson_read_int32(sndchan, "sample-idx", &gs->sample_index) &&
+      bson_read_int32(sndchan, "tick-cnt", &gs->tick_counter) &&
+      bson_read_int32(sndchan, "volume", &gs->total_volume) &&
+      bson_read_int32(sndchan, "active", &gs->active_flag) &&
+      bson_read_int32(sndchan, "enable", &gs->master_enable) &&
+
+      bson_read_int32(sndchan, "env-vol0", &gs->envelope_initial_volume) &&
+      bson_read_int32(sndchan, "env-vol", &gs->envelope_volume) &&
+      bson_read_int32(sndchan, "env-dir", &gs->envelope_direction) &&
+      bson_read_int32(sndchan, "env-status", &gs->envelope_status) &&
+      bson_read_int32(sndchan, "env-ticks0", &gs->envelope_initial_ticks) &&
+      bson_read_int32(sndchan, "env-ticks", &gs->envelope_ticks) &&
+      bson_read_int32(sndchan, "sweep-status", &gs->sweep_status) &&
+      bson_read_int32(sndchan, "sweep-dir", &gs->sweep_direction) &&
+      bson_read_int32(sndchan, "sweep-ticks0", &gs->sweep_initial_ticks) &&
+      bson_read_int32(sndchan, "sweep-ticks", &gs->sweep_ticks) &&
+      bson_read_int32(sndchan, "sweep-shift", &gs->sweep_shift) &&
+      bson_read_int32(sndchan, "wav-type", &gs->wave_type) &&
+      bson_read_int32(sndchan, "wav-bank", &gs->wave_bank) &&
+      bson_read_int32(sndchan, "wav-vol", &gs->wave_volume) &&
+
+      bson_read_int32(sndchan, "len-status", &gs->length_status) &&
+      bson_read_int32(sndchan, "len-ticks", &gs->length_ticks) &&
+      bson_read_int32(sndchan, "noise-type", &gs->noise_type) &&
+      bson_read_int32(sndchan, "sample-tbl", &gs->sample_table_idx)))
+      return false;
+  }
+
+  return true;
+}
+
+unsigned sound_write_savestate(u8 *dst)
+{
+  int i;
+  u8 *wbptr, *startp = dst;
+  bson_start_document(dst, "sound", wbptr);
+  bson_write_int32(dst, "on", sound_on);
+  bson_write_int32(dst, "buf-base", sound_buffer_base);
+  bson_write_int32(dst, "gbc-buf-idx", gbc_sound_buffer_index);
+  bson_write_int32(dst, "gbc-last-cpu-ticks", gbc_sound_last_cpu_ticks);
+  bson_write_int32(dst, "gbc-partial-ticks", gbc_sound_partial_ticks);
+  bson_write_int32(dst, "gbc-ms-vol-left", gbc_sound_master_volume_left);
+  bson_write_int32(dst, "gbc-ms-vol-right", gbc_sound_master_volume_right);
+  bson_write_int32(dst, "gbc-ms-vol", gbc_sound_master_volume);
+  bson_write_bytes(dst, "wav-samples", wave_samples, sizeof(wave_samples));
+
+  for (i = 0; i < 2; i++)
+  {
+    u8 *wbptr2;
+    char tn[4] = {'d', 's', '0' + i, 0};
+    bson_start_document(dst, tn, wbptr2);
+    bson_write_int32(dst, "status", direct_sound_channel[i].status);
+    bson_write_int32(dst, "volume", direct_sound_channel[i].volume_halve);
+    bson_write_int32(dst, "fifo-base", direct_sound_channel[i].fifo_base);
+    bson_write_int32(dst, "fifo-top", direct_sound_channel[i].fifo_top);
+    bson_write_int32(dst, "fifo-frac", direct_sound_channel[i].fifo_fractional);
+    bson_write_bytes(dst, "fifo-bytes", direct_sound_channel[i].fifo,
+                          sizeof(direct_sound_channel[i].fifo));
+    bson_write_int32(dst, "buf-idx", direct_sound_channel[i].buffer_index);
+    bson_finish_document(dst, wbptr2);
+  }
+
+  for (i = 0; i < 4; i++)
+  {
+    gbc_sound_struct *gs = &gbc_sound_channel[i];
+    u8 *wbptr2;
+    char tn[4] = {'g', 's', '0' + i, 0};
+    bson_start_document(dst, tn, wbptr2);
+    bson_write_int32(dst, "status", gs->status);
+    bson_write_int32(dst, "rate", gs->rate);
+    bson_write_int32(dst, "freq-step", gs->frequency_step);
+    bson_write_int32(dst, "sample-idx", gs->sample_index);
+    bson_write_int32(dst, "tick-cnt", gs->tick_counter);
+    bson_write_int32(dst, "volume", gs->total_volume);
+    bson_write_int32(dst, "active", gs->active_flag);
+    bson_write_int32(dst, "enable", gs->master_enable);
+
+    bson_write_int32(dst, "env-vol0", gs->envelope_initial_volume);
+    bson_write_int32(dst, "env-vol", gs->envelope_volume);
+    bson_write_int32(dst, "env-dir", gs->envelope_direction);
+    bson_write_int32(dst, "env-status", gs->envelope_status);
+    bson_write_int32(dst, "env-ticks0", gs->envelope_initial_ticks);
+    bson_write_int32(dst, "env-ticks", gs->envelope_ticks);
+    bson_write_int32(dst, "sweep-status", gs->sweep_status);
+    bson_write_int32(dst, "sweep-dir", gs->sweep_direction);
+    bson_write_int32(dst, "sweep-ticks0", gs->sweep_initial_ticks);
+    bson_write_int32(dst, "sweep-ticks", gs->sweep_ticks);
+    bson_write_int32(dst, "sweep-shift", gs->sweep_shift);
+    bson_write_int32(dst, "wav-type", gs->wave_type);
+    bson_write_int32(dst, "wav-bank", gs->wave_bank);
+    bson_write_int32(dst, "wav-vol", gs->wave_volume);
+
+    bson_write_int32(dst, "len-status", gs->length_status);
+    bson_write_int32(dst, "len-ticks", gs->length_ticks);
+    bson_write_int32(dst, "noise-type", gs->noise_type);
+    bson_write_int32(dst, "sample-tbl", gs->sample_table_idx);
+
+    // No longer used fields, keep for backwards compatibility.
+    bson_write_int32(dst, "env-step", 0);
+    bson_finish_document(dst, wbptr2);
+  }
+
+  bson_finish_document(dst, wbptr);
+  return (unsigned int)(dst - startp);
+}
+
+u32 sound_read_samples(s16 *out, u32 frames)
+{
+  DRPH_SCOPE(DRPH_SOUND);
+   u32 i;
+   u32 samples_to_read   = frames << 1;
+   /* Get total number of samples in the buffer */
+   u32 samples_available = (gbc_sound_buffer_index - sound_buffer_base) & BUFFER_SIZE_MASK;
+   /* The last 512 samples are 'in use', and cannot
+    * be read out yet */
+   samples_available     = (samples_available > 512) ? (samples_available - 512) : 0;
+   /* Available sample count must be an even number */
+   samples_available     = (samples_available >> 1) << 1;
+
+   if (samples_to_read > samples_available)
+      samples_to_read = samples_available;
+
+#ifdef GBA_LINK
+   /* sound_synth_off = 2 (a headless link machine, harness/config
+    * gba_link_headless_audio = 2): nothing was mixed into the ring and
+    * nobody hears what is read, so the copy-and-clear is skipped.  The ring
+    * indices move exactly as below (they are in the save state); only the
+    * bytes handed to the discarding callback differ. */
+   if (sound_synth_off < 2)
+#endif
+   for(i = 0; i < samples_to_read; i++)
+   {
+      u32 source_index   = (sound_buffer_base + i) & BUFFER_SIZE_MASK;
+      s32 current_sample = sound_buffer[source_index];
+
+      sound_buffer[source_index] = 0;
+
+      if(current_sample > 32767)
+         current_sample = 32767;
+      if(current_sample < -32768)
+         current_sample = -32768;
+
+      out[i] = current_sample;
+   }
+
+   sound_buffer_base += samples_to_read;
+   sound_buffer_base &= BUFFER_SIZE_MASK;
+
+   /* Function returns number of frames read */
+   return (samples_to_read >> 1);
+}
+
+/* Discard everything queued in the ring and realign all producers and the
+ * consumer. Called on an output-rate change: pending samples were rendered
+ * at the old rate. Costs up to the 512-sample readout holdback of silence
+ * while the ring refills; deterministic. */
+void sound_flush_ring(void)
+{
+   memset(sound_buffer, 0, sizeof(sound_buffer));
+   sound_buffer_base = gbc_sound_buffer_index;
+   direct_sound_channel[0].buffer_index = gbc_sound_buffer_index;
+   direct_sound_channel[1].buffer_index = gbc_sound_buffer_index;
+}
+
+#ifdef REWIND
+u32 gba_rewind_ring_cleared;
+
+/* Zero what is in flight NOW (between the read position and the furthest
+ * producer), before the positions are replaced by a restore.  With the
+ * read-out zeroing what it consumes, that leaves the whole ring zero. */
+void sound_rewind_clear_inflight(void)
+{
+  u32 idx[3], n = 0, i;
+  idx[0] = gbc_sound_buffer_index;
+  idx[1] = direct_sound_channel[0].buffer_index;
+  idx[2] = direct_sound_channel[1].buffer_index;
+  for (i = 0; i < 3; i++)
+  {
+    u32 d = (idx[i] - sound_buffer_base) & BUFFER_SIZE_MASK;
+    if (d > n)
+      n = d;
+  }
+  /* (+2: the mixers write a stereo pair at their index) */
+  n += 2;
+  if (n >= BUFFER_SIZE_MASK)
+  {
+    memset(sound_buffer, 0, sizeof(sound_buffer));
+    return;
+  }
+  for (i = 0; i < n; i++)
+    sound_buffer[(sound_buffer_base + i) & BUFFER_SIZE_MASK] = 0;
+}
+
+/* See sound.h.  Layout: u32 entries, u32 wide, then the entries in read
+ * order starting at sound_buffer_base; the rest zero, so that two images
+ * XOR to zero wherever neither uses the space. */
+void sound_rewind_extra_save(u8 *dst)
+{
+  (void)sound_rewind_extra_save_part(dst, SOUND_REWIND_EXTRA_BYTES);
+}
+
+u32 sound_rewind_extra_save_part(u8 *dst, u32 stale)
+{
+  u32 idx[3], n = 0, wide = 0, i, used;
+  idx[0] = gbc_sound_buffer_index;
+  idx[1] = direct_sound_channel[0].buffer_index;
+  idx[2] = direct_sound_channel[1].buffer_index;
+  for (i = 0; i < 3; i++)
+  {
+    /* A producer further ahead than the window is a channel that is not
+     * running (its index is stale), not a second of pending sound. */
+    u32 d = (idx[i] - sound_buffer_base) & BUFFER_SIZE_MASK;
+    if (d <= SOUND_REWIND_WINDOW && d > n)
+      n = d;
+  }
+  for (i = 0; i < n; i++)
+  {
+    s32 v = sound_buffer[(sound_buffer_base + i) & BUFFER_SIZE_MASK];
+    if (v < -32768 || v > 32767)
+      wide = 1;
+  }
+  used = 8 + n * (wide ? 4 : 2);
+  if (stale > SOUND_REWIND_EXTRA_BYTES)
+    stale = SOUND_REWIND_EXTRA_BYTES;
+  if (stale > used)
+    memset(dst + used, 0, stale - used);   /* the tail of the older save */
+  memcpy(dst, &n, 4);
+  memcpy(dst + 4, &wide, 4);
+  dst += 8;
+  for (i = 0; i < n; i++)
+  {
+    s32 v = sound_buffer[(sound_buffer_base + i) & BUFFER_SIZE_MASK];
+    if (wide)
+      memcpy(dst + i * 4, &v, 4);
+    else
+    {
+      s16 w = (s16)v;
+      memcpy(dst + i * 2, &w, 2);
+    }
+  }
+  return used;
+}
+
+void sound_rewind_extra_load(const u8 *src)
+{
+  u32 n, wide, i;
+  memcpy(&n, src, 4);
+  memcpy(&wide, src + 4, 4);
+  if (n > SOUND_REWIND_WINDOW)
+    return;
+  src += 8;
+  for (i = 0; i < n; i++)
+  {
+    s32 v;
+    if (wide)
+      memcpy(&v, src + i * 4, 4);
+    else
+    {
+      s16 w;
+      memcpy(&w, src + i * 2, 2);
+      v = w;
+    }
+    sound_buffer[(sound_buffer_base + i) & BUFFER_SIZE_MASK] = v;
+  }
+}
+#endif /* REWIND */

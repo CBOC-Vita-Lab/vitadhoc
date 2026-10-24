@@ -1,0 +1,7 @@
+# GE walk of the Save States page, GB/GBC: cursor on slot 1 (the design's
+# gbc / gb scenes; DUMPNAME via the file name of the copy the spec makes).
++150 menu
++12 press DOWN
++2 press CROSS
++12 dump SCENE
++4 exit 0

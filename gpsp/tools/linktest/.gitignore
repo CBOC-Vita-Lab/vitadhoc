@@ -1,0 +1,4 @@
+# the built test ROMs are ours (GPL-2.0, sources in this directory): keep them
+!linktest.gba
+!linktest_flagprobe.gba
+linktest.map

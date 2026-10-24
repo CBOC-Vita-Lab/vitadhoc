@@ -1,0 +1,585 @@
+/* gameplaySP
+ *
+ * Copyright (C) 2006 Exophase <exophase@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of
+ * the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ */
+
+#ifndef MEMORY_H
+#define MEMORY_H
+
+#include "libretro.h"
+
+#define FEAT_AUTODETECT  -1
+#define FEAT_DISABLE      0
+#define FEAT_ENABLE       1
+
+#define DMA_CHAN_CNT   4
+
+#define DMA_START_IMMEDIATELY         0
+#define DMA_START_VBLANK              1
+#define DMA_START_HBLANK              2
+#define DMA_START_SPECIAL             3
+#define DMA_INACTIVE                  4
+
+#define DMA_16BIT                     0
+#define DMA_32BIT                     1
+
+#define DMA_NO_REPEAT                 0
+#define DMA_REPEAT                    1
+
+#define DMA_INCREMENT                 0
+#define DMA_DECREMENT                 1
+#define DMA_FIXED                     2
+#define DMA_RELOAD                    3
+
+#define DMA_NO_IRQ                    0
+#define DMA_TRIGGER_IRQ               1
+
+#define DMA_DIRECT_SOUND_A            0
+#define DMA_DIRECT_SOUND_B            1
+#define DMA_NO_DIRECT_SOUND           2
+
+// Access to timer registers
+#define REG_TMXD(n)   (REG_TM0D   + (2 * (n)))
+#define REG_TMXCNT(n) (REG_TM0CNT + (2 * (n)))
+
+typedef struct
+{
+  u32 source_address;
+  u32 dest_address;
+  u32 length;
+  u32 repeat_type;
+  u32 direct_sound_channel;
+  u32 source_direction;
+  u32 dest_direction;
+  u32 length_type;
+  u32 start_type;
+  u32 irq;
+} dma_transfer_type;
+
+typedef enum
+{
+  REG_DISPCNT = 0x00,
+  REG_DISPSTAT = 0x02,
+  REG_VCOUNT = 0x03,
+  REG_BG0CNT = 0x04,
+  REG_BG1CNT = 0x05,
+  REG_BG2CNT = 0x06,
+  REG_BG3CNT = 0x07,
+  REG_BG0HOFS = 0x08,
+  REG_BG0VOFS = 0x09,
+  REG_BG1HOFS = 0x0A,
+  REG_BG1VOFS = 0x0B,
+  REG_BG2HOFS = 0x0C,
+  REG_BG2VOFS = 0x0D,
+  REG_BG3HOFS = 0x0E,
+  REG_BG3VOFS = 0x0F,
+  REG_BG2PA = 0x10,
+  REG_BG2PB = 0x11,
+  REG_BG2PC = 0x12,
+  REG_BG2PD = 0x13,
+  REG_BG2X_L = 0x14,
+  REG_BG2X_H = 0x15,
+  REG_BG2Y_L = 0x16,
+  REG_BG2Y_H = 0x17,
+  REG_BG3PA = 0x18,
+  REG_BG3PB = 0x19,
+  REG_BG3PC = 0x1A,
+  REG_BG3PD = 0x1B,
+  REG_BG3X_L = 0x1C,
+  REG_BG3X_H = 0x1D,
+  REG_BG3Y_L = 0x1E,
+  REG_BG3Y_H = 0x1F,
+  REG_WIN0H = 0x20,
+  REG_WIN1H = 0x21,
+  REG_WIN0V = 0x22,
+  REG_WIN1V = 0x23,
+  REG_WININ = 0x24,
+  REG_WINOUT = 0x25,
+  REG_MOSAIC = 0x26,
+  REG_BLDCNT = 0x28,
+  REG_BLDALPHA = 0x29,
+  REG_BLDY = 0x2A,
+  // Sound control registers
+  REG_SOUND1CNT_L = 0x30,
+  REG_SOUND1CNT_H = 0x31,
+  REG_SOUND1CNT_X = 0x32,
+  REG_SOUND2CNT_L = 0x34,
+  REG_SOUND2CNT_H = 0x36,
+  REG_SOUND3CNT_L = 0x38,
+  REG_SOUND3CNT_H = 0x39,
+  REG_SOUND3CNT_X = 0x3A,
+  REG_SOUND4CNT_L = 0x3C,
+  REG_SOUND4CNT_H = 0x3E,
+  REG_SOUNDCNT_L = 0x40,
+  REG_SOUNDCNT_H = 0x41,
+  REG_SOUNDCNT_X = 0x42,
+  REG_SOUNDWAVE_0 = 0x48,
+  REG_SOUNDWAVE_1 = 0x49,
+  REG_SOUNDWAVE_2 = 0x4A,
+  REG_SOUNDWAVE_3 = 0x4B,
+  REG_SOUNDWAVE_4 = 0x4C,
+  REG_SOUNDWAVE_5 = 0x4D,
+  REG_SOUNDWAVE_6 = 0x4E,
+  REG_SOUNDWAVE_7 = 0x4F,
+  REG_SOUND_FIFOA_L = 0x50,
+  REG_SOUND_FIFOA_H = 0x51,
+  REG_SOUND_FIFOB_L = 0x52,
+  REG_SOUND_FIFOB_H = 0x53,
+  // DMA control
+  REG_DMA0SAD = 0x58,
+  REG_DMA0DAD = 0x5A,
+  REG_DMA0CNT_L = 0x5C,
+  REG_DMA0CNT_H = 0x5D,
+  REG_DMA1SAD = 0x5E,
+  REG_DMA1DAD = 0x60,
+  REG_DMA1CNT_L = 0x62,
+  REG_DMA1CNT_H = 0x63,
+  REG_DMA2SAD = 0x64,
+  REG_DMA2DAD = 0x66,
+  REG_DMA2CNT_L = 0x68,
+  REG_DMA2CNT_H = 0x69,
+  REG_DMA3SAD = 0x6A,
+  REG_DMA3DAD = 0x6C,
+  REG_DMA3CNT_L = 0x6E,
+  REG_DMA3CNT_H = 0x6F,
+  // Timers
+  REG_TM0D = 0x80,
+  REG_TM0CNT = 0x81,
+  REG_TM1D = 0x82,
+  REG_TM1CNT = 0x83,
+  REG_TM2D = 0x84,
+  REG_TM2CNT = 0x85,
+  REG_TM3D = 0x86,
+  REG_TM3CNT = 0x87,
+  // Serial
+  REG_SIODATA32_L = 0x90,
+  REG_SIODATA32_H = 0x91,
+  REG_SIOMULTI0 = 0x90,
+  REG_SIOMULTI1 = 0x91,
+  REG_SIOMULTI2 = 0x92,
+  REG_SIOMULTI3 = 0x93,
+  REG_SIOCNT = 0x94,
+  REG_SIOMLT_SEND = 0x95,
+  REG_SIODATA8 = 0x96,
+  // Key input
+  REG_P1 = 0x098,
+  REG_P1CNT = 0x099,
+  // More serial
+  REG_RCNT = 0x9A,
+  // Interrupt, waitstate, power.
+  REG_IE = 0x100,
+  REG_IF = 0x101,
+  REG_WAITCNT = 0x102,
+  REG_IME = 0x104,
+  REG_HALTCNT = 0x180
+} hardware_register;
+
+// Some useful macros to avoid reg math
+#define REG_BGxCNT(n)  (REG_BG0CNT + (n))
+#define REG_WINxH(n)   (REG_WIN0H  + (n))
+#define REG_WINxV(n)   (REG_WIN0V  + (n))
+#define REG_BGxHOFS(n) (REG_BG0HOFS + ((n) * 2))
+#define REG_BGxVOFS(n) (REG_BG0VOFS + ((n) * 2))
+#define REG_BGxPA(n)   (REG_BG2PA + ((n)-2)*8)
+#define REG_BGxPB(n)   (REG_BG2PB + ((n)-2)*8)
+#define REG_BGxPC(n)   (REG_BG2PC + ((n)-2)*8)
+#define REG_BGxPD(n)   (REG_BG2PD + ((n)-2)*8)
+
+/* Most I/O reads can stay on the direct memory fast path.  Video, sound and
+ * DMA registers in 0x010..0x0ff contain write-only fields and other read
+ * semantics that need the hardware-aware helper below.  Addresses beyond the
+ * 1 KiB I/O window are not mirrors on real hardware either. */
+static inline bool io_read_requires_handler(u32 address)
+{
+  u32 offset = (address & 0x00ffffff) & ~1U;
+  if (offset >= 0x400)
+    return true;
+  if (offset >= 0x10 && offset <= 0x46)
+    return true;
+  if (offset >= 0x4C && offset <= 0x4E)
+    return true;
+  if (offset >= 0x54 && offset <= 0x5E)
+    return true;
+  if (offset >= 0x8C && offset <= 0x8E)
+    return true;
+  if (offset >= 0xA0 && offset <= 0xB6)
+    return true;
+  if (offset >= 0xBC && offset <= 0xC2)
+    return true;
+  if (offset >= 0xC8 && offset <= 0xCE)
+    return true;
+  if (offset >= 0xD4 && offset <= 0xDA)
+    return true;
+  if (offset >= 0xE0 && offset <= 0xFE)
+    return true;
+
+  /* Read masks/zero values that differ from the raw backing store. */
+  switch (offset)
+  {
+    case 0x062:
+    case 0x064:
+    case 0x136:
+    case 0x142:
+    case 0x15A:
+    case 0x206:
+    case 0x20A:
+    case 0x302:
+    case 0x068:
+    case 0x06C:
+    case 0x072:
+    case 0x074:
+    case 0x078:
+    case 0x084:
+    case 0x066:
+    case 0x06A:
+    case 0x06E:
+    case 0x076:
+    case 0x07A:
+    case 0x07E:
+    case 0x086:
+    case 0x08A:
+    case 0x0B8:
+    case 0x0BA:
+    case 0x0C4:
+    case 0x0C6:
+    case 0x0D0:
+    case 0x0D2:
+    case 0x0DC:
+    case 0x0DE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+#define FLASH_DEVICE_UNDEFINED       0x00
+#define FLASH_DEVICE_MACRONIX_64KB   0x1C
+#define FLASH_DEVICE_AMTEL_64KB      0x3D
+#define FLASH_DEVICE_SST_64K         0xD4
+#define FLASH_DEVICE_PANASONIC_64KB  0x1B
+#define FLASH_DEVICE_MACRONIX_128KB  0x09
+#define FLASH_DEVICE_SANYO_128KB     0x13
+
+
+#define FLASH_MANUFACTURER_MACRONIX  0xC2
+#define FLASH_MANUFACTURER_AMTEL     0x1F
+#define FLASH_MANUFACTURER_PANASONIC 0x32
+#define FLASH_MANUFACTURER_SST       0xBF
+#define FLASH_MANUFACTURER_SANYO     0x62
+
+u32 function_cc read_memory8(u32 address);
+u32 function_cc read_memory8s(u32 address);
+u32 function_cc read_memory16(u32 address);
+u16 function_cc read_memory16_signed(u32 address);
+u32 function_cc read_memory16s(u32 address);
+u32 function_cc read_memory32(u32 address);
+u32 function_cc read_io_register8(u32 address);
+u32 function_cc read_io_register16(u32 address);
+u32 function_cc read_io_register32(u32 address);
+cpu_alert_type function_cc write_memory8(u32 address, u8 value);
+cpu_alert_type function_cc write_memory16(u32 address, u16 value);
+cpu_alert_type function_cc write_memory32(u32 address, u32 value);
+u32 function_cc read_eeprom(void);
+void function_cc write_eeprom(u32 address, u32 value);
+u8 read_backup(u32 address);
+void function_cc write_backup(u32 address, u32 value);
+void function_cc write_gpio(u32 address, u32 value);
+
+void write_rumble(bool oldv, bool newv);
+/* Rebuild the frame-local rumble timer after restoring CPU/cart state. */
+void rumble_restore_state(bool gbp_active);
+void rumble_frame_reset();
+float rumble_active_pct();
+
+/* SENSOR CARTRIDGES (cart_sensor.h): which sensors the loaded game has
+ * (GPSP_SENSOR_SOLAR / _GYRO / _TILT), and the reading the frontend
+ * publishes for the next frame, in cartridge units with GPSP_SENSOR_VALID
+ * set (0 = still console, dark room):
+ *   solar  bits 0-3   light level 0 (dark) .. 10 (full sun)
+ *   gyro   bits 0-11  rotation rate, 0x6C0 still, higher = clockwise
+ *   tilt   bits 0-11  X, 12-23 Y (0x392 / 0x3A0 = level)
+ * frontend-common/fe_sensor.h converts from a console's own sensors. */
+#define GPSP_SENSOR_SOLAR  1u
+#define GPSP_SENSOR_GYRO   2u
+#define GPSP_SENSOR_TILT   4u
+#define GPSP_SENSOR_VALID  0x80000000u
+u32 gpsp_sensor_kinds(void);
+void gpsp_sensor_set(u32 reading);
+u32 gpsp_sensor_get(void);
+
+/* EDIT: Shouldn't this be extern ?! */
+extern const u32 def_seq_cycles[16][2];
+/* Cycles can change depending on WAITCNT */
+extern u8 ws_cyc_seq[16][2];
+extern u8 ws_cyc_nseq[16][2];
+
+extern u32 gamepak_size;
+extern u32 gamepak_buffer_count;   /* 1 MB ROM-cache blocks actually held */
+/* Most 1 MiB blocks init_gamepak_buffer() may take (read once, in
+ * retro_init).  Defaults to ROM_BUFFER_SIZE; a frontend that knows it has the
+ * memory may raise it (at most 32, the size of gamepak_buffers[]) so a 32 MiB
+ * cart is held whole.  Lowering it is always safe: a cart that does not fit
+ * is paged. */
+extern u32 gamepak_buffer_cap;
+/* Frontend: the cart's size in 1 MiB blocks when it wants the cart held
+ * whole (0 = no wish).  Read by init_gamepak_buffer (PSP only), the LAST
+ * allocation decision of startup -- after the translation-cache tier
+ * (RUNTIME_JIT_CACHE) has taken its block -- so it decides on the heap that
+ * is really left: JIT tier first, residency only from what remains.  The
+ * blocks are taken one by one while the 1 MiB post-load reserve is held, so
+ * a resident cart leaves the same >= 1 MiB floor a PSP-1000 lives on; if
+ * any is refused, every extra block goes back and the cap stands.
+ * gamepak_cap_reason says what happened ("default", "resident",
+ * "heap_short"); gamepak_resident_got how many blocks the attempt reached. */
+extern u32 gamepak_resident_wanted;
+extern const char *gamepak_cap_reason;
+extern u32 gamepak_resident_got;
+/* Idle static memory lent to the ROM cache (the dynarec's SMALL arrays once
+ * the LARGE tier replaced them); blocks carved from it are counted in
+ * gamepak_static_blocks and are never freed. */
+extern u8 *gamepak_spare_pool;
+extern u32 gamepak_spare_pool_bytes;
+extern u8 *gamepak_spare_pool2;
+extern u32 gamepak_reload;
+extern u32 gamepak_hold_bytes;
+extern void *gamepak_hold;
+extern u32 gamepak_spare_pool2_bytes;
+extern u32 gamepak_static_blocks;
+/* Diagnostic: emit the paged-ROM load stubs (NULL page check + fault call)
+ * even when the cart is resident, so a resident run executes exactly the
+ * translated code a paged run does.  Behaviour is identical either way -- a
+ * resident cart never has an unmapped page -- only code size and layout
+ * change.  Read by the emitter at every reset. */
+extern u32 gamepak_force_swap_stubs;
+/* Monotonic count of 32 KiB ROM page faults served from the storage medium
+ * (only ever nonzero when gamepak_must_swap()). Frontends take deltas. */
+extern u32 gamepak_page_loads;
+#ifdef GBA_LINK
+extern u32 backup_writes;     /* gba_memory.c */
+#endif
+/* Page reads that needed a reopen, and pages mapped with 0xFF fill where the
+ * file should have supplied data.  Both should stay 0; frontends may log them. */
+extern u32 gamepak_reopens;
+extern u32 gamepak_short_reads;
+extern bool gamepak_mini_materialized;
+extern bool gamepak_header_nonstandard;
+extern char gamepak_code[5];
+extern char gamepak_filename[512];
+
+cpu_alert_type dma_transfer(unsigned dma_chan, int *cycles);
+u8 *memory_region(u32 address, u32 *memory_limit);
+u32 load_gamepak(const struct retro_game_info* info, const char *name,
+                 int force_rtc, int force_rumble, int force_serial);
+s32 load_bios(char *name);
+void init_memory(void);
+void init_gamepak_buffer(void);
+bool gamepak_must_swap(void);
+void memory_unload_gamepak(void);
+void memory_term(void);
+u8 *load_gamepak_page(u32 physical_index);
+/* cheats.c: point every mirror of the cartridge's 32 KiB page `phys` at
+ * `ptr` (a patched copy, or the page itself again). */
+void gamepak_map_page(u32 phys, u8 *ptr);
+
+extern u32 oam_update;
+extern u32 gbc_sound_wave_update;
+extern dma_transfer_type dma[DMA_CHAN_CNT];
+
+extern u8 open_gba_bios_rom[1024*16];
+extern u16 palette_ram[512];
+extern u16 oam_ram[512];
+extern u16 palette_ram_converted[512];
+extern u16 io_registers[512];
+extern u8 vram[1024 * 96];
+
+/* VRAM dirty map, see gba_memory.c.  One byte per 1 KiB page.  C stores,
+ * DMA, translated stores, and bulk state restoration must all mark it. */
+#define VRAM_DIRTY_SHIFT 10
+#define VRAM_DIRTY_PAGES ((1024 * 96) >> VRAM_DIRTY_SHIFT)
+/* INVERTED: 1 = clean, 0 = dirty. Inverted so the DYNAREC can mark a page
+ * with `sb $zero` -- it has no register holding a known-nonzero byte at the
+ * point of the store, and manufacturing one would cost an extra instruction
+ * in the hottest store path. Reset by memset(.., 1, ..). */
+/* One more byte after the map (the array is VRAM_DIRTY_MAP_BYTES long):
+ * vram_clean[VRAM_DIRTY_ANY] is cleared by every mark, whatever the page, so
+ * a reader that resets it can tell "nothing was written" with one load
+ * (ME_MIDFRAME_LOG's per-scanline check, video.h).  The ME and the frontend
+ * only ever touch the first VRAM_DIRTY_PAGES bytes. */
+#define VRAM_DIRTY_ANY       VRAM_DIRTY_PAGES
+#define VRAM_DIRTY_MAP_BYTES (VRAM_DIRTY_PAGES + 32)
+extern u8  vram_clean[VRAM_DIRTY_MAP_BYTES];
+#ifdef REWIND
+/* Rewind (docs/REWIND.md).
+ * gba_rewind_skip_arrays: memory_write_savestate / memory_read_savestate
+ * leave the six big arrays (IWRAM, EWRAM, VRAM, OAM, palette, I/O) alone --
+ * the image keeps their headers, the rewind moves the bytes itself.
+ *
+ * gba_rewind_clean[]: the rewind's OWN written-page map, 1 KiB pages, same
+ * inverted sense as vram_clean (1 = clean, 0 = written) for the same reason
+ * (the MIPS stubs have $zero to store and nothing known nonzero).
+ *     [RW_CLEAN_EWRAM + p]  EWRAM page p, 0..255
+ *     [256 .. 263]          spill: a block store through an EWRAM stack
+ *                           pointer marks page p and p + 1 without a bounds
+ *                           check (mips_emit.h, the SP trampoline)
+ *     [RW_CLEAN_VRAM + p]   VRAM page p, 0..95
+ * It is separate from vram_clean on purpose: that map has several consumers
+ * that clear it (the ME post, the mid-frame log every scanline), and a
+ * snapshot that trusted "whatever is still marked" lost every page one of
+ * them had taken.  This one is cleared by the rewind only.
+ *
+ * THE RULE: every writer of EWRAM or VRAM bytes marks, BEFORE or WITH the
+ * write.  A page written and not marked is a snapshot that silently differs
+ * from the machine.  The writers are: the dynarec store stubs and the
+ * SP-relative block-store path (mips/mips_emit.h, x86/x86_stub.S), the C
+ * store macros and DMA (gba_memory.c), cheats (cheats.c), and reset / state
+ * load, which mark everything.  IWRAM, OAM, palette and I/O have no map:
+ * they are small and always compared.  The harness key rewind_verify
+ * (fe_host.c) checks the rule on every snapshot. */
+#define RW_PAGE_SHIFT   10
+#define RW_CLEAN_EWRAM  0
+#define RW_CLEAN_VRAM   264
+#define RW_CLEAN_BYTES  (RW_CLEAN_VRAM + 96)
+extern u32 gba_rewind_skip_arrays;
+/* THE SAVE IS PERMANENT UNDER REWIND (docs/REWIND.md 17).
+ * gba_rewind_backup_ro: while nonzero the cartridge save (SRAM, flash,
+ * EEPROM) cannot be written: every statement that would change a byte of it
+ * is skipped and counted in gba_rewind_backup_ro_hits (gba_memory.c,
+ * BACKUP_RO; the chip's command state still runs).  The frontend sets it
+ * around every frame it RE-RUNS for a rewind, so nothing a rewind does can
+ * alter the bytes the save file's writer copies.
+ * The read log: on the first pass every byte of the save's contents the
+ * game reads is appended at gba_rewind_rlog_pos (a byte ring of
+ * gba_rewind_rlog_mask + 1 bytes; positions are absolute and wrap at 2^32);
+ * with the write-protect on, a read is answered from the log at that
+ * position instead, because the contents may be newer than when the frame
+ * first ran.  The frontend keeps _pos with every snapshot and puts it back
+ * on a restore; _end is where the first pass stopped logging.  _served /
+ * _miss: re-run reads answered from the log / with nothing logged for them
+ * (the live byte is returned; must stay 0).  gba_rewind_rlog == NULL: no
+ * log, reads are the live contents.
+ * gba_rewind_bk_acc: bit 0 = the game wrote to the chip (data or command),
+ * bit 1 = it read save contents; the frontend clears it per frame. */
+extern u32 gba_rewind_backup_ro;
+extern u32 gba_rewind_backup_ro_hits;
+extern u32 gba_rewind_bk_acc;
+extern u8 *gba_rewind_rlog;
+extern u32 gba_rewind_rlog_mask, gba_rewind_rlog_pos, gba_rewind_rlog_end;
+extern u32 gba_rewind_rlog_served, gba_rewind_rlog_miss, gba_rewind_rlog_mutant;
+u32 gba_rewind_backup_busy(void);
+extern u8  gba_rewind_clean[RW_CLEAN_BYTES];
+/* 0 = the dynarec's stubs could not be given the map (it must sit within a
+ * 16-bit offset of the register block on MIPS): then nobody may trust it. */
+extern u32 gba_rewind_map_ok;
+extern u32 gba_rewind_marks_wanted;   /* gba_memory.c */
+/* off: byte offset into the array; n: bytes written (1..4). */
+/* REWIND_COUNT=1 (measurement, tools/rewind_marks.sh): how many stores the
+ * marks ride on.  Run with the interpreter, where every store comes through
+ * these macros: [0] EWRAM stores, [1] VRAM stores. */
+#ifdef REWIND_COUNT
+extern u32 gba_rewind_cnt[2];
+#define RW_CNT(i) (gba_rewind_cnt[i]++)
+#else
+#define RW_CNT(i) ((void)0)
+#endif
+#define RW_MARK_EWRAM(off, n)                                                 \
+  do {                                                                        \
+    RW_CNT(0);                                                                \
+    gba_rewind_clean[RW_CLEAN_EWRAM + ((off) >> RW_PAGE_SHIFT)] = 0;          \
+    gba_rewind_clean[RW_CLEAN_EWRAM +                                         \
+                     (((off) + (n) - 1) >> RW_PAGE_SHIFT)] = 0;               \
+  } while (0)
+#define RW_MARK_VRAM(off)                                                     \
+  (RW_CNT(1), gba_rewind_clean[RW_CLEAN_VRAM + ((off) >> RW_PAGE_SHIFT)] = 0)
+#define RW_MARK_ALL()  memset(gba_rewind_clean, 0, sizeof(gba_rewind_clean))
+#else
+#define RW_MARK_EWRAM(off, n) ((void)0)
+#define RW_MARK_VRAM(off)     ((void)0)
+#define RW_MARK_ALL()         ((void)0)
+#endif
+extern u32 vram_dirty_marks;
+extern u8 bios_rom[1024 * 16];
+// Double buffer used for SMC detection
+extern u8 ewram[1024 * 256 * 2];
+extern u8 iwram[1024 * 32 * 2];
+
+extern u8 *memory_map_read[8 * 1024];
+
+extern u32 reg[64];
+
+#define BACKUP_SRAM       0
+#define BACKUP_FLASH      1
+#define BACKUP_EEPROM     2
+#define BACKUP_UNKN       3
+
+#define SRAM_SIZE_32KB    1
+#define SRAM_SIZE_64KB    2
+
+#define FLASH_SIZE_64KB   1
+#define FLASH_SIZE_128KB  2
+
+#define EEPROM_512_BYTE   1
+#define EEPROM_8_KBYTE   16
+
+#define EEPROM_BASE_MODE              0
+#define EEPROM_READ_MODE              1
+#define EEPROM_READ_HEADER_MODE       2
+#define EEPROM_ADDRESS_MODE           3
+#define EEPROM_WRITE_MODE             4
+#define EEPROM_WRITE_ADDRESS_MODE     5
+#define EEPROM_ADDRESS_FOOTER_MODE    6
+#define EEPROM_WRITE_FOOTER_MODE      7
+
+#define FLASH_BASE_MODE               0
+#define FLASH_ERASE_MODE              1
+#define FLASH_ID_MODE                 2
+#define FLASH_WRITE_MODE              3
+#define FLASH_BANKSWITCH_MODE         4
+
+extern u32 backup_type;
+extern u32 sram_bankcount;
+extern u32 flash_bank_cnt;
+extern u32 eeprom_size;
+
+extern u8 gamepak_backup[1024 * 128];
+/* Optional synchronous ROM-load observer: bytes read / bytes to preload.
+ * (0,0) announces cartridge setup. Must not re-enter or mutate the core. */
+extern void (*gpsp_rom_load_progress)(u32 loaded, u32 total);
+/* Telemetry-only observer: the frontend measures the heap (free total and
+ * largest contiguous block) at the startup allocation decisions.  NULL in a
+ * release build; never called after startup. */
+extern void (*gpsp_heap_census)(const char *where);
+
+// Page sticky bit routines
+extern u32 gamepak_sticky_bit[1024/32];
+static inline void touch_gamepak_page(u32 physical_index)
+{
+  u32 idx = (physical_index >> 5) & 31;
+  u32 bof = physical_index & 31;
+
+  gamepak_sticky_bit[idx] |= (1 << bof);
+}
+
+static inline void clear_gamepak_stickybits(void)
+{
+  memset(gamepak_sticky_bit, 0, sizeof(gamepak_sticky_bit));
+}
+
+bool memory_check_savestate(const u8*src);
+bool memory_read_savestate(const u8*src);
+unsigned memory_write_savestate(u8 *dst);
+
+#endif

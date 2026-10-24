@@ -1,0 +1,10 @@
+# linktest input script, slot 1 (gl_host --script1)
+wait 33
+repeat 700
+hold DOWN 4
+wait 6
+hold A+R 9
+hold SELECT+LEFT 3
+wait 2
+hold B 13
+endrepeat

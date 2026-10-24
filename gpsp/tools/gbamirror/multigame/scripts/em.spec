@@ -1,0 +1,60 @@
+# Pokemon Emerald -- Cable Club trade (multigame fixture em)
+mash A 4 0x030022C4 0xFFFFFFFF 0x080AAB2D 4800
+# (spec for pair_script.py: H = host only, J = join only)
+evt title_ok
+mash START 4 0x030022C4 0xFFFFFFFF 0x0802F6B1 3600
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 4800
+evt overworld_ok
+wait 30
+holdmash DOWN  B 2 0x02037362 0xFFFF 12 900
+holdmash RIGHT B 2 0x02037360 0xFFFF 17 900
+holdmash UP    B 2 0x02037362 0xFFFF 11 900
+press UP 2
+evt at_direct_corner
+# the Cable Club attendant: TRADE CENTER is entry 0; she saves first
+mash A 4 0x030022C4 0xFFFFFFFF 0x08085E5D 1800
+mashsram A 4800
+evt entry_saved
+mashptr A 2 0x03005D8C 0x04 0xFFFF 0x1919 4800
+evt in_trade_center
+# both arrive at the warp tiles, live (12,15) host / (13,15) join.  Object
+# slot 1 is the host's avatar, slot 2 the join's (slot 0 is the receptionist).
+# Chair0 map (4,5) = live (11,12) for the host, Chair1 (7,5) = (14,12).
+wait 300
+H holdmash UP B 2 0x02037386 0xFFFF 13 600
+H holdmash LEFT B 2 0x02037384 0xFFFF 11 600
+H holdmash UP B 2 0x02037386 0xFFFF 12 600
+J holdmash UP B 2 0x020373AA 0xFFFF 13 600
+J holdmash RIGHT B 2 0x020373A8 0xFFFF 14 600
+J holdmash UP B 2 0x020373AA 0xFFFF 12 600
+evt seated
+logram pre0 4 0x020244EC
+# both seated: the trade screen (callback2 leaves the overworld)
+waitramne 4 0x030022C4 0xFFFFFFFF 0x08085E5D 3600
+evt trade_screen
+wait 900
+dump
+# party slot 0 -> its menu -> TRADE (the rig-proven sequence)
+press A 10
+wait 90
+press DOWN 10
+wait 30
+press DOWN 10
+wait 60
+dump
+press A 10
+evt trade_selected
+wait 180
+# "Is this trade okay?" and on: A until the trade animation runs
+mash A 4 0x030022C4 0xFFFFFFFF 0x0807AE51 4800
+evt trade_anim
+dump
+# the animation, then the in-game save that ends every trade
+mashsram A 4800
+evt post_save
+wait 120
+waitramne 4 0x030022C4 0xFFFFFFFF 0x0807EB51 3600
+evt trade_done
+logram post0 4 0x020244EC
+dump
+wait 300

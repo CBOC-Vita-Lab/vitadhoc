@@ -1,0 +1,32 @@
+# corpus_mash.txt -- the generic power-on input of the corpus oracle
+# (tools/drprof/dr_corpus.py).  No game knowledge, no RAM predicates: the
+# same buttons at the same frames for every ROM, so a run is a pure function
+# of (ROM, binary).  Shape: let the boot logos play, then a ~250-frame cycle
+# that mashes START/A through titles, intros and menus, walks the d-pad, and
+# backs out with B.  Never presses A+B+START+SELECT together (soft reset).
+# The run length is set by dr_corpus.py --frames; this script is longer.
+wait 180
+repeat 60
+press START 2
+wait 24
+press A 2
+wait 24
+press A 2
+wait 24
+press START 2
+wait 24
+press A 2
+wait 16
+hold RIGHT 18
+press A 2
+wait 12
+hold DOWN 18
+press A 2
+wait 12
+hold LEFT 18
+hold UP 18
+press A 2
+wait 12
+press B 2
+wait 20
+endrepeat

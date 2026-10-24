@@ -1,0 +1,22 @@
+gamedb.txt -- the game list's own knowledge (gamedb.h), written by
+tools/make_gamedb.py.
+
+records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC: 8051)
+          S  GBA header game code -> No-Intro name   (2756)
+          Z  GBA header game code -> cartridge size  (2756)
+          T  title key -> English Wikipedia article  (1587)
+          W  article -> its first sentences          (1268)
+
+sources:  the No-Intro catalogues as published in libretro-database
+          (metadat/no-intro/Nintendo - Game Boy Advance / Game Boy /
+          Game Boy Color .dat); Wikidata (CC0): the video games released
+          for those consoles and their English Wikipedia articles;
+          English Wikipedia (CC BY-SA 4.0): the opening sentences of each
+          article, at most ~200 characters of whole sentences, accents and
+          typographic punctuation written in ASCII (the app's fonts),
+          pronunciations and foreign-script titles left out, list and
+          disambiguation pages left out.
+
+The descriptions are adapted from Wikipedia and stay under CC BY-SA 4.0;
+the app shows them with a "From Wikipedia" chip and the README credits
+them.

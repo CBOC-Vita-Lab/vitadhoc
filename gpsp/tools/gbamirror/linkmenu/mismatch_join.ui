@@ -1,0 +1,13 @@
+# Join through the scan list with a different dump of the same game.
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press DOWN
++4 press CROSS
++40 press CROSS
++1 wait failscreen
++10 dump x-mismatch-fail
++4 press CIRCLE
++30 dump x-mismatch-after
++20 exit 0

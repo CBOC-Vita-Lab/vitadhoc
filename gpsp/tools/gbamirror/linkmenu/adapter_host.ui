@@ -1,0 +1,19 @@
+# Host Emerald's Wireless Adapter room: Host -> HOST chooser -> Wireless
+# Adapter; the chip, the Wireless status; stay ~40 s.
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press CROSS
++10 press DOWN
++4 press CROSS
++2 wait net_up
++40 dump linked-game-adapter
++300 menu
++12 press DOWN
++4 press DOWN
++4 press CROSS
++12 dump x-adapter-host-wireless
++4 press CIRCLE
++6 press CIRCLE
++1800 exit 0

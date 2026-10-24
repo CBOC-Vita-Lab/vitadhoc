@@ -1,0 +1,30 @@
+# Mario Golf: Advance Tour (USA) -- Multiplayer > With Game Link (Multiple
+# Game Paks).  KNOWN GAME-LEVEL FAILURE on the mirror: both machines stay on
+# "Please connect the Game Boy Advance Game Link cable" forever.  The cable
+# runs (multi-player transfers every scanline-ish), and both consoles agree
+# frame for frame, but the child only ever echoes the parent's previous word
+# and its own link task never starts (Mario Tennis, the same Camelot packet
+# format, syncs by its third packet).  docs/GBA-LINK-MIRROR.md 16.4.
+# The fixture stays in the matrix so a fix shows up as a change of verdict:
+# GAME_FAIL makes the row FAIL whatever determinism says.
+NAME=mg
+TITLE="Mario Golf - Advance Tour (USA)"
+ROM=mg.gba
+ROM_MD5=2e8814e664675572a43b01900bbbb16b
+HOST_SAVE=mg-3000.sav
+HOST_SAVE_MD5=d99bdc556855d4763726d60df14ba832
+JOIN_SAVE=mg-3000.sav
+JOIN_SAVE_MD5=d99bdc556855d4763726d60df14ba832
+HOST_STATE=mg.st0
+HOST_STATE_MD5=42f14c34f78c70d470535bca0c4d5b23
+JOIN_STATE=mg.st0
+JOIN_STATE_MD5=42f14c34f78c70d470535bca0c4d5b23
+HOST_SCRIPT=mg_host.txt
+JOIN_SCRIPT=mg_join.txt
+MARKS="link_screen link_wait_done"
+FRAMES=7500
+GOLDEN_FRAME=4775
+GOLDEN_S0="r=4fd1a873 i=2ac127d7 e=d0813e55 io=eb21ec6e p=28b8244e o=b7641a5d v=bee63e95"
+GOLDEN_S1="r=3472e258 i=6115a80a e=a3c04884 io=7d21b57c p=28b8244e o=b7641a5d v=bee63e95"
+GAME_FAIL="the link never forms: both screens stay on 'connect the Game Link cable'"
+SIO="multi-player (16-bit); normal 32-bit wireless-adapter probe ('NI' handshake) on entering Multiplayer; JOY BUS and general-purpose before"

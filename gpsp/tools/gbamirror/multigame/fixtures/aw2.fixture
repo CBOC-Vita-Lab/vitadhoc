@@ -1,0 +1,28 @@
+# Advance Wars 2: Black Hole Rising (USA) -- Link > Multi-Pak, a 10-round
+# 2P battle (the existing fixture, GBA-LINK-MIRROR 14-15: the baseline's
+# RAM-gated scripts, md5-identical to claude/gbalink-baseline's).  The
+# owner's save and state on both consoles.  Also the rig's known-good
+# CONTROL: run_matrix.sh runs it first, and a failure there means the
+# PPSSPP rig, not a build or a game (PPSSPP wears out after ~40 launches).
+NAME=aw2
+TITLE="Advance Wars 2 - Black Hole Rising (USA)"
+ROM=aw2.gba
+ROM_MD5=46599031ef71117c587bd3666c326c07
+HOST_SAVE=aw2.sav
+HOST_SAVE_MD5=df19eabce9253608ee3f601cd2562770
+JOIN_SAVE=aw2.sav
+JOIN_SAVE_MD5=df19eabce9253608ee3f601cd2562770
+HOST_STATE=aw2.st0
+HOST_STATE_MD5=20b1528d80a2f198682226f6707e67b1
+JOIN_STATE=aw2.st0
+JOIN_STATE_MD5=20b1528d80a2f198682226f6707e67b1
+HOST_SCRIPT=aw2_host.txt
+JOIN_SCRIPT=aw2_join.txt
+MARKS="battle_start battle_done"
+DONE="host"
+FRAMES=20000
+# host script DONE (f=14490); the same line in session runs p1, p2b (15.2)
+GOLDEN_FRAME=14490
+GOLDEN_S0="r=09aab51a i=f3181237 e=85578fa5 io=03461c66 p=cc0f6dd2 o=c9985c95 v=614b8584"
+GOLDEN_S1="r=09aab51a i=7f91e193 e=58d9d6b8 io=7122e343 p=ae99ccd2 o=3f595f12 v=07daac4f"
+SIO="multi-player (16-bit)"

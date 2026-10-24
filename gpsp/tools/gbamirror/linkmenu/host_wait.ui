@@ -1,0 +1,10 @@
+# Host a room from the Wireless menu (whatever Host does for this game) and
+# wait; exit after ~40 s.
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press CROSS
++2 wait net_up
++40 dump x-host-up
++2400 exit 0

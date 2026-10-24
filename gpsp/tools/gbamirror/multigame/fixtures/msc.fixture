@@ -1,0 +1,33 @@
+# Mario Kart: Super Circuit (USA) -- Multiplayer > MULTI-PAK LINK > VS
+# (two players, no CPU karts), 50 cc, random characters, Mushroom Cup >
+# Peach Circuit: a real race, and both karts must complete lap 1 (the
+# progress byte of each kart, on BOTH consoles' copies of the race).
+# Each machine steers its own kart from RAM (gen_msc.py: a closed-loop
+# driver in plain autopilot steps over a CPU kart's recorded racing line),
+# so the script holds on either engine; on the desktop mirror it made lap 1
+# for both karts in 38 of 38 start perturbations.  Lap 1, not the whole
+# race: the same driver finished all three laps for both in only 7 of 14.
+# Fresh cartridge on both (no battery).
+#
+# Regenerate the scripts: python gen_msc.py (menus from scripts/msc.spec).
+NAME=msc
+TITLE="Mario Kart - Super Circuit (USA)"
+ROM=msc.gba
+ROM_MD5=784a036ff1aae709e90167186639b75e
+HOST_SAVE=-
+JOIN_SAVE=-
+HOST_STATE=msc.st0
+HOST_STATE_MD5=0a8f6b060ab3d26acecb41446faba666
+JOIN_STATE=msc.st0
+JOIN_STATE_MD5=0a8f6b060ab3d26acecb41446faba666
+HOST_SCRIPT=msc_host.txt
+JOIN_SCRIPT=msc_join.txt
+MARKS="linked race race_drive host_lap1 join_lap1"
+FRAMES=18000
+# the host may finish its script first: wait long enough for the join's
+# leftover (1-frame) loop iterations and its two lap checks
+END_AFTER=1500
+GOLDEN_FRAME=12000
+GOLDEN_S0="r=8890ef15 i=43590257 e=de2c0ea3 io=8a207c82 p=c57a014a o=ec8ccc9e v=6b760027"
+GOLDEN_S1="r=4d767899 i=a22e3d8c e=344db408 io=8365768c p=00ba0c01 o=ab61347a v=fc34ec64"
+SIO="multi-player (16-bit), ~2 transfers a frame in the race; the port sits in JOY BUS from boot until Multiplayer (no transfers)"

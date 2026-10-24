@@ -1,0 +1,13 @@
+# Host AW2 by cable; a PSP with a different dump of AW2 tries to join: the
+# host says so and keeps hosting.
++120 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press CROSS
++2 wait hosting
++1 wait linking
++1 wait hosting
++3 dump x-mismatch-host-toast
++900 dump x-mismatch-host-still
++60 exit 0

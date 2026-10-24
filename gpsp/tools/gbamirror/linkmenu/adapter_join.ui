@@ -1,0 +1,19 @@
+# Join room 7 on a game that links both ways: a scan first; only the
+# adapter room is there, so it joins that.
++60 menu
++10 press DOWN
++4 press DOWN
++4 press CROSS
++10 press DOWN
++4 press DOWN
++4 press CROSS
++2 wait net_up
++40 dump x-adapter-joined
++300 menu
++12 press DOWN
++4 press DOWN
++4 press CROSS
++12 dump x-adapter-join-wireless
++4 press CIRCLE
++6 press CIRCLE
++600 exit 0

@@ -19,6 +19,12 @@
  *  7  the Z flag survives I/O reads on both the direct and the slow path
  *     of the ARM dynarec's load stub (an ARM-state routine in ROM)
  *  8  ...and so does a cleared Z flag
+ *  9  an MSR that sets the T bit carries on in Thumb at the next
+ *     instruction (an ARM-state routine in ROM; packed start-up code such
+ *     as an added intro on Pokemon Pinball: Ruby & Sapphire relies on it)
+ * 10  code in palette RAM runs (Thumb), and runs again after it is
+ *     rewritten (the same game's last trampoline sits at 0x050003F0)
+ * 11  code in OAM runs (ARM), and runs again after it is rewritten
  *
  * "SRAM_V113" below makes the emulator give the cartridge battery SRAM. */
 typedef unsigned char u8;
@@ -30,7 +36,7 @@ typedef volatile u32 vu32;
 
 #define REG(a) (*(vu16 *)(0x04000000 + (a)))
 #define SRAM ((vu8 *)0x0E000000)
-#define NTESTS 9
+#define NTESTS 12
 
 volatile u32 g_frames;              /* crt0.S counts vertical blanks here */
 
@@ -92,7 +98,32 @@ __asm__(
    "  moveq r0, #0\n"
    "  bx lr\n"
    "  .ltorg\n"
-   "  .thumb\n");
+   /* Returns r0 + 1, the add done in Thumb after the MSR switched state. */
+   "  .global msr_to_thumb\n"
+   "  .type msr_to_thumb, %function\n"
+   "msr_to_thumb:\n"
+   "  mrs r1, cpsr\n"
+   "  orr r1, r1, #0x20\n"
+   "  msr cpsr_c, r1\n"
+   "  .thumb\n"
+   "  add r0, #1\n"
+   "  bx lr\n"
+   "  .align 2\n");
+u32 msr_to_thumb(u32 x);
+
+/* Palette RAM: the last OBJ palette's last entries, never shown here.
+ * OAM: object 96 onwards, with no object layer on. */
+static u32 call_pal_thumb(u32 x)
+{
+   fn_t f = (fn_t)(0x050003F0 | 1);
+   return f(x);
+}
+
+static u32 call_oam_arm(u32 x)
+{
+   fn_t f = (fn_t)0x07000300;
+   return f(x);
+}
 
 int main(void)
 {
@@ -164,6 +195,31 @@ int main(void)
    for (a = 1, i = 0; i < 100; i++)
       a &= flags_z_clear();
    result(8, a == 1, a);
+
+   /* 9: MSR into Thumb (100 runs: the translated routine too). */
+   for (a = 0, i = 0; i < 100; i++)
+      a = msr_to_thumb(a);
+   result(9, a == 100, a);
+
+   /* 10: Thumb in palette RAM -- "adds r0, #4; bx lr", then "#6". */
+   ((vu16 *)0x050003F0)[0] = 0x3004;
+   ((vu16 *)0x050003F0)[1] = 0x4770;
+   for (a = 0, i = 0; i < 100; i++)
+      a = call_pal_thumb(a);
+   ((vu16 *)0x050003F0)[0] = 0x3006;
+   for (b = 0, i = 0; i < 100; i++)
+      b = call_pal_thumb(b);
+   result(10, a == 400 && b == 600, (b << 16) | a);
+
+   /* 11: ARM in OAM -- "add r0, r0, #7; bx lr", then "#9". */
+   ((vu32 *)0x07000300)[0] = 0xE2800007;
+   ((vu32 *)0x07000300)[1] = 0xE12FFF1E;
+   for (a = 0, i = 0; i < 100; i++)
+      a = call_oam_arm(a);
+   ((vu32 *)0x07000300)[0] = 0xE2800009;
+   for (b = 0, i = 0; i < 100; i++)
+      b = call_oam_arm(b);
+   result(11, a == 700 && b == 900, (b << 16) | a);
 
    for (i = 0; i < NTESTS; i++)
       all &= SRAM[0x08 + i] == 1;

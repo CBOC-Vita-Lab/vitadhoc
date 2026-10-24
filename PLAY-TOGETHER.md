@@ -1,13 +1,14 @@
 # Play Together
 
-Open the in-game menu > Play together. The implementation provides GBA Link
-Cable, GBA Wireless Adapter and GB/GBC Link Cable modes. Real two-Vita
-networking and Wireless Adapter gameplay still need acceptance on this build.
-Do not rely on an important save without a backup.
+Open the in-game menu > Play together. VitAdhoc does GBA Link Cable, GBA
+Wireless Adapter and Game Boy / Game Boy Color Link Cable games. Back up an
+important save before linking: two-Vita play is still being confirmed on
+hardware for version 1.0 (see [Known Issues](KNOWN-ISSUES.md)).
 
 ## Two Vitas
 
-Use the same VitAdhoc build on both consoles. Vita-to-PSP linking is not
+Use the same VitAdhoc version on both consoles. A patched game (a ROM hack or
+translation) needs the same patch on both. Vita-to-PSP linking is not
 supported. Both players must have permission to use the cartridges involved.
 
 | Connection | Setup |
@@ -22,10 +23,10 @@ cartridges, such as compatible paired versions: the implementation exchanges
 cartridge bytes in memory for the session, not to storage. Do not use it to
 distribute a cartridge you are not allowed to share.
 
-Fast link, in Settings > Wireless, batches two frames of GBA cable input.
+Fast link, in Settings > Link setup, batches two frames of GBA cable input.
 It is off by default and the host's setting controls the session. It does not
 make a weak internet connection reliable. Cheats suspend while linked and
-return afterwards. Rewind, turbo and preview recording are not normal linked
+return afterwards; achievements pause and start counting again afterwards. Rewind, turbo and preview recording are not normal linked
 features. Three- and four-player links and single-cartridge multiboot are absent.
 
 ## Two Players On One Vita
@@ -38,18 +39,17 @@ changes which one you control.
 PS TV can use a paired second DualShock. A handheld needs a controller setup
 that exposes a distinct second pad, not mirrored Vita buttons; the original
 guide specifies ds34vita with reVita's Emulate DS4 mode, or two controllers.
-This release has not verified those plugin/controller combinations. No plugins
+Those plugin and controller combinations haven't been confirmed yet. No plugins
 are included or installed by the app. Bluetooth between two Vitas is not a
 link transport; use Wi-Fi or ad hoc instead.
 
 ## Share A Save Or State
 
-From the game list, open Settings > Wireless > Share game data. On the other
+From the home screen, open Settings > Link setup > Share game data. On the other
 Vita, choose Join a share and select the offered file/target state slot.
 Both sides need build 20 or later. This works over local Wi-Fi only, not
 internet or ad hoc. A replaced battery save is retained as `<game>.sav.bak`.
-Check the received file before removing your own backup. Physical two-Vita
-transfer is still unverified here.
+Check the received file before removing your own backup.
 
 ## Mystery Gift
 

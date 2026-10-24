@@ -11,7 +11,65 @@ static int g_lines;
 static const char **g_names;       /* the C and S records' values, sorted  */
 static int g_nnames;
 
-void gamedb_close(void)
+/* gamedb_open_later: the file is read by the first lookup instead of at
+ * boot (on the console that was the 907 KB read and a sort of ten thousand
+ * names before the game list could show; every lookup is made by a worker
+ * thread anyway).  DB_LATER until a lookup claims the read, DB_READING
+ * while it reads (the other lookups wait for it), DB_READY after. */
+enum { DB_NONE = 0, DB_LATER, DB_READING, DB_READY };
+static int g_db_state;
+static char g_db_path[1024];
+static int g_db_records = -1;
+static int db_load(const char *path);
+
+#if defined(__vita__)
+#include <psp2/kernel/threadmgr.h>
+static void db_nap(void) { sceKernelDelayThread(1000); }
+#else
+#include <time.h>
+static void db_nap(void)
+{
+   struct timespec t = { 0, 1000000 };
+   nanosleep(&t, NULL);
+}
+#endif
+
+int gamedb_open_later(const char *path)
+{
+   if (!path || strlen(path) >= sizeof(g_db_path))
+      return -1;
+   gamedb_close();
+   strcpy(g_db_path, path);
+   g_db_records = -1;
+   __atomic_store_n(&g_db_state, DB_LATER, __ATOMIC_RELEASE);
+   return 0;
+}
+
+int gamedb_records(void)
+{
+   return __atomic_load_n(&g_db_state, __ATOMIC_ACQUIRE) == DB_READY
+          ? g_db_records : -1;
+}
+
+/* Before any lookup: the data is there, or there is none to wait for. */
+static void db_ready(void)
+{
+   int st = __atomic_load_n(&g_db_state, __ATOMIC_ACQUIRE);
+   if (st == DB_READY || st == DB_NONE)
+      return;
+   if (st == DB_LATER &&
+       __atomic_compare_exchange_n(&g_db_state, &st, DB_READING, 0,
+                                   __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+   {
+      g_db_records = db_load(g_db_path);
+      __atomic_store_n(&g_db_state, DB_READY, __ATOMIC_RELEASE);
+      return;
+   }
+   while (__atomic_load_n(&g_db_state, __ATOMIC_ACQUIRE) == DB_READING)
+      db_nap();
+}
+
+static void db_free(void)
 {
    free(g_names);
    free(g_line);
@@ -22,6 +80,18 @@ void gamedb_close(void)
    g_lines = g_nnames = 0;
 }
 
+void gamedb_close(void)
+{
+   free(g_names);
+   free(g_line);
+   free(g_text);
+   g_names = NULL;
+   g_line = NULL;
+   g_text = NULL;
+   g_lines = g_nnames = 0;
+   __atomic_store_n(&g_db_state, DB_NONE, __ATOMIC_RELEASE);
+}
+
 static int name_cmp(const void *a, const void *b)
 {
    return strcmp(*(const char *const *)a, *(const char *const *)b);
@@ -29,12 +99,21 @@ static int name_cmp(const void *a, const void *b)
 
 int gamedb_open(const char *path)
 {
+   int n;
+   gamedb_close();
+   n = db_load(path);
+   g_db_records = n;
+   __atomic_store_n(&g_db_state, DB_READY, __ATOMIC_RELEASE);
+   return n;
+}
+
+static int db_load(const char *path)
+{
    FILE *f;
    long size;
    char *p, *end;
    int n = 0, k = 0;
 
-   gamedb_close();
    f = fopen(path, "rb");
    if (!f)
       return 0;
@@ -48,7 +127,7 @@ int gamedb_open(const char *path)
    if (fread(g_text, 1, (size_t)size, f) != (size_t)size)
    {
       fclose(f);
-      gamedb_close();
+      db_free();
       return 0;
    }
    fclose(f);
@@ -61,7 +140,7 @@ int gamedb_open(const char *path)
    g_names = (const char **)malloc(((size_t)n + 1) * sizeof(char *));
    if (!g_line || !g_names)
    {
-      gamedb_close();
+      db_free();
       return 0;
    }
    /* each line: "<key>\t<value>" -> "<key>\0<value>\0" */
@@ -89,6 +168,7 @@ int gamedb_open(const char *path)
 
 static const char *lookup(const char *key)
 {
+   db_ready();
    int lo = 0, hi = g_lines - 1;
    while (lo <= hi)
    {
@@ -127,7 +207,10 @@ int gamedb_get(const char *key, char *out, size_t cap)
 
 int gamedb_known_name(const char *name)
 {
-   int lo = 0, hi = g_nnames - 1;
+   int lo, hi;
+   db_ready();
+   lo = 0;
+   hi = g_nnames - 1;
    if (!name)
       return 0;
    while (lo <= hi)
@@ -275,6 +358,7 @@ int gamedb_blurb(const char *name, char *out, size_t cap)
    char base[256], key[300], art[256], wkey[300];
    int t;
 
+   db_ready();
    if (!name || !g_lines)
       return 0;
    gamedb_base_title(name, base, sizeof(base));
@@ -358,7 +442,8 @@ int gamedb_name_by_header(const char *path, char *out, size_t cap)
 
 static uint32_t g_crc_tab[256];
 
-int gamedb_file_crc(const char *path, uint32_t *crc, volatile const int *abort)
+static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
+                     int (*cancel)(void))
 {
    static unsigned char buf[64 * 1024];
    uint32_t c = 0xFFFFFFFFu;
@@ -379,18 +464,36 @@ int gamedb_file_crc(const char *path, uint32_t *crc, volatile const int *abort)
    f = path ? fopen(path, "rb") : NULL;
    if (!f)
       return -1;
-   while ((got = fread(buf, 1, sizeof(buf), f)) > 0)
+   for (;;)
    {
       size_t i;
-      if (abort && *abort)
+      if ((abort && *abort) || (cancel && cancel()))
       {
          fclose(f);
          return -1;
       }
+      got = fread(buf, 1, sizeof(buf), f);
+      if (!got)
+         break;
       for (i = 0; i < got; i++)
          c = g_crc_tab[(c ^ buf[i]) & 0xFF] ^ (c >> 8);
+   }
+   if (ferror(f))
+   {
+      fclose(f);
+      return -1;
    }
    fclose(f);
    *crc = c ^ 0xFFFFFFFFu;
    return 0;
+}
+
+int gamedb_file_crc(const char *path, uint32_t *crc, volatile const int *abort)
+{
+   return file_crc(path, crc, abort, NULL);
+}
+
+int gamedb_file_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort);
 }

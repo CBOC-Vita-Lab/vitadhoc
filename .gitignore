@@ -17,3 +17,6 @@
 gpsp/vita/tests/gamedb/gamedb_test
 gpsp/vita/tests/gamedb/keys.txt
 .DS_Store
+
+# the release package, kept beside its source
+!/VitAdhoc.vpk

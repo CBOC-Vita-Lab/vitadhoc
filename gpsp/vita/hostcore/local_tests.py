@@ -650,6 +650,13 @@ def t_save(S):
                 (frame_no(a), frame_no(b)))
     before = open(mine, "rb").read() if os.path.exists(mine) else b""
 
+    # a write cut short between moving the save aside and moving the new
+    # one in leaves only .p2.sav.old (and maybe a .tmp): it is the save
+    if os.path.exists(p2):
+        os.rename(p2, p2 + ".old")
+        with open(p2 + ".tmp", "wb") as f:
+            f.write(b"\0" * 100)
+
     # run 2, the same card: the partner's save is read back; it saves once
     # more; nothing the partner does reaches the player's file
     script = """
@@ -675,6 +682,8 @@ def t_save(S):
     b = open(p2, "rb").read() if os.path.exists(p2) else b""
     S.check(b[:64] == bytes((i * 7 + 16) & 255 for i in range(64)),
             "the partner's file has its new save (one press since power on)")
+    S.check(not os.path.exists(p2 + ".old") and not os.path.exists(p2 + ".tmp"),
+            "the interrupted write's .old was taken back and its .tmp removed")
 
     # a copy that saves becomes the second save file; the old one is kept
     script = """

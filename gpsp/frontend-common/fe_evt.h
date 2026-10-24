@@ -18,6 +18,10 @@ extern "C" {
  * line to stderr (desktop convenience; harmless no-op audience on PSP).
  * Returns 0 on success; on failure logging degrades to stderr-only. */
 int  fe_evt_init(const char *path, int echo_stderr);
+/* Opt-in diagnostic sessions: rotate .1 .. .history before opening, append
+ * monotonic ts_us to events, and cap each file. Call only with writers stopped. */
+int  fe_evt_init_rotating(const char *path, int echo_stderr,
+                          unsigned max_bytes, unsigned history);
 void fe_evt_close(void);
 
 /* Structured event: emits "EVT " + formatted line + "\n", then fflush. */
@@ -100,6 +104,11 @@ void fe_evt_prof(unsigned *lines, unsigned *us, unsigned *max_us);
  * free-running maximum forever.
  * fe_evt_close() implies fe_evt_set_async(NULL). */
 void fe_evt_set_async(void (*wake)(void));
+/* Queue without a writer. No file/stderr I/O in emit, even if open failed.
+ * Drain only outside interactive frames; overflow drops whole lines. */
+void fe_evt_set_buffered(void);
+/* Writer must already be stopped. Drain, then persist terminal loss totals. */
+void fe_evt_finish_buffered(void);
 int  fe_evt_service(void);
 int  fe_evt_pending(void);
 /* Lines dropped because the async ring was full, since boot.  Every gap is

@@ -25,14 +25,18 @@
  * and no touch -- both belong to the keyboard.  The frame it closes,
  * ui_text_take(field, &text) answers 1 = accepted (text points at the
  * result, valid for that frame) or -1 = cancelled, once. */
-enum { TXT_NONE = 0, TXT_NICK, TXT_CHEAT_NAME, TXT_CHEAT_FIND };
+enum { TXT_NONE = 0, TXT_NICK, TXT_CHEAT_NAME, TXT_CHEAT_FIND,
+       TXT_BROWSER_FIND, TXT_RA_USER, TXT_RA_PASS };
 
 static struct
 {
    int  field;                /* the field the keyboard is up for          */
    int  done_field;           /* the field that finished THIS frame        */
    int  done_ok;
-   char text[PC_IME_MAX_CHARS + 1];
+   int  secret;               /* the open field is a password          */
+   /* UTF-8: a password comes back as typed, three bytes a character at
+    * most; the other fields are printable ASCII */
+   char text[PC_IME_MAX_CHARS * 3 + 4];
 } g_txt;
 
 int ui_typing(void)
@@ -55,6 +59,31 @@ static int ui_text_open(int field, const char *title, const char *initial,
    return 0;
 }
 
+/* A password: dots on screen, nothing typed kept by the keyboard's side.
+ * The taker wipes g_txt.text once it has used it (ui_text_wipe). */
+static int ui_text_open_secret(int field, const char *title, int max_chars)
+{
+   if (g_txt.field != TXT_NONE ||
+       pspcompat_ime_open_secret(title, max_chars) != 0)
+   {
+      fe_evt("ui_text_open field=%d REFUSED", field);
+      return -1;
+   }
+   g_txt.field = field;
+   g_txt.secret = 1;
+   vid_set_common_dialog(1);
+   fe_evt("ui_text_open field=%d max=%d secret=1", field, max_chars);
+   return 0;
+}
+
+static void ui_text_wipe(void)
+{
+   volatile char *v = g_txt.text;
+   size_t i;
+   for (i = 0; i < sizeof(g_txt.text); i++)
+      v[i] = 0;
+}
+
 /* Once per UI frame.  Returns 1 while the keyboard owns the input. */
 static int ui_text_pump(void)
 {
@@ -69,8 +98,11 @@ static int ui_text_pump(void)
    g_txt.done_field = g_txt.field;
    g_txt.done_ok = st == PC_IME_DONE;
    g_txt.field = TXT_NONE;
+   /* (a password's length is not the log's business) */
    fe_evt("ui_text_done field=%d ok=%d len=%d", g_txt.done_field,
-          g_txt.done_ok, g_txt.done_ok ? (int)strlen(g_txt.text) : 0);
+          g_txt.done_ok, g_txt.secret ? -1
+                         : g_txt.done_ok ? (int)strlen(g_txt.text) : 0);
+   g_txt.secret = 0;
    /* The frame the keyboard closes still belongs to it: the finger or the
     * button that dismissed it must not reach the page. */
    return 1;

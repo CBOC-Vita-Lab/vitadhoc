@@ -261,8 +261,9 @@ defsymbl(execute_store_cpsr)
   ret
 
 1:
-  // Returned value contains the PC, resume execution there
-  bl block_lookup_address_arm
+  // Returned value contains the PC, resume execution there (odd: Thumb,
+  // the MSR set T)
+  bl block_lookup_address_dual
   load_registers()
   br x0                                   // Resume in the returned block
 .size execute_store_cpsr, .-execute_store_cpsr

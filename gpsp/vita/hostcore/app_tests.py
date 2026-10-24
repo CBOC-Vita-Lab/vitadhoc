@@ -69,6 +69,10 @@ class Result:
                             errors="replace").read().splitlines()
         except OSError:
             self.log = []
+        # Optional monotonic metadata must not become part of a ROM filename
+        # in the older exact-payload assertions. Keep the raw evidence too.
+        self.raw_log = self.log
+        self.log = [re.sub(r" ts_us=\d+$", "", line) for line in self.raw_log]
         m = re.search(r"host: exit (\d+) after (\d+) refreshes \((\d+) "
                       r"presented, (\d+) emulated frames\).*audio "
                       r"frames=(\d+) crc=([0-9a-f]+) peak=(\d+)", err)
@@ -155,8 +159,10 @@ class Suite:
         # hands None to see the key's default)
         # ui_home = 0: the list tests walk the shelf with UP / DOWN (the
         # home screen has its own test, t_home)
+        # Existing pixel samplers and preset-cycle assertions use the legacy
+        # 3x geometry. New full-height quality cases select Fit explicitly.
         cfg = {"last_rom": "gbadhoc-test.gba", "hints": 0, "wide_gba": 0,
-               "ui_home": 0}
+               "ui_home": 0, "scale_gba": 4, "scale_gb": 4, "scale_gbc": 4}
         cfg.update(config or {})
         with open(os.path.join(root, "config.ini"), "w") as f:
             for k, v in cfg.items():
@@ -738,12 +744,642 @@ def t_worker(S):
                 "a GB battery save, named Game.gb.sav, beside the ROM")
 
 
+def t_save_fail_shown(S):
+    """A battery save that cannot be written (here its temporary file's name
+    is taken by a folder) is shown to the player, not only logged."""
+    if not os.path.exists(OWN_GB):
+        S.note("no testrom/gbsave.gb: skipped")
+        return
+    r = S.run("save_fail_shown", "100:a:10\n+100:shot=toast.png\n+150:quit\n",
+              autoboot="gbsave.gb",
+              extra={"roms/gbsave.gb.sav.tmp/keep": b"x"})
+    S.check(r.rc == 0, "ran (rc %s)" % r.rc)
+    S.check(r.has(r"gb_sram_flush size=\d+ FAILED"), "the write failed")
+    S.check(r.has(r"^EVT save_failed_shown count=1"),
+            "the player is told the save was not written")
+    S.picture(r, "toast.png")
+
+
+def t_ambient_bars(S):
+    """Fit with each ambient mode: the bars beside the picture are drawn
+    (the console's palette, or the game's own picture blurred) and the
+    picture is whole -- the frame is not cleared first when they cover the
+    screen anyway."""
+    for mode in (0, 1, 2):
+        r = S.run("ambient_%d" % mode, "200:shot=game.png\n+10:quit\n",
+                  autoboot="gbadhoc-test.gba",
+                  config={"scale_gba": 1, "ambient_gba": mode})
+        S.clean(r)
+        im = S.picture(r, "game.png")
+        if im:
+            bar = [im.getpixel((x, 272)) for x in (8, 40, 920, 950)]
+            S.check((mode == 0) == all(p == (0, 0, 0) for p in bar),
+                    "ambient %d: the bars are %s (%s)" %
+                    (mode, "black" if mode == 0 else "painted", bar))
+
+
+def sensor_bars(im):
+    """The four bars sensors.c draws (tilt X/8, tilt Y/8, gyro/8, light):
+    their lengths in game pixels, read from the picture at 3x."""
+    g = game_pixels(im)
+    out = []
+    for y in (25, 45, 65, 85):
+        n = 0
+        while n < 240 and sum(g.getpixel((n, y))) > 120:
+            n += 1
+        out.append(n)
+    return out
+
+
+def t_sensors(S):
+    """Sensor cartridges (cart_sensor.h, fe_sensor.h): a tilt, a gyro and a
+    light-sensor game read the Vita's motion sensor, the right stick and the
+    Sunlight setting, through the cartridge's own protocol (sensors.c reads
+    them as GBATEK's routines do and draws the values)."""
+    rom = lambda name: open(os.path.join(HERE, "testrom", name), "rb").read()
+    cfg = {"scale_gba": 4, "quality_gba": 1}
+
+    def run(name, game, script, extra=None, args=()):
+        ex = {"roms/" + game: rom(game)}
+        ex.update(extra or {})
+        r = S.run("sensors_" + name, script, autoboot=game, config=cfg,
+                  extra=ex, args=args)
+        S.clean(r)
+        return r
+
+    near = lambda got, want, tol=1: abs(got - want) <= tol
+
+    # TILT (Yoshi Topsy-Turvy's).  The first reading is the level; the right
+    # side down half a g lowers X, the top edge down raises Y (GBATEK's
+    # ranges, fe_sensor.h).
+    r = run("tilt", "gbadhoc-tilt.gba",
+            "1:motion=0.2/0.5/0\n200:shot=level.png\n"
+            "210:motion=0.7/0.5/0\n320:shot=right.png\n"
+            "330:motion=0.2/0.0/0\n440:shot=top.png\n450:quit\n")
+    S.check(r.has(r"^EVT sensor_cart kinds=4"), "KYGE is a tilt cartridge")
+    S.check(r.has(r"^EVT sensor_begin kinds=4 motion=1 mode=0"),
+            "the Vita's motion sensor is read")
+    b = [sensor_bars(r.shot(n)) for n in ("level.png", "right.png", "top.png")]
+    S.check(near(b[0][0], 0x392 // 8) and near(b[0][1], 0x3A0 // 8),
+            "held as at the start reads level (X %d, Y %d px)" % tuple(b[0][:2]))
+    S.check(near(b[1][0], (0x392 - 112) // 8) and near(b[1][1], 0x3A0 // 8),
+            "right side down half a g: X lower (%d px)" % b[1][0])
+    S.check(near(b[2][1], (0x3A0 + 112) // 8) and near(b[2][0], 0x392 // 8),
+            "top edge down half a g: Y higher (%d px)" % b[2][1])
+
+    # Settings > THIS GAME, in a tilt game: wrapping upwards, Button
+    # mapping, then Level -- X makes the way the Vita is held now level, and
+    # the game's file keeps it.
+    r = run("level", "gbadhoc-tilt.gba",
+            "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
+            menu_pick(4, wait=60) + "+20:up\n+8:up\n+10:shot=level_row.png\n"
+            "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
+            "+120:shot=level.png\n+10:quit\n")
+    S.picture(r, "rows.png")
+    S.check(r.has(r"^EVT sensor_level right=300 down=600"),
+            "Level: the hold now (%s)" % [e["_"] for e in r.evt("sensor_level")])
+    g = open(os.path.join(r.root, "games", "gbadhoc-tilt.gba.ini")).read()
+    S.check(re.search(r"^level_set = 1$", g, re.M) and
+            re.search(r"^level_right = 300$", g, re.M) and
+            re.search(r"^level_down = 600$", g, re.M),
+            "the game's file keeps the level")
+    b = sensor_bars(r.shot("level.png"))
+    S.check(near(b[0], 0x392 // 8) and near(b[1], 0x3A0 // 8),
+            "held that way, the game reads level (%d, %d px)" % tuple(b[:2]))
+
+    # GYRO (WarioWare: Twisted!'s): clockwise raises the reading, about 55
+    # units per rad/s; still reads 0x6C0.
+    r = run("gyro", "gbadhoc-gyro.gba",
+            "1:motion=0/0/0\n150:shot=still.png\n160:motion=0/0/-3\n"
+            "260:shot=cw.png\n270:motion=0/0/2\n370:shot=acw.png\n380:quit\n")
+    S.check(r.has(r"^EVT sensor_cart kinds=2"), "RZWE is a gyro cartridge")
+    b = [sensor_bars(r.shot(n)) for n in ("still.png", "cw.png", "acw.png")]
+    S.check(near(b[0][2], 0x6C0 // 8), "still: 0x6C0 (%d px)" % b[0][2])
+    S.check(near(b[1][2], (0x6C0 + 165) // 8), "clockwise 3 rad/s (%d px)" % b[1][2])
+    S.check(near(b[2][2], (0x6C0 - 110) // 8), "anticlockwise 2 rad/s (%d px)" % b[2][2])
+
+    # LIGHT (Boktai's): the Sunlight setting, 6 of 10 by default; a game's
+    # own file can say full sun.  Darker counts further (sensors.c).
+    r = run("solar", "gbadhoc-solar.gba", "150:shot=sun6.png\n160:quit\n")
+    S.check(r.has(r"^EVT sensor_cart kinds=1") and
+            r.has(r"^EVT sensor_begin kinds=1 motion=0 .* sun=6"),
+            "U3IE is a light-sensor cartridge, no motion sampling")
+    sun6 = sensor_bars(r.shot("sun6.png"))[3]
+    S.check(near(sun6, 0xAA), "sunlight 6 counts to 0xAA (%d)" % sun6)
+    r = run("solar_full", "gbadhoc-solar.gba", "150:shot=sun10.png\n160:quit\n",
+            extra={"games/gbadhoc-solar.gba.ini": "sunlight=10\n"})
+    sun10 = sensor_bars(r.shot("sun10.png"))[3]
+    S.check(r.has(r"^EVT game_settings load=1 .* sun=10") and near(sun10, 0x31),
+            "the game's own file: full sun counts to 0x31 (%d)" % sun10)
+
+    # THE RIGHT STICK as the sensor: chosen in the game's settings, and the
+    # stick is no longer fast forward (held right) while it is.
+    r = run("stick", "gbadhoc-tilt.gba",
+            "1:motion=0/0/0\n100:rstick-right:200\n250:shot=stick.png\n"
+            "320:quit\n",
+            extra={"games/gbadhoc-tilt.gba.ini": "sensor_mode=1\n"})
+    x = sensor_bars(r.shot("stick.png"))[0]
+    S.check(r.has(r"^EVT sensor_begin kinds=4 motion=1 mode=1") and
+            near(x, (0x392 - 225) // 8), "stick right: the right side down (%d px)" % x)
+    S.check(not r.has(r"^EVT ff on"),
+            "the stick held right did not fast-forward")
+
+    # A PS TV has no motion sensor: the stick, whatever the setting says.
+    r = run("pstv", "gbadhoc-tilt.gba",
+            "100:rstick-left:200\n250:shot=stick.png\n320:quit\n",
+            args=("--no-motion",))
+    x = sensor_bars(r.shot("stick.png"))[0]
+    S.check(r.has(r"^EVT sensor_begin kinds=4 motion=-1") and
+            near(x, (0x392 + 225) // 8),
+            "no motion sensor: the stick tilts instead (%d px)" % x)
+
+    # Reversed and stronger, from the game's file.
+    r = run("reverse", "gbadhoc-gyro.gba",
+            "1:motion=0/0/-2\n150:shot=rev.png\n160:quit\n",
+            extra={"games/gbadhoc-gyro.gba.ini":
+                   "sensor_reverse=1\nsensor_sens=2\n"})
+    g = sensor_bars(r.shot("rev.png"))[2]
+    S.check(near(g, (0x6C0 - round(2 * 1.6 * 55)) // 8),
+            "reversed and high: a clockwise turn reads anticlockwise, 1.6x (%d px)" % g)
+
+    # REWIND gives a frame back the reading it had: going back past the
+    # moment the turn began shows the still readings again, though the Vita
+    # is still turning; let go, the game goes on with the turn.
+    r = S.run("sensors_rewind", "1:motion=0/0/0\n300:motion=0/0/-3\n"
+              "400:shot=turning.png\n450:rstick-left:130\n"
+              "570:shot=back.png\n760:shot=after.png\n780:quit\n",
+              autoboot="gbadhoc-gyro.gba",
+              config=dict(cfg, rewind=60),
+              extra={"roms/gbadhoc-gyro.gba": rom("gbadhoc-gyro.gba")})
+    S.clean(r)
+    b = [sensor_bars(r.shot(n))[2] for n in ("turning.png", "back.png", "after.png")]
+    S.check(r.has(r"^EVT rewind (start|begin|on)") or r.has(r"^EVT rewind end"),
+            "the rewind ran")
+    S.check(near(b[0], (0x6C0 + 165) // 8) and near(b[1], 0x6C0 // 8) and
+            near(b[2], (0x6C0 + 165) // 8),
+            "turning %d px, rewound to before the turn %d px, after %d px"
+            % tuple(b))
+    S.check(not r.has(r"rewind .*(anomal|distrust|mismatch)"),
+            "the rewind found its re-run frames as they were")
+
+    # An ordinary game has no sensor and samples nothing -- and there the
+    # stick held right is fast forward, as before.
+    r = S.run("sensors_none", "100:rstick-right:200\n320:quit\n",
+              autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.check(not r.has(r"^EVT sensor_") and not r.has(r"^EVT motion "),
+            "no sensor game, no sensor")
+    S.check(r.has(r"^EVT ff on"), "the stick held right fast-forwards there")
+
+
+def t_game_look(S):
+    """Settings > THIS GAME > Display settings: a game can have a look of its
+    own (games/<ROM>.ini, config_psp.h pcfg_game).  Turned on, it starts from
+    what is on screen; changes then reach only that game's file -- the
+    console's profile in config.ini stays -- and the game starts in its own
+    look next time; turned off, the console's look comes back."""
+    cfg = {"scale_gba": 1, "quality_gba": 1}
+    gini = lambda r: open(os.path.join(r.root, "games",
+                                       "gbadhoc-test.gba.ini")).read() \
+        if os.path.exists(os.path.join(r.root, "games",
+                                       "gbadhoc-test.gba.ini")) else ""
+    # Settings wraps upwards to Button mapping, then THIS GAME's Display
+    # settings; CROSS gives the game its own look.  Then TRIANGLE (the
+    # size preset) makes it stretch: the game's file, not config.ini.
+    r = S.run("game_look_on", menu_pick(4, wait=60) +
+              "+20:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+              "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
+              "+60:shot=stretch.png\n+10:quit\n",
+              autoboot="gbadhoc-test.gba", config=cfg)
+    S.clean(r)
+    S.picture(r, "row_own.png")
+    S.check(r.has(r"^EVT game_settings load=0 override=0"),
+            "a game without a file starts with the console's look")
+    S.check(r.has(r"^EVT game_look own=1 scale=fit quality=1"),
+            "Display settings: just this game, from the look on screen")
+    S.check(r.has(r"^EVT video_mode scale=stretch"), "the preset made it stretch")
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^scale_gba = 1$", ini, re.M) and
+            re.search(r"^quality_gba = 1$", ini, re.M),
+            "config.ini keeps the console's fit")
+    g = gini(r)
+    S.check(re.search(r"^override = 1$", g, re.M) and
+            re.search(r"^scale = 2$", g, re.M) and
+            re.search(r"^quality = 1$", g, re.M),
+            "games/gbadhoc-test.gba.ini has the game's own stretch (%r)" % g[:200])
+
+    # Next time it starts in its own look; turning it off brings the
+    # console's back, and the next start is the console's.
+    r = S.run("game_look_off", menu_pick(4, wait=60) +
+              "+20:up\n+8:up\n+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              autoboot="gbadhoc-test.gba", config=cfg,
+              extra={"games/gbadhoc-test.gba.ini":
+                     "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT game_settings load=1 override=1") and
+            r.has(r"^EVT display_profile console=GBA scale=stretch"),
+            "the game starts in its own stretch")
+    S.check(r.has(r"^EVT game_look own=0 scale=fit"),
+            "turned off: the console's fit is back")
+    S.check(re.search(r"^override = 0$", gini(r), re.M),
+            "the file says so")
+    r = S.run("game_look_other", "100:quit\n", autoboot="gbadhoc-wide.gba",
+              config=cfg, extra={
+                  "roms/gbadhoc-wide.gba": open(os.path.join(HERE, "testrom",
+                                                "gbadhoc-wide.gba"), "rb").read(),
+                  "games/gbadhoc-test.gba.ini": "override = 1\nscale = 2\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT display_profile console=GBA scale=fit"),
+            "another game keeps the console's look")
+
+
+def t_recent(S):
+    """Play time and Recent (play_log.h): a session is counted when a game
+    starts and the time played (not the menus) is added; the game page says
+    when and how long; SELECT reaches the Recent tab once something has been
+    played, latest first; Settings > Game order sorts the list by last played
+    or most played; L/R then page plainly."""
+    home = {"ui_home": 1, "last_rom": "gbadhoc-test.gba"}
+    # Ten seconds in the game, a menu that stays open for five, the list.
+    r = S.run("recent_play", "60:cross\n+600:start+select:20\n+300:circle\n"
+              "+60:start+select:20\n+14:down\n+8:down\n+8:down\n+8:down\n"
+              "+8:down\n+8:cross\n+8:cross\n+150:shot=home.png\n"
+              "+10:select\n+40:select\n+60:shot=recent.png\n+10:quit\n",
+              config=home)
+    S.clean(r)
+    log = os.path.join(r.root, "playlog.txt")
+    lines = open(log).read().splitlines() if os.path.exists(log) else []
+    rec = [l.split("\t") for l in lines]
+    S.check(len(rec) == 1 and rec[0][3] == "gbadhoc-test.gba" and
+            rec[0][2] == "1" and 9 <= int(rec[0][1]) <= 12,
+            "playlog.txt: one start and about ten seconds, not the menu's five (%r)"
+            % lines)
+    S.check(r.has(r"^EVT play_end secs=(9|10|11|12) count=1"), "the session's end is logged")
+    S.check(r.has(r"^EVT ui_browser_view favs=1 shown=0$") and
+            r.has(r"^EVT ui_browser_view favs=0 shown=1 recent=1"),
+            "SELECT: Starred, then Recent with the game in it")
+    S.picture(r, "home.png")
+    S.picture(r, "recent.png")
+
+    # Nothing played: SELECT goes Games -> Starred -> Games, as before.
+    r = S.run("recent_none", "60:select\n+40:select\n+40:quit\n", config=home)
+    S.clean(r)
+    S.check(r.has(r"^EVT ui_browser_view favs=0 shown=1$") and
+            not r.has(r"recent=1"), "no Recent tab before anything was played")
+
+    # The orders.  Three copies of the test cartridge with a play log: aa
+    # played long ago for an hour, mm yesterday for a minute, zz today for
+    # ten minutes.
+    rom = open(OWN_GBA, "rb").read()
+    now = 1700000000
+    log = ("%d\t3600\t5\taa.gba\n%d\t60\t1\tmm.gba\n%d\t600\t2\tzz.gba\n"
+           % (now - 86400 * 40, now - 86400, now - 100))
+    extra = {"roms/aa.gba": rom, "roms/mm.gba": rom, "roms/zz.gba": rom,
+             "playlog.txt": log}
+    base = {"ui_home": 1, "last_rom": None}
+    picks = {}
+    for name, cfg, script in (
+            ("name", {}, "60:cross\n+30:quit\n"),
+            ("last", {"lib_sort": 1}, "60:cross\n+30:quit\n"),
+            ("most", {"lib_sort": 2}, "60:cross\n+30:quit\n"),
+            ("recent_tab", {}, "60:select\n+40:select\n+40:right\n+20:cross\n+30:quit\n")):
+        r = S.run("recent_order_" + name, script, config=dict(base, **cfg),
+                  extra=extra)
+        S.clean(r)
+        p = r.evt("ui_browser_pick")
+        picks[name] = p[0]["rom"] if p else None
+    S.check(picks == {"name": "aa.gba", "last": "zz.gba", "most": "aa.gba",
+                      "recent_tab": "mm.gba"},
+            "first game: by name aa, last played zz, most played aa; Recent's "
+            "second is mm (%s)" % picks)
+
+    # Settings > LIBRARY > Game order, from the game list: the browser's
+    # Settings, wrapping upwards from the top: Button mapping, then Game
+    # order (LIBRARY, between GAMEPLAY and CONTROLS).
+    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+10:shot=row.png\n"
+              "+4:right\n+10:shot=row_last.png\n+4:circle\n+60:left\n+30:cross\n"
+              "+30:quit\n", config=base, extra=extra)
+    S.clean(r)
+    S.picture(r, "row_last.png")
+    S.check(r.has(r"^EVT lib_sort order=1") and r.has(r"^EVT lib_order order=1 shown=4"),
+            "Game order: last played first, the list sorted again")
+    p = r.evt("ui_browser_pick")
+    S.check(p and p[0]["rom"] == "mm.gba",
+            "...aa keeps the focus, and the game before it is now mm (%s)"
+            % (p[0]["rom"] if p else None))
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^lib_sort = 1$", ini, re.M), "config.ini keeps lib_sort = 1")
+
+
+def t_resume(S):
+    """Where you left off (main_vita.c resume_*, state_slots.h): leaving a
+    game keeps its moment (Game.rsm); the Home page then offers Continue,
+    which puts the game back there, and Start over (UP), which plays from the
+    battery save.  An in-game save makes a new point half a second later, so
+    a console closed from LiveArea (no notice) continues after it."""
+    home = {"ui_home": 1, "last_rom": "gbadhoc-test.gba"}
+    rsm = lambda r: os.path.join(r.root, "roms", "gbadhoc-test.rsm")
+    # Play, leave to the list: the point is written; the page says Continue.
+    r = S.run("resume_leave", "60:cross\n+300:right:60\n+60:shot=left.png\n" +
+              QUIT_TO_LIST + "+150:shot=home.png\n+10:quit\n", config=home)
+    S.clean(r)
+    S.check(r.has(r"^EVT resume_begin on=1") and
+            r.has(r"^EVT resume_take why=leave size=\d+") and
+            r.has(r"^EVT resume_write size=\d+ rc=0"),
+            "leaving the game writes where it was left")
+    S.check(os.path.exists(rsm(r)) and os.path.getsize(rsm(r)) > 100000 and
+            not os.path.exists(rsm(r) + ".tmp") and
+            not os.path.exists(rsm(r) + ".old"),
+            "gbadhoc-test.rsm is there, alone")
+    S.picture(r, "home.png")
+    # the test cartridge draws its frame counter in binary (main.c)
+    frame_of = lambda im: sum(1 << (15 - i) for i in range(16)
+                              if sum(game_pixels(im).getpixel((13 + i * 14, 105))) > 500)
+    f_left = frame_of(r.shot("left.png"))
+
+    # Continue: the same moment comes back.
+    root = r.root
+    def again(name, script):
+        out = os.path.join(S.outdir, name)
+        shutil.rmtree(out, ignore_errors=True)
+        shutil.copytree(root, os.path.join(out, "root"))
+        for f in glob.glob(os.path.join(out, "root", "log", "*")):
+            os.remove(f)
+        return S.run(name, script, prepared=True)
+    r = again("resume_continue", "60:cross\n+20:shot=back.png\n+10:quit\n")
+    S.clean(r)
+    S.check(r.has(r"^EVT ui_browser_pick rom=gbadhoc-test.gba continue=1") and
+            r.has(r"^EVT state_load path=.*gbadhoc-test.rsm via=continue rc=0"),
+            "CROSS continues: the point is loaded")
+    f_back = frame_of(r.shot("back.png"))
+    S.check(f_left <= f_back <= f_left + 150,
+            "the game goes on from where it was left: its frame %d, %d when "
+            "it was last seen" % (f_back, f_left))
+    r = again("resume_fresh", "60:up\n+20:shot=fresh.png\n+10:quit\n")
+    S.clean(r)
+    f_fresh = frame_of(r.shot("fresh.png"))
+    S.check(r.has(r"^EVT ui_browser_pick rom=gbadhoc-test.gba$") and
+            not r.has(r"^EVT state_load") and f_fresh < 100,
+            "UP starts over, from the battery save (frame %d)" % f_fresh)
+
+    # An in-game save (A writes the battery), then the console closed with
+    # no notice: the point taken after the save is on the card.
+    r = S.run("resume_save", "60:cross\n+200:a:5\n+120:kill\n", config=home)
+    S.check(r.has(r"^EVT resume_take why=save") and
+            r.has(r"^EVT resume_write size=\d+ rc=0") and
+            os.path.exists(rsm(r)),
+            "an in-game save makes a new point at once, before any leaving")
+    S.check(not r.has(r"^EVT resume_take why=leave"),
+            "(the process ended without leaving)")
+
+
+def ups_varint(v):
+    out = bytearray()
+    while True:
+        x = v & 0x7F
+        v >>= 7
+        if not v:
+            out.append(0x80 | x)
+            return bytes(out)
+        out.append(x)
+        v -= 1
+
+
+def t_patch(S):
+    """ROM hacks and translations (rom_patch.h, main_vita.c patch_prepare):
+    Game.ips / .bps / .ups beside the game is applied as it starts -- the
+    cores load a patched copy in patched/, made once and reused; the game's
+    own file is untouched, its saves keep its name; a patch for another
+    version of the game is refused and the game starts unpatched."""
+    import zlib
+    rom = open(OWN_GBA, "rb").read()
+    home = {"ui_home": 1, "last_rom": "gbadhoc-test.gba"}
+    # IPS: the game code AGDE -> PTCH, and a run of 0xFFFF bytes of 0x77
+    # at 0x10000, which makes the cartridge grow.
+    ips = b"PATCH" + bytes([0, 0, 0xAC, 0, 4]) + b"PTCH" + \
+        bytes([0x01, 0x00, 0x00, 0, 0, 0xFF, 0xFF, 0x77]) + b"EOF"
+    want = bytearray(rom) + bytearray(max(0, 0x1FFFF - len(rom)))
+    want[0xAC:0xB0] = b"PTCH"
+    want[0x10000:0x1FFFF] = b"\x77" * 0xFFFF
+    r = S.run("patch_ips", "60:cross\n+120:shot=game.png\n+10:quit\n" +
+              "", config=home, extra={"roms/gbadhoc-test.ips": ips})
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_patch file=.*gbadhoc-test.ips kind=1 rc=1 size=%d cached=0"
+                  % len(want)), "the IPS patch is applied (%s)"
+            % [e["_"] for e in r.evt("rom_patch")])
+    S.check(r.has(r"^EVT rom_loaded code=PTCH size=%d" % len(want)),
+            "the core runs the patched cartridge")
+    pf = os.path.join(r.root, "patched", "gbadhoc-test.gba")
+    S.check(os.path.exists(pf) and open(pf, "rb").read() == bytes(want),
+            "patched/gbadhoc-test.gba is the result, byte for byte")
+    S.check(open(os.path.join(r.root, "roms", "gbadhoc-test.gba"), "rb").read() == rom,
+            "the game's own file is untouched")
+    S.check(r.has(r"^EVT game rom=.*/roms/gbadhoc-test.gba .* save=.*/roms/gbadhoc-test.sav"),
+            "the battery save keeps the game's name")
+    # The page says so; the second start reuses the copy.
+    root = r.root
+    out = os.path.join(S.outdir, "patch_again")
+    shutil.rmtree(out, ignore_errors=True)
+    shutil.copytree(root, os.path.join(out, "root"))
+    for f in glob.glob(os.path.join(out, "root", "log", "*")):
+        os.remove(f)
+    r = S.run("patch_again", "100:shot=home.png\n+10:up\n+60:quit\n", prepared=True)
+    S.clean(r)
+    S.picture(r, "home.png")
+    S.check(r.has(r"^EVT rom_patch .* rc=1 .* cached=1"), "made once, reused after")
+
+    # BPS: checks the game it is applied to.
+    def crc(b):
+        return (zlib.crc32(b) & 0xFFFFFFFF).to_bytes(4, "little")
+    target = bytearray(rom)
+    target[0xAC:0xB0] = b"BPST"
+    body = b"BPS1" + ups_varint(len(rom)) + ups_varint(len(target)) + ups_varint(0)
+    body += ups_varint(((0xAC - 1) << 2) | 0)                   # SourceRead
+    body += ups_varint(((4 - 1) << 2) | 1) + b"BPST"            # TargetRead
+    # SourceCopy: its offset is relative to its own cursor, which SourceRead
+    # does not move -- from 0 to 0xB0
+    body += ups_varint(((len(rom) - 0xB0 - 1) << 2) | 2) + ups_varint(0xB0 << 1)
+    body += crc(rom) + crc(bytes(target))
+    bps = body + crc(body)
+    r = S.run("patch_bps", "60:cross\n+60:quit\n", config=home,
+              extra={"roms/gbadhoc-test.bps": bps})
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_patch .*kind=2 rc=1") and
+            r.has(r"^EVT rom_loaded code=BPST size=%d" % len(rom)),
+            "the BPS patch is applied")
+    other = bytearray(rom)
+    other[0x200] ^= 1                    # another release of the game
+    body2 = body[:-8] + crc(bytes(other)) + crc(bytes(target))
+    r = S.run("patch_wrong", "60:cross\n+20:shot=game.png\n+60:quit\n", config=home,
+              extra={"roms/gbadhoc-test.bps": body2 + crc(body2)})
+    S.clean(r)
+    S.check(r.has(r'^EVT rom_patch .*kind=2 rc=-1 .*why="made for another version of the game"') and
+            r.has(r"^EVT rom_loaded code=AGDE size=%d" % len(rom)),
+            "a patch for another version: refused, the game starts as it is")
+    S.picture(r, "game.png")
+
+    # UPS: XOR hunks.
+    t2 = bytearray(rom)
+    t2[0xAC:0xB0] = b"UPST"
+    hunks = ups_varint(0xAC) + bytes(a ^ b for a, b in zip(rom[0xAC:0xB0], b"UPST")) + b"\0"
+    body = b"UPS1" + ups_varint(len(rom)) + ups_varint(len(t2)) + hunks + \
+        crc(rom) + crc(bytes(t2))
+    r = S.run("patch_ups", "60:cross\n+60:quit\n", config=home,
+              extra={"roms/gbadhoc-test.ups": body + crc(body)})
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_patch .*kind=3 rc=1") and
+            r.has(r"^EVT rom_loaded code=UPST"), "the UPS patch is applied")
+
+    # Two games with one name (Game.gb beside Game.gba): Game.ips could be
+    # either's, so it is not applied; Game.gba.ips names its game.
+    gb = open(OWN_GB, "rb").read() if os.path.exists(OWN_GB) else b"\0" * 0x8000
+    r = S.run("patch_shared", "60:cross\n+60:quit\n", config=home,
+              extra={"roms/gbadhoc-test.ips": ips, "roms/gbadhoc-test.gb": gb})
+    S.clean(r)
+    S.check(r.has(r'^EVT rom_patch .*rc=-1 .*why="two games have this name') and
+            r.has(r"^EVT rom_loaded code=AGDE"),
+            "Game.ips beside Game.gb and Game.gba: not applied to either")
+    r = S.run("patch_whole_name", "60:cross\n+60:quit\n", config=home,
+              extra={"roms/gbadhoc-test.gba.ips": ips, "roms/gbadhoc-test.gb": gb})
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_patch file=.*gbadhoc-test.gba.ips kind=1 rc=1") and
+            r.has(r"^EVT rom_loaded code=PTCH"), "Game.gba.ips: applied")
+
+    # Continue keeps which patch the moment was made with: a point made
+    # patched is not loaded once the patch has gone.
+    r = S.run("patch_leave", "60:cross\n+120:right:20\n" + QUIT_TO_LIST +
+              "+100:quit\n", config=home, extra={"roms/gbadhoc-test.ips": ips})
+    S.clean(r)
+    out = os.path.join(S.outdir, "patch_removed")
+    shutil.rmtree(out, ignore_errors=True)
+    shutil.copytree(r.root, os.path.join(out, "root"))
+    for f in glob.glob(os.path.join(out, "root", "log", "*")):
+        os.remove(f)
+    os.remove(os.path.join(out, "root", "roms", "gbadhoc-test.ips"))
+    pt = os.path.join(out, "root", "roms", "gbadhoc-test.rsm.pt")
+    S.check(os.path.exists(pt) and open(pt).read() != "-\n",
+            "the Continue point records its patch")
+    r = S.run("patch_removed", "60:cross\n+60:quit\n", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT state_load via=continue refused=patch_changed") and
+            not r.has(r"^EVT state_load path="),
+            "the patch removed: Continue starts from the save instead")
+
+
+def t_sgb(S):
+    """The Super Game Boy's border (gbcore_sgb_border, main_vita.c
+    sgb_compose): a game that sends one (CHR_TRN, PCT_TRN: testrom/
+    sgbborder.py) is shown inside it, its tiles and colours exactly; the
+    border is kept for the next start, so a game that has not sent it yet
+    (or a state just loaded) has it from the first frame; Settings > SGB
+    border off is the picture alone."""
+    sys.path.insert(0, os.path.join(HERE, "testrom"))
+    import sgbborder
+    cfg = {"scale_gb": 0, "quality_gb": 1, "gb_palette_gb": 0, "gb_palette": 0}
+    rom = sgbborder.rom()
+
+    def at(im, x, y):
+        # 256x224 at 2x, centred: (224, 48)
+        return im.getpixel((224 + 2 * x + 1, 48 + 2 * y + 1))
+
+    def want(x, y):
+        v = sgbborder.border_pixel(x, y)
+        return tuple(((c << 3) | (c >> 2)) for c in (v & 31, (v >> 5) & 31,
+                                                     (v >> 10) & 31))
+
+    def check_border(im, what):
+        bad = n = 0
+        for y in range(4, 224, 9):
+            for x in range(3, 256, 7):
+                if 48 <= x < 208 and 40 <= y < 184:
+                    continue           # the game's own picture
+                n += 1
+                g, w = at(im, x, y), want(x, y)
+                if max(abs(a - b) for a, b in zip(g, w)) > 10:
+                    bad += 1
+        S.check(n > 300 and bad == 0, "%s: %d of %d border pixels are the "
+                "border's tiles in its colours (%d are not)" % (what, n - bad, n, bad))
+
+    r = S.run("sgb_border", "400:shot=border.png\n+10:quit\n",
+              autoboot="sgb.gb", config=cfg, extra={"roms/sgb.gb": rom})
+    S.clean(r)
+    S.check(r.has(r"^EVT sgb_border shown gen=") and
+            r.has(r"^EVT sgb_border_save bytes=10372 ok=1"),
+            "the border the game sent is shown, and kept")
+    check_border(r.shot("border.png"), "sent")
+    S.picture(r, "border.png")
+    root = r.root
+
+    # The same cartridge, silent: the kept border from the first frame.
+    out = os.path.join(S.outdir, "sgb_kept")
+    shutil.rmtree(out, ignore_errors=True)
+    shutil.copytree(root, os.path.join(out, "root"))
+    for f in glob.glob(os.path.join(out, "root", "log", "*")):
+        os.remove(f)
+    open(os.path.join(out, "root", "roms", "sgb.gb"), "wb").write(sgbborder.rom(True))
+    open(os.path.join(out, "root", "autoboot.txt"), "w").write("sgb.gb\n")
+    r = S.run("sgb_kept", "30:shot=early.png\n+10:quit\n", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT sgb_border_load bytes=10372 rc=0") and
+            r.has(r"^EVT sgb_border shown"), "a later start shows it at once")
+    check_border(r.shot("early.png"), "kept")
+
+    # The upscalers and the other sizes take the 256x224 picture as any.
+    for name, extra_cfg in (("sgb_fit_2x", {"scale_gb": 1, "quality_gb": 2}),
+                            ("sgb_fit_3x", {"scale_gb": 1, "quality_gb": 3}),
+                            ("sgb_stretch", {"scale_gb": 2, "quality_gb": 0})):
+        r = S.run(name, "400:shot=game.png\n+10:quit\n", autoboot="sgb.gb",
+                  config=dict(cfg, **extra_cfg), extra={"roms/sgb.gb": rom})
+        S.clean(r)
+        S.check(r.has(r"^EVT sgb_border shown"), "%s: the border is shown" % name)
+        S.picture(r, "game.png")
+
+    # Off: the picture alone, at its own 2x.
+    r = S.run("sgb_off", "400:shot=off.png\n+10:quit\n", autoboot="sgb.gb",
+              config=dict(cfg, sgb_border_gb=0), extra={"roms/sgb.gb": rom})
+    S.clean(r)
+    im = r.shot("off.png")
+    S.check(not r.has(r"^EVT sgb_border shown") and im.getpixel((230, 60)) == (0, 0, 0),
+            "SGB border off: no border, black where it would be")
+
+
+def t_vita_ini_once(S):
+    """vita.ini is read once at boot and its keys answered from memory, with
+    the same values as before."""
+    r = S.run("vita_ini_once", "60:quit\n", vita_ini={"fade_drop": 1, "up_slide": 1})
+    S.clean(r)
+    b = r.evt("vita_ini")
+    S.check(b and b[0].get("bound") == "1" and int(b[0].get("hits", "0")) >= 30,
+            "the boot switches and extra folders come from one read (%s)" %
+            (b[0]["_"] if b else "no vita_ini line"))
+    S.check(r.has(r"^EVT vita_ini link bound=1 hits=\d+"), "the link's settings too")
+    S.check(r.has(r"^EVT switches2 .* up_slide=1 .* fade_drop=1 "), "values set in vita.ini still apply")
+
+
+def t_gb_save_soon(S):
+    """A Game Boy save is on the card within about two seconds of being made:
+    the Vita gives no warning before the app is closed from LiveArea, so the
+    process is killed 2.5 s after the save, with no exit path."""
+    if not os.path.exists(OWN_GB):
+        S.note("no testrom/gbsave.gb: skipped")
+        return
+    for name, args in (("gb_save_soon", ()), ("gb_save_soon_worker", ("--worker",))):
+        r = S.run(name, "100:a:10\n+150:kill\n", autoboot="gbsave.gb", args=args)
+        p = os.path.join(r.root, "roms", "gbsave.gb.sav")
+        S.check(os.path.exists(p) and os.path.getsize(p) > 0 and
+                any(open(p, "rb").read()),
+                "%s: the save made 2.5 s before the app was killed is on the card" % name)
+
+
 def t_cpufix(S):
     """The emulator fixes from gpSP's September 2026 commits, on this
     build's dynarec (testrom/cpufix.c): code run from VRAM and rewritten
     there, I/O registers reading back as the hardware's do, and the guest's
-    flags kept across the ARM load stub's I/O paths.  The cartridge writes
-    one result byte per test to its battery RAM."""
+    flags kept across the ARM load stub's I/O paths.  And two for packed
+    start-up code (an intro added to Pokemon Pinball: Ruby & Sapphire): an
+    MSR that sets the T bit continues in Thumb, and code runs from palette
+    RAM and OAM.  The cartridge writes one result byte per test to its
+    battery RAM."""
     rom = os.path.join(HERE, "testrom", "gbadhoc-cpufix.gba")
     if not os.path.exists(rom):
         S.note("no testrom/gbadhoc-cpufix.gba (make -C testrom cpufix): skipped")
@@ -752,7 +1388,9 @@ def t_cpufix(S):
              "BG0CNT read mask", "WININ read mask",
              "invalid I/O 0x136 reads 0", "DMA3CNT_H read mask",
              "SOUNDCNT_X master bit", "Z set across I/O reads",
-             "Z clear across I/O reads"]
+             "Z clear across I/O reads", "MSR setting T goes to Thumb",
+             "palette RAM code (Thumb), rewritten",
+             "OAM code (ARM), rewritten"]
     extra = {"roms/gbadhoc-cpufix.gba": open(rom, "rb").read()}
     r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(6, wait=20),
               autoboot="gbadhoc-cpufix.gba", extra=extra)
@@ -1309,12 +1947,13 @@ def t_look(S):
                 "the dark screen is darker (%d < %d)" % (lum["dark"],
                                                          lum["gba"]))
 
-    # ---- the rows: Settings wraps upwards to Button mapping, Keep full
-    # speed, FPS, Rewind, FF button, Fast-forward, Game previews, Game list,
-    # Theme, (Wide view: menus -- not a row while the wide view is off, as
-    # it is in these tests), Wide view, Motion blend, Colours
+    # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
+    # Display settings, Keep full speed, FPS, Rewind, FF button,
+    # Fast-forward, Game previews, Game list, Theme, (Wide view: menus --
+    # not a row while the wide view is off, as it is in these tests), Wide
+    # view, Motion blend, Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 11 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 12 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -1544,10 +2183,11 @@ def t_wide(S):
         S.check(all(sum(c) > 60 for c in col),
                 "fit: the picture reaches both edges of the screen (%s)" % col)
 
-    # ---- the rows: Settings wraps upwards to Button mapping, Keep full
-    # speed, FPS, Rewind, FF button, Fast-forward, Game previews, Game list,
-    # Theme, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 9 + \
+    # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
+    # Display settings, Keep full speed, FPS, Rewind, FF button,
+    # Fast-forward, Game previews, Game list, Theme, Wide view: menus, Wide
+    # view
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 10 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -1759,7 +2399,10 @@ def t_home(S):
 +10:cross
 +90:shot=from_card.png
 """ + EXIT_APP
-    r = S.run("home", script, config={"ui_home": 1})
+    with open(OWN_GBA, "rb") as cartridge:
+        second_game = cartridge.read()
+    r = S.run("home", script, config={"ui_home": 1},
+              extra={"roms/zz-home-test.gba": second_game})
     S.clean(r)
     picks = r.evt("ui_browser_pick")
     S.check(len(picks) >= 2 and picks[0].get("rom") == "gbadhoc-test.gba",
@@ -1787,6 +2430,275 @@ def t_home(S):
     a, b = r.shot("home.png"), r.shot("home_next.png")
     S.check(a is not None and b is not None and worst_diff(a, b) > 0,
             "RIGHT moves the focus along the row")
+
+
+def t_find(S):
+    """Find composes with Starred, resolves real ROMs, and owns IME dismissal input."""
+    cartridge = open(OWN_GBA, "rb").read()
+    first, target = "find-only-01.gba", "find-only-02-NeEdLe.gba"
+    extra = {"roms/" + name: cartridge for name in (first, target)}
+    config = {"ui_home": 1, "last_rom": "gbadhoc-test.gba", "previews": 0, "wide_gba": 1}
+
+    def run(name, script, favs=None):
+        files = dict(extra)
+        if favs is not None:
+            files["roms/favourites.txt"] = favs
+        result = S.run("find_" + name, script, config=config, extra=files)
+        S.clean(result)
+        return result
+
+    def picked(result, name):
+        picks = result.evt("ui_browser_pick")
+        return len(picks) == 1 and picks[0]["_"] == "EVT ui_browser_pick rom=" + name
+
+    r = run("exact", "90:circle\n94:type=find-only-02\n150:shot=filtered.png\n"
+            "190:right\n230:cross\n400:shot=game.png\n420:quit\n")
+    S.check(r.has(r'^EVT host_ime .* text="find-only-02"$') and
+            r.has(r"^EVT browser_find active=1 shown=1 ") and picked(r, target),
+            "Circle Find accepts a query; RIGHT remains on its unique result and Play resolves the exact ROM")
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check("last_rom = " + target + "\n" in ini and
+            not re.search(r"^(?:find|query|search)\w*\s*=", ini, re.M),
+            "only the selected ROM identity persists, never the query or filtered index")
+    S.picture(r, "filtered.png")
+    S.picture(r, "game.png")
+
+    # Nothing starred matches, but a game does: the empty page says so, and
+    # SELECT (All games) shows it with the search kept.
+    r = run("starred_elsewhere", "60:select\n120:circle\n124:type=needle\n"
+            "180:shot=starred_none.png\n200:select\n280:shot=all.png\n"
+            "300:cross\n440:shot=game.png\n460:quit\n",
+            favs="gbadhoc-test.gba\n")
+    S.check(r.has(r"^EVT browser_find active=1 shown=0 scope=1") and
+            r.has(r"^EVT ui_browser_view favs=0 shown=1") and picked(r, target),
+            "an empty Starred search offers All games, which keeps the search and finds the game")
+    S.picture(r, "starred_none.png")
+
+    r = run("cancel", "90:circle\n94:type=\n160:cross\n300:shot=game.png\n320:quit\n")
+    S.check(r.has(r'^EVT host_ime .* text="<cancel>"$') and
+            not r.evt("browser_find") and picked(r, "gbadhoc-test.gba"),
+            "cancelling Find preserves the unfiltered view and selected game")
+
+    r = run("empty", "90:circle\n94:type=no-such-find-only-title\n150:shot=none.png\n"
+            "170:cross\n190:square\n210:circle\n250:circle\n254:type=\n"
+            "300:shot=cleared.png\n320:quit\n")
+    S.check(r.has(r"^EVT browser_find active=1 shown=0 ") and
+            r.has(r"^EVT browser_find active=0 ") and
+            len(r.evt("ui_text_open")) == 2 and not r.evt("ui_browser_pick") and
+            not r.evt("ui_browser_fav") and len(r.evt("rom_scan_time")) == 1,
+            "zero results cannot launch, star or rescan; Circle clears without exiting and Find opens again")
+    S.picture(r, "none.png")
+    S.picture(r, "cleared.png")
+
+    r = run("dismiss", "90:circle\n94:type=find-only-02\n100:cross:50\n"
+            "200:shot=after_ime.png\n230:cross\n400:shot=game.png\n420:quit\n")
+    shot = r.shot_evt("after_ime.png")
+    S.check(shot and shot.get("emu") == "0" and picked(r, target),
+            "a held CROSS that accepts the IME cannot launch until released and deliberately pressed again")
+
+    r = run("starred", "90:circle\n94:type=find-only\n150:select\n190:right\n"
+            "230:cross\n400:shot=game.png\n420:quit\n", favs=target + "\n")
+    S.check(r.has(r"^EVT ui_browser_view favs=1 shown=1$") and
+            len(r.evt("ui_text_open")) == 1 and picked(r, target),
+            "Starred intersects the active query and preserves full ROM identity")
+
+    r = run("unstar", "90:circle\n94:type=find-only\n150:select\n190:square\n"
+            "230:shot=unstarred.png\n260:select\n310:cross\n460:shot=game.png\n480:quit\n",
+            favs=target + "\n")
+    S.check(r.has(r"^EVT ui_browser_fav op=remove ") and
+            r.has(r"^EVT ui_browser_view favs=0 shown=2$") and picked(r, first),
+            "unstar removes the filtered Starred result safely; returning to Games keeps the query")
+
+    r = run("refresh", "90:circle\n94:type=find-only\n150:start\n" +
+            "+8:down\n" * 21 + "+20:cross\n+70:select\n+70:cross\n"
+            "+140:shot=game.png\n+20:quit\n", favs=target + "\n")
+    S.check(r.has(r"^EVT library_refresh_done console=0 ") and
+            r.has(r"^EVT ui_browser_view favs=1 shown=1$") and
+            len(r.evt("ui_text_open")) == 1 and picked(r, target),
+            "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
+
+    r = run("console", "90:circle\n94:type=find-only\n150:triangle\n215:triangle\n"
+            "280:triangle\n360:cross\n500:shot=game.png\n520:quit\n")
+    S.check(r.has(r"^EVT browser_find active=0 ") and
+            len(r.evt("ui_browser_console")) == 3 and picked(r, "gbadhoc-test.gba"),
+            "a console change clears Find instead of hiding the remembered game on return")
+
+    r = run("touch", "90:touch=715/37\n95:type=find-only-02\n"
+            "170:touch=715/37\n175:type=find-only-01\n230:shot=edited.png\n"
+            "250:touch=446/71\n300:cross\n440:shot=game.png\n460:quit\n")
+    S.check(len(r.evt("ui_text_open")) == 2 and
+            r.has(r'^EVT host_ime .* text="find-only-01"$') and
+            r.has(r"^EVT browser_find active=0 ") and picked(r, first),
+            "the touch magnifier edits an active query; the separate clear chip clears without launching")
+    S.picture(r, "edited.png")
+
+
+def t_library_cache(S):
+    """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
+    with open(OWN_GBA, "rb") as cartridge:
+        second_game = cartridge.read()
+    script = ("60:triangle\n+60:triangle\n+70:triangle\n"
+              "+60:triangle\n+60:triangle\n+70:triangle\n"
+              "+60:right\n+20:start\n" + "+8:down\n" * 10 +
+              "+20:shot=quality_setting.png\n" + "+8:down\n" * 11 +
+              "+20:shot=refresh_command.png\n+8:cross\n"
+              "+60:shot=refreshed.png\n+8:cross\n+100:shot=game.png\n+20:quit\n")
+    r = S.run("library_cache", script,
+              config={"ui_home": 1, "wide_gba": 1, "scale_gba": 1, "quality_gba": 1},
+              extra={"roms/zz-home-test.gba": second_game})
+    S.clean(r)
+    scans = r.evt("rom_scan_time")
+    sides = r.evt("rom_scan_side")
+    S.check(len(scans) == 2 and {d.get("console") for d in scans} == {"0"} and
+            len(sides) == 4 and {d.get("console") for d in sides} == {"1", "2"},
+            "one walk lists all three consoles; only the explicit refresh walks again "
+            "(scans %s, side lists %s)" % ([d["_"] for d in scans], [d["_"] for d in sides]))
+    S.check(len(r.evt("rom_cache_hit")) >= 4, "revisited console tabs use cached lists")
+    S.check(r.has(r"library_refresh_asked") and r.has(r"library_refresh_done console=0 roms=2"),
+            "the Refresh library command returns to the complete GBA list")
+    picks = r.evt("ui_browser_pick")
+    S.check(picks and picks[0].get("rom") == "zz-home-test.gba",
+            "refresh preserves the focused game rather than jumping to last played")
+    for name in ["quality_setting.png", "refresh_command.png", "refreshed.png", "game.png"]:
+        S.picture(r, name)
+
+
+def t_settings_order(S):
+    """One DOWN from Screen size adjusts quality, not the filter, in both Settings views."""
+    config = {"ui_home": 1, "scale_gba": 1, "filter_gba": 4, "quality_gba": 1,
+              "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
+              "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
+    for context, down in (("browser", 9), ("game", 7)):
+        enter = "60:start\n" if context == "browser" else \
+            "100:shot=before.png\n" + menu_pick(4, wait=10)
+        leave = "+30:cross\n+120:shot=game.png\n+10:quit\n" if context == "browser" else \
+            "+12:circle\n+60:shot=game.png\n+10:quit\n"
+        script = (enter + "+8:down\n" * down +
+                  "+20:shot=screen_size.png\n+4:right\n+10:left\n" +
+                  "+10:down\n+10:shot=image_quality.png\n+4:right\n+12:circle\n" + leave)
+        r = S.run("settings_order_" + context, script, config=config,
+                  autoboot="gbadhoc-test.gba" if context == "game" else None)
+        S.clean(r)
+        modes = r.evt("video_mode")
+        S.check(len(modes) == 2 and
+                r.has(r"^EVT video_mode scale=4x crop filter=xBRZ smooth profile=GBA$") and
+                r.has(r"^EVT video_mode scale=fit filter=xBRZ smooth profile=GBA$"),
+                "%s: Screen size changes fit to 4x crop and back; the next row is not Video filter" %
+                context)
+        quality = r.evt("display_quality")
+        S.check(quality and quality[-1].get("console") == "GBA" and
+                quality[-1].get("quality") == "2",
+                "%s: one DOWN from Screen size reaches Image quality and changes Original to 2x" %
+                context)
+        ini = open(os.path.join(r.root, "config.ini")).read()
+        expected = {"scale_gba": 1, "filter_gba": 4, "quality_gba": 2,
+                    "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
+                    "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
+        S.check(all(re.search(r"^%s = %d$" % (key, value), ini, re.M)
+                    for key, value in expected.items()),
+                "%s: quality saves under its existing key without changing size, filter or inactive profiles" %
+                context)
+        textures = [d for d in r.evt("up_tex") if d.get("slot") == "0"]
+        S.check(textures and all(d.get("f") == "2" for d in textures),
+                "%s: the game actually uses the selected 2x processing factor" % context)
+        for name in ("screen_size.png", "image_quality.png", "game.png"):
+            S.picture(r, name)
+
+
+def t_quality(S):
+    """Native, 2x and 3x processing share fitted output; manual quality avoids GPU setup."""
+    for quality in [1, 2, 3]:
+        r = S.run("quality_%d" % quality, "120:shot=game.png\n+20:quit\n",
+                  autoboot="gbadhoc-test.gba",
+                  config={"scale_gba": 1, "filter_gba": 4, "quality_gba": quality},
+                  vita_ini={"gpu_xbrz": 1})
+        S.clean(r)
+        S.check(r.has(r"display_quality console=GBA quality=%d" % quality),
+                "the active GBA profile applies quality %d" % quality)
+        textures = [d for d in r.evt("up_tex") if d.get("slot") == "0"]
+        S.check((not textures) if quality == 1 else
+                bool(textures and all(d.get("f") == str(quality) for d in textures)),
+                "quality %d uses its selected CPU intermediate factor, not output zoom" % quality)
+        S.check(not r.evt("gpu_xbrz"), "manual quality does not initialize the GPU shader path")
+        S.picture(r, "game.png")
+
+
+def t_favs_recover(S):
+    """A favourites save cut short leaves favourites.txt.old and no list:
+    it is the list.  Saving writes a new file and moves it in, leaving no
+    .tmp or .old behind."""
+    r = S.run("favs_recover", "60:select\n+80:shot=starred.png\n+10:square\n"
+              "+80:shot=after.png\n+10:quit\n",
+              config={"ui_home": 1, "last_rom": "gbadhoc-test.gba"},
+              extra={"roms/favourites.txt.old": "gbadhoc-test.gba\n"})
+    S.clean(r)
+    fav = os.path.join(r.root, "roms", "favourites.txt")
+    S.check(r.has(r"^EVT favs_load n=1 "), "the .old list is read back as the list")
+    S.check(r.has(r"^EVT favs_save n=0 rc=0"), "untagging saves the list")
+    S.check(os.path.exists(fav) and open(fav).read() == "" and
+            not os.path.exists(fav + ".old") and not os.path.exists(fav + ".tmp"),
+            "the saved list is favourites.txt alone")
+
+
+def t_art_requeue(S):
+    """Coming back to the list from a game (the same scan, from the cache)
+    does not hand the whole library to the cover fetcher again."""
+    import http.server
+    import threading
+    import functools
+    serve = os.path.join(S.outdir, "art_requeue_serve")
+    shutil.rmtree(serve, ignore_errors=True)
+    os.makedirs(serve)
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(Quiet, directory=serve))
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    script = ("120:cross\n+150:shot=game.png\n" + QUIT_TO_LIST +
+              "+200:shot=list.png\n+10:quit\n")
+    r = S.run("art_requeue", script, config={"ui_home": 1},
+              vita_ini={"art_url": "http://127.0.0.1:%d" % srv.server_address[1]})
+    srv.shutdown()
+    S.clean(r)
+    S.check(r.has(r"game_end reason=game_list") and r.evt("rom_cache_hit"),
+            "a game was played and the list came back from the scan cache")
+    queued = r.evt("art_queue")
+    S.check(len(queued) == 1,
+            "the library is handed to the cover fetcher once, not again after "
+            "the game (art_queue lines: %d)" % len(queued))
+
+
+def t_quality_preset(S):
+    """In game, TRIANGLE steps the screen size only; an explicit Image quality keeps its processing."""
+    for quality, active in ((2, "xBRZ smooth"), (1, "sharp bilinear")):
+        r = S.run("quality_preset_%d" % quality,
+                  "100:shot=before.png\n+4:triangle\n+40:shot=stretch.png\n"
+                  "+4:triangle\n+40:shot=3x.png\n+4:triangle\n+40:shot=fit.png\n+20:quit\n",
+                  autoboot="gbadhoc-test.gba",
+                  config={"scale_gba": 1, "filter_gba": 4, "quality_gba": quality})
+        S.clean(r)
+        modes = [(d["scale"], d["_"].split("filter=")[1]) for d in r.evt("video_mode")]
+        S.check(modes == [("stretch", active), ("3x", active), ("fit", active)],
+                "quality %d: the preset steps stretch, 3x, fit with %s throughout (%s)" %
+                (quality, active, modes))
+        ini = open(os.path.join(r.root, "config.ini")).read()
+        S.check(all(re.search(r"^%s = %d$" % (key, value), ini, re.M) for key, value in
+                    (("scale_gba", 1), ("filter_gba", 4), ("quality_gba", quality))),
+                "quality %d: the preset saves the size and keeps the quality and requested filter" %
+                quality)
+        textures = [d for d in r.evt("up_tex") if d.get("slot") == "0"]
+        if quality == 1:
+            S.check(not textures and r.has(r"sharp_target rc=0"),
+                    "Original draws fitted pixels evenly through the sharp target, no enhancement")
+        else:
+            S.check(textures and all(d.get("f") == "2" for d in textures),
+                    "Enhanced 2x keeps its factor at every preset size")
+        for name in ("before.png", "stretch.png", "3x.png", "fit.png"):
+            S.picture(r, name)
 
 
 def read_clip(path):
@@ -2010,7 +2922,9 @@ def t_gameinfo(S):
               vita_ini={"art_url": "http://127.0.0.1:%d" % port})
     srv.shutdown()
     S.clean(r)
-    db = r.evt("gamedb")
+    S.check(r.has(r"^EVT gamedb deferred path="),
+            "the game list is not read at boot, before the library shows")
+    db = [d for d in r.evt("gamedb") if "records" in d]
     S.check(db and int(db[0].get("records", "0")) > 10000,
             "the bundled game list is read (log: %s)" %
             (db[0]["_"] if db else "no gamedb line"))
@@ -2040,6 +2954,220 @@ def t_gameinfo(S):
     tl = open(tmiss).read().split("\n") if os.path.exists(tmiss) else []
     S.check(name in tl, "Emerald, which has no title screen here, is "
             "remembered in titles/.missing.txt (%s)" % tl[:4])
+
+
+def t_art_progress(S):
+    """A held cover response never blocks Play; progress is visible, then covers arrive on return."""
+    import http.server
+    import io
+    import threading
+    cfg = {"ui_home": 1, "last_rom": "gbadhoc-test.gba"}
+    extra = {"roms/zz-needs-cover.gba": open(OWN_GBA, "rb").read()}
+    offline = S.run("art_progress_offline", "90:shot=idle.png\n+10:quit\n",
+                    config=cfg, extra=extra)
+    S.clean(offline)
+    idle = S.picture(offline, "idle.png")
+
+    out = os.path.join(S.outdir, "art_progress")
+    shutil.rmtree(out, ignore_errors=True)
+    busy_path = os.path.join(out, "busy.png")
+    game_path = os.path.join(out, "game.png")
+    stop = threading.Event()
+    requests = []
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (240, 24, 24)).save(buf, "PNG")
+    payload = buf.getvalue()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            row = {"path": self.path, "before_game": not os.path.exists(game_path),
+                   "before_busy": not os.path.exists(busy_path)}
+            requests.append(row)
+            # No cover response can finish before the game has visibly run.
+            until = time.monotonic() + 20
+            while not os.path.exists(game_path) and not stop.is_set() and time.monotonic() < until:
+                stop.wait(0.005)
+            row["response_after_game"] = os.path.exists(game_path)
+            if stop.is_set():
+                return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # Starting the game abandons the in-flight cover request.
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    serving = threading.Thread(target=srv.serve_forever, daemon=True)
+    serving.start()
+    script = ("90:shot=busy.png\n+10:cross\n+120:shot=game.png\n" +
+              QUIT_TO_LIST + "+90:shot=returned.png\n+180:shot=ready.png\n+10:quit\n")
+    try:
+        r = S.run("art_progress", script, config=cfg, extra=extra,
+                  vita_ini={"art_url": "http://127.0.0.1:%d" % srv.server_port,
+                            "art_titles": 0})
+    finally:
+        stop.set()
+        srv.shutdown()
+        srv.server_close()
+        serving.join()
+    S.clean(r)
+    busy = S.picture(r, "busy.png")
+    S.picture(r, "game.png")
+    ready = S.picture(r, "ready.png")
+    S.check(bool(requests) and requests[0]["before_busy"] and
+            all(row.get("response_after_game") for row in requests),
+            "Play runs while the first cover response is still held (%s)" % requests)
+    S.check(bool(r.evt("ui_browser_pick")) and bool(r.evt("rom_loaded")) and
+            r.shot_evt("game.png") is not None,
+            "controller Play reaches an emulated game, not a cover-loading gate")
+    if idle and busy:
+        S.check(worst_diff(idle, busy, (500, 60, 920, 100)) > 40,
+                "the real Home frame visibly shows cover-checking status during a held request")
+        S.check(worst_diff(idle, busy, (0, 100, 960, 510)) == 0,
+                "background progress leaves the cover row, Play and three footer hints unchanged")
+    covers = glob.glob(os.path.join(r.root, "boxart", "*.png"))
+    S.check(len(covers) == 2,
+            "returning from the game resumes and finishes both controlled cover downloads (%d)" % len(covers))
+    if ready:
+        red = sum(1 for c in ready.crop((60, 102, 160, 200)).get_flattened_data()
+                  if c[0] > 180 and c[1] < 60 and c[2] < 60)
+        S.check(red > 8000, "the focused cover appears automatically after returning (%d red pixels)" % red)
+    S.summary["art_progress_evidence"] = {"requests": requests, "covers": len(covers)}
+
+
+def art_settings_requests_ok(requested, failed, stems):
+    from collections import Counter
+    prefix = "/Nintendo - Game Boy Advance/Named_Boxarts/"
+    expected = Counter({prefix + name + ".png": 1 for name in stems})
+    actual = Counter(requested)
+    if actual == expected:
+        return True
+    first, selected = prefix + stems[1] + ".png", prefix + stems[0] + ".png"
+    expected[first] += 1
+    # Selected-first can interrupt a request already in flight at startup.
+    # This precise trace also occurs in unmodified R5; do not permit general
+    # retries, unknown URLs, or refetches of completed cached covers here.
+    return (actual == expected and requested[:3] == [first, selected, first] and
+            failed == ['EVT art_fetch failed name="' + stems[1] + '"'])
+
+
+def art_settings_cache_ok(directory, stems, png, thumb):
+    expected_png = {name + ".png" for name in stems}
+    expected_thumb = {name + ".t2.565" for name in stems}
+    try:
+        if ({os.path.basename(p) for p in glob.glob(os.path.join(directory, "*.png"))}
+                != expected_png or
+                {os.path.basename(p) for p in glob.glob(os.path.join(directory, "*.t2.565"))}
+                != expected_thumb):
+            return False
+        return (all(open(os.path.join(directory, name), "rb").read() == png for name in expected_png)
+                and all(open(os.path.join(directory, name), "rb").read() == thumb for name in expected_thumb))
+    except OSError:
+        return False
+
+
+def t_art_settings(S):
+    """Artwork keeps downloading in Settings, then stale visible tiles refresh on return."""
+    import http.server
+    import io
+    import threading
+    import urllib.parse
+    stems = ["gbadhoc-test"] + ["Artwork %02d" % i for i in range(39)]
+    out = os.path.join(S.outdir, "art_settings")
+    shutil.rmtree(out, ignore_errors=True)
+    entered = os.path.join(out, "settings_entered.png")
+    finished = os.path.join(out, "settings_done.png")
+    returned = os.path.join(out, "after.png")
+    root = os.path.join(out, "root")
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (240, 24, 24)).save(buf, "PNG")
+    payload = buf.getvalue()
+    cartridge = open(OWN_GBA, "rb").read()
+    extra = {"roms/%s.gba" % stem: cartridge for stem in stems[1:]}
+    requested, during = [], {}
+    stop = threading.Event()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            # The first response cannot arrive before the app is in Settings.
+            until = time.monotonic() + 15
+            while not os.path.exists(entered) and not stop.is_set() and time.monotonic() < until:
+                stop.wait(0.005)
+            path = urllib.parse.unquote(self.path)
+            stem = os.path.basename(path)[:-4]
+            ok = os.path.exists(entered) and stem in stems
+            stop.wait(0.02)
+            body = payload if ok else b"not found"
+            requested.append(path)
+            self.send_response(200 if ok else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    def observe():
+        while not stop.is_set():
+            if os.path.exists(finished):
+                during["png"] = len(glob.glob(os.path.join(root, "boxart", "*.png")))
+                during["thumbs"] = len(glob.glob(os.path.join(root, "boxart", "*.t2.565")))
+                during["returned"] = os.path.exists(returned)
+                return
+            stop.wait(0.005)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    serving = threading.Thread(target=srv.serve_forever, daemon=True)
+    observer = threading.Thread(target=observe, daemon=True)
+    serving.start()
+    observer.start()
+    script = ("20:shot=before.png\n+10:start\n+10:shot=settings_entered.png\n" +
+              "+8:down\n" * 20 + "+360:shot=settings_done.png\n+45:circle\n" +
+              "+90:shot=after.png\n+10:quit\n")
+    try:
+        r = S.run("art_settings", script,
+                  config={"ui_home": 1, "wide_gba": 1, "last_rom": "gbadhoc-test.gba"},
+                  extra=extra, vita_ini={"art_url": "http://127.0.0.1:%d" % srv.server_port,
+                                         "art_titles": 0})
+    finally:
+        stop.set()
+        srv.shutdown()
+        srv.server_close()
+        serving.join()
+        observer.join()
+    S.clean(r)
+    S.check(during.get("png") == 40 and during.get("thumbs") == 40 and
+            during.get("returned") is False,
+            "all 40 covers and thumbnails finish before leaving Settings (%s)" % during)
+    failed = [e["_"] for e in r.evt("art_fetch") if e["_"].startswith("EVT art_fetch failed ")]
+    S.check(art_settings_requests_ok(requested, failed, stems),
+            "exact cover requests, allowing only the known initial superseded trace (%d)" % len(requested))
+    import struct
+    pixel = (240 >> 3) | ((24 >> 2) << 5) | ((24 >> 3) << 11)
+    thumb = struct.pack("<4sHHH6x", b"565R", 64, 64, 64) + struct.pack("<H", pixel) * (64 * 64)
+    S.check(art_settings_cache_ok(os.path.join(r.root, "boxart"), stems, payload, thumb),
+            "exact 40 PNG/thumbnail names and complete contents are persisted")
+    S.check(bool(r.evt("art_resync")), "overflow requests one complete artwork-cache resync")
+    before = S.picture(r, "before.png")
+    after = S.picture(r, "after.png")
+    S.picture(r, "settings_done.png")
+    if before and after:
+        box = (60, 102, 160, 200)
+        red = lambda im: sum(1 for c in im.crop(box).get_flattened_data()
+                             if c[0] > 180 and c[1] < 60 and c[2] < 60)
+        before_red, after_red = red(before), red(after)
+        S.check(before_red < 100 and after_red > 8000,
+                "the previously cached empty last-game tile reloads its red cover (%d -> %d pixels)" %
+                (before_red, after_red))
+        evidence = {**during, "requests": len(requested), "before_red": before_red,
+                    "after_red": after_red, "resyncs": len(r.evt("art_resync"))}
+        S.summary["art_settings_evidence"] = evidence
+        print("    artwork evidence " + json.dumps(evidence, sort_keys=True))
 
 
 def t_title_bg(S):
@@ -2103,9 +3231,10 @@ def t_fullspeed(S):
                 swap=max(int(w.get("swap_us", "0/0").split("/")[0])
                          for w in wins[1:]) if len(wins) > 1 else -1,
                 under=int(au[-1].get("under", 0)) if au else -1)
-    # ---- the row: Settings wraps upwards to Button mapping, Keep full
-    # speed; CROSS turns it off, and config.ini keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+10:shot=row.png\n" \
+    # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
+    # Display settings, Keep full speed; CROSS turns it off, and config.ini
+    # keeps that
+    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -2683,9 +3812,10 @@ def t_extra_roms(S):
                 int(sw[0]["roms"]) == len(gbn),
                 "TRIANGLE: the GB list holds %d games, the folder's too "
                 "(log: %s)" % (len(gbn), sw[0]["_"] if sw else "-"))
-        d3 = r3.evt("rom_scan_done")
+        d3 = [d for d in r3.evt("rom_scan_side") if d["console"] == "1"]
         S.check(d3 and d3[-1]["crc"] == list_crc(gbn),
-                "the GB list is complete and in order")
+                "the GB list is complete and in order (listed by the walk the "
+                "GBA list made)")
         S.check(r3.has(r"^EVT ui_browser_pick rom=%s$" % re.escape(mono)),
                 "the folder's GB game was picked")
         gsav = mono + ".sav"
@@ -2820,7 +3950,7 @@ def t_extra_roms(S):
     shutil.rmtree(cwd, ignore_errors=True)
     for sub in ("ux0:ROMS/GBA", "ux0:ROMS/GB", "ux0:roms/GBA",
                 "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance"):
-        os.makedirs(os.path.join(cwd, sub))
+        os.makedirs(os.path.join(cwd, sub), exist_ok=True)
     for sub, n in (("ux0:ROMS/GBA", "Built In One.gba"),
                    ("ux0:roms/GBA", "Same Folder On A Card.gba"),
                    ("ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance",
@@ -2845,8 +3975,10 @@ def t_extra_roms(S):
                     "the same folder under another spelling once (%s)" %
                     (rr[0]["_"] if rr else "no rom_roots line"))
             b = r.evt("ui_browser")
+            expected = list_oracle(os.path.join(r.root, "roms"),
+                                   [os.path.join(cwd, p) for p in fold.split(";")], ".gba")
             S.check(b and int(b[0]["found"]) ==
-                    2 + len(S.roms(r.root, ".gba")),
+                    len(expected),
                     "their games are listed (%s)" %
                     (b[0]["_"] if b else "no ui_browser line"))
             names = [d["path"] for d in r.evt("rom_scan_root")]
@@ -2902,9 +4034,300 @@ def t_extra_roms(S):
                     "and the rest of the page is as it was")
 
 
+def t_old_states(S):
+    """A state save that was interrupted leaves only <state>.old.  On the
+    home screen: browsing its card never renames it; loading the card
+    recovers it first and loads it; deleting the slot removes it; saving
+    over it in the game recovers and then replaces it, leaving no .old."""
+    make = ("60:cross\n+150:shot=game.png\n" + menu_pick(1) +
+            "+20:down\n+10:square\n+30:circle\n+10:circle\n" + EXIT_APP)
+    r = S.run("old_states_make", make, config={"ui_home": 1})
+    S.clean(r)
+    st_rel = os.path.join("roms", "gbadhoc-test.st1")
+    st = os.path.join(r.root, st_rel)
+    if not S.check(os.path.exists(st), "slot 2 was saved to make the fixture"):
+        return
+    saved = open(st, "rb").read()
+
+    def interrupted(name, script):
+        out = os.path.join(S.outdir, name)
+        root = os.path.join(out, "root")
+        shutil.rmtree(out, ignore_errors=True)
+        shutil.copytree(r.root, root)
+        for f in glob.glob(os.path.join(root, "log", "*")):
+            os.remove(f)
+        os.rename(os.path.join(root, st_rel), os.path.join(root, st_rel + ".old"))
+        return S.run(name, script, prepared=True)
+
+    def files(res):
+        p = os.path.join(res.root, st_rel)
+        return os.path.exists(p), os.path.exists(p + ".old")
+
+    b = interrupted("old_states_browse",
+                    "60:shot=home.png\n+2:down\n+60:shot=cards.png\n"
+                    "+2:circle\n+40:shot=back.png\n+10:quit\n")
+    S.check(b.rc == 0, "browsing ran (rc %s)" % b.rc)
+    S.check(files(b) == (False, True) and not b.evt("state_recovered"),
+            "browsing the cards leaves the interrupted save as .old, renamed "
+            "by nobody (files %s, recovered %d)" % (files(b), len(b.evt("state_recovered"))))
+
+    c = interrupted("old_states_load",
+                    "60:down\n+60:cross\n+150:shot=loaded.png\n" + EXIT_APP)
+    S.clean(c)
+    rec = c.evt("state_recovered")
+    S.check(len(rec) == 1 and rec[0].get("file", "").endswith("gbadhoc-test.st1"),
+            "X on the card recovers the .old first, once (log: %s)" %
+            [x["_"] for x in rec])
+    S.check(c.has(r"ui_browser_pick rom=gbadhoc-test.gba state_slot=2") and
+            c.has(r"state_load slot=2 via=shelf rc=0"),
+            "...and the game starts from that slot")
+    present, old = files(c)
+    S.check(present and not old and
+            open(os.path.join(c.root, st_rel), "rb").read() == saved,
+            "the recovered slot is the saved state, byte for byte, and no "
+            ".old is left (files %s)" % ((present, old),))
+
+    d = interrupted("old_states_delete",
+                    "60:down\n+60:square\n+10:cross\n+40:shot=deleted.png\n"
+                    "+10:quit\n")
+    S.check(d.rc == 0, "deleting ran (rc %s)" % d.rc)
+    S.check(d.has(r"state_delete slot=2 file=") and files(d) == (False, False),
+            "SQUARE then X on the card deletes the slot: neither the state "
+            "nor its .old is left (files %s)" % (files(d),))
+
+    # Deleting the game's last state empties the shelf: it closes once the
+    # deletion is read back, and X then plays the game itself.
+    out = os.path.join(S.outdir, "old_states_last")
+    shutil.rmtree(out, ignore_errors=True)
+    shutil.copytree(r.root, os.path.join(out, "root"))
+    for f in glob.glob(os.path.join(out, "root", "log", "*")):
+        os.remove(f)
+    g = S.run("old_states_last", "60:down\n+60:square\n+10:cross\n+90:shot=closed.png\n"
+              "+10:cross\n+150:shot=game.png\n+10:quit\n", prepared=True)
+    S.clean(g)
+    # (X is Continue on the Home page: the game played earlier was left
+    # with a resume point, so it continues from there -- not from a slot.)
+    S.check(g.has(r"state_delete slot=2 file=") and g.has(r"home_shelf_close reason=empty") and
+            g.has(r"EVT game rom=") and
+            not [e for e in g.evt("state_load") if "slot" in e],
+            "deleting the last state closes the shelf, and X then plays the game")
+
+    # The interrupted state is real data: the page asks before replacing it
+    # ("Overwrite Slot 2?"), and X answers yes.
+    e = interrupted("old_states_save",
+                    "60:cross\n+150:shot=game.png\n" + menu_pick(1) +
+                    "+20:down\n+10:square\n+20:shot=ask.png\n+10:cross\n"
+                    "+30:circle\n+10:circle\n" + EXIT_APP)
+    S.clean(e)
+    S.check(e.has(r"state_save slot=2 ") and not e.has(r"state_save .*FAILED"),
+            "slot 2 saved over the interrupted save, after the overwrite question")
+    S.check(len(e.evt("state_recovered")) == 1,
+            "the save recovered the .old before replacing it (log: %s)" %
+            [x["_"] for x in e.evt("state_recovered")])
+    S.check(files(e) == (True, False),
+            "saving over it leaves one state and no .old (files %s)" % (files(e),))
+
+
+class RaServer:
+    """A stand-in for retroachievements.org (dorequest.php), on the
+    loopback: one user (ra_tester / hunter2pw, token tok-1), one game (the
+    test cartridge, by its MD5) with two achievements -- 1001 "First Press"
+    when battery RAM byte 1 reads 23 (the test cartridge's first A press,
+    testrom/main.c), 1002 one that can never be earned -- and a record of
+    every request (the password masked, how often it came kept)."""
+    PASSWORD, TOKEN = "hunter2pw", "tok-1"
+
+    def __init__(self, game_md5):
+        import http.server
+        import threading
+        import urllib.parse
+        self.md5, self.calls, self.password_seen = game_md5, [], 0
+        srv = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                q = dict(urllib.parse.parse_qsl(self.rfile.read(n).decode()))
+                pw_ok = q.get("p") == srv.PASSWORD
+                if pw_ok:
+                    srv.password_seen += 1
+                if "p" in q:
+                    q["p"] = "*"
+                q["_pw_ok"] = pw_ok
+                srv.calls.append(q)
+                code, body = srv.answer(q)
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def url(self):
+        return "http://127.0.0.1:%d" % self.port
+
+    def stop(self):
+        self.httpd.shutdown()
+
+    def answer(self, q):
+        r, ok = q.get("r"), q.get("u") == "ra_tester"
+        if r == "login2":
+            good = ok and (q.get("t") == self.TOKEN or q["_pw_ok"])
+            if not good:
+                return 401, {"Success": False, "Code": "invalid_credentials",
+                             "Error": "Invalid User/Password combination."}
+            return 200, {"Success": True, "User": "ra_tester",
+                         "Token": self.TOKEN, "Score": 5,
+                         "SoftcoreScore": 0, "Messages": 0}
+        if not ok or q.get("t") != self.TOKEN:
+            return 401, {"Success": False, "Code": "invalid_token",
+                         "Error": "Invalid token"}
+        if r == "achievementsets":
+            if q.get("m") != self.md5:
+                return 200, {"Success": True, "GameId": 0, "Title": "",
+                             "ConsoleId": 5, "ImageIconUrl": "", "Sets": []}
+            ach = lambda i, t, d, p, m: {
+                "ID": i, "Title": t, "Description": d, "Flags": 3,
+                "Points": p, "MemAddr": m, "Author": "test",
+                "BadgeName": "00001", "Created": 1700000000,
+                "Modified": 1700000000, "Type": ""}
+            img = "http://127.0.0.1/Images/000001.png"
+            return 200, {"Success": True, "GameId": 77,
+                         "Title": "GBAdhoc Test", "ConsoleId": 5,
+                         "ImageIconUrl": img, "RichPresencePatch": "",
+                         "Sets": [{"AchievementSetId": 7, "GameId": 77,
+                                   "Title": "GBAdhoc Test", "Type": "core",
+                                   "ImageIconUrl": img, "Leaderboards": [],
+                                   "Achievements": [
+                                       ach(1001, "First Press", "Press A once",
+                                           5, "0xH048001=23"),
+                                       ach(1002, "Never", "Cannot be earned",
+                                           10, "0xH000000=1_0xH000000=2")]}]}
+        if r == "startsession":
+            return 200, {"Success": True, "Unlocks": [],
+                         "HardcoreUnlocks": [], "ServerNow": 1700000000}
+        if r == "awardachievement":
+            return 200, {"Success": True, "Score": 10, "SoftcoreScore": 5,
+                         "AchievementID": int(q.get("a", 0)),
+                         "AchievementsRemaining": 1}
+        if r == "ping":
+            return 200, {"Success": True}
+        return 400, {"Success": False, "Error": "unknown request " + str(r)}
+
+
+def t_ra(S):
+    """RetroAchievements (ra_vita.h, a stand-in server on the loopback):
+    Settings > Account signs in with the name and password typed on the
+    system keyboard and keeps only the token; the next boot signs in with
+    it; a game's achievements are fetched by its MD5 and one is earned in
+    play, toasted and sent; Settings > Achievements lists them; Hardcore
+    refuses a state load and sends its unlock as hardcore; a server that is
+    not there costs nothing but a log line."""
+    import hashlib
+    md5 = hashlib.md5(open(OWN_GBA, "rb").read()).hexdigest()
+    srv = RaServer(md5)
+    try:
+        _t_ra(S, srv)
+    finally:
+        srv.stop()
+
+
+def _t_ra(S, srv):
+    ini = {"ra_host": srv.url()}
+    # The password: Settings (the browser's), up from the top past Button
+    # mapping, Game order and Hardcore to Account; X; the name, then the
+    # password, each through the keyboard.
+    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n"
+              "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
+              "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
+              "+30:quit\n", vita_ini=ini)
+    S.clean(r)
+    S.picture(r, "signed_in.png")
+    S.check(r.has(r"^EVT ra_login ok=1 via=password rc=0 user=ra_tester"),
+            "signed in with the password")
+    S.check(srv.password_seen == 1, "the password went to the server once "
+            "(%d)" % srv.password_seen)
+    acct = os.path.join(r.root, "retroachievements.txt")
+    kept = open(acct).read() if os.path.exists(acct) else ""
+    S.check("user=ra_tester" in kept and "token=tok-1" in kept,
+            "retroachievements.txt keeps the name and the token")
+    leaked = [f for f in glob.glob(os.path.join(r.root, "**", "*"),
+                                   recursive=True)
+              if os.path.isfile(f) and b"hunter2pw" in open(f, "rb").read()]
+    S.check(not leaked, "the password is in no file of the app's (%s)" % leaked)
+
+    # Play: the token signs in, the game is found, A earns First Press, and
+    # Settings > Achievements (in game: up past Button mapping and Display
+    # settings) lists both.
+    keep = {"retroachievements.txt": "user=ra_tester\ntoken=tok-1\n"
+                                     "hardcore=0\n"}
+    del srv.calls[:]
+    r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
+              "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
+              "+20:up\n+8:up\n+8:up\n+10:cross\n+20:shot=list.png\n"
+              "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
+              vita_ini=ini, extra=keep)
+    S.clean(r)
+    S.check(r.has(r"^EVT ra_login ok=1 via=token"), "the kept token signs in")
+    S.check(r.has(r"^EVT ra_game_begin hash=%s hardcore=0" % srv.md5) and
+            r.has(r'^EVT ra_game ok=1 id=77 core=2 unlocked=0 hardcore=0 '
+                  r'title="GBAdhoc Test"'),
+            "the game is known by its MD5: two achievements")
+    S.check(r.has(r'^EVT ra_unlock id=1001 points=5 title="First Press"'),
+            "A earns First Press")
+    award = [c for c in srv.calls if c.get("r") == "awardachievement"]
+    S.check(len(award) == 1 and award[0].get("a") == "1001" and
+            award[0].get("h") == "0", "...and it is sent, softcore (%s)" % award)
+    S.check(not r.has(r"ra_unlock id=1002"), "the other one is not earned")
+    S.check(r.has(r"^EVT ra_page open n=2"), "Settings > Achievements lists both")
+    S.picture(r, "earned.png")
+    S.picture(r, "list.png")
+
+    # Hardcore: the same, and a state load is refused.
+    keep = {"retroachievements.txt": "user=ra_tester\ntoken=tok-1\n"
+                                     "hardcore=1\n"}
+    del srv.calls[:]
+    r = S.run("ra_hardcore", "60:cross\n+400:cross:10\n+200:shot=hc_earned.png\n" +
+              menu_pick(1) + "+20:square\n+60:cross\n+30:shot=refused.png\n"
+              "+10:circle\n+10:circle\n+60:quit\n", vita_ini=ini, extra=keep)
+    S.clean(r)
+    S.check(r.has(r"^EVT ra_game ok=1 id=77 core=2 unlocked=0 hardcore=1"),
+            "Hardcore is in force for the game")
+    S.check(r.has(r"^EVT hardcore_refused what=state_load via=menu") and
+            not r.has(r"^EVT state_load slot="), "a state load is refused")
+    award = [c for c in srv.calls if c.get("r") == "awardachievement"]
+    S.check(len(award) == 1 and award[0].get("h") == "1",
+            "the unlock is sent as hardcore (%s)" % award)
+    S.picture(r, "refused.png")
+
+    # No server: nothing hangs, the game plays.
+    r = S.run("ra_offline", "60:cross\n+300:shot=game.png\n+10:quit\n",
+              vita_ini={"ra_host": "http://127.0.0.1:9"}, extra=keep)
+    S.clean(r)
+    S.check(r.has(r"^EVT ra_http api=login2 status=-2"),
+            "the sign-in that cannot reach the server is logged")
+    S.picture(r, "game.png")
+
+
 TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
-         ("home", t_home), ("preview", t_preview),
-         ("gameinfo", t_gameinfo), ("title_bg", t_title_bg), ("fullspeed", t_fullspeed),
+         ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
+         ("settings_order", t_settings_order), ("quality", t_quality),
+         ("quality_preset", t_quality_preset), ("art_requeue", t_art_requeue),
+         ("favs_recover", t_favs_recover), ("gb_save_soon", t_gb_save_soon),
+         ("vita_ini_once", t_vita_ini_once), ("save_fail_shown", t_save_fail_shown),
+         ("ambient_bars", t_ambient_bars), ("sensors", t_sensors),
+         ("game_look", t_game_look), ("recent", t_recent), ("resume", t_resume),
+         ("patch", t_patch), ("sgb", t_sgb), ("ra", t_ra),
+         ("preview", t_preview),
+         ("gameinfo", t_gameinfo), ("art_progress", t_art_progress), ("art_settings", t_art_settings),
+         ("title_bg", t_title_bg), ("fullspeed", t_fullspeed),
          ("upfade", t_upfade), ("render_thread", t_render_thread),
          ("render_skips", t_render_skips), ("gpu_xbrz", t_gpu_xbrz),
          ("session", t_session),

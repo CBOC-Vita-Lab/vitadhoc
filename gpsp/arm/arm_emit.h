@@ -1359,21 +1359,29 @@ u32 execute_spsr_restore_body(u32 pc)
  * wrap it correctly.
  */
 
+/* Returns 0 to carry on, else where to resume: an even ARM address, or an
+ * odd one (address | 1) for Thumb -- an MSR that set the T bit continues in
+ * Thumb at the next instruction, MSR + 4 (cpsr_masks, cpu.cc).  arm_stub.S
+ * loads the Thumb register map for an odd one. */
 u32 execute_store_cpsr_body(u32 _cpsr, u32 store_mask, u32 address)
 {
   reg[REG_CPSR] = _cpsr;
   if(store_mask & 0xFF)
   {
+    u32 thumb = _cpsr & 0x20;
     set_cpu_mode(cpu_modes[_cpsr & 0xF]);
     if((io_registers[REG_IE] & io_registers[REG_IF]) &&
      io_registers[REG_IME] && ((_cpsr & 0x80) == 0))
     {
-      REG_MODE(MODE_IRQ)[6] = address + 4;
+      /* Thumb: the IRQ returns (subs pc, lr, #4) to MSR + 4 */
+      REG_MODE(MODE_IRQ)[6] = address + (thumb ? 8 : 4);
       REG_SPSR(MODE_IRQ) = _cpsr;
       reg[REG_CPSR] = 0xD2;
       set_cpu_mode(MODE_IRQ);
       return 0x00000018;
     }
+    if(thumb)
+      return (address + 4) | 1;
   }
 
   return 0;

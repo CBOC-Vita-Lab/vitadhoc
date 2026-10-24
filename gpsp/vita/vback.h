@@ -77,6 +77,19 @@ vb_tex *vb_tex_create(int w, int h, int fmt, int rt);
 void    vb_tex_destroy(vb_tex *t);
 void    vb_tex_update(vb_tex *t, int x, int y, int w, int h,
                       const void *pix, size_t pitch_bytes);
+/* Nonblocking last-fragment-use fence. Query immediately before a CPU
+ * publication on the renderer owner thread; 0 means retain the old image. */
+int     vb_tex_writable(const vb_tex *t);
+typedef struct vb_ownership_diag
+{
+   unsigned started_frames, skipped_frames, submitted_frames, pending_swaps;
+   unsigned pool_bank, busy_banks, submitted_scenes, vertex_pending;
+   unsigned fragment_pending, texture_blocked, fatal;
+   unsigned scene_serial, vertex_word, fragment_word;
+} vb_ownership_diag;
+/* Fixed-size, nonblocking native ownership snapshot. Last-scene words are
+ * observations, not an ordered completion watermark. */
+void vb_ownership_get(vb_ownership_diag *out);
 /* The texture's own pixels, for a writer that fills it in place (the CPU
  * upscalers' bands, each on its own core): the pointer and the pitch in
  * bytes, in the texture's format.  NULL when the backend cannot say.  Write
@@ -125,6 +138,15 @@ void vb_scissor(int on, int x, int y, int w, int h);
  * bottom-left, bottom-right), interpolated. */
 void vb_quad(float x0, float y0, float x1, float y1,
              uint32_t c_tl, uint32_t c_tr, uint32_t c_bl, uint32_t c_br);
+/* n solid or gradient rectangles in one draw (as n vb_quad calls would
+ * draw them; under a scissor they are drawn one by one). */
+typedef struct
+{
+   float x0, y0, x1, y1;
+   uint32_t c_tl, c_tr, c_bl, c_br;
+} vb_cquad;
+#define VB_CQUADS_MAX 64
+void vb_cquads(const vb_cquad *q, int n);
 /* n textured rectangles from one texture, one tint, one filter. */
 void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint,
                int filter);

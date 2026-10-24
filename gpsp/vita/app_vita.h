@@ -111,6 +111,9 @@ typedef struct app_game
    char rom_path[APP_PATH_CAP];
    char save_path[APP_PATH_CAP];
    char state_path[APP_PATH_CAP];     /* slot 1; psp/state_slots.h has the rest */
+   char boot_path[APP_PATH_CAP];      /* what the cores load: rom_path, or its
+                                       * patched copy (rom_patch.h)          */
+   int  patched;
    char code[5];                      /* GBA header code (0xAC), "" on GB/GBC   */
    char gb_title[17];                 /* GB cartridge title (0x134)             */
    char key[100];                     /* the ROM's name under roms/             */

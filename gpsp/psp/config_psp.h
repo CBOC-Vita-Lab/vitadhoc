@@ -83,12 +83,11 @@ extern "C" {
  * unpaced and still runs as fast as the console can manage. */
 #define PCFG_PROFILE_FPS_X100(p)  ((p) == PCFG_PROFILE_COMPAT ? 2997 : 5700)
 #ifdef VITA
-/* THE PS VITA.  Integer 3x (VID_SCALE_INT3 = 4, psp/video_psp.h): 720x480 of
- * the 960x544 panel, every source pixel an exact 3x3 block -- the crisp
- * default, in every build.  There is no Media Engine: me_mode stays 0 and
+/* THE PS VITA. Fit fills the height without stretching. Explicit legacy
+ * scale keys retain their old meaning. There is no Media Engine: me_mode stays 0 and
  * its key (like the other PSP-hardware keys) is read if present and never
  * written (config_psp.c). */
-#define PCFG_SCALE_DEF       4
+#define PCFG_SCALE_DEF       1
 #define PCFG_ME_MODE_DEF     0
 #elif defined(GPSP_PLAYABLE)
 /* VID_SCALE_FIT (1): fills the 272-px height at the correct 3:2 aspect,
@@ -173,6 +172,10 @@ typedef struct
     * so the game's time and its sound stay at full speed (default);
     * 0 = the game simply runs late. */
    int  full_speed;
+   /* Order of the game list (Settings > LIBRARY > Game order, CONFIG.INI
+    * lib_sort): 0 by name, 1 most recently played first, 2 most played
+    * first (psp/play_log.h). */
+   int  lib_sort;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -476,6 +479,8 @@ typedef struct
    /* The live console's `color`, `blend` and `wide` (pcfg_display),
     * mirrored like scale and filter. */
    int  color, blend, wide, wide_fill;
+   int  sgb_border;     /* the GB profile's Super Game Boy border (pcfg_display) */
+   int  quality;      /* 0 legacy auto; 1 native; 2/3 enhancement factor */
 #endif
 } psp_config;
 
@@ -613,7 +618,7 @@ typedef struct
     *          GB:  none -- an original Game Boy has its palette row.
     *   blend  1 = each frame mixed with the one before, as the slow LCD
     *          did (what games that flicker to fake transparency rely on). */
-   int color, blend;
+   int color, blend, quality;
    /* WIDE VIEW (gpsp/wide.c), CONFIG.INI wide_gba: more of the game beside
     * the console's 240 pixels instead of bars.
     *   0 off; 1 in the games it has a profile for (the default);
@@ -625,9 +630,16 @@ typedef struct
     * menu): 1 its own edges continued softly (the default), 2 the picture
     * stretched, 0 black bars. */
    int wide, wide_fill;
+   /* SUPER GAME BOY BORDER (CONFIG.INI sgb_border_gb, the GB profile's):
+    * 1 = a game running as a Super Game Boy (GB palette Auto) is shown in
+    * the border it sends (the default), 0 = the picture alone. */
+   int sgb_border;
 #endif
 } pcfg_display;
 #ifdef VITA
+enum { PCFG_QUALITY_AUTO, PCFG_QUALITY_ORIGINAL, PCFG_QUALITY_2X,
+       PCFG_QUALITY_3X, PCFG_QUALITY_MODES };
+const char *pcfg_quality_name(int quality);
 /* How many `color` values a console has (GBA 3, GBC 2, GB 0). */
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
@@ -642,6 +654,53 @@ const char *pcfg_color_name(int console, int color);
 
 extern pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 
+#ifdef VITA
+/* ---- PER-GAME SETTINGS ------------------------------------------------------
+ *
+ * <data>/games/<ROM file name>.ini, read when a game starts and written when
+ * one of its values changes.  Two kinds of value live there:
+ *
+ *   override=1  the DISPLAY section is this game's own: pcfg_display_select /
+ *               commit / save read and write `disp` instead of the console's
+ *               profile while the game runs, so a change made in its Settings
+ *               never reaches the other games.  Turned on with the current
+ *               look copied in (nothing changes on screen); turned off, the
+ *               console's own look comes back and the keys are dropped.
+ *   sensor_*    the sensor cartridge's controls (fe_sensor.h; ignored by
+ *               games without one): how motion is read, how strongly, which
+ *               way round, the hold that counts as level, and the light a
+ *               light-sensor game sees. */
+enum { PCFG_SENSOR_MOTION, PCFG_SENSOR_STICK, PCFG_SENSOR_MODES };
+enum { PCFG_SENS_LOW, PCFG_SENS_NORMAL, PCFG_SENS_HIGH, PCFG_SENS_MODES };
+#define PCFG_SUN_CLOCK     11   /* the light follows the time of day */
+#define PCFG_SUN_DEF        6
+typedef struct
+{
+   int on;                    /* a game is running (pcfg_game_begin)       */
+   int console;
+   char path[320];
+   int override;
+   pcfg_display disp;
+   int sensor_mode, sensor_sens, sensor_rev, sunlight;
+   int level_set;             /* level_right/level_down hold a calibration */
+   int level_right, level_down;   /* milli-g of the hold counted as level  */
+} pcfg_game;
+extern pcfg_game g_pgame;
+/* Read `path` for the game about to run on `console` and, when it has its own
+ * look, select it.  Call after pcfg_display_select(console). */
+void pcfg_game_begin(const char *path, int console);
+/* Leave the game: its settings are written if changed, the console's own
+ * profile is selected again.  Safe when no game ran. */
+void pcfg_game_end(void);
+/* Write the file now (0 = written or nothing to write). */
+int  pcfg_game_save(void);
+/* Give the running game its own look (1, starting from the current one) or
+ * hand it back to the console's profile (0).  Selects the result. */
+void pcfg_game_set_override(int on);
+const char *pcfg_sensor_mode_name(int m);
+const char *pcfg_sens_name(int s);
+#endif
+
 /* Mirror `console`'s profile into g_pcfg (scale/filter/ambient/gb_palette)
  * and make it the live console.  Touches no file and no video state: the
  * caller applies it (vid_set_mode etc.) when a picture is on screen. */
@@ -650,8 +709,10 @@ void pcfg_display_select(int console);
 void pcfg_display_commit(void);
 /* The console whose profile g_pcfg currently mirrors. */
 int  pcfg_display_console(void);
-/* Persist ONLY the live console's display keys (2-4 INI rewrites instead of
- * pcfg_save's ~50) -- for the in-game TRIANGLE preset cycle.  Commits first.
+/* Persist the live console's display keys, seeding absent scale/filter/quality
+ * profile keys once on Vita before legacy mirrors can change their defaults.
+ * Existing keys of other consoles are never replaced. Used by the in-game
+ * TRIANGLE preset cycle. Commits first.
  * Returns -1 on a persistence failure. */
 int  pcfg_display_save(void);
 /* "GBA" / "GB" / "GBC" -- the settings section names the profile it edits. */

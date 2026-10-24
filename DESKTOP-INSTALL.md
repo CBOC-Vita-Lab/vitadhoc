@@ -1,35 +1,20 @@
-# VitAdhoc
+# Desktop Install
 
-The existing private ZIP is the earlier build-21 preview, not the newer
-build-21 covers runtime now installed on the owner's Vita. Keep that newer
-installation; its matching source/package review is not finished.
+The [CBOC Vita Installer](https://github.com/CBOC-Vita-Lab/vita-installer/releases)
+puts VitAdhoc on your Vita from a Mac, Windows or Linux computer.
 
-There is no desktop install ZIP on GitHub yet. The release download is
-**source only**. These steps are for an existing local private-preview bundle;
-they are not instructions to downgrade a newer installation.
+**You need:** a Vita with HENkaku or Ensō and VitaShell (or Vita Companion),
+on the same Wi-Fi as the computer, or a USB cable or memory card reader.
 
-Requires a homebrew-enabled Vita and VitaShell. An open GBA BIOS is included;
-no proprietary BIOS or shader compiler is needed for a normal installation.
+1. Open the installer and give it VitAdhoc: paste this page's link, or drop
+   `VitAdhoc-install.zip` or `VitAdhoc.vpk` onto it.
+2. Optionally pick your `.gba`, `.gb` and `.gbc` games or a folder of them.
+   They go to `ux0:data/GBAdhoc/roms/`, and games already there are kept.
+3. Click **Install**. The installer finds the Vita, copies everything and
+   installs the app.
 
-1. Open [CBOC Vita Installer](https://github.com/CBOC-Vita-Lab/vita-installer/releases) and connect your Vita.
-2. Select your existing local `VitAdhoc-build21-desktop-private.zip`.
-3. Optionally select your legally usable `.gba`, `.gb` and `.gbc` files or folder.
-4. Choose default or custom artwork, then click **Install**.
+**Updating:** do the same with the new version. Only what changed is sent, and
+your games, saves and settings are never replaced.
 
-Leave that local install ZIP zipped; the installer opens it. The source ZIP
-from GitHub is not a substitute. [Manual installation](INSTALL.md) covers
-VitaShell and [Building](BUILDING.md) covers the available source.
-
-The app shows any final VitaShell action. Existing ROMs, saves and settings
-are not silently replaced. A different file with the same name stops the
-copy for review. Leave the experimental GPU renderer off for normal use.
-
-Keep the computer and Vita awake through copying and checks. If disconnected,
-reconnect the same Vita and choose **Resume**.
-
-For compatible updates installed through this app, **Update app** keeps your
-ROMs, saves and settings. Use the same computer and Vita, then approve the
-update explicitly. Older/manual installs use **Full setup** instead.
-
-This is a private build-21 preview. Public release remains held pending
-license clarification and final package acceptance.
+If the connection drops, reconnect the same Vita and the installer picks up
+where it stopped. The [manual install](INSTALL.md) works too.

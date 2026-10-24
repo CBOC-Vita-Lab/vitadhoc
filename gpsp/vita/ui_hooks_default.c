@@ -19,8 +19,16 @@
 #include "cheats_vita.h"
 #include "config_psp.h"
 #include "video_vita.h"
+#include "play_log.h"
+#include "ra_vita.h"
+#include "rom_patch.h"
 
 #define UI_WEAK __attribute__((weak))
+
+UI_WEAK int ui_host_sensor_level(void)
+{
+   return -1;
+}
 
 /* ---- section 2: the look ------------------------------------------------- */
 UI_WEAK void ui_host_look_changed(void)
@@ -119,3 +127,76 @@ UI_WEAK const char *cheats_format_hint(fe_console_t console)
 }
 UI_WEAK const char *cheats_note(int i)                 { (void)i; return ""; }
 UI_WEAK int  cheats_db_match(void)                     { return 0; }
+
+/* ---- what has been played (play_log.c) and RetroAchievements (ra_vita.c):
+ * nothing played, nobody signed in, for builds of the UI without them ---- */
+UI_WEAK const play_rec *play_log_get(const char *name) { (void)name; return NULL; }
+UI_WEAK void play_log_when(uint32_t last, uint32_t now, char *out, size_t cap)
+{
+   (void)last; (void)now;
+   if (cap) out[0] = '\0';
+}
+UI_WEAK void play_log_duration(uint32_t secs, char *out, size_t cap)
+{
+   (void)secs;
+   if (cap) out[0] = '\0';
+}
+UI_WEAK int  ra_account(char *name, size_t cap)
+{
+   if (cap) name[0] = '\0';
+   return RA_ACCT_OUT;
+}
+UI_WEAK int  ra_login(const char *user, const char *password)
+{ (void)user; (void)password; return -1; }
+UI_WEAK void ra_logout(void) { }
+UI_WEAK int  ra_hardcore_pref(void) { return 0; }
+UI_WEAK void ra_hardcore_set(int on) { (void)on; }
+UI_WEAK int  ra_summary(unsigned *unlocked, unsigned *total,
+                        unsigned *points_have, unsigned *points_total,
+                        int *hardcore)
+{
+   (void)unlocked; (void)total; (void)points_have; (void)points_total;
+   (void)hardcore;
+   return 0;
+}
+UI_WEAK const char *ra_game_title(void) { return ""; }
+UI_WEAK int  ra_list_build(void) { return 0; }
+UI_WEAK const ra_ach *ra_list_get(int i) { (void)i; return NULL; }
+UI_WEAK void ra_list_free(void) { }
+
+/* The game loop's side of the same three (main_vita.c), for the test
+ * programs that link the app's main from a fixed list of objects: no log,
+ * no patch, no achievements.  The app links the real ones. */
+UI_WEAK int  play_log_load(const char *path) { (void)path; return 0; }
+UI_WEAK int  play_log_save(void) { return -1; }
+UI_WEAK int  play_log_add(const char *name, uint32_t now, uint32_t secs,
+                          int started)
+{ (void)name; (void)now; (void)secs; (void)started; return -1; }
+UI_WEAK int  rom_patch_kind(const uint8_t *patch, size_t plen)
+{ (void)patch; (void)plen; return 0; }
+UI_WEAK size_t rom_patch_size(const uint8_t *patch, size_t plen, size_t slen,
+                              const char **why)
+{ (void)patch; (void)plen; (void)slen; if (why) *why = "patches not built"; return 0; }
+UI_WEAK int  rom_patch_apply(const uint8_t *patch, size_t plen,
+                             const uint8_t *src, size_t slen,
+                             uint8_t *dst, size_t dcap, size_t *dlen,
+                             const char **why)
+{
+   (void)patch; (void)plen; (void)src; (void)slen; (void)dst; (void)dcap;
+   if (dlen) *dlen = 0;
+   if (why) *why = "patches not built";
+   return -1;
+}
+UI_WEAK void ra_boot(const char *data, const char *host, const char *version,
+                     int (*online)(void))
+{ (void)data; (void)host; (void)version; (void)online; }
+UI_WEAK void ra_shutdown(void) { }
+UI_WEAK void ra_pump(void) { }
+UI_WEAK void ra_game_begin(const char *boot_path, fe_console_t console)
+{ (void)boot_path; (void)console; }
+UI_WEAK void ra_game_end(void) { }
+UI_WEAK void ra_frame(int linked) { (void)linked; }
+UI_WEAK void ra_state_loaded(void) { }
+UI_WEAK void ra_game_reset(void) { }
+UI_WEAK int  ra_hardcore_active(void) { return 0; }
+UI_WEAK int  ra_hardcore_pending(void) { return 0; }

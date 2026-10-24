@@ -23,6 +23,7 @@
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/motion.h>
 #include <psp2/power.h>
 #include <psp2/rtc.h>
 
@@ -531,6 +532,49 @@ int plat_bg_join(uint32_t timeout_us)
    return 1;
 }
 
+static SceUID g_net_thid = -1;
+static void (*g_net_fn)(void *);
+static void *g_net_arg;
+
+static int net_entry(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   g_net_fn(g_net_arg);
+   return 0;
+}
+
+int plat_net_start(void (*fn)(void *), void *arg)
+{
+   if (g_net_thid >= 0)
+      return -1;
+   g_net_fn = fn;
+   g_net_arg = arg;
+   /* 256 KiB: SceHttp and SceSsl run the handshake on the caller's stack */
+   g_net_thid = sceKernelCreateThread("gbadhoc_net", net_entry, PRIO_BG,
+                                      0x40000, 0, 0, NULL);
+   if (g_net_thid < 0 || sceKernelStartThread(g_net_thid, 0, NULL) < 0)
+   {
+      if (g_net_thid >= 0)
+         sceKernelDeleteThread(g_net_thid);
+      g_net_thid = -1;
+      return -1;
+   }
+   plat_thread_watch("net", g_net_thid);
+   return 0;
+}
+
+int plat_net_join(uint32_t timeout_us)
+{
+   SceUInt tmo = timeout_us;
+   if (g_net_thid < 0)
+      return 1;
+   if (sceKernelWaitThreadEnd(g_net_thid, NULL, &tmo) < 0)
+      return 0;
+   sceKernelDeleteThread(g_net_thid);
+   g_net_thid = -1;
+   return 1;
+}
+
 void plat_thread_sleep_us(uint32_t us)
 {
    sceKernelDelayThread(us);
@@ -546,7 +590,7 @@ static uint32_t g_wk_period;
 static int worker_entry(SceSize args, void *argp)
 {
    (void)args; (void)argp;
-   while (g_wk_run)
+   while (__atomic_load_n(&g_wk_run, __ATOMIC_ACQUIRE))
    {
       SceUInt tmo = g_wk_period;
       sceKernelWaitSema(g_wk_sema, 1, &tmo);   /* a wake, or the period */
@@ -558,13 +602,15 @@ static int worker_entry(SceSize args, void *argp)
 
 int plat_worker_start(void (*step)(void), uint32_t period_us)
 {
+   if (g_wk_thid >= 0)
+      return -1;
    g_wk_step = step;
    g_wk_period = period_us;
    /* Counting, with a ceiling: a burst of wakes collapses into a few. */
    g_wk_sema = sceKernelCreateSema("gbadhoc_io", 0, 0, 64, NULL);
    if (g_wk_sema < 0)
       return -1;
-   g_wk_run = 1;
+   __atomic_store_n(&g_wk_run, 1, __ATOMIC_RELEASE);
    g_wk_thid = sceKernelCreateThread("gbadhoc_io", worker_entry, PRIO_WORKER,
                                      0x10000, 0, 0, NULL);
    if (g_wk_thid < 0 || sceKernelStartThread(g_wk_thid, 0, NULL) < 0)
@@ -573,7 +619,7 @@ int plat_worker_start(void (*step)(void), uint32_t period_us)
          sceKernelDeleteThread(g_wk_thid);
       sceKernelDeleteSema(g_wk_sema);
       g_wk_thid = g_wk_sema = -1;
-      g_wk_run = 0;
+      __atomic_store_n(&g_wk_run, 0, __ATOMIC_RELEASE);
       return -1;
    }
    plat_thread_watch("io", g_wk_thid);
@@ -588,15 +634,22 @@ void plat_worker_wake(void)
 
 void plat_worker_stop(void)
 {
+   (void)plat_worker_stop_checked();
+}
+
+int plat_worker_stop_checked(void)
+{
    SceUInt tmo = 5000000;       /* the last pass may write a whole save */
    if (g_wk_thid < 0)
-      return;
-   g_wk_run = 0;
+      return 1;
+   __atomic_store_n(&g_wk_run, 0, __ATOMIC_RELEASE);
    sceKernelSignalSema(g_wk_sema, 1);
-   if (sceKernelWaitThreadEnd(g_wk_thid, NULL, &tmo) >= 0)
-      sceKernelDeleteThread(g_wk_thid);
+   if (sceKernelWaitThreadEnd(g_wk_thid, NULL, &tmo) < 0)
+      return 0; /* the writer may still be inside card I/O */
+   sceKernelDeleteThread(g_wk_thid);
    sceKernelDeleteSema(g_wk_sema);
    g_wk_thid = g_wk_sema = -1;
+   return 1;
 }
 
 /* ---- the pad ---------------------------------------------------------------- */
@@ -663,6 +716,45 @@ int plat_pad_read2(plat_pad *pad)
    pad->rx = d.rx;
    pad->ry = d.ry;
    return 1;
+}
+
+/* ---- the motion sensor (plat.h) ------------------------------------------ */
+
+static int g_motion_on;
+
+int plat_motion_enable(int on)
+{
+   if (on == g_motion_on)
+      return on && g_motion_on < 0 ? -1 : 0;
+   if (on)
+   {
+      int rc = sceMotionStartSampling();
+      g_motion_on = rc >= 0 ? 1 : -1;
+      fe_evt("motion start rc=%08x", (unsigned)rc);
+      return g_motion_on > 0 ? 0 : -1;
+   }
+   if (g_motion_on > 0)
+      sceMotionStopSampling();
+   g_motion_on = 0;
+   return 0;
+}
+
+int plat_motion_read(plat_motion *m)
+{
+   SceMotionState st;
+   if (g_motion_on <= 0)
+      return -1;
+   memset(&st, 0, sizeof(st));
+   if (sceMotionGetState(&st) < 0)
+      return -1;
+   /* The accelerometer reads the reaction to gravity in g (face up on a
+    * table: z = +1, held upright: y = +1): the right edge down reads
+    * x = -1, the bottom edge down y = +1.  The gyro, rad/s, right-handed
+    * about axes that point right, up and at the player. */
+   m->right_g = -st.acceleration.x;
+   m->down_g  = st.acceleration.y;
+   m->rate_z  = st.angularVelocity.z;
+   return 0;
 }
 
 /* The twin's script (plat.h): never called on the console. */

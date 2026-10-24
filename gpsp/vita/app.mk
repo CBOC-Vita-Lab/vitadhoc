@@ -51,16 +51,36 @@ APP_SRCS      += local_vita.c
 APP_SRCS      += rewind_vita.c
 # the game list's previews: the last ten seconds played (clip_vita.h)
 APP_SRCS      += clip_vita.c
+APP_SRCS      += preview_vita.c
+APP_SRCS      += menu_diag.c
+APP_SRCS      += menu_load.c menu_files.c
 # what the game list knows about a cartridge (names, blurbs) and its box art
 # fetched by itself (gamedb.h, artfetch.h)
 APP_SRCS      += gamedb.c artfetch.c
 # the GBA's picture drawn on another core (render_thread.h)
 APP_SRCS      += render_thread.c
+# what has been played, when and for how long (play_log.h); patches applied
+# to a game as it starts (rom_patch.h)
+APP_SRCS      += play_log.c rom_patch.c
+# RetroAchievements (ra_vita.h): the app's side, the web requests, and the
+# runtime every RetroAchievements emulator uses (third_party/rcheevos, MIT;
+# PROVENANCE there).  Built with RC_NO_THREADS: one thread calls it.
+APP_SRCS      += ra_vita.c ra_http.c
+RC_DIR        := third_party/rcheevos/src
+APP_SRCS      += $(RC_DIR)/rc_client.c $(RC_DIR)/rc_compat.c \
+                 $(RC_DIR)/rc_util.c $(RC_DIR)/rc_version.c \
+                 $(addprefix $(RC_DIR)/rcheevos/,alloc.c condition.c \
+                    condset.c consoleinfo.c format.c lboard.c memref.c \
+                    operand.c rc_validate.c richpresence.c runtime.c \
+                    runtime_progress.c trigger.c value.c) \
+                 $(addprefix $(RC_DIR)/rapi/,rc_api_common.c rc_api_info.c \
+                    rc_api_runtime.c rc_api_user.c) \
+                 $(RC_DIR)/rhash/md5.c
 APP_SRCS_VITA := plat_vita.c jit_vita.c heap_vita.c
 APP_SRCS_HOST := hostcore/plat_host.c
-APP_DEFS      := -DVITA
-APP_INCDIRS   :=
-APP_LIBS_VITA :=
+APP_DEFS      := -DVITA -DRC_NO_THREADS
+APP_INCDIRS   := third_party/rcheevos/include third_party/rcheevos/src
+APP_LIBS_VITA := -lSceHttp_stub -lSceSsl_stub
 VPK_EXTRA     :=
 
 VPK_EXTRA     += assets/gamedb.txt=gamedb.txt
@@ -81,6 +101,7 @@ include $(V)/net.mk
 # same source on the twin, which draws through vback_soft.c instead.
 # (filter takes one % per pattern: the directory test is a findstring.)
 in_vita2d    = $(findstring /third_party/vita2d/,$(1))
+in_rcheevos  = $(findstring /third_party/rcheevos/,$(1))
 UI_GXM_SRCS := $(foreach s,$(VITA_UI_SRCS_C),$(if $(or $(filter %/vback_vita2d.c,$(s)),$(call in_vita2d,$(s))),$(s)))
 UI_SRCS     := $(filter-out $(UI_GXM_SRCS),$(VITA_UI_SRCS_C)) $(VITA_UI_SRCS_S)
 # netdrv.c is frontend-common's (corebuild.mk FE_OBJS): not twice.
@@ -111,7 +132,7 @@ UI_WARN   := -Wno-unused-parameter -Wno-missing-field-initializers \
 # xBRZ (third_party/xbrz) is C++: no exceptions, no RTTI, nothing of
 # libstdc++ at link time (it needs none), and not ours to lint either.
 APP_CXX_FLAGS := -x c++ -std=gnu++14 -O3 -fno-math-errno -fno-exceptions -fno-rtti -w
-app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS),$(if $(or $(filter $(APP_QUIET),$(1)),$(call in_vita2d,$(1))),-w,$(if $(filter $(UI_SRCS) $(UI_GXM_SRCS),$(1)),$(UI_WARN))))
+app_file_flags = $(if $(filter %.cpp,$(1)),$(APP_CXX_FLAGS),$(if $(or $(filter $(APP_QUIET),$(1)),$(call in_vita2d,$(1)),$(call in_rcheevos,$(1))),-w,$(if $(filter $(UI_SRCS) $(UI_GXM_SRCS),$(1)),$(UI_WARN))))
 
 # The includer defines CC and APP_FLAGS, then:
 #     $(foreach s,$(APP_ALL_xxx),$(eval $(call APP_RULE,$(s))))

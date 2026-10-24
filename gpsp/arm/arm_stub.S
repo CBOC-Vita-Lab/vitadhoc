@@ -384,9 +384,17 @@ defsymbl(execute_store_cpsr)
   add pc, lr, #12                         @ return (skip data)
 
 1:
+  tst r0, #0x01                           @ odd: the MSR set T (Thumb)
+  bne 2f
   call_c_function(block_lookup_address_arm)
   restore_flags()
   bx r0                                   @ return to PC ARM address
+2:
+  load_registers_thumb()                  @ the Thumb block's register map
+  bic r0, r0, #0x01
+  call_c_function(block_lookup_address_thumb)
+  restore_flags()
+  bx r0                                   @ resume in Thumb code
 .size execute_store_cpsr, .-execute_store_cpsr
 
 @ Restore the cpsr from the mode spsr and mode shift.

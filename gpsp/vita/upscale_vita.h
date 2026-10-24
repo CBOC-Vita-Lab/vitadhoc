@@ -66,6 +66,9 @@ enum { UPSCALE_NONE = 0, UPSCALE_SCALE, UPSCALE_XBRZ };
  * (upscale_job_factor) and then fills only the top left of them.
  * 0 = do not upscale. */
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw);
+/* 0 retains width-derived auto quality, 1 bypasses enhancement, 2/3 select
+ * an intermediate factor without changing destination geometry. */
+void upscale_quality(int quality);
 
 /* The factor the picture last submitted to `slot` is scaled by: the one
  * passed to upscale_submit, or less while the screen is changing whole

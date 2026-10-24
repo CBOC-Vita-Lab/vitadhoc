@@ -403,6 +403,21 @@ static int gb_save_snapshot(int force, size_t *size_out, uint32_t *crc_out)
    return 1;
 }
 
+/* Battery-save writes that did not reach the card (a full card, an
+ * unwritable folder), counted for the player to be told
+ * (fe_host_save_failures).  Either thread. */
+static unsigned save_fail_count;
+
+unsigned fe_host_save_failures(void)
+{
+   return __atomic_load_n(&save_fail_count, __ATOMIC_ACQUIRE);
+}
+
+static void save_failed(void)
+{
+   __atomic_add_fetch(&save_fail_count, 1, __ATOMIC_ACQ_REL);
+}
+
 /* Preserve the previous file through short writes, full disks, deferred
  * close errors and renames.  Either thread; the caller owns `data`. */
 static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
@@ -412,6 +427,7 @@ static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
        state_file_replace(host.save_path, data, size) != 0)
    {
       gb_save_file_len = -1;
+      save_failed();
       fe_evt("gb_sram_flush size=%u FAILED", (unsigned)size);
       return -1;
    }
@@ -468,14 +484,20 @@ static int gb_save_flush(int force)
 
 /* Upper bound on how long a cartridge that never stops changing waits. */
 #define GB_SAVE_MAX_DELAY (6 * SRAM_CHECK_INTERVAL)   /* ~30 s */
+/* How often a Game Boy's battery RAM is looked at: about once a second, so
+ * an in-game save is on the card 1-2 s after it is made (it was 5-10 s).
+ * The Vita gives no warning before it suspends or the app is closed from
+ * LiveArea, so this window is all the protection a save made just before
+ * the PS button has.  A look is one CRC of at most 128 KiB. */
+#define GB_SAVE_CHECK_INTERVAL 60
 
-/* The every-SRAM_CHECK_INTERVAL flush during play.
+/* The every-GB_SAVE_CHECK_INTERVAL flush during play.
  *
  * Pokemon Red/Blue/Gold/Silver/Crystal (and others) use battery RAM as
  * scratch -- sprite decompression -- so during ordinary play it differs at
- * almost every check, and writing on every difference meant a Memory Stick
- * rewrite every 5 s.  Write when the RAM has changed and then held still for
- * one interval (an in-game save lands 5-10 s later), or once it has been
+ * almost every check, and writing on every difference meant a card rewrite
+ * at every check.  Write when the RAM has changed and then held still for
+ * one interval (an in-game save lands 1-2 s later), or once it has been
  * different for GB_SAVE_MAX_DELAY.  Exit, sleep and quit flush at once
  * through gb_save_flush.
  *
@@ -1165,6 +1187,14 @@ static void input_poll(void)
 
 static uint32_t injected_mask;   /* autopilot input (fe_host_input_inject) */
 
+/* SENSOR CARTRIDGES (fe_host.h fe_host_sensor_set).  The reading for the
+ * next frame; host_sensor_on once the platform has published one. */
+static uint32_t host_sensor;
+static int host_sensor_on;
+extern uint32_t gpsp_sensor_kinds(void);
+extern void     gpsp_sensor_set(uint32_t reading);
+extern uint32_t gpsp_sensor_get(void);
+
 static int16_t input_state(unsigned port, unsigned device, unsigned index,
                            unsigned id)
 {
@@ -1475,6 +1505,76 @@ uint32_t fe_host_input_mask(void)
 void fe_host_input_inject(uint32_t joypad_mask)
 {
    injected_mask = joypad_mask;
+}
+
+unsigned fe_host_sensor_kinds(void)
+{
+   if (gb_family)
+      return (gb_core && !gb_dual && !gbl && gbcore_has_tilt(gb_core))
+          ? FE_SENSOR_MBC7 : 0;
+   return (unsigned)gpsp_sensor_kinds();
+}
+
+void fe_host_sensor_set(uint32_t reading)
+{
+   host_sensor = reading;
+   host_sensor_on = 1;
+}
+
+/* The Super Game Boy border of the one Game Boy machine (gbcore.h). */
+unsigned fe_host_sgb_border(const uint16_t **pixels)
+{
+   if (!gb_core || gb_dual || gbl)
+      return 0;
+   return gbcore_sgb_border(gb_core, pixels);
+}
+
+size_t fe_host_sgb_border_save(void *buf, size_t cap)
+{
+   return gb_core && !gb_dual && !gbl ? gbcore_sgb_border_save(gb_core, buf, cap)
+                                      : 0;
+}
+
+int fe_host_sgb_border_load(const void *buf, size_t n)
+{
+   return gb_core && !gb_dual && !gbl ? gbcore_sgb_border_load(gb_core, buf, n)
+                                      : -1;
+}
+
+/* RetroAchievements' address space (ra_vita.h): GBA 0-7FFF IWRAM,
+ * 8000-47FFF EWRAM, 48000-57FFF the cartridge's save; a Game Boy's is
+ * gbcore_ra_read's.  Not in a link session (ra_vita.c does not ask). */
+uint32_t fe_host_ra_read(uint32_t addr, uint8_t *out, uint32_t len)
+{
+   uint32_t i = 0;
+   if (gb_family)
+      return gb_core && !gb_dual && !gbl
+             ? gbcore_ra_read(gb_core, addr, out, len) : 0;
+   if (addr >= 0x58000 || !out)
+      return 0;
+   if (len > 0x58000 - addr)
+      len = 0x58000 - addr;
+   while (i < len)
+   {
+      uint32_t a = addr + i, end = a < 0x8000 ? 0x8000
+                                 : a < 0x48000 ? 0x48000 : 0x58000;
+      uint32_t n = end - a < len - i ? end - a : len - i;
+      if (a < 0x48000)
+      {
+         uint32_t g = a < 0x8000 ? 0x03000000u + a : 0x02000000u + (a - 0x8000);
+         if (fe_host_mem_read(g, out + i, n) != 0)
+            memset(out + i, 0, n);
+      }
+      else
+      {
+         size_t sz = 0, off = a - 0x48000, k;
+         const uint8_t *m = (const uint8_t *)fe_host_battery_mem(&sz);
+         for (k = 0; k < n; k++)
+            out[i + k] = m && off + k < sz ? m[off + k] : 0;
+      }
+      i += n;
+   }
+   return len;
 }
 
 int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
@@ -2096,6 +2196,7 @@ static int sram_write_full(const void *p)
        state_file_replace_writer(host.save_path, sram_write_full_blocks,
                                   &image) != 0)
    {
+      save_failed();
       fe_log("sram_flush whole replacement FAILED on %s", host.save_path);
       return -1;
    }
@@ -2529,7 +2630,7 @@ void fe_host_sram_service(void)
    {
       if (!gb_core)
          return;           /* link session: saves commit only at its end */
-      if ((frame_count % SRAM_CHECK_INTERVAL) == 0)
+      if ((frame_count % GB_SAVE_CHECK_INTERVAL) == 0)
          (void)gb_save_flush_periodic();
       return;
    }
@@ -3802,6 +3903,8 @@ int fe_host_boot(const fe_host_config *cfg)
       options_boot_saved = 1;
    }
    host = *cfg;
+   host_sensor = 0;               /* a new game starts still and dark */
+   host_sensor_on = 0;
 #ifdef GBA_LINK
    /* Per game, decided below for a GBA game only: a process that returns to
     * the game list in place (docs/INPROC-RETURN.md) must not carry the last
@@ -3967,6 +4070,8 @@ int fe_host_boot(const fe_host_config *cfg)
    }
 
    log_rom_evt();
+   if (gpsp_sensor_kinds())
+      fe_evt("sensor_cart kinds=%u", (unsigned)gpsp_sensor_kinds());
 
    retro_get_system_av_info(&av);
    /* ADR-0028: the ONE place the audio input rate is decided. Platforms read
@@ -4965,15 +5070,28 @@ static void rw_ema(uint32_t *e, uint32_t d)
    *e = *e ? (*e * 7 + d) / 8 : d;
 }
 /* The clock follows the input log's lifetime, including wrap and forks. */
+/* A frame's external input besides its buttons: the cartridge clock's
+ * second (bits 0-35; a frame clock is 0) and, for a sensor cartridge, the
+ * sensor reading the frame was given (bits 36-59, with bit 60 = valid). */
+#define RW_CTX_CLOCK   ((1ull << 36) - 1)
+#define RW_CTX_SENSOR  36
+#define RW_CTX_VALID   (1ull << 60)
 static uint64_t rw_frame_context(void)
 {
-   return (uint64_t)gpsp_rewind_clock_time(NULL);
+   uint64_t v = (uint64_t)gpsp_rewind_clock_time(NULL) & RW_CTX_CLOCK;
+   uint32_t r = gpsp_sensor_get();
+   if (r & 0x80000000u)
+      v |= ((uint64_t)(r & 0xFFFFFFu) << RW_CTX_SENSOR) | RW_CTX_VALID;
+   return v;
 }
 
 static void rw_replay_context(uint64_t value)
 {
-   long long second = (long long)value;
+   long long second = (long long)(value & RW_CTX_CLOCK);
    (void)gpsp_rewind_clock_time(&second);
+   gpsp_sensor_set((value & RW_CTX_VALID)
+                   ? (0x80000000u | (uint32_t)((value >> RW_CTX_SENSOR) & 0xFFFFFFu))
+                   : 0);
 }
 static uint16_t *rw_play_ext_pix;
 static uint32_t rw_frame_core_us;    /* retro_run's time for the last frame */
@@ -5623,7 +5741,7 @@ static void rw_config(const fe_host_rewind_opts *o, fe_host_rewind_opts *out,
    c->gather       = rw_gather;
    c->restore      = rw_restore;
    c->run          = rw_run;
-   if (out->clock_frames)
+   if (out->clock_frames || gpsp_sensor_kinds())
    {
       c->frame_context = rw_frame_context;
       c->replay_context = rw_replay_context;
@@ -6903,6 +7021,8 @@ static void run_frame(void)
           * dual (link) path above; a no-op with nothing switched on. */
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
+         if (host_sensor_on)
+            gbcore_set_tilt(gb_core, host_sensor);
          if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
             fe_evt("gb_run_frame FAILED frame=%u", frame_count);
       }
@@ -6942,11 +7062,15 @@ static void run_frame(void)
    if (host.gba_dual && !host.gba_dual_session && !fe_gbadual_active())
       gba_dual_bench_idle();
    if (fe_gbadual_active())
+      gpsp_sensor_set(0),        /* both machines: a still console */
       fe_gbadual_frame(fe_gbadual_keys_from_retro(
          (host.input_bitmask ? host.input_bitmask() : 0) | injected_mask));
    else
 #endif
    {
+   /* This frame's sensor reading, held for the whole frame (the rewind
+    * records it with the frame's buttons: rw_frame_context). */
+   gpsp_sensor_set(host_sensor_on ? host_sensor : 0);
 #ifdef REWIND
    rw_latch_input();
 #endif

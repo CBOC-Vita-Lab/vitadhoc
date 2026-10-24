@@ -1,36 +1,40 @@
-VITADHOC
-Private source preview: earlier build 21 / GBAD00001. No VPK is included.
-The newer covers runtime still needs matching source and final component review.
-GBAdhoc's maintainer permission is recorded in LICENSING.md.
-Keep a newer working installation; do not downgrade it to this build.
-BUILDING.md describes the available source. Installation steps below require
-an existing matching private VPK or your own compatible build.
+VitAdhoc 1.0
+Game Boy Advance, Game Boy and Game Boy Color for PS Vita
 
-FIRST INSTALL
-1. Extract the source ZIP on your computer. Keep your separate VPK intact.
-   CHECK-DOWNLOAD.md explains the optional offline download check.
-2. Using VitaShell USB or FTP, copy VitAdhoc-build21.vpk to ux0:VPK/
-   (create VPK if needed). End the transfer, then open the VPK in VitaShell
-   and install it.
-3. Open VitAdhoc once, then exit normally. Copy your legally usable games
-   into ux0:data/GBAdhoc/roms/. Existing standard ROM folders are also
-   scanned; see INSTALL.md before moving or duplicating an existing library.
-4. Reopen VitAdhoc. Triangle chooses GBA, GB or GBC; Cross starts a game.
+Thanks for trying VitAdhoc! Here's everything you need to get playing.
 
-ALREADY INSTALLED?
-Back up ux0:data/GBAdhoc/ AND saves/states beside games in external folders.
-Install only the matching new VPK. Do not delete the bubble or data folder,
-rename games, replace config.ini/vita.ini, or import someone else's saves.
-If your own BIOS exists only inside an older app package, preserve it in
-ux0:data/GBAdhoc/gba_bios.bin before updating. See INSTALL.md.
 
-KEEP: games, adjacent .sav/.st0-.st4 files and previews, settings and artwork.
-INCLUDED: source, open BIOS, databases, app artwork, notices, guides
-          and an optional offline download checker.
-NOT INCLUDED: VPK, commercial games, Nintendo BIOS, personal saves or firmware.
+What You Need
+- A PS Vita with HENkaku or Enso, and VitaShell
+- Your own .gba, .gb or .gbc games
+- No BIOS needed: an open one is built in
 
-No separate shader compiler or HD model is needed for normal rendering.
-Artwork downloads and network play are optional. Keep the source archive,
-guides and licenses on your computer; do not copy them into ux0:app/.
-INSTALL.md has folder details and troubleshooting. PLAY-TOGETHER.md covers
-multiplayer. Build and testing notes are separate in KNOWN-ISSUES.md.
+
+Easy Install
+Open the CBOC Vita Installer on your computer and drop VitAdhoc.vpk (or this
+whole ZIP) onto it. Add your games if you like. It finds your Vita and does
+the rest.
+https://github.com/CBOC-Vita-Lab/vita-installer/releases
+
+
+Manual Install
+1. Copy VitAdhoc.vpk to your Vita with VitaShell (USB or FTP) and install it.
+2. Start VitAdhoc once. It creates ux0:data/GBAdhoc/
+3. Put your games in ux0:data/GBAdhoc/roms/
+   (games already in ux0:ROMS/ or RetroFlow's folders are found by themselves)
+4. Start VitAdhoc again and pick a game.
+
+
+Updating
+Just install the new VPK over the old one. Your games, saves, states and
+settings stay where they are.
+
+
+Have Fun
+- Hold Start + Select (or tap the screen) for the menu.
+- Press Start on the home screen for Settings, including RetroAchievements.
+- Controls:       CONTROLS.md
+- Playing with a friend: PLAY-TOGETHER.md
+- Full install guide:    INSTALL.md
+- Known issues:          KNOWN-ISSUES.md
+- https://github.com/CBOC-Vita-Lab/vitadhoc

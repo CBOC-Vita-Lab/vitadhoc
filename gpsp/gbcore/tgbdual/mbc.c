@@ -52,6 +52,12 @@ byte mbc7_ret;
 byte mbc7_state;
 word mbc7_buf;
 byte mbc7_count;
+/* GBAdhoc: the accelerometer's latched sample (Pan Docs, MBC7): 0x8000
+ * until the first latch, 0x55 to Ax0x erases it, then 0xAA to Ax1x takes a
+ * sample through gbe_getSensor. */
+word mbc7_tilt_x;
+word mbc7_tilt_y;
+byte mbc7_tilt_erased;
 
 char huc1_16_8;
 byte huc1_dat;
@@ -83,6 +89,9 @@ void mbc_reset(void)
 	mbc7_buf=0;
 	mbc7_count=0;
 	mbc7_ret=0;
+	mbc7_tilt_x=0x8000;
+	mbc7_tilt_y=0x8000;
+	mbc7_tilt_erased=0;
 
 	huc1_16_8=true;
 	huc1_dat=0;
@@ -237,14 +246,15 @@ byte mbc_ext_read(word adr)
 			return 0;
 		case 0xA010:
 			return 0;
+		/* GBAdhoc: the latched 16-bit sample (was a live 12-bit value) */
 		case 0xA020:
-			return gbe_getSensor(true)&0xff;
+			return mbc7_tilt_x&0xff;
 		case 0xA030:
-			return (gbe_getSensor(true)>>8)&0xf;
+			return (mbc7_tilt_x>>8)&0xff;
 		case 0xA040:
-			return gbe_getSensor(false)&0xff;
+			return mbc7_tilt_y&0xff;
 		case 0xA050:
-			return (gbe_getSensor(false)>>8)&0xf;
+			return (mbc7_tilt_y>>8)&0xff;
 		case 0xA060:
 			return 0;
 		case 0xA070:
@@ -303,6 +313,22 @@ void mbc_ext_write(word adr,byte dat)
 //		fprintf(file,"%04X : TAMA5 ext_write %04X <= %02X\n",ref_gb->get_cpu()->get_regs()->PC,adr,dat);
 		break;
 	case 0x22: // コロコロカービィ
+		/* GBAdhoc: accelerometer latch (Pan Docs: bits 4-7 select). */
+		if (adr>=0xA000&&adr<0xB000&&(adr&0xF0)==0x00){
+			if (dat==0x55){
+				mbc7_tilt_x=mbc7_tilt_y=0x8000;
+				mbc7_tilt_erased=1;
+			}
+			break;
+		}
+		if (adr>=0xA000&&adr<0xB000&&(adr&0xF0)==0x10){
+			if (dat==0xAA&&mbc7_tilt_erased){
+				mbc7_tilt_x=gbe_getSensor(true);
+				mbc7_tilt_y=gbe_getSensor(false);
+				mbc7_tilt_erased=0;
+			}
+			break;
+		}
 		if (adr==0xA080){
 			int bef_cs=mbc7_cs,bef_sk=mbc7_sk;
 
@@ -392,7 +418,7 @@ void mbc_ext_write(word adr,byte dat)
 									if (mbc7_write_enable){
 										for (i=0;i<256;i++){
 											*(get_sram()+i*2)=mbc7_buf>>8;
-											*(get_sram()+i*2)=mbc7_buf&0xff;
+											*(get_sram()+i*2+1)=mbc7_buf&0xff; /* GBAdhoc: was +i*2 (LOCAL-PATCHES.md) */
 										}
 									}
 //									fprintf(file,"全アドレス書き込み %04X ステート:なし\n",mbc7_buf);

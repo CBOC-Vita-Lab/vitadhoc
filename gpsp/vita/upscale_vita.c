@@ -660,16 +660,25 @@ int upscale_thread_ids(int *ids, int max)
 
 /* ---- the interface --------------------------------------------------------- */
 
+static int g_quality;
+
+void upscale_quality(int quality)
+{
+   g_quality = quality >= 0 && quality <= 3 ? quality : 0;
+}
+
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
 {
    int f, fmax = kind == UPSCALE_XBRZ ? 4 : kind == UPSCALE_SCALE ? 3 : 0;
-   if (slot < 0 || slot >= UPSCALE_SLOTS || !fmax || !w || !h || dw <= 0)
+   if (slot < 0 || slot >= UPSCALE_SLOTS || !fmax || !w || !h || dw <= 0 ||
+       g_quality == 1)
       return 0;
    /* The whole factor AT OR ABOVE the size on screen (a twentieth of
     * tolerance): "fit" is 3.4 times, and a picture scaled four times and
     * drawn a little smaller is cleaner than one scaled three times and
     * stretched. */
-   f = (dw * 20 + (int)w * 19 - (int)w) / ((int)w * 20);
+   f = g_quality >= 2 ? g_quality
+     : (dw * 20 + (int)w * 19 - (int)w) / ((int)w * 20);
    if (f > fmax)
       f = fmax;
    while (f > 2 && (unsigned)(f * f) * w * h > UP_BUDGET_PX)
@@ -743,14 +752,21 @@ void upscale_forget(int slot)
 #define UP_PROBE_COLS 16
 #define UP_PROBES (UP_PROBE_ROWS * UP_PROBE_COLS)
 
-static int slide_score(const up_slot *S, const short *px, const short *py,
-                       int dx, int dy)
+/* Probes that match at the slide `shift` (dy * w + dx), sample by sample,
+ * giving up as soon as the rest could not bring the count to `need`: such a
+ * slide can neither win nor be used, so where it stops does not matter.
+ * `idx` holds each sample's offset in the picture, worked out once. */
+static int slide_score(const up_slot *S, const int *idx, int shift, int need)
 {
-   const int w = (int)S->w;
-   int i, n = 0;
+   const uint16_t *cur = S->cur, *old = S->old;
+   int i, n = 0, miss_left = UP_PROBES - need;
    for (i = 0; i < UP_PROBES; i++)
-      n += S->cur[py[i] * w + px[i]] ==
-           S->old[(py[i] - dy) * w + (px[i] - dx)];
+   {
+      if (cur[idx[i]] == old[idx[i] - shift])
+         n++;
+      else if (--miss_left < 0)
+         return -1;
+   }
    return n;
 }
 
@@ -758,8 +774,8 @@ static void slide_find(up_slot *S, int *pdx, int *pdy)
 {
    const int w = (int)S->w, h = (int)S->h;
    const int m = UP_SLIDE_MAX + 1;
-   short px[UP_PROBES], py[UP_PROBES];
-   int r, c, dx, dy, base, best, bdx = 0, bdy = 0;
+   int idx[UP_PROBES];
+   int r, c, dx, dy, base, best, bdx = 0, bdy = 0, floor_;
 
    *pdx = *pdy = 0;
    if (w < 6 * m || h < 6 * m)
@@ -770,19 +786,19 @@ static void slide_find(up_slot *S, int *pdx, int *pdy)
    for (r = 0; r < UP_PROBE_ROWS; r++)
       for (c = 0; c < UP_PROBE_COLS; c++)
       {
-         py[r * UP_PROBE_COLS + c] =
-            (short)(m + (h - 2 * m - 1) * (2 * r + 1) / (2 * UP_PROBE_ROWS));
-         px[r * UP_PROBE_COLS + c] =
-            (short)(m + ((w - 2 * m - 1) * (2 * c + 1) / (2 * UP_PROBE_COLS) +
-                         r * 5) % (w - 2 * m));
+         const int py = m + (h - 2 * m - 1) * (2 * r + 1) / (2 * UP_PROBE_ROWS);
+         const int px = m + ((w - 2 * m - 1) * (2 * c + 1) /
+                             (2 * UP_PROBE_COLS) + r * 5) % (w - 2 * m);
+         idx[r * UP_PROBE_COLS + c] = py * w + px;
       }
-   base = slide_score(S, px, py, 0, 0);
+   base = slide_score(S, idx, 0, 0);
    if (base * 4 >= UP_PROBES * 3)
       return;                    /* mostly the same where it is */
-   best = base;
    if (S->last_dx || S->last_dy)
    {
-      int s = slide_score(S, px, py, S->last_dx, S->last_dy);
+      /* (counted only as far as deciding "three quarters or not") */
+      int s = slide_score(S, idx, S->last_dy * w + S->last_dx,
+                          (UP_PROBES * 3 + 3) / 4);
       if (s * 4 >= UP_PROBES * 3)
       {
          *pdx = S->last_dx;
@@ -790,13 +806,24 @@ static void slide_find(up_slot *S, int *pdx, int *pdy)
          return;
       }
    }
+   /* A slide is used only if it explains three fifths of the samples and
+    * an eighth more than staying put: nothing below that can be the
+    * answer, so a slide is abandoned once it cannot reach it. */
+   floor_ = (UP_PROBES * 3 + 4) / 5;
+   if (floor_ < base + UP_PROBES / 8)
+      floor_ = base + UP_PROBES / 8;
+   if (floor_ > UP_PROBES)
+      return;
+   best = base;
    for (dy = -UP_SLIDE_MAX; dy <= UP_SLIDE_MAX; dy++)
       for (dx = -UP_SLIDE_MAX; dx <= UP_SLIDE_MAX; dx++)
       {
-         int s;
+         int s, need = best > floor_ ? best : floor_;
          if (!dx && !dy)
             continue;
-         s = slide_score(S, px, py, dx, dy);
+         s = slide_score(S, idx, dy * w + dx, need);
+         if (s < 0)
+            continue;
          /* ties (flat ground matches anywhere): the smaller slide */
          if (s > best || (s == best && (bdx || bdy) &&
                           abs(dx) + abs(dy) < abs(bdx) + abs(bdy)))

@@ -81,7 +81,10 @@ byte sgb_borderchar[32*256];
  * its renderer are compiled only with TGB_SGB_BORDER.  The packets that
  * carry a border are still parsed (palettes ride along with them). */
 #ifdef TGB_SGB_BORDER
+/* GBAdhoc (Vita): the border is presented (gbcore_sgb_border), its pixels
+ * in the frontend's RGB565 like the game's, and every render counts. */
 unsigned short sgb_border_buffer[256*224];
+unsigned sgb_border_gen;
 #endif
 //byte sgb_sound_score[8192];
 byte sgb_screenbuffer[4160];
@@ -162,7 +165,10 @@ void sgb_draw_border_tile(int x, int y, int tile, int attr)
 			yyy = 7 - yy;
 
 			unsigned short c = sgb_palette[palette + color];
-			*(dest + yyy*256+xxx) = c;
+			/* GBAdhoc: SNES BGR555 -> the frontend's RGB565 */
+			*(dest + yyy*256+xxx) = MAKE_COLOR((c & 31) << 3,
+			                                   ((c >> 5) & 31) << 3,
+			                                   ((c >> 10) & 31) << 3);
 
 			mask >>= 1;
 
@@ -190,6 +196,7 @@ void sgb_render_border()
 			sgb_draw_border_tile(x*8,y*8,tile,attr);
 		}
 	}
+	sgb_border_gen++;
 ///	draw_border();
 }
 #else

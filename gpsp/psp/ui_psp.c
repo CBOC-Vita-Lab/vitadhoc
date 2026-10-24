@@ -54,9 +54,18 @@
 #include "fe_host.h"
 #ifdef VITA
 #include "video_vita.h"
+#include "menu_diag.h"
+#include "play_log.h"
+#include "ra_vita.h"
+#include "plat.h"
+#include "vback.h"
+#define UI_DIAG_BEGIN() md_begin()
+#define UI_DIAG_END(stage, t) md_end(stage, t)
 #include "ui_host_hooks.h"
 #include "fe_util.h"         /* fe_crc32: the list's CRC in rom_scan */
 #else
+#define UI_DIAG_BEGIN() 0ull
+#define UI_DIAG_END(stage, t) ((void)(t))
 #include "transport_adhoc.h"
 #endif
 #include "ambient_look.h"
@@ -377,7 +386,7 @@ enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT,
         * are never entered.  SCR_CHEATS is the Vita's own cheats page there
         * (the PSP's is compiled only with GPSP_CHEATS). */
        , SCR_JOIN, SCR_ADDR, SCR_ADHOC, SCR_LOCAL, SCR_CONN, SCR_HELP,
-       SCR_CHEAT_ADD
+       SCR_CHEAT_ADD, SCR_RA
 #endif
      };
 
@@ -2281,11 +2290,21 @@ static void cht_page_reset(void);
  * does not have; the rest of the list is the PSP's, row for row. */
 enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_FASTLINK, SET_OSD, SET_SHARE, SET_JOIN,
-       SET_HDR_VID, SET_SCALE, SET_FILTER, SET_AMBIENT, SET_GBPAL,
+       SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
+       SET_SGB,
        SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL,
-       SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS,
+       SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
+       /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
+        * keeps its place, and Button mapping stays last.  LIBRARY is the
+        * browser's only, THIS GAME a running game's only (set_row_shown). */
+       /* The account and Hardcore in the browser; a running game's list
+        * in game, when it has achievements (ra_vita.h). */
+       SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
+       SET_HDR_LIB, SET_SORT,
+       SET_HDR_THIS, SET_OWN_LOOK, SET_MOTION, SET_SENS, SET_REVERSE,
+       SET_LEVEL, SET_SUN,
        SET_HDR_CTL, SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
@@ -2342,11 +2361,23 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Fast link" },
 #endif
    { 1, "DISPLAY" },              /* + " (GBA)" etc., drawn per console */
-   { 0, "Video scale" },
+   { 0,
+#ifdef VITA
+     "Screen size"
+#else
+     "Video scale"
+#endif
+   },
+#ifdef VITA
+   { 0, "Image quality" },
+#endif
    { 0, "Video filter" },
    { 0, "Ambient bars" },
    { 0, "GB palette" },
 #ifdef VITA
+   /* A Game Boy's only, and greyed (stepped over) on the others, so no row
+    * a harness walker counts on a GBA moves. */
+   { 0, "SGB border" },
    /* After the PSP's rows of the section, so those keep their order. */
    { 0, "Colours" },
    { 0, "Motion blend" },
@@ -2361,6 +2392,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* Browser only: what artfetch.h found, and X looks again for the
     * covers the server did not have. */
    { 0, "Covers" },
+   { 0, "Refresh library" },
 #else
    { 0, "Menu style" },
 #endif
@@ -2380,6 +2412,21 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* After FPS counter, so the rows the harness walkers cross keep their
     * places. */
    { 0, "Keep full speed" },
+   { 1, "RETROACHIEVEMENTS" },
+   { 0, "Account" },
+   { 0, "Hardcore" },
+   { 0, "Achievements" },
+   { 1, "LIBRARY" },
+   { 0, "Game order" },
+   /* The running game's own (config_psp.h pcfg_game): its look, and the
+    * sensor rows of a sensor cartridge (fe_sensor.h). */
+   { 1, "THIS GAME" },
+   { 0, "Display settings" },
+   { 0, "Motion controls" },
+   { 0, "Motion strength" },
+   { 0, "Direction" },
+   { 0, "Level" },
+   { 0, "Sunlight" },
 #endif
 #ifdef REWIND
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
@@ -2406,7 +2453,28 @@ static int linkmode_row_enabled(void);
 static int set_row_shown(int idx)
 {
 #ifdef VITA
-   return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_COVERS) ||
+   if (idx == SET_HDR_LIB || idx == SET_SORT)
+      return g_ov_browse;
+   if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
+      return g_ov_browse;
+   if (idx == SET_HDR_RA || idx == SET_RA_LIST)
+      return g_ov_browse ? idx == SET_HDR_RA
+                         : ra_summary(NULL, NULL, NULL, NULL, NULL);
+   if (idx >= SET_HDR_THIS && idx <= SET_SUN)
+   {
+      unsigned k = fe_host_sensor_kinds();
+      if (g_ov_browse || !g_pgame.on)
+         return 0;
+      if (idx == SET_MOTION || idx == SET_SENS || idx == SET_REVERSE)
+         return (k & (FE_SENSOR_GYRO | FE_SENSOR_TILT | FE_SENSOR_MBC7)) != 0;
+      if (idx == SET_LEVEL)
+         return (k & (FE_SENSOR_TILT | FE_SENSOR_MBC7)) != 0;
+      if (idx == SET_SUN)
+         return (k & FE_SENSOR_SOLAR) != 0;
+      return 1;
+   }
+   return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_COVERS &&
+           idx != SET_REFRESH) ||
           g_ov_browse;
 #else
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_FASTLINK) ||
@@ -2432,6 +2500,10 @@ static int set_row_enabled(int idx)
    if (idx == SET_GBPAL)
       return pcfg_display_console() != FE_CONSOLE_GBA;
 #ifdef VITA
+   if (idx == SET_LEVEL)
+      return g_pgame.sensor_mode == PCFG_SENSOR_MOTION;
+   if (idx == SET_SGB)
+      return pcfg_display_console() == FE_CONSOLE_GB;
    /* An original Game Boy's colours are its palette row. */
    if (idx == SET_COLOR)
       return pcfg_color_modes(pcfg_display_console()) > 0;
@@ -2899,6 +2971,13 @@ static void scan_row_decide(const char *group, scan_row *r)
 #endif /* !VITA */
 
 static int g_profile_changed;
+#ifdef VITA
+static int g_library_refresh;
+#ifdef VITA
+/* Settings > LIBRARY > Game order changed: the browser re-sorts its views. */
+static int g_library_resort;
+#endif
+#endif
 
 /* me_mode_name() was here.  It rendered the Media Engine row's value and
  * went with the row; the mode itself is still read from config.ini and still
@@ -2923,15 +3002,44 @@ static void settings_adjust(int id, int dir)
              pcfg_console_tag(pcfg_display_console()));
       break;
    case SET_FILTER:
+#ifdef VITA
+      if (g_pcfg.quality >= PCFG_QUALITY_2X)
+         g_pcfg.filter = g_pcfg.filter == VID_FILTER_XBRZ
+                       ? VID_FILTER_SCALE : VID_FILTER_XBRZ;
+      else
+      {
+         /* Under Original the row shows sharp bilinear, what is drawn: the
+          * step starts from there, not from Auto's hidden stored filter. */
+         if (g_pcfg.quality == PCFG_QUALITY_ORIGINAL)
+            g_pcfg.filter = VID_FILTER_SHARP;
+         g_pcfg.quality = PCFG_QUALITY_AUTO;
+#endif
       /* nearest -> bilinear -> sharp bilinear (docs/SHARP-BILINEAR.md). */
       g_pcfg.filter = (g_pcfg.filter + VID_FILTER_MODES + dir) %
                       VID_FILTER_MODES;
+#ifdef VITA
+      }
+#endif
       pcfg_display_commit();
       vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+#ifdef VITA
+      ui_host_look_changed();
+#endif
       fe_evt("video_mode scale=%s filter=%s profile=%s",
              vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),
              pcfg_console_tag(pcfg_display_console()));
       break;
+#ifdef VITA
+   case SET_QUALITY:
+      g_pcfg.quality = (g_pcfg.quality + PCFG_QUALITY_MODES + dir) % PCFG_QUALITY_MODES;
+      if (g_pcfg.quality >= PCFG_QUALITY_2X &&
+          g_pcfg.filter != VID_FILTER_XBRZ && g_pcfg.filter != VID_FILTER_SCALE)
+         g_pcfg.filter = VID_FILTER_XBRZ;
+      pcfg_display_commit();
+      vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+      ui_host_look_changed();
+      break;
+#endif
    case SET_AMBIENT:
       g_pcfg.ambient = (g_pcfg.ambient + PCFG_AMB_MODES + dir) % PCFG_AMB_MODES;
       pcfg_display_commit();
@@ -2984,6 +3092,57 @@ static void settings_adjust(int id, int dir)
    case SET_SPEED:
       g_pcfg.full_speed = !g_pcfg.full_speed;
       fe_evt("full_speed_setting on=%d", g_pcfg.full_speed);
+      break;
+   case SET_SGB:
+      g_pcfg.sgb_border = !g_pcfg.sgb_border;
+      pcfg_display_commit();
+      fe_evt("sgb_border_setting on=%d", g_pcfg.sgb_border);
+      break;
+   case SET_RA_HARDCORE:
+      ra_hardcore_set(!ra_hardcore_pref());
+      break;
+   case SET_RA_ACCOUNT:
+   case SET_RA_LIST:
+      /* not values: X acts (screen_settings) */
+      return;
+   case SET_SORT:
+      g_pcfg.lib_sort = (g_pcfg.lib_sort + 3 + dir) % 3;
+      g_library_resort = 1;
+      fe_evt("lib_sort order=%d", g_pcfg.lib_sort);
+      break;
+   case SET_OWN_LOOK:
+      pcfg_game_set_override(!g_pgame.override);
+      vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+      ui_host_look_changed();
+      vid_ambient_mode(g_pcfg.ambient);
+      if (pcfg_display_console() != FE_CONSOLE_GBA)
+         fe_host_gb_palette_set(g_pcfg.gb_palette);
+      fe_evt("game_look own=%d scale=%s quality=%d", g_pgame.override,
+             vid_scale_name(g_pcfg.scale), g_pcfg.quality);
+      break;
+   case SET_MOTION:
+      g_pgame.sensor_mode = !g_pgame.sensor_mode;
+      fe_evt("sensor_setting mode=%d", g_pgame.sensor_mode);
+      break;
+   case SET_SENS:
+      g_pgame.sensor_sens = (g_pgame.sensor_sens + PCFG_SENS_MODES + dir) %
+                            PCFG_SENS_MODES;
+      fe_evt("sensor_setting sens=%d", g_pgame.sensor_sens);
+      break;
+   case SET_REVERSE:
+      g_pgame.sensor_rev = !g_pgame.sensor_rev;
+      fe_evt("sensor_setting reverse=%d", g_pgame.sensor_rev);
+      break;
+   case SET_LEVEL:
+      if (ui_host_sensor_level() == 0)
+         osd_toast("Level is how you hold the Vita now");
+      else
+         osd_toast("No motion reading to set level from");
+      break;
+   case SET_SUN:
+      g_pgame.sunlight = (g_pgame.sunlight + PCFG_SUN_CLOCK + 1 + dir) %
+                         (PCFG_SUN_CLOCK + 1);
+      fe_evt("sensor_setting sun=%d", g_pgame.sunlight);
       break;
 #endif
 #ifdef REWIND
@@ -3111,6 +3270,21 @@ static void settings_adjust(int id, int dir)
    g_settings_dirty = 1;
 }
 
+#ifdef VITA
+/* Separate atomic reads can briefly straddle a worker-list change. These
+ * counts describe games checked and covers present, not download success. */
+static int ui_cover_progress(int *seen, int *total, int *have)
+{
+   int busy = artfetch_progress(seen, total, have);
+   if (*total < 0) *total = 0;
+   if (*seen < 0) *seen = 0;
+   if (*seen > *total) *seen = *total;
+   if (*have < 0) *have = 0;
+   if (*have > *total) *have = *total;
+   return busy && *total > 0;
+}
+#endif
+
 /* One settings row in the overlay: label at 30, value right-aligned at 440,
  * the cursor row on the left-bleed band. */
 static void set_item(int y, int sel, int enabled, const char *label,
@@ -3155,6 +3329,12 @@ static const char *set_help(int id)
    case SET_SCALE:    return "How large the game is drawn. 3x is exact and "
                              "the sharpest.";
    case SET_FILTER:
+#ifdef VITA
+      /* Original draws exact pixels whatever is stored here (the stored
+       * filter is Auto's); choosing one here switches the quality to Auto. */
+      if (g_pcfg.quality == PCFG_QUALITY_ORIGINAL)
+         return "Set by Image quality. Choosing one switches it to Auto.";
+#endif
       /* What the chosen one does, not a list of all seven. */
       switch (g_pcfg.filter)
       {
@@ -3174,6 +3354,16 @@ static const char *set_help(int id)
                                         "row of pixels.";
       default:                   return "How its pixels are drawn.";
       }
+#ifdef VITA
+   case SET_QUALITY:
+      return g_pcfg.quality == PCFG_QUALITY_ORIGINAL
+             ? "The game's own pixels, evenly sized at any screen size."
+           : g_pcfg.quality == PCFG_QUALITY_2X
+             ? "Smoothed at twice the game's size, then sized to fit."
+           : g_pcfg.quality == PCFG_QUALITY_3X
+             ? "Smoothed at three times its size. More detail, more work."
+             : "Follows the Video filter below, as earlier versions did.";
+#endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)
          return g_pcfg.color == 2 ? "Muted and dark, as on the first GBA's "
@@ -3216,8 +3406,7 @@ static const char *set_help(int id)
                              "list with box art, or art across the screen.";
    case SET_PREVIEW:  return "Rest on a game in the home screen and the last "
                              "ten seconds you played of it play behind it.";
-   case SET_COVERS:   return "Box art and title screens fetched over Wi-Fi. "
-                             "X looks again for missing ones.";
+   case SET_COVERS:   return "Retry missing box art and title screens over Wi-Fi.";
 #else
    case SET_SHELL:    return "The game list: a shelf with box art, or art "
                              "across the screen.";
@@ -3252,6 +3441,30 @@ static const char *set_help(int id)
                                "no stuttering sound."
                              : "Busy moments slow the game and its sound "
                                "down.";
+   case SET_SGB:      return "Super Game Boy games in the border they bring "
+                             "(GB palette: Auto).";
+   case SET_RA_ACCOUNT: return "Your retroachievements.org account.";
+   case SET_RA_HARDCORE: return ra_hardcore_pref()
+                             ? "No states, rewind or cheats. From the next "
+                               "game."
+                             : "States, rewind and cheats allowed.";
+   case SET_RA_LIST:  return "This game's achievements and what each asks.";
+   case SET_SORT:     return "The order of All games and Starred. Recent is "
+                             "newest first.";
+   case SET_OWN_LOOK: return g_pgame.override
+                             ? "Display changes made now apply to this game "
+                               "only."
+                             : "Choose \"just this game\" to give it a look "
+                               "of its own.";
+   case SET_MOTION:   return g_pgame.sensor_mode == PCFG_SENSOR_STICK
+                             ? "The right stick is the cartridge's sensor."
+                             : "Turn or tilt the Vita: the cartridge's sensor "
+                               "feels it.";
+   case SET_SENS:     return "How strongly a turn or a tilt is felt.";
+   case SET_REVERSE:  return "Swap it if turning or tilting feels backwards.";
+   case SET_LEVEL:    return "Hold the Vita as level should be, then press X.";
+   case SET_SUN:      return "How much sunlight the cartridge's solar sensor "
+                             "sees.";
 #endif
    case SET_CONTROLS: return "Which button does what, and the shortcuts.";
    default:           return "";
@@ -3269,6 +3482,75 @@ static void set_touch_reset(void)
 }
 #endif
 
+#ifdef VITA
+/* RETROACHIEVEMENTS > Account (ra_vita.h): X asks for the name, then the
+ * password; signed in, X twice within three seconds signs out. */
+static char g_ra_typed_user[64];
+static unsigned g_ra_out_armed;
+static void ra_page_open(void);
+static ui_action screen_ra(unsigned edges);
+
+static void ra_settings_account(void)
+{
+   char nm[64];
+   int st = ra_account(nm, sizeof(nm));
+   if (st == RA_ACCT_BUSY)
+   {
+      osd_toast("Signing in to RetroAchievements...");
+      return;
+   }
+   if (st == RA_ACCT_IN)
+   {
+      unsigned now = pspcompat_time_us();
+      if (g_ra_out_armed && now - g_ra_out_armed < 3000000u)
+      {
+         g_ra_out_armed = 0;
+         ra_logout();
+         osd_toast("Signed out of RetroAchievements");
+      }
+      else
+      {
+         g_ra_out_armed = now ? now : 1;
+         osd_toast("Press X again to sign out of RetroAchievements");
+      }
+      return;
+   }
+   if (ui_text_open(TXT_RA_USER, "RetroAchievements user name",
+                    g_ra_typed_user, 32) != 0)
+      osd_toast("The keyboard is not available");
+}
+
+/* The keyboard closed on one of the two fields: 1 = it was ours. */
+static int ra_settings_typed(void)
+{
+   const char *typed;
+   int r = ui_text_take(TXT_RA_USER, &typed);
+   if (r)
+   {
+      if (r > 0 && typed[0])
+      {
+         snprintf(g_ra_typed_user, sizeof(g_ra_typed_user), "%s", typed);
+         if (ui_text_open_secret(TXT_RA_PASS, "RetroAchievements password",
+                                 PC_IME_MAX_CHARS) != 0)
+            osd_toast("The keyboard is not available");
+      }
+      return 1;
+   }
+   r = ui_text_take(TXT_RA_PASS, &typed);
+   if (!r)
+      return 0;
+   if (r > 0 && typed[0])
+   {
+      if (ra_login(g_ra_typed_user, typed) == 0)
+         osd_toast("Signing in to RetroAchievements...");
+      else
+         osd_toast("Sign-in is already under way");
+   }
+   ui_text_wipe();
+   return 1;
+}
+#endif
+
 static ui_action screen_settings(unsigned edges)
 {
    int i;
@@ -3278,6 +3560,7 @@ static ui_action screen_settings(unsigned edges)
 #ifdef VITA
    {
       const char *typed;
+      (void)ra_settings_typed();
       if (ui_text_take(TXT_NICK, &typed) > 0 && typed[0])
       {
          /* 15 characters: what a room's announcement carries. */
@@ -3320,6 +3603,16 @@ static ui_action screen_settings(unsigned edges)
             osd_toast("The keyboard is not available");
          edges &= ~PSP_CTRL_CROSS;
       }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_RA_ACCOUNT)
+      {
+         ra_settings_account();
+         edges &= ~PSP_CTRL_CROSS;
+      }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_RA_LIST)
+      {
+         ra_page_open();
+         return screen_ra(0);       /* draw this frame as the new page */
+      }
    }
 #endif
    if (edges & PSP_CTRL_UP)
@@ -3336,6 +3629,13 @@ static ui_action screen_settings(unsigned edges)
       return screen_controls(0, 0);   /* draw this frame as the new page */
    }
 #ifdef VITA
+   if ((edges & PSP_CTRL_CROSS) && g_ov_browse && g_cursor == SET_REFRESH)
+   {
+      g_library_refresh = 1;
+      screen_to(SCR_MENU);
+      fe_evt("library_refresh_asked");
+      edges &= ~PSP_CTRL_CROSS;
+   }
    if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERS)
    {
       artfetch_retry();
@@ -3394,12 +3694,19 @@ static ui_action screen_settings(unsigned edges)
             /* a section: its name in sentence case, quiet, no rule */
             char t[40];
             hm_sentence(t, sizeof(t), set_rows[i].label);
+            if (i == SET_HDR_RA)
+               snprintf(t, sizeof(t), "RetroAchievements");   /* its name */
             vs_text(VS_LABEL, 40, (float)(y * 2) - 2, t, HC_TEXT3);
             if (i == SET_HDR_VID)
             {
-               char tag[12];
+               char tag[16];
+               /* Whose look these rows edit: the console's, or the
+                * running game's own (THIS GAME > Display settings). */
                snprintf(tag, sizeof(tag), "%s",
-                        pcfg_console_tag(pcfg_display_console()));
+                        g_pgame.on && g_pgame.override &&
+                        pcfg_display_console() == g_pgame.console
+                        ? "This game"
+                        : pcfg_console_tag(pcfg_display_console()));
                hm_chip(40 + vs_text_w(VS_LABEL, t) + 12, (float)(y * 2) - 6,
                        tag, VS_ALPHA(hm_tint(pcfg_display_console(), 255),
                                      80), HC_TEXT);
@@ -3506,8 +3813,10 @@ static ui_action screen_settings(unsigned edges)
          /* Never greyed: at the integer scales (2x, 3x, 4x crop) nearest,
           * bilinear and sharp all draw the same exact pixels, but "LCD grid"
           * still adds its grid, so the row always has something to choose. */
+         /* Under Original: what is drawn, not Auto's stored filter. */
          set_item(y, g_cursor == i, 1, set_rows[i].label,
-             vid_filter_name(g_pcfg.filter));
+             vid_filter_name(g_pcfg.quality == PCFG_QUALITY_ORIGINAL
+                             ? VID_FILTER_SHARP : g_pcfg.filter));
 #else
          /* 2x samples nearest whatever this says; say so. */
          set_item(y, g_cursor == i, g_pcfg.scale != VID_SCALE_INT2,
@@ -3593,16 +3902,23 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.previews ? "on" : "off");
          break;
+      case SET_QUALITY:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_quality_name(g_pcfg.quality));
+         break;
+      case SET_REFRESH:
+         set_item(y, g_cursor == i, 1, set_rows[i].label, "scan now");
+         break;
       case SET_COVERS:
       {
-         char v[48];
+         char v[80];
          int seen = 0, total = 0, have = 0;
-         if (artfetch_progress(&seen, &total, &have))
-            snprintf(v, sizeof(v), "looking: %d of %d", seen, total);
+         if (ui_cover_progress(&seen, &total, &have))
+            snprintf(v, sizeof(v), "Checking %d of %d - %d have covers", seen, total, have);
          else if (total)
-            snprintf(v, sizeof(v), "%d of %d games have one", have, total);
+            snprintf(v, sizeof(v), "%d of %d games have covers", have, total);
          else
-            snprintf(v, sizeof(v), "%s", "connect to Wi-Fi");
+            snprintf(v, sizeof(v), "%s", "Not checking");
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
@@ -3616,6 +3932,84 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.full_speed ? "on" : "off");
          break;
+      case SET_SGB:
+      {
+         int en = set_row_enabled(i);
+         set_item(y, g_cursor == i, en, set_rows[i].label,
+                  !en ? "GB only" : g_pcfg.sgb_border ? "on" : "off");
+         break;
+      }
+      case SET_RA_ACCOUNT:
+      {
+         char nm[64], v[80];
+         int st = ra_account(nm, sizeof(nm));
+         if (st == RA_ACCT_IN)
+            snprintf(v, sizeof(v), "%s", nm);
+         else if (st == RA_ACCT_BUSY)
+            snprintf(v, sizeof(v), "signing in...");
+         else
+            snprintf(v, sizeof(v), "sign in");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_RA_HARDCORE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  ra_hardcore_pref() ? "on (from the next game)" : "off");
+         break;
+      case SET_RA_LIST:
+      {
+         unsigned have = 0, total = 0;
+         char v[32];
+         ra_summary(&have, &total, NULL, NULL, NULL);
+         snprintf(v, sizeof(v), "%u of %u", have, total);
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_SORT:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             g_pcfg.lib_sort == 1 ? "last played first" :
+             g_pcfg.lib_sort == 2 ? "most played first" : "by name");
+         break;
+      case SET_OWN_LOOK:
+      {
+         char v[48];
+         if (g_pgame.override)
+            snprintf(v, sizeof(v), "just this game");
+         else
+            snprintf(v, sizeof(v), "all %s games",
+                     pcfg_console_tag(pcfg_display_console()));
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_MOTION:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_sensor_mode_name(g_pgame.sensor_mode));
+         break;
+      case SET_SENS:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_sens_name(g_pgame.sensor_sens));
+         break;
+      case SET_REVERSE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.sensor_rev ? "reversed" : "normal");
+         break;
+      case SET_LEVEL:
+         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
+                  g_pgame.level_set ? "set" : "as held at the start");
+         break;
+      case SET_SUN:
+      {
+         char v[40];
+         if (g_pgame.sunlight == PCFG_SUN_CLOCK)
+            snprintf(v, sizeof(v), "follows the clock");
+         else if (g_pgame.sunlight == 0)
+            snprintf(v, sizeof(v), "none (shade)");
+         else
+            snprintf(v, sizeof(v), "%d of 10%s", g_pgame.sunlight,
+                     g_pgame.sunlight == 10 ? " (full sun)" : "");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
 #endif
 #ifdef REWIND
       case SET_REWIND:
@@ -3663,10 +4057,12 @@ static ui_action screen_settings(unsigned edges)
                 set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
 #ifdef VITA
    vid_text(22, SET_HELP_Y, set_help(g_cursor), C_DIM);
-   footer(g_cursor == SET_NAME || g_cursor == SET_CONTROLS
+   footer(g_cursor == SET_LEVEL
+          ? VID_GLYPH_X " set level now   DPAD move   " VID_GLYPH_O " back"
+          : g_cursor == SET_NAME || g_cursor == SET_CONTROLS
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERS
-          ? VID_GLYPH_X " look again   DPAD move   " VID_GLYPH_O " back"
+          ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
           : VID_GLYPH_X " change   DPAD move/change   " VID_GLYPH_O " back");
 #else
    if (g_cursor == SET_FASTLINK)
@@ -5669,6 +6065,7 @@ static char g_menu_note[80];         /* the menu's plate, until the next key */
 
 #include "ui_vita_play.h"
 #include "ui_vita_cheats.h"
+#include "ui_vita_ra.h"
 #include "ui_vita_menu.h"
 #else
 /* Cheats (docs/CHEATS.md) sits after Settings for the same reason: rows 0-3
@@ -5844,7 +6241,8 @@ static ui_action screen_menu(unsigned edges, int session_active)
       {
          char st[32];
          vid_text(18 + vid_text_w(labels[i]) + 12, y,
-                  cheats_suspended() ? "off while linked"
+                  cheats_suspended() == 2 ? "off in Hardcore"
+                  : cheats_suspended() ? "off while linked"
                                      : ch_summary(st, sizeof(st)),
                   mix565(C_ACCENT_DK, C_BG_BOT, fade));
          continue;
@@ -6005,10 +6403,14 @@ static void ov_slots_stat_io(void)
       g_ov_stamp[i][0] = '\0';
       if (!g_state_base[0] ||
           psp_state_path_for_slot(path, sizeof(path), g_state_base,
-                                  (unsigned)i + 1) != 0 ||
-          fe_host_state_recover(path) < 0 ||
-          sceIoGetstat(path, &st) < 0)
+                                  (unsigned)i + 1) != 0)
          continue;
+      if (sceIoGetstat(path, &st) < 0)
+      {
+         char old[PSP_FILE_PATH_CAP + 4];
+         snprintf(old, sizeof(old), "%s.old", path);
+         if (sceIoGetstat(old, &st) < 0) continue;
+      }
       g_ov_slot[i] = 1;
       g_ov_used++;
       ov_stamp(g_ov_stamp[i], sizeof(g_ov_stamp[i]), &st.sce_st_mtime);
@@ -6171,8 +6573,12 @@ int ui_state_load_done(int rc)
       ui_close();
       return 0;                  /* the toast says it, over the game */
    }
-   snprintf(g_slot_note, sizeof(g_slot_note), "Slot %d could not be loaded",
-            g_state_slot);
+   if (rc == -2)
+      snprintf(g_slot_note, sizeof(g_slot_note),
+               "Hardcore mode: states cannot be loaded");
+   else
+      snprintf(g_slot_note, sizeof(g_slot_note), "Slot %d could not be loaded",
+               g_state_slot);
    return 1;
 }
 
@@ -6552,6 +6958,9 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
    case SCR_CHEAT_ADD:
       act = screen_cheat_add(edges);
       break;
+   case SCR_RA:
+      act = screen_ra(edges);
+      break;
 #else
    case SCR_WIRELESS:
       act = screen_wireless(edges, session_active, session_info);
@@ -6667,6 +7076,12 @@ typedef struct {
                          * sits in the padding beside has_sav, so the 1024
                          * entry table costs nothing more for it            */
    unsigned short scan_order; /* preserves traversal order for equal basenames */
+#ifdef VITA
+   /* play_log.h, stamped by favs_mark: when last played (local seconds,
+    * 0 = never), how long, how many times */
+   unsigned play_last, play_secs;
+   unsigned short plays;
+#endif
 } rom_entry;
 
 static rom_entry g_roms[BROWSER_MAX];
@@ -6678,6 +7093,9 @@ static int       g_rom_found;   /* matching ROM files seen, including names
                                  * count and says so out loud */
 static char      g_rom_root[PSP_FILE_PATH_CAP];
 static unsigned  g_rom_scan_path_errors;
+#ifdef VITA
+static unsigned  g_rom_scan_io_errors;
+#endif
 
 #ifdef VITA
 /* The folder rom_scan_dir is walking: g_rom_root first (its entries are
@@ -6689,6 +7107,13 @@ static unsigned  g_rom_scan_path_errors;
 static char      g_scan_root[PSP_FILE_PATH_CAP];
 static int       g_scan_extra;
 #define SCAN_ROOT g_scan_root
+/* One walk lists every console: while rom_scan walks the folders for the
+ * console on screen, the other consoles' games go straight into their own
+ * rom_cache (rom_side_add), so the first TRIANGLE to Game Boy is a cache hit
+ * instead of walking the same folders again (on a card with 925 games in
+ * ux0:ROMS/GBA that was 0.35 to 1.6 s with the screen frozen). */
+static struct { int on, n, found; unsigned used, path_errors; } g_side[3];
+static unsigned  g_rom_rev_seq;      /* issues g_rom_view_revision values */
 /* The key a game has in linkmode.txt: its name under roms/, or for a game
  * of an extra folder its file name (main_vita.c game_identity() does the
  * same for the running game, so the browser and the game agree). */
@@ -6717,18 +7142,319 @@ static int            g_fav_count;              /* tagged entries in scan */
 static unsigned short g_view_idx[BROWSER_MAX];  /* favourites view -> rom */
 static int            g_view_n;
 static int            g_browser_favs;           /* 1 = favourites view    */
+#ifdef VITA
+static unsigned       g_rom_view_revision;
+static char           g_find[64];
+static unsigned short g_find_idx[BROWSER_MAX];
+static int            g_find_n;
+#define BROWSER_FIND_BUTTON (1u << 24)
+/* The Home's tabs by touch: Games, Starred, Recent (hm_topbar). */
+#define BROWSER_TAB_BUTTON(k) (1u << (25 + (k)))
+#define BROWSER_TAB_BUTTONS   (BROWSER_TAB_BUTTON(0) | BROWSER_TAB_BUTTON(1) | \
+                               BROWSER_TAB_BUTTON(2))
+/* Home: Start over -- play without continuing where the game was left. */
+#define BROWSER_FRESH_BUTTON  (1u << 28)
+/* RECENT AND THE ORDERS.  The Recent tab (the Home's third: games played,
+ * the latest first) and Settings > Game order (by name, last played first,
+ * most played first) are one more permutation over the scan, under the
+ * tab's own subset: g_roms itself stays in name order, which every per-game
+ * cache is keyed on and the letter jumps (list_page) walk. */
+static int            g_browser_recent;         /* 1 = the Recent tab     */
+static int            g_swap_to = -1;           /* a tab asked for by touch */
+static unsigned short g_order_idx[BROWSER_MAX];
+static int            g_order_n, g_order_on, g_recent_n;
+#endif
 
-/* The list the shells draw is either the scan or the favourites subset;
- * every g_roms[] index that comes from a row goes through here. */
+static int scope_rom(int i)
+{
+#ifdef VITA
+   if (g_order_on)
+      return g_order_idx[i];
+#endif
+   return g_browser_favs ? g_view_idx[i] : i;
+}
+
+static int scope_count(int n_scan)
+{
+#ifdef VITA
+   if (g_order_on)
+      return g_order_n;
+#endif
+   return g_browser_favs ? g_view_n : n_scan;
+}
+
+#ifdef VITA
+static int g_order_by;                          /* 1 last played, 2 most */
+static int order_cmp(const void *a, const void *b)
+{
+   int i = *(const unsigned short *)a, j = *(const unsigned short *)b;
+   unsigned ki, kj;
+   if (g_order_by == 1)
+      ki = g_roms[i].play_last, kj = g_roms[j].play_last;
+   else
+   {
+      ki = g_roms[i].play_secs, kj = g_roms[j].play_secs;
+      if (ki == kj)
+         ki = g_roms[i].play_last, kj = g_roms[j].play_last;
+   }
+   if (ki != kj)
+      return ki > kj ? -1 : 1;
+   return i - j;                 /* then by name: the scan's own order */
+}
+
+/* The tab's subset in the order asked for.  Before every find (it is the
+ * scope a search looks in). */
+static void order_build(int n_scan)
+{
+   int i;
+   g_recent_n = 0;
+   for (i = 0; i < n_scan; i++)
+      g_recent_n += g_roms[i].play_last != 0;
+   g_order_on = g_browser_recent || g_pcfg.lib_sort != 0;
+   if (!g_order_on)
+      return;
+   g_order_n = 0;
+   if (g_browser_recent)
+   {
+      for (i = 0; i < n_scan; i++)
+         if (g_roms[i].play_last)
+            g_order_idx[g_order_n++] = (unsigned short)i;
+      g_order_by = 1;
+   }
+   else
+   {
+      if (g_browser_favs)
+         for (i = 0; i < g_view_n; i++)
+            g_order_idx[g_order_n++] = g_view_idx[i];
+      else
+         for (i = 0; i < n_scan; i++)
+            g_order_idx[g_order_n++] = (unsigned short)i;
+      g_order_by = g_pcfg.lib_sort;
+   }
+   qsort(g_order_idx, (size_t)g_order_n, sizeof(g_order_idx[0]), order_cmp);
+}
+
+/* 0 Games, 1 Starred, 2 Recent. */
+static int browser_tab(void)
+{
+   return g_browser_recent ? 2 : g_browser_favs ? 1 : 0;
+}
+#endif
+
+/* Every displayed row resolves to the raw scan before it can be launched. */
 static int view_rom(int i)
 {
-   return g_browser_favs ? g_view_idx[i] : i;
+#ifdef VITA
+   if (g_find[0])
+      return g_find_idx[i];
+#endif
+   return scope_rom(i);
 }
 
 static int view_count(int n_scan)
 {
-   return g_browser_favs ? g_view_n : n_scan;
+#ifdef VITA
+   if (g_find[0])
+      return g_find_n;
+#endif
+   return scope_count(n_scan);
 }
+
+#ifdef VITA
+static void rom_display_name(const rom_entry *r, char *out, size_t sz,
+                             int cut_region);
+
+static int browser_find_matches(const char *name, const char *query)
+{
+   size_t i, n = strlen(query);
+   if (!n)
+      return 1;
+   for (; *name; name++)
+   {
+      for (i = 0; i < n && name[i]; i++)
+      {
+         unsigned char a = (unsigned char)name[i], b = (unsigned char)query[i];
+         if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+         if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+         if (a != b)
+            break;
+      }
+      if (i == n)
+         return 1;
+   }
+   return 0;
+}
+
+/* What Find compares: lower case, accents off the Latin letters (a query
+ * typed "pokemon" finds "Pokemon" spelt with its e-acute), apostrophes
+ * dropped ("marios" finds "Mario's"), any other punctuation a space
+ * ("mario kart" finds "Mario-Kart", "zelda minish" finds "Legend of Zelda,
+ * The - The Minish Cap"), and a file's extension left out.  Other UTF-8
+ * (Japanese titles) is kept byte for byte.  `out` ends up with single
+ * spaces between words and one at each end, so " word" finds a word's
+ * start. */
+static void find_fold(const char *in, char *out, size_t cap, int is_file)
+{
+   static const char *const latin1 =   /* U+00C0..U+00FF, folded */
+      "aaaaaaaceeeeiiii" "dnooooo ouuuuyts"
+      "aaaaaaaceeeeiiii" "dnooooo ouuuuyty";
+   const unsigned char *p = (const unsigned char *)in;
+   const unsigned char *end = p + strlen(in);
+   size_t n = 0;
+   if (is_file)
+   {
+      const char *dot = strrchr(in, '.');
+      if (dot && dot != in && !strchr(dot, '/'))
+         end = (const unsigned char *)dot;
+   }
+   if (cap < 3)
+   {
+      if (cap) out[0] = '\0';
+      return;
+   }
+   out[n++] = ' ';
+   while (p < end && n + 3 < cap)
+   {
+      unsigned c = *p;
+      if (c < 0x80)
+      {
+         p++;
+         if (c == '\'')
+            continue;
+         if (c >= 'A' && c <= 'Z')
+            c += 'a' - 'A';
+         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')))
+            c = ' ';
+         if (c == ' ' && out[n - 1] == ' ')
+            continue;
+         out[n++] = (char)c;
+      }
+      else if (c == 0xC3 && p + 1 < end && p[1] >= 0x80 && p[1] <= 0xBF)
+      {
+         /* U+00C0..U+00FF: the letter under the accent (x and division
+          * signs become spaces; sharp s and ae ligature fold to one) */
+         char f = latin1[(p[1] & 0x3F)];
+         p += 2;
+         if (f == ' ' && out[n - 1] == ' ')
+            continue;
+         out[n++] = f;
+      }
+      else if (c == 0xE2 && p + 2 < end && p[1] == 0x80 &&
+               (p[2] == 0x98 || p[2] == 0x99))
+         p += 3;                       /* curly apostrophes, like ' */
+      else if ((c == 0xCC || (c == 0xCD && p + 1 < end && p[1] <= 0xAF)) &&
+               p + 1 < end)
+         p += 2;                       /* a combining accent: dropped */
+      else
+      {
+         /* any other character, whole: kept as it is */
+         size_t len = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+         if (p + len > end || n + len + 2 >= cap)
+            break;
+         memcpy(out + n, p, len);
+         n += len;
+         p += len;
+      }
+   }
+   if (out[n - 1] != ' ')
+      out[n++] = ' ';
+   out[n] = '\0';
+}
+
+/* Every word of the (folded) query is somewhere in the (folded) name, in
+ * any order: "emerald pokemon" finds "Pokemon - Emerald Version". */
+static int find_words_match(const char *name, const char *query)
+{
+   const char *w = query;
+   char word[sizeof(g_find) * 2 + 4];
+   for (;;)
+   {
+      size_t len;
+      while (*w == ' ')
+         w++;
+      if (!*w)
+         return 1;
+      len = strcspn(w, " ");
+      if (len >= sizeof(word))
+         len = sizeof(word) - 1;
+      memcpy(word, w, len);
+      word[len] = '\0';
+      if (!strstr(name, word))
+         return 0;
+      w += len;
+   }
+}
+
+/* Does the raw game `rom` match the query (`q`: g_find folded)? */
+static int find_rom_hit(int rom, const char *q)
+{
+   char title[PSP_FILE_PATH_CAP], a[PSP_FILE_PATH_CAP + 4];
+   rom_display_name(&g_roms[rom], title, sizeof(title), 0);
+   if (!q[1])      /* only punctuation typed: look for it as it is */
+      return browser_find_matches(g_roms[rom].base, g_find) ||
+             browser_find_matches(title, g_find);
+   find_fold(g_roms[rom].base, a, sizeof(a), 1);
+   if (find_words_match(a, q))
+      return 1;
+   find_fold(title, a, sizeof(a), 0);
+   return find_words_match(a, q);
+}
+
+static void browser_find_build(int n_scan)
+{
+   int i;
+   char q[sizeof(g_find) * 2 + 4];
+   order_build(n_scan);          /* the scope a search looks in, in order */
+   g_find_n = 0;
+   if (!g_find[0])
+      return;
+   find_fold(g_find, q, sizeof(q), 0);
+   for (i = 0; i < scope_count(n_scan); i++)
+      if (find_rom_hit(scope_rom(i), q))
+         g_find_idx[g_find_n++] = (unsigned short)scope_rom(i);
+}
+
+/* How many of the console's games match, Starred or not: what a search
+ * that found nothing among the starred ones would find in All games. */
+static int browser_find_count_all(int n_scan)
+{
+   int i, n = 0;
+   char q[sizeof(g_find) * 2 + 4];
+   if (!g_find[0])
+      return 0;
+   find_fold(g_find, q, sizeof(q), 0);
+   for (i = 0; i < n_scan && i < BROWSER_MAX; i++)
+      n += find_rom_hit(i, q);
+   return n;
+}
+
+static int browser_find_set(const char *query, int n_scan, int keep_rom)
+{
+   size_t len;
+   int i, n;
+   while (*query && (unsigned char)*query <= ' ')
+      query++;
+   len = strlen(query);
+   while (len && (unsigned char)query[len - 1] <= ' ')
+      len--;
+   if (len >= sizeof(g_find))
+   {
+      len = sizeof(g_find) - 1;
+      while (len && ((unsigned char)query[len] & 0xc0) == 0x80)
+         len--;
+   }
+   memmove(g_find, query, len);
+   g_find[len] = '\0';
+   browser_find_build(n_scan);
+   n = view_count(n_scan);
+   fe_evt("browser_find active=%d shown=%d scope=%d", g_find[0] != '\0',
+          n, scope_count(n_scan));
+   for (i = 0; i < n; i++)
+      if (view_rom(i) == keep_rom)
+         return i;
+   return 0;
+}
+#endif
 
 static int favs_path(const char *rom_dir, char *out, size_t out_sz)
 {
@@ -6736,20 +7462,42 @@ static int favs_path(const char *rom_dir, char *out, size_t out_sz)
    return (n > 0 && (size_t)n < out_sz) ? 0 : -1;
 }
 
-/* Read straight into the pool and split it in place: no second buffer. */
+/* favourites.txt was not read whole (a read error): a save now would write
+ * the part that was read over the list, so none is made until it is. */
+static int g_favs_unread;
+
+static int favs_side(const char *path, const char *suffix, char *out,
+                     size_t cap)
+{
+   int n = snprintf(out, cap, "%s%s", path, suffix);
+   return n > 0 && (size_t)n < cap ? 0 : -1;
+}
+
+/* Read straight into the pool and split it in place: no second buffer.
+ * A save cut short leaves favourites.txt.old and no list: it is the list. */
 static void favs_load(const char *rom_dir)
 {
-   char path[PSP_FILE_PATH_CAP];
+   char path[PSP_FILE_PATH_CAP], side[PSP_FILE_PATH_CAP + 8];
+   SceIoStat st;
    SceUID fd;
    int len = 0;
    fe_favs_clear(&g_favs);
-   if (favs_path(rom_dir, path, sizeof(path)) == 0 &&
-       (fd = sceIoOpen(path, PSP_O_RDONLY, 0)) >= 0)
+   g_favs_unread = 0;
+   if (favs_path(rom_dir, path, sizeof(path)) == 0)
    {
-      len = sceIoRead(fd, g_favs.pool, FE_FAVS_POOL);
-      sceIoClose(fd);
-      if (len > 0)
-         fe_favs_parse_pool(&g_favs, (size_t)len);
+      if (sceIoGetstat(path, &st) < 0 &&
+          favs_side(path, ".old", side, sizeof(side)) == 0 &&
+          sceIoGetstat(side, &st) >= 0)
+         sceIoRename(side, path);
+      if ((fd = sceIoOpen(path, PSP_O_RDONLY, 0)) >= 0)
+      {
+         len = sceIoRead(fd, g_favs.pool, FE_FAVS_POOL);
+         sceIoClose(fd);
+         if (len > 0)
+            fe_favs_parse_pool(&g_favs, (size_t)len);
+         else if (len < 0)
+            g_favs_unread = 1;
+      }
    }
    fe_evt("favs_load n=%u bytes=%d", g_favs.n, len);
 }
@@ -6760,9 +7508,21 @@ static int favs_save(const char *rom_dir)
    SceUID fd;
    unsigned i;
    int rc = 0;
-   if (favs_path(rom_dir, path, sizeof(path)) != 0)
+   char tmp[PSP_FILE_PATH_CAP + 8], old[PSP_FILE_PATH_CAP + 8];
+   SceIoStat st;
+   int had;
+   if (favs_path(rom_dir, path, sizeof(path)) != 0 ||
+       favs_side(path, ".tmp", tmp, sizeof(tmp)) != 0 ||
+       favs_side(path, ".old", old, sizeof(old)) != 0)
       return -1;
-   fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+   if (g_favs_unread)
+   {
+      fe_evt("favs_save n=%u rc=-1 reason=unread", g_favs.n);
+      return -1;
+   }
+   /* The new list in a file of its own, then the old one aside, the new
+    * one in, the old one gone: a cut anywhere leaves a whole list. */
+   fd = sceIoOpen(tmp, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    if (fd < 0)
       rc = -1;
    for (i = 0; rc == 0 && i < g_favs.n; i++)
@@ -6772,8 +7532,25 @@ static int favs_save(const char *rom_dir)
       if (sceIoWrite(fd, s, len) != len || sceIoWrite(fd, "\n", 1) != 1)
          rc = -1;
    }
-   if (fd >= 0)
-      sceIoClose(fd);
+   if (fd >= 0 && sceIoClose(fd) < 0)
+      rc = -1;
+   had = sceIoGetstat(path, &st) >= 0;
+   if (rc == 0 && had)
+   {
+      sceIoRemove(old);
+      if (sceIoRename(path, old) < 0)
+         rc = -1;
+   }
+   if (rc == 0 && sceIoRename(tmp, path) < 0)
+   {
+      rc = -1;
+      if (had)
+         sceIoRename(old, path);
+   }
+   if (rc == 0 && had)
+      sceIoRemove(old);
+   if (rc != 0)
+      sceIoRemove(tmp);
    fe_evt("favs_save n=%u rc=%d", g_favs.n, rc);
    return rc;
 }
@@ -6788,6 +7565,9 @@ static void favs_build_view(int n_scan)
    for (i = 0; i < n_scan; i++)
       if (g_roms[i].is_fav)
          g_view_idx[g_view_n++] = (unsigned short)i;
+#ifdef VITA
+   browser_find_build(n_scan);
+#endif
 }
 
 static void favs_mark(int n_scan)
@@ -6798,6 +7578,16 @@ static void favs_mark(int n_scan)
    {
       g_roms[i].is_fav = fe_favs_find(&g_favs, g_roms[i].name) >= 0;
       g_fav_count += g_roms[i].is_fav;
+#ifdef VITA
+      {
+         /* and what play_log.h knows of it: Recent, the orders, the page */
+         const play_rec *p = play_log_get(g_roms[i].name);
+         g_roms[i].play_last = p ? p->last : 0;
+         g_roms[i].play_secs = p ? p->secs : 0;
+         g_roms[i].plays = p ? (unsigned short)(p->count > 0xFFFF ? 0xFFFF
+                                                                  : p->count) : 0;
+      }
+#endif
    }
    favs_build_view(n_scan);
 }
@@ -7112,6 +7902,19 @@ static void browser_header(int n_scan)
    vid_text(x, HDR_TEXT_Y, "SELECT", C_DIM);
    UI_TCH_BTN(PSP_CTRL_SELECT, x - 8, 0, 6 + vid_text_w("SELECT") + pw + 14,
               40);
+#ifdef VITA
+   if (g_find[0])
+   {
+      char find[128];
+      snprintf(find, sizeof(find), "\"%s\"  %d/%d", g_find,
+               view_count(n_scan), scope_count(n_scan));
+      clip_title(find, 400);
+      vid_text(20, 30, find, C_ITEM);
+      UI_TCH_BTN(BROWSER_FIND_BUTTON, 16, 28, 408, 16);
+      vs_icon(VS_I_CLOSE, 900, 70, 20, HC_TEXT2);
+      UI_TCH_BTN(PSP_CTRL_CIRCLE, 436, 26, 28, 18);
+   }
+#endif
 
    /* The shelf used to put "24 games" here; it keeps it when it fits. */
    if (!g_ui_shell && n_scan > 0)
@@ -7167,7 +7970,8 @@ static int list_group_start(int i)
 static int list_page(int cur, int n, int dir)
 {
    int i, c;
-   if (n < LIST_LETTER_MIN)
+   /* Not in name order (Recent, Game order): no letters to jump by. */
+   if (n < LIST_LETTER_MIN || g_order_on)
       return dir > 0 ? (cur + LIST_PAGE_ROWS) % n
                      : (cur + n - LIST_PAGE_ROWS % n) % n;
    if (dir > 0)
@@ -7194,12 +7998,17 @@ static void browser_footer(int n_view, int cur_is_fav)
    if (n_view <= 0)
    {
 #ifdef VITA
+      if (g_find[0])
+         hint[count++] = VID_GLYPH_O " clear";
       /* An empty console: X looks in the folder again. */
-      if (!g_browser_favs)
+      else if (!g_browser_favs)
          hint[count++] = VID_GLYPH_X " look again";
 #endif
-      hint[count++] = g_browser_favs ? "SELECT all games"
-                                     : VID_GLYPH_O " exit";
+#ifdef VITA
+      if (!g_find[0] || g_browser_favs)
+#endif
+         hint[count++] = g_browser_favs ? "SELECT all games"
+                                        : VID_GLYPH_O " exit";
       hint[count++] = "START settings";
    }
    else
@@ -7280,6 +8089,11 @@ static const char *rom_pool_add(const char *s, size_t len)
    return p;
 }
 
+#ifdef VITA
+static void rom_side_add(int c, const char *rel, const char *file,
+                         unsigned size);
+#endif
+
 /* `rel` is "" at the top level, otherwise a path under roms/ with no leading
  * or trailing slash (under the extra folder being walked, on the Vita).
  * Directories are walked because sorting a library into folders is the
@@ -7290,6 +8104,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
    char dir[PSP_FILE_PATH_CAP];
    SceUID d;
    SceIoDirent ent;
+   int read_rc;
 
    if (rel[0])
    {
@@ -7305,9 +8120,14 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 
    d = sceIoDopen(dir);
    if (d < 0)
+   {
+#ifdef VITA
+      g_rom_scan_io_errors++;
+#endif
       return;
+   }
    memset(&ent, 0, sizeof(ent));
-   while (sceIoDread(d, &ent) > 0)
+   while ((read_rc = sceIoDread(d, &ent)) > 0)
    {
       /* Memory Stick reports a directory in st_mode on some firmwares and
        * only in st_attr on others.  Test both, rather than pick one and find
@@ -7338,6 +8158,18 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
          }
       }
 #ifdef VITA
+      /* (another console's game: into its own list, rom_side_add) */
+      else if (ent.d_name[0] != '.' &&
+               !ui_rom_matches_console(ent.d_name, console))
+      {
+         int c;
+         for (c = 0; c < FE_CONSOLE_COUNT; c++)
+            if (g_side[c].on && ui_rom_matches_console(ent.d_name, (fe_console_t)c))
+            {
+               rom_side_add(c, rel, ent.d_name, (unsigned)ent.d_stat.st_size);
+               break;
+            }
+      }
       /* A hidden file is not a game.  On a card a Mac has written, every
        * Game.gba comes with a ._Game.gba of 4 KB beside it (AppleDouble:
        * the resource fork and Finder tags), which would be listed as a game
@@ -7389,6 +8221,10 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       }
       memset(&ent, 0, sizeof(ent));
    }
+#ifdef VITA
+   if (read_rc < 0)
+      g_rom_scan_io_errors++;
+#endif
    sceIoDclose(d);
 }
 
@@ -7399,32 +8235,37 @@ static int rom_entry_less(const rom_entry *a, const rom_entry *b)
 }
 
 #ifdef VITA
-static inline unsigned rom_list_crc(int n)
+static inline unsigned rom_entries_crc(const rom_entry *a, int n)
 {
    unsigned crc = 0;
    int i;
    for (i = 0; i < n; i++)
    {
-      crc = fe_crc32(crc, g_roms[i].name, strlen(g_roms[i].name));
+      crc = fe_crc32(crc, a[i].name, strlen(a[i].name));
       crc = fe_crc32(crc, "\n", 1);
    }
    return crc;
 }
+
+static inline unsigned rom_list_crc(int n)
+{
+   return rom_entries_crc(g_roms, n);
+}
 #endif
 
-static void rom_heap_sift_down(int root, int end)
+static void rom_heap_sift_down(rom_entry *a, int root, int end)
 {
    while (root * 2 + 1 < end)
    {
       int child = root * 2 + 1;
       rom_entry tmp;
-      if (child + 1 < end && rom_entry_less(&g_roms[child], &g_roms[child + 1]))
+      if (child + 1 < end && rom_entry_less(&a[child], &a[child + 1]))
          child++;
-      if (!rom_entry_less(&g_roms[root], &g_roms[child]))
+      if (!rom_entry_less(&a[root], &a[child]))
          return;
-      tmp = g_roms[root];
-      g_roms[root] = g_roms[child];
-      g_roms[child] = tmp;
+      tmp = a[root];
+      a[root] = a[child];
+      a[child] = tmp;
       root = child;
    }
 }
@@ -7433,23 +8274,175 @@ static void rom_heap_sift_down(int root, int end)
  * shift roughly half a million entries for a full, reverse-ish 1024-ROM
  * library. Heap sort uses O(n log n) comparisons and no extra BSS/heap. The
  * scan ordinal preserves traversal order for equal basenames. */
-static void rom_sort(int n)
+static void rom_sort_entries(rom_entry *a, int n)
 {
    int start, end;
    for (start = n / 2 - 1; start >= 0; start--)
-      rom_heap_sift_down(start, n);
+      rom_heap_sift_down(a, start, n);
    for (end = n - 1; end > 0; end--)
    {
-      rom_entry tmp = g_roms[0];
-      g_roms[0] = g_roms[end];
-      g_roms[end] = tmp;
-      rom_heap_sift_down(0, end);
+      rom_entry tmp = a[0];
+      a[0] = a[end];
+      a[end] = tmp;
+      rom_heap_sift_down(a, 0, end);
    }
 }
+
+static void rom_sort(int n)
+{
+   rom_sort_entries(g_roms, n);
+}
+
+#ifdef VITA
+typedef struct
+{
+   int valid, n, found;
+   unsigned used, path_errors, roots_key;
+   unsigned revision;            /* g_rom_view_revision of the stored scan */
+   char root[PSP_FILE_PATH_CAP];
+   rom_entry entries[BROWSER_MAX];
+   char pool[ROM_POOL_BYTES];
+} rom_cache;
+static rom_cache g_rom_cache[FE_CONSOLE_COUNT];
+
+static unsigned rom_roots_key(void)
+{
+   unsigned key = 0;
+   int i;
+   for (i = 0; i < ui_host_extra_roots(); i++)
+   {
+      const char *root = ui_host_extra_root(i);
+      if (root)
+         key = fe_crc32(key, root, strlen(root) + 1);
+   }
+   return key;
+}
+
+static void rom_cache_clear(void)
+{
+   int c;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+      g_rom_cache[c].valid = 0;
+}
+
+static void rom_cache_store(int n, fe_console_t console)
+{
+   rom_cache *cache;
+   int i;
+   if ((unsigned)console >= FE_CONSOLE_COUNT || n < 0)
+      return;
+   cache = &g_rom_cache[console];
+   cache->valid = 0;
+   if (g_rom_scan_path_errors || g_rom_scan_io_errors)
+      return;
+   cache->n = n;
+   cache->found = g_rom_found;
+   cache->path_errors = g_rom_scan_path_errors;
+   cache->used = g_rom_pool_used;
+   cache->roots_key = rom_roots_key();
+   cache->revision = g_rom_view_revision;
+   snprintf(cache->root, sizeof(cache->root), "%s", g_rom_root);
+   memcpy(cache->pool, g_rom_pool, cache->used);
+   for (i = 0; i < n; i++)
+   {
+      cache->entries[i] = g_roms[i];
+      cache->entries[i].name = cache->pool + (g_roms[i].name - g_rom_pool);
+      cache->entries[i].base = cache->pool + (g_roms[i].base - g_rom_pool);
+   }
+   cache->valid = 1;
+}
+#endif
+
+#ifdef VITA
+/* Another console's game met on this walk: into that console's rom_cache,
+ * named exactly as rom_scan_dir names its own. */
+static void rom_side_add(int c, const char *rel, const char *file,
+                         unsigned size)
+{
+   rom_cache *cache = &g_rom_cache[c];
+   char path[PSP_ROM_REL_PATH_CAP];
+   int plen;
+   g_side[c].found++;
+   if (g_side[c].n >= BROWSER_MAX)
+      return;
+   if (g_scan_extra)
+      plen = snprintf(path, sizeof(path), "%s/%s%s%s", g_scan_root,
+                      rel, rel[0] ? "/" : "", file);
+   else if (rel[0])
+      plen = snprintf(path, sizeof(path), "%s/%s", rel, file);
+   else
+      plen = snprintf(path, sizeof(path), "%s", file);
+   if (plen < 0 || plen >= (int)sizeof(path))
+   {
+      g_side[c].path_errors++;
+      return;
+   }
+   if (g_side[c].used + (unsigned)plen + 1 <= sizeof(cache->pool))
+   {
+      char *stored = cache->pool + g_side[c].used;
+      const char *slash;
+      rom_entry *e = &cache->entries[g_side[c].n];
+      memcpy(stored, path, (size_t)plen + 1);
+      g_side[c].used += (unsigned)plen + 1;
+      slash = strrchr(stored, '/');
+      e->name = stored;
+      e->base = slash ? slash + 1 : stored;
+      e->size = size;
+      e->has_sav = -1;
+      e->is_fav = 0;
+      e->scan_order = (unsigned short)g_side[c].n;
+      g_side[c].n++;
+   }
+}
+
+/* The walk is over: each other console's list, sorted, is its cache (when
+ * the walk read every folder whole). */
+static void rom_side_finish(void)
+{
+   int c;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+   {
+      rom_cache *cache = &g_rom_cache[c];
+      if (!g_side[c].on)
+         continue;
+      g_side[c].on = 0;
+      cache->valid = 0;
+      if (g_rom_scan_path_errors || g_rom_scan_io_errors ||
+          g_side[c].path_errors)
+         continue;
+      rom_sort_entries(cache->entries, g_side[c].n);
+      cache->n = g_side[c].n;
+      cache->found = g_side[c].found;
+      cache->path_errors = 0;
+      cache->used = g_side[c].used;
+      cache->roots_key = rom_roots_key();
+      cache->revision = ++g_rom_rev_seq;
+      snprintf(cache->root, sizeof(cache->root), "%s", g_rom_root);
+      cache->valid = 1;
+      fe_evt("rom_scan_side console=%d n=%d found=%d crc=%08x", c, cache->n,
+             cache->found, rom_entries_crc(cache->entries, cache->n));
+   }
+}
+#endif
 
 static int rom_scan(const char *rom_dir, fe_console_t console)
 {
    int n = 0;
+#ifdef VITA
+   unsigned began = sceKernelGetSystemTimeLow(), walked;
+   int c;
+   g_rom_view_revision = ++g_rom_rev_seq;
+   g_rom_scan_io_errors = 0;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+   {
+      memset(&g_side[c], 0, sizeof(g_side[c]));
+      g_side[c].on = c != (int)console;
+      if (g_side[c].on)
+         g_rom_cache[c].valid = 0;   /* refilled by this walk, or not used */
+   }
+   FE_EVT_ONLY(began);
+   FE_EVT_ONLY(walked);
+#endif
 
    g_rom_pool_used = 0;
    g_rom_found     = 0;
@@ -7459,6 +8452,9 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
       if (root_len < 0 || (size_t)root_len >= sizeof(g_rom_root))
       {
          g_rom_root[0] = '\0';
+#ifdef VITA
+         memset(g_side, 0, sizeof(g_side));
+#endif
          return -1;
       }
    }
@@ -7499,17 +8495,64 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
 
    /* Sort after collecting the full tree: truncating before sorting was the
     * original 2.0 browser bug. */
+#ifdef VITA
+   walked = sceKernelGetSystemTimeLow();
+#endif
    rom_sort(n);
 #ifdef VITA
+   rom_side_finish();
+   fe_evt("rom_scan_time console=%d n=%d walk_us=%u sort_us=%u total_us=%u",
+          (int)console, n, walked - began,
+          sceKernelGetSystemTimeLow() - walked,
+          sceKernelGetSystemTimeLow() - began);
    /* With extra folders: what the whole list came to, so that a test can
     * check it is complete and in order (a CRC of the names, in list order,
     * each followed by a newline). */
    if (ui_host_extra_roots() > 0)
       fe_evt("rom_scan_done console=%d n=%d found=%d crc=%08x", (int)console,
              n, g_rom_found, rom_list_crc(n));
+   rom_cache_store(n, console);
 #endif
    return n;
 }
+
+#ifdef VITA
+/* Names in each cached tab own their pool; active pointers are rebased on
+ * restore. Saves and favourites are intentionally checked afresh. */
+static int rom_scan_cached(const char *rom_dir, fe_console_t console)
+{
+   rom_cache *cache;
+   int i;
+   if ((unsigned)console >= FE_CONSOLE_COUNT)
+      return -1;
+   cache = &g_rom_cache[console];
+   if (!cache->valid || strcmp(cache->root, rom_dir) ||
+       cache->roots_key != rom_roots_key())
+      return rom_scan(rom_dir, console);
+   memcpy(g_rom_pool, cache->pool, cache->used);
+   for (i = 0; i < cache->n; i++)
+   {
+      g_roms[i] = cache->entries[i];
+      g_roms[i].name = g_rom_pool + (cache->entries[i].name - cache->pool);
+      g_roms[i].base = g_rom_pool + (cache->entries[i].base - cache->pool);
+      g_roms[i].has_sav = -1;
+      g_roms[i].is_fav = 0;
+   }
+   snprintf(g_rom_root, sizeof(g_rom_root), "%s", cache->root);
+   g_rom_pool_used = cache->used;
+   g_rom_found = cache->found;
+   g_rom_scan_path_errors = cache->path_errors;
+   g_rom_scan_io_errors = 0;
+   /* The very list that scan made: its revision, not a new one, so the
+    * cover fetcher is not handed the whole library again (and does not
+    * restart its pass over the card) every time a game ends. */
+   g_rom_view_revision = cache->revision;
+   fe_evt("rom_cache_hit console=%d n=%d", (int)console, cache->n);
+   return cache->n;
+}
+#else
+#define rom_scan_cached rom_scan
+#endif
 
 /* ---- box art -------------------------------------------------------------
  *
@@ -7652,6 +8695,11 @@ static int g_hero_precomposed;
 static void home_free(void);              /* vita/ui_vita_home.h */
 static void home_reset(void);
 static void home_empty(const char *rom_dir, int n_scan);
+static int home_cached_states(int rom);
+static int home_states_known_empty(int rom);
+static void home_state_invalidate(int rom);
+static void home_modal_enter(void);
+static void home_modal_leave(int artwork_may_change);
 #endif
 static void art_free_all(void)
 {
@@ -7713,7 +8761,7 @@ static void art_resample(const unsigned char *src, int w, int h, int nc,
 }
 
 /* Read a whole file into a malloc'd buffer. */
-static unsigned char *art_slurp(const char *path, int *out_len)
+static unsigned char *art_slurp_inner(const char *path, int *out_len)
 {
    SceUID f = sceIoOpen(path, PSP_O_RDONLY, 0);
    int len, got;
@@ -7745,6 +8793,14 @@ static unsigned char *art_slurp(const char *path, int *out_len)
    return buf;
 }
 
+static unsigned char *art_slurp(const char *path, int *out_len)
+{
+   unsigned long long t = UI_DIAG_BEGIN();
+   unsigned char *result = art_slurp_inner(path, out_len);
+   UI_DIAG_END(MD_ART_READ, t);
+   return result;
+}
+
 /* Largest w x h inside the box that keeps the source aspect. */
 static void art_fit(int sw, int sh, int boxw, int boxh, int *ow, int *oh)
 {
@@ -7766,18 +8822,22 @@ static int art_load_stb(const char *path, uint16_t *tex, int stride,
    int flen = 0, w = 0, h = 0, nc = 0, fw, fh;
    unsigned char *file = art_slurp(path, &flen);
    unsigned char *pix;
+   unsigned long long t;
 
    if (!file)
       return -1;
+   t = UI_DIAG_BEGIN();
    if (!stbi_info_from_memory(file, flen, &w, &h, &nc) ||
        w <= 0 || h <= 0 || w > ART_SRC_MAX_PX / h)
    {
       fe_evt("art_fail stage=info path=%s w=%d h=%d", path, w, h);
       free(file);
+      UI_DIAG_END(MD_DECODE, t);
       return -1;
    }
    pix = stbi_load_from_memory(file, flen, &w, &h, &nc, 3);
    free(file);
+   UI_DIAG_END(MD_DECODE, t);
    if (!pix)
    {
       fe_evt("art_fail stage=decode path=%s", path);
@@ -7791,7 +8851,9 @@ static int art_load_stb(const char *path, uint16_t *tex, int stride,
       fh = h;
    }
 #endif
+   t = UI_DIAG_BEGIN();
    art_resample(pix, w, h, 3, tex, stride, fw, fh);
+   UI_DIAG_END(MD_RESAMPLE, t);
    stbi_image_free(pix);
    fe_evt("art_load path=%s src=%dx%d -> %dx%d", path, w, h, fw, fh);
    *dw = fw;
@@ -7803,7 +8865,7 @@ static int art_load_stb(const char *path, uint16_t *tex, int stride,
  * whole-file buffer.  Kept because it costs nothing and a card full of BMPs
  * from an older install must keep working.  Point-sampled: a BMP big enough
  * to alias is a BMP that should have been a PNG. */
-static int art_load_bmp(const char *path, uint16_t *tex, int stride,
+static int art_load_bmp_inner(const char *path, uint16_t *tex, int stride,
                         int *pdw, int *pdh)
 {
    int dw = *pdw, dh = *pdh;
@@ -7885,6 +8947,15 @@ static int art_load_bmp(const char *path, uint16_t *tex, int stride,
    return 0;
 }
 
+static int art_load_bmp(const char *path, uint16_t *tex, int stride,
+                        int *dw, int *dh)
+{
+   unsigned long long t = UI_DIAG_BEGIN();
+   int rc = art_load_bmp_inner(path, tex, stride, dw, dh);
+   UI_DIAG_END(MD_ART_READ, t);
+   return rc;
+}
+
 /* ---- .565: the texture, already made ---------------------------------
  *
  * The GE samples RGB565.  A PNG costs an inflate, a per-byte unfilter pass,
@@ -7901,7 +8972,7 @@ static int art_load_bmp(const char *path, uint16_t *tex, int stride,
 #define R565_MAGIC  0x52353635u        /* '565R' little-endian */
 #define R565_HDR    16
 
-static int art_load_565(const char *path, uint16_t *tex, int stride,
+static int art_load_565_inner(const char *path, uint16_t *tex, int stride,
                         int *dw, int *dh)
 {
    unsigned char hdr[R565_HDR];
@@ -7986,30 +9057,60 @@ static int art_load_565(const char *path, uint16_t *tex, int stride,
 /* Write what we just decoded, so the next visit is a single read.  Best
  * effort: a full or read-only card simply means we decode again next time,
  * which is exactly today's behaviour and not worth reporting as a failure. */
+static int art_load_565(const char *path, uint16_t *tex, int stride,
+                         int *dw, int *dh)
+{
+   unsigned long long t = UI_DIAG_BEGIN();
+   int rc = art_load_565_inner(path, tex, stride, dw, dh);
+   UI_DIAG_END(MD_ART_READ, t);
+   return rc;
+}
+
 static void art_cache_565(const char *path, const uint16_t *tex, int stride,
                           int w, int h)
 {
    unsigned char hdr[R565_HDR];
    SceUID f;
-   int y;
+   int y = 0, writes = 0, wrote = 0, got, close_rc;
+   unsigned long long t = UI_DIAG_BEGIN();
 
    if (w <= 0 || h <= 0)
+   {
+      UI_DIAG_END(MD_CACHE_WRITE, t);
       return;
+   }
+#ifdef VITA
+   if (md_active()) fe_evt("art_cache_begin path=%s w=%d h=%d stride=%d", path, w, h, stride);
+#endif
    f = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
    if (f < 0)
+   {
+      UI_DIAG_END(MD_CACHE_WRITE, t);
+      fe_evt("art_cache_fail stage=open rc=%d path=%s", f, path);
       return;
+   }
    memset(hdr, 0, sizeof(hdr));
    hdr[0] = '5'; hdr[1] = '6'; hdr[2] = '5'; hdr[3] = 'R';
    hdr[4] = (unsigned char)(w & 0xFF);  hdr[5] = (unsigned char)(w >> 8);
    hdr[6] = (unsigned char)(h & 0xFF);  hdr[7] = (unsigned char)(h >> 8);
    hdr[8] = (unsigned char)(stride & 0xFF);
    hdr[9] = (unsigned char)(stride >> 8);
-   if (sceIoWrite(f, hdr, R565_HDR) == R565_HDR)
-      for (y = 0; y < h; y++)
-         if (sceIoWrite(f, tex + (size_t)y * stride, stride * 2) != stride * 2)
-            break;
-   sceIoClose(f);
-   fe_evt("art_cached path=%s %dx%d", path, w, h);
+   got = sceIoWrite(f, hdr, R565_HDR); writes++;
+   if (got > 0) wrote += got;
+   /* The rows are whole strides, one after another: one write, not one per
+    * row.  On a Vita the 513 row writes of a 512x512 hero took 4.5-5.7 s,
+    * the same megabyte in one call a small part of that. */
+   if (got == R565_HDR)
+   {
+      int want = h * stride * 2;
+      got = sceIoWrite(f, tex, (SceSize)want); writes++;
+      if (got > 0) wrote += got;
+      y = got == want ? h : 0;
+   }
+   close_rc = sceIoClose(f);
+   UI_DIAG_END(MD_CACHE_WRITE, t);
+   fe_evt("art_cached path=%s %dx%d ok=%d bytes=%d writes=%d close_rc=%d",
+          path, w, h, y == h && close_rc >= 0, wrote, writes, close_rc);
 }
 
 /* Try png, jpg, bmp in that order.  Returns 0 on success;
@@ -8023,7 +9124,26 @@ static void art_cache_565(const char *path, const uint16_t *tex, int stride,
  * 256x320 copy replaced the hero's and the next visit drew the backdrop from
  * it, visibly soft at 960x544. */
 static int g_art_cover_as_hero;
+/* The home screen's tile picture: the thumbnail the fetch thread made for this
+ * cover (boxart/<stem>.t2.565, at most ART_THUMB_W x ART_THUMB_H).  One read of
+ * a small file, no decode.  0 = read; -1 = there is none (the caller falls back
+ * to the full picture). */
+static int art_thumb_load(int rom_idx, uint16_t *tex, int stride,
+                          int *dw, int *dh)
+{
+   extern char g_dir_base[];
+   const char *base = g_roms[rom_idx].base;
+   int stem = (int)ui_rom_stem_length(base);
+   char path[PSP_FILE_PATH_CAP];
+
+   int len = snprintf(path, sizeof(path), "%s/boxart/%.*s%s", g_dir_base,
+                      stem, base, ART_THUMB_SUFFIX);
+   if (len < 0 || (size_t)len >= sizeof(path))
+      return -1;
+   return art_load_565(path, tex, stride, dw, dh);
+}
 #endif
+
 static int art_load_any(const char *base, const char *dir, uint16_t *tex,
                         int stride, int *dw, int *dh)
 {
@@ -8057,6 +9177,7 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
       char path[PSP_FILE_PATH_CAP];
       SceIoStat st;
       int path_len;
+      unsigned long long probe_t;
       /* A failed attempt may have shrunk the box; every candidate gets
        * the same frame to fit into. */
       *dw = boxw; *dh = boxh;
@@ -8064,7 +9185,10 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
                           dir, stem, base, ext[e]);
       if (path_len < 0 || (size_t)path_len >= sizeof(path))
          continue;
-      if (sceIoGetstat(path, &st) < 0)
+      probe_t = UI_DIAG_BEGIN();
+      int stat_rc = sceIoGetstat(path, &st);
+      UI_DIAG_END(MD_PROBE, probe_t);
+      if (stat_rc < 0)
          continue;
 #ifdef VITA
       if (ext[e][0] == '5' || ext[e][0] == 'v')
@@ -8135,6 +9259,9 @@ static const uint16_t *art_get(const char *rom_dir, int rom_idx, int load,
    if (!load)
       return NULL;
 
+#ifdef VITA
+   if (md_active()) fe_evt("menu_art_begin kind=cover rom=%d", rom_idx);
+#endif
    victim = g_art_clock;
    g_art_clock = (g_art_clock + 1) % ART_SLOTS;
    if (!g_art[victim].tex)
@@ -8174,6 +9301,9 @@ static const uint16_t *hero_get(int rom_idx, int load)
       return g_hero_state > 0 ? g_hero : NULL;
    if (!load)
       return g_hero_state > 0 && g_hero_idx == rom_idx ? g_hero : NULL;
+#ifdef VITA
+   if (md_active()) fe_evt("menu_art_begin kind=hero rom=%d", rom_idx);
+#endif
    return hero_decode(rom_idx, g_roms[rom_idx].base);
 }
 
@@ -8664,21 +9794,64 @@ static void launch_art_take(void)
                         g_hero_precomposed);
 }
 
-/* Browser pick: reuse the decoded hero when it is this ROM's. */
+/* Without a decoded hero, the launch must not wait on the memory card: the
+ * hero decode it used to start here (PNG read, decode, a 1 MiB cache write)
+ * held the press for 7 s on a Vita, the screen frozen with no sign the press
+ * was taken.  The ambient is a blur, so the cover's thumbnail (one small
+ * read, no decode) gives it the same colours; the cover already in the art
+ * pool is next; no art at all last.  Returns where it came from: 2
+ * thumbnail, 3 pooled cover, 0 none. */
+static int launch_art_quick(int rom)
+{
+   art_slot a;
+   const uint16_t *tex;
+#ifdef VITA
+   {
+      int tw = ART_THUMB_W, th = ART_THUMB_H;
+      uint16_t *t = (uint16_t *)malloc((size_t)ART_THUMB_W * ART_THUMB_H * 2);
+      if (t)
+      {
+         int ok = art_thumb_load(rom, t, ART_THUMB_W, &tw, &th) == 0 &&
+                  tw > 0 && th > 0;
+         if (ok)
+            vid_ambient_bake_cover(t, ART_THUMB_W, tw, th);
+         free(t);
+         if (ok && vid_ambient_source() == 1)
+            return 2;
+      }
+   }
+#endif
+   memset(&a, 0, sizeof(a));
+   tex = art_get(NULL, rom, 0, &a);
+   if (tex && a.aw > 0 && a.ah > 0)
+   {
+      vid_ambient_bake_cover(tex, ART_TEX_W, a.aw,
+                             a.ah < ART_TEX_H ? a.ah : ART_TEX_H);
+      return 3;
+   }
+   return 0;
+}
+
+/* Browser pick: reuse the decoded hero when it is this ROM's, else the quick
+ * way above -- never a decode on the press. */
 static void launch_art_from_browser(int rom)
 {
    unsigned t0 = sceKernelGetSystemTimeLow();
    int reused = (g_hero_idx == rom && g_hero_state > 0);
+   int from = 0;
    FE_EVT_ONLY(t0);
    g_launch_taken = 1;
    if (!g_pcfg.loading_art)
       return;
-   if (!reused)
-      hero_get(rom, 1);   /* the Marquee's decode; art_free_all() follows */
-   if (g_hero_idx == rom && g_hero_state > 0)
+   if (reused)
+   {
       launch_art_take();
-   fe_evt("launch_art_source rom=%s reused=%d found=%d us=%u", g_roms[rom].name,
-          reused, vid_ambient_source() == 1,
+      from = 1;
+   }
+   else
+      from = launch_art_quick(rom);
+   fe_evt("launch_art_source rom=%s reused=%d from=%d found=%d us=%u",
+          g_roms[rom].name, reused, from, vid_ambient_source() == 1,
           (unsigned)sceKernelGetSystemTimeLow() - t0);
 }
 
@@ -9133,16 +10306,25 @@ static int browser_rom_state_path(const char *rom_dir, int rom_idx,
 
 static int browser_rom_has_state(const char *rom_dir, int rom_idx)
 {
+#ifdef VITA
+   if (g_ui_home) return home_cached_states(rom_idx);
+#endif
    SceIoStat st;
    char path[PSP_FILE_PATH_CAP];
    int slot, any = 0;
    for (slot = 1; slot <= PSP_STATE_SLOT_COUNT; slot++)
    {
+      path[0] = '\0';
       g_browser_state_exists[slot - 1] =
          browser_rom_state_path(rom_dir, rom_idx, (unsigned)slot,
                                 path, sizeof(path)) == 0 &&
-         fe_host_state_recover(path) >= 0 &&
          sceIoGetstat(path, &st) >= 0;
+      if (!g_browser_state_exists[slot - 1])
+      {
+         char old[PSP_FILE_PATH_CAP + 4];
+         if (path[0] && snprintf(old, sizeof(old), "%s.old", path) < (int)sizeof(old))
+            g_browser_state_exists[slot - 1] = sceIoGetstat(old, &st) >= 0;
+      }
       any |= g_browser_state_exists[slot - 1];
    }
    return any;
@@ -9500,6 +10682,19 @@ static void browser_empty(const char *rom_dir, int n_scan)
    vid_rect(0, 0, 480, 272, C_BG_TOP, 255);
    vid_logo(HDR_LOGO_X, HDR_LOGO_Y, C_ACCENT, 255);
 #ifdef VITA
+   if (g_find[0])
+   {
+      char query[96];
+      browser_header(n_scan);
+      vid_text_center(112, "No games match", sel);
+      snprintf(query, sizeof(query), "\"%s\"", g_find);
+      clip_title(query, 440);
+      vid_text_center(146, query, item);
+      vid_text_center(188, VID_GLYPH_O " clear", dim);
+      UI_TCH_BTN(PSP_CTRL_CIRCLE, 150, 176, 180, 36);
+      browser_footer(0, 0);
+      return;
+   }
    g_bh_plain = !g_browser_favs && n_scan == 0 &&
                 vita_browser_others(rom_dir) == 0;
    browser_header(n_scan);
@@ -10204,7 +11399,7 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
    int i;
    if (pcfg_remember_console(g_sw.to) != 0)
       fe_log("Could not remember console: %d", g_sw.to);
-   *n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+   *n_scan = rom_scan_cached(rom_dir, (fe_console_t)g_pcfg.console);
    if (*n_scan < 0)
       *n_scan = 0;
    favs_mark(*n_scan);
@@ -10238,7 +11433,10 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 {
    int rc;
    osd_toast_place(OSD_TOAST_LIST);
+   pspcompat_io_mark_owner();
+   md_start();
    rc = ui_browser_run(rom_dir, out, out_sz, out_state_slot, console_out);
+   md_stop();
    osd_toast_place(OSD_TOAST_GAME);
    return rc;
 }
@@ -10248,8 +11446,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                int *out_state_slot, fe_console_t *console_out)
 {
-   int n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
+   int n_scan = rom_scan_cached(rom_dir, (fe_console_t)g_pcfg.console);
    int n, cur = 0, i, idle = 0;
+#ifdef VITA
+   unsigned find_ignore_pad = 0;
+   g_find[0] = '\0';
+   g_find_n = 0;
+#endif
 
    if (out_state_slot)
       *out_state_slot = 0;
@@ -10326,9 +11529,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 
    /* Favourites: read once here, stamped onto the scan; the view opens on
     * the full list. */
+   g_browser_favs = 0;
+#ifdef VITA
+   g_browser_recent = 0;
+   g_swap_to = -1;
+#endif
    favs_load(rom_dir);
    favs_mark(n_scan);
-   g_browser_favs = 0;
    n = n_scan;
 
    /* preselect last played */
@@ -10362,20 +11569,112 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       SceCtrlData pd;
       unsigned edges;
       int rom;                        /* g_roms index of the cursor row */
+#ifdef VITA
+      int find_owns_input;
+      const char *find_text;
+      unsigned long long pre_draw_t;
+#endif
 
       sceCtrlPeekBufferPositive(&pd, 1);
-      edges = pad_edges(pd.Buttons);
 #ifdef VITA
+      md_frame_begin(n > 0 ? view_rom(cur) : -1, g_pcfg.console,
+                     pd.Buttons != 0);
+      pre_draw_t = md_begin();
+      if (md_sample_due())
+      {
+         clip_preview_diag sample;
+         clip_preview_get_diag(&sample);
+         menu_load_diag local;
+         menu_files_diag files;
+         pc_io_diag io;
+         vb_ownership_diag gpu;
+         menu_load_get_diag(&local);
+         menu_files_get_diag(&files);
+         pspcompat_io_get_diag(&io);
+         vb_ownership_get(&gpu);
+         fe_evt("menu_platform heap_free=%u vcount=%u swap_state=%d",
+                plat_heap_free(), plat_vcount(), vb_present_state());
+         fe_evt("menu_preview wanted=%u worker_token=%u phase=%u age_us=%llu "
+                "open_us=%u read_us=%u decode_us=%u published=%u stale=%u "
+                "bad=%u ready=%u pinned=%u coherent=%d", sample.wanted, sample.token,
+                sample.phase, (unsigned long long)sample.age_us, sample.open_us,
+                sample.read_us, sample.decode_us, sample.published, sample.stale,
+                sample.bad, sample.ready, sample.pinned, sample.coherent);
+         fe_evt("menu_local started=%u paused=%u phase=%u kind=%u ready=%u "
+                "pinned=%u submitted=%u published=%u stale=%u errors=%u "
+                "dropped=%u job_max_us=%u wait_max_us=%u", local.started,
+                local.paused, local.phase, local.kind, local.ready, local.pinned,
+                local.submitted, local.published, local.stale, local.errors,
+                local.dropped, local.job_us, local.wait_us);
+         fe_evt("menu_local_fs thread=%u calls=%u stat=%u fstat=%u open=%u read=%u "
+                "seek=%u close=%u bytes=%u stat_us=%u read_us=%u meta_us=%u "
+                "decode_us=%u resample_us=%u max_io_us=%u peak_bytes=%u live_bytes=%u",
+                files.thread_tag, files.calls, files.stat_calls, files.fstat_calls,
+                files.open_calls, files.read_calls, files.seek_calls, files.close_calls,
+                files.bytes, files.stat_us, files.read_us, files.meta_us, files.decode_us,
+                files.resample_us, files.max_io_us, files.peak_bytes, files.live_bytes);
+         fe_evt("menu_compat_fs marked=%u owner_calls=%u owner_errors=%u "
+                "owner_us=%u owner_max_us=%u owner_stat=%u owner_open=%u "
+                "owner_read=%u other_calls=%u other_errors=%u other_us=%u "
+                "other_max_us=%u", io.owner_marked, io.owner.calls,
+                io.owner.errors, io.owner.total_us, io.owner.max_us,
+                io.owner.op_calls[PC_IO_GETSTAT], io.owner.op_calls[PC_IO_OPEN],
+                io.owner.op_calls[PC_IO_READ], io.other.calls, io.other.errors,
+                io.other.total_us, io.other.max_us);
+         fe_evt("menu_gpu started=%u skipped=%u submitted=%u swaps=%u bank=%u "
+                "busy=%u scenes=%u vertex_pending=%u fragment_pending=%u "
+                "texture_blocked=%u fatal=%u serial=%u vertex_word=%u fragment_word=%u",
+                gpu.started_frames, gpu.skipped_frames, gpu.submitted_frames,
+                gpu.pending_swaps, gpu.pool_bank, gpu.busy_banks,
+                gpu.submitted_scenes, gpu.vertex_pending, gpu.fragment_pending,
+                gpu.texture_blocked, gpu.fatal, gpu.scene_serial,
+                gpu.vertex_word, gpu.fragment_word);
+      }
       g_vframe++;
-      tch_poll();
-      edges |= tch_buttons();
-      vita_browser_touch(&cur, n, &edges, &idle,
-                         g_ret_on || g_sw.active || g_swap.active ||
-                         g_pop.active);
-      /* The home screen's row runs sideways: its directions are turned
-       * into the list's before anything reads them. */
-      if (g_ui_home)
-         edges = home_remap(edges);
+      find_owns_input = ui_text_pump();
+      if (ui_text_take(TXT_BROWSER_FIND, &find_text) > 0)
+      {
+         rom = n > 0 ? view_rom(cur) : -1;
+         cur = browser_find_set(find_text, n_scan, rom);
+         n = view_count(n_scan);
+         browser_state_cache_free();
+         g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
+         idle = 0;
+      }
+      if (find_owns_input)
+      {
+         find_ignore_pad |= pd.Buttons;
+         pd.Buttons = edges = 0;
+         g_prev_pad = 0xFFFFFFFFu;
+         tch_reset();
+         g_tch.down = g_tch.dead = 1;
+         tch_scroll_stop(&g_br_ts);
+         idle = 0;
+      }
+      else
+      {
+         find_ignore_pad &= pd.Buttons;
+         pd.Buttons &= ~find_ignore_pad;
+         edges = pad_edges(pd.Buttons);
+         tch_poll();
+         {
+            unsigned tapped = tch_buttons();
+            /* Raw navigation wins over a simultaneous touch-button release. */
+            if (!g_ui_home || !(pd.Buttons & (PSP_CTRL_UP | PSP_CTRL_DOWN |
+                  PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_LTRIGGER |
+                  PSP_CTRL_RTRIGGER)))
+               edges |= tapped;
+         }
+         vita_browser_touch(&cur, n, &edges, &idle, pd.Buttons,
+                            g_ret_on || g_sw.active || g_swap.active ||
+                            g_pop.active || (g_ui_home && !g_browser_state_open &&
+                                             g_hm_lift > 0.02f));
+         md_input(g_tch.down || g_br_ts.on);
+         if (g_ui_home)
+            edges = home_remap(edges);
+      }
+#else
+      edges = pad_edges(pd.Buttons);
 #endif
       g_bframe++;
 
@@ -10427,6 +11726,10 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          fe_evt("ui_demo_done");
          edges |= PSP_CTRL_CROSS;
       }
+#ifdef VITA
+      if (find_owns_input)
+         edges = 0;
+#endif
 
       /* TRIANGLE cycles the active hardware family, as a flare (see
        * switch_begin).  A press while one is running finishes it -- doing
@@ -10436,6 +11739,16 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       if ((edges & PSP_CTRL_TRIANGLE) && !g_browser_state_open)
       {
          int skipped = 0;
+#ifdef VITA
+         if (g_find[0])
+         {
+            rom = n > 0 ? view_rom(cur) : -1;
+            cur = browser_find_set("", n_scan, rom);
+            n = view_count(n_scan);
+            tch_reset();
+            tch_scroll_stop(&g_br_ts);
+         }
+#endif
          if (g_sw.active)
          {
             if (!g_sw.swapped)
@@ -10465,23 +11778,42 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       {
          if (swap_step())
          {
+            int found = 0, old_cur = cur;
+            int keep_rom = n > 0 ? view_rom(cur) : -1;
             if (g_swap.rebuild)
                favs_build_view(n_scan);
             else
             {
+#ifdef VITA
+               /* SELECT: the next tab -- Games, Starred, then Recent when
+                * something has been played (the Home only); a tab touched:
+                * that one. */
+               int tab = g_swap_to >= 0 ? g_swap_to : (browser_tab() + 1) % 3;
+               if (g_swap_to < 0 && tab == 2 && (!g_ui_home || !g_recent_n))
+                  tab = 0;
+               g_swap_to = -1;
+               g_browser_favs = tab == 1;
+               g_browser_recent = tab == 2;
+               browser_find_build(n_scan);
+#else
                g_browser_favs = !g_browser_favs;
+#endif
+#ifdef VITA
+               if (g_browser_recent)
+                  fe_evt("ui_browser_view favs=0 shown=%d recent=1",
+                         view_count(n_scan));
+               else
+#endif
                fe_evt("ui_browser_view favs=%d shown=%d", g_browser_favs,
                       view_count(n_scan));
             }
             /* Stay on the same game when it is in both lists; when the
              * row itself left (an untag), stay where the cursor was. */
             {
-               int found = 0, old_cur = cur;
-               rom = n > 0 ? view_rom(cur) : -1;
                n = view_count(n_scan);
                cur = 0;
                for (i = 0; i < n; i++)
-                  if (view_rom(i) == rom)
+                  if (view_rom(i) == keep_rom)
                   {
                      cur = i;
                      found = 1;
@@ -10501,11 +11833,49 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 
       rom = n > 0 ? view_rom(cur) : -1;
 
+#ifdef VITA
+      if (!find_owns_input && !g_browser_state_open && !g_ret_on &&
+          !g_sw.active && !g_swap.active && !g_pop.active &&
+          (!g_ui_home || g_hm_lift <= 0.02f) &&
+          ((edges & BROWSER_FIND_BUTTON) ||
+           ((edges & PSP_CTRL_CIRCLE) && (g_find[0] || n > 0 || g_browser_favs ||
+                                          g_browser_recent))))
+      {
+         if ((edges & PSP_CTRL_CIRCLE) && !(edges & BROWSER_FIND_BUTTON) && g_find[0])
+         {
+            cur = browser_find_set("", n_scan, rom);
+            n = view_count(n_scan);
+            browser_state_cache_free();
+            g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
+         }
+         else if (ui_text_open(TXT_BROWSER_FIND, "Find a game", g_find, 63) != 0)
+            osd_toast("The keyboard is not available");
+         edges = 0;
+         idle = 0;
+         tch_reset();
+         tch_scroll_stop(&g_br_ts);
+      }
+#endif
+
       /* SELECT swaps the list for the favourites subset and back.  Not
        * while L+R are held: that is the screenshot chord above. */
       if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
           !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
          swap_begin(0);
+#ifdef VITA
+      /* A tab touched (the Home's top bar): straight to it. */
+      if ((edges & BROWSER_TAB_BUTTONS) && !g_browser_state_open &&
+          !g_swap.active)
+      {
+         int k = (edges & BROWSER_TAB_BUTTON(0)) ? 0 :
+                 (edges & BROWSER_TAB_BUTTON(1)) ? 1 : 2;
+         if (k != browser_tab())
+         {
+            g_swap_to = k;
+            swap_begin(0);
+         }
+      }
+#endif
 
       /* SQUARE tags or untags the highlighted game and rewrites the file
        * at once.  In the favourites view an untag plays the pop first and
@@ -10542,6 +11912,19 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 
       /* LEFT opens the selected game's save-state shelf, for every
        * console. Shoulder buttons page the list. */
+#ifdef VITA
+      /* Home opens the shelf before the game's save metadata is known, and
+       * a delete makes it unknown again until it is re-read: once it is
+       * known that no slot holds a state, there is nothing to offer and the
+       * shelf closes, as an emptied shelf always has. */
+      if (g_browser_state_open && g_ui_home && !g_shelf_del &&
+          home_states_known_empty(rom))
+      {
+         g_browser_state_open = 0;
+         idle = 0;
+         fe_evt("home_shelf_close reason=empty rom=%d", rom);
+      }
+#endif
       if (g_browser_state_open)
       {
          char state_path[PSP_FILE_PATH_CAP];
@@ -10555,9 +11938,16 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             {
                int s = g_shelf_del, ok;
                g_shelf_del = 0;
+#ifdef VITA
+               home_state_invalidate(rom);
+#endif
                ok = browser_rom_state_path(rom_dir, rom, 1, state_path,
                                            sizeof(state_path)) == 0 &&
                     state_delete(state_path, (unsigned)s) == 0;
+#ifdef VITA
+               home_state_invalidate(rom);
+               if (ok && g_ui_home) hm_cards_drop();
+#endif
                snprintf(g_shelf_note, sizeof(g_shelf_note),
                         ok ? "Slot %d deleted" : "Slot %d not deleted", s);
                /* Refresh what the shelf shows: the slot list from the stick,
@@ -10599,9 +11989,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             g_browser_state_open = 0;
          else if (edges & PSP_CTRL_CROSS)
          {
+#ifdef VITA
+            home_state_invalidate(rom);
+#endif
             if (browser_rom_state_path(rom_dir, rom,
                                        (unsigned)g_browser_state_slot,
                                        state_path, sizeof(state_path)) == 0 &&
+                fe_host_state_recover(state_path) >= 0 &&
                 sceIoGetstat(state_path, &st) >= 0 &&
                 psp_rom_path_join(out, out_sz, rom_dir,
                                   g_roms[rom].name) == 0)
@@ -10620,6 +12014,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                browser_state_cache_free();
                return 0;
             }
+#ifdef VITA
+            home_state_invalidate(rom);
+#endif
             osd_toast("No saved state in this slot");
          }
       }
@@ -10666,7 +12063,15 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          g_bpage.n = n;
          g_bpage.n_scan = n_scan;
          g_bpage.idle = idle;
+#ifdef VITA
+         md_pause();
+         if (g_ui_home) home_modal_enter();
+#endif
          browser_cheats(rom);
+#ifdef VITA
+         if (g_ui_home) home_modal_leave(0);
+         md_resume();
+#endif
          idle = 0;
          continue;
       }
@@ -10689,12 +12094,38 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #endif
       if (edges & PSP_CTRL_START)
       {
+         int settings_changed;
          g_bpage.rom_dir = rom_dir;
          g_bpage.cur = cur;
          g_bpage.n = n;
          g_bpage.n_scan = n_scan;
          g_bpage.idle = idle;
-         if (browser_settings())
+#ifdef VITA
+         md_pause();
+         if (g_ui_home) home_modal_enter();
+#endif
+         settings_changed = browser_settings();
+#ifdef VITA
+         if (g_ui_home) home_modal_leave(1);
+         md_resume();
+#endif
+#ifdef VITA
+         if (g_library_resort)
+         {
+            /* Settings > Game order: the same game stays in focus. */
+            int keep = n > 0 ? view_rom(cur) : -1;
+            g_library_resort = 0;
+            favs_build_view(n_scan);
+            n = view_count(n_scan);
+            cur = 0;
+            for (i = 0; i < n; i++)
+               if (view_rom(i) == keep)
+                  cur = i;
+            g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
+            fe_evt("lib_order order=%d shown=%d", g_pcfg.lib_sort, n);
+         }
+#endif
+         if (settings_changed)
          {
             art_free_all();
             browser_state_cache_free();
@@ -10702,11 +12133,30 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          }
          if (g_sh_quit)
             break;                    /* the harness script ended in there */
-         if (g_sh_rescan)
+         if (g_sh_rescan
+#ifdef VITA
+             || g_library_refresh
+#endif
+            )
          {
+            const char *remembered = g_pcfg.last_rom;
+#ifdef VITA
+            char focused[PSP_FILE_PATH_CAP];
+            int manual_refresh = g_library_refresh;
+            if (manual_refresh && n > 0)
+            {
+               snprintf(focused, sizeof(focused), "%s", g_roms[view_rom(cur)].name);
+               remembered = focused;
+            }
+#endif
             /* Share game data walked the other consoles' ROMs, or a fetched
              * save changed what a row says: list this console again. */
             g_sh_rescan = 0;
+#ifdef VITA
+            rom_cache_clear();
+            g_library_refresh = 0;
+            g_empty_for = -1;
+#endif
             art_free_all();
             browser_state_cache_free();
             n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
@@ -10716,9 +12166,16 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             n = view_count(n_scan);
             cur = 0;
             for (i = 0; i < n; i++)
-               if (g_pcfg.last_rom[0] &&
-                   strcmp(g_roms[view_rom(i)].name, g_pcfg.last_rom) == 0)
+               if (remembered[0] &&
+                   strcmp(g_roms[view_rom(i)].name, remembered) == 0)
                   cur = i;
+#ifdef VITA
+            if (manual_refresh)
+            {
+               osd_toast(n_scan == 1 ? "%d game found" : "%d games found", n_scan);
+               fe_evt("library_refresh_done console=%d roms=%d", g_pcfg.console, n_scan);
+            }
+#endif
             g_scroll_cur = -1;
             g_art_fade_idx = -1;
             g_marq_idx = -1;
@@ -10729,6 +12186,22 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          continue;
       }
       rom = n > 0 ? view_rom(cur) : -1;
+#ifdef VITA
+      md_selection(rom, g_pcfg.console);
+      if (!g_ui_home || n <= 0)
+      {
+         hm_art_poll(rom_dir, n_scan, idle);
+         hm_art_focus(rom_dir, rom, idle);
+      }
+#endif
+#ifdef VITA
+      /* Start over: the same launch, without continuing. */
+      if ((edges & BROWSER_FRESH_BUTTON) && n > 0 && g_ui_home &&
+          !g_browser_state_open && home_has_resume(rom))
+         edges |= PSP_CTRL_CROSS;
+      else
+         edges &= ~BROWSER_FRESH_BUTTON;
+#endif
       if ((edges & PSP_CTRL_CROSS) && n > 0)
       {
          if (g_browser_state_open)
@@ -10746,6 +12219,18 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          ui_loading_begin(out);
          if (pcfg_remember_rom(g_roms[rom].name) != 0)
             fe_log("Could not remember last ROM: %s", g_roms[rom].name);
+#ifdef VITA
+         /* Home: Continue goes back to where the game was left; Start over
+          * (BROWSER_FRESH_BUTTON) plays from the battery save. */
+         if (g_ui_home && !(edges & BROWSER_FRESH_BUTTON) &&
+             home_has_resume(rom))
+         {
+            if (out_state_slot)
+               *out_state_slot = PSP_STATE_RESUME;
+            fe_evt("ui_browser_pick rom=%s continue=1", g_roms[rom].name);
+         }
+         else
+#endif
          fe_evt("ui_browser_pick rom=%s", g_roms[rom].name);
          art_free_all();
          browser_state_cache_free();
@@ -10768,13 +12253,22 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          ret_dump_frame();
          sceDisplayWaitVblankStart();
          vid_swap();
-         if ((edges & PSP_CTRL_CIRCLE) && !g_browser_favs)
+#ifdef VITA
+         md_frame_end();
+#endif
+         if ((edges & PSP_CTRL_CIRCLE) && !g_browser_favs
+#ifdef VITA
+             && !g_find[0] && !g_browser_recent
+#endif
+            )
             break;
 #ifdef VITA
          /* X on an empty console: look in the folder again (games copied
           * over FTP while this sat open appear without a restart). */
-         if ((edges & PSP_CTRL_CROSS) && !g_browser_favs && !g_sw.active)
+         if ((edges & PSP_CTRL_CROSS) && !g_browser_favs && !g_browser_recent &&
+             !g_sw.active && !g_find[0])
          {
+            rom_cache_clear();
             n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
             if (n_scan < 0)
                n_scan = 0;
@@ -10803,14 +12297,26 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       if (g_ui_shots)
          idle = 100;
 
+#ifdef VITA
+      md_end(MD_PRE_DRAW, pre_draw_t);
+#endif
       vid_overlay_begin(1);
 
       /* Warm the cache around the cursor -- at most one decode per frame, so
        * holding a direction still scrolls smoothly. This is what removes the
        * art popping in as you move. */
-      if (idle >= IDLE_PREFETCH && scroll_settled())
+      if (idle >= IDLE_PREFETCH && scroll_settled()
+#ifdef VITA
+          && !g_ui_home
+#endif
+         )
+      {
+         unsigned long long t = UI_DIAG_BEGIN();
          art_prefetch(rom_dir, cur, n);
+         UI_DIAG_END(MD_PREFETCH, t);
+      }
 
+      unsigned long long draw_t = UI_DIAG_BEGIN();
 #ifdef VITA
       if (g_ui_home)
          shell_home(rom_dir, cur, n, n_scan, idle);
@@ -10833,8 +12339,16 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                                   * the PSP queues them for the next game */
 #endif
       ret_dump_frame();
+      UI_DIAG_END(MD_DRAW, draw_t);
+      unsigned long long present_t = UI_DIAG_BEGIN();
+      unsigned long long vblank_t = UI_DIAG_BEGIN();
       sceDisplayWaitVblankStart();
+      UI_DIAG_END(MD_VBLANK, vblank_t);
       vid_swap();
+      UI_DIAG_END(MD_PRESENT, present_t);
+#ifdef VITA
+      md_frame_end();
+#endif
       if (idle < 1000)
          idle++;
    }

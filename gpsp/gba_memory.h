@@ -305,6 +305,22 @@ void rumble_restore_state(bool gbp_active);
 void rumble_frame_reset();
 float rumble_active_pct();
 
+/* SENSOR CARTRIDGES (cart_sensor.h): which sensors the loaded game has
+ * (GPSP_SENSOR_SOLAR / _GYRO / _TILT), and the reading the frontend
+ * publishes for the next frame, in cartridge units with GPSP_SENSOR_VALID
+ * set (0 = still console, dark room):
+ *   solar  bits 0-3   light level 0 (dark) .. 10 (full sun)
+ *   gyro   bits 0-11  rotation rate, 0x6C0 still, higher = clockwise
+ *   tilt   bits 0-11  X, 12-23 Y (0x392 / 0x3A0 = level)
+ * frontend-common/fe_sensor.h converts from a console's own sensors. */
+#define GPSP_SENSOR_SOLAR  1u
+#define GPSP_SENSOR_GYRO   2u
+#define GPSP_SENSOR_TILT   4u
+#define GPSP_SENSOR_VALID  0x80000000u
+u32 gpsp_sensor_kinds(void);
+void gpsp_sensor_set(u32 reading);
+u32 gpsp_sensor_get(void);
+
 /* EDIT: Shouldn't this be extern ?! */
 extern const u32 def_seq_cycles[16][2];
 /* Cycles can change depending on WAITCNT */

@@ -75,8 +75,8 @@ def check(folder):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--directory", type=Path, default=Path(__file__).resolve().parent,
-                        help="extracted install folder (defaults to this script's folder)")
+    parser.add_argument("--directory", type=Path, default=Path(__file__).resolve().parents[1],
+                        help="extracted install folder (defaults to the folder above tools/)")
     args = parser.parse_args()
     checked, problems = check(args.directory)
     if problems:

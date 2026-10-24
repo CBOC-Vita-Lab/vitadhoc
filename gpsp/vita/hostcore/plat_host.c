@@ -124,10 +124,18 @@ static struct
    unsigned    ntouch;
    struct { unsigned frame; char text[TYPE_CAP]; int cancel; } type[MAX_TYPE];
    unsigned    ntype;
+   /* motion=R/D/Z: the motion sensor from that frame on (plat.h) */
+   struct { unsigned frame; float right_g, down_g, rate_z; } motion[MAX_TYPE];
+   unsigned    nmotion;
+   int         no_motion;         /* --no-motion: a PS TV, no sensor */
    unsigned    suspend_at[8], nsuspend;
    struct { unsigned frame; int on; } plug[16];
    unsigned    nplug;
    unsigned    quit_at;           /* 0 = none */
+   unsigned    kill_at;           /* "kill": the process ends at once, as
+                                   * when the Vita closes the app from
+                                   * LiveArea or loses power: nothing is
+                                   * flushed, no exit path runs           */
    unsigned    heap_free_mb;      /* --heap-free-mb: plat_heap_free's answer
                                    * (0 = no figure) */
    /* --slow F:N:US: emulated frames F .. F+N-1 cost US each instead of
@@ -140,7 +148,8 @@ static struct
    unsigned    flip_queue;
 } opt = { .root = "gbadhoc-root", .refresh_mhz = 60000, .work_us = 3000 };
 
-static uint64_t sim_ns;           /* the simulated clock */
+/* Main advances time; background workers may read it through plat_time_us. */
+static uint64_t sim_ns;           /* all accesses are atomic */
 static uint64_t real_t0_ns;       /* --realtime: CLOCK_MONOTONIC at start */
 static uint64_t slept_ns;         /* simulated suspends, in total */
 static unsigned power_pending;
@@ -159,7 +168,8 @@ static uint64_t real_ns(void)
 
 static uint64_t now_ns(void)
 {
-   return opt.realtime ? real_ns() - real_t0_ns : sim_ns;
+   return opt.realtime ? real_ns() - real_t0_ns :
+                         __atomic_load_n(&sim_ns, __ATOMIC_RELAXED);
 }
 
 static uint64_t refresh_ns(void)
@@ -280,7 +290,8 @@ int plat_audio_thread_start(int (*step)(void))
       }
       return 0;
    }
-   grains_done = sim_ns * wav_rate / wav_grain / 1000000000ull;
+   grains_done = __atomic_load_n(&sim_ns, __ATOMIC_RELAXED) *
+                 wav_rate / wav_grain / 1000000000ull;
    return 0;
 }
 
@@ -297,12 +308,13 @@ void plat_audio_thread_stop(void)
 /* Simulated time: the port consumes one grain every grain/rate seconds. */
 static void sim_advance(uint64_t to_ns)
 {
-   if (to_ns <= sim_ns)
+   if (to_ns <= __atomic_load_n(&sim_ns, __ATOMIC_RELAXED))
       return;
-   sim_ns = to_ns;
+   __atomic_store_n(&sim_ns, to_ns, __ATOMIC_RELAXED);
    if (audio_step)
    {
-      uint64_t due = sim_ns * wav_rate / wav_grain / 1000000000ull;
+      uint64_t due = __atomic_load_n(&sim_ns, __ATOMIC_RELAXED) *
+                     wav_rate / wav_grain / 1000000000ull;
       while (grains_done < due && audio_step)
       {
          grains_done++;
@@ -420,8 +432,26 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.type[opt.ntype].cancel = n == 5;
          opt.ntype++;
       }
+      else if (n > 7 && !strncasecmp(p, "motion=", 7))
+      {
+         char tmp[64];
+         float r, d, z;
+         if (opt.nmotion >= MAX_TYPE || n - 7 >= sizeof(tmp))
+            break;
+         memcpy(tmp, p + 7, n - 7);
+         tmp[n - 7] = '\0';
+         if (sscanf(tmp, "%f/%f/%f", &r, &d, &z) != 3)
+            break;
+         opt.motion[opt.nmotion].frame = frame;
+         opt.motion[opt.nmotion].right_g = r;
+         opt.motion[opt.nmotion].down_g = d;
+         opt.motion[opt.nmotion].rate_z = z;
+         opt.nmotion++;
+      }
       else if (n == 4 && !strncasecmp(p, "quit", 4))
          opt.quit_at = frame ? frame : 1;
+      else if (n == 4 && !strncasecmp(p, "kill", 4))
+         opt.kill_at = frame ? frame : 1;
       else if (n == 7 && !strncasecmp(p, "suspend", 7))
       {
          if (opt.nsuspend < 8)
@@ -539,6 +569,7 @@ int plat_init(int argc, char **argv)
       else if (!strcmp(a, "--input") && v)       { parse_input(v, &cursor); i++; }
       else if (!strcmp(a, "--input-file") && v)  { parse_input_file(v, &cursor); i++; }
       else if (!strcmp(a, "--worker"))           opt.worker = 1;
+      else if (!strcmp(a, "--no-motion"))        opt.no_motion = 1;
       else if (!strcmp(a, "--heap-free-mb") && v) { opt.heap_free_mb = (unsigned)atoi(v); i++; }
       else if (!strcmp(a, "--echo"))             opt.echo = 1;
       /* vback_soft.c: run the GPU programs (shaders/) as the console
@@ -598,6 +629,8 @@ const char *plat_app_dir(void)
 int plat_quit_requested(void)
 {
    unsigned f = script_frame();
+   if (opt.kill_at && f >= opt.kill_at)
+      _exit(0);
    return (opt.frames && f >= opt.frames) || (opt.quit_at && f >= opt.quit_at);
 }
 
@@ -656,7 +689,7 @@ void plat_sleep_us(uint32_t us)
    if (opt.realtime)
       usleep(us);
    else
-      sim_advance(sim_ns + (uint64_t)us * 1000u);
+      sim_advance(__atomic_load_n(&sim_ns, __ATOMIC_RELAXED) + (uint64_t)us * 1000u);
 }
 
 time_t plat_wallclock(void)
@@ -699,7 +732,7 @@ void plat_frame_ran(void)
       us = opt.slow_us;
    frames_ran++;
    if (!opt.realtime)
-      sim_advance(sim_ns + (uint64_t)us * 1000u);
+      sim_advance(__atomic_load_n(&sim_ns, __ATOMIC_RELAXED) + (uint64_t)us * 1000u);
 }
 
 /* --flip-queue: when each queued flip reaches the glass. */
@@ -792,9 +825,10 @@ unsigned plat_power_events(void)
       suspend_phase = 0;
       if (!opt.realtime)
       {
-         sim_ns += 10000000000ull;
+         __atomic_fetch_add(&sim_ns, 10000000000ull, __ATOMIC_RELAXED);
          slept_ns += 10000000000ull;
-         grains_done = sim_ns * (wav_rate ? wav_rate : 48000u) /
+         grains_done = __atomic_load_n(&sim_ns, __ATOMIC_RELAXED) *
+                       (wav_rate ? wav_rate : 48000u) /
                        (wav_grain ? wav_grain : 512u) / 1000000000ull;
       }
       return e | PLAT_POWER_RESUME;
@@ -869,6 +903,54 @@ int plat_bg_join(uint32_t timeout_us)
    return 1;
 }
 
+static pthread_t net_thread;
+static int net_on;
+static void (*net_fn)(void *);
+static void *net_arg;
+static volatile int net_ended;
+
+static void *net_main(void *p)
+{
+   (void)p;
+   net_fn(net_arg);
+   net_ended = 1;
+   return NULL;
+}
+
+int plat_net_start(void (*fn)(void *), void *arg)
+{
+   if (net_on)
+      return -1;
+   net_fn = fn;
+   net_arg = arg;
+   net_ended = 0;
+   if (pthread_create(&net_thread, NULL, net_main, NULL) != 0)
+      return -1;
+   net_on = 1;
+   return 0;
+}
+
+int plat_net_join(uint32_t timeout_us)
+{
+   uint32_t waited = 0;
+   if (!net_on)
+      return 1;
+   while (!net_ended && waited < timeout_us)
+   {
+      usleep(10000);
+      waited += 10000;
+   }
+   if (!net_ended)
+   {
+      pthread_detach(net_thread);
+      net_on = 0;
+      return 0;
+   }
+   pthread_join(net_thread, NULL);
+   net_on = 0;
+   return 1;
+}
+
 void plat_thread_sleep_us(uint32_t us)
 {
    usleep(us);
@@ -905,6 +987,7 @@ static pthread_mutex_t wk_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  wk_cv = PTHREAD_COND_INITIALIZER;
 static void          (*wk_step)(void);
 static int             wk_run, wk_kick;
+static int             wk_created;
 
 static void *wk_main(void *arg)
 {
@@ -933,6 +1016,8 @@ int plat_worker_start(void (*step)(void), uint32_t period_us)
    (void)period_us;
    if (!opt.worker)
       return -1;                              /* the app stays synchronous */
+   if (wk_created)
+      return -1;
    wk_step = step;
    wk_run = 1;
    wk_kick = 0;
@@ -941,6 +1026,7 @@ int plat_worker_start(void (*step)(void), uint32_t period_us)
       wk_run = 0;
       return -1;
    }
+   wk_created = 1;
    return 0;
 }
 
@@ -954,13 +1040,29 @@ void plat_worker_wake(void)
 
 void plat_worker_stop(void)
 {
-   if (!wk_run)
+   if (!wk_created)
       return;
    pthread_mutex_lock(&wk_mu);
    wk_run = 0;
    pthread_cond_signal(&wk_cv);
    pthread_mutex_unlock(&wk_mu);
    pthread_join(wk_thread, NULL);
+   wk_created = 0;
+}
+
+int plat_worker_stop_checked(void)
+{
+   struct timespec until;
+   if (!wk_created) return 1;
+   pthread_mutex_lock(&wk_mu);
+   wk_run = 0;
+   pthread_cond_signal(&wk_cv);
+   pthread_mutex_unlock(&wk_mu);
+   clock_gettime(CLOCK_REALTIME, &until);
+   until.tv_sec += 5;
+   if (pthread_timedjoin_np(wk_thread, NULL, &until) != 0) return 0;
+   wk_created = 0;
+   return 1;
 }
 
 /* ---- pad ------------------------------------------------------------------- */
@@ -1013,6 +1115,34 @@ int plat_pad_read2(plat_pad *pad)
    return 1;
 }
 
+/* ---- the motion sensor (plat.h): the script's motion= entries ------------- */
+
+static int motion_sampling;
+
+int plat_motion_enable(int on)
+{
+   if (opt.no_motion)
+      return on ? -1 : 0;
+   motion_sampling = on;
+   return 0;
+}
+
+int plat_motion_read(plat_motion *m)
+{
+   unsigned i, f = script_frame();
+   if (!motion_sampling || opt.no_motion)
+      return -1;
+   m->right_g = m->down_g = m->rate_z = 0.0f;
+   for (i = 0; i < opt.nmotion; i++)
+      if (f >= opt.motion[i].frame)
+      {
+         m->right_g = opt.motion[i].right_g;
+         m->down_g = opt.motion[i].down_g;
+         m->rate_z = opt.motion[i].rate_z;
+      }
+   return 0;
+}
+
 /* ---- the finger and the keyboard (pspcompat.c asks, plat.h) ------------------ */
 
 int plat_script_touch(int *nx, int *ny)
@@ -1047,7 +1177,9 @@ const char *plat_script_ime(const char *title, const char *initial, int frames)
       if (opt.type[i].frame <= f)
          best = (int)i;
    fe_evt("host_ime title=\"%s\" text=\"%s\"", title ? title : "",
-          best >= 0 && !opt.type[best].cancel ? opt.type[best].text : "<cancel>");
+          best < 0 || opt.type[best].cancel ? "<cancel>"
+          : title && strstr(title, "assword") ? "<secret>"
+          : opt.type[best].text);
    if (best < 0 || opt.type[best].cancel)
       return PSPCOMPAT_HOST_IME_CANCEL;
    return opt.type[best].text;

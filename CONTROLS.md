@@ -1,68 +1,61 @@
 # Controls
 
-These are the build-21 defaults. Settings > Controls can change game buttons,
-shortcuts and turbo bindings. Menu navigation stays available even after a
-bad game mapping.
+These are the defaults. Settings > Controls changes game buttons, shortcuts and
+turbo buttons, and the menus always stay reachable, whatever you map.
 
-## Game Browser And Menus
+## Home Screen
 
-| Input | Action |
+| Button | Does |
 | --- | --- |
-| Left / right | Move through the game shelf |
-| Cross | Start the selected game or confirm |
-| Circle | Back |
-| Triangle | Switch GBA, GB and GBC lists |
-| Square | Favourite or unfavourite the selected game |
-| Select | Show favourites |
-| Down on the shelf | Open that game's save-state cards |
+| Left / right | Move along your games |
+| Cross | Play, or **Continue** where you left off |
+| Up | **Start over** from the battery save |
+| Down | Show the game's save states; pick one and press Cross |
+| Square | Star or unstar the game |
+| Select | All games, Starred, Recent |
+| Triangle | Switch between GBA, GB and GBC |
+| Circle | Find a game by name |
 | Start | Settings |
-| Front touch | Select/tap rows, cards and footer hints; drag/flick scrollable lists |
+| Touch | Tap games, buttons and hints; drag or flick lists |
 
-## During A Game
+## In A Game
 
-| Input | Action |
+| Button | Does |
 | --- | --- |
-| D-pad / left stick | Emulated D-pad |
+| D-pad / left stick | D-pad |
 | Cross / Circle | A / B |
-| L / R | GBA L / R |
-| Start / Select | Game Start / Select |
-| Hold Start + Select | Open the app menu |
-| Tap the game picture | Open the app menu |
-| Square | Fast forward, according to its Hold/Toggle setting |
+| L / R, Start, Select | The same buttons |
+| Hold Start + Select, or tap the game | Open the menu |
+| Square | Fast forward (hold or toggle, in Settings) |
 | Right stick right | Fast forward while held |
-| Select + Square / right stick left | Rewind while held |
-| Right stick down | Cheat activation button for supported button-activated codes |
-| Triangle | Cycle video presets |
+| Right stick left, or Select + Square | Rewind while held |
 | Select + L / Select + R | Quick save / quick load |
-| Select + Triangle | Pause/wake overlay |
-| L + R + Select | Save screenshot to `ux0:data/GBAdhoc/screenshots/` |
-| Select + Down | Start/stop the GBA Mystery Gift listener |
+| Triangle | Next picture preset |
+| Select + Triangle | Pause screen |
+| L + R + Select | Screenshot (saved in `ux0:data/GBAdhoc/screenshots/`) |
+| Select + Down | Mystery Gift: listen for a phone (GBA) |
+| Right stick down | Cheat button, for button-activated codes |
 
-The Start + Select escape chord cannot be rebound into a shortcut. The PS
-button belongs to the Vita system, not the PSP HOME-button option in legacy
-code. Start/Select reach the game after a short guard interval so a shortcut
-does not also press the game button. `chord_guard = 0` in `config.ini` disables
-that guard.
+## Motion Games
 
-## Turbo And Remapping
+WarioWare: Twisted!, Yoshi Topsy-Turvy, Koro Koro Puzzle and Kirby Tilt 'n'
+Tumble feel the Vita turn and tilt. Settings > This game switches them to the
+right stick, changes the strength or direction, and sets level: hold the Vita
+the way it should count as flat and press Cross on Level. Boktai's sunlight is
+set there too.
 
-Four turbo actions start unbound: Turbo A, Turbo A (2), Turbo B and Turbo B (2).
-Choose a button, Hold or Toggle, and 10, 15 or 30 presses per emulated second.
-Fast forward changes their real-time rate. Turbo rests during link/local-pair
-play and resets on menu entry, state load or leaving the game. Conflict prompts
-show when a new mapping takes an existing input; Reset restores defaults.
+## Turbo Buttons
 
-## Touch And Two Players
+Turbo A, Turbo A (2), Turbo B and Turbo B (2) start unset. Give each a button,
+choose hold or toggle, and 10, 15 or 30 presses a second. They rest during link
+play and stop when the menu opens or a state loads.
 
-Front touch operates menus; it is not an on-screen GBA controller. A tap
-activates on release, while a drag scrolls or changes selection without
-accidentally confirming. `touch = 0` in `config.ini` or `touch_menu = 0` in
-`vita.ini` disables the in-game picture tap. The rear panel and motion sensors
-have no assigned emulator controls.
+## Two Players On One Vita
 
-With two emulated handhelds on one Vita, a sideways right-stick flick or a
-tap on the other picture changes the controlled player. Tap the active picture
-for the menu. A separate second controller can give each player a pad, but
-controller-port behaviour has not been accepted on physical hardware. PS TV
-has no touch panel; use the buttons and Start + Select. See
-[Play Together](PLAY-TOGETHER.md) for controller requirements and limits.
+Flick the right stick sideways, or tap the other picture, to switch which
+Game Boy you control. Tap the one you control for the menu. A second controller
+can give each player their own pad; see [Play Together](PLAY-TOGETHER.md).
+
+Start and Select reach the game a tenth of a second late, so a shortcut such
+as Select + L doesn't also press Select in the game. `chord_guard = 0` in
+`config.ini` turns that off.

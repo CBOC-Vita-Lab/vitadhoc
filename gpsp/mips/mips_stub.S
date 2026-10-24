@@ -625,8 +625,8 @@ defsymbl(execute_store_cpsr)
   nop
 
 2:
-  addu $4, $2, $0                      # load new address in $4
-  cfncall block_lookup_address_arm, 1  # GBA address is in $4
+  addu $4, $2, $0                      # load new address in $4 (odd: Thumb)
+  cfncall block_lookup_address_dual, 3 # GBA address is in $4
   restore_registers                    # restore registers
   jr $2                                # jump to the new address
   nop

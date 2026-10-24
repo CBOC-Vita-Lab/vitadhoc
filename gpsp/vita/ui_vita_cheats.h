@@ -340,7 +340,9 @@ static ui_action screen_cheats(unsigned edges, unsigned pad)
       {
          /* Where the game's name was, and it stays: the plate under the
           * list is cleared by the next key. */
-         vid_text(22, 48, "Cheats are off while linked to another console.",
+         vid_text(22, 48, suspended == 2
+                  ? "Cheats are off in Hardcore mode (RetroAchievements)."
+                  : "Cheats are off while linked to another console.",
                   C_VALUE);
          ov_text_right(460, 48, "OFF", C_DIM);
       }

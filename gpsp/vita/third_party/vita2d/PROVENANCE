@@ -25,13 +25,29 @@ declares their functions; nothing here calls them.  Text is drawn by
 `gpsp/vita/video_vita_text.c` (stb_truetype), images are decoded by
 `psp/stb_image.h`.
 
-## Local changes (two, both in `source/vita2d.c`, marked `GBAdhoc`)
+## Local changes
 
 1. `vita2d_get_back_fb()` added (and declared in `include/vita2d.h`): the
    display buffer being drawn, where upstream only exposes the front one.
    `vid_dump_ge()` reads the finished frame back from it before the swap.
 2. With `-DVITA2D_NO_PGF` (which `ui.mk` passes) `vita2d_init` does not load
    the system PGF font module: no PGF font is used.
+3. `vita2d_swap_state()` exposes pending/displayed state for the frontend pacer.
+4. R7: three full-capacity temporary-pool banks are retired with independent
+   vertex/fragment scene notifications. Checked/nonblocking scene admission,
+   bounded pending-swap tracking and versioned fragment-reader fences let
+   the backend skip a busy frame and callers defer texture publication
+   without a new whole-GPU wait. Pool allocation failure, exact capacity,
+   non-power-of-two alignment and arithmetic bounds are checked. The
+   corresponding declarations live in `include/vita2d.h`.
 
-To take a newer upstream: copy the four sources and three headers again and
-re-apply those two hunks.
+5. `_vita2d_create_empty_texture_format_advanced` allocates the texture
+   with `calloc`, not `malloc`: a plain texture never set `gxm_rtgt` or
+   `depth_UID`, yet `vita2d_free_texture` reads both, so a reused heap chunk
+   made it destroy a render target and free a GPU memory block it did not
+   own (`gpu/native_geometry_test.c --texture-destructor`).
+
+To take a newer upstream: retain these local changes and the R7 actual-native
+delayed-consumption regression tests; upstream pool rotation alone is not a
+completion/ownership guarantee. R7's hardware visual/performance validation
+is separate from host model and native compile evidence.

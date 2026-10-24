@@ -214,6 +214,24 @@ static int file_bytes(const char *path, long *size)
 
 /* ---- the partner's save file ------------------------------------------------- */
 
+/* A write cut short (power, the app closed) between moving the save aside
+ * and moving the new one in leaves only <save>.old: it is the save.  A
+ * <save>.tmp beside a save is a write that never finished: it goes. */
+static void save_recover(void)
+{
+   char side[APP_PATH_CAP + 8];
+   if (!L.save_path[0])
+      return;
+   if (file_bytes(L.save_path, NULL) != 0 &&
+       snprintf(side, sizeof(side), "%s.old", L.save_path) < (int)sizeof(side) &&
+       file_bytes(side, NULL) == 0)
+      rename(side, L.save_path);
+   if (file_bytes(L.save_path, NULL) == 0 &&
+       snprintf(side, sizeof(side), "%s.tmp", L.save_path) < (int)sizeof(side) &&
+       file_bytes(side, NULL) == 0)
+      remove(side);
+}
+
 /* Where the partner's battery lives for the start that would happen now. */
 static void save_path_set(void)
 {
@@ -228,6 +246,7 @@ static void save_path_set(void)
       psp_rom_path_suffix(L.save_path, sizeof(L.save_path), g_game.rom_path,
                           c == FE_CONSOLE_GBA ? ".p2.sav" :
                           c == FE_CONSOLE_GBC ? ".gbc.p2.sav" : ".gb.p2.sav");
+   save_recover();
    L.save_exists = L.save_path[0] && file_bytes(L.save_path, NULL) == 0;
 }
 
@@ -277,7 +296,7 @@ static void save_write(void)
 {
    char tmp[APP_PATH_CAP + 8];
    FILE *f;
-   int ok = 0, bak = 0;
+   int ok = 0, bak = 0, tried = 0;
 
    /* A copy of the player's save is about to replace a second save file
     * that was there before: keep that one, once. */
@@ -294,21 +313,39 @@ static void save_write(void)
    f = fopen(tmp, "wb");
    if (f)
    {
+      char old[APP_PATH_CAP + 8];
       ok = fwrite(L.save_snap, 1, L.save_n, f) == L.save_n;
       if (fclose(f) != 0)
          ok = 0;
       if (ok)
       {
-         /* rename() over an existing file is refused on the Vita's card */
-         remove(L.save_path);
-         ok = rename(tmp, L.save_path) == 0;
+         /* rename() over an existing file is refused on the Vita's card:
+          * the save moves aside to .old, the new one moves in, and only
+          * then does .old go -- at every moment one whole save is on the
+          * card under a name save_recover() knows. */
+         int had = file_bytes(L.save_path, NULL) == 0;
+         tried = 1;
+         snprintf(old, sizeof(old), "%s.old", L.save_path);
+         if (had)
+         {
+            remove(old);                         /* a stale one */
+            ok = rename(L.save_path, old) == 0;
+         }
+         if (ok && rename(tmp, L.save_path) != 0)
+         {
+            ok = 0;
+            if (had)
+               rename(old, L.save_path);         /* the save goes back */
+         }
+         if (ok && had)
+            remove(old);
       }
       if (!ok)
          remove(tmp);
    }
-   if (!ok)
+   if (!ok && !tried)
    {
-      /* no room for a second copy, or no rename: in place */
+      /* no room for a second copy: in place */
       f = fopen(L.save_path, "wb");
       if (f)
       {
@@ -614,6 +651,10 @@ static void view_set(int v, const char *via)
    if (!L.active || v == L.view)
       return;
    L.view = v;
+   /* The large + small layout draws the game in view large: the rects
+    * have swapped games.  (Side by side keeps the player's game left.) */
+   if (g_pcfg.local_layout == VID_PAIR_INSET)
+      vid_pair_forget();
    /* What is held now was pressed for the other game. */
    L.held_block = ~0u;
    L.hint_frames = 180;

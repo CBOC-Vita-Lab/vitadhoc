@@ -610,9 +610,9 @@ defsymbl(execute_store_cpsr)
   cmp $0, %eax                    # see if return value is 0
   jnz 2f                          # might have changed the PC
   ret                             # return
-2:    # PC has changed, due to IRQ triggered
+2:    # PC has changed: an IRQ, or the MSR set T (odd: Thumb)
   mov %eax, CARG1_REG             # Returned addr from C function
-  CALL_FUNC(block_lookup_address_arm)  # lookup new PC
+  CALL_FUNC(block_lookup_address_dual)  # lookup new PC
   add $ADDR_SIZE_BYTES, STACK_REG # get rid of current return address
   jmp *FULLREG(ax)
 

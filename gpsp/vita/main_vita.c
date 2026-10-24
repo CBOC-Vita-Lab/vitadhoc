@@ -67,6 +67,7 @@
 #include <sys/stat.h>
 
 #include "fe_host.h"
+#include "menu_load.h"
 #include "../gbcore/gbcore.h"   /* gbcore_set_color_correction */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
@@ -88,6 +89,9 @@
 #include "stb_image_write.h"
 
 #include "plat.h"
+#include "fe_sensor.h"
+#include "play_log.h"
+#include "rom_patch.h"
 #include "audio_vita.h"
 #include "app_vita.h"
 #include "mgift_vita.h"
@@ -95,8 +99,11 @@
 #include "cheats_vita.h"
 #include "rewind_vita.h"
 #include "clip_vita.h"
+#include "preview_vita.h"
+#include "menu_diag.h"
 #include "gamedb.h"
 #include "artfetch.h"
+#include "ra_vita.h"
 #include "net_vita.h"
 #include "../wide.h"
 #include "vstyle.h"
@@ -238,8 +245,12 @@ static struct
    int      gba_link_headless_audio;
    int      art_titles;       /* art_titles = 0: box art only, no title
                                  screens (artfetch_titles)              */
+   /* Last: the initializer below is positional, and "" is its default. */
+   char     ra_host[128];     /* ra_host = http://host[:port]: another
+                               * RetroAchievements server (the twin's
+                               * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1 };
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, "" };
 
 /* vita.ini core_phase: the core's per-phase split of a frame (main.h,
  * "Phase 5h").  Declared here, not through the core's main.h (the whole
@@ -557,12 +568,630 @@ static unsigned pad_psp_bits(const plat_pad *p)
    return b;
 }
 
+/* ---- SENSOR CARTRIDGES (frontend-common/fe_sensor.h) --------------------------
+ *
+ * Boktai's light sensor, WarioWare: Twisted!'s gyro, Yoshi Topsy-Turvy's and
+ * Kirby Tilt 'n' Tumble's tilt sensors read the Vita: its motion sensor
+ * (turning it, tilting it) or, when the player chooses or the console has
+ * none (a PS TV), the right stick; the light is a setting.  The game's
+ * Settings > THIS GAME rows (config_psp.h pcfg_game) say how.  One reading
+ * a frame goes to the core (fe_host_sensor_set); while the right stick is
+ * the sensor it is nothing else (rewind, fast forward, the cheat button and
+ * the local link's view switch keep their buttons). */
+static unsigned g_sensor_kinds;      /* fe_host_sensor_kinds() of the game */
+static int      g_sensor_motion;     /* 1 sampling, -1 no sensor, 0 not asked */
+static int      g_sensor_auto_level; /* this session's level: the first hold */
+static float    g_sensor_lr, g_sensor_ld;
+static uint32_t g_sensor_shown;      /* last reading in the log */
+static unsigned g_sensor_logged_at;
+
+#define SENSOR_TILTS (FE_SENSOR_TILT | FE_SENSOR_MBC7)
+#define SENSOR_MOVES (FE_SENSOR_GYRO | SENSOR_TILTS)
+
+static int sensor_owns_stick(void)
+{
+   return (g_sensor_kinds & SENSOR_MOVES) &&
+          (g_pgame.sensor_mode == PCFG_SENSOR_STICK || g_sensor_motion < 0);
+}
+
+/* A stick axis, -1 .. 1, with a dead centre. */
+static float sensor_stick(uint8_t v)
+{
+   float d = (float)v - 128.0f;
+   const float dead = 24.0f;
+   if (d > -dead && d < dead)
+      return 0.0f;
+   d = d > 0 ? (d - dead) / (127.0f - dead) : (d + dead) / (128.0f - dead);
+   return d > 1.0f ? 1.0f : d < -1.0f ? -1.0f : d;
+}
+
+/* Boktai's sun: the setting's level, or the clock's (dark at night, full
+ * at noon). */
+static int sensor_sun_level(void)
+{
+   if (g_pgame.sunlight != PCFG_SUN_CLOCK)
+      return g_pgame.sunlight;
+   {
+      long t = (long)(plat_wallclock() % 86400);
+      float h = (float)t / 3600.0f, v;
+      if (h < 6.0f || h >= 18.0f)
+         return 0;
+      v = 10.0f * (1.0f - (h - 12.0f) * (h - 12.0f) / 36.0f);
+      return fe_sensor_clamp(fe_sensor_round(v), 0, 10);
+   }
+}
+
+static void sensor_game_begin(void)
+{
+   g_sensor_kinds = fe_host_sensor_kinds();
+   g_sensor_motion = 0;
+   g_sensor_auto_level = 0;
+   g_sensor_shown = 0;
+   g_sensor_logged_at = 0;
+   if (g_sensor_kinds & SENSOR_MOVES)
+      g_sensor_motion = plat_motion_enable(1) == 0 ? 1 : -1;
+   if (g_sensor_kinds)
+      fe_evt("sensor_begin kinds=%u motion=%d mode=%d sens=%d rev=%d sun=%d "
+             "level=%d", g_sensor_kinds, g_sensor_motion, g_pgame.sensor_mode,
+             g_pgame.sensor_sens, g_pgame.sensor_rev, g_pgame.sunlight,
+             g_pgame.level_set);
+}
+
+static void sensor_game_end(void)
+{
+   if (g_sensor_motion > 0)
+      plat_motion_enable(0);
+   g_sensor_motion = 0;
+   g_sensor_kinds = 0;
+}
+
+/* Settings > THIS GAME > Level: the way the Vita is held now counts as
+ * level from here on (and is kept for the game). */
+int ui_host_sensor_level(void)
+{
+   plat_motion m;
+   if (!(g_sensor_kinds & SENSOR_TILTS) || g_sensor_motion <= 0 ||
+       plat_motion_read(&m) != 0)
+      return -1;
+   g_pgame.level_set = 1;
+   g_pgame.level_right = fe_sensor_clamp(fe_sensor_round(m.right_g * 1000.0f),
+                                         -2000, 2000);
+   g_pgame.level_down = fe_sensor_clamp(fe_sensor_round(m.down_g * 1000.0f),
+                                        -2000, 2000);
+   fe_evt("sensor_level right=%d down=%d", g_pgame.level_right,
+          g_pgame.level_down);
+   return 0;
+}
+
+static void sensor_frame(const plat_pad *pp)
+{
+   uint32_t reading;
+   if (!g_sensor_kinds)
+      return;
+   if (g_sensor_kinds & FE_SENSOR_SOLAR)
+      reading = fe_sensor_solar(sensor_sun_level());
+   else
+   {
+      float right = 0.0f, down = 0.0f, rate = 0.0f;
+      float gain = g_pgame.sensor_sens == PCFG_SENS_LOW ? 0.6f :
+                   g_pgame.sensor_sens == PCFG_SENS_HIGH ? 1.6f : 1.0f;
+      plat_motion m;
+      if (sensor_owns_stick())
+      {
+         /* Right = the right side down / a clockwise turn; up = the top
+          * edge down (tipping the console away). */
+         right = sensor_stick(pp->rx);
+         down = sensor_stick(pp->ry);
+         rate = -right * 5.0f;
+      }
+      else if (g_sensor_motion > 0 && plat_motion_read(&m) == 0)
+      {
+         if (!g_pgame.level_set && !g_sensor_auto_level)
+         {
+            /* No level kept for this game: the hold it started in. */
+            g_sensor_auto_level = 1;
+            g_sensor_lr = m.right_g;
+            g_sensor_ld = m.down_g;
+         }
+         right = m.right_g - (g_pgame.level_set
+                              ? (float)g_pgame.level_right / 1000.0f
+                              : g_sensor_lr);
+         down = m.down_g - (g_pgame.level_set
+                            ? (float)g_pgame.level_down / 1000.0f
+                            : g_sensor_ld);
+         rate = m.rate_z;
+      }
+      right *= gain;
+      down *= gain;
+      rate *= gain;
+      if (g_pgame.sensor_rev)
+      {
+         right = -right;
+         down = -down;
+         rate = -rate;
+      }
+      reading = (g_sensor_kinds & FE_SENSOR_GYRO) ? fe_sensor_gyro(rate) :
+                (g_sensor_kinds & FE_SENSOR_TILT) ? fe_sensor_tilt(right, down) :
+                fe_sensor_mbc7(right, down);
+   }
+   fe_host_sensor_set(reading);
+   {
+      unsigned f = fe_host_frame_count();
+      if (reading != g_sensor_shown && f - g_sensor_logged_at >= 30)
+      {
+         g_sensor_shown = reading;
+         g_sensor_logged_at = f;
+         fe_evt("sensor_reading kinds=%u value=%08x stick=%d", g_sensor_kinds,
+                (unsigned)reading, sensor_owns_stick());
+      }
+   }
+}
+
+/* ---- PLAY TIME (play_log.h) ---------------------------------------------------
+ *
+ * A session is counted when a game has started; the time played is the
+ * game loop's wall time outside the menus, a step of more than a quarter of
+ * a second (a suspended console, a long card write) not counted.  Written
+ * when the session begins, every five minutes of play and when it ends. */
+static struct
+{
+   char     name[APP_PATH_CAP];
+   int      on;
+   uint64_t t_last, acc_us;
+} g_play;
+
+/* The game list's name for a game: under roms/, the path below it; in an
+ * extra folder, the whole path (rom_entry.name, favourites.txt). */
+static void play_name_of(const char *rom_path, char *out, size_t cap)
+{
+   size_t n = strlen(g_app_rom_dir);
+   if (!strncmp(rom_path, g_app_rom_dir, n) && rom_path[n] == '/')
+      snprintf(out, cap, "%s", rom_path + n + 1);
+   else
+      snprintf(out, cap, "%s", rom_path);
+}
+
+static void play_flush(void)
+{
+   uint32_t secs = (uint32_t)(g_play.acc_us / 1000000u);
+   if (!g_play.on)
+      return;
+   g_play.acc_us -= (uint64_t)secs * 1000000u;
+   if (secs)
+      play_log_add(g_play.name, (uint32_t)plat_wallclock(), secs, 0);
+   (void)play_log_save();
+}
+
+static void play_begin(const char *rom_path)
+{
+   play_name_of(rom_path, g_play.name, sizeof(g_play.name));
+   g_play.on = 1;
+   g_play.t_last = plat_time_us();
+   g_play.acc_us = 0;
+   play_log_add(g_play.name, (uint32_t)plat_wallclock(), 0, 1);
+   (void)play_log_save();
+}
+
+/* Returns the play this iteration added (us). */
+static uint64_t play_tick(void)
+{
+   uint64_t now = plat_time_us(), dt;
+   if (!g_play.on)
+      return 0;
+   dt = now - g_play.t_last;
+   g_play.t_last = now;
+   if (dt >= 250000u || ui_active())
+      return 0;
+   g_play.acc_us += dt;
+   if (g_play.acc_us >= 300000000u)
+      play_flush();
+   return dt;
+}
+
+static void play_end(void)
+{
+   const play_rec *r;
+   if (!g_play.on)
+      return;
+   play_flush();
+   r = play_log_get(g_play.name);
+   fe_evt("play_end secs=%u count=%u", r ? (unsigned)r->secs : 0,
+          r ? (unsigned)r->count : 0);
+   g_play.on = 0;
+}
+
+/* ---- WHERE YOU LEFT OFF (state_slots.h psp_state_resume_path) -----------------
+ *
+ * A state of the running game kept fresh beside its slots, which the game
+ * list's Continue loads: taken when the game is left, after every two
+ * minutes of play, and half a second after an in-game save has changed the
+ * battery -- so Continue never lands before a save the player made.  The
+ * Vita gives an app no notice before LiveArea closes it; this is why the
+ * point is kept up to date as the game is played.
+ *
+ * Taken on the frame thread into memory (fe_host_state_mem_save: no card
+ * I/O, a millisecond), written by the I/O worker (resume_worker) the way a
+ * state slot is: temp file, the old one aside, the new one in.  Never in a
+ * link session (the partner's machine is part of the moment), during a
+ * rewind, or with the menu up. */
+/* Which patch the running game has (patched/<file>.key's line; "" none):
+ * kept beside its Continue point, so a point made with one patch is not
+ * loaded into the game with another, or with none. */
+static char g_patch_key[200];
+#define RES_CAP (448u * 1024u)
+#define RES_EVERY_US (120u * 1000000u)
+static uint8_t g_res_mem[RES_CAP];
+static struct
+{
+   char     path[APP_PATH_CAP];
+   int      on;
+   volatile int slot;            /* 0 empty, 1 ready, 2 being written */
+   volatile size_t len;
+   uint64_t play_us;             /* play since the last capture */
+   uint32_t bat_gen;
+   unsigned bat_wait;            /* frames until a battery change is taken */
+   unsigned taken, written, failed;
+   /* What the writer did, for the log: the log has one producer, the
+    * frame thread (resume_log), and the writer may be the I/O worker. */
+   volatile unsigned wseq;
+   volatile int wrc;
+   volatile size_t wlen;
+   unsigned logged;
+} g_res;
+
+static int res_write(const uint8_t *data, size_t len)
+{
+   char tmp[APP_PATH_CAP + 8], old[APP_PATH_CAP + 8];
+   FILE *f;
+   int ok, had;
+   if (path_fmt(tmp, sizeof(tmp), "%s.tmp", g_res.path) != 0 ||
+       path_fmt(old, sizeof(old), "%s.old", g_res.path) != 0)
+      return -1;
+   f = fopen(tmp, "wb");
+   if (!f)
+      return -1;
+   ok = fwrite(data, 1, len, f) == len;
+   ok &= fclose(f) == 0;
+   if (!ok)
+   {
+      remove(tmp);
+      return -1;
+   }
+   /* rename() over an existing file is refused on the Vita's card */
+   f = fopen(g_res.path, "rb");
+   had = f != NULL;
+   if (f)
+      fclose(f);
+   remove(old);
+   if (had && rename(g_res.path, old) != 0)
+   {
+      remove(tmp);
+      return -1;
+   }
+   if (rename(tmp, g_res.path) != 0)
+   {
+      if (had)
+         rename(old, g_res.path);
+      remove(tmp);
+      return -1;
+   }
+   remove(old);
+   /* ...and which patch the game had (g_patch_key): resume_patch_ok */
+   if (path_fmt(tmp, sizeof(tmp), "%s.pt", g_res.path) == 0 &&
+       (f = fopen(tmp, "wb")) != NULL)
+   {
+      fputs(g_patch_key[0] ? g_patch_key : "-\n", f);
+      fclose(f);
+   }
+   return 0;
+}
+
+/* The I/O worker's part (io_step); also run in place when there is none. */
+static void resume_worker(void)
+{
+   int rc;
+   if (!__sync_bool_compare_and_swap(&g_res.slot, 1, 2))
+      return;
+   rc = res_write(g_res_mem, g_res.len);
+   if (rc == 0) g_res.written++; else g_res.failed++;
+   g_res.wrc = rc;
+   g_res.wlen = g_res.len;
+   __sync_synchronize();
+   g_res.wseq++;
+   __sync_synchronize();
+   g_res.slot = 0;
+}
+
+/* The frame thread's: say what the writer did since the last call. */
+static void resume_log(void)
+{
+   unsigned seq = g_res.wseq;
+   __sync_synchronize();
+   if (seq == g_res.logged)
+      return;
+   g_res.logged = seq;
+   fe_evt("resume_write size=%u rc=%d", (unsigned)g_res.wlen, g_res.wrc);
+}
+
+static void resume_game_begin(void)
+{
+   char old[APP_PATH_CAP + 8];
+   FILE *f = NULL;
+   memset(&g_res, 0, sizeof(g_res));
+   if (psp_state_resume_path(g_res.path, sizeof(g_res.path),
+                             g_game.state_path) != 0)
+      return;
+   /* a write a power cut cut short: the point set aside is the point */
+   if (path_fmt(old, sizeof(old), "%s.old", g_res.path) == 0 &&
+       !(f = fopen(g_res.path, "rb")))
+      rename(old, g_res.path);
+   else if (f)
+      fclose(f);
+   g_res.on = fe_host_state_mem_size() > 0 &&
+              fe_host_state_mem_size() <= RES_CAP;
+   g_res.bat_gen = fe_host_battery_gen();
+   fe_evt("resume_begin on=%d size=%u", g_res.on,
+          (unsigned)fe_host_state_mem_size());
+}
+
+/* Take the moment now.  `wait`: write it before returning (leaving). */
+static int resume_take(const char *why, int wait)
+{
+   long n;
+   if (!g_res.on || link_locks_states() || link_local_active() ||
+       rewind_active())
+      return -1;
+   if (g_res.slot != 0)
+   {
+      if (!wait)
+         return -1;               /* the last one is still being written */
+      while (g_res.slot != 0)
+      {
+         if (g_res.slot == 1)
+         {
+            resume_worker();      /* nobody took it: write it here */
+            resume_log();
+         }
+         else
+            plat_thread_yield();
+      }
+   }
+   n = fe_host_state_mem_save(g_res_mem, RES_CAP);
+   if (n <= 0)
+   {
+      fe_evt("resume_take why=%s FAILED", why);
+      return -1;
+   }
+   g_res.len = (size_t)n;
+   g_res.play_us = 0;
+   g_res.taken++;
+   fe_evt("resume_take why=%s size=%ld frame=%u", why, n,
+          fe_host_frame_count());
+   __sync_synchronize();
+   g_res.slot = 1;
+   if (wait || !g_worker)
+   {
+      resume_worker();
+      resume_log();
+   }
+   else
+      plat_worker_wake();
+   return 0;
+}
+
+/* Once per game-loop iteration, with the play time it added. */
+static void resume_tick(uint64_t played_us)
+{
+   uint32_t gen;
+   resume_log();
+   if (!g_res.on || ui_active())
+      return;
+   g_res.play_us += played_us;
+   gen = fe_host_battery_gen();
+   if (gen != g_res.bat_gen)
+   {
+      /* the game is saving: take the point once it has finished */
+      g_res.bat_gen = gen;
+      g_res.bat_wait = 30;
+   }
+   else if (g_res.bat_wait && --g_res.bat_wait == 0)
+   {
+      if (resume_take("save", 0) != 0)
+         g_res.bat_wait = 30;     /* not now: soon */
+      return;
+   }
+   if (g_res.play_us >= RES_EVERY_US)
+      (void)resume_take("time", 0);
+}
+
+static void resume_game_end(void)
+{
+   if (!g_res.on)
+      return;
+   (void)resume_take("leave", 1);
+   fe_evt("resume_end taken=%u written=%u failed=%u", g_res.taken,
+          g_res.written, g_res.failed);
+   g_res.on = 0;
+}
+
+/* ---- PATCHES (rom_patch.h) ------------------------------------------------------
+ *
+ * Game.ips / Game.bps / Game.ups beside Game.gba: the patched cartridge is
+ * made once, into <data>/patched/<file name>, and used from there while the
+ * game's file and the patch are the same (patched/<file name>.key holds their
+ * sizes, times and the patch's CRC).  Everything that reads the cartridge
+ * reads that file -- both cores, the link's check that both consoles run the
+ * same game, a cartridge sent to a partner -- while the saves, the states
+ * and the game's name in the list stay the original file's.  A patch that
+ * cannot be applied is said so, and the game starts without it. */
+static char g_patch_note[160];
+
+
+static unsigned char *patch_read(const char *path, long *len, long cap)
+{
+   FILE *f = fopen(path, "rb");
+   unsigned char *b = NULL;
+   long n = 0;
+   if (f && fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && n <= cap &&
+       fseek(f, 0, SEEK_SET) == 0 && (b = (unsigned char *)malloc((size_t)n)) &&
+       fread(b, 1, (size_t)n, f) != (size_t)n)
+   {
+      free(b);
+      b = NULL;
+   }
+   if (f)
+      fclose(f);
+   *len = b ? n : 0;
+   return b;
+}
+
+/* 1 = `out` is the patched cartridge (*out_size its size); 0 = no patch;
+ * -1 = a patch that could not be used (g_patch_note says why). */
+static int patch_prepare(const char *rom_path, char *out, size_t cap,
+                         long *out_size)
+{
+   static const char *const ext[3] = { ".ips", ".bps", ".ups" };
+   char ppath[APP_PATH_CAP], key[APP_PATH_CAP + 8], want[200], have[200];
+   struct stat rs, ps;
+   unsigned char *patch = NULL, *rom = NULL, *dst = NULL;
+   long plen = 0, rlen = 0;
+   size_t tlen = 0, dlen = 0;
+   const char *why = NULL;
+   int i, kind = 0, rc = -1, cached = 0;
+   FILE *f;
+
+   g_patch_note[0] = 0;
+   g_patch_key[0] = 0;
+   /* Game.gba.ips names this cartridge alone; Game.ips any cartridge called
+    * Game -- so that one is taken only when no other cartridge (Game.gb
+    * beside Game.gba) has the name too. */
+   for (i = 0; i < 6; i++)
+      if ((i < 3 ? path_fmt(ppath, sizeof(ppath), "%s%s", rom_path, ext[i])
+                 : psp_rom_path_suffix(ppath, sizeof(ppath), rom_path,
+                                       ext[i - 3])) == 0 &&
+          stat(ppath, &ps) == 0 && S_ISREG(ps.st_mode))
+         break;
+   if (i == 6)
+      return 0;
+   if (i >= 3)
+   {
+      static const char *const roms[3] = { ".gba", ".gb", ".gbc" };
+      const char *own = strrchr(rom_path, '.');
+      char other[APP_PATH_CAP];
+      int k;
+      for (k = 0; k < 3; k++)
+         if ((!own || strcasecmp(own, roms[k])) &&
+             psp_rom_path_suffix(other, sizeof(other), rom_path, roms[k]) == 0 &&
+             stat(other, &rs) == 0)
+         {
+            why = "two games have this name: name the patch after the "
+                  "whole file (Game.gba.ips)";
+            goto done;
+         }
+   }
+   if (stat(rom_path, &rs) != 0 ||
+       path_fmt(out, cap, "%s/patched/%s", g_app_root, base_name(rom_path)) != 0 ||
+       path_fmt(key, sizeof(key), "%s.key", out) != 0)
+   {
+      why = "a path too long";
+      goto done;
+   }
+   patch = patch_read(ppath, &plen, 64L << 20);
+   if (!patch)
+   {
+      why = "could not be read";
+      goto done;
+   }
+   kind = rom_patch_kind(patch, (size_t)plen);
+   snprintf(want, sizeof(want), "%d %ld %ld %ld %08x\n", kind, (long)rs.st_size,
+            (long)rs.st_mtime, plen, (unsigned)fe_crc32(0, patch, (size_t)plen));
+   have[0] = 0;
+   if ((f = fopen(key, "rb")) != NULL)
+   {
+      size_t n = fread(have, 1, sizeof(have) - 1, f);
+      have[n] = 0;
+      fclose(f);
+   }
+   if (!strcmp(want, have) && file_size(out, out_size) == 0 && *out_size > 0)
+   {
+      rc = 1;                     /* made before, from these very files */
+      cached = 1;
+      goto done;
+   }
+   rom = patch_read(rom_path, &rlen, 64L << 20);
+   if (!rom)
+   {
+      why = "the game could not be read";
+      goto done;
+   }
+   tlen = rom_patch_size(patch, (size_t)plen, (size_t)rlen, &why);
+   if (!tlen)
+      goto done;
+   if (tlen > (64u << 20))
+   {
+      why = "too large";
+      goto done;
+   }
+   dst = (unsigned char *)malloc(tlen);
+   if (!dst)
+   {
+      why = "not enough memory";
+      goto done;
+   }
+   if (rom_patch_apply(patch, (size_t)plen, rom, (size_t)rlen, dst, tlen,
+                       &dlen, &why) != 0)
+      goto done;
+   {
+      char tmp[APP_PATH_CAP + 8], dir[APP_PATH_CAP];
+      int ok;
+      path_fmt(dir, sizeof(dir), "%s/patched", g_app_root);
+      mkdir(dir, 0777);
+      path_fmt(tmp, sizeof(tmp), "%s.tmp", out);
+      remove(key);                /* no key until the file is whole */
+      f = fopen(tmp, "wb");
+      ok = f && fwrite(dst, 1, dlen, f) == dlen;
+      if (f)
+         ok &= fclose(f) == 0;
+      remove(out);
+      ok = ok && rename(tmp, out) == 0;
+      if (!ok)
+      {
+         remove(tmp);
+         why = "the patched game could not be written (is the card full?)";
+         goto done;
+      }
+      if ((f = fopen(key, "wb")) != NULL)
+      {
+         fputs(want, f);
+         fclose(f);
+      }
+   }
+   *out_size = (long)dlen;
+   rc = 1;
+done:
+   if (rc == 1)
+      snprintf(g_patch_key, sizeof(g_patch_key), "%s", want);
+   free(patch);
+   free(rom);
+   free(dst);
+   if (rc == 1)
+      snprintf(g_patch_note, sizeof(g_patch_note), "Patched with %s",
+               base_name(ppath));
+   else
+      snprintf(g_patch_note, sizeof(g_patch_note), "%s: %s", base_name(ppath),
+               why ? why : "not a patch");
+   fe_evt("rom_patch file=%s kind=%d rc=%d size=%ld cached=%d why=\"%s\"",
+          ppath, kind, rc, rc == 1 ? *out_size : 0L, cached,
+          rc == 1 ? "" : (why ? why : "not a patch"));
+   return rc;
+}
+
 /* ---- the data root ---------------------------------------------------------- */
 
 static int roots_init(void)
 {
    static const char *const sub[] = { "cheats", "screenshots", "scenes",
-                                      "clips" };
+                                      "clips", "games" };
    char path[APP_PATH_CAP];
    size_t i;
 
@@ -584,6 +1213,9 @@ static int roots_init(void)
          mkdir(path, 0777);        /* already there is the normal case */
    return 0;
 }
+
+/* vita.ini as read at boot (main), for the readers that run after it. */
+static fe_ini_doc *g_vita_ini;
 
 static void read_switches(void)
 {
@@ -626,6 +1258,8 @@ static void read_switches(void)
    if (!fe_ini_get(ini, "art_url", g_sw.art_url, sizeof(g_sw.art_url)))
       g_sw.art_url[0] = '\0';
    g_sw.art_titles      = (int)fe_ini_get_int(ini, "art_titles", 1) ? 1 : 0;
+   if (!fe_ini_get(ini, "ra_host", g_sw.ra_host, sizeof(g_sw.ra_host)))
+      g_sw.ra_host[0] = '\0';
    g_sw.wide            = (int)fe_ini_get_int(ini, "wide", -1);
    g_sw.wide_fill       = (int)fe_ini_get_int(ini, "wide_fill", -1);
    if (g_sw.pace_mode != PACE_TIMER)
@@ -858,6 +1492,91 @@ static void app_notice(const char *title, const char *l1, const char *l2,
 
 /* ---- fe_host's platform sinks ----------------------------------------------- */
 
+/* THE SUPER GAME BOY'S BORDER (fe_host_sgb_border; Settings > SGB border):
+ * the game's picture is drawn inside it, as one 256x224 picture -- the
+ * border drawn into g_sgb_frame when it changes, the game's 160x144 at
+ * (48, 40) every frame -- so every size, filter and upscaler treats it as
+ * one.  Kept in borders/<file>.sgb for the next start (sgb_border_*). */
+static uint16_t g_sgb_frame[256 * 224];
+static unsigned g_sgb_gen_drawn;
+static int      g_sgb_shown;         /* the last picture drawn had it */
+
+static int sgb_compose(const uint16_t *game, size_t pitch)
+{
+   const uint16_t *b = NULL;
+   unsigned gen, y;
+   if (g_game.console != FE_CONSOLE_GB || !g_pcfg.sgb_border || !game)
+      return 0;
+   gen = fe_host_sgb_border(&b);
+   if (!gen || !b)
+      return 0;
+   if (gen != g_sgb_gen_drawn)
+   {
+      memcpy(g_sgb_frame, b, sizeof(g_sgb_frame));
+      if (!g_sgb_gen_drawn)
+         fe_evt("sgb_border shown gen=%u", gen);
+      g_sgb_gen_drawn = gen;
+   }
+   for (y = 0; y < 144; y++)
+      memcpy(g_sgb_frame + (40 + y) * 256 + 48,
+             (const uint8_t *)game + (size_t)y * pitch, 160 * 2);
+   return 1;
+}
+
+static int sgb_path(char *out, size_t cap)
+{
+   return path_fmt(out, cap, "%s/borders/%s.sgb", g_app_root,
+                   base_name(g_game.rom_path));
+}
+
+/* At the start: the border this game sent last time, at once. */
+static void sgb_border_begin(void)
+{
+   char path[APP_PATH_CAP];
+   static uint8_t blob[16 * 1024];
+   FILE *f;
+   size_t n = 0;
+   g_sgb_gen_drawn = 0;
+   g_sgb_shown = 0;
+   if (g_game.console != FE_CONSOLE_GB || sgb_path(path, sizeof(path)) != 0 ||
+       !(f = fopen(path, "rb")))
+      return;
+   n = fread(blob, 1, sizeof(blob), f);
+   fclose(f);
+   fe_evt("sgb_border_load bytes=%u rc=%d", (unsigned)n,
+          fe_host_sgb_border_load(blob, n));
+}
+
+/* At the end: what it sent, if anything, for next time. */
+static void sgb_border_end(void)
+{
+   char path[APP_PATH_CAP], dir[APP_PATH_CAP];
+   static uint8_t blob[16 * 1024], old[16 * 1024];
+   size_t n, m = 0;
+   FILE *f;
+   if (g_game.console != FE_CONSOLE_GB ||
+       !(n = fe_host_sgb_border_save(blob, sizeof(blob))) ||
+       sgb_path(path, sizeof(path)) != 0)
+      return;
+   if ((f = fopen(path, "rb")) != NULL)
+   {
+      m = fread(old, 1, sizeof(old), f);
+      fclose(f);
+   }
+   if (m == n && !memcmp(old, blob, n))
+      return;
+   if (path_fmt(dir, sizeof(dir), "%s/borders", g_app_root) == 0)
+      mkdir(dir, 0777);
+   if ((f = fopen(path, "wb")) != NULL)
+   {
+      int ok = fwrite(blob, 1, n, f) == n;
+      ok &= fclose(f) == 0;
+      if (!ok)
+         remove(path);
+      fe_evt("sgb_border_save bytes=%u ok=%d", (unsigned)n, ok);
+   }
+}
+
 static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
                        size_t pitch_bytes)
 {
@@ -902,7 +1621,11 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
    {
       /* pix == NULL is a repeated frame: the display is double-buffered, so
        * the previous picture is drawn again. */
-      vid_draw_frame(g_show.pix, g_show.w, g_show.h, g_show.pitch);
+      g_sgb_shown = sgb_compose(g_show.pix, g_show.pitch);
+      if (g_sgb_shown)
+         vid_draw_frame(g_sgb_frame, 256, 224, 256 * 2);
+      else
+         vid_draw_frame(g_show.pix, g_show.w, g_show.h, g_show.pitch);
       g_app_drew = 1;
    }
    if (pix)
@@ -1074,6 +1797,7 @@ static void io_step(void)
    link_local_io();             /* the local link's partner has a save too */
    rewind_worker();             /* the newest state's XOR and squeeze */
    clip_worker();               /* the preview's newest frame, squeezed */
+   resume_worker();             /* where the game was left (resume_take) */
 }
 
 static void io_yield(void)
@@ -1082,6 +1806,35 @@ static void io_yield(void)
 }
 
 static const fe_host_io g_io = { plat_worker_wake, io_yield };
+
+/* Browser logging owns the same worker only while no game is booted. */
+static int g_menu_writer, g_menu_logging;
+static void menu_log_step(void) { fe_evt_service(); }
+static void menu_log_wake(void)
+{
+   if (fe_evt_pending() >= 4096) plat_worker_wake();
+}
+static void menu_log_start(void)
+{
+#ifdef GPSP_NO_TELEMETRY
+   return;
+#endif
+   if (g_menu_logging) return;
+   g_menu_logging = 1;
+   fe_evt_set_buffered(); /* failed start must not become per-frame card I/O */
+   g_menu_writer = g_sw.io_thread &&
+      plat_worker_start(menu_log_step, 250000) == 0;
+   if (g_menu_writer) fe_evt_set_async(menu_log_wake);
+   fe_evt("menu_writer on=%d buffer_only=%d", g_menu_writer, !g_menu_writer);
+}
+static int menu_log_stop(void)
+{
+   if (!g_menu_logging) return 1;
+   if (g_menu_writer && !plat_worker_stop_checked()) return 0;
+   fe_evt_finish_buffered(); /* the sole consumer has demonstrably ended */
+   g_menu_writer = g_menu_logging = 0;
+   return 1;
+}
 
 static void io_start(void)
 {
@@ -1562,6 +2315,9 @@ static int state_save_slot(unsigned slot)
    return 0;
 }
 
+static int state_load_path(const char *path, const char *via);
+static void state_loaded(const char *path);
+
 static int state_load_slot(unsigned slot, const char *via)
 {
    char path[PSP_FILE_PATH_CAP];
@@ -1573,17 +2329,34 @@ static int state_load_slot(unsigned slot, const char *via)
    rc = fe_host_state_load(path);
    fe_evt("state_load slot=%u via=%s rc=%d", slot, via, rc);
    if (rc == 0)
+      state_loaded(path);
+   return rc;
+}
+
+/* A state file other than a slot (Continue). */
+static int state_load_path(const char *path, const char *via)
+{
+   int rc = fe_host_state_load(path);
+   fe_evt("state_load path=%s via=%s rc=%d", path, via, rc);
+   if (rc == 0)
+      state_loaded(path);
+   return rc;
+}
+
+/* What follows any loaded state. */
+static void state_loaded(const char *path)
+{
    {
       ctl_turbo_stop(&g_turbo); /* a loaded state starts with no auto-fire  */
       cheats_apply();           /* the state brought its own RAM back       */
       rewind_clear();           /* "a moment ago" was another timeline      */
+      ra_state_loaded();        /* achievements' progress starts over       */
       clip_cut();               /* ...and the preview's next frame is whole */
       if (link_local_active())
          link_local_state_loaded(path);
       audio_flush();            /* what is queued belongs to the old timeline */
       app_pace_reset();         /* a load is not a late frame               */
    }
-   return rc;
 }
 
 /* ---- screenshots ---------------------------------------------------------------
@@ -1660,6 +2433,15 @@ static void screenshot_write(void)
  * before it. */
 static void power_service(void)
 {
+   {
+      static int db_said;
+      int records;
+      if (!db_said && (records = gamedb_records()) >= 0)
+      {
+         db_said = 1;
+         fe_evt("gamedb records=%d", records);
+      }
+   }
    unsigned e = plat_power_events();
    if (e & PLAT_POWER_SUSPEND)
    {
@@ -1704,6 +2486,7 @@ static void modal_tick(void)
 {
    plat_present_hook();
    power_service();
+   ra_pump();                   /* the server's answers, in the menus too */
    if (plat_quit_requested())
       g_running = 0;
 }
@@ -1756,6 +2539,7 @@ static void toast_now(const char *fmt, ...)
 void ui_host_look_changed(void)
 {
    int c = pcfg_display_console();
+   vid_set_quality(g_pcfg.quality);
    vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color : VID_COLOR_RAW,
                 g_pcfg.blend);
    if (c == FE_CONSOLE_GBC)
@@ -1763,6 +2547,8 @@ void ui_host_look_changed(void)
    fe_evt("display_look console=%s color=%d blend=%d wide=%d wide_fill=%d",
           pcfg_console_tag(c), g_pcfg.color, g_pcfg.blend, g_pcfg.wide,
           g_pcfg.wide_fill);
+   fe_evt("display_quality console=%s quality=%d", pcfg_console_tag(c),
+          g_pcfg.quality);
    app_wide_apply();
 }
 
@@ -2362,6 +3148,22 @@ static int game_boot(const char *rom_path, fe_console_t console)
       }
    }
    g_game.console = console;
+   snprintf(g_game.boot_path, sizeof(g_game.boot_path), "%s", g_game.rom_path);
+   {
+      /* A patch beside the game (rom_patch.h): the cores load the patched
+       * copy; the saves stay the game's own. */
+      long psize = 0;
+      int prc = patch_prepare(rom_path, g_game.boot_path,
+                              sizeof(g_game.boot_path), &psize);
+      if (prc == 1)
+      {
+         g_game.patched = 1;
+         size = psize;
+      }
+      else
+         snprintf(g_game.boot_path, sizeof(g_game.boot_path), "%s",
+                  g_game.rom_path);
+   }
    g_game.rom_bytes = size;
 
    /* PER-CONSOLE DISPLAY PROFILE (docs/DISPLAY-FEATURES.md): the running
@@ -2369,6 +3171,25 @@ static int game_boot(const char *rom_path, fe_console_t console)
     * Before ui_loading_begin, which bakes the ambient texture. */
    g_pcfg.console = (int)console;
    pcfg_display_select((int)console);
+   {
+      /* PER-GAME SETTINGS (config_psp.h): games/<ROM file name>.ini, which
+       * may give this game a look of its own. */
+      char gpath[APP_PATH_CAP];
+      const char *bn = base_name(rom_path);
+      if (path_fmt(gpath, sizeof(gpath), "%s/games/%s.ini", g_app_root,
+                   bn) != 0 || strlen(gpath) >= FE_INI_PATH_CAP)
+      {
+         /* A name too long for the settings file's path (fe_util.h): its
+          * first 60 characters and a checksum of the whole name. */
+         if (path_fmt(gpath, sizeof(gpath), "%s/games/%.60s-%08x.ini",
+                      g_app_root, bn,
+                      (unsigned)fe_crc32(0, (const uint8_t *)bn,
+                                         strlen(bn))) != 0 ||
+             strlen(gpath) >= FE_INI_PATH_CAP)
+            gpath[0] = 0;
+      }
+      pcfg_game_begin(gpath, (int)console);
+   }
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    ui_host_look_changed();
    vid_ambient_mode(g_pcfg.ambient);
@@ -2401,7 +3222,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
 
    memset(&cfg, 0, sizeof(cfg));
    cfg.console        = console;
-   cfg.rom_path       = g_game.rom_path;
+   cfg.rom_path       = g_game.boot_path;   /* patched, if it has a patch */
    cfg.system_dir     = app_bios_dir();  /* gba_bios.bin, if there is one   */
    cfg.save_path      = g_game.save_path;
    cfg.video_frame    = sink_video;
@@ -2496,6 +3317,12 @@ static int game_boot(const char *rom_path, fe_console_t console)
           pace_speed_x1e6());
    if (!g_audio_ok)
       osd_toast("Audio output unavailable");
+   if (g_patch_note[0])
+   {
+      if (!g_game.patched)
+         osd_toast("Patch not applied");
+      osd_toast("%s", g_patch_note);
+   }
    io_start();
 
    {
@@ -2506,8 +3333,13 @@ static int game_boot(const char *rom_path, fe_console_t console)
    link_game_begin();
    link_local_game_begin();
    osd_session_chip_refresh();
+   sgb_border_begin();
+   sensor_game_begin();         /* before the rewind sizes its log */
    rewind_configure(g_pcfg.rewind, g_pcfg.rewind_mb);
    rewind_game_begin();
+   resume_game_begin();
+   /* after the cheats are loaded: Hardcore takes them out of the core */
+   ra_game_begin(g_game.boot_path, console);
    /* the game list's preview of this game (clip_vita.h) */
    clip_game_begin(g_pcfg.previews && g_sw.clips);
    fe_evt("clip_begin on=%d", g_pcfg.previews && g_sw.clips);
@@ -2525,6 +3357,9 @@ static int game_boot(const char *rom_path, fe_console_t console)
 static void game_unload(int hold)
 {
    unsigned frames = fe_host_frame_count();
+
+   pcfg_game_end();             /* its own settings written, the console's back */
+   sensor_game_end();
 
    if (hold)
    {
@@ -2607,9 +3442,14 @@ static void menu_action(ui_action act)
    {
       /* Loaded: the menu closes, back into the game. */
       int rc = link_locks_states() ? -1
+             : ra_hardcore_active() ? -2
              : state_load_slot((unsigned)ui_state_slot(), "menu");
+      if (rc == -2)
+         fe_evt("hardcore_refused what=state_load via=menu");
       if (!ui_state_load_done(rc))
-         osd_toast(rc == 0 ? "State loaded" : "No state to load");
+         osd_toast(rc == 0 ? "State loaded"
+                   : rc == -2 ? "Hardcore mode: states cannot be loaded"
+                              : "No state to load");
       break;
    }
 
@@ -2710,12 +3550,27 @@ static void frame_present(int paced)
 {
    if (g_app_drew)
       osd_draw();
+   if (paced || g_app_drew)      /* unlimited: only when there is a picture */
+   {
+      /* (how long the present waits: the display queue full) */
+      const uint64_t ts = plat_time_us();
+      uint32_t d;
+      plat_present_hook();
+      vid_swap();                /* presents only if a whole frame was drawn */
+      d = (uint32_t)(plat_time_us() - ts);
+      g_win.swap_sum += d;
+      if (d > g_win.swap_max)
+         g_win.swap_max = d;
+   }
    if (paced)
    {
-      /* The frame is done and its refresh is not due: lend the time to the
-       * CPU upscalers (upscale_vita.h), up to the point from which a stripe
-       * could make this frame late.  Nothing when no upscaler is at work,
-       * or when the frame used its time itself. */
+      /* The frame is presented -- its scene is with the GPU from here, not
+       * after the time lent below -- and its refresh is not due: lend the
+       * time to the CPU upscalers (upscale_vita.h), up to the point from
+       * which a stripe could make the NEXT frame late.  Nothing when no
+       * upscaler is at work, or when the frame used its time itself.
+       * Neither the upscalers' help (it writes the texture not on screen)
+       * nor the scout touches the frame just presented. */
       uint64_t spent = plat_time_us() - g_app_frame_t0;
       /* ...and before that, to the wide view's scout (gpsp/wide.h): the
        * second machine looks a second ahead of the player's, a few of its
@@ -2735,21 +3590,8 @@ static void frame_present(int paced)
       }
       if (spent < HELP_UNTIL_US)
          upscale_help((unsigned)(HELP_UNTIL_US - spent));
-   }
-   if (paced || g_app_drew)      /* unlimited: only when there is a picture */
-   {
-      /* (how long the present waits: the display queue full) */
-      const uint64_t ts = plat_time_us();
-      uint32_t d;
-      plat_present_hook();
-      vid_swap();                /* presents only if a whole frame was drawn */
-      d = (uint32_t)(plat_time_us() - ts);
-      g_win.swap_sum += d;
-      if (d > g_win.swap_max)
-         g_win.swap_max = d;
-   }
-   if (paced)
       pace_frame();
+   }
 }
 
 /* The session as the menus draw it: the network's view, the local link's
@@ -2888,6 +3730,26 @@ static void game_loop(void)
       g_catchup_ok = 0;           /* (set again where the core runs) */
       window_begin();
       power_service();
+      ra_pump();
+      resume_tick(play_tick());
+      {
+         /* A battery save that did not reach the card: say so while the
+          * player can still do something about it (free space, save again
+          * later), not in a log nobody reads. */
+         static unsigned save_fails_seen;
+         static uint64_t save_fail_told_us;
+         unsigned fails = fe_host_save_failures();
+         if (fails != save_fails_seen &&
+             (!save_fail_told_us ||
+              plat_time_us() - save_fail_told_us >= 30000000u))
+         {
+            /* (once, then at most every 30 s while writes keep failing) */
+            save_fails_seen = fails;
+            save_fail_told_us = plat_time_us() ? plat_time_us() : 1;
+            fe_evt("save_failed_shown count=%u", fails);
+            toast_now("Save not written - is the memory card full?");
+         }
+      }
 
       pad = pspcompat_pad();
       pad_new = pad & ~g_prev_pad;
@@ -2919,6 +3781,9 @@ static void game_loop(void)
             pad_was = pad;
          }
       }
+      sensor_frame(&pp);
+      if (sensor_owns_stick())
+         pp.rx = pp.ry = 128;   /* the stick is the sensor's: no gestures */
       rs_side = pp.rx < 128 - RSTICK_PUSH || pp.rx > 128 + RSTICK_PUSH;
       rs_flick = rs_side && !g_rs_side && !ui_active();
       g_rs_side = rs_side;
@@ -3065,7 +3930,10 @@ static void game_loop(void)
       if (touch_tap(&tx, &ty))
       {
          vid_rect_t r;
-         vid_picture_rect(g_show.w, g_show.h, &r);
+         if (g_sgb_shown)
+            vid_picture_rect(256, 224, &r);    /* the border is the picture */
+         else
+            vid_picture_rect(g_show.w, g_show.h, &r);
          if (local)
          {
             /* The other machine's picture: the pad drives that one now.
@@ -3118,17 +3986,64 @@ static void game_loop(void)
       {
          if (link_locks_states())
             toast_now("Cannot load a state during a link session");
+         else if (ra_hardcore_active())
+         {
+            fe_evt("hardcore_refused what=state_load via=chord");
+            toast_now("Hardcore mode: states cannot be loaded");
+         }
          else
             toast_now(state_load_slot(1, "chord") == 0 ? "State loaded"
                                                         : "No saved state");
       }
       /* A state picked on the game list's shelf: once, as soon as the core
        * has run a frame. */
-      if (g_autoload_slot && fe_host_frame_count() >= 1)
+      /* ...but not while RetroAchievements is still finding out whether
+       * Hardcore applies to this game (ra_vita.h): a game it turns out not
+       * to know is not refused.  Twenty seconds at most. */
+      if (g_autoload_slot && fe_host_frame_count() >= 1 &&
+          (!ra_hardcore_pending() || fe_host_frame_count() >= 60 * 20))
       {
          int slot = g_autoload_slot;
          g_autoload_slot = 0;
-         if (state_load_slot((unsigned)slot, "shelf") != 0)
+         if (ra_hardcore_active())
+         {
+            fe_evt("hardcore_refused what=state_load via=%s",
+                   slot == PSP_STATE_RESUME ? "continue" : "shelf");
+            toast_now("Hardcore mode: starting from the save");
+         }
+         else if (slot == PSP_STATE_RESUME)
+         {
+            /* Continue: where the game was left (resume_take) -- unless a
+             * patch was put beside the game since: that moment is of the
+             * game without it. */
+            struct stat rs, ps;
+            char pt[APP_PATH_CAP + 8], had[200];
+            FILE *pf;
+            int known = 0;
+            had[0] = 0;
+            if (path_fmt(pt, sizeof(pt), "%s.pt", g_res.path) == 0 &&
+                (pf = fopen(pt, "rb")) != NULL)
+            {
+               size_t k = fread(had, 1, sizeof(had) - 1, pf);
+               had[k] = 0;
+               fclose(pf);
+               known = 1;
+            }
+            if (known && strcmp(had, g_patch_key[0] ? g_patch_key : "-\n"))
+            {
+               fe_evt("state_load via=continue refused=patch_changed");
+               toast_now("The patch changed: starting from the save");
+            }
+            else if (!known && g_game.patched && stat(g_res.path, &rs) == 0 &&
+                stat(g_game.boot_path, &ps) == 0 && rs.st_mtime < ps.st_mtime)
+            {
+               fe_evt("state_load via=continue refused=patched_since");
+               toast_now("Patched since it was left: starting from the save");
+            }
+            else if (state_load_path(g_res.path, "continue") != 0)
+               toast_now("Could not continue: starting from the save");
+         }
+         else if (state_load_slot((unsigned)slot, "shelf") != 0)
             toast_now("Could not load state %d", slot);
       }
       /* Not on the press that asked for the pause screen: with the default
@@ -3139,10 +4054,13 @@ static void game_loop(void)
       {
          const char *name = vid_cycle_preset();
          g_pcfg.scale  = vid_scale_mode();
-         g_pcfg.filter = vid_filter();
+         /* (with an explicit Image quality the preset changes the size
+          * only, and the requested filter stays saved for Auto) */
+         if (g_pcfg.quality == PCFG_QUALITY_AUTO)
+            g_pcfg.filter = vid_filter();
          pcfg_display_save();    /* this console's profile only */
          fe_evt("video_mode scale=%s filter=%s", vid_scale_name(g_pcfg.scale),
-                vid_filter_name(g_pcfg.filter));
+                vid_filter_name(vid_filter()));
          toast_now("Video: %s", name);
       }
       /* (not `local`: the local link fast-forwards both of its machines) */
@@ -3160,12 +4078,29 @@ static void game_loop(void)
        * backwards -- the step's own frame is run and drawn in there -- and
        * continues from the frame on screen when it is let go.  Not in a
        * link of either kind, nor in the bench pair: a state is one machine. */
+      {
+         /* Hardcore (ra_vita.h): no going back.  Said once per hold. */
+         static int hc_told;
+         if (rw_want && !local && ra_hardcore_active())
+         {
+            if (!hc_told)
+            {
+               hc_told = 1;
+               fe_evt("hardcore_refused what=rewind");
+               toast_now("Hardcore mode: rewind is off");
+            }
+            rw_want = 0;
+         }
+         else if (!rw_want)
+            hc_told = 0;
+      }
       i = rewind_frame(rw_want && !local, session || local ||
                        link_locks_states() || g_sw.link_bench);
       if ((rw_note = rewind_notice()) != NULL)
          toast_now("%s", rw_note);
       if (i)
       {
+         ra_state_loaded();      /* the frames ahead are run again */
          g_pad_block = pad;      /* its buttons are not the game's afterwards */
          g_fps_t0 = 0;
          if (plat_quit_requested())
@@ -3194,6 +4129,7 @@ static void game_loop(void)
             fe_host_skip_override(1);
             g_blit_suppress = 1;
             fe_host_run_frame();
+            ra_frame(0);
             rewind_capture();
             plat_frame_ran();
             audio_frame();
@@ -3220,6 +4156,7 @@ static void game_loop(void)
          if (g_blit_suppress)
             fe_host_skip_override(1);
          fe_host_run_frame();    /* -> sink_video, sink_audio */
+         ra_frame(session || local || g_sw.link_bench);
          if (g_blit_suppress)
             fe_host_skip_override(-1);
          rewind_capture();
@@ -3256,6 +4193,7 @@ static void game_loop(void)
             /* The core reset the game after a jump into nothing. */
             g_faults_seen = faults;
             cheats_apply();
+            ra_game_reset();
             toast_now("Emulation fault - game was reset");
          }
       }
@@ -3278,6 +4216,7 @@ static void game_loop(void)
 
 int main(int argc, char **argv)
 {
+   pspcompat_io_mark_owner();
    static char rom_path[APP_PATH_CAP];
    char path[APP_PATH_CAP];
    int first = 1, games = 0;
@@ -3291,13 +4230,31 @@ int main(int argc, char **argv)
    }
 
    path_fmt(path, sizeof(path), "%s/log/gbadhoc.log", g_app_root);
-   if (fe_evt_init(path, 0) != 0)
+   if (fe_evt_init_rotating(path, 0, 2u * 1024u * 1024u, 3) != 0)
       plat_console("GBAdhoc: cannot open the log file\n");
    fe_evt_set_clock(evt_clock);
+   fe_evt_set_buffered();
+   fe_evt("diag_session revision=6 history=3 file_limit=2097152 tracking=local");
    fe_evt("boot app=GBAdhoc version=%s platform=vita root=%s", GBADHOC_VERSION,
           g_app_root);
-   read_switches();
-   rom_roots_init();
+   /* vita.ini, read once: the switches, the extra folders and the link's
+    * settings ask it for some fifty keys, each of which was an open, a scan
+    * and a close of the file on the card. */
+   {
+      static fe_ini_doc vita_ini;
+      char ini[APP_PATH_CAP];
+      unsigned hits0 = fe_ini_doc_hits();
+      int bound = path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root) == 0 &&
+                  fe_ini_doc_load(&vita_ini, ini) == 0 && vita_ini.ok;
+      if (bound)
+         fe_ini_doc_bind(&vita_ini, ini);
+      read_switches();
+      menu_log_start();
+      rom_roots_init();
+      fe_ini_doc_bind(NULL, NULL);
+      g_vita_ini = bound ? &vita_ini : NULL;
+      fe_evt("vita_ini bound=%d hits=%u", bound, fe_ini_doc_hits() - hits0);
+   }
    fe_evt("switches pace_mode=%d drc=%d autoexit_frames=%u link_bench=%d "
           "io_thread=%d refresh_mhz=%u", g_sw.pace_mode, g_sw.drc,
           g_sw.autoexit_frames, g_sw.link_bench, g_sw.io_thread,
@@ -3364,8 +4321,34 @@ int main(int argc, char **argv)
    if (path_fmt(path, sizeof(path), "%s%sgamedb.txt", plat_app_dir(),
                 plat_app_dir()[strlen(plat_app_dir()) - 1] == ':' ? "" : "/")
           == 0)
-      fe_evt("gamedb records=%d path=%s", gamedb_open(path), path);
-   link_boot();
+   {
+      /* read by the first lookup, on the thread that makes it (the cover
+       * fetcher or the menu loader), not here before the list can show;
+       * power_service() logs its size once it has been read */
+      gamedb_open_later(path);
+      fe_evt("gamedb deferred path=%s", path);
+   }
+   if (path_fmt(path, sizeof(path), "%s/playlog.txt", g_app_root) == 0)
+      play_log_load(path);
+   ra_boot(g_app_root, g_sw.ra_host, GBADHOC_VERSION,
+#ifdef __vita__
+           art_online
+#else
+           NULL
+#endif
+           );
+   {
+      /* (the same document: nothing has written vita.ini since) */
+      char ini[APP_PATH_CAP];
+      unsigned hits0 = fe_ini_doc_hits();
+      int bound = g_vita_ini &&
+                  path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root) == 0;
+      if (bound)
+         fe_ini_doc_bind(g_vita_ini, ini);
+      link_boot();
+      fe_ini_doc_bind(NULL, NULL);
+      fe_evt("vita_ini link bound=%d hits=%u", bound, fe_ini_doc_hits() - hits0);
+   }
    art_start();
 
    while (g_running)
@@ -3381,6 +4364,7 @@ int main(int argc, char **argv)
       }
       else
       {
+         menu_log_start();
          int br = ui_browser(g_app_rom_dir, rom_path, sizeof(rom_path), &slot,
                              &console);
          if (br > 0)
@@ -3396,9 +4380,16 @@ int main(int argc, char **argv)
          break;
 
       /* ---- load ---- */
+      if (!menu_log_stop())
+      {
+         app_notice("Storage is still busy", "Please try again in a moment.",
+                    NULL, 2000);
+         continue;
+      }
       artfetch_pause(1);         /* the game has the card and the network */
       if (game_boot(rom_path, console) != 0)
       {
+         pcfg_game_end();
          artfetch_pause(0);
          app_notice("This game could not be started",
                     base_name(rom_path),
@@ -3407,8 +4398,10 @@ int main(int argc, char **argv)
          continue;
       }
       games++;
-      g_autoload_slot = slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0;
+      g_autoload_slot = (slot >= 1 && slot <= PSP_STATE_SLOT_COUNT) ||
+                        slot == PSP_STATE_RESUME ? slot : 0;
       fe_evt("session game=%d slot=%d", games, g_autoload_slot);
+      play_begin(rom_path);
       keys_script_start();
       g_hint_owed = 0;
       if (g_pcfg.hints > 0)
@@ -3440,6 +4433,14 @@ int main(int argc, char **argv)
                                                            : "game_list");
          if (!g_snap_have || !ui_active())
             app_snapshot_take();   /* the menu's own is the clean picture */
+         play_end();
+         ra_game_end();
+         /* The battery first: the picture and the clip are seconds of card
+          * writes, and a player who closes the app from LiveArea meanwhile
+          * must not lose the save for them. */
+         fe_host_sram_flush(1);
+         resume_game_end();         /* where it was left, for Continue */
+         sgb_border_end();
          scene_save();
          clip_save_game();
          keys_script_end();
@@ -3454,11 +4455,17 @@ int main(int argc, char **argv)
 
    fe_evt("shutdown games=%d", games);
    rt_shutdown();
+   if (!menu_load_shutdown(250000))
+      fe_evt("menu_local shutdown_timeout_us=250000 storage_retained=1");
+   if (!clip_preview_shutdown(250000))
+      fe_evt("home_clip shutdown_timeout_us=250000");
    artfetch_stop();
+   ra_shutdown();
    link_shutdown();
    pcfg_save();
    vid_term();
    fe_evt("exit ok");
+   if (!menu_log_stop()) plat_exit(1); /* do not close a live writer's FILE */
    fe_evt_close();
    plat_exit(0);
    return 0;

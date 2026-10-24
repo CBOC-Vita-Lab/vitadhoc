@@ -40,12 +40,18 @@ int  artfetch_start(const char *root, const char *base_url,
                     int (*online)(void));
 /* At exit: the thread is asked to stop and given up to a second. */
 void artfetch_stop(void);
+/* 1 when the worker is running and has not been asked to stop. */
+int  artfetch_active(void);
 
 /* The game list's cartridges (full paths and file names), handed over
  * whole; the thread looks at each in turn and skips those with a picture.
  * Any number of calls: the newest list is the one worked through. */
-void artfetch_list(const char *const *paths, const char *const *names,
-                   int n);
+/* Zero entries replaces old work too. Zero return means not accepted. */
+#define ART_FETCH_FOCUS_API 1
+unsigned artfetch_list(const char *const *paths, const char *const *names,
+                       int n);
+/* Latest settled selection, copied without I/O. Generations bind it to its list. */
+void artfetch_focus(unsigned generation, const char *path, const char *name);
 
 /* 1 while a game runs: nothing is fetched (a download in the works is
  * abandoned). */
@@ -67,6 +73,18 @@ int  artfetch_progress(int *seen, int *total, int *have);
 /* A picture was written since the last call: 1 and its file name (as given
  * to artfetch_list), for the list to load it again.  The UI thread only. */
 int  artfetch_take(char *name, size_t cap);
+/* After draining arrivals: 1 if some were coalesced while the UI was away.
+ * Invalidate all artwork caches once, including rows outside the current
+ * view. Acknowledges the flag;
+ * the next call returns 0 unless another overflow occurs. UI thread only. */
+int  artfetch_resync(void);
+
+/* Each cover also gets boxart/<stem>.t2.565: the picture fitted into this box
+ * (never enlarged) as RGB565, which is all a home-screen tile reads. */
+#define ART_THUMB_W 160
+#define ART_THUMB_H 200
+/* v1 .t565 files reversed red and blue; regenerate without touching originals. */
+#define ART_THUMB_SUFFIX ".t2.565"
 
 /* A line for the log, when the thread has one (the UI thread writes it with
  * fe_evt; the thread itself never logs). */

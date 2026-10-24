@@ -8,6 +8,8 @@
 #include <psp2/sharedfb.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <limits.h>
 #include "vita2d.h"
 #include "utils.h"
 
@@ -28,6 +30,16 @@
 #define DISPLAY_BUFFER_COUNT		3
 #define DISPLAY_MAX_PENDING_SWAPS	2
 #define DEFAULT_TEMP_POOL_SIZE		(1 * 1024 * 1024)
+/* GBAdhoc: every version retains the full requested per-frame capacity. */
+#define VITA2D_POOL_BANK_COUNT VITA2D_FRAGMENT_FENCE_BANK_COUNT
+#define VITA2D_POOL_SCENE_COUNT 8
+/* Current video call graph: preopened frame + two xBRZ RTs + its optional
+ * debug-control RT = seven scenes. Local pairs use CPU-upscaled quads. */
+#define VITA2D_AUDITED_MAX_FRAME_SCENES 7
+_Static_assert(VITA2D_POOL_SCENE_COUNT >= VITA2D_AUDITED_MAX_FRAME_SCENES,
+	"vertex-pool scene budget must cover the audited video paths");
+_Static_assert(VITA2D_POOL_SCENE_COUNT <= sizeof(unsigned int) * CHAR_BIT,
+	"fragment-reader masks must cover every scene slot");
 
 typedef struct vita2d_display_data {
 	void *address;
@@ -90,6 +102,8 @@ static void *stencilBufferData = NULL;
 
 static unsigned int backBufferIndex = 0;
 static unsigned int frontBufferIndex = 0;
+static unsigned int display_queue_pending = 0;
+static int display_queue_failed = 0;
 
 static SceGxmShaderPatcher *shaderPatcher = NULL;
 static SceGxmVertexProgram *clearVertexProgram = NULL;
@@ -138,9 +152,180 @@ struct {
 
 // Temporary memory pool
 static void *pool_addr = NULL;
+static void *pool_base = NULL;
 static SceUID poolUid;
 static unsigned int pool_index = 0;
 static unsigned int pool_size = 0;
+static unsigned int pool_stride = 0;
+static int pool_bank = -1;
+static unsigned int pool_next_bank = 0;
+static unsigned int pool_serial = 0;
+static int pool_failed = 0;
+static unsigned int pool_submitted_frames = 0;
+static unsigned int pool_submitted_scenes = 0;
+static int pool_last_bank = -1;
+static unsigned int pool_last_scene = 0;
+static struct {
+	unsigned int generation;
+	unsigned int scenes;
+	SceGxmNotification vertex[VITA2D_POOL_SCENE_COUNT];
+	SceGxmNotification fragment[VITA2D_POOL_SCENE_COUNT];
+} pool_banks[VITA2D_POOL_BANK_COUNT];
+
+static int pool_initialize(unsigned int size)
+{
+	unsigned int b, s;
+	volatile unsigned int *region = sceGxmGetNotificationRegion();
+	if (!region || !size || size > UINT_MAX / VITA2D_POOL_BANK_COUNT - 63)
+		return 0;
+	pool_stride = (size + 63) & ~63U;
+	poolUid = -1;
+	pool_base = gpu_alloc(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
+		pool_stride * VITA2D_POOL_BANK_COUNT, sizeof(void *),
+		SCE_GXM_MEMORY_ATTRIB_READ, &poolUid);
+	if (!pool_base) {
+		/* gpu_alloc can fail after allocating its block (base/map error). */
+		if (poolUid >= 0)
+			sceKernelFreeMemBlock(poolUid);
+		poolUid = -1;
+		return 0;
+	}
+	pool_size = size;
+	pool_addr = NULL;
+	pool_bank = -1;
+	pool_index = pool_next_bank = pool_serial = 0;
+	pool_failed = 0;
+	pool_submitted_frames = pool_submitted_scenes = 0;
+	pool_last_bank = -1;
+	pool_last_scene = 0;
+	memset(pool_banks, 0, sizeof(pool_banks));
+	/* This renderer is the application's only notification-region owner.
+	 * Reserve words [0, 48); never recycle a live scene's notification. */
+	for (b = 0; b < VITA2D_POOL_BANK_COUNT; ++b) {
+		for (s = 0; s < VITA2D_POOL_SCENE_COUNT; ++s) {
+			unsigned int i = (b * VITA2D_POOL_SCENE_COUNT + s) * 2;
+			pool_banks[b].vertex[s].address = &region[i];
+			pool_banks[b].fragment[s].address = &region[i + 1];
+			region[i] = region[i + 1] = 0;
+		}
+	}
+	return 1;
+}
+
+static int pool_acquire(void)
+{
+	unsigned int n, b, s;
+	if (pool_failed || !pool_base)
+		return 0;
+	if (pool_bank >= 0)
+		return 1;
+	/* Main is the sole producer; only the callback can reduce this count. */
+	if (display_queue_failed || __atomic_load_n(&display_queue_pending,
+		__ATOMIC_ACQUIRE) >= DISPLAY_MAX_PENDING_SWAPS)
+		return 0;
+	for (n = 0; n < VITA2D_POOL_BANK_COUNT; ++n) {
+		b = (pool_next_bank + n) % VITA2D_POOL_BANK_COUNT;
+		for (s = 0; s < pool_banks[b].scenes; ++s) {
+			const SceGxmNotification *v = &pool_banks[b].vertex[s];
+			const SceGxmNotification *f = &pool_banks[b].fragment[s];
+			if (*v->address != v->value || *f->address != f->value)
+				break;
+		}
+		if (s != pool_banks[b].scenes)
+			continue;
+		__sync_synchronize();
+		if (++pool_banks[b].generation == 0)
+			++pool_banks[b].generation;
+		pool_banks[b].scenes = 0;
+		pool_bank = (int)b;
+		pool_next_bank = (b + 1) % VITA2D_POOL_BANK_COUNT;
+		pool_addr = (unsigned char *)pool_base + b * pool_stride;
+		pool_index = 0;
+		return 1;
+	}
+	return 0;
+}
+
+int vita2d_fragment_fence_record(vita2d_fragment_fence *fence)
+{
+	unsigned int b, s;
+	if (!fence || !drawing || pool_bank < 0 || pool_failed)
+		return 0;
+	b = (unsigned int)pool_bank;
+	s = pool_banks[b].scenes;
+	if (s >= VITA2D_POOL_SCENE_COUNT)
+		return 0;
+	if (fence->generation[b] != pool_banks[b].generation) {
+		fence->generation[b] = pool_banks[b].generation;
+		fence->scenes[b] = 0;
+	}
+	fence->scenes[b] |= 1U << s;
+	return 1;
+}
+
+int vita2d_fragment_fence_done(const vita2d_fragment_fence *fence)
+{
+	unsigned int b, s;
+	if (!fence)
+		return 0;
+	for (b = 0; b < VITA2D_POOL_BANK_COUNT; ++b) {
+		if (!fence->scenes[b])
+			continue;
+		if (pool_failed)
+			return 0;
+		/* A bank changes generation only after ALL its prior scenes retire. */
+		if (fence->generation[b] != pool_banks[b].generation)
+			continue;
+		for (s = 0; s < VITA2D_POOL_SCENE_COUNT; ++s) {
+			const SceGxmNotification *f;
+			if (!(fence->scenes[b] & (1U << s)))
+				continue;
+			if (s >= pool_banks[b].scenes)
+				return 0; /* This use is in the still-open scene. */
+			f = &pool_banks[b].fragment[s];
+			if (*f->address != f->value)
+				return 0;
+		}
+	}
+	__sync_synchronize();
+	return 1;
+}
+
+void vita2d_ownership_get(vita2d_ownership_diag *out)
+{
+	unsigned int b, s;
+	if (!out)
+		return;
+	memset(out, 0, sizeof(*out));
+	out->submitted_frames = pool_submitted_frames;
+	out->submitted_scenes = pool_submitted_scenes;
+	out->pending_swaps = __atomic_load_n(&display_queue_pending, __ATOMIC_ACQUIRE);
+	out->pool_bank = pool_bank >= 0 ? (unsigned int)pool_bank : UINT_MAX;
+	out->fatal = (pool_failed ? 1U : 0U) | (display_queue_failed ? 2U : 0U);
+	out->scene_serial = pool_serial;
+	if (!pool_base)
+		return;
+	for (b = 0; b < VITA2D_POOL_BANK_COUNT; ++b) {
+		int busy = pool_bank == (int)b;
+		for (s = 0; s < pool_banks[b].scenes; ++s) {
+			const SceGxmNotification *v = &pool_banks[b].vertex[s];
+			const SceGxmNotification *f = &pool_banks[b].fragment[s];
+			if (*v->address != v->value) {
+				out->vertex_pending++;
+				busy = 1;
+			}
+			if (*f->address != f->value) {
+				out->fragment_pending++;
+				busy = 1;
+			}
+		}
+		out->busy_banks += busy;
+	}
+	if (pool_last_bank >= 0) {
+		out->vertex_word = *pool_banks[pool_last_bank].vertex[pool_last_scene].address;
+		out->fragment_word = *pool_banks[pool_last_bank].fragment[pool_last_scene].address;
+	}
+}
 
 /* Static functions */
 
@@ -171,6 +356,7 @@ static void display_callback(const void *callback_data)
 	if (vblank_wait) {
 		sceDisplayWaitVblankStart();
 	}
+	__atomic_sub_fetch(&display_queue_pending, 1, __ATOMIC_RELEASE);
 }
 
 static void _vita2d_free_fragment_programs(vita2d_fragment_programs *out)
@@ -245,6 +431,14 @@ static int vita2d_init_internal(unsigned int temp_pool_size, SceGxmMultisampleMo
 
 	err = system_app_mode ? sceGxmVshInitialize(&initializeParams) : sceGxmInitialize(&initializeParams);
 	DEBUG("sceGxmInitialize(): 0x%08X\n", err);
+	if (err < 0)
+		return 0;
+	if (!pool_initialize(temp_pool_size)) {
+		sceGxmTerminate();
+		return 0;
+	}
+	display_queue_pending = 0;
+	display_queue_failed = 0;
 	
 	// Since CDRAM memory is unaccessible in system app mode, we force USER_RW usage at init phase
 	if (system_app_mode) vita2d_texture_set_alloc_memblock_type(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW);
@@ -680,16 +874,6 @@ static int vita2d_init_internal(unsigned int temp_pool_size, SceGxmMultisampleMo
 	_vita2d_textureTintColorParam = sceGxmProgramFindParameterByName(textureTintFragmentProgramGxp, "uTintColor");
 	DEBUG("texture wvp sceGxmProgramFindParameterByName(): %p\n", _vita2d_textureWvpParam);
 
-	// Allocate memory for the memory pool
-	pool_size = temp_pool_size;
-	pool_addr = gpu_alloc(
-		SCE_KERNEL_MEMBLOCK_TYPE_USER_RW,
-		pool_size,
-		sizeof(void *),
-		SCE_GXM_MEMORY_ATTRIB_READ,
-		&poolUid);
-		
-
 	matrix_init_orthographic(_vita2d_ortho_matrix, 0.0f, DISPLAY_WIDTH, DISPLAY_HEIGHT, 0.0f, 0.0f, 1.0f);
 
 	backBufferIndex = 0;
@@ -798,6 +982,9 @@ int vita2d_fini()
 	free(contextParams.hostMem);
 
 	gpu_free(poolUid);
+	pool_base = pool_addr = NULL;
+	pool_bank = -1;
+	pool_size = pool_index = 0;
 
 	// terminate libgxm
 	sceGxmTerminate();
@@ -834,15 +1021,25 @@ void vita2d_clear_screen()
 
 void vita2d_swap_buffers()
 {
-	if (system_app_mode) sceSharedFbEnd(shared_fb);
+	if (system_app_mode) {
+		if (sceSharedFbEnd(shared_fb) >= 0)
+			pool_submitted_frames++;
+	}
 	else {
 		// queue the display swap for this frame
 		vita2d_display_data displayData;
 		displayData.address = displayBufferData[backBufferIndex];
-		sceGxmDisplayQueueAddEntry(
+		__atomic_add_fetch(&display_queue_pending, 1, __ATOMIC_RELEASE);
+		int err = sceGxmDisplayQueueAddEntry(
 			displayBufferSync[frontBufferIndex],	// OLD fb
 			displayBufferSync[backBufferIndex],	// NEW fb
 			&displayData);
+		if (err < 0) {
+			__atomic_sub_fetch(&display_queue_pending, 1, __ATOMIC_RELEASE);
+			display_queue_failed = 1;
+			return;
+		}
+		pool_submitted_frames++;
 
 		// update buffer indices
 		frontBufferIndex = backBufferIndex;
@@ -884,14 +1081,22 @@ void vita2d_start_drawing()
 
 void vita2d_start_drawing_advanced(vita2d_texture *target, unsigned int flags)
 {
+	(void)vita2d_try_start_drawing_advanced(target, flags);
+}
 
+int vita2d_try_start_drawing_advanced(vita2d_texture *target, unsigned int flags)
+{
+	int err;
+	if (drawing || !pool_acquire() ||
+		pool_banks[pool_bank].scenes >= VITA2D_POOL_SCENE_COUNT)
+		return 0;
 	if (target == NULL) {
 		if (system_app_mode) {
 			sceSharedFbBegin(shared_fb, &shared_fb_info);
 			shared_fb_info.vsync = vblank_wait;
 			backBufferIndex = (shared_fb_info.index + 1) % 2;
 		}
-		sceGxmBeginScene(
+		err = sceGxmBeginScene(
 		_vita2d_context,
 		flags,
 		renderTarget,
@@ -901,7 +1106,7 @@ void vita2d_start_drawing_advanced(vita2d_texture *target, unsigned int flags)
 		&displaySurface[backBufferIndex],
 		&depthSurface);
 	} else {
-		sceGxmBeginScene(
+		err = sceGxmBeginScene(
 		_vita2d_context,
 		flags,
 		target->gxm_rtgt,
@@ -911,19 +1116,47 @@ void vita2d_start_drawing_advanced(vita2d_texture *target, unsigned int flags)
 		&target->gxm_sfc,
 		&target->gxm_sfd);
 	}
-
+	if (err < 0)
+		return 0;
 	drawing = 1;
 	// in the current way, the library keeps the region clip across scenes
 	if (clipping_enabled) {
 		vita2d_set_clip_rectangle(clip_rect_x_min, clip_rect_y_min, clip_rect_x_max, clip_rect_y_max);
 	}
+	return 1;
 }
 
 void vita2d_end_drawing()
 {
-	sceGxmEndScene(_vita2d_context, NULL, NULL);
+	(void)vita2d_end_drawing_checked();
+}
+
+int vita2d_end_drawing_checked(void)
+{
+	unsigned int s;
+	int err;
+	if (!drawing || pool_bank < 0)
+		return 0;
+	s = pool_banks[pool_bank].scenes++;
+	if (++pool_serial == 0)
+		++pool_serial;
+	pool_banks[pool_bank].vertex[s].value = pool_serial;
+	pool_banks[pool_bank].fragment[s].value = pool_serial;
+	pool_last_bank = pool_bank;
+	pool_last_scene = s;
+	*pool_banks[pool_bank].vertex[s].address = 0;
+	*pool_banks[pool_bank].fragment[s].address = 0;
+	__sync_synchronize();
+	err = sceGxmEndScene(_vita2d_context,
+		&pool_banks[pool_bank].vertex[s],
+		&pool_banks[pool_bank].fragment[s]);
+	if (err < 0)
+		pool_failed = 1; /* Unknown ownership: retain bytes until shutdown. */
+	else
+		pool_submitted_scenes++;
 	if (system_app_mode && vblank_wait) sceDisplayWaitVblankStart();
 	drawing = 0;
+	return err >= 0;
 }
 
 void vita2d_enable_clipping()
@@ -1080,8 +1313,8 @@ void vita2d_set_region_clip(SceGxmRegionClipMode mode, unsigned int x_min, unsig
 
 void *vita2d_pool_malloc(unsigned int size)
 {
-	if ((pool_index + size) < pool_size) {
-		void *addr = (void *)((unsigned int)pool_addr + pool_index);
+	if (pool_bank >= 0 && size <= pool_size - pool_index) {
+		void *addr = (unsigned char *)pool_addr + pool_index;
 		pool_index += size;
 		return addr;
 	}
@@ -1090,9 +1323,17 @@ void *vita2d_pool_malloc(unsigned int size)
 
 void *vita2d_pool_memalign(unsigned int size, unsigned int alignment)
 {
-	unsigned int new_index = (pool_index + alignment - 1) & ~(alignment - 1);
-	if ((new_index + size) < pool_size) {
-		void *addr = (void *)((unsigned int)pool_addr + new_index);
+	unsigned int remainder, padding, new_index;
+	if (pool_bank < 0 || !alignment)
+		return NULL;
+	/* Texture callers also request 20-byte alignment, not just powers of 2. */
+	remainder = ((uintptr_t)pool_addr + pool_index) % alignment;
+	padding = remainder ? alignment - remainder : 0;
+	if (padding > pool_size - pool_index)
+		return NULL;
+	new_index = pool_index + padding;
+	if (size <= pool_size - new_index) {
+		void *addr = (unsigned char *)pool_addr + new_index;
 		pool_index = new_index + size;
 		return addr;
 	}
@@ -1101,11 +1342,17 @@ void *vita2d_pool_memalign(unsigned int size, unsigned int alignment)
 
 unsigned int vita2d_pool_free_space()
 {
-	return pool_size - pool_index;
+	return pool_bank >= 0 ? pool_size - pool_index : 0;
 }
 
 void vita2d_pool_reset()
 {
+	if (drawing)
+		return;
+	/* Submission is not retirement. A later begin must acquire a bank whose
+	 * independent scene notifications have all completed. */
+	pool_bank = -1;
+	pool_addr = NULL;
 	pool_index = 0;
 }
 

@@ -81,6 +81,12 @@ void osd_session_chip_refresh(void);
  * Weak default: the renderer's part. */
 void ui_host_look_changed(void);
 
+/* Settings > THIS GAME > Level (a tilt-sensor game): the way the Vita is
+ * held now becomes the game's level (g_pgame.level_*).  0 = done, -1 = no
+ * motion reading (a PS TV, or the right stick is the sensor).  Weak
+ * default: -1. */
+int ui_host_sensor_level(void);
+
 /* ---- Mystery Gift (declared in psp/ui_psp.h; listed here for completeness)
  *   int         mgift_ui_active(void);   1 while the listener is up
  *   const char *mgift_ui_line1(void);    what is happening

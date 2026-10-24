@@ -55,6 +55,17 @@ static inline int psp_state_path_for_slot(char *out, size_t out_sz,
    return psp_rom_path_suffix(out, out_sz, slot1_path, suffix);
 }
 
+/* WHERE YOU LEFT OFF (Vita, main_vita.c): a state of its own beside the
+ * slots -- Game.rsm, Game.gb.rsm -- written as a game is left and while it
+ * is played, and loaded by the game list's Continue.  PSP_STATE_RESUME is
+ * the list's "slot" for it. */
+#define PSP_STATE_RESUME 100
+static inline int psp_state_resume_path(char *out, size_t out_sz,
+                                        const char *slot1_path)
+{
+   return psp_rom_path_suffix(out, out_sz, slot1_path, ".rsm");
+}
+
 static inline int psp_state_thumb_path(char *out, size_t out_sz,
                                        const char *state_path)
 {

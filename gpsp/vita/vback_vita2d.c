@@ -34,7 +34,8 @@
  *     the scissor dozens of times a frame.
  *   - vb_tex_destroy never frees a texture a queued scene may still read:
  *     frees wait for the next present, after sceGxmFinish.
- *   - The vertex pool is libvita2d's, reset once per present.
+ *   - Three full-capacity vertex banks retire by scene notifications. If
+ *     none is available, the whole frame is skipped without waiting.
  *
  * TO CHECK ON HARDWARE (see the port report):
  *   1. the 565 channel orders above and the A8 swizzle;
@@ -55,12 +56,14 @@
 #include <vita2d.h>
 
 #include "vback.h"
+#include "menu_diag.h"
 #include "gpu_shaders.h"     /* build/vita/gen: the shaders/ files as strings */
 
 struct vb_tex
 {
    vita2d_texture *t;
    int w, h, fmt, rt, bpp;
+   vita2d_fragment_fence readers;
 };
 
 #define POOL_BYTES   (2 * 1024 * 1024)
@@ -70,6 +73,10 @@ struct vb_tex
 static int g_inited;
 static int g_open;            /* the frame's scene is open                  */
 static int g_suspended;       /* ...and was closed for a render-target pass */
+static int g_skip;            /* keep this entire frame off the queue      */
+static int g_clear_pending;   /* retain a skipped frame's clear request    */
+static int g_frame_started;
+static unsigned g_started_frames, g_skipped_frames, g_texture_blocked;
 static vb_tex *g_rt;          /* render target bound, or NULL               */
 static int g_sc_on, g_sc_x, g_sc_y, g_sc_w, g_sc_h;
 static int g_dialog;          /* run the common dialog before each swap     */
@@ -89,6 +96,9 @@ int vb_init(void)
    vita2d_disable_clipping();
    g_inited = 1;
    g_open = g_suspended = g_sc_on = g_defer_n = 0;
+   g_skip = g_clear_pending = 0;
+   g_frame_started = 0;
+   g_started_frames = g_skipped_frames = g_texture_blocked = 0;
    g_rt = NULL;
    return 0;
 }
@@ -96,13 +106,16 @@ int vb_init(void)
 static void defer_flush(void)
 {
    int i;
+   unsigned long long t;
    if (!g_defer_n)
       return;
+   t = md_begin();
    /* Nothing queued may still be sampling these. */
    vita2d_wait_rendering_done();
    for (i = 0; i < g_defer_n; i++)
       vita2d_free_texture(g_defer[i]);
    g_defer_n = 0;
+   md_end(MD_DEFER, t);
 }
 
 static void prog_release(void);
@@ -221,6 +234,41 @@ void vb_tex_destroy(vb_tex *t)
 int vb_tex_w(const vb_tex *t) { return t ? t->w : 0; }
 int vb_tex_h(const vb_tex *t) { return t ? t->h : 0; }
 
+int vb_tex_writable(const vb_tex *t)
+{
+   if (!t || !t->t)
+      return 0;
+   if (!vita2d_fragment_fence_done(&t->readers))
+   {
+      g_texture_blocked++;
+      return 0;
+   }
+   return 1;
+}
+
+void vb_ownership_get(vb_ownership_diag *out)
+{
+   vita2d_ownership_diag d;
+   if (!out)
+      return;
+   vita2d_ownership_get(&d);
+   memset(out, 0, sizeof(*out));
+   out->started_frames = g_started_frames;
+   out->skipped_frames = g_skipped_frames;
+   out->submitted_frames = d.submitted_frames;
+   out->pending_swaps = d.pending_swaps;
+   out->pool_bank = d.pool_bank;
+   out->busy_banks = d.busy_banks;
+   out->submitted_scenes = d.submitted_scenes;
+   out->vertex_pending = d.vertex_pending;
+   out->fragment_pending = d.fragment_pending;
+   out->texture_blocked = g_texture_blocked;
+   out->fatal = d.fatal;
+   out->scene_serial = d.scene_serial;
+   out->vertex_word = d.vertex_word;
+   out->fragment_word = d.fragment_word;
+}
+
 void *vb_tex_lock(vb_tex *t, size_t *pitch_bytes)
 {
    if (!t)
@@ -254,25 +302,44 @@ void vb_tex_update(vb_tex *t, int x, int y, int w, int h,
    unsigned char *base;
    unsigned stride;
    int j;
+   unsigned long long started;
    if (!t || !pix || x < 0 || y < 0 || x + w > t->w || y + h > t->h)
       return;
+   started = md_begin();
    base = (unsigned char *)vita2d_texture_get_datap(t->t);
    stride = vita2d_texture_get_stride(t->t);
    for (j = 0; j < h; j++)
       memcpy(base + (size_t)(y + j) * stride + (size_t)x * t->bpp,
              (const unsigned char *)pix + (size_t)j * pitch_bytes,
              (size_t)w * t->bpp);
+   md_end(MD_UPLOAD, started);
 }
 
 /* ---- scenes ------------------------------------------------------------ */
 
 void vb_frame_begin(int clear)
 {
-   if (g_open)
+   if (g_open || g_rt)
       return;
-   vita2d_start_drawing_advanced(NULL, 0);
    if (clear)
+      g_clear_pending = 1;
+   if (g_skip)
+      return;
+   if (!vita2d_try_start_drawing_advanced(NULL, 0))
+   {
+      g_skip = 1;
+      return;
+   }
+   if (!g_frame_started)
+   {
+      g_frame_started = 1;
+      g_started_frames++;
+   }
+   if (g_clear_pending)
+   {
       vita2d_clear_screen();
+      g_clear_pending = 0;
+   }
    g_open = 1;
 }
 
@@ -280,7 +347,8 @@ void vb_frame_end(void)
 {
    if (!g_open)
       return;
-   vita2d_end_drawing();
+   if (!vita2d_end_drawing_checked())
+      g_skip = g_clear_pending = 1;
    g_open = 0;
 }
 
@@ -309,7 +377,20 @@ void vb_gpu_stats(unsigned *frames, unsigned *avg_us, unsigned *max_us)
 
 void vb_present(void)
 {
+   if (g_rt)
+      vb_rt_end();
    vb_frame_end();
+   if (g_skip)
+   {
+      /* Do not enqueue a partial frame, reopen a scene, update a dialog or
+       * drain deferred textures while GPU/display backpressure is active. */
+      g_skip = g_suspended = g_sc_on = 0;
+      g_frame_started = 0;
+      g_skipped_frames++;
+      g_clear_pending = 1;
+      vita2d_pool_reset();
+      return;
+   }
    if (g_gpu_time)
    {
       /* everything this frame queued, finished: the GPU's share of it */
@@ -325,11 +406,15 @@ void vb_present(void)
    }
    if (g_dialog)
       vita2d_common_dialog_update();
+   unsigned long long swap_t = md_begin();
    vita2d_swap_buffers();
+   md_end(MD_SWAP, swap_t);
    defer_flush();
-   /* Everything this frame put in the vertex pool has been submitted. */
+   /* Release CPU ownership only; the bank retains its completion fences. */
    vita2d_pool_reset();
    g_sc_on = 0;
+   g_frame_started = 0;
+   g_clear_pending = 0;
 }
 
 int vb_present_state(void)
@@ -339,29 +424,48 @@ int vb_present_state(void)
 
 void vb_rt_begin(vb_tex *rt)
 {
-   if (!rt || !rt->rt || g_rt)
+   if (!rt || !rt->rt || g_rt || g_skip)
       return;
    if (g_open)
    {
-      vita2d_end_drawing();
+      int ended = vita2d_end_drawing_checked();
       g_open = 0;
+      if (!ended)
+      {
+         g_skip = g_clear_pending = 1;
+         return;
+      }
       g_suspended = 1;
    }
-   vita2d_start_drawing_advanced(rt->t, 0);
+   if (!vita2d_try_start_drawing_advanced(rt->t, 0))
+   {
+      g_suspended = 0;
+      g_skip = g_clear_pending = 1;
+      return;
+   }
    g_rt = rt;
+   if (!g_frame_started)
+   {
+      g_frame_started = 1;
+      g_started_frames++;
+   }
+   (void)vita2d_fragment_fence_record(&rt->readers);
 }
 
 void vb_rt_end(void)
 {
    if (!g_rt)
       return;
-   vita2d_end_drawing();
+   if (!vita2d_end_drawing_checked())
+      g_skip = g_clear_pending = 1;
    g_rt = NULL;
    if (g_suspended)
    {
       g_suspended = 0;
-      vita2d_start_drawing_advanced(NULL, 0);
-      g_open = 1;
+      if (!g_skip && vita2d_try_start_drawing_advanced(NULL, 0))
+         g_open = 1;
+      else
+         g_skip = g_clear_pending = 1;
    }
 }
 
@@ -441,6 +545,44 @@ void vb_quad(float x0, float y0, float x1, float y1,
    vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLE_STRIP, v, 4);
 }
 
+void vb_cquads(const vb_cquad *q, int n)
+{
+   vita2d_color_vertex *v;
+   int i, k = 0;
+   if ((!g_open && !g_rt) || !q || n <= 0)
+      return;
+   if ((g_sc_on && !g_rt) || n > VB_CQUADS_MAX)
+   {
+      /* (clipped quads change their corner colours: vb_quad's path) */
+      for (i = 0; i < n; i++)
+         vb_quad(q[i].x0, q[i].y0, q[i].x1, q[i].y1,
+                 q[i].c_tl, q[i].c_tr, q[i].c_bl, q[i].c_br);
+      return;
+   }
+   /* one draw of two triangles per rectangle, in the strip's order and
+    * winding (tl tr bl, bl tr br) */
+   v = (vita2d_color_vertex *)vita2d_pool_memalign(
+          (size_t)n * 6 * sizeof(vita2d_color_vertex),
+          sizeof(vita2d_color_vertex));
+   if (!v)
+      return;
+   for (i = 0; i < n; i++)
+   {
+      const vb_cquad *r = &q[i];
+      float x0 = sx(r->x0), y0 = sy(r->y0), x1 = sx(r->x1), y1 = sy(r->y1);
+      if (!(r->x1 > r->x0) || !(r->y1 > r->y0))
+         continue;
+      v[k].x = x0; v[k].y = y0; v[k].z = 0.5f; v[k++].color = r->c_tl;
+      v[k].x = x1; v[k].y = y0; v[k].z = 0.5f; v[k++].color = r->c_tr;
+      v[k].x = x0; v[k].y = y1; v[k].z = 0.5f; v[k++].color = r->c_bl;
+      v[k].x = x0; v[k].y = y1; v[k].z = 0.5f; v[k++].color = r->c_bl;
+      v[k].x = x1; v[k].y = y0; v[k].z = 0.5f; v[k++].color = r->c_tr;
+      v[k].x = x1; v[k].y = y1; v[k].z = 0.5f; v[k++].color = r->c_br;
+   }
+   if (k)
+      vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLES, v, (size_t)k);
+}
+
 void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
 {
    SceGxmTextureFilter f = filter == VB_LINEAR ? SCE_GXM_TEXTURE_FILTER_LINEAR
@@ -491,8 +633,11 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
          p[5].x = x1; p[5].y = y1; p[5].z = 0.5f; p[5].u = u1; p[5].v = v1;
       }
       if (k)
+      {
+         (void)vita2d_fragment_fence_record(&t->readers);
          vita2d_draw_array_textured(t->t, SCE_GXM_PRIMITIVE_TRIANGLES, v,
                                     (size_t)(k * 6), tint);
+      }
       n -= m;
    }
 }
@@ -945,6 +1090,9 @@ void vb_pquads(vb_prog *p, vb_tex *t0, vb_tex *t1, const vb_tquad *q, int n,
    }
    if (!k)
       return;
+   (void)vita2d_fragment_fence_record(&t0->readers);
+   if (t1)
+      (void)vita2d_fragment_fence_record(&t1->readers);
    sceGxmSetVertexProgram(_vita2d_context, _vita2d_textureVertexProgram);
    sceGxmSetFragmentProgram(_vita2d_context, p->fp);
    sceGxmReserveVertexDefaultUniformBuffer(_vita2d_context, &u);

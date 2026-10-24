@@ -7,8 +7,12 @@
 _start:
     b       rom_start
     .space  156, 0                  @ logo area (the open BIOS does not check it)
-    .ascii  "GBADHOCTEST\0"         @ title, 12 bytes
-    .ascii  "AGDE"                  @ game code
+#ifndef ROM_TITLE
+#define ROM_TITLE "GBADHOCTEST\0"
+#define ROM_CODE  "AGDE"
+#endif
+    .ascii  ROM_TITLE               @ title, 12 bytes
+    .ascii  ROM_CODE                @ game code (sensors.c: a sensor game's)
     .ascii  "01"                    @ maker
     .byte   0x96, 0, 0              @ fixed value, unit code, device type
     .space  7, 0

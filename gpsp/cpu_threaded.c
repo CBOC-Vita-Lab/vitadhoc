@@ -3135,8 +3135,12 @@ void xlat_depth_probe_reset(void)
 #define XLAT_PROBE_LEAVE() do { } while (0)
 #endif
 
+/* Code in palette RAM (0x05) and OAM (0x07) runs through the same uncached
+ * interpreter bridge as VRAM: intros added to some copies park a few words there
+ * while the game is copied over EWRAM (Pokemon Pinball: Ruby & Sapphire
+ * with an added intro jumps to 0x05000000).  cpu.cc: GBA_PC_UNCACHED. */
 #ifdef HAVE_VRAM_INTERPRETER
-#define vram_lookup_region case 0x06:
+#define vram_lookup_region case 0x05: case 0x06: case 0x07:
 #else
 #define vram_lookup_region
 #endif
@@ -4379,7 +4383,7 @@ if (ram_region) {                                                             \
  * must not change reg[PC] while compiling some other block. */
 #ifdef HAVE_VRAM_INTERPRETER
 #define translate_vram_entry(type)                                           \
-  if ((pc >> 24) == 0x06) {                                                  \
+  if (GBA_PC_UNCACHED(pc)) {                                                 \
     translation_ptr = rom_translation_ptr;                                   \
     if (translation_ptr > rom_translation_cache + ROM_TRANSLATION_CACHE_SIZE \
                           - TRANSLATION_CACHE_LIMIT_THRESHOLD) {             \

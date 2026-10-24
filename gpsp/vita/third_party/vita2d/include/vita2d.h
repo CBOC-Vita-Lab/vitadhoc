@@ -43,6 +43,24 @@ typedef struct vita2d_texture {
 	SceUID depth_UID;
 } vita2d_texture;
 
+/* GBAdhoc: zero-initialize once. Records all outstanding fragment readers,
+ * not a pointer into notification words that later scenes may recycle. */
+#define VITA2D_FRAGMENT_FENCE_BANK_COUNT 3
+typedef struct vita2d_fragment_fence {
+	unsigned int generation[VITA2D_FRAGMENT_FENCE_BANK_COUNT];
+	unsigned int scenes[VITA2D_FRAGMENT_FENCE_BANK_COUNT];
+} vita2d_fragment_fence;
+int vita2d_fragment_fence_record(vita2d_fragment_fence *fence);
+int vita2d_fragment_fence_done(const vita2d_fragment_fence *fence);
+
+typedef struct vita2d_ownership_diag {
+	unsigned int submitted_frames, pending_swaps, pool_bank, busy_banks;
+	unsigned int submitted_scenes, vertex_pending, fragment_pending, fatal;
+	unsigned int scene_serial, vertex_word, fragment_word;
+} vita2d_ownership_diag;
+/* Main-thread observation only: no reset, bank admission or GPU wait. */
+void vita2d_ownership_get(vita2d_ownership_diag *out);
+
 typedef struct vita2d_system_pgf_config {
 	SceFontLanguageCode code;
 	int (*in_font_group)(unsigned int c);
@@ -72,6 +90,9 @@ int vita2d_swap_state(void);
 void vita2d_start_drawing();
 void vita2d_start_drawing_advanced(vita2d_texture *target, unsigned int flags);
 void vita2d_end_drawing();
+/* GBAdhoc: zero leaves the caller's last displayed image intact. */
+int vita2d_try_start_drawing_advanced(vita2d_texture *target, unsigned int flags);
+int vita2d_end_drawing_checked(void);
 
 int vita2d_common_dialog_update();
 

@@ -1270,7 +1270,11 @@ u32 function_cc execute_spsr_restore(u32 address)
       break;                                                                  \
                                                                               \
     case 0xF:                                                                 \
-      /* Reserved */                                                          \
+      /* NV: never runs, as on the ARM backend.  It must still leave a jump   \
+       * to patch: a block that started with one patched a NULL               \
+       * backpatch_address and crashed the host build (an ARM scan of Thumb   \
+       * code, testrom/cpufix.c test 9 on the old dynarec). */               \
+      x86_emit_jmp_filler(backpatch_address);                                 \
       break;                                                                  \
   }                                                                           \
 
@@ -1418,18 +1422,24 @@ u32 function_cc execute_spsr_restore(u32 address)
   generate_store_reg(rv, rd)                                                  \
 
 // Does mode-change magic (including IRQ checks)
+// Returns 0 to carry on, else where to resume (x86_stub.S looks it up with
+// block_lookup_address_dual): an MSR that set the T bit continues in Thumb
+// at the next instruction, MSR + 4, returned odd (cpsr_masks, cpu.cc).
 u32 execute_store_cpsr_body()
 {
+  u32 thumb = reg[REG_CPSR] & 0x20;
   set_cpu_mode(cpu_modes[reg[REG_CPSR] & 0xF]);
   if((io_registers[REG_IE] & io_registers[REG_IF]) &&
       io_registers[REG_IME] && ((reg[REG_CPSR] & 0x80) == 0))
   {
-    REG_MODE(MODE_IRQ)[6] = reg[REG_PC] + 4;
+    REG_MODE(MODE_IRQ)[6] = reg[REG_PC] + (thumb ? 8 : 4);
     REG_SPSR(MODE_IRQ) = reg[REG_CPSR];
     reg[REG_CPSR] = (reg[REG_CPSR] & 0xFFFFFF00) | 0xD2;
     set_cpu_mode(MODE_IRQ);
     return 0x00000018;
   }
+  if(thumb)
+    return (reg[REG_PC] + 4) | 1;
 
   return 0;
 }

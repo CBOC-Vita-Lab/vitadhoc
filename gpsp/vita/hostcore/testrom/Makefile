@@ -44,6 +44,19 @@ gbadhoc-top.gba: crt0.S topdown.c gba.ld
 	$(CROSS)objcopy -O binary gbadhoc-top.elf $@
 	@ls -l $@
 
+# The sensor cartridges (app_tests.py, sensors): sensors.c with a tilt, a
+# gyro and a light-sensor game's code in the header (cart_sensor.h).
+sensors: gbadhoc-tilt.gba gbadhoc-gyro.gba gbadhoc-solar.gba
+gbadhoc-tilt.gba gbadhoc-gyro.gba gbadhoc-solar.gba: crt0.S sensors.c gba.ld
+gbadhoc-tilt.gba:  SENSOR_HDR := -DROM_TITLE='"SENSORTILT\0\0"' -DROM_CODE='"KYGE"'
+gbadhoc-gyro.gba:  SENSOR_HDR := -DROM_TITLE='"SENSORGYRO\0\0"' -DROM_CODE='"RZWE"'
+gbadhoc-solar.gba: SENSOR_HDR := -DROM_TITLE='"SENSORSOLAR\0"' -DROM_CODE='"U3IE"'
+gbadhoc-tilt.gba gbadhoc-gyro.gba gbadhoc-solar.gba:
+	$(CROSS)gcc $(CFLAGS) $(SENSOR_HDR) -nostdlib -nostartfiles -T gba.ld \
+	  -o $(@:.gba=.elf) crt0.S sensors.c -lgcc
+	$(CROSS)objcopy -O binary $(@:.gba=.elf) $@
+	@ls -l $@
+
 # The GB battery-save cartridge.  Optional: needs rgbds, which is not in the
 # distribution's packages (git clone https://github.com/gbdev/rgbds, any
 # release; make RGBDS=/path/to/rgbds/ gb).
@@ -76,4 +89,4 @@ clean:
 	      gblocal.gb gblocal.o
 .PHONY: clean gb
 
-.PHONY: wide scroll top gb
+.PHONY: wide scroll top gb sensors

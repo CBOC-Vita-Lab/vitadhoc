@@ -1196,19 +1196,25 @@ u32 execute_spsr_restore_body(u32 address)
   generate_function_call(execute_read_##psr_reg);                             \
   generate_store_reg(reg_rv, rd)                                              \
 
+/* Returns 0 to carry on, else where to resume (mips_stub.S looks it up with
+ * block_lookup_address_dual): an MSR that set the T bit continues in Thumb
+ * at the next instruction, MSR + 4, returned odd (cpsr_masks, cpu.cc). */
 u32 execute_store_cpsr_body(u32 _cpsr, u32 address)
 {
+  u32 thumb = _cpsr & 0x20;
   set_cpu_mode(cpu_modes[_cpsr & 0xF]);
   if((io_registers[REG_IE] & io_registers[REG_IF]) &&
    io_registers[REG_IME] && ((_cpsr & 0x80) == 0))
   {
-    REG_MODE(MODE_IRQ)[6] = address + 4;
+    REG_MODE(MODE_IRQ)[6] = address + (thumb ? 8 : 4);
     REG_SPSR(MODE_IRQ) = _cpsr;
     IRQCHK_ENTER(3);
     reg[REG_CPSR] = 0xD2;
     set_cpu_mode(MODE_IRQ);
     return 0x00000018;
   }
+  if(thumb)
+    return (address + 4) | 1;
 
   return 0;
 }

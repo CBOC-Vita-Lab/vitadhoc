@@ -194,7 +194,8 @@ static int    (*audio_step)(void);
 static uint64_t grains_done;      /* simulated: grains the port has taken */
 
 static pthread_t     au_thread;
-static volatile int  au_run;
+static uint32_t      au_run;
+static int           au_live;
 static uint64_t      au_next_ns;  /* realtime: when the port takes the next */
 
 static void put32(FILE *f, uint32_t v) { fwrite(&v, 4, 1, f); }
@@ -258,36 +259,45 @@ int plat_audio_write(const int16_t *stereo)
    return 0;
 }
 
-void plat_audio_close(void)
+int plat_audio_close_checked(void)
 {
    if (wav_fp)
    {
       wav_header(wav_fp, wav_rate, (uint32_t)wav_frames);
       fflush(wav_fp);
    }
+   return 1;
+}
+
+void plat_audio_close(void)
+{
+   (void)plat_audio_close_checked();
 }
 
 static void *au_main(void *arg)
 {
    (void)arg;
-   while (au_run && audio_step() == 0)
+   while (__atomic_load_n(&au_run, __ATOMIC_ACQUIRE) && audio_step() == 0)
       ;
    return NULL;
 }
 
 int plat_audio_thread_start(int (*step)(void))
 {
+   if (audio_step || au_live)
+      return -1;
    audio_step = step;
    if (opt.realtime)
    {
-      au_run = 1;
+      __atomic_store_n(&au_run, 1, __ATOMIC_RELEASE);
       au_next_ns = 0;
       if (pthread_create(&au_thread, NULL, au_main, NULL) != 0)
       {
-         au_run = 0;
+         __atomic_store_n(&au_run, 0, __ATOMIC_RELEASE);
          audio_step = NULL;
          return -1;
       }
+      au_live = 1;
       return 0;
    }
    grains_done = __atomic_load_n(&sim_ns, __ATOMIC_RELAXED) *
@@ -295,14 +305,22 @@ int plat_audio_thread_start(int (*step)(void))
    return 0;
 }
 
-void plat_audio_thread_stop(void)
+int plat_audio_thread_stop_checked(void)
 {
-   if (opt.realtime && au_run)
+   if (au_live)
    {
-      au_run = 0;
-      pthread_join(au_thread, NULL);
+      __atomic_store_n(&au_run, 0, __ATOMIC_RELEASE);
+      if (pthread_join(au_thread, NULL) != 0)
+         return 0;
+      au_live = 0;
    }
    audio_step = NULL;
+   return 1;
+}
+
+void plat_audio_thread_stop(void)
+{
+   (void)plat_audio_thread_stop_checked();
 }
 
 /* Simulated time: the port consumes one grain every grain/rate seconds. */

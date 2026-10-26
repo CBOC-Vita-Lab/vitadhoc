@@ -2,7 +2,7 @@
 
 | Item | Value |
 | --- | --- |
-| Version | 1.0 |
+| Version | 1.1 |
 | Package | `VitAdhoc.vpk`, SHA-256 `ba45181433f9d250f07e2316dea60e6acaa74010e53ae2c28b16c3fc6124baa4` |
 | Runtime (`eboot.bin`) | SHA-256 `9069471e980c5b0616b48048dcad7c0446b3070ee63033bbcb1b528dd19bb9e8` |
 | Title ID | `GBAD00001` (shares `ux0:data/GBAdhoc/` with GBAdhoc's data layout) |

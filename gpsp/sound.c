@@ -41,6 +41,12 @@ static u32 sound_buffer_base;
 
 static fixed16_16 gbc_sound_tick_step;
 
+void sound_update_psg_tick_step(void)
+{
+  /* The sequencer runs at 256 Hz regardless of the output sample rate. */
+  gbc_sound_tick_step = (fixed16_16)(1u << (24 - sound_freq_bits));
+}
+
 #ifdef LINKBENCH
 /* tools/linkbench only (never a PSP build): DirectSound FIFO bytes queued per
  * channel, reset by the bench every frame -- the audio a thin client would
@@ -217,7 +223,10 @@ unsigned sound_timer(fixed8_24 frequency_step, u32 channel)
 
 void sound_reset_fifo(u32 channel)
 {
-  memset(direct_sound_channel[channel].fifo, 0, 32);
+  direct_sound_struct *ds = &direct_sound_channel[channel];
+  memset(ds->fifo, 0, sizeof(ds->fifo));
+  ds->fifo_base = 0;
+  ds->fifo_top = 0;
 }
 
 // Initial pattern data = 4bits (signed)
@@ -690,8 +699,7 @@ void reset_sound(void)
 
 void init_sound()
 {
-  /* 256 / sound_frequency in 16.16 == 256 (sound_frequency == 2^16). */
-  gbc_sound_tick_step = (fixed16_16)256u;
+  sound_update_psg_tick_step();
 
   init_noise_table(noise_table15, 32767, 14);
   init_noise_table(noise_table7, 127, 6);
@@ -932,6 +940,7 @@ bool sound_read_savestate(const u8 *src)
       return false;
   }
 
+  sound_update_psg_tick_step();
   return true;
 }
 

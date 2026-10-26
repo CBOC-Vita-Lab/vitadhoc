@@ -42,9 +42,13 @@ extern "C" {
  * rate; speed_x1e6 = how fast the emulation is paced relative to the GBA's
  * own 59.7275 Hz, in millionths (1003560 when locked to a 59.94 Hz panel,
  * 1000000 when paced by the clock): the resampler's starting point, so the
- * follow only has to correct what is left.  0 = ok; on failure the game
- * runs silent and audio_push drops everything. */
+ * follow only has to correct what is left. Supported input is 8000..65536
+ * Hz and speed is 500000..2000000; zero selects 32768 Hz or 1000000.
+ * Invalid settings fail without disturbing an existing session. A still
+ * retiring consumer also prevents restart. 0 = ok, -1 = failure. */
 int  audio_start(unsigned in_rate, unsigned speed_x1e6);
+/* Stop producing immediately; retain the port/storage if its consumer or
+ * port has not retired. A later stop or start retries checked retirement. */
 void audio_stop(void);
 
 /* The core's samples, interleaved L/R.  Never blocks: a full ring drops the

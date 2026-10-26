@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "releaseId": "vitadhoc-v1.0",
+  "releaseId": "vitadhoc-v1.1",
   "titleId": "GBAD00001",
   "displayName": "VitAdhoc",
-  "version": "1.0",
+  "version": "1.1",
   "minInstallerVersion": "0.1.0",
   "visibility": "public",
   "releaseState": "ready",
   "recipeId": "vitadhoc",
   "package": {
     "path": "VitAdhoc.vpk",
-    "sha256": "ba45181433f9d250f07e2316dea60e6acaa74010e53ae2c28b16c3fc6124baa4",
-    "runtimeSha256": "9069471e980c5b0616b48048dcad7c0446b3070ee63033bbcb1b528dd19bb9e8"
+    "sha256": "5a207b57ad556180bae44166ff878e984d4e885ddd06a6bc1d813448908b0418",
+    "runtimeSha256": "29a82a3716664c1616e404702fe46ca0460d59e8242a5dfcbca63f3a87b2a6c8"
   },
   "appUpdateFrom": [],
   "requiredInputs": [],

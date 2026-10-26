@@ -1,5 +1,29 @@
 # What's New
 
+## Version 1.1 — October 25, 2026
+
+**Sound fixes.** A rebuilt audio path for all three systems.
+
+- **Steadier output:** audio now plays from two fixed, aligned buffers that
+  take turns, so there are no more gaps or clicks when a frame runs long.
+- **Correct stereo:** left/right routing of the Game Boy Advance's direct-sound
+  channels is fixed, so effects and music come out of the right sides.
+- **Cleaner start, stop and pause:** a short fade at each edge removes the pop
+  when you open a game, pause, resume or load a state, and the sound
+  channel is closed properly when you leave a game.
+- **Right pitch and tempo at any speed:** square, wave and noise channels now
+  follow the real sample rate, so music keeps its pitch and tempo when the
+  output rate or emulation speed changes.
+- **Fresh start after loading a state:** leftover sound from the previous game
+  or state no longer carries over.
+- **Safer against bad data:** damaged save-state sound data is rejected instead
+  of producing noise.
+
+Saves, save states, settings, ROMs and the BIOS are untouched, and the app
+keeps the same ID, so 1.1 installs straight over 1.0. The sound changes were
+checked with new automated tests (including memory-error checking); they have
+not yet been confirmed on every game on a Vita.
+
 ## Version 1.0 — October 24, 2026
 
 The first release. Game Boy Advance, Game Boy and Game Boy Color, built as a

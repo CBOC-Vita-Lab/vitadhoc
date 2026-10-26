@@ -170,7 +170,8 @@ static void gbc_trigger_sound(u32 value)
       gbc_sound_master_volume_right = value & 0x07;
       gbc_sound_master_volume_left = (value >> 4) & 0x07;
       gbc_sound_channel[channel].status =
-        (((value >> (channel + 8)) & 0x1) | ((value >> (channel + 11)) & 0x3));
+        (((value >> (channel + 8)) & 0x1) |
+         (((value >> (channel + 12)) & 0x1) << 1));
    }
    write_ioreg(REG_SOUNDCNT_L, value & 0xFF77);
 }
@@ -234,6 +235,7 @@ void sound_frequency_changed(void)
    u32 i;
    u16 snd4 = read_ioreg(REG_SOUND4CNT_H);
 
+   sound_update_psg_tick_step();
    gbc_sound_channel[0].frequency_step = psg_tone_step(gbc_sound_channel[0].rate);
    gbc_sound_channel[1].frequency_step = psg_tone_step(gbc_sound_channel[1].rate);
    gbc_sound_channel[2].frequency_step = psg_wave_step(gbc_sound_channel[2].rate);

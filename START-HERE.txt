@@ -1,4 +1,4 @@
-VitAdhoc 1.0
+VitAdhoc 1.1
 Game Boy Advance, Game Boy and Game Boy Color for PS Vita
 
 Thanks for trying VitAdhoc! Here's everything you need to get playing.

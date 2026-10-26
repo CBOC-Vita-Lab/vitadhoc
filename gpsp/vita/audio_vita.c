@@ -26,7 +26,12 @@ static uint32_t g_r;                      /* consumer's index                   
 #define STORE(v, x)  __atomic_store_n(&(v), (x), __ATOMIC_RELEASE)
 
 static int      g_running;                /* audio thread should keep going   */
-static int      g_open;                   /* the port is open                 */
+static int      g_open;                   /* session still owns its resources */
+/* The latest submitted window belongs to the port until a later successful
+ * write retires it. Both windows also survive a timed-out thread stop. */
+static int16_t  g_out[2][AUDIO_GRAIN * 2] __attribute__((aligned(64)));
+static unsigned g_out_next;
+static int      g_recovering;             /* retire uncertain failed writes  */
 static unsigned g_in_rate;
 static uint32_t g_target;                 /* input frames the follow holds:
                                            * written by the producer, read
@@ -35,8 +40,8 @@ static uint32_t g_target_min, g_target_max, g_target_step;
 static unsigned g_under_seen, g_calm;     /* the producer's: gaps seen, frames
                                            * since the last one              */
 
-/* Resampler step: input frames per output frame, 0.32 fixed point.  Written
- * by the emulation thread's follow, read once per grain by the consumer. */
+/* Input frames per output frame, 2.30 fixed point. The supported rate/speed
+ * range plus follow fits below 4, and ARMv7 only needs a 32-bit atomic. */
 static uint32_t g_step;
 static uint64_t g_step_base;              /* before the follow's correction   */
 static int      g_follow_ppm;
@@ -50,6 +55,9 @@ static uint64_t g_phase;                  /* 32.32: fraction between frames   */
 static int      g_primed;                 /* playing (0 = waiting for cushion)*/
 static int      g_fade = 0;               /* 16.16 gain                       */
 static int      g_last_l, g_last_r;
+static int      g_tail_l, g_tail_r;       /* last emitted (after fades)       */
+static int      g_trim_l, g_trim_r;
+static unsigned g_trim_left;             /* bounded dezipper after a skip    */
 
 static unsigned g_underruns, g_starved, g_dropped, g_trims, g_port_errors;
 
@@ -71,6 +79,11 @@ static void render(int16_t *out, unsigned n)
       r = w;
       g_phase = 0;
       g_primed = 0;
+      g_last_l = g_tail_l;
+      g_last_r = g_tail_r;
+      g_fade = 65536;
+      g_trim_left = 0;
+      STORE(g_trim_req, 0);
    }
    if (LOAD(g_trim_req))
    {
@@ -79,6 +92,9 @@ static void render(int16_t *out, unsigned n)
       if (w - r > t)
       {
          r = w - t;                       /* a skip, once, instead of latency */
+         g_trim_l = g_tail_l;
+         g_trim_r = g_tail_r;
+         g_trim_left = FADE_FRAMES;
          g_trims++;
       }
    }
@@ -96,11 +112,19 @@ static void render(int16_t *out, unsigned n)
          {
             g_primed = 0;
             g_underruns++;
+            /* A trim or fade-in can make the emitted tail differ from the
+             * raw input. Begin the gap's fade at what actually played. */
+            g_last_l = g_tail_l;
+            g_last_r = g_tail_r;
+            g_fade = 65536;
          }
          /* the last sample, fading to silence */
          g_fade = g_fade > FADE_STEP ? g_fade - FADE_STEP : 0;
          out[i * 2 + 0] = (int16_t)((g_last_l * g_fade) >> 16);
          out[i * 2 + 1] = (int16_t)((g_last_r * g_fade) >> 16);
+         g_tail_l = out[i * 2 + 0];
+         g_tail_r = out[i * 2 + 1];
+         g_trim_left = 0;
          g_starved++;
          continue;
       }
@@ -121,10 +145,21 @@ static void render(int16_t *out, unsigned n)
             sl = (sl * g_fade) >> 16;
             sr = (sr * g_fade) >> 16;
          }
+         if (g_trim_left)
+         {
+            /* Start at the actual last output, not the raw pre-fade sample.
+             * Blend into the new timeline without an extra queued grain. */
+            unsigned fresh = FADE_FRAMES - g_trim_left;
+            sl = (g_trim_l * (int)g_trim_left + sl * (int)fresh) / FADE_FRAMES;
+            sr = (g_trim_r * (int)g_trim_left + sr * (int)fresh) / FADE_FRAMES;
+            g_trim_left--;
+         }
          out[i * 2 + 0] = (int16_t)sl;
          out[i * 2 + 1] = (int16_t)sr;
+         g_tail_l = sl;
+         g_tail_r = sr;
       }
-      g_phase += step;
+      g_phase += (uint64_t)step << 2;      /* preserve the 32.32 phase */
       r += (uint32_t)(g_phase >> 32);
       g_phase &= 0xFFFFFFFFu;
       if ((int32_t)(w - r) < 0)
@@ -136,23 +171,34 @@ static void render(int16_t *out, unsigned n)
 /* One grain: the audio thread's whole loop body (plat_audio_thread_start). */
 static int audio_step(void)
 {
-   static int16_t out[AUDIO_GRAIN * 2];
-
    if (!LOAD(g_running))
       return 1;
-   render(out, AUDIO_GRAIN);
-   if (plat_audio_write(out) < 0)
+   if (!g_recovering)
    {
-      /* The port did not take it.  That is what a port left over from before
-       * a suspend looks like: open a fresh one.  A failed write may return
-       * at once and this thread outranks emulation, so always sleep before
-       * trying again. */
+      render(g_out[g_out_next], AUDIO_GRAIN);
+      if (plat_audio_write(g_out[g_out_next]) >= 0)
+      {
+         g_out_next ^= 1u;
+         return 0;
+      }
       g_port_errors++;
-      plat_audio_close();
-      plat_sleep_us(100000);
-      if (plat_audio_open(AUDIO_OUT_RATE, AUDIO_GRAIN) < 0)
-         plat_sleep_us(400000);
+      g_recovering = 1;
    }
+   /* A failed submission is not a lifetime guarantee for either window.
+    * Do not render again until checked close has retired the old port.
+    * Sleep on every recovery attempt: this thread outranks emulation. */
+   if (!plat_audio_close_checked())
+   {
+      plat_sleep_us(100000);
+      return 0;
+   }
+   plat_sleep_us(100000);
+   if (!LOAD(g_running))
+      return 1;
+   if (plat_audio_open(AUDIO_OUT_RATE, AUDIO_GRAIN) < 0)
+      plat_sleep_us(400000);
+   else
+      g_recovering = 0;
    return 0;
 }
 
@@ -167,16 +213,29 @@ static void set_step(int ppm)
 
 int audio_start(unsigned in_rate, unsigned speed_x1e6)
 {
-   g_in_rate = in_rate ? in_rate : 32768u;
+   in_rate = in_rate ? in_rate : 32768u;
+   speed_x1e6 = speed_x1e6 ? speed_x1e6 : 1000000u;
+   if (in_rate < 8000u || in_rate > 65536u ||
+       speed_x1e6 < 500000u || speed_x1e6 > 2000000u)
+      return -1;
+   /* A timed-out consumer still owns this ring and the output windows.
+    * Never reset even one shared flag until checked stop has retired it. */
+   if (g_open)
+   {
+      audio_stop();
+      if (g_open)
+         return -1;
+   }
+   g_in_rate = in_rate;
    g_target_min  = g_in_rate * AUDIO_TARGET_MS / 1000u;
    g_target_max  = g_in_rate * AUDIO_TARGET_MAX_MS / 1000u;
    g_target_step = g_in_rate * AUDIO_TARGET_STEP_MS / 1000u;
    g_target  = g_target_min;
    g_under_seen = 0;
    g_calm = 0;
-   /* in/out as 0.32, times how fast the emulation is paced */
-   g_step_base = (((uint64_t)g_in_rate << 32) / AUDIO_OUT_RATE) *
-                 (speed_x1e6 ? speed_x1e6 : 1000000u) / 1000000u;
+   /* in/out as 2.30, times how fast the emulation is paced */
+   g_step_base = (((uint64_t)g_in_rate << 30) / AUDIO_OUT_RATE) *
+                 speed_x1e6 / 1000000u;
    g_level_ema16 = g_target << 4;
    set_step(0);
    STORE(g_w, 0);
@@ -185,6 +244,11 @@ int audio_start(unsigned in_rate, unsigned speed_x1e6)
    g_primed = 0;
    g_fade = 0;
    g_last_l = g_last_r = 0;
+   g_tail_l = g_tail_r = 0;
+   g_trim_l = g_trim_r = 0;
+   g_trim_left = 0;
+   g_out_next = 0;
+   g_recovering = 0;
    g_flush_req = g_trim_req = 0;
    g_underruns = g_starved = g_dropped = g_trims = g_port_errors = 0;
 
@@ -194,9 +258,8 @@ int audio_start(unsigned in_rate, unsigned speed_x1e6)
    STORE(g_running, 1);
    if (plat_audio_thread_start(audio_step) != 0)
    {
-      STORE(g_running, 0);
-      plat_audio_close();
-      g_open = 0;
+      /* Failed native start can still leave a thread UID to retire. */
+      audio_stop();
       return -1;
    }
    return 0;
@@ -207,9 +270,10 @@ void audio_stop(void)
    if (!g_open)
       return;
    STORE(g_running, 0);
-   plat_audio_thread_stop();
-   plat_audio_close();
-   g_open = 0;
+   if (!plat_audio_thread_stop_checked())
+      return;
+   if (plat_audio_close_checked())
+      g_open = 0;
 }
 
 void audio_push(const int16_t *lr, size_t frames)

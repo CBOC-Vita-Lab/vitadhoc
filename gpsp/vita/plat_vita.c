@@ -329,15 +329,17 @@ unsigned plat_power_events(void)
 /* ---- audio out -------------------------------------------------------------- */
 
 static int g_port = -1;
+static int g_port_submitted;
 
 int plat_audio_open(unsigned rate, unsigned grain)
 {
    int vol[2] = { SCE_AUDIO_VOLUME_0DB, SCE_AUDIO_VOLUME_0DB };
+   if (g_port >= 0)
+      return -1;
    /* MAIN when the rate is its one rate, 48 kHz (which is what audio_vita.c
     * asks for): the system never mutes it.  The BGM port takes any standard
     * rate but is silenced while the owner's own music plays in the
     * background.  (vitaQuake opens MAIN at 48 kHz too.) */
-   g_port = -1;
    if (rate == 48000)
       g_port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, (int)grain,
                                    48000, SCE_AUDIO_OUT_MODE_STEREO);
@@ -346,6 +348,7 @@ int plat_audio_open(unsigned rate, unsigned grain)
                                    (int)rate, SCE_AUDIO_OUT_MODE_STEREO);
    if (g_port < 0)
       return g_port;
+   g_port_submitted = 0;
    sceAudioOutSetVolume(g_port, SCE_AUDIO_VOLUME_FLAG_L_CH |
                                 SCE_AUDIO_VOLUME_FLAG_R_CH, vol);
    return 0;
@@ -357,57 +360,93 @@ int plat_audio_write(const int16_t *stereo)
       return -1;
    /* Blocks until the port has taken the grain: this call is the audio
     * thread's clock. */
+   g_port_submitted = 1;         /* A failed write may still retain storage. */
    return sceAudioOutOutput(g_port, stereo);
+}
+
+int plat_audio_close_checked(void)
+{
+   if (g_port < 0)
+      return 1;
+   /* Only NULL output is documented to retire the last submitted window.
+    * Keep the port and its storage owned on either error. No drain is
+    * needed when thread creation failed before any output was submitted. */
+   if (g_port_submitted && sceAudioOutOutput(g_port, NULL) < 0)
+      return 0;
+   if (sceAudioOutReleasePort(g_port) < 0)
+      return 0;
+   g_port = -1;
+   g_port_submitted = 0;
+   return 1;
 }
 
 void plat_audio_close(void)
 {
-   if (g_port >= 0)
-      sceAudioOutReleasePort(g_port);
-   g_port = -1;
+   (void)plat_audio_close_checked();
 }
 
 static SceUID g_audio_thid = -1;
 static int (*g_audio_step)(void);
-static volatile int g_audio_stop;
+static uint32_t g_audio_stop;
+static int g_audio_started;
 
 static int audio_entry(SceSize args, void *argp)
 {
    (void)args; (void)argp;
-   while (!g_audio_stop && g_audio_step() == 0)
+   while (!__atomic_load_n(&g_audio_stop, __ATOMIC_ACQUIRE) &&
+          g_audio_step() == 0)
       ;
+   /* Drain on this consumer, never on the controlling thread: a blocked
+    * device keeps its UID and PCM storage owned after stop times out. */
+   while (!plat_audio_close_checked())
+      plat_sleep_us(100000);
    return 0;
 }
 
 int plat_audio_thread_start(int (*step)(void))
 {
+   if (g_audio_thid >= 0)
+      return -1;
    g_audio_step = step;
-   g_audio_stop = 0;
+   __atomic_store_n(&g_audio_stop, 0, __ATOMIC_RELEASE);
+   g_audio_started = 0;
    g_audio_thid = sceKernelCreateThread("gbadhoc_audio", audio_entry,
                                         PRIO_AUDIO, 0x10000, 0, 0, NULL);
    if (g_audio_thid < 0)
       return -1;
    if (sceKernelStartThread(g_audio_thid, 0, NULL) < 0)
    {
-      sceKernelDeleteThread(g_audio_thid);
-      g_audio_thid = -1;
+      __atomic_store_n(&g_audio_stop, 1, __ATOMIC_RELEASE);
+      if (sceKernelDeleteThread(g_audio_thid) >= 0)
+         g_audio_thid = -1;
       return -1;
    }
+   g_audio_started = 1;
    plat_thread_watch("audio", g_audio_thid);
    return 0;
 }
 
-void plat_audio_thread_stop(void)
+int plat_audio_thread_stop_checked(void)
 {
    SceUInt tmo = 2000000;
    if (g_audio_thid < 0)
-      return;
-   g_audio_stop = 1;
-   /* The thread is at most one grain (11 ms) from noticing; if the port
-    * call itself is stuck, leave it behind rather than hang the exit. */
-   if (sceKernelWaitThreadEnd(g_audio_thid, NULL, &tmo) >= 0)
-      sceKernelDeleteThread(g_audio_thid);
+      return 1;
+   __atomic_store_n(&g_audio_stop, 1, __ATOMIC_RELEASE);
+   if (g_audio_started)
+   {
+      if (sceKernelWaitThreadEnd(g_audio_thid, NULL, &tmo) < 0)
+         return 0;
+      g_audio_started = 0;
+   }
+   if (sceKernelDeleteThread(g_audio_thid) < 0)
+      return 0;
    g_audio_thid = -1;
+   return 1;
+}
+
+void plat_audio_thread_stop(void)
+{
+   (void)plat_audio_thread_stop_checked();
 }
 
 /* ---- where the threads run ------------------------------------------------ */

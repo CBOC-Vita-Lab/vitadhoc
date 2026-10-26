@@ -60,6 +60,9 @@ static INLINE fixed16_16 psg_noise_step(u32 dividing_ratio, u32 freq_shift)
  * and after loading a savestate. */
 void sound_frequency_changed(void);
 
+/* Refresh only the rate-derived PSG sequencer clock, not serialized state. */
+void sound_update_psg_tick_step(void);
+
 /* Drop pending ring contents and realign producers/consumer (rate change). */
 void sound_flush_ring(void);
 #ifdef REWIND

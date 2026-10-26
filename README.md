@@ -14,8 +14,8 @@ All of it native to the Vita: no PSP mode, no emulator inside an emulator.
 
 ![The VitAdhoc home screen](store/screenshots/home.png)
 
-**[Download VitAdhoc 1.0](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
-· [Install guide](INSTALL.md) · [Controls](CONTROLS.md) · [What's in 1.0](CHANGELOG.md)
+**[Download VitAdhoc 1.1](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
+· [Install guide](INSTALL.md) · [Controls](CONTROLS.md) · [What's in 1.1](CHANGELOG.md)
 
 You'll need your own games. No BIOS download is needed: an open one is built in.
 

@@ -106,12 +106,19 @@ void plat_present_hook(void);
  * closing and opening again (a port lost across a suspend). */
 int  plat_audio_open(unsigned rate, unsigned grain);
 int  plat_audio_write(const int16_t *stereo);
+/* Only a successful checked close retires all submitted PCM storage. It
+ * may block while draining; call it on the consumer while one exists. */
+int  plat_audio_close_checked(void);
 void plat_audio_close(void);
 /* Run step() over and over on the audio thread until it returns nonzero or
- * plat_audio_thread_stop() is called (which also waits for it to finish).
+ * plat_audio_thread_stop() is called. Start refuses an unretired consumer.
  * The host driver has no thread: it calls step() from its simulated clock,
  * one call per grain of simulated time, so a run is reproducible. */
 int  plat_audio_thread_start(int (*step)(void));
+/* 1: no consumer remains; 0: still owned, so do not close/reuse its storage.
+ * Native waits at most two seconds. Retry after a timeout or delete error.
+ * Lifecycle calls are serialized on the controlling/emulation thread. */
+int  plat_audio_thread_stop_checked(void);
 void plat_audio_thread_stop(void);
 
 /* vita.ini vm_probe (jit_vita.h): asks the console whether a second thread

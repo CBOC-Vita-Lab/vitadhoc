@@ -7,7 +7,9 @@ game, its region and what you did.
 ## Still Being Confirmed On A Vita
 
 Version 1.0 passed its full test suite and plays at full speed on a Vita.
-These still need more time on a real console:
+Version 1.2's changes passed the app's automated tests on a computer; its
+graphics fixes and speed-ups have not been timed on a Vita yet. These still
+need more time on a real console:
 
 - **Motion games:** whether turning and tilting go the right way and feel
   strong enough. If one feels backwards, use Settings > This game >
@@ -43,6 +45,15 @@ These still need more time on a real console:
   `ux0:ROMS/GBA/`) shows up twice, and each copy has its own save. If a save
   seems missing, check for the other copy of the game.
 - Each console's list shows up to 2,048 games.
+- **Zipped games:** the first game in the zip with a `.gba`, `.gb` or `.gbc`
+  name is the one played. Patches, and two-player play with a different game
+  for each player, need the game unzipped. Encrypted and ZIP64 archives are
+  not read.
+- **Starting from a launcher** works when VitAdhoc is closed; close it first.
+- **Sharing states between two Vitas** covers slots 1 to 5 (so a Vita on
+  1.1 can take them too).
+- **Names in other alphabets** (Japanese, for example) show as `?` in the
+  list: the menus' font has Latin letters only. The games still play.
 
 ## Install
 

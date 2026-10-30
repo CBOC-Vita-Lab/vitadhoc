@@ -14,67 +14,36 @@ All of it native to the Vita: no PSP mode, no emulator inside an emulator.
 
 ![The VitAdhoc home screen](store/screenshots/home.png)
 
-**[Download VitAdhoc 1.1](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
-· [Install guide](INSTALL.md) · [Controls](CONTROLS.md) · [What's in 1.1](CHANGELOG.md)
+**[Download VitAdhoc 1.2](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
+· [Install guide](INSTALL.md) · [Controls](CONTROLS.md) · [What's in 1.2](CHANGELOG.md)
 
 You'll need your own games. No BIOS download is needed: an open one is built in.
 
-## Highlights
+**Why VitAdhoc?** It keeps the heart of the PSP emulator [GBAdhoc](https://github.com/ShoshinFauteux/GBAdhoc) (its
+emulator, link play and save formats) and rebuilds everything else as a real
+Vita app: the Vita's own 960×544 screen instead of the PSP's 480×272 blown up,
+all of the Vita's cores, touch and the motion sensor. Already a GBAdhoc
+player? Your folder, games, saves and states carry straight over.
 
-- **A home screen like a real console's.** Big tiles, box art and title
-  screens that download by themselves, a few lines about every game, and the
-  last ten seconds you played moving behind it.
-- **Continue where you left off.** Leave a game, even by closing it from
-  LiveArea, and one press puts you back in that exact moment.
-- **Gorgeous on the Vita's screen.** Pixel-perfect sharp, or xBRZ smoothing
-  that redraws the art with clean curves, at a steady 60 frames a second.
-- **Wide view.** Black bars become more of the game: in Pokémon Emerald and its
-  siblings, the world really continues to the screen's edges.
-- **Play together.** Trade and battle with a friend over Wi-Fi, the internet
-  or ad hoc, or share one Vita side by side.
-- **RetroAchievements**, with Hardcore mode for the purists.
-- **Tilt, turn and sunlight games** like WarioWare: Twisted! and Boktai, using
-  the Vita's own motion sensor.
-- **ROM hacks and translations** with a single patch file next to the game.
+## New In Version 1.2
 
-## Why VitAdhoc?
+**Bring your saves, your folders and your zips.**
 
-[GBAdhoc](https://github.com/ShoshinFauteux/GBAdhoc) is a great PSP emulator
-whose big idea is link play: trade and battle in Pokémon over Wi-Fi, just like
-with a link cable. On a Vita, though, a PSP app runs inside the Vita's PSP
-mode: a 480×272 picture blown up to fit, the power of a PSP, and no touch
-screen or motion sensor.
+- **Your old saves come with you.** Coming from RetroArch? Start the game and
+  your save is picked up by itself. From another emulator, drop the save in
+  the `import` folder ([how](INSTALL.md#bringing-saves-from-another-emulator)).
+  Nothing is moved, and a save VitAdhoc already has is never replaced.
+- **Play your zipped games.** `.zip` files show up under the right console and
+  play straight away.
+- **Pick your game folders in Settings.** Type a folder to add it. No more
+  editing files.
+- **Start games from RetroFlow** and other launchers, straight into the game.
+- **Ten save-state slots**, up from five.
+- **Make it look like the real thing.** Put a bezel or shell picture over the
+  game, and set the LCD grid from 1 to 10. Both are in Settings > Display.
+- **Fewer hiccups and a lighter rewind** (see Performance below).
 
-VitAdhoc keeps GBAdhoc's heart (its emulator, its link play and its save
-formats) and rebuilds everything around it as a real Vita app:
-
-| | A PSP app on a Vita (PSP mode) | VitAdhoc |
-| --- | --- | --- |
-| **Screen** | The PSP's 480×272, scaled up | The Vita's own 960×544: crisp text, art and pixels |
-| **Power** | One PSP processor | All of the Vita's cores: smoothing and drawing run beside the game |
-| **Touch** | Not available | Tap, drag and flick through the home screen and menus |
-| **Motion sensor** | Not available | Tilt and turn the Vita in motion games |
-
-And then it goes much further: everything below. Already a GBAdhoc player?
-Your folder, games, saves and states carry straight over.
-
-## Performance
-
-Measured on a real PS Vita.
-
-| | |
-| --- | --- |
-| **Frame rate** | A steady 60 frames a second (the display's 59.94). Pokémon Ruby held 59.9 with xBRZ smoothing and the wide view both on. |
-| **Headroom** | With xBRZ and the wide view on, a frame needs about 5 to 9 ms of its 16.7 ms: room to spare. |
-| **Smoothing** | xBRZ and Scale3x run on the Vita's spare cores and the game's picture is drawn on a second core, so the game itself never waits. |
-| **Input lag** | Each frame starts once the last one is on screen: up to a whole frame (17 ms) less between a press and the picture. |
-| **Sound** | If the Vita falls behind for a moment, the game catches up without a gap in the sound. |
-| **Saves** | Game Boy saves reach the memory card within two seconds; five state slots per game, plus 60 seconds of rewind. |
-| **Overclock** | Optional 500 MHz profile for PSVshell: about a tenth less time per frame. |
-
-[Known Issues](KNOWN-ISSUES.md) lists what is still being confirmed on a Vita.
-
-## Everything It Does
+## Features
 
 ### A library that feels like a console's own
 - **Home screen.** Your games as big tiles, with the game's own picture behind
@@ -85,71 +54,96 @@ Measured on a real PS Vita.
 - **A few lines about every game.** About 1,300 GBA, GB and GBC games come with
   the opening of their Wikipedia article, built in, no network needed.
 - **Previews of your own play.** Rest on a game and the last ten seconds you
-  played start moving behind it, like a streaming service's trailer.
-- **Continue, Recent and play time.** One press back into the exact moment you
-  left, a Recent tab, and sorting by name, last played or most played.
+  played start moving behind it.
+- **Continue where you left off.** Leave a game, even by closing it from
+  LiveArea, and one press puts you back in that exact moment. Plus a Recent
+  tab and sorting by name, last played or most played.
 - **Starred and Find.** Star favourites; Find matches words in any order and
   ignores accents and punctuation.
 - **Uses the games you already have.** `ux0:ROMS/` and RetroFlow's folders are
-  found without moving anything.
+  found without moving anything; add your own in Settings > Game folders.
 
 ### A picture made for the Vita's screen
-- **Original:** crisp, even pixels at any size, including the full height.
-- **Smooth:** xBRZ and Scale3x redraw the pixel art with clean curves. They run
-  on the Vita's spare cores and only redraw what changed, so the game never
-  waits for them.
-- **Wide view:** instead of black bars, more of the game. Made for Pokémon
-  Emerald and its siblings (Ruby, Sapphire, FireRed, LeafGreen): the map really
-  continues to the screen's edges, and battles span the full width. Options
-  widen 3D racing tracks too.
+- **Pixel-sharp or smooth.** Crisp, even pixels at any size, or xBRZ and
+  Scale3x smoothing that redraws the pixel art with clean curves.
+- **Wide view:** instead of black bars, more of the game. In Pokémon Emerald
+  and its siblings (Ruby, Sapphire, FireRed, LeafGreen) the map really
+  continues to the screen's edges.
 - **Real handheld colours** (the muted look the art was drawn for), motion
-  blend for games that flicker, LCD grid and scanline looks, five screen sizes,
-  and **Super Game Boy borders**.
+  blend for games that flicker, LCD grid and scanline looks, five screen
+  sizes, **Super Game Boy borders** and **screen overlays**.
 - **A look for every game**, kept apart from the rest of your library.
 
 ![Left: the console's picture. Right: the wide view filling the screen](store/screenshots/wide-view.png)
 
 ![Left: Original pixels. Right: xBRZ smoothing, with rounded corners and dots](store/screenshots/smoothing.png)
 
-### Smooth, fast and responsive
-- **The full 60 frames a second**, with the GBA's picture drawn on a second core
-  while the game runs on the first.
-- **Keep full speed:** if the Vita falls behind for a moment, the game catches
-  up without a gap in the sound.
-- **Low lag:** each frame starts once the last one is on screen, up to a frame
-  less between a press and the picture.
-- **Rewind** the last 60 seconds, **fast forward**, five **save-state slots**
-  with pictures, **turbo buttons** and **screenshots**.
-- An optional **500 MHz** profile for the PSVshell plugin.
-
 ### Play together
-- **Link Cable and Wireless Adapter games** between two Vitas: trade and battle
-  in Pokémon as the games intended.
-- **Three ways to connect:** the same Wi-Fi, over the internet (the port opens itself
-  on routers with UPnP), or ad hoc with no router at all.
-- **Game Boy and Game Boy Color links**, even between two different cartridges
-  (Red with Blue): each Vita lends the other its cartridge for the session.
-- **Two players on one Vita**, side by side, with a second controller on a PS TV.
+- **Trade and battle with a friend** in Link Cable and Wireless Adapter games,
+  between two Vitas: on the same Wi-Fi, over the internet, or ad hoc with no
+  router at all.
+- **Game Boy and Game Boy Color links**, even between two different
+  cartridges (Red with Blue).
+- **Two players on one Vita**, side by side.
 - **Share saves and states** between two Vitas, and receive real **Mystery
   Gift** cards from a phone.
 
 ### More to play
+- **Rewind** the last 60 seconds, **fast forward**, ten **save-state slots**
+  with pictures, **turbo buttons** and **screenshots**.
 - **RetroAchievements**, with Hardcore mode.
-- **Tilt, turn and sunlight cartridges:** WarioWare: Twisted!, Yoshi
-  Topsy-Turvy, Koro Koro Puzzle, Kirby Tilt 'n' Tumble and Boktai 1–3.
-- **ROM hacks and translations:** IPS, BPS and UPS patches, applied as the game
-  starts; your original file is never changed.
-- **Cheats** for about 2,190 games built in, plus your own GameShark, Action
-  Replay, CodeBreaker and Game Genie codes.
-- **No BIOS hunt:** an open GBA BIOS is built in (your own dump works too).
+- **Tilt, turn and sunlight games:** WarioWare: Twisted!, Yoshi Topsy-Turvy,
+  Koro Koro Puzzle, Kirby Tilt 'n' Tumble and Boktai 1–3, using the Vita's own
+  motion sensor.
+- **ROM hacks and translations:** drop an IPS, BPS or UPS patch next to the
+  game. Your original file is never changed.
+- **Cheats** for about 2,190 games built in, plus your own codes.
+- **No BIOS hunt:** an open GBA BIOS is built in (your own works too).
 
-### A sharper emulator
-VitAdhoc runs gpSP, GBAdhoc's emulator, with the latest upstream fixes, and
-adds its own, found on real games and real Vitas: games that froze on a white
-screen at start now boot, Game Boy saves reach the memory card within two
-seconds, a full card is reported instead of silently losing a save, and many
-more from independent code reviews. Details are in the
-[technical notes](docs/TECHNICAL.md).
+## Performance
+
+**What you can expect:** the full 60 frames a second, like 1.0. Measured on a
+real PS Vita:
+
+| | |
+| --- | --- |
+| **Frame rate** | A steady 60 frames a second. Pokémon Ruby held 59.9 with xBRZ smoothing and the wide view both on. |
+| **Headroom** | With xBRZ and the wide view on, a frame needs about 5 to 9 ms of its 16.7 ms. |
+| **Input lag** | Each frame starts once the last one is on screen: up to a whole frame (17 ms) less between a press and the picture. |
+| **Sound** | If the Vita falls behind for a moment, the game catches up without a gap in the sound. |
+| **Overclock** | Optional 500 MHz profile for the PSVshell plugin: about a tenth less time per frame. |
+
+**What's better than 1.0:**
+
+| | Compared with 1.0 |
+| --- | --- |
+| **Rewind** | About half the work to record each step, and going back no longer makes the emulator rebuild the game's code. |
+| **Smoothing** | xBRZ and Scale3x find what changed with fewer memory reads. |
+| **Menus and covers** | Removing a picture no longer makes the whole app wait for the graphics chip. |
+| **Sound** | No more gaps or clicks when a frame runs long (since 1.1). |
+
+These speed-ups were checked in the app's computer test build and haven't
+been timed on a Vita yet. On our first play-test on a Vita, with every feature
+on, it felt noticeably smoother.
+
+## Bug Fixes Since 1.0
+
+- **A graphics error no longer freezes the picture.** It used to stay frozen
+  for the rest of the session; now the app recovers and carries on.
+- **Cleaner smoothing.** xBRZ and Scale3x no longer draw over a picture that
+  is still on screen, and running short of graphics memory no longer shows a
+  black picture.
+- **Cleaner sound** (1.1): no gaps or clicks, Game Boy-style sounds on the
+  correct side, no pop when you open, pause or resume a game, and no leftover
+  sound after loading a state.
+- **Names with accents read properly:** "Pokémon" shows as "Pokemon", not
+  "Pok??mon".
+- **Your settings are safe:** if they can't be saved (say, a full memory
+  card), the previous ones are kept.
+
+[Known Issues](KNOWN-ISSUES.md) lists what is still being confirmed on a Vita,
+and the [technical notes](docs/TECHNICAL.md) have the full engineering list
+for every version.
 
 ## Screenshots
 
@@ -159,7 +153,7 @@ more from independent code reviews. Details are in the
 | **Recent** | **Motion games** |
 | ![The Recent tab with play time](store/screenshots/recent.png) | ![Tilt settings for a motion game](store/screenshots/motion.png) |
 | **The in-game menu** | **Save states** |
-| ![The menu sheet over a dimmed game](store/screenshots/in-game-menu.png) | ![Five save-state slots with pictures](store/screenshots/save-states.png) |
+| ![The menu sheet over a dimmed game](store/screenshots/in-game-menu.png) | ![Save-state slots with pictures](store/screenshots/save-states.png) |
 | **Two players on one Vita** | **Display settings** |
 | ![Two linked games side by side](store/screenshots/two-players.png) | ![Image quality: Original](store/screenshots/display-settings.png) |
 | **Starting a game** | |

@@ -92,6 +92,7 @@
 #include "fe_sensor.h"
 #include "play_log.h"
 #include "rom_patch.h"
+#include "zip_rom.h"
 #include "audio_vita.h"
 #include "app_vita.h"
 #include "mgift_vita.h"
@@ -245,12 +246,18 @@ static struct
    int      gba_link_headless_audio;
    int      art_titles;       /* art_titles = 0: box art only, no title
                                  screens (artfetch_titles)              */
+   int      overlays;         /* overlays = 0: no picture from overlays/
+                               * over the game (vid_set_overlay)        */
+   int      grid;             /* grid_strength = 1..10: the LCD grid and
+                               * scanline looks' darkness (5 = default) */
    /* Last: the initializer below is positional, and "" is its default. */
+   char     shot_dir[200];    /* screenshots = ux0:pictures/VitAdhoc: where
+                                 * screenshots go (empty: screenshots/) */
    char     ra_host[128];     /* ra_host = http://host[:port]: another
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, "" };
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, "", "" };
 
 /* vita.ini core_phase: the core's per-phase split of a frame (main.h,
  * "Phase 5h").  Declared here, not through the core's main.h (the whole
@@ -536,6 +543,13 @@ static int has_ext(const char *name, const char *ext)
  * says; one picked in the list is the console the player was browsing. */
 static fe_console_t console_for(const char *path)
 {
+   if (has_ext(path, ".zip"))
+   {
+      zip_rom_entry e;
+      if (zip_rom_peek(path, &e) >= -2 && e.console >= 0)
+         return (fe_console_t)e.console;
+      return FE_CONSOLE_GBA;
+   }
    if (has_ext(path, ".gbc")) return FE_CONSOLE_GBC;
    if (has_ext(path, ".gb"))  return FE_CONSOLE_GB;
    return FE_CONSOLE_GBA;
@@ -1191,7 +1205,8 @@ done:
 static int roots_init(void)
 {
    static const char *const sub[] = { "cheats", "screenshots", "scenes",
-                                      "clips", "games" };
+                                      "clips", "games", "import",
+                                      "overlays" };
    char path[APP_PATH_CAP];
    size_t i;
 
@@ -1215,7 +1230,6 @@ static int roots_init(void)
 }
 
 /* vita.ini as read at boot (main), for the readers that run after it. */
-static fe_ini_doc *g_vita_ini;
 
 static void read_switches(void)
 {
@@ -1258,6 +1272,21 @@ static void read_switches(void)
    if (!fe_ini_get(ini, "art_url", g_sw.art_url, sizeof(g_sw.art_url)))
       g_sw.art_url[0] = '\0';
    g_sw.art_titles      = (int)fe_ini_get_int(ini, "art_titles", 1) ? 1 : 0;
+   g_sw.overlays = (int)fe_ini_get_int(ini, "overlays", 1) ? 1 : 0;
+   g_sw.grid = (int)fe_ini_get_int(ini, "grid_strength", 5);
+   if (g_sw.grid < 1 || g_sw.grid > 10)
+      g_sw.grid = 5;
+   vid_set_lcd_strength(g_sw.grid * 20);
+   if (!fe_ini_get(ini, "screenshots", g_sw.shot_dir, sizeof(g_sw.shot_dir)))
+      g_sw.shot_dir[0] = '\0';
+   {
+      /* a folder of the player's choosing; trailing slashes and blanks go */
+      size_t n = strlen(g_sw.shot_dir);
+      while (n && (g_sw.shot_dir[n - 1] == '/' || g_sw.shot_dir[n - 1] == ' '))
+         g_sw.shot_dir[--n] = '\0';
+      if (n && !strchr(g_sw.shot_dir, ':') && g_sw.shot_dir[0] != '/')
+         g_sw.shot_dir[0] = '\0';      /* needs its device: ux0:... */
+   }
    if (!fe_ini_get(ini, "ra_host", g_sw.ra_host, sizeof(g_sw.ra_host)))
       g_sw.ra_host[0] = '\0';
    g_sw.wide            = (int)fe_ini_get_int(ini, "wide", -1);
@@ -1306,6 +1335,73 @@ int ui_host_extra_roots(void)
 const char *ui_host_extra_root(int i)
 {
    return i >= 0 && i < g_extra_n ? g_extra_roots[i] : "";
+}
+
+static int root_norm(char *out, size_t cap, const char *in);
+static fe_ini_doc *g_vita_ini;
+static void extra_root_add(const char *spec, int log_skips);
+
+/* Settings > Game folders (ui_psp.c): a folder typed on the keyboard is
+ * added, or removed when it is already listed; the list is then the whole
+ * of vita.ini's extra_roms.  1 = added, 2 = removed, -1 = not a folder on
+ * the card, -2 = the list is full, -3 = it could not be written down. */
+int ui_host_extra_root_toggle(const char *folder)
+{
+   char norm[APP_PATH_CAP], ini[APP_PATH_CAP];
+   char all[UI_EXTRA_ROOTS_MAX * (APP_PATH_CAP + 1)];
+   static char saved[UI_EXTRA_ROOTS_MAX][APP_PATH_CAP];
+   size_t used = 0;
+   int i, rc = 0, n0 = g_extra_n;
+
+   if (!folder || !root_norm(norm, sizeof(norm), folder))
+      return -1;
+   memcpy(saved, g_extra_roots, sizeof(saved));
+   for (i = 0; i < g_extra_n; i++)
+      if (!strcasecmp(norm, g_extra_roots[i]))
+      {
+         memmove(g_extra_roots[i], g_extra_roots[i + 1],
+                 (size_t)(g_extra_n - i - 1) * sizeof(g_extra_roots[0]));
+         g_extra_n--;
+         rc = 2;
+         break;
+      }
+   if (!rc)
+   {
+      if (g_extra_n >= UI_EXTRA_ROOTS_MAX)
+         return -2;
+      extra_root_add(norm, 1);
+      if (g_extra_n == n0)
+         return -1;
+      rc = 1;
+   }
+   all[0] = '\0';
+   for (i = 0; i < g_extra_n; i++)
+      used += (size_t)snprintf(all + used, sizeof(all) - used, "%s%s",
+                               i ? ";" : "", g_extra_roots[i]);
+   if (!g_extra_n)
+      snprintf(all, sizeof(all), "0");
+   /* one line of an ini file is read back whole up to about 500 bytes */
+   if (used > 480)
+      rc = -2;
+   else if (path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root) != 0)
+      rc = -3;
+   else if (g_vita_ini)
+   {
+      if (fe_ini_doc_set(g_vita_ini, "extra_roms", all) != 0 ||
+          fe_ini_doc_save(g_vita_ini, ini) != 0)
+         rc = -3;
+   }
+   else if (fe_ini_set(ini, "extra_roms", all) != 0)
+      rc = -3;
+   if (rc < 0)
+   {
+      /* not written down: the list stays as it was */
+      memcpy(g_extra_roots, saved, sizeof(saved));
+      g_extra_n = n0;
+   }
+   fe_evt("rom_roots_edit folder=\"%s\" rc=%d extra=%d list=\"%s\"", norm, rc,
+          g_extra_n, all);
+   return rc;
 }
 
 /* One spelling of a folder: blanks around it dropped, a backslash as '/', no
@@ -1377,7 +1473,11 @@ static void rom_roots_init(void)
 
    g_extra_n = g_extra_skipped = 0;
    path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root);
-   if (fe_ini_get(ini, "extra_roms", list, sizeof(list)))
+   /* The key belongs in vita.ini, but players look for it in config.ini
+    * (GitHub issue #5): either is read, vita.ini first. */
+   if (fe_ini_get(ini, "extra_roms", list, sizeof(list)) ||
+       (fe_ini_get(g_app_config, "extra_roms", list, sizeof(list)) &&
+        (source = "config", 1)))
    {
       /* the key is the whole list; 0 or nothing is no list */
       char *v = list;
@@ -1391,7 +1491,8 @@ static void rom_roots_init(void)
          source = "off";
       else
       {
-         source = "ini";
+         if (strcmp(source, "config"))
+            source = "ini";
          for (tok = v; tok; tok = next)
          {
             next = strchr(tok, ';');
@@ -1404,6 +1505,18 @@ static void rom_roots_init(void)
    else
       for (i = 0; i < sizeof(k_builtin_roots) / sizeof(k_builtin_roots[0]); i++)
          extra_root_add(k_builtin_roots[i], 0);
+   /* One folder per console, the way other emulators ask for it: added to
+    * whichever list the lines above made (any folder holds any console's
+    * games; the extension decides) -- unless vita.ini's extra_roms says what
+    * the list is (Settings > Game folders writes it, with these in it). */
+   if (strcmp(source, "ini") && strcmp(source, "off"))
+   {
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms" };
+      for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
+         if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
+             fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
+            extra_root_add(list, 1);
+   }
 
    all[0] = '\0';
    for (i = 0; i < (size_t)g_extra_n; i++)
@@ -1411,6 +1524,58 @@ static void rom_roots_init(void)
                                i ? ";" : "", g_extra_roots[i]);
    fe_evt("rom_roots primary=\"%s\" extra=%d source=%s skipped=%d list=\"%s\"",
           g_app_rom_dir, g_extra_n, source, g_extra_skipped, all);
+}
+
+/* A LAUNCHER'S GAME (GitHub issue #3): a front end such as RetroFlow starts
+ * VitAdhoc with psgm:play?titleid=GBAD00001&param=<game>.  The text after
+ * "param=" is the game's path exactly as written, never URL-decoded (a name
+ * with '%', '&' or '+' in it stays itself); a name without a device is one
+ * under roms/.  The console comes from the extension.  Read once, at start.
+ * 1 = a game was asked for but cannot be played (g_launch_note says why). */
+static char g_launch_note[200];
+static int  g_launch_tried;
+
+static int rom_from_launch(char *out, size_t cap)
+{
+   char raw[APP_PATH_CAP];
+   long size = 0;
+
+   g_launch_note[0] = 0;
+   switch (plat_launch_param(raw, sizeof(raw)))
+   {
+   case 0:
+      break;
+   case -2:
+      fe_evt("launch_param refused reason=too_long");
+      snprintf(g_launch_note, sizeof(g_launch_note), "The path is too long.");
+      return 1;
+   default:
+      return -1;
+   }
+   fe_evt("launch_param raw=\"%s\"", raw);
+   if ((strchr(raw, ':') || raw[0] == '/')
+          ? path_fmt(out, cap, "%s", raw) != 0
+          : path_fmt(out, cap, "%s/%s", g_app_rom_dir, raw) != 0)
+   {
+      snprintf(g_launch_note, sizeof(g_launch_note), "The path is too long.");
+      return 1;
+   }
+   if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
+       !has_ext(out, ".zip"))
+   {
+      fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
+      snprintf(g_launch_note, sizeof(g_launch_note),
+               "%.150s is not a .gba, .gb, .gbc or .zip file.", base_name(out));
+      return 1;
+   }
+   if (file_size(out, &size) != 0 || size <= 0)
+   {
+      fe_evt("launch_param refused reason=missing path=\"%s\"", out);
+      snprintf(g_launch_note, sizeof(g_launch_note), "%.180s was not found.",
+               out);
+      return 1;
+   }
+   return 0;
 }
 
 /* autoboot.txt: the first game of this run, started without the list. */
@@ -2399,14 +2564,32 @@ static void screenshot_write(void)
       *dot = '\0';
    memset(&tm, 0, sizeof(tm));
    gmtime_r(&now, &tm);            /* plat_wallclock is local time already */
+   if (g_sw.shot_dir[0])
+   {
+      /* vita.ini screenshots = <folder>: made if it is not there yet (one
+       * level); a folder that cannot be used falls back to screenshots/ */
+      struct stat st;
+      if (stat(g_sw.shot_dir, &st) != 0)
+         mkdir(g_sw.shot_dir, 0777);
+      if (stat(g_sw.shot_dir, &st) != 0 || !S_ISDIR(st.st_mode))
+      {
+         fe_evt("screenshot_dir unusable path=%s", g_sw.shot_dir);
+         g_sw.shot_dir[0] = '\0';
+      }
+   }
    for (n = 1; n < 100; n++)
    {
       char tail[16] = "";
+      char dir[APP_PATH_CAP + 16];
       if (n > 1)
          snprintf(tail, sizeof(tail), "-%u", n);
+      if (g_sw.shot_dir[0])
+         snprintf(dir, sizeof(dir), "%s", g_sw.shot_dir);
+      else
+         snprintf(dir, sizeof(dir), "%s/screenshots", g_app_root);
       if (path_fmt(path, sizeof(path),
-                   "%s/screenshots/%s-%04d%02d%02d-%02d%02d%02d%s.png",
-                   g_app_root, stem, tm.tm_year + 1900, tm.tm_mon + 1,
+                   "%s/%s-%04d%02d%02d-%02d%02d%02d%s.png",
+                   dir, stem, tm.tm_year + 1900, tm.tm_mon + 1,
                    tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, tail) != 0)
          break;
       if (file_size(path, NULL) != 0)
@@ -3034,7 +3217,8 @@ static void game_identity(void)
 {
    const char *base = base_name(g_game.rom_path), *t;
    size_t n = strlen(g_app_rom_dir);
-   FILE *f = fopen(g_game.rom_path, "rb");
+   /* the bytes the core runs: the unpacked file of a zipped game */
+   FILE *f = fopen(g_game.zipped ? g_game.boot_path : g_game.rom_path, "rb");
    char *dot;
 
    g_game.code[0] = g_game.gb_title[0] = '\0';
@@ -3102,11 +3286,402 @@ static void game_state_reset(void)
 }
 
 /* Boot `rom_path` as `console`.  0 = the game is running. */
+/* ---- a save made somewhere else (SAVE IMPORT) --------------------------------
+ *
+ * A game that has no battery save of its own here yet takes one it finds in
+ * a place players' saves usually are, copied (never moved) under this app's
+ * own name for it, before the core loads it:
+ *
+ *   import/            in the data root: any name the save may have
+ *                      (Game.sav, Game.srm, Game.gb.sav...).  A file taken
+ *                      from here is renamed *.imported, so deleting the save
+ *                      later does not bring the old one back.
+ *   beside the game    Game.srm (RetroArch); for a Game Boy or Color game
+ *                      also Game.sav, the name most emulators give it -- but
+ *                      not when a Game.gba beside it owns that name.
+ *   RetroArch          ux0:data/retroarch/savefiles/Game.srm, or in the
+ *                      folder of one of the GB/GBA cores.
+ *
+ * Nothing happens when the game already has a save, or an unfinished
+ * replacement of one (.bak, .tmp, .old: fe_host recovers those itself).
+ * The cores take any layout (fe_host.c sram_load / gb_sram_load): a file of
+ * the wrong size keeps what it can and is rewritten in the standard layout
+ * at the first save. */
+#define SAVE_IMPORT_MAX (256L * 1024L)
+static char g_import_note[160];
+
+static int save_copy(const char *from, const char *to, long size)
+{
+   char tmp[APP_PATH_CAP + 8];
+   unsigned char *buf;
+   size_t got;
+   FILE *f;
+   int ok;
+
+   if (size <= 0 || size > SAVE_IMPORT_MAX ||
+       path_fmt(tmp, sizeof(tmp), "%s.import", to) != 0)
+      return -1;
+   buf = (unsigned char *)malloc((size_t)size);
+   if (!buf)
+      return -1;
+   f = fopen(from, "rb");
+   got = f ? fread(buf, 1, (size_t)size, f) : 0;
+   if (f)
+      fclose(f);
+   ok = got == (size_t)size;
+   if (ok)
+   {
+      f = fopen(tmp, "wb");
+      ok = f && fwrite(buf, 1, (size_t)size, f) == (size_t)size;
+      if (f && fclose(f) != 0)
+         ok = 0;
+      if (ok && rename(tmp, to) != 0)
+         ok = 0;
+      if (!ok)
+         remove(tmp);
+   }
+   free(buf);
+   return ok ? 0 : -1;
+}
+
+static void save_import(const char *rom_path, const char *save_path,
+                        fe_console_t console)
+{
+   static const char *const ra_dirs[] = {
+      "", "/mGBA", "/gpSP", "/Gambatte", "/SameBoy", "/TGB Dual",
+      "/Gearboy", "/VBA-M", "/VBA Next"
+   };
+   char stem[APP_PATH_CAP], cand[APP_PATH_CAP], probe[APP_PATH_CAP + 8];
+   const char *bn = base_name(rom_path), *dot;
+   const char *from = NULL;
+   long size = 0;
+   int i, from_import = 0, gb = console != FE_CONSOLE_GBA;
+
+   g_import_note[0] = 0;
+   if (file_size(save_path, NULL) == 0)
+      return;
+   for (i = 0; i < 3; i++)
+   {
+      static const char *const side[3] = { ".bak", ".tmp", ".old" };
+      if (path_fmt(probe, sizeof(probe), "%s%s", save_path, side[i]) == 0 &&
+          file_size(probe, NULL) == 0)
+         return;
+   }
+   snprintf(stem, sizeof(stem), "%s", bn);
+   dot = strrchr(stem, '.');
+   if (dot)
+      stem[dot - stem] = 0;
+   if (!stem[0])
+      return;
+
+#define TRY(where, ...)                                                       \
+   if (!from && path_fmt(cand, sizeof(cand), __VA_ARGS__) == 0 &&             \
+       strcmp(cand, save_path) && file_size(cand, &size) == 0 && size > 0 &&  \
+       size <= SAVE_IMPORT_MAX)                                               \
+      from = where;
+   /* 1. the import folder: the whole name first, it is the most exact */
+   TRY("import", "%s/import/%s.sav", g_app_root, bn)
+   TRY("import", "%s/import/%s.sav", g_app_root, stem)
+   TRY("import", "%s/import/%s.srm", g_app_root, stem)
+   /* 2. beside the game */
+   if (!from)
+   {
+      char dir[APP_PATH_CAP];
+      snprintf(dir, sizeof(dir), "%.*s", (int)(bn - rom_path), rom_path);
+      TRY("this folder", "%s%s.srm", dir, stem)
+      if (!from && gb)
+      {
+         /* Game.sav is Game.gba's (or a zipped GBA game's) when that
+          * cartridge is beside it */
+         char probe2[APP_PATH_CAP + 8];
+         if ((path_fmt(probe, sizeof(probe), "%s%s.gba", dir, stem) != 0 ||
+              file_size(probe, NULL) != 0) &&
+             (path_fmt(probe2, sizeof(probe2), "%s%s.zip", dir, stem) != 0 ||
+              file_size(probe2, NULL) != 0))
+         {
+            TRY("this folder", "%s%s.sav", dir, stem)
+         }
+      }
+   }
+   /* 3. RetroArch's save folder (the Vita's only; nothing on the twin) */
+#ifdef __vita__
+   for (i = 0; !from && i < (int)(sizeof(ra_dirs) / sizeof(ra_dirs[0])); i++)
+      TRY("RetroArch", "ux0:data/retroarch/savefiles%s/%s.srm", ra_dirs[i], stem)
+#else
+   (void)ra_dirs;
+#endif
+#undef TRY
+   if (!from)
+      return;
+   from_import = !strcmp(from, "import");
+   if (save_copy(cand, save_path, size) != 0)
+   {
+      fe_evt("save_import failed from=\"%s\" to=\"%s\" size=%ld", cand,
+             save_path, size);
+      snprintf(g_import_note, sizeof(g_import_note),
+               "A save was found but could not be copied");
+      return;
+   }
+   fe_evt("save_import from=\"%s\" to=\"%s\" size=%ld where=%s", cand,
+          save_path, size, from);
+   if (from_import && path_fmt(probe, sizeof(probe), "%s.imported", cand) == 0)
+   {
+      remove(probe);
+      if (rename(cand, probe) != 0)
+         fe_evt("save_import keep_source rename_failed path=\"%s\"", cand);
+   }
+   snprintf(g_import_note, sizeof(g_import_note), "Save imported from %s",
+            from);
+}
+
+/* ---- display and screenshot settings kept in vita.ini (Settings rows) -----
+ * Players asked for these; 1.2 puts them in Settings (ui_host_hooks.h):
+ * Grid strength, Screen overlay and Screenshot folder.  Written through the
+ * vita.ini document that is read at boot. */
+static int vita_ini_put(const char *key, const char *value)
+{
+   char ini[APP_PATH_CAP];
+   if (path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root) != 0)
+      return -1;
+   if (g_vita_ini)
+      return fe_ini_doc_set(g_vita_ini, key, value) == 0 &&
+             fe_ini_doc_save(g_vita_ini, ini) == 0 ? 0 : -1;
+   return fe_ini_set(ini, key, value) == 0 ? 0 : -1;
+}
+
+/* The overlay for a game: overlays/<stem>.png, else overlays/<console>.png
+ * (none when Screen overlay is off). */
+static char g_overlay_name[96];
+static char g_overlay_rom[APP_PATH_CAP];
+static fe_console_t g_overlay_console;
+
+static void overlay_apply(const char *rom_path, fe_console_t console)
+{
+   char op[APP_PATH_CAP], stem[APP_PATH_CAP];
+   const char *tag = console == FE_CONSOLE_GBC ? "gbc" :
+                     console == FE_CONSOLE_GB ? "gb" : "gba";
+   char *dot;
+
+   if (rom_path != g_overlay_rom)
+      snprintf(g_overlay_rom, sizeof(g_overlay_rom), "%s", rom_path ? rom_path : "");
+   g_overlay_console = console;
+   g_overlay_name[0] = op[0] = '\0';
+   snprintf(stem, sizeof(stem), "%s", base_name(g_overlay_rom));
+   dot = strrchr(stem, '.');
+   if (dot && dot != stem)
+      *dot = '\0';
+   if (g_sw.overlays && g_overlay_rom[0])
+   {
+      if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, stem) == 0 &&
+          file_size(op, NULL) == 0)
+         snprintf(g_overlay_name, sizeof(g_overlay_name), "%.80s.png", stem);
+      else if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag) == 0 &&
+               file_size(op, NULL) == 0)
+         snprintf(g_overlay_name, sizeof(g_overlay_name), "%s.png", tag);
+      else
+         op[0] = '\0';
+   }
+   if (vid_set_overlay(op) != 0)
+   {
+      fe_evt("overlay failed path=%s", op);
+      g_overlay_name[0] = '\0';
+   }
+}
+
+int ui_host_grid_level(void) { return g_sw.grid; }
+
+void ui_host_grid_set(int level)
+{
+   char v[8];
+   g_sw.grid = level < 1 ? 1 : level > 10 ? 10 : level;
+   vid_set_lcd_strength(g_sw.grid * 20);
+   snprintf(v, sizeof(v), "%d", g_sw.grid);
+   fe_evt("grid_strength level=%d saved=%d", g_sw.grid,
+          vita_ini_put("grid_strength", v) == 0);
+}
+
+int ui_host_overlay_on(void) { return g_sw.overlays; }
+
+void ui_host_overlay_set(int on)
+{
+   g_sw.overlays = on ? 1 : 0;
+   overlay_apply(g_overlay_rom, g_overlay_console);   /* the game behind */
+   fe_evt("overlays on=%d saved=%d name=\"%s\"", g_sw.overlays,
+          vita_ini_put("overlays", g_sw.overlays ? "1" : "0") == 0,
+          g_overlay_name);
+}
+
+const char *ui_host_overlay_name(void)
+{
+   /* in the game list: what the console's own file would be */
+   if (!g_overlay_rom[0] && g_sw.overlays)
+   {
+      static const char *const tag[3] = { "gba", "gb", "gbc" };
+      char op[APP_PATH_CAP];
+      int c = g_pcfg.console >= 0 && g_pcfg.console < 3 ? g_pcfg.console : 0;
+      if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
+          file_size(op, NULL) == 0)
+         snprintf(g_overlay_name, sizeof(g_overlay_name), "%s.png", tag[c]);
+      else
+         g_overlay_name[0] = '\0';
+   }
+   return g_overlay_name;
+}
+
+const char *ui_host_shot_dir(void) { return g_sw.shot_dir; }
+
+int ui_host_shot_dir_set(const char *dir)
+{
+   char d[sizeof(g_sw.shot_dir)];
+   size_t n;
+   struct stat st;
+   snprintf(d, sizeof(d), "%s", dir ? dir : "");
+   n = strlen(d);
+   while (n && (d[n - 1] == '/' || d[n - 1] == ' '))
+      d[--n] = '\0';
+   if (n)
+   {
+      if (!strchr(d, ':') && d[0] != '/')
+         return -1;                     /* needs its device: ux0:... */
+      if (stat(d, &st) != 0)
+         mkdir(d, 0777);
+      if (stat(d, &st) != 0 || !S_ISDIR(st.st_mode))
+         return -1;
+   }
+   snprintf(g_sw.shot_dir, sizeof(g_sw.shot_dir), "%s", d);
+   fe_evt("screenshot_dir set path=\"%s\" saved=%d", d,
+          vita_ini_put("screenshots", d) == 0);
+   return 0;
+}
+
+/* ---- a zipped game (zip_rom.h) ---------------------------------------------
+ *
+ * The list asks what console a .zip's cartridge is for (cached by name and
+ * size: the scan asks once per folder pass).  Starting one unpacks it into
+ * unzipped/ -- one game at a time: the last one unpacked is removed first --
+ * unless the copy there already came from this very file (unzipped/<name>
+ * .key: the zip's size, time and the entry's CRC).  Patches are not applied
+ * to zipped games. */
+#define ZIP_CACHE_N 2048
+static struct { uint32_t key; unsigned size; signed char console; }
+   g_zipc[ZIP_CACHE_N];
+
+int ui_host_zip_console(const char *path, unsigned size)
+{
+   zip_rom_entry e;
+   uint32_t key = fe_crc32(0, path, strlen(path)) | 1u;
+   unsigned slot = key % ZIP_CACHE_N;
+   int c;
+   if (g_zipc[slot].key == key && g_zipc[slot].size == size)
+      return g_zipc[slot].console;
+   c = zip_rom_peek(path, &e) == 0 ? e.console : -1;
+   g_zipc[slot].key = key;
+   g_zipc[slot].size = size;
+   g_zipc[slot].console = (signed char)c;
+   fe_evt("zip_peek path=\"%s\" console=%d entry=\"%s\"", path, c, e.name);
+   return c;
+}
+
+static int zip_unpack(const char *zip, fe_console_t console, char *out,
+                      size_t cap, long *size)
+{
+   zip_rom_entry e;
+   struct stat zs;
+   char dir[APP_PATH_CAP], key[APP_PATH_CAP + 8], last[APP_PATH_CAP + 16];
+   char want[96], have[96] = "", prev[APP_PATH_CAP] = "", stem[APP_PATH_CAP];
+   const char *ext, *why = NULL;
+   long have_size = -1;
+   int rc = zip_rom_peek(zip, &e);
+   FILE *f;
+
+   if (rc != 0)
+      why = rc == -2 ? "zip_unsupported" : "zip_no_game";
+   else if (e.console != (int)console)
+      why = "zip_other_console";
+   if (why)
+   {
+      fe_evt("boot_refused reason=%s path=%s", why, zip);
+      return -1;
+   }
+   ext = console == FE_CONSOLE_GBC ? ".gbc" : console == FE_CONSOLE_GB ? ".gb"
+                                                                  : ".gba";
+   snprintf(stem, sizeof(stem), "%s", base_name(zip));
+   stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
+   if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
+       path_fmt(out, cap, "%s/%s%s", dir, stem, ext) != 0 ||
+       path_fmt(key, sizeof(key), "%s.key", out) != 0 ||
+       path_fmt(last, sizeof(last), "%s/last.txt", dir) != 0 ||
+       stat(zip, &zs) != 0)
+   {
+      fe_evt("boot_refused reason=zip_path path=%s", zip);
+      return -1;
+   }
+   mkdir(dir, 0777);
+   snprintf(want, sizeof(want), "zip=%ld:%ld crc=%08lx size=%lu",
+            (long)zs.st_size, (long)zs.st_mtime, e.crc, e.usize);
+   if ((f = fopen(key, "r")) != NULL)
+   {
+      if (!fgets(have, sizeof(have), f))
+         have[0] = '\0';
+      fclose(f);
+      have[strcspn(have, "\r\n")] = '\0';
+   }
+   if (!strcmp(have, want) && file_size(out, &have_size) == 0 &&
+       have_size == (long)e.usize)
+   {
+      fe_evt("zip_unpack reused=1 path=%s", out);
+      *size = have_size;
+      return 0;
+   }
+   /* one game at a time: the one unpacked before goes */
+   if ((f = fopen(last, "r")) != NULL)
+   {
+      if (!fgets(prev, sizeof(prev), f))
+         prev[0] = '\0';
+      fclose(f);
+      prev[strcspn(prev, "\r\n")] = '\0';
+      if (prev[0] && strcmp(prev, out) &&
+          !strncmp(prev, dir, strlen(dir)) && prev[strlen(dir)] == '/' &&
+          !strchr(prev + strlen(dir) + 1, '/'))
+      {
+         char pk[APP_PATH_CAP + 8];
+         remove(prev);
+         if (path_fmt(pk, sizeof(pk), "%s.key", prev) == 0)
+            remove(pk);
+      }
+   }
+   remove(key);
+   rc = zip_rom_extract(zip, &e, out);
+   fe_evt("zip_unpack rc=%d entry=\"%s\" method=%d size=%lu path=%s", rc,
+          e.name, e.method, e.usize, out);
+   if (rc != 0)
+   {
+      fe_evt("boot_refused reason=%s path=%s",
+             rc == -2 ? "zip_crc" : "zip_extract", zip);
+      return -1;
+   }
+   if ((f = fopen(key, "w")) != NULL)
+   {
+      fprintf(f, "%s\n", want);
+      fclose(f);
+   }
+   if ((f = fopen(last, "w")) != NULL)
+   {
+      fprintf(f, "%s\n", out);
+      fclose(f);
+   }
+   *size = (long)e.usize;
+   return 0;
+}
+
 static int game_boot(const char *rom_path, fe_console_t console)
 {
    fe_host_config cfg;
    long size = 0;
    int rc;
+
+   const char *rom_file = rom_path;     /* the cartridge's bytes      */
+   static char unzipped[APP_PATH_CAP];
 
    memset(&g_game, 0, sizeof(g_game));
    game_state_reset();
@@ -3115,6 +3690,17 @@ static int game_boot(const char *rom_path, fe_console_t console)
    {
       fe_evt("boot_refused reason=no_rom path=%s", rom_path);
       return -1;
+   }
+   if (has_ext(rom_path, ".zip"))
+   {
+      /* A zipped game: the cartridge is unpacked once into unzipped/ and
+       * started from there; its saves and states stay beside the .zip,
+       * named after it (Game.zip -> Game.sav). */
+      if (zip_unpack(rom_path, console, unzipped, sizeof(unzipped), &size)
+             != 0)
+         return -1;
+      rom_file = unzipped;
+      g_game.zipped = 1;
    }
    /* A GBA cartridge begins with a 192-byte header.  A shorter file is not
     * one, and the GBA core, which takes any file, would run its zero-filled
@@ -3135,7 +3721,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    if (console == FE_CONSOLE_GBA)
    {
       unsigned char hdr[0xC0];
-      FILE *f = fopen(rom_path, "rb");
+      FILE *f = fopen(rom_file, "rb");
       size_t got = f ? fread(hdr, 1, sizeof(hdr), f) : 0;
       if (f)
          fclose(f);
@@ -3148,7 +3734,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
       }
    }
    g_game.console = console;
-   snprintf(g_game.boot_path, sizeof(g_game.boot_path), "%s", g_game.rom_path);
+   snprintf(g_game.boot_path, sizeof(g_game.boot_path), "%s", rom_file);
+   if (rom_file == rom_path)
    {
       /* A patch beside the game (rom_patch.h): the cores load the patched
        * copy; the saves stay the game's own. */
@@ -3194,6 +3781,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    ui_host_look_changed();
    vid_ambient_mode(g_pcfg.ambient);
    vid_ambient_fallback(ui_console_shade((int)console));
+   overlay_apply(rom_path, console);
    fe_evt("display_profile console=%s scale=%s filter=%s ambient=%d "
           "gb_palette=%d", pcfg_console_tag((int)console),
           vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),
@@ -3213,6 +3801,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
       fe_evt("boot_refused reason=sidecar_path_too_long rom=%s", rom_path);
       return -1;
    }
+   save_import(rom_path, g_game.save_path, console);
    ui_set_state_base(g_game.state_path);
    ui_loading_begin(rom_path);
    game_identity();
@@ -3317,6 +3906,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
           pace_speed_x1e6());
    if (!g_audio_ok)
       osd_toast("Audio output unavailable");
+   if (g_import_note[0])
+      osd_toast("%s", g_import_note);
    if (g_patch_note[0])
    {
       if (!g_game.patched)
@@ -3326,7 +3917,9 @@ static int game_boot(const char *rom_path, fe_console_t console)
    io_start();
 
    {
-      int n = cheats_load(g_app_root, g_game.rom_path, console);
+      /* (a zipped game's checksum and header are the unpacked file's) */
+      int n = cheats_load(g_app_root, g_game.zipped ? g_game.boot_path
+                                                    : g_game.rom_path, console);
       fe_evt("cheats_load n=%d enabled=%d match=%d db=\"%s\"", n,
              cheats_enabled_count(), cheats_db_match(), cheats_db_game());
    }
@@ -4357,7 +4950,21 @@ int main(int argc, char **argv)
       int slot = 0;
 
       /* ---- which game ---- */
-      if (first && rom_from_autoboot(rom_path, sizeof(rom_path)) == 0)
+      /* the launcher's game, once: a refused one is not asked again (nor
+       * replaced by autoboot.txt's) when the list comes back */
+      int launched = g_launch_tried ? -1
+                                    : rom_from_launch(rom_path, sizeof(rom_path));
+      g_launch_tried = 1;
+      if (launched == 1)
+         app_notice("This game could not be started", g_launch_note,
+                    "The launcher's path was used exactly as written.", 6000);
+      if (launched == 0)
+      {
+         console = console_for(rom_path);
+         fe_evt("launch rom=%s console=%s", rom_path, console_name(console));
+      }
+      else if (first && launched != 1 &&
+               rom_from_autoboot(rom_path, sizeof(rom_path)) == 0)
       {
          console = console_for(rom_path);
          fe_evt("autoboot rom=%s", rom_path);
@@ -4445,6 +5052,7 @@ int main(int argc, char **argv)
          clip_save_game();
          keys_script_end();
          game_unload(to_list);
+         g_overlay_rom[0] = '\0';      /* Settings now speak of the list */
          artfetch_pause(0);
          if (!to_list)
             break;

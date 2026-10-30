@@ -389,6 +389,14 @@ int fe_host_state_recover(const char *path);
 size_t fe_host_state_mem_size(void);
 long   fe_host_state_mem_save(void *buf, size_t cap);
 int    fe_host_state_mem_load(const void *buf, size_t n);
+/* _load of an image this same cartridge produced, in this same run (a
+ * rewind's): the GBA core keeps what it translated from the cartridge --
+ * a function of the ROM image (as patched: soft patches at load, cheat
+ * patches flush on change) and the BIOS only, neither of which a state
+ * holds -- and flushes its RAM translations only, as the wide view's
+ * scout does (fe_gbadual.c, savestate.c state_load_keeps_rom).  Otherwise
+ * the same as _load. */
+int    fe_host_state_mem_restore(const void *buf, size_t n);
 
 /* THE BATTERY, FOR A REWIND.  A GBA state does not hold the cartridge's
  * battery memory (it is the .sav's), so a frontend that moves the machine

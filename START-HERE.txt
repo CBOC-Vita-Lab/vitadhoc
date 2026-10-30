@@ -1,4 +1,4 @@
-VitAdhoc 1.1
+VitAdhoc 1.2
 Game Boy Advance, Game Boy and Game Boy Color for PS Vita
 
 Thanks for trying VitAdhoc! Here's everything you need to get playing.
@@ -28,6 +28,12 @@ Manual Install
 Updating
 Just install the new VPK over the old one. Your games, saves, states and
 settings stay where they are.
+
+
+Saves From Another Emulator
+Put the save next to the game (Game.srm, or Game.sav for a Game Boy game) or
+in ux0:data/GBAdhoc/import/. VitAdhoc takes it in the first time you start
+that game, as long as the game has no save here yet. Details: INSTALL.md.
 
 
 Have Fun

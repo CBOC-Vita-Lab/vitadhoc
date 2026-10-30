@@ -1949,11 +1949,12 @@ def t_look(S):
 
     # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
     # Display settings, Keep full speed, FPS, Rewind, FF button,
-    # Fast-forward, Game previews, Game list, Theme, (Wide view: menus --
-    # not a row while the wide view is off, as it is in these tests), Wide
-    # view, Motion blend, Colours
+    # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
+    # Screen overlay, Grid strength, (Wide view: menus -- not a row while the
+    # wide view is off, as it is in these tests), Wide view, Motion blend,
+    # Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 12 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 15 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2185,9 +2186,9 @@ def t_wide(S):
 
     # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
     # Display settings, Keep full speed, FPS, Rewind, FF button,
-    # Fast-forward, Game previews, Game list, Theme, Wide view: menus, Wide
-    # view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 10 + \
+    # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
+    # Screen overlay, Grid strength, Wide view: menus, Wide view
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 13 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -2510,7 +2511,7 @@ def t_find(S):
             "unstar removes the filtered Starred result safely; returning to Games keeps the query")
 
     r = run("refresh", "90:circle\n94:type=find-only\n150:start\n" +
-            "+8:down\n" * 21 + "+20:cross\n+70:select\n+70:cross\n"
+            "+8:down\n" * 23 + "+20:cross\n+70:select\n+70:cross\n"
             "+140:shot=game.png\n+20:quit\n", favs=target + "\n")
     S.check(r.has(r"^EVT library_refresh_done console=0 ") and
             r.has(r"^EVT ui_browser_view favs=1 shown=1$") and
@@ -2540,7 +2541,7 @@ def t_library_cache(S):
     script = ("60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:right\n+20:start\n" + "+8:down\n" * 10 +
-              "+20:shot=quality_setting.png\n" + "+8:down\n" * 11 +
+              "+20:shot=quality_setting.png\n" + "+8:down\n" * 13 +
               "+20:shot=refresh_command.png\n+8:cross\n"
               "+60:shot=refreshed.png\n+8:cross\n+100:shot=game.png\n+20:quit\n")
     r = S.run("library_cache", script,
@@ -4244,7 +4245,8 @@ def _t_ra(S, srv):
     # The password: Settings (the browser's), up from the top past Button
     # mapping, Game order and Hardcore to Account; X; the name, then the
     # password, each through the keyboard.
-    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n"
+    # (1.2: one more UP, for Library > Game folders above Game order)
+    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n"
               "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
               "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
               "+30:quit\n", vita_ini=ini)
@@ -4316,6 +4318,308 @@ def _t_ra(S, srv):
     S.picture(r, "game.png")
 
 
+def t_save_import(S):
+    """A save made elsewhere is taken in at the game's first start: from
+    import/ (then renamed .imported), Game.srm beside the game, and for a
+    Game Boy game Game.sav -- unless a Game.gba owns that name; an existing
+    save is never replaced."""
+    blob = bytes((i * 7 + 3) & 0xFF for i in range(32768))
+    gb_blob = bytes((i * 5 + 1) & 0xFF for i in range(8192))
+    # 1. import/ -> roms/gbadhoc-test.sav, the source renamed
+    r = S.run("save_import_folder", "60:quit\n", autoboot="gbadhoc-test.gba",
+              extra={"import/gbadhoc-test.srm": blob})
+    S.clean(r)
+    sav = os.path.join(r.root, "roms", "gbadhoc-test.sav")
+    S.check(os.path.exists(sav) and open(sav, "rb").read()[:len(blob)] == blob,
+            "the imported save is the game's save")
+    S.check(os.path.exists(os.path.join(r.root, "import",
+                                        "gbadhoc-test.srm.imported")) and
+            not os.path.exists(os.path.join(r.root, "import", "gbadhoc-test.srm")),
+            "the import/ file is renamed .imported")
+    S.check(r.has(r'^EVT save_import from=.*where=import'), "the log says where from")
+    S.check(r.index(r"^EVT save_import ") < r.index(r"^EVT sram_load size=32768"),
+            "taken in before the core loads the battery")
+    # 2. Game.srm beside the game (RetroArch's name)
+    r = S.run("save_import_srm", "60:quit\n", autoboot="gbadhoc-test.gba",
+              extra={"roms/gbadhoc-test.srm": blob})
+    S.clean(r)
+    S.check(open(os.path.join(r.root, "roms", "gbadhoc-test.sav"), "rb")
+            .read()[:len(blob)] == blob, ".srm beside the game is taken in")
+    S.check(os.path.exists(os.path.join(r.root, "roms", "gbadhoc-test.srm")),
+            "...and left where it was")
+    # 3. an existing save wins
+    r = S.run("save_import_keep", "60:quit\n", autoboot="gbadhoc-test.gba",
+              extra={"roms/gbadhoc-test.sav": b"\x11" * 32768,
+                     "import/gbadhoc-test.sav": blob})
+    S.clean(r)
+    S.check(not r.has(r"^EVT save_import "), "nothing taken when there is a save")
+    S.check(os.path.exists(os.path.join(r.root, "import", "gbadhoc-test.sav")),
+            "the import/ file is left alone")
+    # 4. Game Boy: Game.sav -> Game.gb.sav; not when Game.gba is beside it
+    junk_gb = bytes(0x8000)
+    allow = r"boot_failed|boot_refused|notice title|gbcore_create FAILED"
+    r = S.run("save_import_gb", "40:cross\n+40:quit\n", autoboot="mono.gb",
+              extra={"roms/mono.gb": junk_gb, "roms/mono.sav": gb_blob})
+    S.check(os.path.exists(os.path.join(r.root, "roms", "mono.gb.sav")) and
+            open(os.path.join(r.root, "roms", "mono.gb.sav"), "rb").read() == gb_blob,
+            "a Game Boy game takes Game.sav as Game.gb.sav")
+    r = S.run("save_import_gb_zip", "40:cross\n+40:quit\n", autoboot="three.gb",
+              extra={"roms/three.gb": junk_gb, "roms/three.zip": b"PK",
+                     "roms/three.sav": gb_blob})
+    S.check(not os.path.exists(os.path.join(r.root, "roms", "three.gb.sav")),
+            "...nor when a zipped Game.zip is beside it")
+    r = S.run("save_import_gb_twin", "40:cross\n+40:quit\n", autoboot="two.gb",
+              extra={"roms/two.gb": junk_gb, "roms/two.gba": open(OWN_GBA, "rb").read(),
+                     "roms/two.sav": gb_blob})
+    S.check(not os.path.exists(os.path.join(r.root, "roms", "two.gb.sav")),
+            "...but not when Game.gba owns Game.sav")
+
+
+def t_launch_param(S):
+    """A launcher's param= starts its game directly, the path taken exactly
+    as written (GitHub #3); a missing or wrong file is a notice and the list."""
+    own = open(OWN_GBA, "rb").read()
+    odd = "Odd & Name %20 +1.gba"
+    r = S.run("launch_param", "60:quit\n", args=("--launch-param", odd),
+              extra={"roms/" + odd: own})
+    S.clean(r)
+    S.check(r.has(r'^EVT launch_param raw="Odd & Name %20 \+1\.gba"'),
+            "the parameter arrives undecoded")
+    S.check(r.has(r"^EVT launch rom=.*Odd & Name %20 \+1\.gba console=GBA"),
+            "and starts that game as a GBA game")
+    S.check(not r.has(r"^EVT ui_browser "), "without the game list first")
+    full = os.path.join(S.outdir, "launch_param", "root", "roms", odd)
+    r = S.run("launch_param_full", "60:quit\n", args=("--launch-param", full),
+              extra={"roms/" + odd: own})
+    S.clean(r)
+    S.check(r.has(r"^EVT launch rom=" + re.escape(full)), "a whole path works too")
+    for name, why in (("missing.gba", "missing"), ("notes.txt", "not_a_game"),
+                      ("x" * 600 + ".gba", "too_long")):
+        r = S.run("launch_param_" + why, "40:cross\n+60:quit\n",
+                  args=("--launch-param", name), extra={"roms/notes.txt": "x"},
+                  autoboot="gbadhoc-test.gba")
+        S.clean(r, allow=r"launch_param refused|notice title")
+        S.check(r.has(r"^EVT launch_param refused reason=" + why), why)
+        S.check(r.has(r"^EVT ui_browser "), why + ": then the game list")
+        S.check(not r.has(r"^EVT autoboot rom="),
+                why + ": not autoboot.txt's game instead")
+        S.check(len([l for l in r.log if "launch_param raw" in l]) <= 1,
+                why + ": asked once")
+
+
+def t_folders_config(S):
+    """extra_roms in config.ini (where players look for it) and gba_roms /
+    gb_roms / gbc_roms add folders to the game list."""
+    out = os.path.join(S.outdir, "folders_config")
+    root = os.path.join(out, "root")
+    A, B = os.path.join(root, "fa"), os.path.join(root, "fb")
+    own = open(OWN_GBA, "rb").read()
+    S.make_root(root, {"extra_roms": A, "gbc_roms": B}, None, None,
+                {"fa/Folder A.gba": own, "fb/Folder B.gba": own})
+    r = S.run("folders_config", "60:quit\n", prepared=True)
+    S.clean(r)
+    rr = r.evt("rom_roots")
+    S.check(rr and rr[0].get("source") == "config" and rr[0].get("extra") == "2",
+            "both folders are read (%s)" % (rr[0]["_"] if rr else "none"))
+
+
+def t_shot_dir(S):
+    """vita.ini screenshots = <folder>: screenshots go there (made if
+    missing), named after the game, the date and the time."""
+    out = os.path.join(S.outdir, "shot_dir")
+    root = os.path.join(out, "root")
+    want = os.path.join(out, "pictures")
+    shutil.rmtree(want, ignore_errors=True)
+    r = S.run("shot_dir", "150:l+r+select:3\n+40:quit\n",
+              autoboot="gbadhoc-test.gba", vita_ini={"screenshots": want + "/"})
+    S.clean(r)
+    shots = glob.glob(os.path.join(want, "gbadhoc-test-*.png"))
+    S.check(len(shots) == 1 and Image.open(shots[0]).size == (240, 160),
+            "one screenshot in the chosen folder (%s)" % shots)
+    S.check(not glob.glob(os.path.join(r.root, "screenshots", "*.png")),
+            "and none in screenshots/")
+
+
+def t_zip(S):
+    """A game in a .zip (deflated or stored) is listed under its console,
+    unpacked once into unzipped/, started, and saves beside the .zip; a zip
+    with no game or a broken CRC is refused with a notice."""
+    import io, zipfile
+    own = open(OWN_GBA, "rb").read()
+    def zipped(name, data, method=zipfile.ZIP_DEFLATED):
+        b = io.BytesIO()
+        with zipfile.ZipFile(b, "w", method) as z:
+            z.writestr("readme.txt", "hello")
+            z.writestr(name, data)
+        return b.getvalue()
+    deflated = zipped("Zipped Game (USA).gba", own)
+    stored = zipped("Stored.gba", own, zipfile.ZIP_STORED)
+    # autoboot the deflated one, press A (battery write), quit
+    r = S.run("zip", "150:a:40\n+60:quit\n", autoboot="Zipped.zip",
+              extra={"roms/Zipped.zip": deflated, "roms/Stored.zip": stored,
+                     "roms/Empty.zip": zipped("notes.txt", b"x")})
+    S.clean(r)
+    S.check(r.has(r"^EVT zip_unpack rc=0 entry=\"Zipped Game \(USA\)\.gba\" method=8"),
+            "the deflated cartridge is unpacked")
+    up = os.path.join(r.root, "unzipped", "Zipped.gba")
+    S.check(os.path.exists(up) and open(up, "rb").read() == own,
+            "unzipped/Zipped.gba is the cartridge, byte for byte")
+    S.check(r.has(r"^EVT game rom=.*Zipped\.zip .*save=.*roms/Zipped\.sav"),
+            "its save is named after the zip, beside it")
+    S.check(os.path.exists(os.path.join(r.root, "roms", "Zipped.sav")),
+            "and written there")
+    # the list: both zips among the GBA games, the empty one not
+    r = S.run("zip_list", "90:quit\n",
+              extra={"roms/Zipped.zip": deflated, "roms/Stored.zip": stored,
+                     "roms/Empty.zip": zipped("notes.txt", b"x")})
+    S.clean(r)
+    done = [d for d in r.evt("ui_browser") if d.get("console") == "0"]
+    S.check(done and int(done[-1]["roms"]) == len(S.roms(r.root, ".gba")) + 2,
+            "the two zipped GBA games are in the GBA list (%s)" %
+            (done[-1]["_"] if done else "no list"))
+    # stored, reused on the second start
+    for i in range(2):
+        r = S.run("zip_stored", "60:quit\n", autoboot="Stored.zip",
+                  extra={"roms/Stored.zip": stored},
+                  prepared=True if i else None)
+        S.clean(r)
+    S.check(r.has(r"^EVT zip_unpack reused=1"), "the second start reuses the copy")
+    # broken CRC
+    bad = bytearray(stored)
+    k = bad.find(own[0x100:0x110])
+    bad[k] ^= 0xFF
+    r = S.run("zip_crc", "40:cross\n+40:quit\n", autoboot="Bad.zip",
+              extra={"roms/Bad.zip": bytes(bad)})
+    S.clean(r, allow=r"boot_refused|notice title|zip_unpack rc=-2")
+    S.check(r.has(r"boot_refused reason=zip_crc"), "a damaged zip is refused")
+
+
+def t_folders_ui(S):
+    """Settings > Library > Game folders: a folder typed on the keyboard is
+    added (written to vita.ini, the list scanned again with its games), and
+    typed again it is removed."""
+    out = os.path.join(S.outdir, "folders_ui")
+    root = os.path.join(out, "root")
+    A = os.path.join(root, "mine")
+    own = open(OWN_GBA, "rb").read()
+    S.make_root(root, None, None, {"extra_roms": 0},
+                {"mine/Folder Game.gba": own})
+    # the keyboard takes 63 characters: a short name for the folder
+    A = "/tmp/vitadhoc-folders-ui-%d" % os.getpid()
+    if os.path.lexists(A):
+        os.remove(A)
+    os.symlink(os.path.join(root, "mine"), A)
+    # START: Settings; UP wraps to Button mapping, then Game order, then
+    # Game folders
+    walk = "60:start\n+30:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+    r = S.run("folders_ui", walk + "+4:type=%s\n+40:circle\n+90:quit\n" % A,
+              prepared=True)
+    S.clean(r)
+    S.check(r.has(r'^EVT rom_roots_edit folder="%s" rc=1 extra=1' % re.escape(A)),
+            "the folder is added")
+    ini = open(os.path.join(root, "vita.ini")).read()
+    S.check(re.search(r"^extra_roms = %s$" % re.escape(A), ini, re.M),
+            "vita.ini holds it (%r)" % ini)
+    b = [d for d in r.evt("library_refresh_done") if d.get("console") == "0"]
+    S.check(b and int(b[-1]["roms"]) == len(S.roms(root, ".gba")) + 1,
+            "its game is in the list after the rescan (%s)" %
+            (b[-1]["_"] if b else "none"))
+    r = S.run("folders_ui", walk + "+4:type=%s\n+40:circle\n+90:quit\n" % A,
+              prepared=True)
+    S.clean(r)
+    S.check(r.has(r'^EVT rom_roots_edit folder="%s" rc=2 extra=0' % re.escape(A)),
+            "typed again, it is removed")
+    S.check(re.search(r"^extra_roms = 0$",
+                      open(os.path.join(root, "vita.ini")).read(), re.M),
+            "vita.ini says no extra folders")
+
+
+def t_overlay(S):
+    """overlays/gba.png is drawn over the whole screen, with its own
+    transparency; a game's own overlays/<game>.png wins; overlays = 0 in
+    vita.ini turns them off."""
+    import io
+    def png(color):
+        im = Image.new("RGBA", (960, 544), (0, 0, 0, 0))
+        im.paste(Image.new("RGBA", (120, 80), color), (0, 0))
+        b = io.BytesIO(); im.save(b, "PNG"); return b.getvalue()
+    red, green = png((255, 0, 0, 255)), png((0, 255, 0, 255))
+    for name, extra, ini, want in (
+            ("overlay_console", {"overlays/gba.png": red}, None, (255, 0, 0)),
+            ("overlay_game", {"overlays/gba.png": red,
+                              "overlays/gbadhoc-test.png": green}, None, (0, 255, 0)),
+            ("overlay_off", {"overlays/gba.png": red}, {"overlays": 0}, None)):
+        r = S.run(name, "150:shot=game.png\n+10:quit\n", autoboot="gbadhoc-test.gba",
+                  extra=extra, vita_ini=ini)
+        S.clean(r)
+        px = r.shot("game.png").getpixel((20, 20))
+        if want:
+            S.check(px[:3] == want, "%s: the overlay is on screen (%s)" % (name, px))
+            S.check(r.shot("game.png").getpixel((480, 272)) != want,
+                    "%s: and the game shows through it" % name)
+        else:
+            S.check(px[:3] != (255, 0, 0) and not r.has(r"^EVT overlay path="),
+                    "%s: no overlay" % name)
+
+
+def t_ten_slots(S):
+    """Ten save-state slots: the page scrolls past the fifth, a state saved
+    in slot 8 is Game.st7 with its pictures, and loads back."""
+    script = ("150:a:20\n" + menu_pick(1) +
+              "+20:down\n" * 7 +                     # slot 8
+              "+20:shot=slot8.png\n+10:square\n+60:shot=saved8.png\n"
+              "+10:cross\n+60:shot=loaded.png\n+10:quit\n")
+    r = S.run("ten_slots", script, autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    st = os.path.join(r.root, "roms", "gbadhoc-test.st7")
+    S.check(os.path.exists(st) and os.path.getsize(st) > 0, "slot 8 is .st7")
+    S.check(os.path.exists(st + ".thumb") and os.path.exists(st + ".shot"),
+            "with its pictures")
+    S.check(r.has(r"^EVT state_save slot=8 ") and
+            r.has(r"^EVT state_load slot=8 via=\S+ rc=0"),
+            "saved and loaded in slot 8")
+    S.picture(r, "slot8.png")
+
+
+def t_display_rows(S):
+    """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
+    saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
+    grid."""
+    # browser Settings: 9 DOWN to Screen size, 7 more to Grid strength
+    walk = "60:start\n" + "+8:down\n" * 16 + "+20:shot=grid.png\n"
+    r = S.run("display_rows", walk + "+4:right\n+10:down\n+10:shot=overlay.png\n"
+              "+4:cross\n+20:circle\n+30:quit\n")
+    S.clean(r)
+    S.check(r.has(r"^EVT grid_strength level=6 saved=1"), "Grid strength 5 -> 6")
+    S.check(r.has(r"^EVT overlays on=0 saved=1"), "Screen overlay on -> off")
+    ini = open(os.path.join(r.root, "vita.ini")).read()
+    S.check(re.search(r"^grid_strength = 6$", ini, re.M) and
+            re.search(r"^overlays = 0$", ini, re.M), "both kept in vita.ini (%r)" % ini)
+    # Settings > Interface > Screenshot folder, typed on the keyboard
+    shots = "/tmp/vad-shots-%d" % os.getpid()
+    shutil.rmtree(shots, ignore_errors=True)
+    r = S.run("shot_dir_row", "60:start\n" + "+8:down\n" * 23 +
+              "+20:shot=row.png\n+4:cross\n+4:type=%s\n+30:circle\n+30:quit\n" % shots)
+    S.clean(r)
+    S.check(r.has(r'^EVT screenshot_dir set path="%s" saved=1' % re.escape(shots)) and
+            os.path.isdir(shots), "the folder is set, made and kept")
+    S.check(re.search(r"^screenshots = %s$" % re.escape(shots),
+                      open(os.path.join(r.root, "vita.ini")).read(), re.M),
+            "vita.ini holds it")
+    shutil.rmtree(shots, ignore_errors=True)
+    # the look itself: the grid at 1 and at 10 on the same frame
+    dark = []
+    for level in (1, 10):
+        r = S.run("grid_level_%d" % level, "150:shot=g.png\n+5:quit\n",
+                  autoboot="gbadhoc-test.gba",
+                  config={"filter_gba": 3, "quality_gba": 0, "scale_gba": 1},
+                  vita_ini={"grid_strength": level})
+        S.clean(r)
+        im = r.shot("g.png").convert("L")
+        dark.append(sum(im.tobytes()))
+    S.check(dark[1] < dark[0], "a stronger grid is darker (%s)" % dark)
+
+
 TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
@@ -4337,7 +4641,9 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("typing", t_typing), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),
-         ("realtime", t_realtime)]
+         ("realtime", t_realtime),
+         ("save_import", t_save_import), ("launch_param", t_launch_param),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("display_rows", t_display_rows)]
 
 
 def main():

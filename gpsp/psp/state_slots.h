@@ -7,7 +7,28 @@
 #include "rom_paths.h"
 #include "fe_console.h"
 
-#define PSP_STATE_SLOT_COUNT 5
+/* Ten (VitAdhoc 1.2; five before).  The pages show five at a time and
+ * scroll (PSP_STATE_SLOTS_SHOWN). */
+#define PSP_STATE_SLOT_COUNT 10
+#define PSP_STATE_SLOTS_SHOWN 5
+
+/* The first of the PSP_STATE_SLOTS_SHOWN slots on screen when `cur` (0-based)
+ * is selected: the window moves only as far as it must. */
+static inline int psp_state_slot_top(int cur, int *top)
+{
+   int t = top ? *top : 0;
+   if (cur < t)
+      t = cur;
+   if (cur >= t + PSP_STATE_SLOTS_SHOWN)
+      t = cur - PSP_STATE_SLOTS_SHOWN + 1;
+   if (t > PSP_STATE_SLOT_COUNT - PSP_STATE_SLOTS_SHOWN)
+      t = PSP_STATE_SLOT_COUNT - PSP_STATE_SLOTS_SHOWN;
+   if (t < 0)
+      t = 0;
+   if (top)
+      *top = t;
+   return t;
+}
 #define PSP_STATE_THUMB_WIDTH 64
 #define PSP_STATE_THUMB_HEIGHT 42
 #define PSP_STATE_THUMB_TEX_HEIGHT 64
@@ -40,7 +61,7 @@ static inline const char *psp_state_slot1_suffix(fe_console_t console)
           console == FE_CONSOLE_GB  ? ".gb.st0"  : ".st0";
 }
 
-/* Slot 1 is the historic .st0 file; slots 2-5 use .st1 through .st4. */
+/* Slot 1 is the historic .st0 file; slots 2-10 use .st1 through .st9. */
 static inline int psp_state_path_for_slot(char *out, size_t out_sz,
                                           const char *slot1_path,
                                           unsigned slot)

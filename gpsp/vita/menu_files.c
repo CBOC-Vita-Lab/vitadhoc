@@ -6,6 +6,8 @@
 #include "gamedb.h"
 #include "plat.h"
 #include "../psp/state_slots.h"
+_Static_assert(ML_STATE_SLOTS == PSP_STATE_SLOT_COUNT,
+               "menu_load.h ML_STATE_SLOTS is the slot count");
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -498,8 +500,9 @@ static int mf_art(const menu_load_job *job, unsigned kind, menu_load_result *out
    if (kind >= ML_STATE0)
    {
       unsigned slot = 1;
-      for (i = ML_STATE0; i != kind && slot <= 5; i <<= 1) slot++;
-      if (slot > 5 || psp_state_path_for_slot(path, sizeof(path), job->state1, slot) ||
+      for (i = ML_STATE0; i != kind && slot <= PSP_STATE_SLOT_COUNT; i <<= 1)
+         slot++;
+      if (slot > PSP_STATE_SLOT_COUNT || psp_state_path_for_slot(path, sizeof(path), job->state1, slot) ||
           strlen(path) + 5 >= sizeof(path)) return ML_ERROR;
       strcat(path, ".shot");
       return mf_image(path, 0, 1, 0, 0, out);
@@ -576,8 +579,8 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    int i, rc, answer = ML_OK, n;
    uint64_t t = plat_time_us();
    out->battery = ML_UNKNOWN;
-   for (i = 0; i < 5; i++) out->state[i] = ML_UNKNOWN;
-   for (i = 0; i < 5; i++)
+   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++) out->state[i] = ML_UNKNOWN;
+   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
    {
       if (psp_state_path_for_slot(path, sizeof(path), job->state1, (unsigned)i + 1))
       { answer = ML_ERROR; continue; }
@@ -650,7 +653,7 @@ int menu_files_load(const menu_load_job *job, unsigned kind,
        !memchr(job->rom, 0, sizeof(job->rom)) ||
        !memchr(job->stem, 0, sizeof(job->stem)) ||
        !memchr(job->state1, 0, sizeof(job->state1)) ||
-       !kind || (kind & (kind - 1)) || kind > (ML_STATE0 << 4) ||
+       !kind || (kind & (kind - 1)) || kind > (ML_STATE0 << (PSP_STATE_SLOT_COUNT - 1)) ||
        !__atomic_compare_exchange_n(&g_busy, &zero, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
       return out->status = ML_ERROR;
    out->job = *job; out->kind = kind;

@@ -60,6 +60,10 @@ typedef struct vita2d_ownership_diag {
 } vita2d_ownership_diag;
 /* Main-thread observation only: no reset, bank admission or GPU wait. */
 void vita2d_ownership_get(vita2d_ownership_diag *out);
+/* GBAdhoc: outside a scene, clear a latched EndScene / display-queue error
+ * after waiting for the GPU.  0 = nothing latched, 1 = recovered, -1 = not
+ * now (a scene is open) or given up (too many in a row). */
+int vita2d_recover(void);
 
 typedef struct vita2d_system_pgf_config {
 	SceFontLanguageCode code;

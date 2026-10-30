@@ -1,23 +1,79 @@
 # What's New
 
+## Version 1.2 — October 30, 2026
+
+**Bring your saves, your folders and your zips.** Plus graphics fixes and a
+faster rewind.
+
+**Saves and games**
+- **Your old saves come with you.** Start a game that has no save yet and
+  VitAdhoc takes in the one you already had: from `ux0:data/GBAdhoc/import/`,
+  `Game.srm` beside the game (RetroArch), `Game.sav` beside a Game Boy game
+  (most emulators' name), or RetroArch's save folder. It's copied, never
+  moved, and a game that already has a save keeps it. A message says where it
+  came from.
+- **Zipped games.** `.zip` files are listed under the right console and played
+  directly; the game is checked against the zip's checksum.
+- **Choose your game folders in Settings** (Library > Game folders): type a
+  folder to add it, type it again to remove it. `extra_roms` now also works in
+  `config.ini`, and `gba_roms` / `gb_roms` / `gbc_roms` give one folder per
+  console. ([#5](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/5))
+- **Start a game from another app.** Launchers such as RetroFlow can open a
+  game directly with `psgm:play?titleid=GBAD00001&param=<path>`. The path is
+  used exactly as written, so names with `&`, `%` or `+` work.
+  ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
+- **Ten save-state slots** (up from five), each with its picture; the pages
+  scroll.
+- **Accented names read properly:** "Pokémon" shows as "Pokemon", not
+  "Pok??mon".
+
+**Picture**
+- **Screen overlays:** a PNG in `overlays/` (per console or per game) is drawn
+  over the game, for bezels, shells or dot-matrix masks. Settings > Display >
+  Screen overlay turns them on or off.
+- **Adjustable LCD grid and scanlines:** Settings > Display > Grid strength,
+  1 to 10.
+- **Graphics fixes:** a smoothing filter could redraw a picture the graphics
+  chip was still showing; a single graphics error could freeze the screen for
+  the rest of the session; a failed memory allocation was retried every frame
+  (or showed black); freeing a picture made the whole app wait for the
+  graphics chip. All fixed.
+- **Screenshots** can go to a folder of your choice (Settings > Interface >
+  Screenshot folder).
+
+**Speed**
+- **Rewind:** recording each step does about half the work it did, and going
+  back no longer throws away the emulator's translated game code each step.
+- **Smoothing** (xBRZ / Scale3x) prepares each frame with fewer memory reads,
+  and its scaler is compiled for speed.
+
+Everything here was checked with the app's automated tests on a computer,
+which run the same code as the Vita. The graphics fixes and speed-ups have not
+been timed on a real Vita yet.
+
+**A correction to the 1.1 notes.** Three lines in 1.1 claimed more than the
+change did: the stereo fix was for the Game Boy-style tone channels (which
+side each one plays on), not the GBA's sampled-sound channels; the "pitch and
+tempo" fix was the timing of those channels' length, volume envelope and
+sweep; and damaged save-state sound data was already rejected in 1.0 (1.1
+added tests for it). The 1.1 notes below are corrected.
+
 ## Version 1.1 — October 25, 2026
 
 **Sound fixes.** A rebuilt audio path for all three systems.
 
 - **Steadier output:** audio now plays from two fixed, aligned buffers that
   take turns, so there are no more gaps or clicks when a frame runs long.
-- **Correct stereo:** left/right routing of the Game Boy Advance's direct-sound
-  channels is fixed, so effects and music come out of the right sides.
+- **Correct stereo for the tone channels:** the Game Boy-style tone channels
+  (square, wave and noise) play on the side the game asks for.
 - **Cleaner start, stop and pause:** a short fade at each edge removes the pop
   when you open a game, pause, resume or load a state, and the sound
   channel is closed properly when you leave a game.
-- **Right pitch and tempo at any speed:** square, wave and noise channels now
-  follow the real sample rate, so music keeps its pitch and tempo when the
-  output rate or emulation speed changes.
+- **Right note lengths and fades:** the tone channels' length, volume
+  envelope and sweep follow the real sample rate.
 - **Fresh start after loading a state:** leftover sound from the previous game
   or state no longer carries over.
-- **Safer against bad data:** damaged save-state sound data is rejected instead
-  of producing noise.
+- **New tests** for damaged save-state sound data (rejected since 1.0).
 
 Saves, save states, settings, ROMs and the BIOS are untouched, and the app
 keeps the same ID, so 1.1 installs straight over 1.0. The sound changes were

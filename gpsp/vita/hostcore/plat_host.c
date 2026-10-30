@@ -555,6 +555,8 @@ static void parse_input_file(const char *path, unsigned *cursor)
    free(buf);
 }
 
+static const char *host_launch_param;
+
 int plat_init(int argc, char **argv)
 {
    unsigned cursor = 0;
@@ -564,6 +566,7 @@ int plat_init(int argc, char **argv)
       const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
       if (!strcmp(a, "--root") && v)             { opt.root = v; i++; }
       else if (!strcmp(a, "--app") && v)         { opt.app = v; i++; }
+      else if (!strcmp(a, "--launch-param") && v) { host_launch_param = v; i++; }
       else if (!strcmp(a, "--shot-dir") && v)
       {
          opt.shot_dir = v;
@@ -639,6 +642,19 @@ void plat_exit(int code)
 }
 
 const char *plat_data_root(void) { return opt.root; }
+
+/* --launch-param TEXT: what the console's launch URI would carry after
+ * "param=" (main_vita.c rom_from_launch) */
+int plat_launch_param(char *out, size_t cap)
+{
+   size_t n = host_launch_param ? strlen(host_launch_param) : 0;
+   if (!out || !cap || !n)
+      return -1;
+   if (n >= cap)
+      return -2;
+   memcpy(out, host_launch_param, n + 1);
+   return 0;
+}
 const char *plat_app_dir(void)
 {
    return opt.app ? opt.app : HOST_APP_DIR ? HOST_APP_DIR : opt.root;

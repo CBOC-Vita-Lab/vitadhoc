@@ -37,6 +37,88 @@ testing; other profiles and generic/scout behaviour are not universally
 accepted. Where information is unavailable, margins use the selected fallback.
 It does not turn all games into native widescreen games or modify their saves.
 
+## Version 1.2 Changes
+
+Engineering detail behind the [What's New](../CHANGELOG.md) list.
+
+**Features**
+- **Save import** (`vita/main_vita.c` save_import): before the core loads a
+  game with no battery file, and no `.bak` / `.tmp` / `.old` beside it, the
+  first of `import/<rom>.sav`, `import/<stem>.sav`, `import/<stem>.srm`,
+  `<stem>.srm` beside the ROM, `<stem>.sav` beside a GB/GBC ROM (not when
+  `<stem>.gba` exists) and `ux0:data/retroarch/savefiles[/<core>]/<stem>.srm`
+  is copied (through `.import`, then renamed) to the game's save name. Files
+  of up to 256 KiB; the loaders keep what they can of other layouts.
+  Imported `import/` files are renamed `.imported`.
+- **Launch parameter** (`plat_launch_param`; `sceAppMgrGetAppParam` on the
+  Vita, `--launch-param` on the twin): the text after the first `param=`
+  that starts a field, taken raw. Read once at start, before `autoboot.txt`.
+- **Game folders** (`ui_host_extra_root_toggle`, ui_psp.c `SET_FOLDERS`):
+  the keyboard's folder toggles in the list; the list is written as
+  `extra_roms` through the bound `vita.ini` document (refused past 480
+  characters, the length an ini line is read back whole; the list is restored
+  when it cannot be written). `extra_roms` is also read from `config.ini`;
+  `gba_roms` / `gb_roms` / `gbc_roms` add one folder each unless `vita.ini`'s
+  `extra_roms` is the list.
+- **Zipped games** (`vita/zip_rom.c`): End Of Central Directory, the first
+  central entry named `.gba` / `.gb` / `.gbc`, method 0 or 8 (stb_image's
+  inflater), CRC-32 checked. No ZIP64, encryption or multi-disk. The scan asks
+  `ui_host_zip_console` (cached by path and size); the game is unpacked into
+  `unzipped/` (one at a time, keyed by the zip's size, time and entry CRC) and
+  booted from there, while saves, states, cheats and settings keep the zip's
+  name.
+- **Overlays** (`vid_set_overlay`): `overlays/<stem>.png`, else
+  `overlays/<console>.png`, decoded once per game and drawn over the screen
+  after the picture. Settings rows (1.2): Display > Grid strength (1-10,
+  `grid_strength` in `vita.ini`, scales the LCD/scanline texture by 20% a
+  step) and Screen overlay (`overlays`), Interface > Screenshot folder
+  (`screenshots`), all written through the bound `vita.ini` document and
+  applied at once.
+- **Ten state slots** (`PSP_STATE_SLOT_COUNT` 10, `.st0` to `.st9`): the in-game page, the shelf and the home screen's
+  cards show five at a time and follow the selection
+  (`psp_state_slot_top`); the menu loader's metadata and task masks are
+  sized from the count. State sharing (`FE_SHARE_SLOTS`) stays at five, so
+  1.1 peers understand it.
+- **Display names** (`ui_ascii_fold`): UTF-8 Latin letters fold to ASCII for
+  the UI's fonts; Find still compares the file's own name.
+
+**Graphics fixes** (`vita/video_vita.c`, `vita/vback_vita2d.c`, vita2d)
+- The CPU upscalers no longer submit into a texture the GPU may still read
+  (`vb_tex_writable` before `upscale_submit`; a skip counts as dropped).
+- Live, snapshot and soft staging textures are a ring of three chosen by GPU
+  fence, not by frame parity; with none free the last upload is redrawn.
+- Destroyed textures are freed when their fragment fence retires
+  (`defer_sweep`); `sceGxmFinish` only when the queue is full or at exit.
+- A latched EndScene or display-queue error is cleared by `vita2d_recover`
+  (up to five times in a row), instead of every later frame being skipped.
+- The tint uniform no longer comes from the vertex pool (a NULL write when
+  the pool was nearly full); destroying the bound render target ends its
+  scene first; failed texture allocations retry every 60 frames and fall
+  back to the last good picture; unchanged menu snapshots are not uploaded
+  again.
+
+**Speed**
+- `gba_save_state` zeroes only its padding, so serialisers no longer clear
+  the 416 KiB image first (`retro_serialize` about half the instructions).
+- Rewind's encoder and decoder compare 64 bytes at a time with NEON and XOR
+  8 bytes at a time (bit-identical streams; differential tests on x86 and
+  ARM).
+- Rewind landings keep the ROM translation cache (`state_load_keeps_rom`,
+  as the wide-view scout already did).
+- `upscale_submit` compares each row right after copying it;
+  `upscale_vita.c` is built with `-O3 -ftree-vectorize`.
+
+**Fixes from review**
+- `fe_ini_doc_save`'s fallback (when the card refuses a rename) keeps the old
+  file as `.bak` (copied there when it could not be moved) and the complete
+  `.tmp` until the in-place write succeeds, and puts the old file back if
+  that write fails.
+- An independent review of the 1.2 features (before release) also led to:
+  cheats and the link room name of a zipped game read the unpacked file; a
+  refused launch is asked once and does not fall back to `autoboot.txt`; a
+  zip's entry sizes are checked against the file before anything is
+  allocated; an overlay PNG's size is checked before it is decoded.
+
 ## Version 1.0 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

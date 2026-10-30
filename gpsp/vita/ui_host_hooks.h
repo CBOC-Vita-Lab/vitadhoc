@@ -109,6 +109,27 @@ int ui_host_mgift_available(void);
 #define UI_EXTRA_ROOTS_MAX 8
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
+/* Settings > Game folders: add a folder, or remove it when it is listed,
+ * and write the list to vita.ini.  1 added, 2 removed, -1 not a folder on
+ * the card, -2 the list is full, -3 not written down. */
+int         ui_host_extra_root_toggle(const char *folder);
+/* A .zip in a game folder: the console of the cartridge in it (0 GBA, 1 GB,
+ * 2 GBC), or -1 when it holds none this app can start (zip_rom.h).  `size`
+ * is the file's, for the host's cache of answers. */
+int         ui_host_zip_console(const char *path, unsigned size);
+
+/* Settings > Display: Grid strength 1..10 (the LCD grid and scanline looks;
+ * 5 is the default), Screen overlay on/off and the overlay in use ("" when
+ * none is in overlays/); Settings > Interface: Screenshot folder ("" =
+ * screenshots/).  Kept in vita.ini (grid_strength, overlays, screenshots).
+ * shot_dir_set: 0 = taken, -1 = not a usable folder. */
+int         ui_host_grid_level(void);
+void        ui_host_grid_set(int level);
+int         ui_host_overlay_on(void);
+void        ui_host_overlay_set(int on);
+const char *ui_host_overlay_name(void);
+const char *ui_host_shot_dir(void);
+int         ui_host_shot_dir_set(const char *dir);
 
 /* ===========================================================================
  * 3  THE NETWORK'S STATE          (implemented by link_vita.c)

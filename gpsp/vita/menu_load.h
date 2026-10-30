@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* = PSP_STATE_SLOT_COUNT on the Vita (psp/state_slots.h; menu_files.c
+ * checks); kept here so this header stands alone */
+#define ML_STATE_SLOTS 10
+
 #define ML_PATH 512
 #define ML_STEM 256
 #define ML_NEIGHBORS 6
@@ -37,8 +41,8 @@ typedef struct menu_load_job
 
 typedef struct menu_load_meta
 {
-   int battery, state[5];
-   char when[5][24];
+   int battery, state[ML_STATE_SLOTS];
+   char when[ML_STATE_SLOTS][24];
    char blurb[400];
    /* where the game was left (state_slots.h psp_state_resume_path): ML_*,
     * and when; and a patch beside the ROM (rom_patch.h ROM_PATCH_*) */

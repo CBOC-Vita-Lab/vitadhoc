@@ -399,6 +399,7 @@ static int g_set_scroll;      /* SETTINGS list scroll, px (see set_row_y) */
 static int g_share_req;
 static char g_state_base[PSP_FILE_PATH_CAP];
 static int g_state_slot = 1;
+static int g_ss_top, g_shelf_top;   /* the first slot on screen (scrolling) */
 static int g_browser_state_open;
 static int g_ui_shell;                    /* 0 = Shelf, 1 = Marquee */
 #ifdef VITA
@@ -1576,6 +1577,7 @@ static void ov_soften(const uint16_t *frame, int w, int h)
          g_ov_soft[y * 256 + x] =
             (uint16_t)((r >> 3) | ((g >> 2) << 5) | ((bl >> 3) << 11));
       }
+   vid_tex_invalidate(g_ov_soft, sizeof(g_ov_soft));  /* rewritten in place */
    g_ov_soft_of = frame;
    g_ov_vmax = vmax;
 }
@@ -2292,8 +2294,9 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_FASTLINK, SET_OSD, SET_SHARE, SET_JOIN,
        SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_SGB,
-       SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL,
+       SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
        SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
+       SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
@@ -2302,7 +2305,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* The account and Hardcore in the browser; a running game's list
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
-       SET_HDR_LIB, SET_SORT,
+       SET_HDR_LIB, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_OWN_LOOK, SET_MOTION, SET_SENS, SET_REVERSE,
        SET_LEVEL, SET_SUN,
        SET_HDR_CTL, SET_CONTROLS,
@@ -2383,6 +2386,9 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Motion blend" },
    { 0, "Wide view" },
    { 0, "Wide view: menus" },
+   /* 1.2: what were vita.ini keys, now rows (players asked for them) */
+   { 0, "Grid strength" },
+   { 0, "Screen overlay" },
 #endif
    { 1, "INTERFACE" },
    { 0, "Theme" },
@@ -2393,6 +2399,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * covers the server did not have. */
    { 0, "Covers" },
    { 0, "Refresh library" },
+   { 0, "Screenshot folder" },
 #else
    { 0, "Menu style" },
 #endif
@@ -2417,6 +2424,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Hardcore" },
    { 0, "Achievements" },
    { 1, "LIBRARY" },
+   /* Folders of games beside roms/ (vita.ini extra_roms; GitHub #5).
+    * Above Game order, which the harness walkers reach by wrapping up from
+    * the top past Button mapping: it keeps that place. */
+   { 0, "Game folders" },
    { 0, "Game order" },
    /* The running game's own (config_psp.h pcfg_game): its look, and the
     * sensor rows of a sensor cartridge (fe_sensor.h). */
@@ -2453,7 +2464,7 @@ static int linkmode_row_enabled(void);
 static int set_row_shown(int idx)
 {
 #ifdef VITA
-   if (idx == SET_HDR_LIB || idx == SET_SORT)
+   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS)
       return g_ov_browse;
    if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
       return g_ov_browse;
@@ -3105,6 +3116,9 @@ static void settings_adjust(int id, int dir)
    case SET_RA_LIST:
       /* not values: X acts (screen_settings) */
       return;
+   case SET_FOLDERS:
+      /* not a value: X opens the keyboard (screen_settings) */
+      return;
    case SET_SORT:
       g_pcfg.lib_sort = (g_pcfg.lib_sort + 3 + dir) % 3;
       g_library_resort = 1;
@@ -3213,6 +3227,19 @@ static void settings_adjust(int id, int dir)
       ui_host_look_changed();
       break;
    }
+   case SET_GRID:
+   {
+      /* 1..10 (5 is the default look); global, live */
+      int v = ui_host_grid_level() + dir;
+      ui_host_grid_set(v < 1 ? 10 : v > 10 ? 1 : v);
+      break;
+   }
+   case SET_OVERLAY:
+      ui_host_overlay_set(!ui_host_overlay_on());
+      break;
+   case SET_SHOTDIR:
+      /* not a value: X opens the keyboard (screen_settings) */
+      return;
    case SET_WFILL:
    {
       /* soft edges, stretch, bars */
@@ -3375,6 +3402,15 @@ static const char *set_help(int id)
          return g_pcfg.color ? "As on a Game Boy Color's screen."
                              : "Colours exactly as the game sends them.";
       return "An original Game Boy's shades are its palette, above.";
+   case SET_GRID:     return "How dark the LCD grid and scanline looks are "
+                             "(Video filter).";
+   case SET_OVERLAY:  return ui_host_overlay_on()
+                             ? "Your picture from overlays/ over the game "
+                               "(gba.png, gb.png, gbc.png or its name)."
+                             : "Put a PNG in ux0:data/GBAdhoc/overlays/ to "
+                               "frame the game.";
+   case SET_SHOTDIR:  return "X: type a folder (ux0:pictures/VitAdhoc). "
+                             "Empty: screenshots/.";
    case SET_BLEND:    return g_pcfg.blend
              ? "Each frame mixes with the last, like the old LCD."
              : "Steadies flicker that games used as transparency.";
@@ -3451,6 +3487,8 @@ static const char *set_help(int id)
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
    case SET_SORT:     return "The order of All games and Starred. Recent is "
                              "newest first.";
+   case SET_FOLDERS:  return "X: type a folder to add it (ux0:ROMS/GBA), or "
+                             "one listed to remove it.";
    case SET_OWN_LOOK: return g_pgame.override
                              ? "Display changes made now apply to this game "
                                "only."
@@ -3561,6 +3599,24 @@ static ui_action screen_settings(unsigned edges)
    {
       const char *typed;
       (void)ra_settings_typed();
+      if (ui_text_take(TXT_SHOTDIR, &typed) > 0)
+         osd_toast(ui_host_shot_dir_set(typed) == 0
+                   ? (typed[0] ? "Screenshots go there now"
+                               : "Screenshots go to screenshots/")
+                   : "That folder can't be used");
+      if (ui_text_take(TXT_FOLDER, &typed) > 0 && typed[0])
+      {
+         int rc = ui_host_extra_root_toggle(typed);
+         if (rc == 1 || rc == 2)
+         {
+            osd_toast(rc == 1 ? "Folder added - scanning" : "Folder removed - scanning");
+            g_library_refresh = 1;
+         }
+         else
+            osd_toast(rc == -2 ? "Eight folders is the most" :
+                      rc == -3 ? "The folder list could not be saved" :
+                                 "No folder with that name on the card");
+      }
       if (ui_text_take(TXT_NICK, &typed) > 0 && typed[0])
       {
          /* 15 characters: what a room's announcement carries. */
@@ -3600,6 +3656,21 @@ static ui_action screen_settings(unsigned edges)
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_NAME)
       {
          if (ui_text_open(TXT_NICK, "Player name", g_pcfg.nick, 15) != 0)
+            osd_toast("The keyboard is not available");
+         edges &= ~PSP_CTRL_CROSS;
+      }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_SHOTDIR)
+      {
+         const char *d = ui_host_shot_dir();
+         if (ui_text_open(TXT_SHOTDIR, "Screenshot folder (empty: the usual one)",
+                          d && d[0] ? d : "ux0:pictures/VitAdhoc", 63) != 0)
+            osd_toast("The keyboard is not available");
+         edges &= ~PSP_CTRL_CROSS;
+      }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_FOLDERS)
+      {
+         if (ui_text_open(TXT_FOLDER, "Game folder to add or remove",
+                          "ux0:", 63) != 0)
             osd_toast("The keyboard is not available");
          edges &= ~PSP_CTRL_CROSS;
       }
@@ -3858,6 +3929,33 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.blend ? "on" : "off");
          break;
+      case SET_GRID:
+      {
+         char v[8];
+         snprintf(v, sizeof(v), "%d", ui_host_grid_level());
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_OVERLAY:
+      {
+         char v[64];
+         const char *n = ui_host_overlay_name();
+         if (!ui_host_overlay_on())
+            snprintf(v, sizeof(v), "off");
+         else if (n && n[0])
+            snprintf(v, sizeof(v), "on - %.48s", n);
+         else
+            snprintf(v, sizeof(v), "on - none in overlays/");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_SHOTDIR:
+      {
+         const char *d = ui_host_shot_dir();
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  d && d[0] ? d : "screenshots/");
+         break;
+      }
       case SET_WIDE:
          set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
                   pcfg_wide_modes(pcfg_display_console())
@@ -3962,6 +4060,22 @@ static ui_action screen_settings(unsigned edges)
          char v[32];
          ra_summary(&have, &total, NULL, NULL, NULL);
          snprintf(v, sizeof(v), "%u of %u", have, total);
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_FOLDERS:
+      {
+         char v[96];
+         int k, n = ui_host_extra_roots();
+         if (!n)
+            snprintf(v, sizeof(v), "only roms/");
+         else
+         {
+            size_t u = (size_t)snprintf(v, sizeof(v), "roms/");
+            for (k = 0; k < n && u < sizeof(v); k++)
+               u += (size_t)snprintf(v + u, sizeof(v) - u, ", %s",
+                                     ui_host_extra_root(k));
+         }
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
@@ -6803,9 +6917,11 @@ static ui_action screen_state_slots(unsigned edges)
 
    ov_backdrop(OV_SCRIM);
    ov_head(g_ov_title, "SAVE STATES");
-   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   psp_state_slot_top(cur, &g_ss_top);
+   for (i = g_ss_top; i < PSP_STATE_SLOT_COUNT &&
+                      i < g_ss_top + PSP_STATE_SLOTS_SHOWN; i++)
    {
-      int y = SS_ROW_Y(i), by = y + 1, sel = (i == cur);
+      int y = SS_ROW_Y(i - g_ss_top), by = y + 1, sel = (i == cur);
       char lbl[16];
       /* The band is the drawer card's rule, card = text + 1: two lines,
        * 32 rows, bleeding off the left edge. */
@@ -6850,8 +6966,8 @@ static ui_action screen_state_slots(unsigned edges)
    ss_panel(cur);
    {
       char cap[48];
-      snprintf(cap, sizeof(cap), "Slot %d  -  %s", cur + 1,
-               !g_ov_slot[cur] ? "empty"
+      snprintf(cap, sizeof(cap), "Slot %d of %d  -  %s", cur + 1,
+               PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? "empty"
                : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved");
       vid_text(SS_PX, 228, cap, C_DIM);
    }
@@ -8134,6 +8250,25 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
        * out which from a bug report. */
       int is_dir = (ent.d_stat.st_mode & 0x1000) != 0 ||
                    (ent.d_stat.st_attr & 0x0010) != 0;
+#ifdef VITA
+      /* A game in a .zip: the console of the cartridge inside it (the
+       * host's zip reader, ui_host_zip_console); -1 for every other file. */
+      int zipc = -1;
+      {
+         size_t nl = strlen(ent.d_name);
+         if (!is_dir && ent.d_name[0] != '.' && nl > 4 &&
+             !strcasecmp(ent.d_name + nl - 4, ".zip"))
+         {
+            char full[PSP_FILE_PATH_CAP];
+            int fl = snprintf(full, sizeof(full), "%s/%s", dir, ent.d_name);
+            if (fl > 0 && fl < (int)sizeof(full))
+               zipc = ui_host_zip_console(full,
+                                          (unsigned)ent.d_stat.st_size);
+         }
+      }
+#define ROM_MATCH(nm, c) (zipc >= 0 ? zipc == (int)(c) \
+                                    : ui_rom_matches_console((nm), (c)))
+#endif
 
       if (is_dir)
       {
@@ -8159,12 +8294,11 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       }
 #ifdef VITA
       /* (another console's game: into its own list, rom_side_add) */
-      else if (ent.d_name[0] != '.' &&
-               !ui_rom_matches_console(ent.d_name, console))
+      else if (ent.d_name[0] != '.' && !ROM_MATCH(ent.d_name, console))
       {
          int c;
          for (c = 0; c < FE_CONSOLE_COUNT; c++)
-            if (g_side[c].on && ui_rom_matches_console(ent.d_name, (fe_console_t)c))
+            if (g_side[c].on && ROM_MATCH(ent.d_name, (fe_console_t)c))
             {
                rom_side_add(c, rel, ent.d_name, (unsigned)ent.d_stat.st_size);
                break;
@@ -8174,8 +8308,8 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
        * Game.gba comes with a ._Game.gba of 4 KB beside it (AppleDouble:
        * the resource fork and Finder tags), which would be listed as a game
        * that cannot start. */
-      else if (ent.d_name[0] != '.' &&
-               ui_rom_matches_console(ent.d_name, console))
+      else if (ent.d_name[0] != '.' && ROM_MATCH(ent.d_name, console))
+#undef ROM_MATCH
 #else
       else if (ui_rom_matches_console(ent.d_name, console))
 #endif
@@ -9400,6 +9534,56 @@ static const uint16_t *hero_decode(int rom_idx, const char *base)
 #endif
 }
 
+/* What the UI's fonts can draw: they hold ASCII alone, so an accented Latin
+ * letter in a file name is shown as its letter ("Pokémon" reads "Pokemon",
+ * not "Pok??mon"), curly quotes and dashes as their plain ones, and any
+ * other character as one '?' (not one per byte).  In place: never longer. */
+static void ui_ascii_fold(char *s)
+{
+   static const char *const up =     /* U+00C0..U+00DF */
+      "AAAAAAACEEEEIIII" "DNOOOOOxOUUUUYTs";
+   static const char *const lo =     /* U+00E0..U+00FF */
+      "aaaaaaaceeeeiiii" "dnooooo/ouuuuyty";
+   unsigned char *r = (unsigned char *)s, *w = (unsigned char *)s;
+   while (*r)
+   {
+      unsigned c = *r;
+      size_t len = c < 0x80 ? 1 : c >= 0xF0 ? 4 : c >= 0xE0 ? 3 :
+                   c >= 0xC0 ? 2 : 1;
+      size_t k;
+      for (k = 1; k < len; k++)
+         if ((r[k] & 0xC0) != 0x80)
+            break;
+      if (k < len)
+         len = 1;                         /* broken UTF-8: one byte at a time */
+      if (c < 0x80)
+         *w++ = (unsigned char)c;
+      else if (len == 2 && c == 0xC3)
+      {
+         unsigned i = r[1] & 0x3F;
+         *w++ = (unsigned char)(i < 0x20 ? up[i] : lo[i - 0x20]);
+      }
+      else if (len == 2 && c == 0xC5 && (r[1] == 0x92 || r[1] == 0x93))
+      {
+         *w++ = r[1] == 0x92 ? 'O' : 'o';   /* the oe ligature: "OE" fits */
+         *w++ = r[1] == 0x92 ? 'E' : 'e';
+      }
+      else if (len == 2 && (c == 0xCC || (c == 0xCD && r[1] <= 0xAF)))
+         ;                                 /* a combining accent: dropped */
+      else if (len == 3 && c == 0xE2 && r[1] == 0x80 &&
+               r[2] >= 0x90 && r[2] <= 0x9F)
+         *w++ = r[2] <= 0x95 ? '-' : r[2] <= 0x9B ? '\'' : '"';
+      else if (len == 3 && c == 0xE2 && r[1] == 0x80 && r[2] == 0xA6)
+      {
+         *w++ = '.'; *w++ = '.'; *w++ = '.';
+      }
+      else
+         *w++ = '?';
+      r += len;
+   }
+   *w = 0;
+}
+
 /* Display name: extension already stripped by the caller; additionally cut
  * region tags for the card face ("Pokemon - Emerald Version (USA, Europe)"
  * -> "Pokemon - Emerald Version"). */
@@ -9443,6 +9627,7 @@ static void rom_display_name(const rom_entry *r, char *out, size_t sz,
       if (par && par > out)
          *par = '\0';
    }
+   ui_ascii_fold(out);
 }
 
 /* Template card for a ROM with no art: accent header strip, wrapped title,
@@ -10423,7 +10608,9 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
    rom_display_name(&g_roms[cur], title, sizeof(title), 1);
    clip_title(title, 174);
    vid_text(x + 14, 34, title, C_DIM);
-   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   psp_state_slot_top(g_browser_state_slot - 1, &g_shelf_top);
+   for (i = g_shelf_top; i < PSP_STATE_SLOT_COUNT &&
+                         i < g_shelf_top + PSP_STATE_SLOTS_SHOWN; i++)
    {
       /* The card is y-3..y+28 (32 rows).  Its two lines, 14 apart, are
        * placed as one block with their cap heights centred in it
@@ -10431,7 +10618,7 @@ static void browser_state_panel(const char *rom_dir, int cur, int n)
        * y to y+24, 3 rows of card above and 4 below.  They were at y+1 and
        * y+15, which put the second line's capitals on the card's bottom
        * edge and "empty"'s descenders 4 px past it. */
-      int y = 62 + i * 35, exists = g_browser_state_exists[i];
+      int y = 62 + (i - g_shelf_top) * 35, exists = g_browser_state_exists[i];
       int ty = vid_text_y_in(y - 3, 32 - 14);
       vid_rect(x + 10, y - 3, 182, 32,
                i + 1 == g_browser_state_slot ? C_CARD : C_BG_TOP, 255);

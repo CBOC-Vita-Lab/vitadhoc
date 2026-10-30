@@ -34,6 +34,12 @@ const char *plat_data_root(void);
 /* Where the package's own read-only files are: "app0:" on a Vita (the
  * bundled cheat database). */
 const char *plat_app_dir(void);
+/* What a launcher asked this start to play: everything after "param=" in
+ * the launch URI (psgm:play?titleid=GBAD00001&param=ux0:...), taken as it
+ * is -- not decoded, so a name with '%', '&' or '+' arrives unchanged
+ * (GitHub issue #3).  0 = there is one, copied into out; -2 = there is one
+ * too long for out; -1 = none. */
+int  plat_launch_param(char *out, size_t cap);
 /* Nonzero when the platform wants the main loop to end (the host driver's
  * frame budget or script; never on a Vita, where the player quits). */
 int  plat_quit_requested(void);

@@ -33,7 +33,11 @@
  *     stencil over the whole screen twice at every change -- ui_psp.c changes
  *     the scissor dozens of times a frame.
  *   - vb_tex_destroy never frees a texture a queued scene may still read:
- *     frees wait for the next present, after sceGxmFinish.
+ *     each free waits, past a present, for the texture's fragment fence (the
+ *     scenes that read or wrote it).  Only a full queue or vb_term waits for
+ *     the GPU with sceGxmFinish.
+ *   - A latched GXM error (EndScene, the display queue) is cleared at the
+ *     next skipped present by vita2d_recover, a few times in a row at most.
  *   - Three full-capacity vertex banks retire by scene notifications. If
  *     none is available, the whole frame is skipped without waiting.
  *
@@ -57,6 +61,8 @@
 
 #include "vback.h"
 #include "menu_diag.h"
+/* fe_evt, weakly: the backend's GPU tests link without the log */
+extern void fe_evt(const char *fmt, ...) __attribute__((weak, format(printf, 1, 2)));
 #include "gpu_shaders.h"     /* build/vita/gen: the shaders/ files as strings */
 
 struct vb_tex
@@ -64,6 +70,7 @@ struct vb_tex
    vita2d_texture *t;
    int w, h, fmt, rt, bpp;
    vita2d_fragment_fence readers;
+   int unfenced;               /* a GPU use went unrecorded: free after Finish */
 };
 
 #define POOL_BYTES   (2 * 1024 * 1024)
@@ -80,8 +87,15 @@ static unsigned g_started_frames, g_skipped_frames, g_texture_blocked;
 static vb_tex *g_rt;          /* render target bound, or NULL               */
 static int g_sc_on, g_sc_x, g_sc_y, g_sc_w, g_sc_h;
 static int g_dialog;          /* run the common dialog before each swap     */
-static vita2d_texture *g_defer[DEFER_MAX];
+static struct
+{
+   vita2d_texture *t;
+   vita2d_fragment_fence readers;   /* the texture's, when it was destroyed */
+   int unfenced;
+} g_defer[DEFER_MAX];
 static int g_defer_n;
+static unsigned g_recovered;
+static int g_recover_gave_up;
 
 const char *vb_name(void) { return "vita2d"; }
 
@@ -95,6 +109,8 @@ int vb_init(void)
    vita2d_set_vblank_wait(1);
    vita2d_disable_clipping();
    g_inited = 1;
+   g_recovered = 0;
+   g_recover_gave_up = 0;
    g_open = g_suspended = g_sc_on = g_defer_n = 0;
    g_skip = g_clear_pending = 0;
    g_frame_started = 0;
@@ -103,6 +119,27 @@ int vb_init(void)
    return 0;
 }
 
+/* Free the deferred textures the GPU is done with; never waits. */
+static void defer_sweep(void)
+{
+   int i, n = 0;
+   unsigned long long t;
+   if (!g_defer_n)
+      return;
+   t = md_begin();
+   for (i = 0; i < g_defer_n; i++)
+   {
+      if (!g_defer[i].unfenced &&
+          vita2d_fragment_fence_done(&g_defer[i].readers))
+         vita2d_free_texture(g_defer[i].t);
+      else
+         g_defer[n++] = g_defer[i];
+   }
+   g_defer_n = n;
+   md_end(MD_DEFER, t);
+}
+
+/* Free them all: no scene may be open.  Waits for the GPU. */
 static void defer_flush(void)
 {
    int i;
@@ -113,12 +150,13 @@ static void defer_flush(void)
    /* Nothing queued may still be sampling these. */
    vita2d_wait_rendering_done();
    for (i = 0; i < g_defer_n; i++)
-      vita2d_free_texture(g_defer[i]);
+      vita2d_free_texture(g_defer[i].t);
    g_defer_n = 0;
    md_end(MD_DEFER, t);
 }
 
 static void prog_release(void);
+static void recover(void);
 
 void vb_term(void)
 {
@@ -216,18 +254,23 @@ void vb_tex_destroy(vb_tex *t)
 {
    if (!t)
       return;
+   /* The bound target: close its scene first (the frame's, if suspended,
+    * resumes), so no scene is left open on a texture that is gone. */
    if (t == g_rt)
-      g_rt = NULL;
+      vb_rt_end();
+   if (g_defer_n == DEFER_MAX)
+      defer_sweep();
+   if (g_defer_n == DEFER_MAX && !g_open && !g_rt)
+      defer_flush();       /* still full and no scene is open: drain it now */
    if (g_defer_n < DEFER_MAX)
-      g_defer[g_defer_n++] = t->t;
-   else if (!g_open && !g_rt)
    {
-      /* The queue is full and no scene is open: drain it now. */
-      defer_flush();
-      g_defer[g_defer_n++] = t->t;
+      g_defer[g_defer_n].t = t->t;
+      g_defer[g_defer_n].readers = t->readers;
+      g_defer[g_defer_n].unfenced = t->unfenced;
+      g_defer_n++;
    }
-   /* else: leak one texture rather than free one in use (256 destroys in
-    * one frame does not happen). */
+   /* else: leak one texture rather than free one in use (256 destroys
+    * still in flight inside one frame does not happen). */
    free(t);
 }
 
@@ -389,6 +432,7 @@ void vb_present(void)
       g_skipped_frames++;
       g_clear_pending = 1;
       vita2d_pool_reset();
+      recover();
       return;
    }
    if (g_gpu_time)
@@ -409,12 +453,32 @@ void vb_present(void)
    unsigned long long swap_t = md_begin();
    vita2d_swap_buffers();
    md_end(MD_SWAP, swap_t);
-   defer_flush();
+   defer_sweep();
    /* Release CPU ownership only; the bank retains its completion fences. */
    vita2d_pool_reset();
    g_sc_on = 0;
    g_frame_started = 0;
    g_clear_pending = 0;
+}
+
+/* A latched GXM error refuses every frame from then on (a frozen screen):
+ * clear it, a bounded number of times in a row (vita2d_recover). */
+static void recover(void)
+{
+   int r = vita2d_recover();
+   if (r > 0 && ++g_recovered == 1 && fe_evt)
+      fe_evt("gxm_recover n=1");
+   else if (r < 0 && !g_recover_gave_up)
+   {
+      vita2d_ownership_diag d;
+      vita2d_ownership_get(&d);
+      if (d.fatal)
+      {
+         g_recover_gave_up = 1;
+         if (fe_evt)
+            fe_evt("gxm_recover_gave_up n=%u fatal=%u", g_recovered, d.fatal);
+      }
+   }
 }
 
 int vb_present_state(void)
@@ -449,7 +513,8 @@ void vb_rt_begin(vb_tex *rt)
       g_frame_started = 1;
       g_started_frames++;
    }
-   (void)vita2d_fragment_fence_record(&rt->readers);
+   if (!vita2d_fragment_fence_record(&rt->readers))
+      rt->unfenced = 1;
 }
 
 void vb_rt_end(void)
@@ -634,7 +699,8 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
       }
       if (k)
       {
-         (void)vita2d_fragment_fence_record(&t->readers);
+         if (!vita2d_fragment_fence_record(&t->readers))
+            t->unfenced = 1;
          vita2d_draw_array_textured(t->t, SCE_GXM_PRIMITIVE_TRIANGLES, v,
                                     (size_t)(k * 6), tint);
       }
@@ -1090,9 +1156,10 @@ void vb_pquads(vb_prog *p, vb_tex *t0, vb_tex *t1, const vb_tquad *q, int n,
    }
    if (!k)
       return;
-   (void)vita2d_fragment_fence_record(&t0->readers);
-   if (t1)
-      (void)vita2d_fragment_fence_record(&t1->readers);
+   if (!vita2d_fragment_fence_record(&t0->readers))
+      t0->unfenced = 1;
+   if (t1 && !vita2d_fragment_fence_record(&t1->readers))
+      t1->unfenced = 1;
    sceGxmSetVertexProgram(_vita2d_context, _vita2d_textureVertexProgram);
    sceGxmSetFragmentProgram(_vita2d_context, p->fp);
    sceGxmReserveVertexDefaultUniformBuffer(_vita2d_context, &u);

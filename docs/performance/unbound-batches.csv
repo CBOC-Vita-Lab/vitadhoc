@@ -1,0 +1,4 @@
+start_us,end_us,duration_us,window_count,emulated_frames,emulated_fps,frontend_sample_count,frontend_sample_duration_us,frontend_sample_coverage_fraction,frontend_emulated_frames,frontend_emulated_fps,frontend_rendered_frames,frontend_rendered_fps,frontend_skipped_frames,audio_underruns_delta,audio_starved_delta,late_delta,forgiven_delta,catchup_frames,upscale_jobs,upscale_dropped,upscale_factors,work_avg_us,work_max_us,batch
+269030716,294689640,25658924,2,1538,59.94015961074595,2,20020104,0.7802394207956654,1200,59.93974856474272,883,44.105664985556515,317,0,0,250,0,338,1197,3,[3],14205.5,73562,1
+294689640,322183773,27494133,2,1630,59.285375538119354,1,10199118,0.3709561599923882,600,58.828616356826146,458,44.90584381904396,142,5,16328,318,2,430,1200,0,[3],16670.0,81370,2
+322183773,348610171,26426398,2,1584,59.94006447643754,2,20018768,0.7575291948603816,1200,59.94374878613909,896,44.75799909365052,304,1,2617,289,0,384,1196,4,[3],15088.5,72053,3

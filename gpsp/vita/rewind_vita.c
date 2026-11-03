@@ -34,6 +34,10 @@
 #include "video_vita.h"
 #include "rewind_vita.h"
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
 /* A run of fewer than this many equal bytes inside a changed stretch is
  * cheaper said as literal zeros than as a new [skip][count] pair. */
 #define RW_GAP 3
@@ -154,6 +158,97 @@ static int get_var(const uint8_t *in, size_t len, size_t *p, size_t *v)
    return 0;
 }
 
+/* Eight bytes at any address (memcpy: a plain load or store where the CPU
+ * allows unaligned ones, as both the Vita's and a PC's do). */
+static inline uint64_t ld64(const uint8_t *p)
+{
+   uint64_t v;
+   memcpy(&v, p, sizeof(v));
+   return v;
+}
+
+static inline void st64(uint8_t *p, uint64_t v)
+{
+   memcpy(p, &v, sizeof(v));
+}
+
+/* The first i' >= i where a and b differ, n if nowhere.  This is nearly all
+ * of a state, and the reason a step costs what a pass over it costs: whole
+ * blocks are compared (64 bytes with NEON, 32 without) with one test each,
+ * the block that differs then word by word and byte by byte. */
+static size_t rw_equal_end(const uint8_t *a, const uint8_t *b, size_t i,
+                           size_t n)
+{
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+   while (i + 64 <= n)
+   {
+      uint8x16_t d0 = veorq_u8(vld1q_u8(a + i), vld1q_u8(b + i));
+      uint8x16_t d1 = veorq_u8(vld1q_u8(a + i + 16), vld1q_u8(b + i + 16));
+      uint8x16_t d2 = veorq_u8(vld1q_u8(a + i + 32), vld1q_u8(b + i + 32));
+      uint8x16_t d3 = veorq_u8(vld1q_u8(a + i + 48), vld1q_u8(b + i + 48));
+      uint64x2_t o = vreinterpretq_u64_u8(vorrq_u8(vorrq_u8(d0, d1),
+                                                   vorrq_u8(d2, d3)));
+      uint64x1_t r = vorr_u64(vget_low_u64(o), vget_high_u64(o));
+      if (vget_lane_u64(r, 0))
+         break;
+      i += 64;
+   }
+#else
+   while (i + 32 <= n)
+   {
+      uint64_t d = (ld64(a + i) ^ ld64(b + i)) |
+                   (ld64(a + i + 8) ^ ld64(b + i + 8)) |
+                   (ld64(a + i + 16) ^ ld64(b + i + 16)) |
+                   (ld64(a + i + 24) ^ ld64(b + i + 24));
+      if (d)
+         break;
+      i += 32;
+   }
+#endif
+   while (i + 8 <= n && ld64(a + i) == ld64(b + i))
+      i += 8;
+   while (i < n && a[i] == b[i])
+      i++;
+   return i;
+}
+
+/* Where a changed stretch that starts at or before i ends: the first
+ * p >= i at which RW_GAP equal bytes begin (fewer if the buffers end
+ * first), n if nowhere.  Eight bytes are looked at a time, six positions
+ * decided each (the last two need the next word's bytes); the rest, and
+ * any other RW_GAP, byte by byte as it always was. */
+static size_t rw_changed_end(const uint8_t *a, const uint8_t *b, size_t i,
+                             size_t n)
+{
+#if RW_GAP == 3 && defined(__BYTE_ORDER__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+   const uint64_t lo7 = 0x7F7F7F7F7F7F7F7Full;
+   const uint64_t hi1 = 0x8080808080808080ull;
+   while (i + 8 <= n)
+   {
+      uint64_t d = ld64(a + i) ^ ld64(b + i);
+      /* bit 7 of each byte: that byte is equal ... */
+      uint64_t eq = ~(((d & lo7) + lo7) | d) & hi1;
+      /* ...and so are the two after it (bytes 0..5 of the word) */
+      uint64_t run = eq & (eq >> 8) & (eq >> 16);
+      if (run)
+         return i + (size_t)(__builtin_ctzll(run) >> 3);
+      i += 6;
+   }
+#endif
+   for (;;)
+   {
+      size_t z = 0;
+      while (i < n && a[i] != b[i])
+         i++;
+      while (i + z < n && z < RW_GAP && a[i + z] == b[i + z])
+         z++;
+      if (z >= RW_GAP || i + z >= n)
+         return i;
+      i += z;
+   }
+}
+
 long rw_encode(const uint8_t *a, const uint8_t *b, size_t n, uint8_t *out,
                size_t cap)
 {
@@ -163,40 +258,21 @@ long rw_encode(const uint8_t *a, const uint8_t *b, size_t n, uint8_t *out,
    {
       size_t s = i, l, k;
 
-      /* the equal stretch, a machine word at a time: this is nearly all of
-       * a state, and the reason a step costs what a pass over it costs */
-      while (i + sizeof(size_t) <= n)
-      {
-         size_t x, y;
-         memcpy(&x, a + i, sizeof(x));
-         memcpy(&y, b + i, sizeof(y));
-         if (x != y)
-            break;
-         i += sizeof(size_t);
-      }
-      while (i < n && a[i] == b[i])
-         i++;
+      /* the equal stretch */
+      i = rw_equal_end(a, b, i, n);
       if (i == n)
          break;               /* equal to the end: nothing more to say */
 
       /* the changed stretch, up to the next RW_GAP equal bytes */
       l = i;
-      for (;;)
-      {
-         size_t z = 0;
-         while (i < n && a[i] != b[i])
-            i++;
-         while (i + z < n && z < RW_GAP && a[i + z] == b[i + z])
-            z++;
-         if (z >= RW_GAP || i + z >= n)
-            break;
-         i += z;
-      }
+      i = rw_changed_end(a, b, i, n);
       if (o + 10 + (i - l) > cap)
          return -1;
       o += put_var(out + o, l - s);
       o += put_var(out + o, i - l);
-      for (k = l; k < i; k++)
+      for (k = l; k + 8 <= i; k += 8, o += 8)
+         st64(out + o, ld64(a + k) ^ ld64(b + k));
+      for (; k < i; k++)
          out[o++] = (uint8_t)(a[k] ^ b[k]);
    }
    return (long)o;
@@ -214,7 +290,9 @@ int rw_apply(uint8_t *buf, size_t n, const uint8_t *in, size_t len)
       if (skip > n - i || lit > n - i - skip || lit > len - p)
          return -1;
       i += skip;
-      for (k = 0; k < lit; k++)
+      for (k = 0; k + 8 <= lit; k += 8)
+         st64(buf + i + k, ld64(buf + i + k) ^ ld64(in + p + k));
+      for (; k < lit; k++)
          buf[i + k] ^= in[p + k];
       i += lit;
       p += lit;
@@ -717,7 +795,9 @@ static int rw_land(void)
    uint64_t t0 = plat_time_us();
    unsigned us;
 
-   if (fe_host_state_mem_load(R.cur, R.state_len) != 0)
+   /* (the same cartridge's own state: what was translated from the
+    * cartridge stays, fe_host.h) */
+   if (fe_host_state_mem_restore(R.cur, R.state_len) != 0)
       return -1;
    if (R.bat_live && (R.bat_dirty || fe_host_battery_gen() != R.bat_gen))
    {

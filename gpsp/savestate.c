@@ -454,6 +454,17 @@ void gba_save_state(void* dst)
     bson_write_cstring(wrptr, "zpadding");
     bson_write_u32(wrptr, padsize);
     *wrptr++ = 0;
+    /* The writers above store every byte up to here and the terminator
+     * below is the image's last byte, so the padding is the only part of
+     * the image this function would otherwise leave as it found it: zeroed
+     * here, the image is the same whatever the buffer held, and callers
+     * need not clear all 416 KiB first (retro_serialize did, per call).
+     * (A rewind gather with the arrays skipped leaves the padding as the
+     * full image of gpsp_rewind_layout wrote it: zeros, never read.) */
+#ifdef REWIND
+    if (!gba_rewind_skip_arrays)
+#endif
+      memset(wrptr, 0, padsize);
     wrptr += padsize;
   }
 

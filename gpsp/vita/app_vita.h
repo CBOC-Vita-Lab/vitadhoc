@@ -114,6 +114,7 @@ typedef struct app_game
    char boot_path[APP_PATH_CAP];      /* what the cores load: rom_path, or its
                                        * patched copy (rom_patch.h)          */
    int  patched;
+   int  zipped;                       /* boot_path is the unpacked .zip      */
    char code[5];                      /* GBA header code (0xAC), "" on GB/GBC   */
    char gb_title[17];                 /* GB cartridge title (0x134)             */
    char key[100];                     /* the ROM's name under roms/             */

@@ -1290,8 +1290,17 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
    float y = VS_H + 42 + dy, x = HM_X, cw = 160, ch = 107;
    if (lift < 0.02f)
       return;
-   vs_text(VS_SUB, HM_X, y - 54, "Save states", HC_TEXT);
-   for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
+   static int top;
+   char head[48];
+   psp_state_slot_top(g_browser_state_slot - 1, &top);
+   if (PSP_STATE_SLOT_COUNT > PSP_STATE_SLOTS_SHOWN)
+      snprintf(head, sizeof(head), "Save states   %d-%d of %d", top + 1,
+               top + PSP_STATE_SLOTS_SHOWN, PSP_STATE_SLOT_COUNT);
+   else
+      snprintf(head, sizeof(head), "Save states");
+   vs_text(VS_SUB, HM_X, y - 54, head, HC_TEXT);
+   for (i = top; i < PSP_STATE_SLOT_COUNT && i < top + PSP_STATE_SLOTS_SHOWN;
+        i++)
    {
       int on = g_browser_state_open && g_browser_state_slot == i + 1;
       int have = g_browser_state_exists[i];

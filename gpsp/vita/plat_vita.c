@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <psp2/appmgr.h>
 #include <psp2/audioout.h>
 #include <psp2/ctrl.h>
 #include <psp2/display.h>
@@ -103,6 +104,41 @@ const char *plat_data_root(void)
 const char *plat_app_dir(void)
 {
    return "app0:";
+}
+
+int plat_launch_param(char *out, size_t cap)
+{
+   static char buf[1024];
+   const char *p = NULL, *q;
+   size_t n;
+
+   if (!out || !cap)
+      return -1;
+   out[0] = '\0';
+   memset(buf, 0, sizeof(buf));
+   if (sceAppMgrGetAppParam(buf) < 0)
+      return -1;
+   buf[sizeof(buf) - 1] = '\0';
+   /* the first "param=" that begins a field: at the start, or after '?'
+    * or '&' -- not one inside an earlier field's value */
+   for (q = buf; (q = strstr(q, "param=")) != NULL; q++)
+      if (q == buf || q[-1] == '&' || q[-1] == '?')
+      {
+         p = q + 6;
+         break;
+      }
+   if (!p)
+      return -1;
+   n = strlen(p);
+   while (n && (p[n - 1] == '\n' || p[n - 1] == '\r' || p[n - 1] == ' '))
+      n--;
+   if (!n)
+      return -1;
+   if (n >= cap)
+      return -2;                       /* there is one, but it does not fit */
+   memcpy(out, p, n);
+   out[n] = '\0';
+   return 0;
 }
 
 /* The twin's hooks: the console has a real clock and a real screen. */

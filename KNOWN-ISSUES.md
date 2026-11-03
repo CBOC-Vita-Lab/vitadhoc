@@ -6,8 +6,11 @@ game, its region and what you did.
 
 ## Still Being Confirmed On A Vita
 
-Version 1.0 passed its full test suite and plays at full speed on a Vita.
-These still need more time on a real console:
+Historical version 1.0 measurements cover specific games and settings, not
+every cartridge or ROM hack. Version 1.2 has source and host-test evidence;
+current physical-Vita measurements and their limits are recorded in the
+[performance report](docs/PERFORMANCE.md). These still need more time on a
+real console:
 
 - **Motion games:** whether turning and tilting go the right way and feel
   strong enough. If one feels backwards, use Settings > This game >
@@ -21,6 +24,11 @@ These still need more time on a real console:
 
 ## Performance
 
+- **Pokemon Unbound 2.1.1.1:** the tested opening beach scene ran at about
+  60 emulated fps with full-screen CPU xBRZ 3x, but frontend output was lower
+  and audio underruns were recorded. Exploratory setup showed additional
+  scene-dependent slowdown. This is not full-game acceptance; see the
+  [measurements and exact conditions](docs/PERFORMANCE.md).
 - The heaviest picture settings (xBRZ at full height plus the wide view) are
   the most demanding. If a game slows down, try Image quality: Original.
 - The GPU version of xBRZ (`gpu_xbrz = 1`) is an experiment and too slow for
@@ -43,6 +51,15 @@ These still need more time on a real console:
   `ux0:ROMS/GBA/`) shows up twice, and each copy has its own save. If a save
   seems missing, check for the other copy of the game.
 - Each console's list shows up to 2,048 games.
+- **Zipped games:** the first game in the zip with a `.gba`, `.gb` or `.gbc`
+  name is the one played. Patches, and two-player play with a different game
+  for each player, need the game unzipped. Encrypted and ZIP64 archives are
+  not read.
+- **Starting from a launcher** works when VitAdhoc is closed; close it first.
+- **Sharing states between two Vitas** covers slots 1 to 5 (so a Vita on
+  1.1 can take them too).
+- **Names in other alphabets** (Japanese, for example) show as `?` in the
+  list: the menus' font has Latin letters only. The games still play.
 
 ## Install
 

@@ -118,6 +118,10 @@ $(B)/gen/gpu_shaders.h: $(GPU_SHADERS)
 	     echo ";"; done; } > $@.tmp && mv $@.tmp $@
 $(B)/app/vita/vback_vita2d.o: $(B)/gen/gpu_shaders.h
 $(B)/app/vita/vback_vita2d.o: APP_FILE_FLAGS := -I$(B)/gen
+# The upscaler's per-pixel loops (Scale2x/3x, the picture's preparation):
+# -O3 for this object only (a third fewer instructions in epx_rows on the
+# host twin); the rest of the app stays -O2.
+$(B)/app/vita/upscale_vita.o: APP_FILE_FLAGS := -O3 -ftree-vectorize
 
 LIBS     := $(APP_LIBS_VITA) $(VITA_UI_LIBS) $(NET_VITA_LIBS) \
             -lSceShaccCg_stub_weak \

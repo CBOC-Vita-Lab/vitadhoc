@@ -756,13 +756,51 @@ int fe_ini_doc_save(fe_ini_doc *d, const char *path)
       moved = rename(path, bak) == 0;
    if (rename(tmp, path) != 0)
    {
-      int rc;
-      if (moved)
-         rename(bak, path);
+      /* The card refused the rename: write the file in place.  The old
+       * file stays as .bak (copied there when it could not be moved) and
+       * the complete new one as .tmp until that write has succeeded, and
+       * a failed write puts the old file back. */
+      static char old[FE_INI_DOC_CAP];
+      size_t on = 0;
+      int rc, copied = 0;
+      if (!moved && d->existed)
+      {
+         FILE *of = fopen(path, "rb");
+         int ok;
+         on = of ? fread(old, 1, sizeof(old), of) : 0;
+         ok = of && !ferror(of);
+         if (of)
+            fclose(of);
+         if (!ok || ini_write_file(bak, old, on) != 0)
+         {
+            remove(bak);
+            remove(tmp);
+            return -1;                  /* no safe way to write it now */
+         }
+         moved = copied = 1;
+      }
       rc = ini_write_file(path, d->buf, d->len);
-      remove(tmp);
       d->save_fallback = 1;
-      return rc ? -1 : (d->overflow ? -1 : 0);
+      if (rc != 0)
+      {
+         if (copied)
+            rc = ini_write_file(path, old, on);   /* the old file again */
+         else if (moved)
+         {
+            remove(path);
+            rc = rename(bak, path);
+         }
+         if (rc == 0)
+            remove(bak);
+         remove(tmp);
+         return -1;
+      }
+      remove(tmp);
+      if (moved)
+         remove(bak);
+      d->existed = 1;
+      d->changed = 0;
+      return d->overflow ? -1 : 0;
    }
    if (moved)
       remove(bak);

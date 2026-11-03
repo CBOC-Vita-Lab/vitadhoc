@@ -287,11 +287,10 @@ static inline void set_texture_wvp_uniform()
 static inline void set_texture_tint_color_uniform(unsigned int color)
 {
 	void *texture_tint_color_buffer;
+	/* GBAdhoc: sceGxmSetUniformDataF copies, so the stack will do; the
+	 * pool allocation this replaced was written unchecked (NULL when full). */
+	float tint_color[4];
 	sceGxmReserveFragmentDefaultUniformBuffer(_vita2d_context, &texture_tint_color_buffer);
-
-	float *tint_color = vita2d_pool_memalign(
-		4 * sizeof(float), // RGBA
-		sizeof(float));
 
 	tint_color[0] = ((color >> 8*0) & 0xFF)/255.0f;
 	tint_color[1] = ((color >> 8*1) & 0xFF)/255.0f;

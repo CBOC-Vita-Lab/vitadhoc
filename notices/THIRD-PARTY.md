@@ -114,7 +114,7 @@ clarification and the remaining package review.
   experimental GPU shader's unresolved combined-work review.
 
 The linked SDK inputs above are pinned by `notices/VitaSDK-build-lock.json`,
-not inferred from whichever SDK is installed later. See [Building](../BUILDING.md).
+not inferred from whichever SDK is installed later. See [Building](../docs/BUILDING.md).
 Adding these notices does not finish the component-level licensing review.
 
 No game ROM, Nintendo BIOS, user save, downloaded cover collection or private

@@ -140,6 +140,11 @@ int fe_host_state_mem_load(const void *buf, size_t n)
    return 0;
 }
 
+int fe_host_state_mem_restore(const void *buf, size_t n)
+{
+   return fe_host_state_mem_load(buf, n);
+}
+
 void *fe_host_battery_mem(size_t *size)
 {
    if (!bat_len || session)
@@ -183,6 +188,11 @@ void vid_draw_frame(const uint16_t *p, unsigned w, unsigned h, size_t pitch)
 {
    (void)p; (void)w; (void)h; (void)pitch;
    redraws++;
+}
+const uint16_t *app_shown_frame(unsigned *w, unsigned *h, size_t *pitch_bytes)
+{
+   (void)w; (void)h; (void)pitch_bytes;
+   return NULL;               /* nothing to show: the picture stands */
 }
 uint64_t plat_time_us(void)
 {

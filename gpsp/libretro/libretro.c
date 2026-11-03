@@ -959,7 +959,8 @@ bool retro_serialize(void* data, size_t size)
    if (size != GBA_STATE_MEM_SIZE)
       return false;
 
-   memset (data,0, GBA_STATE_MEM_SIZE);
+   /* (no clearing first: gba_save_state writes every byte of the image,
+    * its padding included) */
    gba_save_state(data);
 
    return true;
@@ -1031,7 +1032,7 @@ bool gpsp_rewind_gather(void *data, size_t size)
    if (size != GBA_STATE_MEM_SIZE + GPSP_REWIND_EXTRA)
       return false;
    if (rw_gp_clock) t0 = rw_gp_clock();
-   memset(data, 0, GBA_STATE_MEM_SIZE);
+   /* (nothing to clear: gba_save_state writes every byte of the image) */
    if (rw_gp_clock) t1 = rw_gp_clock();
    gba_save_state(data);
    if (rw_gp_clock) t2 = rw_gp_clock();
@@ -1100,9 +1101,8 @@ u32 gpsp_rewind_layout(u8 *scratch, gpsp_rewind_arr arr[RW_ARRAYS])
    live[4] = (u8 *)palette_ram;
    live[5] = (u8 *)io_registers;
 
-   memset(scratch, 0, GBA_STATE_MEM_SIZE);
    gba_rewind_skip_arrays = 0;
-   gba_save_state(scratch);
+   gba_save_state(scratch);           /* (every byte of it, padding too) */
    memdoc = bson_find_key(scratch, "memory");
    pad = bson_find_key(scratch, "zpadding");
    if (!memdoc || !pad)

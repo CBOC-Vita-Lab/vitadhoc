@@ -1932,6 +1932,20 @@ int fe_host_state_mem_load(const void *buf, size_t n)
    return n == retro_serialize_size() && retro_unserialize(buf, n) ? 0 : -1;
 }
 
+/* savestate.c (instance A); weak: a frontend test may link no core. */
+extern uint32_t state_load_keeps_rom __attribute__((weak));
+
+int fe_host_state_mem_restore(const void *buf, size_t n)
+{
+   int rc;
+   if (gb_core || gb_family || !&state_load_keeps_rom)
+      return fe_host_state_mem_load(buf, n);
+   state_load_keeps_rom = 1;
+   rc = fe_host_state_mem_load(buf, n);
+   state_load_keeps_rom = 0;
+   return rc;
+}
+
 void *fe_host_battery_mem(size_t *size)
 {
    void *p;

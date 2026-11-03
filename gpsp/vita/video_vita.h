@@ -125,6 +125,12 @@ float vid_text_advance_dev(int hd, int *worst_char, float *mean_abs);
 enum { VID_COLOR_RAW = 0, VID_COLOR_GBA = 1, VID_COLOR_GBA_DARK = 2,
        VID_COLOR_MODES = 3 };
 void vid_set_look(int color, int blend);
+/* SCREEN OVERLAY: a picture of the player's (PNG, any size, drawn over the
+ * whole screen with its own transparency) on top of the game -- a bezel, a
+ * Game Boy shell, a dot-matrix mask.  NULL or "" removes it.  0 = shown. */
+int  vid_set_overlay(const char *png_path);
+/* LCD grid / scanlines strength, percent of the default (0..200). */
+void vid_set_lcd_strength(int pct);
 int  vid_look_color(void);
 int  vid_look_blend(void);
 

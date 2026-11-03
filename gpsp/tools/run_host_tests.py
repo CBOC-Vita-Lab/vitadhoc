@@ -423,7 +423,18 @@ def suites(env: Env, baseline: Path | None):
          "-Ilibretro/libretro-common/include -Ifrontend-common "
          "-o /tmp/t_savestate_bson_bounds "
          "tools/test_savestate_bson_bounds.c -Wl,--gc-sections && "
-         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_savestate_bson_bounds"),
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_savestate_bson_bounds && "
+         # ...and gba_save_state writes every byte of its image
+         # (retro_serialize no longer clears the buffer first): zeroed,
+         # 0xAA and random buffers give the same image.  (One entry with
+         # the reader's bounds: the suite has a cap on entries.)
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-Wno-old-style-declaration -fsanitize=address,undefined "
+         "-ffunction-sections -fdata-sections -DINLINE=inline "
+         "-Ilibretro/libretro-common/include -Ifrontend-common "
+         "-o /tmp/t_savestate_prefill "
+         "tools/test_savestate_prefill.c -Wl,--gc-sections && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_savestate_prefill"),
 
         # Includes psp/mgift_net.c, which includes <pspkernel.h>: the SDK stubs
         # in the test replace the FUNCTIONS, not the headers.

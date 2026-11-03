@@ -46,6 +46,7 @@
 #include "fe_evt.h"
 #include "upscale_vita.h"
 #include "stb_image_write.h"
+#include "stb_image.h"           /* psp/stb_impl.c: the overlay PNG */
 
 /* pspcompat.c: microseconds, wrapping (the PSP's sceKernelGetSystemTimeLow). */
 unsigned pspcompat_time_us(void);
@@ -414,11 +415,26 @@ static int geo_covers(const vid_geo *g)
 /* ---- GPU textures ------------------------------------------------------- */
 
 /* The game frame is uploaded every frame.  A deferred renderer may still be
- * reading last frame's texture when this frame's bytes arrive, so each
- * purpose has two textures and alternates. */
+ * reading an earlier frame's texture when this frame's bytes arrive (with
+ * vsync off the CPU can be two frames ahead), so each purpose has a ring of
+ * textures and writes one the GPU is done with (vb_tex_writable).  A
+ * picture handed over again unchanged -- the same pointer, no
+ * vid_tex_invalidate since -- is not uploaded again. */
 enum { ST_LIVE = 0, ST_PARTNER = 1, ST_SNAP = 2, ST_SOFT = 3,
        ST_PURPOSES = 4 };
-static struct { vb_tex *t; int w, h, fmt; } g_stage[ST_PURPOSES][2];
+#define ST_RING 3
+#define ST_RETRY 60            /* frames between attempts after a failure */
+static struct
+{
+   vb_tex *t;
+   int w, h, fmt;
+   const void *key;            /* the picture it holds (NULL: a live one) */
+   unsigned gen;               /* ...as of this g_tex_gen                 */
+} g_stage[ST_PURPOSES][ST_RING];
+static int      g_stage_cur[ST_PURPOSES];    /* the slot used last        */
+static unsigned g_stage_at[ST_PURPOSES];     /* g_frame_no + 1 of that use */
+static unsigned g_stage_fail[ST_PURPOSES];   /* ...of a failed create      */
+static unsigned g_tex_gen;                   /* bumped by vid_tex_invalidate */
 
 /* The textures written every frame (these, the upscalers'): in the GPU's
  * memory, or with vita.ini tex_mem = 1 in the main RAM (vb_tex_mem).  On a
@@ -431,26 +447,71 @@ void vid_set_tex_mem(int cpu_written)
    g_tex_cpu = cpu_written ? 1 : 0;
 }
 
-static vb_tex *stage_tex(int purpose, int w, int h, int fmt)
+/* A texture for `purpose` at w x h: *upload = 1 when the caller is to
+ * write the picture into it, 0 when it holds `key`'s picture already or no
+ * texture is free (it is then drawn as last uploaded).  `key` NULL: a live
+ * picture, always written. */
+static vb_tex *stage_tex(int purpose, int w, int h, int fmt, const void *key,
+                         int *upload)
 {
-   int par = (int)(g_frame_no & 1u);
-   if (g_stage[purpose][par].t &&
-       (g_stage[purpose][par].w != w || g_stage[purpose][par].h != h ||
-        g_stage[purpose][par].fmt != fmt))
+#define ST_FITS(e) ((e)->t && (e)->w == w && (e)->h == h && (e)->fmt == fmt)
+#define ST_HOLDS(e) (key && (e)->key == key && (e)->gen == g_tex_gen)
+   const int cur = g_stage_cur[purpose];
+   int k, s = -1;
+   *upload = 0;
+   /* this frame's already (written again, as before), or the same picture */
+   if (ST_FITS(&g_stage[purpose][cur]) &&
+       (g_stage_at[purpose] == g_frame_no + 1 ||
+        ST_HOLDS(&g_stage[purpose][cur])))
+      s = cur;
+   for (k = 1; s < 0 && k <= ST_RING; k++)
    {
-      vb_tex_destroy(g_stage[purpose][par].t);
-      g_stage[purpose][par].t = NULL;
+      int i = (cur + k) % ST_RING;
+      if (ST_FITS(&g_stage[purpose][i]) &&
+          vb_tex_writable(g_stage[purpose][i].t))
+         s = i;
    }
-   if (!g_stage[purpose][par].t)
+   if (s < 0 && (!g_stage_fail[purpose] ||
+                 g_frame_no + 1 - g_stage_fail[purpose] >= ST_RETRY))
+      for (k = 1; k <= ST_RING; k++)
+      {
+         int i = (cur + k) % ST_RING;
+         if (ST_FITS(&g_stage[purpose][i]))
+            continue;
+         if (g_stage[purpose][i].t)
+            vb_tex_destroy(g_stage[purpose][i].t);
+         vb_tex_mem(g_tex_cpu);
+         g_stage[purpose][i].t = vb_tex_create(w, h, fmt, 0);
+         vb_tex_mem(0);
+         g_stage[purpose][i].w = w;
+         g_stage[purpose][i].h = h;
+         g_stage[purpose][i].fmt = fmt;
+         g_stage[purpose][i].key = NULL;
+         if (g_stage[purpose][i].t)
+         {
+            g_stage_fail[purpose] = 0;
+            s = i;
+         }
+         else
+            g_stage_fail[purpose] = g_frame_no + 1;
+         break;
+      }
+   if (s < 0)
    {
-      vb_tex_mem(g_tex_cpu);
-      g_stage[purpose][par].t = vb_tex_create(w, h, fmt, 0);
-      vb_tex_mem(0);
-      g_stage[purpose][par].w = w;
-      g_stage[purpose][par].h = h;
-      g_stage[purpose][par].fmt = fmt;
+      /* nothing free: the last picture again, not black */
+      return ST_FITS(&g_stage[purpose][cur]) ? g_stage[purpose][cur].t : NULL;
    }
-   return g_stage[purpose][par].t;
+   g_stage_cur[purpose] = s;
+   g_stage_at[purpose] = g_frame_no + 1;
+   if (!ST_HOLDS(&g_stage[purpose][s]))
+   {
+      *upload = 1;
+      g_stage[purpose][s].key = key;
+      g_stage[purpose][s].gen = g_tex_gen;
+   }
+   return g_stage[purpose][s].t;
+#undef ST_FITS
+#undef ST_HOLDS
 }
 
 /* Textures the UI owns (art, thumbnails, the state preview): keyed by the
@@ -508,6 +569,7 @@ void vid_tex_invalidate(const void *p, size_t bytes)
    int i;
    if (!p)
       return;
+   g_tex_gen++;                    /* stage_tex: re-upload what it holds */
    for (i = 0; i < TC_MAX; i++)
    {
       const uint8_t *k = (const uint8_t *)g_tc[i].key;
@@ -1151,6 +1213,13 @@ static int picture_mode(unsigned w, const vid_geo *g, int *kx, int *ky)
 #define SCAN_ALPHA 96          /* ...and of a scanline                       */
 static vb_tex *g_lcd_tex;
 static int     g_lcd_dw, g_lcd_dh, g_lcd_w, g_lcd_sh, g_lcd_rows;
+static int     g_lcd_pct = 100, g_lcd_built_pct = -1;
+
+void vid_set_lcd_strength(int pct)
+{
+   g_lcd_pct = pct < 0 ? 0 : pct > 200 ? 200 : pct;
+}
+static unsigned g_lcd_fail;    /* g_frame_no + 1 of a failed make, or 0 */
 
 static void lcd_axis(unsigned char *cov, int dst, int src)
 {
@@ -1183,8 +1252,13 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
    if (g->dw > VB_W || g->dh > VB_H || g->dw <= 0 || g->dh <= 0)
       return NULL;
    if (g_lcd_tex && g_lcd_dw == g->dw && g_lcd_dh == g->dh &&
-       g_lcd_w == (int)w && g_lcd_sh == g->sh && g_lcd_rows == rows_only)
+       g_lcd_w == (int)w && g_lcd_sh == g->sh && g_lcd_rows == rows_only &&
+       g_lcd_built_pct == g_lcd_pct)
       return g_lcd_tex;
+   /* (no memory last time: try again now and then, not every frame) */
+   if (g_lcd_fail && g_frame_no + 1 - g_lcd_fail < ST_RETRY)
+      return NULL;
+   g_lcd_fail = g_frame_no + 1;
    if (g_lcd_tex)
       vb_tex_destroy(g_lcd_tex);
    g_lcd_tex = NULL;
@@ -1198,6 +1272,9 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
       strength = 0;
    if (rows_only)
       strength = strength * SCAN_ALPHA / LCD_ALPHA;
+   strength = strength * g_lcd_pct / 100;     /* Grid strength (vita.ini grid_strength) */
+   if (strength > 255)
+      strength = 255;
    lcd_axis(cx, g->dw, (int)w);
    lcd_axis(cy, g->dh, g->sh);
    for (y = 0; y < g->dh; y++)
@@ -1210,10 +1287,14 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
       }
    g_lcd_tex = vb_tex_create(g->dw, g->dh, VB_FMT_A8, 0);
    if (g_lcd_tex)
+   {
       vb_tex_update(g_lcd_tex, 0, 0, g->dw, g->dh, px, (size_t)g->dw);
+      g_lcd_fail = 0;
+   }
    free(px);
    g_lcd_dw = g->dw; g_lcd_dh = g->dh; g_lcd_w = (int)w; g_lcd_sh = g->sh;
    g_lcd_rows = rows_only;
+   g_lcd_built_pct = g_lcd_pct;
    return g_lcd_tex;
 }
 
@@ -1758,7 +1839,9 @@ static struct
    int      pox, poy, fox, foy;  /* the ring's turn (upscale_ring) of the
                                   * pending picture and of the front one */
    unsigned w, h, seen;        /* seen: g_frame_no + 1 of the last use */
+   unsigned fail;              /* g_frame_no + 1 of failed textures, or 0 */
 } g_upt[UPSCALE_SLOTS];
+static unsigned g_up_fenced;   /* pictures not handed over: GPU still reading */
 
 static int up_kind(void)
 {
@@ -1829,6 +1912,10 @@ static vb_tex *up_stage(int slot, const uint16_t *pix, unsigned w,
        !g_upt[slot].t[1])
    {
       unsigned t0 = pspcompat_time_us();
+      /* (no memory for them last time: the sharp path, and another try
+       * now and then rather than two big textures every frame) */
+      if (g_upt[slot].fail && g_frame_no + 1 - g_upt[slot].fail < ST_RETRY)
+         return NULL;
       up_drop(slot);
       vb_tex_mem(g_tex_cpu);
       for (k = 0; k < 2; k++)
@@ -1840,8 +1927,10 @@ static vb_tex *up_stage(int slot, const uint16_t *pix, unsigned w,
       if (!g_upt[slot].t[0] || !g_upt[slot].t[1])
       {
          up_drop(slot);
+         g_upt[slot].fail = g_frame_no + 1;
          return NULL;
       }
+      g_upt[slot].fail = 0;
       g_upt[slot].kind = kind; g_upt[slot].f = f;
       g_upt[slot].w = w; g_upt[slot].h = h;
       DP_MAX(VID_DP_REMAKE, pspcompat_time_us() - t0);
@@ -1870,8 +1959,12 @@ static vb_tex *up_stage(int slot, const uint16_t *pix, unsigned w,
       /* (a slot still busy with the last picture turns this one away and
        * counts it: the stats' `dropped`, a frame the smoothing missed) */
       int target = g_upt[slot].front == 0 ? 1 : 0;
-      if (upscale_submit(slot, kind, f, pix, w, h, pitch_bytes, 0, px, tp[0],
-                         target) == 1)
+      /* The target was the front a frame or two ago: while a queued scene
+       * may still read it, nothing is written into it (the front stays). */
+      if (!vb_tex_writable(g_upt[slot].t[target]))
+         g_up_fenced++;
+      else if (upscale_submit(slot, kind, f, pix, w, h, pitch_bytes, 0, px,
+                              tp[0], target) == 1)
       {
          const int pf = upscale_job_factor(slot);
          if (pf != g_upt[slot].pf)
@@ -1953,6 +2046,79 @@ static void up_quad(int slot, vb_tex *t, int f, float x0, float y0, float x1,
 void vid_upscale_stats(upscale_stats_t *out)
 {
    upscale_stats(out);
+   if (out)
+      out->dropped += g_up_fenced;      /* a frame the smoothing missed too */
+   g_up_fenced = 0;
+}
+
+
+/* ---- the player's overlay (vid_set_overlay) ------------------------------- */
+static vb_tex *g_ovl_tex;
+static int     g_ovl_w, g_ovl_h;
+static char    g_ovl_path[512];
+
+int vid_set_overlay(const char *png_path)
+{
+   unsigned char *file = NULL, *px;
+   long n = 0;
+   int w = 0, h = 0, ch = 0;
+   FILE *f;
+
+   if (png_path && png_path[0] && g_ovl_tex && !strcmp(png_path, g_ovl_path))
+      return 0;                              /* the one already up */
+   if (g_ovl_tex)
+      vb_tex_destroy(g_ovl_tex);
+   g_ovl_tex = NULL;
+   g_ovl_path[0] = '\0';
+   if (!png_path || !png_path[0])
+      return 0;
+   f = fopen(png_path, "rb");
+   if (!f)
+      return -1;
+   if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) > 0 && n < (8L << 20) &&
+       fseek(f, 0, SEEK_SET) == 0 && (file = (unsigned char *)malloc((size_t)n)) &&
+       fread(file, 1, (size_t)n, f) != (size_t)n)
+   {
+      free(file);
+      file = NULL;
+   }
+   fclose(f);
+   if (!file)
+      return -1;
+   /* the size first: a small file may claim a huge picture */
+   px = stbi_info_from_memory(file, (int)n, &w, &h, &ch) &&
+        w > 0 && h > 0 && w <= 1024 && h <= 1024
+        ? stbi_load_from_memory(file, (int)n, &w, &h, &ch, 4) : NULL;
+   free(file);
+   if (!px || w <= 0 || h <= 0 || w > 1024 || h > 1024)
+   {
+      fe_evt("overlay refused path=%s w=%d h=%d", png_path, w, h);
+      if (px)
+         stbi_image_free(px);
+      return -1;
+   }
+   g_ovl_tex = vb_tex_create(w, h, VB_FMT_RGBA8, 0);
+   if (g_ovl_tex)
+      vb_tex_update(g_ovl_tex, 0, 0, w, h, px, (size_t)w * 4);
+   stbi_image_free(px);
+   if (!g_ovl_tex)
+      return -1;
+   g_ovl_w = w;
+   g_ovl_h = h;
+   snprintf(g_ovl_path, sizeof(g_ovl_path), "%s", png_path);
+   fe_evt("overlay path=%s w=%d h=%d", png_path, w, h);
+   return 0;
+}
+
+static void overlay_draw(void)
+{
+   vb_tquad q;
+   if (!g_ovl_tex)
+      return;
+   q.x0 = 0; q.y0 = 0; q.x1 = (float)VB_W; q.y1 = (float)VB_H;
+   q.u0 = 0; q.v0 = 0; q.u1 = (float)g_ovl_w; q.v1 = (float)g_ovl_h;
+   vb_tquads(g_ovl_tex, &q, 1, 0xFFFFFFFFu,
+             g_ovl_w == VB_W && g_ovl_h == VB_H ? VB_NEAREST : VB_LINEAR);
 }
 
 void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
@@ -1961,7 +2127,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    unsigned t0, t1, t2;
    vid_geo g;
    vb_tex *t, *tu;
-   int f = 0;
+   int f = 0, upload;
 
    if (!g_inited)
       vid_init();
@@ -1992,17 +2158,19 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
       t2 = pspcompat_time_us();
       DP_MAX(VID_DP_DRAW, t2 - t1);
       prof_add(t1 - t0, t2 - t1);
+      overlay_draw();
       amb_snap_maybe(pix, (int)(pitch_bytes / 2), w, h);
       return;
    }
-   t = stage_tex(ST_LIVE, (int)w, (int)h, VB_FMT_RGB565);
-   if (t)
+   t = stage_tex(ST_LIVE, (int)w, (int)h, VB_FMT_RGB565, NULL, &upload);
+   if (t && upload)
       vb_tex_update(t, 0, 0, (int)w, (int)h, pix, pitch_bytes);
    t1 = pspcompat_time_us();
    DP_MAX(VID_DP_UPLOAD, t1 - t0);
 
    g_filled = 1;
    picture_draw(t, w, &g);
+   overlay_draw();
    t2 = pspcompat_time_us();
    DP_MAX(VID_DP_DRAW, t2 - t1);
    prof_add(t1 - t0, t2 - t1);
@@ -2028,14 +2196,16 @@ void vid_image_screen(const uint16_t *pix, int texw, int texh,
 {
    vid_geo g;
    vb_tex *t;
+   int upload;
    (void)texh;
    if (!pix || srcw <= 0 || srch <= 0 || alpha <= 0)
       return;
    dest_geo((unsigned)srcw, (unsigned)srch, &g);
-   t = stage_tex(ST_SNAP, srcw, srch, VB_FMT_BGR565);
+   t = stage_tex(ST_SNAP, srcw, srch, VB_FMT_BGR565, pix, &upload);
    if (!t)
       return;
-   vb_tex_update(t, 0, 0, srcw, srch, pix, (size_t)texw * 2);
+   if (upload)
+      vb_tex_update(t, 0, 0, srcw, srch, pix, (size_t)texw * 2);
    if (alpha < 255)
    {
       vb_tquad q;
@@ -2066,13 +2236,15 @@ void vid_image_screen_soft(const uint16_t *pix, int texw, int srcw, int srch,
    vid_geo g;
    vb_tex *t;
    vb_tquad q;
+   int upload;
    if (!pix || srcw <= 0 || srch <= 0 || alpha <= 0)
       return;
    dest_geo((unsigned)srcw, (unsigned)srch, &g);
-   t = stage_tex(ST_SOFT, srcw, srch, VB_FMT_BGR565);
+   t = stage_tex(ST_SOFT, srcw, srch, VB_FMT_BGR565, pix, &upload);
    if (!t)
       return;
-   vb_tex_update(t, 0, 0, srcw, srch, pix, (size_t)texw * 2);
+   if (upload)
+      vb_tex_update(t, 0, 0, srcw, srch, pix, (size_t)texw * 2);
    if (alpha >= 255)
       backdrop_draw(geo_covers(&g));
    else
@@ -2160,10 +2332,11 @@ void vid_draw_frame_pair(const uint16_t *left, const uint16_t *right,
          t[i] = up_stage(i, src[i], w, h, pb, r[i].w, &up[i]);
          if (!t[i])
          {
+            int upload;
             up[i] = 0;
             t[i] = stage_tex(i ? ST_PARTNER : ST_LIVE, (int)w, (int)h,
-                             VB_FMT_RGB565);
-            if (t[i])
+                             VB_FMT_RGB565, NULL, &upload);
+            if (t[i] && upload)
                vb_tex_update(t[i], 0, 0, (int)w, (int)h, src[i], pb);
          }
          if (i == 0)
@@ -2333,14 +2506,20 @@ void vid_term(void)
          g_tc[i].tex = NULL;
       }
    for (i = 0; i < ST_PURPOSES; i++)
-      for (j = 0; j < 2; j++)
+   {
+      for (j = 0; j < ST_RING; j++)
       {
          vb_tex_destroy(g_stage[i][j].t);
          g_stage[i][j].t = NULL;
+         g_stage[i][j].key = NULL;
       }
+      g_stage_cur[i] = 0;
+      g_stage_at[i] = g_stage_fail[i] = 0;
+   }
    vb_tex_destroy(g_logo_tex);  g_logo_tex = NULL;
    vb_tex_destroy(g_amb_tex);   g_amb_tex = NULL;
    vb_tex_destroy(g_lcd_tex);   g_lcd_tex = NULL;
+   g_lcd_fail = 0;
    vb_tex_destroy(g_sharp_rt);  g_sharp_rt = NULL;
    g_sharp_tried = 0;
    g_amb_src = AMB_SRC_NONE;

@@ -26,7 +26,8 @@
  * ui_text_take(field, &text) answers 1 = accepted (text points at the
  * result, valid for that frame) or -1 = cancelled, once. */
 enum { TXT_NONE = 0, TXT_NICK, TXT_CHEAT_NAME, TXT_CHEAT_FIND,
-       TXT_BROWSER_FIND, TXT_RA_USER, TXT_RA_PASS };
+       TXT_BROWSER_FIND, TXT_RA_USER, TXT_RA_PASS, TXT_FOLDER,
+       TXT_SHOTDIR };
 
 static struct
 {

@@ -997,8 +997,18 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       uint16_t *t = S->old;      /* the one before last is written over */
       S->old = S->cur;
       S->cur = t;
+      /* Each row is compared with the picture before while it is still in
+       * the cache from its copy (one pass over the picture, not two). */
       for (y = 0; y < h; y++)
-         memcpy(S->cur + (size_t)w * y, src + pitch * y, w * 2u);
+      {
+         uint16_t *row = S->cur + (size_t)w * y;
+         memcpy(row, src + pitch * y, w * 2u);
+         if (!fresh)
+         {
+            rsame[y] = (unsigned char)row_same(row, S->old + (size_t)w * y, w);
+            same += rsame[y];
+         }
+      }
    }
    S->slid = 0;
    up_lap(&tp, PP_COPY);
@@ -1006,13 +1016,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    /* ---- what changed, and the factor this picture is scaled by ----------- */
    if (!fresh)
    {
-      for (y = 0; y < h; y++)
-      {
-         rsame[y] = (unsigned char)row_same(S->cur + (size_t)w * y,
-                                            S->old + (size_t)w * y, w);
-         same += rsame[y];
-      }
-      up_lap(&tp, PP_CMP);
+      up_lap(&tp, PP_CMP);       /* (now inside PP_COPY's time) */
       if (same * 2 < h && g_slide_mode)
          slide_find(S, &dx, &dy);
       up_lap(&tp, PP_FIND);

@@ -139,7 +139,8 @@ static void ml_run(void)
       s->result.kind = kind;
       s->result.slot = (unsigned)slot;
       s->result.meta.battery = ML_UNKNOWN;
-      for (unsigned k = 0; k < 5; k++) s->result.meta.state[k] = ML_UNKNOWN;
+      for (unsigned k = 0; k < ML_STATE_SLOTS; k++)
+         s->result.meta.state[k] = ML_UNKNOWN;
       g_current_revision = batch->revision;
       ML_SET(g_phase, 1); ML_SET(g_kind, kind);
       t = plat_time_us();
@@ -222,7 +223,8 @@ int menu_load_submit(const menu_load_job *jobs, unsigned count)
           !memchr(jobs[i].stem, 0, ML_STEM) ||
           jobs[i].focus != jobs[0].focus ||
           jobs[i].generation != jobs[0].generation ||
-          (jobs[i].tasks & ~255u)) return 0;
+          (jobs[i].tasks & ~(((unsigned)ML_STATE0 << ML_STATE_SLOTS) - 1u)))
+         return 0;
    batch = malloc(sizeof(*batch));
    if (!batch) return 0;
    batch->count = count;

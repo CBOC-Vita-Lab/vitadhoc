@@ -161,6 +161,9 @@ static int pool_bank = -1;
 static unsigned int pool_next_bank = 0;
 static unsigned int pool_serial = 0;
 static int pool_failed = 0;
+#define VITA2D_RECOVER_MAX 5      /* vita2d_recover */
+static unsigned int recover_streak = 0;
+static unsigned int recover_at_frames = 0;
 static unsigned int pool_submitted_frames = 0;
 static unsigned int pool_submitted_scenes = 0;
 static int pool_last_bank = -1;
@@ -198,6 +201,7 @@ static int pool_initialize(unsigned int size)
 	pool_submitted_frames = pool_submitted_scenes = 0;
 	pool_last_bank = -1;
 	pool_last_scene = 0;
+	recover_streak = recover_at_frames = 0;
 	memset(pool_banks, 0, sizeof(pool_banks));
 	/* This renderer is the application's only notification-region owner.
 	 * Reserve words [0, 48); never recycle a live scene's notification. */
@@ -288,6 +292,47 @@ int vita2d_fragment_fence_done(const vita2d_fragment_fence *fence)
 		}
 	}
 	__sync_synchronize();
+	return 1;
+}
+
+/* GBAdhoc: a failed sceGxmEndScene or sceGxmDisplayQueueAddEntry latches
+ * pool_failed / display_queue_failed, and every later frame is refused.
+ * Outside a scene: wait for the GPU and the display queue, then retire every
+ * bank (a new generation: old fences read as done, which they now are). */
+int vita2d_recover(void)
+{
+	unsigned int b, s;
+	if (!pool_failed && !display_queue_failed)
+		return 0;
+	if (drawing || !pool_base)
+		return -1;
+	/* A run of good frames since the last recovery starts the count again. */
+	if (pool_submitted_frames - recover_at_frames >= 60)
+		recover_streak = 0;
+	if (recover_streak >= VITA2D_RECOVER_MAX)
+		return -1;
+	recover_streak++;
+	sceGxmFinish(_vita2d_context);
+	if (!system_app_mode)
+		sceGxmDisplayQueueFinish();
+	for (b = 0; b < VITA2D_POOL_BANK_COUNT; ++b) {
+		for (s = 0; s < VITA2D_POOL_SCENE_COUNT; ++s) {
+			*pool_banks[b].vertex[s].address = 0;
+			*pool_banks[b].fragment[s].address = 0;
+			pool_banks[b].vertex[s].value = 0;
+			pool_banks[b].fragment[s].value = 0;
+		}
+		pool_banks[b].scenes = 0;
+		if (++pool_banks[b].generation == 0)
+			++pool_banks[b].generation;
+	}
+	__sync_synchronize();
+	pool_bank = -1;
+	pool_addr = NULL;
+	pool_index = 0;
+	pool_failed = 0;
+	display_queue_failed = 0;
+	recover_at_frames = pool_submitted_frames;
 	return 1;
 }
 

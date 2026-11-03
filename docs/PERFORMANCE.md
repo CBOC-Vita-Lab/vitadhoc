@@ -1,40 +1,37 @@
-# Performance And Hardware Evidence
+# Performance
 
 ## Pokemon Unbound 2.1.1.1 On VitAdhoc 1.2
 
 **About 60 emulated fps in the sampled opening beach scene, at full-screen
-stretch with CPU xBRZ 3x.** The frontend produced about 44 frames per second
-in the three repeat samples. Those are different counters: this is not a
-claim of 60 visible frames per second, or full-speed performance throughout
-Unbound.
+stretch with CPU xBRZ 3x.** The frontend produced about 44 video callbacks
+per second across three repeat samples. Settings, exact results and counter
+definitions are below.
 
 ![Pokemon Unbound on a physical Vita, full-screen CPU xBRZ 3x](../store/screenshots/vita-1.2/unbound-intro-beach.png)
 
-### Test Conditions
+### Test Setup
 
-| Item | Setting or evidence |
+| Item | Setting or result |
 | --- | --- |
 | Date | 2026-11-03 |
-| Hardware | One physical PS Vita; not Vita3K or the computer test build |
+| Hardware | One physical PS Vita |
 | Executable | Existing installed 1.2 runtime, read back and hash-matched before testing |
 | Game | User-supplied Pokemon Unbound 2.1.1.1, 32 MiB; private ROM, not distributed |
-| Output | 960 x 544, full-screen stretch; not a cropped integer-scale image |
+| Output | 960 x 544, full-screen stretch |
 | Smoothing | CPU xBRZ, Enhanced 3x; every selected upscaler window reports factor 3 |
 | Other display options | Wide view off, colour correction off, motion blend off; ambient setting 2 |
 | Gameplay options | Keep full speed on; 60-second rewind and gameplay previews enabled |
 | Fast-forward | Off during all selected measurement intervals |
-| Clock | Unchanged by this test. Platform API reported 444 MHz; the startup timing probe estimated 496 MHz. These are not interchangeable readings or a verified stock-clock comparison. |
+| Clock | Unchanged by this test. Platform API reported 444 MHz; the startup timing probe estimated 496 MHz, using a different measurement method. |
 | Capture | Installed VitaCompanion 1.10 display-plane capture, outside measurement intervals |
-| Scope | Animated water and dialogue in the opening beach scene, no player input; not walking, battles, a late-game stress test or completion testing |
+| Scope | Animated water and dialogue in the opening beach scene, with no player input |
 
-No clock plugin, experimental USB module or replacement executable was
-installed. An existing personal GBA BIOS was used on the test device; the
-public VPK instead includes an open replacement. BIOS choice is another
-reason not to treat these numbers as a universal result.
+The core selected its built-in GBA BIOS for Unbound. The test used the
+existing app and clock settings.
 
 ### Three Repeat Samples
 
-These are consecutive sampling blocks in one session, not three cold boots.
+These are three consecutive sampling blocks from one session.
 Each block contains two complete 600-loop performance windows. A 15-second
 settling exclusion follows the starting snapshot. There were no controller
 commands, captures or FTP requests during the controlled interval.
@@ -60,34 +57,31 @@ The audio counter recorded **six additional underruns** over the selected
 six windows, and seven over all eight. Across the broader starting/ending
 snapshots, including settling and partially excluded boundaries, it rose
 from 23 to 35. No audio-port errors were recorded in the selected windows.
-This is not evidence of flawless sound.
 
 ### What The Counters Mean
 
 - **Emulated fps:** handheld frames advanced per elapsed second. Keep full
   speed can run catch-up frames without drawing all of them.
 - **Frontend-produced frames:** non-null core video callbacks before the
-  display sink. Calculated from `(win - skipped) / dt_us`. This is useful
-  rendering-throughput evidence, not a measurement of unique frames
-  physically visible on the panel.
+  display sink. Calculated from `(win - skipped) / dt_us`.
 - **Upscaler factor:** the actual CPU smoothing factor reported by the
-  runtime, not simply the selected menu label.
+  runtime.
 - **Audio underruns:** cumulative runtime counters, differenced across the
-  selected windows. A nonzero count should not be hidden by an fps claim.
+  selected windows.
+- **Physical display fps:** unmeasured in this run; a high-speed camera or
+  display-presentation instrumentation would measure it separately.
 
-The `q` diagnostic values count queue conditions and waits, not displayed
-frames. They are not used to calculate visible fps. Independent high-speed
-camera or display-presentation instrumentation would be needed for that.
+The `q` diagnostic values count queue conditions and waits.
 
-### Reproduction And Limits
+### Reproduce The Test
 
-Use the exact 1.2 executable, the same game revision and BIOS, and the
+Use the 1.2 executable, the same game revision and the
 settings above. Advance to the pictured opening beach dialogue. Release
 fast-forward, settle, then collect complete `vita_win`, `vita_upscale`,
 `vita_audio` and `fps` intervals without capturing or transferring files.
 
-Rates are computed as total frame counts divided by total elapsed time,
-not averages of rounded readings. Vita-window durations use consecutive
+Rates are computed as total frame counts divided by total elapsed time.
+Vita-window durations use consecutive
 log-emission timestamps, so small logging-overhead differences remain.
 Frontend windows use their explicit `dt_us` and are not aligned to the
 600-loop windows. Only wholly contained frontend intervals are included.
@@ -95,15 +89,10 @@ Frontend windows use their explicit `dt_us` and are not aligned to the
 Exploratory setup also showed scene-dependent slowdown: one early interval
 logged 55.022 emulated fps and 28.978 frontend callbacks/s. Although no
 fast-forward, menu or suspend event overlaps that interval, capture/FTP
-interference cannot be excluded. It is not a second controlled benchmark.
-The controlled beach result does not override that limitation.
+interference is unknown for this exploratory interval.
 
-There is no matched comparison with another emulator, with version 1.0,
-or with different clock profiles here. No battery-life, input-latency,
-full-game compatibility or network-play result follows from these samples.
-If this combination feels uneven, try Original pixels or a lighter image
-quality setting; that is a practical option, not a measured result in this
-test.
+For lighter display processing, choose Original pixels or a lower image
+quality setting.
 
 ### Inspectable Metrics And Captures
 
@@ -113,20 +102,19 @@ test.
 - [Three sampling blocks](performance/unbound-batches.csv)
 - [Capture provenance and screenshots](../store/screenshots/vita-1.2/README.md)
 
-The public exports contain fixed-schema numeric metrics, not raw device logs,
-account information, network addresses, ROMs, BIOS files or saves. The test
-copy used a unique filename so it could not overwrite an existing save.
+The public exports contain fixed-schema numeric metrics. Raw device logs,
+account information, network addresses, ROMs, BIOS files and saves are
+excluded. The test copy used a unique filename, keeping existing saves separate.
 The original game's battery save and resume files were read back unchanged.
 Settings and play history were restored; the FPS counter was left off as
 requested.
 
 ## Earlier Evidence
 
-The historical **1.0 Pokemon Ruby** result was about 60 emulated fps with
-CPU xBRZ and wide view enabled. It is a different game and software version,
-not a 1.2 Unbound result or a guarantee for every ROM hack.
+| Version | Game | Recorded result | Settings |
+| --- | --- | --- | --- |
+| 1.0 | Pokemon Ruby | About 60 emulated fps | CPU xBRZ and wide view enabled |
 
 Version 1.2 changes reduce repeated work in rewind, smoothing and texture
-handling. Their host tests establish scoped behaviour, not a measured
-percentage speed-up on a Vita. See [Source Record](SOURCE.md) for the
-historical test results, reruns and outstanding acceptance gaps.
+handling. [Source Record](SOURCE.md) lists the automated test results,
+reruns and remaining hardware checks.

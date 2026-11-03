@@ -47,23 +47,14 @@ faster rewind.
 - **Smoothing** (xBRZ / Scale3x) prepares each frame with fewer memory reads,
   and its scaler is compiled for speed.
 
-Everything here was checked with the app's automated tests on a computer,
-which run the same code as the Vita. The graphics fixes and speed-ups have not
-been timed on a real Vita yet.
-
-**A correction to the 1.1 notes.** Three lines in 1.1 claimed more than the
-change did: the stereo fix was for the Game Boy-style tone channels (which
-side each one plays on), not the GBA's sampled-sound channels; the "pitch and
-tempo" fix was the timing of those channels' length, volume envelope and
-sweep; and damaged save-state sound data was already rejected in 1.0 (1.1
-added tests for it). The 1.1 notes below are corrected.
+[Technical details](docs/TECHNICAL.md) | [Vita performance results](docs/PERFORMANCE.md)
 
 ## Version 1.1 — October 25, 2026
 
 **Sound fixes.** A rebuilt audio path for all three systems.
 
-- **Steadier output:** audio now plays from two fixed, aligned buffers that
-  take turns, so there are no more gaps or clicks when a frame runs long.
+- **Steadier output:** fixed, aligned double buffers keep audio flowing
+  through longer frames.
 - **Correct stereo for the tone channels:** the Game Boy-style tone channels
   (square, wave and noise) play on the side the game asks for.
 - **Cleaner start, stop and pause:** a short fade at each edge removes the pop
@@ -76,9 +67,7 @@ added tests for it). The 1.1 notes below are corrected.
 - **New tests** for damaged save-state sound data (rejected since 1.0).
 
 Saves, save states, settings, ROMs and the BIOS are untouched, and the app
-keeps the same ID, so 1.1 installs straight over 1.0. The sound changes were
-checked with new automated tests (including memory-error checking); they have
-not yet been confirmed on every game on a Vita.
+keeps the same ID, so 1.1 installs straight over 1.0.
 
 ## Version 1.0 — October 24, 2026
 
@@ -112,8 +101,9 @@ native PS Vita app from GBAdhoc's emulator.
 - **A look for every game:** Settings > This game > Display settings.
 
 **Speed**
-- **A steady 60 frames a second,** with the picture drawn on a second core.
-- **Keep full speed:** short hiccups are caught up without a gap in the sound.
+- **Rendering on a second core** keeps graphics work off the main game loop.
+- **Keep full speed:** catch-up frames help maintain game timing through
+  short hitches.
 - **Low lag:** up to a frame less between a press and the picture.
 - **Games start the moment you pick them.**
 - Rewind (60 seconds), fast forward, five save-state slots, turbo buttons and

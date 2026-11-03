@@ -15,12 +15,22 @@ RetroAchievements and link-play support, built on the work of
 - Ten save-state slots, up from five.
 - PNG screen overlays and adjustable LCD/scanline strength.
 - Choose your screenshot folder in **Settings > Interface**.
+- Readable accented game names in the menu font.
+
+### Included from 1.1: better sound
+
+- Rebuilt GBA, GB and GBC audio output with fixed, aligned double buffers.
+- Correct stereo routing, note lengths, volume envelopes and sweep for
+  GBA's Game Boy-style tone channels.
+- GBA DirectSound FIFO resets clear old samples and reset their read/write
+  positions together.
+- Smoother startup, pause, resume and state-load transitions, with fades
+  based on the last sample played and checked channel cleanup on exit.
 
 ### Fixes and under-the-hood work
 
 Safer texture handling, recovery from a latched graphics error, deferred GPU
 frees, less repeated work in rewind/smoothing and safer settings writes.
-Includes the audio improvements introduced in 1.1.
 
 **Pokemon Unbound 2.1.1.1 on a real Vita:** about 60 emulated fps and
 44 frontend-produced frames/s across three opening-beach samples, at

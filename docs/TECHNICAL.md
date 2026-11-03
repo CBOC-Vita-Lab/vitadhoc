@@ -119,6 +119,36 @@ Engineering detail behind the [What's New](../CHANGELOG.md) list.
   zip's entry sizes are checked against the file before anything is
   allocated; an overlay PNG's size is checked before it is decoded.
 
+## Version 1.1 Changes
+
+Audio output changes apply to GBA, GB and GBC; the mixer fixes below are in
+the GBA core.
+
+- **Persistent output storage** (`vita/audio_vita.c`): two 64-byte-aligned
+  PCM buffers alternate submissions. Each remains owned until the audio
+  port has finished with it.
+- **Checked shutdown and recovery** (`vita/audio_vita.c`, `vita/plat_vita.c`):
+  failed writes retire the old port before rendering again. Port drain,
+  release and thread termination are checked. Failed or timed-out cleanup
+  retains buffer and thread ownership before another session can start.
+- **Resampler range:** the step uses 2.30 fixed point, supporting input
+  rates from 8,000 to 65,536 Hz and pacing from 0.5x to 2x without fractional
+  overflow. Invalid inputs leave an existing session alone.
+- **Smoother transitions:** flushes and underruns fade from the last sample
+  actually emitted. Backlog trims blend into the new timeline over 64
+  output samples.
+- **GBA tone-channel stereo** (`gba_memory.c`): `SOUNDCNT_L` routing extracts
+  each square, wave and noise channel's left/right bits independently.
+- **GBA tone-channel timing** (`sound.c`, `gba_memory.c`): the 256 Hz
+  sequencer step follows the output sample rate and is refreshed at
+  initialization, rate changes and state loads, correcting length,
+  volume-envelope and sweep timing.
+- **GBA DirectSound FIFO reset** (`sound.c`): resetting either channel
+  clears sample storage and read/write indices together.
+- **Regression coverage** (`tools/run_audio_regressions.py`): a consolidated
+  runner covers mixer, output and native/host lifecycle suites, plus the
+  existing malformed-state safety checks, with optional ASan/UBSan runs.
+
 ## Version 1.0 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

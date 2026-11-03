@@ -34,6 +34,20 @@ version. Keep your games, saves, settings and artwork where they are.
   and a screenshot folder of your choice.
 - **Graphics fixes and a lighter rewind.** Safer texture handling, recovery from graphics
   errors and less repeated work in the rewind and smoothing paths.
+- **More reliable everyday use.** Readable accented game names and safer
+  settings writes when a memory card refuses a rename or write.
+
+## Included From Version 1.1
+
+**Better sound across GBA, GB and GBC.**
+
+- Steadier playback through fixed, aligned double buffers.
+- Correct stereo, note lengths, volume envelopes and sweep for GBA's
+  Game Boy-style tone channels.
+- GBA DirectSound FIFO resets clear old samples and reset the read/write
+  positions together.
+- Smoother startup, pause, resume and state-load transitions, with fades
+  based on the last sample played and proper audio-channel cleanup on exit.
 
 [Release changelog](CHANGELOG.md) | [Feature guide](docs/FEATURES.md)
 

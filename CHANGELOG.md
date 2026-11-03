@@ -47,6 +47,11 @@ faster rewind.
 - **Smoothing** (xBRZ / Scale3x) prepares each frame with fewer memory reads,
   and its scaler is compiled for speed.
 
+**Settings**
+- **Safer configuration saves:** if the memory card refuses a rename or
+  write, the old settings and complete temporary copy are kept until the
+  update succeeds; a failed replacement restores the old file.
+
 [Technical details](docs/TECHNICAL.md) | [Vita performance results](docs/PERFORMANCE.md)
 
 ## Version 1.1 — October 25, 2026
@@ -57,14 +62,17 @@ faster rewind.
   through longer frames.
 - **Correct stereo for the tone channels:** the Game Boy-style tone channels
   (square, wave and noise) play on the side the game asks for.
-- **Cleaner start, stop and pause:** a short fade at each edge removes the pop
-  when you open a game, pause, resume or load a state, and the sound
-  channel is closed properly when you leave a game.
+- **Smoother transitions:** fades and blends start from the last sample
+  actually played, reducing abrupt jumps around pause, resume, state loads,
+  underruns and audio-backlog trims.
+- **Safer audio cleanup:** checked thread shutdown and channel release keep
+  output buffers owned until the Vita has finished with them.
 - **Right note lengths and fades:** the tone channels' length, volume
   envelope and sweep follow the real sample rate.
-- **Fresh start after loading a state:** leftover sound from the previous game
-  or state no longer carries over.
-- **New tests** for damaged save-state sound data (rejected since 1.0).
+- **Clean GBA DirectSound FIFO resets:** queued samples and read/write
+  positions reset together.
+- **Expanded audio tests:** mixer, output and lifecycle regressions, plus a
+  unified runner that also checks damaged save-state sound data.
 
 Saves, save states, settings, ROMs and the BIOS are untouched, and the app
 keeps the same ID, so 1.1 installs straight over 1.0.

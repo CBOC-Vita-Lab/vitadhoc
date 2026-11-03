@@ -131,6 +131,19 @@ adjusts the LCD/scanline effect from 1 to 10 (default 5). Screenshots use
 **Settings > Interface > Screenshot folder**, or the default
 `ux0:data/GBAdhoc/screenshots/`; the button chord is L + R + Select.
 
+## Audio
+
+Version 1.1 rebuilt the Vita audio output used by GBA, GB and GBC. Fixed,
+aligned double buffers keep playback steadier through longer frames. Fades
+and blends start from the last sample played, smoothing transitions around
+pause, resume, state loads, underruns and audio-backlog trims. Leaving a
+game uses checked audio-thread shutdown and channel cleanup.
+
+GBA's Game Boy-style square, wave and noise channels use the game's stereo
+routing and sample-rate-based length, volume-envelope and sweep timing.
+DirectSound FIFO resets clear queued samples and reset their read/write
+positions together. These improvements are all included in 1.2.
+
 ## Patches And Cheats
 
 Place `Game.ips`, `Game.bps` or `Game.ups` beside `Game.gba` (or GB/GBC).

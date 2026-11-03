@@ -6,10 +6,11 @@ game, its region and what you did.
 
 ## Still Being Confirmed On A Vita
 
-Version 1.0 passed its full test suite and plays at full speed on a Vita.
-Version 1.2's changes passed the app's automated tests on a computer; its
-graphics fixes and speed-ups have not been timed on a Vita yet. These still
-need more time on a real console:
+Historical version 1.0 measurements cover specific games and settings, not
+every cartridge or ROM hack. Version 1.2 has source and host-test evidence;
+current physical-Vita measurements and their limits are recorded in the
+[performance report](docs/PERFORMANCE.md). These still need more time on a
+real console:
 
 - **Motion games:** whether turning and tilting go the right way and feel
   strong enough. If one feels backwards, use Settings > This game >
@@ -23,6 +24,11 @@ need more time on a real console:
 
 ## Performance
 
+- **Pokemon Unbound 2.1.1.1:** the tested opening beach scene ran at about
+  60 emulated fps with full-screen CPU xBRZ 3x, but frontend output was lower
+  and audio underruns were recorded. Exploratory setup showed additional
+  scene-dependent slowdown. This is not full-game acceptance; see the
+  [measurements and exact conditions](docs/PERFORMANCE.md).
 - The heaviest picture settings (xBRZ at full height plus the wide view) are
   the most demanding. If a game slows down, try Image quality: Original.
 - The GPU version of xBRZ (`gpu_xbrz = 1`) is an experiment and too slow for

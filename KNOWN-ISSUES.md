@@ -4,13 +4,10 @@ Found something else? Please tell us in
 [GitHub issues](https://github.com/CBOC-Vita-Lab/vitadhoc/issues), with the
 game, its region and what you did.
 
-## Still Being Confirmed On A Vita
+## Testing In Progress
 
-Historical version 1.0 measurements cover specific games and settings, not
-every cartridge or ROM hack. Version 1.2 has source and host-test evidence;
-current physical-Vita measurements and their limits are recorded in the
-[performance report](docs/PERFORMANCE.md). These still need more time on a
-real console:
+Current Vita results are in the [performance report](docs/PERFORMANCE.md).
+Testing continues on:
 
 - **Motion games:** whether turning and tilting go the right way and feel
   strong enough. If one feels backwards, use Settings > This game >
@@ -24,11 +21,8 @@ real console:
 
 ## Performance
 
-- **Pokemon Unbound 2.1.1.1:** the tested opening beach scene ran at about
-  60 emulated fps with full-screen CPU xBRZ 3x, but frontend output was lower
-  and audio underruns were recorded. Exploratory setup showed additional
-  scene-dependent slowdown. This is not full-game acceptance; see the
-  [measurements and exact conditions](docs/PERFORMANCE.md).
+- **Pokemon Unbound 2.1.1.1:** audio underruns were recorded at full-screen
+  CPU xBRZ 3x. See the [measurements and settings](docs/PERFORMANCE.md).
 - The heaviest picture settings (xBRZ at full height plus the wide view) are
   the most demanding. If a game slows down, try Image quality: Original.
 - The GPU version of xBRZ (`gpu_xbrz = 1`) is an experiment and too slow for

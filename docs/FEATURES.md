@@ -23,9 +23,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Open BIOS | Built in; an optional personal dump can be supplied on the Vita |
 | Network features | Art, RetroAchievements, supported link modes, local save sharing and Mystery Gift receiver |
 
-The hardware display timing is not a guarantee of game speed. Emulation,
-drawing and display counters mean different things; use the
-[performance report](PERFORMANCE.md) for measured results and conditions.
+See [Performance](PERFORMANCE.md) for Vita measurements and display settings.
 
 ## Library And Continue
 
@@ -105,10 +103,8 @@ Vita measurements and needs a separately supplied shader compiler module.
 No proprietary compiler is distributed. Its licensing/provenance caveats are
 recorded in [Licensing](../LICENSING.md).
 
-Keep full speed can emulate up to two catch-up frames without drawing before
-presenting a picture. That can maintain game timing through a short hitch;
-it does not make every frame visible or remove the cost of a demanding hack.
-Do not compare its emulated-frame counter directly with displayed fps.
+Keep full speed can run up to two undrawn catch-up frames to maintain game
+timing through short hitches.
 
 ### Wide View
 
@@ -116,12 +112,11 @@ Wide view draws outside the original GBA viewport using game profiles, Mode 7
 support or experimental background-cache/scout behaviour. Profiles target
 the original Pokemon Emerald family, not every game with a similar name.
 ROM hacks can change the layout or rendering enough to break a profile.
-Pokemon Unbound support and performance must be established separately for
-the exact version and settings.
+The [performance report](PERFORMANCE.md) includes Pokemon Unbound measurements.
 
 Missing information can produce incomplete margins or the configured
-fallback. Wide view is not a universal widescreen patch and does not change
-the game's save. Turn it off for a game whose edges are incorrect.
+fallback. Wide view leaves the game's save unchanged. Turn it off for a
+game whose edges are incorrect.
 
 ### Borders, Overlays And Screenshots
 
@@ -143,9 +138,8 @@ Where extensions share a stem, name the full file, for example
 `Game.gba.bps`. A cached patched copy is used; the source ROM stays unchanged.
 
 BPS and UPS verify source/result checksums. IPS does not identify the correct
-base revision. A patch is not a guarantee that an emulator profile,
-achievement set or link partner supports the modified game. Use the same
-game and patch on both Vitas when linking.
+base revision. Wide-view profiles and achievement sets need to match the
+patched game. Use the same game and patch on both Vitas when linking.
 
 The bundled cheat catalogue covers about 2,190 games; custom codes are
 supported too. Some codes require an enable code, and some code types are
@@ -165,8 +159,7 @@ Achievement processing pauses during link play and resets progress after
 state loading, rewind or link sessions. Network retries do not establish
 that every offline unlock has been accepted by the service.
 
-Host tests use a stand-in server. Live Vita HTTPS sign-in and service behaviour
-remain separate acceptance checks; see [Known Issues](../KNOWN-ISSUES.md).
+For sign-in troubleshooting, see [Known Issues](../KNOWN-ISSUES.md).
 
 ## Sensors And Controls
 
@@ -186,7 +179,7 @@ menu opens or a state loads. The menu shortcut remains reachable. See
 | Mode | Scope and limits |
 | --- | --- |
 | GBA Link Cable | Two Vitas; matching game files; Wi-Fi, internet or ad hoc transport |
-| GBA Wireless Adapter | Implemented for supported games; not universal wireless compatibility |
+| GBA Wireless Adapter | Supported Wireless Adapter games |
 | GB / GBC cable | Compatible cartridges can differ; cartridge bytes are exchanged in memory for the session |
 | Two players on one Vita | Side-by-side handhelds; switch control or use a supported distinct second pad |
 | Save/state sharing | Local Wi-Fi; first five state slots; receiver should retain backups |
@@ -198,9 +191,7 @@ reachable UDP port 19019; UPnP is not guaranteed. Controller/plugin setups
 and two-device reliability need broader hardware confirmation. No plugins
 or clock profiles are installed by the app.
 
-Use [Play Together](../PLAY-TOGETHER.md) for setup and safety notes. Feature
-implementation, automated protocol tests and a complete physical session
-are different levels of evidence.
+Use [Play Together](../PLAY-TOGETHER.md) for setup and supported modes.
 
 ## Advanced Configuration And Diagnostics
 
@@ -224,7 +215,6 @@ made through Settings are preferred because they can be checked and saved
 through the app's configuration layer.
 
 Logs are in `ux0:data/GBAdhoc/log/gbadhoc.log`. They may contain game paths
-and network addresses; review before sharing. The native `vita_win` windows
-record timing counters, not proof that every emulated frame reached the
-display. [Performance](PERFORMANCE.md), [Technical Notes](TECHNICAL.md) and
-[Known Issues](../KNOWN-ISSUES.md) cover the evidence and remaining limits.
+and network addresses; review before sharing. See [Performance](PERFORMANCE.md),
+[Technical Notes](TECHNICAL.md) and [Known Issues](../KNOWN-ISSUES.md) for
+measurements, implementation details and troubleshooting.

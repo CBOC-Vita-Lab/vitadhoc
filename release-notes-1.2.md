@@ -20,20 +20,12 @@ RetroAchievements and link-play support, built on the work of
 
 Safer texture handling, recovery from a latched graphics error, deferred GPU
 frees, less repeated work in rewind/smoothing and safer settings writes.
-The audio fixes from 1.1 are retained; the changelog also corrects wording
-that overstated parts of the original sound fix.
+Includes the audio improvements introduced in 1.1.
 
-Performance depends on the game and settings. The historical 59.9 fps Ruby
-result was measured with 1.0, not 1.2 or Pokemon Unbound. Host tests exercise
-the changed code but do not establish physical-Vita speed. See the
-[performance report](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/docs/PERFORMANCE.md)
-for hardware evidence and capture provenance.
-
-**New hardware check:** Pokemon Unbound 2.1.1.1 averaged about 60 emulated
-fps and about 44 frontend-produced frames/s across three opening-beach
-samples, at full-screen CPU xBRZ 3x. Exact readings, audio underruns,
-exploratory slowdown and direct Vita screenshots are in the report. This is
-not a claim of 60 visible frames per second or full-game compatibility.
+**Pokemon Unbound 2.1.1.1 on a real Vita:** about 60 emulated fps and
+44 frontend-produced frames/s across three opening-beach samples, at
+full-screen CPU xBRZ 3x.
+[Full results, settings and screenshots](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/docs/PERFORMANCE.md).
 
 ### Install or update
 
@@ -46,12 +38,8 @@ needed. Games, saves, states, settings and artwork stay in place.
 No commercial games or proprietary BIOS are included.
 
 [Manual install and save import](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/INSTALL.md)
-| [Detailed features and limitations](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/docs/FEATURES.md)
+| [Detailed features](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/docs/FEATURES.md)
 | [Known issues](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/KNOWN-ISSUES.md)
-
-The historical acceptance run included a save-timing timeout that passed on
-reruns; broader host-suite and hardware gaps are recorded in the
-[source record](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/docs/SOURCE.md).
 
 SHA-256 `VitAdhoc.vpk`:
 `b844da404b1ed36ca776818d6870a19c3effc23a4c39ed6503854eeb16c940de`

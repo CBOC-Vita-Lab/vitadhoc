@@ -7252,7 +7252,7 @@ static int       g_scan_extra;
  * rom_cache (rom_side_add), so the first TRIANGLE to Game Boy is a cache hit
  * instead of walking the same folders again (on a card with 925 games in
  * ux0:ROMS/GBA that was 0.35 to 1.6 s with the screen frozen). */
-static struct { int on, n, found; unsigned used, path_errors; } g_side[3];
+static struct { int on, n, found; unsigned used, path_errors; } g_side[FE_CONSOLE_COUNT];
 static unsigned  g_rom_rev_seq;      /* issues g_rom_view_revision values */
 /* The key a game has in linkmode.txt: its name under roms/, or for a game
  * of an extra folder its file name (main_vita.c game_identity() does the

@@ -93,6 +93,7 @@ FE_FLAGS        := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard \
                    -O2 -g -Wall -Wextra -DVITA $(ND_DEFS)
 
 include corebuild.mk
+include retrocores.mk
 
 # ---- the app --------------------------------------------------------------------
 APP_DEFS += -DGBADHOC_VERSION=\"$(VERSION)\" \
@@ -168,9 +169,9 @@ $(foreach s,$(APP_ALL_VITA),$(eval $(call APP_RULE,$(s))))
 # Order: B before A is irrelevant to the result (their symbols are disjoint);
 # the archive last, so only what something references is pulled from it.
 LINK_ELF = $(CC) -Wl,-q -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
-	  $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(1) $(LIBS)
+	  $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(RC_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(1) $(LIBS)
 
-$(ELF): $(APP_OBJS) $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A)
+$(ELF): $(APP_OBJS) $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(RC_OBJS) $(CORE_R) $(CORE_B) $(CORE_A)
 	$(call LINK_ELF,)
 
 # ROOM FOR THE SCE DATA.  vita-elf-create writes its import tables (a few

@@ -909,9 +909,25 @@ static int warm_one(const char *name)
    return written;
 }
 
-static const char *const SYS[3] = {
+static const char *const SYS[6] = {
    "Nintendo%20-%20Game%20Boy%20Advance", "Nintendo%20-%20Game%20Boy",
-   "Nintendo%20-%20Game%20Boy%20Color" };
+   "Nintendo%20-%20Game%20Boy%20Color", "Sega%20-%20Mega%20Drive%20-%20Genesis",
+   "Nintendo%20-%20Nintendo%20Entertainment%20System",
+   "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System" };
+
+/* The libretro-thumbnails system of a retro console's extension, or -1. */
+static int retro_sys(const char *ext)
+{
+   static const struct { const char *e; int sys; } T[] = {
+      { ".md", 3 }, { ".gen", 3 }, { ".smd", 3 }, { ".bin", 3 },
+      { ".nes", 4 }, { ".unf", 4 }, { ".unif", 4 },
+      { ".sfc", 5 }, { ".smc", 5 }, { ".fig", 5 }, { ".swc", 5 } };
+   size_t i;
+   for (i = 0; ext && i < sizeof(T) / sizeof(T[0]); i++)
+      if (!strcasecmp(ext, T[i].e))
+         return T[i].sys;
+   return -1;
+}
 
 typedef struct
 {
@@ -932,6 +948,11 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    {
       a->sys[0] = 2; a->sys[1] = 1;
       a->nsys = 2;
+   }
+   else if (retro_sys(ext) >= 0)
+   {
+      a->sys[0] = retro_sys(ext);
+      a->nsys = 1;
    }
    else
    {

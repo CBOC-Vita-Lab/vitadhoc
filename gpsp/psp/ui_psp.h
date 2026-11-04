@@ -285,20 +285,16 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                int *out_state_slot, fe_console_t *console_out);
 
 /* Pure extension predicate shared by the browser and its host test.  The
- * console selection is explicit: .gbc files are not folded into GB mode. */
-static inline int ui_rom_matches_console(const char *name, fe_console_t console)
+ * console selection is explicit: .gbc files are not folded into GB mode.
+ * The consoles that run through a libretro core take several extensions
+ * each (a Mega Drive dump may be .md, .gen, .smd or .bin). */
+static inline int ui_ext_eq(const char *name, size_t len, const char *ext)
 {
-   const char *ext;
-   size_t len, i;
-   static const char *const suffix[] = { ".gba", ".gb", ".gbc" };
-   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
+   size_t i, n = strlen(ext);
+   if (len < n)
       return 0;
-   len = strlen(name);
-   ext = suffix[console];
-   if (len < strlen(ext))
-      return 0;
-   name += len - strlen(ext);
-   for (i = 0; ext[i]; i++)
+   name += len - n;
+   for (i = 0; i < n; i++)
    {
       unsigned char a = (unsigned char)name[i];
       unsigned char b = (unsigned char)ext[i];
@@ -307,6 +303,25 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
       if (a != b) return 0;
    }
    return 1;
+}
+
+static inline int ui_rom_matches_console(const char *name, fe_console_t console)
+{
+   static const char *const suffix[FE_CONSOLE_COUNT][5] = {
+      { ".gba" }, { ".gb" }, { ".gbc" },
+      { ".md", ".gen", ".smd", ".bin" },
+      { ".nes", ".unf", ".unif" },
+      { ".sfc", ".smc", ".fig", ".swc" },
+   };
+   size_t len;
+   int i;
+   if (!name || console < FE_CONSOLE_GBA || console >= FE_CONSOLE_COUNT)
+      return 0;
+   len = strlen(name);
+   for (i = 0; i < 5 && suffix[console][i]; i++)
+      if (ui_ext_eq(name, len, suffix[console][i]))
+         return 1;
+   return 0;
 }
 
 static inline size_t ui_rom_stem_length(const char *name)

@@ -297,6 +297,20 @@ static void app_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 #define GBA_FRAME_NS   16742706ull
 #define GBA_FPS_X1000  59727.5
 
+/* What the running game's pace is: the GBA's, or a libretro core's own (the
+ * NES and SNES draw 60.10 a second, a PAL Mega Drive game 50).  A rate more
+ * than 2 % from the panel's cannot be shown one frame per refresh without
+ * running the game visibly fast or slow, so it is paced by the clock. */
+static uint64_t g_frame_ns = GBA_FRAME_NS;
+static double   g_fps_x1000 = GBA_FPS_X1000;
+static int      g_pace_force_timer;
+#define FRAME_NS g_frame_ns
+#define FPS_X1000 g_fps_x1000
+static int pace_is_vsync(void)
+{
+   return g_sw.pace_mode == PACE_VSYNC && !g_pace_force_timer;
+}
+
 /* A frame this many refreshes behind is not chased: the debt is forgiven.
  * Without it a console that was genuinely too slow for a moment would sprint
  * afterwards, which looks worse than having been late. */
@@ -552,12 +566,18 @@ static fe_console_t console_for(const char *path)
    }
    if (has_ext(path, ".gbc")) return FE_CONSOLE_GBC;
    if (has_ext(path, ".gb"))  return FE_CONSOLE_GB;
+   {
+      int c;
+      for (c = FE_CONSOLE_MD; c < FE_CONSOLE_COUNT; c++)
+         if (ui_rom_matches_console(path, (fe_console_t)c))
+            return (fe_console_t)c;
+   }
    return FE_CONSOLE_GBA;
 }
 
 static const char *console_name(fe_console_t c)
 {
-   return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB" : "GBA";
+   return pcfg_console_tag((int)c);
 }
 
 static const char *base_name(const char *path)
@@ -832,7 +852,7 @@ static void play_end(void)
  * kept beside its Continue point, so a point made with one patch is not
  * loaded into the game with another, or with none. */
 static char g_patch_key[200];
-#define RES_CAP (448u * 1024u)
+#define RES_CAP (1280u * 1024u)   /* a Mega Drive state is about 1 MiB */
 #define RES_EVERY_US (120u * 1000000u)
 static uint8_t g_res_mem[RES_CAP];
 static struct
@@ -1561,11 +1581,14 @@ static int rom_from_launch(char *out, size_t cap)
       return 1;
    }
    if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
-       !has_ext(out, ".zip"))
+       !has_ext(out, ".zip") &&
+       !ui_rom_matches_console(out, FE_CONSOLE_MD) &&
+       !ui_rom_matches_console(out, FE_CONSOLE_NES) &&
+       !ui_rom_matches_console(out, FE_CONSOLE_SNES))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.150s is not a .gba, .gb, .gbc or .zip file.", base_name(out));
+               "%.150s is not a game or .zip file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
@@ -1755,7 +1778,8 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
    {
       /* A GBA picture wider than the console's is the wide one; of its
        * margins, what the scale in use has room for is shown. */
-      unsigned m = (h == 160 && w > 240) ? (w - 240) / 2 : 0;
+      unsigned m = (g_game.console == FE_CONSOLE_GBA && h == 160 && w > 240)
+                 ? (w - 240) / 2 : 0;
       unsigned fit = m ? (unsigned)vid_margin_fit(w - 2 * m, h, (int)m) : 0;
       g_last.pix = pix + m;
       g_last.w = w - 2 * m;
@@ -2052,7 +2076,7 @@ unsigned app_vcount(void)
  * the network is looked at again while waiting (link_idle_pump). */
 static void pace_frame(void)
 {
-   if (g_sw.pace_mode == PACE_VSYNC)
+   if (pace_is_vsync())
    {
       /* Present on the refresh AFTER the one the last frame used.  Counting
        * against the display's absolute counter instead of calling "wait for
@@ -2130,9 +2154,9 @@ static void pace_frame(void)
    else
    {
       uint64_t now_ns = plat_time_us() * 1000ull;
-      g_next_ns += GBA_FRAME_NS;
+      g_next_ns += FRAME_NS;
       if (now_ns > g_next_ns + (g_catchup_ok ? CATCHUP_HORIZON : PACE_RESYNC_VB)
-                               * GBA_FRAME_NS)
+                               * FRAME_NS)
       {
          g_next_ns = now_ns;
          g_pace_forgiven++;
@@ -2140,8 +2164,8 @@ static void pace_frame(void)
       else if (now_ns >= g_next_ns)
       {
          g_pace_late++;
-         if (g_catchup_ok && now_ns - g_next_ns >= GBA_FRAME_NS)
-            g_catchup = (unsigned)((now_ns - g_next_ns) / GBA_FRAME_NS);
+         if (g_catchup_ok && now_ns - g_next_ns >= FRAME_NS)
+            g_catchup = (unsigned)((now_ns - g_next_ns) / FRAME_NS);
       }
       else
       {
@@ -2157,8 +2181,8 @@ static void pace_frame(void)
  * the resampler's starting point (audio_vita.h). */
 static unsigned pace_speed_x1e6(void)
 {
-   if (g_sw.pace_mode == PACE_VSYNC)
-      return (unsigned)((double)plat_refresh_mhz() * 1000000.0 / GBA_FPS_X1000 + 0.5);
+   if (pace_is_vsync())
+      return (unsigned)((double)plat_refresh_mhz() * 1000000.0 / FPS_X1000 + 0.5);
    return 1000000u;
 }
 
@@ -3231,6 +3255,8 @@ static void game_identity(void)
          else
             g_game.code[0] = '\0';
       }
+      else if (g_game.console >= FE_CONSOLE_MD)
+         g_game.gb_title[0] = '\0';      /* no cartridge title to read */
       else if (fseek(f, 0x134, SEEK_SET) == 0 &&
                fread(g_game.gb_title, 1, 16, f) == 16)
          g_game.gb_title[16] = '\0';
@@ -3349,13 +3375,15 @@ static void save_import(const char *rom_path, const char *save_path,
 {
    static const char *const ra_dirs[] = {
       "", "/mGBA", "/gpSP", "/Gambatte", "/SameBoy", "/TGB Dual",
-      "/Gearboy", "/VBA-M", "/VBA Next"
+      "/Gearboy", "/VBA-M", "/VBA Next", "/Genesis Plus GX", "/FCEUmm",
+      "/Snes9x 2005", "/Snes9x 2010", "/Snes9x"
    };
    char stem[APP_PATH_CAP], cand[APP_PATH_CAP], probe[APP_PATH_CAP + 8];
    const char *bn = base_name(rom_path), *dot;
    const char *from = NULL;
    long size = 0;
-   int i, from_import = 0, gb = console != FE_CONSOLE_GBA;
+   int i, from_import = 0,
+       gb = console == FE_CONSOLE_GB || console == FE_CONSOLE_GBC;
 
    g_import_note[0] = 0;
    if (file_size(save_path, NULL) == 0)
@@ -3458,8 +3486,10 @@ static fe_console_t g_overlay_console;
 static void overlay_apply(const char *rom_path, fe_console_t console)
 {
    char op[APP_PATH_CAP], stem[APP_PATH_CAP];
-   const char *tag = console == FE_CONSOLE_GBC ? "gbc" :
-                     console == FE_CONSOLE_GB ? "gb" : "gba";
+   static const char *const tags[FE_CONSOLE_COUNT] =
+      { "gba", "gb", "gbc", "md", "nes", "snes" };
+   const char *tag = (unsigned)console < FE_CONSOLE_COUNT ? tags[console]
+                                                           : "gba";
    char *dot;
 
    if (rom_path != g_overlay_rom)
@@ -3516,9 +3546,11 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[3] = { "gba", "gb", "gbc" };
+      static const char *const tag[FE_CONSOLE_COUNT] =
+         { "gba", "gb", "gbc", "md", "nes", "snes" };
       char op[APP_PATH_CAP];
-      int c = g_pcfg.console >= 0 && g_pcfg.console < 3 ? g_pcfg.console : 0;
+      int c = g_pcfg.console >= 0 && g_pcfg.console < FE_CONSOLE_COUNT
+            ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
           file_size(op, NULL) == 0)
          snprintf(g_overlay_name, sizeof(g_overlay_name), "%s.png", tag[c]);
@@ -3605,6 +3637,12 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
    }
    ext = console == FE_CONSOLE_GBC ? ".gbc" : console == FE_CONSOLE_GB ? ".gb"
                                                                   : ".gba";
+   if (console >= FE_CONSOLE_MD)
+   {
+      /* a libretro console keeps the entry's own extension (.sfc/.smc...) */
+      const char *edot = strrchr(e.name, '.');
+      ext = edot ? edot : ".bin";
+   }
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
    stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
    if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
@@ -3792,8 +3830,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
     * keeps it in the name, so "Game.gb" and "Game.gba" never share a file. */
    if (psp_rom_path_suffix(g_game.save_path, sizeof(g_game.save_path),
                            rom_path,
-                           console == FE_CONSOLE_GBA ? ".sav" :
-                           console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav")
+                           psp_save_suffix(console))
           != 0 ||
        psp_rom_path_suffix(g_game.state_path, sizeof(g_game.state_path),
                            rom_path, psp_state_slot1_suffix(console)) != 0)
@@ -3900,6 +3937,22 @@ static int game_boot(const char *rom_path, fe_console_t console)
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
 
+   {
+      unsigned f = fe_host_fps_x1000();
+      g_pace_force_timer = 0;
+      g_frame_ns = GBA_FRAME_NS;
+      g_fps_x1000 = GBA_FPS_X1000;
+      if (f)
+      {
+         double hz = (double)plat_refresh_mhz() / 1000.0;
+         g_fps_x1000 = f;
+         g_frame_ns = (uint64_t)(1e12 / (double)f + 0.5);
+         if (hz > 0 && (f / 1000.0 > hz * 1.02 || f / 1000.0 < hz * 0.98))
+            g_pace_force_timer = 1;
+         fe_evt("pace core_fps=%u refresh_mhz=%u timer=%d", f,
+                plat_refresh_mhz(), g_pace_force_timer);
+      }
+   }
    g_audio_ok = audio_start(fe_host_sample_rate(), pace_speed_x1e6()) == 0;
    fe_evt("audio on=%d in_rate=%u out_rate=%u grain=%u speed_x1e6=%u",
           g_audio_ok, fe_host_sample_rate(), AUDIO_OUT_RATE, AUDIO_GRAIN,
@@ -4350,11 +4403,29 @@ static void game_loop(void)
       g_app_pad = pad;
       /* Every remappable shortcut, evaluated once from this frame's pad
        * (psp/ctl_map.c); the context gates stay at each use below. */
-      fired = ctl_shortcuts(&g_pcfg.controls, pad, pad_new);
+      /* MD / NES / SNES: SQUARE and TRIANGLE are the Y and X buttons the
+       * GBA-style table has no row for.  They go to the game (unless SELECT
+       * is held, which makes them part of a chord) and are not offered to
+       * the single-button shortcuts they would otherwise start (fast
+       * forward, video preset); a rebound shortcut or a chord still works. */
+      {
+         unsigned sc_pad = pad, sc_new = pad_new;
+         if (g_game_console >= FE_CONSOLE_MD && !(pad & CTL_SELECT))
+         {
+            sc_pad &= ~(unsigned)(CTL_SQUARE | CTL_TRIANGLE);
+            sc_new &= ~(unsigned)(CTL_SQUARE | CTL_TRIANGLE);
+         }
+         fired = ctl_shortcuts(&g_pcfg.controls, sc_pad, sc_new);
+      }
       g_pad_block &= pad;
       g_pad_block |= chord_took(fired, pad);
       g_app_keys = ctl_game_mask(&g_pcfg.controls,
                                  chord_guard(pad & ~g_pad_block, pad));
+      if (g_game_console >= FE_CONSOLE_MD && !(pad & CTL_SELECT))
+      {
+         if (pad & CTL_SQUARE)   g_app_keys |= 1u << 1;   /* retro Y */
+         if (pad & CTL_TRIANGLE) g_app_keys |= 1u << 9;   /* retro X */
+      }
 
       /* The right stick is no control of a Game Boy: pulled down it is
        * the "button" of a cheat cartridge (the few codes that act only
@@ -4730,10 +4801,10 @@ static void game_loop(void)
          fe_host_skip_override(-1);
          g_blit_suppress = 0;
          /* their refreshes are paid for */
-         if (g_sw.pace_mode == PACE_VSYNC)
+         if (pace_is_vsync())
             g_app_vc_target += n;
          else
-            g_next_ns += (uint64_t)n * GBA_FRAME_NS;
+            g_next_ns += (uint64_t)n * FRAME_NS;
          g_caught += n;
          g_caught_us += (unsigned)(plat_time_us() - t0);
       }

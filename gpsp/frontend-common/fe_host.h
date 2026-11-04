@@ -344,6 +344,10 @@ void fe_host_core_prof(unsigned *calls, uint32_t *total_us, uint32_t *max_us);
  * literal** — gpsp_sound_rate is a core option and changing it must not
  * silently desync every frontend's resampler. */
 unsigned fe_host_sample_rate(void);
+/* Frames a second the running game wants, in thousandths, for the consoles
+ * that run through a libretro core (MD, NES, SNES); 0 for the others, whose
+ * rate is the Game Boy family's fixed 59.7275. */
+unsigned fe_host_fps_x1000(void);
 
 /* ADR-0028: what the core was doing on its single slowest retro_run so far —
  * the per-frame counter deltas captured on the frame that set `max_us`.

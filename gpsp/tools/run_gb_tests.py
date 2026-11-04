@@ -253,7 +253,7 @@ def main() -> int:
         # glue.
         run(["gcc", "-std=gnu11", *WARN, *SAN, "-ffunction-sections",
              "-fdata-sections", *INC, "-o", str(t / "fe_gb_boot"),
-             "tools/test_fe_gb_boot.c", "frontend-common/fe_host.c",
+             "tools/test_fe_gb_boot.c", "frontend-common/fe_host.c", "frontend-common/fe_retro.c",
              "frontend-common/fe_util.c", "netdrv/gb_link.c",
              "frontend-common/fe_gblink.c",
              "gbcore/gbcore_dual.c", inst_a, inst_b, str(shared),
@@ -266,7 +266,7 @@ def main() -> int:
         # without a jump -- at eight time zones.
         run(["gcc", "-std=gnu11", *WARN, *SAN, "-ffunction-sections",
              "-fdata-sections", *INC, "-o", str(t / "gb_rtc_utc"),
-             "tools/tests/test_gb_rtc_utc.c", "frontend-common/fe_host.c",
+             "tools/tests/test_gb_rtc_utc.c", "frontend-common/fe_host.c", "frontend-common/fe_retro.c",
              "frontend-common/fe_util.c", "netdrv/gb_link.c",
              "frontend-common/fe_gblink.c",
              "gbcore/gbcore_dual.c", inst_a, inst_b, str(shared),

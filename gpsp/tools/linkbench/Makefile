@@ -30,7 +30,7 @@ else
 endif
 
 FE := $(CORE_DIR)/frontend-common
-SRCS := lb_host.c $(FE)/fe_host.c $(FE)/fe_evt.c $(FE)/fe_util.c \
+SRCS := lb_host.c $(FE)/fe_host.c $(FE)/fe_retro.c $(FE)/fe_evt.c $(FE)/fe_util.c \
         $(FE)/fe_autopilot.c $(FE)/netpacket_host.c $(CORE_DIR)/netdrv/netdrv.c         $(CORE_DIR)/netdrv/gb_link.c
 # fe_host.c also drives the GB core; link it so fe_host is used unmodified.
 GB   := $(CORE_DIR)/gbcore

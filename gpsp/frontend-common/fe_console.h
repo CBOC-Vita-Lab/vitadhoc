@@ -11,6 +11,11 @@ typedef enum fe_console
   FE_CONSOLE_GBA = 0,
   FE_CONSOLE_GB,
   FE_CONSOLE_GBC,
+  /* Run through libretro cores (frontend-common/fe_retro.c): Sega Mega
+   * Drive / Genesis, NES / Famicom, Super Nintendo. */
+  FE_CONSOLE_MD,
+  FE_CONSOLE_NES,
+  FE_CONSOLE_SNES,
   FE_CONSOLE_COUNT
 } fe_console_t;
 

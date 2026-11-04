@@ -41,7 +41,7 @@ CFLAGS := -O2 -g -Wall -fno-pic -fno-pie -mno-shared -march=mips32r2 \
           -I$(CORE_DIR)/frontend-common -I$(CORE_DIR)/netdrv \
           -I$(CORE_DIR)/libretro/libretro-common/include -I$(CORE_DIR)/gbcore
 FE   := $(CORE_DIR)/frontend-common
-SRCS := dr_host.c $(FE)/fe_host.c $(FE)/fe_evt.c $(FE)/fe_util.c \
+SRCS := dr_host.c $(FE)/fe_host.c $(FE)/fe_retro.c $(FE)/fe_evt.c $(FE)/fe_util.c \
         $(FE)/fe_autopilot.c $(FE)/netpacket_host.c $(CORE_DIR)/netdrv/netdrv.c \
         $(CORE_DIR)/netdrv/gb_link.c $(FE)/fe_gblink.c dr_gbstub.c
 GB     := $(CORE_DIR)/gbcore

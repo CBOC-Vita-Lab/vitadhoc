@@ -48,6 +48,7 @@
 #include "config_psp.h"
 #include "rom_paths.h"
 #include "state_slots.h"
+#include "fe_retro.h"
 #include "font_8x16.h"
 #include "fe_favs.h"
 #include "fe_evt.h"
@@ -280,6 +281,16 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
      { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
        RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
        RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+   { "MD",  "Mega Drive",       "md",  RGB565(0x4F, 0x9E, 0xFF),
+     { RGB565(0x0B, 0x1F, 0x4A), RGB565(0x1D, 0x4F, 0xB0),
+       RGB565(0x4F, 0x9E, 0xFF), 0, 0 }, 3, 1 },
+   { "NES", "Nintendo NES",     "nes", RGB565(0xF2, 0x5A, 0x4C),
+     { RGB565(0x3A, 0x3A, 0x3A), RGB565(0xB0, 0x1E, 0x1E),
+       RGB565(0xF2, 0x5A, 0x4C), 0, 0 }, 3, 1 },
+   { "SNES", "Super Nintendo",  "snes", RGB565(0xB8, 0xA4, 0xFF),
+     { RGB565(0x5B, 0x4B, 0xC4), RGB565(0xE0, 0x30, 0x40),
+       RGB565(0xF5, 0xC5, 0x18), RGB565(0x2F, 0xA8, 0x5A),
+       RGB565(0x3A, 0x7B, 0xE0) }, 5, 1 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -295,6 +306,16 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
      { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
        RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
        RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+   { "MD",  "Mega Drive",       "md",  RGB565(0x14, 0x46, 0x9E),
+     { RGB565(0x0B, 0x1F, 0x4A), RGB565(0x1D, 0x4F, 0xB0),
+       RGB565(0x4F, 0x9E, 0xFF), 0, 0 }, 3, 1 },
+   { "NES", "Nintendo NES",     "nes", RGB565(0x9E, 0x1C, 0x14),
+     { RGB565(0x3A, 0x3A, 0x3A), RGB565(0xB0, 0x1E, 0x1E),
+       RGB565(0xF2, 0x5A, 0x4C), 0, 0 }, 3, 1 },
+   { "SNES", "Super Nintendo",  "snes", RGB565(0x4B, 0x3A, 0xB0),
+     { RGB565(0x5B, 0x4B, 0xC4), RGB565(0xE0, 0x30, 0x40),
+       RGB565(0xF5, 0xC5, 0x18), RGB565(0x2F, 0xA8, 0x5A),
+       RGB565(0x3A, 0x7B, 0xE0) }, 5, 1 },
 };
 
 static const ui_skin *skin_of(int console)
@@ -1678,7 +1699,8 @@ static void ov_title_take(void)
       if (!dot || dot == g_ov_title)
          break;
       if (pass == 1 && strcasecmp(dot, ".gb") && strcasecmp(dot, ".gbc") &&
-          strcasecmp(dot, ".gba"))
+          strcasecmp(dot, ".gba") && strcasecmp(dot, ".md") &&
+          strcasecmp(dot, ".nes") && strcasecmp(dot, ".snes"))
          break;
       *dot = '\0';
    }
@@ -2509,7 +2531,8 @@ static int set_row_enabled(int idx)
    if (!set_row_shown(idx))
       return 0;
    if (idx == SET_GBPAL)
-      return pcfg_display_console() != FE_CONSOLE_GBA;
+      return pcfg_display_console() == FE_CONSOLE_GB ||
+             pcfg_display_console() == FE_CONSOLE_GBC;
 #ifdef VITA
    if (idx == SET_LEVEL)
       return g_pgame.sensor_mode == PCFG_SENSOR_MOTION;
@@ -3129,7 +3152,8 @@ static void settings_adjust(int id, int dir)
       vid_set_mode(g_pcfg.scale, g_pcfg.filter);
       ui_host_look_changed();
       vid_ambient_mode(g_pcfg.ambient);
-      if (pcfg_display_console() != FE_CONSOLE_GBA)
+      if (pcfg_display_console() == FE_CONSOLE_GB ||
+          pcfg_display_console() == FE_CONSOLE_GBC)
          fe_host_gb_palette_set(g_pcfg.gb_palette);
       fe_evt("game_look own=%d scale=%s quality=%d", g_pgame.override,
              vid_scale_name(g_pcfg.scale), g_pcfg.quality);
@@ -8172,6 +8196,10 @@ static int rom_has_sav(int idx)
          : g_pcfg.console == FE_CONSOLE_GBA
          ? snprintf(sav, sizeof(sav), "%.*s.sav",
                     (int)ui_rom_stem_length(rom), rom)
+         : fe_console_is_retro((fe_console_t)g_pcfg.console)
+         ? snprintf(sav, sizeof(sav), "%.*s%s",
+                    (int)ui_rom_stem_length(rom), rom,
+                    psp_save_suffix((fe_console_t)g_pcfg.console))
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
 #else
       /* GB/GBC saves keep the .gb/.gbc stem so a GB and a GBA game of the

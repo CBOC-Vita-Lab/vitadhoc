@@ -925,7 +925,7 @@ static void hm_backdrop(int rom, float dy)
 
 static float hm_topbar(float dy, int n_scan)
 {
-   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC" };
+   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "MD", "NES", "SNES" };
    float x = HM_X, y = 18 + dy, cx;
    int c;
 

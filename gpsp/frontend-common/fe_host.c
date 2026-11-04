@@ -1,5 +1,6 @@
 #include "fe_host.h"
 #include "fe_evt.h"
+#include "fe_retro.h"
 #include "fe_util.h"
 
 #include <stdio.h>
@@ -92,6 +93,7 @@ static uint16_t gb_dual_buttons;
 /* A GB/GBC session, single-player or linked: the GB paths below key on this,
  * not on gb_core, because a link session (gbl) runs with no single core. */
 static int gb_family;
+static int retro_family;   /* MD / NES / SNES through fe_retro.c */
 /* The GB link session (fe_gblink.h), NULL when none. */
 static int save_recover_bak(const char *path);   /* below, with sram_load */
 static int state_file_exists(const char *path);
@@ -162,6 +164,25 @@ static int gb_skip_frame;   /* this frame's drawing was skipped (frameskip) */
  * so host tests that link this file without the core still link. */
 static int skip_override = -1;
 extern int frontend_skip_override __attribute__((weak));   /* libretro.c */
+
+/* The libretro consoles' picture: the sink's, with fe_host's own record of
+ * the last picture and the counts the heartbeat reports. */
+static void retro_video_sink(const uint16_t *pix, unsigned w, unsigned h,
+                             size_t pitch)
+{
+   if (!pix)
+   {
+      frames_skipped++;
+      if (host.video_frame)
+         HOST_VIDEO(NULL, w, h, last_pitch);
+      return;
+   }
+   last_frame = pix;
+   last_pitch = pitch;
+   frames_rendered++;
+   if (host.video_frame)
+      HOST_VIDEO(pix, w, h, pitch);
+}
 
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
@@ -1355,6 +1376,8 @@ static bool env_cb(unsigned cmd, void *data)
 
 static uint32_t sram_crc(void)
 {
+   if (retro_family)
+      return 0;
    if (gb_family && !gb_core)
    {
       /* A link session: the local machine's cartridge RAM (autopilot
@@ -1420,6 +1443,8 @@ static int save_recover_bak(const char *path)
 
 int fe_host_battery_refusal(void)
 {
+   if (retro_family)
+      return fe_retro_battery_failed();
    return battery_load_failed;
 }
 
@@ -1509,6 +1534,8 @@ void fe_host_input_inject(uint32_t joypad_mask)
 
 unsigned fe_host_sensor_kinds(void)
 {
+   if (retro_family)
+      return 0;
    if (gb_family)
       return (gb_core && !gb_dual && !gbl && gbcore_has_tilt(gb_core))
           ? FE_SENSOR_MBC7 : 0;
@@ -1547,6 +1574,8 @@ int fe_host_sgb_border_load(const void *buf, size_t n)
 uint32_t fe_host_ra_read(uint32_t addr, uint8_t *out, uint32_t len)
 {
    uint32_t i = 0;
+   if (retro_family)
+      return fe_retro_ram_read(addr, out, len);
    if (gb_family)
       return gb_core && !gb_dual && !gbl
              ? gbcore_ra_read(gb_core, addr, out, len) : 0;
@@ -1580,6 +1609,8 @@ uint32_t fe_host_ra_read(uint32_t addr, uint8_t *out, uint32_t len)
 int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
 {
    unsigned i;
+   if (retro_family)
+      return fe_retro_ram_read(gba_addr, (uint8_t *)out, len) == len ? 0 : -1;
    if (gb_family)
    {
       /* GB addresses (0000-FFFF) for GB scripts: the single machine, or in
@@ -1629,6 +1660,8 @@ int fe_host_mem_read(uint32_t gba_addr, void *out, unsigned len)
 int fe_host_mem_write(uint32_t gba_addr, const void *in, unsigned len)
 {
    unsigned i;
+   if (retro_family)
+      return -1;
    if (gb_family)
       return -1;
 
@@ -1790,6 +1823,25 @@ int fe_host_state_save(const char *path)
 {
    size_t sz;
 
+   if (retro_family)
+   {
+      size_t need = fe_retro_state_size();
+      uint8_t *img = need ? (uint8_t *)malloc(need) : NULL;
+      long n = img ? fe_retro_state_save(img, need) : -1;
+      int rc = -1;
+      if (n > 0 && state_file_replace(path, img, (size_t)n) == 0)
+      {
+         fe_evt("state_save file=%s size=%u crc=%08x", path, (unsigned)n,
+                (unsigned)fe_crc32(0, img, (size_t)n));
+         rc = 0;
+      }
+      else
+         fe_evt("state_save file=%s FAILED reason=%s", path,
+                n > 0 ? "io" : "serialize");
+      free(img);
+      return rc;
+   }
+
    if (gb_family && !gb_core)
    {
       fe_evt("state_save file=%s FAILED reason=link_session", path);
@@ -1850,6 +1902,27 @@ int fe_host_state_load(const char *path)
 
    if (fe_host_state_recover(path) < 0)
       return -1;
+   if (retro_family)
+   {
+      size_t cap = FE_RETRO_STATE_MAX, got;
+      uint8_t *img = (uint8_t *)malloc(cap);
+      int ok = 0;
+      f = img ? fopen(path, "rb") : NULL;
+      if (f)
+      {
+         got = fread(img, 1, cap, f);
+         ok = !ferror(f) && fgetc(f) == EOF;
+         fclose(f);
+         ok = ok && fe_retro_state_load(img, got) == 0;
+         fe_evt(ok ? "state_load file=%s size=%u"
+                   : "state_load file=%s FAILED reason=unserialize n=%u",
+                path, (unsigned)got);
+      }
+      else
+         fe_evt("state_load file=%s FAILED reason=open", path);
+      free(img);
+      return ok ? 0 : -1;
+   }
    f = fopen(path, "rb");
 
    if (!f)
@@ -1908,6 +1981,8 @@ int fe_host_state_load(const char *path)
 
 size_t fe_host_state_mem_size(void)
 {
+   if (retro_family)
+      return fe_retro_state_size();
    if (gb_family && !gb_core)
       return 0;
    return gb_core ? gbcore_state_size(gb_core) : retro_serialize_size();
@@ -1915,6 +1990,8 @@ size_t fe_host_state_mem_size(void)
 
 long fe_host_state_mem_save(void *buf, size_t cap)
 {
+   if (retro_family)
+      return fe_retro_state_save(buf, cap);
    size_t sz = fe_host_state_mem_size();
    if (!sz || !buf || cap < sz)
       return -1;
@@ -1925,6 +2002,8 @@ long fe_host_state_mem_save(void *buf, size_t cap)
 
 int fe_host_state_mem_load(const void *buf, size_t n)
 {
+   if (retro_family)
+      return fe_retro_state_load(buf, n);
    if (!buf || (gb_family && !gb_core))
       return -1;
    if (gb_core)
@@ -1938,6 +2017,8 @@ extern uint32_t state_load_keeps_rom __attribute__((weak));
 int fe_host_state_mem_restore(const void *buf, size_t n)
 {
    int rc;
+   if (retro_family)
+      return fe_retro_state_load(buf, n);
    if (gb_core || gb_family || !&state_load_keeps_rom)
       return fe_host_state_mem_load(buf, n);
    state_load_keeps_rom = 1;
@@ -1949,6 +2030,8 @@ int fe_host_state_mem_restore(const void *buf, size_t n)
 void *fe_host_battery_mem(size_t *size)
 {
    void *p;
+   if (retro_family)
+      return NULL;
    if (gb_family)
       return NULL;
 #ifdef GBA_LINK
@@ -1963,14 +2046,14 @@ void *fe_host_battery_mem(size_t *size)
 
 uint32_t fe_host_battery_gen(void)
 {
-   return gb_family ? 0u : sram_gen_now();
+   return gb_family || retro_family ? 0u : sram_gen_now();
 }
 
 void fe_host_battery_changed(void)
 {
    /* The core's own counter: it is what the fast-forward nudge and a rewind
     * buffer watch, and bumping it is what a write by the game does. */
-   if (!gb_family && &backup_write_gen)
+   if (!gb_family && !retro_family && &backup_write_gen)
       backup_write_gen++;
 }
 
@@ -2451,6 +2534,8 @@ static int sram_service_io_body(void)
 
 int fe_host_sram_service_io(void)
 {
+   if (retro_family)
+      return 0;
    int rc;
    sram_io_busy = 1;
    rc = sram_service_io_body();
@@ -2466,6 +2551,8 @@ int fe_host_sram_service_io(void)
  * save is flushed by the main loop's own suspend request). */
 void fe_host_sram_request_scan(void)
 {
+   if (retro_family)
+      return;
    /* One read: this runs on the power callback's thread, and the main
     * thread clears host_io when it stops the writer (io_thread_stop). */
    const fe_host_io *io = host_io;
@@ -2483,6 +2570,8 @@ void fe_host_sram_ff_nudge_enable(int on)
 
 int fe_host_sram_ff_nudge(int ff_active)
 {
+   if (retro_family)
+      return 0;
    uint32_t gen, dgen;
    uint64_t now_us;
    int oldest_late, want_scan;
@@ -2640,6 +2729,11 @@ int fe_host_sram_ff_nudge(int ff_active)
  * fe_host_run_frame; cheap no-op when nothing is pending. */
 void fe_host_sram_service(void)
 {
+   if (retro_family)
+   {
+      fe_retro_sram_service(frame_count);
+      return;
+   }
    if (gb_family)
    {
       if (!gb_core)
@@ -2737,6 +2831,11 @@ static int sram_sync_checked(void)
 
 void fe_host_sram_sync(void)
 {
+   if (retro_family)
+   {
+      (void)fe_retro_sram_flush(0);
+      return;
+   }
    (void)sram_sync_checked();
 }
 
@@ -2835,6 +2934,8 @@ static int sram_scan(int force_write)
 
 int fe_host_sram_flush(int force_write)
 {
+   if (retro_family)
+      return fe_retro_sram_flush(force_write);
    if (battery_load_failed)
       return -1;
    if (gb_family)
@@ -3937,6 +4038,36 @@ int fe_host_boot(const fe_host_config *cfg)
    gb_save_crc_valid = 0;
    gb_skip_frame = 0;
 
+   retro_family = fe_console_is_retro(host.console);
+   if (retro_family)
+   {
+      fe_retro_config rc;
+      memset(&rc, 0, sizeof(rc));
+      rc.console = host.console;
+      rc.rom_path = host.rom_path;
+      rc.system_dir = host.system_dir;
+      rc.save_path = host.save_path;
+      rc.video_frame = retro_video_sink;
+      rc.audio_frames = host.audio_frames;
+      rc.input_bitmask = host.input_bitmask;
+      rc.time_us = host.time_us;
+      rc.boot_status = host.boot_status;
+      gb_family = 0;
+      gb_core = NULL;
+      gb_dual = NULL;
+      battery_load_failed = 0;
+      if (fe_retro_boot(&rc) != 0)
+      {
+         retro_family = 0;
+         fe_log("retro boot FAILED for %s console=%d", host.rom_path,
+                (int)host.console);
+         return -1;
+      }
+      core_sample_rate = fe_retro_sample_rate();
+      fps_last_us = host.time_us ? host.time_us() : 0;
+      fe_evt("retro_backend ready console=%d", (int)host.console);
+      return 0;
+   }
    gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC;
    if (gb_family)
    {
@@ -6957,8 +7088,41 @@ static int gb_cheat_poke(void *ctx, uint16_t addr, uint8_t value)
 }
 #endif
 
+static void retro_run_frame_hosted(void)
+{
+   uint64_t t0 = host.time_us ? host.time_us() : 0;
+   fe_retro_run_frame(skip_override == 1);
+   if (t0)
+   {
+      uint32_t d = (uint32_t)(host.time_us() - t0);
+      core_run_us_total += d;
+      core_run_calls++;
+      if (d > core_run_max_us) core_run_max_us = d;
+      if (d > core_win_max_us) core_win_max_us = d;
+   }
+   frame_count++;
+   fe_host_sram_service();
+   if ((frame_count % hb_every) == 0)
+   {
+      fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
+             (unsigned long long)(host.time_us ? host.time_us() : 0));
+      fps_evt();
+      core_prof_evt();
+   }
+}
+
+unsigned fe_host_fps_x1000(void)
+{
+   return retro_family ? fe_retro_fps_x1000() : 0;
+}
+
 void fe_host_run_frame(void)
 {
+   if (retro_family)
+   {
+      retro_run_frame_hosted();
+      return;
+   }
 #if defined(__linux__)
    uint64_t t0 = cpu_now_ns(), v0 = cpu_video_ns;
    run_frame();
@@ -7507,6 +7671,14 @@ static void sram_shutdown(void)
 
 void fe_host_shutdown(void)
 {
+   if (retro_family)
+   {
+      fe_retro_shutdown();
+      retro_family = 0;
+      last_frame = NULL;
+      last_pitch = 0;
+      return;
+   }
    /* ADR-0025 ordering contract: the writer thread is already stopped and
     * fe_host_set_io(NULL) already called, so everything below is
     * single-threaded — which is what makes it safe to close the file and

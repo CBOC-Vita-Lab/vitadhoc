@@ -193,7 +193,7 @@ $(B)/gbcore/gbcore_tgbdual_linked_b.o: $(B)/gbcore/gbcore_tgbdual_linked.o
 # ---- frontend-common, netdrv core, the cable bus ----------------------------
 FE_INC  := -I$(GP)/frontend-common -I$(GP)/netdrv \
            -I$(GP)/libretro/libretro-common/include -I$(GP)
-FE_OBJS := $(addprefix $(B)/frontend-common/,fe_host.o fe_evt.o fe_util.o \
+FE_OBJS := $(addprefix $(B)/frontend-common/,fe_host.o fe_retro.o fe_evt.o fe_util.o \
              fe_gblink.o fe_linkmode.o fe_favs.o fe_autopilot.o \
              netpacket_host.o fe_share.o) \
            $(B)/netdrv/gb_link.o $(B)/netdrv/netdrv.o

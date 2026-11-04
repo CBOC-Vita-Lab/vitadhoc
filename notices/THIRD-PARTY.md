@@ -96,6 +96,20 @@ clarification and the remaining package review.
   upstream shader revision was not recorded. This is not the same license
   evidence as the vendored CPU xBRZ copy. Combined-binary licensing remains
   under review; adding notices or leaving GPU mode off does not settle it.
+- **Mega Drive / NES / SNES cores (added after 1.2):** unmodified libretro
+  cores, source under `gpsp/retro/`, linked as isolated objects.
+  *Genesis Plus GX* (Eke-Eke, Charles MacDonald, MAME team; **non-commercial
+  license**, `licenses/GenesisPlusGX-LICENSE.txt`), *FCEUmm* (GPL-2.0,
+  `licenses/FCEUmm-GPL-2.0.txt`) and *Snes9x 2005* (Snes9x freeware license,
+  **personal use, non-commercial**, plus RetroArch's MIT notice,
+  `licenses/Snes9x2005-copyright.txt`). Pinned revisions: Genesis Plus GX
+  `f27655b592ef43f317272d79883bcaa10d3ac8ad`, FCEUmm
+  `e0f3086a8104f8fbbe49a2615b10401504a9533f`, Snes9x 2005
+  `a79dfe9047e7fec58808aefe48ad2bf499c7af11`. The two non-commercial licenses
+  are not GPL-compatible: a package containing them may not be sold or used
+  commercially, and this combined-work question is open like the others
+  above.
+
 - **Game descriptions:** English Wikipedia contributors, CC BY-SA 4.0.
   Article and history links, adaptation notes and attribution are in
   `notices/WIKIPEDIA-ATTRIBUTION.md`. Wikidata article mappings are CC0.

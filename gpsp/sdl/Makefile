@@ -30,7 +30,7 @@ CFLAGS  := -O2 -g -Wall -Wextra -DND_RTO_FIRST_MAX_US=30000 \
            $(shell sdl2-config --cflags)
 LDLIBS  := $(shell sdl2-config --libs) -lm -lpthread
 
-COMMON_SRC := $(CORE_DIR)/frontend-common/fe_host.c \
+COMMON_SRC := $(CORE_DIR)/frontend-common/fe_retro.c $(CORE_DIR)/frontend-common/fe_host.c \
               $(CORE_DIR)/frontend-common/fe_evt.c \
               $(CORE_DIR)/frontend-common/fe_util.c \
               $(CORE_DIR)/frontend-common/fe_autopilot.c \

@@ -58,7 +58,23 @@ static inline int psp_state_slot_top(int cur, int *top)
 static inline const char *psp_state_slot1_suffix(fe_console_t console)
 {
    return console == FE_CONSOLE_GBC ? ".gbc.st0" :
-          console == FE_CONSOLE_GB  ? ".gb.st0"  : ".st0";
+          console == FE_CONSOLE_GB  ? ".gb.st0"  :
+          console == FE_CONSOLE_MD  ? ".md.st0"  :
+          console == FE_CONSOLE_NES ? ".nes.st0" :
+          console == FE_CONSOLE_SNES ? ".snes.st0" : ".st0";
+}
+
+/* The battery file's suffix, which replaces the ROM's extension.  The three
+ * libretro consoles use the .srm layout of every libretro frontend, with the
+ * console in the name so Game.nes and Game.sfc never share a file (a
+ * RetroArch <stem>.srm is picked up by the save import). */
+static inline const char *psp_save_suffix(fe_console_t console)
+{
+   return console == FE_CONSOLE_GBC ? ".gbc.sav" :
+          console == FE_CONSOLE_GB  ? ".gb.sav"  :
+          console == FE_CONSOLE_MD  ? ".md.srm"  :
+          console == FE_CONSOLE_NES ? ".nes.srm" :
+          console == FE_CONSOLE_SNES ? ".snes.srm" : ".sav";
 }
 
 /* Slot 1 is the historic .st0 file; slots 2-10 use .st1 through .st9. */

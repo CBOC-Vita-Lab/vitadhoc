@@ -1,5 +1,16 @@
 # What's New
 
+## Unreleased
+
+**Sega Mega Drive / Genesis, NES and SNES.** Three new consoles beside GBA,
+GB and GBC, each its own tab on the home screen. Extensions: `.md .gen .smd
+.bin`, `.nes .unf .unif`, `.sfc .smc .fig .swc` (also inside `.zip`).
+Saves are `<game>.<console>.srm` beside the game (a RetroArch `.srm` is
+imported); ten state slots work. SQUARE and TRIANGLE are the Y and X buttons,
+so Fast forward and Video preset are not on them in these games (rebind them
+in Controls). Rewind and link play are GBA/GB features. Not tested on a real
+console.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

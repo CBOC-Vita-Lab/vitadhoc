@@ -522,6 +522,10 @@ static void rw_alloc(void)
    unsigned steps;
 
    rw_free();
+   if (fe_host_fps_x1000())
+      return;                 /* Mega Drive / NES / SNES: states of 13 KiB to
+                               * 1 MiB taken many times a second are not
+                               * something these cores were measured at */
    if (!R.game || R.seconds <= 0 || !state || R.locked)
       return;                 /* (locked: built when the link is over, with
                                * the battery image a session hides) */

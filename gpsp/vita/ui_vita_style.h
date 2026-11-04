@@ -36,11 +36,12 @@
    UI_TCH_ROW((id), (int)((x) / 2), (int)((y) / 2), (int)((w) / 2) + 1, \
               (int)((h) / 2) + 1)
 
-/* One colour per console (GBA, GB, GBC). */
+/* One colour per console (GBA, GB, GBC, MD, NES, SNES). */
 static uint32_t hm_tint(int console, int a)
 {
-   static const uint32_t rgb[3] = { 0x7B6CFF, 0x8CC63F, 0x19C3B4 };
-   if (console < 0 || console > 2)
+   static const uint32_t rgb[FE_CONSOLE_COUNT] = { 0x7B6CFF, 0x8CC63F, 0x19C3B4,
+                                                0x3B82F6, 0xE0553F, 0xB08CFF };
+   if (console < 0 || console >= FE_CONSOLE_COUNT)
       console = 0;
    return VS_HEX(rgb[console], a);
 }
@@ -48,9 +49,11 @@ static uint32_t hm_tint(int console, int a)
 /* The console's card: a top and a bottom colour. */
 static uint32_t hm_deep(int console, int bottom)
 {
-   static const uint32_t top[3] = { 0x5B4BC4, 0x3D7A35, 0x1C9E97 };
-   static const uint32_t bot[3] = { 0x231B5E, 0x12301A, 0x0A3F45 };
-   if (console < 0 || console > 2)
+   static const uint32_t top[FE_CONSOLE_COUNT] = { 0x5B4BC4, 0x3D7A35, 0x1C9E97,
+                                                0x2556B8, 0xA83A2A, 0x7A5AC4 };
+   static const uint32_t bot[FE_CONSOLE_COUNT] = { 0x231B5E, 0x12301A, 0x0A3F45,
+                                                0x10224A, 0x40170F, 0x2B1F55 };
+   if (console < 0 || console >= FE_CONSOLE_COUNT)
       console = 0;
    return VS_HEX(bottom ? bot[console] : top[console], 255);
 }

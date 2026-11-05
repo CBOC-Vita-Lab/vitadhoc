@@ -388,11 +388,12 @@ void vb_gpu_stats(unsigned *frames, unsigned *avg_us, unsigned *max_us)
 
 struct vb_prog { int which; };
 static struct vb_prog g_progs[VB_PROGS] = { { VB_PROG_XBRZ0 }, { VB_PROG_XBRZ1 },
-                                             { VB_PROG_XBRZ2 } };
+                                             { VB_PROG_XBRZ2 },
+                                             { VB_PROG_FX_LCD }, { VB_PROG_FX_CRT } };
 
 uint32_t vbsp_run(int which, const uint32_t *t0, int w0, int h0,
                   const uint32_t *t1, int w1, int h1, float u, float v,
-                  const float uni[4][4]);
+                  const float uni[VB_PROG_UNIFORMS][4]);
 
 static int progs_on(void)
 {

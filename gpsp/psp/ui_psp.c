@@ -3403,6 +3403,24 @@ static const char *set_help(int id)
                                         "adds no colours.";
       case VID_FILTER_SCANLINES: return "Darkens a thin line under every "
                                         "row of pixels.";
+#ifdef VITA
+      case VID_FILTER_LCD_RGB:   return "Shader: coloured sub-pixel grid of "
+                                        "a handheld LCD.";
+      case VID_FILTER_LCD_MONO:  return "Shader: dark gaps between pixels, "
+                                        "like a monochrome LCD.";
+      case VID_FILTER_LCD_PAPER: return "Shader: LCD grid on a paper backing "
+                                        "with soft shadows.";
+      case VID_FILTER_LCD_WORN:  return "Shader: a worn LCD, paper backing "
+                                        "and faint ghosting.";
+      case VID_FILTER_CRT:       return "Shader: scanlines, phosphor mask and "
+                                        "vignette. No distortion.";
+      case VID_FILTER_CRT_COMP:  return "Shader: composite video, dither blur "
+                                        "and a faint ghost.";
+      case VID_FILTER_CRT_RF:    return "Shader: bad aerial, drifting ghost "
+                                        "and noise.";
+      case VID_FILTER_CRT_SHARP: return "Shader: crisp picture, light "
+                                        "scanlines.";
+#endif
       default:                   return "How its pixels are drawn.";
       }
 #ifdef VITA

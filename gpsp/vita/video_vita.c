@@ -213,6 +213,14 @@ const char *vid_filter_name(int filter)
         : filter == VID_FILTER_XBRZ      ? "xBRZ smooth"
         : filter == VID_FILTER_SCALE     ? "Scale3x"
         : filter == VID_FILTER_SCANLINES ? "scanlines"
+        : filter == VID_FILTER_LCD_RGB   ? "LCD RGB"
+        : filter == VID_FILTER_LCD_MONO  ? "LCD mono"
+        : filter == VID_FILTER_LCD_PAPER ? "LCD paper"
+        : filter == VID_FILTER_LCD_WORN  ? "LCD worn"
+        : filter == VID_FILTER_CRT       ? "CRT"
+        : filter == VID_FILTER_CRT_COMP  ? "CRT composite"
+        : filter == VID_FILTER_CRT_RF    ? "CRT aerial"
+        : filter == VID_FILTER_CRT_SHARP ? "CRT sharp"
         : filter ? "bilinear" : "nearest";
 }
 
@@ -280,7 +288,9 @@ const char *vid_cycle_preset(void)
             : g_smooth == VID_FILTER_SHARP ? "sharp"
             : g_smooth == VID_FILTER_XBRZ ? "xBRZ"
             : g_smooth == VID_FILTER_SCALE ? "Scale3x"
-            : g_smooth == VID_FILTER_SCANLINES ? "scanlines" : "bilinear");
+            : g_smooth == VID_FILTER_SCANLINES ? "scanlines"
+            : g_smooth >= VID_FILTER_LCD_RGB ? vid_filter_name(g_smooth)
+            : "bilinear");
    return name;
 }
 
@@ -1187,6 +1197,15 @@ static int geo_integer(unsigned w, const vid_geo *g)
    return w && g->sh > 0 && g->dw % (int)w == 0 && g->dh % g->sh == 0;
 }
 
+/* A shader look (vid_filter >= VID_FILTER_LCD_RGB) as the CPU-side filter
+ * that stands in for it when its shader is not drawing: the LCD looks draw
+ * as the LCD grid, the CRT looks as scanlines. */
+static int fx_base(int f)
+{
+   return f < VID_FILTER_LCD_RGB ? f
+        : f <= VID_FILTER_LCD_WORN ? VID_FILTER_LCD : VID_FILTER_SCANLINES;
+}
+
 /* How the picture is sampled; kx, ky are set for PIC_SHARP. */
 static int picture_mode(unsigned w, const vid_geo *g, int *kx, int *ky)
 {
@@ -1247,7 +1266,7 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
    unsigned char *px;
    int x, y, strength;
    /* SCANLINES: the row gaps alone, a little darker than the grid's. */
-   const int rows_only = (g_filter == VID_FILTER_SCANLINES);
+   const int rows_only = (fx_base(g_filter) == VID_FILTER_SCANLINES);
    double k;
    if (g->dw > VB_W || g->dh > VB_H || g->dw <= 0 || g->dh <= 0)
       return NULL;
@@ -1343,9 +1362,18 @@ static int      g_gx_always;   /* vid_set_gpu_time: every present timed    */
 static int      g_gx_sampling, g_gx_slow;
 static unsigned g_gx_mark, g_gx_samples, g_gx_avg, g_gx_max;
 
+static int g_fx_on = 1;        /* vid_set_gpu_fx                            */
+static int g_fx_state;         /* the shader looks: as g_gx_state           */
+static int fx_filter(int f) { return f >= VID_FILTER_LCD_RGB; }
+
 void vid_set_gpu_xbrz(int on)
 {
    g_gx_on = on ? 1 : 0;
+}
+
+void vid_set_gpu_fx(int on)
+{
+   g_fx_on = on ? 1 : 0;
 }
 
 void vid_set_gpu_time(int on)
@@ -1358,6 +1386,8 @@ void vid_set_gpu_time(int on)
 static void gx_guard(void)
 {
    unsigned n, avg, mx;
+   int *st = fx_filter(g_filter) ? &g_fx_state : &g_gx_state;
+   const char *kind = fx_filter(g_filter) ? "fx" : "xbrz";
    if (g_gx_always)
    {
       vb_gpu_stats(&n, &avg, &mx);
@@ -1370,7 +1400,7 @@ static void gx_guard(void)
       }
       return;
    }
-   if (g_gx_state <= 0)
+   if (*st <= 0)
       return;
    if (g_gx_sampling)
    {
@@ -1384,12 +1414,12 @@ static void gx_guard(void)
       g_gx_samples++;
       g_gx_avg = avg;
       g_gx_max = mx;
-      fe_evt("gpu_xbrz_time frames=%u gpu_us=%u/%u", n, avg, mx);
+      fe_evt("gpu_%s_time frames=%u gpu_us=%u/%u", kind, n, avg, mx);
       g_gx_slow = avg > GX_SLOW_US ? g_gx_slow + 1 : 0;
       if (g_gx_slow >= 2)
       {
-         g_gx_state = -2;
-         fe_evt("gpu_xbrz off reason=slow gpu_us=%u", avg);
+         *st = -2;
+         fe_evt("gpu_%s off reason=slow gpu_us=%u", kind, avg);
       }
       return;
    }
@@ -1569,6 +1599,101 @@ static int gx_draw(vb_tex *t, unsigned w, unsigned h, const vid_geo *g)
    return 1;
 }
 
+/* ---- the LCD and CRT looks on the GPU -------------------------------------
+ * VID_FILTER_LCD_RGB .. VID_FILTER_CRT_SHARP: one pass each (vback.h
+ * VB_PROG_FX_LCD / VB_PROG_FX_CRT; shaders/fx_*.inc), drawn at the final
+ * size straight from the picture.  Same rules as xBRZ above: the shader
+ * compiler must be there, and the guard turns the look back into the CPU's
+ * grid / scanlines for the session if the GPU needs over GX_SLOW_US a frame.
+ * vita.ini gpu_fx = 0 keeps them on the CPU's stand-ins. */
+static int fx_ready(void)
+{
+   if (!g_fx_on || !fx_filter(g_filter) || g_quality != 0)
+      return 0;
+   if (!g_fx_state)
+   {
+      const unsigned t0 = pspcompat_time_us();
+      vb_prog *a = vb_prog_get(VB_PROG_FX_LCD);
+      vb_prog *b = a ? vb_prog_get(VB_PROG_FX_CRT) : NULL;
+      g_fx_state = a && b ? 1 : -1;
+      fe_evt("gpu_fx on=%d lcd=%s crt=%s us=%u", g_fx_state > 0,
+             vb_prog_status(VB_PROG_FX_LCD), vb_prog_status(VB_PROG_FX_CRT),
+             pspcompat_time_us() - t0);
+   }
+   return g_fx_state > 0;
+}
+
+int vid_gpu_fx(void)
+{
+   return g_fx_state > 0 && g_fx_on && fx_filter(g_filter);
+}
+
+static int fx_draw(vb_tex *t, unsigned w, unsigned h, const vid_geo *g)
+{
+   float u[VB_PROG_UNIFORMS][4];
+   vb_tquad q;
+   const int f = g_filter;
+   const int lcd = f <= VID_FILTER_LCD_WORN;
+   vb_prog *p = vb_prog_get(lcd ? VB_PROG_FX_LCD : VB_PROG_FX_CRT);
+   if (!p || !w || !h || g->sh <= 0)
+      return 0;
+   memset(u, 0, sizeof(u));
+   u[0][0] = (float)w; u[0][1] = (float)g->sh;
+   u[0][2] = (float)g->dw; u[0][3] = (float)g->dh;
+   u[1][0] = (float)(g_frame_no % 153600u);     /* frames, wrapped */
+   u[5][0] = (float)vb_tex_w(t); u[5][1] = (float)h; u[5][2] = (float)g->sy0;
+   if (lcd)
+   {
+      /* U1 sharpness, saturation, brightness | U2 contrast, grid mode (auto),
+       * grid (1 RGB, 2 mono), border | U3 border depth, background, mix, tint
+       * | U4 shading depth, distance, fake ghost */
+      u[1][1] = 1.0f; u[1][2] = 1.0f; u[1][3] = 1.0f;
+      u[2][0] = 1.0f; u[2][1] = 0.0f;
+      u[2][2] = f == VID_FILTER_LCD_MONO ? 2.0f : 1.0f;
+      u[3][0] = 0.25f; u[3][2] = 0.6f; u[3][3] = 1.0f;
+      u[4][0] = 1.0f; u[4][1] = 2.0f;
+      if (f >= VID_FILTER_LCD_PAPER)
+      {
+         u[2][3] = 1.0f;                 /* border fade */
+         u[3][1] = 1.0f;                 /* paper */
+         u[3][3] = f == VID_FILTER_LCD_WORN ? 2.0f : 0.0f;   /* gray / white */
+      }
+      if (f == VID_FILTER_LCD_WORN)
+         u[4][2] = 1.0f;                 /* ghost */
+   }
+   else
+   {
+      /* U1 sharpness, saturation, brightness | U2 contrast, grid (auto),
+       * scanline dark, bright | U3 mask type, strength, vignette, border
+       * (1 corner) | U4 dither merge, RF ghost, noise */
+      u[1][1] = 0.8f; u[1][2] = 0.82f; u[1][3] = 1.886f;
+      u[2][0] = 1.05f; u[2][2] = 0.5f; u[2][3] = 0.4f;
+      u[3][1] = 0.15f; u[3][2] = 0.65f; u[3][3] = 1.0f;
+      if (f == VID_FILTER_CRT_COMP)
+      {
+         u[4][0] = 2.0f; u[4][1] = 1.0f;
+      }
+      else if (f == VID_FILTER_CRT_RF)
+      {
+         u[4][0] = 2.0f; u[4][1] = 2.0f; u[4][2] = 1.0f;
+      }
+      else if (f == VID_FILTER_CRT_SHARP)
+      {
+         u[1][1] = 1.0f; u[1][2] = 0.95f; u[1][3] = 1.6f;
+         u[2][2] = 0.3f; u[2][3] = 0.25f;
+         u[3][0] = 2.0f; u[3][1] = 0.12f; u[3][2] = 0.4f;
+      }
+   }
+   backdrop_draw(geo_covers(g));
+   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
+   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
+   q.u0 = 0; q.v0 = (float)g->sy0;
+   q.u1 = (float)w; q.v1 = (float)(g->sy0 + g->sh);
+   vb_pquads(p, t, NULL, &q, 1, u);
+   g_gx_frames++;
+   return 1;
+}
+
 /* A whole frame: the backdrop, then the w-wide source texture `t` at g. */
 static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
 {
@@ -1581,6 +1706,8 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
       return;
    }
    if (gx_ready() && gx_draw(t, w, (unsigned)vb_tex_h(t), g))
+      return;
+   if (fx_ready() && fx_draw(t, w, (unsigned)vb_tex_h(t), g))
       return;
    mode = picture_mode(w, g, &kx, &ky);
    if (mode == PIC_SHARP)
@@ -1641,7 +1768,8 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
       vb_tquads(t, &q, 1, 0xFFFFFFFFu,
                 mode == PIC_LINEAR ? VB_LINEAR : VB_NEAREST);
    }
-   if (g_filter == VID_FILTER_LCD || g_filter == VID_FILTER_SCANLINES)
+   if (fx_base(g_filter) == VID_FILTER_LCD ||
+       fx_base(g_filter) == VID_FILTER_SCANLINES)
    {
       vb_tex *lcd = lcd_tex(w, g);
       if (lcd)

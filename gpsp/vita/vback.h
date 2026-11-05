@@ -190,8 +190,13 @@ void vb_gpu_time(int frames);
 int  vb_gpu_timing(void);
 void vb_gpu_stats(unsigned *frames, unsigned *avg_us, unsigned *max_us);
 
-enum { VB_PROG_XBRZ0 = 0, VB_PROG_XBRZ1 = 1, VB_PROG_XBRZ2 = 2, VB_PROGS };
-enum { VB_PROG_UNIFORMS = 4 };
+/* VB_PROG_FX_LCD / VB_PROG_FX_CRT: the whole LCD / CRT picture filter in one
+ * pass (shaders/fx_*.inc): unit 0 = the picture's texture, LINEAR sampled
+ * (edges clamped); uniforms [0]..[5] as fx_common.inc and fx_lcd.inc /
+ * fx_crt.inc say.  Drawn at the final size. */
+enum { VB_PROG_XBRZ0 = 0, VB_PROG_XBRZ1 = 1, VB_PROG_XBRZ2 = 2,
+       VB_PROG_FX_LCD = 3, VB_PROG_FX_CRT = 4, VB_PROGS };
+enum { VB_PROG_UNIFORMS = 6 };
 typedef struct vb_prog vb_prog;
 vb_prog    *vb_prog_get(int which);
 const char *vb_prog_status(int which);

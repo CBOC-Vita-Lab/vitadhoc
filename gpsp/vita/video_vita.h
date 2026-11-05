@@ -150,6 +150,10 @@ void vid_upscale_stats(upscale_stats_t *out);
  * pictures it has drawn so far. */
 void vid_set_gpu_xbrz(int on);
 int  vid_gpu_xbrz(unsigned *frames);
+/* The LCD / CRT shader looks (video_psp.h VID_FILTER_LCD_RGB..): on = 0 keeps
+ * them on the CPU's grid / scanlines.  vid_gpu_fx: is a look the GPU's now. */
+void vid_set_gpu_fx(int on);
+int  vid_gpu_fx(void);
 /* on = 1: every present waits for the GPU and is timed (measuring only);
  * vid_gpu_time_stats: timed samples so far, the GPU's time over a frame
  * last measured, the slowest since the last call. */

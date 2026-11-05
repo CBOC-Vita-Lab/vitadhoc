@@ -109,7 +109,7 @@ APP_OBJS := $(foreach s,$(APP_ALL_VITA),$(call app_obj,$(s)))
 # The GPU programs' text (shaders/*.inc) as C strings for vback_vita2d.c,
 # which hands it to the console's own Cg compiler at run time.
 GPU_SHADERS := shaders/xbrz_common.inc shaders/xbrz_pass0.inc \
-               shaders/xbrz_pass1.inc shaders/xbrz_pass2.inc
+               shaders/xbrz_pass1.inc shaders/xbrz_pass2.inc shaders/fx_common.inc shaders/fx_lcd.inc shaders/fx_crt.inc
 $(B)/gen/gpu_shaders.h: $(GPU_SHADERS)
 	@mkdir -p $(dir $@)
 	@{ echo "/* generated from $(GPU_SHADERS): do not edit */"; \

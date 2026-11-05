@@ -83,7 +83,20 @@ enum
    VID_FILTER_XBRZ      = 4,
    VID_FILTER_SCALE     = 5,
    VID_FILTER_SCANLINES = 6,
-   VID_FILTER_MODES     = 7
+   /* (Vita only, appended.)  SHADER LOOKS, one GPU pass each (shaders/fx_*.inc,
+    * a port of bagel-mini-shaders): the LCD family and the CRT family.  They
+    * need the system's shader compiler (libshacccg.suprx); without it, or when
+    * the GPU cannot keep up, an LCD look draws as LCD grid and a CRT look as
+    * scanlines.  No look warps or moves the picture. */
+   VID_FILTER_LCD_RGB   = 7,    /* RGB sub-pixel grid (lcd3x)               */
+   VID_FILTER_LCD_MONO  = 8,    /* mono grid (lcd1x)                        */
+   VID_FILTER_LCD_PAPER = 9,    /* RGB grid on a paper backing, soft edges  */
+   VID_FILTER_LCD_WORN  = 10,   /* ...with ghosting, a worn display         */
+   VID_FILTER_CRT       = 11,   /* scanlines, mask, vignette                */
+   VID_FILTER_CRT_COMP  = 12,   /* composite: dither blur, dot crawl, ghost */
+   VID_FILTER_CRT_RF    = 13,   /* bad aerial: drifting ghost, noise        */
+   VID_FILTER_CRT_SHARP = 14,   /* crisp, light scanlines, native mask      */
+   VID_FILTER_MODES     = 15
 #else
    VID_FILTER_MODES    = 3
 #endif

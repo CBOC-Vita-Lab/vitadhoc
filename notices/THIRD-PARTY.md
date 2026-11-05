@@ -134,3 +134,80 @@ Adding these notices does not finish the component-level licensing review.
 No game ROM, Nintendo BIOS, user save, downloaded cover collection or private
 recording is included. Game titles identify compatibility and are not an
 endorsement. Database inclusion does not grant rights to game artwork.
+
+## LCD and CRT shader looks (Retro Adhoc)
+
+`gpsp/vita/shaders/fx_common.inc`, `fx_lcd.inc` and `fx_crt.inc` are a port of
+**bagel-mini-shaders** v3.6 (bgelmini, co-author ClaudeAI,
+<https://github.com/bgelmini/bagel-mini-shaders>), GPL-3.0-or-later, from GLSL to
+the Cg/C++ dialect of this project's GPU programs. Changes: grid locked to the
+picture's own pixels, vertical roll and picture warp removed, presets chosen in
+the app. The originals' credits, which stay in force:
+
+| Shaders | Based on | Author | License |
+| --- | --- | --- | --- |
+| CRT | `fake-CRT-Geom`, `kaizer-lp-small` | DariusG | GPL-2.0-or-later |
+| CRT | `tiny_ntsc` ([sbtl_shaders](https://github.com/vsvsv/sbtl_shaders)) | Vsevolod | MIT, Copyright (c) 2025 Vsevolod |
+| CRT and LCD | `Sharp-Shimmerless-Shader` | zadpos | Public domain |
+| LCD RGB grid | [`lcd3x`](https://github.com/gigaherz/lcd3x) | Gigaherz | BSD 3-Clause, Copyright (c) 2012 David Quintana |
+| LCD mono grid | `lcd1x` | Gigaherz, edited by jdgleaver | GPL-2.0-or-later |
+| LCD background | `Pixel Transparency` | mattakins | inspiration only, no code |
+| all | bagel-mini shaders | bgelmini / ClaudeAI | GPL-3.0-or-later |
+
+The GPL-2.0-or-later parts are used under GPL-3.0, as "or later" allows.
+
+### lcd3x (BSD 3-Clause)
+
+```
+Copyright (c) 2012, David Quintana <gigaherz@gmail.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+    * Redistributions of source code must retain the above copyright
+      notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above copyright
+      notice, this list of conditions and the following disclaimer in the
+      documentation and/or other materials provided with the distribution.
+    * Neither the name of the author nor the names of the contributors may
+      be used to endorse or promote products derived from this software
+      without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
+
+### sbtl_shaders (MIT)
+
+```
+MIT License
+
+Copyright (c) 2025 Vsevolod
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

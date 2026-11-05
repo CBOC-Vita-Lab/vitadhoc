@@ -33,7 +33,7 @@ static int  pdisp_write(int console);
 static int pcfg_filter_clamp(int f)
 {
 #ifdef VITA
-   /* 3..6, Vita only: the LCD grid, xBRZ, Scale3x, scanlines */
+   /* 3..14, Vita only: the LCD grid, xBRZ, Scale3x, scanlines, the shader looks */
    if (f >= VID_FILTER_LCD && f < VID_FILTER_MODES)
       return f;
 #endif

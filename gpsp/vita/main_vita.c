@@ -251,6 +251,8 @@ static struct
                                * over the game (vid_set_overlay)        */
    int      grid;             /* grid_strength = 1..10: the LCD grid and
                                * scanline looks' darkness (5 = default) */
+   int      gpu_fx;           /* gpu_fx = 0: the LCD / CRT shader looks stay on
+                               * the CPU's grid and scanlines (default 1)  */
    /* Last: the initializer below is positional, and "" is its default. */
    char     shot_dir[200];    /* screenshots = ux0:pictures/VitAdhoc: where
                                  * screenshots go (empty: screenshots/) */
@@ -258,7 +260,7 @@ static struct
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, "", "" };
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, "", "" };
 
 /* vita.ini core_phase: the core's per-phase split of a frame (main.h,
  * "Phase 5h").  Declared here, not through the core's main.h (the whole
@@ -1282,6 +1284,7 @@ static void read_switches(void)
    if (g_sw.render_thread < 0 || g_sw.render_thread > 2)
       g_sw.render_thread = 1;
    g_sw.gpu_xbrz        = (int)fe_ini_get_int(ini, "gpu_xbrz", 0) ? 1 : 0;
+   g_sw.gpu_fx          = (int)fe_ini_get_int(ini, "gpu_fx", 1) ? 1 : 0;
    g_sw.gpu_time        = (int)fe_ini_get_int(ini, "gpu_time", 0) ? 1 : 0;
    g_sw.gpu_probe       = (int)fe_ini_get_int(ini, "gpu_probe", 0);
    g_sw.gpu_view        = (int)fe_ini_get_int(ini, "gpu_xbrz_view", 0);
@@ -3268,8 +3271,8 @@ static void window_begin(void)
          int gon = vid_gpu_xbrz(&gx);
          vid_gpu_time_stats(&gn, &gavg, &gmax);
          if (gon || gx != gx_last || gn)
-            fe_evt("vita_gpu xbrz=%d pictures=%u samples=%u gpu_us=%u/%u",
-                   gon, gx - gx_last, gn, gavg, gmax);
+            fe_evt("vita_gpu xbrz=%d fx=%d pictures=%u samples=%u gpu_us=%u/%u",
+                   gon, vid_gpu_fx(), gx - gx_last, gn, gavg, gmax);
          gx_last = gx;
       }
       /* The slowest of each part of drawing the picture this window
@@ -5091,6 +5094,7 @@ int main(int argc, char **argv)
       upscale_slide_mode(g_sw.up_slide);
    vid_set_tex_mem(g_sw.tex_mem);
    vid_set_gpu_xbrz(g_sw.gpu_xbrz);
+   vid_set_gpu_fx(g_sw.gpu_fx);
    vid_set_gpu_time(g_sw.gpu_time);
    upscale_fade_drop(g_sw.fade_drop);
    plat_thread_watch("main", 0);

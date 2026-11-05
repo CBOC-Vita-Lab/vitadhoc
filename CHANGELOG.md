@@ -3,12 +3,22 @@
 ## Unreleased
 
 - The bubble is now **Retro Adhoc** (TITLE_ID RADH00001, RetroAdhoc.vpk) with its own icon and LiveArea;
-  it installs beside the original VitAdhoc and shares the same data folder (ux0:data/GBAdhoc).
+  it installs beside the original VitAdhoc and has its own data folder, `ux0:data/RetroAdhoc`
+  (settings, saves, shader cache), so nothing conflicts with VitAdhoc's `ux0:data/GBAdhoc`.
+  Settings start fresh; nothing is copied from the old folder.
 
 - ROM folders for Mega Drive, NES and SNES (`ux0:roms/MD`, `NES`, `SNES` and common aliases,
   RetroFlow names); up to 24 game folders.
-- Saves, states and resume states of all consoles in `ux0:data/GBAdhoc/saves/<console>/` (vita.ini
+- Saves, states and resume states of all consoles in `ux0:data/RetroAdhoc/saves/<console>/` (vita.ini
   `saves_dir`; `0` = beside the ROM as before); existing ones are copied on first start.
+- **LCD and CRT shader looks** (a port of bagel-mini-shaders, GPL-3.0-or-later): eight new entries
+  in Settings > Video filter: LCD RGB, LCD mono, LCD paper, LCD worn, CRT, CRT composite,
+  CRT aerial, CRT sharp. Grid / scanlines / phosphor mask, vignette, rounded corners, dither
+  blur, ghosting, noise; the picture is never warped or rolled. One GPU pass each; needs
+  `libshacccg.suprx` (first start compiles for a while, then cached in
+  `ux0:data/RetroAdhoc/shaders/`). If it is missing or the GPU is too slow (guard: over 10 ms a
+  frame twice), an LCD look draws as LCD grid and a CRT look as scanlines. `vita.ini gpu_fx = 0`
+  keeps them on those stand-ins.
 - Fix: console switch refused MD/NES/SNES (config bounds); crash scanning ROMs with six consoles.
 
 **Sega Mega Drive / Genesis, NES and SNES.** Three new consoles beside GBA,

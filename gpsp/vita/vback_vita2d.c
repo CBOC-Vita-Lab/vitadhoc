@@ -749,6 +749,7 @@ struct vb_prog
    SceGxmProgram         *gxp;
    const SceGxmProgramParameter *uni[VB_PROG_UNIFORMS];
    int tex[2];                /* the samplers' resource indices          */
+   int linear;                /* unit 0 is sampled LINEAR                */
 };
 
 static struct vb_prog g_prog[VB_PROGS];
@@ -756,19 +757,24 @@ static int  g_prog_state[VB_PROGS];          /* 0 untried, 1 ok, -1 not */
 static char g_prog_why[VB_PROGS][384];
 static int  g_shacc;                          /* 0 untried, 1 ok, -1 not */
 
-static const char *const g_prog_name[VB_PROGS] = { "xbrz0", "xbrz1", "xbrz2" };
+static const char *const g_prog_name[VB_PROGS] = { "xbrz0", "xbrz1", "xbrz2",
+                                                          "fxlcd", "fxcrt" };
 static const char *const g_prog_uni[VB_PROGS][VB_PROG_UNIFORMS] = {
    { "SourceSize", NULL, NULL, NULL },
    { "SourceSize", "CornerInv", NULL, NULL },
-   { "RefSize", "InfoScale", "OutScale", NULL } };
+   { "RefSize", "InfoScale", "OutScale", NULL },
+   { "U0", "U1", "U2", "U3", "U4", "U5" },
+   { "U0", "U1", "U2", "U3", "U4", "U5" } };
 static const char *const g_prog_tex[VB_PROGS][2] = {
-   { "Source", NULL }, { "Source", "Corner" }, { "Ref", "Info" } };
+   { "Source", NULL }, { "Source", "Corner" }, { "Ref", "Info" },
+   { "Source", NULL }, { "Source", NULL } };
 
 /* The Cg half of the shaders' dialect (shaders/xbrz_common.inc). */
 static const char g_prelude_cg[] =
    "#define V_XY(v) ((v).xy)\n"
    "#define V_ZW(v) ((v).zw)\n"
    "#define V_RGB(v) ((v).rgb)\n"
+   "#define V_SAMP sampler2D\n"
    "#define V_MOD(a, b) fmod((a), (b))\n"
    "#define V_EQ3(a, b) all((a) == (b))\n";
 static const char g_main0[] =
@@ -787,6 +793,12 @@ static const char g_main2[] =
    "            uniform sampler2D Info : TEXUNIT1,\n"
    "            uniform float4 RefSize, uniform float4 InfoScale,\n"
    "            uniform float4 OutScale) : COLOR\n{\n";
+
+static const char g_main_fx[] =
+   "float4 main(float2 vTexcoord : TEXCOORD0,\n"
+   "            uniform sampler2D Source : TEXUNIT0,\n"
+   "            uniform float4 U0, uniform float4 U1, uniform float4 U2,\n"
+   "            uniform float4 U3, uniform float4 U4, uniform float4 U5) : COLOR\n{\n";
 
 static int shacc_load(void)
 {
@@ -946,17 +958,29 @@ static SceGxmProgram *cg_compile(const char *text, int variant, int opt,
 /* Program `which`'s whole text (malloc'd). */
 static char *prog_text(int which)
 {
-   const char *body = which == VB_PROG_XBRZ0 ? gpu_src_xbrz_pass0
-                    : which == VB_PROG_XBRZ1 ? gpu_src_xbrz_pass1
-                                             : gpu_src_xbrz_pass2;
-   const char *mainf = which == VB_PROG_XBRZ0 ? g_main0
-                     : which == VB_PROG_XBRZ1 ? g_main1 : g_main2;
-   size_t len = strlen(g_prelude_cg) + strlen(gpu_src_xbrz_common) +
-                strlen(mainf) + strlen(body) + 4;
-   char *text = (char *)malloc(len);
+   const char *common = gpu_src_xbrz_common;
+   const char *body, *mainf;
+   size_t len;
+   char *text;
+   if (which >= VB_PROG_FX_LCD)
+   {
+      common = gpu_src_fx_common;
+      body = which == VB_PROG_FX_LCD ? gpu_src_fx_lcd : gpu_src_fx_crt;
+      mainf = g_main_fx;
+   }
+   else
+   {
+      body = which == VB_PROG_XBRZ0 ? gpu_src_xbrz_pass0
+           : which == VB_PROG_XBRZ1 ? gpu_src_xbrz_pass1
+                                    : gpu_src_xbrz_pass2;
+      mainf = which == VB_PROG_XBRZ0 ? g_main0
+            : which == VB_PROG_XBRZ1 ? g_main1 : g_main2;
+   }
+   len = strlen(g_prelude_cg) + strlen(common) + strlen(mainf) +
+         strlen(body) + 4;
+   text = (char *)malloc(len);
    if (text)
-      snprintf(text, len, "%s%s%s%s}\n", g_prelude_cg, gpu_src_xbrz_common,
-               mainf, body);
+      snprintf(text, len, "%s%s%s%s}\n", g_prelude_cg, common, mainf, body);
    return text;
 }
 
@@ -1079,6 +1103,7 @@ vb_prog *vb_prog_get(int which)
          ? sceGxmProgramFindParameterByName(P->gxp, g_prog_tex[which][k]) : NULL;
       P->tex[k] = s ? (int)sceGxmProgramParameterGetResourceIndex(s) : k;
    }
+   P->linear = which >= VB_PROG_FX_LCD;
    g_prog_state[which] = 1;
    return P;
 }
@@ -1170,8 +1195,12 @@ void vb_pquads(vb_prog *p, vb_tex *t0, vb_tex *t1, const vb_tquad *q, int n,
          if (p->uni[i])
             sceGxmSetUniformDataF(u, p->uni[i], 0, 4, uni[i]);
    sceGxmSetBackPolygonMode(_vita2d_context, SCE_GXM_POLYGON_MODE_TRIANGLE_FILL);
-   vita2d_texture_set_filters(t0->t, SCE_GXM_TEXTURE_FILTER_POINT,
-                              SCE_GXM_TEXTURE_FILTER_POINT);
+   {
+      /* the fx programs sample their picture LINEAR (sharp bilinear) */
+      const SceGxmTextureFilter f0 = p->linear ? SCE_GXM_TEXTURE_FILTER_LINEAR
+                                               : SCE_GXM_TEXTURE_FILTER_POINT;
+      vita2d_texture_set_filters(t0->t, f0, f0);
+   }
    sceGxmSetFragmentTexture(_vita2d_context, (unsigned)p->tex[0],
                             &t0->t->gxm_tex);
    if (t1)

@@ -394,6 +394,8 @@ Send back `ux0:data/RetroAdhoc/log/` (the newest file). Useful switches, in
   also `render_us` the other core's time, `copy_us`/`pages` the hand-over, `wait_us` how long
   the frame waited for the picture)
 - `fade_drop = 1` — smooth a fade's pictures at 3x instead of 2x; `0` — at 4x, as before
+- `gpu_fx = 0` — keep the LCD / CRT shader looks (Video filter) off the GPU: LCD looks draw as the
+  LCD grid, CRT looks as scanlines (default `1`; the log's `gpu_fx` line says how it went)
 - `gpu_xbrz = 1` — draw xBRZ on the GPU (too slow on a Vita, see above; the log's `gpu_xbrz`
   line says whether the GPU took it and how its programs were made: `compiled`, `cached`, or
   why not, e.g. `no_compiler` or the compiler's first error; `gpu_xbrz_time` lines are the

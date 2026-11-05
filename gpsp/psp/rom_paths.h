@@ -62,9 +62,11 @@ static inline int psp_rom_path_join(char *out, size_t out_sz,
    return 0;
 }
 
-/* Replace the final extension with suffix. Source and destination may alias. */
-static inline int psp_rom_path_suffix(char *out, size_t out_sz,
-                                      const char *path, const char *suffix)
+/* Replace the final extension with suffix. Source and destination may alias.
+ * This is the plain form: the file is named beside `path`. */
+static inline int psp_rom_path_suffix_plain(char *out, size_t out_sz,
+                                            const char *path,
+                                            const char *suffix)
 {
    size_t n, suffix_len;
    const char *dot;
@@ -84,6 +86,73 @@ static inline int psp_rom_path_suffix(char *out, size_t out_sz,
       memmove(out, path, n);
    memcpy(out + n, suffix, suffix_len + 1);
    return 0;
+}
+
+/* CENTRAL SAVES (Vita).  When psp_saves_root is set ("ux0:saves"), a path
+ * built for a SAVE file -- a battery (.sav .srm), a state (.st0 .. .st9) or
+ * the resume state (.rsm) -- lands in <root>/<CONSOLE>/<game name><suffix>
+ * instead of beside the ROM.  CONSOLE is read from the suffix, which always
+ * carries it (.gb.sav, .md.st0, ...; no console tag means GBA).  A path that
+ * is already under the root only has its suffix replaced, so a slot path
+ * derived from the slot-1 path stays where slot 1 is.  Patches, art and
+ * every other sidecar keep following the ROM.  NULL = off (the old layout).
+ * A weak definition: every translation unit sees the one variable, and a
+ * test that never sets it keeps the old behaviour. */
+const char *psp_saves_root __attribute__((weak));
+
+static inline int psp_suffix_ends(const char *s, const char *tail)
+{
+   size_t n = strlen(s), t = strlen(tail);
+   return n >= t && !strcmp(s + n - t, tail);
+}
+
+static inline int psp_suffix_is_save(const char *s)
+{
+   size_t n = strlen(s);
+   if (psp_suffix_ends(s, ".sav") || psp_suffix_ends(s, ".srm") ||
+       psp_suffix_ends(s, ".rsm"))
+      return 1;
+   return n >= 4 && s[n - 4] == '.' && s[n - 3] == 's' && s[n - 2] == 't' &&
+          s[n - 1] >= '0' && s[n - 1] <= '9';
+}
+
+static inline const char *psp_saves_console_dir(const char *s)
+{
+   if (!strncmp(s, ".gbc.", 5))  return "GBC";
+   if (!strncmp(s, ".gb.", 4))   return "GB";
+   if (!strncmp(s, ".md.", 4))   return "MD";
+   if (!strncmp(s, ".nes.", 5))  return "NES";
+   if (!strncmp(s, ".snes.", 6)) return "SNES";
+   return "GBA";
+}
+
+static inline int psp_rom_path_suffix(char *out, size_t out_sz,
+                                      const char *path, const char *suffix)
+{
+   if (out && out_sz && path && suffix && psp_saves_root &&
+       psp_saves_root[0] && psp_suffix_is_save(suffix))
+   {
+      size_t rl = strlen(psp_saves_root);
+      if (strncmp(path, psp_saves_root, rl) != 0 || path[rl] != '/')
+      {
+         char tmp[PSP_FILE_PATH_CAP + 16];
+         const char *slash = strrchr(path, '/');
+         const char *base = slash ? slash + 1 : path;
+         const char *dot = strrchr(base, '.');
+         size_t stem = dot ? (size_t)(dot - base) : strlen(base);
+         int n = snprintf(tmp, sizeof(tmp), "%s/%s/%.*s%s", psp_saves_root,
+                          psp_saves_console_dir(suffix), (int)stem, base,
+                          suffix);
+         if (n < 0 || (size_t)n >= sizeof(tmp) || (size_t)n + 1 > out_sz)
+         {
+            out[0] = '\0';
+            return -1;
+         }
+         memcpy(out, tmp, (size_t)n + 1);
+         return 0;
+      }
+   }
+   return psp_rom_path_suffix_plain(out, out_sz, path, suffix);
 }
 
 #endif

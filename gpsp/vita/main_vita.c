@@ -64,6 +64,7 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 #include "fe_host.h"
@@ -1339,7 +1340,19 @@ static const char *const k_builtin_roots[] = {
    "ux0:roms/GBA", "ux0:roms/GB", "ux0:roms/GBC",
    "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance",
    "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy",
-   "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color"
+   "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color",
+   /* Mega Drive / Genesis, NES / Famicom, SNES / Super Famicom: the names
+    * the usual launchers and ROM sets give their folders (the card does not
+    * tell upper from lower case, so each spelling is listed once) */
+   "ux0:roms/MD", "ux0:roms/MegaDrive", "ux0:roms/Mega Drive",
+   "ux0:roms/Genesis", "ux0:roms/Sega Genesis", "ux0:roms/GEN",
+   "ux0:roms/SMD",
+   "ux0:roms/NES", "ux0:roms/Famicom", "ux0:roms/FC",
+   "ux0:roms/SNES", "ux0:roms/SFC", "ux0:roms/SuperFamicom",
+   "ux0:roms/Super Nintendo",
+   "ux0:data/RetroFlow/ROMS/Sega - Mega Drive - Genesis",
+   "ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System",
+   "ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -1483,6 +1496,150 @@ static void extra_root_add(const char *spec, int log_skips)
    snprintf(g_extra_roots[g_extra_n++], sizeof(g_extra_roots[0]), "%s", norm);
 }
 
+/* CENTRAL SAVES (psp/rom_paths.h): batteries, states and the resume state of
+ * every console live in ux0:saves/<GBA|GB|GBC|MD|NES|SNES>/ instead of beside
+ * the ROM.  vita.ini `saves_dir = <folder>` moves the root; `saves_dir = 0`
+ * keeps the old layout (beside each ROM).  If the folders cannot be made the
+ * old layout is kept too, and the log says so. */
+static char g_saves_root_buf[APP_PATH_CAP];
+
+static void saves_init(void)
+{
+   static const char *const dirs[] = { "GBA", "GB", "GBC", "MD", "NES", "SNES" };
+   char ini[APP_PATH_CAP], v[APP_PATH_CAP], sub[APP_PATH_CAP];
+   size_t i, n;
+   struct stat st;
+
+   psp_saves_root = NULL;
+   snprintf(g_saves_root_buf, sizeof(g_saves_root_buf), "ux0:saves");
+   path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root);
+   if (fe_ini_get(ini, "saves_dir", v, sizeof(v)) ||
+       fe_ini_get(g_app_config, "saves_dir", v, sizeof(v)))
+   {
+      char *p = v;
+      while (*p && isspace((unsigned char)*p))
+         p++;
+      n = strlen(p);
+      while (n && (isspace((unsigned char)p[n - 1]) || p[n - 1] == '/'))
+         p[--n] = '\0';
+      if (!n || !strcmp(p, "0"))
+      {
+         fe_evt("saves_dir off (beside the ROM)");
+         return;
+      }
+      snprintf(g_saves_root_buf, sizeof(g_saves_root_buf), "%s", p);
+   }
+   mkdir(g_saves_root_buf, 0777);
+   for (i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++)
+   {
+      snprintf(sub, sizeof(sub), "%s/%s", g_saves_root_buf, dirs[i]);
+      mkdir(sub, 0777);
+      if (stat(sub, &st) != 0 || !S_ISDIR(st.st_mode))
+      {
+         fe_evt("saves_dir_failed path=\"%s\" (kept beside the ROM)", sub);
+         return;
+      }
+   }
+   psp_saves_root = g_saves_root_buf;
+   fe_evt("saves_dir path=\"%s\"", psp_saves_root);
+}
+
+static int file_copy_if_missing(const char *src, const char *dst)
+{
+   struct stat st;
+   FILE *a, *b;
+   char buf[16384];
+   size_t n;
+   int rc = 0;
+
+   if (stat(src, &st) != 0 || !S_ISREG(st.st_mode) || stat(dst, &st) == 0)
+      return 0;
+   a = fopen(src, "rb");
+   if (!a)
+      return -1;
+   {
+      char tmp[APP_PATH_CAP + 8];
+      snprintf(tmp, sizeof(tmp), "%s.tmp", dst);
+      b = fopen(tmp, "wb");
+      if (!b)
+      {
+         fclose(a);
+         return -1;
+      }
+      while ((n = fread(buf, 1, sizeof(buf), a)) > 0)
+         if (fwrite(buf, 1, n, b) != n)
+         {
+            rc = -1;
+            break;
+         }
+      fclose(a);
+      if (fclose(b) != 0)
+         rc = -1;
+      if (rc == 0 && rename(tmp, dst) != 0)
+         rc = -1;
+      if (rc != 0)
+         remove(tmp);
+   }
+   return rc;
+}
+
+/* A game that already has saves beside its ROM (the old layout) gets them
+ * COPIED to the central folder the first time it starts -- never moved: the
+ * folder may be another app's.  Only what is not there yet is copied. */
+static void saves_adopt(const char *rom_path, fe_console_t console)
+{
+   static const char *const tails[] = { "", ".thumb", ".shot", ".old", ".bak" };
+   char old_p[PSP_FILE_PATH_CAP], new_p[PSP_FILE_PATH_CAP];
+   char old_s1[PSP_FILE_PATH_CAP], new_s1[PSP_FILE_PATH_CAP];
+   char suffix[16];
+   unsigned slot;
+   size_t t;
+   int copied = 0;
+
+   if (!psp_saves_root)
+      return;
+   /* the battery */
+   if (psp_rom_path_suffix_plain(old_p, sizeof(old_p), rom_path,
+                                 psp_save_suffix(console)) == 0 &&
+       psp_rom_path_suffix(new_p, sizeof(new_p), rom_path,
+                           psp_save_suffix(console)) == 0)
+      for (t = 0; t < 5; t++)
+      {
+         char a[PSP_FILE_PATH_CAP + 8], b[PSP_FILE_PATH_CAP + 8];
+         if (t == 1 || t == 2)
+            continue;                       /* .thumb/.shot are for states */
+         snprintf(a, sizeof(a), "%s%s", old_p, tails[t]);
+         snprintf(b, sizeof(b), "%s%s", new_p, tails[t]);
+         copied += file_copy_if_missing(a, b) == 0 && !access(b, 0);
+      }
+   /* the states 1..10 and the resume state, with their previews */
+   if (psp_rom_path_suffix_plain(old_s1, sizeof(old_s1), rom_path,
+                                 psp_state_slot1_suffix(console)) != 0 ||
+       psp_rom_path_suffix(new_s1, sizeof(new_s1), rom_path,
+                           psp_state_slot1_suffix(console)) != 0)
+      return;
+   for (slot = 0; slot <= PSP_STATE_SLOT_COUNT; slot++)
+   {
+      if (slot < PSP_STATE_SLOT_COUNT)
+         snprintf(suffix, sizeof(suffix), ".st%u", slot);
+      else
+         snprintf(suffix, sizeof(suffix), ".rsm");
+      if (psp_rom_path_suffix_plain(old_p, sizeof(old_p), old_s1, suffix) ||
+          psp_rom_path_suffix(new_p, sizeof(new_p), new_s1, suffix))
+         continue;
+      for (t = 0; t < 5; t++)
+      {
+         char a[PSP_FILE_PATH_CAP + 8], b[PSP_FILE_PATH_CAP + 8];
+         snprintf(a, sizeof(a), "%s%s", old_p, tails[t]);
+         snprintf(b, sizeof(b), "%s%s", new_p, tails[t]);
+         if (file_copy_if_missing(a, b) == 0 && !access(b, 0))
+            copied++;
+      }
+   }
+   if (copied)
+      fe_evt("saves_adopt rom=%s", rom_path);
+}
+
 static void rom_roots_init(void)
 {
    char ini[APP_PATH_CAP], list[APP_PATH_CAP], all[UI_EXTRA_ROOTS_MAX *
@@ -1531,7 +1688,8 @@ static void rom_roots_init(void)
     * the list is (Settings > Game folders writes it, with these in it). */
    if (strcmp(source, "ini") && strcmp(source, "off"))
    {
-      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms" };
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms",
+                                          "md_roms", "nes_roms", "snes_roms" };
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
          if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
              fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
@@ -3838,6 +3996,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
       fe_evt("boot_refused reason=sidecar_path_too_long rom=%s", rom_path);
       return -1;
    }
+   saves_adopt(rom_path, console);
    save_import(rom_path, g_game.save_path, console);
    ui_set_state_base(g_game.state_path);
    ui_loading_begin(rom_path);
@@ -4914,6 +5073,7 @@ int main(int argc, char **argv)
          fe_ini_doc_bind(&vita_ini, ini);
       read_switches();
       menu_log_start();
+      saves_init();
       rom_roots_init();
       fe_ini_doc_bind(NULL, NULL);
       g_vita_ini = bound ? &vita_ini : NULL;

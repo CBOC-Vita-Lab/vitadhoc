@@ -598,10 +598,8 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
       }
       else answer = ML_ERROR;
    }
-   if (job->console == FE_CONSOLE_GBA)
-      n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".sav");
-   else
-      n = snprintf(path, sizeof(path), "%s.sav", job->rom) >= (int)sizeof(path) ? -1 : 0;
+   n = psp_rom_path_suffix(path, sizeof(path), job->rom,
+                           psp_save_suffix((fe_console_t)job->console));
    if (n < 0) answer = ML_ERROR;
    else
    {

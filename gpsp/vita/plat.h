@@ -29,7 +29,7 @@ extern "C" {
 int  plat_init(int argc, char **argv);
 /* Leave the process (sceKernelExitProcess).  Does not return. */
 void plat_exit(int code);
-/* Where the app keeps its files: "ux0:data/GBAdhoc" on a Vita. */
+/* Where the app keeps its files: "ux0:data/RetroAdhoc" on a Vita. */
 const char *plat_data_root(void);
 /* Where the package's own read-only files are: "app0:" on a Vita (the
  * bundled cheat database). */

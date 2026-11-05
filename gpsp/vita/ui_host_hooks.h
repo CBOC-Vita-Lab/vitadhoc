@@ -30,7 +30,7 @@
  * 1  PROVIDED FOR YOU (do not define these in a main loop)
  * ===========================================================================
  *   char g_dir_base[128]      the data root, vita/pspcompat.c
- *                             (pspcompat_set_root; "ux0:data/GBAdhoc")
+ *                             (pspcompat_set_root; "ux0:data/RetroAdhoc")
  *   pwr_hold / pwr_release    no-ops on the Vita (macros in ui_psp.c)
  *   everything in psp/video_psp.h and vita/video_vita.h   vita/video_vita.c
  *   pspcompat_touch()         the front panel (vita/pspcompat.h).  The UI

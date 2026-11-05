@@ -8,7 +8,7 @@ carry a file name, a size and -- for the GBA ones -- a four-letter game code
 at 0xAC so the link-mode table can be exercised; no game data exists on this
 machine and none is needed.  The art is drawn by this script.
 
-Layout (what vita/pspcompat.h calls the data root, ux0:data/GBAdhoc on a Vita):
+Layout (what vita/pspcompat.h calls the data root, ux0:data/RetroAdhoc on a Vita):
 
     roms/        *.gba *.gb *.gbc (+ a sub-folder), .sav files, save states
                  with their .thumb/.shot previews, favourites.txt

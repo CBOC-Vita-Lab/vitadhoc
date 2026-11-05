@@ -131,7 +131,7 @@ LIBS     := $(APP_LIBS_VITA) $(VITA_UI_LIBS) $(NET_VITA_LIBS) \
             -lSceMotion_stub \
             -lSceSysmem_stub -lSceLibKernel_stub -lm
 # A private build may carry its owner's own GBA BIOS dump, read by the app
-# from app0:gba_bios.bin when ux0:data/GBAdhoc has none (main_vita.c
+# from app0:gba_bios.bin when ux0:data/RetroAdhoc has none (main_vita.c
 # app_bios_dir).  The file is never part of the repository:
 #     make vpk BIOS=/path/to/gba_bios.bin
 ifneq ($(strip $(BIOS)),)

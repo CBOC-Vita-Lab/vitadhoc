@@ -1356,7 +1356,7 @@ static void test_browser(void)
       }
 
    /* A first run: no games anywhere.  The page names the folder -- on a
-    * console pspcompat's root, ux0:data/GBAdhoc/roms, which is what the
+    * console pspcompat's root, ux0:data/RetroAdhoc/roms, which is what the
     * shot uses (nothing is read from it: it does not exist here). */
    {
       char out[PSP_FILE_PATH_CAP], empty[300], f[400];

@@ -729,7 +729,7 @@ int vb_readback(uint32_t *dst)
  * system's own Cg compiler: SceShaccCg, the module libshacccg.suprx that
  * vitaGL games need too (the test console has it in ur0:data/).  Nothing to ship
  * and no offline compiler: VitaSDK has none.  A compiled program is kept in
- * ux0:data/GBAdhoc/shaders/<name>-<hash of the text>.gxp, so the compiler
+ * ux0:data/RetroAdhoc/shaders/<name>-<hash of the text>.gxp, so the compiler
  * runs once per version of a shader, not at every start.
  *
  * Each program is a fragment program bound to libvita2d's own texture
@@ -977,7 +977,7 @@ static SceGxmProgram *prog_gxp(int which, char *why, size_t whylen)
    }
    h = fnv(text, h);
    h = fnv("o3 fastmath fastint v3", h);
-   snprintf(path, sizeof(path), "ux0:data/GBAdhoc/shaders/%s-%08x.gxp",
+   snprintf(path, sizeof(path), "ux0:data/RetroAdhoc/shaders/%s-%08x.gxp",
             g_prog_name[which], (unsigned)h);
    if ((p = gxp_load(path)))
    {
@@ -992,7 +992,7 @@ static SceGxmProgram *prog_gxp(int which, char *why, size_t whylen)
    if (p)
    {
       FILE *f;
-      sceIoMkdir("ux0:data/GBAdhoc/shaders", 0777);
+      sceIoMkdir("ux0:data/RetroAdhoc/shaders", 0777);
       if ((f = fopen(path, "wb")))
       {
          fwrite(p, 1, size, f);

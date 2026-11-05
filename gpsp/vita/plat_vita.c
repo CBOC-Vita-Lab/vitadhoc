@@ -98,7 +98,7 @@ void plat_exit(int code)
 
 const char *plat_data_root(void)
 {
-   return "ux0:data/GBAdhoc";
+   return "ux0:data/RetroAdhoc";
 }
 
 const char *plat_app_dir(void)

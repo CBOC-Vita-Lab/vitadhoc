@@ -45,7 +45,7 @@ AI assistant (Claude) and tested on a real Vita; GPL-2.0, like GBAdhoc and gpSP.
 - **Every page** uses the same navy, the same rounded selection and the same header (page
   title, the game, the console and room chips, the time).
 
-The app's data folder is still `ux0:data/GBAdhoc/` and its title ID is still GBAD00001, so
+The app's data folder is still `ux0:data/RetroAdhoc/` and its title ID is still GBAD00001, so
 installing this over GBAdhoc keeps every game, save, state and setting.
 
 **Status: runs on a real Vita.** Build 20 plays Pokémon Emerald on the console at the display's
@@ -60,14 +60,14 @@ which).
 
 ## Install
 1. Copy `VitAdhoc.vpk` to the Vita and install it with VitaShell (HENkaku / Enso).
-2. Start it once. It creates `ux0:data/GBAdhoc/`.
-3. Copy games to `ux0:data/GBAdhoc/roms/` (`.gba`, `.gb`, `.gbc`; sub-folders are fine), or
+2. Start it once. It creates `ux0:data/RetroAdhoc/`.
+3. Copy games to `ux0:data/RetroAdhoc/roms/` (`.gba`, `.gb`, `.gbc`; sub-folders are fine), or
    leave them where they are: see "Games in other folders" below.
    A PSP GBAdhoc folder (roms, saves, states, box art) can be copied over as it is.
 4. Optional: box art in `boxart/`, wide banners in `hero/`, your own cheat files in `cheats/`.
 
 No BIOS file is needed: a free replacement is built in. With the original GBA BIOS as
-`ux0:data/GBAdhoc/gba_bios.bin` the app uses that instead (bring your own dump: no BIOS is
+`ux0:data/RetroAdhoc/gba_bios.bin` the app uses that instead (bring your own dump: no BIOS is
 part of the source or of any package shared publicly).
 
 ## Games in other folders
@@ -75,7 +75,7 @@ The game list shows `roms/` first and then the games of any other folder you nam
 copying anything. Same rules as `roms/`: the file types of the console on the list, sub-folders
 down to two levels, A to Z by file name (a game with the same name in two folders is listed
 twice).
-- **Which folders.** `extra_roms` in `ux0:data/GBAdhoc/vita.ini`: up to eight folders, a `;`
+- **Which folders.** `extra_roms` in `ux0:data/RetroAdhoc/vita.ini`: up to eight folders, a `;`
   between them, e.g. `extra_roms = ux0:ROMS/GBA; ux0:Games/GB`. Each has to start with its
   drive (`ux0:`). With that line, those folders are the list; `extra_roms = 0` (or nothing
   after the `=`) turns the other folders off altogether.
@@ -112,7 +112,7 @@ twice).
 | Triangle | next video preset (2x, 3x, fit, stretch, 4x crop; sharp or LCD filter) |
 | Select + L / Select + R | quick save / quick load |
 | Select + Triangle | pause screen |
-| L + R + Select | screenshot (`ux0:data/GBAdhoc/screenshots/`) |
+| L + R + Select | screenshot (`ux0:data/RetroAdhoc/screenshots/`) |
 | Select + Down | Mystery Gift: start / stop listening for a phone (GBA games) |
 | (none until you set them) | four **turbo buttons** |
 
@@ -150,7 +150,7 @@ that off.
   half of it for the last pass's 444,000 pixels: it cannot keep 60 frames a second, so xBRZ
   stays on the CPU's cores. `vita.ini gpu_xbrz = 1` turns it on for experiments (the first
   time, the compiler takes about 26 s; the programs are then kept in
-  `ux0:data/GBAdhoc/shaders/`); a guard measures the GPU as the game runs and gives xBRZ back
+  `ux0:data/RetroAdhoc/shaders/`); a guard measures the GPU as the game runs and gives xBRZ back
   to the CPU when a frame's GPU work takes over 10 ms twice in a row
   (`gpu_xbrz off reason=slow`).
 - **Colours** -- as the game sends them, or as a GBA's (or Game Boy Color's) own screen showed
@@ -366,8 +366,8 @@ For a game kept in another folder (see "Games in other folders") that is its own
 `roms/`: back up, or move, the game and its save files together.
 
 ## If something goes wrong
-Send back `ux0:data/GBAdhoc/log/` (the newest file). Useful switches, in
-`ux0:data/GBAdhoc/vita.ini` (create it; one `key = value` per line):
+Send back `ux0:data/RetroAdhoc/log/` (the newest file). Useful switches, in
+`ux0:data/RetroAdhoc/vita.ini` (create it; one `key = value` per line):
 - `extra_roms = ux0:ROMS/GBA; ux0:Games/GB` — the folders besides `roms/` the game list also
   reads (see "Games in other folders"); `extra_roms = 0` — none
 - `drc = 0` — run without the dynamic recompiler (slow, but tells us if a crash is in it)
@@ -375,7 +375,7 @@ Send back `ux0:data/GBAdhoc/log/` (the newest file). Useful switches, in
 - `io_thread = 0` — write saves and the log on the main thread
 - `pad_trace = 40` — log the first 40 changes of the buttons as the console reports them (did a
   press arrive at all?)
-- `keys_script = 1` — give the first game the buttons in `ux0:data/GBAdhoc/keys.txt`, frame by
+- `keys_script = 1` — give the first game the buttons in `ux0:data/RetroAdhoc/keys.txt`, frame by
   frame (`wait N`, `hold START 6`, `dump` = a screenshot, `evt TEXT` = a line in the log): a run
   that reaches the same place every time with nobody holding the console
 - `clips = 0` — record no previews, whatever Settings say (the log's `clip_save` line says what
@@ -552,7 +552,7 @@ multiplayer, Game Boy "Xploder" cheat codes, 3–4 player links.
   `Nintendo - Nintendo Entertainment System`, `... - Super Nintendo Entertainment System`.
   `md_roms`, `nes_roms`, `snes_roms` in vita.ini name one more folder each. Up to 24 folders.
 - **Saves are central:** batteries, save states and the resume state go to
-  `ux0:data/GBAdhoc/saves/<GBA|GB|GBC|MD|NES|SNES>/`, named after the game. `saves_dir = <folder>` in vita.ini
+  `ux0:data/RetroAdhoc/saves/<GBA|GB|GBC|MD|NES|SNES>/`, named after the game. `saves_dir = <folder>` in vita.ini
   moves the root; `saves_dir = 0` keeps the old layout (beside each ROM). A game that has saves
   beside its ROM gets them *copied* to the new folder the first time it starts; the originals
   stay where they were.

@@ -123,7 +123,7 @@ typedef struct app_game
 } app_game;
 extern app_game g_game;
 
-extern char g_app_root[APP_PATH_CAP];     /* ux0:data/GBAdhoc                  */
+extern char g_app_root[APP_PATH_CAP];     /* ux0:data/RetroAdhoc                  */
 extern char g_app_rom_dir[APP_PATH_CAP];  /* <root>/roms                       */
 extern char g_app_config[APP_PATH_CAP];   /* <root>/config.ini                 */
 

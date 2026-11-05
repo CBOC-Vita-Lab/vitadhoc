@@ -41,7 +41,7 @@
  * and runs headless there (x86-64, and armhf under qemu-arm with the ARM
  * dynarec the Vita uses) -- which is where its logic is tested.
  *
- *   ux0:data/GBAdhoc/           (the PSP's layout: a PSP folder copies over)
+ *   ux0:data/RetroAdhoc/           (the PSP's layout: a PSP folder copies over)
  *     roms/         cartridges (.gba .gb .gbc), in folders if you like, and
  *                   BESIDE each one its files, named as the PSP names them:
  *                     Game.sav   Game.gb.sav   Game.gbc.sav     battery
@@ -1498,7 +1498,7 @@ static void extra_root_add(const char *spec, int log_skips)
 
 /* CENTRAL SAVES (psp/rom_paths.h): batteries, states and the resume state of
  * every console live in <data folder>/saves/<GBA|GB|GBC|MD|NES|SNES>/
- * (ux0:data/GBAdhoc/saves) instead of beside
+ * (ux0:data/RetroAdhoc/saves) instead of beside
  * the ROM.  vita.ini `saves_dir = <folder>` moves the root; `saves_dir = 0`
  * keeps the old layout (beside each ROM).  If the folders cannot be made the
  * old layout is kept too, and the log says so. */

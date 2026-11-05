@@ -235,7 +235,7 @@ UBSan.
 Switches include `drc = 0`, `render_thread = 2` for comparison,
 `gpu_xbrz = 1` for experiments, `clips = 0` / `art = 0` to turn off optional
 work, and `ra_host = http://host:port` for a test RetroAchievements server.
-Logs under `ux0:data/GBAdhoc/log/` may contain ROM paths and network
+Logs under `ux0:data/RetroAdhoc/log/` may contain ROM paths and network
 addresses; review them before sharing. The package does not install a clock
 or plugin profile. [Known Issues](../KNOWN-ISSUES.md) lists what still needs
 a Vita.

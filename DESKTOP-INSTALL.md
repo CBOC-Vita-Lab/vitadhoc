@@ -9,7 +9,7 @@ on the same Wi-Fi as the computer, or a USB cable or memory card reader.
 1. Open the installer and give it VitAdhoc: paste this page's link, or drop
    `VitAdhoc-install.zip` or `VitAdhoc.vpk` onto it.
 2. Optionally pick your `.gba`, `.gb` and `.gbc` games or a folder of them.
-   They go to `ux0:data/GBAdhoc/roms/`, and games already there are kept.
+   They go to `ux0:data/RetroAdhoc/roms/`, and games already there are kept.
 3. Click **Install**. The installer finds the Vita, copies everything and
    installs the app.
 

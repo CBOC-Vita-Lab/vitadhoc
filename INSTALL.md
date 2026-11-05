@@ -16,7 +16,7 @@ explains display, achievements, patches and link play in more detail.
 
 ## Updating From 1.0 Or 1.1
 
-1. Close VitAdhoc. Back up `ux0:data/GBAdhoc/` and any saves or states beside
+1. Close VitAdhoc. Back up `ux0:data/RetroAdhoc/` and any saves or states beside
    games in other folders.
 2. Download `VitAdhoc.vpk` from the
    [official release](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest).
@@ -35,8 +35,8 @@ The checker verifies listed bytes; it does not test game compatibility.
 
 1. Copy `VitAdhoc.vpk` to `ux0:VPK/` with VitaShell over USB or FTP (make the
    folder if needed). In VitaShell, select the VPK, press Cross and confirm.
-2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then close it.
-3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use a folder you already
+2. Start VitAdhoc once to create `ux0:data/RetroAdhoc/`, then close it.
+3. Copy your games to `ux0:data/RetroAdhoc/roms/`, or use a folder you already
    have (below).
 4. Start VitAdhoc again. Triangle switches between GBA, GB and GBC; Cross plays.
 
@@ -59,7 +59,7 @@ computer to the address and port shown on the Vita, then copy the VPK into
 Use the address actually shown on your device; an old address may not work.
 
 After first launch, copy your games the same way into
-`ux0:data/GBAdhoc/roms/`. `ux0:` means the Vita storage root, not a folder
+`ux0:data/RetroAdhoc/roms/`. `ux0:` means the Vita storage root, not a folder
 you need to create inside the computer's mounted drive. No game downloads
 are provided by VitAdhoc or the installer.
 
@@ -81,7 +81,7 @@ game list, press Cross and type the folder (for example `ux0:ROMS/GBA`). Type
 a folder that is already listed to remove it. The list is scanned again
 straight away.
 
-Or write the list yourself in `ux0:data/GBAdhoc/vita.ini` (or `config.ini`):
+Or write the list yourself in `ux0:data/RetroAdhoc/vita.ini` (or `config.ini`):
 
 ```ini
 extra_roms = ux0:ROMS/GBA; ux0:Games/GB
@@ -98,7 +98,7 @@ whole list).
 VitAdhoc picks up your old save by itself the first time you start a game
 that has no save here yet. It looks, in this order:
 
-1. In `ux0:data/GBAdhoc/import/`: a file named after the game, ending in
+1. In `ux0:data/RetroAdhoc/import/`: a file named after the game, ending in
    `.sav` or `.srm` (`Pokemon Emerald.sav`, `Pokemon Red.srm`). Once taken in,
    the file is renamed `.imported`.
 2. Next to the game: `Game.srm` (RetroArch's name), and for a Game Boy or
@@ -146,7 +146,7 @@ looked up in `roms/`. The extension picks the console: `.gba`, `.gb` or
 
 Games kept in `.zip` files work too: VitAdhoc looks inside each zip and lists
 it under its console. On start, the game is unpacked once into
-`ux0:data/GBAdhoc/unzipped/` (only the game you're playing is kept there) and
+`ux0:data/RetroAdhoc/unzipped/` (only the game you're playing is kept there) and
 checked against the zip's checksum. Saves and states sit beside the `.zip`,
 named after it. The first `.gba`, `.gb` or `.gbc` entry is used; keep one
 game per zip to avoid surprises. Stored and deflated entries up to 32 MiB
@@ -158,7 +158,7 @@ and check the new expected save name before continuing.
 
 ## Screen Overlays
 
-Put a PNG in `ux0:data/GBAdhoc/overlays/` and it is drawn over the game, with
+Put a PNG in `ux0:data/RetroAdhoc/overlays/` and it is drawn over the game, with
 its own transparency: a bezel, a Game Boy shell, a dot-matrix mask.
 
 - `overlays/gba.png`, `gb.png`, `gbc.png`: for every game of that console.
@@ -189,7 +189,7 @@ Saves and states live **next to each game**, wherever it is (names in the
 table above). Move or back up a game together with these.
 
 ```text
-ux0:data/GBAdhoc/
+ux0:data/RetroAdhoc/
   roms/                  your games (and their saves)
   boxart/  titles/       covers and title screens, downloaded or your own
   hero/                  optional wide artwork
@@ -217,7 +217,7 @@ Settings) to forget the account.
 Install the new VPK over the old one, following
 [Updating From 1.0 Or 1.1](#updating-from-10-or-11). Everything above stays.
 
-To remove VitAdhoc, delete its bubble. `ux0:data/GBAdhoc/` stays until you
+To remove VitAdhoc, delete its bubble. `ux0:data/RetroAdhoc/` stays until you
 delete it yourself, and with it any games and saves kept there.
 
 ## Box Art And Previews
@@ -237,7 +237,7 @@ off in Settings > Interface > Game previews.
 | --- | --- |
 | No games listed | Check the console tab (Triangle) and the file extension, then restart the app. |
 | A save seems missing | Look next to the game's file, in case it was moved or renamed. A Game Boy save is `Game.gb.sav`, a Color one `Game.gbc.sav`. To bring one from another emulator, see above. |
-| A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/GBAdhoc/gba_bios.bin`. |
+| A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/RetroAdhoc/gba_bios.bin`. |
 | The picture is slow or odd | Settings > Display: Image quality Original, and leave GPU xBRZ off. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |
 | A zip will not open | Unzip it and try the game directly; check that it has one supported game and is not encrypted or ZIP64. |
 | No cover for a game | Covers are optional. Check Wi-Fi, or add your own picture to `boxart/`. |

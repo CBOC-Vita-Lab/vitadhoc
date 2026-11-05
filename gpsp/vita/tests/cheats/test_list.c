@@ -501,7 +501,7 @@ static void test_real(const char *db)
    /* landmarks */
    g = cheatdb_find_serial("BPEE", &unique);
    CHECK(g >= 0 && unique, "BPEE: %d unique %d", g, unique);
-   CHECK(g == cheatdb_find_name('A', "ux0:data/GBAdhoc/roms/Pokemon - Emerald Version (USA, Europe).gba", &i) && i == 1,
+   CHECK(g == cheatdb_find_name('A', "ux0:data/RetroAdhoc/roms/Pokemon - Emerald Version (USA, Europe).gba", &i) && i == 1,
          "Emerald by name");
    CHECK(g == cheatdb_find_title('A', "POKEMON EMER"), "Emerald by header title");
    CHECK(cheatdb_find_serial("ZZZZ", &unique) < 0 && cheatdb_find_crc(0x12345678) < 0 &&

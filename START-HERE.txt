@@ -19,8 +19,8 @@ https://github.com/CBOC-Vita-Lab/vita-installer/releases
 
 Manual Install
 1. Copy VitAdhoc.vpk to your Vita with VitaShell (USB or FTP) and install it.
-2. Start VitAdhoc once. It creates ux0:data/GBAdhoc/
-3. Put your games in ux0:data/GBAdhoc/roms/
+2. Start VitAdhoc once. It creates ux0:data/RetroAdhoc/
+3. Put your games in ux0:data/RetroAdhoc/roms/
    (games already in ux0:ROMS/ or RetroFlow's folders are found by themselves)
 4. Start VitAdhoc again and pick a game.
 
@@ -32,7 +32,7 @@ settings stay where they are.
 
 Saves From Another Emulator
 Put the save next to the game (Game.srm, or Game.sav for a Game Boy game) or
-in ux0:data/GBAdhoc/import/. VitAdhoc takes it in the first time you start
+in ux0:data/RetroAdhoc/import/. VitAdhoc takes it in the first time you start
 that game, as long as the game has no save here yet. Details: INSTALL.md.
 
 

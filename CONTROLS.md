@@ -32,7 +32,7 @@ turbo buttons, and the menus always stay reachable, whatever you map.
 | Select + L / Select + R | Quick save / quick load |
 | Triangle | Next picture preset |
 | Select + Triangle | Pause screen |
-| L + R + Select | Screenshot (saved in `ux0:data/GBAdhoc/screenshots/`) |
+| L + R + Select | Screenshot (saved in `ux0:data/RetroAdhoc/screenshots/`) |
 | Select + Down | Mystery Gift: listen for a phone (GBA) |
 | Right stick down | Cheat button, for button-activated codes |
 

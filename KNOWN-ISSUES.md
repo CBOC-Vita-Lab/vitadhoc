@@ -13,7 +13,7 @@ Testing continues on:
   strong enough. If one feels backwards, use Settings > This game >
   Direction; Motion strength changes how much a tilt counts.
 - **RetroAchievements:** signing in over the Vita's own secure connection.
-  If sign-in fails, the reason is in `ux0:data/GBAdhoc/log/gbadhoc.log`
+  If sign-in fails, the reason is in `ux0:data/RetroAdhoc/log/gbadhoc.log`
   (lines starting with `ra_http`).
 - **Two Vitas linked together** (Wi-Fi, internet and ad hoc), sharing saves,
   and Wireless Adapter games.
@@ -41,7 +41,7 @@ Testing continues on:
 - Three- and four-player links and single-cartridge multiboot aren't supported.
 - Two games with the same file name share box art, cheats and previews. Give
   different games different names.
-- The same game in two folders (for example `ux0:data/GBAdhoc/roms/` and
+- The same game in two folders (for example `ux0:data/RetroAdhoc/roms/` and
   `ux0:ROMS/GBA/`) shows up twice, and each copy has its own save. If a save
   seems missing, check for the other copy of the game.
 - Each console's list shows up to 2,048 games.
@@ -57,16 +57,16 @@ Testing continues on:
 
 ## Install
 
-- Back up `ux0:data/GBAdhoc/` and any saves next to games in other folders
+- Back up `ux0:data/RetroAdhoc/` and any saves next to games in other folders
   before a big update.
 - A `Game.ips` that sits next to both `Game.gb` and `Game.gba` is not applied
   to either. Name it after the whole file instead, for example `Game.gba.ips`.
 
 ## If Something Goes Wrong
 
-- **Turn off the automatic box art:** add `art = 0` to `ux0:data/GBAdhoc/vita.ini`.
+- **Turn off the automatic box art:** add `art = 0` to `ux0:data/RetroAdhoc/vita.ini`.
 - **Turn off previews:** Settings > Interface > Game previews, or `clips = 0`
   in `vita.ini`.
 
-The log is `ux0:data/GBAdhoc/log/gbadhoc.log`. It can contain game names and
+The log is `ux0:data/RetroAdhoc/log/gbadhoc.log`. It can contain game names and
 network addresses, so read it before sharing.

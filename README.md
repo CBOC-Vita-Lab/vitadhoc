@@ -111,8 +111,8 @@ See the [changelog](CHANGELOG.md) for the player-facing changes and
 You need a homebrew-enabled PS Vita, VitaShell and your own games.
 
 1. Transfer `VitAdhoc.vpk` with VitaShell over USB or FTP, then install it.
-2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
-3. Add games to `ux0:data/GBAdhoc/roms/`, use an automatically detected folder,
+2. Start VitAdhoc once to create `ux0:data/RetroAdhoc/`.
+3. Add games to `ux0:data/RetroAdhoc/roms/`, use an automatically detected folder,
    or choose **Settings > Library > Game folders**.
 4. Pick a game and press Cross. Triangle switches GBA, GB and GBC.
 

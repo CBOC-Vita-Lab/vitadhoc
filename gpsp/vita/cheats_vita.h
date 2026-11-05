@@ -93,7 +93,7 @@ const char *cheats_db_game(void);
 
 /* A game booted: forget the previous list, read this game's .cht (a missing
  * file is an empty list), merge the bundled database's entries for it,
- * validate every entry, push the enabled ones into the core.  `root` is the data root ("ux0:data/GBAdhoc"), `rom_path` the
+ * validate every entry, push the enabled ones into the core.  `root` is the data root ("ux0:data/RetroAdhoc"), `rom_path` the
  * ROM's full path.  Returns the number of entries. */
 int  cheats_load(const char *root, const char *rom_path, fe_console_t console);
 /* The game is going away. */

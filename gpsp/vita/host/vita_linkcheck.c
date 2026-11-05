@@ -88,7 +88,7 @@ int main(void)
          /* The front panel while the menu is closed (a main loop's use). */
          pc_touch t;
          if (!ui_active() && !ui_typing() && pspcompat_touch(&t))
-            vid_dump_ge("ux0:data/GBAdhoc/log/touch.png");
+            vid_dump_ge("ux0:data/RetroAdhoc/log/touch.png");
       }
       memset(&lv, 0, sizeof(lv));
       if (pad & PSP_CTRL_LTRIGGER)
@@ -99,7 +99,7 @@ int main(void)
       pspcompat_wait_vblank();
       vid_swap();
       if (pad & PSP_CTRL_TRIANGLE)
-         vid_dump_ge("ux0:data/GBAdhoc/log/frame.png");
+         vid_dump_ge("ux0:data/RetroAdhoc/log/frame.png");
    }
    pcfg_save();
    vid_term();

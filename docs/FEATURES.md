@@ -129,7 +129,7 @@ to 1024 x 1024 stretch to fit.
 **Settings > Display > Screen overlay** controls overlays. **Grid strength**
 adjusts the LCD/scanline effect from 1 to 10 (default 5). Screenshots use
 **Settings > Interface > Screenshot folder**, or the default
-`ux0:data/GBAdhoc/screenshots/`; the button chord is L + R + Select.
+`ux0:data/RetroAdhoc/screenshots/`; the button chord is L + R + Select.
 
 ## Audio
 
@@ -209,7 +209,7 @@ Use [Play Together](../PLAY-TOGETHER.md) for setup and supported modes.
 ## Advanced Configuration And Diagnostics
 
 Most settings belong in the UI. The following keys in
-`ux0:data/GBAdhoc/vita.ini` are useful when diagnosing an issue:
+`ux0:data/RetroAdhoc/vita.ini` are useful when diagnosing an issue:
 
 | Key | Purpose |
 | --- | --- |
@@ -227,7 +227,7 @@ Close the app and back up configuration files before manual edits. Changes
 made through Settings are preferred because they can be checked and saved
 through the app's configuration layer.
 
-Logs are in `ux0:data/GBAdhoc/log/gbadhoc.log`. They may contain game paths
+Logs are in `ux0:data/RetroAdhoc/log/gbadhoc.log`. They may contain game paths
 and network addresses; review before sharing. See [Performance](PERFORMANCE.md),
 [Technical Notes](TECHNICAL.md) and [Known Issues](../KNOWN-ISSUES.md) for
 measurements, implementation details and troubleshooting.

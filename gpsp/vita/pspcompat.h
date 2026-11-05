@@ -41,7 +41,7 @@
  * THE DATA ROOT.  The PSP derives everything from its EBOOT's folder,
  * `g_dir_base` (ms0:/PSP/GAME/GBAdhoc): roms/, boxart/, hero/, saves/, log/,
  * config.ini.  Here g_dir_base is DEFINED in pspcompat.c and is the single
- * runtime-settable prefix: "ux0:data/GBAdhoc" by default on the Vita.  Call
+ * runtime-settable prefix: "ux0:data/RetroAdhoc" by default on the Vita.  Call
  * pspcompat_set_root() before anything else to move it (uma0:, a test
  * directory on the host...).  A main loop must NOT define g_dir_base itself.
  */
@@ -56,7 +56,7 @@ extern "C" {
 #endif
 
 /* ---- the data root ------------------------------------------------------- */
-#define PSPCOMPAT_ROOT_VITA "ux0:data/GBAdhoc"
+#define PSPCOMPAT_ROOT_VITA "ux0:data/RetroAdhoc"
 #define PSPCOMPAT_ROOT_HOST "vita_root"
 
 extern char g_dir_base[128];

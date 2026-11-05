@@ -3431,7 +3431,7 @@ static const char *set_help(int id)
    case SET_OVERLAY:  return ui_host_overlay_on()
                              ? "Your picture from overlays/ over the game "
                                "(gba.png, gb.png, gbc.png or its name)."
-                             : "Put a PNG in ux0:data/GBAdhoc/overlays/ to "
+                             : "Put a PNG in ux0:data/RetroAdhoc/overlays/ to "
                                "frame the game.";
    case SET_SHOTDIR:  return "X: type a folder (ux0:pictures/VitAdhoc). "
                              "Empty: screenshots/.";

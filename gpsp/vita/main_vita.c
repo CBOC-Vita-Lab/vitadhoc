@@ -1497,7 +1497,8 @@ static void extra_root_add(const char *spec, int log_skips)
 }
 
 /* CENTRAL SAVES (psp/rom_paths.h): batteries, states and the resume state of
- * every console live in ux0:saves/<GBA|GB|GBC|MD|NES|SNES>/ instead of beside
+ * every console live in <data folder>/saves/<GBA|GB|GBC|MD|NES|SNES>/
+ * (ux0:data/GBAdhoc/saves) instead of beside
  * the ROM.  vita.ini `saves_dir = <folder>` moves the root; `saves_dir = 0`
  * keeps the old layout (beside each ROM).  If the folders cannot be made the
  * old layout is kept too, and the log says so. */
@@ -1511,7 +1512,7 @@ static void saves_init(void)
    struct stat st;
 
    psp_saves_root = NULL;
-   snprintf(g_saves_root_buf, sizeof(g_saves_root_buf), "ux0:saves");
+   snprintf(g_saves_root_buf, sizeof(g_saves_root_buf), "%s/saves", g_app_root);
    path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root);
    if (fe_ini_get(ini, "saves_dir", v, sizeof(v)) ||
        fe_ini_get(g_app_config, "saves_dir", v, sizeof(v)))

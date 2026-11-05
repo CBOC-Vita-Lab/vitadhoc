@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make_livearea.py -- VitAdhoc's bubble and LiveArea pictures.
+"""make_livearea.py -- Retro Adhoc's bubble and LiveArea pictures.
 
     python3 tools/make_livearea.py            (from gpsp/vita)
 
@@ -16,7 +16,10 @@ import io
 import os
 import sys
 
-import cairosvg
+try:
+    import cairosvg
+except ImportError:          # rsvg-convert does the same job
+    cairosvg = None
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,9 +32,15 @@ NAVY = "#070B18"
 
 
 def svg_png(svg, w, h):
-    return Image.open(io.BytesIO(cairosvg.svg2png(bytestring=svg.encode(),
-                                                  output_width=w,
-                                                  output_height=h))).convert("RGBA")
+    if cairosvg is not None:
+        data = cairosvg.svg2png(bytestring=svg.encode(), output_width=w,
+                                output_height=h)
+    else:
+        import subprocess
+        data = subprocess.run(["rsvg-convert", "-w", str(w), "-h", str(h)],
+                              input=svg.encode(), capture_output=True,
+                              check=True).stdout
+    return Image.open(io.BytesIO(data)).convert("RGBA")
 
 
 def glows(w, h, spots):
@@ -53,10 +62,10 @@ def glows(w, h, spots):
 def wordmark(px, color=(255, 255, 255)):
     k = 4
     f = ImageFont.truetype(os.path.join(FONTS, "Outfit-Bold.ttf"), px * k)
-    w = int(f.getlength("VitAdhoc")) + 4 * k
+    w = int(f.getlength("Retro Adhoc")) + 4 * k
     asc, desc = f.getmetrics()
     im = Image.new("L", (w, asc + desc), 0)
-    ImageDraw.Draw(im).text((2 * k, 0), "VitAdhoc", font=f, fill=255)
+    ImageDraw.Draw(im).text((2 * k, 0), "Retro Adhoc", font=f, fill=255)
     bb = im.getbbox()
     im = im.crop((bb[0], bb[1], bb[2], bb[3]))
     im = im.resize((max(1, im.width // k), max(1, im.height // k)), Image.LANCZOS)
@@ -83,22 +92,41 @@ def indexed(im, path):
                                dither=Image.FLOYDSTEINBERG).save(path, optimize=True)
 
 
+def cart_svg(size):
+    """The mark: one cartridge, a play triangle on its screen, gold contacts."""
+    pins = "".join('<rect x="%d" y="86" width="3" height="12" rx="1" fill="#D6B246"/>'
+                   % (49 + i * 5.4) for i in range(6))
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" '
+            'width="%d" height="%d">'
+            '<defs><filter id="b" x="-50%%" y="-50%%" width="200%%" height="200%%">'
+            '<feGaussianBlur stdDeviation="9"/></filter></defs>'
+            '<rect x="34" y="16" width="60" height="92" rx="10" fill="#7B6CFF" '
+            'opacity="0.8" filter="url(#b)"/>'
+            '<rect x="34" y="16" width="60" height="92" rx="9" fill="#EEF0FA"/>'
+            '<rect x="40" y="24" width="48" height="46" rx="5" fill="#28245A"/>'
+            '<polygon points="56,33 56,61 78,47" fill="#FFFFFF"/>'
+            '<rect x="46" y="82" width="36" height="18" rx="3" fill="#3C3C50"/>%s'
+            '</svg>' % (size, size, pins))
+
+
+GLOWS6 = ["#7B6CFF", "#8CC63F", "#19C3B4", "#3B82F6", "#E0553F", "#B08CFF"]
+
+
 def icon0():
     s = 128
-    im = svg_png(glows(s, s, [(30, 20, 120, "#7B6CFF", 0.75),
-                              (120, 120, 110, "#19C3B4", 0.45)]), s, s)
-    mark = svg_png(A.mark_svg(s), 96, 96)
-    im.alpha_composite(mark, (16, 18))
+    im = svg_png(glows(s, s, [(30, 20, 120, "#4B3BC4", 0.8),
+                              (120, 120, 110, "#7B6CFF", 0.35)]), s, s)
+    im.alpha_composite(svg_png(cart_svg(s), s, s), (0, 0))
     return im
 
 
 def bg():
     w, h = 840, 500
-    im = svg_png(glows(w, h, [(160, 80, 420, "#7B6CFF", 0.55),
-                              (720, 420, 360, "#19C3B4", 0.35),
-                              (680, 60, 260, "#8CC63F", 0.18)]), w, h)
+    spots = [(60 + i * 150, 80 + (i % 2) * 340, 300, c, 0.28)
+             for i, c in enumerate(GLOWS6)]
+    im = svg_png(glows(w, h, spots), w, h)
     # the mark, very large and faint, off the right edge
-    big = svg_png(A.mark_svg(512), 520, 520)
+    big = svg_png(cart_svg(512), 520, 520)
     a = big.getchannel("A").point(lambda v: v * 22 // 255)
     big.putalpha(a)
     im.alpha_composite(big, (w - 420, 40))
@@ -107,17 +135,17 @@ def bg():
 
 def startup():
     w, h = 280, 158
-    im = svg_png(glows(w, h, [(40, 20, 220, "#7B6CFF", 0.7),
-                              (260, 150, 180, "#19C3B4", 0.45)]), w, h)
-    mark = svg_png(A.mark_svg(64), 64, 64)
-    word = wordmark(34)
+    im = svg_png(glows(w, h, [(40, 20, 220, "#4B3BC4", 0.75),
+                              (260, 150, 180, "#7B6CFF", 0.35)]), w, h)
+    mark = svg_png(cart_svg(72), 72, 72)
+    word = wordmark(27)
     total = mark.width + 10 + word.width
     x = (w - total) // 2
-    im.alpha_composite(mark, (x, (h - 64) // 2 - 14))
+    im.alpha_composite(mark, (x, (h - 72) // 2 - 14))
     im.alpha_composite(word, (x + mark.width + 10, (h - word.height) // 2 - 14))
     tag = ImageFont.truetype(os.path.join(FONTS, "Inter-Regular.ttf"), 13)
     d = ImageDraw.Draw(im)
-    t = "GBA, GB and GBC, together"
+    t = "GBA  GB  GBC  MD  NES  SNES"
     d.text(((w - tag.getlength(t)) / 2, h - 44), t, font=tag,
            fill=(200, 208, 226, 255))
     return im

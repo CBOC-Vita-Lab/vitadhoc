@@ -1,7 +1,7 @@
 # gpsp/vita/Makefile -- GBAdhoc for the PS Vita.
 #
 #   make            build/vita/eboot.bin   (all cores + the app)
-#   make vpk        VitAdhoc.vpk           (installable with VitaShell)
+#   make vpk        RetroAdhoc.vpk           (installable with VitaShell)
 #   make report     sizes, static memory per core, imported modules
 #   make assets     regenerate sce_sys/*.png from the logo (needs Pillow)
 #   make clean
@@ -64,8 +64,8 @@ READELF := $(PREFIX)readelf
 LD_R    := $(PREFIX)ld
 
 VERSION  ?= 4.1.1
-TITLE    ?= VitAdhoc
-TITLE_ID ?= GBAD00001
+TITLE    ?= Retro Adhoc
+TITLE_ID ?= RADH00001
 VITA_ATTRIBUTE2 ?= 12
 UNSAFE   ?= 0
 
@@ -154,7 +154,7 @@ ELF  := $(B)/gbadhoc.elf
 VELF := $(B)/gbadhoc.velf
 SELF := $(B)/eboot.bin
 SFO  := $(B)/param.sfo
-VPK  := VitAdhoc.vpk
+VPK  := RetroAdhoc.vpk
 LIVEAREA := sce_sys/icon0.png sce_sys/livearea/contents/bg.png \
             sce_sys/livearea/contents/startup.png \
             sce_sys/livearea/contents/template.xml

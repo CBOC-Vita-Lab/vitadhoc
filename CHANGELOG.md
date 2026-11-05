@@ -2,9 +2,12 @@
 
 ## Unreleased
 
+- The bubble is now **Retro Adhoc** (TITLE_ID RADH00001, RetroAdhoc.vpk) with its own icon and LiveArea;
+  it installs beside the original VitAdhoc and shares the same data folder (ux0:data/GBAdhoc).
+
 - ROM folders for Mega Drive, NES and SNES (`ux0:roms/MD`, `NES`, `SNES` and common aliases,
   RetroFlow names); up to 24 game folders.
-- Saves, states and resume states of all consoles in `ux0:saves/<console>/` (vita.ini
+- Saves, states and resume states of all consoles in `ux0:data/GBAdhoc/saves/<console>/` (vita.ini
   `saves_dir`; `0` = beside the ROM as before); existing ones are copied on first start.
 - Fix: console switch refused MD/NES/SNES (config bounds); crash scanning ROMs with six consoles.
 

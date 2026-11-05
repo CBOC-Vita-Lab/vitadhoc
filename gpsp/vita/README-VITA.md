@@ -552,7 +552,7 @@ multiplayer, Game Boy "Xploder" cheat codes, 3–4 player links.
   `Nintendo - Nintendo Entertainment System`, `... - Super Nintendo Entertainment System`.
   `md_roms`, `nes_roms`, `snes_roms` in vita.ini name one more folder each. Up to 24 folders.
 - **Saves are central:** batteries, save states and the resume state go to
-  `ux0:saves/<GBA|GB|GBC|MD|NES|SNES>/`, named after the game. `saves_dir = <folder>` in vita.ini
+  `ux0:data/GBAdhoc/saves/<GBA|GB|GBC|MD|NES|SNES>/`, named after the game. `saves_dir = <folder>` in vita.ini
   moves the root; `saves_dir = 0` keeps the old layout (beside each ROM). A game that has saves
   beside its ROM gets them *copied* to the new folder the first time it starts; the originals
   stay where they were.

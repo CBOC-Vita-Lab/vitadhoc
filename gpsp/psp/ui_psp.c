@@ -90,7 +90,7 @@
 #ifdef VITA
 #define UI_DEV        "Vita"
 #define UI_DEVS       "Vitas"
-#define UI_APP        "VitAdhoc"
+#define UI_APP        "Retro Adhoc"
 #define UI_SHELL_NAME "the LiveArea"
 #define UI_RADIO_OFF  "Wi-Fi is off"
 #define UI_DUMP_EXT   ".png"
@@ -135,7 +135,7 @@
 #endif
 #ifdef VITA
 #include "ui_vita_style.h"           /* VitAdhoc's look (vstyle.h) */
-#define UI_APP_NAME "VitAdhoc"
+#define UI_APP_NAME "Retro Adhoc"
 #else
 #define UI_APP_NAME "GBAdhoc"
 #endif

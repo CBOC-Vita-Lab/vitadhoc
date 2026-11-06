@@ -24,6 +24,13 @@ Testing continues on:
   full trade between versions has not been played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
 
+## Games
+
+How we checked the games people reported, and what is still unchecked, is in
+[Game Compatibility](docs/COMPATIBILITY.md). Not fixed: sprites in the wrong
+order in Golden Sun, Mario Golf and The Minish Cap (OAM order), and any
+flicker or missing instruments, which we could not judge without a Vita.
+
 ## Performance
 
 - **500 MHz needs an overclock plugin** such as PSVshell. Without one the Vita

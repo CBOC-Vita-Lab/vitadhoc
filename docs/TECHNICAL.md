@@ -523,6 +523,22 @@ partner's own cartridge, the way the local link's "partner's game" does
   cache file's name and bytes, nothing extra in `roms/`, the matching
   hashes, the cartridges' own verdicts, the agreed end.
 
+**Open BIOS: decompression from a halfword-aligned source.** The ReGBA/VBA open
+BIOS read the 4-byte header of LZ77UnComp, HuffUnComp, RLUnCompWram and the Diff
+filters with a plain `ldr`, which rotates an unaligned address; only
+RLUnCompVram masked it. Mortal Kombat: Deadly Alliance calls RLUnCompWram with
+sources two bytes into a word, got sizes in the millions and spent 40+ seconds
+(and trashed EWRAM and the menus' tiles). The header is now read from
+`source & ~3` and the data starts at `source + 4`, as in VBA-M and mGBA
+(`gpsp/bios/source/softwareinterrupts.c`). The binary is not rebuilt: it is
+patched by `gpsp/bios/patch_unaligned_decomp.py` (seven jumps into stubs in the
+unused tail of the image; flags and other registers untouched, an aligned
+source behaves as before, 3 more instructions per call). `cpufix` tests 22 and
+23 (RLUnCompWram, LZ77UnCompWram from `buffer + 2`) fail on the old image and
+pass on the new one. Huffman, the Diff filters and the Vram variant of LZ77 use
+the same stub but have no test of their own. Whether a real BIOS aligns down or
+rotates is taken from those two emulators, not measured on a console.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

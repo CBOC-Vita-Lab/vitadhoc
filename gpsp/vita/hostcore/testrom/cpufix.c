@@ -42,6 +42,10 @@
  *     its own, and IRQ entered from FIQ sees the shared ones (OpenLara)
  * 20  LDM {pc}^ in a privileged mode loads the CPSR from the SPSR
  * 21  MSR CPSR_c (control field only) keeps the live N, Z, C, V flags
+ * 22  RLUnCompWram from a source that is only halfword aligned reads its
+ *     header from the word below (Mortal Kombat: Deadly Alliance; the open
+ *     BIOS used to run for tens of seconds on it)
+ * 23  ...and so does LZ77UnCompWram
  *
  * "SRAM_V113" below makes the emulator give the cartridge battery SRAM. */
 typedef unsigned char u8;
@@ -54,7 +58,7 @@ typedef volatile u32 vu32;
 
 #define REG(a) (*(vu16 *)(0x04000000 + (a)))
 #define SRAM ((vu8 *)0x0E000000)
-#define NTESTS 22
+#define NTESTS 24
 #ifndef VENEER_ITERS
 #define VENEER_ITERS 50
 #endif
@@ -427,6 +431,44 @@ static u32 timer_min_read(void)
    return min;
 }
 
+
+/* BIOS decompression from a halfword-aligned source.  The stream sits two
+ * bytes into a word-aligned buffer, as Mortal Kombat: Deadly Alliance packs
+ * its data.  The BIOS reads the header word from the address rounded down
+ * to a multiple of 4 and carries on from source + 4; the size it takes is
+ * the top three bytes of that word.  A CPU-style rotated read of the
+ * unaligned address gives a different size, so the test checks that exactly
+ * the expected number of bytes was written and the guard bytes after them
+ * were not touched. */
+static u8 bios_src[8192] __attribute__((aligned(4)));
+
+static void swi_decomp(u32 swi, u32 src, u32 dst)
+{
+   register u32 r0 __asm__("r0") = src;
+   register u32 r1 __asm__("r1") = dst;
+   if (swi == 0x14)
+      __asm__ volatile("swi 0x14" : "+r"(r0), "+r"(r1) : : "r2", "r3", "memory");
+   else
+      __asm__ volatile("swi 0x11" : "+r"(r0), "+r"(r1) : : "r2", "r3", "memory");
+}
+
+/* Returns 1 when `size` bytes of pattern(i) were written and the 16 guard
+ * bytes after them are still 0xA5. */
+static u32 bios_check(u32 dst, u32 size, u8 (*pat)(u32))
+{
+   u32 i;
+   for (i = 0; i < size; i++)
+      if (*(vu8 *)(dst + i) != pat(i))
+         return 0x100000 | i;
+   for (i = 0; i < 16; i++)
+      if (*(vu8 *)(dst + size + i) != 0xA5)
+         return 0x200000 | i;
+   return 1;
+}
+
+static u8 pat_rl(u32 i) { return (u8)((i / 130) + 1); }
+static u8 pat_lz(u32 i) { return (u8)(i * 7 + 3); }
+
 int main(void)
 {
    u32 a, b, v;
@@ -599,6 +641,55 @@ int main(void)
       a |= msr_flags() ^ 0x40000001;
    result(21, a == 0, msr_flags());
 
+   }
+
+
+   {
+   /* 22: RLUnCompWram, source = bios_src + 2.  Header bytes 30 00 08 00
+    * (type 0x30, size 0x800); the word below holds FF 00 30 00, so the
+    * size the aligned-down read gives is 0x3000 = 12288 bytes. */
+   u32 size = 0x3000, n = 0, left = size, k = 0;
+   u32 dst = 0x02020000, seen;
+   vu8 *g = (vu8 *)(dst + size);
+   u8 *p = bios_src;
+   p[0] = 0xFF; p[1] = 0x00;
+   p[2] = 0x30; p[3] = 0x00; p[4] = 0x08; p[5] = 0x00;
+   n = 6;
+   while (left) {
+      u32 run = left > 130 ? 130 : left;     /* 3..130 copies of one byte */
+      p[n++] = (u8)(0x80 | (run - 3));
+      p[n++] = (u8)(k + 1);
+      left -= run; k++;
+   }
+   for (i = 0; i < 16; i++)
+      g[i] = 0xA5;
+   swi_decomp(0x14, (u32)bios_src + 2, dst);
+   seen = bios_check(dst, size, pat_rl);
+   result(22, seen == 1, seen);
+   }
+
+   {
+   /* 23: LZ77UnCompWram, source = bios_src + 2.  Header bytes 10 00 08 00
+    * (type 0x10); the word below FF 00 10 00 gives size 0x1000 = 4096. */
+   u32 size = 0x1000, n = 6, j, seen;
+   u32 dst = 0x02020000;
+   vu8 *g = (vu8 *)(dst + size);
+   u8 *p = bios_src;
+   p[0] = 0xFF; p[1] = 0x00;
+   p[2] = 0x10; p[3] = 0x00; p[4] = 0x08; p[5] = 0x00;
+   for (j = 0; j < size; j += 8) {
+      u32 q;
+      p[n++] = 0x00;                         /* eight literals */
+      for (q = 0; q < 8; q++)
+         p[n++] = pat_lz(j + q);
+   }
+   for (i = 0; i < 16; i++)
+      g[i] = 0xA5;
+   for (i = 0; i < (int)size; i++)
+      *(vu8 *)(dst + i) = 0;
+   swi_decomp(0x11, (u32)bios_src + 2, dst);
+   seen = bios_check(dst, size, pat_lz);
+   result(23, seen == 1, seen);
    }
 
    for (i = 0; i < NTESTS; i++)

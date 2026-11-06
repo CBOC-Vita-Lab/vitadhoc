@@ -148,12 +148,20 @@ VitAdhoc's game engine started from GBAdhoc 4.1.1. These fixes come from GBAdhoc
   from graphics memory, returning from an interrupt with the register list
   form, and keeping the CPU flags when a game changes CPU mode.
 
+**Mortal Kombat: Deadly Alliance** showed its Midway logo for over 40 seconds
+and covered its title and name screens in green speckles. The built-in BIOS
+read the wrong size when the game asked it to unpack data that starts halfway
+through a 4-byte block. Fixed, for all of the BIOS's unpacking calls.
+
 Not taken from 4.5.0: its Pokemon MonoMyth accuracy work, its speed work for
 self-modifying code, and its PSP-only changes (they only exist for the PSP's
 processor). Nothing here changes saves or save states: 1.2 states still load.
-These fixes are tested with our own test programs and one Pokemon game. They
-are not tested on the games named above, nor on Big Mutha Truckers, Street
-Racing Syndicate or Mortal Kombat: Deadly Alliance.
+These fixes are tested with our own test programs. We also ran the games named
+above, and Big Mutha Truckers, Smashing Drive and Street Racing Syndicate, for
+a minute or more each on a PC build of the engine: they start and run in both
+1.2 and 1.3, and we could not repeat the resets or the black and white screens
+(Need for Speed: Underground and Mortal Kombat did change, as described). This
+is not a Vita test; see [Game Compatibility](docs/COMPATIBILITY.md).
 
 **Trading between versions**
 - **Game Boy and Game Boy Color games link with each other.** A `.gb` game and

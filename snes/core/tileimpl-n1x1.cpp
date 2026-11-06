@@ -10,13 +10,13 @@
 namespace TileImpl {
 
 	template<class MATH, class BPSTART>
-	void Normal1x1Base<MATH, BPSTART>::Draw(int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2)
+	void Normal1x1Base<MATH, BPSTART>::Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2)
 	{
 		(void) OffsetInLine;
-		if (Z1 > GFX.DB[Offset + N] && (M))
+		if (Z1 > c.DB[Offset + N] && (M))
 		{
-			GFX.S[Offset + N] = MATH::Calc(GFX.ScreenColors[Pix], GFX.SubScreen[Offset + N], GFX.SubZBuffer[Offset + N]);
-			GFX.DB[Offset + N] = Z2;
+			c.S[Offset + N] = MATH::Calc(c, c.ScreenColors[Pix], c.SubScreen[Offset + N], c.SubZ[Offset + N]);
+			c.DB[Offset + N] = Z2;
 		}
 	}
 

@@ -60,6 +60,7 @@ bool8 S9xGraphicsInit (void)
 	GFX.SubScreen  = (uint16 *) malloc(GFX.ScreenSize * sizeof(uint16));
 	GFX.ZBuffer    = (uint8 *)  malloc(GFX.ScreenSize);
 	GFX.SubZBuffer = (uint8 *)  malloc(GFX.ScreenSize);
+	g_s9x_zdirty = g_s9x_subzdirty = GFX.ScreenSize;	// contents unknown: the next frame clears everything
 
 	if (!GFX.ZERO || !GFX.SubScreen || !GFX.ZBuffer || !GFX.SubZBuffer)
 	{
@@ -166,6 +167,30 @@ void S9xBuildDirectColourMaps (void)
 			DirectColourMaps[p][c] = BUILD_PIXEL(IPPU.XB[((c & 7) << 2) | ((p & 1) << 1)], IPPU.XB[((c & 0x38) >> 1) | (p & 2)], IPPU.XB[((c & 0xc0) >> 3) | (p & 4)]);
 }
 
+// CBOC-Vita: the two depth buffers hold 244 KB each but a frame only touches the lines it rendered.
+// Every render batch records how far it wrote; the next frame clears just that much (the rest is still
+// zero, because nothing else writes these buffers). The sub-screen buffer is only touched when the
+// batch rendered a sub-screen. The marks are shared by the main and the PPU-thread copy of this file.
+void S9xClearZBuffers (uint8 *z, uint8 *subz)
+{
+	if (g_s9x_zdirty)
+		memset(z, 0, g_s9x_zdirty);
+	if (g_s9x_subzdirty)
+		memset(subz, 0, g_s9x_subzdirty);
+	g_s9x_zdirty = g_s9x_subzdirty = 0;
+}
+
+static inline void S9xMarkZDirty (bool sub)
+{
+	uint32 ext = (GFX.EndY + 1) * GFX.PPL + GFX.RealPPL;	// last row written + one row of margin
+	if (ext > GFX.ScreenSize)
+		ext = GFX.ScreenSize;
+	if (ext > g_s9x_zdirty)
+		g_s9x_zdirty = ext;
+	if (sub && ext > g_s9x_subzdirty)
+		g_s9x_subzdirty = ext;
+}
+
 void S9xStartScreenRefresh (void)
 {
 	if (GFX.DoInterlace)
@@ -194,8 +219,7 @@ void S9xStartScreenRefresh (void)
 			S9xPPUMTFrameStart();
 		else
 		{
-			memset(GFX.ZBuffer, 0, GFX.ScreenSize);
-			memset(GFX.SubZBuffer, 0, GFX.ScreenSize);
+			S9xClearZBuffers(GFX.ZBuffer, GFX.SubZBuffer);
 		}
 	}
 
@@ -563,6 +587,8 @@ void S9xRenderBatch (const S9xRenderJob &job)
 				memmove(GFX.Screen + (y + 1) * GFX.PPL, GFX.Screen + y * GFX.RealPPL, GFX.PPL * sizeof(uint16));
 		}
 
+		S9xMarkZDirty(job.sub != 0);
+
 		if (job.sub)
 			RenderScreen(TRUE);
 
@@ -585,6 +611,7 @@ void S9xRenderBatch (const S9xRenderJob &job)
 // Entry points for the renamed copy of this file used by the PPU thread
 // (see snes/core/ppu_mt.cpp): plain C names so that the build can address them.
 extern "C" void s9x_render_batch (const S9xRenderJob *job) { S9xRenderBatch(*job); }
+extern "C" void s9x_clear_z (uint8 *z, uint8 *subz) { S9xClearZBuffers(z, subz); }
 extern "C" void s9x_render_setup (void) { S9xInitTileRenderer(); }
 
 static void SetupOBJ (void)

@@ -2323,7 +2323,8 @@ void CMemory::InitROM (void)
 	if (!Settings.BS || Settings.BSXItself) // Not BS Dump
 	{
 		ROMCRC32 = caCRC32(ROM, CalculatedSize);
-		sha256sum(ROM, CalculatedSize, ROMSHA256);
+		// CBOC-Vita: SHA-256 skipped (only the cheat-database lookup read it; this build has none): ~0.5 s of load time on a Vita
+		memset(ROMSHA256, 0, sizeof(ROMSHA256));
 	}
 	else // Convert to correct format before scan
 	{
@@ -2336,7 +2337,8 @@ void CMemory::InitROM (void)
 		ROM[offset + 23] = 0x00;
 		// Calc
 		ROMCRC32 = caCRC32(ROM, CalculatedSize);
-		sha256sum(ROM, CalculatedSize, ROMSHA256);
+		// CBOC-Vita: SHA-256 skipped (only the cheat-database lookup read it; this build has none): ~0.5 s of load time on a Vita
+		memset(ROMSHA256, 0, sizeof(ROMSHA256));
 		// Convert back
 		ROM[offset + 22] = BSMagic0;
 		ROM[offset + 23] = BSMagic1;

@@ -231,6 +231,8 @@ struct COLOR_SUB
 };
 
 void S9xStartScreenRefresh (void);
+void S9xClearZBuffers (uint8 *z, uint8 *subz);
+extern uint32 g_s9x_zdirty, g_s9x_subzdirty;
 void S9xEndScreenRefresh (void);
 void S9xBuildDirectColourMaps (void);
 // CBOC-Vita: a brightness change only marks the colour tables stale; they are rebuilt (identically) before

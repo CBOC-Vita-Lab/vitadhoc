@@ -39,6 +39,7 @@ extern struct SLineData LineData[240];
 extern struct SLineMatrixData LineMatrixData[240];
 extern "C" void s9x_render_batch_r(const S9xRenderJob *job);
 extern "C" void s9x_render_setup_r(void);
+extern "C" void s9x_clear_z_r(uint8 *z, uint8 *subz);
 
 /* The renamed renderer copy reads these instead of PPU, IPPU, GFX, BG, Memory,
  * LineData, LineMatrixData, DirectColourMaps and brightness_cap. */
@@ -54,6 +55,7 @@ uint8 brightness_cap_R[64];
 
 bool8 g_s9x_vram_track = FALSE;
 uint32 g_s9x_colour_version = 0;
+uint32 g_s9x_zdirty = 0, g_s9x_subzdirty = 0;	// see S9xClearZBuffers (gfx.cpp)
 bool8 g_s9x_obj_ran = FALSE;
 
 namespace ppumt {
@@ -186,8 +188,7 @@ static void run_slot(Slot &s)
 	switch (s.kind)
 	{
 	case K_FRAME_START:
-		memset(s.z, 0, s.ppl);       /* ppl carries GFX.ScreenSize here */
-		memset(s.subz, 0, s.ppl);
+		s9x_clear_z_r(s.z, s.subz);
 		break;
 
 	case K_FRAME_END:

@@ -16,6 +16,32 @@ extern struct SLineMatrixData	LineMatrixData[240];
 
 namespace TileImpl {
 
+	// CBOC-Vita: the per-pixel plotters used to read GFX.S, GFX.DB, GFX.ScreenColors, GFX.SubScreen, ... from
+	// the global on every pixel and, because the stores into the screen could alias the globals, reload them
+	// after every pixel. A tile routine now copies them once into this struct (a local whose address never
+	// escapes once the plotter is inlined) and passes it to the plotter. Same pixels, far fewer loads.
+	struct PixCtx
+	{
+		uint16 *S;
+		uint8  *DB;
+		const uint16 *SubScreen;
+		const uint8  *SubZ;
+		const uint16 *ScreenColors;
+		const uint16 *RealScreenColors;
+		uint32 FixedColour;
+		uint32 RealPPL;
+		uint8  Z1, Z2;
+		bool8  ClipColors;
+
+		alwaysinline PixCtx()
+		{
+			S = GFX.S; DB = GFX.DB; SubScreen = GFX.SubScreen; SubZ = GFX.SubZBuffer;
+			ScreenColors = GFX.ScreenColors; RealScreenColors = GFX.RealScreenColors;
+			FixedColour = GFX.FixedColour; RealPPL = GFX.RealPPL;
+			Z1 = GFX.Z1; Z2 = GFX.Z2; ClipColors = GFX.ClipColors;
+		}
+	};
+
 	struct BPProgressive
 	{
 		enum { Pitch = 1 };
@@ -35,10 +61,10 @@ namespace TileImpl {
 	template<class MATH, class BPSTART>
 	struct Normal1x1Base
 	{
-		enum { Pitch = BPSTART::Pitch };
+		enum { Pitch = BPSTART::Pitch, Step = 1, Fill = MATH::None };
 		typedef BPSTART bpstart_t;
 
-		static void Draw(int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
+		static alwaysinline void Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
 	};
 
 	template<class MATH>
@@ -49,10 +75,10 @@ namespace TileImpl {
 	template<class MATH, class BPSTART>
 	struct Normal2x1Base
 	{
-		enum { Pitch = BPSTART::Pitch };
+		enum { Pitch = BPSTART::Pitch, Step = 2, Fill = MATH::None };
 		typedef BPSTART bpstart_t;
 
-		static void Draw(int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
+		static alwaysinline void Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
 	};
 
 	template<class MATH>
@@ -72,10 +98,10 @@ namespace TileImpl {
 	template<class MATH, class BPSTART>
 	struct HiresBase
 	{
-		enum { Pitch = BPSTART::Pitch };
+		enum { Pitch = BPSTART::Pitch, Step = 2, Fill = 0 };
 		typedef BPSTART bpstart_t;
 
-		static void Draw(int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
+		static alwaysinline void Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
 	};
 
 	template<class MATH>
@@ -141,7 +167,8 @@ namespace TileImpl {
 
 	struct NOMATH
 	{
-		static alwaysinline uint16 Calc(uint16 Main, uint16 Sub, uint8 SD)
+		enum { None = 1 };
+		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return Main;
 		}
@@ -151,9 +178,10 @@ namespace TileImpl {
 	template<class Op>
 	struct REGMATH
 	{
-		static alwaysinline uint16 Calc(uint16 Main, uint16 Sub, uint8 SD)
+		enum { None = 0 };
+		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
-			return Op::fn(Main, (SD & 0x20) ? Sub : GFX.FixedColour);
+			return Op::fn(Main, (SD & 0x20) ? Sub : c.FixedColour);
 		}
 	};
 	typedef REGMATH<COLOR_ADD> Blend_Add;
@@ -163,9 +191,10 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHF1_2
 	{
-		static alwaysinline uint16 Calc(uint16 Main, uint16 Sub, uint8 SD)
+		enum { None = 0 };
+		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
-			return GFX.ClipColors ? Op::fn(Main, GFX.FixedColour) : Op::fn1_2(Main, GFX.FixedColour);
+			return c.ClipColors ? Op::fn(Main, c.FixedColour) : Op::fn1_2(Main, c.FixedColour);
 		}
 	};
 	typedef MATHF1_2<COLOR_ADD> Blend_AddF1_2;
@@ -174,9 +203,10 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHS1_2
 	{
-		static alwaysinline uint16 Calc(uint16 Main, uint16 Sub, uint8 SD)
+		enum { None = 0 };
+		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
-			return GFX.ClipColors ? REGMATH<Op>::Calc(Main, Sub, SD) : (SD & 0x20) ? Op::fn1_2(Main, Sub) : Op::fn(Main, GFX.FixedColour);
+			return c.ClipColors ? REGMATH<Op>::Calc(c, Main, Sub, SD) : (SD & 0x20) ? Op::fn1_2(Main, Sub) : Op::fn(Main, c.FixedColour);
 		}
 	};
 	typedef MATHS1_2<COLOR_ADD> Blend_AddS1_2;
@@ -225,11 +255,12 @@ namespace TileImpl {
 	//     Z2 is the "cur_depth = new_depth". OBJ need the two separate.
 	//     Pix is the pixel to draw.
 
+	static_assert((MAX_SNES_WIDTH & (MAX_SNES_WIDTH - 1)) == 0, "RealPPL must be a power of two");
 	#define OFFSET_IN_LINE \
-		uint32 OffsetInLine = Offset % GFX.RealPPL;
-	#define DRAW_PIXEL(N, M) PIXEL::Draw(N, M, Offset, OffsetInLine, Pix, Z1, Z2)
-	#define Z1	GFX.Z1
-	#define Z2	GFX.Z2
+		uint32 OffsetInLine = Offset & (MAX_SNES_WIDTH - 1);
+	#define DRAW_PIXEL(N, M) PIXEL::Draw(ctx, N, M, Offset, OffsetInLine, Pix, Z1, Z2)
+	#define Z1	ctx.Z1
+	#define Z2	ctx.Z2
 
 	template<class PIXEL>
 	struct DrawTile16
@@ -249,6 +280,7 @@ namespace TileImpl {
 			if (cache.IsBlankTile())
 				return;
 			cache.SelectPalette();
+			PixCtx ctx;
 
 			if (!(Tile & (V_FLIP | H_FLIP)))
 			{
@@ -304,8 +336,8 @@ namespace TileImpl {
 
 	// Basic routine to render a clipped tile. Inputs same as above.
 
-	#define Z1	GFX.Z1
-	#define Z2	GFX.Z2
+	#define Z1	ctx.Z1
+	#define Z2	ctx.Z2
 
 	template<class PIXEL>
 	struct DrawClippedTile16
@@ -325,6 +357,7 @@ namespace TileImpl {
 			if (cache.IsBlankTile())
 				return;
 			cache.SelectPalette();
+			PixCtx ctx;
 
 			if (!(Tile & (V_FLIP | H_FLIP)))
 			{
@@ -417,8 +450,8 @@ namespace TileImpl {
 	// Basic routine to render a single mosaic pixel.
 	// DRAW_PIXEL, bpstart_t, Z1, Z2 and Pix are the same as above, but Pitch is not used.
 
-	#define Z1	GFX.Z1
-	#define Z2	GFX.Z2
+	#define Z1	ctx.Z1
+	#define Z2	ctx.Z2
 
 	template<class PIXEL>
 	struct DrawMosaicPixel16
@@ -437,6 +470,7 @@ namespace TileImpl {
 			if (cache.IsBlankTile())
 				return;
 			cache.SelectPalette();
+			PixCtx ctx;
 
 			if (Tile & H_FLIP)
 				StartPixel = 7 - StartPixel;
@@ -483,11 +517,43 @@ namespace TileImpl {
 			GFX.ScreenColors = GFX.ClipColors ? BlackColourMap : GFX.RealScreenColors;
 			if (Settings.ForcedBackdrop)
 				GFX.ScreenColors = &Settings.ForcedBackdrop;
+			PixCtx ctx;
 
 			OFFSET_IN_LINE;
+			// CBOC-Vita: the backdrop is drawn last, so on most lines most pixels are already covered
+			// (depth buffer non-zero). Eight depth bytes are tested at once; a group with no zero byte
+			// has nothing to draw. Pixels are still drawn in the same order by the same plotter.
+			enum { Group = 8 / PIXEL::Step };
+			const uint64 oddmask = (PIXEL::Step == 2) ? 0xFF00FF00FF00FF00ULL : 0;
 			for (l = GFX.StartY; l <= GFX.EndY; l++, Offset += GFX.PPL)
 			{
-				for (x = Left; x < Right; x++)
+				x = Left;
+				while (x + Group <= Right)
+				{
+					uint64 v0, v;
+					memcpy(&v0, ctx.DB + Offset + PIXEL::Step * x, 8);
+					v = v0 | oddmask;
+					if (!((v - 0x0101010101010101ULL) & ~v & 0x8080808080808080ULL))
+					{
+						x += Group;	// every pixel of the group is already covered
+						continue;
+					}
+					if (PIXEL::Fill && v0 == 0)
+					{
+						// nothing drawn here yet and no colour math: the backdrop colour goes in as it is
+						const uint64 c4 = (uint64) ctx.ScreenColors[0] * 0x0001000100010001ULL;
+						uint16 *sp = ctx.S + Offset + PIXEL::Step * x;
+						memcpy(sp, &c4, 8);
+						memcpy(sp + 4, &c4, 8);
+						const uint64 ones = 0x0101010101010101ULL;
+						memcpy(ctx.DB + Offset + PIXEL::Step * x, &ones, 8);
+						x += Group;
+						continue;
+					}
+					for (uint32 xe = x + Group; x < xe; x++)
+						DRAW_PIXEL(x, 1);
+				}
+				for (; x < Right; x++)
 					DRAW_PIXEL(x, 1);
 			}
 		}
@@ -508,7 +574,7 @@ namespace TileImpl {
 
 	#define CLIP_10_BIT_SIGNED(a)	(((a) & 0x2000) ? ((a) | ~0x3ff) : ((a) & 0x3ff))
 
-	#define DRAW_PIXEL(N, M) PIXEL::Draw(N, M, Offset, OffsetInLine, Pix, OP::Z1(D, b), OP::Z2(D, b))
+	#define DRAW_PIXEL(N, M) PIXEL::Draw(ctx, N, M, Offset, OffsetInLine, Pix, OP::Z1(D, b), OP::Z2(D, b))
 
 	struct DrawMode7BG1_OP
 	{
@@ -538,7 +604,8 @@ namespace TileImpl {
 
 		static void Draw(uint32 Left, uint32 Right, int D)
 		{
-			uint8	*VRAM1 = Memory.VRAM + 1;
+			const uint8	*VRAM0 = Memory.VRAM;
+			const uint8	*VRAM1 = Memory.VRAM + 1;
 
 			if (OP::DCMODE())
 			{
@@ -548,6 +615,7 @@ namespace TileImpl {
 				GFX.RealScreenColors = IPPU.ScreenColors;
 
 			GFX.ScreenColors = GFX.ClipColors ? BlackColourMap : GFX.RealScreenColors;
+			PixCtx ctx;
 
 			int	aa, cc;
 			int	startx;
@@ -602,7 +670,7 @@ namespace TileImpl {
 						int	X = ((AA + BB) >> 8) & 0x3ff;
 						int	Y = ((CC + DD) >> 8) & 0x3ff;
 
-						uint8	*TileData = VRAM1 + (Memory.VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
+						const uint8	*TileData = VRAM1 + (VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
 						uint8	b = *(TileData + ((Y & 7) << 4) + ((X & 7) << 1));
 
 						Pix = b & OP::MASK; DRAW_PIXEL(x, Pix);
@@ -619,7 +687,7 @@ namespace TileImpl {
 
 						if (((X | Y) & ~0x3ff) == 0)
 						{
-							uint8	*TileData = VRAM1 + (Memory.VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
+							const uint8	*TileData = VRAM1 + (VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
 							b = *(TileData + ((Y & 7) << 4) + ((X & 7) << 1));
 						}
 						else
@@ -647,7 +715,8 @@ namespace TileImpl {
 
 		static void Draw(uint32 Left, uint32 Right, int D)
 		{
-			uint8	*VRAM1 = Memory.VRAM + 1;
+			const uint8	*VRAM0 = Memory.VRAM;
+			const uint8	*VRAM1 = Memory.VRAM + 1;
 
 			if (OP::DCMODE())
 			{
@@ -657,6 +726,7 @@ namespace TileImpl {
 				GFX.RealScreenColors = IPPU.ScreenColors;
 
 			GFX.ScreenColors = GFX.ClipColors ? BlackColourMap : GFX.RealScreenColors;
+			PixCtx ctx;
 
 			int	aa, cc;
 			int	startx, StartY = GFX.StartY;
@@ -737,7 +807,7 @@ namespace TileImpl {
 						int	X = ((AA + BB) >> 8) & 0x3ff;
 						int	Y = ((CC + DD) >> 8) & 0x3ff;
 
-						uint8	*TileData = VRAM1 + (Memory.VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
+						const uint8	*TileData = VRAM1 + (VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
 						uint8	b = *(TileData + ((Y & 7) << 4) + ((X & 7) << 1));
 
 						if ((Pix = (b & OP::MASK)))
@@ -765,7 +835,7 @@ namespace TileImpl {
 
 						if (((X | Y) & ~0x3ff) == 0)
 						{
-							uint8	*TileData = VRAM1 + (Memory.VRAM[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
+							const uint8	*TileData = VRAM1 + (VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
 							b = *(TileData + ((Y & 7) << 4) + ((X & 7) << 1));
 						}
 						else

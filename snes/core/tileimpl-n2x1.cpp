@@ -10,16 +10,15 @@
 namespace TileImpl {
 
 	template<class MATH, class BPSTART>
-	void Normal2x1Base<MATH, BPSTART>::Draw(int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2)
+	void Normal2x1Base<MATH, BPSTART>::Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2)
 	{
 		(void) OffsetInLine;
-		if (Z1 > GFX.DB[Offset + 2 * N] && (M))
+		if (Z1 > c.DB[Offset + 2 * N] && (M))
 		{
-			GFX.S[Offset + 2 * N] = GFX.S[Offset + 2 * N + 1] = MATH::Calc(GFX.ScreenColors[Pix], GFX.SubScreen[Offset + 2 * N], GFX.SubZBuffer[Offset + 2 * N]);
-			GFX.DB[Offset + 2 * N] = GFX.DB[Offset + 2 * N + 1] = Z2;
+			c.S[Offset + 2 * N] = c.S[Offset + 2 * N + 1] = MATH::Calc(c, c.ScreenColors[Pix], c.SubScreen[Offset + 2 * N], c.SubZ[Offset + 2 * N]);
+			c.DB[Offset + 2 * N] = c.DB[Offset + 2 * N + 1] = Z2;
 		}
 	}
-
 
 	// normal double width
 	template struct Renderers<DrawTile16, Normal2x1>;

@@ -229,6 +229,21 @@ static uint16_t gb_buttons_from_retro(uint32_t pad)
 
 static long gb_save_file_len = -1;   /* bytes on disk; -1 = absent/unknown */
 
+/* Bytes a Game Boy save file carries beyond the layout the core writes
+ * (cartridge RAM, then the 44/48-byte clock block on a clock cartridge) --
+ * another emulator's own trailer, for one.  Kept as read and written back
+ * after the image, so the save never comes back shorter than it went in. */
+#define GB_EXTRA_MAX (64u * 1024u)
+static uint8_t *gb_extra;
+static size_t gb_extra_len;
+
+extern void app_battery_written(const char *save_path) __attribute__((weak));
+static void gb_battery_written_note(void)
+{
+   if (&app_battery_written && host.save_path)
+      app_battery_written(host.save_path);
+}
+
 static int gb_save_reserve(size_t size)
 {
    uint8_t *buffer;
@@ -422,17 +437,36 @@ static void save_failed(void)
  * close errors and renames.  Either thread; the caller owns `data`. */
 static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
 {
+   uint8_t *joined = NULL;
    (void)crc;                           /* the log line only */
+   if (gb_extra_len)
+   {
+      joined = (uint8_t *)malloc(size + gb_extra_len);
+      if (!joined)
+      {
+         gb_save_file_len = -1;
+         save_failed();
+         fe_evt("gb_sram_flush size=%u FAILED (no memory)", (unsigned)size);
+         return -1;
+      }
+      memcpy(joined, data, size);
+      memcpy(joined + size, gb_extra, gb_extra_len);
+      data = joined;
+      size += gb_extra_len;
+   }
    if (save_recover_bak(host.save_path) < 0 ||
        state_file_replace(host.save_path, data, size) != 0)
    {
+      free(joined);
       gb_save_file_len = -1;
       save_failed();
       fe_evt("gb_sram_flush size=%u FAILED", (unsigned)size);
       return -1;
    }
+   free(joined);
    gb_save_file_len = (long)size;
    fe_evt("gb_sram_flush size=%u crc=%08x", (unsigned)size, crc);
+   gb_battery_written_note();
    return 0;
 }
 
@@ -589,6 +623,9 @@ static int gb_save_load(void)
    gb_save_crc_valid = 0;
    gb_save_file_len = -1;
    battery_load_failed = 0;
+   free(gb_extra);
+   gb_extra = NULL;
+   gb_extra_len = 0;
    if (!size || !host.save_path)
       return 0;
    battery_load_failed = 1;
@@ -611,10 +648,64 @@ static int gb_save_load(void)
    n = fread(gb_save_buffer, 1, cap, f);
    whole = fgetc(f) == EOF;
    read_ok = !ferror(f);
+   if (!whole && read_ok)
+   {
+      /* Longer than any layout we know: keep every byte past the image so
+       * the first save does not cut them off. */
+      size_t more = 0, room = GB_EXTRA_MAX + 1;
+      uint8_t *rest = (uint8_t *)malloc(room);
+      if (!rest)
+         read_ok = 0;
+      else
+      {
+         fseek(f, (long)n, SEEK_SET);
+         more = fread(rest, 1, room, f);
+         if (ferror(f) || more > GB_EXTRA_MAX || more == 0)
+            read_ok = 0;
+         else
+         {
+            if (n > size)
+            {
+               gb_extra = (uint8_t *)malloc(n - size + more);
+               if (!gb_extra)
+                  read_ok = 0;
+               else
+               {
+                  memcpy(gb_extra, gb_save_buffer + size, n - size);
+                  memcpy(gb_extra + (n - size), rest, more);
+                  gb_extra_len = n - size + more;
+               }
+            }
+            else
+            {
+               gb_extra = rest;
+               rest = NULL;
+               gb_extra_len = more;
+            }
+         }
+         free(rest);
+      }
+      if (!read_ok)
+         fe_log("gb_sram_load: %s is longer than a battery save; refusing",
+                host.save_path);
+   }
    if (fclose(f) != 0)
       read_ok = 0;
    if (!read_ok)
       goto failed;
+   /* A clock block of the wrong length (or cartridge RAM plus something
+    * else) that the core does not read: it stays in the file as it was. */
+   if (whole && n > size && !gb_extra_len)
+   {
+      gb_extra = (uint8_t *)malloc(n - size);
+      if (gb_extra)
+      {
+         memcpy(gb_extra, gb_save_buffer + size, n - size);
+         gb_extra_len = n - size;
+      }
+      else
+         goto failed;
+   }
    if (!n)
    {
       fe_evt("gb_sram_load size=0");
@@ -625,6 +716,8 @@ static int gb_save_load(void)
    load = whole ? n : gbcore_cart_ram_size(gb_core);
    if (load > n)
       load = n;
+   if (gb_extra_len && load > size)
+      load = size;                      /* the rest is kept, not loaded */
    if (whole)
    {
       gb_save_file_len = (long)n;
@@ -641,7 +734,7 @@ static int gb_save_load(void)
     * in the standard layout (RAM, then the 48-byte trailer on clock carts)
     * -- with the RAM just loaded, not a blank one. */
    gb_save_crc = gb_save_ram_crc(size);
-   gb_save_crc_valid = gb_save_file_len == (long)size;
+   gb_save_crc_valid = gb_save_file_len == (long)(size + gb_extra_len);
    fe_evt("gb_sram_load size=%u file=%u crc=%08x", (unsigned)size,
           (unsigned)n, gb_save_crc);
    battery_load_failed = 0;
@@ -1423,6 +1516,25 @@ int fe_host_battery_refusal(void)
    return battery_load_failed;
 }
 
+/* Bytes a save file carries after the core's 128 KiB image -- the clock
+ * block mGBA appends (131072 + 16 = 131088 bytes), for one.  The core has no
+ * use for them, but they are the player's: they are kept as read and written
+ * back after the image every time, so a save never comes back shorter than
+ * it went in.  (Up to 1.2 the first save cut them off.) */
+#define SRAM_TAIL_MAX (64u * 1024u)
+static uint8_t *sram_tail;
+static size_t sram_tail_len;
+
+/* The app's hook, told after every complete write of a battery file (the
+ * save sync in vita/save_sync.c).  Weak: other hosts and the unit tests
+ * have none. */
+extern void app_battery_written(const char *save_path) __attribute__((weak));
+static void battery_written_note(void)
+{
+   if (&app_battery_written && host.save_path)
+      app_battery_written(host.save_path);
+}
+
 static int sram_load(void)
 {
    void *p = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -1438,17 +1550,47 @@ static int sram_load(void)
    if (save_recover_bak(host.save_path) < 0)
       goto failed;
 
+   free(sram_tail);
+   sram_tail = NULL;
+   sram_tail_len = 0;
    f = fopen(host.save_path, "rb");
    if (f)
    {
       n = fread(p, 1, FE_SRAM_SIZE, f);
-      exact = (n == FE_SRAM_SIZE) && (fgetc(f) == EOF);   /* no trailing junk */
+      if (n == FE_SRAM_SIZE)
+      {
+         /* More after the image: keep it (see sram_tail). */
+         uint8_t *t = (uint8_t *)malloc(SRAM_TAIL_MAX + 1);
+         size_t tn = t ? fread(t, 1, SRAM_TAIL_MAX + 1, f) : 0;
+         if (!t || tn > SRAM_TAIL_MAX || ferror(f))
+         {
+            /* Too long to be a battery file we understand, or no memory:
+             * never rewrite it. */
+            free(t);
+            fclose(f);
+            fe_log("sram_load: %s is longer than a battery save; refusing",
+                   host.save_path);
+            goto failed;
+         }
+         if (tn)
+         {
+            sram_tail = t;
+            sram_tail_len = tn;
+         }
+         else
+            free(t);
+      }
+      exact = (n == FE_SRAM_SIZE);       /* the image itself is all there */
       read_ok = !ferror(f);
       if (fclose(f) != 0)
          read_ok = 0;
       if (!read_ok)
          goto failed;
-      fe_evt("sram_load size=%u crc=%08x", (unsigned)n, (unsigned)sram_crc());
+      fe_evt("sram_load size=%u crc=%08x", (unsigned)(n + sram_tail_len),
+             (unsigned)sram_crc());
+      if (sram_tail_len)
+         fe_evt("sram_load keeps %u bytes after the image",
+                (unsigned)sram_tail_len);
    }
    else
    {
@@ -2193,6 +2335,9 @@ static int sram_write_full_blocks(FILE *f, void *user)
       if (fwrite(sram_stage, 1, SRAM_BLOCK, f) != SRAM_BLOCK)
          return -1;
    }
+   if (sram_tail_len &&
+       fwrite(sram_tail, 1, sram_tail_len, f) != sram_tail_len)
+      return -1;
    return 0;
 }
 
@@ -2323,6 +2468,7 @@ static int sram_drain(uint32_t budget_us)
 
    if (!sram_pending())
    {
+      battery_written_note();
       /* `ms=` was ambiguous in the field: it is the TOTAL time spent
        * writing, which under ADR-0020's budget is spread across however
        * many frames it took.  `slices=` disambiguates it once and for all

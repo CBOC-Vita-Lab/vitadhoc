@@ -4375,6 +4375,133 @@ def t_save_import(S):
             "...but not when Game.gba owns Game.sav")
 
 
+def t_save_sync(S):
+    """A save from RetroArch keeps its size and trailer, goes back to
+    RetroArch's file while that is unchanged, is not written over a file
+    RetroArch changed, and the newer one is used at the next start (the other
+    kept in backups/); Settings > Library > Sync RetroArch saves."""
+    rom = "gbadhoc-test"
+    ra = "retroarch/savefiles/%s.srm" % rom
+    press = "100:a:10\n+200:quit\n"          # the test cartridge writes 64 bytes
+    def pat(n, seed):
+        return bytes((i * 7 + seed) & 0xFF for i in range(n))
+    def rd(r, rel):
+        return open(os.path.join(r.root, rel), "rb").read()
+    def ours(r):
+        return rd(r, "roms/%s.sav" % rom)
+    # 1. 131072 bytes (a flash game's size): taken in, played, written back full size
+    src = pat(131072, 3)
+    r = S.run("save_sync_full", press, autoboot=rom + ".gba", extra={ra: src})
+    S.clean(r)
+    S.check(r.has(r"^EVT save_import from=.*where=RetroArch"), "taken from RetroArch's folder")
+    S.check(r.has(r"^EVT save_sync_link "), "the source is remembered")
+    S.check(r.has(r"^EVT save_backup kept .*first time"), "one backup before the first write")
+    a, b = ours(r), rd(r, ra)
+    S.check(len(a) == 131072 and len(b) == 131072, "full size in both (%d, %d)" % (len(a), len(b)))
+    S.check(a[:64] != src[:64] and a == b, "the game's save went back to RetroArch's file")
+    S.check(a[64:] == src[64:], "the rest of the save is as it was")
+    S.check(len(os.listdir(os.path.join(r.root, "backups"))) == 1, "one backup copy in backups/")
+    S.check(not os.path.exists(os.path.join(r.root, "roms", rom + ".sav.bak")),
+            "nothing is left beside the game")
+    S.check(r.has(r"^EVT save_sync_out ok "), "the log says it was written back")
+    # 2. 131088 bytes (RTC trailer): kept in both files
+    tail = bytes(range(0xA0, 0xB0))
+    src = pat(131072, 9) + tail
+    r = S.run("save_sync_tail", press, autoboot=rom + ".gba", extra={ra: src})
+    S.clean(r)
+    a, b = ours(r), rd(r, ra)
+    S.check(len(a) == 131088 and a[-16:] == tail, "the save keeps its 16 trailer bytes")
+    S.check(b == a, "and RetroArch's file is the same 131088 bytes")
+    # 3. a 32768-byte source stays 32768 (the save itself is the core's 128 KiB)
+    src = pat(32768, 5)
+    r = S.run("save_sync_32k", press, autoboot=rom + ".gba", extra={ra: src})
+    S.clean(r)
+    b = rd(r, ra)
+    S.check(len(b) == 32768 and b[:64] == ours(r)[:64] and b[64:] == src[64:],
+            "a 32 KiB source stays 32 KiB with the new save in it")
+    # 4. RetroArch changed its file since: the newer one is used, ours kept in backups/
+    root = r.root
+    newer = pat(32768, 77)
+    p = os.path.join(root, ra)
+    open(p, "wb").write(newer)
+    t = time.time() + 600
+    os.utime(p, (t, t))
+    before = ours(r)
+    r = S.run("save_sync_32k", "60:quit\n", autoboot=rom + ".gba", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT save_sync_conflict .*take=source"), "the log says RetroArch's is taken")
+    S.check(ours(r)[:32768] == newer, "RetroArch's newer save is the game's save now")
+    kept = [open(os.path.join(root, "backups", f), "rb").read()
+            for f in os.listdir(os.path.join(root, "backups"))]
+    S.check(before in kept, "the save it replaced is kept in backups/")
+    # 5. changed, but older than ours: ours kept, RetroArch's copy backed up, then updated
+    old = pat(32768, 99)
+    open(p, "wb").write(old)
+    t = time.time() - 86400
+    os.utime(p, (t, t))
+    mine = ours(r)
+    r = S.run("save_sync_32k", "60:quit\n", autoboot=rom + ".gba", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT save_sync_conflict .*take=ours"), "ours is the newer one")
+    S.check(ours(r) == mine, "the game's save is untouched")
+    kept = [open(os.path.join(root, "backups", f), "rb").read()
+            for f in os.listdir(os.path.join(root, "backups"))]
+    S.check(old in kept, "RetroArch's older file is kept in backups/")
+    S.check(rd(r, ra) == mine[:32768], "and RetroArch's file now has the newer save")
+    # 6. Sync off: written nowhere near RetroArch
+    src = pat(32768, 13)
+    r = S.run("save_sync_off", press, autoboot=rom + ".gba", extra={ra: src},
+              vita_ini={"sync_ra_saves": 0})
+    S.clean(r)
+    S.check(rd(r, ra) == src, "with the setting off RetroArch's file is not touched")
+    S.check(not r.has(r"^EVT save_sync_out "), "...and nothing was written back")
+    S.check(ours(r)[64:32768] == src[64:], "the save was still imported")
+    # 7. the Settings row (Library, above Game folders): default on, toggles, persists
+    walk = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n"
+    r = S.run("save_sync_row", walk + "+4:right\n+20:circle\n+30:quit\n")
+    S.clean(r)
+    S.check(r.has(r"^EVT sync_ra_saves on=0 saved=1"), "the row turns it off and saves it")
+    S.check(re.search(r"^sync_ra_saves = 0$", open(os.path.join(r.root, "vita.ini")).read(), re.M),
+            "vita.ini holds it")
+    r = S.run("save_sync_row", walk + "+4:right\n+20:circle\n+30:quit\n", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT sync_ra_saves on=1 saved=1"), "and back on (it was off when read again)")
+
+
+def t_save_gb_keep(S):
+    """A Game Boy save with bytes after the cartridge RAM (another emulator's
+    trailer) keeps them when the game saves; a RetroArch .srm of the plain RAM
+    is written back at its own size.  (A tiny cartridge made here: MBC1+RAM+
+    battery, writes 0x55 to RAM at once.)"""
+    rom = bytearray(0x8000)
+    rom[0x100:0x103] = bytes([0xC3, 0x50, 0x01])
+    rom[0x150:0x15C] = bytes([0x3E, 0x0A, 0xEA, 0x00, 0x00, 0x3E, 0x55,
+                              0xEA, 0x00, 0xA0, 0x18, 0xFE])
+    rom[0x147], rom[0x148], rom[0x149] = 0x03, 0, 0x02
+    x = 0
+    for i in range(0x134, 0x14D):
+        x = (x - rom[i] - 1) & 0xFF
+    rom[0x14D] = x
+    rom = bytes(rom)
+    for name, extra in (("short", bytes(range(1, 8))), ("long", bytes(range(100)) * 3)):
+        r = S.run("save_gb_keep_" + name, "120:quit\n", autoboot="kept.gb",
+                  extra={"roms/kept.gb": rom,
+                         "roms/kept.gb.sav": b"\x11" * 8192 + extra})
+        S.clean(r)
+        d = open(os.path.join(r.root, "roms", "kept.gb.sav"), "rb").read()
+        S.check(d[0] == 0x55 and d[1:8192] == b"\x11" * 8191,
+                "%s: the game's save was written" % name)
+        S.check(d[8192:] == extra, "%s: and the %d bytes after the RAM are kept"
+                % (name, len(extra)))
+    r = S.run("save_gb_keep_srm", "120:quit\n", autoboot="kept.gb",
+              extra={"roms/kept.gb": rom,
+                     "retroarch/savefiles/Gambatte/kept.srm": b"\x22" * 8192})
+    S.clean(r)
+    d = open(os.path.join(r.root, "retroarch", "savefiles", "Gambatte", "kept.srm"), "rb").read()
+    S.check(len(d) == 8192 and d[0] == 0x55 and d[1:] == b"\x22" * 8191,
+            "a Game Boy .srm of the RAM is written back at 8192 bytes")
+
+
 def t_launch_param(S):
     """A launcher's param= starts its game directly, the path taken exactly
     as written (GitHub #3); a missing or wrong file is a notice and the list."""
@@ -4642,7 +4769,7 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),
          ("realtime", t_realtime),
-         ("save_import", t_save_import), ("launch_param", t_launch_param),
+         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_gb_keep", t_save_gb_keep), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("display_rows", t_display_rows)]
 
 

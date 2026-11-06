@@ -1,5 +1,22 @@
 # What's New
 
+## Version 1.3
+
+**Your saves are safe.**
+- **A save is never cut short.** A save from RetroArch or another emulator
+  that has extra bytes at the end (the clock data mGBA adds, a 131088-byte
+  Pokemon save for one) used to lose them the first time VitAdhoc saved. They
+  are now kept, for Game Boy saves too. ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
+- **One backup before anything is saved over a save from somewhere else.** The
+  first time VitAdhoc uses a save it did not write itself, a copy goes to
+  `ux0:data/GBAdhoc/backups/` (not beside your game).
+- **RetroArch saves stay in sync both ways.** A save taken from RetroArch is
+  now written back to RetroArch's file (same size, same layout) every time you
+  save, so RetroArch can carry on from it. If RetroArch changed its file in
+  the meantime, VitAdhoc never writes over it: at the next start the newer
+  save is used and the other one is kept in `backups/`. Turn it off in
+  Settings > Library > Sync RetroArch saves.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

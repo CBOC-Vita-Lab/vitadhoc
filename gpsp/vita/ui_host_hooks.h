@@ -125,6 +125,10 @@ int         ui_host_zip_console(const char *path, unsigned size);
  * shot_dir_set: 0 = taken, -1 = not a usable folder. */
 int         ui_host_grid_level(void);
 void        ui_host_grid_set(int level);
+/* Settings > Library: Sync RetroArch saves (default on; sync_ra_saves in
+ * vita.ini; save_sync.h). */
+int         ui_host_sync_ra_on(void);
+void        ui_host_sync_ra_set(int on);
 int         ui_host_overlay_on(void);
 void        ui_host_overlay_set(int on);
 const char *ui_host_overlay_name(void);

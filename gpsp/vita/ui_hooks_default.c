@@ -44,6 +44,8 @@ UI_WEAK int         ui_host_extra_root_toggle(const char *f) { (void)f; return -
 UI_WEAK int         ui_host_zip_console(const char *p, unsigned n) { (void)p; (void)n; return -1; }
 UI_WEAK int         ui_host_grid_level(void) { return 5; }
 UI_WEAK void        ui_host_grid_set(int l) { (void)l; }
+UI_WEAK int         ui_host_sync_ra_on(void) { return 0; }
+UI_WEAK void        ui_host_sync_ra_set(int on) { (void)on; }
 UI_WEAK int         ui_host_overlay_on(void) { return 0; }
 UI_WEAK void        ui_host_overlay_set(int on) { (void)on; }
 UI_WEAK const char *ui_host_overlay_name(void) { return ""; }

@@ -91,6 +91,7 @@
 #include "plat.h"
 #include "fe_sensor.h"
 #include "play_log.h"
+#include "save_sync.h"
 #include "rom_patch.h"
 #include "zip_rom.h"
 #include "audio_vita.h"
@@ -258,6 +259,9 @@ static struct
                                * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
            "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, "", "" };
+
+/* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
+static int g_sync_ra = 1;
 
 /* vita.ini core_phase: the core's per-phase split of a frame (main.h,
  * "Phase 5h").  Declared here, not through the core's main.h (the whole
@@ -1273,6 +1277,9 @@ static void read_switches(void)
       g_sw.art_url[0] = '\0';
    g_sw.art_titles      = (int)fe_ini_get_int(ini, "art_titles", 1) ? 1 : 0;
    g_sw.overlays = (int)fe_ini_get_int(ini, "overlays", 1) ? 1 : 0;
+   g_sync_ra = (int)fe_ini_get_int(ini, "sync_ra_saves", 1) ? 1 : 0;
+   save_sync_init(g_app_root);
+   save_sync_set_enabled(g_sync_ra);
    g_sw.grid = (int)fe_ini_get_int(ini, "grid_strength", 5);
    if (g_sw.grid < 1 || g_sw.grid > 10)
       g_sw.grid = 5;
@@ -3403,13 +3410,9 @@ static void save_import(const char *rom_path, const char *save_path,
          }
       }
    }
-   /* 3. RetroArch's save folder (the Vita's only; nothing on the twin) */
-#ifdef __vita__
+   /* 3. RetroArch's save folder (a folder in the data root on the twin) */
    for (i = 0; !from && i < (int)(sizeof(ra_dirs) / sizeof(ra_dirs[0])); i++)
-      TRY("RetroArch", "ux0:data/retroarch/savefiles%s/%s.srm", ra_dirs[i], stem)
-#else
-   (void)ra_dirs;
-#endif
+      TRY("RetroArch", "%s%s/%s.srm", save_sync_ra_dir(), ra_dirs[i], stem)
 #undef TRY
    if (!from)
       return;
@@ -3432,6 +3435,15 @@ static void save_import(const char *rom_path, const char *save_path,
    }
    snprintf(g_import_note, sizeof(g_import_note), "Save imported from %s",
             from);
+   /* A save from RetroArch (its folder, or Game.srm beside the game) stays
+    * in step with RetroArch's file from now on (save_sync.h). */
+   if (!from_import && has_ext(cand, ".srm"))
+   {
+      save_sync_link(save_path, cand);
+      if (save_sync_enabled())
+         snprintf(g_import_note, sizeof(g_import_note),
+                  "Save from RetroArch - kept in sync");
+   }
 }
 
 /* ---- display and screenshot settings kept in vita.ini (Settings rows) -----
@@ -3498,6 +3510,16 @@ void ui_host_grid_set(int level)
    snprintf(v, sizeof(v), "%d", g_sw.grid);
    fe_evt("grid_strength level=%d saved=%d", g_sw.grid,
           vita_ini_put("grid_strength", v) == 0);
+}
+
+int ui_host_sync_ra_on(void) { return g_sync_ra; }
+
+void ui_host_sync_ra_set(int on)
+{
+   g_sync_ra = on ? 1 : 0;
+   save_sync_set_enabled(g_sync_ra);
+   fe_evt("sync_ra_saves on=%d saved=%d", g_sync_ra,
+          vita_ini_put("sync_ra_saves", g_sync_ra ? "1" : "0") == 0);
 }
 
 int ui_host_overlay_on(void) { return g_sw.overlays; }
@@ -3802,6 +3824,12 @@ static int game_boot(const char *rom_path, fe_console_t console)
       return -1;
    }
    save_import(rom_path, g_game.save_path, console);
+   {
+      char sync_note[160];
+      save_sync_game_start(g_game.save_path, sync_note, sizeof(sync_note));
+      if (sync_note[0])
+         snprintf(g_import_note, sizeof(g_import_note), "%s", sync_note);
+   }
    ui_set_state_base(g_game.state_path);
    ui_loading_begin(rom_path);
    game_identity();

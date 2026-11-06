@@ -122,6 +122,9 @@ $(B)/core/%.o: $(GP)/%.S $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(CORE_ARCH_FLAGS) $(CORE_DEFS) $(INCFLAGS) -I$(GP) -c -o $@ $<
 
+# The .incbin is invisible to make: rebuild when the BIOS image changes.
+$(B)/core/bios_data.o: $(GP)/bios/open_gba_bios.bin
+
 $(CORE_A): $(CORE_OBJS)
 	@rm -f $@
 	$(AR) rcs $@ $(CORE_OBJS)

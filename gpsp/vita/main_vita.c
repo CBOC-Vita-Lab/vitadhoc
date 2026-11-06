@@ -68,6 +68,7 @@
 #include <strings.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #include "fe_host.h"
 #include "menu_load.h"
@@ -571,12 +572,27 @@ static fe_console_t console_for(const char *path)
    }
    if (has_ext(path, ".gbc")) return FE_CONSOLE_GBC;
    if (has_ext(path, ".gb"))  return FE_CONSOLE_GB;
+   if (has_ext(path, ".sfc") || has_ext(path, ".smc")) return FE_CONSOLE_SNES;
    return FE_CONSOLE_GBA;
+}
+
+/* ---- SNES (VitAdhoc 1.3): a separate program ------------------------------
+ *
+ * SNES games are not run by anything in this binary.  Snes9x's licence is
+ * non-commercial and not GPL-compatible, so it lives in its own executable
+ * (snes/, packed into the VPK as app0:snes.bin).  This is the whole of the
+ * coupling: start that program with the game's path.  It starts this one
+ * again when the player quits it.  Nothing of snes/ is linked in here. */
+static int snes_launch(const char *rom_path)
+{
+   fe_evt("snes_launch rom=%s", rom_path);
+   return plat_exec_program("snes.bin", rom_path);   /* returns only on failure */
 }
 
 static const char *console_name(fe_console_t c)
 {
-   return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB" : "GBA";
+   return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
+        : c == FE_CONSOLE_SNES ? "SNES" : "GBA";
 }
 
 static const char *base_name(const char *path)
@@ -1335,7 +1351,7 @@ static void read_switches(void)
  * same depth, the same file types; psp/ui_psp.c rom_scan).  Where they come
  * from:
  *
- *   vita.ini  extra_roms = ux0:ROMS/GBA ; ux0:Games/GB     up to eight, ';'
+ *   vita.ini  extra_roms = ux0:ROMS/GBA ; ux0:Games/GB     up to twelve, ';'
  *             between, blanks around each dropped.  When the key is there it
  *             is the whole list; `extra_roms = 0` (or nothing after the '=')
  *             means no extra folder at all.
@@ -1353,7 +1369,10 @@ static const char *const k_builtin_roots[] = {
    "ux0:roms/GBA", "ux0:roms/GB", "ux0:roms/GBC",
    "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance",
    "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy",
-   "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color"
+   "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color",
+   /* SNES games (started by snes.bin, the separate program in snes/) */
+   "ux0:ROMS/SNES", "ux0:roms/SNES",
+   "ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -1497,6 +1516,30 @@ static void extra_root_add(const char *spec, int log_skips)
    snprintf(g_extra_roots[g_extra_n++], sizeof(g_extra_roots[0]), "%s", norm);
 }
 
+/* Every folder directly under ux0:ROMS and ux0:roms is a game folder (a card
+ * may hold "SNES ROM Collection", "Super Nintendo", ...); the extension picks
+ * the console.  Dot-prefixed names (.Trashes, __MACOSX is skipped by the
+ * scan itself) are not folders to read. */
+static void extra_roots_add_subfolders(const char *parent)
+{
+   DIR *d = opendir(parent);
+   struct dirent *ent;
+   if (!d)
+      return;
+   while ((ent = readdir(d)) != NULL)
+   {
+      char sub[APP_PATH_CAP];
+      struct stat st;
+      if (ent->d_name[0] == '.' || !strcmp(ent->d_name, "__MACOSX"))
+         continue;
+      if (snprintf(sub, sizeof(sub), "%s/%s", parent, ent->d_name) >= (int)sizeof(sub))
+         continue;
+      if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode))
+         extra_root_add(sub, 0);
+   }
+   closedir(d);
+}
+
 static void rom_roots_init(void)
 {
    char ini[APP_PATH_CAP], list[APP_PATH_CAP], all[UI_EXTRA_ROOTS_MAX *
@@ -1539,13 +1582,18 @@ static void rom_roots_init(void)
    else
       for (i = 0; i < sizeof(k_builtin_roots) / sizeof(k_builtin_roots[0]); i++)
          extra_root_add(k_builtin_roots[i], 0);
+   if (!strcmp(source, "builtin"))
+   {
+      extra_roots_add_subfolders("ux0:ROMS");
+      extra_roots_add_subfolders("ux0:roms");
+   }
    /* One folder per console, the way other emulators ask for it: added to
     * whichever list the lines above made (any folder holds any console's
     * games; the extension decides) -- unless vita.ini's extra_roms says what
     * the list is (Settings > Game folders writes it, with these in it). */
    if (strcmp(source, "ini") && strcmp(source, "off"))
    {
-      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms" };
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms" };
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
          if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
              fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
@@ -1595,11 +1643,11 @@ static int rom_from_launch(char *out, size_t cap)
       return 1;
    }
    if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
-       !has_ext(out, ".zip"))
+       !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".zip"))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.150s is not a .gba, .gb, .gbc or .zip file.", base_name(out));
+               "%.120s is not a .gba, .gb, .gbc, .sfc, .smc or .zip file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
@@ -3495,7 +3543,8 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
 {
    char op[APP_PATH_CAP], stem[APP_PATH_CAP];
    const char *tag = console == FE_CONSOLE_GBC ? "gbc" :
-                     console == FE_CONSOLE_GB ? "gb" : "gba";
+                     console == FE_CONSOLE_GB ? "gb" :
+                     console == FE_CONSOLE_SNES ? "snes" : "gba";
    char *dot;
 
    if (rom_path != g_overlay_rom)
@@ -3606,9 +3655,9 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[3] = { "gba", "gb", "gbc" };
+      static const char *const tag[4] = { "gba", "gb", "gbc", "snes" };
       char op[APP_PATH_CAP];
-      int c = g_pcfg.console >= 0 && g_pcfg.console < 3 ? g_pcfg.console : 0;
+      int c = g_pcfg.console >= 0 && g_pcfg.console < 4 ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
           file_size(op, NULL) == 0)
          snprintf(g_overlay_name, sizeof(g_overlay_name), "%s.png", tag[c]);
@@ -3695,7 +3744,7 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       return -1;
    }
    ext = console == FE_CONSOLE_GBC ? ".gbc" : console == FE_CONSOLE_GB ? ".gb"
-                                                                  : ".gba";
+       : console == FE_CONSOLE_SNES ? ".smc" : ".gba";
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
    stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
    if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
@@ -5180,6 +5229,35 @@ int main(int argc, char **argv)
       {
          app_notice("Storage is still busy", "Please try again in a moment.",
                     NULL, 2000);
+         continue;
+      }
+      if (console == FE_CONSOLE_SNES)
+      {
+         /* snes.bin takes over; it only comes back here on failure */
+         char snes_arg[APP_PATH_CAP * 2 + 2];
+         int src;
+         snprintf(snes_arg, sizeof(snes_arg), "%s", rom_path);
+         if (has_ext(rom_path, ".zip"))
+         {
+            /* a zipped game: snes.bin gets the unpacked file and, after a '|'
+             * (never in a file name on the card), where its save lives: beside
+             * the zip, because unzipped/ is emptied for the next game */
+            char un[APP_PATH_CAP];
+            long usz = 0;
+            size_t zl = strlen(rom_path);
+            if (zip_unpack(rom_path, FE_CONSOLE_SNES, un, sizeof(un), &usz) != 0)
+            {
+               app_notice("This game could not be started", base_name(rom_path),
+                          "The zip file could not be opened.", 6000);
+               continue;
+            }
+            snprintf(snes_arg, sizeof(snes_arg), "%s|%.*s.srm", un,
+                     (int)(zl - 4), rom_path);
+         }
+         src = snes_launch(snes_arg);
+         fe_evt("snes_launch failed rc=%08x", (unsigned)src);
+         app_notice("This game could not be started", base_name(rom_path),
+                    "The SNES program (snes.bin) did not start.", 6000);
          continue;
       }
       artfetch_pause(1);         /* the game has the card and the network */

@@ -40,6 +40,13 @@ const char *plat_app_dir(void);
  * (GitHub issue #3).  0 = there is one, copied into out; -2 = there is one
  * too long for out; -1 = none. */
 int  plat_launch_param(char *out, size_t cap);
+/* Start a separate program of this package ("snes.bin": snes/, the SNES
+ * emulator, a different executable because Snes9x's licence is not
+ * GPL-compatible) with one argument, a game's path.  The process is
+ * replaced; the program starts this one again when it ends.  Returns only
+ * when it could not be started (the error code); the twin never starts one
+ * and returns -1. */
+int  plat_exec_program(const char *program, const char *arg);
 /* Nonzero when the platform wants the main loop to end (the host driver's
  * frame budget or script; never on a Vita, where the player quits). */
 int  plat_quit_requested(void);

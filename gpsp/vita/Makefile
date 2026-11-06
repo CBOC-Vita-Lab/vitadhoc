@@ -144,6 +144,20 @@ VPK_EXTRA += $(BIOS)=gba_bios.bin
 endif
 DIST_NOTICES := $(wildcard ../../licenses/*) $(wildcard ../../notices/*)
 VPK_EXTRA += $(foreach f,$(DIST_NOTICES),$(f)=$(patsubst ../../%,%,$(f)))
+# ---- SNES (VitAdhoc 1.3) ---------------------------------------------------
+# snes.bin is a SEPARATE PROGRAM (../../snes: Snes9x core, own MIT frontend)
+# launched by VitAdhoc through plat_exec_program.  It is built by its own
+# Makefile and only packed here; nothing of it is linked into eboot.bin
+# (Snes9x's non-commercial licence is not GPL-compatible).  Its licence and
+# provenance travel in the VPK.
+SNES_BIN := ../../snes/vita/build/snes.bin
+VPK_EXTRA += $(SNES_BIN)=snes.bin \
+             ../../snes/core/LICENSE=licenses/Snes9x-LICENSE.txt \
+             ../../snes/core/PROVENANCE.md=licenses/Snes9x-PROVENANCE.md \
+             ../../snes/README.md=notices/SNES-README.md
+$(SNES_BIN): FORCE
+	$(MAKE) -C ../../snes/vita -j1
+FORCE:
 VPK_FILES := -a sce_sys/icon0.png=sce_sys/icon0.png \
              -a sce_sys/livearea/contents/bg.png=sce_sys/livearea/contents/bg.png \
              -a sce_sys/livearea/contents/startup.png=sce_sys/livearea/contents/startup.png \
@@ -255,4 +269,4 @@ clean:
 	rm -rf $(B) $(VPK)
 
 -include $(APP_OBJS:.o=.d)
-.PHONY: all vpk assets report clean
+.PHONY: all vpk assets report clean FORCE

@@ -5559,7 +5559,48 @@ def t_controls_defaults(S):
             "Screenshot button combo off again, kept as NONE")
 
 
-TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
+def t_snes_library(S):
+    """SNES games on the card, no setup: every folder under ux0:ROMS (and
+    ux0:roms) is a game folder, so "ux0:ROMS/SNES ROM Collection/*.smc" is on
+    the SNES shelf; ._ and dot files are left out; picking one starts the SNES
+    program (the twin only logs the launch) and never writes anything."""
+    cwd = os.path.join(S.outdir, "snes_library_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    folder = os.path.join(cwd, "ux0:ROMS", "SNES ROM Collection")
+    os.makedirs(folder)
+    os.makedirs(os.path.join(cwd, "ux0:roms", "Other Name", "Deeper"))
+    junk = b"\x00\x05\x16\x07" + bytes(4092)
+    tiny = bytes(0x8000)
+    for rel, data in (("SNES ROM Collection/Game One (USA).smc", tiny),
+                      ("SNES ROM Collection/Game Two (Europe).sfc", tiny),
+                      ("SNES ROM Collection/._Game One (USA).smc", junk),
+                      ("SNES ROM Collection/.Hidden Game.smc", tiny),
+                      ("SNES ROM Collection/Game One (USA).srm", b"keep me"),
+                      ("SNES ROM Collection/Game One (USA).zst", b"state")):
+        with open(os.path.join(cwd, "ux0:ROMS", rel), "wb") as f:
+            f.write(data)
+    with open(os.path.join(cwd, "ux0:roms", "Other Name", "Deeper",
+                           "Game Three.smc"), "wb") as f:
+        f.write(tiny)
+    before = {n: open(os.path.join(folder, n), "rb").read()
+              for n in os.listdir(folder)}
+    r = S.run("snes_library", "90:triangle\n+30:triangle\n+30:triangle\n"
+              "+60:shot=snes.png\n+2:cross\n+60:quit\n", cwd=cwd)
+    S.clean(r, allow="could not be started")  # the twin cannot start snes.bin
+    sw = r.evt("ui_browser_console")
+    S.check(sw and sw[-1]["console"] == "3" and int(sw[-1]["roms"]) == 3,
+            "the SNES shelf holds the three games and no ._ or dot file (%s)" %
+            (sw[-1]["_"] if sw else "no ui_browser_console line"))
+    ln = r.evt("snes_launch")
+    S.check(ln and "Game" in ln[0]["_"],
+            "picking one starts the SNES program (%s)" %
+            (ln[0]["_"] if ln else "no snes_launch line"))
+    after = {n: open(os.path.join(folder, n), "rb").read()
+             for n in os.listdir(folder)}
+    S.check(before == after, "the card's files (save, state) are untouched")
+
+
+TESTS = [("list", t_list), ("snes_library", t_snes_library), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
          ("quality_preset", t_quality_preset), ("art_requeue", t_art_requeue),

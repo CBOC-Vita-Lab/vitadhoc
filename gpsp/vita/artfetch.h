@@ -7,7 +7,7 @@
  *    http://thumbnails.libretro.com/<console>/Named_Boxarts/<name>.png
  *
  * where <console> is "Nintendo - Game Boy Advance" (or "- Game Boy",
- * "- Game Boy Color") and <name> the cartridge's No-Intro name with
+ * "- Game Boy Color", "- Super Nintendo Entertainment System") and <name> the cartridge's No-Intro name with
  * &*\/:`<>?\|" written as _.  The name is the file's own when the file is
  * named the No-Intro way; else the one gamedb.h knows for the GBA header's
  * game code, else for the file's CRC32.  The picture is written to

@@ -256,7 +256,7 @@ static const ui_theme *g_thm = &THM_DARK;
  * Atomic Purple sits too close to the GBA indigo to read as a change.
  *
  * Each has a light-theme accent: the dark ones vanish on the off-white page.
- * Indexed by fe_console_t: GBA, GB, GBC. */
+ * Indexed by fe_console_t: GBA, GB, GBC, SNES. */
 #define RGB565(r, g, b) \
    ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
@@ -281,6 +281,9 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
      { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
        RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
        RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+   { "SNES", "Super Nintendo",  "sfc", RGB565(0xFF, 0x7A, 0x5C),
+     { RGB565(0x6E, 0x1E, 0x2A), RGB565(0xC0, 0x39, 0x2B),
+       RGB565(0xFF, 0x7A, 0x5C), 0, 0 }, 3, 1 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -296,6 +299,9 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
      { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
        RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
        RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+   { "SNES", "Super Nintendo",  "sfc", RGB565(0xA3, 0x1D, 0x12),
+     { RGB565(0x6E, 0x1E, 0x2A), RGB565(0xC0, 0x39, 0x2B),
+       RGB565(0xFF, 0x7A, 0x5C), 0, 0 }, 3, 1 },
 };
 
 static const ui_skin *skin_of(int console)
@@ -7391,7 +7397,7 @@ static int       g_scan_extra;
  * rom_cache (rom_side_add), so the first TRIANGLE to Game Boy is a cache hit
  * instead of walking the same folders again (on a card with 925 games in
  * ux0:ROMS/GBA that was 0.35 to 1.6 s with the screen frozen). */
-static struct { int on, n, found; unsigned used, path_errors; } g_side[3];
+static struct { int on, n, found; unsigned used, path_errors; } g_side[FE_CONSOLE_COUNT];
 static unsigned  g_rom_rev_seq;      /* issues g_rom_view_revision values */
 /* The key a game has in linkmode.txt: its name under roms/, or for a game
  * of an extra folder its file name (main_vita.c game_identity() does the
@@ -8337,6 +8343,9 @@ static int rom_has_sav(int idx)
                                 g_roms[idx].name) != 0 ? -1
          : g_pcfg.console == FE_CONSOLE_GBA
          ? snprintf(sav, sizeof(sav), "%.*s.sav",
+                    (int)ui_rom_stem_length(rom), rom)
+         : g_pcfg.console == FE_CONSOLE_SNES      /* snes.bin: Game.srm */
+         ? snprintf(sav, sizeof(sav), "%.*s.srm",
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
 #else

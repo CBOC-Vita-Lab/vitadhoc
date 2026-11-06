@@ -290,13 +290,20 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
 {
    const char *ext;
    size_t len, i;
-   static const char *const suffix[] = { ".gba", ".gb", ".gbc" };
-   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
+   static const char *const suffix[] = { ".gba", ".gb", ".gbc", ".sfc", ".smc" };
+   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
       return 0;
    len = strlen(name);
    ext = suffix[console];
    if (len < strlen(ext))
       return 0;
+   if (console == FE_CONSOLE_SNES)
+   {
+      /* two spellings of one cartridge type: .sfc and .smc */
+      const char *e2 = len >= 4 ? name + len - 4 : "";
+      return (e2[0] == '.' && (e2[1] | 32) == 's' && (e2[3] | 32) == 'c' &&
+              ((e2[2] | 32) == 'f' || (e2[2] | 32) == 'm'));
+   }
    name += len - strlen(ext);
    for (i = 0; ext[i]; i++)
    {

@@ -91,6 +91,17 @@ int plat_init(int argc, char **argv)
    return 0;
 }
 
+int plat_exec_program(const char *program, const char *arg)
+{
+   char path[64], *argv[3];
+   if (!program || !arg || snprintf(path, sizeof(path), "app0:%s", program) >= (int)sizeof(path))
+      return -1;
+   argv[0] = (char *)program;
+   argv[1] = (char *)arg;
+   argv[2] = NULL;
+   return sceAppMgrLoadExec(path, argv, NULL);
+}
+
 void plat_exit(int code)
 {
    sceKernelExitProcess(code);

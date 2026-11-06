@@ -250,7 +250,7 @@ One line per second:
 t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | gov=0 drawn=60 skipped=0 new_pic=60 fence_skip=0
 ```
 
-Since the speed pass the line also has `main split ms/fr: emu= copy= gpu_submit=` (the main figure divided into the core call, the picture copy and GPU submission) and `rt_reuse=` (how many times a render target was reused without being redrawn this second). `fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
+Since the speed pass the line also has `main split ms/fr: emu= copy= gpu_submit=` (the main figure divided into the core call, the picture copy and GPU submission) and `rt_reuse=` (a running total since the program started of how often a render target was reused without being redrawn). `fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
 `aq` the audio queue in frames. `busy ms/fr` is the time each thread spent working per emulated frame
 (Vita thread CPU clocks are not available, so each thread measures around its own work; the main figure is the
 whole loop without the display wait). A frame fits when main stays under about 15.5 and the workers under 16.7.
@@ -559,3 +559,5 @@ What changed:
 Checks: `mt_compare.py` shows identical frame hashes and audio against the pre-pass build for all 289 test ROMs
 at 300 frames and for the 15 owner ROMs at 1800 frames, single-threaded and with both workers on; `selftest.sh`
 passes. Not tested: anything on a real Vita (speed, the batched draws, the render-target reuse, the blend rows).
+
+Note: the speed pass skips the ROM SHA-256 at load (`memmap.cpp`); `Memory.ROMSHA256` is all zeros. Only Snes9x cheat-database lookups (`cheats2.cpp`) read it, and snes.bin does not use them; compute it on demand if cheats are added.

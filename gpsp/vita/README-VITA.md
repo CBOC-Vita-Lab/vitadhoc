@@ -87,8 +87,9 @@ twice).
   time.) A card with none of them is read exactly as before.
 - **Hidden files are ignored**, in every folder: any file whose name starts with `.`. A card
   written by a Mac holds a 4 KB `._Game.gba` beside every `Game.gba`; those are not games.
-- **Saves and states go next to the game**, in its own folder (`Game.sav`, `Game.st0` ...), as
-  they do in `roms/`. Nothing is copied, and nothing is written to `roms/` for such a game. Box
+- **The battery save goes next to the game**, in its own folder (`Game.sav`), as it does in
+  `roms/`; states and the Continue point go under `states/` (`Game~<6 characters>.st0` ...).
+  Nothing is copied, and nothing is written to `roms/` for such a game. Box
   art, cheats and the home screen's picture follow the game's file name, as they do for a game
   in a sub-folder of `roms/`; so do Link mode (Settings) and the partner chosen for two players
   on one console (two games with one name share them). A star (favourites) follows the whole
@@ -297,7 +298,7 @@ Bluetooth between two Vitas is not possible (the system's Bluetooth only serves 
 headsets and keyboards); ad hoc is the no-router option.
 
 ## Continue, Recent and play time
-- **Continue.** Leaving a game keeps the moment you left it (`<rom>.rsm`, beside the save), and
+- **Continue.** Leaving a game keeps the moment you left it (`states/<console>/<rom>.rsm`), and
   the point is renewed every two minutes of play and just after the game saves itself, so a
   Vita closed from LiveArea still continues. On the Home page **X Continue** puts the game back
   there; **Up** (or the Start over button) plays from the battery save instead. A patch put
@@ -360,10 +361,11 @@ signs out.
   library; if that fails on your firmware, the log (`log/gbadhoc.log`, lines `ra_http`) says why.
 
 ## Save data
-Battery saves and save states live beside the ROM, with the PSP version's names
-(`<rom>.sav`, `.st0`–`.st4`), and the Continue point (`<rom>.rsm`). Five state slots, with previews, in the menu and on the game list.
+Battery saves live beside the ROM, with the PSP version's names (`<rom>.sav`). Save states
+and the Continue point live in `states/<console>/` (`<rom>.st0`–`.st9`, `<rom>.rsm`). Ten state slots, with previews, in the menu and on the game list.
 For a game kept in another folder (see "Games in other folders") that is its own folder, not
-`roms/`: back up, or move, the game and its save files together.
+`roms/`: back up the game with its `.sav`; its states are in `states/`, named with a short code
+for that folder.
 
 ## If something goes wrong
 Send back `ux0:data/GBAdhoc/log/` (the newest file). Useful switches, in

@@ -17,6 +17,24 @@
   save is used and the other one is kept in `backups/`. Turn it off in
   Settings > Library > Sync RetroArch saves.
 
+**Your game folders stay clean.**
+- **Only the game and its battery save stay in your game folders.** Save
+  states, their pictures, the Continue point and the play-time note now live
+  under `ux0:data/GBAdhoc/states/` (in `gba`, `gb` and `gbc` folders), the way
+  RetroArch keeps its files. Launchers such as RetroFlow no longer have to
+  sort through `.rsm`, `.pt`, `.st0` and similar files.
+  ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
+- **Cover thumbnail files moved out of `boxart/`.** The small `.t2.565` files
+  and other picture copies VitAdhoc makes for speed are now kept in
+  `ux0:data/GBAdhoc/cache/`. `boxart/` and the screenshot folder hold only
+  your own pictures.
+- **Your old states come along.** The first time a game is opened or shown,
+  its old save states, pictures and Continue point are moved from beside the
+  game to the new place. Nothing is overwritten, and if a file can't be
+  moved it is still read from where it is.
+- A game in another folder keeps its own states, even when two games share a
+  name.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

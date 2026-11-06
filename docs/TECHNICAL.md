@@ -193,9 +193,29 @@ Engineering detail behind the [What's New](../CHANGELOG.md) list.
   rewind context, so rewound frames replay it. The sensor state rides in save
   states as an optional key; other games' states are unchanged. In a link the
   partner machine sees a still console in the dark.
+- **Sidecar files** (`psp/sidecar.h`, 1.3): a ROM's folder holds the ROM and
+  its battery save only. States (`.stN`, `.thumb`, `.shot`, link `.p2`),
+  Continue (`.rsm`, `.rsm.pt`) go to `<root>/states/<gba|gb|gbc>/<stem><suffix>`,
+  where the suffix is the old one (`.st0`, `.gb.st0`). A game outside
+  `<root>/roms` (its directory string differs; a subfolder of roms counts) gets
+  `~<6 hex>`, an FNV-1a of the directory path, after the stem; always hashing
+  would have made the common case unreadable and orphaned nothing extra, so
+  only the ambiguous case pays. Moving such a ROM changes the hash. Tile
+  thumbnails (`ART_THUMB_DIR`) and the app-made `.v565`/`.vh565` copies live in
+  `<root>/cache/...`. `g_game.state_path` is the new slot-1 path and every
+  derived path follows it (`psp_state_path_for_slot`, `psp_state_resume_path`,
+  delete paths); `ui_psp.c` `browser_rom_state_path` and `menu_files.c` use the
+  same function. Migration (`sidecar_migrate`): per file, only when the old
+  exists and the new does not: `rename`, else copy to `.mv`, read both back,
+  rename, remove the old (never overwrites; a failure leaves the old file,
+  which `sidecar_read_path` serves for loads). It runs at game boot (logs
+  `sidecar_migrate`), in the shelf's per-game state scan, and in the menu-load
+  worker's metadata job (silent: the log has one producer). Battery saves and
+  `save_import` are untouched. Patches (`Game.ips`) are the player's input and
+  stay beside the ROM.
 - **Continue** (`vita/main_vita.c` resume_*): a state taken in memory on the
   frame thread when a game is left, every two minutes of play and 30 frames
-  after an in-game save, written by the I/O worker as `Game.rsm` (temp, old
+  after an in-game save, written by the I/O worker as `states/<console>/Game.rsm` (temp, old
   aside, new in). `Game.rsm.pt` records the patch the point was made with, and
   a different patch refuses it.
 - **Play log** (`vita/play_log.c`): `playlog.txt`, static tables, atomic

@@ -79,12 +79,15 @@ int  artfetch_take(char *name, size_t cap);
  * the next call returns 0 unless another overflow occurs. UI thread only. */
 int  artfetch_resync(void);
 
-/* Each cover also gets boxart/<stem>.t2.565: the picture fitted into this box
+/* Each cover also gets cache/boxart/<stem>.t2.565 (VitAdhoc 1.2 and before:
+ * boxart/<stem>.t2.565, moved here when found): the picture fitted into this box
  * (never enlarged) as RGB565, which is all a home-screen tile reads. */
 #define ART_THUMB_W 160
 #define ART_THUMB_H 200
 /* v1 .t565 files reversed red and blue; regenerate without touching originals. */
 #define ART_THUMB_SUFFIX ".t2.565"
+/* ...in this folder below the app folder (psp/sidecar.h SIDECAR_THUMB_DIR) */
+#define ART_THUMB_DIR "cache/boxart"
 
 /* A line for the log, when the thread has one (the UI thread writes it with
  * fe_evt; the thread itself never logs). */

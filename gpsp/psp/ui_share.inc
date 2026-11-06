@@ -101,9 +101,22 @@ static int share_path(char *out, size_t cap, const char *rom_dir,
       n = snprintf(out, cap, "%s.sav", rom);
       return (n > 0 && (size_t)n < cap) ? 0 : -1;
    }
+#ifdef VITA
+   {
+      /* states and their pictures live under the app folder, not beside
+       * the ROM (psp/sidecar.h); a guest's files are written there too */
+      extern char g_dir_base[];
+      sidecar_make_dirs(g_dir_base);
+      if (sidecar_state1(st, sizeof(st), g_dir_base, rom,
+                         (fe_console_t)con) != 0)
+         return -1;
+   }
+#else
    if (psp_rom_path_suffix(st, sizeof(st), rom,
-                           psp_state_slot1_suffix((fe_console_t)con)) != 0 ||
-       psp_state_path_for_slot(st, sizeof(st), st, (unsigned)slot) != 0)
+                           psp_state_slot1_suffix((fe_console_t)con)) != 0)
+      return -1;
+#endif
+   if (psp_state_path_for_slot(st, sizeof(st), st, (unsigned)slot) != 0)
       return -1;
    n = snprintf(out, cap, "%s%s", st,
                 kind == FE_SHARE_OBJ_THUMB ? ".thumb" :
@@ -481,6 +494,29 @@ static void shh_walk(share_host_t *h, short *map, const char *rel, int depth,
                if (fe_share_key_matches_rom(key, (size_t)n, con,
                                             g_roms[i].name))
                   break;
+#ifdef VITA
+            if (i < n_roms && kind != FE_SHARE_OBJ_SAVE)
+            {
+               /* a state an older version left beside the ROM: move it
+                * under states/ (shh_states lists it from there) */
+               extern char g_dir_base[];
+               char rp[PSP_FILE_PATH_CAP], now[PSP_FILE_PATH_CAP],
+                    was[PSP_FILE_PATH_CAP];
+               sidecar_mig mig;
+               if (psp_rom_path_join(rp, sizeof(rp), h->rom_dir,
+                                     g_roms[i].name) == 0 &&
+                   sidecar_state1(now, sizeof(now), g_dir_base, rp,
+                                  (fe_console_t)con) == 0 &&
+                   sidecar_legacy_state1(was, sizeof(was), rp,
+                                         (fe_console_t)con) == 0)
+               {
+                  sidecar_make_dirs(g_dir_base);
+                  sidecar_migrate(was, now, &mig);
+               }
+               memset(&ent, 0, sizeof(ent));
+               continue;
+            }
+#endif
             if (i < n_roms && (e = shh_entry(h, map, i, con)) >= 0)
             {
                fe_share_entry *x = &h->e[e];
@@ -506,6 +542,99 @@ static void shh_walk(share_host_t *h, short *map, const char *rel, int depth,
    }
    sceIoDclose(d);
 }
+
+#ifdef VITA
+static uint32_t shh_fnv(const char *s, size_t n)
+{
+   uint32_t h = 2166136261u;
+   size_t i;
+   for (i = 0; i < n; i++)
+      h = (h ^ (unsigned char)s[i]) * 16777619u;
+   return h;
+}
+
+/* The name a ROM's state files carry, without the slot: "Game~1a2b3c" or
+ * "Game~1a2b3c.gb" (what fe_share_classify calls the key). */
+static int shh_state_key(const char *rom_dir, int rom, int con, char *out,
+                         size_t cap)
+{
+   extern char g_dir_base[];
+   char rp[PSP_FILE_PATH_CAP], st[PSP_FILE_PATH_CAP];
+   const char *b;
+   size_t n;
+   if (psp_rom_path_join(rp, sizeof(rp), rom_dir, g_roms[rom].name) != 0 ||
+       sidecar_state1(st, sizeof(st), g_dir_base, rp, (fe_console_t)con) != 0)
+      return -1;
+   b = strrchr(st, '/');
+   b = b ? b + 1 : st;
+   n = strlen(b);
+   if (n < 5 || n - 4 >= cap)
+      return -1;
+   memcpy(out, b, n - 4);                 /* without ".st0" */
+   out[n - 4] = '\0';
+   return 0;
+}
+
+/* The states and their pictures, from states/<console>/: one directory
+ * listing, each file matched to its ROM by the name sidecar_state1 gives it. */
+static void shh_states(share_host_t *h, short *map, int con, int n_roms)
+{
+   extern char g_dir_base[];
+   char dir[PSP_FILE_PATH_CAP], key[PSP_FILE_PATH_CAP];
+   uint32_t *hk;
+   SceUID d;
+   SceIoDirent ent;
+   int i;
+   if (snprintf(dir, sizeof(dir), "%s/states/%s", g_dir_base,
+                sidecar_console_dir((fe_console_t)con)) >= (int)sizeof(dir))
+      return;
+   d = sceIoDopen(dir);
+   if (d < 0)
+      return;
+   hk = (uint32_t *)malloc((size_t)n_roms * sizeof(uint32_t));
+   if (!hk)
+   {
+      sceIoDclose(d);
+      return;
+   }
+   for (i = 0; i < n_roms; i++)
+      hk[i] = shh_state_key(h->rom_dir, i, con, key, sizeof(key)) == 0
+                 ? shh_fnv(key, strlen(key)) : 0;
+   memset(&ent, 0, sizeof(ent));
+   while (sceIoDread(d, &ent) > 0)
+   {
+      int fcon, kind, slot, e;
+      size_t klen;
+      if (!(ent.d_stat.st_mode & 0x1000) && !(ent.d_stat.st_attr & 0x0010) &&
+          fe_share_classify(ent.d_name, &fcon, &kind, &slot, &klen) &&
+          fcon == con && kind != FE_SHARE_OBJ_SAVE && ent.d_stat.st_size > 0 &&
+          ent.d_stat.st_size <= (SceOff)FE_SHARE_MAX_OBJECT)
+      {
+         uint32_t want = shh_fnv(ent.d_name, klen);
+         for (i = 0; i < n_roms; i++)
+            if (hk[i] == want &&
+                shh_state_key(h->rom_dir, i, con, key, sizeof(key)) == 0 &&
+                strlen(key) == klen && !memcmp(key, ent.d_name, klen))
+               break;
+         if (i < n_roms && (e = shh_entry(h, map, i, con)) >= 0)
+         {
+            fe_share_entry *x = &h->e[e];
+            if (kind == FE_SHARE_OBJ_STATE)
+            {
+               x->st[slot - 1].size = (uint32_t)ent.d_stat.st_size;
+               x->st[slot - 1].time = sh_stat_time(&ent.d_stat);
+            }
+            else
+               x->st[slot - 1].flags |= kind == FE_SHARE_OBJ_THUMB
+                  ? FE_SHARE_ST_THUMB : FE_SHARE_ST_SHOT;
+         }
+      }
+      memset(&ent, 0, sizeof(ent));
+   }
+   sceIoDclose(d);
+   free(hk);
+}
+#endif
 
 /* Everything this PSP can offer, all three consoles.  Leaves g_roms
  * holding the last console scanned: the caller flags a browser rescan. */
@@ -535,6 +664,9 @@ static int shh_scan(share_host_t *h)
             shh_walk(h, map, ui_host_extra_root(x), ROM_SCAN_DEPTH, con,
                      n_roms);
       }
+#endif
+#ifdef VITA
+      shh_states(h, map, con, n_roms);
 #endif
       /* Keep the entries that hold something and whose ROM can be
        * identified; a preview without its state is nothing. */

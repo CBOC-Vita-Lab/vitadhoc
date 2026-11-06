@@ -111,6 +111,7 @@ typedef struct app_game
    char rom_path[APP_PATH_CAP];
    char save_path[APP_PATH_CAP];
    char state_path[APP_PATH_CAP];     /* slot 1; psp/state_slots.h has the rest */
+   char legacy_state_path[APP_PATH_CAP]; /* slot 1 beside the ROM (<= 1.2): read from there only if a file could not be moved (psp/sidecar.h) */
    char boot_path[APP_PATH_CAP];      /* what the cores load: rom_path, or its
                                        * patched copy (rom_patch.h)          */
    int  patched;

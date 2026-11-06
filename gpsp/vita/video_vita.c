@@ -1606,26 +1606,30 @@ static int gx_draw(vb_tex *t, unsigned w, unsigned h, const vid_geo *g)
  * compiler must be there, and the guard turns the look back into the CPU's
  * grid / scanlines for the session if the GPU needs over GX_SLOW_US a frame.
  * vita.ini gpu_fx = 0 keeps them on the CPU's stand-ins. */
+static int g_fx_kind[2];       /* LCD, CRT: 0 untried, 1 ok, -1 not        */
 static int fx_ready(void)
 {
-   if (!g_fx_on || !fx_filter(g_filter) || g_quality != 0)
+   const int k = g_filter <= VID_FILTER_LCD_WORN ? 0 : 1;
+   if (!g_fx_on || !fx_filter(g_filter) || g_quality != 0 || g_fx_state < 0)
       return 0;
-   if (!g_fx_state)
+   if (!g_fx_kind[k])
    {
       const unsigned t0 = pspcompat_time_us();
-      vb_prog *a = vb_prog_get(VB_PROG_FX_LCD);
-      vb_prog *b = a ? vb_prog_get(VB_PROG_FX_CRT) : NULL;
-      g_fx_state = a && b ? 1 : -1;
-      fe_evt("gpu_fx on=%d lcd=%s crt=%s us=%u", g_fx_state > 0,
-             vb_prog_status(VB_PROG_FX_LCD), vb_prog_status(VB_PROG_FX_CRT),
-             pspcompat_time_us() - t0);
+      const int which = k ? VB_PROG_FX_CRT : VB_PROG_FX_LCD;
+      vb_prog *a = vb_prog_get(which);
+      g_fx_kind[k] = a ? 1 : -1;
+      if (a)
+         g_fx_state = 1;
+      fe_evt("gpu_fx %s ok=%d why=%s us=%u", k ? "crt" : "lcd", a != NULL,
+             vb_prog_status(which), pspcompat_time_us() - t0);
    }
-   return g_fx_state > 0;
+   return g_fx_kind[k] > 0;
 }
 
 int vid_gpu_fx(void)
 {
-   return g_fx_state > 0 && g_fx_on && fx_filter(g_filter);
+   return g_fx_state > 0 && g_fx_on && fx_filter(g_filter) &&
+          g_fx_kind[g_filter <= VID_FILTER_LCD_WORN ? 0 : 1] > 0;
 }
 
 static int fx_draw(vb_tex *t, unsigned w, unsigned h, const vid_geo *g)

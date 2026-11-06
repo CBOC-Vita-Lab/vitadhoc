@@ -11969,7 +11969,14 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
        * the rescan now if the peak has not passed -- and starts the next
        * from the console it landed on.  The state shelf is keyed by list
        * index, so no switch starts while it is open. */
-      if ((edges & PSP_CTRL_TRIANGLE) && !g_browser_state_open)
+      int sw_dir = (edges & PSP_CTRL_TRIANGLE) ? 1 : 0;
+#ifdef VITA
+      /* Vita: L / R step to the previous / next console. */
+      if (!sw_dir && !find_owns_input)
+         sw_dir = (edges & PSP_CTRL_RTRIGGER) ? 1
+                : (edges & PSP_CTRL_LTRIGGER) ? -1 : 0;
+#endif
+      if (sw_dir && !g_browser_state_open)
       {
          int skipped = 0;
 #ifdef VITA
@@ -11990,7 +11997,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             fx_reset();
             skipped = 1;
          }
-         switch_begin((g_pcfg.console + 1) % FE_CONSOLE_COUNT);
+         switch_begin((g_pcfg.console + FE_CONSOLE_COUNT + sw_dir) %
+                      FE_CONSOLE_COUNT);
          g_pop.active = 0;
          g_swap.active = 0;
          fe_evt("ui_browser_switch from=%d to=%d skipped=%d",
@@ -12314,11 +12322,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       else if (edges & PSP_CTRL_DOWN)
          { cur = (cur + 1) % n; idle = 0; }
 #ifdef VITA
-      else if (edges & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER))
-      {
-         cur = list_page(cur, n, (edges & PSP_CTRL_RTRIGGER) ? 1 : -1);
-         idle = 0;
-      }
+      /* L / R switch consoles (above); the list pages with the d-pad. */
 #else
       else if (edges & PSP_CTRL_LTRIGGER)
          { cur = (cur + n - SHELF_ROWS % n) % n; idle = 0; }

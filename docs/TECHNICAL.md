@@ -329,6 +329,75 @@ The twin's stand-ins: `GBADHOC_FAKE_REFUSE500`, `GBADHOC_FAKE_UR0=<dir>`,
 - Tests: `app_tests.py` pins `stick_rewind = 1` and the screenshot chord in
   its base config; `t_controls_defaults` runs the real defaults.
 
+## Version 1.3 Changes
+
+**Core: what was taken from GBAdhoc 4.x.** The core in the 1.2 tree is
+GBAdhoc 4.1.1 (`d54feb6` / `318dd01`) with the Vita changes on top, plus
+libretro gpSP's September 2026 fixes (already in). It reports itself as
+`4.1.1+4.5.0fixes` (`CORE_VERSION`, `gpsp/vita/Makefile`). From 4.1.1 to 4.5.0
+upstream changed mostly the MIPS dynarec; each change was checked for a
+counterpart in the ARM backend (`gpsp/arm/`).
+
+Taken (ARM backend and shared code):
+- `TIMER_RELOAD_FIX` (`main.c` update_timers): a timer that just overflowed
+  keeps its reload value in TMxCNT_L until the next update, instead of 0. Need
+  for Speed: Underground's mixer computes a length from TM1 and cleared IWRAM
+  with `0xFFFF0120`. Always on.
+- `BX_ALIGN_FIX` (`cpu_threaded.c` block_lookup_address_dual, `arm/arm_stub.S`
+  both dual branches): BX into ARM state with address bit 1 set fetches the
+  word below (the ARM7TDMI ignores A1); the old `+2` rounded up. Camelot's IRQ
+  veneer `bx pc` sits on a halfword (Golden Sun 2, Mario Golf, Mario Tennis).
+- `COND_ENTRY_FIX` (`cpu_threaded.c` translate_block_arm): an internal branch
+  target inside a run of same-condition instructions is marked (`0x40`) so the
+  run is closed and a new condition header opened there.
+- `FIQ_BANK_FIX` (`cpu.cc` set_cpu_mode): FIQ's r8-r12 are banked against the
+  shared ones parked in the user row; leaving FIQ no longer loads r8-r12 from
+  a never-written row (OpenLara).
+- Interpreter (code in VRAM, palette RAM, OAM): Thumb register shifts use
+  Rs[7:0]; ROR by register no longer shifts by 32 or more (undefined in C);
+  LDM with the S bit switches to the user bank only when the PC is not in the
+  list (it tested the base register).
+- `LDM {..., pc}^` in the ARM dynarec (`arm/arm_emit.h`
+  arm_block_memory_adjust_pc_load): loads the CPSR from the SPSR like MOVS pc
+  (it ignored the S bit). The user-bank form without the PC is still not
+  implemented.
+- `MSR CPSR_c` in the ARM stub (`arm_stub.S` execute_store_cpsr): the live
+  N, Z, C, V are kept when the mask does not cover them (the old merge used the
+  stale flags of `reg[REG_CPSR]`).
+- `SCHED_FAST` (`main.c`, now on in `vita/coreflags.mk`): update_gba skips the
+  interrupt check when `IE & IF == 0`. Exact; run-time kill switch `sched_fast`.
+
+Not taken, and why:
+- `VRAM_EXEC` (Blue Roses engine): the tree already runs code from VRAM,
+  palette RAM and OAM through the interpreter bridge (`HAVE_VRAM_INTERPRETER`).
+- Live timer counters, ARM7 prefetch window, taken-branch refill, zero-byte
+  cycle position (Pokemon MonoMyth): they need the cycle count at each I/O
+  access from the emitter (`REG_IO_CYCLES`, stored by the MIPS stubs) and a
+  pipeline step in the SMC trap; the ARM stub has neither, and the change
+  would touch every I/O load and store. Not needed for the listed games.
+- `SMC_*`, `XLAT_FAST`, `JIT_COST`, `ENTRY_GATES`, `SPIN_SKIP`, DMA retire,
+  `DISPATCH_*`, `IRQ_IO_FAST`, `MSR_FAST`, `HOT_DATA_GUARD`, layout pinning:
+  MIPS emitter/stub features (see the header of `vita/coreflags.mk`); the ARM
+  backend flushes the RAM cache whole on a code write and would need its own
+  trap. The largest remaining speed item for self-modifying games.
+- 4.0.0's mid-frame Media Engine state (NFS Underground 2 flicker): the PSP's
+  second renderer only. Vita renders each line from recorded state.
+- The MIPS-only shift, `BACKUP_BUS_FIX` and MSR-IRQ link-register fixes; the
+  ARM emitter uses the host's own shifts, and the MSR-raised IRQ's return
+  address is not observable in practice. `LR_irq` for an IRQ unmasked by MSR
+  is left as it was.
+- libretro gpSP: everything up to its 2026-09-19 head was already in (VRAM
+  execution, I/O read semantics, flag-preserving I/O load stub, BX PC). Not
+  taken: 70707ce (iterative exit resolution, a stack-depth bound) and the
+  sound-rate and rounding commits (sound is the audio work's area).
+- lr-gpsp-amcc OAM order changes: see the report; not ported.
+
+**Tests:** `cpufix` tests 12 to 21 (`testrom/cpufix.c`): reload read after
+overflow, register-shift conformance from ROM and VRAM, Rm = PC in a shift,
+BX to a halfword address, a branch into a conditional run (ROM and IWRAM), FIQ
+banking, `LDM {pc}^`, `MSR CPSR_c` flags. The cart takes `-DRUN_MASK=bits` to
+run some of them.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

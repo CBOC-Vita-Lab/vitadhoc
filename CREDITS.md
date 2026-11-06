@@ -8,6 +8,7 @@ It stands on the work of many people:
 
 - [**GBAdhoc by ShoshinFauteux**](https://github.com/ShoshinFauteux/GBAdhoc):
   the PSP emulator VitAdhoc grew from, with its link play and frontend.
+  Version 1.3 also takes in fixes from its 4.x releases (see the 1.3 notes).
 - **gpSP by Exophase**, with the libretro contributors: the GBA emulator and
   its ARM recompiler.
 - **TGB Dual:** the Game Boy and Game Boy Color emulator.

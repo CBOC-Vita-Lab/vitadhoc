@@ -346,7 +346,8 @@ static const u8 gba_header_logo[156] = {
     case 0x7:                                                                 \
     {                                                                         \
       get_shift_register(reg_sh);                                             \
-      ror(reg_sh, reg_sh, shift);                                             \
+      if(shift & 0x1F)                                                        \
+        ror(reg_sh, reg_sh, shift & 0x1F);                                    \
       break;                                                                  \
     }                                                                         \
   }                                                                           \
@@ -497,8 +498,9 @@ static const u8 gba_header_logo[156] = {
       get_shift_register(reg_sh);                                             \
       if(shift != 0)                                                          \
       {                                                                       \
-        c_flag = (reg_sh >> (shift - 1)) & 0x01;                              \
-        ror(reg_sh, reg_sh, shift);                                           \
+        c_flag = (reg_sh >> ((shift - 1) & 0x1F)) & 0x01;                     \
+        if(shift & 0x1F)                                                      \
+          ror(reg_sh, reg_sh, shift & 0x1F);                                  \
       }                                                                       \
       break;                                                                  \
     }                                                                         \
@@ -1043,7 +1045,7 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
   // However for LDM {PC} we restore CPSR from SPSR.
   // TODO: implement CPSR restore, only USER mode is now implemented.
   u32 old_cpsr = reg[REG_CPSR];
-  if (sbit && (mode == AccStore || rn != REG_PC))
+  if (sbit && (mode == AccStore || !(reglist & 0x8000)))
     set_cpu_mode(MODE_USER);
 
   // If base is in the reglist and writeback is enabled, the value of the
@@ -1074,7 +1076,7 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
   if (writeback && !writeback_first)
     reg[rn] = endaddr;
 
-  if (sbit && (mode == AccStore || rn != REG_PC))
+  if (sbit && (mode == AccStore || !(reglist & 0x8000)))
     set_cpu_mode(cpu_modes[old_cpsr & 0xF]);
 
   return cpu_alert;
@@ -1201,7 +1203,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
 // Affects N/Z/C flags
 
 #define thumb_shift_lsl_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
@@ -1221,7 +1223,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   }                                                                           \
 
 #define thumb_shift_lsr_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
@@ -1241,7 +1243,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   }                                                                           \
 
 #define thumb_shift_asr_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
@@ -1258,12 +1260,13 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   }                                                                           \
 
 #define thumb_shift_ror_reg()                                                 \
-  u32 shift = reg[rs];                                                        \
+  u32 shift = reg[rs] & 0xFF;                                                 \
   u32 dest = reg[rd];                                                         \
   if(shift != 0)                                                              \
   {                                                                           \
-    c_flag = (dest >> (shift - 1)) & 0x01;                                    \
-    ror(dest, dest, shift);                                                   \
+    c_flag = (dest >> ((shift - 1) & 0x1F)) & 0x01;                           \
+    if(shift & 0x1F)                                                          \
+      ror(dest, dest, shift & 0x1F);                                          \
   }                                                                           \
 
 #define thumb_shift_lsl_imm()                                                 \
@@ -1413,36 +1416,58 @@ const u32 cpu_modes[16] =
 
 u32 instruction_count = 0;
 
-void set_cpu_mode(cpu_mode_type new_mode)
+/* FIQ has its own r8-r14; every other mode shares the user r8-r12 and has
+ * only its own r13/r14.  The shared r8-r12 are parked in the USER/SYSTEM slot
+ * (reg_mode[0][0..4]) while FIQ runs, FIQ's own r8-r14 live in reg_mode[FIQ].
+ * The earlier code never loaded FIQ's registers on entry and, on FIQ ->
+ * IRQ/SVC, loaded r8-r12 from the new mode's never-written slots and kept
+ * them on the way back: OpenLara rasterises in FIQ with IRQs enabled, so
+ * every VBlank replaced its r8-r12 with zeros and the span loop ran ~4e9
+ * iterations.  (GBAdhoc 4.5.0 FIQ_BANK_FIX.)  Switches that do not involve
+ * FIQ do what they always did: SP and LR only. */
+static inline __attribute__((always_inline))
+ void set_cpu_mode_body(cpu_mode_type new_mode)
 {
   cpu_mode_type cpu_mode = reg[CPU_MODE];
 
   if(cpu_mode == new_mode)
      return;
 
-  if(new_mode == MODE_FIQ)
+  if(__builtin_expect(cpu_mode == MODE_FIQ || new_mode == MODE_FIQ, 0))
   {
-     for (u32 i = 8; i < 15; i++)
-        REG_MODE(cpu_mode)[i - 8] = reg[i];
+    if(cpu_mode == MODE_FIQ)
+    {
+       for (u32 i = 8; i < 15; i++)        /* FIQ's own r8-r14 */
+          REG_MODE(MODE_FIQ)[i - 8] = reg[i];
+       for (u32 i = 8; i < 13; i++)        /* back to the shared r8-r12 */
+          reg[i] = REG_MODE(MODE_USER)[i - 8];
+       reg[REG_SP] = REG_MODE(new_mode)[5];
+       reg[REG_LR] = REG_MODE(new_mode)[6];
+    }
+    else                                   /* new_mode == MODE_FIQ */
+    {
+       for (u32 i = 8; i < 13; i++)        /* park the shared r8-r12 */
+          REG_MODE(MODE_USER)[i - 8] = reg[i];
+       REG_MODE(cpu_mode)[5] = reg[REG_SP];
+       REG_MODE(cpu_mode)[6] = reg[REG_LR];
+       for (u32 i = 8; i < 15; i++)
+          reg[i] = REG_MODE(MODE_FIQ)[i - 8];
+    }
   }
   else
   {
-     REG_MODE(cpu_mode)[5] = reg[REG_SP];
-     REG_MODE(cpu_mode)[6] = reg[REG_LR];
-  }
-
-  if(cpu_mode == MODE_FIQ)
-  {
-     for (u32 i = 8; i < 15; i++)
-        reg[i] = REG_MODE(new_mode)[i - 8];
-  }
-  else
-  {
-     reg[REG_SP] = REG_MODE(new_mode)[5];
-     reg[REG_LR] = REG_MODE(new_mode)[6];
+    REG_MODE(cpu_mode)[5] = reg[REG_SP];
+    REG_MODE(cpu_mode)[6] = reg[REG_LR];
+    reg[REG_SP] = REG_MODE(new_mode)[5];
+    reg[REG_LR] = REG_MODE(new_mode)[6];
   }
 
   reg[CPU_MODE] = new_mode;
+}
+
+void set_cpu_mode(cpu_mode_type new_mode)
+{
+  set_cpu_mode_body(new_mode);
 }
 
 #define cpu_has_interrupt()                                                   \

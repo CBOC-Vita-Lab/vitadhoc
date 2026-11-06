@@ -22,7 +22,10 @@
 #                   memory and heap arrangement
 #
 # VARIABLES
-#   VERSION=4.1.1        shown in the log and written to PARAM.SFO (APP_VER)
+#   VERSION=4.1.1        the GBAdhoc release the core started from; written to
+#                        PARAM.SFO (APP_VER)
+#   CORE_VERSION=...     what the log, link compatibility and RetroAchievements
+#                        report as the core: VERSION plus the 4.5.0 fixes taken in
 #   TITLE_ID=GBAD00001   the bubble's id (4 letters + 5 digits)
 #   ARM_FAR_STUBS=1      build the core with -DARM_FAR_STUBS (arm/: stubs
 #                        reached through veneers instead of a 24-bit bl)
@@ -64,6 +67,9 @@ READELF := $(PREFIX)readelf
 LD_R    := $(PREFIX)ld
 
 VERSION  ?= 4.1.1
+# The core is GBAdhoc 4.1.1 plus a chosen set of fixes from 4.5.0 (CHANGELOG
+# 1.3, docs/TECHNICAL.md), not 4.1.1 and not 4.5.0.
+CORE_VERSION ?= $(VERSION)+4.5.0fixes
 TITLE    ?= VitAdhoc
 TITLE_ID ?= GBAD00001
 VITA_ATTRIBUTE2 ?= 12
@@ -95,7 +101,7 @@ FE_FLAGS        := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard \
 include corebuild.mk
 
 # ---- the app --------------------------------------------------------------------
-APP_DEFS += -DGBADHOC_VERSION=\"$(VERSION)\" \
+APP_DEFS += -DGBADHOC_VERSION=\"$(CORE_VERSION)\" \
             $(if $(filter 1,$(GBA_LINK)),-DGBA_LINK) \
             $(if $(filter 1,$(ARM_FAR_STUBS)),-DARM_FAR_STUBS)
 # -Wno-type-limits: psp/ui_psp.h compares an enum with 0, and an ARM EABI

@@ -317,7 +317,7 @@ defsymbl(arm_indirect_branch_dual_arm)
   save_flags()
   tst r0, #0x01                           @ check lower bit
   bne 1f                                  @ if set going to Thumb mode
-  add r0, #2                              @ two LSB are cleared after
+                                          @ ARM target: bit 1 is dropped by the lookup (word below)
   call_c_function(block_lookup_address_arm)
   restore_flags()
   bx r0                                   @ keep executing arm code
@@ -345,7 +345,7 @@ defsymbl(arm_indirect_branch_dual_thumb)
   load_registers_arm()                    @ load in ARM registers
   bic r1, r1, #0x20                       @ clear Thumb mode
   str r1, [reg_base, #REG_CPSR]           @ store flags
-  add r0, #2                              @ two LSB are cleared after
+                                          @ ARM target: bit 1 is dropped by the lookup (word below)
   call_c_function(block_lookup_address_arm)
   restore_flags()
   bx r0
@@ -365,8 +365,11 @@ defsymbl(execute_store_cpsr)
   lsr r1, r1, #4                          @ Load privilege bit
   ldr r1, [lr, r1, lsl #2]                @ Load mask
 
+  and r2, reg_flags, #0xF0000000          @ r2 = the LIVE N, Z, C, V
   and reg_flags, r0, r1                   @ reg_flags = new_cpsr & store_mask
-  ldr r0, [reg_base, #REG_CPSR]           @ r0 = cpsr
+  ldr r0, [reg_base, #REG_CPSR]           @ r0 = cpsr (its NZCV is stale)
+  bic r0, r0, #0xF0000000
+  orr r0, r0, r2                          @ ...so take the live flags
   bic r0, r0, r1                          @ r0 = cpsr & ~store_mask
   orr reg_flags, reg_flags, r0            @ reg_flags = new_cpsr | cpsr
 

@@ -3285,7 +3285,13 @@ u8 function_cc *block_lookup_address_dual(u32 pc)
     reg[REG_CPSR] |= 0x20;
     return block_lookup_address_thumb(pc);
   } else {
-    pc = (pc + 2) & ~0x03;
+    /* ARM7TDMI: a BX into ARM state with address bit 1 set fetches from the
+     * word BELOW (the bus ignores A1).  Camelot's IRQ veneer ("bx pc" at a
+     * halfword-aligned address in Golden Sun 2, Mario Golf, Mario Tennis)
+     * lands on the "mrs r3, cpsr" at pc + 2; rounding up skipped it.
+     * (GBAdhoc 4.5.0 BX_ALIGN_FIX.)  arm_stub.S's dual branches pass the
+     * target unrounded to block_lookup_address_arm, which drops bits 1:0. */
+    pc &= ~0x03;
     reg[REG_CPSR] &= ~0x20;
     return block_lookup_address_arm(pc);
   }
@@ -4487,6 +4493,17 @@ bool translate_block_arm(u32 pc, bool ram_region)
     {
       block_data[(branch_target - block_start_pc) /
        arm_instruction_width].update_cycles = 1;
+      /* A conditional entry point needs its own condition check.  The
+       * translator emits one header per run of same-condition instructions,
+       * so a branch landing mid-run executed the rest of the run
+       * unconditionally (Mario Golf's stack-resident loop: bne back into
+       * ANDEQ words with Z clear).  0x40, like the flag-setting 0x20, makes
+       * translate_arm_instruction close the run here (its skip lands on the
+       * entry) and open a fresh header.  (GBAdhoc 4.5.0 COND_ENTRY_FIX.) */
+      if((block_data[(branch_target - block_start_pc) /
+          arm_instruction_width].condition & 0x0F) != 0x0E)
+        block_data[(branch_target - block_start_pc) /
+         arm_instruction_width].condition |= 0x40;
     }
   }
 

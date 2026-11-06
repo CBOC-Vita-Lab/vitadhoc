@@ -380,7 +380,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       strcpy(g_pcfg.nick, "PSP");
 #endif
    g_pcfg.console = (int)fe_ini_get_int(cfg_path, "console", FE_CONSOLE_GBA);
-   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_GBC)
+   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_SNES)
       g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
    /* Every bind_* key is validated here; a bad one is reported
@@ -563,7 +563,7 @@ long pcfg_gb_rtc_utc_since(long now_local)
 
 int pcfg_remember_console(int console)
 {
-   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
+   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
       return -1;
    g_pcfg.console = console;
    /* The browser's console switch is the settings context: the next
@@ -769,11 +769,11 @@ void pcfg_net_addr_push(const char *addr)
 pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 static int g_pdisp_live = FE_CONSOLE_GBA;
 
-static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc" };
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes" };
 
 const char *pcfg_console_tag(int console)
 {
-   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC" };
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
    return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
 }
 

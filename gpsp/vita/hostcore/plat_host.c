@@ -655,6 +655,11 @@ int plat_launch_param(char *out, size_t cap)
    memcpy(out, host_launch_param, n + 1);
    return 0;
 }
+int plat_exec_program(const char *program, const char *arg)
+{
+   (void)program; (void)arg;
+   return -1;                 /* the twin never starts another program */
+}
 const char *plat_app_dir(void)
 {
    return opt.app ? opt.app : HOST_APP_DIR ? HOST_APP_DIR : opt.root;

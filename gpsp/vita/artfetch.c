@@ -909,9 +909,10 @@ static int warm_one(const char *name)
    return written;
 }
 
-static const char *const SYS[3] = {
+static const char *const SYS[4] = {
    "Nintendo%20-%20Game%20Boy%20Advance", "Nintendo%20-%20Game%20Boy",
-   "Nintendo%20-%20Game%20Boy%20Color" };
+   "Nintendo%20-%20Game%20Boy%20Color",
+   "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System" };
 
 typedef struct
 {
@@ -926,6 +927,11 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    if (ext && !strcasecmp(ext, ".gba"))
    {
       a->sys[0] = 0;
+      a->nsys = 1;
+   }
+   else if (ext && (!strcasecmp(ext, ".sfc") || !strcasecmp(ext, ".smc")))
+   {
+      a->sys[0] = 3;               /* SNES: by the file's own No-Intro name */
       a->nsys = 1;
    }
    else if (ext && !strcasecmp(ext, ".gbc"))
@@ -943,7 +949,7 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    if (a->sys[0] == 0 &&
        gamedb_name_by_header(path, a->cand[a->ncand], AF_NAME_CAP))
       a->ncand++;
-   a->crc_allowed = a->ncand == 0;
+   a->crc_allowed = a->ncand == 0 && a->sys[0] != 3;   /* gamedb knows no SNES CRCs */
    if (!a->ncand || strcmp(a->cand[0], a->stem))
       memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
    a->ready = 1;

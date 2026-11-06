@@ -65,6 +65,7 @@
 #include <strings.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #include "fe_host.h"
 #include "menu_load.h"
@@ -1481,6 +1482,30 @@ static void extra_root_add(const char *spec, int log_skips)
    snprintf(g_extra_roots[g_extra_n++], sizeof(g_extra_roots[0]), "%s", norm);
 }
 
+/* Every folder directly under ux0:ROMS and ux0:roms is a game folder (a card
+ * may hold "SNES ROM Collection", "Super Nintendo", ...); the extension picks
+ * the console.  Dot-prefixed names (.Trashes, __MACOSX is skipped by the
+ * scan itself) are not folders to read. */
+static void extra_roots_add_subfolders(const char *parent)
+{
+   DIR *d = opendir(parent);
+   struct dirent *ent;
+   if (!d)
+      return;
+   while ((ent = readdir(d)) != NULL)
+   {
+      char sub[APP_PATH_CAP];
+      struct stat st;
+      if (ent->d_name[0] == '.' || !strcmp(ent->d_name, "__MACOSX"))
+         continue;
+      if (snprintf(sub, sizeof(sub), "%s/%s", parent, ent->d_name) >= (int)sizeof(sub))
+         continue;
+      if (stat(sub, &st) == 0 && S_ISDIR(st.st_mode))
+         extra_root_add(sub, 0);
+   }
+   closedir(d);
+}
+
 static void rom_roots_init(void)
 {
    char ini[APP_PATH_CAP], list[APP_PATH_CAP], all[UI_EXTRA_ROOTS_MAX *
@@ -1523,6 +1548,11 @@ static void rom_roots_init(void)
    else
       for (i = 0; i < sizeof(k_builtin_roots) / sizeof(k_builtin_roots[0]); i++)
          extra_root_add(k_builtin_roots[i], 0);
+   if (!strcmp(source, "builtin"))
+   {
+      extra_roots_add_subfolders("ux0:ROMS");
+      extra_roots_add_subfolders("ux0:roms");
+   }
    /* One folder per console, the way other emulators ask for it: added to
     * whichever list the lines above made (any folder holds any console's
     * games; the extension decides) -- unless vita.ini's extra_roms says what
@@ -3623,7 +3653,7 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       return -1;
    }
    ext = console == FE_CONSOLE_GBC ? ".gbc" : console == FE_CONSOLE_GB ? ".gb"
-                                                                  : ".gba";
+       : console == FE_CONSOLE_SNES ? ".smc" : ".gba";
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
    stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
    if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
@@ -5015,7 +5045,27 @@ int main(int argc, char **argv)
       if (console == FE_CONSOLE_SNES)
       {
          /* snes.bin takes over; it only comes back here on failure */
-         int src = snes_launch(rom_path);
+         char snes_arg[APP_PATH_CAP * 2 + 2];
+         int src;
+         snprintf(snes_arg, sizeof(snes_arg), "%s", rom_path);
+         if (has_ext(rom_path, ".zip"))
+         {
+            /* a zipped game: snes.bin gets the unpacked file and, after a '|'
+             * (never in a file name on the card), where its save lives: beside
+             * the zip, because unzipped/ is emptied for the next game */
+            char un[APP_PATH_CAP];
+            long usz = 0;
+            size_t zl = strlen(rom_path);
+            if (zip_unpack(rom_path, FE_CONSOLE_SNES, un, sizeof(un), &usz) != 0)
+            {
+               app_notice("This game could not be started", base_name(rom_path),
+                          "The zip file could not be opened.", 6000);
+               continue;
+            }
+            snprintf(snes_arg, sizeof(snes_arg), "%s|%.*s.srm", un,
+                     (int)(zl - 4), rom_path);
+         }
+         src = snes_launch(snes_arg);
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);
          app_notice("This game could not be started", base_name(rom_path),
                     "The SNES program (snes.bin) did not start.", 6000);

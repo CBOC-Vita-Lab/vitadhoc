@@ -1,0 +1,26 @@
+# label|path under $SNES_ROMS|frames|pad script (see snes_twin --help)
+Hello World (text)|HelloWorld/HelloWorld.sfc|600|
+Mode 7 RotZoom|PPU/Mode7/RotZoom/RotZoom.sfc|600|
+Mode 7 Perspective|PPU/Mode7/Perspective/Perspective.sfc|600|
+Mode 7 StarWars crawl|PPU/Mode7/StarWars/StarWars.sfc|600|
+Mode 7 HDMA|PPU/HDMA/Mode7HDMA/Mode7HDMA.sfc|600|
+Mode 7 PlotLine (CPU draw)|PlotLine/Mode7/PlotLineMode7.sfc|600|
+Mode 7 PlotPixel (CPU draw)|PlotPixel/Mode7/PlotPixelMode7.sfc|600|
+Windows + HDMA|PPU/Window/WindowMultiHDMA/WindowMultiHDMA.sfc|600|
+HDMA wave|PPU/HDMA/WaveHDMA/WaveHDMA.sfc|600|
+Hi-colour 3840 (blend, HDMA)|PPU/Blend/HiColor/HiColor3840/HiColor3840.sfc|600|
+Pseudo hi-res 64 per row|PPU/HDMA/HiColor64PerTileRowPseudoHiRes/HiColor64PerTileRowPseudoHiRes.sfc|600|
+Interlace RPG (hi-res 512x448)|PPU/Interlace/InterlaceRPG/InterlaceRPG.sfc|600|
+Mosaic mode 5 (hi-res)|PPU/Mosaic/Mode5/MosaicMode5.sfc|600|
+Rings (BG + windows)|PPU/Rings/Rings.sfc|600|
+Monster Farm Jump (game)|Games/MonsterFarmJump/MonsterFarmJump.sfc|1200|120:start,130:none,300:start,310:none,400:right,900:a,910:none
+Super FX 8bpp PlotPixel 256x192|CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.sfc|600|
+Super FX 8bpp FillPoly 256x192|CHIP/GSU/8BPP/FillPoly/256x192/GSU8BPP256x192FillPoly.sfc|600|
+Super FX 4bpp FillPoly 256x192|CHIP/GSU/4BPP/FillPoly/256x192/GSU4BPP256x192FillPoly.sfc|600|
+Super FX 2bpp PlotLine 256x192|CHIP/GSU/2BPP/PlotLine/256x192/GSU2BPP256x192PlotLine.sfc|600|
+SPC700 Axel-F|SPC700/Axel-F/Axel-F.sfc|900|
+SPC700 FF7 Prelude|SPC700/FFVIIPrelude/FFVIIPrelude.sfc|900|
+SPC700 Speech synth|SPC700/SpeechSynth/SpeechSynth.sfc|900|
+SPC700 Pitch mod|SPC700/PitchMod/PitchMod.sfc|900|
+SPC700 Noise|SPC700/PlayNoise/PlayNoise.sfc|900|
+CPU test ADC|CPUTest/CPU/ADC/CPUADC.sfc|600|

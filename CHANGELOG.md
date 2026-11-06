@@ -2,6 +2,9 @@
 
 ## Version 1.3
 
+**Smoothing does less work.** The xBRZ scaler and the step that finds what
+changed on screen do about a tenth less work, with exactly the same picture.
+
 **Your saves are safe.**
 - **A save is never cut short.** A save from RetroArch or another emulator
   that has extra bytes at the end (the clock data mGBA adds, a 131088-byte

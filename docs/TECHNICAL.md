@@ -714,3 +714,30 @@ Logs under `ux0:data/GBAdhoc/log/` may contain ROM paths and network
 addresses; review them before sharing. The package does not install a clock
 or plugin profile. [Known Issues](../KNOWN-ISSUES.md) lists what still needs
 a Vita.
+
+## Version 1.3: profiling pass (GBA)
+
+Callgrind on the Linux twin (x86, 1800 frames each) with seven of the owner's
+cartridges (Emerald, Golden Sun 2, F-Zero GP Legend, Aria of Sorrow, Minish
+Cap, Mario Kart Super Circuit, NFS Underground 2), smoothing off and xBRZ 3x,
+plus a PC sampler on the armhf twin under qemu (the shipped ARM dynarec).
+No Snes9x-style waste was found: the emulation thread (dynarec code and its
+helpers) and the scanline renderer dominate; with xBRZ on, the xBRZ scaler is
+the largest single function. Two bit-identical savings were taken:
+
+- `upscale_vita.c`: the changed-pixel mask is built 32 bits at a time
+  (`cm_mark_diff`, two pixels per 32-bit load; `cm_set_range` whole words;
+  `cm_next` with `__builtin_ctz`) instead of per pixel and per bit. This runs
+  on the emulation thread before the helpers scale.
+- `xbrz.cpp`: `DistYCbCrBuffer::dist` is forced inline and returns 0 at once
+  for equal pixels (every distance mode already gave exactly 0 there). An
+  isolated xBRZ benchmark: 296.9 M -> 265.5 M instructions (about 10 % fewer),
+  same output.
+
+Checked: frame hashes and audio WAVs identical before/after for all seven games
+with smoothing off and with xBRZ 3x (1800 frames; longer runs into gameplay
+13 of 14 frame files and 14 of 14 WAVs confirmed); upscale tests, audio
+regressions (8/8), rewind_tests (373 checks), app_tests look/wide/ambient/play/
+session. Twin-only profiling switches (inert unless set): GBADHOC_FRAME_HASH,
+GBADHOC_SOFT_NORASTER, GBADHOC_CG_FROM, GBADHOC_PCPROF(_FROM). None of this is
+a frame-rate measurement on a Vita.

@@ -12,6 +12,7 @@
  * in (565 expands by bit replication, as a GPU does; A8 becomes white with
  * the byte as alpha), so one sampler serves all four formats.
  */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -144,9 +145,20 @@ void vb_tex_update(vb_tex *t, int x, int y, int w, int h,
 
 /* ---- frame / targets --------------------------------------------------- */
 
+/* GBADHOC_SOFT_NORASTER=1: draw nothing (profiling the app's own work under
+ * valgrind: the software rasteriser is the twin's stand-in for the GPU and
+ * would drown it).  Pictures are then not meaningful. */
+static int noraster(void)
+{
+   static int v = -1;
+   if (v < 0)
+      v = getenv("GBADHOC_SOFT_NORASTER") != NULL;
+   return v;
+}
+
 void vb_frame_begin(int clear)
 {
-   if (clear)
+   if (clear && !noraster())
    {
       int i;
       for (i = 0; i < VB_W * VB_H; i++)
@@ -158,7 +170,29 @@ void vb_frame_begin(int clear)
 void vb_frame_end(void)  { g_open = 0; }
 int  vb_frame_open(void) { return g_open; }
 static void gpu_timed_present(void);
-void vb_present(void)    { g_open = 0; g_sc_on = 0; gpu_timed_present(); }
+/* GBADHOC_FRAME_HASH=file: one FNV-1a line per presented picture (the
+ * composed frame), for before/after comparisons of an optimisation. */
+static void frame_hash_dump(void)
+{
+   static FILE *f;
+   static int tried;
+   uint64_t h = 1469598103934665603ull;
+   int i;
+   if (!tried)
+   {
+      const char *e = getenv("GBADHOC_FRAME_HASH");
+      tried = 1;
+      if (e && *e)
+         f = fopen(e, "w");
+   }
+   if (!f)
+      return;
+   for (i = 0; i < VB_W * VB_H; i++)
+      h = (h ^ g_fb[i]) * 1099511628211ull;
+   fprintf(f, "%016llx\n", (unsigned long long)h);
+   fflush(f);
+}
+void vb_present(void)    { g_open = 0; g_sc_on = 0; frame_hash_dump(); gpu_timed_present(); }
 void vb_set_vsync(int on) { (void)on; }
 void vb_set_common_dialog(int on) { (void)on; }
 
@@ -234,6 +268,8 @@ void vb_quad(float x0, float y0, float x1, float y1,
 {
    int ix0, ix1, iy0, iy1, x, y, k;
    int flat = (c_tl == c_tr && c_tl == c_bl && c_tl == c_br);
+   if (noraster())
+      return;
    if (!(x1 > x0) || !(y1 > y0))
       return;
    if (!span(x0, x1, g_tw, g_sc_x0, g_sc_x1, &ix0, &ix1) ||
@@ -279,7 +315,7 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
    unsigned tr = tint & 0xFF, tg = (tint >> 8) & 0xFF;
    unsigned tb = (tint >> 16) & 0xFF, ta = (tint >> 24) & 0xFF;
    int i;
-   if (!t || !q || n <= 0)
+   if (!t || !q || n <= 0 || noraster())
       return;
    /* A target cannot sample itself. */
    if (t->px == g_tgt)

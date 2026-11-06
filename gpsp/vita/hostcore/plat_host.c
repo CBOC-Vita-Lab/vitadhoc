@@ -75,6 +75,10 @@
 #include "fe_util.h"
 
 #include <ctype.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <ucontext.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -181,6 +185,75 @@ static uint64_t refresh_ns(void)
 static unsigned script_frame(void)
 {
    return (unsigned)((now_ns() - slept_ns) / refresh_ns());
+}
+
+/* ---- GBADHOC_PCPROF=file: a statistical profile of the guest -------------
+ * Under qemu-user there is no valgrind and no plugin; this samples the PC of
+ * whatever thread the 1 ms (wall) SIGALRM lands on and writes
+ * "tid pc" lines at exit.  GBADHOC_PCPROF_FROM=F starts at refresh F.  For
+ * tools/perf (the 1.3 profiling pass): qemu's cost is roughly proportional
+ * to guest instructions executed, so this shows where the ARM dynarec's
+ * output and the C helpers spend a frame.  Twin-only. */
+#define PCPROF_CAP (1u << 21)
+static struct { int tid; uintptr_t pc; } *pcp_buf;
+static volatile unsigned pcp_n;
+static unsigned pcp_from;
+static const char *pcp_path;
+
+static void pcp_handler(int sig, siginfo_t *si, void *vuc)
+{
+   const ucontext_t *uc = (const ucontext_t *)vuc;
+   unsigned i;
+   (void)sig; (void)si;
+   if (script_frame() < pcp_from)
+      return;
+   i = __atomic_fetch_add(&pcp_n, 1, __ATOMIC_RELAXED);
+   if (i >= PCPROF_CAP)
+      return;
+   pcp_buf[i].tid = (int)syscall(SYS_gettid);
+#if defined(__arm__)
+   pcp_buf[i].pc = uc->uc_mcontext.arm_pc;
+#else
+   pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+#endif
+}
+
+static void pcprof_init(void)
+{
+   struct sigaction sa;
+   struct itimerval it;
+   const char *f = getenv("GBADHOC_PCPROF_FROM");
+   pcp_path = getenv("GBADHOC_PCPROF");
+   if (!pcp_path || !*pcp_path)
+      return;
+   pcp_from = f ? (unsigned)atoi(f) : 0;
+   pcp_buf = calloc(PCPROF_CAP, sizeof(*pcp_buf));
+   memset(&sa, 0, sizeof(sa));
+   sa.sa_sigaction = pcp_handler;
+   sa.sa_flags = SA_SIGINFO | SA_RESTART;
+   sigaction(SIGALRM, &sa, NULL);
+   it.it_interval.tv_sec = 0; it.it_interval.tv_usec = 1000;
+   it.it_value = it.it_interval;
+   setitimer(ITIMER_REAL, &it, NULL);
+}
+
+static void pcprof_dump(void)
+{
+   struct itimerval off;
+   FILE *fp;
+   unsigned i, n = pcp_n;
+   if (!pcp_buf)
+      return;
+   memset(&off, 0, sizeof(off));
+   setitimer(ITIMER_REAL, &off, NULL);
+   fp = fopen(pcp_path, "w");
+   if (n > PCPROF_CAP)
+      n = PCPROF_CAP;
+   for (i = 0; fp && i < n; i++)
+      fprintf(fp, "%d %lx\n", pcp_buf[i].tid, (unsigned long)pcp_buf[i].pc);
+   if (fp)
+      fclose(fp);
+   pcp_buf = NULL;
 }
 
 /* ---- audio: the port and its thread ------------------------------------------ */
@@ -561,6 +634,7 @@ int plat_init(int argc, char **argv)
 {
    unsigned cursor = 0;
    int i;
+   pcprof_init();
    for (i = 1; i < argc; i++)
    {
       const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -626,6 +700,7 @@ int plat_init(int argc, char **argv)
 
 void plat_exit(int code)
 {
+   pcprof_dump();
    if (wav_fp)
    {
       wav_header(wav_fp, wav_rate, (uint32_t)wav_frames);
@@ -798,9 +873,35 @@ void plat_power_tick(void) { }
 
 /* An emulated frame costs --work-us of simulated time (--slow's frames
  * cost more). */
+/* GBADHOC_CG_FROM=F: with `valgrind --tool=callgrind --instr-atstart=no`,
+ * switch instrumentation on at emulated frame F and zero the counters, so a
+ * profile covers a steady-state window instead of the boot (twin-only; the
+ * header is a development one, absent elsewhere). */
+#if defined(__has_include)
+#if __has_include(<valgrind/callgrind.h>)
+#include <valgrind/callgrind.h>
+#define HAVE_CG_MARK 1
+#endif
+#endif
+
 void plat_frame_ran(void)
 {
    unsigned us = opt.work_us;
+#ifdef HAVE_CG_MARK
+   {
+      static long cg_from = -2;
+      if (cg_from == -2)
+      {
+         const char *e = getenv("GBADHOC_CG_FROM");
+         cg_from = e && *e ? atol(e) : -1;
+      }
+      if (cg_from >= 0 && (long)frames_ran == cg_from)
+      {
+         CALLGRIND_START_INSTRUMENTATION;
+         CALLGRIND_ZERO_STATS;
+      }
+   }
+#endif
    if (opt.slow_n && frames_ran >= opt.slow_at &&
        frames_ran < opt.slow_at + opt.slow_n)
       us = opt.slow_us;

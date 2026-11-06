@@ -129,7 +129,7 @@ class ArtworkWorkerTests(unittest.TestCase):
             print('STRESS ' + json.dumps({'mode': mode, 'stats': stats,
                   'requests_observed': len(requests),
                   'covers_on_disk': len(list((self.root / 'boxart').glob('*.png'))),
-                  'thumbnails_on_disk': len(list((self.root / 'boxart').glob('*.t2.565')))}), flush=True)
+                  'thumbnails_on_disk': len(list((self.root / 'cache' / 'boxart').glob('*.t2.565')))}), flush=True)
         return stats, requests
 
     def routes(self, name, system=GBA):
@@ -160,7 +160,7 @@ class ArtworkWorkerTests(unittest.TestCase):
     def test_download_writes_a_readable_thumbnail(self):
         name = 'Thumbnail Example.gba'
         self.run_worker([name], self.routes(name), titles=False)
-        thumb = (self.root / 'boxart' / 'Thumbnail Example.t2.565').read_bytes()
+        thumb = (self.root / 'cache' / 'boxart' / 'Thumbnail Example.t2.565').read_bytes()
         self.assertEqual(struct.unpack_from('<IHHH', thumb), (0x52353635, 1, 1, 1))
         self.assertEqual(len(thumb), 18)
 
@@ -169,7 +169,7 @@ class ArtworkWorkerTests(unittest.TestCase):
         (self.root / 'boxart' / 'Offline Example.png').write_bytes(PNG)
         stats, requests = self.run_worker([name], {}, offline=True, timeout_ms=700)
         self.assertEqual(requests, [])
-        self.assertTrue((self.root / 'boxart' / 'Offline Example.t2.565').is_file())
+        self.assertTrue((self.root / 'cache' / 'boxart' / 'Offline Example.t2.565').is_file())
         self.assertGreaterEqual(stats['done'], 1, stats)
 
     def test_thumbnail_channels_match_the_vita_texture_loader(self):
@@ -179,7 +179,7 @@ class ArtworkWorkerTests(unittest.TestCase):
                 route = GBA + 'Named_Boxarts/' + name + '.png'
                 self.run_worker([name + '.gba'], {route: (200, solid_png(1, 1, rgb))},
                                 titles=False)
-                thumb = (self.root / 'boxart' / (name + '.t2.565')).read_bytes()
+                thumb = (self.root / 'cache' / 'boxart' / (name + '.t2.565')).read_bytes()
                 self.assertEqual(struct.unpack_from('<H', thumb, 16)[0], packed)
 
     def test_thumbnail_fits_its_box_and_preserves_original_cover(self):
@@ -187,7 +187,7 @@ class ArtworkWorkerTests(unittest.TestCase):
         payload = solid_png(320, 160, (255, 0, 0))
         self.run_worker([name], {GBA + 'Named_Boxarts/Wide Cover.png': (200, payload)},
                         titles=False)
-        thumb = (self.root / 'boxart' / 'Wide Cover.t2.565').read_bytes()
+        thumb = (self.root / 'cache' / 'boxart' / 'Wide Cover.t2.565').read_bytes()
         self.assertEqual(struct.unpack_from('<IHHH', thumb), (0x52353635, 160, 80, 160))
         self.assertEqual(len(thumb), 16 + 160 * 80 * 2)
         self.assertEqual((self.root / 'boxart' / 'Wide Cover.png').read_bytes(), payload)
@@ -197,15 +197,24 @@ class ArtworkWorkerTests(unittest.TestCase):
         old = self.root / 'boxart' / 'Old Thumbnail.t565'
         old.write_bytes(b'old cached pixels')
         self.run_worker(['Old Thumbnail.gba'], {}, offline=True, timeout_ms=700)
-        thumb = (self.root / 'boxart' / 'Old Thumbnail.t2.565').read_bytes()
+        thumb = (self.root / 'cache' / 'boxart' / 'Old Thumbnail.t2.565').read_bytes()
         self.assertEqual(struct.unpack_from('<H', thumb, 16)[0], 0x001F)
         self.assertEqual(old.read_bytes(), b'old cached pixels')
+
+    def test_thumbnail_left_in_boxart_by_older_versions_moves_to_cache(self):
+        (self.root / 'boxart' / 'Moved.png').write_bytes(PNG)
+        old = self.root / 'boxart' / 'Moved.t2.565'
+        old.write_bytes(b'565R' + b'\x00' * 14)
+        self.run_worker(['Moved.gba'], {}, offline=True, timeout_ms=700)
+        self.assertFalse(old.exists())
+        self.assertTrue((self.root / 'cache' / 'boxart' / 'Moved.t2.565').is_file())
+        self.assertEqual(list((self.root / 'boxart').glob('*.t2.565')), [])
 
     def test_oversized_thumbnail_decode_is_skipped_without_losing_the_cover(self):
         payload = solid_png(1601, 1600, (255, 0, 0))
         self.run_worker(['Huge.gba'], {GBA + 'Named_Boxarts/Huge.png': (200, payload)},
                         titles=False)
-        self.assertFalse((self.root / 'boxart' / 'Huge.t2.565').exists())
+        self.assertFalse((self.root / 'cache' / 'boxart' / 'Huge.t2.565').exists())
         self.assertEqual((self.root / 'boxart' / 'Huge.png').read_bytes(), payload)
 
     def test_cover_that_cannot_be_thumbnailed_is_not_read_again(self):
@@ -214,8 +223,8 @@ class ArtworkWorkerTests(unittest.TestCase):
         stats, requests = self.run_worker(['Broken.gba', 'Good.gba'], {}, offline=True,
                                           mode='relist', timeout_ms=3000)
         self.assertTrue(stats['command_sent'], stats)
-        self.assertTrue((self.root / 'boxart' / 'Good.t2.565').is_file())
-        self.assertFalse((self.root / 'boxart' / 'Broken.t2.565').exists())
+        self.assertTrue((self.root / 'cache' / 'boxart' / 'Good.t2.565').is_file())
+        self.assertFalse((self.root / 'cache' / 'boxart' / 'Broken.t2.565').exists())
         self.assertEqual((self.root / 'boxart' / 'Broken.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
         self.assertEqual(stats['relist_opens'], 0, stats)
 
@@ -369,7 +378,7 @@ class ArtworkWorkerTests(unittest.TestCase):
         stats, requests = self.run_worker(names, routes, titles=False, mode='hold', timeout_ms=2000)
         self.assertEqual(stats['seen'], 40, stats)
         self.assertEqual(len(list((self.root / 'boxart').glob('*.png'))), 40, requests)
-        self.assertEqual(len(list((self.root / 'boxart').glob('*.t2.565'))), 40)
+        self.assertEqual(len(list((self.root / 'cache' / 'boxart').glob('*.t2.565'))), 40)
         self.assertEqual((stats['resync'], stats['resync_cleared']), (1, 1), stats)
         self.assertLess(stats['stop_us'], 750000, stats)
 
@@ -403,7 +412,7 @@ class ArtworkWorkerTests(unittest.TestCase):
         stats, requests = self.run_worker(names, {}, titles=False, mode='hold',
                                           offline=True, timeout_ms=1000)
         self.assertEqual(requests, [])
-        self.assertEqual(len(list((self.root / 'boxart').glob('*.t2.565'))), 40)
+        self.assertEqual(len(list((self.root / 'cache' / 'boxart').glob('*.t2.565'))), 40)
         self.assertEqual((stats['resync'], stats['resync_cleared']), (1, 1), stats)
         for name in names:
             stem = Path(name).stem

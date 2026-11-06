@@ -48,6 +48,7 @@
 #include "config_psp.h"
 #include "rom_paths.h"
 #include "state_slots.h"
+#include "sidecar.h"
 #include "font_8x16.h"
 #include "fe_favs.h"
 #include "fe_evt.h"
@@ -1682,6 +1683,7 @@ static void ov_title_take(void)
          break;
       *dot = '\0';
    }
+   sidecar_strip_hash(g_ov_title);   /* "Game~1a2b3c" of a game outside roms/ */
    clip_title(g_ov_title, 436);
 }
 
@@ -9259,7 +9261,7 @@ static void art_cache_565(const char *path, const uint16_t *tex, int stride,
  * it, visibly soft at 960x544. */
 static int g_art_cover_as_hero;
 /* The home screen's tile picture: the thumbnail the fetch thread made for this
- * cover (boxart/<stem>.t2.565, at most ART_THUMB_W x ART_THUMB_H).  One read of
+ * cover (cache/boxart/<stem>.t2.565, at most ART_THUMB_W x ART_THUMB_H).  One read of
  * a small file, no decode.  0 = read; -1 = there is none (the caller falls back
  * to the full picture). */
 static int art_thumb_load(int rom_idx, uint16_t *tex, int stride,
@@ -9270,10 +9272,16 @@ static int art_thumb_load(int rom_idx, uint16_t *tex, int stride,
    int stem = (int)ui_rom_stem_length(base);
    char path[PSP_FILE_PATH_CAP];
 
-   int len = snprintf(path, sizeof(path), "%s/boxart/%.*s%s", g_dir_base,
-                      stem, base, ART_THUMB_SUFFIX);
+   char was[PSP_FILE_PATH_CAP];
+   sidecar_mig mig = {0};
+   int len = snprintf(path, sizeof(path), "%s/" SIDECAR_THUMB_DIR "/%.*s%s",
+                      g_dir_base, stem, base, ART_THUMB_SUFFIX);
    if (len < 0 || (size_t)len >= sizeof(path))
       return -1;
+   /* one an older version left in boxart/ moves to cache/ */
+   if (snprintf(was, sizeof(was), "%s/boxart/%.*s%s", g_dir_base, stem, base,
+                ART_THUMB_SUFFIX) < (int)sizeof(was))
+      sidecar_move_file(was, path, &mig);
    return art_load_565(path, tex, stride, dw, dh);
 }
 #endif
@@ -9288,7 +9296,10 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
     * is decoded at the Vita's resolution -- and LAST the PSP's .565 (128-px
     * covers, 480x272 heroes), so a PSP art pack with no sources left still
     * shows, filtered. */
-   const char *ext[] = { "v565", "png", "jpg", "jpeg", "bmp", "565" };
+   const char *ext[] = { "v565", "png", "jpg", "jpeg", "bmp", "565",
+                         "v565" };
+   /* [0] is the copy this code made, in cache/<dir>/; the last is one beside
+    * the picture (an older version's, or an art pack's own) */
 #else
    /* .565 first: it is the texture itself and costs one read. */
    static const char *ext[] = { "565", "png", "jpg", "jpeg", "bmp" };
@@ -9303,7 +9314,7 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
    FE_EVT_ONLY(t0);
 #ifdef VITA
    if (g_art_cover_as_hero)
-      ext[0] = "vh565";
+      ext[0] = ext[6] = "vh565";
 #endif
 
    for (e = 0; e < sizeof(ext) / sizeof(ext[0]); e++)
@@ -9315,6 +9326,13 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
       /* A failed attempt may have shrunk the box; every candidate gets
        * the same frame to fit into. */
       *dw = boxw; *dh = boxh;
+#ifdef VITA
+      if (e == 0)
+         path_len = snprintf(path, sizeof(path), "%s/" SIDECAR_ART_CACHE
+                             "/%s/%.*s.%s", g_dir_base, dir, stem, base,
+                             ext[e]);
+      else
+#endif
       path_len = snprintf(path, sizeof(path), "%s/%s/%.*s.%s", g_dir_base,
                           dir, stem, base, ext[e]);
       if (path_len < 0 || (size_t)path_len >= sizeof(path))
@@ -9355,8 +9373,9 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
           * make the emulator look hung on first run. */
          char cpath[PSP_FILE_PATH_CAP];
 #ifdef VITA
-         int cache_len = snprintf(cpath, sizeof(cpath), "%s/%s/%.*s.%s",
-                                  g_dir_base, dir, stem, base, ext[0]);
+         int cache_len = snprintf(cpath, sizeof(cpath), "%s/" SIDECAR_ART_CACHE
+                                  "/%s/%.*s.%s", g_dir_base, dir, stem, base,
+                                  ext[0]);
 #else
          int cache_len = snprintf(cpath, sizeof(cpath),
                                   "%s/%s/%.*s." UI_ART_CACHE_EXT,
@@ -10478,21 +10497,52 @@ static int browser_rom_state_path(const char *rom_dir, int rom_idx,
                                   unsigned slot, char *out, size_t out_sz)
 {
    char rom_path[PSP_FILE_PATH_CAP];
+#ifdef VITA
+   extern char g_dir_base[];
+#endif
    if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
                          g_roms[rom_idx].name) != 0)
       return -1;
    /* The browsing console is the console the game will boot as. */
+#ifdef VITA
+   if (sidecar_state1(out, out_sz, g_dir_base, rom_path,
+                      (fe_console_t)g_pcfg.console) != 0)
+      return -1;
+#else
    if (psp_rom_path_suffix(out, out_sz, rom_path,
                            psp_state_slot1_suffix(
                               (fe_console_t)g_pcfg.console)) != 0)
       return -1;
+#endif
    return psp_state_path_for_slot(out, out_sz, out, slot);
 }
+
+#ifdef VITA
+/* What an older version left beside this game: moved under the app folder
+ * (psp/sidecar.h) before the slots are looked for. */
+static void browser_rom_migrate(const char *rom_dir, int rom_idx)
+{
+   char rom_path[PSP_FILE_PATH_CAP], now[PSP_FILE_PATH_CAP],
+        was[PSP_FILE_PATH_CAP];
+   sidecar_mig mig;
+   if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
+                         g_roms[rom_idx].name) != 0 ||
+       browser_rom_state_path(rom_dir, rom_idx, 1, now, sizeof(now)) != 0 ||
+       sidecar_legacy_state1(was, sizeof(was), rom_path,
+                             (fe_console_t)g_pcfg.console) != 0)
+      return;
+   sidecar_migrate(was, now, &mig);
+   if (mig.moved || mig.copied)
+      fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
+             rom_path, mig.moved, mig.copied, mig.failed, mig.kept);
+}
+#endif
 
 static int browser_rom_has_state(const char *rom_dir, int rom_idx)
 {
 #ifdef VITA
    if (g_ui_home) return home_cached_states(rom_idx);
+   browser_rom_migrate(rom_dir, rom_idx);
 #endif
    SceIoStat st;
    char path[PSP_FILE_PATH_CAP];

@@ -117,13 +117,27 @@ may still need conversion. Back up the original. If VitAdhoc finds a backup
 or temporary save (`.bak`, `.tmp` or `.old`), it does not import over that
 recovery situation. Do not delete those files just to force an import.
 
-VitAdhoc's own save names, beside each game:
+Beside each game, VitAdhoc keeps only its battery save:
 
-| Console | Battery save | States | Continue point |
-| --- | --- | --- | --- |
-| GBA | `Game.sav` | `Game.st0` … `Game.st9` | `Game.rsm` |
-| Game Boy | `Game.gb.sav` | `Game.gb.st0` … `Game.gb.st9` | `Game.gb.rsm` |
-| Game Boy Color | `Game.gbc.sav` | `Game.gbc.st0` … `Game.gbc.st9` | `Game.gbc.rsm` |
+| Console | Battery save |
+| --- | --- |
+| GBA | `Game.sav` |
+| Game Boy | `Game.gb.sav` |
+| Game Boy Color | `Game.gbc.sav` |
+
+Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
+
+| Console | States | Continue point |
+| --- | --- | --- |
+| GBA | `states/gba/Game.st0` … `Game.st9` | `states/gba/Game.rsm` |
+| Game Boy | `states/gb/Game.gb.st0` … `Game.gb.st9` | `states/gb/Game.gb.rsm` |
+| Game Boy Color | `states/gbc/Game.gbc.st0` … `Game.gbc.st9` | `states/gbc/Game.gbc.rsm` |
+
+Each state also has a `.thumb` and a `.shot` picture next to it. A game that
+is not in `roms/` (a folder you added) gets `~` and six letters or digits
+after its name, such as `Game~3fa91c.st0`, so two games with the same name in
+different folders never share states. Games from older versions are moved
+over by themselves the first time you open or view them.
 
 A game kept in a `.zip` uses the archive's stem and the console's suffix:
 `Game.zip` becomes `Game.sav` for GBA, `Game.gb.sav` for GB, or
@@ -185,12 +199,16 @@ achievements or performance; those need to be checked for the exact hack.
 
 ## Where Things Are Kept
 
-Saves and states live **next to each game**, wherever it is (names in the
-table above). Move or back up a game together with these.
+A game's battery save lives **next to the game**, wherever it is (names in the
+table above). Save states and the Continue point live in `states/`. Back up
+the game together with its `.sav`, and `states/` if you want your states.
+Moving a game to another folder (outside `roms/`) starts it with no states.
 
 ```text
 ux0:data/GBAdhoc/
-  roms/                  your games (and their saves)
+  roms/                  your games (and their battery saves)
+  states/                save states and Continue points, by console
+  cache/                 pictures VitAdhoc can rebuild (safe to delete)
   boxart/  titles/       covers and title screens, downloaded or your own
   hero/                  optional wide artwork
   clips/                 the home screen's previews of your play

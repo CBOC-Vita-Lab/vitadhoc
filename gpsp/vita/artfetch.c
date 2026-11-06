@@ -438,6 +438,17 @@ static void inventory_add(int kind, const char *stem)
       g_inventory_valid = 0;
 }
 
+/* cache/ and cache/boxart/ (the app makes them at boot; this is for a root
+ * that did not). */
+static void thumb_dir_make(void)
+{
+   char p[AF_PATH_CAP + 32];
+   snprintf(p, sizeof(p), "%s/cache", g_root);
+   mkdir(p, 0777);
+   snprintf(p, sizeof(p), "%s/" ART_THUMB_DIR, g_root);
+   mkdir(p, 0777);
+}
+
 static void inventory_load(void)
 {
    int kind, ok = 1;
@@ -473,8 +484,16 @@ static void inventory_load(void)
          if (kind == AK_BOX && len > strlen(ART_THUMB_SUFFIX) &&
              !strcasecmp(name + len - strlen(ART_THUMB_SUFFIX), ART_THUMB_SUFFIX))
          {
-            target = INV_THUMB;
-            stem_len = len - strlen(ART_THUMB_SUFFIX);
+            /* made by 1.2 and before: it belongs in cache/boxart/ now */
+            char from[AF_PATH_CAP + AF_NAME_CAP + 32], to[AF_PATH_CAP + AF_NAME_CAP + 32];
+            thumb_dir_make();
+            snprintf(from, sizeof(from), "%s/%s/%s", g_root, KIND_DIR[kind], name);
+            snprintf(to, sizeof(to), "%s/" ART_THUMB_DIR "/%s", g_root, name);
+            if (access(to, F_OK) != 0)
+               rename(from, to);       /* same card: a rename */
+            else
+               remove(from);           /* the new one is the copy that counts */
+            continue;
          }
          else
          {
@@ -492,6 +511,46 @@ static void inventory_load(void)
       }
       if (A_LOAD(g_quit) || A_LOAD(g_new)) ok = 0;
       closedir(dir);
+   }
+   /* the tile pictures */
+   {
+      char path[AF_PATH_CAP + 32];
+      DIR *dir;
+      struct dirent *entry;
+      snprintf(path, sizeof(path), "%s/" ART_THUMB_DIR, g_root);
+      dir = opendir(path);
+      if (!dir)
+      {
+         if (errno != ENOENT) ok = 0;
+      }
+      else
+      {
+         while (!A_LOAD(g_quit) && !A_LOAD(g_new))
+         {
+            const char *name;
+            size_t len, sl = strlen(ART_THUMB_SUFFIX), stem_len;
+            char stem[AF_NAME_CAP];
+            errno = 0;
+            entry = readdir(dir);
+            if (!entry)
+            {
+               if (errno) ok = 0;
+               break;
+            }
+            name = entry->d_name;
+            len = strlen(name);
+            if (len <= sl || strcasecmp(name + len - sl, ART_THUMB_SUFFIX))
+               continue;
+            stem_len = len - sl;
+            if (stem_len >= sizeof(stem))
+               continue;
+            memcpy(stem, name, stem_len);
+            stem[stem_len] = '\0';
+            if (set_add(&g_inventory[INV_THUMB], stem) != 0) ok = 0;
+         }
+         if (A_LOAD(g_quit) || A_LOAD(g_new)) ok = 0;
+         closedir(dir);
+      }
    }
    g_inventory_valid = ok;
 }
@@ -697,7 +756,7 @@ out:
    return rc;
 }
 
-/* The thumbnail file for a cover: boxart/<stem>.t2.565, the picture fitted into
+/* The thumbnail file for a cover: cache/boxart/<stem>.t2.565, the picture fitted into
  * ART_THUMB_W x ART_THUMB_H (never enlarged), box-averaged, as RGB565 behind
  * the same 16-byte header the app's .v565 files use, so the home screen reads
  * it with its ordinary loader.  Written whole or not at all.  0 = written,
@@ -714,6 +773,7 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst)
 
    if (!png || len == 0 || stop_now())
       return -1;
+   thumb_dir_make();
    if (len > AF_MAX_BYTES ||
        !stbi_info_from_memory(png, (int)len, &w, &h, &nc) ||
        w <= 0 || h <= 0)
@@ -836,7 +896,8 @@ static int save(int k, const char *stem, size_t len)
       /* the home screen's tile picture, made now while the bytes are here */
       char th[AF_PATH_CAP + AF_NAME_CAP + 40];
       int rc;
-      snprintf(th, sizeof(th), "%s/boxart/%s%s", g_root, stem, ART_THUMB_SUFFIX);
+      snprintf(th, sizeof(th), "%s/" ART_THUMB_DIR "/%s%s", g_root, stem,
+               ART_THUMB_SUFFIX);
       rc = thumb_write((const unsigned char *)g_body, len, th);
       if (rc == 0)
          inventory_add(INV_THUMB, stem);
@@ -874,7 +935,8 @@ static int warm_one(const char *name)
       return 0;
    if (set_has(&g_thumb_failed, stem))
       return 0;
-   snprintf(th, sizeof(th), "%s/boxart/%s%s", g_root, stem, ART_THUMB_SUFFIX);
+   snprintf(th, sizeof(th), "%s/" ART_THUMB_DIR "/%s%s", g_root, stem,
+               ART_THUMB_SUFFIX);
    if (stat(th, &st) == 0)
       return 0;
    for (e = 0; e < 2; e++)

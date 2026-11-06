@@ -43,10 +43,12 @@
  *
  *   ux0:data/GBAdhoc/           (the PSP's layout: a PSP folder copies over)
  *     roms/         cartridges (.gba .gb .gbc), in folders if you like, and
- *                   BESIDE each one its files, named as the PSP names them:
- *                     Game.sav   Game.gb.sav   Game.gbc.sav     battery
- *                     Game.st0 .. .st4  (.gb.st0, .gbc.st0)     save states
- *                     <state>.thumb  <state>.shot               previews
+ *                   BESIDE each one its battery save, named as the PSP
+ *                   names it:  Game.sav   Game.gb.sav   Game.gbc.sav
+ *     states/<gba|gb|gbc>/  Game.st0 .. .st9, their .thumb/.shot, Game.rsm
+ *                   (Continue) and Game.rsm.pt; a game outside roms/ gets
+ *                   "Game~<hash of its folder>" (psp/sidecar.h)
+ *     cache/        boxart/<stem>.t2.565 and other rebuildable pictures
  *     boxart/ hero/ artwork for the game list
  *     cheats/       <rom name>.cht
  *     screenshots/  <rom name>-<date>-<time>.png
@@ -84,6 +86,7 @@
 #include "render_thread.h"
 #include "ui_host_hooks.h"
 #include "state_slots.h"
+#include "sidecar.h"
 #include "rom_paths.h"
 #include "ff_gate.h"
 #include "stb_image_write.h"
@@ -1223,6 +1226,7 @@ static int roots_init(void)
                 g_app_root) != 0)
       return -1;
    pspcompat_make_dirs();          /* roms boxart hero saves log */
+   sidecar_make_dirs(g_app_root);  /* states/<console>, cache/ */
    for (i = 0; i < sizeof(sub) / sizeof(sub[0]); i++)
       if (path_fmt(path, sizeof(path), "%s/%s", g_app_root, sub[i]) == 0)
          mkdir(path, 0777);        /* already there is the normal case */
@@ -2491,7 +2495,12 @@ static int state_load_slot(unsigned slot, const char *via)
    if (psp_state_path_for_slot(path, sizeof(path), g_game.state_path,
                                slot) != 0)
       return -1;
-   rc = fe_host_state_load(path);
+   {
+      char alt[PSP_FILE_PATH_CAP];
+      rc = fe_host_state_load(sidecar_read_path(path, g_game.legacy_state_path,
+                                                g_game.state_path, alt,
+                                                sizeof(alt)));
+   }
    fe_evt("state_load slot=%u via=%s rc=%d", slot, via, rc);
    if (rc == 0)
       state_loaded(path);
@@ -3787,19 +3796,32 @@ static int game_boot(const char *rom_path, fe_console_t console)
           vid_scale_name(g_pcfg.scale), vid_filter_name(g_pcfg.filter),
           g_pcfg.ambient, g_pcfg.gb_palette);
 
-   /* The battery save and the states sit beside the ROM, named as the PSP
-    * names them: the ROM's extension replaced, except that a GB or GBC game
-    * keeps it in the name, so "Game.gb" and "Game.gba" never share a file. */
+   /* The battery save sits beside the ROM, named as the PSP names it: the
+    * ROM's extension replaced, except that a GB or GBC game keeps it in the
+    * name, so "Game.gb" and "Game.gba" never share a file.  The states and
+    * everything else go under the app folder (psp/sidecar.h); what an older
+    * version left beside the ROM is moved there. */
    if (psp_rom_path_suffix(g_game.save_path, sizeof(g_game.save_path),
                            rom_path,
                            console == FE_CONSOLE_GBA ? ".sav" :
                            console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav")
           != 0 ||
-       psp_rom_path_suffix(g_game.state_path, sizeof(g_game.state_path),
-                           rom_path, psp_state_slot1_suffix(console)) != 0)
+       sidecar_state1(g_game.state_path, sizeof(g_game.state_path),
+                      g_app_root, rom_path, console) != 0 ||
+       sidecar_legacy_state1(g_game.legacy_state_path,
+                             sizeof(g_game.legacy_state_path), rom_path,
+                             console) != 0)
    {
       fe_evt("boot_refused reason=sidecar_path_too_long rom=%s", rom_path);
       return -1;
+   }
+   {
+      sidecar_mig mig;
+      sidecar_make_dirs(g_app_root);
+      sidecar_migrate(g_game.legacy_state_path, g_game.state_path, &mig);
+      if (mig.moved || mig.copied || mig.failed || mig.kept)
+         fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
+                rom_path, mig.moved, mig.copied, mig.failed, mig.kept);
    }
    save_import(rom_path, g_game.save_path, console);
    ui_set_state_base(g_game.state_path);
@@ -4633,7 +4655,9 @@ static void game_loop(void)
                fe_evt("state_load via=continue refused=patched_since");
                toast_now("Patched since it was left: starting from the save");
             }
-            else if (state_load_path(g_res.path, "continue") != 0)
+            else if (state_load_path(sidecar_read_path(g_res.path,
+                        g_game.legacy_state_path, g_game.state_path, pt,
+                        sizeof(pt)), "continue") != 0)
                toast_now("Could not continue: starting from the save");
          }
          else if (state_load_slot((unsigned)slot, "shelf") != 0)

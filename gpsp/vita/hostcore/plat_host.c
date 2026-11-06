@@ -759,9 +759,40 @@ void plat_wait_vblank(void)
 
 unsigned plat_refresh_mhz(void) { return opt.refresh_mhz; }
 
-unsigned plat_arm_mhz(void) { return 0; }
+static unsigned g_fake_arm;
 
-unsigned plat_arm_mhz_measured(void) { return 0; }
+unsigned plat_arm_mhz(void) { return g_fake_arm; }
+/* The tests' stand-ins (GBADHOC_FAKE_*): a console that refuses 500, an
+ * overclock plugin's folders under GBADHOC_FAKE_UR0, a measured clock. */
+unsigned plat_arm_mhz_measured(void)
+{
+   const char *e = getenv("GBADHOC_FAKE_MHZ");
+   return e ? (unsigned)atoi(e) : 0;
+}
+
+int plat_cpu_set_mhz(int mhz)
+{
+   if (mhz > 444 && getenv("GBADHOC_FAKE_REFUSE500"))
+      return -1;
+   g_fake_arm = (unsigned)mhz;
+   return 0;
+}
+
+static const char *fake_ur0(const char *sub)
+{
+   static char buf[2][512];
+   static int k;
+   const char *e = getenv("GBADHOC_FAKE_UR0");
+   if (!e || !e[0])
+      return "";
+   k ^= 1;
+   snprintf(buf[k], sizeof(buf[k]), "%s/%s", e, sub);
+   return buf[k];
+}
+
+const char *plat_tai_dir(void) { return fake_ur0("tai"); }
+const char *plat_psvshell_dir(void) { return fake_ur0("data/PSVshell/profiles"); }
+const char *plat_title_id(void) { return "GBAD00001"; }
 
 void plat_power_tick(void) { }
 

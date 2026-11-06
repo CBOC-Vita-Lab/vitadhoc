@@ -85,6 +85,16 @@
 Real-console listening is still being checked; the numbers behind these are
 in [Technical details](docs/TECHNICAL.md).
 
+**Faster.**
+- **Runs at 500 MHz when your Vita allows it.** Settings > CPU speed:
+  "500 MHz (fast)" is the default; "444 MHz (standard)" is the old speed. A
+  Vita needs an overclock plugin such as PSVshell for 500 (without one the
+  app falls back to 444, and the row says so). With PSVshell installed,
+  VitAdhoc sets up the profile for itself, never replacing one of yours
+  without asking in Settings (your own is saved and put back if you switch to
+  444). The first start after the change may need one more launch. A faster
+  clock uses more battery and runs warmer.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

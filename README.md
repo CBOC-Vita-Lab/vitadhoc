@@ -87,6 +87,11 @@ Vita. Save/state sharing and a Mystery Gift receiver are included too.
 
 ## Performance
 
+**CPU speed (1.3):** VitAdhoc asks for 500 MHz (Settings > CPU speed). The
+system only allows that with an overclock plugin such as PSVshell; otherwise
+the Vita stays at 444 MHz. A faster clock means a warmer Vita and shorter
+battery life; choose "444 MHz (standard)" to go back.
+
 **Pokemon Unbound 2.1.1.1 on a real Vita:** about **60 emulated fps** and
 **44 frontend-produced frames/s** across three samples of the opening beach
 scene, at full-screen CPU xBRZ 3x.

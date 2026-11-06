@@ -93,6 +93,7 @@
 #include "stb_image_write.h"
 
 #include "plat.h"
+#include "cpuclock.h"
 #include "fe_sensor.h"
 #include "play_log.h"
 #include "save_sync.h"
@@ -255,6 +256,8 @@ static struct
                                * over the game (vid_set_overlay)        */
    int      grid;             /* grid_strength = 1..10: the LCD grid and
                                * scanline looks' darkness (5 = default) */
+   int      cpu_fast;         /* cpu_mhz = 500 (default) or 444: Settings >
+                               * CPU speed (cpuclock.h)                 */
    /* Last: the initializer below is positional, and "" is its default. */
    char     shot_dir[200];    /* screenshots = ux0:pictures/VitAdhoc: where
                                  * screenshots go (empty: screenshots/) */
@@ -262,7 +265,7 @@ static struct
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, "", "" };
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, "", "" };
 
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
@@ -1293,6 +1296,7 @@ static void read_switches(void)
    if (g_sw.grid < 1 || g_sw.grid > 10)
       g_sw.grid = 5;
    vid_set_lcd_strength(g_sw.grid * 20);
+   g_sw.cpu_fast = (int)fe_ini_get_int(ini, "cpu_mhz", 500) == 444 ? 0 : 1;
    if (!fe_ini_get(ini, "screenshots", g_sw.shot_dir, sizeof(g_sw.shot_dir)))
       g_sw.shot_dir[0] = '\0';
    {
@@ -2690,6 +2694,7 @@ static void modal_tick(void)
 {
    plat_present_hook();
    power_service();
+   cpuclk_tick();               /* the second clock measurement, 8 s in */
    ra_pump();                   /* the server's answers, in the menus too */
    if (plat_quit_requested())
       g_running = 0;
@@ -3540,6 +3545,19 @@ void ui_host_sync_ra_set(int on)
    fe_evt("sync_ra_saves on=%d saved=%d", g_sync_ra,
           vita_ini_put("sync_ra_saves", g_sync_ra ? "1" : "0") == 0);
 }
+
+/* Settings > CPU speed (cpuclock.h): 500 MHz (default) or 444 MHz. */
+int ui_host_cpu_fast(void) { return cpuclk_fast(); }
+
+void ui_host_cpu_set(int fast)
+{
+   g_sw.cpu_fast = fast ? 1 : 0;
+   cpuclk_set(g_sw.cpu_fast);
+   fe_evt("cpu_mhz setting=%d saved=%d", g_sw.cpu_fast ? 500 : 444,
+          vita_ini_put("cpu_mhz", g_sw.cpu_fast ? "500" : "444") == 0);
+}
+
+const char *ui_host_cpu_note(void) { return cpuclk_note(); }
 
 int ui_host_overlay_on(void) { return g_sw.overlays; }
 
@@ -4870,6 +4888,8 @@ static void game_loop(void)
          }
       }
       keys_script_frame(fe_host_frame_count());
+      if (!session && !local && !g_sw.link_bench)
+         cpuclk_tick();          /* (once; not while a link is running) */
       if (g_shot_pending)
       {
          g_shot_pending = 0;
@@ -4948,6 +4968,9 @@ int main(int argc, char **argv)
           g_sw.autoexit_frames, g_sw.link_bench, g_sw.io_thread,
           plat_refresh_mhz());
    plat_memory_report();
+   /* 500 MHz where the console allows it (444 otherwise), the PSVshell
+    * profile, and the measured clock in the log. */
+   cpuclk_boot(g_app_root, g_sw.cpu_fast);
    if (g_sw.xbrz_dist)
       upscale_xbrz_dist(g_sw.xbrz_dist);
    if (g_sw.up_slide != 2)

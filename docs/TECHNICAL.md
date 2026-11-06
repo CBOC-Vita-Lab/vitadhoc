@@ -206,6 +206,45 @@ that report is **not** confirmed fixed. What was measured:
 - PSG squares are point-sampled at 32768 Hz, so notes above about 4 kHz
   alias (a 3 kHz square: about 4.6 % of its energy off the harmonics).
 
+## Version 1.3 Changes
+
+### CPU speed (`cpuclock.c`)
+
+At start the app calls `scePowerSetArmClockFrequency(500)` with the bus and GPU
+at 222 MHz and the crossbar at 166 (what the other Vita ports do). A console
+without an overclock plugin refuses; the app then asks for 444. Both requests
+and results are in the log (`clocks: asked for ...`).
+
+PSVshellPlus ignores such a request and applies a per-title profile instead,
+read when the app becomes the active app, so a profile written now applies
+from the next launch. `ur0:data/PSVshell/profiles/GBAD00001`, exactly 28
+bytes, little-endian:
+
+| offset | size | content |
+|---|---|---|
+| 0 | 8 | ASCII `PSVS0300` |
+| 8 | u32 | lock flags `0x0b` (bit 0 CPU, bit 1 GPU, bit 3 crossbar) |
+| 12 | i32 | CPU MHz, 500 |
+| 16 | i32 | GPU MHz, 222 |
+| 20 | i32 | bus MHz, 222 |
+| 24 | i32 | crossbar MHz, 166 |
+
+`50535653 30333030 0b000000 f4010000 de000000 de000000 a6000000`
+
+The plugin is found by `ur0:tai/PSVshellPlus*.skprx` or the profiles folder.
+With the setting on 500 the file is written only when none exists. A file that
+differs is never replaced at start. Choosing 500 in Settings saves the
+player's file as `psvshell_profile_backup.bin` in the data folder (and records
+`psvshell_profile.state`), then writes ours; choosing 444 removes our file or
+puts the backup back (if the file is still ours). Writes go to a `.tmp` file,
+are read back, then renamed. If the first write fails, `psvshell_nowrite.stamp`
+stops further tries. Under the plugin `scePowerGetArmClockFrequency` still
+answers 444, so the app times a `subs/bne` loop (`plat_arm_mhz_measured`) at
+start, 8 s later and after a change: `clocks: the ARM core measures N MHz (the
+system reports M)`. The setting is `cpu_mhz = 500|444` in `vita.ini`.
+The twin's stand-ins: `GBADHOC_FAKE_REFUSE500`, `GBADHOC_FAKE_UR0=<dir>`,
+`GBADHOC_FAKE_MHZ=<n>`.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

@@ -129,6 +129,9 @@ void        ui_host_grid_set(int level);
  * vita.ini; save_sync.h). */
 int         ui_host_sync_ra_on(void);
 void        ui_host_sync_ra_set(int on);
+int         ui_host_cpu_fast(void);          /* Settings > CPU speed: 1 = 500 MHz */
+void        ui_host_cpu_set(int fast);
+const char *ui_host_cpu_note(void);          /* "Measured: 496 MHz" and a hint */
 int         ui_host_overlay_on(void);
 void        ui_host_overlay_set(int on);
 const char *ui_host_overlay_name(void);

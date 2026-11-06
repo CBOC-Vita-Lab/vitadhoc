@@ -79,6 +79,16 @@ unsigned plat_refresh_mhz(void);
  * 0 and 0.  For the log. */
 unsigned plat_arm_mhz(void);
 unsigned plat_arm_mhz_measured(void);
+/* Ask for the CPU clock (500 or 444 MHz; the bus is set to 222, the GPU to
+ * 222 and the crossbar to 166).  0 or more: the system took it; negative:
+ * refused (no overclock plugin).  The twin: refused for 500 when
+ * GBADHOC_FAKE_REFUSE500 is set. */
+int      plat_cpu_set_mhz(int mhz);
+/* Where an overclock plugin keeps its files, and our title id; "" = none
+ * (the twin: folders under GBADHOC_FAKE_UR0, for the tests). */
+const char *plat_tai_dir(void);            /* ur0:tai                      */
+const char *plat_psvshell_dir(void);       /* ur0:data/PSVshell/profiles   */
+const char *plat_title_id(void);           /* GBAD00001                    */
 /* Keep the console awake: once per emulated frame (not in the menus, where
  * an idle console should dim and sleep as the owner set it to). */
 void     plat_power_tick(void);

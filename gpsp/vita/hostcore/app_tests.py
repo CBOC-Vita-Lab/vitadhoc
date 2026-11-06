@@ -3263,6 +3263,44 @@ def t_fullspeed(S):
                 "from then on (on: %s, off: %s)" % (slow, a, b))
 
 
+def t_smooth_gov(S):
+    """Keep full speed also lets smoothing give way (upscale_vita.c, the
+    governor).  A stretch of frames that cost too much while xBRZ draws:
+    one step down at a time and quietly (a line in the log, no picture
+    changes beyond the smoothing), then back up once the frames are cheap
+    again.  The twin only runs it when GBADHOC_GOV=1 (a twin's clock is
+    whatever machine it runs on); the frames' cost is --slow's, simulated.
+    With Keep full speed off, it never steps."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-scroll.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-scroll.gba: skipped")
+        return
+    extra = {"roms/gbadhoc-scroll.gba": open(rom, "rb").read()}
+    old = os.environ.get("GBADHOC_GOV")
+    os.environ["GBADHOC_GOV"] = "1"
+    try:
+        res = {}
+        for on in (1, 0):
+            r = S.run("smoothgov_%d" % on, "100:right:300\n", extra=extra,
+                      config={"full_speed": on, "scale_gba": 1, "filter_gba": 4,
+                              "last_rom": "gbadhoc-scroll.gba"},
+                      autoboot="gbadhoc-scroll.gba",
+                      args=("--frames", "3000", "--slow", "200:240:30000"))
+            S.clean(r)
+            res[on] = [e.get("step") for e in r.evt("smooth_gov")]
+    finally:
+        if old is None:
+            os.environ.pop("GBADHOC_GOV", None)
+        else:
+            os.environ["GBADHOC_GOV"] = old
+    S.check(res[1] and res[1][0] == "down",
+            "slow frames while smoothing: it steps down (%s)" % res[1])
+    S.check("up" in res[1] and res[1].index("up") > res[1].index("down"),
+            "and back up once the frames are cheap (%s)" % res[1])
+    S.check(len(res[1]) <= 6, "few steps, no flicker (%s)" % res[1])
+    S.check(not res[0], "Keep full speed off: smoothing never steps (%s)" % res[0])
+
+
 def t_upfade(S):
     """A picture that changes whole (a fade, a jump to another place) at xBRZ
     4x: scaled at 2x at once (upscale_vita.c UP_HOT_HOLD), drawn the same
@@ -4631,7 +4669,7 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("patch", t_patch), ("sgb", t_sgb), ("ra", t_ra),
          ("preview", t_preview),
          ("gameinfo", t_gameinfo), ("art_progress", t_art_progress), ("art_settings", t_art_settings),
-         ("title_bg", t_title_bg), ("fullspeed", t_fullspeed),
+         ("title_bg", t_title_bg), ("fullspeed", t_fullspeed), ("smooth_gov", t_smooth_gov),
          ("upfade", t_upfade), ("render_thread", t_render_thread),
          ("render_skips", t_render_skips), ("gpu_xbrz", t_gpu_xbrz),
          ("session", t_session),

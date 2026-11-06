@@ -81,6 +81,7 @@
 #include "config_psp.h"
 #include "ctl_map.h"
 #include "video_vita.h"
+#include "upscale_vita.h"
 #include "render_thread.h"
 #include "ui_host_hooks.h"
 #include "state_slots.h"
@@ -325,6 +326,10 @@ static unsigned g_catchup;        /* frames owed (pace_frame)              */
 static unsigned g_q_taken, g_q_glass, g_q_waits;
 static int      g_catchup_ok;     /* this iteration may run them           */
 static unsigned g_caught, g_caught_us;   /* this window's: run, their time */
+static unsigned g_caught_us_frame;       /* ...this iteration's time */
+/* A frame whose own work took more than this (of 16.7 ms) is a bad one for
+ * the smoothing governor (upscale_gov_frame). */
+#define GOV_WORK_US 16000u
 
 /* START+SELECT held this many refreshes opens the in-game menu (a quarter of
  * a second, as on the PSP).  The PSP's longer hold that ends the run is not
@@ -4311,6 +4316,7 @@ static void wake_overlay(void)
 
 static void game_loop(void)
 {
+   upscale_gov_reset();            /* a new game starts at the full factor */
    while (g_running && g_quit == QUIT_NONE)
    {
       unsigned pad, pad_new, fired, frames;
@@ -4709,8 +4715,13 @@ static void game_loop(void)
                      ? g_sw.render_thread : RT_OFF);
 
       /* ---- catching up: the frames the last one fell behind by, not drawn */
+      g_caught_us_frame = 0;
       g_catchup_ok = g_pcfg.full_speed && !g_ff.on && !session && !local &&
                      !g_sw.link_bench && !link_owns_picture();
+      /* Keep full speed also lets smoothing give way when frames keep
+       * missing the display (upscale_gov_*): never in a link, where the
+       * picture and its timing are not ours to change. */
+      upscale_gov_enable(g_catchup_ok);
       if (g_catchup && g_catchup_ok)
       {
          const unsigned n = g_catchup < CATCHUP_PER_FRAME ? g_catchup
@@ -4735,7 +4746,8 @@ static void game_loop(void)
          else
             g_next_ns += (uint64_t)n * GBA_FRAME_NS;
          g_caught += n;
-         g_caught_us += (unsigned)(plat_time_us() - t0);
+         g_caught_us_frame = (unsigned)(plat_time_us() - t0);
+         g_caught_us += g_caught_us_frame;
       }
       g_catchup = 0;
 
@@ -4798,6 +4810,22 @@ static void game_loop(void)
       }
 
       window_note((uint32_t)(plat_time_us() - g_app_frame_t0));
+      {
+         /* A frame is bad when its own work (the catch-up frames it ran
+          * for an earlier one left out) took more than 16 ms of the 16.7,
+          * or the display was missed (pace_frame's `late`, last frame's),
+          * or the smoothing missed a picture (upscale_gov_miss). */
+         static unsigned late_seen;
+         const uint64_t own = plat_time_us() - g_app_frame_t0;
+         const int over = own > g_caught_us_frame + GOV_WORK_US ||
+                          g_pace_late != late_seen;
+         int mv;
+         late_seen = g_pace_late;
+         mv = upscale_gov_frame(over);
+         if (mv)
+            fe_evt("smooth_gov step=%s level=%d", mv < 0 ? "down" : "up",
+                   upscale_gov_level());
+      }
       if (plat_quit_requested() ||
           (g_sw.autoexit_frames && frames >= g_sw.autoexit_frames))
          g_running = 0;

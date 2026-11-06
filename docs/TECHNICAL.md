@@ -37,6 +37,67 @@ testing; other profiles and generic/scout behaviour are not universally
 accepted. Where information is unavailable, margins use the selected fallback.
 It does not turn all games into native widescreen games or modify their saves.
 
+## Version 1.3 Changes
+
+**Smoothing that gives way** (`vita/upscale_vita.c` governor,
+`vita/main_vita.c` game loop). Issue #7: with full-screen CPU xBRZ the game
+ran at about 60 emulated frames but fewer actually shown.
+
+What was already there: xBRZ/Scale3x are cut into 8-row stripes and scaled
+on two helper threads (cores 1 and 2) while the emulator keeps core 0, only
+changed columns are scaled again, scrolling turns a ring instead of
+rescaling, fades drop to 2x inside the same textures, and each finished
+picture waits behind a GPU fence (`vb_tex_writable`) before its texture is
+written again. A picture that is not ready when the next arrives is dropped
+(the game never waits), and 20 late pictures in a row step the job factor
+down. That per-picture rule only sees pictures the helpers finished late,
+not what reaches the screen. Bands of rows already give identical output to a
+single pass: `band_split` in `tests/upscale/upscale_test.c` checks xBRZ cut
+into uneven row bands and rectangles against the whole picture, and the
+existing run compares each finished texture (with 2 helpers under
+`GBADHOC_UPSCALE_ASYNC=1`) against a from-scratch scale.
+
+Added: a governor driven by what the player sees. Once per frame the game
+loop calls `upscale_gov_frame(work_late)`. A frame is bad when its own work
+(catch-up frames left out) took more than 16 ms, when `pace_frame` counted a
+missed refresh, or when smoothing missed a picture (slot still busy, picture
+over 16.7 ms, or the texture still fenced). In windows of 60 frames:
+6 or more bad frames with smoothing in use for at least half the window is one
+step down (the factor the picture asks for minus one: xBRZ 4x, 3x, 2x, then
+`upscale_factor` returns 0 and the user's own GPU filter draws); 10 clean
+windows (at most 1 bad frame) in a row is one try back up. A try that fails
+doubles the wait (10, 20, 40 ... 600 windows); one that holds for 20 windows
+forgets the doubling. The rule is `upscale_gov_step` (pure, tested). Windows with
+smoothing not in use change nothing. If the lowest step is still bad, the
+emulation itself is over budget: no step up is tried, and Keep full speed's
+catch-up frames (which skip drawing only, emulation and sound stay at
+60 Hz, default on) are what remains. This is the "Frame skip: Auto"
+behaviour, so no second setting was added. The governor follows Keep full
+speed, is off in fast forward and link sessions, and resets with each game.
+The game menu shows one plate line ("Smoothing is lighter to keep full
+speed.") while stepped down. The log gets `smooth_gov step=down|up level=N`
+and `vita_upscale ... stepped=` counts the downs.
+
+On the Linux twin the governor only runs with `GBADHOC_GOV=1`, since a twin
+finishes a picture before `upscale_submit` returns and its clock is the host's.
+
+Tests: `tests/upscale` (band split, governor rules including an on-the-edge
+case that makes 22 moves in an hour of frames), `app_tests.py --only
+smooth_gov` (slow frames while xBRZ draws: steps down, later up, few steps; none
+with Keep full speed off).
+
+Measurements (Linux x86 twin, Pokemon Emerald copy, fit 4x xBRZ, 1800 frames
+of menu mashing and walking, relative only; the machine was shared):
+- Smoothing off (bilinear): 11.9 ms of CPU per frame (whole process, emulation
+  included, 1800 frames). xBRZ 4x: 11.95 ms per frame. The scaler's cost is
+  inside the noise on this shared x86 machine; the twin cannot show the Vita's
+  44-of-60 shown frames, which came from the console's own cores and memory.
+- The governor itself was exercised with simulated slow frames (`--slow`), see
+  the `smooth_gov` test, not with timings.
+Nothing here was measured on a Vita. The step sizes and windows are from
+reasoning and the twin, not from console traces; the thresholds (16 ms, 6 of 60)
+are the first thing to adjust once a console log with `smooth_gov` lines exists.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

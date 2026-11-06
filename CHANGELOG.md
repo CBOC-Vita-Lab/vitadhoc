@@ -1,5 +1,19 @@
 # What's New
 
+## Version 1.3
+
+**Smoother play with smoothing on**
+- **Smoothing gives way when the game is busy.** With Keep full speed on (the
+  default), if xBRZ or Scale3x smoothing keeps making frames miss the screen
+  for a few seconds, VitAdhoc quietly uses a lighter smoothing (one step at a
+  time, down to the screen's own filter), and goes back up once there is room
+  again. It tries again slowly, so it does not flip back and forth. The game
+  menu shows one line when smoothing is lighter than you chose. Turn Keep full
+  speed off to always get the full smoothing.
+  ([#7](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/7))
+- **Keep full speed** (Settings) now covers both: busy moments skip drawing a
+  frame so the game and its sound keep their speed, and smoothing eases off.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

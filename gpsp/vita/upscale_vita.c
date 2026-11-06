@@ -426,6 +426,7 @@ static void job_finish(up_slot *S)
    A_STORE(g_st.factor, S->f);
    if (dt > 16683u)
    {
+      upscale_gov_miss();
       A_ADD(g_st.late, 1);
       A_ADD(g_st.late_slid, S->slid ? 1 : 0);
       if (S->f >= 2 && S->f <= 4)
@@ -667,6 +668,146 @@ void upscale_quality(int quality)
    g_quality = quality >= 0 && quality <= 3 ? quality : 0;
 }
 
+/* ---- the governor: smoothing that gives way, quietly ------------------------
+ *
+ * The picture-level step-down above (job_finish) works inside the textures
+ * and only sees pictures the helpers finished late.  What the player sees is
+ * the frames that did not reach the glass in time, whatever the cause: a
+ * picture dropped because its slot was busy, one that came a refresh late,
+ * or the emulator's own frame running over.  upscale_gov_frame is called
+ * once per frame; the governor counts the bad frames in windows of
+ * GOV_WINDOW frames:
+ *
+ *   - a window with GOV_BAD or more bad frames, smoothing in use for at
+ *     least half of it: one step down (xBRZ 4x -> 3x -> 2x -> the GPU's own
+ *     filter);
+ *   - GOV_CLEAN clean windows in a row (at most one bad frame): one step
+ *     up.  That is a try: if the step does not hold, the way back up is
+ *     made twice as long (at most GOV_MAX_CLEAN), so a game on the edge
+ *     settles at the lower step instead of flickering between two.
+ *
+ * A window where smoothing was not in use (a menu, a 1:1 view) says nothing
+ * and changes nothing.  When the lowest step is still over budget the
+ * emulation itself is the cause: the windows are not clean, so no step up
+ * is tried, and Keep full speed's catch-up frames are what remains. */
+static int g_gov_on;              /* 1: the governor may step (Keep full speed) */
+static int g_gov_nat;             /* the factor the last picture asked for    */
+static int g_gov_seen;            /* this frame asked for smoothing           */
+static int g_gov_missed;          /* this frame had a miss from the helpers   */
+static upscale_gov g_gov;
+
+void upscale_gov_init(upscale_gov *g)
+{
+   memset(g, 0, sizeof(*g));
+   g->clean_need = GOV_CLEAN;
+}
+
+void upscale_gov_miss(void)
+{
+   A_STORE(g_gov_missed, 1);
+}
+
+int upscale_gov_step(upscale_gov *g, int bad, int active, int nat)
+{
+   int moved = 0;
+   g->frames++;
+   g->active += active ? 1 : 0;
+   g->bad += bad && active ? 1 : 0;
+   if (g->frames < GOV_WINDOW)
+      return 0;
+   if (g->active * 2 >= g->frames)
+   {
+      const int maxl = nat > 2 ? nat - 1 : 0;   /* nat - level < 2: off */
+      if (g->bad >= GOV_BAD)
+      {
+         if (g->level < maxl)
+         {
+            g->level++;
+            moved = -1;
+            if (g->probing)           /* the step up did not hold */
+            {
+               g->clean_need *= 2;
+               if (g->clean_need > GOV_MAX_CLEAN)
+                  g->clean_need = GOV_MAX_CLEAN;
+            }
+         }
+         g->probing = 0;
+         g->settled = 0;
+         g->clean = 0;
+      }
+      else if (g->bad <= 1)
+      {
+         if (g->probing && ++g->settled >= GOV_SETTLE)
+         {
+            g->probing = 0;
+            g->settled = 0;
+            g->clean_need = GOV_CLEAN;      /* it held: forget the doubling */
+         }
+         if (g->level > 0 && ++g->clean >= g->clean_need)
+         {
+            g->level--;
+            g->clean = 0;
+            g->probing = 1;
+            g->settled = 0;
+            moved = 1;
+         }
+      }
+      else
+         g->clean = 0;
+   }
+   g->frames = g->active = g->bad = 0;
+   return moved;
+}
+
+void upscale_gov_enable(int on)
+{
+   on = on ? 1 : 0;
+#ifndef __vita__
+   /* A twin finishes a picture before submit returns and its clock is
+    * whatever machine it runs on: the picture must not depend on that. */
+   if (!getenv("GBADHOC_GOV"))
+      on = 0;
+#endif
+   if (!on && g_gov_on)
+      upscale_gov_init(&g_gov);        /* back to the full factor */
+   g_gov_on = on;
+}
+
+void upscale_gov_reset(void)
+{
+   upscale_gov_init(&g_gov);
+   A_STORE(g_gov_missed, 0);
+}
+
+int upscale_gov_frame(int work_late)
+{
+   const int bad = work_late || A_LOAD(g_gov_missed);
+   const int active = A_LOAD(g_gov_seen);
+   int moved;
+   A_STORE(g_gov_missed, 0);
+   A_STORE(g_gov_seen, 0);
+   if (!A_LOAD(g_gov_on))
+      return 0;
+   moved = upscale_gov_step(&g_gov, bad, active, A_LOAD(g_gov_nat));
+   if (moved < 0)
+      A_ADD(g_st.stepped, 1);
+   return moved;
+}
+
+int upscale_gov_level(void)
+{
+   return A_LOAD(g_gov_on) ? A_LOAD(g_gov.level) : 0;
+}
+
+const char *upscale_gov_note(void)
+{
+   const int l = upscale_gov_level();
+   if (!l)
+      return NULL;
+   return A_LOAD(g_gov_nat) - l < 2 ? "Smoothing is off to keep full speed."
+                                    : "Smoothing is lighter to keep full speed.";
+}
+
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
 {
    int f, fmax = kind == UPSCALE_XBRZ ? 4 : kind == UPSCALE_SCALE ? 3 : 0;
@@ -683,6 +824,13 @@ int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
       f = fmax;
    while (f > 2 && (unsigned)(f * f) * w * h > UP_BUDGET_PX)
       f--;
+   if (f < 2)
+      return 0;
+   /* The governor (above): this many factors less than the picture asks. */
+   A_STORE(g_gov_nat, f);
+   A_STORE(g_gov_seen, 1);
+   if (A_LOAD(g_gov_on))
+      f -= A_LOAD(g_gov.level);
    return f < 2 ? 0 : f;
 }
 
@@ -933,6 +1081,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    if (A_LOAD(S->state) == ST_BUSY)
    {
       A_ADD(g_st.dropped, 1);
+      upscale_gov_miss();
       return 0;
    }
    if (!g_lut_ready)

@@ -1962,7 +1962,10 @@ static vb_tex *up_stage(int slot, const uint16_t *pix, unsigned w,
       /* The target was the front a frame or two ago: while a queued scene
        * may still read it, nothing is written into it (the front stays). */
       if (!vb_tex_writable(g_upt[slot].t[target]))
+      {
          g_up_fenced++;
+         upscale_gov_miss();
+      }
       else if (upscale_submit(slot, kind, f, pix, w, h, pitch_bytes, 0, px,
                               tp[0], target) == 1)
       {
@@ -2041,6 +2044,11 @@ static void up_quad(int slot, vb_tex *t, int f, float x0, float y0, float x1,
          n++;
       }
    vb_tquads(t, q, n, 0xFFFFFFFFu, exact ? VB_NEAREST : VB_LINEAR);
+}
+
+const char *vid_smooth_note(void)
+{
+   return upscale_gov_note();
 }
 
 void vid_upscale_stats(upscale_stats_t *out)

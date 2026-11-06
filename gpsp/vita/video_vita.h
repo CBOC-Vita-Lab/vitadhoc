@@ -145,6 +145,9 @@ void vid_set_tex_mem(int cpu_written);
 
 /* The CPU upscalers' work since the last call (upscale_vita.h). */
 void vid_upscale_stats(upscale_stats_t *out);
+/* One line for the in-game menu when smoothing has stepped down to keep up
+ * (Keep full speed), else NULL. */
+const char *vid_smooth_note(void);
 /* xBRZ drawn by the GPU when it can (video_vita.c, "xBRZ on the GPU"):
  * on = 0 keeps it on the CPU.  vid_gpu_xbrz: is it the GPU's now, and the
  * pictures it has drawn so far. */

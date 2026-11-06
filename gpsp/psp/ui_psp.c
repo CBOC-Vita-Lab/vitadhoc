@@ -3504,8 +3504,8 @@ static const char *set_help(int id)
    case SET_FPS:      return "Shows the game's speed in a corner.";
 #ifdef VITA
    case SET_SPEED:    return g_pcfg.full_speed
-                             ? "Busy moments skip a frame: no slowdown, "
-                               "no stuttering sound."
+                             ? "Busy moments skip a frame; smoothing "
+                               "eases off."
                              : "Busy moments slow the game and its sound "
                                "down.";
    case SET_SGB:      return "Super Game Boy games in the border they bring "
@@ -6364,6 +6364,8 @@ static ui_action screen_menu(unsigned edges, int session_active)
    }
    if (g_menu_note[0])
       cc_plate(0, session_active, g_menu_note);
+   else if (vid_smooth_note())
+      cc_plate(0, session_active, vid_smooth_note());
    return UI_ACT_NONE;
 #endif
    ov_backdrop(OV_SCRIM * k / OV_OPEN_FRAMES);

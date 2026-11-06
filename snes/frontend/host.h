@@ -30,7 +30,11 @@ void snes_host_shutdown(void);
 int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, size_t errlen);
 void snes_host_unload(void);
 
+/* port 0..4: pad 1, pad 2, and (with the multitap on) pads 3 to 5. */
 void snes_host_set_pad(int port, unsigned mask);
+/* Super Multitap in controller port 2 (pads 2..5). Off = a plain pad 2. */
+void snes_host_set_multitap(int on);
+int snes_host_multitap(void);
 
 /* Run until the next vertical blank (one frame). */
 void snes_host_run_frame(void);

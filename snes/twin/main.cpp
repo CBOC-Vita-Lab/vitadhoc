@@ -125,6 +125,7 @@ static void usage(void)
 	    "  --srm FILE         battery RAM file (loaded if present, saved at exit)\n"
 	    "  --save-state FILE --state-frame N   save a state after frame N\n"
 	    "  --load-state FILE --state-frame N   load a state before frame N\n"
+	    "  --pad2/--pad3/--pad4/--pad5 SCRIPT  scripts for pads 2..5 (pads 3-5 need --opt multitap=1)\n"
 	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock transparency echo_buffer), repeatable\n"
 	    "  --summary          print one summary line (fps, split) on stdout\n"
 	    "  --name NAME        label used in the summary line\n");
@@ -137,7 +138,7 @@ int main(int argc, char **argv)
 	int frames = 600, state_frame = -1;
 	const char *hashes = 0, *shots = 0, *wav = 0, *timing = 0, *srm = 0, *sstate = 0, *lstate = 0, *name = 0;
 	std::string prefix = "shot_";
-	std::vector<PadEv> script;
+	std::vector<PadEv> script, script2, script3, script4, script5;
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
 	bool summary = false;
@@ -155,6 +156,10 @@ int main(int argc, char **argv)
 		else if (arg("--load-state")) lstate = argv[++i];
 		else if (arg("--state-frame")) state_frame = atoi(argv[++i]);
 		else if (arg("--name")) name = argv[++i];
+		else if (arg("--pad2")) script2 = parse_script(argv[++i]);
+		else if (arg("--pad3")) script3 = parse_script(argv[++i]);
+		else if (arg("--pad4")) script4 = parse_script(argv[++i]);
+		else if (arg("--pad5")) script5 = parse_script(argv[++i]);
 		else if (arg("--opt")) {
 			char k[64]; int v = 0;
 			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) opts.push_back({ k, v });
@@ -191,6 +196,14 @@ int main(int argc, char **argv)
 	for (int f = 0; f < frames; f++) {
 		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
 		snes_host_set_pad(0, pad);
+		{
+			std::vector<PadEv> *ex[4] = { &script2, &script3, &script4, &script5 };
+			static size_t eidx[4]; static unsigned em[4];
+			for (int k = 0; k < 4; k++) {
+				while (eidx[k] < ex[k]->size() && (*ex[k])[eidx[k]].frame <= f) em[k] = (*ex[k])[eidx[k]++].mask;
+				snes_host_set_pad(k + 1, em[k]);
+			}
+		}
 		if (lstate && f == state_frame) {
 			int r = snes_host_state_load(lstate);
 			fprintf(stderr, "load state: %d\n", r);

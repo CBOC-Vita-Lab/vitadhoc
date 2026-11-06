@@ -40,6 +40,7 @@ static size_t g_ar_r, g_ar_w, g_ar_n; /* int16 units, ring */
 static std::vector<uint8_t> g_sram_saved; /* copy of what is on disk (or at load) */
 static bool g_bak_done;
 static std::string g_backup_dir; /* optional: extra home for the first copy of a player's save */
+static int g_multitap;
 static int g_want_ppu_thread;
 static int g_want_apu_thread;   /* runtime switch: 1 = APU on its own thread (needs a loaded ROM) */
 static std::atomic_flag g_ring_lock = ATOMIC_FLAG_INIT; /* the ring is filled by the APU thread when it is on */
@@ -192,8 +193,7 @@ int snes_host_init(void)
 	S9xSetController(0, CTL_JOYPAD, 0, 0, 0, 0);
 	S9xSetController(1, CTL_JOYPAD, 1, 0, 0, 0);
 	S9xUnmapAllControls();
-	map_pad(0, "1");
-	map_pad(1, "2");
+	for (int i = 0; i < 5; i++) map_pad(i, "");
 
 	g_audio_ring.assign(32040 * 2 * 2, 0); /* 2 seconds */
 	g_ar_r = g_ar_w = g_ar_n = 0;
@@ -285,11 +285,26 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 
 void snes_host_unload(void) { S9xAPUMTSet(false); S9xPPUMTSet(false); g_loaded = false; }
 
+void snes_host_set_multitap(int on)
+{
+	if (!g_inited) return;
+	S9xAPUMTSync();
+	S9xPPUMTSync();
+	if (on) {
+		Settings.MultiPlayer5Master = TRUE;
+		S9xSetController(1, CTL_MP5, 1, 2, 3, 4); /* pads 2..5 on the multitap in port 2 */
+	} else {
+		S9xSetController(1, CTL_JOYPAD, 1, 0, 0, 0);
+	}
+	g_multitap = on ? 1 : 0;
+}
+int snes_host_multitap(void) { return g_multitap; }
+
 void snes_host_reset(void) { if (g_loaded) S9xSoftReset(); }
 
 void snes_host_set_pad(int port, unsigned mask)
 {
-	if (port < 0 || port > 1) return;
+	if (port < 0 || port > 4) return;
 	for (int i = 0; i < 12; i++)
 		S9xReportButton(BTN_PAD(port + 1, i), (mask >> i) & 1);
 }
@@ -345,6 +360,7 @@ int snes_host_set_option(const char *name, int v)
 		if (g_loaded) S9xPPUMTSet(v != 0);
 		return 0;
 	}
+	if (!strcmp(name, "multitap")) { snes_host_set_multitap(v); return 0; }
 	S9xAPUMTSync(); /* the APU thread reads Settings (interpolation, ...) */
 	S9xPPUMTSync();
 	if (!strcmp(name, "block_vram")) Settings.BlockInvalidVRAMAccessMaster = v ? TRUE : FALSE;

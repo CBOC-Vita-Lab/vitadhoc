@@ -43,5 +43,13 @@ b2=$(od -An -tu1 -N1 $T/g.srm.bak 2>/dev/null | tr -d ' ')
 [ "$b2" = 1 ] && ok "previous save kept as .bak" || bad "backup ($b2)"
 [ ! -e $T/g.srm.tmp ] && ok "no .tmp left behind" || bad "tmp file left"
 
+# pad 2 and the multitap: our own pad-reading cartridge copies $4218-$421F into battery RAM
+python3 -I "$HERE/tests/make_pad_rom.py" $T/pad.sfc
+"$TWIN" $T/pad.sfc --frames 30 --pad 5:a --pad2 5:b+y --srm $T/p1.srm >/dev/null 2>&1
+"$TWIN" $T/pad.sfc --frames 30 --opt multitap=1 --pad 5:a --pad2 5:b+y --pad3 5:start --pad4 5:x --pad5 5:select --srm $T/p2.srm >/dev/null 2>&1
+a=$(od -An -tx1 -N9 $T/p1.srm | tr -d ' \n'); b=$(od -An -tx1 -N9 $T/p2.srm | tr -d ' \n')
+[ "$(echo $a | cut -c3-4)" = 80 ] && [ "$(echo $a | cut -c9-10)" = c0 ] && ok "pad 1 and pad 2 reach the game ($a)" || bad "pads ($a)"
+[ "$(echo $b | cut -c9-10)" = c0 ] && [ "$b" != "$a" ] && ok "multitap pads reach the game ($b)" || bad "multitap ($b)"
+
 rm -rf $T
 [ $fail = 0 ] && echo "all passed" || { echo "FAILED"; exit 1; }

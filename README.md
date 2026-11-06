@@ -129,12 +129,12 @@ every folder, use the [manual install guide](INSTALL.md).
 
 | Button | Default action |
 | --- | --- |
-| Cross / Circle | A / B |
+| Cross / Circle | A / B (Circle is A on a Vita whose Enter button is Circle, or in Settings) |
 | Hold Start + Select, or tap the game | Open the menu |
 | Square | Fast forward |
-| Right stick left, or Select + Square | Rewind |
+| Select + Square | Rewind (right stick left too, if turned on in Settings) |
 | Select + L / Select + R | Quick save / quick load |
-| L + R + Select | Screenshot |
+| PS + Start | The Vita's own screenshot |
 | Start on the home screen | Settings |
 
 [All controls](CONTROLS.md) | [Detailed features and settings](docs/FEATURES.md)

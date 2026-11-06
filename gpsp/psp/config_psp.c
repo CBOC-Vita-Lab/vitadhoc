@@ -178,6 +178,10 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.lib_sort    = (int)fe_ini_get_int(cfg_path, "lib_sort", 0);
    if (g_pcfg.lib_sort < 0 || g_pcfg.lib_sort > 2)
       g_pcfg.lib_sort = 0;
+   g_pcfg.ab_buttons  = (int)fe_ini_get_int(cfg_path, "ab_buttons", -1);
+   if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
+      g_pcfg.ab_buttons = -1;
+   g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
 #endif
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
@@ -358,7 +362,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
          (int)fe_ini_get_int(cfg_path, "rewind_mb", PCFG_REWIND_MB_DEFAULT);
       if (g_pcfg.rewind_mb < 4)  g_pcfg.rewind_mb = 4;
       if (g_pcfg.rewind_mb > 64) g_pcfg.rewind_mb = 64;
-      g_pcfg.hints = (int)fe_ini_get_int(cfg_path, "hints", 3);
+      g_pcfg.hints = (int)fe_ini_get_int(cfg_path, "hints", 1);
       if (g_pcfg.hints < 0 || g_pcfg.hints > 3)
          g_pcfg.hints = 0;
       g_pcfg.chord_guard =
@@ -638,6 +642,10 @@ void pcfg_save(void)
       if (g_pcfg.lib_sort || fe_ini_get(cfg_path, "lib_sort", was, sizeof(was)))
          fe_ini_set_int(cfg_path, "lib_sort", g_pcfg.lib_sort);
    }
+   /* ab_buttons: only once chosen, so "as the Vita says" stays no key. */
+   if (g_pcfg.ab_buttons >= 0)
+      fe_ini_set_int(cfg_path, "ab_buttons", g_pcfg.ab_buttons);
+   fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
 #endif
    PCFG_PSP_KEY(fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty));
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);

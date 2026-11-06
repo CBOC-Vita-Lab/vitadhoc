@@ -28,7 +28,8 @@
  *
  * BESIDE THE CONTROL MAP (which is the PSP's: buttons and the left stick):
  * the right stick pulled down is the cheat cartridge's button; held LEFT it
- * rewinds (as the Rewind shortcut does: rewind_vita.h) and held RIGHT it
+ * rewinds (as the Rewind shortcut does: rewind_vita.h; only when Settings >
+ * Controls > Rewind with right stick is on, off by default) and held RIGHT it
  * fast-forwards for as long as it is held, whatever the fast-forward
  * button's mode -- time, on one stick; in the local link, where neither
  * exists, a sideways flick switches machines instead.  A short tap on the
@@ -2354,13 +2355,6 @@ void app_backdrop_from_snapshot(void)
 /* THE IN-GAME MENU OPENS OVER THE GAME (docs/UI-OVERLAY.md): the core is
  * paused from this frame on, so the snapshot is the picture the player was
  * looking at, and the menu draws it, scrimmed, behind every page. */
-/* The first games' hints (config.ini hints) are counted down by games in
- * which the player OPENED the menu, not by games started: someone who has
- * not found it yet keeps being told how.  (The owner's first session on a
- * console: three games started, the line missed each time, and then no way
- * to learn it.) */
-static int g_hint_owed;
-
 static void menu_open(const char *via)
 {
    app_snapshot_take();
@@ -2368,13 +2362,6 @@ static void menu_open(const char *via)
    ui_open();
    g_chord_frames = 0;
    fe_evt("menu_open via=%s frame=%u", via, fe_host_frame_count());
-   if (g_hint_owed)
-   {
-      g_hint_owed = 0;
-      if (g_pcfg.hints > 0)
-         g_pcfg.hints--;
-      fe_evt("hints counted left=%d", g_pcfg.hints);
-   }
 }
 
 /* ---- save states -------------------------------------------------------------
@@ -3535,6 +3522,9 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
       fe_evt("overlay failed path=%s", op);
       g_overlay_name[0] = '\0';
    }
+   /* The glow beside the picture is for a picture with nothing else beside
+    * it: a bezel or shell the player put there is not covered by it. */
+   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : g_pcfg.ambient);
 }
 
 int ui_host_grid_level(void) { return g_sw.grid; }
@@ -3571,6 +3561,34 @@ void ui_host_cpu_set(int fast)
 }
 
 const char *ui_host_cpu_note(void) { return cpuclk_note(); }
+/* ---- A and B buttons (Settings > Controls) --------------------------------
+ * One switch for the whole app: with Circle as A the pad hands Cross and
+ * Circle over exchanged (plat.h), so the menus, the game's buttons and every
+ * shortcut follow, and the hints draw the circle where the cross was.  The
+ * choice is config.ini ab_buttons; with none, the Vita's own Enter button. */
+static int ab_circle(void)
+{
+   if (g_pcfg.ab_buttons >= 0)
+      return g_pcfg.ab_buttons;
+   /* Not chosen here.  A player who already moved A or B in Button mapping
+    * has their own layout: the Vita's setting must not turn it around. */
+   if (g_pcfg.controls.bind[CTL_GAME_A] != ctl_default(CTL_GAME_A) ||
+       g_pcfg.controls.bind[CTL_GAME_B] != ctl_default(CTL_GAME_B))
+      return 0;
+   return pspcompat_enter_is_circle();
+}
+
+static void ab_apply(void)
+{
+   int circle = ab_circle();
+   plat_pad_face_swap(circle);
+   pspcompat_face_swap(circle);
+   vid_set_face_glyphs(circle);
+   fe_evt("ab_buttons circle_is_a=%d chosen=%d", circle, g_pcfg.ab_buttons >= 0);
+}
+
+int ui_host_ab_circle(void) { return ab_circle(); }
+void ui_host_buttons_changed(void) { ab_apply(); }
 
 int ui_host_overlay_on(void) { return g_sw.overlays; }
 
@@ -4489,7 +4507,9 @@ static void game_loop(void)
       g_rs_right = pp.rx > 128 + RSTICK_PUSH ? g_rs_right + 1 : 0;
       if (g_rs_right >= RSTICK_REWIND_HOLD)
          fired |= FIRE_FF_STICK;
-      rw_want = (fired & CTL_FIRE_REWIND) || g_rs_left >= RSTICK_REWIND_HOLD;
+      /* (the stick rewinds only when Settings > Controls says so) */
+      rw_want = (fired & CTL_FIRE_REWIND) ||
+                (g_pcfg.stick_rewind && g_rs_left >= RSTICK_REWIND_HOLD);
       if (rw_want)               /* its chord contains fast forward's */
       {
          fired &= ~(CTL_FIRE_FF_HELD | CTL_FIRE_FF_PRESS | FIRE_FF_STICK);
@@ -4584,6 +4604,7 @@ static void game_loop(void)
          g_tap.wait = 1;         /* nor is the finger that closed it a tap */
          g_fps_t0 = 0;           /* the time in the menu is not a frame rate */
          rewind_configure(g_pcfg.rewind, g_pcfg.rewind_mb);   /* Settings */
+         ab_apply();             /* ...and A and B, if Button mapping moved them */
          cheats_flush();
          audio_flush();          /* the sound stopped with the game */
          app_pace_reset();
@@ -5026,6 +5047,7 @@ int main(int argc, char **argv)
     * cheat's name is typed on, the ad hoc connection screen: here, before
     * either can be asked for (pspcompat.c; nothing on the twin). */
    pspcompat_dialogs_init();
+   ab_apply();                 /* A and B: the choice, else the Vita's own */
    /* The twin's finger and keyboard come from its script (nothing on the
     * console, where pspcompat.c reads the panel itself). */
    pspcompat_host_touch(plat_script_touch);
@@ -5142,20 +5164,18 @@ int main(int argc, char **argv)
       fe_evt("session game=%d slot=%d", games, g_autoload_slot);
       play_begin(rom_path);
       keys_script_start();
-      g_hint_owed = 0;
       if (g_pcfg.hints > 0)
       {
-         /* A new player's first games: the two things nothing on screen
-          * says once the game is up (config.ini hints counts them down,
-          * menu_open). */
-         g_hint_owed = 1;
+         /* The one line nothing on screen says once the game is up, shown
+          * ONCE, in the first game ever played (config.ini hints, which is
+          * then 0 and saved at once): how to reach the menu, and what
+          * Square does. */
          osd_toast(g_pcfg.touch && g_sw.touch_menu
-                   ? "Menu: tap the screen, or hold START + SELECT together"
-                   : "Menu: hold START + SELECT together");
-         osd_toast(g_pcfg.rewind
-                   ? "Right stick: hold left to rewind, right to fast-forward"
-                   : "Right stick: hold right to fast-forward");
+                   ? "Menu: tap the screen or hold START + SELECT. Square: fast-forward"
+                   : "Menu: hold START + SELECT. Square: fast-forward");
          fe_evt("hints shown have=%d", g_pcfg.hints);
+         g_pcfg.hints = 0;
+         pcfg_save();
       }
 
       /* ---- play ---- */

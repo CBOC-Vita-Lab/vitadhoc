@@ -114,9 +114,12 @@ the original Pokemon Emerald family, not every game with a similar name.
 ROM hacks can change the layout or rendering enough to break a profile.
 The [performance report](PERFORMANCE.md) includes Pokemon Unbound measurements.
 
-Missing information can produce incomplete margins or the configured
-fallback. Wide view leaves the game's save unchanged. Turn it off for a
-game whose edges are incorrect.
+By default Wide view is on only for games that have a profile; every other
+game is shown at the console's own shape (240 x 160 at 816 x 544) with bars,
+never stretched. Where a profiled game has nothing more to show (a menu), the
+default is black bars; **Wide view: menus** can fade the picture's edges or
+stretch it instead. Wide view leaves the game's save unchanged. Turn it off
+for a game whose edges are incorrect.
 
 ### Borders, Overlays And Screenshots
 
@@ -129,7 +132,9 @@ to 1024 x 1024 stretch to fit.
 **Settings > Display > Screen overlay** controls overlays. **Grid strength**
 adjusts the LCD/scanline effect from 1 to 10 (default 5). Screenshots use
 **Settings > Interface > Screenshot folder**, or the default
-`ux0:data/GBAdhoc/screenshots/`; the button chord is L + R + Select.
+`ux0:data/GBAdhoc/screenshots/`. The L + R + Select chord is off until
+**Settings > Controls > Screenshot button combo** turns it on; the Vita's own
+PS + Start always works.
 
 ## Audio
 

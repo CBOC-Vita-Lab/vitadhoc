@@ -3,6 +3,12 @@
 These are the defaults. Settings > Controls changes game buttons, shortcuts and
 turbo buttons, and the menus always stay reachable, whatever you map.
 
+**Cross or Circle?** The names below are for a Vita whose Enter button is Cross
+(most of the world). VitAdhoc follows your Vita's own setting (Settings >
+System > Enter Button Assignment): with Circle as Enter, Circle plays, picks
+and is A, and Cross is back and B. Settings > Controls > A and B buttons
+(Circle is A / Cross is A) changes it for VitAdhoc alone.
+
 ## Home Screen
 
 | Button | Does |
@@ -23,18 +29,22 @@ turbo buttons, and the menus always stay reachable, whatever you map.
 | Button | Does |
 | --- | --- |
 | D-pad / left stick | D-pad |
-| Cross / Circle | A / B |
+| Cross / Circle | A / B (swapped with Circle is A) |
 | L / R, Start, Select | The same buttons |
 | Hold Start + Select, or tap the game | Open the menu |
 | Square | Fast forward (hold or toggle, in Settings) |
 | Right stick right | Fast forward while held |
-| Right stick left, or Select + Square | Rewind while held |
+| Select + Square | Rewind while held (the right stick left too, if you turn on Rewind with right stick) |
 | Select + L / Select + R | Quick save / quick load |
 | Triangle | Next picture preset |
 | Select + Triangle | Pause screen |
-| L + R + Select | Screenshot (saved in `ux0:data/GBAdhoc/screenshots/`) |
+| PS + Start | The Vita's own screenshot |
 | Select + Down | Mystery Gift: listen for a phone (GBA) |
 | Right stick down | Cheat button, for button-activated codes |
+
+VitAdhoc's own screenshot (L + R + Select, saved in
+`ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
+button combo turns it on; Button mapping can give Screenshot any other chord.
 
 ## Motion Games
 

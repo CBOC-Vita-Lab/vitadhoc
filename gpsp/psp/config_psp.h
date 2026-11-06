@@ -176,6 +176,15 @@ typedef struct
     * lib_sort): 0 by name, 1 most recently played first, 2 most played
     * first (psp/play_log.h). */
    int  lib_sort;
+   /* A AND B BUTTONS (Settings > Controls, CONFIG.INI ab_buttons): which
+    * face button is the Game Boy's A, and so which one the menus confirm
+    * with.  -1 (no key) = as the Vita's own Settings say (its Enter
+    * button); 0 = Cross is A; 1 = Circle is A.  Written once chosen. */
+   int  ab_buttons;
+   /* Settings > Controls > Rewind with right stick (CONFIG.INI
+    * stick_rewind): 1 = the right stick held left rewinds; 0 = it does not
+    * (the default; the Rewind button still does). */
+   int  stick_rewind;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -467,9 +476,9 @@ typedef struct
    int  rewind;
    int  rewind_mb;
    int  rewind_mb_keep;
-   /* How many more games begin with the two lines a new player needs (how
-    * the menu opens, how to rewind): 3 on a fresh install, counted down by
-    * vita/main_vita.c, 0 for ever after. */
+   /* 1 on a fresh install: the first game ever played says once how the
+    * menu opens and what Square does, then vita/main_vita.c sets it to 0
+    * and saves (an older file may still hold 2 or 3: one showing, then 0). */
    int  hints;
    /* START and SELECT wait a moment before the game sees them, so a
     * shortcut chord (SELECT+L, START+SELECT...) does not also press them in
@@ -602,8 +611,15 @@ enum
    PCFG_AMB_ART_GAME = 2,   /* hero art, else a blurred early game frame    */
    PCFG_AMB_MODES    = 3
 };
-/* Off until the owner picks a look (Fable's mockups). */
+/* 1.3: the glow beside the picture is on by default, so the aspect-correct
+ * picture fills the screen without being stretched: hero art if there is
+ * any, else a blurred frame of the game itself.  (Not drawn under a screen
+ * overlay; a ambient_<console> key already in config.ini is kept.) */
+#ifdef VITA
+#define PCFG_AMBIENT_DEF  PCFG_AMB_ART_GAME
+#else
 #define PCFG_AMBIENT_DEF  PCFG_AMB_OFF
+#endif
 
 typedef struct
 {
@@ -627,8 +643,8 @@ typedef struct
     *     places beside the screen.
     * A Game Boy has none.
     * wide_fill_gba: what the margins show where a game has no more (a
-    * menu): 1 its own edges continued softly (the default), 2 the picture
-    * stretched, 0 black bars. */
+    * menu): 0 black bars (the default), 1 its own edges continued softly,
+    * 2 the picture stretched. */
    int wide, wide_fill;
    /* SUPER GAME BOY BORDER (CONFIG.INI sgb_border_gb, the GB profile's):
     * 1 = a game running as a Super Game Boy (GB palette Auto) is shown in
@@ -644,7 +660,7 @@ const char *pcfg_quality_name(int quality);
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
 #define PCFG_WIDE_DEF 1
-#define PCFG_WIDE_FILL_DEF 1
+#define PCFG_WIDE_FILL_DEF 0
 int pcfg_wide_modes(int console);
 const char *pcfg_wide_name(int wide);
 const char *pcfg_wide_fill_name(int fill);

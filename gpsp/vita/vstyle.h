@@ -103,6 +103,8 @@ enum
    VS_ICONS
 };
 void vs_icon(int id, float cx, float cy, float size, uint32_t rgba);
+/* 1 = VS_I_BTN_X and VS_I_BTN_O are drawn exchanged (A and B buttons). */
+void vs_set_face_swap(int swap);
 /* The wordmark, `h` px tall with its top-left at x, y; returns its width. */
 float vs_wordmark(float x, float y, float h, uint32_t rgba);
 float vs_wordmark_w(float h);

@@ -2315,7 +2315,9 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_HDR_LIB, SET_COVERPIC, SET_SYNCRA, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_SAVETYPE, SET_CLOCK, SET_OWN_LOOK, SET_MOTION, SET_SENS,
        SET_REVERSE, SET_LEVEL, SET_SUN,
-       SET_HDR_CTL, SET_CONTROLS,
+       /* The three plain choices of the controls come before Button mapping,
+        * which stays last (the harness walkers wrap up to it). */
+       SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
 #else
@@ -2473,6 +2475,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * by wrapping up from the top. */
 #ifndef VITA   /* the Vita's left stick is the d-pad, its right one fixed */
    { 0, "Thumbstick" },
+#else
+   { 0, "A and B buttons" },
+   { 0, "Rewind with right stick" },
+   { 0, "Screenshot button combo" },
 #endif
    { 0, "Button mapping" },
 };
@@ -2480,6 +2486,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
 /* A GBA profile has no DMG palette: the row stays visible, greyed, and the
  * cursor steps over it. */
 static int linkmode_row_enabled(void);
+static void ctl_value(unsigned mask, char *b, size_t n);
 /* Rows that exist only in the browser's Settings: not drawn, not counted
  * and not stopped on anywhere else. */
 static int set_row_shown(int idx)
@@ -3133,6 +3140,28 @@ static void settings_adjust(int id, int dir)
       g_pcfg.full_speed = !g_pcfg.full_speed;
       fe_evt("full_speed_setting on=%d", g_pcfg.full_speed);
       break;
+   case SET_ABSWAP:
+      /* Two values: the first press of a player who never chose turns
+       * the Vita's own answer around and keeps it. */
+      g_pcfg.ab_buttons = ui_host_ab_circle() ? 0 : 1;
+      ui_host_buttons_changed();
+      fe_evt("ab_buttons_setting value=%d", g_pcfg.ab_buttons);
+      break;
+   case SET_STICKRW:
+      g_pcfg.stick_rewind = !g_pcfg.stick_rewind;
+      fe_evt("stick_rewind_setting on=%d", g_pcfg.stick_rewind);
+      break;
+   case SET_SHOTCOMBO:
+   {
+      int stolen = -1;
+      if (g_pcfg.controls.bind[CTL_SC_SHOT])
+         g_pcfg.controls.bind[CTL_SC_SHOT] = 0;
+      else
+         (void)ctl_assign(&g_pcfg.controls, CTL_SC_SHOT,
+                          CTL_L | CTL_R | CTL_SELECT, &stolen);
+      fe_evt("screenshot_combo_setting on=%d", g_pcfg.controls.bind[CTL_SC_SHOT] != 0);
+      break;
+   }
    case SET_SGB:
       g_pcfg.sgb_border = !g_pcfg.sgb_border;
       pcfg_display_commit();
@@ -3458,7 +3487,7 @@ static const char *set_help(int id)
                                "(gba.png, gb.png, gbc.png or its name)."
                              : "Put a PNG in ux0:data/GBAdhoc/overlays/ to "
                                "frame the game.";
-   case SET_SHOTDIR:  return "X: type a folder (ux0:pictures/VitAdhoc). "
+   case SET_SHOTDIR:  return VID_GLYPH_X ": type a folder (ux0:pictures/VitAdhoc). "
                              "Empty: screenshots/.";
    case SET_BLEND:    return g_pcfg.blend
              ? "Each frame mixes with the last, like the old LCD."
@@ -3509,19 +3538,36 @@ static const char *set_help(int id)
          return "Running the game backwards is switched off.";
       ctl_format(rb, b, sizeof(b), CTL_UI_NAMES, "none");
       /* 56 characters fit the line; a long chord drops the stick. */
-      if (rb && strlen(b) <= 13)
+      if (rb && g_pcfg.stick_rewind && strlen(b) <= 13)
          snprintf(line, sizeof(line), "Hold %s or the right stick left "
                   "to go back.", b);
       else if (rb)
          snprintf(line, sizeof(line), "Hold %s to go back in time.", b);
-      else
+      else if (g_pcfg.stick_rewind)
          snprintf(line, sizeof(line), "Hold the right stick left to go "
                   "back in time.");
+      else
+         snprintf(line, sizeof(line), "Turn on Rewind with right stick, "
+                  "or bind a button.");
       return line;
    }
    case SET_FPS:      return "Shows the game's speed in a corner.";
 #ifdef VITA
    case SET_CPU:      return ui_host_cpu_note();
+   case SET_ABSWAP:
+      return g_pcfg.ab_buttons < 0
+         ? "Follows the Vita's own Enter button. Press to change it."
+         : ui_host_ab_circle()
+         ? "Circle is A and confirms in menus. Cross is B."
+         : "Cross is A and confirms in menus. Circle is B.";
+   case SET_STICKRW:
+      return g_pcfg.stick_rewind
+         ? "Hold the right stick left to rewind."
+         : "The right stick does not rewind.";
+   case SET_SHOTCOMBO:
+      return g_pcfg.controls.bind[CTL_SC_SHOT]
+         ? "Shot with the buttons set in Button mapping."
+         : "The Vita's own PS + Start takes screenshots.";
    case SET_SPEED:    return g_pcfg.full_speed
                              ? "Busy moments skip a frame; smoothing "
                                "eases off."
@@ -3541,9 +3587,9 @@ static const char *set_help(int id)
                              : "RetroArch's save files are left alone.";
    case SET_SORT:     return "The order of All games and Starred. Recent is "
                              "newest first.";
-   case SET_COVERPIC: return "X: a picture of your own as the cover of the "
+   case SET_COVERPIC: return VID_GLYPH_X ": a picture of your own as the cover of the "
                              "game picked in the list.";
-   case SET_FOLDERS:  return "X: type a folder to add it (ux0:ROMS/GBA), or "
+   case SET_FOLDERS:  return VID_GLYPH_X ": type a folder to add it (ux0:ROMS/GBA), or "
                              "one listed to remove it.";
    case SET_OWN_LOOK: return g_pgame.override
                              ? "Display changes made now apply to this game "
@@ -3607,7 +3653,7 @@ static void ra_settings_account(void)
       else
       {
          g_ra_out_armed = now ? now : 1;
-         osd_toast("Press X again to sign out of RetroAchievements");
+         osd_toast("Press the same button again to sign out of RetroAchievements");
       }
       return;
    }
@@ -4040,6 +4086,34 @@ static ui_action screen_settings(unsigned edges)
          else
             snprintf(d, sizeof(d), "%d min", g_pcfg.rewind / 60);
          set_item(y, g_cursor == i, 1, set_rows[i].label, d);
+         break;
+      }
+#endif
+#ifdef VITA
+      case SET_ABSWAP:
+      {
+         char v[40];
+         snprintf(v, sizeof(v), "%s%s",
+                  ui_host_ab_circle() ? "Circle is A" : "Cross is A",
+                  g_pcfg.ab_buttons < 0 ? " (as the Vita)" : "");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_STICKRW:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.stick_rewind ? "on" : "off");
+         break;
+      case SET_SHOTCOMBO:
+      {
+         char v[40];
+         unsigned sb = g_pcfg.controls.bind[CTL_SC_SHOT];
+         if (!sb)
+            snprintf(v, sizeof(v), "off");
+         else if (sb == (CTL_L | CTL_R | CTL_SELECT))
+            snprintf(v, sizeof(v), "on (L + R + Select)");
+         else
+            ctl_value(sb, v, sizeof(v));
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
 #endif

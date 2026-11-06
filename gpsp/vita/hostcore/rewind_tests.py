@@ -426,7 +426,7 @@ def t_guards(S):
     # left of "1 min" is "30 s"; the game loop hears of it when the menu
     # closes
     r = S.run("rw_setting", menu_pick(4, wait=120) + "+20:up\n+8:up\n+8:up\n"
-              "+8:up\n+8:up\n+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
+              "+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
               "+4:circle\n+10:circle\n+60:rstick-left:30\n+40:quit\n",
               autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -456,25 +456,20 @@ def t_guards(S):
             r.has(r"rewind refused reason=memory") and not rewind_ends(r),
             "42 MiB left: no rewind, and the control says why")
 
-    # a fresh install: the first three games begin with two lines of help
-    r = S.run("rw_hints", "100:shot=hint1.png\n260:shot=hint2.png\n" +
-              menu_pick(6, wait=200), autoboot="gbadhoc-test.gba",
-              config={"hints": 3})
+    # a fresh install: the first game ever says once how to reach the menu
+    # (one line, not two), and never again
+    r = S.run("rw_hints", "100:shot=hint1.png\n260:quit\n",
+              autoboot="gbadhoc-test.gba", config={"hints": 1})
     S.clean(r)
-    S.check(r.has(r"hints shown have=3") and r.has(r"hints counted left=2"),
-            "the first game shows the hints, and opening the menu counts it")
-    for n in ("hint1.png", "hint2.png"):
-        S.check(len(r.shot(n).crop((200, 8, 760, 60)).getcolors(4096) or
-                    []) > 8, "%s: a line of help is on screen" % n)
-    S.check("hints = 2" in open(os.path.join(r.root, "config.ini")).read(),
-            "and config.ini counts them down")
-    # ...but only for a player who has found the menu
-    r = S.run("rw_hints_unseen", "100:shot=hint1.png\n300:quit\n",
-              autoboot="gbadhoc-test.gba", config={"hints": 3})
-    S.clean(r)
-    S.check(r.has(r"hints shown have=3") and not r.has(r"hints counted") and
-            "hints = 2" not in open(os.path.join(r.root, "config.ini")).read(),
-            "a game in which the menu was never opened does not use one up")
+    S.check(r.has(r"hints shown have=1") and not r.has(r"hints counted"),
+            "the first game shows the hint, without waiting for the menu")
+    S.check(len(r.shot("hint1.png").crop((200, 8, 760, 60)).getcolors(4096) or
+                []) > 8, "hint1.png: a line of help is on screen")
+    S.check("hints = 0" in open(os.path.join(r.root, "config.ini")).read(),
+            "and config.ini has used it up at once")
+    r = S.run("rw_hints", "100:quit\n", autoboot="gbadhoc-test.gba",
+              prepared=True)
+    S.check(not r.has(r"hints shown"), "the next game shows nothing")
 
     r = S.run("rw_bench", "300:rstick-left:60\n420:quit\n",
               autoboot="gbadhoc-test.gba", vita_ini={"link_bench": 1})

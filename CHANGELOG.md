@@ -106,6 +106,24 @@ in [Technical details](docs/TECHNICAL.md).
   like the game (`Pokemon Unbound.png`) is used from the next time the list
   opens. Capitals and the `.gba` part of the name do not matter.
 
+**Controls and first impressions**
+- **A picture that is never stretched.** Games without a Wide view profile
+  show at their own shape, with bars; only the games Wide view was made for
+  (Pokémon Emerald, Ruby, Sapphire, FireRed, LeafGreen) get more map beside
+  the picture. Screens with nothing more to show now keep black bars unless
+  you pick soft edges or stretch in Wide view: menus. The sides of the screen
+  are filled by a soft glow from the game's own picture (Settings > Display >
+  Ambient bars; off under a screen overlay). Your saved choices stay.
+- **Circle or Cross as A.** VitAdhoc follows your Vita's own Enter button, so
+  on a Vita where Circle confirms, Circle is A and picks things in the menus.
+  Settings > Controls > A and B buttons changes it.
+- **Fewer surprises:** the right stick no longer rewinds unless you turn on
+  Settings > Controls > Rewind with right stick (Select + Square still
+  rewinds). L + R + Select no longer takes a screenshot (the Vita's PS + Start
+  does); Settings > Controls > Screenshot button combo brings it back.
+- **One hint, once.** The two tips at the start of your first games are now a
+  single line in the first game you ever play.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

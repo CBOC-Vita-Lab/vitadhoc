@@ -60,12 +60,21 @@ static int      g_trim_l, g_trim_r;
 static unsigned g_trim_left;             /* bounded dezipper after a skip    */
 
 static unsigned g_underruns, g_starved, g_dropped, g_trims, g_port_errors;
+/* Output frames of silence in the latest gap, kept after the gap ends: the
+ * consumer writes it, the producer reads it when it notices a new gap. A gap
+ * this long was the emulation being stopped on purpose -- the menu, fast
+ * forward, a rewind -- not a cushion that was too thin. */
+static uint32_t g_gap_len;
+#define LONG_GAP_FRAMES  (AUDIO_OUT_RATE / 4u)       /* 250 ms */
 
 /* ---- consumer ---------------------------------------------------------- */
 
 /* Render `n` output frames.  Linear interpolation between neighbouring input
  * frames: the source is band-limited to 16 kHz and the output is 48 kHz, so
- * the images land above hearing; the PSP frontend does the same. */
+ * the images land above hearing; the PSP frontend does the same.  It cannot
+ * overshoot, so nothing here can wrap an int16 (a Vita fork of mGBA found a
+ * cosine interpolator that did).  A Catmull-Rom cubic was measured and
+ * rejected: see docs/TECHNICAL.md. */
 static void render(int16_t *out, unsigned n)
 {
    uint32_t w = LOAD(g_w);
@@ -112,6 +121,7 @@ static void render(int16_t *out, unsigned n)
          {
             g_primed = 0;
             g_underruns++;
+            STORE(g_gap_len, 0);
             /* A trim or fade-in can make the emitted tail differ from the
              * raw input. Begin the gap's fade at what actually played. */
             g_last_l = g_tail_l;
@@ -126,6 +136,8 @@ static void render(int16_t *out, unsigned n)
          g_tail_r = out[i * 2 + 1];
          g_trim_left = 0;
          g_starved++;
+         if (g_gap_len < 0xFFFFFFFFu)
+            STORE(g_gap_len, g_gap_len + 1);
          continue;
       }
       {
@@ -251,6 +263,7 @@ int audio_start(unsigned in_rate, unsigned speed_x1e6)
    g_recovering = 0;
    g_flush_req = g_trim_req = 0;
    g_underruns = g_starved = g_dropped = g_trims = g_port_errors = 0;
+   g_gap_len = 0;
 
    if (plat_audio_open(AUDIO_OUT_RATE, AUDIO_GRAIN) < 0)
       return -1;
@@ -322,9 +335,12 @@ void audio_frame(void)
       if (under != g_under_seen)
       {
          g_under_seen = under;
-         g_calm = 0;
-         if (g_target + g_target_step <= g_target_max)
-            STORE(g_target, g_target + g_target_step);
+         if (LOAD(g_gap_len) < LONG_GAP_FRAMES)
+         {
+            g_calm = 0;
+            if (g_target + g_target_step <= g_target_max)
+               STORE(g_target, g_target + g_target_step);
+         }
       }
       else if (++g_calm >= 1800u && g_target > g_target_min)
       {

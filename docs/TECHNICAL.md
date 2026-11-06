@@ -129,6 +129,83 @@ Nothing here was measured on a Vita. The step sizes and windows are from
 reasoning and the twin, not from console traces; the thresholds (16 ms, 6 of 60)
 are the first thing to adjust once a console log with `smooth_gov` lines exists.
 
+## Version 1.3 Changes
+
+### Audio investigation (issue #4: "distorted in every game")
+
+Measured on the Linux twin with a simulated clock (bit-for-bit repeatable),
+the output of the whole path (core mix, 32768 Hz ring, 48 kHz resampler) is
+clean; no defect that explains "distorted in every game" was found there, so
+that report is **not** confirmed fixed. What was measured:
+
+- **Level and scaling** (`vita/hostcore/testrom/audio.c`, analysed by
+  `tools/audio_phases.py`): Direct Sound at 100 % with a +-100 sample sine
+  peaks at exactly 25600, at 50 % exactly 12800 (x256, then the 50 % shift);
+  a full-volume PSG square peaks at 8192; two Direct Sound channels at
+  100 % that sum past full scale clip hard at +-32767, as the hardware mixer
+  does. Clipping was zero in a Pokemon Emerald run (title, intro and the
+  first menu screens, 40 s: peak 20420 = 62 % of full scale, 0 clipped, 0 wrap
+  jumps, 0 steps above 12000, mean -1246).
+- **Wrap-around:** every stage saturates (`sound_read_samples`, the TGB Dual
+  mix, and the resampler cannot overshoot: linear interpolation of int16
+  neighbours). A full-scale +-32767 square through the resampler gives 0
+  wrapped steps (`test_audio_sim.c`).
+- **Resampler:** a sine through the real ring + resampler (no rate follow) has
+  everything-but-the-sine at -57 / -38 / -25 / -16 dB for 1 / 3 / 6 / 9 kHz.
+  A Catmull-Rom cubic improves that to -78 / -52 / -33 / -21 dB but overshoots
+  square edges (PSG peak 8192 -> 9331, +1.1 dB; more steps over 12000 in the
+  clipped test: 40 -> 68), which only adds clipping on loud music. Rejected;
+  the linear path stays and a regression guard keeps it from getting worse.
+- **Vita thread and buffer:** the audio thread runs at priority 0x50, above
+  the render thread (0x60) and the worker (0xB0); `sceAudioOutOutput` on the
+  MAIN port at 48 kHz, 512-frame grains, 64-byte-aligned double buffers; the
+  mGBA-Vita "raise the audio thread priority" lesson was already met. Grain
+  size and ring cushion were left as they are: a bigger grain would add
+  latency for a gain that can only be judged on a console.
+- Fast forward and rewind already drop audio instead of overwriting it
+  (`sink_audio`), and a full ring drops the newest frames.
+
+### Fixes
+
+- **Latency creep after intentional silence** (`vita/audio_vita.c`,
+  `vita/main_vita.c`): the menu, fast forward and rewind stop the producer,
+  the ring runs dry, and that was counted as an underrun, which grows the
+  cushion by 20 ms (up to 120 ms) until 30 s of calm. A dry spell longer than
+  250 ms (`g_gap_len`, output frames of the latest gap) is now not counted;
+  fast forward start/end and the in-game menu closing also flush the queue.
+  `vita/tests/audio/test_audio_sim.c` drives the real ring with a virtual
+  clock: five 3 s pauses ended with a 120 ms target (was 60 ms at start);
+  now 60 ms. A short stall (45 ms of missing frames) still adds 20 ms, as
+  designed, and is audible as a gap of about 40 ms; steady 60.00 / 59.94 Hz
+  and +-4 ms jitter runs have 0 underruns, 0 clicks.
+- **Game Boy parked channel** (`gbcore/tgbdual/apu.c`): a square channel
+  with rate above 65 kHz returned a constant +15000 (output +12304 at full
+  volume, 150 % of the channel's own peak); a wave channel there returned
+  the first nibble scaled differently from normal playback. Both now return
+  the pattern's average, which is what an ultrasonic tone leaves
+  (`gbcore/tests/gbaudio.c`: parked 50 % duty peak 12304 -> 0; parked 12.5 %
+  duty equals the 440 Hz tone's own average).
+
+### Tools
+
+- `tools/audio_measure.py file.wav`: peak, clipped samples, wrap jumps,
+  clicks, DC offset, largest step and silent gaps of a `gbadhoc_host --wav`
+  capture. `tools/audio_phases.py` analyses the audio test cartridge
+  (`make -C vita/hostcore/testrom audio`) phase by phase.
+- `tools/run_audio_regressions.py` also runs `sim` (the real-time simulation
+  and resampler/saturation checks) and `gb` (`gbcore/tests/run_gbaudio.py`).
+
+### Not verified / left alone
+
+- Not heard on a Vita. The real-console underrun rate under heavy picture
+  settings (see PERFORMANCE.md) is a CPU-time problem; the sound path only
+  decides how it sounds.
+- GBA PSG master volume uses level/7 (0 = mute); the hardware (like the Game
+  Boy's NR50) plays level 0 at 1/8 and 7 at 8/8, so levels 1-6 are 4-12 %
+  quieter than hardware. Not changed: no reference to measure against here.
+- PSG squares are point-sampled at 32768 Hz, so notes above about 4 kHz
+  alias (a 3 kHz square: about 4.6 % of its energy off the harmonics).
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

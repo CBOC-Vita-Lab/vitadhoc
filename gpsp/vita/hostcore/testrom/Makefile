@@ -20,6 +20,15 @@ gbadhoc-cpufix.gba: crt0.S cpufix.c gba.ld
 	$(CROSS)objcopy -O binary gbadhoc-cpufix.elf $@
 	@ls -l $@
 
+# Known sounds for tools/audio_measure.py (audio.c).
+audio: gbadhoc-audio.gba
+.PHONY: audio
+gbadhoc-audio.gba: crt0.S audio.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-audio.elf \
+	  crt0.S audio.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-audio.elf $@
+	@ls -l $@
+
 # The wide picture's "Mode 7" floor (app_tests.py, wide): see wide7.c.
 wide: gbadhoc-wide.gba
 gbadhoc-wide.gba: crt0.S wide7.c gba.ld

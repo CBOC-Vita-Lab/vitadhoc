@@ -20,6 +20,8 @@ SOURCES = {
     "host_lifecycle": "vita/tests/audio/test_audio_lifecycle.c",
     "timer": "tools/test_sound_timer_step.c",
     "safety": "tools/tests/test_gba_sound_safety.c",
+    "sim": "vita/tests/audio/test_audio_sim.c",
+    "gb": "gbcore/tests/run_gbaudio.py",
 }
 
 
@@ -79,6 +81,12 @@ def main() -> int:
                     region = source[source.index(start):source.index(end)]
                     (out / "audio_lifecycle_host.inc").write_text(region)
                     flags += ["-DAUDIO_TEST_HOST", "-I", str(out), "-pthread"]
+                if name == "gb":
+                    print("RUN python3 " + SOURCES[name], flush=True)
+                    subprocess.run([sys.executable, str(ROOT / SOURCES[name])],
+                                   check=True, env=env)
+                    results.append({"suite": name, "status": "pass"})
+                    continue
                 binary = out / ("test_audio_" + name)
                 linker = "-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"
                 command = cc + flags + [str(ROOT / SOURCES[name]), linker,

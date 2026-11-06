@@ -418,6 +418,13 @@ static const int sq_wav_dat[4][8]={
 	{-10000,-10000, 10000, 10000, 10000, 10000, 10000, 10000}
 };
 
+/* GBAdhoc: the average level of each duty pattern.  A channel parked above
+ * 65 kHz (rate 0x7FF, which games use as a silent "off") is an ultrasonic
+ * tone: what the ear and the amplifier's capacitor keep of it is this
+ * average, not a fixed full-scale level (a constant 15000 was a loud push
+ * with a click on each side of it). */
+static const short sq_wav_mean[4] = { -7500, -5000, 0, 5000 };
+
 inline short snd_sq1_produce(int freq)
 {
 
@@ -425,7 +432,7 @@ inline short snd_sq1_produce(int freq)
 	short ret;
 
 	if (freq>65000)
-		return 15000;
+		return sq_wav_mean[snd_stat.sq1_type & 3];
 
 	if (freq){
 		ret=sq_wav_dat[snd_stat.sq1_type][sq1_sample];
@@ -456,7 +463,7 @@ inline short snd_sq2_produce(int freq)
 	short ret;
 
 	if (freq>65000)
-		return 15000;
+		return sq_wav_mean[snd_stat.sq2_type & 3];
 
 	if (freq){
 		ret=sq_wav_dat[snd_stat.sq2_type][sq2_sample];
@@ -485,8 +492,13 @@ inline short snd_wav_produce(int freq)
 	dword cur_freq;
 	short ret;
 
-	if (freq>65000)
-		return (snd_mem[0x20]>>4)*4000-30000;
+	if (freq>65000){
+		/* GBAdhoc: the table's average (32 nibbles) on the normal scale */
+		int sum = 0, k;
+		for (k = 0; k < 16; k++)
+			sum += (snd_mem[0x20+k] >> 4) + (snd_mem[0x20+k] & 0xf);
+		return (short)(sum * 2500 / 32 - 15000);
+	}
 
 	if (freq){
 		ret=wav_sample*2500-15000;

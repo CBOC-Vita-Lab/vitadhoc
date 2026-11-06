@@ -321,6 +321,15 @@ void link_local_frame(void);
  * (libretro joypad masks, RETRO_DEVICE_ID_JOYPAD_* bits); have2 = a second
  * controller exists.  May change g_app_keys (see above). */
 void link_local_pads(uint32_t keys1, uint32_t keys2, int have2);
+/* Player 2 on the touch screen (g_pcfg.local_touch2, no second controller):
+ * 1 = the mode is on and *keys is player 2's buttons from the fingers now on
+ * the front panel (a libretro mask, like link_local_pads' keys2), whose
+ * half of the screen then carries the drawn pad; 0 = off.  Call it when
+ * plat_pad_read2 found no controller, and pass have2 = 1 when it says 1. */
+int  link_local_touch_keys(uint32_t *keys);
+/* Whatever is held now was pressed for something else (a menu that closed,
+ * a switch): neither player's held buttons reach a game until let go. */
+void link_local_block_held(void);
 /* From the video sink, with the player's machine's frame (libretro RGB565):
  * draw both machines. */
 void link_local_present(const uint16_t *pix, unsigned w, unsigned h,

@@ -603,6 +603,194 @@ def t_switch(S):
     S.picture(r, "unplugged.png")
 
 
+def t_ports(S):
+    """Which sceCtrl port is player 2 (pad_port_pick.h): a PS TV with one,
+    two, three pads; a handheld with one or two external pads."""
+    exe = os.path.join(S.outdir, "padports_test")
+    os.makedirs(S.outdir, exist_ok=True)
+    cc = subprocess.run(["cc", "-Wall", "-o", exe,
+                         os.path.join(HERE, "padports_test.c")],
+                        capture_output=True, text=True)
+    S.check(cc.returncode == 0, "the port rule compiles: %s" % cc.stderr[-200:])
+    if cc.returncode:
+        return
+    p = subprocess.run([exe], capture_output=True, text=True)
+    for line in p.stdout.splitlines():
+        S.check(line.startswith("ok"), line)
+    S.check(p.returncode == 0 and len(p.stdout.splitlines()) >= 10,
+            "every setup in the table agrees")
+
+
+def t_twopads(S):
+    """Two controllers: two equal pictures side by side (even with the
+    large + small layout chosen), each pad its own game, either player opens
+    the menu and neither steals the other's game."""
+    at = S.boot_refresh(TEST)
+    script = """
+%d:a+right:40
+%d:p2.b+left:40
++0:shot=both.png
+# player 2 opens the menu: Start + Select on his controller
++30:p2.start+select:20
++10:shot=menu2.png
++4:p2.circle
++30:shot=back2.png
+# player 1 holds A across the menu's closing: it must not reach his game
++10:a:90
++20:shot=held.png
++90:p2.l:20
++0:shot=p2l.png
+# player 1 opens the menu
++30:start+select:20
++10:shot=menu1.png
++4:circle
++30:shot=back1.png
++10:quit
+""" % (at + 60, at + 60)
+    r = S.run("twopads", script, autoboot=TEST, config={"local_layout": 1},
+              vita_ini={"local_auto": 1})
+    S.clean(r)
+
+    def lit(name):
+        a, b = pair_pixels(r.shot(name), 0)
+        return boxes(a), boxes(b)
+
+    S.check(lit("both.png") == ("A+Right", "B+Left"),
+            "each pad drives its own game (lit: %s / %s)" % lit("both.png"))
+    im = r.shot("both.png")
+    a, b = pair_pixels(im, 0)
+    S.check(abs(frame_no(a) - frame_no(b)) <= 1 and frame_no(a) > 20,
+            "side by side at 2x, equal and running: the pictures sit where "
+            "the large+small layout never puts them (frames %d / %d)" %
+            (frame_no(a), frame_no(b)))
+    S.check(bar_player(im, 0) == 0 and bar_player(im, 1) == 1,
+            "P1 blue left, P2 yellow right")
+    S.picture(r, "both.png", "local_twopads.png", box=(0, 0, 960, 544))
+    opens = [d["via"] for d in r.evt("menu_open")]
+    S.check(opens == ["chord2", "chord"],
+            "either player's Start + Select opens the menu (%s)" % opens)
+    S.picture(r, "menu2.png")
+    S.check(len(r.evt("menu_closed")) == 2,
+            "player 2 closes the menu from his controller, player 1 from "
+            "his")
+    S.check(lit("back2.png") == ("", ""),
+            "back in the game, nothing of the menu reached either game "
+            "(lit: %s / %s)" % lit("back2.png"))
+    S.check(lit("p2l.png")[1] == "L",
+            "player 2's L reaches the partner's game (lit: %s / %s)" %
+            lit("p2l.png"))
+    S.check(not r.evt("local_view"), "no view switch: nobody's game was taken")
+
+
+# Player 2's pad on the front screen, native pixels (local_vita.c TP_*)
+T2_DPAD_LEFT = (534, 356)
+T2_DPAD_UP = (584, 306)
+T2_A = (896, 352)
+T2_B = (820, 396)
+T2_START = (874, 500)
+T2_L = (554, 56)
+T2_R = (886, 56)
+
+
+def t_touch2(S):
+    """Player 2 on the touch screen: fingers on the right half drive the
+    partner's game while the buttons drive the player's, both at once."""
+    at = S.boot_refresh(TEST)
+    f = at + 60
+
+    def t(p, n):
+        return "touch=%d/%d:%d" % (p[0], p[1], n)
+
+    script = f"""
+{f}:a+right:40
+{f}:{t(T2_DPAD_LEFT, 40)}
+{f}:{t(T2_A, 40)}
+{f+25}:shot=both.png
+{f+60}:{t(T2_B, 30)}
+{f+60}:{t(T2_DPAD_UP, 30)}
+{f+80}:shot=bu.png
+{f+110}:{t(T2_L, 20)}
+{f+125}:shot=l.png
+{f+140}:{t(T2_R, 20)}
+{f+155}:shot=r.png
+{f+170}:{t(T2_START, 20)}
+{f+185}:shot=start.png
+{f+210}:shot=idle.png
+# player 1's menu still opens with the chord
+{f+220}:start+select:20
+{f+250}:shot=menu.png
+{f+255}:circle
+{f+300}:quit
+"""
+    r = S.run("touch2", script, autoboot=TEST,
+              config={"local_touch2": 1}, vita_ini={"local_auto": 1})
+    S.clean(r)
+
+    def lit(name):
+        a, b = pair_pixels(r.shot(name), 0)
+        return boxes(a), boxes(b)
+
+    S.check(lit("both.png") == ("A+Right", "A+Left"),
+            "buttons drive the player's game, two fingers drive the "
+            "partner's, at the same time (lit: %s / %s)" % lit("both.png"))
+    S.check(lit("bu.png")[1] == "B+Up",
+            "two fingers on B and Up together (lit: %s / %s)" % lit("bu.png"))
+    S.check(lit("l.png") == ("", "L") and lit("r.png") == ("", "R") and
+            lit("start.png") == ("", "Start"),
+            "L, R and Start (lit: %s / %s, %s / %s, %s / %s)" %
+            (lit("l.png") + lit("r.png") + lit("start.png")))
+    S.check(lit("idle.png") == ("", ""), "idle: nothing pressed")
+    S.check(not r.evt("local_view"), "touching his half switches nothing")
+    S.check(r.has(r"local_pad2 on=1 touch=1"),
+            "player 2 on the touch screen is announced")
+    opens = [d["via"] for d in r.evt("menu_open")]
+    S.check(opens == ["chord"], "only the chord opens the menu (%s)" % opens)
+    im = r.shot("both.png")
+    a, b = pair_pixels(im, 0)
+    S.check(frame_no(a) > 20 and abs(frame_no(a) - frame_no(b)) <= 1,
+            "two equal pictures side by side (frames %d / %d)" %
+            (frame_no(a), frame_no(b)))
+    # the pad is drawn on his half, lit where a finger is
+    px = im.getpixel(T2_DPAD_LEFT)
+    S.check(px[0] > 190 and px[2] < 150, "the pressed arm is lit (%s)" % (px,))
+    idle = r.shot("idle.png")
+    S.check(idle.getpixel((584, 356)) != idle.getpixel((20, 356)),
+            "the pad is drawn on player 2's half")
+    S.picture(r, "both.png", "local_touch2.png")
+    S.picture(r, "idle.png", "local_touch2_idle.png")
+
+    # off (the default): the same fingers are nothing, and the one pad
+    # keeps working
+    script = f"""
+{f}:{t(T2_A, 40)}
+{f+25}:shot=off.png
+{f+80}:quit
+"""
+    r = S.run("touch2_off", script, autoboot=TEST, vita_ini={"local_auto": 1})
+    S.clean(r)
+    a, b = pair_pixels(r.shot("off.png"), 0)
+    S.check(boxes(b) == "" and boxes(a) == "",
+            "off: a finger on the right picture is a view switch at most "
+            "(lit: %s / %s)" % (boxes(a), boxes(b)))
+    S.check(not r.has(r"touch=1"), "off: no touch pad")
+
+    # a real second controller arrives: it wins, the glass is idle
+    script = f"""
+{f}:pad2=on
+{f+4}:{t(T2_A, 30)}
+{f+4}:p2.b:30
+{f+20}:shot=pad.png
+{f+80}:quit
+"""
+    r = S.run("touch2_pad", script, autoboot=TEST,
+              config={"local_touch2": 1}, vita_ini={"local_auto": 1})
+    S.clean(r)
+    a, b = pair_pixels(r.shot("pad.png"), 0)
+    S.check(boxes(b) == "B",
+            "with a controller connected, it is player 2 and the touch pad "
+            "gives way (lit: %s / %s)" % (boxes(a), boxes(b)))
+
+
 def t_save(S):
     """The partner's own save file: created when its game saves, read on
     the next start; the player's save is never the partner's."""
@@ -1943,6 +2131,7 @@ def t_speed(S):
 
 
 TESTS = [("linktest", t_linktest), ("menu", t_menu), ("switch", t_switch),
+         ("ports", t_ports), ("twopads", t_twopads), ("touch2", t_touch2),
          ("save", t_save), ("cycle", t_cycle), ("cheats", t_cheats),
          ("audio", t_audio), ("states", t_states), ("ff", t_ff),
          ("other", t_other), ("gb", t_gb), ("exclusive", t_exclusive),

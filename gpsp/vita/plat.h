@@ -242,19 +242,31 @@ void plat_pad_read(plat_pad *pad);
 void plat_pad_face_swap(int on);
 /* How many players have a pad of their own: 1, or 2 when a second
  * controller can drive the partner's machine of the local link.  Cheap
- * (the answer is refreshed about once a second).
+ * (the answer is refreshed about three times a second, so a pad plugged in
+ * or switched off is noticed within a moment).
  *
  * WHICH PORT IS PLAYER 2 (plat_vita.c).  sceCtrl's port 0 is the console's
  * own controls -- on a PS TV, merged with the first paired controller, so
- * player 1 is always port 0.  Player 2 is port 2 when
- * sceCtrlGetControllerPortInfo() reports a controller there (a PS TV with
- * two pads; a handheld with a plugin that pairs two); else, on a HANDHELD
- * only, port 1 when one is reported there (one external pad through a
- * plugin: the console's own controls are then player 1's alone).  On a PS
- * TV port 1 is the same pad as port 0 and is never player 2. */
+ * player 1 is always port 0.  Paired controllers sit on ports 1..4 in order
+ * (SceCtrlPortInfo.port[]: DualShock 3, DualShock 4, a plugin's pad); on a
+ * PS TV port 1 is the first pad again, so the SECOND pad is port 2.  Player
+ * 2 is the first of ports 2, 3, 4 that is paired (a PS TV with two pads; a
+ * handheld with a plugin that pairs two); else, on a HANDHELD only, port 1
+ * when one is reported there (one external pad through a plugin: the
+ * console's own controls are then player 1's alone).  "Paired" is enough:
+ * a pad that lies untouched is still player 2.  The second pad is read with
+ * the extended call (L1 and L2 both come back as PLAT_BTN_L, R1 and R2 as
+ * PLAT_BTN_R; the sticks' clicks are dropped). */
 int  plat_pad_ports(void);
 /* The second controller: 1 = there is one and *pad is its state. */
 int  plat_pad_read2(plat_pad *pad);
+
+/* Every finger on the front panel, native 960x544 (the Vita's touch panel
+ * reports up to six; the twin's script names as many as it likes).  Returns
+ * how many were written to out[0..max-1].  For the touch pad of player 2
+ * (vita/local_vita.c); pspcompat_touch is the UI's one finger. */
+typedef struct plat_touch_pt { int x, y; } plat_touch_pt;
+int  plat_touch_points(plat_touch_pt *out, int max);
 
 /* ---- the twin's script: a finger and a keyboard ----------------------------
  * The Vita's touch panel and system keyboard are pspcompat.c's (the UI's).

@@ -64,7 +64,10 @@ play and stop when the menu opens or a state loads.
 
 Flick the right stick sideways, or tap the other picture, to switch which
 Game Boy you control. Tap the one you control for the menu. A second controller
-can give each player their own pad; see [Play Together](PLAY-TOGETHER.md).
+can give each player their own pad, and either player opens the menu with
+Start + Select on their own pad. With no second controller, Player 2 on the
+touch screen puts a pad on the front screen; see
+[Play Together](PLAY-TOGETHER.md).
 
 Start and Select reach the game a tenth of a second late, so a shortcut such
 as Select + L doesn't also press Select in the game. `chord_guard = 0` in

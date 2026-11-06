@@ -1232,6 +1232,24 @@ int plat_motion_read(plat_motion *m)
 
 /* ---- the finger and the keyboard (pspcompat.c asks, plat.h) ------------------ */
 
+/* Every touch entry that is down this frame is a finger (the script's
+ * overlapping touch= entries are a multi-touch). */
+int plat_touch_points(plat_touch_pt *out, int max)
+{
+   unsigned i, f = script_frame();
+   int n = 0;
+   for (i = 0; i < opt.ntouch && n < max; i++)
+      if (f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
+      {
+         int span = opt.touch[i].len > 1 ? (int)opt.touch[i].len - 1 : 1;
+         int k = (int)(f - opt.touch[i].frame);
+         out[n].x = opt.touch[i].x0 + (opt.touch[i].x1 - opt.touch[i].x0) * k / span;
+         out[n].y = opt.touch[i].y0 + (opt.touch[i].y1 - opt.touch[i].y0) * k / span;
+         n++;
+      }
+   return n;
+}
+
 int plat_script_touch(int *nx, int *ny)
 {
    unsigned i, f = script_frame();

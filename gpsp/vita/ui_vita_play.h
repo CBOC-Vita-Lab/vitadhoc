@@ -1349,8 +1349,8 @@ static void local_pick(unsigned edges, const ui_local_state *ls)
 
 static ui_action screen_local(unsigned edges)
 {
-   enum { LS_COPY, LS_OWN, LS_GAME, LS_LAYOUT, LS_COUNT };
-   enum { LA_SWAP, LA_LAYOUT, LA_STOP, LA_RESUME, LA_COUNT };
+   enum { LS_COPY, LS_OWN, LS_GAME, LS_LAYOUT, LS_TOUCH, LS_COUNT };
+   enum { LA_SWAP, LA_LAYOUT, LA_STOP, LA_RESUME, LA_TOUCH, LA_COUNT };
    ui_local_state ls;
    ui_action act = UI_ACT_NONE;
    int ids[LA_COUNT], n = 0, i, id, other;
@@ -1389,6 +1389,7 @@ static ui_action screen_local(unsigned edges)
       ids[n++] = LA_LAYOUT;
       ids[n++] = LA_STOP;
       ids[n++] = LA_RESUME;
+      ids[n++] = LA_TOUCH;
    }
    else
    {
@@ -1396,6 +1397,7 @@ static ui_action screen_local(unsigned edges)
       ids[n++] = LS_OWN;
       ids[n++] = LS_GAME;
       ids[n++] = LS_LAYOUT;
+      ids[n++] = LS_TOUCH;
    }
    if (g_cursor >= n)
       g_cursor = 0;
@@ -1416,6 +1418,13 @@ static ui_action screen_local(unsigned edges)
    {
       g_pcfg.local_layout = g_pcfg.local_layout == VID_PAIR_INSET
                                ? VID_PAIR_SIDE : VID_PAIR_INSET;
+      g_settings_dirty = 1;
+      edges &= ~PSP_CTRL_CROSS;
+   }
+   if ((edges & (PSP_CTRL_LEFT | PSP_CTRL_RIGHT | PSP_CTRL_CROSS)) &&
+       id == (ls.active ? (int)LA_TOUCH : (int)LS_TOUCH))
+   {
+      g_pcfg.local_touch2 = !g_pcfg.local_touch2;
       g_settings_dirty = 1;
       edges &= ~PSP_CTRL_CROSS;
    }
@@ -1485,7 +1494,7 @@ static ui_action screen_local(unsigned edges)
                                : "The buttons drive your game.", C_ITEM);
       for (i = 0; i < n; i++)
       {
-         int y = 114 + i * VW_PITCH, sel = g_cursor == i;
+         int y = 108 + i * VW_PITCH, sel = g_cursor == i;
          switch (ids[i])
          {
          case LA_SWAP:
@@ -1496,7 +1505,14 @@ static ui_action screen_local(unsigned edges)
             break;
          case LA_LAYOUT:
             vw_row(i, y, 440, sel, 1, "Layout",
-                   layout_name(g_pcfg.local_layout));
+                   ls.have_pad2 || g_pcfg.local_touch2
+                   ? "side by side (two players)"
+                   : layout_name(g_pcfg.local_layout));
+            break;
+         case LA_TOUCH:
+            vw_row(i, y, 440, sel, 1, "Player 2 on the touch screen",
+                   g_pcfg.local_touch2 ? (ls.have_pad2 ? "on (pad in use)"
+                                                       : "on") : "off");
             break;
          case LA_STOP:
             vw_row(i, y, 440, sel, 1, "Stop", "your game carries on alone");
@@ -1508,8 +1524,11 @@ static ui_action screen_local(unsigned edges)
       }
       /* (Host a game and Join a game are not on offer while this runs:
        * the page says so where the way out is) */
-      vw_line(22, 226, 436, ids[g_cursor] == LA_STOP
+      vw_line(22, 240, 436, ids[g_cursor] == LA_STOP
               ? "Stop it first to host or join a game over the network."
+              : ids[g_cursor] == LA_TOUCH
+              ? "Player 2 plays on the front screen while no controller is "
+                "paired."
               : ls.have_pad2
               ? "In the game: right stick sideways or a tap swaps the sound."
               : "In the game: right stick sideways or a tap on a picture "
@@ -1517,22 +1536,26 @@ static ui_action screen_local(unsigned edges)
    }
    else
    {
-      vw_wrap(22, 66, 436, "Both games run here, joined by a link cable: "
-              "trade with yourself, or pass the " UI_DEV " to a friend.",
-              C_ITEM, 2);
+      vw_wrap(22, 62, 436, "Both games run here, joined by a link cable.",
+              C_ITEM, 1);
       snprintf(own, sizeof(own), other ? "Start: the partner plays its game"
                                        : "Start: the partner uses its own "
                                          "save");
-      vw_row(0, 106, 440, g_cursor == 0, ls.available && !other,
+      vw_row(0, 88, 440, g_cursor == 0, ls.available && !other,
              "Start: the partner copies my save",
              other ? "same game only" : NULL);
-      vw_row(1, 106 + VW_PITCH, 440, g_cursor == 1, ls.available, own,
+      vw_row(1, 88 + VW_PITCH, 440, g_cursor == 1, ls.available, own,
              ls.partner_save ? "save found" : "starts a new game");
-      vw_row(2, 106 + 2 * VW_PITCH, 440, g_cursor == 2, 1, "Partner's game",
+      vw_row(2, 88 + 2 * VW_PITCH, 440, g_cursor == 2, 1, "Partner's game",
              other ? ls.partner_game : "this one");
-      vw_row(3, 106 + 3 * VW_PITCH, 440, g_cursor == 3, 1, "Layout",
-             layout_name(g_pcfg.local_layout));
-      vw_wrap(22, 212, 436,
+      vw_row(3, 88 + 3 * VW_PITCH, 440, g_cursor == 3, 1, "Layout",
+             ls.have_pad2 || g_pcfg.local_touch2
+             ? "side by side (two players)"
+             : layout_name(g_pcfg.local_layout));
+      vw_row(4, 88 + 4 * VW_PITCH, 440, g_cursor == 4, 1,
+             "Player 2 on the touch screen",
+             g_pcfg.local_touch2 ? "on" : "off");
+      vw_wrap(22, 214, 436,
               g_play_pending ? "Starting the second game..."
               : !ls.available ? (ls.why_not && ls.why_not[0] ? ls.why_not
                  : "This game cannot run twice on one " UI_DEV ".")
@@ -1547,6 +1570,9 @@ static ui_action screen_local(unsigned edges)
               : id == LS_GAME
               ? "The same game twice, or the other version of it in the "
                 "second machine."
+              : id == LS_TOUCH
+              ? "No second controller? Player 2 plays on the front screen: "
+                "buttons are drawn on their half."
               : "Side by side: two equal pictures. Large + small: the game "
                 "you drive is the large one.", C_DIM, 2);
    }
@@ -1556,7 +1582,8 @@ static ui_action screen_local(unsigned edges)
       footer(VID_GLYPH_X " select   " VID_GLYPH_O " back");
    else
       footer(id == LS_GAME ? VID_GLYPH_X " choose   " VID_GLYPH_O " back"
-             : id == LS_LAYOUT ? VID_GLYPH_X " change   " VID_GLYPH_O " back"
+             : id == LS_LAYOUT || id == LS_TOUCH
+             ? VID_GLYPH_X " change   " VID_GLYPH_O " back"
              : VID_GLYPH_X " start   " VID_GLYPH_O " back");
    return act;
 }

@@ -463,6 +463,8 @@ typedef struct
    int  local_partner;  /* local link: 0 = the partner starts from a copy
                          * of my save (default), 1 = from its own save file */
    int  local_layout;   /* VID_PAIR_SIDE (default) / VID_PAIR_INSET         */
+   int  local_touch2;   /* 1 = with no second controller, player 2 plays on
+                         * the front screen (vita/local_vita.c); 0 = off   */
    /* 1 (default): the menus answer the front panel.  0 = they ignore it --
     * the switch for a panel that misbehaves.  Read; written only when the
     * key is already in the file. */

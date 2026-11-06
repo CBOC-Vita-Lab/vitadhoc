@@ -200,6 +200,8 @@ or, with "Apply to: this game", for one game (`ux0:data/GBAdhoc/snes/games/<game
 | Quality | **Sharp** (default: nearest-neighbour prescale by an integer factor into a render target, then bilinear: "sharp bilinear") or Smooth (plain bilinear) |
 | Side glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
 | CRT scanlines, LCD grid | Off, 1-10 |
+| Blend hi-res columns | Off (default) or On. For 512-wide pictures: the GPU averages each pair of columns (bilinear sample exactly between two texels, no extra pass), which smooths the dithering/transparency tricks hi-res games use. Opt-in because it softens text |
+| Blend interlace lines | Off (default) or On. The same for 448/478-high interlaced pictures: pairs of lines are averaged, which removes the line flicker |
 | Bezel | not a setting: `ux0:data/GBAdhoc/overlays/<game>.png`, else `overlays/snes.png`, a PNG (transparent window) drawn over the whole screen; it replaces the glow |
 
 No shader compiler exists in this build environment (vitasdk has only the runtime `libshacccg.suprx` loaded
@@ -248,7 +250,7 @@ One line per second:
 t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | gov=0 drawn=60 skipped=0 new_pic=60 fence_skip=0
 ```
 
-`fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
+Since the speed pass the line also has `main split ms/fr: emu= copy= gpu_submit=` (the main figure divided into the core call, the picture copy and GPU submission) and `rt_reuse=` (how many times a render target was reused without being redrawn this second). `fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
 `aq` the audio queue in frames. `busy ms/fr` is the time each thread spent working per emulated frame
 (Vita thread CPU clocks are not available, so each thread measures around its own work; the main figure is the
 whole loop without the display wait). A frame fits when main stays under about 15.5 and the workers under 16.7.
@@ -502,3 +504,58 @@ Result: GSU 8bpp PlotPixel 256x192 went from 240 to 1462 fps on x86; frame hashe
 old build on all 289 test ROMs and the 15 owner ROMs (`mt_compare.py --ref <old build>`, with and without
 threads). It was not a busy-wait on the GSU and no idle-loop skip was needed. Games that fade the screen gain a
 little too.
+
+## Speed pass (profile-driven, all output bit-identical)
+
+Method: callgrind, `--separate-threads=yes`, 600 frames of scripted play on each of the 15 owner games with
+both workers on (cg-01 main, cg-02 APU, cg-03 PPU), minus the startup cost of a 1-frame run, so the numbers are
+millions of x86 instructions per emulated frame on each thread. "Before" is the build at the start of this pass
+(Super FX fix included), "after" is the final twin (same flags, `-O2`). The bottleneck thread is the largest of
+the three. These are instruction counts, not Vita times: nothing here has run on a real Vita.
+
+| Game | main before | main after | APU before | APU after | PPU before | PPU after | bottleneck before | after |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ChronoTrigger | 2.25 | 2.03 | 2.24 | 1.71 | 2.76 | 1.39 | 2.76 | 2.03 |
+| Donkey Kong Country | 2.32 | 2.19 | 2.31 | 1.79 | 4.16 | 2.22 | 4.16 | 2.22 |
+| Doom | 1.92 | 1.82 | 2.57 | 1.96 | 4.71 | 2.76 | 4.71 | 2.76 |
+| F-Zero | 1.92 | 1.72 | 2.63 | 1.88 | 4.34 | 2.24 | 4.34 | 2.24 |
+| Kirby Superstar | 6.47 | 5.73 | 2.77 | 2.34 | 2.67 | 1.71 | 6.47 | 5.73 |
+| Mega Man X 2 | 2.07 | 1.91 | 1.97 | 1.63 | 1.60 | 0.66 | 2.07 | 1.91 |
+| Pilotwings | 2.08 | 1.88 | 2.25 | 1.93 | 2.34 | 1.57 | 2.34 | 1.93 |
+| Street Fighter Alpha 2 | 1.73 | 1.58 | 2.31 | 1.74 | 3.31 | 0.85 | 3.31 | 1.74 |
+| Stunt Race FX | 2.13 | 1.95 | 2.64 | 2.23 | 2.59 | 1.39 | 2.64 | 2.23 |
+| Super Mario Kart | 2.09 | 1.85 | 2.26 | 1.88 | 2.48 | 1.16 | 2.48 | 1.88 |
+| Super Mario RPG | 6.20 | 5.98 | 2.48 | 2.19 | 1.43 | 0.63 | 6.20 | 5.98 |
+| Super Mario World | 2.42 | 2.56 | 2.64 | 1.86 | 3.96 | 1.66 | 3.96 | 2.56 |
+| Super Metroid | 2.21 | 2.07 | 2.00 | 1.78 | 1.90 | 1.01 | 2.21 | 2.07 |
+| Yoshi's Island | 3.64 | 3.59 | 2.47 | 1.98 | 3.94 | 2.37 | 3.94 | 3.59 |
+| Zelda: A Link to the Past | 1.95 | 1.75 | 2.30 | 1.80 | 3.31 | 0.77 | 3.31 | 1.80 |
+
+Super Mario World's main thread went up about 6% (2.42 to 2.56); the cause was not isolated (the inlined memory
+fast paths change code layout; its bottleneck, the PPU, still fell a lot). Startup (1 frame) fell from
+about 430 to about 120 million instructions on the main thread for most carts (Doom: 244 to 88), because the
+ROM's SHA-256 is no longer computed at load (the hash was only used to match a database that is not built in).
+
+What changed:
+
+- **PPU thread (largest gain, up to about 75% fewer instructions).** The tile plotters keep the screen, depth and
+  colour-table pointers in one struct in registers instead of reloading globals for every pixel. Eight-pixel
+  tile rows are drawn with 64-bit byte tricks (transparent, opaque and depth tests for a whole row at once),
+  and the add/subtract colour maths for a row runs as one vector operation (SSE2 on x86, NEON on the Vita,
+  through GCC vector types). The backdrop is filled in groups of pixels: covered groups are skipped, flat
+  areas are stored in bulk, only mixed groups go per pixel. The depth buffers are cleared only where something
+  was drawn (a dirty mark per frame) instead of whole.
+- **Main thread (about 5 to 12% fewer).** Memory reads and writes for the common case (RAM/ROM block) are
+  inlined; the rare case (I/O, SRAM, chips) stays a function call. SA-1 reads got the same fast path.
+- **APU thread (about 15 to 30% fewer).** The DSP skips the Gaussian interpolation of a voice whose envelope is
+  zero (the output is zero either way).
+- **Vita GPU side.** Scanline/grid bands are drawn as one triangle-list draw instead of one draw per band; the
+  sharp-bilinear render target is not redrawn when the picture and settings did not change; the log shows
+  where the main thread's time goes. Two new opt-in Picture rows (above).
+- **Tried and not done:** whole-program LTO and PGO (not measurable without the console; PGO data from x86 would
+  not describe the Vita's cores), fusing the SPC timers, an SA-1 idle-loop skip (not exact), anything in
+  the DSP-1, S-DD1 and Cx4 code (never more than 2% of a thread).
+
+Checks: `mt_compare.py` shows identical frame hashes and audio against the pre-pass build for all 289 test ROMs
+at 300 frames and for the 15 owner ROMs at 1800 frames, single-threaded and with both workers on; `selftest.sh`
+passes. Not tested: anything on a real Vita (speed, the batched draws, the render-target reuse, the blend rows).

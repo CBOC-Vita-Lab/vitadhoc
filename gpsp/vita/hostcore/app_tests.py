@@ -3075,14 +3075,16 @@ def art_settings_requests_ok(requested, failed, stems):
 def art_settings_cache_ok(directory, stems, png, thumb):
     expected_png = {name + ".png" for name in stems}
     expected_thumb = {name + ".t2.565" for name in stems}
+    # 1.3: tile thumbnails live in cache/boxart, beside boxart/ (sidecar.h)
+    tdir = os.path.join(os.path.dirname(directory), "cache", "boxart")
     try:
         if ({os.path.basename(p) for p in glob.glob(os.path.join(directory, "*.png"))}
                 != expected_png or
-                {os.path.basename(p) for p in glob.glob(os.path.join(directory, "*.t2.565"))}
+                {os.path.basename(p) for p in glob.glob(os.path.join(tdir, "*.t2.565"))}
                 != expected_thumb):
             return False
         return (all(open(os.path.join(directory, name), "rb").read() == png for name in expected_png)
-                and all(open(os.path.join(directory, name), "rb").read() == thumb for name in expected_thumb))
+                and all(open(os.path.join(tdir, name), "rb").read() == thumb for name in expected_thumb))
     except OSError:
         return False
 
@@ -3132,7 +3134,7 @@ def t_art_settings(S):
         while not stop.is_set():
             if os.path.exists(finished):
                 during["png"] = len(glob.glob(os.path.join(root, "boxart", "*.png")))
-                during["thumbs"] = len(glob.glob(os.path.join(root, "boxart", "*.t2.565")))
+                during["thumbs"] = len(glob.glob(os.path.join(root, "cache", "boxart", "*.t2.565")))
                 during["returned"] = os.path.exists(returned)
                 return
             stop.wait(0.005)
@@ -3210,6 +3212,280 @@ def t_title_bg(S):
     S.check(tile[1] > tile[0] + 60 and tile[1] > tile[2] + 60,
             "the tile is the title screen too, not the console's card (%s)" %
             (tile,))
+
+
+def cover_png(size, color, corner=None):
+    """A PNG of one colour (and, if asked, a different 8x8 corner)."""
+    import io
+    im = Image.new("RGB", size, color)
+    if corner:
+        im.paste(Image.new("RGB", (8, 8), corner), (0, 0))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def near(px, want, tol=40):
+    return all(abs(a - b) <= tol for a, b in zip(px[:3], want))
+
+
+# Settings > LIBRARY > Cover picture, reached from the top of the browser's
+# Settings by wrapping UP: Button mapping, Game order, Game folders, then it.
+COVER_ROW = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n"
+
+
+def t_cover_menu(S):
+    """Cover picture (cover_custom.h, ui_vita_cover.h): a picture chosen from
+    the console's photos (a fake ux0:picture, with a subfolder) is previewed,
+    set on X, scaled down with its shape kept, and shown at once; the
+    downloaded cover it replaced is kept; a game screenshot can be used too;
+    Automatic puts the cover back."""
+    out = os.path.join(S.outdir, "cover_menu")
+    root = os.path.join(out, "root")
+    pics = os.path.join(root, "pics")
+    red = cover_png((400, 600), (200, 30, 30))           # portrait, 2:3
+    blue = cover_png((300, 200), (30, 30, 200))
+    old = cover_png((64, 64), (240, 240, 240))           # the "downloaded" one
+    stale = b"R565" + bytes(12) + b"STALE" * 40
+    S.make_root(root, {"ui_home": 1}, None, {"pictures": pics},
+                {"pics/SCREENSHOT/Red.png": red, "pics/Blue.png": blue,
+                 "pics/notes.txt": b"not a picture",
+                 "boxart/gbadhoc-test.png": old,
+                 "cache/boxart/gbadhoc-test.v565": stale,
+                 "cache/boxart/gbadhoc-test.vh565": stale,
+                 "boxart/gbadhoc-test.t2.565": stale})
+    # newest first: Red is the first picture in the list
+    now = time.time()
+    os.utime(os.path.join(pics, "SCREENSHOT", "Red.png"), (now, now))
+    os.utime(os.path.join(pics, "Blue.png"), (now - 100, now - 100))
+    script = COVER_ROW + """+10:cross
++10:shot=cover_page.png
++4:cross
++30:shot=cover_pick.png
++4:cross
++12:shot=cover_sure.png
++4:cross
++12:shot=cover_done.png
++4:circle
++8:circle
++60:shot=cover_home.png
++10:quit
+"""
+    r = S.run("cover_menu", script, prepared=True)
+    S.clean(r)
+    pk = r.evt("cover_pick")
+    S.check(pk and pk[0].get("pictures") == "2",
+            "two pictures are found, the note and the subfolder's "
+            "counted right (%s)" % (pk[0]["_"] if pk else "no cover_pick"))
+    st = r.evt("cover_set")
+    S.check(st and st[0].get("rc") == "0" and st[0].get("from") == "picture",
+            "X on the preview sets it (%s)" % (st[0]["_"] if st else "none"))
+    png = os.path.join(root, "boxart", "gbadhoc-test.png")
+    im = Image.open(png) if os.path.exists(png) else None
+    S.check(im is not None and im.size == (341, 512) and
+            near(im.convert("RGB").getpixel((100, 100)), (200, 30, 30), 3),
+            "the cover is the red picture, 400x600 scaled to 512 high with "
+            "its shape kept (%s)" % ((im.size if im else "no file"),))
+    S.check(os.path.exists(os.path.join(root, "cache", "covers", "gbadhoc-test.own")),
+            "boxart/gbadhoc-test.own says it is the player's")
+    dl = os.path.join(root, "cache", "covers", "gbadhoc-test.dl")
+    S.check(os.path.exists(dl) and open(dl, "rb").read() == old,
+            "the downloaded cover it replaced is kept (.dl)")
+    th = os.path.join(root, "cache", "boxart", "gbadhoc-test.t2.565")
+    d = open(th, "rb").read() if os.path.exists(th) else b""
+    S.check(len(d) == 16 + 160 * 160 * 2 and d[4:8] == bytes([160, 0, 160, 0]),
+            "the tile thumbnail was made again, 160 x 160 (%d bytes)" % len(d))
+    S.check(d[16 + 2 * (80 * 160 + 80):16 + 2 * (80 * 160 + 80) + 2] ==
+            bytes([0x06, 0xC1]) or near(
+                [((int.from_bytes(d[16 + 2 * (80 * 160 + 80):16 + 2 * (80 * 160 + 80) + 2], "little") >> k) & m) * (255 // m)
+                 for k, m in ((0, 31), (5, 63), (11, 31))], (200, 30, 30), 24),
+            "its middle is the red picture's red")
+    for ext in ("v565", "vh565"):
+        f = os.path.join(root, "boxart", "gbadhoc-test." + ext)
+        S.check(not os.path.exists(f) or open(f, "rb").read() != stale,
+                "the old %s cache is gone" % ext)
+    page = S.picture(r, "cover_page.png")
+    sure = S.picture(r, "cover_sure.png")
+    if sure:
+        S.check(near(sure.getpixel((480, 250)), (200, 30, 30), 40),
+                "the preview before confirming shows the red picture (%s)" %
+                (sure.getpixel((480, 250)),))
+    home = S.picture(r, "cover_home.png")
+    if home:
+        tile = home.getpixel((110, 150))
+        S.check(near(tile, (200, 30, 30), 45),
+                "the home tile shows the new cover at once (%s)" % (tile,))
+    S.picture(r, "cover_pick.png")
+
+    # a screenshot of the game, then Automatic (the .dl comes back)
+    shots = os.path.join(root, "screenshots")
+    os.makedirs(shots, exist_ok=True)
+    with open(os.path.join(shots, "gbadhoc-test-20260101-120000.png"), "wb") as f:
+        f.write(cover_png((240, 160), (30, 200, 200)))
+    script = COVER_ROW + """+10:cross
++10:down
++4:cross
++12:cross
++12:shot=cover_shot_done.png
++4:down
++4:down
++4:cross
++12:shot=cover_auto_done.png
++4:circle
++8:circle
++60:shot=cover_home2.png
++10:quit
+"""
+    r = S.run("cover_menu", script, prepared=True)
+    S.clean(r)
+    st = r.evt("cover_set")
+    S.check(st and st[0].get("from") == "game" and st[0].get("rc") == "0",
+            "Use a screenshot of the game takes its screenshot (%s)" %
+            (st[0]["_"] if st else "none"))
+    au = r.evt("cover_auto")
+    S.check(au and au[0].get("rc") == "1",
+            "Automatic puts the kept download back (%s)" %
+            (au[0]["_"] if au else "none"))
+    S.check(os.path.exists(png) and open(png, "rb").read() == old,
+            "boxart/gbadhoc-test.png is the downloaded cover again")
+    S.check(not os.path.exists(os.path.join(root, "cache", "covers", "gbadhoc-test.own"))
+            and not os.path.exists(dl),
+            "the player's note and the kept copy are gone")
+    d = open(th, "rb").read() if os.path.exists(th) else b""
+    S.check(len(d) == 16 + 64 * 64 * 2 or d[4:8] == bytes([64, 0, 64, 0]),
+            "its thumbnail is the downloaded picture's (%d bytes)" % len(d))
+    home = S.picture(r, "cover_home2.png")
+    if home:
+        tile = home.getpixel((110, 150))
+        S.check(near(tile, (240, 240, 240), 30),
+                "the home tile is the downloaded cover again (%s)" % (tile,))
+    # the Home's Cover button, by touch
+    r = S.run("cover_menu", "100:touch=326/476\n+30:shot=cover_btn.png\n"
+              "+4:circle\n+30:quit\n", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT ui_screen name=cover from=browser"),
+            "the Cover button on the home screen opens the page")
+    S.picture(r, "cover_btn.png")
+
+
+def t_cover_inbox(S):
+    """A picture in covers/ named like the game (any case, with or without
+    the ROM extension) is taken at the next library refresh and wins over
+    a download; a fetch never writes over it; Automatic keeps it off until
+    the file changes; the shelf shows it too."""
+    import http.server
+    import threading
+    import functools
+    out = os.path.join(S.outdir, "cover_inbox")
+    root = os.path.join(out, "root")
+    serve = os.path.join(out, "server")
+    shutil.rmtree(serve, ignore_errors=True)
+    dirn = os.path.join(serve, "Nintendo - Game Boy Advance", "Named_Boxarts")
+    os.makedirs(dirn)
+    served = cover_png((200, 200), (250, 250, 20))
+    with open(os.path.join(dirn, "gbadhoc-test.png"), "wb") as f:
+        f.write(served)
+    asked = []
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            asked.append(self.path)
+
+    srv = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(Quiet, directory=serve))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = "http://127.0.0.1:%d" % srv.server_address[1]
+    green = cover_png((900, 500), (30, 190, 40))
+    # 1  the file is picked up (no fetching in this run)
+    S.make_root(root, {"ui_home": 1}, None, None,
+                {"covers/GbAdHoc-Test.GBA.PNG": green,
+                 "covers/other.png": cover_png((10, 10), (0, 0, 0))})
+    r = S.run("cover_inbox", "200:shot=inbox_home.png\n+10:quit\n",
+              prepared=True)
+    S.clean(r)
+    w = r.evt("cover_inbox")
+    S.check(any(d.get("waiting") == "1" for d in w) and
+            any(d.get("stem") == "gbadhoc-test" and d.get("rc") == "1"
+                for d in w),
+            "one waiting file, matched in spite of case and the .gba (%s)" %
+            [d["_"] for d in w])
+    png = os.path.join(root, "boxart", "gbadhoc-test.png")
+    im = Image.open(png) if os.path.exists(png) else None
+    S.check(im is not None and im.size == (512, 284),
+            "it is copied to boxart/ scaled to 512 wide, shape kept (%s)" %
+            ((im.size if im else "no file"),))
+    S.check(os.path.exists(os.path.join(root, "covers", "GbAdHoc-Test.GBA.PNG")),
+            "the file in covers/ is left alone")
+    home = S.picture(r, "inbox_home.png")
+    if home:
+        tile = home.getpixel((110, 150))
+        S.check(near(tile, (30, 190, 40), 45),
+                "the home tile shows it (%s)" % (tile,))
+    first = open(png, "rb").read() if os.path.exists(png) else b""
+    # (prepared runs keep the root's vita.ini: the server's address goes in)
+    with open(os.path.join(root, "vita.ini"), "w") as f:
+        f.write("art_url = %s\n" % url)
+    # 2  again, with the fetcher running and a download on offer: the own
+    #    cover is neither asked for nor written over; the list opens
+    #    with nothing waiting
+    r = S.run("cover_inbox", "300:shot=inbox_home2.png\n+10:quit\n",
+              prepared=True)
+    S.clean(r)
+    S.check(not r.evt("cover_inbox"),
+            "a file already taken is not taken again")
+    S.check(os.path.exists(png) and open(png, "rb").read() == first,
+            "the fetcher did not write over the player's cover")
+    S.check(not any("Named_Boxarts/gbadhoc-test" in a for a in asked),
+            "and did not even ask for it (asked: %s)" % asked[:5])
+    # 3  Automatic: the download comes (there is no kept copy), and the
+    #    file in covers/ does not take it back
+    script = COVER_ROW + """+10:cross
++10:down
++4:down
++4:cross
++240:shot=inbox_auto.png
++4:circle
++8:circle
++30:quit
+"""
+    r = S.run("cover_inbox", script, prepared=True)
+    S.clean(r)
+    au = r.evt("cover_auto")
+    S.check(au and au[0].get("rc") == "2",
+            "Automatic with no kept copy asks for a download (%s)" %
+            (au[0]["_"] if au else "none"))
+    S.check(os.path.exists(png) and open(png, "rb").read() == served,
+            "the download took the place (asked: %s)" % asked[:5])
+    S.check(not os.path.exists(os.path.join(root, "cache", "covers", "gbadhoc-test.own"))
+            and os.path.exists(os.path.join(root, "cache", "covers", "gbadhoc-test.auto")),
+            "boxart/gbadhoc-test.auto remembers the choice")
+    r = S.run("cover_inbox", "300:quit\n", prepared=True)
+    S.clean(r)
+    S.check(not r.evt("cover_inbox") and open(png, "rb").read() == served,
+            "the next start leaves it automatic")
+    # 4  a changed file in covers/ is a new wish
+    time.sleep(1.1)
+    with open(os.path.join(root, "covers", "GbAdHoc-Test.GBA.PNG"), "wb") as f:
+        f.write(cover_png((900, 500), (200, 20, 200)))
+    r = S.run("cover_inbox", "300:quit\n", prepared=True)
+    S.clean(r)
+    S.check(r.evt("cover_inbox") and os.path.exists(
+                os.path.join(root, "cache", "covers", "gbadhoc-test.own")) and
+            Image.open(png).convert("RGB").getpixel((50, 50))[0] > 150,
+            "a changed file is taken again")
+    # 5  the shelf shows it as well
+    S.make_root(root, {"ui_home": 0}, None, None, {"covers/keep": b"x"})
+    Image.open(__import__("io").BytesIO(green)).save(
+        os.path.join(root, "covers", "gbadhoc-test.jpg"), "JPEG")
+    r = S.run("cover_inbox", "200:shot=inbox_shelf.png\n+10:quit\n",
+              prepared=True)
+    S.clean(r)
+    shelf = S.picture(r, "inbox_shelf.png")
+    if shelf:
+        px = shelf.getpixel((792, 150))
+        S.check(near(px, (30, 190, 40), 50),
+                "the shelf's cover panel shows a JPG from covers/ (%s)" % (px,))
+    srv.shutdown()
 
 
 def t_fullspeed(S):
@@ -5118,7 +5394,8 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("patch", t_patch), ("sgb", t_sgb), ("ra", t_ra),
          ("preview", t_preview),
          ("gameinfo", t_gameinfo), ("art_progress", t_art_progress), ("art_settings", t_art_settings),
-         ("title_bg", t_title_bg), ("fullspeed", t_fullspeed), ("smooth_gov", t_smooth_gov),
+         ("title_bg", t_title_bg), ("cover_menu", t_cover_menu),
+         ("cover_inbox", t_cover_inbox), ("fullspeed", t_fullspeed), ("smooth_gov", t_smooth_gov),
          ("upfade", t_upfade), ("render_thread", t_render_thread),
          ("render_skips", t_render_skips), ("gpu_xbrz", t_gpu_xbrz),
          ("session", t_session),

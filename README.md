@@ -56,7 +56,8 @@ version. Keep your games, saves, settings and artwork where they are.
 ### A library made for the Vita
 
 Browse with buttons or touch. Box art and title screens download on Wi-Fi;
-your own pictures take priority. Built-in descriptions cover about 1,300
+your own pictures take priority, and any game can have a cover you choose
+(the Cover button, or a picture in `covers/` named like the game). Built-in descriptions cover about 1,300
 games. Star favourites, search by name, check Recent and play time, or rest on
 a game to watch the last ten seconds you recorded.
 

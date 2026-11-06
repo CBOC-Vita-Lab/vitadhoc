@@ -62,6 +62,19 @@ void artfetch_pause(int on);
  * a game never played (vita.ini art_titles = 0: box art only).  Its own
  * titles/.missing.txt. */
 void artfetch_titles(int on);
+/* The player's own cover pictures (cover_custom.h).  A picture the player
+ * sets is boxart/<stem>.png with a boxart/<stem>.own beside it; the fetcher
+ * finds art on the card, so it neither asks for that game nor, if a download
+ * was already on its way, writes over it. */
+/* boxart/ or titles/ changed under the thread (a cover set or taken away):
+ * look at the folders again; what the server did not have stays missed. */
+void artfetch_rescan(void);
+/* The tile thumbnail of a decoded picture (RGB, 3 bytes a pixel) into `dst`
+ * (the caller builds the path from ART_THUMB_SUFFIX).  `square`: fit the
+ * whole picture on a square, for a cover of the player's own. UI thread
+ * safe; 0 = written. */
+int  artfetch_thumb_rgb(const unsigned char *rgb, int w, int h,
+                        const char *dst, int square);
 /* Settings > Covers: forget what the server did not have (both .missing.txt
  * files) and go through the list again. */
 void artfetch_retry(void);

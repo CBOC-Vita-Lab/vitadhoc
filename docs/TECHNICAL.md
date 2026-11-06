@@ -437,6 +437,31 @@ run some of them.
   (layout, each pad its own game, either menu), `touch2` (both inputs at once,
   L/R/Start, nothing leaking, off, a pad overriding the touch pad). The twin's
   `pad2=on|off` and `p2.` script entries already simulated the second pad.
+- **GB and GBC are one link family.** `same_console()` in `local_vita.c` used
+  to pair a `.gb` only with `.gb` and a `.gbc` only with `.gbc`; the picker
+  and `partner_set()` now accept either for a Game Boy game (GBA only with
+  `.gba`). The partner's save keeps the name its own extension gives
+  (`save_suffix_of()`). `fe_host_gb_local_start()` runs the partner's machine
+  as its own hardware (`gbloc_partner_console()`: `.gbc` = CGB, `.gb` = DMG,
+  a colour-only header byte 0x143 = 0xC0 forces CGB) instead of copying the
+  player's `host.console`; the `gb_local_start` event prints both consoles
+  (`console=0/1`). The network link already carried each side's console in
+  HELLO and made each slot's machine from it (`fe_gblink.c`), and its
+  compatibility word is one value for the whole GB family (`link_vita.c`,
+  `GBAdhoc GB link v2`), so a `.gb` host and a `.gbc` guest were accepted;
+  only GBA rooms check the game code. The cable is byte based
+  (`gbcore_dual.c`: the byte crosses at the SC write, the sender's own
+  `seri_occer` completes it in CPU clocks), so a Color in double speed against
+  a Game Boy at normal speed needs no special case; the tests prove it.
+  Over the network the GBA cable still needs the same game on both Vitas (the
+  mirror runs one ROM in both machines), so Ruby with Sapphire is a one-Vita
+  (two players) pairing only.
+- **Tests:** `local_tests.py gb_mixed` (a `.gb` with a colour-flag `.gbc`, with
+  a `.gbc` without the flag, with a Color in double speed, each both ways, and
+  the picker's list) and `link_tests.py gb_mixed` (the same over the loopback
+  network link). The cartridges are `testrom/gblocal*.gbc` and
+  `gblink*.gbc` (`make -C testrom gb`; the `-cgbfast` ones switch to double
+  speed at power on, `rgbasm -DDOUBLE`).
 
 ## Version 1.2 Changes
 

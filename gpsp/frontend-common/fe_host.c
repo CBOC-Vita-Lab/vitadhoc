@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <errno.h>
 
@@ -7448,6 +7449,34 @@ static void gbloc_audio(void *user, const int16_t *samples, size_t frames)
       gbloc.cfg.audio(samples, frames);
 }
 
+/* The hardware a local partner's cartridge runs on: what its own file name
+ * says (.gbc = Game Boy Color, .gb = Game Boy), as for any game; and a
+ * colour-only cartridge (header 0x143 = 0xC0) is a Color whatever its file is
+ * called.  The partner need not be the player's console: Red (.gb) trades with
+ * Gold (.gbc) and each runs as its own hardware. */
+static fe_console_t gbloc_partner_console(const char *path)
+{
+   const char *dot = path ? strrchr(path, '.') : NULL;
+   fe_console_t c = host.console;
+   if (dot && !strcasecmp(dot, ".gbc"))
+      c = FE_CONSOLE_GBC;
+   else if (dot && !strcasecmp(dot, ".gb"))
+      c = FE_CONSOLE_GB;
+   if (c == FE_CONSOLE_GB && path)
+   {
+      FILE *f = fopen(path, "rb");
+      unsigned char b = 0;
+      if (f)
+      {
+         if (fseek(f, 0x143, SEEK_SET) == 0 && fread(&b, 1, 1, f) == 1 &&
+             b == 0xC0)
+            c = FE_CONSOLE_GBC;
+         fclose(f);
+      }
+   }
+   return c;
+}
+
 /* One machine's state, in a buffer of its own size.  The caller frees. */
 static uint8_t *gbloc_state_take(int slot, gbcore_t *core, size_t *n)
 {
@@ -7528,7 +7557,7 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    dc.machine[0].callbacks.video = gb_video_frame;
    dc.machine[0].callbacks.audio_batch = gb_audio_batch;
    dc.machine[1].rom_path = prom;
-   dc.machine[1].console = host.console;
+   dc.machine[1].console = other ? gbloc_partner_console(prom) : host.console;
    dc.machine[1].palette = (unsigned)host.gb_palette;
    dc.machine[1].wallclock = host.wallclock;
    dc.machine[1].save = cfg->clone ? sv : cfg->save;
@@ -7570,8 +7599,9 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
       gb_local_pad = cfg->pad;
       gb_local_on = 1;
       fe_evt("gb_local_start ok clone=%d other=%d rom=%s save=%u batch=%u "
-             "state=%u", cfg->clone, other, prom, (unsigned)cfg->save_n,
-             dc.batch_lines, (unsigned)stn);
+             "state=%u console=%d/%d", cfg->clone, other, prom,
+             (unsigned)cfg->save_n, dc.batch_lines, (unsigned)stn,
+             (int)dc.machine[0].console, (int)dc.machine[1].console);
    }
    free(st);
    free(sv);

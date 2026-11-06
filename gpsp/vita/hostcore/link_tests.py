@@ -727,7 +727,7 @@ def t_three_sessions(T):
         T.picture(r, who, "third.png")
 
 
-def gb_verdict(T, r, who, role):
+def gb_verdict(T, r, who, role, save="gblink.gb.sav"):
     """The GB cartridge's own word: from the machine's memory at the end,
     and from the battery save the session committed."""
     w = T.peek(r, "end")
@@ -740,7 +740,7 @@ def gb_verdict(T, r, who, role):
                 "failed (role/n/ok/bad = %s)" %
                 (who, "master" if role == 1 else "slave", got))
     try:
-        sav = open(os.path.join(r.root, "roms", "gblink.gb.sav"), "rb").read()
+        sav = open(os.path.join(r.root, "roms", save), "rb").read()
     except OSError:
         sav = b""
     T.check(sav[:2] == b"GL" and len(sav) >= 8 and sav[7] == 0x5A and
@@ -821,6 +821,59 @@ def t_gb_two_carts(T):
                 else not any(n.startswith("gblink.gb") for n in roms),
                 "%s: the other's cartridge was not written to the card (%s)" %
                 (who, ", ".join(roms)))
+
+
+GBLINK_CGB = os.path.join(HERE, "testrom", "gblink-cgb.gbc")
+GBLINK_FAST = os.path.join(HERE, "testrom", "gblink-cgbfast.gbc")
+
+
+def t_gb_mixed(T):
+    """A Game Boy and a Game Boy Color cartridge over the network link (Red
+    with Gold, Yellow with Crystal): .gb on one console, .gbc on the other,
+    each machine its own hardware, in both directions, and a Color in
+    double speed against a Game Boy at normal speed."""
+    if not all(os.path.exists(p) for p in (GBLINK, GBLINK_CGB, GBLINK_FAST)):
+        T.S.note("no testrom/gblink-cgb*.gbc (make -C testrom gb): skipped")
+        return
+    for tag, ra_rom, rb_rom, what in (
+            ("gb_cgb", GBLINK, GBLINK_CGB, "Game Boy hosts, Color joins"),
+            ("cgb_gb", GBLINK_CGB, GBLINK, "Color hosts, Game Boy joins"),
+            ("gb_fast", GBLINK, GBLINK_FAST,
+             "Game Boy with a Color in double speed"),
+            ("fast_gb", GBLINK_FAST, GBLINK,
+             "Color in double speed with a Game Boy")):
+        T.begin("gb_mixed_" + tag)
+        a = T.twin("a", T.arch_a, ra_rom, "Alice",
+                   host(2, "host.png") + shot(11, "linking.png") +
+                   press(14, "a", 20) + shot(17, "running.png") +
+                   disconnect(40, "session.png") + shot(46, "after.png") +
+                   quit_at(48), vita={"link_peek": "C000:2"})
+        b = T.twin("b", T.arch_b, rb_rom, "Bob",
+                   join_first(4, wait=3) + shot(17, "running.png") +
+                   shot(46, "after.png") + quit_at(48),
+                   vita={"link_peek": "C000:2"})
+        ra, rb = T.run([a, b], 48)
+        T.clean(ra, "A")
+        T.clean(rb, "B")
+        rooms = rb.evt("link_scan_room")
+        T.check(rooms and rooms[-1]["kind"] == "2" and
+                rooms[-1]["compatible"] == "1",
+                "%s: the room is compatible, shown as a Game Boy Link Cable "
+                "room" % what)
+        for r, who, n in ((ra, "A", 1), (rb, "B", 2)):
+            T.check(r.has(r"link_running player=%d" % n),
+                    "%s, %s: linked as Player %d" % (what, who, n))
+            T.check(r.has(r"gblink_rom_send done size=\d+") and
+                    r.has(r"gblink_rom_received size=\d+ ok=1"),
+                    "%s, %s: sent its cartridge and received the other's" %
+                    (what, who))
+            T.check(r.has(r"gblink_done ") and
+                    r.has(r"gblink_save_commit .*ok=1"),
+                    "%s, %s: agreed end, save committed" % (what, who))
+            T.radio_free(r, who)
+        T.same_machines(ra, rb)
+        gb_verdict(T, ra, "A", 1, os.path.basename(ra_rom) + ".sav")
+        gb_verdict(T, rb, "B", 2, os.path.basename(rb_rom) + ".sav")
 
 
 def t_gb_extra_folder(T):
@@ -1601,7 +1654,7 @@ def t_mixed_refuse(T):
     T.picture(rb, "B", "refused.png")
 
 
-TESTS = [("wifi_cable", t_wifi_cable), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
+TESTS = [("wifi_cable", t_wifi_cable), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
          ("wifi_gb", t_wifi_gb), ("wifi_adapter", t_wifi_adapter),
          ("internet", t_internet), ("adhoc", t_adhoc),
          ("room_full", t_room_full), ("different_build", t_different_build),

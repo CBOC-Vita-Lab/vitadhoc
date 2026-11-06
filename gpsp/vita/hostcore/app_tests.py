@@ -184,7 +184,7 @@ class Suite:
         return sorted(names, key=str.lower)
 
     def run(self, name, script, config=None, autoboot=None, vita_ini=None,
-            args=(), extra=None, prepared=None, cwd=None):
+            args=(), extra=None, prepared=None, cwd=None, env=None):
         out = os.path.join(self.outdir, name)
         root = os.path.join(out, "root")
         if prepared is None:
@@ -200,7 +200,7 @@ class Suite:
         t0 = time.time()
         try:
             p = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=1500, env=dict(os.environ, TZ="UTC"),
+                               timeout=1500, env=dict(os.environ, TZ="UTC", **(env or {})),
                                cwd=cwd)
             rc, err = p.returncode, p.stderr
         except subprocess.TimeoutExpired:
@@ -1948,13 +1948,13 @@ def t_look(S):
                                                          lum["gba"]))
 
     # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, Keep full speed, FPS, Rewind, FF button,
+    # Display settings, CPU speed, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, (Wide view: menus -- not a row while the
     # wide view is off, as it is in these tests), Wide view, Motion blend,
     # Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 15 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 16 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2185,10 +2185,10 @@ def t_wide(S):
                 "fit: the picture reaches both edges of the screen (%s)" % col)
 
     # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, Keep full speed, FPS, Rewind, FF button,
+    # Display settings, CPU speed, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 13 + \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 14 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -3233,9 +3233,9 @@ def t_fullspeed(S):
                          for w in wins[1:]) if len(wins) > 1 else -1,
                 under=int(au[-1].get("under", 0)) if au else -1)
     # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, Keep full speed; CROSS turns it off, and config.ini
+    # Display settings, CPU speed, Keep full speed; CROSS turns it off, and config.ini
     # keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -4620,6 +4620,123 @@ def t_display_rows(S):
     S.check(dark[1] < dark[0], "a stronger grid is darker (%s)" % dark)
 
 
+def t_cpu_speed(S):
+    """Settings > CPU speed (cpuclock.c): 500 MHz by default, 444 as the
+    other value; the system's refusal falls back to 444; with PSVshellPlus
+    present (stand-in folders, GBADHOC_FAKE_UR0) our 28-byte profile is
+    written when none exists, a player's own is never replaced at start, is
+    backed up when they switch the row to 500 and put back on 444."""
+    import tempfile
+    good = bytes.fromhex("50535653" "30333030" "0b000000" "f4010000"
+                         "de000000" "de000000" "a6000000")
+    # the row, in game: Settings wraps upwards to Button mapping, Display
+    # settings, CPU speed
+    pick = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+10:shot=row.png\n"
+    quit_ = "+4:circle\n+10:circle\n+30:quit\n"
+
+    made = []
+
+    def ur0(profile=None):
+        d = tempfile.mkdtemp(prefix="vad-ur0-")
+        made.append(d)
+        os.makedirs(os.path.join(d, "tai"))
+        open(os.path.join(d, "tai", "PSVshellPlus_Kernel.skprx"), "wb").close()
+        prof = os.path.join(d, "data", "PSVshell", "profiles", "GBAD00001")
+        if profile is not None:
+            os.makedirs(os.path.dirname(prof))
+            open(prof, "wb").write(profile)
+        return d, prof
+
+    # 1. a plugin that lets the app ask: 500 accepted, no profile written
+    # (there is no PSVshell), measured clock logged at the start and 8 s in
+    r = S.run("cpu_ask", pick + "+600:shot=late.png\n" + quit_, autoboot="gbadhoc-test.gba",
+              env={"GBADHOC_FAKE_MHZ": "496"})
+    S.clean(r)
+    S.check(r.has(r"^EVT clocks: asked for 500 MHz, result 0"), "asks for 500")
+    S.check(r.has(r"^EVT clocks: the ARM core measures 496 MHz \(the system "
+                  r"reports \d+\) at start"), "the measured clock at start")
+    S.check(r.has(r"^EVT clocks: the ARM core measures 496 MHz .* 8 s in"),
+            "...and about 8 s in")
+    S.picture(r, "row.png")
+
+    # 2. refused, no plugin: falls back to 444, hint in the note
+    r = S.run("cpu_refused", pick + quit_, autoboot="gbadhoc-test.gba",
+              env={"GBADHOC_FAKE_REFUSE500": "1", "GBADHOC_FAKE_MHZ": "444"})
+    S.clean(r)
+    S.check(r.has(r"^EVT clocks: asked for 500 MHz, result -1") and
+            r.has(r"^EVT clocks: asked for 444 MHz, result 0"),
+            "500 refused, 444 asked for")
+    S.check(r.has(r'^EVT clocks: note="Needs an overclock '
+                  r'plugin such as PSVshell"'), "the plain hint")
+    S.picture(r, "row.png")
+
+    # 3. PSVshellPlus present, setting Fast: the profile is written; switching
+    # to 444 takes it away again, and vita.ini keeps the setting
+    d, prof = ur0()
+    env = {"GBADHOC_FAKE_UR0": d, "GBADHOC_FAKE_REFUSE500": "1",
+           "GBADHOC_FAKE_MHZ": "444"}
+    r = S.run("cpu_profile", pick + "+4:cross\n+10:shot=row_std.png\n" + quit_,
+              autoboot="gbadhoc-test.gba", env=env)
+    S.clean(r)
+    S.check(r.has(r"^EVT cpu_profile written"), "the profile is written")
+    S.check(r.has(r"^EVT cpu_mhz setting=444 saved=1"), "444 chosen and saved")
+    S.check(r.has(r"^EVT cpu_profile removed"), "our profile is removed")
+    S.check(not os.path.exists(prof), "no profile left")
+    ini = open(os.path.join(r.root, "vita.ini")).read()
+    S.check(re.search(r"^cpu_mhz = 444$", ini, re.M), "vita.ini cpu_mhz = 444")
+    S.picture(r, "row_std.png")
+    # the first run alone: the bytes
+    d1, prof1 = ur0()
+    r = S.run("cpu_bytes", "60:quit\n", autoboot="gbadhoc-test.gba",
+              env=dict(env, GBADHOC_FAKE_UR0=d1))
+    S.clean(r)
+    S.check(os.path.exists(prof1) and open(prof1, "rb").read() == good,
+            "the profile is the 28 known-good bytes")
+    # the saved 444 keeps the next start from writing
+    d2, prof2 = ur0()
+    r = S.run("cpu_std_boot", "60:quit\n", autoboot="gbadhoc-test.gba",
+              vita_ini={"cpu_mhz": 444}, env=dict(env, GBADHOC_FAKE_UR0=d2))
+    S.clean(r)
+    S.check(r.has(r"^EVT clocks: asked for 444 MHz") and not os.path.exists(prof2),
+            "setting 444: asks for 444, writes nothing")
+
+    # 4. a player's own profile: kept at start, saved and replaced when the
+    # row goes 444 -> 500, restored when it goes back to 444
+    mine = b"PSVS0300" + bytes(range(20))
+    d, prof = ur0(mine)
+    r = S.run("cpu_keep", "60:quit\n", autoboot="gbadhoc-test.gba",
+              env=dict(env, GBADHOC_FAKE_UR0=d))
+    S.clean(r)
+    S.check(open(prof, "rb").read() == mine and r.has(r"^EVT cpu_profile kept_players"),
+            "a player's profile is left alone at start")
+    d, prof = ur0(mine)
+    r = S.run("cpu_backup", pick + "+4:cross\n+10:cross\n+10:shot=mid.png\n"
+              "+4:cross\n+10:" + "shot=end.png\n" + quit_,
+              autoboot="gbadhoc-test.gba", env=dict(env, GBADHOC_FAKE_UR0=d))
+    S.clean(r)
+    # 500 (boot, kept) -> 444 (nothing of ours to take) -> 500 (theirs saved,
+    # ours written) -> 444 (theirs back)
+    S.check(r.has(r"^EVT cpu_profile written path=\S+ replaced=1") and
+            r.has(r"^EVT cpu_profile restored"), "saved, replaced, restored")
+    S.check(open(prof, "rb").read() == mine, "their file is back, byte for byte")
+    S.check(not os.path.exists(os.path.join(r.root, "psvshell_profile_backup.bin")),
+            "the backup is cleared once restored")
+
+    # 5. a place the app may not write (PSVshell's folder is a plain file
+    # here, so no folder can be made): one line, a stamp
+    d, prof = ur0()
+    os.makedirs(os.path.join(d, "data"))
+    open(os.path.join(d, "data", "PSVshell"), "wb").close()
+    r = S.run("cpu_nowrite", "60:quit\n", autoboot="gbadhoc-test.gba",
+              env=dict(env, GBADHOC_FAKE_UR0=d))
+    S.clean(r)
+    S.check(r.has(r"^EVT cpu_profile not_writable") and
+            os.path.exists(os.path.join(r.root, "psvshell_nowrite.stamp")),
+            "one line and a stamp")
+    for x in made:
+        shutil.rmtree(x, ignore_errors=True)
+
+
 TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
@@ -4643,7 +4760,7 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("display_rows", t_display_rows)]
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed)]
 
 
 def main():

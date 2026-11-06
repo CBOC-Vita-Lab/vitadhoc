@@ -2299,6 +2299,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
+       SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2419,6 +2420,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* After FPS counter, so the rows the harness walkers cross keep their
     * places. */
    { 0, "Keep full speed" },
+   /* 1.3: 500 or 444 MHz (cpuclock.h).  One row, right here. */
+   { 0, "CPU speed" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -3100,6 +3103,9 @@ static void settings_adjust(int id, int dir)
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
 #ifdef VITA
+   case SET_CPU:
+      ui_host_cpu_set(!ui_host_cpu_fast());
+      break;
    case SET_SPEED:
       g_pcfg.full_speed = !g_pcfg.full_speed;
       fe_evt("full_speed_setting on=%d", g_pcfg.full_speed);
@@ -3472,6 +3478,7 @@ static const char *set_help(int id)
    }
    case SET_FPS:      return "Shows the game's speed in a corner.";
 #ifdef VITA
+   case SET_CPU:      return ui_host_cpu_note();
    case SET_SPEED:    return g_pcfg.full_speed
                              ? "Busy moments skip a frame: no slowdown, "
                                "no stuttering sound."
@@ -4026,6 +4033,10 @@ static ui_action screen_settings(unsigned edges)
              g_pcfg.show_fps ? "on" : "off");
          break;
 #ifdef VITA
+      case SET_CPU:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             ui_host_cpu_fast() ? "500 MHz (fast)" : "444 MHz (standard)");
+         break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.full_speed ? "on" : "off");

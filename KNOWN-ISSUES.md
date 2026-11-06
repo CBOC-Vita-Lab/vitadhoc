@@ -21,6 +21,11 @@ Testing continues on:
 
 ## Performance
 
+- **500 MHz needs an overclock plugin** such as PSVshell. Without one the Vita
+  stays at 444 MHz (Settings > CPU speed says "Needs an overclock plugin").
+  If the app cannot write PSVshell's profile folder it tries once, and then
+  leaves it to you (create the profile in PSVshell's own menu).
+
 - **Pokemon Unbound 2.1.1.1:** audio underruns were recorded at full-screen
   CPU xBRZ 3x. See the [measurements and settings](docs/PERFORMANCE.md).
 - The heaviest picture settings (xBRZ at full height plus the wide view) are

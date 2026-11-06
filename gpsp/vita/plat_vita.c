@@ -300,6 +300,20 @@ void plat_wait_vblank(void)
    sceDisplayWaitVblankStartCB();
 }
 
+int plat_cpu_set_mhz(int mhz)
+{
+   int rc = scePowerSetArmClockFrequency(mhz);
+   /* the bus and GPU every emulator asks for, the same at both speeds */
+   scePowerSetBusClockFrequency(222);
+   scePowerSetGpuClockFrequency(222);
+   scePowerSetGpuXbarClockFrequency(166);
+   return rc;
+}
+
+const char *plat_tai_dir(void) { return "ur0:tai"; }
+const char *plat_psvshell_dir(void) { return "ur0:data/PSVshell/profiles"; }
+const char *plat_title_id(void) { return "GBAD00001"; }
+
 unsigned plat_arm_mhz(void)
 {
    int mhz = scePowerGetArmClockFrequency();

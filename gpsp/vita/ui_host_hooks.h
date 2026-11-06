@@ -125,6 +125,9 @@ int         ui_host_zip_console(const char *path, unsigned size);
  * shot_dir_set: 0 = taken, -1 = not a usable folder. */
 int         ui_host_grid_level(void);
 void        ui_host_grid_set(int level);
+int         ui_host_cpu_fast(void);          /* Settings > CPU speed: 1 = 500 MHz */
+void        ui_host_cpu_set(int fast);
+const char *ui_host_cpu_note(void);          /* "Measured: 496 MHz" and a hint */
 int         ui_host_overlay_on(void);
 void        ui_host_overlay_set(int on);
 const char *ui_host_overlay_name(void);

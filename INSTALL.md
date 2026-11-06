@@ -183,6 +183,17 @@ that you chose the right base. Unzip a game before using a sidecar patch.
 ROM hacks do not automatically inherit the original game's wide-view profile,
 achievements or performance; those need to be checked for the exact hack.
 
+## CPU Speed (500 MHz)
+
+VitAdhoc asks for 500 MHz. The Vita only allows that with an overclock plugin
+such as PSVshell; without one it runs at 444 MHz and Settings > CPU speed
+says so. With PSVshell installed, VitAdhoc writes the profile it needs
+(`ur0:data/PSVshell/profiles/GBAD00001`) the first time, if you have none for
+it; a profile of your own is left alone until you switch the row in Settings,
+and is saved and put back when you switch to "444 MHz (standard)". The new
+profile applies the next time the app starts. A faster clock uses more
+battery and runs warmer.
+
 ## Where Things Are Kept
 
 Saves and states live **next to each game**, wherever it is (names in the

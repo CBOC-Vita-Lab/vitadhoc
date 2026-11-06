@@ -52,12 +52,15 @@ GP = os.path.normpath(os.path.join(HERE, "..", ".."))
 LINKTEST = os.path.join(GP, "tools", "linktest", "linktest.gba")
 GBLINK = os.path.join(HERE, "testrom", "gblink.gb")
 FAKE_IGD = os.path.join(GP, "netdrv", "tests", "fake_igd.py")
+LINKTEST_B = os.path.join(GP, "tools", "linktest", "linktest_b.gba")
 
 # The linktest cartridge's result block (tools/linktest/linktest.h), in
 # 32-bit words from 0x02000000.
 LT_MAGIC, LT_ROLE, LT_VBL, LT_LOOPS, LT_PHASE, LT_FAIL, LT_PASS = range(7)
 LT_SMC_FAIL, LT_TIMEOUT = 13, 14
-LT_PEEK = "02000000:48"            # ... and 0x80.., the passes by phase
+# 44 words: fe_evt keeps 459 characters of a line when timestamps are on
+# (EVT link_peek is 9 per word); the passes by phase are words 33..42.
+LT_PEEK = "02000000:44"
 
 
 def exe_of(arch):
@@ -68,14 +71,22 @@ class Twin:
     """One console: a data root, a script, a process."""
 
     def __init__(self, T, name, arch, rom, nick, port, script, config=None,
-                 vita=None, net=None, refresh=None, extra=None):
+                 vita=None, net=None, refresh=None, extra=None, keep=False):
         self.T, self.name, self.arch = T, name, arch
         self.out = os.path.join(T.dir, name)
         self.root = os.path.join(self.out, "root")
         self.proc = None
-        shutil.rmtree(self.out, ignore_errors=True)
-        os.makedirs(os.path.join(self.root, "roms"))
-        shutil.copy(rom, os.path.join(self.root, "roms"))
+        if keep:
+            # the same console again: its data root as the last run left it
+            # (a cache, saves), a fresh log and fresh pictures
+            shutil.rmtree(os.path.join(self.root, "log"), ignore_errors=True)
+            for f in os.listdir(self.out):
+                if f.endswith(".png"):
+                    os.remove(os.path.join(self.out, f))
+        else:
+            shutil.rmtree(self.out, ignore_errors=True)
+            os.makedirs(os.path.join(self.root, "roms"))
+            shutil.copy(rom, os.path.join(self.root, "roms"))
         # GBA_BIOS / GBA_BIOS_<NAME>: the real BIOS in this twin's data root
         # (app_tests.py make_root); GBA_BIOS_A=... alone gives it to one side
         bios = os.environ.get("GBA_BIOS_" + name.upper(),
@@ -301,7 +312,7 @@ class Tests:
 
     def linktest_verdict(self, r, who, role, when="end", loops=1):
         w = self.peek(r, when)
-        if not self.check(w is not None and len(w) >= 48,
+        if not self.check(w is not None and len(w) >= 44,
                           "%s: the cartridge's result block was read" % who):
             return
         self.check(w[LT_MAGIC] == 0x31544B4C, "%s: linktest magic" % who)
@@ -514,6 +525,133 @@ def t_wifi_cable(T):
         chip = r.shot("running.png").crop((600, 496, 950, 536))
         T.check(max(hi for _, hi in chip.getextrema()) > 150,
                 "%s: the session chip is on the game's picture" % who)
+
+
+def padded(src, dst, size, seed):
+    """src followed by padding up to `size` bytes: the same program as
+    a bigger cartridge, so that its identity is made of slices (fe_gblink.c
+    SAMPLE_N) and the transfer takes more than a handful of chunks."""
+    rnd = random.Random(seed)
+    b = open(src, "rb").read()
+    # (zeros, like an unprogrammed cartridge's, but for noise in the last
+    # 8 KiB, where the sliced identity looks too)
+    b += bytes(size - len(b) - 8192)
+    b += bytes(rnd.getrandbits(8) for _ in range(8192))
+    with open(dst, "wb") as f:
+        f.write(b)
+
+
+def two_games_session(T, tag, rom_a, rom_b, big, cached=None, verdict=True):
+    """One session of two DIFFERENT GBA games over the loopback Wi-Fi: the
+    host plays rom_a, the joiner rom_b.  cached = (twin a, twin b) of an
+    earlier session to run again on the same data roots (their caches)."""
+    a_name, b_name = os.path.basename(rom_a), os.path.basename(rom_b)
+    keep = cached is not None
+    sa = (host(EARLY, "host.png") + shot(18 if big else 14, "linking.png") +
+          shot(26, "running.png") + press(27, "a+up", 40) +
+          disconnect(44, "session.png") + shot(48, "after.png") +
+          quit_at(50))
+    sb = (join_first(EARLY, wait=2.5) + "+20:shot=linking.png\n" +
+          shot(26, "running.png") + press(29, "b+left", 40) +
+          shot(48, "after.png") + quit_at(50))
+    a = T.twin("a", T.arch_a, rom_a, "Alice", sa, vita={"link_peek": LT_PEEK},
+               keep=keep)
+    b = T.twin("b", T.arch_b, rom_b, "Bob", sb, vita={"link_peek": LT_PEEK},
+               keep=keep)
+    ra, rb = T.run([a, b], 50)
+    T.clean(ra, "A")
+    T.clean(rb, "B")
+    rooms = rb.evt("link_scan_room")
+    T.check(rooms and rooms[-1]["compatible"] == "1" and
+            rooms[-1]["kind"] == "1",
+            "%s: B's Join list shows A's room (a different game), joinable "
+            "(%s)" % (tag, rooms[-1]["_"] if rooms else "no room"))
+    T.check(rb.has(r"play_join id=\w+ addr=127\.0\.0\.1:%d" % T.port),
+            "%s: B joins A's room although the games differ" % tag)
+    for r, who, n, mine, theirs in ((ra, "A", 1, rom_a, rom_b),
+                                    (rb, "B", 2, rom_b, rom_a)):
+        T.check(r.has(r"link_running player=%d" % n),
+                "%s, %s: the session reaches 'linked' as Player %d" %
+                (tag, who, n))
+        if cached is None:
+            T.check(r.has(r"gblink_partner_rom source=transfer") and
+                    r.has(r"gblink_rom_received size=%d ok=1" %
+                          os.path.getsize(theirs)) and
+                    r.has(r"gblink_rom_send done size=%d" %
+                          os.path.getsize(mine)),
+                    "%s, %s: received the other's game (%d bytes, checked) "
+                    "and sent its own" % (tag, who, os.path.getsize(theirs)))
+            T.check(r.has(r"gblink_partner_rom stored path=") and
+                    r.has(r"gbadual_session_partner_rom rc=0") and
+                    r.has(r"gblink_start .*partner=received"),
+                    "%s, %s: the other's game was kept in the cache, the "
+                    "partner's machine loaded it and the pair started on it" %
+                    (tag, who))
+        else:
+            T.check(r.has(r"gblink_partner_rom source=cache") and
+                    not r.has(r"gblink_rom_send begin") and
+                    not r.has(r"gblink_rom_received") and
+                    r.has(r"gblink_start .*partner=cache"),
+                    "%s, %s: the second session found the other's game in "
+                    "the cache: nothing crossed the link" % (tag, who))
+        T.check(r.has(r"gblink_done .*save_committed=131072") and
+                r.has(r"gblink_resume how=live_end rc=0"),
+                "%s, %s: the link ends by agreement, save committed, the "
+                "game carries on" % (tag, who))
+        T.radio_free(r, who)
+    T.same_machines(ra, rb)
+    if verdict:
+        T.linktest_verdict(ra, "A", 1)
+        T.linktest_verdict(rb, "B", 2)
+    # the cache: a hashed name, the other's bytes, outside the game folders
+    for who, r, theirs, mine in (("A", ra, rom_b, rom_a), ("B", rb, rom_a,
+                                                          rom_b)):
+        cdir = os.path.join(r.root, "cache", "link")
+        files = sorted(os.listdir(cdir)) if os.path.isdir(cdir) else []
+        T.check(len(files) == 1 and
+                re.fullmatch(r"[0-9a-f]{40}\.gbarom", files[0]) and
+                open(os.path.join(cdir, files[0]), "rb").read() ==
+                open(theirs, "rb").read(),
+                "%s, %s: exactly the other's game is in cache/link under a "
+                "hashed name, byte for byte (%s)" %
+                (tag, who, ", ".join(files)))
+        roms = sorted(os.listdir(os.path.join(r.root, "roms")))
+        T.check(all(n.startswith(os.path.basename(mine)[:-4]) for n in roms)
+                and os.path.basename(mine) in roms,
+                "%s, %s: only its own game (and its save) in roms/ (%s)" %
+                (tag, who, ", ".join(roms)))
+    return a, b
+
+
+def t_gba_two_games(T):
+    """GBA Link Cable between two DIFFERENT games (the trade between
+    versions: Ruby with Sapphire): each Vita fetches the other's game over
+    the link, keeps it in its cache, runs both machines from their own
+    cartridges and saves.  Small cartridges (identified whole) both ways,
+    then 1 MiB ones (identified by slices) with a second session that finds
+    the games in the cache."""
+    if not os.path.exists(LINKTEST_B):
+        T.S.note("no tools/linktest/linktest_b.gba (make -C tools/linktest "
+                 "VARIANT_B=1): skipped")
+        return
+    T.begin("gba_two_games_ab")
+    two_games_session(T, "small, T hosts", LINKTEST, LINKTEST_B, False)
+    T.begin("gba_two_games_ba")
+    two_games_session(T, "small, B hosts", LINKTEST_B, LINKTEST, False)
+    T.begin("gba_two_games_big")
+    d = T.dir
+    big_a = os.path.join(d, "ruby.gba")
+    big_b = os.path.join(d, "sapphire.gba")
+    padded(LINKTEST, big_a, 1 << 20, 1)
+    padded(LINKTEST_B, big_b, (1 << 20) + 4096, 2)
+    # (the padded test program does not run its link phases -- a padded copy
+    # of the SAME game does not either, with or without this feature -- so
+    # these two sessions check the transfer, the cache and the matching
+    # hashes, not the cartridge's own verdict)
+    a, b = two_games_session(T, "1 MiB first", big_a, big_b, True,
+                             verdict=False)
+    two_games_session(T, "1 MiB again", big_a, big_b, True, cached=(a, b),
+                      verdict=False)
 
 
 def t_fast_link(T):
@@ -1654,7 +1792,7 @@ def t_mixed_refuse(T):
     T.picture(rb, "B", "refused.png")
 
 
-TESTS = [("wifi_cable", t_wifi_cable), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
+TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
          ("wifi_gb", t_wifi_gb), ("wifi_adapter", t_wifi_adapter),
          ("internet", t_internet), ("adhoc", t_adhoc),
          ("room_full", t_room_full), ("different_build", t_different_build),
@@ -1669,7 +1807,7 @@ TESTS = [("wifi_cable", t_wifi_cable), ("fast_link", t_fast_link), ("share", t_s
 # refusal, and the two kinds of link that do not need matching backends.
 RUNS = {
     "x86": [n for n, _ in TESTS if n != "mixed_refuse"],
-    "armhf": ["wifi_cable", "three_sessions", "wifi_gb", "wifi_adapter",
+    "armhf": ["wifi_cable", "gba_two_games", "three_sessions", "wifi_gb", "wifi_adapter",
               "internet", "adhoc", "room_full", "host_quits", "link_lost",
               "lossy", "suspend"],
     "mixed": ["mixed_refuse", "wifi_gb", "wifi_adapter"],

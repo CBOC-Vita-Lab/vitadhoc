@@ -12,8 +12,13 @@
 _start:
         b       rom_start                       @ 00
         .space  156                             @ 04 logo (absent, see above)
+.ifdef VARIANT_B
+        .ascii  "GBALINKTESB\0"                 @ A0 title (the other version)
+        .ascii  "ZLKB"                          @ AC game code
+.else
         .ascii  "GBALINKTEST\0"                 @ A0 title
         .ascii  "ZLKT"                          @ AC game code
+.endif
         .ascii  "00"                            @ B0 maker
         .byte   0x96                            @ B2 fixed value
         .byte   0, 0                            @ B3 unit, device

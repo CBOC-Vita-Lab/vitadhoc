@@ -191,6 +191,19 @@ struct fe_gblink
    uint32_t verify_left;
    uint8_t *partner_buf;             /* received cartridge (gbcore_rom_alloc) */
    size_t partner_alloc;
+   /* a vtable pair meeting ANOTHER cartridge (fe_gblink_machines.
+    * partner_rom): it is kept in the platform's cache and the partner's
+    * machine reads that file */
+   int partner_other;                /* the partner's cartridge is not ours */
+   int partner_cached;               /* ...and was already in the cache */
+   int partner_loaded;               /* its machine is on it (or same cart) */
+   int partner_set;                  /* partner_rom(path) was called */
+   char cache_path[512];             /* where it is / will be kept */
+   int storing;                      /* writing the received cartridge */
+   FILE *store_f;
+   uint32_t store_off;
+   FILE *tx_f;                       /* own cartridge, read for the partner */
+   uint64_t rom_tx_us0;              /* when our cartridge began to leave */
    uint32_t partner_rx;
    fe_sha1_ctx rx_ctx;
    int need_sent;
@@ -293,6 +306,10 @@ struct fe_gblink
    uint32_t nack_steps;              /* steps since (no clock) */
 };
 
+static int ident_of_file(const fe_gblink *s, FILE *f, uint32_t size,
+                         uint8_t out[20]);
+static void ident_of_buf(const fe_gblink *s, const uint8_t *b, uint32_t size,
+                         uint8_t out[20]);
 static uint64_t clock_us(const fe_gblink *s)
 {
    return s->now_us ? s->now_us() : 0;
@@ -505,6 +522,16 @@ static unsigned bk_rto(const fe_gblink *s)
    return r < 4 ? 4 : r > 240 ? 240 : r;
 }
 
+/* A vtable pair does not hold its own cartridge (the machine has it): the
+ * partner's copy is read from the file, in the order it is sent.  1 = ok. */
+static int own_rom_read(fe_gblink *s, uint32_t off, uint8_t *dst, uint32_t n)
+{
+   if (!s->tx_f && !(s->tx_f = fopen(s->rom_path, "rb")))
+      return 0;
+   return fseek(s->tx_f, (long)off, SEEK_SET) == 0 &&
+          fread(dst, 1, n, s->tx_f) == n;
+}
+
 static void bk_send_chunk(fe_gblink *s, int k, uint32_t i)
 {
    uint8_t d[FE_GBLINK_BULK_HDR + 1500];
@@ -513,8 +540,15 @@ static void bk_send_chunk(fe_gblink *s, int k, uint32_t i)
    memcpy(d, FE_GBLINK_BULK_MAGIC, 4);
    d[4] = (uint8_t)k;
    put32(d + 5, i);
-   put32(d + 9, fe_crc32(0, t->data + (size_t)i * s->bk_chunk, n));
-   memcpy(d + FE_GBLINK_BULK_HDR, t->data + (size_t)i * s->bk_chunk, n);
+   if (t->data)
+      memcpy(d + FE_GBLINK_BULK_HDR, t->data + (size_t)i * s->bk_chunk, n);
+   else if (!own_rom_read(s, (uint32_t)((size_t)i * s->bk_chunk),
+                          d + FE_GBLINK_BULK_HDR, n))
+   {
+      fail(s, FE_GBLINK_E_ROM_MISSING, 1);
+      return;
+   }
+   put32(d + 9, fe_crc32(0, d + FE_GBLINK_BULK_HDR, n));
    s->p.bulk_send(s->p.user, d, FE_GBLINK_BULK_HDR + n);
    if (t->tries[i] < 255)
       t->tries[i]++;
@@ -702,6 +736,7 @@ static void bk_send_ack(fe_gblink *s, int k)
 }
 
 static void rom_complete(fe_gblink *s);
+static int io_step_over(const fe_gblink *s, uint64_t t0, uint32_t budget);
 static int take_input(fe_gblink *s, uint32_t f, uint16_t buttons, int fast);
 static void set_end(fe_gblink *s, uint32_t f);
 
@@ -814,7 +849,8 @@ static void bk_rx_step(fe_gblink *s)
             n = HASH_READ;
          if (n)
          {
-            fe_sha1_update(&s->rx_ctx, r->buf + r->hashed, n);
+            if (!s->m)                /* (a vtable pair: identified whole) */
+               fe_sha1_update(&s->rx_ctx, r->buf + r->hashed, n);
             r->hashed += n;
          }
          if (r->hashed >= r->size)
@@ -944,7 +980,10 @@ static void rom_complete(fe_gblink *s)
       s->st.rom_rx_last_us = s->now_us();
    s->partner_rx = s->peer.rom_size;
    s->st.rom_rx_bytes = s->partner_rx;
-   fe_sha1_final(&s->rx_ctx, d);
+   if (s->m)
+      ident_of_buf(s, s->partner_buf, s->peer.rom_size, d);
+   else
+      fe_sha1_final(&s->rx_ctx, d);
    m[0] = M_ROM_RESULT;
    m[1] = memcmp(d, s->peer.sha1, 20) == 0;
    sendm(s, m, 2);
@@ -958,8 +997,79 @@ static void rom_complete(fe_gblink *s)
       fail(s, FE_GBLINK_E_ROM_BAD, 0);
       return;
    }
-   s->partner_ready = 1;
    s->st.rom_received = 1;
+   if (s->m)
+   {
+      /* kept in the cache by setup_step (a few steps), then loaded */
+      char tmp[sizeof(s->cache_path) + 8];
+      snprintf(tmp, sizeof(tmp), "%s.part", s->cache_path);
+      s->store_f = fopen(tmp, "wb");
+      if (!s->store_f)
+      {
+         fe_evt("gblink_partner_rom cache_write_failed path=%s", tmp);
+         fail(s, FE_GBLINK_E_ROM_MISSING, 1);
+         return;
+      }
+      s->storing = 1;
+      s->store_off = 0;
+      return;
+   }
+   s->partner_ready = 1;
+}
+
+/* A step of keeping the received cartridge: a share of it to the file, and
+ * at the end the name it is found under.  The player's cartridge files are
+ * not touched; this one lives in the platform's cache. */
+static void store_step(fe_gblink *s)
+{
+   uint32_t budget = HASH_READ * 4u;
+   uint64_t t0 = s->now_us ? s->now_us() : 0;
+   char tmp[sizeof(s->cache_path) + 8];
+   int bad = 0;
+   while (s->store_off < s->peer.rom_size && !io_step_over(s, t0, budget))
+   {
+      size_t want = s->peer.rom_size - s->store_off;
+      if (want > 16384)
+         want = 16384;
+      if (fwrite(s->partner_buf + s->store_off, 1, want, s->store_f) != want)
+      {
+         bad = 1;
+         break;
+      }
+      s->store_off += (uint32_t)want;
+      budget = budget > want ? budget - (uint32_t)want : 0;
+   }
+   if (!bad && s->store_off < s->peer.rom_size)
+      return;
+   snprintf(tmp, sizeof(tmp), "%s.part", s->cache_path);
+   if (!bad && fflush(s->store_f) != 0)
+      bad = 1;
+   if (fclose(s->store_f) != 0)
+      bad = 1;
+   s->store_f = NULL;
+   if (!bad)
+   {
+      remove(s->cache_path);          /* (a rename may not replace) */
+      if (rename(tmp, s->cache_path) != 0)
+         bad = 1;
+   }
+   s->storing = 0;
+   if (bad)
+   {
+      remove(tmp);
+      fe_evt("gblink_partner_rom cache_write_failed path=%s", s->cache_path);
+      fail(s, FE_GBLINK_E_ROM_MISSING, 1);
+      return;
+   }
+   snprintf(s->partner_path, sizeof(s->partner_path), "%s", s->cache_path);
+   free(s->partner_buf);
+   s->partner_buf = NULL;
+   s->br[BK_ROM].buf = NULL;          /* (every chunk is in: no more writes) */
+   s->p.rom_cache(s->p.user, 1, s->peer.sha1, s->peer.rom_size,
+                  s->cache_path, sizeof(s->cache_path));
+   s->partner_ready = 1;
+   fe_evt("gblink_partner_rom stored path=%s size=%u", s->cache_path,
+          (unsigned)s->peer.rom_size);
 }
 
 /* ------------------------------------------------------ lifecycle -- */
@@ -1065,6 +1175,17 @@ void fe_gblink_destroy(fe_gblink *s)
    if (s->verify_f) fclose(s->verify_f);
    if (s->m && s->m_running)
       s->m->stop(s->m->user);
+   /* The partner's machine back on the player's own cartridge. */
+   if (s->m && s->partner_set && s->m->partner_rom)
+      s->m->partner_rom(s->m->user, NULL);
+   if (s->store_f)
+   {
+      char tmp[sizeof(s->cache_path) + 8];
+      fclose(s->store_f);
+      snprintf(tmp, sizeof(tmp), "%s.part", s->cache_path);
+      remove(tmp);
+   }
+   if (s->tx_f) fclose(s->tx_f);
    gbdual_destroy(s->dual);
    bk_free(s);
    free(s->own_buf);
@@ -1171,17 +1292,63 @@ static void partner_lookup(fe_gblink *s)
    {
       snprintf(s->partner_path, sizeof(s->partner_path), "%s", s->rom_path);
       s->partner_ready = 1;
+      s->partner_loaded = 1;         /* (a vtable pair: its machine has it) */
       send_need(s, 0);
       fe_evt("gblink_partner_rom source=same_as_own");
       return;
    }
    if (s->m)
    {
-      /* A vtable pair runs the same cartridge on both consoles (for now). */
+      /* A vtable pair with ANOTHER cartridge in the partner's machine:
+       * from the cache, else it crosses the link and goes into the cache. */
+      FILE *f;
+      uint8_t d[20];
+      long n = -1;
       hex20(s->peer.sha1, h);
-      fe_evt("gblink_partner_rom source=none sha1=%s (same cartridge needed)",
-             h);
-      fail(s, FE_GBLINK_E_ROM_MISSING, 1);
+      if (!s->m->partner_rom || !s->p.rom_cache ||
+          !s->p.rom_cache(s->p.user, 0, s->peer.sha1, s->peer.rom_size,
+                          s->cache_path, sizeof(s->cache_path)))
+      {
+         fe_evt("gblink_partner_rom source=none sha1=%s (no cache: the same "
+                "cartridge is needed)", h);
+         fail(s, FE_GBLINK_E_ROM_MISSING, 1);
+         return;
+      }
+      s->partner_other = 1;
+      if ((f = fopen(s->cache_path, "rb")) != NULL)
+      {
+         if (fseek(f, 0, SEEK_END) == 0)
+            n = ftell(f);
+         if (n == (long)s->peer.rom_size &&
+             ident_of_file(s, f, s->peer.rom_size, d) == 0 &&
+             !memcmp(d, s->peer.sha1, 20))
+         {
+            fclose(f);
+            snprintf(s->partner_path, sizeof(s->partner_path), "%s",
+                     s->cache_path);
+            s->partner_cached = 1;
+            s->partner_ready = 1;
+            s->p.rom_cache(s->p.user, 1, s->peer.sha1, s->peer.rom_size,
+                           s->cache_path, sizeof(s->cache_path));
+            send_need(s, 0);
+            fe_evt("gblink_partner_rom source=cache sha1=%s size=%u", h,
+                   (unsigned)s->peer.rom_size);
+            return;
+         }
+         fclose(f);
+         fe_evt("gblink_partner_rom cache_entry_rejected sha1=%s", h);
+      }
+      fe_evt("gblink_partner_rom source=transfer size=%u sha1=%s",
+             (unsigned)s->peer.rom_size, h);
+      s->partner_buf = (uint8_t *)malloc(s->peer.rom_size);
+      if (!s->partner_buf)
+      {
+         fail(s, FE_GBLINK_E_MEMORY, 1);
+         return;
+      }
+      fe_sha1_init(&s->rx_ctx);
+      s->st.rom_total = s->peer.rom_size;
+      send_need(s, 1);
       return;
    }
    if (s->p.find_rom &&
@@ -1283,7 +1450,7 @@ static void stream_rom(fe_gblink *s, unsigned *budget)
    size_t cd = chunk_data(s);
    if (cd > 1024)
       cd = 1024;
-   if (!s->own_buf)
+   if (!s->own_buf && !s->m)
    {
       fail(s, FE_GBLINK_E_ROM_MISSING, 1);
       return;
@@ -1291,6 +1458,7 @@ static void stream_rom(fe_gblink *s, unsigned *budget)
    if (!s->rom_tx_began)
    {
       s->rom_tx_began = 1;
+      s->rom_tx_us0 = clock_us(s);
       fe_evt("gblink_rom_send begin size=%u", (unsigned)s->own.rom_size);
    }
    while (s->rom_tx_off < s->own.rom_size && room(s) > ROOM_KEEP && *budget)
@@ -1300,7 +1468,13 @@ static void stream_rom(fe_gblink *s, unsigned *budget)
          n = cd;
       m[0] = M_ROM;
       put32(m + 1, s->rom_tx_off);
-      memcpy(m + CHUNK_HDR, s->own_buf + s->rom_tx_off, n);
+      if (s->own_buf)
+         memcpy(m + CHUNK_HDR, s->own_buf + s->rom_tx_off, n);
+      else if (!own_rom_read(s, s->rom_tx_off, m + CHUNK_HDR, (uint32_t)n))
+      {
+         fail(s, FE_GBLINK_E_ROM_MISSING, 1);
+         return;
+      }
       if (sendm(s, m, n + CHUNK_HDR) != 0)
          break;
       s->rom_tx_off += (uint32_t)n;
@@ -1395,9 +1569,11 @@ static void start_pair_m(fe_gblink *s)
    }
    s->m_running = 1;
    s->state = FE_GBLINK_RUNNING;
-   fe_evt("gblink_start slot=%d delay=%u seed=%lld partner=same batch=%u "
+   fe_evt("gblink_start slot=%d delay=%u seed=%lld partner=%s batch=%u "
           "machines=vtable console=%u", s->local_slot, s->delay,
-          (long long)s->seed, s->batch, (unsigned)s->m->console);
+          (long long)s->seed,
+          !s->partner_other ? "same" : s->partner_cached ? "cache" : "received",
+          s->batch, (unsigned)s->m->console);
 }
 
 static void start_pair(fe_gblink *s)
@@ -1492,6 +1668,7 @@ static void start_pair(fe_gblink *s)
 static int setup_complete(const fe_gblink *s)
 {
    return s->have_config && s->partner_ready &&
+          (!s->m || s->partner_loaded) &&
           s->peer_save_rx >= s->peer.save_size &&
           s->save_tx_off >= s->own_save_size &&
           s->peer_state_rx >= s->peer.state_size &&
@@ -1502,17 +1679,87 @@ static int setup_complete(const fe_gblink *s)
 }
 
 /* The offset of slice k of a sampled identity (see SAMPLE_N). */
+static uint32_t sample_off_n(uint32_t size, unsigned k)
+{
+   uint32_t span = size - SAMPLE_LEN;
+   return (uint32_t)((uint64_t)span * k / (SAMPLE_N - 1u)) & ~3u;
+}
 static uint32_t sample_off(const fe_gblink *s, unsigned k)
 {
-   uint32_t span = s->own.rom_size - SAMPLE_LEN;
-   return (uint32_t)((uint64_t)span * k / (SAMPLE_N - 1u)) & ~3u;
+   return sample_off_n(s->own.rom_size, k);
+}
+
+/* 1 = a cartridge of `size` bytes is identified by slices in this session
+ * (the same rule for the own and the partner's). */
+static int ident_sampled(const fe_gblink *s, uint32_t size)
+{
+   return s->m && s->l.rom_sampled && size > SAMPLE_N * SAMPLE_LEN;
 }
 
 /* 1 = this session identifies the own cartridge by slices. */
 static int rom_sampled(const fe_gblink *s)
 {
-   return s->m && s->l.rom_sampled &&
-          s->own.rom_size > SAMPLE_N * SAMPLE_LEN;
+   return ident_sampled(s, s->own.rom_size);
+}
+
+/* The identity (what HELLO's SHA-1 field carries) of a cartridge file or
+ * of a received buffer, in one go: for the cache check and the check of a
+ * received cartridge.  0 = ok. */
+static int ident_of_file(const fe_gblink *s, FILE *f, uint32_t size,
+                         uint8_t out[20])
+{
+   fe_sha1_ctx c;
+   uint8_t blk[4096];
+   fe_sha1_init(&c);
+   if (ident_sampled(s, size))
+   {
+      uint8_t sz[4];
+      unsigned k;
+      put32(sz, size);
+      fe_sha1_update(&c, sz, 4);
+      for (k = 0; k < SAMPLE_N; k++)
+      {
+         if (fseek(f, (long)sample_off_n(size, k), SEEK_SET) != 0 ||
+             fread(blk, 1, SAMPLE_LEN, f) != SAMPLE_LEN)
+            return -1;
+         fe_sha1_update(&c, blk, SAMPLE_LEN);
+      }
+   }
+   else
+   {
+      uint32_t left = size;
+      if (fseek(f, 0, SEEK_SET) != 0)
+         return -1;
+      while (left)
+      {
+         size_t want = left < sizeof(blk) ? left : sizeof(blk);
+         if (fread(blk, 1, want, f) != want)
+            return -1;
+         fe_sha1_update(&c, blk, want);
+         left -= (uint32_t)want;
+      }
+   }
+   fe_sha1_final(&c, out);
+   return 0;
+}
+
+static void ident_of_buf(const fe_gblink *s, const uint8_t *b, uint32_t size,
+                         uint8_t out[20])
+{
+   fe_sha1_ctx c;
+   fe_sha1_init(&c);
+   if (ident_sampled(s, size))
+   {
+      uint8_t sz[4];
+      unsigned k;
+      put32(sz, size);
+      fe_sha1_update(&c, sz, 4);
+      for (k = 0; k < SAMPLE_N; k++)
+         fe_sha1_update(&c, b + sample_off_n(size, k), SAMPLE_LEN);
+   }
+   else
+      fe_sha1_update(&c, b, size);
+   fe_sha1_final(&c, out);
 }
 
 /* One step of the sampled identity: as many slices as the step's budget
@@ -1614,6 +1861,24 @@ static void setup_step(fe_gblink *s)
       return;
    if (s->verifying)
       verify_step(s);
+   if (s->storing)
+      store_step(s);
+   if (s->state == FE_GBLINK_FAILED)
+      return;
+   /* The partner's machine on its own cartridge, as soon as it is here (the
+    * READY exchange waits for it: setup_complete). */
+   if (s->m && s->partner_other && s->partner_ready && !s->partner_loaded)
+   {
+      s->partner_set = 1;
+      if (s->m->partner_rom(s->m->user, s->partner_path) != 0)
+      {
+         fe_evt("gblink_partner_rom load_failed path=%s", s->partner_path);
+         fail(s, FE_GBLINK_E_START, 1);
+         return;
+      }
+      s->partner_loaded = 1;
+      fe_evt("gblink_partner_rom loaded path=%s", s->partner_path);
+   }
    s->tick++;
    if (s->bk_chunk)
    {
@@ -1640,6 +1905,7 @@ static void setup_step(fe_gblink *s)
       if (s->bt[BK_ROM].active && !s->rom_tx_began)
       {
          s->rom_tx_began = 1;
+         s->rom_tx_us0 = clock_us(s);
          fe_evt("gblink_rom_send begin size=%u chunk=%u",
                 (unsigned)s->own.rom_size, (unsigned)s->bk_chunk);
       }
@@ -2462,7 +2728,8 @@ void fe_gblink_receive(fe_gblink *s, const void *buf, size_t len)
       if (!s->partner_rx && s->now_us)
          s->st.rom_rx_first_us = s->now_us();
       memcpy(s->partner_buf + off, b + CHUNK_HDR, n);
-      fe_sha1_update(&s->rx_ctx, b + CHUNK_HDR, n);
+      if (!s->m)
+         fe_sha1_update(&s->rx_ctx, b + CHUNK_HDR, n);
       s->partner_rx += (uint32_t)n;
       s->st.rom_rx_bytes = s->partner_rx;
       if (s->partner_rx == s->peer.rom_size)
@@ -2734,6 +3001,12 @@ static void status_impl(const fe_gblink *s, char *l1, size_t c1, char *l2,
                     own[0] ? own : "your game", s->rom_tx_off,
                     s->own.rom_size, rx ? p2 : p1);
       }
+      else if (s->storing)
+      {
+         snprintf(l1, c1, "Keeping a copy of %s", t[0] ? t : "the game");
+         if (p1)
+            *p1 = (int)((uint64_t)s->store_off * 1000u / s->peer.rom_size);
+      }
       else if (s->verifying)
       {
          snprintf(l1, c1, "Checking %s", t[0] ? t : "the other game");
@@ -2840,6 +3113,12 @@ void fe_gblink_get_progress(const fe_gblink *s, fe_gblink_progress *o)
          o->done = s->rom_tx_off;
          o->total = s->own.rom_size;
       }
+      else if (s->storing)
+      {
+         o->phase = FE_GBLINK_PH_STORE;
+         o->done = s->store_off;
+         o->total = s->peer.rom_size;
+      }
       else if (s->verifying)
       {
          o->phase = FE_GBLINK_PH_VERIFY;
@@ -2871,5 +3150,34 @@ void fe_gblink_get_progress(const fe_gblink *s, fe_gblink_progress *o)
    default:
       o->phase = FE_GBLINK_PH_FAILED;
       break;
+   }
+   o->partner_cached = s->partner_cached;
+   o->partner_other = s->partner_other;
+   /* the cartridge transfer's speed so far and what is left at that rate */
+   if (s->state == FE_GBLINK_SETUP && s->now_us)
+   {
+      uint64_t now = s->now_us(), t0 = 0;
+      uint32_t got = 0, total = 0;
+      if (o->phase == FE_GBLINK_PH_ROM_RX)
+      {
+         t0 = s->st.rom_rx_first_us;
+         got = s->partner_rx;
+         total = s->peer.rom_size;
+      }
+      else if (o->phase == FE_GBLINK_PH_ROM_TX)
+      {
+         t0 = s->rom_tx_us0;
+         got = s->rom_tx_off;
+         total = s->own.rom_size;
+      }
+      if (t0 && now > t0 + 500000u && got)
+      {
+         uint64_t bps = (uint64_t)got * 1000000u / (now - t0);
+         if (bps)
+         {
+            o->rate_bps = bps > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)bps;
+            o->eta_s = (uint32_t)(((uint64_t)(total - got) + bps - 1) / bps);
+         }
+      }
    }
 }

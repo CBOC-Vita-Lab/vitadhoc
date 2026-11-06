@@ -17,10 +17,24 @@ supported. Both players must have permission to use the cartridges involved.
 | Internet | Join the host address shown by the app. The host needs reachable UDP port 19019; automatic UPnP may open it, otherwise router configuration is needed. Do not expose unrelated services or disable a firewall. |
 | Ad hoc | Choose Ad hoc and use the Vita's system connection screen. No router is needed. |
 
-GBA cable sessions need the same ROM file on both Vitas, so two Vitas cannot
-trade between Ruby and Sapphire (or FireRed and LeafGreen) over the GBA cable:
-a room shows "open that game to join". To trade between those versions put
-both on one Vita (Two players on one Vita, below). GBA Wireless Adapter
+GBA cable sessions can link two different games: Ruby with Sapphire, FireRed
+with LeafGreen, Emerald with FireRed, the way the real cable allows. Each of
+you opens your own game and one hosts; the other joins, and the room list
+shows both games ("FireRed <-> Emerald"). The first time, each Vita sends the
+other its game over the link (16 MB takes seconds on one Wi-Fi network and
+longer over the internet, where the screen shows a time estimate and you can
+cancel). It is checked, then kept in the app's own cache folder
+(`ux0:data/GBAdhoc/cache/link/`, a hashed file name, up to 4 games or 96 MB,
+oldest removed first), never in your game folders and never listed as a game,
+so every later session starts at once. Delete the files there any time. Your
+own save stays on your own Vita; the other player's save travels to your
+Vita for the session only. Both players must own their games: do not use this
+to share a game you are not allowed to share. Playing the same game on both
+Vitas needs no transfer. The two games still need to be able to link to each
+other (a Pokemon Ruby will not trade with Mario Kart): VitAdhoc checks only
+that both are Game Boy Advance games, as a cable would. To trade between
+versions on one Vita, use Two players on one Vita (below).
+GBA Wireless Adapter
 sessions need a game that supports the adapter. GB/GBC cable mode can use
 different cartridges, and a Game Boy (`.gb`) cartridge can play with a Game
 Boy Color (`.gbc`) one: Red with Blue, Yellow, Gold, Silver or Crystal, for

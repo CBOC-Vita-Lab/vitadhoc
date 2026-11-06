@@ -125,6 +125,7 @@
 #include "fe_evt.h"
 #include "fe_util.h"
 #include "fe_gblink.h"
+#include "link_games.h"
 #include "netpacket_host.h"
 
 #include "ui_psp.h"
@@ -365,7 +366,7 @@ static const char *fail_line(int code)
 
 /* ---- who we are: the compatibility words ------------------------------------------ */
 
-#define LINK_ABI "vita-link-1"
+#define LINK_ABI "vita-link-2"
 
 static const char *backend_name(void)
 {
@@ -586,7 +587,14 @@ static int link_find_rom(uint32_t size, const uint8_t header[0x1C], char *path,
 
 void link_host_config(fe_host_config *cfg)
 {
+   static char cache_dir[APP_PATH_CAP];
    cfg->gb_find_rom         = link_find_rom;
+   /* The other player's GBA cartridge, kept for the next session under a
+    * hashed name in the app's own cache (never a game folder, never in the
+    * game list). */
+   if (snprintf(cache_dir, sizeof(cache_dir), "%s/cache/link",
+                g_app_root) < (int)sizeof(cache_dir))
+      cfg->gba_rom_cache_dir = cache_dir;
    cfg->gb_bulk_enable      = net_vita_bulk_enable;
    cfg->gb_bulk_send        = net_vita_bulk_send;
    cfg->gb_bulk_recv        = net_vita_bulk_recv;
@@ -1685,7 +1693,7 @@ static void link_end(int st, unsigned pad_new)
       announce(1, 1);
       phase_set(PH_HOSTING);
       osd_toast("%s", e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD
-                ? "A Vita with a different game tried to join."
+                ? "The other Vita could not set up the game."
                 : "The other Vita left before the link started.");
       fe_evt("link_host_keeps_room room=\"%s\"", L.room);
       return;
@@ -2159,6 +2167,20 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
 
    fe_host_gblink_facts(&pr);
    snprintf(l1, c1, "Linking with %s", L.peer[0] ? L.peer : "the other Vita");
+   /* A different game on the other Vita (Ruby with Sapphire): "Ruby <->
+    * Sapphire" once its header is here. */
+   if (!gb && pr.partner_other && pr.have_peer_header)
+   {
+      char pc[5], nm[40];
+      const char *t;
+      memcpy(pc, pr.peer_header + 12, 4);        /* GBA header 0xAC */
+      pc[4] = '\0';
+      t = link_game_title(pc);
+      snprintf(nm, sizeof(nm), "%s", t ? t : pr.peer_title[0] ? pr.peer_title
+                                                          : "another game");
+      snprintf(l3, c3, "%.38s  <->  %.38s", g_game.name, nm);
+      v->l3 = l3;
+   }
    switch (pr.phase)
    {
    case FE_GBLINK_PH_CHECK:
@@ -2180,13 +2202,36 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
                pr.phase == FE_GBLINK_PH_ROM_RX ? "Receiving" : "Sending",
                pr.phase == FE_GBLINK_PH_ROM_RX
                   ? (pr.peer_title[0] ? pr.peer_title : "the game")
-                  : (g_game.gb_title[0] ? g_game.gb_title : "your game"));
+                  : (gb ? (g_game.gb_title[0] ? g_game.gb_title : "your game")
+                        : (g_game.name[0] ? g_game.name : "your game")));
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
-      snprintf(l3, c3, "The game is kept in memory, not on the memory "
-               "card.");
+      if (gb)
+         snprintf(l3, c3, "The game is kept in memory, not on the memory "
+                  "card.");
+      else if (pr.eta_s)
+      {
+         /* once per game: the copy is kept for the next time */
+         char left[24];
+         if (pr.eta_s >= 90)
+            snprintf(left, sizeof(left), "about %u min", (pr.eta_s + 59) / 60);
+         else
+            snprintf(left, sizeof(left), "about %u s", pr.eta_s);
+         snprintf(l3, c3, "%s left. First time only. Cancel to stop.",
+                  left);
+      }
+      else
+         snprintf(l3, c3, "First time with this game only. Cancel to "
+                  "stop.");
       v->l3 = l3;
+      break;
+   case FE_GBLINK_PH_STORE:
+      snprintf(l2, c2, "Keeping a copy of %s...",
+               pr.peer_title[0] ? pr.peer_title : "the game");
+      amount_text(amt, ca, pr.done, pr.total);
+      v->amount = amt;
+      v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
       break;
    case FE_GBLINK_PH_VERIFY:
       snprintf(l2, c2, "Checking %s...",
@@ -2199,7 +2244,7 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
       amount_text(amt, ca, pr.done, pr.total);
       v->amount = amt;
       v->frac = pr.total ? (int)((uint64_t)pr.done * 1000u / pr.total) : 0;
-      if (!gb)
+      if (!gb && !v->l3)
       {
          snprintf(l3, c3, "Both games carry on from where they are.");
          v->l3 = l3;

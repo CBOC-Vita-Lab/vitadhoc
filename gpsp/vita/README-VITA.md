@@ -256,8 +256,10 @@ Menu > **Play together**. Pick the **Connection** once:
 - **Ad hoc** — no router at all. The Vita's own connection screen appears first.
 
 Three kinds of link are handled: GBA Link Cable, GBA Wireless Adapter, and the GB / GBC Link
-Cable. For a GBA game both players need the same game open (for Link Cable games, the same ROM
-file). A **Game Boy / Game Boy Color** link works between two *different* cartridges (Red with
+Cable. For a GBA Link Cable game the two Vitas may run different games (Ruby with Sapphire,
+FireRed with LeafGreen, Emerald with FireRed): the first time, each sends the other its game
+(checked, then kept in `ux0:data/GBAdhoc/cache/link/` under a hashed name, never in your game
+folders), so every later session starts at once. Each player must own their game. A **Game Boy / Game Boy Color** link works between two *different* cartridges (Red with
 Blue, Gold with Silver) even when neither Vita has the other's: each one sends its cartridge to
 the other for the session, in memory only (checked, never written to the memory card).
 Vita-to-Vita only: a Vita and a PSP running GBAdhoc cannot link to each other.

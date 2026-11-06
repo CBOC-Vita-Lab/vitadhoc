@@ -3368,6 +3368,117 @@ int fe_host_gblink_window(struct fe_gblink_window *out)
  * and the session restarts it (and the partner's, instance B) from the two
  * consoles' save states.  The battery writer is held for the whole session:
  * only an agreed end lets the session's battery image reach the stick. */
+/* THE PARTNER'S CARTRIDGE CACHE (fe_gblink_platform.rom_cache).  One file
+ * per cartridge in host.gba_rom_cache_dir, named by its identity: nothing of
+ * a game's name or folder.  A new file that would take the cache over its
+ * cap pushes out the OLDEST ones (never the one in use); a half-written
+ * ".part" left by a crash is removed with them. */
+#include <dirent.h>
+#define ROMC_EXT ".gbarom"
+typedef struct romc_ent { char name[64]; long size; long age; } romc_ent;
+
+static void romc_trim(const char *dir, const char *keep)
+{
+   romc_ent e[64];
+   unsigned n = 0, i, files = host.gba_rom_cache_files
+                                 ? host.gba_rom_cache_files : 4u;
+   unsigned long cap = (unsigned long)(host.gba_rom_cache_mb
+                                          ? host.gba_rom_cache_mb : 96u)
+                       << 20, total = 0;
+   DIR *d = opendir(dir);
+   struct dirent *de;
+   const char *kb = strrchr(keep, '/');
+   kb = kb ? kb + 1 : keep;
+   if (!d)
+      return;
+   while (n < 64 && (de = readdir(d)) != NULL)
+   {
+      char p[600];
+      struct stat st;
+      size_t l = strlen(de->d_name);
+      if (de->d_name[0] == '.' || l >= sizeof(e[0].name))
+         continue;
+      snprintf(p, sizeof(p), "%s/%s", dir, de->d_name);
+      if (l > 5 && !strcmp(de->d_name + l - 5, ".part"))
+      {
+         remove(p);                   /* a copy that never finished */
+         continue;
+      }
+      if (l < sizeof(ROMC_EXT) || strcmp(de->d_name + l - 7, ROMC_EXT) ||
+          stat(p, &st) != 0)
+         continue;
+      snprintf(e[n].name, sizeof(e[n].name), "%s", de->d_name);
+      e[n].size = (long)st.st_size;
+      e[n].age = (long)st.st_mtime;
+      total += (unsigned long)st.st_size;
+      n++;
+   }
+   closedir(d);
+   for (;;)
+   {
+      int oldest = -1;
+      for (i = 0; i < n; i++)
+         if (e[i].size >= 0 && strcmp(e[i].name, kb) != 0 &&
+             (oldest < 0 || e[i].age < e[oldest].age))
+            oldest = (int)i;
+      {
+         unsigned alive = 0;
+         for (i = 0; i < n; i++)
+            alive += e[i].size >= 0;
+         if (oldest < 0 || (alive <= files && total <= cap))
+            break;
+      }
+      {
+         char p[600];
+         snprintf(p, sizeof(p), "%s/%s", dir, e[oldest].name);
+         remove(p);
+         fe_evt("gblink_cache_evict file=%s", e[oldest].name);
+         total -= (unsigned long)e[oldest].size;
+         e[oldest].size = -1;
+      }
+   }
+}
+
+static int gba_rom_cache(void *user, int op, const uint8_t id[20],
+                         uint32_t size, char *path, size_t cap)
+{
+   static const char hx[] = "0123456789abcdef";
+   char name[64], dir[400];
+   unsigned i;
+   (void)user;
+   (void)size;
+   if (!host.gba_rom_cache_dir || !host.gba_rom_cache_dir[0] ||
+       strlen(host.gba_rom_cache_dir) >= sizeof(dir) - 1)
+      return 0;
+   snprintf(dir, sizeof(dir), "%s", host.gba_rom_cache_dir);
+   for (i = 0; i < 20; i++)
+   {
+      name[i * 2] = hx[id[i] >> 4];
+      name[i * 2 + 1] = hx[id[i] & 15];
+   }
+   name[40] = '\0';
+   strcat(name, ROMC_EXT);
+   if (op == 1)
+   {
+      romc_trim(dir, path);
+      return 1;
+   }
+   if (mkdir(dir, 0777) != 0 && errno != EEXIST)
+   {
+      /* its parent may be missing too (one level) */
+      char par[400], *sl;
+      snprintf(par, sizeof(par), "%s", dir);
+      sl = strrchr(par, '/');
+      if (!sl)
+         return 0;
+      *sl = '\0';
+      (void)mkdir(par, 0777);
+      if (mkdir(dir, 0777) != 0 && errno != EEXIST)
+         return 0;
+   }
+   return snprintf(path, cap, "%s/%s", dir, name) < (int)cap;
+}
+
 static int gba_commit(void *user, const void *image, size_t size)
 {
    (void)user;
@@ -3729,6 +3840,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    p.send_room = gbl_room;
    p.bulk_per_step = gbl_bulk;
    p.commit_save = gba_commit;
+   p.rom_cache = gba_rom_cache;
    /* GB-LINK.md section 14, carried over (GBA-LINK-MIRROR.md section 15):
     * stall absorption and resend requests, each with the GB session's
     * kill switch (gblink_absorb / gblink_nack). */

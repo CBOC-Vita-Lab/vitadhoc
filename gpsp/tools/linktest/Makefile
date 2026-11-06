@@ -11,7 +11,13 @@ CFLAGS := $(ARCH) -O2 -Wall -ffreestanding -fno-builtin \
 
 # make FLAGPROBE=1: a second ROM whose interrupt entry records the flags it
 # is entered with (crt0.s).  Not part of the normal rig; README.md.
-ifeq ($(FLAGPROBE),1)
+# make VARIANT_B=1: the same program as another "game" (title GBALINKTESB,
+# code ZLKB), for the tests that link two different cartridges
+# (vita/hostcore/link_tests.py gba_two_games).
+ifeq ($(VARIANT_B),1)
+ASDEF := -Wa,--defsym,VARIANT_B=1
+OUT   := linktest_b
+else ifeq ($(FLAGPROBE),1)
 ASDEF := -Wa,--defsym,FLAGPROBE=1
 OUT   := linktest_flagprobe
 else

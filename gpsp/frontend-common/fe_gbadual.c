@@ -134,6 +134,8 @@ static struct
    /* local link (fe_gbadual_local_start) */
    int local_on;
    fe_gbadual_local local;
+   int sess_other;                       /* a session: B holds the partner's */
+   char sess_rom[512];                   /* ...cartridge, this file          */
    int local_other;                      /* B holds ANOTHER cartridge ...  */
    char local_rom[512];                  /* ...this one                    */
    int local_heard;                      /* FE_GBADUAL_HEAR_*              */
@@ -1721,6 +1723,46 @@ static void m_stop(void *user)
    sess_clock_restore();
 }
 
+/* A two-console session whose partner plays ANOTHER cartridge (Ruby with
+ * Sapphire): instance B loads its own copy of the file the session cached,
+ * the way the local link's partner's game does (b_recart).  NULL path: back
+ * on the player's cartridge (reading A's ROM pool again). */
+static int m_partner_rom(void *user, const char *path)
+{
+   char msg[300];
+   int rc;
+   (void)user;
+   if (D.active || fe_gbadual_lent() || !D.cfg.session)
+      return -1;
+   scout_cancel();
+   if (!path)
+   {
+      if (!D.sess_other && D.loaded)
+         return 0;
+      D.sess_other = 0;
+      rc = b_recart(D.cfg.rom_path, D.cfg.own_rom);
+      snprintf(msg, sizeof(msg), "gbadual_session_partner_rom back rc=%d", rc);
+      lg(msg);
+      return rc;
+   }
+   if (strlen(path) >= sizeof(D.sess_rom))
+      return -1;
+   snprintf(D.sess_rom, sizeof(D.sess_rom), "%s", path);
+   D.sess_other = 1;
+   rc = b_recart(D.sess_rom, 1);
+   snprintf(msg, sizeof(msg), "gbadual_session_partner_rom rc=%d path=%s",
+            rc, path);
+   lg(msg);
+   if (rc != 0)
+   {
+      /* B back on the player's cartridge, so a later session finds it */
+      D.sess_other = 0;
+      (void)b_recart(D.cfg.rom_path, D.cfg.own_rom);
+      return -1;
+   }
+   return 0;
+}
+
 static fe_gblink_machines gbadual_m;
 
 const fe_gblink_machines *fe_gbadual_machines(void)
@@ -1742,6 +1784,7 @@ const fe_gblink_machines *fe_gbadual_machines(void)
    gbadual_m.state_size = m_state_size;
    gbadual_m.state_save = m_state_save;
    gbadual_m.stop = m_stop;
+   gbadual_m.partner_rom = m_partner_rom;
    return &gbadual_m;
 }
 

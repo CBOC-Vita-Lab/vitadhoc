@@ -17,6 +17,11 @@ Testing continues on:
   (lines starting with `ra_http`).
 - **Two Vitas linked together** (Wi-Fi, internet and ad hoc), sharing saves,
   and Wireless Adapter games.
+- **Two Vitas linking two different GBA games** (Ruby with Sapphire, FireRed
+  with Emerald): tested on the PC build with test cartridges and with two real
+  Pokemon games (a short session), but not yet on two Vitas. Not measured: the memory with two
+  16 MB games at once, and the time to send a game over the internet. A
+  full trade between versions has not been played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
 
 ## Performance

@@ -4428,6 +4428,10 @@ static void wake_overlay(void)
    app_pace_reset();
 }
 
+/* Player 2's menu chord (a second controller's Start + Select, held). */
+static unsigned g_chord2_frames;
+static uint64_t g_chord2_t0;
+
 static void game_loop(void)
 {
    upscale_gov_reset();            /* a new game starts at the full factor */
@@ -4531,14 +4535,41 @@ static void game_loop(void)
           * switches the one pad between the two machines, and takes it
           * from the player's (g_app_keys) while it drives the partner's. */
          plat_pad p2;
-         int have2 = plat_pad_read2(&p2);
+         int have2, real2;
+         uint32_t keys2;
+         memset(&p2, 0, sizeof(p2));
+         have2 = real2 = plat_pad_read2(&p2);
+         keys2 = have2 ? ctl_game_mask(&g_pcfg.controls,
+                                                pad_psp_bits(&p2)) : 0;
+         /* No controller, but player 2 is asked to play on the glass. */
+         if (!have2 && link_local_touch_keys(&keys2))
+            have2 = 1;
+         /* The second controller's own menu chord: either player can open
+          * the menu.  Its Start and Select are held back from the game once
+          * the chord is down, and neither player's buttons reach a game
+          * until they are let go. */
+         if (real2 && !ui_active() &&
+             (p2.buttons & (PSP_CTRL_START | PSP_CTRL_SELECT)) ==
+                (PSP_CTRL_START | PSP_CTRL_SELECT))
+         {
+            if (!g_chord2_frames)
+               g_chord2_t0 = g_app_frame_t0;
+            if (++g_chord2_frames >= MENU_CHORD_FRAMES ||
+                g_app_frame_t0 - g_chord2_t0 >= MENU_CHORD_US)
+            {
+               g_chord2_frames = 0;
+               link_local_block_held();
+               menu_open("chord2");
+               continue;
+            }
+         }
+         else
+            g_chord2_frames = 0;
          /* (with two pads too: the view is then whose sound is heard and
           * which picture is the large one) */
          if (rs_flick)
             link_local_next_view();
-         link_local_pads(g_app_keys,
-                         have2 ? ctl_game_mask(&g_pcfg.controls,
-                                               pad_psp_bits(&p2)) : 0, have2);
+         link_local_pads(g_app_keys, keys2, have2);
       }
       link_frame();
       link_local_frame();
@@ -4587,6 +4618,8 @@ static void game_loop(void)
                        !session && !local);
 
       /* ---- the in-game menu ---------------------------------------------- */
+      /* With two controllers either one drives the menu (and its pages). */
+      pspcompat_pad2_menu(ui_active() && local);
       if (ui_active())
       {
          g_menu_was_open = 1;
@@ -4601,6 +4634,8 @@ static void game_loop(void)
          g_menu_was_open = 0;
          g_pad_block = pad;
          g_app_keys = 0;
+         if (link_local_active())
+            link_local_block_held();   /* ...player 2's too */
          g_tap.wait = 1;         /* nor is the finger that closed it a tap */
          g_fps_t0 = 0;           /* the time in the menu is not a frame rate */
          rewind_configure(g_pcfg.rewind, g_pcfg.rewind_mb);   /* Settings */

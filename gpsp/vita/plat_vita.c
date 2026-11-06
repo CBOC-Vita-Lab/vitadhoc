@@ -8,6 +8,7 @@
  * console is assumed rather than known.
  */
 #include "plat.h"
+#include "pad_port_pick.h"
 #include "jit_vita.h"
 #include "fe_evt.h"
 
@@ -27,6 +28,7 @@
 #include <psp2/motion.h>
 #include <psp2/power.h>
 #include <psp2/rtc.h>
+#include <psp2/touch.h>
 
 /* The emulation thread is the main thread.  The dynarec's block translator
  * recurses (a block's exits are translated eagerly), a few hundred bytes a
@@ -772,25 +774,36 @@ void plat_pad_read(plat_pad *pad)
    pad->ry = d.ry;
 }
 
-/* Player 2's port, or 0 when there is none (plat.h has the rule).  From the
- * SDK's description and the controller plugins' conventions: not run. */
+/* Player 2's port, or 0 when there is none (plat.h has the rule).
+ *
+ * What the SDK and the SDL / RetroArch Vita backends say: sceCtrl has five
+ * ports.  Port 0 is the console's own controls (on a PS TV, the first paired
+ * controller); ports 1..4 are the PAIRED controllers in order (DualShock 3 or
+ * 4, or a plugin's virtual pad; SceCtrlPortInfo.port[] holds the type, 0 =
+ * nobody).  On a PS TV port 0 and port 1 are the same first pad, so the
+ * second pad is port 2, a third port 3, a fourth port 4 (SDL: "port 0 and 1
+ * are the same controller ... start at port 2").  On a handheld the paired
+ * pads come on 1.., and the plugins that pair two (ds34vita, ds4vita with
+ * two pads) put the second on 2.  The answer is only "paired", never "has
+ * been touched": a connected pad that lies idle counts. */
+static int g_pad2_rescan;
+
 static int pad2_port(void)
 {
    static int port, age;
+   if (g_pad2_rescan)
+   {
+      g_pad2_rescan = 0;
+      age = 0;
+   }
    if (age-- <= 0)
    {
       SceCtrlPortInfo info;
-      age = 60;                  /* a controller appears within a second */
+      age = 20;                  /* a controller appears within a third of a second */
       port = 0;
       memset(&info, 0, sizeof(info));
       if (sceCtrlGetControllerPortInfo(&info) >= 0)
-      {
-         if (info.port[2] != SCE_CTRL_TYPE_UNPAIRED)
-            port = 2;
-         else if (info.port[1] != SCE_CTRL_TYPE_UNPAIRED &&
-                  !sceKernelIsPSVitaTV())
-            port = 1;
-      }
+         port = plat_pick_pad2_port(info.port, sceKernelIsPSVitaTV());
    }
    return port;
 }
@@ -798,6 +811,19 @@ static int pad2_port(void)
 int plat_pad_ports(void)
 {
    return pad2_port() ? 2 : 1;
+}
+
+/* A second controller's buttons as the app takes them: L1 and L2 are the
+ * app's L, R1 and R2 its R (a DualShock has two of each and a Game Boy
+ * Advance one), the sticks' clicks are nothing. */
+static uint32_t pad2_buttons(unsigned b)
+{
+   uint32_t r = b & 0xF0F9u;      /* select start d-pad, the face buttons */
+   if (b & (SCE_CTRL_L1 | SCE_CTRL_LTRIGGER))
+      r |= PLAT_BTN_L;
+   if (b & (SCE_CTRL_R1 | SCE_CTRL_RTRIGGER))
+      r |= PLAT_BTN_R;
+   return r;
 }
 
 int plat_pad_read2(plat_pad *pad)
@@ -808,14 +834,46 @@ int plat_pad_read2(plat_pad *pad)
       return 0;
    memset(&d, 0, sizeof(d));
    d.lx = d.ly = d.rx = d.ry = 128;
-   if (sceCtrlPeekBufferPositive2(port, &d, 1) < 0)
+   /* Ext2 reports a DualShock's L1/R1 and L2/R2 apart (the plain call folds
+    * L1 into the Vita's L and drops L2); some setups refuse it: the plain
+    * read then. */
+   if (sceCtrlPeekBufferPositiveExt2(port, &d, 1) < 0 &&
+       sceCtrlPeekBufferPositive2(port, &d, 1) < 0)
+   {
+      g_pad2_rescan = 1;         /* gone: look again at once */
       return 0;
-   pad->buttons = face_buttons(d.buttons);
+   }
+   pad->buttons = face_buttons(pad2_buttons(d.buttons));
    pad->lx = d.lx;
    pad->ly = d.ly;
    pad->rx = d.rx;
    pad->ry = d.ry;
    return 1;
+}
+
+/* The front panel, every finger on it (plat.h): the report is 1920x1088. */
+int plat_touch_points(plat_touch_pt *out, int max)
+{
+   static int started;
+   SceTouchData td;
+   int i, n = 0;
+   if (!started)
+   {
+      sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT,
+                               SCE_TOUCH_SAMPLING_STATE_START);
+      started = 1;
+   }
+   memset(&td, 0, sizeof(td));
+   if (sceTouchPeek(SCE_TOUCH_PORT_FRONT, &td, 1) < 0)
+      return 0;
+   for (i = 0; i < (int)td.reportNum && n < max; i++)
+   {
+      int x = td.report[i].x / 2, y = td.report[i].y / 2;
+      out[n].x = x > 959 ? 959 : x;
+      out[n].y = y > 543 ? 543 : y;
+      n++;
+   }
+   return n;
 }
 
 /* ---- the motion sensor (plat.h) ------------------------------------------ */

@@ -340,6 +340,8 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       (int)fe_ini_get_int(cfg_path, "local_partner", 0) ? 1 : 0;
    g_pcfg.local_layout =
       (int)fe_ini_get_int(cfg_path, "local_layout", 0) ? 1 : 0;
+   g_pcfg.local_touch2 =
+      (int)fe_ini_get_int(cfg_path, "local_touch2", 0) ? 1 : 0;
    {
       char v[8];
       g_pcfg.touch_keep = fe_ini_get(cfg_path, "touch", v, sizeof(v)) ? 1 : 0;
@@ -710,6 +712,7 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "link_delay", g_pcfg.link_delay);
    fe_ini_set_int(cfg_path, "local_partner", g_pcfg.local_partner);
    fe_ini_set_int(cfg_path, "local_layout", g_pcfg.local_layout);
+   fe_ini_set_int(cfg_path, "local_touch2", g_pcfg.local_touch2);
    if (g_pcfg.touch_keep || !g_pcfg.touch)
       fe_ini_set_int(cfg_path, "touch", g_pcfg.touch);
    fe_ini_set_int(cfg_path, "rewind", g_pcfg.rewind);

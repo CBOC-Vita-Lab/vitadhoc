@@ -290,9 +290,15 @@ Vita-to-Vita only: a Vita and a PSP running GBAdhoc cannot link to each other.
   using that game's own save. This is how you trade with yourself.
 - Flick the right stick sideways, or tap the other picture, to change which one you control;
   tap the one you already control (or hold Start + Select) for the menu.
-- With a second controller, each player has their own. On a PS TV pair a DualShock normally. On
-  a handheld Vita you need a controller plugin; use **ds34vita with reVita's "Emulate DS4"**
-  (or two controllers) so the pad is a separate player rather than a copy of the Vita's buttons.
+- With a second controller, each player has their own and the pictures are always side by side,
+  equal. On a PS TV pair two DualShocks normally. On a handheld Vita a controller plugin (ds4vita,
+  ds3vita, ds34vita, MiniVitaTV) shows the pad as a second controller; if the plugin also copies it
+  onto the Vita's buttons, turn that off so it is a separate player. Either player opens the menu
+  with Start + Select on their own pad.
+- With no second controller, **Player 2 on the touch screen** (the two-player page, off by default)
+  draws a D-pad, A, B, L, R, Start and Select on player 2's half of the front screen; both players
+  can press at once. PLAY-TOGETHER.md says which games this is for. None of the controller cases
+  has been confirmed on a real console yet.
 
 Bluetooth between two Vitas is not possible (the system's Bluetooth only serves controllers,
 headsets and keyboards); ad hoc is the no-router option.

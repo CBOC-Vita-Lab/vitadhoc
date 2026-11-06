@@ -152,6 +152,23 @@ These fixes are tested with our own test programs and one Pokemon game. They
 are not tested on the games named above, nor on Big Mutha Truckers, Street
 Racing Syndicate or Mortal Kombat: Deadly Alliance.
 
+**Split screen for two players**
+- **Two controllers, two equal pictures.** With a second controller (a PS TV
+  with two DualShocks, or a handheld Vita with an external pad through a
+  plugin) Two players on this Vita now always shows two equal pictures side by
+  side, one pad each. Either player can open the menu with Start + Select on
+  their own pad, and the menu stops both games without either player's held
+  buttons leaking into a game when it closes.
+- **A second pad is found on any port.** The second controller is accepted on
+  any of the Vita's controller slots, a pad that is connected but untouched
+  counts, and plugging one in or switching it off is noticed within a moment.
+  A DualShock's L1 and L2 both act as L, and R1 and R2 as R.
+- **No controller? Player 2 on the touch screen.** A new row in Two players on
+  this Vita (Off by default, remembered): player 2's half of the front screen
+  becomes a translucent D-pad with A, B, L, R, Start and Select, and both
+  players can press at once.
+- PLAY-TOGETHER.md says plainly what you need and which games this is for.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

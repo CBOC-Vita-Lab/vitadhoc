@@ -398,6 +398,46 @@ BX to a halfword address, a branch into a conditional run (ROM and IWRAM), FIQ
 banking, `LDM {pc}^`, `MSR CPSR_c` flags. The cart takes `-DRUN_MASK=bits` to
 run some of them.
 
+## Version 1.3 Changes: Split Screen (two players on one Vita)
+
+- **Player 2's port** (`plat_vita.c` `pad2_port`, the rule in
+  `pad_port_pick.h`, tested by `hostcore/padports_test.c`): sceCtrl port 0 is
+  the console's controls (on a PS TV merged with the first pad), ports 1..4
+  are the paired controllers in order (`SceCtrlPortInfo.port[]`, 0 =
+  unpaired; types PHY 1, VIRT 2, DS3 4, DS4 8 all count). On a PS TV port 1
+  is the first pad again, so player 2 is the first paired of 2, 3, 4; on a
+  handheld, the same, else port 1 (one external pad). Sources: vita-headers
+  `ctrl.h`, SDL's Vita joystick driver ("on Vita TV port 0 and 1 are the same
+  controller ... start at port 2"), RetroArch's psp_joypad (PS TV: pad n is
+  port n+1 for n = 0). Not run on a console. The port info is re-read every 20
+  polls; a failed read of the chosen port forces a re-read at once.
+- **Reading it** (`plat_pad_read2`): `sceCtrlPeekBufferPositiveExt2`, falling
+  back to `sceCtrlPeekBufferPositive2`. The extended call reports L1/R1 as
+  0x400/0x800 and L2/R2 as 0x100/0x200; both pairs fold into `PLAT_BTN_L` /
+  `PLAT_BTN_R`; L3/R3 and the PS button are dropped. Player 1 still uses
+  `sceCtrlPeekBufferPositive(0)`.
+- **Layout.** `layout_now()` in `local_vita.c`: a second controller or the
+  touch pad forces `VID_PAIR_SIDE` whatever `local_layout` says (the config
+  value is kept for the one-pad case).
+- **Menus.** `main_vita.c` `game_loop`: Start + Select held on a real second
+  pad for `MENU_CHORD_FRAMES` opens the menu (`menu_open("chord2")`);
+  `pspcompat_pad2_menu(1)` while the menu is open and the pair runs makes
+  `pspcompat_pad()` OR in the second pad, so every page answers either pad.
+  `link_local_block_held()` blocks both players' held buttons when the menu
+  closes (`held_block`, `held_block2`).
+- **Touch pad** (`local_touch2` in `config.ini`, Settings row in Two players
+  on this Vita, default 0): `plat_touch_points()` (Vita: `sceTouchPeek`
+  front, up to six fingers, 1920x1088 halved; twin: every `touch=` script
+  entry that is down) -> `link_local_touch_keys()` in `local_vita.c` hit-tests
+  logical 480x272 shapes on the right half (`TP_*`) into a libretro mask passed
+  as player 2's keys, with `have2 = 1`; drawn in `link_local_present`
+  (`touch_draw`). Taps on that half do not switch the view; a tap on the
+  player's picture still opens the menu.
+- **Tests** (`hostcore/local_tests.py`): `ports` (the port table), `twopads`
+  (layout, each pad its own game, either menu), `touch2` (both inputs at once,
+  L/R/Start, nothing leaking, off, a pad overriding the touch pad). The twin's
+  `pad2=on|off` and `p2.` script entries already simulated the second pad.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

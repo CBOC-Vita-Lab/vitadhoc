@@ -152,6 +152,7 @@ static void ime_ascii(char *out, size_t cap, const unsigned char *utf8)
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
+#include "plat.h"
 
 /* The flag values and the twelve button bits are the PSP's; if a future SDK
  * ever disagrees, fail the build rather than the browser. */
@@ -226,6 +227,9 @@ int pspcompat_enter_is_circle(void)
    return v == SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
 }
 
+static int g_pad2_menu;
+void pspcompat_pad2_menu(int on) { g_pad2_menu = on ? 1 : 0; }
+
 unsigned pspcompat_pad(void)
 {
    static int analog_on;
@@ -247,7 +251,15 @@ unsigned pspcompat_pad(void)
    if (g_pc_face_swap && ((btn & PSP_CTRL_CROSS) != 0) !=
                          ((btn & PSP_CTRL_CIRCLE) != 0))
       btn ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
-   return btn | stick_bits(pad.lx, pad.ly);
+   btn |= stick_bits(pad.lx, pad.ly);
+   if (g_pad2_menu)
+   {
+      /* two players: the second controller drives the menu as well */
+      plat_pad q;
+      if (plat_pad_read2(&q))
+         btn |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
+   }
+   return btn;
 }
 
 void pspcompat_host_pad(unsigned (*fn)(void)) { (void)fn; }
@@ -677,13 +689,20 @@ void pspcompat_wait_vblank(void)
 void pspcompat_host_pad(unsigned (*fn)(void)) { g_pad_fn = fn; }
 void pspcompat_host_vblank_hook(void (*fn)(void)) { g_vblank_fn = fn; }
 
+static int g_pad2_menu;
+void pspcompat_pad2_menu(int on) { g_pad2_menu = on ? 1 : 0; }
+
 unsigned pspcompat_pad(void)
 {
-   plat_pad p;
+   plat_pad p, q;
+   unsigned b;
    if (g_pad_fn)
       return g_pad_fn() & 0xF3F9u;
    plat_pad_read(&p);
-   return (p.buttons & 0xF3F9u) | stick_bits(p.lx, p.ly);
+   b = (p.buttons & 0xF3F9u) | stick_bits(p.lx, p.ly);
+   if (g_pad2_menu && plat_pad_read2(&q))
+      b |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
+   return b;
 }
 #else
 static unsigned g_clock_us = 1000000u;
@@ -705,6 +724,8 @@ void pspcompat_wait_vblank(void)
 
 void pspcompat_host_pad(unsigned (*fn)(void)) { g_pad_fn = fn; }
 void pspcompat_host_vblank_hook(void (*fn)(void)) { g_vblank_fn = fn; }
+
+void pspcompat_pad2_menu(int on) { (void)on; }
 
 unsigned pspcompat_pad(void)
 {

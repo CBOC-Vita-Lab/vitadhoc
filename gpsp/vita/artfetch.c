@@ -59,6 +59,7 @@ static unsigned g_list_generation;
 static int g_paused, g_quit, g_running;
 static int g_titles = 1;              /* title screens too (artfetch_titles) */
 static int g_retry;                   /* atomic: artfetch_retry asked        */
+static int g_rescan;                  /* atomic: artfetch_rescan asked       */
 /* atomic, for Settings: cartridges looked at / in the list / with a box
  * art now; 1 while the thread is working through the list */
 static int g_prog_seen, g_prog_total, g_prog_have, g_prog_busy;
@@ -137,6 +138,11 @@ void artfetch_titles(int on)
 void artfetch_retry(void)
 {
    A_STORE(g_retry, 1);
+}
+
+void artfetch_rescan(void)
+{
+   A_STORE(g_rescan, 1);
 }
 
 int artfetch_active(void)
@@ -223,7 +229,7 @@ static unsigned char *g_body;
 static int stop_now(void)
 {
    return A_LOAD(g_quit) || A_LOAD(g_paused) || A_LOAD(g_new) ||
-          A_LOAD(g_retry) || A_LOAD(g_focus);
+          A_LOAD(g_retry) || A_LOAD(g_rescan) || A_LOAD(g_focus);
 }
 
 /* A pause that ends early when the thread is told to stop. */
@@ -236,8 +242,8 @@ static void nap_us(uint32_t us)
       uint32_t d = us < 250000u ? us : 250000u;
       plat_thread_sleep_us(d);
       us -= d;
-      if (A_LOAD(g_new) || A_LOAD(g_retry) || A_LOAD(g_focus) ||
-          A_LOAD(g_paused) != paused || A_LOAD(g_titles) != titles)
+      if (A_LOAD(g_new) || A_LOAD(g_retry) || A_LOAD(g_rescan) ||
+          A_LOAD(g_focus) || A_LOAD(g_paused) != paused || A_LOAD(g_titles) != titles)
          break;
    }
 }
@@ -704,13 +710,14 @@ out:
  * -2 = not a picture stb can read, -3 = a picture too big to shrink here,
  * -1 = anything that may pass (stopping, memory, the card). */
 #define THUMB_MAGIC 0x52353635u     /* '565R' little-endian, as ui_psp.c */
-static int thumb_write(const unsigned char *png, size_t len, const char *dst)
+static int thumb_rgb(const unsigned char *pix, int w, int h, const char *dst,
+                     int square);
+
+static int thumb_write(const unsigned char *png, size_t len, const char *dst,
+                       int square)
 {
-   char tmp[AF_PATH_CAP + AF_NAME_CAP + 40];
-   unsigned char hdr[16], *pix, *out;
-   int w = 0, h = 0, nc = 0, tw, th, x, y, rc = -1;
-   double s;
-   FILE *f;
+   unsigned char *pix;
+   int w = 0, h = 0, nc = 0, rc;
 
    if (!png || len == 0 || stop_now())
       return -1;
@@ -729,22 +736,82 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst)
       stbi_image_free(pix);
       return -2;
    }
-   s = (double)ART_THUMB_W / w;
-   if ((double)ART_THUMB_H / h < s)
-      s = (double)ART_THUMB_H / h;
-   if (s > 1.0)
-      s = 1.0;
+   rc = thumb_rgb(pix, w, h, dst, square);
+   stbi_image_free(pix);
+   return rc;
+}
+
+/* The same from decoded RGB.  `square`: the player's own cover (cover_custom.h)
+ * is shown whole -- fitted, enlarged if small, on a square of its average
+ * colour -- where a downloaded one is fitted and left at its shape (the tile
+ * crops the middle square of that). */
+static int thumb_rgb(const unsigned char *pix, int w, int h, const char *dst,
+                     int square)
+{
+   char tmp[AF_PATH_CAP + AF_NAME_CAP + 40];
+   unsigned char hdr[16], *out;
+   int tw, th, cw, ch, ox, oy, x, y, rc = -1;
+   double s;
+   FILE *f;
+
+   if (!pix || w <= 0 || h <= 0)
+      return -2;
+   if (square)
+   {
+      s = (double)ART_THUMB_W / w;
+      if ((double)ART_THUMB_W / h < s)
+         s = (double)ART_THUMB_W / h;
+      if (s > 4.0)
+         s = 4.0;
+      cw = ch = ART_THUMB_W;
+   }
+   else
+   {
+      s = (double)ART_THUMB_W / w;
+      if ((double)ART_THUMB_H / h < s)
+         s = (double)ART_THUMB_H / h;
+      if (s > 1.0)
+         s = 1.0;
+      cw = ch = 0;
+   }
    tw = (int)(w * s + 0.5);
    th = (int)(h * s + 0.5);
    if (tw < 1) tw = 1;
    if (th < 1) th = 1;
    if (tw > ART_THUMB_W) tw = ART_THUMB_W;
-   if (th > ART_THUMB_H) th = ART_THUMB_H;
-   out = malloc((size_t)tw * th * 2);
-   if (!out)
+   if (th > (square ? ART_THUMB_W : ART_THUMB_H)) th = square ? ART_THUMB_W : ART_THUMB_H;
+   if (!square)
    {
-      stbi_image_free(pix);
+      cw = tw;
+      ch = th;
+   }
+   ox = (cw - tw) / 2;
+   oy = (ch - th) / 2;
+   out = malloc((size_t)cw * ch * 2);
+   if (!out)
       return -1;
+   if (square && (tw < cw || th < ch))
+   {
+      /* the bars: the picture's average colour, darkened */
+      unsigned long long sr = 0, sg = 0, sb = 0, cnt = 0;
+      unsigned v;
+      int yy, xx;
+      for (yy = 0; yy < h; yy += 1 + h / 64)
+         for (xx = 0; xx < w; xx += 1 + w / 64)
+         {
+            const unsigned char *p = pix + ((size_t)yy * w + xx) * 3;
+            sr += p[0]; sg += p[1]; sb += p[2];
+            cnt++;
+         }
+      if (!cnt) cnt = 1;
+      v = (unsigned)((sr / cnt) * 4 / 10) >> 3 |
+          ((unsigned)((sg / cnt) * 4 / 10) >> 2) << 5 |
+          ((unsigned)((sb / cnt) * 4 / 10) >> 3) << 11;
+      for (x = 0; x < cw * ch; x++)
+      {
+         out[2 * x]     = (unsigned char)(v & 0xFF);
+         out[2 * x + 1] = (unsigned char)(v >> 8);
+      }
    }
    for (y = 0; y < th; y++)
    {
@@ -755,6 +822,7 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst)
       {
          int x0 = x * w / tw, x1 = (x + 1) * w / tw, n = 0;
          unsigned r = 0, g = 0, b = 0, v;
+         size_t o;
          if (x1 <= x0) x1 = x0 + 1;
          if (x1 > w) x1 = w;
          for (yy = y0; yy < y1; yy++)
@@ -766,30 +834,35 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst)
             }
          r /= (unsigned)n; g /= (unsigned)n; b /= (unsigned)n;
          v = (r >> 3) | ((g >> 2) << 5) | ((b >> 3) << 11);
-         out[2 * ((size_t)y * tw + x)]     = (unsigned char)(v & 0xFF);
-         out[2 * ((size_t)y * tw + x) + 1] = (unsigned char)(v >> 8);
+         o = 2 * ((size_t)(y + oy) * cw + (x + ox));
+         out[o]     = (unsigned char)(v & 0xFF);
+         out[o + 1] = (unsigned char)(v >> 8);
       }
    }
-   stbi_image_free(pix);
 
    memset(hdr, 0, sizeof(hdr));
    hdr[0] = THUMB_MAGIC & 0xFF;
    hdr[1] = (THUMB_MAGIC >> 8) & 0xFF;
    hdr[2] = (THUMB_MAGIC >> 16) & 0xFF;
    hdr[3] = (THUMB_MAGIC >> 24) & 0xFF;
-   hdr[4] = (unsigned char)(tw & 0xFF);
-   hdr[5] = (unsigned char)(tw >> 8);
-   hdr[6] = (unsigned char)(th & 0xFF);
-   hdr[7] = (unsigned char)(th >> 8);
-   hdr[8] = (unsigned char)(tw & 0xFF);       /* fstride = tw */
-   hdr[9] = (unsigned char)(tw >> 8);
+   hdr[4] = (unsigned char)(cw & 0xFF);
+   hdr[5] = (unsigned char)(cw >> 8);
+   hdr[6] = (unsigned char)(ch & 0xFF);
+   hdr[7] = (unsigned char)(ch >> 8);
+   hdr[8] = (unsigned char)(cw & 0xFF);       /* fstride = cw */
+   hdr[9] = (unsigned char)(cw >> 8);
 
-   snprintf(tmp, sizeof(tmp), "%s.tmp", dst);
+   /* (a name of its own: the UI thread and the worker may both make one) */
+   {
+      static unsigned seq;
+      snprintf(tmp, sizeof(tmp), "%s.tmp%u", dst,
+               __atomic_add_fetch(&seq, 1u, __ATOMIC_RELAXED));
+   }
    f = fopen(tmp, "wb");
    if (f)
    {
       int ok = fwrite(hdr, 1, sizeof(hdr), f) == sizeof(hdr) &&
-               fwrite(out, 1, (size_t)tw * th * 2, f) == (size_t)tw * th * 2;
+               fwrite(out, 1, (size_t)cw * ch * 2, f) == (size_t)cw * ch * 2;
       ok = fclose(f) == 0 && ok;
       if (ok && rename(tmp, dst) == 0)
          rc = 0;
@@ -798,6 +871,23 @@ static int thumb_write(const unsigned char *png, size_t len, const char *dst)
    }
    free(out);
    return rc;
+}
+
+int artfetch_thumb_rgb(const unsigned char *rgb, int w, int h,
+                       const char *dst, int square)
+{
+   return thumb_rgb(rgb, w, h, dst, square);
+}
+
+/* 1 when the player has set a cover of their own for this stem
+ * (boxart/<stem>.own, written by cover_custom.c): its thumbnail is the
+ * whole picture on a square. */
+static int own_cover(const char *stem)
+{
+   char path[AF_PATH_CAP + AF_NAME_CAP + 32];
+   struct stat st;
+   snprintf(path, sizeof(path), "%s/boxart/%s.own", g_root, stem);
+   return stat(path, &st) == 0;
 }
 
 /* The picture to <kind dir>/<stem>.png, whole or not at all. */
@@ -837,7 +927,7 @@ static int save(int k, const char *stem, size_t len)
       char th[AF_PATH_CAP + AF_NAME_CAP + 40];
       int rc;
       snprintf(th, sizeof(th), "%s/boxart/%s%s", g_root, stem, ART_THUMB_SUFFIX);
-      rc = thumb_write((const unsigned char *)g_body, len, th);
+      rc = thumb_write((const unsigned char *)g_body, len, th, 0);
       if (rc == 0)
          inventory_add(INV_THUMB, stem);
       else if (rc == -2)
@@ -898,7 +988,7 @@ static int warm_one(const char *name)
    fclose(f);
    if (buf && n == (size_t)st.st_size)
    {
-      int rc = thumb_write(buf, n, th);
+      int rc = thumb_write(buf, n, th, own_cover(stem));
       written = rc == 0;
       if (rc == -2 || rc == -3)
          set_add(&g_thumb_failed, stem);   /* its content, not the moment */
@@ -1253,6 +1343,23 @@ static void thread_main(void *arg)
          inventory_dirty = 1;
          A_STORE(g_prog_seen, 0);
          say("art_fetch retry%s%s", "", "");
+      }
+      if (__atomic_exchange_n(&g_rescan, 0, __ATOMIC_SEQ_CST) && l)
+      {
+         /* A picture was put in or taken out of boxart/ by hand or by
+          * cover_custom.c: look at the folders again, forget no misses. */
+         for (k = 0; k < l->n; k++)
+         {
+            /* box art is looked at again (what was checked while a cover
+             * was there is no longer so); candidates and misses are kept */
+            items[k].checked &= ~(1u << AK_BOX);
+            items[k].counted = 0;
+         }
+         warm_i = 0;
+         titles_seen = -1;          /* recount against what is there now */
+         inventory_dirty = 1;
+         backoff_until = 0;
+         say("art_fetch rescan%s%s", "", "");
       }
       nf = __atomic_exchange_n(&g_focus, NULL, __ATOMIC_SEQ_CST);
       if (nf)

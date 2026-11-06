@@ -1,5 +1,18 @@
 # What's New
 
+## Version 1.3
+
+**Your own cover pictures**
+- **Set a cover for any game.** On the home screen press **Cover** (or
+  Settings > Library > Cover picture) and choose a picture from your Vita's
+  photos and screenshots, take the game's own screenshot, or go back to the
+  downloaded cover with **Automatic**. You see the picture first, any shape
+  works, and the new cover shows at once. It beats downloaded art everywhere,
+  and downloads never replace it. Handy for custom games and ROM hacks.
+- **Or just drop a file in.** A PNG or JPG in `ux0:data/GBAdhoc/covers/` named
+  like the game (`Pokemon Unbound.png`) is used from the next time the list
+  opens. Capitals and the `.gba` part of the name do not matter.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

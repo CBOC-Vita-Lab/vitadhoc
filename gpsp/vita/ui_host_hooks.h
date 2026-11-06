@@ -129,6 +129,9 @@ int         ui_host_overlay_on(void);
 void        ui_host_overlay_set(int on);
 const char *ui_host_overlay_name(void);
 const char *ui_host_shot_dir(void);
+/* Cover picture > Choose a picture: the console's own photos and screenshots
+ * ("ux0:picture"; vita.ini pictures = <folder> for another). */
+const char *ui_host_pictures_dir(void);
 int         ui_host_shot_dir_set(const char *dir);
 
 /* ===========================================================================

@@ -192,6 +192,7 @@ table above). Move or back up a game together with these.
 ux0:data/GBAdhoc/
   roms/                  your games (and their saves)
   boxart/  titles/       covers and title screens, downloaded or your own
+  covers/                pictures to use as covers, named like the games (above)
   hero/                  optional wide artwork
   clips/                 the home screen's previews of your play
   games/                 each game's own settings ("This game")
@@ -220,10 +221,47 @@ Install the new VPK over the old one, following
 To remove VitAdhoc, delete its bubble. `ux0:data/GBAdhoc/` stays until you
 delete it yourself, and with it any games and saves kept there.
 
+## Your Own Cover Pictures
+
+Give any game a cover you like: a custom game, a ROM hack, or just a better
+picture than the downloaded one. Yours always wins over a download, and the
+downloader never replaces it.
+
+**From the app.** On the home screen, press **Cover** (touch it), or press
+START and choose **Library > Cover picture**. Then pick one:
+
+- **Choose a picture...** lists the pictures on your Vita (`ux0:picture/`,
+  including `SCREENSHOT/` and `CAMERA/`), your VitAdhoc screenshots, and the
+  `covers/` folder below, newest first. Move down the list to see each one.
+  Press X and you see it larger; press X again to use it.
+- **Use a screenshot of the game** takes the game's newest screenshot, or the
+  picture it left when you last played, or a save-state picture, or its title
+  screen.
+- **Automatic (download)** goes back to the downloaded cover.
+
+PNG and JPG work, in any shape. The picture is copied (shrunk to 512 pixels on
+its long side, never stretched) and shown whole on the tile, with bars if it
+is not square. Your original is not touched.
+
+**From a computer.** Copy a PNG or JPG into `ux0:data/GBAdhoc/covers/` and name
+it like the game, without the extension: `Pokemon Unbound.png` for
+`Pokemon Unbound.gba`. Capitals do not matter, and `Pokemon Unbound.gba.png`
+works too. VitAdhoc takes it up when the game list opens, or at Settings >
+Library > Refresh library.
+
+A file in `covers/` is never changed or deleted. If you choose **Automatic**
+for a game, its file in `covers/` stays unused until you put in a new or changed
+one. To get rid of it for good, delete it from `covers/`.
+
+Behind the scenes the cover is `boxart/<game>.png`, with a small
+`boxart/<game>.own` note that it is yours, and the downloaded one is kept as
+`boxart/<game>.dl` so Automatic can bring it back. A picture you put in
+`boxart/` yourself, named like the game, also wins over downloads.
+
 ## Box Art And Previews
 
 On Wi-Fi, the home screen fetches covers and title screens from the libretro
-thumbnail server; your own pictures in `boxart/` always win. Nothing downloads
+thumbnail server; [your own pictures](#your-own-cover-pictures) always win. Nothing downloads
 during a game or in ad hoc mode. Settings > Interface > Covers shows progress
 and looks again for missing ones. `art = 0` in `vita.ini` turns downloading off;
 `art_titles = 0` skips title screens.
@@ -240,5 +278,5 @@ off in Settings > Interface > Game previews.
 | A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/GBAdhoc/gba_bios.bin`. |
 | The picture is slow or odd | Settings > Display: Image quality Original, and leave GPU xBRZ off. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |
 | A zip will not open | Unzip it and try the game directly; check that it has one supported game and is not encrypted or ZIP64. |
-| No cover for a game | Covers are optional. Check Wi-Fi, or add your own picture to `boxart/`. |
+| No cover for a game | Covers are optional. Check Wi-Fi, or set your own: Cover on the home screen, or a picture in `covers/` ([above](#your-own-cover-pictures)). |
 | RetroAchievements won't sign in | Check Wi-Fi and the Vita's date and time. The log's `ra_http` lines say why. |

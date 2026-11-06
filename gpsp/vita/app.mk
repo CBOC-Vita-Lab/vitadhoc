@@ -56,7 +56,7 @@ APP_SRCS      += menu_diag.c
 APP_SRCS      += menu_load.c menu_files.c
 # what the game list knows about a cartridge (names, blurbs) and its box art
 # fetched by itself (gamedb.h, artfetch.h)
-APP_SRCS      += gamedb.c artfetch.c
+APP_SRCS      += gamedb.c artfetch.c cover_custom.c
 # the GBA's picture drawn on another core (render_thread.h)
 APP_SRCS      += render_thread.c
 # what has been played, when and for how long (play_log.h); patches applied

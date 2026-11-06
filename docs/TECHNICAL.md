@@ -37,6 +37,56 @@ testing; other profiles and generic/scout behaviour are not universally
 accepted. Where information is unavailable, margins use the selected fallback.
 It does not turn all games into native widescreen games or modify their saves.
 
+## Version 1.3 Changes
+
+**Your own cover pictures** (`vita/cover_custom.[ch]`, `vita/ui_vita_cover.h`)
+- **One source of truth.** A custom cover is the file every consumer already
+  reads: `boxart/<stem>.png` (the home tile worker `menu_files.c`, the shelf
+  and hero through `art_load_any`, `art_thumb_load`). So nothing else needed a
+  precedence rule. `cover_set_file` decodes a PNG/JPG (stb_image, at most 8
+  megapixels, 24 MiB) or a `.shot`, box-averages it to at most
+  `COVER_MAX_EDGE` (512) px on the long side (never enlarged, shape kept),
+  writes `boxart/<stem>.png` through a `.tmp` and a rename, then the tile
+  thumbnail, then the record. A failed step puts everything back.
+- **Files beside the cover** (all `boxart/<stem>.*`): `.own` = the player's
+  (`src=` and `seen=` lines); `.dl` = the replaced download or hand-placed
+  picture, renamed aside, not copied; `.auto` = Automatic was chosen
+  (the inbox file last seen is recorded). `artfetch.c` needs only the file
+  `.own`: it makes that stem's thumbnail the whole picture on a 160x160 square
+  (`thumb_rgb(..., square=1)`, bars of the picture's average colour at 40%)
+  instead of the plain fit that the tile centre-crops. A fetch never writes
+  over any art on the card (`save()` checks `have_art_disk` before and after
+  the transfer) and does not ask for a game whose art exists, so a cover set
+  while a download is in flight still wins.
+- **Cache invalidation, in one place each.** Disk: `cover_custom.c`
+  `purge_caches` removes `boxart/<stem>.v565` and `.vh565`, and the
+  thumbnail is rewritten (`cover_thumb_path`, the only place cover code
+  builds the thumbnail path from `ART_THUMB_SUFFIX`). Memory:
+  `ui_vita_cover.h` `cv_changed` calls `hm_art_arrived(base, n)` (the shelf
+  slots, the hero, and the Home's artwork epoch for the tile).
+- **Automatic** (`cover_auto`): the `.auto` note is written first, then the
+  cover is removed and `.dl` renamed back (1), or, with none, `artfetch_rescan()`
+  makes the worker read `boxart/` again and download (2). Nothing in
+  `covers/` is touched.
+- **The inbox** (`cover_inbox_scan` / `_step`): `covers/` is listed once per
+  library scan (list opening, Refresh library, a console switch); a PNG/JPG
+  matches a game when its name without the image extension, lower-cased,
+  equals the game's stem lower-cased, or does once a ROM extension
+  (.gba .gb .gbc .sgb .sfc .smc .swc .fig .nes .zip .7z) is cut off. An
+  exact name beats one with the ROM extension, then png, jpg, jpeg. The
+  file's `name|size|mtime` is compared with the `seen=` of the game's `.own` /
+  `.auto`; a difference is a wish, taken one file per frame while the list
+  rests (`ui_cover_pump`). Console-agnostic: only stems.
+- **Where it is in the UI.** Home: a Cover button (`BROWSER_COVER_BUTTON`,
+  bit 29 of the browser's virtual edges); Settings (browser only):
+  LIBRARY > Cover picture (`SET_COVERPIC`, placed before Game folders so the
+  walk-up-from-the-top of the existing tests keeps its rows). The page
+  (`ui_cover_run`) sources: `ui_host_pictures_dir()` (`ux0:picture`;
+  vita.ini `pictures` for the twin's tests), the screenshot folder
+  (`ui_host_shot_dir()` or `screenshots/`) and `covers/`, three levels deep,
+  at most 1500 files, newest first.
+- **Tests:** `app_tests.py --only cover_menu,cover_inbox`.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

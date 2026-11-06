@@ -397,6 +397,10 @@ static int g_settings_dirty;
 static int g_set_scroll;      /* SETTINGS list scroll, px (see set_row_y) */
 /* Browser Settings: 1 = Share game data, 2 = the room list was chosen. */
 static int g_share_req;
+#ifdef VITA
+static int g_cover_req;      /* Settings > Cover picture: X pressed        */
+static int g_cover_row;      /* 0 no game, 1 automatic, 2 a cover of its own */
+#endif
 static char g_state_base[PSP_FILE_PATH_CAP];
 static int g_state_slot = 1;
 static int g_ss_top, g_shelf_top;   /* the first slot on screen (scrolling) */
@@ -2305,7 +2309,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* The account and Hardcore in the browser; a running game's list
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
-       SET_HDR_LIB, SET_FOLDERS, SET_SORT,
+       SET_HDR_LIB, SET_COVERPIC, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_OWN_LOOK, SET_MOTION, SET_SENS, SET_REVERSE,
        SET_LEVEL, SET_SUN,
        SET_HDR_CTL, SET_CONTROLS,
@@ -2427,6 +2431,9 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* Folders of games beside roms/ (vita.ini extra_roms; GitHub #5).
     * Above Game order, which the harness walkers reach by wrapping up from
     * the top past Button mapping: it keeps that place. */
+   /* Before Game folders: the harness walks up from the top to Game
+    * folders (Button mapping, Game order, Game folders) and keeps its row. */
+   { 0, "Cover picture" },
    { 0, "Game folders" },
    { 0, "Game order" },
    /* The running game's own (config_psp.h pcfg_game): its look, and the
@@ -2464,7 +2471,8 @@ static int linkmode_row_enabled(void);
 static int set_row_shown(int idx)
 {
 #ifdef VITA
-   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS)
+   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS ||
+       idx == SET_COVERPIC)
       return g_ov_browse;
    if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
       return g_ov_browse;
@@ -2522,6 +2530,8 @@ static int set_row_enabled(int idx)
       return pcfg_wide_modes(pcfg_display_console()) > 0;
    if (idx == SET_WFILL)
       return pcfg_wide_modes(pcfg_display_console()) > 0 && g_pcfg.wide;
+   if (idx == SET_COVERPIC)
+      return g_cover_row != 0;      /* a game is highlighted in the list */
 #endif
    if (idx == SET_LINKMODE)
       return linkmode_row_enabled();
@@ -3119,6 +3129,9 @@ static void settings_adjust(int id, int dir)
    case SET_FOLDERS:
       /* not a value: X opens the keyboard (screen_settings) */
       return;
+   case SET_COVERPIC:
+      /* not a value: X opens the page (screen_settings) */
+      return;
    case SET_SORT:
       g_pcfg.lib_sort = (g_pcfg.lib_sort + 3 + dir) % 3;
       g_library_resort = 1;
@@ -3487,6 +3500,8 @@ static const char *set_help(int id)
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
    case SET_SORT:     return "The order of All games and Starred. Recent is "
                              "newest first.";
+   case SET_COVERPIC: return "X: a picture of your own as the cover of the "
+                             "game picked in the list.";
    case SET_FOLDERS:  return "X: type a folder to add it (ux0:ROMS/GBA), or "
                              "one listed to remove it.";
    case SET_OWN_LOOK: return g_pgame.override
@@ -3665,6 +3680,12 @@ static ui_action screen_settings(unsigned edges)
          if (ui_text_open(TXT_SHOTDIR, "Screenshot folder (empty: the usual one)",
                           d && d[0] ? d : "ux0:pictures/VitAdhoc", 63) != 0)
             osd_toast("The keyboard is not available");
+         edges &= ~PSP_CTRL_CROSS;
+      }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERPIC)
+      {
+         if (g_cover_row)
+            g_cover_req = 1;      /* browser_settings opens it after this frame */
          edges &= ~PSP_CTRL_CROSS;
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_FOLDERS)
@@ -4063,6 +4084,11 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_COVERPIC:
+         set_item(y, g_cursor == i, g_cover_row != 0, set_rows[i].label,
+                  g_cover_row == 2 ? "your own" :
+                  g_cover_row == 1 ? "automatic" : "no game");
+         break;
       case SET_FOLDERS:
       {
          char v[96];
@@ -4177,6 +4203,8 @@ static ui_action screen_settings(unsigned edges)
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERS
           ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
+          : g_cursor == SET_COVERPIC
+          ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : VID_GLYPH_X " change   DPAD move/change   " VID_GLYPH_O " back");
 #else
    if (g_cursor == SET_FASTLINK)
@@ -7270,6 +7298,9 @@ static int            g_find_n;
                                BROWSER_TAB_BUTTON(2))
 /* Home: Start over -- play without continuing where the game was left. */
 #define BROWSER_FRESH_BUTTON  (1u << 28)
+/* Home: the Cover button -- a picture of your own for the game
+ * (vita/ui_vita_cover.h). */
+#define BROWSER_COVER_BUTTON  (1u << 29)
 /* RECENT AND THE ORDERS.  The Recent tab (the Home's third: games played,
  * the latest first) and Settings > Game order (by name, last played first,
  * most played first) are one more permutation over the scan, under the
@@ -10998,6 +11029,11 @@ static int browse_backdrop_take(void)
  * vita/share_vita.c, Wi-Fi rooms). */
 #include "ui_share.inc"
 
+#ifdef VITA
+static void ui_cover_run(const char *rom_dir, int rom, int n_scan);
+static void ui_cover_inbox_scan(int n_scan);
+static int  ui_cover_row(int rom);
+#endif
 static int browser_settings(void)
 {
    int relaunch = 0;
@@ -11035,6 +11071,11 @@ static int browser_settings(void)
       g_bset_have = 1;
    }
 
+#ifdef VITA
+   g_cover_req = 0;
+   g_cover_row = g_bpage.rom_dir && g_bpage.n > 0
+                 ? ui_cover_row(view_rom(g_bpage.cur)) : 0;
+#endif
    screen_to(SCR_SETTINGS);
    g_cursor = SET_FIRST;
    g_prev_pad = 0xFFFFFFFFu;      /* swallow the opening START */
@@ -11092,6 +11133,16 @@ static int browser_settings(void)
 #ifdef VITA
       /* Share game data (ui_share.inc, vita/share_vita.c): host on this
        * console's Room, or join the share on it; either way back here. */
+      if (g_cover_req)
+      {
+         int rom = view_rom(g_bpage.cur);
+         g_cover_req = 0;
+         ui_cover_run(g_bpage.rom_dir, rom, g_bpage.n_scan);
+         g_cover_row = ui_cover_row(rom);
+         screen_to(SCR_SETTINGS);
+         g_cursor = SET_COVERPIC;
+         g_prev_pad = 0xFFFFFFFFu;  /* the O that left the page is spent */
+      }
       if (g_share_req == 1 || g_share_req == 2)
       {
          int req = g_share_req;
@@ -11590,6 +11641,9 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
    if (*n_scan < 0)
       *n_scan = 0;
    favs_mark(*n_scan);
+#ifdef VITA
+   ui_cover_inbox_scan(*n_scan);
+#endif
    *n = view_count(*n_scan);
    *cur = 0;
    for (i = 0; i < *n; i++)
@@ -11610,6 +11664,7 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
 #ifdef VITA
 #include "ui_vita_browser.h"
 #include "ui_vita_home.h"
+#include "ui_vita_cover.h"
 
 /* The browser below, with the toasts moved off its header for as long as
  * it runs (it has half a dozen ways out). */
@@ -11723,6 +11778,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #endif
    favs_load(rom_dir);
    favs_mark(n_scan);
+#ifdef VITA
+   ui_cover_inbox_scan(n_scan);       /* covers/: pictures named like games */
+#endif
    n = n_scan;
 
    /* preselect last played */
@@ -12350,6 +12408,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             if (n_scan < 0)
                n_scan = 0;
             favs_mark(n_scan);
+#ifdef VITA
+            ui_cover_inbox_scan(n_scan);
+#endif
             n = view_count(n_scan);
             cur = 0;
             for (i = 0; i < n; i++)
@@ -12375,6 +12436,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       rom = n > 0 ? view_rom(cur) : -1;
 #ifdef VITA
       md_selection(rom, g_pcfg.console);
+      ui_cover_pump(n_scan, idle);
       if (!g_ui_home || n <= 0)
       {
          hm_art_poll(rom_dir, n_scan, idle);
@@ -12382,6 +12444,17 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       }
 #endif
 #ifdef VITA
+      /* Cover: a picture of your own for the game (Home's button). */
+      if ((edges & BROWSER_COVER_BUTTON) && n > 0 && !g_browser_state_open)
+      {
+         ui_cover_enter(rom_dir, rom, n_scan);
+         edges = 0;
+         idle = 0;
+         tch_reset();
+         tch_scroll_stop(&g_br_ts);
+         continue;
+      }
+      edges &= ~BROWSER_COVER_BUTTON;
       /* Start over: the same launch, without continuing. */
       if ((edges & BROWSER_FRESH_BUTTON) && n > 0 && g_ui_home &&
           !g_browser_state_open && home_has_resume(rom))
@@ -12460,6 +12533,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             if (n_scan < 0)
                n_scan = 0;
             favs_mark(n_scan);
+            ui_cover_inbox_scan(n_scan);
             n = view_count(n_scan);
             cur = 0;
             g_empty_for = -1;

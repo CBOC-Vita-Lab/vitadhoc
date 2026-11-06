@@ -259,6 +259,9 @@ static struct
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
            "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, "", "" };
 
+/* vita.ini pictures: see ui_host_pictures_dir */
+static char g_pictures_dir[200] = "ux0:picture";
+
 /* vita.ini core_phase: the core's per-phase split of a frame (main.h,
  * "Phase 5h").  Declared here, not through the core's main.h (the whole
  * emulator header set), as main_psp.c does. */
@@ -1289,6 +1292,16 @@ static void read_switches(void)
    }
    if (!fe_ini_get(ini, "ra_host", g_sw.ra_host, sizeof(g_sw.ra_host)))
       g_sw.ra_host[0] = '\0';
+   /* pictures = <folder>: where Cover picture > Choose a picture looks for
+    * the console's own photos and screenshots (default ux0:picture; the
+    * twin's tests point it at a fake one) */
+   if (!fe_ini_get(ini, "pictures", g_pictures_dir, sizeof(g_pictures_dir)))
+      snprintf(g_pictures_dir, sizeof(g_pictures_dir), "ux0:picture");
+   {
+      size_t n = strlen(g_pictures_dir);
+      while (n > 1 && g_pictures_dir[n - 1] == '/')
+         g_pictures_dir[--n] = '\0';
+   }
    g_sw.wide            = (int)fe_ini_get_int(ini, "wide", -1);
    g_sw.wide_fill       = (int)fe_ini_get_int(ini, "wide_fill", -1);
    if (g_sw.pace_mode != PACE_TIMER)
@@ -3529,6 +3542,7 @@ const char *ui_host_overlay_name(void)
 }
 
 const char *ui_host_shot_dir(void) { return g_sw.shot_dir; }
+const char *ui_host_pictures_dir(void) { return g_pictures_dir; }
 
 int ui_host_shot_dir_set(const char *dir)
 {

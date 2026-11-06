@@ -1215,6 +1215,8 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
       x = hm_button(x, y, VS_I_LAYERS, "Save states", 0, PSP_CTRL_DOWN);
    x = hm_button(x, y, g_roms[rom].is_fav ? VS_I_STAR : VS_I_STAR_O, NULL, 0,
                  PSP_CTRL_SQUARE);
+   /* a picture of your own for the cover (ui_vita_cover.h) */
+   x = hm_button(x, y, VS_I_CAMERA, "Cover", 0, BROWSER_COVER_BUTTON);
    (void)x;
 }
 

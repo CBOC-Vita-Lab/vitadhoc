@@ -3231,7 +3231,9 @@ def near(px, want, tol=40):
 
 # Settings > LIBRARY > Cover picture, reached from the top of the browser's
 # Settings by wrapping UP: Button mapping, Game order, Game folders, then it.
-COVER_ROW = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n"
+# start, then up: Button mapping, Game order, Game folders, Sync RetroArch
+# saves, Cover picture
+COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 4
 
 
 def t_cover_menu(S):
@@ -4586,7 +4588,7 @@ def _t_ra(S, srv):
     # mapping, Game order and Hardcore to Account; X; the name, then the
     # password, each through the keyboard.
     # (1.2: one more UP, for Library > Game folders above Game order)
-    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n"
+    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n"
               "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
               "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
               "+30:quit\n", vita_ini=ini)
@@ -5277,7 +5279,7 @@ def t_cpu_speed(S):
                          "de000000" "de000000" "a6000000")
     # the row, in game: Settings wraps upwards to Button mapping, Display
     # settings, CPU speed
-    pick = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+10:shot=row.png\n"
+    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 4 + "+10:shot=row.png\n"
     quit_ = "+4:circle\n+10:circle\n+30:quit\n"
 
     made = []

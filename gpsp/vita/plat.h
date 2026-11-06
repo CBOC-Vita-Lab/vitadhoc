@@ -225,6 +225,11 @@ typedef struct plat_pad
 } plat_pad;
 
 void plat_pad_read(plat_pad *pad);
+/* A AND B BUTTONS: 1 = plat_pad_read / plat_pad_read2 hand CROSS and CIRCLE
+ * to the app exchanged (the physical Circle comes back as PLAT_BTN_CROSS and
+ * the other way round), so the app's whole input -- menus, game buttons,
+ * shortcuts -- follows one setting.  0 (the start) = as pressed. */
+void plat_pad_face_swap(int on);
 /* How many players have a pad of their own: 1, or 2 when a second
  * controller can drive the partner's machine of the local link.  Cheap
  * (the answer is refreshed about once a second).

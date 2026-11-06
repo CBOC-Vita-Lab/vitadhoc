@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 char g_dir_base[128] =
@@ -212,9 +213,23 @@ void pspcompat_wait_vblank(void)
       g_vblank_fn();
 }
 
+static int g_pc_face_swap;
+
+void pspcompat_face_swap(int on) { g_pc_face_swap = on ? 1 : 0; }
+
+int pspcompat_enter_is_circle(void)
+{
+   int v = 0;
+   pspcompat_dialogs_init();      /* sceAppUtilInit: the call needs it */
+   if (sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, &v) < 0)
+      return 0;                   /* unknown: the Western layout */
+   return v == SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
+}
+
 unsigned pspcompat_pad(void)
 {
    static int analog_on;
+   unsigned btn;
    SceCtrlData pad;
    if (!analog_on)
    {
@@ -228,7 +243,11 @@ unsigned pspcompat_pad(void)
       return 0;
    /* Plain PeekBufferPositive reports the Vita's L and R -- and a PS TV
     * pad's L1/R1 -- as LTRIGGER/RTRIGGER, the PSP's shoulder bits. */
-   return (pad.buttons & 0xF3F9u) | stick_bits(pad.lx, pad.ly);
+   btn = pad.buttons & 0xF3F9u;
+   if (g_pc_face_swap && ((btn & PSP_CTRL_CROSS) != 0) !=
+                         ((btn & PSP_CTRL_CIRCLE) != 0))
+      btn ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
+   return btn | stick_bits(pad.lx, pad.ly);
 }
 
 void pspcompat_host_pad(unsigned (*fn)(void)) { (void)fn; }
@@ -580,6 +599,17 @@ int pspcompat_touch(pc_touch *out)
 }
 
 void pspcompat_dialogs_init(void) { }
+
+/* (the twin's pad is plat.h's, which swaps for itself) */
+void pspcompat_face_swap(int on) { (void)on; }
+
+/* The Vita's own Enter button setting.  The twin has none: Cross, unless a
+ * test says otherwise with GBADHOC_ENTER_BUTTON=circle. */
+int pspcompat_enter_is_circle(void)
+{
+   const char *e = getenv("GBADHOC_ENTER_BUTTON");
+   return e && strcmp(e, "circle") == 0;
+}
 
 int  pspcompat_battery_percent(void) { return 80; }
 int  pspcompat_battery_charging(void) { return 0; }

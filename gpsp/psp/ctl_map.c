@@ -66,8 +66,15 @@ static const ctl_action_info INFO[CTL_ACTIONS] = {
 #endif
    { "bind_quicksave",    "Quick save",     CTL_SELECT | CTL_L, 0,   CTL_F_YIELD },
    { "bind_quickload",    "Quick load",     CTL_SELECT | CTL_R, 0,   CTL_F_YIELD },
+#ifdef VITA
+   /* Unbound on the Vita, which has its own screenshot (PS + Start).  The
+    * combo is a Settings row (Controls > Screenshot button combo) that puts
+    * L + R + SELECT back; a bind_screenshot already in config.ini wins. */
+   { "bind_screenshot",   "Screenshot",     0, 0,                    CTL_F_YIELD },
+#else
    { "bind_screenshot",   "Screenshot",     CTL_L | CTL_R | CTL_SELECT, 0,
                                                                      CTL_F_YIELD },
+#endif
    { "bind_pause",        "Pause screen",   CTL_SELECT | CTL_TRIANGLE, 0,
                                                                      CTL_F_YIELD },
    { "bind_mystery_gift", "Mystery Gift",   CTL_SELECT | CTL_DOWN, 0, 0 },

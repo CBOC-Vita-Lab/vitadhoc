@@ -729,6 +729,17 @@ int plat_worker_stop_checked(void)
 
 /* ---- the pad ---------------------------------------------------------------- */
 
+static int g_face_swap;
+
+void plat_pad_face_swap(int on) { g_face_swap = on ? 1 : 0; }
+
+static uint32_t face_buttons(uint32_t b)
+{
+   if (g_face_swap && ((b & PLAT_BTN_CROSS) != 0) != ((b & PLAT_BTN_CIRCLE) != 0))
+      b ^= PLAT_BTN_CROSS | PLAT_BTN_CIRCLE;
+   return b;
+}
+
 void plat_pad_read(plat_pad *pad)
 {
    SceCtrlData d;
@@ -740,7 +751,7 @@ void plat_pad_read(plat_pad *pad)
       pad->lx = pad->ly = pad->rx = pad->ry = 128;
       return;
    }
-   pad->buttons = d.buttons;     /* PLAT_BTN_* are the SCE_CTRL_* values */
+   pad->buttons = face_buttons(d.buttons);  /* PLAT_BTN_* are SCE_CTRL_* */
    pad->lx = d.lx;
    pad->ly = d.ly;
    pad->rx = d.rx;
@@ -785,7 +796,7 @@ int plat_pad_read2(plat_pad *pad)
    d.lx = d.ly = d.rx = d.ry = 128;
    if (sceCtrlPeekBufferPositive2(port, &d, 1) < 0)
       return 0;
-   pad->buttons = d.buttons;
+   pad->buttons = face_buttons(d.buttons);
    pad->lx = d.lx;
    pad->ly = d.ly;
    pad->rx = d.rx;

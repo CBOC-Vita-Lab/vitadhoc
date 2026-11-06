@@ -37,6 +37,40 @@ testing; other profiles and generic/scout behaviour are not universally
 accepted. Where information is unavailable, margins use the selected fallback.
 It does not turn all games into native widescreen games or modify their saves.
 
+## Version 1.3 Changes: Controls And First Impressions
+
+- **Default picture** (`gpsp/wide.c` wide_apply, `psp/config_psp.h`): the
+  "Known games" Wide view no longer opens margins in a game without a profile
+  (it used to hand the renderer a 282 pixel picture and fill the 21 pixel
+  margins with soft edges, which looked like a stretch). Without a profile
+  the picture is 240 x 160 at the Fit size, 816 x 544, centred. `wide_fill`
+  defaults to 0 (bars) instead of 1 (soft edges); keys already in
+  `config.ini` are untouched.
+- **Ambient fill**: `PCFG_AMBIENT_DEF` is `PCFG_AMB_ART_GAME` on the Vita (hero
+  art, else a blurred game frame) so the aspect-correct picture fills the
+  screen; `overlay_apply()` turns it off while a screen overlay is shown.
+  `ambient_<console>` keys already in `config.ini` are kept. `app_tests.py`
+  pins `ambient_* = 0` in its base config.
+- **A and B buttons** (`ab_buttons` in `config.ini`, none = follow the Vita):
+  `ab_circle()` in `vita/main_vita.c` takes the key, else
+  `pspcompat_enter_is_circle()` (`sceAppUtilSystemParamGetInt` with
+  `SCE_SYSTEM_PARAM_ID_ENTER_BUTTON`, after `sceAppUtilInit`), and calls
+  `plat_pad_face_swap()` / `pspcompat_face_swap()`: the pad words exchange
+  Cross and Circle once, so menus, game buttons, shortcuts and Button mapping
+  all follow, and `vid_set_face_glyphs()` draws the hints' circle and cross
+  (text glyphs 0x80/0x81 and `VS_I_BTN_X/O`) exchanged. A player who already
+  moved A or B in Button mapping is never swapped by the Vita's setting
+  (only by choosing). The twin reads `GBADHOC_ENTER_BUTTON=circle`.
+  Row hooks: `ui_host_ab_circle`, `ui_host_buttons_changed`.
+- **Right stick rewind** is `stick_rewind` (default 0); the Rewind button
+  (Select + Square) is unchanged. **Screenshot combo**: `bind_screenshot` now
+  defaults to unbound on the Vita; the Settings row sets or clears
+  L + R + Select. Keys already in `config.ini` win.
+- **Popups**: the two first-games toasts are one line, shown once in the first
+  game ever (`hints` defaults to 1 and is set to 0 and saved when shown).
+- Tests: `app_tests.py` pins `stick_rewind = 1` and the screenshot chord in
+  its base config; `t_controls_defaults` runs the real defaults.
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

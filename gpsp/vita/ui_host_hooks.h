@@ -128,6 +128,12 @@ void        ui_host_grid_set(int level);
 int         ui_host_overlay_on(void);
 void        ui_host_overlay_set(int on);
 const char *ui_host_overlay_name(void);
+/* Settings > Controls > A and B buttons: 1 when Circle is the Game Boy's A
+ * (and confirms in the menus) -- g_pcfg.ab_buttons if the player chose, else
+ * the Vita's own Enter button.  ui_host_buttons_changed(): that row changed;
+ * the app swaps the pad's Cross and Circle (and the hints' glyphs) to match. */
+int         ui_host_ab_circle(void);
+void        ui_host_buttons_changed(void);
 const char *ui_host_shot_dir(void);
 int         ui_host_shot_dir_set(const char *dir);
 

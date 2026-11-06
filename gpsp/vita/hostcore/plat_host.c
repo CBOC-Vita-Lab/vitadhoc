@@ -1116,9 +1116,21 @@ static void pad_at(plat_pad *pad, int pad2)
    pad->ry = (b & HOST_RS_UP) ? 0 : (b & HOST_RS_DOWN) ? 255 : 128;
 }
 
+static int g_face_swap;
+
+void plat_pad_face_swap(int on) { g_face_swap = on ? 1 : 0; }
+
+static void face_swap_pad(plat_pad *pad)
+{
+   if (g_face_swap && ((pad->buttons & PLAT_BTN_CROSS) != 0) !=
+                      ((pad->buttons & PLAT_BTN_CIRCLE) != 0))
+      pad->buttons ^= PLAT_BTN_CROSS | PLAT_BTN_CIRCLE;
+}
+
 void plat_pad_read(plat_pad *pad)
 {
    pad_at(pad, 0);
+   face_swap_pad(pad);
 }
 
 /* The second controller: there from the start when the script names it
@@ -1146,6 +1158,7 @@ int plat_pad_read2(plat_pad *pad)
    if (!pad2_present())
       return 0;
    pad_at(pad, 1);
+   face_swap_pad(pad);
    return 1;
 }
 

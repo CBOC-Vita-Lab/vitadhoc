@@ -161,8 +161,13 @@ class Suite:
         # home screen has its own test, t_home)
         # Existing pixel samplers and preset-cycle assertions use the legacy
         # 3x geometry. New full-height quality cases select Fit explicitly.
+        # 1.3: the right stick rewinds and L+R+Select takes a screenshot only
+        # when asked (Settings > Controls); the tests that use either say so
+        # here, and t_controls_defaults hands None to see the real defaults.
         cfg = {"last_rom": "gbadhoc-test.gba", "hints": 0, "wide_gba": 0,
-               "ui_home": 0, "scale_gba": 4, "scale_gb": 4, "scale_gbc": 4}
+               "ui_home": 0, "scale_gba": 4, "scale_gb": 4, "scale_gbc": 4,
+               "stick_rewind": 1, "bind_screenshot": "L+R+SELECT",
+               "ambient_gba": 0, "ambient_gb": 0, "ambient_gbc": 0}
         cfg.update(config or {})
         with open(os.path.join(root, "config.ini"), "w") as f:
             for k, v in cfg.items():
@@ -184,7 +189,7 @@ class Suite:
         return sorted(names, key=str.lower)
 
     def run(self, name, script, config=None, autoboot=None, vita_ini=None,
-            args=(), extra=None, prepared=None, cwd=None):
+            args=(), extra=None, prepared=None, cwd=None, env=None):
         out = os.path.join(self.outdir, name)
         root = os.path.join(out, "root")
         if prepared is None:
@@ -200,7 +205,8 @@ class Suite:
         t0 = time.time()
         try:
             p = subprocess.run(cmd, capture_output=True, text=True,
-                               timeout=1500, env=dict(os.environ, TZ="UTC"),
+                               timeout=1500,
+                               env=dict(os.environ, TZ="UTC", **(env or {})),
                                cwd=cwd)
             rc, err = p.returncode, p.stderr
         except subprocess.TimeoutExpired:
@@ -832,7 +838,7 @@ def t_sensors(S):
     # the game's file keeps it.
     r = run("level", "gbadhoc-tilt.gba",
             "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
-            menu_pick(4, wait=60) + "+20:up\n+8:up\n+10:shot=level_row.png\n"
+            menu_pick(4, wait=60) + "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=level_row.png\n"
             "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
             "+120:shot=level.png\n+10:quit\n")
     S.picture(r, "rows.png")
@@ -947,7 +953,7 @@ def t_game_look(S):
     # settings; CROSS gives the game its own look.  Then TRIANGLE (the
     # size preset) makes it stretch: the game's file, not config.ini.
     r = S.run("game_look_on", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
               "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
               "+60:shot=stretch.png\n+10:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg)
@@ -971,7 +977,7 @@ def t_game_look(S):
     # Next time it starts in its own look; turning it off brings the
     # console's back, and the next start is the console's.
     r = S.run("game_look_off", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg,
               extra={"games/gbadhoc-test.gba.ini":
                      "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
@@ -1056,7 +1062,7 @@ def t_recent(S):
     # Settings > LIBRARY > Game order, from the game list: the browser's
     # Settings, wrapping upwards from the top: Button mapping, then Game
     # order (LIBRARY, between GAMEPLAY and CONTROLS).
-    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+10:shot=row.png\n"
+    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n"
               "+4:right\n+10:shot=row_last.png\n+4:circle\n+60:left\n+30:cross\n"
               "+30:quit\n", config=base, extra=extra)
     S.clean(r)
@@ -1954,7 +1960,7 @@ def t_look(S):
     # wide view is off, as it is in these tests), Wide view, Motion blend,
     # Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 15 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 18 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2033,11 +2039,11 @@ def t_wide(S):
     shots = "200:shot=a.png\n260:shot=b.png\n331:shot=c.png\n"
     M = 21
 
-    def run(name, wide, keys="", frames=360, cfg=None):
+    def run(name, wide, keys="", frames=360, cfg=None, env=None):
         r = S.run("wide_" + name, keys + shots + "%d:quit\n" % frames,
                   config=dict(base, **(cfg or {})), autoboot="gbadhoc-wide.gba",
                   vita_ini=None if wide is None else {"wide": wide},
-                  extra=extra)
+                  extra=extra, env=env)
         S.clean(r)
         return r
 
@@ -2118,13 +2124,28 @@ def t_wide(S):
         S.check(p4[1].tobytes() != mw[1].tobytes(),
                 "the cartridge's B is another mosaic")
 
-    # ---- the rows' defaults (wide 1, fill 1): a game without a profile
-    # keeps its picture, and the margins carry its edges on softly
+    # ---- the rows' defaults (wide 1, fill 0): a game without a profile is
+    # the console's own 240 columns, no margins at all (1.3: it used to open
+    # them and fill them with soft edges, which looked stretched)
     r = run("default", None, cfg={"wide_gba": None})
+    w = r.evt("wide")
+    S.check(w and w[-1]["mode"] == "1" and w[-1]["fill"] == "0" and
+            w[-1]["margin"] == "0" and w[-1]["profile"] == "0",
+            "the defaults: wide for known games only, no profile, no margins, "
+            "bars (%s)" % (w[-1]["_"] if w else "no line"))
+    d0 = pictures(r, 240)
+    if all(d0) and all(plain):
+        S.check(all(d0[i].tobytes() == plain[i].tobytes() for i in range(3)),
+                "...and the picture is the console's, unchanged")
+    # the margins of a game with no more to show, where one is opened (the
+    # twin's GBADHOC_WIDE_MARGIN_ALWAYS stands in for a profiled game's):
+    # soft edges when asked for
+    twin = {"GBADHOC_WIDE_MARGIN_ALWAYS": "1"}
+    r = run("soft", 1, cfg={"wide_fill_gba": 1}, env=twin)
     w = r.evt("wide")
     S.check(w and w[-1]["mode"] == "1" and w[-1]["fill"] == "1" and
             w[-1]["margin"] == "21" and w[-1]["profile"] == "0",
-            "the defaults: wide, no profile, soft edges (%s)" %
+            "soft edges: wide, a margin, soft edges (%s)" %
             (w[-1]["_"] if w else "no line"))
     d = pictures(r, 240 + 2 * M)
     if all(d) and all(plain) and all(wide):
@@ -2143,7 +2164,8 @@ def t_wide(S):
     for fill, name in ((0, "bars"), (2, "stretch")):
         r = S.run("wide_fill_" + name, shots + "360:quit\n", config=base,
                   autoboot="gbadhoc-wide.gba",
-                  vita_ini={"wide": 1, "wide_fill": fill}, extra=extra)
+                  vita_ini={"wide": 1, "wide_fill": fill}, extra=extra,
+                  env=twin)
         S.clean(r)
         f = pictures(r, 240 + 2 * M)
         if not (all(f) and all(plain)):
@@ -2188,7 +2210,7 @@ def t_wide(S):
     # Display settings, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 13 + \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 16 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -2197,19 +2219,20 @@ def t_wide(S):
     S.clean(r)
     look = r.evt("display_look")
     S.check(look and look[-1].get("wide") == "2" and
-            look[-1].get("wide_fill") == "2",
-            "Settings > Wide view: menus, one step right is stretch; Wide "
+            look[-1].get("wide_fill") == "1",
+            "Settings > Wide view: menus, one step right from bars is soft "
+            "edges; Wide "
             "view, one step right is 2 (%s)" %
             [(e.get("wide"), e.get("wide_fill")) for e in look])
     w = r.evt("wide")
-    S.check(w and w[-1]["mode"] == "2" and w[-1]["fill"] == "2" and
+    S.check(w and w[-1]["mode"] == "2" and w[-1]["fill"] == "1" and
             w[-1]["margin"] == "21",
             "...and the core is told (%s)" % (w[-1]["_"] if w else "no line"))
     S.picture(r, "row_on.png", "wide_row.png")
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(re.search(r"^wide_gba = 2$", ini, re.M) and
-            re.search(r"^wide_fill_gba = 2$", ini, re.M),
-            "config.ini keeps wide_gba = 2 and wide_fill_gba = 2")
+            re.search(r"^wide_fill_gba = 1$", ini, re.M),
+            "config.ini keeps wide_gba = 2 and wide_fill_gba = 1")
     im = S.picture(r, "after.png")
     if im:
         got = game_pixels(im, w=240 + 2 * M)
@@ -3235,7 +3258,7 @@ def t_fullspeed(S):
     # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
     # Display settings, Keep full speed; CROSS turns it off, and config.ini
     # keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -4247,7 +4270,7 @@ def _t_ra(S, srv):
     # password, each through the keyboard.
     # (1.2: one more UP, for Library > Game folders above Game order)
     r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n"
-              "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
+              "+8:up\n+8:up\n+8:up\n+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
               "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
               "+30:quit\n", vita_ini=ini)
     S.clean(r)
@@ -4273,7 +4296,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              "+20:up\n+8:up\n+8:up\n+10:cross\n+20:shot=list.png\n"
+              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -4511,7 +4534,7 @@ def t_folders_ui(S):
     os.symlink(os.path.join(root, "mine"), A)
     # START: Settings; UP wraps to Button mapping, then Game order, then
     # Game folders
-    walk = "60:start\n+30:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+    walk = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
     r = S.run("folders_ui", walk + "+4:type=%s\n+40:circle\n+90:quit\n" % A,
               prepared=True)
     S.clean(r)
@@ -4620,6 +4643,139 @@ def t_display_rows(S):
     S.check(dark[1] < dark[0], "a stronger grid is darker (%s)" % dark)
 
 
+def t_controls_defaults(S):
+    """1.3 first impressions: an unstretched default picture, one hint once,
+    A and B following the Vita, no stick rewind and no screenshot combo until
+    asked, and the three Settings rows that ask."""
+    fresh = {"scale_gba": None, "scale_gb": None, "scale_gbc": None,
+             "wide_gba": None, "hints": None, "stick_rewind": None,
+             "bind_screenshot": None, "ambient_gba": None, "ambient_gb": None,
+             "ambient_gbc": None}
+    # -- the default picture of a game with no Wide view profile: the
+    # console's own 3:2, the whole height, black bars, nothing stretched
+    r = S.run("defaults_fresh",
+              "150:shot=a.png\n+40:l+r+select:3\n+60:rstick-left:80\n+20:quit\n",
+              config=fresh, autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.check(r.has(r"^EVT wide mode=1 fill=0 margin=0 profile=0"),
+            "Wide view is on for known games only: no margin for this one, "
+            "and the menus' fill is bars")
+    S.check(r.has(r"^EVT display_profile .*ambient=2"),
+            "the glow beside the picture is on by default")
+    im = S.picture(r, "a.png")
+    if im:
+        side = [sum(im.getpixel((x, y))) for x in (10, 40, 940) for y in
+                (100, 300, 450)]
+        S.check(sum(1 for v in side if v > 12) >= 6,
+                "...so the sides of the screen are filled, not black (%s)" %
+                side)
+    # the picture itself, with the glow off to see its edges
+    r2 = S.run("defaults_geometry", "150:shot=g.png\n170:quit\n",
+               config=dict(fresh, ambient_gba=0), autoboot="gbadhoc-test.gba")
+    S.clean(r2)
+    im = S.picture(r2, "g.png")
+    if im:
+        row = [sum(im.getpixel((x, 300))) > 24 for x in range(960)]
+        xs = [x for x, v in enumerate(row) if v]
+        S.check(xs and xs[0] == 72 and xs[-1] == 887,
+                "the picture is 816 wide (columns %s..%s of 960)" %
+                (xs[0] if xs else "?", xs[-1] if xs else "?"))
+        col = [sum(im.getpixel((100, y))) > 24 for y in range(544)]
+        S.check(col[0] and col[543], "...and the whole 544 high: 3:2, "
+                "not stretched sideways")
+    S.check(not glob.glob(os.path.join(r.root, "screenshots", "*.png")),
+            "L + R + Select takes no screenshot until Settings turns it on")
+    S.check(not r.has(r"^EVT rewind (begin|end)"),
+            "the right stick held left does not rewind by default")
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check("hints = 0" in ini and "stick_rewind = 0" in ini and
+            "ab_buttons" not in ini,
+            "config.ini: the hint is used up, the stick off, and no A/B "
+            "choice made for the player")
+    S.check(len([l for l in r.log if "hints shown" in l]) == 1,
+            "one hint, once")
+    r = S.run("defaults_fresh", "100:quit\n", autoboot="gbadhoc-test.gba",
+              prepared=True)
+    S.check(not r.has(r"hints shown"), "the second launch shows no hint")
+
+    # -- the Rewind button still works with the stick off; the stick, on
+    for name, cfg, keys, want in (
+            ("defaults_rw_chord", {"stick_rewind": None}, "select+square", 1),
+            ("defaults_rw_stick", {"stick_rewind": 1}, "rstick-left", 1),
+            ("defaults_rw_none", {"stick_rewind": None}, "rstick-left", 0)):
+        r = S.run(name, "300:%s:60\n420:quit\n" % keys, config=cfg,
+                  autoboot="gbadhoc-test.gba")
+        S.clean(r)
+        S.check(bool(r.has(r"^EVT rewind begin")) == bool(want),
+                "%s: rewind %s" % (name, "runs" if want else "does not run"))
+
+    # -- A and B: the Vita's Enter button, the player's choice, and a layout
+    # the player already made themselves
+    def lit(name, cfg, env, keys):
+        r = S.run(name, "100:%s:10\n+0:shot=k.png\n+0:%s:10\n+10:quit\n" %
+                  (keys, keys), config=cfg, env=env,
+                  autoboot="gbadhoc-test.gba")
+        S.clean(r)
+        return key_boxes(r.shot("k.png")), r
+    circle = {"GBADHOC_ENTER_BUTTON": "circle"}
+    got, r = lit("ab_cross", {}, None, "cross")
+    S.check(got == "A" and r.has(r"^EVT ab_buttons circle_is_a=0 chosen=0"),
+            "a Vita whose Enter is Cross: Cross is A (lit: %s)" % got)
+    got, r = lit("ab_japan", {}, circle, "cross")
+    S.check(got == "B" and r.has(r"^EVT ab_buttons circle_is_a=1 chosen=0"),
+            "a Vita whose Enter is Circle: Cross is B (lit: %s)" % got)
+    got, r = lit("ab_japan_circle", {}, circle, "circle")
+    S.check(got == "A", "...and Circle is A (lit: %s)" % got)
+    got, r = lit("ab_chosen_cross", {"ab_buttons": 0}, circle, "cross")
+    S.check(got == "A" and r.has(r"chosen=1"),
+            "Cross is A, chosen, wins over the Vita's Circle (lit: %s)" % got)
+    got, r = lit("ab_chosen_circle", {"ab_buttons": 1}, None, "circle")
+    S.check(got == "A", "Circle is A, chosen, on a Cross Vita (lit: %s)" % got)
+    got, r = lit("ab_own_layout", {"bind_a": "CIRCLE", "bind_b": "CROSS"},
+                 circle, "circle")
+    S.check(got == "A" and r.has(r"circle_is_a=0"),
+            "a player's own A/B mapping is not swapped by the Vita (lit: %s)"
+            % got)
+    # the menus follow: on the shelf Cross plays and Circle finds a game;
+    # with Circle as A it is the other way round
+    for name, cfg, want in (("ab_menu_cross", {"ab_buttons": 0}, "cross"),
+                            ("ab_menu_circle", {"ab_buttons": 1}, "circle")):
+        r = S.run(name, "60:%s\n+120:quit\n" % want, config=cfg)
+        S.check(r.has(r"^EVT session game=1"),
+                "%s: %s plays the highlighted game" % (name, want))
+    r = S.run("ab_menu_other", "60:cross\n+60:quit\n", config={"ab_buttons": 1})
+    S.check(not r.has(r"^EVT session game="),
+            "with Circle as A, Cross does not play")
+
+    # -- the three rows, at the end of Settings (UP from the top wraps to
+    # Button mapping, then Screenshot button combo, Rewind with right stick,
+    # A and B buttons)
+    walk = ("60:start\n" + "+8:up\n" * 4 + "+10:shot=ab.png\n+4:right\n"
+            "+10:shot=ab2.png\n+8:down\n+4:right\n+10:shot=stick.png\n"
+            "+8:down\n+4:right\n+10:shot=combo.png\n+20:quit\n")
+    r = S.run("controls_rows", walk, config=fresh)
+    S.clean(r)
+    S.check(r.has(r"^EVT ab_buttons_setting value=1") and
+            r.has(r"^EVT stick_rewind_setting on=1") and
+            r.has(r"^EVT screenshot_combo_setting on=1"),
+            "each row changes its setting")
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^ab_buttons = 1$", ini, re.M) and
+            re.search(r"^stick_rewind = 1$", ini, re.M) and
+            re.search(r"^bind_screenshot = SELECT\+L\+R$", ini, re.M),
+            "and config.ini keeps all three")
+    for n in ("ab.png", "ab2.png", "stick.png", "combo.png"):
+        S.picture(r, n)
+    # ...and the screenshot row switches it off again
+    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 2 +
+              "+4:right\n+10:shot=off.png\n+20:quit\n", prepared=True)
+    S.clean(r)
+    S.check(r.has(r"^EVT screenshot_combo_setting on=0") and
+            re.search(r"^bind_screenshot = NONE$",
+                      open(os.path.join(r.root, "config.ini")).read(), re.M),
+            "Screenshot button combo off again, kept as NONE")
+
+
 TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
@@ -4643,7 +4799,8 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("display_rows", t_display_rows)]
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("display_rows", t_display_rows),
+         ("controls_defaults", t_controls_defaults)]
 
 
 def main():

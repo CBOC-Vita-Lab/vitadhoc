@@ -37,6 +37,37 @@ testing; other profiles and generic/scout behaviour are not universally
 accepted. Where information is unavailable, margins use the selected fallback.
 It does not turn all games into native widescreen games or modify their saves.
 
+## Version 1.3: battery saves
+
+- **Nothing after the image is dropped.** `fe_host.c` `sram_load` keeps up to
+  64 KiB the file carries after the core's 128 KiB image (`sram_tail`, e.g.
+  mGBA's 16-byte clock block: 131072 + 16) and writes it back after every
+  full rewrite; delta block writes never touch it. A file of that shape is
+  now "exact", so it is not rewritten at the first scan. `gb_save_load` keeps
+  the bytes past the layout the core writes (cart RAM + 44/48-byte clock
+  block) in `gb_extra` and `gb_save_write` appends them. A file longer than
+  64 KiB past the image is refused (never rewritten), as an unreadable one is.
+  The GBA save the app writes is still the 128 KiB image (a 32 KiB SRAM or
+  8 KiB EEPROM file comes out padded with 0xFF), the same bytes RetroArch's
+  gpSP writes.
+- **`vita/save_sync.c`** (`<data>/saves-sync.txt`, one tab-separated line per
+  save: save path, RetroArch source path, source size / mtime / CRC as last
+  synced, CRC of the save as last written, CRC when the source last got it).
+  At game start, a save the app has not written itself (no record, or its CRC
+  differs from the record) is copied once to `backups/<name>.<crc>.bak`.
+  `save_import` links a save taken from RetroArch's folder (`ux0:data/
+  retroarch/savefiles[/<core>]`, a folder under the data root on the twin) or
+  `Game.srm` beside the game. If the linked source changed since the last
+  sync, the newer file (mtime) is used and the other is backed up. After each
+  complete battery write fe_host calls the weak `app_battery_written`, which
+  streams the save into the source (`.import` temp, then replace): the
+  source's size, the save's bytes as far as both reach, the source's own bytes
+  (its trailer) beyond, and only if the source still has the recorded size and
+  CRC, and no data of the save would be cut off. Off with `sync_ra_saves = 0`
+  (Settings > Library; `ui_host_sync_ra_on/_set`).
+- Tests: `app_tests.py --only save_sync,save_gb_keep,save_import` and
+  `vita/tests/savesync/test_save_sync.c` (the compile line is in its header).
+
 ## Version 1.2 Changes
 
 Engineering detail behind the [What's New](../CHANGELOG.md) list.

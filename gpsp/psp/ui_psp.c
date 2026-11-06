@@ -2305,7 +2305,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* The account and Hardcore in the browser; a running game's list
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
-       SET_HDR_LIB, SET_FOLDERS, SET_SORT,
+       SET_HDR_LIB, SET_SYNCRA, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_OWN_LOOK, SET_MOTION, SET_SENS, SET_REVERSE,
        SET_LEVEL, SET_SUN,
        SET_HDR_CTL, SET_CONTROLS,
@@ -2424,6 +2424,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Hardcore" },
    { 0, "Achievements" },
    { 1, "LIBRARY" },
+   /* 1.3: RetroArch saves stay in step (save_sync.h).  Above Game folders,
+    * so the walkers that wrap up from the top to Game folders / Game order
+    * keep their counts. */
+   { 0, "Sync RetroArch saves" },
    /* Folders of games beside roms/ (vita.ini extra_roms; GitHub #5).
     * Above Game order, which the harness walkers reach by wrapping up from
     * the top past Button mapping: it keeps that place. */
@@ -2464,7 +2468,8 @@ static int linkmode_row_enabled(void);
 static int set_row_shown(int idx)
 {
 #ifdef VITA
-   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS)
+   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS ||
+       idx == SET_SYNCRA)
       return g_ov_browse;
    if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
       return g_ov_browse;
@@ -3119,6 +3124,9 @@ static void settings_adjust(int id, int dir)
    case SET_FOLDERS:
       /* not a value: X opens the keyboard (screen_settings) */
       return;
+   case SET_SYNCRA:
+      ui_host_sync_ra_set(!ui_host_sync_ra_on());
+      break;
    case SET_SORT:
       g_pcfg.lib_sort = (g_pcfg.lib_sort + 3 + dir) % 3;
       g_library_resort = 1;
@@ -3485,6 +3493,10 @@ static const char *set_help(int id)
                                "game."
                              : "States, rewind and cheats allowed.";
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
+   case SET_SYNCRA:   return ui_host_sync_ra_on()
+                             ? "A save taken from RetroArch is written back "
+                               "to it too, unless RetroArch changed it."
+                             : "RetroArch's save files are left alone.";
    case SET_SORT:     return "The order of All games and Starred. Recent is "
                              "newest first.";
    case SET_FOLDERS:  return "X: type a folder to add it (ux0:ROMS/GBA), or "
@@ -4079,6 +4091,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_SYNCRA:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  ui_host_sync_ra_on() ? "on" : "off");
+         break;
       case SET_SORT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.lib_sort == 1 ? "last played first" :

@@ -61,7 +61,7 @@ APP_SRCS      += gamedb.c artfetch.c
 APP_SRCS      += render_thread.c
 # what has been played, when and for how long (play_log.h); patches applied
 # to a game as it starts (rom_patch.h)
-APP_SRCS      += play_log.c rom_patch.c zip_rom.c
+APP_SRCS      += play_log.c rom_patch.c zip_rom.c save_sync.c
 # RetroAchievements (ra_vita.h): the app's side, the web requests, and the
 # runtime every RetroAchievements emulator uses (third_party/rcheevos, MIT;
 # PROVENANCE there).  Built with RC_NO_THREADS: one thread calls it.

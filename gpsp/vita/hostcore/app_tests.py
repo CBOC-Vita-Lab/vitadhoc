@@ -2577,9 +2577,9 @@ def t_find(S):
             "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
 
     r = run("console", "90:circle\n94:type=find-only\n150:triangle\n215:triangle\n"
-            "280:triangle\n360:cross\n500:shot=game.png\n520:quit\n")
+            "280:triangle\n330:triangle\n400:cross\n540:shot=game.png\n560:quit\n")
     S.check(r.has(r"^EVT browser_find active=0 ") and
-            len(r.evt("ui_browser_console")) == 3 and picked(r, "gbadhoc-test.gba"),
+            len(r.evt("ui_browser_console")) == 4 and picked(r, "gbadhoc-test.gba"),
             "a console change clears Find instead of hiding the remembered game on return")
 
     r = run("touch", "90:touch=715/37\n95:type=find-only-02\n"
@@ -2596,8 +2596,9 @@ def t_library_cache(S):
     """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
     with open(OWN_GBA, "rb") as cartridge:
         second_game = cartridge.read()
-    script = ("60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:triangle\n+60:triangle\n+70:triangle\n"
+    # four console tabs (GBA, GB, GBC, SNES) since 1.3: two full turns
+    script = ("60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+              "+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:right\n+20:start\n" + "+8:down\n" * 10 +
               "+20:shot=quality_setting.png\n" + "+8:down\n" * 13 +
               "+20:shot=refresh_command.png\n+8:cross\n"
@@ -2609,8 +2610,8 @@ def t_library_cache(S):
     scans = r.evt("rom_scan_time")
     sides = r.evt("rom_scan_side")
     S.check(len(scans) == 2 and {d.get("console") for d in scans} == {"0"} and
-            len(sides) == 4 and {d.get("console") for d in sides} == {"1", "2"},
-            "one walk lists all three consoles; only the explicit refresh walks again "
+            len(sides) == 6 and {d.get("console") for d in sides} == {"1", "2", "3"},
+            "one walk lists all four consoles; only the explicit refresh walks again "
             "(scans %s, side lists %s)" % ([d["_"] for d in scans], [d["_"] for d in sides]))
     S.check(len(r.evt("rom_cache_hit")) >= 4, "revisited console tabs use cached lists")
     S.check(r.has(r"library_refresh_asked") and r.has(r"library_refresh_done console=0 roms=2"),
@@ -4318,7 +4319,7 @@ def t_extra_roms(S):
     b = r.evt("ui_browser")
     S.check(b and int(b[0]["found"]) == 2 + len(S.roms(root, ".gba")),
             "the two folders' games are in the list")
-    # at most eight
+    # ten folders (the limit is 24)
     out2 = os.path.join(S.outdir, "extra_roms_ten")
     root2 = os.path.join(out2, "root")
     shutil.rmtree(out2, ignore_errors=True)
@@ -4327,9 +4328,10 @@ def t_extra_roms(S):
     r = S.run("extra_roms_ten", "40:quit\n", prepared=True, cwd=cwd)
     S.clean(r)
     rr = r.evt("rom_roots")
-    S.check(rr and rr[0]["extra"] == "8" and rr[0]["skipped"] == "2" and
-            rr[0]["list"] == '"%s"' % ";".join(d[:8]),
-            "ten folders: the first eight are used (%s)" %
+    # 1.3: up to UI_EXTRA_ROOTS_MAX (24) folders, so all ten count
+    S.check(rr and rr[0]["extra"] == "10" and rr[0]["skipped"] == "0" and
+            rr[0]["list"] == '"%s"' % ";".join(d[:10]),
+            "ten folders: all ten are used (up to 24) (%s)" %
             (rr[0]["_"] if rr else "no rom_roots line"))
     # extra_roms = 0, and extra_roms = (nothing), with the places below there
     cwd = os.path.join(S.outdir, "extra_roms_cwd2")

@@ -1,5 +1,37 @@
 # What's New
 
+## Version 1.3 — unreleased
+
+**Fixes from GBAdhoc 4.x**
+
+VitAdhoc's game engine started from GBAdhoc 4.1.1. These fixes come from GBAdhoc
+4.5.0 (and the work behind it), checked against the Vita's own engine:
+- **Need for Speed: Underground** could hang at its language screen: a timer
+  that had just run out read 0 instead of its start value, and the game used
+  that to size a huge memory clear. Fixed.
+- **Mario Golf: Advance Tour, Mario Tennis: Power Tour and Golden Sun 2** use
+  a small interrupt routine that the engine started one instruction late.
+  Fixed. This may help the black and white screens reported on Mario Golf and
+  Mario Tennis; we could not test those games.
+- **Wrong code skipped or run**: a jump into the middle of a run of "only if"
+  instructions ran the rest of the run even when the condition was false
+  (seen in Mario Golf). Fixed.
+- **OpenLara and other games that use the fast-interrupt mode**: the engine
+  mixed up that mode's registers with the normal ones, which could send a game
+  into a near-endless loop. Fixed.
+- **Rare instruction fixes**: shifts by a register count in code that runs
+  from graphics memory, returning from an interrupt with the register list
+  form, and keeping the CPU flags when a game changes CPU mode.
+- **A little faster** in every game: the engine no longer checks for
+  interrupts when none can fire.
+
+Not taken from 4.5.0: its Pokemon MonoMyth accuracy work, its speed work for
+self-modifying code, and its PSP-only changes (they only exist for the PSP's
+processor). Nothing here changes saves or save states: 1.2 states still load.
+These fixes are tested with our own test programs and one Pokemon game. They
+are not tested on the games named above, nor on Big Mutha Truckers, Street
+Racing Syndicate or Mortal Kombat: Deadly Alliance.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

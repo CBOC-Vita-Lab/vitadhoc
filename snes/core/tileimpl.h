@@ -61,8 +61,9 @@ namespace TileImpl {
 	template<class MATH, class BPSTART>
 	struct Normal1x1Base
 	{
-		enum { Pitch = BPSTART::Pitch, Step = 1, Fill = MATH::None };
+		enum { Pitch = BPSTART::Pitch, Step = 1, Fill = MATH::None, Const = 1 };
 		typedef BPSTART bpstart_t;
+		typedef MATH math_t;
 
 		static alwaysinline void Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
 	};
@@ -75,8 +76,9 @@ namespace TileImpl {
 	template<class MATH, class BPSTART>
 	struct Normal2x1Base
 	{
-		enum { Pitch = BPSTART::Pitch, Step = 2, Fill = MATH::None };
+		enum { Pitch = BPSTART::Pitch, Step = 2, Fill = MATH::None, Const = 1 };
 		typedef BPSTART bpstart_t;
+		typedef MATH math_t;
 
 		static alwaysinline void Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
 	};
@@ -98,8 +100,9 @@ namespace TileImpl {
 	template<class MATH, class BPSTART>
 	struct HiresBase
 	{
-		enum { Pitch = BPSTART::Pitch, Step = 2, Fill = 0 };
+		enum { Pitch = BPSTART::Pitch, Step = 2, Fill = 0, Const = 0 };
 		typedef BPSTART bpstart_t;
+		typedef MATH math_t;
 
 		static alwaysinline void Draw(const PixCtx &c, int N, int M, uint32 Offset, uint32 OffsetInLine, uint8 Pix, uint8 Z1, uint8 Z2);
 	};
@@ -167,22 +170,44 @@ namespace TileImpl {
 
 	struct NOMATH
 	{
-		enum { None = 1 };
+		enum { None = 1, Vec = 0 };
+		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return Main;
 		}
+		static alwaysinline uint16 CalcConst(const PixCtx &c, uint16 Main) { return Main; }
 	};
 	typedef NOMATH Blend_None;
 
 	template<class Op>
 	struct REGMATH
 	{
-		enum { None = 0 };
+		enum { None = 0, Vec = Op::Vec };
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return Op::fn(Main, (SD & 0x20) ? Sub : c.FixedColour);
 		}
+		// eight pixels at once: the same as Calc() for each (out[i] = Calc(main8[i], SubScreen[Offset+i], SubZ[Offset+i]))
+		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out)
+		{
+			uint32 other[8];
+			for (int i = 0; i < 8; i++)
+				other[i] = (c.SubZ[Offset + i] & 0x20) ? c.SubScreen[Offset + i] : (uint32) c.FixedColour;
+			uint32 res[8];
+			for (int h = 0; h < 8; h += 4)
+			{
+				s9x_v4u a, b, r;
+				memcpy(&a, main8 + h, 16);
+				memcpy(&b, other + h, 16);
+				r = Op::fnV(a, b);
+				memcpy(res + h, &r, 16);
+			}
+			for (int i = 0; i < 8; i++)
+				out[i] = (uint16) res[i];
+		}
+		// the result for a pixel whose sub-screen flag (SD & 0x20) is clear: independent of the sub-screen pixel
+		static alwaysinline uint16 CalcConst(const PixCtx &c, uint16 Main) { return Op::fn(Main, c.FixedColour); }
 	};
 	typedef REGMATH<COLOR_ADD> Blend_Add;
 	typedef REGMATH<COLOR_SUB> Blend_Sub;
@@ -191,11 +216,13 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHF1_2
 	{
-		enum { None = 0 };
+		enum { None = 0, Vec = 0 };
+		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return c.ClipColors ? Op::fn(Main, c.FixedColour) : Op::fn1_2(Main, c.FixedColour);
 		}
+		static alwaysinline uint16 CalcConst(const PixCtx &c, uint16 Main) { return Calc(c, Main, 0, 0); }
 	};
 	typedef MATHF1_2<COLOR_ADD> Blend_AddF1_2;
 	typedef MATHF1_2<COLOR_SUB> Blend_SubF1_2;
@@ -203,11 +230,13 @@ namespace TileImpl {
 	template<class Op>
 	struct MATHS1_2
 	{
-		enum { None = 0 };
+		enum { None = 0, Vec = 0 };
+		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out) {}
 		static alwaysinline uint16 Calc(const PixCtx &c, uint16 Main, uint16 Sub, uint8 SD)
 		{
 			return c.ClipColors ? REGMATH<Op>::Calc(c, Main, Sub, SD) : (SD & 0x20) ? Op::fn1_2(Main, Sub) : Op::fn(Main, c.FixedColour);
 		}
+		static alwaysinline uint16 CalcConst(const PixCtx &c, uint16 Main) { return Op::fn(Main, c.FixedColour); }
 	};
 	typedef MATHS1_2<COLOR_ADD> Blend_AddS1_2;
 	typedef MATHS1_2<COLOR_SUB> Blend_SubS1_2;
@@ -262,6 +291,68 @@ namespace TileImpl {
 	#define Z1	ctx.Z1
 	#define Z2	ctx.Z2
 
+
+	// CBOC-Vita: one tile row (8 pixels) at a time for the normal-width plotter (with or without colour math):
+	// the 8 pixel bytes and the 8 depth bytes are compared together. Rows with nothing to draw cost a
+	// few instructions, rows that are entirely drawn are written without a test per pixel, and mixed rows
+	// draw only their set pixels, in the same way (same pixel colour, same depth) as the per-pixel path.
+	// Depth values are below 0x80 (D <= 32 plus a small priority), which the byte compare relies on.
+	static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "DrawRow8 assumes a little-endian host");
+	template<class PIXEL, bool FLIP>
+	static alwaysinline void DrawRow8(const PixCtx &ctx, const uint8 *bp, uint32 Offset, uint32 OffsetInLine, uint8 z1, uint8 z2)
+	{
+		if (PIXEL::Step == 1)
+		{
+			const uint64 ones = 0x0101010101010101ULL, hi = 0x8080808080808080ULL, lo7 = 0x7f7f7f7f7f7f7f7fULL;
+			uint64 pix, db;
+			memcpy(&pix, bp, 8);
+			if (FLIP)
+				pix = __builtin_bswap64(pix);
+			const uint64 nz = (((pix & lo7) + lo7) | pix) & hi;			// bit 7 of lane i: pixel i is not 0
+			if (!nz)
+				return;
+			memcpy(&db, ctx.DB + Offset, 8);
+			const uint64 gt = ((hi + (uint64) z1 * ones - ones) - db) & hi;	// bit 7 of lane i: z1 > depth i
+			uint64 m = nz & gt;
+			if (!m)
+				return;
+			uint16 *sp = ctx.S + Offset;
+			if (PIXEL::math_t::Vec && m == hi)
+			{
+				// a whole row with plain add / subtract maths: four pixels per vector operation
+				uint32 mc[8];
+				for (int i = 0; i < 8; i++)
+					mc[i] = ctx.ScreenColors[(pix >> (8 * i)) & 0xff];
+				PIXEL::math_t::CalcRow8(ctx, mc, Offset, sp);
+				const uint64 zz = (uint64) z2 * ones;
+				memcpy(ctx.DB + Offset, &zz, 8);
+			}
+			else if (PIXEL::Fill && m == hi)
+			{
+				for (int i = 0; i < 8; i++)
+					sp[i] = ctx.ScreenColors[(pix >> (8 * i)) & 0xff];
+				const uint64 zz = (uint64) z2 * ones;
+				memcpy(ctx.DB + Offset, &zz, 8);
+			}
+			else
+			{
+				do {
+					const int i = __builtin_ctzll(m) >> 3;
+					sp[i] = PIXEL::math_t::Calc(ctx, ctx.ScreenColors[(pix >> (8 * i)) & 0xff], ctx.SubScreen[Offset + i], ctx.SubZ[Offset + i]);
+					ctx.DB[Offset + i] = z2;
+					m &= m - 1;
+				} while (m);
+			}
+		}
+		else
+		{
+			for (int x = 0; x < 8; x++) {
+				const uint8 Pix = FLIP ? bp[7 - x] : bp[x];
+				PIXEL::Draw(ctx, x, Pix, Offset, OffsetInLine, Pix, z1, z2);
+			}
+		}
+	}
+
 	template<class PIXEL>
 	struct DrawTile16
 	{
@@ -288,9 +379,7 @@ namespace TileImpl {
 				OFFSET_IN_LINE;
 				for (l = LineCount; l > 0; l--, bp += 8 * Pitch, Offset += GFX.PPL)
 				{
-					for (int x = 0; x < 8; x++) {
-						Pix = bp[x]; DRAW_PIXEL(x, Pix);
-					}
+					DrawRow8<PIXEL, false>(ctx, bp, Offset, OffsetInLine, Z1, Z2);
 				}
 			}
 			else
@@ -300,9 +389,7 @@ namespace TileImpl {
 				OFFSET_IN_LINE;
 				for (l = LineCount; l > 0; l--, bp += 8 * Pitch, Offset += GFX.PPL)
 				{
-					for (int x = 0; x < 8; x++) {
-						Pix = bp[7 - x]; DRAW_PIXEL(x, Pix);
-					}
+					DrawRow8<PIXEL, true>(ctx, bp, Offset, OffsetInLine, Z1, Z2);
 				}
 			}
 			else
@@ -312,9 +399,7 @@ namespace TileImpl {
 				OFFSET_IN_LINE;
 				for (l = LineCount; l > 0; l--, bp -= 8 * Pitch, Offset += GFX.PPL)
 				{
-					for (int x = 0; x < 8; x++) {
-						Pix = bp[x]; DRAW_PIXEL(x, Pix);
-					}
+					DrawRow8<PIXEL, false>(ctx, bp, Offset, OffsetInLine, Z1, Z2);
 				}
 			}
 			else
@@ -323,9 +408,7 @@ namespace TileImpl {
 				OFFSET_IN_LINE;
 				for (l = LineCount; l > 0; l--, bp -= 8 * Pitch, Offset += GFX.PPL)
 				{
-					for (int x = 0; x < 8; x++) {
-						Pix = bp[7 - x]; DRAW_PIXEL(x, Pix);
-					}
+					DrawRow8<PIXEL, true>(ctx, bp, Offset, OffsetInLine, Z1, Z2);
 				}
 			}
 		}
@@ -538,17 +621,46 @@ namespace TileImpl {
 						x += Group;	// every pixel of the group is already covered
 						continue;
 					}
-					if (PIXEL::Fill && v0 == 0)
+					if (v0 == 0)
 					{
-						// nothing drawn here yet and no colour math: the backdrop colour goes in as it is
-						const uint64 c4 = (uint64) ctx.ScreenColors[0] * 0x0001000100010001ULL;
-						uint16 *sp = ctx.S + Offset + PIXEL::Step * x;
-						memcpy(sp, &c4, 8);
-						memcpy(sp + 4, &c4, 8);
-						const uint64 ones = 0x0101010101010101ULL;
-						memcpy(ctx.DB + Offset + PIXEL::Step * x, &ones, 8);
-						x += Group;
-						continue;
+						// nothing drawn on any pixel of the group yet
+						if (PIXEL::Const)
+						{
+							// the colour is the same for all of them when the maths cannot see a sub-screen pixel
+							bool uniform = true;
+							if (!PIXEL::math_t::None)
+							{
+								uint64 sz;
+								memcpy(&sz, ctx.SubZ + Offset + PIXEL::Step * x, 8);
+								uniform = !(sz & (PIXEL::Step == 1 ? 0x2020202020202020ULL : 0x0020002000200020ULL));
+							}
+							if (uniform)
+							{
+								const uint64 c4 = (uint64) PIXEL::math_t::CalcConst(ctx, ctx.ScreenColors[0]) * 0x0001000100010001ULL;
+								uint16 *sp = ctx.S + Offset + PIXEL::Step * x;
+								memcpy(sp, &c4, 8);
+								memcpy(sp + 4, &c4, 8);
+								const uint64 ones = 0x0101010101010101ULL;
+								memcpy(ctx.DB + Offset + PIXEL::Step * x, &ones, 8);
+								x += Group;
+								continue;
+							}
+						}
+						else if (PIXEL::math_t::None)
+						{
+							// hires, no maths: the same stores as the plotter makes, without the test per pixel
+							const uint16 col = ctx.ScreenColors[0];
+							for (uint32 xe = x + Group; x < xe; x++)
+							{
+								ctx.S[Offset + 2 * x + 1] = col;
+								if ((OffsetInLine + 2 * x) != (SNES_WIDTH - 1) << 1)
+									ctx.S[Offset + 2 * x + 2] = ctx.ClipColors ? 0 : ctx.SubScreen[Offset + 2 * x + 2];
+								if ((OffsetInLine + 2 * x) == 0 || (OffsetInLine + 2 * x) == ctx.RealPPL)
+									ctx.S[Offset + 2 * x] = ctx.ClipColors ? 0 : ctx.SubScreen[Offset + 2 * x];
+								ctx.DB[Offset + 2 * x] = ctx.DB[Offset + 2 * x + 1] = 1;
+							}
+							continue;
+						}
 					}
 					for (uint32 xe = x + Group; x < xe; x++)
 						DRAW_PIXEL(x, 1);

@@ -821,14 +821,21 @@ inline VOICE_CLOCK( V3c )
 
 	// Gaussian interpolation
 	{
-		int output = interpolate( v );
+		// CBOC-Vita: a voice with envelope 0 outputs 0 whatever the interpolation gives (interpolate() and
+		// the noise read state but change nothing), so the filter is only run for audible voices
+		if ( v->env )
+		{
+			int output = interpolate( v );
 
-		// Noise
-		if ( m.t_non & v->vbit )
-			output = (int16_t) (m.noise * 2);
+			// Noise
+			if ( m.t_non & v->vbit )
+				output = (int16_t) (m.noise * 2);
 
-		// Apply envelope
-		m.t_output = (output * v->env) >> 11 & ~1;
+			// Apply envelope
+			m.t_output = (output * v->env) >> 11 & ~1;
+		}
+		else
+			m.t_output = 0;
 		v->t_envx_out = (uint8_t) (v->env >> 4);
 	}
 

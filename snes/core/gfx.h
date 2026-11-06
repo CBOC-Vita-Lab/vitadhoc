@@ -158,8 +158,31 @@ extern struct SGFX	GFX;
 #define V_FLIP		0x8000
 #define BLANK_TILE	2
 
+// CBOC-Vita: 4-lane versions of the two plain blend operations, for whole tile rows (tileimpl.h, DrawRow8).
+// Lane for lane the same arithmetic as fn() (32-bit unsigned lanes hold the values fn() keeps in int, and
+// no intermediate of fn() is negative), written with GCC vector extensions so that it is SSE2 on the PC
+// and NEON on the Vita.
+typedef uint32 s9x_v4u __attribute__((vector_size(16)));
+
 struct COLOR_ADD
 {
+	enum { Vec = 1 };
+	static alwaysinline s9x_v4u fnV(s9x_v4u C1, s9x_v4u C2)
+	{
+		const uint32 RB = (0x1F << RED_SHIFT_BITS) | 0x1F;
+		const uint32 GM = 0x1F << GREEN_SHIFT_BITS;
+		s9x_v4u rb = (C1 & RB) + (C2 & RB);
+		s9x_v4u rbcarry = rb & ((0x20u << RED_SHIFT_BITS) | (0x20u << 0));
+		s9x_v4u g = (C1 & GM) + (C2 & GM);
+		s9x_v4u flags = ((g & (0x20u << GREEN_SHIFT_BITS)) | rbcarry) >> 5;
+		s9x_v4u rgbsaturate = (flags << 5) - flags;		// * 0x1f
+		s9x_v4u retval = ((rb & RB) | (g & GM) | rgbsaturate) & 0xFFFFu;
+#if GREEN_SHIFT_BITS == 6
+		retval |= (retval & 0x0400u) >> 5;
+#endif
+		return retval;
+	}
+
 	static alwaysinline uint16 fn(uint16 C1, uint16 C2)
 	{
 		const int RED_MASK = 0x1F << RED_SHIFT_BITS;
@@ -188,6 +211,9 @@ struct COLOR_ADD
 
 struct COLOR_ADD_BRIGHTNESS
 {
+	enum { Vec = 0 };
+	static alwaysinline s9x_v4u fnV(s9x_v4u C1, s9x_v4u C2) { return C1; }	// never used (Vec = 0)
+
 	static alwaysinline uint16 fn(uint16 C1, uint16 C2)
 	{
 		return ((brightness_cap[ (C1 >> RED_SHIFT_BITS)           +  (C2 >> RED_SHIFT_BITS)          ] << RED_SHIFT_BITS)   |
@@ -208,6 +234,24 @@ struct COLOR_ADD_BRIGHTNESS
 
 struct COLOR_SUB
 {
+	enum { Vec = 1 };
+	static alwaysinline s9x_v4u fnV(s9x_v4u C1, s9x_v4u C2)
+	{
+		const uint32 RB = THIRD_COLOR_MASK | FIRST_COLOR_MASK;
+		s9x_v4u rb1 = (C1 & RB) | ((0x20u << 0) | (0x20u << RED_SHIFT_BITS));
+		s9x_v4u rb2 = C2 & RB;
+		s9x_v4u rb = rb1 - rb2;
+		s9x_v4u rbcarry = rb & ((0x20u << RED_SHIFT_BITS) | (0x20u << 0));
+		s9x_v4u g = ((C1 & (uint32) SECOND_COLOR_MASK) | (0x20u << GREEN_SHIFT_BITS)) - (C2 & (uint32) SECOND_COLOR_MASK);
+		s9x_v4u flags = ((g & (0x20u << GREEN_SHIFT_BITS)) | rbcarry) >> 5;
+		s9x_v4u rgbsaturate = (flags << 5) - flags;		// * 0x1f
+		s9x_v4u retval = (((rb & RB) | (g & (uint32) SECOND_COLOR_MASK)) & rgbsaturate) & 0xFFFFu;
+#if GREEN_SHIFT_BITS == 6
+		retval |= (retval & 0x0400u) >> 5;
+#endif
+		return retval;
+	}
+
 	static alwaysinline uint16 fn(uint16 C1, uint16 C2)
 	{
 		int rb1 = (C1 & (THIRD_COLOR_MASK | FIRST_COLOR_MASK)) | ((0x20 << 0) | (0x20 << RED_SHIFT_BITS));

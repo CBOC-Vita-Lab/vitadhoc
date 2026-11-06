@@ -7,11 +7,25 @@
 #include "snes9x.h"
 #include "memmap.h"
 
+// CBOC-Vita: inlined fast path of S9xSA1GetByte (a plain ROM/RAM block); everything else calls the original
+static alwaysinline uint8 S9xSA1GetByteF (uint32 address)
+{
+	uint8	*GetAddress = SA1.Map[(address & 0xffffff) >> MEMMAP_SHIFT];
+
+	if (GetAddress >= (uint8 *) CMemory::MAP_LAST)
+	{
+		SA1.Cycles += SA1.MemSpeed;
+		return (*(GetAddress + (address & 0xffff)));
+	}
+
+	return S9xSA1GetByte(address);
+}
+
 #define CPU								SA1
 #define ICPU							SA1
 #define Registers						SA1Registers
 #define OpenBus							SA1OpenBus
-#define S9xGetByte						S9xSA1GetByte
+#define S9xGetByte						S9xSA1GetByteF
 #define S9xGetWord						S9xSA1GetWord
 #define S9xSetByte						S9xSA1SetByte
 #define S9xSetWord						S9xSA1SetWord

@@ -812,6 +812,23 @@ uint16 S9xSA1GetWord (uint32 address, s9xwrap_t w)
 {
 	PC_t	a;
 
+	// CBOC-Vita: both bytes in one plain ROM/RAM block (the common case): one lookup, same cycles, same open bus
+	{
+		uint32	mask = MEMMAP_MASK & (w == WRAP_PAGE ? 0xff : (w == WRAP_BANK ? 0xffff : 0xffffff));
+		if ((address & mask) != mask)
+		{
+			uint8	*GetAddress = SA1.Map[(address & 0xffffff) >> MEMMAP_SHIFT];
+
+			if (GetAddress >= (uint8 *) CMemory::MAP_LAST)
+			{
+				SA1.Cycles += SA1.MemSpeed * 2;
+				uint16	word = READ_WORD(GetAddress + (address & 0xffff));
+				SA1OpenBus = (uint8) word;
+				return (word);
+			}
+		}
+	}
+
 	SA1OpenBus = S9xSA1GetByte(address);
 
 	switch (w)

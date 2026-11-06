@@ -54,7 +54,11 @@ static inline int32 memory_speed (uint32 address)
 	return (TWO_CYCLES);
 }
 
-inline uint8 S9xGetByte (uint32 Address)
+// CBOC-Vita: the four memory accessors are split in a small inlined fast path (a plain RAM/ROM block: one
+// table lookup, one access, the cycle accounting) and the original body, which stays out of line. The
+// fast path is the first branch of the original code, unchanged.
+inline uint8 S9xGetByteSlow (uint32 Address) __attribute__((noinline));
+inline uint8 S9xGetByteSlow (uint32 Address)
 {
 	int		block = (Address & 0xffffff) >> MEMMAP_SHIFT;
 	uint8	*GetAddress = Memory.Map[block];
@@ -157,7 +161,24 @@ inline uint8 S9xGetByte (uint32 Address)
 	}
 }
 
-inline uint16 S9xGetWord (uint32 Address, enum s9xwrap_t w = WRAP_NONE)
+
+static alwaysinline uint8 S9xGetByte (uint32 Address)
+{
+	uint8	*GetAddress = Memory.Map[(Address & 0xffffff) >> MEMMAP_SHIFT];
+
+	if (GetAddress >= (uint8 *) CMemory::MAP_LAST)
+	{
+		int32	speed = memory_speed(Address);
+		uint8	byte = *(GetAddress + (Address & 0xffff));
+		addCyclesInMemoryAccess;
+		return (byte);
+	}
+
+	return S9xGetByteSlow(Address);
+}
+
+inline uint16 S9xGetWordSlow (uint32 Address, enum s9xwrap_t w) __attribute__((noinline));
+inline uint16 S9xGetWordSlow (uint32 Address, enum s9xwrap_t w)
 {
 	uint16	word;
 
@@ -317,7 +338,28 @@ inline uint16 S9xGetWord (uint32 Address, enum s9xwrap_t w = WRAP_NONE)
 	}
 }
 
-inline void S9xSetByte (uint8 Byte, uint32 Address)
+
+static alwaysinline uint16 S9xGetWord (uint32 Address, enum s9xwrap_t w = WRAP_NONE)
+{
+	uint32	mask = MEMMAP_MASK & (w == WRAP_PAGE ? 0xff : (w == WRAP_BANK ? 0xffff : 0xffffff));
+	if ((Address & mask) != mask)
+	{
+		uint8	*GetAddress = Memory.Map[(Address & 0xffffff) >> MEMMAP_SHIFT];
+
+		if (GetAddress >= (uint8 *) CMemory::MAP_LAST)
+		{
+			int32	speed = memory_speed(Address);
+			uint16	word = READ_WORD(GetAddress + (Address & 0xffff));
+			addCyclesInMemoryAccess_x2;
+			return (word);
+		}
+	}
+
+	return S9xGetWordSlow(Address, w);
+}
+
+inline void S9xSetByteSlow (uint8 Byte, uint32 Address) __attribute__((noinline));
+inline void S9xSetByteSlow (uint8 Byte, uint32 Address)
 {
 	int		block = (Address & 0xffffff) >> MEMMAP_SHIFT;
 	uint8	*SetAddress = Memory.WriteMap[block];
@@ -423,7 +465,24 @@ inline void S9xSetByte (uint8 Byte, uint32 Address)
 	}
 }
 
-inline void S9xSetWord (uint16 Word, uint32 Address, enum s9xwrap_t w = WRAP_NONE, enum s9xwriteorder_t o = WRITE_01)
+
+static alwaysinline void S9xSetByte (uint8 Byte, uint32 Address)
+{
+	uint8	*SetAddress = Memory.WriteMap[(Address & 0xffffff) >> MEMMAP_SHIFT];
+
+	if (SetAddress >= (uint8 *) CMemory::MAP_LAST)
+	{
+		int32	speed = memory_speed(Address);
+		*(SetAddress + (Address & 0xffff)) = Byte;
+		addCyclesInMemoryAccess;
+		return;
+	}
+
+	S9xSetByteSlow(Byte, Address);
+}
+
+inline void S9xSetWordSlow (uint16 Word, uint32 Address, enum s9xwrap_t w, enum s9xwriteorder_t o) __attribute__((noinline));
+inline void S9xSetWordSlow (uint16 Word, uint32 Address, enum s9xwrap_t w, enum s9xwriteorder_t o)
 {
 	uint32	mask = MEMMAP_MASK & (w == WRAP_PAGE ? 0xff : (w == WRAP_BANK ? 0xffff : 0xffffff));
 	if ((Address & mask) == mask)
@@ -692,6 +751,25 @@ inline void S9xSetWord (uint16 Word, uint32 Address, enum s9xwrap_t w = WRAP_NON
 			addCyclesInMemoryAccess_x2;
 			return;
 	}
+}
+
+static alwaysinline void S9xSetWord (uint16 Word, uint32 Address, enum s9xwrap_t w = WRAP_NONE, enum s9xwriteorder_t o = WRITE_01)
+{
+	uint32	mask = MEMMAP_MASK & (w == WRAP_PAGE ? 0xff : (w == WRAP_BANK ? 0xffff : 0xffffff));
+	if ((Address & mask) != mask)
+	{
+		uint8	*SetAddress = Memory.WriteMap[(Address & 0xffffff) >> MEMMAP_SHIFT];
+
+		if (SetAddress >= (uint8 *) CMemory::MAP_LAST)
+		{
+			int32	speed = memory_speed(Address);
+			WRITE_WORD(SetAddress + (Address & 0xffff), Word);
+			addCyclesInMemoryAccess_x2;
+			return;
+		}
+	}
+
+	S9xSetWordSlow(Word, Address, w, o);
 }
 
 inline void S9xSetPCBase (uint32 Address)

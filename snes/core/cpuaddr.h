@@ -27,7 +27,7 @@ static inline uint8 Immediate8Slow (AccessMode a)
 	return (val);
 }
 
-static inline uint8 Immediate8 (AccessMode a)
+static alwaysinline uint8 Immediate8 (AccessMode a)
 {
 	uint8	val = CPU.PCBase[Registers.PCw];
 	if (a & READ)
@@ -48,7 +48,7 @@ static inline uint16 Immediate16Slow (AccessMode a)
 	return (val);
 }
 
-static inline uint16 Immediate16 (AccessMode a)
+static alwaysinline uint16 Immediate16 (AccessMode a)
 {
 	uint16	val = READ_WORD(CPU.PCBase + Registers.PCw);
 	if (a & READ)

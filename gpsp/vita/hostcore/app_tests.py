@@ -585,7 +585,7 @@ def t_session(S):
     S.picture(r, "quicksave.png")
 
     # battery save, screenshot
-    sav = stem + ".sav"
+    sav = os.path.join(r.root, "roms", "gbadhoc-test.sav")   # beside the ROM (1.3)
     S.check(os.path.exists(sav) and os.path.getsize(sav) == 131072 and
             len(set(open(sav, "rb").read())) > 1,
             "the battery save is beside the ROM, 128 KiB, written")
@@ -4954,7 +4954,7 @@ def t_save_clock(S):
     # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME;
     #    from the last row (Display settings) UP twice.  X steps a value.
     r = S.run("save_type_rows", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+8:up\n+8:up\n+10:shot=rows.png\n"
+              "+20:up\n" + "+8:up\n" * 6 + "+10:shot=rows.png\n"
               "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
               "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)

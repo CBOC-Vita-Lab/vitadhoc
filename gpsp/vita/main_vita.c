@@ -2786,6 +2786,11 @@ static void ff_set(int on)
       ff_gate_arm(&g_ff.gate, 0);
       fe_evt("ff off");
    }
+   /* Nothing is pushed while it runs (sink_audio): what was queued would
+    * play out as a stale tail when it starts, and the sound made just before
+    * it ends would play late when it ends.  Start clean on both sides. */
+   if (g_game_loaded)
+      audio_flush();
    app_pace_reset();               /* fast forward is not a debt of frames */
 }
 
@@ -4483,6 +4488,7 @@ static void game_loop(void)
          g_fps_t0 = 0;           /* the time in the menu is not a frame rate */
          rewind_configure(g_pcfg.rewind, g_pcfg.rewind_mb);   /* Settings */
          cheats_flush();
+         audio_flush();          /* the sound stopped with the game */
          app_pace_reset();
          fe_evt("menu_closed frame=%u", fe_host_frame_count());
       }

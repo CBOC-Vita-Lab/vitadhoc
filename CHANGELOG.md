@@ -1,5 +1,21 @@
 # What's New
 
+## Version 1.3
+
+**Sound.** Fixes for pops, drifting delay and loud pushes in Game Boy sound.
+
+- **No more growing sound delay:** opening the menu, fast forward and rewind
+  each used to count as a dropout and made the sound buffer 20 ms longer, up
+  to 120 ms, until half a minute of calm play. Stopping the game on purpose no
+  longer does that, and the sound starts clean when fast forward or the menu
+  ends.
+- **Game Boy games that "park" a sound channel:** a tone channel set above
+  65 kHz (a trick games use to switch a channel off) played a loud constant
+  push with a click on each side. It is now silent.
+
+Real-console listening is still being checked; the numbers behind these are
+in [Technical details](docs/TECHNICAL.md).
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

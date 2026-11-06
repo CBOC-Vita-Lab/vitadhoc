@@ -515,7 +515,7 @@ def t_wifi_cable(T):
     # child), the rest green until anything fails
     for r, who, ch in ((ra, "A", 0), (rb, "B", 2)):
         im = r.shot("running.png")
-        left, right = im.getpixel((200, 50)), im.getpixel((700, 50))
+        left, right = im.getpixel((200, 20)), im.getpixel((700, 20))
         T.check(left[ch] > 200 and left[2 - ch] < 60 and right[1] > 150 and
                 right[0] < 60 and right[2] < 60,
                 "%s: the cartridge's own screen while linked: role band %s "

@@ -670,6 +670,14 @@ extern pcfg_display g_pdisp[FE_CONSOLE_COUNT];
  *               games without one): how motion is read, how strongly, which
  *               way round, the hold that counts as level, and the light a
  *               light-sensor game sees. */
+/* [save-type] [rtc] per-game GBA overrides for ROM hacks (games/<ROM>.ini
+ * keys save_type, rtc), applied when the game starts.  The order of
+ * PCFG_SAVE_* is gba_memory.h's GPSP_SAVE_*. */
+enum { PCFG_SAVE_AUTO, PCFG_SAVE_SRAM, PCFG_SAVE_FLASH64, PCFG_SAVE_FLASH128,
+       PCFG_SAVE_EEPROM512, PCFG_SAVE_EEPROM8K, PCFG_SAVE_MODES };
+enum { PCFG_RTC_AUTO, PCFG_RTC_ON, PCFG_RTC_OFF, PCFG_RTC_MODES };
+const char *pcfg_save_type_name(int t);
+const char *pcfg_rtc_mode_name(int m);
 enum { PCFG_SENSOR_MOTION, PCFG_SENSOR_STICK, PCFG_SENSOR_MODES };
 enum { PCFG_SENS_LOW, PCFG_SENS_NORMAL, PCFG_SENS_HIGH, PCFG_SENS_MODES };
 #define PCFG_SUN_CLOCK     11   /* the light follows the time of day */
@@ -684,6 +692,8 @@ typedef struct
    int sensor_mode, sensor_sens, sensor_rev, sunlight;
    int level_set;             /* level_right/level_down hold a calibration */
    int level_right, level_down;   /* milli-g of the hold counted as level  */
+   int save_type;             /* PCFG_SAVE_*: GBA battery type, read at load */
+   int rtc_mode;              /* PCFG_RTC_*: GBA cartridge clock, at load    */
 } pcfg_game;
 extern pcfg_game g_pgame;
 /* Read `path` for the game about to run on `console` and, when it has its own

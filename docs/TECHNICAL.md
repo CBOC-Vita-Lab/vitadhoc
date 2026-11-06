@@ -281,6 +281,36 @@ palette RAM and OAM, `testrom/cpufix.c`); unit tests
 `gbcore/tests/mbc7.c` and `vita/tests/playlog/test_play_log.c` under ASan and
 UBSan.
 
+## Cartridge clock and save type (1.3)
+
+The GBA cartridge clock used to be "time at load + emulated frames", which
+steps back at every Continue or state load and runs ahead under fast-forward
+(libretro/gpsp #269, #275; upstream added an "RTC time source" option for
+this, here the system clock is simply the default). `fe_host.c`
+(`rtc_wall_publish`) now publishes `gpsp_wallclock()` (the Vita's local
+clock, `plat_wallclock`) to `gpsp_rtc_wall` before the cartridge loads and at
+most five times a second; `gba_memory.c` / `rtc_clock.h` show it to the game,
+never earlier than the last value shown. The save-state format is unchanged:
+the base still round-trips, is re-anchored on read, and old states load.
+Where determinism matters the frame clock stays: a link session forces it on
+both consoles (`gpsp_rtc_frames_only`, `fe_gbadual.c`); rewind records the
+second shown each frame and replays it exactly (`rw_frame_context`), so
+rewinding never makes the clock jump; the second link machine never has a
+wall clock. RetroAchievements needs no repeatable clock (rcheevos reads
+memory only), so Hardcore uses the real one. `CONFIG.INI rtc_realtime = 0` is
+a kill switch back to the old clock. Tests: `VITADHOC_FAKE_TIME=<seconds>`
+sets the twin's start-up time.
+
+Save type: `games/<ROM>.ini` keys `save_type` (0 Auto, 1 SRAM, 2 Flash 64 KB,
+3 Flash 128 KB, 4 EEPROM 512 B, 5 EEPROM 8 KB) and `rtc` (0 Auto, 1 On, 2 Off),
+shown in Settings > This game and applied by `apply_save_type_choice()` in
+`load_gamepak`, before the battery file is read. Auto also reads a 131072- or
+131088-byte save file as 128 KB flash when the ROM is not in the override
+database and its labels say 64 KB flash, nothing, or EEPROM together with
+FLASH1M (an explicit SRAM label, or a 32 KB or 64 KB file, is left alone).
+Tests: `tools/tests/test_rtc_save_type.c` (in the `rtc_clock` host suite) and
+app test `save_clock`.
+
 ## Diagnostics
 
 Switches include `drc = 0`, `render_thread = 2` for comparison,

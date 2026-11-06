@@ -952,6 +952,60 @@ static int gb_serial_transfer(void *userdata, uint8_t outgoing,
    return 1;
 }
 
+/* [rtc] THE GBA CARTRIDGE CLOCK FOLLOWS THE CONSOLE'S CLOCK.
+ * gba_memory.c shows the game gpsp_rtc_wall when it is set (rtc_clock.h):
+ * otherwise "load time + frames played", which rewinds the in-game clock at
+ * every Continue / state load and runs ahead under fast-forward (Pokemon
+ * berries and daily events, libretro/gpsp#269 and #275; upstream's answer
+ * was an "RTC time source" option, here it is the default).  Published
+ * before the cartridge loads and then at most five times a second.  A link
+ * session sets gpsp_rtc_frames_only itself (fe_gbadual.c) so both machines
+ * compute the same clock; rewind records the second it showed each frame
+ * (fe_host rw_frame_context), so it replays exactly. */
+extern volatile long long gpsp_rtc_wall;
+extern time_t (*gpsp_wallclock)(void);
+/* [save-type] gba_memory.c */
+extern int gpsp_force_save_type;
+extern unsigned gpsp_save_size_hint;
+extern const char *gpsp_backup_name(void);
+static void rtc_wall_publish(int force)
+{
+   static uint64_t last_us;
+   uint64_t now;
+   time_t t;
+   if (host.console != FE_CONSOLE_GBA)
+      return;
+   if (host.gba_rtc_frames_only || !gpsp_wallclock)
+   {
+      gpsp_rtc_wall = 0;
+      return;
+   }
+   now = host.time_us ? host.time_us() : 0;
+   if (!force && host.time_us && now - last_us < 200000u)
+      return;
+   last_us = now;
+   t = gpsp_wallclock();
+   if (t > 0)
+      gpsp_rtc_wall = (long long)t;      /* a failed read keeps the last one */
+   if (force)
+      fe_evt("rtc_wall on=1 t=%lld", (long long)t);
+}
+
+/* [save-type] How big is the battery file already on disk?  0 = none. */
+static uint32_t save_file_size_hint(void)
+{
+   FILE *f;
+   long n;
+   if (!host.save_path)
+      return 0;
+   f = fopen(host.save_path, "rb");
+   if (!f)
+      return 0;
+   n = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+   fclose(f);
+   return n > 0 ? (uint32_t)n : 0;
+}
+
 /* Core options (FRONTEND-AUDIT §9). Values must match check_variables()
  * string compares exactly (libretro/libretro.c:918-1120). */
 typedef struct { const char *key; char value[24]; } fe_option;
@@ -4221,6 +4275,11 @@ int fe_host_boot(const fe_host_config *cfg)
 
    memset(&game, 0, sizeof(game));
    game.path = host.rom_path;
+   rtc_wall_publish(1);                  /* [rtc] before the cartridge loads */
+   gpsp_force_save_type = host.gba_save_type;      /* [save-type] */
+   gpsp_save_size_hint = save_file_size_hint();
+   fe_evt("save_type choice=%d file_size=%u", host.gba_save_type,
+          (unsigned)gpsp_save_size_hint);
    if (host.boot_status) host.boot_status("Reading ROM");
    if (!retro_load_game(&game))
    {
@@ -4230,6 +4289,7 @@ int fe_host_boot(const fe_host_config *cfg)
    }
 
    log_rom_evt();
+   fe_evt("save_type detected=%s", gpsp_backup_name());
    if (gpsp_sensor_kinds())
       fe_evt("sensor_cart kinds=%u", (unsigned)gpsp_sensor_kinds());
 
@@ -7130,6 +7190,8 @@ static void run_frame(void)
 {
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;
    unsigned rf0 = 0, ff0 = 0, sf0 = 0, df0 = 0, pl0 = 0;
+
+   rtc_wall_publish(0);
 
 #ifdef GBA_LINK
    if (gbl && gba_cable)

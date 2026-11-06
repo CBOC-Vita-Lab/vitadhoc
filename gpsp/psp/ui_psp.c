@@ -2308,8 +2308,8 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
        SET_HDR_LIB, SET_SYNCRA, SET_FOLDERS, SET_SORT,
-       SET_HDR_THIS, SET_OWN_LOOK, SET_MOTION, SET_SENS, SET_REVERSE,
-       SET_LEVEL, SET_SUN,
+       SET_HDR_THIS, SET_SAVETYPE, SET_CLOCK, SET_OWN_LOOK, SET_MOTION, SET_SENS,
+       SET_REVERSE, SET_LEVEL, SET_SUN,
        SET_HDR_CTL, SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
@@ -2438,6 +2438,11 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* The running game's own (config_psp.h pcfg_game): its look, and the
     * sensor rows of a sensor cartridge (fe_sensor.h). */
    { 1, "THIS GAME" },
+   /* GBA games, for ROM hacks the app does not detect right; read at the
+    * next start of the game.  Placed above Display settings so the rows a
+    * walker reaches by wrapping up from the top keep their place. */
+   { 0, "Save type" },
+   { 0, "Clock (RTC)" },
    { 0, "Display settings" },
    { 0, "Motion controls" },
    { 0, "Motion strength" },
@@ -2489,6 +2494,8 @@ static int set_row_shown(int idx)
          return (k & (FE_SENSOR_TILT | FE_SENSOR_MBC7)) != 0;
       if (idx == SET_SUN)
          return (k & FE_SENSOR_SOLAR) != 0;
+      if (idx == SET_SAVETYPE || idx == SET_CLOCK)
+         return g_pgame.console == FE_CONSOLE_GBA;
       return 1;
    }
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_COVERS &&
@@ -3168,6 +3175,20 @@ static void settings_adjust(int id, int dir)
                          (PCFG_SUN_CLOCK + 1);
       fe_evt("sensor_setting sun=%d", g_pgame.sunlight);
       break;
+   case SET_SAVETYPE:
+      g_pgame.save_type = (g_pgame.save_type + PCFG_SAVE_MODES +
+                           (dir < 0 ? -1 : 1)) % PCFG_SAVE_MODES;
+      (void)pcfg_game_save();
+      osd_toast("Save type is used the next time the game starts");
+      fe_evt("game_setting save_type=%d", g_pgame.save_type);
+      break;
+   case SET_CLOCK:
+      g_pgame.rtc_mode = (g_pgame.rtc_mode + PCFG_RTC_MODES +
+                          (dir < 0 ? -1 : 1)) % PCFG_RTC_MODES;
+      (void)pcfg_game_save();
+      osd_toast("Clock is used the next time the game starts");
+      fe_evt("game_setting rtc=%d", g_pgame.rtc_mode);
+      break;
 #endif
 #ifdef REWIND
    case SET_REWIND:
@@ -3515,6 +3536,8 @@ static const char *set_help(int id)
    case SET_SENS:     return "How strongly a turn or a tilt is felt.";
    case SET_REVERSE:  return "Swap it if turning or tilting feels backwards.";
    case SET_LEVEL:    return "Hold the Vita as level should be, then press X.";
+   case SET_SAVETYPE: return "For ROM hacks. Takes effect at the next start.";
+   case SET_CLOCK:    return "Auto: on where the game has one. Next start.";
    case SET_SUN:      return "How much sunlight the cartridge's solar sensor "
                              "sees.";
 #endif
@@ -4142,6 +4165,14 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_SAVETYPE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_save_type_name(g_pgame.save_type));
+         break;
+      case SET_CLOCK:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_rtc_mode_name(g_pgame.rtc_mode));
+         break;
 #endif
 #ifdef REWIND
       case SET_REWIND:

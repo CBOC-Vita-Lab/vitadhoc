@@ -4528,6 +4528,114 @@ def t_save_gb_keep(S):
     d = open(os.path.join(r.root, "retroarch", "savefiles", "Gambatte", "kept.srm"), "rb").read()
     S.check(len(d) == 8192 and d[0] == 0x55 and d[1:] == b"\x22" * 8191,
             "a Game Boy .srm of the RAM is written back at 8192 bytes")
+def t_save_clock(S):
+    """ROM hacks and the Pokemon clock: the cartridge clock is the console's
+    (rtc_wall, fe_host.c), a 128 KiB save is read as 128 KiB flash even when
+    the ROM says otherwise, and Settings > THIS GAME > Save type / Clock (RTC)
+    are remembered per game and change what is detected."""
+    own = open(OWN_GBA, "rb").read()
+    big = bytes((i * 3 + 1) & 0xFF for i in range(131072))
+    # 1. The Vita's clock at start-up reaches the cartridge (test hook:
+    #    VITADHOC_FAKE_TIME, the console's local time as seconds since 1970).
+    old = os.environ.get("VITADHOC_FAKE_TIME")
+    for day, name in ((1791504000, "day1"), (1791504000 + 3 * 86400, "day4")):
+        os.environ["VITADHOC_FAKE_TIME"] = str(day)
+        try:
+            r = S.run("save_clock_" + name, "60:quit\n",
+                      autoboot="gbadhoc-test.gba")
+        finally:
+            if old is None:
+                os.environ.pop("VITADHOC_FAKE_TIME", None)
+            else:
+                os.environ["VITADHOC_FAKE_TIME"] = old
+        S.clean(r)
+        ev = r.evt("rtc_wall")
+        S.check(ev and abs(int(ev[0]["t"]) - day) <= 2,
+                "%s: the cartridge clock starts at the console's time (%s)" %
+                (name, ev[0]["t"] if ev else "no rtc_wall event"))
+    # 2. Save type, Auto.  The test cartridge says "SRAM_V113"; a ROM hack
+    #    that says nothing, or says the 64 KB flash library (gpsp#246).
+    bare = own.replace(b"SRAM_V113", b"XRAM_V113")
+    hack = own.replace(b"SRAM_V113", b"FLASH_V\0\0")
+    def go(name, rom, save=None, ini=None):
+        x = {"roms/hack.gba": rom}
+        if save is not None:
+            x["roms/hack.sav"] = save
+        if ini:
+            x["games/hack.gba.ini"] = ini
+        r = S.run(name, "30:quit\n", autoboot="hack.gba", extra=x)
+        S.clean(r)
+        return r
+    S.check(go("save_type_plain", own).has(r"^EVT save_type detected=sram$"),
+            "the cartridge's own SRAM string stays SRAM")
+    S.check(go("save_type_bare", bare).has(r"^EVT save_type detected=sram-default"),
+            "no string and no save: the default")
+    S.check(go("save_type_flash64", hack).has(r"^EVT save_type detected=flash64"),
+            "a 64 KB flash string and no save: 64 KB flash")
+    S.check(go("save_type_flash64_big", hack, big).has(
+            r"^EVT save_type detected=flash128"),
+            "...but with a 128 KiB save: 128 KB flash")
+    S.check(go("save_type_bare_big", bare, big).has(
+            r"^EVT save_type detected=flash128"),
+            "no string and a 128 KiB save: 128 KB flash")
+    S.check(go("save_type_trailer", hack, big + bytes(16)).has(
+            r"^EVT save_type detected=flash128"),
+            "a 128 KiB save with the 16-byte trailer: 128 KB flash")
+    S.check(go("save_type_small", hack, big[:65536]).has(
+            r"^EVT save_type detected=flash64"),
+            "a 64 KiB save changes nothing")
+    S.check(go("save_type_explicit_sram", own, big).has(
+            r"^EVT save_type detected=sram$"),
+            "an explicit SRAM string is not argued with")
+    # 3. The per-game file overrides it, whatever the save looks like.
+    for val, want in ((1, "sram"), (2, "flash64"), (3, "flash128"),
+                      (4, "eeprom512"), (5, "eeprom8k")):
+        r = go("save_type_ini%d" % val, hack, big, "save_type = %d\n" % val)
+        S.check(r.has(r"^EVT save_type detected=%s" % want),
+                "save_type = %d gives %s" % (val, want))
+    # 4. The private Emerald dump (a copy; flash 128 KB and a clock), if it
+    #    is on this machine.
+    emr = "/w/roms/Pokemon - Emerald Version (USA, Europe).gba"
+    esv = "/w/roms/Pokemon Emerald All Shiny Fixed.sav"
+    if os.path.exists(emr) and os.path.exists(esv):
+        rom, sav = open(emr, "rb").read(), open(esv, "rb").read()
+        r = S.run("save_type_emerald", "60:quit\n", autoboot="emerald.gba",
+                  extra={"roms/emerald.gba": rom, "roms/emerald.sav": sav})
+        S.clean(r)
+        S.check(r.has(r"^EVT save_type detected=flash128") and
+                r.has(r"^EVT save_type choice=0 file_size=131072"),
+                "Emerald with its 131072-byte save: 128 KB flash")
+        S.check(open(os.path.join(r.root, "roms", "emerald.sav"), "rb").read()
+                [:len(sav)] == sav, "...and the save came back byte for byte")
+        r = S.run("save_type_emerald_sram", "60:quit\n", autoboot="emerald.gba",
+                  extra={"roms/emerald.gba": rom, "roms/emerald.sav": sav,
+                         "games/emerald.gba.ini": "save_type = 1\n"})
+        S.check(r.has(r"^EVT save_type detected=sram"),
+                "a chosen type beats detection on the same ROM")
+    else:
+        S.note("no private Emerald copy here: that leg is skipped")
+    # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME;
+    #    from the last row (Display settings) UP twice.  X steps a value.
+    r = S.run("save_type_rows", menu_pick(4, wait=60) +
+              "+20:up\n+8:up\n+8:up\n+8:up\n+10:shot=rows.png\n"
+              "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
+              "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.picture(r, "rows.png")
+    g = open(os.path.join(r.root, "games", "gbadhoc-test.gba.ini")).read() \
+        if os.path.exists(os.path.join(r.root, "games",
+                                       "gbadhoc-test.gba.ini")) else ""
+    S.check(re.search(r"^save_type = 2$", g, re.M),
+            "Save type stepped twice (Auto > SRAM > Flash 64 KB) is saved (%r)"
+            % g[:120])
+    S.check(re.search(r"^rtc = 1$", g, re.M), "Clock (RTC) On is saved")
+    r = S.run("save_type_rows_again", "30:quit\n", autoboot="gbadhoc-test.gba",
+              extra={"games/gbadhoc-test.gba.ini": g,
+                     "roms/gbadhoc-test.sav": big})
+    S.clean(r)
+    S.check(r.has(r"^EVT game_settings_clock save_type=2 rtc=1") and
+            r.has(r"^EVT save_type detected=flash64"),
+            "the next start uses them")
 
 
 def t_launch_param(S):
@@ -4868,7 +4976,7 @@ TESTS = [("list", t_list), ("extra_roms", t_extra_roms),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),
          ("realtime", t_realtime),
-         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_gb_keep", t_save_gb_keep), ("launch_param", t_launch_param),
+         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows)]
 
 

@@ -730,7 +730,16 @@ time_t plat_wallclock(void)
 {
    /* A fixed date plus the run's own time: cartridge clocks must not make
     * two simulated runs differ. */
-   return (time_t)(1700000000ull + now_ns() / 1000000000ull);
+   /* VITADHOC_FAKE_TIME=<seconds since 1970, local time as the console shows
+    * it> is the tests' hook for "what the Vita's clock says at start-up"; the
+    * run's own time still advances from there. */
+   static long long base = -1;
+   if (base < 0)
+   {
+      const char *e = getenv("VITADHOC_FAKE_TIME");
+      base = e && *e ? atoll(e) : 1700000000ll;
+   }
+   return (time_t)((unsigned long long)base + now_ns() / 1000000000ull);
 }
 
 unsigned plat_vcount(void) { return (unsigned)(now_ns() / refresh_ns()); }

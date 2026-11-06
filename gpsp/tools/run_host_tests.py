@@ -603,6 +603,13 @@ def suites(env: Env, baseline: Path | None):
           "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
           "-fsanitize=address,undefined -I. -o /tmp/t_rtc_clock "
           "tools/tests/test_rtc_clock.c && /tmp/t_rtc_clock && "
+          # The cartridge clock follows the console's (Continue, old states,
+          # days away) and the per-game save type / 128 KiB save hint.
+          "gcc -std=gnu99 -O1 -g -w -ffunction-sections -fdata-sections "
+          "-DINLINE=inline -Ilibretro/libretro-common/include "
+          "-Ifrontend-common -o /tmp/t_rtc_save_type "
+          "tools/tests/test_rtc_save_type.c -Wl,--gc-sections && "
+          "/tmp/t_rtc_save_type && "
           # Save-state delete (docs/CONTROL-REMAP.md section 11): the one
           # function that names the files a delete removes.  Here because the
           # runner caps the suite count and this suite owns ctl_map, whose

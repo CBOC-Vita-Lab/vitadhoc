@@ -410,3 +410,19 @@ the cores the threading just freed.
 5. Frame skip only as a last resort and only when the player enables it: skipping
    the PPU job (not the CPU/APU work) is exact for game logic, because the PPU
    thread already owns rendering.
+
+## Phase 2 status (threads)
+
+Switches (twin: `--opt NAME=1`; Vita: ini keys of the same names): `apu_thread`, `ppu_thread`. Both off gives the exact phase-1 path.
+
+Done:
+- `apu_thread`: SPC700 and DSP run on a worker that replays the CPU-side command stream (run-to-cycle, port read, port write, end-of-scanline) in order, so output is the same by construction. Port reads help-drain the queue under a lock instead of handing over threads (a wait-per-read design was about 70x slower on polling ROMs).
+- `ppu_thread`: each render flush posts a state snapshot (PPU, IPPU, line tables, colour tables, dirty VRAM blocks); a second copy of the renderer objects (symbols renamed at build time, `core/rcopy.sh`) draws on its own thread. The picture is snapshotted when the host fetches it, because Snes9x can hand the picture over after the next frame has started drawing; copying at the end of the frame instead made the Super FX demos differ.
+- `python3 twin/mt_compare.py [--mt ppu_thread=1,apu_thread=1] [--frames N] [--roms DIR]` runs every ROM both ways and compares frame hashes and WAV bytes.
+
+Results (x86, shared 2-core box, so timings are noisy):
+- 289 of 289 ROMs identical (300 frames) with ppu_thread, and with both threads; owner set 15 of 15 identical at 1800 frames.
+- Main-thread CPU time on the owner set drops (for example Doom 0.43 s to 0.25 s for 600 frames, Chrono Trigger 0.40 to 0.16), but wall time did not improve on this machine because the box has only two busy cores and the workers spin briefly when idle. Real speedup needs measuring on the Vita's three cores; not done.
+- Commercial ROMs: 190-1223 APU port accesses per frame, 1-31 PPU flushes per frame.
+
+Not done yet: Super FX thread, Vita affinity/priority tuning and per-thread busy log in the 1-second line (affinity masks in `s9x_mt.h` are now the SDK user-core masks, untested), snes.bin vpk build re-check, picture options (ambient, zoom, shaders, governor), the Super FX demo and 92% bucket investigation. Nothing here has run on a real Vita.

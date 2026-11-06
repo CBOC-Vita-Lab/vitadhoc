@@ -15,10 +15,10 @@
 ; rgbds (rgbasm / rgblink / rgbfix); see the Makefile.  GPL-2.0-or-later,
 ; like the rest of gpsp/vita.
 
-FRAME_LO EQU $C000
-FRAME_HI EQU $C001
-NPRESS   EQU $C002
-KEYSWAS EQU $C003
+DEF FRAME_LO EQU $C000
+DEF FRAME_HI EQU $C001
+DEF NPRESS EQU $C002
+DEF KEYSWAS EQU $C003
 
 SECTION "vblank", ROM0[$40]
     jp   vblank

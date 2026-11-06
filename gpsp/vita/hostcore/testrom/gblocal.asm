@@ -27,23 +27,23 @@
 ;
 ; Built with rgbds (rgbasm/rgblink/rgbfix); see the Makefile.
 
-rP1 EQU $FF00
-rSB EQU $FF01
-rSC EQU $FF02
-rLCDC EQU $FF40
-rLY EQU $FF44
-rBGP EQU $FF47
+DEF rP1 EQU $FF00
+DEF rSB EQU $FF01
+DEF rSC EQU $FF02
+DEF rLCDC EQU $FF40
+DEF rLY EQU $FF44
+DEF rBGP EQU $FF47
 
-wRole EQU $C000
-wGoodL EQU $C001
-wGoodH EQU $C002
-wBad EQU $C003
-wTx EQU $C004
-wRx EQU $C005
-wBoot EQU $C006
-wKeys EQU $C007
-wSaved EQU $C008
-wAnswered EQU $C009
+DEF wRole EQU $C000
+DEF wGoodL EQU $C001
+DEF wGoodH EQU $C002
+DEF wBad EQU $C003
+DEF wTx EQU $C004
+DEF wRx EQU $C005
+DEF wBoot EQU $C006
+DEF wKeys EQU $C007
+DEF wSaved EQU $C008
+DEF wAnswered EQU $C009
 
 SECTION "entry", ROM0[$100]
     nop

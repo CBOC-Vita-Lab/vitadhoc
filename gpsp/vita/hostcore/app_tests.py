@@ -1963,13 +1963,13 @@ def t_look(S):
                                                          lum["gba"]))
 
     # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, CPU speed, Keep full speed, FPS, Rewind, FF button,
+    # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, (Wide view: menus -- not a row while the
     # wide view is off, as it is in these tests), Wide view, Motion blend,
     # Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 16 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 18 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2200,10 +2200,10 @@ def t_wide(S):
                 "fit: the picture reaches both edges of the screen (%s)" % col)
 
     # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, CPU speed, Keep full speed, FPS, Rewind, FF button,
+    # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 14 + \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 16 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -3248,9 +3248,9 @@ def t_fullspeed(S):
                          for w in wins[1:]) if len(wins) > 1 else -1,
                 under=int(au[-1].get("under", 0)) if au else -1)
     # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, CPU speed, Keep full speed; CROSS turns it off, and config.ini
+    # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed; CROSS turns it off, and config.ini
     # keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 5 + "+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -4310,7 +4310,7 @@ def _t_ra(S, srv):
     # mapping, Game order and Hardcore to Account; X; the name, then the
     # password, each through the keyboard.
     # (1.2: one more UP, for Library > Game folders above Game order)
-    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n"
+    r = S.run("ra_login", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n"
               "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
               "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
               "+30:quit\n", vita_ini=ini)
@@ -4337,7 +4337,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              "+20:up\n+8:up\n+8:up\n+10:cross\n+20:shot=list.png\n"
+              "+20:up\n" + "+8:up\n" * 4 + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)

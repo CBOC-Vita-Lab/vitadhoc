@@ -67,6 +67,14 @@ typedef struct fe_host_config
     * host test, and any platform whose stamps were always UTC): all UTC. */
    time_t (*wallclock_legacy)(void);
    long long gb_rtc_legacy_before;
+   /* GBA only, [save-type]: the player's per-game choice of battery type,
+    * a GPSP_SAVE_* id (gba_memory.h; 0 = Auto).  Applied before the save
+    * file is read. */
+   int gba_save_type;
+   /* GBA only, [rtc]: nonzero keeps the repeatable frame-counting cartridge
+    * clock (base + emulated frames).  0 = the cartridge clock follows
+    * gpsp_wallclock, the console's own clock (gba_memory.c, rtc_clock.h). */
+   int gba_rtc_frames_only;
    /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (0 = Auto: Super
     * Game Boy colours where the game has them, grey otherwise). */
    int gb_palette;

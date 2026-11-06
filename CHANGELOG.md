@@ -1,5 +1,23 @@
 # What's New
 
+## Version 1.3
+
+**Games with a clock, and ROM hacks**
+- **Pokemon clocks keep the right time after Continue.** The clock inside
+  Pokemon Ruby, Sapphire and Emerald (and other games with one, such as
+  Boktai) now follows the Vita's own clock. Save and quit, come back an hour
+  or three days later, and the game shows the real time, so berries grow,
+  daily events happen and the day and night change as they should. Loading a
+  save state no longer winds the clock back, and fast-forward no longer
+  pushes it ahead. Old save states still load.
+- **Save type for ROM hacks.** In a game, Settings > This game has two new
+  rows: **Save type** (Auto, SRAM, Flash 64 KB, Flash 128 KB, EEPROM 512 B,
+  EEPROM 8 KB) and **Clock (RTC)** (Auto, On, Off). They are remembered for
+  that game only and used the next time it starts. Pokemon Unbound and other
+  hacks that were saving to the wrong size can be set here.
+- **Auto is smarter.** A save file of 128 KB is now read as 128 KB flash,
+  even when the hack's own label says 64 KB.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

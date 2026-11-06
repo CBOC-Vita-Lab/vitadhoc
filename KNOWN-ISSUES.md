@@ -34,6 +34,11 @@ Testing continues on:
   RetroAchievements knows.
 - **Achievements pause during link play** and start counting again afterwards,
   as after loading a state.
+- **Game clocks follow the Vita's clock.** A game saved by an older version
+  while its clock ran ahead can see the date go backwards once; the clock then
+  waits until the real time catches up. Two Vitas in link play share one
+  repeatable clock for the session. Save type and Clock (RTC) can only be
+  changed inside a running game, and apply the next time it starts.
 - **Wide view** is made for Pokémon Emerald and its siblings. In other games
   the edges can miss people or weather.
 - Some cheats need their "Enable Code (Must Be On)" entry first; a few code

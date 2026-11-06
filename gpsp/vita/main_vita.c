@@ -3836,6 +3836,11 @@ static int game_boot(const char *rom_path, fe_console_t console)
       uint32_t blocks = (uint32_t)((size + (1 << 20) - 1) >> 20);
       gamepak_buffer_cap = blocks < 1 ? 1 : blocks > 32 ? 32 : blocks;
       gpsp_wallclock = plat_wallclock;
+      /* [rtc] the in-game clock is the Vita's own (fe_host.c); CONFIG.INI
+       * rtc_realtime=0 is the kill switch back to base + frames played.
+       * [save-type] this game's own battery type, if the player chose one. */
+      cfg.gba_rtc_frames_only = g_pcfg.rtc_realtime ? 0 : 1;
+      cfg.gba_save_type       = g_pgame.save_type;
 #ifdef GBA_LINK
       /* The link partner's machine (instance B, docs/GBA-LINK-MIRROR.md) is
        * loaded with the game and stays loaded: the simplest of fe_host's
@@ -3874,6 +3879,10 @@ static int game_boot(const char *rom_path, fe_console_t console)
    link_host_config(&cfg);
    ui_linkmode_load(g_app_rom_dir);
 
+   if (console == FE_CONSOLE_GBA)      /* [rtc] this game's Clock (RTC) row */
+      fe_host_option_set("gpsp_rtc", g_pgame.rtc_mode == PCFG_RTC_ON ? "enabled"
+                         : g_pgame.rtc_mode == PCFG_RTC_OFF ? "disabled"
+                         : "auto");
    if (!g_sw.drc)
       fe_host_option_set("gpsp_drc", "disabled");
    gpsp_rom_load_progress = loading_progress;

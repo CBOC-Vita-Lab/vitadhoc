@@ -88,7 +88,7 @@ twice).
 - **Hidden files are ignored**, in every folder: any file whose name starts with `.`. A card
   written by a Mac holds a 4 KB `._Game.gba` beside every `Game.gba`; those are not games.
 - **The battery save goes next to the game**, in its own folder (`Game.sav`), as it does in
-  `roms/`; states and the Continue point go under `states/` (`Game~<6 characters>.st0` ...).
+  `roms/`; states and the Continue point go under `states/` (`Game.st0` ...).
   Nothing is copied, and nothing is written to `roms/` for such a game. Box
   art, cheats and the home screen's picture follow the game's file name, as they do for a game
   in a sub-folder of `roms/`; so do Link mode (Settings) and the partner chosen for two players

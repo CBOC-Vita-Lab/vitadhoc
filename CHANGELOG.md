@@ -32,8 +32,8 @@
   its old save states, pictures and Continue point are moved from beside the
   game to the new place. Nothing is overwritten, and if a file can't be
   moved it is still read from where it is.
-- A game in another folder keeps its own states, even when two games share a
-  name.
+- States are named after the game, as RetroArch does, so moving a game to
+  another folder keeps its states.
 
 **Games with a clock, and ROM hacks**
 - **Pokemon clocks keep the right time after Continue.** The clock inside

@@ -3806,8 +3806,7 @@ def t_extra_roms(S):
             "the battery save was written beside the ROM, in its own folder")
     # states go under the app folder, named for the game and its folder
     # (psp/sidecar.h); the extra folder keeps the ROM and its battery save
-    st = os.path.join(root, "states", "gba", "Extra Adventure (U) [!]~%06x.st1"
-                      % sidecar_hash(X))
+    st = os.path.join(root, "states", "gba", "Extra Adventure (U) [!].st1")
     S.check(os.path.exists(st) and os.path.getsize(st) > 100000 and
             os.path.exists(st + ".thumb") and os.path.exists(st + ".shot"),
             "slot 2's state and its previews were written under states/ (%s)" %
@@ -3817,8 +3816,7 @@ def t_extra_roms(S):
             "the extra folder holds the ROM and its .sav and nothing else "
             "(%s)" % only_beside(X, "Extra Adventure (U) [!]",
                                  {game, "Extra Adventure (U) [!].sav"}))
-    rs = os.path.join(root, "states", "gba", "Extra Adventure (U) [!]~%06x.rsm"
-                      % sidecar_hash(X))
+    rs = os.path.join(root, "states", "gba", "Extra Adventure (U) [!].rsm")
     S.check(os.path.exists(rs) and os.path.exists(rs + ".pt"),
             "Continue's point and its patch note are under states/ too")
     S.check(r.has(r"state_save slot=2 "), "the state was saved from the menu")

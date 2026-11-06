@@ -334,11 +334,10 @@ Engineering detail behind the [What's New](../CHANGELOG.md) list.
 - **Sidecar files** (`psp/sidecar.h`, 1.3): a ROM's folder holds the ROM and
   its battery save only. States (`.stN`, `.thumb`, `.shot`, link `.p2`),
   Continue (`.rsm`, `.rsm.pt`) go to `<root>/states/<gba|gb|gbc>/<stem><suffix>`,
-  where the suffix is the old one (`.st0`, `.gb.st0`). A game outside
-  `<root>/roms` (its directory string differs; a subfolder of roms counts) gets
-  `~<6 hex>`, an FNV-1a of the directory path, after the stem; always hashing
-  would have made the common case unreadable and orphaned nothing extra, so
-  only the ambiguous case pays. Moving such a ROM changes the hash. Tile
+  where the suffix is the old one (`.st0`, `.gb.st0`). The stem is the
+  ROM's own, wherever it lives (no folder hash), as RetroArch names states:
+  moving a ROM keeps its states; two different games with one file name for
+  one console in two folders would share them, as in RetroArch. Tile
   thumbnails (`ART_THUMB_DIR`) and the app-made `.v565`/`.vh565` copies live in
   `<root>/cache/...`. `g_game.state_path` is the new slot-1 path and every
   derived path follows it (`psp_state_path_for_slot`, `psp_state_resume_path`,

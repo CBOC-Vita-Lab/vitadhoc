@@ -133,10 +133,9 @@ Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 | Game Boy | `states/gb/Game.gb.st0` … `Game.gb.st9` | `states/gb/Game.gb.rsm` |
 | Game Boy Color | `states/gbc/Game.gbc.st0` … `Game.gbc.st9` | `states/gbc/Game.gbc.rsm` |
 
-Each state also has a `.thumb` and a `.shot` picture next to it. A game that
-is not in `roms/` (a folder you added) gets `~` and six letters or digits
-after its name, such as `Game~3fa91c.st0`, so two games with the same name in
-different folders never share states. Games from older versions are moved
+Each state also has a `.thumb` and a `.shot` picture next to it. States are
+named after the game wherever it is kept, as in RetroArch, so moving a game to
+another folder keeps its states. Games from older versions are moved
 over by themselves the first time you open or view them.
 
 A game kept in a `.zip` uses the archive's stem and the console's suffix:

@@ -12,13 +12,11 @@
  *   states/<console>/<name>.rsm.pt              the patch that game had
  *   cache/boxart/<stem>.t2.565                  home-screen tile pictures
  *
- * <name> is the ROM's file name without its extension.  A game that is NOT in
- * the default library folder (roms/) gets "~<6 hex>" after it, a hash of its
- * folder's path, so two games with one name in two folders keep their own
- * states.  (Games in roms/ keep plain names -- the common case reads well --
- * and a subfolder of roms/ counts as a folder of its own.)  Moving a ROM to
- * another folder therefore starts it with no states: the old ones are found
- * by their old name only while they are still beside the ROM.
+ * <name> is the ROM's file name without its extension, wherever the ROM is,
+ * the way RetroArch names its states: moving a game to another folder keeps
+ * its states, and launchers find everything by the game's own name.  (Two
+ * different games with the same file name for the same console in two
+ * folders would share states -- as in RetroArch.)
  *
  * Older versions kept all of these beside the ROM.  sidecar_migrate() moves
  * what is there, once per file, never over a file already in the new place.
@@ -88,18 +86,10 @@ static inline int sidecar_state1(char *out, size_t out_sz, const char *root,
    stem = dot && dot != name ? (size_t)(dot - name) : strlen(name);
    if (!stem)
       return -1;
-   n = snprintf(rooms, sizeof(rooms), "%s/roms", root);
-   if (n < 0 || (size_t)n >= sizeof(rooms))
-      return -1;
-   if (dirlen == strlen(rooms) && !strncmp(rom_path, rooms, dirlen))
-      n = snprintf(out, out_sz, "%s/states/%s/%.*s%s", root,
-                   sidecar_console_dir(console), (int)stem, name,
-                   psp_state_slot1_suffix(console));
-   else
-      n = snprintf(out, out_sz, "%s/states/%s/%.*s~%06x%s", root,
-                   sidecar_console_dir(console), (int)stem, name,
-                   sidecar_dir_hash(rom_path, dirlen),
-                   psp_state_slot1_suffix(console));
+   (void)dirlen; (void)rooms;
+   n = snprintf(out, out_sz, "%s/states/%s/%.*s%s", root,
+                sidecar_console_dir(console), (int)stem, name,
+                psp_state_slot1_suffix(console));
    if (n < 0 || (size_t)n >= out_sz)
    {
       out[0] = '\0';

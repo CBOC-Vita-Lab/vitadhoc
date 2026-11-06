@@ -152,6 +152,14 @@ These fixes are tested with our own test programs and one Pokemon game. They
 are not tested on the games named above, nor on Big Mutha Truckers, Street
 Racing Syndicate or Mortal Kombat: Deadly Alliance.
 
+**Trading between versions**
+- **Game Boy and Game Boy Color games link with each other.** A `.gb` game and
+  a `.gbc` game can now be partners on one Vita (and between two Vitas, which
+  is tested now), each running as its own kind of handheld. That is what
+  Red, Blue and Yellow need with each other and with Gold, Silver and Crystal
+  (Time Capsule trades). Before, Two players on this Vita only offered games
+  with the same file ending, so Red (`.gb`) could not pair with Gold (`.gbc`).
+
 **Split screen for two players**
 - **Two controllers, two equal pictures.** With a second controller (a PS TV
   with two DualShocks, or a handheld Vita with an external pad through a

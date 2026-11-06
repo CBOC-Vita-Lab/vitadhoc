@@ -70,7 +70,7 @@ gbadhoc-tilt.gba gbadhoc-gyro.gba gbadhoc-solar.gba:
 # distribution's packages (git clone https://github.com/gbdev/rgbds, any
 # release; make RGBDS=/path/to/rgbds/ gb).
 RGBDS ?=
-gb: gbsave.gb gblink.gb gblocal.gb
+gb: gbsave.gb gblink.gb gblocal.gb cgb
 gbsave.gb: gbsave.asm
 	$(RGBDS)rgbasm -o gbsave.o gbsave.asm
 	$(RGBDS)rgblink -o $@ gbsave.o
@@ -93,9 +93,35 @@ gblocal.gb: gblocal.asm
 	$(RGBDS)rgbfix -v -p 255 -m 3 -r 2 -t GBADHOCLINK $@
 	@rm -f gblocal.o
 
+# The same two cartridges with the Game Boy Color flag set (header $143 =
+# $80, "works on both"): a .gbc file that really runs as a Color, to link with
+# the plain .gb ones (Red <-> Gold).  The -cgbfast ones also switch to double
+# speed at power on, as a Color game does.
+cgb: gblink-cgb.gbc gblocal-cgb.gbc gblink-cgbfast.gbc gblocal-cgbfast.gbc
+gblink-cgb.gbc: gblink.asm
+	$(RGBDS)rgbasm -o gblink-cgb.o gblink.asm
+	$(RGBDS)rgblink -o $@ gblink-cgb.o
+	$(RGBDS)rgbfix -v -c -p 255 -m 3 -r 2 -t GBLINKTEST $@
+	@rm -f gblink-cgb.o
+gblink-cgbfast.gbc: gblink.asm
+	$(RGBDS)rgbasm -DDOUBLE -o gblink-cgbfast.o gblink.asm
+	$(RGBDS)rgblink -o $@ gblink-cgbfast.o
+	$(RGBDS)rgbfix -v -c -p 255 -m 3 -r 2 -t GBLINKTEST $@
+	@rm -f gblink-cgbfast.o
+gblocal-cgb.gbc: gblocal.asm
+	$(RGBDS)rgbasm -o gblocal-cgb.o gblocal.asm
+	$(RGBDS)rgblink -o $@ gblocal-cgb.o
+	$(RGBDS)rgbfix -v -c -p 255 -m 3 -r 2 -t GBADHOCLINK $@
+	@rm -f gblocal-cgb.o
+gblocal-cgbfast.gbc: gblocal.asm
+	$(RGBDS)rgbasm -DDOUBLE -o gblocal-cgbfast.o gblocal.asm
+	$(RGBDS)rgblink -o $@ gblocal-cgbfast.o
+	$(RGBDS)rgbfix -v -c -p 255 -m 3 -r 2 -t GBADHOCLINK $@
+	@rm -f gblocal-cgbfast.o
+
 clean:
 	rm -f gbadhoc-test.elf gbadhoc-test.gba gbsave.gb gbsave.o gblink.gb gblink.o \
-	      gblocal.gb gblocal.o
-.PHONY: clean gb
+	      gblocal.gb gblocal.o *.gbc
+.PHONY: clean gb cgb
 
 .PHONY: wide scroll top gb sensors

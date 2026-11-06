@@ -17,11 +17,16 @@ supported. Both players must have permission to use the cartridges involved.
 | Internet | Join the host address shown by the app. The host needs reachable UDP port 19019; automatic UPnP may open it, otherwise router configuration is needed. Do not expose unrelated services or disable a firewall. |
 | Ad hoc | Choose Ad hoc and use the Vita's system connection screen. No router is needed. |
 
-GBA cable sessions need the same ROM file on both Vitas. GBA Wireless Adapter
-sessions need the same supported game. GB/GBC cable mode can use different
-cartridges, such as compatible paired versions: the implementation exchanges
-cartridge bytes in memory for the session, not to storage. Do not use it to
-distribute a cartridge you are not allowed to share.
+GBA cable sessions need the same ROM file on both Vitas, so two Vitas cannot
+trade between Ruby and Sapphire (or FireRed and LeafGreen) over the GBA cable:
+a room shows "open that game to join". To trade between those versions put
+both on one Vita (Two players on one Vita, below). GBA Wireless Adapter
+sessions need a game that supports the adapter. GB/GBC cable mode can use
+different cartridges, and a Game Boy (`.gb`) cartridge can play with a Game
+Boy Color (`.gbc`) one: Red with Blue, Yellow, Gold, Silver or Crystal, for
+example. Each Vita runs both games and the implementation exchanges cartridge
+bytes in memory for the session, not to storage. Do not use it to distribute a
+cartridge you are not allowed to share.
 
 Fast link, in Settings > Link setup, batches two frames of GBA cable input.
 It is off by default and the host's setting controls the session. It does not
@@ -85,6 +90,20 @@ on their own screen, as if two handhelds were cabled together:
   Super Circuit has).
 - Game Boy and Game Boy Color games that use the Game Boy Link Cable for two
   players: trading and battling, and versus modes in puzzle and action games.
+  Game Boy (`.gb`) and Game Boy Color (`.gbc`) games are one family, as on
+  real hardware where one cable joins a Game Boy and a Game Boy Color. Pick
+  any of them as the partner's game, whatever the file ends in, and each
+  handheld runs as its own kind: a `.gb` game as a Game Boy, a `.gbc` game as
+  a Game Boy Color. That is what trading between different versions needs:
+  Red, Blue and Yellow with each other, those with Gold, Silver and Crystal
+  (the Time Capsule), Gold, Silver and Crystal with each other, and a Pokemon
+  Trading Card Game duel. Pokemon games are the target; they are not tested
+  one by one with real cartridges, only with test cartridges of the
+  repository (a `.gb` with a `.gbc`, in both directions, and a Color in
+  double speed with a Game Boy).
+- GBA games with each other: Ruby, Sapphire, Emerald, FireRed and LeafGreen
+  can be the two games (the partner's game is any `.gba`, not only the same
+  one).
 - The Link Cable is the GBA's multi-player mode and the 8-bit and 32-bit
   normal modes; these are what the test cartridge in the repository checks.
   The repository's automated tests use test cartridges of its own; they do not

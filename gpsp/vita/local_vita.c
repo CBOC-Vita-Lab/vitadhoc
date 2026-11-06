@@ -243,6 +243,14 @@ static void save_recover(void)
       remove(side);
 }
 
+/* The save suffix of a cartridge by its own file name. */
+static const char *save_suffix_of(const char *rom)
+{
+   size_t n = strlen(rom);
+   return n > 4 && !strcasecmp(rom + n - 4, ".gbc") ? ".gbc.sav"
+        : n > 3 && !strcasecmp(rom + n - 3, ".gb") ? ".gb.sav" : ".sav";
+}
+
 /* Where the partner's battery lives for the start that would happen now. */
 static void save_path_set(void)
 {
@@ -251,8 +259,7 @@ static void save_path_set(void)
    if (g_partner_rom[0])
       /* another cartridge: its own save, named as main_vita.c names it */
       psp_rom_path_suffix(L.save_path, sizeof(L.save_path), g_partner_rom,
-                          c == FE_CONSOLE_GBA ? ".sav" :
-                          c == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav");
+                          save_suffix_of(g_partner_rom));
    else
       psp_rom_path_suffix(L.save_path, sizeof(L.save_path), g_game.rom_path,
                           c == FE_CONSOLE_GBA ? ".p2.sav" :
@@ -1694,10 +1701,14 @@ static int same_console(const char *name)
    fe_console_t c = g_game.console;
    if (c == FE_CONSOLE_GBA)
       return n > 4 && !strcasecmp(name + n - 4, ".gba");
-   if (c == FE_CONSOLE_GBC)
-      return n > 4 && !strcasecmp(name + n - 4, ".gbc");
-   return n > 3 && !strcasecmp(name + n - 3, ".gb");
+   /* One link family: a Game Boy and a Game Boy Color cartridge link on real
+    * hardware with the same cable (Red with Gold, Yellow, Crystal...), and
+    * each runs as its own hardware. */
+   (void)c;
+   return (n > 4 && !strcasecmp(name + n - 4, ".gbc")) ||
+          (n > 3 && !strcasecmp(name + n - 3, ".gb"));
 }
+
 
 static int ini_path(char *out, size_t cap)
 {

@@ -54,6 +54,14 @@ SECTION "main", ROM0[$150]
 start:
     di
     ld   sp, $DFF0
+IF DEF(DOUBLE)
+    ; a Game Boy Color in double speed (rgbasm -DDOUBLE, header flag set):
+    ; the cable must still work against a machine at normal speed
+    ld   a, 1
+    ldh  [$FF4D], a
+    stop
+    nop
+ENDC
     ; the picture: LCD off in the vertical blank, two tiles, an empty map
 .wait_vb:
     ldh  a, [rLY]
@@ -211,6 +219,19 @@ next:
     ldh  a, [rLY]
     cp   146
     jr   nz, .w2
+IF DEF(DOUBLE)
+    ; a Color in double speed gets through a pass in half the time and would
+    ; clock a byte every frame, twice as fast as a Game Boy's pass (two
+    ; frames) can answer: take the extra frame the slower one takes
+.w3:
+    ldh  a, [rLY]
+    cp   100
+    jr   nz, .w3
+.w4:
+    ldh  a, [rLY]
+    cp   146
+    jr   nz, .w4
+ENDC
     jp   frame
 
 count_good:

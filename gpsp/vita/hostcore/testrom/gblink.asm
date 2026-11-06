@@ -43,6 +43,14 @@ SECTION "main", ROM0[$150]
 start:
     di
     ld   sp, $DFF0
+IF DEF(DOUBLE)
+    ; a Game Boy Color in double speed (rgbasm -DDOUBLE, header flag set):
+    ; the cable must still work against a machine at normal speed
+    ld   a, 1
+    ldh  [$FF4D], a
+    stop
+    nop
+ENDC
 .wait_vbl:
     ldh  a, [$FF44]
     cp   144

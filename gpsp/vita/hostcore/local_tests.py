@@ -1826,6 +1826,81 @@ def t_gb(S):
         zlib.crc32("\n".join(runs[2]).encode()) & 0xFFFFFFFF)
 
 
+def t_gb_mixed(S):
+    """A Game Boy and a Game Boy Color cartridge as one link family (Red
+    with Gold, Yellow with Crystal): a .gb and a .gbc in the two machines,
+    each running as its own hardware, in both directions, and with a Color
+    in double speed against a Game Boy at normal speed."""
+    names = ("gblocal.gb", "gblocal.gbc", "gblocal-cgb.gbc",
+             "gblocal-cgbfast.gbc")
+    paths = [os.path.join(HERE, "testrom", n) for n in names[:1] +
+             ("gblocal-cgb.gbc", "gblocal-cgbfast.gbc")]
+    if not all(os.path.exists(p) for p in paths):
+        S.note("no testrom/gblocal*.gb[c] (make -C testrom gb): skipped")
+        return
+    plain = open(GBLINK, "rb").read()
+    cgb = open(paths[1], "rb").read()
+    fast = open(paths[2], "rb").read()
+    extra = {"roms/gblocal.gb": plain, "roms/gblocal.gbc": plain,
+             "roms/gblocal-cgb.gbc": cgb, "roms/gblocal-cgbfast.gbc": fast}
+    # (player's game, partner's game, hardware of each: 1 = GB, 2 = GBC)
+    cases = [("gblocal.gb", "gblocal-cgb.gbc", "1/2", "Game Boy with a Color"),
+             ("gblocal-cgb.gbc", "gblocal.gb", "2/1", "Color with a Game Boy"),
+             ("gblocal.gb", "gblocal.gbc", "1/2", "Game Boy with a .gbc "
+              "that has no colour flag"),
+             ("gblocal.gbc", "gblocal.gb", "2/1", "that .gbc with a Game Boy"),
+             ("gblocal.gb", "gblocal-cgbfast.gbc", "1/2",
+              "Game Boy with a Color in double speed"),
+             ("gblocal-cgbfast.gbc", "gblocal.gb", "2/1",
+              "Color in double speed with a Game Boy")]
+    for i, (game, partner, hw, what) in enumerate(cases):
+        at = S.boot_refresh(game, extra)
+        ex = dict(extra, **{"local.ini": partner_ini(game, partner)})
+        r = S.run("gb_mixed%d" % i,
+                  "%d:a:5\n%d:shot=mixed.png\n" % (at + 90, at + 400) +
+                  menu_pick(6), autoboot=game, extra=ex,
+                  vita_ini={"local_auto": 2, "local_auto_frame": 30,
+                            "local_peek": "0xC000:16"})
+        S.clean(r)
+        st = r.evt("gb_local_start")
+        S.check(st and st[0]["other"] == "1" and
+                st[0]["rom"].endswith(partner) and
+                ("console=" + hw) in st[0]["_"],
+                "%s: the partner is accepted and each runs as its own "
+                "hardware (%s)" % (what, st[0]["_"] if st else "no start"))
+        gb_verdict(S, r, what, 100)
+        im = S.picture(r, "mixed.png", "local_gb_mixed%d.png" % i)
+        # (a cartridge with the colour flag draws with colour palettes, which
+        # this ROM does not set: its boxes cannot be read)
+        if im and "cgb" not in game + partner:
+            a, b = [gb_boxes(g) for g in pair_pixels(im, 0, "gb")]
+            S.check(a[1] == "master" and b[1] == "slave" and not a[2] and
+                    not b[2] and a[0] > 100 and abs(a[0] - b[0]) <= 2,
+                    "%s: both pictures: master %d good, slave %d good, no "
+                    "bad row" % (what, a[0], b[0]))
+
+    # the picker lists both kinds of Game Boy cartridge (not this game, not
+    # a GBA game)
+    extra2 = dict(extra, **{"roms/other.gba": bytes(0x400)})
+    at = S.boot_refresh("gblocal.gb", extra2)
+    script = LOCAL_PAGE + """
++20:down
++8:down
++8:shot=page.png
++2:cross
++20:shot=picker.png
++10:quit
+"""
+    r = S.run("gb_mixed_pick", script, autoboot="gblocal.gb", extra=extra2)
+    S.clean(r)
+    ro = r.evt("local_roms")
+    S.check(ro and ro[-1]["n"] == "4" and ro[-1]["console"] == "1",
+            "the Partner's game list holds the three .gbc cartridges and the "
+            "other .gb one, and no GBA game (%s)" %
+            (ro[-1]["_"] if ro else "the picker did not open"))
+    S.picture(r, "picker.png", "local_picker_gb.png")
+
+
 def t_exclusive(S):
     """The local link and the network link exclude each other, with both
     real layers in the build: what the player sees in each direction, and
@@ -2134,7 +2209,7 @@ TESTS = [("linktest", t_linktest), ("menu", t_menu), ("switch", t_switch),
          ("ports", t_ports), ("twopads", t_twopads), ("touch2", t_touch2),
          ("save", t_save), ("cycle", t_cycle), ("cheats", t_cheats),
          ("audio", t_audio), ("states", t_states), ("ff", t_ff),
-         ("other", t_other), ("gb", t_gb), ("exclusive", t_exclusive),
+         ("other", t_other), ("gb", t_gb), ("gb_mixed", t_gb_mixed), ("exclusive", t_exclusive),
          ("handover", t_handover), ("mirror", t_mirror)]
 
 

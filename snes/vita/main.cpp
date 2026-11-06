@@ -67,6 +67,8 @@ static void mkdirs(void)
 	sceIoMkdir("ux0:data/GBAdhoc", 0777);
 	sceIoMkdir(DATA_ROOT, 0777);
 	sceIoMkdir(DATA_ROOT "/states", 0777);
+	sceIoMkdir("ux0:data/GBAdhoc/backups", 0777);
+	sceIoMkdir("ux0:data/GBAdhoc/backups/snes", 0777);
 }
 
 /* ---- text -------------------------------------------------------------- */
@@ -404,11 +406,17 @@ int main(int argc, char **argv)
 		return_to_vitadhoc();
 	}
 	std::string rom = argv[1];
+	std::string srm_override;
+	{
+		size_t bar = rom.find('|'); /* "rom|save path": a zipped game keeps its save beside the zip */
+		if (bar != std::string::npos) { srm_override = rom.substr(bar + 1); rom.resize(bar); }
+	}
 	std::string game = base_name(rom);
 	logf_("rom: %s\n", rom.c_str());
 
 	char err[160] = "";
-	if (snes_host_init() || snes_host_load_rom(rom.c_str(), srm_path(rom).c_str(), err, sizeof err)) {
+	snes_host_set_backup_dir("ux0:data/GBAdhoc/backups/snes");
+	if (snes_host_init() || snes_host_load_rom(rom.c_str(), (srm_override.empty() ? srm_path(rom) : srm_override).c_str(), err, sizeof err)) {
 		logf_("load failed: %s\n", err);
 		fatal_screen("This game could not be started.", err);
 		return_to_vitadhoc();

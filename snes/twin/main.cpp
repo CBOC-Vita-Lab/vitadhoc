@@ -181,7 +181,7 @@ int main(int argc, char **argv)
 	std::vector<int16_t> pcm;
 	std::vector<int16_t> abuf(4096 * 2);
 
-	uint64_t tot_ns = 0, cpu_tot_ns = 0, acc_ns[S9XP_N] = { 0 }, cnt_tot[S9XC_N] = { 0 };
+	uint64_t wall_tot_ns = 0, tot_ns = 0, cpu_tot_ns = 0, acc_ns[S9XP_N] = { 0 }, cnt_tot[S9XC_N] = { 0 };
 	size_t ev = 0;
 	unsigned pad = 0;
 	g_s9xp.on = tf || summary ? 1 : 0;
@@ -201,6 +201,7 @@ int main(int argc, char **argv)
 		if (prof_on) s9xp_enter(S9XP_FRONT), s9xp_leave();
 		uint64_t t1 = now_ns(), c1 = cpu_ns();
 		tot_ns += t1 - t0;
+		wall_tot_ns += t1 - t0;
 		cpu_tot_ns += c1 - c0;
 		if (prof_on) {
 			for (int c = 0; c < S9XP_N; c++) acc_ns[c] += g_s9xp.acc[c];
@@ -221,6 +222,12 @@ int main(int argc, char **argv)
 			write_png(p, v, w, h, pitch);
 		}
 	}
+	snes_host_sync();
+	{
+		int n;
+		while ((n = snes_host_audio_take(abuf.data(), 4096)) > 0)
+			if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
+	}
 	if (hf) fclose(hf);
 	if (tf) fclose(tf);
 	if (wav) write_wav(wav, pcm);
@@ -240,6 +247,13 @@ int main(int argc, char **argv)
 		    (double) cnt_tot[0] / frames, (double) cnt_tot[1] / frames, (double) cnt_tot[2] / frames, (double) cnt_tot[3] / frames);
 	} else {
 		printf("%s: %d frames in %.3f s = %.1f fps (CPU time, profiling %s)\n", name ? name : rom, frames, secs, fps, prof_on ? "on" : "off");
+	}
+	if (snes_host_threads_active()) {
+		snes_thread_stats st;
+		snes_host_thread_stats(&st);
+		printf("threads(%d): main_cpu=%.3f s wall=%.3f s | apu busy=%.3f s cmds/fr=%.0f (65816 side ran %.0f/fr itself), waited %.1f/fr for %.3f s\n", snes_host_threads_active(), secs, wall_tot_ns / 1e9,
+		    st.apu_busy_ns / 1e9, (double) st.apu_cmds / frames, (double) st.apu_helped / frames, (double) st.apu_waits / frames, st.apu_wait_ns / 1e9);
+		printf("          ppu busy=%.3f s batches/fr=%.1f main waited %.2f/fr for %.3f s\n", st.ppu_busy_ns / 1e9, (double) st.ppu_batches / frames, (double) st.ppu_waits / frames, st.ppu_wait_ns / 1e9);
 	}
 	snes_host_shutdown();
 	return 0;

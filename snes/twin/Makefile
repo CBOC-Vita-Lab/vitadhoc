@@ -14,12 +14,24 @@ CXXFLAGS := -MMD -MP $(OPT) -std=gnu++14 -w -fno-strict-aliasing $(CORE_DEFS) $(
 
 include $(CORE)/sources.mk
 CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
+# Second copy of the renderer for the PPU thread: the same objects with every
+# global symbol renamed (+_r) and the renderer's state variables redirected to
+# the *_R copies defined in core/ppu_mt.cpp. See core/rcopy.sh.
+RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
+RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
+OBJCOPY ?= objcopy
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/main.o
 
 all: $(B)/snes_twin
 
-$(B)/snes_twin: $(CORE_OBJS) $(FE_OBJS)
-	$(CXX) -o $@ $^ -lm
+$(B)/snes_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+$(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh
+	sh $(CORE)/rcopy.sh $@ $(filter %.o,$^)
+$(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
+	@mkdir -p $(B)/rcopy
+	$(OBJCOPY) --redefine-syms=$(B)/rcopy.map $< $@
 
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)

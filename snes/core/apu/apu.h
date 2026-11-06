@@ -21,6 +21,13 @@ void S9xSoftResetAPU (void);
 uint8 S9xAPUReadPort (int);
 void S9xAPUWritePort (int, uint8);
 void S9xAPUExecute (void);
+/* optional APU thread (see apu.cpp) */
+bool S9xAPUMTSet (bool enable);
+bool S9xAPUMTActive (void);
+void S9xAPUMTSync (void);
+void S9xAPUMTPost (void (*fn)(void *), void *arg);
+void S9xAPUMTConfig (int core, int prio);
+void S9xAPUMTStats (uint64_t *busy_ns, uint64_t *cmds, uint64_t *helped, uint64_t *lockwaits, uint64_t *lockwait_ns);
 void S9xAPUEndScanline (void);
 void S9xAPUSetReferenceTime (int32);
 void S9xAPUTimingSetSpeedup (int);

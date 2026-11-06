@@ -117,6 +117,32 @@ struct SLineMatrixData
 	short	M7VOFS;
 };
 
+// CBOC-Vita: one flush of the renderer (see gfx.cpp S9xUpdateScreen_impl)
+struct S9xRenderJob
+{
+	uint8	blank;		// forced blanking: fill the lines with black
+	uint8	widen;		// the picture became 512 wide in this flush: spread the lines already drawn
+	uint8	heighten;	// the picture became interlaced 2x in this flush: spread the lines already drawn
+	uint8	sub;		// render the sub screen too
+	uint32	widen_ppl;	// GFX.PPL as it was before this flush
+};
+void S9xRenderBatch (const S9xRenderJob &);
+// optional PPU thread (ppu_mt.cpp)
+bool S9xPPUMTActive (void);
+void S9xPPUMTBatch (const S9xRenderJob &);
+void S9xPPUMTFrameStart (void);
+void S9xPPUMTFrameEnd (int width, int height);
+void S9xPPUMTSync (void);
+void S9xPPUMTInvalidateAll (void);
+void S9xPPUMTVRAMDirty (uint32 address);
+bool S9xPPUMTSet (bool enable);
+const uint16 *S9xPPUMTVideo (int *width, int *height);
+void S9xPPUMTConfig (int core, int prio);
+void S9xPPUMTStats (uint64_t *busy_ns, uint64_t *batches, uint64_t *waits, uint64_t *wait_ns);
+extern bool8 g_s9x_obj_ran;
+extern bool8 g_s9x_vram_track;
+extern uint32 g_s9x_colour_version;
+
 extern uint16		BlackColourMap[256];
 extern uint16		DirectColourMaps[8][256];
 extern uint8		mul_brightness[16][32];

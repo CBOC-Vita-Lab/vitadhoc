@@ -13,6 +13,7 @@
 #include "../display.h"
 #include "resampler.h"
 #include "../s9x_prof.h"
+#include "../s9x_mt.h"
 
 #include "bapu/snes/snes.hpp"
 
@@ -66,6 +67,190 @@ static void UpdatePlaybackRate(void);
 static void SPCSnapshotCallback(void);
 static inline int S9xAPUGetClock(int32);
 static inline int S9xAPUGetClockRemainder(int32);
+
+/* ---------------------------------------------------------------------------
+ * Optional APU thread (CBOC-Vita addition, see snes/README.md "APU thread").
+ *
+ * Snes9x already runs the SPC700 lazily: the 65816 side only ever asks "run the
+ * APU up to CPU.Cycles" (S9xAPUExecute), "write port" and "read port", and ends
+ * every scanline with a DSP catch-up. This keeps exactly that contract, but the
+ * requests become a command stream consumed in order by a worker thread, so the
+ * worker performs bit-for-bit the same operations the single-thread build does.
+ * Only a port read has to wait (for the worker to reach that point); writes and
+ * time slices are fire-and-forget. Time arithmetic (the 15664/328125 ratio and
+ * its remainder) stays on the 65816 side, so the cycle counts are identical.
+ * ------------------------------------------------------------------------- */
+namespace apumt {
+enum { OP_RUN, OP_WRITE, OP_ENDSCAN, OP_JOB };
+struct Cmd { int32 op; int32 a; uintptr_t b, c; };
+static const unsigned RING = 8192, MASK = RING - 1, PUBLISH_EVERY = 24, CHUNK = 256;
+static Cmd ring[RING];
+static unsigned prod, pub;               /* 65816 side: next slot, last published slot */
+static std::atomic<unsigned> head;       /* published (free running counter) */
+static std::atomic<unsigned> tail;       /* consumed; changed only while xlock is held */
+static std::atomic<int> xlock;           /* whoever holds it may run the APU */
+static std::atomic<int> want;            /* the 65816 side asks the worker to let go of the lock */
+static std::atomic<int> sleeping, quit;
+static s9xmt::Sem wake;
+static s9xmt::Thread thr;
+static bool on, started;
+static std::atomic<uint64_t> busy_ns, cmds, helped, lockwaits, lockwait_ns;
+static int spin_idle = 3000;
+static int core_hint = -1, prio_hint = 0x40;
+
+static inline bool try_lock(void)
+{
+	int z = 0;
+	return xlock.compare_exchange_strong(z, 1, std::memory_order_acquire);
+}
+static inline void unlock(void) { xlock.store(0, std::memory_order_release); }
+
+static inline void publish(void)
+{
+	if (pub == prod) return;
+	pub = prod;
+	head.store(prod, std::memory_order_seq_cst);
+	if (sleeping.load(std::memory_order_seq_cst)) wake.post();
+}
+
+static void exec(const Cmd &c)
+{
+	switch (c.op) {
+	case OP_RUN:
+		SNES::smp.clock -= c.a;
+		SNES::smp.enter();
+		break;
+	case OP_WRITE:
+		SNES::cpu.port_write(c.a >> 8, c.a & 0xff);
+		break;
+	case OP_ENDSCAN:
+		SNES::dsp.synchronize();
+		if (spc::resampler.space_filled() >= APU_SAMPLE_BLOCK)
+			S9xLandSamples();
+		break;
+	case OP_JOB:
+		((void (*)(void *)) c.b)((void *) c.c);
+		break;
+	}
+}
+
+/* The 65816 side needs the APU state "as of now" (a port read, a state save,
+ * a full ring): it takes the lock as soon as the worker finishes its current
+ * chunk and runs everything still queued itself. That is never slower than the
+ * single-thread build, and it avoids a thread hand-over for every poll of a
+ * port. */
+static void help_drain(void)
+{
+	publish();
+	if (tail.load(std::memory_order_acquire) == prod) return;
+	uint64_t t0 = 0;
+	want.store(1, std::memory_order_seq_cst);
+	if (!try_lock()) {
+		t0 = s9xmt::now_ns();
+		int i = 0;
+		while (!try_lock()) { if (++i < 20000) s9xmt::cpu_relax(); else s9xmt::yield_cpu(); }
+		lockwaits.fetch_add(1, std::memory_order_relaxed);
+		lockwait_ns.fetch_add(s9xmt::now_ns() - t0, std::memory_order_relaxed);
+	}
+	unsigned t = tail.load(std::memory_order_relaxed), n = 0;
+	while (t != prod) { exec(ring[t & MASK]); t++; n++; }
+	tail.store(t, std::memory_order_release);
+	unlock();
+	want.store(0, std::memory_order_seq_cst);
+	helped.fetch_add(n, std::memory_order_relaxed);
+}
+
+static inline void push(const Cmd &c)
+{
+	while (prod - tail.load(std::memory_order_acquire) >= RING) help_drain();
+	ring[prod & MASK] = c;
+	prod++;
+	if (prod - pub >= PUBLISH_EVERY || c.op == OP_ENDSCAN) publish();
+}
+
+static void thread_main(void *)
+{
+	for (;;) {
+		if (head.load(std::memory_order_acquire) != tail.load(std::memory_order_acquire)) {
+			if (want.load(std::memory_order_acquire) || !try_lock()) { s9xmt::cpu_relax(); continue; }
+			unsigned h = head.load(std::memory_order_acquire), t = tail.load(std::memory_order_relaxed), n = 0;
+			uint64_t t0 = s9xmt::now_ns();
+			while (t != h && n < CHUNK) {
+				bool endscan = ring[t & MASK].op == OP_ENDSCAN;
+				exec(ring[t & MASK]);
+				t++; n++;
+				if (endscan) break;
+			}
+			tail.store(t, std::memory_order_release);
+			unlock();
+			cmds.fetch_add(n, std::memory_order_relaxed);
+			busy_ns.fetch_add(s9xmt::now_ns() - t0, std::memory_order_relaxed);
+			continue;
+		}
+		int i = 0;
+		for (; i < spin_idle; i++) {
+			if (head.load(std::memory_order_acquire) != tail.load(std::memory_order_acquire)) break;
+			s9xmt::cpu_relax();
+		}
+		if (i < spin_idle) continue;
+		sleeping.store(1, std::memory_order_seq_cst);
+		if (head.load(std::memory_order_seq_cst) != tail.load(std::memory_order_seq_cst)) { sleeping.store(0); continue; }
+		if (quit.load()) { sleeping.store(0); break; }
+		wake.wait();
+		sleeping.store(0);
+	}
+}
+} // namespace apumt
+
+void S9xAPUMTSync(void)
+{
+	if (apumt::on) apumt::help_drain();
+}
+
+bool S9xAPUMTActive(void) { return apumt::on; }
+
+void S9xAPUMTPost(void (*fn)(void *), void *arg)
+{
+	apumt::Cmd c = { apumt::OP_JOB, 0, (uintptr_t) fn, (uintptr_t) arg };
+	apumt::push(c);
+	apumt::publish();
+}
+
+void S9xAPUMTConfig(int core, int prio)
+{
+	apumt::core_hint = core;
+	apumt::prio_hint = prio;
+}
+
+bool S9xAPUMTSet(bool enable)
+{
+	using namespace apumt;
+	if (enable == on) return on;
+	if (enable) {
+		if (Settings.MSU1) return false; /* MSU-1 audio is generated from the DSP callback and read by the 65816 */
+		if (!started) { wake.init(); started = true; }
+		prod = pub = 0;
+		head.store(0); tail.store(0); sleeping.store(0); want.store(0); xlock.store(0); quit.store(0);
+		busy_ns = 0; cmds = 0; helped = 0; lockwaits = 0; lockwait_ns = 0;
+		if (const char *e = getenv("SNES_MT_SPIN")) spin_idle = atoi(e);
+		if (!thr.start(thread_main, 0, "snes_apu", core_hint, prio_hint)) return false;
+		on = true;
+	} else {
+		S9xAPUMTSync();
+		quit.store(1);
+		publish();
+		wake.post();
+		thr.join();
+		on = false;
+	}
+	return on;
+}
+
+void S9xAPUMTStats(uint64_t *busy, uint64_t *cmds, uint64_t *helped, uint64_t *lockwaits, uint64_t *lockwait_ns)
+{
+	*busy = apumt::busy_ns.load(); *cmds = apumt::cmds.load(); *helped = apumt::helped.load();
+	*lockwaits = apumt::lockwaits.load(); *lockwait_ns = apumt::lockwait_ns.load();
+}
 
 bool8 S9xMixSamples(uint8 *dest, int sample_count)
 {
@@ -154,6 +339,7 @@ void S9xSetSamplesAvailableCallback(apu_callback callback, void *data)
 
 void S9xUpdateDynamicRate(int avail, int buffer_size)
 {
+    S9xAPUMTSync();
     spc::dynamic_rate_multiplier = 1.0 + (Settings.DynamicRateLimit * (buffer_size - 2 * avail)) /
                                              (double)(1000 * buffer_size);
 
@@ -183,6 +369,7 @@ static void UpdatePlaybackRate(void)
 
 bool8 S9xInitSound(int buffer_ms)
 {
+    S9xAPUMTSync();
     // The resampler and spc unit use samples (16-bit short) as arguments.
     int buffer_size_samples = MINIMUM_BUFFER_SIZE;
     int requested_buffer_size_samples = Settings.SoundPlaybackRate * buffer_ms * 2 / 1000;
@@ -205,6 +392,7 @@ bool8 S9xInitSound(int buffer_ms)
 
 void S9xSetSoundControl(uint8 voice_switch)
 {
+    S9xAPUMTSync();
     SNES::dsp.spc_dsp.set_stereo_switch(voice_switch << 8 | voice_switch);
 }
 
@@ -217,6 +405,7 @@ void S9xSetSoundMute(bool8 mute)
 
 void S9xDumpSPCSnapshot(void)
 {
+    S9xAPUMTSync();
     SNES::dsp.spc_dsp.dump_spc_snapshot();
 }
 
@@ -228,6 +417,7 @@ static void SPCSnapshotCallback(void)
 
 bool8 S9xInitAPU(void)
 {
+    S9xAPUMTSync();
     spc::resampler.clear();
     msu::resampler.clear();
 
@@ -236,6 +426,7 @@ bool8 S9xInitAPU(void)
 
 void S9xDeinitAPU(void)
 {
+    S9xAPUMTSync();
     S9xMSU1DeInit();
     msu::resampler_buffer.clear();
 }
@@ -256,6 +447,7 @@ uint8 S9xAPUReadPort(int port)
 {
     S9XP_COUNT(APU_PORT);
     S9xAPUExecute();
+    S9xAPUMTSync(); /* the value the APU has produced up to this cycle */
     return ((uint8)SNES::smp.port_read(port & 3));
 }
 
@@ -263,6 +455,12 @@ void S9xAPUWritePort(int port, uint8 byte)
 {
     S9XP_COUNT(APU_PORT);
     S9xAPUExecute();
+    if (apumt::on)
+    {
+        apumt::Cmd c = { apumt::OP_WRITE, ((port & 3) << 8) | byte, 0, 0 };
+        apumt::push(c);
+        return;
+    }
     SNES::cpu.port_write(port & 3, byte);
 }
 
@@ -275,6 +473,21 @@ static void S9xAPUExecute_impl(void);
 void S9xAPUExecute(void)
 {
     S9XP_COUNT(APU_RUN);
+    if (apumt::on)
+    {
+        int cycles = S9xAPUGetClock(CPU.Cycles);
+        spc::remainder = S9xAPUGetClockRemainder(CPU.Cycles);
+        S9xAPUSetReferenceTime(CPU.Cycles);
+        /* merge with a still unpublished run request: two back-to-back runs equal one */
+        if (apumt::prod != apumt::pub && apumt::ring[(apumt::prod - 1) & apumt::MASK].op == apumt::OP_RUN)
+            apumt::ring[(apumt::prod - 1) & apumt::MASK].a += cycles;
+        else
+        {
+            apumt::Cmd c = { apumt::OP_RUN, cycles, 0, 0 };
+            apumt::push(c);
+        }
+        return;
+    }
     S9XP_ENTER(APU);
     S9xAPUExecute_impl();
     S9XP_LEAVE();
@@ -293,6 +506,12 @@ static void S9xAPUExecute_impl(void)
 void S9xAPUEndScanline(void)
 {
     S9xAPUExecute();
+    if (apumt::on)
+    {
+        apumt::Cmd c = { apumt::OP_ENDSCAN, 0, 0, 0 };
+        apumt::push(c);
+        return;
+    }
     S9XP_ENTER(APU);
     SNES::dsp.synchronize();
 
@@ -303,6 +522,7 @@ void S9xAPUEndScanline(void)
 
 void S9xAPUTimingSetSpeedup(int ticks)
 {
+    S9xAPUMTSync();
     if (ticks != 0)
         printf("APU speedup hack: %d\n", ticks);
 
@@ -317,6 +537,7 @@ void S9xAPUTimingSetSpeedup(int ticks)
 
 void S9xResetAPU(void)
 {
+    S9xAPUMTSync();
     spc::reference_time = 0;
     spc::remainder = 0;
 
@@ -330,6 +551,7 @@ void S9xResetAPU(void)
 
 void S9xSoftResetAPU(void)
 {
+    S9xAPUMTSync();
     spc::reference_time = 0;
     spc::remainder = 0;
     SNES::cpu.reset();
@@ -341,6 +563,7 @@ void S9xSoftResetAPU(void)
 
 void S9xAPUSaveState(uint8 *block)
 {
+    S9xAPUMTSync();
     uint8 *ptr = block;
 
     SNES::smp.save_state(&ptr);
@@ -360,6 +583,7 @@ void S9xAPUSaveState(uint8 *block)
 
 void S9xAPULoadState(uint8 *block)
 {
+    S9xAPUMTSync();
     uint8 *ptr = block;
 
     SNES::smp.load_state(&ptr);
@@ -383,6 +607,7 @@ static void to_var_from_buf(uint8 **buf, void *var, size_t size)
 #define IF_0_THEN_256(n) ((uint8)((n)-1) + 1)
 void S9xAPULoadBlarggState(uint8 *oldblock)
 {
+    S9xAPUMTSync();
     uint8 *ptr = oldblock;
 
     SNES::SPC_State_Copier copier(&ptr, to_var_from_buf);
@@ -486,6 +711,7 @@ void S9xAPULoadBlarggState(uint8 *oldblock)
 
 bool8 S9xSPCDump(const char *filename)
 {
+    S9xAPUMTSync();
     FILE *fs;
     uint8 buf[SPC_FILE_SIZE];
     size_t ignore;

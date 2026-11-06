@@ -1566,6 +1566,7 @@ int S9xUnfreezeFromStream (STREAM stream)
 
 		if (local_vram)
 			memcpy(Memory.VRAM, local_vram, 0x10000);
+		S9xPPUMTInvalidateAll();
 
 		if (local_ram)
 			memcpy(Memory.RAM, local_ram, 0x20000);

@@ -187,6 +187,7 @@ void S9xUpdateIRQPositions (bool initial)
 
 void S9xFixColourBrightness (void)
 {
+	g_s9x_colour_version++;
 	IPPU.XB = mul_brightness[PPU.Brightness];
 
 	for (int i = 0; i < 64; i++)
@@ -1747,6 +1748,7 @@ void S9xResetPPUFast (void)
 	memset(IPPU.TileCached[TILE_2BIT_ODD], 0, MAX_2BIT_TILES);
 	memset(IPPU.TileCached[TILE_4BIT_EVEN], 0, MAX_4BIT_TILES);
 	memset(IPPU.TileCached[TILE_4BIT_ODD], 0, MAX_4BIT_TILES);
+	S9xPPUMTInvalidateAll();
 }
 
 void S9xSoftResetPPU (void)
@@ -1893,6 +1895,7 @@ void S9xSoftResetPPU (void)
 	memset(IPPU.TileCached[TILE_2BIT_ODD], 0,  MAX_2BIT_TILES);
 	memset(IPPU.TileCached[TILE_4BIT_EVEN], 0, MAX_4BIT_TILES);
 	memset(IPPU.TileCached[TILE_4BIT_ODD], 0,  MAX_4BIT_TILES);
+	S9xPPUMTInvalidateAll();
 	PPU.VRAMReadBuffer = 0; // XXX: FIXME: anything better?
 	GFX.DoInterlace = 0;
 	IPPU.Interlace = FALSE;

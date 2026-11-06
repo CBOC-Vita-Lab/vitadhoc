@@ -15,6 +15,7 @@
 #include "memmap.h"
 #include "apu/apu.h"
 #include "gfx.h"
+#include "ppu.h"
 #include "snapshot.h"
 #include "controls.h"
 #include "cheats.h"
@@ -23,6 +24,8 @@
 #include "fscompat.h"
 #include "s9x_prof.h"
 #include "host.h"
+#include "s9x_mt.h"
+#include <atomic>
 
 #define BTN_PAD(port, btn) (((port) << 4) | (btn))
 
@@ -36,6 +39,14 @@ static std::vector<int16_t> g_audio_ring;
 static size_t g_ar_r, g_ar_w, g_ar_n; /* int16 units, ring */
 static std::vector<uint8_t> g_sram_saved; /* copy of what is on disk (or at load) */
 static bool g_bak_done;
+static std::string g_backup_dir; /* optional: extra home for the first copy of a player's save */
+static int g_want_ppu_thread;
+static int g_want_apu_thread;   /* runtime switch: 1 = APU on its own thread (needs a loaded ROM) */
+static std::atomic_flag g_ring_lock = ATOMIC_FLAG_INIT; /* the ring is filled by the APU thread when it is on */
+struct RingLock {
+	RingLock() { while (g_ring_lock.test_and_set(std::memory_order_acquire)) s9xmt::cpu_relax(); }
+	~RingLock() { g_ring_lock.clear(std::memory_order_release); }
+};
 
 /* ---- Snes9x callbacks -------------------------------------------------- */
 
@@ -80,6 +91,7 @@ bool8 S9xContinueUpdate(int width, int height)
 
 static void ring_put(const int16_t *src, size_t n)
 {
+	RingLock lk;
 	size_t cap = g_audio_ring.size();
 	if (n > cap) { src += n - cap; n = cap; }
 	/* drop the oldest audio when the frontend is not draining (never block) */
@@ -91,12 +103,14 @@ static void ring_put(const int16_t *src, size_t n)
 	g_ar_n += n;
 }
 
-/* Called by the core at the start of vertical blank: the frame is finished. */
-void S9xSyncSpeed()
+/* The audio mix of one frame. Runs on the APU thread when that is on (it is
+ * queued in the same stream as the DSP work, so it sees exactly the samples
+ * the single-thread build sees at this point). */
+static void mix_job(void *arg)
 {
-	S9XP_ENTER(FRONT);
 	static std::vector<int16_t> tmp;
-	if (Settings.Mute || !g_audio_on) {
+	bool silent = arg != 0;
+	if (silent) {
 		S9xClearSamples();
 	} else {
 		size_t avail = S9xGetSampleCount();
@@ -106,6 +120,15 @@ void S9xSyncSpeed()
 			ring_put(&tmp[0], avail);
 		}
 	}
+}
+
+/* Called by the core at the start of vertical blank: the frame is finished. */
+void S9xSyncSpeed()
+{
+	S9XP_ENTER(FRONT);
+	void *silent = (Settings.Mute || !g_audio_on) ? (void *) 1 : (void *) 0;
+	if (S9xAPUMTActive()) S9xAPUMTPost(mix_job, silent);
+	else mix_job(silent);
 	g_frame_done = true;
 	S9XP_LEAVE();
 }
@@ -181,6 +204,8 @@ int snes_host_init(void)
 void snes_host_shutdown(void)
 {
 	if (!g_inited) return;
+	S9xAPUMTSet(false);
+	S9xPPUMTSet(false);
 	S9xDeinitAPU();
 	Memory.Deinit();
 	S9xGraphicsDeinit();
@@ -231,6 +256,8 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 	const char *base = strrchr(rom_path, '/');
 	base = base ? base + 1 : rom_path;
 	g_loaded = false;
+	S9xAPUMTSet(false);
+	S9xPPUMTSet(false);
 	if (!Memory.LoadROMMem(p, (uint32) n, base)) { snprintf(err, errlen, "Not a valid SNES ROM"); return 3; }
 	g_loaded = true;
 	g_title = Memory.ROMName;
@@ -251,10 +278,12 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 	}
 	/* LoadROMMem has already reset the machine; the game has not run yet, so the
 	 * battery RAM copied in above is what its first instruction sees. */
+	if (g_want_apu_thread) S9xAPUMTSet(true);
+	if (g_want_ppu_thread) S9xPPUMTSet(true);
 	return 0;
 }
 
-void snes_host_unload(void) { g_loaded = false; }
+void snes_host_unload(void) { S9xAPUMTSet(false); S9xPPUMTSet(false); g_loaded = false; }
 
 void snes_host_reset(void) { if (g_loaded) S9xSoftReset(); }
 
@@ -274,6 +303,16 @@ void snes_host_run_frame(void)
 
 const uint16_t *snes_host_video(int *w, int *h, int *pitch)
 {
+	if (S9xPPUMTActive()) {
+		int pw = g_vw, ph = g_vh;
+		const uint16_t *pic = S9xPPUMTVideo(&pw, &ph);
+		if (pic) {
+			if (w) *w = pw;
+			if (h) *h = ph;
+			if (pitch) *pitch = (int) GFX.Pitch;
+			return pic;
+		}
+	}
 	if (w) *w = g_vw;
 	if (h) *h = g_vh;
 	if (pitch) *pitch = (int) GFX.Pitch;
@@ -282,6 +321,7 @@ const uint16_t *snes_host_video(int *w, int *h, int *pitch)
 
 int snes_host_audio_take(int16_t *dst, int max_frames)
 {
+	RingLock lk;
 	size_t want = (size_t) max_frames * 2;
 	if (want > g_ar_n) want = g_ar_n & ~(size_t) 1;
 	size_t cap = g_audio_ring.size();
@@ -295,6 +335,18 @@ int snes_host_audio_take(int16_t *dst, int max_frames)
 
 int snes_host_set_option(const char *name, int v)
 {
+	if (!strcmp(name, "apu_thread")) {
+		g_want_apu_thread = v ? 1 : 0;
+		if (g_loaded) S9xAPUMTSet(v != 0);
+		return 0;
+	}
+	if (!strcmp(name, "ppu_thread")) {
+		g_want_ppu_thread = v ? 1 : 0;
+		if (g_loaded) S9xPPUMTSet(v != 0);
+		return 0;
+	}
+	S9xAPUMTSync(); /* the APU thread reads Settings (interpolation, ...) */
+	S9xPPUMTSync();
 	if (!strcmp(name, "block_vram")) Settings.BlockInvalidVRAMAccessMaster = v ? TRUE : FALSE;
 	else if (!strcmp(name, "sprite_tiles")) Settings.MaxSpriteTilesPerLine = v;
 	else if (!strcmp(name, "interp"))
@@ -305,6 +357,15 @@ int snes_host_set_option(const char *name, int v)
 	else if (!strcmp(name, "echo_buffer")) Settings.SeparateEchoBuffer = v ? TRUE : FALSE;
 	else return 1;
 	return 0;
+}
+
+void snes_host_sync(void) { S9xAPUMTSync(); S9xPPUMTSync(); }
+int snes_host_threads_active(void) { return (S9xAPUMTActive() ? 1 : 0) | (S9xPPUMTActive() ? 2 : 0); }
+void snes_host_thread_stats(snes_thread_stats *st)
+{
+	memset(st, 0, sizeof *st);
+	S9xAPUMTStats(&st->apu_busy_ns, &st->apu_cmds, &st->apu_helped, &st->apu_waits, &st->apu_wait_ns);
+	S9xPPUMTStats(&st->ppu_busy_ns, &st->ppu_batches, &st->ppu_waits, &st->ppu_wait_ns);
 }
 
 void snes_host_set_audio_enabled(int on) { g_audio_on = on != 0; }
@@ -331,6 +392,31 @@ int snes_host_sram_dirty(void)
 	return g_sram_saved.size() != sz || memcmp(g_sram_saved.data(), Memory.SRAM, sz) != 0;
 }
 
+/* Copy an existing save into the backup folder (once per distinct content, never
+ * overwriting an earlier backup), so a .srm that another emulator wrote is safe
+ * even if our .bak is replaced later. Best effort: a failure does not stop the save. */
+static void backup_copy(const char *path, const std::vector<uint8_t> &old)
+{
+	if (g_backup_dir.empty() || old.empty()) return;
+	uint64_t h = 1469598103934665603ull;
+	for (uint8_t b : old) { h ^= b; h *= 1099511628211ull; }
+	const char *base = strrchr(path, '/');
+	base = base ? base + 1 : path;
+	char name[64];
+	snprintf(name, sizeof name, ".%08x.bak", (unsigned) (h ^ (h >> 32)));
+	std::string dst = g_backup_dir + "/" + base + name;
+	FILE *t = fopen(dst.c_str(), "rb");
+	if (t) { fclose(t); return; }
+	std::string tmp = dst + ".tmp";
+	FILE *f = fopen(tmp.c_str(), "wb");
+	if (!f) return;
+	size_t put = fwrite(old.data(), 1, old.size(), f);
+	int cl = fclose(f);
+	if (put != old.size() || cl != 0 || rename(tmp.c_str(), dst.c_str()) != 0) remove(tmp.c_str());
+}
+
+void snes_host_set_backup_dir(const char *dir) { g_backup_dir = dir ? dir : ""; }
+
 static int write_atomic(const char *path, const void *data, size_t n, bool keep_bak, bool *bak_done)
 {
 	std::string tmp = std::string(path) + ".tmp";
@@ -344,6 +430,7 @@ static int write_atomic(const char *path, const void *data, size_t n, bool keep_
 		/* Keep the player's previous file once per session before the first overwrite. */
 		std::vector<uint8_t> old;
 		if (read_file(path, old)) {
+			backup_copy(path, old);
 			std::string bt = bak + ".tmp";
 			FILE *b = fopen(bt.c_str(), "wb");
 			if (!b) { remove(tmp.c_str()); return 3; }

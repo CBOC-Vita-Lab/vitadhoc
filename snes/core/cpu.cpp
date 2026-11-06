@@ -100,6 +100,7 @@ void S9xReset (void)
 
 	memset(Memory.RAM, 0x55, sizeof(Memory.RAM));
 	memset(Memory.VRAM, 0x00, sizeof(Memory.VRAM));
+	S9xPPUMTInvalidateAll();
 	memset(Memory.FillRAM, 0, 0x8000);
 
 	S9xResetBSX();

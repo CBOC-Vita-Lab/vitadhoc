@@ -35,6 +35,7 @@ movie.cpp \
 msu1.cpp \
 obc1.cpp \
 ppu.cpp \
+ppu_mt.cpp \
 sa1.cpp \
 sa1cpu.cpp \
 screenshot.cpp \

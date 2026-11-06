@@ -53,6 +53,10 @@ int snes_host_sram_dirty(void);
  * Returns 0 on success. */
 int snes_host_sram_save(void);
 
+/* Extra folder for the first copy of an existing save before we overwrite it
+ * (the Vita app uses ux0:data/GBAdhoc/backups/snes). The folder must exist. */
+void snes_host_set_backup_dir(const char *dir);
+
 /* Save states, same safe write rule. Return 0 on success. */
 int snes_host_state_save(const char *path);
 int snes_host_state_load(const char *path);
@@ -69,6 +73,23 @@ int snes_host_is_pal(void);
 /* When off, the core skips PPU rendering for the coming frames (audio and
  * game logic still run). */
 void snes_host_set_render(int on);
+
+/* Worker threads (phase 2). Switch on with snes_host_set_option("apu_thread", 1) / ("ppu_thread", 1);
+ * frame hashes and audio stay identical to the single-thread build. */
+void snes_host_sync(void); /* wait until the worker threads have caught up with the emulation */
+int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread */
+typedef struct {
+	uint64_t apu_busy_ns;  /* time the APU thread spent working (not waiting) */
+	uint64_t apu_cmds;     /* work items it ran */
+	uint64_t apu_helped;   /* work items the 65816 side ran itself (port reads) */
+	uint64_t apu_waits;    /* times the 65816 side waited for the worker to finish a chunk */
+	uint64_t apu_wait_ns;  /* total time spent waiting */
+	uint64_t ppu_busy_ns;  /* time the PPU thread spent drawing (not waiting) */
+	uint64_t ppu_batches;  /* snapshots it drew */
+	uint64_t ppu_waits;    /* times the register side waited for it (full ring, picture asked for) */
+	uint64_t ppu_wait_ns;
+} snes_thread_stats;
+void snes_host_thread_stats(snes_thread_stats *st);
 
 const char *snes_host_rom_title(void);
 /* One line about the loaded cartridge: map, size, chips, SRAM. */

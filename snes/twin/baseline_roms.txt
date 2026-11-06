@@ -31,3 +31,19 @@ SPC700 Noise|SPC700/PlayNoise/PlayNoise.sfc|900|
 CPU test ADC|CPUTest/CPU/ADC/CPUADC.sfc|600|
 Synthetic Super FX (GSU saturated)|@chip/gsu.sfc|600|
 Synthetic SA-1 (saturated)|@chip/sa1.sfc|600|
+# The owner's own dumps (private, never committed): @own/ = /w/snes-roms ($OWN_ROMS). Attract mode with Start pressed twice.
+Super Mario World|@own/Super Mario World.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Super Mario Kart (Mode 7)|@own/Super Mario Kart.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+F-Zero (Mode 7)|@own/F-Zero.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Pilotwings (Mode 7, DSP-1)|@own/Pilotwings.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Yoshi's Island (Super FX 2)|@own/Yoshi's Island.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Stunt Race FX (Super FX)|@own/Stunt Race FX.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Doom (Super FX 2)|@own/Doom.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Super Mario RPG (SA-1 title)|@own/Super Mario RPG.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Kirby Super Star (SA-1)|@own/Kirby Superstar.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Donkey Kong Country|@own/Donkey Kong 1 - Country.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Chrono Trigger|@own/ChronoTrigger.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Zelda A Link to the Past|@own/Zelda - A Link to the Past.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Super Metroid|@own/Super Metroid.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Mega Man X2 (Cx4)|@own/Mega Man X 2.smc|900|120:start,130:none,240:start,250:none,400:start,410:none
+Street Fighter Alpha 2 (S-DD1)|@own/Street Fighter Alpha 2.smc|900|120:start,130:none,240:start,250:none,400:start,410:none

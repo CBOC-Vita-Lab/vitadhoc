@@ -146,6 +146,7 @@ void S9xGraphicsScreenResize (void)
 
 void S9xBuildDirectColourMaps (void)
 {
+	g_s9x_colour_version++;
 	IPPU.XB = mul_brightness[PPU.Brightness];
 
 	for (uint32 p = 0; p < 8; p++)
@@ -177,8 +178,13 @@ void S9xStartScreenRefresh (void)
 		PPU.RecomputeClipWindows = TRUE;
 		IPPU.PreviousLine = IPPU.CurrentLine = 0;
 
-		memset(GFX.ZBuffer, 0, GFX.ScreenSize);
-		memset(GFX.SubZBuffer, 0, GFX.ScreenSize);
+		if (S9xPPUMTActive())
+			S9xPPUMTFrameStart();
+		else
+		{
+			memset(GFX.ZBuffer, 0, GFX.ScreenSize);
+			memset(GFX.SubZBuffer, 0, GFX.ScreenSize);
+		}
 	}
 
 	if (++IPPU.FrameCount == (uint32)Memory.ROMFramesPerSecond)
@@ -199,6 +205,13 @@ void S9xEndScreenRefresh (void)
 	if (IPPU.RenderThisFrame)
 	{
 		FLUSH_REDRAW();
+
+		if (S9xPPUMTActive())
+		{
+			S9xPPUMTFrameEnd(IPPU.RenderedScreenWidth, IPPU.RenderedScreenHeight);
+			if (Settings.TakeScreenshot || Settings.AutoDisplayMessages)
+				S9xPPUMTSync(); // these draw into the finished picture here
+		}
 
 		if (GFX.DoInterlace && S9xInterlaceField() == 0)
 		{
@@ -455,6 +468,12 @@ static void S9xUpdateScreen_impl (void)
 	if ((GFX.EndY = IPPU.CurrentLine - 1) >= PPU.ScreenHeight)
 		GFX.EndY = PPU.ScreenHeight - 1;
 
+	// CBOC-Vita: the state changes of this flush stay here (they feed back into
+	// the register side); the pixel work is S9xRenderBatch, which can run on the
+	// PPU thread from a snapshot of the state taken right after this part.
+	S9xRenderJob job;
+	memset(&job, 0, sizeof(job));
+
 	if (!PPU.ForcedBlanking)
 	{
 		// If force blank, may as well completely skip all this. We only did
@@ -469,14 +488,8 @@ static void S9xUpdateScreen_impl (void)
 		if (!IPPU.DoubleWidthPixels && (PPU.BGMode == 5 || PPU.BGMode == 6 || IPPU.PseudoHires))
 		{
 			// Have to back out of the regular speed hack
-			for (uint32 y = 0; y < GFX.StartY; y++)
-			{
-				uint16	*p = GFX.Screen + y * GFX.PPL + 255;
-				uint16	*q = GFX.Screen + y * GFX.PPL + 510;
-
-				for (int x = 255; x >= 0; x--, p--, q -= 2)
-					*q = *(q + 1) = *p;
-			}
+			job.widen = 1;
+			job.widen_ppl = GFX.PPL;
 
 			IPPU.DoubleWidthPixels = TRUE;
 			IPPU.RenderedScreenWidth = 512;
@@ -484,13 +497,11 @@ static void S9xUpdateScreen_impl (void)
 
 		if (!IPPU.DoubleHeightPixels && IPPU.Interlace && (PPU.BGMode == 5 || PPU.BGMode == 6))
 		{
+			job.heighten = 1;
 			IPPU.DoubleHeightPixels = TRUE;
 			IPPU.RenderedScreenHeight = PPU.ScreenHeight << 1;
 			GFX.PPL = GFX.RealPPL << 1;
 			GFX.DoInterlace = 2;
-
-			for (int32 y = (int32) GFX.StartY - 2; y >= 0; y--)
-				memmove(GFX.Screen + (y + 1) * GFX.PPL, GFX.Screen + y * GFX.RealPPL, GFX.PPL * sizeof(uint16));
 		}
 
 		if ((Memory.FillRAM[0x2130] & 0x30) != 0x30 && (Memory.FillRAM[0x2131] & 0x3f))
@@ -500,6 +511,45 @@ static void S9xUpdateScreen_impl (void)
 			((Memory.FillRAM[0x2130] & 0x30) != 0x30 && (Memory.FillRAM[0x2130] & 2) && (Memory.FillRAM[0x2131] & 0x3f) && (Memory.FillRAM[0x212d] & 0x1f)))
 			// If hires (Mode 5/6 or pseudo-hires) or math is to be done
 			// involving the subscreen, then we need to render the subscreen...
+			job.sub = 1;
+	}
+	else
+		job.blank = 1;
+
+	if (S9xPPUMTActive())
+		S9xPPUMTBatch(job);
+	else
+		S9xRenderBatch(job);
+
+	IPPU.PreviousLine = IPPU.CurrentLine;
+}
+
+// The pixel work of one flush: draws lines GFX.StartY..GFX.EndY of the picture
+// from PPU/IPPU/GFX/BG/LineData/VRAM. Touches nothing the register side reads.
+void S9xRenderBatch (const S9xRenderJob &job)
+{
+	if (!job.blank)
+	{
+		if (job.widen)
+		{
+			// Have to back out of the regular speed hack
+			for (uint32 y = 0; y < GFX.StartY; y++)
+			{
+				uint16	*p = GFX.Screen + y * job.widen_ppl + 255;
+				uint16	*q = GFX.Screen + y * job.widen_ppl + 510;
+
+				for (int x = 255; x >= 0; x--, p--, q -= 2)
+					*q = *(q + 1) = *p;
+			}
+		}
+
+		if (job.heighten)
+		{
+			for (int32 y = (int32) GFX.StartY - 2; y >= 0; y--)
+				memmove(GFX.Screen + (y + 1) * GFX.PPL, GFX.Screen + y * GFX.RealPPL, GFX.PPL * sizeof(uint16));
+		}
+
+		if (job.sub)
 			RenderScreen(TRUE);
 
 		RenderScreen(FALSE);
@@ -516,12 +566,16 @@ static void S9xUpdateScreen_impl (void)
 			for (int x = 0; x < IPPU.RenderedScreenWidth; x++)
 				GFX.S[x] = black;
 	}
-
-	IPPU.PreviousLine = IPPU.CurrentLine;
 }
+
+// Entry points for the renamed copy of this file used by the PPU thread
+// (see snes/core/ppu_mt.cpp): plain C names so that the build can address them.
+extern "C" void s9x_render_batch (const S9xRenderJob *job) { S9xRenderBatch(*job); }
+extern "C" void s9x_render_setup (void) { S9xInitTileRenderer(); }
 
 static void SetupOBJ (void)
 {
+	g_s9x_obj_ran = TRUE;
 	int	SmallWidth, SmallHeight, LargeWidth, LargeHeight;
 
 	switch (PPU.OBJSizeSelect)

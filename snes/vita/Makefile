@@ -27,6 +27,9 @@ CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing 
 CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/include
 
 CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
+# Second, renamed copy of the renderer for the PPU thread (see ../core/rcopy.sh)
+RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
+RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/main.o $(B)/font.o
 V2D_OBJS  := $(B)/v2d/vita2d.o $(B)/v2d/vita2d_draw.o $(B)/v2d/vita2d_texture.o $(B)/v2d/utils.o
 SHADERS   := $(wildcard $(V2D)/shader/*_gxp.o)
@@ -38,7 +41,7 @@ LIBS := -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_st
 
 all: $(B)/snes.bin
 
-$(B)/snes.elf: $(CORE_OBJS) $(FE_OBJS) $(V2D_OBJS) $(SHADERS)
+$(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(V2D_OBJS) $(SHADERS)
 	$(CXX) $(CPUFLAGS) -Wl,-q -o $@ $^ $(LIBS)
 
 $(B)/snes.velf: $(B)/snes.elf
@@ -46,6 +49,12 @@ $(B)/snes.velf: $(B)/snes.elf
 
 $(B)/snes.bin: $(B)/snes.velf
 	$(VITASDK)/bin/vita-make-fself -s -c $< $@
+
+$(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh
+	NM=$(PREFIX)nm sh $(CORE)/rcopy.sh $@ $(filter %.o,$^)
+$(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
+	@mkdir -p $(B)/rcopy
+	$(PREFIX)objcopy --redefine-syms=$(B)/rcopy.map $< $@
 
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)

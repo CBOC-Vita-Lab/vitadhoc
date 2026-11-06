@@ -263,8 +263,8 @@ void S9xSetPPU (uint8 Byte, uint16 Address)
 					{
 						IPPU.ColorsChanged = TRUE;
 						PPU.Brightness = Byte & 0xf;
-						S9xFixColourBrightness();
-						S9xBuildDirectColourMaps();
+						IPPU.XB = mul_brightness[PPU.Brightness];
+						g_s9x_colours_stale = TRUE;   // rebuilt before the next flush (S9xRefreshColours)
 						if (PPU.Brightness > IPPU.MaxBrightness)
 							IPPU.MaxBrightness = PPU.Brightness;
 					}

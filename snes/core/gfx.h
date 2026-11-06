@@ -233,6 +233,10 @@ struct COLOR_SUB
 void S9xStartScreenRefresh (void);
 void S9xEndScreenRefresh (void);
 void S9xBuildDirectColourMaps (void);
+// CBOC-Vita: a brightness change only marks the colour tables stale; they are rebuilt (identically) before
+// the next render flush. Some Super FX demos change INIDISP ~900 times per frame.
+extern bool8 g_s9x_colours_stale;
+void S9xRefreshColours (void);
 void RenderLine (uint8);
 void S9xComputeClipWindows (void);
 void S9xDisplayChar (uint16 *, uint8);

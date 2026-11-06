@@ -144,6 +144,18 @@ void S9xGraphicsScreenResize (void)
 	}
 }
 
+bool8 g_s9x_colours_stale = FALSE;
+
+void S9xRefreshColours (void)
+{
+	if (g_s9x_colours_stale)
+	{
+		g_s9x_colours_stale = FALSE;
+		S9xFixColourBrightness();
+		S9xBuildDirectColourMaps();
+	}
+}
+
 void S9xBuildDirectColourMaps (void)
 {
 	g_s9x_colour_version++;
@@ -458,6 +470,8 @@ void S9xUpdateScreen (void)
 
 static void S9xUpdateScreen_impl (void)
 {
+	S9xRefreshColours();
+
 	if (IPPU.OBJChanged || IPPU.InterlaceOBJ)
 		SetupOBJ();
 

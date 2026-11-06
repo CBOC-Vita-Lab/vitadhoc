@@ -489,4 +489,16 @@ Results (x86, shared 2-core box, so timings are noisy):
 - Main-thread CPU time on the owner set drops (for example Doom 0.43 s to 0.25 s for 600 frames, Chrono Trigger 0.40 to 0.16), but wall time did not improve on this machine because the box has only two busy cores and the workers spin briefly when idle. Real speedup needs measuring on the Vita's three cores; not done.
 - Commercial ROMs: 190-1223 APU port accesses per frame, 1-31 PPU flushes per frame.
 
-Not done yet: Super FX thread, Vita affinity/priority tuning and per-thread busy log in the 1-second line (affinity masks in `s9x_mt.h` are now the SDK user-core masks, untested), snes.bin vpk build re-check, picture options (ambient, zoom, shaders, governor), the Super FX demo and 92% bucket investigation. Nothing here has run on a real Vita.
+Phase 3 (this branch): Vita build re-checked and in the VPK; Vita thread placement, non-blocking picture fetch, picture options, governor and multiplayer ports (see "The Vita program"). Still not done: Super FX thread, measuring any of it on a real Vita. Nothing here has run on a real Vita.
+
+### The Super FX demos' "65816/DMA" bucket: found and fixed
+
+The PeterLemon Super FX demos spent 92% of their time in the 65816/DMA bucket although the GSU barely ran. A
+callgrind run showed 86% of all instructions in `S9xBuildDirectColourMaps` and `S9xFixColourBrightness`, called
+from the INIDISP write about 935 times per frame: the demos change the screen brightness all the time, and
+Snes9x rebuilt both colour tables (2048 + 320 entries) at every write. They are now rebuilt once, lazily, before
+the next render flush (`S9xRefreshColours`), which gives the same tables at every point where they are read.
+Result: GSU 8bpp PlotPixel 256x192 went from 240 to 1462 fps on x86; frame hashes and audio are identical to the
+old build on all 289 test ROMs and the 15 owner ROMs (`mt_compare.py --ref <old build>`, with and without
+threads). It was not a busy-wait on the GSU and no idle-loop skip was needed. Games that fade the screen gain a
+little too.

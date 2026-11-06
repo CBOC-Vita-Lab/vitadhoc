@@ -37,6 +37,7 @@ is one small wrapper or call to the optional timing hooks in `s9x_prof.h`
 | `apu/apu.cpp` | `S9xAPUExecute` wrapped the same way (APU); `S9xAPUEndScanline` counts its DSP catch-up and sample landing as APU. Include added. |
 | `fxemu.cpp` | `S9xSuperFXExec` wrapped the same way (CHIP). Include added. |
 | `cpuexec.cpp` | The per-instruction call of `S9xSA1MainLoop` counts as CHIP. Include added. |
+| `gfx.cpp`, `gfx.h`, `ppu.cpp` (phase 2) | Brightness changes (INIDISP) only mark the colour tables stale; `S9xRefreshColours` rebuilds them (same code, same result) at the start of the next render flush instead of at every write. Some Super FX demos wrote INIDISP ~900 times per frame. Frame hashes and audio are identical to before on all test and owner ROMs. |
 | `sources.mk` | New. The list of translation units. |
 | `PROVENANCE.md` | New. This file. |
 

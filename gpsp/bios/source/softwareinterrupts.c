@@ -613,7 +613,7 @@ void swi_BitUnPack(u32 source, u32 dest, u32 header)
 -----------------------------------------------------------------*/
 void swi_LZ77UnCompWram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -669,7 +669,7 @@ void swi_LZ77UnCompWram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_LZ77UnCompVram_(u32 source, u32 dest, int checkBios)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(checkBios && (((source & 0xe000000) == 0) ||
@@ -765,7 +765,7 @@ void swi_LZ77UnCompVram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_HuffUnComp(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -906,7 +906,7 @@ void swi_HuffUnComp(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_RLUnCompWram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -1018,7 +1018,7 @@ void swi_RLUnCompVram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_Diff8bitUnFilterWram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -1054,7 +1054,7 @@ void swi_Diff8bitUnFilterWram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_Diff8bitUnFilterVram(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||
@@ -1100,7 +1100,7 @@ void swi_Diff8bitUnFilterVram(u32 source, u32 dest)
 -----------------------------------------------------------------*/
 void swi_Diff16bitUnFilter(u32 source, u32 dest)
 {
-  u32 header = CPUReadMemory(source);
+  u32 header = CPUReadMemory(source & 0xFFFFFFFC);
   source += 4;
 
   if(((source & 0xe000000) == 0) ||

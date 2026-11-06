@@ -1421,7 +1421,9 @@ def t_cpufix(S):
              "branch into a run of same-condition ARM code (IWRAM)",
              "FIQ has its own r8-r12",
              "LDM {pc}^ loads the CPSR from the SPSR",
-             "MSR CPSR_c keeps the live flags"]
+             "MSR CPSR_c keeps the live flags",
+             "RLUnCompWram from a halfword-aligned source",
+             "LZ77UnCompWram from a halfword-aligned source"]
     extra = {"roms/gbadhoc-cpufix.gba": open(rom, "rb").read()}
     r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(6, wait=20),
               autoboot="gbadhoc-cpufix.gba", extra=extra)

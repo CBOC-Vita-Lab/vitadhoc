@@ -334,6 +334,30 @@ const uint16_t *snes_host_video(int *w, int *h, int *pitch)
 	return GFX.Screen;
 }
 
+const uint16_t *snes_host_video_nowait(int *w, int *h, int *pitch, unsigned *serial)
+{
+	if (S9xPPUMTActive()) {
+		int pw = g_vw, ph = g_vh;
+		unsigned sr = 0;
+		const uint16_t *pic = S9xPPUMTVideoNoWait(&pw, &ph, &sr);
+		*serial = sr;
+		if (!pic) return NULL;
+		*w = pw; *h = ph; *pitch = (int) MAX_SNES_WIDTH * 2;
+		return pic;
+	}
+	static unsigned n;
+	*w = g_vw; *h = g_vh; *pitch = (int) GFX.Pitch;
+	*serial = ++n;
+	return GFX.Screen;
+}
+
+void snes_host_thread_config(int apu_core, int apu_prio, int ppu_core, int ppu_prio, int spin)
+{
+	S9xAPUMTConfig(apu_core, apu_prio);
+	S9xPPUMTConfig(ppu_core, ppu_prio);
+	S9xMTSetSpin(spin);
+}
+
 int snes_host_audio_take(int16_t *dst, int max_frames)
 {
 	RingLock lk;

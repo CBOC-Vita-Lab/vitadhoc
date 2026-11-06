@@ -80,6 +80,13 @@ void snes_host_set_render(int on);
 
 /* Worker threads (phase 2). Switch on with snes_host_set_option("apu_thread", 1) / ("ppu_thread", 1);
  * frame hashes and audio stay identical to the single-thread build. */
+/* Vita: never waits for the PPU worker. Returns the newest finished picture (normally the previous
+ * frame) or NULL when none exists yet; *serial changes whenever a new picture is available. The data
+ * must be copied before the next call. Without the PPU thread it returns the current frame. */
+const uint16_t *snes_host_video_nowait(int *width, int *height, int *pitch_bytes, unsigned *serial);
+/* Core number (0..2, -1 = any) and Vita priority of the workers, and how many empty polls an idle
+ * worker makes before it blocks on a semaphore. Call before enabling the threads. */
+void snes_host_thread_config(int apu_core, int apu_prio, int ppu_core, int ppu_prio, int spin);
 void snes_host_sync(void); /* wait until the worker threads have caught up with the emulation */
 int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread */
 typedef struct {

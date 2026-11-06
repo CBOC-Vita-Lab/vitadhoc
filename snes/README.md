@@ -162,11 +162,10 @@ Reading the table:
 
 ## The Vita program (`snes.bin`)
 
-Started with `snes.bin <rom path>`. Picture: RGB565 texture at the core's native
-size (256x224, 512x448 for hi-res and interlace), scaled to 4:3 at 544 lines high,
-bilinear. Sound: the core's 32040 Hz output resampled to 48000 Hz with linear
-interpolation and a rate control that holds about 60 ms in the queue. 500 MHz is
-requested for the CPU (444 MHz if refused), bus 222, GPU 222, crossbar 166.
+Started with `snes.bin <rom path>`. The core's picture (RGB565, 256 or 512 wide) is copied into a GPU
+texture and everything else happens on the GPU (see "Picture" below). Sound: the core's 32040 Hz output
+resampled to 48000 Hz with linear interpolation and a rate control that holds about 60 ms in the queue.
+500 MHz is requested for the CPU (444 MHz if refused), bus 222, GPU 222, crossbar 166.
 
 | Vita | SNES |
 |---|---|
@@ -174,9 +173,62 @@ requested for the CPU (444 MHz if refused), bus 222, GPU 222, crossbar 166.
 | L, R, Start, Select, D-pad | the same (the left stick also acts as D-pad) |
 | L + R + Start (held together) | pause menu |
 
-Pause menu: Resume, Save state, Load state (L/R pick the slot, 1 to 4), Reset game,
-Quit to VitAdhoc. Menu confirm follows the console's confirm-button setting
-(Cross or Circle); the other is "back".
+Pause menu: Resume, Picture, Multitap, Save state, Load state (L/R pick the slot, 1 to 4), Reset game, Quit to
+VitAdhoc. Menu confirm follows the console's confirm-button setting (Cross or Circle); the other is "back".
+
+### Players (couch multiplayer)
+
+Pad 1 is the Vita's own controls. Pad 2 is Vita port 2 when a controller is paired there, else port 1 on a
+handheld (external pads through ds34vita, MiniVitaTV and the like); on a PS TV port 1 mirrors port 0 and is
+not used. Pads 3 and 4 are ports 3 and 4. The ports are checked once a second, so a pad can be plugged in or
+removed during play (a missing pad reads as no buttons). Input is read with `sceCtrlPeekBufferPositiveExt2`
+(the Vita's L/R arrive as L1/R1, a PS TV pad's L2/R2 as the old L/R bits; both mean SNES L/R).
+Pads 3 and 4 reach a game only through the **Super Multitap** in controller port 2 (Snes9x supports it):
+pause menu "Multitap" = Auto (on for titles known to use it: Bomberman, Secret of Mana, Seiken Densetsu 3,
+NBA Jam, NBA Give 'n Go, NHL, FIFA, Madden), On or Off. Without the multitap, pad 2 is a plain pad in port 2.
+Tested on Linux with a cartridge that copies the auto-joypad registers into its RAM (`selftest.sh`); the Vita
+port detection and the multitap have not been tried with real controllers.
+
+### Picture
+
+Settings are in the pause menu under Picture, saved for all SNES games (`ux0:data/GBAdhoc/snes/picture.ini`)
+or, with "Apply to: this game", for one game (`ux0:data/GBAdhoc/snes/games/<game>.ini`).
+
+| Setting | Values |
+|---|---|
+| Shape | **Original shape** (default: correct 4:3, full height, about 725x544; the side areas show the glow), Zoom (blank top/bottom rows are cropped, the picture is enlarged but not stretched), Full screen (stretched), Pixel perfect (integer height scale; Pixels: 8:7 or square) |
+| Quality | **Sharp** (default: nearest-neighbour prescale by an integer factor into a render target, then bilinear: "sharp bilinear") or Smooth (plain bilinear) |
+| Side glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
+| CRT scanlines, LCD grid | Off, 1-10 |
+| Bezel | not a setting: `ux0:data/GBAdhoc/overlays/<game>.png`, else `overlays/snes.png`, a PNG (transparent window) drawn over the whole screen; it replaces the glow |
+
+No shader compiler exists in this build environment (vitasdk has only the runtime `libshacccg.suprx` loaded
+on the console; no offline `psp2cgc`, and vita2d here ships precompiled texture/colour programs only), so no
+custom fragment shader is used. Scanlines and the grid are alpha-blended dark rectangles drawn between the SNES
+lines / pixels by the GPU; sharp bilinear is the two-pass render-target method; the glow is two shrink passes.
+Hi-res (512 wide) and interlaced (448/478 high) pictures use the same paths; the 4:3 shape does not change, and
+the scanline and grid counts follow SNES lines (an interlaced picture counts two rows as one line).
+The layout maths (`frontend/picture.cpp`) is tested on Linux (`selftest.sh`); the GPU passes are compiled only.
+
+### Threads on the Vita
+
+APU worker on core 2, PPU worker on core 1, emulation (65816, DMA, GPU submission) on core 0, audio output
+thread on core 2 at a more urgent priority than the APU worker. Priorities: workers 0x60, audio 0x50, main
+thread unchanged. Switches in `ux0:data/GBAdhoc/snes/threads.ini` (`apu_thread=1`, `ppu_thread=1`, `spin=300`;
+both on by default). An idle worker polls `spin` times (a few microseconds) and then blocks on a semaphore;
+nothing spins while the game waits. The main loop never waits for the PPU worker: it queues the end-of-frame
+copy and shows the newest finished picture (normally the previous frame, one frame of display latency). The
+Linux twin keeps its exact waiting fetch for the hash checks (`--nowait` exercises the Vita's fetch: every
+picture it returns must equal a picture of the reference run).
+
+### Smoothness governor
+
+The main loop's work per frame (emulation, copy, GPU submission, without the display wait) is fed to a small
+governor (`frontend/picture.cpp`, the idea of the GBA app's governor, own code). 24 slow frames (over 15.5 ms,
+with forgiveness) drop to level 1: glow, scanlines, grid and the sharp pass are off. 24 more drop to level 2:
+every other frame is not drawn (emulation and sound stay at 60 Hz; the core also skips its own drawing when the
+PPU thread is off). It steps back up after 600 fast frames (10 s), and longer if it went down again soon after.
+The level is in the log (`gov=`) and each change is logged.
 
 Files:
 
@@ -184,17 +236,29 @@ Files:
 |---|---|
 | Battery RAM | `Game.srm` beside the ROM (RetroArch's name). Written about 2 s after it last changed, at quit and when the console suspends. The previous file is kept as `Game.srm.bak` before the first overwrite of a session. Carts whose RAM has no battery (Super FX work RAM) write nothing. |
 | Save states | `ux0:data/GBAdhoc/snes/states/<game>.st0` to `.st3` |
+| Picture settings | `ux0:data/GBAdhoc/snes/picture.ini`, `.../games/<game>.ini` |
+| Threads | `ux0:data/GBAdhoc/snes/threads.ini` |
 | Log | `ux0:data/GBAdhoc/snes/log.txt` (appended) |
 
-Log: one line per second, `t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100`
-(fps shown, frames the core ran, average and last frame time in ms, audio queue in
-frames) and, for one second in four, the split `prof(60 fr): cpu=38% apu=30% ppu=27%
-chip=0% front=5% ms/fr=9.8`. The profiled seconds run a little slower.
+### Reading the log
 
-Not implemented in phase 1: zip files, pause-menu settings (filters, frame skip,
-core options), controller ports beyond pad 1, mouse/Super Scope, cheats, rewind,
-RTC data for S-RTC/SPC7110 carts (their clock RAM is not saved), BS-X and Sufami
-Turbo, MSU-1 audio files.
+One line per second:
+
+```
+t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | gov=0 drawn=60 skipped=0 new_pic=60 fence_skip=0
+```
+
+`fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
+`aq` the audio queue in frames. `busy ms/fr` is the time each thread spent working per emulated frame
+(Vita thread CPU clocks are not available, so each thread measures around its own work; the main figure is the
+whole loop without the display wait). A frame fits when main stays under about 15.5 and the workers under 16.7.
+`waits/s` counts how often the main thread had to wait for a worker and how long in total. `fence_skip` counts
+pictures not copied because the GPU still read every texture. Without threads the line also carries
+`prof(60 fr): cpu= apu= ppu= chip= front= ms/fr=` for one second in four. Other lines: `pads:` when a controller
+appears or goes, `governor:` level changes, `overlay`, `render targets:` (0 means a target could not be created).
+
+Not implemented: zip files, core options in the menu, mouse/Super Scope, cheats, rewind, RTC data for
+S-RTC/SPC7110 carts (their clock RAM is not saved), BS-X and Sufami Turbo, MSU-1 audio files.
 
 ## Library hook (VitAdhoc side)
 

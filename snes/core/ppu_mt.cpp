@@ -33,6 +33,7 @@
 #include "gfx.h"
 #include "memmap.h"
 #include "s9x_mt.h"
+#include "apu/apu.h"
 
 extern struct SLineData LineData[240];
 extern struct SLineMatrixData LineMatrixData[240];
@@ -98,6 +99,7 @@ static s9xmt::Thread thr;
 static bool on, started;
 static std::atomic<uint64_t> busy_ns, batches, waits, wait_ns;
 static int spin_idle = 3000;
+static int core_hint = -1, prio_hint = 0x40;
 
 /* register side bookkeeping */
 static uint16 dirty_list[NBLK];
@@ -428,6 +430,31 @@ const uint16 *S9xPPUMTVideo(int *w, int *h)
 	return out_pic[slot];
 }
 
+const uint16 *S9xPPUMTVideoNoWait(int *w, int *h, unsigned *serial)
+{
+	{
+		Slot &s = acquire();
+		s.kind = K_FRAME_END;
+		s.screen = GFX.Screen;
+		s.w = *w;
+		s.h = *h;
+		release();
+	}
+	unsigned n = frames_done.load(std::memory_order_acquire);
+	*serial = n;
+	if (!n) return NULL;
+	int slot = (n - 1) % NOUT;
+	*w = out_w[slot];
+	*h = out_h[slot];
+	return out_pic[slot];
+}
+
+void S9xMTSetSpin(int iterations)
+{
+	spin_idle = iterations;
+	S9xAPUMTSetSpin(iterations);
+}
+
 bool S9xPPUMTSet(bool enable)
 {
 	if (enable == on) return on;
@@ -473,7 +500,7 @@ bool S9xPPUMTSet(bool enable)
 		busy_ns = 0; batches = 0; waits = 0; wait_ns = 0;
 		g_s9x_vram_track = TRUE;
 		on = true;
-		if (!thr.start(thread_main, 0, "snes_ppu", -1, 0x40))
+		if (!thr.start(thread_main, 0, "snes_ppu", core_hint, prio_hint))
 		{
 			on = false;
 			g_s9x_vram_track = FALSE;
@@ -494,7 +521,8 @@ bool S9xPPUMTSet(bool enable)
 
 void S9xPPUMTConfig(int core, int prio)
 {
-	(void) core; (void) prio;
+	core_hint = core;
+	prio_hint = prio;
 }
 
 void S9xPPUMTStats(uint64_t *busy, uint64_t *nbatches, uint64_t *nwaits, uint64_t *waitns)

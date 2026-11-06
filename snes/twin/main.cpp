@@ -126,6 +126,7 @@ static void usage(void)
 	    "  --save-state FILE --state-frame N   save a state after frame N\n"
 	    "  --load-state FILE --state-frame N   load a state before frame N\n"
 	    "  --pad2/--pad3/--pad4/--pad5 SCRIPT  scripts for pads 2..5 (pads 3-5 need --opt multitap=1)\n"
+	    "  --nowait           use the non-blocking video fetch of the Vita (hash file lists new pictures: serial w h hash)\n"
 	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock transparency echo_buffer), repeatable\n"
 	    "  --summary          print one summary line (fps, split) on stdout\n"
 	    "  --name NAME        label used in the summary line\n");
@@ -141,6 +142,7 @@ int main(int argc, char **argv)
 	std::vector<PadEv> script, script2, script3, script4, script5;
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
+	bool nowait = false;
 	bool summary = false;
 	for (int i = 2; i < argc; i++) {
 		auto arg = [&](const char *n) { return !strcmp(argv[i], n) && i + 1 < argc; };
@@ -165,6 +167,7 @@ int main(int argc, char **argv)
 			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) opts.push_back({ k, v });
 		}
 		else if (!strcmp(argv[i], "--summary")) summary = true;
+		else if (!strcmp(argv[i], "--nowait")) nowait = true;
 		else { usage(); return 2; }
 	}
 	std::set<int> shotset;
@@ -188,7 +191,7 @@ int main(int argc, char **argv)
 
 	uint64_t wall_tot_ns = 0, tot_ns = 0, cpu_tot_ns = 0, acc_ns[S9XP_N] = { 0 }, cnt_tot[S9XC_N] = { 0 };
 	size_t ev = 0;
-	unsigned pad = 0;
+	unsigned pad = 0, last_serial = 0;
 	g_s9xp.on = tf || summary ? 1 : 0;
 	/* with --summary alone profiling is on; use no flags for a clean fps number */
 	bool prof_on = g_s9xp.on;
@@ -227,7 +230,22 @@ int main(int argc, char **argv)
 		if (sstate && f == state_frame) fprintf(stderr, "save state: %d\n", snes_host_state_save(sstate));
 
 		int w, h, pitch;
-		const uint16_t *v = snes_host_video(&w, &h, &pitch);
+		const uint16_t *v;
+		if (nowait) {
+			/* the Vita's fetch: never waits; lists each new picture once (serial, size, hash) */
+			unsigned serial = 0;
+			w = 256; h = 224;
+			v = snes_host_video_nowait(&w, &h, &pitch, &serial);
+			if (hf && v && serial != last_serial) fprintf(hf, "%u %d %d %016llx\n", serial, w, h, (unsigned long long) fnv(v, w, h, pitch));
+			last_serial = serial;
+			if (shotset.count(f) && v) {
+				char p[512];
+				snprintf(p, sizeof p, "%s%05d.png", prefix.c_str(), f);
+				write_png(p, v, w, h, pitch);
+			}
+			continue;
+		}
+		v = snes_host_video(&w, &h, &pitch);
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) fnv(v, w, h, pitch));
 		if (shotset.count(f)) {
 			char p[512];

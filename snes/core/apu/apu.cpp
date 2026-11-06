@@ -216,6 +216,8 @@ void S9xAPUMTPost(void (*fn)(void *), void *arg)
 	apumt::publish();
 }
 
+void S9xAPUMTSetSpin(int n) { apumt::spin_idle = n; }
+
 void S9xAPUMTConfig(int core, int prio)
 {
 	apumt::core_hint = core;

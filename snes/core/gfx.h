@@ -138,6 +138,10 @@ void S9xPPUMTVRAMDirty (uint32 address);
 bool S9xPPUMTSet (bool enable);
 const uint16 *S9xPPUMTVideo (int *width, int *height);
 void S9xPPUMTConfig (int core, int prio);
+/* Non-blocking: queues the end-of-frame copy and returns the newest picture the worker has finished
+ * (usually the previous frame), or NULL when none exists yet. *serial counts finished pictures. */
+const uint16 *S9xPPUMTVideoNoWait (int *width, int *height, unsigned *serial);
+void S9xMTSetSpin (int iterations);
 void S9xPPUMTStats (uint64_t *busy_ns, uint64_t *batches, uint64_t *waits, uint64_t *wait_ns);
 extern bool8 g_s9x_obj_ran;
 extern bool8 g_s9x_vram_track;

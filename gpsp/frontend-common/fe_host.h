@@ -153,6 +153,14 @@ typedef struct fe_host_config
     * (the partner then sends it). */
    int (*gb_find_rom)(uint32_t size, const uint8_t header[0x1C], char *path,
                       size_t cap);
+   /* GBA cable sessions with ANOTHER cartridge in the partner's machine
+    * (Ruby with Sapphire): the folder the partner's cartridge is kept in
+    * between sessions (the app's own data, never a game folder), created on
+    * demand.  NULL = no cache, the two players need the same game. */
+   const char *gba_rom_cache_dir;
+   /* ...and how much it may hold: files / bytes (0 = 4 / 96 MiB). */
+   unsigned gba_rom_cache_files;
+   unsigned gba_rom_cache_mb;
    /* Harness: the autopilot script belongs to a link session, so it waits
     * (fe_host_autopilot_gate) until the session's machines are running. */
    int gblink_script_waits;

@@ -159,6 +159,16 @@ Racing Syndicate or Mortal Kombat: Deadly Alliance.
   Red, Blue and Yellow need with each other and with Gold, Silver and Crystal
   (Time Capsule trades). Before, Two players on this Vita only offered games
   with the same file ending, so Red (`.gb`) could not pair with Gold (`.gbc`).
+- **Two Vitas can trade between versions of a Game Boy Advance game.** Ruby
+  with Sapphire, FireRed with LeafGreen and Emerald with FireRed now link over
+  Wi-Fi, the internet and ad hoc. The room list shows both games
+  ("FireRed <-> Emerald") and no longer asks you to open the same game. The
+  first time, each Vita sends the other its game (checked, with a progress
+  bar, a time estimate and Cancel); a copy is kept in
+  `ux0:data/GBAdhoc/cache/link/` under a hashed name, never in your game
+  folders and never in the game list, so the next session starts at once.
+  The cache holds 4 games or 96 MB. Each player's own save stays on their own
+  Vita. Both players must own their games. Not yet confirmed on two real Vitas.
 
 **Split screen for two players**
 - **Two controllers, two equal pictures.** With a second controller (a PS TV

@@ -453,15 +453,75 @@ run some of them.
   (`gbcore_dual.c`: the byte crosses at the SC write, the sender's own
   `seri_occer` completes it in CPU clocks), so a Color in double speed against
   a Game Boy at normal speed needs no special case; the tests prove it.
-  Over the network the GBA cable still needs the same game on both Vitas (the
-  mirror runs one ROM in both machines), so Ruby with Sapphire is a one-Vita
-  (two players) pairing only.
+  Over the network the GBA cable now takes two different games too (next
+  section).
 - **Tests:** `local_tests.py gb_mixed` (a `.gb` with a colour-flag `.gbc`, with
   a `.gbc` without the flag, with a Color in double speed, each both ways, and
   the picker's list) and `link_tests.py gb_mixed` (the same over the loopback
   network link). The cartridges are `testrom/gblocal*.gbc` and
   `gblink*.gbc` (`make -C testrom gb`; the `-cgbfast` ones switch to double
   speed at power on, `rgbasm -DDOUBLE`).
+
+### GBA cable link between two different games (1.3)
+
+Before, each Vita mirrored BOTH machines of a GBA cable session from one ROM
+(`fe_gblink` with the `fe_gbadual` machines, instance B reading instance A's
+ROM pool), so both Vitas needed the same game. Now machine B can run the
+partner's own cartridge, the way the local link's "partner's game" does
+(`b_recart()`, B with its own ROM cache).
+
+- **Room check.** `join_decide()` (`ui_vita_play.h`) no longer compares game
+  codes for a GBA cable room; any two GBA games may join, as hardware allows.
+  The list row shows "their game <-> yours" (`join_other_game()`), the
+  linking screen "yours <-> theirs". `LINK_ABI` is `vita-link-2`.
+- **Identity.** HELLO carries each cartridge's size, header and the 20-byte
+  identity (a whole-file SHA-1 under 256 KiB, else the SHA-1 of the size and 64
+  slices of 4 KiB, `SAMPLE_N`). A different identity means a different game:
+  `partner_lookup()` asks the cache (`fe_gblink_platform.rom_cache`, op 0), and
+  an entry is used only if its size and identity match (`ident_of_file()`),
+  otherwise NEED 1 and the partner streams its ROM. A pair with no cache (the
+  PSP) behaves as before: ROM_MISSING.
+- **Transfer.** Same lanes as the GB path: the bulk lane (1024-byte chunks,
+  CRC-32 per chunk, selective acknowledgement, adaptive rate) or the ordered
+  channel. The sender has no copy in memory (the machine owns it), so
+  `bk_send_chunk()` and `stream_rom()` read the chunks from the cartridge file
+  (`own_rom_read()`, kept open). The receiver collects the ROM in one malloc
+  buffer (16 MiB at most 32), checks `ident_of_buf()` against the HELLO
+  identity (M_ROM_RESULT), then writes it to `<root>/cache/link/<identity>.gbarom`
+  in steps (`store_step()`, `.part` then rename), frees the buffer, and only
+  then loads it. `fe_gblink_progress` carries `rate_bps` and `eta_s` (needs
+  the clock) for the screen's time estimate; Cancel is the LINKING screen's
+  usual one (aborts the setup, the partner is told).
+- **Machine B.** `fe_gblink_machines.partner_rom()` = `m_partner_rom()` in
+  `fe_gbadual.c`: `b_recart(cache file, own_rom = 1)` before READY (so READY
+  means B is loaded), and `partner_rom(NULL)` at `fe_gblink_destroy()` puts B
+  back on the player's cartridge (shared ROM pool). A failed load fails the
+  session with `E_START` ("memory") and restores B.
+- **Saves and states.** Unchanged: each side streams its battery image and its
+  running state, both are loaded into the slot's machine (B's state loads
+  only after B runs that partner's cartridge, so `retro_serialize_size`
+  agrees). Only the local side's battery is committed at the end; the partner's
+  stays in memory. Hashes are compared in lockstep as before; the machines'
+  roles are symmetric, so who holds which cartridge does not matter.
+- **Cache.** `gba_rom_cache()` in `fe_host.c`: one file per cartridge named by
+  its identity, in `host.gba_rom_cache_dir` (Vita: `<root>/cache/link`, not a
+  game folder, so never listed). After each store or use,
+  `romc_trim()` keeps at most 4 files and 96 MB (`gba_rom_cache_files/mb`),
+  removing the oldest files other than the one in use and any `.part` left by
+  a crash. FIFO by modification time (no `utime` on the Vita libc).
+- **Memory (Vita).** Instance B is loaded at boot, sharing A's pool. For a
+  session with another game: A holds the cartridge (cap = its size in 1 MiB
+  blocks, `gamepak_buffer_cap`), the receive buffer holds the partner's
+  (freed after the cache write), then B's own pool takes the partner's size
+  in blocks. Peak with two 16 MiB games = 32 MiB of ROM cache plus 16 MiB for
+  the buffer only while receiving. Not measured on a Vita (see KNOWN-ISSUES).
+- **Tests.** `link_tests.py gba_two_games` (two test cartridges of
+  `tools/linktest`, `make VARIANT_B=1` builds the second with another game
+  code): both ways with 9 KB cartridges (whole-file identity) and 1 MiB padded
+  ones (sliced identity, many chunks), then a second session that finds both
+  in the cache and moves nothing. It checks the room list, the transfer, the
+  cache file's name and bytes, nothing extra in `roms/`, the matching
+  hashes, the cartridges' own verdicts, the agreed end.
 
 ## Version 1.2 Changes
 

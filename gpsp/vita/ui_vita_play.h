@@ -93,8 +93,8 @@ void ui_link_fail_text(int why, const char **l1, const char **l2)
         "A room takes two players. Ask the host to open a new one." },
       { "The other " UI_DEV " runs a different version of VitAdhoc.",
         "Install the same version on both, then link again." },
-      { "The two games are not the same game.",
-        "Both players open the same game (and region), then link." },
+      { "The other player's game did not arrive.",
+        "Try again. If it keeps happening, check the memory card has room." },
       { "The host closed the room.",
         "Ask them to choose Host a game again." },
       { "Link lost: the other " UI_DEV " is gone.",
@@ -647,18 +647,27 @@ static const char *join_title(const ui_room *r)
    return t ? t : r->title[0] ? r->title : "a game";
 }
 
+/* 1 = a Link Cable room playing another Game Boy Advance game than this
+ * one (the two will trade across versions). */
+static int join_other_game(const ui_room *r)
+{
+   char code[5];
+   room_code_gba(g_game_code, code);
+   return r->kind == ROOM_CABLE_GBA && g_pcfg.console == FE_CONSOLE_GBA &&
+          strncmp(r->code, code, 4) != 0;
+}
+
 /* Whether this game can enter a room, and the sentence when it cannot. */
 typedef struct { int ok; char why[40]; char plate[112]; } join_verdict;
 
 static void join_decide(const ui_room *r, join_verdict *v)
 {
-   char rl[24], code[5], t[40];
+   char rl[24], t[40];
    int gba = g_pcfg.console == FE_CONSOLE_GBA;
    memset(v, 0, sizeof(*v));
    v->ok = 1;
    snprintf(rl, sizeof(rl), ROOM_LABEL_WORD " %d", r->number);
    vw_clip(t, sizeof(t), join_title(r), 150);
-   room_code_gba(g_game_code, code);
 #define JOIN_NO(short_, ...) \
    do { v->ok = 0; snprintf(v->why, sizeof(v->why), "%s", short_); \
         snprintf(v->plate, sizeof(v->plate), __VA_ARGS__); } while (0)
@@ -672,9 +681,10 @@ static void join_decide(const ui_room *r, join_verdict *v)
               "This game links by cable.", rl);
    else if (r->kind == ROOM_CABLE_GBA && !gba)
       JOIN_NO("a Game Boy Advance room", "%s is a Game Boy Advance room.", rl);
-   else if (r->kind == ROOM_CABLE_GBA && strncmp(r->code, code, 4) != 0)
-      JOIN_NO("another game: open it to join", "%s is playing %s. Open that "
-              "game to join.", rl, t);
+   /* ANOTHER game is fine (Ruby with Sapphire, FireRed with Emerald): a
+    * link cable joins any two Game Boy Advance games, the games themselves
+    * decide what they do with it.  The session fetches the other game
+    * (fe_gblink partner_rom); the list names both. */
    else if (r->kind == ROOM_CABLE_GBA && !join_can_cable())
       JOIN_NO(g_cable_ready ? "this game links by adapter"
                             : "restart the game to link",
@@ -976,7 +986,16 @@ static ui_action screen_join(unsigned edges)
             vid_rect(0, y - 3, 460, JOIN_ROW_H - 2, C_ACCENT, 40);
             vid_rect(0, y - 3, 4, JOIN_ROW_H - 2, C_ACCENT, 255);
          }
-         vw_clip(t, 64, join_title(r), 236);
+         if (join_other_game(r))
+         {
+            /* "FireRed <-> Emerald": their game, then yours */
+            char a[40], b[40];
+            vw_clip(a, sizeof(a), join_title(r), 96);
+            vw_clip(b, sizeof(b), own_game_name(), 96);
+            snprintf(t, sizeof(t), "%s <-> %s", a, b);
+         }
+         else
+            vw_clip(t, 64, join_title(r), 236);
          vid_text(18, y, t, v.ok ? (sel ? C_SEL : C_ITEM) : C_DIM);
          vid_text(270, y, kind_name(r->kind), v.ok ? C_ACCENT_DK : C_DIM);
          snprintf(pl, sizeof(pl), "%d/%d", r->players,
@@ -1749,7 +1768,7 @@ static ui_action screen_help(unsigned edges)
 {
    /* Page 1: the steps.  Page 2: each connection, its name leading. */
    static const char *const p1[][2] = {
-      { "1", "Both players open the same game." },
+      { "1", "Both players open their game: the same one, or the other version (Ruby and Sapphire, FireRed and LeafGreen)." },
       { "2", "One chooses Play together > Host a game." },
       { "3", "The other chooses Play together > Join a game and picks the "
              "room in the list." },

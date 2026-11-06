@@ -9,8 +9,8 @@ TWIN=${TWIN:-$HERE/build/snes_twin}
 UNDIS=${UNDIS_ROMS:-/w/snes-testroms/snes-test-roms/bin}   # built from undisbeliever/snes-test-roms; paths written @undis/...
 echo "| Test ROM | fps (no profiling) | ms/frame | CPU 65816 | APU | PPU | chip | frontend | PPU flushes/frame | APU port accesses/frame |"
 echo "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
-grep -v '^#' "$HERE/baseline_roms.txt" | while IFS='|' read -r label path frames pad; do
-	case "$path" in @undis/*) full="$UNDIS/${path#@undis/}" ;; *) full="$ROOT/$path" ;; esac
+grep -v "^#" "${ROMLIST:-$HERE/baseline_roms.txt}" | while IFS='|' read -r label path frames pad; do
+	case "$path" in @undis/*) full="$UNDIS/${path#@undis/}" ;; @chip/*) full="${CHIP_ROMS:-/w/snes-out/chip}/${path#@chip/}" ;; *) full="$ROOT/$path" ;; esac
 	[ -f "$full" ] || { echo "| $label | missing | | | | | | | | |"; continue; }
 	set -- "$full" --frames "$frames"
 	[ -n "$pad" ] && set -- "$@" --pad "$pad"

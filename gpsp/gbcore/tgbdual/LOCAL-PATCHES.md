@@ -184,6 +184,19 @@ On the PSP the core and its adapter are linked into one relocatable object
 `oam`, `halt`, `info`...) and `vram` collided with the GBA core's
 `mips_stub.o` on the first link.
 
+## Checked against libretro/tgbdual-libretro (2026-11-06)
+
+libretro's tgbdual is the C++ TGB Dual this core descends from; its history
+since 2014 was read (HEAD 0392c9c, 2026-08-23). Taken: `cpu_io.h`, a write to
+VBK (0xFF4F) is no longer discarded while an HDMA transfer runs
+(619eaa4). Already fixed here in the same way: the `spare_oam` 0xFEA0 index,
+ROM/RAM size table bounds, 32-bit `dword`, the wave channel length. Not taken:
+the dual-machine APU state, RTC and frame-pacing changes (this port has its
+own, see above), `cheat_map` and `vframe` shrinking (cheats are compiled out
+and `vframe` is already 160x144), and the apu_stat copy removal (this core
+renders sound from its own queue). tgbdual_kai and MasterBoy have no newer
+code.
+
 ## MBC7 EEPROM "write all" (WRAL)
 
 The vendored loop stored both bytes of the word at the even address

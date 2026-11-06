@@ -1,5 +1,15 @@
 # What's New
 
+## Version 1.3
+
+**Under the hood**
+- **Parts we borrowed were checked for newer versions.** The Game Boy core,
+  graphics code, image code and the RetroAchievements code were compared with
+  their latest originals. Most were already current. Two small fixes came
+  across: Game Boy Color games that switch video memory banks while copying
+  graphics now behave as on a real console, and the achievements code no
+  longer breaks on very large achievement sets or odd answers from the server.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

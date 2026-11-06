@@ -175,7 +175,7 @@ Engineering detail behind the [What's New](../CHANGELOG.md) list.
   patch's CRC. `Game.gba.ips` names one cartridge; `Game.ips` is refused when
   another cartridge shares the name.
 - **RetroAchievements** (`vita/ra_vita.c`, `vita/ra_http.c`, vendored
-  rcheevos v12.5.0 with `RC_NO_THREADS`): the rc_client runs on the game
+  rcheevos v12.5.0 plus five backported fixes, with `RC_NO_THREADS`): the rc_client runs on the game
   thread; requests go one at a time to a network thread (HTTPS through
   SceHttp/SceSsl with the root certificates in `ra_roots.h`; plain HTTP over
   sockets for tests). The game's hash is the MD5 of the whole file (patched

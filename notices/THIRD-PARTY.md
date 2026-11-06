@@ -45,8 +45,10 @@ clarification and the remaining package review.
   permission for unrelated game material. The original header is also in
   `licenses/CPU-xBRZ-notice.txt` inside the player package.
 - **rcheevos:** RetroAchievements.org, MIT. Release v12.5.0
-  (`1433173220a7eaede6a9ed7a18e94117be1821e0`), unchanged subset in
-  `gpsp/vita/third_party/rcheevos/` (`PROVENANCE` lists what was left out).
+  (`1433173220a7eaede6a9ed7a18e94117be1821e0`, still the newest release on
+  2026-11-06), a subset in `gpsp/vita/third_party/rcheevos/` with five small
+  bug fixes backported from later upstream commits (`PROVENANCE` lists them
+  and what was left out).
   Its notice, which accompanies the source and every distribution:
 
   > MIT License

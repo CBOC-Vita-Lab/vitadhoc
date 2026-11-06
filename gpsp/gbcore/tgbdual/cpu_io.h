@@ -700,8 +700,9 @@ static void cpu_io_write_4D( word adr,byte dat ){ cg_regs.KEY1=dat&1; speed_chan
 static void cpu_io_write_4E( word adr,byte dat ){ ; }
 static void cpu_io_write_4F( word adr,byte dat )
 {
-		if (dma_executing)
-			return;
+		/* GBAdhoc: a VBK write is honoured while an HDMA transfer runs
+		 * (libretro/tgbdual-libretro 619eaa4; real hardware switches the
+		 * bank at once). */
 		vram_bank=vram+0x2000*(dat&0x01);
 		cg_regs.VBK=dat;//&0x01;
 }

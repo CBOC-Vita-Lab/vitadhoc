@@ -2,9 +2,35 @@ rcheevos -- the RetroAchievements runtime (MIT, LICENSE beside this file).
 
 Source:  https://github.com/RetroAchievements/rcheevos
 Release: v12.5.0 (2026-09-13), commit 1433173220a7eaede6a9ed7a18e94117be1821e0
-Taken:   2026-10-23, unchanged.
+Taken:   2026-10-23.
 
-The files here are the release's, as they are, minus what VitAdhoc does not
+Checked 2026-11-06 against upstream develop (eea6461, 29 commits after the
+release; v12.5.0 is still the newest tag).  Develop is not taken whole: it
+moves the source tree, renames the API (softcore -> casual, core/unofficial ->
+promoted/unpromoted) and is unreleased.  Server requests are unchanged apart
+from an optional "v=2" flag for unpromoted leaderboards, so v12.5.0 keeps
+working with the RetroAchievements server.  Backported by hand, each marked
+by its upstream commit in the log below:
+  - 6d897b4  more than 65535 memrefs no longer wraps the 16-bit capacity
+             (src/rcheevos/alloc.c)
+  - 918ba6d  user-agent clause: no write past the buffer (src/rc_client.c)
+  - 8409479  JSON: a null where a text is required is an error, nesting is
+             limited to 32 levels, a deleted author/title no longer fails the
+             whole answer (src/rapi/rc_api_common.c/.h, rc_api_info.c,
+             rc_api_runtime.c; the editor API is not built here)
+  - 8ffa4bc  challenge sets are no longer reported as bonus sets
+             (rc_api_runtime.c, include/rc_api_runtime.h)
+  - e9a6d58  progress loading is bounded to each chunk
+             (src/rcheevos/runtime_progress.c)
+  - 284de96  keeps unlock times in encore mode (src/rc_client.c; the app does
+             not use encore mode; the field is unlock_time_softcore here)
+Not taken: 'rich presence lookup tree' balancing (cab7f7f, only speeds up
+huge lookups), 'survive a failed allocation' (e3e7e86, needs the new source
+layout), the restructure/rebranding/API-rename commits, hashes for consoles
+this app does not load, and the disc-hash bounds checks (the disc hashers are
+not built).
+
+The files here are the release's, with the changes above, minus what VitAdhoc does not
 build: the editor and RAIntegration APIs, the disc/zip/encrypted hashers
 (a GB/GBC/GBA game's hash is the MD5 of its file, made by ra_vita.c with
 md5.c), and the tests, the standalone validator tool and the project files.

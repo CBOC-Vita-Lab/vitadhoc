@@ -176,11 +176,54 @@ static void cm_or(colmask *m, const colmask *o)
       m->b[i] |= o->b[i];
 }
 
+/* Columns [x0, x1) a word at a time (it was a bit at a time: a texture's
+ * pend mask is set once per scaled row, twice). */
 static void cm_set_range(colmask *m, int x0, int x1)
 {
-   int x;
-   for (x = x0; x < x1; x++)
-      m->b[x >> 5] |= 1u << (x & 31);
+   int i;
+   if (x0 < 0)
+      x0 = 0;
+   if (x1 <= x0)
+      return;
+   for (i = x0 >> 5; i <= (x1 - 1) >> 5; i++)
+   {
+      const int lo = i * 32;
+      const int a = x0 > lo ? x0 - lo : 0;
+      const int b = x1 < lo + 32 ? x1 - lo : 32;
+      m->b[i] |= (b - a == 32 ? 0xFFFFFFFFu : ((1u << (b - a)) - 1u)) << a;
+   }
+}
+
+/* Mark the columns x0 .. x1 - 1 where cp[x - x0] differs from op[x - x0]
+ * (cp, op: the pictures at column x0), a mask word at a time and two pixels
+ * to the compare: a row that changed in a few places (a sprite, a number)
+ * used to be walked pixel by pixel with a bit set for each. */
+static void cm_mark_diff(colmask *m, int x0, int x1, const uint16_t *cp,
+                         const uint16_t *op)
+{
+   int x = x0;
+   while (x < x1)
+   {
+      const int wi = x >> 5;
+      const int end = (wi + 1) * 32 < x1 ? (wi + 1) * 32 : x1;
+      uint32_t bits = 0;
+      for (; x + 1 < end; x += 2)
+      {
+         uint32_t a, b;
+         memcpy(&a, cp + (x - x0), 4);
+         memcpy(&b, op + (x - x0), 4);
+         if (a != b)
+            bits |= ((uint32_t)(cp[x - x0] != op[x - x0]) << (x & 31)) |
+                    ((uint32_t)(cp[x - x0 + 1] != op[x - x0 + 1])
+                     << ((x + 1) & 31));
+      }
+      if (x < end)
+      {
+         bits |= (uint32_t)(cp[x - x0] != op[x - x0]) << (x & 31);
+         x++;
+      }
+      m->b[wi] |= bits;
+   }
 }
 
 /* Every set column and `r` columns either side of it, within w. */
@@ -206,35 +249,51 @@ static void cm_dilate(colmask *m, int r, int w)
       m->b[i] &= valid.b[i];
 }
 
+/* The first column at or after x, below w, whose bit is `want`; w when
+ * there is none.  A word at a time. */
+static int cm_next(const colmask *m, int x, int w, uint32_t want)
+{
+   const uint32_t flip = want ? 0u : 0xFFFFFFFFu;
+   int i;
+   uint32_t v;
+   if (x >= w)
+      return w;
+   i = x >> 5;
+   v = (m->b[i] ^ flip) & (0xFFFFFFFFu << (x & 31));
+   for (;;)
+   {
+      if (v)
+      {
+         const int r = (i << 5) + __builtin_ctz(v);
+         return r < w ? r : w;
+      }
+      if (++i >= UP_WORDS || (i << 5) >= w)
+         return w;
+      v = m->b[i] ^ flip;
+   }
+}
+
 /* The next run of set columns at or after x: 1 and [*x0, *x1), or 0.  Runs
  * closer than `join` columns are given as one (a run costs a column of
  * preparation and its own first row). */
 static int cm_run(const colmask *m, int x, int w, int join, int *x0, int *x1)
 {
-#define CM_BIT(m, x) (((m)->b[(x) >> 5] >> ((x) & 31)) & 1u)
-   int gap;
-   while (x < w && !CM_BIT(m, x))
-   {
-      /* a whole empty word at a time */
-      if (!(x & 31) && !m->b[x >> 5])
-         x += 32;
-      else
-         x++;
-   }
+   x = cm_next(m, x, w, 1);
    if (x >= w)
       return 0;
    *x0 = x;
    for (;;)
    {
-      while (x < w && CM_BIT(m, x))
-         x++;
+      int nx;
+      x = cm_next(m, x, w, 0);          /* the run's end */
       *x1 = x;
-      for (gap = 0; x < w && gap < join && !CM_BIT(m, x); gap++)
-         x++;
-      if (x >= w || !CM_BIT(m, x))
+      /* the next run joins this one when fewer than join + 1 clear columns
+       * lie between them */
+      nx = cm_next(m, x, w, 1);
+      if (nx >= w || nx - x > join)
          return 1;
+      x = nx;
    }
-#undef CM_BIT
 }
 
 /* ---- a slot: one picture's standing data and its job --------------------- */
@@ -1256,7 +1315,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          else
          {
             const uint16_t *o = S->old + (size_t)w * (unsigned)sy;
-            int x0 = dx > 0 ? dx : 0, x1 = dx < 0 ? (int)w + dx : (int)w, x;
+            int x0 = dx > 0 ? dx : 0, x1 = dx < 0 ? (int)w + dx : (int)w;
             if (dx)
             {
                /* the columns that came into view, and those whose
@@ -1269,9 +1328,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
              * the same) */
             if (!dx && !dy ? !rsame[y]
                 : memcmp(c + x0, o + x0 - dx, (size_t)(x1 - x0) * 2u) != 0)
-               for (x = x0; x < x1; x++)
-                  if (c[x] != o[x - dx])
-                     rowm[y].b[x >> 5] |= 1u << (x & 31);
+               cm_mark_diff(&rowm[y], x0, x1, c + x0, o + x0 - dx);
          }
       }
       up_lap(&tp, PP_MARK);

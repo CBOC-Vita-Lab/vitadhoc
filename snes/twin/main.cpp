@@ -181,7 +181,7 @@ int main(int argc, char **argv)
 	std::vector<int16_t> pcm;
 	std::vector<int16_t> abuf(4096 * 2);
 
-	uint64_t tot_ns = 0, cpu_tot_ns = 0, acc_ns[S9XP_N] = { 0 };
+	uint64_t tot_ns = 0, cpu_tot_ns = 0, acc_ns[S9XP_N] = { 0 }, cnt_tot[S9XC_N] = { 0 };
 	size_t ev = 0;
 	unsigned pad = 0;
 	g_s9xp.on = tf || summary ? 1 : 0;
@@ -196,7 +196,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "load state: %d\n", r);
 		}
 		uint64_t t0 = now_ns(), c0 = cpu_ns();
-		if (prof_on) { memset(g_s9xp.acc, 0, sizeof g_s9xp.acc); g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.last = s9xp_now(); }
+		if (prof_on) { memset(g_s9xp.acc, 0, sizeof g_s9xp.acc); memset(g_s9xp.cnt, 0, sizeof g_s9xp.cnt); g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.last = s9xp_now(); }
 		snes_host_run_frame();
 		if (prof_on) s9xp_enter(S9XP_FRONT), s9xp_leave();
 		uint64_t t1 = now_ns(), c1 = cpu_ns();
@@ -204,6 +204,7 @@ int main(int argc, char **argv)
 		cpu_tot_ns += c1 - c0;
 		if (prof_on) {
 			for (int c = 0; c < S9XP_N; c++) acc_ns[c] += g_s9xp.acc[c];
+			for (int c = 0; c < S9XC_N; c++) cnt_tot[c] += g_s9xp.cnt[c];
 			if (tf) fprintf(tf, "%d,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f\n", f, (t1 - t0) / 1e3, g_s9xp.acc[0] / 1e3,
 			    g_s9xp.acc[1] / 1e3, g_s9xp.acc[2] / 1e3, g_s9xp.acc[3] / 1e3, g_s9xp.acc[4] / 1e3);
 		}
@@ -232,9 +233,11 @@ int main(int argc, char **argv)
 	if (summary) {
 		double sum = 0;
 		for (int c = 0; c < S9XP_N; c++) sum += acc_ns[c];
-		printf("%-34s %s fps=%7.1f ms/frame=%6.3f cpu=%4.1f%% apu=%4.1f%% ppu=%4.1f%% chip=%4.1f%% front=%4.1f%%\n",
+		printf("%-34s %s fps=%7.1f ms/frame=%6.3f cpu=%4.1f%% apu=%4.1f%% ppu=%4.1f%% chip=%4.1f%% front=%4.1f%%"
+		    " ppu_flush/fr=%.1f apu_port/fr=%.1f apu_run/fr=%.1f chip_run/fr=%.1f\n",
 		    name ? name : rom, snes_host_is_pal() ? "PAL " : "NTSC", fps, secs * 1000 / frames,
-		    100 * acc_ns[0] / sum, 100 * acc_ns[1] / sum, 100 * acc_ns[2] / sum, 100 * acc_ns[3] / sum, 100 * acc_ns[4] / sum);
+		    100 * acc_ns[0] / sum, 100 * acc_ns[1] / sum, 100 * acc_ns[2] / sum, 100 * acc_ns[3] / sum, 100 * acc_ns[4] / sum,
+		    (double) cnt_tot[0] / frames, (double) cnt_tot[1] / frames, (double) cnt_tot[2] / frames, (double) cnt_tot[3] / frames);
 	} else {
 		printf("%s: %d frames in %.3f s = %.1f fps (CPU time, profiling %s)\n", name ? name : rom, frames, secs, fps, prof_on ? "on" : "off");
 	}

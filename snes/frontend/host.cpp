@@ -208,6 +208,13 @@ size_t snes_host_sram_size(void)
 	if (!g_loaded) return 0;
 	size_t size = Memory.SRAMSize ? (size_t) (1 << (Memory.SRAMSize + 3)) * 128 : 0;
 	if (size > 0x20000) size = 0x20000;
+	/* On Super FX and SA-1 carts the header's RAM size is the chip's work RAM,
+	 * which has no battery unless the type byte says so (low nibble 2, 5, 6).
+	 * Treating it as a save would litter the ROM folder with junk .srm files. */
+	if (Settings.SuperFX || Settings.SA1) {
+		unsigned n = Memory.ROMType & 0x0F;
+		if (n != 2 && n != 5 && n != 6) return 0;
+	}
 	return size;
 }
 const uint8_t *snes_host_sram_data(void) { return Memory.SRAM; }

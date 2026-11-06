@@ -254,12 +254,14 @@ static inline int S9xAPUGetClockRemainder(int32 cpucycles)
 
 uint8 S9xAPUReadPort(int port)
 {
+    S9XP_COUNT(APU_PORT);
     S9xAPUExecute();
     return ((uint8)SNES::smp.port_read(port & 3));
 }
 
 void S9xAPUWritePort(int port, uint8 byte)
 {
+    S9XP_COUNT(APU_PORT);
     S9xAPUExecute();
     SNES::cpu.port_write(port & 3, byte);
 }
@@ -272,6 +274,7 @@ void S9xAPUSetReferenceTime(int32 cpucycles)
 static void S9xAPUExecute_impl(void);
 void S9xAPUExecute(void)
 {
+    S9XP_COUNT(APU_RUN);
     S9XP_ENTER(APU);
     S9xAPUExecute_impl();
     S9XP_LEAVE();

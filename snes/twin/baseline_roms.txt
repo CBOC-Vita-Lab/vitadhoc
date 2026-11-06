@@ -13,6 +13,11 @@ Pseudo hi-res 64 per row|PPU/HDMA/HiColor64PerTileRowPseudoHiRes/HiColor64PerTil
 Interlace RPG (hi-res 512x448)|PPU/Interlace/InterlaceRPG/InterlaceRPG.sfc|600|
 Mosaic mode 5 (hi-res)|PPU/Mosaic/Mode5/MosaicMode5.sfc|600|
 Rings (BG + windows)|PPU/Rings/Rings.sfc|600|
+Sprites (object dropout test)|@undis/hardware-tests/object-dropout-test.sfc|600|
+Windows (shapes)|@undis/effects/window-shapes-single.sfc|600|
+Mode 7 tilemap scroll|@undis/effects/vmain-mode7-tilemap-rows.sfc|600|
+HDMA parallax (double buffered)|@undis/examples/hdma-double-buffered-parallax.sfc|600|
+HDMA shear (indirect)|@undis/examples/hdma-double-buffered-indirect-shear.sfc|600|
 Monster Farm Jump (game)|Games/MonsterFarmJump/MonsterFarmJump.sfc|1200|120:start,130:none,300:start,310:none,400:right,900:a,910:none
 Super FX 8bpp PlotPixel 256x192|CHIP/GSU/8BPP/PlotPixel/256x192/GSU8BPP256x192PlotPixel.sfc|600|
 Super FX 8bpp FillPoly 256x192|CHIP/GSU/8BPP/FillPoly/256x192/GSU8BPP256x192FillPoly.sfc|600|

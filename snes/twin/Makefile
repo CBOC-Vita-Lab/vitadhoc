@@ -10,7 +10,7 @@ CXX ?= g++
 OPT ?= -O2
 CORE_DEFS := -DHAVE_STDINT_H -DNDEBUG -DS9X_PROF -DUSE_SELF_THREADED=0
 INC  := -I$(CORE) -I$(CORE)/apu -I$(CORE)/apu/bapu -I$(FE) -I$(FE)/third_party/stb
-CXXFLAGS := $(OPT) -std=gnu++14 -w -fno-strict-aliasing $(CORE_DEFS) $(INC) $(EXTRA)
+CXXFLAGS := -MMD -MP $(OPT) -std=gnu++14 -w -fno-strict-aliasing $(CORE_DEFS) $(INC) $(EXTRA)
 
 include $(CORE)/sources.mk
 CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
@@ -33,6 +33,8 @@ $(B)/prof.o: $(FE)/prof.cpp
 $(B)/main.o: main.cpp $(FE)/host.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+-include $(shell find $(B) -name '*.d' 2>/dev/null)
 
 clean:
 	rm -rf $(B)

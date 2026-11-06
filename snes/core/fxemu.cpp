@@ -144,6 +144,7 @@ uint8 S9xGetSuperFX (uint16 address)
 static void S9xSuperFXExec_impl (void);
 void S9xSuperFXExec (void)
 {
+	S9XP_COUNT(CHIP_RUN);
 	S9XP_ENTER(CHIP);
 	S9xSuperFXExec_impl();
 	S9XP_LEAVE();

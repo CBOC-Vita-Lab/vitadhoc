@@ -437,6 +437,7 @@ static inline void RenderScreen (bool8 sub)
 static void S9xUpdateScreen_impl (void);
 void S9xUpdateScreen (void)
 {
+	S9XP_COUNT(PPU_FLUSH);
 	S9XP_ENTER(PPU);
 	S9xUpdateScreen_impl();
 	S9XP_LEAVE();

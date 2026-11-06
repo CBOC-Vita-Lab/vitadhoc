@@ -6,11 +6,13 @@
 HERE=$(dirname "$0")
 ROOT=${1:-${SNES_ROMS:-/w/snes-testroms/SNES}}
 TWIN=${TWIN:-$HERE/build/snes_twin}
-echo "| Test ROM | fps (no profiling) | ms/frame | CPU 65816 | APU | PPU | chip | frontend |"
-echo "|---|---:|---:|---:|---:|---:|---:|---:|"
+UNDIS=${UNDIS_ROMS:-/w/snes-testroms/snes-test-roms/bin}   # built from undisbeliever/snes-test-roms; paths written @undis/...
+echo "| Test ROM | fps (no profiling) | ms/frame | CPU 65816 | APU | PPU | chip | frontend | PPU flushes/frame | APU port accesses/frame |"
+echo "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
 grep -v '^#' "$HERE/baseline_roms.txt" | while IFS='|' read -r label path frames pad; do
-	[ -f "$ROOT/$path" ] || { echo "| $label | missing | | | | | | |"; continue; }
-	set -- "$ROOT/$path" --frames "$frames"
+	case "$path" in @undis/*) full="$UNDIS/${path#@undis/}" ;; *) full="$ROOT/$path" ;; esac
+	[ -f "$full" ] || { echo "| $label | missing | | | | | | | | |"; continue; }
+	set -- "$full" --frames "$frames"
 	[ -n "$pad" ] && set -- "$@" --pad "$pad"
 	# best of 3 for the unprofiled number: the machine may be shared
 	best=0
@@ -24,6 +26,8 @@ grep -v '^#' "$HERE/baseline_roms.txt" | while IFS='|' read -r label path frames
 	ppu=$(echo "$line" | sed -n 's/.*ppu= *\([0-9.]*\)%.*/\1/p')
 	chip=$(echo "$line" | sed -n 's/.*chip= *\([0-9.]*\)%.*/\1/p')
 	front=$(echo "$line" | sed -n 's/.*front= *\([0-9.]*\)%.*/\1/p')
+	flush=$(echo "$line" | sed -n 's/.*ppu_flush\/fr=\([0-9.]*\).*/\1/p')
+	port=$(echo "$line" | sed -n 's/.*apu_port\/fr=\([0-9.]*\).*/\1/p')
 	ms=$(echo "$best" | awk '{printf "%.2f", 1000/$1}')
-	echo "| $label | $best | $ms | $cpu% | $apu% | $ppu% | $chip% | $front% |"
+	echo "| $label | $best | $ms | $cpu% | $apu% | $ppu% | $chip% | $front% | $flush | $port |"
 done

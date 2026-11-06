@@ -206,7 +206,9 @@ struct GTex {
 };
 
 static GTex g_src[4];            /* the core's picture, 512x512 RGB565 */
-static GTex g_rt, g_glowA, g_glowB;
+static GTex g_rt, g_glowA, g_glowB, g_blend;   /* g_blend: 512x512, made when a blend option is first used */
+static unsigned g_blend_serial;
+static int g_blend_w, g_blend_h;
 static GTex g_bezel;
 static int g_bezel_w, g_bezel_h;
 static int g_src_i = -1;         /* newest uploaded texture */
@@ -329,8 +331,43 @@ static bool rt_scene(GTex &rt)
 	return true;
 }
 
+struct RtKey { int idx; unsigned serial; int kx, ky; float sx, sy, sw, sh; };
+static RtKey g_rtkey;
+static bool g_rtkey_valid;
+static unsigned g_rt_reused;
+
 static int g_glow_age = 99;
 static unsigned g_glow_serial;
+
+
+/* Many same-coloured rectangles in one GPU draw (a triangle list from the vita2d temp pool). If the pool is
+ * full nothing is drawn for that band set. */
+static vita2d_color_vertex *g_rb_v;
+static int g_rb_n, g_rb_cap;
+static void rect_batch_begin(int max_rects)
+{
+	g_rb_n = 0; g_rb_cap = max_rects;
+	g_rb_v = (vita2d_color_vertex *) vita2d_pool_memalign(6 * max_rects * sizeof(vita2d_color_vertex), sizeof(vita2d_color_vertex));
+}
+static void rect_batch_add(float x, float y, float w, float h)
+{
+	if (g_rb_n >= g_rb_cap) return;
+	if (g_rb_v) {
+		vita2d_color_vertex *v = g_rb_v + 6 * g_rb_n;
+		const float xs[6] = { x, x + w, x, x + w, x + w, x };
+		const float ys[6] = { y, y, y + h, y, y + h, y + h };
+		for (int k = 0; k < 6; k++) { v[k].x = xs[k]; v[k].y = ys[k]; v[k].z = 0.5f; }
+	}
+	g_rb_n++;
+}
+static void rect_batch_draw(unsigned color)
+{
+	if (g_rb_n <= 0) return;
+	if (g_rb_v) {
+		for (int i = 0; i < 6 * g_rb_n; i++) g_rb_v[i].color = color;
+		vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLES, g_rb_v, 6 * g_rb_n);
+	}
+}
 
 static unsigned band_alpha(int strength) { unsigned a = 20 + 19 * strength; return a > 210 ? 210 : a; }
 
@@ -341,8 +378,38 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 	vita2d_pool_reset();
 	pic_rect r;
 	GTex *src = g_src_i >= 0 ? &g_src[g_src_i] : NULL;
+	int eff_w = g_src_w, eff_h = g_src_h, crop_top = g_crop_top, crop_bot = g_crop_bot;
+	/* Optional blends (Picture menu), done by the GPU at no cost to the emulation: 512-wide pictures (hi-res
+	 * and pseudo-hi-res, where games alternate columns to fake transparency) shrunk to half width, and
+	 * interlaced (400+ rows) pictures to half height, with bilinear sampling exactly between two source
+	 * pixels, i.e. the plain average of each pair. The result is a 512x512 target used as the picture. */
+	if (src && g_have_picture && extras && (ps.hires_blend || ps.interlace_blend)) {
+		bool bx = ps.hires_blend && g_src_w >= 512, by = ps.interlace_blend && g_src_h >= 400;
+		if ((bx || by) && !g_blend.t) {
+			memset(&g_blend, 0, sizeof g_blend);
+			g_blend.t = vita2d_create_empty_texture_rendertarget(512, 512, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
+			if (g_blend.t) vita2d_texture_set_filters(g_blend.t, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
+			logf_("render target: blend=%d\n", g_blend.t != NULL);
+		}
+		if ((bx || by) && g_blend.t) {
+			int bw = bx ? g_src_w / 2 : g_src_w, bh = by ? g_src_h / 2 : g_src_h;
+			bool ready = g_blend_serial == g_serial_seen && g_blend_w == bw && g_blend_h == bh;
+			if (!ready && rt_scene(g_blend)) {
+				gtex_read(*src);
+				filt(src->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
+				draw_into_rt(src->t, 512, 512, 0, 0, g_src_w, g_src_h, bw, bh);
+				vita2d_end_drawing();
+				g_blend_serial = g_serial_seen; g_blend_w = bw; g_blend_h = bh;
+				ready = true;
+			}
+			if (ready) {
+				src = &g_blend; eff_w = bw; eff_h = bh;
+				if (by) { crop_top /= 2; crop_bot /= 2; }
+			}
+		}
+	}
 	if (src && g_have_picture)
-		pic_geometry(&ps, g_src_w, g_src_h, g_crop_top, g_crop_bot, SCREEN_W, SCREEN_H, &r);
+		pic_geometry(&ps, eff_w, eff_h, crop_top, crop_bot, SCREEN_W, SCREEN_H, &r);
 	bool bezel = g_bezel.t != NULL;
 	int kx = 1, ky = 1;
 	bool use_rt = false, exact = false;
@@ -372,13 +439,23 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 	}
 	/* scene 2: the sharp-bilinear prescale */
 	if (use_rt) {
-		if (rt_scene(g_rt)) {
+		/* the prescaled target is only redrawn when its inputs changed: a new picture, another crop or
+		 * another factor. A frame drawn again for the same picture (the picture is late, the pause menu
+		 * is open) reuses it and saves a whole GPU pass. */
+		RtKey key;
+		memset(&key, 0, sizeof key);
+		key.idx = (src == &g_blend) ? -2 : g_src_i; key.serial = g_serial_seen; key.kx = kx; key.ky = ky;
+		key.sx = r.sx; key.sy = r.sy; key.sw = r.sw; key.sh = r.sh;
+		if (g_rtkey_valid && !memcmp(&key, &g_rtkey, sizeof key)) {
+			g_rt_reused++;
+		} else if (rt_scene(g_rt)) {
 			gtex_read(*src);
 			filt(src->t, SCE_GXM_TEXTURE_FILTER_POINT);
 			draw_into_rt(src->t, RT_SIZE, RT_SIZE, r.sx, r.sy, r.sw, r.sh, r.sw * kx, r.sh * ky);
 			vita2d_end_drawing();
 			filt(src->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
-		} else use_rt = false;
+			g_rtkey = key; g_rtkey_valid = true;
+		} else { use_rt = false; g_rtkey_valid = false; }
 	}
 
 	if (!vita2d_try_start_drawing_advanced(NULL, 0)) return false;
@@ -412,10 +489,14 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 				if (th < 1.0f) th = 1.0f;
 				unsigned a = band_alpha(ps.scan ? ps.scan : ps.grid);
 				unsigned col = a << 24;
+				/* all bands of a kind in one draw call (a few hundred separate rectangles cost the main
+				 * core more than the picture itself did); same vertices, same blending, same order */
+				rect_batch_begin(rows);
 				for (int i = 1; i < rows; i++) {
 					float y = r.dy + i * period - th * 0.5f;
-					vita2d_draw_rectangle(r.dx, y, r.dw, th, col);
+					rect_batch_add(r.dx, y, r.dw, th);
 				}
+				rect_batch_draw(col);
 				(void) sstr;
 			}
 			if (ps.grid > 0) {
@@ -423,8 +504,10 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 				float th = cp * (0.15f + 0.02f * ps.grid);
 				if (th < 1.0f) th = 1.0f;
 				unsigned col = band_alpha(ps.grid) << 24;
+				rect_batch_begin(256);
 				for (int i = 1; i < 256; i++)
-					vita2d_draw_rectangle(r.dx + i * cp - th * 0.5f, r.dy, th, r.dh, col);
+					rect_batch_add(r.dx + i * cp - th * 0.5f, r.dy, th, r.dh);
+				rect_batch_draw(col);
 			}
 		}
 	}
@@ -622,7 +705,7 @@ static bool menu_frame(bool dim)
 
 static void picture_menu(void)
 {
-	enum { R_SHAPE, R_PIXEL, R_QUALITY, R_GLOW, R_SCAN, R_GRID, R_APPLY, R_BACK, R_N };
+	enum { R_SHAPE, R_PIXEL, R_QUALITY, R_GLOW, R_SCAN, R_GRID, R_HIRES, R_ILACE, R_APPLY, R_BACK, R_N };
 	int sel = 0;
 	Nav nv = { 0xffffffffu };
 	for (;;) {
@@ -639,6 +722,8 @@ static void picture_menu(void)
 			case R_GLOW: g_ps.glow = (g_ps.glow + 11 + d) % 11; break;
 			case R_SCAN: g_ps.scan = (g_ps.scan + 11 + d) % 11; break;
 			case R_GRID: g_ps.grid = (g_ps.grid + 11 + d) % 11; break;
+			case R_HIRES: g_ps.hires_blend ^= 1; break;
+			case R_ILACE: g_ps.interlace_blend ^= 1; break;
 			case R_APPLY: g_ps.use_game ^= 1; break;
 			}
 		}
@@ -656,6 +741,8 @@ static void picture_menu(void)
 			case R_GLOW: level_text(v, sizeof v, g_ps.glow); snprintf(line, sizeof line, "Side glow: %s", v); break;
 			case R_SCAN: level_text(v, sizeof v, g_ps.scan); snprintf(line, sizeof line, "CRT scanlines: %s", v); break;
 			case R_GRID: level_text(v, sizeof v, g_ps.grid); snprintf(line, sizeof line, "LCD grid: %s", v); break;
+			case R_HIRES: snprintf(line, sizeof line, "Blend hi-res columns: %s", g_ps.hires_blend ? "On" : "Off"); break;
+			case R_ILACE: snprintf(line, sizeof line, "Blend interlace lines: %s", g_ps.interlace_blend ? "On" : "Off"); break;
 			case R_APPLY: snprintf(line, sizeof line, "Apply to: %s", g_ps.use_game ? "this game" : "all games"); break;
 			default: snprintf(line, sizeof line, "Back"); break;
 			}
@@ -843,7 +930,7 @@ int main(int argc, char **argv)
 	/* log state */
 	uint64_t sec_start = sceKernelGetProcessTimeWide();
 	int frames_run = 0, vblanks = 0, secs = 0;
-	uint64_t emu_us = 0, main_us = 0;
+	uint64_t emu_us = 0, main_us = 0, fetch_us = 0, draw_us = 0;
 	uint64_t prof_acc[S9XP_N] = { 0 };
 	uint64_t prof_frames = 0;
 	uint64_t sram_dirty_since = 0;
@@ -904,7 +991,11 @@ int main(int argc, char **argv)
 			static int16_t abuf[2048 * 2];
 			int n;
 			while ((n = snes_host_audio_take(abuf, 2048)) > 0) audio_push(abuf, n);
-			if (!skip_draw) fresh = video_fetch(g_ps, frames_run) != 0;
+			if (!skip_draw) {
+				uint64_t f0 = sceKernelGetProcessTimeWide();
+				fresh = video_fetch(g_ps, frames_run) != 0;
+				fetch_us += sceKernelGetProcessTimeWide() - f0;
+			}
 		}
 		if (fresh) pic_fresh++;
 
@@ -917,7 +1008,9 @@ int main(int argc, char **argv)
 		}
 
 		bool drew = false;
+		uint64_t d0 = sceKernelGetProcessTimeWide();
 		if (!skip_draw) drew = frame_draw(g_ps, gov.level == 0, frames_run);
+		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
 		if (drew) { frame_finish(); drawn++; }          /* the wait for the display happens in here */
 		else { sceDisplayWaitVblankStart(); skipped++; }
@@ -949,11 +1042,12 @@ int main(int argc, char **argv)
 			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, q_fill());
 			/* busy time per emulated frame: the main thread's whole loop work (emulation, copy, GPU submission,
 			 * without the wait for the display) and the two workers' time spent working */
-			logf_(" | busy ms/fr: main=%.2f ppu=%.2f apu=%.2f | waits/s: ppu=%llu apu=%llu (%.1f ms) | gov=%d drawn=%u skipped=%u new_pic=%u fence_skip=%u",
+			logf_(" | busy ms/fr: main=%.2f ppu=%.2f apu=%.2f | waits/s: ppu=%llu apu=%llu (%.1f ms) | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | gov=%d drawn=%u skipped=%u new_pic=%u fence_skip=%u rt_reuse=%u",
 			    main_us / 1000.0 / fr, (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6 / fr, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6 / fr,
 			    (unsigned long long) (st1.ppu_waits - st0.ppu_waits), (unsigned long long) (st1.apu_waits - st0.apu_waits),
 			    ((st1.ppu_wait_ns - st0.ppu_wait_ns) + (st1.apu_wait_ns - st0.apu_wait_ns)) / 1e6,
-			    gov.level, drawn, skipped, pic_fresh, g_fence_skips);
+			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr,
+			    gov.level, drawn, skipped, pic_fresh, g_fence_skips, g_rt_reused);
 			st0 = st1;
 #ifdef S9X_PROF
 			if (prof_frames) {
@@ -970,7 +1064,7 @@ int main(int argc, char **argv)
 			logf_("\n");
 			sec_start = now;
 			vblanks = frames_run = 0;
-			emu_us = main_us = 0;
+			emu_us = main_us = fetch_us = draw_us = 0;
 			drawn = skipped = pic_fresh = 0;
 			secs++;
 		}

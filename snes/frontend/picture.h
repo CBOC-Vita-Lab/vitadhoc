@@ -18,6 +18,8 @@ typedef struct {
 	int glow;      /* side glow 0 (off) .. 10 */
 	int scan;      /* CRT scanlines 0 (off) .. 10 */
 	int grid;      /* LCD grid 0 (off) .. 10 */
+	int hires_blend;     /* 1: 512-wide pictures are averaged to 256 columns (transparency in pseudo-hi-res games) */
+	int interlace_blend; /* 1: interlaced (400+ row) pictures are averaged to half height */
 	int multitap;  /* Super Multitap in port 2: 0 automatic (known games), 1 on, 2 off */
 	int use_game;  /* 1: this game has its own file; 0: the console file is used */
 } pic_settings;

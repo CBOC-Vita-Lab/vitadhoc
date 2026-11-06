@@ -48,7 +48,7 @@ int main()
 
 	// settings file round trip
 	pic_settings a; pic_defaults(&a);
-	a.shape = PIC_ZOOM; a.quality = PIC_SMOOTH; a.glow = 3; a.scan = 7; a.grid = 2; a.pixel_sq = 1; a.multitap = 2; a.use_game = 1;
+	a.shape = PIC_ZOOM; a.quality = PIC_SMOOTH; a.glow = 3; a.scan = 7; a.grid = 2; a.pixel_sq = 1; a.hires_blend = 1; a.interlace_blend = 1; a.multitap = 2; a.use_game = 1;
 	CHECK(pic_save("/tmp/pic_test.ini", &a) == 0);
 	pic_settings b; pic_defaults(&b);
 	CHECK(pic_load("/tmp/pic_test.ini", &b) == 1 && !memcmp(&a, &b, sizeof a));

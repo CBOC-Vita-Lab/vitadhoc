@@ -8,6 +8,11 @@
 #include "memmap.h"
 
 uint8	SA1OpenBus;
+// CBOC-Vita: the SA-1 idle-loop replay (sa1cpu.cpp). SA1Effects counts every SA-1 access
+// that changes or may observe outside state (a write, a read that is not plain memory);
+// while SA1Rec.on, plain reads are noted (where, what) so a replay can check them.
+uint32	SA1Effects;
+struct SSA1Rec	SA1Rec;
 
 static void S9xSA1SetBWRAMMemMap (uint8);
 static void S9xSetSA1MemMap (uint32, uint8);
@@ -18,6 +23,7 @@ static void S9xSA1ReadVariableLengthData (bool8, bool8);
 
 void S9xSA1Init (void)
 {
+	S9xSA1ReplayDrop();
 	SA1.Cycles = 0;
 	SA1.PrevCycles = 0;
 	SA1.Flags = 0;
@@ -108,6 +114,7 @@ static void S9xSA1SetBWRAMMemMap (uint8 val)
 
 void S9xSA1PostLoadState (void)
 {
+	S9xSA1ReplayDrop();
 	SA1.ShiftedPB = (uint32) SA1Registers.PB << 16;
 	SA1.ShiftedDB = (uint32) SA1Registers.DB << 16;
 
@@ -244,6 +251,7 @@ uint8 S9xGetSA1 (uint32 address)
 
 void S9xSetSA1 (uint8 byte, uint32 address)
 {
+	S9xSA1ReplayReset();	// the SNES CPU changed an SA-1 register: maps, interrupts, DMA
 	switch (address)
 	{
 		case 0x2200: // SA-1 control
@@ -765,8 +773,12 @@ uint8 S9xSA1GetByte (uint32 address)
 	if (GetAddress >= (uint8 *)CMemory::MAP_LAST)
 	{
 		SA1.Cycles += SA1.MemSpeed;
+		if (SA1Rec.on)
+			SA1RecNote(GetAddress + (address & 0xffff));
 		return (*(GetAddress + (address & 0xffff)));
 	}
+
+	SA1Effects++;	// not plain memory: no replay over this read
 
 	switch ((pint) GetAddress)
 	{
@@ -822,6 +834,11 @@ uint16 S9xSA1GetWord (uint32 address, s9xwrap_t w)
 			if (GetAddress >= (uint8 *) CMemory::MAP_LAST)
 			{
 				SA1.Cycles += SA1.MemSpeed * 2;
+				if (SA1Rec.on)
+				{
+					SA1RecNote(GetAddress + (address & 0xffff));
+					SA1RecNote(GetAddress + (address & 0xffff) + 1);
+				}
 				uint16	word = READ_WORD(GetAddress + (address & 0xffff));
 				SA1OpenBus = (uint8) word;
 				return (word);
@@ -852,6 +869,7 @@ uint16 S9xSA1GetWord (uint32 address, s9xwrap_t w)
 void S9xSA1SetByte (uint8 byte, uint32 address)
 {
 	uint8	*SetAddress = SA1.WriteMap[(address & 0xffffff) >> MEMMAP_SHIFT];
+	SA1Effects++;
 
 	if (SetAddress >= (uint8 *) CMemory::MAP_LAST)
 	{

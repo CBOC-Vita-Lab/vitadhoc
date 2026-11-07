@@ -127,6 +127,13 @@ system only allows that with an overclock plugin such as PSVshell; otherwise
 the Vita stays at 444 MHz. A faster clock means a warmer Vita and shorter
 battery life; choose "444 MHz (standard)" to go back.
 
+**Super NES on a real Vita (1.3):** Super Mario World, Donkey Kong Country,
+F-Zero, Chrono Trigger and Yoshi's Island (Super FX 2) run at full speed with
+every frame shown; the game thread needs 5-8 ms of each 16.7 ms frame. The
+SA-1 games Super Mario RPG and Kirby Super Star run at 59 of 60 frames a
+second. Super FX games that keep the chip busy all the time are slower:
+Stunt Race FX about 93% in races, Doom about 68%.
+
 **Pokemon Unbound 2.1.1.1 on a real Vita:** about **60 emulated fps** and
 **44 frontend-produced frames/s** across three samples of the opening beach
 scene, at full-screen CPU xBRZ 3x.

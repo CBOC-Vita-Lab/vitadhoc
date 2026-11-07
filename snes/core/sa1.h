@@ -75,6 +75,22 @@ struct SSA1
 extern struct SSA1Registers	SA1Registers;
 extern struct SSA1			SA1;
 extern uint8				SA1OpenBus;
+extern uint32				SA1Effects;
+
+struct SSA1Rec
+{
+	bool8	on;
+	uint8	n;			// plain bytes read so far in the recorded loop
+	uint8	*at[16];
+	uint8	val[16];
+};
+extern struct SSA1Rec		SA1Rec;
+
+static inline void SA1RecNote (uint8 *p)
+{
+	if (SA1Rec.n < 16) { SA1Rec.at[SA1Rec.n] = p; SA1Rec.val[SA1Rec.n] = *p; SA1Rec.n++; }
+	else SA1Effects++;	// too many reads: not a loop worth replaying
+}
 extern struct SOpcodes		S9xSA1OpcodesM1X1[256];
 extern struct SOpcodes		S9xSA1OpcodesM1X0[256];
 extern struct SOpcodes		S9xSA1OpcodesM0X1[256];
@@ -93,6 +109,10 @@ uint8 S9xGetSA1 (uint32);
 void S9xSetSA1 (uint8, uint32);
 void S9xSA1Init (void);
 void S9xSA1MainLoop (void);
+void S9xSA1ReplayReset (void);
+void S9xSA1ReplaySync (void);
+void S9xSA1ReplayDrop (void);
+void S9xSA1Run (void);
 void S9xSA1PostLoadState (void);
 
 static inline void S9xSA1UnpackStatus (void)

@@ -35,9 +35,10 @@ and [Snes9x](https://github.com/snes9xgit/snes9x).
 ### Performance
 
 - **500 MHz** instead of 444 when PSVshell or a similar plugin allows it.
-- **SNES on three cores:** sound and picture run beside the game on cores of
-  their own, and a speed pass cut the busiest thread's work by up to about 45%
-  (counted on a PC build; pictures and sound are bit-identical).
+- **SNES on a Vita:** Super Mario World, Donkey Kong Country, F-Zero, Chrono
+  Trigger and Yoshi's Island at full speed with every frame shown (5-8 ms of
+  each 16.7 ms frame); Super Mario RPG and Kirby Super Star at 59 of 60.
+  Super FX games that keep the chip busy (Doom, Stunt Race FX) are slower.
 - **Smoothing does about a tenth less work** for exactly the same picture.
 
 ### Fixes

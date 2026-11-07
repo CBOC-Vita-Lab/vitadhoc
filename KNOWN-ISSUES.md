@@ -26,17 +26,16 @@ Testing continues on:
 
 ## Super NES
 
-- **New in 1.3 and still being measured on a Vita.** The SNES player shows the
-  frames per second in its log (`ux0:data/GBAdhoc/snes/log.txt`).
+- **Super FX games that keep the chip busy run slower than full speed:** Doom
+  at about two thirds, Stunt Race FX at about 93% in races (Yoshi's Island is
+  full speed). Super Mario RPG and Kirby Super Star dip a frame now and then.
+  The SNES player writes its speed to `ux0:data/GBAdhoc/snes/log.txt`.
 - The SNES player has its own pause menu (hold **L + R + Start**) with four
   state slots. Rewind, fast forward, Continue, cheats, patches and
   RetroAchievements are for GBA and Game Boy games only for now.
 - **Players 3 and 4** need the Super Multitap (Auto turns it on for games
   known to use it) and extra controllers. Controllers beyond the first have
   not been tried on a real Vita yet.
-- Super FX 2 and SA-1 games (Yoshi's Island, Super Mario RPG, Kirby Super
-  Star) are the heaviest. If one slows down, every other frame is skipped
-  to keep the game and its sound at full speed; the picture options stay on.
 
 ## Games
 

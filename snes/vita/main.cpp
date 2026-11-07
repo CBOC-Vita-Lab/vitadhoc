@@ -640,7 +640,8 @@ static void srm_writer_start(void)
 {
 	g_srm_sema = sceKernelCreateSema("snes_srm", 0, 0, 1, NULL);
 	if (g_srm_sema < 0) return;
-	g_srm_thread = sceKernelCreateThread("snes_srm", srm_writer, 0x60, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
+	/* low priority, beside the picture thread: never in the game thread's way */
+	g_srm_thread = sceKernelCreateThread("snes_srm", srm_writer, 0xA0, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
 	if (g_srm_thread >= 0 && sceKernelStartThread(g_srm_thread, 0, NULL) < 0) g_srm_thread = -1;
 }
 
@@ -1068,7 +1069,13 @@ int main(int argc, char **argv)
 		int to_run = 0;
 		while (run_acc >= 1.0 && to_run < 2) { run_acc -= 1.0; to_run++; }
 		if (run_acc > 2.0) run_acc = 1.0;
-		if (to_run > 1) to_run = 1; /* never run two in one vblank; the audio rate control absorbs the drift */
+		/* Two frames in one refresh only to catch up after a frame that ran past its refresh
+		 * (the game keeps its speed and its sound keeps flowing; one picture is not shown).
+		 * Ordinary drift between the game's and the screen's rate is left to the audio rate
+		 * control, as before. */
+		if (to_run > 1 && (elapsed < 2 || last_frame_us > 11000)) { to_run = 1; run_acc += 1.0; }
+		/* (a game whose frames all run long is not made to run two at a time: that would
+		 * only show fewer pictures) */
 
 		/* governor level 2: every other frame is not drawn (the core skips its own drawing too when it
 		 * draws on this thread; with the picture thread on, only the copy and the GPU work are saved) */
@@ -1129,8 +1136,11 @@ int main(int argc, char **argv)
 		else skipped++;
 		vblanks += elapsed;
 		main_us += work_end - loop0;
-		if (gov_warmup > 0) gov_warmup--;
-		else pic_gov_update(&gov, (unsigned) (work_end - loop0), 15500);
+		/* The governor (skip drawing every other frame when frames run long) stays
+		 * off: on a Vita the picture is drawn on its own thread and handing it over
+		 * costs the game thread about half a millisecond, so skipping it halved the
+		 * frames shown for almost no time won. A late frame is shown late instead. */
+		(void) gov_warmup;
 		if (gov.level != gov_level_seen) {
 			logf_("governor: level %d -> %d (work %.1f ms)\n", gov_level_seen, gov.level, (work_end - loop0) / 1000.0);
 			gov_level_seen = gov.level;

@@ -19,9 +19,11 @@
   with sharp or smooth scaling, CRT scanlines and an LCD grid (1-10).
 - **Up to four players.** A second controller is player 2; with the Super
   Multitap (automatic for games known to use it) players 3 and 4 join too.
-- **Busy moments never lower the picture.** When a frame runs long, the SNES
-  player skips drawing a frame; the game and its sound keep full speed and
-  the picture options you chose stay on.
+- **Full speed with every frame shown** in Super Mario World, Donkey Kong
+  Country, F-Zero, Chrono Trigger and Yoshi's Island on a Vita, with room to
+  spare. Super Mario RPG and Kirby Super Star (SA-1) run at 59 of 60 frames a
+  second; Super FX games that keep the chip busy (Doom, Stunt Race FX) are
+  still slower. Nothing is ever dropped from the picture to save time.
 
 **Smoothing does less work.** The xBRZ scaler and the step that finds what
 changed on screen do about a tenth less work, with exactly the same picture.

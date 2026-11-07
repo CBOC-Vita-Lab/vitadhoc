@@ -101,8 +101,8 @@ Original shape (4:3 at full height, the default), Zoom (blank rows cropped, not
 stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; side glow,
 CRT scanlines and LCD grid, each Off or 1-10; optional blending for hi-res and
 interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
-is drawn as a bezel. A busy frame is skipped rather than drawn with fewer
-picture options.
+is drawn as a bezel. Every frame is shown with every picture option on; none
+is skipped or simplified to save time.
 
 ## Display
 

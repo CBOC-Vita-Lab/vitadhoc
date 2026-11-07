@@ -1169,6 +1169,8 @@ bool8 S9xUnfreezeScreenshot(const char *filename, uint16 **image_buffer, int &wi
 
 void S9xFreezeToStream (STREAM stream)
 {
+	if (Settings.SA1)
+		S9xSA1ReplaySync();	// the SA-1's registers as they are now
 	char	buffer[8192];
 	uint8	*soundsnapshot = new uint8[SPC_SAVE_STATE_BLOCK_SIZE];
 

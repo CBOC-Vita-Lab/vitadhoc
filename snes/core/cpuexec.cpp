@@ -136,6 +136,24 @@ void S9xMainLoop (void)
 			break;
 		}
 
+		/* CBOC-Vita: waiting in WAI. Each pass re-runs WAI (the opcode fetch and one
+		 * cycle) and nothing else happens until the next H event, the NMI or the timer
+		 * IRQ is due, so the passes before that are skipped by adding their cycles; the
+		 * pass that reaches it runs as usual. Not with the SA-1, which is run after
+		 * every instruction. Super FX games wait here while the GSU draws. */
+		if (CPU.WaitingForInterrupt && CPU.PCBase && CPU.PCBase[Registers.PCw] == 0xCB && !Settings.SA1 &&
+		    !CPU.IRQLine && !CPU.IRQExternal && !Timings.IRQFlagChanging)
+		{
+			int32	T = CPU.NextEvent;
+			if (CPU.NMIPending && Timings.NMITriggerPos < T)
+				T = Timings.NMITriggerPos;
+			if (Timings.NextIRQTimer < T)
+				T = Timings.NextIRQTimer;
+			const int32	W = CPU.MemSpeed + ONE_CYCLE;
+			if (W > 0 && T - 1 - CPU.Cycles >= W)
+				CPU.Cycles += ((T - 1 - CPU.Cycles) / W) * W;
+		}
+
 		uint8				Op;
 		struct	SOpcodes	*Opcodes;
 
@@ -175,7 +193,7 @@ void S9xMainLoop (void)
 		if (Settings.SA1)
 		{
 			S9XP_ENTER(CHIP);
-			S9xSA1MainLoop();
+			S9xSA1Run();
 			S9XP_LEAVE();
 		}
 	}

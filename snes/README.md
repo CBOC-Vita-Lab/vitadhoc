@@ -5,8 +5,39 @@ program inside the VitAdhoc package, plus the tools to measure it. Phase 1 is
 a single-threaded accurate player with measurement hooks. Phase 2 (below) splits
 the work across the Vita's cores using what phase 1 measures.
 
-Nothing here has run on a real Vita yet. Every number in this file is from the
-Linux build on an x86 machine, unless it says otherwise.
+Numbers in this file are from the Linux build on an x86 machine unless they say
+otherwise. The first hardware results (7 Nov 2026) are in "On a Vita" below and
+in `docs/PERFORMANCE.md`.
+
+## On a Vita (7 Nov 2026)
+
+The first runs on a console found four faults the twin could not show, all
+fixed: the game path never reached snes.bin (`sceAppMgrLoadExec` puts the
+program's path in front of the arguments it is given, so VitAdhoc passed
+"snes.bin" as the game); passes were not tied to the display (a pass whose
+picture went into the queue without waiting started the next frame early:
+games ran at twice their speed); no power tick (the screen went off a few
+seconds into a demo and the game stopped); and battery RAM writes on the game
+thread (Yoshi's Island changes its battery RAM all the time: a 330 ms write
+every 2 s). Passes now follow `sceDisplayGetVcount`, the .srm is written by a
+low-priority thread (`srm_writer`), when it has settled for 1 s or every 30 s
+while it keeps changing, and the governor is off (see below).
+
+Then, with the same output (mt_compare: 289 test programs and the 15 owner
+games identical, with and without threads, against the build before):
+
+- SA-1 idle loops are replayed (`sa1cpu.cpp`): a loop the SA-1 comes back to is
+  recorded once (state after each instruction, cycles, plain bytes read) and,
+  when one pass ends where it started without writes or I/O reads in ROM-resident
+  code, later calls advance along the recorded points without interpreting,
+  while nothing it reads changes; anything the SNES CPU writes to the SA-1's
+  registers, a load or a reset ends it. Super Mario RPG went from 16.5 to
+  11.5 ms per frame on the game thread, Kirby Super Star from 14.9 to 11.0.
+- The SNES CPU's WAI is skipped to the next H event, NMI or timer IRQ when there
+  is no SA-1 (`cpuexec.cpp`).
+
+The GSU (Doom: 189,000 instructions a frame, about 18 ms) is the limit left for
+Super FX games that keep it busy; giving it a core of its own is the next step.
 
 ## Layout
 
@@ -223,14 +254,13 @@ copy and shows the newest finished picture (normally the previous frame, one fra
 Linux twin keeps its exact waiting fetch for the hash checks (`--nowait` exercises the Vita's fetch: every
 picture it returns must equal a picture of the reference run).
 
-### Smoothness governor
+### Smoothness governor (off)
 
-The main loop's work per frame (emulation, copy, GPU submission, without the display wait) is fed to a small
-governor (`frontend/picture.cpp`, the idea of the GBA app's governor, own code). 24 slow frames (over 15.5 ms,
-with forgiveness) go to level 2: every other frame is not drawn (emulation and sound stay at 60 Hz; the core
-also skips its own drawing when the PPU thread is off). The picture options (glow, scanlines, grid, sharp pass)
-are never dropped to save time; level 1, which did that, is not used. It steps back up after 600 fast frames (10 s), and longer if it went down again soon after.
-The level is in the log (`gov=`) and each change is logged.
+`frontend/picture.cpp` still has a governor that would skip drawing every other frame after 24 slow ones
+(level 2; level 1, which dropped picture options, is not used). On the Vita it is not called: the picture is
+drawn on its own thread, so skipping it saved the game thread about half a millisecond while halving the
+frames shown. A frame that runs long is shown late, and after a single long frame the next refresh runs two
+frames to catch up (not when every frame is long). `gov=` in the log stays 0.
 
 Files:
 

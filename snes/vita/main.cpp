@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include <math.h>
 #include <string>
@@ -611,11 +612,31 @@ static int multitap_wanted(const pic_settings &ps)
 	return 0;
 }
 
+static unsigned arm_mhz_measured(void)
+{
+	const unsigned n = 2000000u;
+	uint64_t best = ~0ull;
+	for (int k = 0; k < 3; k++) {
+		unsigned i = n;
+		const uint64_t t0 = sceKernelGetProcessTimeWide();
+		__asm__ volatile("1: subs %0, %0, #1\n\tbne 1b" : "+r"(i) : : "cc");
+		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
+		if (dt && dt < best) best = dt;
+	}
+	return best != ~0ull ? (unsigned) (n / best) : 0;
+}
+
+static bool ends_with_ci(const char *s, const char *tail)
+{
+	size_t a = strlen(s), b = strlen(tail);
+	return a >= b && strcasecmp(s + a - b, tail) == 0;
+}
+
 /* ---- launch / return --------------------------------------------------- */
 
 static void return_to_vitadhoc(void)
 {
-	const char *argv[] = { "eboot.bin", "--from-snes", NULL };
+	const char *argv[] = { "--from-snes", NULL };   /* arguments only: the system adds the path */
 	logf_("returning to VitAdhoc\n");
 	if (g_log) { fclose(g_log); g_log = NULL; }
 	sceAppMgrLoadExec("app0:eboot.bin", (char *const *) argv, NULL);
@@ -856,6 +877,9 @@ int main(int argc, char **argv)
 	scePowerSetGpuClockFrequency(222);
 	scePowerSetGpuXbarClockFrequency(166);
 	logf_("arm clock now %d MHz (500 request rc=%08x)\n", scePowerGetArmClockFrequency(), clk);
+	/* what the core really runs at (a PSVshell profile can set 500 MHz while
+	 * the system still reports 444): the same count as VitAdhoc's cpuclock */
+	logf_("clocks: the ARM core measures %u MHz\n", arm_mhz_measured());
 	sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
 	/* emulation on core 0; the workers start on cores 1 (picture) and 2 (sound chip) below */
 	{
@@ -881,12 +905,18 @@ int main(int argc, char **argv)
 	font_init();
 	video_init();
 
-	if (argc < 2 || !argv[1] || !argv[1][0]) {
+	/* The game is the last argument. (VitAdhoc 1.3's first builds also passed
+	 * the program's own name in front of it: "snes.bin" is never a game.) */
+	const char *arg = NULL;
+	for (int i = argc - 1; i >= 1 && !arg; i--)
+		if (argv[i] && argv[i][0] && !ends_with_ci(argv[i], "snes.bin")) arg = argv[i];
+	logf_("arguments: %d, game argument: %s\n", argc, arg ? arg : "(none)");
+	if (!arg) {
 		logf_("no ROM path given\n");
 		fatal_screen("No game was given.", "Start SNES games from VitAdhoc.");
 		return_to_vitadhoc();
 	}
-	std::string rom = argv[1];
+	std::string rom = arg;
 	std::string srm_override;
 	{
 		size_t bar = rom.find('|'); /* "rom|save path": a zipped game keeps its save beside the zip */

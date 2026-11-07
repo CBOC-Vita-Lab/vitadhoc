@@ -5595,6 +5595,17 @@ def t_snes_library(S):
              for n in os.listdir(folder)}
     S.check(before == after, "the card's files (save, state) are untouched")
 
+    # The Vita's home screen (ui_home = 1): the SNES chip in the top bar
+    # names itself, and the button row's hints stay clear of the buttons.
+    r = S.run("snes_home", "90:triangle\n+30:triangle\n+30:triangle\n"
+              "+90:shot=home_snes.png\n+2:triangle\n+90:shot=home_gba.png\n"
+              "+10:quit\n", cwd=cwd, config={"ui_home": 1})
+    S.clean(r)
+    sw = r.evt("ui_browser_console")
+    S.check(sw and any(e["console"] == "3" for e in sw),
+            "TRIANGLE reaches the SNES shelf on the home screen (%s)" %
+            [e["_"] for e in sw])
+
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),

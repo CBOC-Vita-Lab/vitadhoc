@@ -640,6 +640,8 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    }
    if (job->console == FE_CONSOLE_GBA)
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".sav");
+   else if (job->console == FE_CONSOLE_SNES)    /* snes.bin: Game.srm */
+      n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".srm");
    else
       n = snprintf(path, sizeof(path), "%s.sav", job->rom) >= (int)sizeof(path) ? -1 : 0;
    if (n < 0) answer = ML_ERROR;

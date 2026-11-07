@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <atomic>
 #include <stdarg.h>
 #include <math.h>
 #include <string>
@@ -612,6 +613,60 @@ static int multitap_wanted(const pic_settings &ps)
 	return 0;
 }
 
+/* ---- battery RAM writer ------------------------------------------------
+ * The .srm is written on a thread of its own: a write (file, .bak, rename) takes
+ * a third of a second on a memory card, and Super FX games such as Yoshi's
+ * Island change their battery RAM all the time, so writing it on the game's
+ * thread every 2 s was a visible stutter. The game thread only copies the RAM
+ * (snes_host_sram_take) and hands it over; one write at a time. */
+static uint8_t g_srm_buf[256 * 1024];
+static size_t g_srm_len;
+static SceUID g_srm_sema = -1, g_srm_thread = -1;
+static std::atomic<int> g_srm_busy(0), g_srm_result(0), g_srm_done(0), g_srm_stop(0);
+
+static int srm_writer(SceSize, void *)
+{
+	for (;;) {
+		sceKernelWaitSema(g_srm_sema, 1, NULL);
+		if (g_srm_stop) break;
+		g_srm_result = snes_host_sram_write(g_srm_buf, g_srm_len);
+		g_srm_done++;
+		g_srm_busy = 0;
+	}
+	return sceKernelExitThread(0);
+}
+
+static void srm_writer_start(void)
+{
+	g_srm_sema = sceKernelCreateSema("snes_srm", 0, 0, 1, NULL);
+	if (g_srm_sema < 0) return;
+	g_srm_thread = sceKernelCreateThread("snes_srm", srm_writer, 0x60, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_0, NULL);
+	if (g_srm_thread >= 0 && sceKernelStartThread(g_srm_thread, 0, NULL) < 0) g_srm_thread = -1;
+}
+
+static void srm_wait_idle(void)
+{
+	while (g_srm_busy) sceKernelDelayThread(2000);
+}
+
+/* hand the current battery RAM to the writer; 0 when it is still busy */
+static int srm_write_async(void)
+{
+	if (g_srm_thread < 0 || g_srm_busy) return 0;
+	g_srm_len = snes_host_sram_take(g_srm_buf, sizeof g_srm_buf);
+	if (!g_srm_len) return 0;
+	g_srm_busy = 1;
+	sceKernelSignalSema(g_srm_sema, 1);
+	return 1;
+}
+
+/* write now, on this thread (pause menu, suspend, quit): after the writer */
+static int srm_write_sync(void)
+{
+	srm_wait_idle();
+	return snes_host_sram_save();
+}
+
 static unsigned arm_mhz_measured(void)
 {
 	const unsigned n = 2000000u;
@@ -961,7 +1016,7 @@ int main(int argc, char **argv)
 	/* log state */
 	uint64_t sec_start = sceKernelGetProcessTimeWide();
 	int frames_run = 0, vblanks = 0, secs = 0;
-	uint64_t emu_us = 0, main_us = 0, fetch_us = 0, draw_us = 0;
+	uint64_t emu_us = 0, main_us = 0, fetch_us = 0, draw_us = 0, finish_us = 0, vwait_us = 0;
 	uint64_t prof_acc[S9XP_N] = { 0 };
 	uint64_t prof_frames = 0;
 	uint64_t sram_dirty_since = 0;
@@ -970,23 +1025,46 @@ int main(int argc, char **argv)
 	snes_host_thread_stats(&st0);
 	unsigned drawn = 0, skipped = 0, pic_fresh = 0;
 	int gov_level_seen = 0;
+	srm_writer_start();
+	unsigned last_vc = sceDisplayGetVcount();
+	int gov_warmup = 180;   /* the first 3 s (caches, the game's own start-up) do not count */
 
 	for (;;) {
+		/* One pass per display refresh, counted by the display itself: a pass
+		 * whose picture went into the queue without waiting must not start the
+		 * next frame early (that ran games at twice their speed on a Vita). */
+		unsigned vc = sceDisplayGetVcount();
+		if (vc == last_vc) {
+			uint64_t w0 = sceKernelGetProcessTimeWide();
+			sceDisplayWaitVblankStart();
+			vc = sceDisplayGetVcount();
+			vwait_us += sceKernelGetProcessTimeWide() - w0;
+		}
+		unsigned elapsed = vc - last_vc;
+		last_vc = vc;
+		if (elapsed == 0) elapsed = 1;      /* the count did not move: count the wait */
+		if (elapsed > 2) elapsed = 2;       /* a long stall (menu, suspend) is not caught up */
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
 		unsigned raw, masks[4];
 		read_pads(masks, &raw);
 		if ((raw & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START)) ==
 		    (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START)) {
-			if (snes_host_sram_dirty()) snes_host_sram_save();
+			if (snes_host_sram_dirty()) srm_write_sync();
 			int quit = pause_menu(game, status);
 			if (quit) break;
 			snes_host_set_multitap(multitap_wanted(g_ps));
 			run_acc = 1.0;
+			last_vc = sceDisplayGetVcount();
+			gov_warmup = 60;
 			continue;
 		}
 		for (int i = 0; i < 4; i++) snes_host_set_pad(i, masks[i]);
+		/* a game being played keeps the console awake, as VitAdhoc does: without
+		 * this the screen turned off (and the game stopped) a few seconds into a
+		 * demo or a cutscene with no buttons pressed */
+		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 
-		run_acc += frame_hz / vita_hz;
+		run_acc += frame_hz / vita_hz * elapsed;
 		int to_run = 0;
 		while (run_acc >= 1.0 && to_run < 2) { run_acc -= 1.0; to_run++; }
 		if (run_acc > 2.0) run_acc = 1.0;
@@ -1043,24 +1121,52 @@ int main(int argc, char **argv)
 		if (!skip_draw) drew = frame_draw(g_ps, 1, frames_run);
 		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
-		if (drew) { frame_finish(); drawn++; }          /* the wait for the display happens in here */
-		else { sceDisplayWaitVblankStart(); skipped++; }
-		vblanks++;
+		if (drew) {                                     /* queued; the next pass waits for the display */
+			frame_finish();
+			drawn++;
+			finish_us += sceKernelGetProcessTimeWide() - work_end;
+		}
+		else skipped++;
+		vblanks += elapsed;
 		main_us += work_end - loop0;
-		pic_gov_update(&gov, (unsigned) (work_end - loop0), 15500);
+		if (gov_warmup > 0) gov_warmup--;
+		else pic_gov_update(&gov, (unsigned) (work_end - loop0), 15500);
 		if (gov.level != gov_level_seen) {
 			logf_("governor: level %d -> %d (work %.1f ms)\n", gov_level_seen, gov.level, (work_end - loop0) / 1000.0);
 			gov_level_seen = gov.level;
 		}
 
-		/* battery RAM: write 2 s after it last changed, and before suspend */
+		/* battery RAM: 2 s after it changed, on the writer thread; at most every
+		 * 30 s for games that keep changing it (work RAM in Super FX carts); at
+		 * once, here, before suspend */
 		uint64_t now = sceKernelGetProcessTimeWide();
-		if (snes_host_sram_dirty()) {
+		{
+			static int srm_done_seen;
+			int d = g_srm_done;
+			if (d != srm_done_seen) {
+				srm_done_seen = d;
+				int r = g_srm_result;
+				if (r) snes_host_sram_forget();   /* failed: still to be written */
+				if (r || d <= 3 || d % 50 == 0) logf_("sram save rc=%d (write %d)\n", r, d);
+			}
+		}
+		if (g_suspend_flag) {
+			if (snes_host_sram_dirty()) logf_("sram save before suspend rc=%d\n", srm_write_sync());
+			sram_dirty_since = 0;
+		} else if (snes_host_sram_dirty()) {
+			/* settled (unchanged for 1 s) or 30 s since the last write */
+			static uint8_t shadow[sizeof g_srm_buf];
+			static uint64_t last_change, last_write;
+			size_t sz = snes_host_sram_size();
+			if (sz <= sizeof shadow && memcmp(shadow, snes_host_sram_data(), sz) != 0) {
+				memcpy(shadow, snes_host_sram_data(), sz);
+				last_change = now;
+			}
 			if (!sram_dirty_since) sram_dirty_since = now;
-			if (now - sram_dirty_since > 2000000 || g_suspend_flag) {
-				int r = snes_host_sram_save();
-				logf_("sram save rc=%d\n", r);
+			if (now - sram_dirty_since > 2000000 &&
+			    (now - last_change > 1000000 || now - last_write > 30000000) && srm_write_async()) {
 				sram_dirty_since = 0;
+				last_write = now;
 			}
 		} else sram_dirty_since = 0;
 		g_suspend_flag = 0;
@@ -1079,6 +1185,10 @@ int main(int argc, char **argv)
 			    ((st1.ppu_wait_ns - st0.ppu_wait_ns) + (st1.apu_wait_ns - st0.apu_wait_ns)) / 1e6,
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr,
 			    gov.level, drawn, skipped, pic_fresh, g_fence_skips, g_rt_reused);
+			/* where the rest of each refresh went: handing the picture over (blocks
+			 * while the display queue or the GPU is behind) and the wait for the
+			 * next refresh */
+			logf_(" | per s: finish=%.1f ms vwait=%.1f ms", finish_us / 1000.0, vwait_us / 1000.0);
 			st0 = st1;
 #ifdef S9X_PROF
 			if (prof_frames) {
@@ -1095,7 +1205,7 @@ int main(int argc, char **argv)
 			logf_("\n");
 			sec_start = now;
 			vblanks = frames_run = 0;
-			emu_us = main_us = fetch_us = draw_us = 0;
+			emu_us = main_us = fetch_us = draw_us = finish_us = vwait_us = 0;
 			drawn = skipped = pic_fresh = 0;
 			secs++;
 		}
@@ -1103,7 +1213,9 @@ int main(int argc, char **argv)
 
 	g_quit = 1;
 	settings_save();
+	srm_wait_idle();
 	if (snes_host_sram_dirty()) logf_("final sram save rc=%d\n", snes_host_sram_save());
+	if (g_srm_thread >= 0) { g_srm_stop = 1; sceKernelSignalSema(g_srm_sema, 1); sceKernelWaitThreadEnd(g_srm_thread, NULL, NULL); sceKernelDeleteThread(g_srm_thread); }
 	if (g_athread >= 0) sceKernelWaitThreadEnd(g_athread, NULL, NULL);
 	if (g_aport >= 0) sceAudioOutReleasePort(g_aport);
 	snes_host_shutdown();

@@ -56,6 +56,13 @@ int snes_host_sram_dirty(void);
 /* Safe save: writes path.tmp, keeps the previous file as path.bak, renames.
  * Returns 0 on success. */
 int snes_host_sram_save(void);
+/* For a save written on another thread: snes_host_sram_take copies the SRAM into
+ * `out` (cap bytes) and counts that content as saved; snes_host_sram_write writes
+ * such a copy (any thread, one at a time); after a failed write the main thread
+ * calls snes_host_sram_forget so the SRAM counts as unsaved again. */
+size_t snes_host_sram_take(uint8_t *out, size_t cap);
+int snes_host_sram_write(const uint8_t *data, size_t n);
+void snes_host_sram_forget(void);
 
 /* Extra folder for the first copy of an existing save before we overwrite it
  * (the Vita app uses ux0:data/GBAdhoc/backups/snes). The folder must exist. */

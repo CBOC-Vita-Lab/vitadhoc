@@ -496,6 +496,23 @@ int snes_host_sram_save(void)
 	return r;
 }
 
+size_t snes_host_sram_take(uint8_t *out, size_t cap)
+{
+	size_t sz = snes_host_sram_size();
+	if (!sz || sz > cap || g_srm_path.empty()) return 0;
+	memcpy(out, Memory.SRAM, sz);
+	g_sram_saved.assign(out, out + sz);
+	return sz;
+}
+
+int snes_host_sram_write(const uint8_t *data, size_t n)
+{
+	if (!n || g_srm_path.empty()) return 0;
+	return write_atomic(g_srm_path.c_str(), data, n, true, &g_bak_done);
+}
+
+void snes_host_sram_forget(void) { g_sram_saved.clear(); }
+
 int snes_host_state_save(const char *path)
 {
 	if (!g_loaded) return 1;

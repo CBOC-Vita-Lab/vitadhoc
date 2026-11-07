@@ -45,6 +45,8 @@
 #ifndef UI_VITA_TOUCH_H
 #define UI_VITA_TOUCH_H
 
+#include "vstyle.h"
+
 #define TCH_MAX        128
 #define TCH_SLOP       7      /* px a finger may wander and still tap (3 mm
                                * across both directions)                    */
@@ -53,6 +55,7 @@
                                * itself is 252..272)                        */
 #define TCH_HINT_MINW  44
 #define TCH_HINT_PAD   7
+#define TCH_FLASH_FRAMES 10   /* ~1/6 s of fading light after a tap        */
 
 enum { TCH_K_ROW = 1, TCH_K_BTN };
 
@@ -86,6 +89,10 @@ static struct
    int vx256;                 /* horizontal velocity, independent of Y     */
    int axis;                  /* first motion past slop: 1 horizontal, 2 Y  */
    int used;                  /* a touch has been seen in this run          */
+   /* 1.3.1: what the finger presses lights up (tch_feedback) */
+   unsigned poll_seq, drawn_seq;
+   tch_rgn flash;             /* the button just tapped                     */
+   int flash_t;               /* frames of its flash left                   */
 } g_tch;
 
 #define TCH_NONE (-0x7fffffff)
@@ -230,6 +237,8 @@ static int tch_find(int px, int py)
    return best;
 }
 
+static void tch_feedback_draw(void);
+
 /* Once per UI frame, before the screen handles input. */
 static void tch_poll(void)
 {
@@ -244,6 +253,12 @@ static void tch_poll(void)
    g_tch.tap_btn = 0;
    g_tch.dx = g_tch.dy = 0;
 
+   static void (*const feedback)(void) = tch_feedback_draw;
+   if (vid_pre_swap_hook != feedback)
+      vid_pre_swap_hook = feedback;
+   g_tch.poll_seq++;
+   if (g_tch.flash_t > 0)
+      g_tch.flash_t--;
    memset(&t, 0, sizeof(t));
    if (g_pcfg.touch)
       pspcompat_touch(&t);
@@ -309,7 +324,49 @@ static void tch_poll(void)
       if (g_tch.land_r.kind == TCH_K_ROW)
          g_tch.tap_row = g_tch.land_r.id;
       else
+      {
          g_tch.tap_btn = g_tch.land_r.btn;
+         g_tch.flash = g_tch.land_r;
+         g_tch.flash_t = TCH_FLASH_FRAMES;
+      }
+   }
+}
+
+/* 1.3.1 TOUCH FEEDBACK.  A button under a finger that landed on it (and has
+ * not slid off: sliding is how to cancel) shows a soft press; the tap that
+ * fires it leaves a short flash, so a tap that changes nothing visible still
+ * shows it was taken.  Rows already answer by moving the cursor.  Drawn last
+ * into the frame (vid_pre_swap_hook), only in frames whose input was read
+ * by tch_poll, so nothing is left behind once a game runs. */
+static void tch_feedback_draw(void)
+{
+   const tch_rgn *r = NULL;
+   int a = 0;
+   if (g_tch.drawn_seq == g_tch.poll_seq)
+      return;                       /* no menu read the panel this frame */
+   g_tch.drawn_seq = g_tch.poll_seq;
+   if (g_tch.down && !g_tch.dead && !g_tch.moved && g_tch.land >= 0 &&
+       g_tch.land_r.kind == TCH_K_BTN && g_tch.land_r.w < VID_SCR_W)
+   {
+      r = &g_tch.land_r;
+      a = 60;
+   }
+   else if (g_tch.flash_t > 0 && g_tch.flash.w < VID_SCR_W)
+   {
+      r = &g_tch.flash;
+      a = 60 * g_tch.flash_t / TCH_FLASH_FRAMES;
+   }
+   if (!r || a <= 0)
+      return;
+   {
+      float x = r->x * 2.0f + 2, y = r->y * 2.0f + 2;
+      float w = r->w * 2.0f - 4, h = r->h * 2.0f - 4;
+      float rad = (h < w ? h : w) * 0.35f;
+      if (rad > 18)
+         rad = 18;
+      vs_clip_off();                /* a screen may have left one set */
+      vs_rrect(x, y, w, h, rad, VS_HEX(0xFFFFFF, a));
+      vs_rrect_line(x, y, w, h, rad, 2, VS_HEX(0xFFFFFF, a * 2 > 255 ? 255 : a * 2));
    }
 }
 

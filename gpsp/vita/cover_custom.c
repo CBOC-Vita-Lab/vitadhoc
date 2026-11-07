@@ -765,10 +765,16 @@ static int inbox_current(const char *stem, char *seen, size_t cap)
 
 int cover_inbox_scan(const char *const *stems, int n)
 {
+   return cover_inbox_match(stems, n, 1);
+}
+
+int cover_inbox_match(const char *const *stems, int n, int reload)
+{
    int i, cap = 0;
    if (!g_root[0])
       return 0;
-   inbox_load();
+   if (reload)
+      inbox_load();
    if (!g_inbox_n)
       return 0;
    for (i = 0; i < n; i++)
@@ -800,6 +806,11 @@ int cover_inbox_scan(const char *const *stems, int n)
    }
    g_jobs_next = 0;
    return g_jobs_n;
+}
+
+int cover_inbox_files(void)
+{
+   return g_inbox_n;
 }
 
 int cover_inbox_pending(void)

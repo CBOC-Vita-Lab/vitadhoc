@@ -512,20 +512,33 @@ static int ui_cover_row(int rom)
 
 /* ---- covers/: the inbox, at the list's opening and at a refresh ------------------------------ */
 
+/* reload 1: the list is (re)built or refreshed -- the folders are made and
+ * covers/ looked at again.  0 (1.3.1, the console switch): only the games of
+ * the console now shown are matched against what that look found, with no
+ * memory card access unless a picture is waiting for one of them. */
+static void ui_cover_inbox_match(int n_scan, int reload);
 static void ui_cover_inbox_scan(int n_scan)
+{
+   ui_cover_inbox_match(n_scan, 1);
+}
+
+static void ui_cover_inbox_match(int n_scan, int reload)
 {
    char (*stems)[256];
    const char **p;
    int i, n = 0, waiting;
-   cover_init(g_dir_base);
+   if (reload)
    {
-      /* covers/ is there for the player to copy pictures into */
-      char dir[PSP_FILE_PATH_CAP];
-      if (snprintf(dir, sizeof(dir), "%s/%s", g_dir_base,
-                   COVER_INBOX_DIR) < (int)sizeof(dir))
-         sceIoMkdir(dir, 0777);
+      cover_init(g_dir_base);
+      {
+         /* covers/ is there for the player to copy pictures into */
+         char dir[PSP_FILE_PATH_CAP];
+         if (snprintf(dir, sizeof(dir), "%s/%s", g_dir_base,
+                      COVER_INBOX_DIR) < (int)sizeof(dir))
+            sceIoMkdir(dir, 0777);
+      }
    }
-   if (n_scan <= 0)
+   if (n_scan <= 0 || (!reload && !cover_inbox_files()))
       return;
    stems = (char (*)[256])malloc((size_t)n_scan * sizeof(*stems));
    p = (const char **)malloc((size_t)n_scan * sizeof(*p));
@@ -541,7 +554,7 @@ static void ui_cover_inbox_scan(int n_scan)
          p[n] = stems[n];
          n++;
       }
-      waiting = cover_inbox_scan(p, n);
+      waiting = cover_inbox_match(p, n, reload);
       if (waiting)
          fe_evt("cover_inbox waiting=%d games=%d", waiting, n);
    }

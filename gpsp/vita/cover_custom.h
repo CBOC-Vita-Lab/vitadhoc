@@ -74,6 +74,10 @@ int  cover_game_picture(const char *stem, const char *shot_dir,
 /* Look at covers/ against these games (their stems) and note the ones whose
  * file is new or changed.  Returns how many are waiting. */
 int  cover_inbox_scan(const char *const *stems, int n);
+/* The same against the folder as the last scan saw it (reload 0: no look at
+ * the memory card at all, for the console switch), or a fresh look (1). */
+int  cover_inbox_match(const char *const *stems, int n, int reload);
+int  cover_inbox_files(void);   /* pictures in covers/ at the last look */
 /* Take over one waiting file (a decode and a write, so one per call).
  * 1 = a cover was set for `stem` (copied to stem_out), 0 = nothing waiting,
  * -1 = one file could not be used (named in stem_out; not tried again until

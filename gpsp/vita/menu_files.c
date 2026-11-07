@@ -677,10 +677,19 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    if (mf_cancelled()) return ML_CANCELLED;
    if (!gamedb_blurb(job->stem, out->blurb, sizeof(out->blurb)))
    {
+      /* a loosely named file ("ChronoTrigger", "Act Raiser"): by the game's
+       * No-Intro name for its console */
+      char named[256];
+      char sys = job->console == FE_CONSOLE_SNES ? 'D' : job->console == FE_CONSOLE_GBC ? 'C'
+               : job->console == FE_CONSOLE_GB ? 'B' : 'A';
+      if (gamedb_name_loose(sys, job->stem, named, sizeof(named)) &&
+          gamedb_blurb(named, out->blurb, sizeof(out->blurb)))
+         goto blurb_done;
       rc = mf_header_blurb(job, out->blurb);
       if (rc == ML_CANCELLED) return rc;
       if (rc == ML_ERROR) answer = rc;
    }
+blurb_done:
    MF_ADD(g_diag.meta_us, mf_elapsed(t));
    return answer;
 }

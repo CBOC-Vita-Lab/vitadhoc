@@ -37,7 +37,12 @@ games identical, with and without threads, against the build before):
   is no SA-1 (`cpuexec.cpp`).
 
 The GSU (Doom: 189,000 instructions a frame, about 18 ms) is the limit left for
-Super FX games that keep it busy; giving it a core of its own is the next step.
+Super FX games that keep it busy. On the Vita the SNES player paces it: the GSU's
+time is measured (`S9xSuperFXClock`, `snes_host_superfx_take_us`) and
+`Settings.SuperFXClockMultiplier` is set every 60 frames to the share that fits
+90% of a refresh (30-100%, back up when there is room), so game, music and controls
+keep full speed (Doom 59 of 60 instead of 41) and the 3D view animates more slowly.
+The twin keeps 100%. A faster GSU interpreter is what would lift the 3D rate.
 
 ## Layout
 

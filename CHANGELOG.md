@@ -6,8 +6,12 @@
 - **Play `.sfc` and `.smc` games** from the same home screen, under a new
   SNES tab. VitAdhoc finds them in `ux0:ROMS/SNES`, in any folder directly
   under `ux0:ROMS/` (a "SNES ROM Collection" folder, for one), in RetroFlow's
-  folders and in the folders you add in Settings. Box art downloads like the
-  other consoles, and your own covers work too.
+  folders and in the folders you add in Settings. Box art and title screens
+  download like the other consoles, and your own covers work too.
+- **Box art for loosely named games, on every console.** A game is now
+  recognised by its contents, and by a loose match of its name ("Act Raiser",
+  "7th Saga", "Pocket Dogs (U)"), so collections with short or old-style file
+  names get their covers. Games that found none before are looked for again.
 - **Accurate, and spread over the Vita's cores.** The SNES player is built on
   Snes9x 1.63 (the current release). Sound and picture drawing each run on a
   core of their own, with exactly the same result as running them one after
@@ -19,11 +23,15 @@
   with sharp or smooth scaling, CRT scanlines and an LCD grid (1-10).
 - **Up to four players.** A second controller is player 2; with the Super
   Multitap (automatic for games known to use it) players 3 and 4 join too.
-- **Full speed with every frame shown** in Super Mario World, Donkey Kong
-  Country, F-Zero, Chrono Trigger and Yoshi's Island on a Vita, with room to
-  spare. Super Mario RPG and Kirby Super Star (SA-1) run at 59 of 60 frames a
-  second; Super FX games that keep the chip busy (Doom, Stunt Race FX) are
-  still slower. Nothing is ever dropped from the picture to save time.
+- **Full speed with every frame shown** on a Vita: Super Mario World, Donkey
+  Kong Country, F-Zero, Chrono Trigger and Yoshi's Island with room to spare,
+  Super Mario RPG and Kirby Super Star (SA-1) at 59 of 60 frames a second.
+  Nothing is ever dropped from the picture to save time.
+- **Super FX games keep their speed.** When the Vita can't run the Super FX
+  chip as fast as a SNES (Doom, the races of Stunt Race FX), the chip gets the
+  time the Vita has instead of the whole game slowing down: the game, its
+  music and its controls stay at full speed, and the 3D view animates as fast
+  as the Vita can draw it. Doom went from 41 to 59 frames a second.
 
 **Smoothing does less work.** The xBRZ scaler and the step that finds what
 changed on screen do about a tenth less work, with exactly the same picture.

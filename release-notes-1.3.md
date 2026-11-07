@@ -23,6 +23,8 @@ and [Snes9x](https://github.com/snes9xgit/snes9x).
 - **Trade between versions.** Red, Blue and Yellow link with Gold, Silver and
   Crystal, and two Vitas can trade between Ruby and Sapphire or FireRed and
   LeafGreen.
+- **Box art for loosely named games, on every console:** games are recognised
+  by their contents and by a loose match of their names.
 - **Your own cover pictures.** The Cover button, or a PNG or JPG in `covers/`
   named like the game. Your picture always wins over downloaded art.
 - **Safer saves.** Saves from other emulators keep their clock data, RetroArch
@@ -37,8 +39,9 @@ and [Snes9x](https://github.com/snes9xgit/snes9x).
 - **500 MHz** instead of 444 when PSVshell or a similar plugin allows it.
 - **SNES on a Vita:** Super Mario World, Donkey Kong Country, F-Zero, Chrono
   Trigger and Yoshi's Island at full speed with every frame shown (5-8 ms of
-  each 16.7 ms frame); Super Mario RPG and Kirby Super Star at 59 of 60.
-  Super FX games that keep the chip busy (Doom, Stunt Race FX) are slower.
+  each 16.7 ms frame); Super Mario RPG and Kirby Super Star at 59 of 60;
+  Doom at 59 of 60 (was 41): busy Super FX games keep their game speed and
+  their 3D view animates as fast as the Vita can draw it.
 - **Smoothing does about a tenth less work** for exactly the same picture.
 
 ### Fixes

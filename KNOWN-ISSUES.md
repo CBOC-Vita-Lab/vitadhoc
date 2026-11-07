@@ -26,10 +26,12 @@ Testing continues on:
 
 ## Super NES
 
-- **Super FX games that keep the chip busy run slower than full speed:** Doom
-  at about two thirds, Stunt Race FX at about 93% in races (Yoshi's Island is
-  full speed). Super Mario RPG and Kirby Super Star dip a frame now and then.
-  The SNES player writes its speed to `ux0:data/GBAdhoc/snes/log.txt`.
+- **Super FX games that keep the chip busy** (Doom, the races of Stunt Race
+  FX) run at full game speed, but their 3D view gets less chip time than on a
+  SNES, so it animates more slowly than on the console. Yoshi's Island runs
+  the chip at full speed. Super Mario RPG and Kirby Super Star dip a frame
+  now and then. The SNES player writes its speed to
+  `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
 - The SNES player has its own pause menu (hold **L + R + Start**) with four
   state slots. Rewind, fast forward, Continue, cheats, patches and
   RetroAchievements are for GBA and Game Boy games only for now.

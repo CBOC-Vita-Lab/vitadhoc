@@ -21,8 +21,8 @@ these games.
 | Yoshi's Island | Super FX 2 | 59.7 of 60 | 8.2 / 13.5 ms | every frame |
 | Super Mario RPG | SA-1 | 59.1 of 60 | 11.5 / 16.8 ms | every frame |
 | Kirby Super Star | SA-1 | 59.1 of 60 | 11.0 / 15.3 ms | every frame |
-| Stunt Race FX (PAL) | Super FX | 46.5 of 50 | 13.1 / 26.2 ms | every frame |
-| Doom | Super FX 2 | 40.7 of 60 | 23.0 / 27.5 ms | every frame |
+| Stunt Race FX (PAL) | Super FX | 49.4 of 50 (46.5 before pacing) | 10.0 / 21.9 ms | every frame |
+| Doom | Super FX 2 | 59.0 of 60 (40.7 before pacing) | 13.4 / 23.0 ms | every frame |
 
 The display runs at 59.9-60 Hz in every game; "every frame" means no frame
 was dropped to save time. Super Mario World and Stunt Race FX are European
@@ -50,9 +50,20 @@ and without the extra threads):
 - **The console stays awake** while a SNES game runs (it used to turn the
   screen off, and stop the game, during demos with no buttons pressed).
 
-Super FX 1 and 2 games that keep the GSU busy all the time (Doom, the races
-in Stunt Race FX) are limited by the GSU interpreter on the game thread.
-Running the GSU on its own core is the next step for them.
+- **Super FX pacing.** Doom keeps the GSU busy all the time; at the
+  hardware's instruction rate a frame needed 22-27 ms on the game thread
+  (GSU 15-18 ms), so everything ran at two thirds of its speed, music
+  included. The SNES player now times the GSU (`superfx clock` lines in its
+  log) and sets its instructions per line to the share that fits a refresh
+  (90% of it, adjusted every second; never below 30%, back to 100% when there
+  is room). Game, music and controls keep full speed; the 3D view gets fewer
+  GSU instructions per emulated frame than on a SNES and so animates more
+  slowly. Doom settles near 35%, Stunt Race FX between 42% and 77% in races;
+  Yoshi's Island stays at 100%. This changes the emulated GSU's speed, not
+  its results; the twin and the bit-for-bit comparisons run it at 100%.
+
+A faster GSU interpreter (or the GSU on a core of its own) is what would give
+these games their full 3D frame rate.
 
 ## Pokemon Unbound 2.1.1.1 On VitAdhoc 1.2
 

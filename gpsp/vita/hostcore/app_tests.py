@@ -5606,6 +5606,16 @@ def t_snes_library(S):
             "TRIANGLE reaches the SNES shelf on the home screen (%s)" %
             [e["_"] for e in sw])
 
+    # A cover of your own for a SNES game: a picture in covers/ named like it
+    # is taken as for the other consoles.
+    r = S.run("snes_cover", "90:triangle\n+30:triangle\n+30:triangle\n"
+              "+120:shot=home_cover.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1},
+              extra={"covers/Game Two (Europe).png": cover_png((300, 400), (200, 40, 40))})
+    S.clean(r)
+    w = r.evt("cover_inbox")
+    S.check(any("stem=Game Two (Europe) rc=1" in d["_"] for d in w),
+            "a picture in covers/ named like a SNES game is taken (%s)" % [d["_"] for d in w])
+
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),

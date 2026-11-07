@@ -10,6 +10,7 @@
  *    C<crc32, 8 hex digits>   No-Intro name of the cartridge with that CRC
  *    S<GBA game code>         No-Intro name of a GBA cartridge by header
  *    Z<GBA game code>         ...and that cartridge's size in bytes
+ *    N<sys><loose title>      No-Intro name by a loose title (gamedb_name_loose)
  *    T<title key>             the Wikipedia article about that title
  *    W<article>               its first sentences (plain ASCII)
  *
@@ -63,6 +64,15 @@ int  gamedb_blurb(const char *name, char *out, size_t cap);
  * cartridge's CRC32 -> its No-Intro name.  1 = found. */
 int  gamedb_name_by_code(const char code[4], char *out, size_t cap);
 int  gamedb_name_by_crc(uint32_t crc, char *out, size_t cap);
+/* A No-Intro name for a file named loosely ("Act Raiser", "7th Saga",
+ * "Mega Man X 2", "Pocket Dogs (U)"): its title key without spaces, looked
+ * up among console `sys`'s games ('A' GBA, 'B' GB, 'C' GBC, 'D' SNES; N
+ * records).  1 when found. */
+int  gamedb_name_loose(char sys, const char *name, char *out, size_t cap);
+/* The CRC32 of a SNES file's ROM: a 512-byte copier header (a file 512
+ * bytes over a multiple of 1 KiB) is left out, as the No-Intro CRCs are of
+ * the cartridge alone. */
+int  gamedb_snes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void));
 
 /* The GBA game code of the cartridge file at `path` (bytes 0xAC-0xAF, four
  * capital letters or digits): 1 and code[0..3], or 0. */

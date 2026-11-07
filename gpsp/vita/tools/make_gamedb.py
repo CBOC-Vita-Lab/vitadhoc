@@ -18,6 +18,10 @@ The output is one text file, sorted, one record a line, TAB-separated:
   Z<code>       <bytes>           ...and that cartridge's size (homebrew
                                   borrows codes: a file much smaller than
                                   the cartridge is not it)
+  N<sys><loose> <No-Intro name>   a game by a loose form of its title
+                                  (squash below; sys A-D as in SYSTEMS),
+                                  for files named "Act Raiser" or
+                                  "7th Saga" instead of the No-Intro name
   T<title key>  <article>         a game by its title (title_key below)
   W<article>    <blurb>           an English Wikipedia article's first lines
 
@@ -45,7 +49,12 @@ SYSTEMS = [
     ("Nintendo - Game Boy Advance", "Q188642", "A"),
     ("Nintendo - Game Boy", "Q186437", "B"),
     ("Nintendo - Game Boy Color", "Q203992", "C"),
+    ("Nintendo - Super Nintendo Entertainment System", "Q183259", "D"),
 ]
+# Preference among a game's releases for the loose name index (N records):
+# the art server has the most box art for the USA releases.
+REGION_ORDER = ["(USA)", "(USA, Europe)", "(World)", "(USA,", "(Europe)",
+                "(Europe,", "(Japan, USA)", "(Japan)"]
 
 
 def get(url, cache=None, accept=None):
@@ -95,6 +104,26 @@ def base_title(nointro):
     if m:
         t = "%s %s%s" % (m.group(2), m.group(1), m.group(3) or "")
     return t
+
+
+def squash(key):
+    """The loose form (gamedb.c gamedb_name_loose): the title key without its
+    spaces, so 'Act Raiser', 'ActRaiser' and 'Mega Man X 2' / 'Mega Man X2'
+    meet."""
+    return key.replace(" ", "")
+
+
+def region_rank(name):
+    for i, r in enumerate(REGION_ORDER):
+        if r in name:
+            return i
+    return len(REGION_ORDER)
+
+
+def plain_release(name):
+    """Not a beta, demo, prototype, hack, pirate, sample or kiosk copy."""
+    return not re.search(r"\((Beta|Demo|Proto|Sample|Kiosk|Pirate|Unl|Hack|"
+                         r"Program|Debug)[^)]*\)", name)
 
 
 def variants(key):
@@ -234,7 +263,10 @@ def main():
     recs = {}
     keys_wanted = {}            # title key -> article
     names = []                  # (key, base title) per cartridge
+    only = os.environ.get("GAMEDB_SYSTEMS")      # e.g. "D": one console's records
     for dat, qid, tag in SYSTEMS:
+        if only and tag not in only:
+            continue
         text = get("https://raw.githubusercontent.com/libretro/libretro-database/"
                    "master/metadat/no-intro/" + urllib.parse.quote(dat) + ".dat",
                    os.path.join(cache, dat + ".dat")).decode("utf-8", "replace")
@@ -245,9 +277,15 @@ def main():
             index.setdefault(title_key(label), art)
         hit = 0
         family = {}             # GBA: code[:3] -> article
+        loose = {}              # squash(key) -> (rank, name)
         for g in games:
             if g["crc"]:
                 recs["C" + g["crc"]] = g["name"]
+            if plain_release(g["name"]):
+                kk = squash(title_key(base_title(g["name"])))
+                rank = (region_rank(g["name"]), "(Rev" in g["name"], g["name"])
+                if kk and (kk not in loose or rank < loose[kk][0]):
+                    loose[kk] = (rank, g["name"])
             code = g["serial"] if g["serial"] and tag == "A" and \
                 re.match(r"^[A-Z0-9]{4}$", g["serial"]) else None
             if code:
@@ -264,6 +302,8 @@ def main():
                     hit += 1
             if art and code:
                 family.setdefault(code[:3], art)
+        for kk, (rank, name) in loose.items():
+            recs["N" + tag + kk] = name
         for g in games:         # the other regions of a game found once
             if g["code"] and g["key"] not in keys_wanted and \
                     g["code"][:3] in family:

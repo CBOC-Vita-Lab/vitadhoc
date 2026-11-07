@@ -223,7 +223,9 @@ void artfetch_focus(unsigned generation, const char *path, const char *name)
 static char **g_missing[AK_KINDS];
 static int g_nmissing[AK_KINDS], g_capmissing[AK_KINDS];
 static int g_missing_current[AK_KINDS];
-#define MISSING_HEADER "# VitAdhoc artwork misses v2\n"
+/* v3: 1.3 names games by checksum and loose title on every console, so the
+ * misses of older versions are looked for again */
+#define MISSING_HEADER "# VitAdhoc artwork misses v3\n"
 static unsigned char *g_body;
 
 static int stop_now(void)
@@ -1068,7 +1070,7 @@ static const char *const SYS[4] = {
 
 typedef struct
 {
-   char stem[AF_NAME_CAP], cand[3][AF_NAME_CAP];
+   char stem[AF_NAME_CAP], cand[5][AF_NAME_CAP];
    int ncand, sys[2], nsys, ready, crc_allowed, crc_tried, crc_unavailable;
 } af_candidates;
 
@@ -1101,7 +1103,35 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    if (a->sys[0] == 0 &&
        gamedb_name_by_header(path, a->cand[a->ncand], AF_NAME_CAP))
       a->ncand++;
-   a->crc_allowed = a->ncand == 0 && a->sys[0] != 3;   /* gamedb knows no SNES CRCs */
+   /* Not a No-Intro file name: the cartridge's checksum names it exactly
+    * (any console; SNES without its copier header), read now so it is
+    * asked for first */
+   if (!a->ncand && !stop_now())
+   {
+      uint32_t crc;
+      int r = a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, &crc, stop_now)
+                             : gamedb_file_crc_cancel(path, &crc, stop_now);
+      if (r == 0)
+      {
+         a->crc_tried = 1;
+         if (gamedb_name_by_crc(crc, a->cand[a->ncand], AF_NAME_CAP))
+            a->ncand++;
+      }
+   }
+   /* A file named loosely ("Act Raiser", "7th Saga", "Pocket Dogs (U)"):
+    * the No-Intro name of the game with that title, for each console the
+    * file may be (gamedb N records) */
+   if (a->ncand < 2)
+   {
+      static const char TAG[4] = { 'A', 'B', 'C', 'D' };
+      int k;
+      for (k = 0; k < a->nsys && a->ncand < 3; k++)
+         if (gamedb_name_loose(TAG[a->sys[k]], a->stem, a->cand[a->ncand], AF_NAME_CAP))
+            a->ncand++;
+   }
+   /* the cartridge's checksum, if no name worked: any console now (SNES
+    * without its copier header) */
+   a->crc_allowed = !gamedb_known_name(a->stem);
    if (!a->ncand || strcmp(a->cand[0], a->stem))
       memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
    a->ready = 1;
@@ -1131,7 +1161,8 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
             a->crc_tried = 0;          /* not tried: asked to stop first */
             return -1;
          }
-         if (gamedb_file_crc_cancel(path, &crc, stop_now) != 0)
+         if ((a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, &crc, stop_now)
+                             : gamedb_file_crc_cancel(path, &crc, stop_now)) != 0)
          {
             if (stop_now())
             {

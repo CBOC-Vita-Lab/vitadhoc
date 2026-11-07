@@ -398,6 +398,34 @@ int gamedb_name_by_crc(uint32_t crc, char *out, size_t cap)
    return gamedb_get(key, out, cap);
 }
 
+int gamedb_name_loose(char sys, const char *name, char *out, size_t cap)
+{
+   char base[256], key[300], sq[300];
+   size_t i, n = 0;
+   if (!name || !out || !cap)
+      return 0;
+   gamedb_base_title(name, base, sizeof(base));
+   gamedb_title_key(base, key, sizeof(key));
+   sq[n++] = 'N';
+   sq[n++] = sys;
+   for (i = 0; key[i] && n + 1 < sizeof(sq); i++)
+      if (key[i] != ' ')
+         sq[n++] = key[i];
+   sq[n] = '\0';
+   if (n <= 2)
+      return 0;
+   if (gamedb_get(sq, out, cap))
+      return 1;
+   /* "Zelda - A Link to the Past" for "Legend of Zelda, The - ..." */
+   if (!strncmp(sq + 2, "zelda", 5) && n + 8 < sizeof(sq))
+   {
+      memmove(sq + 2 + 8, sq + 2, n - 2 + 1);
+      memcpy(sq + 2, "legendof", 8);
+      return gamedb_get(sq, out, cap);
+   }
+   return 0;
+}
+
 int gamedb_read_code(const char *path, char code[4])
 {
    unsigned char b[4];
@@ -443,7 +471,7 @@ int gamedb_name_by_header(const char *path, char *out, size_t cap)
 static uint32_t g_crc_tab[256];
 
 static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
-                     int (*cancel)(void))
+                     int (*cancel)(void), int snes)
 {
    static unsigned char buf[64 * 1024];
    uint32_t c = 0xFFFFFFFFu;
@@ -464,6 +492,16 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
    f = path ? fopen(path, "rb") : NULL;
    if (!f)
       return -1;
+   if (snes)
+   {
+      long size;
+      if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 ||
+          fseek(f, (size % 1024) == 512 ? 512 : 0, SEEK_SET) != 0)
+      {
+         fclose(f);
+         return -1;
+      }
+   }
    for (;;)
    {
       size_t i;
@@ -490,10 +528,15 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
 
 int gamedb_file_crc(const char *path, uint32_t *crc, volatile const int *abort)
 {
-   return file_crc(path, crc, abort, NULL);
+   return file_crc(path, crc, abort, NULL, 0);
 }
 
 int gamedb_file_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 {
-   return file_crc(path, crc, NULL, abort);
+   return file_crc(path, crc, NULL, abort, 0);
+}
+
+int gamedb_snes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 1);
 }

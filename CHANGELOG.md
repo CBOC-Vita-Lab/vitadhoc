@@ -1,5 +1,16 @@
 # What's New
 
+## Version 1.3.1
+
+**Snappier menus and a new look.**
+- **Switching consoles is instant.** Pressing Triangle through GBA, GB, GBC
+  and SNES no longer freezes the screen for a moment each time: remembering
+  the console and looking in `covers/` now wait until you stop on one, and
+  only look at the memory card when there is something to do.
+- **Touch feedback.** An on-screen button lights up while your finger is on
+  it, and flashes when the tap goes through. Slide off to cancel, as before.
+- **New bubble and LiveArea art,** with all four consoles in it.
+
 ## Version 1.3
 
 **Super NES games.**

@@ -2010,7 +2010,7 @@ def t_handover(S):
         S.note("x86 only (two realtime twins): skipped")
         return
     import link_tests as N
-    T = N.Tests("x86", 0)
+    T = N.Tests("x86", getattr(S, "hz", 0))
     T.S = S
     T.begin("handover")
     rom = os.path.join(HERE, "testrom", TEST)
@@ -2220,9 +2220,13 @@ def main():
     ap.add_argument("--update-refs", action="store_true")
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--speed", action="store_true")
+    ap.add_argument("--hz", type=int, default=0,
+                    help="the link twins' display rate (60); lower on a "
+                         "busy machine, as link_tests.py --hz")
     a = ap.parse_args()
     S = LSuite(a.arch, a.update_refs, a.keep)
     S.speed = a.speed
+    S.hz = a.hz
     S.partial = bool(a.only)
     if not os.path.exists(S.exe):
         sys.exit("no %s: make ARCH=%s first" % (S.exe, a.arch.split("-")[0]))

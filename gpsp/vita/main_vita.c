@@ -2061,6 +2061,15 @@ static void menu_log_wake(void)
 {
    if (fe_evt_pending() >= 4096) plat_worker_wake();
 }
+/* No worker thread (io_thread = 0, a worker that would not start, the twin's
+ * default): the menu's ring used to fill after ~25 s in a long screen (the
+ * share room, a transfer) and every later line was dropped, "exit ok"
+ * included.  This thread is then the ring's only consumer, so it drains it
+ * itself -- one write when 12 KB of its 16 KB are queued, never per frame. */
+static void menu_log_wake_sync(void)
+{
+   if (fe_evt_pending() >= 12288) fe_evt_service();
+}
 static void menu_log_start(void)
 {
 #ifdef GPSP_NO_TELEMETRY
@@ -2071,7 +2080,7 @@ static void menu_log_start(void)
    fe_evt_set_buffered(); /* failed start must not become per-frame card I/O */
    g_menu_writer = g_sw.io_thread &&
       plat_worker_start(menu_log_step, 250000) == 0;
-   if (g_menu_writer) fe_evt_set_async(menu_log_wake);
+   fe_evt_set_async(g_menu_writer ? menu_log_wake : menu_log_wake_sync);
    fe_evt("menu_writer on=%d buffer_only=%d", g_menu_writer, !g_menu_writer);
 }
 static int menu_log_stop(void)

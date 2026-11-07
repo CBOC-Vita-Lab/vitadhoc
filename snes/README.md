@@ -227,9 +227,9 @@ picture it returns must equal a picture of the reference run).
 
 The main loop's work per frame (emulation, copy, GPU submission, without the display wait) is fed to a small
 governor (`frontend/picture.cpp`, the idea of the GBA app's governor, own code). 24 slow frames (over 15.5 ms,
-with forgiveness) drop to level 1: glow, scanlines, grid and the sharp pass are off. 24 more drop to level 2:
-every other frame is not drawn (emulation and sound stay at 60 Hz; the core also skips its own drawing when the
-PPU thread is off). It steps back up after 600 fast frames (10 s), and longer if it went down again soon after.
+with forgiveness) go to level 2: every other frame is not drawn (emulation and sound stay at 60 Hz; the core
+also skips its own drawing when the PPU thread is off). The picture options (glow, scanlines, grid, sharp pass)
+are never dropped to save time; level 1, which did that, is not used. It steps back up after 600 fast frames (10 s), and longer if it went down again soon after.
 The level is in the log (`gov=`) and each change is logged.
 
 Files:

@@ -152,12 +152,12 @@ void pic_gov_update(pic_governor *g, unsigned work_us, unsigned budget_us)
 	/* sustained: 24 slow frames beyond the forgiveness in a row of work */
 	if (g->slow >= 24 && g->level < 2) {
 		if (g->frames > 0 && g->recovered && g->since_change < 600) g->backoff = g->backoff < 8 ? g->backoff * 2 : 8; /* went down again soon after going up */
-		g->level++;
+		g->level = 2;    /* never a level that drops picture extras: only frames go */
 		g->recovered = 0;
 		g->slow = g->fast = 0;
 		g->since_change = 0;
 	} else if (g->level > 0 && g->fast >= g->hold * g->backoff) {
-		g->level--;
+		g->level = 0;
 		g->recovered = 1;
 		g->slow = g->fast = 0;
 		g->since_change = 0;

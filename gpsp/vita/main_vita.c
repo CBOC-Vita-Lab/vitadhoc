@@ -4931,10 +4931,9 @@ static void game_loop(void)
       g_caught_us_frame = 0;
       g_catchup_ok = g_pcfg.full_speed && !g_ff.on && !session && !local &&
                      !g_sw.link_bench && !link_owns_picture();
-      /* Keep full speed also lets smoothing give way when frames keep
-       * missing the display (upscale_gov_*): never in a link, where the
-       * picture and its timing are not ours to change. */
-      upscale_gov_enable(g_catchup_ok);
+      /* The smoothing governor (upscale_gov_*) stays off: busy moments
+       * skip drawing a frame, they never lower the smoothing chosen. */
+      upscale_gov_enable(0);
       if (g_catchup && g_catchup_ok)
       {
          const unsigned n = g_catchup < CATCHUP_PER_FRAME ? g_catchup

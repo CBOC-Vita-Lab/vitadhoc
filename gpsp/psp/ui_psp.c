@@ -3575,8 +3575,8 @@ static const char *set_help(int id)
          ? "Shot with the buttons set in Button mapping."
          : "The Vita's own PS + Start takes screenshots.";
    case SET_SPEED:    return g_pcfg.full_speed
-                             ? "Busy moments skip a frame; smoothing "
-                               "eases off."
+                             ? "Busy moments skip drawing a frame; the "
+                               "game and sound keep speed."
                              : "Busy moments slow the game and its sound "
                                "down.";
    case SET_SGB:      return "Super Game Boy games in the border they bring "

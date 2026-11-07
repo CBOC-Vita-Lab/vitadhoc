@@ -68,11 +68,11 @@ int main()
 	for (int i = 0; i < 10; i++) pic_gov_update(&g, 20000, 16000);        // a short hiccup: no change
 	for (int i = 0; i < 100; i++) pic_gov_update(&g, 9000, 16000);
 	CHECK(g.level == 0);
-	for (int i = 0; i < 200; i++) pic_gov_update(&g, 20000, 16000);
+	for (int i = 0; i < 200; i++) { pic_gov_update(&g, 20000, 16000); CHECK(g.level != 1); } // extras never dropped
 	CHECK(g.level == 2);
 	for (int i = 0; i < 300; i++) pic_gov_update(&g, 9000, 16000);        // too soon to step up
 	CHECK(g.level == 2);
-	for (int i = 0; i < 2000; i++) pic_gov_update(&g, 9000, 16000);
+	for (int i = 0; i < 2000; i++) { pic_gov_update(&g, 9000, 16000); CHECK(g.level != 1); }
 	CHECK(g.level == 0);
 	printf(fails ? "picture_test FAILED\n" : "picture_test passed\n");
 	return fails ? 1 : 0;

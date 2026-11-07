@@ -3601,13 +3601,9 @@ def t_fullspeed(S):
 
 
 def t_smooth_gov(S):
-    """Keep full speed also lets smoothing give way (upscale_vita.c, the
-    governor).  A stretch of frames that cost too much while xBRZ draws:
-    one step down at a time and quietly (a line in the log, no picture
-    changes beyond the smoothing), then back up once the frames are cheap
-    again.  The twin only runs it when GBADHOC_GOV=1 (a twin's clock is
-    whatever machine it runs on); the frames' cost is --slow's, simulated.
-    With Keep full speed off, it never steps."""
+    """The smoothing chosen is never lowered for speed: slow frames while
+    xBRZ draws (--slow, simulated; GBADHOC_GOV=1 lets the twin run the
+    governor at all) never step it, with Keep full speed on or off."""
     rom = os.path.join(HERE, "testrom", "gbadhoc-scroll.gba")
     if not os.path.exists(rom):
         S.note("no testrom/gbadhoc-scroll.gba: skipped")
@@ -3630,11 +3626,7 @@ def t_smooth_gov(S):
             os.environ.pop("GBADHOC_GOV", None)
         else:
             os.environ["GBADHOC_GOV"] = old
-    S.check(res[1] and res[1][0] == "down",
-            "slow frames while smoothing: it steps down (%s)" % res[1])
-    S.check("up" in res[1] and res[1].index("up") > res[1].index("down"),
-            "and back up once the frames are cheap (%s)" % res[1])
-    S.check(len(res[1]) <= 6, "few steps, no flicker (%s)" % res[1])
+    S.check(not res[1], "Keep full speed on: smoothing never steps (%s)" % res[1])
     S.check(not res[0], "Keep full speed off: smoothing never steps (%s)" % res[0])
 
 

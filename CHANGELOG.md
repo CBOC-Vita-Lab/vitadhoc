@@ -55,16 +55,10 @@ changed on screen do about a tenth less work, with exactly the same picture.
   even when the hack's own label says 64 KB.
 
 **Smoother play with smoothing on**
-- **Smoothing gives way when the game is busy.** With Keep full speed on (the
-  default), if xBRZ or Scale3x smoothing keeps making frames miss the screen
-  for a few seconds, VitAdhoc quietly uses a lighter smoothing (one step at a
-  time, down to the screen's own filter), and goes back up once there is room
-  again. It tries again slowly, so it does not flip back and forth. The game
-  menu shows one line when smoothing is lighter than you chose. Turn Keep full
-  speed off to always get the full smoothing.
+- **Keep full speed** (Settings, on by default): a busy moment skips drawing a
+  frame so the game and its sound keep their speed. The smoothing you chose is
+  never lowered to get there.
   ([#7](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/7))
-- **Keep full speed** (Settings) now covers both: busy moments skip drawing a
-  frame so the game and its sound keep their speed, and smoothing eases off.
 
 **Under the hood**
 - **Parts we borrowed were checked for newer versions.** The Game Boy core,

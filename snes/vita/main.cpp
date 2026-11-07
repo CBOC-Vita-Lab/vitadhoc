@@ -372,7 +372,8 @@ static void rect_batch_draw(unsigned color)
 static unsigned band_alpha(int strength) { unsigned a = 20 + 19 * strength; return a > 210 ? 210 : a; }
 
 /* Opens the frame's last scene and draws the picture. Returns false when no scene could be started
- * (the display queue is full): the caller then skips this frame. `extras` = 0 under the governor. */
+ * (the display queue is full): the caller then skips this frame. `extras` = 0 draws without the picture
+ * options (not used by the game loop: the governor never drops them). */
 static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 {
 	vita2d_pool_reset();
@@ -1009,7 +1010,7 @@ int main(int argc, char **argv)
 
 		bool drew = false;
 		uint64_t d0 = sceKernelGetProcessTimeWide();
-		if (!skip_draw) drew = frame_draw(g_ps, gov.level == 0, frames_run);
+		if (!skip_draw) drew = frame_draw(g_ps, 1, frames_run);
 		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
 		if (drew) { frame_finish(); drawn++; }          /* the wait for the display happens in here */

@@ -48,8 +48,8 @@ void pic_prescale(const pic_rect *r, int *kx, int *ky);
 int pic_blank_rows(const unsigned short *px, int pitch_bytes, int w, int h, int from_top, int max_rows);
 
 /* Smoothness governor. Feed it the main loop's work time per frame in microseconds (without the wait for
- * the display). level 0 = everything, 1 = picture extras dropped, 2 = additionally every other frame is not
- * drawn (emulation and sound stay at full speed). */
+ * the display). level 0 = every frame drawn, 2 = every other frame is not drawn (emulation and sound stay
+ * at full speed). The picture options chosen are never dropped; level 1 is not used. */
 typedef struct {
 	int level;
 	int slow, fast, since_change, hold, backoff;

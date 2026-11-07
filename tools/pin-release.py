@@ -24,6 +24,7 @@ EARLIER_RUNTIMES = [
     "9069471e980c5b0616b48048dcad7c0446b3070ee63033bbcb1b528dd19bb9e8",  # 1.0
     "29a82a3716664c1616e404702fe46ca0460d59e8242a5dfcbca63f3a87b2a6c8",  # 1.1
     "3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074",  # 1.2
+    "336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09",  # 1.3
 ]
 
 
@@ -42,8 +43,8 @@ def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
     src, version, date = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-    if not re.fullmatch(r"\d+\.\d+", version) or not re.fullmatch(r"\d{4}-\d\d-\d\d", date):
-        sys.exit("pin-release: version is X.Y, date is YYYY-MM-DD")
+    if not re.fullmatch(r"\d+\.\d+(\.\d+)?", version) or not re.fullmatch(r"\d{4}-\d\d-\d\d", date):
+        sys.exit("pin-release: version is X.Y or X.Y.Z, date is YYYY-MM-DD")
     vpk = ROOT / "VitAdhoc.vpk"
     if src.resolve() != vpk.resolve():
         shutil.copyfile(src, vpk)
@@ -86,7 +87,7 @@ def main():
             text = sub_once(text, r"^\| SNES player \(`snes.bin`\) \| .* \|$", line, "SOURCE.md snes")
         else:
             text = sub_once(text, r"^(\| Runtime \(`eboot.bin`\) \| .* \|)$", r"\1\n" + line, "SOURCE.md snes")
-    text = sub_once(text, r"GIT_VERSION=\d+\.\d+`", "GIT_VERSION=%s`" % version, "SOURCE.md build command")
+    text = sub_once(text, r"GIT_VERSION=\d+\.\d+(\.\d+)?`", "GIT_VERSION=%s`" % version, "SOURCE.md build command")
     path.write_text(text)
 
     path = ROOT / "gpsp/vita/tests/test_release_package.py"

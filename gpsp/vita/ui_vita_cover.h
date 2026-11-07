@@ -383,13 +383,15 @@ static int cv_screen(unsigned edges, const char *rom_dir)
          vw_row_h(i, y, 270, 30, g_cv.cur == i,
                   !(i == 1 && !g_cv.have_shot), label[i], v);
       }
-      vw_wrap(22, 178, 270, "A cover you pick is kept in boxart/ and wins "
-              "over downloads. Pictures put in covers/ named like the game "
-              "are used too.", C_DIM, 4);
+      vw_wrap(22, 178, 270, "A cover you pick always wins over downloaded "
+              "art. A PNG or JPG in covers/ named like the game is used too.",
+              C_DIM, 4);
       cv_preview_draw(CV_PREV_X, CV_PREV_Y, CV_PREV_W, CV_PREV_H);
+      /* the plate sits where the footer goes: one or the other */
       if (g_cv.note[0])
          vw_plate(g_cv.note);
-      footer(VID_GLYPH_X " select   DPAD move   " VID_GLYPH_O " back");
+      else
+         footer(VID_GLYPH_X " select   DPAD move   " VID_GLYPH_O " back");
    }
    else if (g_cv.page == CV_PICK)
    {

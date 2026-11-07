@@ -32,6 +32,14 @@ and [Snes9x](https://github.com/snes9xgit/snes9x).
   states and thumbnails move to `ux0:data/GBAdhoc/` on first open.
 - **500 MHz** when an overclock plugin such as PSVshell allows it.
 
+### Performance
+
+- **500 MHz** instead of 444 when PSVshell or a similar plugin allows it.
+- **SNES on three cores:** sound and picture run beside the game on cores of
+  their own, and a speed pass cut the busiest thread's work by up to about 45%
+  (counted on a PC build; pictures and sound are bit-identical).
+- **Smoothing does about a tenth less work** for exactly the same picture.
+
 ### Fixes
 
 - Mortal Kombat: Deadly Alliance no longer sits on its logo for 40 seconds or

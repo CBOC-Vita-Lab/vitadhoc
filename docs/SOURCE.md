@@ -3,8 +3,8 @@
 | Item | Value |
 | --- | --- |
 | Version | 1.3 |
-| Package | `VitAdhoc.vpk`, SHA-256 `a0a27b83984292de87624db6626c798dd4b49a5b822ca6b01bb830bc8d2c70c1` |
-| Runtime (`eboot.bin`) | SHA-256 `d08f139dd62725f2c17d145f3c2020372b9303f0bad3a779f14834b2034cd8d2` |
+| Package | `VitAdhoc.vpk`, SHA-256 `8f600629b31d1fb836d745245bdc06369265c9d27c2462f27c40a0c8e4a6d75f` |
+| Runtime (`eboot.bin`) | SHA-256 `336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09` |
 | SNES player (`snes.bin`) | SHA-256 `19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4` |
 | Title ID | `GBAD00001` (existing data layout: `ux0:data/GBAdhoc/`) |
 | Source | The `v1.3` tag (application code as built; later commits before the tag change documentation, screenshots and release records only), based on 1.2 commit `fb41c1d3e171` |
@@ -28,7 +28,7 @@ The 1.3 candidate passed the full gate on the x86 host build of the app:
 
 | Suite | Result |
 | --- | --- |
-| Whole-app tests (`app_tests.py`) | 1,996 checks, 0 failed |
+| Whole-app tests (`app_tests.py`) | 2,047 checks, 0 failed |
 | Rewind (`rewind_tests.py`) | 373 checks, 0 failed |
 | Two players on one console (`local_tests.py`) | 471 checks, 0 failed |
 | Link between consoles (`link_tests.py --hz 20`, lossy network included) | 649 checks, 0 failed |

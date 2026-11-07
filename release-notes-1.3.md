@@ -78,4 +78,4 @@ and stays free.
 | [Known issues](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/KNOWN-ISSUES.md)
 
 SHA-256 `VitAdhoc.vpk`:
-`a0a27b83984292de87624db6626c798dd4b49a5b822ca6b01bb830bc8d2c70c1`
+`8f600629b31d1fb836d745245bdc06369265c9d27c2462f27c40a0c8e4a6d75f`

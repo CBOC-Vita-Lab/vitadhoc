@@ -12,8 +12,8 @@
   ],
   "package": {
     "path": "VitAdhoc.vpk",
-    "sha256": "a0a27b83984292de87624db6626c798dd4b49a5b822ca6b01bb830bc8d2c70c1",
-    "runtimeSha256": "d08f139dd62725f2c17d145f3c2020372b9303f0bad3a779f14834b2034cd8d2"
+    "sha256": "8f600629b31d1fb836d745245bdc06369265c9d27c2462f27c40a0c8e4a6d75f",
+    "runtimeSha256": "336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09"
   },
   "titleId": "GBAD00001"
 }

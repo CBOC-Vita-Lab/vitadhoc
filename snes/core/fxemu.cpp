@@ -142,11 +142,22 @@ uint8 S9xGetSuperFX (uint16 address)
 }
 
 static void S9xSuperFXExec_impl (void);
+// CBOC-Vita: the frontend may time the GSU (its own clock, microseconds)
+uint64 (*S9xSuperFXClock) (void) = NULL;
+uint64 S9xSuperFXTime = 0;
+
 void S9xSuperFXExec (void)
 {
 	S9XP_COUNT(CHIP_RUN);
 	S9XP_ENTER(CHIP);
-	S9xSuperFXExec_impl();
+	if (S9xSuperFXClock && (Memory.FillRAM[0x3000 + GSU_SFR] & FLG_G))
+	{
+		uint64 t0 = S9xSuperFXClock();
+		S9xSuperFXExec_impl();
+		S9xSuperFXTime += S9xSuperFXClock() - t0;
+	}
+	else
+		S9xSuperFXExec_impl();
 	S9XP_LEAVE();
 }
 

@@ -668,6 +668,8 @@ static int srm_write_sync(void)
 	return snes_host_sram_save();
 }
 
+static uint64_t process_us(void) { return sceKernelGetProcessTimeWide(); }
+
 static unsigned arm_mhz_measured(void)
 {
 	const unsigned n = 2000000u;
@@ -1027,6 +1029,12 @@ int main(int argc, char **argv)
 	unsigned drawn = 0, skipped = 0, pic_fresh = 0;
 	int gov_level_seen = 0;
 	srm_writer_start();
+	/* Super FX pacing: see below */
+	const bool superfx = snes_host_has_superfx() != 0;
+	int fx_pct = 100;
+	uint64_t fx_emu_us = 0, fx_chip_us = 0;
+	int fx_frames = 0;
+	if (superfx) snes_host_superfx_timer(process_us);
 	unsigned last_vc = sceDisplayGetVcount();
 	int gov_warmup = 180;   /* the first 3 s (caches, the game's own start-up) do not count */
 
@@ -1081,6 +1089,7 @@ int main(int argc, char **argv)
 		 * draws on this thread; with the picture thread on, only the copy and the GPU work are saved) */
 		bool skip_draw = gov.level >= 2 && (vblanks & 1);
 		bool fresh = false;
+		uint64_t emu_pass_us = 0;
 		for (int i = 0; i < to_run; i++) {
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 #ifdef S9X_PROF
@@ -1103,6 +1112,7 @@ int main(int argc, char **argv)
 			uint64_t t1 = sceKernelGetProcessTimeWide();
 			emu_us += t1 - t0;
 			last_frame_us = t1 - t0;
+			emu_pass_us += t1 - t0;
 			frames_run++;
 			static int16_t abuf[2048 * 2];
 			int n;
@@ -1136,6 +1146,41 @@ int main(int argc, char **argv)
 		else skipped++;
 		vblanks += elapsed;
 		main_us += work_end - loop0;
+		/* Super FX pacing. The GSU emulation runs on this thread, and in games that
+		 * keep the chip busy all the time (Doom, the races of Stunt Race FX) a frame
+		 * can need more than a refresh: everything then slowed down together, game,
+		 * music and controls (Doom ran at two thirds of its speed). Instead, the
+		 * chip's instructions per line are matched to what this Vita manages: the
+		 * game, its music and its controls stay at full speed, and the 3D picture
+		 * gets the same number of chip instructions per second it got before, so
+		 * it is drawn as fast as before. The chip is back at 100% whenever there is
+		 * time (Yoshi's Island never leaves it). Only for Super FX carts. */
+		if (superfx && to_run > 0) {
+			fx_emu_us += emu_pass_us;
+			fx_chip_us += snes_host_superfx_take_us();
+			if ((fx_frames += to_run) >= 60) {
+				/* the frame's time is the rest (CPU, DMA...) plus the chip's, which
+				 * goes with its speed: the speed that makes the frame fit */
+				const double avg = fx_emu_us / (double) fx_frames, chip = fx_chip_us / (double) fx_frames;
+				const double rest = avg - chip, target = 1e6 / vita_hz * 0.90;
+				int want = fx_pct;
+				if (chip > 100.0) {
+					double fit = fx_pct * (target - rest) / chip;
+					if (avg > target) want = (int) fit;
+					else if (avg < target * 0.9 && fx_pct < 100) want = (int) (fit < fx_pct + 10 ? fit : fx_pct + 10);
+				} else if (fx_pct < 100) want = 100;
+				if (want > 100) want = 100;
+				if (want < 30) want = 30;
+				if (want != fx_pct && (want < fx_pct || want >= fx_pct + 2)) {
+					logf_("superfx clock %d%% -> %d%% (%.1f ms a frame, chip %.1f ms)\n", fx_pct, want, avg / 1000.0, chip / 1000.0);
+					fx_pct = want;
+					snes_host_set_superfx_clock(fx_pct);
+				}
+				fx_emu_us = fx_chip_us = 0;
+				fx_frames = 0;
+			}
+		}
+
 		/* The governor (skip drawing every other frame when frames run long) stays
 		 * off: on a Vita the picture is drawn on its own thread and handing it over
 		 * costs the game thread about half a millisecond, so skipping it halved the

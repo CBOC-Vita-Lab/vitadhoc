@@ -23,6 +23,8 @@
 #include "conffile.h"
 #include "fscompat.h"
 #include "s9x_prof.h"
+#include "fxinst.h"
+#include "fxemu.h"
 #include "host.h"
 #include "s9x_mt.h"
 #include <atomic>
@@ -301,6 +303,11 @@ void snes_host_set_multitap(int on)
 int snes_host_multitap(void) { return g_multitap; }
 
 void snes_host_reset(void) { if (g_loaded) S9xSoftReset(); }
+
+int snes_host_has_superfx(void) { return g_loaded && Settings.SuperFX ? 1 : 0; }
+void snes_host_set_superfx_clock(int percent) { Settings.SuperFXClockMultiplier = percent; }
+void snes_host_superfx_timer(uint64_t (*now_us)(void)) { S9xSuperFXClock = (uint64 (*)(void)) now_us; }
+uint64_t snes_host_superfx_take_us(void) { uint64_t t = S9xSuperFXTime; S9xSuperFXTime = 0; return t; }
 
 void snes_host_set_pad(int port, unsigned mask)
 {

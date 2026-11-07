@@ -80,6 +80,13 @@ int snes_host_state_load(const char *path);
  *   transparency 0/1
  *   echo_buffer 0/1      separate echo buffer (fixes a few games, costs accuracy elsewhere) */
 int snes_host_set_option(const char *name, int value);
+/* Super FX carts: is there one, and its speed in percent of the hardware's (read
+ * by the game thread only, so it can be changed between frames without a sync). */
+int snes_host_has_superfx(void);
+void snes_host_set_superfx_clock(int percent);
+/* Microseconds the GSU has run since the last call (needs a clock: `now_us`). */
+void snes_host_superfx_timer(uint64_t (*now_us)(void));
+uint64_t snes_host_superfx_take_us(void);
 int snes_host_is_pal(void);
 /* When off, the core skips PPU rendering for the coming frames (audio and
  * game logic still run). */

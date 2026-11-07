@@ -28,6 +28,8 @@ extern struct FxInfo_s	SuperFX;
 void S9xInitSuperFX (void);
 void S9xResetSuperFX (void);
 void S9xSuperFXExec (void);
+extern uint64 (*S9xSuperFXClock) (void);
+extern uint64 S9xSuperFXTime;
 void S9xSetSuperFX (uint8, uint16);
 uint8 S9xGetSuperFX (uint16);
 void fx_flushCache (void);

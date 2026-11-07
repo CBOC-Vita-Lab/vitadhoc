@@ -40,7 +40,8 @@ changed on screen do about a tenth less work, with exactly the same picture.
 - **A save is never cut short.** A save from RetroArch or another emulator
   that has extra bytes at the end (the clock data mGBA adds, a 131088-byte
   Pokemon save for one) used to lose them the first time VitAdhoc saved. They
-  are now kept, for Game Boy saves too. ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
+  are now kept, for Game Boy and SNES saves too (a SNES `.srm` keeps any
+  padding another emulator wrote after the cartridge RAM). ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
 - **One backup before anything is saved over a save from somewhere else.** The
   first time VitAdhoc uses a save it did not write itself, a copy goes to
   `ux0:data/GBAdhoc/backups/` (not beside your game).

@@ -42,6 +42,7 @@ static size_t g_ar_r, g_ar_w, g_ar_n; /* int16 units, ring */
 static std::vector<uint8_t> g_sram_saved; /* copy of what is on disk (or at load) */
 static bool g_bak_done;
 static std::string g_backup_dir; /* optional: extra home for the first copy of a player's save */
+static std::vector<uint8_t> g_srm_tail;   /* the save file's bytes past the cartridge RAM */
 static int g_multitap;
 static int g_want_ppu_thread;
 static int g_want_apu_thread;   /* runtime switch: 1 = APU on its own thread (needs a loaded ROM) */
@@ -266,6 +267,7 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 	g_srm_path = srm_path ? srm_path : "";
 	g_bak_done = false;
 	g_sram_saved.clear();
+	g_srm_tail.clear();
 
 	size_t sz = snes_host_sram_size();
 	if (sz) {
@@ -273,6 +275,10 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 		if (!g_srm_path.empty() && read_file(g_srm_path.c_str(), sv)) {
 			size_t c = sv.size() < sz ? sv.size() : sz;
 			memcpy(Memory.SRAM, sv.data(), c);
+			/* Bytes past the cartridge's RAM (another emulator's padding or
+			 * trailer, e.g. a 128 KiB file for 8 KiB) are written back after it,
+			 * so the file never shrinks: the same rule as VitAdhoc's own saves. */
+			if (sv.size() > sz) g_srm_tail.assign(sv.begin() + sz, sv.end());
 			/* A file of a different size is kept untouched until the player's data
 			 * would change; the backup rule in snes_host_sram_save then protects it. */
 		}
@@ -474,18 +480,23 @@ static int write_atomic(const char *path, const void *data, size_t n, bool keep_
 	int cl = fclose(f);
 	if (put != n || cl != 0) { remove(tmp.c_str()); return 2; }
 	if (keep_bak && bak_done && !*bak_done) {
-		/* Keep the player's previous file once per session before the first overwrite. */
+		/* Keep the player's previous file once per session before the first
+		 * overwrite, in the backups folder (nothing more beside the game). */
 		std::vector<uint8_t> old;
 		if (read_file(path, old)) {
-			backup_copy(path, old);
-			std::string bt = bak + ".tmp";
-			FILE *b = fopen(bt.c_str(), "wb");
-			if (!b) { remove(tmp.c_str()); return 3; }
-			size_t bp = fwrite(old.data(), 1, old.size(), b);
-			int bc = fclose(b);
-			if (bp != old.size() || bc != 0) { remove(bt.c_str()); remove(tmp.c_str()); return 3; }
-			remove(bak.c_str());
-			if (rename(bt.c_str(), bak.c_str()) != 0) { remove(tmp.c_str()); return 3; }
+			if (!g_backup_dir.empty())
+				backup_copy(path, old);
+			else {
+				/* no backups folder (the twin): the previous file as <save>.bak */
+				std::string bt = bak + ".tmp";
+				FILE *b = fopen(bt.c_str(), "wb");
+				if (!b) { remove(tmp.c_str()); return 3; }
+				size_t bp = fwrite(old.data(), 1, old.size(), b);
+				int bc = fclose(b);
+				if (bp != old.size() || bc != 0) { remove(bt.c_str()); remove(tmp.c_str()); return 3; }
+				remove(bak.c_str());
+				if (rename(bt.c_str(), bak.c_str()) != 0) { remove(tmp.c_str()); return 3; }
+			}
 		}
 		*bak_done = true;
 	}
@@ -498,7 +509,9 @@ int snes_host_sram_save(void)
 {
 	size_t sz = snes_host_sram_size();
 	if (!sz || g_srm_path.empty()) return 0;
-	int r = write_atomic(g_srm_path.c_str(), Memory.SRAM, sz, true, &g_bak_done);
+	std::vector<uint8_t> all(Memory.SRAM, Memory.SRAM + sz);
+	all.insert(all.end(), g_srm_tail.begin(), g_srm_tail.end());
+	int r = write_atomic(g_srm_path.c_str(), all.data(), all.size(), true, &g_bak_done);
 	if (r == 0) g_sram_saved.assign(Memory.SRAM, Memory.SRAM + sz);
 	return r;
 }
@@ -515,7 +528,9 @@ size_t snes_host_sram_take(uint8_t *out, size_t cap)
 int snes_host_sram_write(const uint8_t *data, size_t n)
 {
 	if (!n || g_srm_path.empty()) return 0;
-	return write_atomic(g_srm_path.c_str(), data, n, true, &g_bak_done);
+	std::vector<uint8_t> all(data, data + n);
+	all.insert(all.end(), g_srm_tail.begin(), g_srm_tail.end());
+	return write_atomic(g_srm_path.c_str(), all.data(), all.size(), true, &g_bak_done);
 }
 
 void snes_host_sram_forget(void) { g_sram_saved.clear(); }

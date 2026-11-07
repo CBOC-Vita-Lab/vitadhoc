@@ -48,6 +48,13 @@ b2=$(od -An -tu1 -N1 $T/g.srm.bak 2>/dev/null | tr -d ' ')
 [ "$v1" = 1 ] && [ "$v2" = 2 ] && ok "battery RAM saved and loaded again (1 then 2)" || bad "battery RAM ($v1,$v2)"
 [ "$b2" = 1 ] && ok "previous save kept as .bak" || bad "backup ($b2)"
 [ ! -e $T/g.srm.tmp ] && ok "no .tmp left behind" || bad "tmp file left"
+# a save file longer than the cartridge RAM (another emulator's padding) keeps its tail
+sz=$(stat -c %s $T/g.srm)
+( cat $T/g.srm; printf 'TAIL-KEPT' ) > $T/t.srm
+"$TWIN" $T/sram.sfc --frames 10 --srm $T/t.srm >/dev/null 2>&1
+v3=$(od -An -tu1 -N1 $T/t.srm | tr -d ' ')
+[ "$(tail -c 9 $T/t.srm)" = TAIL-KEPT ] && [ "$(stat -c %s $T/t.srm)" = $((sz + 9)) ] && [ "$v3" = 3 ] \
+	&& ok "a longer save file keeps its extra bytes after the RAM" || bad "save tail ($v3)"
 
 # pad 2 and the multitap: our own pad-reading cartridge copies $4218-$421F into battery RAM
 python3 -I "$HERE/tests/make_pad_rom.py" $T/pad.sfc

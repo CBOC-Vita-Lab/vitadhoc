@@ -581,7 +581,7 @@ static const u8 gba_header_logo[156] = {
 #define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7)
 
 #define check_pc_region()                                                     \
-  new_pc_region = (reg[REG_PC] >> 15);                                        \
+  new_pc_region = (reg[REG_PC] >> 15) & 0x1FFF;      /* bits 28-31 unused */   \
   if(new_pc_region != pc_region)                                              \
   {                                                                           \
     pc_region = new_pc_region;                                                \
@@ -1552,7 +1552,7 @@ static u32 execute_arm_internal(u32 cycles, bool vram_only)
   u32 opcode;
   u32 condition;
   u32 n_flag, z_flag, c_flag, v_flag;
-  u32 pc_region = (reg[REG_PC] >> 15);
+  u32 pc_region = (reg[REG_PC] >> 15) & 0x1FFF;   /* the bus ignores bits 28-31 */
   u8 *pc_address_block = memory_map_read[pc_region];
   u32 new_pc_region;
   s32 cycles_remaining;

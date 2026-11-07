@@ -2380,11 +2380,15 @@ int vid_present_state(void)
    return g_inited ? vb_present_state() : 0;
 }
 
+void (*vid_pre_swap_hook)(void);
+
 void vid_swap(void)
 {
    /* NOTHING DREW A WHOLE FRAME: hold what is on screen (see the header). */
    if (!g_filled)
       return;
+   if (vid_pre_swap_hook)
+      vid_pre_swap_hook();
    /* A clear nobody drew into is still a (black) frame.  A frame the
     * readback already closed is complete: present it as it is. */
    if (!vb_frame_open() && g_clear_req)
@@ -2398,6 +2402,10 @@ void vid_swap(void)
 
 int vid_readback(uint32_t *dst)
 {
+   /* What vid_swap would add last is part of the picture read back (the
+    * twin's screenshots are taken before the swap); drawn once a frame. */
+   if (vid_pre_swap_hook && g_filled)
+      vid_pre_swap_hook();
    if (!vb_frame_open() && g_clear_req)
    {
       /* A cleared frame nobody drew into is a black frame. */

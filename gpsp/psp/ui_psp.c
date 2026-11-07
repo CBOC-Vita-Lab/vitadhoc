@@ -11872,18 +11872,64 @@ static int swap_step(void)
  * console; start at the saved game when compatible.  The state shelf is
  * keyed by list index, so it is closed and its cache dropped before the
  * list changes under it. */
+/* 1.3.1: a TRIANGLE press only changes what is on screen.  Writing the
+ * console to config.ini and looking in covers/ wait until the list has
+ * rested (browser_switch_settle), so pressing it quickly through the consoles
+ * never waits on the memory card. */
+static int g_sw_cfg_due, g_sw_inbox_due;
+#ifdef VITA
+static void ui_cover_inbox_match(int n_scan, int reload); /* ui_vita_cover.h */
+#endif
+
+static void browser_switch_settle(int n_scan, int idle, int now)
+{
+   if (g_sw_cfg_due && (now || idle >= 180))
+   {
+#ifdef VITA
+      unsigned long long t = md_begin();
+#endif
+      g_sw_cfg_due = 0;
+      if (pcfg_remember_console(g_pcfg.console) != 0)
+         fe_log("Could not remember console: %d", g_pcfg.console);
+#ifdef VITA
+      fe_evt("ui_browser_settle what=config us=%llu", md_begin() - t);
+#endif
+   }
+#ifdef VITA
+   if (g_sw_inbox_due && !now && idle >= 20)
+   {
+      unsigned long long t = md_begin();
+      g_sw_inbox_due = 0;
+      ui_cover_inbox_match(n_scan, 0);
+      fe_evt("ui_browser_settle what=covers us=%llu", md_begin() - t);
+   }
+#else
+   (void)n_scan;
+#endif
+}
+
 static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
                                  int *cur, int *idle)
 {
    int i;
-   if (pcfg_remember_console(g_sw.to) != 0)
-      fe_log("Could not remember console: %d", g_sw.to);
+#ifdef VITA
+   unsigned long long t0 = md_begin(), t1, t2;
+#endif
+   if (g_sw.to < FE_CONSOLE_GBA || g_sw.to >= FE_CONSOLE_COUNT)
+      return;
+   g_pcfg.console = g_sw.to;
+   pcfg_display_select(g_sw.to);
+   g_sw_cfg_due = 1;
    *n_scan = rom_scan_cached(rom_dir, (fe_console_t)g_pcfg.console);
    if (*n_scan < 0)
       *n_scan = 0;
+#ifdef VITA
+   t1 = md_begin();
+#endif
    favs_mark(*n_scan);
 #ifdef VITA
-   ui_cover_inbox_scan(*n_scan);
+   g_sw_inbox_due = 1;
+   t2 = md_begin();
 #endif
    *n = view_count(*n_scan);
    *cur = 0;
@@ -11898,8 +11944,14 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
    g_marq_idx = -1;
    *idle = 0;
    g_sw.swapped = 1;
+#ifdef VITA
+   fe_evt("ui_browser_console console=%d roms=%d found=%d scan_us=%llu "
+          "favs_us=%llu rest_us=%llu", g_pcfg.console, *n_scan, g_rom_found,
+          t1 - t0, t2 - t1, md_begin() - t2);
+#else
    fe_evt("ui_browser_console console=%d roms=%d found=%d",
           g_pcfg.console, *n_scan, g_rom_found);
+#endif
 }
 
 #ifdef VITA
@@ -12498,6 +12550,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                       g_roms[rom].name, g_browser_state_slot);
                art_free_all();
                browser_state_cache_free();
+               browser_switch_settle(n_scan, idle, 1);
                return 0;
             }
 #ifdef VITA
@@ -12615,6 +12668,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          {
             art_free_all();
             browser_state_cache_free();
+            browser_switch_settle(n_scan, idle, 1);
             return 1;
          }
          if (g_sh_quit)
@@ -12677,6 +12731,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       rom = n > 0 ? view_rom(cur) : -1;
 #ifdef VITA
       md_selection(rom, g_pcfg.console);
+      browser_switch_settle(n_scan, idle, 0);
       ui_cover_pump(n_scan, idle);
       if (!g_ui_home || n <= 0)
       {
@@ -12735,6 +12790,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          fe_evt("ui_browser_pick rom=%s", g_roms[rom].name);
          art_free_all();
          browser_state_cache_free();
+         browser_switch_settle(n_scan, idle, 1);
          return 0;
       }
 
@@ -12856,5 +12912,6 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    }
    art_free_all();
    browser_state_cache_free();
+   browser_switch_settle(n_scan, idle, 1);
    return -1;
 }

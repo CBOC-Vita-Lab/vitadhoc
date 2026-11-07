@@ -1858,6 +1858,30 @@ def t_play(S):
             "and the game runs on")
 
 
+def t_touch_feedback(S):
+    """1.3.1: a button pressed on the glass lights up while the finger is on
+    it, and a tap leaves a short flash; a finger that slides off (cancel)
+    does nothing.  Here: the game list's footer, START (Settings) held."""
+    script = ("120:shot=before.png\n"
+              "130:touch=760/524:30\n145:shot=held.png\n"
+              "200:shot=after.png\n210:quit\n")
+    r = S.run("touch_feedback", script)
+    S.clean(r)
+    from PIL import Image, ImageChops
+    try:
+        b, h, a = (Image.open(os.path.join(r.out, n)).convert("RGB")
+                   for n in ("before.png", "held.png", "after.png"))
+    except OSError as e:
+        S.check(False, "screenshots: %s" % e)
+        return
+    box = ImageChops.difference(b, h).getbbox()
+    S.check(box is not None and box[1] >= 400,
+            "the pressed button lights up where the finger is (%s)" % (box,))
+    S.check(box is not None and (box[2] - box[0]) < 400,
+            "only the button, not the screen (%s)" % (box,))
+    S.picture(r, "held.png")
+
+
 def t_touch(S):
     """The touch screen: a tap on the game's picture opens the menu, a tap
     on a card chooses it; nothing else on the glass does anything."""
@@ -5665,7 +5689,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("extra_roms", t_ex
          ("session", t_session),
          ("ff", t_ff),
          ("suspend", t_suspend), ("controls", t_controls), ("turbo", t_turbo),
-         ("cheats", t_cheats), ("play", t_play), ("touch", t_touch),
+         ("cheats", t_cheats), ("play", t_play), ("touch", t_touch), ("touch_feedback", t_touch_feedback),
          ("typing", t_typing), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),

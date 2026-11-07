@@ -7,7 +7,7 @@ previews of your own play. Pick up where you left off, smooth the pixels or
 keep them crisp, and trade with a friend. VitAdhoc brings the library and the
 handheld experience together, with touch controls and the Vita's own sensors.
 
-**[Download VitAdhoc 1.3](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
+**[Download VitAdhoc 1.3.1](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
 | [Install or update](INSTALL.md) | [All features](docs/FEATURES.md)
 | [Performance](docs/PERFORMANCE.md)
 
@@ -16,8 +16,14 @@ handheld experience together, with touch controls and the Vita's own sensors.
 *The home screen on a PS Vita running VitAdhoc 1.3, with the new SNES shelf.*
 
 You'll need your own games. An open-source GBA BIOS is built in; no BIOS
-download is required. Updating from 1.0, 1.1 or 1.2? Install the VPK over the
-old version. Keep your games, saves, settings and artwork where they are.
+download is required. Updating from 1.0, 1.1, 1.2 or 1.3? Install the VPK over
+the old version. Keep your games, saves, settings and artwork where they are.
+
+## New In Version 1.3.1
+
+**Snappier.** Flicking through GBA, GB, GBC and SNES with Triangle no longer
+stalls the screen, buttons you touch now light up so you know the tap
+landed, and VitAdhoc has a new bubble and LiveArea.
 
 ## New In Version 1.3
 

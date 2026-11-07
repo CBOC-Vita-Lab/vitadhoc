@@ -294,6 +294,11 @@ void vid_gu_flush(void);
  * path: the LCD shows stale VRAM the instant it powers on. */
 void vid_blank_all(void);
 void vid_swap(void);
+#ifdef VITA
+/* Drawn last into every menu frame, just before it is shown (1.3.1: the
+ * touch feedback of ui_vita_touch.h).  NULL = nothing. */
+extern void (*vid_pre_swap_hook)(void);
+#endif
 
 /* GE drawbuffer readback (color-order regression check): writes the buffer
  * that was just drawn (pre-swap) as a 24bpp BMP, decoding VRAM bytes with

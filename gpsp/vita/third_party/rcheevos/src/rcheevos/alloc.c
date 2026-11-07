@@ -113,6 +113,12 @@ void rc_preparse_alloc_memrefs(rc_memrefs_t* memrefs, rc_preparse_state_t* prepa
   if (preparse->parse.offset < 0)
     return;
 
+  if (num_memrefs > 0xFFFF || num_modified_memrefs > 0xFFFF) {
+    /* memref capacity is a 16-bit number. If we somehow have more than 64K unique memrefs, fail. */
+    preparse->parse.offset = RC_INSUFFICIENT_BUFFER;
+    return;
+  }
+
   if (memrefs) {
     memset(memrefs, 0, sizeof(*memrefs));
     preparse->parse.memrefs = memrefs;
@@ -150,6 +156,10 @@ static uint32_t rc_preparse_array_size(uint32_t needed, uint32_t minimum)
   while (minimum < needed)
     minimum <<= 1;
 
+  /* Capacity is stored in a 16-bit value. If 16 bits are enough, return the largest 16-bit value. */
+  if (minimum == 0x10000 && needed < 0x10000)
+    minimum = 0xFFFF;
+
   return minimum;
 }
 
@@ -157,7 +167,7 @@ void rc_preparse_reserve_memrefs(rc_preparse_state_t* preparse, rc_memrefs_t* me
 {
   uint32_t num_memrefs = rc_memrefs_count_memrefs(&preparse->memrefs);
   uint32_t num_modified_memrefs = rc_memrefs_count_modified_memrefs(&preparse->memrefs);
-  uint32_t available;
+  uint32_t available, new_size;
 
   if (preparse->parse.offset < 0)
     return;
@@ -177,8 +187,13 @@ void rc_preparse_reserve_memrefs(rc_preparse_state_t* preparse, rc_memrefs_t* me
       if (!new_memref_list)
         return;
 
-      new_memref_list->capacity = rc_preparse_array_size(num_memrefs - available, 16);
-      new_memref_list->items = (rc_memref_t*)malloc(new_memref_list->capacity * sizeof(rc_memref_t));
+      new_size = rc_preparse_array_size(num_memrefs - available, 16);
+      if (new_size > 0xFFFF || (new_memref_list->items = (rc_memref_t*)malloc(new_size * sizeof(rc_memref_t))) == NULL) {
+        free(new_memref_list);
+        preparse->parse.offset = RC_OUT_OF_MEMORY;
+        return;
+      }
+      new_memref_list->capacity = (uint16_t)new_size;
       new_memref_list->allocated = 1;
       memref_list->next = new_memref_list;
     }
@@ -199,8 +214,13 @@ void rc_preparse_reserve_memrefs(rc_preparse_state_t* preparse, rc_memrefs_t* me
       if (!new_modified_memref_list)
         return;
 
-      new_modified_memref_list->capacity = rc_preparse_array_size(num_modified_memrefs - available, 8);
-      new_modified_memref_list->items = (rc_modified_memref_t*)malloc(new_modified_memref_list->capacity * sizeof(rc_modified_memref_t));
+      new_size = rc_preparse_array_size(num_modified_memrefs - available, 8);
+      if (new_size > 0xFFFF || (new_modified_memref_list->items = (rc_modified_memref_t*)malloc(new_size * sizeof(rc_modified_memref_t))) == NULL) {
+        free(new_modified_memref_list);
+        preparse->parse.offset = RC_OUT_OF_MEMORY;
+        return;
+      }
+      new_modified_memref_list->capacity = (uint16_t)new_size;
       new_modified_memref_list->allocated = 1;
       modified_memref_list->next = new_modified_memref_list;
     }

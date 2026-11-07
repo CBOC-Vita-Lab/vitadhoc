@@ -46,6 +46,7 @@
 #include "video_vita.h"
 #include "ui_host_hooks.h"
 #include "state_slots.h"
+#include "sidecar.h"
 #include "fe_evt.h"
 #include "fe_host.h"
 #include "font_8x16.h"
@@ -1077,8 +1078,9 @@ static void game_begin(const char *rom, const char *code, int console,
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    vid_ambient_mode(g_pcfg.ambient);
    snprintf(path, sizeof(path), "%s/%s", g_roms, rom);
-   psp_rom_path_suffix(g_state_base, sizeof(g_state_base), path,
-                       psp_state_slot1_suffix((fe_console_t)console));
+   /* states live under the app folder (psp/sidecar.h) */
+   sidecar_state1(g_state_base, sizeof(g_state_base), pspcompat_root(), path,
+                  (fe_console_t)console);
    snprintf(g_pcfg.last_rom, sizeof(g_pcfg.last_rom), "%s", rom);
    ui_linkmode_load(g_roms);
    ui_set_state_base(g_state_base);

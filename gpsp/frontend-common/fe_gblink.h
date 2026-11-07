@@ -87,8 +87,12 @@ typedef struct fe_gblink fe_gblink;
  * Differences the session honours for a vtable pair:
  *   - the own cartridge is SHA-1'd by streaming, never held in memory (the
  *     running machine already has it; a 32 MiB GBA cart would not fit twice);
- *   - the partner's cartridge must be the same cartridge (SHA-1): no library
- *     lookup and no transfer yet (two-ROM pairs are a later milestone);
+ *   - the partner's cartridge may be ANOTHER cartridge (Ruby with Sapphire,
+ *     FireRed with LeafGreen, Emerald with FireRed): it crosses the link once
+ *     (chunked, CRC-checked, identified like the own cartridge), is kept in
+ *     the platform's ROM cache (fe_gblink_platform.rom_cache) under its
+ *     identity, and partner_rom() puts the partner's machine on that file.
+ *     No library lookup (the GB find_rom): only the cache;
  *   - no clock trailer re-base on the battery image;
  *   - CONFIG's batch field carries the pair's own scheduling quantum
  *     (GBA: the lookahead in scanlines, 114 = half a frame);
@@ -129,6 +133,13 @@ typedef struct fe_gblink_machines
    int (*state_save)(void *user, int slot, void *buf, size_t n); /* 0 = ok */
    /* The session is over: leave link mode (the local machine continues). */
    void (*stop)(void *user);
+   /* The partner's machine on ANOTHER cartridge: `path` is a file holding
+    * exactly that cartridge, which the machine reads for as long as the
+    * session lasts (the platform's ROM cache keeps it there).  NULL path =
+    * back on the player's own cartridge (called when the session is
+    * destroyed).  Called in setup, before start().  0 = ok.  A NULL
+    * function means the pair can only run one cartridge. */
+   int (*partner_rom)(void *user, const char *path);
 } fe_gblink_machines;
 
 typedef struct fe_gblink_platform
@@ -156,6 +167,16 @@ typedef struct fe_gblink_platform
    /* The local machine's picture and sound. */
    void (*video)(void *user, const gbcore_video_frame_t *frame);
    void (*audio)(void *user, const int16_t *samples, size_t frames);
+   /* The cartridge cache of a vtable pair that meets ANOTHER cartridge
+    * (fe_gblink_machines.partner_rom).  NULL = no cache: such a pair cannot
+    * run.  op 0 (locate): fill `path` with where a cartridge of identity
+    * `id` and `size` bytes lives or would be kept; 1 = usable, 0 = no cache
+    * here.  The session checks the file itself (size, identity).  op 1
+    * (used): the file at `path` was just used or stored; the platform
+    * marks it recent and trims the cache to its size cap, never removing
+    * `path`.  Cartridges in the cache are never shown as games. */
+   int (*rom_cache)(void *user, int op, const uint8_t id[20], uint32_t size,
+                    char *path, size_t cap);
    /* Bulk lane (optional; both consoles must offer it or the ordered
     * channel carries the transfers): send one datagram of at most
     * bulk_max bytes to the partner, unreliably; 0 = sent or dropped.
@@ -339,7 +360,8 @@ enum
    FE_GBLINK_PH_RUNNING,
    FE_GBLINK_PH_ENDING,
    FE_GBLINK_PH_DONE,
-   FE_GBLINK_PH_FAILED
+   FE_GBLINK_PH_FAILED,
+   FE_GBLINK_PH_STORE           /* keeping the received cartridge (cache) */
 };
 typedef struct fe_gblink_progress
 {
@@ -348,6 +370,12 @@ typedef struct fe_gblink_progress
    int ran;                     /* the machines started (RUNNING reached) */
    int peer_up;
    uint32_t done, total;        /* the phase's amount (0/0 = none) */
+   /* The cartridge transfer in either direction: bytes a second so far and
+    * the seconds still to go at that rate (0 = not known yet / no transfer;
+    * needs fe_gblink_set_clock). */
+   uint32_t rate_bps, eta_s;
+   int partner_cached;          /* the partner's cartridge was in the cache */
+   int partner_other;           /* the partner plays another cartridge */
    char peer_title[17];         /* the partner cartridge's title, or "" */
    int have_peer_header;
    uint8_t peer_header[0x1C];   /* its raw header (GBA: 0xA0.., GB: 0x134..) */

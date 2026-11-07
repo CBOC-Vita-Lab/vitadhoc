@@ -6,6 +6,7 @@
 #include "gamedb.h"
 #include "plat.h"
 #include "../psp/state_slots.h"
+#include "../psp/sidecar.h"
 _Static_assert(ML_STATE_SLOTS == PSP_STATE_SLOT_COUNT,
                "menu_load.h ML_STATE_SLOTS is the slot count");
 #include <errno.h>
@@ -505,12 +506,30 @@ static int mf_art(const menu_load_job *job, unsigned kind, menu_load_result *out
       if (slot > PSP_STATE_SLOT_COUNT || psp_state_path_for_slot(path, sizeof(path), job->state1, slot) ||
           strlen(path) + 5 >= sizeof(path)) return ML_ERROR;
       strcat(path, ".shot");
+      {
+         /* a picture a migration could not move is read where it is */
+         char was[ML_PATH], alt[ML_PATH + 8];
+         if (sidecar_legacy_state1(was, sizeof(was), job->rom,
+                                   (fe_console_t)job->console) == 0)
+            return mf_image(sidecar_read_path(path, was, job->state1, alt,
+                                              sizeof(alt)),
+                            0, 1, 0, 0, out);
+      }
       return mf_image(path, 0, 1, 0, 0, out);
    }
    if (tile)
    {
-      n = snprintf(path, sizeof(path), "%s/boxart/%s.t2.565", job->root, job->stem);
+      n = snprintf(path, sizeof(path), "%s/" SIDECAR_THUMB_DIR "/%s.t2.565",
+                   job->root, job->stem);
       if (n < 0 || (size_t)n >= sizeof(path)) return ML_ERROR;
+      {
+         /* a thumbnail an older version left in boxart/ moves to cache/ */
+         char was[ML_PATH];
+         sidecar_mig mig = {0};
+         if (snprintf(was, sizeof(was), "%s/boxart/%s.t2.565", job->root,
+                      job->stem) < (int)sizeof(was))
+            sidecar_move_file(was, path, &mig);
+      }
       rc = mf_image(path, 1, 0, 1, 0, out);
       if (rc == ML_OK || rc == ML_CANCELLED) return rc;
       if (rc == ML_ERROR) failure = 1;
@@ -518,6 +537,18 @@ static int mf_art(const menu_load_job *job, unsigned kind, menu_load_result *out
    }
    for (i = 0; i < (tile ? 7u : 6u); i++)
    {
+      if (i == 0)
+      {
+         /* the copy the app made of a picture lives in cache/<dir>/ */
+         n = snprintf(path, sizeof(path), "%s/" SIDECAR_ART_CACHE "/%s/%s.v565",
+                      job->root, tile ? "boxart" : "hero", job->stem);
+         if (n < 0 || (size_t)n >= sizeof(path)) return ML_ERROR;
+         rc = mf_image(path, 1, 0, tile, 0, out);
+         if (rc == ML_OK && !tile) out->source = ML_SOURCE_HERO;
+         if (rc == ML_OK || rc == ML_CANCELLED) return rc;
+         if (rc == ML_ERROR) failure = 1;
+         if (rc == ML_INVALID) invalid = 1;
+      }
       n = snprintf(path, sizeof(path), "%s/%s/%s.%s", job->root,
                                   tile ? "boxart" : "hero", job->stem, ext[i]);
       if (n < 0 || (size_t)n >= sizeof(path)) return ML_ERROR;
@@ -579,6 +610,15 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    int i, rc, answer = ML_OK, n;
    uint64_t t = plat_time_us();
    out->battery = ML_UNKNOWN;
+   {
+      /* what an older version left beside the ROM goes under the app
+       * folder first (no log: the event log has one producer) */
+      char was[ML_PATH];
+      sidecar_mig mig;
+      if (sidecar_legacy_state1(was, sizeof(was), job->rom,
+                                (fe_console_t)job->console) == 0)
+         sidecar_migrate(was, job->state1, &mig);
+   }
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++) out->state[i] = ML_UNKNOWN;
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
    {
@@ -600,6 +640,8 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    }
    if (job->console == FE_CONSOLE_GBA)
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".sav");
+   else if (job->console == FE_CONSOLE_SNES)    /* snes.bin: Game.srm */
+      n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".srm");
    else
       n = snprintf(path, sizeof(path), "%s.sav", job->rom) >= (int)sizeof(path) ? -1 : 0;
    if (n < 0) answer = ML_ERROR;
@@ -635,10 +677,19 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    if (mf_cancelled()) return ML_CANCELLED;
    if (!gamedb_blurb(job->stem, out->blurb, sizeof(out->blurb)))
    {
+      /* a loosely named file ("ChronoTrigger", "Act Raiser"): by the game's
+       * No-Intro name for its console */
+      char named[256];
+      char sys = job->console == FE_CONSOLE_SNES ? 'D' : job->console == FE_CONSOLE_GBC ? 'C'
+               : job->console == FE_CONSOLE_GB ? 'B' : 'A';
+      if (gamedb_name_loose(sys, job->stem, named, sizeof(named)) &&
+          gamedb_blurb(named, out->blurb, sizeof(out->blurb)))
+         goto blurb_done;
       rc = mf_header_blurb(job, out->blurb);
       if (rc == ML_CANCELLED) return rc;
       if (rc == ML_ERROR) answer = rc;
    }
+blurb_done:
    MF_ADD(g_diag.meta_us, mf_elapsed(t));
    return answer;
 }

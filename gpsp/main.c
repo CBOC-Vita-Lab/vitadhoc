@@ -865,6 +865,18 @@ static unsigned update_timers(irq_type *irq_raised, unsigned completed_cycles)
       } while (timer_lazy && timer[i].count <= 0 &&
                timer[i].status == TIMER_PRESCALE);
 #endif
+      /* A timer that has just overflowed reads its RELOAD value, not 0x0000
+       * (GBAdhoc 4.5.0 TIMER_RELOAD_FIX).  The register was refreshed above
+       * with the count BEFORE the reload, i.e. 0 at the exact overflow, and
+       * nothing rewrote it until the next update, so code reading TMxCNT_L
+       * right after an overflow (an IRQ handler, or code running until the
+       * next scheduler event) saw 0.  Need for Speed: Underground's mixer
+       * computes its sample count from TM1 (reload 0xFEE0) as
+       * len + pos - 0x10000: pos = 0 gave a ~4 GB memset that wiped IWRAM and
+       * hung the game at its language screen. */
+      write_ioreg(REG_TMXD(i), timer[i].status == TIMER_CASCADE ?
+                  (u32)(-timer[i].count) :
+                  (u32)(-(timer[i].count >> timer[i].prescale)));
    }
    return ret;
 }

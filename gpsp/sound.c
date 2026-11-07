@@ -256,14 +256,18 @@ const u32 gbc_sound_master_volume_table[4] = { 1, 2, 4, 0 };
 
 const u32 gbc_sound_channel_volume_table[8] =
 {
-  fixed_div(0, 7, 12),
-  fixed_div(1, 7, 12),
-  fixed_div(2, 7, 12),
-  fixed_div(3, 7, 12),
-  fixed_div(4, 7, 12),
-  fixed_div(5, 7, 12),
-  fixed_div(6, 7, 12),
-  fixed_div(7, 7, 12)
+  /* PSG master volume (SOUNDCNT_L / NR50 levels 0-7): the hardware plays
+   * (level + 1) / 8 -- level 0 is one eighth, not silence (as mGBA and the
+   * Game Boy's own NR50).  gpSP used level / 7, which muted level 0 and made
+   * levels 1-6 4-12 % too quiet.  VitAdhoc 1.3. */
+  fixed_div(1, 8, 12),
+  fixed_div(2, 8, 12),
+  fixed_div(3, 8, 12),
+  fixed_div(4, 8, 12),
+  fixed_div(5, 8, 12),
+  fixed_div(6, 8, 12),
+  fixed_div(7, 8, 12),
+  fixed_div(8, 8, 12)
 };
 
 const u32 gbc_sound_envelope_volume_table[16] =

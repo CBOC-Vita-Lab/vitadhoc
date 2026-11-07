@@ -125,6 +125,9 @@ float vid_text_advance_dev(int hd, int *worst_char, float *mean_abs);
 enum { VID_COLOR_RAW = 0, VID_COLOR_GBA = 1, VID_COLOR_GBA_DARK = 2,
        VID_COLOR_MODES = 3 };
 void vid_set_look(int color, int blend);
+/* 1 = the hints' circle and cross (and the home screen's button icons) are
+ * drawn exchanged, for a player whose Circle is the confirm button. */
+void vid_set_face_glyphs(int swap);
 /* SCREEN OVERLAY: a picture of the player's (PNG, any size, drawn over the
  * whole screen with its own transparency) on top of the game -- a bezel, a
  * Game Boy shell, a dot-matrix mask.  NULL or "" removes it.  0 = shown. */
@@ -145,6 +148,9 @@ void vid_set_tex_mem(int cpu_written);
 
 /* The CPU upscalers' work since the last call (upscale_vita.h). */
 void vid_upscale_stats(upscale_stats_t *out);
+/* One line for the in-game menu when smoothing has stepped down to keep up
+ * (Keep full speed), else NULL. */
+const char *vid_smooth_note(void);
 /* xBRZ drawn by the GPU when it can (video_vita.c, "xBRZ on the GPU"):
  * on = 0 keeps it on the CPU.  vid_gpu_xbrz: is it the GPU's now, and the
  * pictures it has drawn so far. */

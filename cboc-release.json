@@ -1,25 +1,30 @@
 {
   "schemaVersion": 1,
-  "releaseId": "vitadhoc-v1.2",
+  "releaseId": "vitadhoc-v1.3",
   "titleId": "GBAD00001",
   "displayName": "VitAdhoc",
-  "version": "1.2",
+  "version": "1.3",
   "minInstallerVersion": "0.1.0",
   "visibility": "public",
   "releaseState": "ready",
   "recipeId": "vitadhoc",
   "package": {
     "path": "VitAdhoc.vpk",
-    "sha256": "b844da404b1ed36ca776818d6870a19c3effc23a4c39ed6503854eeb16c940de",
-    "runtimeSha256": "3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074"
+    "sha256": "8f600629b31d1fb836d745245bdc06369265c9d27c2462f27c40a0c8e4a6d75f",
+    "runtimeSha256": "336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09"
   },
-  "appUpdateFrom": [],
+  "appUpdateFrom": [
+    "9069471e980c5b0616b48048dcad7c0446b3070ee63033bbcb1b528dd19bb9e8",
+    "29a82a3716664c1616e404702fe46ca0460d59e8242a5dfcbca63f3a87b2a6c8",
+    "3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074"
+  ],
   "requiredInputs": [],
   "optionalInputs": [
     { "id": "roms", "label": "Your GB, GBC or GBA games", "kind": "roms" },
+    { "id": "snes", "label": "Your SNES games", "kind": "snes-roms" },
     { "id": "bios", "label": "Your GBA BIOS", "kind": "gba-bios" }
   ],
-  "destinations": { "data": "ux0:data/GBAdhoc/roms" },
+  "destinations": { "data": "ux0:data/GBAdhoc/roms", "snes": "ux0:ROMS/SNES" },
   "protectedPaths": [
     "ux0:data/GBAdhoc/config.ini",
     "ux0:data/GBAdhoc/vita.ini",
@@ -32,7 +37,15 @@
     "ux0:data/GBAdhoc/games",
     "ux0:data/GBAdhoc/borders",
     "ux0:data/GBAdhoc/playlog.txt",
-    "ux0:data/GBAdhoc/retroachievements.txt"
+    "ux0:data/GBAdhoc/retroachievements.txt",
+    "ux0:data/GBAdhoc/covers",
+    "ux0:data/GBAdhoc/cache/covers",
+    "ux0:data/GBAdhoc/backups",
+    "ux0:data/GBAdhoc/states",
+    "ux0:data/GBAdhoc/import",
+    "ux0:data/GBAdhoc/overlays",
+    "ux0:data/GBAdhoc/snes",
+    "ux0:data/GBAdhoc/saves-sync.txt"
   ],
   "prerequisites": [],
   "limits": { "maxFiles": 10000, "maxFileBytes": 1073741824, "maxTotalBytes": 34359738368 }

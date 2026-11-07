@@ -40,6 +40,11 @@ Output: `gpsp/vita/VitAdhoc.vpk`; intermediate files are in
 version 4.1.1 / SFO 04.11, ATTRIBUTE2 12. The shared package must use empty
 `BIOS=`. Do not add a private BIOS to a public build.
 
+The core reports itself as `4.1.1+4.5.0fixes` (`CORE_VERSION`): GBAdhoc 4.1.1
+plus the fixes taken from 4.5.0, listed in the 1.3 notes of
+[Technical Notes](TECHNICAL.md). `VERSION` stays 4.1.1 and sets the package's
+SFO version.
+
 `GIT_VERSION` defaults to the current source revision; it is the label the
 app writes in its log. Version 1.0 was built with
 `GIT_VERSION=library-r7-20261022` ([Source record](SOURCE.md) has its hashes).

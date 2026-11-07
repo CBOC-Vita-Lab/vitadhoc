@@ -281,13 +281,18 @@ def main(root):
     # Save states.  Emerald: slot 1 and 2 with both previews, slot 3 an old
     # state with the small preview only, slot 5 with nothing but the state.
     t0 = time.mktime((2026, 10, 3, 14, 32, 0, 0, 0, -1))
-    em = os.path.join(roms, 'Pokemon - Emerald Version (USA, Europe).st0')
+    # states live under states/<console>/ (psp/sidecar.h), not beside the ROM
+    os.makedirs(os.path.join(root, 'states', 'gba'), exist_ok=True)
+    os.makedirs(os.path.join(root, 'states', 'gb'), exist_ok=True)
+    em = os.path.join(root, 'states', 'gba',
+                      'Pokemon - Emerald Version (USA, Europe).st0')
     write_state(em, 1, 240, 160, when=t0)
     write_state(em, 2, 240, 160, when=t0 + 3600 * 5 + 240)
     write_state(em, 3, 240, 160, shot=False, when=t0 - 86400 * 9)
     write_state(em, 5, 240, 160, thumb=False, shot=False,
                 when=t0 - 86400 * 40)
-    rd = os.path.join(roms, 'Pokemon - Red Version (USA, Europe).gb.st0')
+    rd = os.path.join(root, 'states', 'gb',
+                      'Pokemon - Red Version (USA, Europe).gb.st0')
     write_state(rd, 1, 160, 144, when=t0 + 86400)
 
     open(os.path.join(roms, 'favourites.txt'), 'w').write(

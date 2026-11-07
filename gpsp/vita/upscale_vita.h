@@ -114,6 +114,39 @@ int upscale_busy(int slot);
  * destroyed or the picture's size or filter changes. */
 void upscale_forget(int slot);
 
+/* ---- the governor ----------------------------------------------------------
+ * Keep full speed's other half: when frames keep missing the display while
+ * smoothing is on, the factor steps down (xBRZ 4x -> 3x -> 2x -> the GPU's
+ * own filter) and comes back when there is room, with hysteresis (see
+ * upscale_vita.c).  Off until upscale_gov_enable(1). */
+#define GOV_WINDOW    60      /* frames a decision looks at (~1 s)          */
+#define GOV_BAD       6       /* bad frames in a window: step down          */
+#define GOV_CLEAN     10      /* clean windows in a row: try a step up      */
+#define GOV_MAX_CLEAN 600     /* ...at most this many (ten minutes) after failed tries */
+#define GOV_SETTLE    20      /* windows a step up must hold to count       */
+typedef struct upscale_gov
+{
+   int level;                 /* factors below what the picture asked      */
+   int frames, active, bad;   /* this window                                */
+   int clean, clean_need;     /* clean windows now / needed for a step up   */
+   int probing, settled;      /* a step up on trial, windows it has held    */
+} upscale_gov;
+void upscale_gov_init(upscale_gov *g);
+/* One frame: bad = it missed (see upscale_gov_frame), active = smoothing was
+ * asked for, nat = the factor it asked for.  Returns -1 stepped down, 1
+ * stepped up, 0 no change (the pure rule, for tests). */
+int upscale_gov_step(upscale_gov *g, int bad, int active, int nat);
+void upscale_gov_enable(int on);
+void upscale_gov_reset(void);        /* a new game */
+/* Once per frame, after it ran.  `work_late`: the emulator's own work took
+ * more than its share of the refresh.  A picture the helpers dropped or
+ * finished late counts too.  Returns the step as upscale_gov_step. */
+int upscale_gov_frame(int work_late);
+void upscale_gov_miss(void);         /* (the upscaler's own: a picture missed) */
+int upscale_gov_level(void);
+/* One line for the in-game menu, or NULL while smoothing is at full. */
+const char *upscale_gov_note(void);
+
 /* The caller has up to `max_us` microseconds with nothing to do (the game's
  * frame is finished and the display's refresh is not due): stripes of the
  * pictures in the works are done here too, one at a time, until they run

@@ -44,6 +44,10 @@ static int pcfg_filter_clamp(int f)
 
 int pcfg_ff_mode(void)
 {
+#ifdef VITA
+   if (g_pcfg.ff_mult_x10 == 20)
+      return PCFG_FF_2X;          /* 1.3; a PSP reads any speed as 3x */
+#endif
    if (g_pcfg.ff_mult_x10 != 0)
       return PCFG_FF_3X;
    return g_pcfg.ff_smooth ? PCFG_FF_SMOOTH : PCFG_FF_UNLIMITED;
@@ -53,14 +57,14 @@ void pcfg_ff_set_mode(int mode)
 {
    if (mode < 0 || mode >= PCFG_FF_COUNT)
       mode = PCFG_FF_3X;
-   g_pcfg.ff_mult_x10 = mode == PCFG_FF_3X ? 30 : 0;
+   g_pcfg.ff_mult_x10 = mode == PCFG_FF_3X ? 30 : mode == PCFG_FF_2X ? 20 : 0;
    g_pcfg.ff_smooth = mode != PCFG_FF_UNLIMITED;
 }
 
 const char *pcfg_ff_name(void)
 {
    static const char *const names[PCFG_FF_COUNT] = {
-      "3x", "Unlimited", "Unlimited Smooth"
+      "3x", "Unlimited", "Unlimited Smooth", "2x"
    };
    return names[pcfg_ff_mode()];
 }
@@ -178,6 +182,10 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.lib_sort    = (int)fe_ini_get_int(cfg_path, "lib_sort", 0);
    if (g_pcfg.lib_sort < 0 || g_pcfg.lib_sort > 2)
       g_pcfg.lib_sort = 0;
+   g_pcfg.ab_buttons  = (int)fe_ini_get_int(cfg_path, "ab_buttons", -1);
+   if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
+      g_pcfg.ab_buttons = -1;
+   g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
 #endif
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
@@ -336,6 +344,8 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       (int)fe_ini_get_int(cfg_path, "local_partner", 0) ? 1 : 0;
    g_pcfg.local_layout =
       (int)fe_ini_get_int(cfg_path, "local_layout", 0) ? 1 : 0;
+   g_pcfg.local_touch2 =
+      (int)fe_ini_get_int(cfg_path, "local_touch2", 0) ? 1 : 0;
    {
       char v[8];
       g_pcfg.touch_keep = fe_ini_get(cfg_path, "touch", v, sizeof(v)) ? 1 : 0;
@@ -358,7 +368,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
          (int)fe_ini_get_int(cfg_path, "rewind_mb", PCFG_REWIND_MB_DEFAULT);
       if (g_pcfg.rewind_mb < 4)  g_pcfg.rewind_mb = 4;
       if (g_pcfg.rewind_mb > 64) g_pcfg.rewind_mb = 64;
-      g_pcfg.hints = (int)fe_ini_get_int(cfg_path, "hints", 3);
+      g_pcfg.hints = (int)fe_ini_get_int(cfg_path, "hints", 1);
       if (g_pcfg.hints < 0 || g_pcfg.hints > 3)
          g_pcfg.hints = 0;
       g_pcfg.chord_guard =
@@ -380,7 +390,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       strcpy(g_pcfg.nick, "PSP");
 #endif
    g_pcfg.console = (int)fe_ini_get_int(cfg_path, "console", FE_CONSOLE_GBA);
-   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_GBC)
+   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_SNES)
       g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
    /* Every bind_* key is validated here; a bad one is reported
@@ -563,7 +573,7 @@ long pcfg_gb_rtc_utc_since(long now_local)
 
 int pcfg_remember_console(int console)
 {
-   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_GBC)
+   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
       return -1;
    g_pcfg.console = console;
    /* The browser's console switch is the settings context: the next
@@ -638,6 +648,10 @@ void pcfg_save(void)
       if (g_pcfg.lib_sort || fe_ini_get(cfg_path, "lib_sort", was, sizeof(was)))
          fe_ini_set_int(cfg_path, "lib_sort", g_pcfg.lib_sort);
    }
+   /* ab_buttons: only once chosen, so "as the Vita says" stays no key. */
+   if (g_pcfg.ab_buttons >= 0)
+      fe_ini_set_int(cfg_path, "ab_buttons", g_pcfg.ab_buttons);
+   fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
 #endif
    PCFG_PSP_KEY(fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty));
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
@@ -702,6 +716,7 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "link_delay", g_pcfg.link_delay);
    fe_ini_set_int(cfg_path, "local_partner", g_pcfg.local_partner);
    fe_ini_set_int(cfg_path, "local_layout", g_pcfg.local_layout);
+   fe_ini_set_int(cfg_path, "local_touch2", g_pcfg.local_touch2);
    if (g_pcfg.touch_keep || !g_pcfg.touch)
       fe_ini_set_int(cfg_path, "touch", g_pcfg.touch);
    fe_ini_set_int(cfg_path, "rewind", g_pcfg.rewind);
@@ -769,11 +784,11 @@ void pcfg_net_addr_push(const char *addr)
 pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 static int g_pdisp_live = FE_CONSOLE_GBA;
 
-static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc" };
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes" };
 
 const char *pcfg_console_tag(int console)
 {
-   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC" };
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
    return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
 }
 
@@ -1120,8 +1135,23 @@ const char *pcfg_sens_name(int s)
    return s == PCFG_SENS_LOW ? "low" : s == PCFG_SENS_HIGH ? "high" : "normal";
 }
 
+const char *pcfg_save_type_name(int t)
+{
+   static const char *const n[PCFG_SAVE_MODES] = {
+      "Auto", "SRAM", "Flash 64 KB", "Flash 128 KB", "EEPROM 512 B",
+      "EEPROM 8 KB" };
+   return t >= 0 && t < PCFG_SAVE_MODES ? n[t] : n[0];
+}
+
+const char *pcfg_rtc_mode_name(int m)
+{
+   return m == PCFG_RTC_ON ? "On" : m == PCFG_RTC_OFF ? "Off" : "Auto";
+}
+
 static void pgame_defaults(void)
 {
+   g_pgame.save_type = PCFG_SAVE_AUTO;
+   g_pgame.rtc_mode = PCFG_RTC_AUTO;
    g_pgame.override = 0;
    g_pgame.sensor_mode = PCFG_SENSOR_MOTION;
    g_pgame.sensor_sens = PCFG_SENS_NORMAL;
@@ -1144,7 +1174,8 @@ static char pgame_written[512];
 static void pgame_render(char *out, size_t cap)
 {
    int i, n;
-   n = snprintf(out, cap, "%d %d %d %d %d %d %d %d", g_pgame.override,
+   n = snprintf(out, cap, "%d %d %d %d %d %d %d %d %d %d", g_pgame.save_type,
+                g_pgame.rtc_mode, g_pgame.override,
                 g_pgame.sensor_mode, g_pgame.sensor_sens, g_pgame.sensor_rev,
                 g_pgame.sunlight, g_pgame.level_set, g_pgame.level_right,
                 g_pgame.level_down);
@@ -1183,6 +1214,10 @@ void pcfg_game_begin(const char *path, int console)
       g_pgame.sunlight = pgame_clampi(fe_ini_doc_get_int(&doc, "sunlight",
                                       PCFG_SUN_DEF), 0, PCFG_SUN_CLOCK,
                                       PCFG_SUN_DEF);
+      g_pgame.save_type = pgame_clampi(fe_ini_doc_get_int(&doc, "save_type", 0),
+                                       0, PCFG_SAVE_MODES - 1, PCFG_SAVE_AUTO);
+      g_pgame.rtc_mode = pgame_clampi(fe_ini_doc_get_int(&doc, "rtc", 0),
+                                      0, PCFG_RTC_MODES - 1, PCFG_RTC_AUTO);
       g_pgame.level_set = fe_ini_doc_get_int(&doc, "level_set", 0) == 1;
       g_pgame.level_right = pgame_clampi(fe_ini_doc_get_int(&doc, "level_right", 0),
                                          -2000, 2000, 0);
@@ -1196,6 +1231,8 @@ void pcfg_game_begin(const char *path, int console)
    if (!loaded)
       pgame_written[0] = 0;         /* (a later change creates the file) */
    pcfg_display_select(console);
+   fe_evt("game_settings_clock save_type=%d rtc=%d", g_pgame.save_type,
+          g_pgame.rtc_mode);
    fe_evt("game_settings load=%d override=%d sensor=%d/%d/%d sun=%d level=%d",
           loaded, g_pgame.override, g_pgame.sensor_mode, g_pgame.sensor_sens,
           g_pgame.sensor_rev, g_pgame.sunlight, g_pgame.level_set);
@@ -1236,6 +1273,8 @@ int pcfg_game_save(void)
    rc |= fe_ini_doc_set_int(&doc, "sensor_sens", g_pgame.sensor_sens);
    rc |= fe_ini_doc_set_int(&doc, "sensor_reverse", g_pgame.sensor_rev);
    rc |= fe_ini_doc_set_int(&doc, "sunlight", g_pgame.sunlight);
+   rc |= fe_ini_doc_set_int(&doc, "save_type", g_pgame.save_type);
+   rc |= fe_ini_doc_set_int(&doc, "rtc", g_pgame.rtc_mode);
    rc |= fe_ini_doc_set_int(&doc, "level_set", g_pgame.level_set);
    rc |= fe_ini_doc_set_int(&doc, "level_right", g_pgame.level_right);
    rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);

@@ -554,6 +554,14 @@ extern u32 sram_bankcount;
 extern u32 flash_bank_cnt;
 extern u32 eeprom_size;
 
+/* [save-type] per-game save type choice and save-file size hint; see
+ * apply_save_type_choice() in gba_memory.c.  Set before load_gamepak. */
+enum { GPSP_SAVE_AUTO, GPSP_SAVE_SRAM, GPSP_SAVE_FLASH64, GPSP_SAVE_FLASH128,
+       GPSP_SAVE_EEPROM512, GPSP_SAVE_EEPROM8K, GPSP_SAVE_COUNT };
+extern int gpsp_force_save_type;
+extern u32 gpsp_save_size_hint;
+const char *gpsp_backup_name(void);
+
 extern u8 gamepak_backup[1024 * 128];
 /* Optional synchronous ROM-load observer: bytes read / bytes to preload.
  * (0,0) announces cartridge setup. Must not re-enter or mutate the core. */

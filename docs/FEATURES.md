@@ -1,6 +1,6 @@
 # Features And Settings
 
-VitAdhoc combines GB, GBC and GBA emulation with a Vita-native library,
+VitAdhoc combines GB, GBC, GBA and Super NES emulation with a Vita-native library,
 display pipeline, touch input and motion controls. This is the detailed guide;
 start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 [Play Together](../PLAY-TOGETHER.md) for a specific task.
@@ -12,9 +12,10 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Platform | Native PS Vita application; title ID `GBAD00001`; 960 x 544 output |
 | GBA | gpSP core and ARM dynamic recompiler; original game image 240 x 160 |
 | GB / GBC | TGB Dual core; original game image 160 x 144; Super Game Boy border support |
+| Super NES | Snes9x 1.63 in its own program (`snes.bin`, non-commercial licence); sound and picture drawing on their own cores; up to four players with the Super Multitap |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
-| Game files | `.gba`, `.gb`, `.gbc`; supported stored/deflated `.zip` entries up to 32 MiB |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`; supported stored/deflated `.zip` entries up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
 | Extra folders | Up to eight; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |
@@ -72,7 +73,8 @@ Use **Settings > Library > Game folders**. Enter a folder to add it; enter
 the same folder again to remove it. The library rescans after the change.
 
 Built-in discovery includes the data-root `roms/`, common `ux0:ROMS/` and
-RetroFlow locations. Advanced users can set `extra_roms` in `vita.ini` or
+RetroFlow locations. Every folder directly inside `ux0:ROMS/` (a "SNES ROM
+Collection" folder, say) is scanned too; the file ending picks the console. Advanced users can set `extra_roms` in `vita.ini` or
 `config.ini`. A list in `vita.ini` takes precedence; `extra_roms = 0` disables
 the extra locations. Per-console `gba_roms`, `gb_roms` and `gbc_roms` keys are
 also accepted unless `vita.ini` already supplies the complete list.
@@ -87,6 +89,20 @@ Launchers can pass a raw cartridge path through
 `psgm:play?titleid=GBAD00001&param=...`. The path is not URL-decoded. It is read
 at application startup, so close VitAdhoc before launching a different game.
 The [install guide](../INSTALL.md#starting-a-game-from-another-app) has an example.
+
+## Super NES
+
+SNES games open in their own player and return to the home screen when you
+quit. **L + R + Start** opens its pause menu: Resume, Picture, Multitap, four
+save-state slots, Reset and Quit. Battery saves are `Game.srm` beside the game.
+
+Picture (saved for all SNES games, or for one with "Apply to: this game"):
+Original shape (4:3 at full height, the default), Zoom (blank rows cropped, not
+stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; side glow,
+CRT scanlines and LCD grid, each Off or 1-10; optional blending for hi-res and
+interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
+is drawn as a bezel. Every frame is shown with every picture option on; none
+is skipped or simplified to save time.
 
 ## Display
 
@@ -114,9 +130,12 @@ the original Pokemon Emerald family, not every game with a similar name.
 ROM hacks can change the layout or rendering enough to break a profile.
 The [performance report](PERFORMANCE.md) includes Pokemon Unbound measurements.
 
-Missing information can produce incomplete margins or the configured
-fallback. Wide view leaves the game's save unchanged. Turn it off for a
-game whose edges are incorrect.
+By default Wide view is on only for games that have a profile; every other
+game is shown at the console's own shape (240 x 160 at 816 x 544) with bars,
+never stretched. Where a profiled game has nothing more to show (a menu), the
+default is black bars; **Wide view: menus** can fade the picture's edges or
+stretch it instead. Wide view leaves the game's save unchanged. Turn it off
+for a game whose edges are incorrect.
 
 ### Borders, Overlays And Screenshots
 
@@ -129,7 +148,9 @@ to 1024 x 1024 stretch to fit.
 **Settings > Display > Screen overlay** controls overlays. **Grid strength**
 adjusts the LCD/scanline effect from 1 to 10 (default 5). Screenshots use
 **Settings > Interface > Screenshot folder**, or the default
-`ux0:data/GBAdhoc/screenshots/`; the button chord is L + R + Select.
+`ux0:data/GBAdhoc/screenshots/`. The L + R + Select chord is off until
+**Settings > Controls > Screenshot button combo** turns it on; the Vita's own
+PS + Start always works.
 
 ## Audio
 
@@ -143,6 +164,11 @@ GBA's Game Boy-style square, wave and noise channels use the game's stereo
 routing and sample-rate-based length, volume-envelope and sweep timing.
 DirectSound FIFO resets clear queued samples and reset their read/write
 positions together. These improvements are all included in 1.2.
+
+Fast forward is silent unless you choose **2x with sound** or **3x with
+sound** in **Settings > Fast-forward** (1.3): then the game's sound plays
+along, sped up and higher, without a break when fast forward starts or stops.
+Unlimited and Unlimited Smooth stay silent.
 
 ## Patches And Cheats
 

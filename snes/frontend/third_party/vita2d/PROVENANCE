@@ -1,0 +1,53 @@
+# libvita2d (core subset), vendored
+
+Upstream: https://github.com/xerpi/libvita2d, commit
+`a8f15ab09d5233f0a4e4ad0e8f6ade0da888cbed` (2021-11-26).  MIT licence, see
+`LICENSE`.  Built by `gpsp/vita/ui.mk` into the Vita frontend; used only by
+`gpsp/vita/vback_vita2d.c`.
+
+The VitaSDK on the build machine has no vita2d package (and no libpng,
+libjpeg or freetype to build the whole library against), so only the files
+the video layer needs are here:
+
+| here | upstream | |
+|---|---|---|
+| `source/vita2d.c` | `libvita2d/source/vita2d.c` | GXM set-up, scenes, clipping, the vertex pool |
+| `source/vita2d_draw.c` | same | coloured primitives |
+| `source/vita2d_texture.c` | same | textures, render targets, textured primitives |
+| `source/utils.c` | same | GPU memory, matrices |
+| `include/*.h` | `libvita2d/include/` | |
+| `shader/*_gxp.o` | `libvita2d/shader/compiled/` | the seven precompiled shader programs (ARM ELF objects holding the `.gxp` binaries); `shader/*.cg` are their sources, for reference |
+
+Not vendored: `vita2d_font.c` (FreeType), `vita2d_pgf.c`, `vita2d_pvf.c`,
+`vita2d_image_png.c`, `vita2d_image_jpeg.c`, `vita2d_image_bmp.c`,
+`texture_atlas.c`, `bin_packing_2d.c`, `int_htab.c`.  `vita2d.h` still
+declares their functions; nothing here calls them.  Text is drawn by
+`gpsp/vita/video_vita_text.c` (stb_truetype), images are decoded by
+`psp/stb_image.h`.
+
+## Local changes
+
+1. `vita2d_get_back_fb()` added (and declared in `include/vita2d.h`): the
+   display buffer being drawn, where upstream only exposes the front one.
+   `vid_dump_ge()` reads the finished frame back from it before the swap.
+2. With `-DVITA2D_NO_PGF` (which `ui.mk` passes) `vita2d_init` does not load
+   the system PGF font module: no PGF font is used.
+3. `vita2d_swap_state()` exposes pending/displayed state for the frontend pacer.
+4. R7: three full-capacity temporary-pool banks are retired with independent
+   vertex/fragment scene notifications. Checked/nonblocking scene admission,
+   bounded pending-swap tracking and versioned fragment-reader fences let
+   the backend skip a busy frame and callers defer texture publication
+   without a new whole-GPU wait. Pool allocation failure, exact capacity,
+   non-power-of-two alignment and arithmetic bounds are checked. The
+   corresponding declarations live in `include/vita2d.h`.
+
+5. `_vita2d_create_empty_texture_format_advanced` allocates the texture
+   with `calloc`, not `malloc`: a plain texture never set `gxm_rtgt` or
+   `depth_UID`, yet `vita2d_free_texture` reads both, so a reused heap chunk
+   made it destroy a render target and free a GPU memory block it did not
+   own (`gpu/native_geometry_test.c --texture-destructor`).
+
+To take a newer upstream: retain these local changes and the R7 actual-native
+delayed-consumption regression tests; upstream pool rotation alone is not a
+completion/ownership guarantee. R7's hardware visual/performance validation
+is separate from host model and native compile evidence.

@@ -34,6 +34,12 @@
 # SERIAL_IDLE_FAST    skip update_serial's call chain when no transfer is
 #                     pending and there is no link role; exact by
 #                     construction (main.c).
+# SCHED_FAST          update_gba skips check_and_raise_interrupts and
+#                     flag_interrupt's check while IE & IF == 0 (the only way
+#                     either can do anything).  Plain C in main.c, exact: the
+#                     machine is state-identical with it on or off (GBAdhoc
+#                     4.0.0, verified here by frame hashes).  ON, run-time
+#                     kill switch main.c sched_fast.
 #
 # ---- OFF: implemented in the MIPS emitter/stub only ---------------------
 #
@@ -84,7 +90,8 @@ GBA_LINK      ?= 1
 ARM_FAR_STUBS ?= 1
 
 GBADHOC_CORE_DEFS := -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 -DDMA_SMC_FLUSH=1 \
-                     -DSERIAL_IDLE_FAST=1 -DGBALINK_HALT_BLOCK_EXACT \
+                     -DSERIAL_IDLE_FAST=1 -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1 \
+                     -DGBALINK_HALT_BLOCK_EXACT \
                      -DGBALINK_KEEP_SERIAL_MODE
 ifeq ($(ARM_FAR_STUBS),1)
 GBADHOC_CORE_DEFS += -DARM_FAR_STUBS

@@ -246,8 +246,16 @@ static inline xreal distYCbCr555(int r_diff, int g_diff, int b_diff)
 
 struct DistYCbCrBuffer
 {
-	static xreal dist(uint32_t pix1, uint32_t pix2)
+	/* GBAdhoc: inlined (it was a call for each of the ten distances a pixel's
+	   corners ask for), and two equal pixels are 0 without a table read:
+	   every mode's value for a difference of nothing is exactly 0 (the
+	   tables are centred on it), so the picture is unchanged -- about a
+	   tenth fewer instructions on a game's picture (host twin, instruction
+	   counts). */
+	FORCE_INLINE static xreal dist(uint32_t pix1, uint32_t pix2)
 	{
+		if (pix1 == pix2)
+			return 0;
 		if (g_dist_mode == 1)
 		{
 			const int r5 = static_cast<int>(getRed  (pix1) >> 3) - (getRed  (pix2) >> 3);

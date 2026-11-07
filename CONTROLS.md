@@ -3,6 +3,12 @@
 These are the defaults. Settings > Controls changes game buttons, shortcuts and
 turbo buttons, and the menus always stay reachable, whatever you map.
 
+**Cross or Circle?** The names below are for a Vita whose Enter button is Cross
+(most of the world). VitAdhoc follows your Vita's own setting (Settings >
+System > Enter Button Assignment): with Circle as Enter, Circle plays, picks
+and is A, and Cross is back and B. Settings > Controls > A and B buttons
+(Circle is A / Cross is A) changes it for VitAdhoc alone.
+
 ## Home Screen
 
 | Button | Does |
@@ -23,18 +29,22 @@ turbo buttons, and the menus always stay reachable, whatever you map.
 | Button | Does |
 | --- | --- |
 | D-pad / left stick | D-pad |
-| Cross / Circle | A / B |
+| Cross / Circle | A / B (swapped with Circle is A) |
 | L / R, Start, Select | The same buttons |
 | Hold Start + Select, or tap the game | Open the menu |
-| Square | Fast forward (hold or toggle, in Settings) |
+| Square | Fast forward (hold or toggle; 2x, 3x or Unlimited, with or without sound, in Settings > Fast-forward) |
 | Right stick right | Fast forward while held |
-| Right stick left, or Select + Square | Rewind while held |
+| Select + Square | Rewind while held (the right stick left too, if you turn on Rewind with right stick) |
 | Select + L / Select + R | Quick save / quick load |
 | Triangle | Next picture preset |
 | Select + Triangle | Pause screen |
-| L + R + Select | Screenshot (saved in `ux0:data/GBAdhoc/screenshots/`) |
+| PS + Start | The Vita's own screenshot |
 | Select + Down | Mystery Gift: listen for a phone (GBA) |
 | Right stick down | Cheat button, for button-activated codes |
+
+VitAdhoc's own screenshot (L + R + Select, saved in
+`ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
+button combo turns it on; Button mapping can give Screenshot any other chord.
 
 ## Motion Games
 
@@ -54,7 +64,10 @@ play and stop when the menu opens or a state loads.
 
 Flick the right stick sideways, or tap the other picture, to switch which
 Game Boy you control. Tap the one you control for the menu. A second controller
-can give each player their own pad; see [Play Together](PLAY-TOGETHER.md).
+can give each player their own pad, and either player opens the menu with
+Start + Select on their own pad. With no second controller, Player 2 on the
+touch screen puts a pad on the front screen; see
+[Play Together](PLAY-TOGETHER.md).
 
 Start and Select reach the game a tenth of a second late, so a shortcut such
 as Select + L doesn't also press Select in the game. `chord_guard = 0` in

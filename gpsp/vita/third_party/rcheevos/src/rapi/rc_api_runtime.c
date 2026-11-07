@@ -166,8 +166,7 @@ static int rc_api_process_fetch_game_data_achievements(rc_api_response_t* respon
       achievement->author = last_author;
     }
     else {
-      if (!rc_json_get_required_string(&achievement->author, response, &achievement_fields[6], "Author"))
-        return RC_MISSING_VALUE;
+      rc_json_get_optional_string(&achievement->author, response, &achievement_fields[6], "Author", "");
 
       if (achievement->author == NULL) {
         /* ensure we don't pass NULL out to client */
@@ -431,8 +430,7 @@ static int rc_api_process_fetch_game_sets_achievement_sets(rc_api_fetch_game_set
     if (!rc_json_get_required_unum(&subset->game_id, &response->response, &subset_fields[1], "GameId"))
       return RC_MISSING_VALUE;
 
-    if (!rc_json_get_required_string(&subset->title, &response->response, &subset_fields[2], "Title"))
-      return RC_MISSING_VALUE;
+    rc_json_get_optional_string(&subset->title, &response->response, &subset_fields[2], "Title", "");
     if (!subset->title || !subset->title[0])
       subset->title = response->title;
 
@@ -444,6 +442,8 @@ static int rc_api_process_fetch_game_sets_achievement_sets(rc_api_fetch_game_set
       subset->type = RC_ACHIEVEMENT_SET_TYPE_SPECIALTY;
     else if (rc_json_field_string_matches(&subset_fields[3], "exclusive"))
       subset->type = RC_ACHIEVEMENT_SET_TYPE_EXCLUSIVE;
+    else if (rc_json_field_string_matches(&subset_fields[3], "challenge"))
+      subset->type = RC_ACHIEVEMENT_SET_TYPE_CHALLENGE;
     else
       subset->type = RC_ACHIEVEMENT_SET_TYPE_BONUS;
 

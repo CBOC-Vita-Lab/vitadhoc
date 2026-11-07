@@ -25,6 +25,22 @@ original project and the clarification. Original notices remain intact.
   SDK/runtime components retain their own notices. See
   [Third-Party Notices](notices/THIRD-PARTY.md).
 
+## The SNES Player (Snes9x)
+
+Super NES games run in `snes.bin`, a separate program in the same VPK. It is
+built only from `snes/` and links no code from `gpsp/`: VitAdhoc starts it with
+the game's path and it starts VitAdhoc again when you quit.
+
+- The Snes9x core in `snes/core` keeps the Snes9x licence (`snes/core/LICENSE`,
+  shipped as `licenses/Snes9x-LICENSE.txt`). It allows non-commercial use and
+  changes only and is not GPL-compatible, which is why it is its own program.
+- Our frontend in `snes/frontend`, `snes/vita` and `snes/twin` is MIT.
+- Because the package contains Snes9x, VitAdhoc must stay free of charge and
+  must not be sold, bundled in a commercial product or used to promote one.
+- [SNES notice](notices/SNES-Snes9x.md) and `snes/core/PROVENANCE.md` (the
+  tag, commit and the few local edits) have the details. No legal opinion has
+  been obtained on the separate-program design.
+
 ## Release Status
 
 Version 1.0's VPK is built from the source in this repository, which sits

@@ -27,23 +27,23 @@
 ;
 ; Built with rgbds (rgbasm/rgblink/rgbfix); see the Makefile.
 
-rP1 EQU $FF00
-rSB EQU $FF01
-rSC EQU $FF02
-rLCDC EQU $FF40
-rLY EQU $FF44
-rBGP EQU $FF47
+DEF rP1 EQU $FF00
+DEF rSB EQU $FF01
+DEF rSC EQU $FF02
+DEF rLCDC EQU $FF40
+DEF rLY EQU $FF44
+DEF rBGP EQU $FF47
 
-wRole EQU $C000
-wGoodL EQU $C001
-wGoodH EQU $C002
-wBad EQU $C003
-wTx EQU $C004
-wRx EQU $C005
-wBoot EQU $C006
-wKeys EQU $C007
-wSaved EQU $C008
-wAnswered EQU $C009
+DEF wRole EQU $C000
+DEF wGoodL EQU $C001
+DEF wGoodH EQU $C002
+DEF wBad EQU $C003
+DEF wTx EQU $C004
+DEF wRx EQU $C005
+DEF wBoot EQU $C006
+DEF wKeys EQU $C007
+DEF wSaved EQU $C008
+DEF wAnswered EQU $C009
 
 SECTION "entry", ROM0[$100]
     nop
@@ -54,6 +54,14 @@ SECTION "main", ROM0[$150]
 start:
     di
     ld   sp, $DFF0
+IF DEF(DOUBLE)
+    ; a Game Boy Color in double speed (rgbasm -DDOUBLE, header flag set):
+    ; the cable must still work against a machine at normal speed
+    ld   a, 1
+    ldh  [$FF4D], a
+    stop
+    nop
+ENDC
     ; the picture: LCD off in the vertical blank, two tiles, an empty map
 .wait_vb:
     ldh  a, [rLY]
@@ -211,6 +219,19 @@ next:
     ldh  a, [rLY]
     cp   146
     jr   nz, .w2
+IF DEF(DOUBLE)
+    ; a Color in double speed gets through a pass in half the time and would
+    ; clock a byte every frame, twice as fast as a Game Boy's pass (two
+    ; frames) can answer: take the extra frame the slower one takes
+.w3:
+    ldh  a, [rLY]
+    cp   100
+    jr   nz, .w3
+.w4:
+    ldh  a, [rLY]
+    cp   146
+    jr   nz, .w4
+ENDC
     jp   frame
 
 count_good:

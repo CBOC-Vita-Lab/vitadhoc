@@ -47,6 +47,10 @@ declares their functions; nothing here calls them.  Text is drawn by
    made it destroy a render target and free a GPU memory block it did not
    own (`gpu/native_geometry_test.c --texture-destructor`).
 
+Checked 2026-11-06: upstream master is still a8f15ab (no commit since
+2021-11-26), and utils.c, vita2d_draw.c and the shared headers are
+byte-identical to it, so there is nothing newer to take.
+
 To take a newer upstream: retain these local changes and the R7 actual-native
 delayed-consumption regression tests; upstream pool rotation alone is not a
 completion/ownership guarantee. R7's hardware visual/performance validation

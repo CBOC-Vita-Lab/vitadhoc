@@ -5,6 +5,9 @@ linking exception; PPSSPP ships this same code in its GPL-2.0-or-later
 emulator.  Here it is used under the GPL version 2, like the rest of the
 app.
 
+Checked 2026-11-06 against PPSSPP's current ext/xbrz (master): outside the
+changes listed below the files are identical, so there is nothing newer to
+take.
 Taken from PPSSPP's ext/xbrz (which reads/writes R in the low byte, the
 byte order of this port's RGBA8 textures).  Changes, all marked "GBAdhoc":
   - the 64 MB colour-distance table is 2 MB (sources are RGB565), built by

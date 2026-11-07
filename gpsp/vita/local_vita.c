@@ -116,6 +116,14 @@ static void partner_choice_load(void);
 
 /* ---- state ------------------------------------------------------------------ */
 
+#define COL_P1    0x65BF            /* the OSD's soft blue  */
+#define COL_P2    0xFEA0            /* ...and its warm yellow */
+#define COL_WHITE 0xFFFF
+#define COL_DIM   0x8410
+#define COL_BLACK 0x0000
+static int layout_now(void);
+
+
 #define SAVE_BYTES   0x20000u          /* a GBA battery image                 */
 #define P_W_MAX      240
 #define P_H_MAX      160
@@ -138,7 +146,10 @@ static struct
    int clone;                  /* the partner began as a copy                 */
    int view;                   /* 0 the player's machine, 1 the partner's     */
    int have2;                  /* a second controller, this iteration         */
-   int have2_told;             /* ...as last announced                        */
+   int have2_told;             /* ...as last announced (0 none, 1 pad, 2 touch)*/
+   int touch;                  /* have2 is the touch screen's (player 2 on it)*/
+   uint32_t touch_down;        /* the touch pad's buttons, for the drawing    */
+   uint32_t held_block2;       /* player 2's buttons held when a menu closed  */
    unsigned hint_frames;       /* "how to change games" stays up this long    */
    uint32_t keys2;             /* the partner's buttons (libretro mask)       */
    uint32_t held_block;        /* held at the last switch: not passed on      */
@@ -232,6 +243,14 @@ static void save_recover(void)
       remove(side);
 }
 
+/* The save suffix of a cartridge by its own file name. */
+static const char *save_suffix_of(const char *rom)
+{
+   size_t n = strlen(rom);
+   return n > 4 && !strcasecmp(rom + n - 4, ".gbc") ? ".gbc.sav"
+        : n > 3 && !strcasecmp(rom + n - 3, ".gb") ? ".gb.sav" : ".sav";
+}
+
 /* Where the partner's battery lives for the start that would happen now. */
 static void save_path_set(void)
 {
@@ -240,8 +259,7 @@ static void save_path_set(void)
    if (g_partner_rom[0])
       /* another cartridge: its own save, named as main_vita.c names it */
       psp_rom_path_suffix(L.save_path, sizeof(L.save_path), g_partner_rom,
-                          c == FE_CONSOLE_GBA ? ".sav" :
-                          c == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav");
+                          save_suffix_of(g_partner_rom));
    else
       psp_rom_path_suffix(L.save_path, sizeof(L.save_path), g_game.rom_path,
                           c == FE_CONSOLE_GBA ? ".p2.sav" :
@@ -653,7 +671,7 @@ static void view_set(int v, const char *via)
    L.view = v;
    /* The large + small layout draws the game in view large: the rects
     * have swapped games.  (Side by side keeps the player's game left.) */
-   if (g_pcfg.local_layout == VID_PAIR_INSET)
+   if (layout_now() == VID_PAIR_INSET)
       vid_pair_forget();
    /* What is held now was pressed for the other game. */
    L.held_block = ~0u;
@@ -666,14 +684,40 @@ void link_local_next_view(void)
    view_set(!L.view, "next");
 }
 
+/* The layout in use.  Two players each with an input of their own (a second
+ * controller, or player 2 on the touch screen) always get two equal
+ * pictures side by side: the large + small layout is for ONE pad that
+ * moves between the machines. */
+static int layout_now(void)
+{
+   if (L.have2 || (g_pcfg.local_touch2 && L.active))
+      return VID_PAIR_SIDE;
+   return g_pcfg.local_layout == VID_PAIR_INSET ? VID_PAIR_INSET
+                                                : VID_PAIR_SIDE;
+}
+
+void link_local_block_held(void)
+{
+   L.held_block = ~0u;
+   L.held_block2 = ~0u;
+}
+
 int link_local_tap(int x, int y)
 {
    vid_rect_t r[2];
    unsigned w = L.gb ? 160 : 240, h = L.gb ? 144 : 160;
-   int inset = g_pcfg.local_layout == VID_PAIR_INSET, i;
+   int inset = layout_now() == VID_PAIR_INSET, i;
 
    if (!L.active)
       return 0;
+   if (L.touch)
+   {
+      /* Player 2's half is his buttons, not a place to tap: only the
+       * player's own picture answers (the menu's tap). */
+      vid_pair_rects(w, h, VID_PAIR_SIDE, &r[0], &r[1]);
+      return x >= r[0].x && x < r[0].x + r[0].w && y >= r[0].y &&
+             y < r[0].y + r[0].h ? 2 : 0;
+   }
    vid_pair_rects(w, h, inset ? VID_PAIR_INSET : VID_PAIR_SIDE, &r[0], &r[1]);
    for (i = 0; i < 2; i++)
       if (x >= r[i].x && x < r[i].x + r[i].w && y >= r[i].y &&
@@ -704,7 +748,8 @@ void link_local_pads(uint32_t keys1, uint32_t keys2, int have2)
       /* Each player his own machine: nothing to decide. */
       L.held_block &= keys1;
       g_app_keys = keys1 & ~L.held_block;
-      L.keys2 = keys2;
+      L.held_block2 &= keys2;
+      L.keys2 = keys2 & ~L.held_block2;
       return;
    }
    L.held_block &= keys1;
@@ -719,6 +764,190 @@ void link_local_pads(uint32_t keys1, uint32_t keys2, int have2)
       L.keys2 = 0;
       g_app_keys = keys1;
    }
+}
+
+
+/* ---- player 2 on the touch screen ------------------------------------------------
+ *
+ * With no second controller, g_pcfg.local_touch2 turns player 2's half of
+ * the front screen (native x 480..959) into a pad: a D-pad at the left,
+ * A and B at the right, L and R in the top corners, Start and Select
+ * between.  The panel reports every finger (plat_touch_points), so both
+ * players press at once: the first on the buttons, the second on the glass.
+ * Logical (480x272) coordinates, relative to the half's left edge HX; the
+ * hit areas are the same shapes, a little larger.  Drawn translucent over
+ * the picture (nothing is hidden for good), brighter while pressed. */
+#define TP_HX      240
+#define TP_DX      52           /* the D-pad's centre        */
+#define TP_DY      178
+#define TP_ARM     34           /* ...and how far an arm reaches */
+#define TP_AX      208
+#define TP_AY      176
+#define TP_BX      170
+#define TP_BY      198
+#define TP_BR      19           /* A and B's radius          */
+#define TP_ST_W    54           /* Start, Select: the pills, in the band */
+#define TP_ST_H    20           /* under the pictures, right of the tag  */
+#define TP_ST_Y    240
+#define TP_SEL_X   110
+#define TP_START_X 170
+#define TP_LR_Y    14
+#define TP_LR_W    62
+#define TP_LR_H    28
+#define TP_SLOP    8            /* a finger's reach beyond a shape */
+
+#define KBIT(id) (1u << (id))
+
+static int in_box(int x, int y, int bx, int by, int bw, int bh, int slop)
+{
+   return x >= bx - slop && x < bx + bw + slop && y >= by - slop &&
+          y < by + bh + slop;
+}
+
+static int in_disc(int x, int y, int cx, int cy, int r)
+{
+   int dx = x - cx, dy = y - cy;
+   return dx * dx + dy * dy <= r * r;
+}
+
+/* The buttons (libretro mask) that fingers at these LOGICAL positions press. */
+static uint32_t touch_buttons(const int *px, const int *py, int n, int gb)
+{
+   uint32_t k = 0;
+   int i;
+   for (i = 0; i < n; i++)
+   {
+      int x = px[i] - TP_HX, y = py[i];
+      int dx = x - TP_DX, dy = y - TP_DY;
+      if (x < 0)
+         continue;
+      /* the D-pad: a square around its centre, the arm the finger is nearest
+       * to (and both of a diagonal) */
+      if (dx >= -TP_ARM - TP_SLOP && dx <= TP_ARM + TP_SLOP &&
+          dy >= -TP_ARM - TP_SLOP && dy <= TP_ARM + TP_SLOP)
+      {
+         int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+         if (ax >= 9 || ay >= 9)
+         {
+            if (ax * 5 >= ay * 2)
+               k |= dx < 0 ? KBIT(RETRO_DEVICE_ID_JOYPAD_LEFT)
+                           : KBIT(RETRO_DEVICE_ID_JOYPAD_RIGHT);
+            if (ay * 5 >= ax * 2)
+               k |= dy < 0 ? KBIT(RETRO_DEVICE_ID_JOYPAD_UP)
+                           : KBIT(RETRO_DEVICE_ID_JOYPAD_DOWN);
+         }
+      }
+      if (in_disc(x, y, TP_AX, TP_AY, TP_BR + TP_SLOP))
+         k |= KBIT(RETRO_DEVICE_ID_JOYPAD_A);
+      if (in_disc(x, y, TP_BX, TP_BY, TP_BR + TP_SLOP))
+         k |= KBIT(RETRO_DEVICE_ID_JOYPAD_B);
+      if (in_box(x, y, TP_START_X, TP_ST_Y, TP_ST_W, TP_ST_H, 4))
+         k |= KBIT(RETRO_DEVICE_ID_JOYPAD_START);
+      if (in_box(x, y, TP_SEL_X, TP_ST_Y, TP_ST_W, TP_ST_H, 4))
+         k |= KBIT(RETRO_DEVICE_ID_JOYPAD_SELECT);
+      if (!gb)
+      {
+         if (in_box(x, y, 6, TP_LR_Y, TP_LR_W, TP_LR_H, TP_SLOP))
+            k |= KBIT(RETRO_DEVICE_ID_JOYPAD_L);
+         if (in_box(x, y, TP_HX - 6 - TP_LR_W, TP_LR_Y, TP_LR_W, TP_LR_H, TP_SLOP))
+            k |= KBIT(RETRO_DEVICE_ID_JOYPAD_R);
+      }
+   }
+   return k;
+}
+
+int link_local_touch_keys(uint32_t *keys)
+{
+   plat_touch_pt pt[6];
+   int px[6], py[6], n, i;
+   if (!L.active || !g_pcfg.local_touch2)
+   {
+      L.touch = 0;
+      L.touch_down = 0;
+      return 0;
+   }
+   n = plat_touch_points(pt, 6);
+   for (i = 0; i < n; i++)
+   {
+      px[i] = pt[i].x / 2;
+      py[i] = pt[i].y / 2;
+   }
+   *keys = touch_buttons(px, py, n, L.gb);
+   L.touch_down = *keys;
+   L.touch = 1;
+   return 1;
+}
+
+/* A filled disc from horizontal strokes (the overlay has rectangles). */
+static void tp_disc(int cx, int cy, int r, uint16_t col, int alpha)
+{
+   int y;
+   for (y = -r; y < r; y += 2)
+   {
+      int hw = 0;
+      while ((hw + 1) * (hw + 1) + y * y <= r * r)
+         hw++;
+      if (hw)
+         vid_rect(cx - hw, cy + y, 2 * hw, 2, col, alpha);
+   }
+}
+
+static void tp_label(int cx, int cy, const char *t, uint16_t col)
+{
+   vid_text(cx - vid_text_w(t) / 2, vid_text_y_in(cy - 9, 18), t, col);
+}
+
+static void touch_draw(void)
+{
+   uint32_t d = L.touch_down;
+   const int hx = TP_HX;
+   int a;
+   struct { int cx, cy, id; const char *t; } b[2] = {
+      { TP_AX, TP_AY, RETRO_DEVICE_ID_JOYPAD_A, "A" },
+      { TP_BX, TP_BY, RETRO_DEVICE_ID_JOYPAD_B, "B" } };
+   int i;
+   /* D-pad: a plus of two bars, the pressed arm lit */
+   a = 64;
+   vid_rect(hx + TP_DX - 11, TP_DY - TP_ARM, 22, 2 * TP_ARM, COL_WHITE, a);
+   vid_rect(hx + TP_DX - TP_ARM, TP_DY - 11, 2 * TP_ARM, 22, COL_WHITE, a);
+   if (d & KBIT(RETRO_DEVICE_ID_JOYPAD_UP))
+      vid_rect(hx + TP_DX - 11, TP_DY - TP_ARM, 22, TP_ARM - 8, COL_P2, 200);
+   if (d & KBIT(RETRO_DEVICE_ID_JOYPAD_DOWN))
+      vid_rect(hx + TP_DX - 11, TP_DY + 8, 22, TP_ARM - 8, COL_P2, 200);
+   if (d & KBIT(RETRO_DEVICE_ID_JOYPAD_LEFT))
+      vid_rect(hx + TP_DX - TP_ARM, TP_DY - 11, TP_ARM - 8, 22, COL_P2, 200);
+   if (d & KBIT(RETRO_DEVICE_ID_JOYPAD_RIGHT))
+      vid_rect(hx + TP_DX + 8, TP_DY - 11, TP_ARM - 8, 22, COL_P2, 200);
+   /* A and B */
+   for (i = 0; i < 2; i++)
+   {
+      int on = (d & KBIT(b[i].id)) != 0;
+      tp_disc(hx + b[i].cx, b[i].cy, TP_BR, on ? COL_P2 : COL_WHITE,
+              on ? 200 : 64);
+      tp_label(hx + b[i].cx, b[i].cy, b[i].t, on ? COL_BLACK : COL_WHITE);
+   }
+   /* Start and Select */
+   for (i = 0; i < 2; i++)
+   {
+      int id = i ? RETRO_DEVICE_ID_JOYPAD_START : RETRO_DEVICE_ID_JOYPAD_SELECT;
+      int x = i ? TP_START_X : TP_SEL_X, y = TP_ST_Y, on = (d & KBIT(id)) != 0;
+      vid_rect(hx + x, y, TP_ST_W, TP_ST_H, on ? COL_P2 : COL_WHITE,
+               on ? 200 : 64);
+      tp_label(hx + x + TP_ST_W / 2, y + TP_ST_H / 2,
+               i ? "START" : "SELECT", on ? COL_BLACK : COL_WHITE);
+   }
+   /* L and R, a game boy has neither */
+   if (!L.gb)
+      for (i = 0; i < 2; i++)
+      {
+         int id = i ? RETRO_DEVICE_ID_JOYPAD_R : RETRO_DEVICE_ID_JOYPAD_L;
+         int x = i ? hx + TP_HX - 6 - TP_LR_W : hx + 6;
+         int on = (d & KBIT(id)) != 0;
+         vid_rect(x, TP_LR_Y, TP_LR_W, TP_LR_H, on ? COL_P2 : COL_WHITE,
+                  on ? 200 : 64);
+         tp_label(x + TP_LR_W / 2, TP_LR_Y + TP_LR_H / 2, i ? "R" : "L",
+                  on ? COL_BLACK : COL_WHITE);
+      }
 }
 
 /* ---- every other frame, when two machines do not fit a refresh ------------------ */
@@ -778,11 +1007,6 @@ static void skip_apply(void)
 
 /* ---- the picture ---------------------------------------------------------------- */
 
-#define COL_P1    0x65BF            /* the OSD's soft blue  */
-#define COL_P2    0xFEA0            /* ...and its warm yellow */
-#define COL_WHITE 0xFFFF
-#define COL_DIM   0x8410
-#define COL_BLACK 0x0000
 
 /* A player's tag: "P1" on his colour, and what the picture is. */
 static void tag_draw(int x, int y, int player, int lit, const char *text)
@@ -808,7 +1032,7 @@ void link_local_present(const uint16_t *pix, unsigned w, unsigned h,
 {
    static uint16_t mine[P_W_MAX * P_H_MAX];
    const uint16_t *a = pix, *b = L.have_pix ? L.pix : NULL;
-   int inset = g_pcfg.local_layout == VID_PAIR_INSET;
+   int inset = layout_now() == VID_PAIR_INSET;
    vid_rect_t r[2];
    int who[2], i;
    unsigned y;
@@ -859,8 +1083,9 @@ void link_local_present(const uint16_t *pix, unsigned w, unsigned h,
                                : (ox > x ? "< playing" : "playing >"))
                     : "";
       else if (L.have2)
-         text = p ? (narrow ? "pad 2" : lit ? "controller 2  (sound)"
-                                            : "controller 2")
+         text = p ? (L.touch ? (lit ? "touch  (sound)" : "touch")
+                             : narrow ? "pad 2" : lit ? "controller 2  (sound)"
+                                                      : "controller 2")
                   : (narrow ? "pad 1" : lit ? "this console  (sound)"
                                             : "this console");
       else
@@ -874,6 +1099,8 @@ void link_local_present(const uint16_t *pix, unsigned w, unsigned h,
          vid_rect(x, yy + hh, ww, 2, col, lit ? 255 : 70);
       tag_draw(tx, ty, p, lit, text);
    }
+   if (L.touch)
+      touch_draw();
    /* How to change games: for ten seconds, and again after a change. */
    if (!L.have2 && L.hint_frames)
    {
@@ -1073,6 +1300,9 @@ static int start_now(int clone)
    L.active = 1;
    L.have2 = 0;
    L.have2_told = 0;
+   L.touch = 0;
+   L.touch_down = 0;
+   L.held_block2 = 0;
    L.hint_frames = 600;
    L.save_bak_done = 0;
    L.save_dirty = 0;
@@ -1225,13 +1455,14 @@ void link_local_frame(void)
               (unsigned long long)fe_host_gb_local_hash());
    /* A second controller that comes or goes is said once. */
    {
-      int p2 = plat_pad_ports() >= 2;
+      int p2 = L.have2 ? (L.touch ? 2 : 1) : 0;
       if (p2 != L.have2_told)
       {
          L.have2_told = p2;
-         osd_toast(p2 ? "Controller 2 drives the partner's game"
-                      : "One controller: right stick or tap swaps games");
-         fe_evt("local_pad2 on=%d", p2);
+         osd_toast(p2 == 2 ? "Player 2 plays on the touch screen"
+                   : p2 ? "Controller 2 drives the partner's game"
+                        : "One controller: right stick or tap swaps games");
+         fe_evt("local_pad2 on=%d touch=%d", p2 != 0, p2 == 2);
       }
    }
 }
@@ -1470,10 +1701,14 @@ static int same_console(const char *name)
    fe_console_t c = g_game.console;
    if (c == FE_CONSOLE_GBA)
       return n > 4 && !strcasecmp(name + n - 4, ".gba");
-   if (c == FE_CONSOLE_GBC)
-      return n > 4 && !strcasecmp(name + n - 4, ".gbc");
-   return n > 3 && !strcasecmp(name + n - 3, ".gb");
+   /* One link family: a Game Boy and a Game Boy Color cartridge link on real
+    * hardware with the same cable (Red with Gold, Yellow, Crystal...), and
+    * each runs as its own hardware. */
+   (void)c;
+   return (n > 4 && !strcasecmp(name + n - 4, ".gbc")) ||
+          (n > 3 && !strcasecmp(name + n - 3, ".gb"));
 }
+
 
 static int ini_path(char *out, size_t cap)
 {

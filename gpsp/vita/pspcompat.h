@@ -81,6 +81,10 @@ void     pspcompat_wait_vblank(void);
 /* Buttons held now, PSP bit layout, left stick folded into the d-pad.  A
  * main loop can use this for its own menu input too. */
 unsigned pspcompat_pad(void);
+/* 1 = pspcompat_pad() also answers for the SECOND controller (plat.h
+ * plat_pad_read2), so with two players either one drives the menu and its
+ * pages; 0 (the start) = the first pad alone. */
+void pspcompat_pad2_menu(int on);
 #define PSPCOMPAT_STICK_DEADZONE 56      /* of 128, from centre */
 
 #define PSP_CTRL_SELECT   0x000001u
@@ -242,6 +246,14 @@ int pspcompat_ime_poll(char *out, size_t cap);
  * pspcompat_user_name call it themselves, and a main loop that shows the ad
  * hoc NetCheck dialog can call it at boot.  A no-op on the host. */
 void pspcompat_dialogs_init(void);
+
+/* A AND B BUTTONS.  The Vita's Enter button setting (Settings > System >
+ * Enter Button Assignment): 1 = Circle confirms (the Japanese layout).  The
+ * twin answers 0, or 1 with GBADHOC_ENTER_BUTTON=circle in its environment. */
+int  pspcompat_enter_is_circle(void);
+/* 1 = pspcompat_pad() hands Cross and Circle over exchanged (the same switch
+ * as plat_pad_face_swap, for the pad this file reads itself). */
+void pspcompat_face_swap(int on);
 
 /* The console owner's name (the Vita's "User Name" system setting), for the
  * first run's default player name.  "" when unknown (always on the host,

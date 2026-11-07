@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 char g_dir_base[128] =
@@ -151,6 +152,7 @@ static void ime_ascii(char *out, size_t cap, const unsigned char *utf8)
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
+#include "plat.h"
 
 /* The flag values and the twelve button bits are the PSP's; if a future SDK
  * ever disagrees, fail the build rather than the browser. */
@@ -212,9 +214,26 @@ void pspcompat_wait_vblank(void)
       g_vblank_fn();
 }
 
+static int g_pc_face_swap;
+
+void pspcompat_face_swap(int on) { g_pc_face_swap = on ? 1 : 0; }
+
+int pspcompat_enter_is_circle(void)
+{
+   int v = 0;
+   pspcompat_dialogs_init();      /* sceAppUtilInit: the call needs it */
+   if (sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, &v) < 0)
+      return 0;                   /* unknown: the Western layout */
+   return v == SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
+}
+
+static int g_pad2_menu;
+void pspcompat_pad2_menu(int on) { g_pad2_menu = on ? 1 : 0; }
+
 unsigned pspcompat_pad(void)
 {
    static int analog_on;
+   unsigned btn;
    SceCtrlData pad;
    if (!analog_on)
    {
@@ -228,7 +247,19 @@ unsigned pspcompat_pad(void)
       return 0;
    /* Plain PeekBufferPositive reports the Vita's L and R -- and a PS TV
     * pad's L1/R1 -- as LTRIGGER/RTRIGGER, the PSP's shoulder bits. */
-   return (pad.buttons & 0xF3F9u) | stick_bits(pad.lx, pad.ly);
+   btn = pad.buttons & 0xF3F9u;
+   if (g_pc_face_swap && ((btn & PSP_CTRL_CROSS) != 0) !=
+                         ((btn & PSP_CTRL_CIRCLE) != 0))
+      btn ^= PSP_CTRL_CROSS | PSP_CTRL_CIRCLE;
+   btn |= stick_bits(pad.lx, pad.ly);
+   if (g_pad2_menu)
+   {
+      /* two players: the second controller drives the menu as well */
+      plat_pad q;
+      if (plat_pad_read2(&q))
+         btn |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
+   }
+   return btn;
 }
 
 void pspcompat_host_pad(unsigned (*fn)(void)) { (void)fn; }
@@ -581,6 +612,17 @@ int pspcompat_touch(pc_touch *out)
 
 void pspcompat_dialogs_init(void) { }
 
+/* (the twin's pad is plat.h's, which swaps for itself) */
+void pspcompat_face_swap(int on) { (void)on; }
+
+/* The Vita's own Enter button setting.  The twin has none: Cross, unless a
+ * test says otherwise with GBADHOC_ENTER_BUTTON=circle. */
+int pspcompat_enter_is_circle(void)
+{
+   const char *e = getenv("GBADHOC_ENTER_BUTTON");
+   return e && strcmp(e, "circle") == 0;
+}
+
 int  pspcompat_battery_percent(void) { return 80; }
 int  pspcompat_battery_charging(void) { return 0; }
 void pspcompat_clock(int *hour, int *minute) { *hour = 13; *minute = 34; }
@@ -647,13 +689,20 @@ void pspcompat_wait_vblank(void)
 void pspcompat_host_pad(unsigned (*fn)(void)) { g_pad_fn = fn; }
 void pspcompat_host_vblank_hook(void (*fn)(void)) { g_vblank_fn = fn; }
 
+static int g_pad2_menu;
+void pspcompat_pad2_menu(int on) { g_pad2_menu = on ? 1 : 0; }
+
 unsigned pspcompat_pad(void)
 {
-   plat_pad p;
+   plat_pad p, q;
+   unsigned b;
    if (g_pad_fn)
       return g_pad_fn() & 0xF3F9u;
    plat_pad_read(&p);
-   return (p.buttons & 0xF3F9u) | stick_bits(p.lx, p.ly);
+   b = (p.buttons & 0xF3F9u) | stick_bits(p.lx, p.ly);
+   if (g_pad2_menu && plat_pad_read2(&q))
+      b |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
+   return b;
 }
 #else
 static unsigned g_clock_us = 1000000u;
@@ -675,6 +724,8 @@ void pspcompat_wait_vblank(void)
 
 void pspcompat_host_pad(unsigned (*fn)(void)) { g_pad_fn = fn; }
 void pspcompat_host_vblank_hook(void (*fn)(void)) { g_vblank_fn = fn; }
+
+void pspcompat_pad2_menu(int on) { (void)on; }
 
 unsigned pspcompat_pad(void)
 {

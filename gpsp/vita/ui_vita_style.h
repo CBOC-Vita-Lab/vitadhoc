@@ -165,6 +165,17 @@ static void hm_hints(float xr, float y, const int *icons,
    hm_hints_b(xr, y, icons, words, NULL, n);
 }
 
+/* How far left of xr a line of hints reaches (hm_hints_b's own steps, plus
+ * the first icon's half width). */
+static float hm_hints_w(const int *icons, const char *const *words, int n)
+{
+   float w = 0;
+   int i;
+   for (i = 0; i < n; i++)
+      w += vs_text_w(VS_CAPTION, words[i]) + (icons[i] >= 0 ? 28 : 0) + 22;
+   return w;
+}
+
 /* "SAVE STATES" -> "Save states": the old pages' titles, in the new
  * sentence case. */
 static void hm_sentence(char *out, size_t cap, const char *s)

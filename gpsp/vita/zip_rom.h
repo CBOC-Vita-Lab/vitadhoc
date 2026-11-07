@@ -15,7 +15,7 @@
 
 typedef struct
 {
-   int           console;              /* 0 GBA, 1 GB, 2 GBC (fe_console_t) */
+   int           console;              /* 0 GBA, 1 GB, 2 GBC, 3 SNES (fe_console_t) */
    int           method;               /* 0 stored, 8 deflated            */
    unsigned      flags;
    unsigned long crc, csize, usize, local;

@@ -277,6 +277,126 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
    return bad != 0 || (mode && !slid && frames >= 100);
 }
 
+/* ---- the band split --------------------------------------------------------
+ * The helpers scale a picture in stripes of rows, on two cores.  Whatever the
+ * cut, the picture must be the one a single pass makes: xBRZ in bands of rows
+ * (cut anywhere, uneven, one row at a time) and as rectangles equals the whole. */
+extern void xbrz_c_scale_rect_to(int factor, const uint32_t *src, int w, int h,
+                                 int y0, int y1, int x0, int x1, uint32_t *at,
+                                 int pitch);
+static int band_split(void)
+{
+   const int w = 240, h = 160;
+   int f, fails = 0, i, y;
+   uint16_t *pic = malloc((size_t)w * h * 2);
+   uint32_t *s32 = malloc((size_t)w * h * 4);
+   frame_make(pic, w, h, 150, 120, 70, 80, 3);
+   for (i = 0; i < w * h; i++)
+      s32[i] = lut0(pic[i]);
+   for (f = 2; f <= 4; f++)
+   {
+      const size_t n = (size_t)f * w * f * h;
+      uint32_t *whole = malloc(n * 4), *bands = malloc(n * 4),
+               *rects = malloc(n * 4);
+      static const int cuts[3][4] = { { 80, 160, 0, 0 }, { 8, 77, 160, 0 },
+                                      { 1, 2, 159, 160 } };
+      int c, b;
+      xbrz_c_scale(f, s32, whole, w, h, 0, h);
+      for (c = 0; c < 3; c++)
+      {
+         int y0 = 0;
+         memset(bands, 0xA5, n * 4);
+         for (b = 0; b < 4 && y0 < h; b++)
+            if (cuts[c][b] > y0)
+            {
+               xbrz_c_scale(f, s32, bands, w, h, y0, cuts[c][b]);
+               y0 = cuts[c][b];
+            }
+         if (memcmp(whole, bands, n * 4))
+         {
+            fprintf(stderr, "  band split %d at %dx differs\n", c, f);
+            fails++;
+         }
+      }
+      /* two horizontal bands, each as a full-width rectangle */
+      memset(rects, 0xA5, n * 4);
+      for (y = 0; y < h; y += 80)
+         xbrz_c_scale_rect_to(f, s32, w, h, y, y + 80, 0, w,
+                              rects + (size_t)y * f * f * w, f * w);
+      if (memcmp(whole, rects, n * 4))
+      {
+         fprintf(stderr, "  rect bands at %dx differ\n", f);
+         fails++;
+      }
+      free(whole); free(bands); free(rects);
+   }
+   printf("band split: %s\n", fails ? "FAIL" : "ok");
+   free(pic); free(s32);
+   return fails;
+}
+
+/* ---- the governor ----------------------------------------------------------- */
+static int gov_run(upscale_gov *g, int frames, int bad_at_level_ge, int nat,
+                   int *moves)
+{
+   int i, m;
+   for (i = 0; i < frames; i++)
+   {
+      /* bad: one frame in four while the level is below the line */
+      int bad = g->level < bad_at_level_ge && i % 4 == 0;
+      m = upscale_gov_step(g, bad, 1, nat);
+      if (m && moves)
+         (*moves)++;
+   }
+   return g->level;
+}
+
+static int gov_test(void)
+{
+   int fails = 0, moves, i;
+   upscale_gov g;
+
+   /* sustained misses: down to off (3x -> 2x -> GPU), and no further */
+   upscale_gov_init(&g);
+   moves = 0;
+   gov_run(&g, GOV_WINDOW * 10, 99, 3, &moves);
+   if (g.level != 2 || moves != 2) { fprintf(stderr, "  gov: down: level %d moves %d\n", g.level, moves); fails++; }
+
+   /* a few stray misses never move it */
+   upscale_gov_init(&g);
+   for (i = 0; i < GOV_WINDOW * 50; i++)
+      upscale_gov_step(&g, i % 31 == 0, 1, 4);
+   if (g.level) { fprintf(stderr, "  gov: strays moved it\n"); fails++; }
+
+   /* smoothing not in use: nothing changes, however bad */
+   upscale_gov_init(&g);
+   for (i = 0; i < GOV_WINDOW * 10; i++)
+      upscale_gov_step(&g, 1, 0, 4);
+   if (g.level) { fprintf(stderr, "  gov: moved with no smoothing\n"); fails++; }
+
+   /* room again: it comes back, but only after GOV_CLEAN clean windows */
+   upscale_gov_init(&g);
+   gov_run(&g, GOV_WINDOW * 3, 99, 3, NULL);
+   if (g.level != 2) { fprintf(stderr, "  gov: setup\n"); fails++; }
+   for (i = 0; i < GOV_WINDOW * (GOV_CLEAN - 1); i++)
+      upscale_gov_step(&g, 0, 1, 3);
+   if (g.level != 2) { fprintf(stderr, "  gov: came back early\n"); fails++; }
+   for (i = 0; i < GOV_WINDOW; i++)
+      upscale_gov_step(&g, 0, 1, 3);
+   if (g.level != 1) { fprintf(stderr, "  gov: did not come back\n"); fails++; }
+
+   /* the edge: bad whenever the level is below 2.  It must settle at 2
+    * and not flicker: over an hour of frames the moves are few and the
+    * time between tries grows. */
+   upscale_gov_init(&g);
+   moves = 0;
+   gov_run(&g, 60 * 60 * 60, 2, 4, &moves);
+   if (g.level != 2 || moves > 30) { fprintf(stderr, "  gov: edge: level %d, %d moves in an hour\n", g.level, moves); fails++; }
+   if (g.clean_need <= GOV_CLEAN) { fprintf(stderr, "  gov: the way up did not grow\n"); fails++; }
+   printf("governor: %s (edge: %d moves in an hour)\n", fails ? "FAIL" : "ok", moves);
+   return fails;
+}
+
 int main(int argc, char **argv)
 {
    int fails = 0, mode, f, wi, async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
@@ -292,6 +412,8 @@ int main(int argc, char **argv)
          for (f = 2; f <= 3; f++)
             fails += run(UPSCALE_SCALE, f, widths[wi], mode, frames, async);
       }
+   fails += band_split();
+   fails += gov_test();
    upscale_shutdown();
    printf("%s: %d failed\n", fails ? "FAIL" : "ok", fails);
    return fails != 0;

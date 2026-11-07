@@ -38,6 +38,7 @@
 
 #include "video_vita_priv.h"
 #include "font_ui.h"          /* the PSP's glyph tables: advances, metrics */
+#include "vstyle.h"          /* vs_set_face_swap */
 
 extern const unsigned char vv_font_regular[], vv_font_regular_end[];
 extern const unsigned char vv_font_semibold[], vv_font_semibold_end[];
@@ -326,6 +327,16 @@ float vv_text_worst_dev(int hd, int *ch, float *mean_abs)
    return f->worst;
 }
 
+/* A AND B BUTTONS: with the face buttons exchanged (Settings > Controls),
+ * the circle and the cross glyphs of the hints are drawn the other way
+ * round, and so are the icons of the home screen's buttons (vstyle.c). */
+static int g_face_swap;
+void vid_set_face_glyphs(int swap)
+{
+   g_face_swap = swap ? 1 : 0;
+   vs_set_face_swap(g_face_swap);
+}
+
 /* The PSP's own measure (video_psp.c fu_measure), over the PSP's table. */
 int vv_text_width(int hd, const char *s)
 {
@@ -362,6 +373,8 @@ void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
    {
       unsigned char c = (unsigned char)*s;
       const vv_glyph *g;
+      if (g_face_swap && (c == 0x80 || c == 0x81))
+         c ^= 1;                /* the circle and the cross, exchanged */
       if (c < FU_FIRST || c > FU_LAST)
          c = '?';
       g = &f->g[c - FU_FIRST];

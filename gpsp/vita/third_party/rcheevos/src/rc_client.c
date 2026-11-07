@@ -1456,6 +1456,12 @@ static uint32_t rc_client_subset_toggle_hardcore_achievements(rc_client_subset_i
 
   for (; achievement < stop; ++achievement) {
     if ((achievement->public_.unlocked & active_bit) == 0) {
+      /* Encore keeps achievements active, but their previous unlock times remain available. */
+      if (client->state.encore_mode) {
+        achievement->public_.unlock_time = (client->state.hardcore && achievement->unlock_time_hardcore) ?
+            achievement->unlock_time_hardcore : achievement->unlock_time_softcore;
+      }
+
       switch (achievement->public_.state) {
         case RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED:
         case RC_CLIENT_ACHIEVEMENT_STATE_INACTIVE:
@@ -7134,7 +7140,10 @@ size_t rc_client_get_user_agent_clause(rc_client_t* client, char buffer[], size_
   if (client && client->state.external_client && client->state.external_client->get_user_agent_clause) {
     result = client->state.external_client->get_user_agent_clause(buffer, buffer_size);
     if (result > 0) {
-      result += snprintf(buffer + result, buffer_size - result, " rc_client/" RCHEEVOS_VERSION_STRING);
+      if (result < buffer_size)
+        result += snprintf(buffer + result, buffer_size - result, " rc_client/" RCHEEVOS_VERSION_STRING);
+      else
+        result += (sizeof(" rc_client/" RCHEEVOS_VERSION_STRING) - 1);
       buffer[buffer_size - 1] = '\0';
       return result;
     }

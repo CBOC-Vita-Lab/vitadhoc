@@ -1,0 +1,81 @@
+## VitAdhoc 1.3: Super NES, split screen and your own covers
+
+Game Boy Advance, Game Boy, Game Boy Color and now Super NES, native on PS
+Vita. One home screen with box art for all four, previews of your own play,
+Continue, smoothing, rewind, RetroAchievements and link play, built on the
+work of [GBAdhoc](https://github.com/ShoshinFauteux/GBAdhoc), gpSP, TGB Dual
+and [Snes9x](https://github.com/snes9xgit/snes9x).
+
+### New in 1.3
+
+- **Super NES games.** `.sfc` and `.smc` games (zipped too) appear on a new
+  SNES shelf, found in `ux0:ROMS/` (any folder inside it), RetroFlow's folders
+  and your own folders, with box art.
+- **Accurate and spread over the Vita's cores.** Built on Snes9x 1.63: sound
+  and picture each run on a core of their own, with exactly the same result as
+  one core. Super FX games no longer rebuild their colours hundreds of times a
+  frame.
+- **Fills the screen without stretching.** The SNES's own 4:3 shape at full
+  height with a soft glow at the sides, plus sharp scaling, CRT scanlines and
+  an LCD grid (1-10). Up to four players with the Super Multitap.
+- **Split screen for two players** on one Vita or PS TV: two equal pictures,
+  a second controller on any port, or player 2 on the touch screen.
+- **Trade between versions.** Red, Blue and Yellow link with Gold, Silver and
+  Crystal, and two Vitas can trade between Ruby and Sapphire or FireRed and
+  LeafGreen.
+- **Box art for loosely named games, on every console:** games are recognised
+  by their contents and by a loose match of their names.
+- **Your own cover pictures.** The Cover button, or a PNG or JPG in `covers/`
+  named like the game. Your picture always wins over downloaded art.
+- **Safer saves.** Saves from other emulators keep their clock data, RetroArch
+  saves stay in sync both ways, and one backup is kept before anything is
+  written over a save from elsewhere. ROM hacks can choose their save type.
+- **Cleaner game folders.** Only the game and its battery save stay beside it;
+  states and thumbnails move to `ux0:data/GBAdhoc/` on first open.
+- **Fast forward your way.** A new 2x speed beside 3x, and 2x or 3x can keep
+  the game's sound, sped up (Settings > Fast-forward).
+- **500 MHz** when an overclock plugin such as PSVshell allows it.
+
+### Performance
+
+- **500 MHz** instead of 444 when PSVshell or a similar plugin allows it.
+- **SNES on a Vita:** Super Mario World, Donkey Kong Country, F-Zero, Chrono
+  Trigger and Yoshi's Island at full speed with every frame shown (5-8 ms of
+  each 16.7 ms frame); Super Mario RPG and Kirby Super Star at 59 of 60;
+  Doom at 59 of 60 (was 41): busy Super FX games keep their game speed and
+  their 3D view animates as fast as the Vita can draw it.
+- **Smoothing does about a tenth less work** for exactly the same picture.
+
+### Fixes
+
+- Mortal Kombat: Deadly Alliance no longer sits on its logo for 40 seconds or
+  covers its menus in green speckles. Need for Speed: Underground no longer
+  hangs at its language screen.
+- Engine fixes from GBAdhoc 4.5.0 (Golden Sun 2, Mario Golf, Mario Tennis,
+  OpenLara, rare instructions).
+- No growing sound delay after the menu, fast forward or rewind; no loud push
+  from Game Boy games that switch a sound channel off.
+- Games without a Wide view profile are never stretched; Pokemon clocks keep
+  the right time after Continue; the right stick only rewinds if you turn it on.
+- A busy moment skips drawing a frame instead of lowering the smoothing or
+  picture options you chose.
+
+### Install or update
+
+Install `VitAdhoc.vpk` with VitaShell over the existing bubble (title ID
+`GBAD00001`). Games, saves, settings and artwork stay in place. Two Vitas
+linking together both need 1.3. The
+[CBOC Vita Installer](https://github.com/CBOC-Vita-Lab/vita-installer/releases/latest)
+2.0 or later does it from a computer and has a slot for your SNES games.
+
+`VitAdhoc-install.zip` contains the same VPK, full source, guides and
+checksums. No commercial games or proprietary BIOS are included. The SNES
+player uses Snes9x, whose licence allows non-commercial use only: VitAdhoc is
+and stays free.
+
+[What's new in detail](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/CHANGELOG.md)
+| [Install and save import](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/INSTALL.md)
+| [Known issues](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/KNOWN-ISSUES.md)
+
+SHA-256 `VitAdhoc.vpk`:
+`8f600629b31d1fb836d745245bdc06369265c9d27c2462f27c40a0c8e4a6d75f`

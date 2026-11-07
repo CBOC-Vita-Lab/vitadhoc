@@ -22,7 +22,10 @@
 #                   memory and heap arrangement
 #
 # VARIABLES
-#   VERSION=4.1.1        shown in the log and written to PARAM.SFO (APP_VER)
+#   VERSION=4.1.1        the GBAdhoc release the core started from; written to
+#                        PARAM.SFO (APP_VER)
+#   CORE_VERSION=...     what the log, link compatibility and RetroAchievements
+#                        report as the core: VERSION plus the 4.5.0 fixes taken in
 #   TITLE_ID=GBAD00001   the bubble's id (4 letters + 5 digits)
 #   ARM_FAR_STUBS=1      build the core with -DARM_FAR_STUBS (arm/: stubs
 #                        reached through veneers instead of a 24-bit bl)
@@ -64,6 +67,9 @@ READELF := $(PREFIX)readelf
 LD_R    := $(PREFIX)ld
 
 VERSION  ?= 4.1.1
+# The core is GBAdhoc 4.1.1 plus a chosen set of fixes from 4.5.0 (CHANGELOG
+# 1.3, docs/TECHNICAL.md), not 4.1.1 and not 4.5.0.
+CORE_VERSION ?= $(VERSION)+4.5.0fixes
 TITLE    ?= VitAdhoc
 TITLE_ID ?= GBAD00001
 VITA_ATTRIBUTE2 ?= 12
@@ -95,7 +101,7 @@ FE_FLAGS        := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard \
 include corebuild.mk
 
 # ---- the app --------------------------------------------------------------------
-APP_DEFS += -DGBADHOC_VERSION=\"$(VERSION)\" \
+APP_DEFS += -DGBADHOC_VERSION=\"$(CORE_VERSION)\" \
             $(if $(filter 1,$(GBA_LINK)),-DGBA_LINK) \
             $(if $(filter 1,$(ARM_FAR_STUBS)),-DARM_FAR_STUBS)
 # -Wno-type-limits: psp/ui_psp.h compares an enum with 0, and an ARM EABI
@@ -138,6 +144,19 @@ VPK_EXTRA += $(BIOS)=gba_bios.bin
 endif
 DIST_NOTICES := $(wildcard ../../licenses/*) $(wildcard ../../notices/*)
 VPK_EXTRA += $(foreach f,$(DIST_NOTICES),$(f)=$(patsubst ../../%,%,$(f)))
+# ---- SNES (VitAdhoc 1.3) ---------------------------------------------------
+# snes.bin is a SEPARATE PROGRAM (../../snes: Snes9x core, own MIT frontend)
+# launched by VitAdhoc through plat_exec_program.  It is built by its own
+# Makefile and only packed here; nothing of it is linked into eboot.bin
+# (Snes9x's non-commercial licence is not GPL-compatible).  Its licence and
+# provenance travel in the VPK.
+SNES_BIN := ../../snes/vita/build/snes.bin
+VPK_EXTRA += $(SNES_BIN)=snes.bin \
+             ../../snes/core/LICENSE=licenses/Snes9x-LICENSE.txt \
+             ../../snes/core/PROVENANCE.md=licenses/Snes9x-PROVENANCE.md
+$(SNES_BIN): FORCE
+	$(MAKE) -C ../../snes/vita -j1
+FORCE:
 VPK_FILES := -a sce_sys/icon0.png=sce_sys/icon0.png \
              -a sce_sys/livearea/contents/bg.png=sce_sys/livearea/contents/bg.png \
              -a sce_sys/livearea/contents/startup.png=sce_sys/livearea/contents/startup.png \
@@ -249,4 +268,4 @@ clean:
 	rm -rf $(B) $(VPK)
 
 -include $(APP_OBJS:.o=.d)
-.PHONY: all vpk assets report clean
+.PHONY: all vpk assets report clean FORCE

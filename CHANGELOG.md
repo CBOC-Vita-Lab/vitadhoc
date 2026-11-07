@@ -1,5 +1,236 @@
 # What's New
 
+## Version 1.3
+
+**Super NES games.**
+- **Play `.sfc` and `.smc` games** from the same home screen, under a new
+  SNES tab. VitAdhoc finds them in `ux0:ROMS/SNES`, in any folder directly
+  under `ux0:ROMS/` (a "SNES ROM Collection" folder, for one), in RetroFlow's
+  folders and in the folders you add in Settings. Box art and title screens
+  download like the other consoles, and your own covers work too.
+- **Box art for loosely named games, on every console.** A game is now
+  recognised by its contents, and by a loose match of its name ("Act Raiser",
+  "7th Saga", "Pocket Dogs (U)"), so collections with short or old-style file
+  names get their covers. Games that found none before are looked for again.
+- **Accurate, and spread over the Vita's cores.** The SNES player is built on
+  Snes9x 1.63 (the current release). Sound and picture drawing each run on a
+  core of their own, with exactly the same result as running them one after
+  the other. Super FX games (Yoshi's Island and Stunt Race FX among them) no
+  longer rebuild their colours hundreds of times a frame.
+- **Fills the screen without stretching.** The default shape is the SNES's
+  own 4:3 at full height; the sides show a soft glow from the game's picture.
+  Zoom, full screen and pixel-perfect are in the pause menu (L + R + Start),
+  with sharp or smooth scaling, CRT scanlines and an LCD grid (1-10).
+- **Up to four players.** A second controller is player 2; with the Super
+  Multitap (automatic for games known to use it) players 3 and 4 join too.
+- **Full speed with every frame shown** on a Vita: Super Mario World, Donkey
+  Kong Country, F-Zero, Chrono Trigger and Yoshi's Island with room to spare,
+  Super Mario RPG and Kirby Super Star (SA-1) at 59 of 60 frames a second.
+  Nothing is ever dropped from the picture to save time.
+- **Super FX games keep their speed.** When the Vita can't run the Super FX
+  chip as fast as a SNES (Doom, the races of Stunt Race FX), the chip gets the
+  time the Vita has instead of the whole game slowing down: the game, its
+  music and its controls stay at full speed, and the 3D view animates as fast
+  as the Vita can draw it. Doom went from 41 to 59 frames a second.
+
+**Smoothing does less work.** The xBRZ scaler and the step that finds what
+changed on screen do about a tenth less work, with exactly the same picture.
+
+**Your saves are safe.**
+- **A save is never cut short.** A save from RetroArch or another emulator
+  that has extra bytes at the end (the clock data mGBA adds, a 131088-byte
+  Pokemon save for one) used to lose them the first time VitAdhoc saved. They
+  are now kept, for Game Boy and SNES saves too (a SNES `.srm` keeps any
+  padding another emulator wrote after the cartridge RAM). ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
+- **One backup before anything is saved over a save from somewhere else.** The
+  first time VitAdhoc uses a save it did not write itself, a copy goes to
+  `ux0:data/GBAdhoc/backups/` (not beside your game).
+- **RetroArch saves stay in sync both ways.** A save taken from RetroArch is
+  now written back to RetroArch's file (same size, same layout) every time you
+  save, so RetroArch can carry on from it. If RetroArch changed its file in
+  the meantime, VitAdhoc never writes over it: at the next start the newer
+  save is used and the other one is kept in `backups/`. Turn it off in
+  Settings > Library > Sync RetroArch saves.
+
+**Your game folders stay clean.**
+- **Only the game and its battery save stay in your game folders.** Save
+  states, their pictures, the Continue point and the play-time note now live
+  under `ux0:data/GBAdhoc/states/` (in `gba`, `gb` and `gbc` folders), the way
+  RetroArch keeps its files. Launchers such as RetroFlow no longer have to
+  sort through `.rsm`, `.pt`, `.st0` and similar files.
+  ([#3](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/3))
+- **Cover thumbnail files moved out of `boxart/`.** The small `.t2.565` files
+  and other picture copies VitAdhoc makes for speed are now kept in
+  `ux0:data/GBAdhoc/cache/`. `boxart/` and the screenshot folder hold only
+  your own pictures.
+- **Your old states come along.** The first time a game is opened or shown,
+  its old save states, pictures and Continue point are moved from beside the
+  game to the new place. Nothing is overwritten, and if a file can't be
+  moved it is still read from where it is.
+- States are named after the game, as RetroArch does, so moving a game to
+  another folder keeps its states.
+
+**Games with a clock, and ROM hacks**
+- **Pokemon clocks keep the right time after Continue.** The clock inside
+  Pokemon Ruby, Sapphire and Emerald (and other games with one, such as
+  Boktai) now follows the Vita's own clock. Save and quit, come back an hour
+  or three days later, and the game shows the real time, so berries grow,
+  daily events happen and the day and night change as they should. Loading a
+  save state no longer winds the clock back, and fast-forward no longer
+  pushes it ahead. Old save states still load.
+- **Save type for ROM hacks.** In a game, Settings > This game has two new
+  rows: **Save type** (Auto, SRAM, Flash 64 KB, Flash 128 KB, EEPROM 512 B,
+  EEPROM 8 KB) and **Clock (RTC)** (Auto, On, Off). They are remembered for
+  that game only and used the next time it starts. Pokemon Unbound and other
+  hacks that were saving to the wrong size can be set here.
+- **Auto is smarter.** A save file of 128 KB is now read as 128 KB flash,
+  even when the hack's own label says 64 KB.
+
+**Fast forward your way** (suggested by a player after 1.2)
+- **2x fast forward**, for games where 3x is too fast. Settings >
+  Fast-forward: 2x, 3x, Unlimited or Unlimited Smooth.
+- **Fast forward with sound.** Choose "2x with sound" or "3x with sound" and
+  the game's sound plays along, sped up, so a Pokemon battle still sounds like
+  one. It's off by default; Unlimited stays silent.
+
+**Smoother play with smoothing on**
+- **Keep full speed** (Settings, on by default): a busy moment skips drawing a
+  frame so the game and its sound keep their speed. The smoothing you chose is
+  never lowered to get there.
+  ([#7](https://github.com/CBOC-Vita-Lab/vitadhoc/issues/7))
+
+**Under the hood**
+- **Parts we borrowed were checked for newer versions.** The Game Boy core,
+  graphics code, image code and the RetroAchievements code were compared with
+  their latest originals. Most were already current. Two small fixes came
+  across: Game Boy Color games that switch video memory banks while copying
+  graphics now behave as on a real console, and the achievements code no
+  longer breaks on very large achievement sets or odd answers from the server.
+
+**Sound.** Fixes for pops, drifting delay and loud pushes in Game Boy sound.
+
+- **No more growing sound delay:** opening the menu, fast forward and rewind
+  each used to count as a dropout and made the sound buffer 20 ms longer, up
+  to 120 ms, until half a minute of calm play. Stopping the game on purpose no
+  longer does that, and the sound starts clean when fast forward or the menu
+  ends.
+- **Game Boy games that "park" a sound channel:** a tone channel set above
+  65 kHz (a trick games use to switch a channel off) played a loud constant
+  push with a click on each side. It is now silent.
+
+Real-console listening is still being checked; the numbers behind these are
+in [Technical details](docs/TECHNICAL.md).
+
+**Faster.**
+- **Runs at 500 MHz when your Vita allows it.** Settings > CPU speed:
+  "500 MHz (fast)" is the default; "444 MHz (standard)" is the old speed. A
+  Vita needs an overclock plugin such as PSVshell for 500 (without one the
+  app falls back to 444, and the row says so). With PSVshell installed,
+  VitAdhoc sets up the profile for itself, never replacing one of yours
+  without asking in Settings (your own is saved and put back if you switch to
+  444). The first start after the change may need one more launch. A faster
+  clock uses more battery and runs warmer.
+
+**Your own cover pictures**
+- **Set a cover for any game.** On the home screen press **Cover** (or
+  Settings > Library > Cover picture) and choose a picture from your Vita's
+  photos and screenshots, take the game's own screenshot, or go back to the
+  downloaded cover with **Automatic**. You see the picture first, any shape
+  works, and the new cover shows at once. It beats downloaded art everywhere,
+  and downloads never replace it. Handy for custom games and ROM hacks.
+- **Or just drop a file in.** A PNG or JPG in `ux0:data/GBAdhoc/covers/` named
+  like the game (`Pokemon Unbound.png`) is used from the next time the list
+  opens. Capitals and the `.gba` part of the name do not matter.
+
+**Controls and first impressions**
+- **A picture that is never stretched.** Games without a Wide view profile
+  show at their own shape, with bars; only the games Wide view was made for
+  (Pokémon Emerald, Ruby, Sapphire, FireRed, LeafGreen) get more map beside
+  the picture. Screens with nothing more to show now keep black bars unless
+  you pick soft edges or stretch in Wide view: menus. The sides of the screen
+  are filled by a soft glow from the game's own picture (Settings > Display >
+  Ambient bars; off under a screen overlay). Your saved choices stay.
+- **Circle or Cross as A.** VitAdhoc follows your Vita's own Enter button, so
+  on a Vita where Circle confirms, Circle is A and picks things in the menus.
+  Settings > Controls > A and B buttons changes it.
+- **Fewer surprises:** the right stick no longer rewinds unless you turn on
+  Settings > Controls > Rewind with right stick (Select + Square still
+  rewinds). L + R + Select no longer takes a screenshot (the Vita's PS + Start
+  does); Settings > Controls > Screenshot button combo brings it back.
+- **One hint, once.** The two tips at the start of your first games are now a
+  single line in the first game you ever play.
+
+**Fixes from GBAdhoc 4.x**
+
+VitAdhoc's game engine started from GBAdhoc 4.1.1. These fixes come from GBAdhoc
+4.5.0 (and the work behind it), checked against the Vita's own engine:
+- **Need for Speed: Underground** could hang at its language screen: a timer
+  that had just run out read 0 instead of its start value, and the game used
+  that to size a huge memory clear. Fixed.
+- **Mario Golf: Advance Tour, Mario Tennis: Power Tour and Golden Sun 2** use
+  a small interrupt routine that the engine started one instruction late.
+  Fixed. This may help the black and white screens reported on Mario Golf and
+  Mario Tennis; we could not test those games.
+- **Wrong code skipped or run**: a jump into the middle of a run of "only if"
+  instructions ran the rest of the run even when the condition was false
+  (seen in Mario Golf). Fixed.
+- **OpenLara and other games that use the fast-interrupt mode**: the engine
+  mixed up that mode's registers with the normal ones, which could send a game
+  into a near-endless loop. Fixed.
+- **Rare instruction fixes**: shifts by a register count in code that runs
+  from graphics memory, returning from an interrupt with the register list
+  form, and keeping the CPU flags when a game changes CPU mode.
+
+**Mortal Kombat: Deadly Alliance** showed its Midway logo for over 40 seconds
+and covered its title and name screens in green speckles. The built-in BIOS
+read the wrong size when the game asked it to unpack data that starts halfway
+through a 4-byte block. Fixed, for all of the BIOS's unpacking calls.
+
+Not taken from 4.5.0: its Pokemon MonoMyth accuracy work, its speed work for
+self-modifying code, and its PSP-only changes (they only exist for the PSP's
+processor). Nothing here changes saves or save states: 1.2 states still load.
+These fixes are tested with our own test programs. We also ran the games named
+above, and Big Mutha Truckers, Smashing Drive and Street Racing Syndicate, for
+a minute or more each on a PC build of the engine: they start and run in both
+1.2 and 1.3, and we could not repeat the resets or the black and white screens
+(Need for Speed: Underground and Mortal Kombat did change, as described). This
+is not a Vita test; see [Game Compatibility](docs/COMPATIBILITY.md).
+
+**Trading between versions**
+- **Game Boy and Game Boy Color games link with each other.** A `.gb` game and
+  a `.gbc` game can now be partners on one Vita (and between two Vitas, which
+  is tested now), each running as its own kind of handheld. That is what
+  Red, Blue and Yellow need with each other and with Gold, Silver and Crystal
+  (Time Capsule trades). Before, Two players on this Vita only offered games
+  with the same file ending, so Red (`.gb`) could not pair with Gold (`.gbc`).
+- **Two Vitas can trade between versions of a Game Boy Advance game.** Ruby
+  with Sapphire, FireRed with LeafGreen and Emerald with FireRed now link over
+  Wi-Fi, the internet and ad hoc. The room list shows both games
+  ("FireRed <-> Emerald") and no longer asks you to open the same game. The
+  first time, each Vita sends the other its game (checked, with a progress
+  bar, a time estimate and Cancel); a copy is kept in
+  `ux0:data/GBAdhoc/cache/link/` under a hashed name, never in your game
+  folders and never in the game list, so the next session starts at once.
+  The cache holds 4 games or 96 MB. Each player's own save stays on their own
+  Vita. Both players must own their games. Not yet confirmed on two real Vitas.
+
+**Split screen for two players**
+- **Two controllers, two equal pictures.** With a second controller (a PS TV
+  with two DualShocks, or a handheld Vita with an external pad through a
+  plugin) Two players on this Vita now always shows two equal pictures side by
+  side, one pad each. Either player can open the menu with Start + Select on
+  their own pad, and the menu stops both games without either player's held
+  buttons leaking into a game when it closes.
+- **A second pad is found on any port.** The second controller is accepted on
+  any of the Vita's controller slots, a pad that is connected but untouched
+  counts, and plugging one in or switching it off is noticed within a moment.
+  A DualShock's L1 and L2 both act as L, and R1 and R2 as R.
+- **No controller? Player 2 on the touch screen.** A new row in Two players on
+  this Vita (Off by default, remembered): player 2's half of the front screen
+  becomes a translucent D-pad with A, B, L, R, Start and Select, and both
+  players can press at once.
+- PLAY-TOGETHER.md says plainly what you need and which games this is for.
+
 ## Version 1.2 — October 30, 2026
 
 **Bring your saves, your folders and your zips.** Plus graphics fixes and a

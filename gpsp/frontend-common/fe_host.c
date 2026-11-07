@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <errno.h>
 
@@ -229,6 +230,21 @@ static uint16_t gb_buttons_from_retro(uint32_t pad)
 
 static long gb_save_file_len = -1;   /* bytes on disk; -1 = absent/unknown */
 
+/* Bytes a Game Boy save file carries beyond the layout the core writes
+ * (cartridge RAM, then the 44/48-byte clock block on a clock cartridge) --
+ * another emulator's own trailer, for one.  Kept as read and written back
+ * after the image, so the save never comes back shorter than it went in. */
+#define GB_EXTRA_MAX (64u * 1024u)
+static uint8_t *gb_extra;
+static size_t gb_extra_len;
+
+extern void app_battery_written(const char *save_path) __attribute__((weak));
+static void gb_battery_written_note(void)
+{
+   if (&app_battery_written && host.save_path)
+      app_battery_written(host.save_path);
+}
+
 static int gb_save_reserve(size_t size)
 {
    uint8_t *buffer;
@@ -422,17 +438,36 @@ static void save_failed(void)
  * close errors and renames.  Either thread; the caller owns `data`. */
 static int gb_save_write(const uint8_t *data, size_t size, uint32_t crc)
 {
+   uint8_t *joined = NULL;
    (void)crc;                           /* the log line only */
+   if (gb_extra_len)
+   {
+      joined = (uint8_t *)malloc(size + gb_extra_len);
+      if (!joined)
+      {
+         gb_save_file_len = -1;
+         save_failed();
+         fe_evt("gb_sram_flush size=%u FAILED (no memory)", (unsigned)size);
+         return -1;
+      }
+      memcpy(joined, data, size);
+      memcpy(joined + size, gb_extra, gb_extra_len);
+      data = joined;
+      size += gb_extra_len;
+   }
    if (save_recover_bak(host.save_path) < 0 ||
        state_file_replace(host.save_path, data, size) != 0)
    {
+      free(joined);
       gb_save_file_len = -1;
       save_failed();
       fe_evt("gb_sram_flush size=%u FAILED", (unsigned)size);
       return -1;
    }
+   free(joined);
    gb_save_file_len = (long)size;
    fe_evt("gb_sram_flush size=%u crc=%08x", (unsigned)size, crc);
+   gb_battery_written_note();
    return 0;
 }
 
@@ -589,6 +624,9 @@ static int gb_save_load(void)
    gb_save_crc_valid = 0;
    gb_save_file_len = -1;
    battery_load_failed = 0;
+   free(gb_extra);
+   gb_extra = NULL;
+   gb_extra_len = 0;
    if (!size || !host.save_path)
       return 0;
    battery_load_failed = 1;
@@ -611,10 +649,64 @@ static int gb_save_load(void)
    n = fread(gb_save_buffer, 1, cap, f);
    whole = fgetc(f) == EOF;
    read_ok = !ferror(f);
+   if (!whole && read_ok)
+   {
+      /* Longer than any layout we know: keep every byte past the image so
+       * the first save does not cut them off. */
+      size_t more = 0, room = GB_EXTRA_MAX + 1;
+      uint8_t *rest = (uint8_t *)malloc(room);
+      if (!rest)
+         read_ok = 0;
+      else
+      {
+         fseek(f, (long)n, SEEK_SET);
+         more = fread(rest, 1, room, f);
+         if (ferror(f) || more > GB_EXTRA_MAX || more == 0)
+            read_ok = 0;
+         else
+         {
+            if (n > size)
+            {
+               gb_extra = (uint8_t *)malloc(n - size + more);
+               if (!gb_extra)
+                  read_ok = 0;
+               else
+               {
+                  memcpy(gb_extra, gb_save_buffer + size, n - size);
+                  memcpy(gb_extra + (n - size), rest, more);
+                  gb_extra_len = n - size + more;
+               }
+            }
+            else
+            {
+               gb_extra = rest;
+               rest = NULL;
+               gb_extra_len = more;
+            }
+         }
+         free(rest);
+      }
+      if (!read_ok)
+         fe_log("gb_sram_load: %s is longer than a battery save; refusing",
+                host.save_path);
+   }
    if (fclose(f) != 0)
       read_ok = 0;
    if (!read_ok)
       goto failed;
+   /* A clock block of the wrong length (or cartridge RAM plus something
+    * else) that the core does not read: it stays in the file as it was. */
+   if (whole && n > size && !gb_extra_len)
+   {
+      gb_extra = (uint8_t *)malloc(n - size);
+      if (gb_extra)
+      {
+         memcpy(gb_extra, gb_save_buffer + size, n - size);
+         gb_extra_len = n - size;
+      }
+      else
+         goto failed;
+   }
    if (!n)
    {
       fe_evt("gb_sram_load size=0");
@@ -625,6 +717,8 @@ static int gb_save_load(void)
    load = whole ? n : gbcore_cart_ram_size(gb_core);
    if (load > n)
       load = n;
+   if (gb_extra_len && load > size)
+      load = size;                      /* the rest is kept, not loaded */
    if (whole)
    {
       gb_save_file_len = (long)n;
@@ -641,7 +735,7 @@ static int gb_save_load(void)
     * in the standard layout (RAM, then the 48-byte trailer on clock carts)
     * -- with the RAM just loaded, not a blank one. */
    gb_save_crc = gb_save_ram_crc(size);
-   gb_save_crc_valid = gb_save_file_len == (long)size;
+   gb_save_crc_valid = gb_save_file_len == (long)(size + gb_extra_len);
    fe_evt("gb_sram_load size=%u file=%u crc=%08x", (unsigned)size,
           (unsigned)n, gb_save_crc);
    battery_load_failed = 0;
@@ -857,6 +951,60 @@ static int gb_serial_transfer(void *userdata, uint8_t outgoing,
    /* A timeout/disconnect is completed with the open-bus value. That keeps
     * the game from hanging inside the emulator's CPU loop. */
    return 1;
+}
+
+/* [rtc] THE GBA CARTRIDGE CLOCK FOLLOWS THE CONSOLE'S CLOCK.
+ * gba_memory.c shows the game gpsp_rtc_wall when it is set (rtc_clock.h):
+ * otherwise "load time + frames played", which rewinds the in-game clock at
+ * every Continue / state load and runs ahead under fast-forward (Pokemon
+ * berries and daily events, libretro/gpsp#269 and #275; upstream's answer
+ * was an "RTC time source" option, here it is the default).  Published
+ * before the cartridge loads and then at most five times a second.  A link
+ * session sets gpsp_rtc_frames_only itself (fe_gbadual.c) so both machines
+ * compute the same clock; rewind records the second it showed each frame
+ * (fe_host rw_frame_context), so it replays exactly. */
+extern volatile long long gpsp_rtc_wall;
+extern time_t (*gpsp_wallclock)(void);
+/* [save-type] gba_memory.c */
+extern int gpsp_force_save_type;
+extern unsigned gpsp_save_size_hint;
+extern const char *gpsp_backup_name(void);
+static void rtc_wall_publish(int force)
+{
+   static uint64_t last_us;
+   uint64_t now;
+   time_t t;
+   if (host.console != FE_CONSOLE_GBA)
+      return;
+   if (host.gba_rtc_frames_only || !gpsp_wallclock)
+   {
+      gpsp_rtc_wall = 0;
+      return;
+   }
+   now = host.time_us ? host.time_us() : 0;
+   if (!force && host.time_us && now - last_us < 200000u)
+      return;
+   last_us = now;
+   t = gpsp_wallclock();
+   if (t > 0)
+      gpsp_rtc_wall = (long long)t;      /* a failed read keeps the last one */
+   if (force)
+      fe_evt("rtc_wall on=1 t=%lld", (long long)t);
+}
+
+/* [save-type] How big is the battery file already on disk?  0 = none. */
+static uint32_t save_file_size_hint(void)
+{
+   FILE *f;
+   long n;
+   if (!host.save_path)
+      return 0;
+   f = fopen(host.save_path, "rb");
+   if (!f)
+      return 0;
+   n = fseek(f, 0, SEEK_END) == 0 ? ftell(f) : -1;
+   fclose(f);
+   return n > 0 ? (uint32_t)n : 0;
 }
 
 /* Core options (FRONTEND-AUDIT §9). Values must match check_variables()
@@ -1423,6 +1571,25 @@ int fe_host_battery_refusal(void)
    return battery_load_failed;
 }
 
+/* Bytes a save file carries after the core's 128 KiB image -- the clock
+ * block mGBA appends (131072 + 16 = 131088 bytes), for one.  The core has no
+ * use for them, but they are the player's: they are kept as read and written
+ * back after the image every time, so a save never comes back shorter than
+ * it went in.  (Up to 1.2 the first save cut them off.) */
+#define SRAM_TAIL_MAX (64u * 1024u)
+static uint8_t *sram_tail;
+static size_t sram_tail_len;
+
+/* The app's hook, told after every complete write of a battery file (the
+ * save sync in vita/save_sync.c).  Weak: other hosts and the unit tests
+ * have none. */
+extern void app_battery_written(const char *save_path) __attribute__((weak));
+static void battery_written_note(void)
+{
+   if (&app_battery_written && host.save_path)
+      app_battery_written(host.save_path);
+}
+
 static int sram_load(void)
 {
    void *p = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
@@ -1438,17 +1605,47 @@ static int sram_load(void)
    if (save_recover_bak(host.save_path) < 0)
       goto failed;
 
+   free(sram_tail);
+   sram_tail = NULL;
+   sram_tail_len = 0;
    f = fopen(host.save_path, "rb");
    if (f)
    {
       n = fread(p, 1, FE_SRAM_SIZE, f);
-      exact = (n == FE_SRAM_SIZE) && (fgetc(f) == EOF);   /* no trailing junk */
+      if (n == FE_SRAM_SIZE)
+      {
+         /* More after the image: keep it (see sram_tail). */
+         uint8_t *t = (uint8_t *)malloc(SRAM_TAIL_MAX + 1);
+         size_t tn = t ? fread(t, 1, SRAM_TAIL_MAX + 1, f) : 0;
+         if (!t || tn > SRAM_TAIL_MAX || ferror(f))
+         {
+            /* Too long to be a battery file we understand, or no memory:
+             * never rewrite it. */
+            free(t);
+            fclose(f);
+            fe_log("sram_load: %s is longer than a battery save; refusing",
+                   host.save_path);
+            goto failed;
+         }
+         if (tn)
+         {
+            sram_tail = t;
+            sram_tail_len = tn;
+         }
+         else
+            free(t);
+      }
+      exact = (n == FE_SRAM_SIZE);       /* the image itself is all there */
       read_ok = !ferror(f);
       if (fclose(f) != 0)
          read_ok = 0;
       if (!read_ok)
          goto failed;
-      fe_evt("sram_load size=%u crc=%08x", (unsigned)n, (unsigned)sram_crc());
+      fe_evt("sram_load size=%u crc=%08x", (unsigned)(n + sram_tail_len),
+             (unsigned)sram_crc());
+      if (sram_tail_len)
+         fe_evt("sram_load keeps %u bytes after the image",
+                (unsigned)sram_tail_len);
    }
    else
    {
@@ -2193,6 +2390,9 @@ static int sram_write_full_blocks(FILE *f, void *user)
       if (fwrite(sram_stage, 1, SRAM_BLOCK, f) != SRAM_BLOCK)
          return -1;
    }
+   if (sram_tail_len &&
+       fwrite(sram_tail, 1, sram_tail_len, f) != sram_tail_len)
+      return -1;
    return 0;
 }
 
@@ -2323,6 +2523,7 @@ static int sram_drain(uint32_t budget_us)
 
    if (!sram_pending())
    {
+      battery_written_note();
       /* `ms=` was ambiguous in the field: it is the TOTAL time spent
        * writing, which under ADR-0020's budget is spread across however
        * many frames it took.  `slices=` disambiguates it once and for all
@@ -3167,6 +3368,117 @@ int fe_host_gblink_window(struct fe_gblink_window *out)
  * and the session restarts it (and the partner's, instance B) from the two
  * consoles' save states.  The battery writer is held for the whole session:
  * only an agreed end lets the session's battery image reach the stick. */
+/* THE PARTNER'S CARTRIDGE CACHE (fe_gblink_platform.rom_cache).  One file
+ * per cartridge in host.gba_rom_cache_dir, named by its identity: nothing of
+ * a game's name or folder.  A new file that would take the cache over its
+ * cap pushes out the OLDEST ones (never the one in use); a half-written
+ * ".part" left by a crash is removed with them. */
+#include <dirent.h>
+#define ROMC_EXT ".gbarom"
+typedef struct romc_ent { char name[64]; long size; long age; } romc_ent;
+
+static void romc_trim(const char *dir, const char *keep)
+{
+   romc_ent e[64];
+   unsigned n = 0, i, files = host.gba_rom_cache_files
+                                 ? host.gba_rom_cache_files : 4u;
+   unsigned long cap = (unsigned long)(host.gba_rom_cache_mb
+                                          ? host.gba_rom_cache_mb : 96u)
+                       << 20, total = 0;
+   DIR *d = opendir(dir);
+   struct dirent *de;
+   const char *kb = strrchr(keep, '/');
+   kb = kb ? kb + 1 : keep;
+   if (!d)
+      return;
+   while (n < 64 && (de = readdir(d)) != NULL)
+   {
+      char p[600];
+      struct stat st;
+      size_t l = strlen(de->d_name);
+      if (de->d_name[0] == '.' || l >= sizeof(e[0].name))
+         continue;
+      snprintf(p, sizeof(p), "%s/%s", dir, de->d_name);
+      if (l > 5 && !strcmp(de->d_name + l - 5, ".part"))
+      {
+         remove(p);                   /* a copy that never finished */
+         continue;
+      }
+      if (l < sizeof(ROMC_EXT) || strcmp(de->d_name + l - 7, ROMC_EXT) ||
+          stat(p, &st) != 0)
+         continue;
+      snprintf(e[n].name, sizeof(e[n].name), "%s", de->d_name);
+      e[n].size = (long)st.st_size;
+      e[n].age = (long)st.st_mtime;
+      total += (unsigned long)st.st_size;
+      n++;
+   }
+   closedir(d);
+   for (;;)
+   {
+      int oldest = -1;
+      for (i = 0; i < n; i++)
+         if (e[i].size >= 0 && strcmp(e[i].name, kb) != 0 &&
+             (oldest < 0 || e[i].age < e[oldest].age))
+            oldest = (int)i;
+      {
+         unsigned alive = 0;
+         for (i = 0; i < n; i++)
+            alive += e[i].size >= 0;
+         if (oldest < 0 || (alive <= files && total <= cap))
+            break;
+      }
+      {
+         char p[600];
+         snprintf(p, sizeof(p), "%s/%s", dir, e[oldest].name);
+         remove(p);
+         fe_evt("gblink_cache_evict file=%s", e[oldest].name);
+         total -= (unsigned long)e[oldest].size;
+         e[oldest].size = -1;
+      }
+   }
+}
+
+static int gba_rom_cache(void *user, int op, const uint8_t id[20],
+                         uint32_t size, char *path, size_t cap)
+{
+   static const char hx[] = "0123456789abcdef";
+   char name[64], dir[400];
+   unsigned i;
+   (void)user;
+   (void)size;
+   if (!host.gba_rom_cache_dir || !host.gba_rom_cache_dir[0] ||
+       strlen(host.gba_rom_cache_dir) >= sizeof(dir) - 1)
+      return 0;
+   snprintf(dir, sizeof(dir), "%s", host.gba_rom_cache_dir);
+   for (i = 0; i < 20; i++)
+   {
+      name[i * 2] = hx[id[i] >> 4];
+      name[i * 2 + 1] = hx[id[i] & 15];
+   }
+   name[40] = '\0';
+   strcat(name, ROMC_EXT);
+   if (op == 1)
+   {
+      romc_trim(dir, path);
+      return 1;
+   }
+   if (mkdir(dir, 0777) != 0 && errno != EEXIST)
+   {
+      /* its parent may be missing too (one level) */
+      char par[400], *sl;
+      snprintf(par, sizeof(par), "%s", dir);
+      sl = strrchr(par, '/');
+      if (!sl)
+         return 0;
+      *sl = '\0';
+      (void)mkdir(par, 0777);
+      if (mkdir(dir, 0777) != 0 && errno != EEXIST)
+         return 0;
+   }
+   return snprintf(path, cap, "%s/%s", dir, name) < (int)cap;
+}
+
 static int gba_commit(void *user, const void *image, size_t size)
 {
    (void)user;
@@ -3528,6 +3840,7 @@ static int gba_cable_start_body(int is_host, unsigned input_delay, int64_t rtc_s
    p.send_room = gbl_room;
    p.bulk_per_step = gbl_bulk;
    p.commit_save = gba_commit;
+   p.rom_cache = gba_rom_cache;
    /* GB-LINK.md section 14, carried over (GBA-LINK-MIRROR.md section 15):
     * stall absorption and resend requests, each with the GB session's
     * kill switch (gblink_absorb / gblink_nack). */
@@ -4075,6 +4388,11 @@ int fe_host_boot(const fe_host_config *cfg)
 
    memset(&game, 0, sizeof(game));
    game.path = host.rom_path;
+   rtc_wall_publish(1);                  /* [rtc] before the cartridge loads */
+   gpsp_force_save_type = host.gba_save_type;      /* [save-type] */
+   gpsp_save_size_hint = save_file_size_hint();
+   fe_evt("save_type choice=%d file_size=%u", host.gba_save_type,
+          (unsigned)gpsp_save_size_hint);
    if (host.boot_status) host.boot_status("Reading ROM");
    if (!retro_load_game(&game))
    {
@@ -4084,6 +4402,7 @@ int fe_host_boot(const fe_host_config *cfg)
    }
 
    log_rom_evt();
+   fe_evt("save_type detected=%s", gpsp_backup_name());
    if (gpsp_sensor_kinds())
       fe_evt("sensor_cart kinds=%u", (unsigned)gpsp_sensor_kinds());
 
@@ -6985,6 +7304,8 @@ static void run_frame(void)
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;
    unsigned rf0 = 0, ff0 = 0, sf0 = 0, df0 = 0, pl0 = 0;
 
+   rtc_wall_publish(0);
+
 #ifdef GBA_LINK
    if (gbl && gba_cable)
    {
@@ -7240,6 +7561,34 @@ static void gbloc_audio(void *user, const int16_t *samples, size_t frames)
       gbloc.cfg.audio(samples, frames);
 }
 
+/* The hardware a local partner's cartridge runs on: what its own file name
+ * says (.gbc = Game Boy Color, .gb = Game Boy), as for any game; and a
+ * colour-only cartridge (header 0x143 = 0xC0) is a Color whatever its file is
+ * called.  The partner need not be the player's console: Red (.gb) trades with
+ * Gold (.gbc) and each runs as its own hardware. */
+static fe_console_t gbloc_partner_console(const char *path)
+{
+   const char *dot = path ? strrchr(path, '.') : NULL;
+   fe_console_t c = host.console;
+   if (dot && !strcasecmp(dot, ".gbc"))
+      c = FE_CONSOLE_GBC;
+   else if (dot && !strcasecmp(dot, ".gb"))
+      c = FE_CONSOLE_GB;
+   if (c == FE_CONSOLE_GB && path)
+   {
+      FILE *f = fopen(path, "rb");
+      unsigned char b = 0;
+      if (f)
+      {
+         if (fseek(f, 0x143, SEEK_SET) == 0 && fread(&b, 1, 1, f) == 1 &&
+             b == 0xC0)
+            c = FE_CONSOLE_GBC;
+         fclose(f);
+      }
+   }
+   return c;
+}
+
 /* One machine's state, in a buffer of its own size.  The caller frees. */
 static uint8_t *gbloc_state_take(int slot, gbcore_t *core, size_t *n)
 {
@@ -7320,7 +7669,7 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    dc.machine[0].callbacks.video = gb_video_frame;
    dc.machine[0].callbacks.audio_batch = gb_audio_batch;
    dc.machine[1].rom_path = prom;
-   dc.machine[1].console = host.console;
+   dc.machine[1].console = other ? gbloc_partner_console(prom) : host.console;
    dc.machine[1].palette = (unsigned)host.gb_palette;
    dc.machine[1].wallclock = host.wallclock;
    dc.machine[1].save = cfg->clone ? sv : cfg->save;
@@ -7362,8 +7711,9 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
       gb_local_pad = cfg->pad;
       gb_local_on = 1;
       fe_evt("gb_local_start ok clone=%d other=%d rom=%s save=%u batch=%u "
-             "state=%u", cfg->clone, other, prom, (unsigned)cfg->save_n,
-             dc.batch_lines, (unsigned)stn);
+             "state=%u console=%d/%d", cfg->clone, other, prom,
+             (unsigned)cfg->save_n, dc.batch_lines, (unsigned)stn,
+             (int)dc.machine[0].console, (int)dc.machine[1].console);
    }
    free(st);
    free(sv);

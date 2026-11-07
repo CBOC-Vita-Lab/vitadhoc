@@ -75,6 +75,10 @@
 #include "fe_util.h"
 
 #include <ctype.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <ucontext.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -181,6 +185,75 @@ static uint64_t refresh_ns(void)
 static unsigned script_frame(void)
 {
    return (unsigned)((now_ns() - slept_ns) / refresh_ns());
+}
+
+/* ---- GBADHOC_PCPROF=file: a statistical profile of the guest -------------
+ * Under qemu-user there is no valgrind and no plugin; this samples the PC of
+ * whatever thread the 1 ms (wall) SIGALRM lands on and writes
+ * "tid pc" lines at exit.  GBADHOC_PCPROF_FROM=F starts at refresh F.  For
+ * tools/perf (the 1.3 profiling pass): qemu's cost is roughly proportional
+ * to guest instructions executed, so this shows where the ARM dynarec's
+ * output and the C helpers spend a frame.  Twin-only. */
+#define PCPROF_CAP (1u << 21)
+static struct { int tid; uintptr_t pc; } *pcp_buf;
+static volatile unsigned pcp_n;
+static unsigned pcp_from;
+static const char *pcp_path;
+
+static void pcp_handler(int sig, siginfo_t *si, void *vuc)
+{
+   const ucontext_t *uc = (const ucontext_t *)vuc;
+   unsigned i;
+   (void)sig; (void)si;
+   if (script_frame() < pcp_from)
+      return;
+   i = __atomic_fetch_add(&pcp_n, 1, __ATOMIC_RELAXED);
+   if (i >= PCPROF_CAP)
+      return;
+   pcp_buf[i].tid = (int)syscall(SYS_gettid);
+#if defined(__arm__)
+   pcp_buf[i].pc = uc->uc_mcontext.arm_pc;
+#else
+   pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+#endif
+}
+
+static void pcprof_init(void)
+{
+   struct sigaction sa;
+   struct itimerval it;
+   const char *f = getenv("GBADHOC_PCPROF_FROM");
+   pcp_path = getenv("GBADHOC_PCPROF");
+   if (!pcp_path || !*pcp_path)
+      return;
+   pcp_from = f ? (unsigned)atoi(f) : 0;
+   pcp_buf = calloc(PCPROF_CAP, sizeof(*pcp_buf));
+   memset(&sa, 0, sizeof(sa));
+   sa.sa_sigaction = pcp_handler;
+   sa.sa_flags = SA_SIGINFO | SA_RESTART;
+   sigaction(SIGALRM, &sa, NULL);
+   it.it_interval.tv_sec = 0; it.it_interval.tv_usec = 1000;
+   it.it_value = it.it_interval;
+   setitimer(ITIMER_REAL, &it, NULL);
+}
+
+static void pcprof_dump(void)
+{
+   struct itimerval off;
+   FILE *fp;
+   unsigned i, n = pcp_n;
+   if (!pcp_buf)
+      return;
+   memset(&off, 0, sizeof(off));
+   setitimer(ITIMER_REAL, &off, NULL);
+   fp = fopen(pcp_path, "w");
+   if (n > PCPROF_CAP)
+      n = PCPROF_CAP;
+   for (i = 0; fp && i < n; i++)
+      fprintf(fp, "%d %lx\n", pcp_buf[i].tid, (unsigned long)pcp_buf[i].pc);
+   if (fp)
+      fclose(fp);
+   pcp_buf = NULL;
 }
 
 /* ---- audio: the port and its thread ------------------------------------------ */
@@ -561,6 +634,7 @@ int plat_init(int argc, char **argv)
 {
    unsigned cursor = 0;
    int i;
+   pcprof_init();
    for (i = 1; i < argc; i++)
    {
       const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -626,6 +700,7 @@ int plat_init(int argc, char **argv)
 
 void plat_exit(int code)
 {
+   pcprof_dump();
    if (wav_fp)
    {
       wav_header(wav_fp, wav_rate, (uint32_t)wav_frames);
@@ -654,6 +729,11 @@ int plat_launch_param(char *out, size_t cap)
       return -2;
    memcpy(out, host_launch_param, n + 1);
    return 0;
+}
+int plat_exec_program(const char *program, const char *arg)
+{
+   (void)program; (void)arg;
+   return -1;                 /* the twin never starts another program */
 }
 const char *plat_app_dir(void)
 {
@@ -730,7 +810,16 @@ time_t plat_wallclock(void)
 {
    /* A fixed date plus the run's own time: cartridge clocks must not make
     * two simulated runs differ. */
-   return (time_t)(1700000000ull + now_ns() / 1000000000ull);
+   /* VITADHOC_FAKE_TIME=<seconds since 1970, local time as the console shows
+    * it> is the tests' hook for "what the Vita's clock says at start-up"; the
+    * run's own time still advances from there. */
+   static long long base = -1;
+   if (base < 0)
+   {
+      const char *e = getenv("VITADHOC_FAKE_TIME");
+      base = e && *e ? atoll(e) : 1700000000ll;
+   }
+   return (time_t)((unsigned long long)base + now_ns() / 1000000000ull);
 }
 
 unsigned plat_vcount(void) { return (unsigned)(now_ns() / refresh_ns()); }
@@ -750,17 +839,74 @@ void plat_wait_vblank(void)
 
 unsigned plat_refresh_mhz(void) { return opt.refresh_mhz; }
 
-unsigned plat_arm_mhz(void) { return 0; }
+static unsigned g_fake_arm;
 
-unsigned plat_arm_mhz_measured(void) { return 0; }
+unsigned plat_arm_mhz(void) { return g_fake_arm; }
+/* The tests' stand-ins (GBADHOC_FAKE_*): a console that refuses 500, an
+ * overclock plugin's folders under GBADHOC_FAKE_UR0, a measured clock. */
+unsigned plat_arm_mhz_measured(void)
+{
+   const char *e = getenv("GBADHOC_FAKE_MHZ");
+   return e ? (unsigned)atoi(e) : 0;
+}
+
+int plat_cpu_set_mhz(int mhz)
+{
+   if (mhz > 444 && getenv("GBADHOC_FAKE_REFUSE500"))
+      return -1;
+   g_fake_arm = (unsigned)mhz;
+   return 0;
+}
+
+static const char *fake_ur0(const char *sub)
+{
+   static char buf[2][512];
+   static int k;
+   const char *e = getenv("GBADHOC_FAKE_UR0");
+   if (!e || !e[0])
+      return "";
+   k ^= 1;
+   snprintf(buf[k], sizeof(buf[k]), "%s/%s", e, sub);
+   return buf[k];
+}
+
+const char *plat_tai_dir(void) { return fake_ur0("tai"); }
+const char *plat_psvshell_dir(void) { return fake_ur0("data/PSVshell/profiles"); }
+const char *plat_title_id(void) { return "GBAD00001"; }
 
 void plat_power_tick(void) { }
 
 /* An emulated frame costs --work-us of simulated time (--slow's frames
  * cost more). */
+/* GBADHOC_CG_FROM=F: with `valgrind --tool=callgrind --instr-atstart=no`,
+ * switch instrumentation on at emulated frame F and zero the counters, so a
+ * profile covers a steady-state window instead of the boot (twin-only; the
+ * header is a development one, absent elsewhere). */
+#if defined(__has_include)
+#if __has_include(<valgrind/callgrind.h>)
+#include <valgrind/callgrind.h>
+#define HAVE_CG_MARK 1
+#endif
+#endif
+
 void plat_frame_ran(void)
 {
    unsigned us = opt.work_us;
+#ifdef HAVE_CG_MARK
+   {
+      static long cg_from = -2;
+      if (cg_from == -2)
+      {
+         const char *e = getenv("GBADHOC_CG_FROM");
+         cg_from = e && *e ? atol(e) : -1;
+      }
+      if (cg_from >= 0 && (long)frames_ran == cg_from)
+      {
+         CALLGRIND_START_INSTRUMENTATION;
+         CALLGRIND_ZERO_STATS;
+      }
+   }
+#endif
    if (opt.slow_n && frames_ran >= opt.slow_at &&
        frames_ran < opt.slow_at + opt.slow_n)
       us = opt.slow_us;
@@ -1116,9 +1262,21 @@ static void pad_at(plat_pad *pad, int pad2)
    pad->ry = (b & HOST_RS_UP) ? 0 : (b & HOST_RS_DOWN) ? 255 : 128;
 }
 
+static int g_face_swap;
+
+void plat_pad_face_swap(int on) { g_face_swap = on ? 1 : 0; }
+
+static void face_swap_pad(plat_pad *pad)
+{
+   if (g_face_swap && ((pad->buttons & PLAT_BTN_CROSS) != 0) !=
+                      ((pad->buttons & PLAT_BTN_CIRCLE) != 0))
+      pad->buttons ^= PLAT_BTN_CROSS | PLAT_BTN_CIRCLE;
+}
+
 void plat_pad_read(plat_pad *pad)
 {
    pad_at(pad, 0);
+   face_swap_pad(pad);
 }
 
 /* The second controller: there from the start when the script names it
@@ -1146,6 +1304,7 @@ int plat_pad_read2(plat_pad *pad)
    if (!pad2_present())
       return 0;
    pad_at(pad, 1);
+   face_swap_pad(pad);
    return 1;
 }
 
@@ -1178,6 +1337,24 @@ int plat_motion_read(plat_motion *m)
 }
 
 /* ---- the finger and the keyboard (pspcompat.c asks, plat.h) ------------------ */
+
+/* Every touch entry that is down this frame is a finger (the script's
+ * overlapping touch= entries are a multi-touch). */
+int plat_touch_points(plat_touch_pt *out, int max)
+{
+   unsigned i, f = script_frame();
+   int n = 0;
+   for (i = 0; i < opt.ntouch && n < max; i++)
+      if (f >= opt.touch[i].frame && f < opt.touch[i].frame + opt.touch[i].len)
+      {
+         int span = opt.touch[i].len > 1 ? (int)opt.touch[i].len - 1 : 1;
+         int k = (int)(f - opt.touch[i].frame);
+         out[n].x = opt.touch[i].x0 + (opt.touch[i].x1 - opt.touch[i].x0) * k / span;
+         out[n].y = opt.touch[i].y0 + (opt.touch[i].y1 - opt.touch[i].y0) * k / span;
+         n++;
+      }
+   return n;
+}
 
 int plat_script_touch(int *nx, int *ny)
 {

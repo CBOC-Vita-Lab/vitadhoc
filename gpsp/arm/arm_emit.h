@@ -1638,12 +1638,30 @@ static void trace_instruction(u32 pc, u32 mode)
   generate_store_call_u32();                                                  \
   write32((pc + 4))                                                           \
 
-#define arm_block_memory_adjust_pc_store()                                    \
+#define arm_ldm_sbit_yes 1
+#define arm_ldm_sbit_no  0
 
-#define arm_block_memory_adjust_pc_load()                                     \
+#define arm_block_memory_adjust_pc_store(s_bit)                               \
+
+/* LDM {..., pc}^ (ARM ARM LDM (3)): the registers are the current mode's and
+ * the CPSR is then loaded from the SPSR, like MOVS pc.  Without the S bit
+ * handling the load branched but stayed in the exception mode.  (LDM/STM ^
+ * without the PC, the user-bank transfer, is still not implemented.) */
+#define arm_block_memory_adjust_pc_load(s_bit)                                \
   if(reg_list & 0x8000)                                                       \
   {                                                                           \
-    generate_indirect_branch_arm();                                           \
+    if(arm_ldm_sbit_##s_bit)                                                  \
+    {                                                                         \
+      if(condition == 0x0E)                                                   \
+      {                                                                       \
+        generate_cycle_update();                                              \
+      }                                                                       \
+      generate_function_far_call(armfn_spsr_restore);                         \
+    }                                                                         \
+    else                                                                      \
+    {                                                                         \
+      generate_indirect_branch_arm();                                         \
+    }                                                                         \
   }                                                                           \
 
 #define arm_block_memory_offset_down_a()                                      \
@@ -1714,7 +1732,7 @@ static void trace_instruction(u32 pc, u32 mode)
     }                                                                         \
   }                                                                           \
                                                                               \
-  arm_block_memory_adjust_pc_##access_type();                                 \
+  arm_block_memory_adjust_pc_##access_type(s_bit);                            \
 }                                                                             \
 
 #define arm_swap(type)                                                        \

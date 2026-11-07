@@ -106,7 +106,7 @@ int ui_host_mgift_available(void);
  * that exist; never the roms/ folder itself, never one twice.  The folders
  * are device paths without a trailing slash; the strings are valid for the
  * life of the program.  The weak defaults have none. */
-#define UI_EXTRA_ROOTS_MAX 8
+#define UI_EXTRA_ROOTS_MAX 24
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
 /* Settings > Game folders: add a folder, or remove it when it is listed,
@@ -125,10 +125,26 @@ int         ui_host_zip_console(const char *path, unsigned size);
  * shot_dir_set: 0 = taken, -1 = not a usable folder. */
 int         ui_host_grid_level(void);
 void        ui_host_grid_set(int level);
+/* Settings > Library: Sync RetroArch saves (default on; sync_ra_saves in
+ * vita.ini; save_sync.h). */
+int         ui_host_sync_ra_on(void);
+void        ui_host_sync_ra_set(int on);
+int         ui_host_cpu_fast(void);          /* Settings > CPU speed: 1 = 500 MHz */
+void        ui_host_cpu_set(int fast);
+const char *ui_host_cpu_note(void);          /* "Measured: 496 MHz" and a hint */
 int         ui_host_overlay_on(void);
 void        ui_host_overlay_set(int on);
 const char *ui_host_overlay_name(void);
+/* Settings > Controls > A and B buttons: 1 when Circle is the Game Boy's A
+ * (and confirms in the menus) -- g_pcfg.ab_buttons if the player chose, else
+ * the Vita's own Enter button.  ui_host_buttons_changed(): that row changed;
+ * the app swaps the pad's Cross and Circle (and the hints' glyphs) to match. */
+int         ui_host_ab_circle(void);
+void        ui_host_buttons_changed(void);
 const char *ui_host_shot_dir(void);
+/* Cover picture > Choose a picture: the console's own photos and screenshots
+ * ("ux0:picture"; vita.ini pictures = <folder> for another). */
+const char *ui_host_pictures_dir(void);
 int         ui_host_shot_dir_set(const char *dir);
 
 /* ===========================================================================

@@ -773,6 +773,8 @@ u8 read_backup(u32 address)
 // 14bit address DMAs are made (this is done in the DMA handler).
 
 u32 eeprom_size = EEPROM_512_BYTE;
+/* [save-type] non-zero: the EEPROM size the player chose for this game. */
+static u32 eeprom_size_forced = 0;
 #ifdef GBA_LINK
 /* Monotonic count of game writes to the backup chip (SRAM/flash/EEPROM):
  * a GBA link session's "is the game saving" watch (fe_gbadual m_cart_crc)
@@ -895,9 +897,13 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
    PC-relative read resolves to the very same open bus handler with the
    same address, recursing without bound and overflowing the host stack.
    Detect a prefetch address that would itself land on open bus and fall
-   back to the latched bus value instead of recursing. */
+   back to the latched bus value instead of recursing.  The I/O page counts
+   as open bus here as a whole: a CPU that runs off the end of its code
+   (zeros slide through the mirrored IWRAM, then 0x04000000) has its fetch
+   answered by an I/O read whose open-bus path asks for the same fetch
+   again -- the segfault that ended the 1 MiB link test sessions. */
 #define fetch_is_open_bus(a)                                                  \
-  ((((a) >> 24) > 0x0F) || (((a) >> 24) == 0x01) ||                           \
+  ((((a) >> 24) > 0x0F) || (((a) >> 24) == 0x01) || (((a) >> 24) == 0x04) ||  \
    ((((a) >> 24) == 0x00) && ((a) >= 0x4000)))
 
 #define read_open8()                                                          \
@@ -1254,7 +1260,7 @@ static cpu_alert_type trigger_dma(u32 dma_number, u32 value)
         u32 length = read_dmareg(REG_DMA0CNT_L, dma_number);
 
         if((dma_number == 3) && ((dst_address >> 24) == 0x0D) &&
-         ((length & 0x1F) == 17))
+         ((length & 0x1F) == 17) && !eeprom_size_forced)
           eeprom_size = EEPROM_8_KBYTE;
 
         if(dma_number < 3)
@@ -3490,7 +3496,7 @@ void init_memory(void)
   backup_type = backup_type_reset;
   flash_bank_num = 0;
   flash_command_position = 0;
-  eeprom_size = EEPROM_512_BYTE;
+  eeprom_size = eeprom_size_forced ? eeprom_size_forced : EEPROM_512_BYTE;
   eeprom_mode = EEPROM_BASE_MODE;
   eeprom_address = 0;
   eeprom_counter = 0;
@@ -4185,9 +4191,15 @@ static void normalize_blank_backup_for_detected_type(void)
     memset(gamepak_backup, 0xFF, size);
 }
 
+/* [save-type] the library strings seen in the ROM (ROM_SIG_*), kept so the
+ * save-file size hint below can tell a ROM that names both EEPROM and 1 Mbit
+ * flash (some ROM hacks link both libraries) from one that names only EEPROM. */
+static u32 detected_rom_sigs = 0;
+
 static void detect_backup_subcircuit(const u8 *rom, u32 rom_size)
 {
   u32 file_sigs = rom_scan_signatures(rom, rom_size);
+  detected_rom_sigs = file_sigs;
   bool has_eeprom = (file_sigs & ROM_SIG_EEPROM) != 0;
   bool has_sram = (file_sigs & ROM_SIG_SRAM) != 0;
   bool has_flash1m = (file_sigs & ROM_SIG_FLASH1M) != 0;
@@ -4236,6 +4248,81 @@ static void detect_backup_subcircuit(const u8 *rom, u32 rom_size)
     flash_bank_cnt = FLASH_SIZE_64KB;
     flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
     return;
+  }
+}
+
+/* [save-type] PER-GAME SAVE TYPE and SAVE-FILE SIZE HINT.
+ *
+ * gpsp_force_save_type: set by the frontend before load (Settings > This game
+ * > Save type, a per-game setting).  GPSP_SAVE_AUTO leaves detection alone.
+ * gpsp_save_size_hint: size in bytes of the battery file on disk, 0 = none.
+ * A 128 KiB file (131072, or 131088 with a 16-byte trailer) can only be a
+ * 1 Mbit flash save, so a ROM hack whose library strings say otherwise (the
+ * 64 KiB flash string left in a Pokemon hack, libretro/gpsp#246) is read as
+ * 128 KiB flash.  Never applied to a game in the override database. */
+int gpsp_force_save_type = GPSP_SAVE_AUTO;
+u32 gpsp_save_size_hint = 0;
+
+static void apply_save_type_choice(void)
+{
+  eeprom_size_forced = 0;
+
+  switch (gpsp_force_save_type)
+  {
+    case GPSP_SAVE_SRAM:
+      backup_type_reset = BACKUP_SRAM;
+      break;
+    case GPSP_SAVE_FLASH64:
+      backup_type_reset = BACKUP_FLASH;
+      flash_bank_cnt = FLASH_SIZE_64KB;
+      flash_device_id = FLASH_DEVICE_MACRONIX_64KB;
+      break;
+    case GPSP_SAVE_FLASH128:
+      backup_type_reset = BACKUP_FLASH;
+      flash_bank_cnt = FLASH_SIZE_128KB;
+      flash_device_id = FLASH_DEVICE_SANYO_128KB;
+      break;
+    case GPSP_SAVE_EEPROM512:
+    case GPSP_SAVE_EEPROM8K:
+      backup_type_reset = BACKUP_EEPROM;
+      eeprom_size_forced = (gpsp_force_save_type == GPSP_SAVE_EEPROM8K)
+                           ? EEPROM_8_KBYTE : EEPROM_512_BYTE;
+      break;
+    default:
+    {
+      bool is_128k_file = (gpsp_save_size_hint == 128 * 1024 ||
+                           gpsp_save_size_hint == 128 * 1024 + 16);
+      if (!is_128k_file || is_known_game)
+        return;
+      if ((backup_type_reset == BACKUP_FLASH &&
+           flash_bank_cnt != FLASH_SIZE_128KB) ||
+          backup_type_reset == BACKUP_UNKN ||
+          (backup_type_reset == BACKUP_EEPROM &&
+           (detected_rom_sigs & ROM_SIG_FLASH1M)))
+      {
+        backup_type_reset = BACKUP_FLASH;
+        flash_bank_cnt = FLASH_SIZE_128KB;
+        flash_device_id = FLASH_DEVICE_SANYO_128KB;
+        backup_type_eeprom_guessed = 0;
+      }
+      return;
+    }
+  }
+  /* A chosen type is the player's word: not a guess to be revised. */
+  backup_type_eeprom_guessed = 0;
+}
+
+/* [save-type] What the cartridge was set up as, for the log and the tests. */
+const char *gpsp_backup_name(void)
+{
+  switch (backup_type_reset)
+  {
+    case BACKUP_SRAM:   return "sram";
+    case BACKUP_FLASH:  return flash_bank_cnt == FLASH_SIZE_128KB
+                               ? "flash128" : "flash64";
+    case BACKUP_EEPROM: return eeprom_size_forced == EEPROM_8_KBYTE ? "eeprom8k"
+                               : eeprom_size_forced ? "eeprom512" : "eeprom";
+    default:            return "sram-default";
   }
 }
 
@@ -4289,6 +4376,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
    flash_bank_cnt = FLASH_SIZE_64KB;
    rtc_enabled = false;
    rumble_enabled = false;
+   detected_rom_sigs = 0;
    cart_sensors = 0;
    cart_sensor_reset();
    backup_type_reset = BACKUP_UNKN;
@@ -4382,6 +4470,7 @@ u32 load_gamepak(const struct retro_game_info* info, const char *name,
       }
    }
 	
+   apply_save_type_choice();   /* [save-type] before the save file is read */
    normalize_blank_backup_for_detected_type();
 
    backup_type = backup_type_reset;

@@ -33,6 +33,22 @@ int main(int argc, char **argv)
    expect(gamedb_known_name("Pokemon - Emerald Version (USA, Europe)"),
           "a No-Intro name is known");
    expect(!gamedb_known_name("Pokemon Emerald"), "a made-up name is not");
+   /* loose titles (N records), every console */
+   expect(gamedb_name_loose('D', "Act Raiser", out, sizeof(out)) &&
+          !strcmp(out, "ActRaiser (USA)"), "SNES: 'Act Raiser' is ActRaiser");
+   expect(gamedb_name_loose('D', "7th Saga", out, sizeof(out)) &&
+          !strcmp(out, "7th Saga, The (USA)"), "SNES: '7th Saga' is 'The 7th Saga'");
+   expect(gamedb_name_loose('D', "Mega Man X 2", out, sizeof(out)) &&
+          !strcmp(out, "Mega Man X2 (USA)"), "SNES: 'Mega Man X 2' is Mega Man X2");
+   expect(gamedb_name_loose('D', "Zelda - A Link to the Past", out, sizeof(out)) &&
+          !strcmp(out, "Legend of Zelda, The - A Link to the Past (USA)"),
+          "SNES: 'Zelda - A Link to the Past' finds the Legend of Zelda");
+   expect(gamedb_name_loose('A', "Pocket Dogs (U)", out, sizeof(out)) &&
+          !strcmp(out, "Pocket Dogs (USA)"), "GBA: a GoodTools '(U)' name");
+   expect(!gamedb_name_loose('A', "Act Raiser", out, sizeof(out)),
+          "the console matters: no GBA ActRaiser");
+   expect(gamedb_name_by_crc(0x2D206BF7u, out, sizeof(out)) && !strcmp(out, "Chrono Trigger (USA)"),
+          "SNES cartridges by CRC");
    expect(gamedb_name_by_code("BPEE", out, sizeof(out)) &&
           !strcmp(out, "Pokemon - Emerald Version (USA, Europe)"),
           "BPEE -> Emerald");

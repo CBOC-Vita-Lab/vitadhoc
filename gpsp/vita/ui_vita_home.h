@@ -921,11 +921,14 @@ static void hm_backdrop(int rom, float dy)
              VS_HEX(0x060914, 246));
 }
 
+/* where the detail's button row ends this frame (the hints keep clear) */
+static float g_hm_btn_end;
+
 /* ---- the top bar -------------------------------------------------------- */
 
 static float hm_topbar(float dy, int n_scan)
 {
-   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC" };
+   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
    float x = HM_X, y = 18 + dy, cx;
    int c;
 
@@ -939,7 +942,7 @@ static float hm_topbar(float dy, int n_scan)
          vs_text(VS_SUB, x, y, TAB[t], t == on ? HC_TEXT : HC_TEXT3);
          UI_TCH_BTN(t == on ? 0 : BROWSER_TAB_BUTTON(t), (int)(x / 2) - 4,
                     (int)(y / 2), (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 22);
-         x += vs_text_w(VS_SUB, TAB[t]) + (t < 2 ? 24 : 30);
+         x += vs_text_w(VS_SUB, TAB[t]) + (t < 2 ? 20 : 20);
       }
    }
 
@@ -947,19 +950,21 @@ static float hm_topbar(float dy, int n_scan)
    cx = x;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {
-      float w = vs_text_w(VS_LABEL, CON[c]) + 26;
+      /* four consoles and the search beside them: tight chips */
+      float w = vs_text_w(VS_LABEL, CON[c]) + 20;
       if (c == g_pcfg.console)
       {
          vs_rrect(x, y + 2, w, 34, 17, HC_GLASS_HI);
-         vs_text(VS_LABEL, x + 13, y + 7, CON[c], HC_TEXT);
+         vs_text(VS_LABEL, x + 10, y + 7, CON[c], HC_TEXT);
       }
       else
-         vs_text(VS_LABEL, x + 13, y + 7, CON[c], HC_TEXT3);
-      x += w + 4;
+         vs_text(VS_LABEL, x + 10, y + 7, CON[c], HC_TEXT3);
+      x += w + 2;
    }
-   vs_icon(VS_I_BTN_TRI, x + 12, y + 19, 20, HC_TEXT3);
+   /* (no TRIANGLE glyph here since SNES joined: the hints say it, and
+    * the search icon needs the room) */
    UI_TCH_BTN(PSP_CTRL_TRIANGLE, (int)(cx / 2) - 2, (int)(y / 2),
-              (int)((x + 26 - cx) / 2) + 4, 22);
+              (int)((x - cx) / 2) + 2, 22);
 
    /* the right: settings, the time, the battery */
    x = hm_status(VS_W - HM_X, y);
@@ -1215,7 +1220,9 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
       x = hm_button(x, y, VS_I_LAYERS, "Save states", 0, PSP_CTRL_DOWN);
    x = hm_button(x, y, g_roms[rom].is_fav ? VS_I_STAR : VS_I_STAR_O, NULL, 0,
                  PSP_CTRL_SQUARE);
-   (void)x;
+   /* a picture of your own for the cover (ui_vita_cover.h) */
+   x = hm_button(x, y, VS_I_CAMERA, "Cover", 0, BROWSER_COVER_BUTTON);
+   g_hm_btn_end = x;
 }
 
 /* ---- the states, as cards ---------------------------------------------- */
@@ -1817,7 +1824,15 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    {
       static const int ic[3] = { VS_I_BTN_O, VS_I_BTN_TRI, -1 };
       const char *w[3] = { g_find[0] ? "Clear" : "Find", "Console", "START  Settings" };
-      hm_hints(VS_W - HM_X, HM_BTN_Y + dy + 16, ic, w, 3);
+      /* Beside the buttons, never under them: the leftmost hints give way
+       * first (the top bar has a search, a console and a settings button
+       * of its own). */
+      int s = 0;
+      while (s < 3 && VS_W - HM_X - hm_hints_w(ic + s, w + s, 3 - s) <
+                      g_hm_btn_end + 8)
+         s++;
+      if (s < 3)
+         hm_hints(VS_W - HM_X, HM_BTN_Y + dy + 16, ic + s, w + s, 3 - s);
    }
    (void)n_scan;
 }

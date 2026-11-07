@@ -176,11 +176,54 @@ static void cm_or(colmask *m, const colmask *o)
       m->b[i] |= o->b[i];
 }
 
+/* Columns [x0, x1) a word at a time (it was a bit at a time: a texture's
+ * pend mask is set once per scaled row, twice). */
 static void cm_set_range(colmask *m, int x0, int x1)
 {
-   int x;
-   for (x = x0; x < x1; x++)
-      m->b[x >> 5] |= 1u << (x & 31);
+   int i;
+   if (x0 < 0)
+      x0 = 0;
+   if (x1 <= x0)
+      return;
+   for (i = x0 >> 5; i <= (x1 - 1) >> 5; i++)
+   {
+      const int lo = i * 32;
+      const int a = x0 > lo ? x0 - lo : 0;
+      const int b = x1 < lo + 32 ? x1 - lo : 32;
+      m->b[i] |= (b - a == 32 ? 0xFFFFFFFFu : ((1u << (b - a)) - 1u)) << a;
+   }
+}
+
+/* Mark the columns x0 .. x1 - 1 where cp[x - x0] differs from op[x - x0]
+ * (cp, op: the pictures at column x0), a mask word at a time and two pixels
+ * to the compare: a row that changed in a few places (a sprite, a number)
+ * used to be walked pixel by pixel with a bit set for each. */
+static void cm_mark_diff(colmask *m, int x0, int x1, const uint16_t *cp,
+                         const uint16_t *op)
+{
+   int x = x0;
+   while (x < x1)
+   {
+      const int wi = x >> 5;
+      const int end = (wi + 1) * 32 < x1 ? (wi + 1) * 32 : x1;
+      uint32_t bits = 0;
+      for (; x + 1 < end; x += 2)
+      {
+         uint32_t a, b;
+         memcpy(&a, cp + (x - x0), 4);
+         memcpy(&b, op + (x - x0), 4);
+         if (a != b)
+            bits |= ((uint32_t)(cp[x - x0] != op[x - x0]) << (x & 31)) |
+                    ((uint32_t)(cp[x - x0 + 1] != op[x - x0 + 1])
+                     << ((x + 1) & 31));
+      }
+      if (x < end)
+      {
+         bits |= (uint32_t)(cp[x - x0] != op[x - x0]) << (x & 31);
+         x++;
+      }
+      m->b[wi] |= bits;
+   }
 }
 
 /* Every set column and `r` columns either side of it, within w. */
@@ -206,35 +249,51 @@ static void cm_dilate(colmask *m, int r, int w)
       m->b[i] &= valid.b[i];
 }
 
+/* The first column at or after x, below w, whose bit is `want`; w when
+ * there is none.  A word at a time. */
+static int cm_next(const colmask *m, int x, int w, uint32_t want)
+{
+   const uint32_t flip = want ? 0u : 0xFFFFFFFFu;
+   int i;
+   uint32_t v;
+   if (x >= w)
+      return w;
+   i = x >> 5;
+   v = (m->b[i] ^ flip) & (0xFFFFFFFFu << (x & 31));
+   for (;;)
+   {
+      if (v)
+      {
+         const int r = (i << 5) + __builtin_ctz(v);
+         return r < w ? r : w;
+      }
+      if (++i >= UP_WORDS || (i << 5) >= w)
+         return w;
+      v = m->b[i] ^ flip;
+   }
+}
+
 /* The next run of set columns at or after x: 1 and [*x0, *x1), or 0.  Runs
  * closer than `join` columns are given as one (a run costs a column of
  * preparation and its own first row). */
 static int cm_run(const colmask *m, int x, int w, int join, int *x0, int *x1)
 {
-#define CM_BIT(m, x) (((m)->b[(x) >> 5] >> ((x) & 31)) & 1u)
-   int gap;
-   while (x < w && !CM_BIT(m, x))
-   {
-      /* a whole empty word at a time */
-      if (!(x & 31) && !m->b[x >> 5])
-         x += 32;
-      else
-         x++;
-   }
+   x = cm_next(m, x, w, 1);
    if (x >= w)
       return 0;
    *x0 = x;
    for (;;)
    {
-      while (x < w && CM_BIT(m, x))
-         x++;
+      int nx;
+      x = cm_next(m, x, w, 0);          /* the run's end */
       *x1 = x;
-      for (gap = 0; x < w && gap < join && !CM_BIT(m, x); gap++)
-         x++;
-      if (x >= w || !CM_BIT(m, x))
+      /* the next run joins this one when fewer than join + 1 clear columns
+       * lie between them */
+      nx = cm_next(m, x, w, 1);
+      if (nx >= w || nx - x > join)
          return 1;
+      x = nx;
    }
-#undef CM_BIT
 }
 
 /* ---- a slot: one picture's standing data and its job --------------------- */
@@ -426,6 +485,7 @@ static void job_finish(up_slot *S)
    A_STORE(g_st.factor, S->f);
    if (dt > 16683u)
    {
+      upscale_gov_miss();
       A_ADD(g_st.late, 1);
       A_ADD(g_st.late_slid, S->slid ? 1 : 0);
       if (S->f >= 2 && S->f <= 4)
@@ -667,6 +727,146 @@ void upscale_quality(int quality)
    g_quality = quality >= 0 && quality <= 3 ? quality : 0;
 }
 
+/* ---- the governor: smoothing that gives way, quietly ------------------------
+ *
+ * The picture-level step-down above (job_finish) works inside the textures
+ * and only sees pictures the helpers finished late.  What the player sees is
+ * the frames that did not reach the glass in time, whatever the cause: a
+ * picture dropped because its slot was busy, one that came a refresh late,
+ * or the emulator's own frame running over.  upscale_gov_frame is called
+ * once per frame; the governor counts the bad frames in windows of
+ * GOV_WINDOW frames:
+ *
+ *   - a window with GOV_BAD or more bad frames, smoothing in use for at
+ *     least half of it: one step down (xBRZ 4x -> 3x -> 2x -> the GPU's own
+ *     filter);
+ *   - GOV_CLEAN clean windows in a row (at most one bad frame): one step
+ *     up.  That is a try: if the step does not hold, the way back up is
+ *     made twice as long (at most GOV_MAX_CLEAN), so a game on the edge
+ *     settles at the lower step instead of flickering between two.
+ *
+ * A window where smoothing was not in use (a menu, a 1:1 view) says nothing
+ * and changes nothing.  When the lowest step is still over budget the
+ * emulation itself is the cause: the windows are not clean, so no step up
+ * is tried, and Keep full speed's catch-up frames are what remains. */
+static int g_gov_on;              /* 1: the governor may step (Keep full speed) */
+static int g_gov_nat;             /* the factor the last picture asked for    */
+static int g_gov_seen;            /* this frame asked for smoothing           */
+static int g_gov_missed;          /* this frame had a miss from the helpers   */
+static upscale_gov g_gov;
+
+void upscale_gov_init(upscale_gov *g)
+{
+   memset(g, 0, sizeof(*g));
+   g->clean_need = GOV_CLEAN;
+}
+
+void upscale_gov_miss(void)
+{
+   A_STORE(g_gov_missed, 1);
+}
+
+int upscale_gov_step(upscale_gov *g, int bad, int active, int nat)
+{
+   int moved = 0;
+   g->frames++;
+   g->active += active ? 1 : 0;
+   g->bad += bad && active ? 1 : 0;
+   if (g->frames < GOV_WINDOW)
+      return 0;
+   if (g->active * 2 >= g->frames)
+   {
+      const int maxl = nat > 2 ? nat - 1 : 0;   /* nat - level < 2: off */
+      if (g->bad >= GOV_BAD)
+      {
+         if (g->level < maxl)
+         {
+            g->level++;
+            moved = -1;
+            if (g->probing)           /* the step up did not hold */
+            {
+               g->clean_need *= 2;
+               if (g->clean_need > GOV_MAX_CLEAN)
+                  g->clean_need = GOV_MAX_CLEAN;
+            }
+         }
+         g->probing = 0;
+         g->settled = 0;
+         g->clean = 0;
+      }
+      else if (g->bad <= 1)
+      {
+         if (g->probing && ++g->settled >= GOV_SETTLE)
+         {
+            g->probing = 0;
+            g->settled = 0;
+            g->clean_need = GOV_CLEAN;      /* it held: forget the doubling */
+         }
+         if (g->level > 0 && ++g->clean >= g->clean_need)
+         {
+            g->level--;
+            g->clean = 0;
+            g->probing = 1;
+            g->settled = 0;
+            moved = 1;
+         }
+      }
+      else
+         g->clean = 0;
+   }
+   g->frames = g->active = g->bad = 0;
+   return moved;
+}
+
+void upscale_gov_enable(int on)
+{
+   on = on ? 1 : 0;
+#ifndef __vita__
+   /* A twin finishes a picture before submit returns and its clock is
+    * whatever machine it runs on: the picture must not depend on that. */
+   if (!getenv("GBADHOC_GOV"))
+      on = 0;
+#endif
+   if (!on && g_gov_on)
+      upscale_gov_init(&g_gov);        /* back to the full factor */
+   g_gov_on = on;
+}
+
+void upscale_gov_reset(void)
+{
+   upscale_gov_init(&g_gov);
+   A_STORE(g_gov_missed, 0);
+}
+
+int upscale_gov_frame(int work_late)
+{
+   const int bad = work_late || A_LOAD(g_gov_missed);
+   const int active = A_LOAD(g_gov_seen);
+   int moved;
+   A_STORE(g_gov_missed, 0);
+   A_STORE(g_gov_seen, 0);
+   if (!A_LOAD(g_gov_on))
+      return 0;
+   moved = upscale_gov_step(&g_gov, bad, active, A_LOAD(g_gov_nat));
+   if (moved < 0)
+      A_ADD(g_st.stepped, 1);
+   return moved;
+}
+
+int upscale_gov_level(void)
+{
+   return A_LOAD(g_gov_on) ? A_LOAD(g_gov.level) : 0;
+}
+
+const char *upscale_gov_note(void)
+{
+   const int l = upscale_gov_level();
+   if (!l)
+      return NULL;
+   return A_LOAD(g_gov_nat) - l < 2 ? "Smoothing is off to keep full speed."
+                                    : "Smoothing is lighter to keep full speed.";
+}
+
 int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
 {
    int f, fmax = kind == UPSCALE_XBRZ ? 4 : kind == UPSCALE_SCALE ? 3 : 0;
@@ -683,6 +883,13 @@ int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
       f = fmax;
    while (f > 2 && (unsigned)(f * f) * w * h > UP_BUDGET_PX)
       f--;
+   if (f < 2)
+      return 0;
+   /* The governor (above): this many factors less than the picture asks. */
+   A_STORE(g_gov_nat, f);
+   A_STORE(g_gov_seen, 1);
+   if (A_LOAD(g_gov_on))
+      f -= A_LOAD(g_gov.level);
    return f < 2 ? 0 : f;
 }
 
@@ -933,6 +1140,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    if (A_LOAD(S->state) == ST_BUSY)
    {
       A_ADD(g_st.dropped, 1);
+      upscale_gov_miss();
       return 0;
    }
    if (!g_lut_ready)
@@ -1107,7 +1315,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          else
          {
             const uint16_t *o = S->old + (size_t)w * (unsigned)sy;
-            int x0 = dx > 0 ? dx : 0, x1 = dx < 0 ? (int)w + dx : (int)w, x;
+            int x0 = dx > 0 ? dx : 0, x1 = dx < 0 ? (int)w + dx : (int)w;
             if (dx)
             {
                /* the columns that came into view, and those whose
@@ -1120,9 +1328,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
              * the same) */
             if (!dx && !dy ? !rsame[y]
                 : memcmp(c + x0, o + x0 - dx, (size_t)(x1 - x0) * 2u) != 0)
-               for (x = x0; x < x1; x++)
-                  if (c[x] != o[x - dx])
-                     rowm[y].b[x >> 5] |= 1u << (x & 31);
+               cm_mark_diff(&rowm[y], x0, x1, c + x0, o + x0 - dx);
          }
       }
       up_lap(&tp, PP_MARK);

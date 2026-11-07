@@ -7,7 +7,7 @@
  *    http://thumbnails.libretro.com/<console>/Named_Boxarts/<name>.png
  *
  * where <console> is "Nintendo - Game Boy Advance" (or "- Game Boy",
- * "- Game Boy Color") and <name> the cartridge's No-Intro name with
+ * "- Game Boy Color", "- Super Nintendo Entertainment System") and <name> the cartridge's No-Intro name with
  * &*\/:`<>?\|" written as _.  The name is the file's own when the file is
  * named the No-Intro way; else the one gamedb.h knows for the GBA header's
  * game code, else for the file's CRC32.  The picture is written to
@@ -62,6 +62,19 @@ void artfetch_pause(int on);
  * a game never played (vita.ini art_titles = 0: box art only).  Its own
  * titles/.missing.txt. */
 void artfetch_titles(int on);
+/* The player's own cover pictures (cover_custom.h).  A picture the player
+ * sets is boxart/<stem>.png with a boxart/<stem>.own beside it; the fetcher
+ * finds art on the card, so it neither asks for that game nor, if a download
+ * was already on its way, writes over it. */
+/* boxart/ or titles/ changed under the thread (a cover set or taken away):
+ * look at the folders again; what the server did not have stays missed. */
+void artfetch_rescan(void);
+/* The tile thumbnail of a decoded picture (RGB, 3 bytes a pixel) into `dst`
+ * (the caller builds the path from ART_THUMB_SUFFIX).  `square`: fit the
+ * whole picture on a square, for a cover of the player's own. UI thread
+ * safe; 0 = written. */
+int  artfetch_thumb_rgb(const unsigned char *rgb, int w, int h,
+                        const char *dst, int square);
 /* Settings > Covers: forget what the server did not have (both .missing.txt
  * files) and go through the list again. */
 void artfetch_retry(void);
@@ -79,12 +92,15 @@ int  artfetch_take(char *name, size_t cap);
  * the next call returns 0 unless another overflow occurs. UI thread only. */
 int  artfetch_resync(void);
 
-/* Each cover also gets boxart/<stem>.t2.565: the picture fitted into this box
+/* Each cover also gets cache/boxart/<stem>.t2.565 (VitAdhoc 1.2 and before:
+ * boxart/<stem>.t2.565, moved here when found): the picture fitted into this box
  * (never enlarged) as RGB565, which is all a home-screen tile reads. */
 #define ART_THUMB_W 160
 #define ART_THUMB_H 200
 /* v1 .t565 files reversed red and blue; regenerate without touching originals. */
 #define ART_THUMB_SUFFIX ".t2.565"
+/* ...in this folder below the app folder (psp/sidecar.h SIDECAR_THUMB_DIR) */
+#define ART_THUMB_DIR "cache/boxart"
 
 /* A line for the log, when the thread has one (the UI thread writes it with
  * fe_evt; the thread itself never logs). */

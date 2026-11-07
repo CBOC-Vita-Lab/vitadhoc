@@ -11,14 +11,19 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 VITA = ROOT / "gpsp/vita"
 VPK = Path(os.environ.get("RELEASE_VPK", ROOT / "VitAdhoc.vpk"))
-RUNTIME_SHA256 = "3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074"  # version 1.2
+RUNTIME_SHA256 = "336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09"  # version 1.3
+SNES_SHA256 = "19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4"  # version 1.3
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
            "licenses/Outfit-OFL.txt", "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",
            "notices/WIKIPEDIA-ATTRIBUTION.md", "licenses/GPL-3.0.txt",
            "licenses/GPU-xBRZ-notices.txt", "licenses/CPU-xBRZ-notice.txt",
            "licenses/vita2d-MIT.txt", "licenses/stb.txt",
            "licenses/VitaSDK-Headers-MIT.txt", "licenses/Newlib-Notices.txt",
-           "licenses/GCC-Runtime-Exception.txt", "notices/VitaSDK-build-lock.json"}
+           "licenses/GCC-Runtime-Exception.txt", "notices/VitaSDK-build-lock.json",
+           "notices/SNES-Snes9x.md"}
+# The SNES player's licence travels in the package under these names.
+SNES_NOTICES = {"licenses/Snes9x-LICENSE.txt": "snes/core/LICENSE",
+                "licenses/Snes9x-PROVENANCE.md": "snes/core/PROVENANCE.md"}
 
 
 class ReleasePackageTests(unittest.TestCase):
@@ -59,13 +64,18 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertFalse(name.startswith("/"))
                 self.assertNotIn("..", PurePosixPath(name).parts)
                 self.assertNotIn("\\", name)
-                self.assertNotIn(PurePosixPath(name).suffix.lower(), {".gba", ".gb", ".gbc", ".sav", ".srm"})
+                self.assertNotIn(PurePosixPath(name).suffix.lower(),
+                                 {".gba", ".gb", ".gbc", ".sfc", ".smc", ".sav", ".srm"})
                 self.assertNotEqual(PurePosixPath(name).name.lower(), "gba_bios.bin")
             self.assertTrue(NOTICES.issubset(names))
             for name in NOTICES:
                 with self.subTest(notice=name):
                     self.assertEqual(package.read(name), (ROOT / name).read_bytes())
             self.assertEqual(hashlib.sha256(package.read("eboot.bin")).hexdigest(), RUNTIME_SHA256)
+            self.assertEqual(hashlib.sha256(package.read("snes.bin")).hexdigest(), SNES_SHA256)
+            for name, source in SNES_NOTICES.items():
+                with self.subTest(notice=name):
+                    self.assertEqual(package.read(name), (ROOT / source).read_bytes())
             self.assertEqual(package.read("gamedb.txt"), (VITA / "assets/gamedb.txt").read_bytes())
             self.assertEqual(package.read("cheats.db"), (VITA / "assets/cheats.db").read_bytes())
 

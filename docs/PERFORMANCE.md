@@ -1,5 +1,70 @@
 # Performance
 
+## Super NES On VitAdhoc 1.3
+
+Measured on a PS Vita (firmware 3.74, PSVshell profile at
+500 MHz; the core measured 494-496 MHz) on 7 November 2026, with the
+release's SNES player and its default picture (Original shape, side glow).
+Each game was started through VitAdhoc and left running its title screen,
+attract mode or demo with no input for 100-120 seconds; the first four
+seconds (start-up) are left out. "Game thread" is the time the emulated CPU
+(plus the cartridge's extra chip, where there is one) needs per frame; the
+picture and the sound run on two other cores and are not the limit in any of
+these games.
+
+| Game (owner's cartridge dump) | Chip | Emulated frames/s | Game thread per frame (average / worst second) | Shown |
+| --- | --- | ---: | --- | --- |
+| Super Mario World (PAL) | none | 50.0 of 50 | 5.5 / 7.5 ms | every frame |
+| Donkey Kong Country | none | 59.7 of 60 | 4.7 / 14.9 ms | every frame |
+| F-Zero | none | 59.9 of 60 | 5.1 / 5.8 ms | every frame |
+| Chrono Trigger | none | 59.9 of 60 | 4.6 / 10.2 ms | every frame |
+| Yoshi's Island | Super FX 2 | 59.7 of 60 | 8.2 / 13.5 ms | every frame |
+| Super Mario RPG | SA-1 | 59.1 of 60 | 11.5 / 16.8 ms | every frame |
+| Kirby Super Star | SA-1 | 59.1 of 60 | 11.0 / 15.3 ms | every frame |
+| Stunt Race FX (PAL) | Super FX | 49.4 of 50 (46.5 before pacing) | 10.0 / 21.9 ms | every frame |
+| Doom | Super FX 2 | 59.0 of 60 (40.7 before pacing) | 13.4 / 23.0 ms | every frame |
+
+The display runs at 59.9-60 Hz in every game; "every frame" means no frame
+was dropped to save time. Super Mario World and Stunt Race FX are European
+(50 Hz) dumps, so 50 is their full speed.
+
+What changed for these numbers, all with the same output as before (frames
+and sound compared bit for bit on 289 test programs and the 15 games, with
+and without the extra threads):
+
+- **One emulated frame per screen refresh.** The first hardware run showed
+  games running at twice their speed: a pass that handed its picture over
+  without waiting started the next frame early. Passes now follow the
+  display's own refresh count.
+- **Battery RAM written on its own thread.** Super FX games such as Yoshi's
+  Island change their battery RAM all the time, and writing it on the game
+  thread every two seconds cost a third of a second each time (a stutter
+  every two seconds, about 52 frames a second on average). It is now copied
+  and written by a low-priority thread, when it settles or every 30 seconds.
+- **SA-1 idle loops replayed.** Super Mario RPG and Kirby Super Star spend
+  about 80% of their SA-1 instructions waiting in a loop. Such a loop is
+  recorded once, proven to repeat exactly, and then advanced without
+  interpreting it while nothing it reads changes (`snes/core/sa1cpu.cpp`).
+  Their game thread went from 16.5 and 14.9 ms to 11.5 and 11.0 ms a frame.
+- **WAI waits skipped to the next event** when no SA-1 is present.
+- **The console stays awake** while a SNES game runs (it used to turn the
+  screen off, and stop the game, during demos with no buttons pressed).
+
+- **Super FX pacing.** Doom keeps the GSU busy all the time; at the
+  hardware's instruction rate a frame needed 22-27 ms on the game thread
+  (GSU 15-18 ms), so everything ran at two thirds of its speed, music
+  included. The SNES player now times the GSU (`superfx clock` lines in its
+  log) and sets its instructions per line to the share that fits a refresh
+  (90% of it, adjusted every second; never below 30%, back to 100% when there
+  is room). Game, music and controls keep full speed; the 3D view gets fewer
+  GSU instructions per emulated frame than on a SNES and so animates more
+  slowly. Doom settles near 35%, Stunt Race FX between 42% and 77% in races;
+  Yoshi's Island stays at 100%. This changes the emulated GSU's speed, not
+  its results; the twin and the bit-for-bit comparisons run it at 100%.
+
+A faster GSU interpreter (or the GSU on a core of its own) is what would give
+these games their full 3D frame rate.
+
 ## Pokemon Unbound 2.1.1.1 On VitAdhoc 1.2
 
 **About 60 emulated fps in the sampled opening beach scene, at full-screen

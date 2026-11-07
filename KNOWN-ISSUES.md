@@ -17,9 +17,41 @@ Testing continues on:
   (lines starting with `ra_http`).
 - **Two Vitas linked together** (Wi-Fi, internet and ad hoc), sharing saves,
   and Wireless Adapter games.
+- **Two Vitas linking two different GBA games** (Ruby with Sapphire, FireRed
+  with Emerald): tested on the PC build with test cartridges and with two real
+  Pokemon games (a short session), but not yet on two Vitas. Not measured: the memory with two
+  16 MB games at once, and the time to send a game over the internet. A
+  full trade between versions has not been played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
 
+## Super NES
+
+- **Super FX games that keep the chip busy** (Doom, the races of Stunt Race
+  FX) run at full game speed, but their 3D view gets less chip time than on a
+  SNES, so it animates more slowly than on the console. Yoshi's Island runs
+  the chip at full speed. Super Mario RPG and Kirby Super Star dip a frame
+  now and then. The SNES player writes its speed to
+  `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
+- The SNES player has its own pause menu (hold **L + R + Start**) with four
+  state slots. Rewind, fast forward, Continue, cheats, patches and
+  RetroAchievements are for GBA and Game Boy games only for now.
+- **Players 3 and 4** need the Super Multitap (Auto turns it on for games
+  known to use it) and extra controllers. Controllers beyond the first have
+  not been tried on a real Vita yet.
+
+## Games
+
+How we checked the games people reported, and what is still unchecked, is in
+[Game Compatibility](docs/COMPATIBILITY.md). Not fixed: sprites in the wrong
+order in Golden Sun, Mario Golf and The Minish Cap (OAM order), and any
+flicker or missing instruments, which we could not judge without a Vita.
+
 ## Performance
+
+- **500 MHz needs an overclock plugin** such as PSVshell. Without one the Vita
+  stays at 444 MHz (Settings > CPU speed says "Needs an overclock plugin").
+  If the app cannot write PSVshell's profile folder it tries once, and then
+  leaves it to you (create the profile in PSVshell's own menu).
 
 - **Pokemon Unbound 2.1.1.1:** audio underruns were recorded at full-screen
   CPU xBRZ 3x. See the [measurements and settings](docs/PERFORMANCE.md).
@@ -34,11 +66,18 @@ Testing continues on:
   RetroAchievements knows.
 - **Achievements pause during link play** and start counting again afterwards,
   as after loading a state.
+- **Game clocks follow the Vita's clock.** A game saved by an older version
+  while its clock ran ahead can see the date go backwards once; the clock then
+  waits until the real time catches up. Two Vitas in link play share one
+  repeatable clock for the session. Save type and Clock (RTC) can only be
+  changed inside a running game, and apply the next time it starts.
 - **Wide view** is made for Pokémon Emerald and its siblings. In other games
   the edges can miss people or weather.
 - Some cheats need their "Enable Code (Must Be On)" entry first; a few code
   types are marked unsupported. Cheats switch off while linked and in Hardcore.
 - Three- and four-player links and single-cartridge multiboot aren't supported.
+- **1.3 links only with 1.3.** Engine fixes changed the check two Vitas make
+  before linking, so update both Vitas.
 - Two games with the same file name share box art, cheats and previews. Give
   different games different names.
 - The same game in two folders (for example `ux0:data/GBAdhoc/roms/` and

@@ -761,6 +761,9 @@ static vb_tex *atlas(int big)
    return g_icon_tex[big];
 }
 
+static int g_face_swap;
+void vs_set_face_swap(int swap) { g_face_swap = swap ? 1 : 0; }
+
 void vs_icon(int id, float cx, float cy, float size, uint32_t rgba)
 {
    int big = size > (float)VSI_SMALL * 1.2f, cell;
@@ -768,6 +771,8 @@ void vs_icon(int id, float cx, float cy, float size, uint32_t rgba)
    vb_tquad q;
    if (id < 0 || id >= VS_ICONS || size <= 0)
       return;
+   if (g_face_swap && (id == VS_I_BTN_X || id == VS_I_BTN_O))
+      id = id == VS_I_BTN_X ? VS_I_BTN_O : VS_I_BTN_X;
    t = atlas(big);
    if (!t)
       return;

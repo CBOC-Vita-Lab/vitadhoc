@@ -87,8 +87,9 @@ twice).
   time.) A card with none of them is read exactly as before.
 - **Hidden files are ignored**, in every folder: any file whose name starts with `.`. A card
   written by a Mac holds a 4 KB `._Game.gba` beside every `Game.gba`; those are not games.
-- **Saves and states go next to the game**, in its own folder (`Game.sav`, `Game.st0` ...), as
-  they do in `roms/`. Nothing is copied, and nothing is written to `roms/` for such a game. Box
+- **The battery save goes next to the game**, in its own folder (`Game.sav`), as it does in
+  `roms/`; states and the Continue point go under `states/` (`Game.st0` ...).
+  Nothing is copied, and nothing is written to `roms/` for such a game. Box
   art, cheats and the home screen's picture follow the game's file name, as they do for a game
   in a sub-folder of `roms/`; so do Link mode (Settings) and the partner chosen for two players
   on one console (two games with one name share them). A star (favourites) follows the whole
@@ -255,8 +256,10 @@ Menu > **Play together**. Pick the **Connection** once:
 - **Ad hoc** — no router at all. The Vita's own connection screen appears first.
 
 Three kinds of link are handled: GBA Link Cable, GBA Wireless Adapter, and the GB / GBC Link
-Cable. For a GBA game both players need the same game open (for Link Cable games, the same ROM
-file). A **Game Boy / Game Boy Color** link works between two *different* cartridges (Red with
+Cable. For a GBA Link Cable game the two Vitas may run different games (Ruby with Sapphire,
+FireRed with LeafGreen, Emerald with FireRed): the first time, each sends the other its game
+(checked, then kept in `ux0:data/GBAdhoc/cache/link/` under a hashed name, never in your game
+folders), so every later session starts at once. Each player must own their game. A **Game Boy / Game Boy Color** link works between two *different* cartridges (Red with
 Blue, Gold with Silver) even when neither Vita has the other's: each one sends its cartridge to
 the other for the session, in memory only (checked, never written to the memory card).
 Vita-to-Vita only: a Vita and a PSP running GBAdhoc cannot link to each other.
@@ -289,15 +292,21 @@ Vita-to-Vita only: a Vita and a PSP running GBAdhoc cannot link to each other.
   using that game's own save. This is how you trade with yourself.
 - Flick the right stick sideways, or tap the other picture, to change which one you control;
   tap the one you already control (or hold Start + Select) for the menu.
-- With a second controller, each player has their own. On a PS TV pair a DualShock normally. On
-  a handheld Vita you need a controller plugin; use **ds34vita with reVita's "Emulate DS4"**
-  (or two controllers) so the pad is a separate player rather than a copy of the Vita's buttons.
+- With a second controller, each player has their own and the pictures are always side by side,
+  equal. On a PS TV pair two DualShocks normally. On a handheld Vita a controller plugin (ds4vita,
+  ds3vita, ds34vita, MiniVitaTV) shows the pad as a second controller; if the plugin also copies it
+  onto the Vita's buttons, turn that off so it is a separate player. Either player opens the menu
+  with Start + Select on their own pad.
+- With no second controller, **Player 2 on the touch screen** (the two-player page, off by default)
+  draws a D-pad, A, B, L, R, Start and Select on player 2's half of the front screen; both players
+  can press at once. PLAY-TOGETHER.md says which games this is for. None of the controller cases
+  has been confirmed on a real console yet.
 
 Bluetooth between two Vitas is not possible (the system's Bluetooth only serves controllers,
 headsets and keyboards); ad hoc is the no-router option.
 
 ## Continue, Recent and play time
-- **Continue.** Leaving a game keeps the moment you left it (`<rom>.rsm`, beside the save), and
+- **Continue.** Leaving a game keeps the moment you left it (`states/<console>/<rom>.rsm`), and
   the point is renewed every two minutes of play and just after the game saves itself, so a
   Vita closed from LiveArea still continues. On the Home page **X Continue** puts the game back
   there; **Up** (or the Start over button) plays from the battery save instead. A patch put
@@ -360,10 +369,11 @@ signs out.
   library; if that fails on your firmware, the log (`log/gbadhoc.log`, lines `ra_http`) says why.
 
 ## Save data
-Battery saves and save states live beside the ROM, with the PSP version's names
-(`<rom>.sav`, `.st0`–`.st4`), and the Continue point (`<rom>.rsm`). Five state slots, with previews, in the menu and on the game list.
+Battery saves live beside the ROM, with the PSP version's names (`<rom>.sav`). Save states
+and the Continue point live in `states/<console>/` (`<rom>.st0`–`.st9`, `<rom>.rsm`). Ten state slots, with previews, in the menu and on the game list.
 For a game kept in another folder (see "Games in other folders") that is its own folder, not
-`roms/`: back up, or move, the game and its save files together.
+`roms/`: back up the game with its `.sav`; its states are in `states/`, named with a short code
+for that folder.
 
 ## If something goes wrong
 Send back `ux0:data/GBAdhoc/log/` (the newest file). Useful switches, in

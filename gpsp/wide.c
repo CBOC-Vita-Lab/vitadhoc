@@ -1517,6 +1517,20 @@ static void wide_apply(void)
 {
    int on = wide_want != WIDE_OFF;
 
+   /* "Known games" with a game that is not one: the console's own 240
+    * pixels, no margins to fill (a margin of nothing, drawn as soft edges or
+    * a stretch, is the picture the owner's first players called stretched). */
+   if (wide_want == WIDE_KNOWN &&
+       !(wide_profiles_on && wide_profile == WIDE_PROFILE_EMERALD))
+   {
+#if WIDE_DEBUG
+      /* (the twin's tests of what a margin shows where a game has nothing
+       * more -- bars, soft edges, a stretch -- need a margin to look at) */
+      if (!getenv("GBADHOC_WIDE_MARGIN_ALWAYS"))
+#endif
+         on = 0;
+   }
+
    if (on && !wide_buf)
    {
       wide_buf = (u16 *)calloc(1, WIDE_BUFFER_SIZE);

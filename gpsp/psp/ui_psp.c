@@ -48,6 +48,7 @@
 #include "config_psp.h"
 #include "rom_paths.h"
 #include "state_slots.h"
+#include "sidecar.h"
 #include "font_8x16.h"
 #include "fe_favs.h"
 #include "fe_evt.h"
@@ -255,7 +256,7 @@ static const ui_theme *g_thm = &THM_DARK;
  * Atomic Purple sits too close to the GBA indigo to read as a change.
  *
  * Each has a light-theme accent: the dark ones vanish on the off-white page.
- * Indexed by fe_console_t: GBA, GB, GBC. */
+ * Indexed by fe_console_t: GBA, GB, GBC, SNES. */
 #define RGB565(r, g, b) \
    ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
@@ -280,6 +281,9 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
      { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
        RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
        RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+   { "SNES", "Super Nintendo",  "sfc", RGB565(0xFF, 0x7A, 0x5C),
+     { RGB565(0x6E, 0x1E, 0x2A), RGB565(0xC0, 0x39, 0x2B),
+       RGB565(0xFF, 0x7A, 0x5C), 0, 0 }, 3, 1 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -295,6 +299,9 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
      { RGB565(0xE8, 0x38, 0x6D), RGB565(0xF5, 0xC5, 0x18),
        RGB565(0x7D, 0xCB, 0x2F), RGB565(0x1F, 0xB8, 0xB0),
        RGB565(0x7B, 0x4F, 0xD8) }, 5, 0 },
+   { "SNES", "Super Nintendo",  "sfc", RGB565(0xA3, 0x1D, 0x12),
+     { RGB565(0x6E, 0x1E, 0x2A), RGB565(0xC0, 0x39, 0x2B),
+       RGB565(0xFF, 0x7A, 0x5C), 0, 0 }, 3, 1 },
 };
 
 static const ui_skin *skin_of(int console)
@@ -397,6 +404,10 @@ static int g_settings_dirty;
 static int g_set_scroll;      /* SETTINGS list scroll, px (see set_row_y) */
 /* Browser Settings: 1 = Share game data, 2 = the room list was chosen. */
 static int g_share_req;
+#ifdef VITA
+static int g_cover_req;      /* Settings > Cover picture: X pressed        */
+static int g_cover_row;      /* 0 no game, 1 automatic, 2 a cover of its own */
+#endif
 static char g_state_base[PSP_FILE_PATH_CAP];
 static int g_state_slot = 1;
 static int g_ss_top, g_shelf_top;   /* the first slot on screen (scrolling) */
@@ -1682,6 +1693,7 @@ static void ov_title_take(void)
          break;
       *dot = '\0';
    }
+   sidecar_strip_hash(g_ov_title);   /* "Game~1a2b3c" of a game outside roms/ */
    clip_title(g_ov_title, 436);
 }
 
@@ -2299,16 +2311,19 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
+       SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
        /* The account and Hardcore in the browser; a running game's list
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
-       SET_HDR_LIB, SET_FOLDERS, SET_SORT,
-       SET_HDR_THIS, SET_OWN_LOOK, SET_MOTION, SET_SENS, SET_REVERSE,
-       SET_LEVEL, SET_SUN,
-       SET_HDR_CTL, SET_CONTROLS,
+       SET_HDR_LIB, SET_COVERPIC, SET_SYNCRA, SET_FOLDERS, SET_SORT,
+       SET_HDR_THIS, SET_SAVETYPE, SET_CLOCK, SET_OWN_LOOK, SET_MOTION, SET_SENS,
+       SET_REVERSE, SET_LEVEL, SET_SUN,
+       /* The three plain choices of the controls come before Button mapping,
+        * which stays last (the harness walkers wrap up to it). */
+       SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
 #else
@@ -2323,6 +2338,27 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
        SET_HDR_CTL, SET_STICK, SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_ROOM
+#endif
+
+#ifdef VITA
+/* The Fast-forward row's values, slowest first.  2x and 3x can keep the
+ * sound, sped up (main_vita.c sink_audio); Unlimited is always silent. */
+static const struct { int mode, sound; } ff_steps[] = {
+   { PCFG_FF_2X, 0 }, { PCFG_FF_2X, 1 }, { PCFG_FF_3X, 0 }, { PCFG_FF_3X, 1 },
+   { PCFG_FF_UNLIMITED, 0 }, { PCFG_FF_SMOOTH, 0 },
+};
+
+static int ff_step_now(void)
+{
+   const int mode = pcfg_ff_mode();
+   const int sound = g_pcfg.ff_audio &&
+                     (mode == PCFG_FF_2X || mode == PCFG_FF_3X);
+   int k;
+   for (k = 0; k < (int)(sizeof(ff_steps) / sizeof(ff_steps[0])); k++)
+      if (ff_steps[k].mode == mode && ff_steps[k].sound == sound)
+         return k;
+   return 2;
+}
 #endif
 
 static const struct { unsigned char header; const char *label; } set_rows[SET_COUNT] = {
@@ -2419,19 +2455,33 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* After FPS counter, so the rows the harness walkers cross keep their
     * places. */
    { 0, "Keep full speed" },
+   /* 1.3: 500 or 444 MHz (cpuclock.h).  One row, right here. */
+   { 0, "CPU speed" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
    { 0, "Achievements" },
    { 1, "LIBRARY" },
+   /* 1.3: RetroArch saves stay in step (save_sync.h).  Above Game folders,
+    * so the walkers that wrap up from the top to Game folders / Game order
+    * keep their counts. */
+   { 0, "Sync RetroArch saves" },
    /* Folders of games beside roms/ (vita.ini extra_roms; GitHub #5).
     * Above Game order, which the harness walkers reach by wrapping up from
     * the top past Button mapping: it keeps that place. */
+   /* Before Game folders: the harness walks up from the top to Game
+    * folders (Button mapping, Game order, Game folders) and keeps its row. */
+   { 0, "Cover picture" },
    { 0, "Game folders" },
    { 0, "Game order" },
    /* The running game's own (config_psp.h pcfg_game): its look, and the
     * sensor rows of a sensor cartridge (fe_sensor.h). */
    { 1, "THIS GAME" },
+   /* GBA games, for ROM hacks the app does not detect right; read at the
+    * next start of the game.  Placed above Display settings so the rows a
+    * walker reaches by wrapping up from the top keep their place. */
+   { 0, "Save type" },
+   { 0, "Clock (RTC)" },
    { 0, "Display settings" },
    { 0, "Motion controls" },
    { 0, "Motion strength" },
@@ -2452,6 +2502,10 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * by wrapping up from the top. */
 #ifndef VITA   /* the Vita's left stick is the d-pad, its right one fixed */
    { 0, "Thumbstick" },
+#else
+   { 0, "A and B buttons" },
+   { 0, "Rewind with right stick" },
+   { 0, "Screenshot button combo" },
 #endif
    { 0, "Button mapping" },
 };
@@ -2459,12 +2513,14 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
 /* A GBA profile has no DMG palette: the row stays visible, greyed, and the
  * cursor steps over it. */
 static int linkmode_row_enabled(void);
+static void ctl_value(unsigned mask, char *b, size_t n);
 /* Rows that exist only in the browser's Settings: not drawn, not counted
  * and not stopped on anywhere else. */
 static int set_row_shown(int idx)
 {
 #ifdef VITA
-   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS)
+   if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS ||
+       idx == SET_SYNCRA || idx == SET_COVERPIC)
       return g_ov_browse;
    if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
       return g_ov_browse;
@@ -2482,6 +2538,8 @@ static int set_row_shown(int idx)
          return (k & (FE_SENSOR_TILT | FE_SENSOR_MBC7)) != 0;
       if (idx == SET_SUN)
          return (k & FE_SENSOR_SOLAR) != 0;
+      if (idx == SET_SAVETYPE || idx == SET_CLOCK)
+         return g_pgame.console == FE_CONSOLE_GBA;
       return 1;
    }
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_COVERS &&
@@ -2522,6 +2580,8 @@ static int set_row_enabled(int idx)
       return pcfg_wide_modes(pcfg_display_console()) > 0;
    if (idx == SET_WFILL)
       return pcfg_wide_modes(pcfg_display_console()) > 0 && g_pcfg.wide;
+   if (idx == SET_COVERPIC)
+      return g_cover_row != 0;      /* a game is highlighted in the list */
 #endif
    if (idx == SET_LINKMODE)
       return linkmode_row_enabled();
@@ -3100,10 +3160,35 @@ static void settings_adjust(int id, int dir)
       g_pcfg.show_fps = !g_pcfg.show_fps;
       break;
 #ifdef VITA
+   case SET_CPU:
+      ui_host_cpu_set(!ui_host_cpu_fast());
+      break;
    case SET_SPEED:
       g_pcfg.full_speed = !g_pcfg.full_speed;
       fe_evt("full_speed_setting on=%d", g_pcfg.full_speed);
       break;
+   case SET_ABSWAP:
+      /* Two values: the first press of a player who never chose turns
+       * the Vita's own answer around and keeps it. */
+      g_pcfg.ab_buttons = ui_host_ab_circle() ? 0 : 1;
+      ui_host_buttons_changed();
+      fe_evt("ab_buttons_setting value=%d", g_pcfg.ab_buttons);
+      break;
+   case SET_STICKRW:
+      g_pcfg.stick_rewind = !g_pcfg.stick_rewind;
+      fe_evt("stick_rewind_setting on=%d", g_pcfg.stick_rewind);
+      break;
+   case SET_SHOTCOMBO:
+   {
+      int stolen = -1;
+      if (g_pcfg.controls.bind[CTL_SC_SHOT])
+         g_pcfg.controls.bind[CTL_SC_SHOT] = 0;
+      else
+         (void)ctl_assign(&g_pcfg.controls, CTL_SC_SHOT,
+                          CTL_L | CTL_R | CTL_SELECT, &stolen);
+      fe_evt("screenshot_combo_setting on=%d", g_pcfg.controls.bind[CTL_SC_SHOT] != 0);
+      break;
+   }
    case SET_SGB:
       g_pcfg.sgb_border = !g_pcfg.sgb_border;
       pcfg_display_commit();
@@ -3118,6 +3203,12 @@ static void settings_adjust(int id, int dir)
       return;
    case SET_FOLDERS:
       /* not a value: X opens the keyboard (screen_settings) */
+      return;
+   case SET_SYNCRA:
+      ui_host_sync_ra_set(!ui_host_sync_ra_on());
+      break;
+   case SET_COVERPIC:
+      /* not a value: X opens the page (screen_settings) */
       return;
    case SET_SORT:
       g_pcfg.lib_sort = (g_pcfg.lib_sort + 3 + dir) % 3;
@@ -3158,6 +3249,20 @@ static void settings_adjust(int id, int dir)
                          (PCFG_SUN_CLOCK + 1);
       fe_evt("sensor_setting sun=%d", g_pgame.sunlight);
       break;
+   case SET_SAVETYPE:
+      g_pgame.save_type = (g_pgame.save_type + PCFG_SAVE_MODES +
+                           (dir < 0 ? -1 : 1)) % PCFG_SAVE_MODES;
+      (void)pcfg_game_save();
+      osd_toast("Save type is used the next time the game starts");
+      fe_evt("game_setting save_type=%d", g_pgame.save_type);
+      break;
+   case SET_CLOCK:
+      g_pgame.rtc_mode = (g_pgame.rtc_mode + PCFG_RTC_MODES +
+                          (dir < 0 ? -1 : 1)) % PCFG_RTC_MODES;
+      (void)pcfg_game_save();
+      osd_toast("Clock is used the next time the game starts");
+      fe_evt("game_setting rtc=%d", g_pgame.rtc_mode);
+      break;
 #endif
 #ifdef REWIND
    case SET_REWIND:
@@ -3194,8 +3299,21 @@ static void settings_adjust(int id, int dir)
       break;
    }
    case SET_FFMULT:
-      pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_COUNT + dir) % PCFG_FF_COUNT);
+#ifdef VITA
+   {
+      /* 1.3: 2x, and the sound kept (sped up) at 2x and 3x, are values of
+       * this row, so no row below it moves. */
+      const int n = (int)(sizeof(ff_steps) / sizeof(ff_steps[0]));
+      int k = (ff_step_now() + n + dir) % n;
+      pcfg_ff_set_mode(ff_steps[k].mode);
+      g_pcfg.ff_audio = ff_steps[k].sound;
       break;
+   }
+#else
+      pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_PSP_COUNT + dir) %
+                       PCFG_FF_PSP_COUNT);
+      break;
+#endif
    case SET_FFMODE:
       g_pcfg.ff_hold = !g_pcfg.ff_hold;
       break;
@@ -3409,7 +3527,7 @@ static const char *set_help(int id)
                                "(gba.png, gb.png, gbc.png or its name)."
                              : "Put a PNG in ux0:data/GBAdhoc/overlays/ to "
                                "frame the game.";
-   case SET_SHOTDIR:  return "X: type a folder (ux0:pictures/VitAdhoc). "
+   case SET_SHOTDIR:  return VID_GLYPH_X ": type a folder (ux0:pictures/VitAdhoc). "
                              "Empty: screenshots/.";
    case SET_BLEND:    return g_pcfg.blend
              ? "Each frame mixes with the last, like the old LCD."
@@ -3447,7 +3565,12 @@ static const char *set_help(int id)
    case SET_SHELL:    return "The game list: a shelf with box art, or art "
                              "across the screen.";
 #endif
+#ifdef VITA
+   case SET_FFMULT:   return "How fast it runs. 2x and 3x can play the "
+                             "sound, sped up.";
+#else
    case SET_FFMULT:   return "How fast fast-forward runs.";
+#endif
    case SET_FFMODE:   return "Hold the button to fast-forward, or press it "
                              "to switch.";
    case SET_REWIND:
@@ -3460,21 +3583,39 @@ static const char *set_help(int id)
          return "Running the game backwards is switched off.";
       ctl_format(rb, b, sizeof(b), CTL_UI_NAMES, "none");
       /* 56 characters fit the line; a long chord drops the stick. */
-      if (rb && strlen(b) <= 13)
+      if (rb && g_pcfg.stick_rewind && strlen(b) <= 13)
          snprintf(line, sizeof(line), "Hold %s or the right stick left "
                   "to go back.", b);
       else if (rb)
          snprintf(line, sizeof(line), "Hold %s to go back in time.", b);
-      else
+      else if (g_pcfg.stick_rewind)
          snprintf(line, sizeof(line), "Hold the right stick left to go "
                   "back in time.");
+      else
+         snprintf(line, sizeof(line), "Turn on Rewind with right stick, "
+                  "or bind a button.");
       return line;
    }
    case SET_FPS:      return "Shows the game's speed in a corner.";
 #ifdef VITA
+   case SET_CPU:      return ui_host_cpu_note();
+   case SET_ABSWAP:
+      return g_pcfg.ab_buttons < 0
+         ? "Follows the Vita's own Enter button. Press to change it."
+         : ui_host_ab_circle()
+         ? "Circle is A and confirms in menus. Cross is B."
+         : "Cross is A and confirms in menus. Circle is B.";
+   case SET_STICKRW:
+      return g_pcfg.stick_rewind
+         ? "Hold the right stick left to rewind."
+         : "The right stick does not rewind.";
+   case SET_SHOTCOMBO:
+      return g_pcfg.controls.bind[CTL_SC_SHOT]
+         ? "Shot with the buttons set in Button mapping."
+         : "The Vita's own PS + Start takes screenshots.";
    case SET_SPEED:    return g_pcfg.full_speed
-                             ? "Busy moments skip a frame: no slowdown, "
-                               "no stuttering sound."
+                             ? "Busy moments skip drawing a frame; the "
+                               "game and sound keep speed."
                              : "Busy moments slow the game and its sound "
                                "down.";
    case SET_SGB:      return "Super Game Boy games in the border they bring "
@@ -3485,9 +3626,15 @@ static const char *set_help(int id)
                                "game."
                              : "States, rewind and cheats allowed.";
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
+   case SET_SYNCRA:   return ui_host_sync_ra_on()
+                             ? "A save taken from RetroArch is written back "
+                               "to it too, unless RetroArch changed it."
+                             : "RetroArch's save files are left alone.";
    case SET_SORT:     return "The order of All games and Starred. Recent is "
                              "newest first.";
-   case SET_FOLDERS:  return "X: type a folder to add it (ux0:ROMS/GBA), or "
+   case SET_COVERPIC: return VID_GLYPH_X ": a picture of your own as the cover of the "
+                             "game picked in the list.";
+   case SET_FOLDERS:  return VID_GLYPH_X ": type a folder to add it (ux0:ROMS/GBA), or "
                              "one listed to remove it.";
    case SET_OWN_LOOK: return g_pgame.override
                              ? "Display changes made now apply to this game "
@@ -3501,6 +3648,8 @@ static const char *set_help(int id)
    case SET_SENS:     return "How strongly a turn or a tilt is felt.";
    case SET_REVERSE:  return "Swap it if turning or tilting feels backwards.";
    case SET_LEVEL:    return "Hold the Vita as level should be, then press X.";
+   case SET_SAVETYPE: return "For ROM hacks. Takes effect at the next start.";
+   case SET_CLOCK:    return "Auto: on where the game has one. Next start.";
    case SET_SUN:      return "How much sunlight the cartridge's solar sensor "
                              "sees.";
 #endif
@@ -3549,7 +3698,7 @@ static void ra_settings_account(void)
       else
       {
          g_ra_out_armed = now ? now : 1;
-         osd_toast("Press X again to sign out of RetroAchievements");
+         osd_toast("Press the same button again to sign out of RetroAchievements");
       }
       return;
    }
@@ -3665,6 +3814,12 @@ static ui_action screen_settings(unsigned edges)
          if (ui_text_open(TXT_SHOTDIR, "Screenshot folder (empty: the usual one)",
                           d && d[0] ? d : "ux0:pictures/VitAdhoc", 63) != 0)
             osd_toast("The keyboard is not available");
+         edges &= ~PSP_CTRL_CROSS;
+      }
+      if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERPIC)
+      {
+         if (g_cover_row)
+            g_cover_req = 1;      /* browser_settings opens it after this frame */
          edges &= ~PSP_CTRL_CROSS;
       }
       if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_FOLDERS)
@@ -3901,8 +4056,18 @@ static ui_action screen_settings(unsigned edges)
              pcfg_ambient_name(g_pcfg.ambient));
          break;
       case SET_FFMULT:
+#ifdef VITA
+      {
+         char v[40];
+         snprintf(v, sizeof(v), "%s%s", pcfg_ff_name(),
+                  ff_steps[ff_step_now()].sound ? " with sound" : "");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+#else
          set_item(y, g_cursor == i, 1, set_rows[i].label, pcfg_ff_name());
          break;
+#endif
       case SET_FFMODE:
       {
          /* Names the button it is about, which is no longer always
@@ -3979,6 +4144,34 @@ static ui_action screen_settings(unsigned edges)
          break;
       }
 #endif
+#ifdef VITA
+      case SET_ABSWAP:
+      {
+         char v[40];
+         snprintf(v, sizeof(v), "%s%s",
+                  ui_host_ab_circle() ? "Circle is A" : "Cross is A",
+                  g_pcfg.ab_buttons < 0 ? " (as the Vita)" : "");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+      case SET_STICKRW:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.stick_rewind ? "on" : "off");
+         break;
+      case SET_SHOTCOMBO:
+      {
+         char v[40];
+         unsigned sb = g_pcfg.controls.bind[CTL_SC_SHOT];
+         if (!sb)
+            snprintf(v, sizeof(v), "off");
+         else if (sb == (CTL_L | CTL_R | CTL_SELECT))
+            snprintf(v, sizeof(v), "on (L + R + Select)");
+         else
+            ctl_value(sb, v, sizeof(v));
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+#endif
       case SET_CONTROLS:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              ctl_is_default(&g_pcfg.controls)
@@ -4026,6 +4219,10 @@ static ui_action screen_settings(unsigned edges)
              g_pcfg.show_fps ? "on" : "off");
          break;
 #ifdef VITA
+      case SET_CPU:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+             ui_host_cpu_fast() ? "500 MHz (fast)" : "444 MHz (standard)");
+         break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.full_speed ? "on" : "off");
@@ -4063,6 +4260,11 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_COVERPIC:
+         set_item(y, g_cursor == i, g_cover_row != 0, set_rows[i].label,
+                  g_cover_row == 2 ? "your own" :
+                  g_cover_row == 1 ? "automatic" : "no game");
+         break;
       case SET_FOLDERS:
       {
          char v[96];
@@ -4079,6 +4281,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_SYNCRA:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  ui_host_sync_ra_on() ? "on" : "off");
+         break;
       case SET_SORT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              g_pcfg.lib_sort == 1 ? "last played first" :
@@ -4124,6 +4330,14 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_SAVETYPE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_save_type_name(g_pgame.save_type));
+         break;
+      case SET_CLOCK:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_rtc_mode_name(g_pgame.rtc_mode));
+         break;
 #endif
 #ifdef REWIND
       case SET_REWIND:
@@ -4177,6 +4391,8 @@ static ui_action screen_settings(unsigned edges)
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERS
           ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
+          : g_cursor == SET_COVERPIC
+          ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : VID_GLYPH_X " change   DPAD move/change   " VID_GLYPH_O " back");
 #else
    if (g_cursor == SET_FASTLINK)
@@ -6315,6 +6531,8 @@ static ui_action screen_menu(unsigned edges, int session_active)
    }
    if (g_menu_note[0])
       cc_plate(0, session_active, g_menu_note);
+   else if (vid_smooth_note())
+      cc_plate(0, session_active, vid_smooth_note());
    return UI_ACT_NONE;
 #endif
    ov_backdrop(OV_SCRIM * k / OV_OPEN_FRAMES);
@@ -7228,7 +7446,7 @@ static int       g_scan_extra;
  * rom_cache (rom_side_add), so the first TRIANGLE to Game Boy is a cache hit
  * instead of walking the same folders again (on a card with 925 games in
  * ux0:ROMS/GBA that was 0.35 to 1.6 s with the screen frozen). */
-static struct { int on, n, found; unsigned used, path_errors; } g_side[3];
+static struct { int on, n, found; unsigned used, path_errors; } g_side[FE_CONSOLE_COUNT];
 static unsigned  g_rom_rev_seq;      /* issues g_rom_view_revision values */
 /* The key a game has in linkmode.txt: its name under roms/, or for a game
  * of an extra folder its file name (main_vita.c game_identity() does the
@@ -7270,6 +7488,9 @@ static int            g_find_n;
                                BROWSER_TAB_BUTTON(2))
 /* Home: Start over -- play without continuing where the game was left. */
 #define BROWSER_FRESH_BUTTON  (1u << 28)
+/* Home: the Cover button -- a picture of your own for the game
+ * (vita/ui_vita_cover.h). */
+#define BROWSER_COVER_BUTTON  (1u << 29)
 /* RECENT AND THE ORDERS.  The Recent tab (the Home's third: games played,
  * the latest first) and Settings > Game order (by name, last played first,
  * most played first) are one more permutation over the scan, under the
@@ -8171,6 +8392,9 @@ static int rom_has_sav(int idx)
                                 g_roms[idx].name) != 0 ? -1
          : g_pcfg.console == FE_CONSOLE_GBA
          ? snprintf(sav, sizeof(sav), "%.*s.sav",
+                    (int)ui_rom_stem_length(rom), rom)
+         : g_pcfg.console == FE_CONSOLE_SNES      /* snes.bin: Game.srm */
+         ? snprintf(sav, sizeof(sav), "%.*s.srm",
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
 #else
@@ -9259,7 +9483,7 @@ static void art_cache_565(const char *path, const uint16_t *tex, int stride,
  * it, visibly soft at 960x544. */
 static int g_art_cover_as_hero;
 /* The home screen's tile picture: the thumbnail the fetch thread made for this
- * cover (boxart/<stem>.t2.565, at most ART_THUMB_W x ART_THUMB_H).  One read of
+ * cover (cache/boxart/<stem>.t2.565, at most ART_THUMB_W x ART_THUMB_H).  One read of
  * a small file, no decode.  0 = read; -1 = there is none (the caller falls back
  * to the full picture). */
 static int art_thumb_load(int rom_idx, uint16_t *tex, int stride,
@@ -9270,10 +9494,16 @@ static int art_thumb_load(int rom_idx, uint16_t *tex, int stride,
    int stem = (int)ui_rom_stem_length(base);
    char path[PSP_FILE_PATH_CAP];
 
-   int len = snprintf(path, sizeof(path), "%s/boxart/%.*s%s", g_dir_base,
-                      stem, base, ART_THUMB_SUFFIX);
+   char was[PSP_FILE_PATH_CAP];
+   sidecar_mig mig = {0};
+   int len = snprintf(path, sizeof(path), "%s/" SIDECAR_THUMB_DIR "/%.*s%s",
+                      g_dir_base, stem, base, ART_THUMB_SUFFIX);
    if (len < 0 || (size_t)len >= sizeof(path))
       return -1;
+   /* one an older version left in boxart/ moves to cache/ */
+   if (snprintf(was, sizeof(was), "%s/boxart/%.*s%s", g_dir_base, stem, base,
+                ART_THUMB_SUFFIX) < (int)sizeof(was))
+      sidecar_move_file(was, path, &mig);
    return art_load_565(path, tex, stride, dw, dh);
 }
 #endif
@@ -9288,7 +9518,10 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
     * is decoded at the Vita's resolution -- and LAST the PSP's .565 (128-px
     * covers, 480x272 heroes), so a PSP art pack with no sources left still
     * shows, filtered. */
-   const char *ext[] = { "v565", "png", "jpg", "jpeg", "bmp", "565" };
+   const char *ext[] = { "v565", "png", "jpg", "jpeg", "bmp", "565",
+                         "v565" };
+   /* [0] is the copy this code made, in cache/<dir>/; the last is one beside
+    * the picture (an older version's, or an art pack's own) */
 #else
    /* .565 first: it is the texture itself and costs one read. */
    static const char *ext[] = { "565", "png", "jpg", "jpeg", "bmp" };
@@ -9303,7 +9536,7 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
    FE_EVT_ONLY(t0);
 #ifdef VITA
    if (g_art_cover_as_hero)
-      ext[0] = "vh565";
+      ext[0] = ext[6] = "vh565";
 #endif
 
    for (e = 0; e < sizeof(ext) / sizeof(ext[0]); e++)
@@ -9315,6 +9548,13 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
       /* A failed attempt may have shrunk the box; every candidate gets
        * the same frame to fit into. */
       *dw = boxw; *dh = boxh;
+#ifdef VITA
+      if (e == 0)
+         path_len = snprintf(path, sizeof(path), "%s/" SIDECAR_ART_CACHE
+                             "/%s/%.*s.%s", g_dir_base, dir, stem, base,
+                             ext[e]);
+      else
+#endif
       path_len = snprintf(path, sizeof(path), "%s/%s/%.*s.%s", g_dir_base,
                           dir, stem, base, ext[e]);
       if (path_len < 0 || (size_t)path_len >= sizeof(path))
@@ -9355,8 +9595,9 @@ static int art_load_any(const char *base, const char *dir, uint16_t *tex,
           * make the emulator look hung on first run. */
          char cpath[PSP_FILE_PATH_CAP];
 #ifdef VITA
-         int cache_len = snprintf(cpath, sizeof(cpath), "%s/%s/%.*s.%s",
-                                  g_dir_base, dir, stem, base, ext[0]);
+         int cache_len = snprintf(cpath, sizeof(cpath), "%s/" SIDECAR_ART_CACHE
+                                  "/%s/%.*s.%s", g_dir_base, dir, stem, base,
+                                  ext[0]);
 #else
          int cache_len = snprintf(cpath, sizeof(cpath),
                                   "%s/%s/%.*s." UI_ART_CACHE_EXT,
@@ -10478,21 +10719,52 @@ static int browser_rom_state_path(const char *rom_dir, int rom_idx,
                                   unsigned slot, char *out, size_t out_sz)
 {
    char rom_path[PSP_FILE_PATH_CAP];
+#ifdef VITA
+   extern char g_dir_base[];
+#endif
    if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
                          g_roms[rom_idx].name) != 0)
       return -1;
    /* The browsing console is the console the game will boot as. */
+#ifdef VITA
+   if (sidecar_state1(out, out_sz, g_dir_base, rom_path,
+                      (fe_console_t)g_pcfg.console) != 0)
+      return -1;
+#else
    if (psp_rom_path_suffix(out, out_sz, rom_path,
                            psp_state_slot1_suffix(
                               (fe_console_t)g_pcfg.console)) != 0)
       return -1;
+#endif
    return psp_state_path_for_slot(out, out_sz, out, slot);
 }
+
+#ifdef VITA
+/* What an older version left beside this game: moved under the app folder
+ * (psp/sidecar.h) before the slots are looked for. */
+static void browser_rom_migrate(const char *rom_dir, int rom_idx)
+{
+   char rom_path[PSP_FILE_PATH_CAP], now[PSP_FILE_PATH_CAP],
+        was[PSP_FILE_PATH_CAP];
+   sidecar_mig mig;
+   if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
+                         g_roms[rom_idx].name) != 0 ||
+       browser_rom_state_path(rom_dir, rom_idx, 1, now, sizeof(now)) != 0 ||
+       sidecar_legacy_state1(was, sizeof(was), rom_path,
+                             (fe_console_t)g_pcfg.console) != 0)
+      return;
+   sidecar_migrate(was, now, &mig);
+   if (mig.moved || mig.copied)
+      fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
+             rom_path, mig.moved, mig.copied, mig.failed, mig.kept);
+}
+#endif
 
 static int browser_rom_has_state(const char *rom_dir, int rom_idx)
 {
 #ifdef VITA
    if (g_ui_home) return home_cached_states(rom_idx);
+   browser_rom_migrate(rom_dir, rom_idx);
 #endif
    SceIoStat st;
    char path[PSP_FILE_PATH_CAP];
@@ -10998,6 +11270,11 @@ static int browse_backdrop_take(void)
  * vita/share_vita.c, Wi-Fi rooms). */
 #include "ui_share.inc"
 
+#ifdef VITA
+static void ui_cover_run(const char *rom_dir, int rom, int n_scan);
+static void ui_cover_inbox_scan(int n_scan);
+static int  ui_cover_row(int rom);
+#endif
 static int browser_settings(void)
 {
    int relaunch = 0;
@@ -11035,6 +11312,11 @@ static int browser_settings(void)
       g_bset_have = 1;
    }
 
+#ifdef VITA
+   g_cover_req = 0;
+   g_cover_row = g_bpage.rom_dir && g_bpage.n > 0
+                 ? ui_cover_row(view_rom(g_bpage.cur)) : 0;
+#endif
    screen_to(SCR_SETTINGS);
    g_cursor = SET_FIRST;
    g_prev_pad = 0xFFFFFFFFu;      /* swallow the opening START */
@@ -11092,6 +11374,16 @@ static int browser_settings(void)
 #ifdef VITA
       /* Share game data (ui_share.inc, vita/share_vita.c): host on this
        * console's Room, or join the share on it; either way back here. */
+      if (g_cover_req)
+      {
+         int rom = view_rom(g_bpage.cur);
+         g_cover_req = 0;
+         ui_cover_run(g_bpage.rom_dir, rom, g_bpage.n_scan);
+         g_cover_row = ui_cover_row(rom);
+         screen_to(SCR_SETTINGS);
+         g_cursor = SET_COVERPIC;
+         g_prev_pad = 0xFFFFFFFFu;  /* the O that left the page is spent */
+      }
       if (g_share_req == 1 || g_share_req == 2)
       {
          int req = g_share_req;
@@ -11590,6 +11882,9 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
    if (*n_scan < 0)
       *n_scan = 0;
    favs_mark(*n_scan);
+#ifdef VITA
+   ui_cover_inbox_scan(*n_scan);
+#endif
    *n = view_count(*n_scan);
    *cur = 0;
    for (i = 0; i < *n; i++)
@@ -11610,6 +11905,7 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
 #ifdef VITA
 #include "ui_vita_browser.h"
 #include "ui_vita_home.h"
+#include "ui_vita_cover.h"
 
 /* The browser below, with the toasts moved off its header for as long as
  * it runs (it has half a dozen ways out). */
@@ -11723,6 +12019,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #endif
    favs_load(rom_dir);
    favs_mark(n_scan);
+#ifdef VITA
+   ui_cover_inbox_scan(n_scan);       /* covers/: pictures named like games */
+#endif
    n = n_scan;
 
    /* preselect last played */
@@ -12350,6 +12649,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             if (n_scan < 0)
                n_scan = 0;
             favs_mark(n_scan);
+#ifdef VITA
+            ui_cover_inbox_scan(n_scan);
+#endif
             n = view_count(n_scan);
             cur = 0;
             for (i = 0; i < n; i++)
@@ -12375,6 +12677,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       rom = n > 0 ? view_rom(cur) : -1;
 #ifdef VITA
       md_selection(rom, g_pcfg.console);
+      ui_cover_pump(n_scan, idle);
       if (!g_ui_home || n <= 0)
       {
          hm_art_poll(rom_dir, n_scan, idle);
@@ -12382,6 +12685,17 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       }
 #endif
 #ifdef VITA
+      /* Cover: a picture of your own for the game (Home's button). */
+      if ((edges & BROWSER_COVER_BUTTON) && n > 0 && !g_browser_state_open)
+      {
+         ui_cover_enter(rom_dir, rom, n_scan);
+         edges = 0;
+         idle = 0;
+         tch_reset();
+         tch_scroll_stop(&g_br_ts);
+         continue;
+      }
+      edges &= ~BROWSER_COVER_BUTTON;
       /* Start over: the same launch, without continuing. */
       if ((edges & BROWSER_FRESH_BUTTON) && n > 0 && g_ui_home &&
           !g_browser_state_open && home_has_resume(rom))
@@ -12460,6 +12774,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             if (n_scan < 0)
                n_scan = 0;
             favs_mark(n_scan);
+            ui_cover_inbox_scan(n_scan);
             n = view_count(n_scan);
             cur = 0;
             g_empty_for = -1;

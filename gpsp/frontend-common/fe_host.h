@@ -67,6 +67,14 @@ typedef struct fe_host_config
     * host test, and any platform whose stamps were always UTC): all UTC. */
    time_t (*wallclock_legacy)(void);
    long long gb_rtc_legacy_before;
+   /* GBA only, [save-type]: the player's per-game choice of battery type,
+    * a GPSP_SAVE_* id (gba_memory.h; 0 = Auto).  Applied before the save
+    * file is read. */
+   int gba_save_type;
+   /* GBA only, [rtc]: nonzero keeps the repeatable frame-counting cartridge
+    * clock (base + emulated frames).  0 = the cartridge clock follows
+    * gpsp_wallclock, the console's own clock (gba_memory.c, rtc_clock.h). */
+   int gba_rtc_frames_only;
    /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (0 = Auto: Super
     * Game Boy colours where the game has them, grey otherwise). */
    int gb_palette;
@@ -145,6 +153,14 @@ typedef struct fe_host_config
     * (the partner then sends it). */
    int (*gb_find_rom)(uint32_t size, const uint8_t header[0x1C], char *path,
                       size_t cap);
+   /* GBA cable sessions with ANOTHER cartridge in the partner's machine
+    * (Ruby with Sapphire): the folder the partner's cartridge is kept in
+    * between sessions (the app's own data, never a game folder), created on
+    * demand.  NULL = no cache, the two players need the same game. */
+   const char *gba_rom_cache_dir;
+   /* ...and how much it may hold: files / bytes (0 = 4 / 96 MiB). */
+   unsigned gba_rom_cache_files;
+   unsigned gba_rom_cache_mb;
    /* Harness: the autopilot script belongs to a link session, so it waits
     * (fe_host_autopilot_gate) until the session's machines are running. */
    int gblink_script_waits;

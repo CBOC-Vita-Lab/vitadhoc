@@ -69,12 +69,17 @@ VitAdhoc reads `roms/` first, then any of these that exist, without moving
 anything:
 
 ```text
-ux0:ROMS/GBA, ux0:ROMS/GB, ux0:ROMS/GBC
-ux0:roms/GBA, ux0:roms/GB, ux0:roms/GBC
+ux0:ROMS/GBA, ux0:ROMS/GB, ux0:ROMS/GBC, ux0:ROMS/SNES
+ux0:roms/GBA, ux0:roms/GB, ux0:roms/GBC, ux0:roms/SNES
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color
+ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System
 ```
+
+Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
+(a `SNES ROM Collection` folder, for example). The file ending decides the
+console: `.gba`, `.gb`, `.gbc`, `.sfc` or `.smc`.
 
 To choose your own folders, open **Settings > Library > Game folders** in the
 game list, press Cross and type the folder (for example `ux0:ROMS/GBA`). Type
@@ -117,13 +122,32 @@ may still need conversion. Back up the original. If VitAdhoc finds a backup
 or temporary save (`.bak`, `.tmp` or `.old`), it does not import over that
 recovery situation. Do not delete those files just to force an import.
 
-VitAdhoc's own save names, beside each game:
+Beside each game, VitAdhoc keeps only its battery save:
 
-| Console | Battery save | States | Continue point |
-| --- | --- | --- | --- |
-| GBA | `Game.sav` | `Game.st0` … `Game.st9` | `Game.rsm` |
-| Game Boy | `Game.gb.sav` | `Game.gb.st0` … `Game.gb.st9` | `Game.gb.rsm` |
-| Game Boy Color | `Game.gbc.sav` | `Game.gbc.st0` … `Game.gbc.st9` | `Game.gbc.rsm` |
+| Console | Battery save |
+| --- | --- |
+| GBA | `Game.sav` |
+| Game Boy | `Game.gb.sav` |
+| Game Boy Color | `Game.gbc.sav` |
+| Super NES | `Game.srm` (the same name RetroArch and Snes9x use) |
+
+Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
+
+| Console | States | Continue point |
+| --- | --- | --- |
+| GBA | `states/gba/Game.st0` … `Game.st9` | `states/gba/Game.rsm` |
+| Game Boy | `states/gb/Game.gb.st0` … `Game.gb.st9` | `states/gb/Game.gb.rsm` |
+| Game Boy Color | `states/gbc/Game.gbc.st0` … `Game.gbc.st9` | `states/gbc/Game.gbc.rsm` |
+
+SNES games keep their four state slots and picture settings in
+`ux0:data/GBAdhoc/snes/` (`states/Game.st0` … `Game.st3`). Before VitAdhoc
+first writes over a SNES save it did not make, a copy goes to
+`ux0:data/GBAdhoc/backups/snes/`.
+
+Each GBA or Game Boy state also has a `.thumb` and a `.shot` picture next to it. States are
+named after the game wherever it is kept, as in RetroArch, so moving a game to
+another folder keeps its states. Games from older versions are moved
+over by themselves the first time you open or view them.
 
 A game kept in a `.zip` uses the archive's stem and the console's suffix:
 `Game.zip` becomes `Game.sav` for GBA, `Game.gb.sav` for GB, or
@@ -183,15 +207,31 @@ that you chose the right base. Unzip a game before using a sidecar patch.
 ROM hacks do not automatically inherit the original game's wide-view profile,
 achievements or performance; those need to be checked for the exact hack.
 
+## CPU Speed (500 MHz)
+
+VitAdhoc asks for 500 MHz. The Vita only allows that with an overclock plugin
+such as PSVshell; without one it runs at 444 MHz and Settings > CPU speed
+says so. With PSVshell installed, VitAdhoc writes the profile it needs
+(`ur0:data/PSVshell/profiles/GBAD00001`) the first time, if you have none for
+it; a profile of your own is left alone until you switch the row in Settings,
+and is saved and put back when you switch to "444 MHz (standard)". The new
+profile applies the next time the app starts. A faster clock uses more
+battery and runs warmer.
+
 ## Where Things Are Kept
 
-Saves and states live **next to each game**, wherever it is (names in the
-table above). Move or back up a game together with these.
+A game's battery save lives **next to the game**, wherever it is (names in the
+table above). Save states and the Continue point live in `states/`. Back up
+the game together with its `.sav`, and `states/` if you want your states.
+Moving a game to another folder (outside `roms/`) starts it with no states.
 
 ```text
 ux0:data/GBAdhoc/
-  roms/                  your games (and their saves)
+  roms/                  your games (and their battery saves)
+  states/                save states and Continue points, by console
+  cache/                 pictures VitAdhoc can rebuild (safe to delete)
   boxart/  titles/       covers and title screens, downloaded or your own
+  covers/                pictures to use as covers, named like the games (above)
   hero/                  optional wide artwork
   clips/                 the home screen's previews of your play
   games/                 each game's own settings ("This game")
@@ -220,10 +260,47 @@ Install the new VPK over the old one, following
 To remove VitAdhoc, delete its bubble. `ux0:data/GBAdhoc/` stays until you
 delete it yourself, and with it any games and saves kept there.
 
+## Your Own Cover Pictures
+
+Give any game a cover you like: a custom game, a ROM hack, or just a better
+picture than the downloaded one. Yours always wins over a download, and the
+downloader never replaces it.
+
+**From the app.** On the home screen, press **Cover** (touch it), or press
+START and choose **Library > Cover picture**. Then pick one:
+
+- **Choose a picture...** lists the pictures on your Vita (`ux0:picture/`,
+  including `SCREENSHOT/` and `CAMERA/`), your VitAdhoc screenshots, and the
+  `covers/` folder below, newest first. Move down the list to see each one.
+  Press X and you see it larger; press X again to use it.
+- **Use a screenshot of the game** takes the game's newest screenshot, or the
+  picture it left when you last played, or a save-state picture, or its title
+  screen.
+- **Automatic (download)** goes back to the downloaded cover.
+
+PNG and JPG work, in any shape. The picture is copied (shrunk to 512 pixels on
+its long side, never stretched) and shown whole on the tile, with bars if it
+is not square. Your original is not touched.
+
+**From a computer.** Copy a PNG or JPG into `ux0:data/GBAdhoc/covers/` and name
+it like the game, without the extension: `Pokemon Unbound.png` for
+`Pokemon Unbound.gba`. Capitals do not matter, and `Pokemon Unbound.gba.png`
+works too. VitAdhoc takes it up when the game list opens, or at Settings >
+Library > Refresh library.
+
+A file in `covers/` is never changed or deleted. If you choose **Automatic**
+for a game, its file in `covers/` stays unused until you put in a new or changed
+one. To get rid of it for good, delete it from `covers/`.
+
+Behind the scenes the cover is `boxart/<game>.png`, with a small
+`boxart/<game>.own` note that it is yours, and the downloaded one is kept as
+`boxart/<game>.dl` so Automatic can bring it back. A picture you put in
+`boxart/` yourself, named like the game, also wins over downloads.
+
 ## Box Art And Previews
 
 On Wi-Fi, the home screen fetches covers and title screens from the libretro
-thumbnail server; your own pictures in `boxart/` always win. Nothing downloads
+thumbnail server; [your own pictures](#your-own-cover-pictures) always win. Nothing downloads
 during a game or in ad hoc mode. Settings > Interface > Covers shows progress
 and looks again for missing ones. `art = 0` in `vita.ini` turns downloading off;
 `art_titles = 0` skips title screens.
@@ -240,5 +317,5 @@ off in Settings > Interface > Game previews.
 | A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/GBAdhoc/gba_bios.bin`. |
 | The picture is slow or odd | Settings > Display: Image quality Original, and leave GPU xBRZ off. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |
 | A zip will not open | Unzip it and try the game directly; check that it has one supported game and is not encrypted or ZIP64. |
-| No cover for a game | Covers are optional. Check Wi-Fi, or add your own picture to `boxart/`. |
+| No cover for a game | Covers are optional. Check Wi-Fi, or set your own: Cover on the home screen, or a picture in `covers/` ([above](#your-own-cover-pictures)). |
 | RetroAchievements won't sign in | Check Wi-Fi and the Vita's date and time. The log's `ra_http` lines say why. |

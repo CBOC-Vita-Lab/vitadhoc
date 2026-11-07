@@ -26,13 +26,13 @@
 ;
 ; Built with rgbds; see the Makefile (make gb).
 
-rROLE EQU $C000
-rN EQU $C001
-rOK EQU $C002
-rBAD EQU $C003
-rLAST EQU $C004
-rDONE EQU $C005
-COUNT EQU 200
+DEF rROLE EQU $C000
+DEF rN EQU $C001
+DEF rOK EQU $C002
+DEF rBAD EQU $C003
+DEF rLAST EQU $C004
+DEF rDONE EQU $C005
+DEF COUNT EQU 200
 
 SECTION "entry", ROM0[$100]
     nop
@@ -43,6 +43,14 @@ SECTION "main", ROM0[$150]
 start:
     di
     ld   sp, $DFF0
+IF DEF(DOUBLE)
+    ; a Game Boy Color in double speed (rgbasm -DDOUBLE, header flag set):
+    ; the cable must still work against a machine at normal speed
+    ld   a, 1
+    ldh  [$FF4D], a
+    stop
+    nop
+ENDC
 .wait_vbl:
     ldh  a, [$FF44]
     cp   144

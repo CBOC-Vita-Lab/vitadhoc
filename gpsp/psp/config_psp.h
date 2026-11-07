@@ -176,6 +176,15 @@ typedef struct
     * lib_sort): 0 by name, 1 most recently played first, 2 most played
     * first (psp/play_log.h). */
    int  lib_sort;
+   /* A AND B BUTTONS (Settings > Controls, CONFIG.INI ab_buttons): which
+    * face button is the Game Boy's A, and so which one the menus confirm
+    * with.  -1 (no key) = as the Vita's own Settings say (its Enter
+    * button); 0 = Cross is A; 1 = Circle is A.  Written once chosen. */
+   int  ab_buttons;
+   /* Settings > Controls > Rewind with right stick (CONFIG.INI
+    * stick_rewind): 1 = the right stick held left rewinds; 0 = it does not
+    * (the default; the Rewind button still does). */
+   int  stick_rewind;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -454,6 +463,8 @@ typedef struct
    int  local_partner;  /* local link: 0 = the partner starts from a copy
                          * of my save (default), 1 = from its own save file */
    int  local_layout;   /* VID_PAIR_SIDE (default) / VID_PAIR_INSET         */
+   int  local_touch2;   /* 1 = with no second controller, player 2 plays on
+                         * the front screen (vita/local_vita.c); 0 = off   */
    /* 1 (default): the menus answer the front panel.  0 = they ignore it --
     * the switch for a panel that misbehaves.  Read; written only when the
     * key is already in the file. */
@@ -467,9 +478,9 @@ typedef struct
    int  rewind;
    int  rewind_mb;
    int  rewind_mb_keep;
-   /* How many more games begin with the two lines a new player needs (how
-    * the menu opens, how to rewind): 3 on a fresh install, counted down by
-    * vita/main_vita.c, 0 for ever after. */
+   /* 1 on a fresh install: the first game ever played says once how the
+    * menu opens and what Square does, then vita/main_vita.c sets it to 0
+    * and saves (an older file may still hold 2 or 3: one showing, then 0). */
    int  hints;
    /* START and SELECT wait a moment before the game sees them, so a
     * shortcut chord (SELECT+L, START+SELECT...) does not also press them in
@@ -539,7 +550,10 @@ void pcfg_net_addr_push(const char *addr);
 
 extern psp_config g_pcfg;
 
-enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH, PCFG_FF_COUNT };
+/* PCFG_FF_2X (ff_mult_x10 = 20) is the Vita's (1.3); the PSP's settings row
+ * offers the first PCFG_FF_PSP_COUNT. */
+enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH, PCFG_FF_2X, PCFG_FF_COUNT };
+#define PCFG_FF_PSP_COUNT 3
 int pcfg_ff_mode(void);
 void pcfg_ff_set_mode(int mode);
 const char *pcfg_ff_name(void); /* shared by settings and OSD */
@@ -602,8 +616,15 @@ enum
    PCFG_AMB_ART_GAME = 2,   /* hero art, else a blurred early game frame    */
    PCFG_AMB_MODES    = 3
 };
-/* Off until the owner picks a look (Fable's mockups). */
+/* 1.3: the glow beside the picture is on by default, so the aspect-correct
+ * picture fills the screen without being stretched: hero art if there is
+ * any, else a blurred frame of the game itself.  (Not drawn under a screen
+ * overlay; a ambient_<console> key already in config.ini is kept.) */
+#ifdef VITA
+#define PCFG_AMBIENT_DEF  PCFG_AMB_ART_GAME
+#else
 #define PCFG_AMBIENT_DEF  PCFG_AMB_OFF
+#endif
 
 typedef struct
 {
@@ -627,8 +648,8 @@ typedef struct
     *     places beside the screen.
     * A Game Boy has none.
     * wide_fill_gba: what the margins show where a game has no more (a
-    * menu): 1 its own edges continued softly (the default), 2 the picture
-    * stretched, 0 black bars. */
+    * menu): 0 black bars (the default), 1 its own edges continued softly,
+    * 2 the picture stretched. */
    int wide, wide_fill;
    /* SUPER GAME BOY BORDER (CONFIG.INI sgb_border_gb, the GB profile's):
     * 1 = a game running as a Super Game Boy (GB palette Auto) is shown in
@@ -644,7 +665,7 @@ const char *pcfg_quality_name(int quality);
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
 #define PCFG_WIDE_DEF 1
-#define PCFG_WIDE_FILL_DEF 1
+#define PCFG_WIDE_FILL_DEF 0
 int pcfg_wide_modes(int console);
 const char *pcfg_wide_name(int wide);
 const char *pcfg_wide_fill_name(int fill);
@@ -670,6 +691,14 @@ extern pcfg_display g_pdisp[FE_CONSOLE_COUNT];
  *               games without one): how motion is read, how strongly, which
  *               way round, the hold that counts as level, and the light a
  *               light-sensor game sees. */
+/* [save-type] [rtc] per-game GBA overrides for ROM hacks (games/<ROM>.ini
+ * keys save_type, rtc), applied when the game starts.  The order of
+ * PCFG_SAVE_* is gba_memory.h's GPSP_SAVE_*. */
+enum { PCFG_SAVE_AUTO, PCFG_SAVE_SRAM, PCFG_SAVE_FLASH64, PCFG_SAVE_FLASH128,
+       PCFG_SAVE_EEPROM512, PCFG_SAVE_EEPROM8K, PCFG_SAVE_MODES };
+enum { PCFG_RTC_AUTO, PCFG_RTC_ON, PCFG_RTC_OFF, PCFG_RTC_MODES };
+const char *pcfg_save_type_name(int t);
+const char *pcfg_rtc_mode_name(int m);
 enum { PCFG_SENSOR_MOTION, PCFG_SENSOR_STICK, PCFG_SENSOR_MODES };
 enum { PCFG_SENS_LOW, PCFG_SENS_NORMAL, PCFG_SENS_HIGH, PCFG_SENS_MODES };
 #define PCFG_SUN_CLOCK     11   /* the light follows the time of day */
@@ -684,6 +713,8 @@ typedef struct
    int sensor_mode, sensor_sens, sensor_rev, sunlight;
    int level_set;             /* level_right/level_down hold a calibration */
    int level_right, level_down;   /* milli-g of the hold counted as level  */
+   int save_type;             /* PCFG_SAVE_*: GBA battery type, read at load */
+   int rtc_mode;              /* PCFG_RTC_*: GBA cartridge clock, at load    */
 } pcfg_game;
 extern pcfg_game g_pgame;
 /* Read `path` for the game about to run on `console` and, when it has its own

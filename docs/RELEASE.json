@@ -1,9 +1,9 @@
 {
   "name": "VitAdhoc",
-  "version": "1.2",
-  "date": "2026-10-30",
-  "tag": "v1.2",
-  "title": "VitAdhoc 1.2",
+  "version": "1.3",
+  "date": "2026-11-07",
+  "tag": "v1.3",
+  "title": "VitAdhoc 1.3",
   "assets": [
     "VitAdhoc.vpk",
     "VitAdhoc-install.zip",
@@ -12,8 +12,8 @@
   ],
   "package": {
     "path": "VitAdhoc.vpk",
-    "sha256": "b844da404b1ed36ca776818d6870a19c3effc23a4c39ed6503854eeb16c940de",
-    "runtimeSha256": "3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074"
+    "sha256": "935d938cd0fa9293ed6fa5847bb83c72e0a779814e4083f9b6d64c0f6e3586b2",
+    "runtimeSha256": "c17d060a27af5df57ad9e32e67e49cb7f530229d72b97b1b185fafb8876946f6"
   },
   "titleId": "GBAD00001"
 }

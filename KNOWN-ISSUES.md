@@ -24,6 +24,20 @@ Testing continues on:
   full trade between versions has not been played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
 
+## Super NES
+
+- **New in 1.3 and still being measured on a Vita.** The SNES player shows the
+  frames per second in its log (`ux0:data/GBAdhoc/snes/log.txt`).
+- The SNES player has its own pause menu (hold **L + R + Start**) with four
+  state slots. Rewind, fast forward, Continue, cheats, patches and
+  RetroAchievements are for GBA and Game Boy games only for now.
+- **Players 3 and 4** need the Super Multitap (Auto turns it on for games
+  known to use it) and extra controllers. Controllers beyond the first have
+  not been tried on a real Vita yet.
+- Super FX 2 and SA-1 games (Yoshi's Island, Super Mario RPG, Kirby Super
+  Star) are the heaviest. If one slows down, every other frame is skipped
+  to keep the game and its sound at full speed; the picture options stay on.
+
 ## Games
 
 How we checked the games people reported, and what is still unchecked, is in
@@ -61,6 +75,8 @@ flicker or missing instruments, which we could not judge without a Vita.
 - Some cheats need their "Enable Code (Must Be On)" entry first; a few code
   types are marked unsupported. Cheats switch off while linked and in Hardcore.
 - Three- and four-player links and single-cartridge multiboot aren't supported.
+- **1.3 links only with 1.3.** Engine fixes changed the check two Vitas make
+  before linking, so update both Vitas.
 - Two games with the same file name share box art, cheats and previews. Give
   different games different names.
 - The same game in two folders (for example `ux0:data/GBAdhoc/roms/` and

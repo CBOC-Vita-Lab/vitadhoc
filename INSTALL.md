@@ -69,12 +69,17 @@ VitAdhoc reads `roms/` first, then any of these that exist, without moving
 anything:
 
 ```text
-ux0:ROMS/GBA, ux0:ROMS/GB, ux0:ROMS/GBC
-ux0:roms/GBA, ux0:roms/GB, ux0:roms/GBC
+ux0:ROMS/GBA, ux0:ROMS/GB, ux0:ROMS/GBC, ux0:ROMS/SNES
+ux0:roms/GBA, ux0:roms/GB, ux0:roms/GBC, ux0:roms/SNES
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color
+ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System
 ```
+
+Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
+(a `SNES ROM Collection` folder, for example). The file ending decides the
+console: `.gba`, `.gb`, `.gbc`, `.sfc` or `.smc`.
 
 To choose your own folders, open **Settings > Library > Game folders** in the
 game list, press Cross and type the folder (for example `ux0:ROMS/GBA`). Type
@@ -124,6 +129,7 @@ Beside each game, VitAdhoc keeps only its battery save:
 | GBA | `Game.sav` |
 | Game Boy | `Game.gb.sav` |
 | Game Boy Color | `Game.gbc.sav` |
+| Super NES | `Game.srm` (the same name RetroArch and Snes9x use) |
 
 Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 
@@ -133,7 +139,12 @@ Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 | Game Boy | `states/gb/Game.gb.st0` … `Game.gb.st9` | `states/gb/Game.gb.rsm` |
 | Game Boy Color | `states/gbc/Game.gbc.st0` … `Game.gbc.st9` | `states/gbc/Game.gbc.rsm` |
 
-Each state also has a `.thumb` and a `.shot` picture next to it. States are
+SNES games keep their four state slots and picture settings in
+`ux0:data/GBAdhoc/snes/` (`states/Game.st0` … `Game.st3`). Before VitAdhoc
+first writes over a SNES save it did not make, a copy goes to
+`ux0:data/GBAdhoc/backups/snes/`.
+
+Each GBA or Game Boy state also has a `.thumb` and a `.shot` picture next to it. States are
 named after the game wherever it is kept, as in RetroArch, so moving a game to
 another folder keeps its states. Games from older versions are moved
 over by themselves the first time you open or view them.

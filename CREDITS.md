@@ -12,6 +12,9 @@ It stands on the work of many people:
 - **gpSP by Exophase**, with the libretro contributors: the GBA emulator and
   its ARM recompiler.
 - **TGB Dual:** the Game Boy and Game Boy Color emulator.
+- [**Snes9x**](https://github.com/snes9xgit/snes9x) by its many authors: the
+  Super NES emulator inside the SNES player (version 1.63), including Shay
+  Green's snes_spc sound code.
 - **Normmatt and the VBA/VBA-M team:** the open GBA BIOS from ReGBA.
 - [**rcheevos**](https://github.com/RetroAchievements/rcheevos) by
   RetroAchievements: the achievements runtime.
@@ -25,6 +28,6 @@ It stands on the work of many people:
 [Third-Party Notices](notices/THIRD-PARTY.md) has their licences, revisions and
 local changes. Original copyright notices stay in their files.
 
-An unofficial fan project. Nintendo, Sony, RetroAchievements and the game
-publishers are not affiliated with it and do not endorse it. No ownership of
+An unofficial fan project. Nintendo, Sony, the Snes9x team, RetroAchievements
+and the game publishers are not affiliated with it and do not endorse it. No ownership of
 their games, firmware, artwork or trademarks is claimed.

@@ -15,7 +15,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Super NES | Snes9x 1.63 in its own program (`snes.bin`, non-commercial licence); sound and picture drawing on their own cores; up to four players with the Super Multitap |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
-| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc` (SNES games unzipped); supported stored/deflated `.zip` entries up to 32 MiB |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`; supported stored/deflated `.zip` entries up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
 | Extra folders | Up to eight; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |

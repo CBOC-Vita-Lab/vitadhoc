@@ -11,9 +11,9 @@ handheld experience together, with touch controls and the Vita's own sensors.
 | [Install or update](INSTALL.md) | [All features](docs/FEATURES.md)
 | [Performance](docs/PERFORMANCE.md)
 
-![The VitAdhoc home screen on a physical PS Vita](store/screenshots/vita-1.2/home.png)
+![The VitAdhoc home screen on a physical PS Vita, with the new SNES shelf](store/screenshots/vita-1.3/home-snes.png)
 
-*The home screen on a PS Vita running VitAdhoc 1.2.*
+*The home screen on a PS Vita running VitAdhoc 1.3, with the new SNES shelf.*
 
 You'll need your own games. An open-source GBA BIOS is built in; no BIOS
 download is required. Updating from 1.0, 1.1 or 1.2? Install the VPK over the
@@ -191,22 +191,20 @@ every folder, use the [manual install guide](INSTALL.md).
 
 ## Screenshots
 
-Pokemon Unbound on a PS Vita, full-screen with CPU xBRZ 3x.
+All taken on a PS Vita running VitAdhoc 1.3.
 
-| Pokemon Unbound 2.1.1.1: opening scenes on a PS Vita | Full-screen, CPU xBRZ 3x |
+| Super NES, in its own shape | Super NES with CRT scanlines |
 | --- | --- |
-| ![Unbound's ice cavern introduction on the Vita](store/screenshots/vita-1.2/unbound-intro-ice.png) | ![Unbound's bridge introduction on the Vita](store/screenshots/vita-1.2/unbound-intro-bridge.png) |
+| ![A SNES game filling the Vita's height in 4:3, with a soft glow at the sides](store/screenshots/vita-1.3/snes-original.png) | ![A SNES game with CRT scanlines](store/screenshots/vita-1.3/snes-crt.png) |
+| **Split screen for two players** | **Your own cover pictures** |
+| ![Two games side by side, player 2 on the touch screen](store/screenshots/vita-1.3/split-screen.png) | ![Choosing a cover picture for a game](store/screenshots/vita-1.3/covers.png) |
+| **SNES picture settings** | **A GBA game, never stretched** |
+| ![The SNES player's Picture menu](store/screenshots/vita-1.3/snes-picture.png) | ![A GBA game at its own shape with the glow in the sides](store/screenshots/vita-1.3/gba-fit.png) |
 
-[Capture details](store/screenshots/vita-1.2/README.md).
-
-The following images show the computer test build with the project's test
-cartridges.
-
-| Continue | Save states |
-| --- | --- |
-| ![Continue on the test-build home screen](store/screenshots/continue.png) | ![Test-build save-state previews](store/screenshots/save-states.png) |
-| **Display settings** | **Two players** |
-| ![Test-build display settings](store/screenshots/display-settings.png) | ![Two synthetic test cartridges side by side](store/screenshots/two-players.png) |
+[Capture details](store/screenshots/vita-1.3/README.md). Pokemon Unbound at
+full-screen CPU xBRZ 3x, from 1.2:
+[ice cavern](store/screenshots/vita-1.2/unbound-intro-ice.png),
+[bridge](store/screenshots/vita-1.2/unbound-intro-bridge.png).
 
 ## Download Contents
 

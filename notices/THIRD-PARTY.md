@@ -22,6 +22,14 @@ clarification and the remaining package review.
 - **TGB Dual:** GB/GBC core by the TGB Dual authors, with the libretro
   contributors and local linked-instance changes. Its GPL notice and source
   are in `gpsp/gbcore/tgbdual/`.
+- **Snes9x 1.63 (SNES player, separate program):** the Snes9x team,
+  <https://github.com/snes9xgit/snes9x>. Snes9x licence (non-commercial, not
+  GPL), `snes/core/LICENSE`, shipped as `licenses/Snes9x-LICENSE.txt`; it
+  includes Shay Green's snes_spc DSP (LGPL 2.1). It is built into `snes.bin`
+  only, never linked with `gpsp/` code. Tag, commit and local edits:
+  `snes/core/PROVENANCE.md`. Our SNES frontend (`snes/frontend`, `snes/vita`,
+  `snes/twin`) is MIT and vendors its own libvita2d, stb and Inter font, each
+  with its notice. See [SNES: Snes9x](SNES-Snes9x.md).
 - **mGBA cheat engine:** Copyright (c) 2013-2016 Jeffrey Pfau. MPL-2.0;
   `licenses/MPL-2.0.txt`. Source and marked modifications are in
   `gpsp/cheat_engine.c`, `gpsp/cheat_engine_tables.h` and related files.

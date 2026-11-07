@@ -153,8 +153,7 @@ VPK_EXTRA += $(foreach f,$(DIST_NOTICES),$(f)=$(patsubst ../../%,%,$(f)))
 SNES_BIN := ../../snes/vita/build/snes.bin
 VPK_EXTRA += $(SNES_BIN)=snes.bin \
              ../../snes/core/LICENSE=licenses/Snes9x-LICENSE.txt \
-             ../../snes/core/PROVENANCE.md=licenses/Snes9x-PROVENANCE.md \
-             ../../snes/README.md=notices/SNES-README.md
+             ../../snes/core/PROVENANCE.md=licenses/Snes9x-PROVENANCE.md
 $(SNES_BIN): FORCE
 	$(MAKE) -C ../../snes/vita -j1
 FORCE:

@@ -2,46 +2,50 @@
 
 | Item | Value |
 | --- | --- |
-| Version | 1.2 |
-| Package | `VitAdhoc.vpk`, SHA-256 `b844da404b1ed36ca776818d6870a19c3effc23a4c39ed6503854eeb16c940de` |
-| Runtime (`eboot.bin`) | SHA-256 `3e107b77447ef26961de846a32b0cf90e9cafe55dcc56329efaa75424e0b4074` |
+| Version | 1.3 |
+| Package | `VitAdhoc.vpk`, SHA-256 `935d938cd0fa9293ed6fa5847bb83c72e0a779814e4083f9b6d64c0f6e3586b2` |
+| Runtime (`eboot.bin`) | SHA-256 `c17d060a27af5df57ad9e32e67e49cb7f530229d72b97b1b185fafb8876946f6` |
+| SNES player (`snes.bin`) | SHA-256 `ee8de2831f7f148e38d582181753ec6ce037190dfd5241c4a5b711f2b54dc56c` |
 | Title ID | `GBAD00001` (existing data layout: `ux0:data/GBAdhoc/`) |
-| Original 1.2 source commit | `dd6998f6a902f0f0a8deae0ae3e16c73b5c103f7`, based on 1.1 commit `91ce334f2e807e919ce7602e86bb9d44c13dde50` |
-| Build command | `make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=1.2` |
+| Source | The `v1.3` tag (application code as built; later commits before the tag change documentation, screenshots and release records only), based on 1.2 commit `fb41c1d3e171` |
+| Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=1.3` (also builds `snes/vita`, single job) |
 | Toolchain | VitaSDK `0.20260926.321` ([Building](BUILDING.md) has the pins) |
 
-The release documentation may be updated after the original source commit;
-the hashes above identify the unchanged 1.2 application package. `GIT_VERSION`
-supplies the version label written in the app log.
+`GIT_VERSION` supplies the version label written in the app log.
 
-The VPK's 24 entries include the runtime, original app artwork, databases and
-readable license/attribution notices. Package checks verify the runtime hash,
-title ID, safe archive paths and matching notices. No commercial game,
+The VPK's 28 entries include the runtime, the SNES player, original app
+artwork, databases and readable license/attribution notices. `snes.bin` is a
+separate program built only from `snes/` (Snes9x 1.63 and our MIT frontend);
+it contains no code from `gpsp/`, and its licence travels as
+`licenses/Snes9x-LICENSE.txt`. Package checks verify both program hashes,
+the title ID, safe archive paths and matching notices. No commercial game,
 save file or proprietary BIOS is included; the open-source BIOS is built in.
 The install ZIP includes the same VPK and the corresponding source.
 
 ## Automated Evidence
 
-The historical 1.2 acceptance record reports the 54-gate release harness,
-whole-app tests of the x86 host build, audio tests under sanitizers, the GBA
-rewind suite and release-package checks. A local-play save-timing gate timed
-out under load and passed on reruns.
+The 1.3 candidate passed the full gate on the x86 host build of the app:
 
-The broader host suite retained seven older failures also seen in 1.1. The
-GB/GBC rewind legs were not run in that acceptance environment because the
-`rgbds` assembler was unavailable. [Building](BUILDING.md) lists runnable
-test commands.
+| Suite | Result |
+| --- | --- |
+| Whole-app tests (`app_tests.py`) | 1,996 checks, 0 failed |
+| Rewind (`rewind_tests.py`) | 373 checks, 0 failed |
+| Two players on one console (`local_tests.py`) | 471 checks, 0 failed |
+| Link between consoles (`link_tests.py --hz 20`, lossy network included) | 649 checks, 0 failed |
+| Audio regressions | 8 passed, 0 failed |
+| SNES self tests (`snes/twin/selftest.sh`) | all passed |
+| Release package (`gpsp/vita/tests`) | 5 tests passed |
 
-For the publication audit, the original source/install checksum checker
-verified 1,166 listed files. All 13 download-checker tests and five
-release-package tests passed. The original install ZIP's 1,167 regular files
-matched that source snapshot, including its checksum manifest.
+The SNES threads were checked bit for bit against a single-threaded run
+(frame hashes and audio) on 289 test programs and 15 commercial games the
+tester owns (`snes/twin/mt_compare.py`); the games are not included.
+[Building](BUILDING.md) lists runnable test commands.
 
 ## Hardware Evidence
 
-The [1.2 performance report](PERFORMANCE.md) records the physical-Vita
-Pokemon Unbound samples, exact settings, counter definitions and display
-captures, alongside the runtime readback and preservation checks.
+The [performance report](PERFORMANCE.md) records the physical-Vita samples,
+exact settings, counter definitions and display captures, alongside the
+runtime readback and preservation checks.
 
 [Known Issues](../KNOWN-ISSUES.md) tracks remaining hardware checks.
 [Licensing Status](../LICENSING.md) records the maintainer's permission and

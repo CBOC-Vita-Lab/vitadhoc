@@ -271,11 +271,14 @@ after GBA, GB, GBC). Folders searched: `ux0:ROMS/SNES`, `ux0:roms/SNES`,
 `plat_exec_program`. The list shows a save badge when `Game.srm` exists. A launcher
 (RetroFlow) can start `.sfc/.smc` through the same `param=` path.
 
-Left to do on the VitAdhoc side: `.zip` files holding a SNES ROM (the zip reader
-knows only GBA/GB/GBC), cover art and the "Continue" resume entry for SNES,
-per-console display settings (the SNES slot has the default profile but the
-Settings rows apply to the GBA/GB cores only), a short "Back from SNES" return
-screen, and hostcore twin tests for the new console.
+Done since phase 1: `.zip` files holding a SNES game (unpacked like the
+others; the save stays beside the zip), box art from the libretro thumbnail
+set, own covers, every folder under `ux0:ROMS` read as a game folder, and the
+`snes_library` test in `app_tests.py`.
+
+Left to do on the VitAdhoc side: the "Continue" resume entry for SNES,
+rewind and fast forward in the SNES player, and a short "Back from SNES"
+return screen.
 
 ## Timing hooks (what they are and cost)
 

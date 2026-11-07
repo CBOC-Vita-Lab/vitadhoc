@@ -2,13 +2,13 @@
 
 | Item | Value |
 | --- | --- |
-| Version | 1.3 |
-| Package | `VitAdhoc.vpk`, SHA-256 `8f600629b31d1fb836d745245bdc06369265c9d27c2462f27c40a0c8e4a6d75f` |
-| Runtime (`eboot.bin`) | SHA-256 `336fcffbfc49e14a1a377c68e01d1ece8112fbe66e11730cc89a6ddfb5374b09` |
+| Version | 1.3.1 |
+| Package | `VitAdhoc.vpk`, SHA-256 `a86cc208ce376361229772fdfce73b7b0a6a9f929b2f739bc1c55d34631824a8` |
+| Runtime (`eboot.bin`) | SHA-256 `43f037b19c37ef0647ab637289c0e065ab2d60cd3aa60a9103af2a4896b3df8b` |
 | SNES player (`snes.bin`) | SHA-256 `19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4` |
 | Title ID | `GBAD00001` (existing data layout: `ux0:data/GBAdhoc/`) |
-| Source | The `v1.3` tag (application code as built; later commits before the tag change documentation, screenshots and release records only), based on 1.2 commit `fb41c1d3e171` |
-| Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=1.3` (also builds `snes/vita`, single job) |
+| Source | The `v1.3.1` tag, based on 1.3 (`f21ea9c`) |
+| Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=1.3.1` (also builds `snes/vita`, single job) |
 | Toolchain | VitaSDK `0.20260926.321` ([Building](BUILDING.md) has the pins) |
 
 `GIT_VERSION` supplies the version label written in the app log.
@@ -28,7 +28,7 @@ The 1.3 candidate passed the full gate on the x86 host build of the app:
 
 | Suite | Result |
 | --- | --- |
-| Whole-app tests (`app_tests.py`) | 2,047 checks, 0 failed |
+| Whole-app tests (`app_tests.py`) | 2,053 checks, 0 failed |
 | Rewind (`rewind_tests.py`) | 373 checks, 0 failed |
 | Two players on one console (`local_tests.py`) | 471 checks, 0 failed |
 | Link between consoles (`link_tests.py --hz 20`, lossy network included) | 649 checks, 0 failed |

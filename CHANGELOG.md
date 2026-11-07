@@ -2,6 +2,27 @@
 
 ## Version 1.3
 
+**Super NES games.**
+- **Play `.sfc` and `.smc` games** from the same home screen, under a new
+  SNES tab. VitAdhoc finds them in `ux0:ROMS/SNES`, in any folder directly
+  under `ux0:ROMS/` (a "SNES ROM Collection" folder, for one), in RetroFlow's
+  folders and in the folders you add in Settings. Box art downloads like the
+  other consoles, and your own covers work too.
+- **Accurate, and spread over the Vita's cores.** The SNES player is built on
+  Snes9x 1.63 (the current release). Sound and picture drawing each run on a
+  core of their own, with exactly the same result as running them one after
+  the other. Super FX games (Yoshi's Island and Stunt Race FX among them) no
+  longer rebuild their colours hundreds of times a frame.
+- **Fills the screen without stretching.** The default shape is the SNES's
+  own 4:3 at full height; the sides show a soft glow from the game's picture.
+  Zoom, full screen and pixel-perfect are in the pause menu (L + R + Start),
+  with sharp or smooth scaling, CRT scanlines and an LCD grid (1-10).
+- **Up to four players.** A second controller is player 2; with the Super
+  Multitap (automatic for games known to use it) players 3 and 4 join too.
+- **Busy moments never lower the picture.** When a frame runs long, the SNES
+  player skips drawing a frame; the game and its sound keep full speed and
+  the picture options you chose stay on.
+
 **Smoothing does less work.** The xBRZ scaler and the step that finds what
 changed on screen do about a tenth less work, with exactly the same picture.
 

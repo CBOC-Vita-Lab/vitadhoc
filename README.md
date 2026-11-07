@@ -1,13 +1,13 @@
 # VitAdhoc
 
-**Game Boy Advance, Game Boy and Game Boy Color, native on PS Vita.**
+**Game Boy Advance, Game Boy, Game Boy Color and Super NES, native on PS Vita.**
 
 Your games, together on a home screen with box art, a little history and
 previews of your own play. Pick up where you left off, smooth the pixels or
 keep them crisp, and trade with a friend. VitAdhoc brings the library and the
 handheld experience together, with touch controls and the Vita's own sensors.
 
-**[Download VitAdhoc 1.2](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
+**[Download VitAdhoc 1.3](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
 | [Install or update](INSTALL.md) | [All features](docs/FEATURES.md)
 | [Performance](docs/PERFORMANCE.md)
 
@@ -16,10 +16,44 @@ handheld experience together, with touch controls and the Vita's own sensors.
 *The home screen on a PS Vita running VitAdhoc 1.2.*
 
 You'll need your own games. An open-source GBA BIOS is built in; no BIOS
-download is required. Updating from 1.0 or 1.1? Install the VPK over the old
-version. Keep your games, saves, settings and artwork where they are.
+download is required. Updating from 1.0, 1.1 or 1.2? Install the VPK over the
+old version. Keep your games, saves, settings and artwork where they are.
 
-## New In Version 1.2
+## New In Version 1.3
+
+**Super NES games, on the same home screen.**
+
+- **Play Super NES games.** `.sfc` and `.smc` games appear under a new SNES
+  tab, found in `ux0:ROMS/` (any folder inside it), RetroFlow's folders and
+  your own folders, with box art.
+- **Accurate and spread over the Vita's cores.** Built on Snes9x 1.63: sound
+  and picture each get a core of their own, with the same result as one core.
+- **Fills the screen without stretching**, in the SNES's own 4:3 shape with a
+  soft glow at the sides, plus sharp scaling, scanlines and an LCD grid.
+- **Up to four players** with extra controllers and the Super Multitap.
+
+**Play together, more ways.**
+
+- **Trade between versions.** Pokemon Red, Blue and Yellow now link with Gold,
+  Silver and Crystal, and two Vitas can trade between Ruby and Sapphire, or
+  FireRed and LeafGreen.
+- **Split screen for two players** on one Vita or PS TV, with a second
+  controller or player 2 on the touch screen.
+
+**Your own covers, safer saves.**
+
+- **Set a cover for any game** with the Cover button, or drop a PNG or JPG in
+  `covers/`. Your picture always wins over downloaded art.
+- **Saves are never cut short**, RetroArch saves stay in sync both ways, and
+  one backup is kept before anything is written over a save from elsewhere.
+- **Pokemon clocks keep the right time**, and ROM hacks can choose their
+  save type.
+
+**Faster.** VitAdhoc asks for 500 MHz when an overclock plugin allows it,
+smoothing does less work for the same picture, and a busy moment skips
+drawing a frame instead of lowering the picture you chose.
+
+## Included From Version 1.2
 
 **Bring your saves, your folders and your zips.**
 
@@ -100,6 +134,21 @@ scene, at full-screen CPU xBRZ 3x.
 [Full results, settings and screenshots](docs/PERFORMANCE.md).
 
 ## Bug Fixes Since 1.0
+
+New in 1.3:
+
+- **Mortal Kombat: Deadly Alliance** no longer sits on its logo for 40 seconds
+  or covers its menus in green speckles.
+- **Need for Speed: Underground** no longer hangs at its language screen.
+- Engine fixes from GBAdhoc 4.5.0 for Golden Sun 2, Mario Golf, Mario Tennis,
+  OpenLara and rare instructions.
+- Saves from other emulators keep their clock data instead of being cut short.
+- No more growing sound delay after the menu, fast forward or rewind, and no
+  loud push from Game Boy games that switch a sound channel off.
+- Games without a Wide view profile are never stretched.
+- The right stick only rewinds if you turn it on.
+
+From earlier versions:
 
 - Recovery from a graphics error that could leave the picture frozen.
 - Safer smoothing and staging textures, deferred GPU frees and fallback

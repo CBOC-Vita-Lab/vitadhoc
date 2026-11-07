@@ -60,6 +60,9 @@ full speed with every frame shown.
 - **Pokemon clocks keep the right time**, and ROM hacks can choose their
   save type.
 
+**Fast forward your way.** A new 2x speed beside 3x, and 2x or 3x can keep
+the game's sound, sped up (Settings > Fast-forward).
+
 **Faster.** VitAdhoc asks for 500 MHz when an overclock plugin allows it,
 and smoothing does less work for exactly the same picture.
 

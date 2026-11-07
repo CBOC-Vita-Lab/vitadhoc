@@ -165,6 +165,11 @@ routing and sample-rate-based length, volume-envelope and sweep timing.
 DirectSound FIFO resets clear queued samples and reset their read/write
 positions together. These improvements are all included in 1.2.
 
+Fast forward is silent unless you choose **2x with sound** or **3x with
+sound** in **Settings > Fast-forward** (1.3): then the game's sound plays
+along, sped up and higher, without a break when fast forward starts or stops.
+Unlimited and Unlimited Smooth stay silent.
+
 ## Patches And Cheats
 
 Place `Game.ips`, `Game.bps` or `Game.ups` beside `Game.gba` (or GB/GBC).

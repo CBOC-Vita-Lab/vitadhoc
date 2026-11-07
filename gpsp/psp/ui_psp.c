@@ -2340,6 +2340,27 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
 #define SET_FIRST SET_ROOM
 #endif
 
+#ifdef VITA
+/* The Fast-forward row's values, slowest first.  2x and 3x can keep the
+ * sound, sped up (main_vita.c sink_audio); Unlimited is always silent. */
+static const struct { int mode, sound; } ff_steps[] = {
+   { PCFG_FF_2X, 0 }, { PCFG_FF_2X, 1 }, { PCFG_FF_3X, 0 }, { PCFG_FF_3X, 1 },
+   { PCFG_FF_UNLIMITED, 0 }, { PCFG_FF_SMOOTH, 0 },
+};
+
+static int ff_step_now(void)
+{
+   const int mode = pcfg_ff_mode();
+   const int sound = g_pcfg.ff_audio &&
+                     (mode == PCFG_FF_2X || mode == PCFG_FF_3X);
+   int k;
+   for (k = 0; k < (int)(sizeof(ff_steps) / sizeof(ff_steps[0])); k++)
+      if (ff_steps[k].mode == mode && ff_steps[k].sound == sound)
+         return k;
+   return 2;
+}
+#endif
+
 static const struct { unsigned char header; const char *label; } set_rows[SET_COUNT] = {
 #ifdef VITA
    /* Not "PLAY TOGETHER": that is the in-game menu's page, and the owner
@@ -3278,8 +3299,21 @@ static void settings_adjust(int id, int dir)
       break;
    }
    case SET_FFMULT:
-      pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_COUNT + dir) % PCFG_FF_COUNT);
+#ifdef VITA
+   {
+      /* 1.3: 2x, and the sound kept (sped up) at 2x and 3x, are values of
+       * this row, so no row below it moves. */
+      const int n = (int)(sizeof(ff_steps) / sizeof(ff_steps[0]));
+      int k = (ff_step_now() + n + dir) % n;
+      pcfg_ff_set_mode(ff_steps[k].mode);
+      g_pcfg.ff_audio = ff_steps[k].sound;
       break;
+   }
+#else
+      pcfg_ff_set_mode((pcfg_ff_mode() + PCFG_FF_PSP_COUNT + dir) %
+                       PCFG_FF_PSP_COUNT);
+      break;
+#endif
    case SET_FFMODE:
       g_pcfg.ff_hold = !g_pcfg.ff_hold;
       break;
@@ -3531,7 +3565,12 @@ static const char *set_help(int id)
    case SET_SHELL:    return "The game list: a shelf with box art, or art "
                              "across the screen.";
 #endif
+#ifdef VITA
+   case SET_FFMULT:   return "How fast it runs. 2x and 3x can play the "
+                             "sound, sped up.";
+#else
    case SET_FFMULT:   return "How fast fast-forward runs.";
+#endif
    case SET_FFMODE:   return "Hold the button to fast-forward, or press it "
                              "to switch.";
    case SET_REWIND:
@@ -4017,8 +4056,18 @@ static ui_action screen_settings(unsigned edges)
              pcfg_ambient_name(g_pcfg.ambient));
          break;
       case SET_FFMULT:
+#ifdef VITA
+      {
+         char v[40];
+         snprintf(v, sizeof(v), "%s%s", pcfg_ff_name(),
+                  ff_steps[ff_step_now()].sound ? " with sound" : "");
+         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         break;
+      }
+#else
          set_item(y, g_cursor == i, 1, set_rows[i].label, pcfg_ff_name());
          break;
+#endif
       case SET_FFMODE:
       {
          /* Names the button it is about, which is no longer always

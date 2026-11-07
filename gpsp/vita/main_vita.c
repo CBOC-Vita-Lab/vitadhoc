@@ -467,12 +467,17 @@ static struct
    int       on;          /* engaged                                         */
    int       toggled;     /* toggle mode's latch                             */
    int       mode;        /* PCFG_FF_* it was engaged with                   */
-   int       mult;        /* 3x: three frames per refresh                    */
+   int       mult;        /* 2x / 3x: frames per refresh, else 0             */
    int       uncapped;    /* unlimited / smooth: no pacing                   */
    int       locked_told; /* the "off during a link" toast was shown         */
    ff_gate_t gate;
    /* since it was engaged, for EVT ff_stats */
    unsigned  frames0, vc0, drawn0;
+   unsigned  heard;       /* sample frames sent to the speaker while on     */
+   /* 2x / 3x with sound: each group of `mult` samples is averaged into one,
+    * so the game is heard at its own speed-up and the port's rate holds. */
+   int32_t   acc[2];
+   int       acc_n;
    uint64_t  t0;
 } g_ff;
 static int g_blit_suppress;            /* 3x: an intermediate frame, not drawn */
@@ -1882,12 +1887,55 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
    }
 }
 
+/* The sound of 2x / 3x fast forward when it is kept (Settings > Fast-forward,
+ * "with sound"; config.ini ff_audio): `mult` emulated samples become one, so
+ * the speaker gets one refresh of sound per refresh, higher and faster. */
+static int ff_heard(void)
+{
+   return g_ff.on && g_ff.mult && g_pcfg.ff_audio && !link_local_active();
+}
+
+static void ff_audio_push(const int16_t *lr, size_t frames)
+{
+   int16_t out[256 * 2];
+   size_t i, k = 0;
+   const int n = g_ff.mult;
+   for (i = 0; i < frames; i++)
+   {
+      g_ff.acc[0] += lr[i * 2 + 0];
+      g_ff.acc[1] += lr[i * 2 + 1];
+      if (++g_ff.acc_n < n)
+         continue;
+      out[k * 2 + 0] = (int16_t)(g_ff.acc[0] / n);
+      out[k * 2 + 1] = (int16_t)(g_ff.acc[1] / n);
+      g_ff.acc[0] = g_ff.acc[1] = 0;
+      g_ff.acc_n = 0;
+      if (++k == 256)
+      {
+         audio_push(out, k);
+         g_ff.heard += (unsigned)k;
+         k = 0;
+      }
+   }
+   if (k)
+   {
+      audio_push(out, k);
+      g_ff.heard += (unsigned)k;
+   }
+}
+
 static void sink_audio(const int16_t *stereo_lr, size_t frames)
 {
-   /* Fast forward is silent (config.ini ff_audio = 1 keeps the sound, for
-    * measurements): the ring drains and the port plays the fade-out. */
-   if ((g_ff.on && !g_pcfg.ff_audio) || rewind_active())
-      return;                 /* ...and so is a game running backwards */
+   if (rewind_active())
+      return;                 /* a game running backwards is silent */
+   if (g_ff.on)
+   {
+      /* Fast forward is silent unless 2x / 3x keeps the sound: then the
+       * ring drains and the port plays the fade-out. */
+      if (ff_heard())
+         ff_audio_push(stereo_lr, frames);
+      return;
+   }
    /* Two machines on this console: only one of them is heard. */
    if (link_local_active() && link_local_audio(stereo_lr, frames))
       return;
@@ -2833,22 +2881,33 @@ static void ff_stats_evt(void)
    unsigned frames = fe_host_frame_count() - g_ff.frames0;
    unsigned vcs = plat_vcount() - g_ff.vc0;
    fe_evt("ff_stats mode=%s frames=%u refreshes=%u drawn=%u us=%u "
-          "gate_resyncs=%u",
-          g_ff.mode == PCFG_FF_3X ? "3x" :
+          "gate_resyncs=%u heard=%u",
+          g_ff.mode == PCFG_FF_3X ? "3x" : g_ff.mode == PCFG_FF_2X ? "2x" :
           g_ff.mode == PCFG_FF_SMOOTH ? "smooth" : "unlimited",
           frames, vcs, g_drawn_total - g_ff.drawn0,
-          (unsigned)(plat_time_us() - g_ff.t0), g_ff.gate.resyncs);
+          (unsigned)(plat_time_us() - g_ff.t0), g_ff.gate.resyncs,
+          g_ff.heard);
 }
 
 static void ff_set(int on)
 {
    char chip[32];
+   /* The sound goes on through the change: neither side is silent. */
+   int heard_through;
 
    if (g_ff.on)
       ff_stats_evt();
+   heard_through = on ? (g_pcfg.ff_audio && !link_local_active() &&
+                         (pcfg_ff_mode() == PCFG_FF_2X ||
+                          pcfg_ff_mode() == PCFG_FF_3X))
+                      : ff_heard();
    g_ff.on = on;
    g_ff.mode = pcfg_ff_mode();
-   g_ff.mult = on && g_ff.mode == PCFG_FF_3X;
+   g_ff.mult = !on ? 0 : g_ff.mode == PCFG_FF_3X ? 3 :
+               g_ff.mode == PCFG_FF_2X ? 2 : 0;
+   g_ff.heard = 0;
+   g_ff.acc[0] = g_ff.acc[1] = 0;
+   g_ff.acc_n = 0;
    g_ff.uncapped = on && !g_ff.mult;
    g_ff.frames0 = g_game_loaded ? fe_host_frame_count() : 0;
    g_ff.vc0 = plat_vcount();
@@ -2869,10 +2928,11 @@ static void ff_set(int on)
       ff_gate_arm(&g_ff.gate, 0);
       fe_evt("ff off");
    }
-   /* Nothing is pushed while it runs (sink_audio): what was queued would
+   /* Silent fast forward pushes nothing (sink_audio): what was queued would
     * play out as a stale tail when it starts, and the sound made just before
-    * it ends would play late when it ends.  Start clean on both sides. */
-   if (g_game_loaded)
+    * it ends would play late when it ends.  Start clean on both sides.  With
+    * its sound kept the stream simply goes on. */
+   if (g_game_loaded && !heard_through)
       audio_flush();
    app_pace_reset();               /* fast forward is not a debt of frames */
 }
@@ -4964,7 +5024,7 @@ static void game_loop(void)
       g_catchup = 0;
 
       /* ---- run the core ------------------------------------------------------ */
-      runs = g_ff.mult ? 3 : 1;
+      runs = g_ff.mult ? g_ff.mult : 1;
       for (i = 0; i < runs; i++)
       {
          g_blit_suppress = (i != runs - 1);
@@ -4982,7 +5042,9 @@ static void game_loop(void)
           * the game list do not: left alone there it dims and sleeps, as
           * the owner set it to. */
          plat_power_tick();
-         if (!g_ff.on || g_pcfg.ff_audio)
+         /* Once per refresh: with its sound kept, fast forward sends one
+          * refresh of sound per batch (ff_audio_push). */
+         if (!g_ff.on || (ff_heard() && i == runs - 1))
             audio_frame();
       }
       g_blit_suppress = 0;

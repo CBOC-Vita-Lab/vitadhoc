@@ -118,6 +118,12 @@ that report is **not** confirmed fixed. What was measured:
   latency for a gain that can only be judged on a console.
 - Fast forward and rewind already drop audio instead of overwriting it
   (`sink_audio`), and a full ring drops the newest frames.
+- 1.3: 2x / 3x fast forward "with sound" (`ff_audio = 1`, the Fast-forward
+  row's values) averages each group of 2 or 3 emulated samples into one
+  (`ff_audio_push`), so the port gets one refresh of sound per refresh at its
+  usual rate and the cushion logic runs once per batch; the queue is not
+  flushed when such a fast forward starts or ends. 2x is `ff_mult_x10 = 20`
+  (Vita only; a PSP build reads any speed as 3x).
 
 ### Fixes
 

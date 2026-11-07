@@ -44,6 +44,10 @@ static int pcfg_filter_clamp(int f)
 
 int pcfg_ff_mode(void)
 {
+#ifdef VITA
+   if (g_pcfg.ff_mult_x10 == 20)
+      return PCFG_FF_2X;          /* 1.3; a PSP reads any speed as 3x */
+#endif
    if (g_pcfg.ff_mult_x10 != 0)
       return PCFG_FF_3X;
    return g_pcfg.ff_smooth ? PCFG_FF_SMOOTH : PCFG_FF_UNLIMITED;
@@ -53,14 +57,14 @@ void pcfg_ff_set_mode(int mode)
 {
    if (mode < 0 || mode >= PCFG_FF_COUNT)
       mode = PCFG_FF_3X;
-   g_pcfg.ff_mult_x10 = mode == PCFG_FF_3X ? 30 : 0;
+   g_pcfg.ff_mult_x10 = mode == PCFG_FF_3X ? 30 : mode == PCFG_FF_2X ? 20 : 0;
    g_pcfg.ff_smooth = mode != PCFG_FF_UNLIMITED;
 }
 
 const char *pcfg_ff_name(void)
 {
    static const char *const names[PCFG_FF_COUNT] = {
-      "3x", "Unlimited", "Unlimited Smooth"
+      "3x", "Unlimited", "Unlimited Smooth", "2x"
    };
    return names[pcfg_ff_mode()];
 }

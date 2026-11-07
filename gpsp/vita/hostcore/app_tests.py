@@ -649,11 +649,17 @@ def t_session(S):
 
 
 def t_ff(S):
-    """The three fast-forward modes advance the right number of emulated
-    frames per refresh and draw the right number of pictures."""
+    """The fast-forward modes advance the right number of emulated frames
+    per refresh and draw the right number of pictures; 2x and 3x "with
+    sound" send one refresh of (sped-up) sound per refresh, the others
+    none."""
     hold = "120:square:120\n+0:shot=ff.png\n+60:quit\n"
     cases = (
         ("3x", {}, hold, 3.0, 3.0, 1.0, 1.0),
+        ("2x", {"ff_mult_x10": 20}, hold, 2.0, 2.0, 1.0, 1.0),
+        ("3x_sound", {"ff_audio": 1}, hold, 3.0, 3.0, 1.0, 1.0),
+        ("2x_sound", {"ff_mult_x10": 20, "ff_audio": 1}, hold,
+         2.0, 2.0, 1.0, 1.0),
         # the twin gives a frame 3 ms: unlimited is 16.67 / 3 = 5.56 x
         ("unlimited", {"ff_mult_x10": 0, "ff_smooth": 0}, hold,
          5.3, 5.8, 0.45, 0.56),
@@ -687,9 +693,33 @@ def t_ff(S):
         S.check(abs(total - fr - outside) <= 8,
                 "%s: outside fast forward one frame per refresh (%d frames "
                 "in %d refreshes)" % (name, total - fr, outside))
+        heard = int(st[0].get("heard", -1))
+        if "sound" in name:
+            # one refresh of sound per refresh: 32768 or 48000 Hz / 59.7
+            S.check(500 * vc <= heard <= 850 * vc,
+                    "%s: %d sound frames in %d refreshes = %.0f per refresh"
+                    % (name, heard, vc, heard / vc))
+        else:
+            S.check(heard == 0, "%s: silent (%d sound frames)" % (name, heard))
         if "toggle" not in name:
             S.picture(r, "ff.png", "ff_3x.png" if name == "3x" else None)
         S.summary["ff_%s.audio_crc" % name] = r.host.get("audio_crc")
+
+    # Settings > Fast-forward, in game: Settings wraps upwards to Button
+    # mapping, then up past THIS GAME, CPU speed, Keep full speed, FPS,
+    # Rewind and FF button.  RIGHT: 3x -> 3x with sound, saved.
+    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 12
+    r = S.run("ff_row", pick + "+10:shot=row.png\n+4:right\n"
+              "+10:shot=row_sound.png\n+4:circle\n+10:circle\n+30:quit\n",
+              autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^ff_audio = 1$", ini, re.M) and
+            re.search(r"^ff_mult_x10 = 30$", ini, re.M),
+            "the row's next value is 3x with sound (config.ini ff_audio = 1, "
+            "ff_mult_x10 = 30)")
+    S.picture(r, "row.png")
+    S.picture(r, "row_sound.png")
 
 
 def t_suspend(S):

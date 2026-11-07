@@ -86,6 +86,13 @@ changed on screen do about a tenth less work, with exactly the same picture.
 - **Auto is smarter.** A save file of 128 KB is now read as 128 KB flash,
   even when the hack's own label says 64 KB.
 
+**Fast forward your way** (suggested by a player after 1.2)
+- **2x fast forward**, for games where 3x is too fast. Settings >
+  Fast-forward: 2x, 3x, Unlimited or Unlimited Smooth.
+- **Fast forward with sound.** Choose "2x with sound" or "3x with sound" and
+  the game's sound plays along, sped up, so a Pokemon battle still sounds like
+  one. It's off by default; Unlimited stays silent.
+
 **Smoother play with smoothing on**
 - **Keep full speed** (Settings, on by default): a busy moment skips drawing a
   frame so the game and its sound keep their speed. The smoothing you chose is

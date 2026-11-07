@@ -550,7 +550,10 @@ void pcfg_net_addr_push(const char *addr);
 
 extern psp_config g_pcfg;
 
-enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH, PCFG_FF_COUNT };
+/* PCFG_FF_2X (ff_mult_x10 = 20) is the Vita's (1.3); the PSP's settings row
+ * offers the first PCFG_FF_PSP_COUNT. */
+enum { PCFG_FF_3X, PCFG_FF_UNLIMITED, PCFG_FF_SMOOTH, PCFG_FF_2X, PCFG_FF_COUNT };
+#define PCFG_FF_PSP_COUNT 3
 int pcfg_ff_mode(void);
 void pcfg_ff_set_mode(int mode);
 const char *pcfg_ff_name(void); /* shared by settings and OSD */

@@ -32,6 +32,8 @@ and [Snes9x](https://github.com/snes9xgit/snes9x).
   written over a save from elsewhere. ROM hacks can choose their save type.
 - **Cleaner game folders.** Only the game and its battery save stay beside it;
   states and thumbnails move to `ux0:data/GBAdhoc/` on first open.
+- **Fast forward your way.** A new 2x speed beside 3x, and 2x or 3x can keep
+  the game's sound, sped up (Settings > Fast-forward).
 - **500 MHz** when an overclock plugin such as PSVshell allows it.
 
 ### Performance

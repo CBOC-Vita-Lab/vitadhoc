@@ -897,9 +897,13 @@ void function_cc write_eeprom(u32 unused_address, u32 value)
    PC-relative read resolves to the very same open bus handler with the
    same address, recursing without bound and overflowing the host stack.
    Detect a prefetch address that would itself land on open bus and fall
-   back to the latched bus value instead of recursing. */
+   back to the latched bus value instead of recursing.  The I/O page counts
+   as open bus here as a whole: a CPU that runs off the end of its code
+   (zeros slide through the mirrored IWRAM, then 0x04000000) has its fetch
+   answered by an I/O read whose open-bus path asks for the same fetch
+   again -- the segfault that ended the 1 MiB link test sessions. */
 #define fetch_is_open_bus(a)                                                  \
-  ((((a) >> 24) > 0x0F) || (((a) >> 24) == 0x01) ||                           \
+  ((((a) >> 24) > 0x0F) || (((a) >> 24) == 0x01) || (((a) >> 24) == 0x04) ||  \
    ((((a) >> 24) == 0x00) && ((a) >= 0x4000)))
 
 #define read_open8()                                                          \

@@ -21,37 +21,47 @@ old version. Keep your games, saves, settings and artwork where they are.
 
 ## New In Version 1.3
 
-**Super NES games, on the same home screen.**
+**Super NES joins the family.** Your SNES games sit on the same home screen,
+with box art, title screens and a few lines about each game, and they play at
+full speed with every frame shown.
 
-- **Play Super NES games.** `.sfc` and `.smc` games appear under a new SNES
-  tab, found in `ux0:ROMS/` (any folder inside it), RetroFlow's folders and
-  your own folders, with box art.
-- **Accurate and spread over the Vita's cores.** Built on Snes9x 1.63: sound
-  and picture each get a core of their own, with the same result as one core.
+- **Play Super NES games.** `.sfc` and `.smc` games (zipped too) appear on a
+  new SNES shelf, found in `ux0:ROMS/` (any folder inside it), RetroFlow's
+  folders and your own folders.
+- **Accurate, and spread over the Vita's cores.** Built on Snes9x 1.63: sound
+  and picture each run on a core of their own, with exactly the same result.
+  Super Mario World, Donkey Kong Country, Chrono Trigger and Yoshi's Island
+  need about a third to a half of each frame's time on a Vita.
+- **Super FX and SA-1 at full game speed.** Doom, Stunt Race FX, Super Mario
+  RPG and Kirby Super Star keep their speed, music and controls (the busiest
+  Super FX games draw their 3D view a little less often).
 - **Fills the screen without stretching**, in the SNES's own 4:3 shape with a
-  soft glow at the sides, plus sharp scaling, scanlines and an LCD grid.
+  soft glow at the sides, plus sharp scaling, CRT scanlines and an LCD grid.
 - **Up to four players** with extra controllers and the Super Multitap.
 
 **Play together, more ways.**
 
+- **Split screen for two players** on one Vita or PS TV, with a second
+  controller or player 2 on the touch screen.
 - **Trade between versions.** Pokemon Red, Blue and Yellow now link with Gold,
   Silver and Crystal, and two Vitas can trade between Ruby and Sapphire, or
   FireRed and LeafGreen.
-- **Split screen for two players** on one Vita or PS TV, with a second
-  controller or player 2 on the touch screen.
 
-**Your own covers, safer saves.**
+**Your library, looked after.**
 
-- **Set a cover for any game** with the Cover button, or drop a PNG or JPG in
+- **Box art for every game, however it is named.** Games are recognised by
+  their contents and by their names ("Act Raiser", "7th Saga",
+  "Pocket Dogs (U)"), on every console.
+- **Set your own cover** with the Cover button, or drop a PNG or JPG in
   `covers/`. Your picture always wins over downloaded art.
 - **Saves are never cut short**, RetroArch saves stay in sync both ways, and
   one backup is kept before anything is written over a save from elsewhere.
+- **Tidy game folders.** Only your game and its save stay beside it.
 - **Pokemon clocks keep the right time**, and ROM hacks can choose their
   save type.
 
 **Faster.** VitAdhoc asks for 500 MHz when an overclock plugin allows it,
-smoothing does less work for the same picture, and a busy moment skips
-drawing a frame instead of lowering the picture you chose.
+and smoothing does less work for exactly the same picture.
 
 ## Included From Version 1.2
 
@@ -91,8 +101,8 @@ drawing a frame instead of lowering the picture you chose.
 
 Browse with buttons or touch. Box art and title screens download on Wi-Fi;
 your own pictures take priority, and any game can have a cover you choose
-(the Cover button, or a picture in `covers/` named like the game). Built-in descriptions cover about 1,300
-games. Star favourites, search by name, check Recent and play time, or rest on
+(the Cover button, or a picture in `covers/` named like the game). Built-in
+descriptions from Wikipedia cover about 2,000 games across the four consoles. Star favourites, search by name, check Recent and play time, or rest on
 a game to watch the last ten seconds you recorded.
 
 Continue returns to an automatic resume point. Start over uses the game's
@@ -206,8 +216,10 @@ All taken on a PS Vita running VitAdhoc 1.3.
 | ![A SNES game filling the Vita's height in 4:3, with a soft glow at the sides](store/screenshots/vita-1.3/snes-original.png) | ![A SNES game with CRT scanlines](store/screenshots/vita-1.3/snes-crt.png) |
 | **Split screen for two players** | **Your own cover pictures** |
 | ![Two games side by side, player 2 on the touch screen](store/screenshots/vita-1.3/split-screen.png) | ![Choosing a cover picture for a game](store/screenshots/vita-1.3/covers.png) |
-| **SNES picture settings** | **A GBA game, never stretched** |
-| ![The SNES player's Picture menu](store/screenshots/vita-1.3/snes-picture.png) | ![A GBA game at its own shape with the glow in the sides](store/screenshots/vita-1.3/gba-fit.png) |
+| **SNES picture settings** | **Super FX at full game speed** |
+| ![The SNES player's Picture menu](store/screenshots/vita-1.3/snes-picture.png) | ![Doom running on the Super FX 2 chip](store/screenshots/vita-1.3/snes-superfx.png) |
+| **A GBA game, never stretched** | |
+| ![A GBA game at its own shape with the glow in the sides](store/screenshots/vita-1.3/gba-fit.png) | |
 
 [Capture details](store/screenshots/vita-1.3/README.md). Pokemon Unbound at
 full-screen CPU xBRZ 3x, from 1.2:
@@ -231,18 +243,22 @@ full-screen CPU xBRZ 3x, from 1.2:
 | [Third-party notices](notices/THIRD-PARTY.md)
 
 The native frontend is in `gpsp/vita/`; emulator cores and shared frontend
-code are in `gpsp/`.
+code are in `gpsp/`. The SNES player (Snes9x 1.63 and its Vita frontend) is
+in `snes/`, built as its own program.
 
 ## Credits
 
 VitAdhoc builds on [GBAdhoc by ShoshinFauteux](https://github.com/ShoshinFauteux/GBAdhoc).
 Thank you for the emulator, link-play work and original save formats this
 project builds on. The GBA core is gpSP by Exophase and the libretro
-contributors; GB/GBC uses TGB Dual. RetroAchievements uses
-[rcheevos](https://github.com/RetroAchievements/rcheevos).
+contributors; GB/GBC uses TGB Dual; Super NES uses
+[Snes9x](https://github.com/snes9xgit/snes9x) 1.63 by the Snes9x team, whose
+licence allows non-commercial use only, so VitAdhoc is and stays free.
+RetroAchievements uses [rcheevos](https://github.com/RetroAchievements/rcheevos).
+Game descriptions are adapted from Wikipedia (CC BY-SA 4.0).
 
 Built by AI agents (Claude), directed and play-tested by a human. See
 [Credits](CREDITS.md) for the other projects and contributors.
 
-An unofficial fan project, not affiliated with Nintendo, Sony or
-RetroAchievements. No commercial games or proprietary BIOS are supplied.
+An unofficial fan project, not affiliated with Nintendo, Sony, the Snes9x
+team or RetroAchievements. No commercial games or proprietary BIOS are supplied.

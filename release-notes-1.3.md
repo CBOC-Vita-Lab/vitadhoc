@@ -62,7 +62,9 @@ and [Snes9x](https://github.com/snes9xgit/snes9x).
 
 Install `VitAdhoc.vpk` with VitaShell over the existing bubble (title ID
 `GBAD00001`). Games, saves, settings and artwork stay in place. Two Vitas
-linking together both need 1.3.
+linking together both need 1.3. The
+[CBOC Vita Installer](https://github.com/CBOC-Vita-Lab/vita-installer/releases/latest)
+2.0 or later does it from a computer and has a slot for your SNES games.
 
 `VitAdhoc-install.zip` contains the same VPK, full source, guides and
 checksums. No commercial games or proprietary BIOS are included. The SNES
@@ -74,4 +76,4 @@ and stays free.
 | [Known issues](https://github.com/CBOC-Vita-Lab/vitadhoc/blob/main/KNOWN-ISSUES.md)
 
 SHA-256 `VitAdhoc.vpk`:
-`935d938cd0fa9293ed6fa5847bb83c72e0a779814e4083f9b6d64c0f6e3586b2`
+`a0a27b83984292de87624db6626c798dd4b49a5b822ca6b01bb830bc8d2c70c1`

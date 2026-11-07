@@ -3,9 +3,9 @@
 | Item | Value |
 | --- | --- |
 | Version | 1.3 |
-| Package | `VitAdhoc.vpk`, SHA-256 `935d938cd0fa9293ed6fa5847bb83c72e0a779814e4083f9b6d64c0f6e3586b2` |
-| Runtime (`eboot.bin`) | SHA-256 `c17d060a27af5df57ad9e32e67e49cb7f530229d72b97b1b185fafb8876946f6` |
-| SNES player (`snes.bin`) | SHA-256 `ee8de2831f7f148e38d582181753ec6ce037190dfd5241c4a5b711f2b54dc56c` |
+| Package | `VitAdhoc.vpk`, SHA-256 `a0a27b83984292de87624db6626c798dd4b49a5b822ca6b01bb830bc8d2c70c1` |
+| Runtime (`eboot.bin`) | SHA-256 `d08f139dd62725f2c17d145f3c2020372b9303f0bad3a779f14834b2034cd8d2` |
+| SNES player (`snes.bin`) | SHA-256 `19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4` |
 | Title ID | `GBAD00001` (existing data layout: `ux0:data/GBAdhoc/`) |
 | Source | The `v1.3` tag (application code as built; later commits before the tag change documentation, screenshots and release records only), based on 1.2 commit `fb41c1d3e171` |
 | Build command | `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk GIT_VERSION=1.3` (also builds `snes/vita`, single job) |

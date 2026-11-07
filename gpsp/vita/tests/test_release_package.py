@@ -11,8 +11,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[3]
 VITA = ROOT / "gpsp/vita"
 VPK = Path(os.environ.get("RELEASE_VPK", ROOT / "VitAdhoc.vpk"))
-RUNTIME_SHA256 = "c17d060a27af5df57ad9e32e67e49cb7f530229d72b97b1b185fafb8876946f6"  # version 1.3
-SNES_SHA256 = "ee8de2831f7f148e38d582181753ec6ce037190dfd5241c4a5b711f2b54dc56c"  # version 1.3
+RUNTIME_SHA256 = "d08f139dd62725f2c17d145f3c2020372b9303f0bad3a779f14834b2034cd8d2"  # version 1.3
+SNES_SHA256 = "19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4"  # version 1.3
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
            "licenses/Outfit-OFL.txt", "licenses/CC-BY-SA-4.0.txt", "notices/THIRD-PARTY.md",
            "notices/WIKIPEDIA-ATTRIBUTION.md", "licenses/GPL-3.0.txt",

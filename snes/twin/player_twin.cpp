@@ -340,6 +340,14 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	rig.snap("menu_top");
 	EXPECT(rig.press(PH_CROSS) == MENU_RESUME);         /* Enter is Circle here: Cross is Back = resume */
 	rig.run(20);
+	/* the old chord, L + R + Start held, still opens it */
+	{
+		bool opened = false;
+		for (int i = 0; i < 40 && !opened; i++) opened = rig.game_frame(PH_L | PH_R | PH_START);
+		EXPECT(opened);
+		if (opened) { pl->open_menu(0); rig.settle(3); EXPECT(rig.press(PH_CROSS) == MENU_RESUME); }
+		rig.run(20);
+	}
 	EXPECT(rig.game_frame(0, 0, true));                  /* a tap on the picture */
 	pl->open_menu(0);
 	rig.settle(14);

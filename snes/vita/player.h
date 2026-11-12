@@ -227,6 +227,7 @@ private:
 	uint64_t now_ms_ = 0, prev_frame_us_ = 0;
 	/* log */
 	std::string logbuf_;
+	pk::SpinLock log_lk_;
 	uint64_t log_flushed_us_ = 0;
 	bool log_busy_ = false;
 	unsigned log_lost_ = 0;

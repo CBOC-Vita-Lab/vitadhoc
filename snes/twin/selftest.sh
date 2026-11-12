@@ -204,5 +204,23 @@ g++ -O1 -I"$HERE/../frontend" -o $T/pic_test "$HERE/tests/picture_test.cpp" "$HE
 sh "$HERE/audio_sim.sh" >$T/audio_sim.txt 2>&1 && ok "audio pacing scenarios S1-S7 (new pacer), click detector" \
 	|| { cat $T/audio_sim.txt; bad "audio pacing scenarios"; }
 
+# the player's own code (menu, states, launch file, patch, cheats, remap, session report, old-state migration)
+PT=${PLAYER_TWIN:-$(dirname "$TWIN")/player_twin}
+if [ -x "$PT" ]; then
+	python3 -I "$HERE/tests/make_cheat_rom.py" $T/pt.sfc
+	mkdir -p $T/ptw
+	"$PT" test $T/pt.sfc ${PLAYER_SHOTS:-$T/ptw/shots} $T/ptw >$T/pt.txt 2>&1 && ok "player: $(grep 'player_twin:' $T/pt.txt | tail -1 | sed 's/player_twin: //')" \
+		|| { grep -v '^Map_' $T/pt.txt | tail -30; bad "player (player_twin)"; }
+else echo "SKIP  player_twin not built ($PT)"; fi
+
+# steady pacing: with odd frames not rendered (threads on) the game is the same (audio, RAM, rendered frames)
+if [ -f "$W" ]; then
+	"$TWIN" "$W" --frames 300 --pad 50:a,60:none --hashes $T/p1.h --wav $T/p1.wav --peek-sum >$T/p1.o 2>/dev/null
+	"$TWIN" "$W" --frames 300 --pad 50:a,60:none --hashes $T/p2.h --wav $T/p2.wav --peek-sum --render-half --opt apu_thread=1 --opt ppu_thread=1 >$T/p2.o 2>/dev/null
+	awk '$1 % 2 == 0' $T/p1.h > $T/p1e.h
+	cmp -s $T/p1e.h $T/p2.h && cmp -s $T/p1.wav $T/p2.wav && [ "$(grep ramsum $T/p1.o)" = "$(grep ramsum $T/p2.o)" ] \
+		&& ok "steady pacing half mode: rendered frames, audio and RAM identical" || bad "steady pacing changes the game"
+fi
+
 rm -rf $T
 [ $fail = 0 ] && echo "all passed" || { echo "FAILED"; exit 1; }

@@ -2811,10 +2811,11 @@ def t_find(S):
             len(r.evt("ui_text_open")) == 1 and picked(r, target),
             "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
 
+    # (six consoles since 1.4: six presses go round to the GBA again)
     r = run("console", "90:circle\n94:type=find-only\n150:triangle\n215:triangle\n"
-            "280:triangle\n330:triangle\n380:triangle\n450:cross\n590:shot=game.png\n610:quit\n")
+            "280:triangle\n330:triangle\n380:triangle\n430:triangle\n500:cross\n640:shot=game.png\n660:quit\n")
     S.check(r.has(r"^EVT browser_find active=0 ") and
-            len(r.evt("ui_browser_console")) == 5 and picked(r, "gbadhoc-test.gba"),
+            len(r.evt("ui_browser_console")) == 6 and picked(r, "gbadhoc-test.gba"),
             "a console change clears Find instead of hiding the remembered game on return")
 
     r = run("touch", "90:touch=715/37\n95:type=find-only-02\n"

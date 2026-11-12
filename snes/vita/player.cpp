@@ -136,30 +136,32 @@ void SnesPlayer::logf(const char *fmt, ...)
 	int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
 	va_end(ap);
 	if (n <= 0) return;
+	/* any thread (the host's save code logs from the writer thread) */
+	SpinGuard g(log_lk_);
 	if (logbuf_.size() > 256 * 1024) { log_lost_++; return; }     /* the card was busy for very long */
 	logbuf_.append(tmp, (size_t) n < sizeof tmp ? (size_t) n : sizeof tmp - 1);
 }
 
 /* The log goes to the card on the writer thread, at most every 5 s (an fflush on the game thread was a
- * 12-15 ms hitch); `now` writes it at once on this thread (the end). */
+ * 12-15 ms hitch); `now` writes it at once on this thread (the end). Game thread only. */
 void SnesPlayer::log_flush(bool now)
 {
 	uint64_t t = pf_->now_us();
-	if (log_lost_) { std::string m = strf("(log: %u lines lost, buffer full)\n", log_lost_); log_lost_ = 0; logbuf_ += m; }
-	if (logbuf_.empty()) return;
-	if (now) {
-		wait_writer();
-		pf_->log_write(logbuf_);
-		logbuf_.clear();
-		log_flushed_us_ = t;
-		return;
+	if (!now && (log_busy_ || t - log_flushed_us_ < 5000000)) return;
+	if (now) wait_writer();
+	std::string text;
+	{
+		SpinGuard g(log_lk_);
+		if (log_lost_) { logbuf_ += strf("(log: %u lines lost, buffer full)\n", log_lost_); log_lost_ = 0; }
+		text.swap(logbuf_);
 	}
-	if (log_busy_ || t - log_flushed_us_ < 5000000) return;
+	if (text.empty()) return;
+	log_flushed_us_ = t;
+	if (now) { pf_->log_write(text); return; }
 	WriterJob *j = new WriterJob;
 	j->kind = WriterJob::LOG;
-	j->text.swap(logbuf_);
+	j->text.swap(text);
 	log_busy_ = true;
-	log_flushed_us_ = t;
 	post(j);
 }
 

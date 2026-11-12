@@ -21,7 +21,6 @@ on. `<name>` is the game's file name without its extension (no folder, no
 | `<name>.stN.meta` | playerkit's own note (optional; a reader may ignore it) |
 | `<name>.rsm` | "Continue": where the game was left (written on exit and about once a minute) |
 | `<name>.rsm.pt` | which patch the resume point was made with (text) |
-| `<name>.undo` | the state as it was just before the last state load (one level of undo) |
 | `<root>/scenes/<name>.shot` | the home screen's picture of the game, same picture format as `.shot` |
 
 A game with a ROM patch applied keeps the same `<name>`; the patch is told
@@ -71,11 +70,14 @@ saved=1760000000
 play_s=754
 frame_w=256
 frame_h=224
+end=1
 ```
 
 `size` and `crc32` describe the state file; the player checks them when it
 loads and refuses a damaged file with a message instead of feeding it to the
-core. `saved` is Unix seconds; the slot list shows it as `3 Oct 2026, 14:32`
+core. `end=1` is the last line: a note without it (cut short by a power loss)
+or an empty note is ignored. The note is emptied before its state is replaced
+and written after, so it never describes another state. `saved` is Unix seconds; the slot list shows it as `3 Oct 2026, 14:32`
 (day, abbreviated month, year, 24-hour time, local time). If there is no
 `.meta` (an older player wrote the state) the file's own modification time is
 the save time and the check is skipped. `play_s` is the play time of the game
@@ -90,7 +92,8 @@ The patch key as text, or `-` and a newline when no patch was in use.
 
 ## Safe writes
 
-Every file above is written the same way:
+The state files themselves (`.stN`, `.rsm`), the launch and session files, the
+controls and the battery save are written the same way:
 
 1. write `<path>.tmp`;
 2. read it back and compare its size and CRC32 with what was meant to be
@@ -101,7 +104,17 @@ Every file above is written the same way:
 5. remove `<path>.old`.
 
 If any step fails the old file is put back, so a failed save never destroys
-the previous one. If power is lost between steps 3 and 4 there is a
+the previous one. Step 1 truncates a leftover `.tmp`; a writer that knows the
+file is new skips step 3 (no lookup of a missing name is ever made: on the
+Vita's card that walks the whole folder).
+
+The companions of a state (`.thumb`, `.shot`, `.meta`, `.rsm.pt`) and the
+scene picture are written in place, in one operation each, after the state:
+they are never the only copy of anything, a cut picture fails its size check,
+a cut note has no `end=1`, and a cut `.rsm.pt` reads as another patch (the
+resume point is then not used). Readers must check a picture's size against
+its header before using it. One level of undo for a load is kept in memory by
+the player (no `.undo` file). If power is lost between steps 3 and 4 there is a
 `<path>.old` and no `<path>`; readers call `recover_old()` (or simply look for
 `.old`) and put it back.
 

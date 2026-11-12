@@ -81,6 +81,7 @@ struct Opts {
     int soft_sample = -1;
     int period = 1;                   // wk_compose periodic continuation
     int render_every = 0;             // >0: bench mode, draw/verify only occasionally
+    bool want_prov = true;            // false: no provenance map requested (wk_compose_in.prov = NULL)
 };
 
 struct Metrics {
@@ -131,6 +132,7 @@ public:
     wk_map *map() { return map_; }
     int period_bans() const { return wk_compose_period_bans(comp_); }
     const std::vector<uint16_t> &composed() const { return wide_; }
+    const std::vector<uint8_t> &prov() const { return prov_; }   // last provenance map (valid when want_prov)
     int camx() const { return camx_; }
     int cur_room() const { return room_; }
     uint32_t gfx() const { return ts_[cur_ts_].id; }

@@ -34,7 +34,8 @@ renderer `src/pk_gfx_soft.cpp` on Linux for tests).
 | input | `pk_input` | Vita buttons, sticks and the rear panel to console buttons for four players, profiles, turbo, shortcuts, the START + SELECT chord with the chord guard |
 | launch | `pk_launch` | the protocol between the app and a player: `launch/<console>.ini` in, `launch/session.txt` out |
 | patch | `pk_patch` | IPS, BPS and UPS applied to a ROM in memory, with checksums |
-| notice | `pk_notice` | one-line toasts |
+| notice | `pk_notice` | one-line toasts (two lines when a reason is long) |
+| pace | `pk_pace` | steady frame pacing: when drawn frames cannot keep up, draw every second frame evenly; back to every frame after 3 s with headroom (a pure decision function plus a small history keeper) |
 
 Documents: `FORMATS.md` (the files), `INTEGRATION.md` (exact steps for the SNES
 player, the NES player and the main app).
@@ -66,3 +67,43 @@ pk::MenuEvent ev = menu.update(input);        // pads, touch, dt
 
 Rows the host has not wired are shown greyed with the reason, never hidden, so
 a feature that arrives later lights up without changing the layout.
+
+## Changes made while wiring the SNES player (Nov 2026)
+
+Found by integrating `snes/vita` (and its Linux twin, `snes/twin/player_twin`, which runs the player's
+own code with the software renderer):
+
+- **Card work per frame (bug).** The control centre called `States::used_count()` from `card_help()` and
+  `draw_top()` on every drawn frame: ten `info()` calls, about 30 file lookups and up to ten `.meta` reads a
+  frame on the memory card. The count is now taken once when the slot list is read.
+- **States are read once.** `States` keeps the slot list in memory: one folder listing (`FsOps::list_dir`,
+  new) and the `.meta`/`.thumb` of the slots in use, then every save, delete and load keeps it current. The
+  menu reads no file to open or to show the Save states page (only the big picture of the chosen slot).
+- **Fewer card operations per save** (`lessons-audit` 1d). `atomic_write` takes what the caller knows about
+  the file (`Exists` hint) and no longer removes the temp file first or looks the file up (a lookup of a
+  missing name walks the whole folder on the Vita's card): 5 operations for a replaced file, 3 for a new one.
+  The pictures and the note beside a state are written in place (they are never the only copy of anything:
+  a cut picture fails its size check, a cut note has no `end=1` and is ignored), and the old note is emptied
+  before the state is swapped, so a stale note can never refuse a good state. Measured with `strace`: 9 file
+  operations per state save and no failed lookups, against about 42 operations, 15 `mkdir` and 11 failed
+  lookups before (`snes/README.md`).
+- **Saves on another thread.** `States::prepare()` (game thread: copies the bytes, makes the two pictures)
+  and `States::commit()` (any thread: the files). The menu hands a save to the host with
+  `MenuHost::queue_state_write()` and shows the slot at once; the host reports with
+  `Menu::state_write_done()`; `MenuHost::wait_state_writes()` is called before a load or delete. The
+  cache is guarded by `SpinLock` (std::mutex is a no-op on the Vita: no pthread is linked).
+- **Undo of a load is kept in memory** for the session, not as a `.undo` file (a 400 KB file write on every
+  load).
+- **Host rows and limited choices.** `Menu::add_host_row()` adds a console's own pickers to Picture, Controls
+  or Speed (SNES: pixel shape, the two blend rows, Multitap, Steady pacing); `set_choices_allowed()` leaves
+  out a value the player cannot do (SNES has no separate "Fit": Original already fills the height). The
+  Speed link is hidden when its page would be empty.
+- **Cheats can be added and deleted** (`CAP_CHEAT_EDIT`): "Add a cheat" row (`MenuHost::add_cheat()`; the
+  host asks with the system keyboard and calls `Menu::refresh()`), Triangle or the row's Delete button asks
+  and calls `MenuHost::delete_cheat()`.
+- **Notices** on the pages sit at the foot of the screen (they overlapped the hints and the panel's edge),
+  and a long reason wraps to a second line instead of being cut.
+- **Remap capture texts** named the buttons for Enter = Cross even when Enter is Circle (bug).
+- **`SessionTracker::seconds_played()`** (new): `current().seconds_played` is only filled in by `finish()`,
+  so the thumbnails' "played" time read 0 when a host followed INTEGRATION.md.
+- `init_shared()`: makes the CRC table and the file table before a second thread can race to make them.

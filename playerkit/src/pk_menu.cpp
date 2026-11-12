@@ -1431,7 +1431,7 @@ void Menu::draw_rows(Gfx *g, Text *t)
 	}
 	/* the help line of the focused row */
 	g->fill_rect(PANEL_X + 24, HELP_Y - 8, PANEL_W - 48, 1, col(0xFFFFFF, 26));
-	if (cursor_ >= 0 && cursor_ < (int) rows_.size()) {
+	if (cursor_ >= 0 && cursor_ < (int) rows_.size() && !notices_.active()) {     /* a notice takes the help line's place */
 		const Row &r = rows_[(size_t) cursor_];
 		std::string help = r.enabled || r.reason.empty() ? r.help : r.reason;
 		t->wrap(F_BODY, 56, HELP_Y + 2, 830, 2, 4, help, col(C_TEXT2));
@@ -1580,10 +1580,10 @@ void Menu::draw(Gfx *g, Text *t)
 	else draw_rows(g, t);
 	draw_overlays(g);
 	if (modal_) draw_modal(g, t);
-	/* over the game picture on the control centre; at the foot of the screen on the pages, where it covers
-	 * no header, hint or row the player is looking at */
+	/* over the game picture on the control centre; on the pages in the place of the help line, where it
+	 * covers no header, hint or row the player is looking at */
 	if (page_ == PAGE_TOP && !modal_) notices_.draw(g, t, PK_HEX(cfg_.accent, 255), 60, true);
-	else notices_.draw(g, t, PK_HEX(cfg_.accent, 255), PK_SCREEN_H - 44 - 14, false);
+	else notices_.draw(g, t, PK_HEX(cfg_.accent, 255), HELP_Y + 2, false);
 }
 
 }  // namespace pk

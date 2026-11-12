@@ -25,6 +25,13 @@ FE_OBJS   := $(B)/host.o $(B)/wide.o $(B)/host_files.o $(B)/safe_io.o $(B)/main.
 
 all: $(B)/nes_twin
 
+# the wide-view cost probe (tests/wide_cost.c): the twin's objects without its main, SCOUT=1 build
+WIDE_COST_LIBS := $(CORE_OBJS) $(filter-out $(B)/main.o,$(FE_OBJS))
+$(B)/wide_cost: tests/wide_cost.c $(WIDE_COST_LIBS)
+	$(CC) $(HOSTCFLAGS) -I$(FE) -c -o $(B)/wide_cost.o tests/wide_cost.c
+	$(CXX) -o $@ $(B)/wide_cost.o $(WIDE_COST_LIBS) -lm
+wide-cost: $(B)/wide_cost
+
 $(B)/nes_twin: $(CORE_OBJS) $(FE_OBJS)
 	$(CXX) -o $@ $^ -lm
 

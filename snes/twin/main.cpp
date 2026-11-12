@@ -135,6 +135,9 @@ static void usage(void)
 	    "  --load-state FILE --state-frame N   load a state before frame N\n"
 	    "  --pad2/--pad3/--pad4/--pad5 SCRIPT  scripts for pads 2..5 (pads 3-5 need --opt multitap=1)\n"
 	    "  --nowait           use the non-blocking video fetch of the Vita (hash file lists new pictures: serial w h hash)\n"
+	    "  --render-half      steady pacing's half mode: only even frames are rendered (the core's render-off path for the\n"
+	    "                     others); --hashes then lists the rendered frames only. Emulation and audio must not change.\n"
+	    "  --peek-sum         print a hash of all work RAM and battery RAM at the end\n"
 	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles transparency echo_buffer), repeatable\n"
 	    "  --audio-sim SCEN   audio pacing simulation in virtual time (S1..S7, S2+, S2-, all); ROM may be '-' for none.\n"
 	    "                     with --tone (or ROM '-') the source is a synthetic tone, else the core's audio;\n"
@@ -154,7 +157,7 @@ int main(int argc, char **argv)
 	std::vector<PadEv> script, script2, script3, script4, script5;
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
-	bool nowait = false;
+	bool nowait = false, render_half = false, peek_sum = false;
 	const char *backup_dir = 0, *unblock = 0;
 	bool srm_async = false;
 	bool summary = false;
@@ -208,6 +211,8 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--legacy")) sim.legacy = true;
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--nowait")) nowait = true;
+		else if (!strcmp(argv[i], "--render-half")) render_half = true;
+		else if (!strcmp(argv[i], "--peek-sum")) peek_sum = true;
 		else { usage(); return 2; }
 	}
 	if (!cheat_decode.empty()) {
@@ -285,6 +290,7 @@ int main(int argc, char **argv)
 			int r = snes_host_state_load(lstate);
 			fprintf(stderr, "load state: %d\n", r);
 		}
+		if (render_half) snes_host_set_render((f & 1) == 0);
 		uint64_t t0 = now_ns(), c0 = cpu_ns();
 		if (prof_on) { memset(g_s9xp.acc, 0, sizeof g_s9xp.acc); memset(g_s9xp.cnt, 0, sizeof g_s9xp.cnt); g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.last = s9xp_now(); }
 		snes_host_run_frame();
@@ -319,6 +325,7 @@ int main(int argc, char **argv)
 			}
 			continue;
 		}
+		if (render_half && (f & 1)) continue;
 		v = snes_host_video(&w, &h, &pitch);
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) fnv(v, w, h, pitch));
 		if (shotset.count(f)) {
@@ -334,6 +341,13 @@ int main(int argc, char **argv)
 			if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
 	}
 	if (peek >= 0) printf("peek %05X = %02X\n", peek, snes_host_peek_wram((uint32_t) peek));
+	if (peek_sum) {
+		uint64_t hs = 1469598103934665603ull;
+		for (uint32_t o = 0; o < 0x20000; o++) { hs ^= (uint8_t) snes_host_peek_wram(o); hs *= 1099511628211ull; }
+		const uint8_t *sr = snes_host_sram_data();
+		for (size_t o = 0; sr && o < snes_host_sram_size(); o++) { hs ^= sr[o]; hs *= 1099511628211ull; }
+		printf("ramsum %016llx\n", (unsigned long long) hs);
+	}
 	if (cheat_disable_all) snes_host_cheat_disable_all();
 	if (cheat_list)
 		for (int k = 0, n = snes_host_cheat_count(); k < n; k++) {

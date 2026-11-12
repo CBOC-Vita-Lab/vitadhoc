@@ -153,6 +153,13 @@ static void write_png(const char *path, const uint16_t *px, int w, int h, int pi
 	stbi_write_png(path, w, h, 3, rgb.data(), w * 3);
 }
 
+static uint64_t fnvb(const uint8_t *p, size_t n)
+{
+	uint64_t hsh = 1469598103934665603ull;
+	for (size_t i = 0; i < n; i++) { hsh ^= p[i]; hsh *= 1099511628211ull; }
+	return hsh;
+}
+
 static uint64_t fnv(const uint16_t *px, int w, int h, int pitch)
 {
 	uint64_t hsh = 1469598103934665603ull;
@@ -171,6 +178,7 @@ static void usage(void)
 	    "  --pad SCRIPT       e.g. 60:start,70:none,200:a+right (buttons: a b start select up down left right)\n"
 	    "  --pad2/--pad3/--pad4 SCRIPT   scripts for pads 2..4 (pads 3 and 4 need --opt fourscore=1 or a Four Score game)\n"
 	    "  --hashes FILE      write 'frame width height fnv1a64' per frame\n"
+    "  --wide-hashes FILE  write 'frame width height picture prov real' fnv1a64 of each composed wide frame (golden test)\n"
 	    "  --shots LIST       comma separated frame numbers to save as PNG\n"
 	    "  --shot-prefix P    PNG file prefix (default shot_)\n"
 	    "  --wav FILE         write all audio (stereo, at the audio rate)\n"
@@ -221,7 +229,7 @@ int main(int argc, char **argv)
 	bool ra_on = false, vindexed = false, ssizes = false, memload = false;
 	std::vector<std::string> cheats;
 	int frames = 600, state_frame = -1;
-	const char *hashes = 0, *shots = 0, *wav = 0, *srm = 0, *sstate = 0, *lstate = 0, *name = 0, *backup = 0, *sysdir = 0;
+	const char *hashes = 0, *whashes = 0, *shots = 0, *wav = 0, *srm = 0, *sstate = 0, *lstate = 0, *name = 0, *backup = 0, *sysdir = 0;
 	const char *fdss = 0, *ramdump = 0;
 	int peek = -1;
 	bool text = false;
@@ -263,6 +271,7 @@ int main(int argc, char **argv)
 		}
 		else if (arg("--sprite-exception")) sprite_ex.push_back((uint32_t) strtoul(argv[++i], 0, 16));
 		else if (arg("--hashes")) hashes = argv[++i];
+		else if (arg("--wide-hashes")) whashes = argv[++i];
 		else if (arg("--shots")) shots = argv[++i];
 		else if (arg("--shot-prefix")) prefix = argv[++i];
 		else if (arg("--wav")) wav = argv[++i];
@@ -424,6 +433,7 @@ int main(int argc, char **argv)
 	nes_wide_stats wst;
 	memset(&wst, 0, sizeof wst);
 	FILE *hf = hashes ? fopen(hashes, "w") : 0;
+	FILE *whf = whashes ? fopen(whashes, "w") : 0;
 	std::vector<int16_t> pcm, abuf(4096 * 2);
 	uint64_t cpu_tot_ns = 0;
 	size_t ev[4] = { 0, 0, 0, 0 };
@@ -467,6 +477,12 @@ int main(int argc, char **argv)
 			int ww = 0, wpit = 0;
 			int wok = nes_host_wide_frame(&wp, &ww, &wpit, &wst);
 			if (wok && scout_n > 0) scout_cost_frames += nes_host_scout_step(scout_n, 0);
+			if (wok && whf) {
+				const uint8_t *wprov = nes_host_wide_prov();
+				const uint8_t *wreal = nes_host_wide_real();
+				fprintf(whf, "%d %d %d %016llx %016llx %016llx\n", f, ww, h, (unsigned long long) fnv((const uint16_t *) wp, ww, h, wpit),
+					(unsigned long long) (wprov ? fnvb(wprov, (size_t) ww * h) : 0), (unsigned long long) (wreal ? fnvb(wreal, (size_t) h * 2) : 0));
+			}
 			if (wok) {
 				wframes++;
 				/* the centre of the wide picture must be the original picture (the 8 masked columns may be filled) */
@@ -563,6 +579,7 @@ int main(int argc, char **argv)
 		}
 	}
 	if (hf) fclose(hf);
+	if (whf) fclose(whf);
 	if (wide_report)
 		printf("wide-centre: differing_px=%ld masked_columns_filled_px=%ld\n", wcentre_diff, wmaskfill),
 		printf("wide: frames=%ld layer_active=%ld blocked=%ld mean_real_l=%.1f mean_real_r=%.1f scene_events=%ld hindsight=%ld/%ld ring=%dx%d map_cells=%d rooms=%d\n",

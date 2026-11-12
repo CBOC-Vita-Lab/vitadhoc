@@ -138,6 +138,13 @@ static uint16_t rgb_of(int y, uint8_t idx)
 	return pal[idx];
 }
 
+/* rgb_of with the palette and the emphasis bits of the line already looked up (same result) */
+static inline uint16_t rgb_line(const uint16_t *pal, unsigned deemp, uint8_t idx)
+{
+	if (deemp) return pal[256 + ((deemp & 7) << 6) + (idx & 0x3F)];
+	return pal[idx];
+}
+
 static uint8_t post_px(uint8_t p1, uint8_t v)
 {
 	if (p1 & 1) v &= 0x30;
@@ -788,11 +795,13 @@ static uint8_t cell_px(uint32_t code, int xin, int fy)
 static void fill_strips(const wk_frame *fr, wk_out *out)
 {
 	const int M = W.margin;
+	const uint16_t *pal = nesw_pal();
 	int y, s, d;
 	for (y = 0; y < H; y++) {
 		const NespLine *nl = &nesp_line[y];
 		wk_line_out *lo = &out->line[y];
 		int drawn = (nl->flags & NESPL_DRAWN) != 0;
+		const unsigned deemp = XDBuf ? XDBuf[y * 256] : 0;
 		for (s = 0; s < 2; s++) {
 			uint16_t *dst = W.cand[s] + (size_t) y * M;
 			const uint8_t *src = s == 0 ? nesp_wl[y] : nesp_wr[y];
@@ -813,6 +822,9 @@ static void fill_strips(const wk_frame *fr, wk_out *out)
 			/* a ring as wide as the screen has no history: with the left 8 px masked the column under the mask is the one the
 			   game rewrites (the seam), so the part of it left of the screen comes from the learned map or not at all */
 			mpart = (s == 0 && have_geom && W.st.ring_w == 32 && !(nl->p1 & 2)) ? g.part[0] : 0;
+			/* the learned map's cell is the same for the 8 px of one tile: look it up once per tile */
+			int cidx = 0x7fffffff, cok = 0;
+			wk_cell cell;
 			for (d = 0; d < real; d++) {
 				uint8_t px = src[d];
 				if (d < mpart) {
@@ -825,9 +837,12 @@ static void fill_strips(const wk_frame *fr, wk_out *out)
 					}
 				} else if (have_geom && d >= ring) {
 					int wx = out->world_x[0][y], idx, xw;
-					wk_cell cell;
 					idx = s == 0 ? (int)(g.tile_first - fdiv8(wx - 1 - d)) : (int)(fdiv8(wx + 256 + d) - (g.tile_first + g.nvis - 1));
-					if (wk_map_margin_cell(W.M, fr, out, 0, y, s, idx, &cell)) {
+					if (idx != cidx) {
+						cok = wk_map_margin_cell(W.M, fr, out, 0, y, s, idx, &cell);
+						cidx = idx;
+					}
+					if (cok) {
 						int fy = out->world_row[0][y] & 7;
 						xw = s == 0 ? wx - 1 - d : wx + 256 + d;
 						px = post_px(nl->p1, cell_px(cell.code, xw & 7, fy));
@@ -837,7 +852,7 @@ static void fill_strips(const wk_frame *fr, wk_out *out)
 						break;
 					}
 				}
-				dst[d] = rgb_of(y, px);
+				dst[d] = rgb_line(pal, deemp, px);
 			}
 		}
 		wk_out_refresh_line(out, y);
@@ -848,11 +863,13 @@ static void build_inner(void)
 {
 	const uint16_t *fb = nesw_fb();
 	int y, e;
-	for (y = 0; y < H; y++)
-		for (e = 0; e < WK_MAX_INNER; e++) {
-			W.inner[0][(size_t) y * WK_MAX_INNER + e] = fb[y * 256 + e];
-			W.inner[1][(size_t) y * WK_MAX_INNER + e] = fb[y * 256 + 255 - e];
-		}
+	for (y = 0; y < H; y++) {
+		const uint16_t *src = fb + y * 256;
+		uint16_t *l = W.inner[0] + (size_t) y * WK_MAX_INNER, *r = W.inner[1] + (size_t) y * WK_MAX_INNER;
+		memcpy(l, src, WK_MAX_INNER * sizeof(uint16_t));
+		for (e = 0; e < WK_MAX_INNER; e++)
+			r[e] = src[255 - e];
+	}
 }
 
 int nes_host_wide_frame(const uint16_t **rgb, int *width, int *pitch_bytes, nes_wide_stats *st)

@@ -118,8 +118,8 @@ struct Rig {
 	Texture *game_tex;
 	std::string shots;
 	uint32_t frame = 0;
-	int nshot = 0;
-	Rig(const std::string &s) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s) {}
+	int nshot;
+	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
 	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
 
 	void pads_none(PadSample p[MAX_PLAYERS]) { for (int i = 0; i < MAX_PLAYERS; i++) { p[i] = PadSample(); p[i].connected = i < 2; } }
@@ -386,7 +386,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	rig.snap("states_overwrite_ask");
 	rig.press(PH_CIRCLE);
 	fs() = g_real;
-	rig.settle(2);
+	rig.settle(8);
 	EXPECT(pl->menu().notices().kind() == NOTICE_ERROR);
 	EXPECT(read_bytes(s4) == saved4);                      /* the slot is untouched */
 	EXPECT(exists(s4 + ".meta"));
@@ -490,12 +490,13 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	rig.pf.ime_answers.push_back("Bad");
 	rig.press(PH_CIRCLE);                                  /* Add a cheat: a wrong code */
 	EXPECT(pl->menu().notices().kind() == NOTICE_ERROR);
+	rig.settle(8);
 	rig.snap("cheats_bad_code");
 	rig.pf.ime_answers.push_back("7E0010=AA");
 	rig.pf.ime_answers.push_back("Colour");
 	rig.press(PH_CIRCLE);
 	EXPECT(snes_host_cheat_count() == 1);
-	rig.settle(2);
+	rig.settle(8);
 	rig.snap("cheats_added");
 	EXPECT(rig.press(PH_CROSS) == MENU_NONE);                 /* back to the cards */
 	EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
@@ -573,7 +574,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	/* ---- second start: no launch file (today's argument), quick save/load and threaded writer ---- */
 	file_remove(root + "/launch/snes.ini");
 	{
-		Rig r2(shots);
+		Rig r2(shots, 40);
 		r2.pf.log_path = root + "/snes/log.txt";
 		snesp::SnesPlayer *p2 = new snesp::SnesPlayer(&r2.pf);
 		r2.pl = p2; r2.pf.player = p2;

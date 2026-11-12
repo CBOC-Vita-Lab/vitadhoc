@@ -1,10 +1,14 @@
 /*
  * snes.bin: the SNES program of VitAdhoc (Snes9x core, separate executable).
  *
- * Launched by VitAdhoc with sceAppMgrLoadExec("app0:snes.bin", {rom path}).
- * Quitting launches app0:eboot.bin again. This file and the other files in
- * snes/frontend are new code (MIT); the Snes9x core in snes/core keeps its
- * own non-commercial licence. Nothing from gpsp/ is linked into this program.
+ * Launched by VitAdhoc with sceAppMgrLoadExec("app0:snes.bin", {rom path}) and, from VitAdhoc 1.4, a launch
+ * file (launch/snes.ini). Quitting launches app0:eboot.bin again. The player's behaviour (menu, states,
+ * saves, cheats, launch protocol, pacing) is player.cpp, shared with the Linux twin; this file is the
+ * console around it: screen, sound, pads, touch, keyboard, clocks and threads.
+ *
+ * This file and the other files in snes/frontend and snes/vita are new code (MIT); the Snes9x core in
+ * snes/core keeps its own non-commercial licence. The menu library is playerkit (MIT). Nothing from gpsp/
+ * is linked into this program.
  *
  * Copyright CBOC-Vita. MIT licence (see snes/frontend/LICENSE).
  */
@@ -30,16 +34,17 @@
 #include <psp2/apputil.h>
 #include <psp2/system_param.h>
 #include <psp2/display.h>
+#include <psp2/ime_dialog.h>
+#include <psp2/common_dialog.h>
 #include <psp2/kernel/cpu.h>
 #include <psp2/kernel/sysmem.h>
 #include <vita2d.h>
 
-#define STB_TRUETYPE_IMPLEMENTATION
-#include "stb_truetype.h"
-
 #include "host.h"
 #include "picture.h"
 #include "audio_pace.h"
+#include "player.h"
+#include "pk_gfx_vita.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -51,105 +56,14 @@ unsigned int sceUserMainThreadStackSize = 1024 * 1024;
 unsigned int _newlib_heap_size_user = 56 * 1024 * 1024;
 }
 
-extern "C" const unsigned char snes_font_data[];
-extern "C" const unsigned char snes_font_data_end[];
-
-#define DATA_ROOT "ux0:data/GBAdhoc/snes"
+#define APP_ROOT "ux0:data/GBAdhoc"
+#define DATA_ROOT APP_ROOT "/snes"
 #define SCREEN_W 960
 #define SCREEN_H 544
 
-/* ---- log --------------------------------------------------------------- */
-
+static snesp::SnesPlayer *g_pl;
+#define logf_(...) g_pl->logf(__VA_ARGS__)
 static FILE *g_log;
-/* The log is kept in memory and written in one piece at most every 5 s, never while a battery RAM
- * write is running (see log_flush below): an fflush on every line was a main thread stall on the
- * memory card. Only the main thread logs. */
-static std::string g_logbuf;
-static uint64_t g_log_flushed_us;
-static unsigned g_log_lost;
-static void logf_(const char *fmt, ...)
-{
-	if (!g_log) return;
-	char tmp[1024];
-	va_list ap, ap2;
-	va_start(ap, fmt);
-	va_copy(ap2, ap);
-	int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
-	va_end(ap);
-	if (n > 0) {
-		if (g_logbuf.size() > 256 * 1024) g_log_lost++;      /* the card was busy for very long */
-		else if ((size_t) n < sizeof tmp) g_logbuf.append(tmp, n);
-		else {
-			std::string big((size_t) n + 1, '\0');
-			vsnprintf(&big[0], big.size(), fmt, ap2);
-			g_logbuf.append(big.data(), n);
-		}
-	}
-	va_end(ap2);
-}
-static void log_flush(uint64_t now_us, int mode);   /* defined after the battery RAM writer */
-
-static void mkdirs(void)
-{
-	sceIoMkdir("ux0:data", 0777);
-	sceIoMkdir("ux0:data/GBAdhoc", 0777);
-	sceIoMkdir(DATA_ROOT, 0777);
-	sceIoMkdir(DATA_ROOT "/states", 0777);
-	sceIoMkdir("ux0:data/GBAdhoc/backups", 0777);
-	sceIoMkdir("ux0:data/GBAdhoc/backups/snes", 0777);
-}
-
-/* ---- text -------------------------------------------------------------- */
-
-struct Glyph { float x0, y0, x1, y1, xoff, yoff, adv; };
-static stbtt_bakedchar g_baked[96];
-static vita2d_texture *g_font_tex;
-static const int FONT_W = 512, FONT_H = 512;
-static const float FONT_PX = 26.0f;
-
-static void font_init(void)
-{
-	unsigned char *bitmap = (unsigned char *) calloc(FONT_W * FONT_H, 1);
-	if (!bitmap) return;
-	int rc = stbtt_BakeFontBitmap(snes_font_data, 0, FONT_PX, bitmap, FONT_W, FONT_H, 32, 96, g_baked);
-	if (rc <= 0) { free(bitmap); return; }
-	g_font_tex = vita2d_create_empty_texture_format(FONT_W, FONT_H, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
-	if (g_font_tex) {
-		uint32_t *dst = (uint32_t *) vita2d_texture_get_datap(g_font_tex);
-		unsigned stride = vita2d_texture_get_stride(g_font_tex) / 4;
-		for (int y = 0; y < FONT_H; y++)
-			for (int x = 0; x < FONT_W; x++) {
-				uint32_t a = bitmap[y * FONT_W + x];
-				dst[y * stride + x] = (a << 24) | 0x00ffffff;
-			}
-		vita2d_texture_set_filters(g_font_tex, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
-	}
-	free(bitmap);
-}
-
-static float text_width(const char *s)
-{
-	float w = 0;
-	for (; *s; s++) if (*s >= 32 && *s < 128) w += g_baked[*s - 32].xadvance;
-	return w;
-}
-
-static void text_draw(float x, float y, const char *s, unsigned color)
-{
-	if (!g_font_tex) return;
-	/* white glyph texture tinted with color via the tint program */
-	for (; *s; s++) {
-		if (*s < 32 || *s >= 128) continue;
-		stbtt_aligned_quad q;
-		float px = 0, py = 0;
-		stbtt_GetBakedQuad(g_baked, FONT_W, FONT_H, *s - 32, &px, &py, &q, 1);
-		float w = q.x1 - q.x0, h = q.y1 - q.y0;
-		if (w > 0 && h > 0)
-			vita2d_draw_texture_tint_part_scale(g_font_tex, x + q.x0, y + q.y0,
-			    q.s0 * FONT_W, q.t0 * FONT_H, w, h, 1.0f, 1.0f, color);
-		x += px;
-	}
-}
 
 /* ---- audio ------------------------------------------------------------- */
 /* The pacing itself (ring, resampler, rate control, underrun handling) is frontend/audio_pace.cpp, shared
@@ -162,8 +76,6 @@ static SceUID g_athread = -1;
 static volatile int g_quit;
 static apace::Pacer g_pace;
 static std::atomic<unsigned> g_agap_max_us(0);   /* longest gap between two sceAudioOutOutput returns */
-
-static void audio_push(const int16_t *src, int frames) { g_pace.push(src, frames); }
 
 static int audio_thread(SceSize, void *)
 {
@@ -226,7 +138,7 @@ static int g_src_w = 256, g_src_h = 224;
 static unsigned g_serial_seen;
 static int g_crop_top, g_crop_bot, g_crop_cand_top, g_crop_cand_bot, g_crop_votes;
 static int g_have_picture;
-static unsigned g_fence_skips, g_frames_skipped_gpu;
+static unsigned g_fence_skips;
 
 static bool gtex_writable(GTex &g) { return g.t && vita2d_fragment_fence_done(&g.rd); }
 static void gtex_read(GTex &g) { if (g.t) vita2d_fragment_fence_record(&g.rd); }
@@ -538,10 +450,10 @@ static void frame_finish(void)
 /* Players. SNES pad 1 is the Vita's own controls (port 0). Pad 2 is port 2 when a controller is paired
  * there, else port 1 on a handheld (external pads through ds34vita and the like); on a PS TV port 1 is
  * the same pad as port 0, so it is not used. Pads 3 and 4 are ports 3 and 4; they reach the game only
- * through the Super Multitap (pause menu "Multitap", Auto turns it on for games known to use it).
- * The ports are looked at once a second, so pads can be plugged in or removed while playing. */
+ * through the Super Multitap (Settings > Controls > Multitap). The ports are looked at once a second, so
+ * pads can be plugged in or removed while playing. Mapping, sticks, turbo, shortcuts and the menu chord
+ * are playerkit's Mapper (player.cpp); here the controllers are only read. */
 
-static int g_confirm_is_cross = 1;
 static int g_pad_port[4] = { 0, -1, -1, -1 };
 static int g_port_age;
 
@@ -563,167 +475,216 @@ static void ports_update(void)
 	g_pad_port[1] = p2; g_pad_port[2] = p3; g_pad_port[3] = p4;
 }
 
-/* One port: the SNES buttons, and the raw buttons with L1/R1 folded into L/R (Ext2 reports the Vita's
- * own L and R as L1 and R1, and L2/R2 of a PS TV pad as the old L/R bits). Returns 0 when nobody is there. */
-static int read_port(int port, unsigned *snes, unsigned *raw)
+/* One port into a playerkit sample: the Vita's L/R arrive as L1/R1 (Ext2), a PS TV pad's L2/R2 as the
+ * old L/R bits; both are the console's L/R. */
+static void read_port(int port, pk::PadSample *s)
 {
+	*s = pk::PadSample();
+	if (port < 0) return;
 	SceCtrlData pad;
 	memset(&pad, 0, sizeof pad);
-	pad.lx = pad.ly = 128;
-	*snes = 0; *raw = 0;
-	if (port < 0) return 0;
-	if (sceCtrlPeekBufferPositiveExt2(port, &pad, 1) < 0) return 0;
-	unsigned b = pad.buttons, m = 0;
-	if (b & SCE_CTRL_L1) b |= SCE_CTRL_LTRIGGER;
-	if (b & SCE_CTRL_R1) b |= SCE_CTRL_RTRIGGER;
-	*raw = b;
-	if (b & SCE_CTRL_CROSS) m |= SNES_B;
-	if (b & SCE_CTRL_CIRCLE) m |= SNES_A;
-	if (b & SCE_CTRL_SQUARE) m |= SNES_Y;
-	if (b & SCE_CTRL_TRIANGLE) m |= SNES_X;
-	if (b & SCE_CTRL_LTRIGGER) m |= SNES_L;
-	if (b & SCE_CTRL_RTRIGGER) m |= SNES_R;
-	if (b & SCE_CTRL_START) m |= SNES_START;
-	if (b & SCE_CTRL_SELECT) m |= SNES_SELECT;
-	if (b & SCE_CTRL_UP) m |= SNES_UP;
-	if (b & SCE_CTRL_DOWN) m |= SNES_DOWN;
-	if (b & SCE_CTRL_LEFT) m |= SNES_LEFT;
-	if (b & SCE_CTRL_RIGHT) m |= SNES_RIGHT;
-	if (pad.lx < 64) m |= SNES_LEFT;
-	if (pad.lx > 192) m |= SNES_RIGHT;
-	if (pad.ly < 64) m |= SNES_UP;
-	if (pad.ly > 192) m |= SNES_DOWN;
-	*snes = m;
-	return 1;
+	pad.lx = pad.ly = pad.rx = pad.ry = 128;
+	if (sceCtrlPeekBufferPositiveExt2(port, &pad, 1) < 0) return;
+	unsigned b = pad.buttons;
+	uint32_t m = 0;
+	if (b & SCE_CTRL_UP) m |= pk::PH_UP;
+	if (b & SCE_CTRL_DOWN) m |= pk::PH_DOWN;
+	if (b & SCE_CTRL_LEFT) m |= pk::PH_LEFT;
+	if (b & SCE_CTRL_RIGHT) m |= pk::PH_RIGHT;
+	if (b & SCE_CTRL_CROSS) m |= pk::PH_CROSS;
+	if (b & SCE_CTRL_CIRCLE) m |= pk::PH_CIRCLE;
+	if (b & SCE_CTRL_SQUARE) m |= pk::PH_SQUARE;
+	if (b & SCE_CTRL_TRIANGLE) m |= pk::PH_TRIANGLE;
+	if (b & (SCE_CTRL_L1 | SCE_CTRL_LTRIGGER)) m |= pk::PH_L;
+	if (b & (SCE_CTRL_R1 | SCE_CTRL_RTRIGGER)) m |= pk::PH_R;
+	if (b & SCE_CTRL_START) m |= pk::PH_START;
+	if (b & SCE_CTRL_SELECT) m |= pk::PH_SELECT;
+	s->connected = true;
+	s->buttons = m;
+	s->lx = pad.lx; s->ly = pad.ly; s->rx = pad.rx; s->ry = pad.ry;
 }
 
-/* Reads every player; pad 1's raw buttons are returned for the menu combination. */
-static void read_pads(unsigned masks[4], unsigned *raw0)
+/* the touch panels: the front one (a tap on the picture opens the menu; the menu is touch-driven) and the
+ * rear one (its four corners, for the Controls page's "Rear touch panel") */
+struct TouchState { bool down; float x, y, x0, y0; uint64_t t0; };
+static TouchState g_touch;
+
+static bool touch_read(pk::TouchPoint *tp, uint8_t *back, uint64_t now_us, bool *tapped)
+{
+	SceTouchData d;
+	*tapped = false;
+	tp->down = false;
+	if (sceTouchPeek(SCE_TOUCH_PORT_FRONT, &d, 1) > 0 && d.reportNum > 0) {
+		tp->down = true;
+		tp->x = d.report[0].x / 2.0f;     /* 1920 x 1088 -> 960 x 544 */
+		tp->y = d.report[0].y / 2.0f;
+	}
+	if (tp->down && !g_touch.down) { g_touch.x0 = tp->x; g_touch.y0 = tp->y; g_touch.t0 = now_us; }
+	if (tp->down) { g_touch.x = tp->x; g_touch.y = tp->y; }
+	if (!tp->down && g_touch.down) {
+		float dx = g_touch.x - g_touch.x0, dy = g_touch.y - g_touch.y0;
+		*tapped = now_us - g_touch.t0 < 500000 && dx * dx + dy * dy < 40 * 40;
+	}
+	g_touch.down = tp->down;
+	*back = 0;
+	if (sceTouchPeek(SCE_TOUCH_PORT_BACK, &d, 1) > 0)
+		for (unsigned i = 0; i < d.reportNum && i < 4; i++) {
+			bool left = d.report[i].x < 960, top = d.report[i].y < 445;
+			*back |= (uint8_t) (top ? (left ? 1 : 2) : (left ? 4 : 8));
+		}
+	return true;
+}
+
+static void read_pads(pk::PadSample pads[pk::MAX_PLAYERS], uint8_t back)
 {
 	ports_update();
-	for (int i = 0; i < 4; i++) {
-		unsigned raw;
-		if (!read_port(g_pad_port[i], &masks[i], &raw)) masks[i] = 0;
-		if (i == 0) *raw0 = raw;
+	for (int i = 0; i < pk::MAX_PLAYERS; i++) read_port(g_pad_port[i], &pads[i]);
+	pads[0].back = back;
+	pads[0].connected = true;
+}
+
+/* ---- the platform for the player --------------------------------------- */
+
+static SceUID g_wsema = -1, g_wthread = -1;
+static volatile int g_wstop;
+static bool g_ime_wanted;
+
+struct VitaPlatform : snesp::Platform {
+	uint64_t now_us() { return sceKernelGetProcessTimeWide(); }
+	void pause_us(unsigned us) { sceKernelDelayThread(us); }
+	bool wake_writer()
+	{
+		if (g_wthread < 0) return false;
+		sceKernelSignalSema(g_wsema, 1);
+		return true;
 	}
-}
+	/* the newest picture, straight from its texture (read only while no new picture is fetched) */
+	bool current_frame(pk::Frame *f)
+	{
+		if (!g_have_picture || g_src_i < 0 || !g_src[g_src_i].t) return false;
+		vita2d_texture *t = g_src[g_src_i].t;
+		*f = pk::Frame((const uint16_t *) vita2d_texture_get_datap(t), g_src_w, g_src_h, (int) vita2d_texture_get_stride(t));
+		return true;
+	}
+	void ask_cheat_text() { g_ime_wanted = true; }
+	void picture_changed() { g_rtkey_valid = false; g_glow_serial = 0; g_glow_age = 99; g_blend_serial = 0; }
+	void log_write(const std::string &chunk)
+	{
+		if (!g_log) return;
+		fwrite(chunk.data(), 1, chunk.size(), g_log);
+		fflush(g_log);
+	}
+};
+static VitaPlatform g_platform;
 
-static const char *kMultitapGames[] = { "BOMBERMAN", "SECRET OF MANA", "SEIKEN DENSETSU 3", "NBA JAM", "NBA GIVE", "NHL ", "FIFA", "MADDEN", NULL };
-
-static int multitap_wanted(const pic_settings &ps)
-{
-	if (ps.multitap == 1) return 1;
-	if (ps.multitap == 2) return 0;
-	std::string t = snes_host_rom_title();
-	for (auto &c : t) if (c >= 'a' && c <= 'z') c -= 32;
-	for (int i = 0; kMultitapGames[i]; i++)
-		if (t.find(kMultitapGames[i]) != std::string::npos) return 1;
-	return 0;
-}
-
-/* ---- battery RAM writer ------------------------------------------------
- * The .srm is written on a thread of its own: a write (file, .bak, rename) takes
- * a third of a second on a memory card, and Super FX games such as Yoshi's
- * Island change their battery RAM all the time, so writing it on the game's
- * thread every 2 s was a visible stutter. The game thread only copies the RAM
- * (snes_host_sram_take) and hands it over; one write at a time. */
-static uint8_t g_srm_buf[256 * 1024];
-static size_t g_srm_len;
-static SceUID g_srm_sema = -1, g_srm_thread = -1;
-static std::atomic<int> g_srm_busy(0), g_srm_result(0), g_srm_done(0), g_srm_stop(0), g_srm_sync(0);
-
-static int srm_writer(SceSize, void *)
+/* the writer thread: battery RAM, states, the resume point, settings and the log; low priority, on the
+ * picture thread's core, never in the game thread's way */
+static int writer_thread(SceSize, void *)
 {
 	for (;;) {
-		sceKernelWaitSema(g_srm_sema, 1, NULL);
-		if (g_srm_stop) break;
-		g_srm_result = snes_host_sram_write(g_srm_buf, g_srm_len);
-		g_srm_done++;
-		g_srm_busy = 0;
+		sceKernelWaitSema(g_wsema, 1, NULL);
+		if (g_wstop) break;
+		while (g_pl->writer().work_one(g_pl)) {}
 	}
 	return sceKernelExitThread(0);
 }
 
-static void srm_writer_start(void)
+static void writer_start(void)
 {
-	g_srm_sema = sceKernelCreateSema("snes_srm", 0, 0, 1, NULL);
-	if (g_srm_sema < 0) return;
-	/* low priority, beside the picture thread: never in the game thread's way */
-	g_srm_thread = sceKernelCreateThread("snes_srm", srm_writer, 0xA0, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
-	if (g_srm_thread >= 0 && sceKernelStartThread(g_srm_thread, 0, NULL) < 0) g_srm_thread = -1;
+	g_wsema = sceKernelCreateSema("snes_writer", 0, 0, 1 << 20, NULL);
+	if (g_wsema < 0) return;
+	g_wthread = sceKernelCreateThread("snes_writer", writer_thread, 0xA0, 0x10000, 0, SCE_KERNEL_CPU_MASK_USER_1, NULL);
+	if (g_wthread >= 0 && sceKernelStartThread(g_wthread, 0, NULL) < 0) { sceKernelDeleteThread(g_wthread); g_wthread = -1; }
+	logf_("writer thread %s\n", g_wthread >= 0 ? "started" : "NOT started (writes run on the game thread)");
 }
 
-static void srm_wait_idle(void)
+static void writer_stop(void)
 {
-	while (g_srm_busy) sceKernelDelayThread(2000);
+	if (g_wthread < 0) return;
+	g_wstop = 1;
+	sceKernelSignalSema(g_wsema, 1);
+	sceKernelWaitThreadEnd(g_wthread, NULL, NULL);
+	sceKernelDeleteThread(g_wthread);
+	g_wthread = -1;
 }
 
-/* hand the current battery RAM to the writer; 0 when it is still busy */
-static int srm_write_async(void)
-{
-	if (g_srm_thread < 0 || g_srm_busy) return 0;
-	g_srm_len = snes_host_sram_take(g_srm_buf, sizeof g_srm_buf);
-	if (!g_srm_len) return 0;
-	g_srm_busy = 1;
-	sceKernelSignalSema(g_srm_sema, 1);
-	return 1;
-}
+/* ---- drawing helpers ------------------------------------------------------ */
 
-/* A battery RAM write that failed (no verified backup of the existing save, disk full, card removed...) leaves the
- * file on the card untouched (host.cpp), keeps the RAM marked as unsaved and says why: the reason is logged, shown on
- * the game screen (g_save_msg) and in the pause menu, and the write is tried again after a back-off (10 s, doubling
- * to 60 s) without ever blocking the game thread (the retries run on the writer thread like the first try). */
-static char g_save_msg[220];
-static bool g_save_failing;
-static uint64_t g_srm_retry_at;
-static unsigned g_srm_backoff_s = 10;
+static pk::VitaGfx *g_gfx;
+static pk::Text *g_text;
 
-static void srm_report(int r, const char *how, uint64_t now)
+static void fatal_screen(const std::string &line1, const std::string &line2)
 {
-	if (!r) {
-		if (g_save_failing) logf_("sram save recovered (%s)\n", how);
-		g_save_failing = false;
-		g_save_msg[0] = 0;
-		g_srm_backoff_s = 10;
-		g_srm_retry_at = 0;
-		return;
+	for (int i = 0; i < 300; i++) {
+		vita2d_start_drawing();
+		vita2d_clear_screen();
+		g_text->draw(pk::F_SUB, 60, 180, line1.c_str(), PK_RGBA(255, 255, 255, 255));
+		g_text->wrap(pk::F_BODY, 60, 240, 840, 3, 4, line2, PK_RGBA(192, 192, 192, 255));
+		g_text->draw(pk::F_BODY, 60, 360, "Returning to VitAdhoc...", PK_RGBA(192, 192, 192, 255));
+		vita2d_end_drawing();
+		vita2d_swap_buffers();
 	}
-	char why[200] = "";
-	snes_host_save_error(why, sizeof why);
-	snprintf(g_save_msg, sizeof g_save_msg, "Save NOT written: %s", why[0] ? why : "unknown error");
-	logf_("sram save FAILED rc=%d (%s): %s - the file on the card was not touched; retry in %u s\n", r, how, why, g_srm_backoff_s);
-	g_save_failing = true;
-	g_srm_retry_at = now + (uint64_t) g_srm_backoff_s * 1000000;
-	if (g_srm_backoff_s < 60) g_srm_backoff_s = g_srm_backoff_s * 2 > 60 ? 60 : g_srm_backoff_s * 2;
 }
 
-/* write now, on this thread (pause menu, suspend, quit): after the writer */
-static int srm_write_sync(void)
+/* The system keyboard (an IME common dialog), drawn over the frozen game and the menu. ASCII only. */
+static bool ime_ask(const char *title, const char *initial, std::string &out)
 {
-	srm_wait_idle();
-	g_srm_sync = 1;
-	int r = snes_host_sram_save();
-	g_srm_sync = 0;
-	srm_report(r, "now", sceKernelGetProcessTimeWide());
-	return r;
-}
-
-/* mode 0: periodic (at most every 5 s); 1: now, but still not during a battery RAM write; 2: now, final */
-static void log_flush(uint64_t now_us, int mode)
-{
-	if (!g_log || g_logbuf.empty()) return;
-	if (mode < 2 && (g_srm_busy || g_srm_sync)) return;
-	if (mode == 0 && now_us - g_log_flushed_us < 5000000) return;
-	if (g_log_lost) {
-		char m[64];
-		int n = snprintf(m, sizeof m, "(log: %u lines lost, buffer full)\n", g_log_lost);
-		g_logbuf.append(m, n);
-		g_log_lost = 0;
+	static SceWChar16 title16[64], init16[96], buf16[96];
+	memset(title16, 0, sizeof title16); memset(init16, 0, sizeof init16); memset(buf16, 0, sizeof buf16);
+	for (int i = 0; title[i] && i < 63; i++) title16[i] = (unsigned char) title[i];
+	for (int i = 0; initial[i] && i < 95; i++) init16[i] = (unsigned char) initial[i];
+	SceImeDialogParam p;
+	sceImeDialogParamInit(&p);
+	p.supportedLanguages = 0;
+	p.languagesForced = SCE_FALSE;
+	p.type = SCE_IME_TYPE_BASIC_LATIN;
+	p.option = SCE_IME_OPTION_NO_ASSISTANCE;
+	p.textBoxMode = SCE_IME_DIALOG_TEXTBOX_MODE_WITH_CLEAR;
+	p.title = title16;
+	p.maxTextLength = 90;
+	p.initialText = init16;
+	p.inputTextBuffer = buf16;
+	int rc = sceImeDialogInit(&p);
+	if (rc < 0) { logf_("keyboard could not open: %08x\n", rc); return false; }
+	bool ok = false;
+	for (;;) {
+		if (frame_draw(g_pl->picture(), 1, 0)) {
+			g_pl->menu_draw(g_gfx, g_text);
+			vita2d_end_drawing();
+			vita2d_common_dialog_update();
+			vita2d_swap_buffers();
+		} else sceDisplayWaitVblankStart();
+		SceCommonDialogStatus st = sceImeDialogGetStatus();
+		if (st == SCE_COMMON_DIALOG_STATUS_FINISHED) {
+			SceImeDialogResult r;
+			memset(&r, 0, sizeof r);
+			sceImeDialogGetResult(&r);
+			ok = r.button == SCE_IME_DIALOG_BUTTON_ENTER;
+			break;
+		}
+		if (st == SCE_COMMON_DIALOG_STATUS_NONE) break;
 	}
-	fwrite(g_logbuf.data(), 1, g_logbuf.size(), g_log);
-	fflush(g_log);
-	g_logbuf.clear();
-	g_log_flushed_us = now_us;
+	sceImeDialogTerm();
+	out.clear();
+	for (int i = 0; buf16[i] && i < 95; i++) out += buf16[i] < 128 ? (char) buf16[i] : '?';
+	return ok;
+}
+
+/* ---- launch / return --------------------------------------------------- */
+
+static void return_to_vitadhoc(void)
+{
+	const char *argv[] = { "--from-snes", NULL };   /* arguments only: the system adds the path */
+	if (g_log) { fputs("returning to VitAdhoc\n", g_log); fclose(g_log); g_log = NULL; }
+	sceAppMgrLoadExec("app0:eboot.bin", (char *const *) argv, NULL);
+	sceKernelExitProcess(0);
+}
+
+static volatile int g_suspend_flag;
+static int power_cb(int, int info, int, void *)
+{
+	if (info & (SCE_POWER_CB_APP_SUSPEND | SCE_POWER_CB_SYSTEM_SUSPEND)) g_suspend_flag = 1;
+	return 0;
 }
 
 static uint64_t process_us(void) { return sceKernelGetProcessTimeWide(); }
@@ -742,256 +703,6 @@ static unsigned arm_mhz_measured(void)
 	return best != ~0ull ? (unsigned) (n / best) : 0;
 }
 
-static bool ends_with_ci(const char *s, const char *tail)
-{
-	size_t a = strlen(s), b = strlen(tail);
-	return a >= b && strcasecmp(s + a - b, tail) == 0;
-}
-
-/* ---- launch / return --------------------------------------------------- */
-
-static void return_to_vitadhoc(void)
-{
-	const char *argv[] = { "--from-snes", NULL };   /* arguments only: the system adds the path */
-	logf_("returning to VitAdhoc\n");
-	log_flush(sceKernelGetProcessTimeWide(), 2);
-	if (g_log) { fclose(g_log); g_log = NULL; }
-	sceAppMgrLoadExec("app0:eboot.bin", (char *const *) argv, NULL);
-	sceKernelExitProcess(0);
-}
-
-/* ---- paths ------------------------------------------------------------- */
-
-static std::string base_name(const std::string &p)
-{
-	size_t s = p.find_last_of("/:");
-	std::string n = s == std::string::npos ? p : p.substr(s + 1);
-	size_t d = n.find_last_of('.');
-	return d == std::string::npos ? n : n.substr(0, d);
-}
-
-static std::string srm_path(const std::string &rom)
-{
-	size_t d = rom.find_last_of('.'), s = rom.find_last_of("/:");
-	if (d == std::string::npos || (s != std::string::npos && d < s)) return rom + ".srm";
-	return rom.substr(0, d) + ".srm";
-}
-
-/* ---- settings files ----------------------------------------------------- */
-
-static pic_settings g_ps;
-static std::string g_game_ini;
-
-static void settings_load(const std::string &game)
-{
-	pic_defaults(&g_ps);
-	pic_load(DATA_ROOT "/picture.ini", &g_ps);
-	g_game_ini = std::string(DATA_ROOT "/games/") + game + ".ini";
-	pic_settings gs = g_ps;
-	if (pic_load(g_game_ini.c_str(), &gs) && gs.use_game) g_ps = gs;
-}
-
-static void settings_save(void)
-{
-	int r;
-	if (g_ps.use_game) {
-		r = pic_save(g_game_ini.c_str(), &g_ps);
-	} else {
-		r = pic_save(DATA_ROOT "/picture.ini", &g_ps);
-		pic_settings gs = g_ps;
-		if (pic_load(g_game_ini.c_str(), &gs) && gs.use_game) { gs.use_game = 0; pic_save(g_game_ini.c_str(), &gs); }
-	}
-	logf_("settings saved rc=%d (%s)\n", r, g_ps.use_game ? "this game" : "all games");
-}
-
-/* ---- pause menu -------------------------------------------------------- */
-
-static volatile int g_suspend_flag;
-static int power_cb(int, int info, int, void *)
-{
-	if (info & (SCE_POWER_CB_APP_SUSPEND | SCE_POWER_CB_SYSTEM_SUSPEND)) g_suspend_flag = 1;
-	return 0;
-}
-
-static const char *kMenu[] = { "Resume", "Picture", "Multitap", "Save state", "Load state", "Reset game", "Quit to VitAdhoc" };
-enum { M_N = 7 };
-static const char *kShape[] = { "Original shape", "Zoom", "Full screen", "Pixel perfect" };
-static const char *kMulti[] = { "Auto", "On", "Off" };
-
-static void level_text(char *b, size_t n, int v) { if (v) snprintf(b, n, "%d", v); else snprintf(b, n, "Off"); }
-
-struct Nav { unsigned prev; unsigned up, down, left, right, conf, back; };
-static void nav_poll(Nav &nv)
-{
-	unsigned snes, raw;
-	read_port(0, &snes, &raw);
-	unsigned press = raw & ~nv.prev;
-	if (nv.prev == 0xffffffffu) press = 0; /* buttons held when the menu opened */
-	nv.prev = raw;
-	unsigned conf = g_confirm_is_cross ? SCE_CTRL_CROSS : SCE_CTRL_CIRCLE;
-	unsigned back = g_confirm_is_cross ? SCE_CTRL_CIRCLE : SCE_CTRL_CROSS;
-	nv.up = press & SCE_CTRL_UP; nv.down = press & SCE_CTRL_DOWN;
-	nv.left = press & (SCE_CTRL_LEFT | SCE_CTRL_LTRIGGER); nv.right = press & (SCE_CTRL_RIGHT | SCE_CTRL_RTRIGGER);
-	nv.conf = press & conf; nv.back = press & back;
-}
-
-static bool menu_frame(bool dim)
-{
-	if (!frame_draw(g_ps, 1, 0)) { sceDisplayWaitVblankStart(); return false; }
-	if (dim) vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, 0xC0000000);
-	return true;
-}
-
-static void picture_menu(void)
-{
-	enum { R_SHAPE, R_PIXEL, R_QUALITY, R_GLOW, R_SCAN, R_GRID, R_HIRES, R_ILACE, R_APPLY, R_BACK, R_N };
-	int sel = 0;
-	Nav nv = { 0xffffffffu };
-	for (;;) {
-		nav_poll(nv);
-		if (nv.up) sel = (sel + R_N - 1) % R_N;
-		if (nv.down) sel = (sel + 1) % R_N;
-		int d = nv.right ? 1 : nv.left ? -1 : 0;
-		if (nv.conf && sel != R_BACK) d = 1;
-		if (d) {
-			switch (sel) {
-			case R_SHAPE: g_ps.shape = (g_ps.shape + PIC_SHAPES + d) % PIC_SHAPES; break;
-			case R_PIXEL: g_ps.pixel_sq ^= 1; break;
-			case R_QUALITY: g_ps.quality ^= 1; break;
-			case R_GLOW: g_ps.glow = (g_ps.glow + 11 + d) % 11; break;
-			case R_SCAN: g_ps.scan = (g_ps.scan + 11 + d) % 11; break;
-			case R_GRID: g_ps.grid = (g_ps.grid + 11 + d) % 11; break;
-			case R_HIRES: g_ps.hires_blend ^= 1; break;
-			case R_ILACE: g_ps.interlace_blend ^= 1; break;
-			case R_APPLY: g_ps.use_game ^= 1; break;
-			}
-		}
-		if (nv.back || (nv.conf && sel == R_BACK)) break;
-
-		if (!menu_frame(false)) continue;
-		vita2d_draw_rectangle(16, 16, 400, 40 + R_N * 40 + 50, 0xD0302820);
-		text_draw(34, 56, "Picture", 0xFFFFFFFF);
-		for (int i = 0; i < R_N; i++) {
-			char line[96], v[24];
-			switch (i) {
-			case R_SHAPE: snprintf(line, sizeof line, "Shape: %s", kShape[g_ps.shape]); break;
-			case R_PIXEL: snprintf(line, sizeof line, "Pixels: %s", g_ps.pixel_sq ? "square" : "8:7"); break;
-			case R_QUALITY: snprintf(line, sizeof line, "Quality: %s", g_ps.quality ? "Smooth" : "Sharp"); break;
-			case R_GLOW: level_text(v, sizeof v, g_ps.glow); snprintf(line, sizeof line, "Side glow: %s", v); break;
-			case R_SCAN: level_text(v, sizeof v, g_ps.scan); snprintf(line, sizeof line, "CRT scanlines: %s", v); break;
-			case R_GRID: level_text(v, sizeof v, g_ps.grid); snprintf(line, sizeof line, "LCD grid: %s", v); break;
-			case R_HIRES: snprintf(line, sizeof line, "Blend hi-res columns: %s", g_ps.hires_blend ? "On" : "Off"); break;
-			case R_ILACE: snprintf(line, sizeof line, "Blend interlace lines: %s", g_ps.interlace_blend ? "On" : "Off"); break;
-			case R_APPLY: snprintf(line, sizeof line, "Apply to: %s", g_ps.use_game ? "this game" : "all games"); break;
-			default: snprintf(line, sizeof line, "Back"); break;
-			}
-			text_draw(40, 104 + i * 40, line, i == sel ? 0xFFFFD040 : 0xFFE0E0E0);
-		}
-		text_draw(34, 104 + R_N * 40 + 6, "Left/Right changes a row", 0xFFB0B0B0);
-		frame_finish();
-	}
-	settings_save();
-}
-
-/* Returns 1 when the player chose Quit. */
-static int pause_menu(const std::string &game, std::string &status)
-{
-	int sel = 0, slot = 0;
-	Nav nv = { 0xffffffffu };
-	int closing = 0;
-	g_pace.set_paused(true);
-	for (;;) {
-		nav_poll(nv);
-		if (nv.up) sel = (sel + M_N - 1) % M_N;
-		if (nv.down) sel = (sel + 1) % M_N;
-		if (sel == 2) {
-			if (nv.left) g_ps.multitap = (g_ps.multitap + 2) % 3;
-			if (nv.right || nv.conf) g_ps.multitap = (g_ps.multitap + 1) % 3;
-			if (nv.left || nv.right || nv.conf) { snes_host_set_multitap(multitap_wanted(g_ps)); settings_save(); }
-		} else {
-			if (nv.left) slot = (slot + 3) % 4;
-			if (nv.right) slot = (slot + 1) % 4;
-		}
-		if (nv.back) closing = 1;
-		if (nv.conf && sel != 2) {
-			char path[256];
-			snprintf(path, sizeof path, DATA_ROOT "/states/%s.st%d", game.c_str(), slot);
-			if (sel == 0) closing = 1;
-			else if (sel == 1) { picture_menu(); nv.prev = 0xffffffffu; continue; }
-			else if (sel == 3) {
-				int r = snes_host_state_save(path);
-				status = r ? "Could not save the state" : "State saved";
-			} else if (sel == 4) {
-				int r = snes_host_state_load(path);
-				status = r == 2 ? "No state in this slot" : r ? "Could not load the state" : "State loaded";
-				if (r == 0) closing = 1;
-			} else if (sel == 5) { snes_host_reset(); closing = 1; }
-			else if (sel == 6) { g_pace.set_paused(false); return 1; }
-		}
-		if (closing) break;
-
-		if (!menu_frame(true)) continue;
-		vita2d_draw_rectangle(300, 90, 360, 380, 0xE0302820);
-		text_draw(330, 140, "SNES - paused", 0xFFFFFFFF);
-		for (int i = 0; i < M_N; i++) {
-			char line[64];
-			if (i == 3 || i == 4) snprintf(line, sizeof line, "%s  (slot %d)", kMenu[i], slot + 1);
-			else if (i == 2) snprintf(line, sizeof line, "Multitap: %s", kMulti[g_ps.multitap]);
-			else snprintf(line, sizeof line, "%s", kMenu[i]);
-			text_draw(340, 190 + i * 40, line, i == sel ? 0xFFFFD040 : 0xFFE0E0E0);
-		}
-		if (!status.empty()) text_draw(330, 470, status.c_str(), 0xFFA0FFA0);
-		if (g_save_failing && g_save_msg[0]) {
-			char line[240];
-			snprintf(line, sizeof line, "%s", g_save_msg);
-			while (text_width(line) > SCREEN_W - 40 && strlen(line) > 12) { size_t n = strlen(line); line[n - 1] = 0; }
-			text_draw(20, 510, line, 0xFF5050FF);
-			text_draw(20, 530, "The save on the card was not touched. It is tried again; free space or fix the card.", 0xFFB0B0FF);
-		}
-		frame_finish();
-	}
-	/* wait until the confirm / back buttons are released so the game does not see them */
-	for (;;) {
-		unsigned snes, raw;
-		read_port(0, &snes, &raw);
-		if (!(raw & (SCE_CTRL_CROSS | SCE_CTRL_CIRCLE | SCE_CTRL_START | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER))) break;
-		sceKernelDelayThread(16000);
-	}
-	g_pace.set_paused(false);
-	return 0;
-}
-
-static void fatal_screen(const char *line1, const char *line2)
-{
-	for (int i = 0; i < 300; i++) {
-		vita2d_start_drawing();
-		vita2d_clear_screen();
-		text_draw(60, 200, line1, 0xFFFFFFFF);
-		text_draw(60, 250, line2, 0xFFC0C0C0);
-		text_draw(60, 320, "Returning to VitAdhoc...", 0xFFC0C0C0);
-		vita2d_end_drawing();
-		vita2d_swap_buffers();
-	}
-}
-
-/* ---- main -------------------------------------------------------------- */
-
-/* 64 bit hash of a byte range (battery RAM change detection; not cryptographic) */
-static uint64_t hash64(const uint8_t *p, size_t n)
-{
-	uint64_t h = 0xcbf29ce484222325ull;
-	size_t i = 0;
-	for (; i + 8 <= n; i += 8) {
-		uint64_t w;
-		memcpy(&w, p + i, 8);
-		h = (h ^ w) * 0x100000001b3ull;
-		h ^= h >> 29;
-	}
-	for (; i < n; i++) h = (h ^ p[i]) * 0x100000001b3ull;
-	return h ^ (h >> 32);
-}
-
-
 static int ini_int(const char *path, const char *key, int def)
 {
 	FILE *f = fopen(path, "rb");
@@ -1005,28 +716,70 @@ static int ini_int(const char *path, const char *key, int def)
 	return v;
 }
 
+/* thread priorities from threads.ini: only 0 (leave) or 0x40..0xBF are used; anything else is the default */
+static int prio_ok(int p, int def) { return p == 0 || (p >= 0x40 && p <= 0xBF) ? p : def; }
+
+/* ---- the menu ---------------------------------------------------------------- */
+
+/* Runs the control centre until it closes. Returns MENU_RESUME/RESET_DONE (play on), MENU_GAME_LIST or MENU_EXIT. */
+static pk::MenuEvent menu_loop(int player)
+{
+	g_pace.set_paused(true);
+	g_pl->open_menu(player);
+	bool first = true;
+	uint64_t prev = sceKernelGetProcessTimeWide();
+	pk::MenuEvent ev = pk::MENU_NONE;
+	for (;;) {
+		/* draw first, so the menu is on screen before anything is written */
+		if (frame_draw(g_pl->picture(), 1, 0)) {
+			g_pl->menu_draw(g_gfx, g_text);
+			frame_finish();
+			if (first) { first = false; g_pl->menu_drawn(); }
+		} else sceDisplayWaitVblankStart();
+		uint64_t now = sceKernelGetProcessTimeWide();
+		pk::MenuInput in;
+		uint8_t back = 0;
+		bool tapped;
+		touch_read(&in.touch, &back, now, &tapped);
+		read_pads(in.pads, back);
+		in.dt_ms = (int) ((now - prev) / 1000);
+		if (in.dt_ms <= 0 || in.dt_ms > 100) in.dt_ms = 16;
+		prev = now;
+		ev = g_pl->menu_update(in);
+		if (g_ime_wanted) {
+			g_ime_wanted = false;
+			std::string code, name;
+			bool ok = ime_ask("Cheat code (Game Genie, Pro Action Replay or address=value)", "", code);
+			if (ok && !code.empty()) ime_ask("A name for it (you can leave it empty)", "", name);
+			g_pl->cheat_entered(ok, code, name);
+		}
+		if (ev != pk::MENU_NONE && ev != pk::MENU_RESET_DONE && ev != pk::MENU_RESUME) break;
+		if (!g_pl->menu_open()) break;
+		if (g_suspend_flag) { g_suspend_flag = 0; g_pl->suspend(); }
+		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
+	}
+	g_pace.set_paused(false);
+	return ev;
+}
+
+/* ---- main -------------------------------------------------------------- */
+
 int main(int argc, char **argv)
 {
-	mkdirs();
+	sceIoMkdir("ux0:data", 0777);
+	sceIoMkdir(APP_ROOT, 0777);
+	sceIoMkdir(DATA_ROOT, 0777);
 	g_log = fopen(DATA_ROOT "/log.txt", "a");
+	g_pl = new snesp::SnesPlayer(&g_platform);
 	logf_("---- snes.bin start (argc=%d)\n", argc);
-
-	int clk = scePowerSetArmClockFrequency(500);
-	if (clk < 0) { scePowerSetArmClockFrequency(444); }
-	scePowerSetBusClockFrequency(222);
-	scePowerSetGpuClockFrequency(222);
-	scePowerSetGpuXbarClockFrequency(166);
-	logf_("arm clock now %d MHz (500 request rc=%08x)\n", scePowerGetArmClockFrequency(), clk);
-	/* what the core really runs at (a PSVshell profile can set 500 MHz while
-	 * the system still reports 444): the same count as VitAdhoc's cpuclock */
-	logf_("clocks: the ARM core measures %u MHz\n", arm_mhz_measured());
 	sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+	sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
+	sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
 	/* emulation on core 0; the workers start on cores 1 (picture) and 2 (sound chip) below */
 	{
 		int rc = sceKernelChangeThreadCpuAffinityMask(sceKernelGetThreadId(), SCE_KERNEL_CPU_MASK_USER_0);
 		logf_("main thread to core 0 rc=%08x\n", rc);
 	}
-
 	{
 		SceAppUtilInitParam ip;
 		SceAppUtilBootParam bp;
@@ -1034,76 +787,73 @@ int main(int argc, char **argv)
 		memset(&bp, 0, sizeof bp);
 		sceAppUtilInit(&ip, &bp);
 	}
-	int enter = 1;
-	if (sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, &enter) >= 0)
-		g_confirm_is_cross = enter == SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS;
+	SceCommonDialogConfigParam cdc;
+	sceCommonDialogConfigParamInit(&cdc);
+	sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, (int *) &cdc.language);
+	sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, (int *) &cdc.enterButtonAssign);
+	sceCommonDialogSetConfigParam(&cdc);
+	int enter = SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS;
+	sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, &enter);
 	SceUID pcb = sceKernelCreateCallback("snes_power", 0, power_cb, NULL);
 	if (pcb >= 0) scePowerRegisterCallback(pcb);
 
 	vita2d_init();
 	vita2d_set_clear_color(0xFF000000);
-	font_init();
+	g_gfx = new pk::VitaGfx();
+	g_text = new pk::Text(g_gfx);
 	video_init();
-
-	/* The game is the last argument. (VitAdhoc 1.3's first builds also passed
-	 * the program's own name in front of it: "snes.bin" is never a game.) */
-	const char *arg = NULL;
-	for (int i = argc - 1; i >= 1 && !arg; i--)
-		if (argv[i] && argv[i][0] && !ends_with_ci(argv[i], "snes.bin")) arg = argv[i];
-	logf_("arguments: %d, game argument: %s\n", argc, arg ? arg : "(none)");
-	if (!arg) {
-		logf_("no ROM path given\n");
-		fatal_screen("No game was given.", "Start SNES games from VitAdhoc.");
-		return_to_vitadhoc();
-	}
-	std::string rom = arg;
-	std::string srm_override;
-	{
-		size_t bar = rom.find('|'); /* "rom|save path": a zipped game keeps its save beside the zip */
-		if (bar != std::string::npos) { srm_override = rom.substr(bar + 1); rom.resize(bar); }
-	}
-	std::string game = base_name(rom);
-	logf_("rom: %s\n", rom.c_str());
-	sceIoMkdir(DATA_ROOT "/games", 0777);
-	settings_load(game);
-	bezel_load(game);
 
 	/* worker threads: switches in threads.ini (apu_thread, ppu_thread, spin); on by default */
 	const char *tini = DATA_ROOT "/threads.ini";
 	int want_apu = ini_int(tini, "apu_thread", 1), want_ppu = ini_int(tini, "ppu_thread", 1);
 	int spin = ini_int(tini, "spin", 300);
 	snes_host_thread_config(2, 0x60, 1, 0x60, spin);
-	/* thread priorities, explicit (lower number = more urgent): audio above everything it shares core 2
-	 * with, the emulation thread level with the workers. 0 in threads.ini leaves a thread as the system made it. */
-	const int audio_prio = ini_int(tini, "audio_prio", PRIO_AUDIO_DEFAULT), main_prio = ini_int(tini, "main_prio", PRIO_MAIN_DEFAULT);
-	const bool audio_legacy = ini_int(tini, "audio_legacy", 0) != 0;   /* 1 = the first player's audio, for A/B on hardware */
+	const int audio_prio = prio_ok(ini_int(tini, "audio_prio", PRIO_AUDIO_DEFAULT), PRIO_AUDIO_DEFAULT);
+	const int main_prio = prio_ok(ini_int(tini, "main_prio", PRIO_MAIN_DEFAULT), PRIO_MAIN_DEFAULT);
+	const bool audio_legacy = ini_int(tini, "audio_legacy", 0) != 0;
 	if (main_prio > 0) {
 		int rc = sceKernelChangeThreadPriority(0, main_prio);
 		logf_("main thread priority 0x%x rc=%08x now 0x%x\n", main_prio, rc, sceKernelGetThreadCurrentPriority());
 	}
 	snes_host_set_option("apu_thread", want_apu);
 	snes_host_set_option("ppu_thread", want_ppu);
+	snes_host_set_log([](const char *line) { logf_("%s", line); });
 
-	char err[160] = "";
-	snes_host_set_backup_dir("ux0:data/GBAdhoc/backups/snes");
-	if (snes_host_init() || snes_host_load_rom(rom.c_str(), (srm_override.empty() ? srm_path(rom) : srm_override).c_str(), err, sizeof err)) {
-		logf_("load failed: %s\n", err);
-		fatal_screen("This game could not be started.", err);
+	/* the game: launch file or argument, patch, saves, states, settings (player.cpp) */
+	writer_start();
+	snesp::StartResult sr = g_pl->start(argc, argv, APP_ROOT, enter == SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS);
+	if (!sr.ok) {
+		logf_("cannot start: %s / %s\n", sr.fatal1.c_str(), sr.fatal2.c_str());
+		g_pl->log_flush(true);
+		fatal_screen(sr.fatal1, sr.fatal2);
+		writer_stop();
 		return_to_vitadhoc();
 	}
-	logf_("title: %s  pal=%d  sram=%u  threads=%d (apu %d ppu %d spin %d)\n", snes_host_rom_title(), snes_host_is_pal(),
-	    (unsigned) snes_host_sram_size(), snes_host_threads_active(), want_apu, want_ppu, spin);
-	logf_("picture: shape=%d quality=%d glow=%d scan=%d grid=%d multitap=%d own=%d\n", g_ps.shape, g_ps.quality, g_ps.glow,
-	    g_ps.scan, g_ps.grid, g_ps.multitap, g_ps.use_game);
-	snes_host_set_multitap(multitap_wanted(g_ps));
+	cdc.enterButtonAssign = sr.enter_is_cross ? SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS : SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
+	sceCommonDialogSetConfigParam(&cdc);
 
+	/* clocks: the app's CPU speed request (0 = the player's default: 500 MHz, else 444) */
+	{
+		int want = sr.cpu_mhz == 444 ? 444 : 500;
+		int clk = scePowerSetArmClockFrequency(want);
+		if (clk < 0 && want == 500) scePowerSetArmClockFrequency(444);
+		scePowerSetBusClockFrequency(222);
+		scePowerSetGpuClockFrequency(222);
+		scePowerSetGpuXbarClockFrequency(166);
+		logf_("arm clock now %d MHz (asked %d%s, rc=%08x)\n", scePowerGetArmClockFrequency(), want, sr.cpu_mhz ? " by the app" : "", clk);
+		logf_("clocks: the ARM core measures %u MHz\n", arm_mhz_measured());
+	}
+	bezel_load(g_pl->game_name());
+	logf_("threads=%d (apu %d ppu %d spin %d)\n", snes_host_threads_active(), want_apu, want_ppu, spin);
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
+	g_pl->apply_start_mode();
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
 	const double vita_hz = 59.94;
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
-	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. */
-	std::string status;
+	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. With
+	 * steady pacing in half mode a pass that missed a refresh runs the missed frame too (undrawn), so the
+	 * game keeps its true rate. */
 
 	/* log state */
 	uint64_t sec_start = sceKernelGetProcessTimeWide();
@@ -1111,12 +861,11 @@ int main(int argc, char **argv)
 	uint64_t emu_us = 0, main_us = 0, fetch_us = 0, draw_us = 0, finish_us = 0, vwait_us = 0;
 	uint64_t prof_acc[S9XP_N] = { 0 };
 	uint64_t prof_frames = 0;
-	uint64_t sram_dirty_since = 0;
 	uint64_t last_frame_us = 0;
 	snes_thread_stats st0, st1;
 	snes_host_thread_stats(&st0);
-	unsigned drawn = 0, skipped = 0, pic_fresh = 0;
-	srm_writer_start();
+	uint64_t ppu_busy_at_present = st0.ppu_busy_ns;
+	unsigned drawn = 0, skipped = 0, pic_fresh = 0, not_rendered = 0;
 	/* Super FX pacing: see below (re-clocked every 30 frames) */
 	const bool superfx = snes_host_has_superfx() != 0;
 	int fx_pct = 100;
@@ -1124,25 +873,22 @@ int main(int argc, char **argv)
 	int fx_frames = 0;
 	if (superfx) snes_host_superfx_timer(process_us);
 	unsigned last_vc = sceDisplayGetVcount();
-	/* audio / pacing diagnostics, see the "A " line below */
 	apace::SpeedMeter speed_meter(8);
 	bool stats_pending = false;
 	uint32_t ur_seen = 0;
 	uint64_t prev_loop0 = 0;
-	unsigned w16 = 0, w20 = 0, w25 = 0;           /* passes whose work took longer than 16.7 / 20 / 25 ms */
-	uint64_t stall_max_us = 0, work_max_us = 0;   /* longest gap between two passes; longest single pass */
-	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;     /* the same, as of the last second tick (printed with the counters) */
+	unsigned w16 = 0, w20 = 0, w25 = 0;
+	uint64_t stall_max_us = 0, work_max_us = 0;
+	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;
 	double s_stall = 0, s_work = 0, s_agap = 0;
-	/* battery RAM: cheap change detection (see below) */
-	unsigned sram_pass = 0;
-	uint64_t sram_hash = 0, sram_last_change = 0, sram_last_write = 0;
-	bool sram_hash_valid = false, sram_dirty = false, sram_recheck = true;
-	log_flush(sceKernelGetProcessTimeWide(), 1);
+	uint32_t emu_frame = 0;
+	uint64_t render_emu_us = 0;
+	pk::ExitReason why = pk::EXIT_NORMAL;
+	g_pl->log_flush(false);
 
 	for (;;) {
-		/* One pass per display refresh, counted by the display itself: a pass
-		 * whose picture went into the queue without waiting must not start the
-		 * next frame early (that ran games at twice their speed on a Vita). */
+		/* One pass per display refresh, counted by the display itself: a pass whose picture went into the
+		 * queue without waiting must not start the next frame early (that ran games at twice their speed). */
 		unsigned vc = sceDisplayGetVcount();
 		if (vc == last_vc) {
 			uint64_t w0 = sceKernelGetProcessTimeWide();
@@ -1152,40 +898,29 @@ int main(int argc, char **argv)
 		}
 		unsigned elapsed = vc - last_vc;
 		last_vc = vc;
-		if (elapsed == 0) elapsed = 1;      /* the count did not move: count the wait */
+		if (elapsed == 0) elapsed = 1;
 		if (elapsed > 2) elapsed = 2;       /* a long stall (menu, suspend) is not caught up */
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
 		if (prev_loop0 && loop0 - prev_loop0 > stall_max_us) stall_max_us = loop0 - prev_loop0;
 		prev_loop0 = loop0;
-		unsigned raw, masks[4];
-		read_pads(masks, &raw);
-		if ((raw & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START)) ==
-		    (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START)) {
-			if (snes_host_sram_dirty()) srm_write_sync();
-			log_flush(sceKernelGetProcessTimeWide(), 1);
-			int quit = pause_menu(game, status);
-			if (quit) break;
-			snes_host_set_multitap(multitap_wanted(g_ps));
-			last_vc = sceDisplayGetVcount();
-			/* the second that held the menu says nothing about the emulation's speed */
-			speed_meter.reset();
-			prev_loop0 = 0;
-			sec_start = sceKernelGetProcessTimeWide();
-			frames_run = vblanks = 0;
-			sram_recheck = true;
-			continue;
-		}
-		for (int i = 0; i < 4; i++) snes_host_set_pad(i, masks[i]);
-		/* a game being played keeps the console awake, as VitAdhoc does: without
-		 * this the screen turned off (and the game stopped) a few seconds into a
-		 * demo or a cutscene with no buttons pressed */
+
+		pk::PadSample pads[pk::MAX_PLAYERS];
+		pk::TouchPoint tp;
+		uint8_t back = 0;
+		bool tapped = false;
+		touch_read(&tp, &back, loop0, &tapped);
+		read_pads(pads, back);
+		/* a game being played keeps the console awake */
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 
-		const int to_run = 1;
-
-		bool fresh = false;
+		const bool half = g_pl->pace_mode() == pk::PACE_HALF;
+		const int to_run = half ? (int) elapsed : 1;
+		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
 		for (int i = 0; i < to_run; i++) {
+			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
+			const bool render = g_pl->want_render(emu_frame);
+			snes_host_set_render(render ? 1 : 0);
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 #ifdef S9X_PROF
 			int prof_this = (secs & 3) == 0 && !snes_host_threads_active(); /* the hooks are not thread safe */
@@ -1208,56 +943,68 @@ int main(int argc, char **argv)
 			last_frame_us = t1 - t0;
 			emu_pass_us += t1 - t0;
 			frames_run++;
+			emu_frame++;
+			if (render) { render_emu_us = t1 - t0; rendered_any = true; } else not_rendered++;
 			static int16_t abuf[2048 * 2];
 			int n;
-			while ((n = snes_host_audio_take(abuf, 2048)) > 0) audio_push(abuf, n);
+			while ((n = snes_host_audio_take(abuf, 2048)) > 0) g_pace.push(abuf, n);
 			{
 				uint64_t f0 = sceKernelGetProcessTimeWide();
-				fresh = video_fetch(g_ps, frames_run) != 0;
+				if (video_fetch(g_pl->picture(), frames_run)) fresh = true;
 				fetch_us += sceKernelGetProcessTimeWide() - f0;
 			}
+			g_pl->after_frame(sceKernelGetProcessTimeWide());
+		}
+		if (want_menu) {
+			pk::MenuEvent ev = menu_loop(0);
+			if (ev == pk::MENU_GAME_LIST) { why = pk::EXIT_GAME_LIST; break; }
+			if (ev == pk::MENU_EXIT) { why = pk::EXIT_NORMAL; break; }
+			snes_host_set_multitap(g_pl->multitap_wanted());
+			last_vc = sceDisplayGetVcount();
+			speed_meter.reset();
+			prev_loop0 = 0;
+			sec_start = sceKernelGetProcessTimeWide();
+			frames_run = vblanks = 0;
+			continue;
 		}
 		if (fresh) pic_fresh++;
+		(void) rendered_any;
 
 		/* the old player's rate control ran here; the pacer's runs on the audio thread (a no-op unless audio_legacy=1) */
 		g_pace.legacy_update();
 
+		/* Draw: every pass in full mode (a late picture is shown again), in half mode only when a new
+		 * picture came (every second pass, evenly). */
 		bool drew = false;
 		uint64_t d0 = sceKernelGetProcessTimeWide();
-		drew = frame_draw(g_ps, 1, frames_run);
+		if (!half || fresh) {
+			drew = frame_draw(g_pl->picture(), 1, frames_run);
+			if (drew && g_pl->notices().active()) g_pl->notices().draw(g_gfx, g_text, PK_HEX(0x7B6CFF, 255), 26, true);
+		}
 		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
-		if (drew) {                                     /* queued; the next pass waits for the display */
-			if (g_save_failing && g_save_msg[0]) {
-				/* a save that could not be written: the card's file is untouched; say so, small, at the bottom */
-				char line[240];
-				snprintf(line, sizeof line, "%s (old save kept, retrying)", g_save_msg);
-				while (text_width(line) > SCREEN_W - 24 && strlen(line) > 12) { size_t n = strlen(line); line[n - 1] = 0; }
-				vita2d_draw_rectangle(0, SCREEN_H - 34, SCREEN_W, 34, 0xC0000000);
-				text_draw(12, SCREEN_H - 10, line, 0xFF5050FF);
-			}
+		if (drew) {
 			frame_finish();
 			drawn++;
 			finish_us += sceKernelGetProcessTimeWide() - work_end;
-		}
-		else skipped++;
+			/* the cost of a drawn frame, for steady pacing: the emulation of the frame that was rendered plus the
+			 * fetch / GPU work of showing it, or the picture thread's work since the last picture, whichever is more */
+			snes_host_thread_stats(&st1);
+			uint64_t ppu_us = (st1.ppu_busy_ns - ppu_busy_at_present) / 1000;
+			ppu_busy_at_present = st1.ppu_busy_ns;
+			uint64_t show_us = sceKernelGetProcessTimeWide() - d0;
+			uint64_t cost = render_emu_us + show_us;
+			if (ppu_us > cost) cost = ppu_us;
+			g_pl->drawn_cost((uint32_t) (cost > 0xFFFFFFFFull ? 0xFFFFFFFFu : cost));
+		} else skipped++;
 		vblanks += elapsed;
 		main_us += work_end - loop0;
-		/* Super FX pacing. The GSU emulation runs on this thread, and in games that
-		 * keep the chip busy all the time (Doom, the races of Stunt Race FX) a frame
-		 * can need more than a refresh: everything then slowed down together, game,
-		 * music and controls (Doom ran at two thirds of its speed). Instead, the
-		 * chip's instructions per line are matched to what this Vita manages: the
-		 * game, its music and its controls stay at full speed, and the 3D picture
-		 * gets the same number of chip instructions per second it got before, so
-		 * it is drawn as fast as before. The chip is back at 100% whenever there is
-		 * time (Yoshi's Island never leaves it). Only for Super FX carts. */
+		/* Super FX pacing (see snes/README.md): the chip's speed is matched to what this Vita manages so the
+		 * game, its music and its controls keep full speed. Only for Super FX carts. */
 		if (superfx) {
 			fx_emu_us += emu_pass_us;
 			fx_chip_us += snes_host_superfx_take_us();
 			if ((fx_frames += to_run) >= 30) {
-				/* the frame's time is the rest (CPU, DMA...) plus the chip's, which
-				 * goes with its speed: the speed that makes the frame fit */
 				const double avg = fx_emu_us / (double) fx_frames, chip = fx_chip_us / (double) fx_frames;
 				const double rest = avg - chip, target = 1e6 / vita_hz * 0.90;
 				int want = fx_pct;
@@ -1277,60 +1024,8 @@ int main(int argc, char **argv)
 				fx_frames = 0;
 			}
 		}
-
-		/* battery RAM: 2 s after it changed, on the writer thread; at most every
-		 * 30 s for games that keep changing it (work RAM in Super FX carts); at
-		 * once, here, before suspend */
 		uint64_t now = sceKernelGetProcessTimeWide();
-		{
-			static int srm_done_seen;
-			int d = g_srm_done;
-			if (d != srm_done_seen) {
-				srm_done_seen = d;
-				int r = g_srm_result;
-				if (r) snes_host_sram_forget();   /* failed: still to be written */
-				sram_recheck = true;
-				if (r) srm_report(r, "writer thread", sceKernelGetProcessTimeWide());
-				else {
-					srm_report(0, "writer thread", 0);
-					if (d <= 3 || d % 50 == 0) logf_("sram save rc=0 (write %d)\n", d);
-				}
-			}
-		}
-		if (g_suspend_flag) {
-			if (snes_host_sram_dirty()) logf_("sram save before suspend rc=%d\n", srm_write_sync());
-			sram_dirty_since = 0;
-			sram_recheck = true;
-		} else {
-			/* Change detection without comparing the whole RAM every pass: a 64 bit hash of it every 8th
-			 * pass (Snes9x has no usable dirty flag: CPU.SRAMModified is cleared by the picture code and
-			 * the Super FX / SA-1 chips write the RAM without setting it). Only when the hash moved, or
-			 * a write just finished (or failed), the exact compare against what is on disk runs. So a
-			 * write starts at most 8 passes (133 ms) later than before, never earlier, and nothing is lost. */
-			if ((++sram_pass & 7) == 0 || sram_recheck) {
-				const size_t sz = snes_host_sram_size();
-				const bool recheck = sram_recheck;
-				sram_recheck = false;
-				if (sz) {
-					const uint64_t h = hash64(snes_host_sram_data(), sz);
-					const bool moved = !sram_hash_valid || h != sram_hash;
-					if (moved) { sram_hash = h; sram_hash_valid = true; sram_last_change = now; }
-					if (moved || recheck) sram_dirty = snes_host_sram_dirty() != 0;
-				} else sram_dirty = false;
-			}
-			if (sram_dirty) {
-				/* settled (unchanged for 1 s) or 30 s since the last write */
-				if (!sram_dirty_since) sram_dirty_since = now;
-				if (now - sram_dirty_since > 2000000 &&
-				    (now - sram_last_change > 1000000 || now - sram_last_write > 30000000) &&
-				    now >= g_srm_retry_at && srm_write_async()) {
-					sram_dirty_since = 0;
-					sram_last_write = now;
-					sram_recheck = true;    /* what was handed over counts as saved: look again next pass */
-				}
-			} else sram_dirty_since = 0;
-		}
-		g_suspend_flag = 0;
+		if (g_suspend_flag) { g_suspend_flag = 0; g_pl->suspend(); }
 
 		/* per pass bookkeeping for the pacing diagnostics */
 		{
@@ -1352,7 +1047,6 @@ int main(int argc, char **argv)
 		if (now - sec_start >= 1000000) {
 			double dt = (now - sec_start) / 1e6;
 			{
-				/* emulation speed for the audio pacer: console frames per second over the last 8 s */
 				const double sp = speed_meter.update(frames_run, dt, frame_hz);
 				if (sp >= 0) g_pace.report_speed(sp);
 				s_w16 = w16; s_w20 = w20; s_w25 = w25; s_stall = stall_max_us / 1000.0; s_work = work_max_us / 1000.0;
@@ -1362,20 +1056,15 @@ int main(int argc, char **argv)
 			}
 			snes_host_thread_stats(&st1);
 			double fr = frames_run ? frames_run : 1;
-			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, vblanks / dt, frames_run / dt,
+			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, drawn / dt, frames_run / dt,
 			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, g_pace.fill_frames());
-			/* busy time per emulated frame: the main thread's whole loop work (emulation, copy, GPU submission,
-			 * without the wait for the display) and the two workers' time spent working */
-			logf_(" | busy ms/fr: main=%.2f ppu=%.2f apu=%.2f | waits/s: ppu=%llu apu=%llu (%.1f ms) | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | drawn=%u skipped=%u new_pic=%u fence_skip=%u rt_reuse=%u",
+			logf_(" | busy ms/fr: main=%.2f ppu=%.2f apu=%.2f | waits/s: ppu=%llu apu=%llu (%.1f ms) | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | drawn=%u skipped=%u not_rendered=%u new_pic=%u fence_skip=%u rt_reuse=%u",
 			    main_us / 1000.0 / fr, (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6 / fr, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6 / fr,
 			    (unsigned long long) (st1.ppu_waits - st0.ppu_waits), (unsigned long long) (st1.apu_waits - st0.apu_waits),
 			    ((st1.ppu_wait_ns - st0.ppu_wait_ns) + (st1.apu_wait_ns - st0.apu_wait_ns)) / 1e6,
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr,
-			    drawn, skipped, pic_fresh, g_fence_skips, g_rt_reused);
-			/* where the rest of each refresh went: handing the picture over (blocks
-			 * while the display queue or the GPU is behind) and the wait for the
-			 * next refresh */
-			logf_(" | per s: finish=%.1f ms vwait=%.1f ms", finish_us / 1000.0, vwait_us / 1000.0);
+			    drawn, skipped, not_rendered, pic_fresh, g_fence_skips, g_rt_reused);
+			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());
 			st0 = st1;
 #ifdef S9X_PROF
 			if (prof_frames) {
@@ -1393,12 +1082,11 @@ int main(int argc, char **argv)
 			sec_start = now;
 			vblanks = frames_run = 0;
 			emu_us = main_us = fetch_us = draw_us = finish_us = vwait_us = 0;
-			drawn = skipped = pic_fresh = 0;
+			drawn = skipped = pic_fresh = not_rendered = 0;
 			secs++;
 		}
 
-		/* one compact audio / pacing line a second (the counters of the audio thread's last second, published
-		 * a few ms after the tick), see snes/README.md "Reading the log" */
+		/* one compact audio / pacing line a second, see snes/README.md "Reading the log" */
 		if (stats_pending) {
 			apace::Counters c;
 			if (g_pace.poll(&c)) {
@@ -1409,22 +1097,20 @@ int main(int argc, char **argv)
 				    c.underruns_total, c.dropped_sec, c.trims_sec, s_agap, s_w16, s_w20, s_w25, s_stall, s_work, audio_legacy ? "legacy" : "v2");
 			}
 		}
-		log_flush(sceKernelGetProcessTimeWide(), 0);
 	}
 
 	g_quit = 1;
-	settings_save();
-	srm_wait_idle();
-	if (snes_host_sram_dirty()) {
-		int fr = snes_host_sram_save();
-		logf_("final sram save rc=%d\n", fr);
-		srm_report(fr, "final", sceKernelGetProcessTimeWide());
-		log_flush(sceKernelGetProcessTimeWide(), 2);
-	}
-	if (g_srm_thread >= 0) { g_srm_stop = 1; sceKernelSignalSema(g_srm_sema, 1); sceKernelWaitThreadEnd(g_srm_thread, NULL, NULL); sceKernelDeleteThread(g_srm_thread); }
+	/* resume point, battery RAM, settings, log, launch/session.txt */
+	g_pl->finish(why);
+	writer_stop();
 	if (g_athread >= 0) sceKernelWaitThreadEnd(g_athread, NULL, NULL);
 	if (g_aport >= 0) sceAudioOutReleasePort(g_aport);
 	snes_host_shutdown();
+	if (why == pk::EXIT_NORMAL) {
+		/* "Exit": close VitAdhoc, as the app's own Exit does */
+		if (g_log) { fclose(g_log); g_log = NULL; }
+		sceKernelExitProcess(0);
+	}
 	return_to_vitadhoc();
 	return 0;
 }

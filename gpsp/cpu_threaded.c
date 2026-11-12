@@ -3545,6 +3545,22 @@ static u32 smcr_lookups;
 #include <stdio.h>
 static FILE *smcr_trace_f; /* GPSP_SMC_TRACE=file (twins): one line per flush
                             * of the full-flush build, in both modes */
+/* FNV-1a of the machine's memory (EWRAM, IWRAM data, VRAM, OAM, palette,
+ * I/O) and r0-r15 as kept in reg[]: the identity check for runs without a
+ * picture (GBADHOC_SOFT_NORASTER under qemu). */
+static u32 smcr_state_hash(void)
+{
+  u32 h = 2166136261u, k, i;
+  const u8 *areas[6] = { ewram, iwram + 0x8000, vram, (const u8 *)oam_ram,
+                         (const u8 *)palette_ram, (const u8 *)io_registers };
+  const u32 sizes[6] = { 0x40000, 0x8000, 1024 * 96, 1024, 1024, 1024 };
+  for (k = 0; k < 6; k++)
+    for (i = 0; i < sizes[k]; i++)
+      h = (h ^ areas[k][i]) * 16777619u;
+  for (i = 0; i < 16; i++)
+    h = (h ^ reg[i]) * 16777619u;
+  return h;
+}
 static FILE *smcr_jlog_f;  /* GPSP_JCTR_LOG=file (twins): the counters at the
                             * first lookup of every frame */
 static u32 smcr_jlog_frame = ~0u;
@@ -3563,18 +3579,8 @@ static void smcr_jlog(void)
   /* Every 10th frame: FNV-1a of the machine's memory (EWRAM, IWRAM data,
    * VRAM, OAM, palette, I/O) and the registers -- the identity check for
    * runs without a picture (GBADHOC_SOFT_NORASTER under qemu). */
-  if (!(frame_counter % 10)) {
-    u32 h = 2166136261u, k;
-    const u8 *areas[6] = { ewram, iwram + 0x8000, vram, (const u8 *)oam_ram,
-                           (const u8 *)palette_ram, (const u8 *)io_registers };
-    const u32 sizes[6] = { 0x40000, 0x8000, 1024 * 96, 1024, 1024, 1024 };
-    for (k = 0; k < 6; k++)
-      for (i = 0; i < sizes[k]; i++)
-        h = (h ^ areas[k][i]) * 16777619u;
-    for (i = 0; i < 16; i++)
-      h = (h ^ reg[i]) * 16777619u;
-    fprintf(smcr_jlog_f, " state=%08x", (unsigned)h);
-  }
+  if (!(frame_counter % 10))
+    fprintf(smcr_jlog_f, " state=%08x", (unsigned)smcr_state_hash());
   fprintf(smcr_jlog_f, "\n");
   }
 }
@@ -3619,7 +3625,17 @@ static void smcr_xtrace(u32 pc, u32 off, u32 where)
 }
 static void smcr_trace(char kind)
 {
-  if (smcr_trace_f)
+  static u32 n;
+  if (!smcr_trace_f)
+    return;
+  /* Every 4th event also carries the machine state: the events are guest
+   * points common to both modes (the per-frame log samples at the first
+   * lookup of a frame, which a dispatch-cache hit can move). */
+  if (!(n++ & 3))
+    fprintf(smcr_trace_f, "%c %u %08x %u st=%08x\n", kind,
+            (unsigned)frame_counter, (unsigned)reg[REG_PC],
+            (unsigned)smcr_fw_xlat, (unsigned)smcr_state_hash());
+  else
     fprintf(smcr_trace_f, "%c %u %08x %u\n", kind, (unsigned)frame_counter,
             (unsigned)reg[REG_PC], (unsigned)smcr_fw_xlat);
 }

@@ -25,7 +25,7 @@ PK := ../playerkit
 PK_SRC := $(PK)/src/pk_util.cpp $(PK)/src/pk_text.cpp $(PK)/src/pk_font_data.cpp \
           $(PK)/src/pk_icons.cpp $(PK)/src/pk_states.cpp $(PK)/src/pk_launch.cpp \
           $(PK)/src/pk_patch.cpp $(PK)/src/pk_input.cpp $(PK)/src/pk_notice.cpp \
-          $(PK)/src/pk_menu.cpp $(PK)/vita/pk_gfx_vita.cpp
+          $(PK)/src/pk_menu.cpp $(PK)/src/pk_pace.cpp $(PK)/vita/pk_gfx_vita.cpp
 CXXFLAGS += -I$(PK)/src -I$(PK)/vita
 ```
 
@@ -117,12 +117,14 @@ The `MenuHost` the player implements is small:
 | `capture_state(out)` | the core's save state bytes (`snes_host_state_*` into a buffer) |
 | `restore_state(data, n)` | load them back; false if the core refuses |
 | `current_frame(&f)` | the last picture as RGB565 (`pk::Frame`), for thumbnails |
-| `play_seconds()` | `g_session.current().seconds_played` |
+| `play_seconds()` | `g_session.seconds_played()` |
 | `on_change(row, value)` | store a picture or speed value in the player's own settings and apply it |
 | `on_reset()` | reset the core |
 | `on_state_touched(slot)` | `g_session.note_state_touched(slot)` |
 | `list_cheats` / `set_cheat` | when the player has cheats; otherwise leave `CAP_CHEATS` out and the row is greyed with a reason |
 | `on_controls_changed(rc)` | `rc != W_OK` -> `notices().push(pk::write_result_text(rc), NOTICE_ERROR)` |
+| `queue_state_write(job)` / `wait_state_writes()` | run `States::commit(job)` on the writer thread, then `Menu::state_write_done(slot, report)` on the game thread; wait for the writer |
+| `add_cheat()` / `delete_cheat(i)` | with `CAP_CHEAT_EDIT`: ask for a code with the keyboard, add it, `Menu::refresh()`; remove one |
 
 `Caps` tells the menu what exists: a missing bit greys the row and shows the
 reason, so a feature that is not wired yet (`CAP_WIDE`, `CAP_REWIND`) simply is
@@ -130,7 +132,7 @@ not set. Exiting: on `MENU_EXIT` or `MENU_GAME_LIST`, or when the game ends
 for any reason:
 
 ```cpp
-g_states->save_resume(state, n, frame, g_session.current().seconds_played, g_req.patch_key);
+g_states->save_resume(state, n, frame, g_session.seconds_played(), g_req.patch_key);
 g_session.set_resume_present(g_states->resume_present());
 pk::session_write(root, g_session.finish(pk::EXIT_NORMAL /* or EXIT_GAME_LIST, EXIT_ERROR */));
 return_to_vitadhoc();
@@ -141,6 +143,9 @@ Also write the resume point about once a minute while playing
 (`EXIT_SUSPEND`), so a battery that runs out loses at most a minute.
 
 ## 2. SNES player: what `snes/vita/main.cpp` hands over
+
+**Done (Nov 2026):** `snes/vita/player.cpp` (portable, shared with the Linux twin `snes/twin/player_twin`)
+does all of the table below; `snes/vita/main.cpp` is the console around it. See `snes/README.md`.
 
 Everything below is replaced, not extended. File and line numbers are from the
 current tree.

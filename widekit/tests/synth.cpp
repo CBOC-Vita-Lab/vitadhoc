@@ -667,7 +667,7 @@ void Sim::step()
     ci.inner_n = WK_MAX_INNER;
     ci.out = wide_.data();
     ci.out_stride = VW + 2 * o_.margin;
-    ci.prov = o_.render_every > 0 ? NULL : prov_.data();
+    ci.prov = (o_.render_every > 0 || !o_.want_prov) ? NULL : prov_.data();
     double t3 = now_us();
     if (!o_.skip_lib) wk_compose_frame(comp_, &ci);
     double t4 = now_us();

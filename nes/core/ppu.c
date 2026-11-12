@@ -308,9 +308,8 @@ static void nesp_tiles(uint32_t v0, int t0, int t1, uint8_t *dst, const uint8_t 
 	}
 }
 
-/* the same pass DoLine makes over the finished line: grayscale, then the emphasis / marker bits */
-static uint8_t nesp_post(uint8_t v) {
-	uint8_t p1 = PPU[1];
+/* the same pass DoLine makes over the finished line: grayscale, then the emphasis / marker bits (p1 = PPU[1]) */
+static inline uint8_t nesp_post_p(uint8_t p1, uint8_t v) {
 	if (p1 & 1) v &= 0x30;
 	if ((p1 >> 5) == 7) return (uint8_t)((v & 0x3f) | 0xc0);
 	if (p1 & 0xE0) return (uint8_t)(v | 0x40);
@@ -336,16 +335,17 @@ static void nesp_line_end(int s) {
 	{
 		uint8_t pen[16], tmp[16 * 8], *dl = nesp_wl[s], *dr = nesp_wr[s];
 		int m = nesp_margin, x0 = l->x0, d, tmin, tmax, u;
+		const uint8_t p1 = PPU[1];   /* what nesp_post_p reads: the same for every pixel of this line */
 		for (i = 0; i < 16; i++) pen[i] = (uint8_t)(PALRAM[i] | ((i & 3) ? 0 : 0x40));
 		/* left: pixels x = -m .. 7 (the last 8 are what the left mask hides); tiles tmin .. 1 */
 		tmin = (x0 - m) >> 3;
 		nesp_tiles(l->v0, tmin, 2, tmp, pen);
-		for (d = 0; d < m; d++) { u = (-1 - d) + x0 - 8 * tmin; dl[d] = nesp_post(tmp[u]); }
-		for (d = 0; d < 8; d++) { u = d + x0 - 8 * tmin; nesp_wm[s][d] = nesp_post(tmp[u]); }
+		for (d = 0; d < m; d++) { u = (-1 - d) + x0 - 8 * tmin; dl[d] = nesp_post_p(p1, tmp[u]); }
+		for (d = 0; d < 8; d++) { u = d + x0 - 8 * tmin; nesp_wm[s][d] = nesp_post_p(p1, tmp[u]); }
 		/* right: pixels x = 256 .. 255+m; tiles 32 .. tmax */
 		tmax = (255 + m + x0) >> 3;
 		nesp_tiles(l->v0, 32, tmax + 1, tmp, pen);
-		for (d = 0; d < m; d++) { u = 256 + d + x0 - 8 * 32; dr[d] = nesp_post(tmp[u]); }
+		for (d = 0; d < m; d++) { u = 256 + d + x0 - 8 * 32; dr[d] = nesp_post_p(p1, tmp[u]); }
 		l->flags |= NESPL_DRAWN;
 	}
 }

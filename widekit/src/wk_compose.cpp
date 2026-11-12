@@ -108,9 +108,16 @@ struct wk_compose {
     uint8_t smooth[65];
     uint8_t ramp[65][65];                /* [F][k]: weight k px from the outer end of a ramp of F px */
     uint16_t softf[WK_MAX_MARGIN + 1];   /* soft edge darkening factor per distance (256 = none) */
+    /* per phase (y & 3, y & 7) and side (s) and distance d: the Bayer thresholds the rows use */
+    uint8_t th4[4][2][WK_MAX_MARGIN];    /* kBayer4 value (0..15)                              */
+    uint8_t dth4[4][2][WK_MAX_MARGIN];   /* 2 * kBayer4: the blend dither                      */
+    uint8_t th8[8][2][WK_MAX_MARGIN];    /* kBayer8 value (stipple threshold)                  */
+    uint8_t zero[WK_MAX_MARGIN];         /* all-zero dither (stipple)                          */
+    int lut5[32], lut6[64];              /* 5 and 6 bit channel to 0..255 (edge colours)       */
     /* scratch rows */
     uint16_t *row, *srow;
     uint8_t *prow, *wrow, *drow;
+    uint8_t *mat;      /* per pixel of the row being built: 1 = row[] holds the final value so far */
     int primed;
     /* periodic continuation */
     per_t *per;          /* [layer][side][H] */
@@ -173,6 +180,7 @@ wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h,
     c->prow = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
     c->wrow = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
     c->drow = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
+    c->mat = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
     c->per = (per_t *)calloc(WK_MAX_LAYERS * 2 * HL, sizeof(per_t));
     c->per_el = (uint8_t *)calloc(HL, 1);
     c->seq = (uint16_t *)calloc((size_t)WK_MAX_INNER + (size_t)(margin ? margin : 1) + 40, 2);
@@ -182,7 +190,7 @@ wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h,
         return NULL;
     }
     if (!c->ext || !c->stable || !c->lvl_prev || !c->gh_ext || !c->gh_t || !c->prev ||
-        !c->edge || !c->row || !c->srow || !c->prow || !c->wrow || !c->drow) {
+        !c->edge || !c->row || !c->srow || !c->prow || !c->wrow || !c->drow || !c->mat) {
         wk_compose_destroy(c);
         return NULL;
     }
@@ -194,6 +202,21 @@ wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h,
             c->softf[d] = (uint16_t)(256 - (dk * 256 / 100) * ease / 256);
         }
     }
+    for (int ph = 0; ph < 4; ph++)
+        for (int sd = 0; sd < 2; sd++)
+            for (int d = 0; d < margin; d++) {
+                const int xs = sd == 0 ? margin - 1 - d : margin + view_w + d;
+                c->th4[ph][sd][d] = kBayer4[ph][xs & 3];
+                c->dth4[ph][sd][d] = (uint8_t)(kBayer4[ph][xs & 3] * 2);
+            }
+    for (int ph = 0; ph < 8; ph++)
+        for (int sd = 0; sd < 2; sd++)
+            for (int d = 0; d < margin; d++) {
+                const int xs = sd == 0 ? margin - 1 - d : margin + view_w + d;
+                c->th8[ph][sd][d] = kBayer8[ph][xs & 7];
+            }
+    for (int v = 0; v < 32; v++) c->lut5[v] = v * 255 / 31;
+    for (int v = 0; v < 64; v++) c->lut6[v] = v * 255 / 63;
     for (int i = 0; i <= 64; i++) {
         double t = i / 64.0;
         c->smooth[i] = (uint8_t)(32.0 * (3 * t * t - 2 * t * t * t) + 0.5);
@@ -210,7 +233,7 @@ void wk_compose_destroy(wk_compose *c)
         return;
     free(c->ext); free(c->stable); free(c->lvl_prev); free(c->gh_ext); free(c->gh_t);
     free(c->per); free(c->per_el); free(c->seq); free(c->seqo);
-    free(c->prev); free(c->edge); free(c->row); free(c->srow); free(c->prow); free(c->wrow); free(c->drow);
+    free(c->prev); free(c->edge); free(c->row); free(c->srow); free(c->prow); free(c->wrow); free(c->drow); free(c->mat);
     free(c);
 }
 
@@ -243,9 +266,9 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
             int r = 0, g = 0, b = 0;
             for (int i = 0; i < ns; i++) {
                 unsigned p = s == 0 ? line[i] : line[W - 1 - i];
-                r += (int)((p >> 11) & 31u) * 255 / 31;
-                g += (int)((p >> 5) & 63u) * 255 / 63;
-                b += (int)(p & 31u) * 255 / 31;
+                r += c->lut5[(p >> 11) & 31u];
+                g += c->lut6[(p >> 5) & 63u];
+                b += c->lut5[p & 31u];
             }
             raw[s][y][0] = (int16_t)(r / ns);
             raw[s][y][1] = (int16_t)(g / ns);
@@ -290,22 +313,48 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
     }
 }
 
-static void soft_row(const wk_compose *c, int s, int y, uint16_t *row)
+/* The base of a margin pixel: the soft edge (a pure function of the edge colour, the distance and the
+ * dither) or the flat backdrop colour.  row[] holds the final value of a pixel once mat[] is set; until
+ * then it is the base, which is computed only where something reads it (a blend) or nothing covers it. */
+struct base_t {
+    int soft;               /* 1: soft edge, 0: flat colour */
+    int s, y;
+    const int16_t *e;       /* edge colour of this line and side (soft only) */
+    uint16_t bgc;
+};
+
+/* row[a + i] := base for i < n unless already final (mat); a pixel a blend covers fully (wgt[i] == 32) needs no
+ * base (the blend result does not read it), it only becomes final.  The soft edge is evaluated in one loop per span
+ * with the line's edge colour in locals. */
+static void base_fill(const wk_compose *c, const base_t &b, uint16_t *row, uint8_t *mat, int a, int n, const uint8_t *wgt)
 {
-    const int M = c->M, W = c->W;
-    const int16_t *e = &c->edge[((size_t)s * (size_t)c->H + (size_t)y) * 3];
-    const uint8_t *bay = kBayer4[y & 3];
-    for (int d = 0; d < M; d++) {
-        const int f = c->softf[d];
-        const int xs = s == 0 ? M - 1 - d : M + W + d;
-        const int th = bay[xs & 3];             /* 0..15 */
-        int r = (e[0] * f >> 8) + (th >> 1);
-        int g = (e[1] * f >> 8) + (th >> 2);
-        int b = (e[2] * f >> 8) + (th >> 1);
+    if (!b.soft) {
+        for (int i = 0; i < n; i++) {
+            const int d = a + i;
+            if (!mat[d] && !(wgt && wgt[i] == 32))
+                row[d] = b.bgc;
+            mat[d] = 1;
+        }
+        return;
+    }
+    const int e0 = b.e[0], e1 = b.e[1], e2 = b.e[2];
+    const uint16_t *sf = c->softf;
+    const uint8_t *th4 = c->th4[b.y & 3][b.s];
+    for (int i = 0; i < n; i++) {
+        const int d = a + i;
+        if (mat[d])
+            continue;
+        mat[d] = 1;
+        if (wgt && wgt[i] == 32)
+            continue;
+        const int f = sf[d], th = th4[d];
+        int r = ((e0 * f) >> 8) + (th >> 1);
+        int g = ((e1 * f) >> 8) + (th >> 2);
+        int bl = ((e2 * f) >> 8) + (th >> 1);
         r = r > 255 ? 255 : r;
         g = g > 255 ? 255 : g;
-        b = b > 255 ? 255 : b;
-        row[d] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+        bl = bl > 255 ? 255 : bl;
+        row[d] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (bl >> 3));
     }
 }
 
@@ -531,21 +580,24 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
             memset(oprov + M, WK_PROV_CENTRE, (size_t)W);
         const wk_line_out &lo = ana->line[y];
         const uint16_t bgc = in->bg ? in->bg[y] : cfg.bg_default;
+        const int stipple = cfg.fade_mode == WK_FADE_STIPPLE;
 
         for (int s = 0; s < 2; s++) {
-            if (M == 0)
+            if (M <= 0)
                 break;
             uint16_t *row = c->row;
             uint8_t *prow = c->prow;
-            const int soft = lo.hud || lo.backdrop_mask == 0;
-            if (soft) {
-                soft_row(c, s, y, row);
-                memset(prow, WK_PROV_SOFT, (size_t)M);
-            } else {
-                for (int d = 0; d < M; d++)
-                    row[d] = bgc;
-                memset(prow, WK_PROV_BG, (size_t)M);
-            }
+            uint8_t *mat = c->mat;
+            base_t bs;
+            bs.soft = lo.hud || lo.backdrop_mask == 0;
+            bs.s = s;
+            bs.y = y;
+            bs.e = bs.soft ? &c->edge[((size_t)s * (size_t)H + (size_t)y) * 3] : NULL;
+            bs.bgc = bgc;
+            const uint8_t *dith4 = c->dth4[y & 3][s];      /* blend dither per distance */
+            memset(mat, 0, (size_t)M);
+            if (oprov)
+                memset(prow, bs.soft ? WK_PROV_SOFT : WK_PROV_BG, (size_t)M);
             int lvl_now = 0;
             for (int oi = 0; oi < nl; oi++) {
                 const int l = in->order[oi];
@@ -579,26 +631,26 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                 const int smear = (is_level && n < M && cfg.smear_px > 0) ? wk_min(cfg.smear_px, M - n) : 0;
                 const int a0 = smear ? wk_clamp(cfg.smear_alpha, 0, 32) : 0;
                 uint8_t *w = c->wrow;
-                uint8_t *dth = c->drow;
                 const int nf = n - F;
                 if (op) {
                     copy_masked(row, cdat, op, nf);
+                    for (int d = 0; d < nf; d++)
+                        mat[d] |= (uint8_t)(op[d] != 0);
                 } else {
                     memcpy(row, cdat, (size_t)nf * 2);
+                    memset(mat, 1, (size_t)nf);
                 }
+                const uint8_t *dith = stipple ? c->zero : dith4;
                 for (int d = nf; d < n; d++) {
                     int wv = a0 ? a0 + (c->ramp[F][n - d] * (32 - a0)) / 32 : c->ramp[F][n - d];
-                    int xs = s == 0 ? M - 1 - d : M + W + d;
-                    if (cfg.fade_mode == WK_FADE_STIPPLE) {
-                        wv = (wv * 2 > kBayer8[y & 7][xs & 7]) ? 32 : 0;
-                        dth[d] = 0;
-                    } else {
-                        dth[d] = (uint8_t)(kBayer4[y & 3][xs & 3] * 2);
-                    }
+                    if (stipple)
+                        wv = (wv * 2 > c->th8[y & 7][s][d]) ? 32 : 0;
                     w[d] = (uint8_t)(op && !op[d] ? 0 : wv);
                 }
-                if (F > 0)
-                    wk_blend_row(row + nf, cdat + nf, w + nf, dth + nf, F);
+                if (F > 0) {
+                    base_fill(c, bs, row, mat, nf, F, w + nf);
+                    wk_blend_row(row + nf, cdat + nf, w + nf, dith + nf, F);
+                }
                 if (oprov) {
                     for (int d = 0; d < n; d++) {
                         const int full = d < nf ? (!op || op[d]) : w[d] == 32;
@@ -628,10 +680,9 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                             int t = 32 - d * 32 / smear;          /* 32 .. 1 */
                             w[d] = (uint8_t)(a0 * t / 32);
                             sp[d] = sc;
-                            int xs = s == 0 ? M - 1 - (n + d) : M + W + n + d;
-                            dth[d] = (uint8_t)(kBayer4[y & 3][xs & 3] * 2);
                         }
-                        wk_blend_row(row + n, sp, w, dth, smear);
+                        base_fill(c, bs, row, mat, n, smear, w);
+                        wk_blend_row(row + n, sp, w, dith4 + n, smear);
                         if (oprov)
                             for (int d = 0; d < smear; d++)
                                 if (w[d] && prow[n + d] != (uint8_t)((l << 4) | WK_PROV_LEVEL))
@@ -654,15 +705,16 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                 int wv = 32 * gt / (cfg.ghost_frames + 1);
                 for (int d = lo_d; d < hi_d && d < M; d++) {
                     uint8_t wk8 = (uint8_t)wv;
-                    uint8_t th = (uint8_t)(kBayer4[y & 3][(s == 0 ? M - 1 - d : M + W + d) & 3] * 2);
-                    wk_blend_row(row + d, pv + d, &wk8, &th, 1);
+                    base_fill(c, bs, row, mat, d, 1, &wk8);
+                    wk_blend_row(row + d, pv + d, &wk8, dith4 + d, 1);
                     prow[d] = WK_PROV_GHOST;
                 }
                 gt--;
             } else {
                 gt = 0;
             }
-            memcpy(c->prev + ((size_t)s * (size_t)H + (size_t)y) * (size_t)M, row, (size_t)M * 2);
+            base_fill(c, bs, row, mat, 0, M, NULL);      /* what nothing covered shows the base */
+            memcpy(c->prev + ((size_t)s * (size_t)H + (size_t)y) * (size_t)M, row, (size_t)M * sizeof(uint16_t));
             /* write out (left side runs outwards from the centre) */
             if (s == 0) {
                 for (int d = 0; d < M; d++)

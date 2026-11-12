@@ -74,6 +74,7 @@
 #include "menu_load.h"
 #include "../gbcore/gbcore.h"   /* gbcore_set_color_correction */
 #include "../nescore/gbcore_mux.h"   /* gbmux_nes_fps, gbmux_nes_system_dir */
+#include "../wscore/wscore.h"        /* the WonderSwan's rotation, pad, blend */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -606,6 +607,72 @@ static const char *console_name(fe_console_t c)
    return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
         : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES"
         : c == FE_CONSOLE_WSWAN ? "WS" : "GBA";
+}
+
+/* ---- WonderSwan (VitAdhoc 1.4): the per-game Rotation / Vertical play /
+ * Palette (in-game menu) and Settings > Display > WonderSwan smoothing, given
+ * to the core (wscore.h); also called when the menu changes one. */
+void app_ws_options(void)
+{
+   wscore_set_rotation(g_pgame.ws_rotation == PCFG_WS_ROT_HORIZONTAL
+                       ? WSCORE_ROT_HORIZONTAL
+                       : g_pgame.ws_rotation == PCFG_WS_ROT_VERTICAL
+                       ? WSCORE_ROT_VERTICAL : WSCORE_ROT_AUTO);
+   wscore_set_vertical_play(g_pgame.ws_vplay ? WSCORE_TURNED : WSCORE_UPRIGHT);
+   wscore_set_mono_palette(g_pgame.ws_palette);
+   wscore_set_blend(g_pcfg.ws_blend);
+   /* one core call per refresh: the vsync pacer's refresh, the timer
+    * pacer's GBA frame */
+   if (g_sw.pace_mode == PACE_VSYNC)
+      wscore_set_display_rate(60000, 1001);
+   else
+      wscore_set_display_rate(16777216, 280896);
+   fe_evt("ws_options rotation=%d vertical_play=%d palette=%d blend=%d",
+          g_pgame.ws_rotation, g_pgame.ws_vplay, g_pgame.ws_palette,
+          g_pcfg.ws_blend);
+}
+
+/* The first time each layout shows in a session (the game turned the
+ * console, or the menu did): how to hold it and what the buttons are now.
+ * The picture and the buttons changed together, in the same frame. */
+static void ws_layout_hint(void)
+{
+   static unsigned seen_changes = ~0u;
+   static unsigned told;                 /* bit per WSCORE_SHOW_* */
+   unsigned ch = wscore_layout_changes();
+   int show = wscore_showing();
+   if (ch == seen_changes)
+      return;
+   seen_changes = ch;
+   fe_evt("ws_layout show=%d changes=%u", show, ch);
+   if (ch == 0 || (told & (1u << show)))
+      return;
+   told |= 1u << show;
+   if (show == WSCORE_SHOW_UPRIGHT)
+      toast_now("Vertical: the d-pad turns with the picture. L = A, R = B");
+   else if (show == WSCORE_SHOW_TURNED)
+      toast_now("Vertical: turn the Vita left. L = A, R = B");
+   else
+      toast_now("Horizontal: Circle = A, Cross = B");
+}
+
+/* The WonderSwan's buttons this frame: the Vita's own (the layout follows
+ * the picture's rotation, wswan/frontend/layout.h), not the control map. */
+static unsigned ws_buttons(unsigned pad)
+{
+   unsigned b = 0;
+   if (pad & PSP_CTRL_UP) b |= WSCORE_UP;
+   if (pad & PSP_CTRL_DOWN) b |= WSCORE_DOWN;
+   if (pad & PSP_CTRL_LEFT) b |= WSCORE_LEFT;
+   if (pad & PSP_CTRL_RIGHT) b |= WSCORE_RIGHT;
+   if (pad & PSP_CTRL_CROSS) b |= WSCORE_CROSS;
+   if (pad & PSP_CTRL_CIRCLE) b |= WSCORE_CIRCLE;
+   if (pad & PSP_CTRL_SQUARE) b |= WSCORE_SQUARE;
+   if (pad & PSP_CTRL_TRIANGLE) b |= WSCORE_TRIANGLE;
+   if (pad & PSP_CTRL_LTRIGGER) b |= WSCORE_L;
+   if (pad & PSP_CTRL_RTRIGGER) b |= WSCORE_R;
+   if (pad & PSP_CTRL_START) b |= WSCORE_START;
+   return b;
 }
 
 static const char *base_name(const char *path)
@@ -1389,7 +1456,11 @@ static const char *const k_builtin_roots[] = {
    /* NES and Famicom Disk System games (in-process core); RetroFlow has a
     * folder for the NES only */
    "ux0:ROMS/NES", "ux0:roms/NES",
-   "ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System"
+   "ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System",
+   /* WonderSwan and WonderSwan Color (in-process core): one tab, both */
+   "ux0:ROMS/WS", "ux0:ROMS/WSC", "ux0:roms/WS", "ux0:roms/WSC",
+   "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan",
+   "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -1610,7 +1681,7 @@ static void rom_roots_init(void)
     * the list is (Settings > Game folders writes it, with these in it). */
    if (strcmp(source, "ini") && strcmp(source, "off"))
    {
-      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms", "nes_roms" };
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms", "nes_roms", "ws_roms" };
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
          if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
              fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
@@ -1662,11 +1733,12 @@ static int rom_from_launch(char *out, size_t cap)
    if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
        !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".nes") &&
        !has_ext(out, ".fds") && !has_ext(out, ".unf") && !has_ext(out, ".unif") &&
+       !has_ext(out, ".ws") && !has_ext(out, ".wsc") && !has_ext(out, ".pc2") &&
        !has_ext(out, ".zip"))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.100s is not a .gba, .gb, .gbc, .sfc, .smc, .nes, .fds or .zip file.", base_name(out));
+               "%.100s is not a .gba, .gb, .gbc, .sfc, .smc, .nes, .fds, .ws, .wsc or .zip file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
@@ -4158,6 +4230,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
       if (path_fmt(sysdir, sizeof(sysdir), "%s/nes", g_app_root) == 0)
          gbmux_nes_system_dir(sysdir);
    }
+   if (console == FE_CONSOLE_WSWAN)
+      app_ws_options();          /* this game's Rotation, Vertical play, palette */
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;
    {
@@ -4645,6 +4719,9 @@ static void game_loop(void)
       g_pad_block |= chord_took(fired, pad);
       g_app_keys = ctl_game_mask(&g_pcfg.controls,
                                  chord_guard(pad & ~g_pad_block, pad));
+      if (g_game_console == FE_CONSOLE_WSWAN)
+         wscore_set_buttons(ui_active() ? 0
+                            : ws_buttons(chord_guard(pad & ~g_pad_block, pad)));
 
       /* The right stick is no control of a Game Boy: pulled down it is
        * the "button" of a cheat cartridge (the few codes that act only
@@ -5081,6 +5158,8 @@ static void game_loop(void)
          if (g_blit_suppress)
             fe_host_skip_override(1);
          fe_host_run_frame();    /* -> sink_video, sink_audio */
+         if (g_game_console == FE_CONSOLE_WSWAN)
+            ws_layout_hint();
          ra_frame(session || local || g_sw.link_bench);
          if (g_blit_suppress)
             fe_host_skip_override(-1);

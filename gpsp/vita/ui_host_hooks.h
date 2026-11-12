@@ -106,7 +106,9 @@ int ui_host_mgift_available(void);
  * that exist; never the roms/ folder itself, never one twice.  The folders
  * are device paths without a trailing slash; the strings are valid for the
  * life of the program.  The weak defaults have none. */
-#define UI_EXTRA_ROOTS_MAX 24
+#define UI_EXTRA_ROOTS_MAX 32
+/* WonderSwan options to the core (main_vita.c app_ws_options) */
+void        app_ws_options(void);
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
 /* Settings > Game folders: add a folder, or remove it when it is listed,

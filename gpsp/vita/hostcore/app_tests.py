@@ -6041,6 +6041,63 @@ def nes_rom(S, name):
         return f.read()
 
 
+WS_ROM_DIR = None
+
+
+def ws_rom(S, name):
+    """One of the WonderSwan twin's synthetic cartridges (wswan/twin/tests/
+    make_roms.py, hand-written V30MZ code, no commercial code), generated at
+    run time: the bytes are never committed."""
+    global WS_ROM_DIR
+    if WS_ROM_DIR is None:
+        d = os.path.join(S.outdir, "ws_roms")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        subprocess.run([sys.executable, "-I", os.path.join(HERE, "..", "..", "..", "wswan", "twin",
+                        "tests", "make_roms.py"), d], check=True, capture_output=True)
+        WS_ROM_DIR = d
+    with open(os.path.join(WS_ROM_DIR, name), "rb") as f:
+        return f.read()
+
+
+def t_ws_boot(S):
+    """A WonderSwan game runs inside the app like a NES game: it boots in
+    process at the console's 75.47 frames a second and 48 kHz, its 224x144
+    picture scrolls (one emulated frame or two per refresh, blended), the
+    battery file is Game.srm beside the game and counts the boots; a game
+    whose cartridge says vertical is shown upright (144x224)."""
+    rom = ws_rom(S, "h_sram.ws")
+    script = "120:shot=a.png\n+1:shot=b.png\n+60:shot=c.png\n+10:quit\n"
+    r = S.run("ws_boot", script, autoboot="Swan Test.ws", extra={"roms/Swan Test.ws": rom})
+    S.clean(r)
+    S.check(r.has(r"^EVT gb_rom_loaded console=WS") and
+            r.has(r"^EVT av_info fps=75\.47\d* rate=48000 w=224 h=144"),
+            "the WonderSwan core boots in process: 224x144, 75.47 fps, 48 kHz (%s)" %
+            [l for l in r.log if "av_info" in l][:1])
+    ga, gb, gc = r.shot("a.png"), r.shot("b.png"), r.shot("c.png")
+    S.check(len(ga.getcolors(1 << 20) or [0] * 99) > 3 and ga.tobytes() != gb.tobytes(),
+            "the picture is drawn and scrolls from one refresh to the next")
+    S.picture(r, "a.png", "ws_boot.png")
+    srm = os.path.join(r.root, "roms", "Swan Test.srm")
+    S.check(os.path.exists(srm) and os.path.getsize(srm) >= 8192 + 1032,
+            "Swan Test.srm is the cartridge SRAM plus the console EEPROM (%s bytes)" %
+            (os.path.getsize(srm) if os.path.exists(srm) else None))
+    keep = open(srm, "rb").read() if os.path.exists(srm) else b""
+    r2 = S.run("ws_boot2", "100:quit\n", autoboot="Swan Test.ws",
+               extra={"roms/Swan Test.ws": rom, "roms/Swan Test.srm": keep})
+    S.clean(r2)
+    srm2 = os.path.join(r2.root, "roms", "Swan Test.srm")
+    S.check(keep and os.path.exists(srm2) and open(srm2, "rb").read() != keep,
+            "the save is loaded at the next start and counted again")
+    # a vertical cartridge: upright on a level Vita
+    r = S.run("ws_vertical", "120:shot=v.png\n+10:quit\n", autoboot="Tall.ws",
+              extra={"roms/Tall.ws": ws_rom(S, "v_sram.ws")})
+    S.clean(r)
+    S.check(r.has(r"^EVT av_info fps=75\.47\d* rate=48000 w=144 h=224"),
+            "a vertical game starts upright: 144x224 (%s)" % [l for l in r.log if "av_info" in l][:1])
+    S.picture(r, "v.png", "ws_vertical.png")
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6435,7 +6492,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("ws_boot", t_ws_boot), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

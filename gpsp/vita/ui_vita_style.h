@@ -44,6 +44,8 @@ static uint32_t hm_tint(int console, int a)
    static const uint32_t rgb[3] = { 0x7B6CFF, 0x8CC63F, 0x19C3B4 };
    if (console == FE_CONSOLE_NES)
       return VS_HEX(0xC9CED8, a);
+   if (console == FE_CONSOLE_WSWAN)
+      return VS_HEX(0xF2B134, a);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(rgb[console], a);
@@ -56,6 +58,8 @@ static uint32_t hm_deep(int console, int bottom)
    static const uint32_t bot[3] = { 0x231B5E, 0x12301A, 0x0A3F45 };
    if (console == FE_CONSOLE_NES)
       return VS_HEX(bottom ? 0x1D2027 : 0x6A6F7B, 255);
+   if (console == FE_CONSOLE_WSWAN)
+      return VS_HEX(bottom ? 0x2E1F05 : 0x9A6A14, 255);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(bottom ? bot[console] : top[console], 255);

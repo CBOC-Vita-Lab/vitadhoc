@@ -166,6 +166,9 @@ void app_wide_apply(void);
 
 /* Sound: what is queued belongs to another timeline. */
 void app_audio_flush(void);
+/* WonderSwan: the running game's Rotation / Vertical play / palette and the
+ * smoothing setting, to the core (main_vita.c) */
+void app_ws_options(void);
 /* The pacer: do not count the time just spent as a late frame. */
 void app_pace_reset(void);
 

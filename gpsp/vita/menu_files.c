@@ -642,7 +642,8 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    if (job->console == FE_CONSOLE_GBA)
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".sav");
    else if (job->console == FE_CONSOLE_SNES ||
-            job->console == FE_CONSOLE_NES)     /* Game.srm */
+            job->console == FE_CONSOLE_NES ||
+            job->console == FE_CONSOLE_WSWAN)   /* Game.srm */
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".srm");
    else
       n = snprintf(path, sizeof(path), "%s.sav", job->rom) >= (int)sizeof(path) ? -1 : 0;
@@ -683,7 +684,9 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
        * No-Intro name for its console */
       char named[256];
       size_t rl = strlen(job->rom);
-      char sys = job->console == FE_CONSOLE_NES
+      char sys = job->console == FE_CONSOLE_WSWAN
+               ? (rl > 4 && !strcasecmp(job->rom + rl - 4, ".wsc") ? 'H' : 'G')
+               : job->console == FE_CONSOLE_NES
                ? (rl > 4 && !strcasecmp(job->rom + rl - 4, ".fds") ? 'F' : 'E')
                : job->console == FE_CONSOLE_SNES ? 'D' : job->console == FE_CONSOLE_GBC ? 'C'
                : job->console == FE_CONSOLE_GB ? 'B' : 'A';

@@ -59,6 +59,7 @@ def main():
         roms_dir = os.path.join(work, "roms"); os.makedirs(roms_dir, exist_ok=True)
         for n, kw in mr.ROMS.items():
             with open(os.path.join(roms_dir, n), "wb") as f: f.write(mr.build(n, **kw))
+        with open(os.path.join(roms_dir, "rtc.ws"), "wb") as f: f.write(mr.build_rtc_rom())
         with open(os.path.join(roms_dir, "orient_table.ws"), "wb") as f:
             rng = random.Random(7)
             f.write(mr.build_orient_table([(rng.choice([0, 1, 2, 3]), rng.choice([0, 2, 4, 6])) for _ in range(frames + 1)]))

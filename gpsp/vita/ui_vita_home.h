@@ -928,8 +928,8 @@ static float g_hm_btn_end;
 
 static float hm_topbar(float dy, int n_scan)
 {
-   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES" };
-   float x = HM_X, y = 18 + dy, cx;
+   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES", "WS" };
+   float x = HM_X, y = 18 + dy, cx, right, pad, need;
    int c;
 
    /* Games | Starred | Recent: SELECT steps through them (Recent once a
@@ -946,28 +946,40 @@ static float hm_topbar(float dy, int n_scan)
       }
    }
 
-   /* the consoles: TRIANGLE steps through them */
+   /* the right first: settings, the time, the battery, and the search,
+    * whose icon starts at right - 102: the chips end before it */
+   right = hm_status(VS_W - HM_X, y);
+
+   /* the consoles: TRIANGLE steps through them, a tap on one goes to it.
+    * Six chips beside the search: the padding shrinks until every label
+    * fits whole before the search icon (a 1.4 UX review found the fifth
+    * one under it), each chip its own touch target. */
    cx = x;
+   need = 0;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+      need += vs_text_w(VS_LABEL, CON[c]) + 2;
+   pad = (right - 106 - cx - need) / FE_CONSOLE_COUNT;
+   if (pad > 20) pad = 20;
+   if (pad < 6) pad = 6;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {
-      /* five consoles and the search beside them: tight chips */
-      float w = vs_text_w(VS_LABEL, CON[c]) + 20;
+      float w = vs_text_w(VS_LABEL, CON[c]) + pad;
       if (c == g_pcfg.console)
       {
          vs_rrect(x, y + 2, w, 34, 17, HC_GLASS_HI);
-         vs_text(VS_LABEL, x + 10, y + 7, CON[c], HC_TEXT);
+         vs_text(VS_LABEL, x + pad / 2, y + 7, CON[c], HC_TEXT);
       }
       else
-         vs_text(VS_LABEL, x + 10, y + 7, CON[c], HC_TEXT3);
+         vs_text(VS_LABEL, x + pad / 2, y + 7, CON[c], HC_TEXT3);
+      g_hm_chip_x[c] = (int)(x / 2);
+      UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(x / 2), (int)(y / 2),
+                 (int)((w + 2) / 2), 22);
       x += w + 2;
    }
-   /* (no TRIANGLE glyph here since SNES joined: the hints say it, and
-    * the search icon needs the room) */
-   UI_TCH_BTN(PSP_CTRL_TRIANGLE, (int)(cx / 2) - 2, (int)(y / 2),
-              (int)((x - cx) / 2) + 2, 22);
+   g_hm_chip_x[FE_CONSOLE_COUNT] = (int)(x / 2);
+   (void)cx;
 
-   /* the right: settings, the time, the battery */
-   x = hm_status(VS_W - HM_X, y);
+   x = right;
    vs_icon(VS_I_GEAR, x - 30, y + 19, 26, HC_TEXT2);
    VS_TCH_BTN(PSP_CTRL_START, x - 50, y, 44, 44);
    vs_icon(VS_I_SEARCH, x - 80, y + 19, 26, HC_TEXT2);

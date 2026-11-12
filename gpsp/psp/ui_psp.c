@@ -289,6 +289,10 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
    { "NES", "NES", "nes", RGB565(0xC9, 0xCE, 0xD8),
      { RGB565(0x3A, 0x3D, 0x45), RGB565(0xE6, 0x00, 0x12),
        RGB565(0xC9, 0xCE, 0xD8), 0, 0 }, 3, 0 },
+   /* The WonderSwan (and Color): amber, the one warm hue the others left */
+   { "WS", "WonderSwan", "ws", RGB565(0xF2, 0xB1, 0x34),
+     { RGB565(0x4A, 0x32, 0x0A), RGB565(0xB8, 0x7A, 0x12),
+       RGB565(0xF2, 0xB1, 0x34), 0, 0 }, 3, 1 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -310,6 +314,9 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
    { "NES", "NES", "nes", RGB565(0x4A, 0x4F, 0x5B),
      { RGB565(0x3A, 0x3D, 0x45), RGB565(0xE6, 0x00, 0x12),
        RGB565(0xC9, 0xCE, 0xD8), 0, 0 }, 3, 0 },
+   { "WS", "WonderSwan", "ws", RGB565(0x7A, 0x52, 0x00),
+     { RGB565(0x4A, 0x32, 0x0A), RGB565(0xB8, 0x7A, 0x12),
+       RGB565(0xF2, 0xB1, 0x34), 0, 0 }, 3, 1 },
 };
 
 static const ui_skin *skin_of(int console)
@@ -2315,6 +2322,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_SGB,
        SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
+       SET_WSBLEND,  /* 1.4: WonderSwan profile only (set_row_shown) */
        SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
@@ -2329,6 +2337,9 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_HDR_LIB, SET_NAMES, SET_COVERPIC, SET_SYNCRA, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_SAVETYPE, SET_CLOCK, SET_OWN_LOOK, SET_MOTION, SET_SENS,
        SET_REVERSE, SET_LEVEL, SET_SUN,
+       /* 1.4: a WonderSwan game's (set_row_shown), after every other row
+        * of THIS GAME so nothing above moved */
+       SET_WSROT, SET_WSVPLAY, SET_WSPAL,
        /* The three plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
        SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_CONTROLS,
@@ -2433,6 +2444,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
    { 0, "Grid strength" },
    { 0, "Screen overlay" },
+   { 0, "Smooth 75 Hz motion" },
 #endif
    { 1, "INTERFACE" },
    { 0, "Theme" },
@@ -2502,6 +2514,9 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Direction" },
    { 0, "Level" },
    { 0, "Sunlight" },
+   { 0, "Rotation" },
+   { 0, "Vertical play" },
+   { 0, "Palette" },
 #endif
 #ifdef REWIND
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
@@ -2541,6 +2556,10 @@ static int set_row_shown(int idx)
    if (idx == SET_HDR_RA || idx == SET_RA_LIST)
       return g_ov_browse ? idx == SET_HDR_RA
                          : ra_summary(NULL, NULL, NULL, NULL, NULL);
+   if (idx == SET_WSBLEND)
+      return pcfg_display_console() == FE_CONSOLE_WSWAN;
+   if (idx >= SET_WSROT && idx <= SET_WSPAL)
+      return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_WSWAN;
    if (idx >= SET_HDR_THIS && idx <= SET_SUN)
    {
       unsigned k = fe_host_sensor_kinds();
@@ -2554,6 +2573,8 @@ static int set_row_shown(int idx)
          return (k & FE_SENSOR_SOLAR) != 0;
       if (idx == SET_SAVETYPE || idx == SET_CLOCK)
          return g_pgame.console == FE_CONSOLE_GBA;
+      if (idx == SET_OWN_LOOK || idx == SET_HDR_THIS)
+         return 1;
       return 1;
    }
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_COVERS &&
@@ -3375,6 +3396,30 @@ static void settings_adjust(int id, int dir)
    case SET_OVERLAY:
       ui_host_overlay_set(!ui_host_overlay_on());
       break;
+   case SET_WSBLEND:
+      g_pcfg.ws_blend = !g_pcfg.ws_blend;
+      app_ws_options();
+      fe_evt("ws_setting blend=%d", g_pcfg.ws_blend);
+      break;
+   case SET_WSROT:
+      g_pgame.ws_rotation = (g_pgame.ws_rotation + PCFG_WS_ROT_MODES +
+                             (dir < 0 ? -1 : 1)) % PCFG_WS_ROT_MODES;
+      (void)pcfg_game_save();
+      app_ws_options();
+      fe_evt("ws_setting rotation=%d", g_pgame.ws_rotation);
+      break;
+   case SET_WSVPLAY:
+      g_pgame.ws_vplay = !g_pgame.ws_vplay;
+      (void)pcfg_game_save();
+      app_ws_options();
+      fe_evt("ws_setting vertical_play=%d", g_pgame.ws_vplay);
+      break;
+   case SET_WSPAL:
+      g_pgame.ws_palette = !g_pgame.ws_palette;
+      (void)pcfg_game_save();
+      app_ws_options();
+      fe_evt("ws_setting palette=%d", g_pgame.ws_palette);
+      break;
    case SET_SHOTDIR:
       /* not a value: X opens the keyboard (screen_settings) */
       return;
@@ -3555,6 +3600,20 @@ static const char *set_help(int id)
       return "An original Game Boy's shades are its palette, above.";
    case SET_GRID:     return "How dark the LCD grid and scanline looks are "
                              "(Video filter).";
+   case SET_WSBLEND:  return g_pcfg.ws_blend
+                             ? "The WonderSwan's 75 frames a second blended "
+                               "into each refresh: smooth scrolling."
+                             : "The newest frame only: sharper, with a "
+                               "little judder when the screen scrolls.";
+   case SET_WSROT:    return "Auto follows the game (some turn mid-game). "
+                             "This game only.";
+   case SET_WSVPLAY:  return g_pgame.ws_vplay
+                             ? "Turn the Vita left for vertical scenes: the "
+                               "picture fills the screen."
+                             : "Vertical scenes upright on a level Vita; "
+                               "the d-pad turns with them.";
+   case SET_WSPAL:    return "Black-and-white games: grey, or the original "
+                             "LCD's tint. Colour games keep theirs.";
    case SET_OVERLAY:  return ui_host_overlay_on()
                              ? "Your picture from overlays/ over the game "
                                "(gba.png, gb.png, gbc.png or its name)."
@@ -4139,6 +4198,22 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_WSBLEND:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.ws_blend ? "on" : "off");
+         break;
+      case SET_WSROT:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_ws_rotation_name(g_pgame.ws_rotation));
+         break;
+      case SET_WSVPLAY:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.ws_vplay ? "Turn the Vita" : "Upright");
+         break;
+      case SET_WSPAL:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.ws_palette ? "Classic LCD tint" : "Greyscale");
+         break;
       case SET_OVERLAY:
       {
          char v[64];
@@ -6524,11 +6599,13 @@ static ui_action screen_menu(unsigned edges, int session_active)
          return screen_state_slots(0);   /* draw this frame as the new page */
 #ifdef VITA
       case M_WIRELESS:
-         if (g_pcfg.console == FE_CONSOLE_NES)
+         if (g_pcfg.console == FE_CONSOLE_NES ||
+             g_pcfg.console == FE_CONSOLE_WSWAN)
          {
             /* the two-player link is the Game Boy's and the GBA's cable */
             snprintf(g_menu_note, sizeof(g_menu_note), "Link play is not "
-                     "available for NES games.");
+                     "available for %s games.",
+                     g_pcfg.console == FE_CONSOLE_NES ? "NES" : "WonderSwan");
             break;
          }
          screen_to(SCR_WIRELESS);
@@ -7542,6 +7619,11 @@ static int            g_find_n;
 /* Home: the Cover button -- a picture of your own for the game
  * (vita/ui_vita_cover.h). */
 #define BROWSER_COVER_BUTTON  (1u << 29)
+/* Home: a console chip of the top bar (hm_topbar); which one: the chip the
+ * finger landed on (g_hm_chip_x holds their left edges, logical px). */
+#define BROWSER_CON_BUTTON    (1u << 30)
+static int g_hm_chip_x[FE_CONSOLE_COUNT + 1];
+static int g_con_pick = -1;     /* the console a chip tap asked for */
 /* RECENT AND THE ORDERS.  The Recent tab (the Home's third: games played,
  * the latest first) and Settings > Game order (by name, last played first,
  * most played first) are one more permutation over the scan, under the
@@ -8445,7 +8527,8 @@ static int rom_has_sav(int idx)
          ? snprintf(sav, sizeof(sav), "%.*s.sav",
                     (int)ui_rom_stem_length(rom), rom)
          : (g_pcfg.console == FE_CONSOLE_SNES ||
-            g_pcfg.console == FE_CONSOLE_NES)   /* Game.srm */
+            g_pcfg.console == FE_CONSOLE_NES ||
+            g_pcfg.console == FE_CONSOLE_WSWAN)   /* Game.srm */
          ? snprintf(sav, sizeof(sav), "%.*s.srm",
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
@@ -12453,6 +12536,24 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
        * the rescan now if the peak has not passed -- and starts the next
        * from the console it landed on.  The state shelf is keyed by list
        * index, so no switch starts while it is open. */
+#ifdef VITA
+      if ((edges & BROWSER_CON_BUTTON) && !g_browser_state_open)
+      {
+         /* a tap on a console chip: that console, or nothing if it is the
+          * one shown */
+         int c, at = g_tch.land_r.x, pick = -1;
+         for (c = 0; c < FE_CONSOLE_COUNT; c++)
+            if (at >= g_hm_chip_x[c] && at < g_hm_chip_x[c + 1])
+               pick = c;
+         fe_evt("ui_console_chip pick=%d at=%d", pick, at);
+         edges &= ~BROWSER_CON_BUTTON;
+         if (pick >= 0 && pick != g_pcfg.console)
+         {
+            g_con_pick = pick;
+            edges |= PSP_CTRL_TRIANGLE;
+         }
+      }
+#endif
       if ((edges & PSP_CTRL_TRIANGLE) && !g_browser_state_open)
       {
          int skipped = 0;
@@ -12474,7 +12575,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             fx_reset();
             skipped = 1;
          }
-         switch_begin((g_pcfg.console + 1) % FE_CONSOLE_COUNT);
+         switch_begin(g_con_pick >= 0 ? g_con_pick
+                                      : (g_pcfg.console + 1) % FE_CONSOLE_COUNT);
+         g_con_pick = -1;
          g_pop.active = 0;
          g_swap.active = 0;
          fe_evt("ui_browser_switch from=%d to=%d skipped=%d",

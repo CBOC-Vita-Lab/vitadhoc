@@ -291,25 +291,28 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
    const char *ext;
    size_t len, i;
    static const char *const suffix[] = { ".gba", ".gb", ".gbc", ".sfc", ".smc" };
-   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_NES)
+   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_WSWAN)
       return 0;
    len = strlen(name);
-   if (console == FE_CONSOLE_NES)
+   if (console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN)
    {
       /* a Famicom/NES cartridge in four spellings: .nes (iNES), .fds (a
-       * Famicom Disk System disk), .unf and .unif (UNIF) */
+       * Famicom Disk System disk), .unf and .unif (UNIF); a WonderSwan one
+       * in three: .ws, .wsc (Color) and .pc2 (Pocket Challenge V2) */
       static const char *const nes_ext[] = { ".nes", ".fds", ".unf", ".unif" };
+      static const char *const ws_ext[] = { ".ws", ".wsc", ".pc2", "" };
+      const char *const *exts = console == FE_CONSOLE_NES ? nes_ext : ws_ext;
       size_t k;
-      for (k = 0; k < sizeof(nes_ext) / sizeof(nes_ext[0]); k++)
+      for (k = 0; k < 4 && exts[k][0]; k++)
       {
-         size_t el = strlen(nes_ext[k]);
+         size_t el = strlen(exts[k]);
          if (len <= el)
             continue;
          for (i = 0; i < el; i++)
          {
             unsigned char a = (unsigned char)name[len - el + i];
             if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
-            if (a != (unsigned char)nes_ext[k][i]) break;
+            if (a != (unsigned char)exts[k][i]) break;
          }
          if (i == el)
             return 1;

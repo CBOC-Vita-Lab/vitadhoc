@@ -31,6 +31,10 @@
 
 - `mednafen/wswan/eeprom.c` / `eeprom.h`: new function `uint8_t *WSwan_GetInternalEEPROM(void)` returning the
   internal EEPROM array, so the host can save it (upstream keeps it static and only persists the cartridge memory).
+- `mednafen/wswan/gfx.c`, port 0xA0 read: the mono value is 0x85 (was 0x86). Port 0xA0 is documented as `C??? swcl`
+  (ws.nesdev.org I/O port map) with the Colour flag at bit 1 (0x02). 0x86 had that bit set, so mono cartridges
+  read as Colour hardware, and the spritepriority test (MiSTer testroms, which tests the same bit with WS_COLOR=0x02) locks
+  the CPU in that case; with 0x85 it runs. The Colour value stays 0x87. Not verified against a real mono console.
 
 ## Build notes (not changes to files)
 

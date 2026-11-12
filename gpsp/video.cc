@@ -272,6 +272,8 @@ static const u32 map_widths[] = { 256, 512, 256, 512 };
 // rendtype (FULLCOLOR, INDXCOLOR, STCKCOLOR, PIXCOPY) and the NEON tile-row
 // kernels are in video_tile.h
 #include "video_tile.h"
+// OBJ X from attr1 (video_obj.h): the sign extension, shifted unsigned (UB-free)
+#include "video_obj.h"
 
 s32 affine_reference_x[2];
 s32 affine_reference_y[2];
@@ -1848,7 +1850,7 @@ static void obj_exact_build(s32 vcount)
     bool is_trans = ((obj_attr0 >> 10) & 0x3) == OBJ_MOD_SEMITRAN;
 
     t_sprite obji = {
-      .obj_x = ((s32)((u32)obj_attr1 << 23) >> 23) - wide_xo,
+      .obj_x = obj_attr1_x(obj_attr1) - wide_xo,
       .obj_y = obj_attr0 & 0xFF,
       .obj_w = obj_dim_table[obj_shape][obj_size][0],
       .obj_h = obj_dim_table[obj_shape][obj_size][1],
@@ -1974,7 +1976,7 @@ void render_scanline_objs(
     bool is_trans = ((obj_attr0 >> 10) & 0x3) == OBJ_MOD_SEMITRAN;
 
     t_sprite obji = {
-      .obj_x = ((s32)((u32)obj_attr1 << 23) >> 23) - wide_xo,
+      .obj_x = obj_attr1_x(obj_attr1) - wide_xo,
       .obj_y = obj_attr0 & 0xFF,
       .obj_w = obj_dim_table[obj_shape][obj_size][0],
       .obj_h = obj_dim_table[obj_shape][obj_size][1],
@@ -2113,7 +2115,7 @@ static void order_obj(u32 video_mode)
 
     if(((obj_y + obj_height) > 0) && (obj_y < 160))
     {
-      s32 obj_x = (s32)((u32)obj_attr1 << 23) >> 23;
+      s32 obj_x = obj_attr1_x(obj_attr1);
       const s32 wm = (s32)wide_margin;
 
       if(((obj_x + obj_width) > -wm) && (obj_x < 240 + wm))

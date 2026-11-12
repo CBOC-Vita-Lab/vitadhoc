@@ -189,6 +189,10 @@ typedef struct
     * stick_rewind): 1 = the right stick held left rewinds; 0 = it does not
     * (the default; the Rewind button still does). */
    int  stick_rewind;
+   /* Settings > Display > WonderSwan smoothing (CONFIG.INI ws_blend): 1 =
+    * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
+    * scrolling, the default); 0 = the newest frame only. */
+   int  ws_blend;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -719,7 +723,13 @@ typedef struct
    int level_right, level_down;   /* milli-g of the hold counted as level  */
    int save_type;             /* PCFG_SAVE_*: GBA battery type, read at load */
    int rtc_mode;              /* PCFG_RTC_*: GBA cartridge clock, at load    */
+   /* WonderSwan (the in-game menu; wscore.h): Rotation (PCFG_WS_ROT_*),
+    * Vertical play (0 Upright, 1 Turn the Vita), Palette (0 greyscale,
+    * 1 classic LCD tint) */
+   int ws_rotation, ws_vplay, ws_palette;
 } pcfg_game;
+enum { PCFG_WS_ROT_AUTO, PCFG_WS_ROT_HORIZONTAL, PCFG_WS_ROT_VERTICAL, PCFG_WS_ROT_MODES };
+const char *pcfg_ws_rotation_name(int m);
 extern pcfg_game g_pgame;
 /* Read `path` for the game about to run on `console` and, when it has its own
  * look, select it.  Call after pcfg_display_select(console). */

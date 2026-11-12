@@ -48,6 +48,10 @@ save_mem / load_mem (size fixed per game, zero padded: equal ring slots), save r
 `wswan_host_set_time_source` (a function returning local wall clock seconds: the Vita libc has no time zone), and
 `wswan_host_set_owner` (name shown by games that read the console's owner data).
 
+Console type: at load the core is set to mono or Colour from the cartridge's colour byte (footer byte 7), so port 0xA0 reports
+mono hardware for mono cartridges (0x85) and Colour hardware for Colour cartridges (0x87). Earlier builds always reported Colour;
+the change is in `wswan_host_load_mem` and in `core/mednafen/wswan/gfx.c` (see `core/PROVENANCE.md`).
+
 ## Frame pacing: 75.4716981 Hz on a 59.94 Hz screen
 
 The console runs 159 lines x 256 clocks at 3.072 MHz: 75.4716981 frames/s (`wswan_host_frame_rate()`;
@@ -171,6 +175,7 @@ failure keeps the original) and with Klonoa (the title shows "Continue" after a 
   enumerated. Colour games and WonderSwan Color: only a synthetic ROM and the WSHWTest ROM. RTC games, EEPROM cartridges, WonderWitch
   (flash) carts, Pocket Challenge V2 key mapping and behaviour: untested. The per game orientation table has no entries.
 - Games that scan both key groups and never use the LCD icons: only footer flag plus manual toggle.
+- The mono value of port 0xA0 (0x85) is from the documented bit layout, not read from a mono console.
 - RetroAchievements hash and addresses: from the documented memory map, not run against the server.
 - The public test ROMs only show results on screen; `twin/baseline_results.md` records what was seen. ws-test-suite (asiekierka)
   needs the Wonderful toolchain and was not built.

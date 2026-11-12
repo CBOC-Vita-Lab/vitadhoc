@@ -47,9 +47,10 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
                   g_ov_used, PSP_STATE_SLOT_COUNT);
       break;
    case M_WIRELESS:
-      if (g_pcfg.console == FE_CONSOLE_NES)
+      if (g_pcfg.console == FE_CONSOLE_NES || g_pcfg.console == FE_CONSOLE_WSWAN)
       {
-         snprintf(out, cap, "Not available for NES games");
+         snprintf(out, cap, "Not available for %s games",
+                  g_pcfg.console == FE_CONSOLE_NES ? "NES" : "WonderSwan");
          break;
       }
       memset(&ls, 0, sizeof(ls));

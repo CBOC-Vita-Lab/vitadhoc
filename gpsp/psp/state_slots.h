@@ -59,7 +59,8 @@ static inline const char *psp_state_slot1_suffix(fe_console_t console)
 {
    return console == FE_CONSOLE_GBC ? ".gbc.st0" :
           console == FE_CONSOLE_GB  ? ".gb.st0"  :
-          console == FE_CONSOLE_NES ? ".nes.st0" : ".st0";
+          console == FE_CONSOLE_NES ? ".nes.st0" :
+          console == FE_CONSOLE_WSWAN ? ".ws.st0" : ".st0";
 }
 
 /* Slot 1 is the historic .st0 file; slots 2-10 use .st1 through .st9. */

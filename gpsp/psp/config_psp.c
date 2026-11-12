@@ -187,6 +187,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
       g_pcfg.ab_buttons = -1;
    g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
+   g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
 #endif
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
@@ -391,7 +392,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       strcpy(g_pcfg.nick, "PSP");
 #endif
    g_pcfg.console = (int)fe_ini_get_int(cfg_path, "console", FE_CONSOLE_GBA);
-   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_NES)
+   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_WSWAN)
       g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
    /* Every bind_* key is validated here; a bad one is reported
@@ -574,7 +575,7 @@ long pcfg_gb_rtc_utc_since(long now_local)
 
 int pcfg_remember_console(int console)
 {
-   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_NES)
+   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_WSWAN)
       return -1;
    g_pcfg.console = console;
    /* The browser's console switch is the settings context: the next
@@ -658,6 +659,10 @@ void pcfg_save(void)
    if (g_pcfg.ab_buttons >= 0)
       fe_ini_set_int(cfg_path, "ab_buttons", g_pcfg.ab_buttons);
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
+   if (!g_pcfg.ws_blend)
+      fe_ini_set_int(cfg_path, "ws_blend", 0);
+   else if (fe_ini_get_int(cfg_path, "ws_blend", -1) == 0)
+      fe_ini_set_int(cfg_path, "ws_blend", 1);
 #endif
    PCFG_PSP_KEY(fe_ini_set_int(cfg_path, "me_dirty", g_pcfg.me_dirty));
    fe_ini_set_int(cfg_path, "show_fps", g_pcfg.show_fps);
@@ -790,11 +795,11 @@ void pcfg_net_addr_push(const char *addr)
 pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 static int g_pdisp_live = FE_CONSOLE_GBA;
 
-static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes" };
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws" };
 
 const char *pcfg_console_tag(int console)
 {
-   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES" };
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES", "WS" };
    return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
 }
 
@@ -1154,8 +1159,17 @@ const char *pcfg_rtc_mode_name(int m)
    return m == PCFG_RTC_ON ? "On" : m == PCFG_RTC_OFF ? "Off" : "Auto";
 }
 
+const char *pcfg_ws_rotation_name(int m)
+{
+   return m == PCFG_WS_ROT_HORIZONTAL ? "Horizontal"
+        : m == PCFG_WS_ROT_VERTICAL ? "Vertical" : "Auto";
+}
+
 static void pgame_defaults(void)
 {
+   g_pgame.ws_rotation = PCFG_WS_ROT_AUTO;
+   g_pgame.ws_vplay = 0;
+   g_pgame.ws_palette = 0;
    g_pgame.save_type = PCFG_SAVE_AUTO;
    g_pgame.rtc_mode = PCFG_RTC_AUTO;
    g_pgame.override = 0;
@@ -1185,6 +1199,9 @@ static void pgame_render(char *out, size_t cap)
                 g_pgame.sensor_mode, g_pgame.sensor_sens, g_pgame.sensor_rev,
                 g_pgame.sunlight, g_pgame.level_set, g_pgame.level_right,
                 g_pgame.level_down);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " ws%d/%d/%d", g_pgame.ws_rotation,
+                    g_pgame.ws_vplay, g_pgame.ws_palette);
    for (i = 0; i < PGAME_DISP_KEYS && n > 0 && (size_t)n < cap; i++)
       n += snprintf(out + n, cap - (size_t)n, " %d",
                     g_pgame.override ? *pgame_disp_field(&g_pgame.disp, i) : 0);
@@ -1231,6 +1248,10 @@ void pcfg_game_begin(const char *path, int console)
                                         -2000, 2000, 0);
       if (!g_pgame.level_set)
          g_pgame.level_right = g_pgame.level_down = 0;
+      g_pgame.ws_rotation = pgame_clampi(fe_ini_doc_get_int(&doc, "ws_rotation", 0),
+                                         0, PCFG_WS_ROT_MODES - 1, PCFG_WS_ROT_AUTO);
+      g_pgame.ws_vplay = fe_ini_doc_get_int(&doc, "ws_vertical_play", 0) == 1;
+      g_pgame.ws_palette = fe_ini_doc_get_int(&doc, "ws_palette", 0) == 1;
    }
    g_pgame.on = 1;
    pgame_render(pgame_written, sizeof(pgame_written));
@@ -1284,6 +1305,12 @@ int pcfg_game_save(void)
    rc |= fe_ini_doc_set_int(&doc, "level_set", g_pgame.level_set);
    rc |= fe_ini_doc_set_int(&doc, "level_right", g_pgame.level_right);
    rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);
+   if (g_pgame.console == FE_CONSOLE_WSWAN)
+   {
+      rc |= fe_ini_doc_set_int(&doc, "ws_rotation", g_pgame.ws_rotation);
+      rc |= fe_ini_doc_set_int(&doc, "ws_vertical_play", g_pgame.ws_vplay);
+      rc |= fe_ini_doc_set_int(&doc, "ws_palette", g_pgame.ws_palette);
+   }
    rc |= fe_ini_doc_save(&doc, g_pgame.path);
    if (!rc)
       snprintf(pgame_written, sizeof(pgame_written), "%s", now);

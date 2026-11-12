@@ -3585,6 +3585,15 @@ static inline u8 *smcr_tagp(u32 pc)
                          : ewram + 0x40000 + (pc & 0x3FFFF);
 }
 
+static u32 smcr_xtrace_lo = ~0u, smcr_xtrace_hi;  /* GPSP_SMC_XTRACE=lo:hi */
+static void smcr_xtrace(u32 pc, u32 off, u32 where)
+{
+  if (smcr_trace_f && frame_counter >= smcr_xtrace_lo &&
+      frame_counter <= smcr_xtrace_hi)
+    fprintf(smcr_trace_f, "T %u %08x off=%u %u tag=%x\n",
+            (unsigned)frame_counter, (unsigned)pc, (unsigned)off,
+            (unsigned)smcr_fw_xlat, (unsigned)ram_block_tag);
+}
 static void smcr_trace(char kind)
 {
   if (smcr_trace_f)
@@ -4032,6 +4041,7 @@ static u8 *smcr_lookup(u32 pc, u32 thumb, u16 *tagp)
    * first (SMC_RAM_PREPARE_TRANSLATION), then translates. */
   smcr_fw_xlat++;
   JCTR(9);
+  smcr_xtrace(pc, smcr_vptr, 1);
   *slot = smcr_vptr;
   idx = smcr_find(pc, thumb, &versions);
   if (idx) {
@@ -4109,6 +4119,9 @@ static void smcr_apply(void)
     if (e && *e)
       dispatch_cache_on = atoi(e) ? 1 : 0;
 #endif
+    e = getenv("GPSP_SMC_XTRACE");
+    if (e && *e)
+      sscanf(e, "%u:%u", &smcr_xtrace_lo, &smcr_xtrace_hi);
     e = getenv("GPSP_JCTR_LOG");
     if (e && *e && &gbab_smc_partial != &smc_partial)
       smcr_jlog_f = fopen(e, "w");
@@ -4229,7 +4242,8 @@ static void smcr_dc_clear(void)
 }
 /* Hooks in translate_block_* (locals: translation_ptr, block_end_pc, the
  * external exits).  SMCR_REAL(): emitting for smcr_translate. */
-#define SMCR_COUNT_FW_XLAT() do { if (!smcr_on) { smcr_fw_xlat++; JCTR(9); } } while (0)
+#define SMCR_COUNT_FW_XLAT() do { if (!smcr_on) { smcr_fw_xlat++; JCTR(9);   \
+    smcr_xtrace(pc, translation_ptr - ram_translation_cache, 0); } } while (0)
 #define SMCR_REAL_OVERFLOW() do { if (SMCR_REAL()) return false;               \
                                  smcr_trace('F'); } while (0)
 #define SMCR_NOTE_BODY() do { if (SMCR_REAL()) {                              \

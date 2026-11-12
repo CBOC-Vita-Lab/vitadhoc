@@ -291,6 +291,7 @@ extern "C" int wswan_host_load_mem(const uint8_t *data, size_t size, const char 
 	if (G.ww) v30mz_init(WSwan_readmem20_WW, WSwan_writemem20_WW, WSwan_readport_WW, wp_hook);
 	else v30mz_init(WSwan_readmem20, WSwan_writemem20, WSwan_readport, wp_hook);
 	owner_to_settings();
+	wsc = G.footer[7] != 0;   /* port 0xA0 reports the console type: mono cartridges see mono hardware */
 	WSwan_MemoryInit(setting_wswan_language != 0, wsc, G.sram_size, G.ww);
 	WSwan_GfxInit();
 	WSwan_SoundInit();

@@ -925,3 +925,35 @@ ARM only), so run_tests.sh shows the cpufix picture as DIFFER between twins.
 - **WP2-WP4 not done in this pass** (WP2 is the SMC_STM_FIXED project above;
   the counters show why it matters: two of the six ROMs flush the RAM cache 1-3
   times a frame).
+
+## Renderer colour effects and 4bpp tile kernels (gpsp/video.cc)
+
+**Twin difference on testrom/objprio.gba.** The x86 and armhf (qemu-arm) twins
+showed different pictures while both passed app_tests. Cause: a stale armhf
+binary (build/armhf-nvoff predates OBJ_EXACT), not UB in video.cc. A fresh armhf
+build is pixel identical to x86 (green LSB masked, as run_tests.sh does).
+`gpsp/tools/tests/check_objprio_twins.py` guards it: it checks that both builds
+contain the `obj_exact_build` symbol (stale-binary detector), checks the colour
+classes at 11 x-positions on rows 20/24/27, and compares both pictures.
+ASAN+UBSAN on the x86 twin with objprio: no reports. Note: ASAN globals trip
+over fe_gbadual_boot's memcpy of the core data image (instance B copy); build
+the core video.o with `--param asan-globals=0`.
+
+**Kernels.** `video_merge.h`: merge_blend / merge_brightness. NEON on ARM, SSE2
+on x86, original loops elsewhere (MIPS/PSP ME) and for tails. Output is exactly
+the original math (per channel floor, clamp to channel max, coefficients
+clamped to 16). `video_tile.h`: NEON 4bpp BG tile row and OBJ row kernels
+(vtbl2 16-entry palette lookup). Both are in the core and CORE_R builds.
+Switches: VIDEO_MERGE_ORIG (old loops), VIDEO_MERGE_NO_VEC, VIDEO_MERGE_SCALAR_BF
+(branch-free scalar, slower on x86), VIDEO_MERGE_CHECK / VIDEO_TILE_CHECK
+(compare against the reference per row, abort on difference), VIDEO_TILE_NO_NEON.
+
+**Tests.** `gpsp/tools/tests/run_video_kernel_tests.sh [quick]` builds and runs
+test_video_merge.cc (all 5-bit channel pairs x 17x17 coefficients, all 65536
+colours x BLDY 0..31, random palettes, starts 0..9 x lengths 0..40, guard words)
+and test_video_tile.cc (every nibble in every lane, hflip, all rendtypes) on x86,
+armhf NEON (qemu-arm) and armhf scalar.
+
+**Vita build note.** gpsp/vita/Makefile builds with -mfpu=neon (NEON kernels
+active). The root gpsp/Makefile `vita` platform has -mcpu=cortex-a9 but no
+-mfpu=neon, so that build silently uses the original loops.

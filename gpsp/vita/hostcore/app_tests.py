@@ -4860,7 +4860,8 @@ def _t_ra(S, srv):
     # mapping, Game order and Hardcore to Account; X; the name, then the
     # password, each through the keyboard.
     # (1.2: one more UP, for Library > Game folders above Game order)
-    r = S.run("ra_login", "60:start\n+30:up\n" + "+8:up\n" * 9 +
+    # (1.4: and one more, for Library > Game names)
+    r = S.run("ra_login", "60:start\n+30:up\n" + "+8:up\n" * 10 +
               "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
               "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
               "+30:quit\n", vita_ini=ini)

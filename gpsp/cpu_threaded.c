@@ -3602,6 +3602,9 @@ static void smcr_patch_note(u8 *src, const u32 *before)
 {
   u8 *lo, *hi;
   u32 i;
+  /* ROM blocks are linked once, when new: their sync is the ROM one. */
+  if (src < smcr_base || src >= ram_translation_cache + ram_translation_cache_size)
+    return;
   if (!memcmp(src, before, 8))
     return;
   JCTR(10);
@@ -4101,6 +4104,11 @@ static void smcr_apply(void)
       if (smcr_trace_f)
         setvbuf(smcr_trace_f, NULL, _IOLBF, 0);
     }
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+    e = getenv("GPSP_DISPATCH_CACHE");
+    if (e && *e)
+      dispatch_cache_on = atoi(e) ? 1 : 0;
+#endif
     e = getenv("GPSP_JCTR_LOG");
     if (e && *e && &gbab_smc_partial != &smc_partial)
       smcr_jlog_f = fopen(e, "w");

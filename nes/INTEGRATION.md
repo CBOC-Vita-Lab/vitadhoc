@@ -112,10 +112,12 @@ UNIF files carry their data in chunks: match them by name only. FDS images: the 
 - Measured on the Linux twin (x86_64, peak resident set of the whole process, runner included): 6.1 MB for a
   synthetic game, 6.3 MB for MMC3 and FDS, 6.1 MB for the 41 KB public test ROM `ny2011`. The runner and libc are
   about 2 MB of that. Not measured on a Vita.
-- Per-frame cost on the build machine (x86_64, thread CPU time over 600-1200 frames, machine shared with other jobs
-  so treat as rough): NROM synthetic 0.29 ms, MMC1 0.35 ms, MMC3 0.32 ms, FDS 0.40 ms, sprite-heavy
-  `spritecans` 0.47 ms, `ny2011` 0.61 ms. A Vita's Cortex-A9 at 500 MHz is very roughly 10-20 times slower than the
-  build machine core for this kind of code: that would be 3-12 ms per frame against 16.7 ms available. It is an estimate,
-  not a measurement; the standalone `nes.bin` has never run on a console either.
-- The conformance run over 290 public test ROMs (nes/twin/baseline_results.md) averaged 2.8 thousand frames per second on
-  the same machine, slowest ROM 778 frames per second.
+- Per-frame cost, measured as instructions (callgrind on x86_64, scripted pad, 12 Nov 2026 build): synthetic NROM 2.84 M,
+  MMC1 2.68 M, MMC3 2.79 M, public demos and tests 2.6-3.4 M (`DROPOFF7` 3.19, `TEST.NES` 3.15, `SPRITE` 3.40, `ny2011` 3.24).
+  Counting executed ARM instructions under qemu-arm (`-one-insn-per-tb`, 12 frames minus 2) gives 1.04 (NROM) to 1.13
+  (`ny2011`) times the x86 count, so about 2.9-3.8 M ARM instructions per frame. At 444 MHz that is roughly 9-12 ms at an
+  assumed IPC of 0.7, 6.5-8.5 ms at 1.0 and 5-6.5 ms at 1.3, against 16.6 ms; IPC on a Cortex-A9 was NOT measured (no
+  hardware), and it excludes GPU upload, audio output thread and the app. Before the 12 Nov 2026 `FCEU_BuildBgPairLUT`
+  cache the same demos cost 10-14 M instructions per frame, so older figures are obsolete.
+- Where it goes (NROM): RefreshLine 24%, X6502_Run 23%, RGB565 conversion in `nes_host_run_frame` 14%, sound 9%, PPU loop 8%.
+- Object sizes (`make check`): armhf text 761 KB, data 68 KB, bss 2.62 MB; Vita build text 676 KB, data 63 KB, bss 2.62 MB.

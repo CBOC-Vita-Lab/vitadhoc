@@ -63,6 +63,9 @@ conformance run, see `nes/twin/baseline_results.md`):
   function of them; `RefreshLine` rebuilt it 256 entries at a time on every `$2002` read and PPU register write, i.e.
   thousands of times a frame in a vblank polling loop). Output unchanged (identical picture and RAM hashes over all 290
   public test ROMs); instructions per frame (callgrind, same ROM and input): 3.72 M to 2.84 M on the synthetic NROM game, 13.9 M to 3.2 M on `DROPOFF7`, `TEST.NES`, `BLOCKS.NES` and the other demos that poll `$2002`.
+- `ppu.c`, `CheckSpriteHit`: no sprite-0 hit in the leftmost 8 pixels while sprites are masked there (`$2001` bit 2 clear);
+  the background mask already made those pixels transparent. Fixes `sprite_hit_tests_2005.10.05/05.left_clip` (screen-only
+  test); of 290 ROMs over 300 frames only that one changed picture/RAM/audio hashes.
 - Undefined behaviour found by AddressSanitizer / UBSan over the public test ROMs: `boards/asic_vrc2and4.c`
   `VRC2_stateRegs` had no `{ 0 }` terminator, so every state save of a VRC2 game (mapper 22, 23, 25 ...) ran past the end of
   the array (`m22chrbankingtest`; the same check over all 226 `SFORMAT` tables found no other unterminated one);

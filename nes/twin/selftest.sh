@@ -233,5 +233,11 @@ else
 	echo "SKIP  picture unit test (not present)"
 fi
 
+# 12. public screen-only test: sprite 0 hit is clipped in the left 8 pixels (needs the public ROMs)
+if [ -n "$NES_TESTROMS" ] && [ -f "$NES_TESTROMS/sprite_hit_tests_2005.10.05/05.left_clip.nes" ]; then
+	"$TWIN" "$NES_TESTROMS/sprite_hit_tests_2005.10.05/05.left_clip.nes" --frames 2500 --nt-text 2>/dev/null | grep -q PASSED \
+		&& ok "sprite hit left clipping (blargg sprite_hit_tests 05)" || bad "sprite hit left clipping"
+fi
+
 rm -rf $T
 [ $fail = 0 ] && echo "all passed" || { echo "FAILED"; exit 1; }

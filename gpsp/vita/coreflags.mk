@@ -103,6 +103,13 @@
 GBA_LINK      ?= 1
 ARM_FAR_STUBS ?= 1
 SMC_RANGE     ?= 1
+# GPSP_DCACHE         ON.  WP3: arm_stub.S's indirect-branch stubs probe a
+#                     pc -> entry table before the C lookup (cpu_threaded.c
+#                     adc_put; only side-effect-free lookups are entered, the
+#                     table is emptied by every flush).  Run-time switch
+#                     dispatch_cache (gpsp_dispatch_cache_set; twins:
+#                     GPSP_DISPATCH_CACHE).  The x86 stubs do not probe.
+GPSP_DCACHE   ?= 1
 
 GBADHOC_CORE_DEFS := -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 -DDMA_SMC_FLUSH=1 \
                      -DSERIAL_IDLE_FAST=1 -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1 \
@@ -113,4 +120,7 @@ GBADHOC_CORE_DEFS += -DARM_FAR_STUBS
 endif
 ifeq ($(SMC_RANGE),1)
 GBADHOC_CORE_DEFS += -DSMC_RANGE=1
+endif
+ifeq ($(GPSP_DCACHE),1)
+GBADHOC_CORE_DEFS += -DGPSP_DCACHE=1
 endif

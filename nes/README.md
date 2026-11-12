@@ -11,7 +11,7 @@ Numbers in this file are from the Linux build on a shared x86_64 machine. **Noth
 
 | path | what |
 |---|---|
-| `core/` | FCEUmm `src/` without the libretro driver, commit and local edits in `core/PROVENANCE.md` (three files edited, all marked `NESP`: `fds.c`, `fds.h`, `ines.c`), licence `core/LICENSE` (= `licenses/FCEUmm-GPL-2.0.txt`) |
+| `core/` | FCEUmm `src/` without the libretro driver, commit and local edits in `core/PROVENANCE.md` (local edits all marked `NESP`: `fds.c`, `fds.h`, `ines.c`, plus the 12 Nov 2026 accuracy patches in `ops.h`, `x6502.c`, `ppu.c`, `ppu.h`, `fceu.c`, `boards/mmc3.c` and the UB fixes in `boards/mmc5.c`, `boards/asic_vrc2and4.c`), licence `core/LICENSE` (= `licenses/FCEUmm-GPL-2.0.txt`) |
 | `frontend/host.h`, `host.c` | the API for in-process use (plain C, no file access, no C++ runtime). MIT |
 | `frontend/Makefile` | `nescore.o` for host, `vita`, `armhf`; `make check` proves only `nes_host_*` is global |
 | `frontend/host_files.*`, `safe_io.*` | optional file layer (load by path, safe `.srm` and state writes) used by the runner and the standalone program, not part of `nescore.o` |
@@ -28,8 +28,9 @@ an override; 256x240 RGB565 video with the NTSC overscan rows (8 top and bottom)
 at the requested rate (8000-96000 Hz, default 48000); four pads with the Four Score / Famicom adapter automatic for the
 known games; battery RAM in RetroArch's raw `.srm` layout, with a dirty check, for the caller to save; fixed-size
 save states for a rewind ring; the achievements memory map for console 7; Game Genie, raw and Pro Action Replay
-cheats; sprite-limit removal (default on); a render-off flag for fast forward. Not wired: Zapper, paddles, Power Pad,
-NSF, the NTSC filter.
+cheats; sprite-limit removal (default on, with a per-game exception table keyed by ROM CRC: both Legend of Zelda
+revisions built in, more via `nes_host_sprite_exception_add`); Zapper (touch) and Arkanoid paddle; a render-off flag for
+fast forward. Not wired: Power Pad, NSF, the NTSC filter.
 
 ## Build and test (Linux)
 
@@ -50,24 +51,28 @@ result at `$6000`.
 
 ## Results
 
-Self test (`twin/selftest.sh`): 66 checks, all pass: deterministic hashes; save state / load state replay
-(NROM, MMC1, MMC3); battery RAM load, save, `.bak`, no `.tmp` or `.old`, longer and shorter save files, a failed write keeps
-the original and reports, `.old` recovery; header variants give identical pictures; PAL, Dendy and region override; four
-players with signatures; sprite limit; tone; mapper banking and IRQ; FDS (missing BIOS, header, eject/insert); state size
-fixed; render off; load from memory equals load from file; cheats; achievements map; palette rebuild; `nescore.o` exports
-only `nes_host_*` and links beside clashing globals.
+Self test (`twin/selftest.sh`): 82 checks, all pass (also with `NES_TESTROMS` set, which adds the public ROMs to the
+sprite-limit identity check): deterministic hashes; save state / load state replay (NROM, MMC1, MMC3); battery RAM;
+header variants; PAL, Dendy and region override; four players; sprite limit on/off gives identical RAM, saved state, audio
+and SRAM, and the CRC exception table; Zapper and paddle (synthetic `gun.nes`, `paddle.nes`, header-selected, option off);
+tone; mapper banking and IRQ; FDS; state size fixed; render off; load from memory equals load from file; cheats;
+achievements map; palette rebuild; `nescore.o` exports only `nes_host_*` (57) and links beside clashing globals.
 
-Conformance (`twin/baseline_results.md`, 290 public test ROMs): 55 pass, 52 fail, 6 need the reset button, 176 report on screen
-only, 1 is not a game. The failures are listed there, grouped; they are cycle-exact PPU/MMC3/APU timing tests and unofficial
-opcodes, while both `official_only` instruction suites pass. I did not run the same ROMs in stock libretro-fceumm to compare.
-The run found a real bug: a NES 2.0 header with 1 KiB of CHR-RAM let the PPU write past the buffer (heap corruption); fixed in
-`core/ines.c` (marked `NESP`, in `core/PROVENANCE.md`).
+Conformance (`twin/baseline_results.md`, 290 public test ROMs): 75 pass (55 before the 12 Nov 2026 accuracy work), 32 fail,
+6 need the reset button, 176 report on screen only, 1 is not a game. `twin/conformance_expect.txt` lists the 75;
+`conformance.py --expect` fails on any regression. The remaining failures are cycle-exact PPU/APU/CPU-interrupt timing.
+Against stock libretro-fceumm at the same commit (before our patches): no verdict difference and identical system RAM on
+all 289 loadable ROMs. Against Nestopia: 105 of 107 protocol ROMs pass (2 more need reset); see baseline_results.md.
 
-Speed: see the per-frame table in INTEGRATION.md.
+ARM: `twin/arm_check.sh` builds `nescore.o` for host and armhf and compares per-frame picture, audio, RAM and SRAM hashes
+under qemu-arm; the twin itself was run for armhf over all 290 ROMs: bit-identical to x86_64. Also clean under
+AddressSanitizer + UBSan over the whole public set (that found a missing `SFORMAT` terminator in the VRC2 board, fixed).
+
+Speed: see INTEGRATION.md (about 2.7-3.4 M x86 instructions per frame, ARM about 1.04-1.13 times that).
 
 ## Untested
 
-Everything on a console: the Vita build of `nescore.o` compiles and combines with a test object, but was never linked into
-the app or run. Real commercial games were not tried (none are available here); the mapper coverage is therefore what the
+Everything on a console: the Vita build of `nescore.o` compiles and runs under qemu-arm (armhf), but never on Vita hardware
+(cycle cost there is an estimate); qemu user mode does not trap unaligned accesses. Real commercial games were not tried (none are available here); the mapper coverage is therefore what the
 synthetic ROMs and the public test ROMs reach. FDS was tested only with a stand-in BIOS and a synthetic disk. Four Score
 was tested with a cartridge that reads the ports, not with a real game. The audio is checked for pitch and level, not by ear.

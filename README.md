@@ -1,6 +1,6 @@
 # VitAdhoc
 
-**Game Boy Advance, Game Boy, Game Boy Color and Super NES, native on PS Vita.**
+**Game Boy Advance, Game Boy, Game Boy Color, Super NES and NES, native on PS Vita.**
 
 Your games, together on a home screen with box art, a little history and
 previews of your own play. Pick up where you left off, smooth the pixels or
@@ -18,6 +18,16 @@ handheld experience together, with touch controls and the Vita's own sensors.
 You'll need your own games. An open-source GBA BIOS is built in; no BIOS
 download is required. Updating from 1.0, 1.1, 1.2 or 1.3? Install the VPK over
 the old version. Keep your games, saves, settings and artwork where they are.
+
+## New In Version 1.4 (in progress)
+
+**NES and Famicom join the family.** A fifth shelf for your `.nes`, `.fds`
+(Famicom Disk System; needs your own `disksys.rom`), `.unf` and `.unif` games,
+zipped too, in the same home screen with box art and the same Triangle. They
+play inside VitAdhoc with the same menu, state slots, Continue, fast forward,
+cheats and patches as the Game Boy games, and save as `Game.srm` beside the
+game. Rewind and link play are not for NES. It is new and has not been played on a real Vita
+yet; no speed is promised.
 
 ## New In Version 1.3.1
 
@@ -196,7 +206,7 @@ You need a homebrew-enabled PS Vita, VitaShell and your own games.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
 3. Add games to `ux0:data/GBAdhoc/roms/`, use an automatically detected folder,
    or choose **Settings > Library > Game folders**.
-4. Pick a game and press Cross. Triangle switches GBA, GB and GBC.
+4. Pick a game and press Cross. Triangle switches GBA, GB, GBC, SNES and NES.
 
 For the desktop installer, update precautions, save import, launchers and
 every folder, use the [manual install guide](INSTALL.md).
@@ -253,14 +263,17 @@ full-screen CPU xBRZ 3x, from 1.2:
 
 The native frontend is in `gpsp/vita/`; emulator cores and shared frontend
 code are in `gpsp/`. The SNES player (Snes9x 1.63 and its Vita frontend) is
-in `snes/`, built as its own program.
+in `snes/`, built as its own program; the NES player (FCEUmm and its Vita
+frontend) is in `nes/`, likewise.
 
 ## Credits
 
 VitAdhoc builds on [GBAdhoc by ShoshinFauteux](https://github.com/ShoshinFauteux/GBAdhoc).
 Thank you for the emulator, link-play work and original save formats this
 project builds on. The GBA core is gpSP by Exophase and the libretro
-contributors; GB/GBC uses TGB Dual; Super NES uses
+contributors; GB/GBC uses TGB Dual; NES and Famicom Disk System use
+[FCEUmm](https://github.com/libretro/libretro-fceumm) (GPL-2.0-or-later) by the
+FCE Ultra, FCEUX and FCEUmm authors; Super NES uses
 [Snes9x](https://github.com/snes9xgit/snes9x) 1.63 by the Snes9x team, whose
 licence allows non-commercial use only, so VitAdhoc is and stays free.
 RetroAchievements uses [rcheevos](https://github.com/RetroAchievements/rcheevos).

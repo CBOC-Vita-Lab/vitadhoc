@@ -163,6 +163,9 @@ static inline void sa1_put (const SA1Point &p)
 
 static inline bool sa1_code_in_rom (void)
 {
+#ifdef CBOC_NO_SA1_REPLAY	/* build switch: never records a loop, so every SA-1 instruction is interpreted (the exactness reference) */
+	return false;
+#endif
 	return SA1.PCBase && SA1.PCBase + 0x10000 > Memory.ROM && SA1.PCBase < Memory.ROM + Memory.CalculatedSize;
 }
 
@@ -199,7 +202,18 @@ static alwaysinline bool sa1_replay (int32 target, bool keep)
 	int32		c = SA1.Cycles;
 	int			cur = SA1L.cur;
 	if (target - c > d)
-		c += ((target - c - 1) / d) * d;	// whole passes, each started below the target
+	{
+		// whole passes, each started below the target: c += ((target - c - 1) / d) * d. The quotient is almost
+		// always 1 to 3 here (a call covers one SNES CPU instruction), and the Vita's Cortex-A9 has no divide
+		// instruction (a library call of dozens of cycles, on every replayed call), so subtract while it is small.
+		int32	r = target - c - 1;			// >= d here
+		if (r < 8 * d)
+		{
+			do { c += d; r -= d; } while (r >= d);
+		}
+		else
+			c += (r / d) * d;
+	}
 	while (c < target)
 	{
 		c += SA1L.step[cur];

@@ -1563,6 +1563,10 @@ int S9xUnfreezeFromStream (STREAM stream)
 
 		UnfreezeStructFromCopy(&PPU, SnapPPU, COUNT(SnapPPU), local_ppu, version);
 
+		// CBOC-Vita: the Mode 7 latches (Snes9x cf2b0e5) are per-line state that a state file does not hold: they
+		// start a line unlatched, as at the end of any line, so a load never carries over the live game's flags
+		PPU.CentreXLatched = PPU.CentreYLatched = PPU.M7HOFSLatched = PPU.M7VOFSLatched = false;
+
 		struct SDMASnapshot	dma_snap;
 		UnfreezeStructFromCopy(&dma_snap, SnapDMA, COUNT(SnapDMA), local_dma, version);
 
@@ -1736,6 +1740,7 @@ int S9xUnfreezeFromStream (STREAM stream)
 		{
 			GSU.pfPlot = fx_PlotTable[GSU.vMode];
 			GSU.pfRpix = fx_PlotTable[GSU.vMode + 5];
+			GSU.vCacheMask = 0;		// CBOC-Vita: the GSU timing's record of which cache lines were filled is not in a state file
 		}
 
 		if (local_sa1 && local_sa1_registers)

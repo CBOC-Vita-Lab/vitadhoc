@@ -30,6 +30,20 @@ clarification and the remaining package review.
   `snes/core/PROVENANCE.md`. Our SNES frontend (`snes/frontend`, `snes/vita`,
   `snes/twin`) is MIT and vendors its own libvita2d, stb and Inter font, each
   with its notice. See [SNES: Snes9x](SNES-Snes9x.md).
+- **FCEUmm (NES core):** the FCE Ultra, FCEUX and FCEUmm authors,
+  <https://github.com/libretro/libretro-fceumm>, GPL-2.0-or-later
+  (`licenses/FCEUmm-GPL-2.0.txt`), plus libretro-common (MIT,
+  `licenses/libretro-common-MIT.txt`). Linked as one relocatable object (`nescore.o`) that exports only
+  `nes_host_*`. Commit and the three local edits: `nes/core/PROVENANCE.md`. Our NES host (`nes/frontend`,
+  `nes/twin`) is MIT. See [NES: FCEUmm](NES-FCEUmm.md).
+- **Beetle WonderSwan / Mednafen WonderSwan (WonderSwan core):** Dox (Cygne), the Mednafen team and the libretro
+  contributors, <https://github.com/libretro/beetle-wswan-libretro>, GPL-2.0-or-later
+  (`licenses/Beetle-WonderSwan-GPL-2.0.txt`). It includes Shay Green's Blip_Buffer 0.4.1 (LGPL-2.1-or-later,
+  `licenses/LGPL-2.1.txt`), libretro-common headers (MIT, `licenses/libretro-common-MIT.txt`) and the NEC V30MZ
+  emulator by Bryan McPhail, Oliver Bergmann, Fabrice Frances and David Hedley, used here with the credit its author
+  asks for: **"NEC V30MZ emulator (c) Bryan McPhail"**. Linked as one relocatable object (`wswancore.o`) that exports only
+  `wswan_host_*`. Commit and the one local edit: `wswan/core/PROVENANCE.md`. Our WonderSwan host (`wswan/frontend`,
+  `wswan/twin`) is MIT. See [WonderSwan: Beetle](WSWAN-Beetle.md).
 - **mGBA cheat engine:** Copyright (c) 2013-2016 Jeffrey Pfau. MPL-2.0;
   `licenses/MPL-2.0.txt`. Source and marked modifications are in
   `gpsp/cheat_engine.c`, `gpsp/cheat_engine_tables.h` and related files.
@@ -43,10 +57,20 @@ clarification and the remaining package review.
 - **stb:** Sean Barrett and contributors, offered under MIT or public-domain
   terms. The complete dual notice is in
   `gpsp/vita/third_party/stb/LICENSE` and `licenses/stb.txt`;
-  individual headers retain their notices. `gpsp/psp/stb_image.h` (v2.30)
-  carries two local changes in its JPEG image loop, marked in the file:
-  stray bytes between segments are skipped, and a marker error before the
-  first scan fails instead of returning an undecoded image.
+  individual headers retain their notices. `gpsp/psp/stb_image.h` (v2.31,
+  release commit 48fb1c9) carries four local changes, marked
+  "VitAdhoc local patch" in the file: stray bytes between JPEG segments are
+  skipped; a marker error before the first scan fails instead of returning
+  an undecoded image (upstream e4efdc8 now fails every bad-marker case;
+  VitAdhoc keeps the partial image when a scan was already decoded); the
+  `stbi__mad4sizes_valid` guard covers the PNG-only build (upstream 2.31 does
+  not link in that configuration); and the progressive MCU loop keeps the
+  pre-3f9200a decode, because upstream 3f9200a drops MCUs of valid
+  progressive JPEGs. The snes copy, `snes/frontend/third_party/stb/stb_image.h`
+  (v2.31), has only the progressive change, marked the same way; the snes
+  overlay loader reads PNG only. The stb_truetype.h (v1.27) and
+  stb_image_write.h (v1.17) copies in `gpsp/vita/third_party/stb/` and
+  `snes/frontend/third_party/stb/` are unmodified upstream release files.
 - **xBRZ:** Zenju, HqMAME and contributors, used under GPL version 2 with the
   original exception retained. The code and local-change notice are in
   `gpsp/vita/third_party/xbrz/`. The app does not claim the MAME exception as
@@ -54,9 +78,9 @@ clarification and the remaining package review.
   `licenses/CPU-xBRZ-notice.txt` inside the player package.
 - **rcheevos:** RetroAchievements.org, MIT. Release v12.5.0
   (`1433173220a7eaede6a9ed7a18e94117be1821e0`, still the newest release on
-  2026-11-06), a subset in `gpsp/vita/third_party/rcheevos/` with five small
-  bug fixes backported from later upstream commits (`PROVENANCE` lists them
-  and what was left out).
+  2026-11-06), a subset in `gpsp/vita/third_party/rcheevos/` with six small
+  bug fixes backported from later upstream commits, including the null
+  checks of db8ca2e (`PROVENANCE` lists them and what was left out).
   Its notice, which accompanies the source and every distribution:
 
   > MIT License

@@ -19,7 +19,7 @@ The output is one text file, sorted, one record a line, TAB-separated:
                                   borrows codes: a file much smaller than
                                   the cartridge is not it)
   N<sys><loose> <No-Intro name>   a game by a loose form of its title
-                                  (squash below; sys A-D as in SYSTEMS),
+                                  (squash below; sys A-F as in SYSTEMS),
                                   for files named "Act Raiser" or
                                   "7th Saga" instead of the No-Intro name
   T<title key>  <article>         a game by its title (title_key below)
@@ -50,7 +50,17 @@ SYSTEMS = [
     ("Nintendo - Game Boy", "Q186437", "B"),
     ("Nintendo - Game Boy Color", "Q203992", "C"),
     ("Nintendo - Super Nintendo Entertainment System", "Q183259", "D"),
+    # 1.4: the NES (E) and the Famicom Disk System (F).  The NES catalogue
+    # lists every cartridge twice, as a headered .nes (its CRC includes the
+    # 16-byte iNES header) and a headerless .unh; the app hashes without the
+    # header (gamedb_nes_crc_cancel), so only the headerless CRCs are kept.
+    # The FDS has no Wikidata set of its own here: its blurbs come from the
+    # titles it shares with the NES.
+    ("Nintendo - Nintendo Entertainment System", "Q172742", "E"),
+    ("Nintendo - Family Computer Disk System", None, "F"),
 ]
+# which file extensions of a catalogue's entries give a checksum record
+CRC_EXT = {"E": (".nes",), "F": (".qd",)}   # ...the ones left OUT
 # Preference among a game's releases for the loose name index (N records):
 # the art server has the most box art for the USA releases.
 REGION_ORDER = ["(USA)", "(USA, Europe)", "(World)", "(USA,", "(Europe)",
@@ -141,13 +151,14 @@ def parse_dat(text):
     games = []
     for block in re.findall(r"game \((.*?)\n\)", text, re.S):
         name = re.search(r'\tname "(.*?)"', block)
-        rom = re.search(r'rom \( name ".*?" size (\d+) crc ([0-9A-Fa-f]{8})', block)
+        rom = re.search(r'rom \( name "(.*?)" size (\d+) crc ([0-9A-Fa-f]{8})', block)
         serial = re.search(r'\tserial "(.*?)"', block)
         if not name:
             continue
         games.append({"name": name.group(1),
-                      "size": int(rom.group(1)) if rom else 0,
-                      "crc": rom.group(2).upper() if rom else None,
+                      "file": rom.group(1) if rom else "",
+                      "size": int(rom.group(2)) if rom else 0,
+                      "crc": rom.group(3).upper() if rom else None,
                       "serial": serial.group(1) if serial else None})
     return games
 
@@ -271,7 +282,7 @@ def main():
                    "master/metadat/no-intro/" + urllib.parse.quote(dat) + ".dat",
                    os.path.join(cache, dat + ".dat")).decode("utf-8", "replace")
         games = parse_dat(text)
-        wd = wikidata(qid, cache)
+        wd = wikidata(qid, cache) if qid else []
         index = {}
         for label, art in wd:
             index.setdefault(title_key(label), art)
@@ -279,7 +290,7 @@ def main():
         family = {}             # GBA: code[:3] -> article
         loose = {}              # squash(key) -> (rank, name)
         for g in games:
-            if g["crc"]:
+            if g["crc"] and not g["file"].lower().endswith(CRC_EXT.get(tag, ())):
                 recs["C" + g["crc"]] = g["name"]
             if plain_release(g["name"]):
                 kk = squash(title_key(base_title(g["name"])))

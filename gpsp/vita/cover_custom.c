@@ -636,8 +636,8 @@ static int image_ext(const char *name, size_t *stem_len, int *pref)
 static void rom_ext_off(char *key)
 {
    static const char *const rom[] = { ".gba", ".gbc", ".gb", ".sgb", ".sfc",
-                                      ".smc", ".swc", ".fig", ".nes", ".zip",
-                                      ".7z" };
+                                      ".smc", ".swc", ".fig", ".nes", ".fds",
+                                      ".unif", ".unf", ".zip", ".7z" };
    size_t n = strlen(key), e;
    unsigned i;
    for (i = 0; i < sizeof(rom) / sizeof(rom[0]); i++)

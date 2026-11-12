@@ -1,6 +1,6 @@
 # Features And Settings
 
-VitAdhoc combines GB, GBC, GBA and Super NES emulation with a Vita-native library,
+VitAdhoc combines GB, GBC, GBA, Super NES and NES emulation with a Vita-native library,
 display pipeline, touch input and motion controls. This is the detailed guide;
 start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 [Play Together](../PLAY-TOGETHER.md) for a specific task.
@@ -13,11 +13,12 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | GBA | gpSP core and ARM dynamic recompiler; original game image 240 x 160 |
 | GB / GBC | TGB Dual core; original game image 160 x 144; Super Game Boy border support |
 | Super NES | Snes9x 1.63 in its own program (`snes.bin`, non-commercial licence); sound and picture drawing on their own cores; up to four players with the Super Multitap |
+| NES / Famicom | FCEUmm inside the app (GPL-2.0-or-later); NES, Famicom Disk System (your own `disksys.rom`) and UNIF games |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
-| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`; supported stored/deflated `.zip` entries up to 32 MiB |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`; supported stored/deflated `.zip` entries up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
-| Extra folders | Up to eight; Settings writes a list capped at 480 characters |
+| Extra folders | Up to 24; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |
 | Rewind | Up to 60 seconds, subject to mode and available history |
 | Soft patches | IPS, BPS and UPS; original file unchanged; no soft-patching zipped games |
@@ -32,6 +33,14 @@ The home screen has console tabs, All/Starred/Recent views, sorting and
 play time. Find matches words in any order and ignores accents and
 punctuation. Latin accents are folded for the menu font; unsupported scripts
 may display as `?` without preventing the game from loading.
+
+**Settings > Library > Game names** chooses what the list calls a game: "Game
+title" (the default) cuts the bracketed tags, so `Quest (Hack v2).gba` reads
+"Quest"; "File name" shows the file's name as it is, without the extension.
+Whatever the setting, when two or more games in the list would show the same
+name, each of them also shows its file name under it, so a ROM hack and its
+parent can be told apart. Only the words on screen change: stars, covers, play
+time and saves stay with the file.
 
 On Wi-Fi, covers and title screens can be matched by name, cartridge code or
 checksum. Your own artwork takes priority. Optional hero images and short
@@ -73,10 +82,14 @@ Use **Settings > Library > Game folders**. Enter a folder to add it; enter
 the same folder again to remove it. The library rescans after the change.
 
 Built-in discovery includes the data-root `roms/`, common `ux0:ROMS/` and
-RetroFlow locations. Every folder directly inside `ux0:ROMS/` (a "SNES ROM
-Collection" folder, say) is scanned too; the file ending picks the console. Advanced users can set `extra_roms` in `vita.ini` or
+RetroFlow locations (`ux0:ROMS/NES`, `ux0:roms/NES` and RetroFlow's "Nintendo
+- Nintendo Entertainment System" among them). Every folder directly inside
+`ux0:ROMS/` (a "SNES ROM Collection" or "NES Games" folder, say) is scanned
+too; the file ending picks the console, never the folder's name, so a `.sfc`
+in a folder called NES is still a SNES game. Advanced users can set `extra_roms` in `vita.ini` or
 `config.ini`. A list in `vita.ini` takes precedence; `extra_roms = 0` disables
-the extra locations. Per-console `gba_roms`, `gb_roms` and `gbc_roms` keys are
+the extra locations. Per-console `gba_roms`, `gb_roms`, `gbc_roms`, `snes_roms` and
+`nes_roms` keys are
 also accepted unless `vita.ini` already supplies the complete list.
 
 The zip reader selects the first supported game entry, validates its CRC-32
@@ -93,7 +106,8 @@ The [install guide](../INSTALL.md#starting-a-game-from-another-app) has an examp
 ## Super NES
 
 SNES games open in their own player and return to the home screen when you
-quit. **L + R + Start** opens its pause menu: Resume, Picture, Multitap, four
+quit. **L + R + Start** opens its pause menu (the game page and the loading
+screen of a SNES game say so): Resume, Picture, Multitap, four
 save-state slots, Reset and Quit. Battery saves are `Game.srm` beside the game.
 
 Picture (saved for all SNES games, or for one with "Apply to: this game"):
@@ -103,6 +117,21 @@ CRT scanlines and LCD grid, each Off or 1-10; optional blending for hi-res and
 interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
 is drawn as a bezel. Every frame is shown with every picture option on; none
 is skipped or simplified to save time.
+
+## NES And Famicom
+
+NES games run inside VitAdhoc, as Game Boy games do: the same menu (Start +
+Select), ten state slots with pictures, Continue, fast forward, Game Genie and
+RAM cheats, patches, play time, per-game settings, RetroAchievements and the
+RetroArch save import (FCEUmm, Nestopia, Mesen folders). Battery saves are
+`Game.srm` beside the game, the file RetroArch uses. Famicom Disk System
+games (`.fds`) need your own `disksys.rom` (put it beside the game or in
+`ux0:data/GBAdhoc/nes/`); VitAdhoc cannot include it. UNIF files (`.unf`,
+`.unif`) play too. Box art and title screens come from the libretro
+thumbnails for the NES and the Famicom Disk System; a NES file is recognised by
+its contents without the 16-byte header (and the 512-byte trainer some files
+carry), a UNIF file by its name only. Rewind and link play are not available
+for NES games.
 
 ## Display
 

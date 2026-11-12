@@ -7,7 +7,7 @@
 
 int main(void)
 {
-   assert(FE_CONSOLE_SNES == 3 && FE_CONSOLE_COUNT == 4);
+   assert(FE_CONSOLE_SNES == 3 && FE_CONSOLE_COUNT == 5 && FE_CONSOLE_NES == 4);
    assert(ui_rom_matches_console("Game.sfc", FE_CONSOLE_SNES));
    assert(ui_rom_matches_console("Game.SMC", FE_CONSOLE_SNES));
    assert(ui_rom_matches_console("a.b.Sfc", FE_CONSOLE_SNES));

@@ -35,6 +35,7 @@
 
 #ifndef CHEATS_VITA_NO_CORE
 #include "gbcore/gbcore.h"
+#include "nescore/gbcore_mux.h"
 #endif
 
 /* The engine's kinds are the contract's kinds. */
@@ -219,6 +220,68 @@ static int map_error(int ce)
 }
 
 /* ======================================================================== */
+/* NES codes (the NES core decodes and applies them: nescore.h)            */
+/* ======================================================================== */
+
+/* Game Genie (6 or 8 letters), or a RAM poke "AAAA:VV" / "AAAA?CC:VV", one or
+ * several joined by + , ; or a blank.  Returns CHEAT_KIND_GB_GAMEGENIE for a
+ * list of Game Genie codes, CHEAT_KIND_GBA_RAW when a poke is in it, else 0. */
+static int nes_code_kind(const char *s)
+{
+   int kind = 0, any = 0;
+   while (*s)
+   {
+      char tok[24];
+      size_t n = 0, i;
+      int gg = 1;
+      while (*s && *s != '+' && *s != ',' && *s != ';' && *s != ' ')
+      {
+         if (n < sizeof(tok) - 1)
+            tok[n] = *s;
+         n++;
+         s++;
+      }
+      while (*s == '+' || *s == ',' || *s == ';' || *s == ' ')
+         s++;
+      if (!n)
+         continue;
+      if (n >= sizeof(tok))
+         return 0;
+      tok[n] = 0;
+      if (n == 6 || n == 8)
+      {
+         for (i = 0; i < n; i++)
+         {
+            char c = tok[i];
+            if (c >= 'a' && c <= 'z')
+               c = (char)(c - 32);
+            if (!c || !strchr("APZLGITYEOXUKSVN", c))
+               gg = 0;
+         }
+      }
+      else
+         gg = 0;
+      if (!gg)
+      {
+         /* AAAA:VV or AAAA?CC:VV */
+         int ok = (n == 7 && tok[4] == ':') || (n == 10 && tok[4] == '?' && tok[7] == ':');
+         for (i = 0; ok && i < n; i++)
+            if (!(i == 4 || (n == 10 && i == 7)) &&
+                !((tok[i] >= '0' && tok[i] <= '9') || (tok[i] >= 'a' && tok[i] <= 'f') ||
+                  (tok[i] >= 'A' && tok[i] <= 'F')))
+               ok = 0;
+         if (!ok)
+            return 0;
+         kind = CHEAT_KIND_GBA_RAW;
+      }
+      else if (!kind)
+         kind = CHEAT_KIND_GB_GAMEGENIE;
+      any = 1;
+   }
+   return any ? kind : 0;
+}
+
+/* ======================================================================== */
 /* the cores                                                                */
 /* ======================================================================== */
 
@@ -290,6 +353,35 @@ static int push(void)
    g_rom_failed = 0;
    if (!g_loaded)
       return -1;
+   if (g_console == FE_CONSOLE_NES)
+   {
+      static char joined[CHEATS_CODE_CAP * 8];
+      size_t o = 0;
+      for (i = 0; i < g_count && !g_suspended && !g_hardcore; i++)
+      {
+         size_t l;
+         if (!g_list[i].enabled || !g_list[i].usable)
+            continue;
+         l = strlen(g_list[i].code);
+         if (o + l + 2 > sizeof(joined))
+         {
+            if (overflow < 0)
+               overflow = i;
+            continue;
+         }
+         if (o)
+            joined[o++] = '+';
+         memcpy(joined + o, g_list[i].code, l);
+         o += l;
+      }
+      joined[o] = 0;
+#ifndef CHEATS_VITA_NO_CORE
+      gbmux_nes_cheats(joined);
+#else
+      cheats_test_pushes++;
+#endif
+      return overflow;
+   }
    if (g_console == FE_CONSOLE_GBA)
    {
       unsigned n_ops = 0, n_patches = 0, n_entries = 0;
@@ -362,6 +454,11 @@ static void validate_one(int i)
       out.flags = 0;
       rc = cheat_gba_compile(g_list[i].code, &g_ctx, &out, &kind);
       flags = out.flags;
+   }
+   else if (g_console == FE_CONSOLE_NES)
+   {
+      kind = nes_code_kind(g_list[i].code);
+      rc = kind ? CE_OK : CE_E_FORMAT;
    }
    else
    {
@@ -875,7 +972,7 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
    uint32_t crc;
 
    *match = CHEATS_MATCH_NONE;
-   if (!cheatdb_games())
+   if (console == FE_CONSOLE_NES || !cheatdb_games())
       return -1;
    rom_header(rom_path, console, code, title);
 
@@ -1113,6 +1210,11 @@ int cheats_validate(const char *code, fe_console_t console)
       out.n_ops = out.n_patches = 0;
       out.flags = 0;
       rc = cheat_gba_compile(clean, &ctx, &out, &kind);
+   }
+   else if (console == FE_CONSOLE_NES)
+   {
+      kind = nes_code_kind(clean);
+      rc = kind ? CE_OK : CE_E_FORMAT;
    }
    else
    {

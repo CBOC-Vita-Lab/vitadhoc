@@ -1,7 +1,7 @@
 /* zip_rom.h -- games kept in .zip files.
  *
  *   zip_rom_peek     which game a .zip holds: its first entry named .gba,
- *                    .gb or .gbc.  0 = found and usable; -2 = found but in a
+ *                    .gb, .gbc, .sfc, .smc, .nes, .fds, .unf or .unif.  0 = found and usable; -2 = found but in a
  *                    form this reader refuses (encrypted, another method,
  *                    too large); -1 = no game in it, or not a zip.
  *   zip_rom_extract  that entry, checked against its CRC-32, written to
@@ -15,7 +15,7 @@
 
 typedef struct
 {
-   int           console;              /* 0 GBA, 1 GB, 2 GBC, 3 SNES (fe_console_t) */
+   int           console;              /* 0 GBA, 1 GB, 2 GBC, 3 SNES, 4 NES (fe_console_t) */
    int           method;               /* 0 stored, 8 deflated            */
    unsigned      flags;
    unsigned long crc, csize, usize, local;

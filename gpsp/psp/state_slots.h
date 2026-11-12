@@ -44,8 +44,8 @@ static inline int psp_state_slot_top(int cur, int *top)
  * texture.  Like the .thumb it is a companion file: written after the state,
  * removed on a failed write, deleted with the state, and its absence (a 3.1
  * state) only ever costs the big picture. */
-#define PSP_STATE_SHOT_MAX_W   240
-#define PSP_STATE_SHOT_MAX_H   160
+#define PSP_STATE_SHOT_MAX_W   256
+#define PSP_STATE_SHOT_MAX_H   240
 #define PSP_STATE_SHOT_STRIDE  256
 #define PSP_STATE_SHOT_PATH_CAP (PSP_FILE_PATH_CAP + 6)
 
@@ -58,7 +58,8 @@ static inline int psp_state_slot_top(int cur, int *top)
 static inline const char *psp_state_slot1_suffix(fe_console_t console)
 {
    return console == FE_CONSOLE_GBC ? ".gbc.st0" :
-          console == FE_CONSOLE_GB  ? ".gb.st0"  : ".st0";
+          console == FE_CONSOLE_GB  ? ".gb.st0"  :
+          console == FE_CONSOLE_NES ? ".nes.st0" : ".st0";
 }
 
 /* Slot 1 is the historic .st0 file; slots 2-10 use .st1 through .st9. */

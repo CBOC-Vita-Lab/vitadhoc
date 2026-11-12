@@ -1,5 +1,26 @@
 # What's New
 
+## Version 1.4 (in progress)
+
+- **Game names** (Settings > Library): show the game's title or its file name.
+  Games that would show the same name, such as ROM hacks of one game, also
+  show their file name under it.
+- **NES and Famicom games.** A fifth shelf, NES, beside GBA, GB, GBC and SNES:
+  `.nes`, `.fds` (Famicom Disk System, with your own `disksys.rom`), `.unf` and
+  `.unif` games, zipped too. They play inside VitAdhoc like Game Boy games:
+  ten state slots with pictures, Continue, fast forward, Game Genie cheats,
+  patches, play time and Recent, per-game settings, RetroAchievements and the
+  RetroArch save import. Hold Start + Select for the menu. Found in
+  `ux0:ROMS/NES` and `ux0:roms/NES`, any folder inside `ux0:ROMS/`, RetroFlow's
+  NES folder and your own folders; saves are `Game.srm` beside the game. Box
+  art and title screens come by checksum or name like the other consoles.
+  Rewind and two-player link play are not available for NES games.
+- **Settings fix.** In Settings > Library the names of Cover picture and Sync
+  RetroArch saves were swapped: each row wore the other's name. They are the
+  right way round now.
+- **SNES menu hint.** The game page and the loading screen of a SNES game say
+  to hold L + R + Start for the menu.
+
 ## Version 1.3.1
 
 **Snappier menus and a new look.**

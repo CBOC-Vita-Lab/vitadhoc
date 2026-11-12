@@ -33,14 +33,17 @@ GB one).  Without the fixture the GB and GBC legs are skipped.
 """
 import argparse
 import glob
+import io
 import json
 import os
 import re
+import resource
 import shutil
 import struct
 import subprocess
 import sys
 import time
+import zipfile
 import zlib
 
 from PIL import Image, ImageChops
@@ -117,9 +120,13 @@ class Result:
 class Suite:
     def __init__(self, arch, update_refs, keep):
         self.arch, self.update, self.keep = arch, update_refs, keep
-        self.exe = os.path.join(HERE, "build", arch, "gbadhoc_host")
+        # APPTEST_BUILD=x86-dev: run another build tree's binary (make ARCH=x86
+        # B=build/x86-dev) beside a run in progress; the pictures still
+        # compare as the arch's, and go to their own folder.
+        build = os.environ.get("APPTEST_BUILD", arch)
+        self.exe = os.path.join(HERE, "build", build, "gbadhoc_host")
         self.prefix = QEMU if arch.startswith("armhf") else []
-        self.outdir = os.path.join(HERE, "build", "apptest", arch)
+        self.outdir = os.path.join(HERE, "build", "apptest", build)
         self.fails, self.checks, self.notes = [], 0, []
         self.summary = {}
         self.test = "?"
@@ -1453,7 +1460,12 @@ def t_cpufix(S):
              "LDM {pc}^ loads the CPSR from the SPSR",
              "MSR CPSR_c keeps the live flags",
              "RLUnCompWram from a halfword-aligned source",
-             "LZ77UnCompWram from a halfword-aligned source"]
+             "LZ77UnCompWram from a halfword-aligned source",
+             "NV (condition 0xF) words never run (ROM)",
+             "NV (condition 0xF) words never run (IWRAM)",
+             "NV (condition 0xF) words never run (EWRAM)",
+             "IWRAM code run via a mirror first sees its own pc (RAM_MIRROR_FIX)",
+             "EWRAM code run via a mirror first sees its own pc (RAM_MIRROR_FIX)"]
     extra = {"roms/gbadhoc-cpufix.gba": open(rom, "rb").read()}
     r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(6, wait=20),
               autoboot="gbadhoc-cpufix.gba", extra=extra)
@@ -1475,6 +1487,110 @@ def t_cpufix(S):
             continue
         S.check(sav[0x08 + n] == 1, "%s (saw 0x%x, result %d)" %
                 (name, seen, sav[0x08 + n]))
+
+
+def t_chain(S):
+    """XLAT_ITERATIVE (libretro/gpsp 70707ce): a chain of 6000 first-visit
+    blocks, ARM and Thumb, each ending in a branch to the next, is translated
+    with the host's stack limited to the Vita's 1 MiB (testrom/chain.c).  The
+    exits were resolved by recursion, one host frame pair per block, which
+    overflowed it."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-chain.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-chain.gba (make -C testrom chain): skipped")
+        return
+    extra = {"roms/gbadhoc-chain.gba": open(rom, "rb").read()}
+    old = resource.getrlimit(resource.RLIMIT_STACK)
+    try:
+        resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, old[1]))
+        r = S.run("chain", "120:shot=chain.png\n" + menu_pick(6, wait=20),
+                  autoboot="gbadhoc-chain.gba", extra=extra)
+    finally:
+        resource.setrlimit(resource.RLIMIT_STACK, old)
+    S.clean(r)
+    p = os.path.join(r.root, "roms", "gbadhoc-chain.sav")
+    sav = open(p, "rb").read() if os.path.exists(p) else b""
+    S.check(sav[:5] == b"CHAIN", "the cartridge wrote its results")
+    if sav[:5] != b"CHAIN":
+        return
+    for n, name in enumerate(["ARM chain of 6000 blocks",
+                              "Thumb chain of 6000 blocks",
+                              "ARM chain of 400 blocks in IWRAM"]):
+        seen = int.from_bytes(sav[0x10 + 4 * n:0x14 + 4 * n], "little")
+        S.check(sav[0x08 + n] == 1, "%s (returned %d, result %d)" %
+                (name, seen, sav[0x08 + n]))
+
+
+def t_objprio(S):
+    """The hardware's per-pixel OBJ priority (video.cc OBJ_EXACT;
+    testrom/objprio.c): a sprite of a worse priority that a later sprite of a
+    better priority overlaps with a transparent pixel is drawn at the better
+    priority there -- in front of a BG that painting by priority alone puts
+    over it.  Sprites already in order, an affine sprite's transparent
+    texture, and sprites that do not overlap draw as they always did.  Drawn
+    by the core, by the render thread (a second build of video.cc), and the
+    render thread's picture checked against the core's on every frame."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-objprio.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-objprio.gba (make -C testrom objprio): skipped")
+        return
+    extra = {"roms/gbadhoc-objprio.gba": open(rom, "rb").read()}
+    want = [
+        # case 1: A (prio 2) under B (prio 0, transparent left half)
+        (22, "B", "A alone, behind the BG"),
+        (26, "R", "A where B is transparent: drawn at B's priority"),
+        (30, "G", "B's own pixel"),
+        # case 2: already in order
+        (62, "R", "C in front of the BG"),
+        (66, "R", "C over D"),
+        (70, "B", "D behind the BG"),
+        # case 3: an affine sprite's transparent texture
+        (102, "R", "E under the affine F's transparent texture"),
+        (110, "B", "nothing there"),
+        # case 4: out of order but apart
+        (152, "B", "the prio-2 sprite behind the BG"),
+        (172, "B", "the prio-0 sprite's transparent half"),
+        (176, "G", "the prio-0 sprite's own half"),
+    ]
+    shots = {}
+    for mode in (0, 1):
+        r = S.run("objprio_rt%d" % mode, "120:shot=objprio.png\n130:quit\n",
+                  config={"scale_gba": 4, "filter_gba": 0},
+                  vita_ini={"render_thread": mode},
+                  autoboot="gbadhoc-objprio.gba", extra=extra)
+        S.clean(r)
+        im = S.picture(r, "objprio.png")
+        if not im:
+            continue
+        g = game_pixels(im)   # (scale_gba 4 is fitted to 3x in this window)
+        shots[mode] = g.tobytes()
+
+        def colour(x, y):
+            p = g.getpixel((x, y))
+            if max(p) < 100:
+                return "K"
+            return "RGB"[p.index(max(p))]
+
+        for y in (20, 24, 27):
+            for x, c, what in want:
+                S.check(colour(x, y) == c,
+                        "render_thread %d, row %d x %d: %s (got %s, want %s)" %
+                        (mode, y, x, what, colour(x, y), c))
+        S.check(colour(26, 19) == "B" and colour(26, 28) == "B",
+                "nothing above or below the sprites")
+    if len(shots) == 2:
+        S.check(shots[0] == shots[1], "the render thread's picture is the "
+                "core's")
+    r = S.run("objprio_rt2", "100:a:5\n", config={"last_rom": "gbadhoc-objprio.gba"},
+              vita_ini={"render_thread": 2}, autoboot="gbadhoc-objprio.gba",
+              extra=extra, args=("--frames", "1300"))
+    S.clean(r)
+    st = r.evt("vita_render")
+    checked = sum(int(e["checked"]) for e in st)
+    bad = sum(int(e["bad_frames"]) for e in st)
+    S.check(checked >= 1100 and bad == 0,
+            "the thread's picture is the core's on every frame "
+            "(%d checked, %d differed)" % (checked, bad))
 
 
 def t_realtime(S):
@@ -2631,9 +2747,9 @@ def t_find(S):
             "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
 
     r = run("console", "90:circle\n94:type=find-only\n150:triangle\n215:triangle\n"
-            "280:triangle\n330:triangle\n400:cross\n540:shot=game.png\n560:quit\n")
+            "280:triangle\n330:triangle\n380:triangle\n450:cross\n590:shot=game.png\n610:quit\n")
     S.check(r.has(r"^EVT browser_find active=0 ") and
-            len(r.evt("ui_browser_console")) == 4 and picked(r, "gbadhoc-test.gba"),
+            len(r.evt("ui_browser_console")) == 5 and picked(r, "gbadhoc-test.gba"),
             "a console change clears Find instead of hiding the remembered game on return")
 
     r = run("touch", "90:touch=715/37\n95:type=find-only-02\n"
@@ -2650,9 +2766,9 @@ def t_library_cache(S):
     """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
     with open(OWN_GBA, "rb") as cartridge:
         second_game = cartridge.read()
-    # four console tabs (GBA, GB, GBC, SNES) since 1.3: two full turns
-    script = ("60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+    # five console tabs (GBA, GB, GBC, SNES, NES) since 1.4: two full turns
+    script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+              "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:right\n+20:start\n" + "+8:down\n" * 10 +
               "+20:shot=quality_setting.png\n" + "+8:down\n" * 13 +
               "+20:shot=refresh_command.png\n+8:cross\n"
@@ -2664,8 +2780,8 @@ def t_library_cache(S):
     scans = r.evt("rom_scan_time")
     sides = r.evt("rom_scan_side")
     S.check(len(scans) == 2 and {d.get("console") for d in scans} == {"0"} and
-            len(sides) == 6 and {d.get("console") for d in sides} == {"1", "2", "3"},
-            "one walk lists all four consoles; only the explicit refresh walks again "
+            len(sides) == 8 and {d.get("console") for d in sides} == {"1", "2", "3", "4"},
+            "one walk lists all five consoles; only the explicit refresh walks again "
             "(scans %s, side lists %s)" % ([d["_"] for d in scans], [d["_"] for d in sides]))
     S.check(len(r.evt("rom_cache_hit")) >= 4, "revisited console tabs use cached lists")
     S.check(r.has(r"library_refresh_asked") and r.has(r"library_refresh_done console=0 roms=2"),
@@ -5671,7 +5787,583 @@ def t_snes_library(S):
             "a picture in covers/ named like a SNES game is taken (%s)" % [d["_"] for d in w])
 
 
-TESTS = [("list", t_list), ("snes_library", t_snes_library), ("extra_roms", t_extra_roms),
+# Settings > LIBRARY > Game names: one above Cover picture (GitHub #16).
+NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 8
+
+
+def names_library(S):
+    """A parent game, two hacks of it (one in a folder) and a game of its
+    own: the same cartridge under four file names."""
+    rom = open(OWN_GBA, "rb").read()
+    return {"roms/Quest.gba": rom, "roms/Quest (Hack v2).gba": rom,
+            "roms/Hacks/Quest (Hard Mode).gba": rom,
+            "roms/Solo (Europe).gba": rom}
+
+
+def names_seen(r):
+    """Every game the home page named: file -> (title, subtitle), the last
+    time it was named."""
+    out = {}
+    for d in r.evt("ui_game_name"):
+        out[d["rom"].strip('"')] = (d["title"].strip('"'), d["sub"].strip('"'), d["mode"])
+    return out
+
+
+def t_names_duplicate_subtitle(S):
+    """Games that would show the same name (a ROM hack and its parent) also
+    show their file name under it, whatever Game names says; a game with a
+    name of its own shows none (GitHub #16)."""
+    base = {"ui_home": 1, "last_rom": None}
+    r = S.run("names_dup", "60:shot=a.png\n+40:right\n+40:right\n+40:right\n+40:right\n"
+              "+40:shot=d.png\n+10:quit\n", config=base,
+              extra=names_library(S))
+    S.clean(r)
+    seen = names_seen(r)
+    S.check(len(seen) == 5, "the four games and the test cartridge were each named (%s)"
+            % sorted(seen))
+    for f in ("Quest.gba", "Quest (Hack v2).gba", "Quest (Hard Mode).gba"):
+        t = seen.get(f)
+        S.check(t and t[0] == "Quest",
+                "%s still reads 'Quest' (Game title is the default) (%s)" % (f, t))
+    S.check(seen.get("Quest (Hack v2).gba", ("", ""))[1] == "Quest (Hack v2)" and
+            seen.get("Quest (Hard Mode).gba", ("", ""))[1] == "Quest (Hard Mode)" and
+            seen.get("Quest.gba", ("", ""))[1] == "Quest",
+            "each duplicate shows its file name without the extension (%s)"
+            % {k: v[1] for k, v in seen.items()})
+    S.check(seen.get("Solo (Europe).gba") == ("Solo", "", "0"),
+            "a name of its own gets no subtitle (%s)" % (seen.get("Solo (Europe).gba"),))
+    S.picture(r, "d.png")
+    # Starred shows only one of them: no duplicate is on the list, no subtitle.
+    r = S.run("names_dup_view", "60:right\n+40:square\n+40:select\n+60:quit\n",
+              config=base, extra=names_library(S))
+    S.clean(r)
+    v = r.evt("ui_game_name")
+    S.check(v and any(d["sub"] == '""' for d in v[1:]),
+            "one starred game alone on the list loses its subtitle (%s)"
+            % [d["_"] for d in v])
+    # "File name" keeps the subtitles for what is still the same name.
+    r = S.run("names_dup_file", "60:shot=a.png\n+10:quit\n",
+              config=dict(base, lib_names=1),
+              extra=dict(names_library(S), **{"roms/Other/Quest.gba":
+                                              open(OWN_GBA, "rb").read()}))
+    S.clean(r)
+    seen = names_seen(r)
+    S.check(all(t[1] in ("", "Hacks/", "Other/") for t in seen.values()),
+            "under File name only a folder can tell equal names apart (%s)" % seen)
+
+
+def t_names_filename(S):
+    """Settings > Library > Game names: File name shows the file as it is
+    (brackets kept), changes at once, persists as lib_names in config.ini,
+    and changes nothing but the words: the game picked is the same file
+    (GitHub #16)."""
+    base = {"ui_home": 1, "last_rom": None}
+    extra = names_library(S)
+    r = S.run("names_row", NAMES_ROW + "+10:shot=row.png\n+4:right\n+10:shot=row_file.png\n"
+              "+4:circle\n+60:shot=home_file.png\n+10:right\n+40:right\n+40:quit\n",
+              config=base, extra=extra)
+    S.clean(r)
+    S.picture(r, "row.png")
+    S.picture(r, "row_file.png")
+    S.picture(r, "home_file.png")
+    S.check(r.has(r"^EVT lib_names mode=1"), "the row switches to File name")
+    seen = names_seen(r)
+    S.check(seen.get("Quest (Hack v2).gba", ("", "", ""))[0::2] == ("Quest (Hack v2)", "1"),
+            "the home page now reads the file name (%s)" % seen)
+    S.check(not any(v[0] == "Quest" and v[2] == "1" and v[1] for v in seen.values()),
+            "...so the parent's own subtitle is gone (%s)" % seen)
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^lib_names = 1$", ini, re.M), "config.ini keeps lib_names = 1")
+    # From the file: names as files, a game launches the same file.
+    r = S.run("names_cfg", "60:cross\n+30:quit\n", config=dict(base, lib_names=1),
+              extra=extra)
+    S.clean(r)
+    seen = names_seen(r)
+    p = r.evt("ui_browser_pick")
+    S.check(p and os.path.exists(os.path.join(r.root, "roms", p[0]["rom"])),
+            "the game picked is a real file in roms/ (%s)" % (p[0]["rom"] if p else None))
+    S.check(any(v[0] == k[:-4] for k, v in seen.items()),
+            "every name shown is its file name without the extension (%s)" % seen)
+    # The default writes nothing new into an old config.ini.
+    r = S.run("names_default", "60:quit\n", config=base, extra=extra)
+    S.clean(r)
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check("lib_names" not in ini, "an untouched Game names leaves config.ini alone")
+
+
+# ---- Settings > LIBRARY: Cover picture and Sync RetroArch saves ---------------
+# At 1.3.1 the two labels were in the other order from the two rows (SET_COVERPIC
+# and SET_SYNCRA): the row that opens the cover page was called "Sync RetroArch
+# saves" and the on/off row "Cover picture".  The app says which row it draws
+# (settings_row row=cover|sync label=...) and what a press does is checked here.
+def t_settings_labels(S):
+    """Settings > Library: the row called Cover picture is the one that opens the
+    cover page (it has no on/off), the row called Sync RetroArch saves is the
+    one that toggles saves-sync, on the Vita home and in the shelf list."""
+    for ui in (1, 0):
+        base = {"ui_home": ui, "last_rom": None}
+        r = S.run("settings_labels_%d" % ui, COVER_ROW + "+10:shot=cover_row.png\n"
+                  "+4:left\n+10:down\n+10:shot=sync_row.png\n+4:left\n+10:left\n"
+                  "+10:up\n+10:cross\n+30:shot=cover_page.png\n+4:circle\n"
+                  "+10:circle\n+60:quit\n", config=base)
+        S.clean(r)
+        rows = [(d["row"], d["label"].strip('"')) for d in r.evt("settings_row")]
+        S.check(set(rows) == {("cover", "Cover picture"), ("sync", "Sync RetroArch saves")},
+                "ui_home=%d: the row that opens the cover page wears the name Cover picture and "
+                "the on/off row Sync RetroArch saves, never the other's (%s)" % (ui, rows))
+        flips = r.evt("sync_ra_saves")
+        S.check(len(flips) == 2 and [d["on"] for d in flips] == ["0", "1"],
+                "ui_home=%d: left on the Sync RetroArch saves row turns syncing off, "
+                "again on; left on Cover picture changed nothing (%s)" %
+                (ui, [d["_"] for d in flips]))
+        S.picture(r, "cover_row.png")
+        S.picture(r, "sync_row.png")
+        S.picture(r, "cover_page.png")
+
+
+# ---- NES (1.4) --------------------------------------------------------------
+def ines(prg=2, chr_=1, trainer=False, fill=0x11):
+    """A small iNES file: header, optional 512-byte trainer, PRG and CHR."""
+    head = b"NES\x1a" + bytes([prg, chr_, 0x04 if trainer else 0x00, 0]) + bytes(8)
+    body = bytes([fill]) * (prg * 16384) + bytes([fill ^ 0xFF]) * (chr_ * 8192)
+    return head, (bytes(range(256)) * 2 if trainer else b""), body
+
+
+def crc32(b):
+    return zlib.crc32(b) & 0xFFFFFFFF
+
+
+def nes_db_app(S, out, records):
+    """A copy of the package's assets with a database of our own: `records`
+    is {key: value}; returns the --app directory."""
+    app = os.path.join(out, "app")
+    shutil.rmtree(app, ignore_errors=True)
+    os.makedirs(app)
+    src = os.path.join(HERE, "..", "assets")
+    for n in os.listdir(src):
+        if n not in ("gamedb.txt", "gamedb.txt.txt"):
+            os.symlink(os.path.abspath(os.path.join(src, n)), os.path.join(app, n))
+    with open(os.path.join(app, "gamedb.txt"), "w", encoding="utf-8") as f:
+        for k in sorted(records):
+            f.write("%s\t%s\n" % (k, records[k]))
+    return app
+
+
+NES_ROM_DIR = None
+
+
+def nes_rom(S, name):
+    """One of the NES twin's synthetic cartridges (nes/twin/tests/make_roms.py,
+    hand-written 6502, no commercial code), generated at run time into the
+    suite's output folder: the bytes are never committed."""
+    global NES_ROM_DIR
+    if NES_ROM_DIR is None:
+        d = os.path.join(S.outdir, "nes_roms")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+        subprocess.run([sys.executable, os.path.join(HERE, "..", "..", "..", "nes", "twin",
+                        "tests", "make_roms.py"), d], check=True, capture_output=True)
+        NES_ROM_DIR = d
+    with open(os.path.join(NES_ROM_DIR, name), "rb") as f:
+        return f.read()
+
+
+def t_nes_boot(S):
+    """A NES game runs inside the app like a Game Boy game: it boots in
+    process (no other program), draws its 256x224 picture, the picture is
+    the same twice, the battery file is written beside the game as Game.srm
+    and counts the boots, and the game keeps nothing on the card but that."""
+    rom = nes_rom(S, "nrom.nes")
+    script = "120:shot=a.png\n+60:shot=b.png\n+10:quit\n"
+    r = S.run("nes_boot", script, autoboot="Boot Test.nes", extra={"roms/Boot Test.nes": rom})
+    S.clean(r)
+    S.check(r.has(r"^EVT gb_rom_loaded console=NES") and r.has(r"^EVT av_info fps=60\.\d+ rate=48000 w=256 h=224"),
+            "the NES core boots in process: 256x224 at 48 kHz (%s)" %
+            [l for l in r.log if "av_info" in l][:1])
+    S.check(not r.has(r"nes_launch|snes_launch"), "no other program is started")
+    ga, gb = r.shot("a.png"), r.shot("b.png")
+    S.check(ga.tobytes() == gb.tobytes() and len(ga.getcolors(1 << 20) or [0] * 99) > 3,
+            "the picture is drawn and stable (the same at frames 120 and 180)")
+    S.picture(r, "a.png", "nes_boot.png")
+    srm = os.path.join(r.root, "roms", "Boot Test.srm")
+    S.check(os.path.exists(srm) and os.path.getsize(srm) == 8192 and open(srm, "rb").read()[0] == 1,
+            "Boot Test.srm is the 8 KiB battery file and the game counted one boot")
+    # booted again with that save: the game counts a second boot
+    keep = open(srm, "rb").read()
+    r2 = S.run("nes_boot2", "100:quit\n", autoboot="Boot Test.nes",
+               extra={"roms/Boot Test.nes": rom, "roms/Boot Test.srm": keep})
+    S.clean(r2)
+    srm2 = os.path.join(r2.root, "roms", "Boot Test.srm")
+    S.check(os.path.exists(srm2) and open(srm2, "rb").read()[0] == 2,
+            "the save is loaded at the next start (second boot counted)")
+    S.check(not glob.glob(os.path.join(r2.root, "roms", "*.tmp")), "no temporary file is left beside the game")
+
+
+def t_nes_states(S):
+    """NES states, as every console has them: ten slots under states/nes/ with
+    a thumbnail and a big picture, slot 3 is saved while the sprite sits at
+    one place, the sprite is moved on, loading puts it back (the picture and
+    the game's own RAM: the A counter at $6003 in the save), and the Continue
+    point (leaving the game) is a whole state."""
+    rom = nes_rom(S, "nrom.nes")
+    script = ("100:a:6\n+30:right:25\n+40:shot=before.png\n" + menu_pick(1) +
+              "+20:down\n+8:down\n+10:square\n+60:shot=saved.png\n+10:circle\n+10:circle\n"
+              "+20:left:40\n+50:shot=moved.png\n" + menu_pick(1) +
+              "+20:down\n+8:down\n+10:cross\n+60:circle\n+10:circle\n+30:shot=after.png\n+10:quit\n")
+    r = S.run("nes_states", script, autoboot="State Test.nes",
+              extra={"roms/State Test.nes": rom})
+    S.clean(r)
+    sd = os.path.join(r.root, "states", "nes")
+    have = sorted(os.listdir(sd)) if os.path.isdir(sd) else []
+    st = [n for n in have if re.search(r"\.st2$", n)]
+    S.check(st and os.path.getsize(os.path.join(sd, st[0])) > 1000 and
+            any(n.endswith(".st2.thumb") for n in have) and any(n.endswith(".st2.shot") for n in have),
+            "slot 3 is a state with its thumbnail and big picture in states/nes/ (%s)" % have)
+    S.check(r.has(r"^EVT state_save slot=3 ") and r.has(r"^EVT state_load slot=3 via=\S+ rc=0"),
+            "saved and loaded in slot 3")
+    sh = lambda n: r.shot(n).tobytes()
+    S.check(sh("before.png") != sh("moved.png"), "the sprite moved between the save and the load")
+    top = lambda n: r.shot(n).crop((0, 70, 960, 544)).tobytes()    # below the toast
+    S.check(top("before.png") == top("after.png"),
+            "loading the state puts the picture back exactly")
+    S.check(os.path.getsize(os.path.join(r.root, "roms", "State Test.srm")) == 8192,
+            "the battery file is still the 8 KiB save")
+
+
+def t_nes_continue(S):
+    """Leaving a NES game for the list keeps a Continue point (states/nes/
+    <game>.rsm), and Continue on the home screen resumes it: the sprite is
+    where it was left."""
+    rom = nes_rom(S, "nrom.nes")
+    home = {"ui_home": 1, "last_rom": "Cont Test.nes", "console": 4}
+    r = S.run("nes_continue", "120:right:30\n+50:shot=left.png\n" + QUIT_TO_LIST +
+              "+150:quit\n", config=home, autoboot="Cont Test.nes",
+              extra={"roms/Cont Test.nes": rom})
+    S.clean(r)
+    sd = os.path.join(r.root, "states", "nes")
+    rsm = [n for n in (os.listdir(sd) if os.path.isdir(sd) else []) if n.endswith(".rsm")]
+    S.check(rsm and os.path.getsize(os.path.join(sd, rsm[0])) > 1000,
+            "a Continue point exists for the NES game (%s)" % rsm)
+    keep = {"states/nes/" + n: open(os.path.join(sd, n), "rb").read() for n in os.listdir(sd)}
+    keep["roms/Cont Test.nes"] = rom
+    keep["playlog.txt"] = open(os.path.join(r.root, "playlog.txt"), "rb").read()
+    keep["roms/Cont Test.srm"] = open(os.path.join(r.root, "roms", "Cont Test.srm"), "rb").read()
+    r2 = S.run("nes_continue2", "60:cross\n+100:shot=back.png\n+10:quit\n", config=home, extra=keep)
+    S.clean(r2)
+    S.check(r2.has(r"^EVT state_load path=.*states/nes/.*\.rsm via=continue rc=0"),
+            "Cross on the home screen continues the NES game from its point")
+    S.check(r.shot("left.png").crop((169, 70, 790, 544)).tobytes() ==
+            r2.shot("back.png").crop((169, 70, 790, 544)).tobytes(),
+            "the game picture after Continue is the one it was left with")
+
+
+def gg_encode(addr, val):
+    """The NES Game Genie code (six letters) that makes a read of ROM address
+    addr ($8000-$FFFF) return val (nesdev: Game Genie)."""
+    L = "APZLGITYEOXUKSVN"
+    n = [(val & 7) | ((val >> 4) & 8), ((val >> 4) & 7) | ((addr >> 4) & 8),
+         (addr >> 4) & 7, ((addr >> 12) & 7) | (addr & 8),
+         (addr & 7) | ((addr >> 8) & 8), ((addr >> 8) & 7) | (val & 8)]
+    return "".join(L[i] for i in n)
+
+
+def nes_cht(code, name="Test code"):
+    return ('cheats = 1\ncheat0_desc = "%s"\ncheat0_code = "%s"\ncheat0_enable = true\n' % (name, code))
+
+
+def t_nes_more(S):
+    """The rest of what a console gets, for a NES game: fast forward (3x, with
+    the right frames per refresh), a patch (IPS) beside the game with the
+    patched copy run and the saves keeping the game's name, a cheat (a Game
+    Genie code and a RAM poke, from the game's .cht), the play log and Recent,
+    a setting of this game alone, the RetroAchievements hash (the file
+    without its 16-byte header) and a RetroArch save imported."""
+    import hashlib
+    rom = nes_rom(S, "nrom.nes")
+    plain = S.run("nes_plain", "120:shot=a.png\n+10:quit\n", autoboot="Plain.nes",
+                  extra={"roms/Plain.nes": rom})
+    S.clean(plain)
+    # fast forward
+    r = S.run("nes_ff", "120:square:120\n+0:shot=ff.png\n+60:quit\n", autoboot="Fast.nes",
+              extra={"roms/Fast.nes": rom})
+    S.clean(r)
+    st = r.evt("ff_stats")
+    if S.check(len(st) == 1, "fast forward went on and off once"):
+        fr, vc = int(st[0]["frames"]), int(st[0]["refreshes"])
+        S.check(3.0 * vc <= fr <= 3.0 * vc + 3 and 118 <= vc <= 122,
+                "3x: %d emulated frames in %d refreshes" % (fr, vc))
+    # patch
+    idx = rom.index(b"\x0f\x16\x2a\x12") + 1
+    ips = b"PATCH" + idx.to_bytes(3, "big") + b"\x00\x01" + b"\x30" + b"EOF"
+    want = bytearray(rom)
+    want[idx] = 0x30
+    r = S.run("nes_patch", "120:shot=a.png\n+10:quit\n", autoboot="Hack.nes",
+              extra={"roms/Hack.nes": rom, "roms/Hack.ips": ips})
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_patch file=.*Hack.ips kind=1 rc=1 size=%d" % len(rom)),
+            "the IPS patch is applied (%s)" % [e["_"] for e in r.evt("rom_patch")])
+    pf = glob.glob(os.path.join(r.root, "patched", "Hack*"))
+    S.check(pf and open(pf[0], "rb").read() == bytes(want), "the patched copy is the result, byte for byte")
+    S.check(open(os.path.join(r.root, "roms", "Hack.nes"), "rb").read() == rom, "the game's own file is untouched")
+    S.check(r.has(r"^EVT game rom=.*/roms/Hack.nes .* save=.*/roms/Hack.srm"), "the save keeps the game's name")
+    S.check(r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(), "the patched game draws differently")
+    # cheats: a Game Genie code on the palette byte, and a poke of the A counter
+    code = gg_encode(0xC000 + (idx + 1 - 16) % 0x4000, 0x30)   # the palette's third colour
+    r = S.run("nes_gg", "120:shot=a.png\n+10:quit\n", autoboot="Genie.nes",
+              extra={"roms/Genie.nes": rom, "cheats/Genie.cht": nes_cht(code)})
+    S.clean(r)
+    S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "the .cht is loaded with its code on (%s)" %
+            [e["_"] for e in r.evt("cheats_load")])
+    S.check(r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(),
+            "the Game Genie code %s changes what the game draws" % code)
+    r = S.run("nes_poke", "150:quit\n", autoboot="Poke.nes",
+              extra={"roms/Poke.nes": rom, "cheats/Poke.cht": nes_cht("6003:5A", "A count")})
+    S.clean(r)
+    S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "a RAM poke code (6003:5A) is accepted and on")
+    # the play log, and a setting of this game alone
+    log = os.path.join(r.root, "playlog.txt")
+    lines = open(log).read().splitlines() if os.path.exists(log) else []
+    S.check(len(lines) == 1 and lines[0].split("\t")[3] == "Poke.nes" and lines[0].split("\t")[2] == "1",
+            "playlog.txt has the NES game (%r)" % lines)
+    r = S.run("nes_game_ini", "100:quit\n", autoboot="Own.nes",
+              extra={"roms/Own.nes": rom, "games/Own.nes.ini": "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT display_profile console=NES scale=stretch"), "the per-game file is read for a NES game (%s)" %
+            [e["_"] for e in r.evt("display_profile")])
+    # RetroAchievements: the file's hash without its iNES header
+    md5 = hashlib.md5(rom[16:]).hexdigest()
+    srv = RaServer(md5)
+    try:
+        keep = {"retroachievements.txt": "user=ra_tester\ntoken=tok-1\nhardcore=0\n", "roms/Ach.nes": rom}
+        r = S.run("nes_ra", "400:quit\n", autoboot="Ach.nes", vita_ini={"ra_host": srv.url()}, extra=keep)
+        S.clean(r)
+        S.check(r.has(r"^EVT ra_game_begin hash=%s hardcore=0" % md5),
+                "RetroAchievements is asked for the MD5 of the game without its 16-byte header (%s)" %
+                [e["_"] for e in r.evt("ra_game_begin")])
+    finally:
+        srv.stop()
+    # a save from RetroArch's FCEUmm folder is imported
+    sv = bytes([9]) + bytes(8191)
+    r = S.run("nes_import", "100:quit\n", autoboot="Imp.nes",
+              extra={"roms/Imp.nes": rom, "retroarch/savefiles/FCEUmm/Imp.srm": sv})
+    S.clean(r)
+    S.check(r.has(r"^EVT save_import from=.*FCEUmm/Imp.srm"), "a save in RetroArch's FCEUmm folder is imported")
+
+
+def t_nes_library(S):
+    """NES games on the card, no setup: ux0:ROMS/NES and every folder under
+    ux0:ROMS (ux0:roms) is a game folder, the extension picks the console, so
+    a folder called "SNES ..." is never read as NES nor "NES ..." as SNES;
+    .nes .fds .unf .unif, ._ and dot files left out; TRIANGLE steps GBA, GB,
+    GBC, SNES, NES and back; picking one starts the NES program (the twin only
+    logs the launch) and writes nothing."""
+    cwd = os.path.join(S.outdir, "nes_library_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    head, tr, body = ines()
+    cart = head + body
+    junk = b"\x00\x05\x16\x07" + bytes(4092)
+    snes_rom = bytes(0x8000)
+    files = {
+        "ux0:ROMS/NES/Alpha (USA).nes": cart,
+        "ux0:ROMS/NES/Disk Game (Japan).fds": b"FDS\x1a\x01" + bytes(11) + bytes(65500),
+        "ux0:ROMS/NES/._Alpha (USA).nes": junk,
+        "ux0:ROMS/NES/.Hidden.nes": cart,
+        "ux0:ROMS/NES/Alpha (USA).srm": b"keep me",
+        "ux0:ROMS/NES/Alpha (USA).nes.bak": b"not a game",
+        "ux0:roms/NES Collection/Beta (Europe).NES": cart,
+        "ux0:roms/NES Collection/Sub/Gamma.unf": b"UNIF" + bytes(4092),
+        "ux0:roms/Famicom Games/Delta.unif": b"UNIF" + bytes(4092),
+        # the collision: "SNES" ends in "NES"
+        "ux0:ROMS/SNES ROM Collection/Super One (USA).sfc": snes_rom,
+        "ux0:ROMS/SNES ROM Collection/Super Two (USA).smc": snes_rom,
+        "ux0:ROMS/Super NES Games/Super Three.sfc": snes_rom,
+        "ux0:ROMS/SNES ROM Collection/Misfiled.nes": cart,   # a NES game, wherever it is
+        "ux0:roms/NES Collection/Misfiled.sfc": snes_rom,    # ...and a SNES game
+    }
+    for rel, data in files.items():
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+    folders = [os.path.join(cwd, "ux0:ROMS/NES"), os.path.join(cwd, "ux0:roms/NES Collection"),
+               os.path.join(cwd, "ux0:ROMS/SNES ROM Collection")]
+    before = {d: {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d)
+                  if os.path.isfile(os.path.join(d, n))} for d in folders}
+    # GBA -> GB -> GBC -> SNES -> NES -> GBA, then the NES shelf again, pick
+    steps = "90:triangle\n" + "+30:triangle\n" * 4
+    r = S.run("nes_library", steps + "+30:shot=gba.png\n"
+              "+2:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
+              "+60:shot=nes.png\n+2:cross\n+60:quit\n", cwd=cwd)
+    S.clean(r, allow="could not be started|NES")  # the library files are not playable cartridges
+    sw = [(d["console"], int(d["roms"])) for d in r.evt("ui_browser_console")]
+    order = [c for c, _ in sw if c]
+    while order and order[0] == "0" and order[1:2] != ["1"]:
+        order.pop(0)                       # (the first listing of the GBA shelf)
+    S.check(order[:9] == ["1", "2", "3", "4", "0", "1", "2", "3", "4"],
+            "TRIANGLE steps GB, GBC, SNES, NES and back to GBA, then on again (%s)" % sw)
+    nes = [n for c, n in sw if c == "4"]
+    snes = [n for c, n in sw if c == "3"]
+    S.check(nes and nes[0] == 6,
+            "the NES shelf holds the six NES games (.nes, .NES, .fds, .unf, .unif, "
+            "and the .nes in the SNES folder) and no ._ or dot file or .bak (%s)" % sw)
+    S.check(snes and snes[0] == 4,
+            "the SNES shelf holds its four (a 'SNES ROM Collection' and a 'Super NES "
+            "Games' folder; the .sfc in 'NES Collection' too) and no NES game (%s)" % sw)
+    S.check(r.has(r"^EVT game rom=.*\.(nes|NES|fds|unf|unif) .*console=NES") and not r.has(r"^EVT snes_launch"),
+            "picking one starts it in the app as a NES game")
+    after = {d: {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d)
+                 if os.path.isfile(os.path.join(d, n))} for d in folders}
+    S.check(before == after, "the card's files (save, other) are untouched")
+    S.picture(r, "nes.png")
+
+    # the Vita's home screen: the NES chip in the top bar, five of them fit
+    r = S.run("nes_home", "90:triangle\n" + "+30:triangle\n" * 3 + "+90:shot=home_nes.png\n"
+              "+2:triangle\n+90:shot=home_gba.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1})
+    S.clean(r)
+    sw = r.evt("ui_browser_console")
+    S.check(sw and any(e["console"] == "4" for e in sw),
+            "TRIANGLE reaches the NES shelf on the home screen (%s)" % [e["_"] for e in sw])
+    S.picture(r, "home_nes.png")
+    S.picture(r, "home_gba.png")
+
+    # a cover of your own for a NES game, taken as for the other consoles
+    r = S.run("nes_cover_own", "90:triangle\n" + "+30:triangle\n" * 3 + "+120:shot=home_cover.png\n"
+              "+10:quit\n", cwd=cwd, config={"ui_home": 1},
+              extra={"covers/Alpha (USA).png": cover_png((300, 400), (200, 40, 40)),
+                     "covers/Disk Game (Japan).png": cover_png((300, 400), (40, 200, 40))})
+    S.clean(r)
+    w = r.evt("cover_inbox")
+    S.check(any("stem=Alpha (USA) rc=1" in d["_"] for d in w) and
+            any("stem=Disk Game (Japan) rc=1" in d["_"] for d in w),
+            "pictures in covers/ named like a NES and a disk game are taken (%s)" % [d["_"] for d in w])
+
+
+def t_nes_direct(S):
+    """A NES game handed to the app by a launcher (--launch-param) starts in the
+    app itself: .nes, a UNIF file, a Disk System image (with the player's own
+    disksys.rom beside it) and a game in a .zip, whose save is named beside the
+    zip.  A .fds with no disksys.rom says so and returns."""
+    bios = nes_rom(S, "fds_bios/disksys.rom")
+    cases = (("Direct.nes", nes_rom(S, "nrom.nes"), {}),
+             ("Odd.UNF", nes_rom(S, "unif.unf"), {}),
+             ("Disk.fds", nes_rom(S, "nrom.fds"), {"roms/disksys.rom": bios}),
+             ("Disk2.fds", nes_rom(S, "nrom_hdr.fds"), {"roms/disksys.rom": bios}))
+    for name, data, more in cases:
+        r = S.run("nes_direct_" + name.split(".")[0].lower(), "90:quit\n",
+                  args=("--launch-param", name), extra=dict({"roms/" + name: data}, **more))
+        S.clean(r)
+        S.check(r.has(r"^EVT launch rom=.*%s console=NES" % re.escape(name)) and
+                r.has(r"^EVT gb_rom_loaded console=NES"),
+                "%s starts as a NES game in the app" % name)
+        S.check(not r.has(r"^EVT snes_launch|^EVT nes_launch"), "%s: no other program" % name)
+    r = S.run("nes_direct_nobios", "90:quit\n", args=("--launch-param", "NoBios.fds"),
+              extra={"roms/NoBios.fds": nes_rom(S, "nrom.fds")})
+    S.check(r.has(r"^EVT nes_load_failed reason=") and not r.has(r"^EVT gb_rom_loaded"),
+            "a disk image with no disksys.rom does not start (%s)" %
+            [e["_"] for e in r.evt("nes_load_failed")])
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("Zipped Game (USA).nes", nes_rom(S, "nrom.nes"))
+    r = S.run("nes_direct_zip", "120:quit\n", args=("--launch-param", "Zipped.zip"),
+              extra={"roms/Zipped.zip": buf.getvalue()})
+    S.clean(r)
+    S.check(r.has(r"^EVT game rom=.*Zipped\.zip .*console=NES .*save=.*roms/Zipped\.srm") and
+            r.has(r"^EVT gb_rom_loaded console=NES") and
+            os.path.exists(os.path.join(r.root, "roms", "Zipped.srm")),
+            "a zipped NES game runs and its save is named beside the zip")
+    # the hint under the game page and on the loading screen: the GB chord
+    src = open(os.path.join(HERE, "..", "..", "psp", "ui_psp.h")).read()
+    k = src.index("ui_menu_chord_is_lrs")
+    S.check("FE_CONSOLE_NES" not in src[k:k + 300],
+            "the L + R + START hint is SNES's alone: a NES game opens its menu with START + SELECT")
+
+
+def t_nes_cover(S):
+    """NES box art by checksum without the iNES header (and without the trainer
+    when flag 6 says there is one); a disk image by its checksum without the
+    FDS header, from the Famicom Disk System's pictures; a UNIF file by its name
+    only; a loosely named file by the title.  A database of the test's own."""
+    import http.server
+    import threading
+    import urllib.parse
+    out = os.path.join(S.outdir, "nes_cover_data")
+    shutil.rmtree(out, ignore_errors=True)
+    os.makedirs(out)
+    h1, tr1, b1 = ines(2, 1, trainer=True, fill=0x21)
+    h2, _, b2 = ines(1, 1, fill=0x32)
+    h3, _, b3 = ines(1, 0, fill=0x43)
+    fds_hdr = b"FDS\x1a\x01" + bytes(11)
+    fds_body = bytes([0x5A]) * 65500
+    unif = b"UNIF" + bytes(8) + bytes(range(256)) * 16
+    files = {"Mystery One.nes": h1 + tr1 + b1,          # trainer: skipped too
+             "Mystery Two.nes": h2 + b2,
+             "Mystery Disk.fds": fds_hdr + fds_body,
+             "Unif Game.unf": unif,
+             "Known Name (USA).nes": h3 + b3}
+    recs = {
+        "C%08X" % crc32(b1): "Right One (USA)",
+        "C%08X" % crc32(h1 + tr1 + b1): "Wrong Whole File (USA)",
+        "C%08X" % crc32(tr1 + b1): "Wrong Header Only (USA)",
+        "C%08X" % crc32(b2): "Right Two (World)",
+        "C%08X" % crc32(fds_body): "Right Disk (Japan)",
+        "C%08X" % crc32(fds_hdr + fds_body): "Wrong Disk (Japan)",
+        "C%08X" % crc32(unif): "Wrong Unif (USA)",
+        "NEunifgame": "Loose Unif Game (World)",
+        "C%08X" % crc32(b3): "Known Name (USA)",
+    }
+    app = nes_db_app(S, out, recs)
+    requested = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            requested.append(urllib.parse.unquote(self.path))
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    cwd = os.path.join(out, "cwd")
+    os.makedirs(os.path.join(cwd, "ux0:ROMS", "NES"))
+    for n, d in files.items():
+        with open(os.path.join(cwd, "ux0:ROMS", "NES", n), "wb") as f:
+            f.write(d)
+    try:
+        r = S.run("nes_cover_run", "90:triangle\n" + "+30:triangle\n" * 3 + "+600:shot=covers.png\n+10:quit\n",
+                  cwd=cwd, config={"ui_home": 1}, args=("--app", app),
+                  vita_ini={"art_url": "http://127.0.0.1:%d" % srv.server_port, "art_titles": 0})
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        th.join()
+    S.clean(r)
+    box = [q for q in requested if "/Named_Boxarts/" in q]
+    nes = "/Nintendo - Nintendo Entertainment System/Named_Boxarts/"
+    fds = "/Nintendo - Family Computer Disk System/Named_Boxarts/"
+    want = [nes + "Right One (USA).png", nes + "Right Two (World).png",
+            fds + "Right Disk (Japan).png", nes + "Loose Unif Game (World).png",
+            nes + "Mystery One.png", nes + "Mystery Two.png", fds + "Mystery Disk.png"]
+    for q in want:
+        S.check(q in box, "asked the art server for %s" % q)
+    S.check(not any("Wrong" in q for q in box),
+            "no cover was asked for by a checksum that includes a header or trainer, or "
+            "by a UNIF file's checksum (%s)" % [q for q in box if "Wrong" in q])
+    S.check(not any((q.startswith("/Nintendo - Game Boy") or "Super Nintendo" in q)
+                    and ("Right" in q or "Mystery" in q or "Unif" in q) for q in box),
+            "none of the NES games was looked up among another console's pictures (%s)" % box[:3])
+    S.check(nes + "Known Name (USA).png" in box and
+            nes + "Right Two (World).png" in box,
+            "a file already named like a database entry is asked for by that name")
+    S.picture(r, "covers.png")
+
+
+TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
+         ("nes_boot", t_nes_boot), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
          ("quality_preset", t_quality_preset), ("art_requeue", t_art_requeue),
@@ -5692,11 +6384,12 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("extra_roms", t_ex
          ("cheats", t_cheats), ("play", t_play), ("touch", t_touch), ("touch_feedback", t_touch_feedback),
          ("typing", t_typing), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
-         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix),
+         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed),
-         ("controls_defaults", t_controls_defaults)]
+         ("controls_defaults", t_controls_defaults),
+         ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle)]
 
 
 def main():

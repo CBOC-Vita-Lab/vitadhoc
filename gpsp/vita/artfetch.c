@@ -1063,16 +1063,29 @@ static int warm_one(const char *name)
    return written;
 }
 
-static const char *const SYS[4] = {
+/* 0 GBA, 1 GB, 2 GBC, 3 SNES, 4 NES, 5 Famicom Disk System */
+static const char *const SYS[6] = {
    "Nintendo%20-%20Game%20Boy%20Advance", "Nintendo%20-%20Game%20Boy",
    "Nintendo%20-%20Game%20Boy%20Color",
-   "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System" };
+   "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System",
+   "Nintendo%20-%20Nintendo%20Entertainment%20System",
+   "Nintendo%20-%20Family%20Computer%20Disk%20System" };
 
 typedef struct
 {
    char stem[AF_NAME_CAP], cand[5][AF_NAME_CAP];
    int ncand, sys[2], nsys, ready, crc_allowed, crc_tried, crc_unavailable;
+   int no_crc;                  /* UNIF: the checksum names nothing */
 } af_candidates;
+
+/* The cartridge's checksum as the console's catalogue has it: SNES without
+ * its copier header, NES / Famicom Disk System without theirs. */
+static int cart_crc(const af_candidates *a, const char *path, uint32_t *crc)
+{
+   return a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, crc, stop_now)
+        : a->sys[0] >= 4 ? gamedb_nes_crc_cancel(path, crc, stop_now)
+        : gamedb_file_crc_cancel(path, crc, stop_now);
+}
 
 static void candidates_init(af_candidates *a, const char *path, const char *name)
 {
@@ -1087,6 +1100,18 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    {
       a->sys[0] = 3;               /* SNES: by the file's own No-Intro name */
       a->nsys = 1;
+   }
+   else if (ext && !strcasecmp(ext, ".fds"))
+   {
+      a->sys[0] = 5;               /* Famicom Disk System */
+      a->nsys = 1;
+   }
+   else if (ext && (!strcasecmp(ext, ".nes") || !strcasecmp(ext, ".unf") ||
+                    !strcasecmp(ext, ".unif")))
+   {
+      a->sys[0] = 4;               /* NES: by checksum without the iNES header */
+      a->nsys = 1;
+      a->no_crc = strcasecmp(ext, ".nes") != 0;    /* UNIF: by name only */
    }
    else if (ext && !strcasecmp(ext, ".gbc"))
    {
@@ -1106,11 +1131,10 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    /* Not a No-Intro file name: the cartridge's checksum names it exactly
     * (any console; SNES without its copier header), read now so it is
     * asked for first */
-   if (!a->ncand && !stop_now())
+   if (!a->ncand && !a->no_crc && !stop_now())
    {
       uint32_t crc;
-      int r = a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, &crc, stop_now)
-                             : gamedb_file_crc_cancel(path, &crc, stop_now);
+      int r = cart_crc(a, path, &crc);
       if (r == 0)
       {
          a->crc_tried = 1;
@@ -1123,7 +1147,7 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
     * file may be (gamedb N records) */
    if (a->ncand < 2)
    {
-      static const char TAG[4] = { 'A', 'B', 'C', 'D' };
+      static const char TAG[6] = { 'A', 'B', 'C', 'D', 'E', 'F' };
       int k;
       for (k = 0; k < a->nsys && a->ncand < 3; k++)
          if (gamedb_name_loose(TAG[a->sys[k]], a->stem, a->cand[a->ncand], AF_NAME_CAP))
@@ -1131,7 +1155,7 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
    }
    /* the cartridge's checksum, if no name worked: any console now (SNES
     * without its copier header) */
-   a->crc_allowed = !gamedb_known_name(a->stem);
+   a->crc_allowed = !gamedb_known_name(a->stem) && !a->no_crc;
    if (!a->ncand || strcmp(a->cand[0], a->stem))
       memmove(a->cand[a->ncand++], a->stem, strlen(a->stem) + 1);
    a->ready = 1;
@@ -1161,8 +1185,7 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
             a->crc_tried = 0;          /* not tried: asked to stop first */
             return -1;
          }
-         if ((a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, &crc, stop_now)
-                             : gamedb_file_crc_cancel(path, &crc, stop_now)) != 0)
+         if (cart_crc(a, path, &crc) != 0)
          {
             if (stop_now())
             {

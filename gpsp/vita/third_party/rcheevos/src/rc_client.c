@@ -1979,11 +1979,11 @@ static void rc_client_start_session_callback(const rc_api_server_response_t* ser
   error_message = rc_client_server_error_message(&result, server_response->http_status_code, &start_session_response.response);
   outstanding_requests = rc_client_end_load_state(load_state);
 
-  if (error_message) {
-    rc_client_load_error(load_state, result, error_message);
-  }
-  else if (outstanding_requests < 0) {
+  if (outstanding_requests < 0) {
     /* previous load state was aborted, load_state was free'd */
+  }
+  else if (error_message) {
+    rc_client_load_error(load_state, result, error_message);
   }
   else if (outstanding_requests == 0 && load_state->client->state.allow_background_memory_reads) {
     rc_client_activate_game(load_state, &start_session_response);
@@ -2795,11 +2795,13 @@ rc_client_game_hash_t* rc_client_find_game_hash(rc_client_t* client, const char*
 
   if (!game_hash) {
     game_hash = (rc_client_game_hash_t*)rc_buffer_alloc(&client->state.buffer, sizeof(rc_client_game_hash_t));
-    memset(game_hash, 0, sizeof(*game_hash));
-    snprintf(game_hash->hash, sizeof(game_hash->hash), "%s", hash);
-    game_hash->game_id = RC_CLIENT_UNKNOWN_GAME_ID;
-    game_hash->next = client->hashes;
-    client->hashes = game_hash;
+    if (game_hash) {
+      memset(game_hash, 0, sizeof(*game_hash));
+      snprintf(game_hash->hash, sizeof(game_hash->hash), "%s", hash);
+      game_hash->game_id = RC_CLIENT_UNKNOWN_GAME_ID;
+      game_hash->next = client->hashes;
+      client->hashes = game_hash;
+    }
   }
   rc_mutex_unlock(&client->state.mutex);
 
@@ -3958,10 +3960,10 @@ static void rc_client_fetch_game_list_callback(const rc_api_server_response_t* s
         strings_size += strlen(src->image_name) + 1;
       if (src->image_url)
         strings_size += strlen(src->image_url) + 1;
-      hashes_size += src->num_supported_hashes * sizeof(const char*);
+      hashes_size += src->num_supported_hashes;
       for (i = 0; i < src->num_supported_hashes; i++)
         strings_size += strlen(src->supported_hashes[i]) + 1;
-      hashes_size += src->num_unsupported_hashes * sizeof(const char*);
+      hashes_size += src->num_unsupported_hashes;
       for (i = 0; i < src->num_unsupported_hashes; i++)
         strings_size += strlen(src->unsupported_hashes[i]) + 1;
     }
@@ -4359,6 +4361,10 @@ rc_client_achievement_list_t* rc_client_create_achievement_list(rc_client_t* cli
   buckets_size = RC_ALIGN(num_buckets * sizeof(rc_client_achievement_bucket_t));
 
   list = (rc_client_achievement_list_info_t*)malloc(list_size + buckets_size + num_achievements * sizeof(rc_client_achievement_t*));
+  if (!list) {
+    rc_mutex_unlock(&client->state.mutex);
+    return NULL;
+  }
   list->public_.buckets = bucket_ptr = (rc_client_achievement_bucket_t*)((uint8_t*)list + list_size);
   achievement_ptr = (const rc_client_achievement_t**)((uint8_t*)bucket_ptr + buckets_size);
 
@@ -4663,6 +4669,38 @@ static void rc_client_award_achievement_retry(rc_client_scheduled_callback_data_
   rc_client_award_achievement_server_call(ach_data);
 }
 
+static void rc_client_award_achievement_check_mastery(rc_client_t* client, uint32_t achievement_id)
+{
+  rc_mutex_lock(&client->state.mutex);
+  if (client->game) {
+    rc_client_subset_info_t* subset;
+    for (subset = client->game->subsets; subset; subset = subset->next) {
+      if (subset->mastery == RC_CLIENT_MASTERY_STATE_NONE) {
+        rc_client_achievement_info_t* scan = subset->achievements;
+        rc_client_achievement_info_t* stop = scan + subset->public_.num_achievements;
+        int found = 0;
+        for (; scan < stop; ++scan) {
+          if (scan->public_.id == achievement_id) {
+            found = 1;
+            break;
+          }
+        }
+
+        if (found) {
+          RC_CLIENT_LOG_INFO_FORMATTED(client, "%s %u %s",
+            (subset->public_.id == client->game->public_.id) ? "Game" : "Subset",
+            client->game->public_.id,
+            client->state.hardcore ? "mastered" : "completed");
+
+          subset->mastery = RC_CLIENT_MASTERY_STATE_PENDING;
+          break;
+        }
+      }
+    }
+  }
+  rc_mutex_unlock(&client->state.mutex);
+}
+
 static void rc_client_award_achievement_callback(const rc_api_server_response_t* server_response, void* callback_data)
 {
   rc_client_award_achievement_callback_data_t* ach_data =
@@ -4734,25 +4772,8 @@ static void rc_client_award_achievement_callback(const rc_api_server_response_t*
             ach_data->hardcore ? award_achievement_response.new_player_score : award_achievement_response.new_player_score_softcore);
       }
 
-      if (award_achievement_response.achievements_remaining == 0) {
-        rc_client_subset_info_t* subset;
-        for (subset = ach_data->client->game->subsets; subset; subset = subset->next) {
-          if (subset->mastery == RC_CLIENT_MASTERY_STATE_NONE &&
-              rc_client_subset_get_achievement_info(ach_data->client, subset, ach_data->id)) {
-            if (subset->public_.id == ach_data->client->game->public_.id) {
-              RC_CLIENT_LOG_INFO_FORMATTED(ach_data->client, "Game %u %s", ach_data->client->game->public_.id,
-                ach_data->client->state.hardcore ? "mastered" : "completed");
-              subset->mastery = RC_CLIENT_MASTERY_STATE_PENDING;
-            }
-            else {
-              RC_CLIENT_LOG_INFO_FORMATTED(ach_data->client, "Subset %u %s", ach_data->client->game->public_.id,
-                ach_data->client->state.hardcore ? "mastered" : "completed");
-
-              subset->mastery = RC_CLIENT_MASTERY_STATE_PENDING;
-            }
-          }
-        }
-      }
+      if (award_achievement_response.achievements_remaining == 0)
+        rc_client_award_achievement_check_mastery(ach_data->client, ach_data->id);
     }
   }
 
@@ -5080,6 +5101,10 @@ rc_client_leaderboard_list_t* rc_client_create_leaderboard_list(rc_client_t* cli
   buckets_size = RC_ALIGN(num_buckets * sizeof(rc_client_leaderboard_bucket_t));
 
   list = (rc_client_leaderboard_list_info_t*)malloc(list_size + buckets_size + num_leaderboards * sizeof(rc_client_leaderboard_t*));
+  if (!list) {
+    rc_mutex_unlock(&client->state.mutex);
+    return NULL;
+  }
   list->public_.buckets = bucket_ptr = (rc_client_leaderboard_bucket_t*)((uint8_t*)list + list_size);
   leaderboard_ptr = (const rc_client_leaderboard_t**)((uint8_t*)bucket_ptr + buckets_size);
 
@@ -5455,6 +5480,7 @@ static void rc_client_submit_leaderboard_entry_server_call(rc_client_submit_lead
   result = rc_api_init_submit_lboard_entry_request_hosted(&request, &api_params, &lboard_data->client->state.host);
   if (result != RC_OK) {
     RC_CLIENT_LOG_ERR_FORMATTED(lboard_data->client, "Error constructing submit leaderboard entry for leaderboard %u: %s", lboard_data->id, rc_error_str(result));
+    free(lboard_data);
     return;
   }
 
@@ -5585,7 +5611,7 @@ static void rc_client_fetch_leaderboard_entries_callback(const rc_api_server_res
       char* user = (char*)((uint8_t*)list + list_size);
       const rc_api_lboard_info_entry_t* lbentry = lbinfo_response.entries;
       const rc_api_lboard_info_entry_t* stop = lbentry + lbinfo_response.num_entries;
-      const size_t logged_in_user_len = strlen(client->user.display_name) + 1;
+      const size_t logged_in_user_len = client->user.display_name ? strlen(client->user.display_name) + 1 : 0;
       info->destroy_func = NULL;
       list->user_index = -1;
 

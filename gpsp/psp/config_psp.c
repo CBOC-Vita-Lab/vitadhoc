@@ -182,6 +182,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.lib_sort    = (int)fe_ini_get_int(cfg_path, "lib_sort", 0);
    if (g_pcfg.lib_sort < 0 || g_pcfg.lib_sort > 2)
       g_pcfg.lib_sort = 0;
+   g_pcfg.lib_names   = (int)fe_ini_get_int(cfg_path, "lib_names", 0) ? 1 : 0;
    g_pcfg.ab_buttons  = (int)fe_ini_get_int(cfg_path, "ab_buttons", -1);
    if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
       g_pcfg.ab_buttons = -1;
@@ -390,7 +391,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       strcpy(g_pcfg.nick, "PSP");
 #endif
    g_pcfg.console = (int)fe_ini_get_int(cfg_path, "console", FE_CONSOLE_GBA);
-   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_SNES)
+   if (g_pcfg.console < FE_CONSOLE_GBA || g_pcfg.console > FE_CONSOLE_NES)
       g_pcfg.console = FE_CONSOLE_GBA;
    fe_ini_get(cfg_path, "last_rom", g_pcfg.last_rom, sizeof(g_pcfg.last_rom));
    /* Every bind_* key is validated here; a bad one is reported
@@ -573,7 +574,7 @@ long pcfg_gb_rtc_utc_since(long now_local)
 
 int pcfg_remember_console(int console)
 {
-   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
+   if (console < FE_CONSOLE_GBA || console > FE_CONSOLE_NES)
       return -1;
    g_pcfg.console = console;
    /* The browser's console switch is the settings context: the next
@@ -647,6 +648,11 @@ void pcfg_save(void)
       char was[8];
       if (g_pcfg.lib_sort || fe_ini_get(cfg_path, "lib_sort", was, sizeof(was)))
          fe_ini_set_int(cfg_path, "lib_sort", g_pcfg.lib_sort);
+   }
+   {
+      char was[8];
+      if (g_pcfg.lib_names || fe_ini_get(cfg_path, "lib_names", was, sizeof(was)))
+         fe_ini_set_int(cfg_path, "lib_names", g_pcfg.lib_names);
    }
    /* ab_buttons: only once chosen, so "as the Vita says" stays no key. */
    if (g_pcfg.ab_buttons >= 0)
@@ -784,11 +790,11 @@ void pcfg_net_addr_push(const char *addr)
 pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 static int g_pdisp_live = FE_CONSOLE_GBA;
 
-static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes" };
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes" };
 
 const char *pcfg_console_tag(int console)
 {
-   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES" };
    return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
 }
 

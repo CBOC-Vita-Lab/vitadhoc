@@ -49,6 +49,35 @@ int main(int argc, char **argv)
           "the console matters: no GBA ActRaiser");
    expect(gamedb_name_by_crc(0x2D206BF7u, out, sizeof(out)) && !strcmp(out, "Chrono Trigger (USA)"),
           "SNES cartridges by CRC");
+   /* NES (E) and Disk System (F): loose titles by console, the CRC taken without
+    * the 16-byte iNES header and without a trainer */
+   expect(gamedb_name_loose('E', "Super Mario Bros", out, sizeof(out)) &&
+          !strcmp(out, "Super Mario Bros. (World)"), "NES: 'Super Mario Bros'");
+   expect(!gamedb_name_loose('A', "Duck Hunt", out, sizeof(out)) && gamedb_name_loose('E', "Duck Hunt", out, sizeof(out)),
+          "the console matters: Duck Hunt is NES only");
+   {
+      static unsigned char body[16384 + 8192], file[16 + 512 + 16384 + 8192 + 100];
+      uint32_t plain = 0, headed = 0, trained = 0;
+      FILE *t;
+      size_t i;
+      for (i = 0; i < sizeof(body); i++) body[i] = (unsigned char)(i * 7 + i / 251);
+      memset(file, 0, sizeof(file));
+      memcpy(file, "NES\x1a\x01\x01\x00\x00", 8);
+      memcpy(file + 16, body, sizeof(body));
+      t = fopen("nes_plain.tmp", "wb"); fwrite(body, 1, sizeof(body), t); fclose(t);
+      t = fopen("nes_headed.tmp", "wb"); fwrite(file, 1, 16 + sizeof(body) + 100, t); fclose(t);
+      file[6] = 0x04;
+      memmove(file + 16 + 512, body, sizeof(body));
+      memset(file + 16, 0x55, 512);
+      memcpy(file + 16 + 512, body, sizeof(body));
+      t = fopen("nes_trained.tmp", "wb"); fwrite(file, 1, 16 + 512 + sizeof(body), t); fclose(t);
+      expect(gamedb_file_crc("nes_plain.tmp", &plain, NULL) == 0, "crc of the plain body");
+      expect(gamedb_nes_crc_cancel("nes_headed.tmp", &headed, NULL) == 0 && headed == plain,
+             "NES CRC skips the 16-byte header (and ignores trailing bytes)");
+      expect(gamedb_nes_crc_cancel("nes_trained.tmp", &trained, NULL) == 0 && trained == plain,
+             "NES CRC skips the 512-byte trainer when flag 6 says there is one");
+      remove("nes_plain.tmp"); remove("nes_headed.tmp"); remove("nes_trained.tmp");
+   }
    expect(gamedb_name_by_code("BPEE", out, sizeof(out)) &&
           !strcmp(out, "Pokemon - Emerald Version (USA, Europe)"),
           "BPEE -> Emerald");

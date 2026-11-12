@@ -256,7 +256,7 @@ static const ui_theme *g_thm = &THM_DARK;
  * Atomic Purple sits too close to the GBA indigo to read as a change.
  *
  * Each has a light-theme accent: the dark ones vanish on the off-white page.
- * Indexed by fe_console_t: GBA, GB, GBC, SNES. */
+ * Indexed by fe_console_t: GBA, GB, GBC, SNES, NES. */
 #define RGB565(r, g, b) \
    ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
@@ -284,6 +284,11 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
    { "SNES", "Super Nintendo",  "sfc", RGB565(0xFF, 0x7A, 0x5C),
      { RGB565(0x6E, 0x1E, 0x2A), RGB565(0xC0, 0x39, 0x2B),
        RGB565(0xFF, 0x7A, 0x5C), 0, 0 }, 3, 1 },
+   /* The NES: the grey of its case with the red of its logo.  A neutral,
+    * because the other four already took indigo, green, teal and coral. */
+   { "NES", "NES", "nes", RGB565(0xC9, 0xCE, 0xD8),
+     { RGB565(0x3A, 0x3D, 0x45), RGB565(0xE6, 0x00, 0x12),
+       RGB565(0xC9, 0xCE, 0xD8), 0, 0 }, 3, 0 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -302,6 +307,9 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
    { "SNES", "Super Nintendo",  "sfc", RGB565(0xA3, 0x1D, 0x12),
      { RGB565(0x6E, 0x1E, 0x2A), RGB565(0xC0, 0x39, 0x2B),
        RGB565(0xFF, 0x7A, 0x5C), 0, 0 }, 3, 1 },
+   { "NES", "NES", "nes", RGB565(0x4A, 0x4F, 0x5B),
+     { RGB565(0x3A, 0x3D, 0x45), RGB565(0xE6, 0x00, 0x12),
+       RGB565(0xC9, 0xCE, 0xD8), 0, 0 }, 3, 0 },
 };
 
 static const ui_skin *skin_of(int console)
@@ -2318,7 +2326,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* The account and Hardcore in the browser; a running game's list
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
-       SET_HDR_LIB, SET_COVERPIC, SET_SYNCRA, SET_FOLDERS, SET_SORT,
+       SET_HDR_LIB, SET_NAMES, SET_COVERPIC, SET_SYNCRA, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_SAVETYPE, SET_CLOCK, SET_OWN_LOOK, SET_MOTION, SET_SENS,
        SET_REVERSE, SET_LEVEL, SET_SUN,
        /* The three plain choices of the controls come before Button mapping,
@@ -2462,6 +2470,13 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Hardcore" },
    { 0, "Achievements" },
    { 1, "LIBRARY" },
+   /* 1.4: Game title / File name (GitHub #16).  First under the header, so
+    * the walkers that wrap up from the top to Cover picture, Game folders
+    * and Game order keep their counts. */
+   { 0, "Game names" },
+   /* The labels follow the enum: Cover picture, then Sync RetroArch saves
+    * (they were in the other order, so each row wore the other's name). */
+   { 0, "Cover picture" },
    /* 1.3: RetroArch saves stay in step (save_sync.h).  Above Game folders,
     * so the walkers that wrap up from the top to Game folders / Game order
     * keep their counts. */
@@ -2471,7 +2486,6 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * the top past Button mapping: it keeps that place. */
    /* Before Game folders: the harness walks up from the top to Game
     * folders (Button mapping, Game order, Game folders) and keeps its row. */
-   { 0, "Cover picture" },
    { 0, "Game folders" },
    { 0, "Game order" },
    /* The running game's own (config_psp.h pcfg_game): its look, and the
@@ -2520,7 +2534,7 @@ static int set_row_shown(int idx)
 {
 #ifdef VITA
    if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS ||
-       idx == SET_SYNCRA || idx == SET_COVERPIC)
+       idx == SET_SYNCRA || idx == SET_COVERPIC || idx == SET_NAMES)
       return g_ov_browse;
    if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
       return g_ov_browse;
@@ -3210,6 +3224,12 @@ static void settings_adjust(int id, int dir)
    case SET_COVERPIC:
       /* not a value: X opens the page (screen_settings) */
       return;
+   case SET_NAMES:
+      /* Display only: paths, stars, covers, play log and saves are keyed on
+       * the file, never on the name shown. */
+      g_pcfg.lib_names = !g_pcfg.lib_names;
+      fe_evt("lib_names mode=%d", g_pcfg.lib_names);
+      break;
    case SET_SORT:
       g_pcfg.lib_sort = (g_pcfg.lib_sort + 3 + dir) % 3;
       g_library_resort = 1;
@@ -3443,6 +3463,19 @@ static void set_item(int y, int sel, int enabled, const char *label,
                     enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
 }
 
+/* The label a behaviour wears, for the host tests (app_tests.py, settings_labels):
+ * "settings_row row=cover label=..." when the highlight reaches the row. */
+static void set_row_trace(int sel, const char *row, const char *label)
+{
+   static const char *last;
+   if (!sel)
+      return;
+   if (last == label)
+      return;
+   last = label;
+   fe_evt("settings_row row=%s label=\"%s\"", row, label);
+}
+
 #ifdef VITA
 /* What the highlighted setting does, in one line under the list. */
 static const char *set_help(int id)
@@ -3630,6 +3663,11 @@ static const char *set_help(int id)
                              ? "A save taken from RetroArch is written back "
                                "to it too, unless RetroArch changed it."
                              : "RetroArch's save files are left alone.";
+   case SET_NAMES:    return g_pcfg.lib_names
+                             ? "Each game shows its file name, as it is on the "
+                               "card."
+                             : "Each game shows its title; games with the same "
+                               "title also show their file name.";
    case SET_SORT:     return "The order of All games and Starred. Recent is "
                              "newest first.";
    case SET_COVERPIC: return VID_GLYPH_X ": a picture of your own as the cover of the "
@@ -4264,6 +4302,7 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, g_cover_row != 0, set_rows[i].label,
                   g_cover_row == 2 ? "your own" :
                   g_cover_row == 1 ? "automatic" : "no game");
+         set_row_trace(g_cursor == i, "cover", set_rows[i].label);
          break;
       case SET_FOLDERS:
       {
@@ -4284,6 +4323,11 @@ static ui_action screen_settings(unsigned edges)
       case SET_SYNCRA:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   ui_host_sync_ra_on() ? "on" : "off");
+         set_row_trace(g_cursor == i, "sync", set_rows[i].label);
+         break;
+      case SET_NAMES:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.lib_names ? "File name" : "Game title");
          break;
       case SET_SORT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -6480,6 +6524,13 @@ static ui_action screen_menu(unsigned edges, int session_active)
          return screen_state_slots(0);   /* draw this frame as the new page */
 #ifdef VITA
       case M_WIRELESS:
+         if (g_pcfg.console == FE_CONSOLE_NES)
+         {
+            /* the two-player link is the Game Boy's and the GBA's cable */
+            snprintf(g_menu_note, sizeof(g_menu_note), "Link play is not "
+                     "available for NES games.");
+            break;
+         }
          screen_to(SCR_WIRELESS);
          play_net(1);
          break;
@@ -8393,7 +8444,8 @@ static int rom_has_sav(int idx)
          : g_pcfg.console == FE_CONSOLE_GBA
          ? snprintf(sav, sizeof(sav), "%.*s.sav",
                     (int)ui_rom_stem_length(rom), rom)
-         : g_pcfg.console == FE_CONSOLE_SNES      /* snes.bin: Game.srm */
+         : (g_pcfg.console == FE_CONSOLE_SNES ||
+            g_pcfg.console == FE_CONSOLE_NES)   /* Game.srm */
          ? snprintf(sav, sizeof(sav), "%.*s.srm",
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
@@ -9836,6 +9888,16 @@ static void rom_display_name(const rom_entry *r, char *out, size_t sz,
       n = sz - 1;
    memcpy(out, r->base, n);
    out[n] = '\0';
+#ifdef VITA
+   /* Settings > Library > Game names = File name: the stem as it is on the
+    * card, brackets and article included.  (Find asks with cut_region 0 and
+    * keeps matching the title.) */
+   if (cut_region && g_pcfg.lib_names)
+   {
+      ui_ascii_fold(out);
+      return;
+   }
+#endif
    /* No-Intro writes "Legend of Zelda, The".  Restoring the article to the
     * front costs nothing, reads properly, and matters most on exactly the
     * titles long enough to be truncated. */
@@ -9870,6 +9932,118 @@ static void rom_display_name(const rom_entry *r, char *out, size_t sz,
    }
    ui_ascii_fold(out);
 }
+
+#ifdef VITA
+/* SAME NAME, TWO GAMES (GitHub #16).  ROM hacks are named like their parent
+ * ("Game (Hack v2).gba" and "Game.gba" both read "Game" once the brackets
+ * are cut), so when two or more games of the list being shown would carry
+ * the same name, each of them also shows its file name (no extension)
+ * under it.  Display only: nothing here touches a path, a star, a cover,
+ * the play log or a save.  The flags are rebuilt when the list changes
+ * (names_prepare, once a frame) and read by names_subtitle. */
+static unsigned char g_name_dup[BROWSER_MAX];
+static unsigned      g_name_stamp = ~0u;
+
+static unsigned name_hash(const char *s)
+{
+   unsigned h = 2166136261u;
+   for (; *s; s++)
+      h = (h ^ (unsigned char)*s) * 16777619u;
+   return h;
+}
+
+static void names_prepare(int n_scan)
+{
+   int n = view_count(n_scan), i, j;
+   unsigned stamp = (unsigned)n * 31u + (unsigned)g_pcfg.lib_names * 7u +
+                    (unsigned)g_pcfg.lib_sort * 131u +
+                    g_rom_view_revision * 2654435761u +
+                    (unsigned)browser_tab() * 17u +
+                    (unsigned)scope_count(n_scan) * 53u +
+                    name_hash(g_find);
+   static unsigned short tab[2048];    /* open addressing: rom + 1, 0 free */
+   static char names[BROWSER_MAX][64];
+   if (stamp == g_name_stamp)
+      return;
+   g_name_stamp = stamp;
+   memset(g_name_dup, 0, sizeof(g_name_dup));
+   memset(tab, 0, sizeof(tab));
+   for (i = 0; i < n; i++)
+   {
+      int rom = view_rom(i);
+      unsigned h;
+      if (rom < 0 || rom >= BROWSER_MAX)
+         continue;
+      rom_display_name(&g_roms[rom], names[rom], sizeof(names[rom]), 1);
+      h = name_hash(names[rom]) & 2047u;
+      for (;;)
+      {
+         j = (int)tab[h] - 1;
+         if (j < 0)
+         {
+            tab[h] = (unsigned short)(rom + 1);
+            break;
+         }
+         if (j != rom && !strcmp(names[j], names[rom]))
+         {
+            g_name_dup[j] = g_name_dup[rom] = 1;
+            break;
+         }
+         if (j == rom)
+            break;
+         h = (h + 1) & 2047u;
+      }
+   }
+}
+
+/* The file name without its extension to show under the name of `rom`: 1
+ * when the game shares its name with another of the list, else 0 and out is
+ * empty.  (Under "File name" the title already is that, so the subtitle is
+ * the folder, "Hacks/", when two games differ only by it.) */
+static int names_subtitle(int rom, char *out, size_t sz)
+{
+   char title[64];
+   size_t n;
+   out[0] = '\0';
+   if (rom < 0 || rom >= BROWSER_MAX || !g_name_dup[rom])
+      return 0;
+   n = ui_rom_stem_length(g_roms[rom].base);
+   if (n >= sz)
+      n = sz - 1;
+   memcpy(out, g_roms[rom].base, n);
+   out[n] = '\0';
+   ui_ascii_fold(out);
+   rom_display_name(&g_roms[rom], title, sizeof(title), 1);
+   if (g_pcfg.lib_names && !strcmp(title, out))
+   {
+      /* "File name" with the same stem in two folders: the folder is what
+       * tells them apart. */
+      const char *slash = strrchr(g_roms[rom].name, '/');
+      if (slash && slash > g_roms[rom].name)
+      {
+         const char *d = slash;
+         while (d > g_roms[rom].name && d[-1] != '/')
+            d--;
+         snprintf(out, sz, "%.*s/", (int)(slash - d), d);
+         return 1;
+      }
+      out[0] = '\0';
+      return 0;
+   }
+   return 1;
+}
+
+/* A name for the classic lists (Shelf, Marquee), one line a row: a game that
+ * shares its name shows its file name instead, which is what tells it apart. */
+static void rom_list_name(int rom, char *out, size_t sz)
+{
+   char sub[64];
+   if (names_subtitle(rom, sub, sizeof(sub)) && sub[strlen(sub) - 1] != '/')
+      snprintf(out, sz, "%s", sub);
+   else
+      rom_display_name(&g_roms[rom], out, sz, 1);
+}
+#endif
 
 /* Template card for a ROM with no art: accent header strip, wrapped title,
  * GBA badge.  Deliberately styled so a folder with zero art still looks
@@ -10382,7 +10556,9 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
          vs_text_c(VS_CAPTION, VS_W * 0.5f, 342, amount, HC_TEXT3);
       }
       vs_text_c(VS_CAPTION, VS_W * 0.5f, VS_H - 52,
-                "In the game, hold START + SELECT for the menu", HC_TEXT3);
+                ui_menu_chord_is_lrs(g_pcfg.console)
+                ? "In the game, hold L + R + START for the menu"
+                : "In the game, hold START + SELECT for the menu", HC_TEXT3);
    }
    else
    {
@@ -10423,7 +10599,9 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
 #ifdef VITA
    /* The one thing a first-time player has to be told, while there is
     * nothing else to read. */
-   vid_text_center(250, "In the game, hold START + SELECT for the menu.",
+   vid_text_center(250, ui_menu_chord_is_lrs(g_pcfg.console)
+                   ? "In the game, hold L + R + START for the menu."
+                   : "In the game, hold START + SELECT for the menu.",
                    C_DIM);
    }
 #endif
@@ -10645,7 +10823,7 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
          UI_TCH_ROW(((cur + rel) % n + n) % n, 0, ty, 300, th);
       }
 #endif
-      rom_display_name(&g_roms[idx], title, sizeof(title), 1);
+      rom_list_name(idx, title, sizeof(title));
       /* 208, not 232: the star column sits between the title and SAVE. */
       clip_title(title, 208);
       vid_text(20 + dx, y, title, col);
@@ -11015,7 +11193,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
        * the panel instead of appearing to run off the screen. */
       char full[64];
       int off;
-      rom_display_name(&g_roms[rom], full, sizeof(full), 1);
+      rom_list_name(rom, full, sizeof(full));
       off = marquee_offset(rom, full, 244);
       vid_clip(20, 68, 244, 30);
       vid_text_hd(20 - off, 74 - g_fx_dy, full,
@@ -11055,7 +11233,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
       row_fx(i, &dx, &fade);
       UI_TCH_ROW(((cur + i) % n + n) % n, 0, vid_band_y(y, MQ_ROW_H), 290,
                  MQ_ROW_H);
-      rom_display_name(&g_roms[idx], title, sizeof(title), 1);
+      rom_list_name(idx, title, sizeof(title));
       clip_title(title, 232);
       /* The far rows fade out, so five entries do not read as a wall of
        * text competing with the artwork behind them. */
@@ -12169,6 +12347,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                 gpu.vertex_word, gpu.fragment_word);
       }
       g_vframe++;
+      names_prepare(n_scan);
       find_owns_input = ui_text_pump();
       if (ui_text_take(TXT_BROWSER_FIND, &find_text) > 0)
       {

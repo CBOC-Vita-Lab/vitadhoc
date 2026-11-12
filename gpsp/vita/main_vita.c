@@ -73,6 +73,7 @@
 #include "fe_host.h"
 #include "menu_load.h"
 #include "../gbcore/gbcore.h"   /* gbcore_set_color_correction */
+#include "../nescore/gbcore_mux.h"   /* gbmux_nes_fps, gbmux_nes_system_dir */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -311,6 +312,7 @@ static void app_core_phase(unsigned *lvl, unsigned *clk_ns, unsigned *frames,
 
 /* The GBA's frame period: 280896 cycles of a 16.777216 MHz clock. */
 #define GBA_FRAME_NS   16742706ull
+static uint64_t g_frame_ns = GBA_FRAME_NS;   /* the running core's frame (the NES differs) */
 #define GBA_FPS_X1000  59727.5
 
 /* A frame this many refreshes behind is not chased: the debt is forgiven.
@@ -578,6 +580,9 @@ static fe_console_t console_for(const char *path)
    if (has_ext(path, ".gbc")) return FE_CONSOLE_GBC;
    if (has_ext(path, ".gb"))  return FE_CONSOLE_GB;
    if (has_ext(path, ".sfc") || has_ext(path, ".smc")) return FE_CONSOLE_SNES;
+   if (has_ext(path, ".nes") || has_ext(path, ".fds") || has_ext(path, ".unf") ||
+       has_ext(path, ".unif"))
+      return FE_CONSOLE_NES;
    return FE_CONSOLE_GBA;
 }
 
@@ -597,7 +602,7 @@ static int snes_launch(const char *rom_path)
 static const char *console_name(fe_console_t c)
 {
    return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
-        : c == FE_CONSOLE_SNES ? "SNES" : "GBA";
+        : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES" : "GBA";
 }
 
 static const char *base_name(const char *path)
@@ -1377,7 +1382,11 @@ static const char *const k_builtin_roots[] = {
    "ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color",
    /* SNES games (started by snes.bin, the separate program in snes/) */
    "ux0:ROMS/SNES", "ux0:roms/SNES",
-   "ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System"
+   "ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System",
+   /* NES and Famicom Disk System games (in-process core); RetroFlow has a
+    * folder for the NES only */
+   "ux0:ROMS/NES", "ux0:roms/NES",
+   "ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -1598,7 +1607,7 @@ static void rom_roots_init(void)
     * the list is (Settings > Game folders writes it, with these in it). */
    if (strcmp(source, "ini") && strcmp(source, "off"))
    {
-      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms" };
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms", "nes_roms" };
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
          if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
              fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
@@ -1648,11 +1657,13 @@ static int rom_from_launch(char *out, size_t cap)
       return 1;
    }
    if (!has_ext(out, ".gba") && !has_ext(out, ".gb") && !has_ext(out, ".gbc") &&
-       !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".zip"))
+       !has_ext(out, ".sfc") && !has_ext(out, ".smc") && !has_ext(out, ".nes") &&
+       !has_ext(out, ".fds") && !has_ext(out, ".unf") && !has_ext(out, ".unif") &&
+       !has_ext(out, ".zip"))
    {
       fe_evt("launch_param refused reason=not_a_game path=\"%s\"", out);
       snprintf(g_launch_note, sizeof(g_launch_note),
-               "%.120s is not a .gba, .gb, .gbc, .sfc, .smc or .zip file.", base_name(out));
+               "%.100s is not a .gba, .gb, .gbc, .sfc, .smc, .nes, .fds or .zip file.", base_name(out));
       return 1;
    }
    if (file_size(out, &size) != 0 || size <= 0)
@@ -2269,9 +2280,9 @@ static void pace_frame(void)
    else
    {
       uint64_t now_ns = plat_time_us() * 1000ull;
-      g_next_ns += GBA_FRAME_NS;
+      g_next_ns += g_frame_ns;
       if (now_ns > g_next_ns + (g_catchup_ok ? CATCHUP_HORIZON : PACE_RESYNC_VB)
-                               * GBA_FRAME_NS)
+                               * g_frame_ns)
       {
          g_next_ns = now_ns;
          g_pace_forgiven++;
@@ -2279,8 +2290,8 @@ static void pace_frame(void)
       else if (now_ns >= g_next_ns)
       {
          g_pace_late++;
-         if (g_catchup_ok && now_ns - g_next_ns >= GBA_FRAME_NS)
-            g_catchup = (unsigned)((now_ns - g_next_ns) / GBA_FRAME_NS);
+         if (g_catchup_ok && now_ns - g_next_ns >= g_frame_ns)
+            g_catchup = (unsigned)((now_ns - g_next_ns) / g_frame_ns);
       }
       else
       {
@@ -3379,6 +3390,8 @@ static void game_identity(void)
          else
             g_game.code[0] = '\0';
       }
+      else if (g_game.console == FE_CONSOLE_NES)
+         g_game.gb_title[0] = '\0';          /* no title field: the name is */
       else if (fseek(f, 0x134, SEEK_SET) == 0 &&
                fread(g_game.gb_title, 1, 16, f) == 16)
          g_game.gb_title[16] = '\0';
@@ -3497,7 +3510,9 @@ static void save_import(const char *rom_path, const char *save_path,
 {
    static const char *const ra_dirs[] = {
       "", "/mGBA", "/gpSP", "/Gambatte", "/SameBoy", "/TGB Dual",
-      "/Gearboy", "/VBA-M", "/VBA Next"
+      "/Gearboy", "/VBA-M", "/VBA Next",
+      /* the NES cores of RetroArch */
+      "/FCEUmm", "/Nestopia", "/Mesen", "/QuickNES"
    };
    char stem[APP_PATH_CAP], cand[APP_PATH_CAP], probe[APP_PATH_CAP + 8];
    const char *bn = base_name(rom_path), *dot;
@@ -3613,7 +3628,8 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
    char op[APP_PATH_CAP], stem[APP_PATH_CAP];
    const char *tag = console == FE_CONSOLE_GBC ? "gbc" :
                      console == FE_CONSOLE_GB ? "gb" :
-                     console == FE_CONSOLE_SNES ? "snes" : "gba";
+                     console == FE_CONSOLE_SNES ? "snes" :
+                     console == FE_CONSOLE_NES ? "nes" : "gba";
    char *dot;
 
    if (rom_path != g_overlay_rom)
@@ -3724,9 +3740,9 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[4] = { "gba", "gb", "gbc", "snes" };
+      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes" };
       char op[APP_PATH_CAP];
-      int c = g_pcfg.console >= 0 && g_pcfg.console < 4 ? g_pcfg.console : 0;
+      int c = g_pcfg.console >= 0 && g_pcfg.console < FE_CONSOLE_COUNT ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
           file_size(op, NULL) == 0)
          snprintf(g_overlay_name, sizeof(g_overlay_name), "%s.png", tag[c]);
@@ -3814,6 +3830,14 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
    }
    ext = console == FE_CONSOLE_GBC ? ".gbc" : console == FE_CONSOLE_GB ? ".gb"
        : console == FE_CONSOLE_SNES ? ".smc" : ".gba";
+   if (console == FE_CONSOLE_NES)
+   {
+      /* the entry's own kind: a disk image, a UNIF file or an iNES cartridge */
+      size_t nl = strlen(e.name);
+      ext = nl > 5 && !strcasecmp(e.name + nl - 5, ".unif") ? ".unif"
+          : nl > 4 && !strcasecmp(e.name + nl - 4, ".unf") ? ".unf"
+          : nl > 4 && !strcasecmp(e.name + nl - 4, ".fds") ? ".fds" : ".nes";
+   }
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
    stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
    if (path_fmt(dir, sizeof(dir), "%s/unzipped", g_app_root) != 0 ||
@@ -4004,6 +4028,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    if (psp_rom_path_suffix(g_game.save_path, sizeof(g_game.save_path),
                            rom_path,
                            console == FE_CONSOLE_GBA ? ".sav" :
+                           console == FE_CONSOLE_NES ? ".srm" :
                            console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav")
           != 0 ||
        sidecar_state1(g_game.state_path, sizeof(g_game.state_path),
@@ -4114,8 +4139,20 @@ static int game_boot(const char *rom_path, fe_console_t console)
    if (!g_sw.drc)
       fe_host_option_set("gpsp_drc", "disabled");
    gpsp_rom_load_progress = loading_progress;
+   if (console == FE_CONSOLE_NES)
+   {
+      /* disksys.rom (the Disk System BIOS, supplied by the player) beside the
+       * game or in the app folder */
+      char sysdir[APP_PATH_CAP];
+      if (path_fmt(sysdir, sizeof(sysdir), "%s/nes", g_app_root) == 0)
+         gbmux_nes_system_dir(sysdir);
+   }
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;
+   {
+      double fps = console == FE_CONSOLE_NES && rc == 0 ? gbmux_nes_fps() : 0.0;
+      g_frame_ns = fps > 1.0 ? (uint64_t)(1e9 / fps + 0.5) : GBA_FRAME_NS;
+   }
    /* The link menus' view of this game: can it host a Link Cable room in
     * this boot (instance B loaded)? */
    mgift_vita_game(rc == 0 && console == FE_CONSOLE_GBA ? g_game.code
@@ -5016,7 +5053,7 @@ static void game_loop(void)
          if (g_sw.pace_mode == PACE_VSYNC)
             g_app_vc_target += n;
          else
-            g_next_ns += (uint64_t)n * GBA_FRAME_NS;
+            g_next_ns += (uint64_t)n * g_frame_ns;
          g_caught += n;
          g_caught_us_frame = (unsigned)(plat_time_us() - t0);
          g_caught_us += g_caught_us_frame;
@@ -5309,13 +5346,13 @@ int main(int argc, char **argv)
          snprintf(snes_arg, sizeof(snes_arg), "%s", rom_path);
          if (has_ext(rom_path, ".zip"))
          {
-            /* a zipped game: snes.bin gets the unpacked file and, after a '|'
-             * (never in a file name on the card), where its save lives: beside
-             * the zip, because unzipped/ is emptied for the next game */
+            /* a zipped game: the program gets the unpacked file and, after a
+             * '|' (never in a file name on the card), where its save lives:
+             * beside the zip, because unzipped/ is emptied for the next game */
             char un[APP_PATH_CAP];
             long usz = 0;
             size_t zl = strlen(rom_path);
-            if (zip_unpack(rom_path, FE_CONSOLE_SNES, un, sizeof(un), &usz) != 0)
+            if (zip_unpack(rom_path, console, un, sizeof(un), &usz) != 0)
             {
                app_notice("This game could not be started", base_name(rom_path),
                           "The zip file could not be opened.", 6000);

@@ -86,8 +86,23 @@
 #                     the emitted code is what a build without it emits, and
 #                     jit_vita.c no longer has to refuse a block the kernel
 #                     happened to place far from the program.
+#
+# ---- SMC_RANGE -------------------------------------------------------------
+# SMC_RANGE           ON.  A write over translated RAM code no longer throws
+#                     the RAM translation cache away: the full flush is
+#                     re-enacted on the code tags only and the code is kept,
+#                     revived only for blocks whose guest source is byte-for-
+#                     byte unchanged (cpu_threaded.c "SMC_RANGE";
+#                     docs/TECHNICAL.md "Version 1.4: SMC without whole-cache
+#                     flushes").  C only: the stubs and emitters are those of
+#                     the full-flush build.  The run-time switch smc_partial
+#                     (gpsp_smc_partial_set, vita.ini; the twins also read
+#                     GPSP_SMC_PARTIAL) selects it, its default is
+#                     SMC_PARTIAL_DEFAULT; with it off every line of the old
+#                     code runs.  SMC_RANGE=0 builds the core without it.
 GBA_LINK      ?= 1
 ARM_FAR_STUBS ?= 1
+SMC_RANGE     ?= 1
 
 GBADHOC_CORE_DEFS := -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 -DDMA_SMC_FLUSH=1 \
                      -DSERIAL_IDLE_FAST=1 -DSCHED_FAST=1 -DSCHED_FAST_DEFAULT=1 \
@@ -95,4 +110,7 @@ GBADHOC_CORE_DEFS := -DGBA_PC_MASK=1 -DBADJUMP_SAFE=1 -DDMA_SMC_FLUSH=1 \
                      -DGBALINK_KEEP_SERIAL_MODE
 ifeq ($(ARM_FAR_STUBS),1)
 GBADHOC_CORE_DEFS += -DARM_FAR_STUBS
+endif
+ifeq ($(SMC_RANGE),1)
+GBADHOC_CORE_DEFS += -DSMC_RANGE=1
 endif

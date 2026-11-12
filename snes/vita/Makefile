@@ -30,7 +30,7 @@ CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
 # Second, renamed copy of the renderer for the PPU thread (see ../core/rcopy.sh)
 RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
-FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/picture.o $(B)/main.o $(B)/font.o
+FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/main.o $(B)/font.o
 V2D_OBJS  := $(B)/v2d/vita2d.o $(B)/v2d/vita2d_draw.o $(B)/v2d/vita2d_texture.o $(B)/v2d/utils.o
 SHADERS   := $(wildcard $(V2D)/shader/*_gxp.o)
 

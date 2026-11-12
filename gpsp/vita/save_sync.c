@@ -28,6 +28,10 @@ typedef struct
    uint32_t src_crc;
    uint32_t our_crc;
    uint32_t sync_crc;           /* our_crc when the source last got it */
+   int      src_ours;           /* 1 = the source's bytes were written by us
+                                 * (so they are a copy of an earlier save of
+                                 * ours); 0 = they came from RetroArch and must
+                                 * be backed up before they are overwritten */
 } ss_rec;
 
 void save_sync_init(const char *app_root)
@@ -115,50 +119,147 @@ static void ensure_dir(const char *dir)
    mkdir(dir, 0777);
 }
 
-/* Copy `from` into backups/ once (named by its CRC).  0 = kept (or already
- * there), -1 = not. */
-static int backup_file(const char *from, const char *why)
+/* Why the last backup_file() failed, as text for the player and the log. */
+static char g_berr[96];
+
+static void err_errno(void)
+{
+   snprintf(g_berr, sizeof(g_berr), "%s", errno ? strerror(errno) : "write incomplete");
+}
+
+static void err_text(const char *t)
+{
+   snprintf(g_berr, sizeof(g_berr), "%s", t);
+}
+
+/* Is `p` a whole file of `size` bytes with this CRC? */
+static int file_is(const char *p, uint32_t crc, long size)
+{
+   uint32_t c;
+   long s;
+   return crc_file(p, &c, &s) == 0 && c == crc && s == size;
+}
+
+static int backup_do(const char *from, const uint32_t *expect, long *size_out)
 {
    char dir[SS_PATH + 16], dest[SS_PATH * 2], tmp[SS_PATH * 2 + 8];
    const char *bn = strrchr(from, '/');
-   uint32_t crc;
-   long size;
+   uint32_t crc, c = 0;
+   long size, copied = 0;
    FILE *in, *out;
    unsigned char b[SS_CHUNK];
    size_t n;
    int ok = 1;
-   struct stat st;
 
    bn = bn ? bn + 1 : from;
-   if (crc_file(from, &crc, &size) != 0 || size <= 0)
+   errno = 0;
+   if (crc_file(from, &crc, &size) != 0)
+   {
+      err_errno();
       return -1;
+   }
+   *size_out = size;
+   if (expect && crc != *expect)
+   {
+      err_text("the file changed while it was being synced");
+      return -1;
+   }
+   if (size <= 0)
+      return 0;                        /* nothing in it to lose */
    snprintf(dir, sizeof(dir), "%s/backups", g_root);
    ensure_dir(dir);
    if (snprintf(dest, sizeof(dest), "%s/%s.%08x.bak", dir, bn,
-                (unsigned)crc) >= (int)sizeof(dest))
+                (unsigned)crc) >= (int)sizeof(dest) ||
+       snprintf(tmp, sizeof(tmp), "%s.tmp", dest) >= (int)sizeof(tmp))
+   {
+      err_text("backup path too long");
       return -1;
-   if (stat(dest, &st) == 0)
-      return 0;
-   snprintf(tmp, sizeof(tmp), "%s.tmp", dest);
+   }
+   if (file_is(dest, crc, size))
+      return 0;                        /* already there, and whole */
+   errno = 0;
    in = fopen(from, "rb");
-   out = in ? fopen(tmp, "wb") : NULL;
-   if (!in || !out)
-      ok = 0;
-   while (ok && (n = fread(b, 1, sizeof(b), in)) > 0)
-      if (fwrite(b, 1, n, out) != n)
-         ok = 0;
-   if (in)
+   if (!in)
+   {
+      err_errno();
+      return -1;
+   }
+   out = fopen(tmp, "wb");
+   if (!out)
+   {
+      err_errno();
       fclose(in);
-   if (out && fclose(out) != 0)
+      return -1;
+   }
+   while ((n = fread(b, 1, sizeof(b), in)) > 0)
+   {
+      if (fwrite(b, 1, n, out) != n)
+      {
+         err_errno();
+         ok = 0;
+         break;
+      }
+      c = fe_crc32(c, b, n);
+      copied += (long)n;
+   }
+   if (ok && ferror(in))
+   {
+      err_errno();
       ok = 0;
-   if (ok)
-      (void)rename(tmp, dest);
-   ok = ok && stat(dest, &st) == 0;
+   }
+   fclose(in);
+   if (fclose(out) != 0 && ok)
+   {
+      err_errno();
+      ok = 0;
+   }
+   if (ok && (copied != size || c != crc))
+   {
+      err_text("the file changed while it was being copied");
+      ok = 0;
+   }
+   if (ok && !file_is(tmp, crc, size))
+   {
+      err_text("the backup did not read back whole");
+      ok = 0;
+   }
+   if (ok && promote(tmp, dest) != 0)
+   {
+      err_errno();
+      ok = 0;
+   }
+   if (ok && !file_is(dest, crc, size))
+   {
+      err_text("the backup did not read back whole");
+      ok = 0;
+   }
    if (!ok)
       remove(tmp);
-   fe_evt("save_backup %s file=\"%s\" to=\"%s\" size=%ld why=%s",
-          ok ? "kept" : "FAILED", from, dest, size, why);
    return ok ? 0 : -1;
+}
+
+/* Copy `from` into backups/ once (named by its CRC) and check the copy by
+ * reading it back (size and CRC).  0 = a whole copy is there, -1 = not (the
+ * reason is in g_berr).  A backup is what lets a save be overwritten: every
+ * caller leaves both files alone when this fails.  `expect`, if given, is the
+ * CRC the caller has decided on; a file that no longer has it is refused. */
+static int backup_file(const char *from, const char *why, const uint32_t *expect)
+{
+   long size = 0;
+   int rc = backup_do(from, expect, &size);
+   if (rc != 0)
+      fe_evt("save_backup FAILED file=\"%s\" size=%ld why=%s err=\"%s\"",
+             from, size, why, g_berr);
+   else
+      fe_evt("save_backup kept file=\"%s\" size=%ld why=%s", from, size, why);
+   return rc;
+}
+
+/* "<what> - nothing was overwritten (<errno text>)" into the player's note. */
+static void note_fail(char *note, size_t cap, const char *what)
+{
+   if (note && cap && !note[0])
+      snprintf(note, cap, "%s - nothing was overwritten (%s)", what, g_berr);
 }
 
 /* ---- the record file ---- */
@@ -181,6 +282,13 @@ static int rec_parse(char *line, ss_rec *r)
    p = f[6] + strlen(f[6]);
    while (p > f[6] && (p[-1] == '\n' || p[-1] == '\r'))
       *--p = 0;
+   r->src_ours = 0;                    /* absent in older records */
+   p = strchr(f[6], '\t');
+   if (p)
+   {
+      *p++ = 0;
+      r->src_ours = atoi(p) ? 1 : 0;
+   }
    if (strlen(f[0]) >= SS_PATH || strlen(f[1]) >= SS_PATH)
       return -1;
    snprintf(r->save, sizeof(r->save), "%s", f[0]);
@@ -241,10 +349,10 @@ static int rec_put(const ss_rec *r)
    }
    if (in)
       fclose(in);
-   if (fprintf(out, "%s\t%s\t%ld\t%ld\t%08x\t%08x\t%08x\n", r->save,
+   if (fprintf(out, "%s\t%s\t%ld\t%ld\t%08x\t%08x\t%08x\t%d\n", r->save,
                r->src[0] ? r->src : "-", r->src_size, r->src_mtime,
                (unsigned)r->src_crc, (unsigned)r->our_crc,
-               (unsigned)r->sync_crc) < 0)
+               (unsigned)r->sync_crc, r->src_ours ? 1 : 0) < 0)
       ok = 0;
    if (fclose(out) != 0)
       ok = 0;
@@ -257,8 +365,10 @@ static int rec_put(const ss_rec *r)
 
 /* ---- copying a source over the save, and the save over the source ---- */
 
-/* from -> to (whole file, as it is), through to.import */
-static int copy_over(const char *from, const char *to)
+/* from -> to (whole file, as it is), through to.import.  `crc` is what
+ * `from` held when the caller chose it; a copy that is not that is dropped
+ * and `to` stays as it was. */
+static int copy_over(const char *from, const char *to, uint32_t crc)
 {
    char tmp[SS_PATH + 16];
    unsigned char b[SS_CHUNK];
@@ -266,6 +376,7 @@ static int copy_over(const char *from, const char *to)
    size_t n;
    int ok = 1;
    snprintf(tmp, sizeof(tmp), "%s.import", to);
+   errno = in ? 0 : errno;
    out = in ? fopen(tmp, "wb") : NULL;
    if (!in || !out)
       ok = 0;
@@ -274,12 +385,27 @@ static int copy_over(const char *from, const char *to)
          ok = 0;
    if (ok && ferror(in))
       ok = 0;
+   if (!ok)
+      err_errno();
    if (in)
       fclose(in);
-   if (out && fclose(out) != 0)
+   if (out && fclose(out) != 0 && ok)
+   {
+      err_errno();
       ok = 0;
+   }
    if (ok)
-      ok = promote(tmp, to) == 0;
+   {
+      uint32_t c;
+      ok = crc_file(tmp, &c, NULL) == 0 && c == crc;
+      if (!ok)
+         err_text("the copy did not read back whole");
+   }
+   if (ok && promote(tmp, to) != 0)
+   {
+      err_errno();
+      ok = 0;
+   }
    if (!ok)
       remove(tmp);
    return ok ? 0 : -1;
@@ -362,6 +488,15 @@ static int sync_out(ss_rec *r, long ours_len)
              "(%ld) src=\"%s\"", cur_size, r->src);
       return 1;
    }
+   /* RetroArch's own bytes are kept before the first time we write over
+    * them.  Without a whole, verified copy the source is left as it is and
+    * the write is tried again at the next start. */
+   if (!r->src_ours &&
+       backup_file(r->src, "RetroArch save about to be written over", &cur_crc) != 0)
+   {
+      fe_evt("save_sync_out DEFERRED: no backup of src=\"%s\"", r->src);
+      return -2;
+   }
    limit = ours_len < cur_size ? ours_len : cur_size;
    snprintf(tmp, sizeof(tmp), "%s.import", r->src);
    in = fopen(r->save, "rb");
@@ -413,6 +548,7 @@ static int sync_out(ss_rec *r, long ours_len)
    if (stat_file(r->src, NULL, &r->src_mtime) != 0)
       r->src_mtime = 0;
    r->sync_crc = r->our_crc;
+   r->src_ours = 1;
    fe_evt("save_sync_out ok src=\"%s\" size=%ld crc=%08x", r->src, written,
           (unsigned)crc);
    return 0;
@@ -442,7 +578,7 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap)
    ss_rec r;
    long ours_size = 0, ours_mtime = 0;
    uint32_t ours_crc;
-   int have;
+   int have, deferred = 0;
 
    if (note && cap)
       note[0] = 0;
@@ -465,21 +601,53 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap)
           crc_file(r.src, &s_crc, &s_size) == 0)
       {
          int src_changed = s_size != r.src_size || s_crc != r.src_crc;
-         int ours_changed = have && ours_crc != r.our_crc && r.our_crc != 0;
+         int ours_known = have && r.our_crc != 0;
+         int ours_changed = ours_known && ours_crc != r.our_crc;
          if (src_changed && s_size > 0 && s_crc != ours_crc)
          {
-            int take = s_mtime > ours_mtime;
+            /* Equal times: if only the source changed it is the newer one;
+             * if both may have changed there is nothing to pick by. */
+            int tie = s_mtime == ours_mtime;
+            int both = ours_changed || !ours_known;
+            int take = s_mtime > ours_mtime || (tie && !both);
             fe_evt("save_sync_conflict save=\"%s\" src=\"%s\" ours_changed=%d "
                    "src_mtime=%ld ours_mtime=%ld take=%s", save_path, r.src,
-                   ours_changed, s_mtime, ours_mtime, take ? "source" : "ours");
-            if (take)
+                   ours_changed, s_mtime, ours_mtime,
+                   tie && both ? "neither" : take ? "source" : "ours");
+            if (tie && both)
             {
-               (void)backup_file(save_path, "replaced by a newer RetroArch save");
-               if (copy_over(r.src, save_path) == 0)
+               /* Keep both, overwrite nothing, and ask again at the next
+                * start: the record is left as it was. */
+               int a = backup_file(save_path, "both saves changed at the same time",
+                                   &ours_crc);
+               int c = backup_file(r.src, "both saves changed at the same time",
+                                   &s_crc);
+               deferred = 1;
+               if (a == 0 && c == 0)
+               {
+                  if (note)
+                     snprintf(note, cap, "Both saves changed at the same time - "
+                              "kept both, copies are in backups, nothing overwritten");
+               }
+               else
+                  note_fail(note, cap, "Both saves changed at the same time and "
+                            "could not be backed up");
+            }
+            else if (take)
+            {
+               if (backup_file(save_path, "replaced by a newer RetroArch save",
+                               &ours_crc) != 0)
+               {
+                  deferred = 1;
+                  note_fail(note, cap, "A newer RetroArch save was not used: "
+                            "yours could not be backed up");
+               }
+               else if (copy_over(r.src, save_path, s_crc) == 0)
                {
                   r.src_size = s_size;
                   r.src_mtime = s_mtime;
                   r.src_crc = s_crc;
+                  r.src_ours = 0;
                   r.our_crc = s_crc;
                   r.sync_crc = s_crc;
                   ours_crc = s_crc;
@@ -488,18 +656,34 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap)
                               "Newer save from RetroArch used - kept in sync");
                }
                else
+               {
+                  deferred = 1;
                   fe_evt("save_sync copy from source FAILED src=\"%s\"", r.src);
+                  if (note)
+                     snprintf(note, cap, "RetroArch's newer save could not be "
+                              "copied - nothing was overwritten (%s)", g_berr);
+               }
             }
             else
             {
-               (void)backup_file(r.src, "RetroArch save older than this one");
-               r.src_size = s_size;     /* the next save goes over it */
-               r.src_mtime = s_mtime;
-               r.src_crc = s_crc;
-               r.sync_crc = 0;          /* bring RetroArch's file up to date */
-               if (note)
-                  snprintf(note, cap,
-                           "Your save here is newer - RetroArch's old one is in backups");
+               if (backup_file(r.src, "RetroArch save older than this one",
+                               &s_crc) != 0)
+               {
+                  deferred = 1;      /* RetroArch's file is left alone */
+                  note_fail(note, cap, "RetroArch's older save could not be "
+                            "backed up");
+               }
+               else
+               {
+                  r.src_size = s_size;     /* the next save goes over it */
+                  r.src_mtime = s_mtime;
+                  r.src_crc = s_crc;
+                  r.src_ours = 0;
+                  r.sync_crc = 0;          /* bring RetroArch's file up to date */
+                  if (note)
+                     snprintf(note, cap,
+                              "Your save here is newer - RetroArch's old one is in backups");
+               }
             }
          }
          else if (src_changed)
@@ -508,25 +692,37 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap)
             r.src_size = s_size;
             r.src_mtime = s_mtime;
             r.src_crc = s_crc;
+            r.src_ours = 0;
          }
       }
    }
 
-   if (!have || r.our_crc != ours_crc)
+   if (!deferred && (!have || r.our_crc != ours_crc))
    {
-      /* A file the app did not write: one copy before it is saved over. */
-      (void)backup_file(save_path, have && r.our_crc ? "changed outside the app"
-                                                    : "first time the app uses this save");
-      r.our_crc = ours_crc;
+      /* A file the app did not write: one copy before it is saved over.  If
+       * the copy cannot be made, the record keeps "not known" so the next
+       * start tries again. */
+      if (backup_file(save_path, have && r.our_crc ? "changed outside the app"
+                                                  : "first time the app uses this save",
+                      &ours_crc) == 0)
+         r.our_crc = ours_crc;
+      else
+         note_fail(note, cap, "Your save could not be backed up");
    }
    (void)rec_put(&r);
    /* RetroArch's file is behind this one (a save made with sync off, or a
     * write that never got back): bring it up to date now. */
-   if (g_on && r.src[0] && r.sync_crc != ours_crc)
+   if (!deferred && g_on && r.src[0] && r.sync_crc != ours_crc)
    {
       long len = 0;
-      if (stat_file(save_path, &len, NULL) == 0 && sync_out(&r, len) == 0)
-         (void)rec_put(&r);
+      if (stat_file(save_path, &len, NULL) == 0)
+      {
+         int rc = sync_out(&r, len);
+         if (rc == 0)
+            (void)rec_put(&r);
+         else if (rc == -2)
+            note_fail(note, cap, "RetroArch's save could not be backed up");
+      }
    }
 }
 

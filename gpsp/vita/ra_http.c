@@ -428,6 +428,17 @@ static void hash_file(void)
       return;
    }
    md5_init(&md5);
+   if (H.hash == 2)
+   {
+      /* RetroAchievements console 7 (NES): an iNES file is hashed without its
+       * 16-byte header (rcheevos rc_hash_nes); a file without one, whole. */
+      unsigned char hd[16];
+      size_t got = fread(hd, 1, sizeof(hd), f);
+      if (got == sizeof(hd) && !memcmp(hd, "NES\x1a", 4))
+         ;
+      else if (got)
+         md5_append(&md5, hd, (int)got);
+   }
    while (!A_LOAD(H.quit) && (n = fread(buf, 1, sizeof(buf), f)) > 0)
       md5_append(&md5, buf, (int)n);
    bad = ferror(f) || A_LOAD(H.quit);
@@ -500,6 +511,11 @@ int ra_http_submit(const char *url, const char *post, const char *type)
 int ra_http_hash_file(const char *path)
 {
    return submit(path, NULL, NULL, 1);
+}
+
+int ra_http_hash_file_nes(const char *path)
+{
+   return submit(path, NULL, NULL, 2);
 }
 
 static int submit(const char *url, const char *post, const char *type,

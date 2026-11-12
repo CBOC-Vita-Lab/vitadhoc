@@ -928,7 +928,7 @@ static float g_hm_btn_end;
 
 static float hm_topbar(float dy, int n_scan)
 {
-   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES" };
+   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES" };
    float x = HM_X, y = 18 + dy, cx;
    int c;
 
@@ -950,7 +950,7 @@ static float hm_topbar(float dy, int n_scan)
    cx = x;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {
-      /* four consoles and the search beside them: tight chips */
+      /* five consoles and the search beside them: tight chips */
       float w = vs_text_w(VS_LABEL, CON[c]) + 20;
       if (c == g_pcfg.console)
       {
@@ -1133,7 +1133,8 @@ static const char *hm_blurb(const char *rom_dir, int rom)
 
 static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
 {
-   char title[80], buf[48];
+   char title[80], buf[48], sub[64];
+   int has_sub;
    const char *blurb = idle >= IDLE_SELECTED ? hm_blurb(rom_dir, rom)
       : g_hm_blurb_for == rom ? g_hm_blurb : "";
    float x, y = HM_TITLE_Y + dy - (blurb[0] ? HM_BLURB_LIFT : 0);
@@ -1155,12 +1156,35 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
 
    rom_display_name(&g_roms[rom], title, sizeof(title), 1);
    vs_text_fit(VS_HERO, title, VS_W - 2 * HM_X);
+   /* Games of the list that share this name show their file name under it
+    * (names_subtitle, GitHub #16); the title moves up so the chips below
+    * stay where they were. */
+   has_sub = names_subtitle(rom, sub, sizeof(sub));
+   if (has_sub)
+      y -= 14;
    vs_text(VS_HERO, HM_X, y, title, VS_HEX(0xF5F7FC, la));
    UI_TCH_BTN(PSP_CTRL_CROSS, HM_X / 2, (int)(y / 2), 300, 34);
+   if (has_sub)
+   {
+      vs_text_fit(VS_CAPTION, sub, VS_W - 2 * HM_X);
+      vs_text(VS_CAPTION, HM_X, y + 64, sub, VS_HEX(0xA7B0C6, la));
+   }
+   {
+      static int last_rom = -1, last_mode = -1, last_sub = -1;
+      if (rom != last_rom || g_pcfg.lib_names != last_mode ||
+          has_sub != last_sub)
+      {
+         last_rom = rom;
+         last_mode = g_pcfg.lib_names;
+         last_sub = has_sub;
+         fe_evt("ui_game_name rom=\"%s\" mode=%d title=\"%s\" sub=\"%s\"",
+                g_roms[rom].base, g_pcfg.lib_names, title, sub);
+      }
+   }
 
    /* what is known about it */
    x = HM_X;
-   y += 76;
+   y += has_sub ? 90 : 76;
    meta_line(&g_roms[rom], buf, sizeof(buf));
    x = hm_chip(x, y, buf, HC_GLASS, HC_TEXT2);
    if (m && m->value.battery != ML_UNKNOWN)
@@ -1823,6 +1847,12 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    else
    {
       static const int ic[3] = { VS_I_BTN_O, VS_I_BTN_TRI, -1 };
+      /* The pause menu of the SNES and NES players is a chord nobody guesses: said
+       * under the buttons of every SNES and NES game's page (and on the loading
+       * screen, ui_loading_update). */
+      if (ui_menu_chord_is_lrs(g_pcfg.console) && view_count(n_scan) > 0)
+         vs_text(VS_CAPTION, HM_X, HM_BTN_Y + dy + 66,
+                 "In the game, hold L + R + START for the menu", HC_TEXT3);
       const char *w[3] = { g_find[0] ? "Clear" : "Find", "Console", "START  Settings" };
       /* Beside the buttons, never under them: the leftmost hints give way
        * first (the top bar has a search, a console and a settings button

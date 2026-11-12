@@ -34,7 +34,8 @@
 static inline const char *sidecar_console_dir(fe_console_t console)
 {
    return console == FE_CONSOLE_GBC ? "gbc" :
-          console == FE_CONSOLE_GB  ? "gb"  : "gba";
+          console == FE_CONSOLE_GB  ? "gb"  :
+          console == FE_CONSOLE_NES ? "nes" : "gba";
 }
 
 /* The cover thumbnails (artfetch.h ART_THUMB_SUFFIX) live here, below the app
@@ -46,7 +47,7 @@ static inline const char *sidecar_console_dir(fe_console_t console)
 static inline void sidecar_make_dirs(const char *root)
 {
    static const char *const sub[] = { "states", "states/gba", "states/gb",
-                                      "states/gbc", "cache", "cache/boxart",
+                                      "states/gbc", "states/nes", "cache", "cache/boxart",
                                       "cache/titles", "cache/hero" };
    char p[PSP_FILE_PATH_CAP];
    unsigned i;

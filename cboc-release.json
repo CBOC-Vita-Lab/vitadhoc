@@ -23,9 +23,10 @@
   "optionalInputs": [
     { "id": "roms", "label": "Your GB, GBC or GBA games", "kind": "roms" },
     { "id": "snes", "label": "Your SNES games", "kind": "snes-roms" },
+    { "id": "nes", "label": "Your NES games", "kind": "nes-roms" },
     { "id": "bios", "label": "Your GBA BIOS", "kind": "gba-bios" }
   ],
-  "destinations": { "data": "ux0:data/GBAdhoc/roms", "snes": "ux0:ROMS/SNES" },
+  "destinations": { "data": "ux0:data/GBAdhoc/roms", "snes": "ux0:ROMS/SNES", "nes": "ux0:ROMS/NES" },
   "protectedPaths": [
     "ux0:data/GBAdhoc/config.ini",
     "ux0:data/GBAdhoc/vita.ini",
@@ -46,6 +47,7 @@
     "ux0:data/GBAdhoc/import",
     "ux0:data/GBAdhoc/overlays",
     "ux0:data/GBAdhoc/snes",
+    "ux0:data/GBAdhoc/nes",
     "ux0:data/GBAdhoc/saves-sync.txt"
   ],
   "prerequisites": [],

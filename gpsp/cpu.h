@@ -253,6 +253,7 @@ void xlat_depth_probe_reset(void);
 extern u32 rom_branch_hash[ROM_BRANCH_HASH_SIZE];
 
 void flush_translation_cache_rom(void);
+u32 gpsp_jit_counters(u32 *out, u32 n);        /* WP0, see cpu_threaded.c */
 void flush_translation_cache_ram(void);
 void flush_translation_cache_ram_smc(void);   /* dynarec stubs only */
 void flush_translation_cache_ram_dma(void);   /* dynarec stubs only */

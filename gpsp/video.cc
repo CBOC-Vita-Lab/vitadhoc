@@ -1220,6 +1220,7 @@ static u8 obj_priority_list[5][160][128];
 #endif
 static u8 obj_priority_count[5][160];
 static u8 obj_alpha_count[160];
+static inline void obj_inv_reset(void);   // OBJ_EXACT, below
 
 #if ME_WORK_INDIRECT
 /* The work area was just (re)assigned and holds nothing of ours: forget the
@@ -1230,6 +1231,7 @@ extern "C" void me_obj_lists_reset(void)
 {
   memset(obj_priority_count, 0, sizeof(obj_priority_count));
   memset(obj_alpha_count, 0, sizeof(obj_alpha_count));
+  obj_inv_reset();
 }
 #endif
 
@@ -1694,6 +1696,240 @@ inline static void render_sprite(
   }
 }
 
+// ---- OBJ_EXACT: the hardware's per-pixel OBJ priority ----------------------
+//
+// The sprite engine keeps, for each pixel of the line, the colour of one sprite
+// AND a priority, and walks the sprites in OAM order (0 first).  A sprite pixel
+// is taken over only by a sprite with a strictly better (lower) priority; at
+// equal priority the lower OAM index stays.  The part gpSP's layer-by-layer
+// painter does not have is what a TRANSPARENT pixel of such a better sprite
+// does: it keeps the colour that is there but takes over the priority (and the
+// semi-transparent flag).  So a low-priority sprite A (OAM 0, priority 2) that
+// a later sprite B (OAM 1, priority 0) overlaps with a transparent pixel is
+// drawn at B's priority there: in front of a BG of priority 1 that, painted
+// by priority, hides it.  That is the hole in Golden Sun 1 and 2 (menus), Mario
+// Golf (the shot indicator), The Minish Cap.  mGBA does the same (software-
+// obj.c, the `else if (current != FLAG_UNWRITTEN)` arm of the SPRITE_DRAW_
+// PIXEL macros), and lr-gpsp-amcc's "OAM hijack" patch covers part of it.
+//
+// order_obj() marks the rows where it can matter: a sprite whose priority is
+// better than that of an EARLIER sprite it overlaps (obj_inv_row).  Every other
+// row takes the code below this block unchanged.  A marked row is rendered
+// here: each sprite of the row, in OAM order, is drawn into a scratch line with
+// the ordinary sprite renderers (so flip, 4/8 bpp, mosaic and affine are the
+// same code) and merged by the rule above; render_scanline_objs() then paints
+// the pixels whose final priority is the one asked for.  OBJ-window sprites
+// (list 4) are not part of it.  -DGPSP_NO_OBJ_EXACT removes it all;
+// -DOBJ_EXACT_ALL (a test build) sends every row down this path, which must
+// draw what the ordinary path does wherever the two agree.
+#if !defined(GPSP_NO_OBJ_EXACT)
+#define OBJ_EXACT 1
+
+static u8 obj_inv_row[160];
+static s16 obj_inv_minx[4][160], obj_inv_maxx[4][160];
+
+static struct {
+  s32 row;                       // the row built, -1: none (order_layers)
+  u16 code[GBA_SCREEN_PITCH];    // INDXCOLOR code of the winning pixel, 0: none
+  u8  pri[GBA_SCREEN_PITCH];     // its priority, 4: no sprite pixel here
+} obj_ex = { -1, {0}, {0} };
+
+static inline void obj_inv_reset(void)
+{
+  memset(obj_inv_row, 0, sizeof(obj_inv_row));
+  memset(obj_inv_minx, 0x7F, sizeof(obj_inv_minx));   // +32639
+  memset(obj_inv_maxx, 0x80, sizeof(obj_inv_maxx));   // -32640
+  obj_ex.row = -1;
+#ifdef OBJ_EXACT_ALL
+  memset(obj_inv_row, 1, sizeof(obj_inv_row));
+#endif
+}
+
+// A sprite of priority `p` covers [x0, x1) on `row`: if any earlier sprite of a
+// WORSE priority covers some of it, the row needs the exact path.
+static inline void obj_inv_note(u32 row, u32 p, s32 x0, s32 x1)
+{
+  for (u32 q = p + 1; q < 4; q++)
+    if (obj_inv_maxx[q][row] > x0 && obj_inv_minx[q][row] < x1) {
+      obj_inv_row[row] = 1;
+      break;
+    }
+  if (x0 < obj_inv_minx[p][row]) obj_inv_minx[p][row] = (s16)x0;
+  if (x1 > obj_inv_maxx[p][row]) obj_inv_maxx[p][row] = (s16)x1;
+}
+
+// The pixels [*cx0, *cx1) of the line the sprite's area covers, transparent
+// ones included (a non-affine sprite: its box; an affine one: the texture, as
+// render_affine_object() walks it).
+static void obj_cover(const t_sprite *obji, bool is_affine, bool mosaic,
+                      s32 vcount, s32 *cx0, s32 *cx1)
+{
+  if (!is_affine) {
+    *cx0 = MAX(0, obji->obj_x);
+    *cx1 = MIN((s32)GBA_SCREEN_PITCH, obji->obj_x + obji->obj_w);
+    return;
+  }
+  const t_affp *affp = &((t_affp*)oam_ram)[(obji->attr1 >> 9) & 0x1f];
+  s32 dx  = (s16)eswap16(affp->dx),  dy  = (s16)eswap16(affp->dy);
+  s32 dmx = (s16)eswap16(affp->dmx), dmy = (s16)eswap16(affp->dmy);
+  u32 w = obji->obj_w, h = obji->obj_h;
+  bool dbl = obji->is_double;
+  s32 middle_x = dbl ? obji->obj_w : (obji->obj_w / 2);
+  s32 middle_y = dbl ? obji->obj_h : (obji->obj_h / 2);
+  s32 width = dbl ? obji->obj_w * 2 : obji->obj_w;
+  if (mosaic) {
+    s32 mosv = ((read_ioreg(REG_MOSAIC) >> 12) & 0xF) + 1;
+    vcount -= vcount % mosv;
+  }
+  s32 y_delta = vcount - (obji->obj_y + middle_y);
+  if (obji->obj_x < 0)
+    middle_x -= (0 - obji->obj_x);
+  s32 sx = (w << 7) + (y_delta * dmx) - (middle_x * dx);
+  s32 sy = (h << 7) + (y_delta * dmy) - (middle_x * dy);
+  s32 x   = MAX(0, obji->obj_x);
+  s32 end = MIN((s32)GBA_SCREEN_PITCH, obji->obj_x + width);
+  *cx0 = *cx1 = x;
+  while (x < end) {                       // find the first pixel inside
+    if ((u32)(sx >> 8) < w && (u32)(sy >> 8) < h)
+      break;
+    x++; sx += dx; sy += dy;
+  }
+  *cx0 = x;
+  while (x < end) {                       // ...and walk on until it ends
+    if ((u32)(sx >> 8) >= w || (u32)(sy >> 8) >= h)
+      break;
+    x++; sx += dx; sy += dy;
+  }
+  *cx1 = x;
+}
+
+#ifdef OBJ_EXACT_STATS     /* a test build: how often rows took the exact path */
+#include <stdio.h>
+static u32 obj_exact_rows, obj_exact_calls;
+static void obj_exact_report(void)
+{ fprintf(stderr, "OBJ_EXACT rows built %u\n", obj_exact_rows); }
+#endif
+
+static void obj_exact_build(s32 vcount)
+{
+#ifdef OBJ_EXACT_STATS
+  if (!obj_exact_calls++) atexit(obj_exact_report);
+  obj_exact_rows++;
+#endif
+  u32 present[4] = { 0, 0, 0, 0 };        // OAM indices on this row
+  u16 tmp[GBA_SCREEN_PITCH];
+  const u16 *palptr = &palette_ram_converted[0x100];
+
+  for (u32 pr = 0; pr < 4; pr++) {
+    u32 cnt = obj_priority_count[pr][vcount];
+    const u8 *list = obj_priority_list[pr][vcount];
+    for (u32 i = 0; i < cnt; i++)
+      present[list[i] >> 5] |= 1u << (list[i] & 31);
+  }
+  memset(obj_ex.code, 0, sizeof(obj_ex.code));
+  memset(obj_ex.pri, 4, sizeof(obj_ex.pri));
+
+  for (u32 objoff = 0; objoff < 128; objoff++) {
+    if (!((present[objoff >> 5] >> (objoff & 31)) & 1))
+      continue;
+    const t_oam *oamentry = &((t_oam*)oam_ram)[objoff];
+    u16 obj_attr0 = eswap16(oamentry->attr0);
+    u16 obj_attr1 = eswap16(oamentry->attr1);
+    u16 obj_shape = obj_attr0 >> 14;
+    u16 obj_size = (obj_attr1 >> 14);
+    bool is_affine = obj_attr0 & 0x100;
+    bool is_trans = ((obj_attr0 >> 10) & 0x3) == OBJ_MOD_SEMITRAN;
+
+    t_sprite obji = {
+      .obj_x = ((s32)(obj_attr1 << 23) >> 23) - wide_xo,
+      .obj_y = obj_attr0 & 0xFF,
+      .obj_w = obj_dim_table[obj_shape][obj_size][0],
+      .obj_h = obj_dim_table[obj_shape][obj_size][1],
+      .attr1 = obj_attr1,
+      .attr2 = eswap16(oamentry->attr2),
+      .is_double = (obj_attr0 & 0x200) != 0,
+    };
+    s32 obj_maxw = (is_affine && obji.is_double) ? obji.obj_w * 2 : obji.obj_w;
+    if (obji.obj_x >= (s32)GBA_SCREEN_PITCH || obji.obj_x + obj_maxw <= 0)
+      continue;
+    if (obji.obj_y > 160)
+      obji.obj_y -= 256;
+
+    u32 prio = (obji.attr2 >> 10) & 3;
+    u32 pxcomb = (is_trans ? 0x800 : 0) | color_flags(4);
+    bool emosaic = (obj_attr0 & 0x1000) != 0;
+    bool is_8bpp = (obj_attr0 & 0x2000) != 0;
+    const u32 mosreg = read_ioreg(REG_MOSAIC) & 0xFF00;
+    bool mosaic = emosaic && mosreg;
+
+    s32 cx0, cx1;
+    obj_cover(&obji, is_affine, mosaic, vcount, &cx0, &cx1);
+    if (cx0 >= cx1)
+      continue;
+    memset(&tmp[cx0], 0, (cx1 - cx0) * sizeof(u16));
+
+    if (mosaic) {
+      if (is_8bpp)
+        render_sprite<u16, INDXCOLOR, true, true>(
+          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+      else
+        render_sprite<u16, INDXCOLOR, false, true>(
+          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+    } else {
+      if (is_8bpp)
+        render_sprite<u16, INDXCOLOR, true, false>(
+          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+      else
+        render_sprite<u16, INDXCOLOR, false, false>(
+          &obji, is_affine, 0, GBA_SCREEN_PITCH, tmp, pxcomb, palptr);
+    }
+
+    // The merge: only a strictly better priority takes a pixel over.
+    for (s32 x = cx0; x < cx1; x++) {
+      u32 cur = obj_ex.pri[x];
+      if (prio < cur) {
+        if (tmp[x]) {
+          obj_ex.code[x] = tmp[x];
+          obj_ex.pri[x] = (u8)prio;
+        } else if (cur != 4) {            // transparent: keep the colour,
+          obj_ex.pri[x] = (u8)prio;       // take the priority and the ST flag
+          obj_ex.code[x] = (obj_ex.code[x] & ~0x800) | (is_trans ? 0x800 : 0);
+        }
+      }
+    }
+  }
+  obj_ex.row = vcount;
+}
+
+template <typename stype, rendtype rdtype>
+static void render_scanline_objs_exact(
+  u32 priority, u32 start, u32 end, stype *scanline, const u16 *palptr
+) {
+  s32 vcount = read_ioreg(REG_VCOUNT);
+  if (obj_ex.row != vcount)
+    obj_exact_build(vcount);
+  if (end > GBA_SCREEN_PITCH)
+    end = GBA_SCREEN_PITCH;
+  for (u32 x = start; x < end; x++) {
+    if (obj_ex.pri[x] != priority)
+      continue;
+    u32 code = obj_ex.code[x];
+    if (rdtype == FULLCOLOR)
+      scanline[x] = palptr[code & 0xFF];
+    else if (rdtype == INDXCOLOR)
+      scanline[x] = code;
+    else if (rdtype == STCKCOLOR) {
+      if (scanline[x] & 0x100)
+        scanline[x] = code | (scanline[x] & 0xFFFF0000);
+      else
+        scanline[x] = code | (scanline[x] << 16);
+    }
+  }
+}
+#else
+static inline void obj_inv_reset(void) { }
+#endif
+
 // Renders objects on a scanline for a given priority.
 // This function assumes that order_obj has been called to prepare the objects.
 template <typename stype, rendtype rdtype>
@@ -1707,6 +1943,15 @@ void render_scanline_objs(
   u8 *objlist = obj_priority_list[priority][vcount];
 
   VP_CNT(VP_C_OBJ_CALL, 1);
+
+#ifdef OBJ_EXACT
+  // A row with a sprite that out-ranks an overlapped earlier one: see OBJ_EXACT
+  if (rdtype != PIXCOPY && priority < 4 && obj_inv_row[vcount]) {
+    render_scanline_objs_exact<stype, rdtype>(
+      priority, start, end, scanline, palptr);
+    return;
+  }
+#endif
 
   // Render all the visible objects for this priority (back to front)
   for (objn = objcnt-1; objn >= 0; objn--) {
@@ -1818,6 +2063,7 @@ static void order_obj(u32 video_mode)
   memset(obj_priority_count, 0, sizeof(obj_priority_count));
   memset(obj_alpha_count, 0, sizeof(obj_alpha_count));
   memset(rend_cycles, 0, sizeof(rend_cycles));
+  obj_inv_reset();
 
   for(obj_num = 0; obj_num < 128; obj_num++)
   {
@@ -1883,6 +2129,9 @@ static void order_obj(u32 video_mode)
           for(row = starty; row < endy; row++)
           {
             if (rend_cycles[row] < max_rend_cycles) {
+#ifdef OBJ_EXACT
+              obj_inv_note(row, obj_priority, obj_x, obj_x + obj_width);
+#endif
               u32 cur_cnt = obj_priority_count[obj_priority][row];
               obj_list[obj_priority][row][cur_cnt] = obj_num;
               obj_priority_count[obj_priority][row] = cur_cnt + 1;
@@ -1900,6 +2149,10 @@ static void order_obj(u32 video_mode)
           for(row = starty; row < endy; row++)
           {
             if (rend_cycles[row] < max_rend_cycles) {
+#ifdef OBJ_EXACT
+              if (obj_priority < 4)
+                obj_inv_note(row, obj_priority, obj_x, obj_x + obj_width);
+#endif
               u32 cur_cnt = obj_priority_count[obj_priority][row];
               obj_list[obj_priority][row][cur_cnt] = obj_num;
               obj_priority_count[obj_priority][row] = cur_cnt + 1;
@@ -1942,6 +2195,9 @@ static void order_layers(u32 layer_flags, u32 vcnt)
   };
 
   layer_count = 0;
+#ifdef OBJ_EXACT
+  obj_ex.row = -1;       // every pass starts from the OAM and VRAM as they are
+#endif
 
   for(priority = 3; priority >= 0; priority--)
   {
@@ -1967,34 +2223,11 @@ static void order_layers(u32 layer_flags, u32 vcnt)
 // Since blending factors are at most 16, mult/add operations do not overflow
 // to the neighbouring color and can be performed much faster than separatedly
 
-// Here follow the mask value to separate/expand the color to 32 bit,
-// the mask to detect overflows in the blend operation and
-
-#define BLND_MSK (SATR_MSK | SATG_MSK | SATB_MSK)
-
-#ifdef USE_XBGR1555_FORMAT
-  #define OVFG_MSK 0x04000000
-  #define OVFR_MSK 0x00008000
-  #define OVFB_MSK 0x00000020
-  #define SATG_MSK 0x03E00000
-  #define SATR_MSK 0x00007C00
-  #define SATB_MSK 0x0000001F
-#else
-  #define OVFG_MSK 0x08000000
-  #define OVFR_MSK 0x00010000
-  #define OVFB_MSK 0x00000020
-  #define SATG_MSK 0x07E00000
-  #define SATR_MSK 0x0000F800
-  #define SATB_MSK 0x0000001F
-#endif
-
-typedef enum
-{
-  OBJ_BLEND,    // No effects, just blend forced-blend pixels (ie. ST objects)
-  BLEND_ONLY,   // Just alpha blending (if the pixels are 1st and 2nd target)
-  BLEND_BRIGHT, // Perform alpha blending if appropiate, and brighten otherwise
-  BLEND_DARK,   // Same but with darken effecg
-} blendtype;
+// The masks that separate/expand a colour to 32 bit, the overflow masks of the
+// blend and the blendtype enum live in video_merge.h, together with the merge
+// kernels (the scalar and NEON versions of the loops kept below under
+// VIDEO_MERGE_ORIG, and what tools/tests/test_video_merge.cc proves them against).
+#include "video_merge.h"
 
 // Applies blending (and optional brighten/darken) effect to a bunch of
 // color-indexed pixel pairs. Depending on the mode and the pixel target
@@ -2003,6 +2236,15 @@ typedef enum
 // Bit 9 is set if the pixel belongs to a 1st target layer
 // Bit 10 is set if the pixel belongs to a 2nd target layer
 // Bit 11 is set if the pixel belongs to a ST-object
+#ifndef VIDEO_MERGE_ORIG
+template <blendtype bldtype, bool st_objs>
+static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
+  VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_MERGE_PX, end - start);
+  vm_merge_blend<bldtype, st_objs>(palette_ram_converted,
+    read_ioreg(REG_BLDALPHA), read_ioreg(REG_BLDY), start, end, dst, src);
+  VP_LEAVE2(VP_T_MERGE);
+}
+#else
 template <blendtype bldtype, bool st_objs>
 static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
   u32 bldalpha = read_ioreg(REG_BLDALPHA);
@@ -2092,7 +2334,18 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
   VP_LEAVE2(VP_T_MERGE);
 }
 
+#endif
+
 // Applies brighten/darken effect to a bunch of color-indexed pixels.
+#ifndef VIDEO_MERGE_ORIG
+template <blendtype bldtype>
+static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
+  VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_BRIGHT_PX, end - start);
+  vm_merge_brightness<bldtype>(palette_ram_converted, read_ioreg(REG_BLDY),
+                               start, end, srcdst);
+  VP_LEAVE2(VP_T_MERGE);
+}
+#else
 template <blendtype bldtype>
 static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
   u32 brightness = MIN(16, read_ioreg(REG_BLDY) & 0x1F);
@@ -2117,6 +2370,7 @@ static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
 
   VP_LEAVE2(VP_T_MERGE);
 }
+#endif
 
 // Fills a segment using the backdrop color (in the right mode).
 template<rendtype rdmode, typename dsttype>

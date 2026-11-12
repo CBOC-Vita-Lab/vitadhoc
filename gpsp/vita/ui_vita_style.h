@@ -36,10 +36,14 @@
    UI_TCH_ROW((id), (int)((x) / 2), (int)((y) / 2), (int)((w) / 2) + 1, \
               (int)((h) / 2) + 1)
 
-/* One colour per console (GBA, GB, GBC). */
+/* One colour per console (GBA, GB, GBC; the NES its own silver).  The SNES
+ * has always worn the GBA's (a console past the third falls back to it);
+ * it keeps that, the NES does not. */
 static uint32_t hm_tint(int console, int a)
 {
    static const uint32_t rgb[3] = { 0x7B6CFF, 0x8CC63F, 0x19C3B4 };
+   if (console == FE_CONSOLE_NES)
+      return VS_HEX(0xC9CED8, a);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(rgb[console], a);
@@ -50,6 +54,8 @@ static uint32_t hm_deep(int console, int bottom)
 {
    static const uint32_t top[3] = { 0x5B4BC4, 0x3D7A35, 0x1C9E97 };
    static const uint32_t bot[3] = { 0x231B5E, 0x12301A, 0x0A3F45 };
+   if (console == FE_CONSOLE_NES)
+      return VS_HEX(bottom ? 0x1D2027 : 0x6A6F7B, 255);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(bottom ? bot[console] : top[console], 255);

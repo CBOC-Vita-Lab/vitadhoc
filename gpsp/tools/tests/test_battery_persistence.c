@@ -8,7 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/resource.h>
 
+static FILE *sram_fp;   /* fe_host.c's delta handle (tentative: defined there) */
+static int fp_write_fail;
 static uint8_t live_save[131072];
 static int short_write, close_error, mutate_once, read_error, open_read_error;
 static const char *save_path;
@@ -18,6 +22,11 @@ volatile uint32_t backup_write_gen;
 static size_t battery_write(const void *p, size_t s, size_t n, FILE *f)
 {
    size_t wrote;
+   if (fp_write_fail && f == sram_fp)
+   {
+      errno = EIO;
+      return 0;
+   }
    if (short_write && s * n > 16)
       return fwrite(p, 1, 16, f) / s;
    wrote = fwrite(p, s, n, f);
@@ -128,6 +137,7 @@ static int matches(const char *path, const uint8_t *p, size_t n, int value)
 static void reset_faults(void)
 {
    short_write = close_error = mutate_once = read_error = open_read_error = 0;
+   fp_write_fail = 0;
    rename_calls = rename_fail_mask = 0;
 }
 static int write_kind(int kind)
@@ -320,6 +330,119 @@ static void test_load_recovery_failures(const char *path)
    gb_family = 0;
    puts("failed recovery at load: boot refuses, shutdown keeps backup, retry loads it");
 }
+/* ---- delta writes update the .sav in place: a failure falls back at once to
+ * the whole-image writer (.tmp, .old swap) from the in-memory copy ---- */
+static void fsize_limit(long n)
+{
+   struct rlimit r;
+   getrlimit(RLIMIT_FSIZE, &r);
+   r.rlim_cur = n < 0 ? r.rlim_max : (rlim_t)n;
+   assert(setrlimit(RLIMIT_FSIZE, &r) == 0);
+}
+static long file_len(const char *p)
+{
+   FILE *f = fopen(p, "rb");
+   long n;
+   if (!f) return -1;
+   fseek(f, 0, SEEK_END);
+   n = ftell(f);
+   fclose(f);
+   return n;
+}
+/* disk = 0x31 image loaded; blocks `a` and `b` then changed in memory */
+static void delta_setup(const char *path, unsigned a, unsigned b)
+{
+   seed(path, FE_SRAM_SIZE);
+   reset_faults();
+   sram_full_req = sram_retry_full = 0;
+   memset((void *)sram_blk_state, SBLK_CLEAN, sizeof(sram_blk_state));
+   assert(sram_load() == 0 && sram_have_blk);
+   memset(live_save + (size_t)a * SRAM_BLOCK, 0x52, SRAM_BLOCK);
+   memset(live_save + (size_t)b * SRAM_BLOCK, 0x53, SRAM_BLOCK);
+   assert(sram_scan(0) == 1 && sram_pending() == 2 && !sram_full_req);
+}
+static void converge(const char *path)
+{
+   reset_faults();
+   fsize_limit(-1);
+   assert(fe_host_sram_flush(1) >= 0);
+   assert(matches(path, live_save, FE_SRAM_SIZE, 0));
+   assert(!sram_retry_full && !sram_full_req && !sram_pending() && sram_have_blk);
+   assert(sram_scan(0) == 0);
+   sram_close();
+}
+static void test_delta_failure(const char *path)
+{
+   char tmp[512], old[512];
+   snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+   snprintf(old, sizeof(old), "%s.old", path);
+   signal(SIGXFSZ, SIG_IGN);
+
+   /* 1. the delta write fails, the disk is fine: the whole image is on the
+    * card before the drain returns, nothing stays queued or half done. */
+   delta_setup(path, 2, 7);
+   fp_write_fail = 1;
+   assert(sram_drain(0) == 0);
+   reset_faults();
+   assert(matches(path, live_save, FE_SRAM_SIZE, 0));
+   assert(access(tmp, F_OK) != 0 && access(old, F_OK) != 0);
+   assert(!sram_retry_full && !sram_full_req && !sram_pending() && sram_have_blk);
+   assert(sram_scan(0) == 0);             /* per-block CRCs match the disk */
+   sram_close();
+   puts("delta write failure: whole image written at once from memory, file whole");
+
+   /* 2. the delta write fails AND the fall-back fails (short writes): the
+    * file is never truncated or removed, the retry is armed, and the next
+    * flush rewrites it whole. */
+   delta_setup(path, 2, 7);
+   fp_write_fail = 1;
+   short_write = 1;
+   assert(sram_drain(0) < 0);
+   reset_faults();
+   assert(sram_retry_full && !sram_have_blk && file_len(path) == FE_SRAM_SIZE);
+   assert(access(tmp, F_OK) != 0 && access(old, F_OK) != 0);
+   converge(path);
+   puts("delta + fall-back failure: file keeps its size, retry armed, next flush converges");
+
+   /* 3. a real full card (RLIMIT_FSIZE): block 3 fits under the limit, block
+    * 20 does not.  The fall-back cannot fit either; nothing is truncated. */
+   delta_setup(path, 3, 20);
+   fsize_limit(64 * 1024);
+   assert(sram_drain(0) < 0);
+   fsize_limit(-1);
+   assert(sram_retry_full && file_len(path) == FE_SRAM_SIZE);
+   assert(access(tmp, F_OK) != 0 && access(old, F_OK) != 0);
+   converge(path);
+   puts("full card mid-delta (RLIMIT_FSIZE): size kept, no .tmp left, converges");
+
+   /* 4. the same card, a whole-image write that never involved a delta: the
+    * original is byte-identical (the .tmp is what fills up). */
+   seed(path, FE_SRAM_SIZE);
+   memset(live_save, 0x52, sizeof(live_save));
+   reset_faults();
+   fsize_limit(64 * 1024);
+   assert(sram_write_full(live_save) < 0);
+   fsize_limit(-1);
+   assert(matches(path, NULL, FE_SRAM_SIZE, 0x31) && access(tmp, F_OK) != 0);
+   puts("full card during whole-image write: original byte-identical");
+
+   /* 5. power lost inside the fall-back's swap: the (possibly torn) file was
+    * moved to .old and nothing else rename()d: start-up recovery brings .old
+    * back as the save, whole in size, and a flush from memory repairs it. */
+   delta_setup(path, 2, 7);
+   fp_write_fail = 1;
+   rename_fail_mask = (1u << 1) | (1u << 2);   /* tmp->save and the roll-back */
+   assert(sram_drain(0) < 0);
+   reset_faults();
+   assert(access(path, F_OK) != 0 && file_len(old) == FE_SRAM_SIZE);
+   sram_close();
+   sram_retry_full = sram_full_req = 0;
+   memset(live_save, 0xEE, sizeof(live_save));
+   assert(sram_load() == 0);                 /* the next start */
+   assert(file_len(path) == FE_SRAM_SIZE && access(old, F_OK) != 0);
+   assert(live_save[0] == 0x31);             /* the file's bytes, not 0xEE */
+   puts("fall-back cut inside the swap: start-up recovery restores .old as the save");
+}
 int main(int argc, char **argv)
 {
    char dir[] = "/tmp/gbadhoc-battery-review-XXXXXX", path[256];
@@ -333,6 +456,7 @@ int main(int argc, char **argv)
    test_full_write_interleaving(path, baseline);
    if (!baseline) test_full_write_generation(path);
    if (!baseline) test_recovery(path);
+   if (!baseline) test_delta_failure(path);
    test_load_failures(path, baseline);
    if (!baseline) test_load_recovery_failures(path);
    free(gb_save_buffer);

@@ -39,6 +39,7 @@
 
 #include "host.h"
 #include "picture.h"
+#include "audio_pace.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -60,15 +61,33 @@ extern "C" const unsigned char snes_font_data_end[];
 /* ---- log --------------------------------------------------------------- */
 
 static FILE *g_log;
+/* The log is kept in memory and written in one piece at most every 5 s, never while a battery RAM
+ * write is running (see log_flush below): an fflush on every line was a main thread stall on the
+ * memory card. Only the main thread logs. */
+static std::string g_logbuf;
+static uint64_t g_log_flushed_us;
+static unsigned g_log_lost;
 static void logf_(const char *fmt, ...)
 {
 	if (!g_log) return;
-	va_list ap;
+	char tmp[1024];
+	va_list ap, ap2;
 	va_start(ap, fmt);
-	vfprintf(g_log, fmt, ap);
+	va_copy(ap2, ap);
+	int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
 	va_end(ap);
-	fflush(g_log);
+	if (n > 0) {
+		if (g_logbuf.size() > 256 * 1024) g_log_lost++;      /* the card was busy for very long */
+		else if ((size_t) n < sizeof tmp) g_logbuf.append(tmp, n);
+		else {
+			std::string big((size_t) n + 1, '\0');
+			vsnprintf(&big[0], big.size(), fmt, ap2);
+			g_logbuf.append(big.data(), n);
+		}
+	}
+	va_end(ap2);
 }
+static void log_flush(uint64_t now_us, int mode);   /* defined after the battery RAM writer */
 
 static void mkdirs(void)
 {
@@ -133,62 +152,51 @@ static void text_draw(float x, float y, const char *s, unsigned color)
 }
 
 /* ---- audio ------------------------------------------------------------- */
+/* The pacing itself (ring, resampler, rate control, underrun handling) is frontend/audio_pace.cpp, shared
+ * with the Linux twin's simulation. This is only the thread around it. */
 
-static const int OUT_RATE = 48000, OUT_GRAIN = 1024;
+static const int OUT_RATE = 48000;
+static const int PRIO_AUDIO_DEFAULT = 0x40, PRIO_MAIN_DEFAULT = 0x60;   /* threads.ini: audio_prio, main_prio (0 = leave) */
 static int g_aport = -1;
-static SceUID g_athread = -1, g_amutex = -1;
+static SceUID g_athread = -1;
 static volatile int g_quit;
-static int16_t g_q[32768 * 2]; /* 32040 Hz stereo queue (frames) */
-static volatile unsigned g_q_r, g_q_w; /* frame counters */
-static volatile int g_paused;
-static double g_ratio_adj = 1.0;
-static double g_frac;
+static apace::Pacer g_pace;
+static std::atomic<unsigned> g_agap_max_us(0);   /* longest gap between two sceAudioOutOutput returns */
 
-static unsigned q_fill(void) { return g_q_w - g_q_r; }
-
-static void audio_push(const int16_t *src, int frames)
-{
-	for (int i = 0; i < frames; i++) {
-		if (q_fill() >= 32768 - 1) break; /* full: drop new audio */
-		unsigned w = g_q_w & 32767;
-		g_q[w * 2] = src[i * 2];
-		g_q[w * 2 + 1] = src[i * 2 + 1];
-		__sync_synchronize();
-		g_q_w++;
-	}
-}
+static void audio_push(const int16_t *src, int frames) { g_pace.push(src, frames); }
 
 static int audio_thread(SceSize, void *)
 {
-	static int16_t out[OUT_GRAIN * 2];
-	int16_t last[2] = { 0, 0 };
+	static int16_t out[apace::Pacer::GRAIN_LEGACY * 2];
+	uint64_t prev = 0;
 	while (!g_quit) {
-		double step = (double) SNES_AUDIO_RATE / OUT_RATE * g_ratio_adj;
-		for (int i = 0; i < OUT_GRAIN; i++) {
-			if (g_paused || q_fill() < 3) { out[i * 2] = last[0]; out[i * 2 + 1] = last[1]; continue; }
-			unsigned r = g_q_r & 32767, r1 = (g_q_r + 1) & 32767;
-			double f = g_frac;
-			out[i * 2] = (int16_t) (g_q[r * 2] * (1 - f) + g_q[r1 * 2] * f);
-			out[i * 2 + 1] = (int16_t) (g_q[r * 2 + 1] * (1 - f) + g_q[r1 * 2 + 1] * f);
-			last[0] = out[i * 2]; last[1] = out[i * 2 + 1];
-			g_frac += step;
-			unsigned adv = (unsigned) g_frac;
-			g_frac -= adv;
-			g_q_r += adv;
-		}
+		g_pace.render(out);
 		sceAudioOutOutput(g_aport, out);
+		const uint64_t t = sceKernelGetProcessTimeWide();
+		if (prev) {
+			const unsigned gap = (unsigned) (t - prev);
+			if (gap > g_agap_max_us.load(std::memory_order_relaxed)) g_agap_max_us.store(gap, std::memory_order_relaxed);
+		}
+		prev = t;
 	}
 	return 0;
 }
 
-static void audio_init(void)
+static void audio_init(bool legacy, int prio)
 {
-	g_aport = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, OUT_GRAIN, OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
+	apace::Config cfg;
+	cfg.in_rate = SNES_AUDIO_RATE;
+	cfg.out_rate = OUT_RATE;
+	cfg.legacy = legacy;
+	g_pace.init(cfg);
+	g_aport = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, g_pace.grain(), OUT_RATE, SCE_AUDIO_OUT_MODE_STEREO);
 	if (g_aport < 0) { logf_("audio open failed %08x\n", g_aport); return; }
 	int vol[2] = { SCE_AUDIO_VOLUME_0DB, SCE_AUDIO_VOLUME_0DB };
 	sceAudioOutSetVolume(g_aport, (SceAudioOutChannelFlag) (SCE_AUDIO_VOLUME_FLAG_L_CH | SCE_AUDIO_VOLUME_FLAG_R_CH), vol);
-	g_athread = sceKernelCreateThread("snes_audio", audio_thread, 0x50, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+	g_athread = sceKernelCreateThread("snes_audio", audio_thread, prio, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
 	if (g_athread >= 0) sceKernelStartThread(g_athread, 0, NULL);
+	logf_("audio: %s, grain %d frames at %d Hz, thread priority 0x%x (%s)\n", legacy ? "LEGACY (first player's pacing)" : "pacer v2",
+	    g_pace.grain(), OUT_RATE, prio, g_athread >= 0 ? "started" : "NOT started");
 }
 
 /* ---- video ------------------------------------------------------------- */
@@ -622,7 +630,7 @@ static int multitap_wanted(const pic_settings &ps)
 static uint8_t g_srm_buf[256 * 1024];
 static size_t g_srm_len;
 static SceUID g_srm_sema = -1, g_srm_thread = -1;
-static std::atomic<int> g_srm_busy(0), g_srm_result(0), g_srm_done(0), g_srm_stop(0);
+static std::atomic<int> g_srm_busy(0), g_srm_result(0), g_srm_done(0), g_srm_stop(0), g_srm_sync(0);
 
 static int srm_writer(SceSize, void *)
 {
@@ -661,11 +669,61 @@ static int srm_write_async(void)
 	return 1;
 }
 
+/* A battery RAM write that failed (no verified backup of the existing save, disk full, card removed...) leaves the
+ * file on the card untouched (host.cpp), keeps the RAM marked as unsaved and says why: the reason is logged, shown on
+ * the game screen (g_save_msg) and in the pause menu, and the write is tried again after a back-off (10 s, doubling
+ * to 60 s) without ever blocking the game thread (the retries run on the writer thread like the first try). */
+static char g_save_msg[220];
+static bool g_save_failing;
+static uint64_t g_srm_retry_at;
+static unsigned g_srm_backoff_s = 10;
+
+static void srm_report(int r, const char *how, uint64_t now)
+{
+	if (!r) {
+		if (g_save_failing) logf_("sram save recovered (%s)\n", how);
+		g_save_failing = false;
+		g_save_msg[0] = 0;
+		g_srm_backoff_s = 10;
+		g_srm_retry_at = 0;
+		return;
+	}
+	char why[200] = "";
+	snes_host_save_error(why, sizeof why);
+	snprintf(g_save_msg, sizeof g_save_msg, "Save NOT written: %s", why[0] ? why : "unknown error");
+	logf_("sram save FAILED rc=%d (%s): %s - the file on the card was not touched; retry in %u s\n", r, how, why, g_srm_backoff_s);
+	g_save_failing = true;
+	g_srm_retry_at = now + (uint64_t) g_srm_backoff_s * 1000000;
+	if (g_srm_backoff_s < 60) g_srm_backoff_s = g_srm_backoff_s * 2 > 60 ? 60 : g_srm_backoff_s * 2;
+}
+
 /* write now, on this thread (pause menu, suspend, quit): after the writer */
 static int srm_write_sync(void)
 {
 	srm_wait_idle();
-	return snes_host_sram_save();
+	g_srm_sync = 1;
+	int r = snes_host_sram_save();
+	g_srm_sync = 0;
+	srm_report(r, "now", sceKernelGetProcessTimeWide());
+	return r;
+}
+
+/* mode 0: periodic (at most every 5 s); 1: now, but still not during a battery RAM write; 2: now, final */
+static void log_flush(uint64_t now_us, int mode)
+{
+	if (!g_log || g_logbuf.empty()) return;
+	if (mode < 2 && (g_srm_busy || g_srm_sync)) return;
+	if (mode == 0 && now_us - g_log_flushed_us < 5000000) return;
+	if (g_log_lost) {
+		char m[64];
+		int n = snprintf(m, sizeof m, "(log: %u lines lost, buffer full)\n", g_log_lost);
+		g_logbuf.append(m, n);
+		g_log_lost = 0;
+	}
+	fwrite(g_logbuf.data(), 1, g_logbuf.size(), g_log);
+	fflush(g_log);
+	g_logbuf.clear();
+	g_log_flushed_us = now_us;
 }
 
 static uint64_t process_us(void) { return sceKernelGetProcessTimeWide(); }
@@ -696,6 +754,7 @@ static void return_to_vitadhoc(void)
 {
 	const char *argv[] = { "--from-snes", NULL };   /* arguments only: the system adds the path */
 	logf_("returning to VitAdhoc\n");
+	log_flush(sceKernelGetProcessTimeWide(), 2);
 	if (g_log) { fclose(g_log); g_log = NULL; }
 	sceAppMgrLoadExec("app0:eboot.bin", (char *const *) argv, NULL);
 	sceKernelExitProcess(0);
@@ -840,7 +899,7 @@ static int pause_menu(const std::string &game, std::string &status)
 	int sel = 0, slot = 0;
 	Nav nv = { 0xffffffffu };
 	int closing = 0;
-	g_paused = 1;
+	g_pace.set_paused(true);
 	for (;;) {
 		nav_poll(nv);
 		if (nv.up) sel = (sel + M_N - 1) % M_N;
@@ -867,7 +926,7 @@ static int pause_menu(const std::string &game, std::string &status)
 				status = r == 2 ? "No state in this slot" : r ? "Could not load the state" : "State loaded";
 				if (r == 0) closing = 1;
 			} else if (sel == 5) { snes_host_reset(); closing = 1; }
-			else if (sel == 6) { g_paused = 0; return 1; }
+			else if (sel == 6) { g_pace.set_paused(false); return 1; }
 		}
 		if (closing) break;
 
@@ -882,6 +941,13 @@ static int pause_menu(const std::string &game, std::string &status)
 			text_draw(340, 190 + i * 40, line, i == sel ? 0xFFFFD040 : 0xFFE0E0E0);
 		}
 		if (!status.empty()) text_draw(330, 470, status.c_str(), 0xFFA0FFA0);
+		if (g_save_failing && g_save_msg[0]) {
+			char line[240];
+			snprintf(line, sizeof line, "%s", g_save_msg);
+			while (text_width(line) > SCREEN_W - 40 && strlen(line) > 12) { size_t n = strlen(line); line[n - 1] = 0; }
+			text_draw(20, 510, line, 0xFF5050FF);
+			text_draw(20, 530, "The save on the card was not touched. It is tried again; free space or fix the card.", 0xFFB0B0FF);
+		}
 		frame_finish();
 	}
 	/* wait until the confirm / back buttons are released so the game does not see them */
@@ -891,7 +957,7 @@ static int pause_menu(const std::string &game, std::string &status)
 		if (!(raw & (SCE_CTRL_CROSS | SCE_CTRL_CIRCLE | SCE_CTRL_START | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER))) break;
 		sceKernelDelayThread(16000);
 	}
-	g_paused = 0;
+	g_pace.set_paused(false);
 	return 0;
 }
 
@@ -909,6 +975,22 @@ static void fatal_screen(const char *line1, const char *line2)
 }
 
 /* ---- main -------------------------------------------------------------- */
+
+/* 64 bit hash of a byte range (battery RAM change detection; not cryptographic) */
+static uint64_t hash64(const uint8_t *p, size_t n)
+{
+	uint64_t h = 0xcbf29ce484222325ull;
+	size_t i = 0;
+	for (; i + 8 <= n; i += 8) {
+		uint64_t w;
+		memcpy(&w, p + i, 8);
+		h = (h ^ w) * 0x100000001b3ull;
+		h ^= h >> 29;
+	}
+	for (; i < n; i++) h = (h ^ p[i]) * 0x100000001b3ull;
+	return h ^ (h >> 32);
+}
+
 
 static int ini_int(const char *path, const char *key, int def)
 {
@@ -991,6 +1073,14 @@ int main(int argc, char **argv)
 	int want_apu = ini_int(tini, "apu_thread", 1), want_ppu = ini_int(tini, "ppu_thread", 1);
 	int spin = ini_int(tini, "spin", 300);
 	snes_host_thread_config(2, 0x60, 1, 0x60, spin);
+	/* thread priorities, explicit (lower number = more urgent): audio above everything it shares core 2
+	 * with, the emulation thread level with the workers. 0 in threads.ini leaves a thread as the system made it. */
+	const int audio_prio = ini_int(tini, "audio_prio", PRIO_AUDIO_DEFAULT), main_prio = ini_int(tini, "main_prio", PRIO_MAIN_DEFAULT);
+	const bool audio_legacy = ini_int(tini, "audio_legacy", 0) != 0;   /* 1 = the first player's audio, for A/B on hardware */
+	if (main_prio > 0) {
+		int rc = sceKernelChangeThreadPriority(0, main_prio);
+		logf_("main thread priority 0x%x rc=%08x now 0x%x\n", main_prio, rc, sceKernelGetThreadCurrentPriority());
+	}
 	snes_host_set_option("apu_thread", want_apu);
 	snes_host_set_option("ppu_thread", want_ppu);
 
@@ -1007,14 +1097,13 @@ int main(int argc, char **argv)
 	    g_ps.scan, g_ps.grid, g_ps.multitap, g_ps.use_game);
 	snes_host_set_multitap(multitap_wanted(g_ps));
 
-	audio_init();
+	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
 	const double vita_hz = 59.94;
-	double run_acc = 1.0; /* frames owed to the core */
+	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
+	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. */
 	std::string status;
-	pic_governor gov;
-	pic_gov_init(&gov);
 
 	/* log state */
 	uint64_t sec_start = sceKernelGetProcessTimeWide();
@@ -1027,16 +1116,28 @@ int main(int argc, char **argv)
 	snes_thread_stats st0, st1;
 	snes_host_thread_stats(&st0);
 	unsigned drawn = 0, skipped = 0, pic_fresh = 0;
-	int gov_level_seen = 0;
 	srm_writer_start();
-	/* Super FX pacing: see below */
+	/* Super FX pacing: see below (re-clocked every 30 frames) */
 	const bool superfx = snes_host_has_superfx() != 0;
 	int fx_pct = 100;
 	uint64_t fx_emu_us = 0, fx_chip_us = 0;
 	int fx_frames = 0;
 	if (superfx) snes_host_superfx_timer(process_us);
 	unsigned last_vc = sceDisplayGetVcount();
-	int gov_warmup = 180;   /* the first 3 s (caches, the game's own start-up) do not count */
+	/* audio / pacing diagnostics, see the "A " line below */
+	apace::SpeedMeter speed_meter(8);
+	bool stats_pending = false;
+	uint32_t ur_seen = 0;
+	uint64_t prev_loop0 = 0;
+	unsigned w16 = 0, w20 = 0, w25 = 0;           /* passes whose work took longer than 16.7 / 20 / 25 ms */
+	uint64_t stall_max_us = 0, work_max_us = 0;   /* longest gap between two passes; longest single pass */
+	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;     /* the same, as of the last second tick (printed with the counters) */
+	double s_stall = 0, s_work = 0, s_agap = 0;
+	/* battery RAM: cheap change detection (see below) */
+	unsigned sram_pass = 0;
+	uint64_t sram_hash = 0, sram_last_change = 0, sram_last_write = 0;
+	bool sram_hash_valid = false, sram_dirty = false, sram_recheck = true;
+	log_flush(sceKernelGetProcessTimeWide(), 1);
 
 	for (;;) {
 		/* One pass per display refresh, counted by the display itself: a pass
@@ -1054,17 +1155,24 @@ int main(int argc, char **argv)
 		if (elapsed == 0) elapsed = 1;      /* the count did not move: count the wait */
 		if (elapsed > 2) elapsed = 2;       /* a long stall (menu, suspend) is not caught up */
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
+		if (prev_loop0 && loop0 - prev_loop0 > stall_max_us) stall_max_us = loop0 - prev_loop0;
+		prev_loop0 = loop0;
 		unsigned raw, masks[4];
 		read_pads(masks, &raw);
 		if ((raw & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START)) ==
 		    (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER | SCE_CTRL_START)) {
 			if (snes_host_sram_dirty()) srm_write_sync();
+			log_flush(sceKernelGetProcessTimeWide(), 1);
 			int quit = pause_menu(game, status);
 			if (quit) break;
 			snes_host_set_multitap(multitap_wanted(g_ps));
-			run_acc = 1.0;
 			last_vc = sceDisplayGetVcount();
-			gov_warmup = 60;
+			/* the second that held the menu says nothing about the emulation's speed */
+			speed_meter.reset();
+			prev_loop0 = 0;
+			sec_start = sceKernelGetProcessTimeWide();
+			frames_run = vblanks = 0;
+			sram_recheck = true;
 			continue;
 		}
 		for (int i = 0; i < 4; i++) snes_host_set_pad(i, masks[i]);
@@ -1073,21 +1181,8 @@ int main(int argc, char **argv)
 		 * demo or a cutscene with no buttons pressed */
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 
-		run_acc += frame_hz / vita_hz * elapsed;
-		int to_run = 0;
-		while (run_acc >= 1.0 && to_run < 2) { run_acc -= 1.0; to_run++; }
-		if (run_acc > 2.0) run_acc = 1.0;
-		/* Two frames in one refresh only to catch up after a frame that ran past its refresh
-		 * (the game keeps its speed and its sound keeps flowing; one picture is not shown).
-		 * Ordinary drift between the game's and the screen's rate is left to the audio rate
-		 * control, as before. */
-		if (to_run > 1 && (elapsed < 2 || last_frame_us > 11000)) { to_run = 1; run_acc += 1.0; }
-		/* (a game whose frames all run long is not made to run two at a time: that would
-		 * only show fewer pictures) */
+		const int to_run = 1;
 
-		/* governor level 2: every other frame is not drawn (the core skips its own drawing too when it
-		 * draws on this thread; with the picture thread on, only the copy and the GPU work are saved) */
-		bool skip_draw = gov.level >= 2 && (vblanks & 1);
 		bool fresh = false;
 		uint64_t emu_pass_us = 0;
 		for (int i = 0; i < to_run; i++) {
@@ -1099,7 +1194,6 @@ int main(int argc, char **argv)
 				g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.on = 1; g_s9xp.last = s9xp_now();
 			}
 #endif
-			if (!(snes_host_threads_active() & 2)) snes_host_set_render(!skip_draw);
 			snes_host_run_frame();
 #ifdef S9X_PROF
 			if (prof_this) {
@@ -1117,7 +1211,7 @@ int main(int argc, char **argv)
 			static int16_t abuf[2048 * 2];
 			int n;
 			while ((n = snes_host_audio_take(abuf, 2048)) > 0) audio_push(abuf, n);
-			if (!skip_draw) {
+			{
 				uint64_t f0 = sceKernelGetProcessTimeWide();
 				fresh = video_fetch(g_ps, frames_run) != 0;
 				fetch_us += sceKernelGetProcessTimeWide() - f0;
@@ -1125,20 +1219,23 @@ int main(int argc, char **argv)
 		}
 		if (fresh) pic_fresh++;
 
-		/* audio rate control: keep the queue near 60 ms */
-		{
-			double target = 0.06 * SNES_AUDIO_RATE, fill = q_fill();
-			double e = (fill - target) / target; /* >0: too full, consume faster */
-			if (e > 1) e = 1; if (e < -1) e = -1;
-			g_ratio_adj = 1.0 + 0.01 * e;
-		}
+		/* the old player's rate control ran here; the pacer's runs on the audio thread (a no-op unless audio_legacy=1) */
+		g_pace.legacy_update();
 
 		bool drew = false;
 		uint64_t d0 = sceKernelGetProcessTimeWide();
-		if (!skip_draw) drew = frame_draw(g_ps, 1, frames_run);
+		drew = frame_draw(g_ps, 1, frames_run);
 		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
 		if (drew) {                                     /* queued; the next pass waits for the display */
+			if (g_save_failing && g_save_msg[0]) {
+				/* a save that could not be written: the card's file is untouched; say so, small, at the bottom */
+				char line[240];
+				snprintf(line, sizeof line, "%s (old save kept, retrying)", g_save_msg);
+				while (text_width(line) > SCREEN_W - 24 && strlen(line) > 12) { size_t n = strlen(line); line[n - 1] = 0; }
+				vita2d_draw_rectangle(0, SCREEN_H - 34, SCREEN_W, 34, 0xC0000000);
+				text_draw(12, SCREEN_H - 10, line, 0xFF5050FF);
+			}
 			frame_finish();
 			drawn++;
 			finish_us += sceKernelGetProcessTimeWide() - work_end;
@@ -1155,10 +1252,10 @@ int main(int argc, char **argv)
 		 * gets the same number of chip instructions per second it got before, so
 		 * it is drawn as fast as before. The chip is back at 100% whenever there is
 		 * time (Yoshi's Island never leaves it). Only for Super FX carts. */
-		if (superfx && to_run > 0) {
+		if (superfx) {
 			fx_emu_us += emu_pass_us;
 			fx_chip_us += snes_host_superfx_take_us();
-			if ((fx_frames += to_run) >= 60) {
+			if ((fx_frames += to_run) >= 30) {
 				/* the frame's time is the rest (CPU, DMA...) plus the chip's, which
 				 * goes with its speed: the speed that makes the frame fit */
 				const double avg = fx_emu_us / (double) fx_frames, chip = fx_chip_us / (double) fx_frames;
@@ -1181,16 +1278,6 @@ int main(int argc, char **argv)
 			}
 		}
 
-		/* The governor (skip drawing every other frame when frames run long) stays
-		 * off: on a Vita the picture is drawn on its own thread and handing it over
-		 * costs the game thread about half a millisecond, so skipping it halved the
-		 * frames shown for almost no time won. A late frame is shown late instead. */
-		(void) gov_warmup;
-		if (gov.level != gov_level_seen) {
-			logf_("governor: level %d -> %d (work %.1f ms)\n", gov_level_seen, gov.level, (work_end - loop0) / 1000.0);
-			gov_level_seen = gov.level;
-		}
-
 		/* battery RAM: 2 s after it changed, on the writer thread; at most every
 		 * 30 s for games that keep changing it (work RAM in Super FX carts); at
 		 * once, here, before suspend */
@@ -1202,44 +1289,89 @@ int main(int argc, char **argv)
 				srm_done_seen = d;
 				int r = g_srm_result;
 				if (r) snes_host_sram_forget();   /* failed: still to be written */
-				if (r || d <= 3 || d % 50 == 0) logf_("sram save rc=%d (write %d)\n", r, d);
+				sram_recheck = true;
+				if (r) srm_report(r, "writer thread", sceKernelGetProcessTimeWide());
+				else {
+					srm_report(0, "writer thread", 0);
+					if (d <= 3 || d % 50 == 0) logf_("sram save rc=0 (write %d)\n", d);
+				}
 			}
 		}
 		if (g_suspend_flag) {
 			if (snes_host_sram_dirty()) logf_("sram save before suspend rc=%d\n", srm_write_sync());
 			sram_dirty_since = 0;
-		} else if (snes_host_sram_dirty()) {
-			/* settled (unchanged for 1 s) or 30 s since the last write */
-			static uint8_t shadow[sizeof g_srm_buf];
-			static uint64_t last_change, last_write;
-			size_t sz = snes_host_sram_size();
-			if (sz <= sizeof shadow && memcmp(shadow, snes_host_sram_data(), sz) != 0) {
-				memcpy(shadow, snes_host_sram_data(), sz);
-				last_change = now;
+			sram_recheck = true;
+		} else {
+			/* Change detection without comparing the whole RAM every pass: a 64 bit hash of it every 8th
+			 * pass (Snes9x has no usable dirty flag: CPU.SRAMModified is cleared by the picture code and
+			 * the Super FX / SA-1 chips write the RAM without setting it). Only when the hash moved, or
+			 * a write just finished (or failed), the exact compare against what is on disk runs. So a
+			 * write starts at most 8 passes (133 ms) later than before, never earlier, and nothing is lost. */
+			if ((++sram_pass & 7) == 0 || sram_recheck) {
+				const size_t sz = snes_host_sram_size();
+				const bool recheck = sram_recheck;
+				sram_recheck = false;
+				if (sz) {
+					const uint64_t h = hash64(snes_host_sram_data(), sz);
+					const bool moved = !sram_hash_valid || h != sram_hash;
+					if (moved) { sram_hash = h; sram_hash_valid = true; sram_last_change = now; }
+					if (moved || recheck) sram_dirty = snes_host_sram_dirty() != 0;
+				} else sram_dirty = false;
 			}
-			if (!sram_dirty_since) sram_dirty_since = now;
-			if (now - sram_dirty_since > 2000000 &&
-			    (now - last_change > 1000000 || now - last_write > 30000000) && srm_write_async()) {
-				sram_dirty_since = 0;
-				last_write = now;
-			}
-		} else sram_dirty_since = 0;
+			if (sram_dirty) {
+				/* settled (unchanged for 1 s) or 30 s since the last write */
+				if (!sram_dirty_since) sram_dirty_since = now;
+				if (now - sram_dirty_since > 2000000 &&
+				    (now - sram_last_change > 1000000 || now - sram_last_write > 30000000) &&
+				    now >= g_srm_retry_at && srm_write_async()) {
+					sram_dirty_since = 0;
+					sram_last_write = now;
+					sram_recheck = true;    /* what was handed over counts as saved: look again next pass */
+				}
+			} else sram_dirty_since = 0;
+		}
 		g_suspend_flag = 0;
+
+		/* per pass bookkeeping for the pacing diagnostics */
+		{
+			const uint64_t work = now - loop0;
+			if (work > 16700) w16++;
+			if (work > 20000) w20++;
+			if (work > 25000) w25++;
+			if (work > work_max_us) work_max_us = work;
+			const uint32_t u = g_pace.underruns();
+			if (u != ur_seen) {
+				const apace::UnderrunEvent e = g_pace.last_underrun();
+				logf_("UNDERRUN #%u (%u new) at out=%.2fs ema=%.1fms target->%.0fms ratio=%+.0fppm queue_now=%ums work=%.1fms\n", e.index,
+				    u - ur_seen, e.out_frames / (double) OUT_RATE, e.ema_ms, e.target_ms, e.ratio_ppm, g_pace.fill_frames() * 1000 / SNES_AUDIO_RATE,
+				    work / 1000.0);
+				ur_seen = u;
+			}
+		}
 
 		if (now - sec_start >= 1000000) {
 			double dt = (now - sec_start) / 1e6;
+			{
+				/* emulation speed for the audio pacer: console frames per second over the last 8 s */
+				const double sp = speed_meter.update(frames_run, dt, frame_hz);
+				if (sp >= 0) g_pace.report_speed(sp);
+				s_w16 = w16; s_w20 = w20; s_w25 = w25; s_stall = stall_max_us / 1000.0; s_work = work_max_us / 1000.0;
+				s_agap = g_agap_max_us.exchange(0) / 1000.0;
+				w16 = w20 = w25 = 0; stall_max_us = work_max_us = 0;
+				stats_pending = true;
+			}
 			snes_host_thread_stats(&st1);
 			double fr = frames_run ? frames_run : 1;
 			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, vblanks / dt, frames_run / dt,
-			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, q_fill());
+			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, g_pace.fill_frames());
 			/* busy time per emulated frame: the main thread's whole loop work (emulation, copy, GPU submission,
 			 * without the wait for the display) and the two workers' time spent working */
-			logf_(" | busy ms/fr: main=%.2f ppu=%.2f apu=%.2f | waits/s: ppu=%llu apu=%llu (%.1f ms) | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | gov=%d drawn=%u skipped=%u new_pic=%u fence_skip=%u rt_reuse=%u",
+			logf_(" | busy ms/fr: main=%.2f ppu=%.2f apu=%.2f | waits/s: ppu=%llu apu=%llu (%.1f ms) | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | drawn=%u skipped=%u new_pic=%u fence_skip=%u rt_reuse=%u",
 			    main_us / 1000.0 / fr, (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6 / fr, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6 / fr,
 			    (unsigned long long) (st1.ppu_waits - st0.ppu_waits), (unsigned long long) (st1.apu_waits - st0.apu_waits),
 			    ((st1.ppu_wait_ns - st0.ppu_wait_ns) + (st1.apu_wait_ns - st0.apu_wait_ns)) / 1e6,
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr,
-			    gov.level, drawn, skipped, pic_fresh, g_fence_skips, g_rt_reused);
+			    drawn, skipped, pic_fresh, g_fence_skips, g_rt_reused);
 			/* where the rest of each refresh went: handing the picture over (blocks
 			 * while the display queue or the GPU is behind) and the wait for the
 			 * next refresh */
@@ -1264,12 +1396,31 @@ int main(int argc, char **argv)
 			drawn = skipped = pic_fresh = 0;
 			secs++;
 		}
+
+		/* one compact audio / pacing line a second (the counters of the audio thread's last second, published
+		 * a few ms after the tick), see snes/README.md "Reading the log" */
+		if (stats_pending) {
+			apace::Counters c;
+			if (g_pace.poll(&c)) {
+				stats_pending = false;
+				logf_("A t=%d in=%u out=%u fill=%.1f/%.1f/%.1f ema=%.1f tgt=%.0f ratio=%+.0f/%+.0f/%+.0f base=%.4f ur=%u/%u drop=%u trim=%u"
+				    " agap=%.1f w16=%u w20=%u w25=%u stall=%.1f wmax=%.1f %s\n", secs - 1, c.in_frames, c.out_frames, c.fill_ms_min, c.fill_ms_avg,
+				    c.fill_ms_max, c.ema_ms, c.target_ms, c.ratio_ppm_min, c.ratio_ppm_avg, c.ratio_ppm_max, c.base_speed, c.underruns_sec,
+				    c.underruns_total, c.dropped_sec, c.trims_sec, s_agap, s_w16, s_w20, s_w25, s_stall, s_work, audio_legacy ? "legacy" : "v2");
+			}
+		}
+		log_flush(sceKernelGetProcessTimeWide(), 0);
 	}
 
 	g_quit = 1;
 	settings_save();
 	srm_wait_idle();
-	if (snes_host_sram_dirty()) logf_("final sram save rc=%d\n", snes_host_sram_save());
+	if (snes_host_sram_dirty()) {
+		int fr = snes_host_sram_save();
+		logf_("final sram save rc=%d\n", fr);
+		srm_report(fr, "final", sceKernelGetProcessTimeWide());
+		log_flush(sceKernelGetProcessTimeWide(), 2);
+	}
 	if (g_srm_thread >= 0) { g_srm_stop = 1; sceKernelSignalSema(g_srm_sema, 1); sceKernelWaitThreadEnd(g_srm_thread, NULL, NULL); sceKernelDeleteThread(g_srm_thread); }
 	if (g_athread >= 0) sceKernelWaitThreadEnd(g_athread, NULL, NULL);
 	if (g_aport >= 0) sceAudioOutReleasePort(g_aport);

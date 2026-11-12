@@ -1,16 +1,17 @@
 gamedb.txt -- the game list's own knowledge (gamedb.h), written by
 tools/make_gamedb.py.
 
-records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES: 11781)
+records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, FDS: 18812)
           S  GBA header game code -> No-Intro name   (2756)
           Z  GBA header game code -> cartridge size  (2756)
-          N  console + loose title -> No-Intro name  (7842)
+          N  console + loose title -> No-Intro name  (11113)
           T  title key -> English Wikipedia article  (2451)
           W  article -> its first sentences          (2030)
 
 sources:  the No-Intro catalogues as published in libretro-database
           (metadat/no-intro/Nintendo - Game Boy Advance / Game Boy /
-          Game Boy Color / Super Nintendo Entertainment System .dat);
+          Game Boy Color / Super Nintendo Entertainment System / Nintendo Entertainment System /
+          Family Computer Disk System .dat);
           Wikidata (CC0): the video games released for those consoles and
           their English Wikipedia articles; English Wikipedia (CC BY-SA
           4.0): the opening sentences of each article, at most ~200
@@ -19,6 +20,10 @@ sources:  the No-Intro catalogues as published in libretro-database
           and foreign-script titles left out, list and disambiguation pages
           left out. The SNES records were added for 1.3 (GAMEDB_SYSTEMS=D);
           where a title is shared, the earlier consoles' article is kept.
+          The NES (E) and Disk System (F) records were added for 1.4 from the
+          No-Intro catalogues alone (GAMEDB_SYSTEMS=EF, Wikidata and Wikipedia
+          were not reachable then): names and checksums, no descriptions. Only
+          the headerless CRCs are kept, as the app hashes without the iNES header.
 
 The descriptions are adapted from Wikipedia and stay under CC BY-SA 4.0;
 the app shows them with a "From Wikipedia" chip and the README credits

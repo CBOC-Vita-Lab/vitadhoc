@@ -1,12 +1,12 @@
 VitAdhoc 1.3.1
-Game Boy Advance, Game Boy, Game Boy Color and Super NES for PS Vita
+Game Boy Advance, Game Boy, Game Boy Color, Super NES and NES for PS Vita
 
 Thanks for trying VitAdhoc! Here's everything you need to get playing.
 
 
 What You Need
 - A PS Vita with HENkaku or Enso, and VitaShell
-- Your own .gba, .gb, .gbc, .sfc or .smc games
+- Your own .gba, .gb, .gbc, .sfc, .smc or .nes games
 - No BIOS needed: an open one is built in
 
 

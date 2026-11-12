@@ -28,6 +28,9 @@
 #include "host.h"
 #include "s9x_mt.h"
 #include <atomic>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #define BTN_PAD(port, btn) (((port) << 4) | (btn))
 
@@ -406,6 +409,7 @@ int snes_host_set_option(const char *name, int v)
 		Settings.InterpolationMethod = v == 0 ? DSP_INTERPOLATION_NONE : v == 1 ? DSP_INTERPOLATION_LINEAR
 		    : v == 3 ? DSP_INTERPOLATION_CUBIC : v == 4 ? DSP_INTERPOLATION_SINC : DSP_INTERPOLATION_GAUSSIAN;
 	else if (!strcmp(name, "superfx_clock")) Settings.SuperFXClockMultiplier = v;
+	else if (!strcmp(name, "gsu_cycles")) Settings.DisableGSUCycleMode = v ? FALSE : TRUE;	/* 0 = the 1.63 flat instruction budget; takes effect at the next ROM load */
 	else if (!strcmp(name, "transparency")) Settings.Transparency = v ? TRUE : FALSE;
 	else if (!strcmp(name, "echo_buffer")) Settings.SeparateEchoBuffer = v ? TRUE : FALSE;
 	else return 1;
@@ -445,63 +449,226 @@ int snes_host_sram_dirty(void)
 	return g_sram_saved.size() != sz || memcmp(g_sram_saved.data(), Memory.SRAM, sz) != 0;
 }
 
-/* Copy an existing save into the backup folder (once per distinct content, never
- * overwriting an earlier backup), so a .srm that another emulator wrote is safe
- * even if our .bak is replaced later. Best effort: a failure does not stop the save. */
-static void backup_copy(const char *path, const std::vector<uint8_t> &old)
+/* ---- save safety ---------------------------------------------------------
+ * The rule (the same as the rest of VitAdhoc, see gpsp/vita/save_sync.c):
+ *  - the first overwrite of an existing save in a session needs a backup that was
+ *    read back whole (size and bytes). If there is none the save is left untouched,
+ *    the real reason is kept (snes_host_save_error) and the write is refused; the
+ *    caller tries again later because nothing was recorded as saved.
+ *  - every write goes to <file>.tmp, is read back, and is renamed over the file.
+ *    The old file is never truncated or deleted before the new one is whole.
+ * Return codes of the save functions: 0 ok; 1 the temporary file could not be
+ * created; 2 writing it failed (disk full, file size limit); 3 no verified backup
+ * (the save was not touched); 4 the new file could not be put in place; 5 the new
+ * file did not read back whole; 6 the existing save cannot be read. */
+static std::atomic_flag g_err_lock = ATOMIC_FLAG_INIT;
+static int g_err_code;
+static char g_err_text[200];
+static void (*g_log_fn)(const char *);
+
+void snes_host_set_log(void (*fn)(const char *line)) { g_log_fn = fn; }
+
+static void log_line(const char *s)
 {
-	if (g_backup_dir.empty() || old.empty()) return;
+	if (g_log_fn) g_log_fn(s);
+	else fprintf(stderr, "%s\n", s);
+}
+
+static void err_set(int code, const char *path, const char *what, int en)
+{
+	char line[320];
+	if (code) snprintf(line, sizeof line, "%s: %s%s%s", what, path ? path : "", en ? " - " : "", en ? strerror(en) : "");
+	else line[0] = 0;
+	while (g_err_lock.test_and_set(std::memory_order_acquire)) s9xmt::cpu_relax();
+	g_err_code = code;
+	snprintf(g_err_text, sizeof g_err_text, "%s", line);
+	g_err_lock.clear(std::memory_order_release);
+	if (code) log_line((std::string("save FAILED, the existing file was not touched: ") + line).c_str());
+}
+
+int snes_host_save_error(char *text, size_t cap)
+{
+	while (g_err_lock.test_and_set(std::memory_order_acquire)) s9xmt::cpu_relax();
+	int c = g_err_code;
+	if (text && cap) snprintf(text, cap, "%s", g_err_text);
+	g_err_lock.clear(std::memory_order_release);
+	return c;
+}
+
+static uint64_t fnv64(const uint8_t *d, size_t n)
+{
 	uint64_t h = 1469598103934665603ull;
-	for (uint8_t b : old) { h ^= b; h *= 1099511628211ull; }
+	for (size_t i = 0; i < n; i++) { h ^= d[i]; h *= 1099511628211ull; }
+	return h;
+}
+
+/* Does the file hold exactly these bytes (size and content)? */
+static bool file_equals(const char *p, const uint8_t *d, size_t n)
+{
+	if (n == 0) { struct stat st; return stat(p, &st) == 0 && st.st_size == 0; }
+	std::vector<uint8_t> b;
+	return read_file(p, b) && b.size() == n && memcmp(b.data(), d, n) == 0;
+}
+
+/* Does the file hold a shorter start of these bytes (an interrupted copy)? */
+static bool file_is_prefix_of(const char *p, const uint8_t *d, size_t n)
+{
+	struct stat st;
+	if (stat(p, &st) != 0) return false;
+	if (st.st_size == 0) return true;
+	std::vector<uint8_t> b;
+	return read_file(p, b) && b.size() < n && memcmp(b.data(), d, b.size()) == 0;
+}
+
+/* Write a whole file (not atomic by itself: callers write a .tmp). 0 ok, 1 could not be created,
+ * 2 writing failed; errno is kept on failure. */
+static int put_file(const char *p, const uint8_t *d, size_t n)
+{
+	errno = 0;
+	FILE *f = fopen(p, "wb");
+	if (!f) return 1;
+	size_t put = n ? fwrite(d, 1, n, f) : 0;
+	int fl = fflush(f);
+	int en = errno;
+#if !defined(__vita__)
+	if (fl == 0 && put == n) fsync(fileno(f));
+#endif
+	int cl = fclose(f);
+	if (put != n || fl != 0 || cl != 0) { errno = en ? en : EIO; remove(p); return 2; }
+	return 0;
+}
+
+/* Put tmp in place of dest. rename over an existing file is not guaranteed on every
+ * platform (the Vita's); then the old file is moved aside, never deleted first. */
+static bool promote(const char *tmp, const char *dest)
+{
+	if (rename(tmp, dest) == 0) return true;
+	int en = errno;
+	std::string old = std::string(dest) + ".old";
+	struct stat st;
+	bool had = stat(dest, &st) == 0;
+	if (!had) { errno = en; return false; }
+	remove(old.c_str());
+	if (rename(dest, old.c_str()) != 0) { errno = en; return false; }
+	if (rename(tmp, dest) != 0) {
+		en = errno;
+		rename(old.c_str(), dest);
+		errno = en;
+		return false;
+	}
+	remove(old.c_str());
+	return true;
+}
+
+/* A file `dst` that holds exactly d[0..n): written beside it, read back, put in place, read back. */
+static bool write_verified(const std::string &dst, const uint8_t *d, size_t n, const char **step, int *en)
+{
+	std::string tmp = dst + ".tmp";
+	*step = "writing the backup";
+	if (put_file(tmp.c_str(), d, n)) { *en = errno; return false; }
+	*step = "the backup did not read back whole";
+	if (!file_equals(tmp.c_str(), d, n)) { *en = 0; remove(tmp.c_str()); return false; }
+	*step = "putting the backup in place";
+	if (!promote(tmp.c_str(), dst.c_str())) { *en = errno; remove(tmp.c_str()); return false; }
+	*step = "the backup did not read back whole";
+	if (!file_equals(dst.c_str(), d, n)) { *en = 0; return false; }
+	return true;
+}
+
+static void make_dirs(const std::string &dir)
+{
+	for (size_t i = 1; i <= dir.size(); i++)
+		if (i == dir.size() || dir[i] == '/') {
+			std::string d = dir.substr(0, i);
+			if (!d.empty() && d.back() != ':') mkdir(d.c_str(), 0777);
+		}
+}
+
+/* A backup of `old` (the save as it is now) that was read back whole: in the backups
+ * folder (one file per distinct content, never replacing a file that holds something
+ * else), or, without a folder (the twin), <save>.bak. true = it exists. */
+static bool backup_verified(const char *path, const std::vector<uint8_t> &old, std::string &dstout, const char **step, int *en)
+{
+	*en = 0;
+	*step = "backup";
+	if (old.empty()) return true;               /* nothing in it to lose */
+	if (g_backup_dir.empty()) {
+		std::string bak = std::string(path) + ".bak";
+		dstout = bak;
+		if (file_equals(bak.c_str(), old.data(), old.size())) return true;
+		return write_verified(bak, old.data(), old.size(), step, en);
+	}
+	make_dirs(g_backup_dir);
 	const char *base = strrchr(path, '/');
 	base = base ? base + 1 : path;
-	char name[64];
-	snprintf(name, sizeof name, ".%08x.bak", (unsigned) (h ^ (h >> 32)));
-	std::string dst = g_backup_dir + "/" + base + name;
-	FILE *t = fopen(dst.c_str(), "rb");
-	if (t) { fclose(t); return; }
-	std::string tmp = dst + ".tmp";
-	FILE *f = fopen(tmp.c_str(), "wb");
-	if (!f) return;
-	size_t put = fwrite(old.data(), 1, old.size(), f);
-	int cl = fclose(f);
-	if (put != old.size() || cl != 0 || rename(tmp.c_str(), dst.c_str()) != 0) remove(tmp.c_str());
+	uint64_t h = fnv64(old.data(), old.size());
+	for (int k = 0; k < 10; k++) {
+		char name[64];
+		if (k) snprintf(name, sizeof name, ".%08x.%d.bak", (unsigned) (h ^ (h >> 32)), k);
+		else snprintf(name, sizeof name, ".%08x.bak", (unsigned) (h ^ (h >> 32)));
+		std::string dst = g_backup_dir + "/" + base + name;
+		dstout = dst;
+		struct stat st;
+		if (stat(dst.c_str(), &st) != 0) return write_verified(dst, old.data(), old.size(), step, en);
+		if (file_equals(dst.c_str(), old.data(), old.size())) return true;      /* already there, and whole */
+		if (file_is_prefix_of(dst.c_str(), old.data(), old.size()))            /* an interrupted copy of this very file */
+			return write_verified(dst, old.data(), old.size(), step, en);
+		/* another file with the same name: leave it, try the next name */
+	}
+	*step = "no free backup name";
+	return false;
 }
 
 void snes_host_set_backup_dir(const char *dir) { g_backup_dir = dir ? dir : ""; }
 
 static int write_atomic(const char *path, const void *data, size_t n, bool keep_bak, bool *bak_done)
 {
+	const uint8_t *d = (const uint8_t *) data;
+	/* only battery saves (keep_bak) report through snes_host_save_error; a save state failing says so by its return code */
+	auto E = [&](int code, const char *p, const char *what, int en) { if (keep_bak) err_set(code, p, what, en); else if (code) { char l[300]; snprintf(l, sizeof l, "state write failed: %s: %s %s", what, p ? p : "", en ? strerror(en) : ""); log_line(l); } };
 	std::string tmp = std::string(path) + ".tmp";
-	std::string bak = std::string(path) + ".bak";
-	FILE *f = fopen(tmp.c_str(), "wb");
-	if (!f) return 1;
-	size_t put = fwrite(data, 1, n, f);
-	int cl = fclose(f);
-	if (put != n || cl != 0) { remove(tmp.c_str()); return 2; }
-	if (keep_bak && bak_done && !*bak_done) {
-		/* Keep the player's previous file once per session before the first
-		 * overwrite, in the backups folder (nothing more beside the game). */
+	struct stat st;
+	bool exists = stat(path, &st) == 0;
+	if (exists && keep_bak && bak_done && !*bak_done) {
 		std::vector<uint8_t> old;
-		if (read_file(path, old)) {
-			if (!g_backup_dir.empty())
-				backup_copy(path, old);
-			else {
-				/* no backups folder (the twin): the previous file as <save>.bak */
-				std::string bt = bak + ".tmp";
-				FILE *b = fopen(bt.c_str(), "wb");
-				if (!b) { remove(tmp.c_str()); return 3; }
-				size_t bp = fwrite(old.data(), 1, old.size(), b);
-				int bc = fclose(b);
-				if (bp != old.size() || bc != 0) { remove(bt.c_str()); remove(tmp.c_str()); return 3; }
-				remove(bak.c_str());
-				if (rename(bt.c_str(), bak.c_str()) != 0) { remove(tmp.c_str()); return 3; }
-			}
+		if (st.st_size > 0 && !read_file(path, old)) {
+			E(6, path, "cannot read the existing save to back it up", errno);
+			return 6;
 		}
+		std::string dst;
+		const char *step = "";
+		int en = 0;
+		if (!backup_verified(path, old, dst, &step, &en)) {
+			E(3, dst.empty() ? path : dst.c_str(), step, en);
+			return 3;
+		}
+		char line[200];
+		snprintf(line, sizeof line, "save backup verified: %zu bytes fnv=%016llx", old.size(), (unsigned long long) fnv64(old.data(), old.size()));
+		log_line(line);
 		*bak_done = true;
 	}
-	remove(path); /* rename over an existing file is not guaranteed everywhere */
-	if (rename(tmp.c_str(), path) != 0) return 4;
+	if (int pf = put_file(tmp.c_str(), d, n)) {
+		int en = errno;
+		E(pf, tmp.c_str(), pf == 1 ? "cannot create the temporary file" : "cannot write the temporary file", en);
+		return pf;
+	}
+	if (!file_equals(tmp.c_str(), d, n)) {
+		remove(tmp.c_str());
+		E(5, tmp.c_str(), "the new file did not read back whole", 0);
+		return 5;
+	}
+	if (!promote(tmp.c_str(), path)) {
+		int en = errno;
+		remove(tmp.c_str());
+		E(4, path, "cannot put the new file in place", en);
+		return 4;
+	}
+	if (!file_equals(path, d, n)) {
+		E(5, path, "the saved file did not read back whole", 0);
+		return 5;
+	}
+	if (!exists && keep_bak && bak_done) *bak_done = true;   /* a save created in this session needs no backup */
+	E(0, NULL, NULL, 0);
 	return 0;
 }
 

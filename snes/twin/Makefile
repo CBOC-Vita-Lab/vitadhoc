@@ -20,7 +20,7 @@ CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
 RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 OBJCOPY ?= objcopy
-FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/main.o
+FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/audio_sim.o $(B)/main.o
 
 all: $(B)/snes_twin
 
@@ -42,7 +42,13 @@ $(B)/host.o: $(FE)/host.cpp $(FE)/host.h
 $(B)/prof.o: $(FE)/prof.cpp
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
-$(B)/main.o: main.cpp $(FE)/host.h
+$(B)/audio_pace.o: $(FE)/audio_pace.cpp $(FE)/audio_pace.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/audio_sim.o: audio_sim.cpp audio_sim.h $(FE)/audio_pace.h $(FE)/host.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/main.o: main.cpp $(FE)/host.h audio_sim.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 

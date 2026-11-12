@@ -19,7 +19,7 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | Down | Show the game's save states; pick one and press Cross |
 | Square | Star or unstar the game |
 | Select | All games, Starred, Recent |
-| Triangle | Switch between GBA, GB and GBC |
+| Triangle | Switch between GBA, GB, GBC, SNES and NES |
 | Circle | Find a game by name |
 | Start | Settings |
 | Touch | Tap games, buttons and hints; drag or flick lists |

@@ -17,6 +17,7 @@
 #include "stb_image_write.h"
 #include "host.h"
 #include "s9x_prof.h"
+#include "audio_sim.h"
 
 static uint64_t now_ns(void)
 {
@@ -122,12 +123,19 @@ static void usage(void)
 	    "  --shot-prefix P    PNG file prefix (default shot_)\n"
 	    "  --wav FILE         write all audio (32040 Hz stereo)\n"
 	    "  --timing FILE      CSV: frame,total_us,cpu_us,apu_us,ppu_us,chip_us,front_us (enables profiling)\n"
-	    "  --srm FILE         battery RAM file (loaded if present, saved at exit)\n"
+	    "  --srm FILE         battery RAM file (loaded if present, saved at exit; exit status 3 when the save failed)\n"
+	    "  --srm-async        save the way the Vita's writer thread does (take / write / forget); --unblock PATH: if the save\n"
+	    "                     failed remove PATH and try once more\n"
+	    "  --backup-dir DIR   keep the verified backup of an existing save in DIR (default: <save>.bak)\n"
 	    "  --save-state FILE --state-frame N   save a state after frame N\n"
 	    "  --load-state FILE --state-frame N   load a state before frame N\n"
 	    "  --pad2/--pad3/--pad4/--pad5 SCRIPT  scripts for pads 2..5 (pads 3-5 need --opt multitap=1)\n"
 	    "  --nowait           use the non-blocking video fetch of the Vita (hash file lists new pictures: serial w h hash)\n"
-	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock transparency echo_buffer), repeatable\n"
+	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles transparency echo_buffer), repeatable\n"
+	    "  --audio-sim SCEN   audio pacing simulation in virtual time (S1..S7, S2+, S2-, all); ROM may be '-' for none.\n"
+	    "                     with --tone (or ROM '-') the source is a synthetic tone, else the core's audio;\n"
+	    "                     --legacy runs the first player's audio behaviour; --wav FILE writes the 48 kHz output;\n"
+	    "                     --sim-minutes N sets the length; --sim-verbose prints a line per virtual second\n"
 	    "  --summary          print one summary line (fps, split) on stdout\n"
 	    "  --name NAME        label used in the summary line\n");
 }
@@ -143,7 +151,11 @@ int main(int argc, char **argv)
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
 	bool nowait = false;
+	const char *backup_dir = 0, *unblock = 0;
+	bool srm_async = false;
 	bool summary = false;
+	AudioSimArgs sim;
+	bool want_sim = false, force_tone = false;
 	for (int i = 2; i < argc; i++) {
 		auto arg = [&](const char *n) { return !strcmp(argv[i], n) && i + 1 < argc; };
 		if (arg("--frames")) frames = atoi(argv[++i]);
@@ -154,6 +166,9 @@ int main(int argc, char **argv)
 		else if (arg("--wav")) wav = argv[++i];
 		else if (arg("--timing")) timing = argv[++i];
 		else if (arg("--srm")) srm = argv[++i];
+		else if (arg("--backup-dir")) backup_dir = argv[++i];
+		else if (arg("--unblock")) unblock = argv[++i];
+		else if (!strcmp(argv[i], "--srm-async")) srm_async = true;
 		else if (arg("--save-state")) sstate = argv[++i];
 		else if (arg("--load-state")) lstate = argv[++i];
 		else if (arg("--state-frame")) state_frame = atoi(argv[++i]);
@@ -166,6 +181,13 @@ int main(int argc, char **argv)
 			char k[64]; int v = 0;
 			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) opts.push_back({ k, v });
 		}
+		else if (arg("--audio-sim")) { sim.scenario = argv[++i]; want_sim = true; }
+		else if (arg("--sim-minutes")) sim.minutes = atof(argv[++i]);
+		else if (!strcmp(argv[i], "--sim-verbose")) sim.verbose = true;
+		else if (arg("--sim-kp")) sim.kp = atof(argv[++i]);
+		else if (arg("--sim-ki")) sim.ki = atof(argv[++i]);
+		else if (!strcmp(argv[i], "--tone")) force_tone = true;
+		else if (!strcmp(argv[i], "--legacy")) sim.legacy = true;
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--nowait")) nowait = true;
 		else { usage(); return 2; }
@@ -177,8 +199,19 @@ int main(int argc, char **argv)
 		while (p < t.size()) { size_t q = t.find(',', p); if (q == std::string::npos) q = t.size(); shotset.insert(atoi(t.substr(p, q - p).c_str())); p = q + 1; }
 	}
 
+	if (want_sim) {
+		sim.tone = force_tone || !strcmp(rom, "-");
+		sim.wav = wav;
+		if (!sim.tone) {
+			if (snes_host_init()) { fprintf(stderr, "init failed\n"); return 1; }
+			char e[128] = "";
+			if (snes_host_load_rom(rom, NULL, e, sizeof e)) { fprintf(stderr, "load failed: %s\n", e); return 1; }
+		}
+		return audio_sim_run(sim);
+	}
 	if (snes_host_init()) { fprintf(stderr, "init failed\n"); return 1; }
 	for (auto &o : opts) if (snes_host_set_option(o.k.c_str(), o.v)) { fprintf(stderr, "unknown option %s\n", o.k.c_str()); return 2; }
+	if (backup_dir) snes_host_set_backup_dir(backup_dir);
 	char err[128] = "";
 	if (snes_host_load_rom(rom, srm, err, sizeof err)) { fprintf(stderr, "load failed: %s\n", err); return 1; }
 
@@ -262,7 +295,26 @@ int main(int argc, char **argv)
 	if (hf) fclose(hf);
 	if (tf) fclose(tf);
 	if (wav) write_wav(wav, pcm);
-	if (srm && snes_host_sram_dirty()) fprintf(stderr, "sram save: %d\n", snes_host_sram_save());
+	int save_rc = 0;
+	if (srm && snes_host_sram_dirty()) {
+		/* the same calls as the Vita player: --srm-async copies the RAM (take), writes the copy (write) and, when that
+		 * fails, forgets it so the RAM counts as unsaved again, exactly as the Vita's writer thread loop does */
+		std::vector<uint8_t> buf(256 * 1024);
+		for (int attempt = 0; attempt < 2; attempt++) {
+			if (srm_async) {
+				size_t n = snes_host_sram_take(buf.data(), buf.size());
+				save_rc = snes_host_sram_write(buf.data(), n);
+				if (save_rc) snes_host_sram_forget();
+			} else
+				save_rc = snes_host_sram_save();
+			char why[200] = "";
+			snes_host_save_error(why, sizeof why);
+			fprintf(stderr, "sram save%s: %d%s%s (still unsaved: %d)\n", attempt ? " (retry)" : "", save_rc, why[0] ? " " : "", why, snes_host_sram_dirty());
+			if (!save_rc || !unblock) break;
+			remove(unblock);   /* the cause is gone: retry once, as the player does after its back-off */
+			unblock = 0;
+		}
+	}
 
 	/* fps comes from the thread's CPU time, not the wall clock: the build machine
 	 * is shared and wall time includes time spent waiting for a core. */
@@ -287,5 +339,5 @@ int main(int argc, char **argv)
 		printf("          ppu busy=%.3f s batches/fr=%.1f main waited %.2f/fr for %.3f s\n", st.ppu_busy_ns / 1e9, (double) st.ppu_batches / frames, (double) st.ppu_waits / frames, st.ppu_wait_ns / 1e9);
 	}
 	snes_host_shutdown();
-	return 0;
+	return save_rc ? 3 : 0;
 }

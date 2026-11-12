@@ -471,12 +471,13 @@ int gamedb_name_by_header(const char *path, char *out, size_t cap)
 static uint32_t g_crc_tab[256];
 
 static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
-                     int (*cancel)(void), int snes)
+                     int (*cancel)(void), int mode)
 {
    static unsigned char buf[64 * 1024];
    uint32_t c = 0xFFFFFFFFu;
    FILE *f;
    size_t got;
+   unsigned long limit = 0;      /* mode 2: bytes of PRG + CHR to hash (0 = to the end) */
 
    if (!g_crc_tab[1])
    {
@@ -492,7 +493,47 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
    f = path ? fopen(path, "rb") : NULL;
    if (!f)
       return -1;
-   if (snes)
+   if (mode == 2)
+   {
+      /* NES: the iNES header (16 bytes, "NES\x1a") and its 512-byte trainer
+       * (flag 6 bit 2) are no part of the cartridge the No-Intro CRCs are of;
+       * a Famicom Disk System file may carry the 16-byte "FDS\x1a" header of
+       * fwNES; UNIF and anything else is hashed whole. */
+      unsigned char h[16];
+      size_t skip = 0;
+      if (fread(h, 1, 16, f) == 16)
+      {
+         if (!memcmp(h, "NES\x1a", 4))
+         {
+            /* the declared sizes bound the hash: bytes after CHR are no part of the
+             * cartridge (iNES 1: 16 KiB and 8 KiB units; NES 2.0: 12-bit units, or the
+             * exponent form when the high nibble is 15) */
+            unsigned long prg, chr;
+            int v2 = (h[7] & 0x0C) == 0x08;
+            skip = 16 + ((h[6] & 4) ? 512 : 0);
+            prg = h[4] | (v2 ? (unsigned long)(h[9] & 0x0F) << 8 : 0);
+            chr = h[5] | (v2 ? (unsigned long)(h[9] >> 4) << 8 : 0);
+            if (v2 && (h[9] & 0x0F) == 0x0F)
+               prg = (1ul << (h[4] >> 2)) * ((h[4] & 3) * 2 + 1);
+            else
+               prg *= 16384ul;
+            if (v2 && (h[9] >> 4) == 0x0F)
+               chr = (1ul << (h[5] >> 2)) * ((h[5] & 3) * 2 + 1);
+            else
+               chr *= 8192ul;
+            if (prg + chr > 0 && prg + chr < (64ul << 20))
+               limit = prg + chr;
+         }
+         else if (!memcmp(h, "FDS\x1a", 4))
+            skip = 16;
+      }
+      if (fseek(f, (long)skip, SEEK_SET) != 0)
+      {
+         fclose(f);
+         return -1;
+      }
+   }
+   else if (mode == 1)
    {
       long size;
       if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 ||
@@ -510,11 +551,20 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
          fclose(f);
          return -1;
       }
-      got = fread(buf, 1, sizeof(buf), f);
+      size_t want = sizeof(buf);
+      if (mode == 2 && limit && limit < want)
+         want = (size_t)limit;
+      got = fread(buf, 1, want, f);
       if (!got)
          break;
       for (i = 0; i < got; i++)
          c = g_crc_tab[(c ^ buf[i]) & 0xFF] ^ (c >> 8);
+      if (mode == 2 && limit)
+      {
+         limit -= got;
+         if (!limit)
+            break;
+      }
    }
    if (ferror(f))
    {
@@ -539,4 +589,9 @@ int gamedb_file_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 int gamedb_snes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 {
    return file_crc(path, crc, NULL, abort, 1);
+}
+
+int gamedb_nes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 2);
 }

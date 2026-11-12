@@ -8,7 +8,8 @@ explains display, achievements, patches and link play in more detail.
 ## What You Need
 
 - A PS Vita with HENkaku or Ensō, and VitaShell. The app's ID is `GBAD00001`.
-- Your own `.gba`, `.gb` and `.gbc` games, or supported `.zip` archives.
+- Your own `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc` and `.nes` games (also `.fds`, `.unf`,
+  `.unif`), or supported `.zip` archives.
   Subfolders are fine, two levels deep.
 - Wi-Fi only for box art, RetroAchievements and playing online.
 - No separate BIOS is required: an open replacement is built in. An optional
@@ -38,7 +39,7 @@ The checker verifies listed bytes; it does not test game compatibility.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then close it.
 3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use a folder you already
    have (below).
-4. Start VitAdhoc again. Triangle switches between GBA, GB and GBC; Cross plays.
+4. Start VitAdhoc again. Triangle switches between GBA, GB, GBC, SNES and NES; Cross plays.
 
 ### Transfer With VitaShell
 
@@ -69,17 +70,20 @@ VitAdhoc reads `roms/` first, then any of these that exist, without moving
 anything:
 
 ```text
-ux0:ROMS/GBA, ux0:ROMS/GB, ux0:ROMS/GBC, ux0:ROMS/SNES
-ux0:roms/GBA, ux0:roms/GB, ux0:roms/GBC, ux0:roms/SNES
+ux0:ROMS/GBA, ux0:ROMS/GB, ux0:ROMS/GBC, ux0:ROMS/SNES, ux0:ROMS/NES
+ux0:roms/GBA, ux0:roms/GB, ux0:roms/GBC, ux0:roms/SNES, ux0:roms/NES
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Advance
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color
 ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System
+ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System
 ```
 
 Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
-(a `SNES ROM Collection` folder, for example). The file ending decides the
-console: `.gba`, `.gb`, `.gbc`, `.sfc` or `.smc`.
+(a `SNES ROM Collection` or `NES Games` folder, for example). The file ending
+decides the console, not the folder's name: `.gba`, `.gb`, `.gbc`, `.sfc` or
+`.smc`, `.nes`, `.fds`, `.unf` or `.unif`. NES and Famicom games go in
+`ux0:ROMS/NES/`, or in any of these folders.
 
 To choose your own folders, open **Settings > Library > Game folders** in the
 game list, press Cross and type the folder (for example `ux0:ROMS/GBA`). Type
@@ -97,6 +101,12 @@ Up to eight folders, separated by `;`, each starting with its drive (`ux0:`).
 too: `gba_roms = ux0:ROMS/GBA`, `gb_roms = ...`, `gbc_roms = ...` (once
 `vita.ini` has an `extra_roms` line, which Settings writes, that line is the
 whole list).
+
+**Settings > Library > Game names** picks what the list calls each game: "Game
+title" (the default, region and hack tags cut) or "File name" (the file's name
+without its extension). Games that would show the same name, such as a ROM hack
+and its parent, always show their file name under it. Saves and covers are not
+affected.
 
 ## Bringing Saves From Another Emulator
 
@@ -130,6 +140,7 @@ Beside each game, VitAdhoc keeps only its battery save:
 | Game Boy | `Game.gb.sav` |
 | Game Boy Color | `Game.gbc.sav` |
 | Super NES | `Game.srm` (the same name RetroArch and Snes9x use) |
+| NES / Famicom | `Game.srm` (the same name RetroArch uses) |
 
 Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 
@@ -143,6 +154,14 @@ SNES games keep their four state slots and picture settings in
 `ux0:data/GBAdhoc/snes/` (`states/Game.st0` … `Game.st3`). Before VitAdhoc
 first writes over a SNES save it did not make, a copy goes to
 `ux0:data/GBAdhoc/backups/snes/`.
+
+NES games keep their states under `ux0:data/GBAdhoc/states/nes/`, like the
+other consoles, and VitAdhoc keeps a copy of a save before it first writes over
+it.
+
+**Famicom Disk System games** (`.fds`) need the disk system's BIOS, which VitAdhoc
+cannot include: put your own `disksys.rom` next to the game or in
+`ux0:data/GBAdhoc/nes/` (create the folder).
 
 Each GBA or Game Boy state also has a `.thumb` and a `.shot` picture next to it. States are
 named after the game wherever it is kept, as in RetroArch, so moving a game to
@@ -163,8 +182,8 @@ psgm:play?titleid=GBAD00001&param=ux0:ROMS/GBA/Pokemon Emerald.gba
 
 Everything after `param=` is the game's path, exactly as written (it is not
 URL-decoded, so names with `&`, `%` or `+` work). A name without a drive is
-looked up in `roms/`. The extension picks the console: `.gba`, `.gb` or
-`.gbc` (a `.zip` works too). Close VitAdhoc before launching another game this way.
+looked up in `roms/`. The extension picks the console: `.gba`, `.gb`,
+`.gbc`, `.sfc`/`.smc` or `.nes`/`.fds`/`.unf`/`.unif` (a `.zip` works too). Close VitAdhoc before launching another game this way.
 
 ## Zipped Games
 
@@ -172,7 +191,8 @@ Games kept in `.zip` files work too: VitAdhoc looks inside each zip and lists
 it under its console. On start, the game is unpacked once into
 `ux0:data/GBAdhoc/unzipped/` (only the game you're playing is kept there) and
 checked against the zip's checksum. Saves and states sit beside the `.zip`,
-named after it. The first `.gba`, `.gb` or `.gbc` entry is used; keep one
+named after it. The first game entry (`.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`,
+`.unf` or `.unif`) is used; keep one
 game per zip to avoid surprises. Stored and deflated entries up to 32 MiB
 are supported; encrypted, multi-disk and ZIP64 archives are not.
 
@@ -185,7 +205,7 @@ and check the new expected save name before continuing.
 Put a PNG in `ux0:data/GBAdhoc/overlays/` and it is drawn over the game, with
 its own transparency: a bezel, a Game Boy shell, a dot-matrix mask.
 
-- `overlays/gba.png`, `gb.png`, `gbc.png`: for every game of that console.
+- `overlays/gba.png`, `gb.png`, `gbc.png`, `snes.png`, `nes.png`: for every game of that console.
 - `overlays/<game name>.png` (the game's file name without its extension):
   for that game only.
 

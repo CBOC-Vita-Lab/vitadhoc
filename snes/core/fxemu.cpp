@@ -19,6 +19,8 @@ static bool8 fx_checkStartAddress (void);
 static uint32 FxEmulate (uint32);
 static void FxCacheWriteAccess (uint16);
 static void FxFlushCache (void);
+static int32 s_celHold;	// Winter Gold delay (Timings.GSUCelDelay): lines still to hold, and the cel that was published
+static uint8 s_celPrev;
 
 
 void S9xInitSuperFX (void)
@@ -30,10 +32,14 @@ void S9xResetSuperFX (void)
 {
 	// FIXME: Snes9x only runs the SuperFX at the end of every line.
 	// 5823405 is a magic number that seems to work for most games.
+    // only used when GSU Cycle Mode is disabled (see below)
 	SuperFX.speedPerLine = (uint32) (5823405 * ((1.0 / (float) Memory.ROMFramesPerSecond) / ((float) (Timings.V_Max))));
 	SuperFX.oneLineDone = FALSE;
 	SuperFX.vFlags = 0;
 	CPU.IRQExternal = FALSE;
+	s_celHold = 0;
+	s_celPrev = 0;
+
 	FxReset(&SuperFX);
 }
 
@@ -165,11 +171,65 @@ static void S9xSuperFXExec_impl (void)
 {
 	if ((Memory.FillRAM[0x3000 + GSU_SFR] & FLG_G) && (Memory.FillRAM[0x3000 + GSU_SCMR] & 0x18) != 0)
 	{
-		FxEmulate(((Memory.FillRAM[0x3000 + GSU_CLSR] & 1) ? (SuperFX.speedPerLine * 5 / 2) : SuperFX.speedPerLine) * Settings.SuperFXClockMultiplier / 100);
+        int	cs = Memory.FillRAM[0x3000 + GSU_CLSR] & 1;
+
+		if (GSU.bCycleMode)
+		{
+			// Real cycle costs: the GSU runs at the master clock (21.4MHz,
+			// CLSR=1) or half of it (10.7MHz, CLSR=0). Costs carry the CLSR
+			// scaling, so the per-line budget is a flat master-cycle slice.
+
+			int	ms0 = Memory.FillRAM[0x3000 + GSU_CFGR] & 0x20;
+
+			GSU.vCostCache = cs ? 1 : 2;
+			GSU.vCostMem   = cs ? 5 : 6;
+			GSU.vCostFmult = (ms0 ? 3 : 7) * (cs ? 1 : 2);
+			GSU.vCostMult  = ms0 ? 1 : 2;
+
+			uint32	budget = (uint32) (Timings.H_Max > 0 ? Timings.H_Max : 1364);
+			FxEmulate(budget * Settings.SuperFXClockMultiplier / 100);
+		}
+        else
+        {
+            FxEmulate((cs ? (SuperFX.speedPerLine * 5 / 2) : SuperFX.speedPerLine) * Settings.SuperFXClockMultiplier / 100);
+        }
 
 		uint16 GSUStatus = Memory.FillRAM[0x3000 + GSU_SFR] | (Memory.FillRAM[0x3000 + GSU_SFR + 1] << 8);
 		if ((GSUStatus & (FLG_G | FLG_IRQ)) == FLG_IRQ)
 			CPU.IRQExternal = TRUE;
+	}
+
+	// Winter Gold (#533): at the race-start pose switch, the game polls the
+	// GSU-published pose cel at $70:EBC0 once per frame (V~159) and commits the
+	// skier arrangement from it. On hardware the heavy course-load render keeps
+	// the GSU busy one frame longer than the batch model, so that poll still
+	// reads 0 ("not ready" -> skier parked, one blank frame) where snes9x already
+	// shows the published cel ("ready" -> a stale arrangement is committed over
+	// the new tiles = the garbled skier). Delay CPU visibility of the 0->nonzero
+	// publish transition by one frame (312 lines), matching measured hardware
+	// behavior (verified frame-by-frame against Mesen).
+	if (Timings.GSUCelDelay > 0)
+	{
+		int32			&holdLines = s_celHold;	// CBOC-Vita: file-level so that a reset clears them
+		uint8			&prevCel = s_celPrev;
+		uint8			*cel = &GSU.pvRam[0xEBC0];
+
+		if (holdLines > 0)
+		{
+			if (*cel != 0)  // capture any republish during the hold
+				prevCel = *cel;
+			*cel = 0;
+			if (--holdLines == 0)
+				*cel = prevCel;
+		}
+		else if (prevCel == 0 && *cel != 0)
+		{
+			prevCel = *cel;
+			*cel = 0;
+			holdLines = Timings.GSUCelDelay;
+		}
+		else
+			prevCel = *cel;
 	}
 }
 
@@ -234,6 +294,15 @@ static void FxReset (struct FxInfo_s *psFxInfo)
 	// Set pointer to GSU cache
 	GSU.pvCache = &GSU.pvRegisters[0x100];
 
+    // Cycle-accurate GSU timing state (see fxinst.h)
+    GSU.vCycles = 0;
+    GSU.vCacheMask = 0;
+    GSU.vCostCache = 1;
+    GSU.vCostMem = 5;
+    GSU.vCostFmult = 7;
+    GSU.vCostMult = 2;
+    GSU.bCycleMode = Settings.DisableGSUCycleMode ? 0 : 1;
+
 	fx_readRegisterSpace();
 }
 
@@ -284,7 +353,7 @@ static void fx_readRegisterSpace (void)
 	else
 		GSU.vScreenSize = (GSU.vScreenHeight / 8) * (256 / 8) * avMult[GSU.vMode];
 
-	if (GSU.vPlotOptionReg & 0x10) // OBJ Mode (for drawing into sprites)
+	if (GSU.vPlotOptionReg & PLOT_OBJECT) // OBJ Mode (for drawing into sprites)
 		GSU.vScreenHeight = 256;
 
 	if (GSU.pvScreenBase + GSU.vScreenSize > GSU.pvRam + (GSU.nRamBanks * 65536))
@@ -588,6 +657,7 @@ static void FxFlushCache (void)
 	GSU.vCacheFlags = 0;
 	GSU.vCacheBaseReg = 0;
 	GSU.bCacheActive = FALSE;
+	GSU.vCacheMask = 0;
 	//GSU.vPipe = 0x1;
 }
 
@@ -596,6 +666,7 @@ void fx_flushCache (void)
 	//fx_restoreCache();
 	GSU.vCacheFlags = 0;
 	GSU.bCacheActive = FALSE;
+	GSU.vCacheMask = 0;
 }
 
 /*

@@ -784,7 +784,7 @@ void vid_image_px(int x, int y, int w, int h, const uint16_t *pix,
  * The PSP keeps this texture in VRAM; here it is 256 x 160 texels of RAM
  * that ui_psp.c fills row by row and a cached GPU texture made from it. */
 #define SHOT_TEX_W 256
-#define SHOT_TEX_H 160
+#define SHOT_TEX_H 240
 static uint16_t g_shot[SHOT_TEX_W * SHOT_TEX_H];
 
 uint16_t *vid_shot_tex(void) { return g_shot; }

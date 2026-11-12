@@ -12,6 +12,8 @@
 #include "libretro.h"
 #include "../gbcore/gbcore.h"
 #include "../gbcore/gbcore_dual.h"
+#define GBADHOC_GBMUX 1   /* the NES machine answers the gb_core calls */
+#include "../nescore/gbcore_mux.h"
 #include "fe_gblink.h"
 #include "fe_linkprof.h"
 #include "../netdrv/gb_link.h"
@@ -22,6 +24,7 @@
 #ifdef GBA_LINK
 #include "fe_gbadual.h"
 #include <stdarg.h>
+#endif
 
 /* Measurement (Linux hosts only; nothing on a console): the CPU time of the
  * calling thread spent in fe_host_run_frame WITHOUT the frontend's video
@@ -45,6 +48,7 @@ static uint64_t cpu_now_ns(void)
 #else
 #define HOST_VIDEO(pix, w, h, pitch) host.video_frame((pix), (w), (h), (pitch))
 #endif
+#ifdef GBA_LINK
 static void gbadual_log(const char *fmt, ...)
 {
    char buf[320];
@@ -164,6 +168,10 @@ static int gb_skip_frame;   /* this frame's drawing was skipped (frameskip) */
 static int skip_override = -1;
 extern int frontend_skip_override __attribute__((weak));   /* libretro.c */
 
+/* The picture size of the running machine: 160x144 for a Game Boy, 256x224
+ * (an NTSC television's rows; 256x240 PAL) for the NES. */
+static unsigned gb_pic_w = 160, gb_pic_h = 144;
+
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
    (void)userdata;
@@ -172,17 +180,17 @@ static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
       /* Same contract as the GBA core's frameskip: NULL = nothing new. */
       frames_skipped++;
       if (host.video_frame)
-         HOST_VIDEO(NULL, 160, 144, last_pitch);
+         HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
       return;
    }
-   if (!frame || !frame->pixels || frame->width != 160 || frame->height != 144 ||
+   if (!frame || !frame->pixels || frame->width != gb_pic_w || frame->height != gb_pic_h ||
        frame->pitch_bytes < frame->width * sizeof(uint16_t))
       return;
    last_frame = frame->pixels;
    last_pitch = frame->pitch_bytes;
    frames_rendered++;
    if (host.video_frame)
-      HOST_VIDEO(frame->pixels, 160, 144, last_pitch);
+      HOST_VIDEO(frame->pixels, gb_pic_w, gb_pic_h, last_pitch);
 }
 
 static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames)
@@ -2418,6 +2426,56 @@ static int sram_write_full(const void *p)
    return 0;
 }
 
+/* A whole-image rewrite through the .tmp/.old swap, with the accounting the
+ * drain keeps.  Used for the first flush of a run and as the fall-back when a
+ * delta write fails.  On success every block is CLEAN and the on-disk image
+ * is a trustworthy baseline again. */
+static int sram_drain_full(const uint8_t *p)
+{
+   uint64_t t0 = host.time_us ? host.time_us() : 0, slice;
+   unsigned i;
+   if (sram_write_full(p) != 0)
+      return -1;
+   slice = (host.time_us ? host.time_us() : 0) - t0;
+   sram_run_us += slice;
+   sram_run_slices++;
+   if (slice > sram_run_slice_max)
+      sram_run_slice_max = slice;
+   if (slice > sram_run_blk_max)
+      sram_run_blk_max = slice;
+   for (i = 0; i < SRAM_BLOCKS; i++)
+      sram_blk_state[i] = SBLK_CLEAN;
+   sram_run_bytes += FE_SRAM_SIZE;
+   sram_run_blocks = SRAM_BLOCKS;
+   sram_run_full = 1;
+   sram_have_blk = 1;
+   sram_full_req = 0;
+   sram_retry_full = 0;
+   return 0;
+}
+
+/* A delta write failed part-way.  The .sav is updated IN PLACE, so it may now
+ * hold some blocks new and some old, with no other copy of the old bytes --
+ * and the memory image, which has every change, is the only whole copy.  Put
+ * it on the card now through the safe writer (.tmp, then the old file moves
+ * to .old, then the new one moves in) instead of waiting for the next scan,
+ * so the torn file lives for as short a time as possible.  Costs nothing on
+ * a save that goes well; this runs only after a failure.  If this fails too
+ * (card full or gone) sram_retry_full stays set and the exit path and the
+ * next scan try again; the torn file is left exactly as it is. */
+static int sram_delta_failed(const uint8_t *p, const char *why)
+{
+   sram_abandon_deltas(why);
+   fe_evt("sram_delta_failed why=\"%s\" action=full_rewrite", why);
+   if (sram_drain_full(p) != 0)
+   {
+      fe_evt("sram_delta_failed full_rewrite=FAILED retry=pending");
+      return -1;
+   }
+   fe_evt("sram_delta_failed full_rewrite=ok");
+   return 0;
+}
+
 /* Write pending dirty blocks until the dirty set is empty or `budget_us` of
  * wall clock has been spent (0 = drain to completion — exit/menu paths).
  * Always writes at least one block when work is pending, so progress is
@@ -2440,28 +2498,8 @@ static int sram_drain(uint32_t budget_us)
     * still 128 KiB, so it too runs here, on whichever thread is draining. */
    if (sram_full_req)
    {
-      t0 = host.time_us ? host.time_us() : 0;
-      if (sram_write_full(p) != 0)
-      {
+      if (sram_drain_full(p) != 0)
          return -1;
-      }
-      slice = (host.time_us ? host.time_us() : 0) - t0;
-      sram_run_us += slice;
-      sram_run_slices++;
-      if (slice > sram_run_slice_max)
-         sram_run_slice_max = slice;
-      if (slice > sram_run_blk_max)
-         sram_run_blk_max = slice;
-      for (i = 0; i < SRAM_BLOCKS; i++)
-      {
-         sram_blk_state[i] = SBLK_CLEAN;
-      }
-      sram_run_bytes += FE_SRAM_SIZE;
-      sram_run_blocks = SRAM_BLOCKS;
-      sram_run_full = 1;
-      sram_have_blk = 1;
-      sram_full_req = 0;
-      sram_retry_full = 0;
    }
    else if (!sram_pending())
       return 0;
@@ -2473,8 +2511,9 @@ static int sram_drain(uint32_t budget_us)
          sram_fp = fopen(host.save_path, "r+b");
          if (!sram_fp)
          {
-            sram_abandon_deltas("cannot reopen the .sav for update");
-            return -1;
+            if (sram_delta_failed(p, "cannot reopen the .sav for update") != 0)
+               return -1;
+            goto delta_done;
          }
       }
 
@@ -2496,8 +2535,9 @@ static int sram_drain(uint32_t budget_us)
              fwrite(sram_stage, 1, SRAM_BLOCK, sram_fp) != SRAM_BLOCK ||
              fflush(sram_fp) != 0)
          {
-            sram_abandon_deltas("seek/write/flush failed mid-update");
-            return -1;
+            if (sram_delta_failed(p, "seek/write/flush failed mid-update") != 0)
+               return -1;
+            goto delta_done;
          }
          bd = (host.time_us ? host.time_us() : 0) - b0;
          if (bd > sram_run_blk_max)
@@ -2521,6 +2561,7 @@ static int sram_drain(uint32_t budget_us)
          sram_run_slice_max = slice;
    }
 
+delta_done:
    if (!sram_pending())
    {
       battery_written_note();
@@ -3936,7 +3977,8 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    if (gba_cable)
       return gba_cable_start(is_host, input_delay, rtc_seed);
 #endif
-   if (!gb_family || gbl || !gb_core || gb_dual || fe_host_gb_local_active())
+   if (!gb_family || gbl || !gb_core || gb_dual || fe_host_gb_local_active() ||
+       gbmux_is_nes(gb_core))
       return -1;
    /* This console's save, as the game has it now (and on disk). */
    gb_save_flush(1);
@@ -4250,14 +4292,19 @@ int fe_host_boot(const fe_host_config *cfg)
    gb_save_crc_valid = 0;
    gb_skip_frame = 0;
 
-   gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC;
+   gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC ||
+               host.console == FE_CONSOLE_NES;
+   gb_pic_w = 160;
+   gb_pic_h = 144;
    if (gb_family)
    {
       gbcore_callbacks_t callbacks;
-      char title[17] = "";
-      unsigned rate = 32768;
+      char title[33] = "";
+      unsigned rate = host.console == FE_CONSOLE_NES ? 48000 : 32768;
       gbcore_set_color_correction(!host.gbc_raw_colors);
-      if (host.boot_status) host.boot_status("Preparing GB emulator");
+      if (host.boot_status)
+         host.boot_status(host.console == FE_CONSOLE_NES ? "Preparing NES emulator"
+                                                         : "Preparing GB emulator");
       memset(&callbacks, 0, sizeof(callbacks));
       callbacks.video = gb_video_frame;
       callbacks.audio_batch = gb_audio_batch;
@@ -4267,7 +4314,7 @@ int fe_host_boot(const fe_host_config *cfg)
       fe_np_gb_set_peer_callback(gb_link_peer_event, NULL);
       /* Before create: the core takes its clock base and chooses DMG, SGB
        * or CGB behaviour (the palette decides SGB colours) as it boots. */
-      if (host.gb_dual_rom)
+      if (host.gb_dual_rom && host.console != FE_CONSOLE_NES)
       {
          /* The pair takes the cable: no ad-hoc byte link beside it. */
          gbdual_config_t dc;
@@ -4335,16 +4382,25 @@ int fe_host_boot(const fe_host_config *cfg)
       }
       if (!gb_core)
       {
-         fe_log("gbcore_create FAILED for %s console=%d", host.rom_path,
-                (int)host.console);
+         fe_log("gbcore_create FAILED for %s console=%d%s%s", host.rom_path,
+                (int)host.console,
+                host.console == FE_CONSOLE_NES ? ": " : "",
+                host.console == FE_CONSOLE_NES ? gbmux_nes_error() : "");
+         if (host.console == FE_CONSOLE_NES)
+            fe_evt("nes_load_failed reason=%s", gbmux_nes_error());
          return -1;
       }
       core_sample_rate = gbcore_sample_rate(gb_core);
       gbcore_rom_title(gb_core, title, sizeof(title));
+      if (host.console == FE_CONSOLE_NES)
+      {
+         gb_pic_w = gbcore_frame_width(gb_core);
+         gb_pic_h = gbcore_frame_height(gb_core);
+      }
       fe_evt("gb_rom_loaded console=%s title=%s", host.console == FE_CONSOLE_GBC ?
-             "GBC" : "GB", title);
-      fe_evt("av_info fps=59.7275 rate=%u w=%u h=%u", core_sample_rate,
-             gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
+             "GBC" : host.console == FE_CONSOLE_NES ? "NES" : "GB", title);
+      fe_evt("av_info fps=%.4f rate=%u w=%u h=%u", gbmux_fps(gb_core),
+             core_sample_rate, gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
       if (host.boot_status) host.boot_status("Loading GB save");
       if (gb_save_load() != 0)
       {
@@ -4922,7 +4978,7 @@ static void gblink_frame(uint64_t core_t0)
    if (gbl_last == FE_GBLINK_STALL && host.video_frame)
    {
       gbl_repeat = 1;
-      HOST_VIDEO(NULL, 160, 144, last_pitch);
+      HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
       gbl_repeat = 0;
    }
    if (gbl_last != FE_GBLINK_FRAME)
@@ -7632,7 +7688,7 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    const char *prom;
    int other, rc = 0;
 
-   if (!cfg || !gb_family || !gb_core || gb_dual || gbl)
+   if (!cfg || !gb_family || !gb_core || gb_dual || gbl || gbmux_is_nes(gb_core))
       return -1;
    other = cfg->rom_path && cfg->rom_path[0] &&
            strcmp(cfg->rom_path, host.rom_path) != 0;

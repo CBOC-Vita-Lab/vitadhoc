@@ -777,3 +777,151 @@ regressions (8/8), rewind_tests (373 checks), app_tests look/wide/ambient/play/
 session. Twin-only profiling switches (inert unless set): GBADHOC_FRAME_HASH,
 GBADHOC_SOFT_NORASTER, GBADHOC_CG_FROM, GBADHOC_PCPROF(_FROM). None of this is
 a frame-rate measurement on a Vita.
+
+## Version 1.4 Changes: Game Names And The SNES Hint
+
+- **Game names** (`lib_names` in `config.ini`, `SET_NAMES` in ui_psp.c, first row
+  under LIBRARY so the walkers that wrap up to Cover picture, Game folders and
+  Game order keep their counts). 0 = Game title, the default: `rom_display_name`
+  cuts everything from the first `(` and puts a trailing ", The" back in front.
+  1 = File name: the stem as it is. Find still matches both. Written only once
+  changed. The names on screen come from the file name, not from gamedb
+  (gamedb only feeds covers and the blurb), so hacks collide because the
+  bracketed tag is cut.
+- **Same name, two games** (`names_prepare` once a frame, `names_subtitle`): the
+  list being shown (tab, search, order) is hashed by display name; every game
+  sharing a name shows its file name under it on the home page (`hm_focus`). The
+  Shelf and Marquee lists, one line a row, show the file name in place of the
+  name for those games. Under File name equal stems in two folders show the
+  folder instead. Display only: nothing keyed on the file changes.
+  `ui_game_name` is the test's event.
+- **SNES hint**: the home page's footer and both loading screens say "hold
+  L + R + START for the menu" when the console is SNES (the loading screen said
+  START + SELECT for every console).
+- **Settings fix**: the Cover picture and Sync RetroArch saves labels were in
+  the other order from `SET_COVERPIC` / `SET_SYNCRA`, so each row wore the
+  other's name.
+- **Tests:** `app_tests.py --only names_filename,names_duplicate_subtitle`.
+
+## Version 1.4 Changes: Core Fixes From GBAdhoc, libretro gpSP And lr-gpsp-amcc
+
+What was taken into the gpSP core after the 1.3 review of GBAdhoc 4.5.0/4.6.0-beta,
+libretro gpSP `70707ce` and lr-gpsp-amcc's `patch-3` branch, what was left, and
+how each part was checked. Every change has a `-DGPSP_NO_...` switch that
+restores the old code (the tests below were run against builds with all four
+off, to prove they fail without the fix; NV_COND_FIX is the exception, see its entry). All of it is shared C: the emitters
+(`arm/`, `x86/`) are untouched.
+
+Measured on the host twins (700 frames, scripted input, the six private test ROMs
+that are never copied into the repo): the picture hashes (every 200 frames) and the
+sound CRC of all six are identical with all four switches off and with all four
+on, on x86 and on the armhf twin under qemu; x86 and armhf also agree with each
+other. User CPU time, off vs on: x86 within noise (-5% to +2%, load 20+ on the
+box), armhf under qemu 43.6-52.7 s vs 43.3-50.7 s (no slowdown). A 3000-frame
+Golden Sun run with a screenshot every 10 frames differs in exactly one frame
+(an 8x12 px patch beside a character sprite, the expected OBJ-over-BG change);
+no other frame of any ROM differs. `x86` cpufix tests 13, 20, 21 fail on the x86
+twin by design (x86 emitter not fixed for them, `app_tests.py` enforces them on
+ARM only), so run_tests.sh shows the cpufix picture as DIFFER between twins.
+
+- **NV_COND_FIX** (GBAdhoc `a8b9f52`; `cpu_threaded.c` `arm_scan_nv_nop`,
+  `arm_emit_case`). An ARM word with condition 0xF is never executed: the scan
+  turns it into an AL no-op (no exit point, no `block_exits[]` entry, it closes
+  an open condition run) and the emit switch gives it no code. Its 1S stays.
+  Unlike GBAdhoc's MIPS backend, VitAdhoc's emitters were already safe: the
+  x86 `generate_condition` has an explicit 0xF case (a jump over the word) and
+  the ARM header's `condition ^= 1` turns NV into AL, i.e. an always-taken skip.
+  So this is not a crash fix here; it makes NV words emit no code and no skip
+  branch, and the test (`cpufix` 24-26) passes with and without the fix.
+- **RAM_MIRROR_FIX** (GBAdhoc `d9052db`, first half; `block_lookup_translate_*`,
+  `RAM_MIRROR_CANON`). IWRAM repeats every 32 KiB and EWRAM every 256 KiB; the
+  lookup gave all aliases one tag but translated at whichever alias asked
+  first, so a canonical caller could run code carrying the alias's pc (`mov r0,
+  pc`, `mov lr, pc`, its exits). The lookup now translates the canonical pc
+  for every alias (one AND). Code that really runs at an alias sees canonical pc
+  values where the GBA shows the alias; upstream took the same trade. The second
+  half (an exit to an aliased pc linked lazily through a dispatch island) is
+  MIPS emitter work and is not ported: the eager link resolves to the canonical
+  block. Test: `cpufix` 27-28 (an alias runs first, then the home address must
+  see its own pc); fails without the fix (saw 0x300e408, 0x2071008).
+- **SMC_STM_FIXED** (GBAdhoc `45bc8d1`) is **not ported**, and neither is the
+  partial RAM retirement it is a refinement of. It needs, and the ARM and x86
+  backends have none of: (1) the written address and size at the trap (the ARM
+  stub's `smc_write` passes none, the x86 one jumps with it in a register that
+  differs per region); (2) a source extent per block (`ramtag_note_extent`,
+  MIPS only); (3) no direct RAM-to-RAM links, or a way to unlink: here every
+  external exit is patched straight to the target's translation, so clearing one
+  block's tags would leave live blocks jumping into retired code (GBAdhoc routes
+  RAM exits through dispatch islands, `SMC_PARTIAL_SAFE`, and `coreflags.mk`
+  records that it does not compile for ARM); (4) patching already-published
+  code, which on the Vita needs `sceKernelSyncVMDomain` for words outside the
+  `[last, ptr)` range `translate_icache_sync` covers, and can only be proven on
+  the console. Doing it correctly is a project of its own (a trap that carries
+  the address in both stubs, extents per tag, inbound-link tracking or islands,
+  a tag rebuild for overlapping live blocks, then the Vita). The ARM backend
+  still flushes the whole RAM cache on a code write.
+- **XLAT_ITERATIVE** (libretro/gpsp `70707ce`; `defer_external_exit`,
+  `process_deferred_exits`, `translate_depth`). A block's external exits used to
+  be resolved by recursing: one `translate_block_*` frame (the exits array alone
+  is 256-384 bytes) plus one lookup frame per not-yet-translated block of a
+  branch chain. A chain of a few thousand first-visit blocks overflowed the 1 MiB
+  main thread stack (`plat_vita.c`). Now the exits are queued and the outermost
+  lookup drains the queue; the queue is filled in reverse and popped from the
+  end, so the blocks are visited in the same order as the recursion visited them
+  (same cache layout, tag numbers and cache-full timing) and the host stack depth
+  is constant. The failure contract is the old one (NULL, queue dropped,
+  `block_lookup_address` retries), the unmappable-target backstop moved into the
+  drain, and the pre-publication island loops are unchanged. Test: `chain`
+  (`testrom/chain.c`, 6000 ARM and 6000 Thumb blocks, 400 in IWRAM) with the host
+  stack limited to 1 MiB: segfault (-11) without the change, passes with it.
+- **OBJ_EXACT** (lr-gpsp-amcc `ea8e4a9`/`9faf6f9`/`d8db010`, replaced by the full
+  rule; `video.cc`). Among sprites the hardware keeps one colour and one priority
+  per pixel and walks the OAM in order: a later sprite takes a pixel over only
+  with a strictly better priority, and a TRANSPARENT pixel of such a sprite keeps
+  the colour but takes over the priority (and the semi-transparent flag). So a
+  low-priority sprite that a later, better-priority sprite overlaps is drawn
+  in front of a BG that painting by priority hides it behind: the hole in Golden
+  Sun 1 and 2, Mario Golf, The Minish Cap. This is mGBA's rule
+  (`software-obj.c`, the `else if (current != FLAG_UNWRITTEN)` arm); amcc's patch
+  does the same for whole-tile transparency only and per object. Note the
+  task text described the rule as "lowest OAM wins among OBJs regardless of
+  priority"; that is not what mGBA or gpSP's existing common path do, and the
+  implementation follows mGBA.
+  `order_obj` marks a row (`obj_inv_row`) only when a sprite out-ranks an
+  EARLIER, worse-priority sprite whose x extent it overlaps (four min/max pairs
+  per row). Unmarked rows run the old code unchanged behind one predictable
+  branch in `render_scanline_objs`. A marked row is built once per pass
+  (`obj_exact_build`, cache reset in `order_layers`): every sprite of the row in
+  OAM order is drawn into a scratch line by the ordinary `render_sprite`
+  (flip, 4/8 bpp, mosaic, affine unchanged), its covered area is known exactly
+  (`obj_cover`, the affine texture walked as `render_affine_object` walks it),
+  and the pixels are merged by the rule; `render_scanline_objs_exact` then paints
+  the pixels of the priority being asked for in FULLCOLOR, INDXCOLOR or
+  STCKCOLOR form. OBJ-window sprites are not part of it. `video.cc` is also
+  CORE_R (the render thread) and gets the same code. Test: `objprio`
+  (`testrom/objprio.c`: out-of-order pair with a transparent half, in-order
+  control, an affine transparent texture, a non-overlapping pair), core,
+  render thread, and the thread-vs-core check on every frame of 1300; the
+  `-DGPSP_NO_OBJ_EXACT` build fails exactly the two defect cases.
+  `-DOBJ_EXACT_ALL` (test builds) sends every row down the exact path.
+- **Tests:** `testrom/cpufix.c` tests 24-28, `testrom/chain.c`,
+  `testrom/objprio.c` (`make -C testrom cpufix chain objprio`);
+  `app_tests.py --only cpufix,chain,objprio`.
+
+- **WP0 counters** (`cpu_threaded.c`, `gpsp_jit_counters(u32 *out, u32 n)`,
+  declared in `cpu.h`; each core instance exports its own copy under its prefix).
+  Monotonic, 8 slots: ARM blocks translated, Thumb blocks translated, icache/VM
+  domain sync calls, bytes they covered, RAM cache flushes, ROM cache flushes,
+  RAM flushes from a code write. A few increments per block or flush, nothing on
+  an execution path; hashes unchanged. `-DJCTR_DUMP` prints the totals at exit on
+  the twins. 700 frames, six real ROMs (syncs / blocks translated / RAM flushes /
+  of which SMC): 681/1564/4/3, 12768/26186/1163/761, 554/1420/1/0,
+  19236/42348/2299/2266, 689/1490/48/47, 1351/2944/86/85.
+- **WP1 (batch the icache sync): not done, finding.** Syncs are already one per
+  top-level lookup, not per block (2.0-2.6 blocks per sync above, the chain is
+  drained first, `XLAT_ITERATIVE`), and the code a lookup returns is executed
+  at once, so the sync cannot move after it. Fewer syscalls needs translating
+  ahead of execution (a different cache layout) and a Vita measurement.
+- **WP2-WP4 not done in this pass** (WP2 is the SMC_STM_FIXED project above;
+  the counters show why it matters: two of the six ROMs flush the RAM cache 1-3
+  times a frame).

@@ -53,8 +53,9 @@ size_t snes_host_sram_size(void);
 const uint8_t *snes_host_sram_data(void);
 /* Returns 1 when the SRAM changed since the last successful snes_host_sram_save. */
 int snes_host_sram_dirty(void);
-/* Safe save: writes path.tmp, keeps the previous file as path.bak, renames.
- * Returns 0 on success. */
+/* Safe save: a verified backup of the existing file first (once per session), then
+ * path.tmp, read back, renamed over the file. Returns 0 on success; on failure the
+ * existing file is untouched (codes: see snes_host_save_error). */
 int snes_host_sram_save(void);
 /* For a save written on another thread: snes_host_sram_take copies the SRAM into
  * `out` (cap bytes) and counts that content as saved; snes_host_sram_write writes
@@ -67,6 +68,15 @@ void snes_host_sram_forget(void);
 /* Extra folder for the first copy of an existing save before we overwrite it
  * (the Vita app uses ux0:data/GBAdhoc/backups/snes). The folder must exist. */
 void snes_host_set_backup_dir(const char *dir);
+
+/* Why the last battery save failed: 0 when it did not (or none was tried), else the
+ * return code of the failed snes_host_sram_save / snes_host_sram_write (see host.cpp:
+ * 1 temp file, 2 write, 3 no verified backup, 4 rename, 5 read-back, 6 unreadable save)
+ * and, in `text` (cap bytes), the real reason. Any thread. The existing file is left
+ * untouched on every failure; the caller retries later. */
+int snes_host_save_error(char *text, size_t cap);
+/* Where the host reports save problems (one line per call); default is stderr. */
+void snes_host_set_log(void (*fn)(const char *line));
 
 /* Save states, same safe write rule. Return 0 on success. */
 int snes_host_state_save(const char *path);

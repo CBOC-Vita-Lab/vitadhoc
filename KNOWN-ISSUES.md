@@ -39,6 +39,25 @@ Testing continues on:
   known to use it) and extra controllers. Controllers beyond the first have
   not been tried on a real Vita yet.
 
+## NES And Famicom
+
+- **New in 1.4, and the least tested console here.** NES has run on the PC
+  build with test cartridges; no game has been played on a real Vita yet.
+  Nothing is measured, and no speed is promised.
+- **Famicom Disk System games** need your own `disksys.rom` (the system's BIOS,
+  which cannot be included). Put it beside the game or in
+  `ux0:data/GBAdhoc/nes/`. Without it the game says so and returns.
+- NES games use the same menu, state slots, Continue, fast forward, cheats
+  (Game Genie codes and RAM codes), patches and RetroAchievements as the Game
+  Boy games. Rewind and link play are not available for NES games; the link
+  card says so. A few cheat codes of the "RAM" kind change what the game
+  reads but not what it saves.
+- **Box art** finds a NES game by its contents or its name. A UNIF game
+  (`.unf`, `.unif`) is found by name only, so a file with an unusual name may
+  stay without a cover until you give it one (the Cover button).
+- Game descriptions are written for GBA, GB, GBC and SNES games first; a NES
+  game may show none.
+
 ## Games
 
 How we checked the games people reported, and what is still unchecked, is in
@@ -84,8 +103,8 @@ flicker or missing instruments, which we could not judge without a Vita.
   `ux0:ROMS/GBA/`) shows up twice, and each copy has its own save. If a save
   seems missing, check for the other copy of the game.
 - Each console's list shows up to 2,048 games.
-- **Zipped games:** the first game in the zip with a `.gba`, `.gb` or `.gbc`
-  name is the one played. Patches, and two-player play with a different game
+- **Zipped games:** the first game in the zip with a `.gba`, `.gb`, `.gbc`,
+  `.sfc`, `.smc`, `.nes`, `.fds`, `.unf` or `.unif` name is the one played. Patches, and two-player play with a different game
   for each player, need the game unzipped. Encrypted and ZIP64 archives are
   not read.
 - **Starting from a launcher** works when VitAdhoc is closed; close it first.

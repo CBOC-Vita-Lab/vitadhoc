@@ -47,6 +47,7 @@ static struct
    int  framed;                    /* a frame was emulated since ra_pump */
    int  inflight;                  /* the net thread's job: 0, CALL, HASH */
    int  hash_want;                 /* the game's file is to be hashed */
+   int  hash_nes;                  /* ...as an NES file (RA console 7) */
    unsigned game_gen, hash_gen;    /* which game a hash answer is for */
    char hash_path[600];
    int  was_linked;
@@ -465,7 +466,8 @@ void ra_pump(void)
       /* A game's hash first: its achievements wait on it. */
       if (R.hash_want)
       {
-         if (ra_http_hash_file(R.hash_path) == 0)
+         if ((R.hash_nes ? ra_http_hash_file_nes(R.hash_path)
+                         : ra_http_hash_file(R.hash_path)) == 0)
          {
             R.hash_want = 0;
             R.hash_gen = R.game_gen;
@@ -600,7 +602,7 @@ static void RC_CCONV game_done(int result, const char *error,
 
 void ra_game_begin(const char *boot_path, fe_console_t console)
 {
-   (void)console;
+   R.hash_nes = console == FE_CONSOLE_NES;
    R.game_on = 0;
    R.game_state = 0;
    R.game_title[0] = '\0';

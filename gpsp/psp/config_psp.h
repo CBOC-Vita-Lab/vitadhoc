@@ -176,6 +176,10 @@ typedef struct
     * lib_sort): 0 by name, 1 most recently played first, 2 most played
     * first (psp/play_log.h). */
    int  lib_sort;
+   /* Names in the game list (Settings > LIBRARY > Game names, CONFIG.INI
+    * lib_names): 0 the game's title (default; region tags cut), 1 the file
+    * name as it is.  Display only.  Written once changed. */
+   int  lib_names;
    /* A AND B BUTTONS (Settings > Controls, CONFIG.INI ab_buttons): which
     * face button is the Game Boy's A, and so which one the menus confirm
     * with.  -1 (no key) = as the Vita's own Settings say (its Enter

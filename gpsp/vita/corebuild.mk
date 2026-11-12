@@ -193,6 +193,10 @@ $(B)/gbcore/gbcore_tgbdual_linked_b.o: $(B)/gbcore/gbcore_tgbdual_linked.o
 	  { print $$3 " gbcoreb_" substr($$3, 8) } END { exit bad }' > $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $< $@
 
+# ---- the NES core (FCEUmm), in-process like TGB Dual: nescore.mk
+include $(GP)/vita/nescore.mk
+GB_OBJS += $(NES_OBJS)
+
 # ---- frontend-common, netdrv core, the cable bus ----------------------------
 FE_INC  := -I$(GP)/frontend-common -I$(GP)/netdrv \
            -I$(GP)/libretro/libretro-common/include -I$(GP)

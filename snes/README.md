@@ -251,21 +251,47 @@ The layout maths (`frontend/picture.cpp`) is tested on Linux (`selftest.sh`); th
 ### Threads on the Vita
 
 APU worker on core 2, PPU worker on core 1, emulation (65816, DMA, GPU submission) on core 0, audio output
-thread on core 2 at a more urgent priority than the APU worker. Priorities: workers 0x60, audio 0x50, main
-thread unchanged. Switches in `ux0:data/GBAdhoc/snes/threads.ini` (`apu_thread=1`, `ppu_thread=1`, `spin=300`;
-both on by default). An idle worker polls `spin` times (a few microseconds) and then blocks on a semaphore;
+thread on core 2 at a more urgent priority than the APU worker. Priorities: workers 0x60, audio 0x40, main
+thread 0x60 (`audio_prio=` / `main_prio=` in threads.ini, 0 = leave as the system made it). Switches in
+`ux0:data/GBAdhoc/snes/threads.ini` (`apu_thread=1`, `ppu_thread=1`, `spin=300`, `audio_legacy=0`; the threads
+are on by default). An idle worker polls `spin` times (a few microseconds) and then blocks on a semaphore;
 nothing spins while the game waits. The main loop never waits for the PPU worker: it queues the end-of-frame
 copy and shows the newest finished picture (normally the previous frame, one frame of display latency). The
 Linux twin keeps its exact waiting fetch for the hash checks (`--nowait` exercises the Vita's fetch: every
 picture it returns must equal a picture of the reference run).
+
+### Audio pacing (`frontend/audio_pace.cpp`)
+
+The audio thread renders 512-frame grains at 48 kHz from a lock-free ring of the core's 32040 Hz frames. A PI
+controller on the smoothed ring fill (measured at each grain start) sets the resampling ratio; the target fill is an
+adaptive cushion (70 ms, 50-140 ms, +20 ms per underrun, -5 ms after 30 s without one). An underrun, a pause and a
+resume all fade out/in over 64 frames and prime again at half the cushion; an overfull ring is trimmed with a
+crossfade. When the emulation runs slower than real time (speed over the last 8 s below 0.985) the pitch follows the
+speed. `audio_legacy=1` in threads.ini selects the first player's audio for A/B tests. The same code runs in the
+twin's `--audio-sim` (see `twin/audio_sim.sh`, results in `twin/baseline_results.md`).
+
+Log, one extra line per second (counters of the audio thread's last second):
+
+```
+A t=12 in=31987 out=48128 fill=55.6/67.4/79.7 ema=69.4 tgt=70 ratio=-4453/-2554/945 base=1.0000 ur=0/0 drop=0 trim=0 agap=10.9 w16=0 w20=0 w25=0 stall=16.8 wmax=11.4 v2
+```
+
+`in`/`out` frames pushed / rendered; `fill` ring fill in ms at grain starts (min/avg/max), `ema` smoothed fill, `tgt`
+cushion; `ratio` is (ratio-1) in ppm (min/avg/max, the slow-emulation base included), `base` the base speed; `ur=` underruns
+this second / in total; `drop` frames refused by a full ring; `trim` overfill trims; `agap` longest gap in ms between two
+`sceAudioOutOutput` returns; `w16/w20/w25` passes of the main loop whose work took over 16.7 / 20 / 25 ms; `stall` longest
+time between two passes; `wmax` longest pass; last word `v2` or `legacy`. Each underrun also gets a line of its own:
+`UNDERRUN #n (k new) at out=..s ema=..ms target->..ms ratio=..ppm queue_now=..ms work=..ms`. The log is kept in memory and
+written at most every 5 s, never during a battery RAM write.
 
 ### Smoothness governor (off)
 
 `frontend/picture.cpp` still has a governor that would skip drawing every other frame after 24 slow ones
 (level 2; level 1, which dropped picture options, is not used). On the Vita it is not called: the picture is
 drawn on its own thread, so skipping it saved the game thread about half a millisecond while halving the
-frames shown. A frame that runs long is shown late, and after a single long frame the next refresh runs two
-frames to catch up (not when every frame is long). `gov=` in the log stays 0.
+frames shown. A frame that runs long is shown late. The main loop emulates exactly one frame per display
+refresh (the console's 60.0988 Hz against the Vita's 59.94 Hz is absorbed by the audio rate control; the former
+"two frames to catch up" branch is gone). The governor is not called and has no log field any more.
 
 Files:
 
@@ -282,7 +308,7 @@ Files:
 One line per second:
 
 ```
-t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | gov=0 drawn=60 skipped=0 new_pic=60 fence_skip=0
+t=12 fps=59.9 emu_fps=59.9 emu_ms=9.40 last_ms=9.7 aq=2100 | busy ms/fr: main=11.2 ppu=3.1 apu=4.8 | waits/s: ppu=0 apu=3 (0.4 ms) | drawn=60 skipped=0 new_pic=60 fence_skip=0
 ```
 
 Since the speed pass the line also has `main split ms/fr: emu= copy= gpu_submit=` (the main figure divided into the core call, the picture copy and GPU submission) and `rt_reuse=` (a running total since the program started of how often a render target was reused without being redrawn). `fps` is what was shown, `emu_fps` frames the core ran, `emu_ms` time inside the core call on the main thread,
@@ -292,7 +318,7 @@ whole loop without the display wait). A frame fits when main stays under about 1
 `waits/s` counts how often the main thread had to wait for a worker and how long in total. `fence_skip` counts
 pictures not copied because the GPU still read every texture. Without threads the line also carries
 `prof(60 fr): cpu= apu= ppu= chip= front= ms/fr=` for one second in four. Other lines: `pads:` when a controller
-appears or goes, `governor:` level changes, `overlay`, `render targets:` (0 means a target could not be created).
+appears or goes, `overlay`, `render targets:` (0 means a target could not be created).
 
 Not implemented: zip files, core options in the menu, mouse/Super Scope, cheats, rewind, RTC data for
 S-RTC/SPC7110 carts (their clock RAM is not saved), BS-X and Sufami Turbo, MSU-1 audio files.

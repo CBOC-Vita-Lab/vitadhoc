@@ -20,3 +20,4 @@ gpsp/vita/tests/gamedb/keys.txt
 
 # the release package, kept beside its source
 !/VitAdhoc.vpk
+gpsp/vita/hostcore/shots/

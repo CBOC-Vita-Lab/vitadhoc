@@ -125,3 +125,22 @@ clean:
 .PHONY: clean gb cgb
 
 .PHONY: wide scroll top gb sensors
+
+# XLAT_ITERATIVE (app_tests.py, chain): a chain of thousands of first-visit
+# blocks, chain.c.
+.PHONY: chain
+chain: gbadhoc-chain.gba
+gbadhoc-chain.gba: crt0.S chain.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-chain.elf \
+	  crt0.S chain.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-chain.elf $@
+	@ls -l $@
+
+# OBJ_EXACT (app_tests.py, objprio): sprites out of priority order, objprio.c.
+.PHONY: objprio
+objprio: gbadhoc-objprio.gba
+gbadhoc-objprio.gba: crt0.S objprio.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-objprio.elf \
+	  crt0.S objprio.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-objprio.elf $@
+	@ls -l $@

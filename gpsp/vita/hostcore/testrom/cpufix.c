@@ -46,6 +46,14 @@
  *     header from the word below (Mortal Kombat: Deadly Alliance; the open
  *     BIOS used to run for tens of seconds on it)
  * 23  ...and so does LZ77UnCompWram
+ * 24  an ARM word with condition NV (0xF) is never executed and is no exit
+ *     point (NV_COND_FIX; Fire Emblem: The Morrow's Golden Country), in ROM
+ * 25  ...in IWRAM
+ * 26  ...in EWRAM
+ * 27  RAM_MIRROR_FIX: IWRAM code first run through a mirror (+0x8000) and
+ *     then at its own address sees its own pc (`mov r0, pc`), not the
+ *     mirror's: one translation, canonical (The Morrow's Golden Country)
+ * 28  ...and the same in EWRAM (mirror +0x40000)
  *
  * "SRAM_V113" below makes the emulator give the cartridge battery SRAM. */
 typedef unsigned char u8;
@@ -58,7 +66,7 @@ typedef volatile u32 vu32;
 
 #define REG(a) (*(vu16 *)(0x04000000 + (a)))
 #define SRAM ((vu8 *)0x0E000000)
-#define NTESTS 24
+#define NTESTS 29
 #ifndef VENEER_ITERS
 #define VENEER_ITERS 50
 #endif
@@ -312,6 +320,71 @@ __asm__(
    "  .global cond_run_end\n"
    "cond_run_end:\n"
    "  .align 2\n"
+   /* NV (condition 0xF) words, "never" on an ARM7TDMI.  Six routines in
+    * 64-byte slots (copied whole to IWRAM and EWRAM); r0 = 0 in, the sum out.
+    * Each NV word would change r0 (or leave the routine, or hang) if it ran.
+    *   0 NV word first in its block                        -> 1
+    *   1 NV mid block                                      -> 3
+    *   2 a false NE skip, then NV, then AL (the stale skip) -> 4
+    *   3 EQ / NV / EQ / NV / NE mixed, Z set               -> 37
+    *   4 NV in every shape of an exit point                -> 3
+    *   5 the data word of the crash, FFF5FFF6              -> 3 */
+   "  .arm\n"
+   "  .balign 64\n"
+   "  .global nv_slots\n"
+   "nv_slots:\n"
+   "  .word 0xF2800010\n"                  /* NV add r0, r0, #16 */
+   "  add r0, r0, #1\n"
+   "  bx lr\n"
+   "  .balign 64\n"
+   "  add r0, r0, #1\n"
+   "  .word 0xF2800010\n"
+   "  add r0, r0, #2\n"
+   "  bx lr\n"
+   "  .balign 64\n"
+   "  cmp r0, r0\n"
+   "  addne r0, r0, #1\n"
+   "  .word 0xF2800002\n"
+   "  add r0, r0, #4\n"
+   "  bx lr\n"
+   "  .balign 64\n"
+   "  cmp r0, r0\n"
+   "  addeq r0, r0, #1\n"
+   "  .word 0xF2800002\n"
+   "  addeq r0, r0, #4\n"
+   "  .word 0xF2800010\n"
+   "  addne r0, r0, #8\n"
+   "  add r0, r0, #32\n"
+   "  bx lr\n"
+   "  .balign 64\n"
+   "  add r0, r0, #1\n"
+   "  .word 0xF12FFF1E\n"                  /* NV bx lr */
+   "  .word 0xF1A0F00E\n"                  /* NV mov pc, lr */
+   "  .word 0xF59DF000\n"                  /* NV ldr pc, [sp] */
+   "  .word 0xF89D8000\n"                  /* NV ldmia sp, {pc} */
+   "  .word 0xFAFFFFFE\n"                  /* NV b . */
+   "  .word 0xFBFFFFFE\n"                  /* NV bl . */
+   "  .word 0xFF000000\n"                  /* NV swi 0 (SoftReset) */
+   "  add r0, r0, #2\n"
+   "  bx lr\n"
+   "  .balign 64\n"
+   "  add r0, r0, #1\n"
+   "  .word 0xFFF5FFF6\n"
+   "  .word 0xFFF5FFF6\n"
+   "  add r0, r0, #2\n"
+   "  bx lr\n"
+   "  .balign 64\n"
+   "  .global nv_slots_end\n"
+   "nv_slots_end:\n"
+   /* mov r0, pc ; bx lr -- the pc it reads is where it runs, + 8 */
+   "  .arm\n"
+   "  .global mirror_probe\n"
+   "mirror_probe:\n"
+   "  mov r0, pc\n"
+   "  bx lr\n"
+   "  .global mirror_probe_end\n"
+   "mirror_probe_end:\n"
+   "  .align 2\n"
    /* FIQ: r0 = 0 when everything held, else the number of the failed check.
     * Interrupts stay masked throughout (I and F set in every mode). */
    "  .global fiq_test\n  .type fiq_test, %function\n"
@@ -399,6 +472,8 @@ __asm__(
    "  .align 2\n"
 );
 extern u32 bx_veneer[], bx_veneer_end[], cond_run[], cond_run_end[];
+extern u32 nv_slots[], nv_slots_end[];
+extern u32 mirror_probe[], mirror_probe_end[];
 extern u32 fiq_test(void), ldm_spsr(void), msr_flags(void);
 u32 ldm_buf[4];
 
@@ -414,6 +489,24 @@ static u32 to_iwram(u32 *from, u32 *to, u32 dst, u32 thumb)
    while (a < e)
       *d++ = *a++;
    return dst | thumb;
+}
+
+/* Run the six NV routines at `base` fifty times each: a bit per routine that
+ * ever returned the wrong sum (the value seen is kept for the log). */
+static u32 nv_check(u32 base, u32 *seen)
+{
+   static const u32 want[6] = { 1, 3, 4, 37, 3, 3 };
+   u32 k, i, bad = 0;
+   for (k = 0; k < 6; k++)
+      for (i = 0; i < 50; i++) {
+         u32 v = ((fn_t)(base + 64 * k))(0);
+         if (v != want[k]) {
+            bad |= 1u << k;
+            *seen = (*seen << 8) | (v & 0xFF);
+            break;
+         }
+      }
+   return bad;
 }
 
 static u32 timer_min_read(void)
@@ -690,6 +783,35 @@ int main(void)
    swi_decomp(0x11, (u32)bios_src + 2, dst);
    seen = bios_check(dst, size, pat_lz);
    result(23, seen == 1, seen);
+   }
+
+   if (RUN_MASK & (1u << 24)) {
+   /* 24, 25, 26: NV words, from ROM, IWRAM and EWRAM. */
+   u32 seen = 0, bad;
+   bad = nv_check((u32)nv_slots, &seen);
+   result(24, bad == 0, bad ? (bad << 24) | (seen & 0xFFFFFF) : 0);
+   seen = 0;
+   bad = nv_check(to_iwram(nv_slots, nv_slots_end, 0x03006200, 0), &seen);
+   result(25, bad == 0, bad ? (bad << 24) | (seen & 0xFFFFFF) : 0);
+   seen = 0;
+   bad = nv_check(to_iwram(nv_slots, nv_slots_end, 0x02030000, 0), &seen);
+   result(26, bad == 0, bad ? (bad << 24) | (seen & 0xFFFFFF) : 0);
+   }
+
+   if (RUN_MASK & (1u << 27)) {
+   /* 27, 28: run a RAM routine through a mirror first, then at home.  The
+    * first call's value is the mirror's business (the GBA shows the alias,
+    * the fixed translator the canonical pc); the second must be the home
+    * pc whatever came first. */
+   u32 home = to_iwram(mirror_probe, mirror_probe_end, 0x03006400, 0);
+   u32 v1 = ((fn_t)(home + 0x8000 + 0x0))(0);   /* alias: not yet code there */
+   (void)v1;
+   v = ((fn_t)home)(0);
+   result(27, v == home + 8, v);
+   home = to_iwram(mirror_probe, mirror_probe_end, 0x02031000, 0);
+   v1 = ((fn_t)(home + 0x40000))(0);
+   v = ((fn_t)home)(0);
+   result(28, v == home + 8, v);
    }
 
    for (i = 0; i < NTESTS; i++)

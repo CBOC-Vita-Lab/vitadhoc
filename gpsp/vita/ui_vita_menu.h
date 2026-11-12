@@ -47,6 +47,11 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
                   g_ov_used, PSP_STATE_SLOT_COUNT);
       break;
    case M_WIRELESS:
+      if (g_pcfg.console == FE_CONSOLE_NES)
+      {
+         snprintf(out, cap, "Not available for NES games");
+         break;
+      }
       memset(&ls, 0, sizeof(ls));
       ui_host_local_state(&ls);
       if (ls.active)

@@ -291,9 +291,31 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
    const char *ext;
    size_t len, i;
    static const char *const suffix[] = { ".gba", ".gb", ".gbc", ".sfc", ".smc" };
-   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_SNES)
+   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_NES)
       return 0;
    len = strlen(name);
+   if (console == FE_CONSOLE_NES)
+   {
+      /* a Famicom/NES cartridge in four spellings: .nes (iNES), .fds (a
+       * Famicom Disk System disk), .unf and .unif (UNIF) */
+      static const char *const nes_ext[] = { ".nes", ".fds", ".unf", ".unif" };
+      size_t k;
+      for (k = 0; k < sizeof(nes_ext) / sizeof(nes_ext[0]); k++)
+      {
+         size_t el = strlen(nes_ext[k]);
+         if (len <= el)
+            continue;
+         for (i = 0; i < el; i++)
+         {
+            unsigned char a = (unsigned char)name[len - el + i];
+            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+            if (a != (unsigned char)nes_ext[k][i]) break;
+         }
+         if (i == el)
+            return 1;
+      }
+      return 0;
+   }
    ext = suffix[console];
    if (len < strlen(ext))
       return 0;
@@ -314,6 +336,13 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
       if (a != b) return 0;
    }
    return 1;
+}
+
+/* The pause menu of the separate SNES player (snes.bin) is held L + R + START,
+ * not START + SELECT as in the player that runs GBA, GB, GBC and NES games. */
+static inline int ui_menu_chord_is_lrs(int console)
+{
+   return console == FE_CONSOLE_SNES;
 }
 
 static inline size_t ui_rom_stem_length(const char *name)

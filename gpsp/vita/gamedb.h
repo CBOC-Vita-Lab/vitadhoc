@@ -66,13 +66,19 @@ int  gamedb_name_by_code(const char code[4], char *out, size_t cap);
 int  gamedb_name_by_crc(uint32_t crc, char *out, size_t cap);
 /* A No-Intro name for a file named loosely ("Act Raiser", "7th Saga",
  * "Mega Man X 2", "Pocket Dogs (U)"): its title key without spaces, looked
- * up among console `sys`'s games ('A' GBA, 'B' GB, 'C' GBC, 'D' SNES; N
- * records).  1 when found. */
+ * up among console `sys`'s games ('A' GBA, 'B' GB, 'C' GBC, 'D' SNES, 'E' NES and Famicom Disk
+ * System; N records).  1 when found. */
 int  gamedb_name_loose(char sys, const char *name, char *out, size_t cap);
 /* The CRC32 of a SNES file's ROM: a 512-byte copier header (a file 512
  * bytes over a multiple of 1 KiB) is left out, as the No-Intro CRCs are of
  * the cartridge alone. */
 int  gamedb_snes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void));
+/* ...and of a NES file's ROM: the 16-byte iNES header ("NES\x1a") is left
+ * out, and with flag 6 bit 2 set the 512-byte trainer after it; a Famicom
+ * Disk System file loses its 16-byte "FDS\x1a" header.  A UNIF file, or a
+ * file with no header, is taken whole.  (The No-Intro CRCs are of the
+ * cartridge without them.) */
+int  gamedb_nes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void));
 
 /* The GBA game code of the cartridge file at `path` (bytes 0xAC-0xAF, four
  * capital letters or digits): 1 and code[0..3], or 0. */

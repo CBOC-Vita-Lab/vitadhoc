@@ -14,6 +14,7 @@ _Static_assert(ML_STATE_SLOTS == PSP_STATE_SLOT_COUNT,
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef __vita__
@@ -640,7 +641,8 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    }
    if (job->console == FE_CONSOLE_GBA)
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".sav");
-   else if (job->console == FE_CONSOLE_SNES)    /* snes.bin: Game.srm */
+   else if (job->console == FE_CONSOLE_SNES ||
+            job->console == FE_CONSOLE_NES)     /* Game.srm */
       n = psp_rom_path_suffix(path, sizeof(path), job->rom, ".srm");
    else
       n = snprintf(path, sizeof(path), "%s.sav", job->rom) >= (int)sizeof(path) ? -1 : 0;
@@ -680,7 +682,10 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
       /* a loosely named file ("ChronoTrigger", "Act Raiser"): by the game's
        * No-Intro name for its console */
       char named[256];
-      char sys = job->console == FE_CONSOLE_SNES ? 'D' : job->console == FE_CONSOLE_GBC ? 'C'
+      size_t rl = strlen(job->rom);
+      char sys = job->console == FE_CONSOLE_NES
+               ? (rl > 4 && !strcasecmp(job->rom + rl - 4, ".fds") ? 'F' : 'E')
+               : job->console == FE_CONSOLE_SNES ? 'D' : job->console == FE_CONSOLE_GBC ? 'C'
                : job->console == FE_CONSOLE_GB ? 'B' : 'A';
       if (gamedb_name_loose(sys, job->stem, named, sizeof(named)) &&
           gamedb_blurb(named, out->blurb, sizeof(out->blurb)))

@@ -22,7 +22,11 @@
  *
  * Whatever the partner's game writes to its battery goes to that file and
  * never to the player's.  A copy that saves becomes the second save file:
- * the file it replaces is kept once as <file>.bak.
+ * the file it replaces is kept first as <file>.bak (or <file>.<crc>.bak if a
+ * .bak is already there), copied whole and read back to check its size and
+ * CRC.  Without a verified copy the file is NOT replaced and the player is
+ * told.  A save is never opened for writing in place when it already holds
+ * data: a full card leaves the old file as it was.
  *
  * THE PAIR IS ONE THING TO THE PLAYER.  One pad drives one machine at a
  * time -- the VIEW: right stick sideways, a tap on the other picture, the
@@ -75,6 +79,7 @@
  *                           cost so far (fe_host_cpu_stat: without drawing;
  *                           zeros on a console) to the log, alone or linked
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,7 +188,7 @@ static struct
    uint8_t save_snap[SAVE_BYTES + 64];  /* + a GB clock trailer */
    unsigned save_count;        /* files written (telemetry)                   */
    /* the writer's word on its last write, for the emulation thread to log */
-   struct { volatile int done; int ok, bak; unsigned size; } wr;
+   struct { volatile int done; int ok, bak, kept; unsigned size; char err[72]; } wr;
 
    /* drawing every other frame when the work does not fit a refresh */
    int skip_on, skip_set;
@@ -278,32 +283,160 @@ static const uint8_t *partner_image(uint32_t *writes, size_t *n, int fresh)
    return fe_gbadual_local_partner_save(writes);
 }
 
-static int copy_file(const char *from, const char *to)
+/* Size and CRC of a file; 0 = read to the end without an error. */
+static int file_sum(const char *path, uint32_t *crc, long *size)
 {
-   FILE *a = fopen(from, "rb"), *b;
-   char buf[4096];
+   FILE *f = fopen(path, "rb");
+   unsigned char buf[4096];
    size_t n;
-   int ok = 1;
-   if (!a)
+   uint32_t c = 0;
+   long total = 0;
+   int ok;
+   if (!f)
       return -1;
-   b = fopen(to, "wb");
+   while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+   {
+      c = fe_crc32(c, buf, n);
+      total += (long)n;
+   }
+   ok = !ferror(f);
+   if (fclose(f) != 0)
+      ok = 0;
+   if (!ok)
+      return -1;
+   *crc = c;
+   *size = total;
+   return 0;
+}
+
+static void err_set(char *err, size_t cap, const char *text)
+{
+   snprintf(err, cap, "%s", text && *text ? text : "write incomplete");
+}
+
+/* Copy `from` to `to` through to.tmp, check the copy by reading it back (size
+ * and CRC against the source as it was read), and only then give it its name.
+ * `to` is never opened for writing, so an existing file of that name is not
+ * touched; the caller picks a free name.  0 = a whole, checked copy is at
+ * `to`; -1 = not (nothing is left at `to`, the reason is in err). */
+static int copy_file_verified(const char *from, const char *to, char *err,
+                              size_t errcap)
+{
+   char tmp[APP_PATH_CAP + 24];
+   unsigned char buf[4096];
+   FILE *a, *b;
+   size_t n;
+   uint32_t crc = 0, back;
+   long total = 0, bsize;
+   int ok = 1;
+
+   if (snprintf(tmp, sizeof(tmp), "%s.tmp", to) >= (int)sizeof(tmp))
+   {
+      err_set(err, errcap, "path too long");
+      return -1;
+   }
+   errno = 0;
+   a = fopen(from, "rb");
+   if (!a)
+   {
+      err_set(err, errcap, strerror(errno));
+      return -1;
+   }
+   errno = 0;
+   b = fopen(tmp, "wb");
    if (!b)
    {
+      err_set(err, errcap, strerror(errno));
       fclose(a);
       return -1;
    }
    while ((n = fread(buf, 1, sizeof(buf), a)) > 0)
+   {
       if (fwrite(buf, 1, n, b) != n)
       {
+         err_set(err, errcap, errno ? strerror(errno) : NULL);
          ok = 0;
          break;
       }
-   fclose(a);
-   if (fclose(b) != 0)
+      crc = fe_crc32(crc, buf, n);
+      total += (long)n;
+   }
+   if (ok && ferror(a))
+   {
+      err_set(err, errcap, "read error");
       ok = 0;
-   if (!ok)
+   }
+   fclose(a);
+   if (fclose(b) != 0 && ok)
+   {
+      err_set(err, errcap, errno ? strerror(errno) : NULL);
+      ok = 0;
+   }
+   if (ok && (file_sum(tmp, &back, &bsize) != 0 || back != crc ||
+              bsize != total))
+   {
+      err_set(err, errcap, "the copy did not read back whole");
+      ok = 0;
+   }
+   if (ok && rename(tmp, to) != 0)
+   {
+      err_set(err, errcap, strerror(errno));
+      ok = 0;
+   }
+   if (ok && (file_sum(to, &back, &bsize) != 0 || back != crc ||
+              bsize != total))
+   {
+      err_set(err, errcap, "the copy did not read back whole");
+      ok = 0;
       remove(to);
+   }
+   if (!ok)
+      remove(tmp);
    return ok ? 0 : -1;
+}
+
+/* Keep the player's own file of the second save before a clone replaces it.
+ * <file>.bak, or <file>.<crc>.bak when that name is taken by something else.
+ * 0 = a verified copy exists. */
+static int save_keep_old(char *err, size_t errcap)
+{
+   char bakp[APP_PATH_CAP + 24];
+   uint32_t crc, bcrc;
+   long size, bsize;
+
+   errno = 0;
+   if (file_sum(L.save_path, &crc, &size) != 0)
+   {
+      err_set(err, errcap, errno ? strerror(errno) : "cannot be read");
+      return -1;
+   }
+   if (size == 0)
+      return 0;                         /* nothing in it to lose */
+   if (snprintf(bakp, sizeof(bakp), "%s.bak", L.save_path) >= (int)sizeof(bakp))
+   {
+      err_set(err, errcap, "path too long");
+      return -1;
+   }
+   if (file_bytes(bakp, NULL) == 0)
+   {
+      /* already kept (an earlier session)? else a name of its own */
+      if (file_sum(bakp, &bcrc, &bsize) == 0 && bcrc == crc && bsize == size)
+         return 0;
+      if (snprintf(bakp, sizeof(bakp), "%s.%08x.bak", L.save_path,
+                   (unsigned)crc) >= (int)sizeof(bakp))
+      {
+         err_set(err, errcap, "path too long");
+         return -1;
+      }
+      if (file_bytes(bakp, NULL) == 0)
+      {
+         if (file_sum(bakp, &bcrc, &bsize) == 0 && bcrc == crc &&
+             bsize == size)
+            return 0;
+         remove(bakp);                  /* same name, other bytes: a broken one */
+      }
+   }
+   return copy_file_verified(L.save_path, bakp, err, errcap);
 }
 
 /* Write the snapshot.  On whichever thread claimed it (SV_WRITING) -- the
@@ -314,65 +447,85 @@ static void save_write(void)
 {
    char tmp[APP_PATH_CAP + 8];
    FILE *f;
-   int ok = 0, bak = 0, tried = 0;
+   int ok = 0, bak = 0, tried = 0, had_file, refused = 0;
 
+   L.wr.err[0] = 0;
+   had_file = file_bytes(L.save_path, NULL) == 0;
    /* A copy of the player's save is about to replace a second save file
-    * that was there before: keep that one, once. */
+    * that was there before: keep that one, once.  A whole copy that reads
+    * back right is the condition for going on; without it the file is left
+    * exactly as it is and the write is given up (it is tried again at the
+    * next change). */
    if (L.clone && !L.save_bak_done)
    {
-      char bakp[APP_PATH_CAP + 8];
-      L.save_bak_done = 1;
-      if (file_bytes(L.save_path, NULL) == 0 &&
-          snprintf(bakp, sizeof(bakp), "%s.bak", L.save_path) <
-             (int)sizeof(bakp))
-         bak = copy_file(L.save_path, bakp) == 0 ? 1 : -1;
-   }
-   snprintf(tmp, sizeof(tmp), "%s.tmp", L.save_path);
-   f = fopen(tmp, "wb");
-   if (f)
-   {
-      char old[APP_PATH_CAP + 8];
-      ok = fwrite(L.save_snap, 1, L.save_n, f) == L.save_n;
-      if (fclose(f) != 0)
-         ok = 0;
-      if (ok)
+      if (!had_file)
+         L.save_bak_done = 1;
+      else if (save_keep_old(L.wr.err, sizeof(L.wr.err)) == 0)
       {
-         /* rename() over an existing file is refused on the Vita's card:
-          * the save moves aside to .old, the new one moves in, and only
-          * then does .old go -- at every moment one whole save is on the
-          * card under a name save_recover() knows. */
-         int had = file_bytes(L.save_path, NULL) == 0;
-         tried = 1;
-         snprintf(old, sizeof(old), "%s.old", L.save_path);
-         if (had)
-         {
-            remove(old);                         /* a stale one */
-            ok = rename(L.save_path, old) == 0;
-         }
-         if (ok && rename(tmp, L.save_path) != 0)
-         {
-            ok = 0;
-            if (had)
-               rename(old, L.save_path);         /* the save goes back */
-         }
-         if (ok && had)
-            remove(old);
+         L.save_bak_done = 1;
+         bak = 1;
       }
-      if (!ok)
-         remove(tmp);
+      else
+      {
+         bak = -1;
+         refused = 1;
+      }
    }
-   if (!ok && !tried)
+   if (!refused)
    {
-      /* no room for a second copy: in place */
-      f = fopen(L.save_path, "wb");
+      snprintf(tmp, sizeof(tmp), "%s.tmp", L.save_path);
+      f = fopen(tmp, "wb");
       if (f)
       {
+         char old[APP_PATH_CAP + 8];
          ok = fwrite(L.save_snap, 1, L.save_n, f) == L.save_n;
          if (fclose(f) != 0)
             ok = 0;
+         if (ok)
+         {
+            /* rename() over an existing file is refused on the Vita's card:
+             * the save moves aside to .old, the new one moves in, and only
+             * then does .old go -- at every moment one whole save is on the
+             * card under a name save_recover() knows. */
+            int had = file_bytes(L.save_path, NULL) == 0;
+            tried = 1;
+            snprintf(old, sizeof(old), "%s.old", L.save_path);
+            if (had)
+            {
+               remove(old);                         /* a stale one */
+               ok = rename(L.save_path, old) == 0;
+            }
+            if (ok && rename(tmp, L.save_path) != 0)
+            {
+               ok = 0;
+               if (had)
+                  rename(old, L.save_path);         /* the save goes back */
+            }
+            if (ok && had)
+               remove(old);
+         }
+         if (!ok)
+            remove(tmp);
+      }
+      if (!ok && !tried && !had_file)
+      {
+         /* No room for a second copy, but there is no file either, so
+          * there is nothing in it to lose: write it in place, and take the
+          * partial file away again if that fails too.  A file that holds a
+          * save is never opened for writing here. */
+         f = fopen(L.save_path, "wb");
+         if (f)
+         {
+            ok = fwrite(L.save_snap, 1, L.save_n, f) == L.save_n;
+            if (fclose(f) != 0)
+               ok = 0;
+            if (!ok)
+               remove(L.save_path);
+         }
       }
    }
    L.wr.bak = bak;
+   L.wr.kept = had_file;
    L.wr.ok = ok;
    L.wr.size = (unsigned)L.save_n;
    __sync_lock_test_and_set(&L.wr.done, 1);
@@ -387,12 +540,15 @@ static void save_report(void)
    L.save_count++;
    L.save_exists = L.save_exists || L.wr.ok;
    if (L.wr.bak)
-      fe_evt("local_save_backup file=%s.bak rc=%d", L.save_path,
-             L.wr.bak > 0 ? 0 : -1);
+      fe_evt("local_save_backup file=%s rc=%d err=\"%s\"", L.save_path,
+             L.wr.bak > 0 ? 0 : -1, L.wr.bak > 0 ? "" : L.wr.err);
    fe_evt("local_save file=%s size=%u crc=%08x ok=%d", L.save_path, L.wr.size,
           (unsigned)fe_crc32(0, L.save_snap, L.wr.size), L.wr.ok);
-   if (!L.wr.ok)
-      osd_toast("The second game's save could not be written");
+   if (L.wr.bak < 0)
+      osd_toast("The second game's old save could not be backed up - it was not replaced");
+   else if (!L.wr.ok)
+      osd_toast(L.wr.kept ? "The second game's save could not be written - the old one is kept"
+                          : "The second game's save could not be written");
 }
 
 /* app_vita.h: on the I/O worker, from main_vita.c's io_step. */

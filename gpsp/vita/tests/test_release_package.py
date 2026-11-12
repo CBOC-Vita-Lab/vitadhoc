@@ -20,7 +20,8 @@ NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.t
            "licenses/vita2d-MIT.txt", "licenses/stb.txt",
            "licenses/VitaSDK-Headers-MIT.txt", "licenses/Newlib-Notices.txt",
            "licenses/GCC-Runtime-Exception.txt", "notices/VitaSDK-build-lock.json",
-           "notices/SNES-Snes9x.md"}
+           "notices/SNES-Snes9x.md", "notices/NES-FCEUmm.md",
+           "licenses/FCEUmm-GPL-2.0.txt", "licenses/libretro-common-MIT.txt"}
 # The SNES player's licence travels in the package under these names.
 SNES_NOTICES = {"licenses/Snes9x-LICENSE.txt": "snes/core/LICENSE",
                 "licenses/Snes9x-PROVENANCE.md": "snes/core/PROVENANCE.md"}
@@ -65,7 +66,8 @@ class ReleasePackageTests(unittest.TestCase):
                 self.assertNotIn("..", PurePosixPath(name).parts)
                 self.assertNotIn("\\", name)
                 self.assertNotIn(PurePosixPath(name).suffix.lower(),
-                                 {".gba", ".gb", ".gbc", ".sfc", ".smc", ".sav", ".srm"})
+                                 {".gba", ".gb", ".gbc", ".sfc", ".smc", ".nes", ".fds", ".unf",
+                                  ".unif", ".sav", ".srm"})
                 self.assertNotEqual(PurePosixPath(name).name.lower(), "gba_bios.bin")
             self.assertTrue(NOTICES.issubset(names))
             for name in NOTICES:

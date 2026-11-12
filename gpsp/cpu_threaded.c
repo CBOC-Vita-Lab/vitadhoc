@@ -3553,10 +3553,13 @@ static void smcr_jlog(void)
   u32 i;
   if (frame_counter == smcr_jlog_frame)
     return;
+  {
+  u32 c[JCTR_N];
   smcr_jlog_frame = frame_counter;
+  gpsp_jit_counters(c, JCTR_N);
   fprintf(smcr_jlog_f, "%u", (unsigned)frame_counter);
   for (i = 0; i < JCTR_N; i++)
-    fprintf(smcr_jlog_f, " %u", (unsigned)jctr[i]);
+    fprintf(smcr_jlog_f, " %u", (unsigned)c[i]);
   /* Every 10th frame: FNV-1a of the machine's memory (EWRAM, IWRAM data,
    * VRAM, OAM, palette, I/O) and the registers -- the identity check for
    * runs without a picture (GBADHOC_SOFT_NORASTER under qemu). */
@@ -3573,6 +3576,7 @@ static void smcr_jlog(void)
     fprintf(smcr_jlog_f, " state=%08x", (unsigned)h);
   }
   fprintf(smcr_jlog_f, "\n");
+  }
 }
 
 /* What translate_block_* leaves for smcr_translate (smcr_xlat_real). */
@@ -4301,8 +4305,16 @@ static void smcr_dc_clear(void)
     if (smcr_jlog_f) smcr_jlog();                                             \
     if (smcr_on) smcr_depth0();                                               \
   } } while (0)
-#define SMCR_RAM_LOOKUP(pc, tagp) \
-  do { if (smcr_on) return smcr_lookup_entry((pc), thumb, (tagp)); } while (0)
+#define SMCR_RAM_LOOKUP(pc, tagp) do {                                        \
+  if (smcr_trace_f && frame_counter >= smcr_xtrace_lo &&                      \
+      frame_counter <= smcr_xtrace_hi) {                                      \
+    ramtag_type *xte_ = VALID_TAG(*(tagp)) ? get_ram_tag(*(tagp)) : NULL;    \
+    fprintf(smcr_trace_f, "L %u %08x tag=%04x slot=%u depth=%u\n",           \
+            (unsigned)frame_counter, (unsigned)((pc) | thumb),               \
+            (unsigned)*(tagp), xte_ ? (unsigned)(thumb ? xte_->offset_thumb != 0 \
+            : xte_->offset_arm != 0) : 9u, (unsigned)translate_depth);        \
+  }                                                                           \
+  if (smcr_on) return smcr_lookup_entry((pc), thumb, (tagp)); } while (0)
 
 #else  /* !SMC_RANGE */
 #define SMCR_ROM_SIZE rom_translation_cache_size

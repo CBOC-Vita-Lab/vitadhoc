@@ -117,6 +117,11 @@ void wscore_set_mono_palette(int id)
   if (g_inited) wswan_host_set_mono_palette(g_palette);
 }
 
+void wscore_set_time_source(time_t (*fn)(void))
+{
+  wswan_host_set_time_source(fn);
+}
+
 int wscore_showing(void) { return g_show < 0 ? WSCORE_SHOW_HORIZONTAL : g_show; }
 unsigned wscore_layout_changes(void) { return g_changes; }
 void wscore_set_buttons(unsigned vita_bits) { g_buttons = vita_bits; }

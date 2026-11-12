@@ -1,6 +1,6 @@
 # VitAdhoc
 
-**Game Boy Advance, Game Boy, Game Boy Color, Super NES and NES, native on PS Vita.**
+**Game Boy Advance, Game Boy, Game Boy Color, Super NES, NES and WonderSwan, native on PS Vita.**
 
 Your games, together on a home screen with box art, a little history and
 previews of your own play. Pick up where you left off, smooth the pixels or
@@ -25,9 +25,21 @@ the old version. Keep your games, saves, settings and artwork where they are.
 (Famicom Disk System; needs your own `disksys.rom`), `.unf` and `.unif` games,
 zipped too, in the same home screen with box art and the same Triangle. They
 play inside VitAdhoc with the same menu, state slots, Continue, fast forward,
-cheats and patches as the Game Boy games, and save as `Game.srm` beside the
-game. Rewind and link play are not for NES. It is new and has not been played on a real Vita
-yet; no speed is promised.
+cheats, rewind and patches as the Game Boy games, and save as `Game.srm`
+beside the game. Link play is not for NES. It is new and has not been played
+on a real Vita yet; no speed is promised.
+
+**WonderSwan and WonderSwan Color.** A WS shelf for `.ws`, `.wsc` and `.pc2`
+games, with the same menu, states, Continue, rewind, fast forward, cheats and
+patches. Vertical games are turned upright by themselves (the d-pad turns
+with the picture), or play them with the Vita turned on its side: **Rotation**
+and **Vertical play** are in the game's settings. The console's 75 frames a
+second are blended into the Vita's 60 for smooth scrolling (Settings >
+Display, Smooth 75 Hz motion). New and not yet played on a real Vita; no
+speed is promised.
+
+**The console tabs fit.** Every tab of the top bar can be tapped, each one
+goes straight to its console.
 
 ## New In Version 1.3.1
 

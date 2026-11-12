@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
+#include <atomic>
 
 namespace pk {
 
@@ -41,6 +42,11 @@ struct FsOps {
 	/* false when the file is not there; size and mtime (Unix seconds) may be NULL */
 	bool (*stat_file)(const std::string &path, uint64_t *size, int64_t *mtime);
 	bool (*make_dir)(const std::string &path);   /* true also when it already exists */
+	/* the names (no folder) of the files in a folder; false when it cannot be read. May be NULL (then
+	 * callers fall back to one stat per name). One listing is one pass over the folder, where a stat of a
+	 * missing name is a whole pass each on the Vita's card: callers that need to know about many names
+	 * in one folder list it once. */
+	bool (*list_dir)(const std::string &dir, std::vector<std::string> &names);
 };
 FsOps &fs();                 /* the active table */
 FsOps default_fs_ops();      /* stdio */
@@ -67,10 +73,43 @@ const char *write_result_text(WriteResult r);
  * old file back, so a failed save never destroys the previous one (the Vita's
  * card refuses rename over an existing file, which is why this is not a plain
  * rename). */
-WriteResult atomic_write(const std::string &path, const uint8_t *data, size_t n);
+enum Exists { EXISTS_UNKNOWN = 0, EXISTS_NO, EXISTS_YES };
+/* `hint` is what the caller already knows about `path` (from a folder listing or its own earlier
+ * writes). It only saves card operations, never safety: with EXISTS_NO the old-file step is skipped
+ * (if the hint was wrong the write still keeps the old file); with EXISTS_UNKNOWN a missing file is
+ * found by the failed rename, so no lookup of a missing name is made in the normal case. Card
+ * operations for an existing file: create path.tmp, read it back, rename path -> path.old, rename
+ * path.tmp -> path, remove path.old (5); for a new file 3. */
+WriteResult atomic_write(const std::string &path, const uint8_t *data, size_t n, Exists hint = EXISTS_UNKNOWN);
+/* Lists a folder through fs().list_dir; false when there is no lister or the folder cannot be read. */
+bool list_dir(const std::string &dir, std::vector<std::string> &names);
 /* A write that a power cut interrupted between "old set aside" and "new in
  * place" leaves path.old and no path: put it back. Returns true if it did. */
 bool recover_old(const std::string &path);
+
+/* ---- a tiny lock -------------------------------------------------------
+ * For data shared between the game thread and a writer thread (the state cache). std::mutex is not
+ * usable on the Vita (no pthread is linked: the calls are weak no-ops), std::atomic is. Hold it only
+ * around memory work, never around file operations. */
+class SpinLock {
+public:
+	SpinLock() { f_.clear(); }
+	void lock() { while (f_.test_and_set(std::memory_order_acquire)) {} }
+	void unlock() { f_.clear(std::memory_order_release); }
+private:
+	std::atomic_flag f_;
+	SpinLock(const SpinLock &);
+	SpinLock &operator=(const SpinLock &);
+};
+struct SpinGuard {
+	SpinLock &l;
+	explicit SpinGuard(SpinLock &x) : l(x) { l.lock(); }
+	~SpinGuard() { l.unlock(); }
+};
+
+/* Call once at start-up before any second thread uses playerkit: makes the CRC table and the file
+ * operation table, which are otherwise made on first use. */
+void init_shared();
 
 /* ---- key=value files ---------------------------------------------------- */
 class Ini {

@@ -49,7 +49,7 @@ Testing continues on:
   `ux0:data/GBAdhoc/nes/`. Without it the game says so and returns.
 - NES games use the same menu, state slots, Continue, fast forward, cheats
   (Game Genie codes and RAM codes), patches and RetroAchievements as the Game
-  Boy games. Rewind and link play are not available for NES games; the link
+  Boy games, rewind too. Link play is not available for NES games; the link
   card says so. A few cheat codes of the "RAM" kind change what the game
   reads but not what it saves.
 - **Box art** finds a NES game by its contents or its name. A UNIF game
@@ -57,6 +57,28 @@ Testing continues on:
   stay without a cover until you give it one (the Cover button).
 - Game descriptions are written for GBA, GB, GBC and SNES games first; a NES
   game may show none.
+
+## WonderSwan
+
+- **New in 1.4, untested on a real Vita.** It has run on the PC build with
+  test cartridges and one game; nothing is measured. A busy scene may need
+  two console frames in one Vita refresh; if that is too slow on the Vita,
+  turning off Smooth 75 Hz motion does not make it lighter (it changes only
+  how the picture is shown).
+- **Rotation** follows what the game shows (its LCD icons, the buttons it
+  reads, the cartridge). A game that gives no sign keeps the way its
+  cartridge says; set Rotation by hand in the game's settings.
+- **Buttons.** Held sideways: Circle is A, Cross is B; a game's second cross
+  is not on a button there (the right stick fast-forwards and rewinds). Upright: the
+  d-pad and the four face buttons are the two crosses, L is A and R is B; there
+  Triangle and Square are the game's, so use the right stick for fast forward.
+  Button mapping in Settings does not apply to WonderSwan games.
+- **Cheats** are RAM codes (`AAAAA:VV`, hex), from the game's `.cht` file in
+  `ux0:data/GBAdhoc/cheats/` or typed in the Cheats page. No cheat list for
+  WonderSwan or NES games is included yet: use RetroArch's `.cht` files.
+- Pocket Challenge V2 (`.pc2`), WonderWitch and games with a clock are
+  untested. No descriptions for WonderSwan games yet; names and covers come
+  from the No-Intro catalogue.
 
 ## Games
 

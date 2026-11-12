@@ -259,12 +259,19 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 	if (!g_inited) { snprintf(err, errlen, "not initialised"); return 1; }
 	std::vector<uint8_t> rom;
 	if (!read_file(rom_path, rom)) { snprintf(err, errlen, "Cannot read the ROM file"); return 2; }
-	const uint8_t *p = rom.data();
-	size_t n = rom.size();
+	return snes_host_load_rom_mem(rom.data(), rom.size(), rom_path, srm_path, err, errlen);
+}
+
+int snes_host_load_rom_mem(const uint8_t *data, size_t size, const char *rom_path, const char *srm_path, char *err, size_t errlen)
+{
+	if (!g_inited) { snprintf(err, errlen, "not initialised"); return 1; }
+	if (!data || !size || size > 8 * 1024 * 1024 + 4096) { snprintf(err, errlen, "Cannot read the ROM file"); return 2; }
+	const uint8_t *p = data;
+	size_t n = size;
 	if (n - (n / 0x2000) * 0x2000 == 512) { p += 512; n -= 512; } /* copier header */
 
-	const char *base = strrchr(rom_path, '/');
-	base = base ? base + 1 : rom_path;
+	const char *base = rom_path ? strrchr(rom_path, '/') : NULL;
+	base = base ? base + 1 : (rom_path ? rom_path : "game.sfc");
 	g_loaded = false;
 	S9xAPUMTSet(false);
 	S9xPPUMTSet(false);
@@ -1086,6 +1093,32 @@ int snes_host_state_save(const char *path)
 	if (!S9xFreezeGameMem(buf.data(), (uint32) n)) return 2;
 	bool dummy = false;
 	return write_atomic(path, buf.data(), n, false, &dummy);
+}
+
+size_t snes_host_state_size(void)
+{
+	return g_loaded ? (size_t) S9xFreezeSize() : 0;
+}
+
+int snes_host_state_save_buf(uint8_t *out, size_t cap, size_t *len)
+{
+	if (!g_loaded) return 1;
+	size_t n = S9xFreezeSize();
+	if (len) *len = n;
+	if (!out || cap < n) return 2;
+	if (!S9xFreezeGameMem(out, (uint32) n)) return 2;
+	return 0;
+}
+
+int snes_host_state_load_buf(const uint8_t *data, size_t n)
+{
+	if (!g_loaded) return 1;
+	if (!data || !n) return 3;
+	std::vector<int> on;
+	cheats_suspend(on);
+	int r = S9xUnfreezeGameMem(data, (uint32) n) == SUCCESS ? 0 : 3;
+	cheats_resume(on);
+	return r;
 }
 
 int snes_host_state_load(const char *path)

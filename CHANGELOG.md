@@ -14,7 +14,26 @@
   `ux0:ROMS/NES` and `ux0:roms/NES`, any folder inside `ux0:ROMS/`, RetroFlow's
   NES folder and your own folders; saves are `Game.srm` beside the game. Box
   art and title screens come by checksum or name like the other consoles.
-  Rewind and two-player link play are not available for NES games.
+  Rewind works as for Game Boy games; two-player link play is not available
+  for NES games. PAL games run at their own 50 frames a second (five of six
+  refreshes) instead of 20% fast.
+- **WonderSwan and WonderSwan Color games.** A sixth shelf, WS, for `.ws`,
+  `.wsc` and `.pc2` games (zipped too), found in `ux0:ROMS/WS`, `ux0:ROMS/WSC`,
+  `ux0:roms/WS`, `ux0:roms/WSC`, RetroFlow's "Bandai - WonderSwan" folders and
+  any folder inside `ux0:ROMS/`. They play inside VitAdhoc with states,
+  Continue, rewind, fast forward, cheats (RAM codes `AAAAA:VV`), patches,
+  play time, per-game settings, RetroAchievements and the RetroArch save
+  import (Beetle WonderSwan folder); saves are `Game.srm` beside the game,
+  the file RetroArch uses. Vertical games turn upright by themselves; the
+  game's settings have **Rotation** (Auto, Horizontal, Vertical), **Vertical
+  play** (Upright, or Turn the Vita) and **Palette** (Greyscale or the LCD's
+  tint). The first time a game turns, a hint says where the buttons are.
+  The console runs at 75 frames a second: each Vita refresh shows a blend
+  of the frames it covers (Settings > Display > Smooth 75 Hz motion; on by
+  default).
+- **Top bar.** With six consoles the tabs are drawn smaller when they need
+  to be, all of them before the search icon, and each tab can be tapped to go
+  to its console (the fifth one was hidden under the search icon).
 - **Settings fix.** In Settings > Library the names of Cover picture and Sync
   RetroArch saves were swapped: each row wore the other's name. They are the
   right way round now.

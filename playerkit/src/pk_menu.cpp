@@ -21,6 +21,7 @@ const float HELP_Y = 444;
 const float CARD_W = 104, CARD_H = 124, CARD_GAP = 8, SHEET_H = 262;
 const int SHEET_MS = 150;
 const int ID_MAP_PLAYER = -100;
+const int ID_CHEAT_ADD = -200;
 const int TAG_MAP_RESET = -2;
 
 uint32_t col(uint32_t rgb, int a = 255) { return PK_HEX(rgb, a); }
@@ -46,6 +47,9 @@ Menu::Menu()
 	  gfx_(0), shot_tex_(0), tex_dirty_(false), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
 {
 	memset(vals_, 0, sizeof vals_);
+	memset(allowed_, 0, sizeof allowed_);
+	used_slots_ = 0;
+	for (int i = 0; i < STATE_SLOTS; i++) { pending_slot_[i].on = false; pending_slot_[i].saved = 0; pending_slot_[i].play = -1; }
 	memset(rep_ms_, 0, sizeof rep_ms_);
 	for (int i = 0; i < STATE_SLOTS; i++) thumb_tex_[i] = 0;
 	memset(&flash_, 0, sizeof flash_);
@@ -78,14 +82,62 @@ void Menu::attach_input(Mapper *m, ProfileStore *s, const PadModel *model, Profi
 	mapper_ = m; store_ = s; model_ = model; profile_ = p;
 }
 
+Menu::HostRow *Menu::host_row(int id)
+{
+	for (size_t i = 0; i < host_rows_.size(); i++) if (host_rows_[i].id == id) return &host_rows_[i];
+	return 0;
+}
+
 void Menu::set_value(int id, int v)
 {
+	if (HostRow *h = host_row(id)) { h->value = v; if (open_) build_rows(); return; }
 	if (id < 0 || id >= ROW_COUNT) return;
 	vals_[id] = v;
 	if (open_) build_rows();
 }
 
-int Menu::value(int id) const { return (id >= 0 && id < ROW_COUNT) ? vals_[id] : 0; }
+int Menu::value(int id) const
+{
+	for (size_t i = 0; i < host_rows_.size(); i++) if (host_rows_[i].id == id) return host_rows_[i].value;
+	return (id >= 0 && id < ROW_COUNT) ? vals_[id] : 0;
+}
+
+void Menu::set_choices_allowed(int id, uint32_t mask)
+{
+	if (id >= 0 && id < ROW_COUNT) { allowed_[id] = mask; if (open_) build_rows(); }
+}
+
+void Menu::add_host_row(int page, int id, const std::string &label, const std::string &help,
+                        const std::vector<std::string> &choices, int value, int before_row)
+{
+	if (id < ROW_HOST_BASE || choices.empty()) return;
+	HostRow *h = host_row(id);
+	HostRow n;
+	n.page = page; n.id = id; n.before = before_row; n.label = label; n.help = help; n.choices = choices; n.value = value;
+	if (h) *h = n; else host_rows_.push_back(n);
+	if (open_) build_rows();
+}
+
+void Menu::refresh()
+{
+	if (!open_) return;
+	if (page_ == PAGE_STATES) refresh_slots();
+	build_rows();
+	clamp_cursor();
+	ensure_visible();
+	layout();
+}
+
+void Menu::state_write_done(int slot, const SaveReport &rep)
+{
+	if (slot >= 1 && slot <= STATE_SLOTS) pending_slot_[slot - 1].on = false;
+	if (rep.status != ST_OK) notify(rep.text(), NOTICE_ERROR);       /* the previous state in the slot is untouched */
+	else {
+		if (host_) host_->on_state_touched(slot);
+		notify(strf("State saved to slot %d", slot), NOTICE_OK);
+	}
+	if (open_) { refresh_slots(); if (page_ == PAGE_STATES) select_slot(slot_); }
+}
 
 void Menu::set_row_note(int id, const std::string &reason)
 {
@@ -242,8 +294,18 @@ void Menu::build_rows()
 		{
 			Row r;
 			r.id = id; r.kind = K_CHOICE; r.label = label;
-			for (int i = 0; i < n; i++) r.choices.push_back(ch[i]);
-			r.vmin = 0; r.vmax = n - 1; r.value = value < 0 ? 0 : value > n - 1 ? n - 1 : value;
+			uint32_t mask = (id >= 0 && id < ROW_COUNT) ? m->allowed_[id] : 0;
+			int v = value < 0 ? 0 : value > n - 1 ? n - 1 : value;
+			if (mask) {
+				int pos = 0;
+				for (int i = 0; i < n; i++)
+					if (mask & (1u << i)) { if (i == v) pos = (int) r.map.size(); r.choices.push_back(ch[i]); r.map.push_back(i); }
+				if (r.choices.empty()) return;
+				v = pos;
+			} else {
+				for (int i = 0; i < n; i++) r.choices.push_back(ch[i]);
+			}
+			r.vmin = 0; r.vmax = (int) r.choices.size() - 1; r.value = v;
 			r.help = help_for(id);
 			finish(r, cap, reason);
 		}
@@ -289,9 +351,18 @@ void Menu::build_rows()
 		rows_.push_back(r);
 		r.enabled = true; r.reason.clear();
 		r.tag = PAGE_SPEED; r.label = "Speed";
-		r.value_text = (cfg_.caps & CAP_FF) ? std::string("Fast-forward ") + kFF[vals_[ROW_SPD_FF] ? 1 : 0] : "Not available";
-		r.help = "Fast-forward and sound while it runs.";
-		rows_.push_back(r);
+		{
+			const HostRow *hs = 0;
+			for (size_t i = 0; i < host_rows_.size() && !hs; i++) if (host_rows_[i].page == PAGE_SPEED) hs = &host_rows_[i];
+			bool any = (cfg_.caps & (CAP_FF | CAP_REWIND)) != 0 || hs;
+			if (cfg_.caps & CAP_FF) { r.value_text = std::string("Fast-forward ") + kFF[vals_[ROW_SPD_FF] ? 1 : 0]; r.help = "Fast-forward and sound while it runs."; }
+			else if (hs) {
+				int v = hs->value < 0 || hs->value >= (int) hs->choices.size() ? 0 : hs->value;
+				r.value_text = hs->label + ": " + hs->choices[(size_t) v];
+				r.help = "How the game is run and shown.";
+			}
+			if (any) rows_.push_back(r);     /* a page with nothing on it is not offered */
+		}
 		break;
 	}
 	case PAGE_PICTURE:
@@ -381,7 +452,14 @@ void Menu::build_rows()
 	case PAGE_CHEATS: {
 		cheats_.clear();
 		if (host_ && (cfg_.caps & CAP_CHEATS)) host_->list_cheats(cheats_);
-		if (cheats_.empty()) {
+		if ((cfg_.caps & CAP_CHEATS) && (cfg_.caps & CAP_CHEAT_EDIT)) {
+			Row r;
+			r.id = ID_CHEAT_ADD; r.kind = K_ACTION; r.label = "Add a cheat"; r.enabled = true;
+			r.value_text = cheats_.empty() ? "No cheats yet" : strf("%d in the list", (int) cheats_.size());
+			r.help = "Type a Game Genie, Pro Action Replay or address=value code with the keyboard.";
+			rows_.push_back(r);
+		}
+		if (cheats_.empty() && !((cfg_.caps & CAP_CHEATS) && (cfg_.caps & CAP_CHEAT_EDIT))) {
 			Row r;
 			r.kind = K_INFO; r.enabled = false; r.label = "No cheats for this game";
 			r.reason = (cfg_.caps & CAP_CHEATS) ? "" : unsup;
@@ -394,12 +472,28 @@ void Menu::build_rows()
 			r.choices.push_back("Off"); r.choices.push_back("On");
 			r.vmin = 0; r.vmax = 1; r.value = cheats_[i].on ? 1 : 0; r.enabled = cheats_[i].available;
 			if (!r.enabled) r.reason = "Not usable here";
-			r.help = "Turn this cheat on or off.";
+			r.help = (cfg_.caps & CAP_CHEAT_EDIT) ? "Turn this cheat on or off. Triangle or Delete removes it." : "Turn this cheat on or off.";
 			rows_.push_back(r);
 		}
 		break;
 	}
 	default: break;
+	}
+	/* the host's own rows */
+	if (page_ == PAGE_PICTURE || page_ == PAGE_CONTROLS || page_ == PAGE_SPEED) {
+		for (size_t k = 0; k < host_rows_.size(); k++) {
+			const HostRow &h = host_rows_[k];
+			if (h.page != (int) page_) continue;
+			Row r;
+			r.id = h.id; r.kind = K_CHOICE; r.label = h.label; r.help = h.help; r.choices = h.choices;
+			r.vmin = 0; r.vmax = (int) h.choices.size() - 1;
+			r.value = h.value < 0 ? 0 : h.value > r.vmax ? r.vmax : h.value;
+			r.enabled = true;
+			size_t at = rows_.size();
+			if (h.before >= 0)
+				for (size_t i = 0; i < rows_.size(); i++) if (rows_[i].id == h.before) { at = i; break; }
+			rows_.insert(rows_.begin() + (long) at, r);
+		}
 	}
 	clamp_cursor();
 }
@@ -465,7 +559,7 @@ std::string Menu::card_help(int c) const
 	if (!card_enabled(c, &why)) return why;
 	switch (c) {
 	case CARD_RESUME: return "Back to the game";
-	case CARD_STATES: return strf("Save or load the game: %d of %d slots used", states_ ? states_->used_count() : 0, (int) STATE_SLOTS);
+	case CARD_STATES: return strf("Save or load the game: %d of %d slots used", used_slots_, (int) STATE_SLOTS);
 	case CARD_TOGETHER: return "Play with a friend";
 	case CARD_CHEATS: return "Turn cheats on and off";
 	case CARD_SETTINGS: return "Picture, controls and speed";
@@ -505,6 +599,12 @@ void Menu::controls_changed()
 void Menu::apply_value(Row &r, int v)
 {
 	r.value = v;
+	if (!r.map.empty() && v >= 0 && v < (int) r.map.size()) v = r.map[(size_t) v];
+	if (r.id >= ROW_HOST_BASE) {
+		if (HostRow *h = host_row(r.id)) h->value = v;
+		if (host_) host_->on_change(r.id, v);
+		return;
+	}
 	if (page_ == PAGE_CHEATS) {
 		if (r.tag >= 0 && r.tag < (int) cheats_.size()) { cheats_[(size_t) r.tag].on = v != 0; if (host_) host_->set_cheat(r.tag, v != 0); }
 		return;
@@ -564,7 +664,8 @@ void Menu::activate_row(int i)
 	case K_SLIDER: apply_value(r, r.value >= r.vmax ? r.vmin : r.value + 1); break;
 	case K_LINK: set_page((PageId) r.tag, true); break;
 	case K_ACTION:
-		if (r.id == ROW_CTL_RESET) open_modal(M_CTL_RESET, 0);
+		if (r.id == ID_CHEAT_ADD) { if (host_) host_->add_cheat(); }
+		else if (r.id == ROW_CTL_RESET) open_modal(M_CTL_RESET, 0);
 		else if (page_ == PAGE_MAPPING && r.tag == TAG_MAP_RESET) {
 			if (profile_ && model_) {
 				Profile d = profile_defaults(*model_, cfg_.enter_is_cross);
@@ -588,13 +689,22 @@ void Menu::refresh_slots()
 	shot_w_ = shot_h_ = 0;
 	shot_slot_ = 0;
 	undo_avail_ = false;
+	used_slots_ = 0;
 	if (states_ && (cfg_.caps & CAP_STATES)) {
+		/* all from the States cache: nothing is read from the card here (but the big picture of one slot) */
 		states_->scan(slots_);
 		for (int i = 0; i < STATE_SLOTS; i++) {
 			int w, h;
-			if (slots_[i].present) states_->read_thumb(i + 1, thumb_px_[i], &w, &h);
+			if (pending_slot_[i].on) {
+				slots_[i].present = true;
+				slots_[i].saved = pending_slot_[i].saved;
+				slots_[i].play_seconds = pending_slot_[i].play;
+				slots_[i].has_thumb = !pending_slot_[i].thumb.empty();
+				thumb_px_[i] = pending_slot_[i].thumb;
+			} else if (slots_[i].present) states_->read_thumb(i + 1, thumb_px_[i], &w, &h);
+			if (slots_[i].present) used_slots_++;
 		}
-		if (slot_ >= 1 && slot_ <= STATE_SLOTS && slots_[slot_ - 1].present) {
+		if (slot_ >= 1 && slot_ <= STATE_SLOTS && slots_[slot_ - 1].present && !pending_slot_[slot_ - 1].on) {
 			if (states_->read_shot(slot_, shot_px_, &shot_w_, &shot_h_)) shot_slot_ = slot_;
 		}
 		undo_avail_ = (cfg_.caps & CAP_UNDO) && states_->undo_available();
@@ -610,7 +720,7 @@ void Menu::select_slot(int slot)
 	shot_px_.clear();
 	shot_w_ = shot_h_ = 0;
 	shot_slot_ = 0;
-	if (states_ && slots_[slot - 1].present && states_->read_shot(slot, shot_px_, &shot_w_, &shot_h_)) shot_slot_ = slot;
+	if (states_ && slots_[slot - 1].present && !pending_slot_[slot - 1].on && states_->read_shot(slot, shot_px_, &shot_w_, &shot_h_)) shot_slot_ = slot;
 	tex_dirty_ = true;
 	ensure_visible();
 }
@@ -628,7 +738,21 @@ void Menu::do_save(int slot)
 	if (!host_->capture_state(data) || data.empty()) { notify("Could not save the state: the game could not be captured", NOTICE_ERROR); return; }
 	Frame f;
 	host_->current_frame(&f);
-	SaveReport rep = states_->save(slot, data.data(), data.size(), f, host_->play_seconds());
+	StateJob job = states_->prepare(slot, data.data(), data.size(), f, host_->play_seconds());
+	std::vector<uint16_t> thumb;
+	int tw, th;
+	if (!job.thumb.empty()) parse_thumb(job.thumb, thumb, &tw, &th);
+	int64_t saved = job.saved, play = job.play_seconds;
+	if (host_->queue_state_write(job)) {
+		/* written by the host's thread; shown at once from memory */
+		Pending &p = pending_slot_[slot - 1];
+		p.on = true; p.thumb.swap(thumb); p.saved = saved; p.play = play;
+		notify(strf("Saving to slot %d...", slot), NOTICE_INFO);
+		refresh_slots();
+		select_slot(slot);
+		return;
+	}
+	SaveReport rep = states_->commit(job);
 	if (rep.status != ST_OK) {
 		notify(rep.text(), NOTICE_ERROR);       /* the previous state in the slot is untouched */
 		refresh_slots();
@@ -643,6 +767,7 @@ void Menu::do_save(int slot)
 void Menu::do_load(int slot)
 {
 	if (!states_ || !host_) { notify("Loading states is not available", NOTICE_ERROR); return; }
+	host_->wait_state_writes();
 	std::vector<uint8_t> data;
 	StateStatus st = states_->load(slot, data);
 	if (st != ST_OK) { notify(state_status_text(st), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
@@ -675,6 +800,7 @@ void Menu::do_undo()
 void Menu::do_delete(int slot)
 {
 	if (!states_) return;
+	if (host_) host_->wait_state_writes();
 	if (states_->remove(slot)) {
 		if (host_) host_->on_state_touched(slot);
 		notify(strf("Slot %d deleted", slot), NOTICE_OK);
@@ -721,6 +847,16 @@ void Menu::modal_answer(bool yes)
 		}
 		break;
 	case M_CAPTURE: break;
+	case M_CHEAT_DELETE:
+		if (yes && host_) {
+			std::string name = arg >= 0 && arg < (int) cheats_.size() ? cheats_[(size_t) arg].name : std::string();
+			if (host_->delete_cheat(arg)) notify(name.empty() ? std::string("Cheat deleted") : "Deleted: " + name, NOTICE_OK);
+			else notify("The cheat could not be deleted", NOTICE_ERROR);
+			build_rows();
+			clamp_cursor();
+			ensure_visible();
+		}
+		break;
 	}
 	layout();
 }
@@ -754,8 +890,8 @@ void Menu::capture_update(const MenuInput &in)
 		if (r != ASSIGN_OK) notify(assign_result_text(r), NOTICE_ERROR);
 		else {
 			controls_changed();
-			if (stolen >= 0) notify(strf("%s moved here from %s", phys_label(cap_bits_, true).c_str(), action_label(*model_, stolen)), NOTICE_INFO);
-			else notify(strf("%s is now %s", action_label(*model_, cap_action_), phys_label(cap_bits_, true).c_str()), NOTICE_OK);
+			if (stolen >= 0) notify(strf("%s moved here from %s", phys_label(cap_bits_, cfg_.enter_is_cross).c_str(), action_label(*model_, stolen)), NOTICE_INFO);
+			else notify(strf("%s is now %s", action_label(*model_, cap_action_), phys_label(cap_bits_, cfg_.enter_is_cross).c_str()), NOTICE_OK);
 		}
 		build_rows();
 		layout();
@@ -802,7 +938,7 @@ void Menu::grow_to_pitch()
 {
 	for (size_t i = 0; i < regions_.size(); i++) {
 		Region &r = regions_[i];
-		if (r.kind == REGION_ROW || r.kind == REGION_ARROW_L || r.kind == REGION_ARROW_R || r.kind == REGION_SLIDER || r.kind == REGION_SLOT) {
+		if (r.kind == REGION_ROW || r.kind == REGION_ARROW_L || r.kind == REGION_ARROW_R || r.kind == REGION_SLIDER || r.kind == REGION_SLOT || r.kind == REGION_DELETE) {
 			float bottom = std::min(r.vy + PITCH, VY + view_h());
 			if (r.vy + r.vh <= VY + view_h()) { r.h = bottom - r.y; }
 		}
@@ -854,6 +990,8 @@ void Menu::layout()
 		float y = VY + (float) i * PITCH - scroll_;
 		const Row &r = rows_[i];
 		add_region(VX, y, VW, RH, REGION_ROW, (int) i, 20, true);
+		if (page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT) && r.kind == K_CHOICE)
+			add_region(VX + VW - 380 - 132, y, 120, RH, REGION_DELETE, (int) i, 20, true);
 		if (r.enabled && (r.kind == K_CHOICE || r.kind == K_SLIDER)) {
 			float rx = VX + VW;
 			add_region(rx - 380, y, 72, RH, REGION_ARROW_L, (int) i, 20, true);
@@ -893,6 +1031,10 @@ void Menu::tap(const Region &r, float x)
 		break;
 	}
 	case REGION_SLOT: select_slot(r.a + 1); break;
+	case REGION_DELETE:
+		cursor_ = r.a;
+		if (r.a >= 0 && r.a < (int) rows_.size() && rows_[(size_t) r.a].kind == K_CHOICE) open_modal(M_CHEAT_DELETE, rows_[(size_t) r.a].tag);
+		break;
 	case REGION_BUTTON:
 		switch (r.a) {
 		case BTN_PRIMARY: modal_answer(true); break;
@@ -954,7 +1096,7 @@ void Menu::touch_update(const MenuInput &in)
 			if (v != w.value) apply_value(w, v);
 		} else if (t_region_ >= 0 && !modal_ && page_ != PAGE_TOP) {
 			const Region &r = regions_[(size_t) t_region_];
-			bool scrollable = r.kind == REGION_ROW || r.kind == REGION_ARROW_L || r.kind == REGION_ARROW_R || r.kind == REGION_SLOT;
+			bool scrollable = r.kind == REGION_ROW || r.kind == REGION_ARROW_L || r.kind == REGION_ARROW_R || r.kind == REGION_SLOT || r.kind == REGION_DELETE;
 			if (scrollable && fabsf(t.y - t_y0_) > 14) t_scrolling_ = true;
 			if (t_scrolling_) {
 				float maxs = std::max(0.0f, content_h() - view_h());
@@ -1034,6 +1176,11 @@ void Menu::pad_update(const MenuInput &in)
 		if (fire & PH_TRIANGLE) { if (filled) open_modal(M_DELETE, slot_); }
 		if ((fire & PH_SELECT) && undo_avail_) do_undo();
 		if (fire & cancel) back();
+		return;
+	}
+	if (page_ == PAGE_CHEATS && (fire & PH_TRIANGLE) && (cfg_.caps & CAP_CHEAT_EDIT) && cursor_ >= 0 && cursor_ < (int) rows_.size() &&
+	    rows_[(size_t) cursor_].kind == K_CHOICE) {
+		open_modal(M_CHEAT_DELETE, rows_[(size_t) cursor_].tag);
 		return;
 	}
 	if (fire & PH_UP) { if (!rows_.empty()) cursor_ = (cursor_ + (int) rows_.size() - 1) % (int) rows_.size(); ensure_visible(); }
@@ -1135,7 +1282,10 @@ void Menu::draw_hints(Gfx *g, Text *t)
 		return;
 	}
 	hint(g, t, &xr, gc, "Back", 0);
-	hint(g, t, &xr, ge, "Change", 0);
+	if (page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT) && cursor_ >= 0 && cursor_ < (int) rows_.size() && rows_[(size_t) cursor_].kind == K_CHOICE)
+		hint(g, t, &xr, GLYPH_TRIANGLE, "Delete", 0);
+	bool act = cursor_ >= 0 && cursor_ < (int) rows_.size() && (rows_[(size_t) cursor_].kind == K_ACTION || rows_[(size_t) cursor_].kind == K_LINK);
+	hint(g, t, &xr, ge, act ? "Select" : "Change", 0);
 }
 
 void Menu::draw_header(Gfx *g, Text *t, const char *title, const char *sub)
@@ -1199,7 +1349,7 @@ void Menu::draw_top(Gfx *g, Text *t)
 			t->draw_center(F_CAPTION, x + CARD_W * 0.5f, y + 76, lb.c_str(), lc);
 		}
 		/* a dot where something is going on */
-		if (i == CARD_STATES && enabled && states_ && states_->used_count() > 0) g->fill_circle(x + CARD_W - 16, y + 16, 5, on ? col(C_INK) : accent(255));
+		if (i == CARD_STATES && enabled && used_slots_ > 0) g->fill_circle(x + CARD_W - 16, y + 16, 5, on ? col(C_INK) : accent(255));
 		if (i == CARD_CHEATS && enabled) {
 			std::vector<CheatItem> ch;
 			bool any = false;
@@ -1232,7 +1382,14 @@ void Menu::draw_rows(Gfx *g, Text *t)
 		float rx = VX + VW;
 		float lab_w = (r.kind == K_CHOICE || r.kind == K_SLIDER) ? VW - 380 - 40 : VW - 60;
 		if (!r.enabled && !r.reason.empty()) lab_w = 330;
+		bool del = page_ == PAGE_CHEATS && (cfg_.caps & CAP_CHEAT_EDIT) && r.kind == K_CHOICE;
+		if (del) lab_w -= 140;
 		std::string lab = t->fit(F_LABEL, r.label, lab_w);
+		if (del) {
+			float dx = VX + VW - 380 - 132;
+			g->fill_rrect(dx, y + 12, 120, RH - 24, 16, sel ? col(C_INK, 30) : col(0xFFFFFF, 22));
+			t->draw_center(F_BODY, dx + 60, y + (RH - t->line_h(F_BODY)) * 0.5f, "Delete", col(C_RED));
+		}
 		t->draw(F_LABEL, VX + 28, ly, lab.c_str(), ink);
 		uint32_t vcol = !r.enabled ? col(C_TEXT3) : sel ? accent_deep() : accent(255);
 		if (!r.enabled) {
@@ -1366,6 +1523,11 @@ void Menu::draw_modal(Gfx *g, Text *t)
 	case M_EXIT: title = cfg_.exit_help + "?"; body = "Anything the game has not saved is lost."; yes = cfg_.exit_label; no = "Stay"; break;
 	case M_RESET: title = "Reset the game?"; body = "The game starts again from the beginning. Anything it has not saved is lost."; yes = "Reset"; no = "Cancel"; break;
 	case M_CTL_RESET: title = "Reset the controls?"; body = "Every button, stick and turbo setting goes back to the defaults."; yes = "Reset"; no = "Cancel"; break;
+	case M_CHEAT_DELETE:
+		title = "Delete this cheat?";
+		body = (modal_arg_ >= 0 && modal_arg_ < (int) cheats_.size() ? "\"" + cheats_[(size_t) modal_arg_].name + "\" " : std::string()) + "is removed from the list. This cannot be undone.";
+		yes = "Delete"; no = "Keep";
+		break;
 	default: {
 		const char *lab = model_ ? action_label(*model_, cap_action_) : "";
 		title = strf("Press a button for %s", lab);
@@ -1380,10 +1542,10 @@ void Menu::draw_modal(Gfx *g, Text *t)
 	if (modal_ == M_CAPTURE) {
 		int secs = (cap_ms_ + 999) / 1000;
 		if (secs < 0) secs = 0;
-		std::string w = cap_bits_ ? phys_label(cap_bits_, true) : strf("Waiting...  %d", secs);
+		std::string w = cap_bits_ ? phys_label(cap_bits_, cfg_.enter_is_cross) : strf("Waiting...  %d", secs);
 		t->draw_center(F_SUB, cx + cw * 0.5f, cy + 150, w.c_str(), accent(255));
 	}
-	g->fill_rrect(cx + 24, by, 250, 80, 22, modal_ == M_CAPTURE ? col(0xFFFFFF, 40) : (modal_ == M_DELETE || modal_ == M_RESET || modal_ == M_LIST || modal_ == M_EXIT ? col(C_RED) : accent(255)));
+	g->fill_rrect(cx + 24, by, 250, 80, 22, modal_ == M_CAPTURE ? col(0xFFFFFF, 40) : (modal_ == M_DELETE || modal_ == M_CHEAT_DELETE || modal_ == M_RESET || modal_ == M_LIST || modal_ == M_EXIT ? col(C_RED) : accent(255)));
 	uint32_t yink = (modal_ == M_CAPTURE) ? col(C_TEXT) : col(C_INK);
 	t->draw_center(F_LABEL, cx + 24 + 125, by + (80 - t->line_h(F_LABEL)) * 0.5f, yes.c_str(), yink);
 	g->fill_rrect(cx + cw - 24 - 250, by, 250, 80, 22, col(0xFFFFFF, 40));
@@ -1418,7 +1580,10 @@ void Menu::draw(Gfx *g, Text *t)
 	else draw_rows(g, t);
 	draw_overlays(g);
 	if (modal_) draw_modal(g, t);
-	notices_.draw(g, t, PK_HEX(cfg_.accent, 255), 60, true);
+	/* over the game picture on the control centre; at the foot of the screen on the pages, where it covers
+	 * no header, hint or row the player is looking at */
+	if (page_ == PAGE_TOP && !modal_) notices_.draw(g, t, PK_HEX(cfg_.accent, 255), 60, true);
+	else notices_.draw(g, t, PK_HEX(cfg_.accent, 255), PK_SCREEN_H - 44 - 14, false);
 }
 
 }  // namespace pk

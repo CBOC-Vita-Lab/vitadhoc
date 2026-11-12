@@ -113,6 +113,8 @@ public:
 	void set_resume_present(bool v) { rep_.resume_present = v; }
 	SessionReport finish(ExitReason why);
 	const SessionReport &current() const { return rep_; }
+	/* play time so far (current().seconds_played is only filled in by finish()) */
+	int64_t seconds_played() const { return (int64_t) (acc_ms_ / 1000); }
 private:
 	SessionReport rep_;
 	std::set<int> touched_;

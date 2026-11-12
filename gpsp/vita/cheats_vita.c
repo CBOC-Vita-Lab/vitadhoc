@@ -33,6 +33,7 @@
 
 #include "cheat_engine.h"
 #include "cheatdb.h"
+#include "fe_evt.h"
 
 #ifndef CHEATS_VITA_NO_CORE
 #include "gbcore/gbcore.h"
@@ -413,6 +414,13 @@ static int push(void)
       }
       joined[o] = 0;
 #ifndef CHEATS_VITA_NO_CORE
+      {
+         int n = 0;
+         for (i = 0; i < g_count && !g_suspended && !g_hardcore; i++)
+            n += g_list[i].enabled && g_list[i].usable;
+         fe_evt("cheats_push console=%d codes=%d held=%d", (int)g_console, n,
+                g_suspended ? 1 : g_hardcore ? 2 : 0);
+      }
       gbmux_cheats_text(joined);
 #else
       cheats_test_pushes++;
@@ -1469,5 +1477,9 @@ const char *cheats_format_hint(fe_console_t console)
    if (console == FE_CONSOLE_GBA)
       return "8 digits, space, 4 digits (CodeBreaker) or 8 digits "
              "(GameShark, Action Replay). + between lines.";
+   if (console == FE_CONSOLE_NES)
+      return "6 or 8 letters (Game Genie) or AAAA:VV (RAM). + between codes.";
+   if (console == FE_CONSOLE_WSWAN)
+      return "AAAAA:VV: a RAM address and a byte, in hex. + between codes.";
    return "8 digits (GameShark) or 3-3-3 digits (Game Genie). + between codes.";
 }

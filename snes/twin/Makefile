@@ -22,7 +22,24 @@ RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 OBJCOPY ?= objcopy
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/audio_sim.o $(B)/main.o
 
-all: $(B)/snes_twin
+all: $(B)/snes_twin $(B)/player_twin
+
+# player_twin: the Vita player's own logic (../vita/player.cpp) with playerkit's software renderer
+PK       := ../../playerkit
+PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace
+PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
+PLAYER_OBJS := $(B)/player.o $(B)/picture.o $(B)/player_twin.o
+$(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)/pk
+	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(PK)/src -c -o $@ $<
+$(B)/player.o: ../vita/player.cpp ../vita/player.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/picture.o: $(FE)/picture.cpp $(FE)/picture.h
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/player_twin.o: player_twin.cpp ../vita/player.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/player_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(PLAYER_OBJS) $(PK_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
 
 $(B)/snes_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread

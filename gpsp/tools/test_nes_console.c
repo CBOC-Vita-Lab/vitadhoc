@@ -6,7 +6,7 @@
 
 int main(void)
 {
-   assert(FE_CONSOLE_NES == 4 && FE_CONSOLE_COUNT == 5);
+   assert(FE_CONSOLE_NES == 4 && FE_CONSOLE_COUNT == 6);
    assert(ui_rom_matches_console("Game.nes", FE_CONSOLE_NES));
    assert(ui_rom_matches_console("Game.NES", FE_CONSOLE_NES));
    assert(ui_rom_matches_console("Disk.fds", FE_CONSOLE_NES));

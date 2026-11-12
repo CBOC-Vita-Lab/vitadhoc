@@ -28,6 +28,9 @@ void snes_host_shutdown(void);
  * returns non-zero and writes a short reason into err. Battery RAM is loaded
  * from srm_path when the file exists. */
 int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, size_t errlen);
+/* The same from a ROM already in memory (a patched one, say). `name` is the file name the core is told (its
+ * folder part is ignored); the cheat list and the battery RAM are found by the caller's names, as above. */
+int snes_host_load_rom_mem(const uint8_t *data, size_t n, const char *name, const char *srm_path, char *err, size_t errlen);
 void snes_host_unload(void);
 
 /* port 0..4: pad 1, pad 2, and (with the multitap on) pads 3 to 5. */
@@ -81,6 +84,14 @@ void snes_host_set_log(void (*fn)(const char *line));
 /* Save states, same safe write rule. Return 0 on success. */
 int snes_host_state_save(const char *path);
 int snes_host_state_load(const char *path);
+/* The same in memory: snes_host_state_size() is the size of a state now (0 without a game);
+ * snes_host_state_save_buf writes it into out (cap bytes) and puts its length in *len; returns 0, or 2 when
+ * cap is too small. snes_host_state_load_buf returns 0, 1 without a game, 3 when the core refuses the bytes
+ * (a state of another game or a damaged one: the running game is then left as Snes9x leaves it on a failed
+ * load, which is unchanged for a wrong-format state). Codes are switched off around the load as for the file. */
+size_t snes_host_state_size(void);
+int snes_host_state_save_buf(uint8_t *out, size_t cap, size_t *len);
+int snes_host_state_load_buf(const uint8_t *data, size_t n);
 
 /* Core options by name; returns 0 when the name is known:
  *   block_vram 0/1       block CPU/DMA VRAM access while the screen is drawn (Snes9x default 1)

@@ -19,7 +19,7 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | Down | Show the game's save states; pick one and press Cross |
 | Square | Star or unstar the game |
 | Select | All games, Starred, Recent |
-| Triangle | Switch between GBA, GB, GBC, SNES and NES |
+| Triangle | Switch between GBA, GB, GBC, SNES, NES and WS (or tap a tab) |
 | Circle | Find a game by name |
 | Start | Settings |
 | Touch | Tap games, buttons and hints; drag or flick lists |
@@ -45,6 +45,20 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 VitAdhoc's own screenshot (L + R + Select, saved in
 `ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
 button combo turns it on; Button mapping can give Screenshot any other chord.
+
+## WonderSwan
+
+| Held | Sideways game | Upright game (Vertical play: Upright) | Vita turned on its side |
+| --- | --- | --- | --- |
+| D-pad | the cross | the cross, turned with the picture | the cross |
+| Circle / Cross | A / B | the second cross | the second cross |
+| Triangle / Square | Rewind / Fast-forward | the second cross | the second cross |
+| L / R | | A / B | A / B |
+| Start | Start | Start | Start |
+
+The game turns the picture and the buttons together; the first time, a hint
+says so. Rotation and Vertical play are in Settings > This game. Button
+mapping does not change WonderSwan buttons.
 
 ## Motion Games
 

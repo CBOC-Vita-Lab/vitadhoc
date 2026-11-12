@@ -7,8 +7,10 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <dirent.h>
 #ifdef __vita__
 #include <psp2/io/stat.h>
+#include <psp2/io/dirent.h>
 #endif
 
 namespace pk {
@@ -186,9 +188,37 @@ static bool d_mkdir(const std::string &path)
 #endif
 }
 
+static bool d_list_dir(const std::string &dir, std::vector<std::string> &names)
+{
+	names.clear();
+#ifdef __vita__
+	SceUID d = sceIoDopen(dir.c_str());
+	if (d < 0) return false;
+	SceIoDirent e;
+	for (;;) {
+		memset(&e, 0, sizeof e);
+		if (sceIoDread(d, &e) <= 0) break;
+		if (SCE_S_ISDIR(e.d_stat.st_mode)) continue;
+		names.push_back(e.d_name);
+	}
+	sceIoDclose(d);
+	return true;
+#else
+	DIR *d = opendir(dir.c_str());
+	if (!d) return false;
+	while (struct dirent *e = readdir(d)) {
+		if (e->d_name[0] == '.' && (!e->d_name[1] || (e->d_name[1] == '.' && !e->d_name[2]))) continue;
+		names.push_back(e->d_name);
+	}
+	closedir(d);
+	return true;
+#endif
+}
+
 FsOps default_fs_ops()
 {
 	FsOps o;
+	o.list_dir = d_list_dir;
 	o.read_all = d_read_all;
 	o.write_all = d_write_all;
 	o.rename_file = d_rename;
@@ -271,11 +301,23 @@ bool recover_old(const std::string &path)
 	return fs().rename_file(old, path);
 }
 
-WriteResult atomic_write(const std::string &path, const uint8_t *data, size_t n)
+bool list_dir(const std::string &dir, std::vector<std::string> &names)
+{
+	names.clear();
+	return fs().list_dir && fs().list_dir(dir, names);
+}
+
+void init_shared()
+{
+	crc32(0, "", 0);
+	(void) fs();
+}
+
+WriteResult atomic_write(const std::string &path, const uint8_t *data, size_t n, Exists hint)
 {
 	if (path.empty() || (!data && n)) return W_BAD_ARGS;
 	const std::string tmp = path + ".tmp", old = path + ".old";
-	fs().remove_file(tmp);
+	/* "wb" truncates a leftover temp file: no remove first (a lookup of a missing name costs a folder pass) */
 	if (!fs().write_all(tmp, data, n)) {
 		fs().remove_file(tmp);
 		return W_NO_WRITE;
@@ -290,17 +332,35 @@ WriteResult atomic_write(const std::string &path, const uint8_t *data, size_t n)
 			return W_VERIFY;
 		}
 	}
-	bool had = file_exists(path);
-	if (!had) recover_old(path), had = file_exists(path);
-	if (had) {
-		fs().remove_file(old);
-		if (!fs().rename_file(path, old)) {
-			fs().remove_file(tmp);
-			return W_NO_REPLACE;
+	/* set the old file aside. The Vita's card refuses to rename over an existing name, so path.old must
+	 * be free: it is removed after every write, and a leftover (a power cut) is cleared when it is in the way. */
+	bool had = false;
+	if (hint != EXISTS_NO) {
+		if (fs().rename_file(path, old)) had = true;
+		else if (hint == EXISTS_YES || file_exists(path)) {
+			if (!file_exists(old) || !fs().remove_file(old) || !fs().rename_file(path, old)) {
+				fs().remove_file(tmp);
+				return W_NO_REPLACE;
+			}
+			had = true;
+		} else if (file_exists(old)) {
+			/* no file but a leftover path.old: the previous write was cut between its two renames. That
+			 * leftover is the last good copy; the new file replaces it below. */
+			had = true;
 		}
 	}
 	if (!fs().rename_file(tmp, path)) {
-		if (had) fs().rename_file(old, path);      /* the old one comes back */
+		bool ok = false;
+		if (!had && hint == EXISTS_NO && file_exists(path)) {
+			/* the hint was wrong: do it the long way */
+			if ((!file_exists(old) || fs().remove_file(old)) && fs().rename_file(path, old)) {
+				if (fs().rename_file(tmp, path)) { fs().remove_file(old); return W_OK; }
+				fs().rename_file(old, path);
+			}
+		} else if (had && !file_exists(path)) {
+			ok = fs().rename_file(old, path);      /* the old one comes back */
+		}
+		(void) ok;
 		fs().remove_file(tmp);
 		return W_NO_REPLACE;
 	}

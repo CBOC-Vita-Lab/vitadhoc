@@ -209,51 +209,263 @@ bool parse_shot(const std::vector<uint8_t> &f, std::vector<uint16_t> &out, int *
 
 /* ---- the slots ----------------------------------------------------------- */
 
-bool States::ensure_dirs() const
+States::States(const StateLayout &l) : l_(l) {}
+
+bool States::ensure_dirs()
 {
+	if (dirs_ok_) return true;
 	bool a = make_dirs(l_.states_dir());
 	bool b = make_dirs(path_join(l_.root, "scenes"));
+	dirs_ok_ = scene_dir_ok_ = a && b;
 	return a && b;
 }
 
-static std::string meta_text(const StateLayout &l, const uint8_t *data, size_t n, const Frame &f, int64_t play_s)
+static std::string meta_text(const StateLayout &l, const StateJob &j)
 {
 	Ini m;
 	m.set("v", "1");
 	m.set("console", l.console);
 	m.set("name", l.name);
-	m.set_int("size", (int64_t) n);
-	m.set("crc32", strf("%08x", (unsigned) crc32(0, data, n)));
-	m.set_int("saved", now_unix());
-	m.set_int("play_s", play_s);
-	m.set_int("frame_w", f.valid() ? f.w : 0);
-	m.set_int("frame_h", f.valid() ? f.h : 0);
+	m.set_int("size", (int64_t) j.data.size());
+	m.set("crc32", strf("%08x", (unsigned) crc32(0, j.data.data(), j.data.size())));
+	m.set_int("saved", j.saved);
+	m.set_int("play_s", j.play_seconds);
+	m.set_int("frame_w", j.frame_w);
+	m.set_int("frame_h", j.frame_h);
+	m.set("end", "1");      /* written last: a .meta cut short by a power loss has no end and is ignored */
 	return m.serialize();
 }
 
-SaveReport States::write_set(const std::string &path, const uint8_t *data, size_t n, const Frame &frame,
-                             int64_t play_seconds, bool pictures)
+static bool meta_complete(const Ini &m) { return m.has("end") && m.has("crc32") && m.has("size"); }
+
+static bool has_name(const std::vector<std::string> &names, const std::string &n)
+{
+	return std::find(names.begin(), names.end(), n) != names.end();
+}
+
+/* Fills one cache entry. `names` is the folder listing (file names only), or NULL: then the card is asked
+ * one name at a time. */
+void States::scan_one(Cached &c, const std::string &path, const std::vector<std::string> *names, bool resume)
+{
+	c = Cached();
+	std::string base = path.substr(path_dir(path).size() + (path_dir(path).empty() ? 0 : 1));
+	uint64_t sz = 0;
+	int64_t mt = 0;
+	if (names) {
+		c.has_main = has_name(*names, base);
+		c.has_old = has_name(*names, base + ".old");
+		c.has_meta = has_name(*names, base + ".meta");
+		c.has_thumb = !resume && has_name(*names, base + ".thumb");
+		c.has_shot = !resume && has_name(*names, base + ".shot");
+		static const char *const leftovers[] = { ".tmp", ".thumb.tmp", ".shot.tmp", ".meta.tmp", ".thumb.old", ".shot.old", ".meta.old" };
+		for (size_t i = 0; i < sizeof leftovers / sizeof leftovers[0]; i++)
+			if (has_name(*names, base + leftovers[i])) c.extra.push_back(base + leftovers[i]);
+	} else {
+		c.has_main = file_exists(path);
+		c.has_old = !c.has_main && file_exists(path + ".old");
+		c.has_meta = file_exists(path + ".meta");
+		c.has_thumb = !resume && file_exists(path + ".thumb");
+		c.has_shot = !resume && file_exists(path + ".shot");
+	}
+	if (!c.has_main && c.has_old) {
+		/* a write cut between its two renames: the .old is the last good copy, put it back */
+		if (fs().rename_file(path + ".old", path)) { c.has_main = true; c.has_old = false; }
+	}
+	if (!c.has_main && !c.has_old) return;
+	c.info.present = true;
+	if (file_exists(c.has_main ? path : path + ".old", &sz, &mt)) { c.info.size = sz; c.info.saved = mt; }
+	Ini m;
+	if (c.has_meta && m.load(path + ".meta") && meta_complete(m)) {
+		int64_t s = m.get_i64("saved", 0);
+		if (s > 0) c.info.saved = s;
+		c.info.play_seconds = m.get_i64("play_s", -1);
+	}
+	if (c.has_thumb) {
+		std::vector<uint8_t> f;
+		int w, h;
+		if (file_read(path + ".thumb", f, 1u << 16) && parse_thumb(f, c.thumb_px, &w, &h)) c.info.has_thumb = true;
+		else c.thumb_px.clear();
+	}
+}
+
+void States::rescan()
+{
+	std::vector<std::string> names;
+	bool listed = list_dir(l_.states_dir(), names);
+	if (listed) {
+		/* only this game's names matter */
+		std::string pre = l_.name + l_.ext_tag + ".";
+		std::vector<std::string> mine;
+		for (size_t i = 0; i < names.size(); i++)
+			if (names[i].compare(0, pre.size(), pre) == 0) mine.push_back(names[i]);
+		names.swap(mine);
+	}
+	Cached tmp[STATE_SLOTS], r;
+	for (int i = 0; i < STATE_SLOTS; i++) scan_one(tmp[i], l_.slot_path(i + 1), listed ? &names : 0, false);
+	scan_one(r, l_.resume_path(), listed ? &names : 0, true);
+	bool pt = listed ? has_name(names, path_stem(l_.resume_path()) + ".rsm.pt") : file_exists(l_.resume_path() + ".pt");
+	SpinGuard g(lk_);
+	for (int i = 0; i < STATE_SLOTS; i++) slot_[i] = tmp[i];
+	rsm_ = r;
+	rsm_pt_ = pt;
+	rsm_pt_known_ = false;
+	scanned_ = true;
+}
+
+void States::ensure_scanned()
+{
+	bool s;
+	{ SpinGuard g(lk_); s = scanned_; }
+	if (!s) rescan();
+}
+
+SlotInfo States::info(int slot)
+{
+	if (slot < 1 || slot > STATE_SLOTS) return SlotInfo();
+	ensure_scanned();
+	SpinGuard g(lk_);
+	return slot_[slot - 1].info;
+}
+
+void States::scan(SlotInfo out[STATE_SLOTS])
+{
+	ensure_scanned();
+	SpinGuard g(lk_);
+	for (int i = 0; i < STATE_SLOTS; i++) out[i] = slot_[i].info;
+}
+
+int States::used_count()
+{
+	ensure_scanned();
+	SpinGuard g(lk_);
+	int n = 0;
+	for (int i = 0; i < STATE_SLOTS; i++) n += slot_[i].info.present ? 1 : 0;
+	return n;
+}
+
+StateJob States::prepare(int slot, const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds)
+{
+	StateJob j;
+	j.slot = slot;
+	if (data && n) j.data.assign(data, data + n);
+	j.play_seconds = play_seconds;
+	j.saved = now_unix();
+	j.frame_w = frame.valid() ? frame.w : 0;
+	j.frame_h = frame.valid() ? frame.h : 0;
+	if (frame.valid()) {
+		j.thumb = thumb_file(frame);
+		j.shot = shot_file(frame);
+	}
+	return j;
+}
+
+StateJob States::prepare_resume(const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds, const std::string &patch_key)
+{
+	StateJob j = prepare(0, data, n, Frame(), play_seconds);
+	j.frame_w = frame.valid() ? frame.w : 0;
+	j.frame_h = frame.valid() ? frame.h : 0;
+	j.patch_key = patch_key;
+	if (frame.valid()) { j.shot = shot_file(frame); j.scene = true; }
+	return j;
+}
+
+/* A companion file (picture, note): written in place, one card operation, no temp/rename. It is never
+ * the only copy of anything: a picture cut short is refused by its size check, a note by its missing end. */
+WriteResult States::put_file(const std::string &path, const std::vector<uint8_t> &b, bool safe, Exists hint)
+{
+	if (safe) return atomic_write(path, b.data(), b.size(), hint);
+	return fs().write_all(path, b.data(), b.size()) ? W_OK : W_NO_WRITE;
+}
+
+SaveReport States::commit(const StateJob &j)
 {
 	SaveReport rep;
+	if (j.slot < 0 || j.slot > STATE_SLOTS) { rep.status = ST_BAD_SLOT; return rep; }
+	if (j.data.empty()) { rep.status = ST_WRITE; rep.write_rc = W_BAD_ARGS; return rep; }
+	ensure_scanned();
 	ensure_dirs();
-	WriteResult rc = atomic_write(path, data, n);
+	const bool resume = j.slot == 0;
+	const std::string path = path_of(j.slot);
+	Cached before;
+	bool pt_had, pt_known;
+	std::string pt_text;
+	{
+		SpinGuard g(lk_);
+		before = entry(j.slot);
+		pt_had = rsm_pt_; pt_known = rsm_pt_known_; pt_text = rsm_pt_text_;
+	}
+	/* 1. the old note is emptied (in place) so it can never describe the new state: an empty note means
+	 *    "not checked", a stale one would refuse a good state after a power cut between 2 and 3. */
+	if (before.has_meta) fs().write_all(path + ".meta", (const uint8_t *) "", 0);
+	/* 2. the state itself: temp file, read back, swap (the previous state is kept on any failure) */
+	WriteResult rc = atomic_write(path, j.data.data(), j.data.size(), before.has_main ? EXISTS_YES : before.has_old ? EXISTS_UNKNOWN : EXISTS_NO);
 	if (rc != W_OK) {
 		rep.status = ST_WRITE;
 		rep.write_rc = rc;
-		return rep;               /* the previous file and its pictures are untouched */
+		/* the old note was emptied: write it again for the old file, which is untouched */
+		if (before.has_meta && before.info.present) {
+			std::vector<uint8_t> old;
+			if (file_read(path, old, 32u << 20)) {
+				StateJob o;
+				o.data.swap(old);
+				o.saved = before.info.saved;
+				o.play_seconds = before.info.play_seconds;
+				std::string m = meta_text(l_, o);
+				fs().write_all(path + ".meta", (const uint8_t *) m.data(), m.size());
+			}
+		}
+		return rep;
 	}
-	/* the companions: a failed one is removed so a stale picture never sits beside a new state */
-	if (pictures) {
-		std::vector<uint8_t> t = thumb_file(frame);
-		rep.thumb_ok = frame.valid() && atomic_write(path + ".thumb", t.data(), t.size()) == W_OK;
-		if (!rep.thumb_ok) file_remove(path + ".thumb");
-		std::vector<uint8_t> s = shot_file(frame);
-		rep.shot_ok = !s.empty() && atomic_write(path + ".shot", s.data(), s.size()) == W_OK;
-		if (!rep.shot_ok) file_remove(path + ".shot");
+	/* 3. the companions, in place */
+	if (!resume) {
+		rep.thumb_ok = !j.thumb.empty() && put_file(path + ".thumb", j.thumb, false, EXISTS_UNKNOWN) == W_OK;
+		if (!rep.thumb_ok && before.has_thumb) file_remove(path + ".thumb");
+		rep.shot_ok = !j.shot.empty() && put_file(path + ".shot", j.shot, false, EXISTS_UNKNOWN) == W_OK;
+		if (!rep.shot_ok && before.has_shot) file_remove(path + ".shot");
 	}
-	std::string m = meta_text(l_, data, n, frame, play_seconds);
-	rep.meta_ok = atomic_write(path + ".meta", (const uint8_t *) m.data(), m.size()) == W_OK;
-	if (!rep.meta_ok) file_remove(path + ".meta");
+	std::string m = meta_text(l_, j);
+	rep.meta_ok = fs().write_all(path + ".meta", (const uint8_t *) m.data(), m.size());
+	/* leftovers from older writes (seen in the listing) go */
+	for (size_t i = 0; i < before.extra.size(); i++) file_remove(path_join(l_.states_dir(), before.extra[i]));
+	bool pt_ok = pt_had, scene_ok = false;
+	std::string key = j.patch_key.empty() ? "-\n" : j.patch_key;
+	if (resume) {
+		/* which patch the point was made with: rewritten only when it changed. A note cut short reads as a
+		 * different patch, so the point is then not loaded: safe. */
+		if (!pt_had || !pt_known || pt_text != key) {
+			std::vector<uint8_t> kb(key.begin(), key.end());
+			pt_ok = put_file(path + ".pt", kb, false, EXISTS_UNKNOWN) == W_OK;
+			if (!pt_ok) file_remove(path + ".pt");
+		}
+		if (j.scene && !j.shot.empty()) {
+			if (!scene_dir_ok_) scene_dir_ok_ = make_dirs(path_join(l_.root, "scenes"));
+			scene_ok = put_file(l_.scene_path(), j.shot, false, EXISTS_UNKNOWN) == W_OK;
+		}
+	}
+	(void) scene_ok;
+	/* 4. the cache */
+	{
+		SpinGuard g(lk_);
+		Cached &c = entry(j.slot);
+		c.has_main = true; c.has_old = false; c.has_meta = rep.meta_ok; c.extra.clear();
+		c.info.present = true;
+		c.info.size = j.data.size();
+		c.info.saved = j.saved;
+		c.info.play_seconds = j.play_seconds;
+		if (!resume) {
+			c.has_thumb = rep.thumb_ok;
+			c.has_shot = rep.shot_ok;
+			int w, h;
+			if (!rep.thumb_ok || !parse_thumb(j.thumb, c.thumb_px, &w, &h)) c.thumb_px.clear();
+			c.info.has_thumb = !c.thumb_px.empty();
+			c.shot_loaded = rep.shot_ok && parse_shot(j.shot, c.shot_px, &c.shot_w, &c.shot_h);
+			if (!c.shot_loaded) { c.shot_px.clear(); c.shot_w = c.shot_h = 0; }
+		} else {
+			rsm_pt_ = pt_ok;
+			rsm_pt_text_ = key;
+			rsm_pt_known_ = pt_ok;
+		}
+	}
 	return rep;
 }
 
@@ -264,20 +476,24 @@ SaveReport States::save(int slot, const uint8_t *data, size_t n, const Frame &fr
 		r.status = ST_BAD_SLOT;
 		return r;
 	}
-	return write_set(l_.slot_path(slot), data, n, frame, play_seconds, true);
+	return commit(prepare(slot, data, n, frame, play_seconds));
 }
 
-StateStatus States::read_checked(const std::string &path, std::vector<uint8_t> &out) const
+StateStatus States::read_checked(int slot, std::vector<uint8_t> &out)
 {
-	recover_old(path);
-	if (!file_exists(path)) return ST_EMPTY;
+	ensure_scanned();
+	Cached c;
+	{ SpinGuard g(lk_); c = entry(slot); }
+	if (!c.info.present) return ST_EMPTY;
+	std::string path = path_of(slot);
+	if (!c.has_main && c.has_old) path += ".old";
 	if (!file_read(path, out, 32u << 20)) {
 		uint64_t sz = 0;
-		file_exists(path, &sz);
+		if (!file_exists(path, &sz)) return ST_EMPTY;
 		return sz > (32u << 20) ? ST_TOO_BIG : ST_READ;
 	}
 	Ini m;
-	if (m.load(path + ".meta") && m.has("crc32") && m.has("size")) {
+	if (c.has_meta && m.load(path_of(slot) + ".meta") && meta_complete(m)) {
 		unsigned want = (unsigned) strtoul(m.get("crc32").c_str(), 0, 16);
 		if ((uint64_t) m.get_i64("size", -1) != out.size() || want != crc32(0, out.data(), out.size())) {
 			out.clear();
@@ -287,64 +503,67 @@ StateStatus States::read_checked(const std::string &path, std::vector<uint8_t> &
 	return ST_OK;
 }
 
-StateStatus States::load(int slot, std::vector<uint8_t> &out) const
+StateStatus States::load(int slot, std::vector<uint8_t> &out)
 {
 	if (slot < 1 || slot > STATE_SLOTS) return ST_BAD_SLOT;
-	return read_checked(l_.slot_path(slot), out);
-}
-
-SlotInfo States::info(int slot) const
-{
-	SlotInfo si;
-	if (slot < 1 || slot > STATE_SLOTS) return si;
-	std::string p = l_.slot_path(slot);
-	uint64_t sz = 0;
-	int64_t mt = 0;
-	if (!file_exists(p, &sz, &mt) && !file_exists(p + ".old", &sz, &mt)) return si;
-	si.present = true;
-	si.size = sz;
-	si.saved = mt;
-	Ini m;
-	if (m.load(p + ".meta")) {
-		int64_t s = m.get_i64("saved", 0);
-		if (s > 0) si.saved = s;
-		si.play_seconds = m.get_i64("play_s", -1);
-	}
-	si.has_thumb = file_exists(p + ".thumb");
-	return si;
-}
-
-void States::scan(SlotInfo out[STATE_SLOTS]) const
-{
-	for (int i = 0; i < STATE_SLOTS; i++) out[i] = info(i + 1);
-}
-
-int States::used_count() const
-{
-	int n = 0;
-	for (int i = 1; i <= STATE_SLOTS; i++) n += info(i).present ? 1 : 0;
-	return n;
+	return read_checked(slot, out);
 }
 
 bool States::remove(int slot)
 {
 	if (slot < 1 || slot > STATE_SLOTS) return false;
+	ensure_scanned();
+	Cached c;
+	{ SpinGuard g(lk_); c = slot_[slot - 1]; }
 	std::string p = l_.slot_path(slot);
-	static const char *const tails[] = { "", ".old", ".tmp", ".thumb", ".shot", ".meta", ".thumb.tmp", ".shot.tmp", ".meta.tmp" };
-	for (size_t i = 0; i < sizeof tails / sizeof tails[0]; i++) file_remove(p + tails[i]);
-	return !file_exists(p) && !file_exists(p + ".old");
+	bool ok = true;
+	if (c.has_main) ok = file_remove(p) && ok;
+	if (c.has_old) ok = file_remove(p + ".old") && ok;
+	if (c.has_thumb) file_remove(p + ".thumb");
+	if (c.has_shot) file_remove(p + ".shot");
+	if (c.has_meta) file_remove(p + ".meta");
+	for (size_t i = 0; i < c.extra.size(); i++) file_remove(path_join(l_.states_dir(), c.extra[i]));
+	SpinGuard g(lk_);
+	if (ok) slot_[slot - 1] = Cached();
+	return ok;
 }
 
-bool States::read_thumb(int slot, std::vector<uint16_t> &px, int *w, int *h) const
+bool States::read_thumb(int slot, std::vector<uint16_t> &px, int *w, int *h)
 {
-	std::vector<uint8_t> f;
-	return slot >= 1 && slot <= STATE_SLOTS && file_read(l_.slot_path(slot) + ".thumb", f, 1u << 16) && parse_thumb(f, px, w, h);
+	if (slot < 1 || slot > STATE_SLOTS) return false;
+	ensure_scanned();
+	SpinGuard g(lk_);
+	const Cached &c = slot_[slot - 1];
+	if (c.thumb_px.empty()) return false;
+	px = c.thumb_px;
+	if (w) *w = THUMB_W;
+	if (h) *h = THUMB_H;
+	return true;
 }
 
-bool States::read_shot(int slot, std::vector<uint16_t> &px, int *w, int *h) const
+bool States::read_shot(int slot, std::vector<uint16_t> &px, int *w, int *h)
 {
+	if (slot < 1 || slot > STATE_SLOTS) return false;
+	ensure_scanned();
+	bool need;
+	{
+		SpinGuard g(lk_);
+		const Cached &c = slot_[slot - 1];
+		if (c.shot_loaded) { px = c.shot_px; if (w) *w = c.shot_w; if (h) *h = c.shot_h; return true; }
+		need = c.has_shot;
+	}
+	if (!need) return false;
 	std::vector<uint8_t> f;
-	return slot >= 1 && slot <= STATE_SLOTS && file_read(l_.slot_path(slot) + ".shot", f, 1u << 18) && parse_shot(f, px, w, h);
+	std::vector<uint16_t> p;
+	int sw = 0, sh = 0;
+	if (!file_read(l_.slot_path(slot) + ".shot", f, 1u << 18) || !parse_shot(f, p, &sw, &sh)) return false;
+	SpinGuard g(lk_);
+	Cached &c = slot_[slot - 1];
+	c.shot_px = p; c.shot_w = sw; c.shot_h = sh; c.shot_loaded = true;
+	px.swap(p);
+	if (w) *w = sw;
+	if (h) *h = sh;
+	return true;
 }
 
 /* ---- Continue ------------------------------------------------------------ */
@@ -352,44 +571,57 @@ bool States::read_shot(int slot, std::vector<uint16_t> &px, int *w, int *h) cons
 SaveReport States::save_resume(const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds,
                                const std::string &patch_key)
 {
-	std::string p = l_.resume_path();
-	SaveReport r = write_set(p, data, n, frame, play_seconds, false);
-	if (r.status != ST_OK) return r;
-	std::string key = patch_key.empty() ? "-\n" : patch_key;
-	if (atomic_write(p + ".pt", (const uint8_t *) key.data(), key.size()) != W_OK) {
-		/* without its note the point could be loaded into a different patched game: keep none */
-		file_remove(p + ".pt");
+	return commit(prepare_resume(data, n, frame, play_seconds, patch_key));
+}
+
+bool States::resume_present()
+{
+	ensure_scanned();
+	SpinGuard g(lk_);
+	return rsm_.info.present;
+}
+
+StateStatus States::load_resume(std::vector<uint8_t> &out)
+{
+	return read_checked(0, out);
+}
+
+States::PatchMatch States::resume_patch(const std::string &key)
+{
+	ensure_scanned();
+	std::string want = key.empty() ? "-\n" : key;
+	{
+		SpinGuard g(lk_);
+		if (!rsm_pt_) return PATCH_UNKNOWN;
+		if (rsm_pt_known_) return rsm_pt_text_ == want ? PATCH_SAME : PATCH_DIFFERENT;
 	}
-	if (frame.valid()) save_scene(frame);
-	return r;
-}
-
-bool States::resume_present() const
-{
-	std::string p = l_.resume_path();
-	return file_exists(p) || file_exists(p + ".old");
-}
-
-StateStatus States::load_resume(std::vector<uint8_t> &out) const
-{
-	return read_checked(l_.resume_path(), out);
-}
-
-States::PatchMatch States::resume_patch(const std::string &key) const
-{
 	std::vector<uint8_t> b;
 	if (!file_read(l_.resume_path() + ".pt", b, 4096)) return PATCH_UNKNOWN;
 	std::string had((const char *) b.data(), b.size());
-	std::string want = key.empty() ? "-\n" : key;
+	{
+		SpinGuard g(lk_);
+		rsm_pt_text_ = had;
+		rsm_pt_known_ = true;
+	}
 	return had == want ? PATCH_SAME : PATCH_DIFFERENT;
 }
 
 bool States::remove_resume()
 {
+	ensure_scanned();
+	Cached c;
+	bool pt;
+	{ SpinGuard g(lk_); c = rsm_; pt = rsm_pt_; }
 	std::string p = l_.resume_path();
-	static const char *const tails[] = { "", ".old", ".tmp", ".pt", ".meta" };
-	for (size_t i = 0; i < sizeof tails / sizeof tails[0]; i++) file_remove(p + tails[i]);
-	return !resume_present();
+	bool ok = true;
+	if (c.has_main) ok = file_remove(p) && ok;
+	if (c.has_old) ok = file_remove(p + ".old") && ok;
+	if (c.has_meta) file_remove(p + ".meta");
+	if (pt) file_remove(p + ".pt");
+	for (size_t i = 0; i < c.extra.size(); i++) file_remove(path_join(l_.states_dir(), c.extra[i]));
+	SpinGuard g(lk_);
+	if (ok) { rsm_ = Cached(); rsm_pt_ = false; rsm_pt_known_ = false; }
+	return ok;
 }
 
 bool States::resume_due(uint64_t now_ms, uint64_t interval_ms) const
@@ -401,31 +633,33 @@ bool States::resume_due(uint64_t now_ms, uint64_t interval_ms) const
 
 bool States::undo_store(const uint8_t *data, size_t n)
 {
-	ensure_dirs();
-	return atomic_write(l_.undo_path(), data, n) == W_OK;
+	if (!data || !n) return false;
+	undo_.assign(data, data + n);
+	undo_have_ = true;
+	return true;
 }
 
 StateStatus States::undo_fetch(std::vector<uint8_t> &out) const
 {
-	if (!file_exists(l_.undo_path())) return ST_EMPTY;
-	return file_read(l_.undo_path(), out, 32u << 20) ? ST_OK : ST_READ;
+	if (!undo_have_) return ST_EMPTY;
+	out = undo_;
+	return ST_OK;
 }
 
-bool States::undo_available() const { return file_exists(l_.undo_path()); }
+bool States::undo_available() const { return undo_have_; }
 
 void States::undo_clear()
 {
-	file_remove(l_.undo_path());
-	file_remove(l_.undo_path() + ".old");
-	file_remove(l_.undo_path() + ".tmp");
+	undo_.clear();
+	undo_have_ = false;
 }
 
 bool States::save_scene(const Frame &frame)
 {
 	std::vector<uint8_t> s = shot_file(frame);
 	if (s.empty()) return false;
-	make_dirs(path_join(l_.root, "scenes"));
-	return atomic_write(l_.scene_path(), s.data(), s.size()) == W_OK;
+	if (!scene_dir_ok_) scene_dir_ok_ = make_dirs(path_join(l_.root, "scenes"));
+	return fs().write_all(l_.scene_path(), s.data(), s.size());
 }
 
 }  // namespace pk

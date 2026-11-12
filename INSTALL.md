@@ -77,13 +77,18 @@ ux0:data/RetroFlow/ROMS/Nintendo - Game Boy
 ux0:data/RetroFlow/ROMS/Nintendo - Game Boy Color
 ux0:data/RetroFlow/ROMS/Nintendo - Super Nintendo Entertainment System
 ux0:data/RetroFlow/ROMS/Nintendo - Nintendo Entertainment System
+ux0:ROMS/WS                  ux0:ROMS/WSC
+ux0:roms/WS                  ux0:roms/WSC
+ux0:data/RetroFlow/ROMS/Bandai - WonderSwan
+ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color
 ```
 
 Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
 (a `SNES ROM Collection` or `NES Games` folder, for example). The file ending
 decides the console, not the folder's name: `.gba`, `.gb`, `.gbc`, `.sfc` or
-`.smc`, `.nes`, `.fds`, `.unf` or `.unif`. NES and Famicom games go in
-`ux0:ROMS/NES/`, or in any of these folders.
+`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`. NES and
+Famicom games go in `ux0:ROMS/NES/`, WonderSwan games in `ux0:ROMS/WS/`, or
+in any of these folders.
 
 To choose your own folders, open **Settings > Library > Game folders** in the
 game list, press Cross and type the folder (for example `ux0:ROMS/GBA`). Type
@@ -141,6 +146,7 @@ Beside each game, VitAdhoc keeps only its battery save:
 | Game Boy Color | `Game.gbc.sav` |
 | Super NES | `Game.srm` (the same name RetroArch and Snes9x use) |
 | NES / Famicom | `Game.srm` (the same name RetroArch uses) |
+| WonderSwan / Color | `Game.srm` (the same name RetroArch uses) |
 
 Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 
@@ -155,7 +161,8 @@ SNES games keep their four state slots and picture settings in
 first writes over a SNES save it did not make, a copy goes to
 `ux0:data/GBAdhoc/backups/snes/`.
 
-NES games keep their states under `ux0:data/GBAdhoc/states/nes/`, like the
+NES and WonderSwan games keep their states under
+`ux0:data/GBAdhoc/states/nes/` and `states/ws/`, like the
 other consoles, and VitAdhoc keeps a copy of a save before it first writes over
 it.
 

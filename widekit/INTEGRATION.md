@@ -248,3 +248,14 @@ Small fixes found by the NES twin's truth checker (synthetic scrolling cartridge
   scouted cell not yet seen live from being served (a generation counter in the spare byte of the cell entry; the
   file format is unchanged: unconfirmed scouted cells are not written). Unconfirmed scouted cells do not count in the
   room recognition / verification overlap.
+
+## Measured 12 Nov 2026 (the chores of this file)
+
+* `make vita`: all five objects compile warning free with `arm-vita-eabi-g++` (-O3, cortex-a9, NEON) after the NES fixes.
+* `make test`: 1095 checks, 0 failed.
+* `make bench` (host x86_64, -O2, scene 0, 600 frames): layers 50.6 us, map 22.2 us, compose 163.5 us, total 236.4 us
+  per frame (on a heavily loaded 2-core machine: wall time, indicative only).
+* `make arm-count` (qemu-arm, armhf -O3 NEON, scene 0): 1,769,442 instructions per frame in all, harness 32,496, library
+  1,736,946. At 444 MHz: 3.9 ms at IPC 1.0, 5.6 ms at IPC 0.7 (Cortex-A9 IPC not measured).
+* Inside the NES adapter (one 84 px layer, 240 lines; see nes/INTEGRATION.md) widekit costs about 2.6 M x86 instructions per
+  frame, 2.2 M of it in `wk_compose_frame`.

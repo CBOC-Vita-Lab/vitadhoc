@@ -168,3 +168,32 @@ What it does (details in `nes/frontend/wide.c`, `nes/core/nesp_wide.h`, `widekit
   rendering: full-width picture with soft edges (`stats.lines_blocked`). MMC3 IRQ counting is untouched (the margin
   fetches never call a hook); verified identical frames/RAM/state/audio on MMC3 cartridges including the IRQ split
   cartridge.
+
+Cost, measured 12 Nov 2026 (`nes/twin/tests/wide_cost.c` linked with `nescore.o` SCOUT=1: `scroll_vert.nes` from a saved state
+at frame 300, holding right, 84 px margins; instructions per frame as the difference of two run lengths):
+
+| | x86_64 (callgrind) | armhf (qemu-arm, `-one-insn-per-tb`) |
+|---|---|---|
+| wide view off | 2.71 M | 2.72 M |
+| wide view on (live thread) | 7.14 M (+4.43 M) | 6.25 M (+3.52 M) |
+| wide view on + scout (`scout_step(2)` per frame) | 15.09 M | 12.54 M (+6.30 M, meant for a second core) |
+
+Where the +4.4 M (x86) goes: widekit `wk_compose_frame` 2.2 M (of it the soft-edge base drawn under every margin pixel
+0.6 M), margin rendering in the core (`nesp_tiles`) 0.54 M, `describe` (ring codes / hashes / stamps) 0.26 M,
+`wk_layers_update` 0.21 M, the rest under 0.1 M each. Vita estimate (444 MHz, IPC NOT measured): the wide view adds 3.5 M
+ARM instructions to the emulation thread = 7.9 ms at IPC 1.0, 11.3 ms at 0.7, 6.1 ms at 1.3; with the core (2.7 M) that is
+14.1 / 20.1 / 10.8 ms against 16.6 ms. At IPC 0.7 it does NOT fit with the scout on the same thread; even alone it is tight:
+the compositor is the first place to save (skip the soft-edge base under opaque real pixels; draw only the margins that
+changed). The scout's 6.3 M (two scout frames per frame while it catches up, nothing while it is `ahead` frames in front)
+needs its own core: 14 ms at IPC 1.0. Memory: `nescore.o` host text 877 KB / bss 4.17 MB (wide view and widekit included),
+SCOUT=1 1.66 MB / 8.2 MB; Vita SCOUT=1 text 1.47 MB, data 125 KB, bss 5.57 MB; heap at enable: widekit map 32768 cells
+(about 1 MB) + layers + compositor (~0.5 MB), the scout's ROM copy and one state buffer.
+
+Tests (`nes/twin/selftest.sh` section 13; `nes/twin/wide_public.sh`):
+* identity: frames, RAM, saved state, audio, battery RAM byte identical with the wide view off / on / on + scout on the
+  synthetic cartridges (NROM, MMC1, MMC3 with IRQ, Zapper, and the 5 scrolling ones), and off / on / on + scout over the 289
+  public test ROMs that load (`wide_public.sh`; 1 of 290 files does not load in this core); the centre of every wide frame
+  equals `nes_host_video` pixel for pixel. `conformance.py --expect`: 75 expected passes, 0 regressions.
+* truth (`tests/scroll_roms.py` writes each cartridge and its full true level picture; `nes_twin --wide-truth`): zero wrong
+  margin pixels shown as real, zero wrong masked-column fills, zero wrong backdrop / status bar continuations, on the first
+  pass, with the learned map of a first pass, with the map used in a different play, and with the scout.

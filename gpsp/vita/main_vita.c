@@ -620,6 +620,7 @@ void app_ws_options(void)
                        ? WSCORE_ROT_VERTICAL : WSCORE_ROT_AUTO);
    wscore_set_vertical_play(g_pgame.ws_vplay ? WSCORE_TURNED : WSCORE_UPRIGHT);
    wscore_set_mono_palette(g_pgame.ws_palette);
+   wscore_set_time_source(plat_wallclock);    /* local time: no zone in libc */
    wscore_set_blend(g_pcfg.ws_blend);
    /* one core call per refresh: the vsync pacer's refresh, the timer
     * pacer's GBA frame */

@@ -1,6 +1,6 @@
 # Features And Settings
 
-VitAdhoc combines GB, GBC, GBA, Super NES and NES emulation with a Vita-native library,
+VitAdhoc combines GB, GBC, GBA, Super NES, NES and WonderSwan emulation with a Vita-native library,
 display pipeline, touch input and motion controls. This is the detailed guide;
 start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 [Play Together](../PLAY-TOGETHER.md) for a specific task.
@@ -14,6 +14,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | GB / GBC | TGB Dual core; original game image 160 x 144; Super Game Boy border support |
 | Super NES | Snes9x 1.63 in its own program (`snes.bin`, non-commercial licence); sound and picture drawing on their own cores; up to four players with the Super Multitap |
 | NES / Famicom | FCEUmm inside the app (GPL-2.0-or-later); NES, Famicom Disk System (your own `disksys.rom`) and UNIF games |
+| WonderSwan / Color | Beetle WonderSwan (Mednafen) inside the app (GPL-2.0-or-later); 224 x 144 at 75.47 frames a second, blended into each 59.94 Hz refresh; horizontal and vertical games |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
 | Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`; supported stored/deflated `.zip` entries up to 32 MiB |
@@ -130,8 +131,49 @@ games (`.fds`) need your own `disksys.rom` (put it beside the game or in
 `.unif`) play too. Box art and title screens come from the libretro
 thumbnails for the NES and the Famicom Disk System; a NES file is recognised by
 its contents without the 16-byte header (and the 512-byte trainer some files
-carry), a UNIF file by its name only. Rewind and link play are not available
-for NES games.
+carry), a UNIF file by its name only. Rewind works as for Game Boy games; link
+play is not available for NES games. PAL and Dendy games run at their own 50
+frames a second (five of every six refreshes).
+
+## WonderSwan
+
+WonderSwan and WonderSwan Color games (`.ws`, `.wsc`, `.pc2`) share one WS
+tab and run inside VitAdhoc: the same menu, ten state slots, Continue,
+rewind, fast forward, RAM cheats (`AAAAA:VV`), patches, play time,
+per-game settings, RetroAchievements (console 53) and the RetroArch save
+import (Beetle WonderSwan folder). Saves are `Game.srm` beside the game,
+RetroArch's layout (VitAdhoc adds the console's own settings memory at the
+end, which RetroArch ignores).
+
+- **Rotation.** The game decides: VitAdhoc follows its LCD icons, the
+  buttons it reads and the cartridge. A vertical scene is turned upright on
+  a level Vita (Vertical play: Upright, the default) or shown full size for a
+  Vita turned on its side (Vertical play: Turn the Vita). The picture and
+  the buttons change in the same frame; the first time, a hint shows the
+  layout. Rotation: Auto, Horizontal or Vertical is kept per game.
+- **Buttons.** Sideways: d-pad, Circle = A, Cross = B, Start. Upright: the
+  d-pad is the game's cross turned with the picture, the face buttons its
+  second cross, L = A, R = B.
+- **75 frames a second on a 60 Hz screen.** Each refresh runs the one or two
+  console frames it covers and shows their blend, weighted by time
+  (Settings > Display > Smooth 75 Hz motion, on by default), so scrolling
+  stays even. Off shows the newest frame only.
+- **Palette** (game settings): greyscale or the original LCD's tint for black
+  and white games.
+- Box art and title screens: libretro thumbnails "Bandai - WonderSwan" and
+  "Bandai - WonderSwan Color", by the file's checksum or name.
+
+## Cheats on every console
+
+The Cheats page works the same for every console: the list for the game (from
+the bundled database for GBA, GB and GBC games, or the game's `.cht` file in
+`ux0:data/GBAdhoc/cheats/` in RetroArch's format), codes typed by hand with
+a name, a switch per code, delete, and the choices kept per game. Codes are
+off during a link session and in RetroAchievements Hardcore. Formats: GBA
+(GameShark, Action Replay, CodeBreaker, raw), GB/GBC (GameShark, Game Genie),
+NES (Game Genie 6 or 8 letters, Pro Action Replay, `AAAA:VV`, `AAAA?CC:VV`),
+WonderSwan (`AAAAA:VV`: a RAM address, 00000-0FFFF the console's memory,
+10000 on the cartridge's save memory, and a byte).
 
 ## Display
 

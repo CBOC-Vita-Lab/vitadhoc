@@ -47,6 +47,7 @@ enum Caps : uint32_t {
 	CAP_REWIND = 1u << 15,
 	CAP_CHEATS = 1u << 16,
 	CAP_PLAY_TOGETHER = 1u << 17,
+	CAP_CHEAT_EDIT = 1u << 18,    /* the host can add (add_cheat) and delete (delete_cheat) codes */
 	CAP_ALL_BASIC = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
 	                CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO
 };
@@ -57,7 +58,8 @@ enum RowId {
 	ROW_CTL_STICK_L, ROW_CTL_STICK_R, ROW_CTL_REAR, ROW_CTL_MAPPING, ROW_CTL_TURBO_A, ROW_CTL_TURBO_B, ROW_CTL_TURBO_MODE,
 	ROW_CTL_APPLY, ROW_CTL_RESET,
 	ROW_SPD_FF, ROW_SPD_SOUND, ROW_SPD_MODE, ROW_SPD_REWIND,
-	ROW_COUNT
+	ROW_COUNT,
+	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
 };
 
 /* the values (RowId order): ROW_PIC_SHAPE 0..4 = Original, Fit, Zoom, Full screen, Pixel perfect; ROW_PIC_WIDE 0..2 = Auto, On, Off;
@@ -92,6 +94,16 @@ public:
 	virtual void on_state_touched(int slot) { (void) slot; }
 	/* the profile or a mapping changed and was stored (rc) */
 	virtual void on_controls_changed(WriteResult rc) { (void) rc; }
+	/* CAP_CHEAT_EDIT: "Add a cheat" was chosen (the host asks for the code, e.g. with the system keyboard,
+	 * and calls Menu::refresh() when the list changed); a code was confirmed for deletion */
+	virtual void add_cheat() {}
+	virtual bool delete_cheat(int index) { (void) index; return false; }
+	/* Writing a state on another thread: return true to take the job (the host runs States::commit(job)
+	 * there and calls Menu::state_write_done() on the game thread when it has finished); false (the default)
+	 * makes the menu write it now. wait_state_writes() must return only when no write is running; the menu
+	 * calls it before it reads or deletes a state. */
+	virtual bool queue_state_write(StateJob &job) { (void) job; return false; }
+	virtual void wait_state_writes() {}
 };
 
 struct MenuConfig {
@@ -131,6 +143,18 @@ public:
 	void set_value(int row_id, int value);
 	int value(int row_id) const;
 	void set_row_note(int row_id, const std::string &reason);   /* greys the row with this reason ("" clears) */
+	/* only these choices of a picker are offered (bit i = value i); 0 = all. For a value the host cannot do
+	 * (a "Fit" shape that would equal "Original"), so no choice does nothing. */
+	void set_choices_allowed(int row_id, uint32_t mask);
+	/* A row of the host's own on PAGE_PICTURE, PAGE_CONTROLS or PAGE_SPEED: a picker with `choices`, shown
+	 * before the row `before_row` (a RowId; -1 = at the end). id >= ROW_HOST_BASE. Changes come to
+	 * MenuHost::on_change(id, value) like the built-in rows; set_value()/value() work with the id. */
+	void add_host_row(int page, int id, const std::string &label, const std::string &help,
+	                  const std::vector<std::string> &choices, int value, int before_row = -1);
+	/* the cheat list (or anything the host changed) is read again */
+	void refresh();
+	/* the host finished a write it took with queue_state_write */
+	void state_write_done(int slot, const SaveReport &rep);
 
 	/* opens on the control centre; nav_player is the pad that asked for it */
 	void open(int nav_player = 0);
@@ -149,7 +173,7 @@ public:
 	int selected_slot() const { return slot_; }
 	bool modal_open() const { return modal_ != 0; }
 	int modal_kind() const { return modal_; }
-	enum { REGION_CARD = 1, REGION_ROW, REGION_ARROW_L, REGION_ARROW_R, REGION_SLIDER, REGION_SLOT, REGION_BUTTON, REGION_OUTSIDE };
+	enum { REGION_CARD = 1, REGION_ROW, REGION_ARROW_L, REGION_ARROW_R, REGION_SLIDER, REGION_SLOT, REGION_BUTTON, REGION_OUTSIDE, REGION_DELETE };
 	struct Region {
 		float x, y, w, h;      /* the touch area */
 		int kind, a;
@@ -175,9 +199,10 @@ private:
 		bool enabled;
 		std::string reason;
 		int tag;                      /* a PageId for links, an action index for mapping rows, a cheat index */
+		std::vector<int> map;         /* a picker with some choices left out: choices[i] stands for value map[i] */
 		Row() : id(-1), kind(K_INFO), vmin(0), vmax(0), value(0), enabled(true), tag(0) {}
 	};
-	enum { M_NONE = 0, M_OVERWRITE, M_DELETE, M_LIST, M_EXIT, M_RESET, M_CTL_RESET, M_CAPTURE };
+	enum { M_NONE = 0, M_OVERWRITE, M_DELETE, M_LIST, M_EXIT, M_RESET, M_CTL_RESET, M_CAPTURE, M_CHEAT_DELETE };
 	enum { CARD_RESUME = 0, CARD_STATES, CARD_TOGETHER, CARD_CHEATS, CARD_SETTINGS, CARD_RESET, CARD_LIST, CARD_EXIT, CARD_COUNT };
 	enum { BTN_PRIMARY = 1, BTN_SECONDARY, BTN_LOAD, BTN_SAVE, BTN_DELETE, BTN_UNDO, BTN_CLEAR, BTN_CANCEL };
 
@@ -244,6 +269,14 @@ private:
 	Profile *profile_;
 	int vals_[ROW_COUNT];
 	std::string notes_[ROW_COUNT];
+	uint32_t allowed_[ROW_COUNT];
+	struct HostRow { int page, id, before; std::string label, help; std::vector<std::string> choices; int value; };
+	std::vector<HostRow> host_rows_;
+	HostRow *host_row(int id);
+	int used_slots_;
+	/* a state being written by the host's thread: shown at once from memory */
+	struct Pending { bool on; std::vector<uint16_t> thumb; int64_t saved; int64_t play; };
+	Pending pending_slot_[STATE_SLOTS];
 	bool open_;
 	PageId page_;
 	std::vector<PageId> stack_;

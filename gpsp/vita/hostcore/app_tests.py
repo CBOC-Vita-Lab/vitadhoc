@@ -4557,10 +4557,10 @@ def t_extra_roms(S):
     r = S.run("extra_roms_ten", "40:quit\n", prepared=True, cwd=cwd)
     S.clean(r)
     rr = r.evt("rom_roots")
-    # 1.3: up to UI_EXTRA_ROOTS_MAX (24) folders, so all ten count
+    # 1.3: up to UI_EXTRA_ROOTS_MAX (24; 32 since 1.4, six consoles) folders, so all ten count
     S.check(rr and rr[0]["extra"] == "10" and rr[0]["skipped"] == "0" and
             rr[0]["list"] == '"%s"' % ";".join(d[:10]),
-            "ten folders: all ten are used (up to 24) (%s)" %
+            "ten folders: all ten are used (up to 32) (%s)" %
             (rr[0]["_"] if rr else "no rom_roots line"))
     # extra_roms = 0, and extra_roms = (nothing), with the places below there
     cwd = os.path.join(S.outdir, "extra_roms_cwd2")
@@ -6295,8 +6295,8 @@ def t_ws_more(S):
     bad = S.run("ws_cheat_bad", "60:quit\n", autoboot="Bad.ws",
                 extra={"roms/Bad.ws": rom, "cheats/Bad.cht": nes_cht("ZZZZ:55", "Not a code")})
     S.clean(bad)
-    S.check(bad.has(r"^EVT cheats_load .*n=1 enabled=0") or bad.has(r"^EVT cheats_load .*enabled=0"),
-            "a code that is not one stays off (%s)" % [e["_"] for e in bad.evt("cheats_load")])
+    S.check(bad.has(r"^EVT cheats_push console=5 codes=0") and not bad.has(r"^EVT cheats_push console=5 codes=[1-9]"),
+            "a code that is not one never reaches the core (%s)" % [e["_"] for e in bad.evt("cheats_push")])
     # play log
     log = os.path.join(r.root, "playlog.txt")
     lines = open(log).read().splitlines() if os.path.exists(log) else []
@@ -6325,8 +6325,8 @@ def t_ws_more(S):
         S.clean(r)
         S.check(r.has(r"^EVT ra_game_begin hash=%s hardcore=1" % md5),
                 "RetroAchievements is asked for the MD5 of the whole file (%s)" % [e["_"] for e in r.evt("ra_game_begin")])
-        S.check(r.has(r"^EVT cheats_load .*enabled=0") or r.has(r"cheats_hardcore on=1|hardcore.*cheat"),
-                "in Hardcore the cheat is off (%s)" % [e["_"] for e in r.evt("cheats_load")])
+        S.check(r.has(r"^EVT cheats_push console=5 codes=0 held=2"),
+                "in Hardcore the cheat is held back (%s)" % [e["_"] for e in r.evt("cheats_push")])
     finally:
         srv.stop()
     # a save from RetroArch's beetle-wswan folder
@@ -6357,6 +6357,74 @@ def t_nes_pal(S):
     if S.check(bool(p), "the pacing is logged (%s)" % [e["_"] for e in p][:2]):
         fr, ca = int(p[-1]["frames"]), int(p[-1]["calls"])
         S.check(abs(fr - ca * 50.007 / 59.94) <= 2, "%d frames in %d refreshes (5 of 6)" % (fr, ca))
+
+
+def t_nes_rewind(S):
+    """Rewind (the right stick, Settings > Gameplay > Rewind on) runs a NES
+    game backwards, as it does a Game Boy game."""
+    r = S.run("nes_rewind", "300:rstick-left:100\n+60:quit\n", autoboot="Back.nes",
+              config={"rewind": 60, "stick_rewind": 1}, extra={"roms/Back.nes": nes_rom(S, "nrom.nes")})
+    S.clean(r)
+    S.check(r.has(r"^EVT rewind begin") and r.has(r"^EVT rewind end"), "the right stick rewinds a NES game")
+
+
+def t_cheats_consoles(S):
+    """Cheats on every console, the same page: a Game Boy GameShark code from
+    the game's .cht changes the game; on a WonderSwan game a RAM code typed
+    on the page's keypad (its ':' key) and on a NES game a Game Genie code
+    typed on the system keyboard (L) are saved in the game's .cht, switched
+    on, act on the game, and are there again at the next start."""
+    gbrom = os.path.join(HERE, "..", "tests", "cheats", "rom", "gbcheat.gb")
+    if os.path.exists(gbrom):
+        g = open(gbrom, "rb").read()
+        plain = S.run("cheat_gb_plain", "120:shot=a.png\n+10:quit\n", autoboot="GbCheat.gb",
+                      extra={"roms/GbCheat.gb": g})
+        r = S.run("cheat_gb", "120:shot=a.png\n+10:quit\n", autoboot="GbCheat.gb",
+                  extra={"roms/GbCheat.gb": g, "cheats/GbCheat.cht": nes_cht("01E400C0", "Lives")})
+        S.clean(r)
+        S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1") and
+                r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(),
+                "Game Boy: a GameShark code (01E400C0) from the .cht changes the game")
+    else:
+        S.note("no gbcheat.gb (make -C ../tests/cheats/rom): the Game Boy leg is skipped")
+    # WonderSwan: typed on the keypad, with the ':' key where the dash was
+    rom = ws_rom(S, "h_sram.ws")
+    plain = S.run("cheat_ws_plain", "200:shot=a.png\n+10:quit\n", autoboot="Typed.ws",
+                  extra={"roms/Typed.ws": rom})
+    colon = (79 + 84 * 5, 169 + 72 * 2)
+    script = ("100:shot=b.png\n" + menu_pick(3) + "+20:triangle\n+20:shot=add.png\n" + taps("00100") +
+              "+4:touch=%d/%d\n" % colon + taps("55") + "+10:shot=typed.png\n" + taps(["save"]) +
+              "+20:circle\n+10:circle\n+30:shot=a.png\n+10:quit\n")
+    r = S.run("cheat_ws_typed", script, autoboot="Typed.ws", extra={"roms/Typed.ws": rom})
+    S.clean(r)
+    add = r.evt("cheat_add")
+    S.check(add and int(add[0]["rc"]) >= 0 and add[0]["len"] == "8",
+            "WonderSwan: 00100:55 typed on the keypad and saved (%s)" % [e["_"] for e in add])
+    S.picture(r, "typed.png", "cheat_ws_typed.png")
+    S.check(r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(), "...and it acts on the game")
+    chts = glob.glob(os.path.join(r.root, "cheats", "*.cht"))
+    cht = open(chts[0]).read() if chts else ""
+    S.check("00100:55" in cht and re.search(r"_enable\s*=\s*true", cht), "...and is in the game's .cht, on")
+    r2 = S.run("cheat_ws_again", "60:quit\n", autoboot="Typed.ws",
+               extra={"roms/Typed.ws": rom, "cheats/" + os.path.basename(chts[0]) if chts else "cheats/x.cht": cht})
+    S.clean(r2)
+    S.check(r2.has(r"^EVT cheats_push console=5 codes=1"), "the next start has it on again")
+    # NES: a Game Genie code from the system keyboard (letters)
+    nrom = nes_rom(S, "nrom.nes")
+    idx = nrom.index(b"\x0f\x16\x2a\x12") + 1
+    code = gg_encode(0xC000 + (idx + 1 - 16) % 0x4000, 0x30)
+    nplain = S.run("cheat_nes_plain", "200:shot=a.png\n+10:quit\n", autoboot="Genie.nes",
+                   extra={"roms/Genie.nes": nrom})
+    script = (menu_pick(3, wait=100) + "+20:triangle\n+20:l\n+4:type=%s\n+20:shot=typed.png\n" % code.lower() +
+              taps(["save"]) + "+20:circle\n+10:circle\n+40:shot=a.png\n+10:quit\n")
+    r = S.run("cheat_nes_typed", script, autoboot="Genie.nes", extra={"roms/Genie.nes": nrom})
+    S.clean(r)
+    S.check(r.has(r'host_ime title="Cheat code" text="%s"' % code.lower()) and
+            r.has(r"^EVT cheat_code_typed len=6 verdict=[1-9]"),
+            "NES: L opens the keyboard for the code; %s is read as a Game Genie code" % code)
+    add = r.evt("cheat_add")
+    S.check(add and int(add[0]["rc"]) >= 0, "...saved (%s)" % [e["_"] for e in add])
+    S.check(r.shot("a.png").tobytes() != nplain.shot("a.png").tobytes(), "...and it acts on the game")
 
 
 def t_nes_boot(S):
@@ -6754,7 +6822,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("ws_boot", t_ws_boot), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

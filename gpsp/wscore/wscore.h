@@ -29,6 +29,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,6 +76,9 @@ void wscore_set_rotation(int mode);          /* WSCORE_ROT_* */
 void wscore_set_vertical_play(int how);      /* WSCORE_UPRIGHT / _TURNED */
 void wscore_set_blend(int on);               /* default 1 */
 void wscore_set_mono_palette(int id);        /* 0 greyscale, 1 classic LCD tint */
+/* Local wall-clock seconds for a cartridge clock (the Vita's libc has no
+ * time zone); set before the game starts. */
+void wscore_set_time_source(time_t (*fn)(void));
 int wscore_showing(void);                    /* WSCORE_SHOW_* */
 /* Counts every change of WSCORE_SHOW_* since the game started. */
 unsigned wscore_layout_changes(void);

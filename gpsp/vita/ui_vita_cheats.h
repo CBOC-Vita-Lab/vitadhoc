@@ -518,6 +518,11 @@ static const kp_key CA_KEYS[] = {
    { "Save", 0, KP_OK, 3, 3, 3 },
 };
 #define CA_NKEYS  ((int)(sizeof(CA_KEYS) / sizeof(CA_KEYS[0])))
+/* The keys as this console has them: the dash key types the colon of a NES
+ * or WonderSwan RAM code ("AAAA:VV", "AAAAA:VV") there (ca_open).  Letters
+ * (a NES Game Genie code) and anything else come from the system keyboard:
+ * L opens it with the code typed so far. */
+static kp_key g_ca_keys[sizeof(CA_KEYS) / sizeof(CA_KEYS[0])];
 #define CA_KEY_DASH 17
 #define CA_KEY_OK   (CA_NKEYS - 1)
 #define CA_NAME_ROW 100          /* the cursor on the NAME field */
@@ -548,6 +553,12 @@ static void ca_open(void)
 {
    screen_to(SCR_CHEAT_ADD);
    memset(&g_ca, 0, sizeof(g_ca));
+   memcpy(g_ca_keys, CA_KEYS, sizeof(g_ca_keys));
+   if (g_pcfg.console == FE_CONSOLE_NES || g_pcfg.console == FE_CONSOLE_WSWAN)
+   {
+      g_ca_keys[CA_KEY_DASH].label = ":";
+      g_ca_keys[CA_KEY_DASH].ch = ':';
+   }
    ca_validate();
 }
 
@@ -568,7 +579,7 @@ static void ca_mono(int x, int y, const char *s, int n, uint16_t col)
 
 static ui_action screen_cheat_add(unsigned edges)
 {
-   static const kp_pad pad = { CA_KEYS, CA_NKEYS, 20, 68 };
+   static const kp_pad pad = { g_ca_keys, CA_NKEYS, 20, 68 };
    int gb = g_pcfg.console != FE_CONSOLE_GBA;
    int act = -1, r;
    const char *typed;
@@ -577,6 +588,38 @@ static ui_action screen_cheat_add(unsigned edges)
    r = ui_text_take(TXT_CHEAT_NAME, &typed);
    if (r > 0)
       snprintf(g_ca.name, sizeof(g_ca.name), "%s", typed);
+   r = ui_text_take(TXT_CHEAT_CODE, &typed);
+   if (r > 0)
+   {
+      /* the code from the system keyboard: capitals, '+' or ',' are lines */
+      int i, n = 0;
+      for (i = 0; typed[i] && n < CA_CODE_CAP - 1; i++)
+      {
+         char c = typed[i];
+         if (c >= 'a' && c <= 'z')
+            c = (char)(c - 32);
+         if (c == '+' || c == ',' || c == ';')
+            c = '\n';
+         if ((c == ' ' || c == '\n') && (!n || g_ca.code[n - 1] == ' ' ||
+                                          g_ca.code[n - 1] == '\n'))
+            continue;
+         g_ca.code[n++] = c;
+      }
+      g_ca.code[n] = '\0';
+      g_ca.len = n;
+      ca_validate();
+      fe_evt("cheat_code_typed len=%d verdict=%d", n, g_ca.verdict);
+   }
+   if ((edges & PSP_CTRL_LTRIGGER) && !g_ca.ask_discard)
+   {
+      char now[CA_CODE_CAP];
+      int i;
+      for (i = 0; i < g_ca.len; i++)
+         now[i] = g_ca.code[i] == '\n' ? '+' : g_ca.code[i];
+      now[g_ca.len] = '\0';
+      if (ui_text_open(TXT_CHEAT_CODE, "Cheat code", now, CA_CODE_CAP - 1) != 0)
+         snprintf(g_ca.note, sizeof(g_ca.note), "No keyboard: use the keys.");
+   }
 
    if (g_ca.ask_discard)
    {
@@ -626,8 +669,8 @@ static ui_action screen_cheat_add(unsigned edges)
    }
    if ((edges & PSP_CTRL_CROSS) && g_cursor != CA_NAME_ROW)
    {
-      act = CA_KEYS[g_cursor].act;
-      ch = CA_KEYS[g_cursor].ch;
+      act = g_ca_keys[g_cursor].act;
+      ch = g_ca_keys[g_cursor].ch;
       if (act == KP_CHAR && ch == '-' && !gb)
       {
          snprintf(g_ca.note, sizeof(g_ca.note), "The dash belongs to Game "
@@ -789,8 +832,8 @@ static ui_action screen_cheat_add(unsigned edges)
       footer(g_cursor == CA_NAME_ROW
              ? VID_GLYPH_X " name it   " VID_GLYPH_TRI " save   "
                VID_GLYPH_O " back"
-             : VID_GLYPH_X " type   " VID_GLYPH_SQ " delete   SELECT name   "
-               VID_GLYPH_TRI " save   " VID_GLYPH_O " back");
+             : VID_GLYPH_X " type   " VID_GLYPH_SQ " delete   L keyboard   "
+               "SELECT name   " VID_GLYPH_TRI " save   " VID_GLYPH_O " back");
    return UI_ACT_NONE;
 }
 

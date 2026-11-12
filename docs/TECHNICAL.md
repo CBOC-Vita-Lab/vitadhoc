@@ -1056,15 +1056,28 @@ dispatch-cache hits, [15] dispatch-cache fills.
 ## Renderer colour effects and 4bpp tile kernels (gpsp/video.cc)
 
 **Twin difference on testrom/objprio.gba.** The x86 and armhf (qemu-arm) twins
-showed different pictures while both passed app_tests. Cause: a stale armhf
-binary (build/armhf-nvoff predates OBJ_EXACT), not UB in video.cc. A fresh armhf
-build is pixel identical to x86 (green LSB masked, as run_tests.sh does).
-`gpsp/tools/tests/check_objprio_twins.py` guards it: it checks that both builds
-contain the `obj_exact_build` symbol (stale-binary detector), checks the colour
-classes at 11 x-positions on rows 20/24/27, and compares both pictures.
-ASAN+UBSAN on the x86 twin with objprio: no reports. Note: ASAN globals trip
-over fe_gbadual_boot's memcpy of the core data image (instance B copy); build
-the core video.o with `--param asan-globals=0`.
+once showed different pictures. The cause of that observation was a stale armhf
+binary, built before OBJ_EXACT. Both twins built from one tree give the same
+picture (0 pixels differ with the lowest green bit masked, as run_tests.sh
+does). `gpsp/tools/tests/check_objprio_twins.py` guards it: it refuses a build
+without the `obj_exact_build` symbol (the stale-binary detector), checks the
+colour classes at 11 positions on rows 20/24/27, and compares both pictures.
+
+**Undefined behaviour in the OBJ X decode (fixed).** UBSan reports `left shift
+of 16484 by 23 places cannot be represented in type 'int'` at three sites in
+video.cc. `(s32)(attr1 << 23)` shifts an int past its sign bit whenever attr1
+bit 8 (the sign of X) is set. The decode is now `obj_attr1_x()` in
+`video_obj.h`, which shifts an unsigned value. The original expression gives
+the same result on x86 and armhf at -O0 and -O2 for all 65536 attr1 values, so
+the UB was latent and did not cause the picture difference above.
+
+**Sanitizer runs.** A verification build of the x86 twin has UBSan on the
+renderer objects (core `video.o` and the render thread's `video_r.o`), with
+the rest of the core uninstrumented. The twelve testrom cartridges run with
+scripted input and report no runtime errors. The ASan build of the app objects
+reports a global-buffer-overflow in fe_gbadual_boot's memcpy of instance B's
+.data image, a redzone false positive outside video.cc; it does not appear in
+this build.
 
 **Kernels.** `video_merge.h`: merge_blend / merge_brightness. NEON on ARM, SSE2
 on x86, original loops elsewhere (MIPS/PSP ME) and for tails. Output is exactly
@@ -1080,6 +1093,8 @@ test_video_merge.cc (all 5-bit channel pairs x 17x17 coefficients, all 65536
 colours x BLDY 0..31, random palettes, starts 0..9 x lengths 0..40, guard words)
 and test_video_tile.cc (every nibble in every lane, hflip, all rendtypes) on x86,
 armhf NEON (qemu-arm) and armhf scalar.
+The OBJ X decode is tested by test_video_obj.c: all 65536 attr1 values under
+UBSan, with a negative control that the original expression must fail.
 
 **Vita build note.** gpsp/vita/Makefile builds with -mfpu=neon (NEON kernels
 active). The root gpsp/Makefile `vita` platform has -mcpu=cortex-a9 but no

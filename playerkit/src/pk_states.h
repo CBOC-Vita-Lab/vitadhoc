@@ -96,36 +96,64 @@ std::vector<uint8_t> shot_file(const Frame &f);
 bool parse_thumb(const std::vector<uint8_t> &file, std::vector<uint16_t> &rgb565, int *w, int *h);
 bool parse_shot(const std::vector<uint8_t> &file, std::vector<uint16_t> &rgb565, int *w, int *h);
 
+/* One state write, made on the game thread by prepare() (copies of the bytes and the two pictures,
+ * no file work) and carried out by commit() on any thread (a writer thread in the players). */
+struct StateJob {
+	int slot = 0;                    /* 1..10, or 0 for the resume point */
+	std::vector<uint8_t> data;       /* the state */
+	std::vector<uint8_t> thumb;      /* .thumb file bytes (empty: none) */
+	std::vector<uint8_t> shot;       /* .shot file bytes (empty: none) */
+	int64_t play_seconds = -1;
+	int64_t saved = 0;               /* Unix seconds */
+	int frame_w = 0, frame_h = 0;
+	std::string patch_key;           /* resume point only */
+	bool scene = false;              /* resume point only: also write the home screen's picture */
+};
+
+/* The slot list is read from the card once (one folder listing, then the .meta and .thumb of the slots
+ * in use) and kept in memory; saves, deletes and loads keep it up to date. So opening the menu or the
+ * Save states page reads nothing from the card, and a save knows which files exist and makes no lookups
+ * of missing names. All methods may be called from the game thread; commit() may run on another thread
+ * at the same time as the cache readers (info, scan, read_thumb, read_shot, used_count, resume_present),
+ * but load/remove/save_* must not overlap a commit of the same game (the players wait for their writer
+ * before them). */
 class States {
 public:
-	explicit States(const StateLayout &l) : l_(l) {}
+	explicit States(const StateLayout &l);
 	const StateLayout &layout() const { return l_; }
-	bool ensure_dirs() const;
+	bool ensure_dirs();
 
-	SlotInfo info(int slot) const;
-	/* all ten, the way the page wants them */
-	void scan(SlotInfo out[STATE_SLOTS]) const;
-	int used_count() const;
+	/* (re)reads the slot list from the card; done by the first call that needs it */
+	void rescan();
+	SlotInfo info(int slot);
+	/* all ten, the way the page wants them (from memory) */
+	void scan(SlotInfo out[STATE_SLOTS]);
+	int used_count();
 
+	/* the two halves of a save */
+	StateJob prepare(int slot, const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds = -1);
+	StateJob prepare_resume(const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds, const std::string &patch_key);
+	SaveReport commit(const StateJob &job);
+	/* both halves now */
 	SaveReport save(int slot, const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds = -1);
-	StateStatus load(int slot, std::vector<uint8_t> &out) const;
+	StateStatus load(int slot, std::vector<uint8_t> &out);
 	bool remove(int slot);
-	bool read_thumb(int slot, std::vector<uint16_t> &rgb565, int *w, int *h) const;
-	bool read_shot(int slot, std::vector<uint16_t> &rgb565, int *w, int *h) const;
+	bool read_thumb(int slot, std::vector<uint16_t> &rgb565, int *w, int *h);
+	bool read_shot(int slot, std::vector<uint16_t> &rgb565, int *w, int *h);
 
 	/* Continue */
 	SaveReport save_resume(const uint8_t *data, size_t n, const Frame &frame, int64_t play_seconds,
 	                       const std::string &patch_key);
-	bool resume_present() const;
-	StateStatus load_resume(std::vector<uint8_t> &out) const;
+	bool resume_present();
+	StateStatus load_resume(std::vector<uint8_t> &out);
 	enum PatchMatch { PATCH_UNKNOWN, PATCH_SAME, PATCH_DIFFERENT };
-	PatchMatch resume_patch(const std::string &patch_key) const;
+	PatchMatch resume_patch(const std::string &patch_key);
 	bool remove_resume();
 	/* True when a resume point should be written: `interval_ms` since the last one (or none yet). */
 	bool resume_due(uint64_t now_ms, uint64_t interval_ms = 60000) const;
 	void resume_mark(uint64_t now_ms) { last_resume_ms_ = now_ms; have_resume_mark_ = true; }
 
-	/* one level of undo for a state load */
+	/* one level of undo for a state load, kept in memory for the session (no file) */
 	bool undo_store(const uint8_t *data, size_t n);
 	StateStatus undo_fetch(std::vector<uint8_t> &out) const;
 	bool undo_available() const;
@@ -135,12 +163,33 @@ public:
 	bool save_scene(const Frame &frame);
 
 private:
+	struct Cached {
+		SlotInfo info;
+		bool has_main = false, has_old = false, has_meta = false, has_thumb = false, has_shot = false;
+		std::vector<std::string> extra;   /* other names of this slot seen in the listing (.tmp leftovers) */
+		std::vector<uint16_t> thumb_px;
+		std::vector<uint16_t> shot_px;
+		int shot_w = 0, shot_h = 0;
+		bool shot_loaded = false;
+	};
 	StateLayout l_;
+	SpinLock lk_;
+	bool scanned_ = false, dirs_ok_ = false, scene_dir_ok_ = false;
+	Cached slot_[STATE_SLOTS];
+	Cached rsm_;
+	bool rsm_pt_ = false;
+	std::string rsm_pt_text_;
+	bool rsm_pt_known_ = false;
+	std::vector<uint8_t> undo_;
+	bool undo_have_ = false;
 	uint64_t last_resume_ms_ = 0;
 	bool have_resume_mark_ = false;
-	SaveReport write_set(const std::string &path, const uint8_t *data, size_t n, const Frame &frame,
-	                     int64_t play_seconds, bool with_shot);
-	StateStatus read_checked(const std::string &path, std::vector<uint8_t> &out) const;
+	void ensure_scanned();
+	void scan_one(Cached &c, const std::string &path, const std::vector<std::string> *names, bool resume);
+	Cached &entry(int slot) { return slot == 0 ? rsm_ : slot_[slot - 1]; }
+	std::string path_of(int slot) const { return slot == 0 ? l_.resume_path() : l_.slot_path(slot); }
+	StateStatus read_checked(int slot, std::vector<uint8_t> &out);
+	WriteResult put_file(const std::string &path, const std::vector<uint8_t> &b, bool safe, Exists hint);
 };
 
 }  // namespace pk

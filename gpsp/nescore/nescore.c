@@ -136,6 +136,24 @@ int nescore_run_frame(nescore_t *core, unsigned buttons)
   return 0;
 }
 
+int nescore_repeat_frame(nescore_t *core)
+{
+  nescore_video_frame_t vf;
+  const uint16_t *px;
+  int w, h, pitch;
+  if (core != &g_core || !g_live) return -1;
+  px = nes_host_video(&w, &h, &pitch);
+  if (core->cb.video && px)
+  {
+    vf.pixels = (const uint16_t *)((const uint8_t *)px + (size_t)core->top * (size_t)pitch);
+    vf.width = core->width;
+    vf.height = core->height;
+    vf.pitch_bytes = (unsigned)pitch;
+    core->cb.video(core->cb.userdata, &vf);
+  }
+  return 0;
+}
+
 void nescore_set_skip_render(nescore_t *core, int skip)
 {
   (void)core;

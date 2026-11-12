@@ -6,6 +6,7 @@
 #include "../wscore/wscore.h"
 
 #include <string.h>
+#include "../frontend-common/fe_evt.h"
 
 static nescore_t *g_nes;                 /* the running NES machine, if any */
 static gbcore_callbacks_t g_gbcb;        /* the frontend's callbacks for it */
@@ -112,8 +113,40 @@ static unsigned nes_pad(uint16_t b)
   return n;
 }
 
+/* The NES at a rate the display does not have (PAL and Dendy games, 50.007
+ * frames a second): one core call per refresh runs the frames the refresh
+ * covers, 0 or 1 (5 of 6 on a 59.94 Hz display), an exact accumulator of
+ * frame time against refresh time.  An NTSC game (60.0988) runs one per call
+ * as before.  The picture of a call that runs none is the last one again. */
+static double g_disp_hz = 60000.0 / 1001.0, g_nes_acc;
+void gbmux_set_display_rate(double hz) { if (hz > 1.0) g_disp_hz = hz; g_nes_acc = 0; }
+
+static int nes_pal_frame(gbcore_t *c, uint16_t b)
+{
+  double fps = nescore_fps(g_nes);
+  (void)c;
+  if (fps > 55.0 || fps < 1.0)
+    return nescore_run_frame(g_nes, nes_pad(b));
+  static unsigned calls, frames;
+  int rc;
+  g_nes_acc += fps / g_disp_hz;
+  calls++;
+  if (g_nes_acc >= 1.0)
+  {
+    g_nes_acc -= 1.0;
+    frames++;
+    rc = nescore_run_frame(g_nes, nes_pad(b));
+  }
+  else
+    rc = nescore_repeat_frame(g_nes);
+  if (calls % 600 == 0)
+    fe_evt("nes_pace fps=%.3f display=%.3f frames=%u calls=%u", fps, g_disp_hz, frames, calls);
+  return rc;
+}
+
 int gbmux_run_frame(gbcore_t *c, uint16_t b)
 { if (IS_WS(c)) return wscore_run_frame(g_ws);   /* buttons: wscore_set_buttons */
+  if (IS_NES(c)) return nes_pal_frame(c, b);
   return IS_NES(c) ? nescore_run_frame(g_nes, nes_pad(b)) : gbcore_run_frame(c, b); }
 void gbmux_set_skip_render(gbcore_t *c, int s)
 { if (IS_WS(c)) wscore_set_skip_render(g_ws, s); else if (IS_NES(c)) nescore_set_skip_render(g_nes, s); else gbcore_set_skip_render(c, s); }

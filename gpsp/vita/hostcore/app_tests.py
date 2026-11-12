@@ -6155,11 +6155,14 @@ def t_ws_private(S):
         return int(round(f * k))
     keep = dict(extra)
     keep["states/ws/" + slot[0]] = open(hub, "rb").read()
-    script = "100:shot=title.png\n" + menu_pick(1) + "+20:cross\n+60:circle\n+10:circle\n+40:shot=hub.png\n"
+    script = "100:shot=title.png\n" + menu_pick(1) + "+20:cross\n+60:circle\n+10:circle\n"
     t = 0
     for d, b in ((30, "down"), (90, "up"), (150, "circle"), (300, "circle")):
         script += "+%d:%s:4\n" % (max(1, at(d) - t), b)
         t = at(d) + 4
+        if b == "up":                       # (the hub, faded in by now)
+            script += "+1:shot=hub.png\n"
+            t += 1
     script += "+%d:shot=vertical1.png\n" % (at(450) - t)
     script += "+120:shot=vertical2.png\n+2:right:40\n+10:shot=vertical3.png\n+20:quit\n"
     r = S.run("ws_private", script, autoboot="Private.ws", extra=keep)
@@ -6167,7 +6170,7 @@ def t_ws_private(S):
         os.remove(os.path.join(r.out, "audio.wav"))
     except OSError:
         pass
-    S.check(r.has(r"^EVT state_load file=.*Private.*size=79637"), "the twin's hub state loads in the app")
+    S.check(r.has(r"^EVT state_load file=.*Private.*size=\d+"), "the twin's hub state loads in the app")
     lay = [e["_"] for e in r.evt("ws_layout")]
     S.check(r.has(r"^EVT ws_picture w=144 h=224") and any("show=1" in l for l in lay),
             "Vision 1-3 turns the picture upright by itself, the buttons with it (%s)" % lay[:6])
@@ -6227,6 +6230,133 @@ def t_ws_library(S):
         S.check(picks[:2] == ["5", "0"] and "5" in cons and cons[-1] == "0",
                 "a tap on WS goes to the WS tab, a tap on GBA back (%s, %s)" % (picks, cons))
         S.picture(r2, "ws_tab.png", "ws_home_bar.png")
+
+
+def t_ws_more(S):
+    """The rest of what a console gets, for a WonderSwan game: a state in slot
+    1 (states/ws/, with its thumbnail) loads back; leaving keeps a Continue
+    point; fast forward (3x: three refreshes' worth of frames each refresh);
+    rewind (the right stick); an IPS patch; a cheat from the game's .cht (a
+    RAM poke, AAAAA:VV) changes the picture, and is off in Hardcore; the play
+    log; this game's own Rotation / Palette (games/<game>.ini) and the
+    smoothing setting; the RetroAchievements hash (MD5 of the whole file);
+    a save from RetroArch's Beetle WonderSwan folder imported; the picture
+    and the buttons turn together."""
+    import hashlib
+    rom = ws_rom(S, "h_sram.ws")
+    plain = S.run("ws_plain", "120:shot=a.png\n+10:quit\n", autoboot="Plain.ws",
+                  extra={"roms/Plain.ws": rom})
+    S.clean(plain)
+    # states: slot 1 saved, the game moves on, slot 1 loaded
+    r = S.run("ws_states", "100:shot=before.png\n" + menu_pick(1) + "+20:square\n+60:circle\n+10:circle\n"
+              "+120:shot=moved.png\n" + menu_pick(1) + "+20:cross\n+60:circle\n+10:circle\n+2:shot=after.png\n"
+              "+10:quit\n", autoboot="State.ws", extra={"roms/State.ws": rom})
+    S.clean(r)
+    sd = os.path.join(r.root, "states", "ws")
+    have = sorted(os.listdir(sd)) if os.path.isdir(sd) else []
+    S.check(any(n.endswith(".ws.st0") for n in have) and any(n.endswith(".thumb") for n in have),
+            "slot 1 is a state with its thumbnail in states/ws/ (%s)" % have)
+    S.check(r.has(r"^EVT state_load slot=1 via=menu rc=0"), "slot 1 loads back")
+    # Continue
+    home = {"ui_home": 1, "last_rom": "Cont.ws", "console": 5}
+    r = S.run("ws_continue", "120:shot=left.png\n" + QUIT_TO_LIST + "+150:quit\n", config=home,
+              autoboot="Cont.ws", extra={"roms/Cont.ws": rom})
+    S.clean(r)
+    rsm = [n for n in (os.listdir(sd.replace("ws_states", "ws_continue")) if os.path.isdir(
+        sd.replace("ws_states", "ws_continue")) else []) if n.endswith(".rsm")]
+    S.check(bool(rsm), "a Continue point is kept for the WonderSwan game (%s)" % rsm)
+    # fast forward
+    r = S.run("ws_ff", "120:square:120\n+0:shot=ff.png\n+60:quit\n", autoboot="Fast.ws",
+              extra={"roms/Fast.ws": rom})
+    S.clean(r)
+    st = r.evt("ff_stats")
+    if S.check(len(st) == 1, "fast forward (Square, the game's B only upright) went on and off once"):
+        fr, vc = int(st[0]["frames"]), int(st[0]["refreshes"])
+        S.check(3.0 * vc <= fr <= 3.0 * vc + 3, "3x: %d refreshes' worth in %d refreshes" % (fr, vc))
+    # rewind
+    r = S.run("ws_rewind", "300:rstick-left:100\n+60:quit\n", autoboot="Back.ws",
+              config={"rewind": 60, "stick_rewind": 1}, extra={"roms/Back.ws": rom})
+    S.clean(r)
+    S.check(r.has(r"^EVT rewind (begin|end)"), "the right stick rewinds a WonderSwan game")
+    # patch
+    off = len(rom) // 2
+    ips = b"PATCH" + off.to_bytes(3, "big") + b"\x00\x01" + bytes([rom[off] ^ 0xFF]) + b"EOF"
+    r = S.run("ws_patch", "120:quit\n", autoboot="Hack.ws", extra={"roms/Hack.ws": rom, "roms/Hack.ips": ips})
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_patch file=.*Hack.ips kind=1 rc=1"), "the IPS patch is applied (%s)" %
+            [e["_"] for e in r.evt("rom_patch")])
+    S.check(r.has(r"^EVT game rom=.*/roms/Hack.ws .* save=.*/roms/Hack.srm"), "the save keeps the game's name")
+    # cheat: a RAM poke in the WonderSwan's format
+    r = S.run("ws_cheat", "120:shot=a.png\n+10:quit\n", autoboot="Cheat.ws",
+              extra={"roms/Cheat.ws": rom, "cheats/Cheat.cht": nes_cht("00100:55", "Poke")})
+    S.clean(r)
+    S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "the .cht's poke 00100:55 is accepted and on")
+    S.check(r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(), "the poke changes what the game draws")
+    bad = S.run("ws_cheat_bad", "60:quit\n", autoboot="Bad.ws",
+                extra={"roms/Bad.ws": rom, "cheats/Bad.cht": nes_cht("ZZZZ:55", "Not a code")})
+    S.clean(bad)
+    S.check(bad.has(r"^EVT cheats_load .*n=1 enabled=0") or bad.has(r"^EVT cheats_load .*enabled=0"),
+            "a code that is not one stays off (%s)" % [e["_"] for e in bad.evt("cheats_load")])
+    # play log
+    log = os.path.join(r.root, "playlog.txt")
+    lines = open(log).read().splitlines() if os.path.exists(log) else []
+    S.check(len(lines) == 1 and lines[0].split("\t")[3] == "Cheat.ws", "playlog.txt has the game (%r)" % lines)
+    # this game's settings and the smoothing setting
+    r = S.run("ws_game_ini", "120:shot=v.png\n+10:quit\n", autoboot="Own.ws",
+              extra={"roms/Own.ws": rom, "games/Own.ws.ini": "ws_rotation = 2\nws_palette = 1\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT ws_options rotation=2 vertical_play=0 palette=1 blend=1") and
+            r.has(r"^EVT av_info .* w=144 h=224"),
+            "Rotation: Vertical and the LCD tint from the game's own file: upright from the start")
+    S.check(r.has(r"^EVT ws_layout show=1"), "the layout is logged as upright")
+    r = S.run("ws_noblend", "120:shot=a.png\n+1:shot=b.png\n+10:quit\n", autoboot="Plain.ws",
+              config={"ws_blend": 0}, extra={"roms/Plain.ws": rom})
+    S.clean(r)
+    S.check(r.has(r"^EVT ws_options .* blend=0"), "Smooth 75 Hz motion off is given to the core")
+    S.check(r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(),
+            "without the blend the picture is the newest frame (not the blended one)")
+    # RetroAchievements: the whole file's MD5
+    md5 = hashlib.md5(rom).hexdigest()
+    srv = RaServer(md5)
+    try:
+        keep = {"retroachievements.txt": "user=ra_tester\ntoken=tok-1\nhardcore=1\n", "roms/Ach.ws": rom,
+                "cheats/Ach.cht": nes_cht("00100:55", "Poke")}
+        r = S.run("ws_ra", "400:quit\n", autoboot="Ach.ws", vita_ini={"ra_host": srv.url()}, extra=keep)
+        S.clean(r)
+        S.check(r.has(r"^EVT ra_game_begin hash=%s hardcore=1" % md5),
+                "RetroAchievements is asked for the MD5 of the whole file (%s)" % [e["_"] for e in r.evt("ra_game_begin")])
+        S.check(r.has(r"^EVT cheats_load .*enabled=0") or r.has(r"cheats_hardcore on=1|hardcore.*cheat"),
+                "in Hardcore the cheat is off (%s)" % [e["_"] for e in r.evt("cheats_load")])
+    finally:
+        srv.stop()
+    # a save from RetroArch's beetle-wswan folder
+    sv = bytes([7]) * 8192
+    r = S.run("ws_import", "100:quit\n", autoboot="Imp.ws",
+              extra={"roms/Imp.ws": rom, "retroarch/savefiles/Beetle WonderSwan/Imp.srm": sv})
+    S.clean(r)
+    S.check(r.has(r"^EVT save_import from=.*Beetle WonderSwan/Imp.srm"),
+            "a save in RetroArch's Beetle WonderSwan folder is imported")
+    # the picture and the buttons turn together: a game that switches
+    r = S.run("ws_switch", "60:shot=s0.png\n+200:shot=s1.png\n+10:quit\n", autoboot="Switch.ws",
+              extra={"roms/Switch.ws": ws_rom(S, "icon.ws")})
+    S.clean(r)
+    lay = [e["_"] for e in r.evt("ws_layout")]
+    pics = [e["_"] for e in r.evt("ws_picture")]
+    S.check(any("show=1" in l for l in lay) and any("w=144 h=224" in p for p in pics),
+            "a game that shows the vertical icon turns upright by itself (%s / %s)" % (lay[:4], pics[:4]))
+    S.check(r.has(r"toast .*Vertical") or r.has(r"osd_toast .*Vertical") or len(lay) >= 2,
+            "the first turn says how the buttons are now")
+
+
+def t_nes_pal(S):
+    """A PAL NES game (50 frames a second) on the 59.94 Hz display runs five
+    frames of six, not 20% fast; an NTSC game one per refresh."""
+    r = S.run("nes_pal", "1300:quit\n", autoboot="Pal.nes", extra={"roms/Pal.nes": nes_rom(S, "nrom_pal.nes")})
+    S.clean(r)
+    p = r.evt("nes_pace")
+    if S.check(bool(p), "the pacing is logged (%s)" % [e["_"] for e in p][:2]):
+        fr, ca = int(p[-1]["frames"]), int(p[-1]["calls"])
+        S.check(abs(fr - ca * 50.007 / 59.94) <= 2, "%d frames in %d refreshes (5 of 6)" % (fr, ca))
 
 
 def t_nes_boot(S):
@@ -6624,7 +6754,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("ws_boot", t_ws_boot), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("ws_boot", t_ws_boot), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

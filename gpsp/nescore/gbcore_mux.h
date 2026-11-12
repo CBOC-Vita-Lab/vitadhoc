@@ -39,6 +39,9 @@ const char *gbmux_error(void);
 int gbmux_cheats_text(const char *codes);
 /* 1 when the machine's own battery data changed (NES and WonderSwan) */
 int gbmux_save_dirty(const gbcore_t *core);
+/* The rate fe_host runs the machine's frames at (one per display refresh):
+ * a 50 Hz NES game then runs 5 of 6 (default 59.94). */
+void gbmux_set_display_rate(double hz);
 
 gbcore_t *gbmux_create(const char *rom_path, const void *rom_data,
                        size_t rom_size, fe_console_t console,

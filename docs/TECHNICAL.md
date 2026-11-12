@@ -1026,6 +1026,26 @@ full, `X` external), with frame, REG_PC and the count of RAM translations the
 full-flush build has made: the files of an off and an on run must be identical.
 `GPSP_JCTR_LOG=file` writes the 16 counters at the first lookup of each frame.
 
+**WP3: indirect-branch dispatch cache (`GPSP_DCACHE`, ARM back end).**
+`arm_stub.S`'s indirect-branch stubs (`arm_indirect_branch_arm/_thumb` and the
+same-mode paths of the `_dual_` ones: `bx lr`, `pop {pc}`, `ldr pc`, `mov pc`)
+probe a direct-mapped table of {key, entry} pairs (`adc_table_arm/_thumb`,
+1024 entries each; key = the pc masked as the lookup masks it) before calling
+`block_lookup_address_*`: a hit costs ~14 instructions and no C call.
+`adc_put` enters only lookups that have no side effects -- a ROM/BIOS/VRAM-stub
+entry found in the hash, or a RAM block whose tag entry already holds its offset
+(the full-flush build's offset-0 block is translated again at every lookup, so
+it is never entered) -- and the table is emptied by every flush of either
+cache, tag-only flushes and reclaims included. A hit therefore returns exactly
+what the lookup would have, and skips nothing the lookup would have done.
+Run-time switch `dispatch_cache` (`gpsp_dispatch_cache_set(u32)`, default 1;
+twins: `GPSP_DISPATCH_CACHE`); with it off the table stays empty and every probe
+misses. The x86 stubs do not probe (the C side fills a table nothing reads).
+Return-address prediction was not changed: the ARM stubs are entered by `ldr pc`
+and leave by `bx r0`, with the C call in between a balanced `bl`/`bx lr`, so the
+host's return stack is not disturbed; a guest-level return stack (predicting
+`bx lr` from the matching `bl`) was not attempted.
+
 **Counters** (`gpsp_jit_counters`, now 16 slots; the first 7 as WP0, [4] with
 smc_partial on counts only flushes that discard RAM code): [7] tag-only
 flushes, [8] revived blocks, [9] RAM translations the full-flush build makes

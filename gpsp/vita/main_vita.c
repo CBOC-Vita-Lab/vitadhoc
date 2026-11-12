@@ -4240,6 +4240,11 @@ static int game_boot(const char *rom_path, fe_console_t console)
    {
       double fps = console == FE_CONSOLE_NES && rc == 0 ? gbmux_nes_fps() : 0.0;
       g_frame_ns = fps > 1.0 ? (uint64_t)(1e9 / fps + 0.5) : GBA_FRAME_NS;
+      /* the NES machine's calls come once per refresh (vsync) or once per
+       * g_frame_ns (timer): a 50 Hz game runs 5 frames of 6 on the first */
+      gbmux_set_display_rate(g_sw.pace_mode == PACE_VSYNC
+                             ? (double)plat_refresh_mhz() / 1000.0
+                             : 1e9 / (double)g_frame_ns);
    }
    /* The link menus' view of this game: can it host a Link Cable room in
     * this boot (instance B loaded)? */
@@ -4723,8 +4728,20 @@ static void game_loop(void)
       g_app_keys = ctl_game_mask(&g_pcfg.controls,
                                  chord_guard(pad & ~g_pad_block, pad));
       if (g_game_console == FE_CONSOLE_WSWAN)
-         wscore_set_buttons(ui_active() ? 0
-                            : ws_buttons(chord_guard(pad & ~g_pad_block, pad)));
+      {
+         /* The WonderSwan's buttons are the Vita's own.  Held sideways its
+          * A and B are Circle and Cross (Triangle and Square stay Rewind and
+          * Fast-forward); upright the four face buttons are its second
+          * cross, the game's: those shortcuts give way to it there (the
+          * right stick still fast-forwards). */
+         unsigned wb = ui_active() ? 0
+                     : ws_buttons(chord_guard(pad & ~g_pad_block, pad));
+         if (wscore_showing() == WSCORE_SHOW_HORIZONTAL)
+            wb &= ~(WSCORE_SQUARE | WSCORE_TRIANGLE);
+         else
+            fired &= ~(CTL_FIRE_FF_HELD | CTL_FIRE_FF_PRESS | CTL_FIRE_REWIND);
+         wscore_set_buttons(wb);
+      }
 
       /* The right stick is no control of a Game Boy: pulled down it is
        * the "button" of a cheat cartridge (the few codes that act only

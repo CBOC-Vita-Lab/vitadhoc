@@ -50,6 +50,9 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
 const char *nescore_error(void);
 int nescore_run_frame(nescore_t *core, unsigned buttons);
 void nescore_set_skip_render(nescore_t *core, int skip);
+/* A refresh with no NES frame (a 50 Hz game on a 60 Hz display): the last
+ * picture is handed to the video callback again, no sound. */
+int nescore_repeat_frame(nescore_t *core);
 void nescore_shutdown(nescore_t *core);
 
 unsigned nescore_sample_rate(const nescore_t *core);

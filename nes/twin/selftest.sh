@@ -241,14 +241,14 @@ WPAD="40:start,60:none,100:a+right,140:b,200:left+up,260:none,300:right"
 wide_same() {
 	rom=$1; shift
 	rm -f $T/wsl0.srm $T/wsl1.srm
-	run $rom --frames 400 --pad $WPAD "$@" --hashes $T/wh0 --ram-dump $T/wr0 --save-state $T/ws0 --state-frame 399 --wav $T/ww0.wav --srm $T/wsl0.srm
-	"$TWIN" $rom --frames 400 --pad $WPAD "$@" --wide 84 --wide-report --hashes $T/wh1 --ram-dump $T/wr1 --save-state $T/ws1 --state-frame 399 --wav $T/ww1.wav --srm $T/wsl1.srm >$T/wout 2>&1
+	run "$rom" --frames 400 --pad $WPAD "$@" --hashes $T/wh0 --ram-dump $T/wr0 --save-state $T/ws0 --state-frame 399 --wav $T/ww0.wav --srm $T/wsl0.srm
+	"$TWIN" "$rom" --frames 400 --pad $WPAD "$@" --wide 84 --wide-report --hashes $T/wh1 --ram-dump $T/wr1 --save-state $T/ws1 --state-frame 399 --wav $T/ww1.wav --srm $T/wsl1.srm >$T/wout 2>&1
 	cmp -s $T/wh0 $T/wh1 && cmp -s $T/wr0 $T/wr1 && cmp -s $T/ws0 $T/ws1 && cmp -s $T/ww0.wav $T/ww1.wav && [ -s $T/ws0 ] && [ -s $T/wh0 ] \
 		&& { [ ! -e $T/wsl0.srm ] || cmp -s $T/wsl0.srm $T/wsl1.srm; } && grep -q "^wide-centre: differing_px=0 " $T/wout || return 1
 	[ -z "$WIDE_SCOUT" ] && return 0
 	# the same with the scout running (a second machine started from the game's states)
 	rm -f $T/wsl1.srm
-	"$TWIN" $rom --frames 400 --pad $WPAD "$@" --wide 84 --scout 3 --wide-report --hashes $T/wh1 --ram-dump $T/wr1 --save-state $T/ws1 --state-frame 399 --wav $T/ww1.wav --srm $T/wsl1.srm >$T/wout 2>&1
+	"$TWIN" "$rom" --frames 400 --pad $WPAD "$@" --wide 84 --scout 3 --wide-report --hashes $T/wh1 --ram-dump $T/wr1 --save-state $T/ws1 --state-frame 399 --wav $T/ww1.wav --srm $T/wsl1.srm >$T/wout 2>&1
 	cmp -s $T/wh0 $T/wh1 && cmp -s $T/wr0 $T/wr1 && cmp -s $T/ws0 $T/ws1 && cmp -s $T/ww0.wav $T/ww1.wav \
 		&& { [ ! -e $T/wsl0.srm ] || cmp -s $T/wsl0.srm $T/wsl1.srm; } && grep -q "^wide-centre: differing_px=0 " $T/wout
 }
@@ -259,12 +259,15 @@ for m in $R/nrom.nes $R/mmc1.nes $R/mmc3.nes $R/gun.nes $T/sr/scroll_vert.nes $T
 done
 WIDE_SCOUT=""   # the public ROMs below: wide on/off (the scout identity over them: twin/wide_public.sh)
 if [ -n "$NES_TESTROMS" ] && [ -d "$NES_TESTROMS" ]; then
-	nw=0; bw=0
-	for r in $(find "$NES_TESTROMS" -iname '*.nes' | sort); do
-		nw=$((nw + 1))
-		wide_same "$r" || { bw=$((bw + 1)); echo "      differs: $r"; }
-	done
-	[ "$bw" = 0 ] && ok "wide view on/off: identical over $nw public test ROMs" || bad "wide view changes the emulation in $bw of $nw public test ROMs"
+	# (names with spaces: read line by line; ROMs this core does not load are counted apart)
+	find "$NES_TESTROMS" -iname '*.nes' | sort > $T/wlist
+	: > $T/wres
+	while IFS= read -r r; do
+		if ! "$TWIN" "$r" --info >/dev/null 2>&1; then echo "noload $r" >> $T/wres; continue; fi
+		wide_same "$r" && echo "same $r" >> $T/wres || { echo "differs $r" >> $T/wres; echo "      differs: $r"; }
+	done < $T/wlist
+	nw=$(grep -c '^same' $T/wres); bw=$(grep -c '^differs' $T/wres); nl=$(grep -c '^noload' $T/wres)
+	[ "$bw" = 0 ] && ok "wide view on/off: identical over $nw public test ROMs ($nl of $(wc -l < $T/wlist) files do not load in this core)" || bad "wide view changes the emulation in $bw of $((nw + bw)) public test ROMs"
 fi
 # truth: zero wrong real pixels; leads (mean real px per side) as a floor so a regression shows
 wtruth() {   # name frames pad min_lead_l min_lead_r [extra]

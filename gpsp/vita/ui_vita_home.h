@@ -942,7 +942,7 @@ static float hm_topbar(float dy, int n_scan)
          vs_text(VS_SUB, x, y, TAB[t], t == on ? HC_TEXT : HC_TEXT3);
          UI_TCH_BTN(t == on ? 0 : BROWSER_TAB_BUTTON(t), (int)(x / 2) - 4,
                     (int)(y / 2), (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 22);
-         x += vs_text_w(VS_SUB, TAB[t]) + (t < 2 ? 20 : 20);
+         x += vs_text_w(VS_SUB, TAB[t]) + 14;
       }
    }
 
@@ -955,26 +955,40 @@ static float hm_topbar(float dy, int n_scan)
     * fits whole before the search icon (a 1.4 UX review found the fifth
     * one under it), each chip its own touch target. */
    cx = x;
-   need = 0;
-   for (c = 0; c < FE_CONSOLE_COUNT; c++)
-      need += vs_text_w(VS_LABEL, CON[c]) + 2;
-   pad = (right - 106 - cx - need) / FE_CONSOLE_COUNT;
-   if (pad > 20) pad = 20;
-   if (pad < 6) pad = 6;
+   {
+      int font = VS_LABEL;
+      float ty = y + 7;
+      need = 0;
+      for (c = 0; c < FE_CONSOLE_COUNT; c++)
+         need += vs_text_w(font, CON[c]) + 2;
+      pad = (right - 106 - cx - need) / FE_CONSOLE_COUNT;
+      if (pad < 12)
+      {
+         /* not room for the label size: the caption size, whole */
+         font = VS_CAPTION;
+         ty = y + 9;
+         need = 0;
+         for (c = 0; c < FE_CONSOLE_COUNT; c++)
+            need += vs_text_w(font, CON[c]) + 2;
+         pad = (right - 106 - cx - need) / FE_CONSOLE_COUNT;
+      }
+      if (pad > 20) pad = 20;
+      if (pad < 4) pad = 4;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {
-      float w = vs_text_w(VS_LABEL, CON[c]) + pad;
+      float w = vs_text_w(font, CON[c]) + pad;
       if (c == g_pcfg.console)
       {
          vs_rrect(x, y + 2, w, 34, 17, HC_GLASS_HI);
-         vs_text(VS_LABEL, x + pad / 2, y + 7, CON[c], HC_TEXT);
+         vs_text(font, x + pad / 2, ty, CON[c], HC_TEXT);
       }
       else
-         vs_text(VS_LABEL, x + pad / 2, y + 7, CON[c], HC_TEXT3);
+         vs_text(font, x + pad / 2, ty, CON[c], HC_TEXT3);
       g_hm_chip_x[c] = (int)(x / 2);
       UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(x / 2), (int)(y / 2),
                  (int)((w + 2) / 2), 22);
       x += w + 2;
+   }
    }
    g_hm_chip_x[FE_CONSOLE_COUNT] = (int)(x / 2);
    {

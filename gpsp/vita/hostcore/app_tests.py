@@ -1521,6 +1521,71 @@ def t_chain(S):
                 (name, seen, sav[0x08 + n]))
 
 
+def t_smc(S):
+    """Self-modifying RAM code (testrom/smc.c, SMC_RANGE): code written into
+    IWRAM/EWRAM and rewritten by ARM and Thumb stores, STRB, STM, DMA,
+    CpuSet, through mirrors, over a page boundary, in linked chains and in a
+    decompress-and-run loop.  Run with smc_partial off (the full-flush build)
+    and on (GPSP_SMC_PARTIAL, with GPSP_SMC_VERIFY's run-time checks): every
+    result must be gpSP's, and the two runs must agree on every code-write
+    event (GPSP_SMC_TRACE), the picture and the sound."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-smc.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-smc.gba (make -C testrom smc): skipped")
+        return
+    names = ["ARM STR over ARM code", "Thumb STRH over Thumb code",
+             "STRB over an immediate", "STM, last word on code",
+             "STM, first word on code: stale until the next code write",
+             "DMA3 over code", "store rewrites the next instruction",
+             "store rewrites a later instruction of its block",
+             "linked successor rewritten", "predecessor rewritten",
+             "CpuSet over code", "EWRAM code across 0x02008000",
+             "data written next to live code (no trap)",
+             "decompress-and-run, 300 rounds", "IWRAM mirror", "EWRAM mirror",
+             "code patching its own immediate, 2000 times",
+             "ARM and Thumb code at one address", "chain of 20 linked blocks"]
+    extra = {"roms/gbadhoc-smc.gba": open(rom, "rb").read()}
+    runs = {}
+    for mode in ("0", "1"):
+        out = os.path.join(S.outdir, "smc%s" % mode)
+        trace = os.path.join(out, "trace.txt")
+        env = {"GPSP_SMC_PARTIAL": mode, "GPSP_SMC_TRACE": trace}
+        if mode == "1":
+            env["GPSP_SMC_VERIFY"] = "1"
+        r = S.run("smc%s" % mode, "120:shot=smc.png\n" + menu_pick(6, wait=20),
+                  autoboot="gbadhoc-smc.gba", extra=extra, env=env)
+        S.clean(r)
+        p = os.path.join(r.root, "roms", "gbadhoc-smc.sav")
+        sav = open(p, "rb").read() if os.path.exists(p) else b""
+        S.check(sav[:6] == b"SMCTST", "smc_partial=%s: the cartridge wrote its results" % mode)
+        if sav[:6] != b"SMCTST":
+            continue
+        for n, name in enumerate(names):
+            seen = int.from_bytes(sav[0x40 + 4 * n:0x44 + 4 * n], "little")
+            S.check(sav[0x08 + n] == 1, "smc_partial=%s: %s (saw %d, result %d)" %
+                    (mode, name, seen, sav[0x08 + n]))
+        tr = open(trace).read() if os.path.exists(trace) else None
+        wav = open(os.path.join(r.out, "audio.wav"), "rb").read() \
+            if os.path.exists(os.path.join(r.out, "audio.wav")) else b""
+        try:
+            shot = r.shot("smc.png").tobytes()
+        except OSError:
+            shot = b""
+        runs[mode] = (tr, wav, shot, sav)
+    if len(runs) == 2:
+        if runs["0"][0] is None:
+            S.note("this build has no SMC_RANGE (no trace): compared results only")
+        else:
+            S.check(runs["0"][0] == runs["1"][0],
+                    "the code-write events (trace) are the same with smc_partial off and on")
+            S.note("%d code-write events, %d cache-full" %
+                   (runs["0"][0].count("\nS ") + runs["0"][0].startswith("S "),
+                    runs["0"][0].count("\nF ") + runs["0"][0].startswith("F ")))
+        S.check(runs["0"][1] == runs["1"][1], "the sound is the same with smc_partial off and on")
+        S.check(runs["0"][2] == runs["1"][2], "the picture is the same with smc_partial off and on")
+        S.check(runs["0"][3] == runs["1"][3], "the battery RAM is the same with smc_partial off and on")
+
+
 def t_objprio(S):
     """The hardware's per-pixel OBJ priority (video.cc OBJ_EXACT;
     testrom/objprio.c): a sprite of a worse priority that a later sprite of a
@@ -6384,7 +6449,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_n
          ("cheats", t_cheats), ("play", t_play), ("touch", t_touch), ("touch_feedback", t_touch_feedback),
          ("typing", t_typing), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
-         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio),
+         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed),

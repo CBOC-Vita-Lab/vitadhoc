@@ -44,11 +44,19 @@ time is measured (`S9xSuperFXClock`, `snes_host_superfx_take_us`) and
 keep full speed (Doom 59 of 60 instead of 41) and the 3D view animates more slowly.
 The twin keeps 100%. A faster GSU interpreter is what would lift the 3D rate.
 
+Super FX pacing with the cycle-accurate GSU (Snes9x `8783b54` and follow-ups): the chip's budget per line is
+now `H_Max * SuperFXClockMultiplier / 100` GSU cycles (the real chip's speed at 100%) instead of a flat
+instruction count, so the chip runs fewer instructions per line than before (Doom 921 to 576, Stunt Race FX 920
+to 398, Yoshi's Island 681 to 443 steps a line, measured). The pacing hooks are unchanged (`S9xSuperFXClock`
+measures the GSU's time, `snes_host_set_superfx_clock` sets the share) and still work, in both modes. Option
+`gsu_cycles=0` selects the old flat budget (takes effect at the next ROM load). The game's own timing of the
+3D view follows the real chip now; whether the Vita keeps 60 is not measured here.
+
 ## Layout
 
 | Folder | What | Licence |
 |---|---|---|
-| `core/` | Snes9x 1.63 core sources, vendored. `PROVENANCE.md` lists the tag, commit, files and the four small local edits. | Snes9x licence (non-commercial, not GPL) |
+| `core/` | Snes9x 1.63 core sources, vendored. `PROVENANCE.md` lists the tag, commit, files, the upstream fixes taken after 1.63 and every local edit. | Snes9x licence (non-commercial, not GPL) |
 | `frontend/` | `host.cpp/.h`: the glue between Snes9x and any frontend (load ROM, run a frame, video, audio, pad, battery RAM, states). Third-party files for the Vita program in `third_party/` (vita2d, stb, Inter font). | MIT, "Copyright CBOC-Vita" |
 | `twin/` | The Linux headless runner `snes_twin` and the test scripts. | MIT |
 | `vita/` | The Vita program `snes.bin`: `main.cpp` (frontend) and the Makefile. | MIT |
@@ -74,7 +82,8 @@ GPLv2 VitAdhoc program. The SNES player is therefore a **second executable**:
 
 ```
 make -C snes/twin -j1                  # build/snes_twin  (takes a few minutes)
-snes/twin/selftest.sh                  # host glue tests: determinism, states, battery RAM, copier header
+snes/twin/selftest.sh                  # host glue tests: determinism, states, battery RAM (incl. forced write failures), copier header
+snes/twin/exact_check.sh               # proves the WAI skip and the SA-1 replay are exact (builds with and without them)
 snes/twin/conformance.py               # compare with the demo authors' reference screenshots (needs Pillow)
 snes/twin/baseline.sh > table.md       # the baseline table below
 ```
@@ -90,12 +99,28 @@ snes/twin/baseline.sh > table.md       # the baseline table below
 | `--wav F` | all audio, 32040 Hz stereo |
 | `--timing F` | per-frame CSV: total, 65816 CPU, APU, PPU, chip and frontend microseconds (turns profiling on) |
 | `--summary` | one line: fps and the time split (profiling on) |
-| `--srm F` | battery RAM file, loaded if present and saved at the end (`F.bak` keeps the previous file) |
+| `--srm F` | battery RAM file, loaded if present and saved at the end. The existing file is first copied to `F.bak` (or to `--backup-dir`) and the copy read back; if that fails the save is left untouched, the error is printed and the exit status is 3 |
+| `--backup-dir D` | keep the backups of `--srm` in `D` (`name.<crc>.bak`) like the Vita |
+| `--srm-async` | save like the Vita's writer thread (take, write on a thread, forget on failure, retry) |
+| `--unblock P` | after a failed save delete `P` and retry once (used by the failure tests) |
 | `--save-state F --state-frame N`, `--load-state F --state-frame N` | save after / load before frame N |
-| `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `transparency`, `echo_buffer` |
+| `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `gsu_cycles`, `transparency`, `echo_buffer` |
 
 Without `--timing`/`--summary` the program prints one line with the fps from the
 thread's **CPU time** (the build machine is shared, so wall time is not used).
+
+### Save safety (`frontend/host.cpp`)
+
+Battery RAM is written as: temp file, read back and compared, rename over the save, final file read back.
+The first overwrite of an existing save needs a **verified backup** (size and checksum read back; on the Vita
+`<name>.<crc>.bak` in the backup folder, an interrupted earlier copy is replaced, a different file with the
+same name gets the next name). If any step fails the existing save is untouched, `snes_host_save_error()` gives the
+real reason (log and an on-screen note on the Vita), and the Vita retries after 10 s, doubling to 60 s,
+without blocking the game thread. A longer `.srm` than the cartridge's RAM keeps its extra bytes.
+`CMemory::SaveSRAM` is not called by the frontend and uses the same temp-and-rename write. `selftest.sh`
+forces the failures (file size limit, backup folder blocked, truncated earlier backup, name clash, temp file
+blocked, stale `.bak`, retry after unblock, sync and async) and asserts the save stays byte-identical.
+Hardware behaviour of the Vita file system (rename over an existing file, fsync) is not tested here.
 
 ### Test ROMs
 

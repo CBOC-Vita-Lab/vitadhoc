@@ -144,3 +144,12 @@ gbadhoc-objprio.gba: crt0.S objprio.c gba.ld
 	  crt0.S objprio.c -lgcc
 	$(CROSS)objcopy -O binary gbadhoc-objprio.elf $@
 	@ls -l $@
+
+# Self-modifying RAM code (app_tests.py, smc; SMC_RANGE): see smc.c.
+.PHONY: smc
+smc: gbadhoc-smc.gba
+gbadhoc-smc.gba: crt0.S smc.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-smc.elf \
+	  crt0.S smc.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-smc.elf $@
+	@ls -l $@

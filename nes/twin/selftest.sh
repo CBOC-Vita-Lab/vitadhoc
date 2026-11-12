@@ -214,7 +214,7 @@ run $R/nrom.nes --frames 60 --opt no_sprite_limit=1 --sprite-exception $crc --ha
 cmp -s $T/e0.h $T/e2.h && ! cmp -s $T/e0.h $T/e1.h && ok "sprite limit: a game in the exception table keeps the 8 sprite limit even with 'no flicker' on" || bad "sprite exception table"
 
 # the relocatable core object (make -C nes/frontend): exports nothing but nes_host_*, links beside colliding globals
-NC=$HERE/../frontend/build/host/nescore.o
+NC=${NES_NESCORE:-$HERE/../frontend/build/host/nescore.o}   # NES_NESCORE: another build of the object
 if [ -f "$NC" ]; then
 	bad=$(nm -g --defined-only "$NC" | awk '$3 !~ /^nes_host_/' | wc -l)
 	[ "$bad" = 0 ] && ok "nescore.o: $(nm -g --defined-only "$NC" | wc -l) global symbols, all nes_host_*" || bad "nescore.o exports $bad other symbols"

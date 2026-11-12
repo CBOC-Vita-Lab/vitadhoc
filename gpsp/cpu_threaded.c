@@ -293,7 +293,8 @@ typedef struct
  *     whose links were re-pointed, [11] VM-domain syncs of re-pointed links
  *     (also counted in [2]), [12] kept translations dropped because their
  *     guest source changed, [13] RAM code reclaims (kept code thrown away for
- *     room), [14] dispatch-cache hits, [15] dispatch-cache misses. */
+ *     room), [14] dispatch-cache hits (lookups avoided), [15] dispatch-cache
+ *     fills (lookups through the C dispatcher that could be cached). */
 #define JCTR_N 16
 static u32 jctr[JCTR_N];
 #define JCTR(i) (jctr[i]++)
@@ -303,6 +304,13 @@ u32 gpsp_jit_counters(u32 *out, u32 n)
   u32 i;
   for (i = 0; i < n && i < JCTR_N; i++)
     out[i] = jctr[i];
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+  {
+    extern u32 adc_hits;   /* incremented by arm_stub.S */
+    if (n > 14)
+      out[14] = adc_hits;
+  }
+#endif
   return JCTR_N;
 }
 
@@ -310,12 +318,14 @@ u32 gpsp_jit_counters(u32 *out, u32 n)
 #include <stdio.h>
 static void __attribute__((destructor)) jctr_dump(void)
 {
+  u32 c[JCTR_N];
+  gpsp_jit_counters(c, JCTR_N);
   fprintf(stderr, "jctr: arm_blocks=%u thumb_blocks=%u syncs=%u sync_bytes=%u "
           "ram_flush=%u rom_flush=%u smc_flush=%u tag_flush=%u revived=%u "
           "fw_xlat=%u relinked=%u link_syncs=%u src_changed=%u reclaims=%u "
-          "dc_hit=%u dc_miss=%u\n", jctr[0], jctr[1], jctr[2],
-          jctr[3], jctr[4], jctr[5], jctr[6], jctr[7], jctr[8], jctr[9],
-          jctr[10], jctr[11], jctr[12], jctr[13], jctr[14], jctr[15]);
+          "dc_hit=%u dc_put=%u\n", c[0], c[1], c[2],
+          c[3], c[4], c[5], c[6], c[7], c[8], c[9],
+          c[10], c[11], c[12], c[13], c[14], c[15]);
 }
 #endif
 
@@ -333,6 +343,39 @@ static void smcr_patch_sync(void);
 #else
 #define SMCR_REAL()   (0)
 #define SMCR_PATCH_SYNC() do { } while (0)
+#endif
+
+/* GPSP_DCACHE (WP3; ARM back end): a direct-mapped table pc -> translated
+ * entry that arm_stub.S's indirect-branch stubs probe before calling
+ * block_lookup_address_* (a bx lr, pop {pc} or ldr pc that lands where it
+ * has landed before costs ~12 instructions instead of a C lookup).  Only
+ * lookups WITHOUT side effects are entered: a ROM/BIOS block found in the
+ * hash, or a RAM block whose tag entry already holds its offset (the
+ * full-flush build's first block after a flush, at offset 0, is translated
+ * again at every lookup, and smc_partial re-enacts that: never cached).  The
+ * table is emptied with every flush of either cache, tag-only ones included,
+ * so a hit always returns what the lookup would.  Run-time switch
+ * dispatch_cache (gpsp_dispatch_cache_set; twins: GPSP_DISPATCH_CACHE). */
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+#define ADC_BITS 10
+#define ADC_SIZE (1u << ADC_BITS)
+uintptr_t adc_table_arm[ADC_SIZE * 2];     /* {key, entry} pairs (arm_stub.S) */
+uintptr_t adc_table_thumb[ADC_SIZE * 2];
+u32 adc_hits;                              /* counted by the stub */
+u32 dispatch_cache_on = 1;
+static void adc_clear(void)
+{
+  memset(adc_table_arm, 0xFF, sizeof(adc_table_arm));
+  memset(adc_table_thumb, 0xFF, sizeof(adc_table_thumb));
+}
+void gpsp_dispatch_cache_set(u32 on)
+{
+  dispatch_cache_on = on ? 1 : 0;
+  adc_clear();
+}
+#define ADC_CLEAR() adc_clear()
+#else
+#define ADC_CLEAR() do { } while (0)
 #endif
 
 /* Cache invalidation */
@@ -3482,6 +3525,14 @@ static smcr_desc *smcr_d;  static u32 smcr_nd, smcr_capd;
 static u8 *smcr_srcb;      static u32 smcr_nsrc, smcr_capsrc;
 static smcr_exit *smcr_x;  static u32 smcr_nx, smcr_capx;
 static u32 smcr_hash[SMCR_HASH_SIZE];
+/* Which descriptor a live tag's ARM / Thumb translation is (index + 1).  The
+ * tag entries themselves (ramtag_type, at the end of the RAM cache) hold what
+ * the full-flush build holds there -- the cache offset the block was
+ * translated at, which is 0 for the first block after a flush, so that block
+ * counts as untranslated and is translated again at its next lookup; that is
+ * reproduced, so the entries cannot carry anything else. */
+static u32 smcr_tagd[0x8000][2];
+#define SMCR_TAGD(tag, thumb) (smcr_tagd[(u16)(tag) >> 1][(thumb)])
 static u8 *smcr_base;      /* start of the kept-code region */
 static u32 smcr_vptr;      /* the full-flush build's ram_translation_ptr */
 static u32 smcr_vgen = 1;  /* +1 per tag-only flush */
@@ -3491,6 +3542,20 @@ static u32 smcr_lookups;
 #include <stdio.h>
 static FILE *smcr_trace_f; /* GPSP_SMC_TRACE=file (twins): one line per flush
                             * of the full-flush build, in both modes */
+static FILE *smcr_jlog_f;  /* GPSP_JCTR_LOG=file (twins): the counters at the
+                            * first lookup of every frame */
+static u32 smcr_jlog_frame = ~0u;
+static void smcr_jlog(void)
+{
+  u32 i;
+  if (frame_counter == smcr_jlog_frame)
+    return;
+  smcr_jlog_frame = frame_counter;
+  fprintf(smcr_jlog_f, "%u", (unsigned)frame_counter);
+  for (i = 0; i < JCTR_N; i++)
+    fprintf(smcr_jlog_f, " %u", (unsigned)jctr[i]);
+  fprintf(smcr_jlog_f, "\n");
+}
 
 /* What translate_block_* leaves for smcr_translate (smcr_xlat_real). */
 static u32 smcr_last_end;
@@ -3736,11 +3801,11 @@ static void smcr_reclaim(void)
     src += len;
     x += d.n_exits;
     smcr_d[j] = d;
-    {
-      ramtag_type *te = get_ram_tag(d.tag);
-      if (d.key & 1) te->offset_thumb = j + 1;
-      else           te->offset_arm   = j + 1;
-    }
+    /* (A live tag can have two live translations of one mode: the
+     * full-flush build's block at cache offset 0 is translated again at its
+     * next lookup.  The entry names the newer; keep it pointing there.) */
+    if (SMCR_TAGD(d.tag, d.key & 1) == i + 1)
+      SMCR_TAGD(d.tag, d.key & 1) = j + 1;
     j++;
   }
   smcr_nd = j;
@@ -3950,7 +4015,7 @@ static u8 *smcr_lookup(u32 pc, u32 thumb, u16 *tagp)
   if (*slot) {
     /* Live in the full-flush build: no effect there.  Here it may need its
      * code back after a reclaim, and its links with it. */
-    idx = *slot;
+    idx = SMCR_TAGD(*tagp, thumb);
     if (smcr_d[idx - 1].code == SMCR_NOCODE) {
       if (!smcr_translate(pc, thumb, idx))
         return smcr_emergency("re-translation after reclaim");
@@ -3960,9 +4025,11 @@ static u8 *smcr_lookup(u32 pc, u32 thumb, u16 *tagp)
     return smcr_base + smcr_d[idx - 1].code;
   }
 
-  /* The full-flush build translates this block now. */
+  /* The full-flush build translates this block now: it records the offset
+   * first (SMC_RAM_PREPARE_TRANSLATION), then translates. */
   smcr_fw_xlat++;
   JCTR(9);
+  *slot = smcr_vptr;
   idx = smcr_find(pc, thumb, &versions);
   if (idx) {
     JCTR(8);
@@ -3992,7 +4059,7 @@ static u8 *smcr_lookup(u32 pc, u32 thumb, u16 *tagp)
   }
   smcr_tag(d, thumb);
   smcr_vptr += d->s_total;
-  *slot = idx;
+  SMCR_TAGD(*tagp, thumb) = idx;
   d->gen = smcr_vgen;
   d->tag = *tagp;
   if (!smcr_push_exits(d, thumb))
@@ -4034,12 +4101,16 @@ static void smcr_apply(void)
       if (smcr_trace_f)
         setvbuf(smcr_trace_f, NULL, _IOLBF, 0);
     }
+    e = getenv("GPSP_JCTR_LOG");
+    if (e && *e && &gbab_smc_partial != &smc_partial)
+      smcr_jlog_f = fopen(e, "w");
   }
   want = smc_partial && rom_translation_cache && ram_translation_cache &&
          ram_translation_cache == rom_translation_cache +
                                   rom_translation_cache_size &&
          rom_translation_cache_size >= 4 * SMC_RANGE_CARVE;
   smcr_drop_all();
+  smcr_vptr = 0;          /* init and flush both restart the RAM cache */
   smcr_on = want;
   smcr_base = want ? ram_translation_cache - SMC_RANGE_CARVE
                    : ram_translation_cache;
@@ -4078,8 +4149,13 @@ static void smcr_verify_state(const char *where)
     if (*(u16 *)smcr_tagp(pc) != d->tag)
       smcr_verify_fail(where, "start tag", pc, d->tag);
     te = get_ram_tag(d->tag);
-    if ((thumb ? te->offset_thumb : te->offset_arm) != i + 1)
-      smcr_verify_fail(where, "tag entry", pc, i + 1);
+    (void)te;
+    {
+      u32 t = SMCR_TAGD(d->tag, thumb);
+      if (!t || t > smcr_nd || smcr_d[t - 1].key != d->key ||
+          smcr_d[t - 1].gen != smcr_vgen)
+        smcr_verify_fail(where, "tag descriptor", pc, i + 1);
+    }
     for (a = pc; a < d->end; a += 2) {
       h = ((a >> 24) == 3 ? (a & 0x7FFF) : 0x8000 + (a & 0x3FFFF)) >> 1;
       if (!*(u16 *)smcr_tagp(a))
@@ -4141,6 +4217,7 @@ static void smcr_verify_revival(u32 idx, u32 thumb)
 /* WP3's dispatch cache, when built, is emptied with every flush. */
 static void smcr_dc_clear(void)
 {
+  ADC_CLEAR();
 }
 /* Hooks in translate_block_* (locals: translation_ptr, block_end_pc, the
  * external exits).  SMCR_REAL(): emitting for smcr_translate. */
@@ -4167,7 +4244,11 @@ static void smcr_dc_clear(void)
   if (smcr_on) { smcr_virtual_flush(); } else { flush_translation_cache_ram(); } \
 } while (0)
 #define SMCR_FULL_FLUSH_HOOK() do { if (smcr_on) { smcr_full_flush(); return; } } while (0)
-#define SMCR_DEPTH0() do { if (smcr_on && !translate_depth) smcr_depth0(); } while (0)
+#define SMCR_DEPTH0() do {                                                     \
+  if (!translate_depth) {                                                     \
+    if (smcr_jlog_f) smcr_jlog();                                             \
+    if (smcr_on) smcr_depth0();                                               \
+  } } while (0)
 #define SMCR_RAM_LOOKUP(pc, tagp) \
   do { if (smcr_on) return smcr_lookup_entry((pc), thumb, (tagp)); } while (0)
 
@@ -4792,8 +4873,8 @@ u32 dispatch_cache_thumb[2 << DISPATCH_CACHE_BITS] __attribute__((aligned(64)));
 #define DC_MASK ((1u << DISPATCH_CACHE_BITS) - 1)
 void dispatch_cache_clear(void)
 {
-  memset(dispatch_cache_arm, 0xFF, sizeof(dispatch_cache_arm));
-  memset(dispatch_cache_thumb, 0xFF, sizeof(dispatch_cache_thumb));
+  memset(adc_table_arm, 0xFF, sizeof(adc_table_arm));
+  memset(adc_table_thumb, 0xFF, sizeof(adc_table_thumb));
 }
 #define DC_PUT(tbl, key, ptr) do {                                            \
   u32 k_ = (key), i_ = (k_ & DC_MASK) * 2;                                    \
@@ -4801,6 +4882,41 @@ void dispatch_cache_clear(void)
 } while (0)
 #else
 #define DC_PUT(tbl, key, ptr) do { } while (0)
+#endif
+
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+/* Enter a lookup that had no side effects (see GPSP_DCACHE above). */
+static void adc_put(u32 thumb, u32 pc, u8 *ret)
+{
+  u32 key, idx, region;
+  uintptr_t *tbl;
+  if (!dispatch_cache_on || ret == BLOCK_LOOKUP_UNMAPPABLE)
+    return;
+  key = GBA_PC(pc) & (thumb ? ~1u : ~3u);
+  region = key >> 24;
+  if (region == 2 || region == 3) {
+    u32 c = key;
+    u16 *tagp;
+    ramtag_type *te;
+    RAM_MIRROR_CANON(region, c);
+    tagp = region == 2 ? (u16 *)(ewram + (c & 0x3FFFF) + 0x40000)
+                       : (u16 *)(iwram + (c & 0x7FFF));
+    if (!VALID_TAG(*tagp))
+      return;
+    te = get_ram_tag(*tagp);
+    if (!(thumb ? te->offset_thumb : te->offset_arm))
+      return;
+  } else if (region != 0 && (region < 5 || region > 0xD || region == 4))
+    return;
+  tbl = thumb ? adc_table_thumb : adc_table_arm;
+  idx = (key >> (thumb ? 1 : 2)) & (ADC_SIZE - 1);
+  tbl[idx * 2 + 1] = (uintptr_t)ret;
+  tbl[idx * 2] = key;
+  JCTR(15);
+}
+#define ADC_PUT(thumb, pc, ret) adc_put((thumb), (pc), (ret))
+#else
+#define ADC_PUT(thumb, pc, ret) do { } while (0)
 #endif
 
 u8 function_cc *block_lookup_address_arm(u32 pc)
@@ -4819,6 +4935,7 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
       translate_icache_sync_ranged(); BADJUMP_NOTE_PC(pc);
 #endif
       DC_PUT(dispatch_cache_arm, DC_KEY_ARM(pc), ret);
+      ADC_PUT(0, pc, ret);
       return ret;
     }
   }
@@ -4844,6 +4961,7 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
       translate_icache_sync(); BADJUMP_NOTE_PC(pc);
       JIT_CODE_CHECK_ENTRY(ret);
       DC_PUT(dispatch_cache_thumb, DC_KEY_THUMB(pc), ret);
+      ADC_PUT(1, pc, ret);
       return ret;
     }
   }
@@ -6209,6 +6327,7 @@ void flush_translation_cache_ram(void)
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
 #endif
+  ADC_CLEAR();
   /* Flushes RAM caches avoiding doing too much work (ie. wiping unused memory) */
   flush_ram_count++;
   flush_ram_total++;
@@ -7951,6 +8070,7 @@ void flush_translation_cache_rom(void)
 #ifdef DISPATCH_CACHE
   dispatch_cache_clear();
 #endif
+  ADC_CLEAR();
 #ifdef DRPROF_TWIN
   drprof_forget_rom(rom_translation_ptr);
 #endif
@@ -7996,6 +8116,7 @@ void init_dynarec_caches(void)
   iwram_code_min = 0;
   iwram_code_max = 0x8000;
   SMCR_APPLY();
+  ADC_CLEAR();
   /* NO smc_gates_reset() HERE.  See flush_dynarec_caches below: a reset keeps
    * the same ROM, and ROM load already resets the table. */
 }

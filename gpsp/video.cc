@@ -2236,17 +2236,21 @@ static void order_layers(u32 layer_flags, u32 vcnt)
 // Bit 9 is set if the pixel belongs to a 1st target layer
 // Bit 10 is set if the pixel belongs to a 2nd target layer
 // Bit 11 is set if the pixel belongs to a ST-object
-#ifndef VIDEO_MERGE_ORIG
+#ifdef VIDEO_MERGE_CHECK
+#include <stdio.h>
+#include <stdlib.h>
+static unsigned long long video_merge_checked;
+static void video_merge_report(void)
+{ fprintf(stderr, "VIDEO_MERGE_CHECK: %llu pixels identical to the original loops\n", video_merge_checked); }
+__attribute__((constructor)) static void video_merge_install(void) { atexit(video_merge_report); }
+#endif
+
+#if defined(VIDEO_MERGE_ORIG) || defined(VIDEO_MERGE_CHECK)
+// The original per-pixel loop: -DVIDEO_MERGE_ORIG builds with it (the
+// reference the speed is compared with), -DVIDEO_MERGE_CHECK runs it beside
+// the kernel on every call and stops at the first difference (a test build).
 template <blendtype bldtype, bool st_objs>
-static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
-  VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_MERGE_PX, end - start);
-  vm_merge_blend<bldtype, st_objs>(palette_ram_converted,
-    read_ioreg(REG_BLDALPHA), read_ioreg(REG_BLDY), start, end, dst, src);
-  VP_LEAVE2(VP_T_MERGE);
-}
-#else
-template <blendtype bldtype, bool st_objs>
-static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
+static void merge_blend_ref(u32 start, u32 end, u16 *dst, u32 *src) {
   u32 bldalpha = read_ioreg(REG_BLDALPHA);
   u32 brightf = MIN(16, read_ioreg(REG_BLDY) & 0x1F);
   u32 blend_a = MIN(16, (bldalpha >> 0) & 0x1F);
@@ -2336,18 +2340,34 @@ static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
 
 #endif
 
-// Applies brighten/darken effect to a bunch of color-indexed pixels.
-#ifndef VIDEO_MERGE_ORIG
-template <blendtype bldtype>
-static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
-  VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_BRIGHT_PX, end - start);
-  vm_merge_brightness<bldtype>(palette_ram_converted, read_ioreg(REG_BLDY),
-                               start, end, srcdst);
-  VP_LEAVE2(VP_T_MERGE);
-}
+template <blendtype bldtype, bool st_objs>
+static void merge_blend(u32 start, u32 end, u16 *dst, u32 *src) {
+#ifdef VIDEO_MERGE_ORIG
+  merge_blend_ref<bldtype, st_objs>(start, end, dst, src);
 #else
+  VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_MERGE_PX, end - start);
+#ifdef VIDEO_MERGE_CHECK
+  u16 chk[GBA_SCREEN_PITCH];
+  memcpy(chk, dst, sizeof(chk));
+  merge_blend_ref<bldtype, st_objs>(start, end, chk, src);
+#endif
+  vm_merge_blend<bldtype, st_objs>(palette_ram_converted,
+    read_ioreg(REG_BLDALPHA), read_ioreg(REG_BLDY), start, end, dst, src);
+#ifdef VIDEO_MERGE_CHECK
+  if (memcmp(chk, dst, sizeof(chk))) {
+    fprintf(stderr, "VIDEO_MERGE_CHECK: merge_blend<%d,%d> differs\n", (int)bldtype, (int)st_objs);
+    abort();
+  }
+  video_merge_checked += end - start;
+#endif
+  VP_LEAVE2(VP_T_MERGE);
+#endif
+}
+
+// Applies brighten/darken effect to a bunch of color-indexed pixels.
+#if defined(VIDEO_MERGE_ORIG) || defined(VIDEO_MERGE_CHECK)
 template <blendtype bldtype>
-static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
+static void merge_brightness_ref(u32 start, u32 end, u16 *srcdst) {
   u32 brightness = MIN(16, read_ioreg(REG_BLDY) & 0x1F);
 
   VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_BRIGHT_PX, end - start);
@@ -2371,6 +2391,30 @@ static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
   VP_LEAVE2(VP_T_MERGE);
 }
 #endif
+
+template <blendtype bldtype>
+static void merge_brightness(u32 start, u32 end, u16 *srcdst) {
+#ifdef VIDEO_MERGE_ORIG
+  merge_brightness_ref<bldtype>(start, end, srcdst);
+#else
+  VP_ENTER2(VP_T_MERGE); VP_CNT(VP_C_BRIGHT_PX, end - start);
+#ifdef VIDEO_MERGE_CHECK
+  u16 chk[GBA_SCREEN_PITCH];
+  memcpy(chk, srcdst, sizeof(chk));
+  merge_brightness_ref<bldtype>(start, end, chk);
+#endif
+  vm_merge_brightness<bldtype>(palette_ram_converted, read_ioreg(REG_BLDY),
+                               start, end, srcdst);
+#ifdef VIDEO_MERGE_CHECK
+  if (memcmp(chk, srcdst, sizeof(chk))) {
+    fprintf(stderr, "VIDEO_MERGE_CHECK: merge_brightness<%d> differs\n", (int)bldtype);
+    abort();
+  }
+  video_merge_checked += end - start;
+#endif
+  VP_LEAVE2(VP_T_MERGE);
+#endif
+}
 
 // Fills a segment using the backdrop color (in the right mode).
 template<rendtype rdmode, typename dsttype>

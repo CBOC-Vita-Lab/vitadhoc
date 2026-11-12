@@ -298,17 +298,47 @@ cheat_hook_builder(thumb)
 @ These are b stubs for performing indirect branches. They are not
 @ linked to and don't return, instead they link elsewhere.
 
+@ GPSP_DCACHE (WP3, cpu_threaded.c adc_put): before the C lookup, probe a
+@ direct-mapped table of {key, entry} pairs that holds only lookups without
+@ side effects and is emptied by every flush.  key = the pc as the lookup
+@ masks it (28 bits, ~3 for ARM, ~1 for Thumb); index = key bits above the
+@ instruction alignment.  r0 = pc (kept on a miss); r1, r2, lr are free here
+@ (the C call clobbers them anyway); the guest flags are already in reg_flags.
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+#define ADC_BITS 10
+#define adc_probe(table, keyclr, shift)                                      ;\
+  bic r1, r0, #(keyclr)                   /* r1 = key                      */;\
+  ldr r2, =table                                                             ;\
+  mov lr, r1, lsl #(32 - ADC_BITS - shift)                                   ;\
+  add r2, r2, lr, lsr #(32 - ADC_BITS - 3) /* r2 = &table[index]           */;\
+  ldr lr, [r2]                                                               ;\
+  cmp lr, r1                                                                 ;\
+  bne 7f                                                                     ;\
+  ldr r0, [r2, #4]                        /* the entry                     */;\
+  ldr r1, =adc_hits                                                          ;\
+  ldr r2, [r1]                                                               ;\
+  add r2, r2, #1                                                             ;\
+  str r2, [r1]                                                               ;\
+  restore_flags()                                                            ;\
+  bx r0                                                                      ;\
+7:
+#else
+#define adc_probe(table, keyclr, shift)
+#endif
+
 @ Input:
 @ r0: PC to branch to
 
 defsymbl(arm_indirect_branch_arm)
   save_flags()
+  adc_probe(adc_table_arm, 0xF0000003, 2)
   call_c_function(block_lookup_address_arm)
   restore_flags()
   bx r0
 
 defsymbl(arm_indirect_branch_thumb)
   save_flags()
+  adc_probe(adc_table_thumb, 0xF0000001, 1)
   call_c_function(block_lookup_address_thumb)
   restore_flags()
   bx r0
@@ -318,6 +348,7 @@ defsymbl(arm_indirect_branch_dual_arm)
   tst r0, #0x01                           @ check lower bit
   bne 1f                                  @ if set going to Thumb mode
                                           @ ARM target: bit 1 is dropped by the lookup (word below)
+  adc_probe(adc_table_arm, 0xF0000003, 2)
   call_c_function(block_lookup_address_arm)
   restore_flags()
   bx r0                                   @ keep executing arm code
@@ -336,6 +367,7 @@ defsymbl(arm_indirect_branch_dual_thumb)
   save_flags()
   tst r0, #0x01                           @ check lower bit
   beq 1f                                  @ if set going to ARM mode
+  adc_probe(adc_table_thumb, 0xF0000001, 1)
   call_c_function(block_lookup_address_thumb)
   restore_flags()
   bx r0                                   @ keep executing thumb code
@@ -350,6 +382,9 @@ defsymbl(arm_indirect_branch_dual_thumb)
   restore_flags()
   bx r0
 .size arm_indirect_branch_dual_thumb, .-arm_indirect_branch_dual_thumb
+#if defined(GPSP_DCACHE) && GPSP_DCACHE
+.ltorg                                    @ adc_probe's literals, in reach
+#endif
 
 @ Update the cpsr.
 

@@ -6,8 +6,8 @@
 #   usage: count_insns.sh [binary] [scene] [short] [long]
 BIN=${1:-build/arm_bench}
 SCENE=${2:-0}
-S=${3:-20}
-L=${4:-60}
+S=${3:-2}
+L=${4:-6}
 count() { qemu-arm -one-insn-per-tb -d exec,nochain -D /dev/stdout "$BIN" "$1" "$SCENE" "$2" 2>/dev/null | grep -c '^Trace'; }
 A=$(count $S 0); B=$(count $L 0)
 C=$(count $S 1); D=$(count $L 1)

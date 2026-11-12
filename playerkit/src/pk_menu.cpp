@@ -1269,7 +1269,13 @@ void Menu::draw_hints(Gfx *g, Text *t)
 {
 	float xr = 924;
 	int ge = cfg_.enter_is_cross ? GLYPH_CROSS : GLYPH_CIRCLE, gc = cfg_.enter_is_cross ? GLYPH_CIRCLE : GLYPH_CROSS;
-	if (modal_ == M_NONE && page_ == PAGE_TOP) {
+	if (modal_ == M_CAPTURE) return;              /* any button is the answer: no hints */
+	if (modal_ != M_NONE) {
+		hint(g, t, &xr, gc, "Cancel", 0);
+		hint(g, t, &xr, ge, "Confirm", 0);
+		return;
+	}
+	if (page_ == PAGE_TOP) {
 		hint(g, t, &xr, gc, "Resume", 0);
 		hint(g, t, &xr, ge, "Select", 0);
 		return;
@@ -1582,7 +1588,8 @@ void Menu::draw(Gfx *g, Text *t)
 	if (modal_) draw_modal(g, t);
 	/* over the game picture on the control centre; on the pages in the place of the help line, where it
 	 * covers no header, hint or row the player is looking at */
-	if (page_ == PAGE_TOP && !modal_) notices_.draw(g, t, PK_HEX(cfg_.accent, 255), 60, true);
+	if (page_ == PAGE_TOP) notices_.draw(g, t, PK_HEX(cfg_.accent, 255), 60, true);
+	else if (page_ == PAGE_STATES && !modal_) notices_.draw(g, t, PK_HEX(cfg_.accent, 255), 116, true);   /* over the slot's picture, not its buttons */
 	else notices_.draw(g, t, PK_HEX(cfg_.accent, 255), HELP_Y + 2, false);
 }
 

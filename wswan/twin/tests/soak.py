@@ -71,6 +71,8 @@ def main():
                     roms.append(("public/" + f, os.path.join(root, f)))
     if private and os.path.isfile(private):
         roms.append(("private-acceptance", private))
+    with open(os.path.join(work, "roms.txt"), "w") as lf:     # the inputs, for the API comparison (arm_compare.sh)
+        for label, path in roms: lf.write(path + "\n")
     fails = 0
     for i, (label, path) in enumerate(roms):
         d = os.path.join(work, "run%02d" % i); os.makedirs(d, exist_ok=True)

@@ -56,7 +56,7 @@ HERE = Path(__file__).resolve().parent
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = HERE / "out"
 CORES = os.cpu_count() or 2
-TIERS = ("quick", "default", "full")
+TIERS = ("quick", "default", "full", "release")
 FAILING = ("FAIL", "BLOCKED")
 
 # ---- toolchains -------------------------------------------------------------
@@ -173,11 +173,20 @@ STEPS = [
     # ---- quick: unit tests, twin selftests, playerkit, widekit, save tests ----
     Step("release-unit", "download checker and release contracts (tests/, python unittest)",
          "python3 -m unittest discover -s tests", "quick", {"release"}, inputs=["."], parse="unittest"),
-    Step("release-package", "VitAdhoc.vpk: no BIOS or games inside, notices, runtime hash",
+    # Development: the package test checks the VPK built here (gpsp/vita/VitAdhoc.vpk,
+    # `make vpk`) when there is one, without the release hash pins; it skips the
+    # package checks when nothing has been built.
+    Step("release-package", "VitAdhoc.vpk (fresh build if any): no BIOS or games inside, notices",
          "python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py", "quick",
          {"release"}, inputs=["."], parse="unittest"),
+    # Release time only (--release): the committed root VitAdhoc.vpk with its pinned
+    # runtime hashes, and SHA256SUMS against the tree. Both are stale by design
+    # between releases (tools/pin-release.py refreshes them).
+    Step("release-package-pinned", "the committed VitAdhoc.vpk: notices, pinned eboot.bin / snes.bin hashes",
+         "RELEASE_VPK=VitAdhoc.vpk python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py",
+         "release", {"release"}, inputs=["."], parse="unittest"),
     Step("check-files", "SHA256SUMS: every listed file matches (tools/check-files.py)",
-         "python3 tools/check-files.py --directory .", "quick", {"release"}, inputs=["."],
+         "python3 tools/check-files.py --directory .", "release", {"release"}, inputs=["."],
          parse="check_files"),
     Step("gamedb", "title database: gamedb.c against assets/gamedb.txt and make_gamedb.py",
          "make -C gpsp/vita/tests/gamedb test", "quick", {"gpsp", "gamedb"}, inputs=["gpsp/"],
@@ -622,8 +631,10 @@ def path_tags(p):
 def tiers_allowed(a):
     if a.quick:
         return {"quick"}
-    if a.full:
+    if getattr(a, "release", False):
         return set(TIERS)
+    if a.full:
+        return {"quick", "default", "full"}
     return {"quick", "default"}
 
 
@@ -646,7 +657,7 @@ def build_plan(a):
         how = "--changed against %s (tags: %s)" % (a.base, ", ".join(sorted(tags)))
     else:
         wanted = {s.name for s in STEPS if s.tier in tiers_allowed(a)}
-        how = "tier " + ("quick" if a.quick else "full" if a.full else "default")
+        how = "tier " + ("quick" if a.quick else "release" if a.release else "full" if a.full else "default")
     if unknown:
         sys.exit("gate: unknown step(s) in --skip: %s" % ", ".join(unknown))
     order, seen = [], set()
@@ -982,6 +993,8 @@ def main(argv=None):
     tier = ap.add_mutually_exclusive_group()
     tier.add_argument("--quick", action="store_true", help="the fast subset")
     tier.add_argument("--full", action="store_true", help="everything, incl. armhf and the Vita build")
+    tier.add_argument("--release", action="store_true",
+                      help="--full plus the release pins (committed VPK hashes, SHA256SUMS)")
     ap.add_argument("--changed", action="store_true", help="only steps selected by changed paths")
     ap.add_argument("--base", default="HEAD", help="what --changed compares with (default HEAD)")
     ap.add_argument("--only", action="append", default=[], metavar="A,B", help="these steps")
@@ -1062,7 +1075,7 @@ def main(argv=None):
             print("gate: cannot read baseline %s: %s" % (a.baseline, e), file=sys.stderr)
             return 2
 
-    meta = {"started": started, "tier": "quick" if a.quick else "full" if a.full else "default",
+    meta = {"started": started, "tier": "quick" if a.quick else "release" if a.release else "full" if a.full else "default",
             "selection": how, "git": GITVER[0], "jobs": JOBS[0], "wall_seconds": round(wall, 1),
             "baseline": str(a.baseline) if a.baseline else None}
     write_summary(out_dir, meta, results, order, flags, steps)

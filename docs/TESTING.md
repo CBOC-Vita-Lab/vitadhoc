@@ -49,8 +49,13 @@ the folders (or, for WonderSwan, at one file):
 ## What each step covers
 
 **Release** (`--quick`): `release-unit` (the download checker, `tests/`),
-`release-package` (the VPK has no BIOS or games, the notices match, the runtime
-hash), `check-files` (every file in `SHA256SUMS` matches).
+`release-package` (the VPK built here by `make vpk`, gpsp/vita/VitAdhoc.vpk:
+no BIOS or games, the notices match; skipped when nothing is built).
+At release time only (`--release`, which is `--full` plus these):
+`release-package-pinned` (the committed root VitAdhoc.vpk with the pinned
+eboot.bin / snes.bin hashes) and `check-files` (every file in `SHA256SUMS`
+matches). Both are stale by design between releases until
+`tools/pin-release.py` refreshes them.
 
 **Save and local link** (`--quick`): `save-sync` (RetroArch edits, short
 sources, backups), `save-backup-failure` (a backup that cannot be made leaves

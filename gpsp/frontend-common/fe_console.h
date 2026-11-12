@@ -13,6 +13,7 @@ typedef enum fe_console
   FE_CONSOLE_GBC,
   FE_CONSOLE_SNES,   /* run by the separate program snes.bin (snes/), never by a core here */
   FE_CONSOLE_NES,    /* FCEUmm (nes/core) inside this program, through nescore.h */
+  FE_CONSOLE_WSWAN,  /* WonderSwan and Color: Beetle (wswan/core) inside, wscore.h */
   FE_CONSOLE_COUNT
 } fe_console_t;
 

@@ -196,6 +196,9 @@ $(B)/gbcore/gbcore_tgbdual_linked_b.o: $(B)/gbcore/gbcore_tgbdual_linked.o
 # ---- the NES core (FCEUmm), in-process like TGB Dual: nescore.mk
 include $(GP)/vita/nescore.mk
 GB_OBJS += $(NES_OBJS)
+# ---- the WonderSwan core (Beetle), in-process the same way: wswancore.mk
+include $(GP)/vita/wswancore.mk
+GB_OBJS += $(WS_OBJS)
 
 # ---- frontend-common, netdrv core, the cable bus ----------------------------
 FE_INC  := -I$(GP)/frontend-common -I$(GP)/netdrv \

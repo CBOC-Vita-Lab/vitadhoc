@@ -8,6 +8,7 @@ changes no test and no build file.
 python3 tools/gate/gate.py                 # default tier
 python3 tools/gate/gate.py --quick         # the fast subset
 python3 tools/gate/gate.py --full          # everything, incl. armhf under qemu and the Vita package
+python3 tools/gate/gate.py --release       # --full plus the release pins (committed VPK hashes, SHA256SUMS)
 python3 tools/gate/gate.py --changed       # steps selected by the paths changed since HEAD
 python3 tools/gate/gate.py --list          # every step, its tier, tags, prerequisites, and whether it can run here
 python3 tools/gate/gate.py --dry-run       # the plan, with cache hits and skips marked
@@ -21,9 +22,10 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
 
 | tier | what runs |
 |---|---|
-| `--quick` | release unit tests, `check-files`, the three save tests, `gamedb`, `playerkit`, `widekit`, the SNES, NES and WonderSwan selftests |
+| `--quick` | release unit tests, the package test on a fresh `make vpk` build, the three save tests, `gamedb`, `playerkit`, `widekit`, the SNES, NES and WonderSwan selftests |
 | default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, audio, cover art, cheats, library, and the private-ROM steps (skipped unless their folder is set) |
 | `--full` | everything, plus armhf under qemu, the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
+| `--release` | `--full` plus the release pins: `release-package-pinned` (the committed root VitAdhoc.vpk and its pinned hashes) and `check-files` (SHA256SUMS); stale by design between releases |
 
 `--only`, `--skip` and `--changed` act within the tier you name, and
 `--only` ignores tiers. A step's prerequisites are always added.

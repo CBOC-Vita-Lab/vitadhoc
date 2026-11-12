@@ -10,7 +10,19 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
 VITA = ROOT / "gpsp/vita"
-VPK = Path(os.environ.get("RELEASE_VPK", ROOT / "VitAdhoc.vpk"))
+# RELEASE_VPK names the candidate to accept (release time: the committed root
+# VitAdhoc.vpk, `RELEASE_VPK=VitAdhoc.vpk`): every check, the pinned hashes too.
+# Without it (development) the package built here by `make vpk`
+# (gpsp/vita/VitAdhoc.vpk) is checked, except for the hash pins, which only a
+# release candidate matches; with no build the package checks are skipped.
+if os.environ.get("RELEASE_VPK"):
+    VPK = Path(os.environ["RELEASE_VPK"])
+    if not VPK.is_absolute():
+        VPK = ROOT / VPK
+    PINNED = True
+else:
+    VPK = VITA / "VitAdhoc.vpk"
+    PINNED = False
 RUNTIME_SHA256 = "43f037b19c37ef0647ab637289c0e065ab2d60cd3aa60a9103af2a4896b3df8b"  # version 1.3.1
 SNES_SHA256 = "19f4adb8c0d99c0793757cba92632dbf7f406bfc27f73eab0d61a15d339f92b4"  # version 1.3.1
 NOTICES = {"licenses/GPL-2.0.txt", "licenses/MPL-2.0.txt", "licenses/Inter-OFL.txt",
@@ -56,6 +68,8 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual(target.read_text(), header)
 
     def test_distribution_is_bios_and_rom_free_and_paths_are_unique(self):
+        if not PINNED and not VPK.is_file():
+            self.skipTest("no VPK built here (make -C gpsp/vita vpk); RELEASE_VPK for a release")
         self.assertTrue(VPK.is_file(), "Assemble the candidate before package acceptance")
         with zipfile.ZipFile(VPK) as package:
             self.assertIsNone(package.testzip())
@@ -73,8 +87,12 @@ class ReleasePackageTests(unittest.TestCase):
             for name in NOTICES:
                 with self.subTest(notice=name):
                     self.assertEqual(package.read(name), (ROOT / name).read_bytes())
-            self.assertEqual(hashlib.sha256(package.read("eboot.bin")).hexdigest(), RUNTIME_SHA256)
-            self.assertEqual(hashlib.sha256(package.read("snes.bin")).hexdigest(), SNES_SHA256)
+            if PINNED:
+                self.assertEqual(hashlib.sha256(package.read("eboot.bin")).hexdigest(), RUNTIME_SHA256)
+                self.assertEqual(hashlib.sha256(package.read("snes.bin")).hexdigest(), SNES_SHA256)
+            else:
+                self.assertIn("eboot.bin", names)
+                self.assertIn("snes.bin", names)
             for name, source in SNES_NOTICES.items():
                 with self.subTest(notice=name):
                     self.assertEqual(package.read(name), (ROOT / source).read_bytes())
@@ -82,6 +100,8 @@ class ReleasePackageTests(unittest.TestCase):
             self.assertEqual(package.read("cheats.db"), (VITA / "assets/cheats.db").read_bytes())
 
     def test_title_id_preserves_existing_installs(self):
+        if not PINNED and not VPK.is_file():
+            self.skipTest("no VPK built here")
         self.assertTrue(VPK.is_file())
         with zipfile.ZipFile(VPK) as package:
             data = package.read("sce_sys/param.sfo")

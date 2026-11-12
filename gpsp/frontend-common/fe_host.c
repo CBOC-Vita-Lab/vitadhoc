@@ -183,6 +183,14 @@ static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
          HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
       return;
    }
+   if (frame && frame->pixels && host.console == FE_CONSOLE_WSWAN &&
+       (frame->width != gb_pic_w || frame->height != gb_pic_h))
+   {
+      /* the WonderSwan turns its picture (wscore.h): the size follows */
+      gb_pic_w = frame->width;
+      gb_pic_h = frame->height;
+      fe_evt("ws_picture w=%u h=%u", gb_pic_w, gb_pic_h);
+   }
    if (!frame || !frame->pixels || frame->width != gb_pic_w || frame->height != gb_pic_h ||
        frame->pitch_bytes < frame->width * sizeof(uint16_t))
       return;
@@ -3978,7 +3986,7 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
       return gba_cable_start(is_host, input_delay, rtc_seed);
 #endif
    if (!gb_family || gbl || !gb_core || gb_dual || fe_host_gb_local_active() ||
-       gbmux_is_nes(gb_core))
+       gbmux_other_console(gb_core) >= 0)
       return -1;
    /* This console's save, as the game has it now (and on disk). */
    gb_save_flush(1);
@@ -4293,18 +4301,20 @@ int fe_host_boot(const fe_host_config *cfg)
    gb_skip_frame = 0;
 
    gb_family = host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC ||
-               host.console == FE_CONSOLE_NES;
+               host.console == FE_CONSOLE_NES || host.console == FE_CONSOLE_WSWAN;
    gb_pic_w = 160;
    gb_pic_h = 144;
    if (gb_family)
    {
       gbcore_callbacks_t callbacks;
       char title[33] = "";
-      unsigned rate = host.console == FE_CONSOLE_NES ? 48000 : 32768;
+      const int other = host.console == FE_CONSOLE_NES || host.console == FE_CONSOLE_WSWAN;
+      unsigned rate = other ? 48000 : 32768;
       gbcore_set_color_correction(!host.gbc_raw_colors);
       if (host.boot_status)
          host.boot_status(host.console == FE_CONSOLE_NES ? "Preparing NES emulator"
-                                                         : "Preparing GB emulator");
+                          : host.console == FE_CONSOLE_WSWAN ? "Preparing WonderSwan emulator"
+                          : "Preparing GB emulator");
       memset(&callbacks, 0, sizeof(callbacks));
       callbacks.video = gb_video_frame;
       callbacks.audio_batch = gb_audio_batch;
@@ -4314,7 +4324,7 @@ int fe_host_boot(const fe_host_config *cfg)
       fe_np_gb_set_peer_callback(gb_link_peer_event, NULL);
       /* Before create: the core takes its clock base and chooses DMG, SGB
        * or CGB behaviour (the palette decides SGB colours) as it boots. */
-      if (host.gb_dual_rom && host.console != FE_CONSOLE_NES)
+      if (host.gb_dual_rom && !other)
       {
          /* The pair takes the cable: no ad-hoc byte link beside it. */
          gbdual_config_t dc;
@@ -4384,21 +4394,23 @@ int fe_host_boot(const fe_host_config *cfg)
       {
          fe_log("gbcore_create FAILED for %s console=%d%s%s", host.rom_path,
                 (int)host.console,
-                host.console == FE_CONSOLE_NES ? ": " : "",
-                host.console == FE_CONSOLE_NES ? gbmux_nes_error() : "");
+                other ? ": " : "", other ? gbmux_error() : "");
          if (host.console == FE_CONSOLE_NES)
-            fe_evt("nes_load_failed reason=%s", gbmux_nes_error());
+            fe_evt("nes_load_failed reason=%s", gbmux_error());
+         if (host.console == FE_CONSOLE_WSWAN)
+            fe_evt("ws_load_failed reason=%s", gbmux_error());
          return -1;
       }
       core_sample_rate = gbcore_sample_rate(gb_core);
       gbcore_rom_title(gb_core, title, sizeof(title));
-      if (host.console == FE_CONSOLE_NES)
+      if (other)
       {
          gb_pic_w = gbcore_frame_width(gb_core);
          gb_pic_h = gbcore_frame_height(gb_core);
       }
       fe_evt("gb_rom_loaded console=%s title=%s", host.console == FE_CONSOLE_GBC ?
-             "GBC" : host.console == FE_CONSOLE_NES ? "NES" : "GB", title);
+             "GBC" : host.console == FE_CONSOLE_NES ? "NES" :
+             host.console == FE_CONSOLE_WSWAN ? "WS" : "GB", title);
       fe_evt("av_info fps=%.4f rate=%u w=%u h=%u", gbmux_fps(gb_core),
              core_sample_rate, gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
       if (host.boot_status) host.boot_status("Loading GB save");
@@ -7688,7 +7700,7 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    const char *prom;
    int other, rc = 0;
 
-   if (!cfg || !gb_family || !gb_core || gb_dual || gbl || gbmux_is_nes(gb_core))
+   if (!cfg || !gb_family || !gb_core || gb_dual || gbl || gbmux_other_console(gb_core) >= 0)
       return -1;
    other = cfg->rom_path && cfg->rom_path[0] &&
            strcmp(cfg->rom_path, host.rom_path) != 0;

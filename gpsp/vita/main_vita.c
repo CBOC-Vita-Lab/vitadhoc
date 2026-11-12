@@ -583,6 +583,8 @@ static fe_console_t console_for(const char *path)
    if (has_ext(path, ".nes") || has_ext(path, ".fds") || has_ext(path, ".unf") ||
        has_ext(path, ".unif"))
       return FE_CONSOLE_NES;
+   if (has_ext(path, ".ws") || has_ext(path, ".wsc") || has_ext(path, ".pc2"))
+      return FE_CONSOLE_WSWAN;
    return FE_CONSOLE_GBA;
 }
 
@@ -602,7 +604,8 @@ static int snes_launch(const char *rom_path)
 static const char *console_name(fe_console_t c)
 {
    return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
-        : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES" : "GBA";
+        : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES"
+        : c == FE_CONSOLE_WSWAN ? "WS" : "GBA";
 }
 
 static const char *base_name(const char *path)
@@ -3390,7 +3393,7 @@ static void game_identity(void)
          else
             g_game.code[0] = '\0';
       }
-      else if (g_game.console == FE_CONSOLE_NES)
+      else if (g_game.console == FE_CONSOLE_NES || g_game.console == FE_CONSOLE_WSWAN)
          g_game.gb_title[0] = '\0';          /* no title field: the name is */
       else if (fseek(f, 0x134, SEEK_SET) == 0 &&
                fread(g_game.gb_title, 1, 16, f) == 16)
@@ -3629,7 +3632,8 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
    const char *tag = console == FE_CONSOLE_GBC ? "gbc" :
                      console == FE_CONSOLE_GB ? "gb" :
                      console == FE_CONSOLE_SNES ? "snes" :
-                     console == FE_CONSOLE_NES ? "nes" : "gba";
+                     console == FE_CONSOLE_NES ? "nes" :
+                     console == FE_CONSOLE_WSWAN ? "ws" : "gba";
    char *dot;
 
    if (rom_path != g_overlay_rom)
@@ -3740,7 +3744,7 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes" };
+      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws" };
       char op[APP_PATH_CAP];
       int c = g_pcfg.console >= 0 && g_pcfg.console < FE_CONSOLE_COUNT ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
@@ -3837,6 +3841,12 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       ext = nl > 5 && !strcasecmp(e.name + nl - 5, ".unif") ? ".unif"
           : nl > 4 && !strcasecmp(e.name + nl - 4, ".unf") ? ".unf"
           : nl > 4 && !strcasecmp(e.name + nl - 4, ".fds") ? ".fds" : ".nes";
+   }
+   if (console == FE_CONSOLE_WSWAN)
+   {
+      size_t nl = strlen(e.name);
+      ext = nl > 4 && !strcasecmp(e.name + nl - 4, ".wsc") ? ".wsc"
+          : nl > 4 && !strcasecmp(e.name + nl - 4, ".pc2") ? ".pc2" : ".ws";
    }
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
    stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
@@ -4029,6 +4039,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
                            rom_path,
                            console == FE_CONSOLE_GBA ? ".sav" :
                            console == FE_CONSOLE_NES ? ".srm" :
+                           console == FE_CONSOLE_WSWAN ? ".srm" :
                            console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav")
           != 0 ||
        sidecar_state1(g_game.state_path, sizeof(g_game.state_path),

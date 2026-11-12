@@ -3279,7 +3279,9 @@ def t_art_progress(S):
                    "before_busy": not os.path.exists(busy_path)}
             requests.append(row)
             # No cover response can finish before the game has visibly run.
-            until = time.monotonic() + 20
+            # (the stop event ends the hold; 120 s only bounds a lost run: on a
+            # loaded machine the app needed more than 20 s to reach game.png)
+            until = time.monotonic() + 120
             while not os.path.exists(game_path) and not stop.is_set() and time.monotonic() < until:
                 stop.wait(0.005)
             row["response_after_game"] = os.path.exists(game_path)
@@ -5015,7 +5017,12 @@ def t_save_sync(S):
     S.check(len(a) == 131072 and len(b) == 131072, "full size in both (%d, %d)" % (len(a), len(b)))
     S.check(a[:64] != src[:64] and a == b, "the game's save went back to RetroArch's file")
     S.check(a[64:] == src[64:], "the rest of the save is as it was")
-    S.check(len(os.listdir(os.path.join(r.root, "backups"))) == 1, "one backup copy in backups/")
+    # 1.4 (save safety): the RetroArch file is also kept before it is written
+    # over, so backups/ holds our copy and RetroArch's, both the save as it was
+    bk = sorted(os.listdir(os.path.join(r.root, "backups")))
+    S.check(len(bk) == 2 and all(rd(r, "backups/" + f) == src for f in bk) and
+            any(".sav." in f for f in bk) and any(".srm." in f for f in bk),
+            "one backup copy of each file in backups/, both the save as it was (%s)" % bk)
     S.check(not os.path.exists(os.path.join(r.root, "roms", rom + ".sav.bak")),
             "nothing is left beside the game")
     S.check(r.has(r"^EVT save_sync_out ok "), "the log says it was written back")

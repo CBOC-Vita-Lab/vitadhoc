@@ -29,6 +29,17 @@ double gbmux_nes_fps(void);
 int gbmux_nes_cheats(const char *codes);
 int gbmux_nes_save_dirty(const gbcore_t *core);
 
+/* The WonderSwan machine (wscore.h), through the same path. */
+int gbmux_is_ws(const gbcore_t *core);
+/* the console the machine is: FE_CONSOLE_NES / _WSWAN, else -1 (a GB one) */
+int gbmux_other_console(const gbcore_t *core);
+/* the error of the last NES or WonderSwan create */
+const char *gbmux_error(void);
+/* Cheat codes for the NES or WonderSwan machine (joined by '+'). */
+int gbmux_cheats_text(const char *codes);
+/* 1 when the machine's own battery data changed (NES and WonderSwan) */
+int gbmux_save_dirty(const gbcore_t *core);
+
 gbcore_t *gbmux_create(const char *rom_path, const void *rom_data,
                        size_t rom_size, fe_console_t console,
                        unsigned audio_rate, const gbcore_callbacks_t *cb);

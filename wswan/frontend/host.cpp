@@ -566,24 +566,42 @@ extern "C" int StateAction(StateMem *sm, int load, int data_only)
 	return 1;
 }
 extern "C" size_t wswan_host_state_size(void) { return G.loaded ? G.state_size : 0; }
-extern "C" size_t wswan_host_state_save_mem(uint8_t *buf, size_t cap)
+/* The machine into the scratch buffer. The core's writer may outgrow the buffer and realloc it (smem_write): the live
+ * pointer is kept, so nothing dangles. Returns the length, 0 when it failed or does not fit the fixed state size. */
+static size_t state_to_scratch(void)
 {
-	if (!G.loaded || cap < G.state_size) return 0;
 	StateMem st;
 	st.data = G.state_scratch; st.loc = 0; st.len = 0; st.malloced = (uint32_t)G.state_size; st.initial_malloc = 0;
 	int ok = MDFNSS_SaveSM(&st, 0, 0, NULL, NULL, NULL);
-	if (st.data != G.state_scratch) { free(st.data); return 0; }      /* it would have outgrown the scratch buffer */
-	if (!ok || st.len > G.state_size) return 0;
-	memcpy(buf, st.data, st.len);
-	memset(buf + st.len, 0, G.state_size - st.len);
+	G.state_scratch = st.data;
+	if (!ok || !st.data || st.len > G.state_size) return 0;
+	return st.len;
+}
+extern "C" size_t wswan_host_state_save_mem(uint8_t *buf, size_t cap)
+{
+	if (!G.loaded || cap < G.state_size) return 0;
+	size_t len = state_to_scratch();
+	if (!len) return 0;
+	memcpy(buf, G.state_scratch, len);
+	memset(buf + len, 0, G.state_size - len);
 	return G.state_size;
 }
 extern "C" int wswan_host_state_load_mem(const uint8_t *buf, size_t n)
 {
 	if (!G.loaded) return 1;
+	/* all or nothing: the current machine is saved first and loaded back if the new state is refused. The core's loader
+	 * stops part way through a truncated or damaged state, which left the machine altered (found by the twin's refused
+	 * state test: tests/state_refused.py). The backup uses the scratch buffer, as the save does. */
+	size_t back_n = state_to_scratch();
+	if (!back_n) return 4;             /* no backup, so no load: the machine is untouched */
 	StateMem st;
 	st.data = (uint8_t *)buf; st.loc = 0; st.len = (uint32_t)n; st.malloced = 0; st.initial_malloc = 0;
-	if (!MDFNSS_LoadSM(&st, 0, 0)) return 3;
+	if (!MDFNSS_LoadSM(&st, 0, 0)) {
+		StateMem r;
+		r.data = G.state_scratch; r.loc = 0; r.len = (uint32_t)back_n; r.malloced = 0; r.initial_malloc = 0;
+		MDFNSS_LoadSM(&r, 0, 0);       /* our own copy: restores everything the refused state touched */
+		return 3;
+	}
 	G.fr_x = G.fr_y = G.fr_b = 0; G.cand_n = 0;
 	if (!G.table_mode) {     /* the LCD icons are part of the state: take them at once instead of after the debounce */
 		int icon = WSwan_GfxRead(0x15), v = (icon >> 1) & 1, hz = (icon >> 2) & 1;

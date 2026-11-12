@@ -3517,6 +3517,9 @@ typedef struct
   u32 gen;        /* virtual generation of its last (re)translation */
   u16 n_exits;
   u16 tag;        /* its tag in generation gen */
+  u32 gate;       /* the scan stopped at a translation gate (game_config):
+                   * the full-flush build also tags the word AT the gate
+                   * (smc_tag_gate_*_yes) */
 } smcr_desc;
 
 typedef struct { u32 off; u32 target; } smcr_exit;
@@ -3574,6 +3577,7 @@ static void smcr_jlog(void)
 
 /* What translate_block_* leaves for smcr_translate (smcr_xlat_real). */
 static u32 smcr_last_end;
+static u32 smcr_last_gate;
 static u8 *smcr_last_body;
 static u32 smcr_xn;
 #define SMCR_XBUF 64        /* >= MAX_EXITS + entry gate, checked below */
@@ -3927,7 +3931,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
 
   if (redo) {
     smcr_desc *r = &smcr_d[redo - 1];
-    if (smcr_last_end != r->end ||
+    if (smcr_last_end != r->end || smcr_last_gate != r->gate ||
         (u32)(smcr_last_body - start) != r->s_body ||
         (u32)(ram_translation_ptr - start) != r->s_total ||
         smcr_xn != r->n_exits) {
@@ -3963,6 +3967,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
     d->n_exits = (u16)smcr_xn;
     d->gen = 0;
     d->tag = 0;
+    d->gate = smcr_last_gate;
     memcpy(smcr_srcb + smcr_nsrc, mem, len);
     smcr_nsrc += len;
     for (i = 0; i < smcr_xn; i++) {
@@ -3994,6 +3999,15 @@ static void smcr_tag(const smcr_desc *d, u32 thumb)
       if (!*t) *t = CODE_TAG_BLOCK32;
     }
     last = d->end - 4;
+  }
+  if (d->gate) {
+    /* smc_tag_gate_*_yes: the halfword(s) of the gate word itself */
+    u16 *t = (u16 *)smcr_tagp(d->end);
+    if (!*t) *t = CODE_TAG_BLOCK16;
+    if (!thumb) {
+      t = (u16 *)smcr_tagp(d->end + 2);
+      if (!*t) *t = CODE_TAG_BLOCK16;
+    }
   }
   if (pc >= 0x3000000) {
     iwram_code_min = MIN(pc & 0x7FFF, iwram_code_min);
@@ -4192,7 +4206,7 @@ static void smcr_verify_state(const char *where)
           smcr_d[t - 1].gen != smcr_vgen)
         smcr_verify_fail(where, "tag descriptor", pc, i + 1);
     }
-    for (a = pc; a < d->end; a += 2) {
+    for (a = pc; a < d->end + (d->gate ? (thumb ? 2 : 4) : 0); a += 2) {
       h = ((a >> 24) == 3 ? (a & 0x7FFF) : 0x8000 + (a & 0x3FFFF)) >> 1;
       if (!*(u16 *)smcr_tagp(a))
         smcr_verify_fail(where, "untagged live code", a, pc);
@@ -4227,7 +4241,7 @@ static void smcr_verify_revival(u32 idx, u32 thumb)
   smcr_xn = 0;
   ok = thumb ? translate_block_thumb(pc, true) : translate_block_arm(pc, true);
   smcr_xlat_real = 0;
-  if (!ok || smcr_last_end != d.end ||
+  if (!ok || smcr_last_end != d.end || smcr_last_gate != d.gate ||
       (u32)(smcr_last_body - code) != d.s_body ||
       (u32)(ram_translation_ptr - code) != d.s_total || smcr_xn != d.n_exits)
     smcr_verify_fail("revival", "different extent or size", pc,
@@ -4262,7 +4276,8 @@ static void smcr_dc_clear(void)
 #define SMCR_REAL_OVERFLOW() do { if (SMCR_REAL()) return false;               \
                                  smcr_trace('F'); } while (0)
 #define SMCR_NOTE_BODY() do { if (SMCR_REAL()) {                              \
-    smcr_last_body = translation_ptr; smcr_last_end = block_end_pc; } } while (0)
+    smcr_last_body = translation_ptr; smcr_last_end = block_end_pc;           \
+    smcr_last_gate = (scan_exit_reason == SMC_SCAN_GATE); } } while (0)
 #define SMCR_RECORD_EXITS() do { if (SMCR_REAL() && ram_region) {            \
     for(i = 0; i < (s32)external_block_exit_position; i++) {                  \
       if (!external_block_exits[i].branch_source)                             \
@@ -5335,7 +5350,7 @@ block_exit_type block_exits[MAX_EXITS];
  * still happens only when the gate block itself is looked up) makes the final
  * word's check fire whenever a live block precedes it.  Words already tagged
  * are left alone, ROM scans are unaffected, and ungated scans never get here. */
-#define smc_tag_gate_arm_yes() {                                              \
+#define smc_tag_gate_arm_yes() if(!SMCR_REAL()) {                             \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   check_pc_region(block_end_pc);                                              \
   if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \
@@ -5346,7 +5361,7 @@ block_exit_type block_exits[MAX_EXITS];
       CODE_TAG_BLOCK16;                                                       \
 }
 
-#define smc_tag_gate_thumb_yes() {                                            \
+#define smc_tag_gate_thumb_yes() if(!SMCR_REAL()) {                           \
   intptr_t offset = (pc < 0x03000000) ? 0x40000 : -0x8000;                    \
   check_pc_region(block_end_pc);                                              \
   if(address16(pc_address_block, (block_end_pc & 0x7FFF) + offset) == 0)      \

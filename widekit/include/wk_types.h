@@ -39,6 +39,10 @@ enum { WK_KIND_UNKNOWN = 0, WK_KIND_BACKDROP, WK_KIND_LEVEL, WK_KIND_HUD,
  * core and only read during the wk_* call.  If the hardware mirrors
  * nametables, fold the mirroring first (map_w = 32 for horizontal mirroring
  * or single screen) so the ring size is what the picture really wraps at. */
+/* wk_layer.code value of an entry the learned map must not record (what the ring holds there is not what the picture shows
+ * at that world column: a column hidden under a left-edge mask that the game is already rewriting). Added for the NES adapter. */
+#define WK_CODE_NOREC 0xFFFFFFFFu
+
 typedef struct wk_layer {
     int active;           /* layer visible this frame (enabled, not forced
                              blank).  0 -> everything below ignored        */

@@ -81,6 +81,63 @@ static void write_wav(const char *path, const std::vector<int16_t> &pcm)
 	fclose(f);
 }
 
+
+/* ---- wide view truth checker (--wide-truth BASE): BASE.meta / BASE.truth come from tests/scroll_roms.py ---- */
+static inline bool cen_x(int x, int m) { return x >= m && x < m + 256; }
+struct WTruth {
+	bool on = false;
+	int W = 0, H = 0, n = 0, origin_x = 0, tx = 0x300, tset = 0x305, scene = 0x306;
+	std::string select, mode;
+	std::vector<uint8_t> px;           /* n * W * H, bit7 known, bits0..5 colour */
+	std::vector<char> uni;             /* per image per row: the whole row is one known colour */
+	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0;
+	long lead_frames = 0; double lead_l = 0, lead_r = 0;
+	std::vector<std::string> firsts;
+	std::vector<std::pair<int, int>> wrongf;
+	bool load(const std::string &base) {
+		FILE *f = fopen((base + ".meta").c_str(), "r");
+		if (!f) return false;
+		char line[256];
+		while (fgets(line, sizeof line, f)) {
+			char k[64], v[128];
+			if (sscanf(line, "%63[^=]=%127[^\n]", k, v) != 2) continue;
+			if (!strcmp(k, "select")) select = v;
+			else if (!strcmp(k, "mode")) mode = v;
+			else if (!strcmp(k, "origin_x")) origin_x = atoi(v);
+			else if (!strcmp(k, "ram_tx")) tx = (int) strtol(v, 0, 16);
+			else if (!strcmp(k, "ram_tset")) tset = (int) strtol(v, 0, 16);
+			else if (!strcmp(k, "ram_scene")) scene = (int) strtol(v, 0, 16);
+		}
+		fclose(f);
+		f = fopen((base + ".truth").c_str(), "rb");
+		if (!f) return false;
+		uint32_t h[3];
+		if (fread(h, 4, 3, f) != 3) { fclose(f); return false; }
+		W = (int) h[0]; H = (int) h[1]; n = (int) h[2];
+		px.resize((size_t) W * H * n);
+		if (fread(px.data(), 1, px.size(), f) != px.size()) { fclose(f); return false; }
+		fclose(f);
+		uni.assign((size_t) n * H, 0);
+		for (int i = 0; i < n; i++)
+			for (int y = 0; y < H; y++) {
+				const uint8_t *r = &px[((size_t) i * H + y) * W];
+				bool u = (r[0] & 0x80) != 0;
+				for (int x = 1; u && x < W; x++) u = r[x] == r[0];
+				uni[(size_t) i * H + y] = u;
+			}
+		on = true;
+		return true;
+	}
+	/* expected colour index at (world x, y) of image i, or -1 for unknown */
+	int at(int i, int wx, int wy) const {
+		if (wy < 0 || wy >= H) return -1;
+		if (uni[(size_t) i * H + wy]) return px[((size_t) i * H + wy) * W] & 0x3F;
+		if (wx < 0 || wx >= W) return -1;
+		uint8_t v = px[((size_t) i * H + wy) * W + wx];
+		return (v & 0x80) ? (v & 0x3F) : -1;
+	}
+};
+
 static void write_png(const char *path, const uint16_t *px, int w, int h, int pitch)
 {
 	std::vector<uint8_t> rgb((size_t) w * h * 3);
@@ -141,6 +198,15 @@ static void usage(void)
 	    "  --sprite-exception CRC   add a CRC-32 (hex) to the no-flicker exception table\n"
 	    "  --zapper SCRIPT    light gun: frame:x:y:trigger entries, e.g. 10:60:120:0,20:60:120:1 (x or y < 0 = off screen)\n"
 	    "  --paddle SCRIPT    Arkanoid paddle: frame:x:button entries\n"
+	    "  --wide M           switch the wide view on with M margin px per side (0..96): nes_host_wide_frame runs every frame\n"
+	    "  --wide-shots LIST  PNG of the composed wide picture at these frames (prefix + 'w')\n"
+	    "  --wide-truth BASE  compare the wide picture with BASE.truth/.meta (tests/scroll_roms.py): counts claimed-real margin px that are wrong\n"
+	    "  --wide-strips LIST PNG of truth (above) and composed picture (below) at these frames (prefix + 's')\n"
+	    "  --wide-map-save F / --wide-map-load F   write / read the learned level map image (second pass)\n"
+	    "  --wide-report      print the wide view statistics (mean real px per side, lines, scene events, map)\n"
+	    "  --wide-opt NAME=V  wide view option (period, debug, fade_px, appear_frames)\n"
+	    "  --scout N          wide view scout on: up to N scout frames after each frame (nes_host_scout_step)\n"
+	    "  --scout-opt NAME=V scout option (ahead, resync)\n"
 	    "  --summary          print one summary line (fps, ms/frame)\n"
 	    "  --name NAME        label used in the summary line\n");
 }
@@ -169,6 +235,11 @@ int main(int argc, char **argv)
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
 	bool summary = false, info = false, areport = false;
+	int wide = 0;
+	bool wide_report = false;
+	const char *wide_shots = 0, *wtruth_base = 0, *wstrips = 0, *wmap_save = 0, *wmap_load = 0;
+	std::vector<Opt> wopts, sopts;
+	int scout_n = 0;
 	for (int i = 2; i < argc; i++) {
 		auto arg = [&](const char *n) { return !strcmp(argv[i], n) && i + 1 < argc; };
 		if (arg("--frames")) frames = atoi(argv[++i]);
@@ -219,12 +290,38 @@ int main(int argc, char **argv)
 			char k[64]; int v = 0;
 			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) opts.push_back({ k, v });
 		}
+		else if (arg("--wide")) wide = atoi(argv[++i]);
+		else if (arg("--wide-shots")) wide_shots = argv[++i];
+		else if (arg("--wide-truth")) wtruth_base = argv[++i];
+		else if (arg("--wide-strips")) wstrips = argv[++i];
+		else if (arg("--wide-map-save")) wmap_save = argv[++i];
+		else if (arg("--wide-map-load")) wmap_load = argv[++i];
+		else if (!strcmp(argv[i], "--wide-report")) wide_report = true;
+		else if (arg("--scout")) scout_n = atoi(argv[++i]);
+		else if (arg("--scout-opt")) {
+			char k[64]; int v = 0;
+			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) sopts.push_back({ k, v });
+		}
+		else if (arg("--wide-opt")) {
+			char k[64]; int v = 0;
+			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) wopts.push_back({ k, v });
+		}
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--info")) info = true;
 		else if (!strcmp(argv[i], "--audio-report")) areport = true;
 		else { usage(); return 2; }
 	}
-	std::set<int> shotset;
+	std::set<int> shotset, wshotset, wstripset;
+	if (wstrips) {
+		std::string t(wstrips);
+		size_t p = 0;
+		while (p < t.size()) { size_t q = t.find(',', p); if (q == std::string::npos) q = t.size(); wstripset.insert(atoi(t.substr(p, q - p).c_str())); p = q + 1; }
+	}
+	if (wide_shots) {
+		std::string t(wide_shots);
+		size_t p = 0;
+		while (p < t.size()) { size_t q = t.find(',', p); if (q == std::string::npos) q = t.size(); wshotset.insert(atoi(t.substr(p, q - p).c_str())); p = q + 1; }
+	}
 	if (shots) {
 		std::string t(shots);
 		size_t p = 0;
@@ -254,6 +351,10 @@ int main(int argc, char **argv)
 	if (backup) nes_host_set_backup_dir(backup);
 	if (sysdir) nes_host_set_system_dir(sysdir);
 	if (arate && nes_host_set_audio_rate((unsigned) arate)) { fprintf(stderr, "bad audio rate\n"); return 2; }
+	if (scout_n > 0) {
+		nes_host_scout_enable(1);
+		for (auto &o : sopts) if (nes_host_scout_option(o.k.c_str(), o.v)) { fprintf(stderr, "unknown scout option %s\n", o.k.c_str()); return 2; }
+	}
 	char err[200] = "";
 	if (memload) {
 		/* the in-process route: the caller owns the buffers; no file layer */
@@ -298,6 +399,30 @@ int main(int argc, char **argv)
 		return 0;
 	}
 
+	if (wide > 0) {
+		for (auto &o : wopts) if (nes_host_wide_option(o.k.c_str(), o.v)) { fprintf(stderr, "unknown wide option %s\n", o.k.c_str()); return 2; }
+		nes_host_wide_enable(1);
+		nes_host_wide_margin(wide);
+		if (wtruth_base) nes_host_wide_option("debug", 1);
+		if (wmap_load) {
+			FILE *mf = fopen(wmap_load, "rb");
+			if (mf) {
+				std::vector<uint8_t> mb(8 << 20);
+				size_t mn = fread(mb.data(), 1, mb.size(), mf);
+				fclose(mf);
+				fprintf(stderr, "map load: %d (%zu bytes)\n", nes_host_wide_map_load(mb.data(), mn), mn);
+			}
+		}
+	}
+	WTruth wt;
+	if (wtruth_base && !wt.load(wtruth_base)) { fprintf(stderr, "cannot read truth %s\n", wtruth_base); return 2; }
+	int cam[8] = { 0 };
+	double rowl_sum = 0, rowr_sum = 0; long row_n = 0;
+	double wsum_l = 0, wsum_r = 0, wlines = 0;
+	long wcentre_diff = 0, wmaskfill = 0, scout_cost_frames = 0;
+	long wframes = 0, wevents = 0, wmiss = 0, wchk = 0, wactive = 0, wblocked = 0;
+	nes_wide_stats wst;
+	memset(&wst, 0, sizeof wst);
 	FILE *hf = hashes ? fopen(hashes, "w") : 0;
 	std::vector<int16_t> pcm, abuf(4096 * 2);
 	uint64_t cpu_tot_ns = 0;
@@ -337,6 +462,99 @@ int main(int argc, char **argv)
 		}
 		int w, h, pitch;
 		const uint16_t *v = nes_host_video(&w, &h, &pitch);
+		if (wide > 0) {
+			const uint16_t *wp = 0;
+			int ww = 0, wpit = 0;
+			int wok = nes_host_wide_frame(&wp, &ww, &wpit, &wst);
+			if (wok && scout_n > 0) scout_cost_frames += nes_host_scout_step(scout_n, 0);
+			if (wok) {
+				wframes++;
+				/* the centre of the wide picture must be the original picture (the 8 masked columns may be filled) */
+				for (int y = 0; y < h; y++)
+					for (int x = 0; x < w; x++)
+						if (wp[y * (wpit / 2) + wide + x] != v[y * (pitch / 2) + x]) { if (x < 8) wmaskfill++; else wcentre_diff++; }
+				wsum_l += wst.real_l; wsum_r += wst.real_r; wlines += 1;
+				wevents += wst.scene_event; wmiss = wst.hs_missed; wchk = wst.hs_checked;
+				if (wst.layer_active) wactive++;
+				if (wst.lines_blocked) wblocked++;
+				if (wt.on && f >= 2) {
+					int m = wide, img = 0;
+					if (wt.select == "tset") img = cam[5]; else if (wt.select == "scene") img = cam[6];
+					if (img < 0 || img >= wt.n) img = 0;
+					int ent = 0;
+					const uint16_t *pal = nes_host_palette(&ent);
+					int cx = wt.mode == "static" ? wt.origin_x : cam[0] * 8 + cam[1];
+					int cy = wt.mode == "static" ? 0 : cam[2] * 8 + cam[3];
+					const uint8_t *real = nes_host_wide_real();
+					const uint8_t *prov = nes_host_wide_prov();
+					std::vector<uint16_t> strip;
+					bool want = wstripset.count(f) != 0;
+					if (want) strip.assign((size_t) ww * (h * 2 + 4), 0);
+					for (int y = 0; y < h; y++) {
+						int rl = real ? real[y * 2] : 0, rr = real ? real[y * 2 + 1] : 0;
+						rowl_sum += rl; rowr_sum += rr; row_n++;
+						for (int x = 0; x < ww; x++) {
+							int e = wt.at(img, cx + x - m, cy + y);
+							uint16_t got = wp[y * (wpit / 2) + x];
+							bool ok = e >= 0 && pal[0x80 | e] == got;
+							int pv = prov ? (prov[(size_t) y * ww + x] & 15) : 0;
+							bool inreal = (x < m && x >= m - rl) || (x >= m + 256 && x < m + 256 + rr);
+							bool claim = !cen_x(x, m) && (pv == 4 || pv == 8 || pv == 1);
+							if (!cen_x(x, m) && (pv == 5 || pv == 9)) { wt.faded++; if (x < m) wt.fade_l++; else wt.fade_r++; }
+							if (inreal) wt.pvh[pv]++;
+							if (!cen_x(x, m) && pv == 3) { wt.bd_px++; if (e < 0) wt.bd_unknown++; else if (!ok) wt.bd_wrong++; }
+							if (claim) { if (x < m) wt.solid_l++; else wt.solid_r++; }
+							bool cen = x >= m && x < m + 256;
+							if (claim) {
+								wt.claimed++;
+								if (!ok) {
+									wt.wrong++;
+									if (wt.wrongf.empty() || wt.wrongf.back().first != f) wt.wrongf.push_back({ f, 0 });
+									wt.wrongf.back().second++;
+									if (wt.firsts.size() < 6) {
+										char b[160];
+										snprintf(b, sizeof b, "frame %d x=%d y=%d (world %d,%d) expect %d got %04x", f, x - m, y, cx + x - m, cy + y, e, got);
+										wt.firsts.push_back(b);
+									}
+								}
+							}
+							if (cen) { wt.centre++; if (!ok) wt.centre_bad++; }
+							/* the masked left columns the wide view filled in: they must be the true picture */
+							if (cen && x < m + 8 && got != v[y * (pitch / 2) + x - m]) { wt.maskfill++; if (!ok) wt.maskfill_wrong++; }
+							if (want) {
+								strip[(size_t) y * ww + x] = e >= 0 ? pal[0x80 | e] : 0x4010;
+								uint16_t c = got;
+								if (claim && !ok) c = 0xF800;
+								strip[(size_t) (y + h + 4) * ww + x] = c;
+							}
+						}
+					}
+					if (want) {
+						long cb = 0, wr = 0, ylo = 999, yhi = -1, xlo = 9999, xhi = -9999;
+						for (int y = 0; y < h; y++) {
+							for (int x = 0; x < ww; x++) {
+								int e = wt.at(img, cx + x - m, cy + y);
+								bool ok = e >= 0 && pal[0x80 | e] == wp[y * (wpit / 2) + x];
+								if (x >= m && x < m + 256 && !ok) cb++;
+								if (!cen_x(x, m) && prov && ((prov[(size_t) y * ww + x] & 15) == 4 || (prov[(size_t) y * ww + x] & 15) == 8 || (prov[(size_t) y * ww + x] & 15) == 1) && !ok) { wr++; if (y < ylo) ylo = y; if (y > yhi) yhi = y; if (x - m < xlo) xlo = x - m; if (x - m > xhi) xhi = x - m; }
+							}
+						}
+						fprintf(stderr, "frame %d: cam tx=%d fx=%d ty=%d fy=%d img=%d centre_bad=%ld wrong_real=%ld rows %ld..%ld x %ld..%ld\n", f, cam[0], cam[1], cam[2], cam[3], img, cb, wr, ylo, yhi, xlo, xhi);
+					}
+					if (want) {
+						char p[512];
+						snprintf(p, sizeof p, "%ss%05d.png", prefix.c_str(), f);
+						write_png(p, strip.data(), ww, h * 2 + 4, ww * 2);
+					}
+				}
+				if (wshotset.count(f)) {
+					char p[512];
+					snprintf(p, sizeof p, "%sw%05d.png", prefix.c_str(), f);
+					write_png(p, wp, ww, h, wpit);
+				}
+			}
+		}
+		if (wt.on) { for (int k = 0; k < 8; k++) cam[k] = nes_host_peek(wt.tx + k); }
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) fnv(v, w, h, pitch));
 		if (shotset.count(f)) {
 			char p[512];
@@ -345,6 +563,31 @@ int main(int argc, char **argv)
 		}
 	}
 	if (hf) fclose(hf);
+	if (wide_report)
+		printf("wide-centre: differing_px=%ld masked_columns_filled_px=%ld\n", wcentre_diff, wmaskfill),
+		printf("wide: frames=%ld layer_active=%ld blocked=%ld mean_real_l=%.1f mean_real_r=%.1f scene_events=%ld hindsight=%ld/%ld ring=%dx%d map_cells=%d rooms=%d\n",
+		    wframes, wactive, wblocked, wlines ? wsum_l / wlines : 0.0, wlines ? wsum_r / wlines : 0.0, wevents, wmiss, wchk, wst.ring_w, wst.ring_h, wst.map_cells, wst.map_rooms);
+	if (scout_n > 0) {
+		nes_scout_stats ss;
+		nes_host_scout_stats(&ss);
+		printf("scout: available=%d snapshots=%u frames=%u stops=%u cells=%u confirmed=%u contradicted=%u step_frames=%ld\n", ss.available, ss.snapshots, ss.frames, ss.stops, ss.cells, ss.confirmed, ss.contradicted, scout_cost_frames);
+	}
+	if (wt.on)
+		printf("truth: claimed_real=%ld wrong=%ld faded_px=%ld solid_lead_l=%.1f solid_lead_r=%.1f drawn_lead_l=%.1f drawn_lead_r=%.1f centre_px=%ld centre_mismatch=%ld offered_l=%.1f offered_r=%.1f\n", wt.claimed, wt.wrong, wt.faded,
+		    row_n ? (double) wt.solid_l / row_n : 0.0, row_n ? (double) wt.solid_r / row_n : 0.0,
+		    row_n ? (double) (wt.solid_l + wt.fade_l) / row_n : 0.0, row_n ? (double) (wt.solid_r + wt.fade_r) / row_n : 0.0, wt.centre, wt.centre_bad, row_n ? rowl_sum / row_n : 0.0, row_n ? rowr_sum / row_n : 0.0);
+	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong);
+	if (!wt.wrongf.empty()) { printf("  wrong frames (%zu):", wt.wrongf.size()); for (size_t i = 0; i < wt.wrongf.size() && i < 24; i++) printf(" %d:%d", wt.wrongf[i].first, wt.wrongf[i].second); printf("\n"); }
+	if (wt.on) { printf("  prov in real px:"); for (int k = 0; k < 16; k++) if (wt.pvh[k]) printf(" %d:%ld", k, wt.pvh[k]); printf("\n"); }
+	for (auto &t : wt.firsts) printf("  wrong: %s\n", t.c_str());
+	if (wmap_save && wide > 0) {
+		size_t need = nes_host_wide_map_save(0, 0);
+		std::vector<uint8_t> mb(need ? need : 1);
+		size_t got = need ? nes_host_wide_map_save(mb.data(), mb.size()) : 0;
+		FILE *mf = fopen(wmap_save, "wb");
+		if (mf) { fwrite(mb.data(), 1, got, mf); fclose(mf); }
+		fprintf(stderr, "map save: %zu bytes\n", got);
+	}
 	if (ssizes) {
 		bool eq = !ssz.empty() && ssz[0] != 0;
 		for (size_t sz : ssz) eq = eq && sz == ssz[0];

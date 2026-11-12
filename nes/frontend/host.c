@@ -31,6 +31,11 @@ extern int option_ramstate;
 extern FCEUGI *GameInfo;
 #include "fourscore_db.h"
 #include "host.h"
+#include "nesp_wide.h"
+
+/* the wide view adapter (wide.c) */
+extern void nesw_on_load(void), nesw_on_unload(void), nesw_on_discontinuity(void), nesw_on_shutdown(void);
+extern void nesw_on_rom(const uint8_t *data, size_t n, const char *name);
 
 #define MAX_ROM_BYTES (24u * 1024 * 1024)
 #define STATE_SCRATCH (1536u * 1024)
@@ -262,6 +267,7 @@ void nes_host_shutdown(void)
 	free(g_atmp); g_atmp = NULL; g_atmp_cap = 0;
 	free(g_sram_saved); g_sram_saved = NULL; g_sram_saved_n = 0;
 	g_inited = 0;
+	nesw_on_shutdown();
 }
 
 void nes_host_set_fds_bios(const uint8_t *bios, size_t n)
@@ -360,11 +366,14 @@ int nes_host_load_mem(const uint8_t *data, size_t n, const char *name, char *err
 	memset(g_fb, 0, sizeof g_fb);
 	g_ar_r = g_ar_n = 0;
 	snprintf(g_info, sizeof g_info, "%s", nes_host_rom_info());
+	nesw_on_rom(data, n, name);
+	nesw_on_load();
 	return 0;
 }
 
 void nes_host_unload(void)
 {
+	nesw_on_unload();
 	if (g_loaded) {
 		nes_host_cheat_reset();
 		FCEUI_CloseGame();
@@ -469,7 +478,7 @@ void nes_host_run_frame(void)
 	}
 }
 
-void nes_host_reset(void) { if (g_loaded) ResetNES(); }
+void nes_host_reset(void) { if (g_loaded) { ResetNES(); nesw_on_discontinuity(); } }
 void nes_host_set_render(int on) { g_render = on != 0; }
 
 /* ---- video -------------------------------------------------------------------------------- */
@@ -608,7 +617,9 @@ int nes_host_state_load_mem(const uint8_t *buf, size_t n)
 {
 	if (!g_loaded) return 1;
 	if (n < 16 || memcmp(buf, "FCS", 3) != 0 || geniestage == 1) return 3;
-	return FCEUSS_Load_Mem(buf, n) ? 0 : 3;
+	if (!FCEUSS_Load_Mem(buf, n)) return 3;
+	nesw_on_discontinuity();
+	return 0;
 }
 
 /* ---- memory ------------------------------------------------------------------------------- */
@@ -778,3 +789,14 @@ int nes_host_take_message(char *out, size_t cap)
 }
 
 void nes_host_set_log(void (*fn)(const char *line)) { g_log = fn; }
+
+/* ---- accessors for the wide view adapter (wide.c); not part of the API ------------------------------------- */
+int nesw_game_loaded(void) { return g_loaded; }
+int nesw_render_on(void) { return g_render; }
+const uint16_t *nesw_pal(void) { return g_pal; }
+const uint16_t *nesw_fb(void) { return g_fb; }
+uint32_t nesw_game_crc(void) { return nes_host_rom_crc(); }
+const char *nesw_game_title(void) { return g_title; }
+const uint8_t *nesw_sprm(void) { return nesp_sprm; }
+unsigned nesw_pad(int port) { return port >= 0 && port < 4 ? g_pad[port] : 0; }
+int nesw_is_cart(void) { return g_loaded && GameInfo && GameInfo->type == GIT_CART; }

@@ -637,7 +637,8 @@ static void rom_ext_off(char *key)
 {
    static const char *const rom[] = { ".gba", ".gbc", ".gb", ".sgb", ".sfc",
                                       ".smc", ".swc", ".fig", ".nes", ".fds",
-                                      ".unif", ".unf", ".zip", ".7z" };
+                                      ".unif", ".unf", ".ws", ".wsc", ".pc2",
+                                      ".zip", ".7z" };
    size_t n = strlen(key), e;
    unsigned i;
    for (i = 0; i < sizeof(rom) / sizeof(rom[0]); i++)

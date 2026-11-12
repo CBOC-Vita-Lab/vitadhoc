@@ -47,6 +47,9 @@ typedef struct wk_map_stats {
     int found, matched;          /* last frame's overlap with the room         */
     uint32_t binds, revokes, new_rooms;
     uint32_t served_tiles;       /* tiles raised by the last wk_map_serve()    */
+    /* look-ahead (wk_map_record_scout): cells recorded, and of those later
+     * seen live the same / different (hindsight) */
+    uint32_t scout_cells, scout_confirmed, scout_contradicted;
 } wk_map_stats;
 
 /* Geometry of a line, shared by map and adapters: columns are unwrapped tile
@@ -71,6 +74,17 @@ void wk_map_clear(wk_map *m);
  * frame: observe (records, binds, verifies), then serve (raises real[]). */
 void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out);
 void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out);
+
+/* Look-ahead: record what a second emulator instance running ahead of the
+ * game (a scout) showed, described by f/out in the LIVE epoch's world
+ * coordinates (out->epoch = the live epoch, no scene event).  Only cells the
+ * map does not hold are added (the live picture always wins); they are served
+ * like learned cells until the live picture shows one of them differently:
+ * then every scouted cell not yet seen live stops being served (hindsight,
+ * stats.scout_contradicted).  Scouted cells are not persisted until seen
+ * live.  Call between wk_map_update and wk_map_serve of a live frame, or
+ * after them; the map must be bound (the live frame recognised its room). */
+void wk_map_record_scout(wk_map *m, const wk_frame *f, const wk_out *out);
 
 void wk_line_geom(const wk_frame *f, const wk_out *out, int layer, int y,
                   wk_geom *g);

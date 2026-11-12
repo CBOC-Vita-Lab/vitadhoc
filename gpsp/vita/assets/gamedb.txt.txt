@@ -1,17 +1,18 @@
 gamedb.txt -- the game list's own knowledge (gamedb.h), written by
 tools/make_gamedb.py.
 
-records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, FDS: 18812)
+records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, FDS, WS, WSC: 19260)
           S  GBA header game code -> No-Intro name   (2756)
           Z  GBA header game code -> cartridge size  (2756)
-          N  console + loose title -> No-Intro name  (11113)
+          N  console + loose title -> No-Intro name  (11486)
           T  title key -> English Wikipedia article  (2451)
           W  article -> its first sentences          (2030)
 
 sources:  the No-Intro catalogues as published in libretro-database
           (metadat/no-intro/Nintendo - Game Boy Advance / Game Boy /
           Game Boy Color / Super Nintendo Entertainment System / Nintendo Entertainment System /
-          Family Computer Disk System .dat);
+          Family Computer Disk System .dat, metadat/no-intro/Bandai - WonderSwan /
+          WonderSwan Color .dat);
           Wikidata (CC0): the video games released for those consoles and
           their English Wikipedia articles; English Wikipedia (CC BY-SA
           4.0): the opening sentences of each article, at most ~200
@@ -24,6 +25,8 @@ sources:  the No-Intro catalogues as published in libretro-database
           No-Intro catalogues alone (GAMEDB_SYSTEMS=EF, Wikidata and Wikipedia
           were not reachable then): names and checksums, no descriptions. Only
           the headerless CRCs are kept, as the app hashes without the iNES header.
+          The WonderSwan (G) and WonderSwan Color (H) records were added for 1.4
+          the same way (GAMEDB_SYSTEMS=GH): names and whole-file checksums.
 
 The descriptions are adapted from Wikipedia and stay under CC BY-SA 4.0;
 the app shows them with a "From Wikipedia" chip and the README credits

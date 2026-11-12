@@ -223,3 +223,28 @@ continued backdrop looks better. Leave it off.
 * The adapter must fold NES mirroring, supply 32 bit stamps and respect
   `profile.sprites_off`.
 * Mode 7 and mosaic effects are not described and are not widened.
+
+## Changes made for the NES adapter (nes/frontend/wide.c), 12 Nov 2026
+
+Small fixes found by the NES twin's truth checker (synthetic scrolling cartridges with their true level pictures); the
+1095 checks of `make test` still pass with zero wrong pixels after each of them.
+
+* `wk_types.h`: `WK_CODE_NOREC` (0xFFFFFFFF), a `wk_layer.code` value the learned map must not record (the adapter marks
+  the ring column under a masked left edge, cells written during the picture, and cells still settling). `wk_map.cpp`
+  `gather()` skips such cells.
+* `wk_layers.cpp`, world rows: unwrapped line to line from the reference line instead of each line against the
+  reference line alone. A ring only as tall as the view (NES vertical mirroring: 240 px) folded every line more than
+  half a ring below the reference onto rows above it, so the map stored the bottom of the picture at the wrong rows.
+* `wk_layers.cpp`, reference line: kept from the previous frame while it still moves with the plurality, and when it
+  does change the world position continues through the old reference (last frame's offset between the two lines plus
+  the new line's own delta). A split screen (fixed status bar + scrolling field) flipped the reference between the bar
+  and the field whenever the camera stopped or started, which shifted the whole world by the camera's scroll: the map
+  recorded and served tiles at the wrong columns on the next pass.
+* `wk_layers.cpp`, ring extent: `real` / `ring` are clamped to 0..margin. A ring narrower than the view (32 tiles, 33
+  visible with fine scroll) gave a negative partial column, stored in a `uint16_t` as 65533.
+* `wk_map`: look-ahead input `wk_map_record_scout()` (see `wk_map.h`): cells a second emulator instance running ahead
+  showed are added (never over what the live picture showed), served like learned cells, checked when the live
+  picture shows them (stats `scout_cells`, `scout_confirmed`, `scout_contradicted`); one contradiction stops every
+  scouted cell not yet seen live from being served (a generation counter in the spare byte of the cell entry; the
+  file format is unchanged: unconfirmed scouted cells are not written). Unconfirmed scouted cells do not count in the
+  room recognition / verification overlap.

@@ -71,6 +71,21 @@ conformance run, see `nes/twin/baseline_results.md`):
   the array (`m22chrbankingtest`; the same check over all 226 `SFORMAT` tables found no other unterminated one);
   `ppu.c` (`ppulut3` build) and `boards/mmc5.c` (`<< 24` of a byte promoted to a signed int) now shift unsigned values.
 
+- Wide view recorder (12 Nov 2026), `ppu.c` + new file `nesp_wide.h` (ours, MIT): write-only bookkeeping for the 16:9 wide
+  view (`nes/frontend/wide.c`), switched on only when the app enables the wide view (`nesp_on`; with it off: one test per
+  `$2007` write and per scanline). At the start of each visible line (`ResetRL`) it records the loopy address, fine X,
+  `PPU[0]`/`PPU[1]`, the four BG pattern page pointers, the nametable page pointers and `PALRAM[0..15]`; after the line
+  (`EndRL`, then in `DoLine`) it marks the line steady when none of them changed during it and, on boards without a PPU fetch
+  hook (`PPU_hook`), MMC5 or PEC-586, draws the margin pixels left and right of the line (`nesp_wl` / `nesp_wr`, up to 96
+  px) and the 8 pixels the left mask hides (`nesp_wm`) with READ-ONLY nametable / attribute / pattern fetches from the same
+  scroll and banks (no hook, no latch, no bank call: MMC2/MMC4 latches and every board that watches fetches are never
+  touched; MMC3 clocks its IRQ from `GameHBIRQHook`, which these fetches do not call). `B2007` stamps every nametable byte
+  it writes with the frame number and whether the picture was being drawn (`nesp_ntstamp`, per physical page) and counts CHR
+  RAM writes; `DoLine` records which of x = 0..7 carry a sprite pixel; `FCEUPPU_Loop` counts frames (`nesp_frame`) and
+  clears the line records. Nothing is read back by the CPU, PPU, APU or a mapper, nothing is in the saved state; the twin
+  proves identical frames, RAM, states and audio with it on and off (`selftest.sh` section 13, and over the 290 public test
+  ROMs). Each change is marked `NESP` in `ppu.c`.
+
 Check: `diff -r <clone>/src nes/core` lists only the files named in this section as different, plus the additions above and
 the omissions above.
 

@@ -11,6 +11,7 @@
 #  8. Famicom Disk System with a stand-in BIOS (never a real one)
 #  9. picture layout unit test
 # 10. Zapper and Arkanoid paddle; 11. sprite limit on/off leaves the game state identical (+ exception table)
+# 13. wide view: emulation identical with it on/off, zero wrong margin pixels on the synthetic scrolling cartridges
 # Copyright CBOC-Vita. MIT licence.
 HERE=$(cd "$(dirname "$0")" && pwd)
 TWIN=${NES_TWIN:-$HERE/build/nes_twin}
@@ -232,6 +233,64 @@ if [ -f "$HERE/tests/picture_test.cpp" ] && [ -f "$HERE/../frontend/picture.cpp"
 else
 	echo "SKIP  picture unit test (not present)"
 fi
+
+# 13. wide view (nes_host_wide_*): the emulation is bit for bit the same with it on and off, the centre of the wide picture
+#     is the original picture, and on the synthetic scrolling cartridges (tests/scroll_roms.py, with their true level pictures)
+#     no margin pixel shown as real is ever wrong, on the first pass and with the learned map of a first pass loaded
+WPAD="40:start,60:none,100:a+right,140:b,200:left+up,260:none,300:right"
+wide_same() {
+	rom=$1; shift
+	rm -f $T/wsl0.srm $T/wsl1.srm
+	run $rom --frames 400 --pad $WPAD "$@" --hashes $T/wh0 --ram-dump $T/wr0 --save-state $T/ws0 --state-frame 399 --wav $T/ww0.wav --srm $T/wsl0.srm
+	"$TWIN" $rom --frames 400 --pad $WPAD "$@" --wide 84 --wide-report --hashes $T/wh1 --ram-dump $T/wr1 --save-state $T/ws1 --state-frame 399 --wav $T/ww1.wav --srm $T/wsl1.srm >$T/wout 2>&1
+	cmp -s $T/wh0 $T/wh1 && cmp -s $T/wr0 $T/wr1 && cmp -s $T/ws0 $T/ws1 && cmp -s $T/ww0.wav $T/ww1.wav && [ -s $T/ws0 ] && [ -s $T/wh0 ] \
+		&& { [ ! -e $T/wsl0.srm ] || cmp -s $T/wsl0.srm $T/wsl1.srm; } && grep -q "^wide-centre: differing_px=0 " $T/wout || return 1
+	[ -z "$WIDE_SCOUT" ] && return 0
+	# the same with the scout running (a second machine started from the game's states)
+	rm -f $T/wsl1.srm
+	"$TWIN" $rom --frames 400 --pad $WPAD "$@" --wide 84 --scout 3 --wide-report --hashes $T/wh1 --ram-dump $T/wr1 --save-state $T/ws1 --state-frame 399 --wav $T/ww1.wav --srm $T/wsl1.srm >$T/wout 2>&1
+	cmp -s $T/wh0 $T/wh1 && cmp -s $T/wr0 $T/wr1 && cmp -s $T/ws0 $T/ws1 && cmp -s $T/ww0.wav $T/ww1.wav \
+		&& { [ ! -e $T/wsl0.srm ] || cmp -s $T/wsl0.srm $T/wsl1.srm; } && grep -q "^wide-centre: differing_px=0 " $T/wout
+}
+python3 -I "$HERE/tests/scroll_roms.py" $T/sr >/dev/null || bad "scrolling ROM generation"
+WIDE_SCOUT=1
+for m in $R/nrom.nes $R/mmc1.nes $R/mmc3.nes $R/gun.nes $T/sr/scroll_vert.nes $T/sr/scroll_mmc3.nes $T/sr/scroll_chrram.nes $T/sr/scroll_4way.nes $T/sr/single_screen.nes; do
+	wide_same $m && ok "wide view off / on / on + scout: identical frames, RAM, saved state, audio, battery RAM; centre untouched ($(basename $m))" || bad "wide view changes the emulation ($(basename $m))"
+done
+WIDE_SCOUT=""   # the public ROMs below: wide on/off (the scout identity over them: twin/wide_public.sh)
+if [ -n "$NES_TESTROMS" ] && [ -d "$NES_TESTROMS" ]; then
+	nw=0; bw=0
+	for r in $(find "$NES_TESTROMS" -iname '*.nes' | sort); do
+		nw=$((nw + 1))
+		wide_same "$r" || { bw=$((bw + 1)); echo "      differs: $r"; }
+	done
+	[ "$bw" = 0 ] && ok "wide view on/off: identical over $nw public test ROMs" || bad "wide view changes the emulation in $bw of $nw public test ROMs"
+fi
+# truth: zero wrong real pixels; leads (mean real px per side) as a floor so a regression shows
+wtruth() {   # name frames pad min_lead_l min_lead_r [extra]
+	n=$1; fr=$2; pad=$3; ml=$4; mr=$5; shift 5
+	"$TWIN" $T/sr/$n.nes --frames $fr --pad $pad --wide 84 --wide-truth $T/sr/$n "$@" >$T/wt.out 2>&1
+	line=$(grep '^truth:' $T/wt.out)
+	wrong=$(echo "$line" | sed 's/.*wrong=\([0-9]*\).*/\1/')
+	bdw=$(grep '^  backdrop continuation' $T/wt.out | sed 's/.*wrong=\([0-9]*\).*/\1/')
+	mfw=$(grep '^  masked columns filled' $T/wt.out | sed 's/.*wrong=\([0-9]*\).*/\1/')
+	ll=$(echo "$line" | sed 's/.*solid_lead_l=\([0-9.]*\).*/\1/'); lr=$(echo "$line" | sed 's/.*solid_lead_r=\([0-9.]*\).*/\1/')
+	[ -n "$line" ] && [ "$wrong" = 0 ] && [ "$bdw" = 0 ] && [ "$mfw" = 0 ] && awk -v a="$ll" -v b="$lr" -v c="$ml" -v d="$mr" 'BEGIN{exit !(a >= c && b >= d)}'
+}
+for sc in "scroll_vert 900 10:right 60 0" "scroll_vert_nomask 900 10:right 60 0" "scroll_mmc3 900 10:right 50 0" "scroll_chrram 900 10:right 60 0" \
+          "scroll_4way 1800 10:right,430:down,960:up 15 0" "single_screen 400 100:start,103:none,250:start,253:none 0 0"; do
+	set -- $sc
+	wtruth $1 $2 $3 $4 $5 --wide-map-save $T/$1.map && ok "wide view: no wrong margin pixel, first pass ($1: lead L/R $(grep '^truth:' $T/wt.out | sed 's/.*solid_lead_l=\([0-9.]*\) solid_lead_r=\([0-9.]*\).*/\1\/\2/') px)" || { cat $T/wt.out | grep -E 'truth|wrong' | head -5; bad "wide view truth, first pass ($1)"; }
+	min2=0; [ "$1" != single_screen ] && [ "$1" != scroll_4way ] && min2=40
+	wtruth $1 $2 $3 $4 $min2 --wide-map-load $T/$1.map && ok "wide view: no wrong margin pixel, second pass with the learned map ($1: lead L/R $(grep '^truth:' $T/wt.out | sed 's/.*solid_lead_l=\([0-9.]*\) solid_lead_r=\([0-9.]*\).*/\1\/\2/') px)" || { cat $T/wt.out | grep -E 'truth|wrong' | head -5; bad "wide view truth, second pass ($1)"; }
+done
+for sc in "scroll_vert 900 10:right 60 40" "scroll_vert_nomask 900 10:right 60 40" "scroll_mmc3 900 10:right 50 40" "scroll_chrram 900 10:right 60 40" \
+          "scroll_4way 1800 10:right,430:down,960:up 15 5"; do
+	set -- $sc
+	wtruth $1 $2 $3 $4 $5 --scout 2 && ok "wide view: no wrong margin pixel, first pass with the scout ($1: lead L/R $(grep '^truth:' $T/wt.out | sed 's/.*solid_lead_l=\([0-9.]*\) solid_lead_r=\([0-9.]*\).*/\1\/\2/') px; $(grep '^scout:' $T/wt.out | sed 's/.*\(cells=[0-9]* confirmed=[0-9]* contradicted=[0-9]*\).*/\1/'))" || { cat $T/wt.out | grep -E 'truth|wrong|scout' | head -5; bad "wide view truth with the scout ($1)"; }
+done
+wtruth scroll_vert 1200 "10:right,200:none,260:right,400:left,520:right,700:none,720:right" 60 40 --wide-map-load $T/scroll_vert.map \
+	&& ok "wide view: learned map from one play used in a different play (stop, back, go): no wrong pixel" || bad "wide view: map reuse in another play"
 
 # 12. public screen-only test: sprite 0 hit is clipped in the left 8 pixels (needs the public ROMs)
 if [ -n "$NES_TESTROMS" ] && [ -f "$NES_TESTROMS/sprite_hit_tests_2005.10.05/05.left_clip.nes" ]; then

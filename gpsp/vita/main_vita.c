@@ -3587,7 +3587,10 @@ static void save_import(const char *rom_path, const char *save_path,
       "", "/mGBA", "/gpSP", "/Gambatte", "/SameBoy", "/TGB Dual",
       "/Gearboy", "/VBA-M", "/VBA Next",
       /* the NES cores of RetroArch */
-      "/FCEUmm", "/Nestopia", "/Mesen", "/QuickNES"
+      "/FCEUmm", "/Nestopia", "/Mesen", "/QuickNES",
+      /* ...and its WonderSwan core (beetle-wswan: library name "Beetle
+       * WonderSwan"; older builds "Beetle Cygne") */
+      "/Beetle WonderSwan", "/Beetle Cygne"
    };
    char stem[APP_PATH_CAP], cand[APP_PATH_CAP], probe[APP_PATH_CAP + 8];
    const char *bn = base_name(rom_path), *dot;

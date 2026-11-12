@@ -40,6 +40,8 @@ struct LS {
     uint8_t row_streak[kMaxDim];
     int32_t prev_sx[WK_MAX_LINES];
     int32_t prev_row[WK_MAX_LINES];
+    uint8_t prev_on[WK_MAX_LINES];
+    int prev_ref;              /* reference line of the previous frame, -1 none */
     int have_prev;
     uint32_t gfx_prev;
     int have_gfx;
@@ -179,6 +181,7 @@ void wk_layers_reset(wk_layers *w)
         LS *s = &w->ls[l];
         s->init = 0;
         s->have_prev = 0;
+        s->prev_ref = -1;
         s->have_gfx = 0;
         s->travel_ema = 0;
         s->dir = 0;
@@ -375,6 +378,7 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
             s->tp = L->tile_px;
             s->cells = L->map_w * L->map_h;
             s->have_prev = 0;
+        s->prev_ref = -1;
             s->have_gfx = 0;
             s->travel_ema = 0;
             memset(s->seen_ep, 0, (size_t)s->cells);
@@ -408,11 +412,23 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         sc.dom_dx[l] = cand;
         sc.dom_dy[l] = cand_y;
         sc.ref_y[l] = 0;
-        for (int y = 0; y < H; y++)
-            if (on(L, y) && sc.dsx[l][y] == cand) {
-                sc.ref_y[l] = y;
-                break;
+        {
+            /* keep last frame's reference line while it still moves with the
+             * plurality: a split screen (fixed status bar + scrolling field)
+             * would otherwise flip the reference between the bar and the field
+             * whenever the camera stops or starts  [NES adapter fix] */
+            const LS *ps = &w->ls[l];
+            if (s->have_prev && ps->prev_ref >= 0 && ps->prev_ref < H && on(L, ps->prev_ref) &&
+                sc.dsx[l][ps->prev_ref] == cand) {
+                sc.ref_y[l] = ps->prev_ref;
+            } else {
+                for (int y = 0; y < H; y++)
+                    if (on(L, y) && sc.dsx[l][y] == cand) {
+                        sc.ref_y[l] = y;
+                        break;
+                    }
             }
+        }
         sc.jump[l] = (wk_abs(cand) > cfg.jump_px || wk_abs(cand_y) > cfg.jump_px) &&
                      role != WK_ROLE_HUD;
     }
@@ -463,6 +479,27 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
             sc.dom_dx[l] = sc.dom_dy[l] = 0;
             for (int y = 0; y < H; y++)
                 sc.dsx[l][y] = sc.dsy[l][y] = 0;
+        } else if (s->prev_ref >= 0 && s->prev_ref != ry && s->prev_on[ry]) {
+            /* the reference line changed: continue from where the new reference
+             * line was last frame (relative to the old one, in last frame's
+             * picture) plus its own delta, so world coordinates do not jump
+             * [NES adapter fix] */
+            const int pry = s->prev_ref;
+            const int32_t wrapx = s->map_w * s->tp, wraph = s->map_h * s->tp;
+            int32_t dv = 0, pr = s->prev_row[pry];
+            const int step = ry > pry ? 1 : -1;
+            for (int y = pry + step;; y += step) {
+                if (s->prev_on[y] || y == ry) {
+                    dv += wk_wrapdiff(s->prev_row[y] - pr, wraph);
+                    pr = s->prev_row[y];
+                }
+                if (y == ry)
+                    break;
+            }
+            s->U += wk_wrapdiff(s->prev_sx[ry] - s->prev_sx[pry], wrapx) + sc.dsx[l][ry];
+            s->V += dv + sc.dsy[l][ry];
+            if (s->U < s->Umin) s->Umin = s->U;
+            if (s->U > s->Umax) s->Umax = s->U;
         } else {
             s->U += sc.dom_dx[l];
             s->V += sc.dom_dy[l];
@@ -475,7 +512,9 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         for (int y = 0; y < H; y++) {
             s->prev_sx[y] = L->scroll_x[y];
             s->prev_row[y] = L->row_y[y];
+            s->prev_on[y] = (uint8_t)on(L, y);
         }
+        s->prev_ref = ry;
         s->have_prev = 1;
         s->gfx_prev = L->gfx_id;
         s->have_gfx = 1;
@@ -659,10 +698,28 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         }
 
         /* world coordinates */
-        for (int y = 0; y < H; y++) {
+        for (int y = 0; y < H; y++)
             out->world_x[l][y] = s->U + wk_wrapdiff(L->scroll_x[y] - L->scroll_x[ry], wrap);
-            out->world_row[l][y] =
-                s->V + wk_wrapdiff(L->row_y[y] - L->row_y[ry], mh * tp);
+        /* rows are unwrapped line to line from the reference line (lines of one
+         * picture step by a few rows), not against the reference line alone: a
+         * ring only as tall as the view (NES, 240 px) would otherwise fold the
+         * lines more than half a ring below the reference onto the rows above
+         * it.  Off lines take the row relative to the last on line.  [NES
+         * adapter fix, see INTEGRATION.md] */
+        {
+            const int32_t hw = mh * tp;
+            int32_t pr = L->row_y[ry], pw = s->V;
+            for (int y = ry; y < H; y++) {
+                int32_t wr = pw + wk_wrapdiff(L->row_y[y] - pr, hw);
+                out->world_row[l][y] = wr;
+                if (on(L, y)) { pr = L->row_y[y]; pw = wr; }
+            }
+            pr = L->row_y[ry]; pw = s->V;
+            for (int y = ry - 1; y >= 0; y--) {
+                int32_t wr = pw + wk_wrapdiff(L->row_y[y] - pr, hw);
+                out->world_row[l][y] = wr;
+                if (on(L, y)) { pr = L->row_y[y]; pw = wr; }
+            }
         }
 
         /* backdrop / level decision and extents, one tile row run at a time */
@@ -772,8 +829,12 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
                 k.fresh_edge = (fe >> 1) & 1;
                 nR = walk_side(k, +1, partR, sc, sR);
             }
-            int rl = wk_min(M, partL + tp * nL);
-            int rr = wk_min(M, partR + tp * nR);
+            /* a ring narrower than the view (NES one-screen / horizontal
+             * mirroring: 32 tiles, 33 visible with fine scroll) gives a
+             * negative part: the edge column's slot is also the other edge's,
+             * so nothing beyond it is ring-backed  [NES adapter fix] */
+            int rl = wk_clamp(partL + tp * nL, 0, M);
+            int rr = wk_clamp(partR + tp * nR, 0, M);
             run_valid = 1;
             run_sx = uy;
             run_tr = tr;

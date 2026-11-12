@@ -37,6 +37,7 @@
 #include        "state.h"
 #include        "video.h"
 #include        "input.h"
+#include        "nesp_wide.h"
 
 #ifdef HAVE_HDPACK
 #include        "hdpack/hdpack.h"
@@ -201,6 +202,152 @@ static uint8_t * MMC5BGVRAMADR(uint32_t V) {
 		else
 			return &MMC5BGVPage[(V) >> 10][(V)];
 	} else return &MMC5BGVPage[(V) >> 10][(V)];
+}
+
+/* ---- NESP: wide view recorder (see nesp_wide.h). Write-only from the emulation's side. ---- */
+int nesp_on = 0, nesp_margin = 0;
+uint32_t nesp_frame = 0;
+uint32_t nesp_chrw = 0;
+NespLine nesp_line[240];
+uint8_t nesp_wl[240][NESP_MBUF];
+uint8_t nesp_wr[240][NESP_MBUF];
+uint8_t nesp_wm[240][8];
+uint8_t nesp_sprm[240];
+uint32_t nesp_ntstamp[NESP_NTP][1024];
+const uint8_t *nesp_ntptr[NESP_NTP];
+int nesp_nnt = 0;
+static uint32_t nesp_v1;			/* RefreshAddr at the end of the line (34 tile fetches and the vertical increment) */
+
+int nesp_ntid(const uint8_t *page) {
+	int i;
+	for (i = 0; i < nesp_nnt; i++)
+		if (nesp_ntptr[i] == page) return i;
+	if (nesp_nnt < NESP_NTP) {
+		nesp_ntptr[nesp_nnt] = page;
+		return nesp_nnt++;
+	}
+	return NESP_NTP - 1;
+}
+
+void nesp_clear_stamps(void) {
+	memset(nesp_ntstamp, 0, sizeof nesp_ntstamp);
+}
+
+/* 1 when the background fetch path is the plain one: no PPU_hook (MMC2/MMC4 latches, MMC3-style A12 boards that watch
+ * fetches, ...), no MMC5, no PEC-586. */
+int nesp_plain_fetch(void) {
+	return !(PPU_hook || MMC5Hack || PEC586Hack);
+}
+
+const uint8_t *nesp_chr_base(int *size) {
+	if (size) *size = (int)CHRsize[0];
+	return CHRptr[0];
+}
+
+/* the vertical increment at the end of a line (what Fixit1 does) */
+static uint32_t nesp_incy(uint32_t rad) {
+	if ((rad & 0x7000) == 0x7000) {
+		rad ^= 0x7000;
+		if ((rad & 0x3E0) == 0x3A0)
+			rad ^= 0xBA0;
+		else if ((rad & 0x3E0) == 0x3e0)
+			rad ^= 0x3e0;
+		else
+			rad += 0x20;
+	} else
+		rad += 0x1000;
+	return rad;
+}
+
+/* number of coarse X steps, with the horizontal nametable toggle: the address n tiles further along the line */
+static uint32_t nesp_step(uint32_t v, int n) {
+	int cx = (int)(v & 31) + n;
+	uint32_t nt = (v >> 10) & 1;
+	while (cx < 0) { cx += 32; nt ^= 1; }
+	while (cx >= 32) { cx -= 32; nt ^= 1; }
+	return (v & 0x7BE0) | (nt << 10) | (uint32_t)cx;
+}
+
+static void nesp_line_start(const uint8_t *target) {
+	int s = (int)((target - XBuf) >> 8), i, b;
+	NespLine *l;
+	if (s < 0 || s >= 240) return;
+	l = &nesp_line[s];
+	l->v0 = (uint16_t)RefreshAddr;
+	l->x0 = XOffset;
+	l->p0 = PPU[0];
+	l->p1 = PPU[1];
+	l->flags = NESPL_VALID;
+	b = (PPU[0] & 0x10) ? 4 : 0;
+	for (i = 0; i < 4; i++) {
+		l->bp[i] = VPage[b + i] + ((b + i) << 10);
+		l->np[i] = vnapage[i];
+	}
+	memcpy(l->pal, PALRAM, 16);
+	l->bd = PALRAM[0];
+}
+
+/* Render the pixels of tiles t0..t1-1 of the line (tile 0 = the one the line starts with) from the loopy address v0
+ * into dst[(t - t0) * 8 + k]. Read only: no PPU_hook, no latches, no bank calls. The pixel values are as RefreshLine
+ * makes them (palette entry, bit 6 set on background colour), before the grayscale / emphasis pass. */
+static void nesp_tiles(uint32_t v0, int t0, int t1, uint8_t *dst, const uint8_t *pen) {
+	uint32_t vofs = ((PPU[0] & 0x10) << 8) | ((v0 >> 12) & 7);
+	int t;
+	for (t = t0; t < t1; t++) {
+		uint32_t a = nesp_step(v0, t), pd, zz = a & 0x1F, cc, vadr;
+		const uint8_t *C = vnapage[(a >> 10) & 3], *G;
+		cc = C[0x3c0 + (zz >> 2) + ((a & 0x380) >> 4)];
+		cc = (cc >> ((zz & 2) + ((a & 0x40) >> 4))) & 3;
+		vadr = ((uint32_t)C[a & 0x3ff] << 4) + vofs;
+		G = VRAMADR(vadr);
+		pd = ppulut1[G[0]] | ppulut2[G[8]];
+		pd |= (cc << 2) * 0x11111111u;
+		dst[0] = pen[pd & 15]; dst[1] = pen[(pd >> 4) & 15]; dst[2] = pen[(pd >> 8) & 15]; dst[3] = pen[(pd >> 12) & 15];
+		dst[4] = pen[(pd >> 16) & 15]; dst[5] = pen[(pd >> 20) & 15]; dst[6] = pen[(pd >> 24) & 15]; dst[7] = pen[pd >> 28];
+		dst += 8;
+	}
+}
+
+/* the same pass DoLine makes over the finished line: grayscale, then the emphasis / marker bits */
+static uint8_t nesp_post(uint8_t v) {
+	uint8_t p1 = PPU[1];
+	if (p1 & 1) v &= 0x30;
+	if ((p1 >> 5) == 7) return (uint8_t)((v & 0x3f) | 0xc0);
+	if (p1 & 0xE0) return (uint8_t)(v | 0x40);
+	return (uint8_t)((v & 0x3f) | 0x80);
+}
+
+/* after EndRL of scanline s: decide whether the line was steady and render the margins */
+static void nesp_line_end(int s) {
+	NespLine *l = &nesp_line[s];
+	int b, i, ok;
+	if (!(l->flags & NESPL_VALID)) return;
+	if (!(PPU[1] & 0x08) || !(l->p1 & 0x08)) { l->flags |= NESPL_BGOFF; l->bd = PALRAM[0]; return; }
+	b = (PPU[0] & 0x10) ? 4 : 0;
+	ok = (l->p1 == PPU[1]) && ((l->p0 ^ PPU[0]) & 0x10) == 0 && l->x0 == XOffset && !memcmp(l->pal, PALRAM, 16) &&
+	     nesp_v1 == nesp_incy(nesp_step(l->v0, 34));
+	for (i = 0; ok && i < 4; i++)
+		ok = l->bp[i] == VPage[b + i] + ((b + i) << 10) && l->np[i] == vnapage[i];
+	l->bd = PALRAM[0];
+	if (!ok) return;
+	l->flags |= NESPL_STABLE;
+	if (!nesp_margin) return;
+	if (!nesp_plain_fetch()) { l->flags |= NESPL_BLOCK; return; }
+	{
+		uint8_t pen[16], tmp[16 * 8], *dl = nesp_wl[s], *dr = nesp_wr[s];
+		int m = nesp_margin, x0 = l->x0, d, tmin, tmax, u;
+		for (i = 0; i < 16; i++) pen[i] = (uint8_t)(PALRAM[i] | ((i & 3) ? 0 : 0x40));
+		/* left: pixels x = -m .. 7 (the last 8 are what the left mask hides); tiles tmin .. 1 */
+		tmin = (x0 - m) >> 3;
+		nesp_tiles(l->v0, tmin, 2, tmp, pen);
+		for (d = 0; d < m; d++) { u = (-1 - d) + x0 - 8 * tmin; dl[d] = nesp_post(tmp[u]); }
+		for (d = 0; d < 8; d++) { u = d + x0 - 8 * tmin; nesp_wm[s][d] = nesp_post(tmp[u]); }
+		/* right: pixels x = 256 .. 255+m; tiles 32 .. tmax */
+		tmax = (255 + m + x0) >> 3;
+		nesp_tiles(l->v0, 32, tmax + 1, tmp, pen);
+		for (d = 0; d < m; d++) { u = 256 + d + x0 - 8 * 32; dr[d] = nesp_post(tmp[u]); }
+		l->flags |= NESPL_DRAWN;
+	}
 }
 
 static DECLFR(A2002) {
@@ -368,15 +515,23 @@ static DECLFW(B2006) {
 	vtoggle ^= 1;
 }
 
+static uint8_t *Pline;	/* NESP: forward declaration (defined with Plinef below) */
 static DECLFW(B2007) {
 	uint32_t tmp = RefreshAddr & 0x3FFF;
 	PPUGenLatch = V;
 	if (tmp < 0x2000) {
-		if (PPUCHRRAM & (1 << (tmp >> 10)))
+		if (PPUCHRRAM & (1 << (tmp >> 10))) {
 			VPage[tmp >> 10][tmp] = V;
+			nesp_chrw++;	/* NESP */
+		}
 	} else if (tmp < 0x3F00) {
-		if (PPUNTARAM & (1 << ((tmp & 0xF00) >> 10)))
+		if (PPUNTARAM & (1 << ((tmp & 0xF00) >> 10))) {
 			vnapage[((tmp & 0xF00) >> 10)][tmp & 0x3FF] = V;
+			/* NESP: write stamp (frame, and whether the picture was being drawn) for the wide view */
+			if (nesp_on)
+				nesp_ntstamp[nesp_ntid(vnapage[((tmp & 0xF00) >> 10)])][tmp & 0x3FF] =
+					(nesp_frame << 1) | ((Pline && (PPU[1] & 0x18)) ? 1u : 0u);
+		}
 	} else {
 		if (!(tmp & 3)) {
 			if (!(tmp & 0xC))
@@ -416,6 +571,7 @@ static int linestartts;
 static int tofix = 0;
 
 static void ResetRL(uint8_t *target) {
+	if (nesp_on) nesp_line_start(target);	/* NESP */
 	memset(target, 0xFF, 256);
 	if (InputScanlineHook)
 		InputScanlineHook(0, 0, 0, 0);
@@ -456,6 +612,7 @@ static void EndRL(void) {
 	RefreshLine(272);
 	if (tofix)
 		Fixit1();
+	nesp_v1 = RefreshAddr;	/* NESP: after the 34 tile fetches and the vertical increment */
 	CheckSpriteHit(272);
 	Pline = 0;
 }
@@ -742,6 +899,7 @@ static void DoLine(void)
 
 	X6502_Run(256);
 	EndRL();
+	if (nesp_on) nesp_line_end(scanline);	/* NESP: margins and the scroll record of this line */
 
 	if (rendis & 2) {/* User asked to not display background data. */
 		uint32_t tem;
@@ -759,6 +917,15 @@ static void DoLine(void)
 		HDNes_RecordLine(scanline, target, rendis);
 #endif
 
+	if (nesp_on) {	/* NESP: which of x = 0..7 carry a sprite pixel (the wide view fills the masked background around them) */
+		uint8_t m = 0;
+		if (SpriteON && spork && (PPU[1] & 4) && !(rendis & 1)) {
+			int k;
+			for (k = 0; k < 8; k++)
+				if (!(sprlinebuf[k] & 0x80)) m |= (uint8_t)(1 << k);
+		}
+		nesp_sprm[scanline] = m;
+	}
 	if (SpriteON)
 		CopySprites(target);
 
@@ -1232,6 +1399,7 @@ void FCEUPPU_Power(void) {
 
 
 int FCEUPPU_Loop(int skip) {
+	nesp_frame++;	/* NESP */
 	/* Needed for Knight Rider, possibly others. */
 	if (ppudead) {
 		memset(XBuf, 0x80, 256 * 240);
@@ -1287,6 +1455,10 @@ int FCEUPPU_Loop(int skip) {
 
 			/* Clean this stuff up later. */
 			spork = numsprites = 0;
+			if (nesp_on) {	/* NESP: no line of the new frame has been recorded yet */
+				int nl;
+				for (nl = 0; nl < 240; nl++) nesp_line[nl].flags = 0;
+			}
 			ResetRL(XBuf);
 
 			X6502_Run(16 - kook);

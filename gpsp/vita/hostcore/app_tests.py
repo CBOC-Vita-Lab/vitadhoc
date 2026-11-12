@@ -2831,9 +2831,9 @@ def t_library_cache(S):
     """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
     with open(OWN_GBA, "rb") as cartridge:
         second_game = cartridge.read()
-    # five console tabs (GBA, GB, GBC, SNES, NES) since 1.4: two full turns
-    script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+    # six console tabs (GBA, GB, GBC, SNES, NES, WS) since 1.4: two full turns
+    script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+              "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:right\n+20:start\n" + "+8:down\n" * 10 +
               "+20:shot=quality_setting.png\n" + "+8:down\n" * 13 +
               "+20:shot=refresh_command.png\n+8:cross\n"
@@ -2845,8 +2845,8 @@ def t_library_cache(S):
     scans = r.evt("rom_scan_time")
     sides = r.evt("rom_scan_side")
     S.check(len(scans) == 2 and {d.get("console") for d in scans} == {"0"} and
-            len(sides) == 8 and {d.get("console") for d in sides} == {"1", "2", "3", "4"},
-            "one walk lists all five consoles; only the explicit refresh walks again "
+            len(sides) == 10 and {d.get("console") for d in sides} == {"1", "2", "3", "4", "5"},
+            "one walk lists all six consoles; only the explicit refresh walks again "
             "(scans %s, side lists %s)" % ([d["_"] for d in scans], [d["_"] for d in sides]))
     S.check(len(r.evt("rom_cache_hit")) >= 4, "revisited console tabs use cached lists")
     S.check(r.has(r"library_refresh_asked") and r.has(r"library_refresh_done console=0 roms=2"),
@@ -6100,49 +6100,133 @@ def t_ws_boot(S):
 
 def t_ws_private(S):
     """LOCAL ONLY: the owner's WonderSwan acceptance game (a private file named
-    by GATE_WS_ROM or WS_PRIVATE_ROM; skipped when it is not there, never
-    copied into the tree).  Played by script as the WonderSwan twin played it
-    (wswan/twin notes: A through the opening, the hub, Vision 1-3 reached
-    with the RAM poke 012D9:13 from the game's .cht), it shows a horizontal
-    stage at 224x144 and turns upright (144x224) by itself in the vertical
-    one, the buttons with it; the screenshots are for a person to look at."""
+    by GATE_WS_ROM or WS_PRIVATE_ROM; skipped when it is not there; never
+    copied into the tree: it is read where it is, the runs' copies are under
+    build/).  The way to its vertical stage is the WonderSwan twin's (wswan/
+    twin notes): A through the opening to the hub, then Vision 1-3 with the
+    RAM poke 012D9:13.  The twin plays the 30,000 frames to the hub (seconds;
+    the app at 960x544 would take an hour on a busy machine) and its state is
+    loaded into the app's slot 1, a core state like any other.  In the app:
+    the hub is horizontal (224x144), the poke from the game's .cht is on, and
+    entering the stage turns the picture upright (144x224) with the buttons;
+    the screenshots are for a person to look at."""
     path = os.environ.get("GATE_WS_ROM") or os.environ.get("WS_PRIVATE_ROM") or ""
     if not path or not os.path.isfile(path):
         S.note("no private WonderSwan ROM (GATE_WS_ROM): skipped")
         return
+    twin = os.path.join(HERE, "..", "..", "..", "wswan", "twin", "build", "wswan_twin")
+    # (made again when wswan/ changed: its states carry a trailer the app checks)
+    subprocess.run(["make", "-C", os.path.join(HERE, "..", "..", "..", "wswan", "twin"), "build/wswan_twin"],
+                   capture_output=True)
+    if not S.check(os.path.exists(twin), "the WonderSwan twin is built (wswan/twin)"):
+        return
+    work = os.path.join(S.outdir, "ws_private_twin")
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    ev = ["1000:start", "1006:none", "1200:start", "1206:none"]
+    for f in range(1400, 30000, 45):
+        ev += ["%d:a" % f, "%d:none" % (f + 4)]
+    for d, k in ((100, "start"), (260, "down"), (300, "down"), (340, "down"), (380, "a")):
+        ev += ["%d:%s" % (30000 + d, k), "%d:none" % (30006 + d)]
+    with open(os.path.join(work, "pad.txt"), "w") as f:
+        f.write(",".join(ev))
+    hub = os.path.join(work, "hub.st")
+    subprocess.run([twin, path, "--frames", "30520", "--pad-file", os.path.join(work, "pad.txt"),
+                    "--save-state", hub, "--state-frame", "30519", "--quiet"],
+                   capture_output=True, timeout=1200)
+    if not S.check(os.path.exists(hub), "the twin reached the hub and saved its state"):
+        return
     rom = open(path, "rb").read()
-    k = 60000.0 / 1001.0 / (3072000.0 / 40704.0)     # refreshes per emulated frame
+    extra = {"roms/Private.ws": rom, "cheats/Private.cht": nes_cht("012D9:13", "Vision 1-3")}
+    # 1. a state of the app's own in slot 1: its file is the one to replace
+    r = S.run("ws_private_slot", "120:shot=boot.png\n" + menu_pick(1) + "+20:square\n+60:circle\n"
+              "+10:circle\n+30:quit\n", autoboot="Private.ws", extra=extra)
+    S.check(r.has(r"^EVT gb_rom_loaded console=WS") and
+            r.has(r"^EVT av_info fps=75\.47\d* rate=48000 w=224 h=144"), "the game boots horizontal, 224x144")
+    S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "the poke from the game's .cht is on")
+    sd = os.path.join(r.root, "states", "ws")
+    slot = [n for n in (os.listdir(sd) if os.path.isdir(sd) else []) if n.endswith(".ws.st0")]
+    if not S.check(len(slot) == 1, "slot 1 is a file in states/ws/ (%s)" % slot):
+        return
+    # 2. the hub in slot 1, loaded, then into Vision 1-3 (the twin's keys:
+    # down = d-pad down, A = Circle while horizontal)
+    k = 60000.0 / 1001.0 / (3072000.0 / 40704.0)
     def at(f):
         return int(round(f * k))
-    ev = [(at(1000), "start"), (at(1200), "start")]
-    ev += [(at(f), "circle") for f in range(1400, 30000, 45)]  # WonderSwan A = Circle
-    base = 30000
-    ev += [(at(base + d), b) for d, b in ((100, "start"), (260, "down"), (300, "down"),
-                                          (340, "down"), (380, "circle"))]
-    base2 = base + 520
-    ev += [(at(base2 + d), b) for d, b in ((30, "down"), (90, "up"), (150, "circle"),
-                                           (300, "circle"))]
-    shots = [(at(8000), "shot=h1.png"), (at(20000), "shot=h2.png"), (at(29900), "shot=h3.png"),
-             (at(base2 + 450), "shot=v1.png"), (at(base2 + 700), "shot=v2.png")]
-    lines = []
-    for f, b in sorted(ev + shots):
-        lines.append("%d:%s" % (f, b) if b.startswith("shot") else "%d:%s:3" % (f, b))
-    lines.append("%d:right:30" % (at(base2 + 720)))
-    lines.append("%d:shot=v3.png" % (at(base2 + 760)))
-    lines.append("%d:quit" % (at(base2 + 800)))
-    r = S.run("ws_private", "\n".join(lines) + "\n", autoboot="Private.ws",
-              extra={"roms/Private.ws": rom, "cheats/Private.cht": nes_cht("012D9:13", "Vision 1-3")})
+    keep = dict(extra)
+    keep["states/ws/" + slot[0]] = open(hub, "rb").read()
+    script = "100:shot=title.png\n" + menu_pick(1) + "+20:cross\n+60:circle\n+10:circle\n+40:shot=hub.png\n"
+    t = 0
+    for d, b in ((30, "down"), (90, "up"), (150, "circle"), (300, "circle")):
+        script += "+%d:%s:4\n" % (max(1, at(d) - t), b)
+        t = at(d) + 4
+    script += "+%d:shot=vertical1.png\n" % (at(450) - t)
+    script += "+120:shot=vertical2.png\n+2:right:40\n+10:shot=vertical3.png\n+20:quit\n"
+    r = S.run("ws_private", script, autoboot="Private.ws", extra=keep)
     try:
         os.remove(os.path.join(r.out, "audio.wav"))
     except OSError:
         pass
-    S.check(r.has(r"^EVT gb_rom_loaded console=WS") and r.has(r"^EVT av_info fps=75\.47\d* rate=48000 w=224 h=144"),
-            "the game boots horizontal, 224x144")
-    S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "the poke from the game's .cht is on")
-    S.check(r.has(r"^EVT ws_picture w=144 h=224"), "the vertical stage turns the picture upright (%s)" %
-            [e["_"] for e in r.evt("ws_layout")][:6])
-    for n in ("h1", "h2", "h3", "v1", "v2", "v3"):
+    S.check(r.has(r"^EVT state_load file=.*Private.*size=79637"), "the twin's hub state loads in the app")
+    lay = [e["_"] for e in r.evt("ws_layout")]
+    S.check(r.has(r"^EVT ws_picture w=144 h=224") and any("show=1" in l for l in lay),
+            "Vision 1-3 turns the picture upright by itself, the buttons with it (%s)" % lay[:6])
+    for n in ("hub", "vertical1", "vertical2", "vertical3"):
         S.note("look at %s" % os.path.join(r.out, n + ".png"))
+
+
+def t_ws_library(S):
+    """WonderSwan games on the card, no setup: ux0:ROMS/WS, ux0:ROMS/WSC,
+    RetroFlow's "Bandai - WonderSwan" and "Bandai - WonderSwan Color" and any
+    folder under ux0:roms; .ws .wsc .pc2 on one WS tab, TRIANGLE reaches it
+    after NES.  The top bar: every console chip is whole before the search
+    icon and each is its own touch target (a tap on WS goes to the WS tab, a
+    tap on GBA back)."""
+    cwd = os.path.join(S.outdir, "ws_library_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    rom = ws_rom(S, "h_sram.ws")
+    files = {
+        "ux0:ROMS/WS/Alpha (Japan).ws": rom,
+        "ux0:ROMS/WSC/Beta (Japan).wsc": ws_rom(S, "color.ws"),
+        "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan/Gamma (Japan).ws": rom,
+        "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color/Delta (Japan).wsc": rom,
+        "ux0:roms/WonderSwan Collection/Epsilon.pc2": rom,
+        "ux0:ROMS/WS/._Alpha (Japan).ws": b"\x00\x05\x16\x07" + bytes(60),
+        "ux0:ROMS/WS/Alpha (Japan).srm": b"keep me",
+    }
+    for rel, data in files.items():
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+    r = S.run("ws_library", "90:triangle\n" + "+30:triangle\n" * 4 + "+60:shot=ws.png\n"
+              "+2:cross\n+120:shot=game.png\n+10:quit\n", cwd=cwd)
+    S.clean(r)
+    sw = [(d["console"], int(d["roms"])) for d in r.evt("ui_browser_console")]
+    ws = [n for c, n in sw if c == "5"]
+    S.check(ws and ws[0] == 5, "the WS tab holds the five WonderSwan games and no ._ file (%s)" % sw)
+    S.check(r.has(r"^EVT game rom=.*\.(ws|wsc|pc2) .*console=WS") and r.has(r"^EVT gb_rom_loaded console=WS"),
+            "picking one runs it in the app as a WonderSwan game")
+    S.picture(r, "ws.png")
+    # the home screen's top bar: six chips, each whole and touchable
+    r = S.run("ws_home", "90:shot=bar.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1})
+    S.clean(r)
+    ch = r.evt("hm_chips")
+    if S.check(bool(ch), "the top bar logs where its chips are"):
+        xs = [int(v) for v in ch[-1]["x"].split(",")]
+        search = int(ch[-1]["search"])
+        S.check(len(xs) == 7 and all(b > a for a, b in zip(xs, xs[1:])) and xs[-1] <= search,
+                "six chips side by side, all of them before the search icon (%s, search %d)" % (xs, search))
+        ws_x = (xs[5] + xs[6]) // 2 * 2
+        gba_x = (xs[0] + xs[1]) // 2 * 2
+        r2 = S.run("ws_touch", "90:touch=%d/37\n+80:shot=ws_tab.png\n+10:touch=%d/37\n+80:shot=gba_tab.png\n"
+                   "+10:quit\n" % (ws_x, gba_x), cwd=cwd, config={"ui_home": 1})
+        S.clean(r2)
+        picks = [d.get("pick") for d in r2.evt("ui_console_chip")]
+        cons = [d["console"] for d in r2.evt("ui_browser_console")]
+        S.check(picks[:2] == ["5", "0"] and "5" in cons and cons[-1] == "0",
+                "a tap on WS goes to the WS tab, a tap on GBA back (%s, %s)" % (picks, cons))
+        S.picture(r2, "ws_tab.png", "ws_home_bar.png")
 
 
 def t_nes_boot(S):
@@ -6366,8 +6450,8 @@ def t_nes_library(S):
                os.path.join(cwd, "ux0:ROMS/SNES ROM Collection")]
     before = {d: {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d)
                   if os.path.isfile(os.path.join(d, n))} for d in folders}
-    # GBA -> GB -> GBC -> SNES -> NES -> GBA, then the NES shelf again, pick
-    steps = "90:triangle\n" + "+30:triangle\n" * 4
+    # GBA -> GB -> GBC -> SNES -> NES -> WS -> GBA, then the NES shelf again, pick
+    steps = "90:triangle\n" + "+30:triangle\n" * 5
     r = S.run("nes_library", steps + "+30:shot=gba.png\n"
               "+2:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
               "+60:shot=nes.png\n+2:cross\n+60:quit\n", cwd=cwd)
@@ -6376,8 +6460,8 @@ def t_nes_library(S):
     order = [c for c, _ in sw if c]
     while order and order[0] == "0" and order[1:2] != ["1"]:
         order.pop(0)                       # (the first listing of the GBA shelf)
-    S.check(order[:9] == ["1", "2", "3", "4", "0", "1", "2", "3", "4"],
-            "TRIANGLE steps GB, GBC, SNES, NES and back to GBA, then on again (%s)" % sw)
+    S.check(order[:10] == ["1", "2", "3", "4", "5", "0", "1", "2", "3", "4"],
+            "TRIANGLE steps GB, GBC, SNES, NES, WS and back to GBA, then on again (%s)" % sw)
     nes = [n for c, n in sw if c == "4"]
     snes = [n for c, n in sw if c == "3"]
     S.check(nes and nes[0] == 6,
@@ -6395,7 +6479,8 @@ def t_nes_library(S):
 
     # the Vita's home screen: the NES chip in the top bar, five of them fit
     r = S.run("nes_home", "90:triangle\n" + "+30:triangle\n" * 3 + "+90:shot=home_nes.png\n"
-              "+2:triangle\n+90:shot=home_gba.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1})
+              "+2:triangle\n+30:triangle\n+90:shot=home_gba.png\n+10:quit\n", cwd=cwd,
+              config={"ui_home": 1})
     S.clean(r)
     sw = r.evt("ui_browser_console")
     S.check(sw and any(e["console"] == "4" for e in sw),
@@ -6539,7 +6624,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("ws_boot", t_ws_boot), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("ws_boot", t_ws_boot), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

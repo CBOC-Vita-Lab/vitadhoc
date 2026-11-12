@@ -198,6 +198,105 @@ int nes_host_take_message(char *out, size_t cap);
 /* Optional sink for the core's text output; NULL for none. */
 void nes_host_set_log(void (*fn)(const char *line));
 
+/* ---- wide view ---------------------------------------------------------------------------------------------- */
+
+/* The picture 16:9 screens need: the original 256 x 240 picture stays exactly as it is in the middle, and the sides are
+ * filled with real picture where that can be proven (the game's own nametables, what the scroll has already shown, a
+ * learned map of the level), the continued backdrop where it is safe, and a soft edge otherwise. Never a guessed tile.
+ * Sprites are not invented: they only appear where the game draws them (inside the original 256 columns).
+ *
+ * Off by default. With it off the core records nothing and draws nothing extra (one test per PPU write and per line); with it
+ * on the emulation (picture, audio, RAM, state, mapper IRQs) is bit for bit the same: tested on the synthetic cartridges and
+ * 290 public test ROMs (nes/twin/selftest.sh). Call order per frame: nes_host_run_frame(), then nes_host_wide_frame().
+ *
+ * Margins are drawn only on boards with a plain background fetch path (no PPU fetch hook, no MMC5, no PEC-586: MMC2/MMC4
+ * and a few more); on the others nes_host_wide_frame still returns a full-width picture with soft edges (stats.lines_blocked). */
+#define NES_WIDE_MAX_MARGIN 96
+
+typedef struct nes_wide_stats {
+	uint32_t frame;          /* the core's frame counter (the clock of the write stamps) */
+	int margin, width;       /* px per side, 256 + 2 * margin */
+	int real_l, real_r;      /* mean number of margin px per side that are real picture, over the drawn lines */
+	int lines_drawn;         /* lines whose margins were rendered (steady lines on a plain board) */
+	int lines_hud;           /* lines widekit treats as fixed (status bar): original width, soft edge */
+	int lines_backdrop;      /* lines continued as flat backdrop (all-backdrop row of a game that never scrolled sideways) */
+	int lines_bar_uniform;   /* fixed lines (status bar) whose row is one colour across the ring: continued to the edge */
+	int lines_blocked;       /* lines of a board with a fetch hook (margins not rendered) */
+	int lines_dominant;      /* lines in the frame's main steady scroll/bank state */
+	int layer_active;        /* 1: a background layer was described to widekit */
+	int ring_w, ring_h;      /* the nametable ring in tiles after mirroring: 32 or 64 by 30 or 60 */
+	int scene_event;         /* widekit saw a scene change this frame */
+	uint32_t epoch;
+	int kind;                /* WK_KIND_*: 0 unknown 1 backdrop 2 level 3 hud */
+	int hs_checked, hs_missed;   /* hindsight: predictions checked / wrong */
+	int map_cells, map_rooms, map_bound, map_served;   /* the learned map */
+} nes_wide_stats;
+
+/* mode 0 = off (default), 1 = automatic. Takes effect from the next frame; cheap to call again. */
+void nes_host_wide_enable(int mode);
+/* Margin per side in pixels for the frontend's pixel shape (84 at square pixels for 240 lines; 0..NES_WIDE_MAX_MARGIN).
+ * 0 switches the wide view off. Changing it rebuilds the compositor (hysteresis restarts). */
+void nes_host_wide_margin(int px);
+int nes_host_wide_active(void);   /* 1 when a game is loaded, mode is on and margin > 0 */
+/* Options: "period" 0/1 (continue provably periodic terrain beyond the trusted edge; OFF by default, a guess that can be wrong
+ * in levels with pits: for per-game opt-in), "fade_px", "appear_frames", "debug" 0/1 (keep the provenance image). 0 = known. */
+int nes_host_wide_option(const char *name, int value);
+/* widekit per-game profile table (the text format of widekit/include/wk_profile.h); problems are appended to msgs; returns
+ * their number. Applied by CRC (nes_host_rom_crc) or title. */
+int nes_host_wide_profiles_load(const char *text, size_t n, char *msgs, size_t msgcap);
+
+/* The composed picture of the frame just run: (256 + 2 * margin) x 240 RGB565 in *rgb (valid until the next call), the
+ * original 256 columns at x = margin .. margin + 255 exactly as nes_host_video shows them (except the 8 left columns the
+ * game masks, filled in where the margin next to them is real). Returns 0 (and writes nothing) when the wide view is off, no
+ * game is loaded or rendering is off (nes_host_set_render(0)): then use nes_host_video. Rows 8..231 are the NTSC picture. */
+int nes_host_wide_frame(const uint16_t **rgb, int *width, int *pitch_bytes, nes_wide_stats *stats);
+/* For logging and tests: per row of the last composed frame the margin px that are real picture on the left and right
+ * ([row * 2], [row * 2 + 1]; 240 rows), and (only with option debug) widekit's provenance bytes of the composed picture. */
+const uint8_t *nes_host_wide_real(void);
+const uint8_t *nes_host_wide_prov(void);
+
+/* The learned map of the level, as a file image. The app does the file I/O (safe_io): key = nes_host_wide_map_key() =
+ * the PRG+CHR CRC, 0 for disk games (do not save). _save(NULL, 0) returns the size needed, _save(buf, cap) the bytes written
+ * (0 when nothing to save or cap too small). _load right after the load or after nes_host_wide_enable; 0 = loaded, anything
+ * else leaves the map empty. _dirty = 1 when the map holds cells that were not in the last saved/loaded image. */
+uint32_t nes_host_wide_map_key(void);
+size_t nes_host_wide_map_save(uint8_t *buf, size_t cap);
+int nes_host_wide_map_load(const uint8_t *buf, size_t n);
+int nes_host_wide_map_dirty(void);
+
+/* ---- wide view: the scout (look-ahead) -----------------------------------------------------------------------
+ * A second, separate NES machine (its own copy of the core, every global renamed: it shares no memory with the game)
+ * that starts from the live game's saved state and runs ahead holding the direction the camera moves, with the picture
+ * recorder on. What its background showed is added to the learned map as look-ahead cells, so the margin the camera moves
+ * towards can be real before the game streams it. Live play is never affected (tested: frames, RAM, state, audio identical
+ * with the scout on and off). A scouted cell the live picture later shows differently stops every scouted cell not yet
+ * seen live from being shown (hindsight); scouted cells are saved with the map only once seen live.
+ *
+ * Available only when nescore.o is built with SCOUT=1 (make -C nes/frontend SCOUT=1: about twice the core's code and bss);
+ * otherwise these functions exist and do nothing (nes_host_scout_available() = 0).
+ * Threading: nes_host_scout_step may run on another thread AT THE SAME TIME as nes_host_run_frame (the two machines share
+ * nothing), but never at the same time as nes_host_wide_frame, the map load/save, load/unload/reset/state load or any
+ * other nes_host_wide_* / nes_host_scout_* call: e.g. main thread: run_frame || worker: scout_step; join; wide_frame. */
+typedef struct nes_scout_stats {
+	int available;           /* built in and running for this game (iNES cartridges; not Disk System) */
+	int session;             /* a scout run from the last snapshot is going on */
+	int ahead;               /* frames the scout was ahead of the game at the last nes_host_wide_frame */
+	uint32_t snapshots, frames, stops;   /* states copied from the game, scout frames run, runs ended early */
+	uint32_t cells, confirmed, contradicted;   /* map cells it recorded; of those later seen live: the same / different */
+} nes_scout_stats;
+int nes_host_scout_available(void);
+/* Enable BEFORE loading the game (the scout keeps a copy of the ROM bytes given to nes_host_load_mem). Needs the wide view. */
+void nes_host_scout_enable(int on);
+/* "ahead": frames the scout may run ahead of the game (default 90); "resync": live frames after which a new snapshot is
+ * taken (default 240). 0 = known. */
+int nes_host_scout_option(const char *name, int value);
+/* Optional clock for the time cap of nes_host_scout_step (microseconds, monotonic; e.g. sceKernelGetProcessTimeWide). */
+void nes_host_scout_set_clock(uint64_t (*now_us)(void));
+/* Run up to max_frames scout frames (stops early at max_us when a clock is set, or when far enough ahead). Returns the
+ * number run. One scout frame costs about one emulated frame. */
+int nes_host_scout_step(int max_frames, int max_us);
+void nes_host_scout_stats(nes_scout_stats *st);
+
 #ifdef __cplusplus
 }
 #endif

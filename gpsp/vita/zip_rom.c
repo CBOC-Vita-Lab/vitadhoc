@@ -34,10 +34,11 @@ static unsigned long rd32(const unsigned char *p)
 
 static int name_console(const char *name, size_t len)
 {
-   static const char *const ext[9] = { ".gba", ".gb", ".gbc", ".sfc", ".smc",
-                                       ".nes", ".fds", ".unf", ".unif" };
+   static const char *const ext[12] = { ".gba", ".gb", ".gbc", ".sfc", ".smc",
+                                        ".nes", ".fds", ".unf", ".unif",
+                                        ".ws", ".wsc", ".pc2" };
    int c;
-   for (c = 0; c < 9; c++)
+   for (c = 0; c < 12; c++)
    {
       size_t e = strlen(ext[c]), i;
       if (len <= e)
@@ -51,7 +52,9 @@ static int name_console(const char *name, size_t len)
             break;
       }
       if (i == e)
-         return c > 4 ? 4 : c > 3 ? 3 : c;   /* .sfc/.smc: 3 (SNES); .nes/.fds/.unf/.unif: 4 (NES) */
+         /* .sfc/.smc: 3 (SNES); .nes/.fds/.unf/.unif: 4 (NES);
+          * .ws/.wsc/.pc2: 5 (WonderSwan) */
+         return c > 8 ? 5 : c > 4 ? 4 : c > 3 ? 3 : c;
    }
    return -1;
 }

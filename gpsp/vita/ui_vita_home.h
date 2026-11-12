@@ -977,6 +977,17 @@ static float hm_topbar(float dy, int n_scan)
       x += w + 2;
    }
    g_hm_chip_x[FE_CONSOLE_COUNT] = (int)(x / 2);
+   {
+      /* (the harness: where each chip is, logged when it moves) */
+      static int logged[FE_CONSOLE_COUNT + 1];
+      if (memcmp(logged, g_hm_chip_x, sizeof(logged)))
+      {
+         memcpy(logged, g_hm_chip_x, sizeof(logged));
+         fe_evt("hm_chips x=%d,%d,%d,%d,%d,%d,%d search=%d", g_hm_chip_x[0],
+                g_hm_chip_x[1], g_hm_chip_x[2], g_hm_chip_x[3], g_hm_chip_x[4],
+                g_hm_chip_x[5], g_hm_chip_x[6], (int)((right - 102) / 2));
+      }
+   }
    (void)cx;
 
    x = right;

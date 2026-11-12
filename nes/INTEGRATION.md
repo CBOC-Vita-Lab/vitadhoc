@@ -121,3 +121,49 @@ UNIF files carry their data in chunks: match them by name only. FDS images: the 
   cache the same demos cost 10-14 M instructions per frame, so older figures are obsolete.
 - Where it goes (NROM): RefreshLine 24%, X6502_Run 23%, RGB565 conversion in `nes_host_run_frame` 14%, sound 9%, PPU loop 8%.
 - Object sizes (`make check`): armhf text 761 KB, data 68 KB, bss 2.62 MB; Vita build text 676 KB, data 63 KB, bss 2.62 MB.
+
+## Wide view (16:9) — additions of 12 Nov 2026
+
+NES pictures fill a 960x544 screen at square pixels (84 px per side for 240 lines) with real game picture where it can
+be proven, never a guessed tile. The original 256 columns stay exactly as `nes_host_video` shows them (tested pixel for
+pixel); only the 8 columns the game masks on the left are filled in where the picture there is known. All existing
+`nes_host_*` functions are unchanged; these are additions (host.h, section "wide view"):
+
+| need | calls |
+|---|---|
+| switch on | `nes_host_wide_enable(1)` and `nes_host_wide_margin(84)` (0..96; 0 or mode 0 = off, the default). Off = the core records nothing |
+| each frame | after `nes_host_run_frame()`: `nes_host_wide_frame(&rgb, &w, &pitch, &stats)` returns (256 + 2 * margin) x 240 RGB565 (0 = not available this frame: use `nes_host_video`). Scale it with ONE factor (no stretch) |
+| learned map (second visit of a level) | `nes_host_wide_map_key()` (PRG+CHR CRC, 0 = do not save), `nes_host_wide_map_save(NULL,0)` = size, `nes_host_wide_map_save(buf,cap)`, `nes_host_wide_map_load(buf,n)` right after the game load, `nes_host_wide_map_dirty()`. The app does the safe file I/O (the image is CRC checked; a bad file loads as empty) |
+| options | `nes_host_wide_option("period", 0/1)` (periodic foreground continuation: OFF by default, can be wrong over pits; per-game opt-in only), `"fade_px"`, `"appear_frames"`, `"debug"`; `nes_host_wide_profiles_load(text, n, msgs, cap)` = widekit profile table (by CRC or title) |
+| logging | `nes_wide_stats` (mean real px per side, status bar lines, ring size, map cells, scene events, hindsight); `nes_host_wide_real()` per row real px; `nes_host_wide_prov()` (debug) |
+| scout (look-ahead) | `nes_host_scout_available()`, `nes_host_scout_enable(1)` BEFORE the game load, `nes_host_scout_step(max_frames, max_us)` once per frame, `nes_host_scout_option("ahead"/"resync", v)`, `nes_host_scout_set_clock(fn)`, `nes_host_scout_stats(&st)` |
+
+Build: `nescore.o` now also contains `nes/frontend/wide.c` and widekit (`widekit/src/*.cpp`, C++11 compiled with
+`-fno-exceptions -fno-rtti`, no C++ runtime calls, no static constructors: check the undefined list of `make check`).
+The scout needs `make -C nes/frontend SCOUT=1 [vita]` (output `build/<target>-scout/nescore.o`): a second copy of the
+core + host.c inside the object with every global renamed `nesscout_*` (`ld -r` + `objcopy --redefine-syms`, like the
+second GBA instance), so about twice the code and bss of the core. Without SCOUT=1 the scout functions exist and do
+nothing.
+
+Threading of the scout: `nes_host_scout_step` may run on a worker thread at the same time as `nes_host_run_frame` (the
+two machines share no memory), never at the same time as `nes_host_wide_frame` or any other `nes_host_wide_*` /
+`nes_host_scout_*` call, load, unload, reset or state load. Suggested frame: main `run_frame` || worker
+`scout_step(2, budget_us)`; join; main `wide_frame`. `nes_host_wide_frame` takes the snapshot (a 14-15 KB state save of
+the live game) when the scout needs one; `scout_step` loads it into the scout machine. One scout frame costs about one
+emulated frame; the scout stops when it is `ahead` frames (default 90) in front of the game and waits.
+
+What it does (details in `nes/frontend/wide.c`, `nes/core/nesp_wide.h`, `widekit/INTEGRATION.md`):
+
+* The core records per line the scroll, fine X, BG banks, nametable mapping, palette, mask/emphasis, whether the line
+  was steady, and on plain boards renders the margin pixels with read-only fetches (`nes/core/PROVENANCE.md`). Every
+  nametable byte written through `$2007` gets a frame stamp.
+* The adapter folds the mirroring into widekit's ring (vertical mirroring / four-screen: 512 px wide; horizontal /
+  one-screen: 256 px, no neighbour data), gives each cell a redraw code (tile + palette) and a content hash (tile
+  graphics included: CHR RAM and bank switching are compared by graphics), keeps cells just written / written during
+  the picture / under the masked seam column out of the learned map, and draws learned cells with the banks in force.
+* Lines widekit finds fixed (status bars) stay original width with a soft edge. On a game that never scrolled sideways
+  (one-screen), lines whose whole row is backdrop continue as flat backdrop.
+* Boards with a fetch hook (MMC2, MMC4 and the others that install `PPU_hook`), MMC5 and PEC-586 get no margin
+  rendering: full-width picture with soft edges (`stats.lines_blocked`). MMC3 IRQ counting is untouched (the margin
+  fetches never call a hook); verified identical frames/RAM/state/audio on MMC3 cartridges including the IRQ split
+  cartridge.

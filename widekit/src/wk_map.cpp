@@ -15,7 +15,8 @@ struct Entry {
     uint32_t code;
     uint16_t h16, gfx;
     uint8_t conf;
-    uint8_t pad[3];
+    uint8_t scout;    /* 0: seen in the live picture; else the scout generation that recorded it (not yet seen live) */
+    uint8_t pad[2];
 };
 
 struct Room {
@@ -65,6 +66,7 @@ struct wk_map {
     int miss;
     wk_map_stats st;
     Vis *vis;
+    uint8_t scout_gen;         /* scouted cells of other generations are never served */
 };
 
 void wk_map_cfg_default(wk_map_cfg *c)
@@ -109,6 +111,7 @@ wk_map *wk_map_create(const wk_map_cfg *cfg, uint32_t game_crc)
     }
     m->next_room = 1;
     m->clock = 1;
+    m->scout_gen = 1;
     return m;
 }
 
@@ -306,6 +309,8 @@ static int gather(wk_map *m, const wk_frame *f, const wk_out *out)
                 if (!ok)
                     continue;
                 int idx = rr * mw + wk_floormod(tf + i, mw);
+                if (L->code && L->code[idx] == WK_CODE_NOREC)
+                    continue;
                 m->vis[n].local = lk;
                 m->vis[n].h16 = fold16(L->hash[idx]);
                 m->vis[n].code = L->code ? L->code[idx] : L->hash[idx];
@@ -322,7 +327,7 @@ static void overlap(const wk_map *m, uint32_t room, int n, int *found, int *matc
     int fo = 0, ma = 0;
     for (int i = 0; i < n; i++) {
         const Entry *e = find(m, ((uint64_t)room << 32) | m->vis[i].local);
-        if (!e || e->gfx != m->vis[i].gfx)
+        if (!e || e->gfx != m->vis[i].gfx || e->scout)
             continue;
         fo++;
         if (e->h16 == m->vis[i].h16)
@@ -436,8 +441,20 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
         Entry *e = find(m, key);
         if (e) {
             if (e->h16 == m->vis[i].h16 && e->gfx == m->vis[i].gfx) {
+                if (e->scout) {
+                    /* hindsight: a scouted cell now seen live, the same */
+                    if (e->scout == m->scout_gen) m->st.scout_confirmed++;
+                    e->scout = 0;
+                }
                 if (e->conf < 255) e->conf++;
             } else {
+                if (e->scout && e->scout == m->scout_gen) {
+                    /* hindsight: the scout's future was not this one; nothing it
+                     * recorded and the live picture has not shown yet is served */
+                    m->st.scout_contradicted++;
+                    m->scout_gen = (uint8_t)(m->scout_gen == 255 ? 1 : m->scout_gen + 1);
+                }
+                e->scout = 0;
                 e->code = m->vis[i].code;
                 e->h16 = m->vis[i].h16;
                 e->gfx = m->vis[i].gfx;
@@ -473,7 +490,8 @@ static int cell_at(const wk_map *m, const wk_frame *f, const wk_out *out, int la
     if (!ok)
         return 0;
     const Entry *e = find(m, ((uint64_t)m->cur_room << 32) | lk);
-    if (!e || e->conf < m->cfg.min_conf || e->gfx != fold16(L->gfx_id))
+    if (!e || e->conf < m->cfg.min_conf || e->gfx != fold16(L->gfx_id) ||
+        (e->scout && e->scout != m->scout_gen))
         return 0;
     if (cell) {
         cell->code = e->code;
@@ -489,6 +507,28 @@ int wk_map_margin_cell(const wk_map *m, const wk_frame *f, const wk_out *out, in
     if (layer < 0 || layer >= f->nlayers || y < 0 || y >= out->nlines)
         return 0;
     return cell_at(m, f, out, layer, y, side, index, cell);
+}
+
+void wk_map_record_scout(wk_map *m, const wk_frame *f, const wk_out *out)
+{
+    if (!m->bound || !m->cur_room || out->scene_event || out->epoch != m->epoch_seen)
+        return;
+    int n = gather(m, f, out);
+    uint64_t rbase = (uint64_t)m->cur_room << 32;
+    for (int i = 0; i < n; i++) {
+        uint64_t key = rbase | m->vis[i].local;
+        if (find(m, key))
+            continue;               /* what the live picture showed (or an earlier scout frame) stays */
+        Entry *e = insert(m, key);
+        if (!e)
+            break;
+        e->code = m->vis[i].code;
+        e->h16 = m->vis[i].h16;
+        e->gfx = m->vis[i].gfx;
+        e->conf = 1;
+        e->scout = m->scout_gen;
+        m->st.scout_cells++;
+    }
 }
 
 void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
@@ -647,7 +687,7 @@ size_t wk_map_serialize(const wk_map *m, uint8_t *buf, size_t cap)
         const Room *r = &m->rooms[order[oi]];
         uint32_t np = 0;
         for (uint32_t i = 0; i < m->npool; i++)
-            if ((uint32_t)(m->pool[i].key >> 32) == r->id) {
+            if ((uint32_t)(m->pool[i].key >> 32) == r->id && !m->pool[i].scout) {
                 pairs[np].local = (uint32_t)m->pool[i].key;
                 pairs[np].idx = i;
                 np++;

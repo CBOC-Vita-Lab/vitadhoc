@@ -36,6 +36,10 @@
 
 static bool g_inited, g_loaded;
 static std::string g_srm_path;
+static void cheats_forget(void);
+static void cheats_suspend(std::vector<int> &on);
+static void cheats_resume(const std::vector<int> &on);
+static std::string g_rom_stem;   /* ROM file name without its extension (names the cheat file) */
 static std::string g_title;
 static bool g_audio_on = true;
 static bool g_frame_done;
@@ -183,7 +187,7 @@ int snes_host_init(void)
 	Settings.AutoSaveDelay = 0;
 	Settings.DontSaveOopsSnapshot = TRUE;
 	Settings.NoPatch = TRUE;
-	Settings.ApplyCheats = FALSE;
+	Settings.ApplyCheats = FALSE;   /* unused by the core; the codes are switched on per game by snes_host_cheat_* */
 	CPU.Flags = 0;
 
 	if (!Memory.Init() || !S9xInitAPU()) {
@@ -264,7 +268,13 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 	g_loaded = false;
 	S9xAPUMTSet(false);
 	S9xPPUMTSet(false);
+	cheats_forget();   /* the old game's codes (restores its memory) and Snes9x's own .cht lookup, which this host does not use */
+	Cheat.enabled = FALSE;
 	if (!Memory.LoadROMMem(p, (uint32) n, base)) { snprintf(err, errlen, "Not a valid SNES ROM"); return 3; }
+	S9xDeleteCheats();
+	S9xCheatsEnable();   /* the engine is on; with no group it does nothing, so a game without codes runs bit for bit as before */
+	g_rom_stem = base;
+	{ size_t dot = g_rom_stem.rfind('.'); if (dot != std::string::npos && dot > 0) g_rom_stem.resize(dot); }
 	g_loaded = true;
 	g_title = Memory.ROMName;
 	g_srm_path = srm_path ? srm_path : "";
@@ -294,7 +304,7 @@ int snes_host_load_rom(const char *rom_path, const char *srm_path, char *err, si
 	return 0;
 }
 
-void snes_host_unload(void) { S9xAPUMTSet(false); S9xPPUMTSet(false); g_loaded = false; }
+void snes_host_unload(void) { S9xAPUMTSet(false); S9xPPUMTSet(false); if (g_loaded) cheats_forget(); g_loaded = false; }
 
 void snes_host_set_multitap(int on)
 {
@@ -311,7 +321,14 @@ void snes_host_set_multitap(int on)
 }
 int snes_host_multitap(void) { return g_multitap; }
 
-void snes_host_reset(void) { if (g_loaded) S9xSoftReset(); }
+void snes_host_reset(void)
+{
+	if (!g_loaded) return;
+	std::vector<int> on;
+	cheats_suspend(on);   /* original bytes back (ROM patches included), reset, then the codes are armed again */
+	S9xSoftReset();
+	cheats_resume(on);
+}
 
 int snes_host_has_superfx(void) { return g_loaded && Settings.SuperFX ? 1 : 0; }
 void snes_host_set_superfx_clock(int percent) { Settings.SuperFXClockMultiplier = percent; }
@@ -621,11 +638,11 @@ static bool backup_verified(const char *path, const std::vector<uint8_t> &old, s
 
 void snes_host_set_backup_dir(const char *dir) { g_backup_dir = dir ? dir : ""; }
 
-static int write_atomic(const char *path, const void *data, size_t n, bool keep_bak, bool *bak_done)
+static int write_atomic(const char *path, const void *data, size_t n, bool keep_bak, bool *bak_done, bool report = true)
 {
 	const uint8_t *d = (const uint8_t *) data;
 	/* only battery saves (keep_bak) report through snes_host_save_error; a save state failing says so by its return code */
-	auto E = [&](int code, const char *p, const char *what, int en) { if (keep_bak) err_set(code, p, what, en); else if (code) { char l[300]; snprintf(l, sizeof l, "state write failed: %s: %s %s", what, p ? p : "", en ? strerror(en) : ""); log_line(l); } };
+	auto E = [&](int code, const char *p, const char *what, int en) { if (keep_bak && report) err_set(code, p, what, en); else if (code) { char l[300]; snprintf(l, sizeof l, "write failed: %s: %s %s", what, p ? p : "", en ? strerror(en) : ""); log_line(l); } };
 	std::string tmp = std::string(path) + ".tmp";
 	struct stat st;
 	bool exists = stat(path, &st) == 0;
@@ -702,6 +719,365 @@ int snes_host_sram_write(const uint8_t *data, size_t n)
 
 void snes_host_sram_forget(void) { g_sram_saved.clear(); }
 
+
+/* ===== Cheats ==========================================================================
+ * Snes9x's own engine (cheats2.cpp: one group per code, poked into memory at the end of every
+ * frame by S9xUpdateCheatsInMemory, on the emulation thread, so the APU and PPU workers, which
+ * read none of that memory, stay exact). This part adds validation, a list per game kept in
+ * RetroArch's .cht format (<root>/cheats/<rom name>.cht, written like a save: temp file, read
+ * back, rename, verified backup of the old file first) and re-arming after reset and state load. */
+bool S9xGameGenieToRaw(const std::string &code, uint32 &address, uint8 &byte);
+bool S9xProActionReplayToRaw(const std::string &code, uint32 &address, uint8 &byte);
+
+struct ChtEntry { std::string label, code, extra; bool on = false, usable = false; };
+static std::vector<ChtEntry> g_ch;
+static std::string g_ch_path, g_ch_dir, g_ch_global_extra;
+static bool g_ch_bak_done, g_ch_blocked, g_ch_dirty;
+static char g_ch_errtxt[200];
+
+static bool is_hex_run(const std::string &s, size_t a, size_t n)
+{
+	if (n == 0 || a + n > s.size()) return false;
+	for (size_t i = a; i < a + n; i++) if (!isxdigit((unsigned char) s[i])) return false;
+	return true;
+}
+
+/* Checks one code (cells separated by '+', ',', ';', blanks or line ends) and writes the form the
+ * core is given. Returns the number of cells (1..16) or a SNES_CHEAT_E_* code. */
+static int cheat_parse(const char *code, std::string *canon_out, std::string *raw_out)
+{
+	if (!code) return SNES_CHEAT_E_FORMAT;
+	std::vector<std::string> cells;
+	std::string cur;
+	for (const char *p = code;; p++) {
+		unsigned char c = (unsigned char) *p;
+		if (!c || c == '+' || c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+			if (!cur.empty()) { cells.push_back(cur); cur.clear(); }
+			if (!c) break;
+		} else cur += (char) toupper(c);
+	}
+	if (cells.empty()) return SNES_CHEAT_E_FORMAT;
+	if (cells.size() > 16) return SNES_CHEAT_E_TOO_LONG;
+	std::string out, raw;
+	for (auto &t : cells) {
+		std::string o;
+		uint32 addr = 0; uint8 val = 0;
+		if (t.size() == 9 && t[4] == '-' && is_hex_run(t, 0, 4) && is_hex_run(t, 5, 4)) {          /* Game Genie XXXX-XXXX */
+			if (!S9xGameGenieToRaw(t, addr, val)) return SNES_CHEAT_E_FORMAT;
+			o = t;
+		} else if (t.size() == 8 && is_hex_run(t, 0, 8)) {                                          /* Pro Action Replay AAAAAAVV */
+			if (!S9xProActionReplayToRaw(t, addr, val)) return SNES_CHEAT_E_FORMAT;
+			o = t;
+		} else {                                                                                    /* AAAAAA:VV  AAAAAA=VV  AAAAAA=CC?VV */
+			size_t sep = t.find_first_of(":=");
+			if (sep == std::string::npos || sep < 1 || sep > 6 || !is_hex_run(t, 0, sep)) return SNES_CHEAT_E_FORMAT;
+			std::string rest = t.substr(sep + 1);
+			char buf[40];
+			unsigned a = (unsigned) strtoul(t.substr(0, sep).c_str(), NULL, 16);
+			size_t q = rest.find('?');
+			if (q == std::string::npos) {
+				if (rest.empty() || rest.size() > 2 || !is_hex_run(rest, 0, rest.size())) return SNES_CHEAT_E_FORMAT;
+				unsigned v = (unsigned) strtoul(rest.c_str(), NULL, 16);
+				snprintf(buf, sizeof buf, "%06X=%02X", a, v);
+			} else {
+				if (t[sep] != '=' || q < 1 || q > 2 || rest.size() - q - 1 < 1 || rest.size() - q - 1 > 2 ||
+				    !is_hex_run(rest, 0, q) || !is_hex_run(rest, q + 1, rest.size() - q - 1)) return SNES_CHEAT_E_FORMAT;
+				unsigned cnd = (unsigned) strtoul(rest.substr(0, q).c_str(), NULL, 16);
+				unsigned v = (unsigned) strtoul(rest.substr(q + 1).c_str(), NULL, 16);
+				snprintf(buf, sizeof buf, "%06X=%02X?%02X", a, cnd, v);
+			}
+			addr = a;
+			o = buf;
+		}
+		if (addr == 0) return SNES_CHEAT_E_RANGE;   /* the engine drops address 0 */
+		if (!out.empty()) out += '+';
+		out += o;
+		char rb[40];
+		if (o.size() == 9 && o[4] == '-') snprintf(rb, sizeof rb, "%06X=%02X", (unsigned) addr, (unsigned) val);
+		else if (o.size() == 8 && o.find('=') == std::string::npos) snprintf(rb, sizeof rb, "%06X=%02X", (unsigned) addr, (unsigned) val);
+		else snprintf(rb, sizeof rb, "%s", o.c_str());
+		if (!raw.empty()) raw += '+';
+		raw += rb;
+	}
+	if (canon_out) *canon_out = out;
+	if (raw_out) *raw_out = raw;
+	return (int) cells.size();
+}
+
+int snes_host_cheat_validate(const char *code, char *canon, size_t cap)
+{
+	std::string c;
+	int r = cheat_parse(code, &c, NULL);
+	if (r > 0 && canon) {
+		if (c.size() + 1 > cap) return SNES_CHEAT_E_TOO_LONG;
+		memcpy(canon, c.c_str(), c.size() + 1);
+	}
+	return r;
+}
+
+int snes_host_cheat_decode(const char *code, char *raw, size_t cap)
+{
+	std::string r;
+	int n = cheat_parse(code, NULL, &r);
+	if (n > 0 && raw) {
+		if (r.size() + 1 > cap) return SNES_CHEAT_E_TOO_LONG;
+		memcpy(raw, r.c_str(), r.size() + 1);
+	}
+	return n;
+}
+
+int snes_host_peek_wram(uint32_t offset) { return g_loaded && offset < 0x20000 ? Memory.RAM[offset] : -1; }
+
+static int cheat_gidx(int i) { int n = 0; for (int k = 0; k < i; k++) if (g_ch[k].usable) n++; return n; }
+
+static std::string cheat_label_clean(const char *s)
+{
+	std::string o;
+	for (; s && *s; s++) {
+		unsigned char c = (unsigned char) *s;
+		if (c < 0x20 || c == 0x7f) c = ' ';
+		if (c == '"') c = '\'';
+		if (c == ' ' && (o.empty() || o.back() == ' ')) continue;
+		o += (char) c;
+	}
+	while (!o.empty() && o.back() == ' ') o.pop_back();
+	if (o.size() > SNES_CHEAT_NAME_CAP - 1) {
+		o.resize(SNES_CHEAT_NAME_CAP - 1);
+		while (!o.empty() && ((unsigned char) o.back() & 0xC0) == 0x80) o.pop_back();   /* not inside a UTF-8 character */
+		if (!o.empty() && ((unsigned char) o.back() & 0x80) && ((unsigned char) o.back() & 0x40)) o.pop_back();
+	}
+	return o;
+}
+
+static void cheats_forget(void)
+{
+	S9xDeleteCheats();   /* restores every byte a code changed */
+	g_ch.clear();
+	g_ch_path.clear(); g_ch_dir.clear(); g_ch_global_extra.clear();
+	g_ch_bak_done = g_ch_blocked = g_ch_dirty = false;
+	g_ch_errtxt[0] = 0;
+}
+
+/* codes off with their bytes put back, remembering which were on (reset, state load) */
+static void cheats_suspend(std::vector<int> &on)
+{
+	on.clear();
+	if (Cheat.group.empty()) return;
+	snes_host_sync();
+	for (size_t i = 0; i < Cheat.group.size(); i++) {
+		on.push_back(Cheat.group[i].enabled ? 1 : 0);
+		if (Cheat.group[i].enabled) S9xDisableCheatGroup((uint32) i);
+	}
+}
+static void cheats_resume(const std::vector<int> &on)
+{
+	for (size_t i = 0; i < on.size() && i < Cheat.group.size(); i++)
+		if (on[i]) S9xEnableCheatGroup((uint32) i);
+}
+
+static std::string cht_text(void)
+{
+	std::string t = "cheats = " + std::to_string(g_ch.size()) + "\n";
+	for (size_t i = 0; i < g_ch.size(); i++) {
+		std::string n = std::to_string(i);
+		t += "cheat" + n + "_desc = \"" + g_ch[i].label + "\"\n";
+		t += "cheat" + n + "_code = \"" + g_ch[i].code + "\"\n";
+		t += "cheat" + n + "_enable = " + (g_ch[i].on ? "true" : "false") + "\n";
+		t += g_ch[i].extra;
+	}
+	t += g_ch_global_extra;
+	return t;
+}
+
+int snes_host_cheats_save(void)
+{
+	if (g_ch_path.empty()) return 0;   /* no file attached: the list lives in memory only */
+	if (g_ch_blocked) {
+		snprintf(g_ch_errtxt, sizeof g_ch_errtxt, "cheat file not saved: the existing file could not be read, it is left alone");
+		return SNES_CHEAT_E_IO;
+	}
+	make_dirs(g_ch_dir);
+	std::string t = cht_text();
+	int r = write_atomic(g_ch_path.c_str(), t.data(), t.size(), true, &g_ch_bak_done, false);
+	if (r) {
+		snprintf(g_ch_errtxt, sizeof g_ch_errtxt, "cheat file not saved (code %d, %s); the old file is untouched", r, strerror(errno));
+		g_ch_dirty = true;
+		return SNES_CHEAT_E_IO;
+	}
+	g_ch_errtxt[0] = 0;
+	g_ch_dirty = false;
+	return 0;
+}
+
+int snes_host_cheat_error(char *text, size_t cap)
+{
+	if (text && cap) snprintf(text, cap, "%s", g_ch_errtxt);
+	return g_ch_errtxt[0] ? 1 : 0;
+}
+
+static std::string cht_trim(const std::string &s)
+{
+	size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
+	return a == std::string::npos ? "" : s.substr(a, b - a + 1);
+}
+
+int snes_host_cheats_load(const char *root)
+{
+	if (!g_loaded || !root) return SNES_CHEAT_E_NOROM;
+	cheats_forget();
+	g_ch_dir = std::string(root) + "/cheats";
+	g_ch_path = g_ch_dir + "/" + g_rom_stem + ".cht";
+	struct stat st;
+	if (stat(g_ch_path.c_str(), &st) != 0) return 0;   /* no file yet: an empty list */
+	std::vector<uint8_t> raw;
+	if (st.st_size > 0 && (st.st_size > (4 << 20) || !read_file(g_ch_path.c_str(), raw))) {
+		g_ch_blocked = true;
+		snprintf(g_ch_errtxt, sizeof g_ch_errtxt, "cheat file unreadable, left alone");
+		return SNES_CHEAT_E_IO;
+	}
+	struct Raw { std::string desc, code, extra; bool on = false, has_code = false; };
+	std::vector<Raw> items;
+	std::string text((const char *) raw.data(), raw.size()), line;
+	text += "\n";
+	for (size_t p = 0; p < text.size(); p++) {
+		if (text[p] != '\n') { line += text[p]; continue; }
+		std::string l = cht_trim(line);
+		line.clear();
+		if (l.empty()) continue;
+		size_t eq = l.find('=');
+		std::string key = cht_trim(eq == std::string::npos ? l : l.substr(0, eq));
+		std::string val = eq == std::string::npos ? "" : cht_trim(l.substr(eq + 1));
+		std::string unq = val;
+		if (unq.size() >= 2 && unq.front() == '"' && unq.back() == '"') unq = unq.substr(1, unq.size() - 2);
+		if (key == "cheats") continue;
+		if (key.compare(0, 5, "cheat") == 0 && key.size() > 6 && isdigit((unsigned char) key[5])) {
+			size_t u = key.find('_');
+			if (u != std::string::npos && u > 5) {
+				size_t idx = (size_t) strtoul(key.substr(5, u - 5).c_str(), NULL, 10);
+				std::string suf = key.substr(u + 1);
+				if (idx < SNES_CHEATS_MAX) {
+					if (items.size() <= idx) items.resize(idx + 1);
+					Raw &r = items[idx];
+					if (suf == "desc") r.desc = unq;
+					else if (suf == "code") { r.code = unq; r.has_code = true; }
+					else if (suf == "enable") r.on = (unq == "true" || unq == "1");
+					else r.extra += "cheat@" + suf + " = " + val + "\n";   /* '@' is the entry number, filled in on writing */
+					continue;
+				}
+			}
+		}
+		g_ch_global_extra += l + "\n";
+	}
+	for (auto &r : items) {
+		if (!r.has_code) continue;
+		ChtEntry e;
+		e.label = cheat_label_clean(r.desc.c_str());
+		if (e.label.empty()) e.label = "Cheat " + std::to_string(g_ch.size() + 1);
+		e.code = r.code;
+		e.on = r.on;
+		/* the extra keys carry the new number */
+		for (size_t q = 0; q < r.extra.size();) {
+			size_t nl = r.extra.find('\n', q);
+			std::string ln = r.extra.substr(q, nl - q);
+			size_t at = ln.find('@');
+			e.extra += ln.substr(0, at) + std::to_string(g_ch.size()) + "_" + ln.substr(at + 1) + "\n";
+			q = nl + 1;
+		}
+		char canon[600];
+		if (snes_host_cheat_validate(r.code.c_str(), canon, sizeof canon) > 0 && S9xAddCheatGroup("", canon) >= 0) e.usable = true;
+		g_ch.push_back(e);
+		if (e.usable && e.on) S9xEnableCheatGroup((uint32) cheat_gidx((int) g_ch.size() - 1));
+		if (g_ch.size() >= SNES_CHEATS_MAX) break;
+	}
+	return (int) g_ch.size();
+}
+
+int snes_host_cheat_count(void) { return (int) g_ch.size(); }
+
+int snes_host_cheat_get(int i, snes_cheat_info *out)
+{
+	if (i < 0 || i >= (int) g_ch.size() || !out) return SNES_CHEAT_E_RANGE;
+	snprintf(out->label, sizeof out->label, "%s", g_ch[i].label.c_str());
+	snprintf(out->code, sizeof out->code, "%s", g_ch[i].code.c_str());
+	out->enabled = g_ch[i].on ? 1 : 0;
+	out->usable = g_ch[i].usable ? 1 : 0;
+	return 0;
+}
+
+int snes_host_cheat_add(const char *code, const char *label)
+{
+	if (!g_loaded) return SNES_CHEAT_E_NOROM;
+	if ((int) g_ch.size() >= SNES_CHEATS_MAX) return SNES_CHEAT_E_FULL;
+	char canon[600];
+	int r = snes_host_cheat_validate(code, canon, sizeof canon);
+	if (r < 0) return r;
+	if (strlen(canon) >= SNES_CHEAT_CODE_CAP) return SNES_CHEAT_E_TOO_LONG;
+	snes_host_sync();
+	int gi = S9xAddCheatGroup("", canon);
+	if (gi < 0 || gi != (int) cheat_gidx((int) g_ch.size())) { if (gi >= 0) S9xDeleteCheatGroup((uint32) gi); return SNES_CHEAT_E_FORMAT; }
+	ChtEntry e;
+	e.label = cheat_label_clean(label);
+	if (e.label.empty()) e.label = "Cheat " + std::to_string(g_ch.size() + 1);
+	e.code = canon;
+	e.on = true; e.usable = true;
+	g_ch.push_back(e);
+	S9xEnableCheatGroup((uint32) gi);
+	snes_host_cheats_save();   /* a failure is in snes_host_cheat_error(); the code works and is retried on the next change */
+	return (int) g_ch.size() - 1;
+}
+
+int snes_host_cheat_enable(int i, int on)
+{
+	if (i < 0 || i >= (int) g_ch.size()) return SNES_CHEAT_E_RANGE;
+	ChtEntry &e = g_ch[i];
+	if (!e.usable) { if (!on) { e.on = false; snes_host_cheats_save(); return 0; } return SNES_CHEAT_E_UNSUPPORTED; }
+	if ((e.on ? 1 : 0) == (on ? 1 : 0)) return 0;
+	snes_host_sync();
+	if (on) S9xEnableCheatGroup((uint32) cheat_gidx(i)); else S9xDisableCheatGroup((uint32) cheat_gidx(i));
+	e.on = on != 0;
+	snes_host_cheats_save();
+	return 0;
+}
+
+int snes_host_cheat_remove(int i)
+{
+	if (i < 0 || i >= (int) g_ch.size()) return SNES_CHEAT_E_RANGE;
+	snes_host_sync();
+	if (g_ch[i].usable) S9xDeleteCheatGroup((uint32) cheat_gidx(i));
+	g_ch.erase(g_ch.begin() + i);
+	/* extra keys name their entry by number: renumber the ones after it */
+	for (size_t k = (size_t) i; k < g_ch.size(); k++) {
+		std::string fixed;
+		for (size_t q = 0; q < g_ch[k].extra.size();) {
+			size_t nl = g_ch[k].extra.find('\n', q);
+			std::string ln = g_ch[k].extra.substr(q, nl - q);
+			size_t us = ln.find('_');
+			if (us != std::string::npos) ln = "cheat" + std::to_string(k) + ln.substr(us);
+			fixed += ln + "\n";
+			q = nl + 1;
+		}
+		g_ch[k].extra = fixed;
+	}
+	snes_host_cheats_save();
+	return 0;
+}
+
+void snes_host_cheat_disable_all(void)
+{
+	snes_host_sync();
+	for (size_t i = 0; i < g_ch.size(); i++) if (g_ch[i].on && g_ch[i].usable) S9xDisableCheatGroup((uint32) cheat_gidx((int) i));
+	for (auto &e : g_ch) e.on = false;
+	snes_host_cheats_save();
+}
+
+void snes_host_cheat_reset(void)
+{
+	snes_host_sync();
+	S9xDeleteCheats();
+	g_ch.clear();
+	snes_host_cheats_save();
+}
+
 int snes_host_state_save(const char *path)
 {
 	if (!g_loaded) return 1;
@@ -717,5 +1093,9 @@ int snes_host_state_load(const char *path)
 	if (!g_loaded) return 1;
 	std::vector<uint8_t> buf;
 	if (!read_file(path, buf)) return 2;
-	return S9xUnfreezeGameMem(buf.data(), (uint32) buf.size()) == SUCCESS ? 0 : 3;
+	std::vector<int> on;
+	cheats_suspend(on);   /* the state holds the game's own bytes; the codes poke them again after the load */
+	int r = S9xUnfreezeGameMem(buf.data(), (uint32) buf.size()) == SUCCESS ? 0 : 3;
+	cheats_resume(on);
+	return r;
 }

@@ -123,6 +123,10 @@ static void usage(void)
 	    "  --shot-prefix P    PNG file prefix (default shot_)\n"
 	    "  --wav FILE         write all audio (32040 Hz stereo)\n"
 	    "  --timing FILE      CSV: frame,total_us,cpu_us,apu_us,ppu_us,chip_us,front_us (enables profiling)\n"
+	    "  --cheats-root DIR  load/keep the game's cheat list in DIR/cheats/<rom name>.cht (RetroArch format)\n"
+	    "  --cheat CODE       add a code (Game Genie XXXX-XXXX, Action Replay AAAAAAVV, raw AAAAAA=VV), repeatable\n"
+	    "  --cheat-toggle F:I:0|1  at frame F switch entry I off/on;  --cheat-remove I;  --cheat-disable-all;  --cheat-list\n"
+	    "  --peek HEX         print the work RAM byte at that offset at the end;  '-' as ROM with --cheat-decode CODE: decode only\n"
 	    "  --srm FILE         battery RAM file (loaded if present, saved at exit; exit status 3 when the save failed)\n"
 	    "  --srm-async        save the way the Vita's writer thread does (take / write / forget); --unblock PATH: if the save\n"
 	    "                     failed remove PATH and try once more\n"
@@ -154,6 +158,12 @@ int main(int argc, char **argv)
 	const char *backup_dir = 0, *unblock = 0;
 	bool srm_async = false;
 	bool summary = false;
+	std::vector<std::string> cheat_codes, cheat_decode;
+	struct CTog { int frame, index, on; };
+	std::vector<CTog> ctog;
+	const char *cheats_root = 0;
+	int peek = -1, cheat_remove = -1;
+	bool cheat_list = false, cheat_disable_all = false;
 	AudioSimArgs sim;
 	bool want_sim = false, force_tone = false;
 	for (int i = 2; i < argc; i++) {
@@ -169,6 +179,14 @@ int main(int argc, char **argv)
 		else if (arg("--backup-dir")) backup_dir = argv[++i];
 		else if (arg("--unblock")) unblock = argv[++i];
 		else if (!strcmp(argv[i], "--srm-async")) srm_async = true;
+		else if (arg("--cheat")) cheat_codes.push_back(argv[++i]);
+		else if (arg("--cheat-decode")) cheat_decode.push_back(argv[++i]);
+		else if (arg("--cheats-root")) cheats_root = argv[++i];
+		else if (arg("--cheat-toggle")) { CTog t; if (sscanf(argv[++i], "%d:%d:%d", &t.frame, &t.index, &t.on) == 3) ctog.push_back(t); }
+		else if (arg("--cheat-remove")) cheat_remove = atoi(argv[++i]);
+		else if (arg("--peek")) peek = (int) strtol(argv[++i], 0, 16);
+		else if (!strcmp(argv[i], "--cheat-list")) cheat_list = true;
+		else if (!strcmp(argv[i], "--cheat-disable-all")) cheat_disable_all = true;
 		else if (arg("--save-state")) sstate = argv[++i];
 		else if (arg("--load-state")) lstate = argv[++i];
 		else if (arg("--state-frame")) state_frame = atoi(argv[++i]);
@@ -191,6 +209,17 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--nowait")) nowait = true;
 		else { usage(); return 2; }
+	}
+	if (!cheat_decode.empty()) {
+		/* no ROM needed: "snes_twin - --cheat-decode CODE" prints the code as address=value cells (Game Genie, Action Replay, raw), or the error */
+		int bad = 0;
+		for (auto &c : cheat_decode) {
+			char raw[700], canon[700];
+			int n = snes_host_cheat_decode(c.c_str(), raw, sizeof raw);
+			if (n > 0 && snes_host_cheat_validate(c.c_str(), canon, sizeof canon) > 0) printf("%s -> %s (%d cell%s, %s)\n", c.c_str(), raw, n, n == 1 ? "" : "s", canon);
+			else { printf("%s -> error %d\n", c.c_str(), n); bad++; }
+		}
+		return 0;
 	}
 	std::set<int> shotset;
 	if (shots) {
@@ -216,6 +245,17 @@ int main(int argc, char **argv)
 	if (snes_host_load_rom(rom, srm, err, sizeof err)) { fprintf(stderr, "load failed: %s\n", err); return 1; }
 
 	fprintf(stderr, "%s\n", snes_host_rom_info());
+	if (cheats_root) {
+		int r = snes_host_cheats_load(cheats_root);
+		fprintf(stderr, "cheats: %d entries loaded\n", r);
+	}
+	if (cheat_remove >= 0) printf("cheat remove %d -> %d\n", cheat_remove, snes_host_cheat_remove(cheat_remove));
+	for (auto &c : cheat_codes) {
+		int r = snes_host_cheat_add(c.c_str(), NULL);
+		char et[200];
+		printf("cheat add %s -> %d\n", c.c_str(), r);
+		if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et);
+	}
 	FILE *hf = hashes ? fopen(hashes, "w") : 0;
 	FILE *tf = timing ? fopen(timing, "w") : 0;
 	if (tf) fprintf(tf, "frame,total_us,cpu_us,apu_us,ppu_us,chip_us,front_us\n");
@@ -240,6 +280,7 @@ int main(int argc, char **argv)
 				snes_host_set_pad(k + 1, em[k]);
 			}
 		}
+		for (auto &t : ctog) if (t.frame == f) printf("cheat toggle frame %d index %d on %d -> %d\n", f, t.index, t.on, snes_host_cheat_enable(t.index, t.on));
 		if (lstate && f == state_frame) {
 			int r = snes_host_state_load(lstate);
 			fprintf(stderr, "load state: %d\n", r);
@@ -292,6 +333,14 @@ int main(int argc, char **argv)
 		while ((n = snes_host_audio_take(abuf.data(), 4096)) > 0)
 			if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
 	}
+	if (peek >= 0) printf("peek %05X = %02X\n", peek, snes_host_peek_wram((uint32_t) peek));
+	if (cheat_disable_all) snes_host_cheat_disable_all();
+	if (cheat_list)
+		for (int k = 0, n = snes_host_cheat_count(); k < n; k++) {
+			snes_cheat_info ci;
+			snes_host_cheat_get(k, &ci);
+			printf("cheat %d: %s | %s | %s%s\n", k, ci.label, ci.code, ci.enabled ? "on" : "off", ci.usable ? "" : " (not a code)");
+		}
 	if (hf) fclose(hf);
 	if (tf) fclose(tf);
 	if (wav) write_wav(wav, pcm);

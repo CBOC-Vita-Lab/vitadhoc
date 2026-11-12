@@ -8,6 +8,7 @@
 #include "cheats.h"
 #include "snes9x.h"
 #include "memmap.h"
+#include "sa1.h"
 #include <cassert>
 
 static inline uint8 S9xGetByteFree(uint32 Address)
@@ -103,7 +104,15 @@ static inline void S9xSetByteFree(uint8 Byte, uint32 Address)
 
     if (SetAddress >= (uint8 *)CMemory::MAP_LAST)
     {
-        *(SetAddress + (Address & 0xffff)) = Byte;
+        uint8 *p = SetAddress + (Address & 0xffff);
+        *p = Byte;
+        // CBOC-Vita: a Game Genie style patch of the ROM image. The SA-1 idle-loop replay assumes
+        // ROM code never changes, so it is switched off for this cartridge (until the next load).
+        if (Settings.SA1 && p >= Memory.ROM && p < Memory.ROM + Memory.CalculatedSize && !S9xSA1RomPatched)
+        {
+            S9xSA1RomPatched = TRUE;
+            S9xSA1ReplayReset();
+        }
         return;
     }
 

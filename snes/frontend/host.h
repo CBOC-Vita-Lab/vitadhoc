@@ -126,6 +126,73 @@ typedef struct {
 } snes_thread_stats;
 void snes_host_thread_stats(snes_thread_stats *st);
 
+/* ---- Cheats (all systems share the shape of this API) ------------------------------------
+ * Codes: Game Genie XXXX-XXXX, Pro Action Replay AAAAAAVV (8 hex), raw AAAAAA:VV or AAAAAA=VV
+ * (address 1-6 hex digits, value 1-2), and AAAAAA=CC?VV (poke VV only while the byte is CC).
+ * Several cells in one code: separate them with '+', ',', ';', a blank or a line end. Case and
+ * spacing do not matter; spaces around ':' or '=' are not allowed. Address 0 is refused.
+ *
+ * The codes of a game live in a list (up to SNES_CHEATS_MAX); a code is poked into memory at the end
+ * of every frame while it is on, on the emulation thread (RAM writes at a frame boundary, so the APU
+ * and PPU workers stay bit-identical to the single thread), a Game Genie style ROM patch is put back
+ * when the code is switched off. Reset and state load switch the codes off, do their work and arm them
+ * again, so a state's own bytes are never mixed with stale ones. With no code on, the emulation is
+ * bit-identical to a build without cheats (checked by hash on the 15 owner games, threads on and off).
+ *
+ * Persistence: after snes_host_cheats_load(root) every change is written to
+ * <root>/cheats/<ROM file name without extension>.cht in RetroArch's format
+ *     cheats = 2
+ *     cheat0_desc = "Infinite lives"
+ *     cheat0_code = "7E0DBE=63"
+ *     cheat0_enable = true
+ * (a code of several cells joined by '+'; keys we do not know are kept). Writing is the safe writer:
+ * temp file, read back, rename, a verified backup of the old file before the first overwrite. If a
+ * write fails the change still holds in memory, snes_host_cheat_error() says why and the next change
+ * (or snes_host_cheats_save()) retries; a file that exists but cannot be read is never overwritten.
+ * Call everything from the thread that runs the frames, between frames. */
+#define SNES_CHEATS_MAX 512
+#define SNES_CHEAT_NAME_CAP 64
+#define SNES_CHEAT_CODE_CAP 512
+enum {
+	SNES_CHEAT_OK = 0,
+	SNES_CHEAT_E_FULL = -1,
+	SNES_CHEAT_E_FORMAT = -2,       /* not a code */
+	SNES_CHEAT_E_UNSUPPORTED = -3,  /* in the list but not a code this engine can run (cannot be switched on) */
+	SNES_CHEAT_E_TOO_LONG = -4,     /* more than 16 cells, or a text over the cap */
+	SNES_CHEAT_E_IO = -5,           /* the .cht could not be read or written */
+	SNES_CHEAT_E_RANGE = -6,        /* bad index, or address 0 */
+	SNES_CHEAT_E_NOROM = -7
+};
+typedef struct {
+	char label[SNES_CHEAT_NAME_CAP];
+	char code[SNES_CHEAT_CODE_CAP];
+	int enabled;
+	int usable;                     /* 0: the text is not a code we can run (kept so the file round-trips) */
+} snes_cheat_info;
+/* Needs a loaded ROM. Reads the game's .cht (a missing file is an empty list) and arms the entries that
+ * are on. Returns the number of entries or a SNES_CHEAT_E_*. Loading a ROM forgets the list. */
+int snes_host_cheats_load(const char *root);
+/* Checks a code without adding it. Returns the number of cells (> 0) or SNES_CHEAT_E_*. If canon is given
+ * it receives the normalised text ("7E0DBE=63", "C2A6-3D6D", upper case, cells joined by '+'). */
+int snes_host_cheat_validate(const char *code, char *canon, size_t cap);
+/* The same code as plain address=value cells, "7E0DBE=63+..." (a Game Genie or Action Replay cell decoded); for tests. */
+int snes_host_cheat_decode(const char *code, char *raw, size_t cap);
+/* Work RAM byte at offset 0..0x1FFFF (address $7E0000 + offset), or -1; for tests. */
+int snes_host_peek_wram(uint32_t offset);
+/* Adds a code (switched on). label may be NULL/"" ("Cheat N"). Returns the new index or SNES_CHEAT_E_*. */
+int snes_host_cheat_add(const char *code, const char *label);
+int snes_host_cheat_enable(int index, int on);
+int snes_host_cheat_remove(int index);
+int snes_host_cheat_count(void);
+int snes_host_cheat_get(int index, snes_cheat_info *out);
+void snes_host_cheat_disable_all(void);
+/* Removes every code (memory is restored) and writes the empty list. */
+void snes_host_cheat_reset(void);
+/* Writes the list now (a retry after a failed write). 0 or SNES_CHEAT_E_IO. */
+int snes_host_cheats_save(void);
+/* 1 and the reason in text when the last write of the list failed, else 0. */
+int snes_host_cheat_error(char *text, size_t cap);
+
 const char *snes_host_rom_title(void);
 /* One line about the loaded cartridge: map, size, chips, SRAM. */
 const char *snes_host_rom_info(void);

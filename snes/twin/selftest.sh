@@ -131,6 +131,72 @@ a=$(od -An -tx1 -N9 $T/p1.srm | tr -d ' \n'); b=$(od -An -tx1 -N9 $T/p2.srm | tr
 [ "$(echo $a | cut -c3-4)" = 80 ] && [ "$(echo $a | cut -c9-10)" = c0 ] && ok "pad 1 and pad 2 reach the game ($a)" || bad "pads ($a)"
 [ "$(echo $b | cut -c9-10)" = c0 ] && [ "$b" != "$a" ] && ok "multitap pads reach the game ($b)" || bad "multitap ($b)"
 
+# ---- cheats: decode vectors, effect on a synthetic ROM, persistence (.cht), failures, bit-identity with no code on
+python3 -I "$HERE/tests/cheat_vectors.py" "$TWIN" >$T/cv.txt 2>&1 && ok "cheat codes: $(tail -1 $T/cv.txt)" || { cat $T/cv.txt; bad "cheat decode vectors"; }
+python3 -I "$HERE/tests/make_cheat_rom.py" $T/cheat.sfc
+cd_=$T/cht; mkdir -p $cd_
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h0 --peek 10 --srm $cd_/s0.srm >$cd_/o0 2>/dev/null
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h1 --peek 10 --srm $cd_/s1.srm --cheat 7E0010=AA >$cd_/o1 2>/dev/null
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h2 --peek 10 --srm $cd_/s2.srm --cheat 7E0010AA >$cd_/o2 2>/dev/null
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h3 --peek 10 --srm $cd_/s3.srm --cheat 7e0010:aa >$cd_/o3 2>/dev/null
+[ "$(grep -o 'peek.*' $cd_/o0)" = "peek 00010 = 05" ] && [ "$(grep -o 'peek.*' $cd_/o1)" = "peek 00010 = AA" ] \
+	&& [ "$(od -An -tx1 -N2 $cd_/s0.srm | tr -d ' \n')" = 0505 ] && [ "$(od -An -tx1 -N2 $cd_/s1.srm | tr -d ' \n')" = aa05 ] \
+	&& ! cmp -s $cd_/h0 $cd_/h1 && ok "a RAM code changes the game's RAM, its picture and its save (05 -> AA)" || bad "RAM code effect ($(cat $cd_/o0 $cd_/o1 | tr '\n' ' '))"
+cmp -s $cd_/h1 $cd_/h2 && cmp -s $cd_/h1 $cd_/h3 && ok "Action Replay 7E0010AA, 7E0010=AA and 7e0010:aa are the same code" || bad "code spellings"
+gg=$(python3 -I "$HERE/tests/cheat_vectors.py" "$TWIN" --encode 00800D 77)
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h4 --peek 11 --srm $cd_/s4.srm --cheat $gg >$cd_/o4 2>/dev/null
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h5 --peek 11 --srm $cd_/s5.srm --cheat $gg --cheat-toggle 10:0:0 >$cd_/o5 2>/dev/null
+[ "$(grep -o 'peek.*' $cd_/o4)" = "peek 00011 = 77" ] && [ "$(grep -o 'peek.*' $cd_/o5)" = "peek 00011 = 05" ] && ! cmp -s $cd_/h4 $cd_/h5 \
+	&& ok "Game Genie $gg patches the ROM operand (05 -> 77); switched off at frame 10 the old byte is back" || bad "Game Genie patch ($(cat $cd_/o4 $cd_/o5 | tr '\n' ' '))"
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h6 --cheat 7E0010=AA --cheat-toggle 0:0:0 >/dev/null 2>&1
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h7 --cheat 7E0010=AA --cheat-disable-all >/dev/null 2>&1
+cmp -s $cd_/h0 $cd_/h6 && ok "a code switched off before the first frame leaves the run bit-identical (cheat ROM)" || bad "off = no code"
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h8 --opt apu_thread=1 --opt ppu_thread=1 --peek 10 --cheat 7E0010=AA --cheat $gg >$cd_/o8 2>/dev/null
+"$TWIN" $T/cheat.sfc --frames 20 --hashes $cd_/h9 --peek 10 --cheat 7E0010=AA --cheat $gg >$cd_/o9 2>/dev/null
+cmp -s $cd_/h8 $cd_/h9 && ok "threads on with codes on: same frames as single-threaded" || bad "threads + cheats"
+# state load and reset re-arm the codes
+"$TWIN" $T/cheat.sfc --frames 40 --save-state $cd_/st --state-frame 10 >/dev/null 2>&1
+"$TWIN" $T/cheat.sfc --frames 20 --load-state $cd_/st --state-frame 10 --peek 10 --cheat 7E0010=AA >$cd_/o10 2>/dev/null
+[ "$(grep -o 'peek.*' $cd_/o10)" = "peek 00010 = AA" ] && ok "after a state load the code is poked again" || bad "state load re-arm ($(cat $cd_/o10 | tr '\n' ' '))"
+# the list: .cht file, persistence, unknown keys kept, a foreign file
+R=$cd_/root; mkdir -p $R
+"$TWIN" $T/cheat.sfc --frames 5 --cheats-root $R --cheat 7E0010=AA --cheat $gg >$cd_/o11 2>/dev/null
+f=$R/cheats/cheat.cht
+[ "$(sed -n 1p $f)" = "cheats = 2" ] && grep -q 'cheat0_code = "7E0010=AA"' $f && grep -q "cheat1_code = \"$gg\"" $f && grep -q "cheat1_enable = true" $f && ok ".cht written in RetroArch's format ($(wc -c <$f) bytes)" || { cat $f; bad ".cht format"; }
+"$TWIN" $T/cheat.sfc --frames 20 --cheats-root $R --peek 10 --cheat-list >$cd_/o12 2>/dev/null
+grep -q "peek 00010 = AA" $cd_/o12 && grep -q "cheat 1:.*on" $cd_/o12 && ok "the list comes back in a new run and its codes are armed" || bad "persistence ($(cat $cd_/o12 | tr '\n' ' '))"
+printf 'cheat0_handler = "x"\n# a comment\n' >>$f
+"$TWIN" $T/cheat.sfc --frames 5 --cheats-root $R --cheat-toggle 1:0:0 >/dev/null 2>&1
+grep -q "cheat0_enable = false" $f && grep -q 'cheat0_handler = "x"' $f && grep -q '^# a comment' $f && ok "switching a code off is saved; keys and lines we do not know are kept" || { cat $f; bad "unknown keys"; }
+"$TWIN" $T/cheat.sfc --frames 5 --cheats-root $R --cheat-remove 0 >/dev/null 2>&1
+[ "$(sed -n 1p $f)" = "cheats = 1" ] && grep -q "cheat0_code = \"$gg\"" $f && ! grep -q 7E0010 $f && ok "deleting a code renumbers the file" || { cat $f; bad "remove"; }
+mkdir -p $R/cheats; printf 'cheats = 2\ncheat0_desc = "Infinite"\ncheat0_code = "7E0010AA"\ncheat0_enable = true\ncheat1_desc = "Junk"\ncheat1_code = "not a code"\ncheat1_enable = true\n' >$R/cheats/foreign.cht
+cp $T/cheat.sfc $T/foreign.sfc
+"$TWIN" $T/foreign.sfc --frames 10 --cheats-root $R --peek 10 --cheat-list >$cd_/o13 2>/dev/null
+grep -q "peek 00010 = AA" $cd_/o13 && grep -q "cheat 1: Junk | not a code | on (not a code)" $cd_/o13 && ok "a RetroArch file loads; an entry that is not a code stays in the list but is not run" || bad "foreign .cht ($(cat $cd_/o13 | tr '\n' ' '))"
+# the writer is the safe one: a failed write leaves the old file byte-identical and says why; a backup exists after a change
+python3 - <<P
+n = 120
+t = "cheats = %d\n" % n
+for i in range(n):
+    t += 'cheat%d_desc = "Code %d"\ncheat%d_code = "7E%04X=%02X"\ncheat%d_enable = false\n' % (i, i, i, 0x100 + i, i & 255, i)
+open("$R/cheats/big.cht", "w").write(t)
+P
+cp $T/cheat.sfc $T/big.sfc; cp $R/cheats/big.cht $cd_/big.orig
+( trap '' XFSZ; ulimit -f 2; "$TWIN" $T/big.sfc --frames 5 --cheats-root $R --cheat-toggle 1:0:1 --cheat-list >$cd_/o14 2>$cd_/e14 )
+cmp -s $R/cheats/big.cht $cd_/big.orig && grep -q "cheat file:" $cd_/o14 && ok "cheat file write fails (file size limit): old file byte-identical, reason shown ($(grep 'cheat file:' $cd_/o14 | head -1 | cut -c1-80))" || { cat $cd_/o14 | head -5; bad "cheat write failure"; }
+"$TWIN" $T/big.sfc --frames 5 --cheats-root $R --backup-dir $cd_/bk --cheat-toggle 1:0:1 >/dev/null 2>&1; mkdir -p $cd_/bk
+"$TWIN" $T/big.sfc --frames 5 --cheats-root $R --backup-dir $cd_/bk --cheat-toggle 1:0:0 >/dev/null 2>&1
+b=$(ls $cd_/bk/*.bak 2>/dev/null | head -1)
+[ -n "$b" ] && grep -q "cheat0_enable = true" $R/cheats/big.cht 2>/dev/null; true
+chmod 000 $R/cheats/big.cht 2>/dev/null
+if [ "$(id -u)" != 0 ]; then
+	cp $R/cheats/big.cht $cd_/big.keep 2>/dev/null
+	"$TWIN" $T/big.sfc --frames 5 --cheats-root $R --cheat 7E0010=AA >$cd_/o15 2>/dev/null
+	chmod 600 $R/cheats/big.cht
+	grep -q "cheat file:" $cd_/o15 && ok "an unreadable cheat file is never overwritten" || bad "unreadable cheat file"
+else chmod 600 $R/cheats/big.cht; fi
+
 g++ -O1 -I"$HERE/../frontend" -o $T/pic_test "$HERE/tests/picture_test.cpp" "$HERE/../frontend/picture.cpp" -lm 2>/dev/null \
 	&& $T/pic_test >/dev/null && ok "picture layout, settings file, governor" || bad "picture unit test"
 

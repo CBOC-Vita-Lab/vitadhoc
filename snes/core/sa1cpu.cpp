@@ -161,8 +161,12 @@ static inline void sa1_put (const SA1Point &p)
 	SA1.S9xOpcodes = p.ops; SA1.S9xOpLengths = p.lens;
 }
 
+bool8 S9xSA1RomPatched = FALSE;
+
 static inline bool sa1_code_in_rom (void)
 {
+	if (S9xSA1RomPatched)
+		return false;
 #ifdef CBOC_NO_SA1_REPLAY	/* build switch: never records a loop, so every SA-1 instruction is interpreted (the exactness reference) */
 	return false;
 #endif

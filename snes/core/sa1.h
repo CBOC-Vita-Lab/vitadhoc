@@ -110,6 +110,7 @@ void S9xSetSA1 (uint8, uint32);
 void S9xSA1Init (void);
 void S9xSA1MainLoop (void);
 void S9xSA1ReplayReset (void);
+extern bool8 S9xSA1RomPatched;	/* a cheat has written into the ROM image: the replay engine assumes ROM code never changes, so it stays off */
 void S9xSA1ReplaySync (void);
 void S9xSA1ReplayDrop (void);
 void S9xSA1Run (void);

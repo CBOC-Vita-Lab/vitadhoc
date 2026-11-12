@@ -23,6 +23,7 @@ static void S9xSA1ReadVariableLengthData (bool8, bool8);
 
 void S9xSA1Init (void)
 {
+	S9xSA1RomPatched = FALSE;
 	S9xSA1ReplayDrop();
 	SA1.Cycles = 0;
 	SA1.PrevCycles = 0;

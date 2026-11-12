@@ -6098,6 +6098,53 @@ def t_ws_boot(S):
     S.picture(r, "v.png", "ws_vertical.png")
 
 
+def t_ws_private(S):
+    """LOCAL ONLY: the owner's WonderSwan acceptance game (a private file named
+    by GATE_WS_ROM or WS_PRIVATE_ROM; skipped when it is not there, never
+    copied into the tree).  Played by script as the WonderSwan twin played it
+    (wswan/twin notes: A through the opening, the hub, Vision 1-3 reached
+    with the RAM poke 012D9:13 from the game's .cht), it shows a horizontal
+    stage at 224x144 and turns upright (144x224) by itself in the vertical
+    one, the buttons with it; the screenshots are for a person to look at."""
+    path = os.environ.get("GATE_WS_ROM") or os.environ.get("WS_PRIVATE_ROM") or ""
+    if not path or not os.path.isfile(path):
+        S.note("no private WonderSwan ROM (GATE_WS_ROM): skipped")
+        return
+    rom = open(path, "rb").read()
+    k = 60000.0 / 1001.0 / (3072000.0 / 40704.0)     # refreshes per emulated frame
+    def at(f):
+        return int(round(f * k))
+    ev = [(at(1000), "start"), (at(1200), "start")]
+    ev += [(at(f), "circle") for f in range(1400, 30000, 45)]  # WonderSwan A = Circle
+    base = 30000
+    ev += [(at(base + d), b) for d, b in ((100, "start"), (260, "down"), (300, "down"),
+                                          (340, "down"), (380, "circle"))]
+    base2 = base + 520
+    ev += [(at(base2 + d), b) for d, b in ((30, "down"), (90, "up"), (150, "circle"),
+                                           (300, "circle"))]
+    shots = [(at(8000), "shot=h1.png"), (at(20000), "shot=h2.png"), (at(29900), "shot=h3.png"),
+             (at(base2 + 450), "shot=v1.png"), (at(base2 + 700), "shot=v2.png")]
+    lines = []
+    for f, b in sorted(ev + shots):
+        lines.append("%d:%s" % (f, b) if b.startswith("shot") else "%d:%s:3" % (f, b))
+    lines.append("%d:right:30" % (at(base2 + 720)))
+    lines.append("%d:shot=v3.png" % (at(base2 + 760)))
+    lines.append("%d:quit" % (at(base2 + 800)))
+    r = S.run("ws_private", "\n".join(lines) + "\n", autoboot="Private.ws",
+              extra={"roms/Private.ws": rom, "cheats/Private.cht": nes_cht("012D9:13", "Vision 1-3")})
+    try:
+        os.remove(os.path.join(r.out, "audio.wav"))
+    except OSError:
+        pass
+    S.check(r.has(r"^EVT gb_rom_loaded console=WS") and r.has(r"^EVT av_info fps=75\.47\d* rate=48000 w=224 h=144"),
+            "the game boots horizontal, 224x144")
+    S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "the poke from the game's .cht is on")
+    S.check(r.has(r"^EVT ws_picture w=144 h=224"), "the vertical stage turns the picture upright (%s)" %
+            [e["_"] for e in r.evt("ws_layout")][:6])
+    for n in ("h1", "h2", "h3", "v1", "v2", "v3"):
+        S.note("look at %s" % os.path.join(r.out, n + ".png"))
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6492,7 +6539,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("ws_boot", t_ws_boot), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("ws_boot", t_ws_boot), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

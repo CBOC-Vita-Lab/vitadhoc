@@ -3554,6 +3554,21 @@ static void smcr_jlog(void)
   fprintf(smcr_jlog_f, "%u", (unsigned)frame_counter);
   for (i = 0; i < JCTR_N; i++)
     fprintf(smcr_jlog_f, " %u", (unsigned)jctr[i]);
+  /* Every 10th frame: FNV-1a of the machine's memory (EWRAM, IWRAM data,
+   * VRAM, OAM, palette, I/O) and the registers -- the identity check for
+   * runs without a picture (GBADHOC_SOFT_NORASTER under qemu). */
+  if (!(frame_counter % 10)) {
+    u32 h = 2166136261u, k;
+    const u8 *areas[6] = { ewram, iwram + 0x8000, vram, (const u8 *)oam_ram,
+                           (const u8 *)palette_ram, (const u8 *)io_registers };
+    const u32 sizes[6] = { 0x40000, 0x8000, 1024 * 96, 1024, 1024, 1024 };
+    for (k = 0; k < 6; k++)
+      for (i = 0; i < sizes[k]; i++)
+        h = (h ^ areas[k][i]) * 16777619u;
+    for (i = 0; i < 16; i++)
+      h = (h ^ reg[i]) * 16777619u;
+    fprintf(smcr_jlog_f, " state=%08x", (unsigned)h);
+  }
   fprintf(smcr_jlog_f, "\n");
 }
 

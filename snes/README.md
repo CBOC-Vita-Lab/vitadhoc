@@ -84,6 +84,7 @@ GPLv2 VitAdhoc program. The SNES player is therefore a **second executable**:
 make -C snes/twin -j1                  # build/snes_twin  (takes a few minutes)
 snes/twin/selftest.sh                  # host glue tests: determinism, states, battery RAM (incl. forced write failures), copier header
 snes/twin/exact_check.sh               # proves the WAI skip and the SA-1 replay are exact (builds with and without them)
+python3 snes/twin/mt_compare.py --roms DIR   # threads on and off: frames and audio bit for bit (DIR: ROMs, not copied)
 snes/twin/conformance.py               # compare with the demo authors' reference screenshots (needs Pillow)
 snes/twin/baseline.sh > table.md       # the baseline table below
 ```
@@ -103,6 +104,10 @@ snes/twin/baseline.sh > table.md       # the baseline table below
 | `--backup-dir D` | keep the backups of `--srm` in `D` (`name.<crc>.bak`) like the Vita |
 | `--srm-async` | save like the Vita's writer thread (take, write on a thread, forget on failure, retry) |
 | `--unblock P` | after a failed save delete `P` and retry once (used by the failure tests) |
+| `--cheat CODE` (repeatable), `--cheats-root DIR` | add a code: Game Genie `XXXX-XXXX`, Action Replay `AAAAAAVV`, raw `AAAAAA=VV`, `AAAAAA:VV` or `AAAAAA=CC?VV`. With `--cheats-root` the game's list is read from and saved to `DIR/cheats/<rom>.cht` |
+| `--cheat-toggle F:I:0\|1`, `--cheat-remove I`, `--cheat-disable-all`, `--cheat-list` | at frame F switch entry I off or on; remove an entry; switch all off; print the list |
+| `--cheat-decode CODE` (ROM `-`) | print a code as address=value cells, or the error, without a ROM |
+| `--peek HEX` | print the work RAM byte at that offset at the end of the run |
 | `--save-state F --state-frame N`, `--load-state F --state-frame N` | save after / load before frame N |
 | `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `gsu_cycles`, `transparency`, `echo_buffer` |
 
@@ -121,6 +126,31 @@ without blocking the game thread. A longer `.srm` than the cartridge's RAM keeps
 forces the failures (file size limit, backup folder blocked, truncated earlier backup, name clash, temp file
 blocked, stale `.bak`, retry after unblock, sync and async) and asserts the save stays byte-identical.
 Hardware behaviour of the Vita file system (rename over an existing file, fsync) is not tested here.
+
+### Cheats (`frontend/host.cpp`, `frontend/host.h`)
+
+The engine is Snes9x's own (`core/cheats2.cpp`): each code is poked into memory at the end of every frame on the
+emulation thread, and the APU and PPU workers read none of that memory, so the threads stay exact (`selftest.sh`
+runs codes with the threads on and checks the frames equal the single thread). The host adds:
+
+- **Decoding**: Game Genie through the core's `S9xGameGenieToRaw`, Action Replay through `S9xProActionReplayToRaw`,
+  and raw `AAAAAA=VV` / `AAAAAA:VV` / `AAAAAA=CC?VV` (conditional). Up to 16 cells a code, 512 codes a game,
+  address 0 refused. `snes_host_cheat_validate` and `snes_host_cheat_decode` check a code without adding it.
+  `cheat_vectors.py` checks the Game Genie decoder against an independent Python implementation of the same
+  bit layout (300 random codes, fixed vectors, refused spellings). That is a check against the layout as written
+  in the core, not against a real cartridge's codes.
+- **The list**: `snes_host_cheats_load(root)`, `snes_host_cheat_add/enable/remove/get/count`,
+  `snes_host_cheat_disable_all`. The list is kept in RetroArch's `.cht` format in `<root>/cheats/<rom>.cht`. Keys and
+  lines this host does not use are kept. A file that exists but cannot be read is never overwritten.
+- **Writing**: the `.cht` is written like a save (temp file, read back, verified backup of the old file, rename).
+  A failed write keeps the change in memory, `snes_host_cheat_error()` gives the reason, and the next change (or
+  `snes_host_cheats_save()`) retries.
+- **Reset and state load** poke the codes again (`cheats_suspend` / `cheats_resume`).
+- **A ROM patched by a code** (Game Genie on the ROM image) switches the SA-1 idle-loop replay off for that
+  cartridge until the next load (`S9xSA1RomPatched`), because the replay assumes ROM code does not change.
+
+Not done: the Vita program has no cheat screen (`vita/main.cpp` does not call the API yet), and the Snes9x
+cheat database is not used. Hardware behaviour of the file writes is not tested here.
 
 ### Test ROMs
 
@@ -144,7 +174,9 @@ to its battery RAM at every boot) for the `.srm` rules.
 Same ROM and pad script give identical frame hashes twice; a state saved at frame
 99 and loaded at frame 150 replays frames 100-199 bit-identically; a 512-byte
 copier header is skipped; battery RAM loads and saves (the test cartridge counts
-1 then 2); the previous save is kept as `.bak`; no `.tmp` file is left.
+1 then 2); the previous save is kept as `.bak`; no `.tmp` file is left; the save-safety failures listed under
+"Save safety"; the cheat tests (decode vectors, RAM and ROM codes, threads with codes, state load, the `.cht`
+file, a foreign file, a failed write that leaves the file byte-identical).
 
 ### Screenshot conformance (`conformance.py`)
 
@@ -345,7 +377,8 @@ pictures not copied because the GPU still read every texture. Without threads th
 `prof(60 fr): cpu= apu= ppu= chip= front= ms/fr=` for one second in four. Other lines: `pads:` when a controller
 appears or goes, `overlay`, `render targets:` (0 means a target could not be created).
 
-Not implemented: zip files, core options in the menu, mouse/Super Scope, cheats, rewind, RTC data for
+Not implemented: zip files, core options in the menu, mouse/Super Scope, a cheat screen (the host API is in
+place, see "Cheats" above), rewind, RTC data for
 S-RTC/SPC7110 carts (their clock RAM is not saved), BS-X and Sufami Turbo, MSU-1 audio files.
 
 ## Library hook (VitAdhoc side)

@@ -924,7 +924,114 @@ ARM only), so run_tests.sh shows the cpufix picture as DIFFER between twins.
   ahead of execution (a different cache layout) and a Vita measurement.
 - **WP2-WP4 not done in this pass** (WP2 is the SMC_STM_FIXED project above;
   the counters show why it matters: two of the six ROMs flush the RAM cache 1-3
-  times a frame).
+  times a frame). WP2 and WP3 were done afterwards: see the next section.
+
+## Version 1.4: SMC Without Whole-Cache Flushes (SMC_RANGE, smc_partial)
+
+On the ARM and x86 back ends a store over translated RAM code used to throw the
+whole RAM translation cache away (and so did a DMA onto code, and a full RAM
+cache), and everything that ran next was translated again. WP0's counters put
+two of the six test games at 1-3 such flushes a frame; Unbound-class ROM hacks
+show 65-84 ms worst frames on a Vita. `SMC_RANGE` keeps the translated code.
+
+**The constraint that shaped it: bit-identical to the full-flush build.** A trap
+is not free for the guest: the store leaves its block at the next instruction
+and the cycles the block counted since its last update are dropped (upstream
+gpSP behaviour). So which stores trap must not change, and which stores trap is
+decided by the code tags (one u16 per RAM halfword) that the full-flush build
+sets when it translates and clears when it flushes. A scheme that retired only
+the blocks a write touches would keep the other blocks' tags, trap on stores the
+full-flush build lets through, and drift. `SMC_RANGE` therefore keeps the
+full-flush build's tag array, tag numbers and RAM-cache fill pointer *exactly*
+and keeps the code separately:
+
+- **Descriptors.** Every RAM translation is recorded (`smcr_desc`): start pc and
+  mode, end, a copy of the guest bytes `[start, end)` it was made from (a RAM
+  translation reads nothing else: the Thumb literal folding is ROM-only), its
+  size and the size before its tail, and its external exits (patch site,
+  target). Index: a hash of pc|mode with up to 8 kept versions each.
+- **Flushes re-enacted on the tags only.** A code write (`flush_translation_cache_ram_smc`,
+  `_dma`) and a full cache (the full-flush build's limit test, with its fill
+  pointer kept as `smcr_vptr` and its tag numbers as `ram_block_tag`) clear the
+  tags and the code range exactly as `flush_translation_cache_ram` does
+  (`smcr_flush_tags`, line for line) and start a new generation. The code stays.
+- **Translation re-enacted, code revived.** Where the full-flush build would
+  translate a RAM block (the lookup finds no offset in the block's tag entry --
+  at the dispatcher or while resolving a block's exits eagerly), `smcr_lookup`
+  does what that translation does to the tags, `code_min/max`, the tag entry
+  (including the upstream quirk that the first block after a flush sits at
+  offset 0 and so is translated again at its next lookup) and the fill pointer,
+  runs the same cache-full test at the same block, and queues the block's exits
+  in the same order on the `XLAT_ITERATIVE` queue -- but takes the code from a
+  descriptor whose source copy is byte-for-byte the current memory, and
+  translates only when there is none. Same bytes, pc and mode: same translation
+  (checked, see GPSP_SMC_VERIFY). The re-queued exits re-link the kept block to
+  the targets' current code (a link whose word changes is synced, below), so a
+  kept block can never jump into a translation whose source changed.
+- **Why a source compare and not a write index.** The compare is exact and needs
+  no write tracking, so it also covers the writes that never trap: STM's earlier
+  words (only an STM's last word is checked), DMA onto untagged code, C writers.
+  A page index of "code present" would have to see every one of those. The
+  trap itself is unchanged (the stubs are not touched): it needs neither the
+  address nor the size, because what to keep is decided at revival.
+- **The executing block.** A trapping store still completes, writes REG_PC =
+  next instruction and resumes through the dispatcher (`arm_stub.S` label 3,
+  `x86_stub.S` `smc_write`): the next instruction is fetched from a fresh lookup,
+  i.e. an instruction the store rewrote right after itself runs in its NEW form
+  (gpSP's semantics; an ARM7TDMI would run the prefetched old one). Kept code is
+  never patched while it runs: links are re-pointed only inside a lookup, and
+  every lookup leaves the block that called it.
+- **Space.** Kept code lives in a region that starts `SMC_RANGE_CARVE` (1 MiB)
+  below the RAM cache, taken from the end of the ROM cache (ROM: 10 -> 9 MiB on
+  the Linux twins, 7 -> 6 MiB per instance on the Vita link build), and ends at
+  the RAM cache's tag table. Before every top-level lookup at least one full RAM
+  cache plus 256 KiB is kept free (everything one lookup can make the
+  full-flush build translate fits its cache); otherwise `smcr_reclaim` throws
+  away the code of everything not live in the current generation and keeps the
+  live blocks' descriptors without code; they are translated again from their
+  own source copy (put back in guest memory for the translator if memory has
+  changed: a live block is the translation of what was there) when entered.
+  This is the hysteresis: a reclaim leaves the whole region minus the live set.
+- **Syncs.** New code is published by the existing `[last, ptr)` sync. A link
+  re-pointed in already-published code is noted (`smcr_patch_note`, 64-byte
+  lines, up to 16 ranges, else one min..max range) and synced once before the
+  lookup returns (`smcr_patch_sync`). On the Vita the VM domain stays open for
+  the emulation thread (jit_vita.c), so a patch needs only
+  `sceKernelSyncVMDomain`; jctr[11] counts these syncs (also in [2]).
+- **Full flushes.** `flush_translation_cache_ram()` from anywhere else (state
+  load, cheats, reset, emitter rebuild, `flush_dynarec_caches*`) drops all kept
+  code and descriptors.
+- **Both instances.** All state is per object, so the link partner (`gbab_*`)
+  has its own; the render thread's copy (CORE_R) has no CPU.
+
+**Switches.** Build: `SMC_RANGE=1` in `vita/coreflags.mk` (`SMC_RANGE=0` builds
+without it). Run time: `smc_partial` (`u32 smc_partial`,
+`gpsp_smc_partial_set(u32)`, `gpsp_smc_partial_active()`; instance B:
+`gbab_gpsp_smc_partial_set`), default `SMC_PARTIAL_DEFAULT`=1; it takes effect
+at the next `init_dynarec_caches`/`flush_dynarec_caches` (game load or reset),
+so the frontend sets it before loading. With it off every line of the old code
+runs. Twins: `GPSP_SMC_PARTIAL=0/1`. Things that cannot happen (a translation
+that does not fit the reserve, an allocation failure, a re-translation that
+comes out different) are counted in `smc_partial_emergencies` and handled by a
+full flush (safe, but not the full-flush build's behaviour).
+
+**Run-time proof obligations (twins).** `GPSP_SMC_VERIFY=1`: at every tag-only
+flush, every reclaim and every 256th top-level lookup the tag array must be
+exactly the union of the live blocks' extents, each live block tagged and named
+by its tag; and every revival first translates the block AGAIN, in place, from
+current memory and compares it byte for byte with the kept code (exit words
+aside), plus extent, sizes and exits. Any difference aborts. `GPSP_SMC_TRACE=file`
+writes one line per full-flush-build flush (`S` code write, `D` DMA, `F` cache
+full, `X` external), with frame, REG_PC and the count of RAM translations the
+full-flush build has made: the files of an off and an on run must be identical.
+`GPSP_JCTR_LOG=file` writes the 16 counters at the first lookup of each frame.
+
+**Counters** (`gpsp_jit_counters`, now 16 slots; the first 7 as WP0, [4] with
+smc_partial on counts only flushes that discard RAM code): [7] tag-only
+flushes, [8] revived blocks, [9] RAM translations the full-flush build makes
+(identical in both modes), [10] links re-pointed, [11] their syncs, [12] kept
+translations passed over because the source changed, [13] reclaims, [14] WP3
+dispatch-cache hits, [15] dispatch-cache fills.
 
 ## Renderer colour effects and 4bpp tile kernels (gpsp/video.cc)
 

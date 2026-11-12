@@ -43,7 +43,7 @@ $(B)/wswan/wswancore.o: <all of the above>
 `host.h` is the reference (each function has its rules in the comments). Summary: init, load_mem (`.ws .wsc .pc2` buffer,
 64 KiB..16 MiB, copied), run_frame, set_pad (WSWAN_* bits), video (224x144 RGB565), audio_take (stereo int16, 48000 Hz, about
 636 frames per emulated frame), reset, set_render (skip drawing; emulation, sound and state identical), state_size /
-save_mem / load_mem (size fixed per game, zero padded: equal ring slots), save regions + `srm_*`, RTC clock hook, `ra_read` /
+save_mem / load_mem (size fixed per game, zero padded, last 4 bytes a CRC32 of the rest: equal ring slots), save regions + `srm_*`, RTC clock hook, `ra_read` /
 `peek`, cheats, rom_info. One instance, one thread, no allocation per frame. Before the first frame the app should call
 `wswan_host_set_time_source` (a function returning local wall clock seconds: the Vita libc has no time zone), and
 `wswan_host_set_owner` (name shown by games that read the console's owner data).
@@ -150,7 +150,14 @@ failure keeps the original) and with Klonoa (the title shows "Continue" after a 
 ## Memory footprint and cost
 
 - `wswancore.o` Vita: text 137 KB, bss 1.34 MB (fixed core tables); heap: the ROM padded to a power of two (up to 16 MiB; Klonoa
-  1 MiB), cartridge SRAM, one second of stereo audio (192 KB), a state scratch buffer. State: `wswan_host_state_size()` = 79,637 bytes for Klonoa (1 MiB cartridge).
+  1 MiB), cartridge SRAM, one second of stereo audio (192 KB), a state scratch buffer. State: `wswan_host_state_size()` = 79,641 bytes for the 8 KiB synthetic ROM (was 79,637 before the CRC trailer; the size
+for Klonoa is measured at load). The state container is the core's machine data, zero padded, then a CRC32 (IEEE, little
+endian) of everything before it. `wswan_host_state_load_mem` loads only a buffer of exactly `state_size` bytes whose CRC matches;
+anything else (truncated, extended, damaged) returns 3 and leaves the running machine as it was. Earlier builds had no CRC, but no
+released build ever wrote a state, so no compatibility path exists.
+
+Return values changed (documented in host.h): `wswan_host_set_audio_rate` returns 2 when out of memory (the old rate and buffers
+stay); `wswan_host_orientation_table_set` returns 2 for a mode other than 0, 1 or 2 (nothing changed).
 - Measured per frame on the x86 build machine (thread CPU time, shared machine, rough): synthetic ROMs 0.22-0.33 ms; Klonoa title and
   stages 0.06-0.16 ms average, vertical stage 0.31-0.37 ms (half of it the picture drawing: 0.15 ms with render off), worst single frame 1.2 ms.
 - Instructions (valgrind lackey on the host build, Klonoa vertical stage): about 3.4 million x86 instructions per frame.
@@ -176,6 +183,7 @@ failure keeps the original) and with Klonoa (the title shows "Continue" after a 
   (flash) carts, Pocket Challenge V2 key mapping and behaviour: untested. The per game orientation table has no entries.
 - Games that scan both key groups and never use the LCD icons: only footer flag plus manual toggle.
 - The mono value of port 0xA0 (0x85) is from the documented bit layout, not read from a mono console.
+- The CRC32 detects corruption, not forgery: a state written by another program with a valid CRC is loaded as any state would be.
 - RetroAchievements hash and addresses: from the documented memory map, not run against the server.
 - The public test ROMs only show results on screen; `twin/baseline_results.md` records what was seen. ws-test-suite (asiekierka)
   needs the Wonderful toolchain and was not built.

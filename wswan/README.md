@@ -26,15 +26,25 @@ it; individual titles that do are untested.
   `layout.[ch]` (picture layout, rotation, Vita pad mapping), `safe_io.[h,cpp]` (atomic save writes, from the NES
   frontend), `Makefile`, `time_shim.h`.
 - `twin/`: Linux test runner `wswan_twin` (headless: frames, scripted pad, hashes, PNG, wav, saves, states),
-  `selftest.sh`, `tests/make_roms.py` (synthetic ROMs), `tests/blend_test.c`, `conformance.py`, `baseline_results.md`.
+  `selftest.sh`, `tests/make_roms.py` (synthetic ROMs), `tests/blend_test.c`, `conformance.py`, `baseline_results.md`,
+  and the property and matrix tests in `tests/`: `orient_prop.py` (orientation rules, randomised), `save_types.py` (every save
+  type the header can declare), `state_fuzz.py` (truncated and damaged states), `rtc_fixed.py` (RTC with a fixed clock),
+  `soak.py` (long run with round trips and render-off stretches), `arm_compare.sh` (x86 against armhf under qemu-arm),
+  `api_run.c` (the shipped API harness used by arm_compare.sh).
 
 ## Build and test (Linux)
 
 ```
 make -C wswan/frontend && make -C wswan/frontend check          # also: vita, armhf (TARGET=vita check)
 make -C wswan/twin
-sh wswan/twin/selftest.sh                                        # 38 checks (+1 with a private ROM), optional WSWAN_PRIVATE_ROM=<your own ROM>
-python3 -I wswan/twin/tests/make_roms.py OUTDIR                  # the 7 synthetic ROMs
+sh wswan/twin/selftest.sh                                        # 42 checks (+1 with a private ROM), optional WSWAN_PRIVATE_ROM=<your own ROM>
+python3 -I wswan/twin/tests/make_roms.py OUTDIR                  # the synthetic ROMs
+python3 -I wswan/twin/tests/orient_prop.py --work DIR            # full property run: 24 seeds x 1200 frames
+python3 -I wswan/twin/tests/save_types.py --work DIR             # full save-type matrix
+python3 -I wswan/twin/tests/state_fuzz.py --work DIR             # truncations and damaged states (CRC must refuse)
+python3 -I wswan/twin/tests/rtc_fixed.py --work DIR              # RTC with a fixed clock (UTC and JST)
+sh wswan/twin/tests/arm_compare.sh WORKDIR --frames 1500         # x86 vs armhf under qemu-arm: needs arm-linux-gnueabihf-gcc and qemu-arm
+WSWAN_TWIN=<sanitizer build> python3 -I wswan/twin/tests/soak.py --work DIR   # long soak; set ASAN_OPTIONS/UBSAN_OPTIONS log_path
 WSWAN_TESTSRC=<clones> python3 -I wswan/twin/conformance.py      # optional, public test ROMs
 ```
 

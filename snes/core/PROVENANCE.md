@@ -45,6 +45,7 @@ the Snes9x master after 1.63 (commit ids are upstream's), **C** hooks and glue f
 | `sa1.cpp`, `sa1.h`, `sa1cpu.cpp` | SA-1 idle-loop replay (`SA1L`): a loop that ends where it started without writes or I/O reads in ROM-resident code is recorded once and later calls advance along the recorded points while nothing it reads changes. `sa1_replay` has no integer divide in the common case (the quotient is 1-3; the Vita's Cortex-A9 has no divide instruction). |
 | `cpuexec.cpp` | WAI skip: while the CPU waits with no IRQ pending and no SA-1, the wait is advanced to the next H event in one step (see B4 for how it was merged with the upstream WAI change). |
 | `memmap.cpp` | The ROM SHA-256 is not computed (only the cheat-database lookup read it): about 0.5 s of load time on a Vita. |
+| `cheats2.cpp`, `sa1.cpp`, `sa1.h`, `sa1cpu.cpp` | A cheat that writes into the ROM image (`S9xSetByteFree` on the cartridge) sets `S9xSA1RomPatched`, which turns the SA-1 replay off until the next load. No change for a game without such a code. |
 | `fxemu.cpp` | `S9xSuperFXClock` / `S9xSuperFXTime` wrap `S9xSuperFXExec_impl` so the frontend can measure the GSU's time. `Settings.SuperFXClockMultiplier` scales the per-line budget (in both timing modes). |
 
 ### B. Upstream fixes taken after 1.63 (re-implemented on this tree, one at a time)
@@ -56,9 +57,9 @@ the Snes9x master after 1.63 (commit ids are upstream's), **C** hooks and glue f
 | `c1aa979` | Super FX RPIX: flags are cleared at the end of the instruction | `fxinst.cpp`, `fxinst.h` | Stunt Race FX frames change (23,869 RPIX in 3000 frames; Doom 294 and Yoshi 588 RPIX gave no change). |
 | `d17fd00` | Super FX 8-bit plot transparency (PLOT_* defines) | `fxinst.cpp`, `fxinst.h` | None: in the 8.9M 8-bit plots of Stunt and 3.65M of Doom no transparency decision differs. |
 | `8783b54`, `1994532`, `1bcc369` | Super FX cycle-accurate timing: ROM/RAM/cache access costs (`GSU.v*`), cache-line fill, the instruction fetch pipe, a per-line budget in GSU cycles, the Winter Gold delay hack (`Timings.GSUCelDelay`) and `Settings.DisableGSUCycleMode` | `fxinst.cpp`, `fxinst.h`, `fxemu.cpp`, `snes9x.cpp`, `snes9x.h`, `memmap.cpp` | Doom, Stunt Race FX and Yoshi's Island change (frames and audio; the chip now does fewer instructions per line, as the real one). The 12 other games are identical. |
-| `c0dffce` | IRQ: a write to $4211 latches an IRQ that is already due | `ppu.cpp` | See the step table in the session report; owner games unchanged. |
+| `c0dffce` | IRQ: a write to $4211 latches an IRQ that is already due | `ppu.cpp` | Owner games: Stunt Race FX frames and audio change (3000 frames, step s3b to s4a); the other 14 do not change. |
 | `cf2b0e5`, `1b21357` | Mode 7: the registers $210D, $210E, $211B-$2120 are latched per line (`S9xPPULatchM7`, from dot 44), `RenderLine` uses the latched values | `ppu.cpp`, `ppu.h`, `gfx.cpp`, `cpuexec.cpp`, `snapshot.cpp` | Owner games unchanged (F-Zero, Mario Kart, Pilotwings included). |
-| `642f0ac` | WAI: a waiting pass costs exactly one CPU cycle plus event processing; an IRQ wake adds one dot | `cpuexec.cpp` | See the report. Merged with the local WAI skip: the skip now advances by the same one-cycle passes (`W = ONE_CYCLE`), so it is exact. |
+| `642f0ac` | WAI: a waiting pass costs exactly one CPU cycle plus event processing; an IRQ wake adds one dot | `cpuexec.cpp` | Owner games: Donkey Kong 1 and Doom audio change in the step from s4b to the final tree, frames do not. That step holds this WAI change; the builds s4c and s4d were not recorded separately. Merged with the local WAI skip: the skip now advances by the same one-cycle passes (`W = ONE_CYCLE`), so it is exact. |
 
 Merge notes. **Super FX**: the frontend's pacing hooks are unchanged. The measured GSU time
 still feeds `SuperFXClockMultiplier`; in cycle mode the multiplier scales the per-line budget

@@ -86,7 +86,8 @@ void wswan_host_set_mono_colors(uint32_t dark_rgb, uint32_t light_rgb);
 /* ---- audio ----------------------------------------------------------------------------------------------- */
 
 /* Four channels (wave, voice, sweep, noise) and HyperVoice are synthesised by the core's band limited synth directly at
- * the rate asked for (8000..96000, default 48000), stereo. Call before the first frame (drops queued audio). */
+ * the rate asked for (8000..96000, default 48000), stereo. Call before the first frame (drops queued audio).
+ * Returns 0 ok, 1 rate out of range, 2 out of memory (the previous rate and buffers stay in use). */
 int wswan_host_set_audio_rate(unsigned hz);
 unsigned wswan_host_audio_rate(void);
 /* Pull up to max_frames stereo frames (L,R int16 pairs). Returns the number written. About 636 per frame at 48000. */
@@ -113,7 +114,8 @@ typedef struct {
 } wswan_orientation_info;
 void wswan_host_orientation_info(wswan_orientation_info *out);
 /* Per game table (keyed by footer bytes that survive translation patches: developer id, cart id, save type, ROM size
- * code; NOT the checksum). mode as above; 0 removes. Entries are matched at load. Max 64 entries. */
+ * code; NOT the checksum). mode as above; 0 removes. Entries are matched at load. Max 64 entries.
+ * Returns 0 ok, 1 table full, 2 mode not 0, 1 or 2 (nothing changed). */
 int wswan_host_orientation_table_set(unsigned dev_id, unsigned cart_id, int mode);
 
 /* ---- cartridge and console save data (the caller saves it) ------------------------------------------------ */
@@ -147,10 +149,12 @@ void wswan_host_rtc_sync(void);
 
 /* ---- save states ----------------------------------------------------------------------------------------- */
 
-/* Fixed for a loaded game (measured at load plus 1 KiB headroom, zero padded) so a rewind ring can use equal slots. */
+/* Fixed for a loaded game (measured at load, plus 1 KiB headroom and a 4-byte CRC32 trailer, zero padded) so a rewind ring
+ * can use equal slots. The last 4 bytes are the CRC32 (IEEE, little endian) of the bytes before them. The CRC is mandatory:
+ * a state is loaded only when its length is state_size and its CRC matches. */
 size_t wswan_host_state_size(void);
 size_t wswan_host_state_save_mem(uint8_t *buf, size_t cap);    /* cap >= state_size; returns the size, 0 on failure */
-int wswan_host_state_load_mem(const uint8_t *buf, size_t n);   /* 0 ok, 1 no game, 3 refused */
+int wswan_host_state_load_mem(const uint8_t *buf, size_t n);   /* n must be state_size. 0 ok, 1 no game, 3 refused (wrong length or CRC, machine untouched), 4 no backup, machine untouched */
 
 /* ---- memory for achievements and tools ------------------------------------------------------------------- */
 

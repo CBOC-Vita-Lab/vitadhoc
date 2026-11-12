@@ -39,6 +39,7 @@ time_t wswan_host_time_hook(time_t *t);
 
 #define MAX_TABLE 64
 #define STATE_HEADROOM 1024
+#define STATE_TRAILER 4          /* CRC32 (little endian) of everything before it: mandatory */
 #define IEEPROM_SIZE 0x400
 #define SWITCH_FRAMES 6        /* key group evidence: 80 ms */
 #define SWITCH_FRAMES_ICON 2   /* LCD icon change: deliberate, switch before the next scene's first picture */
@@ -311,7 +312,7 @@ extern "C" int wswan_host_load_mem(const uint8_t *data, size_t size, const char 
 	G.ring_head = G.ring_n = 0;
 	G.pad = 0; G.frames = 0;
 	G.loaded = 1;
-	G.state_size = measure_state() + STATE_HEADROOM;
+	G.state_size = measure_state() + STATE_HEADROOM + STATE_TRAILER;
 	G.state_scratch = (uint8_t *)malloc(G.state_size);
 	if (!G.abuf || !G.ring || !G.state_scratch || G.state_size <= STATE_HEADROOM) {
 		free_game(); errset(err, errlen, "out of memory"); return 4;
@@ -428,12 +429,17 @@ extern "C" int wswan_host_set_mono_palette(int id)
 extern "C" int wswan_host_set_audio_rate(unsigned hz)
 {
 	if (hz < 8000 || hz > 96000) return 1;
-	G.rate = hz;
 	if (G.loaded) {
+		/* allocate first: on failure the old buffers and the old rate stay in use (returns 2, nothing changed) */
+		int32 cap = (int32)((hz / 70 + 8) * 2);
+		int16 *abuf = (int16 *)malloc(cap * sizeof(int16));
+		int16 *ring = (int16 *)calloc(hz, 4);
+		if (!abuf || !ring) { free(abuf); free(ring); return 2; }
 		WSwan_SetSoundRate(hz);
-		free(G.abuf); G.abuf_cap = (int32)((hz / 70 + 8) * 2); G.abuf = (int16 *)malloc(G.abuf_cap * sizeof(int16));
-		free(G.ring); G.ring_cap = hz; G.ring = (int16 *)calloc(hz, 4); G.ring_head = G.ring_n = 0;
+		free(G.abuf); G.abuf = abuf; G.abuf_cap = cap;
+		free(G.ring); G.ring = ring; G.ring_cap = hz; G.ring_head = G.ring_n = 0;
 	}
+	G.rate = hz;
 	return 0;
 }
 extern "C" unsigned wswan_host_audio_rate(void) { return G.rate; }
@@ -466,6 +472,7 @@ extern "C" void wswan_host_orientation_info(wswan_orientation_info *o)
 }
 extern "C" int wswan_host_orientation_table_set(unsigned dev, unsigned cart, int mode)
 {
+	if (mode < 0 || mode > 2) return 2;          /* 0 removes, WSWAN_ORIENT_HORIZONTAL / _VERTICAL (1, 2) set */
 	for (int i = 0; i < G.table_n; i++)
 		if (G.table[i].dev == dev && G.table[i].cart == cart) {
 			if (mode) G.table[i].mode = mode; else G.table[i] = G.table[--G.table_n];
@@ -575,21 +582,43 @@ static size_t state_to_scratch(void)
 	st.data = G.state_scratch; st.loc = 0; st.len = 0; st.malloced = (uint32_t)G.state_size; st.initial_malloc = 0;
 	int ok = MDFNSS_SaveSM(&st, 0, 0, NULL, NULL, NULL);
 	G.state_scratch = st.data;
-	if (!ok || !st.data || st.len > G.state_size) return 0;
+	if (!ok || !st.data || st.len > G.state_size - STATE_TRAILER) return 0;
 	return st.len;
+}
+/* CRC-32 (IEEE, reflected, as zlib). Bitwise: small, and the state is not hot. */
+static uint32_t crc32_of(const uint8_t *p, size_t n)
+{
+	uint32_t c = 0xFFFFFFFFu;
+	for (size_t i = 0; i < n; i++) {
+		c ^= p[i];
+		for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
+	}
+	return ~c;
 }
 extern "C" size_t wswan_host_state_save_mem(uint8_t *buf, size_t cap)
 {
 	if (!G.loaded || cap < G.state_size) return 0;
 	size_t len = state_to_scratch();
 	if (!len) return 0;
+	size_t body = G.state_size - STATE_TRAILER;
 	memcpy(buf, G.state_scratch, len);
-	memset(buf + len, 0, G.state_size - len);
+	memset(buf + len, 0, body - len);
+	uint32_t c = crc32_of(buf, body);
+	buf[body] = c & 0xFF; buf[body + 1] = (c >> 8) & 0xFF; buf[body + 2] = (c >> 16) & 0xFF; buf[body + 3] = c >> 24;
 	return G.state_size;
 }
 extern "C" int wswan_host_state_load_mem(const uint8_t *buf, size_t n)
 {
 	if (!G.loaded) return 1;
+	/* Only a state of exactly state_size bytes with a matching CRC is loaded (a corrupt state of the right length is
+	 * refused, and so is a truncated one). Nothing is touched when it is refused. */
+	if (n != G.state_size) return 3;
+	{
+		size_t body = G.state_size - STATE_TRAILER;
+		uint32_t want = (uint32_t)buf[body] | ((uint32_t)buf[body + 1] << 8) | ((uint32_t)buf[body + 2] << 16) | ((uint32_t)buf[body + 3] << 24);
+		if (crc32_of(buf, body) != want) return 3;
+		n = body;
+	}
 	/* all or nothing: the current machine is saved first and loaded back if the new state is refused. The core's loader
 	 * stops part way through a truncated or damaged state, which left the machine altered (found by the twin's refused
 	 * state test: tests/state_refused.py). The backup uses the scratch buffer, as the save does. */

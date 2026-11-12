@@ -25,6 +25,7 @@
  */
 #include "cheats_vita.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -226,6 +227,42 @@ static int map_error(int ce)
 /* Game Genie (6 or 8 letters), or a RAM poke "AAAA:VV" / "AAAA?CC:VV", one or
  * several joined by + , ; or a blank.  Returns CHEAT_KIND_GB_GAMEGENIE for a
  * list of Game Genie codes, CHEAT_KIND_GBA_RAW when a poke is in it, else 0. */
+/* WonderSwan codes (the WonderSwan core applies them: wscore.h): RAM pokes
+ * "AAAAA:VV" -- a hex address of the console's RetroAchievements map (system
+ * RAM 00000-0FFFF, the cartridge's save RAM from 10000), 1 to 5 digits, and
+ * a hex byte -- one or several joined by + , ; or a blank.  Returns
+ * CHEAT_KIND_GBA_RAW, else 0. */
+static int ws_code_kind(const char *s)
+{
+   int any = 0;
+   while (*s)
+   {
+      size_t n = 0, i, colon = 0;
+      const char *t = s;
+      while (*s && *s != '+' && *s != ',' && *s != ';' && *s != ' ')
+      {
+         if (*s == ':')
+            colon = n;
+         n++;
+         s++;
+      }
+      while (*s == '+' || *s == ',' || *s == ';' || *s == ' ')
+         s++;
+      if (!n)
+         continue;
+      /* 1..5 hex digits, ':', 2 hex digits; the address within 0x8FFFF */
+      if (colon < 1 || colon > 5 || n != colon + 3)
+         return 0;
+      for (i = 0; i < n; i++)
+         if (i != colon && !isxdigit((unsigned char)t[i]))
+            return 0;
+      if (colon == 5 && strtoul(t, NULL, 16) > 0x8FFFFul)
+         return 0;
+      any = 1;
+   }
+   return any ? CHEAT_KIND_GBA_RAW : 0;
+}
+
 static int nes_code_kind(const char *s)
 {
    int kind = 0, any = 0;
@@ -353,7 +390,7 @@ static int push(void)
    g_rom_failed = 0;
    if (!g_loaded)
       return -1;
-   if (g_console == FE_CONSOLE_NES)
+   if (g_console == FE_CONSOLE_NES || g_console == FE_CONSOLE_WSWAN)
    {
       static char joined[CHEATS_CODE_CAP * 8];
       size_t o = 0;
@@ -376,7 +413,7 @@ static int push(void)
       }
       joined[o] = 0;
 #ifndef CHEATS_VITA_NO_CORE
-      gbmux_nes_cheats(joined);
+      gbmux_cheats_text(joined);
 #else
       cheats_test_pushes++;
 #endif
@@ -458,6 +495,11 @@ static void validate_one(int i)
    else if (g_console == FE_CONSOLE_NES)
    {
       kind = nes_code_kind(g_list[i].code);
+      rc = kind ? CE_OK : CE_E_FORMAT;
+   }
+   else if (g_console == FE_CONSOLE_WSWAN)
+   {
+      kind = ws_code_kind(g_list[i].code);
       rc = kind ? CE_OK : CE_E_FORMAT;
    }
    else
@@ -972,7 +1014,7 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
    uint32_t crc;
 
    *match = CHEATS_MATCH_NONE;
-   if (console == FE_CONSOLE_NES || !cheatdb_games())
+   if (console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN || !cheatdb_games())
       return -1;
    rom_header(rom_path, console, code, title);
 
@@ -1214,6 +1256,11 @@ int cheats_validate(const char *code, fe_console_t console)
    else if (console == FE_CONSOLE_NES)
    {
       kind = nes_code_kind(clean);
+      rc = kind ? CE_OK : CE_E_FORMAT;
+   }
+   else if (console == FE_CONSOLE_WSWAN)
+   {
+      kind = ws_code_kind(clean);
       rc = kind ? CE_OK : CE_E_FORMAT;
    }
    else

@@ -53,7 +53,13 @@ int wswan_recover_old(const char *path);
  *  keep_backup: make that backup first (the player passes 1 for the session's first write only).
  *  *backed_up: set to 1 when a verified backup of an existing file exists after the call.
  * Returns WSWAN_IO_OK or one of the codes above, with a text in err. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 int wswan_write_safe(const char *path, const void *data, size_t n, const char *backup_dir, int keep_backup,
                    int *backed_up, char *err, size_t errlen);
+#ifdef __cplusplus
+}
+#endif
 
 #endif

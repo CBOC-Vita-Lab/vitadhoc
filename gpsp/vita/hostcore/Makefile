@@ -123,6 +123,11 @@ APP_ALL   := $(APP_ALL_HOST)
 ifeq ($(VITASIM),1)
 APP_FLAGS += -DVITASIM -Ivitasim
 APP_ALL   += $(V)/jit_vita.c vitasim.c
+# As in ../Makefile (APP_DEFS): jit_vita.c's reach check knows the emitter's
+# far stubs.  Without it a program image of more than ~16 MiB (the twin's
+# grew past that) has its VM block refused and the twin quietly runs the
+# interpreter ("JIT memory unavailable" in gbadhoc.log).
+$(B)/app/jit_vita.o: APP_FILE_FLAGS += $(if $(filter 1,$(ARM_FAR_STUBS)),-DARM_FAR_STUBS)
 endif
 APP_OBJS  := $(foreach s,$(APP_ALL),$(call app_obj,$(s)))
 

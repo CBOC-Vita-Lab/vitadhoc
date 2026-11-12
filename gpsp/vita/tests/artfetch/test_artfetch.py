@@ -247,7 +247,10 @@ class ArtworkWorkerTests(unittest.TestCase):
         self.assertFalse(miss.exists() and 'Truncated' in miss.read_text())
 
     def test_exact_filename_success_does_not_hash_entire_file(self):
+        # (1.3: a name that is not a No-Intro name is checksummed first, so the
+        # exact-name case is a name gamedb knows)
         name = 'Filename Example.gba'
+        (self.root / 'gamedb.txt').write_text('C12345678\tFilename Example\n')
         stats, _ = self.run_worker([name], self.routes(name), size=1024 * 1024)
         self.assertLessEqual(stats['rom_bytes'], 4, stats)
         self.assertEqual(stats['have'], 1)
@@ -299,7 +302,7 @@ class ArtworkWorkerTests(unittest.TestCase):
     def test_large_current_miss_cache_does_not_probe_every_art_extension(self):
         names = [f'Cached {i:04}.gba' for i in range(900)]
         (self.root / 'boxart' / '.missing.txt').write_text(
-            '# VitAdhoc artwork misses v2\n' + ''.join(f'{Path(name).stem}\n' for name in names))
+            '# VitAdhoc artwork misses v3\n' + ''.join(f'{Path(name).stem}\n' for name in names))
         stats, requests = self.run_worker(names, {}, titles=False)
         self.assertEqual(requests, [])
         self.assertEqual(stats['have'], 0)
@@ -385,7 +388,7 @@ class ArtworkWorkerTests(unittest.TestCase):
     def test_missing_cover_retry_is_serviced_without_draining_notifications(self):
         names = [f'Retry Batch {i:02}.gba' for i in range(40)]
         (self.root / 'boxart' / '.missing.txt').write_text(
-            '# VitAdhoc artwork misses v2\n' +
+            '# VitAdhoc artwork misses v3\n' +
             ''.join(Path(name).stem + '\n' for name in names[-3:]))
         routes = {GBA + 'Named_Boxarts/' + Path(name).stem + '.png': (200, PNG)
                   for name in names}

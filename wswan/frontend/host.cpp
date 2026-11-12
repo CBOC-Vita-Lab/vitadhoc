@@ -69,6 +69,7 @@ static struct {
 	uint8_t *shadow[3]; size_t shadow_n[3];
 	/* orientation */
 	int mode, detected, source, cand, cand_n, hdr_vertical;
+	int cand_src;                       /* the evidence (KEYS / ICON) the candidate run was built from */
 	unsigned switches, since_switch;
 	int fr_x, fr_y, fr_b, last_keys, last_icon;
 	TableEntry table[MAX_TABLE]; int table_n;
@@ -231,7 +232,7 @@ static void orient_reset(void)
 	G.source = WSWAN_SRC_HEADER;
 	G.hdr_vertical = G.footer[12] & 1;
 	G.detected = G.hdr_vertical ? WSWAN_VERTICAL : WSWAN_HORIZONTAL;
-	G.cand = G.detected; G.cand_n = 0; G.switches = 0; G.since_switch = 0;
+	G.cand = G.detected; G.cand_n = 0; G.cand_src = -1; G.switches = 0; G.since_switch = 0;
 	G.fr_x = G.fr_y = G.fr_b = 0; G.last_keys = 0; G.last_icon = 0;
 	G.table_mode = 0;
 	for (int i = 0; i < G.table_n; i++)
@@ -275,7 +276,9 @@ extern "C" int wswan_host_load_mem(const uint8_t *data, size_t size, const char 
 	case 0x20: eeprom_size = 2 * 1024; break;
 	case 0x50: eeprom_size = 1024; break;
 	}
-	if ((h[8] | (h[9] << 8)) == 0x8de1 && h[0] == 0x01 && h[2] == 0x27) {   /* Detective Conan, as upstream */
+	/* Detective Conan, as upstream. The patch writes 0xFFFE8..0xFFFEC: only for images that reach that far (a footer
+	 * that matches on a 64 KiB image wrote outside the buffer, found by ASan in the twin: dconan_footer.ws). */
+	if ((h[8] | (h[9] << 8)) == 0x8de1 && h[0] == 0x01 && h[2] == 0x27 && rom_size > 0xFFFECu) {
 		wsCartROM[0xfffe8] = 0xea; wsCartROM[0xfffe9] = 0; wsCartROM[0xfffea] = 0; wsCartROM[0xfffeb] = 0; wsCartROM[0xfffec] = 0x20;
 	}
 	snprintf(G.info, sizeof G.info, "%u KiB, dev %02X cart %02X, %s, %s, save %s%s, footer %s, sum %02X%02X",
@@ -354,7 +357,9 @@ static void orient_update(void)
 	else if (icon_class) { want = icon_class == 1 ? WSWAN_VERTICAL : WSWAN_HORIZONTAL; src = WSWAN_SRC_ICON; }
 	if (want < 0) return;                          /* no information this frame: keep counting */
 	if (want == G.detected) { G.cand_n = 0; return; }
-	if (want == G.cand) G.cand_n++; else { G.cand = want; G.cand_n = 1; }
+	/* a run is consecutive frames of the same direction AND the same kind of evidence: a key frame never counts
+	 * toward the two frames an icon needs (found by the orientation property test, tests/orient_prop.py) */
+	if (want == G.cand && src == G.cand_src) G.cand_n++; else { G.cand = want; G.cand_src = src; G.cand_n = 1; }
 	if (G.cand_n >= (src == WSWAN_SRC_ICON ? SWITCH_FRAMES_ICON : SWITCH_FRAMES)) {
 		G.detected = want; G.source = src; G.switches++; G.since_switch = 0; G.cand_n = 0;
 	}

@@ -249,7 +249,7 @@ int main(int argc, char **argv)
 		int r = snes_host_cheats_load(cheats_root);
 		fprintf(stderr, "cheats: %d entries loaded\n", r);
 	}
-	if (cheat_remove >= 0) printf("cheat remove %d -> %d\n", cheat_remove, snes_host_cheat_remove(cheat_remove));
+	if (cheat_remove >= 0) { char et[200]; printf("cheat remove %d -> %d\n", cheat_remove, snes_host_cheat_remove(cheat_remove)); if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et); }
 	for (auto &c : cheat_codes) {
 		int r = snes_host_cheat_add(c.c_str(), NULL);
 		char et[200];
@@ -280,7 +280,7 @@ int main(int argc, char **argv)
 				snes_host_set_pad(k + 1, em[k]);
 			}
 		}
-		for (auto &t : ctog) if (t.frame == f) printf("cheat toggle frame %d index %d on %d -> %d\n", f, t.index, t.on, snes_host_cheat_enable(t.index, t.on));
+		for (auto &t : ctog) if (t.frame == f) { char et[200]; printf("cheat toggle frame %d index %d on %d -> %d\n", f, t.index, t.on, snes_host_cheat_enable(t.index, t.on)); if (snes_host_cheat_error(et, sizeof et)) printf("cheat file: %s\n", et); }
 		if (lstate && f == state_frame) {
 			int r = snes_host_state_load(lstate);
 			fprintf(stderr, "load state: %d\n", r);

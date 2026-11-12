@@ -3,6 +3,10 @@
  * Loads a ROM, runs N frames with a scripted pad, writes per-frame hashes, PNG screenshots (raw, or rotated by the
  * detected orientation), a WAV of the audio, saves and states, and a summary line.
  *
+ * In-run round trips (--rt AT:BACK): the state is saved at frame AT, the run goes on to frame AT+BACK, the state is loaded
+ * again and frames AT..AT+BACK-1 are replayed. Every replayed frame must equal the first pass (picture, when drawn in
+ * both passes; audio, always). The summary line reports the count compared and the mismatches.
+ *
  * Copyright CBOC-Vita. MIT licence (see wswan/frontend/LICENSE).
  */
 #include <stdio.h>
@@ -124,31 +128,41 @@ static void usage(void)
 		"usage: wswan_twin ROM [options]\n"
 		"  --frames N            frames to run (default 300)\n"
 		"  --pad SCRIPT          'frame:key+key,frame:none' keys x1-x4 y1-y4 a b start (up/right/down/left = x1..x4)\n"
+		"  --pad-file FILE       the same script read from a file (newlines and spaces ignored)\n"
 		"  --vpad SCRIPT         the same with Vita buttons through wsl_map_pad (up down left right cross circle square triangle l r start rsup..)\n"
 		"  --vita-presentation upright|turned   (default upright)\n"
-		"  --hashes FILE         'frame hash orientation' per frame\n"
+		"  --hashes FILE         'frame hash orientation keys icon' per frame\n"
 		"  --shot FRAME:FILE[,..]  PNG after that frame   --shot-mode raw|auto|ccw (default raw)  --shot-scale N\n"
 		"  --png-every N --png-prefix P   a PNG every N frames (auto-rotated)\n"
 		"  --wav FILE            audio of the run\n"
 		"  --srm FILE            cartridge save (RetroArch .srm layout + internal EEPROM trailer): loaded, written if dirty\n"
 		"  --backup-dir DIR      --save-state FILE --load-state FILE --state-frame N (save at, and load at unless --load-frame M)\n"
+		"  --rt AT:BACK          in-run round trip (repeatable): save at AT, rewind to AT at AT+BACK, compare the replay\n"
 		"  --orient auto|h|v     --orient-log FILE (changes of the effective orientation)\n"
 		"  --render-off-from N   skip drawing from frame N on\n"
+		"  --render-range A:B    skip drawing for frames A <= f < B (repeatable)\n"
 		"  --palette N           mono palette 0..3        --rate HZ   audio rate\n"
-		"  --cheat CODE          --rtc-fixed (clock = 2023-11-14 22:13:20 UTC)\n"
+		"  --cheat CODE          --rtc-fixed (clock = 2023-11-14 22:13:20 UTC; run with TZ=UTC for the same clock everywhere)\n"
 		"  --table DEV:CART:h|v  orientation table entry (hex ids)\n"
+		"  --peek ADDR          (hex) a RA byte as a 6th column of --hashes\n"
 		"  --quiet\n");
 }
+
+struct Rt { int at, back; bool saved, done; std::vector<uint8_t> st; size_t pi, vi, pcm_len; unsigned cur, vcur; };
+struct Rng { int a, b; };
 
 int main(int argc, char **argv)
 {
 	if (argc < 2) { usage(); return 2; }
 	const char *rom = argv[1];
+	int peek_addr = -1;     /* --peek ADDR: one more column in --hashes, the RA byte after each frame */
 	int frames = 300, shot_scale = 1, shot_mode = 0, png_every = 0, state_frame = 100, load_frame = -1, render_off = -1, palette = 0, quiet = 0, rate = 0;
 	bool turned = false, rtc_fixed = false;
 	std::string hashes, wav, srm, backup, save_state, load_state, orient_log, png_prefix = "shot", cheat, table;
 	std::vector<std::pair<int, std::string>> shots;
 	std::vector<PadEv> pad, vpad;
+	std::vector<Rt> rts;
+	std::vector<Rng> ranges;
 	int orient_mode = WSWAN_ORIENT_AUTO;
 	for (int i = 2; i < argc; i++) {
 		std::string a = argv[i];
@@ -158,7 +172,7 @@ int main(int argc, char **argv)
 		else if (a == "--pad-file" || a == "--vpad-file") {
 			FILE *pf = fopen(nxt(), "r"); std::string t; int ch;
 			if (!pf) { fprintf(stderr, "cannot read pad file\n"); return 1; }
-			while ((ch = fgetc(pf)) != EOF) if (ch != '\n' && ch != ' ') t += (char) ch;
+			while ((ch = fgetc(pf)) != EOF) if (ch != '\n' && ch != ' ' && ch != '\r') t += (char) ch;
 			fclose(pf);
 			if (a == "--pad-file") pad = parse_script(t.c_str(), WS_NAMES, NWS); else vpad = parse_script(t.c_str(), VITA_NAMES, NVITA);
 		}
@@ -182,6 +196,19 @@ int main(int argc, char **argv)
 		else if (a == "--load-state") load_state = nxt();
 		else if (a == "--state-frame") state_frame = atoi(nxt());
 		else if (a == "--load-frame") load_frame = atoi(nxt());
+		else if (a == "--rt") {
+			std::string t = nxt(); size_t c = t.find(':');
+			if (c == std::string::npos) { usage(); return 2; }
+			Rt r; r.at = atoi(t.substr(0, c).c_str()); r.back = atoi(t.substr(c + 1).c_str());
+			r.saved = r.done = false; r.pi = r.vi = r.pcm_len = 0; r.cur = r.vcur = 0;
+			if (r.back < 1) { fprintf(stderr, "--rt needs BACK >= 1\n"); return 2; }
+			rts.push_back(r);
+		}
+		else if (a == "--render-range") {
+			std::string t = nxt(); size_t c = t.find(':');
+			if (c == std::string::npos) { usage(); return 2; }
+			Rng r; r.a = atoi(t.substr(0, c).c_str()); r.b = atoi(t.substr(c + 1).c_str()); ranges.push_back(r);
+		}
 		else if (a == "--orient") { std::string m = nxt(); orient_mode = m == "h" ? WSWAN_ORIENT_HORIZONTAL : m == "v" ? WSWAN_ORIENT_VERTICAL : WSWAN_ORIENT_AUTO; }
 		else if (a == "--orient-log") orient_log = nxt();
 		else if (a == "--render-off-from") render_off = atoi(nxt());
@@ -191,6 +218,7 @@ int main(int argc, char **argv)
 		else if (a == "--rtc-fixed") rtc_fixed = true;
 		else if (a == "--table") table = nxt();
 		else if (a == "--quiet") quiet = 1;
+		else if (a == "--peek") peek_addr = (int) strtol(nxt(), NULL, 16);
 		else { usage(); return 2; }
 	}
 
@@ -228,28 +256,61 @@ int main(int argc, char **argv)
 	uint64_t cpu = 0, cpu_max = 0;
 	long clipped = 0; int peak = 0; double sq = 0; long samples = 0;
 	std::vector<uint8_t> stbuf;
-	int save_errs = 0;
+	int save_errs = 0, load_errs = 0;
+	/* per frame record of the first pass, compared on replays */
+	std::vector<uint64_t> vh((size_t) (frames > 0 ? frames : 0)), ah((size_t) (frames > 0 ? frames : 0));
+	std::vector<char> drawn((size_t) (frames > 0 ? frames : 0), 0), seen((size_t) (frames > 0 ? frames : 0), 0);
+	long rt_cmp_v = 0, rt_cmp_a = 0, rt_mis_v = 0, rt_mis_a = 0, rt_rewinds = 0;
+	int replay_from = -1, replay_to = -1;
 	for (int f = 0; f < frames; f++) {
+		for (auto &r : rts)
+			if (!r.saved && !r.done && f == r.at) {
+				r.st.resize(wswan_host_state_size());
+				size_t got_n = wswan_host_state_save_mem(r.st.data(), r.st.size());
+				if (!got_n) { fprintf(stderr, "rt: state save failed at %d\n", f); return 4; }
+				r.pi = pi; r.vi = vi; r.cur = cur; r.vcur = vcur; r.pcm_len = pcm.size(); r.saved = true;
+			}
+		bool rewound = false;
+		for (auto &r : rts)
+			if (!rewound && r.saved && !r.done && f == r.at + r.back) {
+				int lr = wswan_host_state_load_mem(r.st.data(), r.st.size());
+				if (lr) { fprintf(stderr, "rt: state load failed at %d: %d\n", f, lr); return 4; }
+				pi = r.pi; vi = r.vi; cur = r.cur; vcur = r.vcur; pcm.resize(r.pcm_len);
+				r.done = true; rt_rewinds++;
+				replay_from = r.at; replay_to = r.at + r.back;
+				f = r.at - 1;            /* the loop increment brings us back to AT */
+				rewound = true;
+			}
+		if (rewound) continue;
 		while (pi < pad.size() && pad[pi].frame <= f) cur = pad[pi++].mask;
 		while (vi < vpad.size() && vpad[vi].frame <= f) vcur = vpad[vi++].mask;
 		if (!load_state.empty() && f == (load_frame >= 0 ? load_frame : state_frame)) {
 			uint8_t *b = NULL; size_t bn = 0;
 			if (wswan_file_read(load_state.c_str(), &b, &bn, 64u << 20) == 0) {
 				int r = wswan_host_state_load_mem(b, bn);
-				if (r) fprintf(stderr, "state load failed: %d\n", r);
+				if (r) { fprintf(stderr, "state load failed: %d\n", r); load_errs++; }
+				else if (!quiet) { wswan_orientation_info q; wswan_host_orientation_info(&q);
+					printf("state loaded at frame %d: orient %s detected %d icon %d\n", f, wswan_host_orientation() ? "vertical" : "horizontal", q.detected, q.icon_bits); }
 			}
 			free(b);
 		}
 		if (!vpad.empty()) cur = wsl_map_pad(vcur, wswan_host_orientation(), turned ? WSL_TURNED : WSL_UPRIGHT);
 		wswan_host_set_pad(cur);
-		if (render_off >= 0 && f == render_off) wswan_host_set_render(0);
+		int ron = 1;
+		if (render_off >= 0 && f >= render_off) ron = 0;
+		for (auto &r : ranges) if (f >= r.a && f < r.b) ron = 0;
+		wswan_host_set_render(ron);
 		uint64_t t0 = cpu_ns();
 		wswan_host_run_frame();
 		uint64_t dt = cpu_ns() - t0;
 		cpu += dt; if (dt > cpu_max) cpu_max = dt;
+		uint64_t ahf = 1469598103934665603ull;
 		int got;
 		while ((got = wswan_host_audio_take(abuf.data(), 4096)) > 0) {
-			for (int i = 0; i < got * 2; i++) { int v = abuf[i]; int a = v < 0 ? -v : v; if (a > peak) peak = a; if (a >= 32767) clipped++; sq += (double) v * v; }
+			for (int i = 0; i < got * 2; i++) {
+				int v = abuf[i]; int a = v < 0 ? -v : v; if (a > peak) peak = a; if (a >= 32767) clipped++; sq += (double) v * v;
+				ahf ^= (uint16_t) abuf[i]; ahf *= 1099511628211ull;
+			}
 			samples += got * 2;
 			if (!wav.empty()) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + got * 2);
 		}
@@ -257,7 +318,18 @@ int main(int argc, char **argv)
 		{
 			int w, hh, p; const uint16_t *v = wswan_host_video(&w, &hh, &p); h = fnv(v, (size_t) w * hh);
 		}
-		if (hf) { wswan_orientation_info q; wswan_host_orientation_info(&q); fprintf(hf, "%d %016llx %d %d %d\n", f, (unsigned long long) h, wswan_host_orientation(), q.keys_last_frame, q.icon_bits); }
+		{
+			/* a replayed frame must match the first pass: audio always, picture when drawn in both passes */
+			int in_replay = f >= replay_from && f < replay_to;
+			if (in_replay && seen[f]) {
+				rt_cmp_a++; if (ah[f] != ahf) rt_mis_a++;
+				if (drawn[f] && ron) { rt_cmp_v++; if (vh[f] != h) rt_mis_v++; }
+			}
+			if (!in_replay) { vh[f] = h; ah[f] = ahf; seen[f] = 1; drawn[f] = (char) ron; }
+		}
+		if (hf && !(f >= replay_from && f < replay_to)) { wswan_orientation_info q; wswan_host_orientation_info(&q); fprintf(hf, "%d %016llx %d %d %d", f, (unsigned long long) h, wswan_host_orientation(), q.keys_last_frame, q.icon_bits);
+			if (peek_addr >= 0) fprintf(hf, " %d", wswan_host_peek(peek_addr));
+			fprintf(hf, "\n"); }
 		int o = wswan_host_orientation();
 		if (o != last_orient) {
 			wswan_orientation_info oi; wswan_host_orientation_info(&oi);
@@ -286,9 +358,14 @@ int main(int argc, char **argv)
 	if (!wav.empty()) write_wav(wav.c_str(), pcm);
 	wswan_orientation_info oi; wswan_host_orientation_info(&oi);
 	uint64_t last_hash; { int w, hh, p; const uint16_t *v = wswan_host_video(&w, &hh, &p); last_hash = fnv(v, (size_t) w * hh); }
+	if (!rts.empty()) {
+		int not_done = 0; for (auto &r : rts) if (!r.done) not_done++;
+		printf("rewind: trips=%ld rewound=%ld compared_video=%ld mismatch_video=%ld compared_audio=%ld mismatch_audio=%ld pending=%d\n",
+		       (long) rts.size(), rt_rewinds, rt_cmp_v, rt_mis_v, rt_cmp_a, rt_mis_a, not_done);
+	}
 	printf("frames=%d hash=%016llx cpu_ms_per_frame=%.3f cpu_ms_max=%.3f audio_peak=%d audio_rms=%.0f audio_clipped=%ld orient=%s switches=%u src=%d\n",
 	       frames, (unsigned long long) last_hash, cpu / 1e6 / (frames ? frames : 1), cpu_max / 1e6, peak, samples ? sqrt(sq / samples) : 0.0,
 	       clipped, wswan_host_orientation() ? "vertical" : "horizontal", oi.switches, oi.source);
 	wswan_host_shutdown();
-	return save_errs ? 3 : 0;
+	return (save_errs || load_errs) ? 3 : 0;
 }

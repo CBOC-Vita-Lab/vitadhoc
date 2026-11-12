@@ -58,6 +58,10 @@ SYSTEMS = [
     # titles it shares with the NES.
     ("Nintendo - Nintendo Entertainment System", "Q172742", "E"),
     ("Nintendo - Family Computer Disk System", None, "F"),
+    # 1.4: the WonderSwan (G) and the WonderSwan Color (H), names and
+    # whole-file checksums only (no Wikidata set: no blurbs yet)
+    ("Bandai - WonderSwan", None, "G"),
+    ("Bandai - WonderSwan Color", None, "H"),
 ]
 # which file extensions of a catalogue's entries give a checksum record
 CRC_EXT = {"E": (".nes",), "F": (".qd",)}   # ...the ones left OUT

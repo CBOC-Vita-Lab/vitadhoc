@@ -470,6 +470,9 @@ static void CheckSpriteHit(int p) {
 	if (sphitx == 0x100) return;
 
 	for (x = sphitx; x < (sphitx + 8) && x < l; x++) {
+		/* NESP: no hit in the leftmost 8 pixels while sprites are masked there ($2001 bit 2); the background mask
+		 * already marks those pixels transparent (blargg sprite_hit_tests 05.left_clip) */
+		if (x < 8 && !(PPU[1] & 4)) continue;
 		if ((sphitdata & (0x80 >> (x - sphitx))) && !(Plinef[x] & 64) && x < 255) {
 			PPU_status |= 0x40;
 			sphitx = 0x100;

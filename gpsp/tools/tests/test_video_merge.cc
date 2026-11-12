@@ -2,14 +2,17 @@
  * against a verbatim copy of the per-pixel loops they replaced (video.cc's
  * merge_blend / merge_brightness as of the commit before WP4).
  *
- *   x86:    g++ -O2 -o t tools/tests/test_video_merge.cc && ./t          (the
- *           branch-free scalar kernels)
+ *   x86:    g++ -O2 -o t tools/tests/test_video_merge.cc && ./t          (SSE2
+ *           vector code and the scalar code)
  *   armhf:  arm-linux-gnueabihf-g++ -O2 -static -marm -march=armv7-a \
  *             -mfpu=neon -mfloat-abi=hard -o t tools/tests/test_video_merge.cc
  *           qemu-arm ./t                                          (NEON)
- *           add -DVIDEO_MERGE_NO_NEON to run the scalar kernels on ARM too.
+ *           add -DVIDEO_MERGE_NO_VEC to run only the scalar code on ARM / x86.
  *   ./t quick   a few percent of the work, for a smoke test.
  *
+ * Implementations compared with the verbatim copy of the original loops: the
+ * one the renderer calls (vector where the build has NEON or SSE2), the
+ * original loops, the branch-free scalar code, and the vector code.
  * What is compared, for every blend type video.cc instantiates
  * (OBJ_BLEND/true, BLEND_ONLY/true+false, BLEND_BRIGHT/true, BLEND_DARK/true,
  * and the two brightness-only kernels):
@@ -153,22 +156,56 @@ static void fail(const char *what, ...)
 
 #define GUARD 16
 
-// Runs one blend kernel pair over src[start..end) and compares, guards included.
+// Runs the original loops (the verbatim copy above) and every implementation
+// of video_merge.h over src[start..end) and compares them, guards included.
+// Implementations: 0 = what the renderer calls, 1 = original, 2 = branch-free
+// scalar, 3 = vector (when the build has one).
+template <blendtype bt, bool st, int which>
+static void run_blend_w(const u16 *pal, u32 alpha, u32 bldy, u32 *src,
+                        u32 start, u32 end, const u16 *ref, const char *name)
+{
+  u16 b[GUARD + 256 + GUARD];
+  for (unsigned i = 0; i < GUARD + 256 + GUARD; i++) b[i] = 0xA5A5 + i;
+  vm_merge_blend_w<bt, st, which>(pal, alpha, bldy, start, end, b + GUARD, src);
+  n_px += end - start;
+  if (memcmp(ref, b, sizeof(b))) {
+    for (unsigned i = 0; i < GUARD + 256 + GUARD; i++)
+      if (ref[i] != b[i])
+        fail("%s blend impl %d alpha=%04x bldy=%x start=%u end=%u: lane %d ref %04x got %04x"
+             " (src %08x)", name, which, alpha, bldy, start, end, (int)i - GUARD,
+             ref[i], b[i], i >= GUARD && i - GUARD < 256 ? src[i - GUARD] : 0);
+  }
+}
+
 template <blendtype bt, bool st>
 static void run_blend(const u16 *pal, u32 alpha, u32 bldy, u32 *src,
                       u32 start, u32 end, const char *name)
 {
-  u16 a[GUARD + 256 + GUARD], b[GUARD + 256 + GUARD];
-  for (unsigned i = 0; i < GUARD + 256 + GUARD; i++) a[i] = b[i] = 0xA5A5 + i;
+  u16 a[GUARD + 256 + GUARD];
+  for (unsigned i = 0; i < GUARD + 256 + GUARD; i++) a[i] = 0xA5A5 + i;
   ref_merge_blend<bt, st>(pal, alpha, bldy, start, end, a + GUARD, src);
-  vm_merge_blend<bt, st>(pal, alpha, bldy, start, end, b + GUARD, src);
+  run_blend_w<bt, st, 0>(pal, alpha, bldy, src, start, end, a, name);
+  run_blend_w<bt, st, 1>(pal, alpha, bldy, src, start, end, a, name);
+  run_blend_w<bt, st, 2>(pal, alpha, bldy, src, start, end, a, name);
+#if VM_VEC
+  run_blend_w<bt, st, 3>(pal, alpha, bldy, src, start, end, a, name);
+#endif
+}
+
+template <blendtype bt, int which>
+static void run_bright_w(const u16 *pal, u32 bldy, const u16 *in, u32 start,
+                         u32 end, const u16 *ref, const char *name)
+{
+  u16 b[GUARD + 256 + GUARD];
+  for (unsigned i = 0; i < GUARD + 256 + GUARD; i++) b[i] = 0xA5A5 + i;
+  memcpy(b + GUARD, in, 256 * 2);
+  vm_merge_brightness_w<bt, which>(pal, bldy, start, end, b + GUARD);
   n_px += end - start;
-  if (memcmp(a, b, sizeof(a))) {
+  if (memcmp(ref, b, sizeof(b))) {
     for (unsigned i = 0; i < GUARD + 256 + GUARD; i++)
-      if (a[i] != b[i])
-        fail("%s blend alpha=%04x bldy=%x start=%u end=%u: lane %d ref %04x got %04x"
-             " (src %08x)", name, alpha, bldy, start, end, (int)i - GUARD,
-             a[i], b[i], i >= GUARD && i - GUARD < 256 ? src[i - GUARD] : 0);
+      if (ref[i] != b[i])
+        fail("%s brightness impl %d bldy=%x start=%u end=%u: lane %d ref %04x got %04x",
+             name, which, bldy, start, end, (int)i - GUARD, ref[i], b[i]);
   }
 }
 
@@ -176,19 +213,16 @@ template <blendtype bt>
 static void run_bright(const u16 *pal, u32 bldy, const u16 *in, u32 start,
                        u32 end, const char *name)
 {
-  u16 a[GUARD + 256 + GUARD], b[GUARD + 256 + GUARD];
-  for (unsigned i = 0; i < GUARD + 256 + GUARD; i++) a[i] = b[i] = 0xA5A5 + i;
+  u16 a[GUARD + 256 + GUARD];
+  for (unsigned i = 0; i < GUARD + 256 + GUARD; i++) a[i] = 0xA5A5 + i;
   memcpy(a + GUARD, in, 256 * 2);
-  memcpy(b + GUARD, in, 256 * 2);
   ref_merge_brightness<bt>(pal, bldy, start, end, a + GUARD);
-  vm_merge_brightness<bt>(pal, bldy, start, end, b + GUARD);
-  n_px += end - start;
-  if (memcmp(a, b, sizeof(a))) {
-    for (unsigned i = 0; i < GUARD + 256 + GUARD; i++)
-      if (a[i] != b[i])
-        fail("%s brightness bldy=%x start=%u end=%u: lane %d ref %04x got %04x",
-             name, bldy, start, end, (int)i - GUARD, a[i], b[i]);
-  }
+  run_bright_w<bt, 0>(pal, bldy, in, start, end, a, name);
+  run_bright_w<bt, 1>(pal, bldy, in, start, end, a, name);
+  run_bright_w<bt, 2>(pal, bldy, in, start, end, a, name);
+#if VM_VEC
+  run_bright_w<bt, 3>(pal, bldy, in, start, end, a, name);
+#endif
 }
 
 // All five blend instantiations at once.
@@ -293,7 +327,16 @@ static void test_random(unsigned iters)
 int main(int argc, char **argv)
 {
   bool quick = argc > 1 && !strcmp(argv[1], "quick");
-  printf("test_video_merge: %s kernels%s\n", VM_NEON ? "NEON" : "scalar",
+  printf("test_video_merge: vector unit: %s%s\n",
+#if VM_VEC
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+         "NEON",
+#else
+         "SSE2",
+#endif
+#else
+         "none (scalar only)",
+#endif
          quick ? " (quick)" : "");
   test_channels(quick ? 1 : 3);
   test_brightness(quick);

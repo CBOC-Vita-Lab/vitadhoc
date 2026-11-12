@@ -269,13 +269,9 @@ static inline u16 color_flags(u32 layer) {
 
 static const u32 map_widths[] = { 256, 512, 256, 512 };
 
-typedef enum
-{
-  FULLCOLOR,  // Regular rendering, output a 16 bit color
-  INDXCOLOR,  // Rendering to indexed color, so we can later apply dark/bright
-  STCKCOLOR,  // Stacks two indexed pixels (+flags) to apply blending
-  PIXCOPY     // Special mode used for sprites, to allow for obj-window drawing
-} rendtype;
+// rendtype (FULLCOLOR, INDXCOLOR, STCKCOLOR, PIXCOPY) and the NEON tile-row
+// kernels are in video_tile.h
+#include "video_tile.h"
 
 s32 affine_reference_x[2];
 s32 affine_reference_y[2];
@@ -428,6 +424,11 @@ static inline void render_tile_Nbpp(
       VP_CNT(VP_C_TROW, 1);
       if ((nz & 0x11111111u) == 0x11111111u) VP_CNT(VP_C_TROWFULL, 1);
     }
+#if VT_NEON
+    // Eight pixels at once (video_tile.h): the loops below, as vector selects.
+    vt_bg_row4<dtype, rdtype, isbase, hflip>(dest_ptr, tilepix,
+      (u16)((tile >> 12) << 4), px_comb, bg_comb, paltbl, bgcolor);
+#else
     if (tilepix) {  // We can skip it all if the row is transparent
       u16 tilepal = (tile >> 12) << 4;
       u16 pxflg = px_comb | tilepal;
@@ -455,6 +456,7 @@ static inline void render_tile_Nbpp(
         if (rdtype == FULLCOLOR && sizeof(dtype) == 2) VP_COVER(dest_ptr);
       }
     }
+#endif
   }
 }
 
@@ -1336,6 +1338,11 @@ static inline void render_obj_tile_Nbpp(u32 px_comb,
     }
   } else {
     u32 tilepix = eswap32(*(u32*)tile_ptr);
+#if VT_NEON
+    if (rdtype != PIXCOPY) {
+      vt_obj_row4<dsttype, rdtype, hflip>(dest_ptr, tilepix, px_attr, pal, palette);
+    } else
+#endif
     if (tilepix) {   // Can skip all pixels if the row is just transparent
       for (u32 i = 0; i < 8; i++, dest_ptr++) {
         u8 pval = (hflip ? (tilepix >> ((7-i)*4)) : (tilepix >> (i*4))) & 0xF;

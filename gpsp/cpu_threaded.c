@@ -4221,7 +4221,7 @@ static void smcr_dc_clear(void)
 }
 /* Hooks in translate_block_* (locals: translation_ptr, block_end_pc, the
  * external exits).  SMCR_REAL(): emitting for smcr_translate. */
-#define SMCR_COUNT_FW_XLAT() do { if (!smcr_on) smcr_fw_xlat++; } while (0)
+#define SMCR_COUNT_FW_XLAT() do { if (!smcr_on) { smcr_fw_xlat++; JCTR(9); } } while (0)
 #define SMCR_REAL_OVERFLOW() do { if (SMCR_REAL()) return false;               \
                                  smcr_trace('F'); } while (0)
 #define SMCR_NOTE_BODY() do { if (SMCR_REAL()) {                              \

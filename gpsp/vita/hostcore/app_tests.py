@@ -6524,6 +6524,24 @@ def t_state_buckets(S):
     S.check(not r2.evt("sidecar_migrate"), "with the marker there, nothing is looked for again")
 
 
+def t_steady_input(S):
+    """While steady pacing draws every second frame (a slow stretch: the
+    twin's --slow), the pad is still read for every emulated frame: six
+    short taps of A (one refresh each) are six presses the NES test game
+    counts in its battery RAM ($6003), as with every frame drawn."""
+    rom = nes_rom(S, "nrom.nes")
+    taps = "".join("+40:a:1\n" for _ in range(6))
+    for name, args in (("steady_input", ("--slow", "60:3000:20000")), ("steady_input_full", ())):
+        r = S.run(name, "400:shot=x.png\n" + taps + "+60:quit\n", autoboot="Taps.nes",
+                  extra={"roms/Taps.nes": rom}, args=args)
+        S.clean(r)
+        srm = os.path.join(r.root, "roms", "Taps.srm")
+        n = open(srm, "rb").read()[3] if os.path.exists(srm) else -1
+        half = any(e["mode"] == "half" for e in r.evt("steady"))
+        S.check(n == 6 and (half if args else not half),
+                "%s: six one-refresh taps, six presses counted (%d; half mode %s)" % (name, n, half))
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6920,7 +6938,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

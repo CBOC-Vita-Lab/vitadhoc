@@ -40,6 +40,7 @@ static inline void DrawBackdrop (void);
 static inline void RenderScreen (bool8);
 // CBOC-Vita: wide view pass (see wide.h and the end of this file). All of it is off (g_wide_on == 0) while the
 // main pass draws; the hooks below only change what RenderScreen does during the wide pass.
+unsigned g_wide_zdirty = ~0u;
 int g_wide_on = 0;				// 1 only while the wide pass draws (also read by the Mode 7 loop in tileimpl.h)
 int g_wide_dx = 0;				// screen x of buffer column 0 during the wide pass (= -margin)
 static uint8 g_wmask = 0xff;			// layers the wide pass may draw (bit 4 = sprites)
@@ -2596,9 +2597,13 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 		W.m = margin = SW_MAXM;
 	wide_alloc();
 	memset(W.line, 0, sizeof(W.line));
+	// only the Z buffers a pass drew into last frame are dirty (an unused pass costs nothing)
 	for (int p = 0; p < SW_NPASS; p++)
-		memset(W.z[p], 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
-	memset(W.subz, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+		if (g_wide_zdirty & (1u << p))
+			memset(W.z[p], 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+	if (g_wide_zdirty)
+		memset(W.subz, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+	g_wide_zdirty = 0;
 	W.h = 0;
 }
 
@@ -2610,6 +2615,7 @@ static void wide_pass (const S9xRenderJob &job, int pass, uint8 mask, bool compo
 	uint8 save2131 = Memory.FillRAM[0x2131];
 
 	GFX.Screen = W.scr[pass];
+	g_wide_zdirty |= 1u << pass;
 	GFX.ZBuffer = W.z[pass];
 	GFX.SubScreen = W.sub;
 	GFX.SubZBuffer = W.subz;

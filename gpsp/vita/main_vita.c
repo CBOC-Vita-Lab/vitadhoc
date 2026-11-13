@@ -3314,6 +3314,24 @@ static void window_begin(void)
           g_pace_forgiven, g_caught, g_caught ? g_caught_us / g_caught : 0,
           g_win.swap_sum / g_win.n, g_win.swap_max, g_q_taken, g_q_glass,
           g_q_waits);
+   {
+      /* CENSUS (one line a window): each default-on 1.4 feature says it is
+       * there and what it did, so a run proves it acted (gate: census).
+       * steady = Steady pacing on / windows spent drawing every second
+       * frame; wide = the NES wide picture shown; jit = blocks the GBA
+       * recompiler translated this window (gpsp_jit_counters). */
+      extern uint32_t gpsp_jit_counters(uint32_t *out, uint32_t n);
+      static unsigned half_windows;
+      static uint32_t jit_last;
+      uint32_t jc[2] = { 0, 0 };
+      half_windows += steady_half() ? 1 : 0;
+      gpsp_jit_counters(jc, 2);
+      fe_evt("census steady=%d half_windows=%u wide=%d jit_blocks=%u console=%d",
+             g_pcfg.steady_pacing, half_windows,
+             g_game_console == FE_CONSOLE_NES ? nescore_wide_shown() : -1,
+             (unsigned)(jc[0] + jc[1] - jit_last), g_game_console);
+      jit_last = jc[0] + jc[1];
+   }
    g_caught = g_caught_us = 0;
    g_q_taken = g_q_glass = g_q_waits = 0;
    g_win.swap_sum = g_win.swap_max = 0;

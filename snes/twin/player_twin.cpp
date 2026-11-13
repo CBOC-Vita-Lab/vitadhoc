@@ -220,6 +220,12 @@ static bool write_bytes(const std::string &p, const std::vector<uint8_t> &b)
 }
 static bool write_text(const std::string &p, const std::string &s) { return write_bytes(p, std::vector<uint8_t>(s.begin(), s.end())); }
 static std::vector<uint8_t> read_bytes(const std::string &p) { std::vector<uint8_t> b; file_read(p, b); return b; }
+/* the game's state folder (states/<console>/<xx>/, playerkit's bucket layout) */
+static std::string bucket(const std::string &root, const std::string &game)
+{
+	StateLayout l; l.root = root; l.console = "snes"; l.name = game;
+	return l.states_dir() + "/" + game;
+}
 static bool exists(const std::string &p) { struct stat st; return stat(p.c_str(), &st) == 0; }
 
 /* failing writes of temp files in the states folder (a full card) */
@@ -317,9 +323,9 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	EXPECT(pl->request().session_id == "s-test-1");
 	EXPECT(pl->request().unknown.count("future_key") == 1);
 	/* migration: old .st0 -> slot 2 (slot 1 was taken), old .st2 -> slot 3; the other game's file stays */
-	EXPECT(read_bytes(root + "/states/snes/" + game + ".st0") == occupant);
-	EXPECT(read_bytes(root + "/states/snes/" + game + ".st1") == real_state);
-	EXPECT(read_bytes(root + "/states/snes/" + game + ".st2") == real_state);
+	EXPECT(read_bytes(bucket(root, game) + ".st0") == occupant);
+	EXPECT(read_bytes(bucket(root, game) + ".st1") == real_state);
+	EXPECT(read_bytes(bucket(root, game) + ".st2") == real_state);
 	EXPECT(!exists(root + "/snes/states/" + game + ".st0"));
 	EXPECT(!exists(root + "/snes/states/" + game + ".st2"));
 	EXPECT(exists(root + "/snes/states/Other Game.st1"));
@@ -370,7 +376,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	pl->capture_state(before_save);
 	rig.press(PH_CIRCLE);                                  /* Enter on an empty slot saves */
 	rig.settle(4);
-	std::string s4 = root + "/states/snes/" + game + ".st3";
+	std::string s4 = bucket(root, game) + ".st3";
 	EXPECT(exists(s4));
 	EXPECT(exists(s4 + ".thumb"));
 	EXPECT(exists(s4 + ".shot"));
@@ -564,8 +570,8 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 	EXPECT(std::find(rep.states_touched.begin(), rep.states_touched.end(), 4) != rep.states_touched.end());
 	EXPECT(rep.resume_present);
 	EXPECT(rep.exit == EXIT_GAME_LIST);
-	EXPECT(exists(root + "/states/snes/" + game + ".rsm"));
-	{ std::vector<uint8_t> pt = read_bytes(root + "/states/snes/" + game + ".rsm.pt"); EXPECT(std::string(pt.begin(), pt.end()) == "fix-1"); }
+	EXPECT(exists(bucket(root, game) + ".rsm"));
+	{ std::vector<uint8_t> pt = read_bytes(bucket(root, game) + ".rsm.pt"); EXPECT(std::string(pt.begin(), pt.end()) == "fix-1"); }
 	EXPECT(exists(root + "/scenes/" + game + ".shot"));
 	EXPECT(exists(root + "/snes/picture.ini") || exists(root + "/snes/games/" + game + ".ini"));
 	{
@@ -605,7 +611,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 		p2->wait_writer();
 		r2.run(1);
 		EXPECT(p2->notices().text() == "State saved to slot 1");
-		EXPECT(read_bytes(root + "/states/snes/" + game + ".st0") != occupant);
+		EXPECT(read_bytes(bucket(root, game) + ".st0") != occupant);
 		r2.snap("quicksave_notice");
 		/* a threaded save through the menu shows at once ("Saving...") and finishes */
 		p2->open_menu(0);
@@ -617,7 +623,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 		r2.settle(1);
 		p2->wait_writer();
 		r2.settle(2);
-		EXPECT(exists(root + "/states/snes/" + game + ".st5"));
+		EXPECT(exists(bucket(root, game) + ".st5"));
 		EXPECT(p2->menu().notices().text() == "State saved to slot 6");
 		r2.snap("states_threaded_save");
 		r2.press(PH_CIRCLE);
@@ -652,7 +658,7 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 		r4.pl = p4; r4.pf.player = p4;
 		EXPECT(p4->start(1, av, root, true).ok);
 		std::vector<uint8_t> rsm;
-		file_read(root + "/states/snes/" + game + ".rsm", rsm);
+		file_read(bucket(root, game) + ".rsm", rsm);
 		p4->apply_start_mode();
 		std::vector<uint8_t> now;
 		p4->capture_state(now);

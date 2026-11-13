@@ -6609,6 +6609,9 @@ def t_census(S):
     S.check(c and all(e["steady"] == "1" for e in c) and int(c[-1]["half_passes"]) > 0,
             "census: steady pacing on and it acted (%s)" % [e["_"] for e in c][-1:])
     S.check(c and sum(int(e["jit_blocks"]) for e in c) > 0, "census: the recompiler's block counter moves")
+    h = r.evt("handoff:")
+    S.check(r.has(r"^EVT handoff_start handoff=1 started=1") and h and any(int(e["shown"]) > 0 for e in h),
+            "census: smooth hand-over is on by default and showed pictures (%s)" % [e["_"] for e in h][-1:])
     j = r.evt("vita_jit")
     S.check(r.has(r"^EVT jit_switches smc_partial=1 dispatch_cache=1") and j and
             all(e["emergencies"] == "0" for e in j) and sum(int(e["blocks"]) for e in j) > 0,
@@ -6633,6 +6636,148 @@ def t_census(S):
               extra={"retroarch/savefiles/%s.srm" % rom: bytes(131072)})
     S.clean(r)
     S.check(r.has(r"^EVT save_backup kept "), "census: a save backup was made and checked")
+
+
+def t_handoff(S):
+    """Smooth hand-over (Settings > Gameplay, on by default; handoff_glue.h):
+    the picture goes through playerkit's mailbox to the drawing side.  Proofs:
+    (1) on the twin's inline drawing side every screenshot is byte for byte
+    the old path's, and so is every picture drawn (GBADHOC_PIC_TRACE: frame
+    number and CRC of each picture); (2) with a real second thread that is
+    slow (20 ms a picture), every picture it shows is the old path's picture
+    for the same frame, in order, through a menu (a flush) and the Settings
+    row turned off and on again in the middle; (3) the census line says it
+    ran; (4) off in a local link."""
+    toggle = menu_pick(4, wait=30) + "+20:up\n" + "+8:up\n" * 8 + "+10:shot=row.png\n+10:cross\n" + \
+        "+6:circle\n+10:circle\n"
+    script = ("100:right:40\n+30:shot=a.png\n+5:a:3\n+40:shot=b.png\n" + menu_pick(0, wait=20) +
+              "+60:shot=c.png\n" + toggle + "+80:shot=d.png\n+5:b:10\n" + toggle +
+              "+90:shot=e.png\n+20:quit\n")
+
+    def run(name, vini=None, env=None):
+        tr = os.path.join(S.outdir, name + ".trace")
+        if os.path.exists(tr):
+            os.remove(tr)
+        e = {"GBADHOC_PIC_TRACE": tr}
+        e.update(env or {})
+        r = S.run(name, script, autoboot="gbadhoc-test.gba", vita_ini=vini, env=e)
+        S.clean(r)
+        lines = [l.split() for l in open(tr)] if os.path.exists(tr) else []
+        return r, [(int(a), c) for a, c, _ in lines]
+
+    plain, tp = run("handoff_plain", {"smooth_handoff": 0})
+    inl, ti = run("handoff_inline")
+    S.check(plain.has(r"^EVT handoff_enabled on=0") and inl.has(r"^EVT handoff_start handoff=1 started=1"),
+            "off by vita.ini's override, on by default")
+    S.check(len(tp) > 300 and tp == ti, "inline: every picture drawn is the old path's (%d / %d)" %
+            (len(tp), len(ti)))
+    same = [n for n in ("a.png", "b.png", "c.png", "d.png", "e.png")
+            if os.path.exists(os.path.join(plain.out, n)) and os.path.exists(os.path.join(inl.out, n)) and
+            open(os.path.join(plain.out, n), "rb").read() == open(os.path.join(inl.out, n), "rb").read()]
+    S.check(len(same) == 5, "inline: the five screenshots are byte for byte the old path's (%s)" % same)
+    S.check(inl.has(r"^EVT handoff_setting on=0") and inl.has(r"^EVT handoff_setting on=1") and
+            inl.has(r"^EVT handoff_enabled on=0 ") and len(inl.evt("handoff_enabled")) >= 3,
+            "the Settings row turns it off and on again in the game")
+    c = inl.evt("handoff:")
+    S.check(c and any(int(e["shown"]) > 0 for e in c) and all(e["timeouts"] == "0" for e in c),
+            "census: handoff lines with pictures shown (%s)" % [e["_"] for e in c][-1:])
+    th, tt = run("handoff_thread", env={"GBADHOC_HANDOFF_THREAD": "1", "GBADHOC_HANDOFF_SLOW_US": "20000"})
+    ref = dict(tp)
+    seqs = [q for q, _ in tt]
+    bad = [(q, k) for q, k in tt if ref.get(q) != k]
+    S.check(th.has(r"^EVT handoff_start handoff=1 started=1 where=thread"), "a real drawing thread")
+    S.check(len(tt) > 200 and not bad and seqs == sorted(set(seqs)),
+            "thread: every picture shown is the old path's for its frame, in order (%d shown, %d wrong: %s)" %
+            (len(tt), len(bad), bad[:3]))
+    S.check(any(q > 400 for q in seqs) and th.has(r"^EVT menu_closed"),
+            "thread: pictures after the menu and after the row was turned on again")
+    S.check(th.has(r"^EVT handoff_stop shown=[1-9]"), "thread: shut down cleanly with pictures shown")
+
+
+def t_look_gov(S):
+    """The look governor (look_glue.h, playerkit pk_look; docs/DEFAULTS-1.4.md):
+    a game starts at the best look (Image quality Auto: xBRZ over the sharp
+    filter); a long stretch the console cannot hold at 60 (the twin's --slow)
+    takes the least visible sacrifice first, logs a `look:` line every second,
+    and writes the game's memory (look/gba/<xx>/<name>.look); the next start
+    begins at the look that held; a row set by hand is never touched."""
+    stem = "gbadhoc-test"
+    r = S.run("look_slow", "3000:quit\n", autoboot=stem + ".gba", args=("--slow", "200:2600:22000"))
+    S.clean(r)
+    S.check(r.has(r"^EVT up_tex slot=0 f=[234] ") and r.has(r"^EVT look_start mask=0 "),
+            "Auto starts at the best look: xBRZ over the sharp filter")
+    lk = r.evt("look:")
+    S.check(len(lk) >= 20, "a look: line every second of play (%d)" % len(lk))
+    ap = r.evt("look_apply")
+    S.check(ap and ap[0]["why"] == "second" and int(ap[0]["mask"]) != 0,
+            "a second the console cannot hold eases the look (%s)" % [e["_"] for e in ap][:2])
+    mem = os.path.join(r.root, "look", "gba", bkt(stem), stem + ".look")
+    S.check(r.has(r"^EVT look_memory written why=") and os.path.exists(mem) and
+            open(mem).read().startswith("pk-look 1"), "the game's memory is written in its bucket")
+    S.check(r.has(r"^EVT look_summary "), "a summary at the end of the game")
+    r2 = S.run("look_again", "300:quit\n", autoboot=stem + ".gba",
+               extra={"look/gba/%s/%s.look" % (bkt(stem), stem): open(mem, "rb").read()} if os.path.exists(mem) else None)
+    S.clean(r2)
+    st = r2.evt("look_start")
+    S.check(st and int(st[0]["mask"]) != 0 and int(st[0]["memory"]) == 1 and r2.has(r"^EVT look_apply why=start"),
+            "the next start begins at the look that held (%s)" % [e["_"] for e in st])
+    r3 = S.run("look_hand", "1800:quit\n", autoboot=stem + ".gba", config={"quality_gba": 3},
+               args=("--slow", "200:1500:22000"))
+    S.clean(r3)
+    masks = [int(e["mask"], 16) for e in r3.evt("look:") if "mask" in e]
+    S.check(r3.has(r"^EVT look_start mask=0 user_rows=\d*") and all(m & 0b10110 == 0 for m in masks),
+            "Image quality set by hand: the xBRZ rungs are never taken (%s)" % sorted(set(masks)))
+
+
+def t_export_row(S):
+    """Settings > This game > Export save for other emulators (docs/SAVES.md):
+    X makes the running game's save a plain file, for RetroArch (where it
+    looks) or as a .sav beside the game (LEFT/RIGHT choose), whatever Sync
+    RetroArch saves says; the toast says where."""
+    rom = "gbadhoc-test"
+    ra = "retroarch/savefiles/%s.srm" % rom
+    mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
+    row = menu_pick(4, wait=60) + "+20:up\n" + "+8:up\n" * 4 + "+10:shot=row.png\n"
+    r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
+              autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
+                                            "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
+              vita_ini={"sync_ra_saves": 0})
+    S.clean(r)
+    S.check(r.has(r"^EVT export_save_row dest=0 rc=0 "), "X exports for RetroArch (%s)" %
+            [l for l in r.log if "export_save_row" in l or "save_export" in l][:3])
+    p = os.path.join(r.root, ra)
+    S.check(os.path.exists(p) and open(p, "rb").read() ==
+            open(os.path.join(r.root, "roms", rom + ".sav"), "rb").read(),
+            "RetroArch's file is the game's save, though Sync RetroArch saves is off")
+    S.picture(r, "row.png")
+    r2 = S.run("export_row_sav", "30:left:2\n" + row + "+10:right\n+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
+               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine}, vita_ini={"sync_ra_saves": 0})
+    S.clean(r2)
+    S.check(r2.has(r"^EVT export_save_row dest=1 rc=0 "), "RIGHT then X: a plain .sav beside the game")
+    S.check(not os.path.exists(os.path.join(r2.root, ra)), "...and nothing for RetroArch then")
+
+
+def t_save_heal_nes_ws(S):
+    """NES and WonderSwan saves go through the same safety as the others
+    (save_sync.h): at the game's start a census line of their kind, a save the
+    app did not write is backed up once, and the Export save row gives
+    RetroArch its copy."""
+    for kind, name, rom in (("nes", "Heal Test.nes", nes_rom(S, "nrom.nes")),
+                            ("wswan", "Heal Test.ws", ws_rom(S, "h_sram.ws"))):
+        stem = name.rsplit(".", 1)[0]
+        mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
+        row = menu_pick(4, wait=60) + "+20:up\n" + "+8:up\n" * 4
+        r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
+                  autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
+                  vita_ini={"sync_ra_saves": 0})
+        S.clean(r)
+        S.check(r.has(r"^EVT save_census kind=%s " % kind), "%s: a census line of its kind at the start" % kind)
+        S.check(r.has(r"^EVT save_backup kept file=.*%s\.srm" % re.escape(stem)),
+                "%s: a save the app did not write is backed up once" % kind)
+        ra = os.path.join(r.root, "retroarch", "savefiles", stem + ".srm")
+        S.check(r.has(r"^EVT export_save_row dest=0 rc=0 ") and os.path.exists(ra),
+                "%s: Export save makes RetroArch's copy (%s)" %
+                (kind, [l for l in r.log if "export_save_row" in l or "save_export" in l][:2]))
 
 
 def t_tap_menu(S):
@@ -7082,7 +7227,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_n
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws),
          ("controls_defaults", t_controls_defaults),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle)]
 

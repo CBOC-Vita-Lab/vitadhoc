@@ -136,6 +136,9 @@ struct Adapter {
 	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
 	uint8_t softm[MAXH][2][SNES_WIDE_MAX_MARGIN];   /* per margin pixel: bit n = layer n shows a learned cell that has not been seen live in this run (blended toward the ambient frame) */
 	int soft_on;
+	int fgfade = 1;                   /* option "fgfade": unknown foreground fades out over fade_px (B) */
+	uint16_t tailpx[4][2][MAXH];      /* per layer, side, line: the layer's own pixel at the view edge (colour) ... */
+	uint8_t tailop[4][2][MAXH];       /* ... and whether it is opaque */
 	/* ambient frame: calm dimmed colours of the scene's own edges, never structure */
 	int amb_have;
 	int amb_c[2][32][3];       /* per side and 8-line cell: temporal mean colour, Q4 */
@@ -419,6 +422,7 @@ static int make_compose(int H, int Mh)
 	wk_compose_cfg_default(&cc);
 	cc.period = A.period;
 	cc.reveal_prov = 1;
+	cc.fg_fade_px = A.fgfade ? 24 : 0;
 	cc.fade_px = A.fade_px > 0 ? A.fade_px : 24;
 	cc.soft_blur = 0; cc.soft_sample = 1; cc.soft_darken = 45; cc.soft_always = 1;   /* the base is the ambient colours below */
 	for (int d = 0; d < Mh; d++) {
@@ -673,8 +677,6 @@ static void run(const SWideView *v)
 		wk_map_stats ms;
 		wk_map_stats_get(A.M, &ms);
 		st.map_cells = ms.cells; st.map_rooms = ms.rooms; st.map_bound = ms.bound; st.map_served = (int) ms.served_tiles;
-		static int dbg = getenv("WIDE_DBG") ? 1 : 0;
-		if (dbg) fprintf(stderr, "wd f=%u ev=%d bound=%d room=%d rooms=%d cells=%d found=%d match=%d binds=%u revokes=%u new=%u served=%u\n", (unsigned) v->clock, wo->scene_event, ms.bound, ms.cur_room, ms.rooms, ms.cells, ms.found, ms.matched, ms.binds, ms.revokes, ms.new_rooms, ms.served_tiles);
 	}
 
 	/* 3. candidates */
@@ -720,14 +722,28 @@ static void run(const SWideView *v)
 					/* the layer's ring row is blank all around: it draws nothing on this line, margin included */
 					const int ty = fmod_(((int) Ln.vofs[l] + y) / Ly->tile_px, Ly->mh);
 					if (Ly->rowblank[ty]) {
-						memset(op, 0, (size_t) Mh);
-						lo->real[s][l] = lo->ring[s][l] = (uint16_t) Mh;
-						continue;
+						/* blank all around the ring: assumed blank beyond it too, unless the learned map knows a tile there */
+						bool nonblank = false;
+						if (A.M && wo->coherent[l][y]) {
+							wk_geom g2;
+							wk_line_geom(fr, wo, l, y, &g2);
+							for (int idx = 1; idx <= Mh / g2.tp + 1 && !nonblank; idx++) {
+								wk_cell c2;
+								if (!wk_map_margin_cell(A.M, fr, wo, l, y, s, idx, &c2)) continue;
+								const int t2 = (int) (c2.code & 0x3ff);
+								layer_tile_th(Ly, v, t2, Ly->gen, false);
+								if (!Ly->tblank[t2]) nonblank = true;
+							}
+						}
+						if (!nonblank) {
+							memset(op, 0, (size_t) Mh);
+							lo->real[s][l] = lo->ring[s][l] = (uint16_t) Mh;
+							continue;
+						}
 					}
 				}
 				if (real > Mh) real = Mh;
 				if (ring > real) ring = real;
-				if (getenv("WIDE_DBG2") && v->clock >= 1040 && v->clock <= 1041 && y == 56 && s == 1) fprintf(stderr, "f=%u l=%d real=%d ring=%d coh=%d kind=%d\n", (unsigned) v->clock, l, real, ring, wo->coherent[l][y], wo->kind[l]);
 				const uint16_t *pp = v->pass_px[pass] + (size_t) y * SW_PITCH;
 				const uint8_t *pz = v->pass_z[pass] + (size_t) y * SW_PITCH;
 				int d;
@@ -757,7 +773,6 @@ static void run(const SWideView *v)
 								cok = (uint16_t) ((hh ^ (hh >> 16)) & 0xFFFF) == cell.h16;
 							}
 						}
-						if (getenv("WIDE_DBG2") && v->clock == 881 && y == 56 && s == 0 && l == 0) fprintf(stderr, "d=%d idx=%d cok=%d ring=%d real=%d code=%x tf=%d nvis=%d wx=%d\n", d, idx, cok, ring, real, cok ? cell.code : 0, (int) g.tile_first, g.nvis, wx);
 						if (!cok) { lo->real[s][l] = (uint16_t) d; break; }
 						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
 						const int ci = cell_index(v, Ly, cell.code, fmod_(xw, tp), fmod_(wo->world_row[l][y], tp));
@@ -775,6 +790,29 @@ static void run(const SWideView *v)
 		}
 		wk_out_refresh_line(wo, y);
 	}
+
+	/* the layers' own pixels at the view edge, for the foreground fade (what a layer that is not known beside the view continues with) */
+	if (A.fgfade && nlay)
+		for (int l = 0; l < 4; l++) {
+			Layer *Ly = &A.lay[l];
+			if (!Ly->active) continue;
+			const int tp = Ly->tile_px;
+			for (int y = 0; y < H; y++) {
+				const SWideLine &Ln = v->line[y];
+				const bool ok = line_ok(Ln) && Ly->line_on[y] && !A.xl[y] && !wo->line[y].hud && !(Ln.flags & SWL_MODE7);
+				for (int s = 0; s < 2; s++) {
+					A.tailop[l][s][y] = 0;
+					if (!ok) continue;
+					const int X = (int) Ln.hofs[l] + (s ? 255 : 0), Y = (int) Ln.vofs[l] + y;
+					const uint32_t word = Ly->code[fmod_(fdiv(Y, tp), Ly->mh) * Ly->mw + fmod_(fdiv(X, tp), Ly->mw)];
+					if (word == WK_CODE_NOREC) continue;
+					const int px = cell_index(v, Ly, word, fmod_(X, tp), fmod_(Y, tp));
+					if (px < 0) continue;
+					A.tailpx[l][s][y] = v->colors[px];
+					A.tailop[l][s][y] = 1;
+				}
+			}
+		}
 
 	/* 4. compose */
 	wk_compose_in ci;
@@ -795,6 +833,7 @@ static void run(const SWideView *v)
 		for (int l = 3; l >= 0; l--)
 			if (A.lay[l].active && (((subl >> l) & 1) == (pass == 0))) {
 				ci.cand[l][0] = A.cand[l][0]; ci.cand[l][1] = A.cand[l][1];
+				if (A.fgfade) for (int sd = 0; sd < 2; sd++) { ci.tail_px[l][sd] = A.tailpx[l][sd]; ci.tail_op[l][sd] = A.tailop[l][sd]; }
 				ci.opaque[l][0] = A.opq[l][0]; ci.opaque[l][1] = A.opq[l][1];
 				ci.order[ci.norder++] = l;
 			}
@@ -918,8 +957,9 @@ static void run(const SWideView *v)
 		A.cen.px_tilemap += ctm; A.cen.px_learned += cln; A.cen.px_backdrop += cbd; A.cen.px_unknown += cun;
 		A.cen.px_soft += csf; A.cen.px_reveal += crv;
 		if (tot) {
-			/* soft learned pixels and revealed lower layers count half: they are real memory / real lower layer, not a proven picture */
-			const int c256 = (int) (((ctm + cln + cbd) * 2 + csf + crv) * 50 * 256 / tot);
+			/* a revealed lower layer is real picture (the layer above it fades out over it: B); soft learned pixels are memory of an
+			 * earlier run, not a proven picture: they count half */
+			const int c256 = (int) (((ctm + cln + cbd + crv) * 2 + csf) * 50 * 256 / tot);
 			if (!A.cov_have || wo->scene_event) { A.cov_q8 = c256; A.cov_have = 1; }
 			else A.cov_q8 += (c256 - A.cov_q8) / 60;
 		}
@@ -1064,6 +1104,7 @@ int snes_wide_option(const char *name, int v)
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
 	else if (!strcmp(name, "debug")) A.debug = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
+	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
 	else if (!strcmp(name, "map_safe")) {
 		A.map_safe = v;
 		if (A.M) { wk_map_destroy(A.M); A.M = NULL; make_map(); }

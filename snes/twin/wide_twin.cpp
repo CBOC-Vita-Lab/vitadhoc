@@ -2,6 +2,7 @@
  * snes_wide_twin: headless runner for the wide view. Runs a ROM with the scripted pad, optionally with the wide view on,
  * and writes what the proofs need:
  *   --hashes F       per frame: frame width height fnv1a64 of the NORMAL picture (snes_host_video), as snes_twin does
+ *   --xf F           per frame: frame coverage% auto-wide cross-fade-state mean-abs-change of the margin pixels since the previous frame (x100)
  *   --whashes F      per frame: frame, wide width, fnv1a64 of the 256 centre columns of the wide picture, fnv1a64 of the whole wide
  *                    picture, claimed real px (left right means), available
  *   --state-hash N F every N frames an fnv1a64 of the whole saved state (CPU, PPU, VRAM, CGRAM, OAM, SPC, DSP, RAM, cart RAM)
@@ -150,7 +151,7 @@ static std::vector<uint8_t> read_all(const char *path)
 int main(int argc, char **argv)
 {
 	if (argc < 2) { fprintf(stderr, "usage: snes_wide_twin ROM [--frames N] [--pad S] [--opt k=v] [--wide M] ...\n"); return 2; }
-	const char *rom = argv[1], *hashes = 0, *whashes = 0, *wav = 0, *dumpdir = 0, *pngdir = 0, *statef = 0, *mapf = 0, *prefix = "f";
+	const char *rom = argv[1], *hashes = 0, *whashes = 0, *wav = 0, *dumpdir = 0, *pngdir = 0, *statef = 0, *mapf = 0, *xff = 0, *prefix = "f";
 	int frames = 300, wide = 0, state_every = 0;
 	bool summary = false;
 	std::vector<PadEv> script;
@@ -165,6 +166,7 @@ int main(int argc, char **argv)
 		else if (arg("--pad")) script = parse_script(argv[++i]);
 		else if (arg("--hashes")) hashes = argv[++i];
 		else if (arg("--whashes")) whashes = argv[++i];
+		else if (arg("--xf")) xff = argv[++i];
 		else if (arg("--wav")) wav = argv[++i];
 		else if (arg("--wide")) wide = atoi(argv[++i]);
 		else if (arg("--dump")) dumpdir = argv[++i];
@@ -202,7 +204,7 @@ int main(int argc, char **argv)
 		snes_host_snapshot_enable(1);
 		snes_wide_set(1, wide);
 	}
-	FILE *hf = hashes ? fopen(hashes, "w") : 0, *wf = whashes ? fopen(whashes, "w") : 0, *sf = statef ? fopen(statef, "w") : 0;
+	FILE *hf = hashes ? fopen(hashes, "w") : 0, *wf = whashes ? fopen(whashes, "w") : 0, *sf = statef ? fopen(statef, "w") : 0, *xf_ = xff ? fopen(xff, "w") : 0;
 	std::vector<int16_t> pcm, abuf(4096 * 2);
 	std::vector<uint8_t> sbuf;
 	size_t ev = 0;
@@ -256,6 +258,23 @@ int main(int argc, char **argv)
 				uint64_t nrm = 1469598103934665603ull;
 				for (int y = 0; y < rh && y < wh; y++)
 					nrm = fnv_bytes(ref + (size_t) y * rpitch, 512, nrm);
+				if (xf_) {
+					static std::vector<uint16_t> prevm;
+					uint64_t dsum = 0, cnt = 0;
+					const size_t need = (size_t) wh * 2 * M;
+					if (prevm.size() != need) prevm.assign(need, 0);
+					for (int y = 0; y < wh; y++)
+						for (int sd = 0; sd < 2; sd++)
+							for (int d = 0; d < M; d++) {
+								const uint16_t px = wp[(size_t) y * wpitch + (sd ? M + 256 + d : d)];
+								uint16_t &pv = prevm[((size_t) y * 2 + sd) * M + d];
+								const int a = (px >> 11) - (pv >> 11), b = ((px >> 5) & 63) / 2 - ((pv >> 5) & 63) / 2, c = (px & 31) - (pv & 31);
+								dsum += (uint64_t) (abs(a) + abs(b) + abs(c));
+								cnt++;
+								pv = px;
+							}
+					fprintf(xf_, "%d %d %d %d %llu\n", f, st.coverage_pct, st.auto_wide, st.xfade, (unsigned long long) (dsum * 100 / (cnt ? cnt : 1)));
+				}
 				if (wf) fprintf(wf, "%d %d %016llx %016llx %d %d %d %d\n", f, ww, (unsigned long long) cwh, (unsigned long long) fnv(wp, ww, wh, wpitch * 2),
 				                st.real_l, st.real_r, st.available, cwh == nrm);
 				if (cwh != nrm) {
@@ -335,6 +354,7 @@ int main(int argc, char **argv)
 		       tot ? 100.0 * c.px_tilemap / tot : 0, tot ? 100.0 * c.px_learned / tot : 0, tot ? 100.0 * c.px_backdrop / tot : 0, tot ? 100.0 * c.px_unknown / tot : 0);
 	if (hf) fclose(hf);
 	if (wf) fclose(wf);
+	if (xf_) fclose(xf_);
 	if (sf) fclose(sf);
 	if (wav) write_wav(wav, pcm);
 	if (wide) snes_wide_set(0, 0);

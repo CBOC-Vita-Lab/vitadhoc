@@ -84,6 +84,9 @@ u32 reg[64];
 u32 gbp_get_state(void) { return 0; }
 void rumble_restore_state(bool gbp_active) { (void)gbp_active; }
 void video_reload_counters(void) {}
+/* The wide picture's hook (wide.c is a renderer feature): the preflight
+ * test never reaches a completed load, so there is nothing to observe. */
+void wide_state_loaded(void) {}
 
 static int rejects_late_channel(const char *label, int bad_dma,
                                 int bad_ds, int bad_gs)

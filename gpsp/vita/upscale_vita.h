@@ -69,6 +69,8 @@ int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw);
 /* 0 retains width-derived auto quality, 1 bypasses enhancement, 2/3 select
  * an intermediate factor without changing destination geometry. */
 void upscale_quality(int quality);
+/* the look governor's limit on Auto (look_glue.h): largest factor, 0 none */
+void upscale_look_cap(int max_factor);
 
 /* The factor the picture last submitted to `slot` is scaled by: the one
  * passed to upscale_submit, or less while the screen is changing whole

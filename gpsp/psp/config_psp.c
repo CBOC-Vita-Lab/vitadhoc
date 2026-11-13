@@ -164,8 +164,15 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
                                             PCFG_PROFILE_SPEED);
    g_pcfg.me_mode     = (int)fe_ini_get_int(cfg_path, "me_mode",
                                             PCFG_ME_MODE_DEF);
+   /* 1.4 (docs/DEFAULTS-1.4.md): the Vita's base filter is sharp bilinear
+    * -- what Auto falls back to when it does not smooth: never nearest,
+    * whose uneven pixels at 960 x 544 are the look to avoid */
    g_pcfg.filter      = (int)fe_ini_get_int(cfg_path, "filter",
+#ifdef VITA
+                                            VID_FILTER_SHARP);
+#else
                                             VID_FILTER_NEAREST);
+#endif
    g_pcfg.ff_mult_x10 = (int)fe_ini_get_int(cfg_path, "ff_mult_x10", 30);
    g_pcfg.ff_hold     = (int)fe_ini_get_int(cfg_path, "ff_hold", 1);
    g_pcfg.frameskip_sparse = (int)fe_ini_get_int(cfg_path, "frameskip_sparse", 0);
@@ -190,6 +197,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
    g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
+   g_pcfg.smooth_handoff = (int)fe_ini_get_int(cfg_path, "smooth_handoff", 1) ? 1 : 0;
    if (g_pcfg.nes_wide < 0 || g_pcfg.nes_wide > 2)
       g_pcfg.nes_wide = 0;
 #endif
@@ -665,6 +673,8 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
    if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
       fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
+   if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)
+      fe_ini_set_int(cfg_path, "smooth_handoff", g_pcfg.smooth_handoff);
    if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
       fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
    if (!g_pcfg.ws_blend)
@@ -953,8 +963,11 @@ static void pdisp_load(void)
             legacy |= fe_ini_get(cfg_path, key, value, sizeof(value));
          if (pdisp_key(key, sizeof(key), "filter", c))
             legacy |= fe_ini_get(cfg_path, key, value, sizeof(value));
-         d->quality = (int)pdisp_get("quality", c, legacy
-                                      ? PCFG_QUALITY_AUTO : PCFG_QUALITY_ORIGINAL);
+         /* 1.4: Auto for every install (the governed xBRZ ladder,
+          * look_glue.h); it was Original on a fresh one and Auto on an
+          * upgraded one -- two looks for one version */
+         (void)legacy;
+         d->quality = (int)pdisp_get("quality", c, PCFG_QUALITY_AUTO);
       }
       /* The GBC's correction was a hidden key before it was a row. */
       d->color = c == FE_CONSOLE_GB ? 0

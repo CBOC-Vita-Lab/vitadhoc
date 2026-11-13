@@ -2345,6 +2345,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SPEED,
        SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
        SET_STEADY,   /* 1.4: Steady pacing (pace_steady.h) */
+       SET_HANDOFF,  /* 1.4: Smooth hand-over (handoff_glue.h) */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2357,6 +2358,9 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* 1.4: a WonderSwan game's (set_row_shown), after every other row
         * of THIS GAME so nothing above moved */
        SET_WSROT, SET_WSVPLAY, SET_WSPAL,
+       /* 1.4: the running game's save as a plain file for other emulators
+        * (docs/SAVES.md; ui_host_export_save) */
+       SET_EXPORT,
        /* The three plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
        SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_CONTROLS,
@@ -2496,6 +2500,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* 1.3: 500 or 444 MHz (cpuclock.h).  One row, right here. */
    { 0, "CPU speed" },
    { 0, "Steady pacing" },
+   { 0, "Smooth hand-over" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -2536,6 +2541,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Rotation" },
    { 0, "Vertical play" },
    { 0, "Palette" },
+   { 0, "Export save for other emulators" },
 #endif
 #ifdef REWIND
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
@@ -2581,6 +2587,8 @@ static int set_row_shown(int idx)
       return pcfg_display_console() == FE_CONSOLE_NES;
    if (idx >= SET_WSROT && idx <= SET_WSPAL)
       return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_WSWAN;
+   if (idx == SET_EXPORT)
+      return !g_ov_browse && g_pgame.on;
    if (idx >= SET_HDR_THIS && idx <= SET_SUN)
    {
       unsigned k = fe_host_sensor_kinds();
@@ -3110,6 +3118,12 @@ static int g_library_resort;
  * went with the row; the mode itself is still read from config.ini and still
  * falls back automatically.  See the SET_PROFILE note above the enum. */
 
+#ifdef VITA
+/* Export save for other emulators: 0 = for RetroArch (SS_DEST_RETROARCH),
+ * 1 = a plain .sav beside the game (SS_DEST_ROM_SAV) */
+static int g_export_dest;
+#endif
+
 static void settings_adjust(int id, int dir)
 {
    switch (id)
@@ -3223,6 +3237,11 @@ static void settings_adjust(int id, int dir)
       g_pcfg.steady_pacing = !g_pcfg.steady_pacing;
       app_steady_options();
       fe_evt("steady_setting on=%d", g_pcfg.steady_pacing);
+      break;
+   case SET_HANDOFF:
+      g_pcfg.smooth_handoff = !g_pcfg.smooth_handoff;
+      app_handoff_options();
+      fe_evt("handoff_setting on=%d", g_pcfg.smooth_handoff);
       break;
    case SET_SPEED:
       g_pcfg.full_speed = !g_pcfg.full_speed;
@@ -3451,6 +3470,10 @@ static void settings_adjust(int id, int dir)
       app_ws_options();
       fe_evt("ws_setting palette=%d", g_pgame.ws_palette);
       break;
+   case SET_EXPORT:
+      /* LEFT / RIGHT choose where; X exports (screen_settings) */
+      g_export_dest = !g_export_dest;
+      return;
    case SET_SHOTDIR:
       /* not a value: X opens the keyboard (screen_settings) */
       return;
@@ -3616,7 +3639,8 @@ static const char *set_help(int id)
              ? "Smoothed at twice the game's size, then sized to fit."
            : g_pcfg.quality == PCFG_QUALITY_3X
              ? "Smoothed at three times its size. More detail, more work."
-             : "Follows the Video filter below, as earlier versions did.";
+             : "The smoothest look that keeps full speed: xBRZ, lighter "
+               "only when a game needs it.";
 #endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)
@@ -3649,6 +3673,10 @@ static const char *set_help(int id)
                                "picture fills the screen."
                              : "Vertical scenes upright on a level Vita; "
                                "the d-pad turns with them.";
+   case SET_EXPORT:   return g_export_dest
+                             ? "X: a plain .sav beside the game, for mGBA, "
+                               "SameBoy and others."
+                             : "X: a copy RetroArch can use, where it looks.";
    case SET_WSPAL:    return "Black-and-white games: grey, or the original "
                              "LCD's tint. Colour games keep theirs.";
    case SET_OVERLAY:  return ui_host_overlay_on()
@@ -3733,6 +3761,10 @@ static const char *set_help(int id)
                                "evenly. The game keeps its speed."
                              : "Every frame drawn when it can be; a busy moment "
                                "drops frames unevenly.";
+   case SET_HANDOFF:  return g_pcfg.smooth_handoff
+                             ? "Pictures drawn on a second core: heavy looks "
+                               "do not slow the game."
+                             : "Off: try this if the picture ever misbehaves.";
    case SET_ABSWAP:
       return g_pcfg.ab_buttons < 0
          ? "Follows the Vita's own Enter button. Press to change it."
@@ -3761,9 +3793,10 @@ static const char *set_help(int id)
                              : "States, rewind and cheats allowed.";
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
    case SET_SYNCRA:   return ui_host_sync_ra_on()
-                             ? "A save taken from RetroArch is written back "
-                               "to it too, unless RetroArch changed it."
-                             : "RetroArch's save files are left alone.";
+                             ? "Every save gets a copy RetroArch can use, kept "
+                               "in step unless RetroArch changed it."
+                             : "RetroArch's files are left alone. A game's "
+                               "Export save row copies one by hand.";
    case SET_NAMES:    return g_pcfg.lib_names
                              ? "Each game shows its file name, as it is on the "
                                "card."
@@ -3999,6 +4032,28 @@ static ui_action screen_settings(unsigned edges)
       g_library_refresh = 1;
       screen_to(SCR_MENU);
       fe_evt("library_refresh_asked");
+      edges &= ~PSP_CTRL_CROSS;
+   }
+   if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_EXPORT)
+   {
+      /* the running game's save as a plain file (docs/SAVES.md) */
+      char where[256], note[200];
+      int rc;
+      where[0] = note[0] = '\0';
+      rc = ui_host_export_save(g_export_dest, where, sizeof(where), note,
+                               sizeof(note));
+      {
+         /* a sentence too long for the strip (a long path): the file's name */
+         const char *base = strrchr(where, '/');
+         base = base ? base + 1 : where;
+         if (note[0] && strlen(note) <= 60)
+            osd_toast("%s", note);
+         else if (rc == 0)
+            osd_toast("Exported as %.48s", base[0] ? base : "a plain file");
+         else
+            osd_toast("The save could not be exported");
+      }
+      fe_evt("export_save_row dest=%d rc=%d where=%s", g_export_dest, rc, where);
       edges &= ~PSP_CTRL_CROSS;
    }
    if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_COVERS)
@@ -4260,6 +4315,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pgame.ws_palette ? "Classic LCD tint" : "Greyscale");
          break;
+      case SET_EXPORT:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_export_dest ? "plain .sav" : "for RetroArch");
+         break;
       case SET_OVERLAY:
       {
          char v[64];
@@ -4353,9 +4412,14 @@ static ui_action screen_settings(unsigned edges)
              g_pcfg.previews ? "on" : "off");
          break;
       case SET_QUALITY:
+      {
+         /* Auto says what it is doing when the look governor eased it */
+         const char *eased = g_pcfg.quality == PCFG_QUALITY_AUTO
+                             ? ui_host_look_label() : NULL;
          set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  pcfg_quality_name(g_pcfg.quality));
+                  eased ? eased : pcfg_quality_name(g_pcfg.quality));
          break;
+      }
       case SET_REFRESH:
          set_item(y, g_cursor == i, 1, set_rows[i].label, "scan now");
          break;
@@ -4385,6 +4449,10 @@ static ui_action screen_settings(unsigned edges)
       case SET_STEADY:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.steady_pacing ? "on" : "off");
+         break;
+      case SET_HANDOFF:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.smooth_handoff ? "on" : "off");
          break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -4556,6 +4624,8 @@ static ui_action screen_settings(unsigned edges)
    vid_text(22, SET_HELP_Y, set_help(g_cursor), C_DIM);
    footer(g_cursor == SET_LEVEL
           ? VID_GLYPH_X " set level now   DPAD move   " VID_GLYPH_O " back"
+          : g_cursor == SET_EXPORT
+          ? VID_GLYPH_X " export   DPAD move/choose   " VID_GLYPH_O " back"
           : g_cursor == SET_NAME || g_cursor == SET_CONTROLS
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERS

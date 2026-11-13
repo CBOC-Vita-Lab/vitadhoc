@@ -130,24 +130,26 @@ BASELINE_FILES = ("psp/config_psp.c", "psp/config_psp.h", "gba_memory.c")
 
 def extract_baseline(dest: Path) -> tuple[bool, str]:
     """Materialise the baseline files with the git that can actually see the
-    repo.  Returns (ok, detail)."""
+    repo.  Returns (ok, detail).  The ROM-loader baseline (rom_load) and the
+    GB 3.0.0 baseline (gb) are independent: either may be missing.  rom_load
+    is skipped without its own; gb falls back to the pin it carries
+    (gbcore/tests/bitident-3.0.0.pin, tools/run_gb_tests.py)."""
+    ok_gb, gb_detail = extract_gb_baseline(dest / "gb")
     try:
         subprocess.run(["git", "cat-file", "-e", BASELINE_COMMIT + "^{commit}"],
                        cwd=str(REPO), capture_output=True, check=True)
     except Exception:
-        return False, "baseline commit %s is not in this repository" % BASELINE_COMMIT[:12]
+        return False, ("baseline commit %s is not in this repository; %s"
+                       % (BASELINE_COMMIT[:12], gb_detail))
     for rel in BASELINE_FILES:
         try:
             blob = subprocess.run(["git", "show", "%s:%s" % (BASELINE_COMMIT, rel)],
                                   cwd=str(REPO), capture_output=True, check=True)
         except subprocess.CalledProcessError:
-            return False, "baseline lacks %s" % rel
+            return False, "baseline lacks %s; %s" % (rel, gb_detail)
         out = dest / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(blob.stdout)
-    ok, gb_detail = extract_gb_baseline(dest / "gb")
-    if not ok:
-        return False, gb_detail
     return True, "extracted %d files at %s; %s" % (
         len(BASELINE_FILES), BASELINE_COMMIT[:12], gb_detail)
 
@@ -165,7 +167,8 @@ def extract_gb_baseline(dest: Path) -> tuple[bool, str]:
              *GB_BASELINE_PATHS], cwd=str(REPO), capture_output=True,
             check=True, text=True).stdout.split()
     except Exception:
-        return False, "GB baseline commit %s is not in this repository" % GB_BASELINE_COMMIT[:12]
+        return False, ("GB baseline commit %s is not in this repository (gb "
+                       "uses its pinned trace)" % GB_BASELINE_COMMIT[:12])
     for rel in names:
         blob = subprocess.run(["git", "show", "%s:%s" % (GB_BASELINE_COMMIT, rel)],
                               cwd=str(REPO), capture_output=True, check=True)
@@ -361,13 +364,15 @@ def suites(env: Env, baseline: Path | None):
          "gcc -std=gnu99 -O1 -g -w -ffunction-sections -fdata-sections "
          "-DINLINE=inline -Ilibretro/libretro-common/include "
          "-Ifrontend-common -o /tmp/t_gamepak_file_lifecycle "
-         "tools/test_gamepak_file_lifecycle.c -Wl,--gc-sections && "
+         "tools/test_gamepak_file_lifecycle.c cheats.c cheat_engine.c "
+         "-Wl,--gc-sections && "
          "/tmp/t_gamepak_file_lifecycle && "
          "gcc -std=gnu99 -O1 -g -w -fsanitize=address,undefined "
          "-ffunction-sections -fdata-sections "
          "-DINLINE=inline -Ilibretro/libretro-common/include "
          "-Ifrontend-common -o /tmp/t_gamepak_residency_budget "
-         "tools/tests/test_gamepak_residency_budget.c -Wl,--gc-sections && "
+         "tools/tests/test_gamepak_residency_budget.c "
+         "-Wl,--gc-sections && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_gamepak_residency_budget"),
 
         # Exercise the production DMA span planner across paired region
@@ -401,20 +406,20 @@ def suites(env: Env, baseline: Path | None):
          "-ffunction-sections -fdata-sections "
          "-DINLINE=inline -Ilibretro/libretro-common/include -Ifrontend-common "
          "-o /tmp/t_cheat_codebreaker_bounds "
-         "tools/test_cheat_codebreaker_bounds.c cheats.c "
+         "tools/test_cheat_codebreaker_bounds.c cheats.c cheat_engine.c "
          "-Wl,--gc-sections && ASAN_OPTIONS=detect_leaks=0 "
-         "/tmp/t_cheat_codebreaker_bounds && "
-         # GPSP_CHEATS (docs/CHEATS.md), in this suite because the suite cap
-         # is 30: the strict parser, the RAM-only accessors, the translated-
-         # code flush trigger, cheat files, the .on state, GB codes, fuzz.
-         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
-         "-Wno-old-style-declaration -Wno-unused-parameter "
-         "-fsanitize=address,undefined -ffunction-sections -fdata-sections "
-         "-DGPSP_CHEATS=1 -DHAVE_DYNAREC -DREWIND -DINLINE=inline "
-         "-Ilibretro/libretro-common/include -Ifrontend-common "
-         "-o /tmp/t_fe_cheats tools/test_fe_cheats.c cheats.c "
-         "frontend-common/fe_cheats.c -Wl,--gc-sections && "
-         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_cheats"),
+         "/tmp/t_cheat_codebreaker_bounds"
+         ),
+        # NOT RUN: tools/test_fe_cheats.c (the PSP's GPSP_CHEATS list and its
+        # strict GS1/AR3 parser).  It was written against a cheats.c that
+        # exported cheats_active / cheats_apply_frame / cheats_fe_* and the
+        # CheatErrorGameShark... codes; this repository's cheats.c is the
+        # Vita app's (cheat_engine.c, the mGBA port) and has none of them, so
+        # the test cannot build, and frontend-common/fe_cheats.c (PSP only)
+        # has no core to link against.  The Vita's own cheat suites
+        # (decoders, ciphers, mGBA vectors, .cht lists, the database) are
+        # gpsp/vita/tests/cheats, the gate's cheats-unit-* steps.
+
 
         ("savestate_bson_bounds", True, lambda: None,
          "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
@@ -704,7 +709,13 @@ def main() -> int:
             results.append({"suite": name, "status": SKIP, "reason": reason})
             continue
 
-        extra = {"GBADHOC_BASELINE_DIR": str(baseline)} if baseline else None
+        extra = ({"GBADHOC_BASELINE_DIR": str(bdir)}
+                 if baseline or (bdir / "gb" / "gbcore").is_dir() else None)
+        if not env.wsl:
+            # Private output names: the commands build into fixed /tmp/t_*
+            # files, so two runs at once (two people, two worktrees, a gate
+            # and a hand run) overwrote each other's binaries mid-test.
+            cmd = cmd.replace("/tmp/", str(tmp) + "/")
         t0 = time.time()
         try:
             r = env.run(cmd, extra_env=extra)
@@ -739,6 +750,7 @@ def main() -> int:
         "suites": results,
     }
     Path(args.json).write_text(json.dumps(manifest, indent=2))
+    shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n%d passed, %d failed, %d skipped -> %s"
           % (counts[PASS], counts[FAIL], counts[SKIP], args.json))

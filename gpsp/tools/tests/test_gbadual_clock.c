@@ -45,6 +45,21 @@ void gbalink_pair_end(gbalink_pair *p) { (void)p; end_calls++; }
 int gbalink_pair_step(gbalink_pair *p) { (void)p; return GBALINK_PAIR_FRAME; }
 void gbalink_script_free(gbalink_script *p) { (void)p; }
 
+/* The wide picture's look-ahead scout (wide.c, and instance B's copy of it)
+ * is a renderer feature this clock test never starts; fe_gbadual.c only
+ * names it when a scout ends (scout_end_why).  Link-time stubs for those
+ * names: nothing here may call them for a result. */
+int gbab_frontend_skip_override;
+uint32_t gbab_sound_synth_off;
+int wide_scout_cam(void) { return 0; }
+int wide_scout_cam_y(void) { return 0; }
+void wide_scout_report(int dir, int moved_px, unsigned learned)
+{ (void)dir; (void)moved_px; (void)learned; }
+void gbab_wide_scout_end(void) {}
+int gbab_wide_scout_moved_y(void) { return 0; }
+int gbab_wide_scout_status(int *moved_px, unsigned *learned, unsigned *frames)
+{ (void)moved_px; (void)learned; (void)frames; return 1; }
+
 static void fresh(int prior_frames)
 {
   memset(&D, 0, sizeof(D)); D.loaded = 1;

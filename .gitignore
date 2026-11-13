@@ -26,3 +26,7 @@ gpsp/vita/hostcore/shots/
 **/build_*/
 **/build-*/
 *.o
+
+# generated test output
+gpsp/audit/
+host-test-results.json

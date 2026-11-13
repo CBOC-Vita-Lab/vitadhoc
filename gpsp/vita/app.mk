@@ -56,6 +56,10 @@ APP_SRCS      += menu_diag.c
 APP_SRCS      += menu_load.c menu_files.c
 # steady pacing: playerkit's pacer (pace_steady.h)
 APP_SRCS      += pace_steady.cpp
+# smooth hand-over: playerkit's mailbox and the drawing thread (handoff_glue.h)
+APP_SRCS      += handoff_glue.cpp
+# the look governor: playerkit's pk_look (look_glue.h)
+APP_SRCS      += look_glue.cpp
 # what the game list knows about a cartridge (names, blurbs) and its box art
 # fetched by itself (gamedb.h, artfetch.h)
 APP_SRCS      += gamedb.c artfetch.c cover_custom.c

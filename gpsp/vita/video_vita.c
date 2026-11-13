@@ -134,6 +134,12 @@ void vv_frame_need(void)
    }
 }
 
+/* Called first by every entry point that draws or changes how the picture
+ * is drawn: smooth hand-over (handoff_glue.h) makes the caller wait there
+ * while the drawing thread still has a picture in hand. */
+void (*vid_enter_hook)(void);
+#define VID_ENTER() do { if (vid_enter_hook) vid_enter_hook(); } while (0)
+
 void vid_init(void)
 {
    if (g_inited)
@@ -171,6 +177,7 @@ void vid_set_common_dialog(int on) { vb_set_common_dialog(on); }
 
 void vid_set_mode(int scale, int filter)
 {
+   VID_ENTER();
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
    g_requested_filter = (filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES)
@@ -186,6 +193,7 @@ void vid_set_mode(int scale, int filter)
 
 void vid_set_quality(int quality)
 {
+   VID_ENTER();
    g_quality = quality >= 0 && quality <= 3 ? quality : 0;
    upscale_quality(g_quality);
    vid_set_mode(g_scale, g_requested_filter);
@@ -234,6 +242,7 @@ int vid_scale_step(int scale, int dir)
 
 const char *vid_cycle_preset(void)
 {
+   VID_ENTER();
    /* 3x -> fit -> fit smoothed -> stretch -> stretch smoothed -> 3x: the
     * PSP's cycle with 3x where its 1x was.  2x and the cropped 4x are opt-in
     * from Settings; from either, the cycle continues at fit. */
@@ -594,6 +603,7 @@ void vid_tex_invalidate(const void *p, size_t bytes)
 
 void vid_overlay_begin(int clear)
 {
+   VID_ENTER();
    if (!g_inited)
       vid_init();
    if (clear)
@@ -837,6 +847,7 @@ static int      g_amb_snap_done;
 
 void vid_ambient_mode(int mode)
 {
+   VID_ENTER();
    g_amb_mode = (mode >= 0 && mode <= 2) ? mode : 0;
    g_amb_frames = 0;
 }
@@ -1743,6 +1754,7 @@ static void cc_build(int mode)
 
 void vid_set_look(int color, int blend)
 {
+   VID_ENTER();
    if (color < 0 || color >= VID_COLOR_MODES)
       color = VID_COLOR_RAW;
    if (color != VID_COLOR_RAW && (!g_cc || g_cc_mode != color))
@@ -1848,10 +1860,24 @@ static struct
 } g_upt[UPSCALE_SLOTS];
 static unsigned g_up_fenced;   /* pictures not handed over: GPU still reading */
 
+/* 1.4: Image quality Auto over the base filter (sharp bilinear) is xBRZ at
+ * the largest factor the look governor allows (look_glue.h), the sharp
+ * filter where it allows none (upscale_factor 0: the plain path below).
+ * vita.ini auto_xbrz = 0 gives the 1.3 Auto (it followed the filter). */
+static int g_auto_xbrz = 1;
+
+void vid_set_auto_xbrz(int on)
+{
+   VID_ENTER();
+   g_auto_xbrz = on ? 1 : 0;
+}
+
 static int up_kind(void)
 {
    return g_filter == VID_FILTER_XBRZ ? UPSCALE_XBRZ
-        : g_filter == VID_FILTER_SCALE ? UPSCALE_SCALE : UPSCALE_NONE;
+        : g_filter == VID_FILTER_SCALE ? UPSCALE_SCALE
+        : g_quality == 0 && g_auto_xbrz && g_filter == VID_FILTER_SHARP
+          ? UPSCALE_XBRZ : UPSCALE_NONE;
 }
 
 /* Nothing is being written into the slot's textures any more, and they are
@@ -2141,6 +2167,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
    vid_geo g;
    vb_tex *t, *tu;
    int f = 0, upload;
+   VID_ENTER();
 
    if (!g_inited)
       vid_init();
@@ -2210,6 +2237,7 @@ void vid_image_screen(const uint16_t *pix, int texw, int texh,
    vid_geo g;
    vb_tex *t;
    int upload;
+   VID_ENTER();
    (void)texh;
    if (!pix || srcw <= 0 || srch <= 0 || alpha <= 0)
       return;
@@ -2250,6 +2278,7 @@ void vid_image_screen_soft(const uint16_t *pix, int texw, int srcw, int srch,
    vb_tex *t;
    vb_tquad q;
    int upload;
+   VID_ENTER();
    if (!pix || srcw <= 0 || srch <= 0 || alpha <= 0)
       return;
    dest_geo((unsigned)srcw, (unsigned)srch, &g);
@@ -2326,6 +2355,7 @@ void vid_draw_frame_pair(const uint16_t *left, const uint16_t *right,
    int up[2] = { 0, 0 };
    size_t amb_pb = pitch_bytes;
    int i;
+   VID_ENTER();
 
    if (!g_inited)
       vid_init();
@@ -2389,6 +2419,7 @@ void (*vid_pre_swap_hook)(void);
 
 void vid_swap(void)
 {
+   VID_ENTER();
    /* NOTHING DREW A WHOLE FRAME: hold what is on screen (see the header). */
    if (!g_filled)
       return;
@@ -2407,6 +2438,7 @@ void vid_swap(void)
 
 int vid_readback(uint32_t *dst)
 {
+   VID_ENTER();
    /* What vid_swap would add last is part of the picture read back (the
     * twin's screenshots are taken before the swap); drawn once a frame. */
    if (vid_pre_swap_hook && g_filled)

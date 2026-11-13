@@ -78,6 +78,9 @@ typedef struct wk_compose_cfg {
     int soft_sample;    /* edge columns averaged for the soft edge (4)         */
     int soft_darken;    /* % the soft edge darkens towards the screen edge (30)*/
     uint16_t bg_default;/* flat backdrop colour when the caller gives none     */
+    int fg_fade_px;     /* >0: a level layer that is known for less than this many px on a line continues with its last known colour
+                           (in->tail_px) and fades out over this many px, alpha 32 -> 0, no dither: no hard edge where the
+                           foreground ends (0 = off)                                                  */
     int reveal_prov;    /* 1: pixels of a layer lying beyond the extent of a higher level layer get WK_PROV_REVEAL (0) */
     int period;         /* 1: continue provably periodic terrain beyond the
                            trusted edge (see below); needs inner strips      */
@@ -110,6 +113,10 @@ typedef struct wk_compose_in {
      * knows its background apart from sprites passes background-only pixels: a sprite at the view edge must not smear into the
      * soft edge).  edge_px[side][y * WK_EDGE_N + i], i = 0 the pixel at the view edge, growing inwards; NULL = from centre. */
     const uint16_t *edge_px[2];
+    /* optional (cfg.fg_fade_px): per layer, side and line the layer's own colour at the view edge (the visible pixel next to the
+     * margin) and whether it is opaque there; used when the layer is not known at all beside the view on that line */
+    const uint16_t *tail_px[WK_MAX_LAYERS][2];   /* [y] */
+    const uint8_t *tail_op[WK_MAX_LAYERS][2];    /* [y] */
 } wk_compose_in;
 
 #define WK_EDGE_N 8     /* pixels per line and side of wk_compose_in.edge_px (>= soft_sample, which is at most 8) */

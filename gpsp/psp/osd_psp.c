@@ -102,25 +102,17 @@ void osd_chip_fps(const char *text)
       chip_fps_txt[0] = '\0';
 }
 
-void osd_draw(void)
+void osd_take(osd_snap *s)
 {
-   int any = toast_count || chip_session_txt[0] || chip_ff_txt[0] ||
-             chip_fps_txt[0];
-   if (!any)
+   s->any = toast_count || chip_session_txt[0] || chip_ff_txt[0] ||
+            chip_fps_txt[0];
+   s->toast[0] = '\0';
+   if (!s->any)
       return;
-
-   vid_overlay_begin(0);
-
    if (toast_count)
    {
-      const char *msg = toast_q[toast_head];
-      int tw = vid_text_w(msg);
-      int px = (VID_SCR_W - tw) / 2 - 8;
-      int pw = tw + 16;
-      vid_rect(px, TOAST_Y, pw, TOAST_H, COL_PANEL, 200);
-      vid_rect(px, TOAST_LINE, pw, 2, COL_ACCENT, 255);
-      vid_text_center(TOAST_TY, msg, COL_TEXT);
-
+      memcpy(s->toast, toast_q[toast_head], sizeof(s->toast));
+      s->toast[sizeof(s->toast) - 1] = '\0';
       if (--toast_timer <= 0)
       {
          toast_head = (toast_head + 1) % TOAST_MAX;
@@ -128,32 +120,73 @@ void osd_draw(void)
          toast_timer = TOAST_FRAMES;
       }
    }
+   memcpy(s->chip_session, chip_session_txt, sizeof(s->chip_session));
+   memcpy(s->chip_ff, chip_ff_txt, sizeof(s->chip_ff));
+   memcpy(s->chip_fps, chip_fps_txt, sizeof(s->chip_fps));
+#ifdef VITA
+   s->toast_y = (short)toast_y;
+   s->toast_slim = (short)toast_slim;
+#else
+   s->toast_y = TOAST_Y;
+   s->toast_slim = 0;
+#endif
+}
 
-   if (chip_fps_txt[0])
+void osd_draw_snap(const osd_snap *s)
+{
+   if (!s || !s->any)
+      return;
+
+   vid_overlay_begin(0);
+
+   if (s->toast[0])
+   {
+      const char *msg = s->toast;
+      const int slim = s->toast_slim, ty = s->toast_y;
+      const int th = slim ? 17 : FE_FONT_H + 8;
+      const int tty = slim ? 0 : ty + 4;
+      const int line = slim ? 16 : ty;
+      int tw = vid_text_w(msg);
+      int px = (VID_SCR_W - tw) / 2 - 8;
+      int pw = tw + 16;
+      vid_rect(px, ty, pw, th, COL_PANEL, 200);
+      vid_rect(px, line, pw, 2, COL_ACCENT, 255);
+      vid_text_center(tty, msg, COL_TEXT);
+   }
+
+   if (s->chip_fps[0])
    {
       /* Top-left, mirroring the FF chip's top-right — the two are designed
        * to be on screen together (FPS is most interesting DURING FF). */
-      int tw = vid_text_w(chip_fps_txt);
+      int tw = vid_text_w(s->chip_fps);
       vid_rect(10, 6, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
-      vid_text(16, 8, chip_fps_txt, COL_TEXT);
+      vid_text(16, 8, s->chip_fps, COL_TEXT);
    }
 
-   if (chip_ff_txt[0])
+   if (s->chip_ff[0])
    {
-      int tw = vid_text_w(chip_ff_txt);
+      int tw = vid_text_w(s->chip_ff);
       int px = VID_SCR_W - tw - 14;
       vid_rect(px - 4, 6, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
-      vid_text(px + 2, 8, chip_ff_txt, COL_FF);
+      vid_text(px + 2, 8, s->chip_ff, COL_FF);
    }
 
-   if (chip_session_txt[0])
+   if (s->chip_session[0])
    {
-      int tw = vid_text_w(chip_session_txt);
+      int tw = vid_text_w(s->chip_session);
       int px = VID_SCR_W - tw - 14;
       int py = VID_SCR_H - FE_FONT_H - 8;
       vid_rect(px - 4, py - 2, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
-      vid_text(px + 2, py, chip_session_txt, COL_ACCENT);
+      vid_text(px + 2, py, s->chip_session, COL_ACCENT);
    }
 
    vid_overlay_end();
+}
+
+/* One pass, on the thread that owns everything (the menus, the PSP). */
+void osd_draw(void)
+{
+   osd_snap s;
+   osd_take(&s);
+   osd_draw_snap(&s);
 }

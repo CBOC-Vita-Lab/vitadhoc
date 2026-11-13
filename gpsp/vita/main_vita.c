@@ -77,6 +77,8 @@
 #include "../wscore/wscore.h"        /* the WonderSwan's rotation, pad, blend */
 #include "../nescore/nescore.h"      /* the NES wide view */
 #include "pace_steady.h"             /* Steady pacing (playerkit's pk_pace) */
+#include "handoff_glue.h"            /* Smooth hand-over (playerkit's pk_handoff) */
+#include "look_glue.h"               /* the look governor (playerkit's pk_look) */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -267,6 +269,11 @@ static struct
    int      smc_partial;      /* smc_partial = 0 | 1 (default 1): GBA code
                                * writes flush only the code they touch  */
    int      dispatch_cache;   /* dispatch_cache = 0 | 1 (default 1)    */
+   int      handoff;          /* smooth_handoff = 0 | 1: this launch's
+                               * override of the setting (-1: as set)  */
+   int      draw_core;        /* draw_core = 0..2 (default 1), draw_prio:
+                               * smooth hand-over's drawing thread     */
+   int      draw_prio;
    /* Last: the initializer below is positional, and "" is its default. */
    char     shot_dir[200];    /* screenshots = ux0:pictures/VitAdhoc: where
                                  * screenshots go (empty: screenshots/) */
@@ -274,7 +281,8 @@ static struct
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, "", "" };
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, -1, 1, 0x60,
+           "", "" };
 
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
@@ -642,9 +650,27 @@ void app_ws_options(void)
  * at the game's start and when the row changes. */
 void app_nes_options(void)
 {
+   /* (Auto gives way to the look governor's last rung: look_glue.h) */
    nescore_set_wide(g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
-                    : g_pcfg.nes_wide == 2 ? NESCORE_WIDE_OFF : NESCORE_WIDE_AUTO);
+                    : g_pcfg.nes_wide == 2 || look_rung(5) ? NESCORE_WIDE_OFF
+                    : NESCORE_WIDE_AUTO);
    fe_evt("nes_options wide=%d", g_pcfg.nes_wide);
+}
+
+/* The ambient look in force: the row's, or still art where the look
+ * governor took the blurred game frame away (its first rung). */
+static int app_ambient_mode(void)
+{
+   return look_rung(0) && g_pcfg.ambient == PCFG_AMB_ART_GAME ? PCFG_AMB_ART
+                                                              : g_pcfg.ambient;
+}
+
+/* Smooth hand-over switched in Settings: the game loop asks again next
+ * pass (g_ho_want), the mailbox empties before it is turned off. */
+static int g_ho_want;              /* (defined with the hand-over below) */
+void app_handoff_options(void)
+{
+   g_ho_want = -1;
 }
 
 /* Steady pacing: the refresh it measures against, and on or off. */
@@ -1384,6 +1410,13 @@ static void read_switches(void)
     * "Version 1.4: SMC Without Whole-Cache Flushes"): no Settings row */
    g_sw.smc_partial     = fe_ini_get_int(ini, "smc_partial", 1) ? 1 : 0;
    g_sw.dispatch_cache  = fe_ini_get_int(ini, "dispatch_cache", 1) ? 1 : 0;
+   /* smooth hand-over (handoff_glue.h): this launch's override of the
+    * setting, and where its drawing thread runs */
+   g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);
+   g_sw.draw_core       = (int)fe_ini_get_int(ini, "draw_core", 1);
+   g_sw.draw_prio       = (int)fe_ini_get_int(ini, "draw_prio", 0x60);
+   /* Image quality Auto's xBRZ over the sharp filter (video_vita.c) */
+   vid_set_auto_xbrz((int)fe_ini_get_int(ini, "auto_xbrz", 1));
    g_sw.drc             = (int)fe_ini_get_int(ini, "drc", g_sw.drc);
    g_sw.autoexit_frames = (unsigned)fe_ini_get_int(ini, "autoexit_frames", 0);
    g_sw.link_bench      = (int)fe_ini_get_int(ini, "link_bench", 0);
@@ -1947,6 +1980,49 @@ static void sgb_border_end(void)
    }
 }
 
+/* ---- smooth hand-over (handoff_glue.h) ------------------------------------ */
+static int g_ho_want = -1;        /* what ho_set_enabled was last told      */
+static uint64_t g_ho_t0;          /* the drawn frame's start (its emu cost) */
+
+#ifndef __vita__
+/* GBADHOC_PIC_TRACE=file (the twin): one line per picture drawn, its frame
+ * number and a CRC of its pixels, from whichever thread draws it -- the
+ * proof that the hand-over shows exactly the pictures the old path did
+ * (app_tests.py t_handoff). */
+static void pic_trace(uint32_t seq, const uint16_t *pix, unsigned w,
+                      unsigned h, size_t pitch)
+{
+   static FILE *f;
+   static int tried;
+   uint32_t c = 0xFFFFFFFFu;
+   unsigned x, y;
+   if (!tried)
+   {
+      const char *e = getenv("GBADHOC_PIC_TRACE");
+      tried = 1;
+      f = e && *e ? fopen(e, "w") : NULL;
+   }
+   if (!f || !pix)
+      return;
+   for (y = 0; y < h; y++)
+   {
+      const uint8_t *r = (const uint8_t *)pix + (size_t)y * pitch;
+      for (x = 0; x < w * 2u; x++)
+      {
+         unsigned k;
+         c ^= r[x];
+         for (k = 0; k < 8; k++)
+            c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+      }
+   }
+   fprintf(f, "%u %08x %ux%u\n", (unsigned)seq, (unsigned)~c, w, h);
+   fflush(f);
+}
+#define PIC_TRACE(q, p, w, h, b) pic_trace(q, p, w, h, b)
+#else
+#define PIC_TRACE(q, p, w, h, b) ((void)0)
+#endif
+
 static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
                        size_t pitch_bytes)
 {
@@ -1991,12 +2067,29 @@ static void sink_video(const uint16_t *pix, unsigned w, unsigned h,
    {
       /* pix == NULL is a repeated frame: the display is double-buffered, so
        * the previous picture is drawn again. */
+      const uint32_t seq = fe_host_frame_count();
       g_sgb_shown = sgb_compose(g_show.pix, g_show.pitch);
-      if (g_sgb_shown)
-         vid_draw_frame(g_sgb_frame, 256, 224, 256 * 2);
+      /* Smooth hand-over: the picture is copied for the drawing thread,
+       * which draws and presents it (frame_present commits it) */
+      if (ho_active() &&
+          (g_sgb_shown ? ho_stage(g_sgb_frame, 256, 224, 256 * 2, seq, 1)
+                       : ho_stage(g_show.pix, g_show.w, g_show.h,
+                                  g_show.pitch, seq, 0)))
+         ;
       else
-         vid_draw_frame(g_show.pix, g_show.w, g_show.h, g_show.pitch);
-      g_app_drew = 1;
+      {
+         if (g_sgb_shown)
+         {
+            PIC_TRACE(seq, g_sgb_frame, 256, 224, 256 * 2);
+            vid_draw_frame(g_sgb_frame, 256, 224, 256 * 2);
+         }
+         else
+         {
+            PIC_TRACE(seq, g_show.pix, g_show.w, g_show.h, g_show.pitch);
+            vid_draw_frame(g_show.pix, g_show.w, g_show.h, g_show.pitch);
+         }
+         g_app_drew = 1;
+      }
    }
    if (pix)
    {
@@ -2293,8 +2386,12 @@ static void io_stop(void)
 
 /* ---- pacing --------------------------------------------------------------- */
 
+static void app_look_window_reset(void);
+
 void app_pace_reset(void)
 {
+   ho_time_baseline();          /* stopped time is not lost time */
+   app_look_window_reset();     /* ...nor a second of play for the look */
    g_app_vc_target = plat_vcount();
    g_next_ns = plat_time_us() * 1000ull;
    g_catchup = 0;
@@ -2356,7 +2453,9 @@ static void pace_frame(void)
        * stretch the gap in the sound (the game's samples come with its
        * frames; measured on the twin: three 25 ms frames in a row were a
        * gap with the wait, none without it). */
-      if (!g_catchup)
+      /* (Smooth hand-over: the mailbox's gate is the back-pressure; the
+       * drawing thread waits for the display, this one does not.) */
+      if (!g_catchup && !ho_threaded())
       {
          static unsigned stuck;
          const int st = vid_present_state();
@@ -2460,6 +2559,8 @@ void app_wide_apply(void)
       mode = g_sw.wide & 7;
    if (link_local_active())
       mode = WIDE_OFF;
+   if (look_rung(5) && g_sw.wide < 0)
+      mode = WIDE_OFF;             /* the look governor's last rung */
    if (g_sw.wide_fill >= 0)
       fill = g_sw.wide_fill;
    if (mode != g_wide_mode || fill != g_wide_fill)
@@ -2578,8 +2679,11 @@ void app_backdrop_from_snapshot(void)
 /* THE IN-GAME MENU OPENS OVER THE GAME (docs/UI-OVERLAY.md): the core is
  * paused from this frame on, so the snapshot is the picture the player was
  * looking at, and the menu draws it, scrimmed, behind every page. */
+static void app_look_save(const char *why);
+
 static void menu_open(const char *via)
 {
+   app_look_save("menu");       /* what the look governor learned so far */
    app_snapshot_take();
    app_backdrop_from_snapshot();
    ui_open();
@@ -2768,6 +2872,7 @@ static void state_loaded(const char *path)
       if (link_local_active())
          link_local_state_loaded(path);
       audio_flush();            /* what is queued belongs to the old timeline */
+      ho_discard();             /* ...and so are the pictures in flight     */
       app_pace_reset();         /* a load is not a late frame               */
    }
 }
@@ -2968,12 +3073,33 @@ static void toast_now(const char *fmt, ...)
  * colours to its core (which re-converts its palettes before the next line;
  * display only, nothing a state or a link's hash holds).  At every boot and
  * whenever the Settings rows change. */
+/* The rows the player set by hand (look_glue.h): a row on Auto or at its
+ * default is the governor's. */
+static unsigned app_look_user_rows(void)
+{
+   const int c = pcfg_display_console();
+   unsigned u = 0;
+   if (g_pcfg.quality != PCFG_QUALITY_AUTO)
+      u |= 1u << LOOK_ROW_QUALITY;
+   if (g_pcfg.ambient != PCFG_AMBIENT_DEF)
+      u |= 1u << LOOK_ROW_AMBIENT;
+   if (g_pcfg.blend)
+      u |= 1u << LOOK_ROW_BLEND;
+   if (c == FE_CONSOLE_GBA ? g_pcfg.wide != PCFG_WIDE_DEF
+                           : c == FE_CONSOLE_NES && g_pcfg.nes_wide != 0)
+      u |= 1u << LOOK_ROW_WIDE;
+   return u;
+}
+
 void ui_host_look_changed(void)
 {
    int c = pcfg_display_console();
+   /* the look governor (look_glue.h): what is set by hand is not its */
+   look_set_user_rows(app_look_user_rows());
+   upscale_look_cap(look_quality_cap());
    vid_set_quality(g_pcfg.quality);
    vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color : VID_COLOR_RAW,
-                g_pcfg.blend);
+                g_pcfg.blend && !look_rung(3));
    if (c == FE_CONSOLE_GBC)
       gbcore_set_color_correction(g_pcfg.color ? 1 : 0);
    fe_evt("display_look console=%s color=%d blend=%d wide=%d wide_fill=%d",
@@ -2982,6 +3108,136 @@ void ui_host_look_changed(void)
    fe_evt("display_quality console=%s quality=%d", pcfg_console_tag(c),
           g_pcfg.quality);
    app_wide_apply();
+}
+
+/* ---- the look governor (look_glue.h) ------------------------------------- */
+static char g_overlay_name[96];   /* the overlay in use (overlay_apply) */
+static struct
+{
+   uint32_t gen;                  /* the generation applied */
+   uint64_t t0;                   /* this second's start (0: not started) */
+   unsigned vc0;                  /* the display's count then */
+   uint64_t emu_sum;              /* the drawn frames' own work this second */
+   unsigned emu_n;
+   uint64_t draw0;                /* the drawing side's totals then */
+   uint32_t drawn0;
+   unsigned late0;
+} g_lk;
+
+/* The governed look, applied (at a safe point: the xBRZ factor's change
+ * makes new textures, never in the middle of a picture). */
+static void app_look_apply(const char *why)
+{
+   g_lk.gen = look_generation();
+   ui_host_look_changed();
+   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : app_ambient_mode());
+   if (g_game_console == FE_CONSOLE_NES)
+      app_nes_options();
+   fe_evt("look_apply why=%s mask=%u cap=%d gen=%u", why, look_mask(),
+          look_quality_cap(), look_generation());
+}
+
+/* The game's memory: <root>/look/<console>/<xx>/<name>.look */
+static void app_look_begin(void)
+{
+   char path[APP_PATH_CAP];
+   const char *name = base_name(g_game.rom_path);
+   const char *dot = strrchr(name, '.');
+   size_t stem = dot && dot != name ? (size_t)(dot - name) : strlen(name);
+   if (path_fmt(path, sizeof(path), "%s/look/%s/%02x/%.*s.look", g_app_root,
+                sidecar_console_dir((fe_console_t)g_game_console),
+                (unsigned)(sidecar_crc32(name, stem) >> 24), (int)stem,
+                name) != 0)
+      path[0] = '\0';
+   look_begin(path, (int)plat_arm_mhz(), app_look_user_rows());
+   memset(&g_lk, 0, sizeof(g_lk));
+   look_safe_point(LOOK_AT_START);
+   upscale_look_cap(0);
+   if (look_generation() != g_lk.gen)
+      app_look_apply("start");     /* the look this game needed last time */
+   fe_evt("look_start mask=%u user_rows=%u memory=%d", look_mask(),
+          app_look_user_rows(), path[0] ? file_size(path, NULL) == 0 : 0);
+}
+
+/* ui_host_hooks.h: the Image quality row while the governor eased it */
+const char *ui_host_look_label(void)
+{
+   static char l[40];
+   const int cap = look_quality_cap();
+   if (!look_running() || !look_steps_on_row(LOOK_ROW_QUALITY))
+      return NULL;
+   snprintf(l, sizeof(l), "Auto (%s, eased)",
+            cap == 3 ? "xBRZ 3x" : cap == 2 ? "xBRZ 2x" : "sharp");
+   return l;
+}
+
+static void app_look_save(const char *why)
+{
+   const int a = look_save();
+   if (a)
+      fe_evt("look_memory %s why=%s", a == 1 ? "written" : "deleted", why);
+}
+
+/* the clock stopped (a menu, a pause, a load): the second starts again */
+static void app_look_window_reset(void)
+{
+   g_lk.t0 = 0;
+   look_reset_window();
+}
+
+/* Once per pass of play: a drawn frame's own work (emu_us); once a second
+ * the governor hears how the second went. */
+static void app_look_pass(uint32_t emu_us, int counts)
+{
+   const uint64_t now = plat_time_us();
+   uint64_t dsum;
+   uint32_t dn;
+   if (!look_running())
+      return;
+   ho_draw_stats(&dsum, &dn);
+   if (!counts)
+   {
+      g_lk.t0 = 0;              /* fast forward, a link: not the game's look */
+      return;
+   }
+   if (!g_lk.t0)
+   {
+      g_lk.t0 = now;
+      g_lk.vc0 = plat_vcount();
+      g_lk.emu_sum = 0;
+      g_lk.emu_n = 0;
+      g_lk.draw0 = dsum;
+      g_lk.drawn0 = dn;
+      g_lk.late0 = g_pace_late;
+      return;
+   }
+   g_lk.emu_sum += emu_us;
+   g_lk.emu_n++;
+   if (now - g_lk.t0 >= 1000000u)
+   {
+      const float ref = 16683.0f;
+      const int refreshes = (int)(plat_vcount() - g_lk.vc0);
+      const uint32_t drawn = dn - g_lk.drawn0;
+      const int handoff = ho_active();
+      const int half = steady_half();
+      int missed;
+      char line[320];
+      if (handoff)
+         missed = !half && refreshes > (int)drawn ? refreshes - (int)drawn : 0;
+      else
+         missed = (int)(g_pace_late - g_lk.late0);
+      if (look_second(g_lk.emu_n ? (float)g_lk.emu_sum / g_lk.emu_n / ref : 0.f,
+                      drawn && handoff ? (float)(dsum - g_lk.draw0) / drawn / ref
+                                       : 0.f,
+                      0.f, refreshes, missed, handoff, half))
+         ;
+      if (look_generation() != g_lk.gen)
+         app_look_apply("second");
+      if (look_census_line(line, sizeof(line)))
+         fe_evt("%s", line);
+      g_lk.t0 = 0;
+      app_look_pass(0, 1);      /* the next second starts now */
+   }
 }
 
 /* ui_host_hooks.h: the chip shows the link layer's status line, when the
@@ -3769,8 +4025,8 @@ static int vita_ini_put(const char *key, const char *value)
 }
 
 /* The overlay for a game: overlays/<stem>.png, else overlays/<console>.png
- * (none when Screen overlay is off). */
-static char g_overlay_name[96];
+ * (none when Screen overlay is off).  (g_overlay_name: above, with the
+ * look governor's use of it.) */
 static char g_overlay_rom[APP_PATH_CAP];
 static fe_console_t g_overlay_console;
 
@@ -3810,7 +4066,7 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
    }
    /* The glow beside the picture is for a picture with nothing else beside
     * it: a bezel or shell the player put there is not covered by it. */
-   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : g_pcfg.ambient);
+   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : app_ambient_mode());
 }
 
 int ui_host_grid_level(void) { return g_sw.grid; }
@@ -3838,6 +4094,7 @@ int ui_host_export_save(int dest, char *where, size_t wcap, char *note, size_t c
               g_game.console == FE_CONSOLE_GBC ? SS_KIND_GBC :
               g_game.console == FE_CONSOLE_GB ? SS_KIND_GB :
               g_game.console == FE_CONSOLE_NES ? SS_KIND_NES : SS_KIND_WSWAN;
+   fe_host_sram_flush(1);      /* the bytes the game has now, on the card */
    return save_sync_export_now(g_game.save_path, g_game.rom_path, kind, dest,
                                where, wcap, note, cap);
 }
@@ -4185,7 +4442,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    ui_host_look_changed();
-   vid_ambient_mode(g_pcfg.ambient);
+   vid_ambient_mode(app_ambient_mode());
    vid_ambient_fallback(ui_console_shade((int)console));
    overlay_apply(rom_path, console);
    fe_evt("display_profile console=%s scale=%s filter=%s ambient=%d "
@@ -4644,8 +4901,51 @@ static void menu_action(ui_action act)
  * latency, and it costs nothing to give back.  The pacer then waits for the
  * blank the flip happens on, so the next frame's pad is read just after
  * it. */
+/* The drawing side of smooth hand-over (handoff_glue.h): on the drawing
+ * thread, what frame_present below does on this one. */
+static void ho_draw(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
+                    uint32_t seq, int user, const void *extra)
+{
+   const uint64_t ts0 = plat_time_us();
+   uint32_t d;
+   (void)user;
+   PIC_TRACE(seq, pix, w, h, pitch);
+   vid_draw_frame(pix, w, h, pitch);
+   osd_draw_snap((const osd_snap *)extra);
+   {
+      const uint64_t ts = plat_time_us();
+      plat_present_hook();
+      vid_swap();
+      d = (uint32_t)(plat_time_us() - ts);
+      g_win.swap_sum += d;
+      if (d > g_win.swap_max)
+         g_win.swap_max = d;
+   }
+   (void)ts0;
+}
+
 static void frame_present(int paced)
 {
+   int handed = 0;
+   if (ho_staged())
+   {
+      if (g_app_drew)
+         ho_abandon();           /* something drew here: that is the picture */
+      else
+      {
+         /* the toasts as of this frame go with it; its cost is this
+          * thread's work for it */
+         osd_take((osd_snap *)ho_staged_extra());
+         ho_commit((uint32_t)(plat_time_us() - g_ho_t0));
+         handed = 1;
+      }
+   }
+   if (handed)
+      ho_consume_inline();       /* the twin: drawn here, as before */
+   else if (ho_threaded() && !g_app_drew)
+      ;                          /* the display is the drawing thread's */
+   else
+   {
    if (g_app_drew)
       osd_draw();
    if (paced || g_app_drew)      /* unlimited: only when there is a picture */
@@ -4659,6 +4959,7 @@ static void frame_present(int paced)
       g_win.swap_sum += d;
       if (d > g_win.swap_max)
          g_win.swap_max = d;
+   }
    }
    if (paced)
    {
@@ -4686,7 +4987,8 @@ static void frame_present(int paced)
 #endif
          spent = plat_time_us() - g_app_frame_t0;
       }
-      if (spent < HELP_UNTIL_US)
+      /* (not with a drawing thread: the upscalers are its work then) */
+      if (spent < HELP_UNTIL_US && !ho_threaded())
          upscale_help((unsigned)(HELP_UNTIL_US - spent));
       pace_frame();
    }
@@ -4826,6 +5128,7 @@ static void game_loop(void)
       unsigned pad, pad_new, fired, frames;
       int session, local, runs, i, rs_side, rs_flick, rw_want, tx = 0, ty = 0;
       int steady_on = 0;
+      uint32_t caught_now = 0;
       uint64_t t_drawn = 0;
       plat_pad pp;
       const char *rw_note;
@@ -4979,6 +5282,22 @@ static void game_loop(void)
       session = link_session_up();
       if (g_quit != QUIT_NONE)
          break;                  /* app_quit_game from inside a link layer */
+      {
+         /* Smooth hand-over: as set (or vita.ini's override), never in a
+          * link of either kind nor the bench pair (lockstepped machines
+          * draw where they run) */
+         const int want = (g_sw.handoff >= 0 ? g_sw.handoff != 0
+                                             : g_pcfg.smooth_handoff) &&
+                          !session && !local && !g_sw.link_bench &&
+                          !link_owns_picture();
+         if (ho_running() && want != g_ho_want)
+         {
+            ho_set_enabled(want);
+            fe_evt("handoff_enabled on=%d session=%d local=%d", want,
+                   session, local);
+            g_ho_want = want;
+         }
+      }
 
       /* Turbo: one step per pad sample, for the frame about to run.  Off
        * in a link (both consoles must get the same buttons from the same
@@ -5047,6 +5366,11 @@ static void game_loop(void)
          audio_flush();          /* the sound stopped with the game */
          app_pace_reset();
          fe_evt("menu_closed frame=%u", fe_host_frame_count());
+         /* a safe point for a change of look; Settings may have set a row
+          * by hand (ui_host_look_changed told the governor) */
+         look_safe_point(LOOK_AT_MENU);
+         if (look_generation() != g_lk.gen)
+            app_look_apply("menu");
       }
       {
          /* START and SELECT going down or up, in the log (a person's
@@ -5256,12 +5580,15 @@ static void game_loop(void)
          else if (!rw_want)
             hc_told = 0;
       }
+      /* rewinding: no picture waits, the newest is shown */
+      ho_set_force_drop(g_ff.on || rw_want || rewind_active());
       i = rewind_frame(rw_want && !local, session || local ||
                        link_locks_states() || g_sw.link_bench);
       if ((rw_note = rewind_notice()) != NULL)
          toast_now("%s", rw_note);
       if (i)
       {
+         ho_discard();           /* what was in flight is of the other way */
          ra_state_loaded();      /* the frames ahead are run again */
          g_pad_block = pad;      /* its buttons are not the game's afterwards */
          g_fps_t0 = 0;
@@ -5308,6 +5635,7 @@ static void game_loop(void)
          else
             g_next_ns += (uint64_t)n * g_frame_ns;
          g_caught += n;
+         caught_now = n;
          g_caught_us_frame = (unsigned)(plat_time_us() - t0);
          g_caught_us += g_caught_us_frame;
       }
@@ -5324,10 +5652,11 @@ static void game_loop(void)
          runs = 2;
          g_steady_half_passes++;
       }
+      ho_set_pace(steady_on);
       for (i = 0; i < runs; i++)
       {
          if (i == runs - 1)
-            t_drawn = plat_time_us();
+            g_ho_t0 = t_drawn = plat_time_us();
          g_blit_suppress = (i != runs - 1);
          /* 3x: the two frames before the one shown are not drawn at all
           * (they were drawn and thrown away: the picture's whole cost) */
@@ -5351,6 +5680,8 @@ static void game_loop(void)
             audio_frame();
       }
       g_blit_suppress = 0;
+      /* every frame of the pass, drawn or not (the mailbox's game clock) */
+      ho_note_emulated((uint32_t)runs + caught_now);
       frames = fe_host_frame_count();
       /* The preview keeps the game as it is played: not fast forward, not
        * a link of either kind (their timing is not to be touched), not the
@@ -5389,13 +5720,37 @@ static void game_loop(void)
       }
 
       window_note((uint32_t)(plat_time_us() - g_app_frame_t0));
+      {
+         /* once a second: the hand-over's own census (gate: census) */
+         char hl[320];
+         if (ho_census_line(hl, sizeof(hl)))
+            fe_evt("%s guard_waits=%u", hl, ho_guard_waits());
+      }
       if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active())
       {
-         int changed = 0, half;
-         half = steady_add((uint32_t)(plat_time_us() - t_drawn), &changed);
+         int changed = 0, half = 0;
+         uint32_t cost;
+         if (ho_active())
+         {
+            /* hand-over: the cost of each picture the drawing thread
+             * finished, the larger of the two threads' work for it */
+            int ch;
+            while (ho_poll_cost(&cost))
+            {
+               ch = 0;
+               half = steady_add(cost, &ch);
+               changed |= ch;
+            }
+         }
+         else
+            half = steady_add((uint32_t)(plat_time_us() - t_drawn), &changed);
          if (changed)
             fe_evt("steady mode=%s frame=%u", half ? "half" : "full", fe_host_frame_count());
       }
+      /* the look governor: this pass's drawn frame, once a second a verdict */
+      app_look_pass((uint32_t)(plat_time_us() - t_drawn),
+                    !g_ff.on && !session && !local && !g_sw.link_bench &&
+                    !ui_active() && !rewind_active() && !link_owns_picture());
       if (steady_on)
       {
          /* the frame shown stands for two refreshes */
@@ -5696,7 +6051,37 @@ int main(int argc, char **argv)
       }
 
       /* ---- play ---- */
+      {
+         /* Smooth hand-over (handoff_glue.h): a drawing thread for this
+          * game; anything else that draws waits for it (vid_enter_hook) */
+         const int on = ho_start((uint32_t)(g_frame_ns / 1000u),
+                                 sizeof(osd_snap), ho_draw, g_sw.draw_core,
+                                 g_sw.draw_prio);
+         g_ho_want = -1;
+         vid_enter_hook = on ? ho_guard : NULL;
+         app_look_begin();         /* the best look, or what the game needed */
+         fe_evt("handoff_start handoff=%d started=%d where=%s setting=%d "
+                "override=%d", (g_sw.handoff >= 0 ? g_sw.handoff != 0
+                                                  : g_pcfg.smooth_handoff),
+                on, ho_where(), g_pcfg.smooth_handoff, g_sw.handoff);
+      }
       game_loop();
+      vid_enter_hook = NULL;
+      {
+         uint32_t shown = ho_shown_total();
+         ho_stop();
+         fe_evt("handoff_stop shown=%u guard_waits=%u", (unsigned)shown,
+                ho_guard_waits());
+      }
+      {
+         char sum[400];
+         look_summary(sum, sizeof(sum));
+         if (sum[0])
+            fe_evt("look_summary %s", sum);
+         app_look_save("end");
+         look_end();
+         upscale_look_cap(0);
+      }
       rt_frame_begin(RT_OFF);      /* the next game starts drawing as before */
 
       /* ---- unload ---- */

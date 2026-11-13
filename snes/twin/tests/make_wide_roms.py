@@ -14,7 +14,7 @@ scroller with several levels and a schedule (an event table, one word per frame)
 data, tile graphics, camera restarts) or a change of the level data without blank (the ring is streamed again from the new
 data). alias_a: level B shares the scroll coordinates with A but no tiles; alias_b: B = A with 15 % of the cells replaced;
 alias_c: B has A's tilemap words but other graphics; destr: cells near the camera change at frame 300 (a block broken, a
-switch: they are written into the ring at once); destr_far: cells far beyond the ring change at frame 500 (RAM only, the
+switch: they are written into the ring at once); destr_far: cells far beyond the ring change at frame 1300 (RAM only, the
 game streams them when the camera arrives: the case no picture based map can know, kept as a measured residual).
 """
 import json, os, random, struct, sys
@@ -57,7 +57,7 @@ MULTI = {
     "alias_b": [(0, 0, 0, 0), (1000, 1, 1, 1), (2000, 0, 1, 1)],
     "alias_c": [(0, 0, 0, 0), (1000, 1, 1, 1), (2000, 0, 1, 1)],
     "destr": [(0, 0, 0, 0), (300, 1, 0, 0)],
-    "destr_far": [(0, 0, 0, 0), (500, 1, 0, 0)],
+    "destr_far": [(0, 0, 0, 0), (1300, 1, 0, 0)],
 }
 SPEED = 2
 
@@ -172,7 +172,7 @@ def build(kind):
         else:                                  # destr / destr_far: cells change at the event frame
             fe = sched[1][0]
             cc = cam[fe] >> 3
-            c0, c1 = (cc + 6, cc + 22) if kind == "destr" else (min(cc + 62, 200), min(cc + 90, 235))
+            c0, c1 = (cc + 6, cc + 22) if kind == "destr" else (cc + 100, cc + 150)
             lvB = [list(col_) for col_ in level]
             for c in range(c0, c1 + 1):
                 for r in range(4, 28):

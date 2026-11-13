@@ -250,6 +250,24 @@ if [ -x "$WT" ]; then
 		r=$(python3 -I "$HERE/tests/wide_truth.py" $T/wide/$n.json $T/wide/$n.d 2>&1 | head -1)
 		echo "$r" | grep -q "centre unmatched 0): wrong real px 0, checked real px [1-9]" && ok "wide view truth: $n ($r)" || bad "wide view truth: $n ($r)"
 	done
+	# the learned map: two levels with the same scroll coordinates (no tile in common / 85 % in common / the same tilemap with other
+	# graphics) and cells that change (near the camera: written into the ring at once). Pass 1 learns, pass 2 starts from the saved map
+	# (a new session): no pixel claimed real may be wrong in either pass; learned cells not seen live in the run are not claims.
+	FR=$(seq -s, 20 20 2980)
+	for n in wide_alias_a wide_alias_b wide_alias_c wide_destr; do
+		rm -f $T/wide/$n.map
+		for ps in 1 2; do
+			mkdir -p $T/wide/$n.p$ps
+			"$WT" $T/wide/$n.sfc --frames 3000 --wide 70 --wopt debug=1 --wopt auto=0 --map $T/wide/$n.map --dump $T/wide/$n.p$ps --dump-frames $FR >/dev/null 2>&1
+			r=$(python3 -I "$HERE/tests/wide_truth.py" $T/wide/$n.json $T/wide/$n.p$ps 2>&1 | head -1)
+			echo "$r" | grep -q "centre unmatched 0): wrong real px 0, checked real px [1-9]" && ok "learned map truth: $n pass $ps ($r)" || bad "learned map truth: $n pass $ps ($r)"
+		done
+	done
+	# measured residual (not a pass criterion): cells beyond the ring changed in RAM only, which no picture based map can know
+	rm -f $T/wide/fr.map; mkdir -p $T/wide/fr.p2
+	for ps in 1 2; do rm -rf $T/wide/fr.p2; mkdir -p $T/wide/fr.p2
+		"$WT" $T/wide/wide_destr_far.sfc --frames 3000 --wide 70 --wopt debug=1 --wopt auto=0 --map $T/wide/fr.map --dump $T/wide/fr.p2 --dump-frames $FR >/dev/null 2>&1; done
+	echo "INFO  residual (RAM-only change beyond the ring, destr_far, pass 2): $(python3 -I "$HERE/tests/wide_truth.py" $T/wide/wide_destr_far.json $T/wide/fr.p2 2>&1 | head -1)"
 	python3 -I "$HERE/wide_compare.py" --twin "$WT" --frames 500 --roms $T/wide/wide_scroll64.sfc $T/wide/wide_mode7.sfc $T/wide/wide_win64_a.sfc >$T/wide/id.txt 2>&1 \
 		&& ok "wide view identity (frames, audio, state; single thread and workers): $(tail -1 $T/wide/id.txt | cut -d'(' -f1)" || { cat $T/wide/id.txt; bad "wide view identity"; }
 	if [ -x "$PT" ]; then

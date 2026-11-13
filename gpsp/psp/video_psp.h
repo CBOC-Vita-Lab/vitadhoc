@@ -298,6 +298,10 @@ void vid_swap(void);
 /* Drawn last into every menu frame, just before it is shown (1.3.1: the
  * touch feedback of ui_vita_touch.h).  NULL = nothing. */
 extern void (*vid_pre_swap_hook)(void);
+/* (Vita) called first by the drawing entry points: see vita/handoff_glue.h */
+extern void (*vid_enter_hook)(void);
+/* (Vita) Image quality Auto smooths with xBRZ over the sharp filter */
+void vid_set_auto_xbrz(int on);
 #endif
 
 /* GE drawbuffer readback (color-order regression check): writes the buffer

@@ -199,6 +199,9 @@ typedef struct
    /* Settings > Gameplay > Steady pacing (CONFIG.INI steady_pacing, 1 by
     * default): pace_steady.h */
    int  steady_pacing;
+   /* Settings > Gameplay > Smooth hand-over (CONFIG.INI smooth_handoff, 1
+    * by default): vita/handoff_glue.h */
+   int  smooth_handoff;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -679,7 +682,8 @@ const char *pcfg_quality_name(int quality);
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
 #define PCFG_WIDE_DEF 1
-#define PCFG_WIDE_FILL_DEF 0
+/* 1.4: the margins continue the picture's own edges softly (no black bars) */
+#define PCFG_WIDE_FILL_DEF 1
 int pcfg_wide_modes(int console);
 const char *pcfg_wide_name(int wide);
 const char *pcfg_wide_fill_name(int fill);

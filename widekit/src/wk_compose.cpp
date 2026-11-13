@@ -163,6 +163,7 @@ void wk_compose_cfg_default(wk_compose_cfg *c)
     c->period_ban_frames = 300;
     c->soft_always = 0;
     c->reveal_prov = 0;
+    c->fg_fade_px = 0;
 }
 
 wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h, int margin)
@@ -674,7 +675,9 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                 const int ptail = (is_level && cfg.period) ? PER(c, l, s, y).ptail : 0;
                 if (is_level && ext > lvl_now)
                     lvl_now = ext;
-                if (ext + ptail == 0)
+                const int tailreq = (cfg.fg_fade_px > 0 && is_level && !ptail && in->tail_px[l][s]) ? wk_min(cfg.fg_fade_px, M) : 0;
+                const int use_tail = tailreq > 0 && (int)ext < tailreq;      /* a short real run: the fade replaces its own ramp */
+                if (ext + ptail == 0 && !(use_tail && in->tail_op[l][s] && in->tail_op[l][s][y]))
                     continue;
                 /* the run to draw: the real part, then the periodic tail */
                 const uint16_t *cdat = cand + (size_t)y * (size_t)M;
@@ -691,7 +694,7 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                 }
                 /* weights: full weight up to n-F (a plain opaque copy), the ramp over the last F */
                 const int n = ext + ptail;
-                const int F = n >= M ? 0 : wk_min(wk_min(cfg.fade_px, 64), n);
+                const int F = (n >= M || use_tail) ? 0 : wk_min(wk_min(cfg.fade_px, 64), n);
                 const int smear = (is_level && n < M && cfg.smear_px > 0) ? wk_min(cfg.smear_px, M - n) : 0;
                 const int a0 = smear ? wk_clamp(cfg.smear_alpha, 0, 32) : 0;
                 uint8_t *w = c->wrow;
@@ -735,6 +738,26 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                                                        : pred ? (full ? WK_PROV_PERIOD : WK_PROV_PFADE)
                                                               : full ? (is_back ? WK_PROV_BACKDROP : WK_PROV_LEVEL)
                                                                      : WK_PROV_FADE));
+                    }
+                }
+                if (use_tail && n < M) {
+                    /* the foreground is not known beyond d = n: its last known colour continues and fades out */
+                    int have = 0;
+                    uint16_t tc = 0;
+                    if (n > 0 && (!op || op[n - 1])) { tc = cdat[n - 1]; have = 1; }
+                    else if (n == 0 && in->tail_op[l][s] && in->tail_op[l][s][y]) { tc = in->tail_px[l][s][y]; have = 1; }
+                    const int ft = wk_min(tailreq - n, M - n);
+                    if (have && ft > 0) {
+                        uint16_t *sp = c->srow;
+                        for (int d = 0; d < ft; d++) {
+                            w[d] = c->ramp[wk_min(ft, 64)][wk_min(ft, 64) - (d < 64 ? d : 63)];
+                            sp[d] = tc;
+                        }
+                        base_fill(c, bs, row, mat, n, ft, w);
+                        wk_blend_row(row + n, sp, w, c->zero + n, ft);
+                        if (oprov)
+                            for (int d = 0; d < ft; d++)
+                                prow[n + d] = (uint8_t)((l << 4) | WK_PROV_SMEAR);
                     }
                 }
                 if (smear) {

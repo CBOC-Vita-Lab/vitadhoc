@@ -94,6 +94,9 @@ int netdrv_unacked(const netdrv *nd, uint16_t dst_id)
 { (void)nd; (void)dst_id; return 0; }
 int netdrv_peer_mac(const netdrv *nd, uint16_t id, uint8_t mac[6])
 { (void)nd; (void)id; memset(mac, 0, 6); return 0; }
+/* The fake peers have no nicknames (the real call returns "" for those too). */
+const char *netdrv_peer_nick(const netdrv *nd, uint16_t id)
+{ (void)nd; (void)id; return ""; }
 int netdrv_active(const netdrv *nd) { return nd->active; }
 int netdrv_local_id(const netdrv *nd) { return nd->active ? nd->local_id : -1; }
 int netdrv_peer_count(const netdrv *nd) { return nd->peers; }

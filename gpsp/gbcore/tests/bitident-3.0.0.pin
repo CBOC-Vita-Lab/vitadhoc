@@ -1,0 +1,11 @@
+# bitident-3.0.0.pin -- the single-player GB/GBC trace the 3.0.0 core
+# must keep producing: picture (v) and battery (b) hashes per frame of
+# `bitident 1200` on the generated ROMs, run-length coded.  Audio and
+# state hashes are not pinned (accuracy.c / replay oracles own them).
+# Written by: python3 tools/run_gb_tests.py --write-pin [TREE]
+# Checked by: tools/run_gb_tests.py (baseline_picture_battery).
+# Source of this pin: gbcore/ of commit ea65dcb (VitAdhoc 1.0), the oldest GB core in this repository (git archive ea65dcb gpsp/gbcore gpsp/frontend-common/fe_console.h); the 3.0.0 commit 696ad10a21d9 is not in this repository, so it could not be traced directly. At the time of writing the current core traced identically to it (gbcore/tgbdual/apu.c and cpu_io.h changed since, without effect on these hashes).
+generated.gb 0-1199 v=2db49089aa538725 b=cbf29ce484222325
+generated.gb serial_calls=20004 frames=1200
+generated-cgb-hw 0-1199 v=2db49089aa538725 b=cbf29ce484222325
+generated-cgb-hw serial_calls=20004 frames=1200

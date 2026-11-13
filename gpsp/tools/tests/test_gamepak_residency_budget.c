@@ -76,6 +76,11 @@ static void budget_free(void *p)
 
 /* ---- link stubs for the parts of gba_memory.c this test never runs ---- */
 u8 *memory_map_read[8 * 1024];
+/* cheats.c's hooks into the loader: this test runs no cheat program (the
+ * hooks' effect on the cartridge map is tested with the real cheats.c in
+ * test_gamepak_file_lifecycle.c). */
+void cheat_gamepak_unloaded(void) {}
+void cheat_rom_share_begin(void) {}
 RFILE *filestream_open(const char *path, unsigned mode, unsigned hints)
 { (void)path; (void)mode; (void)hints; return NULL; }
 int64_t filestream_get_size(RFILE *stream) { (void)stream; return 0; }

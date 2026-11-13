@@ -111,6 +111,13 @@ int ui_host_mgift_available(void);
 void        app_ws_options(void);
 void        app_nes_options(void);   /* the NES Wide view setting, to the core */
 void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
+void        app_handoff_options(void); /* Smooth hand-over on/off (main_vita.c) */
+/* "Auto (xBRZ 3x, eased)" while the look governor eased the game, else NULL */
+const char *ui_host_look_label(void);
+/* Settings > This game > Export save for other emulators (main_vita.c):
+ * dest 0 = for RetroArch, 1 = plain .sav beside the game.  0 = done. */
+int         ui_host_export_save(int dest, char *where, size_t wcap, char *note,
+                                size_t cap);
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
 /* Settings > Game folders: add a folder, or remove it when it is listed,

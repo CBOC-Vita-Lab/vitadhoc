@@ -14,6 +14,19 @@ void osd_chip_session(const char *text);  /* NULL/"" hides the chip */
 void osd_chip_ff(const char *text);       /* NULL/"" hides the chip */
 void osd_chip_fps(const char *text);      /* top-left; NULL/"" hides */
 void osd_draw(void);
+/* The same pass in two halves, for a picture drawn on another thread
+ * (vita/handoff_glue.h): osd_take() on the thread that owns the toasts
+ * copies what is to be drawn and counts the toast's time down, as
+ * osd_draw() would; osd_draw_snap() draws that copy, touching nothing
+ * else of this module. */
+typedef struct osd_snap
+{
+   char toast[72];
+   char chip_session[32], chip_ff[24], chip_fps[64];
+   short toast_y, toast_slim, any;
+} osd_snap;
+void osd_take(osd_snap *s);
+void osd_draw_snap(const osd_snap *s);
 /* Forget every toast and chip: the in-process return to the game list
  * starts the next game with the OSD a fresh boot has. */
 void osd_reset(void);

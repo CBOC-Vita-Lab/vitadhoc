@@ -727,6 +727,15 @@ void upscale_quality(int quality)
    g_quality = quality >= 0 && quality <= 3 ? quality : 0;
 }
 
+/* The look governor's limit on Auto (look_glue.h): the largest factor
+ * (0 = none, 1 = no smoothing: sharp bilinear). */
+static int g_look_cap;
+
+void upscale_look_cap(int max_factor)
+{
+   A_STORE(g_look_cap, max_factor < 0 ? 0 : max_factor);
+}
+
 /* ---- the governor: smoothing that gives way, quietly ------------------------
  *
  * The picture-level step-down above (job_finish) works inside the textures
@@ -883,6 +892,9 @@ int upscale_factor(int slot, int kind, unsigned w, unsigned h, int dw)
       f = fmax;
    while (f > 2 && (unsigned)(f * f) * w * h > UP_BUDGET_PX)
       f--;
+   /* Auto only: an explicit factor is the player's */
+   if (g_quality == 0 && A_LOAD(g_look_cap) && f > A_LOAD(g_look_cap))
+      f = A_LOAD(g_look_cap);
    if (f < 2)
       return 0;
    /* The governor (above): this many factors less than the picture asks. */

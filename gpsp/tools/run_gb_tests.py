@@ -13,6 +13,29 @@ inline, no strict aliasing, no unused-parameter warning) and -Werror too:
 every other warning in it was fixed, see gbcore/tgbdual/LOCAL-PATCHES.md.
 The core and the tests that drive it run under AddressSanitizer and
 UBSan, which is what caught the upstream spare_oam underflow class of bug.
+
+THE 3.0.0 BIT-IDENTITY CHECK.  Single-player GB/GBC must trace identically to
+the 3.0.0 release (picture, battery, serial; audio and state hashes have their
+own oracles).  The release's source is not in every checkout, so the check has
+two sources of truth, strongest first:
+
+  1. a baseline tree (GBADHOC_BASELINE_DIR/gb, or `git archive` of
+     GB_BASELINE when that commit exists): built and traced next to the
+     current core, byte for byte, on the generated ROMs and on every real ROM
+     in GBADHOC_GB_ROMS;
+  2. otherwise gbcore/tests/bitident-3.0.0.pin, the baseline's trace of the
+     generated ROMs committed as text (run-length coded: one line per run of
+     frames with the same picture and battery hashes).  Real ROMs cannot be
+     checked this way and are reported as not checked.
+
+Writing a pin (only ever from a baseline tree, or from the current core when a
+change to the picture/battery/serial path is intended and reviewed -- say so
+in the commit):
+
+    python3 tools/run_gb_tests.py --write-pin [BASELINE_TREE]
+
+BASELINE_TREE is a directory holding gbcore/ and frontend-common/fe_console.h
+(default: this repository).
 """
 from __future__ import annotations
 
@@ -28,6 +51,8 @@ REPO = Path(__file__).resolve().parents[1]
 GB_BASELINE = "696ad10a21d92e83400d5fb45a2856e6032d2824"   # 3.0.0 source
 WARN = ["-Wall", "-Wextra", "-Werror"]
 SAN = ["-fsanitize=address,undefined", "-g", "-O1"]
+PIN = REPO / "gbcore/tests/bitident-3.0.0.pin"
+PIN_FRAMES = "1200"
 CORE_FLAGS = ["-fgnu89-inline", "-fno-strict-aliasing", "-Wno-unused-parameter"]
 CORE = ["apu.c", "cpu.c", "gb.c", "lcd.c", "mbc.c", "rom.c", "sgb.c"]
 # Read-only tables every instance shares: linked once, outside the
@@ -91,13 +116,88 @@ def build_trace(t: Path, root: Path, tag: str) -> Path:
     return out
 
 
+def unaffected(trace: str) -> str:
+    """The trace without the audio and state hashes (they have their own
+    oracles: corrected APU behaviour and serialized timing change them on
+    purpose)."""
+    return re.sub(r" a=[0-9a-f]{16} s=[0-9a-f]{16}", "", trace)
+
+
+def trace_to_pin(trace: str) -> list[str]:
+    """Run-length code a filtered trace: `name first-last v=.. b=..` for a
+    run of frames with equal hashes, other lines (the per-ROM summary) kept."""
+    out: list[str] = []
+    cur = None          # [name, first, last, rest]
+    for line in unaffected(trace).splitlines():
+        m = re.match(r"(\S+) (\d+) (v=\S+ b=\S+)$", line)
+        if m and cur and cur[0] == m[1] and cur[3] == m[3] and \
+                int(m[2]) == cur[2] + 1:
+            cur[2] += 1
+            continue
+        if cur:
+            out.append("%s %d-%d %s" % tuple(cur))
+            cur = None
+        if m:
+            cur = [m[1], int(m[2]), int(m[2]), m[3]]
+        else:
+            out.append(line)
+    if cur:
+        out.append("%s %d-%d %s" % tuple(cur))
+    return out
+
+
+def expand_pin(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for line in lines:
+        m = re.match(r"(\S+) (\d+)-(\d+) (v=\S+ b=\S+)$", line)
+        if m:
+            out += ["%s %d %s" % (m[1], f, m[4])
+                    for f in range(int(m[2]), int(m[3]) + 1)]
+        else:
+            out.append(line)
+    return out
+
+
+def read_pin() -> list[str]:
+    if not PIN.exists():
+        raise SystemExit("FAIL: no 3.0.0 baseline tree and no pin (%s)" % PIN)
+    return [l for l in PIN.read_text().splitlines()
+            if l.strip() and not l.startswith("#")]
+
+
+def write_pin(tree: Path) -> int:
+    """Trace `tree`'s GB core on the generated ROMs and commit the result."""
+    with tempfile.TemporaryDirectory(prefix="gbadhoc-gbpin-") as tmp:
+        t = Path(tmp)
+        if tree != REPO:       # the trace program is always this repo's
+            shutil.copy(REPO / "gbcore/tests/bitident.c",
+                        tree / "gbcore/tests/bitident.c")
+        exe = build_trace(t, tree, "pin")
+        r = subprocess.run([str(exe), PIN_FRAMES], capture_output=True, text=True)
+        if r.returncode:
+            raise SystemExit("FAIL: trace of %s exited %d" % (tree, r.returncode))
+    lines = trace_to_pin(r.stdout)
+    PIN.write_text(
+        "# bitident-3.0.0.pin -- the single-player GB/GBC trace the 3.0.0 core\n"
+        "# must keep producing: picture (v) and battery (b) hashes per frame of\n"
+        "# `bitident %s` on the generated ROMs, run-length coded.  Audio and\n"
+        "# state hashes are not pinned (accuracy.c / replay oracles own them).\n"
+        "# Written by: python3 tools/run_gb_tests.py --write-pin [TREE]\n"
+        "# Checked by: tools/run_gb_tests.py (baseline_picture_battery).\n"
+        "# Source of this pin: %s\n" % (PIN_FRAMES, os.environ.get(
+            "GBADHOC_PIN_SOURCE", "(unrecorded)")) + "\n".join(lines) + "\n")
+    print("wrote %s: %d lines" % (PIN.relative_to(REPO), len(lines)))
+    return 0
+
+
 def baseline_picture_battery(t: Path) -> None:
     """Retain historical picture/battery parity on every generated frame.
     Corrected APU behavior and newly serialized timing intentionally change
     audio/state hashes; accuracy.c independently tests those semantics.
-    Also compare picture/battery on the supplied real-ROM corpus.
-    and (GBADHOC_GB_ROMS) on every real one.  The baseline tree comes from
-    run_host_tests.py (GBADHOC_BASELINE_DIR/gb) or from git here."""
+    Also compare picture/battery on the supplied real-ROM corpus
+    (GBADHOC_GB_ROMS) when a baseline tree exists.  The baseline tree comes
+    from run_host_tests.py (GBADHOC_BASELINE_DIR/gb) or from git here; with
+    neither, the committed pin stands in for it on the generated ROMs."""
     base = Path(os.environ.get("GBADHOC_BASELINE_DIR", "")) / "gb"
     if not (base / "gbcore/gbcore_tgbdual.c").exists():
         base = t / "baseline-gb"
@@ -105,8 +205,7 @@ def baseline_picture_battery(t: Path) -> None:
                             "gbcore", "frontend-common/fe_console.h"],
                            cwd=REPO, capture_output=True)
         if r.returncode != 0:
-            raise SystemExit("FAIL: bit-identity baseline %s unavailable: run "
-                             "through tools/run_host_tests.py" % GB_BASELINE[:12])
+            return pinned_picture_battery(t)
         base.mkdir()
         subprocess.run(["tar", "-x", "-C", str(base)], input=r.stdout, check=True)
     # bitident.c includes "../gbcore.h": the baseline copy reads the
@@ -123,8 +222,6 @@ def baseline_picture_battery(t: Path) -> None:
     for args in runs:
         a = subprocess.run([str(old), *args], capture_output=True, text=True)
         b = subprocess.run([str(new), *args], capture_output=True, text=True)
-        def unaffected(trace):
-            return re.sub(r" a=[0-9a-f]{16} s=[0-9a-f]{16}", "", trace)
         old_trace, new_trace = unaffected(a.stdout), unaffected(b.stdout)
         if a.returncode or b.returncode or old_trace != new_trace:
             for x, y in zip(old_trace.splitlines(), new_trace.splitlines()):
@@ -140,7 +237,36 @@ def baseline_picture_battery(t: Path) -> None:
               else "; set GBADHOC_GB_ROMS for real ones"))
 
 
+def pinned_picture_battery(t: Path) -> None:
+    """The baseline tree is unavailable: hold the current core to the pin."""
+    new = build_trace(t, REPO, "current")
+    r = subprocess.run([str(new), PIN_FRAMES], capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit("FAIL: bitident exited %d" % r.returncode)
+    pin = read_pin()
+    got = trace_to_pin(r.stdout)
+    if got != pin:
+        want_x, got_x = expand_pin(pin), expand_pin(got)
+        for x, y in zip(want_x, got_x):
+            if x != y:
+                print("pinned:  " + x + "\ncurrent: " + y, file=sys.stderr)
+                break
+        else:
+            print("pinned %d records, current %d" % (len(want_x), len(got_x)),
+                  file=sys.stderr)
+        raise SystemExit("FAIL: picture/battery/serial trace differs from the "
+                         "pinned 3.0.0 trace (%s)" % PIN.relative_to(REPO))
+    print("picture/battery/serial parity with the pinned 3.0.0 trace (%s, "
+          "%d frame records, generated ROMs); the baseline tree %s is not in "
+          "this checkout, so real ROMs (GBADHOC_GB_ROMS) are NOT compared; "
+          "audio/state use independent accuracy/replay oracles" % (
+              PIN.relative_to(REPO), len(expand_pin(pin)), GB_BASELINE[:7]))
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--write-pin":
+        return write_pin(Path(sys.argv[2]).resolve() if len(sys.argv) > 2
+                         else REPO)
     asan = {"ASAN_OPTIONS": "detect_leaks=0"}
     with tempfile.TemporaryDirectory(prefix="gbadhoc-gb-") as tmp:
         t = Path(tmp)
@@ -254,6 +380,7 @@ def main() -> int:
         run(["gcc", "-std=gnu11", *WARN, *SAN, "-ffunction-sections",
              "-fdata-sections", *INC, "-o", str(t / "fe_gb_boot"),
              "tools/test_fe_gb_boot.c", "frontend-common/fe_host.c",
+             "nescore/gbcore_mux.c", "tools/tests/fe_host_absent.c",
              "frontend-common/fe_util.c", "netdrv/gb_link.c",
              "frontend-common/fe_gblink.c",
              "gbcore/gbcore_dual.c", inst_a, inst_b, str(shared),
@@ -267,6 +394,7 @@ def main() -> int:
         run(["gcc", "-std=gnu11", *WARN, *SAN, "-ffunction-sections",
              "-fdata-sections", *INC, "-o", str(t / "gb_rtc_utc"),
              "tools/tests/test_gb_rtc_utc.c", "frontend-common/fe_host.c",
+             "nescore/gbcore_mux.c", "tools/tests/fe_host_absent.c",
              "frontend-common/fe_util.c", "netdrv/gb_link.c",
              "frontend-common/fe_gblink.c",
              "gbcore/gbcore_dual.c", inst_a, inst_b, str(shared),

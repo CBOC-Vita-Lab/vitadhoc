@@ -1058,6 +1058,42 @@ and leave by `bx r0`, with the C call in between a balanced `bl`/`bx lr`, so the
 host's return stack is not disturbed; a guest-level return stack (predicting
 `bx lr` from the matching `bl`) was not attempted.
 
+**Results (host twins, 13 Nov 2026).** Six private test ROMs, 3000 refreshes,
+scripted input (`scratchpad` harness: never copied into the repo), smc_partial
+off vs on in the same binary. Identical in every case on x86 (picture hash of
+every presented frame), armhf under qemu and armhf VITASIM=1 (no raster;
+machine-state hash every 10 frames and at every 4th code-write event): the
+GPSP_SMC_TRACE files (every flush of the full-flush build with frame, REG_PC
+and its translation count), sound, battery saves and the state hashes.
+GPSP_SMC_VERIFY=1 runs (every revival re-translated and compared, tag-array
+invariant) pass on Golden Sun and Mario Golf (800-1000 frames) and on the
+`smc` cartridge. Counters over the 3000 frames (armhf; x86 the same):
+
+| game | RAM flushes off -> on | blocks translated off -> on (worst frame) | icache/VM syncs off -> on | revived |
+|---|---|---|---|---|
+| Golden Sun | 3929 -> 1 (+3928 tag-only) | 105036 -> 3409 (295 -> 290) | 59446 -> 1955 | 101627 |
+| Mario Golf | 12021 -> 1 (+12020 tag-only) | 247750 -> 4217 (373 -> 329) | 105340 -> 4997 | 243533 |
+| Fire Red | 86 -> 1 | 3516 -> 3061 | 1736 -> 1543 | 455 |
+| Mario Kart SC | 48 -> 1 | 1402 -> 1225 | 693 -> 613 | 177 |
+| Aria of Sorrow | 6 -> 1 | 3635 -> 3499 | 1578 -> 1530 | 136 |
+| Minish Cap | 1 -> 1 | 1442 -> 1441 | 562 -> 561 | 1 |
+
+No reclaims and no emergencies in any run. callgrind (x86, frames 300-900,
+no raster, whole process): Golden Sun 2184.2M -> 2043.3M Ir (-6.5%), Mario
+Golf 2323.3M -> 2153.3M (-7.3%; `translate_block_*` 238M -> `smcr_lookup` 41M),
+Fire Red 2289.5M -> 2298.1M (+0.4%: the per-lookup reserve test). WP3 on
+armhf: lookups avoided (jctr[14]) per 3000 frames Fire Red 448,818, Aria
+785,317, Mario Kart 555,902, Minish Cap 1,138,440, Golden Sun 300,844, Mario
+Golf 1,233,739; identical with smc_partial off and on, and the six games give
+the same trace, sound, saves and states with `dispatch_cache` off.
+Test cartridges (`app_tests.py --only smc,cpufix,chain,objprio`): pass on x86,
+armhf and armhf VITASIM=1 (VITASIM needed `hostcore/Makefile` to give
+`jit_vita.c` -DARM_FAR_STUBS as the Vita app does: the grown twin image put the
+VM block out of plain branch reach and the twin had silently been running the
+interpreter). **Not verified: anything on a Vita** -- the VM domain staying
+open for patches of published code, `sceKernelSyncVMDomain` on re-pointed
+links, the I-cache, the 1 MiB taken from the ROM cache, and real timings.
+
 **Counters** (`gpsp_jit_counters`, now 16 slots; the first 7 as WP0, [4] with
 smc_partial on counts only flushes that discard RAM code): [7] tag-only
 flushes, [8] revived blocks, [9] RAM translations the full-flush build makes

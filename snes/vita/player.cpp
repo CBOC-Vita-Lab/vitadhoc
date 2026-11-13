@@ -116,11 +116,22 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 
 /* ---- construction ------------------------------------------------------------- */
 
+/* 1.4 defaults (docs/DEFAULTS-1.4.md): the picture as a television showed it. Pseudo hi-res games alternate
+ * columns to fake transparency and interlaced pictures flicker between fields; averaging pairs shows what the
+ * hardware's output blended anyway. A picture.ini or game file that sets them keeps its value. */
+static void apply_1_4_defaults(pic_settings *s)
+{
+	s->hires_blend = 1;
+	s->interlace_blend = 1;
+}
+
 SnesPlayer::SnesPlayer(Platform *pf) : pf_(pf)
 {
 	pic_defaults(&ps_);
+	apply_1_4_defaults(&ps_);
 	g_changed = 0;
 	pic_defaults(&g_ps_file);
+	apply_1_4_defaults(&g_ps_file);
 }
 
 SnesPlayer::~SnesPlayer()
@@ -341,6 +352,7 @@ std::string SnesPlayer::pic_game_ini() const { return path_join(path_join(snes_d
 void SnesPlayer::settings_load()
 {
 	pic_defaults(&ps_);
+	apply_1_4_defaults(&ps_);
 	pic_load(path_join(snes_dir_, "picture.ini").c_str(), &ps_);
 	pic_settings gs = ps_;
 	if (pic_load(pic_game_ini().c_str(), &gs) && gs.use_game) ps_ = gs;

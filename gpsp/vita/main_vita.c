@@ -5070,14 +5070,19 @@ static void game_loop(void)
                continue;
             }
          }
-         else if (g_sw.touch_menu && !pad && !link_net_busy() && g_last.pix &&
-                  tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h)
+         else if (g_sw.touch_menu && !pad && !link_net_busy() && g_last.pix)
          {
-            /* A tap on the game's picture opens the menu, which is the
-             * touch screen's from there on.  Conservative: a short still
-             * tap, on the picture itself, no button held (a thumb that
-             * brushes the glass in the middle of play is not one), and
-             * never while the network is in use. */
+            /* A tap on the screen opens the menu, which is the touch
+             * screen's from there on.  Conservative: a short still tap, no
+             * button held (a thumb that brushes the glass in the middle of
+             * play is not one), and never while the network is in use.
+             * ANYWHERE on the screen since 1.4: it had to be on the picture,
+             * and a Game Boy picture at a whole-number size leaves most of
+             * the glass beside it ("touching the screen for settings doesn't
+             * work on GB/GBC"); a turned WonderSwan picture likewise. */
+            fe_evt("tap_menu x=%d y=%d on_picture=%d console=%d", tx, ty,
+                   tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h,
+                   g_game_console);
             menu_open("touch");
             continue;
          }

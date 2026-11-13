@@ -218,3 +218,38 @@ ended_at=1760000000
 Both files are written with the safe write, tolerate missing and unknown
 keys, and carry a version; a reader that sees a newer version reads what it
 knows and keeps the rest.
+
+## Look memory
+
+What the look governor (`pk_look`, `INTEGRATION.md` section 8) learned about one game. Only a game that needed a
+lighter look than the best one has a file; a game that held 60 at the full look has none (and a file whose look
+turned out not to be needed any more is deleted: `LOOK_MEM_DELETE`).
+
+Path: `<root>/look/<console>/<xx>/<name>.look`, `<console>` as for states (`gba`, `gb`, `gbc`, `nes`, `ws`, `snes`),
+`<xx>` and `<name>` as for states (the CRC-32 bucket and the game's file name without extension). Written with the
+safe write (see "Safe writes") by the frontend's writer thread, at the end of the game or when the menu opens, never
+on the game thread; the module only makes and reads the text (`LookGovernor::serialize`, `load_memory`).
+
+```
+pk-look 1
+ladder=1a2b3c4d
+mhz=444
+mask=15
+cool=30
+peak=780
+sav=120,120,80,200,100
+```
+
+| key | meaning |
+| --- | --- |
+| first line | `pk-look 1`: the format version. Anything else is rejected |
+| `ladder` | FNV-1a of the rung names and rows (hex). A file made with another ladder (another build, another console) is rejected |
+| `mhz` | the CPU clock it was learned at. At another clock the costs are used, the look is not (the game starts at the best look) |
+| `mask` | bit i = rung i of the ladder is applied: the look that cured the last overload. Never has a bit beyond the ladder |
+| `cool` | seconds of the cool-down before a climb is tried (doubled by failed climbs, 0..960) |
+| `peak` | the worst 4 s load seen at that look, in thousandths of a refresh (0..4000) |
+| `sav` | the learned cost of each rung, thousandths of a refresh, comma separated, one per rung (0..2000) |
+
+A reader ignores unknown keys, rejects the whole file when a known key is out of range, and then starts from the
+best look with the frontend's own guesses: a damaged file never makes the picture worse than having no file. Text,
+at most 1 KiB.

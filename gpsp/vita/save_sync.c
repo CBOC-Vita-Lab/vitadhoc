@@ -17,7 +17,12 @@
 static char g_root[SS_PATH];
 static char g_ra[SS_PATH + 32];
 static char g_rec_path[SS_PATH + 24];
+static char g_racfg[SS_PATH + 48];  /* RetroArch's retroarch.cfg */
 static int  g_on = 1;
+
+static char g_ctx_rom[SS_PATH], g_ctx_save[SS_PATH];
+static int  g_ctx_kind = -1;
+static char g_late_note[160];
 
 typedef struct
 {
@@ -32,7 +37,13 @@ typedef struct
                                  * (so they are a copy of an earlier save of
                                  * ours); 0 = they came from RetroArch and must
                                  * be backed up before they are overwritten */
+   int      flags;              /* SSF_*: what the 1.4 export has settled */
 } ss_rec;
+
+/* record flags (the 9th field; 1.3 ignores what follows its 8th) */
+#define SSF_HEALED   1           /* the plain copy for other emulators is dealt
+                                  * with: made, linked, or kept apart on purpose */
+#define SSF_CONFLICT 2           /* ...kept apart: the other file differs */
 
 void save_sync_init(const char *app_root)
 {
@@ -40,9 +51,13 @@ void save_sync_init(const char *app_root)
    snprintf(g_rec_path, sizeof(g_rec_path), "%s/saves-sync.txt", g_root);
 #ifdef __vita__
    snprintf(g_ra, sizeof(g_ra), "ux0:data/retroarch/savefiles");
+   snprintf(g_racfg, sizeof(g_racfg), "ux0:data/retroarch/retroarch.cfg");
 #else
    snprintf(g_ra, sizeof(g_ra), "%s/retroarch/savefiles", g_root);
+   snprintf(g_racfg, sizeof(g_racfg), "%s/retroarch/retroarch.cfg", g_root);
 #endif
+   g_ctx_kind = -1;
+   g_ctx_rom[0] = g_ctx_save[0] = g_late_note[0] = 0;
 }
 
 void save_sync_set_enabled(int on) { g_on = on ? 1 : 0; }
@@ -283,11 +298,16 @@ static int rec_parse(char *line, ss_rec *r)
    while (p > f[6] && (p[-1] == '\n' || p[-1] == '\r'))
       *--p = 0;
    r->src_ours = 0;                    /* absent in older records */
+   r->flags = 0;
    p = strchr(f[6], '\t');
    if (p)
    {
+      char *q;
       *p++ = 0;
       r->src_ours = atoi(p) ? 1 : 0;
+      q = strchr(p, '\t');
+      if (q)
+         r->flags = atoi(q + 1);
    }
    if (strlen(f[0]) >= SS_PATH || strlen(f[1]) >= SS_PATH)
       return -1;
@@ -349,10 +369,10 @@ static int rec_put(const ss_rec *r)
    }
    if (in)
       fclose(in);
-   if (fprintf(out, "%s\t%s\t%ld\t%ld\t%08x\t%08x\t%08x\t%d\n", r->save,
+   if (fprintf(out, "%s\t%s\t%ld\t%ld\t%08x\t%08x\t%08x\t%d\t%d\n", r->save,
                r->src[0] ? r->src : "-", r->src_size, r->src_mtime,
                (unsigned)r->src_crc, (unsigned)r->our_crc,
-               (unsigned)r->sync_crc, r->src_ours ? 1 : 0) < 0)
+               (unsigned)r->sync_crc, r->src_ours ? 1 : 0, r->flags) < 0)
       ok = 0;
    if (fclose(out) != 0)
       ok = 0;
@@ -415,7 +435,7 @@ static int copy_over(const char *from, const char *to, uint32_t crc)
  * trailer may follow (RetroArch/mGBA: 131072 + 16 and so on). */
 static long core_len(long size)
 {
-   static const long base[] = { 131072, 65536, 32768, 8192, 512 };
+   static const long base[] = { 131072, 65536, 32768, 8192, 2048, 512 };
    unsigned i;
    for (i = 0; i < sizeof(base) / sizeof(base[0]); i++)
       if (size >= base[i] && size - base[i] <= 64)

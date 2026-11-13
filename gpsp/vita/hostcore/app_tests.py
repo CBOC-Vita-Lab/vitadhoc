@@ -6582,6 +6582,32 @@ def t_census(S):
     S.check(r.has(r"^EVT save_backup kept "), "census: a save backup was made and checked")
 
 
+def t_tap_menu(S):
+    """A tap opens the in-game menu on every console the app runs itself
+    (issue: "touching the screen for settings doesn't work on GB/GBC"): on the
+    picture or beside it (a Game Boy picture at a whole-number size leaves
+    most of the glass empty), on GBA, GB, GBC, NES and WonderSwan, the
+    WonderSwan both sideways and turned upright."""
+    gbc = os.path.join(HERE, "testrom", "gblocal-cgb.gbc")
+    games = [("GBA", "gbadhoc-test.gba", None),
+             ("GB", "gbsave.gb", open(OWN_GB, "rb").read() if os.path.exists(OWN_GB) else None),
+             ("GBC", "colour.gbc", open(gbc, "rb").read() if os.path.exists(gbc) else None),
+             ("NES", "tap.nes", nes_rom(S, "nrom.nes")),
+             ("WS", "tap.ws", ws_rom(S, "h_sram.ws")),
+             ("WS upright", "tall.ws", ws_rom(S, "v_sram.ws"))]
+    for label, name, data in games:
+        if data is None and not name.endswith(".gba"):
+            S.note("%s: no test cartridge here: skipped" % label)
+            continue
+        extra = {"roms/" + name: data} if data else None
+        for where, (x, y) in (("beside the picture", (24, 272)), ("on the picture", (480, 272))):
+            r = S.run("tap_menu_" + name.replace(".", "_") + ("_side" if x < 100 else "_mid"),
+                      "120:touch=%d/%d\n+60:shot=menu.png\n+10:quit\n" % (x, y),
+                      autoboot=name, extra=extra, config={"scale_gb": 1, "scale_gbc": 1})
+            S.clean(r)
+            S.check(r.has(r"^EVT menu_open via=touch"), "%s: a tap %s opens the menu" % (label, where))
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6978,7 +7004,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

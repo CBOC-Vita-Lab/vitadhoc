@@ -322,3 +322,42 @@ Gameplay page: "Smooth hand-over", on by default, help line "Draws each picture 
 - A census gate: the app's selftest must fail when hand-over is default on and the log has no `handoff:` line with `shown` above zero (lessons D: a feature that logs nothing has not been proven to run).
 - A weak-symbol check: `nm` of the linked binary shows no ` w ` entries for the `pk::Handoff` or `pk::HandoffSys` methods (the console linker accepts unresolved weak symbols silently).
 - `make -C playerkit test` (unit, ThreadSanitizer and model-agreement tests) stays green.
+
+## 8. Look governor (`pk_look`)
+
+Purpose: every game starts with the best look the console can show; the governor takes a sacrifice only when THIS game, in THIS scene, cannot hold 60, takes the least visible one first, and gives it back when there is room. It never lowers a picture "to be safe". Everything below is a model checked on the host (`tests/test_look.cpp`); nothing has run on a real console yet.
+
+### 8.1 The ladder (a table, once per console)
+
+`LookRung{name, row, est_saving, visibility}`, least visible first (visibility must not decrease down the ladder; `set_ladder` rejects a ladder that does). `row` is the settings row id the rung belongs to. At most `LOOK_MAX_RUNGS` (12). The per-console ladders are in `docs/DEFAULTS-1.4.md`.
+
+### 8.2 Calls (main app and SNES player alike)
+
+1. At start: `set_ladder(...)`, then for every row the player has set by hand `set_user_row(row, true)` (a row on Auto or at its default is not by hand), then `load_memory(text, n, cpu_mhz)` with the game's `.look` file if there is one (a rejected file is not an error), then `start()`. The look to show is `applied(i)` / `steps_on_row(row)`; poll `generation()` and re-apply the rows when it changed.
+2. Once per second of play (not while a menu, pause or load is up; call `reset_window()` when one stops the clock): fill `LookSecond` and call `second()`:
+   - `emu`, `draw`, `filter`: the average time per emulated frame of the emulating thread, of drawing/presenting without the filter, and of the filter's critical path, as fractions of the frame budget (1.0 = 16.7 ms at 60). Take them from the counters the pacer already has (`pace_steady.h` / `pk::Pacer` drawn-cost sums); do not add timers to the game thread.
+   - `refreshes`, `missed`: refreshes in that second, and refreshes that repeated a picture because the new one was NOT ready (the hand-over mailbox's `late` counter; planned half-mode repeats do not count).
+   - `parallel`: hand-over active (load = the larger of emu and draw+filter, else their sum).
+   - `pace_half`: `pacer.mode() == PACE_HALF`.
+3. Safe points: `safe_point(LOOK_SAFE_START|SCENE|BLANK|MENU)` where a change cannot be seen as a flicker: the first frame, a scene change the core reports (the main app: a game's blank/fade frames; SNES: the screen-off or forced blank bit), the frame after the menu closes. A step down with no safe point is applied after `force_s` (12 s); a step up never is. A frontend that can cross-fade sets `crossfade`.
+4. The menu: a row shows `Auto` plus, while `eased(row)`, the look in force (`look_auto_label(current, eased)`); choosing a value calls `set_user_row(row, true)` and the governor never touches that row again; choosing Auto calls `set_user_row(row, false)`.
+5. Log: after each `second()` write `census_line()` if it returns true (a `look:` line; the selftest gates on it like the `handoff:` line, see section 7), and `summary()` at the end of the game with the `events()` reasons.
+6. Memory: at the end of the game and when the menu opens (writer thread, safe write, see `FORMATS.md` "Look memory"): `memory_action()` is `LOOK_MEM_WRITE` (write `serialize(mhz)`), `LOOK_MEM_DELETE` (delete the file) or `LOOK_MEM_NONE`.
+
+### 8.3 Coupling that must hold
+
+- `LookConfig::pace_recover` (0.80) is the load above which a second counts as bad while `pk_pace` is in half mode. It must equal `PaceConfig::recover_pct / 100`: pacing only leaves half mode when every frame is under that share, so a governor that parks the look at a higher load leaves the game in half mode for good (found in the model, fixed by `down_target` = `up_load` = 0.80).
+- The governor only replaces the disabled xBRZ governor of the main app where it keeps a locked 60: a game that holds 60 at the full look is never touched.
+- An "Auto" row that the governor eased shows what it did; the same wording on every console.
+
+### 8.4 Main app (`gpsp/vita/`, owned by the main-app work)
+
+Wire in `main_vita.c`'s per-second block (where the `handoff:` census is made): fill `LookSecond` from the pacer and hand-over counters; rows `ui_psp.c` Smoothing (xBRZ factor), Frame hand-over depth and, last, Smoothing on/off; re-apply in `video_vita.c`/`upscale_vita.c` when `generation()` changes, at the safe point only (the xBRZ factor change reallocates the target: not mid-frame). Memory path `<root>/look/<console>/<xx>/<name>.look`.
+
+### 8.5 SNES player (`snes/vita/player.cpp`)
+
+Not wired in 1.4: it needs the per-second cost sums from `main.cpp`'s drawing code and a row for hires/interlace blend on the Picture page; that is more than the small change allowed there, and the SNES ladder is short (blend off, then wide view off) with the player already steady-paced. The recipe is the same as 8.2 with the ladder in `docs/DEFAULTS-1.4.md`. Snes9x is not GPL compatible: the SNES ladder has no xBRZ rung.
+
+### 8.6 Tests
+
+`make -C playerkit test` runs `tests/test_look.cpp` (20 cases: ladder order, protected rows, multi-rung drop, cost learning, peak memory, cool-down doubling, no flapping at a steady load, the real `pk::Pacer` leaving half mode, memory round trip and rejection of damaged/other-ladder files). An adopter adds: a twin proof that a script of loads gives the same `mask()` sequence, and the census gate.

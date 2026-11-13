@@ -44,8 +44,8 @@ for arch in x86 armhf; do
 	$CXX -O2 -std=gnu++11 -Wall -I"$FE" -c -o "$OUT/api/safe_io.o" "$FE/safe_io.cpp"
 	$CXX -o "$OUT/api/api_run" "$OUT/api/api_run.o" "$OUT/api/blend.o" "$OUT/api/layout.o" "$OUT/api/safe_io.o" "$OBJ" -lm
 done
-printf '#!/bin/sh\nexec qemu-arm -L /usr/arm-linux-gnueabihf "%s/api/api_run" "$@"\n' "$A" > "$W/api-armhf"
-chmod +x "$W/api-armhf"
+printf '#!/bin/sh\nexec qemu-arm -L /usr/arm-linux-gnueabihf "%s/api/api_run" "$@"\n' "$A" > "$W/bin-api-armhf"
+chmod +x "$W/bin-api-armhf"
 
 fail=0
 run_soak() { # name twin
@@ -73,7 +73,7 @@ while read -r rom; do
 	nm=$(basename "$rom" .ws)
 	rm -rf "$W/api-x86/$nm" "$W/api-armhf/$nm"; mkdir -p "$W/api-x86/$nm" "$W/api-armhf/$nm"
 	"$X/api/api_run" "$rom" $FRAMES "$W/api-x86/$nm" >/dev/null || fail=1
-	"$W/api-armhf" "$rom" $FRAMES "$W/api-armhf/$nm" >/dev/null || fail=1
+	"$W/bin-api-armhf" "$rom" $FRAMES "$W/api-armhf/$nm" >/dev/null || fail=1
 	diff -r "$W/api-x86/$nm" "$W/api-armhf/$nm" >/dev/null && echo "identical api_run: $nm" || { echo "DIFFERENT api_run: $nm"; fail=1; }
 done < "$W/soak-x86/roms.txt"
 echo "arm_compare: $([ $fail = 0 ] && echo PASS || echo FAIL)"

@@ -301,6 +301,22 @@ console's setting without a launch file).
 The battery RAM is never written before the menu is on screen: it is handed to the writer thread after the
 menu's first frame.
 
+### Card operations per state save (measured)
+
+`strace -f` of `player_twin bench-saves DIR 20 FILL` (20 saves of a 400 KB state with pictures, three slots)
+against the same loop on the playerkit of before this change (`git show db68129:playerkit/src/...`):
+
+| per save, `strace -c` | open | rename | remove | stat | mkdir | of these failed (missing name / folder exists) |
+|---|---:|---:|---:|---:|---:|---:|
+| before | 8 | 7.4 | 10.8 | 22 | 15.4 | 26 |
+| now | 5.9 | 1.85 | 0.85 | 0 | 0 (once at start) | 0 |
+
+A replaced slot is 9 operations (temp file, read back, note emptied, picture, big picture, note; 2 renames; 1
+remove), an empty slot 6. The count does not grow with the folder (2,000 other files gave the
+same numbers); on the Vita each operation still walks the folder once, so a flat `states/snes/` with thousands
+of files stays the remaining cost (see the report for a bucketed layout). The slot list is read once (one
+folder listing) and kept in memory: opening the menu or the Save states page reads nothing from the card.
+
 ### Launch protocol
 
 `<root>/launch/snes.ini` (written by VitAdhoc, keys in `playerkit/FORMATS.md`) is read at start: game, save,

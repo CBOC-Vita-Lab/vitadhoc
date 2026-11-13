@@ -8,7 +8,49 @@ namespace pk {
 
 /* ---- paths -------------------------------------------------------------- */
 
-std::string StateLayout::states_dir() const { return path_join(path_join(root, "states"), console); }
+std::string StateLayout::flat_dir() const { return path_join(path_join(root, "states"), console); }
+std::string StateLayout::states_dir() const
+{
+	uint32_t c = crc32(0, name.data(), name.size());
+	return path_join(flat_dir(), strf("%02x", (unsigned) (c >> 24)));
+}
+
+int migrate_to_bucket(const StateLayout &l, int *failed)
+{
+	static const char *const tail[] = { "", ".thumb", ".shot", ".meta", ".p2", ".old" };
+	static const char *const rtail[] = { "", ".pt", ".meta", ".thumb", ".shot", ".old" };
+	const std::string base = l.name + l.ext_tag;
+	const std::string dir = l.states_dir(), flat = l.flat_dir();
+	const std::string mark = path_join(dir, base + ".st0.mig");
+	int moved = 0, bad = 0;
+	if (failed) *failed = 0;
+	if (file_exists(mark)) return 0;
+	std::vector<std::string> names;
+	std::vector<std::string> want;
+	for (int s = 0; s < 10; s++)
+		for (size_t t = 0; t < sizeof(tail) / sizeof(tail[0]); t++)
+			want.push_back(base + strf(".st%d", s) + tail[t]);
+	for (size_t t = 0; t < sizeof(rtail) / sizeof(rtail[0]); t++)
+		want.push_back(base + ".rsm" + rtail[t]);
+	want.push_back(base + ".undo");
+	bool listed = list_dir(flat, names);
+	bool made = false;
+	for (size_t i = 0; i < want.size(); i++) {
+		const std::string from = path_join(flat, want[i]), to = path_join(dir, want[i]);
+		if (listed ? std::find(names.begin(), names.end(), want[i]) == names.end() : !file_exists(from))
+			continue;
+		if (!made) { make_dirs(dir); made = true; }
+		if (file_exists(to)) continue;               /* the bucket's own wins; the old one is kept */
+		if (fs().rename_file(from, to)) moved++;
+		else bad++;
+	}
+	if (!bad) {
+		if (!made) make_dirs(dir);
+		fs().write_all(mark, (const uint8_t *) "", 0);
+	}
+	if (failed) *failed = bad;
+	return moved;
+}
 
 std::string StateLayout::slot_path(int slot) const
 {
@@ -290,6 +332,7 @@ void States::scan_one(Cached &c, const std::string &path, const std::vector<std:
 
 void States::rescan()
 {
+	migrate_to_bucket(l_);          /* (one stat once this game is in its bucket) */
 	std::vector<std::string> names;
 	bool listed = list_dir(l_.states_dir(), names);
 	if (listed) {

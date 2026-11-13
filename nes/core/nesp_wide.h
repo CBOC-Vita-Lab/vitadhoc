@@ -35,10 +35,14 @@ extern int nesp_on;               /* 1: record stamps and lines, render margins 
 extern int nesp_margin;           /* px per side to render, 0..NESP_MAXM */
 extern uint32_t nesp_frame;       /* counts FCEUPPU_Loop calls (never reset) */
 extern NespLine nesp_line[240];
-extern uint8_t nesp_wl[240][NESP_MBUF];   /* left margin, index d = 0 is the pixel at x = -1; palette index bytes as XBuf */
+/* Margin pixels are RAW: palette entry as the background renderer makes it (bit 6 set on the backdrop colour), before the
+ * grayscale / emphasis pass of the line (apply it with the line's p1 when reading: nes/frontend/wide.c post_px). */
+extern uint8_t nesp_wl[240][NESP_MBUF];   /* left margin, index i = 0 is the pixel at x = -nesp_margin, i = margin - 1 is x = -1 */
 extern uint8_t nesp_wr[240][NESP_MBUF];   /* right margin, index d = 0 is the pixel at x = 256 */
 extern uint8_t nesp_sprm[240];           /* per line: bit k set when a sprite pixel was drawn at x = k (k < 8)  */
-extern uint8_t nesp_wm[240][8];           /* the 8 background pixels x = 0..7 as they would be without the left mask */
+extern uint8_t nesp_wm[240][16];          /* the background pixels x = 0..15 (raw) as the line would show them without the left mask
+                                             and without sprites */
+extern uint8_t nesp_wmr[240][8];          /* the background pixels x = 248..255 (raw), without sprites */
 
 /* nametable write stamps: (frame << 1) | rendering_was_on; indexed by physical page id, offset in the page */
 extern uint32_t nesp_ntstamp[NESP_NTP][1024];

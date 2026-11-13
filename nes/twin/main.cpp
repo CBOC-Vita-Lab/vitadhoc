@@ -13,6 +13,10 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -88,9 +92,10 @@ struct WTruth {
 	bool on = false;
 	int W = 0, H = 0, n = 0, origin_x = 0, tx = 0x300, tset = 0x305, scene = 0x306;
 	std::string select, mode;
+	int hud_lo = 0, hud_hi = -1;       /* status bar rows of the cartridge (its numbers and text change; the truth holds the frame it started with) */
 	std::vector<uint8_t> px;           /* n * W * H, bit7 known, bits0..5 colour */
 	std::vector<char> uni;             /* per image per row: the whole row is one known colour */
-	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0;
+	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0, maskfill_soft = 0, c_sprite = 0, c_hud = 0, c_mask = 0, c_unknown = 0, c_unexplained = 0;
 	long lead_frames = 0; double lead_l = 0, lead_r = 0;
 	std::vector<std::string> firsts;
 	std::vector<std::pair<int, int>> wrongf;
@@ -107,6 +112,7 @@ struct WTruth {
 			else if (!strcmp(k, "ram_tx")) tx = (int) strtol(v, 0, 16);
 			else if (!strcmp(k, "ram_tset")) tset = (int) strtol(v, 0, 16);
 			else if (!strcmp(k, "ram_scene")) scene = (int) strtol(v, 0, 16);
+			else if (!strcmp(k, "hud_rows")) { int a = 0, b = -1; if (sscanf(v, "%d-%d", &a, &b) == 2) { hud_lo = a; hud_hi = b; } }
 		}
 		fclose(f);
 		f = fopen((base + ".truth").c_str(), "rb");
@@ -213,6 +219,7 @@ static void usage(void)
 	    "  --wide-map-save F / --wide-map-load F   write / read the learned level map image (second pass)\n"
 	    "  --wide-report      print the wide view statistics (mean real px per side, lines, scene events, map)\n"
 	    "  --wide-opt NAME=V  wide view option (period, debug, fade_px, appear_frames)\n"
+	    "  --wide-split       with --wide: capture on the main thread, compose (and the scout step) on real threads, one frame behind\n"
 	    "  --scout N          wide view scout on: up to N scout frames after each frame (nes_host_scout_step)\n"
 	    "  --scout-opt NAME=V scout option (ahead, resync)\n"
 	    "  --summary          print one summary line (fps, ms/frame)\n"
@@ -248,6 +255,7 @@ int main(int argc, char **argv)
 	const char *wide_shots = 0, *wtruth_base = 0, *wstrips = 0, *wmap_save = 0, *wmap_load = 0;
 	std::vector<Opt> wopts, sopts;
 	int scout_n = 0;
+	bool wide_split = false;
 	for (int i = 2; i < argc; i++) {
 		auto arg = [&](const char *n) { return !strcmp(argv[i], n) && i + 1 < argc; };
 		if (arg("--frames")) frames = atoi(argv[++i]);
@@ -306,6 +314,7 @@ int main(int argc, char **argv)
 		else if (arg("--wide-map-save")) wmap_save = argv[++i];
 		else if (arg("--wide-map-load")) wmap_load = argv[++i];
 		else if (!strcmp(argv[i], "--wide-report")) wide_report = true;
+		else if (!strcmp(argv[i], "--wide-split")) wide_split = true;
 		else if (arg("--scout")) scout_n = atoi(argv[++i]);
 		else if (arg("--scout-opt")) {
 			char k[64]; int v = 0;
@@ -426,6 +435,7 @@ int main(int argc, char **argv)
 	WTruth wt;
 	if (wtruth_base && !wt.load(wtruth_base)) { fprintf(stderr, "cannot read truth %s\n", wtruth_base); return 2; }
 	int cam[8] = { 0 };
+	uint8_t oam[256] = { 0 };   /* the game's sprite list ($0200) as of the end of the previous frame: what the next frame draws */
 	double rowl_sum = 0, rowr_sum = 0; long row_n = 0;
 	double wsum_l = 0, wsum_r = 0, wlines = 0;
 	long wcentre_diff = 0, wmaskfill = 0, scout_cost_frames = 0;
@@ -442,42 +452,12 @@ int main(int argc, char **argv)
 	size_t gev = 0, pev = 0;
 	int rc = 0;
 
-	for (int f = 0; f < frames; f++) {
-		for (int k = 0; k < 4; k++) {
-			while (ev[k] < script[k].size() && script[k][ev[k]].frame <= f) mask[k] = script[k][ev[k]++].mask;
-			nes_host_set_pad(k, mask[k]);
-		}
-		while (gev < gun.size() && gun[gev].frame <= f) { nes_host_set_zapper(gun[gev].x, gun[gev].y, gun[gev].t); gev++; }
-		while (pev < pdl.size() && pdl[pev].frame <= f) { nes_host_set_paddle(pdl[pev].x, pdl[pev].t); pev++; }
-		if (lstate && f == state_frame) {
-			int r = nes_host_state_load(lstate);
-			fprintf(stderr, "load state: %d\n", r);
-			if (r) rc = 1;
-		}
-		while (fev < fdsev.size() && fdsev[fev].frame <= f) {
-			if (fdsev[fev].what == 1) nes_host_fds_next_side(); else nes_host_fds_toggle_disk();
-			fev++;
-		}
-		nes_host_set_render(!(f >= roff_a && f <= roff_b));
-		uint64_t c0 = cpu_ns();
-		nes_host_run_frame();
-		cpu_tot_ns += cpu_ns() - c0;
-		if (ssizes && f % 25 == 0) ssz.push_back(nes_host_state_save_mem(sbuf.data(), sbuf.size()));
-		int n = nes_host_audio_take(abuf.data(), 4096);
-		if (wav || areport) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
-		if (sstate && f == state_frame) {
-			int r = nes_host_state_save(sstate);
-			fprintf(stderr, "save state: %d\n", r);
-			if (r) rc = 1;
-		}
-		int w, h, pitch;
-		const uint16_t *v = nes_host_video(&w, &h, &pitch);
-		if (wide > 0) {
-			const uint16_t *wp = 0;
-			int ww = 0, wpit = 0;
-			int wok = nes_host_wide_frame(&wp, &ww, &wpit, &wst);
-			if (wok && scout_n > 0) scout_cost_frames += nes_host_scout_step(scout_n, 0);
-			if (wok && whf) {
+	/* everything done with a composed wide frame (hashes, centre check, truth); cam = the game's camera bytes read after the
+	   previous frame. Split mode calls it one frame late with copies of that frame's video and cam. */
+	auto wide_process = [&](int f, bool wok, const uint16_t *wp, int ww, int wpit, const nes_wide_stats &wst, const uint16_t *v, int w, int h, int pitch, const int *camin, const uint8_t *oam) {
+		int cam[8];
+		memcpy(cam, camin, sizeof cam);
+		if (wok && whf) {
 				const uint8_t *wprov = nes_host_wide_prov();
 				const uint8_t *wreal = nes_host_wide_real();
 				fprintf(whf, "%d %d %d %016llx %016llx %016llx\n", f, ww, h, (unsigned long long) fnv((const uint16_t *) wp, ww, h, wpit),
@@ -534,9 +514,23 @@ int main(int argc, char **argv)
 									}
 								}
 							}
-							if (cen) { wt.centre++; if (!ok) wt.centre_bad++; }
+							if (cen) {
+								wt.centre++;
+								if (!ok) {
+									/* where the centre differs from the true BACKGROUND picture: sprites (the truth has none), the masked
+									   columns, rows the truth does not know, or nothing explains it (must be 0) */
+									wt.centre_bad++;
+									bool spr = false;
+									for (int k = 0; k < 64 && !spr; k++) {
+										int sx = oam[k * 4 + 3], sy = oam[k * 4] + 1;
+										if (oam[k * 4] < 240 && x - m >= sx && x - m < sx + 8 && y >= sy && y < sy + 8) spr = true;
+									}
+									if (!spr && e >= 0 && x - m >= 8 && getenv("TWIN_DBG") && (atoi(getenv("TWIN_DBG")) < 0 || f == atoi(getenv("TWIN_DBG"))) && !(y >= wt.hud_lo && y <= wt.hud_hi)) fprintf(stderr, "UNEXP f%d x%d y%d\n", f, x - m, y);
+									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (y >= wt.hud_lo && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else wt.c_unexplained++;
+								}
+							}
 							/* the masked left columns the wide view filled in: they must be the true picture */
-							if (cen && x < m + 8 && got != v[y * (pitch / 2) + x - m]) { wt.maskfill++; if (!ok) wt.maskfill_wrong++; }
+							if (cen && x < m + 8 && got != v[y * (pitch / 2) + x - m]) { wt.maskfill++; if (pv == 2) wt.maskfill_soft++; else if (!ok) wt.maskfill_wrong++; }
 							if (want) {
 								strip[(size_t) y * ww + x] = e >= 0 ? pal[0x80 | e] : 0x4010;
 								uint16_t c = got;
@@ -569,8 +563,85 @@ int main(int argc, char **argv)
 					write_png(p, wp, ww, h, wpit);
 				}
 			}
+	};
+	/* --wide-split: capture here, compose + scout step on worker threads */
+	struct Worker {
+		std::thread th; std::mutex m; std::condition_variable cv; std::function<void()> job; bool has = false, busy = false, quit = false;
+		void start() { th = std::thread([this] { std::unique_lock<std::mutex> l(m); for (;;) { cv.wait(l, [this] { return has || quit; }); if (quit) return; std::function<void()> j = job; has = false; busy = true; l.unlock(); j(); l.lock(); busy = false; cv.notify_all(); } }); }
+		void run(std::function<void()> j) { std::unique_lock<std::mutex> l(m); job = j; has = true; busy = true; cv.notify_all(); }
+		void wait() { std::unique_lock<std::mutex> l(m); cv.wait(l, [this] { return !has && !busy; }); }
+		void stop() { { std::lock_guard<std::mutex> l(m); quit = true; } cv.notify_all(); if (th.joinable()) th.join(); }
+	};
+	Worker wcomp, wscout;
+	if (wide_split) { wcomp.start(); wscout.start(); }
+	std::vector<nes_wide_snapshot> snaps(wide_split ? 2 : 0);
+	for (auto &sn : snaps) memset(&sn, 0, sizeof sn);
+	struct Pend { bool on = false; int f = 0, w = 0, h = 0, pitch = 0; std::vector<uint16_t> v; int cam[8]; uint8_t oam[256]; int slot = 0; bool scout = false; } pend;
+	const uint16_t *cwp = 0; int cww = 0, cwpit = 0; int cwok = 0; nes_wide_stats cst;
+	memset(&cst, 0, sizeof cst);
+	auto finish_pending = [&]() {   // after the compose / scout step of the pending frame ran: process its results
+		if (!pend.on) return;
+		wcomp.wait(); wscout.wait();
+		if (cwok) { wst = cst; wide_process(pend.f, true, cwp, cww, cwpit, wst, pend.v.data(), pend.w, pend.h, pend.pitch, pend.cam, pend.oam); }
+		pend.on = false;
+	};
+	auto start_pending = [&]() {   // compose (and the scout step) of the pending snapshot run on their threads
+		if (!pend.on) return;
+		cwok = 0;
+		const nes_wide_snapshot *ps = &snaps[pend.slot];
+		wcomp.run([&, ps] { cwok = nes_host_wide_compose(ps, &cwp, &cww, &cwpit, &cst); });
+		if (scout_n > 0) wscout.run([&] { scout_cost_frames += nes_host_scout_step(scout_n, 0); });
+	};
+	for (int f = 0; f < frames; f++) {
+		for (int k = 0; k < 4; k++) {
+			while (ev[k] < script[k].size() && script[k][ev[k]].frame <= f) mask[k] = script[k][ev[k]++].mask;
+			nes_host_set_pad(k, mask[k]);
 		}
-		if (wt.on) { for (int k = 0; k < 8; k++) cam[k] = nes_host_peek(wt.tx + k); }
+		while (gev < gun.size() && gun[gev].frame <= f) { nes_host_set_zapper(gun[gev].x, gun[gev].y, gun[gev].t); gev++; }
+		while (pev < pdl.size() && pdl[pev].frame <= f) { nes_host_set_paddle(pdl[pev].x, pdl[pev].t); pev++; }
+		if (wide_split && ((lstate && f == state_frame) || (fev < fdsev.size() && fdsev[fev].frame <= f))) finish_pending();
+		if (lstate && f == state_frame) {
+			int r = nes_host_state_load(lstate);
+			fprintf(stderr, "load state: %d\n", r);
+			if (r) rc = 1;
+		}
+		while (fev < fdsev.size() && fdsev[fev].frame <= f) {
+			if (fdsev[fev].what == 1) nes_host_fds_next_side(); else nes_host_fds_toggle_disk();
+			fev++;
+		}
+		nes_host_set_render(!(f >= roff_a && f <= roff_b));
+		uint64_t c0 = cpu_ns();
+		nes_host_run_frame();
+		cpu_tot_ns += cpu_ns() - c0;
+		if (ssizes && f % 25 == 0) ssz.push_back(nes_host_state_save_mem(sbuf.data(), sbuf.size()));
+		int n = nes_host_audio_take(abuf.data(), 4096);
+		if (wav || areport) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
+		if (sstate && f == state_frame) {
+			int r = nes_host_state_save(sstate);
+			fprintf(stderr, "save state: %d\n", r);
+			if (r) rc = 1;
+		}
+		int w, h, pitch;
+		const uint16_t *v = nes_host_video(&w, &h, &pitch);
+		if (wide > 0 && !wide_split) {
+			const uint16_t *wp = 0;
+			int ww = 0, wpit = 0;
+			int wok = nes_host_wide_frame(&wp, &ww, &wpit, &wst);
+			if (wok && scout_n > 0) scout_cost_frames += nes_host_scout_step(scout_n, 0);
+			wide_process(f, wok != 0, wp, ww, wpit, wst, v, w, h, pitch, cam, oam);
+		}
+		if (wide > 0 && wide_split) {
+			/* the frame before this one: compose it now (it overlaps nothing of this frame's emulation that it reads) */
+			finish_pending();
+			if (nes_host_wide_capture(&snaps[f & 1])) {
+				pend.on = true; pend.f = f; pend.w = w; pend.h = h; pend.pitch = pitch; pend.slot = f & 1;
+				pend.v.assign(v, v + (size_t) (pitch / 2) * h);
+				memcpy(pend.cam, cam, sizeof cam);
+				memcpy(pend.oam, oam, sizeof oam);
+				start_pending();   // overlaps the next iteration: its events, run_frame and audio
+			}
+		}
+		if (wt.on) { for (int k = 0; k < 8; k++) cam[k] = nes_host_peek(wt.tx + k); for (int k = 0; k < 256; k++) oam[k] = (uint8_t) nes_host_peek(0x200 + k); }
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) fnv(v, w, h, pitch));
 		if (shotset.count(f)) {
 			char p[512];
@@ -578,6 +649,7 @@ int main(int argc, char **argv)
 			write_png(p, v, w, h, pitch);
 		}
 	}
+	if (wide_split) { finish_pending(); wcomp.stop(); wscout.stop(); }
 	if (hf) fclose(hf);
 	if (whf) fclose(whf);
 	if (wide_report)
@@ -593,7 +665,7 @@ int main(int argc, char **argv)
 		printf("truth: claimed_real=%ld wrong=%ld faded_px=%ld solid_lead_l=%.1f solid_lead_r=%.1f drawn_lead_l=%.1f drawn_lead_r=%.1f centre_px=%ld centre_mismatch=%ld offered_l=%.1f offered_r=%.1f\n", wt.claimed, wt.wrong, wt.faded,
 		    row_n ? (double) wt.solid_l / row_n : 0.0, row_n ? (double) wt.solid_r / row_n : 0.0,
 		    row_n ? (double) (wt.solid_l + wt.fade_l) / row_n : 0.0, row_n ? (double) (wt.solid_r + wt.fade_r) / row_n : 0.0, wt.centre, wt.centre_bad, row_n ? rowl_sum / row_n : 0.0, row_n ? rowr_sum / row_n : 0.0);
-	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong);
+	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld (continued as soft where no true pixel is known: px=%ld)\n  centre differs from the true background: %ld px = sprites %ld + status bar rows %ld + masked column %ld + truth unknown %ld + unexplained %ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong, wt.maskfill_soft, wt.centre_bad, wt.c_sprite, wt.c_hud, wt.c_mask, wt.c_unknown, wt.c_unexplained);
 	if (!wt.wrongf.empty()) { printf("  wrong frames (%zu):", wt.wrongf.size()); for (size_t i = 0; i < wt.wrongf.size() && i < 24; i++) printf(" %d:%d", wt.wrongf[i].first, wt.wrongf[i].second); printf("\n"); }
 	if (wt.on) { printf("  prov in real px:"); for (int k = 0; k < 16; k++) if (wt.pvh[k]) printf(" %d:%ld", k, wt.pvh[k]); printf("\n"); }
 	for (auto &t : wt.firsts) printf("  wrong: %s\n", t.c_str());

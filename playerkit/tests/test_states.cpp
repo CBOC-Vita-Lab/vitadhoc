@@ -22,11 +22,59 @@ static std::vector<uint8_t> blob(int seed, size_t n = 30000)
 TEST(states_layout_names)
 {
 	StateLayout l = layout("ux0:data/GBAdhoc");
-	CHECK_STR(l.states_dir(), "ux0:data/GBAdhoc/states/snes");
-	CHECK_STR(l.slot_path(1), "ux0:data/GBAdhoc/states/snes/Super Example World (USA).st0");
-	CHECK_STR(l.slot_path(10), "ux0:data/GBAdhoc/states/snes/Super Example World (USA).st9");
-	CHECK_STR(l.resume_path(), "ux0:data/GBAdhoc/states/snes/Super Example World (USA).rsm");
+	/* the bucket: crc32("Super Example World (USA)") = f3a54da3 */
+	CHECK_STR(l.flat_dir(), "ux0:data/GBAdhoc/states/snes");
+	CHECK_STR(l.states_dir(), "ux0:data/GBAdhoc/states/snes/f3");
+	CHECK_STR(l.slot_path(1), "ux0:data/GBAdhoc/states/snes/f3/Super Example World (USA).st0");
+	CHECK_STR(l.slot_path(10), "ux0:data/GBAdhoc/states/snes/f3/Super Example World (USA).st9");
+	CHECK_STR(l.resume_path(), "ux0:data/GBAdhoc/states/snes/f3/Super Example World (USA).rsm");
 	CHECK_STR(l.scene_path(), "ux0:data/GBAdhoc/scenes/Super Example World (USA).shot");
+}
+
+/* The flat layout before buckets (1.3): a game's files move into its bucket the first time it is
+ * looked at, with nothing lost; a file already in the bucket wins and the old one stays; once moved, a
+ * marker means one stat; another game's files are not touched; a mixed layout reads right. */
+TEST(states_bucket_migration)
+{
+	pkh::TempDir td;
+	StateLayout l = layout(td.path);
+	std::vector<uint16_t> px; pkh::make_game_frame(4, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d1 = blob(1), d2 = blob(2), d5 = blob(5), back;
+	/* make real slot files in the bucket, then put them where 1.3 had them */
+	{
+		States st(l);
+		CHECK_EQ(st.save(1, &d1[0], d1.size(), f, 10).status, ST_OK);
+		CHECK_EQ(st.save(2, &d2[0], d2.size(), f, 20).status, ST_OK);
+	}
+	make_dirs(l.flat_dir());
+	const char *const files[] = { ".st0", ".st0.thumb", ".st0.shot", ".st0.meta", ".st1", ".st1.thumb",
+	                              ".st1.shot", ".st1.meta" };
+	for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++)
+		CHECK(fs().rename_file(path_join(l.states_dir(), l.name + files[i]),
+		                       path_join(l.flat_dir(), l.name + files[i])));
+	file_remove(path_join(l.states_dir(), l.name + ".st0.mig"));
+	/* slot 2 also in the bucket, newer: it wins, the flat one is kept */
+	{
+		std::vector<uint8_t> b; CHECK(file_read(path_join(l.flat_dir(), l.name + ".st1"), b, 1 << 20));
+		CHECK(fs().write_all(path_join(l.states_dir(), l.name + ".st1"), &d5[0], d5.size()));
+	}
+	/* another game's file in the flat folder stays */
+	CHECK(fs().write_all(path_join(l.flat_dir(), "Other Game.st0"), &d2[0], 10));
+	int failed = -1;
+	int moved = migrate_to_bucket(l, &failed);
+	CHECK_EQ(failed, 0);
+	CHECK(moved >= 7);
+	CHECK(file_exists(path_join(l.states_dir(), l.name + ".st0.mig")));
+	CHECK(file_exists(path_join(l.flat_dir(), l.name + ".st1")));        /* kept, not overwritten */
+	CHECK(file_exists(path_join(l.flat_dir(), "Other Game.st0")));
+	CHECK(!file_exists(path_join(l.flat_dir(), l.name + ".st0")));
+	CHECK_EQ(migrate_to_bucket(l, &failed), 0);                           /* the marker: done */
+	States st(l);
+	CHECK_EQ(st.load(1, back), ST_OK);
+	CHECK(back == d1);
+	SlotInfo s2 = st.info(2);
+	CHECK(s2.present);
 }
 
 TEST(states_thumb_format_bytes)

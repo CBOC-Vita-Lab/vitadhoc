@@ -22,7 +22,7 @@ RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 OBJCOPY ?= objcopy
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/audio_sim.o $(B)/main.o
 
-all: $(B)/snes_twin $(B)/player_twin
+all: $(B)/snes_twin $(B)/player_twin $(B)/snes_wide_twin
 
 # player_twin: the Vita player's own logic (../vita/player.cpp) with playerkit's software renderer
 PK       := ../../playerkit
@@ -42,6 +42,23 @@ $(B)/player_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(PLAYER_OB
 	$(CXX) -o $@ $^ -lm -pthread
 
 $(B)/snes_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+
+# snes_wide_twin: the wide view runner (adapter ../frontend/wide.cpp + widekit, MIT) for the proofs in wide_selftest.sh
+WK       := ../../widekit
+WK_SRC   := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
+WK_OBJS  := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
+$(B)/wk/%.o: $(WK)/src/%.cpp $(wildcard $(WK)/include/*.h) $(wildcard $(WK)/src/*.h)
+	@mkdir -p $(B)/wk
+	$(CXX) $(OPT) -std=c++11 -Wall -fno-exceptions -fno-rtti -I$(WK)/include -c -o $@ $<
+$(B)/wide.o: $(FE)/wide.cpp $(FE)/wide.h $(CORE)/widecap.h $(wildcard $(WK)/include/*.h)
+	@mkdir -p $(B)
+	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(CORE) -I$(FE) -I$(WK)/include -c -o $@ $<
+$(B)/wide_twin.o: wide_twin.cpp $(FE)/host.h $(FE)/wide.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/snes_wide_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin.o $(WK_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread
 
 $(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh

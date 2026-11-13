@@ -264,8 +264,9 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
         const uint16_t *line = in->centre + (size_t)y * (size_t)in->centre_stride;
         for (int s = 0; s < 2; s++) {
             int r = 0, g = 0, b = 0;
+            const uint16_t *ep = in->edge_px[s] ? in->edge_px[s] + (size_t)y * WK_EDGE_N : NULL;
             for (int i = 0; i < ns; i++) {
-                unsigned p = s == 0 ? line[i] : line[W - 1 - i];
+                unsigned p = ep ? ep[i] : s == 0 ? line[i] : line[W - 1 - i];
                 r += c->lut5[(p >> 11) & 31u];
                 g += c->lut6[(p >> 5) & 63u];
                 b += c->lut5[p & 31u];

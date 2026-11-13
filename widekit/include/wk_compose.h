@@ -99,7 +99,13 @@ typedef struct wk_compose_in {
     const uint16_t *inner[WK_MAX_LAYERS][2];
     const uint8_t *inner_opaque[WK_MAX_LAYERS][2];
     int inner_n;
+    /* optional: the colours the soft edge samples, instead of the first / last soft_sample columns of `centre` (a core that
+     * knows its background apart from sprites passes background-only pixels: a sprite at the view edge must not smear into the
+     * soft edge).  edge_px[side][y * WK_EDGE_N + i], i = 0 the pixel at the view edge, growing inwards; NULL = from centre. */
+    const uint16_t *edge_px[2];
 } wk_compose_in;
+
+#define WK_EDGE_N 8     /* pixels per line and side of wk_compose_in.edge_px (>= soft_sample, which is at most 8) */
 
 typedef struct wk_compose wk_compose;
 

@@ -46,12 +46,21 @@ struct StateLayout {
 	std::string console;    /* "snes", "nes" (folder under states/) */
 	std::string name;       /* the game's file name without extension */
 	std::string ext_tag;    /* "" ; the GBA side uses ".gb"/".gbc" for Game Boy files */
+	/* states/<console>/<xx>/ with xx = the first two hex digits of crc32(name) (the bucket: 256
+	 * small folders, the layout VitAdhoc 1.4 uses for every console; FORMATS.md) */
 	std::string states_dir() const;
+	std::string flat_dir() const;                 /* states/<console>/: the layout before buckets */
 	std::string slot_path(int slot) const;        /* slot 1..10 -> name.st0..st9 */
 	std::string resume_path() const;
 	std::string undo_path() const;
 	std::string scene_path() const;
 };
+
+/* Move one game's files from the flat folder into its bucket, once: a marker <name><ext>.st0.mig in
+ * the bucket says it was done (one stat afterwards). Never over a file already in the bucket, never a
+ * file lost: one that cannot be moved stays, is reported, and the marker is not written (tried again
+ * next time). Returns the number of files moved; *failed gets the ones that could not be. */
+int migrate_to_bucket(const StateLayout &l, int *failed = 0);
 
 enum StateStatus {
 	ST_OK = 0,

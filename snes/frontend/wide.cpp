@@ -575,21 +575,23 @@ static void run(const SWideView *v)
 		}
 		if (!line_ok(Ln)) continue;
 		for (int s = 0; s < 2; s++) {
-			int n = Mh;
-			if (Ln.flags & SWL_MODE7) {
-				n = Mh;
-			} else {
-				if (lo->hud) n = 0;
+			int nex = Mh, nlay_ = Mh;     /* nex: every enabled layer is real (exact composite); nlay_: every layer that is not a HUD */
+			if (!(Ln.flags & SWL_MODE7)) {
+				if (lo->hud) nex = nlay_ = 0;
 				for (int l = 0; l < bg_count(Ln.mode); l++) {
 					if (!(Ln.tm & (1 << l))) continue;
-					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { n = 0; break; }
-					int r = lo->real[s][l];
-					if (r < n) n = r;
+					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; break; }
+					const int r = lo->real[s][l];
+					const int kind = wo->kind[l];
+					if (r < nex) nex = r;
+					if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r < nlay_) nlay_ = r;
+					if (kind == WK_KIND_HUD || kind == WK_KIND_OFF) nex = 0;
 				}
 			}
-			int claim = n >= Mh ? Mh : (n > fade ? n - fade : 0);
+			const int cex = nex >= Mh ? Mh : (nex > fade ? nex - fade : 0);
+			const int cla = nlay_ >= Mh ? Mh : (nlay_ > fade ? nlay_ - fade : 0);
 			const uint16_t *cp = v->pass_px[SWP_COMPOSITE] + (size_t) y * SW_PITCH;
-			for (int d = 0; d < claim; d++) {
+			for (int d = 0; d < cex; d++) {
 				const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
 				const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 				row[dx] = cp[col];
@@ -598,14 +600,14 @@ static void run(const SWideView *v)
 			if (!(Ln.flags & SWL_MODE7) && !sprites_off && ((Ln.pass >> SWP_OBJ) & 1)) {
 				const uint16_t *sp = v->pass_px[SWP_OBJ] + (size_t) y * SW_PITCH;
 				const uint8_t *sz = v->pass_z[SWP_OBJ] + (size_t) y * SW_PITCH;
-				for (int d = claim; d < Mh; d++) {
+				for (int d = cex; d < Mh; d++) {
 					const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
 					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 					if (sz[col]) { row[dx] = sp[col]; if (prow) prow[dx] = PROV_EXACT; }
 				}
 			}
-			o->real[y][s] = (uint8_t) claim;
-			if (s == 0) sl += claim; else sr += claim;
+			o->real[y][s] = (uint8_t) (cla > cex ? cla : cex);
+			if (s == 0) sl += o->real[y][0]; else sr += o->real[y][1];
 		}
 		nreal++;
 		if (o->real[y][0] == Mh && o->real[y][1] == Mh) st.lines_exact++;

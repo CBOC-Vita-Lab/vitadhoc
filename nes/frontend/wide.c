@@ -96,7 +96,7 @@ typedef struct {
 	unsigned pad;                      /* controller port 0 at the capture */
 	uint8_t palram[32];
 	uint16_t pal565[768];              /* RGB565 of the palette indexes (0..255 plain, 256.. emphasis variants) */
-	uint8_t wl[H][NESP_MBUF], wr[H][NESP_MBUF], wm[H][8];
+	uint8_t wl[H][NESP_MBUF], wr[H][NESP_MBUF], wm[H][16], wmr[H][8];
 	uint16_t centre[H * 256];
 	SnCore core;
 } Snap;
@@ -142,6 +142,7 @@ typedef struct {
 	uint16_t *wide;                       /* (256 + 2 * margin) x 240 */
 	uint16_t *cand[2];                    /* 240 x margin */
 	uint16_t *inner[2];                   /* 240 x WK_MAX_INNER */
+	uint16_t *edge[2];                    /* 240 x WK_EDGE_N: the colours the soft edge samples */
 	uint8_t *prov;
 	uint16_t bg[H];
 	uint8_t real[H][2];
@@ -851,8 +852,8 @@ static void free_objects(void)
 	if (W.C) wk_compose_destroy(W.C);
 	if (W.L) wk_layers_destroy(W.L);
 	W.C = NULL; W.L = NULL;
-	free(W.wide); free(W.cand[0]); free(W.cand[1]); free(W.inner[0]); free(W.inner[1]); free(W.prov);
-	W.wide = NULL; W.cand[0] = W.cand[1] = NULL; W.inner[0] = W.inner[1] = NULL; W.prov = NULL;
+	free(W.wide); free(W.cand[0]); free(W.cand[1]); free(W.inner[0]); free(W.inner[1]); free(W.edge[0]); free(W.edge[1]); free(W.prov);
+	W.wide = NULL; W.cand[0] = W.cand[1] = NULL; W.inner[0] = W.inner[1] = NULL; W.edge[0] = W.edge[1] = NULL; W.prov = NULL;
 	W.margin = 0;
 }
 
@@ -883,10 +884,12 @@ static int make_objects(void)
 	W.wide = (uint16_t *) calloc((size_t)(256 + 2 * m) * H, 2);
 	W.cand[0] = (uint16_t *) calloc((size_t) H * m, 2);
 	W.cand[1] = (uint16_t *) calloc((size_t) H * m, 2);
+	W.edge[0] = (uint16_t *) calloc((size_t) H * WK_EDGE_N, 2);
+	W.edge[1] = (uint16_t *) calloc((size_t) H * WK_EDGE_N, 2);
 	W.inner[0] = (uint16_t *) calloc((size_t) H * WK_MAX_INNER, 2);
 	W.inner[1] = (uint16_t *) calloc((size_t) H * WK_MAX_INNER, 2);
 	W.prov = (uint8_t *) calloc((size_t)(256 + 2 * m) * H, 1);
-	if (!W.L || !W.C || !W.wide || !W.cand[0] || !W.cand[1] || !W.inner[0] || !W.inner[1] || !W.prov) { free_objects(); return 0; }
+	if (!W.L || !W.C || !W.wide || !W.cand[0] || !W.cand[1] || !W.inner[0] || !W.inner[1] || !W.edge[0] || !W.edge[1] || !W.prov) { free_objects(); return 0; }
 	W.margin = m;
 	W.have_pal_prev = 0;
 	W.have_gid = 0;
@@ -1079,6 +1082,7 @@ int nes_host_wide_capture(nes_wide_snapshot *ps)
 		}
 	}
 	memcpy(sn->wm, nesp_wm, sizeof sn->wm);
+	memcpy(sn->wmr, nesp_wmr, sizeof sn->wmr);
 	memcpy(sn->centre, nesw_fb(), sizeof sn->centre);
 	scout_capture(sn);
 	return 1;
@@ -1101,6 +1105,8 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 	const Desc *D = &W.D;
 	const uint16_t *pal = sn->pal565;
 	int y, s, d;
+	uint16_t rt[128];   /* RGB565 of a raw margin pixel (grayscale / emphasis pass, palette): rebuilt when a line's p1 or emphasis differs */
+	int rt_ok = 0, rt_p1 = 0, rt_dm = 0;
 	for (y = 0; y < H; y++) {
 		const SnLine *nl = &sn->core.line[y];
 		wk_line_out *lo = &out->line[y];
@@ -1130,8 +1136,11 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 			int cidx = 0x7fffffff, cok = 0;
 			wk_cell cell;
 			for (d = 0; d < real; d++) {
-				uint8_t px = src[d];
+				const uint8_t raw = s == 0 ? src[M - 1 - d] : src[d];   /* raw pixel: through the line's grayscale / emphasis pass below */
+				uint8_t px = 0;
+				int ov = 0;
 				if (d < mpart) {
+					ov = 1;
 					wk_cell c0;
 					if (wk_map_margin_cell(W.M, fr, out, 0, y, s, 0, &c0)) {
 						px = post_px(nl->p1, cell_px(sn, D, c0.code, (out->world_x[0][y] - 1 - d) & 7, out->world_row[0][y] & 7));
@@ -1141,6 +1150,7 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 					}
 				} else if (have_geom && d >= ring) {
 					int wx = out->world_x[0][y], idx, xw;
+					ov = 1;
 					idx = s == 0 ? (int)(g.tile_first - fdiv8(wx - 1 - d)) : (int)(fdiv8(wx + 256 + d) - (g.tile_first + g.nvis - 1));
 					if (idx != cidx) {
 						cok = wk_map_margin_cell(W.M, fr, out, 0, y, s, idx, &cell);
@@ -1156,10 +1166,39 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 						break;
 					}
 				}
-				dst[d] = rgb_line(pal, deemp, px);
+				if (ov) { dst[d] = rgb_line(pal, deemp, px); continue; }
+				if (!rt_ok || rt_p1 != nl->p1 || rt_dm != (int) deemp) {
+					int v;
+					for (v = 0; v < 128; v++) rt[v] = rgb_line(pal, deemp, post_px(nl->p1, (uint8_t) v));
+					rt_ok = 1; rt_p1 = nl->p1; rt_dm = (int) deemp;
+				}
+				dst[d] = rt[raw & 127];
 			}
 		}
 		wk_out_refresh_line(out, y);
+	}
+}
+
+/* The colours the soft edge samples: background only, never sprite pixels. A line the PPU drew has its own background pixels
+ * (x = 0..15 and 248..255); with the left 8 px masked the left edge is sampled at x = 8.. (the visible background; the
+ * masked columns are backdrop or, in a ring as wide as the screen, the seam). Other lines: the centre picture. */
+static void build_edge(const Snap *sn)
+{
+	const SnCore *c = &sn->core;
+	const uint16_t *pal = sn->pal565;
+	int y, i;
+	for (y = 0; y < H; y++) {
+		const SnLine *l = &c->line[y];
+		uint16_t *el = W.edge[0] + (size_t) y * WK_EDGE_N, *er = W.edge[1] + (size_t) y * WK_EDGE_N;
+		if (l->flags & NESPL_DRAWN) {
+			const int x0 = (l->p1 & 2) ? 0 : 8;
+			for (i = 0; i < WK_EDGE_N; i++) {
+				el[i] = rgb_line(pal, l->deemp, post_px(l->p1, sn->wm[y][x0 + i]));
+				er[i] = rgb_line(pal, l->deemp, post_px(l->p1, sn->wmr[y][7 - i]));
+			}
+		} else {
+			for (i = 0; i < WK_EDGE_N; i++) { el[i] = sn->centre[y * 256 + i]; er[i] = sn->centre[y * 256 + 255 - i]; }
+		}
 	}
 }
 
@@ -1270,6 +1309,8 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 		ci.ana = out;
 		ci.centre = sn->centre; ci.centre_stride = 256;
 		ci.bg = W.bg;
+		build_edge(sn);
+		ci.edge_px[0] = W.edge[0]; ci.edge_px[1] = W.edge[1];
 		if (fr->nlayers) {
 			ci.cand[0][0] = W.cand[0]; ci.cand[0][1] = W.cand[1];
 			ci.order[0] = 0; ci.norder = 1;
@@ -1284,28 +1325,44 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 		wk_compose_frame(W.C, &ci);
 	}
 
-	/* 4. left mask fill: the 8 background pixels the hardware hides at x = 0..7, where the margin next to them is real.
-	   With a 64 column ring they are the ring's own pixels. With a 32 column ring the leftmost column's slot is the seam
-	   the game rewrites for the right edge: its part under the mask comes from the learned map (the world column as it was
-	   seen before) or the line is left masked; the next column's part is the ring's (it is on screen). Sprite pixels stay. */
+	/* 4. left mask fill: the 8 background pixels the hardware hides at x = 0..7 (a game that masks the left 8 px). Where the
+	   true background there is known it is drawn (where the margin next to them is real): a 64 column ring has them as ring
+	   pixels; in a 32 column ring the leftmost column's slot is the seam the game rewrites for the right edge, so its part under
+	   the mask comes from the learned map (the world column as it was seen before) and the next column's part is the ring's
+	   (it is on screen). Pixels with no known truth (the seam column without a map cell, fixed lines, lines without a certified margin) are
+	   not left as a dark band beside the margin: they continue the picture's margin there (the composed pixel at x = -1,
+	   marked SOFT in the provenance, never real). Sprite pixels stay. */
 	if (fr->nlayers) {
 		for (y = 0; y < H; y++) {
 			const SnLine *l = &C0->line[y];
 			uint8_t px8[8];
-			int ok = 1;
-			if (!(l->flags & NESPL_DRAWN) || (l->p1 & 2)) continue;
-			if (out->line[y].hud || out->line[y].real[0][0] < 8 || !out->coherent[0][y]) continue;
-			memcpy(px8, sn->wm[y], 8);
-			if (D->mw == 32) {
-				int wx = out->world_x[0][y], first = 8 - (wx & 7);   /* x < first: the leftmost (seam) column */
-				wk_cell c0;
-				if (!wk_map_margin_cell(W.M, fr, out, 0, y, 0, 0, &c0)) ok = 0;
-				for (i = 0; ok && i < first; i++)
-					px8[i] = post_px(l->p1, cell_px(sn, D, c0.code, (wx + i) & 7, out->world_row[0][y] & 7));
+			int unk = 8;     /* x < unk: no true background pixel known */
+			wk_cell c0;
+			if (!(l->flags & NESPL_VALID) || (l->flags & NESPL_BGOFF) || (l->p1 & 2)) continue;
+			/* the ring pixels under the mask are only the world's where the margin next to them is certified real */
+			if ((l->flags & NESPL_DRAWN) && !out->line[y].hud && out->line[y].real[0][0] >= 8 && out->coherent[0][y]) {
+				for (i = 0; i < 8; i++) px8[i] = post_px(l->p1, sn->wm[y][i]);
+				if (D->mw == 64) unk = 0;
+				else {
+					int wx = out->world_x[0][y], first = 8 - (wx & 7);   /* x < first: the leftmost (seam) column */
+					unk = first;
+					if (wk_map_margin_cell(W.M, fr, out, 0, y, 0, 0, &c0)) {
+						for (i = 0; i < first; i++)
+							px8[i] = post_px(l->p1, cell_px(sn, D, c0.code, (wx + i) & 7, out->world_row[0][y] & 7));
+						unk = 0;
+					}
+				}
 			}
-			if (!ok) continue;
-			for (i = 0; i < 8; i++)
+			for (i = unk; i < 8; i++)
 				if (!((l->sprm >> i) & 1)) W.wide[(size_t) y * (256 + 2 * M) + M + i] = rgb_line(pal565, l->deemp, px8[i]);
+			if (unk) {
+				const uint16_t cont = W.wide[(size_t) y * (256 + 2 * M) + M - 1];
+				for (i = 0; i < unk; i++)
+					if (!((l->sprm >> i) & 1)) {
+						W.wide[(size_t) y * (256 + 2 * M) + M + i] = cont;
+						if (W.debug) W.prov[(size_t) y * (256 + 2 * M) + M + i] = WK_PROV_SOFT;
+					}
+			}
 		}
 	}
 

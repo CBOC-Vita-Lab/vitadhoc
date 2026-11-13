@@ -212,7 +212,8 @@ uint32_t nesp_ntgen = 0, nesp_ntlast = 0;
 NespLine nesp_line[240];
 uint8_t nesp_wl[240][NESP_MBUF];
 uint8_t nesp_wr[240][NESP_MBUF];
-uint8_t nesp_wm[240][8];
+uint8_t nesp_wm[240][16];
+uint8_t nesp_wmr[240][8];
 uint8_t nesp_sprm[240];
 uint32_t nesp_ntstamp[NESP_NTP][1024];
 const uint8_t *nesp_ntptr[NESP_NTP];
@@ -291,31 +292,26 @@ static void nesp_line_start(const uint8_t *target) {
 
 /* Render the pixels of tiles t0..t1-1 of the line (tile 0 = the one the line starts with) from the loopy address v0
  * into dst[(t - t0) * 8 + k]. Read only: no PPU_hook, no latches, no bank calls. The pixel values are as RefreshLine
- * makes them (palette entry, bit 6 set on background colour), before the grayscale / emphasis pass. */
+ * makes them (palette entry, bit 6 set on background colour), before the grayscale / emphasis pass. The coordinates
+ * advance tile by tile (what nesp_step(v0, t) gives for each t). */
 static void nesp_tiles(uint32_t v0, int t0, int t1, uint8_t *dst, const uint8_t *pen) {
-	uint32_t vofs = ((PPU[0] & 0x10) << 8) | ((v0 >> 12) & 7);
-	int t;
+	const uint32_t vofs = ((PPU[0] & 0x10) << 8) | ((v0 >> 12) & 7), yb = v0 & 0x7BE0;
+	int cx = (int)(v0 & 31) + t0, t;
+	uint32_t nt = (v0 >> 10) & 1;
+	while (cx < 0) { cx += 32; nt ^= 1; }
+	while (cx >= 32) { cx -= 32; nt ^= 1; }
 	for (t = t0; t < t1; t++) {
-		uint32_t a = nesp_step(v0, t), pd, zz = a & 0x1F, cc, vadr;
+		const uint32_t a = yb | (nt << 10) | (uint32_t)cx, zz = (uint32_t)cx;
 		const uint8_t *C = vnapage[(a >> 10) & 3], *G;
-		cc = C[0x3c0 + (zz >> 2) + ((a & 0x380) >> 4)];
+		uint32_t cc = C[0x3c0 + (zz >> 2) + ((a & 0x380) >> 4)], pd;
 		cc = (cc >> ((zz & 2) + ((a & 0x40) >> 4))) & 3;
-		vadr = ((uint32_t)C[a & 0x3ff] << 4) + vofs;
-		G = VRAMADR(vadr);
-		pd = ppulut1[G[0]] | ppulut2[G[8]];
-		pd |= (cc << 2) * 0x11111111u;
+		G = VRAMADR(((uint32_t)C[a & 0x3ff] << 4) + vofs);
+		pd = (ppulut1[G[0]] | ppulut2[G[8]]) | (cc << 2) * 0x11111111u;
 		dst[0] = pen[pd & 15]; dst[1] = pen[(pd >> 4) & 15]; dst[2] = pen[(pd >> 8) & 15]; dst[3] = pen[(pd >> 12) & 15];
 		dst[4] = pen[(pd >> 16) & 15]; dst[5] = pen[(pd >> 20) & 15]; dst[6] = pen[(pd >> 24) & 15]; dst[7] = pen[pd >> 28];
 		dst += 8;
+		if (++cx == 32) { cx = 0; nt ^= 1; }
 	}
-}
-
-/* the same pass DoLine makes over the finished line: grayscale, then the emphasis / marker bits (p1 = PPU[1]) */
-static inline uint8_t nesp_post_p(uint8_t p1, uint8_t v) {
-	if (p1 & 1) v &= 0x30;
-	if ((p1 >> 5) == 7) return (uint8_t)((v & 0x3f) | 0xc0);
-	if (p1 & 0xE0) return (uint8_t)(v | 0x40);
-	return (uint8_t)((v & 0x3f) | 0x80);
 }
 
 /* after EndRL of scanline s: decide whether the line was steady and render the margins */
@@ -335,19 +331,21 @@ static void nesp_line_end(int s) {
 	if (!nesp_margin) return;
 	if (!nesp_plain_fetch()) { l->flags |= NESPL_BLOCK; return; }
 	{
-		uint8_t pen[16], tmp[16 * 8], *dl = nesp_wl[s], *dr = nesp_wr[s];
-		int m = nesp_margin, x0 = l->x0, d, tmin, tmax, u;
-		const uint8_t p1 = PPU[1];   /* what nesp_post_p reads: the same for every pixel of this line */
+		/* raw pixels (palette entry, bit 6 on the backdrop colour): the consumer applies the grayscale / emphasis pass of the
+		   line (PPU[1] is the line's p1) when it reads them. The left margin is stored left to right. */
+		uint8_t pen[16], tmp[16 * 8];
+		int m = nesp_margin, x0 = l->x0, tmin, tmax;
 		for (i = 0; i < 16; i++) pen[i] = (uint8_t)(PALRAM[i] | ((i & 3) ? 0 : 0x40));
-		/* left: pixels x = -m .. 7 (the last 8 are what the left mask hides); tiles tmin .. 1 */
+		/* left: pixels x = -m .. 15 (x = 0..7 are what the left mask hides); tiles tmin .. 2 */
 		tmin = (x0 - m) >> 3;
-		nesp_tiles(l->v0, tmin, 2, tmp, pen);
-		for (d = 0; d < m; d++) { u = (-1 - d) + x0 - 8 * tmin; dl[d] = nesp_post_p(p1, tmp[u]); }
-		for (d = 0; d < 8; d++) { u = d + x0 - 8 * tmin; nesp_wm[s][d] = nesp_post_p(p1, tmp[u]); }
-		/* right: pixels x = 256 .. 255+m; tiles 32 .. tmax */
+		nesp_tiles(l->v0, tmin, 3, tmp, pen);
+		memcpy(nesp_wl[s], tmp + (x0 - m - 8 * tmin), (size_t)m);
+		memcpy(nesp_wm[s], tmp + (x0 - 8 * tmin), 16);
+		/* right: pixels x = 248 .. 255+m; tiles 31 .. tmax */
 		tmax = (255 + m + x0) >> 3;
-		nesp_tiles(l->v0, 32, tmax + 1, tmp, pen);
-		for (d = 0; d < m; d++) { u = 256 + d + x0 - 8 * 32; dr[d] = nesp_post_p(p1, tmp[u]); }
+		nesp_tiles(l->v0, 31, tmax + 1, tmp, pen);
+		memcpy(nesp_wmr[s], tmp + x0, 8);
+		memcpy(nesp_wr[s], tmp + 8 + x0, (size_t)m);
 		l->flags |= NESPL_DRAWN;
 	}
 }

@@ -9,9 +9,25 @@ little-endian.
 
 ## Save states
 
-Folder: `<root>/states/<console>/`, with `<console>` = `snes`, `nes`, and so
-on. `<name>` is the game's file name without its extension (no folder, no
-`.sfc`), exactly as written, spaces and brackets included.
+Folder: `<root>/states/<console>/<xx>/`, with `<console>` = `snes`, `nes`,
+`gba`, `gb`, `gbc`, `ws`, and `<xx>` the game's bucket: the first two hex
+digits (lower case) of the CRC-32 (zlib's) of `<name>`'s bytes, e.g.
+`Super Example World (USA)` -> crc32 `f3a54da3` -> `states/snes/f3/`. 256
+small folders instead of one with thousands of files: a lookup in a big
+folder on the Vita's card takes seconds. `<name>` is the game's file name
+without its extension (no folder, no `.sfc`), exactly as written, spaces and
+brackets included. The VitAdhoc app uses the same layout for its own consoles
+(its Game Boy files carry `.gb`/`.gbc` before `.stN`).
+
+Before 1.4 the files were in `<root>/states/<console>/` itself (and before
+1.3 beside the ROM). A game's files are moved into its bucket the first time
+the game is looked at (`migrate_to_bucket`; the app's
+`sidecar_migrate_game`): never over a file already in the bucket (that one
+wins, the old one stays where it was), and a file that cannot be moved stays
+and is tried again next time. When everything moved, an empty marker
+`<name><ext>.st0.mig` in the bucket says so, and later looks cost one stat.
+A reader that finds no marker and no files in the bucket may look in the old
+flat folder.
 
 | file | what |
 | --- | --- |
@@ -21,6 +37,7 @@ on. `<name>` is the game's file name without its extension (no folder, no
 | `<name>.stN.meta` | playerkit's own note (optional; a reader may ignore it) |
 | `<name>.rsm` | "Continue": where the game was left (written on exit and about once a minute) |
 | `<name>.rsm.pt` | which patch the resume point was made with (text) |
+| `<name><ext>.st0.mig` | empty: this game's files are all in the bucket (see above) |
 | `<root>/scenes/<name>.shot` | the home screen's picture of the game, same picture format as `.shot` |
 
 A game with a ROM patch applied keeps the same `<name>`; the patch is told

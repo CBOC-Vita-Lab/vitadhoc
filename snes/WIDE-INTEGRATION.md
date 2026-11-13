@@ -88,3 +88,14 @@ look as the app's ambient backdrop. Pixels not trusted fade over 24 px into it.
 wide / ambient / cross-fading, fallback reasons (nothing drawn, profile off, setup), Auto switches, scene events, margin pixels by
 provenance (tilemap, learned, backdrop, unknown), map cells, current coverage and the Auto state. The player writes one log line per
 second from it while the wide view is on. `snes_wide_twin --summary` prints the same (`census:` and `censuspx:` lines).
+
+## Learned map and sub screen layers (13 Nov 2026)
+
+- The learned map identifies a cell by its content hash (tilemap word + the tile's graphics) instead of a global tile set identity
+  (`wk_layer.map_by_cell`, opt-in; the NES adapter does not set it and its golden output is unchanged). The adapter re-checks that hash
+  against the tile's graphics today before showing a served cell, so a changed or animated tile is never shown stale.
+- Colour math on the backdrop alone (`cgadsub` 0x20, no window, no clip) no longer disables the layered continuation. A BG that is only on
+  the sub screen (Yoshi's Island's far mountains) is drawn by the core as backdrop + layer (`SWideLine.tsx`), and map cells of such a layer
+  get the same "add" maths (only for `cgadsub == 0x20`; other maths keep the ring-only extent).
+- Not done: backdrop pixels not covered by any layer are still the soft edge (the colour is not guessed); a foreground that is unknown
+  beside a known backdrop ends with a hard edge (no per layer fade beyond the real extent yet).

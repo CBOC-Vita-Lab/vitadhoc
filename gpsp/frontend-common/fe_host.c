@@ -183,13 +183,16 @@ static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
          HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
       return;
    }
-   if (frame && frame->pixels && host.console == FE_CONSOLE_WSWAN &&
+   if (frame && frame->pixels &&
+       (host.console == FE_CONSOLE_WSWAN || host.console == FE_CONSOLE_NES) &&
        (frame->width != gb_pic_w || frame->height != gb_pic_h))
    {
-      /* the WonderSwan turns its picture (wscore.h): the size follows */
+      /* the WonderSwan turns its picture (wscore.h), the NES widens it
+       * (nescore.h wide view): the size follows */
       gb_pic_w = frame->width;
       gb_pic_h = frame->height;
-      fe_evt("ws_picture w=%u h=%u", gb_pic_w, gb_pic_h);
+      fe_evt("%s_picture w=%u h=%u", host.console == FE_CONSOLE_NES ? "nes" : "ws",
+             gb_pic_w, gb_pic_h);
    }
    if (!frame || !frame->pixels || frame->width != gb_pic_w || frame->height != gb_pic_h ||
        frame->pitch_bytes < frame->width * sizeof(uint16_t))

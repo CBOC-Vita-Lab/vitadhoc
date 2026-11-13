@@ -85,6 +85,17 @@ void nescore_set_fourscore(nescore_t *core, int mode);
 int nescore_peek(nescore_t *core, unsigned address);
 void nescore_reset(nescore_t *core);
 
+/* The wide view (nes/frontend/host.h "wide view"): 0 Auto (the wider
+ * picture while the game's sides can be shown, else the original 256
+ * columns), 1 On (always the wider picture, soft edges where nothing is
+ * known), 2 Off.  Set before create; takes effect at the next frame.  The
+ * learned map of each game is kept in <system dir>/wide/<key>.map (loaded
+ * at create, written safely at shutdown).  The scout stays off. */
+enum { NESCORE_WIDE_AUTO = 0, NESCORE_WIDE_ON = 1, NESCORE_WIDE_OFF = 2 };
+void nescore_set_wide(int mode);
+/* 1 while the last frame handed over was the wider picture */
+int nescore_wide_shown(void);
+
 #ifdef __cplusplus
 }
 #endif

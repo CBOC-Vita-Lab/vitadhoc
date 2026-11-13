@@ -3631,6 +3631,23 @@ static void smcr_trace(char kind)
   /* Every 4th event also carries the machine state: the events are guest
    * points common to both modes (the per-frame log samples at the first
    * lookup of a frame, which a dispatch-cache hit can move). */
+  if (frame_counter >= smcr_xtrace_lo && frame_counter <= smcr_xtrace_hi) {
+    /* debug: per-area hashes and the registers */
+    const u8 *areas[6] = { ewram, iwram + 0x8000, vram, (const u8 *)oam_ram,
+                           (const u8 *)palette_ram, (const u8 *)io_registers };
+    const u32 sizes[6] = { 0x40000, 0x8000, 1024 * 96, 1024, 1024, 1024 };
+    u32 k, i;
+    fprintf(smcr_trace_f, "A");
+    for (k = 0; k < 6; k++) {
+      u32 h = 2166136261u;
+      for (i = 0; i < sizes[k]; i++)
+        h = (h ^ areas[k][i]) * 16777619u;
+      fprintf(smcr_trace_f, " %08x", (unsigned)h);
+    }
+    for (i = 0; i < 16; i++)
+      fprintf(smcr_trace_f, " r%u=%08x", (unsigned)i, (unsigned)reg[i]);
+    fprintf(smcr_trace_f, "\n");
+  }
   if (!(n++ & 3))
     fprintf(smcr_trace_f, "%c %u %08x %u st=%08x\n", kind,
             (unsigned)frame_counter, (unsigned)reg[REG_PC],

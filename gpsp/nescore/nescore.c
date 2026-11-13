@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define AUDIO_CHUNK 2048
 
@@ -25,6 +26,56 @@ static int g_live;
 static int g_inited;
 static char g_err[96];
 static char g_sysdir[512];
+static int g_wide = NESCORE_WIDE_AUTO;
+static int g_wide_shown;
+static nescore_video_frame_t g_last_vf;   /* the last picture handed over */
+static unsigned g_wide_dark;     /* frames in a row with no real side picture */
+#define WIDE_MARGIN 84           /* 240 lines at square pixels on 16:9 */
+
+void nescore_set_wide(int mode)
+{
+  g_wide = mode == NESCORE_WIDE_ON || mode == NESCORE_WIDE_OFF ? mode : NESCORE_WIDE_AUTO;
+  if (g_live)
+  {
+    nes_host_wide_enable(g_wide == NESCORE_WIDE_OFF ? 0 : 1);
+    nes_host_wide_margin(g_wide == NESCORE_WIDE_OFF ? 0 : WIDE_MARGIN);
+  }
+}
+int nescore_wide_shown(void) { return g_wide_shown; }
+
+static int wide_map_path(char *p, size_t cap)
+{
+  uint32_t key = nes_host_wide_map_key();
+  if (!key || !g_sysdir[0]) return -1;
+  return snprintf(p, cap, "%s/wide/%08x.map", g_sysdir, (unsigned)key) < (int)cap ? 0 : -1;
+}
+
+static void wide_map_save(void)
+{
+  char p[600], tmp[610];
+  size_t n;
+  uint8_t *b;
+  FILE *f;
+  int ok;
+  if (g_wide == NESCORE_WIDE_OFF || !nes_host_wide_map_dirty() || wide_map_path(p, sizeof(p)) != 0)
+    return;
+  n = nes_host_wide_map_save(NULL, 0);
+  if (!n || !(b = (uint8_t *)malloc(n))) return;
+  n = nes_host_wide_map_save(b, n);
+  {
+    char d[600];
+    snprintf(d, sizeof(d), "%s/wide", g_sysdir);
+    mkdir(d, 0777);
+  }
+  /* written whole beside it, then put in its place: a cut leaves the old map */
+  snprintf(tmp, sizeof(tmp), "%s.tmp", p);
+  f = fopen(tmp, "wb");
+  ok = f && fwrite(b, 1, n, f) == n;
+  if (f && fclose(f) != 0) ok = 0;
+  if (ok && rename(tmp, p) != 0) ok = 0;
+  if (!ok) remove(tmp);
+  free(b);
+}
 
 void nescore_set_system_dir(const char *dir)
 {
@@ -110,6 +161,17 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
     if (s) { nes_host_sram_load(s, sn); free(s); }
   }
   g_live = 1;
+  g_wide_shown = 0;
+  g_wide_dark = 0;
+  memset(&g_last_vf, 0, sizeof(g_last_vf));
+  nescore_set_wide(g_wide);
+  if (g_wide != NESCORE_WIDE_OFF)
+  {
+    char p[600];
+    size_t mn = 0;
+    uint8_t *m = wide_map_path(p, sizeof(p)) == 0 ? read_all(p, &mn, 16u << 20) : NULL;
+    if (m) { nes_host_wide_map_load(m, mn); free(m); }
+  }
   return &g_core;
 }
 
@@ -122,12 +184,30 @@ int nescore_run_frame(nescore_t *core, unsigned buttons)
   nes_host_set_pad(0, buttons & 0xFFu);
   nes_host_run_frame();
   px = nes_host_video(&w, &h, &pitch);
+  if (g_wide != NESCORE_WIDE_OFF)
+  {
+    const uint16_t *wp = NULL;
+    int ww = 0, wpitch = 0;
+    nes_wide_stats st;
+    if (nes_host_wide_frame(&wp, &ww, &wpitch, &st) && wp)
+    {
+      /* Auto: the sides only while there is something real to show in
+       * them (a second without any: the original picture again) */
+      g_wide_dark = st.real_l + st.real_r > 0 ? 0 : g_wide_dark + 1;
+      if (g_wide == NESCORE_WIDE_ON || g_wide_dark < 60)
+      {
+        px = wp; w = ww; pitch = wpitch;
+      }
+    }
+  }
+  g_wide_shown = w > NES_WIDTH;
   if (core->cb.video && px)
   {
     vf.pixels = (const uint16_t *)((const uint8_t *)px + (size_t)core->top * (size_t)pitch);
-    vf.width = core->width;
+    vf.width = (unsigned)w;
     vf.height = core->height;
     vf.pitch_bytes = (unsigned)pitch;
+    g_last_vf = vf;
     core->cb.video(core->cb.userdata, &vf);
   }
   while ((got = nes_host_audio_take(core->audio, AUDIO_CHUNK)) > 0)
@@ -142,6 +222,11 @@ int nescore_repeat_frame(nescore_t *core)
   const uint16_t *px;
   int w, h, pitch;
   if (core != &g_core || !g_live) return -1;
+  if (g_last_vf.pixels && core->cb.video)
+  {
+    core->cb.video(core->cb.userdata, &g_last_vf);   /* the same picture again */
+    return 0;
+  }
   px = nes_host_video(&w, &h, &pitch);
   if (core->cb.video && px)
   {
@@ -163,6 +248,7 @@ void nescore_set_skip_render(nescore_t *core, int skip)
 void nescore_shutdown(nescore_t *core)
 {
   if (core != &g_core || !g_live) return;
+  wide_map_save();
   nes_host_unload();
   nes_host_set_render(1);
   g_live = 0;

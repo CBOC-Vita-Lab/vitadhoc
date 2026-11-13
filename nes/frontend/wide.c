@@ -1199,7 +1199,7 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 			   game rewrites (the seam), so the part of it left of the screen comes from the learned map or not at all */
 			mpart = (s == 0 && have_geom && W.st.ring_w == 32 && !(nl->p1 & 2)) ? g.part[0] : 0;
 			/* the learned map's cell is the same for the 8 px of one tile: look it up once per tile */
-			int cidx = 0x7fffffff, cok = 0;
+			int cidx = 0x7fffffff, cok = 0, nsc = 0, fin = real;
 			wk_cell cell;
 			for (d = 0; d < real; d++) {
 				const uint8_t raw = s == 0 ? src[M - 1 - d] : src[d];   /* raw pixel: through the line's grayscale / emphasis pass below */
@@ -1212,6 +1212,7 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 						px = post_px(nl->p1, cell_px(sn, D, c0.code, (out->world_x[0][y] - 1 - d) & 7, out->world_row[0][y] & 7));
 					} else {
 						lo->real[s][0] = (uint16_t) d; lo->ring[s][0] = (uint16_t) (ring < d ? ring : d);
+						fin = d;
 						break;
 					}
 				} else if (have_geom && d >= ring) {
@@ -1229,17 +1230,23 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 					} else {
 						/* widekit said real but the map has no cell here: never show the raw ring in its place */
 						lo->real[s][0] = (uint16_t) d;
+						fin = d;
 						break;
 					}
 				}
-				if (ov) { dst[d] = rgb_line(pal, deemp, px); if (d >= ring && d >= mpart && cok && cell.scout) W.cen_scout++; else W.cen_map++; continue; }
-				W.cen_real++;
+				if (ov) { dst[d] = rgb_line(pal, deemp, px); if (d >= mpart && cok && cell.scout) nsc++; continue; }
 				if (!rt_ok || rt_p1 != nl->p1 || rt_dm != (int) deemp) {
 					int v;
 					for (v = 0; v < 128; v++) rt[v] = rgb_line(pal, deemp, post_px(nl->p1, (uint8_t) v));
 					rt_ok = 1; rt_p1 = nl->p1; rt_dm = (int) deemp;
 				}
 				dst[d] = rt[raw & 127];
+			}
+			{
+				/* census: of the fin px drawn, the raw ones are d >= mpart and (with a geometry) d < ring; the rest came from the map */
+				int hi = have_geom ? (fin < ring ? fin : ring) : fin, raw = hi - mpart;
+				if (raw < 0) raw = 0;
+				W.cen_real += (uint64_t) raw; W.cen_scout += (uint64_t) nsc; W.cen_map += (uint64_t) (fin - raw - nsc);
 			}
 		}
 		wk_out_refresh_line(out, y);

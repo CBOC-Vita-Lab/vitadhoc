@@ -115,6 +115,10 @@ static void *mf_realloc(void *ptr, size_t n)
 #define STBI_NO_STDIO
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
+/* no thread-local flags (we set none): stb's __thread pulls libgcc's emutls,
+ * whose pthread_* references are WEAK and unresolved here -- the Vita build
+ * fails on those (Makefile CHECK_WEAK) */
+#define STBI_NO_THREAD_LOCALS
 #define STBI_MALLOC(n) mf_alloc(n)
 #define STBI_REALLOC(p, n) mf_realloc(p, n)
 #define STBI_FREE(p) mf_free(p)

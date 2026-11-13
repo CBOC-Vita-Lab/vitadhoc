@@ -747,17 +747,18 @@ static void run(const SWideView *v)
 		}
 		if (!line_ok(Ln)) continue;
 		for (int s = 0; s < 2; s++) {
-			int nex = Mh, nlay_ = Mh;     /* nex: every enabled layer is real (exact composite); nlay_: every layer that is not a HUD */
+			int nex = Mh, nlay_ = Mh, rmax_ = 0;   /* nex: every enabled layer is real (exact composite); nlay_: every layer that is not a HUD; rmax_: the widest real extent of any layer */
 			if (!(Ln.flags & SWL_MODE7)) {
 				if (lo->hud) nex = nlay_ = 0;
 				for (int l = 0; l < bg_count(Ln.mode); l++) {
 					if (!(Ln.tm & (1 << l))) continue;
-					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; break; }
+					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; rmax_ = 0; break; }
 					const int r = A.xl[y] ? A.xr[y][s][l] : lo->real[s][l];
 					const int rr = A.xl[y] ? r : (lo->ring[s][l] < r ? lo->ring[s][l] : r);   /* the core's composite pass only knows the ring */
 					const int kind = wo->kind[l];
 					if (rr < nex) nex = rr;
 					if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r < nlay_) nlay_ = r;
+					if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r > rmax_) rmax_ = r;
 					if (kind == WK_KIND_HUD || kind == WK_KIND_OFF) nex = 0;
 				}
 			}
@@ -774,14 +775,15 @@ static void run(const SWideView *v)
 				const uint16_t *sp = v->pass_px[SWP_OBJ] + (size_t) y * SW_PITCH;
 				const uint8_t *sz = v->pass_z[SWP_OBJ] + (size_t) y * SW_PITCH;
 				/* sprites end where the layers' real picture ends (same fade): never a sprite floating on the ambient colour */
-				const int sb = nlay_ >= Mh ? Mh : nlay_;
+				const int sbm = rmax_ > nlay_ ? rmax_ : nlay_;
+				const int sb = sbm >= Mh ? Mh : sbm;
 				for (int d = cex; d < sb; d++) {
 					const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
 					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 					if (!sz[col]) continue;
 					const int w = (sb < Mh && d >= sb - fade) ? (sb - d) * 32 / fade : 32;
 					row[dx] = w >= 32 ? sp[col] : mix565(row[dx], sp[col], w);
-					prow[dx] = PROV_EXACT;
+					prow[dx] = w >= 32 ? PROV_EXACT : WK_PROV_FADE;      /* a faded sprite pixel is not a claim of real picture */
 				}
 			}
 			o->real[y][s] = (uint8_t) (cla > cex ? cla : cex);

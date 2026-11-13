@@ -257,8 +257,10 @@ Small fixes found by the NES twin's truth checker (synthetic scrolling cartridge
 * Threading: the compose half of the NES adapter (describe + `wk_layers_update` + `wk_map_*` + `wk_compose_frame`) runs on its own
   thread from a captured snapshot; the handles stay single threaded (the compose thread owns them, the scout posts its cells to
   a queue the compose thread replays into `wk_map_record_scout`). Checked under ThreadSanitizer. Instructions per frame in the
-  adapter on x86_64: compose half 3.68 M, of which `wk_compose_frame` 2.1 M (`base_fill` 1.2 M: the soft edge row is recomputed each
-  frame), `wk_layers_update` 0.19 M, `wk_map_*` 0.1 M.
+  adapter on x86_64: compose half 3.60 M, of which `wk_compose_frame` 1.4 M (`base_fill` 1.0 M), `wk_layers_update` 0.17 M, `wk_map_*` 0.1 M.
+* `wk_compose`: whole soft edge rows are cached per (edge colour, side, y & 3) in a direct mapped table of 128 rows, and runs of
+  untouched pixels of a margin row are copied whole (output byte identical: the widekit golden and the 37 NES hash files are unchanged).
+* `wk_cell.scout` (new field, 1 = the cell was recorded by the look-ahead and not yet seen live), filled by `wk_map_margin_cell`.
 
 ## Measured 12 Nov 2026 (the chores of this file)
 

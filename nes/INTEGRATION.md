@@ -169,7 +169,7 @@ What it does (details in `nes/frontend/wide.c`, `nes/core/nesp_wide.h`, `widekit
   fetches never call a hook); verified identical frames/RAM/state/audio on MMC3 cartridges including the IRQ split
   cartridge.
 
-Cost, measured 12 Nov 2026 (`nes/twin/tests/wide_cost.c` linked with `nescore.o` SCOUT=1: `scroll_vert.nes` from a saved state
+Cost, measured 12 Nov 2026, single thread, SUPERSEDED by the split-thread table below (13 Nov) (`nes/twin/tests/wide_cost.c` linked with `nescore.o` SCOUT=1: `scroll_vert.nes` from a saved state
 at frame 300, holding right, 84 px margins; instructions per frame as the difference of two run lengths):
 
 | | x86_64 (callgrind) | armhf (qemu-arm, `-one-insn-per-tb`) |
@@ -215,30 +215,72 @@ after the decision (it started in the same frame before; scout runs differ from 
 checks unchanged: zero wrong pixels, leads within 1 px).
 Proof: `nes_twin --wide-split` runs capture on the main thread and compose + scout step on two real threads (a mutex / condition
 variable job each); `wide_golden.sh` with `WG_EXTRA=--wide-split` writes the same 37 hash files as without (first pass, second
-pass with the learned map, scout, map reused in another play, the 9 synthetic cartridges): `diff -r` empty. Under
-`-fsanitize=thread` (`make B=build_tsan EXTRA="-fsanitize=thread -g" OPT=-O1`): 5 scrolling cartridges x (first pass, second pass,
-scout), 700 frames each, zero reports.
+pass with the learned map, scout, map reused in another play, the 9 synthetic cartridges), and both equal the checked-in
+baseline `nes/twin/wide_golden_sha256.txt` (`WG_VERIFY=1`; `WG_WRITE=1` rewrites it). ThreadSanitizer over the WHOLE suite:
+`make -C nes/twin B=build_tsan EXTRA="-fsanitize=thread -g" OPT=-O1`, then `sh nes/twin/wide_tsan.sh OUTDIR` runs the cartridges
+one after another (one `wide_golden.sh WG_ONLY=<name> WG_EXTRA=--wide-split` per cartridge, each its own TSan log, each finished in
+a few minutes): 10 cartridges, 37 hash files, every file equal to the single-call baseline, zero ThreadSanitizer reports.
 
-Cost after the split, instructions per frame (`wide_cost` modes 0 off, 1 `wide_frame`, 3 capture only, 4 capture + compose + scout;
-x86_64 callgrind; armhf `-O2 -mcpu=cortex-a9 -mfpu=neon` under qemu-arm `-one-insn-per-tb`; scroll_vert at frame 300, right held, 84 px):
+Baseline history: `wide_golden_sha256.txt` was written on 13 Nov 2026 (re-baseline). Reasons: (1) the scout schedule is lagged by
+about two frames (the split needs it), (2) the look fixes below (soft edge, masked column), (3) scroll_4way's ROM was corrected
+(see "scroll_4way" below). Before re-baselining the scout files, `--wide-truth --scout 2` on the four scrolling cartridges
+showed wrong = 0 and leads unchanged to within 1 px (solid lead left / right: scroll_vert 69.1 / 53.6, scroll_mmc3 62.3 / 45.2,
+scroll_chrram 69.3 / 47.1, scroll_4way 18.5 / 8.4 px).
 
-| | x86_64 before (12 Nov tree) | x86_64 after | armhf after |
+Cost, instructions per frame (`wide_cost` modes 0 off, 1 `wide_frame`, 3 capture only, 4 capture + compose + scout step of 2;
+x86_64 callgrind over frames 30..90 (mode 4: scout in steady state); armhf `-O2 -mcpu=cortex-a9 -mfpu=neon` under qemu-arm
+`-one-insn-per-tb` over frames 6..18 (scout while starting); scroll_vert from the state at frame 300, right held, 84 px):
+
+| | x86_64 12 Nov tree | x86_64 split, 13 Nov start | x86_64 final | armhf 13 Nov start | armhf final |
+|---|---|---|---|---|---|
+| wide off | 2.72 M | 2.72 M | 2.72 M | 2.82 M | 2.82 M |
+| wide on, one call | 7.56 M | 7.19 M | 7.10 M | 6.95 M | 6.43 M |
+| emulation thread, split (core + recorder + capture) | 7.56 M | 3.50 M | 3.50 M (+0.78 M) | 3.44 M | 3.44 M (+0.62 M) |
+| of it nes_host_wide_capture | - | 0.17 M | 0.17 M | - | - |
+| compose thread | - | 3.68 M | 3.60 M | 3.51 M | 2.99 M |
+| scout thread (2 frames per step) | 7.16 M | 7.12 M | 7.8 M | 6.53 M | 6.53 M |
+
+Where the +0.78 M on the emulation thread goes (x86, per frame): `nesp_tiles` 0.51 M (the PPU recorder renders 14 left + 12 right
+margin tiles for each of the 240 lines: about 82 instructions per tile), the rest of the PPU loop 0.07 M, memcpy of the snapshot
+(pattern pages, nametables when they changed, margin rows) 0.14 M, `ResetRL`, `cap_core` and the recorder's bookkeeping 0.06 M.
+It is not reducible without changing what the recorder is: the margin pixels are rendered at the moment the line is drawn because
+the nametable can change before the frame ends, and which of those tiles compose will use (the core's own "real" margin) is only
+known to widekit after the frame. Skipping tiles on a guess would change the output, so nothing was cut. The two other
+candidates were measured: a per tile cache is not cheaper than the 82 instruction render; skipping margin columns where the learned
+map has a trusted cell would need the map (compose thread state) on the emulation thread.
+Compose thread: the soft edge rows are cached (a whole row per edge colour, side and row phase: 50 to 70 % hits, -0.2 M) and
+untouched runs of a row are copied whole (ARM -0.5 M); `base_fill` is still about 1.0 M, `nes_host_wide_compose` itself 0.8 M,
+`wk_compose_frame` 0.33 M, `describe` 0.23 M, `wk_layers_update` 0.17 M, `edge_colours` 0.17 M. The target of 2.0 M was NOT met
+(3.6 M x86, 3.0 M armhf): describe() caching and a per column map memo were not done (0.2 M each at best), and the soft edge cache
+saves less than hoped because the vertically blurred edge colour is different on most lines.
+Vita estimate (444 MHz, armhf instructions / (444 M x IPC); not measured on hardware):
+
+| thread | instructions | IPC 1.0 | IPC 0.7 |
 |---|---|---|---|
-| wide off | 2.72 M | 2.72 M | 2.82 M |
-| wide on, one call | 7.56 M | 7.19 M | 6.95 M (12 Nov figure 6.25 M, other build) |
-| emulation thread, split (core + recorder + capture) | 7.56 M | 3.50 M (+0.78 M) | 3.44 M (+0.61 M) |
-| of it capture alone | - | 0.17 M | - |
-| compose thread | - | 3.68 M | 3.51 M |
-| scout thread (two frames per step while catching up) | 7.16 M | 7.12 M | 6.53 M |
+| emulation thread, wide on (split) | 3.44 M | 7.7 ms | 11.1 ms |
+| (core alone, wide off) | 2.82 M | 6.4 ms | 9.1 ms |
+| compose thread | 2.99 M | 6.7 ms | 9.6 ms |
+| scout thread (only while it catches up) | 6.53 M | 14.7 ms | 21.0 ms |
 
-What changed: the PPU recorder keeps the margin pixels raw (no per-pixel grayscale pass: -0.7 M on the emulation thread) and
-`nesp_tiles` advances the tile coordinates incrementally (-0.1 M); the compose half converts raw pixels with a 128 entry table
-per line state. Not done (gain too small or too risky for identical output): describe() caching (0.23 M of the compose thread),
-a soft edge row cache (base_fill is 1.2 M of the compose thread), per-column learned map memo. CHR tile identity caching
-was not needed: the pattern pages are copied (4-16 KB, 0.17 M with everything else).
-Vita estimate (444 MHz, IPC 0.7 / 1.0, armhf figures, not measured on hardware): emulation thread with wide on (split)
-3.44 M = 11.1 / 7.7 ms (core alone 2.82 M = 9.1 / 6.4 ms); compose thread 3.51 M = 11.3 / 7.9 ms; scout thread 6.53 M = 21.0 / 14.7
-ms (only while it catches up; nothing while it is `ahead` frames in front). Compose and scout each need a core of their own.
+Compose and the scout each need a core of their own; the 16.7 ms frame holds all of them only at IPC 1.0 on three cores.
+
+Scout duty cap (`nes_host_scout_step_paced(headroom_us)`, host.h): the scout is the only part that can exceed one frame of work
+per frame. The app measures the time left in the real frame after the emulation thread, compose and audio and passes it; the scout
+runs nothing when it is 0 or less, otherwise at most "duty" frames (option, default 2) and at most as many as fit in
+(100 - "reserve")% of the headroom (option "reserve", default 30) at the running estimate of its own cost per frame (needs
+`nes_host_scout_set_clock`). A scout that is never given time does not make the capture take a new state every few frames (it
+holds 120 frames); `--scout-headroom US` runs the twin through it (0: the scout never runs, snapshots 1, frames 0; 8000: same
+result as step(2)). Without a clock only "duty" applies.
+
+Census (`nes_host_wide_census`, `nes_host_wide_census_reset`, host.h): cumulative counters since the game was loaded, for one
+log line per second. frames_composed, active_frames (a background layer described), margin pixels summed over lines and both sides
+by source (px_real core margins, px_map learned map, px_scout look-ahead cells, px_backdrop flat continuation, px_soft soft edge;
+they add up to px_total = frames * 2 * margin * 240; divide by frames * 240 for columns), scout_frames / scout_snapshots /
+scout_stops, map_cells and map_scout_cells (cells learned from the scout). Example, scroll_vert 900 frames, right held,
+`--wide-report`: `census: frames=900 active=894 margin_px: real=46.6% map=0.0% scout=30.4% backdrop=6.4% soft=16.6% scout_frames=1247
+snapshots=4 stops=0 map_cells=4197 scout_cells=3240`; second pass (map loaded, no scout): `map` takes over what the scout gave. The
+scout counters are atomics (any thread); the rest is the compose thread's value after its last compose. Counting costs nothing
+measurable (per line arithmetic).
 
 Look fixes (13 Nov 2026), checked on strips in `scratchpad/nes-wide-shots/w2/`:
 * the soft edge samples background only (PPU records the background pixels x = 0..15 and 248..255 without sprites; with the left
@@ -247,10 +289,18 @@ Look fixes (13 Nov 2026), checked on strips in `scratchpad/nes-wide-shots/w2/`:
   learned map's cell); everything else continues the margin (the composed pixel at x = -1, provenance SOFT, never real) instead of
   a dark band;
 * the two "stray tiles" of scroll_vert_scout_s00400.png are SPRITES the cartridge draws (an enemy that drifts through the left
-  edge, an object on the ground): the truth picture has no sprites. `--wide-truth` now classifies every centre pixel that differs
-  from the truth: sprites (from the game's OAM), status bar rows, scene-change frames, the masked column, rows the truth does not
-  know, unexplained. scroll_vert, scroll_chrram, single_screen: unexplained 0 / 84 / 0 px of 55 M; scroll_mmc3 0; scroll_4way
-  113 k px, all in the last rows (232..239) of the vertical level (truth image edge), not investigated further.
+  edge, an object on the ground): the truth picture has no sprites. `--wide-truth` classifies every centre pixel that differs
+  from the truth: sprites (from the game's OAM), status bar rows, scene-change frames (start-up and the first 4 frames after a scene
+  or tile set change, and any frame where more than 5000 px change), the masked column, rows the truth does not know, the bottom
+  tile row (the 31st row the PPU shows while the vertical fine scroll is not 0, and the row that just entered the screen, which the
+  game is still streaming), and unexplained. Unexplained is 0 on all of scroll_vert, scroll_vert_nomask, scroll_mmc3, scroll_chrram,
+  scroll_4way and single_screen, with wrong = 0 everywhere. Two real findings behind the last numbers:
+  scroll_chrram's 84 px were the tail of the start-up CHR RAM upload (the start-up window is now 12 frames);
+  scroll_4way's 113 k px were two things: the bottom tile row above, and a generator bug that was visible in the game's own picture
+  (not the wide view): the 32 column ring's attribute byte slot of column 80 is shared with columns 48..51, and the byte written
+  for column 80 had palette 0 for the columns beyond the level, so two tiles of the last row showed the wrong palette for as long
+  as the camera stayed at the bottom right. `tests/scroll_roms.py` now clamps the column (palettes are constant along a band, so
+  the shared byte is right for both); only scroll_4way's ROM changed.
 
 Tests (`nes/twin/selftest.sh` section 13; `nes/twin/wide_public.sh`):
 * identity: frames, RAM, saved state, audio, battery RAM byte identical with the wide view off / on / on + scout on the

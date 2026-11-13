@@ -79,6 +79,9 @@ typedef struct wk_compose_cfg {
                            trusted edge (see below); needs inner strips      */
     int period_ban_frames; /* periodic continuation of a layer is switched off
                            this long after hindsight showed a miss (300)     */
+    int soft_always;    /* 1: the base under the layers is always the soft edge (an
+                           adapter that feeds edge_px with a calm ambient colour
+                           wants no flat backdrop colour blocks) (0)         */
 } wk_compose_cfg;
 
 typedef struct wk_compose_in {

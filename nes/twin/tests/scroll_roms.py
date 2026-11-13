@@ -1321,8 +1321,10 @@ def build_4way(outdir, name, seed):
         for q, (dr, dc) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
             lr = 2 * g + dr
             mr = vp * 15 + lr
-            mc = 2 * ac + dc
-            p = lv.P[mr][mc] if lr < 15 and mr < mrows and mc < mcols else 0
+            # a column beyond the level (the 32 column ring's attribute slot of column 80 is shared with columns 48..51) takes the
+            # palette of the last column: palettes are constant along a band, so the shared byte is right for both
+            mc = min(2 * ac + dc, mcols - 1)
+            p = lv.P[mr][mc] if lr < 15 and mr < mrows else 0
             v |= p << (2 * q)
         return v
 

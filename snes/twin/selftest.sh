@@ -244,9 +244,9 @@ WT=${WIDE_TWIN:-$(dirname "$TWIN")/snes_wide_twin}
 if [ -x "$WT" ]; then
 	mkdir -p $T/wide
 	python3 -I "$HERE/tests/make_wide_roms.py" $T/wide >/dev/null
-	for n in wide_scroll64 wide_scroll32 wide_win64_a wide_win64_b wide_mode7; do
+	for n in wide_scroll64 wide_scroll64e wide_scroll32 wide_win64_a wide_win64_b wide_mode7; do
 		mkdir -p $T/wide/$n.d
-		"$WT" $T/wide/$n.sfc --frames 1200 --wide 70 --wopt debug=1 --dump $T/wide/$n.d --dump-frames 150,300,450,600,750,900,1050,1150 >/dev/null 2>&1
+		"$WT" $T/wide/$n.sfc --frames 1200 --wide 70 --wopt debug=1 --wopt auto=0 --dump $T/wide/$n.d --dump-frames 150,300,450,600,750,900,1050,1150 >/dev/null 2>&1
 		r=$(python3 -I "$HERE/tests/wide_truth.py" $T/wide/$n.json $T/wide/$n.d 2>&1 | head -1)
 		echo "$r" | grep -q "centre unmatched 0): wrong real px 0, checked real px [1-9]" && ok "wide view truth: $n ($r)" || bad "wide view truth: $n ($r)"
 	done

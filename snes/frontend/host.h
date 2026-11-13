@@ -190,6 +190,13 @@ int snes_host_cheat_validate(const char *code, char *canon, size_t cap);
 int snes_host_cheat_decode(const char *code, char *raw, size_t cap);
 /* Work RAM byte at offset 0..0x1FFFF (address $7E0000 + offset), or -1; for tests. */
 int snes_host_peek_wram(uint32_t offset);
+/* PPU registers for tests and traces: BG mode and the scroll of BG1..BG4 (h[n], v[n]) */
+int snes_host_ppu_scroll(int *h, int *v);
+/* Writes one work RAM byte (offset 0..0x1FFFF); for test scripts only (they hold lives or invulnerability to stay in play). */
+void snes_host_poke_wram(uint32_t offset, uint8_t value);
+/* Test hook: the picture as it stood at the frame end (see host.cpp), tightly packed w x h; NULL when not enabled/none yet. */
+void snes_host_snapshot_enable(int on);
+const uint16_t *snes_host_video_snapshot(int *w, int *h);
 /* Adds a code (switched on). label may be NULL/"" ("Cheat N"). Returns the new index or SNES_CHEAT_E_*. */
 int snes_host_cheat_add(const char *code, const char *label);
 int snes_host_cheat_enable(int index, int on);

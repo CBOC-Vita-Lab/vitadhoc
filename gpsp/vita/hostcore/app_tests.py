@@ -722,7 +722,8 @@ def t_ff(S):
     # Settings > Fast-forward, in game: Settings wraps upwards to Button
     # mapping, then up past THIS GAME, CPU speed, Keep full speed, FPS,
     # Rewind and FF button.  RIGHT: 3x -> 3x with sound, saved.
-    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 12
+    # (+1 since 1.4: Steady pacing, below CPU speed)
+    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 13
     r = S.run("ff_row", pick + "+10:shot=row.png\n+4:right\n"
               "+10:shot=row_sound.png\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba")
@@ -2237,7 +2238,7 @@ def t_look(S):
     # wide view is off, as it is in these tests), Wide view, Motion blend,
     # Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 21 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 22 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2487,7 +2488,7 @@ def t_wide(S):
     # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 19 + \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 20 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -3817,7 +3818,7 @@ def t_fullspeed(S):
     # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
     # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed; CROSS turns it off, and config.ini
     # keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 8 + "+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 9 + "+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -5567,7 +5568,7 @@ def t_cpu_speed(S):
                          "de000000" "de000000" "a6000000")
     # the row, in game: Settings wraps upwards to Button mapping, Display
     # settings, CPU speed
-    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 7 + "+10:shot=row.png\n"
+    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 8 + "+10:shot=row.png\n"
     quit_ = "+4:circle\n+10:circle\n+30:quit\n"
 
     made = []
@@ -6555,6 +6556,11 @@ def t_census(S):
     S.check(c and all(e["steady"] == "1" for e in c) and int(c[-1]["half_windows"]) > 0,
             "census: steady pacing on and it acted (%s)" % [e["_"] for e in c][-1:])
     S.check(c and sum(int(e["jit_blocks"]) for e in c) > 0, "census: the recompiler's block counter moves")
+    j = r.evt("vita_jit")
+    S.check(r.has(r"^EVT jit_switches smc_partial=1 dispatch_cache=1") and j and
+            all(e["emergencies"] == "0" for e in j) and sum(int(e["blocks"]) for e in j) > 0,
+            "census: SMC without whole flushes and the dispatch cache are on, no emergency (%s)" %
+            [e["_"] for e in j][-1:])
     d = os.path.join(S.outdir, "census_scroll_roms")
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)

@@ -161,6 +161,7 @@ void wk_compose_cfg_default(wk_compose_cfg *c)
     c->bg_default = 0;
     c->period = 1;
     c->period_ban_frames = 300;
+    c->soft_always = 0;
 }
 
 wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h, int margin)
@@ -644,7 +645,7 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
             uint8_t *prow = c->prow;
             uint8_t *mat = c->mat;
             base_t bs;
-            bs.soft = lo.hud || lo.backdrop_mask == 0;
+            bs.soft = lo.hud || lo.backdrop_mask == 0 || cfg.soft_always;
             bs.s = s;
             bs.y = y;
             bs.e = bs.soft ? &c->edge[((size_t)s * (size_t)H + (size_t)y) * 3] : NULL;

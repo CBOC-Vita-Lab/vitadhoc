@@ -2,7 +2,7 @@
 
 The NES player is a core linked into the main app, like the Game Boy core. Nothing here starts another program.
 The core is FCEUmm (`nes/core`, GPL-2.0-or-later) plus `nes/frontend/host.c` (plain C, MIT), built as ONE relocatable
-object, `nescore.o`, whose only global symbols are the 78 `nes_host_*` functions declared in `nes/frontend/host.h` (57 before the wide view
+object, `nescore.o`, whose only global symbols are the 81 `nes_host_*` functions declared in `nes/frontend/host.h` (57 before the wide view
 additions of 12 Nov 2026; the 57 are unchanged).
 Everything else FCEUmm defines (`RAM`, `X`, `PPU`, `GameInfo`, `XBuf`, `dendy`, `crc32`, `FCEU_*`, ...) is localised
 inside the object, so it cannot clash with gpSP or TGB Dual.
@@ -45,7 +45,7 @@ $(NES_O): FORCE
 # notices/ are already packed by DIST_NOTICES)
 ```
 
-Checked here: `make -C nes/frontend check` for host (78 globals with the wide view and the split API, with and without SCOUT=1) and earlier for host and vita (57 globals after the Zapper, paddle and sprite-exception additions of 12 Nov 2026; 51 before; all `nes_host_*`), and
+Checked here: `make -C nes/frontend check` for host (81 globals with the wide view, the split API, the census and the paced scout, with and without SCOUT=1) and earlier for host and vita (57 globals after the Zapper, paddle and sprite-exception additions of 12 Nov 2026; 51 before; all `nes_host_*`), and
 `nes/twin/tests/link_test.c` linked with the host object next to user globals named `RAM, X, PPU, GameInfo, XBuf,
 dendy, FCEUI_Emulate` and a user `crc32`, which then runs a game from memory (part of `selftest.sh`); the Vita object
 also combines with that test through `arm-vita-eabi-ld -r` without a duplicate symbol. Not done: a link into the real

@@ -31,7 +31,7 @@
 
 namespace {
 
-enum { MAXH = 240, RING_MAX = 64 * 64, NOUT = 4, PROV_EXACT = 10 };
+enum { MAXH = 240, RING_MAX = 64 * 64, NOUT = 4, PROV_EXACT = 10, COV_ON = 85, COV_OFF = 75 };
 
 static inline uint32_t mix32(uint32_t a, uint32_t b)
 {
@@ -71,7 +71,7 @@ struct SpinLock {
 };
 
 /* hash of a tile's graphics, valid while the 32 byte VRAM units under it were not written */
-struct TileHash { uint32_t h; uint16_t age; uint8_t ok; };
+struct TileHash { uint32_t h; uint16_t age; uint8_t ok, blank; };
 
 struct Layer {
 	int active;
@@ -84,6 +84,7 @@ struct Layer {
 	uint8_t gh_prev_ok[1024];
 	uint32_t gid;
 	int have_gid;
+	uint8_t rowblank[64];            /* ring tile row is made of blank tiles only (the layer draws nothing on it, anywhere) */
 };
 
 struct Out {
@@ -127,6 +128,21 @@ struct Adapter {
 	int outW, outH;
 	uint16_t xr[MAXH][2][4];   /* per line: the ring-backed real margin of a line whose layers cannot be continued from the map */
 	uint8_t xl[MAXH];
+	/* ambient frame: calm dimmed colours of the scene's own edges, never structure */
+	int amb_have;
+	int amb_c[2][32][3];       /* per side and 8-line cell: temporal mean colour, Q4 */
+	uint16_t amb_px[2][MAXH];  /* the colour per line (RGB565) after the vertical smoothing */
+	int amb_rgb[2][MAXH][3];   /* ... as 8-bit channels */
+	uint16_t edge_px[2][MAXH * WK_EDGE_N];
+	uint8_t amb_dk[SNES_WIDE_MAX_MARGIN + 1];   /* darkening per distance, 0..255 */
+	/* Auto: per game and scene */
+	int auto_on = 1;
+	int cov_q8;                /* smoothed coverage, percent * 256 */
+	int auto_state = 1;        /* 1 = real picture, 0 = ambient frame */
+	int xf;                    /* cross-fade 0 (wide) .. 32 (ambient) */
+	int cov_have;
+	snes_wide_census cen;
+	uint32_t frame_n;
 };
 
 static Adapter A;
@@ -165,12 +181,23 @@ static uint32_t tile_hash(const SWideView *v, int bpp, int tile, int name)
 	uint16_t age = v->uage[a >> 5];
 	if (bytes == 64) { uint16_t b = v->uage[(a >> 5) + 1]; if (b > age) age = b; }
 	if (c->ok && c->age == age) return c->h;
-	uint32_t h = 0x811C9DC5u;
-	for (int i = 0; i < bytes; i += 4)
-		h = mix32(h, (uint32_t) v->vram[(a + i) & 0xffff] | ((uint32_t) v->vram[(a + i + 1) & 0xffff] << 8) |
-		             ((uint32_t) v->vram[(a + i + 2) & 0xffff] << 16) | ((uint32_t) v->vram[(a + i + 3) & 0xffff] << 24));
-	c->h = h; c->age = age; c->ok = 1;
+	uint32_t h = 0x811C9DC5u, any = 0;
+	for (int i = 0; i < bytes; i += 4) {
+		const uint32_t w = (uint32_t) v->vram[(a + i) & 0xffff] | ((uint32_t) v->vram[(a + i + 1) & 0xffff] << 8) |
+		                   ((uint32_t) v->vram[(a + i + 2) & 0xffff] << 16) | ((uint32_t) v->vram[(a + i + 3) & 0xffff] << 24);
+		any |= w;
+		h = mix32(h, w);
+	}
+	c->h = h; c->age = age; c->ok = 1; c->blank = any == 0;
 	return h;
+}
+
+static int tile_blank(int bpp, int tile, int name)
+{
+	const int bytes = bpp * 8;
+	const uint32_t a = ((uint32_t) name * 2 + (uint32_t) tile * (uint32_t) bytes) & 0xffff;
+	const TileHash *c = bpp == 2 ? &A.th2[a >> 4] : bpp == 4 ? &A.th4[a >> 5] : &A.th8[a >> 6];
+	return c->ok && c->blank;
 }
 
 /* one pixel of a tile cell (a learned-map cell: the tilemap word) of layer l: returns the colour index or -1 for transparent */
@@ -250,6 +277,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 	const int scr[4] = { sc[0] & 0x7fff, sc[1] & 0x7fff, sc2 & 0x7fff, sc3 & 0x7fff };
 	const uint32_t settle_n = (uint32_t) (A.settle ? A.settle : 1);
 	memset(Ly->used, 0, sizeof Ly->used);
+	memset(Ly->rowblank, 1, sizeof Ly->rowblank);
 	for (int ry = 0; ry < mh; ry++)
 		for (int rx = 0; rx < mw; rx++) {
 			const int k = ry * mw + rx;
@@ -274,6 +302,12 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 				uint32_t age = (uint16_t) (clk16 - w16);
 				if (age < 32768 && age <= clk) st = clk - age;
 			}
+			if (Ly->rowblank[ry]) {
+				bool bl = tile_blank(K.bpp, tile, K.name);
+				if (bl && Ly->tile_px == 16)
+					bl = tile_blank(K.bpp, (tile + 1) & 0x3ff, K.name) && tile_blank(K.bpp, (tile + 16) & 0x3ff, K.name) && tile_blank(K.bpp, (tile + 17) & 0x3ff, K.name);
+				if (!bl) Ly->rowblank[ry] = 0;
+			}
 			Ly->code[k] = word;
 			Ly->hash[k] = mix32(word * 0x10001u + 0x1234567u, th);
 			Ly->stamp[k] = st;
@@ -293,7 +327,10 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 			nused++;
 			if (Ly->gh_prev_ok[i] && Ly->gh_prev[i] == Ly->gh[i]) same++;
 		}
-		if (!Ly->have_gid || same * 10 < nused * 9) {
+		/* a tile set swap changes most of the used tiles; a handful animating (blocks, water, coins) is cosmetic and must not look
+		 * like a new scene (widekit would forget the columns it has seen): new identity from a third of the tiles and 8 of them */
+		const int changed = nused - same;
+		if (!Ly->have_gid || (changed * 3 >= nused && changed >= 8)) {
 			uint32_t g = (uint32_t) K.bpp * 7919u + (uint32_t) K.name;
 			for (i = 0; i < 1024; i++) if (Ly->used[i]) g = mix32(g, Ly->gh[i]);
 			Ly->gid = g; Ly->have_gid = 1;
@@ -352,7 +389,12 @@ static int make_compose(int H, int Mh)
 	if (A.C) { wk_compose_destroy(A.C); A.C = NULL; }
 	wk_compose_cfg_default(&cc);
 	cc.period = A.period;
-	if (A.fade_px > 0) cc.fade_px = A.fade_px;
+	cc.fade_px = A.fade_px > 0 ? A.fade_px : 24;
+	cc.soft_blur = 0; cc.soft_sample = 1; cc.soft_darken = 45; cc.soft_always = 1;   /* the base is the ambient colours below */
+	for (int d = 0; d < Mh; d++) {
+		int t = d * 256 / Mh, ease = (t * t) >> 8;
+		A.amb_dk[d] = (uint8_t) (256 - (45 * 256 / 100) * ease / 256 > 255 ? 255 : 256 - (45 * 256 / 100) * ease / 256);
+	}
 	if (A.appear > 0) cc.appear_frames = A.appear;
 	A.C = wk_compose_create(&cc, 256, H, Mh);
 	if (!A.C) return 0;
@@ -381,6 +423,15 @@ static void publish(Out *o, int avail)
 	A.serial.fetch_add(1, std::memory_order_release);
 }
 
+static void fallback(Out *o, int reason)
+{
+	A.cen.frames_fallback++;
+	if (reason == 0) A.cen.fb_nothing_drawn++;
+	else if (reason == 1) A.cen.fb_profile_off++;
+	else A.cen.fb_setup++;
+	publish(o, 0);
+}
+
 static void profile_lookup(void)
 {
 	A.prof = NULL;
@@ -397,6 +448,86 @@ static void make_map(void)
 	A.M = wk_map_create(&mc, A.crc);
 }
 
+/* ---- ambient frame -------------------------------------------------------------------------------------------- */
+
+static const uint8_t kBay4[4][4] = {{0, 8, 2, 10}, {12, 4, 14, 6}, {3, 11, 1, 9}, {15, 7, 13, 5}};
+
+/* the mean colour of the picture's own left and right edge regions (48 columns), per 8 line cell, low passed in time and
+ * smoothed over the lines: no structure, no stripes, never a copy of anything the game drew there */
+static void amb_update(const SWideView *v, int H, bool reset)
+{
+	const int NC = (H + 7) / 8;
+	int cur[2][32][3];
+	for (int s = 0; s < 2; s++)
+		for (int k = 0; k < NC; k++) {
+			int r = 0, g = 0, b = 0, n = 0;
+			for (int y = k * 8; y < k * 8 + 8 && y < H; y += 2) {
+				const uint16_t *row = v->centre + (size_t) y * v->centre_pitch + (s ? 208 : 0);
+				for (int x = 0; x < 48; x += 2) {
+					const unsigned p = row[x];
+					r += (p >> 11) & 31; g += (p >> 5) & 63; b += p & 31; n++;
+				}
+			}
+			if (!n) n = 1;
+			cur[s][k][0] = (r * 255 / 31) * 16 / n; cur[s][k][1] = (g * 255 / 63) * 16 / n; cur[s][k][2] = (b * 255 / 31) * 16 / n;
+		}
+	if (!A.amb_have || reset) {
+		for (int s = 0; s < 2; s++) for (int k = 0; k < NC; k++) for (int c = 0; c < 3; c++) A.amb_c[s][k][c] = cur[s][k][c];
+		A.amb_have = 1;
+	} else {
+		for (int s = 0; s < 2; s++) for (int k = 0; k < NC; k++) for (int c = 0; c < 3; c++) A.amb_c[s][k][c] += (cur[s][k][c] - A.amb_c[s][k][c]) / 8;
+	}
+	for (int s = 0; s < 2; s++) {
+		int a[32][3];
+		for (int k = 0; k < NC; k++) for (int c = 0; c < 3; c++) a[k][c] = A.amb_c[s][k][c];
+		for (int pass = 0; pass < 3; pass++) {
+			int t[32][3];
+			for (int k = 0; k < NC; k++)
+				for (int c = 0; c < 3; c++) {
+					const int l = a[k > 0 ? k - 1 : 0][c], r = a[k < NC - 1 ? k + 1 : NC - 1][c];
+					t[k][c] = (l + 2 * a[k][c] + r) / 4;
+				}
+			memcpy(a, t, sizeof a);
+		}
+		for (int y = 0; y < H; y++) {
+			/* cell centres at 8k + 3.5: linear between the two nearest */
+			int pos = (y * 2 - 7);                      /* (y - 3.5) * 2 */
+			int k0 = pos >= 0 ? pos / 16 : -1;
+			int fr = pos - k0 * 16;                     /* 0..15 of 16 */
+			if (k0 < 0) { k0 = 0; fr = 0; }
+			int k1 = k0 + 1 < NC ? k0 + 1 : NC - 1;
+			if (k0 >= NC - 1) { k0 = k1 = NC - 1; fr = 0; }
+			int rgb[3];
+			for (int c = 0; c < 3; c++) {
+				rgb[c] = (a[k0][c] * (16 - fr) + a[k1][c] * fr) / 16 / 16;   /* Q4 -> 8 bit */
+				A.amb_rgb[s][y][c] = rgb[c] > 255 ? 255 : rgb[c];
+			}
+			A.amb_px[s][y] = (uint16_t) (((A.amb_rgb[s][y][0] >> 3) << 11) | ((A.amb_rgb[s][y][1] >> 2) << 5) | (A.amb_rgb[s][y][2] >> 3));
+			uint16_t *e = &A.edge_px[s][(size_t) y * WK_EDGE_N];
+			for (int i = 0; i < WK_EDGE_N; i++) e[i] = A.amb_px[s][y];
+		}
+	}
+}
+
+/* ambient pixel at distance d from the picture edge (side s, line y) */
+static inline uint16_t amb_pixel(int s, int y, int d, int M)
+{
+	const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
+	int r = ((A.amb_rgb[s][y][0] * f) >> 8) + (th >> 1);
+	int g = ((A.amb_rgb[s][y][1] * f) >> 8) + (th >> 2);
+	int b = ((A.amb_rgb[s][y][2] * f) >> 8) + (th >> 1);
+	r = r > 255 ? 255 : r; g = g > 255 ? 255 : g; b = b > 255 ? 255 : b;
+	return (uint16_t) (((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+/* w (0..32) of the ambient pixel over the margin pixel */
+static inline uint16_t mix565(uint16_t a, uint16_t amb, int w)
+{
+	const int ar = a >> 11, ag = (a >> 5) & 63, ab = a & 31;
+	const int br = amb >> 11, bg = (amb >> 5) & 63, bb = amb & 31;
+	return (uint16_t) (((ar + (br - ar) * w / 32) << 11) | ((ag + (bg - ag) * w / 32) << 5) | (ab + (bb - ab) * w / 32));
+}
+
 /* ---- the frame ------------------------------------------------------------------------------------------------ */
 
 static void run(const SWideView *v)
@@ -409,13 +540,16 @@ static void run(const SWideView *v)
 	st.frame = v->clock;
 	const int H = v->h;
 	o->avail = 0;
-	if (H <= 0 || H > MAXH || !v->ok || A.margin224 <= 0) { publish(o, 0); return; }
+	A.cen.frames++;
+	A.frame_n++;
+	if (H <= 0 || H > MAXH || !v->ok || A.margin224 <= 0) { fallback(o, 2); return; }
 	const int Mh = margin_for(H), Mc = v->m;
-	if (Mh <= 0 || Mc < Mh) { publish(o, 0); return; }
-	if (A.prof && A.prof->enable == WK_ENABLE_OFF) { publish(o, 0); return; }
-	if (!A.L || !make_compose(H, Mh) || !A.fr || !A.wo) { publish(o, 0); return; }
+	if (Mh <= 0 || Mc < Mh) { fallback(o, 2); return; }
+	if (A.prof && A.prof->enable == WK_ENABLE_OFF) { fallback(o, 1); return; }
+	if (!A.L || !make_compose(H, Mh) || !A.fr || !A.wo) { fallback(o, 2); return; }
 	if (v->epoch != A.epoch) {
 		A.epoch = v->epoch;
+		A.amb_have = 0; A.cov_have = 0;
 		wk_layers_reset(A.L);
 		wk_compose_reset(A.C);
 		A.have_pal_prev = 0;
@@ -434,7 +568,7 @@ static void run(const SWideView *v)
 		else if (L.flags & SWL_DRAWN) { nd++; if (L.flags & SWL_MODE7) n7++; }
 	}
 	st.lines_drawn = nd; st.lines_nomargin = nn;
-	if (nd == 0 && nblank == 0) { publish(o, 0); return; }
+	if (nd == 0 && nblank == 0) { fallback(o, 0); return; }
 	const bool mode7 = n7 * 2 > nd;
 	st.mode7 = mode7;
 
@@ -499,6 +633,9 @@ static void run(const SWideView *v)
 				for (int s = 0; s < 2; s++) {
 					const int r = lo->real[s][l], g = lo->ring[s][l];
 					A.xr[y][s][l] = (uint16_t) (g < r ? g : r);
+					if (nlay && A.lay[l].active && drawn && A.lay[l].line_on[y] &&
+					    A.lay[l].rowblank[fmod_(((int) Ln.vofs[l] + y) / A.lay[l].tile_px, A.lay[l].mh)])
+						A.xr[y][s][l] = (uint16_t) Mh;           /* blank ring row: draws nothing here */
 					lo->real[s][l] = 0; lo->ring[s][l] = 0;
 				}
 		for (int l = 0; l < 4; l++) {
@@ -510,6 +647,15 @@ static void run(const SWideView *v)
 				uint8_t *op = A.opq[l][s] + (size_t) y * Mh;
 				int real = lo->real[s][l], ring = lo->ring[s][l];
 				if (!drawn || !Ly->line_on[y] || !((Ln.pass >> pass) & 1)) { lo->real[s][l] = 0; lo->ring[s][l] = 0; continue; }
+				{
+					/* the layer's ring row is blank all around: it draws nothing on this line, margin included */
+					const int ty = fmod_(((int) Ln.vofs[l] + y) / Ly->tile_px, Ly->mh);
+					if (Ly->rowblank[ty]) {
+						memset(op, 0, (size_t) Mh);
+						lo->real[s][l] = lo->ring[s][l] = (uint16_t) Mh;
+						continue;
+					}
+				}
 				if (real > Mh) real = Mh;
 				if (ring > real) ring = real;
 				const uint16_t *pp = v->pass_px[pass] + (size_t) y * SW_PITCH;
@@ -545,9 +691,25 @@ static void run(const SWideView *v)
 		wk_out_refresh_line(wo, y);
 	}
 
+	if (getenv("WDBGF") && (uint32_t) atoi(getenv("WDBGF")) == v->clock) {
+		for (int l = 0; l < 4; l++) {
+			if (!A.lay[l].active) continue;
+			int nb = 0; for (int r = 0; r < A.lay[l].mh; r++) nb += A.lay[l].rowblank[r];
+			fprintf(stderr, "L%d mw=%d mh=%d tp=%d bpp=%d rowblank=%d/%d kind=%d\n", l, A.lay[l].mw, A.lay[l].mh, A.lay[l].tile_px, A.lay[l].bpp, nb, A.lay[l].mh, wo->kind[l]);
+		}
+		for (int y = 0; y < H; y += 16) {
+			const wk_line_out *lo = &wo->line[y];
+			fprintf(stderr, "cg=%02x/%02x wsel=%d tm=%x ts=%x ", v->line[y].cgadsub, v->line[y].cgwsel, v->line[y].wsel_any, v->line[y].tm, v->line[y].ts);
+			fprintf(stderr, "y=%d hud=%d lvl=%x bd=%x on=%d%d%d%d real=", y, lo->hud, lo->level_mask, lo->backdrop_mask, A.lay[0].line_on[y], A.lay[1].line_on[y], A.lay[2].line_on[y], A.lay[3].line_on[y]);
+			for (int l = 0; l < 4; l++) fprintf(stderr, "%d/%d/%d/%d ", lo->real[0][l], lo->real[1][l], lo->ring[0][l], lo->ring[1][l]);
+			fprintf(stderr, "\n");
+		}
+	}
 	/* 4. compose */
+	amb_update(v, H, wo->scene_event != 0);
 	wk_compose_in ci;
 	memset(&ci, 0, sizeof ci);
+	ci.edge_px[0] = A.edge_px[0]; ci.edge_px[1] = A.edge_px[1];
 	for (int y = 0; y < H; y++) {
 		const SWideLine &Ln = v->line[y];
 		A.bg[y] = (Ln.flags & SWL_VALID) ? Ln.backdrop : 0;
@@ -564,7 +726,7 @@ static void run(const SWideView *v)
 				ci.order[ci.norder++] = l;
 			}
 	ci.out = o->px; ci.out_stride = OW;
-	ci.prov = A.debug ? o->prov : NULL;
+	ci.prov = o->prov;
 	wk_compose_frame(A.C, &ci);
 
 	/* 5. exact composite where every layer of the line is real, sprites over the rest, Mode 7 whole */
@@ -576,11 +738,11 @@ static void run(const SWideView *v)
 		const SWideLine &Ln = v->line[y];
 		wk_line_out *lo = &wo->line[y];
 		uint16_t *row = o->px + (size_t) y * OW;
-		uint8_t *prow = A.debug ? o->prov + (size_t) y * OW : NULL;
+		uint8_t *prow = o->prov + (size_t) y * OW;
 		o->real[y][0] = o->real[y][1] = 0;
 		if (!(Ln.flags & SWL_VALID)) continue;
 		if (Ln.flags & SWL_BLANK) {
-			for (int d = 0; d < Mh; d++) { row[Mh - 1 - d] = 0; row[Mh + 256 + d] = 0; if (prow) prow[Mh - 1 - d] = prow[Mh + 256 + d] = PROV_EXACT; }
+			for (int d = 0; d < Mh; d++) { row[Mh - 1 - d] = 0; row[Mh + 256 + d] = 0; prow[Mh - 1 - d] = prow[Mh + 256 + d] = PROV_EXACT; }
 			continue;
 		}
 		if (!line_ok(Ln)) continue;
@@ -606,15 +768,20 @@ static void run(const SWideView *v)
 				const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
 				const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 				row[dx] = cp[col];
-				if (prow) prow[dx] = PROV_EXACT;
+				prow[dx] = PROV_EXACT;
 			}
 			if (!(Ln.flags & SWL_MODE7) && !sprites_off && ((Ln.pass >> SWP_OBJ) & 1)) {
 				const uint16_t *sp = v->pass_px[SWP_OBJ] + (size_t) y * SW_PITCH;
 				const uint8_t *sz = v->pass_z[SWP_OBJ] + (size_t) y * SW_PITCH;
-				for (int d = cex; d < Mh; d++) {
+				/* sprites end where the layers' real picture ends (same fade): never a sprite floating on the ambient colour */
+				const int sb = nlay_ >= Mh ? Mh : nlay_;
+				for (int d = cex; d < sb; d++) {
 					const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
 					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
-					if (sz[col]) { row[dx] = sp[col]; if (prow) prow[dx] = PROV_EXACT; }
+					if (!sz[col]) continue;
+					const int w = (sb < Mh && d >= sb - fade) ? (sb - d) * 32 / fade : 32;
+					row[dx] = w >= 32 ? sp[col] : mix565(row[dx], sp[col], w);
+					prow[dx] = PROV_EXACT;
 				}
 			}
 			o->real[y][s] = (uint8_t) (cla > cex ? cla : cex);
@@ -625,6 +792,75 @@ static void run(const SWideView *v)
 	}
 	st.real_l = nreal ? (int) (sl / nreal) : 0;
 	st.real_r = nreal ? (int) (sr / nreal) : 0;
+
+	/* 6. census, coverage and the Auto decision (per game and scene) */
+	if (wo->scene_event) A.cen.scenes++;
+	if ((A.frame_n & 1) == 0 || !A.cov_have) {
+		uint64_t ctm = 0, cln = 0, cbd = 0, cun = 0;
+		for (int y = 0; y < H; y++) {
+			const SWideLine &Ln = v->line[y];
+			if (!line_ok(Ln)) continue;
+			const wk_line_out *lo = &wo->line[y];
+			const uint8_t *prow = o->prov + (size_t) y * OW;
+			for (int s = 0; s < 2; s++) {
+				int ring_e = 0, real_e = 0;
+				for (int l = 0; l < 4; l++) {
+					if (lo->ring[s][l] > ring_e) ring_e = lo->ring[s][l];
+					if (lo->real[s][l] > real_e) real_e = lo->real[s][l];
+				}
+				int tm = 0, bd = 0, un = 0;
+				const uint8_t *pp = prow + (s == 0 ? 0 : Mh + 256);
+				for (int d = 0; d < Mh; d++) {
+					const int p = pp[s == 0 ? Mh - 1 - d : d] & 15;
+					if (p == WK_PROV_LEVEL || p == PROV_EXACT || p == WK_PROV_FADE) tm++;
+					else if (p == WK_PROV_BACKDROP || p == WK_PROV_BG) bd++;
+					else un++;
+				}
+				int ln_ = real_e > ring_e ? real_e - ring_e : 0;
+				if (ln_ > tm) ln_ = tm;
+				ctm += (uint64_t) (tm - ln_); cln += (uint64_t) ln_; cbd += (uint64_t) bd; cun += (uint64_t) un;
+			}
+		}
+		const uint64_t tot = ctm + cln + cbd + cun;
+		A.cen.px_tilemap += ctm; A.cen.px_learned += cln; A.cen.px_backdrop += cbd; A.cen.px_unknown += cun;
+		if (tot) {
+			const int c256 = (int) ((ctm + cln + cbd) * 100 * 256 / tot);
+			if (!A.cov_have || wo->scene_event) { A.cov_q8 = c256; A.cov_have = 1; }
+			else A.cov_q8 += (c256 - A.cov_q8) / 60;
+		}
+	}
+	if (A.auto_on) {
+		const int want = A.auto_state ? (A.cov_q8 >= COV_OFF * 256) : (A.cov_q8 >= COV_ON * 256);
+		if (want != A.auto_state) { A.auto_state = want; A.cen.auto_switches++; }
+	} else {
+		A.auto_state = 1;
+	}
+	{
+		const int target = A.auto_state ? 0 : 32;
+		if (!A.auto_on) A.xf = 0;
+		else if (A.xf < target) A.xf++;
+		else if (A.xf > target) A.xf--;
+	}
+	if (A.xf > 0) {
+		const int xf = A.xf;
+		for (int y = 0; y < H; y++) {
+			const SWideLine &Ln = v->line[y];
+			if (!(Ln.flags & SWL_VALID) || (Ln.flags & SWL_BLANK)) continue;
+			uint16_t *row = o->px + (size_t) y * OW;
+			for (int s = 0; s < 2; s++)
+				for (int d = 0; d < Mh; d++) {
+					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
+					const uint16_t ap = amb_pixel(s, y, d, Mh);
+					row[dx] = xf >= 32 ? ap : mix565(row[dx], ap, xf);
+				}
+			if (xf >= 32) o->real[y][0] = o->real[y][1] = 0;
+		}
+		if (xf >= 32) A.cen.frames_ambient++; else A.cen.frames_crossfade++;
+	}
+	st.coverage_pct = A.cov_q8 >> 8; st.auto_wide = A.auto_state; st.xfade = A.xf;
+	A.cen.frames_wide++;
+	A.cen.coverage_pct = st.coverage_pct; A.cen.auto_wide = A.auto_state;
+	A.cen.map_cells = (uint32_t) st.map_cells;
 	st.instr_us = (uint32_t) (now_us() - t0);
 	publish(o, 1);
 }
@@ -692,6 +928,8 @@ void snes_wide_clear_game(void)
 	A.on = 0;
 	if (A.M) { wk_map_destroy(A.M); A.M = NULL; }
 	A.have_game = 0; A.crc = 0; A.title[0] = 0; A.prof = NULL;
+	memset(&A.cen, 0, sizeof A.cen);
+	A.amb_have = 0; A.cov_have = 0; A.auto_state = 1; A.xf = 0; A.frame_n = 0;
 	A.map_saved_cells = 0;
 	if (A.L) wk_layers_reset(A.L);
 	if (A.C) wk_compose_reset(A.C);
@@ -718,7 +956,8 @@ int snes_wide_option(const char *name, int v)
 	if (!name) return 1;
 	A.lk.lock();
 	int r = 0;
-	if (!strcmp(name, "period")) { A.period = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
+	if (!strcmp(name, "auto")) A.auto_on = v != 0;
+	else if (!strcmp(name, "period")) { A.period = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
 	else if (!strcmp(name, "fade_px")) { A.fade_px = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
 	else if (!strcmp(name, "appear_frames")) { A.appear = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
@@ -821,6 +1060,20 @@ void snes_wide_map_mark_saved(void)
 {
 	A.lk.lock();
 	A.map_saved_cells = A.map_pending_cells;   /* the cell count when the bytes that were written were taken */
+	A.lk.unlock();
+}
+
+void snes_wide_census_get(snes_wide_census *c)
+{
+	A.lk.lock();
+	*c = A.cen;
+	A.lk.unlock();
+}
+
+void snes_wide_census_reset(void)
+{
+	A.lk.lock();
+	memset(&A.cen, 0, sizeof A.cen);
 	A.lk.unlock();
 }
 

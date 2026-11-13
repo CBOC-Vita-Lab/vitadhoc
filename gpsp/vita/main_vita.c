@@ -264,6 +264,9 @@ static struct
                                * scanline looks' darkness (5 = default) */
    int      cpu_fast;         /* cpu_mhz = 500 (default) or 444: Settings >
                                * CPU speed (cpuclock.h)                 */
+   int      smc_partial;      /* smc_partial = 0 | 1 (default 1): GBA code
+                               * writes flush only the code they touch  */
+   int      dispatch_cache;   /* dispatch_cache = 0 | 1 (default 1)    */
    /* Last: the initializer below is positional, and "" is its default. */
    char     shot_dir[200];    /* screenshots = ux0:pictures/VitAdhoc: where
                                  * screenshots go (empty: screenshots/) */
@@ -271,7 +274,7 @@ static struct
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, "", "" };
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, "", "" };
 
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
@@ -1375,6 +1378,10 @@ static void read_switches(void)
    char ini[APP_PATH_CAP];
    path_fmt(ini, sizeof(ini), "%s/vita.ini", g_app_root);
    g_sw.pace_mode       = (int)fe_ini_get_int(ini, "pace_mode", g_sw.pace_mode);
+   /* engineering switches for A/B on the console (docs/TECHNICAL.md
+    * "Version 1.4: SMC Without Whole-Cache Flushes"): no Settings row */
+   g_sw.smc_partial     = fe_ini_get_int(ini, "smc_partial", 1) ? 1 : 0;
+   g_sw.dispatch_cache  = fe_ini_get_int(ini, "dispatch_cache", 1) ? 1 : 0;
    g_sw.drc             = (int)fe_ini_get_int(ini, "drc", g_sw.drc);
    g_sw.autoexit_frames = (unsigned)fe_ini_get_int(ini, "autoexit_frames", 0);
    g_sw.link_bench      = (int)fe_ini_get_int(ini, "link_bench", 0);
@@ -3321,16 +3328,40 @@ static void window_begin(void)
        * frame; wide = the NES wide picture shown; jit = blocks the GBA
        * recompiler translated this window (gpsp_jit_counters). */
       extern uint32_t gpsp_jit_counters(uint32_t *out, uint32_t n);
-      static unsigned half_windows;
-      static uint32_t jit_last;
-      uint32_t jc[2] = { 0, 0 };
+      extern uint32_t gpsp_smc_partial_active(void);
+      extern uint32_t smc_partial_emergencies;
+      static unsigned half_windows, emerg_told;
+      static uint32_t jl[16];
+      uint32_t jc[16], d[16];
+      int k;
+      memset(jc, 0, sizeof(jc));
       half_windows += steady_half() ? 1 : 0;
-      gpsp_jit_counters(jc, 2);
+      gpsp_jit_counters(jc, 16);
+      for (k = 0; k < 16; k++)
+      {
+         d[k] = jc[k] - jl[k];
+         jl[k] = jc[k];
+      }
       fe_evt("census steady=%d half_windows=%u wide=%d jit_blocks=%u console=%d",
              g_pcfg.steady_pacing, half_windows,
              g_game_console == FE_CONSOLE_NES ? nescore_wide_shown() : -1,
-             (unsigned)(jc[0] + jc[1] - jit_last), g_game_console);
-      jit_last = jc[0] + jc[1];
+             (unsigned)(d[0] + d[1]), g_game_console);
+      /* the recompiler this window (cpu_threaded.c gpsp_jit_counters): RAM
+       * flushes that discard code, code-write traps, tag-only flushes,
+       * blocks translated, VM syncs, revived, reclaims, dispatch-cache hits;
+       * also the census of smc_partial and dispatch_cache */
+      if (g_game_console == FE_CONSOLE_GBA)
+         fe_evt("vita_jit smc_partial=%u ram_flush=%u smc_traps=%u tag_flush=%u "
+                "blocks=%u vm_syncs=%u revived=%u reclaims=%u dcache_hits=%u "
+                "emergencies=%u", gpsp_smc_partial_active(), d[4], d[6], d[7],
+                d[0] + d[1], d[2], d[8], d[13], d[14], smc_partial_emergencies);
+      if (smc_partial_emergencies && !emerg_told)
+      {
+         emerg_told = 1;
+         fe_evt("JIT EMERGENCY smc_partial_emergencies=%u: a full flush stood in "
+                "for a partial one (must stay 0; docs/TECHNICAL.md)",
+                smc_partial_emergencies);
+      }
    }
    g_caught = g_caught_us = 0;
    g_q_taken = g_q_glass = g_q_waits = 0;
@@ -4292,6 +4323,23 @@ static int game_boot(const char *rom_path, fe_console_t console)
       app_ws_options();          /* this game's Rotation, Vertical play, palette */
    if (console == FE_CONSOLE_NES)
       app_nes_options();         /* Wide view */
+   if (console == FE_CONSOLE_GBA)
+   {
+      /* before the load: they take effect at load / reset (both machines) */
+      extern void gpsp_smc_partial_set(uint32_t on);
+      extern void gbab_gpsp_smc_partial_set(uint32_t on) __attribute__((weak));
+      extern void gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
+      extern void gbab_gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
+      gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
+      if (gbab_gpsp_smc_partial_set)
+         gbab_gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
+      if (gpsp_dispatch_cache_set)
+         gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
+      if (gbab_gpsp_dispatch_cache_set)
+         gbab_gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
+      fe_evt("jit_switches smc_partial=%d dispatch_cache=%d", g_sw.smc_partial,
+             g_sw.dispatch_cache);
+   }
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;
    {

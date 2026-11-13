@@ -45,9 +45,11 @@ truth scroll_mmc3 900 10:right
 truth scroll_chrram 900 10:right
 truth scroll_4way 1800 10:right,430:down,960:up
 truth single_screen 400 100:start,103:none,250:start,253:none
-want scroll_vert && "$TWIN" $T/sr/scroll_vert.nes --frames 1200 --pad "10:right,200:none,260:right,400:left,520:right,700:none,720:right" --wide 84 $WG_EXTRA \
+if want scroll_vert; then
+	"$TWIN" $T/sr/scroll_vert.nes --frames 1200 --pad "10:right,200:none,260:right,400:left,520:right,700:none,720:right" --wide 84 $WG_EXTRA \
 	--wide-truth $T/sr/scroll_vert --wide-hashes "$OUT/scroll_vert.reuse.wh" --wide-map-load $T/scroll_vert.map >/dev/null 2>&1 || fail=1
-if [ -n "$NES_TESTROMS" ] && [ -d "$NES_TESTROMS" ]; then
+fi
+if [ -z "$WG_ONLY" ] && [ -n "$NES_TESTROMS" ] && [ -d "$NES_TESTROMS" ]; then
 	# the public test ROMs that load: wide on, one hash file each (names with spaces are read line by line)
 	n=0
 	find "$NES_TESTROMS" -iname '*.nes' | sort > $T/wlist
@@ -60,8 +62,11 @@ fi
 if [ -n "$WG_WRITE" ] || [ -n "$WG_VERIFY" ]; then
 	(cd "$OUT" && sha256sum *.wh) > "$OUT/.sums"
 	if [ -n "$WG_WRITE" ]; then cp "$OUT/.sums" "$HERE/wide_golden_sha256.txt"; echo "wrote $HERE/wide_golden_sha256.txt";
-	elif diff "$HERE/wide_golden_sha256.txt" "$OUT/.sums" >/dev/null; then echo "wide golden: hashes match wide_golden_sha256.txt";
-	else echo "wide golden: HASHES DIFFER from wide_golden_sha256.txt"; fail=1; fi
+	else
+		nb=0   # every file this run wrote must be listed in the baseline with the same hash (a WG_ONLY run writes a part of it)
+		while read -r h f; do grep -q "^$h  $f\$" "$HERE/wide_golden_sha256.txt" || { echo "  $f differs from wide_golden_sha256.txt"; nb=$((nb + 1)); }; done < "$OUT/.sums"
+		if [ $nb = 0 ]; then echo "wide golden: hashes match wide_golden_sha256.txt"; else echo "wide golden: $nb HASHES DIFFER from wide_golden_sha256.txt"; fail=1; fi
+	fi
 fi
 echo "wide golden: $(ls "$OUT" | wc -l) files in $OUT, run errors: $fail"
 exit $fail

@@ -42,7 +42,34 @@ typedef struct snes_wide_stats {
 	int scene_event, epoch, hs_checked, hs_missed;
 	int map_cells, map_rooms, map_bound, map_served;
 	uint32_t instr_us;        /* wall time of the hook for this frame (microseconds) */
+	int coverage_pct;         /* margin pixels that are real (tilemap, learned map, continued backdrop) in percent, smoothed over ~2 s */
+	int auto_wide;            /* Auto mode: 1 = real picture is shown, 0 = ambient frame only */
+	int xfade;                /* Auto cross-fade state 0 (wide) .. 32 (ambient frame): the margins already carry this blend */
 } snes_wide_stats;
+
+/* Census: running totals since the game was set (or since snes_wide_census_reset), for the player's per-second log line
+ * (take two snapshots and subtract). Margin pixels are counted on every second frame that is widened, drawn lines only. */
+typedef struct snes_wide_census {
+	uint32_t frames;                 /* frames seen by the hook */
+	uint32_t frames_wide;            /* ... widened (a wide picture was published) */
+	uint32_t frames_fallback;        /* ... not widened (the normal picture is used) = the sum of the reasons below */
+	uint32_t fb_nothing_drawn;       /* every line is hi-res, interlaced, mode 2/4/6, mosaic or blanked */
+	uint32_t fb_profile_off;         /* a game profile switched the view off */
+	uint32_t fb_setup;               /* picture height / margin the core cannot serve */
+	uint32_t frames_ambient;         /* widened frames whose margins are the ambient frame only (Auto with low coverage) */
+	uint32_t frames_crossfade;       /* ... of those and of the real ones: frames while a cross-fade was running */
+	uint32_t auto_switches;          /* Auto decisions changed (real <-> ambient) */
+	uint32_t scenes;                 /* scene changes widekit reported */
+	uint64_t px_tilemap;             /* margin pixels from the layers' tilemap (history, lead, exact composite) */
+	uint64_t px_learned;             /* ... from the learned map (estimate: real beyond the tilemap's own extent) */
+	uint64_t px_backdrop;            /* ... continued backdrop layers / flat backdrop colour that widekit proved */
+	uint64_t px_unknown;             /* ... ambient (nothing proven) */
+	uint32_t map_cells;              /* learned map cells now */
+	int coverage_pct;                /* smoothed real share of the margins, percent */
+	int auto_wide;                   /* Auto's current decision (1 = real picture) */
+} snes_wide_census;
+void snes_wide_census_get(snes_wide_census *c);
+void snes_wide_census_reset(void);
 
 /* Switch the wide view on or off. `margin` = pixels per side (0..96; the frontend takes it from the picture shape: 70 fills
  * a 16:9 screen at square pixels, 42 with the original 4:3 shape); 224 and 239 line pictures get the same margin. Waits for
@@ -56,7 +83,10 @@ int snes_wide_margin(void);
 void snes_wide_set_game(const uint8_t *rom, size_t n, const char *title);
 void snes_wide_clear_game(void);
 
-/* Options: "period" (0/1, periodic foreground continuation, off by default), "fade_px", "appear_frames", "settle_frames",
+/* Auto mode (default on): the margins show real picture only while the real share stays high over the last seconds, else the
+ * ambient frame; a decision change cross-fades over half a second. "On" in the player = snes_wide_option("auto", 0). */
+
+/* Options: "auto" (0/1), "period" (0/1, periodic foreground continuation, off by default), "fade_px", "appear_frames", "settle_frames",
  * "debug" (provenance picture), "layered" (0: no layer passes: composite only; for cost tests), "learn" (0/1: learned map
  * on, default 1). Returns 0 when the name is known. */
 int snes_wide_option(const char *name, int value);

@@ -134,6 +134,11 @@ static void mix_job(void *arg)
 }
 
 /* Called by the core at the start of vertical blank: the frame is finished. */
+static bool g_snap_on;
+static std::vector<uint16_t> g_snap;
+static int g_snap_w, g_snap_h;
+static void snap_take(void);
+
 void S9xSyncSpeed()
 {
 	S9XP_ENTER(FRONT);
@@ -141,6 +146,7 @@ void S9xSyncSpeed()
 	if (S9xAPUMTActive()) S9xAPUMTPost(mix_job, silent);
 	else mix_job(silent);
 	g_frame_done = true;
+	if (g_snap_on) snap_take();
 	S9XP_LEAVE();
 }
 
@@ -372,6 +378,25 @@ const uint16_t *snes_host_video(int *w, int *h, int *pitch)
 	if (h) *h = g_vh;
 	if (pitch) *pitch = (int) GFX.Pitch;
 	return GFX.Screen;
+}
+
+/* Test hook: a copy of the picture as it stands when the frame ends (S9xSyncSpeed), which for some cartridges is earlier than
+ * what snes_host_video() sees after snes_host_run_frame() returns (the main loop runs on for a few lines of the next frame). */
+static void snap_take(void)
+{
+	int w, h, pitch;
+	const uint16_t *v = snes_host_video(&w, &h, &pitch);
+	if (!v || w <= 0 || h <= 0) { g_snap_w = g_snap_h = 0; return; }
+	g_snap.resize((size_t) w * h);
+	for (int y = 0; y < h; y++) memcpy(&g_snap[(size_t) y * w], (const uint8_t *) v + (size_t) y * pitch, (size_t) w * 2);
+	g_snap_w = w; g_snap_h = h;
+}
+void snes_host_snapshot_enable(int on) { g_snap_on = on != 0; }
+const uint16_t *snes_host_video_snapshot(int *w, int *h)
+{
+	if (w) *w = g_snap_w;
+	if (h) *h = g_snap_h;
+	return g_snap_w ? &g_snap[0] : NULL;
 }
 
 const uint16_t *snes_host_video_nowait(int *w, int *h, int *pitch, unsigned *serial)
@@ -841,6 +866,13 @@ int snes_host_cheat_decode(const char *code, char *raw, size_t cap)
 }
 
 int snes_host_peek_wram(uint32_t offset) { return g_loaded && offset < 0x20000 ? Memory.RAM[offset] : -1; }
+void snes_host_poke_wram(uint32_t offset, uint8_t value) { if (g_loaded && offset < 0x20000) Memory.RAM[offset] = value; }
+int snes_host_ppu_scroll(int *h, int *v)
+{
+	if (!g_loaded) return -1;
+	for (int i = 0; i < 4; i++) { h[i] = PPU.BG[i].HOffset; v[i] = PPU.BG[i].VOffset; }
+	return PPU.BGMode;
+}
 
 static int cheat_gidx(int i) { int n = 0; for (int k = 0; k < i; k++) if (g_ch[k].usable) n++; return n; }
 

@@ -155,6 +155,8 @@ int main(int argc, char **argv)
 	bool summary = false;
 	std::vector<PadEv> script;
 	std::set<int> dumpset, shotset, statset;
+	int trace_every = 0;
+	std::vector<std::pair<uint32_t, uint8_t>> pokes;
 	struct KV { std::string k; int v; };
 	std::vector<KV> opts, wopts;
 	for (int i = 2; i < argc; i++) {
@@ -168,6 +170,8 @@ int main(int argc, char **argv)
 		else if (arg("--dump")) dumpdir = argv[++i];
 		else if (arg("--dump-frames")) dumpset = parse_set(argv[++i]);
 		else if (arg("--stat-frames")) statset = parse_set(argv[++i]);
+		else if (arg("--trace")) trace_every = atoi(argv[++i]);
+		else if (arg("--poke")) { unsigned a, b; if (sscanf(argv[++i], "%x=%x", &a, &b) == 2) pokes.push_back({ a, (uint8_t) b }); }
 		else if (arg("--png-dir")) pngdir = argv[++i];
 		else if (arg("--shots")) shotset = parse_set(argv[++i]);
 		else if (arg("--shot-prefix")) prefix = argv[++i];
@@ -195,6 +199,7 @@ int main(int argc, char **argv)
 			std::vector<uint8_t> m = read_all(mapf);
 			if (!m.empty()) fprintf(stderr, "map load: %d\n", snes_wide_map_load(m.data(), m.size()));
 		}
+		snes_host_snapshot_enable(1);
 		snes_wide_set(1, wide);
 	}
 	FILE *hf = hashes ? fopen(hashes, "w") : 0, *wf = whashes ? fopen(whashes, "w") : 0, *sf = statef ? fopen(statef, "w") : 0;
@@ -207,12 +212,21 @@ int main(int argc, char **argv)
 	if (sf) sbuf.resize(snes_host_state_size() + 4096);
 	for (int f = 0; f < frames; f++) {
 		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
+		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
 		snes_host_set_pad(0, pad);
 		snes_host_run_frame();
 		int n = snes_host_audio_take(abuf.data(), 4096);
 		if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
 		int w, h, pitch;
 		const uint16_t *v = snes_host_video(&w, &h, &pitch);
+		if (trace_every && f % trace_every == 0) {
+			int sh[4], sv[4];
+			int md = snes_host_ppu_scroll(sh, sv);
+			uint64_t luma = 0;
+			for (int y = 0; y < h; y += 4) for (int x = 0; x < w; x += 4) { unsigned p = ((const uint16_t *) ((const uint8_t *) v + (size_t) y * pitch))[x]; luma += ((p >> 11) & 31) * 2 + ((p >> 5) & 63) + (p & 31) * 1; }
+			fprintf(stderr, "trace f=%d luma=%llu mode=%d h=%d,%d,%d,%d v=%d,%d,%d,%d centre=%016llx\n", f, (unsigned long long) (luma / ((w / 4) * (h / 4) + 1)), md, sh[0], sh[1], sh[2], sh[3], sv[0], sv[1], sv[2], sv[3],
+			        (unsigned long long) fnv(v, w, h, pitch));
+		}
 		uint64_t ch = fnv(v, w, h, pitch);
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) ch);
 		if (sf && f % state_every == 0) {
@@ -233,15 +247,21 @@ int main(int argc, char **argv)
 				uint64_t cwh = 1469598103934665603ull;
 				for (int y = 0; y < wh; y++)
 					cwh = fnv_bytes((const uint8_t *) (wp + (size_t) y * wpitch + M), 512, cwh);
+				/* the reference is the picture as it stood at the frame end (some cartridges' main loop runs on a few lines of the
+				 * next frame before snes_host_run_frame returns, so the picture read after it can already hold those) */
+				int sw = 0, sh_ = 0;
+				const uint16_t *snap = snes_host_video_snapshot(&sw, &sh_);
+				const uint8_t *ref = snap ? (const uint8_t *) snap : (const uint8_t *) v;
+				const int rpitch = snap ? sw * 2 : pitch, rh = snap ? sh_ : h;
 				uint64_t nrm = 1469598103934665603ull;
-				for (int y = 0; y < h && y < wh; y++)
-					nrm = fnv_bytes((const uint8_t *) v + (size_t) y * pitch, 512, nrm);
+				for (int y = 0; y < rh && y < wh; y++)
+					nrm = fnv_bytes(ref + (size_t) y * rpitch, 512, nrm);
 				if (wf) fprintf(wf, "%d %d %016llx %016llx %d %d %d %d\n", f, ww, (unsigned long long) cwh, (unsigned long long) fnv(wp, ww, wh, wpitch * 2),
 				                st.real_l, st.real_r, st.available, cwh == nrm);
 				if (cwh != nrm) {
 					int first = -1, cnt = 0;
-					for (int y = 0; y < h && y < wh; y++)
-						if (memcmp(wp + (size_t) y * wpitch + M, (const uint8_t *) v + (size_t) y * pitch, 512)) { if (first < 0) first = y; cnt++; if (cnt <= 20) fprintf(stderr, " row %d", y); }
+					for (int y = 0; y < rh && y < wh; y++)
+						if (memcmp(wp + (size_t) y * wpitch + M, ref + (size_t) y * rpitch, 512)) { if (first < 0) first = y; cnt++; if (cnt <= 20) fprintf(stderr, " row %d", y); }
 					fprintf(stderr, "frame %d: wide centre differs from the normal picture (rows differing %d, first %d; picture %dx%d wide %dx%d)\n", f, cnt, first, w, h, ww, wh);
 				}
 				if (statset.count(f))
@@ -304,6 +324,14 @@ int main(int argc, char **argv)
 	if (summary && wide)
 		printf("wide: frames=%ld available=%ld mean real px L=%.1f R=%.1f, adapter %.0f us/frame\n", n_wide, n_avail,
 		       n_avail ? sum_l / n_avail : 0, n_avail ? sum_r / n_avail : 0, n_avail ? sum_us / n_avail : 0);
+		snes_wide_census c;
+		snes_wide_census_get(&c);
+		const double tot = (double) (c.px_tilemap + c.px_learned + c.px_backdrop + c.px_unknown);
+		printf("census: frames=%u wide=%u fallback=%u (nothing_drawn=%u profile=%u setup=%u) ambient=%u crossfade=%u switches=%u scenes=%u cells=%u cov=%d%% auto=%d\n"
+		       "census: margin px tilemap %.1f%% learned %.1f%% backdrop %.1f%% unknown %.1f%%\n",
+		       c.frames, c.frames_wide, c.frames_fallback, c.fb_nothing_drawn, c.fb_profile_off, c.fb_setup, c.frames_ambient, c.frames_crossfade,
+		       c.auto_switches, c.scenes, c.map_cells, c.coverage_pct, c.auto_wide,
+		       tot ? 100.0 * c.px_tilemap / tot : 0, tot ? 100.0 * c.px_learned / tot : 0, tot ? 100.0 * c.px_backdrop / tot : 0, tot ? 100.0 * c.px_unknown / tot : 0);
 	if (hf) fclose(hf);
 	if (wf) fclose(wf);
 	if (sf) fclose(sf);

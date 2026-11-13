@@ -65,13 +65,16 @@ def camera(kind, wide):
 
 
 def build(kind):
-    rnd = random.Random(1234 if kind == "s64" else 99)
+    rnd = random.Random(1234 if kind == "s64" else 4321 if kind == "s64e" else 99)
     win = kind.startswith("win")
     wk_ = kind[-1]
-    N = 64 if kind in ("s64", "win64_a", "win64_b") else 32
+    N = 64 if kind in ("s64", "s64e", "win64_a", "win64_b") else 32
     W = 32
     LL = 6 if N == 64 else 0
     LR = 6 if N == 64 else 0
+    if kind == "s64e":          # worst case: columns are streamed exactly when they become visible (no lead at all beyond the
+        LL, LR = 0, 1           # 33rd partial column), the rest of the ring holds stale columns of the previous lap
+
     # palettes (CGRAM 512 B): avoid exact magenta
     def col():
         while True:
@@ -327,7 +330,7 @@ def build_m7(kind="m7"):
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
-    for kind, name in (("s64", "wide_scroll64"), ("s32", "wide_scroll32"), ("win_a", "wide_win_a"), ("win_b", "wide_win_b"), ("win64_a", "wide_win64_a"), ("win64_b", "wide_win64_b")):
+    for kind, name in (("s64", "wide_scroll64"), ("s64e", "wide_scroll64e"), ("s32", "wide_scroll32"), ("win_a", "wide_win_a"), ("win_b", "wide_win_b"), ("win64_a", "wide_win64_a"), ("win64_b", "wide_win64_b")):
         rom, meta = build(kind)
         open(os.path.join(out, name + ".sfc"), "wb").write(rom)
         json.dump(meta, open(os.path.join(out, name + ".json"), "w"))

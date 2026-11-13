@@ -2,6 +2,14 @@
 
 ## Version 1.4 (in progress)
 
+- **Your saves reach RetroArch.** A save made by an older version (or one that
+  was never taken from RetroArch) is now also written, once, as a plain
+  `Game.srm` where RetroArch looks, with one sentence saying where. A RetroArch
+  file that is newer or different is never overwritten: both are kept and you
+  are told which is which; an older one is backed up first. Odd files an older
+  version left beside the game go to the app's folder. Settings > This game >
+  Export save for other emulators makes a plain `.srm` or `.sav` on request.
+  See docs/SAVES.md.
 - **Game names** (Settings > Library): show the game's title or its file name.
   Games that would show the same name, such as ROM hacks of one game, also
   show their file name under it.

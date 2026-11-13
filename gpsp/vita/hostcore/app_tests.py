@@ -5099,6 +5099,59 @@ def t_save_sync(S):
     S.check(r.has(r"^EVT sync_ra_saves on=1 saved=1"), "and back on (it was off when read again)")
 
 
+def t_save_heal(S):
+    """1.4: a save the app already has (1.0-1.2 never wrote one for RetroArch,
+    1.3 only for a save taken from it) gets its plain RetroArch file at the
+    game's start, once, with a census line every start; RetroArch's own file
+    is never overwritten without a verified backup, and a different, newer
+    one is kept apart."""
+    rom = "gbadhoc-test"
+    ra = "retroarch/savefiles/%s.srm" % rom
+    other = {"retroarch/savefiles/Other Game.srm": b"\x01" * 64}
+    def pat(n, seed):
+        return bytes((i * 7 + seed) & 0xFF for i in range(n))
+    def rd(r, rel):
+        return open(os.path.join(r.root, rel), "rb").read()
+    mine = pat(32768, 21)
+    # 1. a 1.2 card: Game.sav beside the game, RetroArch's folder, no file of its own
+    ex = dict(other); ex["roms/%s.sav" % rom] = mine
+    r = S.run("save_heal_new", "60:quit\n", autoboot=rom + ".gba", extra=ex)
+    S.clean(r)
+    S.check(os.path.exists(os.path.join(r.root, ra)) and
+            rd(r, ra) == rd(r, "roms/%s.sav" % rom)[:len(rd(r, ra))],
+            "RetroArch's file is made, the same bytes as the game's save")
+    S.check(r.has(r'^EVT save_export ok target=.*%s\.srm" rule=retroarch-savefiles' % rom),
+            "the log names the place and the rule")
+    S.check(r.has(r"^EVT save_census kind=gba bytes=\d+ crc=[0-9a-f]{8} .*rule=retroarch-savefiles .*exported=.*%s.srm" % rom),
+            "one census line says what was found, exported and why")
+    S.check(rd(r, "roms/%s.sav" % rom)[:len(mine)] == mine or r.has(r"^EVT save_sync_out ok "),
+            "the game's own save is not touched")
+    left = [f for f in os.listdir(os.path.join(r.root, "roms")) if f.endswith((".import", ".tmp", ".old"))]
+    S.check(not left, "nothing half-made is left beside the game (%s)" % left)
+    # 2. the next start: nothing again
+    first = rd(r, ra)
+    r = S.run("save_heal_new", "60:quit\n", autoboot=rom + ".gba", prepared=True)
+    S.clean(r)
+    S.check(rd(r, ra) == first and not r.has(r"^EVT save_export ok "), "the second start writes nothing")
+    S.check(r.has(r"^EVT save_census .*skipped=\"already done\""), "...and says why in the census line")
+    # 3. a different RetroArch file that is newer: both kept
+    ex = dict(other); ex["roms/%s.sav" % rom] = mine
+    theirs = pat(32768, 99)
+    ex[ra] = theirs
+    r = S.run("save_heal_conflict", "60:quit\n", autoboot=rom + ".gba", extra=ex)
+    S.clean(r)
+    # RetroArch's file got its mtime from the test run (newer than the save)
+    S.check(rd(r, ra) == theirs, "a different RetroArch file is not overwritten")
+    S.check(r.has(r"^EVT save_census "), "and the census line is there")
+    # 4. Sync RetroArch saves off: nothing is written, and the census says so
+    ex = dict(other); ex["roms/%s.sav" % rom] = mine
+    r = S.run("save_heal_off", "60:quit\n", autoboot=rom + ".gba", extra=ex,
+              vita_ini={"sync_ra_saves": 0})
+    S.clean(r)
+    S.check(not os.path.exists(os.path.join(r.root, ra)), "with the setting off no file is made")
+    S.check(r.has(r"^EVT save_census .*skipped=\"Sync RetroArch saves is off\""), "the census line says why")
+
+
 def t_save_gb_keep(S):
     """A Game Boy save with bytes after the cartridge RAM (another emulator's
     trailer) keeps them when the game saves; a RetroArch .srm of the plain RAM
@@ -7028,7 +7081,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_n
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
-         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
+         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed),
          ("controls_defaults", t_controls_defaults),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle)]

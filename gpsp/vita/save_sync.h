@@ -44,6 +44,41 @@ void save_sync_link(const char *save_path, const char *src_path);
  * Fills `note` (may be empty) with a short sentence for the player. */
 void save_sync_game_start(const char *save_path, char *note, size_t cap);
 
+/* ---- 1.4: a plain copy for RetroArch and other emulators ----------------
+ *
+ * Every save the app has gets a plain file where RetroArch looks, once per
+ * game (record flag), whether or not it ever came from RetroArch (1.0 - 1.2
+ * never wrote one; 1.3 only for a save it had taken from RetroArch).  Rules
+ * and the file layouts: docs/SAVES.md.  `kind`: */
+enum { SS_KIND_GBA = 0, SS_KIND_GB = 1, SS_KIND_GBC = 2, SS_KIND_SNES = 3,
+       SS_KIND_NES = 4, SS_KIND_WSWAN = 5 };
+
+/* Call at a game's start, after save_sync_game_start.  `note` (may be empty)
+ * is the one-time sentence for the player ("Save is now also at <place>,
+ * RetroArch can use it").  Returns 1 = a copy was written, 2 = RetroArch's
+ * file is the same save and is now linked, 3 = both kept apart (they differ),
+ * 0 = nothing to do / already done / sync off, -1 = failed or deferred (nothing
+ * was overwritten; tried again at the next start).  Always logs one
+ * `save_census` line. */
+int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
+                        char *note, size_t cap);
+
+/* The running game, so that the first save of a NEW game (which has none at
+ * its start) also gets its copy: app_battery_written does it, and the sentence
+ * waits for save_sync_take_note.  Call with NULLs when the game ends. */
+void save_sync_set_game(const char *save_path, const char *rom_path, int kind);
+int  save_sync_take_note(char *note, size_t cap);
+
+/* What an older version left beside the game that the game's own folder
+ * (states/...) already has a copy of: moved to <data>/leftovers/ after a
+ * verified copy.  Returns how many.  (psp/sidecar.h leaves such pairs alone.) */
+int save_sync_tidy_beside_rom(const char *old_slot1, const char *new_slot1);
+
+/* The menu action "Export save for other emulators". */
+enum { SS_DEST_RETROARCH = 0, SS_DEST_ROM_SAV = 1 };
+int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
+                         int dest, char *where, size_t wcap, char *note, size_t cap);
+
 /* fe_host's hook: the battery file at `save_path` was just written. */
 void app_battery_written(const char *save_path);
 

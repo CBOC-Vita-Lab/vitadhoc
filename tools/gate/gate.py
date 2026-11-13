@@ -201,6 +201,11 @@ STEPS = [
          "vita/tests/savesync/test_backup_failure.c vita/save_sync.c frontend-common/fe_util.c "
          "-o {out}/bin/save-backup-failure && {out}/bin/save-backup-failure",
          "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("save-legacy-heal", "save sync: every legacy save layout gets its plain RetroArch file, never over another save",
+         "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -I vita -I frontend-common "
+         "vita/tests/savesync/test_legacy_heal.c vita/save_sync.c frontend-common/fe_util.c "
+         "-o {out}/bin/save-legacy-heal && {out}/bin/save-legacy-heal",
+         "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
     Step("local-save-fail", "local link: a second game's save is never lost (save_write)",
          "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -no-pie -DVITA -I vita -I psp "
          "-I frontend-common -I libretro/libretro-common/include -I . "

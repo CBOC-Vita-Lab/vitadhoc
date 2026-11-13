@@ -65,8 +65,13 @@ It does not turn all games into native widescreen games or modify their saves.
   (its trailer) beyond, and only if the source still has the recorded size and
   CRC, and no data of the save would be cut off. Off with `sync_ra_saves = 0`
   (Settings > Library; `ui_host_sync_ra_on/_set`).
-- Tests: `app_tests.py --only save_sync,save_gb_keep,save_import` and
-  `vita/tests/savesync/test_save_sync.c` (the compile line is in its header).
+- 1.4: `save_sync_heal_game` (called by game_boot after `save_sync_game_start`)
+  gives every save without a linked RetroArch file a plain `Game.srm` where
+  RetroArch looks, once per game (record flag), never over a different or
+  newer file; see docs/SAVES.md for the rules, layouts and the log lines.
+- Tests: `app_tests.py --only save_sync,save_heal,save_gb_keep,save_import` and
+  `vita/tests/savesync/test_save_sync.c`, `test_backup_failure.c`,
+  `test_legacy_heal.c` (the compile line is in each header).
 
 ## Version 1.3 Changes
 

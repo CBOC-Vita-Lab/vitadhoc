@@ -3827,6 +3827,21 @@ void ui_host_grid_set(int level)
 
 int ui_host_sync_ra_on(void) { return g_sync_ra; }
 
+/* The menu action "Export save for other emulators" (docs/SAVES.md): the
+ * running game's save as a plain file, `dest` = SS_DEST_RETROARCH (where
+ * RetroArch looks) or SS_DEST_ROM_SAV (Game.sav beside the game).  0 = done or
+ * already there; `note` is the sentence to show, `where` the file's path.  Not
+ * tied to the Sync RetroArch saves setting. */
+int ui_host_export_save(int dest, char *where, size_t wcap, char *note, size_t cap)
+{
+   int kind = g_game.console == FE_CONSOLE_GBA ? SS_KIND_GBA :
+              g_game.console == FE_CONSOLE_GBC ? SS_KIND_GBC :
+              g_game.console == FE_CONSOLE_GB ? SS_KIND_GB :
+              g_game.console == FE_CONSOLE_NES ? SS_KIND_NES : SS_KIND_WSWAN;
+   return save_sync_export_now(g_game.save_path, g_game.rom_path, kind, dest,
+                               where, wcap, note, cap);
+}
+
 void ui_host_sync_ra_set(int on)
 {
    g_sync_ra = on ? 1 : 0;
@@ -4220,11 +4235,27 @@ static int game_boot(const char *rom_path, fe_console_t console)
       if (mig.moved || mig.copied || mig.failed || mig.kept)
          fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
                 rom_path, mig.moved, mig.copied, mig.failed, mig.kept);
+      /* a file beside the ROM that the game's folder has a copy of: out of
+       * the ROM folder (save_sync.h), so it holds the ROM and its save */
+      if (mig.kept)
+         (void)save_sync_tidy_beside_rom(g_game.legacy_state_path,
+                                         g_game.state_path);
    }
    save_import(rom_path, g_game.save_path, console);
    {
       char sync_note[160];
+      int kind = console == FE_CONSOLE_GBA ? SS_KIND_GBA :
+                 console == FE_CONSOLE_GBC ? SS_KIND_GBC :
+                 console == FE_CONSOLE_GB ? SS_KIND_GB :
+                 console == FE_CONSOLE_NES ? SS_KIND_NES : SS_KIND_WSWAN;
       save_sync_game_start(g_game.save_path, sync_note, sizeof(sync_note));
+      if (sync_note[0])
+         snprintf(g_import_note, sizeof(g_import_note), "%s", sync_note);
+      /* 1.4: a plain copy for RetroArch, once per game (save_sync.h); the
+       * sentence is shown once, the census line every start */
+      save_sync_set_game(g_game.save_path, rom_path, kind);
+      save_sync_heal_game(g_game.save_path, rom_path, kind, sync_note,
+                          sizeof(sync_note));
       if (sync_note[0])
          snprintf(g_import_note, sizeof(g_import_note), "%s", sync_note);
    }
@@ -5610,6 +5641,22 @@ int main(int argc, char **argv)
             }
             snprintf(snes_arg, sizeof(snes_arg), "%s|%.*s.srm", un,
                      (int)(zl - 4), rom_path);
+         }
+         {
+            /* 1.4: the SNES save (Game.srm beside the game or its zip) gets
+             * the same record, backup and plain copy for RetroArch as the
+             * others; snes.bin has no way to call back, so this is done now
+             * and brings the previous session's changes across */
+            char srm[APP_PATH_CAP], note[160];
+            const char *sl = strrchr(rom_path, '/');
+            const char *dt = strrchr(rom_path, '.');
+            if (dt && (!sl || dt > sl) &&
+                path_fmt(srm, sizeof(srm), "%.*s.srm",
+                         (int)(dt - rom_path), rom_path) == 0)
+            {
+               save_sync_game_start(srm, note, sizeof(note));
+               save_sync_heal_game(srm, rom_path, SS_KIND_SNES, note, sizeof(note));
+            }
          }
          src = snes_launch(snes_arg);
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);

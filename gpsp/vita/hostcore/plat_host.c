@@ -1273,6 +1273,8 @@ unsigned plat_pad_pressed(void)
    static int have;
    static unsigned last;
    unsigned i, f = script_frame(), from, b = 0;
+   if (getenv("GBADHOC_NO_PADLATCH"))
+      return 0;                    /* (twin: the old behaviour, to compare) */
    if (!have)
    {
       have = 1;

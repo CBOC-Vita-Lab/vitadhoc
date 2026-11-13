@@ -746,6 +746,730 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap)
    }
 }
 
+/* ======================================================================
+ * 1.4: a plain copy of every save for RetroArch and other emulators
+ *
+ * 1.0 - 1.2 never wrote one (their battery file is Game.sav / Game.gb.sav /
+ * Game.gbc.sav beside the game, a name RetroArch does not read), and 1.3 only
+ * wrote back to a RetroArch file the save had been TAKEN from.  A save with no
+ * record of one (every save made in 1.0 - 1.2, a new game, a copy taken from
+ * import/ or from beside the game) was never written anywhere RetroArch looks.
+ * save_sync_heal_game() does that once per game, at its start (and after the
+ * first save of a new game), by these rules:
+ *
+ *  - the file is the app's save byte for byte: it already is the layout the
+ *    cores load (GBA: the 128 KB gpSP image; Game Boy: cartridge RAM and, for a
+ *    clock cartridge, the 48 byte trailer of mGBA, SameBoy and VBA-M; SNES: raw
+ *    SRAM) -- nothing is converted, so nothing can be converted wrongly;
+ *  - an existing RetroArch file of that game (its savefiles folder, a core's
+ *    folder in it, or beside the game) is never replaced unless it is older
+ *    than ours and a verified copy of it is in backups/; when it is as new or
+ *    newer and differs, both are kept and the record says so;
+ *  - where a new file goes follows RetroArch's own configuration.
+ * ====================================================================== */
+
+typedef struct
+{
+   int  have;
+   int  in_content;                    /* savefiles_in_content_dir */
+   int  sort_core;                     /* sort_savefiles_enable */
+   int  sort_content;                  /* sort_savefiles_by_content_enable */
+   char dir[SS_PATH];                  /* savefile_directory, "" = none/default */
+} ra_cfg;
+
+static void cfg_val(const char *line, const char *key, char *out, size_t cap)
+{
+   size_t kl = strlen(key);
+   const char *p = line;
+   while (*p == ' ' || *p == '\t')
+      p++;
+   if (strncmp(p, key, kl))
+      return;
+   p += kl;
+   while (*p == ' ' || *p == '\t')
+      p++;
+   if (*p != '=')
+      return;
+   p++;
+   while (*p == ' ' || *p == '\t' || *p == '"')
+      p++;
+   snprintf(out, cap, "%s", p);
+   {
+      size_t n = strlen(out);
+      while (n && (out[n - 1] == '\n' || out[n - 1] == '\r' ||
+                   out[n - 1] == '"' || out[n - 1] == ' '))
+         out[--n] = 0;
+   }
+}
+
+static void ra_cfg_read(ra_cfg *c)
+{
+   FILE *f = fopen(g_racfg, "rb");
+   char line[SS_PATH + 64], v[SS_PATH];
+   memset(c, 0, sizeof(*c));
+   if (!f)
+      return;
+   c->have = 1;
+   while (fgets(line, sizeof(line), f))
+   {
+      v[0] = 0;
+      cfg_val(line, "savefiles_in_content_dir", v, sizeof(v));
+      if (v[0]) c->in_content = !strcmp(v, "true");
+      v[0] = 0;
+      cfg_val(line, "sort_savefiles_enable", v, sizeof(v));
+      if (v[0]) c->sort_core = !strcmp(v, "true");
+      v[0] = 0;
+      cfg_val(line, "sort_savefiles_by_content_enable", v, sizeof(v));
+      if (v[0]) c->sort_content = !strcmp(v, "true");
+      v[0] = 0;
+      cfg_val(line, "savefile_directory", v, sizeof(v));
+      if (v[0] && strcmp(v, "default") && v[0] != ':' && v[0] != '~' &&
+          (strchr(v, ':') || v[0] == '/'))
+         snprintf(c->dir, sizeof(c->dir), "%s", v);
+   }
+   fclose(f);
+}
+
+static int is_dir(const char *p)
+{
+   struct stat st;
+   return stat(p, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static int exists(const char *p)
+{
+   struct stat st;
+   return stat(p, &st) == 0;
+}
+
+/* dst = src when it fits SS_PATH, else -1 (a record path is never cut) */
+static int set_path(char *dst, const char *src)
+{
+   size_t n = strlen(src);
+   if (n >= SS_PATH)
+      return -1;
+   memcpy(dst, src, n + 1);
+   return 0;
+}
+
+static const char *kind_name(int k)
+{
+   static const char *const n[] = { "gba", "gb", "gbc", "snes", "nes", "wswan" };
+   return k >= 0 && k < 6 ? n[k] : "?";
+}
+
+/* "<dir of the game>" into dir (with its trailing slash), and the game's name
+ * without its extension into stem. */
+static int rom_parts(const char *rom, char *dir, size_t dcap, char *stem, size_t scap)
+{
+   const char *sl = strrchr(rom, '/'), *c = strrchr(rom, ':'), *bn, *dot;
+   size_t dl;
+   if (c && (!sl || c > sl))
+      sl = c;
+   bn = sl ? sl + 1 : rom;
+   dl = (size_t)(bn - rom);
+   if (dl >= dcap || !*bn)
+      return -1;
+   memcpy(dir, rom, dl);
+   dir[dl] = 0;
+   snprintf(stem, scap, "%s", bn);
+   dot = strrchr(stem, '.');
+   if (dot && dot != stem)
+      stem[dot - stem] = 0;
+   return stem[0] ? 0 : -1;
+}
+
+/* RetroArch's per-core folders, for the console, in the order to look. */
+static const char *const k_sub_gb[] = { "", "/Gambatte", "/mGBA", "/SameBoy", "/TGB Dual",
+   "/Gearboy", "/VBA-M", "/VBA Next", "/gpSP", NULL };
+static const char *const k_sub_gba[] = { "", "/gpSP", "/mGBA", "/VBA-M", "/VBA Next", NULL };
+static const char *const k_sub_snes[] = { "", "/Snes9x", "/Snes9x 2010", "/Snes9x 2005",
+   "/bsnes", "/bsnes-mercury Balanced", NULL };
+static const char *const k_sub_other[] = { "", "/FCEUmm", "/Nestopia", "/Mesen",
+   "/QuickNES", "/Beetle WonderSwan", "/Beetle Cygne", NULL };
+
+static const char *const *subs_for(int kind)
+{
+   return kind == 0 ? k_sub_gba : kind == 1 || kind == 2 ? k_sub_gb :
+          kind == 3 ? k_sub_snes : k_sub_other;
+}
+
+/* Is the data of the two files the same save?  Same bytes as far as both go;
+ * what is left over is only a clock trailer (at most 64 bytes) or erased
+ * (0xFF) -- a 32 KB copy of a 128 KB image, a trailer RetroArch wrote with
+ * other clock bytes. */
+static int same_save(const char *a, const char *b)
+{
+   unsigned char x[SS_CHUNK], y[SS_CHUNK];
+   long sa = 0, sb = 0, i, cmp;
+   FILE *fa, *fb;
+   int same = 1;
+   if (stat_file(a, &sa, NULL) != 0 || stat_file(b, &sb, NULL) != 0)
+      return 0;
+   cmp = core_len(sa) < core_len(sb) ? core_len(sa) : core_len(sb);
+   fa = fopen(a, "rb");
+   fb = fopen(b, "rb");
+   if (!fa || !fb)
+      same = 0;
+   for (i = 0; same && i < cmp; )
+   {
+      size_t want = (size_t)(cmp - i > (long)sizeof(x) ? (long)sizeof(x) : cmp - i);
+      if (fread(x, 1, want, fa) != want || fread(y, 1, want, fb) != want ||
+          memcmp(x, y, want))
+         same = 0;
+      i += (long)want;
+   }
+   if (fa)
+      fclose(fa);
+   if (fb)
+      fclose(fb);
+   if (!same)
+      return 0;
+   if (sa - cmp > 64 && has_data_between(a, cmp, sa))
+      return 0;
+   if (sb - cmp > 64 && has_data_between(b, cmp, sb))
+      return 0;
+   return 1;
+}
+
+/* An existing RetroArch file of this game, wherever RetroArch could have put
+ * it: its configured folder (and the core folders in it), the default folder,
+ * beside the game.  `skip` (our own save) is never one. */
+static int find_foreign(const char *skip, const char *rom_dir, const char *stem,
+                        int kind, const ra_cfg *cfg, char *out, size_t cap)
+{
+   const char *bases[2];
+   const char *const *sub = subs_for(kind);
+   char p[SS_PATH * 2];
+   int b, i;
+   bases[0] = cfg->dir[0] ? cfg->dir : g_ra;
+   bases[1] = cfg->dir[0] && strcmp(cfg->dir, g_ra) ? g_ra : NULL;
+   for (b = 0; b < 2; b++)
+   {
+      if (!bases[b])
+         continue;
+      for (i = 0; sub[i]; i++)
+      {
+         if (snprintf(p, sizeof(p), "%s%s/%s.srm", bases[b], sub[i], stem) < (int)sizeof(p) &&
+             strcmp(p, skip) && exists(p) && strlen(p) < cap)
+         {
+            snprintf(out, cap, "%s", p);
+            return 1;
+         }
+      }
+   }
+   if (snprintf(p, sizeof(p), "%s%s.srm", rom_dir, stem) < (int)sizeof(p) &&
+       strcmp(p, skip) && exists(p) && strlen(p) < cap)
+   {
+      snprintf(out, cap, "%s", p);
+      return 1;
+   }
+   return 0;
+}
+
+/* Where a NEW plain copy goes.  Returns a short name of the rule used. */
+static const char *pick_target(const char *save_path, const char *rom_dir,
+                               const char *stem, int kind, const ra_cfg *cfg,
+                               char *out, size_t cap)
+{
+   char base[SS_PATH + 48], ra_root[SS_PATH + 48];
+   const char *rule;
+   const char *const *sub = subs_for(kind);
+   int i;
+   out[0] = 0;
+   snprintf(ra_root, sizeof(ra_root), "%s", g_ra);
+   {
+      char *sl = strrchr(ra_root, '/');
+      if (sl)
+         *sl = 0;                      /* RetroArch's own folder */
+   }
+   if (cfg->have && cfg->in_content && !cfg->dir[0])
+   {
+      snprintf(out, cap, "%s%s.srm", rom_dir, stem);
+      rule = "retroarch-config:beside-game";
+   }
+   else if (cfg->dir[0] || is_dir(g_ra) || is_dir(ra_root))
+   {
+      snprintf(base, sizeof(base), "%s", cfg->dir[0] ? cfg->dir : g_ra);
+      if (cfg->sort_core)
+      {
+         for (i = 1; sub[i]; i++)
+         {
+            char d[SS_PATH * 2];
+            if (snprintf(d, sizeof(d), "%s%s", base, sub[i]) < (int)sizeof(d) && is_dir(d))
+            {
+               snprintf(out, cap, "%s/%s.srm", d, stem);
+               return "retroarch-core-folder";
+            }
+         }
+      }
+      snprintf(out, cap, "%s/%s.srm", base, stem);
+      rule = cfg->dir[0] ? "retroarch-config:savefile_directory" : "retroarch-savefiles";
+   }
+   else
+   {
+      /* No RetroArch on the card: the plain .sav beside the game.  A GBA
+       * game's save already is that (Game.sav); a Game Boy game's is named
+       * Game.gb.sav, so it gets Game.sav -- unless a GBA game beside it owns
+       * that name.  SNES, NES and WonderSwan saves already are Game.srm. */
+      if (kind == 1 || kind == 2)
+      {
+         char a[SS_PATH * 2], z[SS_PATH * 2];
+         if (snprintf(a, sizeof(a), "%s%s.gba", rom_dir, stem) < (int)sizeof(a) &&
+             !exists(a) &&
+             snprintf(z, sizeof(z), "%s%s.zip", rom_dir, stem) < (int)sizeof(z) &&
+             !exists(z))
+         {
+            snprintf(out, cap, "%s%s.sav", rom_dir, stem);
+            rule = "no-retroarch:beside-game-sav";
+         }
+         else
+         {
+            snprintf(out, cap, "%s%s.srm", rom_dir, stem);
+            rule = "no-retroarch:beside-game-srm";
+         }
+      }
+      else
+      {
+         snprintf(out, cap, "%s", save_path);   /* already the plain file */
+         rule = "no-retroarch:save-is-plain";
+      }
+   }
+   return rule;
+}
+
+static void ensure_parent(const char *path)
+{
+   char d[SS_PATH * 2];
+   char *sl;
+   snprintf(d, sizeof(d), "%s", path);
+   sl = strrchr(d, '/');
+   if (sl)
+   {
+      *sl = 0;
+      ensure_dir(d);
+   }
+}
+
+/* One census line per launch: never silent. */
+static void census(const char *save, int kind, long size, uint32_t crc,
+                   const char *found, const char *exported, const char *backup,
+                   const char *skipped, const char *rule)
+{
+   /* reasons first: the log line is cut at 512 bytes and paths are long */
+   fe_evt("save_census kind=%s bytes=%ld crc=%08x skipped=\"%s\" rule=%s backup=%s "
+          "save=\"%s\" found=\"%s\" exported=\"%s\"", kind_name(kind), size,
+          (unsigned)crc, skipped ? skipped : "-", rule ? rule : "-",
+          backup ? backup : "none", save, found ? found : "-",
+          exported ? exported : "-");
+}
+
+static void put_flags(ss_rec *r, int flags)
+{
+   r->flags |= flags;
+   (void)rec_put(r);
+}
+
+/* Remove what an export cut short left behind: <target>.import, and put a
+ * RetroArch file that was being replaced back (<target>.old). */
+static void export_recover(const char *t)
+{
+   char a[SS_PATH * 2 + 16];
+   if (snprintf(a, sizeof(a), "%s.import", t) < (int)sizeof(a) && exists(a))
+   {
+      remove(a);
+      fe_evt("save_export removed an unfinished copy \"%s\"", a);
+   }
+   if (snprintf(a, sizeof(a), "%s.old", t) < (int)sizeof(a) && exists(a))
+   {
+      if (!exists(t) && rename(a, t) == 0)
+         fe_evt("save_export put back \"%s\" (a replacement was cut short)", t);
+   }
+}
+
+int save_sync_heal_game(const char *save_path, const char *rom_path, int kind,
+                        char *note, size_t cap)
+{
+   ss_rec r;
+   ra_cfg cfg;
+   char rom_dir[SS_PATH], stem[SS_PATH], found[SS_PATH], target[SS_PATH * 2 + 16];
+   long ours_len = 0, ours_mtime = 0;
+   uint32_t ours_crc = 0;
+   const char *rule;
+   int have;
+
+   if (note && cap)
+      note[0] = 0;
+   if (!save_path || !rom_path || !g_root[0])
+      return 0;
+   if (stat_file(save_path, &ours_len, &ours_mtime) != 0 || ours_len <= 0)
+   {
+      census(save_path, kind, 0, 0, NULL, NULL, NULL, "no save yet", NULL);
+      return 0;
+   }
+   have = rec_get(save_path, &r);
+   if (!have)
+   {
+      memset(&r, 0, sizeof(r));
+      snprintf(r.save, sizeof(r.save), "%s", save_path);
+   }
+   if (r.flags & SSF_HEALED)
+   {
+      /* settled: one stat tells whether the linked file is still there */
+      if (r.src[0] && !exists(r.src))
+         census(save_path, kind, ours_len, 0, r.src, NULL, NULL,
+                "RetroArch file was removed; not made again", NULL);
+      else
+         census(save_path, kind, ours_len, r.our_crc, r.src[0] ? r.src : "-",
+                r.src[0] ? r.src : NULL, NULL,
+                r.flags & SSF_CONFLICT ? "kept apart: the files differ" : "already done", NULL);
+      return 0;
+   }
+   if (!g_on)
+   {
+      census(save_path, kind, ours_len, 0, NULL, NULL, NULL,
+             "Sync RetroArch saves is off", NULL);
+      return 0;
+   }
+   if (rom_parts(rom_path, rom_dir, sizeof(rom_dir), stem, sizeof(stem)) != 0 ||
+       crc_file(save_path, &ours_crc, &ours_len) != 0)
+   {
+      census(save_path, kind, ours_len, 0, NULL, NULL, NULL, "cannot read the save or the game name", NULL);
+      return -1;
+   }
+   ra_cfg_read(&cfg);
+
+   /* A record that names a source: 1.3's own business, as long as it is there. */
+   if (r.src[0])
+   {
+      if (exists(r.src))
+      {
+         r.flags |= SSF_HEALED;
+         (void)rec_put(&r);
+         census(save_path, kind, ours_len, ours_crc, r.src, r.src, NULL, "linked already", NULL);
+         return 0;
+      }
+      census(save_path, kind, ours_len, ours_crc, r.src, NULL, NULL,
+             "the linked RetroArch file is gone; looking again", NULL);
+      r.src[0] = 0;
+   }
+
+   /* an export or a replacement that was cut short last time is put right
+    * BEFORE the RetroArch file is looked for: a file waiting as <name>.old is
+    * RetroArch's own and goes back where it was, never written over */
+   rule = pick_target(save_path, rom_dir, stem, kind, &cfg, target, sizeof(target));
+   if (strcmp(target, save_path))
+      export_recover(target);
+   if (find_foreign(save_path, rom_dir, stem, kind, &cfg, found, sizeof(found)))
+   {
+      long f_size = 0, f_mtime = 0;
+      uint32_t f_crc = 0;
+      export_recover(found);
+      if (stat_file(found, &f_size, &f_mtime) != 0 ||
+          crc_file(found, &f_crc, &f_size) != 0)
+      {
+         census(save_path, kind, ours_len, ours_crc, found, NULL, NULL, "cannot read it", NULL);
+         return -1;
+      }
+      if (same_save(save_path, found))
+      {
+         snprintf(r.src, sizeof(r.src), "%s", found);
+         r.src_size = f_size; r.src_mtime = f_mtime; r.src_crc = f_crc;
+         r.src_ours = 0; r.our_crc = ours_crc; r.sync_crc = ours_crc;
+         r.flags |= SSF_HEALED;
+         (void)rec_put(&r);
+         census(save_path, kind, ours_len, ours_crc, found, found, NULL,
+                "RetroArch's file is the same save: linked, nothing written", NULL);
+         return 2;
+      }
+      if (f_mtime >= ours_mtime)
+      {
+         int a = backup_file(save_path, "RetroArch has a different save of this game", &ours_crc);
+         int c = backup_file(found, "RetroArch has a different save of this game", &f_crc);
+         if (a != 0 || c != 0)
+         {
+            note_fail(note, cap, "Your save and RetroArch's differ and could not be backed up");
+            census(save_path, kind, ours_len, ours_crc, found, NULL, "FAILED",
+                   "no verified backup: retry at the next start", NULL);
+            return -1;
+         }
+         r.our_crc = ours_crc;
+         put_flags(&r, SSF_HEALED | SSF_CONFLICT);
+         if (note)
+            snprintf(note, cap, "Your save here and RetroArch's save (%s) differ - "
+                     "both kept, nothing overwritten", found);
+         census(save_path, kind, ours_len, ours_crc, found, NULL, "both",
+                f_mtime > ours_mtime ? "RetroArch's is newer and differs" :
+                                       "same time and different", NULL);
+         return 3;
+      }
+      /* RetroArch's is older and differs: after a verified backup of it, ours
+       * goes over it, in its own size and layout (sync_out). */
+      snprintf(r.src, sizeof(r.src), "%s", found);
+      r.src_size = f_size; r.src_mtime = f_mtime; r.src_crc = f_crc;
+      r.src_ours = 0; r.our_crc = ours_crc; r.sync_crc = 0;
+      {
+         int rc = sync_out(&r, ours_len);
+         if (rc == 0)
+         {
+            r.flags |= SSF_HEALED;
+            (void)rec_put(&r);
+            if (note)
+               snprintf(note, cap, "Save is now also at %s, RetroArch can use it "
+                        "(its older one is in backups)", found);
+            census(save_path, kind, ours_len, ours_crc, found, found, "kept", "-", NULL);
+            return 1;
+         }
+         if (rc == 1)
+         {
+            int a = backup_file(save_path, "RetroArch has a different save of this game", &ours_crc);
+            int c = backup_file(found, "RetroArch has a different save of this game", &f_crc);
+            r.src[0] = 0;
+            if (a == 0 && c == 0)
+            {
+               r.our_crc = ours_crc;
+               put_flags(&r, SSF_HEALED | SSF_CONFLICT);
+               if (note)
+                  snprintf(note, cap, "Your save here and RetroArch's save (%s) differ "
+                           "- both kept, nothing overwritten", found);
+            }
+            census(save_path, kind, ours_len, ours_crc, found, NULL,
+                   a == 0 && c == 0 ? "both" : "FAILED", "the files do not fit each other", NULL);
+            return 3;
+         }
+         if (rc == -2)
+            note_fail(note, cap, "RetroArch's save could not be backed up");
+         census(save_path, kind, ours_len, ours_crc, found, NULL, rc == -2 ? "FAILED" : "none",
+                rc == -2 ? "no verified backup: retry at the next start"
+                         : "write failed: retry at the next start", NULL);
+         return -1;
+      }
+   }
+
+   if (!strcmp(target, save_path))
+   {
+      r.our_crc = ours_crc;
+      put_flags(&r, SSF_HEALED);
+      census(save_path, kind, ours_len, ours_crc, save_path, save_path, NULL, NULL, rule);
+      return 0;
+   }
+   ensure_parent(target);
+   if (copy_over(save_path, target, ours_crc) != 0)
+   {
+      note_fail(note, cap, "A copy of your save for RetroArch could not be written");
+      fe_evt("save_export FAILED target=\"%s\" rule=%s err=\"%s\"", target, rule, g_berr);
+      census(save_path, kind, ours_len, ours_crc, NULL, NULL, NULL,
+             "write failed: nothing changed, retry at the next start", NULL);
+      return -1;
+   }
+   if (set_path(r.src, target) != 0) r.src[0] = 0;
+   r.src_size = ours_len; r.src_crc = ours_crc;
+   if (stat_file(target, NULL, &r.src_mtime) != 0)
+      r.src_mtime = 0;
+   r.src_ours = 1;
+   r.our_crc = ours_crc;
+   r.sync_crc = ours_crc;
+   r.flags |= SSF_HEALED;
+   (void)rec_put(&r);
+   if (note)
+      snprintf(note, cap, "Save is now also at %s, RetroArch can use it", target);
+   fe_evt("save_export ok target=\"%s\" rule=%s", target, rule);
+   census(save_path, kind, ours_len, ours_crc, NULL, target, "-", NULL, rule);
+   return 1;
+}
+
+/* Files of an older version that are still beside the game although the game's
+ * own folder (states/...) has the same file: the migration leaves both
+ * alone ("kept"), and the old one would stay in the game folder for good.  A
+ * verified copy goes to <data>/leftovers/ and the old file is removed; the
+ * file in the game's folder is never touched, and an old file with no twin
+ * stays where it is (it is what the game reads).  `old1` / `new1` are the
+ * slot-1 state paths, beside the game and in the game's folder.  Returns the
+ * number of files moved. */
+int save_sync_tidy_beside_rom(const char *old1, const char *new1)
+{
+   static const char *const tail[] = { "", ".thumb", ".shot", ".p2", ".old" };
+   static const char *const rtail[] = { "", ".pt", ".old" };
+   char ba[SS_PATH], bb[SS_PATH], a[SS_PATH + 24], b[SS_PATH + 24], dir[SS_PATH + 16];
+   size_t la, lb;
+   int moved = 0, slot, t;
+
+   if (!old1 || !new1 || !g_root[0])
+      return 0;
+   la = strlen(old1);
+   lb = strlen(new1);
+   if (la < 4 || lb < 4 || la >= sizeof(ba) || lb >= sizeof(bb) ||
+       strcmp(old1 + la - 3, "st0") || strcmp(new1 + lb - 3, "st0") ||
+       !strcmp(old1, new1))
+      return 0;
+   memcpy(ba, old1, la - 3); ba[la - 3] = 0;
+   memcpy(bb, new1, lb - 3); bb[lb - 3] = 0;
+   snprintf(dir, sizeof(dir), "%s/leftovers", g_root);
+   for (slot = 0; slot < 11; slot++)
+   {
+      int nt = slot < 10 ? 5 : 3;
+      for (t = 0; t < nt; t++)
+      {
+         const char *tl = slot < 10 ? tail[t] : rtail[t];
+         char nm[40];
+         uint32_t crc;
+         long size;
+         if (slot < 10)
+            snprintf(nm, sizeof(nm), "st%d%s", slot, tl);
+         else
+            snprintf(nm, sizeof(nm), "rsm%s", tl);
+         if (snprintf(a, sizeof(a), "%s%s", ba, nm) >= (int)sizeof(a) ||
+             snprintf(b, sizeof(b), "%s%s", bb, nm) >= (int)sizeof(b) ||
+             !exists(a) || !exists(b))
+            continue;
+         if (crc_file(a, &crc, &size) == 0)
+         {
+            char to[SS_PATH * 2 + 32];
+            const char *bn = strrchr(a, '/');
+            bn = bn ? bn + 1 : a;
+            ensure_dir(dir);
+            if (snprintf(to, sizeof(to), "%s/%s.%08x", dir, bn, (unsigned)crc) <
+                   (int)sizeof(to) &&
+                (file_is(to, crc, size) || copy_over(a, to, crc) == 0) &&
+                file_is(to, crc, size) && remove(a) == 0)
+            {
+               moved++;
+               fe_evt("save_tidy moved \"%s\" to leftovers (the game's folder has its own)", a);
+            }
+            else
+               fe_evt("save_tidy kept \"%s\" beside the game (could not be copied away)", a);
+         }
+      }
+   }
+   return moved;
+}
+
+void save_sync_set_game(const char *save_path, const char *rom_path, int kind)
+{
+   g_late_note[0] = 0;
+   if (!save_path || !rom_path)
+   {
+      g_ctx_kind = -1;
+      return;
+   }
+   snprintf(g_ctx_save, sizeof(g_ctx_save), "%s", save_path);
+   snprintf(g_ctx_rom, sizeof(g_ctx_rom), "%s", rom_path);
+   g_ctx_kind = kind;
+}
+
+int save_sync_take_note(char *note, size_t cap)
+{
+   if (!note || !cap || !g_late_note[0])
+      return 0;
+   snprintf(note, cap, "%s", g_late_note);
+   g_late_note[0] = 0;
+   return 1;
+}
+
+/* "Export save for other emulators": the save as a plain file where the
+ * player chose, whatever the setting says, after a verified backup of any file
+ * it replaces. */
+int save_sync_export_now(const char *save_path, const char *rom_path, int kind,
+                         int dest, char *where, size_t wcap, char *note, size_t cap)
+{
+   ra_cfg cfg;
+   char rom_dir[SS_PATH], stem[SS_PATH], target[SS_PATH * 2 + 16];
+   long ours_len = 0;
+   uint32_t ours_crc = 0, t_crc;
+   long t_size;
+   ss_rec r;
+   int have;
+
+   if (note && cap)
+      note[0] = 0;
+   if (where && wcap)
+      where[0] = 0;
+   if (!save_path || !rom_path || !g_root[0] ||
+       rom_parts(rom_path, rom_dir, sizeof(rom_dir), stem, sizeof(stem)) != 0 ||
+       crc_file(save_path, &ours_crc, &ours_len) != 0 || ours_len <= 0)
+   {
+      if (note && cap)
+         snprintf(note, cap, "This game has no save yet");
+      return -1;
+   }
+   ra_cfg_read(&cfg);
+   if (dest == SS_DEST_ROM_SAV)
+   {
+      char a[SS_PATH * 2];
+      if (kind == 0 || kind >= 3)
+         snprintf(target, sizeof(target), "%s", save_path);   /* it is that file already */
+      else if (snprintf(a, sizeof(a), "%s%s.gba", rom_dir, stem) < (int)sizeof(a) && exists(a))
+      {
+         if (note && cap)
+            snprintf(note, cap, "%s.sav belongs to the GBA game of the same name", stem);
+         return -1;
+      }
+      else
+         snprintf(target, sizeof(target), "%s%s.sav", rom_dir, stem);
+   }
+   else
+   {
+      char found[SS_PATH];
+      if (find_foreign(save_path, rom_dir, stem, kind, &cfg, found, sizeof(found)))
+         snprintf(target, sizeof(target), "%s", found);
+      else
+         (void)pick_target(save_path, rom_dir, stem, kind, &cfg, target, sizeof(target));
+   }
+   if (where && wcap)
+      snprintf(where, wcap, "%s", target);
+   if (!strcmp(target, save_path))
+   {
+      if (note && cap)
+         snprintf(note, cap, "The save is already a plain file: %s", target);
+      return 0;
+   }
+   export_recover(target);
+   if (crc_file(target, &t_crc, &t_size) == 0)
+   {
+      if (t_crc == ours_crc && t_size == ours_len)
+      {
+         if (note && cap)
+            snprintf(note, cap, "Already there: %s", target);
+         return 0;
+      }
+      if (backup_file(target, "replaced by Export save", &t_crc) != 0)
+      {
+         if (note && cap)
+            snprintf(note, cap, "Not exported: the file there could not be backed up (%s)", g_berr);
+         return -1;
+      }
+   }
+   ensure_parent(target);
+   if (copy_over(save_path, target, ours_crc) != 0)
+   {
+      if (note && cap)
+         snprintf(note, cap, "Not exported (%s) - nothing was changed", g_berr);
+      return -1;
+   }
+   if (dest == SS_DEST_RETROARCH)
+   {
+      have = rec_get(save_path, &r);
+      if (!have)
+      {
+         memset(&r, 0, sizeof(r));
+         snprintf(r.save, sizeof(r.save), "%s", save_path);
+      }
+      if (set_path(r.src, target) != 0) r.src[0] = 0;
+      r.src_size = ours_len; r.src_crc = ours_crc;
+      if (stat_file(target, NULL, &r.src_mtime) != 0)
+         r.src_mtime = 0;
+      r.src_ours = 1; r.our_crc = ours_crc; r.sync_crc = ours_crc;
+      r.flags |= SSF_HEALED;
+      r.flags &= ~SSF_CONFLICT;
+      (void)rec_put(&r);
+   }
+   fe_evt("save_export ok target=\"%s\" rule=manual bytes=%ld crc=%08x", target, ours_len,
+          (unsigned)ours_crc);
+   if (note && cap)
+      snprintf(note, cap, "Saved a plain copy: %s", target);
+   return 0;
+}
+
 void app_battery_written(const char *save_path)
 {
    ss_rec r;
@@ -767,4 +1491,14 @@ void app_battery_written(const char *save_path)
    if (g_on && r.src[0])
       (void)sync_out(&r, len);
    (void)rec_put(&r);
+   /* a save with no RetroArch file yet (a new game, or one that could not be
+    * dealt with at the start): its plain copy, now that there is something */
+   if (g_on && g_ctx_kind >= 0 && !r.src[0] && !(r.flags & SSF_HEALED) &&
+       !strcmp(g_ctx_save, save_path))
+   {
+      char n[160];
+      if (save_sync_heal_game(save_path, g_ctx_rom, g_ctx_kind, n, sizeof(n)) == 1 &&
+          n[0])
+         snprintf(g_late_note, sizeof(g_late_note), "%s", n);
+   }
 }

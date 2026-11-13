@@ -304,6 +304,15 @@ static void app_stopped(void *user, int reason)
    a->stop_reason = reason;
 }
 
+/* A transport whose I/O thread says "heard from it just now", whatever the
+ * pump sees: a peer with a busy main thread. */
+static int g_heard_always;
+static uint64_t sim_heard_now(void *ctx, const uint8_t mac[6])
+{
+   (void)ctx; (void)mac;
+   return 0;
+}
+
 static netdrv *mk_node_cfg(sim *s, sim_ep *ep, int idx, app *a,
                            const char *name, uint32_t nonce,
                            const char *proto, const nd_config *extra)
@@ -312,6 +321,7 @@ static netdrv *mk_node_cfg(sim *s, sim_ep *ep, int idx, app *a,
    nd_callbacks cb;
    nd_config cfg;
 
+   memset(&tp, 0, sizeof(tp));        /* optional hooks must read NULL */
    ep->s = s;
    ep->idx = idx;
    tp.ctx = ep;
@@ -320,6 +330,8 @@ static netdrv *mk_node_cfg(sim *s, sim_ep *ep, int idx, app *a,
    tp.recv = sim_recv;
    tp.local_addr = sim_local_addr;
    tp.pending = sim_pending;
+   if (g_heard_always)
+      tp.heard_age_us = sim_heard_now;
 
    memset(a, 0, sizeof(*a));
    a->name = name;
@@ -1135,6 +1147,38 @@ static void test_reentrant_echo(void)
    netdrv_destroy(nd[1]);
 }
 
+/* The I/O thread's word counts, up to three times the limit. */
+static void test_io_heard(void)
+{
+   sim s;
+   sim_ep ep[2];
+   app a[2];
+   netdrv *nd[2], *alive[2];
+
+   printf("[peer busy, not gone: the transport still hears it]\n");
+   g_heard_always = 1;
+   sim_init(&s, 2, 0xBEEF);
+   nd[0] = mk_node(&s, &ep[0], 0, &a[0], "host", 0x3000u, NULL);
+   nd[1] = mk_node(&s, &ep[1], 1, &a[1], "cli", 0x3001u, NULL);
+   netdrv_host(nd[0]);
+   netdrv_join(nd[1]);
+   sim_run(&s, nd, 2, 3000);
+   CHECK(netdrv_peer_count(nd[0]) == 1, "setup peers=%d",
+         netdrv_peer_count(nd[0]));
+   s.node[1].down = 1;                 /* its pump stops; its I/O thread does not */
+   alive[0] = nd[0]; alive[1] = NULL;
+   sim_run(&s, alive, 2, 50000);
+   CHECK(netdrv_peer_count(nd[0]) == 1 && netdrv_active(nd[0]),
+         "still a peer after 50 s of pump silence (heard by the I/O thread)");
+   sim_run(&s, alive, 2, 20000);       /* 70 s: past three times the limit */
+   CHECK(netdrv_peer_count(nd[0]) == 0,
+         "but not forever: dropped after 3x the limit (peers=%d)",
+         netdrv_peer_count(nd[0]));
+   netdrv_destroy(nd[0]);
+   netdrv_destroy(nd[1]);
+   g_heard_always = 0;
+}
+
 static void test_keepalive_death(void)
 {
    sim s;
@@ -1158,7 +1202,7 @@ static void test_keepalive_death(void)
    /* Client 2 dies silently (stop pumping, unreachable). */
    s.node[2].down = 1;
    alive[0] = nd[0]; alive[1] = nd[1]; alive[2] = NULL;
-   sim_run(&s, alive, 3, 10000);     /* > 8s dead threshold */
+   sim_run(&s, alive, 3, 22000);     /* > 20s dead threshold */
 
    CHECK(netdrv_peer_count(nd[0]) == 1, "host dropped dead client (peers=%d)",
          netdrv_peer_count(nd[0]));
@@ -1170,7 +1214,7 @@ static void test_keepalive_death(void)
    /* Now the host dies: client must tear the whole session down. */
    s.node[0].down = 1;
    alive[0] = NULL;
-   sim_run(&s, alive, 3, 10000);
+   sim_run(&s, alive, 3, 22000);
    CHECK(!netdrv_active(nd[1]), "client tore down after host death");
    CHECK(a[1].stopped && a[1].stop_reason == ND_STOP_HOST_LOST,
          "stop reason=%d", a[1].stop_reason);
@@ -1579,6 +1623,7 @@ int main(void)
    test_unreliable_broadcast();
    test_reentrant_echo();
    test_keepalive_death();
+   test_io_heard();
    test_roster_churn();
    test_fuzz();
    test_peer_fps_exchange();

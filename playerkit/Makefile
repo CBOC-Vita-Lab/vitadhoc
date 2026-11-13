@@ -1,7 +1,7 @@
 # playerkit: portable player library (MIT). Linux twin with ASan + UBSan.
 #
 #   make test        build and run every unit test, plus the scripted menu walk (PNGs)
-#   make tsan        the frame hand-over mailbox under ThreadSanitizer (also part of test)
+#   make tsan        the frame hand-over mailbox and the core watchdog under ThreadSanitizer (also part of test)
 #   make model       the pacing model's tables (ARGS=standard|adaptive|all)
 #   make shots       only the menu walk; PNGs go to SHOTS (default build/shots)
 #   make vita        compile the library for the PS Vita (arm-vita-eabi-g++), objects only
@@ -16,7 +16,7 @@ B        := build
 SHOTS    ?= $(B)/shots
 
 LIB_SRC  := src/pk_util.cpp src/pk_text.cpp src/pk_font_data.cpp src/pk_icons.cpp src/pk_gfx_soft.cpp src/pk_states.cpp \
-            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp src/pk_look.cpp
+            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp src/pk_look.cpp src/pk_cores.cpp
 LIB_OBJ  := $(patsubst src/%.cpp,$(B)/linux/%.o,$(LIB_SRC))
 TEST_SRC := $(wildcard tests/test_*.cpp)
 TEST_OBJ := $(patsubst tests/%.cpp,$(B)/linux/tests/%.o,$(TEST_SRC))
@@ -45,10 +45,11 @@ $(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: $(B)/unit_tests $(B)/menu_walk $(B)/handoff_tsan
+test: $(B)/unit_tests $(B)/menu_walk $(B)/handoff_tsan $(B)/cores_tsan
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
 	$(B)/handoff_tsan
+	$(B)/cores_tsan
 
 # the frame hand-over mailbox under ThreadSanitizer (a separate binary: it cannot share one with AddressSanitizer)
 TSAN_FLAGS ?= -std=c++11 -Wall -Wextra -O1 -g -fsanitize=thread
@@ -56,8 +57,14 @@ $(B)/handoff_tsan: tests/handoff_tsan_main.cpp tests/handoff_stress.h src/pk_han
 	@mkdir -p $(B)
 	$(CXX) $(TSAN_FLAGS) -Isrc -Itests tests/handoff_tsan_main.cpp src/pk_handoff.cpp src/pk_pace.cpp -o $@ -pthread
 
-tsan: $(B)/handoff_tsan
+# the core watchdog's heartbeat counters with real threads under ThreadSanitizer
+$(B)/cores_tsan: tests/cores_tsan_main.cpp src/pk_cores.cpp src/pk_cores.h
+	@mkdir -p $(B)
+	$(CXX) $(TSAN_FLAGS) -Isrc tests/cores_tsan_main.cpp src/pk_cores.cpp -o $@ -pthread
+
+tsan: $(B)/handoff_tsan $(B)/cores_tsan
 	$(B)/handoff_tsan
+	$(B)/cores_tsan
 
 # the pacing model (virtual time, no console): make model ARGS="all"
 $(B)/pacing_model: tools/pacing_model.cpp tools/pacing_model.h src/pk_pace.cpp src/pk_handoff.cpp src/pk_handoff.h
@@ -92,6 +99,6 @@ regen-font: tools/gen_font.cpp
 	$(B)/gen_font ../gpsp/assets/fonts src/pk_font_data.cpp
 
 clean:
-	rm -rf $(B)/linux $(B)/unit_tests $(B)/menu_walk $(B)/vita $(B)/handoff_tsan $(B)/pacing_model
+	rm -rf $(B)/linux $(B)/unit_tests $(B)/menu_walk $(B)/vita $(B)/handoff_tsan $(B)/cores_tsan $(B)/pacing_model
 
 .PHONY: all test shots vita regen-font clean tsan model

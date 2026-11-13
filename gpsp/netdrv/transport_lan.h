@@ -132,6 +132,12 @@ enum { LAN_MODE_HOST = 0, LAN_MODE_JOIN = 1 };
 #define LAN_F_LOOPBACK   0x01
 /* Host: do not answer probes or beacon (a direct-IP-only room). */
 #define LAN_F_NO_DISCOVERY 0x02
+/* The I/O thread sends a small keepalive datagram to every session peer it
+ * has heard from (once a second), and records when anything last arrived
+ * from each, so netdrv can tell a peer whose main thread is busy (a state
+ * save, card I/O) from one that is gone: nd_transport.heard_age_us.  A
+ * build that does not know the datagram ignores it. */
+#define LAN_F_IO_KEEPALIVE 0x04
 
 typedef struct lan_config
 {
@@ -253,6 +259,27 @@ typedef struct lan_stats
 } lan_stats;
 
 void lan_transport_get_stats(const lan_transport *t, lan_stats *out);
+
+/* ---- census: what the wire did, for a once-a-second log line -------------
+ * Totals since the last call with reset = 1 (or since creation), counted by
+ * the I/O thread so a stalled main thread does not hide anything.
+ * `pkts_in` / `pkts_out` are datagrams from / to session peers (netdrv
+ * frames, bulk lane and keepalives; discovery excluded); `worst_gap_us` is
+ * the longest silence between two such datagrams from a peer inside the
+ * window.  `path` is "lan" or "direct": whether the peer's address is in
+ * our own subnet (internet play by room code, with punching and a relay, is
+ * not built: docs/ONLINE.md is not in this release). */
+typedef struct lan_census
+{
+   uint32_t pkts_in, pkts_out;
+   uint32_t keep_in, keep_out;
+   uint32_t worst_gap_us;
+   const char *path;
+} lan_census;
+void lan_transport_census(lan_transport *t, lan_census *out, int reset);
+/* Switch the I/O-thread keepalive on or off after creation (LAN_F_IO_KEEPALIVE
+ * at create does the same). */
+void lan_transport_set_io_keepalive(lan_transport *t, int on);
 
 /* ---- debug fault-injection shim (tests, harness) -------------------------
  * udp_transport_set_fault()'s contract: loss/dup in percent, latency/jitter

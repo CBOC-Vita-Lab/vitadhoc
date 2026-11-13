@@ -94,6 +94,13 @@ def main() -> int:
                                          "lat=60", "jitter=20",
                                          "rto_first=30000", "rto_min=30000",
                                          "rto_max=2500000"]),
+        # the other console's main loop does nothing for 12 s (a state save,
+        # card I/O) at frame 200 of the run: its I/O thread keeps the
+        # session alive; the stall rides on the 20 s peer-dead limit
+        ("stall", "dmg.gb", "dmg.gb", ["delay=3", "stall=200:12000:1"]),
+        # the host's process disappears with no BYE: the guest must end
+        # through the "connection lost" path after ~20 s (peer-dead limit)
+        ("kill", "dmg.gb", "dmg.gb", ["delay=3", "kill=300:0"]),
         ("busy", "dmg.gb", "dmg.gb", ["delay=4", "bulk=1037", "copies=4",
                                      "nack=1", "absorb=1", "loss=3", "lat=5",
                                      "jitter=25", "rto_first=30000",
@@ -113,6 +120,19 @@ def main() -> int:
                     "run=600", *extra]
             r = subprocess.run(args, capture_output=True, text=True, timeout=300)
             o = r.stdout
+            if name == "kill":
+                m = re.search(r"EVT peer_lost ms=(\d+) error=(\d+)", o)
+                ms = int(m.group(1)) if m else -1
+                if r.returncode == 0 and m and 19000 <= ms <= 24000 and \
+                        m.group(2) != "0":
+                    print("sesslan kill      peer vanished without a BYE: the "
+                          "other console ended with error %s after %d ms "
+                          "(limit 20000)" % (m.group(2), ms))
+                else:
+                    failed += 1
+                    print(o[-3000:])
+                    print("FAIL sesslan kill (exit %d, ms=%d)" % (r.returncode, ms))
+                continue
             res = [l for l in o.splitlines() if "EVT result console=" in l]
             net = [l for l in o.splitlines() if "EVT net console=" in l]
             ok = (r.returncode == 0 and len(res) == 2 and
@@ -129,6 +149,11 @@ def main() -> int:
                 ok = ok and len(rx) == 2 and all("ok=1" in l for l in rx)
                 if "bulk=1037" in extra:
                     ok = ok and all("chunk=1024" in l for l in rx)
+            if name == "stall":
+                sb = re.search(r"EVT stall_begin id=1 ms=12000", o)
+                ok = ok and sb is not None and \
+                    int(field(res[0], "stalls")) >= 600 and \
+                    all(int(field(l, "keep_in")) >= 8 for l in net)
             if "transport_invariant_broken" in o:
                 ok = False
             if not ok:

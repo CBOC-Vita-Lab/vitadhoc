@@ -96,6 +96,13 @@ int  net_vita_bulk_recv(void *buf, size_t cap);
 /* Datagrams waiting for the pump (telemetry: EVT gblink_win rxq_max). */
 unsigned net_vita_rx_depth(void);
 
+/* ---- is a link session up? (link_vita.c) -----------------------------------
+ * 1 from the moment the partner has arrived until the session is gone; 0
+ * while a host only waits.  For whoever should keep off the radio and the
+ * card meanwhile: cover-art fetching (artfetch_pause) and the achievements'
+ * web requests.  Cheap; the main thread. */
+int link_is_active(void);
+
 /* ---- ARQ timing per kind of link --------------------------------------------
  * netdrv's timers are per session (nd_config); frontend-common exposes two
  * of them through fe_np_set_arq_timers(rto_first_max_us, rto_min_us).  Call

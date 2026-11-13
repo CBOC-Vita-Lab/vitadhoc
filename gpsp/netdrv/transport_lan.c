@@ -97,6 +97,9 @@
 #define LAN_PROBE_US     500000ull
 #define LAN_ROOM_TTL_US  3500000ull
 #define LAN_REPLY_BURST  30        /* probe answers per second, at most */
+#define LAN_KEEP_US      1000000ull /* I/O-thread keepalive, per session peer */
+#define LAN_HEARD_TTL_US 60000000ull /* a peer not heard for this long gets no
+                                      * more keepalives (and is forgotten) */
 
 /* ---- discovery wire format (all little-endian, explicit) -----------------
  *
@@ -130,7 +133,11 @@
  * transport answers one, host or joiner.  An older build ignores both
  * (disc_check: unknown type). */
 enum { DISC_PROBE = 1, DISC_ANNOUNCE = 2, DISC_GONE = 3, DISC_ECHO = 4,
-       DISC_ECHO_REPLY = 5 };
+       DISC_ECHO_REPLY = 5,
+       /* KEEP: PROBE-shaped, sent once a second by the I/O thread to every
+        * session peer (LAN_F_IO_KEEPALIVE).  Never answered; its arrival
+        * only says "this console's process is alive". */
+       DISC_KEEP = 6 };
 #define DISC_PROBE_LEN    18
 #define DISC_GONE_LEN     22
 #define DISC_ANNOUNCE_LEN 86
@@ -572,7 +579,8 @@ static int disc_check(const uint8_t *b, size_t n)
    {
       case DISC_PROBE:
       case DISC_ECHO:
-      case DISC_ECHO_REPLY: need = DISC_PROBE_LEN; break;
+      case DISC_ECHO_REPLY:
+      case DISC_KEEP: need = DISC_PROBE_LEN; break;
       case DISC_GONE:     need = DISC_GONE_LEN; break;
       case DISC_ANNOUNCE: need = DISC_ANNOUNCE_LEN; break;
       default:            return 0;
@@ -599,6 +607,15 @@ static void disc_parse_announce(const uint8_t *b, lan_room_info *out,
 }
 
 /* ---------------------------------------------------------------- transport -- */
+
+/* One session peer as the I/O thread sees it (under mx). */
+typedef struct lan_heard
+{
+   struct sockaddr_in a;
+   uint64_t rx_us;                 /* nd_now_us() of its last datagram */
+   uint64_t keep_us;               /* ...and of our last keepalive to it */
+   int      used;
+} lan_heard;
 
 typedef struct lan_delayed
 {
@@ -647,6 +664,11 @@ struct lan_transport
 
    /* ---- shared under mx (rare) ---- */
    nd_mutex mx;
+   lan_heard heard[LAN_BOOK_CAP];
+   uint32_t keep_cookie;
+   atomic_int io_keep;
+   uint32_t cen_tx_prev;           /* census baselines (caller's thread) */
+   uint32_t cen_in_prev, cen_keepin_prev, cen_keepout_prev;
    int      announcing;
    lan_room_info info;
    uint32_t room_id;
@@ -668,8 +690,12 @@ struct lan_transport
       nd_ctr disc_probes_rx, disc_replies_tx, disc_beacons_tx, disc_limited;
       nd_ctr fault_dropped, fault_delayed, fault_dup;
       nd_ctr io_wakeups, io_poll_err, nat_aliases;
+      nd_ctr peer_in, keep_in, keep_out, gap_max_us;
    } st;
 };
+
+static void lan_io_send(lan_transport *t, const struct sockaddr_in *to,
+                        const void *buf, size_t len);
 
 static uint32_t lan_rand(lan_transport *t)
 {
@@ -803,6 +829,93 @@ static void book_touch(lan_transport *t, const struct sockaddr_in *a)
       t->book[i].a = *a;
    }
    t->book[i].used_at = ++t->book_clock;
+}
+
+/* ---- who is alive: the I/O thread's table of session peers --------------
+ * A peer is an address we received a netdrv frame, a bulk datagram or a
+ * keepalive from (discovery does not count: a scanner is not a session),
+ * or the host a joiner was pointed at.  Under mx; any thread. */
+static void heard_touch(lan_transport *t, const struct sockaddr_in *a,
+                        uint64_t now)
+{
+   int i, free_i = -1, old_i = 0;
+   nd_mutex_lock(&t->mx);
+   for (i = 0; i < LAN_BOOK_CAP; i++)
+   {
+      if (!t->heard[i].used)
+      {
+         if (free_i < 0)
+            free_i = i;
+         continue;
+      }
+      if (sa_eq(&t->heard[i].a, a))
+      {
+         uint64_t gap = now - t->heard[i].rx_us;
+         t->heard[i].rx_us = now;
+         nd_mutex_unlock(&t->mx);
+         nd_ctr_max(&t->st.gap_max_us, gap > 0xFFFFFFFFull ? 0xFFFFFFFFu
+                                                           : (uint32_t)gap);
+         return;
+      }
+      if (t->heard[i].rx_us < t->heard[old_i].rx_us)
+         old_i = i;
+   }
+   i = free_i >= 0 ? free_i : old_i;
+   t->heard[i].a = *a;
+   t->heard[i].rx_us = now;
+   t->heard[i].keep_us = now;       /* the first keepalive is a second away */
+   t->heard[i].used = 1;
+   nd_mutex_unlock(&t->mx);
+}
+
+/* nd_transport.heard_age_us: microseconds since this peer was last heard. */
+static uint64_t lan_heard_age(void *ctx, const uint8_t mac[6])
+{
+   lan_transport *t = (lan_transport *)ctx;
+   struct sockaddr_in a;
+   uint64_t age = UINT64_MAX, now = nd_now_us();
+   int i;
+   sa_from_mac(mac, &a);
+   nd_mutex_lock(&t->mx);
+   for (i = 0; i < LAN_BOOK_CAP; i++)
+      if (t->heard[i].used && sa_eq(&t->heard[i].a, &a))
+         age = now - t->heard[i].rx_us;
+   nd_mutex_unlock(&t->mx);
+   return age;
+}
+
+/* I/O thread: the keepalives that are due. */
+static void lan_io_keepalives(lan_transport *t, uint64_t now)
+{
+   uint8_t pkt[DISC_PROBE_LEN];
+   struct sockaddr_in to[LAN_BOOK_CAP];
+   int i, n = 0;
+   size_t len;
+
+   nd_mutex_lock(&t->mx);
+   for (i = 0; i < LAN_BOOK_CAP; i++)
+   {
+      lan_heard *h = &t->heard[i];
+      if (!h->used)
+         continue;
+      if (now - h->rx_us >= LAN_HEARD_TTL_US)
+      {
+         h->used = 0;               /* gone for a minute: forget it */
+         continue;
+      }
+      if (now - h->keep_us >= LAN_KEEP_US)
+      {
+         h->keep_us = now;
+         to[n++] = h->a;
+      }
+   }
+   len = disc_build_echo(pkt, DISC_KEEP, ++t->keep_cookie);
+   nd_mutex_unlock(&t->mx);
+   for (i = 0; i < n; i++)
+   {
+      lan_io_send(t, &to[i], pkt, len);
+      nd_ctr_add(&t->st.keep_out, 1);
+   }
 }
 
 /* ---- NAT translation (emulation thread; see the top of the file) --------- */
@@ -981,6 +1094,7 @@ void lan_transport_iface(lan_transport *t, nd_transport *out)
    out->recv       = lan_recv;
    out->local_addr = lan_local_addr;
    out->pending    = lan_pending;
+   out->heard_age_us = lan_heard_age;
 }
 
 /* ---- bulk lane ------------------------------------------------------------ */
@@ -1158,6 +1272,13 @@ static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
          }
          return;
       }
+      if (type == DISC_KEEP)
+      {
+         heard_touch(t, from, now);
+         nd_ctr_add(&t->st.keep_in, 1);
+         nd_ctr_add(&t->st.peer_in, 1);
+         return;
+      }
       if (type == DISC_ECHO_REPLY)
       {
          uint32_t cookie = get32(b + 8);
@@ -1210,6 +1331,8 @@ static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
       if (m == (uint32_t)atomic_load_explicit(&t->bulk_magic,
                                               memory_order_relaxed))
       {
+         heard_touch(t, from, now);
+         nd_ctr_add(&t->st.peer_in, 1);
          if (n <= LAN_BULK_MAX && nd_ring_push(&t->bulk, mac, b, (size_t)n))
             nd_ctr_add(&t->st.bulk_rx, 1);
          else
@@ -1228,6 +1351,8 @@ static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
       nd_ctr_add(&t->st.rx_oversize, 1);
       return;
    }
+   heard_touch(t, from, now);
+   nd_ctr_add(&t->st.peer_in, 1);
    if (nd_ring_push(&t->rx, mac, b, (size_t)n))
       nd_ctr_add(&t->st.rx_pkts, 1);
    else
@@ -1271,6 +1396,11 @@ static void lan_io_thread(void *arg)
          lan_dq_flush(t, now, 0);
          wait_ms = 1;
       }
+
+      /* 2b. keepalives to session peers: sent HERE, not by the pump, so a
+       * main thread that is busy for seconds does not fall silent */
+      if (atomic_load_explicit(&t->io_keep, memory_order_relaxed))
+         lan_io_keepalives(t, now);
 
       /* 3. the room beacon */
       nd_mutex_lock(&t->mx);
@@ -1341,6 +1471,7 @@ lan_transport *lan_transport_create(const lan_config *cfg)
    atomic_init(&t->bulk_on, 0);
    atomic_init(&t->bulk_magic, 0);
    atomic_init(&t->fault_delay, 0);
+   atomic_init(&t->io_keep, (cfg->flags & LAN_F_IO_KEEPALIVE) ? 1 : 0);
 
    if (nd_mutex_init(&t->mx) != 0)
    {
@@ -1392,6 +1523,7 @@ lan_transport *lan_transport_create(const lan_config *cfg)
               cfg->target_port ? cfg->target_port : LAN_PORT_DEFAULT);
       t->have_target = 1;
       book_touch(t, &t->target);         /* JOIN goes there, as --join does */
+      heard_touch(t, &t->target, nd_now_us());
    }
 
    /* A room id that two hosts on one LAN will not share. */
@@ -1525,6 +1657,52 @@ void lan_transport_echo_reset(lan_transport *t)
    t->echo_n = t->echo_min_us = t->echo_max_us = t->echo_last_us = 0;
    memset(t->echo_sent_us, 0, sizeof(t->echo_sent_us));
    nd_mutex_unlock(&t->mx);
+}
+
+void lan_transport_set_io_keepalive(lan_transport *t, int on)
+{
+   if (t)
+      atomic_store_explicit(&t->io_keep, on ? 1 : 0, memory_order_relaxed);
+}
+
+void lan_transport_census(lan_transport *t, lan_census *out, int reset)
+{
+   uint32_t tx, in, ki, ko;
+   uint32_t mask;
+   int i;
+   if (!out)
+      return;
+   memset(out, 0, sizeof(*out));
+   out->path = "lan";
+   if (!t)
+      return;
+   tx = nd_ctr_get(&t->st.tx_pkts);
+   in = nd_ctr_get(&t->st.peer_in);
+   ki = nd_ctr_get(&t->st.keep_in);
+   ko = nd_ctr_get(&t->st.keep_out);
+   out->pkts_out = tx - t->cen_tx_prev;
+   out->pkts_in = in - t->cen_in_prev;
+   out->keep_in = ki - t->cen_keepin_prev;
+   out->keep_out = ko - t->cen_keepout_prev;
+   out->worst_gap_us = nd_ctr_get(&t->st.gap_max_us);
+   /* "direct": the peer is outside our own subnet (a typed internet address,
+    * or a forwarded port) */
+   mask = t->mask_be;
+   nd_mutex_lock(&t->mx);
+   for (i = 0; i < LAN_BOOK_CAP; i++)
+      if (t->heard[i].used && mask && t->ip_be &&
+          (t->heard[i].a.sin_addr.s_addr & mask) != (t->ip_be & mask) &&
+          (ntohl(t->heard[i].a.sin_addr.s_addr) >> 24) != 127)
+         out->path = "direct";
+   nd_mutex_unlock(&t->mx);
+   if (reset)
+   {
+      t->cen_tx_prev = tx;
+      t->cen_in_prev = in;
+      t->cen_keepin_prev = ki;
+      t->cen_keepout_prev = ko;
+      nd_ctr_set(&t->st.gap_max_us, 0);
+   }
 }
 
 void lan_transport_set_fault(lan_transport *t, int loss_pct, int dup_pct,

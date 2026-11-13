@@ -269,6 +269,17 @@ STEPS = [
          cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/"],
          deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=7200),
+    # a busy console is not a gone one: 20 s peer-dead limit, keepalives sent by
+    # the transport's I/O thread (netdrv test_lan stall12/peerdead, and the real
+    # link session stalled for 12 s / its partner killed, sesslan)
+    Step("link-liveness", "link liveness: 12 s stall kept, killed peer ends in ~20 s (test_lan, sesslan)",
+         "make -C gpsp/netdrv test_netdrv test-lan LAN_TESTS=\"stall12 peerdead\" && ./gpsp/netdrv/test_netdrv >/dev/null && "
+         "python3 gpsp/netdrv/tests/run_sesslan.py {out}/sesslan-live stall kill",
+         "default", {"gpsp", "link"}, inputs=["gpsp/netdrv/", "gpsp/frontend-common/", "gpsp/gbcore/", "gpsp/tools/gblink/"],
+         requires=CC, group=GROUP_MAKE, timeout=1800),
+    Step("link-liveness-long", "link liveness: a 25 s stall rides on the I/O keepalive, ends without it (test_lan stall25)",
+         "make -C gpsp/netdrv test-lan LAN_TESTS=stall25",
+         "full", {"gpsp", "link"}, inputs=["gpsp/netdrv/"], requires=CC, group=GROUP_MAKE, timeout=1800),
     Step("audio-regressions", "audio: mixer, output, lifecycle, timer, safety, sim, GB audio",
          "python3 gpsp/tools/run_audio_regressions.py --vita-headers {vitasdk}/arm-vita-eabi/include",
          "default", {"gpsp", "audio"}, inputs=["gpsp/"], requires=CC, parse="audio"),

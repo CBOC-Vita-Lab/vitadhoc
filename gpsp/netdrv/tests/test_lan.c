@@ -86,6 +86,7 @@ struct console
    netdrv *nd;
    pthread_t th;
    atomic_int run;
+   atomic_int stall;                   /* 1 = the pump thread does nothing */
    int     threaded;
 
    /* written by the console thread, read by the test thread */
@@ -202,7 +203,8 @@ static void *con_thread(void *p)
    console *c = (console *)p;
    while (atomic_load(&c->run))
    {
-      con_step(c);
+      if (!atomic_load(&c->stall))
+         con_step(c);
       nd_sleep_us(1000);
    }
    return NULL;
@@ -1729,6 +1731,194 @@ static void bench(const char *only)
    }
 }
 
+
+/* ============================================================ liveness == */
+
+/* A session between a host and one joiner on loopback, a pump thread each,
+ * with the I/O-thread keepalive on or off.  Returns 0 on success. */
+typedef struct pair
+{
+   lan_transport *th, *tj;
+   console H, J;
+} pair;
+
+static int pair_open(pair *p, int test, int keepalive)
+{
+   unsigned save = g_net_flags;
+   uint16_t base = test_port(test);
+   uint32_t ip;
+   uint16_t port;
+   char typed[32];
+
+   memset(p, 0, sizeof(*p));
+   if (keepalive)
+      g_net_flags |= LAN_F_IO_KEEPALIVE;
+   p->th = mk_host(base, 0);
+   if (!p->th)
+      { g_net_flags = save; return -1; }
+   lan_transport_addr_str(p->th, typed, sizeof(typed));
+   lan_parse_addr(typed, &ip, &port, LAN_PORT_DEFAULT);
+   p->tj = mk_join(base, ip, port);
+   g_net_flags = save;
+   if (!p->tj)
+      return -1;
+   if (con_open(&p->H, "host", p->th, 1, PROTO_A, 0x1001, NULL) ||
+       con_open(&p->J, "join", p->tj, 0, PROTO_A, 0x2002, NULL))
+      return -1;
+   WAIT_FOR(5000, atomic_load(&p->H.peers) == 1 && atomic_load(&p->J.peers) == 1 &&
+                  atomic_load(&p->J.active));
+   return atomic_load(&p->H.peers) == 1 && atomic_load(&p->J.active) ? 0 : -1;
+}
+
+/* Both sides send `n` payloads and see all of the other's. */
+static int pair_traffic(pair *p, unsigned n, unsigned ms)
+{
+   unsigned h0 = atomic_load(&p->H.rx_ok[1]), j0 = atomic_load(&p->J.rx_ok[0]);
+   unsigned hs = atomic_load(&p->H.sent), js = atomic_load(&p->J.sent);
+   p->H.to_send = hs + n;
+   p->J.to_send = js + n;
+   atomic_store(&p->H.go, 1);
+   atomic_store(&p->J.go, 1);
+   WAIT_FOR(ms, atomic_load(&p->H.rx_ok[1]) >= h0 + n &&
+                atomic_load(&p->J.rx_ok[0]) >= j0 + n);
+   return atomic_load(&p->H.rx_ok[1]) >= h0 + n &&
+          atomic_load(&p->J.rx_ok[0]) >= j0 + n &&
+          !atomic_load(&p->H.rx_bad) && !atomic_load(&p->J.rx_bad);
+}
+
+static void pair_close(pair *p)
+{
+   if (p->H.nd) con_close(&p->H);
+   if (p->J.nd) con_close(&p->J);
+   if (p->tj) lan_transport_destroy(p->tj);
+   if (p->th) lan_transport_destroy(p->th);
+}
+
+/* One side's PUMP THREAD does nothing for `secs` (a state save, card I/O),
+ * its transport's I/O thread keeps running.  `victim` 0 = the host (the
+ * joiner judges it), 1 = the joiner (the host judges it). */
+static void stall_run(int test, int secs, int keepalive, int victim,
+                      int expect_alive)
+{
+   pair p;
+   console *v, *o;
+   uint64_t t0;
+   lan_census cs;
+
+   printf("[stall: %s's pump thread idle %d s, I/O keepalive %s, expect the "
+          "session %s]\n", victim ? "joiner" : "host", secs,
+          keepalive ? "on" : "off", expect_alive ? "kept" : "ended");
+   if (pair_open(&p, test, keepalive) != 0)
+   {
+      CHECK(0, "session opens: %s", lan_last_error());
+      pair_close(&p);
+      return;
+   }
+   CHECK(pair_traffic(&p, 40, 10000), "traffic before the stall");
+   v = victim ? &p.J : &p.H;
+   o = victim ? &p.H : &p.J;
+   atomic_store(&v->stall, 1);
+   t0 = nd_now_us();
+   WAIT_FOR((unsigned)secs * 1000, !atomic_load(&o->active) ||
+                                   !atomic_load(&o->peers));
+   if (expect_alive)
+      CHECK(atomic_load(&o->active) && atomic_load(&o->peers) == 1,
+            "the other console kept the session through %d s "
+            "(active=%d peers=%d stop=%d)", secs, atomic_load(&o->active),
+            atomic_load(&o->peers), atomic_load(&o->stop_reason));
+   else
+   {
+      /* ended by the 20 s limit, not earlier */
+      WAIT_FOR(5000, !atomic_load(&o->active) || !atomic_load(&o->peers));
+      CHECK(!atomic_load(&o->active) || !atomic_load(&o->peers),
+            "no keepalive: the stalled peer was declared dead");
+      CHECK(nd_now_us() - t0 >= 19000000ull,
+            "...and not before ~20 s (%u ms)",
+            (unsigned)((nd_now_us() - t0) / 1000));
+   }
+   if (expect_alive)
+   {
+      lan_transport_census(o == &p.H ? p.th : p.tj, &cs, 1);
+      if (keepalive)
+         CHECK(cs.keep_in >= (unsigned)secs - 2 || secs < 3,
+               "I/O keepalives kept arriving while the pump was stalled "
+               "(%u in %d s)", cs.keep_in, secs);
+      atomic_store(&v->stall, 0);
+      CHECK(pair_traffic(&p, 60, 15000),
+            "traffic resumes both ways after the stall, intact "
+            "(H<-J %u, J<-H %u)", atomic_load(&p.H.rx_ok[1]),
+            atomic_load(&p.J.rx_ok[0]));
+   }
+   atomic_store(&v->stall, 0);
+   pair_close(&p);
+}
+
+static void test_stall12(void)
+{
+   stall_run(30, 12, 1, 0, 1);
+   stall_run(31, 12, 0, 1, 1);
+}
+
+static void test_stall25(void)
+{
+   stall_run(32, 25, 1, 0, 1);       /* the keepalive carries it past 20 s */
+   stall_run(33, 25, 0, 0, 0);       /* without it the limit applies */
+}
+
+/* A peer that is really gone: its transport closed without a BYE.  Measured
+ * from that moment to the other side's own "lost" path. */
+static void test_peerdead(void)
+{
+   int victim;
+   for (victim = 0; victim < 2; victim++)
+   {
+      pair p;
+      console *o;
+      uint64_t t0;
+      unsigned ms;
+      printf("[peer dead: the %s vanishes without a BYE]\n",
+             victim ? "joiner" : "host");
+      if (pair_open(&p, 34 + victim, 1) != 0)
+      {
+         CHECK(0, "session opens: %s", lan_last_error());
+         pair_close(&p);
+         continue;
+      }
+      CHECK(pair_traffic(&p, 20, 10000), "traffic before");
+      /* "kill": stop its pump thread and take its socket away, no BYE */
+      if (victim)
+      {
+         atomic_store(&p.J.run, 0); pthread_join(p.J.th, NULL);
+         p.J.threaded = 0;
+         lan_transport_destroy(p.tj); p.tj = NULL;
+         netdrv_destroy(p.J.nd); p.J.nd = NULL;
+         o = &p.H;
+      }
+      else
+      {
+         atomic_store(&p.H.run, 0); pthread_join(p.H.th, NULL);
+         p.H.threaded = 0;
+         lan_transport_destroy(p.th); p.th = NULL;
+         netdrv_destroy(p.H.nd); p.H.nd = NULL;
+         o = &p.J;
+      }
+      t0 = nd_now_us();
+      WAIT_FOR(30000, victim ? atomic_load(&o->disconnects) > 0
+                             : !atomic_load(&o->active));
+      ms = (unsigned)((nd_now_us() - t0) / 1000);
+      if (victim)
+         CHECK(atomic_load(&o->disconnects) == 1 && ms >= 19000 && ms <= 23000,
+               "host dropped the dead joiner after %u ms (want ~20000)", ms);
+      else
+         CHECK(!atomic_load(&o->active) &&
+               atomic_load(&o->stop_reason) == ND_STOP_HOST_LOST &&
+               ms >= 19000 && ms <= 23000,
+               "joiner ended with HOST_LOST after %u ms (stop=%d, want "
+               "~20000)", ms, atomic_load(&o->stop_reason));
+      pair_close(&p);
+   }
+}
+
 /* ==================================================================== main == */
 
 static const struct { const char *name; void (*fn)(void); } TESTS[] = {
@@ -1743,6 +1933,9 @@ static const struct { const char *name; void (*fn)(void); } TESTS[] = {
    { "hostile",   test_hostile },
    { "cycles",    test_cycles },
    { "realnet",   test_realnet },
+   { "stall12",   test_stall12 },
+   { "stall25",   test_stall25 },
+   { "peerdead",  test_peerdead },
 };
 
 int main(int argc, char **argv)
@@ -1763,7 +1956,9 @@ int main(int argc, char **argv)
    }
    for (i = 0; i < sizeof(TESTS) / sizeof(TESTS[0]); i++)
    {
-      int want = argc < 2;
+      /* the liveness tests take 12-60 s each: only when asked for by name */
+      int want = argc < 2 && strncmp(TESTS[i].name, "stall", 5) &&
+                 strcmp(TESTS[i].name, "peerdead");
       for (a = 1; a < argc; a++)
          if (!strcmp(argv[a], TESTS[i].name))
             want = 1;

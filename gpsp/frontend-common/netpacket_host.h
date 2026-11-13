@@ -135,6 +135,9 @@ int fe_np_peer_count(void);
 /* netdrv's smoothed round trip to the slowest peer, microseconds; 0 until a
  * reliable payload of ours has been acknowledged (or with no session). */
 uint32_t fe_np_srtt_us(void);
+/* netdrv's retransmissions since the session began (the link census); 0 with
+ * no session. */
+uint32_t fe_np_retx(void);
 /* The first connected peer's nickname ("" = none, or it sent none).  Valid
  * until the next fe_np_pump(). */
 const char *fe_np_peer_nick(void);

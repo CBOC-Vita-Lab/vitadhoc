@@ -1153,7 +1153,7 @@ static void host_on_join(netdrv *nd, const uint8_t mac[6],
       memcpy(offer->mac, mac, 6);
       memcpy(offer->nick, nick, ND_NICK_LEN);
    }
-   offer->expires = nd->now + tmo(nd->cfg.peer_dead_us, ND_PEER_DEAD_US);
+   offer->expires = nd->now + tmo(nd->cfg.peer_dead_us, ND_OFFER_US);
    nd_xmit_instance(nd, mac, ND_T_OFFER, ND_ID_JOINING,
                     (uint16_t)offer->challenge, (uint16_t)(offer->challenge >> 16),
                     NULL, 0, nonce);
@@ -1449,6 +1449,22 @@ static uint64_t prof_mark(netdrv *nd, uint64_t t0, uint32_t *sum, uint32_t *max)
    return now;
 }
 
+/* A peer silent to the pump for `dead` microseconds is still alive if the
+ * transport's I/O thread heard from it inside that time (its main thread is
+ * busy, its process is not gone) -- but only for so long: a console whose
+ * main thread has produced no frame for three times `dead` is hung, however
+ * cheerfully its I/O thread keeps answering. */
+static int peer_overdue(const netdrv *nd, const nd_peer *p, uint32_t dead)
+{
+   uint64_t age;
+   if (!nd->tp.heard_age_us)
+      return 1;
+   if (nd->now - p->last_rx_us >= 3ull * dead)
+      return 1;
+   age = nd->tp.heard_age_us(nd->tp.ctx, p->mac);
+   return age >= dead;
+}
+
 void netdrv_pump(netdrv *nd, uint64_t now_us)
 {
    if (!nd)
@@ -1561,7 +1577,7 @@ void netdrv_pump(netdrv *nd, uint64_t now_us)
          /* Death authority (split-brain guard): the host judges clients;
           * clients judge only the host link. Client<->client liveness is
           * host-relayed via roster generations. */
-         if (nd->now - p->last_rx_us >= dead)
+         if (nd->now - p->last_rx_us >= dead && peer_overdue(nd, p, dead))
          {
             if (nd->is_host)
             {

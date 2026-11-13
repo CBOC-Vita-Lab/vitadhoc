@@ -220,7 +220,9 @@ static struct
    lan_transport *lan;
    unsigned ticks;                /* the clock, in sixtieths of a second     */
    unsigned t_phase;              /* ...when this phase began                */
-   unsigned t_watch, t_peek, t_win;
+   unsigned t_watch, t_peek, t_win, t_census;
+   uint32_t retx_prev;            /* link census: netdrv retransmits so far  */
+   int      census_on;
    unsigned prev_pad;
    int  screen;                   /* the LINKING screen is up this iteration */
    int  screen_drew;              /* ...and was drawn last iteration         */
@@ -733,7 +735,9 @@ static int infra_open(int is_host, uint32_t target_ip_be, uint16_t target_port)
    c.disc_port = (uint16_t)S.port;
    c.local_ip_be = w.ip_be;
    c.netmask_be = w.netmask_be;
-   c.flags = lan_flags(w.ip_be);
+   /* The I/O thread keeps the partner's liveness fresh: a state save or a
+    * card stall on THIS console's main thread must not read as "gone". */
+   c.flags = lan_flags(w.ip_be) | LAN_F_IO_KEEPALIVE;
    c.target_ip_be = target_ip_be;
    c.target_port = target_port;
    L.lan = lan_transport_create(&c);
@@ -1064,6 +1068,77 @@ static void bringup_failed(int code)
    L.screen = 1;
    hold_game(1);
    phase_set(PH_FAILED);
+}
+
+/* ---- who asks: is a session linked? ---------------------------------------
+
+ * The fetchers (cover art, achievements) and anything else that wants the
+ * radio and the card to itself while two consoles play asks this: a linked
+ * session has twenty seconds of patience, not unlimited, and every socket
+ * and every card read is a thing its frame loop competes with.  True from
+ * the moment the partner has arrived (timing the way to it, or running)
+ * until the session is gone; not while a host merely waits. */
+int link_is_active(void)
+{
+   return L.phase == PH_MEASURE || L.phase == PH_LINKED ||
+          fe_host_gblink_active();
+}
+
+/* ---- the census: once a second while linked ---------------------------------
+ * What the wire did, counted by the transport's I/O thread (so a stalled
+ * main thread does not hide anything):
+ *   EVT link_census in= out= keep_in= keep_out= worst_gap_ms= retx= path=
+ * in/out are datagrams from/to the partner this second (netdrv frames, the
+ * bulk lane and keepalives), keep_* the transport's own keepalives among
+ * them, worst_gap_ms the longest silence from the partner inside the second,
+ * retx netdrv's retransmissions in it, path lan | direct | adhoc.  Ad hoc
+ * has no I/O-thread counters: only retx and the path. */
+static void census_tick(void)
+{
+   uint32_t retx = fe_np_retx();
+
+   if (!link_is_active())
+   {
+      L.census_on = 0;
+      return;
+   }
+   if (L.transport == TR_LAN && L.lan)
+   {
+      lan_census c;
+      if (!L.census_on)
+      {
+         lan_transport_census(L.lan, &c, 1);      /* a clean baseline */
+         L.census_on = 1;
+         L.t_census = L.ticks;
+         L.retx_prev = retx;
+         return;
+      }
+      if (L.ticks - L.t_census < 60u)
+         return;
+      L.t_census = L.ticks;
+      lan_transport_census(L.lan, &c, 1);
+      fe_evt("link_census in=%u out=%u keep_in=%u keep_out=%u "
+             "worst_gap_ms=%u retx=%u path=%s", c.pkts_in, c.pkts_out,
+             c.keep_in, c.keep_out, c.worst_gap_us / 1000u,
+             (unsigned)(retx - L.retx_prev), c.path);
+   }
+   else if (L.transport == TR_ADHOC)
+   {
+      if (!L.census_on)
+      {
+         L.census_on = 1;
+         L.t_census = L.ticks;
+         L.retx_prev = retx;
+         return;
+      }
+      if (L.ticks - L.t_census < 60u)
+         return;
+      L.t_census = L.ticks;
+      fe_evt("link_census retx=%u path=adhoc", (unsigned)(retx - L.retx_prev));
+   }
+   else
+      return;
+   L.retx_prev = retx;
 }
 
 /* ---- the session (cable / GB): start ------------------------------------------------------- */
@@ -2058,6 +2133,7 @@ static void link_service(unsigned pad_new)
    if (L.net_up)
    {
       fe_np_pump();
+      census_tick();
       if (fe_np_failed())
          link_lost(LW_OVERLOAD);
       else if (L.ticks - L.t_watch >= WATCH_EVERY)

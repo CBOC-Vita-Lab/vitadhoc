@@ -47,6 +47,7 @@
 #include "player.h"
 #include "pipe.h"
 #include "pk_gfx_vita.h"
+#include "pk_cores.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -80,6 +81,13 @@ static volatile int g_quit;
 static apace::Pacer g_pace;
 static std::atomic<unsigned> g_agap_max_us(0);   /* longest gap between two sceAudioOutOutput returns */
 
+/* The fourth core (playerkit pk_cores, docs/FOURTH-CORE.md): probed once at start-up; only when it is proven usable
+ * (CapUnlocker plugin) the audio thread moves to it, so the sound-chip thread has core 2 to itself. Without it
+ * nothing below changes: the plan puts the audio thread on core 2 exactly as before. */
+static pk::Cores *g_cores;
+static pk::Plan g_core_plan;
+static int g_wd_audio = -1;              /* watchdog slot of the audio thread; only registered when it runs on core 3 */
+
 static int audio_thread(SceSize, void *)
 {
 	static int16_t out[apace::Pacer::GRAIN_LEGACY * 2];
@@ -87,6 +95,7 @@ static int audio_thread(SceSize, void *)
 	while (!g_quit) {
 		g_pace.render(out);
 		sceAudioOutOutput(g_aport, out);
+		if (g_wd_audio >= 0) g_cores->watchdog().beat(g_wd_audio);
 		const uint64_t t = sceKernelGetProcessTimeWide();
 		if (prev) {
 			const unsigned gap = (unsigned) (t - prev);
@@ -108,10 +117,56 @@ static void audio_init(bool legacy, int prio)
 	if (g_aport < 0) { logf_("audio open failed %08x\n", g_aport); return; }
 	int vol[2] = { SCE_AUDIO_VOLUME_0DB, SCE_AUDIO_VOLUME_0DB };
 	sceAudioOutSetVolume(g_aport, (SceAudioOutChannelFlag) (SCE_AUDIO_VOLUME_FLAG_L_CH | SCE_AUDIO_VOLUME_FLAG_R_CH), vol);
-	g_athread = sceKernelCreateThread("snes_audio", audio_thread, prio, 0x4000, 0, SCE_KERNEL_CPU_MASK_USER_2, NULL);
+	const pk::Slot *aslot = g_core_plan.find(pk::R_AUDIO_OUT);
+	const unsigned amask = aslot ? aslot->mask : (unsigned) SCE_KERNEL_CPU_MASK_USER_2;   /* USER_2 unless core 3 is proven */
+	if (aslot && aslot->on_core3) {
+		g_wd_audio = g_cores->watchdog().add("snes_audio");
+		g_cores->watchdog().set_busy(g_wd_audio, true);
+		g_cores->watchdog().watch(g_wd_audio, true);
+		logf_("audio thread on the extra core (core 3)\n");
+	}
+	g_athread = sceKernelCreateThread("snes_audio", audio_thread, prio, 0x4000, 0, amask, NULL);
 	if (g_athread >= 0) sceKernelStartThread(g_athread, 0, NULL);
 	logf_("audio: %s, grain %d frames at %d Hz, thread priority 0x%x (%s)\n", legacy ? "LEGACY (first player's pacing)" : "pacer v2",
 	    g_pace.grain(), OUT_RATE, prio, g_athread >= 0 ? "started" : "NOT started");
+}
+
+static pk::Request core4_request(void)
+{
+	pk::Request rq(pk::CP_SNES);
+	rq.with(pk::R_EMU_MAIN).with(pk::R_RENDER).with(pk::R_APU).with(pk::R_AUDIO_OUT);
+	return rq;
+}
+
+/* threads.ini: core4=auto (default) or core4=off; the probe runs before any worker thread exists */
+static void core4_start(const char *path)
+{
+	pk::Core4Mode mode = pk::CORE4_AUTO;
+	if (FILE *f = fopen(path, "rb")) {
+		char line[96];
+		while (fgets(line, sizeof line, f))
+			if (!strncmp(line, "core4=", 6) && (!strncasecmp(line + 6, "off", 3) || line[6] == '0')) mode = pk::CORE4_OFF;
+		fclose(f);
+	}
+	g_cores = new pk::Cores(pk::vita_core_sys(), mode);
+	g_cores->set_log([](void *, const char *l) { logf_("%s\n", l); }, NULL);
+	g_cores->probe();
+	g_core_plan = g_cores->plan(core4_request());
+	char c[220];
+	g_cores->census_line(c, sizeof c);
+	logf_("%s\n%s\n", c, g_cores->status_text());
+}
+
+/* the watchdog found the audio thread dead on core 3: back to core 2 (the three-core layout) */
+static void core4_fallback(void)
+{
+	g_core_plan = g_cores->plan(core4_request());
+	const pk::Slot *a = g_core_plan.find(pk::R_AUDIO_OUT);
+	const int rc = a && g_athread >= 0 ? sceKernelChangeThreadCpuAffinityMask(g_athread, a->mask) : -1;
+	g_wd_audio = -1;
+	char c[220];
+	g_cores->census_line(c, sizeof c);
+	logf_("audio thread back on core 2 rc=%08x\n%s\n", rc, c);
 }
 
 /* ---- video ------------------------------------------------------------- */
@@ -979,6 +1034,7 @@ int main(int argc, char **argv)
 
 	/* worker threads: switches in threads.ini (apu_thread, ppu_thread, spin); on by default */
 	const char *tini = DATA_ROOT "/threads.ini";
+	core4_start(tini);
 	int want_apu = ini_int(tini, "apu_thread", 1), want_ppu = ini_int(tini, "ppu_thread", 1);
 	int spin = ini_int(tini, "spin", 300);
 	snes_host_thread_config(2, 0x60, 1, 0x60, spin);
@@ -1078,6 +1134,10 @@ int main(int argc, char **argv)
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
 		if (prev_loop0 && loop0 - prev_loop0 > stall_max_us) stall_max_us = loop0 - prev_loop0;
 		prev_loop0 = loop0;
+		if (g_wd_audio >= 0) {
+			g_cores->watchdog().ref_beat();
+			if (g_cores->poll_watchdog(loop0)) core4_fallback();
+		}
 
 		pk::PadSample pads[pk::MAX_PLAYERS];
 		pk::TouchPoint tp;
@@ -1309,6 +1369,11 @@ int main(int argc, char **argv)
 
 	hd_stop();
 	g_quit = 1;
+	{
+		char c[220];
+		g_cores->census_line(c, sizeof c);
+		logf_("%s\n", c);
+	}
 	/* resume point, battery RAM, settings, log, launch/session.txt */
 	g_pl->finish(why);
 	writer_stop();

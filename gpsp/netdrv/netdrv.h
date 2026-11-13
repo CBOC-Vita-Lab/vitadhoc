@@ -125,10 +125,22 @@ extern "C" {
 #define ND_RETX_US        ND_RTO_MIN_US   /* legacy names (nd_config maps) */
 #define ND_RETX_MAX_US    ND_RTO_MAX_US
 #define ND_KEEPALIVE_US   250000    /* ping an idle peer every ~250ms */
-#define ND_PEER_DEAD_US   8000000   /* declare dead after ~8s of silence
-                                       (generous: loaded CI hosts stall whole
-                                       processes for seconds; real radio has
-                                       dropouts — plan risk #5) */
+#ifndef ND_PEER_DEAD_US
+#define ND_PEER_DEAD_US   20000000  /* declare an ACTIVE peer dead after ~20s
+                                       of silence.  Was 8 s: a state save or
+                                       card stall on the OTHER console's main
+                                       thread (seconds on a Vita) silenced its
+                                       pump, and this side gave up on it.  The
+                                       transport's I/O thread also sends
+                                       keepalives (heard_age_us below), so the
+                                       number is the bound for a peer whose
+                                       whole process is gone, not for a busy
+                                       one.  Handshake steps keep their own,
+                                       shorter limit (ND_OFFER_US). */
+#endif
+#ifndef ND_OFFER_US
+#define ND_OFFER_US       8000000   /* how long a JOIN's OFFER stays valid */
+#endif
 #define ND_JOIN_RETRY_US  500000    /* JOIN broadcast retry */
 #define ND_ROSTER_US      1000000   /* host roster refresh broadcast */
 /* ADR-0027: how often each side reports its emulated frame rate to a peer.
@@ -197,6 +209,17 @@ typedef struct nd_transport
     * leaves it NULL, and netdrv then assumes "yes" (the pre-ADR-0021
     * behaviour: every poll pumps). */
    int  (*pending)(void *ctx);
+   /* OPTIONAL (may be NULL; same zero-the-struct rule as `pending`).
+    * Microseconds since ANYTHING last arrived from the peer at this
+    * address -- a netdrv frame or the transport's own keepalive datagram --
+    * as seen by the transport's I/O thread, which keeps running while the
+    * pump thread is stalled.  UINT64_MAX = never / unknown.  An age, not a
+    * timestamp, so the transport's clock and the pump's need not agree.
+    * netdrv consults it only when the pump's own last-frame time says the
+    * peer is overdue, so a console whose main thread stalls for seconds
+    * (state save, card I/O) is not declared dead while its I/O thread
+    * still answers.  Must be callable from the pump thread, cheap. */
+   uint64_t (*heard_age_us)(void *ctx, const uint8_t mac[6]);
 } nd_transport;
 
 /* ------------------------------------------------------------ callbacks -- */

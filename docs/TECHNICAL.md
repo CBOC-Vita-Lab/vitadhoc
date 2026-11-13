@@ -1225,9 +1225,40 @@ Recipe: `playerkit/INTEGRATION.md` sections 7 and 8. What the main app does:
   the worker.
 - **Log wakes.** In a game the io worker is woken by the log only with 4 KiB
   waiting (`game_log_wake`); it writes every 250 ms anyway.
-- **Link keep-alive.** A silent partner is given up after 20 s on the Vita
-  (`fe_np_set_peer_dead` in `link_vita.c`, was netdrv's 8 s). The rest of
-  that item (keep-alives from the I/O thread) is the online-play work.
+- **Link keep-alive.** A silent partner is given up after 20 s, not 8
+  (`ND_PEER_DEAD_US` in `netdrv.h`; the join handshake keeps its own 8 s,
+  `ND_OFFER_US`). And a partner whose MAIN thread is busy (a state save, card
+  I/O: seconds on a Vita) is not silent to this console: with
+  `LAN_F_IO_KEEPALIVE` (set by `infra_open`) the transport's I/O thread, which
+  owns the socket, sends a small keepalive datagram (`GBLD` type 6, 18 bytes)
+  to every session peer once a second and records when anything last came
+  from each; netdrv asks `nd_transport.heard_age_us` before it declares a
+  peer dead, and gives up on a console its pump has not heard for 60 s
+  (three times the limit) whatever its I/O thread says. Tests: `test_lan
+  stall12 | stall25 | peerdead` (a pump thread idle 12 s / 25 s with and
+  without the keepalive; a peer whose transport vanishes without a BYE ends
+  in 19-23 s through HOST_LOST / peer disconnect) and `run_sesslan.py stall
+  kill` (the real link session: 12 s stall, 600+ stalled frames, every
+  periodic hash still matches; the killed host's partner ends through the
+  session's `peer_lost` after ~19.95 s). Gate steps `link-liveness`
+  (default) and `link-liveness-long` (full).
+- **Link census.** While linked, `link_vita.c` logs once a second
+  `EVT link_census in= out= keep_in= keep_out= worst_gap_ms= retx= path=`
+  (datagrams from/to the partner, the transport's keepalives among them, the
+  longest silence from the partner inside that second, netdrv's
+  retransmissions, `lan` / `direct` / `adhoc`). Counted by the I/O thread, so
+  a stalled main thread cannot hide a gap. `link_is_active()` (`net_vita.h`)
+  says whether a session is linked, for the fetchers: see "Pausing the
+  fetchers while linked" below.
+- **Pausing the fetchers while linked** (recipe; `artfetch.c`, `ra_vita.c` and
+  `main_vita.c` are not `link_vita.c`'s): `artfetch` is already paused for the
+  whole game (`artfetch_pause(1)` at boot), so the only web traffic left in a
+  session is RetroAchievements. Hand `ra_http_config` / `ra_vita` an `online`
+  callback of `net_up() && !link_is_active()` (`#include "net_vita.h"`); the
+  achievements' own "will be sent when back online" path then holds the
+  requests until the session ends. If the cover fetcher is ever allowed
+  during a game, the one line is `artfetch_pause(link_is_active())` once a
+  frame in `main_vita.c`.
 - **"Save present" without stats.** The library scan keeps 64-bit hashes of the
   `.sav`/`.srm` names and of the folders it read (`savset`, `ui_psp.c`); a row
   asks the set instead of `sceIoGetstat` (folders the scan did not read still

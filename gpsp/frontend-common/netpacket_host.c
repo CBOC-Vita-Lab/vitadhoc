@@ -686,6 +686,15 @@ uint32_t fe_np_srtt_us(void)
    return st.srtt_us;
 }
 
+uint32_t fe_np_retx(void)
+{
+   nd_stats st;
+   if (!np.active || !np.nd)
+      return 0;
+   netdrv_get_stats(np.nd, &st);
+   return st.retx;
+}
+
 const char *fe_np_peer_nick(void)
 {
    unsigned i;

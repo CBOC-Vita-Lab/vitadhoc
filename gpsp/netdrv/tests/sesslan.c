@@ -19,6 +19,14 @@
  *           [loss=PCT] [lat=MS] [jitter=MS]        the fault shim, both ways
  *           [bulk=BYTES] [copies=N] [nack=1] [absorb=1] [batch=N]
  *           [rto_first=US] [rto_min=US] [rto_max=US]   nd_config timers
+ *           [stall=FRAME:MS:ID]   console ID's main loop (pump and step) does
+ *                                 nothing for MS ms from FRAME frames into
+ *                                 the run; its transport's I/O thread goes on
+ *           [kill=FRAME:ID]       console ID vanishes FRAME frames into the
+ *                                 run: transport and netdrv destroyed with no
+ *                                 BYE.  The other console must end through
+ *                                 the "connection lost" path; the time that
+ *                                 took is printed (peer_lost ms=)
  *
  * Prints sesssim's EVT lines; exit 0 when both sessions end DONE.
  * Built and driven by netdrv/tests/run_sesslan.py.
@@ -174,8 +182,21 @@ int main(int argc, char **argv)
    uint64_t stall_ticks[2] = { 0, 0 };
    int i, n, rc = 0, end_asked = 0;
    uint64_t frame = 0;
+   unsigned stall_at = 0, stall_ms = 0, stall_id = 0;
+   uint64_t stall_until = 0, stalled_iters = 0, kill_t0 = 0;
+   unsigned kill_at = 0, kill_id = 0;
+   int dead[2] = { 0, 0 }, lost_ms = -1, kill_on = 0;
    unsigned max_frames = (unsigned)atoi(arg(argc, argv, "max", "6000"));
 
+   if (sscanf(arg(argc, argv, "stall", ""), "%u:%u:%u", &stall_at, &stall_ms,
+              &stall_id) == 3 && stall_id > 1)
+      return 2;
+   if (sscanf(arg(argc, argv, "kill", ""), "%u:%u", &kill_at, &kill_id) == 2)
+   {
+      if (kill_id > 1)
+         return 2;
+      kill_on = 1;
+   }
    if (!rom[0] || !rom[1]) { fprintf(stderr, "usage: see sesslan.c\n"); return 2; }
    setvbuf(stdout, NULL, _IOLBF, 0);
    if (!base)
@@ -189,7 +210,7 @@ int main(int argc, char **argv)
    memset(&lc, 0, sizeof(lc));
    lc.mode = LAN_MODE_HOST;
    lc.disc_port = base;
-   lc.flags = LAN_F_LOOPBACK;
+   lc.flags = LAN_F_LOOPBACK | LAN_F_IO_KEEPALIVE;
    sl[0].tp = lan_transport_create(&lc);
    if (!sl[0].tp) { fprintf(stderr, "host transport: %s\n", lan_last_error()); return 2; }
    memset(&info, 0, sizeof(info));
@@ -221,7 +242,7 @@ int main(int argc, char **argv)
    memset(&lc, 0, sizeof(lc));
    lc.mode = LAN_MODE_JOIN;
    lc.disc_port = base;
-   lc.flags = LAN_F_LOOPBACK;
+   lc.flags = LAN_F_LOOPBACK | LAN_F_IO_KEEPALIVE;
    lc.target_ip_be = rooms[0].ip_be;
    lc.target_port = rooms[0].port;
    sl[1].tp = lan_transport_create(&lc);
@@ -319,9 +340,42 @@ int main(int argc, char **argv)
    for (frame = 0; frame < max_frames; frame++)
    {
       int st[2];
+      if (stall_ms && !stall_until && running_since &&
+          frame + 1 - running_since >= stall_at)
+      {
+         stall_until = nd_now_us() + (uint64_t)stall_ms * 1000ull;
+         sim("stall_begin id=%u ms=%u", stall_id, stall_ms);
+      }
+      if (stall_until && nd_now_us() < stall_until)
+         stalled_iters++;
+      if (kill_on && !dead[kill_id] && running_since &&
+          frame + 1 - running_since >= kill_at)
+      {
+         /* a console whose process is gone: no BYE, nothing answers */
+         STACK[kill_id].destroy(sess[kill_id]);
+         sess[kill_id] = NULL;
+         netdrv_destroy(sl[kill_id].nd);
+         lan_transport_destroy(sl[kill_id].tp);
+         sl[kill_id].nd = NULL;
+         sl[kill_id].tp = NULL;
+         dead[kill_id] = 1;
+         kill_t0 = nd_now_us();
+         sim("kill_begin id=%u", kill_id);
+      }
       for (i = 0; i < 2; i++)
       {
          int r;
+         if (dead[i])
+         {
+            st[i] = FE_GBLINK_DONE;
+            continue;
+         }
+         if (stall_until && (unsigned)i == stall_id &&
+             nd_now_us() < stall_until)
+         {
+            st[i] = STACK[i].state(sess[i]);
+            continue;                    /* busy: no pump, no step */
+         }
          sl_pump(i);
          st[i] = STACK[i].state(sess[i]);
          if (st[i] == FE_GBLINK_RUNNING || st[i] == FE_GBLINK_ENDING)
@@ -335,17 +389,27 @@ int main(int argc, char **argv)
          else
             STACK[i].step(sess[i], 0);
       }
-      st[0] = STACK[0].state(sess[0]);
-      st[1] = STACK[1].state(sess[1]);
+      st[0] = dead[0] ? FE_GBLINK_DONE : STACK[0].state(sess[0]);
+      st[1] = dead[1] ? FE_GBLINK_DONE : STACK[1].state(sess[1]);
+      if (kill_on && dead[1 - kill_id] == 0 && dead[kill_id] && lost_ms < 0 &&
+          STACK[1 - kill_id].state(sess[1 - kill_id]) == FE_GBLINK_FAILED)
+      {
+         lost_ms = (int)((nd_now_us() - kill_t0) / 1000u);
+         sim("peer_lost ms=%d error=%d", lost_ms,
+             STACK[1 - kill_id].error(sess[1 - kill_id]));
+      }
       if (!running_since && st[0] == FE_GBLINK_RUNNING && st[1] == FE_GBLINK_RUNNING)
       {
          running_since = frame + 1;
          run_t0 = nd_now_us();
          sim("running setup_ms=%u", (unsigned)((run_t0 - setup_t0) / 1000u));
       }
-      if (!end_asked && running_since && frame + 1 - running_since >= run_frames)
+      if (!end_asked && running_since && (!stall_ms || (stall_until &&
+          nd_now_us() >= stall_until)) &&
+          frame + 1 - running_since - stalled_iters >= run_frames)
       {
-         STACK[0].request_end(sess[0]);
+         if (!dead[0])
+            STACK[0].request_end(sess[0]);
          end_asked = 1;
       }
       if ((st[0] == FE_GBLINK_DONE || st[0] == FE_GBLINK_FAILED) &&
@@ -359,15 +423,21 @@ int main(int argc, char **argv)
    /* let the last acknowledgements and BYE cross before the sockets close */
    for (i = 0; i < 100; i++)
    {
-      sl_pump(0);
-      sl_pump(1);
+      if (!dead[0])
+         sl_pump(0);
+      if (!dead[1])
+         sl_pump(1);
       nd_sleep_us(1000);
    }
    for (i = 0; i < 2; i++)
    {
       fe_gblink_stats s;
       nd_stats ns;
+      if (dead[i])
+         continue;
       lan_stats ls;
+      lan_census cen;
+      lan_transport_census(sl[i].tp, &cen, 0);
       STACK[i].stats(sess[i], &s);
       netdrv_get_stats(sl[i].nd, &ns);
       lan_transport_get_stats(sl[i].tp, &ls);
@@ -386,7 +456,8 @@ int main(int argc, char **argv)
           "srtt_us=%u rto_us=%u malformed=%u crc=%u unknown=%u overflow=%u "
           "payloads=%llu payload_bytes=%llu lan_tx=%u lan_rx=%u ringdrop=%u "
           "foreign=%u bulk_tx=%u bulk_rx=%u bulk_drop=%u bulk_read=%u "
-          "fault_drop=%u fault_delay=%u tx_us_avg=%u tx_us_max=%u stop=%d",
+          "fault_drop=%u fault_delay=%u tx_us_avg=%u tx_us_max=%u stop=%d "
+          "keep_in=%u keep_out=%u",
           i ? "G" : "H", ns.tx_frames, ns.rx_frames, ns.retx, ns.rx_dup,
           ns.acked, ns.srtt_us, ns.rto_us, ns.rx_drop_malformed, ns.rx_drop_crc,
           ns.rx_drop_unknown_peer, ns.tx_overflow,
@@ -395,24 +466,29 @@ int main(int argc, char **argv)
           ls.rx_ring_drop, ls.rx_foreign, ls.bulk_tx, ls.bulk_rx, ls.bulk_drop,
           sl[i].bulk_rx_n, ls.fault_dropped, ls.fault_delayed,
           ls.tx_pkts ? ls.tx_us / ls.tx_pkts : 0, ls.tx_max_us,
-          sl[i].stop_reason);
+          sl[i].stop_reason, cen.keep_in, cen.keep_out);
       if (STACK[i].state(sess[i]) != FE_GBLINK_DONE)
          rc = 1;
       /* the transport's invariants for a session */
       if (ns.rx_drop_malformed || ns.rx_drop_crc || ns.tx_overflow ||
-          ls.rx_ring_drop || ls.rx_pkts != ns.rx_frames)
+          (!stall_ms && (ls.rx_ring_drop || ls.rx_pkts != ns.rx_frames)))
       {
          sim("transport_invariant_broken console=%s", i ? "G" : "H");
          rc = 1;
       }
    }
+   if (kill_on)
+      rc = lost_ms >= 0 ? 0 : 1;
    sim("frames=%llu run_ms=%u", (unsigned long long)frame,
        run_t0 ? (unsigned)((nd_now_us() - run_t0) / 1000u) : 0);
-   STACK[0].destroy(sess[0]);
-   STACK[1].destroy(sess[1]);
+   for (i = 0; i < 2; i++)
+      if (sess[i])
+         STACK[i].destroy(sess[i]);
    sess[0] = sess[1] = NULL;
    for (i = 1; i >= 0; i--)
    {
+      if (dead[i])
+         continue;
       netdrv_leave(sl[i].nd);
       netdrv_destroy(sl[i].nd);
       lan_transport_destroy(sl[i].tp);

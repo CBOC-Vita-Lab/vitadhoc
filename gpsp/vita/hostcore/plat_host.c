@@ -1266,6 +1266,31 @@ static int g_face_swap;
 
 void plat_pad_face_swap(int on) { g_face_swap = on ? 1 : 0; }
 
+/* The script's buttons on every refresh since the last call: the twin's
+ * picture of the console's buffered samples (plat_vita.c). */
+unsigned plat_pad_pressed(void)
+{
+   static int have;
+   static unsigned last;
+   unsigned i, f = script_frame(), from, b = 0;
+   if (!have)
+   {
+      have = 1;
+      last = f;
+      return 0;
+   }
+   from = last + 1;
+   last = f;
+   for (i = 0; i < opt.npress; i++)
+      if (!opt.press[i].pad2 && opt.press[i].frame <= f &&
+          opt.press[i].frame + opt.press[i].len > from)
+         b |= opt.press[i].buttons;
+   b &= 0xFFFFu;
+   if (g_face_swap && ((b & PLAT_BTN_CROSS) != 0) != ((b & PLAT_BTN_CIRCLE) != 0))
+      b ^= PLAT_BTN_CROSS | PLAT_BTN_CIRCLE;
+   return b;
+}
+
 static void face_swap_pad(plat_pad *pad)
 {
    if (g_face_swap && ((pad->buttons & PLAT_BTN_CROSS) != 0) !=

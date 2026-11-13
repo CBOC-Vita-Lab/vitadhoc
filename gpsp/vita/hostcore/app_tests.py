@@ -6550,10 +6550,10 @@ def t_census(S):
     blocks.  A scrolling NES game: the wide picture was shown.  The home
     screen: covers arrived under the per-frame upload budget.  A save from
     RetroArch: its backup was made and checked."""
-    r = S.run("census_gba", "900:quit\n", autoboot="gbadhoc-test.gba", args=("--slow", "200:300:20000"))
+    r = S.run("census_gba", "2000:quit\n", autoboot="gbadhoc-test.gba", args=("--slow", "200:800:20000"))
     S.clean(r)
     c = r.evt("census")
-    S.check(c and all(e["steady"] == "1" for e in c) and int(c[-1]["half_windows"]) > 0,
+    S.check(c and all(e["steady"] == "1" for e in c) and int(c[-1]["half_passes"]) > 0,
             "census: steady pacing on and it acted (%s)" % [e["_"] for e in c][-1:])
     S.check(c and sum(int(e["jit_blocks"]) for e in c) > 0, "census: the recompiler's block counter moves")
     j = r.evt("vita_jit")

@@ -10,6 +10,7 @@ the seam), BG2 = sky (32 wide, scrolls at half speed), BG3 = HUD (fixed, priorit
 The camera is a table (one entry per frame), the ROM only looks it up.
 """
 import json, os, random, struct, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from asm65816 import Asm, make_lorom
 
 NFRAMES = 3200

@@ -26,6 +26,8 @@ title, so the output can go into repository notes.  Typical uses:
 Exit status 0 only when every game is identical on every checkpoint, the
 audio and the saves.
 """
+import warnings
+warnings.simplefilter('ignore')
 import argparse, glob, hashlib, os, shlex, shutil, subprocess, sys, tempfile, time
 from PIL import Image
 
@@ -111,8 +113,8 @@ def main():
     roms = sorted(glob.glob(a.rom_dir + "/*.gba"))
     want = [int(x) for x in a.games.split(",") if x] or list(range(1, len(roms) + 1))
     bad = 0
-    print("%-4s %-9s %-6s %-9s %-9s %-9s %-8s %-8s" %
-          ("game", "frames", "shots", "picture", "audio", "save", "A secs", "B secs"))
+    print("%-4s %-7s %-8s %-8s %-6s %-6s %-14s %-7s %-7s" %
+          ("game", "frames", "distinct", "picture", "audio", "save", "A save", "A secs", "B secs"))
     for n in want:
         rom = roms[n - 1]
         ra = run(a.a, None, rom, a.frames, a.checkpoints, a.mask_green)
@@ -121,15 +123,15 @@ def main():
             continue
         rb = run(a.b, a.qemu if a.qemu_b else None, rom, a.frames, a.checkpoints, a.mask_green)
         same = sum(1 for x, y in zip(ra["shots"], rb["shots"]) if x == y and x[0] != "missing")
-        live = sum(1 for x in ra["shots"] if x[1])
+        live = len(set(x[0] for x in ra["shots"]))     # distinct pictures
         pic = "%d/%d" % (same, a.checkpoints)
         aud = "same" if ra["audio"] == rb["audio"] and ra["audio"] != "missing" else "DIFFER"
         sav = "same" if ra["save"] == rb["save"] else "DIFFER"
         ok = (same == a.checkpoints and aud == "same" and sav == "same"
               and ra["rc"] == 0 and rb["rc"] == 0)
         bad += not ok
-        print("g%-3d %-9d %-6s %-9s %-9s %-9s %-8.0f %-8.0f %s" %
-              (n, a.frames, "%d live" % live, pic, aud, sav, ra["secs"], rb["secs"],
+        print("g%-3d %-7d %-8d %-8s %-6s %-6s %-14s %-7.0f %-7.0f %s" %
+              (n, a.frames, live, pic, aud, sav, ra["save"], ra["secs"], rb["secs"],
                "" if ok else "<-- rc=%d/%d" % (ra["rc"], rb["rc"])), flush=True)
         if not ok:
             for i, (x, y) in enumerate(zip(ra["shots"], rb["shots"])):

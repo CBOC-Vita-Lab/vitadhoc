@@ -84,6 +84,9 @@ struct Layer {
 	uint8_t gh_prev_ok[1024];
 	uint32_t gid;
 	int have_gid;
+	uint32_t tcache[1024];           /* th of a tile id (8x8 graphics, or the 2x2 group of a 16x16 tile), valid when tgen matches */
+	uint32_t tgen[1024];
+	uint8_t tblank[1024];
 	uint8_t rowblank[64];            /* ring tile row is made of blank tiles only (the layer draws nothing on it, anywhere) */
 };
 
@@ -143,6 +146,7 @@ struct Adapter {
 	int cov_have;
 	snes_wide_census cen;
 	uint32_t frame_n;
+	uint32_t gen;
 };
 
 static Adapter A;
@@ -278,6 +282,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 	const uint32_t settle_n = (uint32_t) (A.settle ? A.settle : 1);
 	memset(Ly->used, 0, sizeof Ly->used);
 	memset(Ly->rowblank, 1, sizeof Ly->rowblank);
+	const uint32_t gen = ++A.gen;
 	for (int ry = 0; ry < mh; ry++)
 		for (int rx = 0; rx < mw; rx++) {
 			const int k = ry * mw + rx;
@@ -286,15 +291,22 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 			const uint32_t word = ld16(v->vram + wa * 2);
 			const int tile = (int) (word & 0x3ff);
 			uint32_t th;
-			if (Ly->tile_px == 8) {
-				th = tile_hash(v, K.bpp, tile, K.name);
-				if (!Ly->used[tile]) { Ly->used[tile] = 1; Ly->gh[tile] = th; }
+			if (Ly->tgen[tile] != gen) {          /* per tile id and frame: hash of its graphics (a 16x16 tile: of its four) and blankness */
+				Ly->tgen[tile] = gen;
+				if (Ly->tile_px == 8) {
+					th = tile_hash(v, K.bpp, tile, K.name);
+					Ly->tblank[tile] = tile_blank(K.bpp, tile, K.name);
+				} else {
+					int t1 = (tile + 1) & 0x3ff, t2 = (tile + 16) & 0x3ff, t3 = (tile + 17) & 0x3ff;
+					uint32_t h0 = tile_hash(v, K.bpp, tile, K.name), h1 = tile_hash(v, K.bpp, t1, K.name);
+					uint32_t h2 = tile_hash(v, K.bpp, t2, K.name), h3 = tile_hash(v, K.bpp, t3, K.name);
+					th = mix32(mix32(mix32(h0, h1), h2), h3);
+					Ly->tblank[tile] = tile_blank(K.bpp, tile, K.name) && tile_blank(K.bpp, t1, K.name) && tile_blank(K.bpp, t2, K.name) && tile_blank(K.bpp, t3, K.name);
+				}
+				Ly->tcache[tile] = th;
+				Ly->used[tile] = 1; Ly->gh[tile] = th;
 			} else {
-				int t1 = (tile + 1) & 0x3ff, t2 = (tile + 16) & 0x3ff, t3 = (tile + 17) & 0x3ff;
-				uint32_t h0 = tile_hash(v, K.bpp, tile, K.name), h1 = tile_hash(v, K.bpp, t1, K.name);
-				uint32_t h2 = tile_hash(v, K.bpp, t2, K.name), h3 = tile_hash(v, K.bpp, t3, K.name);
-				th = mix32(mix32(mix32(h0, h1), h2), h3);
-				if (!Ly->used[tile]) { Ly->used[tile] = 1; Ly->gh[tile] = th; }
+				th = Ly->tcache[tile];
 			}
 			uint32_t st = 0;
 			const uint16_t w16 = v->vage[wa];
@@ -302,12 +314,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 				uint32_t age = (uint16_t) (clk16 - w16);
 				if (age < 32768 && age <= clk) st = clk - age;
 			}
-			if (Ly->rowblank[ry]) {
-				bool bl = tile_blank(K.bpp, tile, K.name);
-				if (bl && Ly->tile_px == 16)
-					bl = tile_blank(K.bpp, (tile + 1) & 0x3ff, K.name) && tile_blank(K.bpp, (tile + 16) & 0x3ff, K.name) && tile_blank(K.bpp, (tile + 17) & 0x3ff, K.name);
-				if (!bl) Ly->rowblank[ry] = 0;
-			}
+			if (!Ly->tblank[tile]) Ly->rowblank[ry] = 0;
 			Ly->code[k] = word;
 			Ly->hash[k] = mix32(word * 0x10001u + 0x1234567u, th);
 			Ly->stamp[k] = st;
@@ -509,15 +516,29 @@ static void amb_update(const SWideView *v, int H, bool reset)
 	}
 }
 
-/* ambient pixel at distance d from the picture edge (side s, line y) */
-static inline uint16_t amb_pixel(int s, int y, int d, int M)
+/* The ambient row (distances 0 .. M - 1) for a colour, side and dither phase: a pure function of those, so rows built for a
+ * neighbouring line or an earlier frame are reused. Direct mapped. */
+struct ARow { uint16_t key; uint8_t ph, ok; uint16_t px[SNES_WIDE_MAX_MARGIN]; };
+static ARow g_arow[256];
+static int g_arow_m;
+
+static const uint16_t *amb_row(int s, int y, int M)
 {
-	const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
-	int r = ((A.amb_rgb[s][y][0] * f) >> 8) + (th >> 1);
-	int g = ((A.amb_rgb[s][y][1] * f) >> 8) + (th >> 2);
-	int b = ((A.amb_rgb[s][y][2] * f) >> 8) + (th >> 1);
-	r = r > 255 ? 255 : r; g = g > 255 ? 255 : g; b = b > 255 ? 255 : b;
-	return (uint16_t) (((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+	if (g_arow_m != M) { memset(g_arow, 0, sizeof g_arow); g_arow_m = M; }
+	const uint16_t key = A.amb_px[s][y];
+	const uint8_t ph = (uint8_t) ((y & 3) | (s << 2));
+	ARow *r = &g_arow[(unsigned) (key * 31u + ph * 7u + (key >> 8) * 5u) & 255];
+	if (!r->ok || r->key != key || r->ph != ph) {
+		const int r8 = ((key >> 11) & 31) * 255 / 31, g8 = ((key >> 5) & 63) * 255 / 63, b8 = (key & 31) * 255 / 31;
+		for (int d = 0; d < M; d++) {
+			const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
+			int rr = ((r8 * f) >> 8) + (th >> 1), gg = ((g8 * f) >> 8) + (th >> 2), bb = ((b8 * f) >> 8) + (th >> 1);
+			rr = rr > 255 ? 255 : rr; gg = gg > 255 ? 255 : gg; bb = bb > 255 ? 255 : bb;
+			r->px[d] = (uint16_t) (((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3));
+		}
+		r->key = key; r->ph = ph; r->ok = 1;
+	}
+	return r->px;
 }
 
 /* w (0..32) of the ambient pixel over the margin pixel */
@@ -691,20 +712,6 @@ static void run(const SWideView *v)
 		wk_out_refresh_line(wo, y);
 	}
 
-	if (getenv("WDBGF") && (uint32_t) atoi(getenv("WDBGF")) == v->clock) {
-		for (int l = 0; l < 4; l++) {
-			if (!A.lay[l].active) continue;
-			int nb = 0; for (int r = 0; r < A.lay[l].mh; r++) nb += A.lay[l].rowblank[r];
-			fprintf(stderr, "L%d mw=%d mh=%d tp=%d bpp=%d rowblank=%d/%d kind=%d\n", l, A.lay[l].mw, A.lay[l].mh, A.lay[l].tile_px, A.lay[l].bpp, nb, A.lay[l].mh, wo->kind[l]);
-		}
-		for (int y = 0; y < H; y += 16) {
-			const wk_line_out *lo = &wo->line[y];
-			fprintf(stderr, "cg=%02x/%02x wsel=%d tm=%x ts=%x ", v->line[y].cgadsub, v->line[y].cgwsel, v->line[y].wsel_any, v->line[y].tm, v->line[y].ts);
-			fprintf(stderr, "y=%d hud=%d lvl=%x bd=%x on=%d%d%d%d real=", y, lo->hud, lo->level_mask, lo->backdrop_mask, A.lay[0].line_on[y], A.lay[1].line_on[y], A.lay[2].line_on[y], A.lay[3].line_on[y]);
-			for (int l = 0; l < 4; l++) fprintf(stderr, "%d/%d/%d/%d ", lo->real[0][l], lo->real[1][l], lo->ring[0][l], lo->ring[1][l]);
-			fprintf(stderr, "\n");
-		}
-	}
 	/* 4. compose */
 	amb_update(v, H, wo->scene_event != 0);
 	wk_compose_in ci;
@@ -849,12 +856,18 @@ static void run(const SWideView *v)
 			const SWideLine &Ln = v->line[y];
 			if (!(Ln.flags & SWL_VALID) || (Ln.flags & SWL_BLANK)) continue;
 			uint16_t *row = o->px + (size_t) y * OW;
-			for (int s = 0; s < 2; s++)
-				for (int d = 0; d < Mh; d++) {
-					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
-					const uint16_t ap = amb_pixel(s, y, d, Mh);
-					row[dx] = xf >= 32 ? ap : mix565(row[dx], ap, xf);
+			for (int s = 0; s < 2; s++) {
+				const uint16_t *ap = amb_row(s, y, Mh);
+				if (xf >= 32) {
+					if (s == 0) for (int d = 0; d < Mh; d++) row[Mh - 1 - d] = ap[d];
+					else memcpy(row + Mh + 256, ap, (size_t) Mh * 2);
+				} else {
+					for (int d = 0; d < Mh; d++) {
+						const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
+						row[dx] = mix565(row[dx], ap[d], xf);
+					}
 				}
+			}
 			if (xf >= 32) o->real[y][0] = o->real[y][1] = 0;
 		}
 		if (xf >= 32) A.cen.frames_ambient++; else A.cen.frames_crossfade++;

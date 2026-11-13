@@ -699,7 +699,8 @@ unsigned pspcompat_pad(void)
    if (g_pad_fn)
       return g_pad_fn() & 0xF3F9u;
    plat_pad_read(&p);
-   b = (p.buttons & 0xF3F9u) | stick_bits(p.lx, p.ly);
+   /* (a tap since the last read counts as down now: plat_pad_pressed) */
+   b = ((p.buttons | plat_pad_pressed()) & 0xF3F9u) | stick_bits(p.lx, p.ly);
    if (g_pad2_menu && plat_pad_read2(&q))
       b |= (q.buttons & 0xF3F9u) | stick_bits(q.lx, q.ly);
    return b;

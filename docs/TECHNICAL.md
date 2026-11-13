@@ -1027,6 +1027,18 @@ that does not fit the reserve, an allocation failure, a re-translation that
 comes out different) are counted in `smc_partial_emergencies` and handled by a
 full flush (safe, but not the full-flush build's behaviour).
 
+**The app (main_vita.c).** `vita.ini` `smc_partial = 0|1` and
+`dispatch_cache = 0|1` (both 1 by default; engineering switches for an A/B on
+the console, no Settings row) are given to both machines before a GBA game
+loads (`EVT jit_switches`). Each window (600 passes) logs
+`EVT vita_jit smc_partial= ram_flush= smc_traps= tag_flush= blocks= vm_syncs=
+revived= reclaims= dcache_hits= emergencies=` (counters [4] [6] [7] [0]+[1] [2]
+[8] [13] [14] of `gpsp_jit_counters`, deltas over the window) and once, loudly,
+`EVT JIT EMERGENCY` if `smc_partial_emergencies` ever leaves 0. The app test
+`census` checks both switches are on, blocks are translated and emergencies
+stay 0. Memory: the ROM translation cache is 6 MiB a machine now (1 MiB holds
+kept code): the two-machine budget only shrank.
+
 **Run-time proof obligations (twins).** `GPSP_SMC_VERIFY=1`: at every tag-only
 flush, every reclaim and every 256th top-level lookup the tag array must be
 exactly the union of the live blocks' extents, each live block tagged and named

@@ -292,6 +292,13 @@ static void edge_colours(wk_compose *c, const wk_compose_in *in)
      *   sum_j (R+1-|j-y|) v[j] over lo..hi  =  (R+1)*S(lo..hi)
      *        - ( y*S(lo..y) - T(lo..y) ) - ( T(y+1..hi) - y*S(y+1..hi) ). */
     const int R = c->cfg.soft_blur;
+    if (R <= 0) {   /* no blur (the caller's colours are already smooth): the edge colour is the raw colour */
+        for (int s = 0; s < 2; s++)
+            for (int y = 0; y < H; y++)
+                for (int ch = 0; ch < 3; ch++)
+                    c->edge[((size_t)s * (size_t)H + (size_t)y) * 3 + (size_t)ch] = raw[s][y][ch];
+        return;
+    }
     int32_t S[4][WK_MAX_LINES + 1], T[4][WK_MAX_LINES + 1];   /* ch 3 = count */
     int seg_lo[WK_MAX_LINES], seg_hi[WK_MAX_LINES];
     for (int y = 0; y < H; y++) {

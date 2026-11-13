@@ -2598,11 +2598,34 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 	wide_alloc();
 	memset(W.line, 0, sizeof(W.line));
 	// only the Z buffers a pass drew into last frame are dirty (an unused pass costs nothing)
+	// the passes only draw (and the adapter only reads) the two margin strips [0, m) and [m + 256, 2m + 256): clear just those
+	static int prev_m = 0;
+	const bool moved = prev_m != W.m;		// the strips moved (first frame, other margin): clear everything once
+	prev_m = W.m;
+	if (moved) g_wide_zdirty = ~0u;
+	const int m2 = W.m;
 	for (int p = 0; p < SW_NPASS; p++)
 		if (g_wide_zdirty & (1u << p))
-			memset(W.z[p], 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+		{
+			if (moved) { memset(W.z[p], 0, (size_t) (SW_ROWS + 2) * SW_PITCH); continue; }
+			for (int y = 0; y < SW_ROWS + 2; y++)
+			{
+				uint8 *r = W.z[p] + (size_t) y * SW_PITCH;
+				memset(r, 0, (size_t) m2);
+				memset(r + m2 + 256, 0, (size_t) m2);
+			}
+		}
 	if (g_wide_zdirty)
-		memset(W.subz, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+	{
+		if (moved) memset(W.subz, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+		else
+			for (int y = 0; y < SW_ROWS + 2; y++)
+			{
+				uint8 *r = W.subz + (size_t) y * SW_PITCH;
+				memset(r, 0, (size_t) m2);
+				memset(r + m2 + 256, 0, (size_t) m2);
+			}
+	}
 	g_wide_zdirty = 0;
 	W.h = 0;
 }

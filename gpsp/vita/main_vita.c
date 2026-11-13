@@ -661,6 +661,8 @@ void app_steady_options(void)
 /* The first time each layout shows in a session (the game turned the
  * console, or the menu did): how to hold it and what the buttons are now.
  * The picture and the buttons changed together, in the same frame. */
+static unsigned g_steady_half_passes;   /* passes drawn 1 of 2 (census) */
+
 static void ws_layout_hint(void)
 {
    static unsigned seen_changes = ~0u;
@@ -3330,20 +3332,19 @@ static void window_begin(void)
       extern uint32_t gpsp_jit_counters(uint32_t *out, uint32_t n);
       extern uint32_t gpsp_smc_partial_active(void);
       extern uint32_t smc_partial_emergencies;
-      static unsigned half_windows, emerg_told;
+      static unsigned emerg_told;
       static uint32_t jl[16];
       uint32_t jc[16], d[16];
       int k;
       memset(jc, 0, sizeof(jc));
-      half_windows += steady_half() ? 1 : 0;
       gpsp_jit_counters(jc, 16);
       for (k = 0; k < 16; k++)
       {
          d[k] = jc[k] - jl[k];
          jl[k] = jc[k];
       }
-      fe_evt("census steady=%d half_windows=%u wide=%d jit_blocks=%u console=%d",
-             g_pcfg.steady_pacing, half_windows,
+      fe_evt("census steady=%d half_passes=%u wide=%d jit_blocks=%u console=%d",
+             g_pcfg.steady_pacing, g_steady_half_passes,
              g_game_console == FE_CONSOLE_NES ? nescore_wide_shown() : -1,
              (unsigned)(d[0] + d[1]), g_game_console);
       /* the recompiler this window (cpu_threaded.c gpsp_jit_counters): RAM
@@ -5283,7 +5284,10 @@ static void game_loop(void)
       steady_on = !g_ff.on && !session && !local && !g_sw.link_bench &&
                   !link_owns_picture() && steady_half();
       if (steady_on)
+      {
          runs = 2;
+         g_steady_half_passes++;
+      }
       for (i = 0; i < runs; i++)
       {
          if (i == runs - 1)

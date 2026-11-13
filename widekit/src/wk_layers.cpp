@@ -17,8 +17,6 @@
  * (periodic rows, slow parallax, wrap-around travel) that is revoked the
  * moment the game writes beyond the layer's edges again. */
 
-#include <stdio.h>
-#include <stdlib.h>
 #include "wk_layers.h"
 #include "wk_util.h"
 
@@ -291,11 +289,8 @@ static int walk_side(const Walk &k, int dirn, int partial, Scratch &sc, int stam
         if (sc.vis[rc])
             break;
         int idx = k.tr * k.mw + rc;
-        if (!seen_ok(k, idx, ut)) {
-            if (getenv("WKDBG2") && k.frame == (uint32_t)atoi(getenv("WKDBG2")) && k.tr == 12)
-                fprintf(stderr, "hist dir=%d n=%d ut=%d rc=%d ep=%d/%d wc=%d/%d hash=%08x/%08x\n", dirn, n, ut, rc, k.s->seen_ep[idx], k.w->ep8, k.s->seen_wc[idx], (int16_t)ut, k.s->seen_hash[idx], k.L->hash[idx]);
+        if (!seen_ok(k, idx, ut))
             break;
-        }
         sc.claimed[rc] = 1;
     }
     if (n > 0 || !stamps || k.s->chain_ban > 0)
@@ -444,11 +439,15 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
         if (!sc.valid[l])
             continue;
         LS *s = &w->ls[l];
-        if (sc.jump[l]) { event = 1; if (getenv("WKDBG")) fprintf(stderr, "ev f=%u jump l=%d dx=%d dy=%d\n", f->frame, l, sc.dom_dx[l], sc.dom_dy[l]); }
-        if (s->have_gfx && s->gfx_prev != f->layer[l].gfx_id) { event = 1; if (getenv("WKDBG")) fprintf(stderr, "ev f=%u gfx l=%d\n", f->frame, l); }
+        if (sc.jump[l])
+            event = 1;
+        if (s->have_gfx && s->gfx_prev != f->layer[l].gfx_id)
+            event = 1;
     }
-    if (f->brightness <= cfg.blank_thr) { event = 1; if (getenv("WKDBG")) fprintf(stderr, "ev f=%u dark\n", f->frame); }
-    if (f->palette_size > 0 && f->palette_delta * 2 >= f->palette_size) { event = 1; if (getenv("WKDBG")) fprintf(stderr, "ev f=%u pal %d\n", f->frame, f->palette_delta); }
+    if (f->brightness <= cfg.blank_thr)
+        event = 1;
+    if (f->palette_size > 0 && f->palette_delta * 2 >= f->palette_size)
+        event = 1;
     if (event) {
         out->scene_event = 1;
         if (!w->in_cluster || f->frame - w->last_event > (uint32_t)cfg.cluster_gap) {
@@ -836,7 +835,6 @@ void wk_layers_update(wk_layers *w, const wk_frame *f, wk_out *out)
              * so nothing beyond it is ring-backed  [NES adapter fix] */
             int rl = wk_clamp(partL + tp * nL, 0, M);
             int rr = wk_clamp(partR + tp * nR, 0, M);
-            if (getenv("WKDBG2") && f->frame == (uint32_t)atoi(getenv("WKDBG2")) && l == 0 && tr == 12) fprintf(stderr, "walk l=%d y=%d tr=%d nL=%d nR=%d rl=%d rr=%d dir=%d partL=%d partR=%d\n", l, y, tr, nL, nR, rl, rr, s->dir, partL, partR);
             run_valid = 1;
             run_sx = uy;
             run_tr = tr;

@@ -242,6 +242,11 @@ typedef struct plat_pad
 } plat_pad;
 
 void plat_pad_read(plat_pad *pad);
+/* The buttons that were down at ANY moment since the previous call (port 0,
+ * PLAT_BTN_* bits, the face swap applied): a tap shorter than the time
+ * between two plat_pad_read calls (a slow frame, Steady pacing's two frames
+ * a pass) is still seen once.  The first call answers 0. */
+unsigned plat_pad_pressed(void);
 /* A AND B BUTTONS: 1 = plat_pad_read / plat_pad_read2 hand CROSS and CIRCLE
  * to the app exchanged (the physical Circle comes back as PLAT_BTN_CROSS and
  * the other way round), so the app's whole input -- menus, game buttons,

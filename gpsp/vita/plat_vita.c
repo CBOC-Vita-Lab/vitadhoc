@@ -768,6 +768,32 @@ static uint32_t face_buttons(uint32_t b)
    return b;
 }
 
+/* The samples the controller service buffered since the last call (it keeps
+ * the latest 64, one per refresh): every button seen down in one of them. */
+unsigned plat_pad_pressed(void)
+{
+   static int have;
+   static SceUInt64 last;
+   SceCtrlData d[16];
+   unsigned b = 0;
+   int n, i;
+   memset(d, 0, sizeof(d));
+   n = sceCtrlPeekBufferPositive(0, d, 16);
+   if (n <= 0)
+      return 0;
+   if (!have)
+   {
+      have = 1;
+      last = d[n - 1].timeStamp;
+      return 0;
+   }
+   for (i = 0; i < n; i++)
+      if (d[i].timeStamp > last)
+         b |= d[i].buttons;
+   last = d[n - 1].timeStamp;
+   return face_buttons(b);
+}
+
 void plat_pad_read(plat_pad *pad)
 {
    SceCtrlData d;

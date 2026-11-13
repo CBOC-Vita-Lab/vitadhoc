@@ -16,6 +16,7 @@
  * Nothing here is read by the emulation.
  */
 #include <atomic>
+#include <new>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,7 +89,28 @@ struct Layer {
 	uint32_t tcache[1024];           /* th of a tile id (8x8 graphics, or the 2x2 group of a 16x16 tile), valid when tgen matches */
 	uint32_t tgen[1024];
 	uint8_t tblank[1024];
+	uint8_t bitmap;                  /* the tilemap is a framebuffer ramp: nearly every tile number differs */
 	uint8_t rowblank[64];            /* ring tile row is made of blank tiles only (the layer draws nothing on it, anywhere) */
+};
+
+/* One captured frame: exactly what the compose half reads (see "Capture and compose" in snes/WIDE-INTEGRATION.md). Margin pass
+ * pictures are kept per line, side and distance index: px[pass][y][0][i] is buffer column (m - mh + i) of the core's pass (left
+ * margin, i = mh - 1 - d for distance d from the picture), px[pass][y][1][i] is column m + 256 + i (i = d). Only the rows and passes
+ * the line says it drew are copied; compose never reads the others. */
+enum { SNAP_N = 5, SS_FREE = 0, SS_FILLING = 1, SS_FILLED = 2, SS_TAKEN = 3, SS_COMPOSING = 4 };
+struct Snap {
+	std::atomic<uint32_t> state;
+	uint32_t serial;
+	int h, m, mh, ok, wide_hint;
+	uint32_t clock, epoch;
+	struct SWideLine line[SW_ROWS];
+	uint16_t cgram[256], colors[256];
+	uint16_t uage[2048];
+	uint16_t vage[32768];
+	uint8_t vram[65536];
+	uint16_t centre[SW_ROWS * 256];
+	uint16_t px[SW_NPASS][SW_ROWS][2][SNES_WIDE_MAX_MARGIN];
+	uint8_t z[SW_NPASS][SW_ROWS][2][SNES_WIDE_MAX_MARGIN];
 };
 
 struct Out {
@@ -101,7 +123,8 @@ struct Out {
 
 struct Adapter {
 	SpinLock lk;
-	int on, margin224, core_margin;
+	std::atomic<int> on;
+	int margin224, core_margin;
 	int period, fade_px, appear, settle, debug, layered;
 	int learn = 1;
 	int map_safe = 1;
@@ -136,6 +159,7 @@ struct Adapter {
 	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
 	uint8_t softm[MAXH][2][SNES_WIDE_MAX_MARGIN];   /* per margin pixel: bit n = layer n shows a learned cell that has not been seen live in this run (blended toward the ambient frame) */
 	int soft_on;
+	int hud_excl = 1;                 /* option "hud_excl": HUD rows do not count against the Auto coverage */
 	int fgfade = 1;                   /* option "fgfade": unknown foreground fades out over fade_px (B) */
 	uint16_t tailpx[4][2][MAXH];      /* per layer, side, line: the layer's own pixel at the view edge (colour) ... */
 	uint8_t tailop[4][2][MAXH];       /* ... and whether it is opaque */
@@ -155,6 +179,14 @@ struct Adapter {
 	snes_wide_census cen;
 	uint32_t frame_n;
 	uint32_t gen;
+	/* capture / compose split */
+	Snap *snap[SNAP_N];
+	Snap *own;                        /* the snapshot of the single call path */
+	std::atomic<uint32_t> snap_serial;
+	std::atomic<int> split;           /* 1: the frame hook captures only; the consumer composes (snes_wide_compose) */
+	std::atomic<int> cap_mh;          /* the margin the capture copies (= margin224; 0 = off) */
+	std::atomic<int> prof_off;        /* the game's profile switches the view off (a hint for capture) */
+	std::atomic<unsigned> dropped;    /* snapshots overwritten before they were composed */
 };
 
 static Adapter A;
@@ -350,6 +382,20 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 			}
 		}
 
+	{
+		/* a tilemap in which almost every visible tile number differs is a framebuffer (Super FX, bitmap games), not a level */
+		uint8_t seen[1024];
+		memset(seen, 0, sizeof seen);
+		int distinct = 0, n = 0;
+		for (int ry = 0; ry < 28 && ry < mh; ry++)
+			for (int rx = 0; rx < 32 && rx < mw; rx++) {
+				const int t = (int) (Ly->code[ry * mw + rx] & 0x3ff);
+				n++;
+				if (!seen[t]) { seen[t] = 1; distinct++; }
+			}
+		Ly->bitmap = n > 0 && distinct * 10 >= n * 9;
+	}
+
 	/* graphics identity: kept through cosmetic animation (a few tiles changing), new for a tile set swap */
 	{
 		int nused = 0, same = 0;
@@ -471,6 +517,7 @@ static void profile_lookup(void)
 	A.prof = NULL;
 	if (A.db && A.have_game) A.prof = wk_profile_find(A.db, A.crc, A.title);
 	if (A.L) wk_layers_set_profile(A.L, A.prof);
+	A.prof_off.store(A.prof && A.prof->enable == WK_ENABLE_OFF ? 1 : 0);
 }
 
 static void make_map(void)
@@ -589,10 +636,85 @@ static inline uint16_t mix565(uint16_t a, uint16_t amb, int w)
 	return (uint16_t) (((ar + (br - ar) * w / 32) << 11) | ((ag + (bg - ag) * w / 32) << 5) | (ab + (bb - ab) * w / 32));
 }
 
+/* ---- capture (the frame hook's own work) ------------------------------------------------------------------------- */
+
+static Snap *snap_alloc(void) { return new (std::nothrow) Snap(); }
+
+/* copies what compose needs out of the core's view; touches no compose state, so it can run on any thread while compose runs */
+static void capture(const SWideView *v, Snap *sn)
+{
+	const int H = v->h, Mh = A.cap_mh.load(std::memory_order_relaxed);
+	sn->h = H; sn->m = v->m; sn->mh = Mh; sn->ok = v->ok; sn->clock = v->clock; sn->epoch = v->epoch; sn->wide_hint = 0;
+	if (H <= 0 || H > MAXH) return;
+	memcpy(sn->line, v->line, (size_t) H * sizeof(SWideLine));
+	int nd = 0, nblank = 0, n7 = 0;
+	for (int y = 0; y < H; y++) {
+		const SWideLine &L = sn->line[y];
+		if (!(L.flags & SWL_VALID)) continue;
+		if (L.flags & SWL_BLANK) nblank++;
+		else if (!(L.flags & SWL_NOMARGIN) && (L.flags & SWL_DRAWN)) { nd++; if (L.flags & SWL_MODE7) n7++; }
+	}
+	if (!v->ok || Mh <= 0 || v->m < Mh || (nd == 0 && nblank == 0)) return;
+	sn->wide_hint = A.prof_off.load(std::memory_order_relaxed) ? 0 : 1;
+	memcpy(sn->cgram, v->cgram, sizeof sn->cgram);
+	memcpy(sn->colors, v->colors, sizeof sn->colors);
+	if (n7 * 2 <= nd) {      /* a Mode 7 frame (the margin is the core's composite) describes no layer: compose reads no tilemap, stamp or graphics */
+		memcpy(sn->uage, v->uage, sizeof sn->uage);
+		memcpy(sn->vage, v->vage, sizeof sn->vage);
+		memcpy(sn->vram, v->vram, sizeof sn->vram);
+	}
+	for (int y = 0; y < H; y++) memcpy(sn->centre + (size_t) y * 256, v->centre + (size_t) y * v->centre_pitch, 256 * 2);
+	const int Mc = v->m;
+	for (int y = 0; y < H; y++) {
+		const SWideLine &L = sn->line[y];
+		if (!line_ok(L)) continue;
+		for (int p = 0; p < SW_NPASS; p++) {
+			if (!((L.pass >> p) & 1)) continue;
+			const size_t row = (size_t) y * SW_PITCH;
+			memcpy(sn->px[p][y][0], v->pass_px[p] + row + (Mc - Mh), (size_t) Mh * 2);
+			memcpy(sn->px[p][y][1], v->pass_px[p] + row + Mc + 256, (size_t) Mh * 2);
+			if (p) {
+				memcpy(sn->z[p][y][0], v->pass_z[p] + row + (Mc - Mh), (size_t) Mh);
+				memcpy(sn->z[p][y][1], v->pass_z[p] + row + Mc + 256, (size_t) Mh);
+			}
+		}
+	}
+}
+
+/* a slot to capture into: a free one, else the oldest one nobody composed (counted as dropped), else the oldest taken one */
+static Snap *pool_claim(void)
+{
+	for (int pass = 0; pass < 3; pass++) {
+		Snap *best = NULL;
+		for (int i = 0; i < SNAP_N; i++) {
+			Snap *s = A.snap[i];
+			if (!s) continue;
+			const uint32_t st = s->state.load(std::memory_order_acquire);
+			const uint32_t want = pass == 0 ? SS_FREE : pass == 1 ? SS_FILLED : SS_TAKEN;
+			if (st != want) continue;
+			if (!best || (int32_t) (s->serial - best->serial) < 0) best = s;
+		}
+		if (!best) continue;
+		uint32_t exp = pass == 0 ? SS_FREE : pass == 1 ? SS_FILLED : SS_TAKEN;
+		if (best->state.compare_exchange_strong(exp, SS_FILLING, std::memory_order_acq_rel)) {
+			if (pass) A.dropped.fetch_add(1);
+			return best;
+		}
+		pass--;   /* lost a race with the consumer: look again */
+	}
+	return NULL;
+}
+
 /* ---- the frame ------------------------------------------------------------------------------------------------ */
 
-static void run(const SWideView *v)
+static void run(const Snap *sn)
 {
+	SWideView vv;
+	memset(&vv, 0, sizeof vv);
+	vv.m = sn->m; vv.h = sn->h; vv.ok = sn->ok; vv.clock = sn->clock; vv.epoch = sn->epoch;
+	vv.line = sn->line; vv.vram = sn->vram; vv.vage = sn->vage; vv.uage = sn->uage; vv.cgram = sn->cgram; vv.colors = sn->colors;
+	vv.centre = sn->centre; vv.centre_pitch = 256;
+	const SWideView *v = &vv;
 	const uint64_t t0 = now_us();
 	Out *o = &A.out[A.wr.load() % NOUT];
 	snes_wide_stats &st = o->st;
@@ -605,7 +727,7 @@ static void run(const SWideView *v)
 	A.frame_n++;
 	if (H <= 0 || H > MAXH || !v->ok || A.margin224 <= 0) { fallback(o, 2); return; }
 	const int Mh = margin_for(H), Mc = v->m;
-	if (Mh <= 0 || Mc < Mh) { fallback(o, 2); return; }
+	if (Mh <= 0 || Mc < Mh || sn->mh != Mh) { fallback(o, 2); return; }
 	if (A.prof && A.prof->enable == WK_ENABLE_OFF) { fallback(o, 1); return; }
 	if (!A.L || !make_compose(H, Mh) || !A.fr || !A.wo) { fallback(o, 2); return; }
 	if (v->epoch != A.epoch) {
@@ -682,7 +804,7 @@ static void run(const SWideView *v)
 	/* 3. candidates */
 	amb_update(v, H, wo->scene_event != 0);
 	if (A.soft_on) memset(A.softm, 0, sizeof A.softm);
-	const int Mc_ = Mc;
+	(void) Mc;
 	for (int y = 0; y < H; y++) {
 		const SWideLine &Ln = v->line[y];
 		wk_line_out *lo = &wo->line[y];
@@ -744,11 +866,11 @@ static void run(const SWideView *v)
 				}
 				if (real > Mh) real = Mh;
 				if (ring > real) ring = real;
-				const uint16_t *pp = v->pass_px[pass] + (size_t) y * SW_PITCH;
-				const uint8_t *pz = v->pass_z[pass] + (size_t) y * SW_PITCH;
+				const uint16_t *pp = sn->px[pass][y][s];
+				const uint8_t *pz = sn->z[pass][y][s];
 				int d;
 				for (d = 0; d < ring; d++) {
-					int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
+					const int col = s == 0 ? Mh - 1 - d : d;
 					dst[d] = pp[col];
 					op[d] = ((Ln.tsx >> l) & 1) || pz[col] != 0;   /* a backdrop + sub layer composite draws every pixel */
 				}
@@ -852,19 +974,24 @@ static void run(const SWideView *v)
 		uint16_t *row = o->px + (size_t) y * OW;
 		uint8_t *prow = o->prov + (size_t) y * OW;
 		o->real[y][0] = o->real[y][1] = 0;
-		if (!(Ln.flags & SWL_VALID)) continue;
+		if (!(Ln.flags & SWL_VALID)) { A.cen.line_reason[SNES_WIDE_LR_NOTVALID]++; continue; }
 		if (Ln.flags & SWL_BLANK) {
+			A.cen.line_reason[SNES_WIDE_LR_BLANK]++;
 			for (int d = 0; d < Mh; d++) { row[Mh - 1 - d] = 0; row[Mh + 256 + d] = 0; prow[Mh - 1 - d] = prow[Mh + 256 + d] = PROV_EXACT; }
 			continue;
 		}
-		if (!line_ok(Ln)) continue;
+		if (!line_ok(Ln)) {
+			A.cen.line_reason[(Ln.flags & SWL_HIRES) ? SNES_WIDE_LR_HIRES : (Ln.flags & SWL_OPT) ? SNES_WIDE_LR_OPT : (Ln.flags & SWL_MOSAIC) ? SNES_WIDE_LR_MOSAIC : SNES_WIDE_LR_INTERLACE]++;
+			continue;
+		}
+		int why = 0;
 		for (int s = 0; s < 2; s++) {
 			int nex = Mh, nlay_ = Mh, rmax_ = 0;   /* nex: every enabled layer is real (exact composite); nlay_: every layer that is not a HUD; rmax_: the widest real extent of any layer */
 			if (!(Ln.flags & SWL_MODE7)) {
-				if (lo->hud) nex = nlay_ = 0;
+				if (lo->hud) { nex = nlay_ = 0; if (!why) why = SNES_WIDE_LR_HUD; }
 				for (int l = 0; l < bg_count(Ln.mode); l++) {
 					if (!((Ln.tm | Ln.tsx) & (1 << l))) continue;
-					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; rmax_ = 0; break; }
+					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; rmax_ = 0; if (!why) why = SNES_WIDE_LR_NOLAYER; break; }
 					const int r = A.xl[y] ? A.xr[y][s][l] : lo->real[s][l];
 					const int rr = A.xl[y] ? r : (lo->ring[s][l] < r ? lo->ring[s][l] : r);   /* the core's composite pass only knows the ring */
 					const int kind = wo->kind[l];
@@ -874,23 +1001,30 @@ static void run(const SWideView *v)
 					if (kind == WK_KIND_HUD || kind == WK_KIND_OFF) nex = 0;
 				}
 			}
+			if (!why && !(Ln.flags & SWL_MODE7) && nex < Mh) {
+				if (A.xl[y] && nlay_ >= Mh) why = Ln.wsel_any ? SNES_WIDE_LR_WINDOW : SNES_WIDE_LR_MATH;
+				else {
+					why = SNES_WIDE_LR_RING;
+					for (int l = 0; l < 4; l++) if (nlay && A.lay[l].active && A.lay[l].line_on[y] && A.lay[l].bitmap) why = SNES_WIDE_LR_BITMAP;
+				}
+			}
 			const int cex = nex >= Mh ? Mh : (nex > fade ? nex - fade : 0);
 			const int cla = nlay_ >= Mh ? Mh : (nlay_ > fade ? nlay_ - fade : 0);
-			const uint16_t *cp = v->pass_px[SWP_COMPOSITE] + (size_t) y * SW_PITCH;
+			const uint16_t *cp = sn->px[SWP_COMPOSITE][y][s];
 			for (int d = 0; d < cex; d++) {
-				const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
+				const int col = s == 0 ? Mh - 1 - d : d;
 				const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 				row[dx] = cp[col];
 				prow[dx] = PROV_EXACT;
 			}
 			if (!(Ln.flags & SWL_MODE7) && !sprites_off && ((Ln.pass >> SWP_OBJ) & 1)) {
-				const uint16_t *sp = v->pass_px[SWP_OBJ] + (size_t) y * SW_PITCH;
-				const uint8_t *sz = v->pass_z[SWP_OBJ] + (size_t) y * SW_PITCH;
+				const uint16_t *sp = sn->px[SWP_OBJ][y][s];
+				const uint8_t *sz = sn->z[SWP_OBJ][y][s];
 				/* sprites end where the layers' real picture ends (same fade): never a sprite floating on the ambient colour */
 				const int sbm = rmax_ > nlay_ ? rmax_ : nlay_;
 				const int sb = sbm >= Mh ? Mh : sbm;
 				for (int d = cex; d < sb; d++) {
-					const int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
+					const int col = s == 0 ? Mh - 1 - d : d;
 					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 					if (!sz[col]) continue;
 					const int w = (sb < Mh && d >= sb - fade) ? (sb - d) * 32 / fade : 32;
@@ -902,7 +1036,9 @@ static void run(const SWideView *v)
 			if (s == 0) sl += o->real[y][0]; else sr += o->real[y][1];
 		}
 		nreal++;
-		if (o->real[y][0] == Mh && o->real[y][1] == Mh) st.lines_exact++;
+		if (o->real[y][0] == Mh && o->real[y][1] == Mh) { st.lines_exact++; why = SNES_WIDE_LR_EXACT; }
+		else if (!why) why = SNES_WIDE_LR_RING;
+		A.cen.line_reason[why]++;
 	}
 	st.real_l = nreal ? (int) (sl / nreal) : 0;
 	st.real_r = nreal ? (int) (sr / nreal) : 0;
@@ -930,6 +1066,7 @@ static void run(const SWideView *v)
 			const SWideLine &Ln = v->line[y];
 			if (!line_ok(Ln)) continue;
 			const wk_line_out *lo = &wo->line[y];
+			if (A.hud_excl && lo->hud) continue;      /* a status bar is original width by design: not a gap in the margin */
 			const uint8_t *prow = o->prov + (size_t) y * OW;
 			for (int s = 0; s < 2; s++) {
 				int ring_e = 0, real_e = 0;
@@ -1008,8 +1145,20 @@ static void run(const SWideView *v)
 
 static void on_frame(const SWideView *v, void *)
 {
+	if (!A.on) return;
+	if (A.split.load(std::memory_order_acquire)) {
+		Snap *sn = pool_claim();
+		if (!sn) return;
+		capture(v, sn);
+		sn->serial = A.snap_serial.fetch_add(1) + 1;
+		sn->state.store(SS_FILLED, std::memory_order_release);
+		return;
+	}
+	if (!A.own) A.own = snap_alloc();
+	if (!A.own) return;
+	capture(v, A.own);
 	A.lk.lock();
-	if (A.on) run(v);
+	if (A.on) run(A.own);
 	A.lk.unlock();
 }
 
@@ -1018,6 +1167,15 @@ static void on_frame(const SWideView *v, void *)
 /* ---- public control ------------------------------------------------------------------------------------------ */
 
 extern "C" {
+
+static void pool_reset(void)
+{
+	/* callers hold A.lk (no compose runs) and the hook is quiet (S9xWideSet synced the PPU thread, or it is about to be) */
+	for (int i = 0; i < SNAP_N; i++) {
+		if (!A.snap[i]) A.snap[i] = snap_alloc();
+		if (A.snap[i]) A.snap[i]->state.store(SS_FREE);
+	}
+}
 
 static void ensure_objects(void)
 {
@@ -1031,6 +1189,80 @@ static void ensure_objects(void)
 	}
 }
 
+
+/* ---- split API: capture happens in the frame hook, compose is called by the consumer ---------------------------------- */
+
+void snes_wide_split(int on)
+{
+	S9xWideSet(0, NULL, NULL);          /* waits for the PPU thread: the hook is quiet */
+	A.lk.lock();
+	A.split = on ? 1 : 0;
+	pool_reset();
+	const int cm = A.core_margin;
+	const int is_on = A.on;
+	A.lk.unlock();
+	if (is_on) S9xWideSet(cm, on_frame, NULL);
+}
+
+int snes_wide_split_active(void) { return A.split.load(); }
+
+size_t snes_wide_snapshot_size(void) { return sizeof(Snap); }
+
+/* the oldest captured frame nobody took yet: 1 and its handle; *widenable is the capture's verdict (0: compose will answer 0, use the
+ * normal picture of that frame) */
+int snes_wide_snap_take(snes_wide_snap **out, unsigned *serial, int *widenable)
+{
+	if (!A.split.load(std::memory_order_acquire)) return 0;
+	for (;;) {
+		Snap *best = NULL;
+		for (int i = 0; i < SNAP_N; i++) {
+			Snap *s = A.snap[i];
+			if (s && s->state.load(std::memory_order_acquire) == SS_FILLED && (!best || (int32_t) (s->serial - best->serial) < 0)) best = s;
+		}
+		if (!best) return 0;
+		uint32_t exp = SS_FILLED;
+		if (!best->state.compare_exchange_strong(exp, SS_TAKEN, std::memory_order_acq_rel)) continue;
+		*out = (snes_wide_snap *) best;
+		*serial = best->serial;
+		if (widenable) *widenable = best->wide_hint;
+		return 1;
+	}
+}
+
+void snes_wide_snap_release(snes_wide_snap *h, unsigned serial)
+{
+	Snap *s = (Snap *) h;
+	uint32_t exp = SS_TAKEN;
+	if (s && s->serial == serial) s->state.compare_exchange_strong(exp, SS_FREE, std::memory_order_acq_rel);
+}
+
+/* compose a taken frame: 1 = the picture (valid until the third next compose), 0 = this frame is not widened (the adapter counted it), -1 = the
+ * handle is stale (overwritten, the view was switched off) and nothing was done */
+int snes_wide_compose(snes_wide_snap *h, unsigned serial, const uint16_t **rgb, int *width, int *height, int *pitch_px, snes_wide_stats *st)
+{
+	Snap *sn = (Snap *) h;
+	if (!sn) return -1;
+	uint32_t exp = SS_TAKEN;
+	if (sn->serial != serial || !sn->state.compare_exchange_strong(exp, SS_COMPOSING, std::memory_order_acq_rel)) return -1;
+	int r = 0;
+	A.lk.lock();
+	if (A.on) {
+		run(sn);
+		Out *o = &A.out[(A.wr.load(std::memory_order_acquire) - 1) % NOUT];
+		if (st) *st = o->st;
+		if (o->avail && o->px) {
+			if (rgb) *rgb = o->px;
+			if (width) *width = o->st.width;
+			if (height) *height = o->st.height;
+			if (pitch_px) *pitch_px = o->st.width;
+			r = 1;
+		}
+	} else r = -1;
+	A.lk.unlock();
+	sn->state.store(SS_FREE, std::memory_order_release);
+	return r;
+}
+
 void snes_wide_set(int on, int margin)
 {
 	if (margin < 0) margin = 0;
@@ -1038,20 +1270,25 @@ void snes_wide_set(int on, int margin)
 	if (!on || !margin) {
 		S9xWideSet(0, NULL, NULL);       /* waits for the PPU thread: no hook is running after this */
 		A.lk.lock();
-		A.on = 0; A.margin224 = 0; A.core_margin = 0;
+		A.on = 0; A.margin224 = 0; A.core_margin = 0; A.cap_mh = 0;
+		pool_reset();
 		A.serial.fetch_add(1);           /* the consumer sees "no wide frame" */
 		for (int i = 0; i < NOUT; i++) A.out[i].avail = 0;
 		A.lk.unlock();
 		return;
 	}
+	if (A.on) S9xWideSet(0, NULL, NULL);   /* the hook (capture) is quiet while the setup changes */
 	A.lk.lock();
 	if (!A.settle) A.settle = 1;
 	if (A.margin224 != margin) {
 		A.margin224 = margin;
+		A.cap_mh = margin;
+		pool_reset();
 		if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; }
 	}
 	ensure_objects();
 	make_map();
+	A.cap_mh = margin;
 	A.on = 1;
 	A.core_margin = margin_for(239) > margin ? margin_for(239) : margin;
 	if (A.core_margin > SNES_WIDE_MAX_MARGIN) A.core_margin = SNES_WIDE_MAX_MARGIN;
@@ -1068,7 +1305,8 @@ void snes_wide_clear_game(void)
 	A.lk.lock();
 	A.on = 0;
 	if (A.M) { wk_map_destroy(A.M); A.M = NULL; }
-	A.have_game = 0; A.crc = 0; A.title[0] = 0; A.prof = NULL;
+	A.have_game = 0; A.crc = 0; A.title[0] = 0; A.prof = NULL; A.prof_off = 0;
+	pool_reset();
 	memset(&A.cen, 0, sizeof A.cen);
 	A.amb_have = 0; A.cov_have = 0; A.auto_state = 1; A.xf = 0; A.frame_n = 0;
 	A.map_saved_cells = 0;
@@ -1103,6 +1341,7 @@ int snes_wide_option(const char *name, int v)
 	else if (!strcmp(name, "appear_frames")) { A.appear = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
 	else if (!strcmp(name, "debug")) A.debug = v != 0;
+	else if (!strcmp(name, "hud_excl")) A.hud_excl = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
 	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
 	else if (!strcmp(name, "map_safe")) {
@@ -1207,6 +1446,13 @@ void snes_wide_map_mark_saved(void)
 	A.lk.lock();
 	A.map_saved_cells = A.map_pending_cells;   /* the cell count when the bytes that were written were taken */
 	A.lk.unlock();
+}
+
+const char *snes_wide_reason_name(int r)
+{
+	static const char *n[SNES_WIDE_LR_N] = { "exact", "not rendered", "forced blank", "hi-res", "interlace", "offset-per-tile (mode 2/4/6)", "mosaic",
+	                                         "HUD row", "layer not described", "window", "colour math", "ring shorter than margin", "bitmap tilemap" };
+	return r >= 0 && r < SNES_WIDE_LR_N ? n[r] : "?";
 }
 
 void snes_wide_census_get(snes_wide_census *c)

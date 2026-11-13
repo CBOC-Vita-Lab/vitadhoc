@@ -1023,7 +1023,10 @@ def t_cheats(S):
 +0:shot=gold.png
 +30:quit
 """ % (at + 200)
+    # (Image quality Original: the probes read the game's own pixels, which
+    # 1.4's default xBRZ smoothing blends at the blocks' edges)
     r = S.run("cheats_own", script, autoboot="cheatrom.gba", extra=extra,
+              config={"quality_gba": 1},
               vita_ini={"local_auto": 2, "local_auto_frame": 60})
     S.clean(r)
     ld = r.evt("cheats_load")
@@ -1050,7 +1053,7 @@ def t_cheats(S):
     # a copy starts with what the codes had written, and from then on is
     # left alone: its lives count down
     r = S.run("cheats_copy", "%d:shot=copy.png\n+10:quit\n" % (at + 200),
-              autoboot="cheatrom.gba", extra=extra,
+              autoboot="cheatrom.gba", extra=extra, config={"quality_gba": 1},
               vita_ini={"local_auto": 1, "local_auto_frame": 60})
     S.clean(r)
     a, b = blocks("copy.png")

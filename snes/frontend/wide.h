@@ -47,6 +47,17 @@ typedef struct snes_wide_stats {
 	int xfade;                /* Auto cross-fade state 0 (wide) .. 32 (ambient frame): the margins already carry this blend */
 } snes_wide_stats;
 
+/* Why a picture line's margin is not entirely real picture (one reason per line and frame; the first that applies):
+ * EXACT = real on both sides out to the margin; NOTVALID, BLANK (forced blank), HIRES (hi-res / pseudo hi-res), INTERLACE, OPT (offset per tile,
+ * modes 2/4/6), MOSAIC = the core draws no margin on the line; HUD = widekit found the line fixed (status bar: original width by design, not
+ * counted against the Auto coverage); NOLAYER = an enabled layer is not described to widekit (other tilemap setup on this line, too few lines,
+ * not a mode 0/1/3 BG); WINDOW / MATH = a window or colour math that only the core's composite out to the ring can show; RING = the layers are
+ * real but their known extent is shorter than the margin (a 32 wide tilemap, scrolling history short); BITMAP = the same, and a layer's
+ * tilemap is a framebuffer (almost every tile number different: Super FX / bitmap games, which cannot be widened). */
+enum { SNES_WIDE_LR_EXACT, SNES_WIDE_LR_NOTVALID, SNES_WIDE_LR_BLANK, SNES_WIDE_LR_HIRES, SNES_WIDE_LR_INTERLACE, SNES_WIDE_LR_OPT, SNES_WIDE_LR_MOSAIC,
+       SNES_WIDE_LR_HUD, SNES_WIDE_LR_NOLAYER, SNES_WIDE_LR_WINDOW, SNES_WIDE_LR_MATH, SNES_WIDE_LR_RING, SNES_WIDE_LR_BITMAP, SNES_WIDE_LR_N };
+const char *snes_wide_reason_name(int r);
+
 /* Census: running totals since the game was set (or since snes_wide_census_reset), for the player's per-second log line
  * (take two snapshots and subtract). Margin pixels are counted on every second frame that is widened, drawn lines only. */
 typedef struct snes_wide_census {
@@ -67,6 +78,7 @@ typedef struct snes_wide_census {
 	uint64_t px_soft;                /* ... learned cells not seen live in this run, shown softly (a hint, counted half in the coverage) */
 	uint64_t px_reveal;              /* ... a lower layer shown where the layer above it is not known (counted half) */
 	uint32_t map_cells;              /* learned map cells now */
+	uint64_t line_reason[16];        /* picture lines (summed over frames) by what limits their margin: SNES_WIDE_LR_* */
 	int coverage_pct;                /* smoothed real share of the margins, percent */
 	int auto_wide;                   /* Auto's current decision (1 = real picture) */
 } snes_wide_census;
@@ -94,6 +106,20 @@ void snes_wide_clear_game(void);
 int snes_wide_option(const char *name, int value);
 /* widekit profile table (by CRC or title); returns the number of parse problems, messages appended to msgs */
 int snes_wide_profiles_load(const char *text, size_t n, char *msgs, size_t cap);
+
+/* Capture / compose split (for a consumer that composes on its own thread, e.g. the hand-over's draw thread). snes_wide_split(1) makes
+ * the frame hook only capture (a fixed-size snapshot of what compose needs, taken on the thread that renders the margins); the consumer takes
+ * them in order with snes_wide_snap_take (emulating thread, once per frame), hands the handle on, and calls snes_wide_compose on any one
+ * thread at a time, in the order taken (one compose per take). The single call path (split off, the default) is exactly capture + compose
+ * in the hook. A snapshot that is not composed is recycled when the pool of 5 is needed (counted); stale handles are refused (-1).
+ * snes_wide_snap_release is for a taken handle that will not be composed. All calls but compose are for the thread that runs frames. */
+typedef struct snes_wide_snap snes_wide_snap;
+void snes_wide_split(int on);
+int snes_wide_split_active(void);
+size_t snes_wide_snapshot_size(void);
+int snes_wide_snap_take(snes_wide_snap **out, unsigned *serial, int *widenable);
+void snes_wide_snap_release(snes_wide_snap *h, unsigned serial);
+int snes_wide_compose(snes_wide_snap *h, unsigned serial, const uint16_t **rgb, int *width, int *height, int *pitch_px, snes_wide_stats *st);
 
 /* The newest finished frame: 1 and the picture (valid until the third next finished frame), or 0 when there is none yet or
  * the frame cannot be widened (then show the normal picture). */

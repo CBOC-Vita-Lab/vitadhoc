@@ -2344,7 +2344,9 @@ struct WideState
 	uint16	*sub;
 	uint8	*subz;
 	struct SWideLine line[SW_ROWS];
-	struct ClipData clip[2][6];
+	struct ClipData clip[2][2][6];		// [side][sub][window k]: the batch's window tables cut to one margin strip
+	struct ClipData mclip[2][6];		// both strips in one table (when the regions fit): one RenderScreen per screen
+	bool	merged;
 	uint16	hsave[SW_ROWS][4];
 	// sprites of the margin pass
 	uint8	mobj_n[SW_ROWS];
@@ -2379,30 +2381,50 @@ static void wide_alloc (void)
 
 // The regions of one window table in buffer columns, cut to one side. A region that touches an edge of the
 // 256 pixel picture continues outwards (the window state of the edge is the state of the margin).
-static void wide_clip_side (int side)
+// Done once per batch (the tables are the same for every pass), for both strips; when the two strips' regions
+// fit in one table of 6 they are also merged, so that a pass is one RenderScreen per screen instead of two.
+static void wide_clip_prep (void)
 {
 	const int M = W.m;
-	const int lo = side ? M + 256 : 0, hi = side ? 2 * M + 256 : M;
+	W.merged = true;
+	for (int side = 0; side < 2; side++)
+	{
+		const int lo = side ? M + 256 : 0, hi = side ? 2 * M + 256 : M;
+		for (int sub = 0; sub < 2; sub++)
+			for (int k = 0; k < 6; k++)
+			{
+				const struct ClipData &s = IPPU.Clip[sub][k];
+				struct ClipData &d = W.clip[side][sub][k];
+				d.Count = 0;
+				for (int i = 0; i < s.Count && d.Count < 6; i++)
+				{
+					int l = s.Left[i], r = s.Right[i];
+					int bl = (l <= 0) ? 0 : l + M;
+					int br = (r >= 256) ? 2 * M + 256 : r + M;
+					if (bl < lo) bl = lo;
+					if (br > hi) br = hi;
+					if (bl >= br)
+						continue;
+					d.Left[d.Count] = (uint16) bl;
+					d.Right[d.Count] = (uint16) br;
+					d.DrawMode[d.Count] = s.DrawMode[i];
+					d.Count++;
+				}
+			}
+	}
 	for (int sub = 0; sub < 2; sub++)
 		for (int k = 0; k < 6; k++)
 		{
-			const struct ClipData &s = IPPU.Clip[sub][k];
-			struct ClipData &d = W.clip[sub][k];
-			d.Count = 0;
-			for (int i = 0; i < s.Count && d.Count < 6; i++)
+			const struct ClipData &a = W.clip[0][sub][k], &b = W.clip[1][sub][k];
+			struct ClipData &d = W.mclip[sub][k];
+			if (a.Count + b.Count > 6)
 			{
-				int l = s.Left[i], r = s.Right[i];
-				int bl = (l <= 0) ? 0 : l + M;
-				int br = (r >= 256) ? 2 * M + 256 : r + M;
-				if (bl < lo) bl = lo;
-				if (br > hi) br = hi;
-				if (bl >= br)
-					continue;
-				d.Left[d.Count] = (uint16) bl;
-				d.Right[d.Count] = (uint16) br;
-				d.DrawMode[d.Count] = s.DrawMode[i];
-				d.Count++;
+				W.merged = false;
+				continue;
 			}
+			d.Count = a.Count + b.Count;
+			for (int i = 0; i < a.Count; i++) { d.Left[i] = a.Left[i]; d.Right[i] = a.Right[i]; d.DrawMode[i] = a.DrawMode[i]; }
+			for (int i = 0; i < b.Count; i++) { d.Left[a.Count + i] = b.Left[i]; d.Right[a.Count + i] = b.Right[i]; d.DrawMode[a.Count + i] = b.DrawMode[i]; }
 		}
 }
 
@@ -2649,14 +2671,14 @@ static void wide_pass (const S9xRenderJob &job, int pass, uint8 mask, bool compo
 	if (!composite)
 		Memory.FillRAM[0x2131] = 0;		// layers alone: no colour math (their margin is blended by the adapter)
 
-	for (int side = 0; side < 2; side++)
+	for (int side = W.merged ? 2 : 0; side < 2 || (W.merged && side == 2); side++)
 	{
-		wide_clip_side(side);
-		g_wclip[0] = W.clip[0];
-		g_wclip[1] = W.clip[1];
+		if (W.merged) { g_wclip[0] = W.mclip[0]; g_wclip[1] = W.mclip[1]; }
+		else { g_wclip[0] = W.clip[side][0]; g_wclip[1] = W.clip[side][1]; }
 		if (composite && job.sub)
 			RenderScreen(TRUE);
 		RenderScreen(FALSE);
+		if (W.merged) break;
 	}
 
 	Memory.FillRAM[0x2131] = save2131;
@@ -2762,6 +2784,7 @@ static void S9xWideBatch (const S9xRenderJob &job)
 			LineData[y].BG[n].HOffset = (uint16) (LineData[y].BG[n].HOffset - W.m);
 		}
 	wide_setup_obj(y0, y1);
+	wide_clip_prep();
 
 	uint8 drawn = 1 << SWP_COMPOSITE;
 	wide_pass(job, SWP_COMPOSITE, 0xff, true);

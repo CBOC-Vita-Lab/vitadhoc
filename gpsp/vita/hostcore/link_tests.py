@@ -96,7 +96,12 @@ class Twin:
         self.rom = os.path.basename(rom)
         with open(os.path.join(self.root, "autoboot.txt"), "w") as f:
             f.write(self.rom + "\n")
-        cfg = {"nick": nick}
+        # Image quality Original: a realtime twin pays 1.4's default xBRZ in
+        # its own wall-clock time (a slow frame per refresh on this host),
+        # which these scripts' timings were not made for; the network is
+        # what they test.  A test can still hand its own quality.
+        cfg = {"nick": nick, "quality_gba": 1, "quality_gb": 1,
+               "quality_gbc": 1}
         cfg.update(config or {})
         with open(os.path.join(self.root, "config.ini"), "w") as f:
             for k, v in cfg.items():

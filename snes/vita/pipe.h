@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include "pk_handoff.h"
 
+struct snes_wide_snap;
+
 namespace snesp {
 
 class PicturePipe {
@@ -34,6 +36,12 @@ public:
 	/* The same for the core's own newest picture (snes_host_video_nowait), once per new picture; user = its serial.
 	 * Returns 1 handed over, 0 nothing new from the core, -1 the mailbox is off. */
 	int stage(uint32_t seq, uint32_t emu_us);
+	/* Wide view with the capture / compose split (wide.h): the mailbox frame carries the handle of a captured snapshot instead of a
+	 * picture; the drawing thread composes it (snes_wide_compose). `normal` (or NULL) is the core's normal picture of the same frame, copied
+	 * after the descriptor for frames the capture says will not be widened. user = the caller's flags (SNAP_FLAG is added). Returns as put(). */
+	enum { SNAP_FLAG = 0x20000000, SNAP_OFS = 64 };
+	struct SnapDesc { snes_wide_snap *snap; uint32_t serial; uint32_t has_normal; uint32_t w, h; };
+	int put_snap(snes_wide_snap *snap, unsigned serial, const uint16_t *normal, int w, int h, int pitch, int user, uint32_t seq, uint32_t emu_us);
 	/* forget which picture was handed over last (after a state load or a reset the core's serial may restart) */
 	void forget() { serial_ = 0; }
 

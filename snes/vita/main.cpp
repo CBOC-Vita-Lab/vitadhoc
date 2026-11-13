@@ -195,6 +195,7 @@ static int g_src_i = -1;         /* newest uploaded texture */
 static int g_src_w = 256, g_src_h = 224;
 static unsigned g_serial_seen;      /* counts uploaded pictures */
 static unsigned g_norm_seen, g_wide_seen;   /* the core's and the wide view's own picture serials */
+static bool g_wide_split;           /* the wide view captures in the frame hook and composes on the drawing thread */
 static int g_src_wide;              /* the uploaded picture is a wide view frame (256 + 2 margin columns) */
 static int g_src_margin;
 static unsigned g_up_serial;
@@ -772,9 +773,24 @@ static int hd_draw_thread(SceSize, void *)
 		if (!f) break;
 		const uint64_t t0 = sceKernelGetProcessTimeWide();
 		PicSrc s;
-		s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch;
-		s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0;
-		video_upload(g_pl->picture(), (int) f->seq, s);
+		bool have = true;
+		if (f->user & snesp::PicturePipe::SNAP_FLAG) {
+			/* wide view, capture / compose split: the frame is a captured snapshot; the compose runs here, off the emulating thread */
+			snesp::PicturePipe::SnapDesc d;
+			memcpy(&d, f->data, sizeof d);
+			const uint16_t *wp = NULL; int ww = 0, wh = 0, wpp = 0;
+			snes_wide_stats st;
+			const int r = snes_wide_compose(d.snap, d.serial, &wp, &ww, &wh, &wpp, &st);
+			if (r == 1 && wp) { s.p = wp; s.w = ww; s.h = wh; s.pitch = wpp * 2; s.serial = st.serial; s.is_wide = true; }
+			else if (r == 0 && d.has_normal) {
+				s.p = (const uint16_t *) (f->data + snesp::PicturePipe::SNAP_OFS); s.w = (int) d.w; s.h = (int) d.h; s.pitch = (int) d.w * 2;
+				s.serial = (unsigned) (f->user & 0x1FFFFFFF); s.is_wide = false;
+			} else have = false;     /* stale handle (the view was switched meanwhile) or a frame with no picture: the old one stays */
+		} else {
+			s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch;
+			s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0;
+		}
+		if (have) video_upload(g_pl->picture(), (int) f->seq, s);
 		bool drew = false;
 		for (int tries = 0; tries < 4 && !drew; tries++) {
 			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: the picture is not dropped for it */
@@ -1154,6 +1170,13 @@ int main(int argc, char **argv)
 		 * last of them is drawn) and the game keeps its true speed; pk_handoff drops older pictures in half mode only. */
 		const bool hd = hd_active();
 		if (hd) g_pipe.box().set_pace_mode(g_pl->pace_mode());
+		{
+			/* the wide view composes on the drawing thread while the hand-over is on, inline (in the frame hook) when it is off */
+			const bool want_split = hd && g_pl->wide_active();
+			if (want_split != g_wide_split) {
+				if (hd_quiesce()) { snes_wide_split(want_split ? 1 : 0); g_wide_split = want_split; }
+			}
+		}
 		const int to_run = (half || hd) ? (int) elapsed : 1;
 		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
@@ -1195,7 +1218,17 @@ int main(int argc, char **argv)
 					/* the picture goes to the drawing thread by copy; this thread does not wait for it (except at the gate) */
 					g_pipe.box().note_emulated(1);
 					PicSrc ps_src;
-					if (video_source(&ps_src, g_hd_norm_seen, g_hd_wide_seen, g_hd_src_wide)) {
+					snes_wide_snap *wsnap = NULL; unsigned wser = 0; int whint = 0;
+					if (g_wide_split && g_pl->wide_active()) {
+						/* every captured frame is composed, in order (a frame in which the core's loop ended late has two captures, the next none) */
+						for (int k = 0; k < 3 && snes_wide_snap_take(&wsnap, &wser, &whint); k++) {
+							/* the capture goes to the drawing thread as it is; only a frame the view will not widen carries the normal picture */
+							int nw = 0, nh = 0, np = 0; unsigned nser = 0;
+							const uint16_t *np_ = whint ? NULL : snes_host_video_nowait(&nw, &nh, &np, &nser);
+							if (g_pipe.put_snap(wsnap, wser, np_, nw, nh, np, (int) (wser & 0x1FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) fresh = true;
+							else { snes_wide_snap_release(wsnap, wser); break; }
+						}
+					} else if (video_source(&ps_src, g_hd_norm_seen, g_hd_wide_seen, g_hd_src_wide)) {
 						const int user = (ps_src.is_wide ? 0x40000000 : 0) | (int) (ps_src.serial & 0x3FFFFFFFu);
 						if (g_pipe.put(ps_src.p, ps_src.w, ps_src.h, ps_src.pitch, user, (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) {
 							if (ps_src.is_wide) g_hd_wide_seen = ps_src.serial; else g_hd_norm_seen = ps_src.serial;

@@ -22,6 +22,9 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -160,6 +163,8 @@ int main(int argc, char **argv)
 	std::vector<PadEv> script;
 	std::set<int> dumpset, shotset, statset;
 	int trace_every = 0, cg_a = -1, cg_b = -1;
+	bool split_mode = false, bench = false, map_poll = false;
+	const char *save_state = 0, *load_state = 0; int save_at = -1;
 	std::vector<std::pair<uint32_t, uint8_t>> pokes;
 	struct KV { std::string k; int v; };
 	std::vector<KV> opts, wopts;
@@ -184,6 +189,11 @@ int main(int argc, char **argv)
 		else if (arg("--map")) mapf = argv[++i];
 		else if (arg("--state-hash") && i + 2 < argc) { state_every = atoi(argv[++i]); statef = argv[++i]; }
 		else if (!strcmp(argv[i], "--summary")) summary = true;
+		else if (!strcmp(argv[i], "--wide-split")) split_mode = true;
+		else if (arg("--save-state") && i + 2 < argc) { save_state = argv[++i]; save_at = atoi(argv[++i]); }   /* emulation state after frame N (no wide data) */
+		else if (arg("--load-state")) load_state = argv[++i];
+		else if (!strcmp(argv[i], "--map-poll")) map_poll = true;   /* save / dirty / census calls from the frame thread while compose runs (TSan) */
+		else if (!strcmp(argv[i], "--bench")) bench = true;   /* no harness hashing: for instruction counts */
 		else if (arg("--opt") || arg("--wopt")) {
 			bool w = !strcmp(argv[i], "--wopt");
 			std::string t(argv[++i]);
@@ -207,6 +217,11 @@ int main(int argc, char **argv)
 		}
 		snes_host_snapshot_enable(1);
 		snes_wide_set(1, wide);
+		if (split_mode) snes_wide_split(1);
+	}
+	if (load_state) {
+		std::vector<uint8_t> sb = read_all(load_state);
+		if (sb.empty() || snes_host_state_load_buf(sb.data(), sb.size())) { fprintf(stderr, "state load failed\n"); return 1; }
 	}
 	FILE *hf = hashes ? fopen(hashes, "w") : 0, *wf = whashes ? fopen(whashes, "w") : 0, *sf = statef ? fopen(statef, "w") : 0, *xf_ = xff ? fopen(xff, "w") : 0;
 	std::vector<int16_t> pcm, abuf(4096 * 2);
@@ -216,39 +231,10 @@ int main(int argc, char **argv)
 	double sum_l = 0, sum_r = 0, sum_us = 0;
 	long n_avail = 0, n_wide = 0;
 	if (sf) sbuf.resize(snes_host_state_size() + 4096);
-	for (int f = 0; f < frames; f++) {
-#ifdef WIDE_CALLGRIND
-		if (f == cg_a) { CALLGRIND_ZERO_STATS; CALLGRIND_START_INSTRUMENTATION; }
-		if (f == cg_b) { CALLGRIND_STOP_INSTRUMENTATION; CALLGRIND_DUMP_STATS; }
-#endif
-		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
-		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
-		snes_host_set_pad(0, pad);
-		snes_host_run_frame();
-		int n = snes_host_audio_take(abuf.data(), 4096);
-		if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
-		int w, h, pitch;
-		const uint16_t *v = snes_host_video(&w, &h, &pitch);
-		if (trace_every && f % trace_every == 0) {
-			int sh[4], sv[4];
-			int md = snes_host_ppu_scroll(sh, sv);
-			uint64_t luma = 0;
-			for (int y = 0; y < h; y += 4) for (int x = 0; x < w; x += 4) { unsigned p = ((const uint16_t *) ((const uint8_t *) v + (size_t) y * pitch))[x]; luma += ((p >> 11) & 31) * 2 + ((p >> 5) & 63) + (p & 31) * 1; }
-			fprintf(stderr, "trace f=%d luma=%llu mode=%d h=%d,%d,%d,%d v=%d,%d,%d,%d centre=%016llx\n", f, (unsigned long long) (luma / ((w / 4) * (h / 4) + 1)), md, sh[0], sh[1], sh[2], sh[3], sv[0], sv[1], sv[2], sv[3],
-			        (unsigned long long) fnv(v, w, h, pitch));
-		}
-		uint64_t ch = fnv(v, w, h, pitch);
-		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) ch);
-		if (sf && f % state_every == 0) {
-			size_t len = 0;
-			int r = snes_host_state_save_buf(sbuf.data(), sbuf.size(), &len);
-			fprintf(sf, "%d %d %zu %016llx\n", f, r, len, (unsigned long long) fnv_bytes(sbuf.data(), len));
-		}
-		if (wide) {
-			const uint16_t *wp; int ww, wh, wpitch;
-			snes_wide_stats st;
-			int ok = snes_wide_frame(&wp, &ww, &wh, &wpitch, &st);
-			n_wide++;
+	auto finish = [&](int f, int ok, const uint16_t *wp, int ww, int wh, int wpitch, const snes_wide_stats &st, uint64_t nrm, const uint8_t *ref, int rpitch, int rh,
+	                  const uint16_t *v, int w, int h, int pitch) {
+		n_wide++;
+		if (bench) return;
 			if (ok) {
 				n_avail++;
 				sum_l += st.real_l; sum_r += st.real_r; sum_us += st.instr_us;
@@ -257,15 +243,15 @@ int main(int argc, char **argv)
 				uint64_t cwh = 1469598103934665603ull;
 				for (int y = 0; y < wh; y++)
 					cwh = fnv_bytes((const uint8_t *) (wp + (size_t) y * wpitch + M), 512, cwh);
-				/* the reference is the picture as it stood at the frame end (some cartridges' main loop runs on a few lines of the
-				 * next frame before snes_host_run_frame returns, so the picture read after it can already hold those) */
-				int sw = 0, sh_ = 0;
-				const uint16_t *snap = snes_host_video_snapshot(&sw, &sh_);
-				const uint8_t *ref = snap ? (const uint8_t *) snap : (const uint8_t *) v;
-				const int rpitch = snap ? sw * 2 : pitch, rh = snap ? sh_ : h;
-				uint64_t nrm = 1469598103934665603ull;
-				for (int y = 0; y < rh && y < wh; y++)
-					nrm = fnv_bytes(ref + (size_t) y * rpitch, 512, nrm);
+				if (!split_mode) {
+					int sw = 0, sh_ = 0;
+					const uint16_t *snap = snes_host_video_snapshot(&sw, &sh_);
+					ref = snap ? (const uint8_t *) snap : (const uint8_t *) v;
+					rpitch = snap ? sw * 2 : pitch; rh = snap ? sh_ : h;
+					nrm = 1469598103934665603ull;
+					for (int y = 0; y < rh && y < wh; y++)
+						nrm = fnv_bytes(ref + (size_t) y * rpitch, 512, nrm);
+				}
 				if (xf_) {
 					static std::vector<uint16_t> prevm;
 					uint64_t dsum = 0, cnt = 0;
@@ -285,7 +271,8 @@ int main(int argc, char **argv)
 				}
 				if (wf) fprintf(wf, "%d %d %016llx %016llx %d %d %d %d\n", f, ww, (unsigned long long) cwh, (unsigned long long) fnv(wp, ww, wh, wpitch * 2),
 				                st.real_l, st.real_r, st.available, cwh == nrm);
-				if (cwh != nrm) {
+				if (cwh != nrm && !ref) fprintf(stderr, "frame %d: wide centre differs from the normal picture\n", f);
+				if (cwh != nrm && ref) {
 					int first = -1, cnt = 0;
 					for (int y = 0; y < rh && y < wh; y++)
 						if (memcmp(wp + (size_t) y * wpitch + M, ref + (size_t) y * rpitch, 512)) { if (first < 0) first = y; cnt++; if (cnt <= 20) fprintf(stderr, " row %d", y); }
@@ -328,12 +315,131 @@ int main(int argc, char **argv)
 					write_png(p, v, w, h, pitch / 2);
 				}
 			}
+	};
+	/* --wide-split: the hook only captures; compose runs on a real thread, one frame behind (capture of frame N+1 overlaps compose of N) */
+	struct SplitJob {
+		std::mutex mu; std::condition_variable cv;
+		bool has = false, done = false, quit = false, active = false;
+		std::vector<std::pair<snes_wide_snap *, unsigned>> snaps; int f = 0, r = 0; uint64_t nrm = 0;
+		const uint16_t *wp = 0; int ww = 0, wh = 0, wpitch = 0; snes_wide_stats st;
+		std::vector<uint8_t> pic, ref; int w = 0, hh = 0, pitch = 0, rh = 0;   /* ref: 512 bytes of each row of the normal picture at the frame end */
+	} job;
+	std::thread comp;
+	if (split_mode)
+		comp = std::thread([&]() {
+			std::unique_lock<std::mutex> lk(job.mu);
+			for (;;) {
+				job.cv.wait(lk, [&] { return job.has || job.quit; });
+				if (job.quit) return;
+				std::vector<std::pair<snes_wide_snap *, unsigned>> sn = job.snaps;
+				lk.unlock();
+				const uint16_t *wp = 0; int ww = 0, wh = 0, wpi = 0; snes_wide_stats st;
+				memset(&st, 0, sizeof st);
+				int r = -1;
+				for (auto &e : sn) r = snes_wide_compose(e.first, e.second, &wp, &ww, &wh, &wpi, &st);   /* every captured frame is composed, in order; the last is the frame's picture */
+				lk.lock();
+				job.r = r; job.wp = wp; job.ww = ww; job.wh = wh; job.wpitch = wpi; job.st = st;
+				job.has = false; job.done = true;
+				job.cv.notify_all();
+			}
+		});
+	auto flush_split = [&](int) {
+		if (!job.active) return;
+		{
+			std::unique_lock<std::mutex> lk(job.mu);
+			job.cv.wait(lk, [&] { return job.done; });
+			job.done = false;
+		}
+		job.active = false;
+		uint64_t nr = 1469598103934665603ull;
+		if (!bench) for (int y = 0; y < job.rh && y < job.wh; y++) nr = fnv_bytes(job.ref.data() + (size_t) y * 512, 512, nr);
+		finish(job.f, job.r == 1, job.wp, job.ww, job.wh, job.wpitch, job.st, nr, NULL, 0, 0, (const uint16_t *) job.pic.data(), job.w, job.hh, job.pitch);
+	};
+	auto start_split = [&](int f, const uint16_t *v, int w, int hh, int pitch) {
+		if (!bench) job.pic.assign((const uint8_t *) v, (const uint8_t *) v + (size_t) pitch * hh);
+		job.w = w; job.hh = hh; job.pitch = pitch; job.f = f; job.nrm = 0; job.active = true;
+		std::lock_guard<std::mutex> lk(job.mu);
+		job.has = true; job.done = false;
+		job.cv.notify_all();
+	};
+	for (int f = 0; f < frames; f++) {
+#ifdef WIDE_CALLGRIND
+		if (f == cg_a) { CALLGRIND_ZERO_STATS; CALLGRIND_START_INSTRUMENTATION; }
+		if (f == cg_b) { CALLGRIND_STOP_INSTRUMENTATION; CALLGRIND_DUMP_STATS; }
+#endif
+		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
+		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
+		snes_host_set_pad(0, pad);
+		snes_host_run_frame();
+		if (save_state && f == save_at) {
+			std::vector<uint8_t> sb(snes_host_state_size() + 4096);
+			size_t len = 0;
+			if (!snes_host_state_save_buf(sb.data(), sb.size(), &len)) { FILE *sf2 = fopen(save_state, "wb"); if (sf2) { fwrite(sb.data(), 1, len, sf2); fclose(sf2); } }
+		}
+		if (map_poll && f % 37 == 0) {
+			size_t need = snes_wide_map_save(NULL, 0);
+			std::vector<uint8_t> mb(need ? need : 1);
+			if (need) snes_wide_map_save(mb.data(), mb.size());
+			(void) snes_wide_map_dirty();
+			snes_wide_census c0;
+			snes_wide_census_get(&c0);
+		}
+		int n = snes_host_audio_take(abuf.data(), 4096);
+		if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);
+		int w, h, pitch;
+		const uint16_t *v = snes_host_video(&w, &h, &pitch);
+		if (trace_every && f % trace_every == 0) {
+			int sh[4], sv[4];
+			int md = snes_host_ppu_scroll(sh, sv);
+			uint64_t luma = 0;
+			for (int y = 0; y < h; y += 4) for (int x = 0; x < w; x += 4) { unsigned p = ((const uint16_t *) ((const uint8_t *) v + (size_t) y * pitch))[x]; luma += ((p >> 11) & 31) * 2 + ((p >> 5) & 63) + (p & 31) * 1; }
+			fprintf(stderr, "trace f=%d luma=%llu mode=%d h=%d,%d,%d,%d v=%d,%d,%d,%d centre=%016llx\n", f, (unsigned long long) (luma / ((w / 4) * (h / 4) + 1)), md, sh[0], sh[1], sh[2], sh[3], sv[0], sv[1], sv[2], sv[3],
+			        (unsigned long long) fnv(v, w, h, pitch));
+		}
+		uint64_t ch = bench ? 0 : fnv(v, w, h, pitch);
+		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) ch);
+		if (sf && f % state_every == 0) {
+			size_t len = 0;
+			int r = snes_host_state_save_buf(sbuf.data(), sbuf.size(), &len);
+			fprintf(sf, "%d %d %zu %016llx\n", f, r, len, (unsigned long long) fnv_bytes(sbuf.data(), len));
+		}
+		if (wide) {
+			if (split_mode) {
+				/* the normal picture of this frame is hashed now; the wide picture is composed on another thread and finished next frame */
+				int sw = 0, sh_ = 0;
+				const uint16_t *snap = snes_host_video_snapshot(&sw, &sh_);
+				const uint8_t *r0 = snap ? (const uint8_t *) snap : (const uint8_t *) v;
+				const int rp = snap ? sw * 2 : pitch, rhh = snap ? sh_ : h;
+				flush_split(f);
+				snes_wide_snap *hnd; unsigned ser; int hint;
+				{
+					std::lock_guard<std::mutex> lk(job.mu);
+					job.snaps.clear();
+					while (snes_wide_snap_take(&hnd, &ser, &hint)) job.snaps.push_back({ hnd, ser });
+				}
+				if (!bench) { job.ref.resize((size_t) rhh * 512); job.rh = rhh; for (int y = 0; y < rhh; y++) memcpy(job.ref.data() + (size_t) y * 512, r0 + (size_t) y * rp, 512); }
+				if (!job.snaps.empty()) start_split(f, v, w, h, pitch);
+				else {
+					/* the hook did not run during this call: the single call path shows the newest picture again */
+					const uint16_t *wp = 0; int ww = 0, wh = 0, wpi = 0; snes_wide_stats st; memset(&st, 0, sizeof st);
+					const int ok = snes_wide_frame(&wp, &ww, &wh, &wpi, &st);
+					job.wp = wp; job.ww = ww; job.wh = wh; job.wpitch = wpi; job.st = st; job.r = ok ? 1 : 0; job.f = f;
+					job.w = w; job.hh = h; job.pitch = pitch; if (!bench) job.pic.assign((const uint8_t *) v, (const uint8_t *) v + (size_t) pitch * h);
+					job.done = true; job.active = true;
+				}
+			} else {
+				const uint16_t *wp; int ww, wh, wpitch;
+				snes_wide_stats st;
+				int ok = snes_wide_frame(&wp, &ww, &wh, &wpitch, &st);
+				finish(f, ok, wp, ww, wh, wpitch, st, 0, NULL, 0, 0, v, w, h, pitch);
+			}
 		} else if (pngdir && shotset.count(f)) {
 			char p[600];
 			snprintf(p, sizeof p, "%s/%s%05d.png", pngdir, prefix, f);
 			write_png(p, v, w, h, pitch / 2);
 		}
 	}
+	if (split_mode) { flush_split(frames); { std::lock_guard<std::mutex> lk(job.mu); job.quit = true; job.cv.notify_all(); } comp.join(); }
 	snes_host_sync();
 	int n;
 	while ((n = snes_host_audio_take(abuf.data(), 4096)) > 0)
@@ -360,6 +466,20 @@ int main(int argc, char **argv)
 		       c.frames, c.frames_wide, c.frames_fallback, c.fb_nothing_drawn, c.fb_profile_off, c.fb_setup, c.frames_ambient, c.frames_crossfade,
 		       c.auto_switches, c.scenes, c.map_cells, c.coverage_pct, c.auto_wide,
 		       tot ? 100.0 * c.px_tilemap / tot : 0, tot ? 100.0 * c.px_learned / tot : 0, tot ? 100.0 * c.px_backdrop / tot : 0, tot ? 100.0 * c.px_unknown / tot : 0);
+	if (wide) {
+		snes_wide_census c2;
+		snes_wide_census_get(&c2);
+		uint64_t tl = 0;
+		for (int r = 0; r < SNES_WIDE_LR_N; r++) tl += c2.line_reason[r];
+		int ord[SNES_WIDE_LR_N];
+		for (int r = 0; r < SNES_WIDE_LR_N; r++) ord[r] = r;
+		for (int a2 = 0; a2 < SNES_WIDE_LR_N; a2++) for (int b2 = a2 + 1; b2 < SNES_WIDE_LR_N; b2++) if (c2.line_reason[ord[b2]] > c2.line_reason[ord[a2]]) { int t = ord[a2]; ord[a2] = ord[b2]; ord[b2] = t; }
+		printf("reasons:");
+		for (int i = 0; i < SNES_WIDE_LR_N && tl; i++) if (c2.line_reason[ord[i]]) printf(" %s %.1f%%;", snes_wide_reason_name(ord[i]), 100.0 * c2.line_reason[ord[i]] / tl);
+		printf("\nreasoncount:");
+		for (int r = 0; r < SNES_WIDE_LR_N; r++) printf(" %llu", (unsigned long long) c2.line_reason[r]);
+		printf("\n");
+	}
 	if (hf) fclose(hf);
 	if (wf) fclose(wf);
 	if (xf_) fclose(xf_);

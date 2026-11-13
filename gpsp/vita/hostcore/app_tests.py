@@ -723,7 +723,7 @@ def t_ff(S):
     # mapping, then up past THIS GAME, CPU speed, Keep full speed, FPS,
     # Rewind and FF button.  RIGHT: 3x -> 3x with sound, saved.
     # (+1 since 1.4: Steady pacing, below CPU speed)
-    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 13
+    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 15
     r = S.run("ff_row", pick + "+10:shot=row.png\n+4:right\n"
               "+10:shot=row_sound.png\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba")
@@ -907,7 +907,7 @@ def t_sensors(S):
     # the game's file keeps it.
     r = run("level", "gbadhoc-tilt.gba",
             "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
-            menu_pick(4, wait=60) + "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=level_row.png\n"
+            menu_pick(4, wait=60) + "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=level_row.png\n"
             "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
             "+120:shot=level.png\n+10:quit\n")
     S.picture(r, "rows.png")
@@ -1022,7 +1022,7 @@ def t_game_look(S):
     # settings; CROSS gives the game its own look.  Then TRIANGLE (the
     # size preset) makes it stretch: the game's file, not config.ini.
     r = S.run("game_look_on", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
               "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
               "+60:shot=stretch.png\n+10:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg)
@@ -1046,7 +1046,7 @@ def t_game_look(S):
     # Next time it starts in its own look; turning it off brings the
     # console's back, and the next start is the console's.
     r = S.run("game_look_off", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg,
               extra={"games/gbadhoc-test.gba.ini":
                      "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
@@ -2089,11 +2089,11 @@ def t_touch(S):
 # tap "Resume" (the control centre's first card)
 +2:touch=96/420
 +20:shot=resumed.png
-# none of these is a tap on the picture with free hands: a tap while a
-# button is held, a tap beside the picture, a long press, a swipe
+# none of these is a tap with free hands: a tap while a button is held, a
+# long press, a swipe (a tap BESIDE the picture opens the menu since 1.4:
+# t_tap_menu)
 160:circle:40
 170:touch=480/272
-210:touch=30/272
 230:touch=480/272:40
 290:drag=300/200/600/300:10
 330:shot=still_game.png
@@ -2112,8 +2112,8 @@ def t_touch(S):
     S.check(len(r.evt("menu_closed")) == 1, "a tap on Resume closes it")
     a, b = r.shot_evt("resumed.png"), r.shot_evt("still_game.png")
     S.check(a and b and int(b["emu"]) - int(a["emu"]) > 150,
-            "a tap with a button held, a tap beside the picture, a long "
-            "press and a swipe do not open it")
+            "a tap with a button held, a long press and a swipe do not "
+            "open it")
     S.check(r.has(r"ui_screen name=cheats"), "a tap on the Cheats row opens it")
     S.picture(r, "cheats.png")
 
@@ -2247,7 +2247,7 @@ def t_look(S):
     # wide view is off, as it is in these tests), Wide view, Motion blend,
     # Colours
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 22 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+        "+8:up\n" * 24 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2411,12 +2411,13 @@ def t_wide(S):
         S.check(p4[1].tobytes() != mw[1].tobytes(),
                 "the cartridge's B is another mosaic")
 
-    # ---- the rows' defaults (wide 1, fill 0): a game without a profile is
+    # ---- the rows' defaults (wide 1, fill 1 since 1.4 -- soft edges where
+    # margins are shown; docs/DEFAULTS-1.4.md): a game without a profile is
     # the console's own 240 columns, no margins at all (1.3: it used to open
     # them and fill them with soft edges, which looked stretched)
     r = run("default", None, cfg={"wide_gba": None})
     w = r.evt("wide")
-    S.check(w and w[-1]["mode"] == "1" and w[-1]["fill"] == "0" and
+    S.check(w and w[-1]["mode"] == "1" and w[-1]["fill"] == "1" and
             w[-1]["margin"] == "0" and w[-1]["profile"] == "0",
             "the defaults: wide for known games only, no profile, no margins, "
             "bars (%s)" % (w[-1]["_"] if w else "no line"))
@@ -2497,11 +2498,11 @@ def t_wide(S):
     # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed, FPS, Rewind, FF button,
     # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
     # Screen overlay, Grid strength, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 20 + \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 22 + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
-    r = S.run("wide_row", script, config=dict(base, wide_gba=None),
+    r = S.run("wide_row", script, config=dict(base, wide_gba=None, wide_fill_gba=0),
               autoboot="gbadhoc-wide.gba", extra=extra)
     S.clean(r)
     look = r.evt("display_look")
@@ -3827,7 +3828,7 @@ def t_fullspeed(S):
     # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
     # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed; CROSS turns it off, and config.ini
     # keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 9 + "+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 11 + "+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -4908,7 +4909,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              "+20:up\n" + "+8:up\n" * 7 + "+10:cross\n+20:shot=list.png\n"
+              "+20:up\n" + "+8:up\n" * 8 + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -5282,7 +5283,7 @@ def t_save_clock(S):
     # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME;
     #    from the last row (Display settings) UP twice.  X steps a value.
     r = S.run("save_type_rows", menu_pick(4, wait=60) +
-              "+20:up\n" + "+8:up\n" * 6 + "+10:shot=rows.png\n"
+              "+20:up\n" + "+8:up\n" * 7 + "+10:shot=rows.png\n"
               "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
               "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -5576,8 +5577,10 @@ def t_sidecars(S):
     S.clean(r4)
     S.check(open(os.path.join(r4.root, "states", "gba", bkt(stem), stem + ".st1"),
                  "rb").read() == b"mine" and
-            os.path.exists(os.path.join(r4.root, "roms", stem + ".st1")),
-            "a state already under states/ is not overwritten; the old one stays")
+            (os.path.exists(os.path.join(r4.root, "roms", stem + ".st1")) or
+             glob.glob(os.path.join(r4.root, "leftovers", stem + ".st1.*"))),
+            "a state already under states/ is not overwritten; the old one stays "
+            "(beside the game, or in leftovers/ since 1.4's tidy: save_sync.h)")
 
 
 def t_display_rows(S):
@@ -5630,7 +5633,7 @@ def t_cpu_speed(S):
                          "de000000" "de000000" "a6000000")
     # the row, in game: Settings wraps upwards to Button mapping, Display
     # settings, CPU speed
-    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 8 + "+10:shot=row.png\n"
+    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 10 + "+10:shot=row.png\n"
     quit_ = "+4:circle\n+10:circle\n+30:quit\n"
 
     made = []
@@ -5750,9 +5753,9 @@ def t_controls_defaults(S):
               "150:shot=a.png\n+40:l+r+select:3\n+60:rstick-left:80\n+20:quit\n",
               config=fresh, autoboot="gbadhoc-test.gba")
     S.clean(r)
-    S.check(r.has(r"^EVT wide mode=1 fill=0 margin=0 profile=0"),
+    S.check(r.has(r"^EVT wide mode=1 fill=1 margin=0 profile=0"),
             "Wide view is on for known games only: no margin for this one, "
-            "and the menus' fill is bars")
+            "and the menus' fill is soft edges (1.4 default)")
     S.check(r.has(r"^EVT display_profile .*ambient=2"),
             "the glow beside the picture is on by default")
     im = S.picture(r, "a.png")

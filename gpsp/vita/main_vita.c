@@ -5114,8 +5114,13 @@ static void frame_present(int paced)
       {
          /* the toasts as of this frame go with it; its cost is this
           * thread's work for it */
+         /* (a rewind step's picture is not a frame of play: no cost for
+          * Steady pacing, as the old path fed none; a pass that ran no
+          * frame of its own counts from its start) */
          osd_take((osd_snap *)ho_staged_extra());
-         ho_commit((uint32_t)(plat_time_us() - g_ho_t0));
+         ho_commit(rewind_active() ? 0u
+                   : (uint32_t)(plat_time_us() - (g_ho_t0 >= g_app_frame_t0
+                                                  ? g_ho_t0 : g_app_frame_t0)));
          handed = 1;
       }
    }

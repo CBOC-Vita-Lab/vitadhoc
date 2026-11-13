@@ -16,7 +16,7 @@ B        := build
 SHOTS    ?= $(B)/shots
 
 LIB_SRC  := src/pk_util.cpp src/pk_text.cpp src/pk_font_data.cpp src/pk_icons.cpp src/pk_gfx_soft.cpp src/pk_states.cpp \
-            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp
+            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp src/pk_look.cpp
 LIB_OBJ  := $(patsubst src/%.cpp,$(B)/linux/%.o,$(LIB_SRC))
 TEST_SRC := $(wildcard tests/test_*.cpp)
 TEST_OBJ := $(patsubst tests/%.cpp,$(B)/linux/tests/%.o,$(TEST_SRC))

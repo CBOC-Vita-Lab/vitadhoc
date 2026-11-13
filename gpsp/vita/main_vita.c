@@ -615,6 +615,175 @@ static int snes_launch(const char *rom_path)
    return plat_exec_program("snes.bin", rom_path);   /* returns only on failure */
 }
 
+/* ---- SNES (1.4): the launch file and the session report ------------------
+ * playerkit/FORMATS.md "Launch and session files" (the player: snes/vita/
+ * player.cpp, playerkit pk_launch).  Before snes.bin starts, <root>/launch/
+ * snes.ini says what to run and how (the save, Continue or a slot chosen on
+ * the shelf, the CPU clock, the Enter button) with a fresh session_id; the
+ * game's path stays the program's argument too, for an older player.  When
+ * this program starts again, the player's launch/session.txt (same id) adds
+ * the time played and shows its notice; with no report (the player was
+ * closed) the time since the launch is the estimate. */
+static char g_snes_session[40];
+static const char *base_name(const char *path);
+static void play_name_of(const char *rom_path, char *out, size_t cap);
+
+static int snes_file_put(const char *path, const char *text)
+{
+   char tmp[APP_PATH_CAP + 8], back[4096];
+   size_t n = strlen(text), got;
+   FILE *f;
+   int ok;
+   if (path_fmt(tmp, sizeof(tmp), "%s.tmp", path) != 0 || n >= sizeof(back))
+      return -1;
+   if ((f = fopen(tmp, "wb")) == NULL)
+      return -1;
+   ok = fwrite(text, 1, n, f) == n;
+   ok &= fclose(f) == 0;
+   /* read back: what is on the card is what was meant */
+   if (ok && (f = fopen(tmp, "rb")) != NULL)
+   {
+      got = fread(back, 1, sizeof(back), f);
+      fclose(f);
+      ok = got == n && memcmp(back, text, n) == 0;
+   }
+   else
+      ok = 0;
+   if (ok)
+   {
+      remove(path);                 /* the card refuses to rename over a file */
+      ok = rename(tmp, path) == 0;
+   }
+   if (!ok)
+      remove(tmp);
+   return ok ? 0 : -1;
+}
+
+static void snes_session_clear(void)
+{
+   char p[APP_PATH_CAP], q[APP_PATH_CAP + 8];
+   if (path_fmt(p, sizeof(p), "%s/launch/session.txt", g_app_root) != 0)
+      return;
+   remove(p);
+   if (path_fmt(q, sizeof(q), "%s.old", p) == 0) remove(q);
+   if (path_fmt(q, sizeof(q), "%s.tmp", p) == 0) remove(q);
+}
+
+/* `game` is what snes.bin runs (the unpacked file of a zip), `save` its
+ * battery file, `rom_path` the game as the list knows it; `slot` the shelf's
+ * choice (PSP_STATE_RESUME: Continue).  0 = written. */
+static int snes_launch_write(const char *game, const char *save,
+                             const char *rom_path, int slot)
+{
+   static unsigned seq;
+   char dir[APP_PATH_CAP], path[APP_PATH_CAP], text[3600], name[200];
+   const char *b = base_name(rom_path);
+   const char *dot = strrchr(b, '.');
+   const uint32_t now = (uint32_t)plat_wallclock();
+   int n;
+   snprintf(name, sizeof(name), "%.*s",
+            (int)(dot && dot != b ? (size_t)(dot - b) : strlen(b)), b);
+   if (path_fmt(dir, sizeof(dir), "%s/launch", g_app_root) != 0 ||
+       path_fmt(path, sizeof(path), "%s/snes.ini", dir) != 0)
+      return -1;
+   mkdir(dir, 0777);
+   snes_session_clear();          /* an old report is never read for this one */
+   snprintf(g_snes_session, sizeof(g_snes_session), "s-%u-%u", (unsigned)now,
+            (unsigned)(++seq + (unsigned)(plat_time_us() & 0xFFFF)));
+   n = snprintf(text, sizeof(text),
+                "version=1\n"
+                "session_id=%s\n"
+                "console=snes\n"
+                "game=%s\n"
+                "game_name=%s\n"
+                "save=%s\n"
+                "root=%s\n"
+                "cpu_mhz=%d\n"
+                "enter_button=%s\n"
+                "language=en\n"
+                "start=%s\n"
+                "slot=%d\n"
+                "patch=\n"
+                "patch_key=\n"
+                "retroarch_save=\n"
+                "app_rom=%s\n"
+                "app_started_at=%u\n",
+                g_snes_session, game, name, save, g_app_root,
+                g_sw.cpu_fast ? 500 : 444,
+                pspcompat_enter_is_circle() ? "circle" : "cross",
+                slot == PSP_STATE_RESUME ? "continue"
+                : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new",
+                slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0,
+                rom_path, (unsigned)now);
+   if (n < 0 || (size_t)n >= sizeof(text))
+      return -1;
+   n = snes_file_put(path, text);
+   fe_evt("snes_launch_file ok=%d session=%s start=%s slot=%d", n == 0,
+          g_snes_session, slot == PSP_STATE_RESUME ? "continue"
+          : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new", slot);
+   return n;
+}
+
+/* At start-up: a SNES session that ended (or was cut short) since the last
+ * run of this program. */
+static void snes_session_collect(void)
+{
+   char lp[APP_PATH_CAP], sp[APP_PATH_CAP], id[80], rid[80], rom[APP_PATH_CAP],
+        save[APP_PATH_CAP], v[400], name[APP_PATH_CAP];
+   long secs;
+   int have_report, save_changed = 0, save_error = 0;
+   uint32_t now = (uint32_t)plat_wallclock(), started;
+   if (path_fmt(lp, sizeof(lp), "%s/launch/snes.ini", g_app_root) != 0 ||
+       path_fmt(sp, sizeof(sp), "%s/launch/session.txt", g_app_root) != 0 ||
+       !fe_ini_get(lp, "session_id", id, sizeof(id)) || !id[0] ||
+       !fe_ini_get(lp, "app_rom", rom, sizeof(rom)) || !rom[0])
+      return;
+   if (!fe_ini_get(lp, "save", save, sizeof(save)))
+      save[0] = '\0';
+   started = (uint32_t)fe_ini_get_int(lp, "app_started_at", 0);
+   have_report = fe_ini_get(sp, "session_id", rid, sizeof(rid)) &&
+                 strcmp(rid, id) == 0;
+   if (have_report)
+   {
+      secs = fe_ini_get_int(sp, "seconds_played", 0);
+      save_changed = fe_ini_get_int(sp, "save_changed", 0) != 0;
+      save_error = fe_ini_get_int(sp, "save_error", 0) != 0;
+      if (!fe_ini_get(sp, "notice", v, sizeof(v)))
+         v[0] = '\0';
+   }
+   else
+   {
+      /* the player was closed or failed: the time since the launch, at
+       * most a day (a clock that jumped says nothing) */
+      secs = started && now > started ? (long)(now - started) : 0;
+      if (secs > 86400)
+         secs = 0;
+      v[0] = '\0';
+   }
+   if (secs < 0)
+      secs = 0;
+   play_name_of(rom, name, sizeof(name));
+   if (secs)
+   {
+      play_log_add(name, now, (uint32_t)secs, 0);
+      (void)play_log_save();
+   }
+   fe_evt("snes_session report=%d secs=%ld save_changed=%d save_error=%d "
+          "notice=\"%s\" rom=%s", have_report, secs, save_changed, save_error,
+          v, rom);
+   if (save_changed && save[0])
+   {
+      /* the battery the player wrote: its record and RetroArch's copy now */
+      char note[160];
+      save_sync_game_start(save, note, sizeof(note));
+      save_sync_heal_game(save, rom, SS_KIND_SNES, note, sizeof(note));
+   }
+   remove(lp);
+   snes_session_clear();
+   if (v[0])
+      osd_toast("%s", v);          /* over the game list */
+}
+
 static const char *console_name(fe_console_t c)
 {
    return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
@@ -2351,6 +2520,11 @@ static int menu_log_stop(void)
    return 1;
 }
 
+static void game_log_wake(void)
+{
+   if (fe_evt_pending() >= 4096) plat_worker_wake();
+}
+
 static void io_start(void)
 {
    /* 250 ms: how stale the log on the card may be.  The save's own cadence
@@ -2358,17 +2532,20 @@ static void io_start(void)
    g_worker = g_sw.io_thread && plat_worker_start(io_step, 250000) == 0;
    if (g_worker)
    {
-      fe_evt_set_async(plat_worker_wake);
-      /* A GB cartridge's RAM has no race-safe block scanner (the GBA core
-       * has): its battery snapshot stays on the emulation thread, as on
-       * the PSP.  The log is asynchronous either way. */
-      if (g_game.console == FE_CONSOLE_GBA)
-         fe_host_set_io(&g_io);
+      /* The log: the worker writes it every 250 ms anyway; a wake for each
+       * line made it write a few bytes (12-15 ms of card time) up to once
+       * a frame (lessons-audit 2).  Woken early only with 4 KiB waiting. */
+      fe_evt_set_async(game_log_wake);
+      /* The battery file: the GBA's blocks are scanned and written there;
+       * a GB, GBC, NES or WonderSwan cartridge's RAM is snapshotted on this
+       * thread (gb_save_flush_periodic, a memcpy) and only the write --
+       * temporary file, renames, each a walk of a big ROM folder -- goes
+       * to the worker (lessons-audit 1e: it was a visible hitch). */
+      fe_host_set_io(&g_io);
    }
    rewind_set_async(g_worker ? plat_worker_wake : NULL);
    clip_set_async(g_worker ? plat_worker_wake : NULL);
-   fe_evt("io_worker on=%d sram_async=%d", g_worker,
-          g_worker && g_game.console == FE_CONSOLE_GBA);
+   fe_evt("io_worker on=%d sram_async=%d", g_worker, g_worker);
 }
 
 static void io_stop(void)
@@ -2605,6 +2782,7 @@ int app_snapshot_take(void)
  * reader serves both.  A failed write leaves nothing (no torn picture). */
 static void scene_save(void)
 {
+   menu_files_art_changed();   /* scenes/: the list's names are stale */
    char stem[96], path[APP_PATH_CAP];
    unsigned char hdr[PSP_STATE_THUMB_HEADER_SIZE];
    char *dot;
@@ -3226,11 +3404,12 @@ static void app_look_pass(uint32_t emu_us, int counts)
          missed = !half && refreshes > (int)drawn ? refreshes - (int)drawn : 0;
       else
          missed = (int)(g_pace_late - g_lk.late0);
-      if (look_second(g_lk.emu_n ? (float)g_lk.emu_sum / g_lk.emu_n / ref : 0.f,
-                      drawn && handoff ? (float)(dsum - g_lk.draw0) / drawn / ref
-                                       : 0.f,
-                      0.f, refreshes, missed, handoff, half))
-         ;
+      (void)look_second(g_lk.emu_n ? (float)g_lk.emu_sum / g_lk.emu_n / ref : 0.f,
+                        drawn && handoff ? (float)(dsum - g_lk.draw0) / drawn / ref
+                                         : 0.f,
+                        0.f, refreshes, missed, handoff, half);
+      /* (a change applies at once: the governor itself waited for a safe
+       * point, or forced it after 12 s) */
       if (look_generation() != g_lk.gen)
          app_look_apply("second");
       if (look_census_line(line, sizeof(line)))
@@ -5904,6 +6083,7 @@ int main(int argc, char **argv)
    }
    if (path_fmt(path, sizeof(path), "%s/playlog.txt", g_app_root) == 0)
       play_log_load(path);
+   snes_session_collect();      /* back from snes.bin: its report */
    ra_boot(g_app_root, g_sw.ra_host, GBADHOC_VERSION,
 #ifdef __vita__
            art_online
@@ -6013,6 +6193,26 @@ int main(int argc, char **argv)
                save_sync_heal_game(srm, rom_path, SS_KIND_SNES, note, sizeof(note));
             }
          }
+         {
+            /* the launch file (snes.bin reads it; the argument stays) and
+             * the start in Recent, as for a game run here */
+            char game[APP_PATH_CAP], save[APP_PATH_CAP], nm[APP_PATH_CAP];
+            const char *bar = strchr(snes_arg, '|');
+            const char *dt = strrchr(rom_path, '.');
+            snprintf(game, sizeof(game), "%.*s",
+                     (int)(bar ? (size_t)(bar - snes_arg) : strlen(snes_arg)),
+                     snes_arg);
+            if (bar)
+               snprintf(save, sizeof(save), "%s", bar + 1);
+            else
+               snprintf(save, sizeof(save), "%.*s.srm",
+                        (int)(dt ? (size_t)(dt - rom_path) : strlen(rom_path)),
+                        rom_path);
+            (void)snes_launch_write(game, save, rom_path, slot);
+            play_name_of(rom_path, nm, sizeof(nm));
+            play_log_add(nm, (uint32_t)plat_wallclock(), 0, 1);
+            (void)play_log_save();
+         }
          src = snes_launch(snes_arg);
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);
          app_notice("This game could not be started", base_name(rom_path),
@@ -6042,9 +6242,10 @@ int main(int argc, char **argv)
           * ONCE, in the first game ever played (config.ini hints, which is
           * then 0 and saved at once): how to reach the menu, and what
           * Square does. */
+         /* (UX review G1: it ran off both screen edges; 40 characters) */
          osd_toast(g_pcfg.touch && g_sw.touch_menu
-                   ? "Menu: tap the screen or hold START + SELECT. Square: fast-forward"
-                   : "Menu: hold START + SELECT. Square: fast-forward");
+                   ? "Menu: tap the screen, or START + SELECT"
+                   : "Menu: hold START + SELECT");
          fe_evt("hints shown have=%d", g_pcfg.hints);
          g_pcfg.hints = 0;
          pcfg_save();
@@ -6100,6 +6301,8 @@ int main(int argc, char **argv)
           * writes, and a player who closes the app from LiveArea meanwhile
           * must not lose the save for them. */
          fe_host_sram_flush(1);
+         if (file_size(g_game.save_path, NULL) == 0)
+            ui_savset_add(g_game.save_path);   /* the list's "save present" */
          resume_game_end();         /* where it was left, for Continue */
          sgb_border_end();
          scene_save();

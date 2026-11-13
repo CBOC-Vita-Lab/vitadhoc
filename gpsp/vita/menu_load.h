@@ -80,6 +80,9 @@ int menu_load_take(int image, menu_load_result *out);
 void menu_load_release(unsigned slot);
 /* Only at process exit. A timeout retains thread, buffers and processor. */
 int menu_load_shutdown(uint32_t timeout_us);
+/* A picture was written to boxart/, hero/, scenes/, titles/ or cache/:
+ * the loader's names of those folders are read again (menu_files.c). */
+void menu_files_art_changed(void);
 
 typedef struct menu_load_diag
 {

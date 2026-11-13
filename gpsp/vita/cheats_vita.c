@@ -880,7 +880,8 @@ static const char *base_name(const char *path)
 /* The ROM's CRC-32, from <root>/cheats/index.cache when this file (by name
  * and size) has been hashed before: a 32 MiB cartridge takes seconds to
  * read from a memory card, and it is read for this once in its life. */
-static int rom_crc(const char *rom_path, uint32_t *crc_out)
+static int rom_crc(const char *rom_path, fe_console_t console,
+                   uint32_t *crc_out)
 {
    static char cache_path[640];
    static uint8_t buf[32768];
@@ -930,6 +931,18 @@ static int rom_crc(const char *rom_path, uint32_t *crc_out)
       }
    }
 
+   if (console == FE_CONSOLE_NES)
+   {
+      /* The catalogue's CRC-32 is of the cartridge without the 16-byte iNES
+       * header and the 512-byte trainer after it (gamedb_nes_crc_cancel);
+       * a file with no such header is taken whole. */
+      uint8_t h[16];
+      long skip = 0;
+      if (fread(h, 1, sizeof(h), f) == sizeof(h) && !memcmp(h, "NES\x1a", 4))
+         skip = 16 + ((h[6] & 4) ? 512 : 0);
+      if (skip >= size || fseek(f, skip, SEEK_SET) != 0)
+         fseek(f, 0, SEEK_SET);
+   }
    while ((got = fread(buf, 1, sizeof(buf), f)) > 0)
       crc = cheatdb_crc32(crc, buf, got);
    if (ferror(f))
@@ -1022,8 +1035,24 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
    uint32_t crc;
 
    *match = CHEATS_MATCH_NONE;
-   if (console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN || !cheatdb_games())
+   if (!cheatdb_games())
       return -1;
+   if (console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN)
+   {
+      /* No header to read: the cartridge's CRC-32 (the NES's without its
+       * iNES header, the WonderSwan's of the whole file), then its name. */
+      sys = console == FE_CONSOLE_NES ? 'N' : 'W';
+      if (rom_crc(rom_path, console, &crc) == 0 &&
+          (game = cheatdb_find_crc(crc)) >= 0)
+      {
+         *match = CHEATS_MATCH_CRC;
+         return game;
+      }
+      game = cheatdb_find_name(sys, rom_path, &exact);
+      if (game >= 0)
+         *match = exact ? CHEATS_MATCH_NAME : CHEATS_MATCH_TITLE;
+      return game;
+   }
    rom_header(rom_path, console, code, title);
 
    if (console == FE_CONSOLE_GBA && code[0])
@@ -1035,7 +1064,7 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
          return by_code;
       }
    }
-   if (rom_crc(rom_path, &crc) == 0 && (game = cheatdb_find_crc(crc)) >= 0)
+   if (rom_crc(rom_path, console, &crc) == 0 && (game = cheatdb_find_crc(crc)) >= 0)
    {
       *match = CHEATS_MATCH_CRC;
       return game;

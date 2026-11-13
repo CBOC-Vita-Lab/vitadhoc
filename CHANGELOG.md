@@ -50,6 +50,23 @@
   cannot be drawn at the full rate, every second frame is shown, evenly,
   while the game keeps its true speed and sound; every frame comes back after
   about three seconds with room to spare. The same as the SNES player.
+- **Smooth hand-over** (Settings > Gameplay, on by default). The picture is
+  drawn and shown on a second core while the game runs on its own, so heavy
+  picture options no longer slow the game down. Off in link play. Turn it off
+  if the picture ever misbehaves.
+- **The best look by default.** Image quality is Auto on every install (it
+  was Original on a fresh one): xBRZ smoothing at the largest size the
+  console holds at full speed, over sharp bilinear (no more uneven nearest
+  pixels as the base filter). A game that cannot hold 60 with it is eased one
+  small, least visible step at a time (the ambient glow's moving picture
+  first, then xBRZ 4x, 3x, 2x, the frame blend, the wide view last), gets the
+  look back when there is room, and remembers what it needed. The Image
+  quality row then reads, for example, "Auto (xBRZ 3x, eased)". A row you
+  set yourself is never touched. The wide view's margins now continue the
+  picture's own edges by default instead of black bars.
+- **Export save for other emulators** (Settings > This game, in a game): X
+  makes the save a plain file for RetroArch, or a `.sav` beside the game
+  (LEFT / RIGHT choose), whatever Sync RetroArch saves says.
 - **Top bar.** With six consoles the tabs are drawn smaller when they need
   to be, all of them before the search icon, and each tab can be tapped to go
   to its console (the fifth one was hidden under the search icon).

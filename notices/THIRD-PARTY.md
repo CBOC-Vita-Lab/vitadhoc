@@ -120,7 +120,14 @@ clarification and the remaining package review.
   revision `d5bae90b22018ce3c9c5a8eff4141a4768c8dd5f`,
   <https://github.com/libretro/libretro-database/tree/d5bae90b22018ce3c9c5a8eff4141a4768c8dd5f>.
   Published there under CC BY-SA 4.0; `licenses/CC-BY-SA-4.0.txt`.
-  The local converter merges and deduplicates lists, filters supported codes,
+  The `cht/` lists used are those of Game Boy Advance, Game Boy, Game Boy
+  Color, Nintendo Entertainment System, WonderSwan and WonderSwan Color, and
+  the No-Intro lists of `metadat/no-intro/` for the same systems. The local
+  converter (`gpsp/vita/tools/make_cheatdb.py`, run offline on a local
+  checkout of that revision; `assets/cheats.db.txt` lists what it kept and
+  dropped) merges and deduplicates lists, filters supported codes (for the
+  NES: Game Genie and `AAAA:VV` / `AAAA?CC:VV` forms, with Pro Action Rocky
+  hex codes rewritten as `AAAA:VV`; for WonderSwan: `AAAAA:VV` RAM pokes),
   shortens display names and associates records with cartridge checksums.
   This database remains separately licensed; it is not relicensed as GPL.
 - **Experimental GPU xBRZ:** a separate implementation referring to libretro's

@@ -42,6 +42,9 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | Select + Down | Mystery Gift: listen for a phone (GBA) |
 | Right stick down | Cheat button, for button-activated codes |
 
+SNES games (the separate SNES program) open their menu the same way: hold
+Start + Select (L + R + Start also works).
+
 VitAdhoc's own screenshot (L + R + Select, saved in
 `ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
 button combo turns it on; Button mapping can give Screenshot any other chord.

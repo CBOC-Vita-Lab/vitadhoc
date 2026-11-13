@@ -1397,11 +1397,23 @@ static void hm_cards(const char *rom_dir, int rom, float dy, float lift)
          vs_rrect_line(x - 6, y - 6, cw + 12, ch + 12, 18, 3, HC_TEXT);
       snprintf(slot, sizeof(slot), "Slot %d", i + 1);
       vs_text(VS_LABEL, x, y + ch + 12, slot, on ? HC_TEXT : HC_TEXT2);
-      vs_text(VS_CAPTION, x, y + ch + 42,
-              have ? (g_hm_cards.rom == rom && g_hm_cards.when[i][0]
-                         ? g_hm_cards.when[i] : "Saved")
-                   : (!hm_metadata(rom) || hm_metadata(rom)->value.state[i] == ML_UNKNOWN
-                      ? "Checking..." : "Empty"), HC_TEXT3);
+      {
+         /* (UX review H6: "12 Nov 2026, 16:06" ran into the next card)
+          * the stamp without its year, cut to the card */
+         char cap[32];
+         const char *t = have ? (g_hm_cards.rom == rom && g_hm_cards.when[i][0]
+                                    ? g_hm_cards.when[i] : "Saved")
+                         : (!hm_metadata(rom) || hm_metadata(rom)->value.state[i] == ML_UNKNOWN
+                            ? "Checking..." : "Empty");
+         char *yr;
+         snprintf(cap, sizeof(cap), "%s", t);
+         yr = strstr(cap, " 20");
+         if (yr && yr[3] >= '0' && yr[3] <= '9' && yr[4] >= '0' && yr[4] <= '9' &&
+             yr[5] == ',')
+            memmove(yr, yr + 5, strlen(yr + 5) + 1);
+         vs_text_fit(VS_CAPTION, cap, (float)cw);
+         vs_text(VS_CAPTION, x, y + ch + 42, cap, HC_TEXT3);
+      }
       if (g_browser_state_open && !g_shelf_del)
          UI_TCH_ROW(i, (int)(x / 2), (int)(y / 2), (int)(cw / 2),
                     (int)((ch + 60) / 2));

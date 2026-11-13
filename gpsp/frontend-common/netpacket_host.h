@@ -88,6 +88,8 @@ const char *fe_np_start_reason(void);
 /* ADR-0062: override netdrv's ARQ timers before fe_np_start(). Microseconds;
  * 0 = leave the build-time ND_* default. See the comment at the definition. */
 void fe_np_set_arq_timers(uint32_t rto_first_max_us, uint32_t rto_min_us);
+/* A silent partner is given up after this long (0 = netdrv's 8 s). */
+void fe_np_set_peer_dead(uint32_t us);
 /* Ack riding for the next session (netdrv.h nd_config.ack_ride_us; 0 = off). */
 void fe_np_set_ack_ride(uint32_t us);
 /* The product value a running GBA Link Cable session rides at (0 = never);

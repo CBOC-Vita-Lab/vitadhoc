@@ -808,6 +808,15 @@ def t_worker(S):
         p = os.path.join(r.root, "roms", "gbsave.gb.sav")
         S.check(os.path.exists(p) and os.path.getsize(p) > 0,
                 "a GB battery save, named Game.gb.sav, beside the ROM")
+        # 1.4 (lessons-audit 1e): a GB game's battery write goes to the
+        # worker too, and the file is the one the game thread would write
+        S.check(r.has(r"^EVT io_worker on=1 sram_async=1"), "the GB save is written by the worker")
+        r2 = S.run("worker_gb_sync", "100:a:10\n+200:a:10\n" + menu_pick(6, wait=200),
+                   autoboot="gbsave.gb")
+        S.clean(r2)
+        p2 = os.path.join(r2.root, "roms", "gbsave.gb.sav")
+        S.check(os.path.exists(p) and os.path.exists(p2) and open(p, "rb").read() == open(p2, "rb").read(),
+                "...the same bytes as without the worker")
 
 
 def t_save_fail_shown(S):
@@ -6774,10 +6783,79 @@ def t_save_heal_nes_ws(S):
         S.check(r.has(r"^EVT save_census kind=%s " % kind), "%s: a census line of its kind at the start" % kind)
         S.check(r.has(r"^EVT save_backup kept file=.*%s\.srm" % re.escape(stem)),
                 "%s: a save the app did not write is backed up once" % kind)
-        ra = os.path.join(r.root, "retroarch", "savefiles", stem + ".srm")
-        S.check(r.has(r"^EVT export_save_row dest=0 rc=0 ") and os.path.exists(ra),
+        # (save_sync.c answers "already there" for Game.srm beside the game:
+        # the file RetroArch reads when it keeps saves with the content)
+        ex = [l for l in r.log if l.startswith("EVT export_save_row dest=0 rc=0 where=")]
+        S.check(ex and os.path.exists(ex[0].split("where=", 1)[1].rsplit(" ts_us=", 1)[0]),
                 "%s: Export save makes RetroArch's copy (%s)" %
                 (kind, [l for l in r.log if "export_save_row" in l or "save_export" in l][:2]))
+
+
+def t_snes_session(S):
+    """The SNES player's launch protocol (playerkit/FORMATS.md, snes/vita/
+    player.cpp): picking a game writes launch/snes.ini (session_id, game,
+    save, root, CPU clock, Enter button, start new / continue / slot from the
+    shelf) and counts the start in Recent; when VitAdhoc starts again the
+    player's launch/session.txt with the same id adds the time played and
+    shows its notice; a stale or missing report is not read as this one, and
+    a session with no report is estimated from the launch time."""
+    tiny = bytes(0x8000)
+    name = "Game One (USA)"
+    st = "states/snes/%s/%s" % (bkt(name), name)
+    ex = {"roms/%s.sfc" % name: tiny, st + ".st0": b"state one", st + ".st1": b"state two"}
+    r = S.run("snes_launch_new", "90:triangle\n+30:triangle\n+30:triangle\n+40:cross\n+60:quit\n", extra=ex)
+    S.clean(r, allow="could not be started")
+    lf = os.path.join(r.root, "launch", "snes.ini")
+    kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf) if "=" in l) if os.path.exists(lf) else {}
+    S.check(kv.get("version") == "1" and kv.get("console") == "snes" and kv.get("session_id", "").startswith("s-") and
+            kv.get("game", "").endswith(name + ".sfc") and kv.get("save", "").endswith(name + ".srm") and
+            kv.get("start") == "new" and kv.get("cpu_mhz") in ("444", "500") and kv.get("enter_button") in ("cross", "circle"),
+            "launch/snes.ini says what to run and how (%s)" % kv)
+    S.check(r.has(r"^EVT snes_launch_file ok=1 ") and r.has(r"^EVT snes_launch rom="), "written, then snes.bin is started")
+    pl = open(os.path.join(r.root, "playlog.txt")).read() if os.path.exists(os.path.join(r.root, "playlog.txt")) else ""
+    S.check(name in pl, "the start is in Recent")
+    # the shelf's slot 2
+    r = S.run("snes_launch_slot", "90:triangle\n+30:triangle\n+30:triangle\n+40:left\n+30:down\n+10:shot=shelf.png\n"
+              "+10:cross\n+60:quit\n", extra=ex)
+    S.clean(r, allow="could not be started")
+    kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf.replace("snes_launch_new", "snes_launch_slot")) if "=" in l) \
+        if os.path.exists(lf.replace("snes_launch_new", "snes_launch_slot")) else {}
+    S.check(kv.get("start") == "slot" and kv.get("slot") == "2",
+            "a state picked on the SNES shelf is the player's start (states/snes/<xx>/): %s" %
+            {k: kv.get(k) for k in ("start", "slot")})
+    # back from the player: its report
+    sid = "s-1699990000-7"
+    launch = ("version=1\nsession_id=%s\nconsole=snes\ngame=x\nsave=x\napp_rom=%s\napp_started_at=1699990000\n" %
+              (sid, "roms/%s.sfc" % name))
+    rep = ("version=1\nsession_id=%s\nconsole=snes\nseconds_played=125\nsave_changed=0\nsave_error=0\n"
+           "notice=Could not save the game: the memory card is full\nexit=normal\n" % sid)
+    r = S.run("snes_back", "60:quit\n", extra={"roms/%s.sfc" % name: tiny, "launch/snes.ini": launch.encode(),
+                                               "launch/session.txt": rep.encode()})
+    S.clean(r)
+    ev = r.evt("snes_session")
+    S.check(ev and ev[0]["report"] == "1" and ev[0]["secs"] == "125", "the report is read (%s)" % [e["_"] for e in ev])
+    S.check(not os.path.exists(os.path.join(r.root, "launch", "session.txt")) and
+            not os.path.exists(os.path.join(r.root, "launch", "snes.ini")), "...once: both files are gone")
+    S.check(r.has(r"memory card is full"), "its notice is shown")
+    # a report of another session is not this one's: the estimate instead
+    r = S.run("snes_back_stale", "60:quit\n", extra={"roms/%s.sfc" % name: tiny, "launch/snes.ini": launch.encode(),
+                                                     "launch/session.txt": rep.replace(sid, "s-1-1").encode()})
+    S.clean(r)
+    ev = r.evt("snes_session")
+    S.check(ev and ev[0]["report"] == "0" and 9000 < int(ev[0]["secs"]) < 11000 and not r.has(r"memory card is full"),
+            "another session's report is ignored; the time since the launch is the estimate (%s)" % [e["_"] for e in ev])
+
+
+def t_savset(S):
+    """The game list's "save present" comes from the names the scan read
+    (lessons-audit 1b): no stat per drawn row.  A battery file beside a game
+    is in the scan's set; the list's label reads it."""
+    r = S.run("savset", "60:shot=list.png\n+10:quit\n",
+              extra={"roms/gbadhoc-test.sav": bytes(32768), "roms/Other.srm": b"x"})
+    S.clean(r)
+    sv = r.evt("savset")
+    S.check(sv and int(sv[0]["names"]) >= 2 and int(sv[0]["dirs"]) >= 1 and sv[0]["full"] == "0",
+            "the scan kept the battery files' names (%s)" % [e["_"] for e in sv][:1])
 
 
 def t_tap_menu(S):
@@ -7227,7 +7305,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_n
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle)]
 

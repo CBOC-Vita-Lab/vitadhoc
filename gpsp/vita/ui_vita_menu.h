@@ -74,7 +74,7 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
          snprintf(out, cap, "Cheats: %s", ch_summary(st, sizeof(st)));
       break;
    case M_SETTINGS:
-      snprintf(out, cap, "Picture, sound, controls and more");
+      snprintf(out, cap, "Picture, controls and more");
       break;
    case M_GAMELIST:
       snprintf(out, cap, "Leave this game for the game list");

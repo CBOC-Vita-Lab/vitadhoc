@@ -488,9 +488,9 @@ static void test_real(const char *db)
    int games, g, i, same = 0, unique;
    unsigned total = 0;
    /* per system: games, entries, usable, value, encrypted, unsupported, other */
-   unsigned stat[3][7];
+   unsigned stat[4][7];
    char rom[700];
-   static const char *sysname[3] = { "GBA", "GB", "GBC" };
+   static const char *sysname[4] = { "GBA", "GB+GBC", "NES", "WS+WSC" };
 
    printf("the bundled database\n");
    memset(stat, 0, sizeof(stat));
@@ -542,12 +542,28 @@ static void test_real(const char *db)
          continue;
       total += n;
       /* which system: ask the index both ways */
+      /* sys: 0 GBA, 1 GB/GBC, 2 NES, 3 WonderSwan/Color */
       by_title = cheatdb_find_name('A', block, &exact);
-      sys = (by_title == g && exact) ? 0 : 1;
+      sys = (by_title == g && exact) ? 0 : -1;
+      if (sys < 0)
+      {
+         sys = 1;
+         by_title = cheatdb_find_name('N', block, &exact);
+         if (by_title == g && exact)
+            sys = 2;
+         else
+         {
+            by_title = cheatdb_find_name('W', block, &exact);
+            if (by_title == g && exact)
+               sys = 3;
+         }
+      }
       p = block + strlen(block) + 1;
       snprintf(first_code, sizeof(first_code), "%.60s", p + strlen(p) + 1);
-      console = sys ? FE_CONSOLE_GB : FE_CONSOLE_GBA;
-      snprintf(rom, sizeof(rom), "/roms/%s.%s", block, sys ? "gb" : "gba");
+      console = sys == 0 ? FE_CONSOLE_GBA : sys == 2 ? FE_CONSOLE_NES :
+                sys == 3 ? FE_CONSOLE_WSWAN : FE_CONSOLE_GB;
+      snprintf(rom, sizeof(rom), "/roms/%s.%s", block,
+               sys == 0 ? "gba" : sys == 2 ? "nes" : sys == 3 ? "ws" : "gb");
       cnt = cheats_load(work, rom, console);
       found = !strcmp(cheats_db_game(), block) && cheats_db_match() == CHEATS_MATCH_NAME;
       same += found;
@@ -586,10 +602,10 @@ static void test_real(const char *db)
    printf("   %d games, %u cheats; through cheats_validate:\n", games, total);
    printf("   %-7s %6s %8s %8s %8s %8s %8s %8s\n", "", "games", "entries", "usable",
           "value?", "encrypt.", "type", "other");
-   for (i = 0; i < 2; i++)
-      printf("   %-7s %6u %8u %8u %8u %8u %8u %8u\n", i ? "GB+GBC" : sysname[0], stat[i][0],
+   for (i = 0; i < 4; i++)
+      printf("   %-7s %6u %8u %8u %8u %8u %8u %8u\n", sysname[i], stat[i][0],
              stat[i][1], stat[i][2], stat[i][3], stat[i][4], stat[i][5], stat[i][6]);
-   CHECK(stat[0][6] == 0 && stat[1][6] == 0, "entries that are not codes shipped");
+   CHECK(stat[0][6] == 0 && stat[1][6] == 0 && stat[2][6] == 0 && stat[3][6] == 0, "entries that are not codes shipped");
    cheatdb_close();
 }
 

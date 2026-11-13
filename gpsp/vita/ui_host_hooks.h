@@ -114,6 +114,9 @@ void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
 void        app_handoff_options(void); /* Smooth hand-over on/off (main_vita.c) */
 /* "Auto (xBRZ 3x, eased)" while the look governor eased the game, else NULL */
 const char *ui_host_look_label(void);
+/* (ui_psp.c) a battery file the app just wrote: the game list's "save
+ * present" comes from the scan's names (lessons-audit 1b) */
+void        ui_savset_add(const char *path);
 /* Settings > This game > Export save for other emulators (main_vita.c):
  * dest 0 = for RetroArch, 1 = plain .sav beside the game.  0 = done. */
 int         ui_host_export_save(int dest, char *where, size_t wcap, char *note,

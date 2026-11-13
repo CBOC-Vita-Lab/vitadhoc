@@ -135,13 +135,17 @@ void artfetch_titles(int on)
    A_STORE(g_titles, on ? 1 : 0);
 }
 
+void menu_files_art_changed(void);
+
 void artfetch_retry(void)
 {
+   menu_files_art_changed();
    A_STORE(g_retry, 1);
 }
 
 void artfetch_rescan(void)
 {
+   menu_files_art_changed();
    A_STORE(g_rescan, 1);
 }
 
@@ -440,8 +444,13 @@ static void inventory_clear(void)
    g_inventory_valid = 0;
 }
 
+/* menu_files.c's picture-name index is stale from here (lessons-audit 1c);
+ * a do-nothing default where artfetch is built alone (its unit tests) */
+__attribute__((weak)) void menu_files_art_changed(void) { }
+
 static void inventory_add(int kind, const char *stem)
 {
+   menu_files_art_changed();
    if (set_add(&g_inventory[kind], stem) != 0)
       g_inventory_valid = 0;
 }

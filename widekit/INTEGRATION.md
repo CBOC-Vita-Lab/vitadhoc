@@ -272,3 +272,11 @@ Small fixes found by the NES twin's truth checker (synthetic scrolling cartridge
   1,736,946. At 444 MHz: 3.9 ms at IPC 1.0, 5.6 ms at IPC 0.7 (Cortex-A9 IPC not measured).
 * Inside the NES adapter (one 84 px layer, 240 lines; see nes/INTEGRATION.md) widekit costs about 2.6 M x86 instructions per
   frame, 2.2 M of it in `wk_compose_frame`.
+
+## Opt-in safety fields (13 Nov 2026)
+
+All default to 0 = the previous behaviour (the NES adapter sets none of them).
+- `wk_map_cfg`: `bind_pct`, `bind_frames` (probation), `match_by_code`, `drop_on_revoke`, `live_flags` (`wk_cell.live`: seen live since the
+  room was bound), `seam_tiles` (visible tiles next to the seam must equal the room's cells).
+- `wk_compose_cfg`: `reveal_prov` (a lower layer's pixel beyond an unknown higher level layer gets `WK_PROV_REVEAL`, not `WK_PROV_LEVEL`),
+  `fg_fade_px` with `wk_compose_in.tail_px/tail_op` (an unknown foreground fades out over that many pixels, provenance `WK_PROV_SMEAR`).

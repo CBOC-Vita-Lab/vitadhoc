@@ -21,7 +21,9 @@
 #define HC_BG       VS_HEX(0x060914, 255)
 #define HC_TEXT     VS_HEX(0xF5F7FC, 255)
 #define HC_TEXT2    VS_HEX(0xA7B0C6, 255)
-#define HC_TEXT3    VS_HEX(0x6E7891, 255)
+/* (UX review 2.1: #6E7891 was too faint on the card at arm's length;
+ * #8F99B3 is the lightest secondary text the players use) */
+#define HC_TEXT3    VS_HEX(0x8F99B3, 255)
 #define HC_GLASS    VS_HEX(0xFFFFFF, 30)
 #define HC_GLASS_HI VS_HEX(0xFFFFFF, 52)
 #define HC_INK      VS_HEX(0x0A0F1F, 255)

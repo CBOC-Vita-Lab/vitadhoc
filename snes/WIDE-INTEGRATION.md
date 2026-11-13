@@ -99,3 +99,25 @@ second from it while the wide view is on. `snes_wide_twin --summary` prints the 
   get the same "add" maths (only for `cgadsub == 0x20`; other maths keep the ring-only extent).
 - Not done: backdrop pixels not covered by any layer are still the soft edge (the colour is not guessed); a foreground that is unknown
   beside a known backdrop ends with a hard edge (no per layer fade beyond the real extent yet).
+
+## Learned map safety and the foreground fade (13 Nov 2026, release 1.4)
+
+No file under snes/core changed for this (PROVENANCE.md needs no new row); everything is in widekit (opt-in fields, defaults = old
+behaviour, so the NES adapter and its golden hashes are unchanged) and snes/frontend/wide.cpp. Adapter option `map_safe` (bit mask,
+1 = all, default on): 2 strict bind, 4 match by tilemap word, 8 drop a revoked room, 16 seam check, 64 strict verify, 128 live flags.
+
+- Binding: a room binds only when 98% of the found cells match (`bind_pct`) for 8 frames in a row (`bind_frames`, probation); matching and
+  verifying compare the tilemap word (`match_by_code`), so animation does not break a match; a revoked room is dropped (`drop_on_revoke`);
+  verify 98%, revoked after one bad frame. Proof: two levels with identical scroll coordinates and different tiles, and an 85% shared
+  variant (synthetic ROMs `wide_alias_a/b/c`): 0 wrong real pixels in pass 1 and pass 2 (the old rules showed 42742 wrong on `alias_b`).
+- A learned cell is served only if the 2 visible tiles next to the seam, in the same tile row, equal the room's cells (`seam_tiles`).
+- Changed terrain: a cell has `live`. Cells loaded from a file, or not seen on screen since the room was bound, are not live and are drawn
+  "soft" (50% toward the ambient colour, provenance 12), never as real (provenance 4 is claimed only for live cells). Soft pixels count half
+  in the Auto coverage. Proof: `wide_destr` (terrain changed in the ring by game code while the camera is away): 0 wrong in both passes.
+- Residual risk, not provable by this design: a game that changes level tiles through RAM that was never on screen and is beyond the ring
+  (`wide_destr_far`: 43600 wrong of 3.98M checked pixels in pass 2, reported as INFO by selftest, not as a failure); a tilemap ring of
+  32 tiles cannot be told from a 64 tile one.
+- Foreground fade: an unknown foreground column fades out over 24 px (smoothstep alpha, no dither, `cfg.fg_fade_px`; the layer's own last
+  known colour continues, provenance 7) and a lower layer shows through beyond it, labelled `WK_PROV_REVEAL` (11, not a claim, counted in
+  the coverage). Sprites use the same ramp. The Auto cross-fade is 32 frames (measured on Super Mario World: largest per frame change of
+  the margin 1.7 colour units at both switches).

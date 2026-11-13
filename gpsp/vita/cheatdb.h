@@ -30,7 +30,7 @@ int  cheatdb_find_crc(uint32_t crc);
  * every release with this code has this list (no need to hash the ROM). */
 int  cheatdb_find_serial(const char code[4], int *unique);
 /* A ROM's file name (any directory and extension are ignored), system 'A'
- * (GBA) or 'G' (GB / GBC).  *exact: 1 = title, region and revision matched,
+ * (GBA), 'G' (GB / GBC), 'N' (NES) or 'W' (WonderSwan / Color).  *exact: 1 = title, region and revision matched,
  * 0 = the title alone did. */
 int  cheatdb_find_name(char system, const char *file_name, int *exact);
 /* A cartridge header's title ("POKEMON EMER", "ZELDA"): the one game whose

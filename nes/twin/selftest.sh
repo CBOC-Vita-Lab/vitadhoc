@@ -168,6 +168,10 @@ n32=$("$TWIN" $R/nrom.nes --frames 120 --audio-rate 32768 --audio-report 2>&1 | 
 "$TWIN" $R/nrom.nes --frames 3 --cheat "C000?78:58" --peek C000 2>&1 | grep -q "^peek c000=58" && ok "cheat: ROM read patch with compare value" || bad "cheat ROM"
 "$TWIN" $R/nrom.nes --frames 3 --cheat "C000?99:58" --peek C000 2>&1 | grep -q "^peek c000=78" && ok "cheat: compare value that does not match changes nothing" || bad "cheat compare"
 "$TWIN" $R/nrom.nes --frames 3 --cheat SXIOPO --cheat BBBBBB --cheat zzz 2>&1 | grep "cheat" | tr -d '\n' | grep -q "SXIOPO': 1 accepted.*BBBBBB': 0 accepted.*zzz': 0 accepted" && ok "Game Genie code accepted, invalid ones refused" || bad "cheat GG"
+DB="$HERE/../../gpsp/vita/assets/cheats.db"
+if [ -f "$DB" ]; then
+	python3 -I "$HERE/tests/cheatdb_test.py" "$TWIN" "$R" "$DB" >$T/cdb.txt 2>&1 && ok "bundled cheat database, NES part: $(grep -c PASS $T/cdb.txt) checks, every code accepted by the host" || { cat $T/cdb.txt; bad "bundled cheat database, NES part"; }
+fi
 "$TWIN" $R/nrom.nes --frames 60 --ra 6000,4 2>&1 | grep -q "^ra 6000 n=4: 01 00 00 00" && ok "achievements map: cartridge RAM window \$6000" || bad "ra 6000"
 "$TWIN" $R/nrom.nes --frames 60 --ra 7ffe,8 2>&1 | grep -q "^ra 7ffe n=2:" && ok "achievements map: a read is cut at the end of its window" || bad "ra cut"
 "$TWIN" $R/nrom.nes --frames 60 --ra 1000,4 2>&1 | grep -q "^ra 1000 n=0:" && ok "achievements map: unmapped addresses give nothing" || bad "ra unmapped"

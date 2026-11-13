@@ -125,6 +125,8 @@ if command -v python3 >/dev/null 2>&1; then
 	WSWAN_TWIN=$TWIN $PY/save_types.py --work $T/saves >$T/saves.txt 2>&1 && ok "save types: $(tail -1 $T/saves.txt)" || { tail -5 $T/saves.txt; bad "save types"; }
 	WSWAN_TWIN=$TWIN $PY/state_fuzz.py --work $T/fuzz >$T/fuzz.txt 2>&1 && ok "state fuzz: $(tail -1 $T/fuzz.txt | sed 's/.*state fuzz: //')" || { tail -5 $T/fuzz.txt; bad "state fuzz"; }
 	WSWAN_TWIN=$TWIN $PY/rtc_fixed.py --work $T/rtc >$T/rtc.txt 2>&1 && ok "RTC with a fixed clock (UTC and JST, deterministic)" || { cat $T/rtc.txt; bad "RTC fixed clock"; }
+	DB="$HERE/../../gpsp/vita/assets/cheats.db"
+	[ -f "$DB" ] && { TMPDIR=$T $PY/cheatdb_test.py "$TWIN" "$R" "$DB" >$T/cdb.txt 2>&1 && ok "bundled cheat database, WonderSwan part: $(grep -c PASS $T/cdb.txt) checks" || { cat $T/cdb.txt; bad "bundled cheat database, WonderSwan part"; }; }
 else echo "SKIP  property and save tests (python3 missing)"; fi
 
 # optional acceptance with a private ROM, used only as an input file

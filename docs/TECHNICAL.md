@@ -1164,3 +1164,82 @@ UBSan, with a negative control that the original expression must fail.
 **Vita build note.** gpsp/vita/Makefile builds with -mfpu=neon (NEON kernels
 active). The root gpsp/Makefile `vita` platform has -mcpu=cortex-a9 but no
 -mfpu=neon, so that build silently uses the original loops.
+
+## Version 1.4: Smooth Hand-over And The Look Governor (main app)
+
+Recipe: `playerkit/INTEGRATION.md` sections 7 and 8. What the main app does:
+
+- **Mailbox** (`gpsp/vita/handoff_glue.{h,cpp}`): `pk_handoff` compiled into
+  one C++ unit with sceKernel semaphores and a drawing thread
+  (`gbadhoc_draw`, `vita.ini` `draw_core` default 1, `draw_prio` default
+  0x60), started per game. `sink_video` copies the picture to show (or the
+  Super Game Boy frame) into a mailbox buffer; `frame_present` commits it with
+  the OSD snapshot (`osd_take`, so the drawing thread never touches the live
+  toast queue) and the emulating thread's cost (`now - t_drawn`). The drawing
+  thread draws (`vid_draw_frame`), the toasts (`osd_draw_snap`), presents
+  (`vid_swap`) and releases with its own time; Steady pacing gets the larger of
+  the two costs (`ho_poll_cost`). The drain wait of `pace_frame` and the
+  upscale help are off while a drawing thread runs.
+- **One owner of the display.** Every drawing entry point of
+  `video_vita.c` calls `vid_enter_hook` first; while a picture is in flight
+  that waits for the drawing thread to go idle (`ho_guard`, counted as
+  `guard_waits` in the `handoff:` line). So the menus, the pause screen,
+  rewind's standing picture, the LINKING screen and every Settings change
+  cannot draw beside the drawing thread. A state load and a rewind step
+  discard what is in flight; a menu or pause resets the game-time baseline.
+- **Off** in every link session, local two-player play, the bench pair and
+  while the LINKING screen owns the picture (`set_enabled(false)` on a change).
+- **The twin** runs the same mailbox; its drawing side is the emulating thread
+  itself, at the old present point, so every screenshot is byte for byte the
+  old one (app test `handoff`). `GBADHOC_HANDOFF_THREAD=1` runs a real thread
+  (`GBADHOC_HANDOFF_SLOW_US` makes it slow) and `GBADHOC_PIC_TRACE=file`
+  writes the frame number and CRC of every picture drawn: with a slow thread
+  each picture shown is the old path's for its frame, in order, through a
+  menu and the Settings row turned off and on.
+- **No C++ library.** The app links with the C driver: `handoff_glue.cpp`
+  gives `operator new/delete` (malloc/free); `look_glue.cpp` instantiates
+  `std::string` and gives the four `std::__throw_*` helpers as `abort()`.
+  The weak-symbol check after the link still passes.
+- **Look governor** (`gpsp/vita/look_glue.{h,cpp}`, `pk_look`): ladder of
+  `docs/DEFAULTS-1.4.md` section 5; fed once a second of play from the drawn
+  frame's own work (`emu`), the drawing thread's average (`draw`), refreshes
+  and misses (refreshes without a new picture in full mode; `late` without
+  hand-over), parallel = hand-over active, half = Steady pacing's half mode.
+  Applied in `app_look_apply`: the Auto xBRZ factor cap
+  (`upscale_look_cap`), the ambient mode, the blend, the GBA wide mode
+  (`app_wide_apply`) and the NES wide mode. Rows set by hand
+  (`app_look_user_rows`) are told to the governor whenever the look rows
+  change. Memory: `look/<console>/<xx>/<name>.look`, written at the menu and
+  at the end of the game (`.tmp`, then renamed).
+- **Defaults** (Vita): Image quality Auto everywhere, the base filter sharp
+  bilinear, Auto = xBRZ over sharp (`up_kind`; `vita.ini` `auto_xbrz = 0`
+  for the 1.3 behaviour), wide fill = soft edges.
+
+## Version 1.4: Lessons-audit fixes (main app)
+
+- **Battery writes off the game thread for every console.** `io_start` hands
+  the writer (`fe_host_set_io`) the GB, GBC, NES and WonderSwan battery files
+  too: the game thread only snapshots the cartridge RAM
+  (`gb_save_flush_periodic`, a memcpy), the temporary file, renames and removes
+  run on the io worker. Twin test `worker` compares the bytes with and without
+  the worker.
+- **Log wakes.** In a game the io worker is woken by the log only with 4 KiB
+  waiting (`game_log_wake`); it writes every 250 ms anyway.
+- **Link keep-alive.** A silent partner is given up after 20 s on the Vita
+  (`fe_np_set_peer_dead`, was netdrv's 8 s). Keep-alives still go out from the
+  thread that pumps netdrv.
+- **"Save present" without stats.** The library scan keeps 64-bit hashes of the
+  `.sav`/`.srm` names and of the folders it read (`savset`, `ui_psp.c`); a row
+  asks the set instead of `sceIoGetstat` (folders the scan did not read still
+  get the stat). The app adds the save of a game it just ran
+  (`ui_savset_add`). Log: `savset names= dirs= full= hits= stats=`.
+- **No failed opens for missing covers.** The menu loader reads the names of
+  `boxart/`, `hero/`, `scenes/`, `titles/` and `cache/...` once and answers
+  "not there" from them (`pix_absent`, `menu_files.c`); every writer of those
+  folders calls `menu_files_art_changed`, after which the names are not trusted
+  until read again (at most every 5 s).
+- **`-fno-math-errno` instead of `-ffast-math`** for the cores (Vita and twin).
+  Proof: the twin built both ways from the same sources gave byte-identical
+  screenshots and sound for GBA, GB, GBC, NES (NROM, MMC3) and WonderSwan
+  test cartridges; the Vita objects were compared instruction by instruction
+  (see the 1.4 handoff notes for the list of objects whose code changed).

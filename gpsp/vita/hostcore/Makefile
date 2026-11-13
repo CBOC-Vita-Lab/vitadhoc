@@ -64,7 +64,7 @@ NM      := nm
 OBJCOPY := objcopy
 LD_R    := ld
 CPU_ARCH := x86_32
-CORE_ARCH_FLAGS := -fomit-frame-pointer -ffast-math
+CORE_ARCH_FLAGS := -fomit-frame-pointer -fno-math-errno
 LDFLAGS_ARCH := -no-pie
 else ifeq ($(ARCH),armhf)
 CROSS   := arm-linux-gnueabihf-
@@ -78,7 +78,7 @@ CPU_ARCH := arm
 # What the root Makefile's vita section passes, on a Linux toolchain: ARM
 # state, Cortex-A9-class ARMv7-A with NEON, hard-float.
 CORE_ARCH_FLAGS := -marm -march=armv7-a -mfpu=neon -mfloat-abi=hard \
-                   -fomit-frame-pointer -ffast-math -fno-optimize-sibling-calls
+                   -fomit-frame-pointer -fno-math-errno -fno-optimize-sibling-calls
 # Static and not PIE: the image starts at 0x10000, as low as the Vita's sits
 # at 0x81000000 relative to its own memory, and qemu-arm needs no sysroot
 # libraries at run time.

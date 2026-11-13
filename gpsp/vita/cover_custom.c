@@ -101,8 +101,12 @@ static int put_file(const char *tmp, const char *dst)
 /* The decoded caches of the old picture: the next draw makes them again from
  * the new one.  Only the Vita's own cache names; a picture of anyone's
  * (.png .jpg .bmp .565) is never touched here. */
+/* menu_files.c's picture-name index is stale from here (lessons-audit 1c) */
+__attribute__((weak)) void menu_files_art_changed(void) { }
+
 static void purge_caches(const char *stem)
 {
+   menu_files_art_changed();
    static const char *const ext[] = { "v565", "vh565" };
    char p[CV_PATH];
    unsigned i;

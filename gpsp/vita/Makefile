@@ -88,9 +88,12 @@ HAVE_DYNAREC := 1
 # The root Makefile's vita section, minus -mword-relocations (a RetroArch
 # dynamic-core need: vita-elf-create relocates movw/movt pairs) and plus an
 # explicit FPU.  -fno-optimize-sibling-calls is upstream's: the stubs rely on
-# C helpers returning to them.
+# C helpers returning to them.  -fno-math-errno, not -ffast-math (1.4,
+# lessons-audit 10): the NES core's sound and palette use floats, and the
+# standalone nes.bin never had fast-math; the twin's pictures and sound were
+# byte-identical both ways (GBA, GB, GBC, NES NROM/MMC3, WonderSwan).
 CORE_ARCH_FLAGS := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard \
-                   -fomit-frame-pointer -ffast-math \
+                   -fomit-frame-pointer -fno-math-errno \
                    -fno-unwind-tables -fno-asynchronous-unwind-tables \
                    -ftree-vectorize -fno-optimize-sibling-calls
 CORE_PLAT_DEFS  := -DVITA

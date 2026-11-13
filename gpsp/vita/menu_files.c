@@ -9,6 +9,7 @@
 #include "../psp/sidecar.h"
 _Static_assert(ML_STATE_SLOTS == PSP_STATE_SLOT_COUNT,
                "menu_load.h ML_STATE_SLOTS is the slot count");
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -279,6 +280,157 @@ static int mf_stat(const char *path, char *stamp)
    return mf_cancelled() ? ML_CANCELLED : answer;
 }
 
+/* ---- THE PICTURE FOLDERS' NAMES (lessons-audit 1c) ------------------------
+ * A game with no picture cost about twelve failed opens per tile (each
+ * candidate extension in boxart/, scenes/, titles/, cache/...), and on the
+ * card a failed open walks the whole folder: in a folder of thousands that
+ * is the time the list's covers take.  This thread reads each picture folder
+ * once and answers "not there" from the names; a name it has must still be
+ * opened.  Anything the app writes there (artfetch, the cover picker)
+ * calls menu_files_art_changed: the names are then not trusted until they
+ * are read again (at most every 5 s), and the opens are made as before. */
+#define PIX_N 16384u                     /* a power of two */
+static const char *const k_pix_dirs[] = { "boxart", "hero", "scenes", "titles",
+                                          SIDECAR_THUMB_DIR,
+                                          SIDECAR_ART_CACHE "/boxart",
+                                          SIDECAR_ART_CACHE "/hero" };
+#define PIX_DIRS (sizeof(k_pix_dirs) / sizeof(k_pix_dirs[0]))
+static uint64_t *g_pix;                  /* 0 = empty; this thread only */
+static uint64_t g_pix_dir[PIX_DIRS];
+static char g_pix_root[ML_PATH];
+static unsigned g_pix_gen, g_pix_n;
+static uint64_t g_pix_built_us;
+static int g_pix_ok;
+static unsigned g_art_gen = 1;           /* bumped by any writer (atomic) */
+static uint32_t g_pix_skips;
+
+void menu_files_art_changed(void)
+{
+   __atomic_add_fetch(&g_art_gen, 1u, __ATOMIC_RELAXED);
+}
+
+static uint64_t pix_hash(const char *s, size_t n)
+{
+   uint64_t h = 1469598103934665603ull;
+   size_t i;
+   for (i = 0; i < n; i++)
+   {
+      int c = (unsigned char)s[i];
+      if (c >= 'A' && c <= 'Z') c += 32;
+      h = (h ^ (uint64_t)c) * 1099511628211ull;
+   }
+   return h ? h : 1;
+}
+
+static int pix_put(uint64_t h)
+{
+   unsigned i = (unsigned)h & (PIX_N - 1);
+   if (g_pix_n >= PIX_N * 3 / 4)
+      return -1;
+   while (g_pix[i] && g_pix[i] != h)
+      i = (i + 1) & (PIX_N - 1);
+   if (!g_pix[i]) { g_pix[i] = h; g_pix_n++; }
+   return 0;
+}
+
+static void pix_build(const char *root)
+{
+   unsigned k;
+   char dir[ML_PATH], full[ML_PATH + 256];
+   g_pix_ok = 0;
+   if (!g_pix && !(g_pix = (uint64_t *)calloc(PIX_N, sizeof(uint64_t))))
+      return;
+   memset(g_pix, 0, PIX_N * sizeof(uint64_t));
+   g_pix_n = 0;
+   g_pix_gen = __atomic_load_n(&g_art_gen, __ATOMIC_RELAXED);
+   g_pix_built_us = plat_time_us();
+   snprintf(g_pix_root, sizeof(g_pix_root), "%s", root);
+   for (k = 0; k < PIX_DIRS; k++)
+   {
+      DIR *d;
+      struct dirent *e;
+      int n = snprintf(dir, sizeof(dir), "%s/%s", root, k_pix_dirs[k]);
+      if (n < 0 || (size_t)n >= sizeof(dir))
+         return;
+      g_pix_dir[k] = pix_hash(dir, (size_t)n);
+      if ((d = opendir(dir)) == NULL)
+      {
+         if (errno != ENOENT)
+            return;              /* not read: no answers from the names */
+         continue;               /* no folder: nothing in it */
+      }
+      while ((e = readdir(d)) != NULL)
+      {
+         int m = snprintf(full, sizeof(full), "%s/%s", dir, e->d_name);
+         if (m > 0 && (size_t)m < sizeof(full) &&
+             pix_put(pix_hash(full, (size_t)m)) != 0)
+         {
+            closedir(d);
+            return;              /* too many: no answers */
+         }
+         if (mf_cancelled())
+         {
+            closedir(d);
+            return;
+         }
+      }
+      closedir(d);
+   }
+   g_pix_ok = 1;
+}
+
+/* 1 = `path` is in a picture folder whose names say it is not there */
+static int pix_absent(const char *path)
+{
+   const char *sl = strrchr(path, '/');
+   uint64_t dh, h;
+   unsigned k, i;
+   if (!sl)
+      return 0;
+   dh = pix_hash(path, (size_t)(sl - path));
+   for (k = 0; k < PIX_DIRS && g_pix_dir[k] != dh; k++)
+      ;
+   if (!g_pix_ok || k == PIX_DIRS ||
+       g_pix_gen != __atomic_load_n(&g_art_gen, __ATOMIC_RELAXED))
+   {
+      /* (re)read the names: the first time, or 5 s after a change */
+      char root[ML_PATH];
+      size_t rl;
+      if (k == PIX_DIRS && g_pix_ok &&
+          g_pix_gen == __atomic_load_n(&g_art_gen, __ATOMIC_RELAXED))
+         return 0;                /* not a picture folder */
+      if (g_pix_built_us && plat_time_us() - g_pix_built_us < 5000000u)
+         return 0;
+      /* the root: what is before "/boxart/", "/hero/" ... */
+      for (k = 0; k < PIX_DIRS; k++)
+      {
+         const char *f = strstr(path, k_pix_dirs[k]);
+         if (f && f > path && f[-1] == '/' && f + strlen(k_pix_dirs[k]) == sl)
+            break;
+      }
+      if (k == PIX_DIRS)
+         return 0;
+      rl = (size_t)(strstr(path, k_pix_dirs[k]) - path) - 1;
+      if (rl >= sizeof(root))
+         return 0;
+      memcpy(root, path, rl);
+      root[rl] = '\0';
+      pix_build(root);
+      if (!g_pix_ok)
+         return 0;
+      for (k = 0; k < PIX_DIRS && g_pix_dir[k] != dh; k++)
+         ;
+      if (k == PIX_DIRS)
+         return 0;
+   }
+   h = pix_hash(path, strlen(path));
+   for (i = (unsigned)h & (PIX_N - 1); g_pix[i]; i = (i + 1) & (PIX_N - 1))
+      if (g_pix[i] == h)
+         return 0;
+   g_pix_skips++;
+   return 1;
+}
+
 static int mf_whole(const char *path, unsigned char **out, size_t *len)
 {
    int fd, rc;
@@ -286,6 +438,11 @@ static int mf_whole(const char *path, unsigned char **out, size_t *len)
    unsigned char *p = NULL;
    *out = NULL; *len = 0;
    if (mf_cancelled()) return ML_CANCELLED;
+   if (pix_absent(path))
+   {
+      errno = ENOENT;            /* what the open would have said */
+      return mf_missing();
+   }
    fd = mf_open(path);
    if (fd < 0) return mf_cancelled() ? ML_CANCELLED : mf_missing();
    if (mf_cancelled()) rc = ML_CANCELLED;
@@ -532,7 +689,7 @@ static int mf_art(const menu_load_job *job, unsigned kind, menu_load_result *out
          char was[ML_PATH];
          sidecar_mig mig = {0};
          if (snprintf(was, sizeof(was), "%s/boxart/%s.t2.565", job->root,
-                      job->stem) < (int)sizeof(was))
+                      job->stem) < (int)sizeof(was) && !pix_absent(was))
             sidecar_move_file(was, path, &mig);
       }
       rc = mf_image(path, 1, 0, 1, 0, out);

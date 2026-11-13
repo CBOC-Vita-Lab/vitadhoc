@@ -73,7 +73,7 @@ states from other emulators are not portable battery saves. Import size is
 limited to 256 KiB and compatibility still depends on the save layout.
 
 State menus show five entries at a time and scroll through all ten. Quick
-save/load uses the selected slot. State sharing remains limited to five slots
+save/load (Select + L / Select + R) uses slot 1. State sharing remains limited to five slots
 for compatibility with earlier peers. In Hardcore mode, state loading,
 Continue and rewind are restricted for games recognised by RetroAchievements.
 
@@ -151,6 +151,34 @@ an even cadence instead of dropping frames here and there; the game itself
 runs every frame, at its true speed, with its sound. Back to every frame
 after about three seconds with room to spare. Keep full speed and fast
 forward work as before.
+
+## Smooth hand-over
+
+Settings > Gameplay > Smooth hand-over (on by default; `config.ini`
+`smooth_handoff`, `vita.ini` `smooth_handoff` overrides it for a launch). The
+emulating thread hands each finished picture to a drawing thread on another
+core (`vita.ini` `draw_core`, `draw_prio`) through playerkit's mailbox
+(`pk_handoff`); the drawing thread filters, draws, puts the toasts over it and
+presents. At most two pictures are in flight (fewer when the drawing stays
+over budget); fast forward, rewind and Steady pacing's half mode show the
+newest picture. Off in every link session, local two-player play and the
+bench pair. The log has a `handoff:` line every second (gate step `census`).
+
+## The look governor
+
+Image quality Auto (the default) is xBRZ at the largest factor the console
+can hold at a locked 60, over the sharp bilinear base filter. When a game
+cannot, playerkit's look governor (`pk_look`; `docs/DEFAULTS-1.4.md`) takes
+the least visible sacrifice first: the ambient glow's blurred game frame
+(still art instead), xBRZ 4x to 3x, 3x to 2x, the frame blend, xBRZ to sharp
+bilinear, and last the wide view. It decides once a second, applies a change
+at a safe point (the start, the menu closing; after 12 s at the latest), gives
+the look back after sustained headroom, and keeps what the game needed in
+`look/<console>/<xx>/<name>.look`. A row set by hand (Image quality other
+than Auto, an ambient, blend or wide setting other than the default) is never
+touched. The log has a `look:` line every second and a `look_summary` at the
+end. `vita.ini` `auto_xbrz = 0` gives the 1.3 Auto (it followed the Video
+filter).
 
 ## WonderSwan
 

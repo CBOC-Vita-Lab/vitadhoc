@@ -24,8 +24,9 @@
 # The app's include path must have gpsp/ (cheat_engine.h, gbcore/gbcore.h)
 # and gpsp/frontend-common (fe_console.h): corebuild.mk's FE_INC has both.
 #
-# The database is committed (assets/cheats.db, 1.4 MiB); to rebuild it from
-# a libretro-database checkout:
+# The database is committed (assets/cheats.db, 3.7 MiB: GBA, GB,
+# GBC, NES and WonderSwan lists, from libretro-database revision d5bae90b);
+# to rebuild it from a checkout of that revision:
 #     python3 tools/make_cheatdb.py --db <libretro-database> --out assets/cheats.db
 # Tests: make -C tests/cheats test   (see tests/cheats/README).
 

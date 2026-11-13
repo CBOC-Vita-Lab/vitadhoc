@@ -3639,8 +3639,7 @@ static const char *set_help(int id)
              ? "Smoothed at twice the game's size, then sized to fit."
            : g_pcfg.quality == PCFG_QUALITY_3X
              ? "Smoothed at three times its size. More detail, more work."
-             : "The smoothest look that keeps full speed: xBRZ, lighter "
-               "only when a game needs it.";
+             : "xBRZ smoothing, eased only when a game cannot keep 60.";
 #endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)
@@ -3674,8 +3673,8 @@ static const char *set_help(int id)
                              : "Vertical scenes upright on a level Vita; "
                                "the d-pad turns with them.";
    case SET_EXPORT:   return g_export_dest
-                             ? "X: a plain .sav beside the game, for mGBA, "
-                               "SameBoy and others."
+                             ? "X: a plain .sav beside the game (mGBA, "
+                               "SameBoy...)."
                              : "X: a copy RetroArch can use, where it looks.";
    case SET_WSPAL:    return "Black-and-white games: grey, or the original "
                              "LCD's tint. Colour games keep theirs.";
@@ -3713,8 +3712,8 @@ static const char *set_help(int id)
                              "shown in.";
    case SET_THEME:    return "Dark or light menus.";
 #ifdef VITA
-   case SET_SHELL:    return "The game list: tiles over your game (home), a "
-                             "list with box art, or art across the screen.";
+   case SET_SHELL:    return "Tiles over your game, a list with art, or art "
+                             "full screen.";
    case SET_PREVIEW:  return "Rest on a game in the home screen and the last "
                              "ten seconds you played of it play behind it.";
    case SET_COVERS:   return "Retry missing box art and title screens over Wi-Fi.";
@@ -3757,13 +3756,13 @@ static const char *set_help(int id)
 #ifdef VITA
    case SET_CPU:      return ui_host_cpu_note();
    case SET_STEADY:   return g_pcfg.steady_pacing
-                             ? "When drawing cannot keep up: every second frame, "
-                               "evenly. The game keeps its speed."
-                             : "Every frame drawn when it can be; a busy moment "
-                               "drops frames unevenly.";
+                             ? "Busy moments show every second frame, evenly, "
+                               "at full speed."
+                             : "Every frame when it can be; busy moments drop "
+                               "unevenly.";
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
-                             ? "Pictures drawn on a second core: heavy looks "
-                               "do not slow the game."
+                             ? "Drawn on a second core: heavy looks do not "
+                               "slow the game."
                              : "Off: try this if the picture ever misbehaves.";
    case SET_ABSWAP:
       return g_pcfg.ab_buttons < 0
@@ -3780,10 +3779,9 @@ static const char *set_help(int id)
          ? "Shot with the buttons set in Button mapping."
          : "The Vita's own PS + Start takes screenshots.";
    case SET_SPEED:    return g_pcfg.full_speed
-                             ? "Busy moments skip drawing a frame; the "
-                               "game and sound keep speed."
-                             : "Busy moments slow the game and its sound "
-                               "down.";
+                             ? "Busy moments skip a frame; game and sound "
+                               "keep speed."
+                             : "Busy moments slow the game and its sound down.";
    case SET_SGB:      return "Super Game Boy games in the border they bring "
                              "(GB palette: Auto).";
    case SET_RA_ACCOUNT: return "Your retroachievements.org account.";
@@ -3793,10 +3791,10 @@ static const char *set_help(int id)
                              : "States, rewind and cheats allowed.";
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
    case SET_SYNCRA:   return ui_host_sync_ra_on()
-                             ? "Every save gets a copy RetroArch can use, kept "
-                               "in step unless RetroArch changed it."
-                             : "RetroArch's files are left alone. A game's "
-                               "Export save row copies one by hand.";
+                             ? "Each save also goes where RetroArch looks, "
+                               "kept in step."
+                             : "RetroArch's files are left alone; Export save "
+                               "copies one.";
    case SET_NAMES:    return g_pcfg.lib_names
                              ? "Each game shows its file name, as it is on the "
                                "card."
@@ -3806,8 +3804,8 @@ static const char *set_help(int id)
                              "newest first.";
    case SET_COVERPIC: return VID_GLYPH_X ": a picture of your own as the cover of the "
                              "game picked in the list.";
-   case SET_FOLDERS:  return VID_GLYPH_X ": type a folder to add it (ux0:ROMS/GBA), or "
-                             "one listed to remove it.";
+   case SET_FOLDERS:  return VID_GLYPH_X ": add a folder (ux0:ROMS/GBA), or pick one "
+                             "to remove it.";
    case SET_OWN_LOOK: return g_pgame.override
                              ? "Display changes made now apply to this game "
                                "only."
@@ -4914,11 +4912,19 @@ void ui_ctl_warn_inject(int on) { g_ctl_warn = on ? 1 : 0; }
 void ui_ctl_warn_inject(int on) { (void)on; }
 #endif
 static const char *const CTL_WARN_LINES[] = {
+#ifdef VITA
+   /* (UX review G9: the 3.x wording named the PSP and joked) */
+   "Careful: quick save or quick load is now on a",
+   "stick direction by itself. A Vita put down on a",
+   "bed or in a bag can press it and replace a state.",
+   "You won't see this again.",
+#else
    "Hey man, I'm not gonna tell you how to live your life",
    "but be careful. Last thing you'd want is to lose",
    "progress by accidentally saving or loading a state by",
    "doing something as simple as tossing your PSP on the",
    "bed. You won't see this again.",
+#endif
 };
 #define CTL_WARN_N ((int)(sizeof(CTL_WARN_LINES) / sizeof(CTL_WARN_LINES[0])))
 
@@ -7208,7 +7214,7 @@ static void ss_panel(int i)
    if (!g_ov_slot[i])
    {
       static const char l1[] = "Nothing saved here";
-      static const char l2[] = VID_GLYPH_SQ " save";
+      static const char l2[] = VID_GLYPH_X " save";
 #ifdef VITA
       if (g_pcfg.theme != 1)
       {
@@ -7341,10 +7347,13 @@ static ui_action screen_state_slots(unsigned edges)
       {
          if (g_ov_slot[cur])
             act = UI_ACT_LOADSTATE;
-         else            /* on the plate, as every page message: a toast
-                          * would sit on the header */
-            snprintf(g_slot_note, sizeof(g_slot_note),
-                     "Slot %d is empty", g_state_slot);
+         else
+         {
+            /* (UX review G3: X on an empty slot only said "Slot 2 is
+             * empty"; the natural press saves there, as Square does) */
+            g_slot_saving = g_state_slot;
+            act = UI_ACT_SAVESTATE;
+         }
       }
       else if (edges & PSP_CTRL_SQUARE)
       {
@@ -8631,6 +8640,102 @@ static void browser_footer(int n_view, int cur_is_fav)
 
 /* One stat per ROM during the scan was ~2 s of boot on a large library, and
  * it was wasted work: only the handful of entries actually drawn need this. */
+#ifdef VITA
+/* THE SAVES THE SCAN SAW (lessons-audit 1b).  The list said "save present"
+ * from a stat of Game.sav per drawn row, on the UI thread: in a folder of a
+ * thousand games each is a walk of the folder (60-210 ms a scroll step).
+ * The scan reads every name of those folders anyway, so it keeps the
+ * battery-file names (.sav, .srm) and the folders it read, as 64-bit hashes
+ * of the case-folded path; a row's answer is then a lookup.  A folder the
+ * scan did not read still gets the stat.  Saves made since (a game played)
+ * are added by the app (ui_savset_add). */
+#define SAVSET_N 8192u                /* a power of two */
+static uint64_t g_savset[SAVSET_N];   /* 0 = empty */
+static uint64_t g_dirset[512];
+static unsigned g_savset_n, g_dirset_n;
+static unsigned g_savset_hits, g_savset_stats;
+static int g_savset_full;
+
+static uint64_t savset_hash(const char *a, size_t an, const char *b)
+{
+   uint64_t h = 1469598103934665603ull;
+   size_t i;
+   int prev = 0;
+   for (i = 0; i < an; i++)
+   {
+      int c = (unsigned char)a[i];
+      if (c >= 'A' && c <= 'Z') c += 32;
+      if (c == '/' && prev == '/') continue;
+      h = (h ^ (uint64_t)c) * 1099511628211ull;
+      prev = c;
+   }
+   if (b)
+   {
+      if (prev != '/')
+         h = (h ^ (uint64_t)'/') * 1099511628211ull;
+      for (; *b; b++)
+      {
+         int c = (unsigned char)*b;
+         if (c >= 'A' && c <= 'Z') c += 32;
+         h = (h ^ (uint64_t)c) * 1099511628211ull;
+      }
+   }
+   return h ? h : 1;
+}
+
+static void savset_clear(void)
+{
+   memset(g_savset, 0, sizeof(g_savset));
+   g_savset_n = g_dirset_n = 0;
+   g_savset_full = 0;
+}
+
+static int savset_put(uint64_t h)
+{
+   unsigned i = (unsigned)h & (SAVSET_N - 1);
+   if (g_savset_n >= SAVSET_N * 3 / 4)
+      return -1;
+   while (g_savset[i] && g_savset[i] != h)
+      i = (i + 1) & (SAVSET_N - 1);
+   if (!g_savset[i])
+   {
+      g_savset[i] = h;
+      g_savset_n++;
+   }
+   return 0;
+}
+
+static int savset_has(uint64_t h)
+{
+   unsigned i = (unsigned)h & (SAVSET_N - 1);
+   while (g_savset[i])
+   {
+      if (g_savset[i] == h)
+         return 1;
+      i = (i + 1) & (SAVSET_N - 1);
+   }
+   return 0;
+}
+
+static int dirset_has(uint64_t h)
+{
+   unsigned i;
+   if (g_savset_full)
+      return 0;
+   for (i = 0; i < g_dirset_n; i++)
+      if (g_dirset[i] == h)
+         return 1;
+   return 0;
+}
+
+/* (the app: a battery file it has just written) */
+void ui_savset_add(const char *path)
+{
+   if (path && path[0])
+      (void)savset_put(savset_hash(path, strlen(path), NULL));
+}
+#endif
+
 static int rom_has_sav(int idx)
 {
    if (g_roms[idx].has_sav < 0)
@@ -8667,6 +8772,19 @@ static int rom_has_sav(int idx)
          g_roms[idx].has_sav = 0;
          return 0;
       }
+#ifdef VITA
+      {
+         const char *sl = strrchr(sav, '/');
+         if (sl && dirset_has(savset_hash(sav, (size_t)(sl - sav), NULL)))
+         {
+            g_savset_hits++;
+            g_roms[idx].has_sav =
+               (signed char)savset_has(savset_hash(sav, strlen(sav), NULL));
+            return g_roms[idx].has_sav;
+         }
+         g_savset_stats++;
+      }
+#endif
       g_roms[idx].has_sav = (signed char)(sceIoGetstat(sav, &st) >= 0);
    }
    return g_roms[idx].has_sav;
@@ -8722,6 +8840,12 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       return;
    }
    memset(&ent, 0, sizeof(ent));
+#ifdef VITA
+   if (g_dirset_n < sizeof(g_dirset) / sizeof(g_dirset[0]))
+      g_dirset[g_dirset_n++] = savset_hash(dir, strlen(dir), NULL);
+   else
+      g_savset_full = 1;          /* more folders than it keeps: stat */
+#endif
    while ((read_rc = sceIoDread(d, &ent)) > 0)
    {
       /* Memory Stick reports a directory in st_mode on some firmwares and
@@ -8729,6 +8853,17 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
        * out which from a bug report. */
       int is_dir = (ent.d_stat.st_mode & 0x1000) != 0 ||
                    (ent.d_stat.st_attr & 0x0010) != 0;
+#ifdef VITA
+      if (!is_dir)
+      {
+         /* a battery file: remembered for rom_has_sav */
+         size_t nl = strlen(ent.d_name);
+         if (nl > 4 && (!strcasecmp(ent.d_name + nl - 4, ".sav") ||
+                        !strcasecmp(ent.d_name + nl - 4, ".srm")) &&
+             savset_put(savset_hash(dir, strlen(dir), ent.d_name)) != 0)
+            g_savset_full = 1;   /* full: no answers from it, stat instead */
+      }
+#endif
 #ifdef VITA
       /* A game in a .zip: the console of the cartridge inside it (the
        * host's zip reader, ui_host_zip_console); -1 for every other file. */
@@ -9046,6 +9181,7 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
    int c;
    g_rom_view_revision = ++g_rom_rev_seq;
    g_rom_scan_io_errors = 0;
+   savset_clear();             /* this walk sees every folder again */
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {
       memset(&g_side[c], 0, sizeof(g_side[c]));
@@ -9118,6 +9254,8 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
           (int)console, n, walked - began,
           sceKernelGetSystemTimeLow() - walked,
           sceKernelGetSystemTimeLow() - began);
+   fe_evt("savset names=%u dirs=%u full=%d hits=%u stats=%u", g_savset_n,
+          g_dirset_n, g_savset_full, g_savset_hits, g_savset_stats);
    /* With extra folders: what the whole list came to, so that a test can
     * check it is complete and in order (a CRC of the names, in list order,
     * each followed by a newline). */

@@ -101,7 +101,7 @@ class Env:
         return wsl_path(p) if self.wsl else str(p)
 
     def run(self, shell_cmd: str, extra_env: dict[str, str] | None = None,
-            timeout: int = 900) -> subprocess.CompletedProcess:
+            timeout: int = 1800) -> subprocess.CompletedProcess:
         env = dict(os.environ)
         if extra_env:
             env.update(extra_env)

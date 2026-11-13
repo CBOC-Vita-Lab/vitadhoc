@@ -162,6 +162,7 @@ void wk_compose_cfg_default(wk_compose_cfg *c)
     c->period = 1;
     c->period_ban_frames = 300;
     c->soft_always = 0;
+    c->reveal_prov = 0;
 }
 
 wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h, int margin)
@@ -715,13 +716,23 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                     wk_blend_row(row + nf, cdat + nf, w + nf, dith + nf, F);
                 }
                 if (oprov) {
+                    int lim = M;               /* where a higher level layer stops being known */
+                    if (cfg.reveal_prov)
+                        for (int oj = oi + 1; oj < nl; oj++) {
+                            const int lj = in->order[oj];
+                            if (lo.hud || !in->cand[lj][s] || !((lo.level_mask >> lj) & 1))
+                                continue;
+                            const int ej = EXT(c, lj, s, y);       /* the upper layer is fully there only up to its ramp */
+                            lim = wk_min(lim, ej >= M ? M : ej - wk_min(wk_min(cfg.fade_px, 64), ej));
+                        }
                     for (int d = 0; d < n; d++) {
                         const int full = d < nf ? (!op || op[d]) : w[d] == 32;
                         const int any = d < nf ? full : w[d] != 0;
                         if (!any)
                             continue;
                         const int pred = d >= ext;
-                        prow[d] = (uint8_t)((l << 4) | (pred ? (full ? WK_PROV_PERIOD : WK_PROV_PFADE)
+                        prow[d] = (uint8_t)((l << 4) | (d >= lim ? WK_PROV_REVEAL
+                                                       : pred ? (full ? WK_PROV_PERIOD : WK_PROV_PFADE)
                                                               : full ? (is_back ? WK_PROV_BACKDROP : WK_PROV_LEVEL)
                                                                      : WK_PROV_FADE));
                     }

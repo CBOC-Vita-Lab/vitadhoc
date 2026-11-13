@@ -25,8 +25,12 @@ class World:
         self.t2 = [tile_px(t) for t in m["t2"]]
         self.t3 = [tile_px(t) for t in m["t3"]]
         self.level = m["level"]; self.sky = m["sky"]; self.hud = m["hud"]
+        self.lv = [(L["level"], [tile_px(t) for t in L["t1"]]) for L in m["levels"]] if "levels" in m else None
         self.sprites = [tuple(s) for s in m["sprites"]]
         self.M = 0
+
+    def set_level(self, i):
+        if self.lv: self.level, self.t1 = self.lv[i if i < len(self.lv) else 0]
 
     def mathpix(self, c565v):
         r, g, b = (c565v >> 11) & 31, (c565v >> 6) & 31, c565v & 31
@@ -117,27 +121,33 @@ def main():
     meta = json.load(open(sys.argv[1])); World_ = World7(meta) if meta.get('kind') == 'm7' else World(meta)
     files = sorted(glob.glob(os.path.join(sys.argv[2], (sys.argv[3] if len(sys.argv) > 3 else "") + "*.wide")))
     tot_wrong = tot_checked = tot_unchecked = tot_hudalt = 0
-    nunm = 0
+    nunm = 0; nblank = 0
     lead_l = []; lead_r = []; avail_l = []
     worst = []
     for fp in files:
         d = load(fp)
         w, h, M = d["w"], d["h"], d["M"]
         counter = struct.unpack_from("<H", d["wram"], 2)[0]
-        cands = [0] if meta.get("kind") == "m7" else []
+        cands = [(0, 0)] if meta.get("kind") == "m7" else []
         for k in ([] if meta.get('kind') == 'm7' else range(counter - 4, counter + 2)):
             if k < 0: continue
-            cands.append(struct.unpack_from("<H", d["wram"], 0x1000 + 2 * (k & 0x3FF))[0])
-        # find the camera whose truth equals the centre exactly
+            w16 = struct.unpack_from("<H", d["wram"], 0x1000 + 2 * (k & 0x3FF))[0]
+            cands.append((w16 & 0xFFF, w16 >> 12))
+        # find the camera (and level) whose truth equals the centre exactly
         best = None
-        for cam in dict.fromkeys(cands):
+        for cam, lvl in dict.fromkeys(cands):
+            World_.set_level(lvl) if hasattr(World_, "set_level") else None
             bad = 0
             for y in range(0, min(h, 224), 7):
                 for x in range(0, 256, 5):
                     t, alt = World_.pixel(cam, x, y)
                     if t is not None and t != d["px"][y, M + x]: bad += 1
             if bad == 0: best = cam; break
-        if best is None: nunm += 1; continue
+        if best is None:
+            if not d["px"][:, M:M + 256].any(): nblank += 1      # a forced blank frame: nothing to check
+            else: nunm += 1
+            continue
+        World_.set_level(lvl) if hasattr(World_, "set_level") else None
         wrong = checked = unchecked = hudalt = 0
         for y in range(min(h, 224)):
             L, R = int(d["real"][y, 0]), int(d["real"][y, 1])
@@ -159,6 +169,7 @@ def main():
                     if len(worst) < 5: worst.append((os.path.basename(fp), y, x, got, t))
         tot_wrong += wrong; tot_checked += checked; tot_unchecked += unchecked; tot_hudalt += hudalt
     n = len(files)
+    n -= nblank
     print("frames %d (centre unmatched %d): wrong real px %d, checked real px %d, real px outside the level %d, hud-line ambiguous %d" %
           (n, nunm, tot_wrong, tot_checked, tot_unchecked, tot_hudalt))
     if lead_l:

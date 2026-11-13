@@ -8,6 +8,14 @@
 scroll64 / scroll32: mode 1 horizontal scroller. BG1 = level (64 or 32 tile wide map, columns streamed by DMA in the vblank at
 the seam), BG2 = sky (32 wide, scrolls at half speed), BG3 = HUD (fixed, priority), plus three sprites (x=-5, x=250, x=-40).
 The camera is a table (one entry per frame), the ROM only looks it up.
+
+alias_a / alias_b / alias_c / destr / destr_far (the learned map's safety proofs, see WIDE-INTEGRATION.md): the same 64 wide
+scroller with several levels and a schedule (an event table, one word per frame): a level switch with forced blank (new level
+data, tile graphics, camera restarts) or a change of the level data without blank (the ring is streamed again from the new
+data). alias_a: level B shares the scroll coordinates with A but no tiles; alias_b: B = A with 15 % of the cells replaced;
+alias_c: B has A's tilemap words but other graphics; destr: cells near the camera change at frame 300 (a block broken, a
+switch: they are written into the ring at once); destr_far: cells far beyond the ring change at frame 500 (RAM only, the
+game streams them when the camera arrives: the case no picture based map can know, kept as a measured residual).
 """
 import json, os, random, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,6 +51,33 @@ def pack2(px):
     return bytes(out)
 
 
+# sched: (frame, level, blank, reset camera). blank: forced blank for the frame + the level's graphics are loaded
+MULTI = {
+    "alias_a": [(0, 0, 0, 0), (1000, 1, 1, 1), (2000, 0, 1, 1)],
+    "alias_b": [(0, 0, 0, 0), (1000, 1, 1, 1), (2000, 0, 1, 1)],
+    "alias_c": [(0, 0, 0, 0), (1000, 1, 1, 1), (2000, 0, 1, 1)],
+    "destr": [(0, 0, 0, 0), (300, 1, 0, 0)],
+    "destr_far": [(0, 0, 0, 0), (500, 1, 0, 0)],
+}
+SPEED = 2
+
+
+def camera_multi(sched, nframes):
+    """camera table: forward at SPEED x the pattern, back from the end, again; restarts at a flagged level switch"""
+    ev = {f: (lv, bl, rc) for (f, lv, bl, rc) in sched}
+    pat = [0, 1, 2, 3, 1, 0, 2, 1, -1, 1, 2, 0, 3, 1, 1, 2]
+    maxc = (255 - 32 - 6 - 1) * 8
+    cam = []; c = 0; f0 = 0; dr = 1
+    for f in range(nframes):
+        if f in ev and ev[f][2]: c = 0; f0 = f; dr = 1
+        d = pat[((f - f0) // 16) % len(pat)] * SPEED
+        c += d * dr
+        if c >= maxc: c = maxc; dr = -1
+        if c <= 0: c = 0; dr = 1
+        cam.append(c)
+    return cam
+
+
 def camera(kind, wide):
     """cam[f] in pixels. monotone with pauses and small back steps; 32-wide: multiples of 8."""
     cam = []
@@ -69,7 +104,8 @@ def build(kind):
     rnd = random.Random(1234 if kind == "s64" else 4321 if kind == "s64e" else 99)
     win = kind.startswith("win")
     wk_ = kind[-1]
-    N = 64 if kind in ("s64", "s64e", "win64_a", "win64_b") else 32
+    multi = kind in MULTI
+    N = 64 if kind in ("s64", "s64e", "win64_a", "win64_b") or multi else 32
     W = 32
     LL = 6 if N == 64 else 0
     LR = 6 if N == 64 else 0
@@ -109,14 +145,57 @@ def build(kind):
     hud = [[0] * 32 for _ in range(32)]
     for y in range(3):
         for x in range(32): hud[y][x] = 1 + (x + y * 3) % 7
-    cam = camera("s32" if N == 32 else kind, N == 32)
+    # levels: (level cells, tile graphics); level 0 is the one above
+    levels = [(level, t1)]
+    sched = MULTI.get(kind, [])
+    part = None
+    if multi:
+        cam = camera_multi(sched, NFRAMES)
+        r2 = random.Random(31337)
+        def newtile(old): return 1 + r2.randrange(255)
+        if kind == "alias_a":                  # no tile in common: other formula, other tiles
+            lvB = [[(0 if (r < 6 or r >= 28 or ((c * 7 + r * 5 + (c >> 3)) % 5) not in (0, 1)) and not (24 <= r < 28) else 1 + (c * 13 + r * 29 + (c >> 1)) % 255) for r in range(32)] for c in range(256)]
+            for c in range(256):               # make sure no cell equals A's (empty cells too: a ground row everywhere)
+                for r in range(32):
+                    if lvB[c][r] == level[c][r]: lvB[c][r] = 1 + (lvB[c][r] + 17) % 255
+            levels.append((lvB, t1))
+        elif kind == "alias_b":                # 85 % of the cells equal A's
+            lvB = [list(col_) for col_ in level]
+            cells = [(c, r) for c in range(256) for r in range(32)]
+            r2.shuffle(cells)
+            for (c, r) in cells[:len(cells) * 15 // 100]:
+                lvB[c][r] = 1 + (lvB[c][r] + 1 + r2.randrange(254)) % 255
+            levels.append((lvB, t1))
+        elif kind == "alias_c":                # the same words, other graphics
+            t1B = [[0] * 64] + [[1 + r2.randrange(15) for _ in range(64)] for _ in range(1, 256)]
+            levels.append(([list(col_) for col_ in level], t1B))
+        else:                                  # destr / destr_far: cells change at the event frame
+            fe = sched[1][0]
+            cc = cam[fe] >> 3
+            c0, c1 = (cc + 6, cc + 22) if kind == "destr" else (min(cc + 62, 200), min(cc + 90, 235))
+            lvB = [list(col_) for col_ in level]
+            for c in range(c0, c1 + 1):
+                for r in range(4, 28):
+                    lvB[c][r] = 1 + (lvB[c][r] * 3 + 7 + r) % 255 if (r + c) % 3 else 0
+            levels.append((lvB, t1))
+            part = (c0, c1)
+            print("  %s: cells change in columns %d..%d at frame %d (camera column %d)" % (kind, c0, c1, fe, cc))
+    else:
+        cam = camera("s32" if N == 32 else kind, N == 32)
     # ---- ROM data
     bank1 = bytearray(0x8000)
-    for c in range(256):
-        for r in range(32):
-            v = level[c][r] | (2 << 10)
-            bank1[c * 64 + r * 2: c * 64 + r * 2 + 2] = struct.pack("<H", v)
-    for t in range(256): bank1[0x4000 + t * 32: 0x4000 + t * 32 + 32] = pack4(t1[t])
+    lvbanks = []
+    for k, (lv_, tt_) in enumerate(levels):
+        bk = bank1 if k == 0 else bytearray(0x8000)
+        for c in range(256):
+            for r in range(32):
+                v = lv_[c][r] | (2 << 10)
+                bk[c * 64 + r * 2: c * 64 + r * 2 + 2] = struct.pack("<H", v)
+        for t in range(256): bk[0x4000 + t * 32: 0x4000 + t * 32 + 32] = pack4(tt_[t])
+        lvbanks.append(bk)
+    evw = [0] * NFRAMES
+    for (f, lv, bl, rc) in sched:
+        if f: evw[f] = (lv + 1) | (0x80 if bl else 0)
     bank2 = bytearray(0x8000)
     o = {}
     def put(name, off, data):
@@ -138,6 +217,7 @@ def build(kind):
     oam[512:544] = hi
     put("oam", 0x1AA0, bytes(oam))
     put("cam", 0x2000, b"".join(struct.pack("<H", c) for c in cam))
+    if multi: put("ev", 0x4000, b"".join(struct.pack("<H", v) for v in evw))
     a = Asm(0x8000)
     # ---- code
     R = a
@@ -186,6 +266,8 @@ def build(kind):
     R.lda("#", 0xFFFF); R.ldx("#", 0)
     R.label("tg"); R.sta("absx", 0x0400); R.inx(); R.inx(); R.cpx("#", 128); R.bne("tg")
     R.lda("#", 0); R.sta("dp", 0x02)       # frame
+    R.lda("#", 1); R.sta("dp", 0x0E)       # bank of the level data
+    R.lda("#", 0); R.sta("dp", 0x16)       # level
     R.jsr("abs", "update")                       # frame 0 state into VRAM during forced blank
     R.sep(0x20)
     w8(0x4200, 0x81); w8(0x2100, 0x0F)
@@ -196,8 +278,38 @@ def build(kind):
     R.rep(0x30)
     R.lda("dp", 0x02); R.asla(); R.tax()
     R.lda("longx", 0x020000 + 0x8000 + o["cam"]); R.sta("dp", 0x00)
+    if multi:
+        R.lda("longx", 0x020000 + 0x8000 + o["ev"]); R.sta("dp", 0x10)
+        R.beq("noev")
+        R.and_("#", 0x7F); R.deca(); R.sta("dp", 0x16)
+        R.asla(); R.inca(); R.sta("dp", 0x0E)
+        if kind == "destr_far":                # RAM only: nothing is written into the ring now, later streams use the new data
+            pass
+        elif part:                             # the changed columns are written into the ring at once (a block broken, a switch)
+            R.lda("#", 0xFFFF); R.ldx("#", (part[0] & 63) * 2)
+            R.label("rt"); R.sta("absx", 0x0400); R.inx(); R.inx(); R.cpx("#", ((part[1] & 63) + 1) * 2); R.bne("rt")
+        else:
+            R.lda("#", 0xFFFF); R.ldx("#", 0)
+            R.label("rt"); R.sta("absx", 0x0400); R.inx(); R.inx(); R.cpx("#", 128); R.bne("rt")
+        R.lda("dp", 0x10); R.and_("#", 0x80); R.beq("noev")
+        R.sep(0x20)
+        R.lda("#", 0x8F); R.sta("abs", 0x2100)
+        R.lda("#", 0x80); R.sta("abs", 0x2115)
+        R.rep(0x20); R.lda("#", 0x2000); R.sta("abs", 0x2116); R.sep(0x20)
+        R.lda("#", 0x01); R.sta("abs", 0x4300); R.lda("#", 0x18); R.sta("abs", 0x4301)
+        R.rep(0x20); R.lda("#", 0xC000); R.sta("abs", 0x4302); R.sep(0x20)
+        R.lda("dp", 0x0E); R.sta("abs", 0x4304)
+        R.rep(0x20); R.lda("#", 0x2000); R.sta("abs", 0x4305); R.sep(0x20)
+        R.lda("#", 1); R.sta("abs", 0x420B)
+        R.rep(0x30)
+        R.label("noev")
     R.lda("dp", 0x02); R.and_("#", 0x03FF); R.asla(); R.tax()
     R.lda("dp", 0x00); R.sta("absx", 0x1000)
+    if multi:
+        R.lda("dp", 0x16)
+        for _ in range(12): R.asla()
+        R.ora("dp", 0x00); R.sta("absx", 0x1000)
+        R.lda("dp", 0x00)
     R.lsra(); R.lsra(); R.lsra(); R.sta("dp", 0x04)          # cam_col
     R.sec(); R.sbc("#", LL); R.bpl("c0ok"); R.lda("#", 0)
     R.label("c0ok"); R.sta("dp", 0x06)                      # c = max(0, cam_col - LL)
@@ -234,20 +346,26 @@ def build(kind):
     R.lda("#", 0x81); R.sta("abs", 0x2115)
     R.lda("#", 0x01); R.sta("abs", 0x4300)
     R.lda("#", 0x18); R.sta("abs", 0x4301)
-    R.lda("#", 1); R.sta("abs", 0x4304)
-    R.sta("abs", 0x420B)
+    R.lda("dp", 0x0E); R.sta("abs", 0x4304)
+    R.lda("#", 1); R.sta("abs", 0x420B)
     R.rep(0x30)
     R.rts()
     # ---- NMI
     R.label("nmi")
     R.rep(0x30)
-    R.sep(0x20); R.lda("abs", 0x4210); R.rep(0x30)
+    R.sep(0x20); R.lda("abs", 0x4210)
+    if multi: R.lda("#", 0x0F); R.sta("abs", 0x2100)
+    R.rep(0x30)
     R.jsr("abs", "update")
     R.rti()
     code = R.link()
-    rom = make_lorom({0: code, 1: bytes(bank1), 2: bytes(bank2)}, "WIDE SYNTH " + kind.upper(), R.labels["nmi"], R.labels["reset"])
-    return rom, dict(kind=kind, win=kind if win else "", N=N, W=W, LL=LL, LR=LR, level=level, t1=t1, t2=t2, t3=t3, sky=sky, hud=hud,
-                     cg=[list(c) for c in cg], cam=cam, sprites=sprites)
+    banks = {0: code, 1: bytes(bank1), 2: bytes(bank2)}
+    for k in range(1, len(levels)): banks[2 * k + 1] = bytes(lvbanks[k])
+    rom = make_lorom(banks, "WIDE SYNTH " + kind.upper(), R.labels["nmi"], R.labels["reset"])
+    meta = dict(kind=kind, win=kind if win else "", N=N, W=W, LL=LL, LR=LR, level=level, t1=t1, t2=t2, t3=t3, sky=sky, hud=hud,
+                cg=[list(c) for c in cg], cam=cam, sprites=sprites)
+    if multi: meta["levels"] = [dict(level=lv_, t1=tt_) for (lv_, tt_) in levels]; meta["sched"] = sched
+    return rom, meta
 
 
 M7 = dict(H=96, V=200, CX=128, CY=128)
@@ -331,7 +449,8 @@ def build_m7(kind="m7"):
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
-    for kind, name in (("s64", "wide_scroll64"), ("s64e", "wide_scroll64e"), ("s32", "wide_scroll32"), ("win_a", "wide_win_a"), ("win_b", "wide_win_b"), ("win64_a", "wide_win64_a"), ("win64_b", "wide_win64_b")):
+    for kind, name in (("s64", "wide_scroll64"), ("s64e", "wide_scroll64e"), ("s32", "wide_scroll32"), ("win_a", "wide_win_a"), ("win_b", "wide_win_b"), ("win64_a", "wide_win64_a"), ("win64_b", "wide_win64_b"),
+                       ("alias_a", "wide_alias_a"), ("alias_b", "wide_alias_b"), ("alias_c", "wide_alias_c"), ("destr", "wide_destr"), ("destr_far", "wide_destr_far")):
         rom, meta = build(kind)
         open(os.path.join(out, name + ".sfc"), "wb").write(rom)
         json.dump(meta, open(os.path.join(out, name + ".json"), "w"))

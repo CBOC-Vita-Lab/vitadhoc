@@ -52,7 +52,10 @@ enum { WK_FADE_ALPHA = 0, WK_FADE_STIPPLE = 1 };
 enum { WK_PROV_CENTRE = 0, WK_PROV_BG = 1, WK_PROV_SOFT = 2, WK_PROV_BACKDROP = 3,
        WK_PROV_LEVEL = 4, WK_PROV_FADE = 5, WK_PROV_GHOST = 6, WK_PROV_SMEAR = 7,
        WK_PROV_PERIOD = 8,   /* provable-periodic continuation, full weight   */
-       WK_PROV_PFADE = 9 };  /* ... partly faded                              */
+       WK_PROV_PFADE = 9,    /* ... partly faded                              */
+       WK_PROV_REVEAL = 11 };/* a lower layer's real pixel shown where a higher level layer is not known
+                                (cfg.reveal_prov; the pixel of the lower layer is real, the layer above it is
+                                missing: not a claim that the picture is complete here) */
 
 /* Widest inner strip (wk_compose_in.inner_n) the periodic detector uses. */
 #define WK_MAX_INNER 64
@@ -75,6 +78,7 @@ typedef struct wk_compose_cfg {
     int soft_sample;    /* edge columns averaged for the soft edge (4)         */
     int soft_darken;    /* % the soft edge darkens towards the screen edge (30)*/
     uint16_t bg_default;/* flat backdrop colour when the caller gives none     */
+    int reveal_prov;    /* 1: pixels of a layer lying beyond the extent of a higher level layer get WK_PROV_REVEAL (0) */
     int period;         /* 1: continue provably periodic terrain beyond the
                            trusted edge (see below); needs inner strips      */
     int period_ban_frames; /* periodic continuation of a layer is switched off

@@ -16,7 +16,8 @@ struct Entry {
     uint16_t h16, gfx;
     uint8_t conf;
     uint8_t scout;    /* 0: seen in the live picture; else the scout generation that recorded it (not yet seen live) */
-    uint8_t pad[2];
+    uint8_t live;     /* seen in the live picture since its room was bound (cfg.live_flags) */
+    uint8_t pad;
 };
 
 struct Room {
@@ -67,6 +68,8 @@ struct wk_map {
     wk_map_stats st;
     Vis *vis;
     uint8_t scout_gen;         /* scouted cells of other generations are never served */
+    uint32_t cand;             /* probation: the room being confirmed, and how many frames in a row it has matched */
+    int cand_ok;
 };
 
 void wk_map_cfg_default(wk_map_cfg *c)
@@ -83,6 +86,12 @@ void wk_map_cfg_default(wk_map_cfg *c)
     c->min_conf = 1;
     c->file_cap = 262144;
     c->min_room_cells = 48;
+    c->bind_pct = 0;
+    c->bind_frames = 0;
+    c->match_by_code = 0;
+    c->drop_on_revoke = 0;
+    c->seam_tiles = 0;
+    c->live_flags = 0;
 }
 
 wk_map *wk_map_create(const wk_map_cfg *cfg, uint32_t game_crc)
@@ -222,6 +231,16 @@ static int count_rooms(const wk_map *m)
     return n;
 }
 
+/* a room is bound again (a new run of the level): nothing in it has been seen in this run yet */
+static void demote_room(wk_map *m, uint32_t id)
+{
+    if (!m->cfg.live_flags)
+        return;
+    for (uint32_t i = 0; i < m->npool; i++)
+        if ((uint32_t)(m->pool[i].key >> 32) == id)
+            m->pool[i].live = 0;
+}
+
 static Room *new_room(wk_map *m)
 {
     for (;;) {
@@ -330,7 +349,7 @@ static void overlap(const wk_map *m, uint32_t room, int n, int *found, int *matc
         if (!e || e->gfx != m->vis[i].gfx || e->scout)
             continue;
         fo++;
-        if (e->h16 == m->vis[i].h16)
+        if (m->cfg.match_by_code ? e->code == m->vis[i].code : e->h16 == m->vis[i].h16)
             ma++;
     }
     *found = fo;
@@ -351,6 +370,8 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
         m->miss = 0;
     }
     if (out->scene_event || f->brightness <= 2) {
+        m->cand = 0;
+        m->cand_ok = 0;
         m->since_event = 0;
         m->cur_room = 0;
         m->bound = m->fresh = 0;
@@ -366,6 +387,38 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
     if (!m->bound) {
         if (m->since_event < m->cfg.settle_frames)
             return;
+        const int bpct = m->cfg.bind_pct > 0 ? m->cfg.bind_pct : m->cfg.match_pct;
+        if (m->cand) {
+            /* probation: the candidate room must match on every frame of the run, else start over */
+            int fo, ma;
+            if (!room_by_id(m, m->cand)) {
+                m->cand = 0;
+                m->cand_ok = 0;
+            } else {
+                overlap(m, m->cand, n, &fo, &ma);
+                if (fo * 100 >= n * m->cfg.found_pct && fo >= 24 && ma * 100 >= fo * bpct) {
+                    if (++m->cand_ok < m->cfg.bind_frames)
+                        return;
+                    /* confirmed: bind it below */
+                    uint32_t c = m->cand;
+                    m->cand = 0;
+                    m->cand_ok = 0;
+                    m->cur_room = c;
+                    m->bound = 1;
+                    m->fresh = 0;
+                    m->miss = 0;
+                    m->st.binds++;
+                    demote_room(m, c);
+                    room_by_id(m, c)->last_used = m->clock++;
+                    goto bound_now;
+                }
+                m->cand = 0;
+                m->cand_ok = 0;
+                m->tries = 0;
+                m->last_try = m->since_event;
+                return;
+            }
+        }
         if (m->since_event - m->last_try < m->cfg.rematch_gap && m->tries > 0)
             return;
         /* try to recognise a known room at this world position */
@@ -378,19 +431,28 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
             int fo, ma;
             overlap(m, r->id, n, &fo, &ma);
             if (fo * 100 >= n * m->cfg.found_pct && fo >= 24 &&
-                ma * 100 >= fo * m->cfg.match_pct && ma > best_m) {
+                ma * 100 >= fo * bpct && ma > best_m) {
                 best = r->id;
                 best_m = ma;
             }
         }
         m->tries++;
         m->last_try = m->since_event;
+        if (best && m->cfg.bind_frames > 0) {
+            m->cand = best;
+            m->cand_ok = 1;
+            if (m->cand_ok < m->cfg.bind_frames)
+                return;
+            m->cand = 0;
+            m->cand_ok = 0;
+        }
         if (best) {
             m->cur_room = best;
             m->bound = 1;
             m->fresh = 0;
             m->miss = 0;
             m->st.binds++;
+            demote_room(m, best);
             room_by_id(m, best)->last_used = m->clock++;
         } else if (m->tries >= m->cfg.rematch_tries || count_rooms(m) == 0) {
             Room *r = new_room(m);
@@ -406,6 +468,7 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
         }
     }
 
+bound_now:
     int found, matched;
     overlap(m, m->cur_room, n, &found, &matched);
     m->st.found = found;
@@ -420,6 +483,11 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
         /* the picture no longer matches what we stored: forget the binding,
          * try again (and open a new room if nothing matches) */
         m->st.revokes++;
+        if (m->cfg.drop_on_revoke) {
+            Room *dr = room_by_id(m, m->cur_room);
+            if (dr)
+                drop_room(m, dr);
+        }
         m->bound = 0;
         m->fresh = 0;
         m->cur_room = 0;
@@ -440,6 +508,7 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
         uint64_t key = rbase | m->vis[i].local;
         Entry *e = find(m, key);
         if (e) {
+            e->live = 1;
             if (e->h16 == m->vis[i].h16 && e->gfx == m->vis[i].gfx) {
                 if (e->scout) {
                     /* hindsight: a scouted cell now seen live, the same */
@@ -468,6 +537,7 @@ void wk_map_update(wk_map *m, const wk_frame *f, const wk_out *out)
             e->h16 = m->vis[i].h16;
             e->gfx = m->vis[i].gfx;
             e->conf = 1;
+            e->live = 1;
         }
     }
     Room *r = room_by_id(m, m->cur_room);
@@ -493,12 +563,30 @@ static int cell_at(const wk_map *m, const wk_frame *f, const wk_out *out, int la
     if (!e || e->conf < m->cfg.min_conf || e->gfx != (L->map_by_cell ? 0 : fold16(L->gfx_id)) ||
         (e->scout && e->scout != m->scout_gen))
         return 0;
+    if (m->cfg.seam_tiles > 0 && index >= 1) {
+        /* the visible tiles next to the seam, same tile row, must be what the room holds */
+        const int mw = L->map_w, mh = L->map_h;
+        const int rr = wk_floormod(wk_floordiv(out->world_row[layer][y], g.tp), mh);
+        for (int k = 0; k < m->cfg.seam_tiles && k < g.nvis; k++) {
+            int32_t c2 = side == WK_LEFT ? g.tile_first + k : g.tile_first + g.nvis - 1 - k;
+            int ok2;
+            uint32_t lk2 = local_key(layer, c2, row, &ok2);
+            if (!ok2)
+                return 0;
+            const Entry *e2 = find(m, ((uint64_t)m->cur_room << 32) | lk2);
+            const int i2 = rr * mw + wk_floormod(c2, mw);
+            const uint32_t live = L->code ? L->code[i2] : L->hash[i2];
+            if (!e2 || e2->scout || live == WK_CODE_NOREC || e2->code != live)
+                return 0;
+        }
+    }
     if (cell) {
         cell->code = e->code;
         cell->gfx = e->gfx;
         cell->h16 = e->h16;
         cell->conf = e->conf;
         cell->scout = e->scout ? 1 : 0;
+        cell->live = e->live;
     }
     return 1;
 }

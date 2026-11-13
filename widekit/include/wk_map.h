@@ -34,6 +34,17 @@ typedef struct wk_map_cfg {
     int min_conf;       /* cell confidence needed to serve it (1)              */
     int file_cap;       /* largest persisted file in bytes (262144)            */
     int min_room_cells; /* rooms smaller than this are not persisted (48)      */
+    /* Safety options (all 0 = the behaviour above, unchanged; the SNES adapter sets them). */
+    int bind_pct;       /* % of found cells that must match to BIND a room (0: match_pct) */
+    int bind_frames;    /* probation: the room must keep matching for this many frames in a row before it is
+                         * bound and may serve a tile (0: bind at once)                                   */
+    int match_by_code;  /* 1: rooms are matched and verified by the tilemap word (graphics changes such as animation
+                         * do not break a match; the adapter checks the graphics of every tile it draws)   */
+    int drop_on_revoke; /* 1: a room whose binding is revoked (the picture contradicted it) is dropped        */
+    int live_flags;     /* 1: wk_cell.live tells whether the cell was seen in the live picture since the room was bound
+                         * (cells of an earlier run or session are live = 0 until they are seen again)      */
+    int seam_tiles;     /* serve a learned cell only if this many visible tiles next to the seam, in the same tile
+                         * row, equal the room's cells (by tilemap word); 0 = no check                        */
 } wk_map_cfg;
 
 typedef struct wk_cell {
@@ -42,6 +53,7 @@ typedef struct wk_cell {
     uint16_t gfx;       /* folded tileset identity it was recorded with        */
     uint8_t conf;       /* times seen unchanged                                */
     uint8_t scout;      /* 1: recorded by the look-ahead and not yet seen live (a guess that proved nothing so far) */
+    uint8_t live;       /* cfg.live_flags: 1 = seen live since the room was bound (else a memory of an earlier run) */
 } wk_cell;
 
 typedef struct wk_map_stats {

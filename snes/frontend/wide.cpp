@@ -31,7 +31,7 @@
 
 namespace {
 
-enum { MAXH = 240, RING_MAX = 64 * 64, NOUT = 4, PROV_EXACT = 10, COV_ON = 85, COV_OFF = 75 };
+enum { MAXH = 240, RING_MAX = 64 * 64, NOUT = 4, PROV_EXACT = 10, PROV_SOFTL = 12, SOFT_W = 16, COV_ON = 85, COV_OFF = 75 };
 
 static inline uint32_t mix32(uint32_t a, uint32_t b)
 {
@@ -104,6 +104,7 @@ struct Adapter {
 	int on, margin224, core_margin;
 	int period, fade_px, appear, settle, debug, layered;
 	int learn = 1;
+	int map_safe = 1;
 	/* game */
 	int have_game;
 	uint32_t crc;
@@ -133,6 +134,8 @@ struct Adapter {
 	uint16_t xr[MAXH][2][4];   /* per line: the ring-backed real margin of a line whose layers cannot be continued from the map */
 	uint8_t xl[MAXH];
 	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
+	uint8_t softm[MAXH][2][SNES_WIDE_MAX_MARGIN];   /* per margin pixel: bit n = layer n shows a learned cell that has not been seen live in this run (blended toward the ambient frame) */
+	int soft_on;
 	/* ambient frame: calm dimmed colours of the scene's own edges, never structure */
 	int amb_have;
 	int amb_c[2][32][3];       /* per side and 8-line cell: temporal mean colour, Q4 */
@@ -415,6 +418,7 @@ static int make_compose(int H, int Mh)
 	if (A.C) { wk_compose_destroy(A.C); A.C = NULL; }
 	wk_compose_cfg_default(&cc);
 	cc.period = A.period;
+	cc.reveal_prov = 1;
 	cc.fade_px = A.fade_px > 0 ? A.fade_px : 24;
 	cc.soft_blur = 0; cc.soft_sample = 1; cc.soft_darken = 45; cc.soft_always = 1;   /* the base is the ambient colours below */
 	for (int d = 0; d < Mh; d++) {
@@ -471,6 +475,19 @@ static void make_map(void)
 	if (A.M || !A.have_game || !A.learn) return;
 	wk_map_cfg_default(&mc);
 	mc.max_cells = 32768;
+	if (A.map_safe) {
+		/* what makes a learned cell safe to show (snes/WIDE-INTEGRATION.md, "Learned map safety"); map_safe is a bit mask
+		 * for the tests (1 = all): 2 strict bind, 4 match by tilemap word, 8 drop a contradicted room, 16 seam check,
+		 * 64 strict verify with instant revoke, 128 cells not seen live in this run are shown softly */
+		const int f = A.map_safe == 1 ? 254 : A.map_safe;
+		A.soft_on = (f & 128) != 0;
+		if (f & 128) mc.live_flags = 1;
+		if (f & 2) { mc.bind_pct = 98; mc.bind_frames = 8; }
+		if (f & 4) mc.match_by_code = 1;
+		if (f & 8) mc.drop_on_revoke = 1;
+		if (f & 16) mc.seam_tiles = 2;
+		if (f & 64) { mc.verify_pct = 98; mc.revoke_frames = 1; }
+	}
 	A.M = wk_map_create(&mc, A.crc);
 }
 
@@ -656,9 +673,13 @@ static void run(const SWideView *v)
 		wk_map_stats ms;
 		wk_map_stats_get(A.M, &ms);
 		st.map_cells = ms.cells; st.map_rooms = ms.rooms; st.map_bound = ms.bound; st.map_served = (int) ms.served_tiles;
+		static int dbg = getenv("WIDE_DBG") ? 1 : 0;
+		if (dbg) fprintf(stderr, "wd f=%u ev=%d bound=%d room=%d rooms=%d cells=%d found=%d match=%d binds=%u revokes=%u new=%u served=%u\n", (unsigned) v->clock, wo->scene_event, ms.bound, ms.cur_room, ms.rooms, ms.cells, ms.found, ms.matched, ms.binds, ms.revokes, ms.new_rooms, ms.served_tiles);
 	}
 
 	/* 3. candidates */
+	amb_update(v, H, wo->scene_event != 0);
+	if (A.soft_on) memset(A.softm, 0, sizeof A.softm);
 	const int Mc_ = Mc;
 	for (int y = 0; y < H; y++) {
 		const SWideLine &Ln = v->line[y];
@@ -706,6 +727,7 @@ static void run(const SWideView *v)
 				}
 				if (real > Mh) real = Mh;
 				if (ring > real) ring = real;
+				if (getenv("WIDE_DBG2") && v->clock >= 1040 && v->clock <= 1041 && y == 56 && s == 1) fprintf(stderr, "f=%u l=%d real=%d ring=%d coh=%d kind=%d\n", (unsigned) v->clock, l, real, ring, wo->coherent[l][y], wo->kind[l]);
 				const uint16_t *pp = v->pass_px[pass] + (size_t) y * SW_PITCH;
 				const uint8_t *pz = v->pass_z[pass] + (size_t) y * SW_PITCH;
 				int d;
@@ -735,12 +757,18 @@ static void run(const SWideView *v)
 								cok = (uint16_t) ((hh ^ (hh >> 16)) & 0xFFFF) == cell.h16;
 							}
 						}
+						if (getenv("WIDE_DBG2") && v->clock == 881 && y == 56 && s == 0 && l == 0) fprintf(stderr, "d=%d idx=%d cok=%d ring=%d real=%d code=%x tf=%d nvis=%d wx=%d\n", d, idx, cok, ring, real, cok ? cell.code : 0, (int) g.tile_first, g.nvis, wx);
 						if (!cok) { lo->real[s][l] = (uint16_t) d; break; }
 						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
 						const int ci = cell_index(v, Ly, cell.code, fmod_(xw, tp), fmod_(wo->world_row[l][y], tp));
 						if (tsx_math) { dst[d] = math_add565(Ln.backdrop, ci < 0 ? Ln.fix565 : v->colors[ci]); op[d] = 1; }
 						else if (ci < 0) { dst[d] = 0; op[d] = 0; }
 						else { dst[d] = v->colors[ci]; op[d] = 1; }
+						if (A.soft_on && !cell.live && op[d]) {
+							/* a memory of an earlier run or session, not seen in this one: a hint, shown softly */
+							dst[d] = mix565(dst[d], amb_row(s, y, Mh)[d], SOFT_W);
+							A.softm[y][s][d] |= (uint8_t) (1 << l);
+						}
 					}
 				}
 			}
@@ -749,7 +777,6 @@ static void run(const SWideView *v)
 	}
 
 	/* 4. compose */
-	amb_update(v, H, wo->scene_event != 0);
 	wk_compose_in ci;
 	memset(&ci, 0, sizeof ci);
 	ci.edge_px[0] = A.edge_px[0]; ci.edge_px[1] = A.edge_px[1];
@@ -841,10 +868,25 @@ static void run(const SWideView *v)
 	st.real_l = nreal ? (int) (sl / nreal) : 0;
 	st.real_r = nreal ? (int) (sr / nreal) : 0;
 
+	/* provenance of soft learned pixels: a hint, never a claim of real picture */
+	if (A.soft_on)
+		for (int y = 0; y < H; y++) {
+			if (!line_ok(v->line[y])) continue;
+			uint8_t *prow = o->prov + (size_t) y * OW;
+			for (int s = 0; s < 2; s++) {
+				const uint8_t *sm = A.softm[y][s];
+				for (int d = 0; d < Mh; d++) {
+					if (!sm[d]) continue;
+					uint8_t &p = prow[s == 0 ? Mh - 1 - d : Mh + 256 + d];
+					if ((p & 15) == WK_PROV_LEVEL && ((sm[d] >> (p >> 4)) & 1)) p = (uint8_t) ((p & 0xF0) | PROV_SOFTL);
+				}
+			}
+		}
+
 	/* 6. census, coverage and the Auto decision (per game and scene) */
 	if (wo->scene_event) A.cen.scenes++;
 	if ((A.frame_n & 1) == 0 || !A.cov_have) {
-		uint64_t ctm = 0, cln = 0, cbd = 0, cun = 0;
+		uint64_t ctm = 0, cln = 0, cbd = 0, cun = 0, csf = 0, crv = 0;
 		for (int y = 0; y < H; y++) {
 			const SWideLine &Ln = v->line[y];
 			if (!line_ok(Ln)) continue;
@@ -856,23 +898,28 @@ static void run(const SWideView *v)
 					if (lo->ring[s][l] > ring_e) ring_e = lo->ring[s][l];
 					if (lo->real[s][l] > real_e) real_e = lo->real[s][l];
 				}
-				int tm = 0, bd = 0, un = 0;
+				int tm = 0, bd = 0, un = 0, sf = 0, rv = 0;
 				const uint8_t *pp = prow + (s == 0 ? 0 : Mh + 256);
 				for (int d = 0; d < Mh; d++) {
 					const int p = pp[s == 0 ? Mh - 1 - d : d] & 15;
 					if (p == WK_PROV_LEVEL || p == PROV_EXACT || p == WK_PROV_FADE) tm++;
 					else if (p == WK_PROV_BACKDROP || p == WK_PROV_BG) bd++;
+					else if (p == PROV_SOFTL) sf++;
+					else if (p == WK_PROV_REVEAL) rv++;
 					else un++;
 				}
 				int ln_ = real_e > ring_e ? real_e - ring_e : 0;
 				if (ln_ > tm) ln_ = tm;
 				ctm += (uint64_t) (tm - ln_); cln += (uint64_t) ln_; cbd += (uint64_t) bd; cun += (uint64_t) un;
+				csf += (uint64_t) sf; crv += (uint64_t) rv;
 			}
 		}
-		const uint64_t tot = ctm + cln + cbd + cun;
+		const uint64_t tot = ctm + cln + cbd + cun + csf + crv;
 		A.cen.px_tilemap += ctm; A.cen.px_learned += cln; A.cen.px_backdrop += cbd; A.cen.px_unknown += cun;
+		A.cen.px_soft += csf; A.cen.px_reveal += crv;
 		if (tot) {
-			const int c256 = (int) ((ctm + cln + cbd) * 100 * 256 / tot);
+			/* soft learned pixels and revealed lower layers count half: they are real memory / real lower layer, not a proven picture */
+			const int c256 = (int) (((ctm + cln + cbd) * 2 + csf + crv) * 50 * 256 / tot);
 			if (!A.cov_have || wo->scene_event) { A.cov_q8 = c256; A.cov_have = 1; }
 			else A.cov_q8 += (c256 - A.cov_q8) / 60;
 		}
@@ -1017,6 +1064,10 @@ int snes_wide_option(const char *name, int v)
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
 	else if (!strcmp(name, "debug")) A.debug = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
+	else if (!strcmp(name, "map_safe")) {
+		A.map_safe = v;
+		if (A.M) { wk_map_destroy(A.M); A.M = NULL; make_map(); }
+	}
 	else if (!strcmp(name, "learn")) {
 		A.learn = v != 0;
 		if (!A.learn && A.M) { wk_map_destroy(A.M); A.M = NULL; }

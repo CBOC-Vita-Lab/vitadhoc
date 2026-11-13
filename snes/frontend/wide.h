@@ -64,6 +64,8 @@ typedef struct snes_wide_census {
 	uint64_t px_learned;             /* ... from the learned map (estimate: real beyond the tilemap's own extent) */
 	uint64_t px_backdrop;            /* ... continued backdrop layers / flat backdrop colour that widekit proved */
 	uint64_t px_unknown;             /* ... ambient (nothing proven) */
+	uint64_t px_soft;                /* ... learned cells not seen live in this run, shown softly (a hint, counted half in the coverage) */
+	uint64_t px_reveal;              /* ... a lower layer shown where the layer above it is not known (counted half) */
 	uint32_t map_cells;              /* learned map cells now */
 	int coverage_pct;                /* smoothed real share of the margins, percent */
 	int auto_wide;                   /* Auto's current decision (1 = real picture) */

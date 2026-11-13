@@ -56,6 +56,13 @@ OWN_GB = os.path.join(HERE, "testrom", "gbsave.gb")
 # the cheats workstream's cartridge: a "game" with lives and gold at known
 # addresses, drawn as coloured blocks (make -C ../tests/cheats/rom)
 CHEAT_GBA = os.path.join(HERE, "..", "tests", "cheats", "rom", "cheatrom.gba")
+
+
+def bkt(stem):
+    """A game's state bucket (1.4, psp/sidecar.h and playerkit/FORMATS.md):
+    the first two hex digits of the CRC-32 of its name."""
+    import zlib
+    return "%02x" % (zlib.crc32(stem.encode("utf-8")) >> 24)
 REF = os.path.join(HERE, "ref")
 
 # Lines that must not be in the log of a run that went well.
@@ -529,7 +536,7 @@ def t_session(S):
     S.picture(r, "states.png", "states.png", box=(470, 120, 960, 455))
 
     # states: the files, as the PSP writes them
-    stem = os.path.join(r.root, "states", "gba", "gbadhoc-test")
+    stem = os.path.join(r.root, "states", "gba", bkt("gbadhoc-test"), "gbadhoc-test")
     S.check(r.has(r"state_save slot=2 thumb=0 shot=0"), "slot 2 was saved")
     for slot in (1, 0):
         st = "%s.st%d" % (stem, slot)
@@ -1136,7 +1143,7 @@ def t_resume(S):
     battery save.  An in-game save makes a new point half a second later, so
     a console closed from LiveArea (no notice) continues after it."""
     home = {"ui_home": 1, "last_rom": "gbadhoc-test.gba"}
-    rsm = lambda r: os.path.join(r.root, "states", "gba", "gbadhoc-test.rsm")
+    rsm = lambda r: os.path.join(r.root, "states", "gba", bkt("gbadhoc-test"), "gbadhoc-test.rsm")
     # Play, leave to the list: the point is written; the page says Continue.
     r = S.run("resume_leave", "60:cross\n+300:right:60\n+60:shot=left.png\n" +
               QUIT_TO_LIST + "+150:shot=home.png\n+10:quit\n", config=home)
@@ -1314,7 +1321,7 @@ def t_patch(S):
     for f in glob.glob(os.path.join(out, "root", "log", "*")):
         os.remove(f)
     os.remove(os.path.join(out, "root", "roms", "gbadhoc-test.ips"))
-    pt = os.path.join(out, "root", "states", "gba", "gbadhoc-test.rsm.pt")
+    pt = os.path.join(out, "root", "states", "gba", bkt("gbadhoc-test"), "gbadhoc-test.rsm.pt")
     S.check(os.path.exists(pt) and open(pt).read() != "-\n",
             "the Continue point records its patch")
     r = S.run("patch_removed", "60:cross\n+60:quit\n", prepared=True)
@@ -4358,7 +4365,7 @@ def t_extra_roms(S):
             "the battery save was written beside the ROM, in its own folder")
     # states go under the app folder, named for the game and its folder
     # (psp/sidecar.h); the extra folder keeps the ROM and its battery save
-    st = os.path.join(root, "states", "gba", "Extra Adventure (U) [!].st1")
+    st = os.path.join(root, "states", "gba", bkt("Extra Adventure (U) [!]"), "Extra Adventure (U) [!].st1")
     S.check(os.path.exists(st) and os.path.getsize(st) > 100000 and
             os.path.exists(st + ".thumb") and os.path.exists(st + ".shot"),
             "slot 2's state and its previews were written under states/ (%s)" %
@@ -4368,7 +4375,7 @@ def t_extra_roms(S):
             "the extra folder holds the ROM and its .sav and nothing else "
             "(%s)" % only_beside(X, "Extra Adventure (U) [!]",
                                  {game, "Extra Adventure (U) [!].sav"}))
-    rs = os.path.join(root, "states", "gba", "Extra Adventure (U) [!].rsm")
+    rs = os.path.join(root, "states", "gba", bkt("Extra Adventure (U) [!]"), "Extra Adventure (U) [!].rsm")
     S.check(os.path.exists(rs) and os.path.exists(rs + ".pt"),
             "Continue's point and its patch note are under states/ too")
     S.check(r.has(r"state_save slot=2 "), "the state was saved from the menu")
@@ -4661,7 +4668,7 @@ def t_old_states(S):
             "+20:down\n+10:square\n+30:circle\n+10:circle\n" + EXIT_APP)
     r = S.run("old_states_make", make, config={"ui_home": 1})
     S.clean(r)
-    st_rel = os.path.join("states", "gba", "gbadhoc-test.st1")
+    st_rel = os.path.join("states", "gba", bkt("gbadhoc-test"), "gbadhoc-test.st1")
     st = os.path.join(r.root, st_rel)
     if not S.check(os.path.exists(st), "slot 2 was saved to make the fixture"):
         return
@@ -5429,7 +5436,7 @@ def t_ten_slots(S):
               "+10:cross\n+60:shot=loaded.png\n+10:quit\n")
     r = S.run("ten_slots", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
-    st = os.path.join(r.root, "states", "gba", "gbadhoc-test.st7")
+    st = os.path.join(r.root, "states", "gba", bkt("gbadhoc-test"), "gbadhoc-test.st7")
     S.check(os.path.exists(st) and os.path.getsize(st) > 0, "slot 8 is .st7")
     S.check(os.path.exists(st + ".thumb") and os.path.exists(st + ".shot"),
             "with its pictures")
@@ -5456,10 +5463,10 @@ def t_sidecars(S):
             "roms/ holds the ROM and its .sav alone after states, Continue "
             "and play time (%s)" % only_beside(roms, stem,
                                                {stem + ".gba", stem + ".sav"}))
-    sd = os.path.join(r.root, "states", "gba")
+    sd = os.path.join(r.root, "states", "gba", bkt(stem))
     want = [stem + ".rsm", stem + ".rsm.pt", stem + ".st1",
             stem + ".st1.shot", stem + ".st1.thumb"]
-    have = sorted(os.listdir(sd)) if os.path.isdir(sd) else []
+    have = sorted(n for n in os.listdir(sd) if not n.endswith(".mig")) if os.path.isdir(sd) else []
     S.check(all(n in have for n in want),
             "states/gba/ has %s (has %s)" % (want, have))
     S.check(os.path.getsize(os.path.join(sd, stem + ".rsm")) > 100000,
@@ -5478,14 +5485,14 @@ def t_sidecars(S):
     r2 = S.run("sidecar_legacy_continue", "60:cross\n+20:shot=back.png\n+10:quit\n",
                config=home, extra=legacy)
     S.clean(r2)
-    S.check(r2.has(r"^EVT state_load path=.*states/gba/gbadhoc-test.rsm via=continue rc=0"),
+    S.check(r2.has(r"^EVT state_load path=.*states/gba/%s/gbadhoc-test.rsm via=continue rc=0" % bkt(stem)),
             "old Continue point beside the ROM: moved, and CROSS continues")
     S.check(only_beside(os.path.join(r2.root, "roms"), stem,
                         {stem + ".gba", stem + ".sav"}) == [],
             "...and nothing of it is left in roms/ (%s)" % only_beside(
                 os.path.join(r2.root, "roms"), stem,
                 {stem + ".gba", stem + ".sav"}))
-    S.check(os.path.exists(os.path.join(r2.root, "states", "gba", stem + ".st1"))
+    S.check(os.path.exists(os.path.join(r2.root, "states", "gba", bkt(stem), stem + ".st1"))
             and os.path.exists(os.path.join(r2.root, "cache", "boxart",
                                             stem + ".t2.565")) and
             not os.path.exists(os.path.join(r2.root, "boxart", stem + ".t2.565")),
@@ -5502,9 +5509,9 @@ def t_sidecars(S):
     # (c) a new file is never overwritten by an old one
     keep = dict(legacy)
     r4 = S.run("sidecar_keep", "100:quit\n", autoboot="gbadhoc-test.gba",
-               extra=dict(keep, **{"states/gba/" + stem + ".st1": b"mine"}))
+               extra=dict(keep, **{"states/gba/%s/%s.st1" % (bkt(stem), stem): b"mine"}))
     S.clean(r4)
-    S.check(open(os.path.join(r4.root, "states", "gba", stem + ".st1"),
+    S.check(open(os.path.join(r4.root, "states", "gba", bkt(stem), stem + ".st1"),
                  "rb").read() == b"mine" and
             os.path.exists(os.path.join(r4.root, "roms", stem + ".st1")),
             "a state already under states/ is not overwritten; the old one stays")
@@ -6145,7 +6152,7 @@ def t_ws_private(S):
     S.check(r.has(r"^EVT gb_rom_loaded console=WS") and
             r.has(r"^EVT av_info fps=75\.47\d* rate=48000 w=224 h=144"), "the game boots horizontal, 224x144")
     S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1"), "the poke from the game's .cht is on")
-    sd = os.path.join(r.root, "states", "ws")
+    sd = os.path.join(r.root, "states", "ws", bkt("Private"))
     slot = [n for n in (os.listdir(sd) if os.path.isdir(sd) else []) if n.endswith(".ws.st0")]
     if not S.check(len(slot) == 1, "slot 1 is a file in states/ws/ (%s)" % slot):
         return
@@ -6155,7 +6162,7 @@ def t_ws_private(S):
     def at(f):
         return int(round(f * k))
     keep = dict(extra)
-    keep["states/ws/" + slot[0]] = open(hub, "rb").read()
+    keep["states/ws/%s/%s" % (bkt("Private"), slot[0])] = open(hub, "rb").read()
     script = "100:shot=title.png\n" + menu_pick(1) + "+20:cross\n+60:circle\n+10:circle\n"
     t = 0
     for d, b in ((30, "down"), (90, "up"), (150, "circle"), (300, "circle")):
@@ -6253,7 +6260,7 @@ def t_ws_more(S):
               "+120:shot=moved.png\n" + menu_pick(1) + "+20:cross\n+60:circle\n+10:circle\n+2:shot=after.png\n"
               "+10:quit\n", autoboot="State.ws", extra={"roms/State.ws": rom})
     S.clean(r)
-    sd = os.path.join(r.root, "states", "ws")
+    sd = os.path.join(r.root, "states", "ws", bkt("State"))
     have = sorted(os.listdir(sd)) if os.path.isdir(sd) else []
     S.check(any(n.endswith(".ws.st0") for n in have) and any(n.endswith(".thumb") for n in have),
             "slot 1 is a state with its thumbnail in states/ws/ (%s)" % have)
@@ -6263,8 +6270,8 @@ def t_ws_more(S):
     r = S.run("ws_continue", "120:shot=left.png\n" + QUIT_TO_LIST + "+150:quit\n", config=home,
               autoboot="Cont.ws", extra={"roms/Cont.ws": rom})
     S.clean(r)
-    rsm = [n for n in (os.listdir(sd.replace("ws_states", "ws_continue")) if os.path.isdir(
-        sd.replace("ws_states", "ws_continue")) else []) if n.endswith(".rsm")]
+    cd = os.path.join(r.root, "states", "ws", bkt("Cont"))
+    rsm = [n for n in (os.listdir(cd) if os.path.isdir(cd) else []) if n.endswith(".rsm")]
     S.check(bool(rsm), "a Continue point is kept for the WonderSwan game (%s)" % rsm)
     # fast forward
     r = S.run("ws_ff", "120:square:120\n+0:shot=ff.png\n+60:quit\n", autoboot="Fast.ws",
@@ -6473,6 +6480,50 @@ def t_steady(S):
     S.check(r2.has(r"^EVT steady_options on=0") and not r2.evt("steady"), "off: every frame, always")
 
 
+def t_state_buckets(S):
+    """States live in buckets, states/<console>/<xx>/ (xx: the CRC-32 of the
+    game's name, the layout playerkit uses for SNES too).  What 1.3 left in
+    the flat states/<console>/ folder is moved into the game's bucket the
+    first time the game is opened, once (the .mig marker), never over a file
+    already in the bucket (a mixed layout: the bucket's own wins, the old one
+    stays), and another game's flat files are left alone."""
+    stem = "gbadhoc-test"
+    make = S.run("buckets_make", "150:a:20\n" + menu_pick(1) + "+20:square\n+30:circle\n+10:circle\n" +
+                 menu_pick(1) + "+20:down\n+10:square\n+30:circle\n+10:circle\n+30:quit\n",
+                 autoboot="gbadhoc-test.gba")
+    S.clean(make)
+    bd = os.path.join(make.root, "states", "gba", bkt(stem))
+    have = sorted(os.listdir(bd)) if os.path.isdir(bd) else []
+    S.check(stem + ".st0" in have and stem + ".st1" in have and stem + ".st0.mig" in have,
+            "slots 1 and 2 are saved in the game's bucket gba/%s/ with its marker (%s)" % (bkt(stem), have))
+    flat = {}
+    for n in have:
+        if not n.endswith(".mig"):
+            flat["states/gba/" + n] = open(os.path.join(bd, n), "rb").read()
+    flat["states/gba/Other Game.st0"] = b"other"
+    # slot 2 in the bucket already, different: the bucket's wins
+    flat["states/gba/%s/%s.st1" % (bkt(stem), stem)] = b"bucket's own"
+    r = S.run("buckets_migrate", "150:a:20\n" + menu_pick(1) + "+20:cross\n+60:quit\n",
+              autoboot="gbadhoc-test.gba", extra=flat)
+    S.clean(r)
+    bd = os.path.join(r.root, "states", "gba", bkt(stem))
+    fd = os.path.join(r.root, "states", "gba")
+    S.check(r.has(r"^EVT sidecar_migrate rom=.*gbadhoc-test.gba moved=\d+ copied=0 failed=0 kept=1"),
+            "opening the game moves its 1.3 files into the bucket (%s)" % [e["_"] for e in r.evt("sidecar_migrate")])
+    S.check(os.path.exists(os.path.join(bd, stem + ".st0")) and not os.path.exists(os.path.join(fd, stem + ".st0"))
+            and os.path.exists(os.path.join(bd, stem + ".st0.mig")),
+            "slot 1 moved, the marker written")
+    S.check(open(os.path.join(bd, stem + ".st1"), "rb").read() == b"bucket's own" and
+            os.path.exists(os.path.join(fd, stem + ".st1")),
+            "the bucket's own slot 2 is kept and the flat one is not lost")
+    S.check(os.path.exists(os.path.join(fd, "Other Game.st0")), "another game's flat file is left alone")
+    S.check(r.has(r"^EVT state_load slot=1 via=\S+ rc=0"), "the moved slot 1 loads")
+    r2 = S.run("buckets_again", "100:quit\n", autoboot="gbadhoc-test.gba",
+               prepared=None, extra={"states/gba/%s/%s.st0.mig" % (bkt(stem), stem): b""})
+    S.clean(r2)
+    S.check(not r2.evt("sidecar_migrate"), "with the marker there, nothing is looked for again")
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6518,7 +6569,7 @@ def t_nes_states(S):
     r = S.run("nes_states", script, autoboot="State Test.nes",
               extra={"roms/State Test.nes": rom})
     S.clean(r)
-    sd = os.path.join(r.root, "states", "nes")
+    sd = os.path.join(r.root, "states", "nes", bkt("State Test"))
     have = sorted(os.listdir(sd)) if os.path.isdir(sd) else []
     st = [n for n in have if re.search(r"\.st2$", n)]
     S.check(st and os.path.getsize(os.path.join(sd, st[0])) > 1000 and
@@ -6545,11 +6596,12 @@ def t_nes_continue(S):
               "+150:quit\n", config=home, autoboot="Cont Test.nes",
               extra={"roms/Cont Test.nes": rom})
     S.clean(r)
-    sd = os.path.join(r.root, "states", "nes")
+    sd = os.path.join(r.root, "states", "nes", bkt("Cont Test"))
     rsm = [n for n in (os.listdir(sd) if os.path.isdir(sd) else []) if n.endswith(".rsm")]
     S.check(rsm and os.path.getsize(os.path.join(sd, rsm[0])) > 1000,
             "a Continue point exists for the NES game (%s)" % rsm)
-    keep = {"states/nes/" + n: open(os.path.join(sd, n), "rb").read() for n in os.listdir(sd)}
+    keep = {"states/nes/%s/%s" % (bkt("Cont Test"), n): open(os.path.join(sd, n), "rb").read()
+            for n in os.listdir(sd)}
     keep["roms/Cont Test.nes"] = rom
     keep["playlog.txt"] = open(os.path.join(r.root, "playlog.txt"), "rb").read()
     keep["roms/Cont Test.srm"] = open(os.path.join(r.root, "roms", "Cont Test.srm"), "rb").read()
@@ -6868,7 +6920,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

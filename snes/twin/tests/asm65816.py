@@ -20,7 +20,7 @@ OPS = {
     "stz": {"dp": 0x64, "dpx": 0x74, "abs": 0x9C, "absx": 0x9E},
     "adc": {"#": 0x69, "dp": 0x65, "dpx": 0x75, "abs": 0x6D, "absx": 0x7D, "long": 0x6F, "longx": 0x7F},
     "sbc": {"#": 0xE9, "dp": 0xE5, "abs": 0xED, "absx": 0xFD, "long": 0xEF, "longx": 0xFF},
-    "cmp": {"#": 0xC9, "dp": 0xC5, "abs": 0xCD, "long": 0xCF, "longx": 0xDF},
+    "cmp": {"#": 0xC9, "dp": 0xC5, "abs": 0xCD, "absx": 0xDD, "long": 0xCF, "longx": 0xDF},
     "cpx": {"#": 0xE0, "dp": 0xE4, "abs": 0xEC}, "cpy": {"#": 0xC0, "dp": 0xC4, "abs": 0xCC},
     "and": {"#": 0x29, "dp": 0x25, "abs": 0x2D, "long": 0x2F, "longx": 0x3F},
     "ora": {"#": 0x09, "dp": 0x05, "abs": 0x0D, "long": 0x0F, "longx": 0x1F},
@@ -96,6 +96,7 @@ class Asm:
                 self.byte(arg, arg >> 8, arg >> 16)
 
     def __getattr__(self, name):
+        name = name.rstrip('_')
         if name in OPS:
             return lambda mode, arg: self._op(name, mode, arg)
         if name in IMPL:

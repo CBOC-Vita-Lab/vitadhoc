@@ -1229,7 +1229,7 @@ def t_states(S):
             int(sv[0]["size"]) > 800000,
             "the pair is saved beside the player's state (%s)" %
             (sv[0]["_"] if sv else "no local_state_save"))
-    st0 = os.path.join(r.root, "states", "gba", "linktest.st0")
+    st0 = os.path.join(r.root, "states", "gba", A.bkt("linktest"), "linktest.st0")
     S.check(os.path.exists(st0) and os.path.exists(st0 + ".p2") and
             os.path.getsize(st0) == 416 * 1024,
             "the player's own state file is still a plain 416 KiB state")
@@ -1297,7 +1297,7 @@ def t_states(S):
             "saved, %d / %d when loaded 100 frames later" % (a0, b0, a1, b1))
     S.check(a2 - a1 == 60 and b2 - b1 == 60, "and both run on (%d / %d)" %
             (a2, b2))
-    st = os.path.join(r.root, "states", "gba", "gbadhoc-test.st0")
+    st = os.path.join(r.root, "states", "gba", A.bkt("gbadhoc-test"), "gbadhoc-test.st0")
 
     # the same card, no pair this time: the player's state file loads as a
     # state of one game, and a state saved alone orphans the old companion

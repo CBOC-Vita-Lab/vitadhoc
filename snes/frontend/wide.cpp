@@ -97,7 +97,8 @@ struct Out {
 struct Adapter {
 	SpinLock lk;
 	int on, margin224, core_margin;
-	int period, fade_px, appear, settle, debug, layered, learn;
+	int period, fade_px, appear, settle, debug, layered;
+	int learn = 1;
 	/* game */
 	int have_game;
 	uint32_t crc;
@@ -484,6 +485,7 @@ static void run(const SWideView *v)
 		st.map_cells = ms.cells; st.map_rooms = ms.rooms; st.map_bound = ms.bound; st.map_served = (int) ms.served_tiles;
 	}
 
+	if (getenv("SNES_WIDE_TRACE") && v->clock % 100 == 0) { const wk_line_out *q = &wo->line[100]; fprintf(stderr, "trace M=%p bright=%d scene=%d epoch=%d nlay=%d clk=%u line100 real L:%d,%d,%d,%d R:%d,%d,%d,%d ring L:%d,%d,%d R:%d,%d,%d hud=%d coh=%d,%d,%d\n", (void*) A.M, fr->brightness, wo->scene_event, (int) wo->epoch, nlay, (unsigned) v->clock, q->real[0][0], q->real[0][1], q->real[0][2], q->real[0][3], q->real[1][0], q->real[1][1], q->real[1][2], q->real[1][3], q->ring[0][0], q->ring[0][1], q->ring[0][2], q->ring[1][0], q->ring[1][1], q->ring[1][2], q->hud, wo->coherent[0][100], wo->coherent[1][100], wo->coherent[2][100]); }
 	/* 3. candidates */
 	const int Mc_ = Mc;
 	for (int y = 0; y < H; y++) {

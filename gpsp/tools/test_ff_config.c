@@ -65,7 +65,8 @@ int main(void)
          assert(g_pcfg.ff_smooth == (expected != PCFG_FF_UNLIMITED));
       }
 
-   for (mode = 0; mode < PCFG_FF_COUNT; mode++)
+   /* the PSP's three (PCFG_FF_2X, 1.3, is the Vita's: a PSP reads it as 3x) */
+   for (mode = 0; mode <= PCFG_FF_SMOOTH; mode++)
    {
       pcfg_ff_set_mode(mode);
       assert(strcmp(pcfg_ff_name(), names[mode]) == 0);

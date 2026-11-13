@@ -1365,8 +1365,15 @@ static void screen_to(int scr)
       pcfg_save();
       g_settings_dirty = 0;
    }
-   g_screen = scr;
-   g_cursor = 0;
+   {
+      /* The menu keeps its place: back from a page, the cursor is on the
+       * row that opened it (ui_open starts it at Resume). */
+      static int menu_cursor;
+      if (g_screen == SCR_MENU && scr != SCR_MENU)
+         menu_cursor = g_cursor;
+      g_screen = scr;
+      g_cursor = scr == SCR_MENU ? menu_cursor : 0;
+   }
    ctl_page_reset();             /* no capture survives a screen change */
    g_slot_ask = 0;               /* nor a delete/overwrite question */
    g_slot_note[0] = '\0';

@@ -154,7 +154,7 @@ int main(int argc, char **argv)
 	int frames = 300, wide = 0, state_every = 0;
 	bool summary = false;
 	std::vector<PadEv> script;
-	std::set<int> dumpset, shotset;
+	std::set<int> dumpset, shotset, statset;
 	struct KV { std::string k; int v; };
 	std::vector<KV> opts, wopts;
 	for (int i = 2; i < argc; i++) {
@@ -167,6 +167,7 @@ int main(int argc, char **argv)
 		else if (arg("--wide")) wide = atoi(argv[++i]);
 		else if (arg("--dump")) dumpdir = argv[++i];
 		else if (arg("--dump-frames")) dumpset = parse_set(argv[++i]);
+		else if (arg("--stat-frames")) statset = parse_set(argv[++i]);
 		else if (arg("--png-dir")) pngdir = argv[++i];
 		else if (arg("--shots")) shotset = parse_set(argv[++i]);
 		else if (arg("--shot-prefix")) prefix = argv[++i];
@@ -239,6 +240,11 @@ int main(int argc, char **argv)
 				if (wf) fprintf(wf, "%d %d %016llx %016llx %d %d %d %d\n", f, ww, (unsigned long long) cwh, (unsigned long long) fnv(wp, ww, wh, wpitch * 2),
 				                st.real_l, st.real_r, st.available, cwh == nrm);
 				if (cwh != nrm) { fprintf(stderr, "frame %d: wide centre differs from the normal picture\n", f); }
+				if (statset.count(f))
+					fprintf(stderr, "stat f=%d mode7=%d lines=%d drawn=%d nomargin=%d hud=%d exact=%d real=%d/%d layers=%x ring=%dx%d,%dx%d,%dx%d,%dx%d kind=%d,%d,%d,%d scene=%d epoch=%d hs=%d/%d map cells=%d rooms=%d bound=%d served=%d\n",
+					        f, st.mode7, st.lines, st.lines_drawn, st.lines_nomargin, st.lines_hud, st.lines_exact, st.real_l, st.real_r, st.layers,
+					        st.ring_w[0], st.ring_h[0], st.ring_w[1], st.ring_h[1], st.ring_w[2], st.ring_h[2], st.ring_w[3], st.ring_h[3],
+					        st.kind[0], st.kind[1], st.kind[2], st.kind[3], st.scene_event, st.epoch, st.hs_checked, st.hs_missed, st.map_cells, st.map_rooms, st.map_bound, st.map_served);
 				if (dumpdir && dumpset.count(f)) {
 					char p[600];
 					snprintf(p, sizeof p, "%s/%s%05d.wide", dumpdir, prefix, f);

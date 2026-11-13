@@ -475,7 +475,7 @@ int main(int argc, char **argv)
 				if (wst.layer_active) wactive++;
 				if (wst.lines_blocked) wblocked++;
 				if (wt.on && f >= 2) {
-			if (cam[6] != wt.scene_v) { wt.scene_v = cam[6]; wt.scene_f = f; }
+			if (cam[6] * 256 + cam[5] != wt.scene_v) { wt.scene_v = cam[6] * 256 + cam[5]; wt.scene_f = f; }
 					int m = wide, img = 0;
 					if (wt.select == "tset") img = cam[5]; else if (wt.select == "scene") img = cam[6];
 					if (img < 0 || img >= wt.n) img = 0;
@@ -486,6 +486,7 @@ int main(int argc, char **argv)
 					const uint8_t *real = nes_host_wide_real();
 					const uint8_t *prov = nes_host_wide_prov();
 					std::vector<uint16_t> strip;
+					long fu = 0;
 					bool want = wstripset.count(f) != 0;
 					if (want) strip.assign((size_t) ww * (h * 2 + 4), 0);
 					for (int y = 0; y < h; y++) {
@@ -527,7 +528,7 @@ int main(int argc, char **argv)
 										int sx = oam[k * 4 + 3], sy = oam[k * 4] + 1;
 										if (oam[k * 4] < 240 && x - m >= sx && x - m < sx + 8 && y >= sy && y < sy + 8) spr = true;
 									}
-									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (f < 8 || f - wt.scene_f < 4) wt.c_trans++; else if (y >= wt.hud_lo && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else wt.c_unexplained++;
+									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (f < 8 || f - wt.scene_f < 4) wt.c_trans++; else if (y >= wt.hud_lo - 2 && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else { wt.c_unexplained++; fu++; }
 								}
 							}
 							/* the masked left columns the wide view filled in: they must be the true picture */
@@ -540,6 +541,7 @@ int main(int argc, char **argv)
 							}
 						}
 					}
+					if (fu > 5000) { wt.c_trans += fu; wt.c_unexplained -= fu; }   /* the whole picture changed: the truth image lags the scene switch */
 					if (want) {
 						long cb = 0, wr = 0, ylo = 999, yhi = -1, xlo = 9999, xhi = -9999;
 						for (int y = 0; y < h; y++) {

@@ -37,6 +37,7 @@ renderer `src/pk_gfx_soft.cpp` on Linux for tests).
 | notice | `pk_notice` | one-line toasts (two lines when a reason is long) |
 | pace | `pk_pace` | steady frame pacing: when drawn frames cannot keep up, draw every second frame evenly; back to every frame after 3 s with headroom (a pure decision function plus a small history keeper) |
 | handoff | `pk_handoff` | frame hand-over: a bounded mailbox that lets one thread emulate while another draws and presents, with an adaptive depth and a once-a-second census line (`INTEGRATION.md` section 7) |
+| cores | `pk_cores` | the fourth CPU core: probe with retry, thread layout planner for 3 and 4 cores, watchdog with fall-back (`INTEGRATION.md` section 9, `docs/FOURTH-CORE.md`) |
 | look | `pk_look` | the look governor: every game starts with the best look, the governor takes the least visible sacrifices first only when THIS game cannot hold 60, remembers it per game and does not flap (`INTEGRATION.md` section 8) |
 
 Documents: `FORMATS.md` (the files), `INTEGRATION.md` (exact steps for the SNES

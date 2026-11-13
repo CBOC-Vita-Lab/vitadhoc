@@ -27,6 +27,9 @@
 #include "stb_image_write.h"
 #include "host.h"
 #include "wide.h"
+#ifdef WIDE_CALLGRIND
+#include <valgrind/callgrind.h>
+#endif
 
 struct PadEv { int frame; unsigned mask; };
 
@@ -156,7 +159,7 @@ int main(int argc, char **argv)
 	bool summary = false;
 	std::vector<PadEv> script;
 	std::set<int> dumpset, shotset, statset;
-	int trace_every = 0;
+	int trace_every = 0, cg_a = -1, cg_b = -1;
 	std::vector<std::pair<uint32_t, uint8_t>> pokes;
 	struct KV { std::string k; int v; };
 	std::vector<KV> opts, wopts;
@@ -173,6 +176,7 @@ int main(int argc, char **argv)
 		else if (arg("--dump-frames")) dumpset = parse_set(argv[++i]);
 		else if (arg("--stat-frames")) statset = parse_set(argv[++i]);
 		else if (arg("--trace")) trace_every = atoi(argv[++i]);
+		else if (arg("--cg") && sscanf(argv[++i], "%d,%d", &cg_a, &cg_b) == 2) {}
 		else if (arg("--poke")) { unsigned a, b; if (sscanf(argv[++i], "%x=%x", &a, &b) == 2) pokes.push_back({ a, (uint8_t) b }); }
 		else if (arg("--png-dir")) pngdir = argv[++i];
 		else if (arg("--shots")) shotset = parse_set(argv[++i]);
@@ -213,6 +217,10 @@ int main(int argc, char **argv)
 	long n_avail = 0, n_wide = 0;
 	if (sf) sbuf.resize(snes_host_state_size() + 4096);
 	for (int f = 0; f < frames; f++) {
+#ifdef WIDE_CALLGRIND
+		if (f == cg_a) { CALLGRIND_ZERO_STATS; CALLGRIND_START_INSTRUMENTATION; }
+		if (f == cg_b) { CALLGRIND_STOP_INSTRUMENTATION; CALLGRIND_DUMP_STATS; }
+#endif
 		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
 		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
 		snes_host_set_pad(0, pad);

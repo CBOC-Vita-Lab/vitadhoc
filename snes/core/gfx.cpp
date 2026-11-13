@@ -2723,6 +2723,7 @@ static void S9xWideBatch (const S9xRenderJob &job)
 		L.tsx = tsx;
 		L.cgwsel = Memory.FillRAM[0x2130]; L.cgadsub = Memory.FillRAM[0x2131];
 		L.fixr = PPU.FixedColourRed; L.fixg = PPU.FixedColourGreen; L.fixb = PPU.FixedColourBlue;
+		L.fix565 = BUILD_PIXEL(IPPU.XB[PPU.FixedColourRed], IPPU.XB[PPU.FixedColourGreen], IPPU.XB[PPU.FixedColourBlue]);
 		L.mosaic = mosaic ? PPU.Mosaic : 1;
 		L.extbg = (Memory.FillRAM[0x2133] & 0x40) ? 1 : 0;
 		for (int n = 0; n < 4; n++)

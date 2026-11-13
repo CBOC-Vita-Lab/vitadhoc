@@ -43,6 +43,7 @@ struct SWideLine
 	uint8   tsx;                    /* BGs shown only through the sub screen with colour math on the backdrop alone: their pass is a composite of backdrop + that layer (math done by the core) */
 	uint8   cgwsel, cgadsub;        /* $2130, $2131: colour math */
 	uint8   fixr, fixg, fixb;
+	uint16  fix565;                 /* the fixed colour as the core adds it (brightness applied) */
 	uint8   mosaic;                 /* PPU.Mosaic when any enabled BG has the mosaic bit, else 1 */
 	uint8   wsel_any;               /* a window is in force for some layer ($212E/$212F with window masks) */
 	uint8   extbg;

@@ -240,6 +240,16 @@ static inline bool line_ok(const SWideLine &L)
 }
 
 /* hash of a tile's graphics (a 16x16 tile: of its four), cached per tile id and frame; also its blankness */
+/* colour math "add" of two RGB565 pixels as the core does it (5 bit channels, saturating; the sixth green bit repeats the top one) */
+static inline uint16_t math_add565(uint16_t a, uint16_t b)
+{
+	int r = (a >> 11) + (b >> 11), g = ((a >> 6) & 31) + ((b >> 6) & 31), bl = (a & 31) + (b & 31);
+	if (r > 31) r = 31;
+	if (g > 31) g = 31;
+	if (bl > 31) bl = 31;
+	return (uint16_t) ((r << 11) | (g << 6) | ((g >> 4) << 5) | bl);
+}
+
 static uint32_t layer_tile_th(Layer *Ly, const SWideView *v, int tile, uint32_t gen, bool mark = true)
 {
 	if (Ly->tgen[tile] == gen) return Ly->tcache[tile];
@@ -707,7 +717,8 @@ static void run(const SWideView *v)
 				if (real > ring) {
 					const int tp = Ly->tile_px;
 					wk_geom g;
-					int have_geom = wo->coherent[l][y] != 0 && A.M && !((Ln.tsx >> l) & 1);   /* map cells carry no colour math */
+					const bool tsx_math = ((Ln.tsx >> l) & 1) && Ln.cgadsub == 0x20;   /* a sub screen layer added to the backdrop: the map cell gets the same maths */
+					int have_geom = wo->coherent[l][y] != 0 && A.M && (!((Ln.tsx >> l) & 1) || tsx_math);
 					if (have_geom) wk_line_geom(fr, wo, l, y, &g);
 					int cidx = 0x7fffffff, cok = 0;
 					wk_cell cell;
@@ -727,7 +738,8 @@ static void run(const SWideView *v)
 						if (!cok) { lo->real[s][l] = (uint16_t) d; break; }
 						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
 						const int ci = cell_index(v, Ly, cell.code, fmod_(xw, tp), fmod_(wo->world_row[l][y], tp));
-						if (ci < 0) { dst[d] = 0; op[d] = 0; }
+						if (tsx_math) { dst[d] = math_add565(Ln.backdrop, ci < 0 ? Ln.fix565 : v->colors[ci]); op[d] = 1; }
+						else if (ci < 0) { dst[d] = 0; op[d] = 0; }
 						else { dst[d] = v->colors[ci]; op[d] = 1; }
 					}
 				}

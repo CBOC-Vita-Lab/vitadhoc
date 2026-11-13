@@ -306,6 +306,20 @@ STEPS = [
          "sh gpsp/vita/hostcore/run_tests.sh", "full", APP_TAGS | {"app"}, inputs=["gpsp/", "nes/"],
          deps=["build-hostcore-x86", "build-hostcore-armhf", "build-testrom"], requires=ARMHF,
          group=GROUP_HOST, timeout=7200),
+    # instance B's image bounds and boot copies under ASan/UBSan (run_tests.sh
+    # calls it at its end too; here it runs on its own, in every tier but quick)
+    Step("gbadual-image", "instance B image bounds and boot copies (run_gbadual_image_test.sh)",
+         "bash gpsp/tools/tests/run_gbadual_image_test.sh", "default", {"gpsp", "app"},
+         inputs=["gpsp/"], requires=CC, group=GROUP_MAKE),
+    # the fast GBA picture kernels against the scalar reference build, on
+    # the private games (frame, audio and save hashes; video_identity.py)
+    Step("video-identity", "GBA renderer: vector kernels vs -DVIDEO_KERNELS_SCALAR on private games (GATE_GBA_ROMS)",
+         "make -C gpsp/vita/hostcore ARCH=x86 -j{jobs} B=build/x86-scalar "
+         "CORE_ARCH_FLAGS='-fomit-frame-pointer -ffast-math -DVIDEO_KERNELS_SCALAR' && "
+         "python3 gpsp/tools/tests/video_identity.py --a gpsp/vita/hostcore/build/x86/gbadhoc_host "
+         "--b gpsp/vita/hostcore/build/x86-scalar/gbadhoc_host --rom-dir \"$GATE_GBA_ROMS\"",
+         "full", APP_TAGS | {"app"}, inputs=["gpsp/"], deps=["build-hostcore-x86"], requires=PIL,
+         env_req="GATE_GBA_ROMS", group=GROUP_MAKE, timeout=14400),
     Step("cores-private-gba", "cores: every private GBA/GB/GBC ROM, x86 against armhf (GATE_GBA_ROMS)",
          "sh gpsp/vita/hostcore/run_tests.sh \"$GATE_GBA_ROMS\"", "full", APP_TAGS | {"app"},
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-hostcore-armhf", "build-testrom"],

@@ -74,3 +74,17 @@ after `run_frame` already holds lines of the next frame, while the wide view's c
 end (screen hash at the hook, at `S9xControlEOF` and at `S9xSyncSpeed` are equal to the wide centre). The same read-time
 picture is what the unmodified build returns (frame, audio and state hashes are identical to the reference).
 The wide centre is the cleaner frame. Not a wide-view error.
+
+## Auto decision and census
+
+`snes_wide_option("auto", 1)` (the player's "Auto") lets the adapter decide per scene whether the margins show the wide picture or
+an ambient frame. Coverage is the share of margin pixels (over the drawn lines) that come from a real tilemap, the learned map or a
+trusted continued backdrop; it is smoothed (EMA over about 60 frames, snapped at scene events). Wide turns on at 85 % and off at 75 %
+(hysteresis); a change cross-fades over 32 frames (about 0.5 s). `snes_wide_option("auto", 0)` ("On") always shows the wide picture.
+The ambient frame is a dimmed, heavily blurred colour field taken from the picture's own edge columns (no structure), the same
+look as the app's ambient backdrop. Pixels not trusted fade over 24 px into it.
+
+`snes_wide_census_get()` returns running totals since the game was set (`snes_wide_census_reset()` restarts them): frames, frames
+wide / ambient / cross-fading, fallback reasons (nothing drawn, profile off, setup), Auto switches, scene events, margin pixels by
+provenance (tilemap, learned, backdrop, unknown), map cells, current coverage and the Auto state. The player writes one log line per
+second from it while the wide view is on. `snes_wide_twin --summary` prints the same (`census:` and `censuspx:` lines).

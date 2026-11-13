@@ -28,6 +28,15 @@
 #include <stdint.h>
 #include <string.h>
 
+/* GCC 4.8 (-fsanitize=address) and clang know the attribute; the PSP's old
+ * compiler has no sanitizer and no need for it. */
+#if defined(__clang__) || (defined(__GNUC__) && \
+    (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)))
+#define FE_BIMAGE_NOSAN __attribute__((no_sanitize_address, noinline))
+#else
+#define FE_BIMAGE_NOSAN __attribute__((noinline))
+#endif
+
 typedef struct
 {
    char *data_start, *data_end;
@@ -72,7 +81,7 @@ static inline int fe_bimage_check(const fe_bimage *b, const char **why)
    return -1;
 }
 
-__attribute__((no_sanitize_address, noinline))
+FE_BIMAGE_NOSAN
 static void fe_bimage_raw_copy(char *d, const char *s, size_t n)
 {
    volatile char *dd = (volatile char *)d;
@@ -81,7 +90,7 @@ static void fe_bimage_raw_copy(char *d, const char *s, size_t n)
       *dd++ = *ss++;
 }
 
-__attribute__((no_sanitize_address, noinline))
+FE_BIMAGE_NOSAN
 static void fe_bimage_raw_zero(char *d, size_t n)
 {
    volatile char *dd = (volatile char *)d;

@@ -327,6 +327,7 @@ int main(int argc, char **argv)
 		snes_wide_census c;
 		snes_wide_census_get(&c);
 		const double tot = (double) (c.px_tilemap + c.px_learned + c.px_backdrop + c.px_unknown);
+		printf("censuspx: %llu %llu %llu %llu\n", (unsigned long long) c.px_tilemap, (unsigned long long) c.px_learned, (unsigned long long) c.px_backdrop, (unsigned long long) c.px_unknown);
 		printf("census: frames=%u wide=%u fallback=%u (nothing_drawn=%u profile=%u setup=%u) ambient=%u crossfade=%u switches=%u scenes=%u cells=%u cov=%d%% auto=%d\n"
 		       "census: margin px tilemap %.1f%% learned %.1f%% backdrop %.1f%% unknown %.1f%%\n",
 		       c.frames, c.frames_wide, c.frames_fallback, c.fb_nothing_drawn, c.fb_profile_off, c.fb_setup, c.frames_ambient, c.frames_crossfade,

@@ -1000,6 +1000,7 @@ void SnesPlayer::wide_apply(int scr_w, int scr_h)
 	bool want = m > 0 && ps_.wide != 2;
 	if (want && ps_.wide == 0 && pacer_.mode() != PACE_FULL) want = false;
 	if (!want) m = 0;
+	snes_wide_option("auto", ps_.wide == 1 ? 0 : 1);   /* Auto decides per scene; On forces the wide view */
 	if (want == wide_on_ && m == wide_m_) return;
 	snes_wide_set(want ? 1 : 0, m);
 	wide_on_ = want; wide_m_ = m;
@@ -1022,6 +1023,14 @@ void SnesPlayer::wide_post(bool final_)
 /* every 30 s while the map has new cells (a game thread check; the work is the writer thread's) */
 void SnesPlayer::wide_watch(uint64_t now_us)
 {
+	if (wide_on_ && now_us - wide_log_us_ >= 1000000u) {   /* the per-second census line */
+		wide_log_us_ = now_us;
+		snes_wide_census c; snes_wide_census_get(&c);
+		logf("wide: frames %llu wide %llu ambient %llu xfade %llu fallback %llu (nothing %llu, off %llu, setup %llu) switches %llu scenes %llu cover %d%% %s cells %u\n",
+		     (unsigned long long) c.frames, (unsigned long long) c.frames_wide, (unsigned long long) c.frames_ambient, (unsigned long long) c.frames_crossfade,
+		     (unsigned long long) c.frames_fallback, (unsigned long long) c.fb_nothing_drawn, (unsigned long long) c.fb_profile_off, (unsigned long long) c.fb_setup,
+		     (unsigned long long) c.auto_switches, (unsigned long long) c.scenes, (int) c.coverage_pct, c.auto_wide ? "wide" : "ambient", (unsigned) c.map_cells);
+	}
 	if (!wide_on_ && !snes_wide_map_dirty()) return;
 	if (now_us - wide_last_us_ < 30u * 1000000u) return;
 	wide_last_us_ = now_us;

@@ -229,6 +229,7 @@ private:
 	std::string wide_path_;
 	bool wide_busy_ = false;
 	uint64_t wide_last_us_ = 0;
+	uint64_t wide_log_us_ = 0;
 	void wide_start();
 	void wide_watch(uint64_t now_us);
 	void wide_post(bool final_);

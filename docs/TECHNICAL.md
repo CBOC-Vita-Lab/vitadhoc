@@ -1225,9 +1225,6 @@ Recipe: `playerkit/INTEGRATION.md` sections 7 and 8. What the main app does:
   the worker.
 - **Log wakes.** In a game the io worker is woken by the log only with 4 KiB
   waiting (`game_log_wake`); it writes every 250 ms anyway.
-- **Link keep-alive.** A silent partner is given up after 20 s on the Vita
-  (`fe_np_set_peer_dead`, was netdrv's 8 s). Keep-alives still go out from the
-  thread that pumps netdrv.
 - **"Save present" without stats.** The library scan keeps 64-bit hashes of the
   `.sav`/`.srm` names and of the folders it read (`savset`, `ui_psp.c`); a row
   asks the set instead of `sceIoGetstat` (folders the scan did not read still

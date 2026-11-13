@@ -64,6 +64,9 @@
   quality row then reads, for example, "Auto (xBRZ 3x, eased)". A row you
   set yourself is never touched. The wide view's margins now continue the
   picture's own edges by default instead of black bars.
+- **NES and WonderSwan cheat lists.** Cheats > the game's list now has
+  ready-made codes for NES and WonderSwan games too (found by the game's
+  checksum, then by its name), besides the codes you type yourself.
 - **Export save for other emulators** (Settings > This game, in a game): X
   makes the save a plain file for RetroArch, or a `.sav` beside the game
   (LEFT / RIGHT choose), whatever Sync RetroArch saves says.

@@ -307,13 +307,6 @@ uint32_t fe_np_ack_ride_now(void)
    return np.nd ? netdrv_ack_ride(np.nd) : 0u;
 }
 
-/* How long a silent partner is waited for (0 = netdrv's ND_PEER_DEAD_US,
- * 8 s).  The Vita sets 20 s (lessons-audit 8): a stall of the thread that
- * sends the keep-alives -- a card write, a slow state save -- must not end a
- * session the radio kept. */
-static uint32_t np_peer_dead_us;
-void fe_np_set_peer_dead(uint32_t us) { np_peer_dead_us = us; }
-
 void fe_np_set_arq_timers(uint32_t rto_first_max_us, uint32_t rto_min_us)
 {
    np_rto_first_max_us = rto_first_max_us;
@@ -403,7 +396,6 @@ static int fe_np_start_internal(const fe_np_config *cfg, int gb_mode)
     * records exactly what a silent struct-layout skew costs on this project. */
    nc.rto_first_max_us = np_rto_first_max_us;
    nc.retx_us          = np_rto_min_us;
-   nc.peer_dead_us     = np_peer_dead_us;
    nc.ack_ride_us      = np_ack_ride_fixed ? np_ack_ride_us : 0u;
    np.nd = netdrv_create(cfg->transport, &cb, &nc);
    if (!np.nd)

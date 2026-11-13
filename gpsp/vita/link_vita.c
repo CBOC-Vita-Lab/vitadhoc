@@ -920,10 +920,6 @@ static int np_start(void)
                                                        : NET_VITA_LINK_LAN,
                         &first, &floor_us);
    fe_np_set_arq_timers(first, floor_us);
-   /* 20 s of silence before the partner is given up (8 s was netdrv's):
-    * the keep-alives go out from the frame thread, which a card write can
-    * hold up for seconds (lessons-audit 8) */
-   fe_np_set_peer_dead(20000000u);
    {
       /* GBAdhoc 4.0: in a running GBA Link Cable session a bare ack waits
        * up to 30 ms for an input packet to ride on (fe_host switches it on

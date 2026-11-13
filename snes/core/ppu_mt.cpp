@@ -34,12 +34,15 @@
 #include "memmap.h"
 #include "s9x_mt.h"
 #include "apu/apu.h"
+#include "widecap.h"
 
 extern struct SLineData LineData[240];
 extern struct SLineMatrixData LineMatrixData[240];
 extern "C" void s9x_render_batch_r(const S9xRenderJob *job);
 extern "C" void s9x_render_setup_r(void);
 extern "C" void s9x_clear_z_r(uint8 *z, uint8 *subz);
+extern "C" void S9xWideRenderFrameStart_r(int margin);
+extern "C" void S9xWideFillView_r(struct SWideView *v);
 
 /* The renamed renderer copy reads these instead of PPU, IPPU, GFX, BG, Memory,
  * LineData, LineMatrixData, DirectColourMaps and brightness_cap. */
@@ -60,7 +63,7 @@ bool8 g_s9x_obj_ran = FALSE;
 
 namespace ppumt {
 
-enum { K_BATCH, K_FRAME_START, K_FRAME_END };
+enum { K_BATCH, K_FRAME_START, K_FRAME_END, K_WIDE_END };
 enum { F_FULL = 1, F_COLOURS = 2 };
 
 static const int NOBJ = sizeof(((struct SGFX *) 0)->OBJLines) / sizeof(((struct SGFX *) 0)->OBJLines[0]);
@@ -74,7 +77,9 @@ static const int NOUT = 4;
 
 struct Slot
 {
-	int kind, flags, nblocks, row0, nrows, obj_from, w, h;
+	int kind, flags, nblocks, row0, nrows, obj_from, w, h, wide_m;
+	uint32 wclock, wepoch;
+	uint16 *vage, *uage;	/* wide view: stamps of the frame end (allocated when first needed) */
 	S9xRenderJob job;
 	uint16 *screen, *sub, *zero;
 	uint8 *z, *subz;
@@ -189,7 +194,26 @@ static void run_slot(Slot &s)
 	{
 	case K_FRAME_START:
 		s9x_clear_z_r(s.z, s.subz);
+		S9xWideRenderFrameStart_r(s.wide_m);
 		break;
+
+	case K_WIDE_END:
+	{
+		SWideHook hook = g_s9x_wide_hook;
+		if (!hook)
+			break;
+		struct SWideView v;
+		S9xWideFillView_r(&v);
+		v.vram = Memory_R.VRAM;
+		v.vage = s.vage;
+		v.uage = s.uage;
+		v.clock = s.wclock;
+		v.epoch = s.wepoch;
+		v.centre = s.screen;
+		v.centre_pitch = MAX_SNES_WIDTH;
+		hook(&v, g_s9x_wide_user);
+		break;
+	}
 
 	case K_FRAME_END:
 	{
@@ -283,6 +307,7 @@ bool S9xPPUMTActive(void) { return on; }
 
 void S9xPPUMTInvalidateAll(void)
 {
+	g_s9x_wide_epoch++;	/* wide view: a reset or a state load makes every stamp and learned position meaningless */
 	if (!on) return;
 	wait_idle();
 	full_resync = true;
@@ -310,6 +335,7 @@ void S9xPPUMTFrameStart(void)
 	s.z = GFX.ZBuffer;
 	s.subz = GFX.SubZBuffer;
 	s.ppl = GFX.ScreenSize;
+	s.wide_m = g_s9x_wide_fm;
 	release();
 }
 
@@ -320,6 +346,23 @@ void S9xPPUMTFrameEnd(int width, int height)
 	 * the picture is therefore snapshotted at S9xPPUMTVideo(), not here. */
 	(void) width; (void) height;
 	frames_posted++;
+	if (g_s9x_wide_fm)
+	{
+		/* wide view: the stamps and the margin pictures of this frame are consumed in order by the worker */
+		Slot &s = acquire();
+		s.kind = K_WIDE_END;
+		if (!s.vage)
+		{
+			s.vage = (uint16 *) malloc(32768 * 2);
+			s.uage = (uint16 *) malloc(2048 * 2);
+		}
+		memcpy(s.vage, g_s9x_vage, 32768 * 2);
+		memcpy(s.uage, g_s9x_uage, 2048 * 2);
+		s.wclock = g_s9x_wide_clock;
+		s.wepoch = g_s9x_wide_epoch;
+		s.screen = GFX.Screen;
+		release();
+	}
 }
 
 void S9xPPUMTBatch(const S9xRenderJob &job)
@@ -529,4 +572,75 @@ void S9xPPUMTConfig(int core, int prio)
 void S9xPPUMTStats(uint64_t *busy, uint64_t *nbatches, uint64_t *nwaits, uint64_t *waitns)
 {
 	*busy = busy_ns.load(); *nbatches = batches.load(); *nwaits = waits.load(); *waitns = wait_ns.load();
+}
+
+
+/* ---- wide view, register side (wide.h) --------------------------------------------------------------------- */
+
+uint32 g_s9x_wide_clock = 0;
+uint32 g_s9x_wide_epoch = 1;
+uint8 g_s9x_wide_stamp = 0;
+uint8 g_s9x_wide_m = 0;
+uint8 g_s9x_wide_fm = 0;
+uint16 g_s9x_vage[32768];
+uint16 g_s9x_uage[2048];
+SWideHook g_s9x_wide_hook = NULL;
+void *g_s9x_wide_user = NULL;
+
+void S9xWideSet(int margin, SWideHook hook, void *user)
+{
+	S9xPPUMTSync();			/* the worker may be inside the old hook */
+	if (margin < 0) margin = 0;
+	if (margin > SW_MAXM) margin = SW_MAXM;
+	if (margin && !g_s9x_wide_m)
+	{
+		memset(g_s9x_vage, 0, sizeof(g_s9x_vage));
+		memset(g_s9x_uage, 0, sizeof(g_s9x_uage));
+		g_s9x_wide_epoch++;
+	}
+	g_s9x_wide_hook = hook;
+	g_s9x_wide_user = user;
+	g_s9x_wide_stamp = margin ? 1 : 0;
+	g_s9x_wide_m = (uint8) margin;
+	if (!margin) g_s9x_wide_fm = 0;
+}
+
+void S9xWideReset(void)
+{
+	g_s9x_wide_epoch++;
+}
+
+void S9xWideFrameStartLive(void)
+{
+	g_s9x_wide_fm = g_s9x_wide_m;
+	if (!g_s9x_wide_fm)
+		return;
+	if (++g_s9x_wide_clock == 0 || (g_s9x_wide_clock & 0xffff) == 0)
+		g_s9x_wide_clock++;
+	if ((g_s9x_wide_clock & 0x3fff) == 0)
+	{
+		/* stamps older than 32768 frames become 0 ("long ago") so that the 16 bit clock cannot make them look new */
+		uint16 c = (uint16) g_s9x_wide_clock;
+		for (int i = 0; i < 32768; i++)
+			if (g_s9x_vage[i] && (uint16) (c - g_s9x_vage[i]) >= 32768) g_s9x_vage[i] = 0;
+		for (int i = 0; i < 2048; i++)
+			if (g_s9x_uage[i] && (uint16) (c - g_s9x_uage[i]) >= 32768) g_s9x_uage[i] = 0;
+	}
+}
+
+void S9xWideFrameEndLive(void)
+{
+	SWideHook hook = g_s9x_wide_hook;
+	if (!hook)
+		return;
+	struct SWideView v;
+	S9xWideFillView(&v);
+	v.vram = Memory.VRAM;
+	v.vage = g_s9x_vage;
+	v.uage = g_s9x_uage;
+	v.clock = g_s9x_wide_clock;
+	v.epoch = g_s9x_wide_epoch;
+	v.centre = GFX.Screen;
+	v.centre_pitch = MAX_SNES_WIDTH;
+	hook(&v, g_s9x_wide_user);
 }

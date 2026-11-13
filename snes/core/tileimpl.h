@@ -12,6 +12,7 @@
 #include "tile.h"
 
 extern struct SLineMatrixData	LineMatrixData[240];
+extern int g_wide_on, g_wide_dx;	// CBOC-Vita: wide view pass (gfx.cpp)
 
 
 namespace TileImpl {
@@ -758,13 +759,15 @@ namespace TileImpl {
 
 				if (PPU.Mode7HFlip)
 				{
-					startx = Right - 1;
+					// CBOC-Vita: g_wide_on is 1 only during the wide view's margin pass, which maps buffer column x to
+					// screen x + g_wide_dx (the flip is about the 256 pixel screen)
+					startx = g_wide_on ? 255 - ((int) Left + g_wide_dx) : Right - 1;
 					aa = -l->MatrixA;
 					cc = -l->MatrixC;
 				}
 				else
 				{
-					startx = Left;
+					startx = g_wide_on ? (int) Left + g_wide_dx : Left;
 					aa = l->MatrixA;
 					cc = l->MatrixC;
 				}

@@ -54,6 +54,8 @@ APP_SRCS      += clip_vita.c
 APP_SRCS      += preview_vita.c
 APP_SRCS      += menu_diag.c
 APP_SRCS      += menu_load.c menu_files.c
+# steady pacing: playerkit's pacer (pace_steady.h)
+APP_SRCS      += pace_steady.cpp
 # what the game list knows about a cartridge (names, blurbs) and its box art
 # fetched by itself (gamedb.h, artfetch.h)
 APP_SRCS      += gamedb.c artfetch.c cover_custom.c

@@ -6428,6 +6428,51 @@ def t_cheats_consoles(S):
     S.check(r.shot("a.png").tobytes() != nplain.shot("a.png").tobytes(), "...and it acts on the game")
 
 
+def t_nes_wide(S):
+    """The NES wide view (Settings > Display, NES profile: Auto by default):
+    a scrolling game fills 16:9, the original 256 columns in the middle as
+    they were; Off keeps the 256-column picture; the learned map of the level
+    is kept under nes/wide/ when the game ends."""
+    d = os.path.join(S.outdir, "nes_scroll_roms")
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
+    subprocess.run([sys.executable, os.path.join(HERE, "..", "..", "..", "nes", "twin", "tests",
+                    "scroll_roms.py"), d], check=True, capture_output=True)
+    rom = open(os.path.join(d, "scroll_vert.nes"), "rb").read()
+    r = S.run("nes_wide", "60:right:400\n+0:shot=wide.png\n+10:quit\n", autoboot="Scroll.nes",
+              extra={"roms/Scroll.nes": rom})
+    S.clean(r)
+    pics = [e["_"] for e in r.evt("nes_picture")]
+    S.check(any("w=424" in p for p in pics), "Auto: the scrolling game widens to 424 columns (%s)" % pics[:3])
+    maps = glob.glob(os.path.join(r.root, "nes", "wide", "*.map"))
+    S.check(len(maps) == 1 and os.path.getsize(maps[0]) > 0, "the level's map is kept (%s)" % maps)
+    S.picture(r, "wide.png", "nes_wide.png")
+    r = S.run("nes_wide_off", "400:shot=narrow.png\n+10:quit\n", autoboot="Scroll.nes",
+              config={"nes_wide": 2}, extra={"roms/Scroll.nes": rom})
+    S.clean(r)
+    S.check(r.has(r"^EVT nes_options wide=2") and not r.evt("nes_picture"),
+            "Off: the 256-column picture only")
+
+
+def t_steady(S):
+    """Steady pacing (Settings > Gameplay, on by default): a stretch where
+    every frame cannot be drawn in time (the twin's --slow: 20 ms frames on
+    a 16.7 ms display) turns to every second frame drawn, evenly, the game
+    still running every frame; once there is room again for about three
+    seconds it goes back to every frame.  Off: never."""
+    r = S.run("steady", "1500:quit\n", autoboot="gbadhoc-test.gba", args=("--slow", "200:400:20000"))
+    S.clean(r)
+    st = r.evt("steady")
+    modes = [(e["mode"], int(e["frame"])) for e in st]
+    S.check(len(modes) >= 2 and modes[0][0] == "half" and modes[1][0] == "full" and
+            200 < modes[0][1] < 400 and modes[1][1] - 600 >= 150,
+            "half during the slow stretch, every frame again ~3 s after it (%s)" % modes)
+    r2 = S.run("steady_off", "1000:quit\n", autoboot="gbadhoc-test.gba", config={"steady_pacing": 0},
+               args=("--slow", "200:400:20000"))
+    S.clean(r2)
+    S.check(r2.has(r"^EVT steady_options on=0") and not r2.evt("steady"), "off: every frame, always")
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6823,7 +6868,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

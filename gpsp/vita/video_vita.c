@@ -344,7 +344,12 @@ static void dest_geo(unsigned w, unsigned h, vid_geo *g)
       g->dh = VB_H;
       g->dw = (int)((unsigned)VB_H * w / (h ? h : 1));
       if (g->dw > VB_W)
+      {
+         /* wider than the screen (the NES wide view, 424x224): the width
+          * decides, one factor for both (never a squeezed picture) */
          g->dw = VB_W;
+         g->dh = (int)((unsigned)VB_W * h / (w ? w : 1));
+      }
       break;
    case VID_SCALE_STRETCH:
       g->dw = VB_W;

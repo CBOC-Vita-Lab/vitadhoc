@@ -109,6 +109,8 @@ int ui_host_mgift_available(void);
 #define UI_EXTRA_ROOTS_MAX 32
 /* WonderSwan options to the core (main_vita.c app_ws_options) */
 void        app_ws_options(void);
+void        app_nes_options(void);   /* the NES Wide view setting, to the core */
+void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
 /* Settings > Game folders: add a folder, or remove it when it is listed,

@@ -193,6 +193,12 @@ typedef struct
     * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
     * scrolling, the default); 0 = the newest frame only. */
    int  ws_blend;
+   /* Settings > Display > Wide view (NES profile; CONFIG.INI nes_wide):
+    * 0 Auto (default), 1 On, 2 Off (nescore.h NESCORE_WIDE_*) */
+   int  nes_wide;
+   /* Settings > Gameplay > Steady pacing (CONFIG.INI steady_pacing, 1 by
+    * default): pace_steady.h */
+   int  steady_pacing;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed

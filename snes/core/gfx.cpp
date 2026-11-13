@@ -14,6 +14,7 @@
 #include "screenshot.h"
 #include "display.h"
 #include "s9x_prof.h"
+#include "widecap.h"
 
 extern struct SCheatData		Cheat;
 extern struct SLineData			LineData[240];
@@ -37,6 +38,15 @@ static void DrawBackgroundOffsetMosaic (int, uint8, uint8, int);
 static inline void DrawBackgroundMode7 (int, void (*DrawMath) (uint32, uint32, int), void (*DrawNomath) (uint32, uint32, int), int);
 static inline void DrawBackdrop (void);
 static inline void RenderScreen (bool8);
+// CBOC-Vita: wide view pass (see wide.h and the end of this file). All of it is off (g_wide_on == 0) while the
+// main pass draws; the hooks below only change what RenderScreen does during the wide pass.
+int g_wide_on = 0;				// 1 only while the wide pass draws (also read by the Mode 7 loop in tileimpl.h)
+int g_wide_dx = 0;				// screen x of buffer column 0 during the wide pass (= -margin)
+static uint8 g_wmask = 0xff;			// layers the wide pass may draw (bit 4 = sprites)
+static bool g_wnobackdrop = false;
+static struct ClipData *g_wclip[2];
+static void DrawOBJSWide (int);
+static void S9xWideBatch (const S9xRenderJob &);
 static uint16 get_crosshair_color (uint8);
 static void S9xDisplayStringType (const char *, int, int, bool, int);
 
@@ -215,11 +225,14 @@ void S9xStartScreenRefresh (void)
 		PPU.RecomputeClipWindows = TRUE;
 		IPPU.PreviousLine = IPPU.CurrentLine = 0;
 
+		S9xWideFrameStartLive();	// CBOC-Vita: wide view clock and margin of this frame (nothing when off)
+
 		if (S9xPPUMTActive())
 			S9xPPUMTFrameStart();
 		else
 		{
 			S9xClearZBuffers(GFX.ZBuffer, GFX.SubZBuffer);
+			S9xWideRenderFrameStart(g_s9x_wide_fm);
 		}
 	}
 
@@ -241,6 +254,9 @@ void S9xEndScreenRefresh (void)
 	if (IPPU.RenderThisFrame)
 	{
 		FLUSH_REDRAW();
+
+		if (!S9xPPUMTActive() && g_s9x_wide_fm)
+			S9xWideFrameEndLive();	// CBOC-Vita: single thread: hand the finished frame to the wide view
 
 		if (S9xPPUMTActive())
 		{
@@ -371,16 +387,20 @@ static inline void RenderScreen (bool8 sub)
 		if (GFX.DoInterlace && S9xInterlaceField())
 			GFX.S += GFX.RealPPL;
 		GFX.DB = GFX.ZBuffer;
-		GFX.Clip = IPPU.Clip[0];
+		GFX.Clip = g_wide_on ? g_wclip[0] : IPPU.Clip[0];
 		BGActive = Memory.FillRAM[0x212c] & ~Settings.BG_Forced;
+		if (g_wide_on)
+			BGActive &= g_wmask;
 		D = 32;
 	}
 	else
 	{
 		GFX.S = GFX.SubScreen;
 		GFX.DB = GFX.SubZBuffer;
-		GFX.Clip = IPPU.Clip[1];
+		GFX.Clip = g_wide_on ? g_wclip[1] : IPPU.Clip[1];
 		BGActive = Memory.FillRAM[0x212d] & ~Settings.BG_Forced;
+		if (g_wide_on)
+			BGActive &= g_wmask;
 		D = (Memory.FillRAM[0x2130] & 2) << 4; // 'do math' depth flag
 	}
 
@@ -392,7 +412,10 @@ static inline void RenderScreen (bool8 sub)
 		BG.StartPalette = 128;
 		S9xSelectTileConverter(4, FALSE, sub, FALSE);
 		S9xSelectTileRenderers(PPU.BGMode, sub, TRUE);
-		DrawOBJS(D + 4);
+		if (g_wide_on)
+			DrawOBJSWide(D + 4);
+		else
+			DrawOBJS(D + 4);
 	}
 
 	BG.NameSelect = 0;
@@ -485,7 +508,8 @@ static inline void RenderScreen (bool8 sub)
 
 	BG.EnableMath = !sub && (Memory.FillRAM[0x2131] & 0x20);
 
-	DrawBackdrop();
+	if (!g_wnobackdrop)
+		DrawBackdrop();
 }
 
 static void S9xUpdateScreen_impl (void);
@@ -611,6 +635,8 @@ void S9xRenderBatch (const S9xRenderJob &job)
 			for (int x = 0; x < IPPU.RenderedScreenWidth; x++)
 				GFX.S[x] = black;
 	}
+
+	S9xWideBatch(job);		// CBOC-Vita: the wide view's margin pass (nothing unless the wide view is on)
 }
 
 // Entry points for the renamed copy of this file used by the PPU thread
@@ -2295,3 +2321,448 @@ void S9xDrawCrosshair (const char *crosshair, uint8 fgcolor, uint8 bgcolor, int1
 	}
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------
+// CBOC-Vita: wide view (wide.h). A second pass of the same renderer that draws only the columns beside the
+// 256 pixel picture into private buffers, after the main pass of the batch has finished. Nothing the main pass
+// or the register side reads is changed: the buffers, the clip tables and the sprite list are the pass's own, and
+// the scroll rows it shifts are put back. With the wide view off the only cost is one test per batch.
+// ---------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+struct WideObjEnt { uint8 spr, line, real; };
+
+struct WideState
+{
+	int		m;			// margin in pixels, 0 = off
+	bool	bad;			// the frame has hi-res or interlace lines: no margin at all
+	bool	alloc;
+	uint16	*scr[SW_NPASS];
+	uint8	*z[SW_NPASS];
+	uint16	*sub;
+	uint8	*subz;
+	struct SWideLine line[SW_ROWS];
+	struct ClipData clip[2][6];
+	uint16	hsave[SW_ROWS][4];
+	// sprites of the margin pass
+	uint8	mobj_n[SW_ROWS];
+	struct WideObjEnt mobj[SW_ROWS][40];
+	int		h;
+};
+
+static WideState W;
+
+static uint32 hash_cg (void)
+{
+	uint32 h = 2166136261u;
+	for (int i = 0; i < 256; i++)
+		h = (h ^ PPU.CGDATA[i]) * 16777619u;
+	return h;
+}
+
+static void wide_alloc (void)
+{
+	if (W.alloc)
+		return;
+	size_t rows = SW_ROWS + 2;
+	for (int p = 0; p < SW_NPASS; p++)
+	{
+		W.scr[p] = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
+		W.z[p]   = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
+	}
+	W.sub  = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
+	W.subz = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
+	W.alloc = true;
+}
+
+// The regions of one window table in buffer columns, cut to one side. A region that touches an edge of the
+// 256 pixel picture continues outwards (the window state of the edge is the state of the margin).
+static void wide_clip_side (int side)
+{
+	const int M = W.m;
+	const int lo = side ? M + 256 : 0, hi = side ? 2 * M + 256 : M;
+	for (int sub = 0; sub < 2; sub++)
+		for (int k = 0; k < 6; k++)
+		{
+			const struct ClipData &s = IPPU.Clip[sub][k];
+			struct ClipData &d = W.clip[sub][k];
+			d.Count = 0;
+			for (int i = 0; i < s.Count && d.Count < 6; i++)
+			{
+				int l = s.Left[i], r = s.Right[i];
+				int bl = (l <= 0) ? 0 : l + M;
+				int br = (r >= 256) ? 2 * M + 256 : r + M;
+				if (bl < lo) bl = lo;
+				if (br > hi) br = hi;
+				if (bl >= br)
+					continue;
+				d.Left[d.Count] = (uint16) bl;
+				d.Right[d.Count] = (uint16) br;
+				d.DrawMode[d.Count] = s.DrawMode[i];
+				d.Count++;
+			}
+		}
+}
+
+static void wide_obj_dims (int S, int *w, int *h)
+{
+	*w = GFX.OBJWidths[S];
+	int sw, sh, lw, lh;
+	switch (PPU.OBJSizeSelect)
+	{
+		case 0: sw = sh = 8; lw = lh = 16; break;
+		case 1: sw = sh = 8; lw = lh = 32; break;
+		case 2: sw = sh = 8; lw = lh = 64; break;
+		case 3: sw = sh = 16; lw = lh = 32; break;
+		case 4: sw = sh = 16; lw = lh = 64; break;
+		case 6: sw = 16; sh = 32; lw = 32; lh = 64; break;
+		case 7: sw = 16; sh = 32; lw = lh = 32; break;
+		case 5: default: sw = sh = 32; lw = lh = 64; break;
+	}
+	*h = PPU.OBJ[S].Size ? lh : sh;
+	(void) sw; (void) lw;
+}
+
+// Sprites that lie wholly in the left margin (the hardware's own list has only sprites that touch the picture),
+// for rows y0..y1. They are drawn only on lines where the hardware's own sprite budget was not exceeded and
+// they never take part in that budget.
+static void wide_setup_obj (int y0, int y1)
+{
+	const int M = W.m;
+	int sprite_limit = (Settings.MaxSpriteTilesPerLine == 128) ? 128 : 32;
+	for (int y = y0; y <= y1; y++)
+		W.mobj_n[y] = 0;
+	if (!(Memory.FillRAM[0x212c] & 0x10))
+		return;
+	for (int S = 0; S < 128; S++)
+	{
+		int w, h;
+		wide_obj_dims(S, &w, &h);
+		int hp = PPU.OBJ[S].HPos;
+		if (hp > -w || hp <= -w - M || hp == -256)
+			continue;
+		for (int y = y0; y <= y1; y++)
+		{
+			uint8 line = (uint8) (y - (PPU.OBJ[S].VPos & 0xff));
+			if (line >= h)
+				continue;
+			int n = W.mobj_n[y];
+			if (n >= 40)
+				continue;
+			W.mobj[y][n].spr = (uint8) S;
+			W.mobj[y][n].line = PPU.OBJ[S].VFlip ? (uint8) (line ^ (w - 1)) : line;
+			W.mobj[y][n].real = 0;
+			W.mobj_n[y] = (uint8) (n + 1);
+		}
+	}
+	(void) sprite_limit;
+}
+
+} // namespace
+
+// One sprite on one row, in buffer columns. `tiles` is the number of on-screen tiles the hardware drew of it,
+// `full` says all of them were drawn (so the tiles beyond the picture's edge may be drawn too).
+static void wide_draw_sprite (int S, int OLine, int tiles, bool full, uint32 Offset, int D,
+	void (*&DrawTile) (uint32, uint32, uint32, uint32), void (*&DrawClippedTile) (uint32, uint32, uint32, uint32, uint32, uint32))
+{
+	const int M = W.m;
+	const int BW = 2 * M + 256;
+	int	BaseTile = (((OLine << 1) + (PPU.OBJ[S].Name & 0xf0)) & 0xf0) | (PPU.OBJ[S].Name & 0x100) | (PPU.OBJ[S].Palette << 10);
+	int	TileX = PPU.OBJ[S].Name & 0x0f;
+	int	TileLine = (OLine & 7) * 8;
+	int	TileInc = 1;
+
+	if (PPU.OBJ[S].HFlip)
+	{
+		TileX = (TileX + (GFX.OBJWidths[S] >> 3) - 1) & 0x0f;
+		BaseTile |= H_FLIP;
+		TileInc = -1;
+	}
+
+	GFX.Z2 = D + PPU.OBJ[S].Priority * 4;
+
+	int	DrawMode = 3;
+	int	clip = 0, next_clip = -1000;
+	int	HP = PPU.OBJ[S].HPos;
+	int	X = HP + M;
+	int	end = HP + M + GFX.OBJWidths[S];
+
+	for (int t = tiles, O = Offset + X; X < BW && X < end; TileX = (TileX + TileInc) & 0x0f, X += 8, O += 8)
+	{
+		int sx = X - M;
+		if (sx < -7 || sx >= 256)
+		{
+			// a tile the hardware never drew
+			if (!full || X < -7)
+				continue;
+		}
+		else if (--t < 0)
+			continue;
+		if (sx >= 0 && sx + 8 <= 256)
+			continue;	// wholly inside the picture: the main pass drew it
+
+		for (int x = X; x < X + 8;)
+		{
+			if (x >= next_clip)
+			{
+				for (; clip < GFX.Clip[4].Count && GFX.Clip[4].Left[clip] <= x; clip++) ;
+				if (clip == 0 || x >= GFX.Clip[4].Right[clip - 1])
+				{
+					DrawMode = 0;
+					next_clip = ((clip < GFX.Clip[4].Count) ? GFX.Clip[4].Left[clip] : 1000);
+				}
+				else
+				{
+					DrawMode = GFX.Clip[4].DrawMode[clip - 1];
+					next_clip = GFX.Clip[4].Right[clip - 1];
+					GFX.ClipColors = !(DrawMode & 1);
+
+					if (BG.EnableMath && (PPU.OBJ[S].Palette & 4) && (DrawMode & 2))
+					{
+						DrawTile = GFX.DrawTileMath;
+						DrawClippedTile = GFX.DrawClippedTileMath;
+					}
+					else
+					{
+						DrawTile = GFX.DrawTileNomath;
+						DrawClippedTile = GFX.DrawClippedTileNomath;
+					}
+				}
+			}
+
+			if (x == X && x + 8 < next_clip && x >= 0)
+			{
+				if (DrawMode)
+					DrawTile(BaseTile | TileX, O, TileLine, 1);
+				x += 8;
+			}
+			else
+			{
+				int	w = (next_clip <= X + 8) ? next_clip - x : X + 8 - x;
+				if (w <= 0)
+					w = 1;
+				if (DrawMode && x >= X)
+					DrawClippedTile(BaseTile | TileX, O, x - X, w, TileLine, 1);
+				x += w;
+			}
+		}
+	}
+}
+
+static void DrawOBJSWide (int D)
+{
+	void (*DrawTile) (uint32, uint32, uint32, uint32) = NULL;
+	void (*DrawClippedTile) (uint32, uint32, uint32, uint32, uint32, uint32) = NULL;
+
+	BG.InterlaceLine = 0;
+	GFX.Z1 = 2;
+	int sprite_limit = (Settings.MaxSpriteTilesPerLine == 128) ? 128 : 32;
+
+	for (uint32 Y = GFX.StartY, Offset = Y * GFX.PPL; Y <= GFX.EndY; Y++, Offset += GFX.PPL)
+	{
+		int	I = 0;
+		int	tiles = GFX.OBJLines[Y].Tiles;
+
+		// the hardware's sprites (they touch the picture): the same budget as DrawOBJS, and the tiles beyond the picture's
+		// edges only when the sprite was drawn whole
+		for (int S = GFX.OBJLines[Y].OBJ[I].Sprite; S >= 0 && I < sprite_limit; S = GFX.OBJLines[Y].OBJ[++I].Sprite)
+		{
+			tiles += GFX.OBJVisibleTiles[S];
+			if (tiles <= 0)
+				continue;
+			if (PPU.OBJ[S].HPos == -256)
+				continue;
+			int hp = PPU.OBJ[S].HPos;
+			if (hp >= 0 && hp + GFX.OBJWidths[S] <= 256)
+				continue;	// no part beyond the edges
+			wide_draw_sprite(S, GFX.OBJLines[Y].OBJ[I].Line, tiles, tiles >= GFX.OBJVisibleTiles[S], Offset, D, DrawTile, DrawClippedTile);
+		}
+
+		// sprites wholly in the left margin: only when this line had no time over (budget never exceeded)
+		if (GFX.OBJLines[Y].Tiles >= 0 && I < sprite_limit)
+			for (int k = 0; k < W.mobj_n[Y]; k++)
+				wide_draw_sprite(W.mobj[Y][k].spr, W.mobj[Y][k].line, 1 << 20, true, Offset, D, DrawTile, DrawClippedTile);
+	}
+}
+
+extern "C" void S9xWideRenderFrameStart (int margin)
+{
+	W.m = margin;
+	W.bad = false;
+	if (!margin)
+		return;
+	if (margin > SW_MAXM)
+		W.m = margin = SW_MAXM;
+	wide_alloc();
+	memset(W.line, 0, sizeof(W.line));
+	for (int p = 0; p < SW_NPASS; p++)
+		memset(W.z[p], 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+	memset(W.subz, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+	W.h = 0;
+}
+
+static void wide_pass (const S9xRenderJob &job, int pass, uint8 mask, bool composite)
+{
+	const int M = W.m;
+	uint16 *sS = GFX.Screen, *sSub = GFX.SubScreen;
+	uint8 *sZ = GFX.ZBuffer, *sSubZ = GFX.SubZBuffer;
+	uint8 save2131 = Memory.FillRAM[0x2131];
+
+	GFX.Screen = W.scr[pass];
+	GFX.ZBuffer = W.z[pass];
+	GFX.SubScreen = W.sub;
+	GFX.SubZBuffer = W.subz;
+	g_wide_on = 1;
+	g_wide_dx = -M;
+	g_wmask = mask;
+	g_wnobackdrop = !composite;
+	if (!composite)
+		Memory.FillRAM[0x2131] = 0;		// layers alone: no colour math (their margin is blended by the adapter)
+
+	for (int side = 0; side < 2; side++)
+	{
+		wide_clip_side(side);
+		g_wclip[0] = W.clip[0];
+		g_wclip[1] = W.clip[1];
+		if (composite && job.sub)
+			RenderScreen(TRUE);
+		RenderScreen(FALSE);
+	}
+
+	Memory.FillRAM[0x2131] = save2131;
+	g_wide_on = 0;
+	g_wide_dx = 0;
+	g_wmask = 0xff;
+	g_wnobackdrop = false;
+	GFX.Screen = sS; GFX.SubScreen = sSub; GFX.ZBuffer = sZ; GFX.SubZBuffer = sSubZ;
+}
+
+static void S9xWideBatch (const S9xRenderJob &job)
+{
+	if (!W.m)
+		return;
+
+	const int y0 = (int) GFX.StartY;
+	int y1 = (int) GFX.EndY;
+	if (y1 >= SW_ROWS)
+		y1 = SW_ROWS - 1;
+	if (y0 > y1)
+		return;
+
+	const bool hires = IPPU.DoubleWidthPixels || job.widen || PPU.BGMode == 5 || PPU.BGMode == 6 || IPPU.PseudoHires;
+	const bool inter = IPPU.Interlace || IPPU.DoubleHeightPixels || job.heighten;
+	const uint8 tm = Memory.FillRAM[0x212c] & ~Settings.BG_Forced, ts = Memory.FillRAM[0x212d];
+	const int mode = PPU.BGMode;
+	bool mosaic = false;
+	for (int n = 0; n < 4; n++)
+		if (PPU.BGMosaic[n] && PPU.Mosaic > 1 && ((tm | ts) & (1 << n)))
+			mosaic = true;
+	const bool opt = (mode == 2 || mode == 4 || mode == 6);
+	const uint32 cgs = hash_cg();
+
+	uint8 flags = SWL_VALID;
+	if (job.blank || PPU.ForcedBlanking) flags |= SWL_BLANK;
+	if (hires) flags |= SWL_HIRES | SWL_NOMARGIN;
+	if (inter) flags |= SWL_NOMARGIN;
+	if (opt) flags |= SWL_OPT | SWL_NOMARGIN;
+	if (mosaic) flags |= SWL_MOSAIC | SWL_NOMARGIN;
+	if (mode == 7) flags |= SWL_MODE7;
+	if (hires || inter)
+		W.bad = true;
+	if (y1 + 1 > W.h)
+		W.h = y1 + 1;
+
+	for (int y = y0; y <= y1; y++)
+	{
+		struct SWideLine &L = W.line[y];
+		memset(&L, 0, sizeof(L));
+		L.flags = flags;
+		L.mode = (uint8) mode;
+		L.bg3prio = PPU.BG3Priority;
+		L.bright = PPU.ForcedBlanking ? 0 : PPU.Brightness;
+		L.tm = tm; L.ts = ts;
+		L.cgwsel = Memory.FillRAM[0x2130]; L.cgadsub = Memory.FillRAM[0x2131];
+		L.fixr = PPU.FixedColourRed; L.fixg = PPU.FixedColourGreen; L.fixb = PPU.FixedColourBlue;
+		L.mosaic = mosaic ? PPU.Mosaic : 1;
+		L.extbg = (Memory.FillRAM[0x2133] & 0x40) ? 1 : 0;
+		for (int n = 0; n < 4; n++)
+		{
+			L.bgsize[n] = PPU.BG[n].BGSize;
+			L.scsize[n] = (uint8) PPU.BG[n].SCSize;
+			L.scbase[n] = PPU.BG[n].SCBase;
+			L.name[n] = PPU.BG[n].NameBase;
+			L.hofs[n] = LineData[y].BG[n].HOffset;
+			L.vofs[n] = LineData[y].BG[n].VOffset;
+		}
+		L.backdrop = IPPU.ScreenColors[0];
+		L.cgsum = cgs;
+		if (mode == 7)
+		{
+			const struct SLineMatrixData &m = LineMatrixData[y];
+			L.m7[0] = m.MatrixA; L.m7[1] = m.MatrixB; L.m7[2] = m.MatrixC; L.m7[3] = m.MatrixD;
+			L.m7[4] = m.CentreX; L.m7[5] = m.CentreY; L.m7[6] = m.M7HOFS; L.m7[7] = m.M7VOFS;
+			L.m7flags = (PPU.Mode7HFlip ? 1 : 0) | (PPU.Mode7VFlip ? 2 : 0) | (PPU.Mode7Repeat << 2);
+		}
+		L.obj_size = PPU.OBJSizeSelect; L.obj_prio_rot = PPU.OAMPriorityRotation;
+		L.obj_base = PPU.OBJNameBase; L.obj_gap = PPU.OBJNameSelect;
+		for (int k = 0; k < 6; k++)
+			if (k < 5 && (tm & (1 << k)) && (IPPU.Clip[0][k].Count != 1 || IPPU.Clip[0][k].Left[0] != 0 || IPPU.Clip[0][k].Right[0] != 256 || IPPU.Clip[0][k].DrawMode[0] != 3))
+				L.wsel_any = 1;
+	}
+
+	if (job.blank || PPU.ForcedBlanking || (flags & SWL_NOMARGIN))
+		return;
+
+	// the pass: scroll rows shifted so that buffer column x is screen column x - M
+	for (int y = y0; y <= y1; y++)
+		for (int n = 0; n < 4; n++)
+		{
+			W.hsave[y][n] = LineData[y].BG[n].HOffset;
+			LineData[y].BG[n].HOffset = (uint16) (LineData[y].BG[n].HOffset - W.m);
+		}
+	wide_setup_obj(y0, y1);
+
+	uint8 drawn = 1 << SWP_COMPOSITE;
+	wide_pass(job, SWP_COMPOSITE, 0xff, true);
+	if (mode != 7)
+	{
+		if (tm & 0x10)
+		{
+			wide_pass(job, SWP_OBJ, 0x10, false);
+			drawn |= 1 << SWP_OBJ;
+		}
+		int nbg = (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
+		for (int n = 0; n < nbg; n++)
+			if (tm & (1 << n))
+			{
+				wide_pass(job, SWP_BG0 + n, 1 << n, false);
+				drawn |= 1 << (SWP_BG0 + n);
+			}
+	}
+	for (int y = y0; y <= y1; y++)
+	{
+		for (int n = 0; n < 4; n++)
+			LineData[y].BG[n].HOffset = W.hsave[y][n];
+		W.line[y].pass = drawn;
+		W.line[y].flags |= SWL_DRAWN;
+	}
+}
+
+extern "C" void S9xWideFillView (struct SWideView *v)
+{
+	memset(v, 0, sizeof(*v));
+	v->m = W.m;
+	v->h = W.h ? W.h : PPU.ScreenHeight;
+	v->ok = !W.bad;
+	v->line = W.line;
+	for (int p = 0; p < SW_NPASS; p++)
+	{
+		v->pass_px[p] = W.scr[p];
+		v->pass_z[p] = W.z[p];
+	}
+	v->cgram = PPU.CGDATA;
+	v->colors = IPPU.ScreenColors;
+	v->oam = PPU.OAMData;
+	v->rendered_w = IPPU.RenderedScreenWidth;
+}

@@ -3520,6 +3520,9 @@ typedef struct
   u32 gate;       /* the scan stopped at a translation gate (game_config):
                    * the full-flush build also tags the word AT the gate
                    * (smc_tag_gate_*_yes) */
+  u32 nins;       /* instructions; their update_cycles flags as the scan
+                   * left them follow the source copy (smcr_vb) */
+  u32 s_in;       /* the last instruction's update_cycles BEFORE the scan */
 } smcr_desc;
 
 typedef struct { u32 off; u32 target; } smcr_exit;
@@ -3646,6 +3649,9 @@ static void smcr_trace(char kind)
     }
     for (i = 0; i < 16; i++)
       fprintf(smcr_trace_f, " r%u=%08x", (unsigned)i, (unsigned)reg[i]);
+    fprintf(smcr_trace_f, "\nIO");
+    for (i = 0; i < 0x110; i++)
+      fprintf(smcr_trace_f, " %03x:%04x", (unsigned)(i * 2), (unsigned)io_registers[i]);
     fprintf(smcr_trace_f, "\n");
   }
   if (!(n++ & 3))
@@ -3805,6 +3811,13 @@ static void smcr_flush_tags(void)
 
 static void smcr_verify_state(const char *where);
 static void smcr_dc_clear(void);
+/* smcr_vb: see after block_data. */
+static void smcr_vb_load(void);
+static void smcr_vb_store(void);
+static u32  smcr_vb_get(u32 k);
+static void smcr_vb_set(u32 k, u32 v);
+static u32  smcr_bd_get(u32 k);
+static void smcr_bd_set(u32 k, u32 v);
 
 /* The full-flush build's flush, re-enacted: tags only, the code stays. */
 static void smcr_virtual_flush(void)
@@ -3860,7 +3873,7 @@ static void smcr_reclaim(void)
     u32 len;
     if (d.gen != smcr_vgen)
       continue;
-    len = d.end - (d.key & ~1u);
+    len = d.end - (d.key & ~1u) + d.nins;
     memmove(smcr_srcb + src, smcr_srcb + d.src, len);
     memmove(smcr_x + x, smcr_x + d.exits, d.n_exits * sizeof(smcr_exit));
     d.src = src;
@@ -3909,7 +3922,8 @@ static u32 smcr_find(u32 pc, u32 thumb, u32 *versions)
     if (d->key != key)
       continue;
     (*versions)++;
-    if (!memcmp(mem, smcr_srcb + d->src, d->end - pc))
+    if (d->s_in == smcr_vb_get(d->nins - 1) &&
+        !memcmp(mem, smcr_srcb + d->src, d->end - pc))
       return i;
   }
   return 0;
@@ -3953,6 +3967,15 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
       swaplen = len;
     }
   }
+  /* scan_block resets update_cycles for every instruction but the last, so
+   * the last one's flag is what the PREVIOUS translation left there
+   * (upstream behaviour; it decides a cycle update before the last
+   * instruction).  The full-flush build's value is smcr_vb; a re-translation
+   * reproduces the value the kept one was made with. */
+  if (redo)
+    smcr_bd_set(smcr_d[redo - 1].nins - 1, smcr_d[redo - 1].s_in);
+  else
+    smcr_vb_load();
   smcr_xlat_real = 1;
   smcr_xn = 0;
   cph_t = core_phase_enter(CORE_PHASE_FINE);
@@ -3982,10 +4005,17 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
   }
 
   len = smcr_last_end - pc;
-  if (!smcr_grow((void **)&smcr_d, &smcr_capd, smcr_nd + 1,
-                 sizeof(smcr_desc), 1024) ||
-      !smcr_grow((void **)&smcr_srcb, &smcr_capsrc, smcr_nsrc + len, 1,
-                 64 * 1024) ||
+  {
+    u32 nins = len / (thumb ? 2 : 4);
+    if (!smcr_grow((void **)&smcr_d, &smcr_capd, smcr_nd + 1,
+                   sizeof(smcr_desc), 1024) ||
+        !smcr_grow((void **)&smcr_srcb, &smcr_capsrc, smcr_nsrc + len + nins,
+                   1, 64 * 1024)) {
+      ram_translation_ptr = start;
+      return 0;
+    }
+  }
+  if (
       !smcr_grow((void **)&smcr_x, &smcr_capx, smcr_nx + smcr_xn,
                  sizeof(smcr_exit), 4096)) {
     ram_translation_ptr = start;
@@ -4005,8 +4035,13 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
     d->gen = 0;
     d->tag = 0;
     d->gate = smcr_last_gate;
+    d->nins = len / (thumb ? 2 : 4);
+    d->s_in = smcr_vb_get(d->nins - 1);
     memcpy(smcr_srcb + smcr_nsrc, mem, len);
     smcr_nsrc += len;
+    for (i = 0; i < d->nins; i++)
+      smcr_srcb[smcr_nsrc + i] = (u8)smcr_bd_get(i);
+    smcr_nsrc += d->nins;
     for (i = 0; i < smcr_xn; i++) {
       smcr_x[smcr_nx + i].off = (u32)(smcr_xbuf[i].src - start);
       smcr_x[smcr_nx + i].target = smcr_xbuf[i].target;
@@ -4125,6 +4160,13 @@ static u8 *smcr_lookup(u32 pc, u32 thumb, u16 *tagp)
       return smcr_emergency("translation does not fit");
   }
   d = &smcr_d[idx - 1];
+  /* The scan's update_cycles flags, as the full-flush build leaves them. */
+  {
+    u32 k;
+    const u8 *fl = smcr_srcb + d->src + (d->end - pc);
+    for (k = 0; k < d->nins; k++)
+      smcr_vb_set(k, fl[k]);
+  }
   /* Its cache-full test, at the same block: translate_block_* checks after
    * each instruction, the pointer only grows, and its limit is taken with
    * this block's tag already allocated. */
@@ -4274,15 +4316,39 @@ static void smcr_verify_revival(u32 idx, u32 thumb)
     return;
   memcpy(save, code, d.s_total);
   ram_translation_ptr = code;
+  smcr_bd_set(d.nins - 1, d.s_in);
   smcr_xlat_real = 1;
   smcr_xn = 0;
   ok = thumb ? translate_block_thumb(pc, true) : translate_block_arm(pc, true);
   smcr_xlat_real = 0;
   if (!ok || smcr_last_end != d.end || smcr_last_gate != d.gate ||
       (u32)(smcr_last_body - code) != d.s_body ||
-      (u32)(ram_translation_ptr - code) != d.s_total || smcr_xn != d.n_exits)
+      (u32)(ram_translation_ptr - code) != d.s_total || smcr_xn != d.n_exits) {
+    fprintf(stderr, "smc_partial VERIFY: %08x%s end %08x/%08x gate %u/%u "
+            "body %u/%u total %u/%u exits %u/%u\n", (unsigned)pc,
+            thumb ? " thumb" : "", (unsigned)d.end, (unsigned)smcr_last_end,
+            (unsigned)d.gate, (unsigned)smcr_last_gate, (unsigned)d.s_body,
+            (unsigned)(smcr_last_body - code), (unsigned)d.s_total,
+            (unsigned)(ram_translation_ptr - code), (unsigned)d.n_exits,
+            (unsigned)smcr_xn);
+    {
+      const char *dd = getenv("GPSP_SMC_VERIFY_DUMP");
+      if (dd) {
+        char nm[600];
+        FILE *f;
+        snprintf(nm, sizeof(nm), "%s.kept", dd);
+        if ((f = fopen(nm, "wb"))) { fwrite(save, 1, d.s_total, f); fclose(f); }
+        snprintf(nm, sizeof(nm), "%s.fresh", dd);
+        if ((f = fopen(nm, "wb"))) {
+          fwrite(code, 1, ram_translation_ptr - code, f); fclose(f); }
+        snprintf(nm, sizeof(nm), "%s.src", dd);
+        if ((f = fopen(nm, "wb"))) {
+          fwrite(smcr_mem(pc), 1, d.end - pc, f); fclose(f); }
+      }
+    }
     smcr_verify_fail("revival", "different extent or size", pc,
                      (u32)(ram_translation_ptr - code));
+  }
   for (i = 0; i < smcr_xn; i++)
     if ((u32)(smcr_xbuf[i].src - code) != smcr_x[d.exits + i].off ||
         smcr_xbuf[i].target != smcr_x[d.exits + i].target)
@@ -4324,6 +4390,8 @@ static void smcr_dc_clear(void)
       smcr_xn++;                                                              \
     }                                                                         \
     return true; } } while (0)
+#define SMCR_ROM_XLAT_ENTER() do { if (smcr_on) smcr_vb_load(); } while (0)
+#define SMCR_ROM_XLAT_LEAVE() do { if (smcr_on) smcr_vb_store(); } while (0)
 #define SMCR_APPLY() smcr_apply()
 #define SMCR_TRACE(k) smcr_trace(k)
 /* The SMC trap and a DMA onto code: the full-flush build's flush, on the tags
@@ -4359,6 +4427,8 @@ static void smcr_dc_clear(void)
 #define SMCR_NOTE_BODY()              do { } while (0)
 #define SMCR_RECORD_EXITS()           do { } while (0)
 #define SMCR_TRACE(k)                 do { } while (0)
+#define SMCR_ROM_XLAT_ENTER()         do { } while (0)
+#define SMCR_ROM_XLAT_LEAVE()         do { } while (0)
 #define SMCR_CODE_WRITE_FLUSH(k)      flush_translation_cache_ram()
 #define SMCR_FULL_FLUSH_HOOK()        do { } while (0)
 #endif /* SMC_RANGE */
@@ -4496,7 +4566,9 @@ u8 function_cc *block_lookup_translate_##type(u32 pc)                         \
         DRPROF_ZONE_ENTER(DRZ_XLAT);                                          \
         DRPROF_XLAT_PC_PUSH(pc | thumb);                                      \
         XLAT_DEPTH_ENTER();                                                   \
+        SMCR_ROM_XLAT_ENTER();                                                \
         result = translate_block_##type(pc, false);                           \
+        SMCR_ROM_XLAT_LEAVE();                                                \
         XLAT_DEPTH_LEAVE(result);                                             \
         DRPROF_XLAT_PC_POP();                                                 \
         DRPROF_ZONE_LEAVE(DRZ_XLAT);                                          \
@@ -5343,6 +5415,30 @@ u8 function_cc *block_lookup_address_thumb(u32 pc)
  * with nothing emitted there is nothing to reserve for.) */
 
 block_data_type block_data[MAX_BLOCK_SIZE];
+#if defined(SMC_RANGE) && SMC_RANGE
+/* smcr_vb: block_data[].update_cycles as the full-flush build would have it
+ * now (only the last instruction's flag of a block leaks from one
+ * translation into the next, see smcr_translate).  Loaded into block_data
+ * before every translation that the full-flush build also makes (ROM, and a
+ * RAM block with no kept version) and read back after it. */
+static u8 smcr_vb[MAX_BLOCK_SIZE];
+static void smcr_vb_load(void)
+{
+  u32 k;
+  for (k = 0; k < MAX_BLOCK_SIZE; k++)
+    block_data[k].update_cycles = smcr_vb[k];
+}
+static void smcr_vb_store(void)
+{
+  u32 k;
+  for (k = 0; k < MAX_BLOCK_SIZE; k++)
+    smcr_vb[k] = block_data[k].update_cycles;
+}
+static u32  smcr_vb_get(u32 k)        { return smcr_vb[k]; }
+static void smcr_vb_set(u32 k, u32 v) { smcr_vb[k] = (u8)v; }
+static u32  smcr_bd_get(u32 k)        { return block_data[k].update_cycles; }
+static void smcr_bd_set(u32 k, u32 v) { block_data[k].update_cycles = (u8)v; }
+#endif
 block_exit_type block_exits[MAX_EXITS];
 
 #define smc_write_arm_yes() if(!SMCR_REAL()) {                                \

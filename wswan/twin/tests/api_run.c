@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 #include "host.h"
 #include "blend.h"
 #include "safe_io.h"
@@ -24,6 +25,9 @@ static uint64_t fnv(const void *p, size_t n)
 	for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 1099511628211ull; }
 	return h;
 }
+
+/* the host clock for the cartridge RTC: 2023-11-14 22:13:20 UTC, the same instant as the twin's --rtc-fixed */
+static time_t fixed_time(void) { return 1700000000; }
 
 /* a deterministic pad schedule, integer arithmetic only (the same on every machine) */
 static unsigned pad_for(unsigned f)
@@ -48,6 +52,9 @@ int main(int argc, char **argv)
 	if (n != (size_t) len) return 1;
 
 	if (wswan_host_init()) return 1;
+	/* the cartridge RTC is seeded from the host clock: pin it (after init, which clears the host state), or the
+	 * state hash follows the wall clock */
+	wswan_host_set_time_source(fixed_time);
 	char err[128] = "";
 	if (wswan_host_load_mem(rom, n, argv[1], err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 1; }
 	free(rom);

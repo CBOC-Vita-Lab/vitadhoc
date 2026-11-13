@@ -57,6 +57,9 @@ Testing continues on:
   stay without a cover until you give it one (the Cover button).
 - Game descriptions are written for GBA, GB, GBC and SNES games first; a NES
   game may show none.
+- **Wide view** is new and measured only on the PC build. Some boards (MMC5,
+  MMC2/MMC4 and a few more) show soft edges only. The look-ahead that would
+  show the level before it scrolls in is not used yet.
 
 ## WonderSwan
 

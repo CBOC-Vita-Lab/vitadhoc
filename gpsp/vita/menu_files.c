@@ -614,11 +614,14 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
    {
       /* what an older version left beside the ROM goes under the app
        * folder first (no log: the event log has one producer) */
-      char was[ML_PATH];
+      char was[ML_PATH], flat[ML_PATH];
       sidecar_mig mig;
       if (sidecar_legacy_state1(was, sizeof(was), job->rom,
-                                (fe_console_t)job->console) == 0)
-         sidecar_migrate(was, job->state1, &mig);
+                                (fe_console_t)job->console) != 0)
+         was[0] = '\0';
+      if (sidecar_flat_of(flat, sizeof(flat), job->state1) != 0)
+         flat[0] = '\0';
+      sidecar_migrate_game(was, flat, job->state1, &mig);
    }
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++) out->state[i] = ML_UNKNOWN;
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)

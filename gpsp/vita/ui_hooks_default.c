@@ -40,6 +40,8 @@ UI_WEAK void ui_host_look_changed(void)
 
 /* ---- section 2: ROM folders beside roms/ ---------------------------------- */
 UI_WEAK void        app_ws_options(void)        { }
+UI_WEAK void        app_nes_options(void)       { }
+UI_WEAK void        app_steady_options(void)    { }
 UI_WEAK int         ui_host_extra_roots(void)   { return 0; }
 UI_WEAK int         ui_host_extra_root_toggle(const char *f) { (void)f; return -3; }
 UI_WEAK int         ui_host_zip_console(const char *p, unsigned n) { (void)p; (void)n; return -1; }

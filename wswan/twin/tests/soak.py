@@ -82,7 +82,7 @@ def main():
         at1 = frames // 4; at2 = frames // 2
         args = [twin, path, "--frames", str(frames), "--pad-file", pad, "--wav", os.path.join(d, "a.wav"),
                 "--hashes", os.path.join(d, "h.txt"), "--rt", "%d:300" % at1, "--rt", "%d:500" % at2,
-                "--render-range", "%d:%d" % (frames // 3, frames // 3 + 200), "--quiet"]
+                "--render-range", "%d:%d" % (frames // 3, frames // 3 + 200), "--quiet", "--rtc-fixed"]
         if label.startswith("synthetic/") and "nosave" not in path and "dconan" not in path and "orient_table" not in path:
             args += ["--srm", os.path.join(d, "g.srm"), "--backup-dir", os.path.join(d, "bk")]
         before = set(san_logs(san_dir))

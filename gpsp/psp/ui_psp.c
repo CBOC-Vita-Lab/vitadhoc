@@ -2323,11 +2323,13 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SGB,
        SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
        SET_WSBLEND,  /* 1.4: WonderSwan profile only (set_row_shown) */
+       SET_NESWIDE,  /* 1.4: NES profile only */
        SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
        SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
+       SET_STEADY,   /* 1.4: Steady pacing (pace_steady.h) */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2445,6 +2447,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Grid strength" },
    { 0, "Screen overlay" },
    { 0, "Smooth 75 Hz motion" },
+   { 0, "Wide view" },
 #endif
    { 1, "INTERFACE" },
    { 0, "Theme" },
@@ -2477,6 +2480,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Keep full speed" },
    /* 1.3: 500 or 444 MHz (cpuclock.h).  One row, right here. */
    { 0, "CPU speed" },
+   { 0, "Steady pacing" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -2558,6 +2562,8 @@ static int set_row_shown(int idx)
                          : ra_summary(NULL, NULL, NULL, NULL, NULL);
    if (idx == SET_WSBLEND)
       return pcfg_display_console() == FE_CONSOLE_WSWAN;
+   if (idx == SET_NESWIDE)
+      return pcfg_display_console() == FE_CONSOLE_NES;
    if (idx >= SET_WSROT && idx <= SET_WSPAL)
       return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_WSWAN;
    if (idx >= SET_HDR_THIS && idx <= SET_SUN)
@@ -3198,6 +3204,11 @@ static void settings_adjust(int id, int dir)
    case SET_CPU:
       ui_host_cpu_set(!ui_host_cpu_fast());
       break;
+   case SET_STEADY:
+      g_pcfg.steady_pacing = !g_pcfg.steady_pacing;
+      app_steady_options();
+      fe_evt("steady_setting on=%d", g_pcfg.steady_pacing);
+      break;
    case SET_SPEED:
       g_pcfg.full_speed = !g_pcfg.full_speed;
       fe_evt("full_speed_setting on=%d", g_pcfg.full_speed);
@@ -3395,6 +3406,11 @@ static void settings_adjust(int id, int dir)
    }
    case SET_OVERLAY:
       ui_host_overlay_set(!ui_host_overlay_on());
+      break;
+   case SET_NESWIDE:
+      g_pcfg.nes_wide = (g_pcfg.nes_wide + 3 + (dir < 0 ? -1 : 1)) % 3;
+      app_nes_options();
+      fe_evt("nes_setting wide=%d", g_pcfg.nes_wide);
       break;
    case SET_WSBLEND:
       g_pcfg.ws_blend = !g_pcfg.ws_blend;
@@ -3600,6 +3616,12 @@ static const char *set_help(int id)
       return "An original Game Boy's shades are its palette, above.";
    case SET_GRID:     return "How dark the LCD grid and scanline looks are "
                              "(Video filter).";
+   case SET_NESWIDE:  return g_pcfg.nes_wide == 2
+                             ? "The NES picture as it was: 256 columns."
+                             : g_pcfg.nes_wide == 1
+                             ? "Always the 16:9 picture; unknown sides fade."
+                             : "The sides filled with the game's own picture "
+                               "where it is known. Never guessed.";
    case SET_WSBLEND:  return g_pcfg.ws_blend
                              ? "The WonderSwan's 75 frames a second blended "
                                "into each refresh: smooth scrolling."
@@ -3691,6 +3713,11 @@ static const char *set_help(int id)
    case SET_FPS:      return "Shows the game's speed in a corner.";
 #ifdef VITA
    case SET_CPU:      return ui_host_cpu_note();
+   case SET_STEADY:   return g_pcfg.steady_pacing
+                             ? "When drawing cannot keep up: every second frame, "
+                               "evenly. The game keeps its speed."
+                             : "Every frame drawn when it can be; a busy moment "
+                               "drops frames unevenly.";
    case SET_ABSWAP:
       return g_pcfg.ab_buttons < 0
          ? "Follows the Vita's own Enter button. Press to change it."
@@ -4198,6 +4225,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
+      case SET_NESWIDE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.nes_wide == 1 ? "On" : g_pcfg.nes_wide == 2 ? "Off" : "Auto");
+         break;
       case SET_WSBLEND:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.ws_blend ? "on" : "off");
@@ -4335,6 +4366,10 @@ static ui_action screen_settings(unsigned edges)
       case SET_CPU:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              ui_host_cpu_fast() ? "500 MHz (fast)" : "444 MHz (standard)");
+         break;
+      case SET_STEADY:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.steady_pacing ? "on" : "off");
          break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -11007,6 +11042,7 @@ static void browser_rom_migrate(const char *rom_dir, int rom_idx)
 {
    char rom_path[PSP_FILE_PATH_CAP], now[PSP_FILE_PATH_CAP],
         was[PSP_FILE_PATH_CAP];
+   char flat[PSP_FILE_PATH_CAP];
    sidecar_mig mig;
    if (psp_rom_path_join(rom_path, sizeof(rom_path), rom_dir,
                          g_roms[rom_idx].name) != 0 ||
@@ -11014,7 +11050,9 @@ static void browser_rom_migrate(const char *rom_dir, int rom_idx)
        sidecar_legacy_state1(was, sizeof(was), rom_path,
                              (fe_console_t)g_pcfg.console) != 0)
       return;
-   sidecar_migrate(was, now, &mig);
+   if (sidecar_flat_of(flat, sizeof(flat), now) != 0)
+      flat[0] = '\0';
+   sidecar_migrate_game(was, flat, now, &mig);
    if (mig.moved || mig.copied)
       fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
              rom_path, mig.moved, mig.copied, mig.failed, mig.kept);

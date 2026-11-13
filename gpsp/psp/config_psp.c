@@ -188,6 +188,10 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       g_pcfg.ab_buttons = -1;
    g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
+   g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
+   g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
+   if (g_pcfg.nes_wide < 0 || g_pcfg.nes_wide > 2)
+      g_pcfg.nes_wide = 0;
 #endif
    g_pcfg.me_dirty    = (int)fe_ini_get_int(cfg_path, "me_dirty", 1) ? 1 : 0;
    g_pcfg.rom_resident = (int)fe_ini_get_int(cfg_path, "rom_resident", 1) ? 1 : 0;
@@ -659,6 +663,10 @@ void pcfg_save(void)
    if (g_pcfg.ab_buttons >= 0)
       fe_ini_set_int(cfg_path, "ab_buttons", g_pcfg.ab_buttons);
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
+   if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
+      fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
+   if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
+      fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
    if (!g_pcfg.ws_blend)
       fe_ini_set_int(cfg_path, "ws_blend", 0);
    else if (fe_ini_get_int(cfg_path, "ws_blend", -1) == 0)

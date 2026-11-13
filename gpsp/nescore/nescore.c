@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "../frontend-common/fe_evt.h"
 
 #define AUDIO_CHUNK 2048
 
@@ -58,12 +59,17 @@ static void wide_map_save(void)
   FILE *f;
   int ok;
   if (g_wide == NESCORE_WIDE_OFF || !nes_host_wide_map_dirty() || wide_map_path(p, sizeof(p)) != 0)
+  {
+    fe_evt("nes_wide_map saved=0 dirty=%d key=%08x", nes_host_wide_map_dirty(),
+           (unsigned)nes_host_wide_map_key());
     return;
+  }
   n = nes_host_wide_map_save(NULL, 0);
   if (!n || !(b = (uint8_t *)malloc(n))) return;
   n = nes_host_wide_map_save(b, n);
   {
     char d[600];
+    mkdir(g_sysdir, 0777);          /* (already there is the normal case) */
     snprintf(d, sizeof(d), "%s/wide", g_sysdir);
     mkdir(d, 0777);
   }
@@ -74,6 +80,7 @@ static void wide_map_save(void)
   if (f && fclose(f) != 0) ok = 0;
   if (ok && rename(tmp, p) != 0) ok = 0;
   if (!ok) remove(tmp);
+  fe_evt("nes_wide_map saved=%d bytes=%u", ok, (unsigned)n);
   free(b);
 }
 

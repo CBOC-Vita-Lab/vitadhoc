@@ -31,6 +31,17 @@
   The console runs at 75 frames a second: each Vita refresh shows a blend
   of the frames it covers (Settings > Display > Smooth 75 Hz motion; on by
   default).
+- **NES wide view** (Settings > Display, with the NES selected: Wide view
+  Auto, On or Off; Auto by default). A scrolling NES game fills the 16:9
+  screen: the original picture stays exactly as it is in the middle, the sides
+  show the game's own picture where it is known (what the level has already
+  shown, and a map of the level kept for the next visit), and fade where it is
+  not. Nothing is guessed. Auto goes back to the plain picture when there is
+  nothing to show at the sides.
+- **Steady pacing** (Settings > Gameplay, on by default). When a busy moment
+  cannot be drawn at the full rate, every second frame is shown, evenly,
+  while the game keeps its true speed and sound; every frame comes back after
+  about three seconds with room to spare. The same as the SNES player.
 - **Top bar.** With six consoles the tabs are drawn smaller when they need
   to be, all of them before the search icon, and each tab can be tapped to go
   to its console (the fifth one was hidden under the search icon).

@@ -204,6 +204,13 @@ struct SPPU
 };
 
 extern uint16				SignExtend[2];
+#include "widecap.h"
+static inline void S9xWideStampVRAM (uint32 address)
+{
+	uint16 c = (uint16) g_s9x_wide_clock;	// never 0 (see S9xWideFrameStartLive)
+	g_s9x_vage[(address >> 1) & 0x7fff] = c;
+	g_s9x_uage[(address >> 5) & 0x7ff] = c;
+}
 extern struct SPPU			PPU;
 extern struct InternalPPU	IPPU;
 
@@ -386,6 +393,8 @@ static inline void REGISTER_2118 (uint8 Byte)
 
 	if (g_s9x_vram_track)
 		S9xPPUMTVRAMDirty(address);
+	if (g_s9x_wide_stamp)	// CBOC-Vita: write stamps for the wide view (wide.h); nothing reads them back into the emulation
+		S9xWideStampVRAM(address);
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -419,6 +428,8 @@ static inline void REGISTER_2118_tile (uint8 Byte)
 
 	if (g_s9x_vram_track)
 		S9xPPUMTVRAMDirty(address);
+	if (g_s9x_wide_stamp)	// CBOC-Vita: write stamps for the wide view (wide.h); nothing reads them back into the emulation
+		S9xWideStampVRAM(address);
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -445,6 +456,8 @@ static inline void REGISTER_2118_linear (uint8 Byte)
 
 	if (g_s9x_vram_track)
 		S9xPPUMTVRAMDirty(address);
+	if (g_s9x_wide_stamp)	// CBOC-Vita: write stamps for the wide view (wide.h); nothing reads them back into the emulation
+		S9xWideStampVRAM(address);
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -499,6 +512,8 @@ static inline void REGISTER_2119 (uint8 Byte)
 
 	if (g_s9x_vram_track)
 		S9xPPUMTVRAMDirty(address);
+	if (g_s9x_wide_stamp)	// CBOC-Vita: write stamps for the wide view (wide.h); nothing reads them back into the emulation
+		S9xWideStampVRAM(address);
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -532,6 +547,8 @@ static inline void REGISTER_2119_tile (uint8 Byte)
 
 	if (g_s9x_vram_track)
 		S9xPPUMTVRAMDirty(address);
+	if (g_s9x_wide_stamp)	// CBOC-Vita: write stamps for the wide view (wide.h); nothing reads them back into the emulation
+		S9xWideStampVRAM(address);
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
@@ -558,6 +575,8 @@ static inline void REGISTER_2119_linear (uint8 Byte)
 
 	if (g_s9x_vram_track)
 		S9xPPUMTVRAMDirty(address);
+	if (g_s9x_wide_stamp)	// CBOC-Vita: write stamps for the wide view (wide.h); nothing reads them back into the emulation
+		S9xWideStampVRAM(address);
 	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
 	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
 	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;

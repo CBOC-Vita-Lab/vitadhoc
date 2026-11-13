@@ -208,6 +208,7 @@ static uint8_t * MMC5BGVRAMADR(uint32_t V) {
 int nesp_on = 0, nesp_margin = 0;
 uint32_t nesp_frame = 0;
 uint32_t nesp_chrw = 0;
+uint32_t nesp_ntgen = 0, nesp_ntlast = 0;
 NespLine nesp_line[240];
 uint8_t nesp_wl[240][NESP_MBUF];
 uint8_t nesp_wr[240][NESP_MBUF];
@@ -231,6 +232,7 @@ int nesp_ntid(const uint8_t *page) {
 
 void nesp_clear_stamps(void) {
 	memset(nesp_ntstamp, 0, sizeof nesp_ntstamp);
+	nesp_ntgen++;
 }
 
 /* 1 when the background fetch path is the plain one: no PPU_hook (MMC2/MMC4 latches, MMC3-style A12 boards that watch
@@ -528,9 +530,11 @@ static DECLFW(B2007) {
 		if (PPUNTARAM & (1 << ((tmp & 0xF00) >> 10))) {
 			vnapage[((tmp & 0xF00) >> 10)][tmp & 0x3FF] = V;
 			/* NESP: write stamp (frame, and whether the picture was being drawn) for the wide view */
-			if (nesp_on)
+			if (nesp_on) {
 				nesp_ntstamp[nesp_ntid(vnapage[((tmp & 0xF00) >> 10)])][tmp & 0x3FF] =
 					(nesp_frame << 1) | ((Pline && (PPU[1] & 0x18)) ? 1u : 0u);
+				nesp_ntgen++; nesp_ntlast = nesp_frame;
+			}
 		}
 	} else {
 		if (!(tmp & 3)) {

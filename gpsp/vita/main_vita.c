@@ -75,6 +75,8 @@
 #include "../gbcore/gbcore.h"   /* gbcore_set_color_correction */
 #include "../nescore/gbcore_mux.h"   /* gbmux_nes_fps, gbmux_nes_system_dir */
 #include "../wscore/wscore.h"        /* the WonderSwan's rotation, pad, blend */
+#include "../nescore/nescore.h"      /* the NES wide view */
+#include "pace_steady.h"             /* Steady pacing (playerkit's pk_pace) */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -631,6 +633,26 @@ void app_ws_options(void)
    fe_evt("ws_options rotation=%d vertical_play=%d palette=%d blend=%d",
           g_pgame.ws_rotation, g_pgame.ws_vplay, g_pgame.ws_palette,
           g_pcfg.ws_blend);
+}
+
+/* The NES Wide view setting (Settings > Display, NES profile), to the core:
+ * at the game's start and when the row changes. */
+void app_nes_options(void)
+{
+   nescore_set_wide(g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
+                    : g_pcfg.nes_wide == 2 ? NESCORE_WIDE_OFF : NESCORE_WIDE_AUTO);
+   fe_evt("nes_options wide=%d", g_pcfg.nes_wide);
+}
+
+/* Steady pacing: the refresh it measures against, and on or off. */
+void app_steady_options(void)
+{
+   uint32_t budget = g_sw.pace_mode == PACE_VSYNC && plat_refresh_mhz()
+                   ? (uint32_t)(1000000000ull / plat_refresh_mhz())
+                   : (uint32_t)(g_frame_ns / 1000u);
+   steady_config(budget);
+   steady_enable(g_pcfg.steady_pacing);
+   fe_evt("steady_options on=%d budget_us=%u", g_pcfg.steady_pacing, (unsigned)budget);
 }
 
 /* The first time each layout shows in a session (the game turned the
@@ -4129,8 +4151,22 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    {
       sidecar_mig mig;
+      char flat[APP_PATH_CAP];
       sidecar_make_dirs(g_app_root);
-      sidecar_migrate(g_game.legacy_state_path, g_game.state_path, &mig);
+      if (sidecar_flat_of(flat, sizeof(flat), g_game.state_path) != 0)
+         flat[0] = '\0';
+      /* 1.2 beside the ROM, 1.3 flat: into the game's bucket, once */
+      sidecar_migrate_game(g_game.legacy_state_path, flat, g_game.state_path, &mig);
+      {
+         char d[APP_PATH_CAP];
+         const char *sl = strrchr(g_game.state_path, '/');
+         if (sl && (size_t)(sl - g_game.state_path) < sizeof(d))
+         {
+            memcpy(d, g_game.state_path, (size_t)(sl - g_game.state_path));
+            d[sl - g_game.state_path] = '\0';
+            mkdir(d, 0777);       /* the bucket, for the states to come */
+         }
+      }
       if (mig.moved || mig.copied || mig.failed || mig.kept)
          fe_evt("sidecar_migrate rom=%s moved=%u copied=%u failed=%u kept=%u",
                 rom_path, mig.moved, mig.copied, mig.failed, mig.kept);
@@ -4236,6 +4272,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    if (console == FE_CONSOLE_WSWAN)
       app_ws_options();          /* this game's Rotation, Vertical play, palette */
+   if (console == FE_CONSOLE_NES)
+      app_nes_options();         /* Wide view */
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;
    {
@@ -4268,6 +4306,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
 
+   app_steady_options();
    g_audio_ok = audio_start(fe_host_sample_rate(), pace_speed_x1e6()) == 0;
    fe_evt("audio on=%d in_rate=%u out_rate=%u grain=%u speed_x1e6=%u",
           g_audio_ok, fe_host_sample_rate(), AUDIO_OUT_RATE, AUDIO_GRAIN,
@@ -4688,6 +4727,8 @@ static void game_loop(void)
    {
       unsigned pad, pad_new, fired, frames;
       int session, local, runs, i, rs_side, rs_flick, rw_want, tx = 0, ty = 0;
+      int steady_on = 0;
+      uint64_t t_drawn = 0;
       plat_pad pp;
       const char *rw_note;
 
@@ -5171,8 +5212,16 @@ static void game_loop(void)
 
       /* ---- run the core ------------------------------------------------------ */
       runs = g_ff.mult ? g_ff.mult : 1;
+      /* Steady pacing in its half mode: two frames, the second drawn, on
+       * two refreshes (below) -- the game's speed exactly, an even cadence */
+      steady_on = !g_ff.on && !session && !local && !g_sw.link_bench &&
+                  !link_owns_picture() && steady_half();
+      if (steady_on)
+         runs = 2;
       for (i = 0; i < runs; i++)
       {
+         if (i == runs - 1)
+            t_drawn = plat_time_us();
          g_blit_suppress = (i != runs - 1);
          /* 3x: the two frames before the one shown are not drawn at all
           * (they were drawn and thrown away: the picture's whole cost) */
@@ -5234,6 +5283,21 @@ static void game_loop(void)
       }
 
       window_note((uint32_t)(plat_time_us() - g_app_frame_t0));
+      if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active())
+      {
+         int changed = 0, half;
+         half = steady_add((uint32_t)(plat_time_us() - t_drawn), &changed);
+         if (changed)
+            fe_evt("steady mode=%s frame=%u", half ? "half" : "full", fe_host_frame_count());
+      }
+      if (steady_on)
+      {
+         /* the frame shown stands for two refreshes */
+         if (g_sw.pace_mode == PACE_VSYNC)
+            g_app_vc_target++;
+         else
+            g_next_ns += g_frame_ns;
+      }
       {
          /* A frame is bad when its own work (the catch-up frames it ran
           * for an earlier one left out) took more than 16 ms of the 16.7,

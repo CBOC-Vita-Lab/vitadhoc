@@ -8,6 +8,7 @@
 # usage: arm_compare.sh WORKDIR [--frames N] [--roms DIR] [--public DIR] [--private FILE]
 # Needs: arm-linux-gnueabihf-gcc/g++, qemu-arm (with -L /usr/arm-linux-gnueabihf). Builds go in WORKDIR (never in the repo).
 set -e
+export TZ=UTC   # the cartridge RTC reads local time; the same zone on every run
 HERE=$(cd "$(dirname "$0")" && pwd)
 WS=$(cd "$HERE/../.." && pwd)
 W=$1; shift
@@ -60,9 +61,9 @@ for other in soak-uchar soak-armhf; do
 	if diff -r -x '*.txt' "$W/soak-x86" "$W/$other" >"$W/diff-$other.txt" 2>&1; then echo "identical: x86 vs $other (hashes, audio, saves, rewinds)"; else echo "DIFFERENT: x86 vs $other (see $W/diff-$other.txt)"; fail=1; fi
 done
 # the summary lines, without the timing fields
-sed 's/cpu_ms[^ ]*//g' "$W/soak-x86.txt" > "$W/sum-x86.txt"
+sed 's/cpu_ms[^ ]*//g; s/, work [^)]*//' "$W/soak-x86.txt" > "$W/sum-x86.txt"
 for other in soak-uchar soak-armhf; do
-	sed 's/cpu_ms[^ ]*//g' "$W/$other.txt" > "$W/sum-$other.txt"
+	sed 's/cpu_ms[^ ]*//g; s/, work [^)]*//' "$W/$other.txt" > "$W/sum-$other.txt"
 	cmp -s "$W/sum-x86.txt" "$W/sum-$other.txt" && echo "identical summary: x86 vs $other" || { echo "summary differs: x86 vs $other"; fail=1; }
 done
 

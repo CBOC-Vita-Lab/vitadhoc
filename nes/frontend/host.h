@@ -250,6 +250,30 @@ int nes_host_wide_profiles_load(const char *text, size_t n, char *msgs, size_t m
  * game masks, filled in where the margin next to them is real). Returns 0 (and writes nothing) when the wide view is off, no
  * game is loaded or rendering is off (nes_host_set_render(0)): then use nes_host_video. Rows 8..231 are the NTSC picture. */
 int nes_host_wide_frame(const uint16_t **rgb, int *width, int *pitch_bytes, nes_wide_stats *stats);
+/* ---- wide view: split into capture (emulation thread) and compose (any thread, one frame behind) ----------------------
+ * nes_host_wide_frame() is exactly capture + compose on an internal snapshot. The split lets the part that costs most run
+ * off the emulation thread:
+ *   emulation thread:  nes_host_run_frame(); nes_host_wide_capture(&snap[i]);       (about 0.3 M instructions)
+ *   compose thread:    nes_host_wide_compose(&snap[i], &rgb, &w, &pitch, &stats);    (describe + widekit + compositor)
+ * A snapshot is a caller-owned fixed-size block (use two or three in rotation; nothing in it points into the core; it needs
+ * 16 byte alignment, a malloc or a static union member). The compose call reads ONLY the snapshot and the wide view's own
+ * state; the core may run the next frame meanwhile. The composed picture stays valid until the next compose call: present
+ * it before composing the next snapshot.
+ * Contract (deterministic, tested in the twin with --wide-split and ThreadSanitizer):
+ *  - captures and composes are in frame order, one compose per capture; capture(N + 1) is called after compose(N) has
+ *    returned (the scout's control messages are exchanged there) - compose(N) overlaps only run_frame(N + 1) and scout_step.
+ *  - the compose side owns the widekit objects and the learned map. nes_host_wide_enable / _margin / _option /
+ *    _profiles_load, _map_*, _stats, load / unload / reset / state load are called only while no compose runs.
+ *  - nes_host_scout_step() runs after capture(N) (any thread, also overlapping compose(N) and run_frame(N + 1)); what it learns
+ *    is posted to a lock-free queue the compose side drains at the start of its next compose.
+ * Returns 0 when the wide view is off, nothing is loaded or rendering is off (use nes_host_video); then compose must not be
+ * called for that snapshot. */
+#define NES_WIDE_SNAPSHOT_BYTES 270336u
+typedef union nes_wide_snapshot { unsigned char bytes[NES_WIDE_SNAPSHOT_BYTES]; unsigned long long align_; } nes_wide_snapshot;
+size_t nes_host_wide_snapshot_size(void);          /* bytes actually used (<= NES_WIDE_SNAPSHOT_BYTES) */
+int nes_host_wide_capture(nes_wide_snapshot *snap);
+int nes_host_wide_compose(const nes_wide_snapshot *snap, const uint16_t **rgb, int *width, int *pitch_bytes, nes_wide_stats *stats);
+
 /* For logging and tests: per row of the last composed frame the margin px that are real picture on the left and right
  * ([row * 2], [row * 2 + 1]; 240 rows), and (only with option debug) widekit's provenance bytes of the composed picture. */
 const uint8_t *nes_host_wide_real(void);

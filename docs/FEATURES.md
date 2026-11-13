@@ -135,6 +135,23 @@ carry), a UNIF file by its name only. Rewind works as for Game Boy games; link
 play is not available for NES games. PAL and Dendy games run at their own 50
 frames a second (five of every six refreshes).
 
+**Wide view** (Settings > Display with the NES selected: Auto, On, Off).
+The 256-column picture stays as it is in the middle of a 16:9 picture; the
+sides are filled with the game's own picture only where it is proven (its
+name tables, what the scroll has shown, a learned map of the level kept in
+`ux0:data/GBAdhoc/nes/wide/`), otherwise they fade. Auto shows the plain
+picture while nothing is known at the sides. The picture keeps one scale for
+both directions.
+
+## Steady pacing
+
+Settings > Gameplay > Steady pacing (on by default), for every console the
+app runs itself. When drawing cannot keep up, every second frame is shown on
+an even cadence instead of dropping frames here and there; the game itself
+runs every frame, at its true speed, with its sound. Back to every frame
+after about three seconds with room to spare. Keep full speed and fast
+forward work as before.
+
 ## WonderSwan
 
 WonderSwan and WonderSwan Color games (`.ws`, `.wsc`, `.pc2`) share one WS

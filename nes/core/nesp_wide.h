@@ -48,5 +48,8 @@ int nesp_ntid(const uint8_t *page);       /* physical id of a nametable page poi
 void nesp_clear_stamps(void);
 int nesp_plain_fetch(void);               /* 1 when the BG fetch path has no hook (margins can be rendered read only) */
 const uint8_t *nesp_chr_base(int *size);  /* first CHR chip, for stable bank identities (NULL for CHR RAM only) */
+extern uint32_t nesp_ntgen;               /* counts every change of nesp_ntstamp (write stamp or clear): a copy of the stamps is
+                                             current while this is unchanged */
+extern uint32_t nesp_ntlast;              /* nesp_frame of the latest stamp write */
 extern uint32_t nesp_chrw;                /* bytes written to CHR RAM through $2007 (the host reads and clears it) */
 #endif

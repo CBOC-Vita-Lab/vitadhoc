@@ -287,7 +287,7 @@ static int gather(wk_map *m, const wk_frame *f, const wk_out *out)
             continue;
         const wk_layer *L = &f->layer[l];
         int mw = L->map_w, mh = L->map_h, tp = L->tile_px;
-        uint16_t g16 = fold16(L->gfx_id);
+        uint16_t g16 = L->map_by_cell ? 0 : fold16(L->gfx_id);
         int32_t prev_wx = 0, prev_row = 0;
         int have = 0;
         for (int y = 0; y < out->nlines; y++) {
@@ -490,12 +490,13 @@ static int cell_at(const wk_map *m, const wk_frame *f, const wk_out *out, int la
     if (!ok)
         return 0;
     const Entry *e = find(m, ((uint64_t)m->cur_room << 32) | lk);
-    if (!e || e->conf < m->cfg.min_conf || e->gfx != fold16(L->gfx_id) ||
+    if (!e || e->conf < m->cfg.min_conf || e->gfx != (L->map_by_cell ? 0 : fold16(L->gfx_id)) ||
         (e->scout && e->scout != m->scout_gen))
         return 0;
     if (cell) {
         cell->code = e->code;
         cell->gfx = e->gfx;
+        cell->h16 = e->h16;
         cell->conf = e->conf;
         cell->scout = e->scout ? 1 : 0;
     }

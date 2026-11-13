@@ -38,6 +38,7 @@ typedef struct wk_map_cfg {
 
 typedef struct wk_cell {
     uint32_t code;      /* the redraw token the core supplied                  */
+    uint16_t h16;       /* folded content hash it was recorded with (wk_layer.hash)  */
     uint16_t gfx;       /* folded tileset identity it was recorded with        */
     uint8_t conf;       /* times seen unchanged                                */
     uint8_t scout;      /* 1: recorded by the look-ahead and not yet seen live (a guess that proved nothing so far) */

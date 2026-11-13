@@ -84,6 +84,7 @@ struct Layer {
 	uint8_t gh_prev_ok[1024];
 	uint32_t gid;
 	int have_gid;
+	uint32_t gen;                    /* the frame generation tcache/tgen are valid for */
 	uint32_t tcache[1024];           /* th of a tile id (8x8 graphics, or the 2x2 group of a 16x16 tile), valid when tgen matches */
 	uint32_t tgen[1024];
 	uint8_t tblank[1024];
@@ -131,6 +132,7 @@ struct Adapter {
 	int outW, outH;
 	uint16_t xr[MAXH][2][4];   /* per line: the ring-backed real margin of a line whose layers cannot be continued from the map */
 	uint8_t xl[MAXH];
+	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
 	/* ambient frame: calm dimmed colours of the scene's own edges, never structure */
 	int amb_have;
 	int amb_c[2][32][3];       /* per side and 8-line cell: temporal mean colour, Q4 */
@@ -237,6 +239,27 @@ static inline bool line_ok(const SWideLine &L)
 	return (L.flags & SWL_DRAWN) && !(L.flags & (SWL_NOMARGIN | SWL_BLANK));
 }
 
+/* hash of a tile's graphics (a 16x16 tile: of its four), cached per tile id and frame; also its blankness */
+static uint32_t layer_tile_th(Layer *Ly, const SWideView *v, int tile, uint32_t gen, bool mark = true)
+{
+	if (Ly->tgen[tile] == gen) return Ly->tcache[tile];
+	Ly->tgen[tile] = gen;
+	uint32_t th;
+	if (Ly->tile_px == 8) {
+		th = tile_hash(v, Ly->bpp, tile, Ly->name);
+		Ly->tblank[tile] = tile_blank(Ly->bpp, tile, Ly->name);
+	} else {
+		int t1 = (tile + 1) & 0x3ff, t2 = (tile + 16) & 0x3ff, t3 = (tile + 17) & 0x3ff;
+		uint32_t h0 = tile_hash(v, Ly->bpp, tile, Ly->name), h1 = tile_hash(v, Ly->bpp, t1, Ly->name);
+		uint32_t h2 = tile_hash(v, Ly->bpp, t2, Ly->name), h3 = tile_hash(v, Ly->bpp, t3, Ly->name);
+		th = mix32(mix32(mix32(h0, h1), h2), h3);
+		Ly->tblank[tile] = tile_blank(Ly->bpp, tile, Ly->name) && tile_blank(Ly->bpp, t1, Ly->name) && tile_blank(Ly->bpp, t2, Ly->name) && tile_blank(Ly->bpp, t3, Ly->name);
+	}
+	Ly->tcache[tile] = th;
+	if (mark) { Ly->used[tile] = 1; Ly->gh[tile] = th; }
+	return th;
+}
+
 static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 {
 	wk_frame *fr = A.fr;
@@ -247,7 +270,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 		const SWideLine &L = v->line[y];
 		Ly->line_on[y] = 0;
 		if (!line_ok(L) || (L.flags & SWL_MODE7)) continue;
-		if (n >= bg_count(L.mode) || !(L.tm & (1 << n))) continue;
+		if (n >= bg_count(L.mode) || !((L.tm | L.tsx) & (1 << n))) continue;
 		Key k = { L.scbase[n], L.scsize[n], L.name[n], L.bgsize[n], bg_bpp(L.mode, n), 0 };
 		int j;
 		for (j = 0; j < nk; j++)
@@ -283,6 +306,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 	memset(Ly->used, 0, sizeof Ly->used);
 	memset(Ly->rowblank, 1, sizeof Ly->rowblank);
 	const uint32_t gen = ++A.gen;
+	Ly->gen = gen;
 	for (int ry = 0; ry < mh; ry++)
 		for (int rx = 0; rx < mw; rx++) {
 			const int k = ry * mw + rx;
@@ -291,23 +315,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 			const uint32_t word = ld16(v->vram + wa * 2);
 			const int tile = (int) (word & 0x3ff);
 			uint32_t th;
-			if (Ly->tgen[tile] != gen) {          /* per tile id and frame: hash of its graphics (a 16x16 tile: of its four) and blankness */
-				Ly->tgen[tile] = gen;
-				if (Ly->tile_px == 8) {
-					th = tile_hash(v, K.bpp, tile, K.name);
-					Ly->tblank[tile] = tile_blank(K.bpp, tile, K.name);
-				} else {
-					int t1 = (tile + 1) & 0x3ff, t2 = (tile + 16) & 0x3ff, t3 = (tile + 17) & 0x3ff;
-					uint32_t h0 = tile_hash(v, K.bpp, tile, K.name), h1 = tile_hash(v, K.bpp, t1, K.name);
-					uint32_t h2 = tile_hash(v, K.bpp, t2, K.name), h3 = tile_hash(v, K.bpp, t3, K.name);
-					th = mix32(mix32(mix32(h0, h1), h2), h3);
-					Ly->tblank[tile] = tile_blank(K.bpp, tile, K.name) && tile_blank(K.bpp, t1, K.name) && tile_blank(K.bpp, t2, K.name) && tile_blank(K.bpp, t3, K.name);
-				}
-				Ly->tcache[tile] = th;
-				Ly->used[tile] = 1; Ly->gh[tile] = th;
-			} else {
-				th = Ly->tcache[tile];
-			}
+			th = layer_tile_th(Ly, v, tile, gen);
 			uint32_t st = 0;
 			const uint16_t w16 = v->vage[wa];
 			if (w16) {
@@ -353,12 +361,13 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 	L->priority = 3 - n;                 /* BG1 on top */
 	L->map_w = mw; L->map_h = mh; L->tile_px = Ly->tile_px;
 	L->hash = Ly->hash; L->code = Ly->code; L->stamp = Ly->stamp;
+	L->map_by_cell = 1;
 	L->gfx_id = Ly->gid ^ (uint32_t) (mw * 977 + mh * 131 + Ly->tile_px * 7 + K.bpp);
 	L->line_on = Ly->line_on;
 	int ndom = 0;
 	for (y = 0; y < H; y++) {
 		const SWideLine &Ln = v->line[y];
-		const bool on = line_ok(Ln) && !(Ln.flags & SWL_MODE7) && n < bg_count(Ln.mode) && (Ln.tm & (1 << n)) &&
+		const bool on = line_ok(Ln) && !(Ln.flags & SWL_MODE7) && n < bg_count(Ln.mode) && ((Ln.tm | Ln.tsx) & (1 << n)) &&
 		                Ln.scbase[n] == K.scbase && Ln.scsize[n] == K.scsize && Ln.name[n] == K.name &&
 		                Ln.bgsize[n] == K.bgsize && bg_bpp(Ln.mode, n) == K.bpp;
 		Ly->line_on[y] = on;
@@ -649,6 +658,14 @@ static void run(const SWideView *v)
 		/* windows and colour math act on the composite, not on the layers: the layered continuation (map, history) knows
 		 * neither, so on such lines only the core's own composite out to the ring is shown as real */
 		A.xl[y] = (Ln.wsel_any || (Ln.cgadsub & 0x3F) || (Ln.cgwsel & 0xC0)) ? 1 : 0;
+		A.bdm[y] = 0;
+		/* colour math on the backdrop alone (a sky gradient: fixed colour, or a sub screen with no layers): layer and sprite pixels
+		 * are untouched, so the layered continuation applies; only pixels where no layer is opaque would show the (maths'd) backdrop,
+		 * and those are filled with the soft edge, never with a guessed colour */
+		if (A.xl[y] && drawn && !Ln.wsel_any && !(Ln.cgadsub & 0x1F) && (Ln.cgadsub & 0x20) && !(Ln.cgwsel & 0xC0) && !(Ln.ts & ~Ln.tsx) &&
+		    !(Ln.flags & SWL_MODE7)) {
+			A.bdm[y] = 1; A.xl[y] = 0;
+		}
 		if (A.xl[y])
 			for (int l = 0; l < 4; l++)
 				for (int s = 0; s < 2; s++) {
@@ -685,12 +702,12 @@ static void run(const SWideView *v)
 				for (d = 0; d < ring; d++) {
 					int col = s == 0 ? Mc_ - 1 - d : Mc_ + 256 + d;
 					dst[d] = pp[col];
-					op[d] = pz[col] != 0;
+					op[d] = ((Ln.tsx >> l) & 1) || pz[col] != 0;   /* a backdrop + sub layer composite draws every pixel */
 				}
 				if (real > ring) {
 					const int tp = Ly->tile_px;
 					wk_geom g;
-					int have_geom = wo->coherent[l][y] != 0 && A.M;
+					int have_geom = wo->coherent[l][y] != 0 && A.M && !((Ln.tsx >> l) & 1);   /* map cells carry no colour math */
 					if (have_geom) wk_line_geom(fr, wo, l, y, &g);
 					int cidx = 0x7fffffff, cok = 0;
 					wk_cell cell;
@@ -699,7 +716,14 @@ static void run(const SWideView *v)
 						const int wx = wo->world_x[l][y];
 						const int idx = s == 0 ? (int) (g.tile_first - fdiv(wx - 1 - d, tp))
 						                       : (int) (fdiv(wx + 256 + d, tp) - (g.tile_first + g.nvis - 1));
-						if (idx != cidx) { cok = wk_map_margin_cell(A.M, fr, wo, l, y, s, idx, &cell); cidx = idx; }
+						if (idx != cidx) {
+							cok = wk_map_margin_cell(A.M, fr, wo, l, y, s, idx, &cell); cidx = idx;
+							if (cok) {   /* the map holds a tilemap word, not pixels: shown only if that tile's graphics are today what they were when it was learned */
+								const uint32_t th = layer_tile_th(Ly, v, (int) (cell.code & 0x3ff), Ly->gen, false);
+								const uint32_t hh = mix32(cell.code * 0x10001u + 0x1234567u, th);
+								cok = (uint16_t) ((hh ^ (hh >> 16)) & 0xFFFF) == cell.h16;
+							}
+						}
 						if (!cok) { lo->real[s][l] = (uint16_t) d; break; }
 						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
 						const int ci = cell_index(v, Ly, cell.code, fmod_(xw, tp), fmod_(wo->world_row[l][y], tp));
@@ -725,9 +749,12 @@ static void run(const SWideView *v)
 	ci.centre = v->centre; ci.centre_stride = v->centre_pitch;
 	ci.bg = A.bg;
 	ci.norder = 0;
+	uint8_t subl = 0;                                  /* layers that are sub screen only (backdrop + layer composites): below every main layer */
+	for (int y = 0; y < H; y++) if (line_ok(v->line[y])) subl |= v->line[y].tsx;
 	if (nlay)
+		for (int pass = 0; pass < 2; pass++)
 		for (int l = 3; l >= 0; l--)
-			if (A.lay[l].active) {
+			if (A.lay[l].active && (((subl >> l) & 1) == (pass == 0))) {
 				ci.cand[l][0] = A.cand[l][0]; ci.cand[l][1] = A.cand[l][1];
 				ci.opaque[l][0] = A.opq[l][0]; ci.opaque[l][1] = A.opq[l][1];
 				ci.order[ci.norder++] = l;
@@ -758,7 +785,7 @@ static void run(const SWideView *v)
 			if (!(Ln.flags & SWL_MODE7)) {
 				if (lo->hud) nex = nlay_ = 0;
 				for (int l = 0; l < bg_count(Ln.mode); l++) {
-					if (!(Ln.tm & (1 << l))) continue;
+					if (!((Ln.tm | Ln.tsx) & (1 << l))) continue;
 					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; rmax_ = 0; break; }
 					const int r = A.xl[y] ? A.xr[y][s][l] : lo->real[s][l];
 					const int rr = A.xl[y] ? r : (lo->ring[s][l] < r ? lo->ring[s][l] : r);   /* the core's composite pass only knows the ring */

@@ -2692,6 +2692,11 @@ static void S9xWideBatch (const S9xRenderJob &job)
 		if (PPU.BGMosaic[n] && PPU.Mosaic > 1 && ((tm | ts) & (1 << n)))
 			mosaic = true;
 	const bool opt = (mode == 2 || mode == 4 || mode == 6);
+	// a BG on the sub screen only, with colour math on the backdrop alone (a far background done with maths, e.g. a sky): drawn as backdrop + that layer
+	uint8 tsx = 0;
+	if (mode == 0 || mode == 1 || mode == 2 || mode == 3)
+		if ((Memory.FillRAM[0x2131] & 0x3F) == 0x20 && (Memory.FillRAM[0x2130] & 2) && !(ts & 0x10))
+			tsx = ts & ~tm & 0x0f & ((mode == 0) ? 0x0f : (mode == 1) ? 0x07 : 0x03);
 	const uint32 cgs = hash_cg();
 
 	uint8 flags = SWL_VALID;
@@ -2715,6 +2720,7 @@ static void S9xWideBatch (const S9xRenderJob &job)
 		L.bg3prio = PPU.BG3Priority;
 		L.bright = PPU.ForcedBlanking ? 0 : PPU.Brightness;
 		L.tm = tm; L.ts = ts;
+		L.tsx = tsx;
 		L.cgwsel = Memory.FillRAM[0x2130]; L.cgadsub = Memory.FillRAM[0x2131];
 		L.fixr = PPU.FixedColourRed; L.fixg = PPU.FixedColourGreen; L.fixb = PPU.FixedColourBlue;
 		L.mosaic = mosaic ? PPU.Mosaic : 1;
@@ -2770,6 +2776,11 @@ static void S9xWideBatch (const S9xRenderJob &job)
 			if (tm & (1 << n))
 			{
 				wide_pass(job, SWP_BG0 + n, 1 << n, false);
+				drawn |= 1 << (SWP_BG0 + n);
+			}
+			else if (tsx & (1 << n))
+			{
+				wide_pass(job, SWP_BG0 + n, 1 << n, true);
 				drawn |= 1 << (SWP_BG0 + n);
 			}
 	}

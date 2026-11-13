@@ -40,6 +40,7 @@ struct SWideLine
 	uint8   flags;
 	uint8   mode, bg3prio, bright;
 	uint8   tm, ts;                 /* $212C, $212D: main / sub screen layer enables (bit 4 = sprites) */
+	uint8   tsx;                    /* BGs shown only through the sub screen with colour math on the backdrop alone: their pass is a composite of backdrop + that layer (math done by the core) */
 	uint8   cgwsel, cgadsub;        /* $2130, $2131: colour math */
 	uint8   fixr, fixg, fixb;
 	uint8   mosaic;                 /* PPU.Mosaic when any enabled BG has the mosaic bit, else 1 */

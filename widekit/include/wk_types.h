@@ -63,6 +63,10 @@ typedef struct wk_layer {
                              line (windows, IRQ splits).  NULL = all        */
     int32_t scroll_x[WK_MAX_LINES]; /* layer px column at view column 0     */
     int32_t row_y[WK_MAX_LINES];    /* layer px row shown on that scanline  */
+    int map_by_cell;      /* opt-in (0 = off, the old behaviour): the learned map
+                             ignores gfx_id; each cell is identified by its
+                             content hash alone (hash[] must cover the tile's
+                             graphics) and the adapter re-checks it when serving */
 } wk_layer;
 
 /* One frame of input.  Only the first nlayers entries are read. */

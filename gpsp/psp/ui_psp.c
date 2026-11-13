@@ -1368,11 +1368,19 @@ static void screen_to(int scr)
    {
       /* The menu keeps its place: back from a page, the cursor is on the
        * row that opened it (ui_open starts it at Resume). */
+      /* (from the pages a player opens and leaves: Save states, Settings,
+       * Cheats.  Play together's pages go back to the top themselves when a
+       * link starts or ends, and keep the old rule.) */
       static int menu_cursor;
+      const int from = g_screen;
       if (g_screen == SCR_MENU && scr != SCR_MENU)
          menu_cursor = g_cursor;
       g_screen = scr;
-      g_cursor = scr == SCR_MENU ? menu_cursor : 0;
+      g_cursor = scr == SCR_MENU && (from == SCR_SETTINGS || from == SCR_STATE_SLOTS
+#ifdef GPSP_CHEATS
+                                     || from == SCR_CHEATS
+#endif
+                                    ) ? menu_cursor : 0;
    }
    ctl_page_reset();             /* no capture survives a screen change */
    g_slot_ask = 0;               /* nor a delete/overwrite question */

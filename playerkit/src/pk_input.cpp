@@ -688,4 +688,35 @@ uint32_t Mapper::capture_next(const PadSample &s)
 	return 0;
 }
 
+/* ---- PadLatch ---------------------------------------------------------------------------- */
+
+PadLatch::PadLatch() { clear(); }
+
+void PadLatch::clear()
+{
+	SpinGuard g(lk_);
+	for (int p = 0; p < MAX_PLAYERS; p++) { last_[p] = PadSample(); prev_[p] = 0; edges_[p] = 0; }
+}
+
+void PadLatch::feed(const PadSample pads[MAX_PLAYERS])
+{
+	SpinGuard g(lk_);
+	for (int p = 0; p < MAX_PLAYERS; p++) {
+		const uint32_t b = pads[p].connected ? (pads[p].buttons & PH_BUTTONS) : 0;
+		edges_[p] |= b & ~prev_[p];
+		prev_[p] = b;
+		last_[p] = pads[p];
+	}
+}
+
+void PadLatch::take(PadSample out[MAX_PLAYERS])
+{
+	SpinGuard g(lk_);
+	for (int p = 0; p < MAX_PLAYERS; p++) {
+		out[p] = last_[p];
+		if (out[p].connected) out[p].buttons |= edges_[p];
+		edges_[p] = 0;
+	}
+}
+
 }  // namespace pk

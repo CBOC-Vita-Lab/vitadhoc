@@ -454,6 +454,13 @@ int snes_host_is_pal(void) { return Settings.PAL ? 1 : 0; }
 void snes_host_set_render(int on) { IPPU.RenderThisFrame = on ? TRUE : FALSE; }
 const char *snes_host_rom_title(void) { return g_title.c_str(); }
 
+const uint8_t *snes_host_rom_image(size_t *n)
+{
+	if (!g_loaded || !Memory.ROM) { if (n) *n = 0; return NULL; }
+	if (n) *n = (size_t) Memory.CalculatedSize;
+	return Memory.ROM;
+}
+
 const char *snes_host_rom_info(void)
 {
 	static char buf[200];

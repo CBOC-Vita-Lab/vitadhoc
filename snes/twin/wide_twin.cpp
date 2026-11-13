@@ -187,10 +187,9 @@ int main(int argc, char **argv)
 	if (snes_host_load_rom(rom, NULL, err, sizeof err)) { fprintf(stderr, "load failed: %s\n", err); return 1; }
 
 	if (wide) {
-		/* the ROM image for the learned map key: the file without a copier header */
-		std::vector<uint8_t> img = read_all(rom);
-		size_t off = (img.size() & 0x7fff) == 512 ? 512 : 0;
-		snes_wide_set_game(img.data() + off, img.size() - off, snes_host_rom_title());
+		size_t rn = 0;
+		const uint8_t *rimg = snes_host_rom_image(&rn);
+		snes_wide_set_game(rimg, rn, snes_host_rom_title());
 		for (auto &o : wopts) if (snes_wide_option(o.k.c_str(), o.v)) { fprintf(stderr, "unknown wide option %s\n", o.k.c_str()); return 2; }
 		if (mapf) {
 			std::vector<uint8_t> m = read_all(mapf);

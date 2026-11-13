@@ -12,6 +12,7 @@
 #include "player.h"
 #include "pk_gfx_soft.h"
 #include "pk_icons.h"
+#include "wide.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -708,8 +709,136 @@ static int bench(const std::string &dir, int n, int fill)
 	return 0;
 }
 
+
+/* ---- the wide view in the player ------------------------------------------------------------------------------- */
+/* ROM: tests/make_wide_roms.py wide_scroll64 (a mode 1 scroller whose map columns stream at the seam). */
+static int run_wide_test(const char *rom, const std::string &work)
+{
+	std::string root = work + "/root";
+	make_dirs(root);
+	const std::string game = path_stem(rom);
+	char a0[] = "app0:snes.bin";
+	std::string arg = std::string(rom);
+	char *av[] = { a0, &arg[0], 0 };
+	const std::string wpath = root + "/snes/wide/" + game + ".wmap";
+
+	auto frames = [&](Rig &r, int n) {
+		for (int i = 0; i < n; i++) { r.pl->wide_apply(960, 544); r.game_frame(); }
+	};
+	auto centre_matches = [&](int M) {
+		const uint16_t *wp; int ww, wh, wpp; snes_wide_stats st;
+		if (!snes_wide_frame(&wp, &ww, &wh, &wpp, &st)) return false;
+		int w, h, pitch;
+		const uint16_t *v = snes_host_video(&w, &h, &pitch);
+		if (ww != 256 + 2 * M || w != 256 || wh != h) return false;
+		for (int y = 0; y < h; y++)
+			if (memcmp(wp + (size_t) y * wpp + M, (const uint8_t *) v + (size_t) y * pitch, 512)) return false;
+		return true;
+	};
+
+	{
+		Rig rig(work + "/wshots");
+		snesp::SnesPlayer *pl = new snesp::SnesPlayer(&rig.pf);
+		rig.pl = pl; rig.pf.player = pl;
+		rig.pf.log_path = root + "/snes/log.txt";
+		snesp::StartResult sr = pl->start(2, av, root, true);
+		EXPECT(sr.ok);
+		if (!sr.ok) return 1;
+		pl->apply_start_mode();
+		/* the default is Auto, shown in the menu; the picture shape Original wants 41 columns each side on a 960x544 screen */
+		EXPECT(pl->picture().wide == 0);
+		EXPECT(pl->menu().value(ROW_PIC_WIDE) == 0);
+		EXPECT(!pl->wide_active());
+		frames(rig, 5);
+		EXPECT(pl->wide_active() && pl->wide_margin() == 41);
+		frames(rig, 400);
+		EXPECT(snes_wide_active() && snes_wide_margin() == 41);
+		EXPECT(centre_matches(41));
+		/* the menu row: Off switches it off, On back; the stretched shape has nothing to gain */
+		pl->on_change(ROW_PIC_WIDE, 2);
+		frames(rig, 2);
+		EXPECT(!pl->wide_active() && !snes_wide_active());
+		{ const uint16_t *wp; int ww, wh, wpp; snes_wide_stats st; EXPECT(!snes_wide_frame(&wp, &ww, &wh, &wpp, &st)); }
+		pl->on_change(ROW_PIC_WIDE, 1);
+		frames(rig, 3);
+		EXPECT(pl->wide_active() && pl->wide_margin() == 41);
+		pl->on_change(ROW_PIC_SHAPE, 3);                       /* Full screen */
+		frames(rig, 2);
+		EXPECT(!pl->wide_active());
+		pl->on_change(ROW_PIC_SHAPE, 4);                       /* Pixel perfect: 8:7 pixels, integer scale 2 */
+		frames(rig, 3);
+		fprintf(stderr, "pixel perfect margin %d\n", pl->wide_margin());
+		EXPECT(pl->wide_active() && (pl->wide_margin() == 82 || pl->wide_margin() == 81));
+		pl->on_change(snesp::SnesPlayer::ROW_PIXELS, 1);                          /* square pixels: 112 would fit, the core's limit is 96 */
+		frames(rig, 3);
+		EXPECT(pl->wide_active() && pl->wide_margin() == SNES_WIDE_MAX_MARGIN);
+		EXPECT(centre_matches(SNES_WIDE_MAX_MARGIN));
+		pl->on_change(snesp::SnesPlayer::ROW_PIXELS, 0);
+		pl->on_change(ROW_PIC_SHAPE, 0);
+		pl->on_change(ROW_PIC_WIDE, 0);
+		frames(rig, 3);
+		EXPECT(pl->wide_active() && pl->wide_margin() == 41);
+		/* Auto while the steady pacer thins frames: off (the pacer's own state is driven by the platform's costs) */
+		for (int i = 0; i < 300 && pl->pace_mode() == PACE_FULL; i++) { pl->drawn_cost(60000); frames(rig, 1); }
+		if (pl->pace_mode() == PACE_HALF) { frames(rig, 2); EXPECT(!pl->wide_active()); pl->on_change(ROW_PIC_WIDE, 1); frames(rig, 2); EXPECT(pl->wide_active()); pl->on_change(ROW_PIC_WIDE, 0); }
+		/* back to full pacing */
+		for (int i = 0; i < 2000 && pl->pace_mode() != PACE_FULL; i++) { pl->drawn_cost(3000); frames(rig, 1); }
+		frames(rig, 3);
+		/* the learned map: new cells are written by the writer, not at once, after 30 s of play */
+		frames(rig, 2300);
+		EXPECT(pl->wide_active());
+		EXPECT(exists(wpath));
+		{ std::vector<uint8_t> b = read_bytes(wpath); EXPECT(b.size() > 1000); fprintf(stderr, "wide map file: %zu bytes\n", b.size()); }
+		pl->finish(EXIT_NORMAL);
+		delete pl;
+		snes_host_unload();
+	}
+	EXPECT(exists(wpath));
+	{
+		/* a second start loads the map (the first frame already serves from it) */
+		Rig r2(work + "/wshots", 40);
+		snesp::SnesPlayer *p2 = new snesp::SnesPlayer(&r2.pf);
+		r2.pl = p2; r2.pf.player = p2;
+		r2.pf.log_path = root + "/snes/log.txt";
+		EXPECT(p2->start(2, av, root, true).ok);
+		p2->log_flush(true);
+		EXPECT(r2.pf.log_text.find("wide view map loaded") != std::string::npos);
+		EXPECT(!snes_wide_map_dirty());
+		frames(r2, 10);
+		EXPECT(snes_wide_map_key() != 0);
+		p2->finish(EXIT_NORMAL);
+		delete p2;
+		snes_host_unload();
+	}
+	{
+		/* a map file that cannot be written: the game goes on, the map stays dirty, the log says why */
+		file_remove(wpath);
+		file_remove(root + "/snes/wide");
+		EXPECT(write_text(root + "/snes/wide", "not a folder"));
+		Rig r3(work + "/wshots", 60);
+		snesp::SnesPlayer *p3 = new snesp::SnesPlayer(&r3.pf);
+		r3.pl = p3; r3.pf.player = p3;
+		r3.pf.log_path = root + "/snes/log.txt";
+		EXPECT(p3->start(2, av, root, true).ok);
+		frames(r3, 2300);
+		EXPECT(p3->wide_active());
+		p3->log_flush(true);
+		EXPECT(r3.pf.log_text.find("wide view map NOT written") != std::string::npos);
+		EXPECT(snes_wide_map_dirty());
+		p3->finish(EXIT_NORMAL);
+		delete p3;
+		snes_host_unload();
+	}
+	file_remove(root + "/snes/wide");
+	return 0;
+}
+
+int run_handoff_test(const char *rom, const std::string &work);   /* handoff_proof.cpp */
+
 int main(int argc, char **argv)
 {
+	if (argc >= 4 && !strcmp(argv[1], "handoff")) return run_handoff_test(argv[2], argv[3]);
+	if (argc >= 4 && !strcmp(argv[1], "wide")) { int r = run_wide_test(argv[2], argv[3]); fprintf(stderr, "player_twin: wide %d checks, %d failed\n", g_checks, g_fail); return r || g_fail ? 1 : 0; }
 	if (argc >= 5 && !strcmp(argv[1], "test")) return run_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "bench-saves")) return bench(argv[2], atoi(argv[3]), atoi(argv[4]));
 	fprintf(stderr, "usage: player_twin test ROM SHOTS WORK | bench-saves DIR N FILL\n");

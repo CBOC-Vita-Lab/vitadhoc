@@ -78,6 +78,15 @@ the core.
 |---|---|
 | `sources.mk` | New. The list of translation units. |
 | `PROVENANCE.md` | New. This file. |
+| `widecap.h` | New. The wide view capture interface: `SWideLine` (what the PPU was set up to do on a scanline group: mode, tilemap bases and sizes, scroll incl. HDMA, mosaic, windows, enables, colour math, Mode 7 matrix, sprite settings), `SWideView` (one frame's capture: per-pass margin pictures and Z, VRAM, per-word VRAM write stamps, unit ages, CGRAM, OAM, the centre picture) and the control functions `S9xWideSet/Reset/FrameStartLive/FrameEndLive/RenderFrameStart/FillView`. |
+| `gfx.cpp` | Wide view (all behind `g_wide_on` / a margin > 0; emulation state is not touched): a margin pass per render batch (`S9xWideBatch`): the batch is drawn again with the BG scroll shifted by the margin and per-side clip tables, once as a composite and once per layer / sprites (`DrawOBJSWide`, left and right sprite overhang with the real draw rules), into separate buffers; the line records (`WideState`); `S9xWideRenderFrameStart` / `S9xWideFillView` (the view). The normal picture is drawn by the unchanged code before the pass. |
+| `tileimpl.h` | Mode 7 start column hook: `g_wide_on ? Left + g_wide_dx : Left` (and the h-flip mirror) so the margin pass maps buffer column x to screen column x + dx. With the wide view off the expression is the original one. |
+| `ppu.h` | `S9xWideStampVRAM`: after each of the six VRAM write sites that already call `S9xPPUMTVRAMDirty`, one 16-bit "age" stamp per VRAM word (`g_s9x_vage`) and per 16-byte unit (`g_s9x_uage`) is stored when `g_s9x_wide_stamp` is set (wide view on). Nothing reads them in the emulation. |
+| `ppu_mt.cpp` | K_WIDE_END slot kind: the frame's wide capture (the margin passes run on the PPU thread inside the batches of the slot ring) is finished with a VRAM / stamp copy and handed to the adapter hook off the CPU thread; `S9xWideSet` (syncs the PPU thread, switches stamping on), `S9xWideReset`, frame clock (`S9xWideFrameStartLive`, decay of the 16-bit stamps every 16384 frames). The wide state is per renderer copy (rcopy renames the globals of gfx/tile objects); the slot ring carries the margin in the slot. |
+
+The wide view is proven not to change anything the emulation produces: `snes/twin/wide_compare.py` compares frames, audio and the
+saved state (hash every 50 frames) with the wide view off and on, single-threaded and with `apu_thread=1,ppu_thread=1`, against a build
+of the tree before these changes, for the 15 owner games and the PeterLemon suite (results in the project notes).
 
 ### Switches that prove the exact speed-ups
 

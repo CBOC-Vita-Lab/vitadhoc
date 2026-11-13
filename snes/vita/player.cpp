@@ -1,5 +1,6 @@
 /* See player.h. Copyright CBOC-Vita. MIT licence (see snes/frontend/LICENSE). */
 #include "player.h"
+#include "wide.h"
 #include "pk_patch.h"
 #include "pk_util.h"
 
@@ -94,7 +95,7 @@ static const char *kMultitapGames[] = { "BOMBERMAN", "SECRET OF MANA", "SEIKEN D
 /* fields of pic_settings the player changed in the menu (only these are written back to the files, so a
  * per-game value the app sent in the launch file never leaks into picture.ini) */
 enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_HIRES = 64, CH_ILACE = 128,
-       CH_MULTITAP = 256, CH_USEGAME = 512 };
+       CH_MULTITAP = 256, CH_USEGAME = 512, CH_WIDE = 1024 };
 static unsigned g_changed;
 static pic_settings g_ps_file;
 
@@ -109,6 +110,7 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_HIRES) dst.hires_blend = src.hires_blend;
 	if (m & CH_ILACE) dst.interlace_blend = src.interlace_blend;
 	if (m & CH_MULTITAP) dst.multitap = src.multitap;
+	if (m & CH_WIDE) dst.wide = src.wide;
 	if (m & CH_USEGAME) dst.use_game = src.use_game;
 }
 
@@ -219,6 +221,21 @@ void SnesPlayer::run_writer_job(WriterJob *j)
 	case WriterJob::LOG:
 		pf_->log_write(j->text);
 		break;
+	case WriterJob::WIDEMAP: {
+		/* the learned map of the wide view: serialised here (not on the game thread), written with the safe writer */
+		size_t need = snes_wide_map_save(NULL, 0);
+		j->result = 0;
+		if (need) {
+			j->bytes.resize(need);
+			size_t got = snes_wide_map_save(j->bytes.data(), j->bytes.size());
+			if (got) {
+				make_dirs(path_dir(j->path));
+				WriteResult w = atomic_write(j->path, j->bytes.data(), got);
+				j->result = w == W_OK ? 0 : 100 + (int) w;
+			} else j->result = 1;
+		}
+		break;
+	}
 	}
 }
 
@@ -257,6 +274,11 @@ void SnesPlayer::poll_writer()
 			break;
 		case WriterJob::LOG:
 			log_busy_ = false;
+			break;
+		case WriterJob::WIDEMAP:
+			wide_busy_ = false;
+			if (!j->result) snes_wide_map_mark_saved();
+			logf("wide view map %s (%u bytes), rc=%d\n", j->result ? "NOT written" : "written", (unsigned) j->bytes.size(), j->result);
 			break;
 		}
 		delete j;
@@ -327,6 +349,7 @@ void SnesPlayer::settings_load()
 	Ini pl;
 	pl.load(path_join(snes_dir_, "player.ini"));
 	steady_ = pl.get_int("steady_pacing", 1) != 0;
+	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -355,7 +378,10 @@ void SnesPlayer::apply_overrides()
 	if ((v = req_.override_int("hires_blend", -1)) >= 0) ps_.hires_blend = v ? 1 : 0;
 	if ((v = req_.override_int("interlace_blend", -1)) >= 0) ps_.interlace_blend = v ? 1 : 0;
 	if ((v = req_.override_int("multitap", -1)) >= 0) ps_.multitap = clampi(v, 0, 2);
+	if ((v = req_.override_int("wide_view", -1)) >= 0) ps_.wide = clampi(v, 0, 2);
+	if (req_.overrides.count("wide_view")) { std::string w = lower(req_.overrides.find("wide_view")->second); if (w == "auto") ps_.wide = 0; else if (w == "on") ps_.wide = 1; else if (w == "off") ps_.wide = 2; }
 	if ((v = req_.override_int("steady_pacing", -1)) >= 0) steady_ = v != 0;
+	if ((v = req_.override_int("smooth_handoff", -1)) >= 0) handoff_ = v != 0;
 }
 
 void SnesPlayer::sync_menu_values()
@@ -370,7 +396,9 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_HIRES, ps_.hires_blend ? 1 : 0);
 	menu_.set_value(ROW_INTERLACE, ps_.interlace_blend ? 1 : 0);
 	menu_.set_value(ROW_MULTITAP, ps_.multitap);
+	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
+	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 }
 
 int SnesPlayer::multitap_wanted() const
@@ -518,7 +546,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
-	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT;
+	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = 4;
 	cfg.accent = 0x7B6CFF;
@@ -541,13 +569,17 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "Steady pacing",
 		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.",
 		                   onoff, 1);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
+		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.",
+		                   onoff, 1);
 	}
 	sync_menu_values();
 	snes_host_set_multitap(multitap_wanted());
+	wide_start();
 
-	logf("title: %s  pal=%d  sram=%u  picture: shape=%d quality=%d glow=%d scan=%d grid=%d multitap=%d own=%d steady=%d\n",
+	logf("title: %s  pal=%d  sram=%u  picture: shape=%d quality=%d glow=%d scan=%d grid=%d multitap=%d own=%d steady=%d handoff=%d\n",
 	     snes_host_rom_title(), snes_host_is_pal(), (unsigned) snes_host_sram_size(), ps_.shape, ps_.quality, ps_.glow, ps_.scan,
-	     ps_.grid, ps_.multitap, ps_.use_game, steady_ ? 1 : 0);
+	     ps_.grid, ps_.multitap, ps_.use_game, steady_ ? 1 : 0, handoff_ ? 1 : 0);
 	states_->resume_mark(pf_->now_us() / 1000);
 	res.ok = true;
 	return res;
@@ -663,6 +695,7 @@ void SnesPlayer::after_frame(uint64_t now_us)
 	now_ms_ = now_us / 1000;
 	poll_writer();
 	srm_watch(now_us);
+	wide_watch(now_us);
 	/* the resume point: every 2 minutes, and soon after the game saved (at most every 30 s) */
 	if (!resume_busy_) {
 		bool after_save = resume_after_srm_at_ && now_us >= resume_after_srm_at_ && states_->resume_due(now_ms_, 30000);
@@ -796,6 +829,7 @@ void SnesPlayer::settings_queue_save()
 	j->path2 = pic_game_ini();
 	Ini pl;
 	pl.set_int("steady_pacing", steady_ ? 1 : 0);
+	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
 	j->text = pl.serialize();
 	post(j);
 }
@@ -813,13 +847,15 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PIC_APPLY:
 		ps_.use_game = v ? 1 : 0;
 		/* "This game" stores every value as now shown; "All games" only what was changed here */
-		g_changed |= CH_USEGAME | (v ? 0x3FF : 0);
+		g_changed |= CH_USEGAME | (v ? 0x7FF : 0);
 		break;
 	case ROW_PIXELS: ps_.pixel_sq = v ? 1 : 0; g_changed |= CH_PIXEL; break;
 	case ROW_HIRES: ps_.hires_blend = v ? 1 : 0; g_changed |= CH_HIRES; break;
 	case ROW_INTERLACE: ps_.interlace_blend = v ? 1 : 0; g_changed |= CH_ILACE; break;
 	case ROW_MULTITAP: ps_.multitap = clampi(v, 0, 2); g_changed |= CH_MULTITAP; snes_host_set_multitap(multitap_wanted()); break;
+	case ROW_PIC_WIDE: ps_.wide = clampi(v, 0, 2); g_changed |= CH_WIDE; break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
+	case ROW_HANDOFF: handoff_ = v != 0; break;
 	default: return;
 	}
 	settings_dirty_ = true;
@@ -942,9 +978,60 @@ bool SnesPlayer::queue_state_write(StateJob &job)
 
 /* ---- the end ---------------------------------------------------------------------- */
 
+/* ---- wide view ----------------------------------------------------------------------- */
+
+void SnesPlayer::wide_start()
+{
+	size_t n = 0;
+	const uint8_t *img = snes_host_rom_image(&n);
+	snes_wide_set_game(img, n, snes_host_rom_title());
+	wide_path_ = path_join(path_join(snes_dir_, "wide"), game_ + ".wmap");
+	wide_last_us_ = pf_->now_us();
+	std::vector<uint8_t> b;
+	if (file_read(wide_path_, b, 16u << 20) && !b.empty()) {
+		int r = snes_wide_map_load(b.data(), b.size());
+		logf("wide view map loaded: %u bytes rc=%d\n", (unsigned) b.size(), r);
+	}
+}
+
+void SnesPlayer::wide_apply(int scr_w, int scr_h)
+{
+	int m = pic_wide_margin(&ps_, scr_w, scr_h, SNES_WIDE_MAX_MARGIN);
+	bool want = m > 0 && ps_.wide != 2;
+	if (want && ps_.wide == 0 && pacer_.mode() != PACE_FULL) want = false;
+	if (!want) m = 0;
+	if (want == wide_on_ && m == wide_m_) return;
+	snes_wide_set(want ? 1 : 0, m);
+	wide_on_ = want; wide_m_ = m;
+	logf("wide view %s margin=%d (mode %d, shape %d)\n", want ? "on" : "off", m, ps_.wide, ps_.shape);
+}
+
+void SnesPlayer::wide_post(bool final_)
+{
+	if (wide_path_.empty() || !snes_wide_map_key()) return;
+	if (!snes_wide_map_dirty()) return;
+	if (wide_busy_) { if (!final_) return; wait_writer(); poll_writer(); if (wide_busy_) return; }
+	WriterJob *j = new WriterJob;
+	j->kind = WriterJob::WIDEMAP;
+	j->path = wide_path_;
+	wide_busy_ = true;
+	post(j);
+	if (final_) { wait_writer(); poll_writer(); }
+}
+
+/* every 30 s while the map has new cells (a game thread check; the work is the writer thread's) */
+void SnesPlayer::wide_watch(uint64_t now_us)
+{
+	if (!wide_on_ && !snes_wide_map_dirty()) return;
+	if (now_us - wide_last_us_ < 30u * 1000000u) return;
+	wide_last_us_ = now_us;
+	wide_post(false);
+}
+
 void SnesPlayer::finish(ExitReason why)
 {
 	wait_writer();
+	wide_post(true);
 	if (settings_dirty_) settings_queue_save();
 	/* the resume point: where the game was left */
 	if (states_ && snes_host_state_size()) resume_post(true);

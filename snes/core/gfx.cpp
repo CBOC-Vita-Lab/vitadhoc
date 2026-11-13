@@ -2649,6 +2649,10 @@ static void S9xWideBatch (const S9xRenderJob &job)
 		y1 = SW_ROWS - 1;
 	if (y0 > y1)
 		return;
+#ifdef CBOC_WIDE_NEGATIVE_CONTROL
+	// test only (never in a release): a deliberate emulation change from the wide pass, to show that wide_compare.py notices
+	if (y0 <= 100 && y1 >= 100) Memory.VRAM[0x2345] ^= 1;
+#endif
 
 	const bool hires = IPPU.DoubleWidthPixels || job.widen || PPU.BGMode == 5 || PPU.BGMode == 6 || IPPU.PseudoHires;
 	const bool inter = IPPU.Interlace || IPPU.DoubleHeightPixels || job.heighten;

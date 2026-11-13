@@ -66,8 +66,9 @@ def camera(kind, wide):
 
 def build(kind):
     rnd = random.Random(1234 if kind == "s64" else 99)
-    win = kind in ("win_a", "win_b")
-    N = 64 if kind == "s64" else 32
+    win = kind.startswith("win")
+    wk_ = kind[-1]
+    N = 64 if kind in ("s64", "win64_a", "win64_b") else 32
     W = 32
     LL = 6 if N == 64 else 0
     LR = 6 if N == 64 else 0
@@ -153,7 +154,7 @@ def build(kind):
     w8(0x212C, 0x01 if win else 0x17); w8(0x212D, 0); w8(0x212E, 0x01 if win else 0); w8(0x212F, 0)
     w8(0x2130, 0); w8(0x2131, 0); w8(0x2133, 0)
     if win:
-        if kind == "win_a":
+        if wk_ == "a":
             w8(0x2126, 0); w8(0x2127, 127); w8(0x2128, 200); w8(0x2129, 255); w8(0x2123, 0x0A); w8(0x2125, 0x20); w8(0x2130, 0x20)
         else:
             w8(0x2126, 8); w8(0x2127, 247); w8(0x2123, 0x02)
@@ -326,7 +327,7 @@ def build_m7(kind="m7"):
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
-    for kind, name in (("s64", "wide_scroll64"), ("s32", "wide_scroll32"), ("win_a", "wide_win_a"), ("win_b", "wide_win_b")):
+    for kind, name in (("s64", "wide_scroll64"), ("s32", "wide_scroll32"), ("win_a", "wide_win_a"), ("win_b", "wide_win_b"), ("win64_a", "wide_win64_a"), ("win64_b", "wide_win64_b")):
         rom, meta = build(kind)
         open(os.path.join(out, name + ".sfc"), "wb").write(rom)
         json.dump(meta, open(os.path.join(out, name + ".json"), "w"))

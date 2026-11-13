@@ -4225,7 +4225,7 @@ static void smcr_apply(void)
 #if defined(GPSP_DCACHE) && GPSP_DCACHE
     e = getenv("GPSP_DISPATCH_CACHE");
     if (e && *e)
-      dispatch_cache_on = atoi(e) ? 1 : 0;
+      gpsp_dispatch_cache_set(atoi(e) ? 1 : 0);
 #endif
     e = getenv("GPSP_SMC_XTRACE");
     if (e && *e)

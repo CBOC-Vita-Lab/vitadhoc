@@ -119,12 +119,14 @@ struct Adapter {
 	uint16_t pal_prev[256];
 	int have_pal_prev;
 	uint32_t epoch;
-	uint32_t map_saved_cells;
+	uint32_t map_saved_cells, map_pending_cells;
 	/* output ring */
 	Out out[NOUT];
 	std::atomic<unsigned> serial;
 	std::atomic<unsigned> wr;
 	int outW, outH;
+	uint16_t xr[MAXH][2][4];   /* per line: the ring-backed real margin of a line whose layers cannot be continued from the map */
+	uint8_t xl[MAXH];
 };
 
 static Adapter A;
@@ -134,13 +136,10 @@ static Adapter A;
 /* margin for a picture of h lines that keeps the 224 line picture's aspect (70 px at 224 -> 83 at 239) */
 static int margin_for(int h)
 {
-	if (h == 224 || A.margin224 <= 0)
-		return A.margin224;
-	int total = (h * (256 + 2 * A.margin224) + 112) / 224;
-	int m = (total - 256) / 2;
-	if (m < 0) m = 0;
-	if (m > SNES_WIDE_MAX_MARGIN) m = SNES_WIDE_MAX_MARGIN;
-	return m;
+	/* the player's picture shapes scale the width per source column, not per picture height, so a 239 line picture
+	 * gets the same margin as a 224 line one */
+	(void) h;
+	return A.margin224;
 }
 
 static inline int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
@@ -485,7 +484,6 @@ static void run(const SWideView *v)
 		st.map_cells = ms.cells; st.map_rooms = ms.rooms; st.map_bound = ms.bound; st.map_served = (int) ms.served_tiles;
 	}
 
-	if (getenv("SNES_WIDE_TRACE") && v->clock % 100 == 0) { const wk_line_out *q = &wo->line[100]; fprintf(stderr, "trace M=%p bright=%d scene=%d epoch=%d nlay=%d clk=%u line100 real L:%d,%d,%d,%d R:%d,%d,%d,%d ring L:%d,%d,%d R:%d,%d,%d hud=%d coh=%d,%d,%d\n", (void*) A.M, fr->brightness, wo->scene_event, (int) wo->epoch, nlay, (unsigned) v->clock, q->real[0][0], q->real[0][1], q->real[0][2], q->real[0][3], q->real[1][0], q->real[1][1], q->real[1][2], q->real[1][3], q->ring[0][0], q->ring[0][1], q->ring[0][2], q->ring[1][0], q->ring[1][1], q->ring[1][2], q->hud, wo->coherent[0][100], wo->coherent[1][100], wo->coherent[2][100]); }
 	/* 3. candidates */
 	const int Mc_ = Mc;
 	for (int y = 0; y < H; y++) {
@@ -493,6 +491,16 @@ static void run(const SWideView *v)
 		wk_line_out *lo = &wo->line[y];
 		const bool drawn = line_ok(Ln);
 		if (lo->hud) st.lines_hud++;
+		/* windows and colour math act on the composite, not on the layers: the layered continuation (map, history) knows
+		 * neither, so on such lines only the core's own composite out to the ring is shown as real */
+		A.xl[y] = (Ln.wsel_any || (Ln.cgadsub & 0x3F) || (Ln.cgwsel & 0xC0)) ? 1 : 0;
+		if (A.xl[y])
+			for (int l = 0; l < 4; l++)
+				for (int s = 0; s < 2; s++) {
+					const int r = lo->real[s][l], g = lo->ring[s][l];
+					A.xr[y][s][l] = (uint16_t) (g < r ? g : r);
+					lo->real[s][l] = 0; lo->ring[s][l] = 0;
+				}
 		for (int l = 0; l < 4; l++) {
 			if (!(nlay && A.lay[l].active)) continue;
 			Layer *Ly = &A.lay[l];
@@ -583,9 +591,10 @@ static void run(const SWideView *v)
 				for (int l = 0; l < bg_count(Ln.mode); l++) {
 					if (!(Ln.tm & (1 << l))) continue;
 					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; break; }
-					const int r = lo->real[s][l];
+					const int r = A.xl[y] ? A.xr[y][s][l] : lo->real[s][l];
+					const int rr = A.xl[y] ? r : (lo->ring[s][l] < r ? lo->ring[s][l] : r);   /* the core's composite pass only knows the ring */
 					const int kind = wo->kind[l];
-					if (r < nex) nex = r;
+					if (rr < nex) nex = rr;
 					if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r < nlay_) nlay_ = r;
 					if (kind == WK_KIND_HUD || kind == WK_KIND_OFF) nex = 0;
 				}
@@ -770,7 +779,7 @@ size_t snes_wide_map_save(uint8_t *buf, size_t cap)
 				need = wk_map_serialize(A.M, buf, cap);
 				wk_map_stats ms;
 				wk_map_stats_get(A.M, &ms);
-				if (need) A.map_saved_cells = (uint32_t) ms.cells;
+				if (need) A.map_pending_cells = (uint32_t) ms.cells;
 			}
 		}
 	}
@@ -811,7 +820,7 @@ int snes_wide_map_dirty(void)
 void snes_wide_map_mark_saved(void)
 {
 	A.lk.lock();
-	if (A.M) { wk_map_stats ms; wk_map_stats_get(A.M, &ms); A.map_saved_cells = (uint32_t) ms.cells; }
+	A.map_saved_cells = A.map_pending_cells;   /* the cell count when the bytes that were written were taken */
 	A.lk.unlock();
 }
 

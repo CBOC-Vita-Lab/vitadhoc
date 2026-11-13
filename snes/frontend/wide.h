@@ -44,9 +44,9 @@ typedef struct snes_wide_stats {
 	uint32_t instr_us;        /* wall time of the hook for this frame (microseconds) */
 } snes_wide_stats;
 
-/* Switch the wide view on or off. `margin` = pixels per side for a 224 line picture (0..96; the frontend takes it from the
- * picture shape: 70 fills a 16:9 screen at square pixels); 239 line pictures get the margin that gives the same
- * aspect. Waits for the PPU thread. 0 or on = 0 switches off. */
+/* Switch the wide view on or off. `margin` = pixels per side (0..96; the frontend takes it from the picture shape: 70 fills
+ * a 16:9 screen at square pixels, 42 with the original 4:3 shape); 224 and 239 line pictures get the same margin. Waits for
+ * the PPU thread. on = 0 or margin = 0 switches off. */
 void snes_wide_set(int on, int margin);
 int snes_wide_active(void);
 int snes_wide_margin(void);

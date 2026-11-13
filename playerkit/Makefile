@@ -1,6 +1,8 @@
 # playerkit: portable player library (MIT). Linux twin with ASan + UBSan.
 #
 #   make test        build and run every unit test, plus the scripted menu walk (PNGs)
+#   make tsan        the frame hand-over mailbox under ThreadSanitizer (also part of test)
+#   make model       the pacing model's tables (ARGS=standard|adaptive|all)
 #   make shots       only the menu walk; PNGs go to SHOTS (default build/shots)
 #   make vita        compile the library for the PS Vita (arm-vita-eabi-g++), objects only
 #   make regen-font  regenerate src/pk_font_data.cpp from the OFL fonts in ../gpsp/assets/fonts
@@ -14,7 +16,7 @@ B        := build
 SHOTS    ?= $(B)/shots
 
 LIB_SRC  := src/pk_util.cpp src/pk_text.cpp src/pk_font_data.cpp src/pk_icons.cpp src/pk_gfx_soft.cpp src/pk_states.cpp \
-            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp
+            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp
 LIB_OBJ  := $(patsubst src/%.cpp,$(B)/linux/%.o,$(LIB_SRC))
 TEST_SRC := $(wildcard tests/test_*.cpp)
 TEST_OBJ := $(patsubst tests/%.cpp,$(B)/linux/tests/%.o,$(TEST_SRC))
@@ -25,12 +27,12 @@ $(B)/linux/%.o: src/%.cpp $(wildcard src/*.h)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -c $< -o $@
 
-$(B)/linux/tests/%.o: tests/%.cpp $(wildcard src/*.h) $(wildcard tests/*.h)
+$(B)/linux/tests/%.o: tests/%.cpp $(wildcard src/*.h) $(wildcard tests/*.h) $(wildcard tools/*.h)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
+	$(CXX) $(CXXFLAGS) -Isrc -Itests -Itools -c $< -o $@
 
 $(B)/unit_tests: $(LIB_OBJ) $(TEST_OBJ) $(B)/linux/tests/main.o
-	$(CXX) $(CXXFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $^ -o $@ -pthread
 
 $(B)/linux/tests/main.o: tests/main.cpp tests/pk_test.h
 	@mkdir -p $(dir $@)
@@ -43,9 +45,27 @@ $(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: $(B)/unit_tests $(B)/menu_walk
+test: $(B)/unit_tests $(B)/menu_walk $(B)/handoff_tsan
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
+	$(B)/handoff_tsan
+
+# the frame hand-over mailbox under ThreadSanitizer (a separate binary: it cannot share one with AddressSanitizer)
+TSAN_FLAGS ?= -std=c++11 -Wall -Wextra -O1 -g -fsanitize=thread
+$(B)/handoff_tsan: tests/handoff_tsan_main.cpp tests/handoff_stress.h src/pk_handoff.cpp src/pk_handoff.h src/pk_handoff_posix.h src/pk_pace.cpp
+	@mkdir -p $(B)
+	$(CXX) $(TSAN_FLAGS) -Isrc -Itests tests/handoff_tsan_main.cpp src/pk_handoff.cpp src/pk_pace.cpp -o $@ -pthread
+
+tsan: $(B)/handoff_tsan
+	$(B)/handoff_tsan
+
+# the pacing model (virtual time, no console): make model ARGS="all"
+$(B)/pacing_model: tools/pacing_model.cpp tools/pacing_model.h src/pk_pace.cpp src/pk_handoff.cpp src/pk_handoff.h
+	@mkdir -p $(B)
+	$(CXX) -std=c++11 -O2 -Wall -Wextra -Isrc -Itools tools/pacing_model.cpp src/pk_pace.cpp src/pk_handoff.cpp -o $@
+
+model: $(B)/pacing_model
+	$(B)/pacing_model $(ARGS)
 
 shots: $(B)/menu_walk
 	TZ=UTC $(B)/menu_walk $(SHOTS)
@@ -72,6 +92,6 @@ regen-font: tools/gen_font.cpp
 	$(B)/gen_font ../gpsp/assets/fonts src/pk_font_data.cpp
 
 clean:
-	rm -rf $(B)/linux $(B)/unit_tests $(B)/menu_walk $(B)/vita
+	rm -rf $(B)/linux $(B)/unit_tests $(B)/menu_walk $(B)/vita $(B)/handoff_tsan $(B)/pacing_model
 
-.PHONY: all test shots vita regen-font clean
+.PHONY: all test shots vita regen-font clean tsan model

@@ -25,7 +25,7 @@ PK := ../playerkit
 PK_SRC := $(PK)/src/pk_util.cpp $(PK)/src/pk_text.cpp $(PK)/src/pk_font_data.cpp \
           $(PK)/src/pk_icons.cpp $(PK)/src/pk_states.cpp $(PK)/src/pk_launch.cpp \
           $(PK)/src/pk_patch.cpp $(PK)/src/pk_input.cpp $(PK)/src/pk_notice.cpp \
-          $(PK)/src/pk_menu.cpp $(PK)/src/pk_pace.cpp $(PK)/vita/pk_gfx_vita.cpp
+          $(PK)/src/pk_menu.cpp $(PK)/src/pk_pace.cpp $(PK)/src/pk_handoff.cpp $(PK)/vita/pk_gfx_vita.cpp
 CXXFLAGS += -I$(PK)/src -I$(PK)/vita
 ```
 
@@ -259,3 +259,66 @@ must do:
 - `make -C playerkit vita` proves the library and the vita2d binding compile
   for the console; on the device, check the touch targets and the first
   frame after opening the menu.
+
+## 7. Frame hand-over (`pk_handoff`)
+
+What it is: the emulating thread builds a picture and passes it through a small mailbox to a drawing thread that filters, composes, draws and presents it. Emulation and sound stay at true speed; a picture or two "in flight" soak up wobble when the drawing work sits near one refresh. The SNES player already uses it (`snes/vita/pipe.*`, `hd_*` in `snes/vita/main.cpp`, row "Smooth hand-over", default on). This section is the exact recipe for the main app (`gpsp/vita/*`), which has not been changed. Every number quoted in `make -C playerkit model` is a model number; nothing here has run on a console.
+
+### 7.1 Build and links
+
+- Add `pk_handoff.cpp` to the app's playerkit sources (section 0). The class is C++; the gpsp side is C, so add a small C++ file (`handoff_glue.cpp`, with `extern "C"` functions) holding the `Handoff`, a `HandoffSys` backed by sceKernel semaphores (`sceKernelCreateSema`, `WaitSema` with a timeout in microseconds, `SignalSema`, `DeleteSema`; copy `VitaHandoffSys` from `snes/vita/main.cpp`) and the draw thread. No `std::mutex`, no `thread_local`, no pthread TLS (`pk::SpinLock` is used inside).
+- Give the draw thread its own core and a priority just below the emulating thread's; the SNES player uses the core the audio thread does not use. Pick on the console and log it.
+
+### 7.2 Who owns what
+
+The draw thread becomes the only thread that calls `vid_*`, `vb_*`, `osd_draw`, `vid_swap`, the upscalers and any GXM call. The emulating thread keeps the core, sound, pad, menus' logic and writes only into `HandoffFrame` buffers. Everything else that touches the picture must either `flush()` first or run on the draw thread (7.6).
+
+### 7.3 Calls, in game loop order (`main_vita.c`)
+
+Per `game_loop` pass, with the existing code around them:
+
+1. `pace_frame()`: keep the absolute vcount wait. Replace the drain wait (the `vid_present_state` mask loop, at most two vblank waits, `g_sw.drain`) with nothing when hand-over is active: the mailbox gate is the back-pressure now. Keep the drain code for hand-over off, link sessions and `link_bench`.
+2. Read the pad once (`pspcompat_pad`), then, for every pad read (see 7.7), `PadLatch::feed`.
+3. `ho_set_pace(steady_half())` then `ho_set_force_drop(g_ff || rewinding)`: `Handoff::set_pace_mode`, `set_force_drop`.
+4. Poll finished costs: `while (h.poll_cost(&c)) steady_add(c);` and stop feeding `steady_add` with `plat_time_us() - t_drawn` while hand-over is active. The cost is the larger of the emulating work and the drawing work, which is what the model fed the pacer.
+5. Run the owed frames (`g_catchup`, `CATCHUP_PER_FRAME`, `HORIZON`) exactly as now: owed frames run undrawn and are never staged. After them, `h.note_emulated(n)` with the count of ALL frames run in the pass (drawn or not).
+6. `sink_video` of the frame to show: replace the body by `HandoffFrame *f = h.begin_write(); if (!f) { old inline path } else { copy g_show.pix (or the sgb frame) into f->data; set w, h, pitch, seq, emu_us, user (sgb/border flags); h.commit(f); }`. `begin_write` is the only place the emulating thread waits (full mode, in-flight at depth). In the steady half path (`runs = 2`) stage only the drawn one, which is the second.
+7. `frame_present` (`osd_draw` + `vid_swap`) moves into the draw thread loop: `f = h.take(); draw; osd; swap; h.release(f, draw_us)`. `draw_us` is the draw thread's own work including the wait in `vid_swap`. The OSD text and toasts live in values the emulating thread publishes under a `pk::SpinLock` (copy, then draw; see `hd_publish_notices`).
+8. Once a second beside `vita_win`: `if (h.census_line(now_us, buf, sizeof buf)) fe_evt("%s", buf);`. `now_us` must come from the same clock as `HandoffSys::now_us`.
+
+What to remove or guard: the `drain` wait and its auto-off counter (when on), the `plat_time_us() - t_drawn` cost feed (when on), any "present skipped because the swap queue is full" path (the draw thread blocks in `vid_swap`; the emulating thread does not).
+
+### 7.4 What stays
+
+`render_thread` (GBA line renderer on another core) and the upscale threads stay as they are, but they are driven from the draw thread when they belong to the filter stage (xBRZ, compose) and from the emulating thread when they belong to the core. Do not call `rt_frame_end` from the draw thread: the picture is complete before `commit`. `g_blit_suppress` is checked before `begin_write`, so a suppressed picture is not staged.
+
+### 7.5 Default depth and adaptation
+
+`HandoffConfig` defaults are the model's choice: depth 2 in flight at most, 1 at least, adaptive (window 24 pictures, shrink at 100% of the refresh held 1 s, restore at 88% held 1 s and 4 s after the shrink, cool-down doubling to 32 s on a bounce). Do not tune them without rerunning `make -C playerkit model ARGS=...`: the table shows depth 2 gives the frame rate depth 3 and 4 give, with less delay (about 13 ms for every extra picture). The governor never changes the speed of the game, so a wrong cost estimate costs delay at worst.
+
+### 7.6 Flush, discard and off
+
+| situation | call |
+| --- | --- |
+| menu opens, pause, "go to game list", exit | `flush()` before the menu draws; at exit `shutdown()`, join the thread |
+| save-state thumbnail, `clip_frame`, screenshot, `vid_readback` | `flush()`, then read `last_shown()` (it stays valid until the next release) |
+| state load, rewind step, reset | `discard()` |
+| menu closed or game resumed | `time_baseline()` so stopped time is not counted as lost time |
+| fast-forward, rewind held | `set_force_drop(true)` (nothing waits, newest wins) |
+| link session, local play, `link_bench`, anything lockstepped | `set_enabled(false)` (flushes, then `begin_write` returns NULL and the old inline path runs) |
+| the Settings row switched off | the same as link |
+
+### 7.7 Pad latching
+
+Add one `pk::PadLatch` per player port. The pad is sampled by the emulating thread at least once per pass; if a pass is long, also feed it from a faster poll. At each EMULATED frame call `take()` to get the sample that frame sees, so a tap shorter than the gap between reads is kept (rising edges are ORed in until taken). The test in `tests/test_handoff.cpp` shows the loss without it. The SNES player does not use it yet.
+
+### 7.8 The settings row and config
+
+Gameplay page: "Smooth hand-over", on by default, help line "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves." Config key `smooth_handoff` (default 1), and a per-launch override of the same name. Log it with the title line (`handoff=%d`).
+
+### 7.9 Tests to add
+
+- A twin proof like `snes/twin/handoff_proof.cpp`: the same game and pad script run plain and through the mailbox with a slow consumer; every delivered picture must be bit-identical to the plain run's picture for the same frame number, in order, including a flush and a disable/enable in the middle.
+- A census gate: the app's selftest must fail when hand-over is default on and the log has no `handoff:` line with `shown` above zero (lessons D: a feature that logs nothing has not been proven to run).
+- A weak-symbol check: `nm` of the linked binary shows no ` w ` entries for the `pk::Handoff` or `pk::HandoffSys` methods (the console linker accepts unresolved weak symbols silently).
+- `make -C playerkit test` (unit, ThreadSanitizer and model-agreement tests) stays green.

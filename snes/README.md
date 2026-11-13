@@ -357,6 +357,7 @@ or, with "Apply to: this game", for one game (`ux0:data/GBAdhoc/snes/games/<game
 | Quality | **Sharp** (default: nearest-neighbour prescale by an integer factor into a render target, then bilinear: "sharp bilinear") or Smooth (plain bilinear) |
 | Side glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
 | CRT scanlines, LCD grid | Off, 1-10 |
+| Wide view | Auto (default), On or Off. Fills the 16:9 screen with real picture of the game beside the 4:3 frame (the game's own tiles and Mode 7 where its data proves them, soft edges elsewhere); the 256 middle columns stay the normal picture. Hi-res scenes use the normal picture. Auto is off while steady pacing thins frames. See `WIDE-INTEGRATION.md` |
 | Blend hi-res columns | Off (default) or On. For 512-wide pictures: the GPU averages each pair of columns (bilinear sample exactly between two texels, no extra pass), which smooths the dithering/transparency tricks hi-res games use. Opt-in because it softens text |
 | Blend interlace lines | Off (default) or On. The same for 448/478-high interlaced pictures: pairs of lines are averaged, which removes the line flicker |
 | Bezel | not a setting: `ux0:data/GBAdhoc/overlays/<game>.png`, else `overlays/snes.png`, a PNG (transparent window) drawn over the whole screen; it replaces the glow |

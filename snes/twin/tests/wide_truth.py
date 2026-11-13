@@ -29,14 +29,12 @@ class World:
         self.M = 0
 
     def mathpix(self, c565v):
-        r, g, b = (c565v >> 11) & 31, (c565v >> 5) & 63, c565v & 31
-        fr, fg5, fb = 12, 6, 3
-        fg = (fg5 << 1) | (fg5 >> 4)
-        return (min(31, r + fr) << 11) | (min(63, g + fg) << 5) | min(31, b + fb)
+        r, g, b = (c565v >> 11) & 31, (c565v >> 6) & 31, c565v & 31
+        return c565((min(31, r + 12), min(31, g + 6), min(31, b + 3)))
 
     def pixel_win(self, cam, x, y):
         w = self.m["win"]
-        if w == "win_a": hidden = x <= 127 or x >= 200; math = x >= 128
+        if w.endswith("_a"): hidden = x <= 127 or x >= 200; math = x >= 128
         else: hidden = 8 <= x <= 247; math = True
         X = cam + x
         c = X >> 3

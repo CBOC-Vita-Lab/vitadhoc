@@ -24,27 +24,6 @@ FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/audio_sim.o $(B)/mai
 
 all: $(B)/snes_twin $(B)/player_twin $(B)/snes_wide_twin
 
-# player_twin: the Vita player's own logic (../vita/player.cpp) with playerkit's software renderer
-PK       := ../../playerkit
-PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace
-PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
-PLAYER_OBJS := $(B)/player.o $(B)/picture.o $(B)/player_twin.o
-$(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
-	@mkdir -p $(B)/pk
-	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(PK)/src -c -o $@ $<
-$(B)/player.o: ../vita/player.cpp ../vita/player.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
-	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
-$(B)/picture.o: $(FE)/picture.cpp $(FE)/picture.h
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-$(B)/player_twin.o: player_twin.cpp ../vita/player.h $(wildcard $(PK)/src/*.h)
-	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
-$(B)/player_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(PLAYER_OBJS) $(PK_OBJS)
-	$(CXX) -o $@ $^ -lm -pthread
-
-$(B)/snes_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS)
-	$(CXX) -o $@ $^ -lm -pthread
-
-
 # snes_wide_twin: the wide view runner (adapter ../frontend/wide.cpp + widekit, MIT) for the proofs in wide_selftest.sh
 WK       := ../../widekit
 WK_SRC   := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
@@ -52,6 +31,31 @@ WK_OBJS  := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
 $(B)/wk/%.o: $(WK)/src/%.cpp $(wildcard $(WK)/include/*.h) $(wildcard $(WK)/src/*.h)
 	@mkdir -p $(B)/wk
 	$(CXX) $(OPT) -std=c++11 -Wall -fno-exceptions -fno-rtti -I$(WK)/include -c -o $@ $<
+# player_twin: the Vita player's own logic (../vita/player.cpp) with playerkit's software renderer
+PK       := ../../playerkit
+PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff
+PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
+PLAYER_OBJS := $(B)/player.o $(B)/picture.o $(B)/pipe.o $(B)/handoff_proof.o $(B)/player_twin.o
+$(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)/pk
+	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(PK)/src -c -o $@ $<
+$(B)/player.o: ../vita/player.cpp ../vita/player.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/pipe.o: ../vita/pipe.cpp ../vita/pipe.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/handoff_proof.o: handoff_proof.cpp ../vita/player.h ../vita/pipe.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/picture.o: $(FE)/picture.cpp $(FE)/picture.h
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/player_twin.o: player_twin.cpp ../vita/player.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/player_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(WK_OBJS) $(PLAYER_OBJS) $(PK_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+$(B)/snes_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+
 $(B)/wide.o: $(FE)/wide.cpp $(FE)/wide.h $(CORE)/widecap.h $(wildcard $(WK)/include/*.h)
 	@mkdir -p $(B)
 	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(CORE) -I$(FE) -I$(WK)/include -c -o $@ $<

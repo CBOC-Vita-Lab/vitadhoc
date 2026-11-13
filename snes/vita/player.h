@@ -51,7 +51,7 @@ public:
 
 /* One piece of work for the writer thread. */
 struct WriterJob {
-	enum Kind { SRM = 1, STATE, RESUME, SETTINGS, LOG } kind;
+	enum Kind { SRM = 1, STATE, RESUME, SETTINGS, LOG, WIDEMAP } kind;
 	pk::StateJob state;
 	std::vector<uint8_t> bytes;
 	std::string text;
@@ -101,6 +101,14 @@ public:
 	StartResult start(int argc, char **argv, const std::string &root, bool system_enter_cross);
 	/* after start: a resume point or a slot asked for by the launch file (call once, before the first frame) */
 	void apply_start_mode();
+	/* ---- wide view ----
+	 * The platform calls this every frame (cheap) with the screen size it draws to: it works out the margin the picture
+	 * shape wants (pic_wide_margin) and switches the core's wide view on, off or to another margin when that changes
+	 * ("Auto": on unless the steady pacer is thinning frames; "On": always, where the shape has room; "Off"). Between
+	 * frames, on the game thread. */
+	void wide_apply(int scr_w, int scr_h);
+	bool wide_active() const { return wide_on_; }
+	int wide_margin() const { return wide_m_; }
 	/* the writer thread's loop body (also run by the player itself when there is no thread) */
 	Writer &writer() { return writer_; }
 	void run_writer_job(WriterJob *j);
@@ -148,6 +156,10 @@ public:
 	const pk::Profile &profile() const { return profile_; }
 	const pk::InputResult &last_input() const { return in_; }
 	bool steady_pacing() const { return steady_; }
+	/* "Smooth hand-over" (Speed page, default on): pictures are drawn and presented by their own thread through
+	 * playerkit's mailbox (pipe.h) so the game never waits for the picture. Ignored while the platform has no such thread. */
+	enum { ROW_HANDOFF = pk::ROW_HOST_BASE + 40 };
+	bool smooth_handoff() const { return handoff_; }
 	bool save_failing() const { return save_failing_; }
 	const std::string &save_message() const { return save_msg_; }
 	void logf(const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -200,6 +212,7 @@ private:
 	pic_settings ps_;
 	bool settings_dirty_ = false;
 	bool steady_ = true;
+	bool handoff_ = true;
 	pk::Pacer pacer_;
 	pk::States *states_ = 0;
 	pk::SessionTracker session_;
@@ -210,6 +223,15 @@ private:
 	pk::InputResult in_;
 	pk::PadSample last_pads_[pk::MAX_PLAYERS];
 	bool menu_srm_pending_ = false;
+	/* wide view */
+	bool wide_on_ = false;
+	int wide_m_ = 0;
+	std::string wide_path_;
+	bool wide_busy_ = false;
+	uint64_t wide_last_us_ = 0;
+	void wide_start();
+	void wide_watch(uint64_t now_us);
+	void wide_post(bool final_);
 	/* battery RAM */
 	std::vector<uint8_t> srm_buf_;
 	bool srm_busy_ = false;

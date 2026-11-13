@@ -748,7 +748,11 @@ def start_step(step, out_dir, logs_dir):
         step.name, step.desc, cwd, cmd, datetime.datetime.now().isoformat(timespec="seconds")))
     logf.flush()
     nice = shutil.which("nice")
-    argv = ([nice, "-n", "10"] if nice else []) + ["/bin/sh", "-c", cmd]
+    # bash with pipefail: a step can never pass through a pipe into `tail`
+    # (the status of a pipeline is its first failing command's)
+    bash = shutil.which("bash")
+    shell = [bash, "-o", "pipefail", "-c", cmd] if bash else ["/bin/sh", "-c", cmd]
+    argv = ([nice, "-n", "10"] if nice else []) + shell
     proc = subprocess.Popen(argv, cwd=str(cwd), stdout=logf, stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL, start_new_session=True)
     return Running(step, proc, log_path, logf, time.time())

@@ -205,6 +205,9 @@ int snes_host_cheats_save(void);
 int snes_host_cheat_error(char *text, size_t cap);
 
 const char *snes_host_rom_title(void);
+/* The loaded cartridge image (copier header already removed), valid while the ROM is loaded; the wide view keys its learned
+ * map and profile by a checksum of it. NULL and 0 when nothing is loaded. */
+const uint8_t *snes_host_rom_image(size_t *n);
 /* One line about the loaded cartridge: map, size, chips, SRAM. */
 const char *snes_host_rom_info(void);
 

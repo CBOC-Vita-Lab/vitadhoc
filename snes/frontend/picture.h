@@ -22,6 +22,7 @@ typedef struct {
 	int interlace_blend; /* 1: interlaced (400+ row) pictures are averaged to half height */
 	int multitap;  /* Super Multitap in port 2: 0 automatic (known games), 1 on, 2 off */
 	int use_game;  /* 1: this game has its own file; 0: the console file is used */
+	int wide;      /* wide view (real picture beside the 4:3 frame): 0 auto, 1 on, 2 off */
 } pic_settings;
 
 void pic_defaults(pic_settings *s);
@@ -40,6 +41,15 @@ typedef struct {
  * blank rows (in picture rows) the Zoom shape may remove. */
 void pic_geometry(const pic_settings *s, int src_w, int src_h, int crop_top, int crop_bottom,
                   int scr_w, int scr_h, pic_rect *r);
+
+/* Wide view. pic_wide_margin: pixels per side (0..max_m) of extra picture that fill the screen's width for the shape and the
+ * pixel shape in `s` (0: this shape has nothing to gain, the picture already fills the width: the stretched shape). The
+ * wide picture is (256 + 2 * M) columns; pic_geometry_wide places it with the same scale per column as the normal picture
+ * (rows as in pic_geometry; the width is the normal one times wide_w / 256, cropped symmetrically if it is wider than the
+ * screen). */
+int pic_wide_margin(const pic_settings *s, int scr_w, int scr_h, int max_m);
+void pic_geometry_wide(const pic_settings *s, int wide_w, int src_h, int crop_top, int crop_bottom,
+                       int scr_w, int scr_h, pic_rect *r);
 
 /* Integer prescale factors for the sharp-bilinear pass (1 = none needed). */
 void pic_prescale(const pic_rect *r, int *kx, int *ky);

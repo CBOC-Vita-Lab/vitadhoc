@@ -22,9 +22,9 @@
       "frontend-common/fe_rewind_pack.c",
       "-Wl,--gc-sections",
       "-o",
-      "/tmp/gbadhoc-clock-tests-_pyq1i5s/rewind_rtc"
+      "/tmp/gbadhoc-clock-tests-vhjuq7z_/rewind_rtc"
     ],
-    "seconds": 13.536
+    "seconds": 16.46
   },
   {
     "name": "gbadual_clock",
@@ -48,9 +48,9 @@
       "tools/tests/test_gbadual_clock.c",
       "-Wl,--gc-sections",
       "-o",
-      "/tmp/gbadhoc-clock-tests-_pyq1i5s/gbadual_clock"
+      "/tmp/gbadhoc-clock-tests-vhjuq7z_/gbadual_clock"
     ],
-    "seconds": 1.826
+    "seconds": 2.332
   },
   {
     "name": "rtc_protocol",
@@ -72,9 +72,9 @@
       "tools/tests/test_rtc_protocol.c",
       "-Wl,--gc-sections",
       "-o",
-      "/tmp/gbadhoc-clock-tests-_pyq1i5s/rtc_protocol"
+      "/tmp/gbadhoc-clock-tests-vhjuq7z_/rtc_protocol"
     ],
-    "seconds": 24.124
+    "seconds": 27.42
   },
   {
     "name": "rtc_clock",
@@ -98,8 +98,8 @@
       "tools/tests/test_rtc_clock.c",
       "-Wl,--gc-sections",
       "-o",
-      "/tmp/gbadhoc-clock-tests-_pyq1i5s/rtc_clock"
+      "/tmp/gbadhoc-clock-tests-vhjuq7z_/rtc_clock"
     ],
-    "seconds": 0.482
+    "seconds": 0.552
   }
 ]

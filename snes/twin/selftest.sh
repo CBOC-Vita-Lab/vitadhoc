@@ -213,6 +213,22 @@ if [ -x "$PT" ]; then
 		|| { grep -v '^Map_' $T/pt.txt | tail -30; bad "player (player_twin)"; }
 else echo "SKIP  player_twin not built ($PT)"; fi
 
+# frame hand-over ("Smooth hand-over", playerkit pk_handoff through snes/vita/pipe.cpp): the setting row (default on, kept), and the
+# pictures it delivers are bit for bit those of the plain run, in order, none missing outside steady pacing's half mode; with a
+# second thread, a slow drawing side, a flush, and the mailbox switched off and on again (two-player lockstep)
+if [ -x "$PT" ]; then
+	mkdir -p $T/hd/rom
+	python3 "$HERE/tests/make_wide_roms.py" $T/hd/rom >/dev/null 2>&1
+	if [ -f $T/hd/rom/wide_scroll64.sfc ]; then
+		"$PT" handoff $T/hd/rom/wide_scroll64.sfc $T/hd/w >$T/hd.txt 2>&1 && ok "hand-over: $(grep 'checks' $T/hd.txt | tail -1 | sed 's/handoff proof: //')" \
+			|| { grep 'handoff proof' $T/hd.txt | tail -8; bad "frame hand-over (player_twin handoff)"; }
+	else echo "SKIP  hand-over proof: wide_scroll64 ROM not made"; fi
+	if [ -f "$W" ]; then
+		"$PT" handoff "$W" $T/hd/w2 >$T/hd2.txt 2>&1 && ok "hand-over on a game ROM: $(grep 'checks' $T/hd2.txt | tail -1 | sed 's/handoff proof: //')" \
+			|| { grep 'handoff proof' $T/hd2.txt | tail -8; bad "frame hand-over, game ROM"; }
+	fi
+fi
+
 # steady pacing: with odd frames not rendered (threads on) the game is the same (audio, RAM, rendered frames)
 if [ -f "$W" ]; then
 	"$TWIN" "$W" --frames 300 --pad 50:a,60:none --hashes $T/p1.h --wav $T/p1.wav --peek-sum >$T/p1.o 2>/dev/null
@@ -221,6 +237,27 @@ if [ -f "$W" ]; then
 	cmp -s $T/p1e.h $T/p2.h && cmp -s $T/p1.wav $T/p2.wav && [ "$(grep ramsum $T/p1.o)" = "$(grep ramsum $T/p2.o)" ] \
 		&& ok "steady pacing half mode: rendered frames, audio and RAM identical" || bad "steady pacing changes the game"
 fi
+
+# the wide view: synthetic cartridges with a known level (tests/make_wide_roms.py): no pixel the wide view calls real may be
+# wrong, the picture in the middle is the normal picture, and nothing the emulation produces changes with it on
+WT=${WIDE_TWIN:-$(dirname "$TWIN")/snes_wide_twin}
+if [ -x "$WT" ]; then
+	mkdir -p $T/wide
+	python3 -I "$HERE/tests/make_wide_roms.py" $T/wide >/dev/null
+	for n in wide_scroll64 wide_scroll32 wide_win64_a wide_win64_b wide_mode7; do
+		mkdir -p $T/wide/$n.d
+		"$WT" $T/wide/$n.sfc --frames 1200 --wide 70 --wopt debug=1 --dump $T/wide/$n.d --dump-frames 150,300,450,600,750,900,1050,1150 >/dev/null 2>&1
+		r=$(python3 -I "$HERE/tests/wide_truth.py" $T/wide/$n.json $T/wide/$n.d 2>&1 | head -1)
+		echo "$r" | grep -q "centre unmatched 0): wrong real px 0, checked real px [1-9]" && ok "wide view truth: $n ($r)" || bad "wide view truth: $n ($r)"
+	done
+	python3 -I "$HERE/wide_compare.py" --twin "$WT" --frames 500 --roms $T/wide/wide_scroll64.sfc $T/wide/wide_mode7.sfc $T/wide/wide_win64_a.sfc >$T/wide/id.txt 2>&1 \
+		&& ok "wide view identity (frames, audio, state; single thread and workers): $(tail -1 $T/wide/id.txt | cut -d'(' -f1)" || { cat $T/wide/id.txt; bad "wide view identity"; }
+	if [ -x "$PT" ]; then
+		mkdir -p $T/ptwide
+		"$PT" wide $T/wide/wide_scroll64.sfc $T/ptwide >$T/ptwide.txt 2>&1 && ok "wide view in the player: $(grep 'player_twin:' $T/ptwide.txt | tail -1 | sed 's/player_twin: //')" \
+			|| { grep -v '^Map_' $T/ptwide.txt | tail -20; bad "wide view in the player"; }
+	fi
+else echo "SKIP  snes_wide_twin not built ($WT)"; fi
 
 rm -rf $T
 [ $fail = 0 ] && echo "all passed" || { echo "FAILED"; exit 1; }

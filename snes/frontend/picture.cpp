@@ -17,6 +17,7 @@ void pic_defaults(pic_settings *s)
 	s->interlace_blend = 0;
 	s->multitap = 0; /* 0 auto, 1 on, 2 off */
 	s->use_game = 0;
+	s->wide = 0;
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -40,6 +41,7 @@ int pic_load(const char *path, pic_settings *s)
 		else if (!strcmp(line, "hires_blend")) s->hires_blend = v ? 1 : 0;
 		else if (!strcmp(line, "interlace_blend")) s->interlace_blend = v ? 1 : 0;
 		else if (!strcmp(line, "multitap")) s->multitap = clampi(v, 0, 2);
+		else if (!strcmp(line, "wide_view")) s->wide = clampi(v, 0, 2);
 		else if (!strcmp(line, "own_settings")) s->use_game = v ? 1 : 0;
 	}
 	fclose(f);
@@ -52,8 +54,8 @@ int pic_save(const char *path, const pic_settings *s)
 	snprintf(tmp, sizeof tmp, "%s.tmp", path);
 	FILE *f = fopen(tmp, "wb");
 	if (!f) return 1;
-	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\nhires_blend=%d\ninterlace_blend=%d\nmultitap=%d\nown_settings=%d\n",
-	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->hires_blend, s->interlace_blend, s->multitap, s->use_game);
+	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\nhires_blend=%d\ninterlace_blend=%d\nmultitap=%d\nwide_view=%d\nown_settings=%d\n",
+	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->hires_blend, s->interlace_blend, s->multitap, s->wide, s->use_game);
 	int bad = ferror(f);
 	if (fclose(f) != 0 || bad) { remove(tmp); return 2; }
 	remove(path);
@@ -110,6 +112,36 @@ void pic_geometry(const pic_settings *s, int src_w, int src_h, int crop_top, int
 	r->dw = dw; r->dh = dh;
 	r->dx = (scr_w - dw) * 0.5f;
 	r->dy = (scr_h - dh) * 0.5f;
+}
+
+int pic_wide_margin(const pic_settings *s, int scr_w, int scr_h, int max_m)
+{
+	if (s->shape == PIC_FULL) return 0;
+	pic_rect r;
+	pic_geometry(s, 256, 224, 0, 0, scr_w, scr_h, &r);
+	if (r.dw <= 0.0f) return 0;
+	float per_col = r.dw / 256.0f;
+	int m = (int) floorf((scr_w / per_col - 256.0f) * 0.5f);
+	if (m < 1) return 0;
+	return m > max_m ? max_m : m;
+}
+
+void pic_geometry_wide(const pic_settings *s, int wide_w, int src_h, int crop_top, int crop_bottom,
+                       int scr_w, int scr_h, pic_rect *r)
+{
+	pic_geometry(s, 256, src_h, crop_top, crop_bottom, scr_w, scr_h, r);
+	float per_col = r->dw / 256.0f;
+	float dw = per_col * wide_w;
+	r->sx = 0; r->sw = wide_w;
+	if (dw > scr_w) {
+		/* trim the same number of source columns on both sides */
+		int cut = (int) ceilf((dw - scr_w) * 0.5f / per_col);
+		if (cut * 2 >= wide_w) cut = 0;
+		r->sx = cut; r->sw = wide_w - 2 * cut;
+		dw = per_col * r->sw;
+	}
+	r->dw = dw;
+	r->dx = (scr_w - dw) * 0.5f;
 }
 
 void pic_prescale(const pic_rect *r, int *kx, int *ky)

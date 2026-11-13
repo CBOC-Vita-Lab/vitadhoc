@@ -41,9 +41,11 @@
 #include <vita2d.h>
 
 #include "host.h"
+#include "wide.h"
 #include "picture.h"
 #include "audio_pace.h"
 #include "player.h"
+#include "pipe.h"
 #include "pk_gfx_vita.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -62,6 +64,7 @@ unsigned int _newlib_heap_size_user = 56 * 1024 * 1024;
 #define SCREEN_H 544
 
 static snesp::SnesPlayer *g_pl;
+static snesp::PicturePipe g_pipe;      /* frame hand-over to the drawing thread (pipe.h); idle unless started */
 #define logf_(...) g_pl->logf(__VA_ARGS__)
 static FILE *g_log;
 
@@ -135,7 +138,11 @@ static GTex g_bezel;
 static int g_bezel_w, g_bezel_h;
 static int g_src_i = -1;         /* newest uploaded texture */
 static int g_src_w = 256, g_src_h = 224;
-static unsigned g_serial_seen;
+static unsigned g_serial_seen;      /* counts uploaded pictures */
+static unsigned g_norm_seen, g_wide_seen;   /* the core's and the wide view's own picture serials */
+static int g_src_wide;              /* the uploaded picture is a wide view frame (256 + 2 margin columns) */
+static int g_src_margin;
+static unsigned g_up_serial;
 static int g_crop_top, g_crop_bot, g_crop_cand_top, g_crop_cand_bot, g_crop_votes;
 static int g_have_picture;
 static unsigned g_fence_skips;
@@ -203,19 +210,60 @@ static void bezel_load(const std::string &game)
 
 /* Takes the newest finished picture from the core without waiting and copies it into a texture the GPU is
  * done with. Returns 1 when the picture changed. */
+struct PicSrc { const uint16_t *p; int w, h, pitch; unsigned serial; bool is_wide; };
+
+/* Where the next picture comes from (the wide view's frame or the core's own); false when there is nothing new. The three
+ * "seen" values are the caller's memory of what it took last: the drawing side's globals when the picture is fetched
+ * inline, the emulating thread's own copies when it goes through the hand-over mailbox. */
+static bool video_source(PicSrc *s, unsigned norm_seen, unsigned wide_seen, int shown_wide)
+{
+	int w = 256, h = 224, pitch = 0;
+	unsigned serial = 0;
+	const uint16_t *src = NULL;
+	bool is_wide = false;
+	if (g_pl->wide_active()) {
+		/* the wide view's newest finished frame (composed off this thread); when it has none for this picture (hi-res,
+		 * nothing widenable) the core's own picture is shown */
+		snes_wide_stats st;
+		const uint16_t *wp = NULL;
+		int ww = 0, wh = 0, wpp = 0;
+		if (snes_wide_frame(&wp, &ww, &wh, &wpp, &st) && wp) {
+			if (st.serial == wide_seen && shown_wide) return false;
+			src = wp; w = ww; h = wh; pitch = wpp * 2; serial = st.serial; is_wide = true;
+		}
+	}
+	if (!is_wide) {
+		src = snes_host_video_nowait(&w, &h, &pitch, &serial);
+		if (!src || (serial == norm_seen && !shown_wide)) return false;
+	}
+	s->p = src; s->w = w; s->h = h; s->pitch = pitch; s->serial = serial; s->is_wide = is_wide;
+	return true;
+}
+
+static int video_upload(const pic_settings &ps, int frame_no, const PicSrc &ps_src);
+
 static int video_fetch(const pic_settings &ps, int frame_no)
 {
-	int w = g_src_w, h = g_src_h, pitch = 0;
-	unsigned serial = 0;
-	const uint16_t *src = snes_host_video_nowait(&w, &h, &pitch, &serial);
-	if (!src || serial == g_serial_seen) return 0;
+	PicSrc s;
+	if (!video_source(&s, g_norm_seen, g_wide_seen, g_src_wide)) return 0;
+	return video_upload(ps, frame_no, s);
+}
+
+/* The second half: copies the picture into a texture the GPU is done with (on the drawing side). Returns 1 when the picture changed. */
+static int video_upload(const pic_settings &ps, int frame_no, const PicSrc &ps_src)
+{
+	int w = ps_src.w, h = ps_src.h, pitch = ps_src.pitch;
+	unsigned serial = ps_src.serial;
+	const uint16_t *src = ps_src.p;
+	const bool is_wide = ps_src.is_wide;
 	int idx = -1;
 	for (int n = 1; n <= 4; n++) {
 		int c = (g_src_i + n) % 4;
 		if (gtex_writable(g_src[c])) { idx = c; break; }
 	}
 	if (idx < 0) { g_fence_skips++; return 0; }          /* the GPU is behind: show the old picture again */
-	g_serial_seen = serial;
+	g_serial_seen = ++g_up_serial;
+	if (is_wide) g_wide_seen = serial; else g_norm_seen = serial;
 	if (w > 512) w = 512;
 	if (h > 512) h = 512;
 	if (ps.shape == PIC_ZOOM && frame_no % 20 == 0) {
@@ -230,8 +278,9 @@ static int video_fetch(const pic_settings &ps, int frame_no)
 	unsigned dpitch = vita2d_texture_get_stride(tx);
 	for (int y = 0; y < h; y++)
 		memcpy(dst + (size_t) y * dpitch, (const uint8_t *) src + (size_t) y * pitch, (size_t) w * 2);
-	if (w != g_src_w || h != g_src_h) { g_crop_top = g_crop_bot = g_crop_cand_top = g_crop_cand_bot = 0; }
+	if (w != g_src_w || h != g_src_h || is_wide != (g_src_wide != 0)) { g_crop_top = g_crop_bot = g_crop_cand_top = g_crop_cand_bot = 0; }
 	g_src_i = idx; g_src_w = w; g_src_h = h;
+	g_src_wide = is_wide ? 1 : 0; g_src_margin = is_wide ? (w - 256) / 2 : 0;
 	g_have_picture = 1;
 	return 1;
 }
@@ -331,8 +380,10 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 			}
 		}
 	}
-	if (src && g_have_picture)
-		pic_geometry(&ps, eff_w, eff_h, crop_top, crop_bot, SCREEN_W, SCREEN_H, &r);
+	if (src && g_have_picture) {
+		if (g_src_wide && src == &g_src[g_src_i]) pic_geometry_wide(&ps, eff_w, eff_h, crop_top, crop_bot, SCREEN_W, SCREEN_H, &r);
+		else pic_geometry(&ps, eff_w, eff_h, crop_top, crop_bot, SCREEN_W, SCREEN_H, &r);
+	}
 	bool bezel = g_bezel.t != NULL;
 	int kx = 1, ky = 1;
 	bool use_rt = false, exact = false;
@@ -561,9 +612,12 @@ struct VitaPlatform : snesp::Platform {
 	/* the newest picture, straight from its texture (read only while no new picture is fetched) */
 	bool current_frame(pk::Frame *f)
 	{
+		/* a state picture: the drawing thread finishes what it holds first, so the texture read is a whole picture */
+		if (g_pipe.running()) g_pipe.box().flush(300000);
 		if (!g_have_picture || g_src_i < 0 || !g_src[g_src_i].t) return false;
 		vita2d_texture *t = g_src[g_src_i].t;
-		*f = pk::Frame((const uint16_t *) vita2d_texture_get_datap(t), g_src_w, g_src_h, (int) vita2d_texture_get_stride(t));
+		/* a wide frame: the state picture is the 256 columns of the game's own picture in its middle */
+		*f = pk::Frame((const uint16_t *) vita2d_texture_get_datap(t) + (g_src_wide ? g_src_margin : 0), g_src_wide ? 256 : g_src_w, g_src_h, (int) vita2d_texture_get_stride(t));
 		return true;
 	}
 	void ask_cheat_text() { g_ime_wanted = true; }
@@ -612,6 +666,126 @@ static void writer_stop(void)
 
 static pk::VitaGfx *g_gfx;
 static pk::Text *g_text;
+
+static int ini_int(const char *path, const char *key, int def);
+static int prio_ok(int p, int def);
+
+/* ---- frame hand-over ------------------------------------------------------------------------------
+ * "Smooth hand-over" (Speed page): the emulating thread (main) copies each finished picture into playerkit's
+ * mailbox (pipe.h) and goes on; this thread uploads it, draws it (filters, bands, bezel, notices) and presents
+ * it. The main thread owns the display only while this thread is idle: flush() before the menu, before a state
+ * picture is read, and at the end. See playerkit/src/pk_handoff.h for the rules. */
+struct VitaHandoffSys : pk::HandoffSys {
+	uint64_t now_us() { return sceKernelGetProcessTimeWide(); }
+	void *sem_create()
+	{
+		SceUID id = sceKernelCreateSema("snes_hd", 0, 0, 1 << 16, NULL);
+		return id < 0 ? NULL : (void *) (intptr_t) id;
+	}
+	void sem_destroy(void *s) { sceKernelDeleteSema((SceUID) (intptr_t) s); }
+	void sem_post(void *s) { sceKernelSignalSema((SceUID) (intptr_t) s, 1); }
+	bool sem_wait(void *s, uint32_t timeout_us)
+	{
+		SceUInt t = timeout_us;
+		return sceKernelWaitSema((SceUID) (intptr_t) s, 1, timeout_us == 0xFFFFFFFFu ? NULL : &t) >= 0;
+	}
+};
+static VitaHandoffSys g_hd_sys;
+static SceUID g_hd_thread = -1;
+static bool g_hd_ok;                                   /* the drawing thread runs */
+static std::atomic<unsigned> g_hd_drawn(0), g_hd_failed(0), g_hd_draw_us(0);   /* this second, read and cleared by main */
+static pk::SpinLock g_hd_lk;                           /* guards the notice snapshot */
+static pk::Notices g_hd_notices;
+static std::atomic<int> g_hd_notice_on(0);
+static unsigned g_hd_norm_seen, g_hd_wide_seen;       /* what the emulating thread handed over last */
+static int g_hd_src_wide;
+
+/* the player's toast, as of the last emulated frame (the drawing thread must not touch the live one) */
+static void hd_publish_notices(void)
+{
+	const bool on = g_pl->notices().active();
+	if (!on && !g_hd_notice_on.load()) return;
+	pk::SpinGuard g(g_hd_lk);
+	g_hd_notices = g_pl->notices();
+	g_hd_notice_on = on ? 1 : 0;
+}
+
+static int hd_draw_thread(SceSize, void *)
+{
+	for (;;) {
+		pk::HandoffFrame *f = g_pipe.box().take();
+		if (!f) break;
+		const uint64_t t0 = sceKernelGetProcessTimeWide();
+		PicSrc s;
+		s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch;
+		s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0;
+		video_upload(g_pl->picture(), (int) f->seq, s);
+		bool drew = false;
+		for (int tries = 0; tries < 4 && !drew; tries++) {
+			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: the picture is not dropped for it */
+			drew = frame_draw(g_pl->picture(), 1, (int) f->seq);
+		}
+		if (drew) {
+			if (g_hd_notice_on.load()) {
+				pk::Notices n;
+				{ pk::SpinGuard g(g_hd_lk); n = g_hd_notices; }
+				if (n.active()) n.draw(g_gfx, g_text, PK_HEX(0x7B6CFF, 255), 26, true);
+			}
+			frame_finish();
+			g_hd_drawn++;
+		} else g_hd_failed++;
+		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
+		g_hd_draw_us += (unsigned) dt;
+		g_pipe.box().release(f, (uint32_t) (dt > 0xFFFFFFFFull ? 0xFFFFFFFFu : dt));
+	}
+	return sceKernelExitThread(0);
+}
+
+static bool hd_active(void) { return g_hd_ok && g_pipe.box().enabled() && g_pl->smooth_handoff(); }
+
+/* Turn it on for the session (the setting is read again whenever the menu closes). */
+static void hd_start(const char *tini, double frame_hz)
+{
+	if (!g_pl->smooth_handoff()) { logf_("handoff: off (setting)\n"); return; }
+	if (!g_pipe.start(&g_hd_sys, 2, true, 16683, (uint32_t) (1e6 / frame_hz + 0.5))) { logf_("handoff: NOT started (mailbox)\n"); return; }
+	const int core = ini_int(tini, "draw_core", 1);
+	const int prio = prio_ok(ini_int(tini, "draw_prio", 0x60), 0x60);
+	const unsigned mask = core == 0 ? SCE_KERNEL_CPU_MASK_USER_0 : core == 2 ? SCE_KERNEL_CPU_MASK_USER_2 : SCE_KERNEL_CPU_MASK_USER_1;
+	g_hd_thread = sceKernelCreateThread("snes_draw", hd_draw_thread, prio ? prio : 0x60, 0x20000, 0, mask, NULL);
+	if (g_hd_thread >= 0 && sceKernelStartThread(g_hd_thread, 0, NULL) < 0) { sceKernelDeleteThread(g_hd_thread); g_hd_thread = -1; }
+	g_hd_ok = g_hd_thread >= 0;
+	if (!g_hd_ok) g_pipe.stop();
+	logf_("handoff: %s, draw thread on core %d priority 0x%x, depth 2 (adaptive 2/1)\n", g_hd_ok ? "on" : "NOT started (thread)", core, prio ? prio : 0x60);
+}
+
+/* The drawing thread is idle when this returns true: the main thread may use the display (menu, state picture, end). */
+static bool hd_quiesce(void)
+{
+	if (!g_hd_ok) return true;
+	const bool ok = g_pipe.box().flush(1000000);
+	if (!ok) logf_("handoff: the drawing thread did not go idle in 1 s\n");
+	return ok;
+}
+
+/* After the menu: the setting may have changed; the clocks start again. */
+static void hd_after_menu(void)
+{
+	if (!g_hd_ok) return;
+	g_pipe.box().set_enabled(g_pl->smooth_handoff());
+	g_pipe.box().time_baseline();
+	g_hd_norm_seen = g_hd_wide_seen = 0; g_hd_src_wide = 0;
+}
+
+static void hd_stop(void)
+{
+	if (!g_hd_ok) return;
+	hd_quiesce();
+	g_pipe.stop();
+	sceKernelWaitThreadEnd(g_hd_thread, NULL, NULL);
+	sceKernelDeleteThread(g_hd_thread);
+	g_hd_thread = -1;
+	g_hd_ok = false;
+}
 
 static void fatal_screen(const std::string &line1, const std::string &line2)
 {
@@ -850,6 +1024,7 @@ int main(int argc, char **argv)
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
 	const double vita_hz = 59.94;
+	hd_start(tini, frame_hz);
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
 	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. With
 	 * steady pacing in half mode a pass that missed a refresh runs the missed frame too (undrawn), so the
@@ -913,13 +1088,19 @@ int main(int argc, char **argv)
 		/* a game being played keeps the console awake */
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 
+		g_pl->wide_apply(SCREEN_W, SCREEN_H);
 		const bool half = g_pl->pace_mode() == pk::PACE_HALF;
-		const int to_run = half ? (int) elapsed : 1;
+		/* Smooth hand-over: the game never waits for a picture, so a pass that came late runs the frames it owes (only the
+		 * last of them is drawn) and the game keeps its true speed; pk_handoff drops older pictures in half mode only. */
+		const bool hd = hd_active();
+		if (hd) g_pipe.box().set_pace_mode(g_pl->pace_mode());
+		const int to_run = (half || hd) ? (int) elapsed : 1;
 		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
-			const bool render = g_pl->want_render(emu_frame);
+			bool render = g_pl->want_render(emu_frame);
+			if (hd && !half && i != to_run - 1) render = false;
 			snes_host_set_render(render ? 1 : 0);
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 #ifdef S9X_PROF
@@ -950,15 +1131,35 @@ int main(int argc, char **argv)
 			while ((n = snes_host_audio_take(abuf, 2048)) > 0) g_pace.push(abuf, n);
 			{
 				uint64_t f0 = sceKernelGetProcessTimeWide();
-				if (video_fetch(g_pl->picture(), frames_run)) fresh = true;
+				if (hd) {
+					/* the picture goes to the drawing thread by copy; this thread does not wait for it (except at the gate) */
+					g_pipe.box().note_emulated(1);
+					PicSrc ps_src;
+					if (video_source(&ps_src, g_hd_norm_seen, g_hd_wide_seen, g_hd_src_wide)) {
+						const int user = (ps_src.is_wide ? 0x40000000 : 0) | (int) (ps_src.serial & 0x3FFFFFFFu);
+						if (g_pipe.put(ps_src.p, ps_src.w, ps_src.h, ps_src.pitch, user, (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) {
+							if (ps_src.is_wide) g_hd_wide_seen = ps_src.serial; else g_hd_norm_seen = ps_src.serial;
+							g_hd_src_wide = ps_src.is_wide ? 1 : 0;
+							fresh = true;
+						}
+					}
+				} else if (video_fetch(g_pl->picture(), frames_run)) fresh = true;
 				fetch_us += sceKernelGetProcessTimeWide() - f0;
 			}
 			g_pl->after_frame(sceKernelGetProcessTimeWide());
 		}
+		if (hd) {
+			/* what the drawing thread measured goes to steady pacing, and its toast is the player's as of now */
+			uint32_t hc;
+			while (g_pipe.box().poll_cost(&hc)) g_pl->drawn_cost(hc);
+			hd_publish_notices();
+		}
 		if (want_menu) {
+			hd_quiesce();
 			pk::MenuEvent ev = menu_loop(0);
 			if (ev == pk::MENU_GAME_LIST) { why = pk::EXIT_GAME_LIST; break; }
 			if (ev == pk::MENU_EXIT) { why = pk::EXIT_NORMAL; break; }
+			hd_after_menu();
 			snes_host_set_multitap(g_pl->multitap_wanted());
 			last_vc = sceDisplayGetVcount();
 			speed_meter.reset();
@@ -977,7 +1178,7 @@ int main(int argc, char **argv)
 		 * picture came (every second pass, evenly). */
 		bool drew = false;
 		uint64_t d0 = sceKernelGetProcessTimeWide();
-		if (!half || fresh) {
+		if (!hd && (!half || fresh)) {
 			drew = frame_draw(g_pl->picture(), 1, frames_run);
 			if (drew && g_pl->notices().active()) g_pl->notices().draw(g_gfx, g_text, PK_HEX(0x7B6CFF, 255), 26, true);
 		}
@@ -996,7 +1197,7 @@ int main(int argc, char **argv)
 			uint64_t cost = render_emu_us + show_us;
 			if (ppu_us > cost) cost = ppu_us;
 			g_pl->drawn_cost((uint32_t) (cost > 0xFFFFFFFFull ? 0xFFFFFFFFu : cost));
-		} else skipped++;
+		} else if (!hd) skipped++;
 		vblanks += elapsed;
 		main_us += work_end - loop0;
 		/* Super FX pacing (see snes/README.md): the chip's speed is matched to what this Vita manages so the
@@ -1044,8 +1245,15 @@ int main(int argc, char **argv)
 			}
 		}
 
+		if (g_hd_ok) {
+			/* one census line a second while the hand-over is on: pictures made / shown / repeated / dropped, depth, and the game's
+			 * time against the wall's (a game that lost time shows a negative drift) */
+			char hl[512];
+			if (g_pipe.box().census_line(now, hl, sizeof hl)) logf_("%s draw_ms=%.1f\n", hl, g_hd_draw_us.exchange(0) / 1000.0);
+		}
 		if (now - sec_start >= 1000000) {
 			double dt = (now - sec_start) / 1e6;
+			if (g_hd_ok) { drawn += g_hd_drawn.exchange(0); skipped += g_hd_failed.exchange(0); }
 			{
 				const double sp = speed_meter.update(frames_run, dt, frame_hz);
 				if (sp >= 0) g_pace.report_speed(sp);
@@ -1099,6 +1307,7 @@ int main(int argc, char **argv)
 		}
 	}
 
+	hd_stop();
 	g_quit = 1;
 	/* resume point, battery RAM, settings, log, launch/session.txt */
 	g_pl->finish(why);

@@ -129,6 +129,32 @@ private:
 	std::string root_, console_, game_;
 };
 
+
+/* ---- keeping a short tap until the core reads it ---------------------------------------------------
+ * The pad is read when the player gets round to it (once a pass, once a drawn picture, from a drawing thread
+ * between pictures); the core reads it once per EMULATED frame. A tap that went down and up between two
+ * emulated frames is gone if only the latest state is passed on, and a player that shows every second picture
+ * (steady pacing) or hands pictures to another thread reads the pad less often than the game runs.
+ * PadLatch remembers every button that went down since the core last took a sample, and take() gives the next
+ * emulated frame the latest state with those buttons OR-ed in, so a tap is seen for at least one frame. Sticks
+ * and the rear panel are analogue / held: only the latest value is kept. Safe to feed() from one thread while
+ * another take()s (a spin lock, no mutex: the console has no usable one). */
+class PadLatch {
+public:
+	PadLatch();
+	/* any pad sample, at any rate */
+	void feed(const PadSample pads[MAX_PLAYERS]);
+	/* the sample for the next emulated frame; the pending presses are used up */
+	void take(PadSample out[MAX_PLAYERS]);
+	/* the menu opened, a state loaded, a pause: presses made before it are not the game's */
+	void clear();
+private:
+	SpinLock lk_;
+	PadSample last_[MAX_PLAYERS];
+	uint32_t prev_[MAX_PLAYERS];      /* buttons of the previous fed sample */
+	uint32_t edges_[MAX_PLAYERS];     /* went down since the last take() */
+};
+
 /* ---- the per-frame mapper -------------------------------------------------- */
 enum Fire : uint32_t {
 	FIRE_QSAVE = 1u << 0, FIRE_QLOAD = 1u << 1, FIRE_SHOT = 1u << 2,

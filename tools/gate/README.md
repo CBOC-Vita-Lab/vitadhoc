@@ -36,7 +36,7 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
    GB test cartridges, the link ROM, the cheats and rewind ROMs) is a step of
    its own. Steps that need it depend on it, so it is built once per run and
    reused. A build step that is already up to date costs `make` a second.
-2. **Runs the suites as steps.** Each step is a command, a working directory,
+2. **Runs the suites as steps.** Each step is a command (run by `bash -o pipefail`: no step passes through a pipe), a working directory,
    prerequisites, tags, a timeout and a log. Commands run under `nice -n 10`,
    at most `--jobs` at a time (default: the number of cores).
 3. **Shares resources safely.** Steps in one group never overlap: `gpsp-make`

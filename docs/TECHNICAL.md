@@ -968,6 +968,18 @@ and keeps the code separately:
   (checked, see GPSP_SMC_VERIFY). The re-queued exits re-link the kept block to
   the targets' current code (a link whose word changes is synced, below), so a
   kept block can never jump into a translation whose source changed.
+- **Two pieces of history the full-flush build's translations depend on**,
+  both found by the run-time checks below on Mario Golf and re-enacted:
+  (1) a block whose scan stops at a translation gate (`game_config`) also
+  tags the word AT the gate (`smc_tag_gate_*_yes`): kept per descriptor and
+  replayed; (2) `scan_block` resets `block_data[].update_cycles` for every
+  instruction but the LAST one, so the last instruction's flag is whatever the
+  previous translation left there (upstream behaviour), and it decides whether
+  a cycle update is emitted before that instruction. `smcr_vb` tracks the
+  full-flush build's flags; it is loaded into `block_data` before every
+  translation the full-flush build also makes (ROM ones included) and read
+  back after; a kept translation is only revived when its recorded incoming
+  flag equals the current one, and a re-translation reproduces its own.
 - **Why a source compare and not a write index.** The compare is exact and needs
   no write tracking, so it also covers the writes that never trap: STM's earlier
   words (only an STM's last word is checked), DMA onto untagged code, C writers.

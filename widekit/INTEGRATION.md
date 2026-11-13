@@ -249,6 +249,17 @@ Small fixes found by the NES twin's truth checker (synthetic scrolling cartridge
   file format is unchanged: unconfirmed scouted cells are not written). Unconfirmed scouted cells do not count in the
   room recognition / verification overlap.
 
+## 13 Nov 2026: soft edge input, threading
+
+* `wk_compose_in.edge_px[side]` (optional, `WK_EDGE_N` = 8 px per line, index 0 at the view edge): the colours the soft edge
+  samples instead of the first / last `soft_sample` columns of `centre`. A core that knows its background apart from sprites passes
+  background-only pixels so a sprite at the edge does not smear. NULL keeps the old behaviour (tests and goldens unchanged).
+* Threading: the compose half of the NES adapter (describe + `wk_layers_update` + `wk_map_*` + `wk_compose_frame`) runs on its own
+  thread from a captured snapshot; the handles stay single threaded (the compose thread owns them, the scout posts its cells to
+  a queue the compose thread replays into `wk_map_record_scout`). Checked under ThreadSanitizer. Instructions per frame in the
+  adapter on x86_64: compose half 3.68 M, of which `wk_compose_frame` 2.1 M (`base_fill` 1.2 M: the soft edge row is recomputed each
+  frame), `wk_layers_update` 0.19 M, `wk_map_*` 0.1 M.
+
 ## Measured 12 Nov 2026 (the chores of this file)
 
 * `make vita`: all five objects compile warning free with `arm-vita-eabi-g++` (-O3, cortex-a9, NEON) after the NES fixes.

@@ -238,6 +238,13 @@ STEPS = [
          "for s in 1 2 3; do build/unit_san $s 200000 0 && build/unit_san $s 200000 1 && "
          "build/unit_tsan $s 60000 1 || exit 1; done",
          "default", {"gpsp", "app", "rewind"}, inputs=["gpsp/"], requires=CC, group=GROUP_MAKE),
+    # the census: every default-on 1.4 feature proves it acted in a twin run
+    # (steady pacing, NES wide view, jit counters, cover upload budget, save
+    # backup); quick, so it runs in --quick too
+    Step("census", "default-on features act (app_tests.py --only census)",
+         "python3 app_tests.py x86 --only census", "quick", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
+         inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom"],
+         requires=PIL, group=GROUP_HOST, parse="app", timeout=1800),
     Step("app-x86", "the whole app on x86: game list, menus, states, fast forward (app_tests.py)",
          "python3 app_tests.py x86", "default", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom", "build-cheatrom"],

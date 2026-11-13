@@ -84,6 +84,7 @@ static int g_hm_batch_rom[1 + ML_NEIGHBORS];
 static unsigned g_hm_batch_n;
 static unsigned g_hm_load_left;
 static int g_hm_uploaded, g_hm_still_for = -1;
+#define HM_UPLOAD_BUDGET_US 4000   /* picture uploads a frame (hm_load_service) */
 
 static unsigned hm_epoch(int rom)
 {
@@ -1723,14 +1724,32 @@ static void hm_load_pump(const char *rom_dir, int cur, int n, int n_scan, int id
       menu_load_release(r.slot);
       md_end(MD_PUBLISH, began);
    }
-   if (menu_load_take(1, &r))
    {
-      unsigned long long began = md_begin();
-      int at = hm_result_rom(rom_dir, n_scan, &r);
-      if (at >= 0) hm_adopt_image(at, &r);
-      if (hm_result_current(&r) && g_hm_load_left) g_hm_load_left--;
-      menu_load_release(r.slot);
-      md_end(MD_PUBLISH, began);
+      /* Pictures for the shelf and the covers: a TIME budget a frame, not a
+       * count (a texture upload costs 2.7-5.3 ms on the console, Galaxy
+       * 13 Nov): at least one, more while the frame's 4 ms last.  The most
+       * in one frame is logged when it grows (the census of the budget). */
+      static unsigned up_max;
+      const uint64_t t0 = plat_time_us();
+      unsigned ups = 0;
+      while (menu_load_take(1, &r))
+      {
+         unsigned long long began = md_begin();
+         int at = hm_result_rom(rom_dir, n_scan, &r);
+         if (at >= 0) hm_adopt_image(at, &r);
+         if (hm_result_current(&r) && g_hm_load_left) g_hm_load_left--;
+         menu_load_release(r.slot);
+         md_end(MD_PUBLISH, began);
+         ups++;
+         if (plat_time_us() - t0 >= HM_UPLOAD_BUDGET_US)
+            break;
+      }
+      if (ups > up_max)
+      {
+         up_max = ups;
+         fe_evt("home_upload_budget max=%u us=%u budget_us=%u", ups,
+                (unsigned)(plat_time_us() - t0), (unsigned)HM_UPLOAD_BUDGET_US);
+      }
    }
    if (!g_hm_load_left) g_hm_load_active = 0;
    if (g_hm_load_active) return;

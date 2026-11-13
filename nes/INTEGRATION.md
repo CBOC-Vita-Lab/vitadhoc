@@ -2,7 +2,7 @@
 
 The NES player is a core linked into the main app, like the Game Boy core. Nothing here starts another program.
 The core is FCEUmm (`nes/core`, GPL-2.0-or-later) plus `nes/frontend/host.c` (plain C, MIT), built as ONE relocatable
-object, `nescore.o`, whose only global symbols are the 75 `nes_host_*` functions declared in `nes/frontend/host.h` (57 before the wide view
+object, `nescore.o`, whose only global symbols are the 78 `nes_host_*` functions declared in `nes/frontend/host.h` (57 before the wide view
 additions of 12 Nov 2026; the 57 are unchanged).
 Everything else FCEUmm defines (`RAM`, `X`, `PPU`, `GameInfo`, `XBuf`, `dendy`, `crc32`, `FCEU_*`, ...) is localised
 inside the object, so it cannot clash with gpSP or TGB Dual.
@@ -45,7 +45,7 @@ $(NES_O): FORCE
 # notices/ are already packed by DIST_NOTICES)
 ```
 
-Checked here: `make -C nes/frontend check` for host (75 globals with the wide view, with and without SCOUT=1) and earlier for host and vita (57 globals after the Zapper, paddle and sprite-exception additions of 12 Nov 2026; 51 before; all `nes_host_*`), and
+Checked here: `make -C nes/frontend check` for host (78 globals with the wide view and the split API, with and without SCOUT=1) and earlier for host and vita (57 globals after the Zapper, paddle and sprite-exception additions of 12 Nov 2026; 51 before; all `nes_host_*`), and
 `nes/twin/tests/link_test.c` linked with the host object next to user globals named `RAM, X, PPU, GameInfo, XBuf,
 dendy, FCEUI_Emulate` and a user `crc32`, which then runs a game from memory (part of `selftest.sh`); the Vita object
 also combines with that test through `arm-vita-eabi-ld -r` without a duplicate symbol. Not done: a link into the real
@@ -188,6 +188,69 @@ changed). The scout's 6.3 M (two scout frames per frame while it catches up, not
 needs its own core: 14 ms at IPC 1.0. Memory: `nescore.o` host text 877 KB / bss 4.17 MB (wide view and widekit included),
 SCOUT=1 1.66 MB / 8.2 MB; Vita SCOUT=1 text 1.47 MB, data 125 KB, bss 5.57 MB; heap at enable: widekit map 32768 cells
 (about 1 MB) + layers + compositor (~0.5 MB), the scout's ROM copy and one state buffer.
+
+Split capture / compose (13 Nov 2026; additions to host.h, `nes_host_wide_frame` is now exactly capture + compose):
+
+    emulation thread:  nes_host_run_frame(); nes_host_wide_capture(&snap[i]);
+    compose thread:    nes_host_wide_compose(&snap[i], &rgb, &w, &pitch, &stats);      // one frame behind
+    scout thread:      nes_host_scout_step(2, budget_us);                              // after capture(N)
+
+`nes_wide_snapshot` is a caller-owned fixed block (`NES_WIDE_SNAPSHOT_BYTES` = 264 KB, `nes_host_wide_snapshot_size()` bytes used;
+zero it once, 8 byte aligned; rotate two or three). It holds per-line records with page indexes instead of pointers (scroll,
+banks, palette, masks), the nametable pages and their write stamps (copied only when the recorder's generation `nesp_ntgen`
+changed), the pattern pages the steady lines use (1 KB each, at most 16 per frame, a line needing more is treated as unsteady),
+the margin pixels the PPU drew (raw, the line's grayscale / emphasis pass is applied by compose), the background-only pixels
+under the mask and at the right edge, the palette table and the centre picture. `compose` reads only the snapshot and the wide
+view's own state: `describe()` now works on indexes, every global it read is gone (checked by grep: no `nesp_*`, `XDBuf`, `PALRAM`,
+`GameInfo`, `nesw_*` in the compose half). The compose side owns widekit and the learned map (`wk_map`).
+Contract: one compose per capture, in order; capture(N + 1) is called after compose(N) returned (compose(N) overlaps
+run_frame(N + 1) and scout_step); enable / margin / option / profiles / map save+load+dirty / scout stats / load / unload /
+reset / state load only while no compose runs.
+Scout under the split: its control messages go compose -> next capture (start: capture takes the state of the live game when
+compose(N) asked for it; compose(N + 1) measures the link at that frame; capture(N + 2) hands it to the scout), its state is
+mirrored capture -> compose, and what it learns is posted to a lock-free SPSC queue (8 posts of 34 KB) that the compose of
+capture K drains for posts made before capture K. Every exchange is at a point where the other side is quiet, so the result
+does not depend on timing: the one-call path and the split path give identical frames. The scout therefore starts two frames
+after the decision (it started in the same frame before; scout runs differ from the 12 Nov goldens by that schedule, truth
+checks unchanged: zero wrong pixels, leads within 1 px).
+Proof: `nes_twin --wide-split` runs capture on the main thread and compose + scout step on two real threads (a mutex / condition
+variable job each); `wide_golden.sh` with `WG_EXTRA=--wide-split` writes the same 37 hash files as without (first pass, second
+pass with the learned map, scout, map reused in another play, the 9 synthetic cartridges): `diff -r` empty. Under
+`-fsanitize=thread` (`make B=build_tsan EXTRA="-fsanitize=thread -g" OPT=-O1`): 5 scrolling cartridges x (first pass, second pass,
+scout), 700 frames each, zero reports.
+
+Cost after the split, instructions per frame (`wide_cost` modes 0 off, 1 `wide_frame`, 3 capture only, 4 capture + compose + scout;
+x86_64 callgrind; armhf `-O2 -mcpu=cortex-a9 -mfpu=neon` under qemu-arm `-one-insn-per-tb`; scroll_vert at frame 300, right held, 84 px):
+
+| | x86_64 before (12 Nov tree) | x86_64 after | armhf after |
+|---|---|---|---|
+| wide off | 2.72 M | 2.72 M | 2.82 M |
+| wide on, one call | 7.56 M | 7.19 M | 6.95 M (12 Nov figure 6.25 M, other build) |
+| emulation thread, split (core + recorder + capture) | 7.56 M | 3.50 M (+0.78 M) | 3.44 M (+0.61 M) |
+| of it capture alone | - | 0.17 M | - |
+| compose thread | - | 3.68 M | 3.51 M |
+| scout thread (two frames per step while catching up) | 7.16 M | 7.12 M | 6.53 M |
+
+What changed: the PPU recorder keeps the margin pixels raw (no per-pixel grayscale pass: -0.7 M on the emulation thread) and
+`nesp_tiles` advances the tile coordinates incrementally (-0.1 M); the compose half converts raw pixels with a 128 entry table
+per line state. Not done (gain too small or too risky for identical output): describe() caching (0.23 M of the compose thread),
+a soft edge row cache (base_fill is 1.2 M of the compose thread), per-column learned map memo. CHR tile identity caching
+was not needed: the pattern pages are copied (4-16 KB, 0.17 M with everything else).
+Vita estimate (444 MHz, IPC 0.7 / 1.0, armhf figures, not measured on hardware): emulation thread with wide on (split)
+3.44 M = 11.1 / 7.7 ms (core alone 2.82 M = 9.1 / 6.4 ms); compose thread 3.51 M = 11.3 / 7.9 ms; scout thread 6.53 M = 21.0 / 14.7
+ms (only while it catches up; nothing while it is `ahead` frames in front). Compose and scout each need a core of their own.
+
+Look fixes (13 Nov 2026), checked on strips in `scratchpad/nes-wide-shots/w2/`:
+* the soft edge samples background only (PPU records the background pixels x = 0..15 and 248..255 without sprites; with the left
+  mask on, the left edge is sampled at x = 8..), so a sprite at the screen edge no longer smears into the soft edge;
+* the 8 masked columns: true pixels where known (64 column ring with a certified margin; 32 column ring: the ring's part and the
+  learned map's cell); everything else continues the margin (the composed pixel at x = -1, provenance SOFT, never real) instead of
+  a dark band;
+* the two "stray tiles" of scroll_vert_scout_s00400.png are SPRITES the cartridge draws (an enemy that drifts through the left
+  edge, an object on the ground): the truth picture has no sprites. `--wide-truth` now classifies every centre pixel that differs
+  from the truth: sprites (from the game's OAM), status bar rows, scene-change frames, the masked column, rows the truth does not
+  know, unexplained. scroll_vert, scroll_chrram, single_screen: unexplained 0 / 84 / 0 px of 55 M; scroll_mmc3 0; scroll_4way
+  113 k px, all in the last rows (232..239) of the vertical level (truth image edge), not investigated further.
 
 Tests (`nes/twin/selftest.sh` section 13; `nes/twin/wide_public.sh`):
 * identity: frames, RAM, saved state, audio, battery RAM byte identical with the wide view off / on / on + scout on the

@@ -6542,6 +6542,40 @@ def t_steady_input(S):
                 "%s: six one-refresh taps, six presses counted (%d; half mode %s)" % (name, n, half))
 
 
+def t_census(S):
+    """The census (gate step `census`): every default-on 1.4 feature logs that
+    it acted.  A GBA game: Steady pacing is on, and with a slow stretch it
+    spent windows drawing every second frame; the recompiler translated
+    blocks.  A scrolling NES game: the wide picture was shown.  The home
+    screen: covers arrived under the per-frame upload budget.  A save from
+    RetroArch: its backup was made and checked."""
+    r = S.run("census_gba", "900:quit\n", autoboot="gbadhoc-test.gba", args=("--slow", "200:300:20000"))
+    S.clean(r)
+    c = r.evt("census")
+    S.check(c and all(e["steady"] == "1" for e in c) and int(c[-1]["half_windows"]) > 0,
+            "census: steady pacing on and it acted (%s)" % [e["_"] for e in c][-1:])
+    S.check(c and sum(int(e["jit_blocks"]) for e in c) > 0, "census: the recompiler's block counter moves")
+    d = os.path.join(S.outdir, "census_scroll_roms")
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
+    subprocess.run([sys.executable, os.path.join(HERE, "..", "..", "..", "nes", "twin", "tests",
+                    "scroll_roms.py"), d], check=True, capture_output=True)
+    r = S.run("census_nes", "60:right:600\n+10:quit\n", autoboot="Scroll.nes",
+              extra={"roms/Scroll.nes": open(os.path.join(d, "scroll_vert.nes"), "rb").read()})
+    S.clean(r)
+    c = r.evt("census")
+    S.check(c and any(e["wide"] == "1" for e in c), "census: the NES wide picture was shown")
+    r = S.run("census_home", "400:quit\n", config={"ui_home": 1},
+              extra={"roms/zz-second.gba": open(OWN_GBA, "rb").read()})
+    S.clean(r)
+    S.check(bool(r.evt("home_upload_budget")), "census: home pictures went through the upload budget")
+    rom = "gbadhoc-test"
+    r = S.run("census_backup", "100:a:10\n+200:quit\n", autoboot=rom + ".gba",
+              extra={"retroarch/savefiles/%s.srm" % rom: bytes(131072)})
+    S.clean(r)
+    S.check(r.has(r"^EVT save_backup kept "), "census: a save backup was made and checked")
+
+
 def t_nes_boot(S):
     """A NES game runs inside the app like a Game Boy game: it boots in
     process (no other program), draws its 256x224 picture, the picture is
@@ -6938,7 +6972,7 @@ def t_nes_cover(S):
 
 
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

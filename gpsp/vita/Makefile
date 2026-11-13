@@ -189,8 +189,14 @@ $(foreach s,$(APP_ALL_VITA),$(eval $(call APP_RULE,$(s))))
 LINK_ELF = $(CC) -Wl,-q -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
 	  $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(1) $(LIBS)
 
+# A WEAK undefined pthread_* / sce* symbol links without complaint and is a
+# null call on the console (lessons 13 Nov): the link fails on one instead.
+CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" && $$2 ~ /^(pthread_|sce)/ { print $$2 }')"; \
+	if [ -n "$$w" ]; then echo "weak undefined in $(1): $$w"; rm -f $(1); exit 1; fi
+
 $(ELF): $(APP_OBJS) $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A)
 	$(call LINK_ELF,)
+	$(call CHECK_WEAK,$(ELF))
 
 # ROOM FOR THE SCE DATA.  vita-elf-create writes its import tables (a few
 # KiB) behind the last byte of segment 0 and gives up when segment 1, which

@@ -238,7 +238,12 @@ int main(int argc, char **argv)
 					nrm = fnv_bytes((const uint8_t *) v + (size_t) y * pitch, 512, nrm);
 				if (wf) fprintf(wf, "%d %d %016llx %016llx %d %d %d %d\n", f, ww, (unsigned long long) cwh, (unsigned long long) fnv(wp, ww, wh, wpitch * 2),
 				                st.real_l, st.real_r, st.available, cwh == nrm);
-				if (cwh != nrm) { fprintf(stderr, "frame %d: wide centre differs from the normal picture\n", f); }
+				if (cwh != nrm) {
+					int first = -1, cnt = 0;
+					for (int y = 0; y < h && y < wh; y++)
+						if (memcmp(wp + (size_t) y * wpitch + M, (const uint8_t *) v + (size_t) y * pitch, 512)) { if (first < 0) first = y; cnt++; if (cnt <= 20) fprintf(stderr, " row %d", y); }
+					fprintf(stderr, "frame %d: wide centre differs from the normal picture (rows differing %d, first %d; picture %dx%d wide %dx%d)\n", f, cnt, first, w, h, ww, wh);
+				}
 				if (statset.count(f))
 					fprintf(stderr, "stat f=%d mode7=%d lines=%d drawn=%d nomargin=%d hud=%d exact=%d real=%d/%d layers=%x ring=%dx%d,%dx%d,%dx%d,%dx%d kind=%d,%d,%d,%d scene=%d epoch=%d hs=%d/%d map cells=%d rooms=%d bound=%d served=%d\n",
 					        f, st.mode7, st.lines, st.lines_drawn, st.lines_nomargin, st.lines_hud, st.lines_exact, st.real_l, st.real_r, st.layers,

@@ -92,10 +92,11 @@ struct WTruth {
 	bool on = false;
 	int W = 0, H = 0, n = 0, origin_x = 0, tx = 0x300, tset = 0x305, scene = 0x306;
 	std::string select, mode;
+	int scene_f = -100, scene_v = 0;   /* frame the scene variable last changed (the truth image lags a frame or two) */
 	int hud_lo = 0, hud_hi = -1;       /* status bar rows of the cartridge (its numbers and text change; the truth holds the frame it started with) */
 	std::vector<uint8_t> px;           /* n * W * H, bit7 known, bits0..5 colour */
 	std::vector<char> uni;             /* per image per row: the whole row is one known colour */
-	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0, maskfill_soft = 0, c_sprite = 0, c_hud = 0, c_mask = 0, c_unknown = 0, c_unexplained = 0;
+	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0, maskfill_soft = 0, c_sprite = 0, c_trans = 0, c_hud = 0, c_mask = 0, c_unknown = 0, c_unexplained = 0;
 	long lead_frames = 0; double lead_l = 0, lead_r = 0;
 	std::vector<std::string> firsts;
 	std::vector<std::pair<int, int>> wrongf;
@@ -474,6 +475,7 @@ int main(int argc, char **argv)
 				if (wst.layer_active) wactive++;
 				if (wst.lines_blocked) wblocked++;
 				if (wt.on && f >= 2) {
+			if (cam[6] != wt.scene_v) { wt.scene_v = cam[6]; wt.scene_f = f; }
 					int m = wide, img = 0;
 					if (wt.select == "tset") img = cam[5]; else if (wt.select == "scene") img = cam[6];
 					if (img < 0 || img >= wt.n) img = 0;
@@ -525,8 +527,7 @@ int main(int argc, char **argv)
 										int sx = oam[k * 4 + 3], sy = oam[k * 4] + 1;
 										if (oam[k * 4] < 240 && x - m >= sx && x - m < sx + 8 && y >= sy && y < sy + 8) spr = true;
 									}
-									if (!spr && e >= 0 && x - m >= 8 && getenv("TWIN_DBG") && (atoi(getenv("TWIN_DBG")) < 0 || f == atoi(getenv("TWIN_DBG"))) && !(y >= wt.hud_lo && y <= wt.hud_hi)) fprintf(stderr, "UNEXP f%d x%d y%d\n", f, x - m, y);
-									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (y >= wt.hud_lo && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else wt.c_unexplained++;
+									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (f < 8 || f - wt.scene_f < 4) wt.c_trans++; else if (y >= wt.hud_lo && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else wt.c_unexplained++;
 								}
 							}
 							/* the masked left columns the wide view filled in: they must be the true picture */
@@ -665,7 +666,7 @@ int main(int argc, char **argv)
 		printf("truth: claimed_real=%ld wrong=%ld faded_px=%ld solid_lead_l=%.1f solid_lead_r=%.1f drawn_lead_l=%.1f drawn_lead_r=%.1f centre_px=%ld centre_mismatch=%ld offered_l=%.1f offered_r=%.1f\n", wt.claimed, wt.wrong, wt.faded,
 		    row_n ? (double) wt.solid_l / row_n : 0.0, row_n ? (double) wt.solid_r / row_n : 0.0,
 		    row_n ? (double) (wt.solid_l + wt.fade_l) / row_n : 0.0, row_n ? (double) (wt.solid_r + wt.fade_r) / row_n : 0.0, wt.centre, wt.centre_bad, row_n ? rowl_sum / row_n : 0.0, row_n ? rowr_sum / row_n : 0.0);
-	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld (continued as soft where no true pixel is known: px=%ld)\n  centre differs from the true background: %ld px = sprites %ld + status bar rows %ld + masked column %ld + truth unknown %ld + unexplained %ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong, wt.maskfill_soft, wt.centre_bad, wt.c_sprite, wt.c_hud, wt.c_mask, wt.c_unknown, wt.c_unexplained);
+	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld (continued as soft where no true pixel is known: px=%ld)\n  centre differs from the true background: %ld px = sprites %ld + status bar rows %ld + scene-change frames %ld + masked column %ld + truth unknown %ld + unexplained %ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong, wt.maskfill_soft, wt.centre_bad, wt.c_sprite, wt.c_hud, wt.c_trans, wt.c_mask, wt.c_unknown, wt.c_unexplained);
 	if (!wt.wrongf.empty()) { printf("  wrong frames (%zu):", wt.wrongf.size()); for (size_t i = 0; i < wt.wrongf.size() && i < 24; i++) printf(" %d:%d", wt.wrongf[i].first, wt.wrongf[i].second); printf("\n"); }
 	if (wt.on) { printf("  prov in real px:"); for (int k = 0; k < 16; k++) if (wt.pvh[k]) printf(" %d:%ld", k, wt.pvh[k]); printf("\n"); }
 	for (auto &t : wt.firsts) printf("  wrong: %s\n", t.c_str());

@@ -11,7 +11,12 @@
  *                                   every load of B, so each game and each
  *                                   cable session starts B from a fresh
  *                                   boot's bytes
- *   bdata_pristine                  the pristine .data copy
+ *   bdata_pristine .. _pristine_end the pristine .data copy and the end of its
+ *                                   room: exactly SIZEOF(.data), which
+ *                                   fe_gbadual_boot checks against
+ *                                   bdata_end - bdata_start before it copies
+ *                                   (frontend-common/fe_gbadual_image.h; the
+ *                                   build checks it as well, corebuild.mk)
  *
  * The PSP pads the .bss block to whole MiB because it LENDS it to the ROM
  * cache between sessions.  A Vita has the memory to keep B resident, nothing
@@ -33,6 +38,7 @@ SECTIONS
     bregion_lend = .;
     bdata_pristine = .;
     . += SIZEOF(.data);
+    bdata_pristine_end = .;
     . = ALIGN(64);
   }
 }

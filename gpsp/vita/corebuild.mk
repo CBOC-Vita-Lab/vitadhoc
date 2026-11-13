@@ -137,8 +137,10 @@ $(CORE_A): $(CORE_OBJS)
 # marks B's .data and .bss so fe_gbadual can put B back to a fresh boot's
 # bytes before every load (vita/gba_instance_b.ld).
 ifeq ($(GBA_LINK),1)
-$(CORE_B): $(CORE_A) $(GP)/vita/gba_instance_b.ld
+READELF ?= $(subst objcopy,readelf,$(OBJCOPY))
+$(CORE_B): $(CORE_A) $(GP)/vita/gba_instance_b.ld $(GP)/vita/check_instance_b.sh
 	$(LD_R) -r -d -T $(GP)/vita/gba_instance_b.ld -o $@.tmp --whole-archive $(CORE_A)
+	sh $(GP)/vita/check_instance_b.sh $(NM) $(READELF) $@.tmp
 	$(NM) -g --defined-only $@.tmp | awk 'NF == 3 { print $$3 " gbab_" $$3 }' > $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $@.tmp $@
 	@rm -f $@.tmp

@@ -497,6 +497,7 @@ static int cell_at(const wk_map *m, const wk_frame *f, const wk_out *out, int la
         cell->code = e->code;
         cell->gfx = e->gfx;
         cell->conf = e->conf;
+        cell->scout = e->scout ? 1 : 0;
     }
     return 1;
 }

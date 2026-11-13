@@ -96,7 +96,7 @@ struct WTruth {
 	int hud_lo = 0, hud_hi = -1;       /* status bar rows of the cartridge (its numbers and text change; the truth holds the frame it started with) */
 	std::vector<uint8_t> px;           /* n * W * H, bit7 known, bits0..5 colour */
 	std::vector<char> uni;             /* per image per row: the whole row is one known colour */
-	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0, maskfill_soft = 0, c_sprite = 0, c_trans = 0, c_hud = 0, c_mask = 0, c_unknown = 0, c_unexplained = 0;
+	long pvh[16] = { 0 }, fade_l = 0, fade_r = 0, faded = 0, solid_l = 0, solid_r = 0, claimed = 0, wrong = 0, centre = 0, centre_bad = 0, hud_claimed = 0, soft_claim_frames = 0, bd_px = 0, bd_wrong = 0, bd_unknown = 0, maskfill = 0, maskfill_wrong = 0, maskfill_soft = 0, c_sprite = 0, c_trans = 0, c_hud = 0, c_mask = 0, c_unknown = 0, c_unexplained = 0, c_edge = 0;
 	long lead_frames = 0; double lead_l = 0, lead_r = 0;
 	std::vector<std::string> firsts;
 	std::vector<std::pair<int, int>> wrongf;
@@ -221,6 +221,7 @@ static void usage(void)
 	    "  --wide-report      print the wide view statistics (mean real px per side, lines, scene events, map)\n"
 	    "  --wide-opt NAME=V  wide view option (period, debug, fade_px, appear_frames)\n"
 	    "  --wide-split       with --wide: capture on the main thread, compose (and the scout step) on real threads, one frame behind\n"
+	    "  --scout-headroom US  with --scout: step through nes_host_scout_step_paced(US) (the duty cap) instead of N frames\n"
 	    "  --scout N          wide view scout on: up to N scout frames after each frame (nes_host_scout_step)\n"
 	    "  --scout-opt NAME=V scout option (ahead, resync)\n"
 	    "  --summary          print one summary line (fps, ms/frame)\n"
@@ -255,7 +256,7 @@ int main(int argc, char **argv)
 	bool wide_report = false;
 	const char *wide_shots = 0, *wtruth_base = 0, *wstrips = 0, *wmap_save = 0, *wmap_load = 0;
 	std::vector<Opt> wopts, sopts;
-	int scout_n = 0;
+	int scout_n = 0, scout_headroom = -1;
 	bool wide_split = false;
 	for (int i = 2; i < argc; i++) {
 		auto arg = [&](const char *n) { return !strcmp(argv[i], n) && i + 1 < argc; };
@@ -317,6 +318,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--wide-report")) wide_report = true;
 		else if (!strcmp(argv[i], "--wide-split")) wide_split = true;
 		else if (arg("--scout")) scout_n = atoi(argv[++i]);
+		else if (arg("--scout-headroom")) scout_headroom = atoi(argv[++i]);   /* paced stepping: nes_host_scout_step_paced(US) instead of step(N) */
 		else if (arg("--scout-opt")) {
 			char k[64]; int v = 0;
 			if (sscanf(argv[++i], "%63[^=]=%d", k, &v) == 2) sopts.push_back({ k, v });
@@ -486,7 +488,7 @@ int main(int argc, char **argv)
 					const uint8_t *real = nes_host_wide_real();
 					const uint8_t *prov = nes_host_wide_prov();
 					std::vector<uint16_t> strip;
-					long fu = 0;
+					long fu = 0, fe = 0;
 					bool want = wstripset.count(f) != 0;
 					if (want) strip.assign((size_t) ww * (h * 2 + 4), 0);
 					for (int y = 0; y < h; y++) {
@@ -528,7 +530,7 @@ int main(int argc, char **argv)
 										int sx = oam[k * 4 + 3], sy = oam[k * 4] + 1;
 										if (oam[k * 4] < 240 && x - m >= sx && x - m < sx + 8 && y >= sy && y < sy + 8) spr = true;
 									}
-									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (f < 8 || f - wt.scene_f < 4) wt.c_trans++; else if (y >= wt.hud_lo - 2 && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else { wt.c_unexplained++; fu++; }
+									if (spr) wt.c_sprite++; else if (e < 0) wt.c_unknown++; else if (f < 12 || f - wt.scene_f < 4) wt.c_trans++; else if (y >= wt.hud_lo - 2 && y <= wt.hud_hi) wt.c_hud++; else if (x - m < 8) wt.c_mask++; else if (wt.mode != "static" && y >= h - 8 - (cy & 7)) { wt.c_edge++; fe++; } else { wt.c_unexplained++; fu++; }
 								}
 							}
 							/* the masked left columns the wide view filled in: they must be the true picture */
@@ -541,7 +543,7 @@ int main(int argc, char **argv)
 							}
 						}
 					}
-					if (fu > 5000) { wt.c_trans += fu; wt.c_unexplained -= fu; }   /* the whole picture changed: the truth image lags the scene switch */
+					if (fu + fe > 5000) { wt.c_trans += fu + fe; wt.c_unexplained -= fu; wt.c_edge -= fe; }   /* the whole picture changed: the truth image lags the scene switch */
 					if (want) {
 						long cb = 0, wr = 0, ylo = 999, yhi = -1, xlo = 9999, xhi = -9999;
 						for (int y = 0; y < h; y++) {
@@ -593,7 +595,7 @@ int main(int argc, char **argv)
 		cwok = 0;
 		const nes_wide_snapshot *ps = &snaps[pend.slot];
 		wcomp.run([&, ps] { cwok = nes_host_wide_compose(ps, &cwp, &cww, &cwpit, &cst); });
-		if (scout_n > 0) wscout.run([&] { scout_cost_frames += nes_host_scout_step(scout_n, 0); });
+		if (scout_n > 0) wscout.run([&] { scout_cost_frames += (scout_headroom >= 0 ? nes_host_scout_step_paced(scout_headroom) : nes_host_scout_step(scout_n, 0)); });
 	};
 	for (int f = 0; f < frames; f++) {
 		for (int k = 0; k < 4; k++) {
@@ -630,7 +632,7 @@ int main(int argc, char **argv)
 			const uint16_t *wp = 0;
 			int ww = 0, wpit = 0;
 			int wok = nes_host_wide_frame(&wp, &ww, &wpit, &wst);
-			if (wok && scout_n > 0) scout_cost_frames += nes_host_scout_step(scout_n, 0);
+			if (wok && scout_n > 0) scout_cost_frames += (scout_headroom >= 0 ? nes_host_scout_step_paced(scout_headroom) : nes_host_scout_step(scout_n, 0));
 			wide_process(f, wok != 0, wp, ww, wpit, wst, v, w, h, pitch, cam, oam);
 		}
 		if (wide > 0 && wide_split) {
@@ -664,11 +666,19 @@ int main(int argc, char **argv)
 		nes_host_scout_stats(&ss);
 		printf("scout: available=%d snapshots=%u frames=%u stops=%u cells=%u confirmed=%u contradicted=%u step_frames=%ld\n", ss.available, ss.snapshots, ss.frames, ss.stops, ss.cells, ss.confirmed, ss.contradicted, scout_cost_frames);
 	}
+	if (wide_report && wide > 0) {
+		nes_wide_census cn;
+		nes_host_wide_census(&cn);
+		double den = cn.px_total ? (double) cn.px_total : 1.0;
+		printf("census: frames=%llu active=%llu margin_px: real=%.1f%% map=%.1f%% scout=%.1f%% backdrop=%.1f%% soft=%.1f%% scout_frames=%u snapshots=%u stops=%u map_cells=%u scout_cells=%u\n",
+		    (unsigned long long) cn.frames_composed, (unsigned long long) cn.active_frames, 100.0 * cn.px_real / den, 100.0 * cn.px_map / den, 100.0 * cn.px_scout / den,
+		    100.0 * cn.px_backdrop / den, 100.0 * cn.px_soft / den, cn.scout_frames, cn.scout_snapshots, cn.scout_stops, cn.map_cells, cn.map_scout_cells);
+	}
 	if (wt.on)
 		printf("truth: claimed_real=%ld wrong=%ld faded_px=%ld solid_lead_l=%.1f solid_lead_r=%.1f drawn_lead_l=%.1f drawn_lead_r=%.1f centre_px=%ld centre_mismatch=%ld offered_l=%.1f offered_r=%.1f\n", wt.claimed, wt.wrong, wt.faded,
 		    row_n ? (double) wt.solid_l / row_n : 0.0, row_n ? (double) wt.solid_r / row_n : 0.0,
 		    row_n ? (double) (wt.solid_l + wt.fade_l) / row_n : 0.0, row_n ? (double) (wt.solid_r + wt.fade_r) / row_n : 0.0, wt.centre, wt.centre_bad, row_n ? rowl_sum / row_n : 0.0, row_n ? rowr_sum / row_n : 0.0);
-	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld (continued as soft where no true pixel is known: px=%ld)\n  centre differs from the true background: %ld px = sprites %ld + status bar rows %ld + scene-change frames %ld + masked column %ld + truth unknown %ld + unexplained %ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong, wt.maskfill_soft, wt.centre_bad, wt.c_sprite, wt.c_hud, wt.c_trans, wt.c_mask, wt.c_unknown, wt.c_unexplained);
+	if (wt.on) printf("  backdrop continuation: px=%ld wrong=%ld unverifiable=%ld\n  masked columns filled: px=%ld wrong=%ld (continued as soft where no true pixel is known: px=%ld)\n  centre differs from the true background: %ld px = sprites %ld + status bar rows %ld + scene-change frames %ld + masked column %ld + truth unknown %ld + bottom tile row (31st row, or the row the game is still streaming) %ld + unexplained %ld\n", wt.bd_px, wt.bd_wrong, wt.bd_unknown, wt.maskfill, wt.maskfill_wrong, wt.maskfill_soft, wt.centre_bad, wt.c_sprite, wt.c_hud, wt.c_trans, wt.c_mask, wt.c_unknown, wt.c_edge, wt.c_unexplained);
 	if (!wt.wrongf.empty()) { printf("  wrong frames (%zu):", wt.wrongf.size()); for (size_t i = 0; i < wt.wrongf.size() && i < 24; i++) printf(" %d:%d", wt.wrongf[i].first, wt.wrongf[i].second); printf("\n"); }
 	if (wt.on) { printf("  prov in real px:"); for (int k = 0; k < 16; k++) if (wt.pvh[k]) printf(" %d:%ld", k, wt.pvh[k]); printf("\n"); }
 	for (auto &t : wt.firsts) printf("  wrong: %s\n", t.c_str());

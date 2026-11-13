@@ -65,3 +65,12 @@ The normal picture is drawn by the unchanged code first.
 `sh snes/twin/selftest.sh` has a wide section: truth tests on synthetic cartridges (`twin/tests/make_wide_roms.py`, `wide_truth.py`),
 identity (frames, audio, state; single thread and workers) and the player test (`player_twin wide ROM WORK`).
 Larger runs: `twin/wide_compare.py` (the 15 owner games and the test-ROM suites).
+
+## Known harness note (Super FX test ROMs)
+
+On four PeterLemon Super FX ROMs (GSU 256x192) the twin check "wide centre differs from the normal picture" reports 9 to 17
+rows per frame. Cause: `S9xMainLoop` returns some lines after `S9xSyncSpeed` for these ROMs, so `snes_host_video()` read
+after `run_frame` already holds lines of the next frame, while the wide view's centre is the snapshot taken at the frame
+end (screen hash at the hook, at `S9xControlEOF` and at `S9xSyncSpeed` are equal to the wide centre). The same read-time
+picture is what the unmodified build returns (frame, audio and state hashes are identical to the reference).
+The wide centre is the cleaner frame. Not a wide-view error.

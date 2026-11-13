@@ -142,4 +142,17 @@ sys.exit(0 if same and both and agree == len(both) else 1)
 PY
   [ $? = 0 ] || fail=1
 fi
+# Instance B's image bounds (GBA-LINK-MIRROR.md 19): the sizes fe_gbadual_boot
+# copies must be the section's.  First on the sanitized stand-in (the boot
+# copies under ASan/UBSan, and the plain-memcpy failure that was reported
+# for a sanitized core build), then on the B objects of the twins built here.
+if ! "$HERE/../../tools/tests/run_gbadual_image_test.sh"; then fail=1; fi
+for dir in x86 "$ARMDIR"; do
+  obj="$HERE/build/$dir/gpsp_b.o"
+  [ -f "$obj" ] || continue
+  pre=; [ "$dir" != x86 ] && pre=arm-linux-gnueabihf-
+  if sh "$HERE/../check_instance_b.sh" ${pre}nm ${pre}readelf "$obj" gbab_ >/dev/null 2>"$WORK/chk.err"
+  then echo "instance B image ($dir): ok"
+  else echo "instance B image ($dir): FAIL $(cat "$WORK/chk.err")"; fail=1; fi
+done
 exit $fail

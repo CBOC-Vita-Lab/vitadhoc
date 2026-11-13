@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "fe_gbadual.h"
+#include "fe_gbadual_image.h"
 #include "fe_gblink.h"
 #include "fe_console.h"
 #include "../gbalink.h"
@@ -56,6 +57,9 @@ extern char gbab_bdata_end[] __attribute__((weak));
 extern char gbab_bdata_pristine[] __attribute__((weak));
 extern char gbab_bregion_start[] __attribute__((weak));
 extern char gbab_bregion_lend[] __attribute__((weak));
+/* End of the pristine copy's room (vita/gba_instance_b.ld; the PSP script
+ * does not mark it). */
+extern char gbab_bdata_pristine_end[] __attribute__((weak));
 extern uint8_t *gamepak_spare_pool2;
 extern uint32_t gamepak_spare_pool2_bytes;
 extern uint32_t gbalink_headless_audio, gbab_gbalink_headless_audio;
@@ -277,13 +281,44 @@ uint16_t fe_gbadual_keys_from_retro(uint32_t pad)
  * gives it, however the last session or the lending left them. */
 static int g_bpristine;
 
+static fe_bimage b_image(void)
+{
+   fe_bimage b;
+   b.data_start   = gbab_bdata_start;
+   b.data_end     = gbab_bdata_end;
+   b.pristine     = gbab_bdata_pristine;
+   b.pristine_end = gbab_bdata_pristine_end;
+   b.bss_start    = gbab_bregion_start;
+   b.bss_lend     = gbab_bregion_lend;
+   return b;
+}
+
+/* The copies below move exactly B's .data and .bss: if the markers do not
+ * agree (a partial link made without the script, a script that changed
+ * without the code) the copy would run over memory that is not B's, so the
+ * process stops here, loudly, instead. */
 void fe_gbadual_boot(void)
 {
-   size_t n;
-   if (g_bpristine || !gbab_bdata_start || !gbab_bdata_pristine)
+   fe_bimage b;
+   const char *why = "";
+   int rc;
+   if (g_bpristine)
       return;
-   n = (size_t)(gbab_bdata_end - gbab_bdata_start);
-   memcpy(gbab_bdata_pristine, gbab_bdata_start, n);
+   b = b_image();
+   rc = fe_bimage_check(&b, &why);
+   if (rc == FE_BIMAGE_ABSENT)
+      return;
+   if (rc)
+   {
+      fprintf(stderr, "fe_gbadual_boot: FATAL instance B image: %s "
+              "(data %lu, pristine room %lu, zeroed %lu bytes)\n", why,
+              (unsigned long)(b.data_end - b.data_start),
+              b.pristine_end ? (unsigned long)(b.pristine_end - b.pristine) : 0ul,
+              (unsigned long)(b.bss_lend - b.bss_start));
+      fflush(stderr);
+      abort();
+   }
+   fe_bimage_save(&b);
    g_bpristine = 1;
 }
 
@@ -310,12 +345,11 @@ int fe_gbadual_lent(void)
  * blocks carved from it (the caller unloaded A first). */
 static void b_fresh(void)
 {
-   size_t n;
+   fe_bimage b;
    if (!gbab_bregion_start || !g_bpristine)
       return;
-   n = (size_t)(gbab_bdata_end - gbab_bdata_start);
-   memcpy(gbab_bdata_start, gbab_bdata_pristine, n);
-   memset(gbab_bregion_start, 0, fe_gbadual_lendable());
+   b = b_image();
+   fe_bimage_restore(&b);
 }
 
 /* Instance B's core up on `rom_path` (D.cfg holds everything else): on the

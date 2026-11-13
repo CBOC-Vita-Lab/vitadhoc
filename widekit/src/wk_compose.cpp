@@ -96,6 +96,15 @@ typedef struct per_t {
     uint8_t P, valid, ptail, stb;
 } per_t;
 
+/* A whole soft-edge row (distance 0 .. M - 1) for one edge colour, side and row phase: a pure function of those, so a row the
+ * previous lines (or frames) already built is reused. Direct mapped. */
+struct softrow_t {
+    int16_t e[3];
+    uint8_t ph, ok;
+    uint16_t px[WK_MAX_MARGIN];
+};
+#define SOFTROWS 128
+
 struct wk_compose {
     wk_compose_cfg cfg;
     int W, H, M;
@@ -107,6 +116,7 @@ struct wk_compose {
     int16_t *edge;     /* [side][H][3] blurred edge colour */
     uint8_t smooth[65];
     uint8_t ramp[65][65];                /* [F][k]: weight k px from the outer end of a ramp of F px */
+    softrow_t softc[SOFTROWS];
     uint16_t softf[WK_MAX_MARGIN + 1];   /* soft edge darkening factor per distance (256 = none) */
     /* per phase (y & 3, y & 7) and side (s) and distance d: the Bayer thresholds the rows use */
     uint8_t th4[4][2][WK_MAX_MARGIN];    /* kBayer4 value (0..15)                              */
@@ -339,6 +349,50 @@ static void base_fill(const wk_compose *c, const base_t &b, uint16_t *row, uint8
         return;
     }
     const int e0 = b.e[0], e1 = b.e[1], e2 = b.e[2];
+    if (n >= c->M / 2) {
+        /* whole row from the cache (computed for every distance on a miss) */
+        const uint8_t ph = (uint8_t)((b.y & 3) | (b.s << 2));
+        softrow_t *sr = &((wk_compose *)c)->softc[(unsigned)(e0 * 31 + e1 * 17 + e2 * 7 + ph * 5) & (SOFTROWS - 1)];
+        if (!sr->ok || sr->ph != ph || sr->e[0] != e0 || sr->e[1] != e1 || sr->e[2] != e2) {
+            const uint16_t *sf = c->softf;
+            const uint8_t *th4 = c->th4[b.y & 3][b.s];
+            for (int d = 0; d < c->M; d++) {
+                const int f = sf[d], th = th4[d];
+                int r = ((e0 * f) >> 8) + (th >> 1);
+                int g = ((e1 * f) >> 8) + (th >> 2);
+                int bl = ((e2 * f) >> 8) + (th >> 1);
+                r = r > 255 ? 255 : r;
+                g = g > 255 ? 255 : g;
+                bl = bl > 255 ? 255 : bl;
+                sr->px[d] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (bl >> 3));
+            }
+            sr->e[0] = (int16_t)e0; sr->e[1] = (int16_t)e1; sr->e[2] = (int16_t)e2; sr->ph = ph; sr->ok = 1;
+        }
+        const uint16_t *px = sr->px;
+        if (!wgt) {
+            /* the usual call (what nothing covered): runs of untouched pixels are copied whole */
+            int i = 0;
+            while (i < n) {
+                if (mat[a + i]) { i++; continue; }
+                const uint8_t *e = (const uint8_t *)memchr(mat + a + i, 1, (size_t)(n - i));
+                const int j = e ? (int)(e - (mat + a)) : n;
+                memcpy(row + a + i, px + a + i, (size_t)(j - i) * sizeof(uint16_t));
+                memset(mat + a + i, 1, (size_t)(j - i));
+                i = j;
+            }
+            return;
+        }
+        for (int i = 0; i < n; i++) {
+            const int d = a + i;
+            if (mat[d])
+                continue;
+            mat[d] = 1;
+            if (wgt && wgt[i] == 32)
+                continue;
+            row[d] = px[d];
+        }
+        return;
+    }
     const uint16_t *sf = c->softf;
     const uint8_t *th4 = c->th4[b.y & 3][b.s];
     for (int i = 0; i < n; i++) {

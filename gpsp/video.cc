@@ -269,6 +269,21 @@ static inline u16 color_flags(u32 layer) {
 
 static const u32 map_widths[] = { 256, 512, 256, 512 };
 
+// -DVIDEO_KERNELS_SCALAR: the renderer without any of its fast kernels -- the
+// original per-pixel merge loops (VIDEO_MERGE_ORIG) and the scalar tile rows
+// (VIDEO_TILE_NO_NEON).  Not for shipping: the reference build that
+// tools/tests/video_identity.py proves the fast path bit-identical to.
+#ifdef VIDEO_KERNELS_SCALAR
+#ifndef VIDEO_MERGE_ORIG
+#define VIDEO_MERGE_ORIG
+#endif
+#ifndef VIDEO_MERGE_NO_VEC
+#define VIDEO_MERGE_NO_VEC
+#endif
+#ifndef VIDEO_TILE_NO_NEON
+#define VIDEO_TILE_NO_NEON
+#endif
+#endif
 // rendtype (FULLCOLOR, INDXCOLOR, STCKCOLOR, PIXCOPY) and the NEON tile-row
 // kernels are in video_tile.h
 #include "video_tile.h"

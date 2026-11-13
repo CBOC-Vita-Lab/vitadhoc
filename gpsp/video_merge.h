@@ -45,6 +45,13 @@
 #ifndef GPSP_VIDEO_MERGE_H
 #define GPSP_VIDEO_MERGE_H
 
+/* -DVIDEO_KERNELS_SCALAR (see video.cc): no vector kernels at all. */
+#ifdef VIDEO_KERNELS_SCALAR
+#ifndef VIDEO_MERGE_NO_VEC
+#define VIDEO_MERGE_NO_VEC
+#endif
+#endif
+
 #ifdef USE_XBGR1555_FORMAT
   #define OVFG_MSK 0x04000000
   #define OVFR_MSK 0x00008000

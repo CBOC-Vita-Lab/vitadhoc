@@ -274,6 +274,28 @@ size_t nes_host_wide_snapshot_size(void);          /* bytes actually used (<= NE
 int nes_host_wide_capture(nes_wide_snapshot *snap);
 int nes_host_wide_compose(const nes_wide_snapshot *snap, const uint16_t **rgb, int *width, int *pitch_bytes, nes_wide_stats *stats);
 
+/* ---- wide view: census (proof, for one log line per second, that the feature acted) ---------------------------------
+ * Cumulative since the game was loaded (or nes_host_wide_census_reset), counted by the compose stage. A "px" count is margin pixels
+ * summed over the 240 lines and both sides: divide by (frames_composed * 240) for the mean number of margin COLUMNS per frame
+ * (px_total / frames_composed / 240 = 2 * margin columns). The five sources add up to px_total:
+ *   px_real     the core's own margin pixels (what the PPU drew beyond the screen edge)
+ *   px_map      columns beyond that served from the learned map (cells seen live)
+ *   px_scout    columns served from the look-ahead's cells (not yet seen live)
+ *   px_backdrop columns continued as flat backdrop (all-backdrop rows, uniform status bar rows)
+ *   px_soft     everything else: the soft edge
+ * scout_frames / scout_snapshots / scout_stops: frames the scout ran, states it started from, runs ended early (written by the
+ * scout thread, read with relaxed atomics: this call is safe from any thread, the rest is the compose thread's value
+ * as of its last compose, so call it between composes or accept a value one frame old). map_cells = cells in the learned map,
+ * map_scout_cells = cells recorded by the scout. Typical log line: frames, 100 * px_real / px_total ... */
+typedef struct nes_wide_census {
+	uint64_t frames_composed, active_frames;    /* composes; of those with a background layer described */
+	uint64_t px_real, px_map, px_scout, px_backdrop, px_soft, px_total;
+	uint32_t scout_frames, scout_snapshots, scout_stops;
+	uint32_t map_cells, map_scout_cells;
+} nes_wide_census;
+void nes_host_wide_census(nes_wide_census *c);
+void nes_host_wide_census_reset(void);
+
 /* For logging and tests: per row of the last composed frame the margin px that are real picture on the left and right
  * ([row * 2], [row * 2 + 1]; 240 rows), and (only with option debug) widekit's provenance bytes of the composed picture. */
 const uint8_t *nes_host_wide_real(void);
@@ -312,13 +334,20 @@ int nes_host_scout_available(void);
 /* Enable BEFORE loading the game (the scout keeps a copy of the ROM bytes given to nes_host_load_mem). Needs the wide view. */
 void nes_host_scout_enable(int on);
 /* "ahead": frames the scout may run ahead of the game (default 90); "resync": live frames after which a new snapshot is
- * taken (default 240). 0 = known. */
+ * taken (default 240); "duty" / "reserve": see nes_host_scout_step_paced. 0 = known. */
 int nes_host_scout_option(const char *name, int value);
 /* Optional clock for the time cap of nes_host_scout_step (microseconds, monotonic; e.g. sceKernelGetProcessTimeWide). */
 void nes_host_scout_set_clock(uint64_t (*now_us)(void));
 /* Run up to max_frames scout frames (stops early at max_us when a clock is set, or when far enough ahead). Returns the
  * number run. One scout frame costs about one emulated frame. */
 int nes_host_scout_step(int max_frames, int max_us);
+/* Duty cap: use this instead of nes_host_scout_step on a device with few cores. headroom_us = the time left in the real frame
+ * after the emulation thread, compose and audio (measured by the app; 0 or less = steady pacing reports no headroom: the scout
+ * does not run). The scout runs at most "duty" frames per call (option, default 2; 0 = never), and at most as many as fit in
+ * (100 - "reserve")% of the headroom at the running estimate of its own cost per frame (needs nes_host_scout_set_clock; option
+ * "reserve" 0..90, default 30), and stops at that time budget. Returns the frames run. The scout never runs more often than the
+ * caller calls this, so a thread that sleeps when there is no headroom cannot starve the audio or compose threads. */
+int nes_host_scout_step_paced(int headroom_us);
 void nes_host_scout_stats(nes_scout_stats *st);
 
 #ifdef __cplusplus

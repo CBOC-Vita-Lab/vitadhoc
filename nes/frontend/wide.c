@@ -155,6 +155,8 @@ typedef struct {
 	int have_gid;
 	/* stats */
 	nes_wide_stats st;
+	nes_wide_census cen;                  /* cumulative, compose side */
+	uint64_t cen_real, cen_map, cen_scout, cen_bd;   /* this frame's margin px by source (reset in compose) */
 	uint32_t map_cells_saved;
 	/* uniform-row backdrop fill (screens that never scroll sideways) */
 	int hscrolled;                        /* sticky per game: a line's horizontal scroll changed between two frames */
@@ -510,11 +512,16 @@ typedef struct {
 	unsigned c_pad;
 	/* capture -> compose: the scout's state as of this capture */
 	int m_session, m_frames; uint32_t m_base_live, m_epoch, m_retry_at;
+	uint32_t hold;                              /* compose side: no new snapshot before this live frame (scout starved) */
 	int phase;                                  /* compose side: a snapshot was asked for, its frame is the next compose */
 	int ahead_stat;
 	/* scout -> compose: lock-free single producer / single consumer queue */
 	ScoutPost *q;
 	atomic_uint qh, qt;
+	atomic_uint tot_frames;                     /* scout frames run (scout thread writes, anyone reads) */
+	atomic_uint tot_snaps, tot_stops;
+	/* paced stepping (nes_host_scout_step_paced) */
+	int duty, reserve_pct; uint32_t us_per_frame;   /* options; running estimate of one scout frame's cost (scout thread) */
 } Scout;
 
 static Scout S;
@@ -532,7 +539,7 @@ static void scout_reset_link(void)
 {
 	S.session = S.need_load = 0;
 	S.c_stop = S.c_want = S.c_link = 0;
-	S.phase = 0;
+	S.phase = 0; S.hold = 0;
 	S.m_session = 0;
 	atomic_store(&S.qt, atomic_load(&S.qh));
 }
@@ -619,6 +626,7 @@ static void scout_capture(Snap *sn)
 		else if (S.c_dir < 0) S.stage_pad = (S.stage_pad & ~(unsigned) NES_RIGHT) | NES_LEFT;
 		sn->scout_state = 1;
 		S.st.snapshots++;
+		atomic_fetch_add_explicit(&S.tot_snaps, 1u, memory_order_relaxed);
 	}
 #else
 	(void) sn;
@@ -666,6 +674,9 @@ static void scout_control(const Snap *sn, const Desc *D, const wk_out *out)
 		return;
 	if (out->scene_event || out->dir[0] == 0) { S.c_stop = 1; return; }   /* nothing to look ahead into */
 	if ((int32_t)(frame - S.m_retry_at) < 0) return;
+	/* a scout that was never given time (duty cap with no headroom) must not make the capture take a new state every few frames */
+	if (S.m_session && S.m_frames == 0 && ahead <= -4) S.hold = frame + 120;
+	if ((int32_t)(frame - S.hold) < 0) return;
 	if (y0 < 0) { S.c_stop = 1; return; }
 	S.c_want = 1;
 	S.c_dir = out->dir[0];
@@ -688,6 +699,7 @@ static int scout_one(void)
 	while (nesscout_nes_host_audio_take(junk, 1024) > 0) {}
 	S.frames++;
 	S.st.frames++;
+	atomic_fetch_add_explicit(&S.tot_frames, 1u, memory_order_relaxed);
 	si.line = nesscout_nesp_line; si.ntstamp = (const uint32_t (*)[1024]) nesscout_nesp_ntstamp; si.ntid = nesscout_nesp_ntid;
 	si.chr_base = nesscout_nesp_chr_base; si.frame = nesscout_nesp_frame; si.ntgen = &nesscout_nesp_ntgen;
 	cap_core(&S.core, &si, 0);
@@ -801,7 +813,7 @@ int nes_host_scout_step(int max_frames, int max_us)
 		if (ahead >= S.ahead_max) break;                      /* far enough: wait for the live game */
 		if ((unsigned) (atomic_load_explicit(&S.qh, memory_order_relaxed) - atomic_load_explicit(&S.qt, memory_order_acquire)) >= SQ_N)
 			break;                                            /* the compose side has not drained the queue yet */
-		if (!scout_one()) { S.session = 0; S.st.stops++; S.retry_at = S.live_frame + 30; break; }
+		if (!scout_one()) { S.session = 0; S.st.stops++; atomic_fetch_add_explicit(&S.tot_stops, 1u, memory_order_relaxed); S.retry_at = S.live_frame + 30; break; }
 		n++;
 		if (max_us > 0 && S.clock_us && S.clock_us() - t0 >= (uint64_t) max_us) break;
 	}
@@ -812,13 +824,65 @@ int nes_host_scout_step(int max_frames, int max_us)
 #endif
 }
 
+/* The scout's duty cap: the host says how much of the real frame is left (headroom_us = frame period minus what the emulation
+ * thread, compose and audio used, measured by the app); the scout runs at most `duty` frames, at most as many as fit in
+ * (100 - reserve)% of the headroom at the measured cost of a scout frame, and none when there is no headroom. */
+int nes_host_scout_step_paced(int headroom_us)
+{
+	int n, cap, budget;
+	uint64_t t0, t1;
+	if (headroom_us <= 0 || !S.duty) return 0;
+	budget = (int) ((int64_t) headroom_us * (100 - (S.reserve_pct ? S.reserve_pct : 30)) / 100);
+	if (budget <= 0) return 0;
+	cap = S.duty;
+	if (S.clock_us && S.us_per_frame) {
+		int fit = budget / (int) S.us_per_frame;
+		if (fit < cap) cap = fit;
+	}
+	if (cap <= 0) return 0;
+	t0 = S.clock_us ? S.clock_us() : 0;
+	n = nes_host_scout_step(cap, budget);
+	if (n > 0 && S.clock_us) {
+		uint32_t per;
+		t1 = S.clock_us();
+		per = (uint32_t) ((t1 - t0) / (uint64_t) n);
+		S.us_per_frame = S.us_per_frame ? (S.us_per_frame * 3 + per) / 4 : per;
+	}
+	return n;
+}
+
 int nes_host_scout_available(void) { return NESW_SCOUT; }
+
+void nes_host_wide_census(nes_wide_census *c)
+{
+	wk_map_stats ms;
+	if (!c) return;
+	*c = W.cen;
+	c->scout_frames = atomic_load_explicit(&S.tot_frames, memory_order_relaxed);
+	c->scout_snapshots = atomic_load_explicit(&S.tot_snaps, memory_order_relaxed);
+	c->scout_stops = atomic_load_explicit(&S.tot_stops, memory_order_relaxed);
+	c->map_cells = 0; c->map_scout_cells = 0;
+	if (W.M) {
+		wk_map_stats_get(W.M, &ms);
+		c->map_cells = (uint32_t) ms.cells; c->map_scout_cells = ms.scout_cells;
+	}
+}
+
+void nes_host_wide_census_reset(void)
+{
+	memset(&W.cen, 0, sizeof W.cen);
+	atomic_store_explicit(&S.tot_frames, 0u, memory_order_relaxed);
+	atomic_store_explicit(&S.tot_snaps, 0u, memory_order_relaxed);
+	atomic_store_explicit(&S.tot_stops, 0u, memory_order_relaxed);
+}
 
 void nes_host_scout_enable(int on)
 {
 	S.enabled = on != 0 && NESW_SCOUT;
 	if (!S.ahead_max) S.ahead_max = 90;
 	if (!S.resync) S.resync = 240;
+	if (!S.duty) S.duty = 2;
+	if (!S.reserve_pct) S.reserve_pct = 30;
 	if (!S.enabled) scout_reset_link();
 }
 
@@ -827,6 +891,8 @@ int nes_host_scout_option(const char *name, int v)
 	if (!name) return 1;
 	if (!strcmp(name, "ahead")) { S.ahead_max = v < 1 ? 1 : v > 600 ? 600 : v; return 0; }
 	if (!strcmp(name, "resync")) { S.resync = v < 1 ? 1 : v; return 0; }
+	if (!strcmp(name, "duty")) { S.duty = v < 0 ? 0 : v > 8 ? 8 : v; return 0; }
+	if (!strcmp(name, "reserve")) { S.reserve_pct = v < 0 ? 0 : v > 90 ? 90 : v; return 0; }
 	return 1;
 }
 
@@ -1166,7 +1232,8 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 						break;
 					}
 				}
-				if (ov) { dst[d] = rgb_line(pal, deemp, px); continue; }
+				if (ov) { dst[d] = rgb_line(pal, deemp, px); if (d >= ring && d >= mpart && cok && cell.scout) W.cen_scout++; else W.cen_map++; continue; }
+				W.cen_real++;
 				if (!rt_ok || rt_p1 != nl->p1 || rt_dm != (int) deemp) {
 					int v;
 					for (v = 0; v < 128; v++) rt[v] = rgb_line(pal, deemp, post_px(nl->p1, (uint8_t) v));
@@ -1245,6 +1312,7 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 		fr->palette_size = 32;
 	}
 	memset(&W.st, 0, sizeof W.st);
+	W.cen_real = W.cen_map = W.cen_scout = W.cen_bd = 0;
 	W.st.frame = C0->frame;
 	W.st.margin = M;
 	W.st.width = 256 + 2 * M;
@@ -1392,6 +1460,7 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 				for (d = r; d < M; d++) {
 					int x = i == 0 ? M - 1 - d : M + 256 + d;
 					W.wide[(size_t) y * OW + x] = W.bg[y];
+					W.cen_bd++;
 					if (W.debug) W.prov[(size_t) y * OW + x] = WK_PROV_BACKDROP;
 				}
 			}
@@ -1426,6 +1495,7 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 			for (i = 0; i < M; i++) {
 				W.wide[(size_t) y * OW + i] = rgb_line(pal565, l->deemp, post_px(l->p1, (uint8_t) col));
 				W.wide[(size_t) y * OW + M + 256 + i] = rgb_line(pal565, l->deemp, post_px(l->p1, (uint8_t) col));
+				W.cen_bd += 2;
 				if (W.debug) W.prov[(size_t) y * OW + i] = W.prov[(size_t) y * OW + M + 256 + i] = WK_PROV_BACKDROP;
 			}
 			W.st.lines_bar_uniform++;
@@ -1452,6 +1522,14 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 		W.st.real_r = n ? (int)(sr / n) : 0;
 		W.st.lines_dominant = D->ndom;
 		W.st.layer_active = fr->nlayers;
+		{
+			uint64_t tot = (uint64_t) 2 * (uint64_t) M * H, got = W.cen_real + W.cen_map + W.cen_scout + W.cen_bd;
+			W.cen.frames_composed++;
+			if (fr->nlayers) W.cen.active_frames++;
+			W.cen.px_real += W.cen_real; W.cen.px_map += W.cen_map; W.cen.px_scout += W.cen_scout; W.cen.px_backdrop += W.cen_bd;
+			W.cen.px_soft += got < tot ? tot - got : 0;
+			W.cen.px_total += tot;
+		}
 	}
 
 	/* 6. the scout: link a snapshot taken for it, or ask for a new one at the next capture */

@@ -2,7 +2,7 @@
 """Identity proof for the wide view: the normal picture, the audio and the emulation state must not change with the wide view on.
 
   wide_compare.py --twin BIN [--base BIN] [--frames 3000] [--mt apu_thread=1,ppu_thread=1] [--roms FILE...|--dir DIR|--list FILE]
-                  [--pad SCRIPT] [--margin 70] [--state-every 50] [--jobs 1]
+                  [--pad SCRIPT] [--margin 70] [--state-every 50]
 
 For every ROM it runs (all with the same scripted pad):
   A  base   : the reference binary (snes_twin built from the tree before the wide view), if --base is given

@@ -23,6 +23,13 @@
 #ifndef GPSP_VIDEO_TILE_H
 #define GPSP_VIDEO_TILE_H
 
+/* -DVIDEO_KERNELS_SCALAR (see video.cc): no vector kernels at all. */
+#ifdef VIDEO_KERNELS_SCALAR
+#ifndef VIDEO_TILE_NO_NEON
+#define VIDEO_TILE_NO_NEON
+#endif
+#endif
+
 typedef enum
 {
   FULLCOLOR,  // Regular rendering, output a 16 bit color

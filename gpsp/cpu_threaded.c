@@ -605,78 +605,6 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #endif
 
-/* VM_SYNC_BATCH (vita.ini vm_sync_batch, default 1; 0 = the old behaviour,
- * one platform_cache_sync per range, in the order they were found).
- *
- * A lookup that translated something publishes up to three kinds of range
- * before the dispatcher may run any of it: the new ROM code, the new RAM code
- * and the re-pointed links of kept RAM blocks (up to 16 ranges).  Each used to
- * be its own kernel call (sceKernelSyncVMDomain on the Vita).  With the switch
- * on, the ranges are only recorded here and issued together at the END of the
- * publish (VMS_FLUSH, still inside the lookup, so before any of the code can
- * run): sorted by address and merged when the gap between two is at most
- * VMS_GAP bytes, so a patch beside the new code costs no extra call.  A merged
- * call covers a few bytes that were already synced, which is harmless; it
- * never reaches outside the translation caches because a gap lies between two
- * ranges that are both inside them.  Nothing is deferred past the lookup:
- * every path that publishes (translate_icache_sync and the ranged ARM variant;
- * smcr_patch_sync is only called from them, just before their VMS_FLUSH) ends
- * in VMS_FLUSH, and a full table is flushed on the spot.  Twins:
- * GPSP_VM_SYNC_BATCH=0/1. */
-#define VMS_MAX 20
-#define VMS_GAP 2048u
-u32 vm_sync_batch = 1;
-static u8 *vms_lo[VMS_MAX], *vms_hi[VMS_MAX];
-static u32 vms_n;
-void gpsp_vm_sync_batch_set(u32 on) { vm_sync_batch = on ? 1 : 0; }
-static void __attribute__((unused)) vms_flush(void)
-{
-  u32 i, j;
-  if (!vms_n)
-    return;
-  /* insertion sort by start: at most VMS_MAX entries */
-  for (i = 1; i < vms_n; i++) {
-    u8 *l = vms_lo[i], *h = vms_hi[i];
-    for (j = i; j && vms_lo[j - 1] > l; j--) {
-      vms_lo[j] = vms_lo[j - 1];
-      vms_hi[j] = vms_hi[j - 1];
-    }
-    vms_lo[j] = l;
-    vms_hi[j] = h;
-  }
-  {
-    u8 *cl = vms_lo[0], *ch = vms_hi[0];
-    u32 n = vms_n;
-    vms_n = 0;                      /* first: platform_cache_sync must not see a stale table */
-    for (i = 1; i < n; i++) {
-      if (vms_lo[i] <= ch + VMS_GAP) {
-        if (vms_hi[i] > ch)
-          ch = vms_hi[i];
-      } else {
-        JCTR_SYNC(cl, ch);
-        platform_cache_sync(cl, ch);
-        cl = vms_lo[i];
-        ch = vms_hi[i];
-      }
-    }
-    JCTR_SYNC(cl, ch);
-    platform_cache_sync(cl, ch);
-  }
-}
-static void __attribute__((unused)) vms_add(void *lo, void *hi)
-{
-  if (vms_n == VMS_MAX)
-    vms_flush();
-  vms_lo[vms_n] = (u8 *)lo;
-  vms_hi[vms_n] = (u8 *)hi;
-  vms_n++;
-}
-#define VMS_SYNC(lo, hi) do {                                                 \
-  if (vm_sync_batch) vms_add((lo), (hi));                                     \
-  else { JCTR_SYNC((lo), (hi)); platform_cache_sync((lo), (hi)); }            \
-} while (0)
-#define VMS_FLUSH() vms_flush()
-
 #ifndef JIT_CODE_DISCIPLINE
 /* The ARM lookup's normal success path keeps the RANGED sync.  The bisection
  * (docs/RESIDENT-ICACHE-FIX.md) cured the derail with a whole I-cache
@@ -687,7 +615,8 @@ static void __attribute__((unused)) vms_add(void *lo, void *hi)
  * (Under JIT_CODE_DISCIPLINE the publish point owns this decision.) */
 static void translate_icache_sync_ranged(void) {
     if (last_rom_translation_ptr < rom_translation_ptr) {
-        VMS_SYNC(last_rom_translation_ptr, rom_translation_ptr);
+        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
+        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
         last_rom_translation_ptr = rom_translation_ptr;
     }
 #if defined(VITA)
@@ -705,11 +634,11 @@ static void translate_icache_sync_ranged(void) {
         last_ram_translation_ptr = ram_translation_cache;
 #endif
     if (last_ram_translation_ptr < ram_translation_ptr) {
-        VMS_SYNC(last_ram_translation_ptr, ram_translation_ptr);
+        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
+        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
     SMCR_PATCH_SYNC();
-    VMS_FLUSH();
 }
 #endif
 
@@ -784,7 +713,8 @@ void translate_icache_sync() {
           (char *)rom_translation_ptr - (char *)last_rom_translation_ptr);
         sceKernelIcacheInvalidateAll();
 #else
-        VMS_SYNC(last_rom_translation_ptr, rom_translation_ptr);
+        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
+        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
 #endif
         last_rom_translation_ptr = rom_translation_ptr;
     }
@@ -801,11 +731,11 @@ void translate_icache_sync() {
         last_ram_translation_ptr = ram_translation_cache;
 #endif
     if (last_ram_translation_ptr < ram_translation_ptr) {
-        VMS_SYNC(last_ram_translation_ptr, ram_translation_ptr);
+        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
+        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
     SMCR_PATCH_SYNC();
-    VMS_FLUSH();
 #endif
 }
 
@@ -3894,12 +3824,12 @@ static void smcr_patch_sync(void)
   if (!smcr_pmin)
     return;
   if (smcr_pover) {
-    JCTR(11);
-    VMS_SYNC(smcr_pmin, smcr_pmax);
+    JCTR(11); JCTR_SYNC(smcr_pmin, smcr_pmax);
+    platform_cache_sync(smcr_pmin, smcr_pmax);
   } else
     for (i = 0; i < smcr_np; i++) {
-      JCTR(11);
-      VMS_SYNC(smcr_plo[i], smcr_phi[i]);
+      JCTR(11); JCTR_SYNC(smcr_plo[i], smcr_phi[i]);
+      platform_cache_sync(smcr_plo[i], smcr_phi[i]);
     }
   smcr_np = smcr_pover = 0;
   smcr_pmin = smcr_pmax = NULL;
@@ -4408,9 +4338,6 @@ static void smcr_apply(void)
     if (e && *e)
       gpsp_dispatch_cache_set(atoi(e) ? 1 : 0);
 #endif
-    e = getenv("GPSP_VM_SYNC_BATCH");
-    if (e && *e)
-      gpsp_vm_sync_batch_set(atoi(e) ? 1 : 0);
     e = getenv("GPSP_SMC_XTRACE");
     if (e && *e)
       sscanf(e, "%u:%u", &smcr_xtrace_lo, &smcr_xtrace_hi);

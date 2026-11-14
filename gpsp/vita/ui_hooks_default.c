@@ -44,6 +44,7 @@ UI_WEAK void        app_nes_options(void)       { }
 UI_WEAK void        app_steady_options(void)    { }
 UI_WEAK void        app_handoff_options(void)   { }
 UI_WEAK void        app_core4_options(void)     { }
+UI_WEAK const char *ui_host_core4_status(void)  { return "not available"; }
 UI_WEAK const char *ui_host_look_label(void)    { return NULL; }
 UI_WEAK int ui_host_export_save(int dest, char *where, size_t wcap, char *note,
                                 size_t cap)

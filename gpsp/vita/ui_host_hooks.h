@@ -112,6 +112,7 @@ void        app_ws_options(void);
 void        app_nes_options(void);   /* the NES Wide view setting, to the core */
 void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
 void        app_handoff_options(void); /* Smooth hand-over on/off (main_vita.c) */
+const char *ui_host_core4_status(void);   /* "in use" / "not available" / "off" (main_vita.c: core4_status(), handoff_glue.h) */
 void        app_core4_options(void);   /* Fourth core Auto/Off changed (main_vita.c; g_pcfg.core4_off) */
 /* "Auto (xBRZ 3x, eased)" while the look governor eased the game, else NULL */
 const char *ui_host_look_label(void);

@@ -2856,8 +2856,8 @@ def t_library_cache(S):
     # six console tabs (GBA, GB, GBC, SNES, NES, WS) since 1.4: two full turns
     script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:right\n+20:start\n" + "+8:down\n" * 18 +
-              "+20:shot=quality_setting.png\n" + "+8:up\n" * 14 +
+              "+60:right\n+20:start\n" + "+8:down\n" * 19 +
+              "+20:shot=quality_setting.png\n" + "+8:up\n" * 15 +
               "+20:shot=refresh_command.png\n+8:cross\n"
               "+60:shot=refreshed.png\n+8:cross\n+100:shot=game.png\n+20:quit\n")
     r = S.run("library_cache", script,
@@ -2885,7 +2885,7 @@ def t_settings_order(S):
     config = {"ui_home": 1, "scale_gba": 1, "filter_gba": 4, "quality_gba": 1,
               "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
               "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
-    for context, down in (("browser", 17), ("game", 0)):
+    for context, down in (("browser", 18), ("game", 0)):
         enter = "60:start\n" if context == "browser" else \
             "100:shot=before.png\n" + menu_pick(4, wait=10)
         leave = "+30:cross\n+120:shot=game.png\n+10:quit\n" if context == "browser" else \
@@ -4687,7 +4687,7 @@ def t_old_states(S):
         return
     saved = open(st, "rb").read()
 
-    def interrupted(name, script):
+    def interrupted(name, script, meta=False):
         out = os.path.join(S.outdir, name)
         root = os.path.join(out, "root")
         shutil.rmtree(out, ignore_errors=True)
@@ -4695,6 +4695,9 @@ def t_old_states(S):
         for f in glob.glob(os.path.join(root, "log", "*")):
             os.remove(f)
         os.rename(os.path.join(root, st_rel), os.path.join(root, st_rel + ".old"))
+        if meta:        # the player kit's .meta beside the slot (pk_states.cpp)
+            with open(os.path.join(root, st_rel + ".meta"), "w") as f:
+                f.write("end=1\n")
         return S.run(name, script, prepared=True)
 
     def files(res):
@@ -4727,11 +4730,13 @@ def t_old_states(S):
 
     d = interrupted("old_states_delete",
                     "60:down\n+60:square\n+10:cross\n+40:shot=deleted.png\n"
-                    "+10:quit\n")
+                    "+10:quit\n", meta=True)
     S.check(d.rc == 0, "deleting ran (rc %s)" % d.rc)
     S.check(d.has(r"state_delete slot=2 file=") and files(d) == (False, False),
             "SQUARE then X on the card deletes the slot: neither the state "
             "nor its .old is left (files %s)" % (files(d),))
+    S.check(not os.path.exists(os.path.join(d.root, st_rel + ".meta")),
+            "...and no .meta is left naming the empty slot")
 
     # Deleting the game's last state empties the shelf: it closes once the
     # deletion is read back, and X then plays the game itself.
@@ -4911,7 +4916,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              set_up(8) + "+10:cross\n+20:shot=list.png\n"
+              set_up(9) + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -5589,8 +5594,8 @@ def t_display_rows(S):
     """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
     saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
     grid."""
-    # browser Settings opens on Theme: 17 DOWN to Screen size, 7 more to Grid strength
-    walk = "60:start\n" + "+8:down\n" * 24 + "+20:shot=grid.png\n"
+    # browser Settings opens on Theme: 18 DOWN to Screen size, 7 more to Grid strength
+    walk = "60:start\n" + "+8:down\n" * 25 + "+20:shot=grid.png\n"
     r = S.run("display_rows", walk + "+4:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)

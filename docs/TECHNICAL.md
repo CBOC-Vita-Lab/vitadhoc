@@ -1055,6 +1055,26 @@ full, `X` external), with frame, REG_PC and the count of RAM translations the
 full-flush build has made: the files of an off and an on run must be identical.
 `GPSP_JCTR_LOG=file` writes the 16 counters at the first lookup of each frame.
 
+**Worst-frame counters and `vm_sync_batch` (P2, 13 Nov 2026).** Each window the
+app also logs `EVT vita_jit_worst frame= demand= spec= syncs= sync_us= sync_kb=
+xlat_us= xlat_pages= | win frames= demand= spec= syncs= sync_us= xlat_us=
+xlat_pages= pages_total= [cap=<gamepak_cap_reason>, first line only]`: for the
+frame of the window that spent most time translating plus syncing, the blocks
+translated because the guest asked (demand, `translate_depth` 1) vs because an
+exit pointed at them (spec, depth >= 2), the publish syncs and their time, the
+time of the outermost translations and the ROM pages they pulled in; then the
+window's totals. Touched only on the translating path. `vm_sync_batch = 0|1`
+(vita.ini, default 1; twins `GPSP_VM_SYNC_BATCH`) records the ranges of one
+publish (new ROM code, new RAM code, re-pointed links) and issues them at the
+end of the publish, sorted and merged when less than 2 KiB apart. Syncs were
+already one per top-level lookup (WP1 above), so this only merges neighbours:
+twin counts are identical on/off on Mario Golf, Golden Sun and Minish Cap
+(1070/1070 syncs in the first window), audio CRC identical. What it cannot do
+is fewer syncs than lookups: in the worst frames the syncs equal the demand
+blocks (Mario Golf 63 syncs for 63 demand blocks, Golden Sun 138/138).
+Twin (x86, 1500 frames), worst frame demand/spec blocks: Mario Golf 63/266,
+Golden Sun 138/152, Minish Cap 52/60; whole windows 690/1188, 828/894, 340/632.
+
 **WP3: indirect-branch dispatch cache (`GPSP_DCACHE`, ARM back end).**
 `arm_stub.S`'s indirect-branch stubs (`arm_indirect_branch_arm/_thumb` and the
 same-mode paths of the `_dual_` ones: `bx lr`, `pop {pc}`, `ldr pc`, `mov pc`)

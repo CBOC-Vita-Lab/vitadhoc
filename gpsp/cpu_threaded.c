@@ -39,6 +39,7 @@ u32 smc_window_violations;
 #include "gpsp_profile.h"   /* named build profiles + illegal-flag rejection */
 #if defined(VITA)
 #include <psp2/kernel/sysmem.h>
+#include <psp2/kernel/processmgr.h>   /* sceKernelGetProcessTimeLow (jd_*) */
 #include <stdio.h>
 #elif defined(PS2)
 #include <kernel.h>
@@ -314,6 +315,97 @@ u32 gpsp_jit_counters(u32 *out, u32 n)
   return JCTR_N;
 }
 
+/* WORST-FRAME DIAGNOSTIC (vita_jit_worst EVT line, gpsp_jit_worst_line).
+ * Per GBA frame: blocks translated because the guest asked for them (demand,
+ * translate_depth 1) vs because a block's exit pointed at them (speculative,
+ * depth >= 2), publish syncs and the microseconds in them, the microseconds
+ * the outermost translations took, and the ROM pages the translations pulled
+ * in.  Everything is touched only on the translating path (a few adds per
+ * block, two clock reads per top-level translation and per sync), never on an
+ * execution path or in a lookup that hits, so an idle game pays nothing.  A
+ * frame is closed when the first event of the next one arrives; the window
+ * keeps the frame with the most time (translation + sync), its own totals,
+ * and is emptied when the frontend reads it. */
+#if defined(VITA)
+#define JD_NOW_US() ((u32)sceKernelGetProcessTimeLow())
+#elif defined(PSP)
+#define JD_NOW_US() ((u32)sceKernelGetSystemTimeLow())
+#else
+#include <time.h>
+static u32 jd_now_us(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (u32)(ts.tv_sec * 1000000u + ts.tv_nsec / 1000u);
+}
+#define JD_NOW_US() jd_now_us()
+#endif
+typedef struct {
+  u32 frame, demand, spec, syncs, sync_us, sync_bytes, xlat_us, pages, tops;
+} jd_frame_t;
+static jd_frame_t jd_cur, jd_worst;
+static u32 jd_win_demand, jd_win_spec, jd_win_syncs, jd_win_sync_us,
+           jd_win_xlat_us, jd_win_pages, jd_win_frames;
+static u32 jd_cap_told;
+static u32 jd_xlat_t0, jd_pages0;
+static inline void jd_close(void)
+{
+  u32 cost = jd_cur.xlat_us + jd_cur.sync_us;
+  if (!jd_cur.demand && !jd_cur.spec && !jd_cur.syncs)
+    return;
+  jd_win_frames++;
+  jd_win_demand += jd_cur.demand;  jd_win_spec += jd_cur.spec;
+  jd_win_syncs += jd_cur.syncs;    jd_win_sync_us += jd_cur.sync_us;
+  jd_win_xlat_us += jd_cur.xlat_us; jd_win_pages += jd_cur.pages;
+  if (cost >= jd_worst.xlat_us + jd_worst.sync_us)
+    jd_worst = jd_cur;
+}
+static inline jd_frame_t *jd_frame(void)
+{
+  if (jd_cur.frame != frame_counter) {
+    jd_close();
+    memset(&jd_cur, 0, sizeof(jd_cur));
+    jd_cur.frame = frame_counter;
+  }
+  return &jd_cur;
+}
+#define JD_BLOCK(depth) do { jd_frame_t *f_ = jd_frame();                     \
+  if ((depth) <= 1) f_->demand++; else f_->spec++; } while (0)
+#define JD_SYNC_BEGIN() u32 jd_t0_ = JD_NOW_US()
+#define JD_SYNC_END(b, e) do { jd_frame_t *f_ = jd_frame(); f_->syncs++;      \
+  f_->sync_bytes += (u32)((char *)(e) - (char *)(b));                         \
+  f_->sync_us += JD_NOW_US() - jd_t0_; } while (0)
+/* Fills buf with one EVT body for the window just ended and starts the next
+ * (the frontend calls it once per window; main_vita.c).  Returns its length,
+ * 0 when nothing was translated this window. */
+extern u32 gamepak_page_loads;
+extern const char *gamepak_cap_reason;
+u32 gpsp_jit_worst_line(char *buf, u32 cap)
+{
+  int n;
+  jd_close();
+  memset(&jd_cur, 0, sizeof(jd_cur));
+  jd_cur.frame = ~0u;
+  if (!jd_win_frames) {
+    memset(&jd_worst, 0, sizeof(jd_worst));
+    return 0;
+  }
+  n = snprintf(buf, cap,
+    "vita_jit_worst frame=%u demand=%u spec=%u syncs=%u sync_us=%u "
+    "sync_kb=%u xlat_us=%u xlat_pages=%u | win frames=%u demand=%u spec=%u "
+    "syncs=%u sync_us=%u xlat_us=%u xlat_pages=%u pages_total=%u%s%s",
+    jd_worst.frame, jd_worst.demand, jd_worst.spec, jd_worst.syncs,
+    jd_worst.sync_us, jd_worst.sync_bytes >> 10, jd_worst.xlat_us,
+    jd_worst.pages, jd_win_frames, jd_win_demand, jd_win_spec, jd_win_syncs,
+    jd_win_sync_us, jd_win_xlat_us, jd_win_pages, gamepak_page_loads,
+    jd_cap_told ? "" : " cap=", jd_cap_told ? "" : gamepak_cap_reason);
+  jd_cap_told = 1;
+  memset(&jd_worst, 0, sizeof(jd_worst));
+  jd_win_demand = jd_win_spec = jd_win_syncs = jd_win_sync_us =
+    jd_win_xlat_us = jd_win_pages = jd_win_frames = 0;
+  return n > 0 ? (u32)n : 0;
+}
+
 #ifdef JCTR_DUMP   /* twin diagnostic: totals at exit, to stderr */
 #include <stdio.h>
 static void __attribute__((destructor)) jctr_dump(void)
@@ -485,7 +577,9 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #elif defined(VITA)
   void platform_cache_sync(void *baseaddr, void *endptr) {
+    JD_SYNC_BEGIN();
     sceKernelSyncVMDomain(sceBlock, baseaddr, ((char*)endptr) - ((char*)baseaddr) + 64);
+    JD_SYNC_END(baseaddr, endptr);
   }
 #elif defined(_3DS)
   #include "3ds/3ds_utils.h"
@@ -494,7 +588,9 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #elif defined(ARM_ARCH) || defined(ARM64_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
+    JD_SYNC_BEGIN();
     __clear_cache(baseaddr, endptr);
+    JD_SYNC_END(baseaddr, endptr);
   }
 #elif defined(MIPS_ARCH)
   void platform_cache_sync(void *baseaddr, void *endptr) {
@@ -503,8 +599,83 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
   }
 #else
   /* x86 CPUs have icache consistency checks */
-  void platform_cache_sync(void *baseaddr, void *endptr) {}
+  void platform_cache_sync(void *baseaddr, void *endptr) {
+    JD_SYNC_BEGIN();
+    JD_SYNC_END(baseaddr, endptr);   /* counts only: the twin's sync count */
+  }
 #endif
+
+/* VM_SYNC_BATCH (vita.ini vm_sync_batch, default 1; 0 = the old behaviour,
+ * one platform_cache_sync per range, in the order they were found).
+ *
+ * A lookup that translated something publishes up to three kinds of range
+ * before the dispatcher may run any of it: the new ROM code, the new RAM code
+ * and the re-pointed links of kept RAM blocks (up to 16 ranges).  Each used to
+ * be its own kernel call (sceKernelSyncVMDomain on the Vita).  With the switch
+ * on, the ranges are only recorded here and issued together at the END of the
+ * publish (VMS_FLUSH, still inside the lookup, so before any of the code can
+ * run): sorted by address and merged when the gap between two is at most
+ * VMS_GAP bytes, so a patch beside the new code costs no extra call.  A merged
+ * call covers a few bytes that were already synced, which is harmless; it
+ * never reaches outside the translation caches because a gap lies between two
+ * ranges that are both inside them.  Nothing is deferred past the lookup:
+ * every path that publishes (translate_icache_sync and the ranged ARM variant;
+ * smcr_patch_sync is only called from them, just before their VMS_FLUSH) ends
+ * in VMS_FLUSH, and a full table is flushed on the spot.  Twins:
+ * GPSP_VM_SYNC_BATCH=0/1. */
+#define VMS_MAX 20
+#define VMS_GAP 2048u
+u32 vm_sync_batch = 1;
+static u8 *vms_lo[VMS_MAX], *vms_hi[VMS_MAX];
+static u32 vms_n;
+void gpsp_vm_sync_batch_set(u32 on) { vm_sync_batch = on ? 1 : 0; }
+static void __attribute__((unused)) vms_flush(void)
+{
+  u32 i, j;
+  if (!vms_n)
+    return;
+  /* insertion sort by start: at most VMS_MAX entries */
+  for (i = 1; i < vms_n; i++) {
+    u8 *l = vms_lo[i], *h = vms_hi[i];
+    for (j = i; j && vms_lo[j - 1] > l; j--) {
+      vms_lo[j] = vms_lo[j - 1];
+      vms_hi[j] = vms_hi[j - 1];
+    }
+    vms_lo[j] = l;
+    vms_hi[j] = h;
+  }
+  {
+    u8 *cl = vms_lo[0], *ch = vms_hi[0];
+    u32 n = vms_n;
+    vms_n = 0;                      /* first: platform_cache_sync must not see a stale table */
+    for (i = 1; i < n; i++) {
+      if (vms_lo[i] <= ch + VMS_GAP) {
+        if (vms_hi[i] > ch)
+          ch = vms_hi[i];
+      } else {
+        JCTR_SYNC(cl, ch);
+        platform_cache_sync(cl, ch);
+        cl = vms_lo[i];
+        ch = vms_hi[i];
+      }
+    }
+    JCTR_SYNC(cl, ch);
+    platform_cache_sync(cl, ch);
+  }
+}
+static void __attribute__((unused)) vms_add(void *lo, void *hi)
+{
+  if (vms_n == VMS_MAX)
+    vms_flush();
+  vms_lo[vms_n] = (u8 *)lo;
+  vms_hi[vms_n] = (u8 *)hi;
+  vms_n++;
+}
+#define VMS_SYNC(lo, hi) do {                                                 \
+  if (vm_sync_batch) vms_add((lo), (hi));                                     \
+  else { JCTR_SYNC((lo), (hi)); platform_cache_sync((lo), (hi)); }            \
+} while (0)
+#define VMS_FLUSH() vms_flush()
 
 #ifndef JIT_CODE_DISCIPLINE
 /* The ARM lookup's normal success path keeps the RANGED sync.  The bisection
@@ -516,8 +687,7 @@ struct { u32 rom_pub, ram_pub, calls, lines; } jit_legacy_stats;
  * (Under JIT_CODE_DISCIPLINE the publish point owns this decision.) */
 static void translate_icache_sync_ranged(void) {
     if (last_rom_translation_ptr < rom_translation_ptr) {
-        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
-        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+        VMS_SYNC(last_rom_translation_ptr, rom_translation_ptr);
         last_rom_translation_ptr = rom_translation_ptr;
     }
 #if defined(VITA)
@@ -535,11 +705,11 @@ static void translate_icache_sync_ranged(void) {
         last_ram_translation_ptr = ram_translation_cache;
 #endif
     if (last_ram_translation_ptr < ram_translation_ptr) {
-        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
-        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
+        VMS_SYNC(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
     SMCR_PATCH_SYNC();
+    VMS_FLUSH();
 }
 #endif
 
@@ -614,8 +784,7 @@ void translate_icache_sync() {
           (char *)rom_translation_ptr - (char *)last_rom_translation_ptr);
         sceKernelIcacheInvalidateAll();
 #else
-        JCTR_SYNC(last_rom_translation_ptr, rom_translation_ptr);
-        platform_cache_sync(last_rom_translation_ptr, rom_translation_ptr);
+        VMS_SYNC(last_rom_translation_ptr, rom_translation_ptr);
 #endif
         last_rom_translation_ptr = rom_translation_ptr;
     }
@@ -632,11 +801,11 @@ void translate_icache_sync() {
         last_ram_translation_ptr = ram_translation_cache;
 #endif
     if (last_ram_translation_ptr < ram_translation_ptr) {
-        JCTR_SYNC(last_ram_translation_ptr, ram_translation_ptr);
-        platform_cache_sync(last_ram_translation_ptr, ram_translation_ptr);
+        VMS_SYNC(last_ram_translation_ptr, ram_translation_ptr);
         last_ram_translation_ptr = ram_translation_ptr;
     }
     SMCR_PATCH_SYNC();
+    VMS_FLUSH();
 #endif
 }
 
@@ -3394,18 +3563,30 @@ static bool process_deferred_exits(void)
   return true;
 }
 
-#define XLAT_DEPTH_ENTER()  (translate_depth++)
+#define XLAT_DEPTH_ENTER()                                                    \
+  do {                                                                        \
+    if(!translate_depth) { jd_xlat_t0 = JD_NOW_US();                          \
+                           jd_pages0 = gamepak_page_loads; }                  \
+    translate_depth++;                                                        \
+  } while(0)
 #define XLAT_DEPTH_LEAVE(result)                                              \
   do {                                                                        \
     if((result) && translate_depth == 1)                                      \
       (result) = process_deferred_exits();                                    \
     translate_depth--;                                                        \
+    if(!translate_depth) {                                                    \
+      jd_frame_t *jf_ = jd_frame();                                           \
+      jf_->xlat_us += JD_NOW_US() - jd_xlat_t0;                               \
+      jf_->pages += gamepak_page_loads - jd_pages0;                           \
+      jf_->tops++;                                                            \
+    }                                                                         \
     if(!(result) && !translate_depth)                                         \
       deferred_exit_count = 0;                                                \
   } while(0)
 #else
 #define XLAT_DEPTH_ENTER()       do { } while(0)
 #define XLAT_DEPTH_LEAVE(result) do { } while(0)
+#define translate_depth 1
 #endif
 
 /* ===== SMC_RANGE: self-modifying RAM code without whole-cache flushes =====
@@ -3713,12 +3894,12 @@ static void smcr_patch_sync(void)
   if (!smcr_pmin)
     return;
   if (smcr_pover) {
-    JCTR(11); JCTR_SYNC(smcr_pmin, smcr_pmax);
-    platform_cache_sync(smcr_pmin, smcr_pmax);
+    JCTR(11);
+    VMS_SYNC(smcr_pmin, smcr_pmax);
   } else
     for (i = 0; i < smcr_np; i++) {
-      JCTR(11); JCTR_SYNC(smcr_plo[i], smcr_phi[i]);
-      platform_cache_sync(smcr_plo[i], smcr_phi[i]);
+      JCTR(11);
+      VMS_SYNC(smcr_plo[i], smcr_phi[i]);
     }
   smcr_np = smcr_pover = 0;
   smcr_pmin = smcr_pmax = NULL;
@@ -4227,6 +4408,9 @@ static void smcr_apply(void)
     if (e && *e)
       gpsp_dispatch_cache_set(atoi(e) ? 1 : 0);
 #endif
+    e = getenv("GPSP_VM_SYNC_BATCH");
+    if (e && *e)
+      gpsp_vm_sync_batch_set(atoi(e) ? 1 : 0);
     e = getenv("GPSP_SMC_XTRACE");
     if (e && *e)
       sscanf(e, "%u:%u", &smcr_xtrace_lo, &smcr_xtrace_hi);
@@ -5800,6 +5984,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
   JCTR(0);
+  JD_BLOCK(translate_depth);
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -6144,6 +6329,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
 {
   DRPH_SCOPE(DRPH_XLAT);
   JCTR(1);
+  JD_BLOCK(translate_depth);
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;

@@ -1031,7 +1031,9 @@ void SnesPlayer::wide_apply(int scr_w, int scr_h)
 {
 	int m = pic_wide_margin(&ps_, scr_w, scr_h, SNES_WIDE_MAX_MARGIN);
 	bool want = m > 0 && eff_.wide != 2;
-	if (want && eff_.wide == 0 && pacer_.mode() != PACE_FULL) want = false;
+	/* Owner decision (1.4): the wide view is on by default and never switched off to save time (Auto used to drop it while
+	 * the steady pacer thinned frames). What it costs is held down by degrading its resolution (snes/frontend/wide.*, rungs
+	 * to be added to kLookLadder), and by the blends the look governor gives up first. */
 	if (!want) m = 0;
 	snes_wide_option("auto", eff_.wide == 1 ? 0 : 1);   /* Auto decides per scene; On forces the wide view */
 	if (want == wide_on_ && m == wide_m_) return;

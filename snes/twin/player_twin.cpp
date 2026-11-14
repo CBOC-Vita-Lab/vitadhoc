@@ -786,9 +786,9 @@ static int run_wide_test(const char *rom, const std::string &work)
 		pl->on_change(ROW_PIC_WIDE, 0);
 		frames(rig, 3);
 		EXPECT(pl->wide_active() && pl->wide_margin() == 41);
-		/* Auto while the steady pacer thins frames: off (the pacer's own state is driven by the platform's costs) */
+		/* Auto while the steady pacer thins frames: stays on (owner decision: never switched off to save time) */
 		for (int i = 0; i < 300 && pl->pace_mode() == PACE_FULL; i++) { pl->drawn_cost(60000); frames(rig, 1); }
-		if (pl->pace_mode() == PACE_HALF) { frames(rig, 2); EXPECT(!pl->wide_active()); pl->on_change(ROW_PIC_WIDE, 1); frames(rig, 2); EXPECT(pl->wide_active()); pl->on_change(ROW_PIC_WIDE, 0); }
+		if (pl->pace_mode() == PACE_HALF) { frames(rig, 2); EXPECT(pl->wide_active()); pl->on_change(ROW_PIC_WIDE, 2); frames(rig, 2); EXPECT(!pl->wide_active()); pl->on_change(ROW_PIC_WIDE, 0); frames(rig, 2); EXPECT(pl->wide_active()); }
 		/* back to full pacing */
 		for (int i = 0; i < 2000 && pl->pace_mode() != PACE_FULL; i++) { pl->drawn_cost(3000); frames(rig, 1); }
 		frames(rig, 3);

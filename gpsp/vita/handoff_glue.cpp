@@ -6,15 +6,7 @@
 #include "handoff_glue.h"
 #include "plat.h"
 #include "../../playerkit/src/pk_handoff.cpp"
-/* pk_cores' planner gives the WRONG answer when this file is compiled at -O3
- * (GCC, as the app's C++ is): the main app's render thread stays on cores
- * 1+2 in the four-core plan instead of the extra core (-O0/-O1/-O2 are
- * right; no UBSan or -Wall finding).  Compiled at -O2 here until playerkit
- * is looked at; the golden tests run at -O1. */
-#pragma GCC push_options
-#pragma GCC optimize("O2")
 #include "../../playerkit/src/pk_cores.cpp"
-#pragma GCC pop_options
 #include "fe_evt.h"
 
 #include <new>
@@ -502,12 +494,26 @@ extern "C" int core4_on_core3(int role, int index)
    return s && s->on_core3 ? 1 : 0;
 }
 
+/* One watchdog slot per role/index: a restart reuses it. */
+static int g_c4wd[8][4];
+static bool g_c4wd_init;
+
 extern "C" int core4_wd_add(const char *name, int role, int index)
 {
    int w;
-   if (!core4_on_core3(role, index))
+   if (!g_c4 || !core4_on_core3(role, index))
       return -1;
-   w = g_c4->watchdog().add(name);
+   if (!g_c4wd_init)
+   {
+      memset(g_c4wd, -1, sizeof(g_c4wd));
+      g_c4wd_init = true;
+   }
+   if (role < 0 || role >= 8 || index < 0 || index >= 4)
+      return -1;
+   w = g_c4wd[role][index];
+   if (w < 0)
+      w = g_c4->watchdog().add(name);
+   g_c4wd[role][index] = w;
    if (w >= 0)
    {
       g_c4->watchdog().watch(w, true);
@@ -546,10 +552,24 @@ extern "C" void core4_set_thread(int role, int index, int thid)
    }
 }
 
+/* A stalled helper or the render thread only asks (below); the emulator
+ * thread, in core4_poll, does the moving. */
+static volatile int g_c4req;
+static const char *volatile g_c4why;
+
 extern "C" int core4_poll(uint64_t now_us)
 {
    if (!g_c4 || !g_c4->core3_usable())
       return 0;
+   if (__atomic_exchange_n(&g_c4req, 0, __ATOMIC_SEQ_CST))
+   {
+      const char *why = g_c4why ? g_c4why : "stalled";
+      if (g_c4->mark_lost(why, now_us))
+      {
+         c4_reapply(why);
+         return 1;
+      }
+   }
    g_c4->watchdog().ref_beat();
    if (!g_c4->poll_watchdog(now_us))
       return 0;
@@ -559,14 +579,10 @@ extern "C" int core4_poll(uint64_t now_us)
 
 extern "C" int core4_mark_lost(const char *why)
 {
-#ifdef __vita__
-   const uint64_t now = sceKernelGetProcessTimeWide();
-#else
-   const uint64_t now = plat_time_us();
-#endif
-   if (!g_c4 || !g_c4->mark_lost(why, now))
+   if (!g_c4)
       return 0;
-   c4_reapply(why);
+   g_c4why = why;                     /* a string literal at every caller */
+   __atomic_store_n(&g_c4req, 1, __ATOMIC_SEQ_CST);
    return 1;
 }
 

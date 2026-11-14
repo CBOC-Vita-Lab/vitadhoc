@@ -2434,7 +2434,7 @@ static void ho_window_check(unsigned vm, unsigned vp, unsigned late_delta)
       ho_set_enabled(0);
       g_ho_want = 0;
       fe_evt("handoff_fallback reason=%s gxm_errors=%u vc_miss=%u/%u "
-             "strikes=%d: back on the 1.3 path for this session", why,
+             "strikes=%d: back on the 1.3 path for this game", why,
              g_ho_gxm_errs, vm, vp, g_ho_strikes);
    }
 }

@@ -121,8 +121,8 @@ static int rt_entry(SceSize args, void *argp)
          break;
       rt_stall();
       rt_work();
-      core4_beat(g_wd);
-      core4_busy(g_wd, 0);
+      core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
+      core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
       sceKernelSignalSema(g_done, 1);
    }
    return 0;
@@ -143,7 +143,7 @@ static int rt_start(void)
    /* On the extra core (core4_init proved it): the thread owes the emulator
     * a picture a frame, so the watchdog watches it (a trip moves it back to
     * the user cores); a plain three-core run gets no slot, no change. */
-   g_wd = core4_wd_add("render", C4_RENDER, 0);
+   __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);
    if (g_go < 0 || g_done < 0 || g_th < 0 ||
        sceKernelStartThread(g_th, 0, NULL) < 0)
       return -1;
@@ -151,7 +151,7 @@ static int rt_start(void)
    return 0;
 }
 
-static void rt_post(void) { core4_busy(g_wd, 1); sceKernelSignalSema(g_go, 1); }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); sceKernelSignalSema(g_go, 1); }
 /* 1: the picture is done; 0: `us` went by first (the semaphore is not
  * consumed: the thread's signal will still be there). */
 static int rt_wait_to(unsigned us)
@@ -194,8 +194,8 @@ static void *rt_entry(void *arg)
          break;
       rt_stall();
       rt_work();
-      core4_beat(g_wd);
-      core4_busy(g_wd, 0);
+      core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
+      core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
       sem_post(&g_done);
    }
    return NULL;
@@ -205,12 +205,12 @@ static int rt_start(void)
 {
    if (sem_init(&g_go, 0, 0) != 0 || sem_init(&g_done, 0, 0) != 0)
       return -1;
-   g_wd = core4_wd_add("render", C4_RENDER, 0);   /* (the twin's fake core) */
+   __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);   /* (the twin's fake core) */
    core4_set_thread(C4_RENDER, 0, 0);
    return pthread_create(&g_th, NULL, rt_entry, NULL) == 0 ? 0 : -1;
 }
 
-static void rt_post(void) { core4_busy(g_wd, 1); sem_post(&g_go); }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); sem_post(&g_go); }
 static int rt_wait_to(unsigned us)
 {
    struct timespec ts;
@@ -272,8 +272,9 @@ static int rt_collect(unsigned us)
       /* On the extra core, a thread that does not answer is the system
        * taking the core back: say so, and the thread is moved to the user
        * cores (handoff_glue.cpp), where it finishes this picture. */
-      if (g_wd >= 0 && core4_mark_lost("render thread stalled"))
-         g_wd = -1;
+      if (__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST) >= 0 &&
+          core4_mark_lost("render thread stalled"))
+         __atomic_store_n(&g_wd, -1, __ATOMIC_SEQ_CST);
       return 0;
    }
    g_posted = 0;

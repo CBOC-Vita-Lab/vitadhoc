@@ -341,6 +341,7 @@ typedef struct
    int next, done;             /* atomics: stripes claimed, finished      */
    int state;                  /* atomic: ST_*                            */
    int inside;                 /* atomic: threads looking at the job      */
+   int dead;                   /* atomic: a helper never let go (teardown gave up); no more jobs, textures stay */
    int scaled_px;              /* atomic: source pixels this job scaled   */
 
    /* The factor's history. */
@@ -603,7 +604,7 @@ static int claim_and_run(int si)
    return ran;
 }
 
-static int g_wd_up2 = -1;      /* watchdog slot of helper 2 (extra core) */
+static int g_wd_up2 = -1;      /* watchdog slot of helper 2 (extra core); atomic access */
 
 /* `wd`: the watchdog slot to beat once per stripe (-1: none). */
 static void work_all(int wd)
@@ -641,10 +642,10 @@ static int helper_entry(SceSize args, void *argp)
       if (g_pool_quit)
          break;
       if (i == 2)
-         core4_busy(g_wd_up2, 1);
-      work_all(i == 2 ? g_wd_up2 : -1);
+         core4_busy(A_LOAD(g_wd_up2), 1);
+      work_all(i == 2 ? A_LOAD(g_wd_up2) : -1);
       if (i == 2)
-         core4_busy(g_wd_up2, 0);
+         core4_busy(A_LOAD(g_wd_up2), 0);
    }
    return 0;
 }
@@ -654,13 +655,17 @@ static void pool_start(void)
    int i;
    g_pool = 0;
    g_async = 1;
-   g_wd_up2 = -1;
+   A_STORE(g_wd_up2, -1);
    for (i = 0; i < UP_HELPERS; i++)
    {
       if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
          break;                  /* the third helper is the extra core's */
       if (i == 2)
-         g_wd_up2 = core4_wd_add("up2", C4_UPSCALE, 2);
+      {
+         A_STORE(g_wd_up2, core4_wd_add("up2", C4_UPSCALE, 2));
+         if (A_LOAD(g_wd_up2) < 0)
+            break;               /* nothing would watch it: do not start it */
+      }
       /* One wake-up pending is enough: a helper that is told twice finds
        * nothing the second time. */
       g_go[i] = sceKernelCreateSema("gbadhoc_up_go", 0, 0, 1, NULL);
@@ -690,17 +695,25 @@ static void pool_go(void)
       sceKernelSignalSema(g_go[i], 1);   /* (fails when one is pending: fine) */
 }
 
-static void pool_stop(void)
+/* 1 when every helper ended; 0 when one did not within a second (it is left
+ * running: the caller must not free what it may still touch). */
+static int pool_stop(void)
 {
-   int i;
+   int i, all = 1;
    g_pool_quit = 1;
    for (i = 0; i < g_pool; i++)
    {
+      SceUInt timeout = 1000000u;
       sceKernelSignalSema(g_go[i], 1);
-      sceKernelWaitThreadEnd(g_th[i], NULL, NULL);
+      if (sceKernelWaitThreadEnd(g_th[i], NULL, &timeout) < 0)
+      {
+         all = 0;
+         continue;
+      }
       sceKernelDeleteThread(g_th[i]);
       sceKernelDeleteSema(g_go[i]);
    }
+   return all;
 }
 
 static void nap(void) { sceKernelDelayThread(200); }
@@ -733,10 +746,10 @@ static void *helper_entry(void *p)
       if (g_pool_quit)
          break;
       if (i == 2)
-         core4_busy(g_wd_up2, 1);
-      work_all(i == 2 ? g_wd_up2 : -1);
+         core4_busy(A_LOAD(g_wd_up2), 1);
+      work_all(i == 2 ? A_LOAD(g_wd_up2) : -1);
       if (i == 2)
-         core4_busy(g_wd_up2, 0);
+         core4_busy(A_LOAD(g_wd_up2), 0);
    }
    return NULL;
 }
@@ -745,7 +758,7 @@ static void pool_start(void)
 {
    int i;
    g_pool = 0;
-   g_wd_up2 = -1;
+   A_STORE(g_wd_up2, -1);
    g_async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
    if (getenv("GBADHOC_UPSCALE_SERIAL"))
    {
@@ -757,7 +770,11 @@ static void pool_start(void)
       if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
          break;                  /* the third helper is the extra core's */
       if (i == 2)
-         g_wd_up2 = core4_wd_add("up2", C4_UPSCALE, 2);
+      {
+         A_STORE(g_wd_up2, core4_wd_add("up2", C4_UPSCALE, 2));
+         if (A_LOAD(g_wd_up2) < 0)
+            break;               /* nothing would watch it: do not start it */
+      }
       g_idx[i] = i;
       sem_init(&g_go[i], 0, 0);
       if (pthread_create(&g_th[i], NULL, helper_entry, &g_idx[i]) != 0)
@@ -776,7 +793,7 @@ static void pool_go(void)
       sem_post(&g_go[i]);
 }
 
-static void pool_stop(void)
+static int pool_stop(void)
 {
    int i;
    g_pool_quit = 1;
@@ -786,6 +803,7 @@ static void pool_stop(void)
       pthread_join(g_th[i], NULL);
       sem_destroy(&g_go[i]);
    }
+   return 1;
 }
 
 static void nap(void) { sched_yield(); }
@@ -1055,11 +1073,6 @@ static int slot_wait_to(up_slot *S, unsigned us)
       if (wall_us() - t0 >= us)
       {
          A_ADD(g_wait_timeouts, 1);
-         /* A helper stuck inside a stripe on the extra core: the system
-          * took the core back.  Moved to a user core it finishes the
-          * stripe (which cannot be run twice); the next wait finds it done. */
-         if (A_LOAD(S->inside) && g_wd_up2 >= 0 && core4_mark_lost("upscale helper stalled"))
-            g_wd_up2 = -1;
          return 0;
       }
       nap();
@@ -1067,29 +1080,39 @@ static int slot_wait_to(up_slot *S, unsigned us)
    return 1;
 }
 
-/* Teardown: see UP_TEARDOWN_TURNS. */
-static void slot_wait(up_slot *S)
+/* Teardown: see UP_TEARDOWN_TURNS.  1 = nobody is on the slot; 0 = a helper
+ * never let go, the slot is DEAD: it takes no more jobs, and its textures
+ * and buffers must not be freed (the helper may still write into them). */
+static int slot_wait(up_slot *S)
 {
    int turn;
+   if (A_LOAD(S->dead))
+      return 0;
    for (turn = 0; turn < UP_TEARDOWN_TURNS; turn++)
       if (slot_wait_to(S, UP_WAIT_US))
-         return;
+         return 1;
    A_ADD(g_wait_abandoned, 1);
+   A_STORE(S->dead, 1);
+   fe_evt("up_slot_dead slot=%d: a helper never let go; its textures are kept",
+          (int)(S - g_slot));
+   return 0;
 }
 
-void upscale_forget(int slot)
+int upscale_forget(int slot)
 {
    up_slot *S;
    if (slot < 0 || slot >= UPSCALE_SLOTS)
-      return;
+      return 1;
    S = &g_slot[slot];
-   slot_wait(S);
+   if (!slot_wait(S))
+      return 0;
    A_STORE(S->state, ST_IDLE);
    S->kind = UPSCALE_NONE;       /* the next picture starts from nothing */
    S->out[0] = S->out[1] = NULL;
    S->late_run = S->fast_run = S->fast_need = 0;
    S->hot = 0;
    A_STORE(S->step_down, 0);
+   return 1;
 }
 
 /* ---- a picture that scrolled ---------------------------------------------
@@ -1289,7 +1312,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
        out_pitch < (size_t)f * w * sizeof(uint32_t))
       return -1;
    S = &g_slot[slot];
-   if (A_LOAD(S->state) == ST_BUSY)
+   if (A_LOAD(S->dead) || A_LOAD(S->state) == ST_BUSY)
    {
       A_ADD(g_st.dropped, 1);
       upscale_gov_miss();
@@ -1303,9 +1326,22 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
     * (claim_and_run): a few instructions, almost never seen. */
    {
       int spins = 0;
+      unsigned t0 = 0;
       while (A_LOAD(S->inside))
-         if (++spins > 200)
-            nap();
+      {
+         if (++spins <= 200)
+            continue;
+         if (!t0)
+            t0 = wall_us();
+         else if (wall_us() - t0 >= UP_WAIT_US)
+         {
+            /* a helper that never leaves the slot: this picture is dropped */
+            A_ADD(g_wait_timeouts, 1);
+            A_ADD(g_st.dropped, 1);
+            return 0;
+         }
+         nap();
+      }
    }
 
    /* ---- the slot's buffers ------------------------------------------------ */
@@ -1746,12 +1782,16 @@ void upscale_bench(const uint16_t *src, unsigned w, unsigned h,
 void upscale_shutdown(void)
 {
    int i;
+   int clean = 1;
    for (i = 0; i < UPSCALE_SLOTS; i++)
-      slot_wait(&g_slot[i]);
-   if (g_pool > 0)
-      pool_stop();
+      if (!slot_wait(&g_slot[i]))
+         clean = 0;
+   if (g_pool > 0 && !pool_stop())
+      clean = 0;
    g_pool = -1;
    g_pool_quit = 0;
+   if (!clean)
+      return; /* a helper may still touch the buffers: leak them, never free */
    for (i = 0; i < UPSCALE_SLOTS; i++)
    {
       free(g_slot[i].cur);

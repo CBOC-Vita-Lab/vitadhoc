@@ -114,7 +114,9 @@ int upscale_busy(int slot);
 /* Wait for the slot's picture in the works, then forget everything about
  * the slot's textures and its last picture: before the textures are
  * destroyed or the picture's size or filter changes. */
-void upscale_forget(int slot);
+/* 1 = done; 0 = a helper never let go (the slot is dead): the caller must NOT
+ * free the slot's textures. */
+int upscale_forget(int slot);
 
 /* ---- the governor ----------------------------------------------------------
  * Keep full speed's other half: when frames keep missing the display while

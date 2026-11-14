@@ -748,6 +748,7 @@ struct VitaHandoffSys : pk::HandoffSys {
 	}
 };
 static VitaHandoffSys g_hd_sys;
+static int clampi_(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static SceUID g_hd_thread = -1;
 static int g_draw_core = 1;
 
@@ -1107,6 +1108,11 @@ int main(int argc, char **argv)
 	logf_("threads=%d (apu %d ppu %d spin %d)\n", snes_host_threads_active(), want_apu, want_ppu, spin);
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 	g_pl->apply_start_mode();
+	/* the wide view's cost ladder (threads.ini): wide_policy 1 (default) steps the composed margin down when the compose time is too high,
+	 * 0 keeps the full margin; wide_cost_us (default 9000) is the smoothed compose time over which a rung is given up */
+	snes_wide_option("policy", ini_int(tini, "wide_policy", 1) != 0 ? 1 : 0);
+	snes_wide_option("cost_us", clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
+	logf_("wide ladder: policy=%d cost_us=%d\n", ini_int(tini, "wide_policy", 1) != 0, clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
 	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;

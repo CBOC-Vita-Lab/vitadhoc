@@ -1083,6 +1083,9 @@ void SnesPlayer::wide_watch(uint64_t now_us)
 		     (unsigned long long) c.frames, (unsigned long long) c.frames_wide, (unsigned long long) c.frames_ambient, (unsigned long long) c.frames_crossfade,
 		     (unsigned long long) c.frames_fallback, (unsigned long long) c.fb_nothing_drawn, (unsigned long long) c.fb_profile_off, (unsigned long long) c.fb_setup,
 		     (unsigned long long) c.auto_switches, (unsigned long long) c.scenes, (int) c.coverage_pct, c.auto_wide ? "wide" : "ambient", (unsigned) c.map_cells);
+		/* the cost ladder (snes/frontend/wide.h): rung 0 full margin .. 3 floor, the smoothed compose time, frames each side showed the ambient frame */
+		logf("wide ladder: rung=%d compose_us=%u steps=%u side_amb_frames L=%u R=%u chip=%d\n", c.rung, (unsigned) c.compose_us, (unsigned) c.rung_changes,
+		     (unsigned) c.frames_side_amb[0], (unsigned) c.frames_side_amb[1], c.chip);
 	}
 	if (!wide_on_ && !snes_wide_map_dirty()) return;
 	if (now_us - wide_last_us_ < 30u * 1000000u) return;

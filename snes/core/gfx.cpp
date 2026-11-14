@@ -233,7 +233,7 @@ void S9xStartScreenRefresh (void)
 		else
 		{
 			S9xClearZBuffers(GFX.ZBuffer, GFX.SubZBuffer);
-			S9xWideRenderFrameStart(g_s9x_wide_fm);
+			S9xWideRenderFrameStart(g_s9x_wide_fco ? 0 : g_s9x_wide_fm);
 		}
 	}
 
@@ -2614,7 +2614,10 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 	W.m = margin;
 	W.bad = false;
 	if (!margin)
+	{
+		W.h = 0;
 		return;
+	}
 	if (margin > SW_MAXM)
 		W.m = margin = SW_MAXM;
 	wide_alloc();
@@ -2822,7 +2825,8 @@ extern "C" void S9xWideFillView (struct SWideView *v)
 	memset(v, 0, sizeof(*v));
 	v->m = W.m;
 	v->h = W.h ? W.h : PPU.ScreenHeight;
-	v->ok = !W.bad;
+	// no passes this frame (centre only): hi-res and interlaced pictures are told by the rendered size
+	v->ok = !W.bad && (W.m || (IPPU.RenderedScreenWidth <= 256 && IPPU.RenderedScreenHeight <= 240));
 	v->line = W.line;
 	for (int p = 0; p < SW_NPASS; p++)
 	{

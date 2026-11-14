@@ -749,6 +749,17 @@ struct VitaHandoffSys : pk::HandoffSys {
 };
 static VitaHandoffSys g_hd_sys;
 static SceUID g_hd_thread = -1;
+static int g_draw_core = 1;
+
+/* CPU time a thread has used so far, in ms (the kernel's own count, SceKernelThreadInfo.runClocks), or -1 */
+static double thread_cpu_ms(SceUID id)
+{
+	SceKernelThreadInfo ti;
+	memset(&ti, 0, sizeof ti);
+	ti.size = sizeof ti;
+	if (id < 0 || sceKernelGetThreadInfo(id, &ti) < 0) return -1.0;
+	return ti.runClocks / 1000.0;
+}
 static bool g_hd_ok;                                   /* the drawing thread runs */
 static std::atomic<unsigned> g_hd_drawn(0), g_hd_failed(0), g_hd_draw_us(0);   /* this second, read and cleared by main */
 static pk::SpinLock g_hd_lk;                           /* guards the notice snapshot */
@@ -820,7 +831,9 @@ static void hd_start(const char *tini, double frame_hz)
 {
 	if (!g_pl->smooth_handoff()) { logf_("handoff: off (setting)\n"); return; }
 	if (!g_pipe.start(&g_hd_sys, 2, true, 16683, (uint32_t) (1e6 / frame_hz + 0.5))) { logf_("handoff: NOT started (mailbox)\n"); return; }
+	/* threads.ini draw_core: 0, 1 (default) or 2, the core the drawing thread runs on */
 	const int core = ini_int(tini, "draw_core", 1);
+	g_draw_core = core == 0 ? 0 : core == 2 ? 2 : 1;
 	const int prio = prio_ok(ini_int(tini, "draw_prio", 0x60), 0x60);
 	const unsigned mask = core == 0 ? SCE_KERNEL_CPU_MASK_USER_0 : core == 2 ? SCE_KERNEL_CPU_MASK_USER_2 : SCE_KERNEL_CPU_MASK_USER_1;
 	g_hd_thread = sceKernelCreateThread("snes_draw", hd_draw_thread, prio ? prio : 0x60, 0x20000, 0, mask, NULL);
@@ -1390,6 +1403,17 @@ int main(int argc, char **argv)
 				missed_refr = 0;
 			}
 			snes_host_thread_stats(&st1);
+			{
+				/* the per-thread CPU census: ms of CPU each thread used in this second (the kernel's run time). The PPU and APU workers
+				 * are made inside the core, so for them the core's own busy time is given (marked b). 2 cores: the sum shows the load. */
+				static SceUID s_main = sceKernelGetThreadId();
+				static double prev[4] = { 0, 0, 0, 0 };
+				const SceUID ids[4] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread };
+				double cur[4], d[4];
+				for (int k = 0; k < 4; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
+				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f ppu_b=%.0f apu_b=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3],
+				    (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6, g_draw_core);
+			}
 			double fr = frames_run ? frames_run : 1;
 			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, drawn / dt, frames_run / dt,
 			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, g_pace.fill_frames());

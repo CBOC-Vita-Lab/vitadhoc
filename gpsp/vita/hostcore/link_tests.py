@@ -825,6 +825,8 @@ def t_three_sessions(T):
     """Three sessions in one boot: host, end, join, end, host again."""
     T.begin("three_sessions")
     # 1: A hosts, B joins, A ends.  2: B hosts, A joins, B ends.  3: as 1.
+    # (The second and third are given ~20 s: the first hash check comes at 240
+    # frames, and a guest plays only some 24 frames a second.)
     # An emulated ARM twin on a busy machine spends most of a short session
     # setting it up: each one runs e seconds longer there, so that every
     # session reaches at least one hash check.
@@ -832,17 +834,17 @@ def t_three_sessions(T):
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                host(EARLY) + disconnect(16 + e) +
                join_first(26 + e, wait=2.5, shot="join2.png") +
-               shot(34 + e, "second.png") +
-               host(48 + 2 * e) + shot(58 + 3 * e, "third.png") +
-               disconnect(62 + 3 * e) +
-               shot(68 + 3 * e, "after.png") + quit_at(70 + 3 * e))
+               shot(36 + e, "second.png") +
+               host(54 + 2 * e) + shot(64 + 3 * e, "third.png") +
+               disconnect(75 + 3 * e) +
+               shot(81 + 3 * e, "after.png") + quit_at(83 + 3 * e))
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                join_first(EARLY, wait=2.5) +
-               host(21 + e) + disconnect(40 + 2 * e) +
-               join_first(50 + 2 * e, wait=2.5) +
-               shot(58 + 3 * e, "third.png") +
-               shot(68 + 3 * e, "after.png") + quit_at(70 + 3 * e))
-    ra, rb = T.run([a, b], 70 + 3 * e)
+               host(21 + e) + disconnect(47 + 2 * e) +
+               join_first(56 + 2 * e, wait=2.5) +
+               shot(64 + 3 * e, "third.png") +
+               shot(81 + 3 * e, "after.png") + quit_at(83 + 3 * e))
+    ra, rb = T.run([a, b], 83 + 3 * e)
     T.clean(ra, "A")
     T.clean(rb, "B")
     for r, who, roles in ((ra, "A", ["host", "guest", "host"]),
@@ -895,16 +897,20 @@ def gb_verdict(T, r, who, role, save="gblink.gb.sav"):
 def t_wifi_gb(T):
     """Wi-Fi, Game Boy Link Cable: two Game Boys per console, bytes each way."""
     T.begin("wifi_gb")
+    # An emulated ARM twin plays some 5 frames a second on a busy machine,
+    # and the 200 bytes each way need a few hundred frames: it is given
+    # e seconds more before the cable is pulled.
+    e = 14 if T.slow else 0
     a = T.twin("a", T.arch_a, GBLINK, "Alice",
                host(2, "host.png") + shot(11, "linking.png") +
-               press(15, "a", 20) + shot(17, "running.png") +
-               disconnect(26, "session.png") + shot(33, "after.png") +
-               quit_at(35), vita={"link_peek": "C000:2"})
+               press(15, "a", 20) + shot(17 + e, "running.png") +
+               disconnect(26 + e, "session.png") + shot(33 + e, "after.png") +
+               quit_at(35 + e), vita={"link_peek": "C000:2"})
     b = T.twin("b", T.arch_b, GBLINK, "Bob",
-               join_first(4, wait=3) + shot(17, "running.png") +
-               shot(33, "after.png") + quit_at(35),
+               join_first(4, wait=3) + shot(17 + e, "running.png") +
+               shot(33 + e, "after.png") + quit_at(35 + e),
                vita={"link_peek": "C000:2"})
-    ra, rb = T.run([a, b], 35)
+    ra, rb = T.run([a, b], 35 + e)
     T.clean(ra, "A")
     T.clean(rb, "B")
     rooms = rb.evt("link_scan_room")
@@ -1460,18 +1466,21 @@ def t_host_quits(T):
 def lost_run(T, name, how):
     """B is killed (or frozen) mid-session; how long until A says so."""
     T.begin(name)
+    # netdrv gives a silent peer ND_PEER_DEAD_US (20 s) before the link is
+    # called lost: B is struck at 16 s, A says so at about 36 s, and the
+    # frozen B is thawed only after that (at 44 s) to find the link gone.
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
-               host(EARLY) + shot(14, "running.png") + shot(18.5, "waiting.png") +
-               shot(29, "after.png") + quit_at(40))
+               host(EARLY) + shot(14, "running.png") + shot(26, "waiting.png") +
+               shot(52, "after.png") + quit_at(60))
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
-               join_first(EARLY, wait=2.5) + quit_at(40))
+               join_first(EARLY, wait=2.5) + quit_at(60))
     t = {}
 
     def strike():
         t["ok"] = a.wait_log(r"link_running", 5)
         b.signal(signal.SIGKILL if how == "kill" else signal.SIGSTOP)
         t["at"] = time.time()
-        t["seen"] = a.wait_log(r"link_ended ", 30 * T.k)
+        t["seen"] = a.wait_log(r"link_ended ", 40 * T.k)
         t["took"] = time.time() - t["at"]
 
     def revive():
@@ -1479,13 +1488,13 @@ def lost_run(T, name, how):
 
     actions = [(16, strike)]
     if how == "stop":
-        actions.append((32, revive))
-    ra, rb = T.run([a, b], 40, actions)
+        actions.append((44, revive))
+    ra, rb = T.run([a, b], 60, actions)
     T.clean(ra, "A")
     T.check(t.get("ok"), "the session was running when B was struck")
-    T.check(t.get("seen") and t["took"] < 12 * T.k,
+    T.check(t.get("seen") and t["took"] < 28 * T.k,
             "A says the link is lost %.1f s after B %s (netdrv's limit is "
-            "8 s of silence)" % (t.get("took", -1),
+            "20 s of silence)" % (t.get("took", -1),
                                  "was killed" if how == "kill" else "froze"))
     T.check(ra.has(r"link_stall_note"),
             "A: 'Waiting for the other Vita...' while it waits")
@@ -1501,7 +1510,7 @@ def lost_run(T, name, how):
     if how == "stop":
         T.check(rb.rc == 0 and rb.has(r"link_ended state=4 ran=1") and
                 rb.has(r"link_net_down radio=0"),
-                "B, thawed 16 s later: finds the link gone, ends it, plays "
+                "B, thawed 28 s later: finds the link gone, ends it, plays "
                 "on and leaves cleanly (exit %s)" % rb.rc)
     return t.get("took", -1)
 

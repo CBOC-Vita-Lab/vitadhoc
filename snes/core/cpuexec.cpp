@@ -315,7 +315,12 @@ void S9xDoHEventProcessing (void)
 			PPU.M7VOFSLatched = false;
 
 			if (Settings.SA1)
+			{
+			#if defined(SA1_FAST_RUN) && (SA1_FAST_RUN + 0 == 0 || (SA1_FAST_RUN & 8))
+				S9xSA1ReplayAdvance();	// the SA-1 may be behind by the targets it was not moved to yet
+			#endif
 				SA1.Cycles -= Timings.H_Max * 3;
+			}
 
 			CPU.V_Counter++;
 			if (CPU.V_Counter >= Timings.V_Max)	// V ranges from 0 to Timings.V_Max - 1

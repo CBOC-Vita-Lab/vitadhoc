@@ -108,16 +108,34 @@ The [install guide](../INSTALL.md#starting-a-game-from-another-app) has an examp
 
 SNES games open in their own player and return to the home screen when you
 quit. **L + R + Start** opens its pause menu (the game page and the loading
-screen of a SNES game say so): Resume, Picture, Multitap, four
-save-state slots, Reset and Quit. Battery saves are `Game.srm` beside the game.
+screen of a SNES game say so): Resume, Picture, Multitap, ten
+save-state slots with pictures, Cheats, Reset and Quit. Battery saves are `Game.srm` beside the game.
 
 Picture (saved for all SNES games, or for one with "Apply to: this game"):
 Original shape (4:3 at full height, the default), Zoom (blank rows cropped, not
 stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; side glow,
 CRT scanlines and LCD grid, each Off or 1-10; optional blending for hi-res and
 interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
-is drawn as a bezel. Every frame is shown with every picture option on; none
-is skipped or simplified to save time.
+is drawn as a bezel.
+
+New in 1.4:
+
+- **PAL games speed** (Picture menu): "True 50 Hz" (the default) runs
+  European games at their own speed, five frames in every six refreshes;
+  "Fast 60 Hz" is the old behaviour, 20 % fast.
+- **Wide view** (Auto, On or Off; on by default). The 4:3 picture stays
+  exactly as it is in the middle of the 16:9 screen. A cost ladder narrows the
+  real-picture margin where a game is busy and fades into a soft extension of
+  the picture, so wide view never costs a frame; per side, in Auto, the side
+  the camera came from can show real picture. Never a wrong tile (checked on
+  15 games for 3000 frames each). On shows the full margin; Off is the plain
+  picture.
+- **Image look** (Auto, Full or Light). Auto eases the hi-res and interlace
+  blends only when a game cannot hold 60; Full and Light fix the choice.
+- **Cheats** and ten state slots with pictures, from Snes9x's post-1.63 fixes;
+  a new audio pacer keeps the sound even.
+- Super FX games do about 10 to 15 percent less work per Super FX
+  instruction, with identical pictures and sound.
 
 ## NES And Famicom
 
@@ -141,7 +159,8 @@ sides are filled with the game's own picture only where it is proven (its
 name tables, what the scroll has shown, a learned map of the level kept in
 `ux0:data/GBAdhoc/nes/wide/`), otherwise they fade. Auto shows the plain
 picture while nothing is known at the sides. The picture keeps one scale for
-both directions.
+both directions. In the SNES player, wide view works the same way and is
+described under Super NES.
 
 ## Steady pacing
 
@@ -166,19 +185,26 @@ bench pair. The log has a `handoff:` line every second (gate step `census`).
 
 ## The look governor
 
-Image quality Auto (the default) is xBRZ at the largest factor the console
-can hold at a locked 60, over the sharp bilinear base filter. When a game
-cannot, playerkit's look governor (`pk_look`; `docs/DEFAULTS-1.4.md`) takes
-the least visible sacrifice first: the ambient glow's blurred game frame
-(still art instead), xBRZ 4x to 3x, 3x to 2x, the frame blend, xBRZ to sharp
-bilinear, and last the wide view. It decides once a second, applies a change
+Image quality Auto (the default) is xBRZ at the starting size of each
+console (GBA, GB, GBC and WonderSwan 3x; NES 2x; 4x only when you choose it
+by hand), over the sharp bilinear base filter. When a game cannot hold a
+locked 60, playerkit's look governor (`pk_look`; `docs/DEFAULTS-1.4.md`)
+takes the least visible sacrifice first: the ambient glow's blurred game
+frame (still art instead), then xBRZ down a size, xBRZ 2x to MMPX 2x, the
+frame blend, and last MMPX to sharp bilinear. The wide view and the screen
+fill have no step: they stay on. It decides once a second, applies a change
 at a safe point (the start, the menu closing; after 12 s at the latest), gives
 the look back after sustained headroom, and keeps what the game needed in
-`look/<console>/<xx>/<name>.look`. A row set by hand (Image quality other
-than Auto, an ambient, blend or wide setting other than the default) is never
-touched. The log has a `look:` line every second and a `look_summary` at the
-end. `vita.ini` `auto_xbrz = 0` gives the 1.3 Auto (it followed the Video
-filter).
+`look/<console>/<xx>/<name>.look`. A GBA game that redraws its whole picture
+in a bitmap mode (software 3D) starts on sharp bilinear. A row set by hand
+(Image quality other than Auto, an ambient, blend or wide setting other than
+the default) is never touched. The log has a `look:` line every second and a
+`look_summary` at the end. `vita.ini` `auto_xbrz = 0` gives the 1.3 Auto (it
+followed the Video filter); `look_bitmap = 0` turns the bitmap-mode rule off.
+
+**MMPX 2x** (Image quality, Video filter) is a 2x pixel-art scaler (MIT
+licence) that costs less than xBRZ 2x and has no tables to build. It sits
+between xBRZ 2x and sharp bilinear on the ladder and can be picked by hand.
 
 ## WonderSwan
 
@@ -211,7 +237,7 @@ end, which RetroArch ignores).
 ## Cheats on every console
 
 The Cheats page works the same for every console: the list for the game (from
-the bundled database for GBA, GB and GBC games, or the game's `.cht` file in
+the bundled database for GBA, GB, GBC and NES games and one WonderSwan game, or the game's `.cht` file in
 `ux0:data/GBAdhoc/cheats/` in RetroArch's format), codes typed by hand with
 a name, a switch per code, delete, and the choices kept per game. Codes are
 off during a link session and in RetroAchievements Hardcore. Formats: GBA
@@ -220,12 +246,31 @@ NES (Game Genie 6 or 8 letters, Pro Action Replay, `AAAA:VV`, `AAAA?CC:VV`),
 WonderSwan (`AAAAA:VV`: a RAM address, 00000-0FFFF the console's memory,
 10000 on the cartridge's save memory, and a byte).
 
+## Settings added or changed in 1.4
+
+| Where | Row | What it does |
+| --- | --- | --- |
+| Display | Image quality | Auto is the default (see the look governor); every other choice (Original, MMPX 2x, the xBRZ sizes) stays available by hand |
+| Display | Wide view (NES) | Auto, On or Off |
+| Display | Screen fill (GBA wide view) | what the wide view shows beyond the picture |
+| Display | Smooth 75 Hz motion | WonderSwan frame blend, on by default |
+| Gameplay | Steady pacing | even half-rate frames when a scene is too busy; on |
+| Gameplay | Smooth hand-over | drawing on its own core; on |
+| Library | Game names | game title or file name |
+| This game | Export save for other emulators | a plain `.srm` or `.sav` on request |
+| This game | Rotation, Vertical play, Palette | WonderSwan |
+| SNES menu | Wide view, Image look, PAL games speed | see Super NES |
+
+Settings opens on the section you most likely want (Display in a game,
+Interface on the home screen); rows that cannot apply to the console on
+screen are hidden.
+
 ## Display
 
 Choose a screen size and filter per console, or keep a game-specific look in
 **Settings > This game**. Sizes include integer scales, fit, stretch and
 crop; filters include nearest, bilinear, sharp bilinear, LCD, scanlines,
-Scale3x and CPU xBRZ. Colour correction and motion blending are independent
+Scale3x, MMPX 2x and CPU xBRZ. Colour correction and motion blending are independent
 choices. Demanding combinations can cost more time than Original pixels.
 
 CPU xBRZ and Scale3x use worker cores and changed regions; the GBA picture
@@ -246,7 +291,9 @@ the original Pokemon Emerald family, not every game with a similar name.
 ROM hacks can change the layout or rendering enough to break a profile.
 The [performance report](PERFORMANCE.md) includes Pokemon Unbound measurements.
 
-By default Wide view is on only for games that have a profile; every other
+NES and Super NES have their own wide view (described under those consoles);
+GBA, GB, GBC and WonderSwan fill the screen's height. For GBA, by default
+Wide view is on only for games that have a profile; every other
 game is shown at the console's own shape (240 x 160 at 816 x 544) with bars,
 never stretched. Where a profiled game has nothing more to show (a menu), the
 default is black bars; **Wide view: menus** can fade the picture's edges or
@@ -296,7 +343,9 @@ BPS and UPS verify source/result checksums. IPS does not identify the correct
 base revision. Wide-view profiles and achievement sets need to match the
 patched game. Use the same game and patch on both Vitas when linking.
 
-The bundled cheat catalogue covers about 2,190 games; custom codes are
+The bundled cheat catalogue covers about 2,190 GBA and Game Boy games and
+about 2,000 NES games (found by checksum, then by name); WonderSwan has a list
+for one game. Typed codes work everywhere; custom codes are
 supported too. Some codes require an enable code, and some code types are
 unsupported. Cheats suspend during link play and in recognised Hardcore
 games. Back up a battery save before experimenting.

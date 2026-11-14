@@ -284,11 +284,6 @@ static struct
            "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, -1, 1, 0x60,
            "", "" };
 
-/* vm_sync_batch = 0 | 1 (default 1): one VM-domain sync call per publish
- * (merged ranges), not one per range (cpu_threaded.c VM_SYNC_BATCH).  Not in
- * g_sw: that initializer is positional. */
-static int g_vm_sync_batch = 1;
-
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
 
@@ -1584,7 +1579,6 @@ static void read_switches(void)
     * "Version 1.4: SMC Without Whole-Cache Flushes"): no Settings row */
    g_sw.smc_partial     = fe_ini_get_int(ini, "smc_partial", 1) ? 1 : 0;
    g_sw.dispatch_cache  = fe_ini_get_int(ini, "dispatch_cache", 1) ? 1 : 0;
-   g_vm_sync_batch   = fe_ini_get_int(ini, "vm_sync_batch", 1) ? 1 : 0;
    /* smooth hand-over (handoff_glue.h): this launch's override of the
     * setting, and where its drawing thread runs */
    g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);
@@ -4813,11 +4807,6 @@ static int game_boot(const char *rom_path, fe_console_t console)
       extern void gbab_gpsp_smc_partial_set(uint32_t on) __attribute__((weak));
       extern void gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
       extern void gbab_gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
-      extern void gpsp_vm_sync_batch_set(uint32_t on);
-      extern void gbab_gpsp_vm_sync_batch_set(uint32_t on) __attribute__((weak));
-      gpsp_vm_sync_batch_set((uint32_t)g_vm_sync_batch);
-      if (gbab_gpsp_vm_sync_batch_set)
-         gbab_gpsp_vm_sync_batch_set((uint32_t)g_vm_sync_batch);
       gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
       if (gbab_gpsp_smc_partial_set)
          gbab_gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
@@ -4825,8 +4814,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
          gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
       if (gbab_gpsp_dispatch_cache_set)
          gbab_gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
-      fe_evt("jit_switches smc_partial=%d dispatch_cache=%d vm_sync_batch=%d",
-             g_sw.smc_partial, g_sw.dispatch_cache, g_vm_sync_batch);
+      fe_evt("jit_switches smc_partial=%d dispatch_cache=%d", g_sw.smc_partial,
+             g_sw.dispatch_cache);
    }
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;

@@ -561,8 +561,9 @@ static void test_cover_progress(void)
 static void test_quality_text(void)
 {
    static const char *const helps[PCFG_QUALITY_MODES] = {
-      "Follows the Video filter below", "evenly sized at any screen size",
-      "twice the game's size", "three times its size"
+      "Auto adapts to keep 60 fps", "evenly sized at any screen size",
+      "twice the game's size", "three times its size",
+      "four times its size", "MMPX at twice its size"
    };
    int q, found;
    vid_init();

@@ -199,13 +199,17 @@ LINK_ELF = $(CC) -Wl,-q -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
 # known ones, each used only behind an address check (`if (&sym)`): the
 # core's optional speed hooks and counters (instance A, and instance B under
 # its gbab_ prefix), the translation-cache release B can do without, and the
-# sanitizer's start hook of a non-ASan build.  A new name here needs the
+# sanitizer's start hook of a non-ASan build, and the toolchain's own start-up
+# code (crtbegin: transactional-memory and unwind-frame registration, libc's
+# __libc_fini), which tests each address before calling.  A new name here needs the
 # same reason, written next to it.
 WEAK_OK := irq_io_fast timer_lazy jit_big_i_calls jit_big_i_max \
            jit_big_d_calls jit_pin_at \
            gbab_irq_io_fast gbab_timer_lazy gbab_jit_big_i_calls \
            gbab_jit_big_i_max gbab_jit_big_d_calls gbab_jit_pin_at \
-           gbab_dynarec_release_translation_caches __asan_init
+           gbab_dynarec_release_translation_caches __asan_init \
+           _ITM_deregisterTMCloneTable _ITM_registerTMCloneTable \
+           __deregister_frame_info __register_frame_info __libc_fini
 # (nm marks a weak undefined function `w` and a weak undefined object `v`;
 # a version suffix such as @VERS is dropped before the comparison.)
 CHECK_WEAK = @ok=" $(WEAK_OK) "; \

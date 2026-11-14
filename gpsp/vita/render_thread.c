@@ -109,6 +109,7 @@ static void rt_work(void)
 
 static SceUID g_go = -1, g_done = -1, g_th = -1;
 static volatile int g_quit;
+#define rt_stall() ((void)0)    /* (the twin's stall test is not built here) */
 
 static int rt_entry(SceSize args, void *argp)
 {
@@ -158,7 +159,6 @@ static int rt_wait_to(unsigned us)
    SceUInt timeout = us;
    return sceKernelWaitSema(g_done, 1, &timeout) >= 0;
 }
-#define rt_stall() ((void)0)
 
 void rt_shutdown(void)
 {

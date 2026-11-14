@@ -176,7 +176,13 @@ public:
 	bool steady_pacing() const { return steady_; }
 	/* "Smooth hand-over" (Speed page, default on): pictures are drawn and presented by their own thread through
 	 * playerkit's mailbox (pipe.h) so the game never waits for the picture. Ignored while the platform has no such thread. */
-	enum { ROW_HANDOFF = pk::ROW_HOST_BASE + 40 };
+	enum { ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42 };
+	/* "PAL games speed" (Speed page, key pal_speed in player.ini): false = true 50 Hz (default: 5 frames in 6 refreshes), true = Fast 60 Hz
+	 * (one frame per refresh, the game and its sound run 20 % fast, as before 1.4). Read by the platform each pass. */
+	bool pal_fast() const { return pal_fast_; }
+	/* "Image look" (Picture page, key look_mode): 0 Auto (the governor eases the blends only when the game cannot hold 60),
+	 * 1 Full (blends as set, never eased), 2 Light (blends off, never eased) */
+	int look_mode() const { return look_mode_; }
 	bool smooth_handoff() const { return handoff_; }
 	bool save_failing() const { return save_failing_; }
 	const std::string &save_message() const { return save_msg_; }
@@ -241,6 +247,8 @@ private:
 	bool settings_dirty_ = false;
 	bool steady_ = true;
 	bool handoff_ = true;
+	bool pal_fast_ = false;
+	int look_mode_ = 0;
 	pk::Pacer pacer_;
 	pk::States *states_ = 0;
 	pk::SessionTracker session_;

@@ -364,6 +364,7 @@ int SnesPlayer::migrate_old_states(const std::string &root, const std::string &g
 
 std::string SnesPlayer::pic_game_ini() const { return path_join(path_join(snes_dir_, "games"), game_ + ".ini"); }
 
+static int clampi(int v, int lo, int hi);
 void SnesPlayer::settings_load()
 {
 	pic_defaults(&ps_);
@@ -377,6 +378,8 @@ void SnesPlayer::settings_load()
 	pl.load(path_join(snes_dir_, "player.ini"));
 	steady_ = pl.get_int("steady_pacing", 1) != 0;
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
+	pal_fast_ = pl.get_int("pal_speed", 0) != 0;
+	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -426,6 +429,8 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
+	menu_.set_value(ROW_PALSPEED, pal_fast_ ? 1 : 0);
+	menu_.set_value(ROW_LOOK, look_mode_);
 }
 
 int SnesPlayer::multitap_wanted() const
@@ -597,6 +602,15 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "Steady pacing",
 		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.",
 		                   onoff, 1);
+		std::vector<std::string> palv, lookv;
+		palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
+		lookv.push_back("Auto"); lookv.push_back("Full"); lookv.push_back("Light");
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_LOOK, "Image look",
+		                   "Auto keeps the best look and eases the blends only when a game cannot hold 60. Full keeps the blends as set, Light turns them off, both always.",
+		                   lookv, 0, ROW_PIC_APPLY);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
+		                   "European games run at 50 Hz. True 50 Hz plays them at their real speed (one frame in six is shown again); Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
+		                   palv, 0);
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
 		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.",
 		                   onoff, 1);
@@ -862,6 +876,8 @@ void SnesPlayer::settings_queue_save()
 	Ini pl;
 	pl.set_int("steady_pacing", steady_ ? 1 : 0);
 	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
+	pl.set_int("pal_speed", pal_fast_ ? 1 : 0);
+	pl.set_int("look_mode", look_mode_);
 	j->text = pl.serialize();
 	post(j);
 }
@@ -888,6 +904,8 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PIC_WIDE: ps_.wide = clampi(v, 0, 2); g_changed |= CH_WIDE; break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
+	case ROW_PALSPEED: pal_fast_ = v != 0; break;
+	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
 	default: return;
 	}
 	settings_dirty_ = true;
@@ -1088,9 +1106,12 @@ enum { kLookRungs = sizeof kLookLadder / sizeof kLookLadder[0] };
 void SnesPlayer::look_sync_rows()
 {
 	if (look_on_) {
-		look_.set_user_row(ROW_INTERLACE, ps_.interlace_blend == 0);
-		look_.set_user_row(ROW_HIRES, ps_.hires_blend == 0);
+		/* a fixed look (Full / Light) is the player's choice: the governor touches nothing */
+		const bool fixed = look_mode_ != 0;
+		look_.set_user_row(ROW_INTERLACE, fixed || ps_.interlace_blend == 0);
+		look_.set_user_row(ROW_HIRES, fixed || ps_.hires_blend == 0);
 	}
+
 	look_apply(0);
 }
 
@@ -1098,7 +1119,8 @@ void SnesPlayer::look_apply(const char *why)
 {
 	const pic_settings before = eff_;
 	eff_ = ps_;
-	if (look_on_) {
+	if (look_mode_ == 2) { eff_.interlace_blend = 0; eff_.hires_blend = 0; }   /* Light: blends off, fixed */
+	else if (look_on_) {
 		if (look_.applied(LOOK_ILACE)) eff_.interlace_blend = 0;
 		if (look_.applied(LOOK_HIRES)) eff_.hires_blend = 0;
 	}

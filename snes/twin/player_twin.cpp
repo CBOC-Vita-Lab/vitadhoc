@@ -973,6 +973,40 @@ static int run_look_test(const char *rom, const std::string &work)
 			p2->finish(EXIT_NORMAL);
 		}
 	}
+
+	/* 4. the menu rows: Image look Full never eases, Light has the blends off at once; both and PAL games speed are kept for the next start */
+	{
+		const std::string root = work + "/look5";
+		make_dirs(root);
+		{
+			Rig *rig = new Rig(root + "/shots");
+			snesp::SnesPlayer *pl = new snesp::SnesPlayer(&rig->pf);
+			rig->pl = pl; rig->pf.player = pl;
+			rig->pf.log_path = root + "/snes/log.txt";
+			EXPECT(pl->start(2, av, root, true).ok);
+			pl->apply_start_mode();
+			EXPECT(!pl->pal_fast() && pl->look_mode() == 0);          /* defaults: True 50 Hz, Auto */
+			pl->look_start(444);
+			pl->on_change(snesp::SnesPlayer::ROW_LOOK, 1);             /* Full */
+			for (int i = 0; i < 20; i++) { pk::LookSecond ls; ls.emu = 1.25f; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true; pl->look_second(ls); }
+			EXPECT(pl->picture().interlace_blend == 1 && pl->picture().hires_blend == 1);
+			pl->on_change(snesp::SnesPlayer::ROW_LOOK, 2);             /* Light */
+			EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0);
+			pl->on_change(snesp::SnesPlayer::ROW_PALSPEED, 1);
+			pl->finish(EXIT_NORMAL);
+		}
+		{
+			Rig *rig = new Rig(root + "/shots2");
+			snesp::SnesPlayer *pl = new snesp::SnesPlayer(&rig->pf);
+			rig->pl = pl; rig->pf.player = pl;
+			rig->pf.log_path = root + "/snes/log.txt";
+			EXPECT(pl->start(2, av, root, true).ok);
+			EXPECT(pl->pal_fast() && pl->look_mode() == 2);
+			EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0);
+			EXPECT(pl->menu().value(snesp::SnesPlayer::ROW_LOOK) == 2 && pl->menu().value(snesp::SnesPlayer::ROW_PALSPEED) == 1);
+			pl->finish(EXIT_NORMAL);
+		}
+	}
 	fprintf(stderr, "player_twin: look %d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;
 }

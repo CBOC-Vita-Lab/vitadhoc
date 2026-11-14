@@ -1115,7 +1115,7 @@ int main(int argc, char **argv)
 	 * rate follows 50 Hz on its own once the frames come at that rate. NTSC does not use it (one per refresh, as before). */
 	const bool pal = snes_host_is_pal() != 0;
 	FramePace pal_pace;
-	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: 5 of 6 refreshes emulate a frame (%.4f frames per refresh)\n", pal_pace.ratio); }
+	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: %s\n", g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
 	hd_start(tini, frame_hz);
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
 	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. With
@@ -1201,7 +1201,7 @@ int main(int argc, char **argv)
 			}
 		}
 		int to_run = (half || hd) ? (int) elapsed : 1;
-		if (pal) to_run = pal_pace.owed(to_run);   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
+		if (pal && !g_pl->pal_fast()) to_run = pal_pace.owed(to_run);   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
 		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
@@ -1394,7 +1394,7 @@ int main(int argc, char **argv)
 				ls.refreshes = vblanks;
 				ls.emu = frames_run ? (float) (emu_us / (double) frames_run / budget) : 0.f;
 				ls.draw = g_hd_ok ? (float) (hd_draw_ms * 1000.0 / refr / budget) : (float) ((draw_us + fetch_us + finish_us) / refr / budget);
-				const unsigned planned = pal && vblanks > frames_run ? (unsigned) (vblanks - frames_run) : 0;
+				const unsigned planned = pal && !g_pl->pal_fast() && vblanks > frames_run ? (unsigned) (vblanks - frames_run) : 0;
 				const unsigned late = g_hd_ok ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
 				ls.missed = (int) late;
 				ls.parallel = hd;

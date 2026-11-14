@@ -3647,9 +3647,23 @@ const char *ui_host_look_label(void)
    const int cap = look_quality_cap();
    if (!look_running() || !look_steps_on_row(LOOK_ROW_QUALITY))
       return NULL;
+   (void)cap;
    snprintf(l, sizeof(l), "Auto (%s, eased)",
-            cap == 3 ? "xBRZ 3x" : cap == 2 ? "xBRZ 2x" : "sharp");
+            look_tier_name()[0] ? look_tier_name() : "sharp");
    return l;
+}
+
+/* ui_host_hooks.h: Settings > About > Extra CPU core */
+const char *ui_host_core4_status(void)
+{
+   return core4_status();
+}
+
+/* ui_host_hooks.h: the Fourth core row changed; the probe and the thread
+ * layout are decided once at start, so the new choice applies next start */
+void app_core4_options(void)
+{
+   fe_evt("core4_option off=%d applies=next_start", g_pcfg.core4_off);
 }
 
 static void app_look_save(const char *why)
@@ -6359,7 +6373,16 @@ int main(int argc, char **argv)
    /* The fourth CPU core (docs/FOURTH-CORE.md): probed once, here, before
     * any worker thread of the game exists; core4 = off in vita.ini skips it
     * and every thread stays where 1.3 had it. */
-   core4_init(g_core4_off);
+   {
+      /* Settings > Gameplay > Fourth core (config.ini core4 = off) or the
+       * test switch in vita.ini: either one keeps the 1.3 layout.  The row
+       * applies from the next start (threads exist from here on). */
+      char c4[16];
+      const int cfg_off = g_app_config[0] &&
+                          fe_ini_get(g_app_config, "core4", c4, sizeof(c4)) &&
+                          (c4[0] == 'o' || c4[0] == 'O' || c4[0] == '0');
+      core4_init(g_core4_off || cfg_off);
+   }
    plat_thread_watch("main", 0);
    if (g_sw.main_cpu >= 0)
       fe_evt("main_cpu core=%d rc=%d", g_sw.main_cpu,

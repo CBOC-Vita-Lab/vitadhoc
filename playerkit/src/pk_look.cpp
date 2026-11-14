@@ -244,6 +244,35 @@ bool LookGovernor::second(const LookSecond &s)
 	return changed;
 }
 
+bool LookGovernor::force_rungs(uint32_t rungs, const char *why)
+{
+	if (!started_) start();
+	uint32_t add = 0;
+	for (int i = 0; i < n_; i++)
+		if (((rungs >> i) & 1u) && !((applied_ >> i) & 1u) && !user_row(rung_[i].row)) add |= 1u << i;
+	if (!add) return false;
+	float pre = last_load_;
+	applied_ |= add;
+	hold_mask_ = applied_;
+	mem_needed_ = true;
+	mem_dirty_ = true;
+	gen_++;
+	downs_++;
+	for (uint32_t m = add; m; m &= m - 1) rungs_down_++;
+	pending_ = 0;
+	last_change_up_ = false;
+	probe_since_ = -1;
+	since_change_ = 0;
+	peak_[level()] = 0.f;                                   /* nothing seen at this look yet */
+	peak_at_[level()] = now_;
+	learn_mask_ = 0;                                        /* no measured cause: the guesses stay */
+	char b[160];
+	snprintf(b, sizeof b, "forced (%s)", why ? why : "frontend");
+	event("step", b, pre);
+	clear_window();
+	return true;
+}
+
 bool LookGovernor::safe_point(LookSafe kind)
 {
 	if (!started_) start();
@@ -464,6 +493,26 @@ bool LookGovernor::load_memory(const char *text, size_t n, int mhz)
 	mem_mismatch_ = mhz > 0 && fmhz > 0 && fmhz != mhz;
 	hold_mask_ = (uint32_t) mask;                      /* a mismatched memory is kept as it is unless this session learns better */
 	return true;
+}
+
+float look_tier_cost(LookTier t, int w, int h, const LookTierCosts &c)
+{
+	if (w <= 0 || h <= 0) return 0.f;
+	const float px = (float) w * (float) h;
+	switch (t) {
+	case LOOK_TIER_XBRZ4: return px * 16.f * c.xbrz_per_px;
+	case LOOK_TIER_XBRZ3: return px * 9.f * c.xbrz_per_px;
+	case LOOK_TIER_XBRZ2: return px * 4.f * c.xbrz_per_px;
+	case LOOK_TIER_MMPX2: return px * 4.f * c.mmpx_per_px;
+	default: return 0.f;
+	}
+}
+
+int look_ceiling_factor(int w, int h, int max_px)
+{
+	int f = 4;
+	while (f > 2 && (long) w * h * f * f > (long) max_px) f--;
+	return f;
 }
 
 std::string look_auto_label(const std::string &current, bool eased)

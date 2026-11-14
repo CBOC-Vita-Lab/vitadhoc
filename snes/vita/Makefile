@@ -9,6 +9,7 @@ export VITASDK
 PREFIX := $(VITASDK)/bin/arm-vita-eabi-
 CC  := $(PREFIX)gcc
 CXX := $(PREFIX)g++
+NM  := $(PREFIX)nm
 
 CORE := ../core
 FE   := ../frontend
@@ -49,8 +50,21 @@ LIBS := -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_st
 
 all: $(B)/snes.bin
 
+# A WEAK undefined symbol links without complaint and is a null call on the console (gpsp/vita/Makefile has the same
+# check): the link fails on any weak undefined symbol that is not listed here. The list is what the toolchain's runtime
+# leaves weak on purpose, and the pthread_* of libstdc++'s thread layer. With those unresolved libstdc++ believes the
+# program is single threaded, so std::mutex, std::call_once, shared_ptr counts and the guards of function-local statics
+# do NOT lock. Audited (13 Nov): snes/, playerkit/, widekit/ use none of std::mutex, std::thread, condition_variable,
+# shared_ptr, call_once; strings are the C++11 ABI (no shared refcount); the function-local statics with constructors
+# (host.cpp mix_job's vector, pk_util.cpp fs(), pk_input.cpp models) are first used on one thread before another can
+# reach them. Sharing between threads is done with pk::SpinLock and atomics. A new use of any of those needs a real lock.
+WEAK_OK := ^(_ITM_|_ZGT|__cxa_pure_virtual$$|__deregister_frame_info$$|__register_frame_info$$|__gnu_Unwind_Find_exidx$$|__libc_fini$$|pthread_)
+CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" { print $$2 }' | grep -v -E '$(WEAK_OK)')"; \
+	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
+
 $(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
 	$(CXX) $(CPUFLAGS) -Wl,-q -o $@ $^ $(LIBS)
+	$(call CHECK_WEAK,$@)
 
 $(B)/snes.velf: $(B)/snes.elf
 	$(VITASDK)/bin/vita-elf-create $< $@

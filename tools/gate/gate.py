@@ -319,7 +319,7 @@ STEPS = [
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom", "build-rewind-rom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=14400),
     Step("cores-own-rom", "cores: own test ROM, x86 against armhf, and the link bench (run_tests.sh)",
-         "sh gpsp/vita/hostcore/run_tests.sh", "full", APP_TAGS | {"app"}, inputs=["gpsp/", "nes/"],
+         "bash gpsp/vita/hostcore/run_tests.sh", "full", APP_TAGS | {"app"}, inputs=["gpsp/", "nes/"],
          deps=["build-hostcore-x86", "build-hostcore-armhf", "build-testrom"], requires=ARMHF,
          group=GROUP_HOST, timeout=7200),
     # instance B's image bounds and boot copies under ASan/UBSan (run_tests.sh
@@ -337,7 +337,7 @@ STEPS = [
          "full", APP_TAGS | {"app"}, inputs=["gpsp/"], deps=["build-hostcore-x86"], requires=PIL,
          env_req="GATE_GBA_ROMS", group=GROUP_MAKE, timeout=14400),
     Step("cores-private-gba", "cores: every private GBA/GB/GBC ROM, x86 against armhf (GATE_GBA_ROMS)",
-         "sh gpsp/vita/hostcore/run_tests.sh \"$GATE_GBA_ROMS\"", "full", APP_TAGS | {"app"},
+         "bash gpsp/vita/hostcore/run_tests.sh \"$GATE_GBA_ROMS\"", "full", APP_TAGS | {"app"},
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-hostcore-armhf", "build-testrom"],
          requires=ARMHF, env_req="GATE_GBA_ROMS", group=GROUP_HOST, timeout=14400),
     Step("app-armhf", "the whole app on armhf under qemu, the ARM dynarec (app_tests.py)",

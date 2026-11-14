@@ -711,19 +711,19 @@ static void test_quality(const char *conf)
    check(file != NULL, "create fresh-config fixture");
    fclose(file);
    pcfg_load(legacy);
-   check(g_pcfg.scale == VID_SCALE_FIT && g_pcfg.quality == PCFG_QUALITY_ORIGINAL,
-         "a fresh installation defaults to full-height Original without migrating explicit preferences");
+   check(g_pcfg.scale == VID_SCALE_FIT && g_pcfg.quality == PCFG_QUALITY_AUTO,
+         "a fresh installation defaults to full-height Auto (1.4: the governed ladder for every install)");
    g_pcfg.scale = VID_SCALE_INT3;
    check(pcfg_display_save() == 0, "save only the fresh GBA profile through the preset path");
    pcfg_load(legacy);
-   check(g_pdisp[FE_CONSOLE_GB].quality == PCFG_QUALITY_ORIGINAL &&
-         g_pdisp[FE_CONSOLE_GBC].quality == PCFG_QUALITY_ORIGINAL,
-         "a sparse first save must not reclassify other fresh profiles as legacy Auto");
+   check(g_pdisp[FE_CONSOLE_GB].quality == PCFG_QUALITY_AUTO &&
+         g_pdisp[FE_CONSOLE_GBC].quality == PCFG_QUALITY_AUTO,
+         "a sparse first save leaves the other fresh profiles at the 1.4 default (Auto)");
    check(g_pdisp[FE_CONSOLE_GB].scale == VID_SCALE_FIT &&
          g_pdisp[FE_CONSOLE_GBC].scale == VID_SCALE_FIT &&
-         g_pdisp[FE_CONSOLE_GB].filter == VID_FILTER_NEAREST &&
-         g_pdisp[FE_CONSOLE_GBC].filter == VID_FILTER_NEAREST,
-         "legacy mirrors from the sparse GBA save do not change other consoles' size or filter");
+         g_pdisp[FE_CONSOLE_GB].filter == VID_FILTER_SHARP &&
+         g_pdisp[FE_CONSOLE_GBC].filter == VID_FILTER_SHARP,
+         "legacy mirrors from the sparse GBA save do not change other consoles' size or filter (1.4 default: sharp)");
    check(fe_ini_set_int(legacy, "quality_gb", PCFG_QUALITY_3X) == 0 &&
          fe_ini_set_int(legacy, "scale_gb", VID_SCALE_INT2) == 0 &&
          fe_ini_set_int(legacy, "filter_gb", VID_FILTER_SCALE) == 0,

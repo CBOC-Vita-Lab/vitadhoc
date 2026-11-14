@@ -56,8 +56,8 @@ two fixed ones (and small timing differences in a game's random choices).
 - **GBA** games that rewrite their own code (a self-modifying game) flush only
   the part that changed in 1.4. Software-3D games (bitmap modes) start on
   sharp bilinear so they are not asked to redraw a whole smoothed picture each
-  frame. The sprite-order fault below is a separate matter; priority itself is
-  exact in 1.4.
+  frame. Sprite priority is exact in 1.4; the OAM-order note below was
+  written for 1.3 and has not been rechecked.
 
 ## Not fixed, and not checked
 

@@ -86,6 +86,10 @@ The normal picture is drawn by the unchanged code first.
 `sh snes/twin/selftest.sh` has a wide section: truth tests on synthetic cartridges (`twin/tests/make_wide_roms.py`, `wide_truth.py`),
 identity (frames, audio, state; single thread and workers) and the player test (`player_twin wide ROM WORK`).
 Larger runs: `twin/wide_compare.py` (the 15 owner games and the test-ROM suites).
+Last full run (13/14 Nov 2026, final tree): `selftest.sh` all passed (includes the ladder floor and per-side Auto truth runs on scrolling, window
+and Mode 7 cartridges: 0 wrong real pixels); `make -C widekit test` 1095 checks, 0 failed; NES `wide_golden.sh` with `WG_VERIFY=1` 37 files
+match; `wide_compare.py` against the pre-wide reference tree on the 15 owner games, 3000 frames: margin 70 (single thread and workers) 15
+identical, margin 41 and 96 (single thread) 15 identical.
 
 ## Known harness note (Super FX test ROMs)
 

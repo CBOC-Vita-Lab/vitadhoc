@@ -2361,6 +2361,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
        SET_STEADY,   /* 1.4: Steady pacing (pace_steady.h) */
        SET_HANDOFF,  /* 1.4: Smooth hand-over (handoff_glue.h) */
+       SET_CORE4,    /* 1.4: Fourth core Auto / Off (docs/FOURTH-CORE.md) */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2516,6 +2517,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "CPU speed" },
    { 0, "Steady pacing" },
    { 0, "Smooth hand-over" },
+   { 0, "Fourth core" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -3326,6 +3328,11 @@ static void settings_adjust(int id, int dir)
       app_steady_options();
       fe_evt("steady_setting on=%d", g_pcfg.steady_pacing);
       break;
+   case SET_CORE4:
+      g_pcfg.core4_off = !g_pcfg.core4_off;
+      app_core4_options();
+      fe_evt("core4_setting off=%d", g_pcfg.core4_off);
+      break;
    case SET_HANDOFF:
       g_pcfg.smooth_handoff = !g_pcfg.smooth_handoff;
       app_handoff_options();
@@ -3727,6 +3734,10 @@ static const char *set_help(int id)
              ? "Smoothed at twice the game's size, then sized to fit."
            : g_pcfg.quality == PCFG_QUALITY_3X
              ? "Smoothed at three times its size. More detail, more work."
+           : g_pcfg.quality == PCFG_QUALITY_4X
+             ? "Smoothed at four times its size. The most detail and work."
+           : g_pcfg.quality == PCFG_QUALITY_MMPX
+             ? "MMPX at twice its size: crisp pixel art, light on the Vita."
              : "Auto adapts to keep 60 fps; xBRZ smoothing when it can.";
 #endif
    case SET_COLOR:
@@ -3848,6 +3859,9 @@ static const char *set_help(int id)
                                "at full speed."
                              : "Every frame when it can be; busy moments drop "
                                "unevenly.";
+   case SET_CORE4:    return g_pcfg.core4_off
+                             ? "Off: the app stays on the three cores it is given."
+                             : "Auto: uses the Vita's fourth core if it works. Next game.";
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
                              ? "Drawn on a second core: heavy looks do not "
                                "slow the game."
@@ -4549,6 +4563,10 @@ static ui_action screen_settings(unsigned edges)
       case SET_HANDOFF:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.smooth_handoff ? "on" : "off");
+         break;
+      case SET_CORE4:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.core4_off ? "off" : "auto");
          break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, set_rows[i].label,

@@ -202,6 +202,10 @@ typedef struct
    /* Settings > Gameplay > Smooth hand-over (CONFIG.INI smooth_handoff, 1
     * by default): vita/handoff_glue.h */
    int  smooth_handoff;
+   /* Settings > Gameplay > Fourth core (CONFIG.INI core4 = auto | off, auto
+    * by default): 1 = off.  main_vita.c reads it where it probes the core
+    * (vita.ini core4 = off still wins); app_core4_options() says it changed. */
+   int  core4_off;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -675,8 +679,12 @@ typedef struct
 #endif
 } pcfg_display;
 #ifdef VITA
+/* The first four values are what old config files hold; 4X and MMPX are
+ * 1.4's hand-set choices (Auto never overrides them): xBRZ at four times,
+ * and MMPX at twice (vid_set_quality turns it into factor 2 + the MMPX flag). */
 enum { PCFG_QUALITY_AUTO, PCFG_QUALITY_ORIGINAL, PCFG_QUALITY_2X,
-       PCFG_QUALITY_3X, PCFG_QUALITY_MODES };
+       PCFG_QUALITY_3X, PCFG_QUALITY_4X, PCFG_QUALITY_MMPX,
+       PCFG_QUALITY_MODES };
 const char *pcfg_quality_name(int quality);
 /* How many `color` values a console has (GBA 3, GBC 2, GB 0). */
 int pcfg_color_modes(int console);

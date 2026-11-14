@@ -1058,15 +1058,13 @@ void SnesPlayer::wide_apply(int scr_w, int scr_h)
 	 * the steady pacer thinned frames). What it costs is held down by degrading its resolution (snes/frontend/wide.*, rungs
 	 * to be added to kLookLadder), and by the blends the look governor gives up first. */
 	if (!want) m = 0;
-	snes_wide_option("auto", eff_.wide == 1 ? 0 : 1);   /* Auto decides per scene; On forces the wide view */
-	/* Wide view Auto = the cost ladder (policy from threads.ini, default 1); On = the full margin always (policy 0). The ladder also gets
-	 * the player's pressure (the steady pacer thinning frames, or a second the look governor found bad) so it narrows before frames are
-	 * lost; a name the adapter does not know is ignored. Both are set only when they change (they take the adapter's lock). */
+	/* Wide view Auto = per side Auto + the cost ladder, On = the full margin always (no ladder); Off is snes_wide_set(0, 0) below.
+	 * threads.ini wide_policy 0 turns the ladder off for Auto (the A/B). Set only when they change (they may take the adapter's lock). */
 	{
-		const int policy = eff_.wide == 1 ? 0 : wide_policy_ini_;
+		const int mode = eff_.wide == 1 ? 1 : 0;
+		if (mode != wide_mode_set_) { snes_wide_option("mode", mode); wide_mode_set_ = mode; wide_policy_set_ = -1; }
+		const int policy = mode == 1 ? 0 : wide_policy_ini_;
 		if (policy != wide_policy_set_) { snes_wide_option("policy", policy); wide_policy_set_ = policy; }
-		const int pressure = (pacer_.mode() != PACE_FULL || look_bad_) ? 1 : 0;
-		if (pressure != wide_pressure_set_) { snes_wide_option("pressure", pressure); wide_pressure_set_ = pressure; }
 	}
 	if (want == wide_on_ && m == wide_m_) return;
 	snes_wide_set(want ? 1 : 0, m);
@@ -1180,6 +1178,10 @@ void SnesPlayer::look_second(const LookSecond &s)
 {
 	if (!look_on_) return;
 	look_bad_ = pk::LookGovernor::load_of(s) >= look_.config().bad_load;
+	/* the wide view's ladder takes the player's trouble once per second (it is consumed by the next composed frame): 1 = step down, 2 = to the
+	 * floor when the steady pacer has been thinning frames for 3 seconds in a row */
+	pace_half_secs_ = pacer_.mode() == PACE_HALF ? pace_half_secs_ + 1 : 0;
+	if (pacer_.mode() != PACE_FULL || look_bad_) snes_wide_option("pressure", pace_half_secs_ >= 3 ? 2 : 1);
 	const bool changed = look_.second(s);
 	char line[400];
 	if (look_.census_line(line, sizeof line)) logf("%s\n", line);

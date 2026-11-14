@@ -251,7 +251,7 @@ private:
 	bool handoff_ = true;
 	bool pal_fast_ = false;
 	bool look_bad_ = false;               /* the last second was bad for the look governor */
-	int wide_policy_ini_ = 1, wide_policy_set_ = -1, wide_pressure_set_ = -1;
+	int wide_policy_ini_ = 1, wide_policy_set_ = -1, wide_mode_set_ = -1, pace_half_secs_ = 0;
 	int look_mode_ = 0;
 	pk::Pacer pacer_;
 	pk::States *states_ = 0;

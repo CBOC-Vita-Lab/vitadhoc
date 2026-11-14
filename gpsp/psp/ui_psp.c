@@ -2584,6 +2584,19 @@ static void ctl_value(unsigned mask, char *b, size_t n);
 static int set_row_shown(int idx)
 {
 #ifdef VITA
+   /* Rows this console can never use are not listed (they used to be
+    * greyed with a reason, which was noise in a 55-row page). */
+   if (idx == SET_GBPAL)
+      return pcfg_display_console() == FE_CONSOLE_GB ||
+             pcfg_display_console() == FE_CONSOLE_GBC;
+   if (idx == SET_SGB)
+      return pcfg_display_console() == FE_CONSOLE_GB;
+   if (idx == SET_COLOR)
+      return pcfg_color_modes(pcfg_display_console()) > 0;
+   if (idx == SET_WIDE || idx == SET_WFILL)
+      return pcfg_wide_modes(pcfg_display_console()) > 0;
+   if (idx == SET_FASTLINK)
+      return pcfg_display_console() == FE_CONSOLE_GBA;
    if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS ||
        idx == SET_SYNCRA || idx == SET_COVERPIC || idx == SET_NAMES)
       return g_ov_browse;

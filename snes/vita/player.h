@@ -183,6 +183,8 @@ public:
 	/* "Image look" (Picture page, key look_mode): 0 Auto (the governor eases the blends only when the game cannot hold 60),
 	 * 1 Full (blends as set, never eased), 2 Light (blends off, never eased) */
 	int look_mode() const { return look_mode_; }
+	/* threads.ini wide_policy: the wide view's cost ladder for "Auto" (1 default, 0 = full margin); "On" is always the full margin */
+	void set_wide_policy_ini(int p) { wide_policy_ini_ = p ? 1 : 0; }
 	bool smooth_handoff() const { return handoff_; }
 	bool save_failing() const { return save_failing_; }
 	const std::string &save_message() const { return save_msg_; }
@@ -248,6 +250,8 @@ private:
 	bool steady_ = true;
 	bool handoff_ = true;
 	bool pal_fast_ = false;
+	bool look_bad_ = false;               /* the last second was bad for the look governor */
+	int wide_policy_ini_ = 1, wide_policy_set_ = -1, wide_pressure_set_ = -1;
 	int look_mode_ = 0;
 	pk::Pacer pacer_;
 	pk::States *states_ = 0;

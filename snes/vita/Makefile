@@ -57,9 +57,9 @@ all: $(B)/snes.bin
 # do NOT lock. Audited (13 Nov): snes/, playerkit/, widekit/ use none of std::mutex, std::thread, condition_variable,
 # shared_ptr, call_once; strings are the C++11 ABI (no shared refcount); the function-local statics with constructors
 # (host.cpp mix_job's vector, pk_util.cpp fs(), pk_input.cpp models) are first used on one thread before another can
-# reach them. Sharing between threads is done with pk::SpinLock and atomics. A new use of any of those needs a real lock.
-WEAK_OK := ^(_ITM_|_ZGT|__cxa_pure_virtual$$|__deregister_frame_info$$|__register_frame_info$$|__gnu_Unwind_Find_exidx$$|__libc_fini$$|pthread_)
-CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" { print $$2 }' | grep -v -E '$(WEAK_OK)')"; \
+# reach them. With the gthreads inactive libstdc++'s exception globals are process-wide, so nothing may throw on two threads at once. Sharing between threads is done with pk::SpinLock and atomics. A new use of any of those needs a real lock.
+WEAK_OK := ^(_ITM_|_ZGT|__cxa_pure_virtual$$|__deregister_frame_info$$|__register_frame_info$$|__gnu_Unwind_Find_exidx$$|__libc_fini$$|pthread_(cancel|cond_broadcast|cond_wait|getspecific|key_create|key_delete|mutex_destroy|mutex_init|mutex_lock|mutex_unlock|once|setspecific)$$)
+CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" || $$1 == "v" { print $$2 }' | grep -v -E '$(WEAK_OK)')"; \
 	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
 
 $(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
@@ -78,6 +78,8 @@ $(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
 	@mkdir -p $(B)/rcopy
 	$(PREFIX)objcopy --redefine-syms=$(B)/rcopy.map $< $@
 
+# Super FX: the exact speed-up of agent P5 (limit and fast paths in the GSU interpreter)
+$(B)/core/fxinst.o: CXXFLAGS += -DFX_LIMIT -DFX_FAST
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

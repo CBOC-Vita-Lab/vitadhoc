@@ -412,6 +412,11 @@ void SnesPlayer::apply_overrides()
 	if (req_.overrides.count("wide_view")) { std::string w = lower(req_.overrides.find("wide_view")->second); if (w == "auto") ps_.wide = 0; else if (w == "on") ps_.wide = 1; else if (w == "off") ps_.wide = 2; }
 	if ((v = req_.override_int("steady_pacing", -1)) >= 0) steady_ = v != 0;
 	if ((v = req_.override_int("smooth_handoff", -1)) >= 0) handoff_ = v != 0;
+	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
+	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_fast_ = v != 0;
+	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_fast_ = true; else if (w == "true" || w == "50") pal_fast_ = false; }
+	if ((v = req_.override_int("look_mode", -1)) >= 0) look_mode_ = clampi(v, 0, 2);
+	if (req_.overrides.count("look_mode")) { std::string w = lower(req_.overrides.find("look_mode")->second); if (w == "auto") look_mode_ = 0; else if (w == "full") look_mode_ = 1; else if (w == "light") look_mode_ = 2; }
 }
 
 void SnesPlayer::sync_menu_values()
@@ -1054,6 +1059,15 @@ void SnesPlayer::wide_apply(int scr_w, int scr_h)
 	 * to be added to kLookLadder), and by the blends the look governor gives up first. */
 	if (!want) m = 0;
 	snes_wide_option("auto", eff_.wide == 1 ? 0 : 1);   /* Auto decides per scene; On forces the wide view */
+	/* Wide view Auto = the cost ladder (policy from threads.ini, default 1); On = the full margin always (policy 0). The ladder also gets
+	 * the player's pressure (the steady pacer thinning frames, or a second the look governor found bad) so it narrows before frames are
+	 * lost; a name the adapter does not know is ignored. Both are set only when they change (they take the adapter's lock). */
+	{
+		const int policy = eff_.wide == 1 ? 0 : wide_policy_ini_;
+		if (policy != wide_policy_set_) { snes_wide_option("policy", policy); wide_policy_set_ = policy; }
+		const int pressure = (pacer_.mode() != PACE_FULL || look_bad_) ? 1 : 0;
+		if (pressure != wide_pressure_set_) { snes_wide_option("pressure", pressure); wide_pressure_set_ = pressure; }
+	}
 	if (want == wide_on_ && m == wide_m_) return;
 	snes_wide_set(want ? 1 : 0, m);
 	wide_on_ = want; wide_m_ = m;
@@ -1120,24 +1134,32 @@ void SnesPlayer::look_sync_rows()
 
 void SnesPlayer::look_apply(const char *why)
 {
-	const pic_settings before = eff_;
-	eff_ = ps_;
-	if (look_mode_ == 2) { eff_.interlace_blend = 0; eff_.hires_blend = 0; }   /* Light: blends off, fixed */
+	/* Built in a local and stored int by int, only what differs: this runs on the game thread during play while the drawing thread
+	 * reads picture() (it takes a copy per picture), so eff_ is never rewritten as a whole and nothing is stored that did not change. */
+	pic_settings n = ps_;
+	if (look_mode_ == 2) { n.interlace_blend = 0; n.hires_blend = 0; }   /* Light: blends off, fixed */
 	else if (look_on_) {
-		if (look_.applied(LOOK_ILACE)) eff_.interlace_blend = 0;
-		if (look_.applied(LOOK_HIRES)) eff_.hires_blend = 0;
+		if (look_.applied(LOOK_ILACE)) n.interlace_blend = 0;
+		if (look_.applied(LOOK_HIRES)) n.hires_blend = 0;
 	}
 	look_gen_ = look_.generation();
-	if (memcmp(&before, &eff_, sizeof eff_) == 0) return;
+	int *dst = (int *) &eff_;
+	const int *src = (const int *) &n;
+	bool changed = false;
+	for (size_t i = 0; i < sizeof n / sizeof(int); i++)
+		if (dst[i] != src[i]) { dst[i] = src[i]; changed = true; }
+	if (!changed) return;
 	pf_->picture_changed();
 	if (why) {
 		logf("look: %s -> mask=%u (interlace blend %d, hi-res blend %d)\n", why, look_.mask(), eff_.interlace_blend, eff_.hires_blend);
-		if (look_.level() > 0) notice("Look eased to keep full speed", NOTICE_INFO);
+		/* no toast at launch, where only a remembered look is applied */
+		if (strcmp(why, "start") != 0 && look_.level() > 0) notice("Look eased to keep full speed", NOTICE_INFO);
 	}
 }
 
 void SnesPlayer::look_start(int mhz)
 {
+	look_bad_ = false;
 	look_mhz_ = mhz;
 	look_.set_ladder(kLookLadder, kLookRungs);
 	look_on_ = true;
@@ -1157,6 +1179,7 @@ void SnesPlayer::look_start(int mhz)
 void SnesPlayer::look_second(const LookSecond &s)
 {
 	if (!look_on_) return;
+	look_bad_ = pk::LookGovernor::load_of(s) >= look_.config().bad_load;
 	const bool changed = look_.second(s);
 	char line[400];
 	if (look_.census_line(line, sizeof line)) logf("%s\n", line);

@@ -189,6 +189,7 @@ struct GTex {
 static GTex g_src[4];            /* the core's picture, 512x512 RGB565 */
 static GTex g_rt, g_glowA, g_glowB, g_blend;   /* g_blend: 512x512, made when a blend option is first used */
 static unsigned g_blend_serial;
+static std::atomic<bool> g_pic_dirty(false);     /* the picture settings changed: frame_draw resets its caches (set by any thread) */
 static int g_blend_w, g_blend_h;
 static GTex g_bezel;
 static int g_bezel_w, g_bezel_h;
@@ -404,6 +405,7 @@ static unsigned band_alpha(int strength) { unsigned a = 20 + 19 * strength; retu
  * options (not used by the game loop: the governor never drops them). */
 static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 {
+	if (g_pic_dirty.exchange(false)) { g_rtkey_valid = false; g_glow_serial = 0; g_glow_age = 99; g_blend_serial = 0; }
 	vita2d_pool_reset();
 	pic_rect r;
 	GTex *src = g_src_i >= 0 ? &g_src[g_src_i] : NULL;
@@ -678,7 +680,7 @@ struct VitaPlatform : snesp::Platform {
 		return true;
 	}
 	void ask_cheat_text() { g_ime_wanted = true; }
-	void picture_changed() { g_rtkey_valid = false; g_glow_serial = 0; g_glow_age = 99; g_blend_serial = 0; }
+	void picture_changed() { g_pic_dirty.store(true); }   /* the drawing code resets its caches itself, on its own thread */
 	void log_write(const std::string &chunk)
 	{
 		if (!g_log) return;
@@ -803,11 +805,12 @@ static int hd_draw_thread(SceSize, void *)
 			s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch;
 			s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0;
 		}
-		if (have) video_upload(g_pl->picture(), (int) f->seq, s);
+		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
+		if (have) video_upload(ps, (int) f->seq, s);
 		bool drew = false;
 		for (int tries = 0; tries < 4 && !drew; tries++) {
 			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: the picture is not dropped for it */
-			drew = frame_draw(g_pl->picture(), 1, (int) f->seq);
+			drew = frame_draw(ps, 1, (int) f->seq);
 		}
 		if (drew) {
 			if (g_hd_notice_on.load()) {
@@ -1110,7 +1113,7 @@ int main(int argc, char **argv)
 	g_pl->apply_start_mode();
 	/* the wide view's cost ladder (threads.ini): wide_policy 1 (default) steps the composed margin down when the compose time is too high,
 	 * 0 keeps the full margin; wide_cost_us (default 9000) is the smoothed compose time over which a rung is given up */
-	snes_wide_option("policy", ini_int(tini, "wide_policy", 1) != 0 ? 1 : 0);
+	g_pl->set_wide_policy_ini(ini_int(tini, "wide_policy", 1) != 0 ? 1 : 0);   /* the player sets it with the menu's Wide view row */
 	snes_wide_option("cost_us", clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
 	logf_("wide ladder: policy=%d cost_us=%d\n", ini_int(tini, "wide_policy", 1) != 0, clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
 	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
@@ -1152,7 +1155,7 @@ int main(int argc, char **argv)
 	uint64_t prev_loop0 = 0;
 	unsigned w16 = 0, w20 = 0, w25 = 0;
 	double hd_draw_ms = 0;            /* the drawing thread's busy time and the repeats of the last hand-over census, for the look governor */
-	unsigned hd_repeated = 0, missed_refr = 0;
+	unsigned hd_repeated = 0, missed_refr = 0, pal_planned = 0;   /* pal_planned: refreshes that owed no frame (the 6th of a PAL game) */
 	uint64_t stall_max_us = 0, work_max_us = 0;
 	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;
 	double s_stall = 0, s_work = 0, s_agap = 0;
@@ -1207,7 +1210,7 @@ int main(int argc, char **argv)
 			}
 		}
 		int to_run = (half || hd) ? (int) elapsed : 1;
-		if (pal && !g_pl->pal_fast()) to_run = pal_pace.owed(to_run);   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
+		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
 		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
@@ -1400,7 +1403,10 @@ int main(int argc, char **argv)
 				ls.refreshes = vblanks;
 				ls.emu = frames_run ? (float) (emu_us / (double) frames_run / budget) : 0.f;
 				ls.draw = g_hd_ok ? (float) (hd_draw_ms * 1000.0 / refr / budget) : (float) ((draw_us + fetch_us + finish_us) / refr / budget);
-				const unsigned planned = pal && !g_pl->pal_fast() && vblanks > frames_run ? (unsigned) (vblanks - frames_run) : 0;
+				const unsigned planned = pal_planned;
+				pal_planned = 0;
+				/* a PAL game runs 5 frames in 6 refreshes: its cost per refresh is 50.007 / 59.94 of the cost per frame, so one that holds 50 is not overloaded */
+				if (pal && !g_pl->pal_fast()) ls.emu *= (float) (50.007 / 59.94);
 				const unsigned late = g_hd_ok ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
 				ls.missed = (int) late;
 				ls.parallel = hd;

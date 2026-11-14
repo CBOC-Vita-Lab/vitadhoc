@@ -137,7 +137,7 @@ struct Adapter {
 	wk_layers *L;
 	wk_map *M;
 	wk_compose *C;
-	int cH, cM;                      /* what C was created for */
+	int cH, cM, cF;                  /* what C was created for: picture lines, work margin, full margin */
 	wk_frame *fr;
 	wk_out *wo;
 	Layer lay[4];
@@ -171,10 +171,19 @@ struct Adapter {
 	uint16_t edge_px[2][MAXH * WK_EDGE_N];
 	uint8_t amb_dk[SNES_WIDE_MAX_MARGIN + 1];   /* darkening per distance, 0..255 */
 	/* Auto: per game and scene */
-	int auto_on = 1;
-	int cov_q8;                /* smoothed coverage, percent * 256 */
-	int auto_state = 1;        /* 1 = real picture, 0 = ambient frame */
-	int xf;                    /* cross-fade 0 (wide) .. 32 (ambient) */
+	std::atomic<int> auto_on{1};
+	/* cost ladder (option "policy", default on; the twin's proofs switch it off): measured compose time steps the work margin down a rung
+	 * (see work_margin) and, much later and only when it would fit, up again */
+	int policy = 1;
+	int chip = 0;                     /* 1 Super FX (GSU), 2 SA-1, from the cartridge header */
+	int rung = 0;
+	int cost_us = 9000;               /* option "cost_us": smoothed compose time that is too much for one 60 Hz frame of the drawing thread */
+	int cost_frames = 60;             /* ... held for this many frames before a step down */
+	int cost_scale = 100;             /* option "cost_scale" (percent): the twin's way to stand in for a slower machine; the ladder sees the measured time times this */
+	uint32_t cost_ema_q4 = 0, cost_n = 0, hold_frames = 600, since_down = 0;
+	int cov_q8[2];             /* smoothed coverage per side, percent * 256 (a scrolling game has real history behind the camera and none ahead: each side decides alone) */
+	int auto_state[2] = { 1, 1 };   /* per side: 1 = real picture, 0 = ambient frame */
+	int xf[2];                 /* per side cross-fade 0 (wide) .. 32 (ambient) */
 	int cov_have;
 	snes_wide_census cen;
 	uint32_t frame_n;
@@ -214,6 +223,38 @@ static int bg_bpp(int mode, int n)
 	return 0;
 }
 static int bg_count(int mode) { return mode == 0 ? 4 : mode == 1 ? 3 : mode == 3 ? 2 : 0; }
+
+/* ---- cost ladder: the wide view is on for every game; what degrades is how much of the margin is composed -------------- */
+
+/* chip in the cartridge: the header's "ROM type" byte ($FFD6 / $7FD6): high nibble 1 = Super FX (GSU), 3 = SA-1, low nibble >= 3 = has a
+ * coprocessor. The header whose checksum and complement agree is taken. Those games cost the most (bitmap screens, many render batches), so
+ * they start one rung down; the measured compose time decides the rest. */
+static int rom_chip(const uint8_t *rom, size_t n)
+{
+	static const size_t offs[] = { 0x7FC0, 0xFFC0, 0x40FFC0 };
+	for (size_t off : offs) {
+		if (!rom || n < off + 0x20) continue;
+		if ((uint16_t) (ld16(rom + off + 0x1C) ^ ld16(rom + off + 0x1E)) != 0xFFFF) continue;
+		const int type = rom[off + 0x16];
+		if ((type & 15) < 3) return 0;
+		return (type >> 4) == 1 ? 1 : (type >> 4) == 3 ? 2 : 0;
+	}
+	return 0;
+}
+
+/* Rungs: how many columns per side the renderer's passes, widekit and the map are asked for (the "work margin"); the picture keeps its
+ * full width, the columns beyond the work margin are the ambient frame (a calm colour field, never structure, so never a wrong tile).
+ * 0 full, 1 five eighths, 2 three eighths, 3 the floor (12 columns: little more than the edge fade; composing it costs the per line and
+ * per layer fixed part only). */
+enum { RUNG_N = 4, WORK_FLOOR = 12, PAD_FADE = 12 };
+static int work_margin(int rung, int full)
+{
+	static const int num[RUNG_N] = { 8, 5, 3, 0 };
+	if (rung <= 0 || full <= WORK_FLOOR) return full;
+	int m = rung >= RUNG_N - 1 ? WORK_FLOOR : (full * num[rung] + 7) / 8;
+	if (m < WORK_FLOOR) m = WORK_FLOOR;
+	return m;
+}
 
 /* ---- tile graphics ------------------------------------------------------------------------------------------- */
 
@@ -454,14 +495,14 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 static void free_objects(void)
 {
 	if (A.C) wk_compose_destroy(A.C);
-	A.C = NULL; A.cH = A.cM = 0;
+	A.C = NULL; A.cH = A.cM = A.cF = 0;
 	for (int i = 0; i < NOUT; i++) { free(A.out[i].px); free(A.out[i].prov); A.out[i].px = NULL; A.out[i].prov = NULL; }
 	for (int l = 0; l < 4; l++) for (int s = 0; s < 2; s++) { free(A.cand[l][s]); free(A.opq[l][s]); A.cand[l][s] = NULL; A.opq[l][s] = NULL; }
 }
 
-static int make_compose(int H, int Mh)
+static int make_compose(int H, int Mh, int Mf)
 {
-	if (A.C && A.cH == H && A.cM == Mh)
+	if (A.C && A.cH == H && A.cM == Mh && A.cF == Mf)
 		return 1;
 	wk_compose_cfg cc;
 	if (A.C) { wk_compose_destroy(A.C); A.C = NULL; }
@@ -471,15 +512,16 @@ static int make_compose(int H, int Mh)
 	cc.fg_fade_px = A.fgfade ? 24 : 0;
 	cc.fade_px = A.fade_px > 0 ? A.fade_px : 24;
 	cc.soft_blur = 0; cc.soft_sample = 1; cc.soft_darken = 45; cc.soft_always = 1;   /* the base is the ambient colours below */
-	for (int d = 0; d < Mh; d++) {
-		int t = d * 256 / Mh, ease = (t * t) >> 8;
+	for (int d = 0; d < Mf; d++) {      /* the ambient frame's darkening is a function of the distance in the full margin, whatever the work margin */
+		int t = d * 256 / Mf, ease = (t * t) >> 8;
 		A.amb_dk[d] = (uint8_t) (256 - (45 * 256 / 100) * ease / 256 > 255 ? 255 : 256 - (45 * 256 / 100) * ease / 256);
 	}
 	if (A.appear > 0) cc.appear_frames = A.appear;
 	A.C = wk_compose_create(&cc, 256, H, Mh);
 	if (!A.C) return 0;
-	A.cH = H; A.cM = Mh;
+	A.cH = H; A.cM = Mh; A.cF = Mf;
 	for (int i = 0; i < NOUT; i++) {
+		if (A.out[i].px && A.out[i].prov) continue;   /* the output ring never moves while a consumer may hold a picture of it */
 		free(A.out[i].px); free(A.out[i].prov);
 		A.out[i].px = (uint16_t *) calloc((size_t) (256 + 2 * SNES_WIDE_MAX_MARGIN) * MAXH, 2);
 		A.out[i].prov = (uint8_t *) calloc((size_t) (256 + 2 * SNES_WIDE_MAX_MARGIN) * MAXH, 1);
@@ -726,10 +768,11 @@ static void run(const Snap *sn)
 	A.cen.frames++;
 	A.frame_n++;
 	if (H <= 0 || H > MAXH || !v->ok || A.margin224 <= 0) { fallback(o, 2); return; }
-	const int Mh = margin_for(H), Mc = v->m;
-	if (Mh <= 0 || Mc < Mh || sn->mh != Mh) { fallback(o, 2); return; }
+	const int Mfull = margin_for(H), Mc = v->m;
+	const int Mh = sn->mh;           /* the work margin of this snapshot (the capture's: see work_margin), at most the picture's margin */
+	if (Mfull <= 0 || Mh <= 0 || Mh > Mfull || Mc < Mh) { fallback(o, 2); return; }
 	if (A.prof && A.prof->enable == WK_ENABLE_OFF) { fallback(o, 1); return; }
-	if (!A.L || !make_compose(H, Mh) || !A.fr || !A.wo) { fallback(o, 2); return; }
+	if (!A.L || !make_compose(H, Mh, Mfull) || !A.fr || !A.wo) { fallback(o, 2); return; }
 	if (v->epoch != A.epoch) {
 		A.epoch = v->epoch;
 		A.amb_have = 0; A.cov_have = 0;
@@ -739,7 +782,7 @@ static void run(const Snap *sn)
 		for (int l = 0; l < 4; l++) A.lay[l].have_gid = 0;
 		memset(A.th2, 0, sizeof A.th2); memset(A.th4, 0, sizeof A.th4); memset(A.th8, 0, sizeof A.th8);
 	}
-	const int OW = 256 + 2 * Mh;
+	const int OW = 256 + 2 * Mh;      /* the work picture's row; the output row is 256 + 2 * Mfull (padded at the end) */
 	st.width = OW; st.height = H; st.margin = Mh; st.lines = H;
 
 	int nd = 0, nn = 0, n7 = 0, nblank = 0;
@@ -903,7 +946,7 @@ static void run(const Snap *sn)
 						else { dst[d] = v->colors[ci]; op[d] = 1; }
 						if (A.soft_on && !cell.live && op[d]) {
 							/* a memory of an earlier run or session, not seen in this one: a hint, shown softly */
-							dst[d] = mix565(dst[d], amb_row(s, y, Mh)[d], SOFT_W);
+							dst[d] = mix565(dst[d], amb_row(s, y, Mfull)[d], SOFT_W);
 							A.softm[y][s][d] |= (uint8_t) (1 << l);
 						}
 					}
@@ -1061,7 +1104,8 @@ static void run(const Snap *sn)
 	/* 6. census, coverage and the Auto decision (per game and scene) */
 	if (wo->scene_event) A.cen.scenes++;
 	if ((A.frame_n & 1) == 0 || !A.cov_have) {
-		uint64_t ctm = 0, cln = 0, cbd = 0, cun = 0, csf = 0, crv = 0;
+		uint64_t ctm = 0, cln = 0, cbd = 0, cun = 0, csf = 0, crv = 0, cpad = 0;
+		uint64_t cnum[2] = { 0, 0 }, ctot[2] = { 0, 0 };   /* per side: good pixels (soft ones half, doubled) and pixels counted */
 		for (int y = 0; y < H; y++) {
 			const SWideLine &Ln = v->line[y];
 			if (!line_ok(Ln)) continue;
@@ -1088,60 +1132,130 @@ static void run(const Snap *sn)
 				if (ln_ > tm) ln_ = tm;
 				ctm += (uint64_t) (tm - ln_); cln += (uint64_t) ln_; cbd += (uint64_t) bd; cun += (uint64_t) un;
 				csf += (uint64_t) sf; crv += (uint64_t) rv;
+				cnum[s] += (uint64_t) ((tm + bd + rv) * 2 + sf); ctot[s] += (uint64_t) Mh;
+				cpad += (uint64_t) (Mfull - Mh);
 			}
 		}
 		const uint64_t tot = ctm + cln + cbd + cun + csf + crv;
 		A.cen.px_tilemap += ctm; A.cen.px_learned += cln; A.cen.px_backdrop += cbd; A.cen.px_unknown += cun;
-		A.cen.px_soft += csf; A.cen.px_reveal += crv;
+		A.cen.px_soft += csf; A.cen.px_reveal += crv; A.cen.px_pad += cpad;
 		if (tot) {
 			/* a revealed lower layer is real picture (the layer above it fades out over it: B); soft learned pixels are memory of an
-			 * earlier run, not a proven picture: they count half */
-			const int c256 = (int) (((ctm + cln + cbd + crv) * 2 + csf) * 50 * 256 / tot);
-			if (!A.cov_have || wo->scene_event) { A.cov_q8 = c256; A.cov_have = 1; }
-			else A.cov_q8 += (c256 - A.cov_q8) / 60;
+			 * earlier run, not a proven picture: they count half. Each side has its own coverage: a scrolling game has real history
+			 * behind the camera and little ahead of it, and the side the camera came from can carry real picture while the other
+			 * one shows the ambient frame. */
+			for (int s = 0; s < 2; s++) {
+				if (!ctot[s]) continue;
+				const int c256 = (int) (cnum[s] * 50 * 256 / ctot[s]);
+				if (!A.cov_have || wo->scene_event) A.cov_q8[s] = c256;
+				else A.cov_q8[s] += (c256 - A.cov_q8[s]) / 60;
+			}
+			A.cov_have = 1;
 		}
 	}
-	if (A.auto_on) {
-		const int want = A.auto_state ? (A.cov_q8 >= COV_OFF * 256) : (A.cov_q8 >= COV_ON * 256);
-		if (want != A.auto_state) { A.auto_state = want; A.cen.auto_switches++; }
-	} else {
-		A.auto_state = 1;
+	for (int s = 0; s < 2; s++) {
+		if (A.auto_on.load()) {
+			const int want = A.auto_state[s] ? (A.cov_q8[s] >= COV_OFF * 256) : (A.cov_q8[s] >= COV_ON * 256);
+			if (want != A.auto_state[s]) { A.auto_state[s] = want; A.cen.auto_switches++; }
+		} else {
+			A.auto_state[s] = 1;
+		}
+		const int target = A.auto_state[s] ? 0 : 32;
+		if (!A.auto_on.load()) A.xf[s] = 0;
+		else if (A.xf[s] < target) A.xf[s]++;
+		else if (A.xf[s] > target) A.xf[s]--;
 	}
-	{
-		const int target = A.auto_state ? 0 : 32;
-		if (!A.auto_on) A.xf = 0;
-		else if (A.xf < target) A.xf++;
-		else if (A.xf > target) A.xf--;
-	}
-	if (A.xf > 0) {
-		const int xf = A.xf;
+	if (A.xf[0] > 0 || A.xf[1] > 0) {
 		for (int y = 0; y < H; y++) {
 			const SWideLine &Ln = v->line[y];
 			if (!(Ln.flags & SWL_VALID) || (Ln.flags & SWL_BLANK)) continue;
 			uint16_t *row = o->px + (size_t) y * OW;
 			for (int s = 0; s < 2; s++) {
-				const uint16_t *ap = amb_row(s, y, Mh);
+				const int xf = A.xf[s];
+				if (xf <= 0) continue;
+				const uint16_t *ap = amb_row(s, y, Mfull);
+				o->real[y][s] = 0;        /* a blend with the ambient frame is not a claim of real picture, whatever the weight */
+				uint8_t *prow = o->prov + (size_t) y * OW;
 				if (xf >= 32) {
 					if (s == 0) for (int d = 0; d < Mh; d++) row[Mh - 1 - d] = ap[d];
 					else memcpy(row + Mh + 256, ap, (size_t) Mh * 2);
+					for (int d = 0; d < Mh; d++) prow[s == 0 ? Mh - 1 - d : Mh + 256 + d] = WK_PROV_SOFT;
 				} else {
 					for (int d = 0; d < Mh; d++) {
 						const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
 						row[dx] = mix565(row[dx], ap[d], xf);
+						prow[dx] = (uint8_t) ((prow[dx] & 0xF0) | WK_PROV_FADE);
 					}
 				}
 			}
-			if (xf >= 32) o->real[y][0] = o->real[y][1] = 0;
 		}
-		if (xf >= 32) A.cen.frames_ambient++; else A.cen.frames_crossfade++;
+		if (A.xf[0] >= 32 && A.xf[1] >= 32) A.cen.frames_ambient++; else A.cen.frames_crossfade++;
 	}
-	st.coverage_pct = A.cov_q8 >> 8; st.auto_wide = A.auto_state; st.xfade = A.xf;
+	for (int s = 0; s < 2; s++) if (A.xf[s] >= 32) A.cen.frames_side_amb[s]++;
+	/* a work margin narrower than the picture's: the columns beyond it are the ambient frame, and the work margin's last columns fade into
+	 * it (faded pixels are not claimed as real) */
+	if (Mh < Mfull) {
+		const int OWf = 256 + 2 * Mfull, padn = Mfull - Mh, F = Mh < 3 * PAD_FADE ? Mh / 3 : PAD_FADE;
+		for (int y = H - 1; y >= 0; y--) {
+			uint16_t *src = o->px + (size_t) y * OW, *dst = o->px + (size_t) y * OWf;
+			uint8_t *psrc = o->prov + (size_t) y * OW, *pdst = o->prov + (size_t) y * OWf;
+			memmove(dst + padn, src, (size_t) OW * 2);
+			memmove(pdst + padn, psrc, (size_t) OW);
+			const SWideLine &Ln = v->line[y];
+			const bool blank = (Ln.flags & SWL_VALID) && (Ln.flags & SWL_BLANK);
+			for (int sd = 0; sd < 2; sd++) {
+				const uint16_t *ap = amb_row(sd, y, Mfull);
+				for (int d = Mh; d < Mfull; d++) {
+					const int dx = sd == 0 ? Mfull - 1 - d : Mfull + 256 + d;
+					dst[dx] = blank ? 0 : ap[d];
+					pdst[dx] = blank ? PROV_EXACT : WK_PROV_SOFT;
+				}
+				if (!blank && (Ln.flags & SWL_VALID))
+					for (int d = Mh - F; d < Mh; d++) {
+						const int dx = sd == 0 ? Mfull - 1 - d : Mfull + 256 + d;
+						const int w = (d - (Mh - F) + 1) * 32 / (F + 1);
+						dst[dx] = mix565(dst[dx], ap[d], w);
+						pdst[dx] = (uint8_t) ((pdst[dx] & 0xF0) | WK_PROV_FADE);
+					}
+				if (o->real[y][sd] > Mh - F) o->real[y][sd] = (uint8_t) (Mh - F);
+			}
+		}
+	}
+	st.width = 256 + 2 * Mfull; st.margin = Mfull;
+	st.coverage_pct = (A.cov_q8[0] > A.cov_q8[1] ? A.cov_q8[0] : A.cov_q8[1]) >> 8;
+	st.auto_wide = A.auto_state[0] | A.auto_state[1]; st.xfade = A.xf[0] < A.xf[1] ? A.xf[0] : A.xf[1];
+	for (int s = 0; s < 2; s++) { st.side_wide[s] = A.auto_state[s]; st.side_xfade[s] = A.xf[s]; st.side_cov[s] = A.cov_q8[s] >> 8; }
+	st.work_margin = Mh; st.rung = A.rung;
 	A.cen.frames_wide++;
-	A.cen.coverage_pct = st.coverage_pct; A.cen.auto_wide = A.auto_state;
+	A.cen.coverage_pct = st.coverage_pct; A.cen.auto_wide = st.auto_wide;
 	A.cen.map_cells = (uint32_t) st.map_cells;
 	st.instr_us = (uint32_t) (now_us() - t0);
+	if (A.policy) {
+		/* cost ladder. The smoothed compose time (about 32 frames) over the budget for cost_frames frames: one rung down (a narrower work
+		 * margin). One rung up again only after hold_frames frames at this rung (10 s, doubling after every step down that follows a step
+		 * up too soon, to 2 minutes) and only if the time scaled to the wider margin would still be at most 75% of the budget. */
+		const uint32_t q4 = (uint32_t) ((uint64_t) st.instr_us * (uint32_t) A.cost_scale / 100) * 16;
+		A.cost_ema_q4 = A.cost_n ? A.cost_ema_q4 + (int32_t) (q4 - A.cost_ema_q4) / 32 : q4;
+		A.cost_n++; A.since_down++;
+		A.cen.compose_us = A.cost_ema_q4 / 16;
+		const uint32_t ema = A.cost_ema_q4 / 16;
+		if (A.cost_n >= (uint32_t) A.cost_frames && ema > (uint32_t) A.cost_us && A.rung < RUNG_N - 1 && Mh > WORK_FLOOR) {
+			if (A.since_down < 3600 && A.hold_frames < 7200) A.hold_frames *= 2;   /* stepped up and straight back down: wait longer next time */
+			A.rung++; A.cen.rung_changes++;
+			A.cost_n = 0; A.since_down = 0;
+			A.cap_mh.store(work_margin(A.rung, A.margin224));
+		} else if (A.rung > 0 && A.since_down >= A.hold_frames && A.cost_n >= (uint32_t) A.cost_frames) {
+			const int up = work_margin(A.rung - 1, A.margin224);
+			if ((uint64_t) ema * (uint32_t) up / (uint32_t) (Mh ? Mh : 1) <= (uint64_t) A.cost_us * 3 / 4) {
+				A.rung--; A.cen.rung_changes++;
+				A.cost_n = 0; A.since_down = 0;
+				A.cap_mh.store(up);
+			}
+		}
+	}
 	publish(o, 1);
 }
+
 
 static void on_frame(const SWideView *v, void *)
 {
@@ -1282,13 +1396,13 @@ void snes_wide_set(int on, int margin)
 	if (!A.settle) A.settle = 1;
 	if (A.margin224 != margin) {
 		A.margin224 = margin;
-		A.cap_mh = margin;
+		A.cap_mh = work_margin(A.rung, margin);
 		pool_reset();
-		if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; }
+		if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; }
 	}
 	ensure_objects();
 	make_map();
-	A.cap_mh = margin;
+	A.cap_mh = work_margin(A.rung, margin);
 	A.on = 1;
 	A.core_margin = margin_for(239) > margin ? margin_for(239) : margin;
 	if (A.core_margin > SNES_WIDE_MAX_MARGIN) A.core_margin = SNES_WIDE_MAX_MARGIN;
@@ -1308,7 +1422,7 @@ void snes_wide_clear_game(void)
 	A.have_game = 0; A.crc = 0; A.title[0] = 0; A.prof = NULL; A.prof_off = 0;
 	pool_reset();
 	memset(&A.cen, 0, sizeof A.cen);
-	A.amb_have = 0; A.cov_have = 0; A.auto_state = 1; A.xf = 0; A.frame_n = 0;
+	A.amb_have = 0; A.cov_have = 0; A.auto_state[0] = A.auto_state[1] = 1; A.xf[0] = A.xf[1] = 0; A.cov_q8[0] = A.cov_q8[1] = 0; A.frame_n = 0;
 	A.map_saved_cells = 0;
 	if (A.L) wk_layers_reset(A.L);
 	if (A.C) wk_compose_reset(A.C);
@@ -1325,6 +1439,9 @@ void snes_wide_set_game(const uint8_t *rom, size_t n, const char *title)
 	A.crc = rom && n ? crc32_of(rom, n) : 0;
 	snprintf(A.title, sizeof A.title, "%s", title ? title : "");
 	A.have_game = A.crc != 0;
+	A.chip = rom_chip(rom, n);
+	A.cost_ema_q4 = 0; A.cost_n = 0; A.since_down = 0; A.hold_frames = 600;
+	A.rung = (A.policy && A.chip) ? 1 : 0;     /* Super FX / SA-1 start one rung down; the measured cost corrects it either way */
 	ensure_objects();
 	profile_lookup();
 	A.lk.unlock();
@@ -1333,17 +1450,26 @@ void snes_wide_set_game(const uint8_t *rom, size_t n, const char *title)
 int snes_wide_option(const char *name, int v)
 {
 	if (!name) return 1;
+	if (!strcmp(name, "auto")) {       /* the player calls this every frame: no lock unless it changes (compose holds the lock for a whole frame) */
+		if (A.auto_on.load() != (v != 0)) {
+			A.auto_on.store(v != 0);
+		}
+		return 0;
+	}
 	A.lk.lock();
 	int r = 0;
-	if (!strcmp(name, "auto")) A.auto_on = v != 0;
-	else if (!strcmp(name, "period")) { A.period = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
-	else if (!strcmp(name, "fade_px")) { A.fade_px = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
-	else if (!strcmp(name, "appear_frames")) { A.appear = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
+	if (!strcmp(name, "policy")) { A.policy = v != 0; if (!A.policy) A.rung = 0; if (A.margin224) A.cap_mh = work_margin(A.rung, A.margin224); }
+	else if (!strcmp(name, "cost_us")) A.cost_us = v;
+	else if (!strcmp(name, "cost_frames")) A.cost_frames = v;
+	else if (!strcmp(name, "cost_scale")) A.cost_scale = v < 1 ? 1 : v;
+	else if (!strcmp(name, "period")) { A.period = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
+	else if (!strcmp(name, "fade_px")) { A.fade_px = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
+	else if (!strcmp(name, "appear_frames")) { A.appear = v; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
 	else if (!strcmp(name, "debug")) A.debug = v != 0;
 	else if (!strcmp(name, "hud_excl")) A.hud_excl = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
-	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = 0; } }
+	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
 	else if (!strcmp(name, "map_safe")) {
 		A.map_safe = v;
 		if (A.M) { wk_map_destroy(A.M); A.M = NULL; make_map(); }
@@ -1459,6 +1585,7 @@ void snes_wide_census_get(snes_wide_census *c)
 {
 	A.lk.lock();
 	*c = A.cen;
+	c->chip = A.chip; c->rung = A.rung;
 	A.lk.unlock();
 }
 

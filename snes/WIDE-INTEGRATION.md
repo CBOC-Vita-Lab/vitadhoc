@@ -86,6 +86,10 @@ The normal picture is drawn by the unchanged code first.
 `sh snes/twin/selftest.sh` has a wide section: truth tests on synthetic cartridges (`twin/tests/make_wide_roms.py`, `wide_truth.py`),
 identity (frames, audio, state; single thread and workers) and the player test (`player_twin wide ROM WORK`).
 Larger runs: `twin/wide_compare.py` (the 15 owner games and the test-ROM suites).
+Last full run (13/14 Nov 2026, final tree): `selftest.sh` all passed (includes the ladder floor and per-side Auto truth runs on scrolling, window
+and Mode 7 cartridges: 0 wrong real pixels); `make -C widekit test` 1095 checks, 0 failed; NES `wide_golden.sh` with `WG_VERIFY=1` 37 files
+match; `wide_compare.py` against the pre-wide reference tree on the 15 owner games, 3000 frames: margin 70 (single thread and workers) 15
+identical, margin 41 and 96 (single thread) 15 identical.
 
 ## Known harness note (Super FX test ROMs)
 
@@ -96,19 +100,91 @@ end (screen hash at the hook, at `S9xControlEOF` and at `S9xSyncSpeed` are equal
 picture is what the unmodified build returns (frame, audio and state hashes are identical to the reference).
 The wide centre is the cleaner frame. Not a wide-view error.
 
-## Auto decision and census
+## Auto decision (per side) and census
 
-`snes_wide_option("auto", 1)` (the player's "Auto") lets the adapter decide per scene whether the margins show the wide picture or
-an ambient frame. Coverage is the share of margin pixels (over the drawn lines) that come from a real tilemap, the learned map or a
-trusted continued backdrop; it is smoothed (EMA over about 60 frames, snapped at scene events). Wide turns on at 85 % and off at 75 %
-(hysteresis); a change cross-fades over 32 frames (about 0.5 s). `snes_wide_option("auto", 0)` ("On") always shows the wide picture.
-The ambient frame is a dimmed, heavily blurred colour field taken from the picture's own edge columns (no structure), the same
-look as the app's ambient backdrop. Pixels not trusted fade over 24 px into it.
+`snes_wide_option("auto", 1)` (the player's "Auto") lets the adapter decide, per side and scene, whether a margin shows the composed wide
+picture or the ambient frame. Coverage is the share of that side's margin pixels (over the drawn lines, status bar lines excluded:
+`hud_excl`, default on) that come from a real tilemap, the learned map or a trusted continued backdrop (soft learned pixels count half);
+it is smoothed (EMA over about 60 frames, snapped at scene events). A side turns real at 85 % and back to ambient at 75 % (hysteresis);
+a change cross-fades over 32 frames (about 0.5 s). The two sides decide alone (13 Nov 2026): a scrolling game has real picture behind the
+camera (the tilemap keeps up to about 240 px of history behind the scroll direction and only 0 to 16 px ahead) and the side the camera came
+from can show it while the other side shows the ambient frame, instead of both falling back together. `snes_wide_option("auto", 0)` ("On")
+always shows the composed picture. A side that is ambient or cross-fading claims no real pixel (`snes_wide_real()` is 0 there and the
+provenance is soft / fade), so the truth tools see exactly what is claimed. The ambient frame is a dimmed, heavily blurred colour field
+taken from the picture's own edge columns (no structure), the same look as the app's ambient backdrop. Pixels not trusted fade over 24 px
+into it. Option calls with "auto" are lock free when the value does not change (the player calls it every frame; compose holds the adapter
+lock for a whole frame).
 
-`snes_wide_census_get()` returns running totals since the game was set (`snes_wide_census_reset()` restarts them): frames, frames
-wide / ambient / cross-fading, fallback reasons (nothing drawn, profile off, setup), Auto switches, scene events, margin pixels by
-provenance (tilemap, learned, backdrop, unknown), map cells, current coverage and the Auto state. The player writes one log line per
-second from it while the wide view is on. `snes_wide_twin --summary` prints the same (`census:` and `censuspx:` lines).
+`snes_wide_census_get()` returns running totals since the game was set (`snes_wide_census_reset()` restarts them): frames, frames wide /
+ambient (both sides) / ambient per side / cross-fading, fallback reasons (nothing drawn, profile off, setup), per line reasons
+(`line_reason[]`, `SNES_WIDE_LR_*`), Auto switches, scene events, margin pixels by provenance (tilemap, learned, backdrop, unknown, soft,
+reveal, pad), map cells, the ladder rung and the smoothed compose time. The player writes one log line per second from it while the wide
+view is on. `snes_wide_twin --summary` prints the same (`census:`, `censuspx:`, `sides:`, `ladder:`, `reasons:` lines).
+
+## Cost ladder: wide stays on, what degrades is how much is composed (13 Nov 2026)
+
+Owner rule: wide on by default for every game, never a missed 60 Hz refresh for it. The adapter therefore never switches the view off for
+cost. Option `policy` (default 1; the twin's proofs run with 0 = always the full margin) measures the compose time per frame (the wall time
+of `run()`, smoothed over about 32 frames; on the split path that is the drawing thread's time) and steps a rung:
+
+| rung | work margin (columns per side that the passes, widekit and the map are asked for) | beyond it |
+|---|---|---|
+| 0 | the picture's margin (41 / 70 / up to 96) | - |
+| 1 | 5/8 of it | ambient frame |
+| 2 | 3/8 of it | ambient frame |
+| 3 | the floor, 12 columns | ambient frame |
+
+The picture keeps its full width: the columns beyond the work margin are the ambient frame (a calm colour field, never structure, so never a
+wrong tile) and the last 12 work columns fade into it (a faded pixel claims nothing). Steps down: smoothed compose time above `cost_us`
+(default 9000 us, about half of a 60 Hz frame so that the draw thread also has room for the texture copy) for `cost_frames` (60) frames.
+Steps up (hysteresis): only after `hold_frames` (600 frames = 10 s; doubled up to 7200 each time a step up was followed by a step down within
+a minute) at the rung, and only if the time scaled to the wider margin (linear in the margin) is at most 75 % of the budget. Super FX and SA-1
+cartridges (header type byte) start at rung 1; the measurement corrects either way. Proof that the rung never shows a wrong tile: it only
+shrinks the region that is composed and fills the rest with the ambient frame; `selftest.sh` runs the truth tools at the floor
+(`policy=1 cost_us=1`) on scrolling, window and Mode 7 cartridges (0 wrong real pixels, centre identical).
+The twin can stand in for a slower machine with `--wopt cost_scale=PERCENT` (the ladder sees the measured time times this).
+
+What the ladder does not reduce: the renderer's own margin passes (PPU thread) and the capture. Their cost depends little on the margin (a
+tile draw costs the same per call, one call per tile row, line and layer), so the floor still leaves the passes of Super FX games with a
+render batch per line (Yoshi's Island: about 6 M instructions a frame). Cutting that needs a core mode that delivers the hook with the centre
+only (no passes) for the floor rung; snes/core is not in this agent's ownership (see the report).
+
+## The 15 games (13 Nov 2026; `snes/twin/wide_table.py`, margin 41, 3000 frames of the owner's script, x86 twin)
+
+Columns: real share = margin pixels that are real picture (tilemap, learned map, continued backdrop, revealed lower layer) over all margin
+pixels, with `hud_excl` on (default) and off; soft = learned cells shown softly; Auto ambient frames L / R = percent of frames on which that
+side showed the ambient frame (Auto decides per side; 0 = always the composed picture); main limits = per picture line reasons
+(`SNES_WIDE_LR_*`; "ring shorter than margin" = the layers' known extent is shorter than the margin, "layer not described" = a layer on
+the line is not a mode 0/1/3 tilemap widekit can describe, "bitmap tilemap" = framebuffer style tilemap); compose = wall microseconds of
+compose per frame on this x86 box, full margin (a contended 2 core box: indicative only); ladder rung = where the cost ladder was after
+3000 frames with `--wopt policy=1 --wopt cost_scale=800` (the measured time times 8, a guess at the Vita's speed from the instruction
+counts below; the box was shared with other jobs, so the steps are noisy), steps in brackets; hud_excl pixels = the composed frames with
+Auto off (`auto=0`) with `hud_excl` 1 and 0 compared byte for byte.
+
+| game | chip | real share % (hud_excl 1 / 0) | soft % | Auto ambient frames L / R % | main limits of the margin (lines) | compose us/frame (x86, full margin) | ladder rung at x800 (steps) | hud_excl pixels |
+|---|---|---|---|---|---|---|---|---|
+| ChronoTrigger | - | 42.8 / 42.8 | 0.0 | 86 / 86 | ring shorter than margin 53.7%  exact 40.2%  forced blank 6.0% | 440 | 0 (0) | identical |
+| Donkey Kong 1 - Country | - | 11.7 / 11.7 | 0.0 | 99 / 99 | ring shorter than margin 77.2%  exact 11.3%  bitmap tilemap 7.8% | 289 | 0 (0) | identical |
+| Doom | Super FX | 0.0 / 0.0 | 0.0 | 99 / 99 | ring shorter than margin 67.7%  forced blank 32.3% | 272 | 0 (0) | identical |
+| F-Zero | - | 2.9 / 2.9 | 0.0 | 99 / 99 | ring shorter than margin 92.0%  forced blank 4.6%  exact 2.7% | 309 | 0 (0) | identical |
+| Kirby Superstar | SA-1 | 23.9 / 23.9 | 0.0 | 91 / 91 | ring shorter than margin 53.0%  exact 24.9%  forced blank 13.2% | 397 | 0 (0) | identical |
+| Mega Man X 2 | - | 29.5 / 29.5 | 0.0 | 69 / 69 | ring shorter than margin 47.7%  exact 42.8%  forced blank 6.6% | 411 | 0 (0) | identical |
+| Pilotwings | - | 60.2 / 60.2 | 0.0 | 91 / 91 | exact 55.8%  layer not described 36.9%  forced blank 7.3% | 193 | 0 (0) | identical |
+| Street Fighter Alpha 2 | - | 44.2 / 44.2 | 0.2 | 56 / 52 | ring shorter than margin 46.4%  exact 39.6%  forced blank 14.0% | 433 | 0 (2) | identical |
+| Stunt Race FX | Super FX | 4.6 / 4.6 | 0.0 | 91 / 91 | ring shorter than margin 84.5%  forced blank 11.4%  exact 4.1% | 352 | 0 (0) | identical |
+| Super Mario Kart | - | 62.3 / 62.3 | 0.0 | 43 / 92 | ring shorter than margin 56.0%  exact 30.8%  layer not described 7.0% | 313 | 0 (0) | identical |
+| Super Mario RPG | SA-1 | 34.1 / 34.1 | 0.0 | 71 / 72 | ring shorter than margin 55.3%  exact 33.8%  forced blank 10.9% | 328 | 0 (2) | identical |
+| Super Mario World | - | 53.6 / 53.6 | 4.2 | 60 / 84 | exact 63.8%  ring shorter than margin 30.6%  forced blank 5.6% | 613 | 2 (2) | identical |
+| Super Metroid | - | 99.0 / 99.0 | 0.0 | 0 / 0 | exact 88.6%  forced blank 10.5%  ring shorter than margin 0.9% | 118 | 0 (0) | identical |
+| Yoshi's Island | Super FX | 17.6 / 16.2 | 7.1 | 90 / 90 | ring shorter than margin 59.3%  forced blank 18.6%  exact 15.5% | 463 | 0 (0) | identical |
+| Zelda - A Link to the Past | - | 38.1 / 38.1 | 0.0 | 67 / 67 | ring shorter than margin 59.1%  exact 36.4%  forced blank 4.5% | 332 | 0 (0) | identical |
+
+Reading it: `hud_excl` changes no pixel in any of the 15 games (it only changes which lines count towards Auto's decision; the real share
+differs only on Yoshi's Island, 17.6 against 16.2 percent). Real picture is rare outside Mode 7 and the few games with long tilemap history:
+Super Metroid (99 %), Super Mario Kart (62 %), Pilotwings (60 %), Super Mario World (54 %), Street Fighter Alpha 2, Chrono Trigger, Zelda
+(38 to 44 %). The side decision shows its effect where the camera scrolls: Super Mario Kart 43 / 92 and Super Mario World 60 / 84 percent
+ambient on the left / right, against both sides together before. For every other game the limit is the ring: the line is real only as far
+as the tilemap extent known from the write stamps, which is shorter than the 41 px margin on 46 to 92 percent of the lines.
 
 ## Learned map and sub screen layers (13 Nov 2026)
 

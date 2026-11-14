@@ -567,7 +567,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	session_.set_resume_present(states_->resume_present());
 	settings_load();
 	apply_overrides();
-	eff_ = ps_;
+	look_apply(0);   // eff_ from ps_ (a fixed Light look has the blends off from the start)
 	pacer_.set_enabled(steady_);
 	store_ = new ProfileStore(root, "snes", game_);
 	store_->load_effective(model_snes(), req_.enter_is_cross, profile_);

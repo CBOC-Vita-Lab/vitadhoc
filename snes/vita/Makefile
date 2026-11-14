@@ -21,7 +21,7 @@ include $(CORE)/sources.mk
 CPUFLAGS := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard
 # S9X_PROF compiles the timing hooks in; they cost nothing while g_s9xp.on is 0
 # (the app switches them on for one second in four to keep the log cheap).
-CORE_DEFS := -DHAVE_STDINT_H -DNDEBUG -DS9X_PROF -DUSE_SELF_THREADED=0 -D__vita__
+CORE_DEFS := -DHAVE_STDINT_H -DNDEBUG -DS9X_PROF -DUSE_SELF_THREADED=0 -D__vita__ -DSA1_FAST_RUN=15
 PK  := ../../playerkit
 WK  := ../../widekit
 INC := -I$(WK)/include -I$(CORE) -I$(CORE)/apu -I$(CORE)/apu/bapu -I$(FE) -I$(FE)/third_party/stb -I$(V2D)/include -I$(PK)/src -I$(PK)/vita

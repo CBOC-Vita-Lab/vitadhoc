@@ -50,7 +50,7 @@ import zlib
 from PIL import ImageChops
 
 import app_tests as A
-from app_tests import Suite, menu_pick, game_pixels, EXIT_APP
+from app_tests import Suite, menu_pick, set_down, game_pixels, EXIT_APP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROMS = os.path.join(HERE, "..", "tests", "rewind", "rom")
@@ -425,7 +425,7 @@ def t_guards(S):
     # Rewind), stepped once to the
     # left of "1 min" is "30 s"; the game loop hears of it when the menu
     # closes
-    r = S.run("rw_setting", menu_pick(4, wait=120) + "+20:up\n" + "+8:up\n" * 13 +  # (+3: Steady pacing, Smooth hand-over, Export save, 1.4)
+    r = S.run("rw_setting", menu_pick(4, wait=120) + set_down(11) +  # Rewind: third Gameplay row (Fast-forward, FF button, Rewind)
               "+10:shot=row.png\n+4:left\n+10:shot=row30.png\n"
               "+4:circle\n+10:circle\n+60:rstick-left:30\n+40:quit\n",
               autoboot="gbadhoc-test.gba")

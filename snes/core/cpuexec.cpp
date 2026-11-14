@@ -316,7 +316,7 @@ void S9xDoHEventProcessing (void)
 
 			if (Settings.SA1)
 			{
-			#if defined(SA1_FAST_RUN) && (SA1_FAST_RUN + 0 == 0 || (SA1_FAST_RUN & 8))
+			#if defined(SA1_FAST_RUN) && (SA1_FAST_RUN & 8)
 				S9xSA1ReplayAdvance();	// the SA-1 may be behind by the targets it was not moved to yet
 			#endif
 				SA1.Cycles -= Timings.H_Max * 3;

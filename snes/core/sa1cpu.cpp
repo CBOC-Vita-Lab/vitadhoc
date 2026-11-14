@@ -8,8 +8,7 @@
 #include "memmap.h"
 
 #if defined(SA1_FAST_RUN) && SA1_FAST_RUN + 0 == 0
-#undef SA1_FAST_RUN
-#define SA1_FAST_RUN 15
+#error "SA1_FAST_RUN needs a bit mask: build every core file with -DSA1_FAST_RUN=15"
 #endif
 
 // CBOC-Vita: inlined fast path of S9xSA1GetByte (a plain ROM/RAM block); everything else calls the original
@@ -283,7 +282,8 @@ void S9xSA1ReplayDrop (void)
  * loop's points and its timer is updated, as the full call below does. */
 #ifdef SA1_FAST_RUN
 /* CBOC-Vita: the same replay call as below with its fixed costs taken out. Bit flags in
- * SA1_FAST_RUN (a plain -DSA1_FAST_RUN means all of them):
+ * SA1_FAST_RUN, a bit mask (ship -DSA1_FAST_RUN=15 on EVERY core file: bit 8's
+ * flush points live in cpuexec.cpp and sa1.cpp too):
  *   1  the watched bytes are checked with the loop unrolled for 1 to 3 of them
  *   2  the whole passes of the loop are counted with a multiply (the Cortex-A9 has no divide)
  *   4  the timer step is written out for "no timer interrupt set up" (thisIRQ is false there)

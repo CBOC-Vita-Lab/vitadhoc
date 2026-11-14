@@ -9,6 +9,7 @@ B    := build
 CXX ?= g++
 OPT ?= -O2
 CORE_DEFS := -DHAVE_STDINT_H -DNDEBUG -DS9X_PROF -DUSE_SELF_THREADED=0
+CORE_DEFS += -DSA1_FAST_RUN=15
 INC  := -I$(CORE) -I$(CORE)/apu -I$(CORE)/apu/bapu -I$(FE) -I$(FE)/third_party/stb
 CXXFLAGS := -MMD -MP $(OPT) -std=gnu++14 -w -fno-strict-aliasing $(CORE_DEFS) $(INC) $(EXTRA)
 

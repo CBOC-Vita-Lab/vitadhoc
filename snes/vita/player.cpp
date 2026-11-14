@@ -132,6 +132,7 @@ SnesPlayer::SnesPlayer(Platform *pf) : pf_(pf)
 	g_changed = 0;
 	pic_defaults(&g_ps_file);
 	apply_1_4_defaults(&g_ps_file);
+	eff_ = ps_;
 }
 
 SnesPlayer::~SnesPlayer()
@@ -232,6 +233,15 @@ void SnesPlayer::run_writer_job(WriterJob *j)
 	case WriterJob::LOG:
 		pf_->log_write(j->text);
 		break;
+	case WriterJob::LOOKMEM:
+		/* the game's look memory: the safe writer, or gone when the governor says it is no longer needed */
+		if (j->remove_file) { file_remove(j->path); j->result = 0; }
+		else {
+			make_dirs(path_dir(j->path));
+			WriteResult w = atomic_write(j->path, (const uint8_t *) j->text.data(), j->text.size());
+			j->result = w == W_OK ? 0 : 100 + (int) w;
+		}
+		break;
 	case WriterJob::WIDEMAP: {
 		/* the learned map of the wide view: serialised here (not on the game thread), written with the safe writer */
 		size_t need = snes_wide_map_save(NULL, 0);
@@ -285,6 +295,11 @@ void SnesPlayer::poll_writer()
 			break;
 		case WriterJob::LOG:
 			log_busy_ = false;
+			break;
+		case WriterJob::LOOKMEM:
+			look_busy_ = false;
+			if (j->result) look_written_.clear();      /* not written: try again at the next chance */
+			logf("look memory %s rc=%d\n", j->remove_file ? "removed" : "written", j->result);
 			break;
 		case WriterJob::WIDEMAP:
 			wide_busy_ = false;
@@ -547,6 +562,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	session_.set_resume_present(states_->resume_present());
 	settings_load();
 	apply_overrides();
+	eff_ = ps_;
 	pacer_.set_enabled(steady_);
 	store_ = new ProfileStore(root, "snes", game_);
 	store_->load_effective(model_snes(), req_.enter_is_cross, profile_);
@@ -808,6 +824,8 @@ void SnesPlayer::open_menu(int player)
 	/* the battery RAM is written once the menu is on screen (menu_drawn), on the writer thread */
 	menu_srm_pending_ = snes_host_sram_dirty() != 0;
 	pacer_.reset(PACE_FULL);
+	look_save(false);
+	look_.reset_window();
 }
 
 void SnesPlayer::menu_drawn()
@@ -825,6 +843,8 @@ MenuEvent SnesPlayer::menu_update(const MenuInput &in)
 		snes_host_set_multitap(multitap_wanted());
 		srm_recheck_ = true;
 		pacer_.reset(PACE_FULL);
+		look_.reset_window();
+		look_safe_point(LOOK_SAFE_MENU);
 		if (ev == MENU_RESET_DONE) notice("The game was reset", NOTICE_INFO);
 	}
 	return ev;
@@ -871,6 +891,7 @@ void SnesPlayer::on_change(int row, int v)
 	default: return;
 	}
 	settings_dirty_ = true;
+	look_sync_rows();
 	pf_->picture_changed();
 }
 
@@ -1009,14 +1030,14 @@ void SnesPlayer::wide_start()
 void SnesPlayer::wide_apply(int scr_w, int scr_h)
 {
 	int m = pic_wide_margin(&ps_, scr_w, scr_h, SNES_WIDE_MAX_MARGIN);
-	bool want = m > 0 && ps_.wide != 2;
-	if (want && ps_.wide == 0 && pacer_.mode() != PACE_FULL) want = false;
+	bool want = m > 0 && eff_.wide != 2;
+	if (want && eff_.wide == 0 && pacer_.mode() != PACE_FULL) want = false;
 	if (!want) m = 0;
-	snes_wide_option("auto", ps_.wide == 1 ? 0 : 1);   /* Auto decides per scene; On forces the wide view */
+	snes_wide_option("auto", eff_.wide == 1 ? 0 : 1);   /* Auto decides per scene; On forces the wide view */
 	if (want == wide_on_ && m == wide_m_) return;
 	snes_wide_set(want ? 1 : 0, m);
 	wide_on_ = want; wide_m_ = m;
-	logf("wide view %s margin=%d (mode %d, shape %d)\n", want ? "on" : "off", m, ps_.wide, ps_.shape);
+	logf("wide view %s margin=%d (mode %d, shape %d)\n", want ? "on" : "off", m, eff_.wide, ps_.shape);
 }
 
 void SnesPlayer::wide_post(bool final_)
@@ -1049,10 +1070,112 @@ void SnesPlayer::wide_watch(uint64_t now_us)
 	wide_post(false);
 }
 
+/* ---- look governor ------------------------------------------------------------------ */
+
+/* The ladder (docs/DEFAULTS-1.4.md section 5, Super NES: no xBRZ), least visible first. The row ids are the menu's.
+ * Owner decision: a feature is never switched off for a game, so the wide view is NOT a rung; it will be degraded in
+ * resolution (narrower margin, lower resolution side strips, 30 Hz strips) by rungs appended here once snes/frontend/wide.*
+ * offers them. To add one: a line here, a LOOK_* id in player.h, and its effect in look_apply(). */
+static const LookRung kLookLadder[] = {
+	{ "interlace blend off", SnesPlayer::ROW_INTERLACE, 0.04f, 30 },
+	{ "hi-res blend off", SnesPlayer::ROW_HIRES, 0.04f, 45 },
+};
+enum { kLookRungs = sizeof kLookLadder / sizeof kLookLadder[0] };
+
+/* a row on its default is the governor's; a row set to something else is the player's, by hand */
+void SnesPlayer::look_sync_rows()
+{
+	if (look_on_) {
+		look_.set_user_row(ROW_INTERLACE, ps_.interlace_blend == 0);
+		look_.set_user_row(ROW_HIRES, ps_.hires_blend == 0);
+	}
+	look_apply(0);
+}
+
+void SnesPlayer::look_apply(const char *why)
+{
+	const pic_settings before = eff_;
+	eff_ = ps_;
+	if (look_on_) {
+		if (look_.applied(LOOK_ILACE)) eff_.interlace_blend = 0;
+		if (look_.applied(LOOK_HIRES)) eff_.hires_blend = 0;
+	}
+	look_gen_ = look_.generation();
+	if (memcmp(&before, &eff_, sizeof eff_) == 0) return;
+	pf_->picture_changed();
+	if (why) {
+		logf("look: %s -> mask=%u (interlace blend %d, hi-res blend %d)\n", why, look_.mask(), eff_.interlace_blend, eff_.hires_blend);
+		if (look_.level() > 0) notice("Look eased to keep full speed", NOTICE_INFO);
+	}
+}
+
+void SnesPlayer::look_start(int mhz)
+{
+	look_mhz_ = mhz;
+	look_.set_ladder(kLookLadder, kLookRungs);
+	look_on_ = true;
+	look_sync_rows();
+	look_path_ = path_join(path_join(path_join(root_, "look"), "snes"), path_join(strf("%02x", (unsigned) (crc32(0, game_.data(), game_.size()) >> 24)), game_ + ".look"));
+	std::vector<uint8_t> b;
+	bool had = false;
+	if (file_read(look_path_, b, 4096) && !b.empty()) {
+		had = look_.load_memory((const char *) b.data(), b.size(), mhz);
+		if (had) look_written_.assign((const char *) b.data(), b.size());
+	}
+	look_.start();
+	look_apply("start");
+	logf("look: governor on, memory %s, mask=%u\n", had ? "loaded" : "none", look_.mask());
+}
+
+void SnesPlayer::look_second(const LookSecond &s)
+{
+	if (!look_on_) return;
+	const bool changed = look_.second(s);
+	char line[400];
+	if (look_.census_line(line, sizeof line)) logf("%s\n", line);
+	if (changed || look_.generation() != look_gen_) look_apply("second");
+}
+
+void SnesPlayer::look_safe_point(LookSafe k)
+{
+	if (!look_on_) return;
+	if (look_.safe_point(k) || look_.generation() != look_gen_) look_apply("safe point");
+}
+
+/* the game's memory, on the writer thread, only when it differs from what is on the card */
+void SnesPlayer::look_save(bool final_)
+{
+	if (!look_on_ || look_path_.empty()) return;
+	if (look_busy_) { if (!final_) return; wait_writer(); poll_writer(); }
+	LookMemAction a = look_.memory_action();
+	WriterJob *j = new WriterJob;
+	j->kind = WriterJob::LOOKMEM;
+	j->path = look_path_;
+	if (a == LOOK_MEM_WRITE) {
+		j->text = look_.serialize(look_mhz_);
+		if (j->text == look_written_) { delete j; return; }
+		look_written_ = j->text;
+	} else if (a == LOOK_MEM_DELETE) {
+		if (look_written_.empty()) { delete j; return; }
+		j->remove_file = true;
+		look_written_.clear();
+	} else { delete j; return; }
+	look_busy_ = true;
+	post(j);
+	if (final_) { wait_writer(); poll_writer(); }
+}
+
 void SnesPlayer::finish(ExitReason why)
 {
 	wait_writer();
 	wide_post(true);
+	if (look_on_) {
+		char sum[600];
+		snprintf(sum, sizeof sum, "%s", look_.summary().c_str());
+		for (char *c = sum; *c; c++) if (*c == '\n') *c = ' ';
+		logf("%s\n", sum);
+		look_save(true);
+	}
 	if (settings_dirty_) settings_queue_save();
 	/* the resume point: where the game was left */
 	if (states_ && snes_host_state_size()) resume_post(true);

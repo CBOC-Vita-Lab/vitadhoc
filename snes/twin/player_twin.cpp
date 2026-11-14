@@ -878,10 +878,110 @@ static int run_pal_test(const char *rom)
 	return g_fail ? 1 : 0;
 }
 
+/* The look governor in the player (playerkit/INTEGRATION.md section 8): a script of loads gives the same sequence of looks
+ * every time; the ladder goes interlace blend, then hi-res blend (the wide view is never a rung); a row set by hand is never touched; the settings the
+ * player saved are not the eased ones; the game's memory is written, read back at the same clock and ignored at another. */
+static int run_look_test(const char *rom, const std::string &work)
+{
+	char a0[] = "app0:snes.bin";
+	std::string arg = std::string(rom);
+	char *av[] = { a0, &arg[0], 0 };
+	const std::string game = path_stem(rom);
+	std::string bucket_dir;
+
+	/* one run: bad seconds, then good ones; returns the picture's (interlace, hires, wide) after every second */
+	auto run = [&](const std::string &root, int bad_s, int good_s, bool hand_hires, int mhz, std::string *seq, bool keep_open) -> snesp::SnesPlayer * {
+		make_dirs(root);
+		Rig *rig = new Rig(root + "/shots");
+		snesp::SnesPlayer *pl = new snesp::SnesPlayer(&rig->pf);
+		rig->pl = pl; rig->pf.player = pl;
+		rig->pf.log_path = root + "/snes/log.txt";
+		snesp::StartResult sr = pl->start(2, av, root, true);
+		EXPECT(sr.ok);
+		pl->apply_start_mode();
+		if (hand_hires) pl->on_change(snesp::SnesPlayer::ROW_HIRES, 0);
+		pl->look_start(mhz);
+		auto sec = [&](float emu) {
+			pk::LookSecond ls;
+			ls.emu = emu; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true;
+			pl->look_second(ls);
+			for (int i = 0; i < 3; i++) rig->game_frame();
+			if (seq) *seq += (char) ('0' + pl->picture().interlace_blend) , *seq += (char) ('0' + pl->picture().hires_blend), *seq += (char) ('0' + pl->picture().wide), *seq += ' ';
+		};
+		for (int i = 0; i < bad_s; i++) sec(1.25f);
+		for (int i = 0; i < good_s; i++) sec(0.35f);
+		(void) keep_open;
+		return pl;
+	};
+
+	/* 1. a script of loads gives the same looks twice, and the ladder goes in order */
+	std::string a, b;
+	{
+		snesp::SnesPlayer *pl = run(work + "/look1", 40, 0, false, 444, &a, false);
+		EXPECT(pl->look().level() == 2);
+		EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0 && pl->picture().wide == 0);   /* wide stays Auto */
+		pl->finish(EXIT_NORMAL);
+	}
+	{
+		snesp::SnesPlayer *pl = run(work + "/look2", 40, 0, false, 444, &b, false);
+		pl->finish(EXIT_NORMAL);
+	}
+	fprintf(stderr, "look sequence: %s\n", a.c_str());
+	EXPECT(a == b);
+	EXPECT(a.compare(0, 3, "110") == 0);        /* starts at the best look */
+	{
+		/* a long overload at the start takes every rung the learned costs say are needed at once (here both), never the wide view */
+		EXPECT(a.find("000") != std::string::npos);
+		EXPECT(a.find("002") == std::string::npos && a.find("012") == std::string::npos);
+	}
+
+	/* 2. a row set by hand is never touched, and the files keep the player's own values */
+	{
+		std::string c;
+		snesp::SnesPlayer *pl = run(work + "/look3", 40, 0, true, 444, &c, false);
+		EXPECT(pl->look().level() == 1);                 /* interlace blend only: hi-res blend was set to Off by hand */
+		EXPECT(pl->picture().hires_blend == 0 && pl->picture().interlace_blend == 0 && pl->picture().wide == 0);
+		EXPECT(!pl->look().applied(snesp::SnesPlayer::LOOK_HIRES));
+		pl->finish(EXIT_NORMAL);
+	}
+
+	/* 3. memory: an overload that was cured is written; the next start at the same clock begins with it; another clock does not */
+	{
+		std::string d;
+		snesp::SnesPlayer *pl = run(work + "/look4", 20, 30, false, 444, &d, false);
+		fprintf(stderr, "look sequence (cured): %s\n", d.c_str());
+		pl->finish(EXIT_NORMAL);
+	}
+	{
+		std::string mem;
+		std::vector<std::string> found;
+		for (int x = 0; x < 256; x++) {
+			char buf[16]; snprintf(buf, sizeof buf, "%02x", x);
+			std::string f = work + "/look4/look/snes/" + buf + "/" + game + ".look";
+			if (!read_bytes(f).empty()) { found.push_back(f); mem = std::string((const char *) read_bytes(f).data(), read_bytes(f).size()); }
+		}
+		EXPECT(found.size() == 1);
+		EXPECT(mem.compare(0, 9, "pk-look 1") == 0);
+		if (!found.empty()) {
+			/* a start at the same clock begins with the remembered look; at another clock with the best look */
+			std::string e;
+			snesp::SnesPlayer *pl = run(work + "/look4", 0, 0, false, 444, &e, false);
+			EXPECT(pl->look().mask() != 0);
+			pl->finish(EXIT_NORMAL);
+			snesp::SnesPlayer *p2 = run(work + "/look4", 0, 0, false, 333, &e, false);
+			EXPECT(p2->look().mask() == 0 && p2->picture().interlace_blend == 1 && p2->picture().hires_blend == 1 && p2->picture().wide == 0);
+			p2->finish(EXIT_NORMAL);
+		}
+	}
+	fprintf(stderr, "player_twin: look %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
 int run_handoff_test(const char *rom, const std::string &work);   /* handoff_proof.cpp */
 
 int main(int argc, char **argv)
 {
+	if (argc >= 4 && !strcmp(argv[1], "look")) return run_look_test(argv[2], argv[3]);
 	if (argc >= 3 && !strcmp(argv[1], "pal")) return run_pal_test(argv[2]);
 	if (argc >= 4 && !strcmp(argv[1], "handoff")) return run_handoff_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "wide")) { int r = run_wide_test(argv[2], argv[3]); fprintf(stderr, "player_twin: wide %d checks, %d failed\n", g_checks, g_fail); return r || g_fail ? 1 : 0; }

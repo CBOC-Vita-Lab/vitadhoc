@@ -33,7 +33,7 @@ $(B)/wk/%.o: $(WK)/src/%.cpp $(wildcard $(WK)/include/*.h) $(wildcard $(WK)/src/
 	$(CXX) $(OPT) -std=c++11 -Wall -fno-exceptions -fno-rtti -I$(WK)/include -c -o $@ $<
 # player_twin: the Vita player's own logic (../vita/player.cpp) with playerkit's software renderer
 PK       := ../../playerkit
-PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff
+PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look
 PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
 PLAYER_OBJS := $(B)/player.o $(B)/picture.o $(B)/pipe.o $(B)/handoff_proof.o $(B)/player_twin.o
 $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)

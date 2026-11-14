@@ -26,6 +26,7 @@
 #include "pk_states.h"
 #include "pk_notice.h"
 #include "pk_pace.h"
+#include "pk_look.h"
 
 namespace snesp {
 
@@ -51,7 +52,7 @@ public:
 
 /* One piece of work for the writer thread. */
 struct WriterJob {
-	enum Kind { SRM = 1, STATE, RESUME, SETTINGS, LOG, WIDEMAP } kind;
+	enum Kind { SRM = 1, STATE, RESUME, SETTINGS, LOG, WIDEMAP, LOOKMEM } kind;
 	pk::StateJob state;
 	std::vector<uint8_t> bytes;
 	std::string text;
@@ -59,6 +60,7 @@ struct WriterJob {
 	std::string path, path2;
 	int result = 0;
 	pk::SaveReport rep;
+	bool remove_file = false;      /* LOOKMEM: delete `path` instead of writing `text` */
 	bool quick = false;            /* a quick save (its notice is the player's, the menu may be closed) */
 	WriterJob() : kind(SRM) {}
 };
@@ -113,6 +115,22 @@ public:
 	Writer &writer() { return writer_; }
 	void run_writer_job(WriterJob *j);
 
+	/* ---- look governor (playerkit/INTEGRATION.md section 8; the ladder is docs/DEFAULTS-1.4.md section 5) ----
+	 * Every game starts with the best look. When this game cannot hold 60 with it, the least visible sacrifice is made
+	 * first (interlace blend off, then hi-res blend off; the wide view is never switched off, its resolution will be degraded instead), remembered for the game (<root>/look/snes/..) and
+	 * given back when there is room. A row the player set by hand (blend Off) is never touched.
+	 * picture() is the look to show: the player's settings with the governor's sacrifices applied; the settings files
+	 * only ever get the player's own values. */
+	enum { LOOK_ILACE = 0, LOOK_HIRES };   /* rung ids = positions in the ladder (player.cpp) */
+	/* the game starts: the CPU clock in MHz now (the remembered look is for one clock); call once, before the first frame */
+	void look_start(int mhz);
+	/* once a second of play (not while a menu, pause or load is up): the costs are fractions of one refresh (1 = 16.7 ms) */
+	void look_second(const pk::LookSecond &s);
+	/* after the menu closed, a scene change or blank frames: a change that waited for one is applied now */
+	void look_safe_point(pk::LookSafe k);
+	void look_reset_window() { look_.reset_window(); }
+	const pk::LookGovernor &look() const { return look_; }
+
 	/* ---- every frame while the game runs ---- */
 	/* pads and a finished tap on the game picture; returns true when the menu should open */
 	bool input(const pk::PadSample pads[pk::MAX_PLAYERS], bool tapped, uint64_t now_ms, uint32_t frame);
@@ -144,7 +162,7 @@ public:
 	void finish(pk::ExitReason why);
 
 	/* ---- for the platform and tests ---- */
-	const pic_settings &picture() const { return ps_; }
+	const pic_settings &picture() const { return eff_; }   /* ps_ with the look governor applied */
 	const pk::LaunchRequest &request() const { return req_; }
 	bool have_launch_file() const { return have_launch_; }
 	const std::string &game_name() const { return game_; }
@@ -209,7 +227,17 @@ private:
 	pk::LaunchRequest req_;
 	bool have_launch_ = false;
 	std::string root_, snes_dir_, game_, rom_, srm_;
-	pic_settings ps_;
+	pic_settings ps_;              /* what the player chose (and what the files hold) */
+	pic_settings eff_;             /* ps_ with the governor's sacrifices: what is shown */
+	pk::LookGovernor look_;
+	bool look_on_ = false;
+	std::string look_path_, look_written_;
+	int look_mhz_ = 0;
+	uint32_t look_gen_ = 0;
+	bool look_busy_ = false;
+	void look_sync_rows();
+	void look_apply(const char *why);
+	void look_save(bool final_);
 	bool settings_dirty_ = false;
 	bool steady_ = true;
 	bool handoff_ = true;

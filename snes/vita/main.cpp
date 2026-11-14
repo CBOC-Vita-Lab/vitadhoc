@@ -1094,6 +1094,7 @@ int main(int argc, char **argv)
 	logf_("threads=%d (apu %d ppu %d spin %d)\n", snes_host_threads_active(), want_apu, want_ppu, spin);
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 	g_pl->apply_start_mode();
+	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
 	const double vita_hz = 59.94;
@@ -1131,6 +1132,8 @@ int main(int argc, char **argv)
 	uint32_t ur_seen = 0;
 	uint64_t prev_loop0 = 0;
 	unsigned w16 = 0, w20 = 0, w25 = 0;
+	double hd_draw_ms = 0;            /* the drawing thread's busy time and the repeats of the last hand-over census, for the look governor */
+	unsigned hd_repeated = 0, missed_refr = 0;
 	uint64_t stall_max_us = 0, work_max_us = 0;
 	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;
 	double s_stall = 0, s_work = 0, s_agap = 0;
@@ -1151,6 +1154,7 @@ int main(int argc, char **argv)
 		}
 		unsigned elapsed = vc - last_vc;
 		last_vc = vc;
+		if (elapsed > 1) missed_refr += elapsed - 1;   /* refreshes the loop was too late for */
 		if (elapsed == 0) elapsed = 1;
 		if (elapsed > 2) elapsed = 2;       /* a long stall (menu, suspend) is not caught up */
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
@@ -1350,7 +1354,12 @@ int main(int argc, char **argv)
 			/* one census line a second while the hand-over is on: pictures made / shown / repeated / dropped, depth, and the game's
 			 * time against the wall's (a game that lost time shows a negative drift) */
 			char hl[512];
-			if (g_pipe.box().census_line(now, hl, sizeof hl)) logf_("%s draw_ms=%.1f\n", hl, g_hd_draw_us.exchange(0) / 1000.0);
+			if (g_pipe.box().census_line(now, hl, sizeof hl)) {
+				hd_draw_ms = g_hd_draw_us.exchange(0) / 1000.0;
+				const char *rp = strstr(hl, "repeated=");
+				hd_repeated = rp ? (unsigned) atoi(rp + 9) : 0;
+				logf_("%s draw_ms=%.1f\n", hl, hd_draw_ms);
+			}
 		}
 		if (now - sec_start >= 1000000) {
 			double dt = (now - sec_start) / 1e6;
@@ -1362,6 +1371,23 @@ int main(int argc, char **argv)
 				s_agap = g_agap_max_us.exchange(0) / 1000.0;
 				w16 = w20 = w25 = 0; stall_max_us = work_max_us = 0;
 				stats_pending = true;
+			}
+			{
+				/* the look governor's second (costs as fractions of a 60 Hz refresh): emulation per emulated frame, drawing per
+				 * refresh (the drawing thread's busy time with the hand-over, else the main thread's drawing), and the refreshes that
+				 * showed an old picture without the plan wanting it (the 6th refresh of a PAL game is planned) */
+				const double budget = 16683.0, refr = vblanks > 0 ? vblanks : 1;
+				pk::LookSecond ls;
+				ls.refreshes = vblanks;
+				ls.emu = frames_run ? (float) (emu_us / (double) frames_run / budget) : 0.f;
+				ls.draw = g_hd_ok ? (float) (hd_draw_ms * 1000.0 / refr / budget) : (float) ((draw_us + fetch_us + finish_us) / refr / budget);
+				const unsigned planned = pal && vblanks > frames_run ? (unsigned) (vblanks - frames_run) : 0;
+				const unsigned late = g_hd_ok ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
+				ls.missed = (int) late;
+				ls.parallel = hd;
+				ls.pace_half = half;
+				g_pl->look_second(ls);
+				missed_refr = 0;
 			}
 			snes_host_thread_stats(&st1);
 			double fr = frames_run ? frames_run : 1;

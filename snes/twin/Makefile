@@ -71,6 +71,11 @@ $(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
 	@mkdir -p $(B)/rcopy
 	$(OBJCOPY) --redefine-syms=$(B)/rcopy.map $< $@
 
+# Super FX speed-ups (exact, identity-tested on the 15 ROMs): merged run-loop test, cache range
+# test, byte-per-line cache fill flags. The Vita Makefile uses the same defines for these two files.
+GSU_FAST := -DFX_LIMIT -DFX_FAST -DFX_LINEFLAGS
+$(B)/core/fxinst.o $(B)/core/fxemu.o: CXXFLAGS += $(GSU_FAST)
+
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

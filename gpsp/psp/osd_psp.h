@@ -24,6 +24,7 @@ typedef struct osd_snap
    char toast[72];
    char chip_session[32], chip_ff[24], chip_fps[64];
    short toast_y, toast_slim, any;
+   short toast_glass;       /* Vita: a page's toast, above the footer */
 } osd_snap;
 void osd_take(osd_snap *s);
 void osd_draw_snap(const osd_snap *s);

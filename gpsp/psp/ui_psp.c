@@ -469,6 +469,8 @@ static const uint16_t *g_ov_frame;          /* the snapshot, or NULL      */
 static int   g_ov_fw = 240, g_ov_fh = 160;   /* its size in texels         */
 static uint16_t *g_ov_full;                 /* harness: 480x272 at 512    */
 static uint16_t *g_ov_thumbs;               /* 5 x 64x64, or NULL         */
+static int   g_set_fresh;                   /* Settings just opened */
+static int   g_scr_from;                    /* the screen screen_to left */
 static int   g_ov_browse;                   /* browser Settings: art bake */
 static int   g_ov_open_k = OV_OPEN_FRAMES;   /* frames into the transition */
 static int   g_ov_linked;                   /* a session is up            */
@@ -1023,6 +1025,7 @@ static int g_profile_at_open;
  *
  * Returns 0 to resume, 1 to leave for the game list. */
 
+static int set_start_row(void);          /* Settings' first row, below */
 static void footer(const char *hint);   /* defined with the other chrome */
 static void ctl_page_reset(void);       /* Settings > Controls state */
 #ifdef GPSP_CHEATS
@@ -1375,6 +1378,7 @@ static void screen_to(int scr)
       const int from = g_screen;
       if (g_screen == SCR_MENU && scr != SCR_MENU)
          menu_cursor = g_cursor;
+      g_scr_from = from;
       g_screen = scr;
       g_cursor = scr == SCR_MENU && (from == SCR_SETTINGS || from == SCR_STATE_SLOTS
 #ifdef GPSP_CHEATS
@@ -1389,6 +1393,13 @@ static void screen_to(int scr)
    {
       g_profile_at_open = g_pcfg.me_mode;
       g_set_scroll = 0;
+#ifdef VITA
+      /* Opens on the row most worth changing (not the link's name); back
+       * from Button mapping, on the row that opened it.  Set on Settings'
+       * first frame (screen_settings): the caller's own page may still be
+       * drawing this frame with the cursor. */
+      g_set_fresh = 1;
+#endif
    }
    if (scr == SCR_STATE_SLOTS)
    {
@@ -2175,12 +2186,16 @@ static void ov_plate(const char *msg)
 #ifdef VITA
    if (g_pcfg.theme != 1)
    {
+      /* 24 px above the footer's own line: the plate used to start at the
+       * footer's top (14 px above its text) and ran off the bottom edge,
+       * cutting "Slot 2 saved" in half. */
       int w = vid_text_w(msg) + 40;
-      float nx = (float)(VID_SCR_W - w), ny = (float)(OV_PLATE_Y * 2) - 14;
+      const int ty = OV_PLATE_Y - 32;                /* text row, logical */
+      float nx = (float)(VID_SCR_W - w), ny = (float)(ty * 2 + 16 - 25);
       vs_shadow(nx, ny, (float)(w * 2), 50, 25, 14, VS_HEX(0x000000, 130));
       vs_rrect(nx, ny, (float)(w * 2), 50, 25, VS_HEX(0x1C2646, 250));
-      vid_text_center(OV_PLATE_Y + 2, msg, C_SEL);
-      tch_hints_center(OV_PLATE_Y + 2, msg);
+      vid_text_center(ty, msg, C_SEL);
+      tch_hints_center(ty, msg);
       return;
    }
 #endif
@@ -2461,7 +2476,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Colours" },
    { 0, "Motion blend" },
    { 0, "Wide view" },
-   { 0, "Wide view: menus" },
+   { 0, "Screen fill" },        /* the wide view's margins: bars / soft edges / stretch */
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
    { 0, "Grid strength" },
    { 0, "Screen overlay" },
@@ -2573,6 +2588,19 @@ static void ctl_value(unsigned mask, char *b, size_t n);
 static int set_row_shown(int idx)
 {
 #ifdef VITA
+   /* Rows this console can never use are not listed (they used to be
+    * greyed with a reason, which was noise in a 55-row page). */
+   if (idx == SET_GBPAL)
+      return pcfg_display_console() == FE_CONSOLE_GB ||
+             pcfg_display_console() == FE_CONSOLE_GBC;
+   if (idx == SET_SGB)
+      return pcfg_display_console() == FE_CONSOLE_GB;
+   if (idx == SET_COLOR)
+      return pcfg_color_modes(pcfg_display_console()) > 0;
+   if (idx == SET_WIDE || idx == SET_WFILL)
+      return pcfg_wide_modes(pcfg_display_console()) > 0;
+   if (idx == SET_FASTLINK)
+      return pcfg_display_console() == FE_CONSOLE_GBA;
    if (idx == SET_HDR_LIB || idx == SET_SORT || idx == SET_FOLDERS ||
        idx == SET_SYNCRA || idx == SET_COVERPIC || idx == SET_NAMES)
       return g_ov_browse;
@@ -2680,9 +2708,10 @@ static int set_row_enabled(int idx)
  * with a finger.  26 px is 6 mm, the Play together pages' pitch; the page
  * shows five or six rows instead of nine and scrolls as it already did
  * (the d-pad, a drag, a flick).  Headers keep their extra 4 px. */
-#define SET_PITCH     26
+#define SET_PITCH     32     /* 64 px: a fingertip's row (was 52 px) */
 #define SET_HDR_PITCH 30
 #define SET_BAND_H    24
+#define SET_HIT_H     40     /* 80 px of touch, past the art's 64 */
 #else
 #define SET_PITCH     FE_FONT_H
 #define SET_HDR_PITCH (FE_FONT_H + 3)
@@ -2698,6 +2727,59 @@ static int set_row_bot(int y)
    return b > y + FE_FONT_H ? b : y + FE_FONT_H;
 }
 
+#ifdef VITA
+/* THE ORDER ON SCREEN is not the enum's.  The enum keeps its values (the
+ * code, the help text and config all key on them); sections are listed by
+ * how often a player reaches for them: the picture first, the link last.
+ * THIS GAME (the running game's own rows) sits after Gameplay. */
+static const unsigned char set_sec_order[] = {
+   SET_HDR_VID, SET_HDR_GAME, SET_HDR_THIS, SET_HDR_CTL, SET_HDR_LIB,
+   SET_HDR_UI, SET_HDR_RA, SET_HDR_WL };
+#endif
+static short set_disp[SET_COUNT];     /* display position -> enum row */
+static short set_pos[SET_COUNT];      /* enum row -> display position */
+
+static void set_order_init(void)
+{
+   int n = 0, k, j;
+   if (set_disp[1] || set_pos[1])
+      return;                         /* built (row 0 is a header: pos 0) */
+#ifdef VITA
+   for (k = 0; k < (int)sizeof(set_sec_order); k++)
+      for (j = set_sec_order[k]; j < SET_COUNT && (j == set_sec_order[k] ||
+                                                   !set_rows[j].header); j++)
+         set_disp[n++] = (short)j;
+#else
+   for (j = 0; j < SET_COUNT; j++)
+      set_disp[n++] = (short)j;
+#endif
+   for (k = 0; k < SET_COUNT; k++)
+      set_pos[set_disp[k]] = (short)k;
+}
+
+/* The last row that is drawn, in display order. */
+static int set_last_shown(void)
+{
+   int p;
+   set_order_init();
+   for (p = SET_COUNT - 1; p > 0; p--)
+      if (set_row_shown(set_disp[p]))
+         break;
+   return set_disp[p];
+}
+
+/* Where Settings opens: on what a player most likely came to change. */
+static int set_start_row(void)
+{
+#ifdef VITA
+   if (g_scr_from == SCR_CONTROLS)
+      return SET_CONTROLS;          /* back from Button mapping */
+   return g_ov_browse ? SET_THEME : SET_SCALE;
+#else
+   return SET_FIRST;
+#endif
+}
+
 static int set_row_y(int idx)
 {
    /* 13 rows must fit between the header (30) and footer (252) — the Back
@@ -2708,18 +2790,23 @@ static int set_row_y(int idx)
     * selection band is SET_BAND_H = 20 on this 16 px pitch, so it covers
     * the 4 empty top rows of the next row's line box and the previous row's
     * descender tips (y+16..y+17); no capital of a neighbour is under it. */
-   int y = SET_VIEW_TOP, i;
-   for (i = 0; i < idx; i++)
-      if (set_row_shown(i))
-         y += set_rows[i].header ? SET_HDR_PITCH : SET_PITCH;
+   int y = SET_VIEW_TOP, p;
+   set_order_init();
+   for (p = 0; p < set_pos[idx]; p++)
+      if (set_row_shown(set_disp[p]))
+         y += set_rows[set_disp[p]].header ? SET_HDR_PITCH : SET_PITCH;
    return y;
 }
 
 static void set_cursor_step(int dir)
 {
+   int p;
+   set_order_init();
+   p = set_pos[g_cursor];
    do
-      g_cursor = (g_cursor + SET_COUNT + dir) % SET_COUNT;
-   while (set_rows[g_cursor].header || !set_row_enabled(g_cursor));
+      p = (p + SET_COUNT + dir) % SET_COUNT;
+   while (set_rows[set_disp[p]].header || !set_row_enabled(set_disp[p]));
+   g_cursor = set_disp[p];
 }
 
 /* Follow the cursor, and pull the section header in with the first item
@@ -2728,10 +2815,11 @@ static void set_scroll_follow(void)
 {
    int top = set_row_y(g_cursor);
    int bot = set_row_bot(top);
-   int max = set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_BOT;
+   int max = set_row_bot(set_row_y(set_last_shown())) - SET_VIEW_BOT;
 
-   if (g_cursor > 0 && set_rows[g_cursor - 1].header)
-      top = set_row_y(g_cursor - 1);
+   set_order_init();
+   if (set_pos[g_cursor] > 0 && set_rows[set_disp[set_pos[g_cursor] - 1]].header)
+      top = set_row_y(set_disp[set_pos[g_cursor] - 1]);
    if (max < 0)
       max = 0;
    if (top - g_set_scroll < SET_VIEW_TOP)
@@ -3639,7 +3727,7 @@ static const char *set_help(int id)
              ? "Smoothed at twice the game's size, then sized to fit."
            : g_pcfg.quality == PCFG_QUALITY_3X
              ? "Smoothed at three times its size. More detail, more work."
-             : "xBRZ smoothing, eased only when a game cannot keep 60.";
+             : "Auto adapts to keep 60 fps; xBRZ smoothing when it can.";
 #endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)
@@ -3700,7 +3788,7 @@ static const char *set_help(int id)
            : "The console's own picture, bars beside it.";
    case SET_WFILL:
       if (pcfg_display_console() != FE_CONSOLE_GBA || !g_pcfg.wide)
-         return "For the wide view, when it is on.";
+         return "What fills the wide view's margins (needs Wide view on).";
       return g_pcfg.wide_fill == 2 ? "Screens with no more to show are "
                                      "stretched to the edges."
            : g_pcfg.wide_fill == 1 ? "Screens with no more to show fade "
@@ -3912,8 +4000,13 @@ static ui_action screen_settings(unsigned edges)
 {
    int i;
 
+   if (g_set_fresh)
+   {
+      g_set_fresh = 0;
+      g_cursor = set_start_row();
+   }
    if (set_rows[g_cursor].header || !set_row_enabled(g_cursor))
-      g_cursor = SET_FIRST;
+      g_cursor = set_start_row();
 #ifdef VITA
    {
       const char *typed;
@@ -3949,12 +4042,15 @@ static ui_action screen_settings(unsigned edges)
       {
          /* The finger scrolled the cursor's row out of sight: the d-pad
           * picks up from what is on screen instead of jumping back. */
-         int y = set_row_y(g_cursor) - g_set_scroll, k, pick = -1;
+         int y = set_row_y(g_cursor) - g_set_scroll, j, k, pick = -1;
          if (y < SET_VIEW_TOP || y + FE_FONT_H > SET_VIEW_BOT)
          {
-            for (k = 0; k < SET_COUNT; k++)
+            set_order_init();
+            for (j = 0; j < SET_COUNT; j++)
             {
-               int ry = set_row_y(k) - g_set_scroll;
+               int ry;
+               k = set_disp[j];
+               ry = set_row_y(k) - g_set_scroll;
                if (set_rows[k].header || !set_row_enabled(k) ||
                    ry < SET_VIEW_TOP || ry + FE_FONT_H > SET_VIEW_BOT)
                   continue;
@@ -4087,7 +4183,7 @@ static ui_action screen_settings(unsigned edges)
    ov_head(NULL, "SETTINGS");
 #ifdef VITA
    if (tch_scroll(&g_set_ts, &g_set_scroll,
-                  set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_BOT, 0,
+                  set_row_bot(set_row_y(set_last_shown())) - SET_VIEW_BOT, 0,
                   SET_VIEW_TOP, VID_SCR_W, SET_VIEW_BOT - SET_VIEW_TOP))
       g_set_free = 1;
    else if (!g_set_free)
@@ -4152,7 +4248,9 @@ static ui_action screen_settings(unsigned edges)
        * touchable only where it shows. */
       if (set_row_enabled(i))
       {
-         int ty = y - (SET_PITCH - FE_FONT_H) / 2, th = SET_PITCH;
+         /* 80 px of touch on a 64 px row: the hit box runs past the art
+          * (neighbours overlap a little; the later row wins the overlap) */
+         int ty = y - (SET_HIT_H - FE_FONT_H) / 2, th = SET_HIT_H;
          if (ty < SET_VIEW_TOP - 2) { th -= SET_VIEW_TOP - 2 - ty; ty = SET_VIEW_TOP - 2; }
          if (ty + th > SET_VIEW_BOT + 2) th = SET_VIEW_BOT + 2 - ty;
          UI_TCH_ROW(i, 0, ty, SET_BAND_W, th);
@@ -4617,7 +4715,7 @@ static ui_action screen_settings(unsigned edges)
    vid_clip_off();
    ov_scrollbar(470, SET_VIEW_TOP, SET_VIEW_BOT - SET_VIEW_TOP, g_set_scroll,
                 SET_VIEW_BOT - SET_VIEW_TOP,
-                set_row_bot(set_row_y(SET_COUNT - 1)) - SET_VIEW_TOP);
+                set_row_bot(set_row_y(set_last_shown())) - SET_VIEW_TOP);
 #ifdef VITA
    vid_text(22, SET_HELP_Y, set_help(g_cursor), C_DIM);
    footer(g_cursor == SET_LEVEL
@@ -11840,7 +11938,6 @@ static int browser_settings(void)
                  ? ui_cover_row(view_rom(g_bpage.cur)) : 0;
 #endif
    screen_to(SCR_SETTINGS);
-   g_cursor = SET_FIRST;
    g_prev_pad = 0xFFFFFFFFu;      /* swallow the opening START */
    /* Settings > Controls runs inside this loop too: it is a sub-page of
     * these settings, and it leaves back to them. */

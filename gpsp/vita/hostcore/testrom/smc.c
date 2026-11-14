@@ -46,6 +46,13 @@
  * 18  a chain of 20 linked IWRAM blocks; one in the middle is rewritten
  *     and the whole chain run again, 50 times, at different links
  *
+ * 19  a block that runs off the END of IWRAM (0x03008000, where the RAM
+ *     mirrors back to 0x03000000): its source bytes are read through the
+ *     mirror.  smcr_translate used to copy them with smcr_mem(pc) + len, which
+ *     ran past the IWRAM array: the fortify abort on Driver 2 Advance.  The
+ *     words involved (the BIOS IRQ vector at 0x03007FF8/C and the first two
+ *     words of the cartridge's own data) are saved and put back, with IRQs off
+ *
  * "SRAM_V113" below makes the emulator give the cartridge battery SRAM. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -57,7 +64,7 @@ typedef volatile u32 vu32;
 #define REG(a) (*(vu16 *)(0x04000000 + (a)))
 #define REG32(a) (*(vu32 *)(0x04000000 + (a)))
 #define SRAM ((vu8 *)0x0E000000)
-#define NTESTS 19
+#define NTESTS 20
 
 volatile u32 g_frames;              /* crt0.S counts vertical blanks here */
 const char save_tag[] __attribute__((used)) = "SRAM_V113";
@@ -376,6 +383,25 @@ int main(void)
          imm[k] = (i & 3) + 1;
       }
       result(18, v, want);
+   }
+
+   /* 19: IWRAM block across the end of the region */
+   {
+      u32 s0 = *(vu32 *)0x03007FF8, s1 = *(vu32 *)0x03007FFC;
+      u32 s2 = *(vu32 *)0x03000000, s3 = *(vu32 *)0x03000004;
+      u16 ime = REG(0x208);
+      REG(0x208) = 0;
+      wr32(0x03007FF8, A_MOV_R0(1));
+      wr32(0x03007FFC, A_ADD_R0(2));
+      wr32(0x03008000, A_ADD_R0(4));         /* = 0x03000000 */
+      wr32(0x03008004, A_BX_LR);
+      w = call_arm(0x03007FF8, 0);                /* 7 */
+      arm_str(0x03008000, A_ADD_R0(40));
+      w = w * 100 + call_arm(0x03007FF8, 0);      /* 43 */
+      wr32(0x03007FF8, s0); wr32(0x03007FFC, s1);
+      wr32(0x03000000, s2); wr32(0x03000004, s3);
+      REG(0x208) = ime;
+      result(19, w, 743);
    }
 
    (void)vsum;

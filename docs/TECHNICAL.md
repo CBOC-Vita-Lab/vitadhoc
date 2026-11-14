@@ -1055,6 +1055,51 @@ full, `X` external), with frame, REG_PC and the count of RAM translations the
 full-flush build has made: the files of an off and an on run must be identical.
 `GPSP_JCTR_LOG=file` writes the 16 counters at the first lookup of each frame.
 
+**Worst-frame counters (P2, 13 Nov 2026).** Each window the app also logs
+`EVT vita_jit_worst frame= demand= spec= syncs= sync_us= sync_kb= xlat_us=
+xlat_pages= | win frames= demand= spec= syncs= sync_us= xlat_us= xlat_pages=
+pages_total= [cap=<gamepak_cap_reason>, first line only]`: for the frame of the
+window that spent most time translating plus syncing, the blocks translated
+because the guest asked (demand, `translate_depth` 1) vs because an exit
+pointed at them (spec, depth >= 2), the publish syncs and their time, the time
+of the outermost translations and the ROM pages they pulled in; then the
+window's totals. Touched only on the translating path. Finding: syncs are one
+per top-level lookup, so in the worst frames syncs == demand blocks (Mario Golf
+63/63, Golden Sun 138/138); merging ranges (tried as `vm_sync_batch`, removed)
+changed no count. Twin worst frame demand/spec: Mario Golf 63/266, Golden Sun
+138/152, Minish Cap 52/60. Vita3K first window: sync_us 13.9 ms over 836 syncs
+vs xlat_us 110 ms.
+
+**Lazy exits (`jit_lazy_exits`, `jit_lazy_budget`; ARM back end; default OFF).**
+vita.ini `jit_lazy_exits = 0|1`, `jit_lazy_budget = N` (twins `GPSP_LAZY_EXITS`,
+`GPSP_LAZY_BUDGET`). With it on, an exit from a ROM block to an untranslated
+ROM target is, once the outermost lookup has already translated N speculative
+blocks, pointed at a 20-byte island at the end of the ROM cache
+(`generate_lazy_exit_island`); the first time the guest takes it the island
+enters `arm_lazy_exit_*` (arm_stub.S) -> `block_lookup_address_lazy_*`, which
+translates the target like an indirect branch and re-points the exit's `b` at
+it (one extra `sceKernelSyncVMDomain` for that word; a link is never written
+when the ROM cache was reset meanwhile, `rom_flush_gen`). RAM exits stay eager.
+Function-table slots REG_USERDEF+17/18. `vita_jit_worst` shows `lazy= islands=
+resolved=`. Armhf twin under qemu, 800-1300 frames, six ROMs (Golden Sun,
+Minish Cap, Fire Red, Mario Kart SC, Aria of Sorrow, Mario Golf): picture and
+sound identical to off with budget 0 (and Mario Golf at 1300 frames also with
+budget 16). Cost: Mario Golf 1300 frames blocks 2233 -> 1681 (-25%) but VM
+syncs 1849 -> 3208 (+73%); first-window worst frame 114 -> 80 blocks, syncs
+53 -> 105. Budget 16 changes almost nothing (the graph below one cold lookup is
+far bigger). Left OFF: whether fewer blocks beat more syncs is only known on a
+Vita (Vita3K's sync_us rose sharply with it).
+
+**RAM mirror in the SMC source copy (fix, 14 Nov 2026).** A RAM block that
+starts near the end of IWRAM (or EWRAM) continues at the region's start (the
+RAM mirrors), and the translator reads it that way. `smcr_translate` copied,
+compared and swapped the block's source bytes with `smcr_mem(pc) + len`, which
+ran off the end of the array: a fortify abort on the twin (Driver 2 Advance,
+about 30 s in), silent corruption on the Vita. They now go through two-piece
+helpers (`smcr_mem_read/write/cmp`). Regression: `testrom/smc.c` test 19
+(`app_tests.py --only smc`) fails on the old code (GPSP_SMC_VERIFY: "different
+code 03007ff8") and passes now on x86 and armhf.
+
 **WP3: indirect-branch dispatch cache (`GPSP_DCACHE`, ARM back end).**
 `arm_stub.S`'s indirect-branch stubs (`arm_indirect_branch_arm/_thumb` and the
 same-mode paths of the `_dual_` ones: `bx lr`, `pop {pc}`, `ldr pc`, `mov pc`)

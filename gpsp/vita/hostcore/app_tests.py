@@ -1569,7 +1569,8 @@ def t_smc(S):
              "data written next to live code (no trap)",
              "decompress-and-run, 300 rounds", "IWRAM mirror", "EWRAM mirror",
              "code patching its own immediate, 2000 times",
-             "ARM and Thumb code at one address", "chain of 20 linked blocks"]
+             "ARM and Thumb code at one address", "chain of 20 linked blocks",
+             "IWRAM block across the end of the region (mirror)"]
     extra = {"roms/gbadhoc-smc.gba": open(rom, "rb").read()}
     runs = {}
     for mode in ("0", "1"):

@@ -2476,7 +2476,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Colours" },
    { 0, "Motion blend" },
    { 0, "Wide view" },
-   { 0, "Wide view: menus" },
+   { 0, "Screen fill" },        /* the wide view's margins: bars / soft edges / stretch */
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
    { 0, "Grid strength" },
    { 0, "Screen overlay" },
@@ -3727,7 +3727,7 @@ static const char *set_help(int id)
              ? "Smoothed at twice the game's size, then sized to fit."
            : g_pcfg.quality == PCFG_QUALITY_3X
              ? "Smoothed at three times its size. More detail, more work."
-             : "xBRZ smoothing, eased only when a game cannot keep 60.";
+             : "Auto adapts to keep 60 fps; xBRZ smoothing when it can.";
 #endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)
@@ -3788,7 +3788,7 @@ static const char *set_help(int id)
            : "The console's own picture, bars beside it.";
    case SET_WFILL:
       if (pcfg_display_console() != FE_CONSOLE_GBA || !g_pcfg.wide)
-         return "For the wide view, when it is on.";
+         return "What fills the wide view's margins (needs Wide view on).";
       return g_pcfg.wide_fill == 2 ? "Screens with no more to show are "
                                      "stretched to the edges."
            : g_pcfg.wide_fill == 1 ? "Screens with no more to show fade "

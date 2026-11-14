@@ -2186,12 +2186,16 @@ static void ov_plate(const char *msg)
 #ifdef VITA
    if (g_pcfg.theme != 1)
    {
+      /* 24 px above the footer's own line: the plate used to start at the
+       * footer's top (14 px above its text) and ran off the bottom edge,
+       * cutting "Slot 2 saved" in half. */
       int w = vid_text_w(msg) + 40;
-      float nx = (float)(VID_SCR_W - w), ny = (float)(OV_PLATE_Y * 2) - 14;
+      const int ty = OV_PLATE_Y - 32;                /* text row, logical */
+      float nx = (float)(VID_SCR_W - w), ny = (float)(ty * 2 + 16 - 25);
       vs_shadow(nx, ny, (float)(w * 2), 50, 25, 14, VS_HEX(0x000000, 130));
       vs_rrect(nx, ny, (float)(w * 2), 50, 25, VS_HEX(0x1C2646, 250));
-      vid_text_center(OV_PLATE_Y + 2, msg, C_SEL);
-      tch_hints_center(OV_PLATE_Y + 2, msg);
+      vid_text_center(ty, msg, C_SEL);
+      tch_hints_center(ty, msg);
       return;
    }
 #endif

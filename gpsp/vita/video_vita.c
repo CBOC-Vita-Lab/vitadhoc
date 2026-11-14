@@ -1891,7 +1891,8 @@ static int up_kind(void)
 static void up_drop(int slot)
 {
    int k;
-   upscale_forget(slot);
+   if (!upscale_forget(slot))
+      return;                    /* a helper may still write: keep the textures */
    for (k = 0; k < 2; k++)
       if (g_upt[slot].t[k])
       {

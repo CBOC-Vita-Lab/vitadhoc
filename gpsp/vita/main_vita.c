@@ -91,6 +91,7 @@
 #include "config_psp.h"
 #include "ctl_map.h"
 #include "video_vita.h"
+#include "vback.h"                   /* vb_ownership_get: the GXM error census */
 #include "upscale_vita.h"
 #include "render_thread.h"
 #include "ui_host_hooks.h"
@@ -283,6 +284,18 @@ static struct
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
            "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, -1, 1, 0x60,
            "", "" };
+
+/* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
+ * profile (docs/TECHNICAL.md, "A/B keys"): vita.ini
+ *   smooth_handoff = 0   no drawing thread (also a Settings row)
+ *   look_gov = 0         the look governor never eases anything
+ *   core4 = off          no fourth-core probe, every thread where 1.3 had it
+ *   handoff_check = 0    keep hand-over on even when its boot self-check
+ *                        (below) would give it up
+ * Not in g_sw: its initializer is positional. */
+static int g_look_gov = 1;
+static int g_ho_check = 1;
+static int g_core4_off;
 
 /* jit_lazy_exits = 0 | 1 and jit_lazy_budget = N (GBA recompiler, cpu_threaded.c
  * "LAZY EXITS"): exits to untranslated ROM code are linked on first execution
@@ -676,6 +689,115 @@ static void snes_session_clear(void)
    if (path_fmt(q, sizeof(q), "%s.tmp", p) == 0) remove(q);
 }
 
+static unsigned char *patch_read(const char *path, long *len, long cap);
+
+/* The two launch-file keys the SNES player reads from the app (P1's side:
+ * playerkit/src/pk_launch.cpp, snes/vita/player.cpp; format in
+ * playerkit/FORMATS.md):
+ *
+ *   patch=<path>          an IPS, BPS or UPS file the player applies to the
+ *                         ROM in memory; "" = none.  Looked up beside the
+ *                         game as the GBA side does (patch_prepare): the
+ *                         whole name first (Game.smc.ips, .bps, .ups), then
+ *                         the stem (Game.ips) unless another cartridge has
+ *                         that stem too.  A zip's patch is named after the
+ *                         zip (Game.zip.ips) or its stem.
+ *   patch_key=<text>      one line, "<kind> <rom size> <rom mtime> <patch
+ *                         size> <patch crc32 hex>" (kind: rom_patch_kind,
+ *                         the same note the GBA side keeps).  The player
+ *                         stores it beside a resume point and refuses a
+ *                         resume made with another patch.  "" when no patch.
+ *   retroarch_save=<path> a RetroArch Game.srm of this game (its savefiles
+ *                         folder or a core's folder in it, as save_sync
+ *                         knows them; the folder of RetroArch's own
+ *                         config is not read here), "" = none.  The player
+ *                         imports it when it is newer than `save`.
+ * All three are "" for any failure: never a half-filled pair. */
+static int snes_patch_find(const char *rom_path, char *out, size_t cap)
+{
+   static const char *const ext[3] = { ".ips", ".bps", ".ups" };
+   struct stat ps;
+   int i;
+   for (i = 0; i < 6; i++)
+   {
+      if ((i < 3 ? path_fmt(out, cap, "%s%s", rom_path, ext[i])
+                 : psp_rom_path_suffix(out, cap, rom_path, ext[i - 3])) != 0 ||
+          stat(out, &ps) != 0 || !S_ISREG(ps.st_mode))
+         continue;
+      if (i >= 3)
+      {
+         static const char *const carts[] = { ".smc", ".sfc", ".swc", ".fig",
+                                              ".zip" };
+         const char *own = strrchr(rom_path, '.');
+         char other[APP_PATH_CAP];
+         size_t k;
+         int clash = 0;
+         for (k = 0; k < sizeof(carts) / sizeof(carts[0]); k++)
+            if ((!own || strcasecmp(own, carts[k])) &&
+                psp_rom_path_suffix(other, sizeof(other), rom_path,
+                                    carts[k]) == 0 &&
+                stat(other, &ps) == 0)
+               clash = 1;
+         if (clash)
+            continue;
+      }
+      return 0;
+   }
+   return -1;
+}
+
+static void snes_patch_keys(const char *rom_path, char *patch, size_t pcap,
+                            char *key, size_t kcap)
+{
+   struct stat rs;
+   unsigned char *data;
+   long plen = 0;
+   patch[0] = key[0] = 0;
+   if (snes_patch_find(rom_path, patch, pcap) != 0)
+   {
+      patch[0] = 0;
+      return;
+   }
+   data = patch_read(patch, &plen, 64L << 20);
+   if (!data || stat(rom_path, &rs) != 0)
+   {
+      free(data);
+      patch[0] = 0;
+      return;
+   }
+   snprintf(key, kcap, "%d %ld %ld %ld %08x", rom_patch_kind(data, (size_t)plen),
+            (long)rs.st_size, (long)rs.st_mtime, plen,
+            (unsigned)fe_crc32(0, data, (size_t)plen));
+   free(data);
+}
+
+static void snes_ra_save(const char *rom_path, const char *save, char *out,
+                         size_t cap)
+{
+   static const char *const sub[] = { "", "/Snes9x", "/Snes9x 2010",
+      "/Snes9x 2005", "/bsnes", "/bsnes-mercury Balanced" };
+   char stem[APP_PATH_CAP];
+   const char *bn = base_name(rom_path), *dot = strrchr(bn, '.');
+   size_t i;
+   long sz = 0;
+   out[0] = 0;
+   snprintf(stem, sizeof(stem), "%.*s",
+            (int)(dot && dot != bn ? (size_t)(dot - bn) : strlen(bn)), bn);
+   if (!stem[0])
+      return;
+   for (i = 0; i < sizeof(sub) / sizeof(sub[0]); i++)
+   {
+      char p[APP_PATH_CAP];
+      if (path_fmt(p, sizeof(p), "%s%s/%s.srm", save_sync_ra_dir(), sub[i],
+                   stem) == 0 && strcmp(p, save) &&
+          file_size(p, &sz) == 0 && sz > 0 && strlen(p) < cap)
+      {
+         snprintf(out, cap, "%s", p);
+         return;
+      }
+   }
+}
+
 /* `game` is what snes.bin runs (the unpacked file of a zip), `save` its
  * battery file, `rom_path` the game as the list knows it; `slot` the shelf's
  * choice (PSP_STATE_RESUME: Continue).  0 = written. */
@@ -684,6 +806,7 @@ static int snes_launch_write(const char *game, const char *save,
 {
    static unsigned seq;
    char dir[APP_PATH_CAP], path[APP_PATH_CAP], text[3600], name[200];
+   char patch[APP_PATH_CAP], pkey[200], ra[APP_PATH_CAP];
    const char *b = base_name(rom_path);
    const char *dot = strrchr(b, '.');
    const uint32_t now = (uint32_t)plat_wallclock();
@@ -694,6 +817,8 @@ static int snes_launch_write(const char *game, const char *save,
        path_fmt(path, sizeof(path), "%s/snes.ini", dir) != 0)
       return -1;
    mkdir(dir, 0777);
+   snes_patch_keys(rom_path, patch, sizeof(patch), pkey, sizeof(pkey));
+   snes_ra_save(rom_path, save, ra, sizeof(ra));
    snes_session_clear();          /* an old report is never read for this one */
    snprintf(g_snes_session, sizeof(g_snes_session), "s-%u-%u", (unsigned)now,
             (unsigned)(++seq + (unsigned)(plat_time_us() & 0xFFFF)));
@@ -710,9 +835,9 @@ static int snes_launch_write(const char *game, const char *save,
                 "language=en\n"
                 "start=%s\n"
                 "slot=%d\n"
-                "patch=\n"
-                "patch_key=\n"
-                "retroarch_save=\n"
+                "patch=%s\n"
+                "patch_key=%s\n"
+                "retroarch_save=%s\n"
                 "app_rom=%s\n"
                 "app_started_at=%u\n",
                 g_snes_session, game, name, save, g_app_root,
@@ -721,13 +846,15 @@ static int snes_launch_write(const char *game, const char *save,
                 slot == PSP_STATE_RESUME ? "continue"
                 : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new",
                 slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0,
-                rom_path, (unsigned)now);
+                patch, pkey, ra, rom_path, (unsigned)now);
    if (n < 0 || (size_t)n >= sizeof(text))
       return -1;
    n = snes_file_put(path, text);
-   fe_evt("snes_launch_file ok=%d session=%s start=%s slot=%d", n == 0,
+   fe_evt("snes_launch_file ok=%d session=%s start=%s slot=%d patch=%d "
+          "retroarch_save=%d", n == 0,
           g_snes_session, slot == PSP_STATE_RESUME ? "continue"
-          : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new", slot);
+          : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new", slot,
+          patch[0] != 0, ra[0] != 0);
    return n;
 }
 
@@ -1593,6 +1720,13 @@ static void read_switches(void)
    /* smooth hand-over (handoff_glue.h): this launch's override of the
     * setting, and where its drawing thread runs */
    g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);
+   g_look_gov           = fe_ini_get_int(ini, "look_gov", 1) ? 1 : 0;
+   g_ho_check           = fe_ini_get_int(ini, "handoff_check", 1) ? 1 : 0;
+   {
+      char c4[16];
+      g_core4_off = fe_ini_get(ini, "core4", c4, sizeof(c4)) &&
+                    (!strncasecmp(c4, "off", 3) || c4[0] == '0');
+   }
    g_sw.draw_core       = (int)fe_ini_get_int(ini, "draw_core", 1);
    g_sw.draw_prio       = (int)fe_ini_get_int(ini, "draw_prio", 0x60);
    /* Image quality Auto's xBRZ over the sharp filter (video_vita.c) */
@@ -2162,6 +2296,149 @@ static void sgb_border_end(void)
 
 /* ---- smooth hand-over (handoff_glue.h) ------------------------------------ */
 static int g_ho_want = -1;        /* what ho_set_enabled was last told      */
+
+/* ---- the truth metric: refreshes that showed no new picture ----------------
+ * Every present notes the display's refresh counter; a gap of more than one
+ * refresh to the present before it is a refresh that had nothing new to
+ * show (a miss).  Independent of the emulated frame rate: on hardware it is
+ * the one number that says "locked 60".  Counted where the picture is
+ * presented (the drawing thread's ho_draw, or the emulating thread's
+ * frame_present), so it works with hand-over on and off.  A gap of 30
+ * refreshes or more is a pause (menu, suspend), not a miss, and Steady
+ * pacing's half-rate passes are 30 fps on purpose and are not counted. */
+static unsigned g_vc_prev;
+static unsigned g_vc_miss, g_vc_pres;      /* atomics, this window */
+static unsigned g_vc_miss_total, g_vc_pres_total;
+
+static void present_note(void)
+{
+   const unsigned vc = plat_vcount();
+   const unsigned prev = g_vc_prev;
+   const unsigned d = vc - prev;
+   g_vc_prev = vc;
+   if (!prev || d < 1u || d >= 30u)
+      return;
+   __atomic_fetch_add(&g_vc_pres, 1u, __ATOMIC_RELAXED);
+   if (d > 1u && !steady_half())
+      __atomic_fetch_add(&g_vc_miss, d - 1u, __ATOMIC_RELAXED);
+}
+
+/* ---- hand-over's boot self-check ------------------------------------------------
+ * In the first seconds of a game with Smooth hand-over on, the drawing
+ * thread is the new thing between this build and 1.3.  Two things give it
+ * up for the rest of the session (one log line, the reason):
+ *  - GXM/vita2d errors on its draw path: three skipped presents (a scene
+ *    that would not begin or end: vb_ownership_get skipped_frames) in the
+ *    first HO_CHECK_WINDOWS windows;
+ *  - refreshes that showed nothing new while the emulator itself was not
+ *    late: 30 or more misses in a window, with at most 3 late frames, three
+ *    windows in a row -- the old path would have shown them.
+ * Deterministic, no timing of its own: it reads the window's counters.
+ * vita.ini handoff_check = 0 switches it off (A/B). */
+#define HO_CHECK_WINDOWS 10
+static unsigned g_sec_t0, g_sec_late0;   /* the once-a-second tick */
+static int g_ho_boot_left;        /* windows still under test            */
+static int g_ho_strikes;
+static unsigned g_ho_gxm_errs;    /* skipped presents since the start    */
+static int g_ho_fell_back;        /* given up for this game              */
+static vb_ownership_diag g_gxm0, g_gxm_last;
+static unsigned g_gxm_recovered;  /* a skipped present, then a good one  */
+
+static void ho_selfcheck_begin(void)
+{
+   vb_ownership_get(&g_gxm0);
+   g_gxm_last = g_gxm0;
+   g_ho_boot_left = g_ho_check ? HO_CHECK_WINDOWS : 0;
+   g_sec_t0 = 0;
+   g_ho_strikes = 0;
+   g_ho_gxm_errs = 0;
+   g_ho_fell_back = 0;
+   g_gxm_recovered = 0;
+   g_vc_prev = 0;
+}
+
+static void ho_window_check(unsigned vm, unsigned vp, unsigned late_delta);
+static unsigned g_vc_last_vm, g_vc_last_vp;   /* the last second's, for the handoff: line */
+
+/* Once a second (game loop, beside the handoff: line): the vcount-miss
+ * count, the GXM census and the boot self-check. */
+static void ho_second_tick(void)
+{
+   const uint32_t now = (uint32_t)plat_time_us();
+   unsigned vm, vp, late_delta;
+   if (!g_sec_t0)
+   {
+      g_sec_t0 = now ? now : 1;
+      g_sec_late0 = g_pace_late;
+      return;
+   }
+   if (now - g_sec_t0 < 1000000u)
+      return;
+   g_sec_t0 = now;
+   late_delta = g_pace_late - g_sec_late0;
+   g_sec_late0 = g_pace_late;
+   vm = __atomic_exchange_n(&g_vc_miss, 0u, __ATOMIC_RELAXED);
+   vp = __atomic_exchange_n(&g_vc_pres, 0u, __ATOMIC_RELAXED);
+   g_vc_last_vm = vm;
+   g_vc_last_vp = vp;
+   ho_window_check(vm, vp, late_delta);
+}
+
+/* The GXM census and the check, for the second just ended. */
+static void ho_window_check(unsigned vm, unsigned vp, unsigned late_delta)
+{
+   vb_ownership_diag d;
+   unsigned skipped, started;
+   const char *why = NULL;
+   vb_ownership_get(&d);
+   skipped = d.skipped_frames - g_gxm_last.skipped_frames;
+   started = d.started_frames - g_gxm_last.started_frames;
+#ifndef __vita__
+   {
+      /* the twin's stand-in for a GXM that fails (app_tests.py t_stall) */
+      static int fake = -1;
+      if (fake < 0)
+      {
+         const char *e = getenv("GBADHOC_FAKE_GXM_ERR");
+         fake = e ? atoi(e) : 0;
+      }
+      if (fake && ho_active())
+         skipped += (unsigned)fake;
+   }
+#endif
+   if (skipped && started)
+      g_gxm_recovered += skipped;      /* the next frame went through */
+   g_ho_gxm_errs += skipped;
+   g_vc_miss_total += vm;
+   g_vc_pres_total += vp;
+   /* census: error returns and recoveries on the draw path, this window and
+    * in all; fatal = vita2d gave up recovering */
+   fe_evt("vita_gxm skipped=%u recovered=%u total_skipped=%u total_recovered=%u "
+          "fatal=%u tex_blocked=%u vc_miss=%u vc_presents=%u vc_miss_total=%u/%u",
+          skipped,
+          skipped && started ? skipped : 0u, d.skipped_frames - g_gxm0.skipped_frames,
+          g_gxm_recovered, d.fatal, d.texture_blocked - g_gxm0.texture_blocked,
+          vm, vp, g_vc_miss_total, g_vc_pres_total);
+   g_gxm_last = d;
+   if (g_ho_boot_left <= 0 || g_ho_fell_back || !ho_active())
+      return;
+   g_ho_boot_left--;
+   g_ho_strikes = vm >= 30u && late_delta <= 3u ? g_ho_strikes + 1 : 0;
+   if (d.fatal || skipped >= 10u)
+      why = "gxm_errors";
+   else if (g_ho_strikes >= 3)
+      why = "vcount_misses";
+   if (why)
+   {
+      g_ho_fell_back = 1;
+      ho_set_enabled(0);
+      g_ho_want = 0;
+      fe_evt("handoff_fallback reason=%s gxm_errors=%u vc_miss=%u/%u "
+             "strikes=%d: back on the 1.3 path for this game", why,
+             g_ho_gxm_errs, vm, vp, g_ho_strikes);
+   }
+}
+
 static uint64_t g_ho_t0;          /* the drawn frame's start (its emu cost) */
 
 #ifndef __vita__
@@ -2341,6 +2618,15 @@ static int art_online(void)
 {
    net_vita_wifi w;
    return net_vita_wifi_status(&w) && net_vita_use() != NET_VITA_ADHOC;
+}
+
+/* RetroAchievements go quiet while a link session is up: the web requests
+ * share the radio and the main thread's time with the link, and the
+ * achievements' own "will be sent when back online" path holds them until
+ * the session ends (docs/TECHNICAL.md, "Pausing the fetchers while linked"). */
+static int ra_online(void)
+{
+   return art_online() && !link_is_active();
 }
 #endif
 
@@ -3280,13 +3566,19 @@ static unsigned app_look_user_rows(void)
    return u;
 }
 
+/* upscale_vita.c: the governor's own reading of the upscalers' job time */
+unsigned upscale_second_avg_us(void);
+
 void ui_host_look_changed(void)
 {
    int c = pcfg_display_console();
    /* the look governor (look_glue.h): what is set by hand is not its */
    look_set_user_rows(app_look_user_rows());
-   upscale_look_cap(look_quality_cap());
    vid_set_quality(g_pcfg.quality);
+   /* the cap is read once the drawing thread is idle (vid_set_quality waits
+    * for it): look_quality_cap also moves the MMPX flag the drawing side reads */
+   ho_guard();
+   upscale_look_cap(look_quality_cap());
    vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color : VID_COLOR_RAW,
                 g_pcfg.blend && !look_rung(3));
    if (c == FE_CONSOLE_GBC)
@@ -3341,7 +3633,7 @@ static void app_look_begin(void)
    look_begin(path, (int)plat_arm_mhz(), app_look_user_rows());
    memset(&g_lk, 0, sizeof(g_lk));
    look_safe_point(LOOK_AT_START);
-   upscale_look_cap(0);
+   upscale_look_cap(look_quality_cap());
    if (look_generation() != g_lk.gen)
       app_look_apply("start");     /* the look this game needed last time */
    fe_evt("look_start mask=%u user_rows=%u memory=%d", look_mask(),
@@ -3418,7 +3710,8 @@ static void app_look_pass(uint32_t emu_us, int counts)
       (void)look_second(g_lk.emu_n ? (float)g_lk.emu_sum / g_lk.emu_n / ref : 0.f,
                         drawn && handoff ? (float)(dsum - g_lk.draw0) / drawn / ref
                                          : 0.f,
-                        0.f, refreshes, missed, handoff, half);
+                        (float)upscale_second_avg_us() / ref, refreshes, missed,
+                        handoff, half);
       /* (a change applies at once: the governor itself waited for a safe
        * point, or forced it after 12 s) */
       if (look_generation() != g_lk.gen)
@@ -3952,6 +4245,11 @@ static void window_begin(void)
 /* At its end: what the iteration's work cost, the wait not included. */
 static void window_note(uint32_t work_us)
 {
+   /* The fourth core's watchdog: one beat of the emulator's own clock and a
+    * look at the threads on that core, once per frame (a paused game or an
+    * open menu never reaches here, so it never trips on them).  A trip has
+    * already moved the threads back to the user cores. */
+   (void)core4_poll(plat_time_us());
    g_win.work_sum += work_us;
    if (work_us > g_win.work_max)
       g_win.work_max = work_us;
@@ -5121,6 +5419,7 @@ static void ho_draw(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
       const uint64_t ts = plat_time_us();
       plat_present_hook();
       vid_swap();
+      present_note();
       d = (uint32_t)(plat_time_us() - ts);
       g_win.swap_sum += d;
       if (d > g_win.swap_max)
@@ -5165,6 +5464,7 @@ static void frame_present(int paced)
       uint32_t d;
       plat_present_hook();
       vid_swap();                /* presents only if a whole frame was drawn */
+      present_note();
       d = (uint32_t)(plat_time_us() - ts);
       g_win.swap_sum += d;
       if (d > g_win.swap_max)
@@ -5499,7 +5799,7 @@ static void game_loop(void)
          const int want = (g_sw.handoff >= 0 ? g_sw.handoff != 0
                                              : g_pcfg.smooth_handoff) &&
                           !session && !local && !g_sw.link_bench &&
-                          !link_owns_picture();
+                          !link_owns_picture() && !g_ho_fell_back;
          if (ho_running() && want != g_ho_want)
          {
             ho_set_enabled(want);
@@ -5931,10 +6231,15 @@ static void game_loop(void)
 
       window_note((uint32_t)(plat_time_us() - g_app_frame_t0));
       {
-         /* once a second: the hand-over's own census (gate: census) */
+         /* once a second: the vcount misses and the GXM census (the
+          * self-check), then the hand-over's own census (gate: census);
+          * vc_miss = refreshes that showed no new picture this second --
+          * "locked 60" on a console whatever the emulated fps */
          char hl[320];
+         ho_second_tick();
          if (ho_census_line(hl, sizeof(hl)))
-            fe_evt("%s guard_waits=%u", hl, ho_guard_waits());
+            fe_evt("%s guard_waits=%u vc_miss=%u vc_presents=%u", hl,
+                   ho_guard_waits(), g_vc_last_vm, g_vc_last_vp);
       }
       if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active())
       {
@@ -6051,6 +6356,10 @@ int main(int argc, char **argv)
    vid_set_gpu_xbrz(g_sw.gpu_xbrz);
    vid_set_gpu_time(g_sw.gpu_time);
    upscale_fade_drop(g_sw.fade_drop);
+   /* The fourth CPU core (docs/FOURTH-CORE.md): probed once, here, before
+    * any worker thread of the game exists; core4 = off in vita.ini skips it
+    * and every thread stays where 1.3 had it. */
+   core4_init(g_core4_off);
    plat_thread_watch("main", 0);
    if (g_sw.main_cpu >= 0)
       fe_evt("main_cpu core=%d rc=%d", g_sw.main_cpu,
@@ -6117,7 +6426,7 @@ int main(int argc, char **argv)
    snes_session_collect();      /* back from snes.bin: its report */
    ra_boot(g_app_root, g_sw.ra_host, GBADHOC_VERSION,
 #ifdef __vita__
-           art_online
+           ra_online
 #else
            NULL
 #endif
@@ -6290,8 +6599,12 @@ int main(int argc, char **argv)
                                  sizeof(osd_snap), ho_draw, g_sw.draw_core,
                                  g_sw.draw_prio);
          g_ho_want = -1;
+         ho_selfcheck_begin();
          vid_enter_hook = on ? ho_guard : NULL;
-         app_look_begin();         /* the best look, or what the game needed */
+         if (g_look_gov)
+            app_look_begin();      /* the best look, or what the game needed */
+         else
+            fe_evt("look_start off=1 reason=ini");
          fe_evt("handoff_start handoff=%d started=%d where=%s setting=%d "
                 "override=%d", (g_sw.handoff >= 0 ? g_sw.handoff != 0
                                                   : g_pcfg.smooth_handoff),

@@ -310,6 +310,11 @@ static Place place4(CoreProfile p, Role r, int idx, const Request &req)
 	return o;
 }
 
+/* GCC -O3 loop unswitching of this function gave a wrong plan (the render
+ * role stayed on cores 1+2); keep it off. */
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((optimize("no-unswitch-loops")))
+#endif
 Plan make_plan(const Request &req, bool core3)
 {
 	Plan pl;

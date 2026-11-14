@@ -11,7 +11,7 @@
 
 CXX      ?= g++
 SAN      ?= -fsanitize=address,undefined -fno-sanitize-recover=undefined
-CXXFLAGS ?= -std=c++11 -Wall -Wextra -O1 -g -fno-omit-frame-pointer $(SAN)
+CXXFLAGS ?= -std=c++11 -Wall -Wextra -O3 -g -fno-omit-frame-pointer $(SAN)
 B        := build
 SHOTS    ?= $(B)/shots
 

@@ -7,6 +7,7 @@
 
 #include "pspcompat.h"          /* pspcompat_time_us */
 #include "fe_evt.h"
+#include "handoff_glue.h"       /* core4_*: the fourth core */
 
 /* The core's types, for video.h's capture structure (its layout does not
  * depend on the core's build flags). */
@@ -66,7 +67,11 @@ static int g_fresh;                   /* the thread's object lists are old  */
 static int g_vram_all;                /* the thread's VRAM is not the game's */
 static unsigned g_vram_age;           /* frames since all of it was copied   */
 static unsigned g_pages;              /* VRAM pages copied (statistics)      */
-static int g_posted;                  /* this frame went to the thread      */
+static int g_posted;                  /* the thread has a picture to draw (or is drawing one) */
+static int g_wd = -1;                 /* watchdog slot (the thread is on the extra core) */
+static int g_late;                    /* ...and it was not done in time     */
+static int g_last = 1;                  /* g_out[] holding the last whole picture */
+static unsigned g_timeouts, g_stale;  /* waits that ran out; frames shown stale */
 static int g_ready;                   /* the thread is running              */
 static int g_failed;                  /* it could not be started: never    */
 static int g_logset;
@@ -104,6 +109,7 @@ static void rt_work(void)
 
 static SceUID g_go = -1, g_done = -1, g_th = -1;
 static volatile int g_quit;
+#define rt_stall() ((void)0)    /* (the twin's stall test is not built here) */
 
 static int rt_entry(SceSize args, void *argp)
 {
@@ -113,7 +119,10 @@ static int rt_entry(SceSize args, void *argp)
       sceKernelWaitSema(g_go, 1, NULL);
       if (g_quit)
          break;
+      rt_stall();
       rt_work();
+      core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
+      core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
       sceKernelSignalSema(g_done, 1);
    }
    return 0;
@@ -127,16 +136,29 @@ static int rt_start(void)
     * middle of a long picture), below the sound: the emulator waits for
     * this at the end of the frame. */
    g_th = sceKernelCreateThread("gbadhoc_render", rt_entry, 0x60, 0x10000, 0,
-                                SCE_KERNEL_CPU_MASK_USER_1 |
-                                SCE_KERNEL_CPU_MASK_USER_2, NULL);
+                                (int)core4_mask(C4_RENDER, 0,
+                                                SCE_KERNEL_CPU_MASK_USER_1 |
+                                                SCE_KERNEL_CPU_MASK_USER_2),
+                                NULL);
+   /* On the extra core (core4_init proved it): the thread owes the emulator
+    * a picture a frame, so the watchdog watches it (a trip moves it back to
+    * the user cores); a plain three-core run gets no slot, no change. */
+   __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);
    if (g_go < 0 || g_done < 0 || g_th < 0 ||
        sceKernelStartThread(g_th, 0, NULL) < 0)
       return -1;
+   core4_set_thread(C4_RENDER, 0, (int)g_th);
    return 0;
 }
 
-static void rt_post(void) { sceKernelSignalSema(g_go, 1); }
-static void rt_wait(void) { sceKernelWaitSema(g_done, 1, NULL); }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); sceKernelSignalSema(g_go, 1); }
+/* 1: the picture is done; 0: `us` went by first (the semaphore is not
+ * consumed: the thread's signal will still be there). */
+static int rt_wait_to(unsigned us)
+{
+   SceUInt timeout = us;
+   return sceKernelWaitSema(g_done, 1, &timeout) >= 0;
+}
 
 void rt_shutdown(void)
 {
@@ -149,12 +171,17 @@ void rt_shutdown(void)
    g_ready = 0;
 }
 #else
+#include <errno.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
 
 static sem_t g_go, g_done;
 static pthread_t g_th;
 static volatile int g_quit;
+static void rt_stall(void);
 
 static void *rt_entry(void *arg)
 {
@@ -165,7 +192,10 @@ static void *rt_entry(void *arg)
          ;
       if (g_quit)
          break;
+      rt_stall();
       rt_work();
+      core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
+      core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
       sem_post(&g_done);
    }
    return NULL;
@@ -175,11 +205,41 @@ static int rt_start(void)
 {
    if (sem_init(&g_go, 0, 0) != 0 || sem_init(&g_done, 0, 0) != 0)
       return -1;
+   __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);   /* (the twin's fake core) */
+   core4_set_thread(C4_RENDER, 0, 0);
    return pthread_create(&g_th, NULL, rt_entry, NULL) == 0 ? 0 : -1;
 }
 
-static void rt_post(void) { sem_post(&g_go); }
-static void rt_wait(void) { while (sem_wait(&g_done) != 0) ; }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); sem_post(&g_go); }
+static int rt_wait_to(unsigned us)
+{
+   struct timespec ts;
+   clock_gettime(CLOCK_REALTIME, &ts);
+   ts.tv_nsec += (long)(us % 1000000u) * 1000L;
+   ts.tv_sec += us / 1000000u + ts.tv_nsec / 1000000000L;
+   ts.tv_nsec %= 1000000000L;
+   for (;;)
+   {
+      if (sem_timedwait(&g_done, &ts) == 0)
+         return 1;
+      if (errno != EINTR)
+         return 0;
+   }
+}
+/* A twin's test of the bounded wait (app_tests.py "stall"): the thread
+ * sleeps GBADHOC_STALL_MS before each picture, as one the system has not
+ * scheduled would.  Never built into the VPK. */
+static void rt_stall(void)
+{
+   static int ms = -1, left = 30;      /* the first 30 pictures */
+   if (ms < 0)
+   {
+      const char *e = getenv("GBADHOC_STALL_MS");
+      ms = e ? atoi(e) : 0;
+   }
+   if (ms > 0 && left-- > 0)
+      usleep((useconds_t)ms * 1000u);
+}
 
 void rt_shutdown(void)
 {
@@ -192,14 +252,47 @@ void rt_shutdown(void)
 }
 #endif
 
+/* The wait for the thread's picture is bounded.  50 ms: the picture is 2-6 ms
+ * of work, so one not finished after three refreshes means the thread has
+ * lost its core (the system's, or a sibling helper's); the emulator's own
+ * frame is then shown with the last whole picture of the thread's -- one
+ * repeated frame -- and the late one is collected when it lands, instead of
+ * the game, its sound and its input stopping for as long as the other core
+ * takes. */
+#define RT_WAIT_US 50000u
+
+/* The thread's picture, if it is done: 1 collected, 0 not yet (counted). */
+static int rt_collect(unsigned us)
+{
+   if (!g_posted)
+      return 1;
+   if (!rt_wait_to(us))
+   {
+      g_timeouts++;
+      /* On the extra core, a thread that does not answer is the system
+       * taking the core back: say so, and the thread is moved to the user
+       * cores (handoff_glue.cpp), where it finishes this picture. */
+      if (__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST) >= 0 &&
+          core4_mark_lost("render thread stalled"))
+         __atomic_store_n(&g_wd, -1, __ATOMIC_SEQ_CST);
+      return 0;
+   }
+   g_posted = 0;
+   g_last = g_cur;                    /* whole now; the thread draws the other */
+   g_cur ^= 1;
+   return 1;
+}
+
 /* ---- the frame ----------------------------------------------------------------- */
 
 void rt_frame_begin(int mode)
 {
-   if (g_posted)                      /* (a frame end that never came) */
+   if (g_posted)                      /* (a frame end that never came, or a late picture) */
    {
-      rt_wait();
-      g_posted = 0;
+      if (rt_collect(RT_WAIT_US))
+         g_late = 0;
+      else
+         g_late = 1;
    }
    if (mode && !g_ready && !g_failed)
    {
@@ -290,17 +383,32 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
 
    if (!g_posted)
       return pix;
+   /* A picture from an earlier frame is still being drawn, and this
+    * frame was not given to the thread (the hook saw it busy): the last
+    * whole picture is shown again.  (With the core drawing too, mode 2,
+    * its own is as good and is not touched.) */
    t0 = pspcompat_time_us();
-   rt_wait();
-   g_posted = 0;
+   if (g_late)
+   {
+      if (rt_collect(RT_WAIT_US))
+         g_late = 0;
+      g_stale++;
+      return pix && mode == RT_ON ? g_out[g_last] : pix;
+   }
+   if (!rt_collect(RT_WAIT_US))
+   {
+      g_late = 1;
+      g_stale++;
+      g_wait_us += pspcompat_time_us() - t0;
+      return pix && mode == RT_ON ? g_out[g_last] : pix;
+   }
    dt = pspcompat_time_us() - t0;
    g_wait_us += dt;
    if (dt > g_wait_max_us)
       g_wait_max_us = dt;
    g_frames++;
    g_drawn++;
-   out = g_out[g_cur];
-   g_cur ^= 1;
+   out = g_out[g_last];
    if (!pix)
       return pix;
    if (mode == RT_CHECK)
@@ -346,6 +454,15 @@ const uint16_t *rt_frame_end(const uint16_t *pix)
 void rt_stats(rt_stats_t *out)
 {
    const unsigned n = g_frames;
+   /* The bounded wait's census (once a window): waits that ran out, and
+    * the frames shown with the thread's last whole picture because of it. */
+   if (g_ready)
+   {
+      static unsigned last_to;
+      fe_evt("vita_rt_waits timeouts=%u window=%u stale_frames=%u limit_us=%u",
+             g_timeouts, g_timeouts - last_to, g_stale, RT_WAIT_US);
+      last_to = g_timeouts;
+   }
    memset(out, 0, sizeof(*out));
    out->frames = n;
    if (n)

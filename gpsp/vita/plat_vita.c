@@ -563,13 +563,14 @@ void plat_thread_report(char *buf, size_t cap)
          continue;            /* gone (its game ended) */
       run = (uint64_t)info.runClocks;
       n += (size_t)snprintf(buf + n, n < cap ? cap - n : 0,
-                            "%s%s=c%d/%x/%u/%u/%u/%u", n ? " " : "",
+                            "%s%s=c%d/%x/%u/%u/%u/%u/%ums", n ? " " : "",
                             g_watch[i].tag, (int)info.lastExecutedCpuId,
                             (unsigned)info.currentCpuAffinityMask >> 16,
                             (unsigned)(run - g_watch[i].run),
                             info.threadPreemptCount - g_watch[i].pre,
                             info.intrPreemptCount - g_watch[i].irq,
-                            (unsigned)info.changeCpuCount - g_watch[i].moved);
+                            (unsigned)info.changeCpuCount - g_watch[i].moved,
+                            (unsigned)(run / 1000u));   /* ms run, in total */
       g_watch[i].run = run;
       g_watch[i].pre = info.threadPreemptCount;
       g_watch[i].irq = info.intrPreemptCount;

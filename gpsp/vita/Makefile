@@ -192,10 +192,30 @@ $(foreach s,$(APP_ALL_VITA),$(eval $(call APP_RULE,$(s))))
 LINK_ELF = $(CC) -Wl,-q -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
 	  $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(1) $(LIBS)
 
-# A WEAK undefined pthread_* / sce* symbol links without complaint and is a
-# null call on the console (lessons 13 Nov): the link fails on one instead.
-CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" && $$2 ~ /^(pthread_|sce)/ { print $$2 }')"; \
-	if [ -n "$$w" ]; then echo "weak undefined in $(1): $$w"; rm -f $(1); exit 1; fi
+# A WEAK undefined symbol links without complaint and is a null call or a
+# null address on the console (lessons 13 Nov: an archive member that was
+# not pulled in worked on the host and was null on the Vita).  The link fails
+# on EVERY weak undefined symbol that is not on this list.  The list is the
+# known ones, each used only behind an address check (`if (&sym)`): the
+# core's optional speed hooks and counters (instance A, and instance B under
+# its gbab_ prefix), the translation-cache release B can do without, and the
+# sanitizer's start hook of a non-ASan build, and the toolchain's own start-up
+# code (crtbegin: transactional-memory and unwind-frame registration, libc's
+# __libc_fini), which tests each address before calling.  A new name here needs the
+# same reason, written next to it.
+WEAK_OK := irq_io_fast timer_lazy jit_big_i_calls jit_big_i_max \
+           jit_big_d_calls jit_pin_at \
+           gbab_irq_io_fast gbab_timer_lazy gbab_jit_big_i_calls \
+           gbab_jit_big_i_max gbab_jit_big_d_calls gbab_jit_pin_at \
+           gbab_dynarec_release_translation_caches __asan_init \
+           _ITM_deregisterTMCloneTable _ITM_registerTMCloneTable \
+           __deregister_frame_info __register_frame_info __libc_fini
+# (nm marks a weak undefined function `w` and a weak undefined object `v`;
+# a version suffix such as @VERS is dropped before the comparison.)
+CHECK_WEAK = @ok=" $(WEAK_OK) "; \
+	w="$$($(NM) $(1) | awk '($$1 == "w" || $$1 == "v") && NF == 2 { print $$2 }' | sed 's/@.*//')"; \
+	bad=""; for s in $$w; do case "$$ok" in *" $$s "*) ;; *) bad="$$bad $$s";; esac; done; \
+	if [ -n "$$bad" ]; then echo "weak undefined in $(1), not on the allowlist (gpsp/vita/Makefile WEAK_OK):$$bad"; rm -f $(1); exit 1; fi
 
 $(ELF): $(APP_OBJS) $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A)
 	$(call LINK_ELF,)

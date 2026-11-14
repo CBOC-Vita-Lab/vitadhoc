@@ -1143,8 +1143,10 @@ void plat_thread_watch(const char *tag, int thid)
 
 void plat_thread_report(char *buf, size_t cap)
 {
+   /* The console's line, with nothing to measure: zeros, so the census line
+    * is there on a twin too (the run time is the last field, in ms). */
    if (buf && cap)
-      buf[0] = '\0';
+      snprintf(buf, cap, "main=c0/0/0/0/0/0/0ms");
 }
 
 int plat_thread_pin(int core)

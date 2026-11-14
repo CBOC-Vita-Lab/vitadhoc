@@ -482,9 +482,23 @@ def windows_rate(samples, key_list):
     return sum(rates) / len(rates), max(rates)
 
 
+def window_counts(samples, key_list):
+    """samples: [(kv, ts)] of a line that is printed once a second with a count
+    for that second (handoff: vc_miss=): the mean and the worst second."""
+    v = []
+    for kv, _ in samples:
+        for k in key_list:
+            if k in kv and num(kv[k]) is not None:
+                v.append(num(kv[k]))
+                break
+    return None if not v else (sum(v) / len(v), max(v))
+
+
 def col_miss(L):
-    allk = [(kv, ts) for _, kv, ts in L.evts]
-    r = windows_rate(allk, VC_MISS_KEYS)
+    # vc_miss= is the count of refreshes with no new picture in the second
+    # the handoff: line covers (main_vita.c); vita_gxm repeats it, so only
+    # the handoff: lines are read, and nothing is divided by line spacing.
+    r = window_counts(L.of("handoff:"), VC_MISS_KEYS) or window_counts(L.of("handoff"), VC_MISS_KEYS)
     tag = ""
     if r is None:
         r, tag = windows_rate(L.of("vita_win"), ["late"]), " L"      # fallback: late= of vita_win

@@ -42,10 +42,14 @@ class Parser(unittest.TestCase):
         self.assertEqual(row["faults"], "0")
 
     def test_vc_counter_wins_over_late(self):
-        log = GBA + "EVT vcount_misses n=1 vc_miss=4 ts_us=3000000\nEVT x vc_miss=2 ts_us=4000000\n"
+        # vc_miss= on the once-a-second handoff: line is that second's count
+        # (vita_gxm repeats it and must not be counted twice)
+        log = GBA + ("EVT handoff: on=1 vc_miss=4 vc_presents=56 ts_us=3000000\n"
+                     "EVT vita_gxm vc_miss=4 ts_us=3000100\n"
+                     "EVT handoff: on=1 vc_miss=2 vc_presents=58 ts_us=4000000\n")
         r = M.col_miss(M.Logs(log))
         self.assertFalse(r.endswith(" L"))
-        self.assertTrue(r.startswith("3.00"), r)   # (4/1s + 2/1s)/2
+        self.assertTrue(r.startswith("3.00 (max 4.00)"), r)   # (4 + 2) / 2
 
     def test_unknown_and_empty_give_dash(self):
         L = M.Logs("", "", "", 10)

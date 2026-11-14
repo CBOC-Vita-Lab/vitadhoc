@@ -145,6 +145,43 @@ tile draw costs the same per call, one call per tile row, line and layer), so th
 render batch per line (Yoshi's Island: about 6 M instructions a frame). Cutting that needs a core mode that delivers the hook with the centre
 only (no passes) for the floor rung; snes/core is not in this agent's ownership (see the report).
 
+## The 15 games (13 Nov 2026; `snes/twin/wide_table.py`, margin 41, 3000 frames of the owner's script, x86 twin)
+
+Columns: real share = margin pixels that are real picture (tilemap, learned map, continued backdrop, revealed lower layer) over all margin
+pixels, with `hud_excl` on (default) and off; soft = learned cells shown softly; Auto ambient frames L / R = percent of frames on which that
+side showed the ambient frame (Auto decides per side; 0 = always the composed picture); main limits = per picture line reasons
+(`SNES_WIDE_LR_*`; "ring shorter than margin" = the layers' known extent is shorter than the margin, "layer not described" = a layer on
+the line is not a mode 0/1/3 tilemap widekit can describe, "bitmap tilemap" = framebuffer style tilemap); compose = wall microseconds of
+compose per frame on this x86 box, full margin (a contended 2 core box: indicative only); ladder rung = where the cost ladder was after
+3000 frames with `--wopt policy=1 --wopt cost_scale=800` (the measured time times 8, a guess at the Vita's speed from the instruction
+counts below; the box was shared with other jobs, so the steps are noisy), steps in brackets; hud_excl pixels = the composed frames with
+Auto off (`auto=0`) with `hud_excl` 1 and 0 compared byte for byte.
+
+| game | chip | real share % (hud_excl 1 / 0) | soft % | Auto ambient frames L / R % | main limits of the margin (lines) | compose us/frame (x86, full margin) | ladder rung at x800 (steps) | hud_excl pixels |
+|---|---|---|---|---|---|---|---|---|
+| ChronoTrigger | - | 42.8 / 42.8 | 0.0 | 86 / 86 | ring shorter than margin 53.7%  exact 40.2%  forced blank 6.0% | 440 | 0 (0) | identical |
+| Donkey Kong 1 - Country | - | 11.7 / 11.7 | 0.0 | 99 / 99 | ring shorter than margin 77.2%  exact 11.3%  bitmap tilemap 7.8% | 289 | 0 (0) | identical |
+| Doom | Super FX | 0.0 / 0.0 | 0.0 | 99 / 99 | ring shorter than margin 67.7%  forced blank 32.3% | 272 | 0 (0) | identical |
+| F-Zero | - | 2.9 / 2.9 | 0.0 | 99 / 99 | ring shorter than margin 92.0%  forced blank 4.6%  exact 2.7% | 309 | 0 (0) | identical |
+| Kirby Superstar | SA-1 | 23.9 / 23.9 | 0.0 | 91 / 91 | ring shorter than margin 53.0%  exact 24.9%  forced blank 13.2% | 397 | 0 (0) | identical |
+| Mega Man X 2 | - | 29.5 / 29.5 | 0.0 | 69 / 69 | ring shorter than margin 47.7%  exact 42.8%  forced blank 6.6% | 411 | 0 (0) | identical |
+| Pilotwings | - | 60.2 / 60.2 | 0.0 | 91 / 91 | exact 55.8%  layer not described 36.9%  forced blank 7.3% | 193 | 0 (0) | identical |
+| Street Fighter Alpha 2 | - | 44.2 / 44.2 | 0.2 | 56 / 52 | ring shorter than margin 46.4%  exact 39.6%  forced blank 14.0% | 433 | 0 (2) | identical |
+| Stunt Race FX | Super FX | 4.6 / 4.6 | 0.0 | 91 / 91 | ring shorter than margin 84.5%  forced blank 11.4%  exact 4.1% | 352 | 0 (0) | identical |
+| Super Mario Kart | - | 62.3 / 62.3 | 0.0 | 43 / 92 | ring shorter than margin 56.0%  exact 30.8%  layer not described 7.0% | 313 | 0 (0) | identical |
+| Super Mario RPG | SA-1 | 34.1 / 34.1 | 0.0 | 71 / 72 | ring shorter than margin 55.3%  exact 33.8%  forced blank 10.9% | 328 | 0 (2) | identical |
+| Super Mario World | - | 53.6 / 53.6 | 4.2 | 60 / 84 | exact 63.8%  ring shorter than margin 30.6%  forced blank 5.6% | 613 | 2 (2) | identical |
+| Super Metroid | - | 99.0 / 99.0 | 0.0 | 0 / 0 | exact 88.6%  forced blank 10.5%  ring shorter than margin 0.9% | 118 | 0 (0) | identical |
+| Yoshi's Island | Super FX | 17.6 / 16.2 | 7.1 | 90 / 90 | ring shorter than margin 59.3%  forced blank 18.6%  exact 15.5% | 463 | 0 (0) | identical |
+| Zelda - A Link to the Past | - | 38.1 / 38.1 | 0.0 | 67 / 67 | ring shorter than margin 59.1%  exact 36.4%  forced blank 4.5% | 332 | 0 (0) | identical |
+
+Reading it: `hud_excl` changes no pixel in any of the 15 games (it only changes which lines count towards Auto's decision; the real share
+differs only on Yoshi's Island, 17.6 against 16.2 percent). Real picture is rare outside Mode 7 and the few games with long tilemap history:
+Super Metroid (99 %), Super Mario Kart (62 %), Pilotwings (60 %), Super Mario World (54 %), Street Fighter Alpha 2, Chrono Trigger, Zelda
+(38 to 44 %). The side decision shows its effect where the camera scrolls: Super Mario Kart 43 / 92 and Super Mario World 60 / 84 percent
+ambient on the left / right, against both sides together before. For every other game the limit is the ring: the line is real only as far
+as the tilemap extent known from the write stamps, which is shorter than the 41 px margin on 46 to 92 percent of the lines.
+
 ## Learned map and sub screen layers (13 Nov 2026)
 
 - The learned map identifies a cell by its content hash (tilemap word + the tile's graphics) instead of a global tile set identity

@@ -47,7 +47,7 @@ def main():
     ap.add_argument("--filter", default="")
     a = ap.parse_args()
     roms = sorted(f for f in os.listdir(a.dir) if f.lower().endswith((".smc", ".sfc")) and a.filter.lower() in f.lower())
-    print("| game | chip | real share % (hud_excl 1 / 0 : Auto) | soft % | Auto ambient frames L / R % | main limits of the margin (lines) | compose us/frame (x86, full margin) | ladder rung at x%d (steps) | hud_excl pixels |" % a.scale)
+    print("| game | chip | real share %% (hud_excl 1 / 0) | soft %% | Auto ambient frames L / R %% | main limits of the margin (lines) | compose us/frame (x86, full margin) | ladder rung at x%d (steps) | hud_excl pixels |" % a.scale)
     print("|---|---|---|---|---|---|---|---|---|")
     for g in roms:
         rom = os.path.join(a.dir, g)

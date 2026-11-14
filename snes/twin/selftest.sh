@@ -40,6 +40,14 @@ else
 	echo "SKIP  ROMs not found in $ROOT"
 fi
 
+# PAL pacing (a PAL ROM in SNES_PAL_ROM): 5 frames in 6 refreshes keep the game's time within 0.5 % of the display's
+if [ -n "$SNES_PAL_ROM" ] && [ -f "$SNES_PAL_ROM" ]; then
+	PT=${PLAYER_TWIN:-$(dirname "$TWIN")/player_twin}
+	"$PT" pal "$SNES_PAL_ROM" >$T/pal.log 2>&1 && ok "PAL pacing: $(grep 'error' $T/pal.log | sed 's/.*frames run, //')" || { cat $T/pal.log; bad "PAL pacing"; }
+else
+	echo "SKIP  PAL pacing (set SNES_PAL_ROM)"
+fi
+
 python3 -I "$HERE/tests/make_sram_rom.py" $T/sram.sfc
 "$TWIN" $T/sram.sfc --frames 10 --srm $T/g.srm >/dev/null 2>&1
 v1=$(od -An -tu1 -N1 $T/g.srm | tr -d ' ')
@@ -212,6 +220,12 @@ if [ -x "$PT" ]; then
 	"$PT" test $T/pt.sfc ${PLAYER_SHOTS:-$T/ptw/shots} $T/ptw >$T/pt.txt 2>&1 && ok "player: $(grep 'player_twin:' $T/pt.txt | tail -1 | sed 's/player_twin: //')" \
 		|| { grep -v '^Map_' $T/pt.txt | tail -30; bad "player (player_twin)"; }
 else echo "SKIP  player_twin not built ($PT)"; fi
+# look governor in the player: same loads give the same looks, wide view never a rung, a row by hand is kept, memory round trip
+if [ -x "$PT" ]; then
+	python3 -I "$HERE/tests/make_cheat_rom.py" $T/lk.sfc
+	"$PT" look $T/lk.sfc $T/lkw >$T/lk.txt 2>&1 && ok "look governor: $(grep 'player_twin:' $T/lk.txt | tail -1 | sed 's/player_twin: //')" \
+		|| { grep -v '^Map_' $T/lk.txt | tail -20; bad "look governor (player_twin look)"; }
+fi
 
 # frame hand-over ("Smooth hand-over", playerkit pk_handoff through snes/vita/pipe.cpp): the setting row (default on, kept), and the
 # pictures it delivers are bit for bit those of the plain run, in order, none missing outside steady pacing's half mode; with a

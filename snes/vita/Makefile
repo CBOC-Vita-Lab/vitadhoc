@@ -9,6 +9,7 @@ export VITASDK
 PREFIX := $(VITASDK)/bin/arm-vita-eabi-
 CC  := $(PREFIX)gcc
 CXX := $(PREFIX)g++
+NM  := $(PREFIX)nm
 
 CORE := ../core
 FE   := ../frontend
@@ -37,7 +38,7 @@ FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/wide.
 WK_SRC    := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
 WK_OBJS   := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
 # playerkit (MIT): the in-game menu, states, input mapping, launch protocol, patches, notices, pacing
-PK_SRC    := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores
+PK_SRC    := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look
 PK_OBJS   := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o
 V2D_OBJS  := $(B)/v2d/vita2d.o $(B)/v2d/vita2d_draw.o $(B)/v2d/vita2d_texture.o $(B)/v2d/utils.o
 SHADERS   := $(wildcard $(V2D)/shader/*_gxp.o)
@@ -49,8 +50,21 @@ LIBS := -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_st
 
 all: $(B)/snes.bin
 
+# A WEAK undefined symbol links without complaint and is a null call on the console (gpsp/vita/Makefile has the same
+# check): the link fails on any weak undefined symbol that is not listed here. The list is what the toolchain's runtime
+# leaves weak on purpose, and the pthread_* of libstdc++'s thread layer. With those unresolved libstdc++ believes the
+# program is single threaded, so std::mutex, std::call_once, shared_ptr counts and the guards of function-local statics
+# do NOT lock. Audited (13 Nov): snes/, playerkit/, widekit/ use none of std::mutex, std::thread, condition_variable,
+# shared_ptr, call_once; strings are the C++11 ABI (no shared refcount); the function-local statics with constructors
+# (host.cpp mix_job's vector, pk_util.cpp fs(), pk_input.cpp models) are first used on one thread before another can
+# reach them. With the gthreads inactive libstdc++'s exception globals are process-wide, so nothing may throw on two threads at once. Sharing between threads is done with pk::SpinLock and atomics. A new use of any of those needs a real lock.
+WEAK_OK := ^(_ITM_|_ZGT|__cxa_pure_virtual$$|__deregister_frame_info$$|__register_frame_info$$|__gnu_Unwind_Find_exidx$$|__libc_fini$$|pthread_(cancel|cond_broadcast|cond_wait|getspecific|key_create|key_delete|mutex_destroy|mutex_init|mutex_lock|mutex_unlock|once|setspecific)$$)
+CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" || $$1 == "v" { print $$2 }' | grep -v -E '$(WEAK_OK)')"; \
+	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
+
 $(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
 	$(CXX) $(CPUFLAGS) -Wl,-q -o $@ $^ $(LIBS)
+	$(call CHECK_WEAK,$@)
 
 $(B)/snes.velf: $(B)/snes.elf
 	$(VITASDK)/bin/vita-elf-create $< $@
@@ -64,6 +78,8 @@ $(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
 	@mkdir -p $(B)/rcopy
 	$(PREFIX)objcopy --redefine-syms=$(B)/rcopy.map $< $@
 
+# Super FX: the exact speed-up of agent P5 (limit and fast paths in the GSU interpreter)
+$(B)/core/fxinst.o $(B)/core/fxemu.o: CXXFLAGS += -DFX_LIMIT -DFX_FAST -DFX_LINEFLAGS
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

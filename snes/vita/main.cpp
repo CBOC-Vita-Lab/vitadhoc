@@ -46,6 +46,7 @@
 #include "audio_pace.h"
 #include "player.h"
 #include "pipe.h"
+#include "pal_pace.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
 #define STB_IMAGE_IMPLEMENTATION
@@ -188,6 +189,7 @@ struct GTex {
 static GTex g_src[4];            /* the core's picture, 512x512 RGB565 */
 static GTex g_rt, g_glowA, g_glowB, g_blend;   /* g_blend: 512x512, made when a blend option is first used */
 static unsigned g_blend_serial;
+static std::atomic<bool> g_pic_dirty(false);     /* the picture settings changed: frame_draw resets its caches (set by any thread) */
 static int g_blend_w, g_blend_h;
 static GTex g_bezel;
 static int g_bezel_w, g_bezel_h;
@@ -403,6 +405,7 @@ static unsigned band_alpha(int strength) { unsigned a = 20 + 19 * strength; retu
  * options (not used by the game loop: the governor never drops them). */
 static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 {
+	if (g_pic_dirty.exchange(false)) { g_rtkey_valid = false; g_glow_serial = 0; g_glow_age = 99; g_blend_serial = 0; }
 	vita2d_pool_reset();
 	pic_rect r;
 	GTex *src = g_src_i >= 0 ? &g_src[g_src_i] : NULL;
@@ -677,7 +680,7 @@ struct VitaPlatform : snesp::Platform {
 		return true;
 	}
 	void ask_cheat_text() { g_ime_wanted = true; }
-	void picture_changed() { g_rtkey_valid = false; g_glow_serial = 0; g_glow_age = 99; g_blend_serial = 0; }
+	void picture_changed() { g_pic_dirty.store(true); }   /* the drawing code resets its caches itself, on its own thread */
 	void log_write(const std::string &chunk)
 	{
 		if (!g_log) return;
@@ -747,7 +750,19 @@ struct VitaHandoffSys : pk::HandoffSys {
 	}
 };
 static VitaHandoffSys g_hd_sys;
+static int clampi_(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static SceUID g_hd_thread = -1;
+static int g_draw_core = 1;
+
+/* CPU time a thread has used so far, in ms (the kernel's own count, SceKernelThreadInfo.runClocks), or -1 */
+static double thread_cpu_ms(SceUID id)
+{
+	SceKernelThreadInfo ti;
+	memset(&ti, 0, sizeof ti);
+	ti.size = sizeof ti;
+	if (id < 0 || sceKernelGetThreadInfo(id, &ti) < 0) return -1.0;
+	return ti.runClocks / 1000.0;
+}
 static bool g_hd_ok;                                   /* the drawing thread runs */
 static std::atomic<unsigned> g_hd_drawn(0), g_hd_failed(0), g_hd_draw_us(0);   /* this second, read and cleared by main */
 static pk::SpinLock g_hd_lk;                           /* guards the notice snapshot */
@@ -790,11 +805,12 @@ static int hd_draw_thread(SceSize, void *)
 			s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch;
 			s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0;
 		}
-		if (have) video_upload(g_pl->picture(), (int) f->seq, s);
+		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
+		if (have) video_upload(ps, (int) f->seq, s);
 		bool drew = false;
 		for (int tries = 0; tries < 4 && !drew; tries++) {
 			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: the picture is not dropped for it */
-			drew = frame_draw(g_pl->picture(), 1, (int) f->seq);
+			drew = frame_draw(ps, 1, (int) f->seq);
 		}
 		if (drew) {
 			if (g_hd_notice_on.load()) {
@@ -819,7 +835,9 @@ static void hd_start(const char *tini, double frame_hz)
 {
 	if (!g_pl->smooth_handoff()) { logf_("handoff: off (setting)\n"); return; }
 	if (!g_pipe.start(&g_hd_sys, 2, true, 16683, (uint32_t) (1e6 / frame_hz + 0.5))) { logf_("handoff: NOT started (mailbox)\n"); return; }
+	/* threads.ini draw_core: 0, 1 (default) or 2, the core the drawing thread runs on */
 	const int core = ini_int(tini, "draw_core", 1);
+	g_draw_core = core == 0 ? 0 : core == 2 ? 2 : 1;
 	const int prio = prio_ok(ini_int(tini, "draw_prio", 0x60), 0x60);
 	const unsigned mask = core == 0 ? SCE_KERNEL_CPU_MASK_USER_0 : core == 2 ? SCE_KERNEL_CPU_MASK_USER_2 : SCE_KERNEL_CPU_MASK_USER_1;
 	g_hd_thread = sceKernelCreateThread("snes_draw", hd_draw_thread, prio ? prio : 0x60, 0x20000, 0, mask, NULL);
@@ -1093,9 +1111,20 @@ int main(int argc, char **argv)
 	logf_("threads=%d (apu %d ppu %d spin %d)\n", snes_host_threads_active(), want_apu, want_ppu, spin);
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 	g_pl->apply_start_mode();
+	/* the wide view's cost ladder (threads.ini): wide_policy 1 (default) steps the composed margin down when the compose time is too high,
+	 * 0 keeps the full margin; wide_cost_us (default 9000) is the smoothed compose time over which a rung is given up */
+	g_pl->set_wide_policy_ini(ini_int(tini, "wide_policy", 1) != 0 ? 1 : 0);   /* the player sets it with the menu's Wide view row */
+	snes_wide_option("cost_us", clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
+	logf_("wide ladder: policy=%d cost_us=%d\n", ini_int(tini, "wide_policy", 1) != 0, clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
+	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
 	const double vita_hz = 59.94;
+	/* PAL: 5 frames in 6 refreshes (see pal_pace.h). The audio pacer measures the speed against frame_hz (50), so its base
+	 * rate follows 50 Hz on its own once the frames come at that rate. NTSC does not use it (one per refresh, as before). */
+	const bool pal = snes_host_is_pal() != 0;
+	FramePace pal_pace;
+	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: %s\n", g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
 	hd_start(tini, frame_hz);
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
 	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. With
@@ -1125,6 +1154,8 @@ int main(int argc, char **argv)
 	uint32_t ur_seen = 0;
 	uint64_t prev_loop0 = 0;
 	unsigned w16 = 0, w20 = 0, w25 = 0;
+	double hd_draw_ms = 0;            /* the drawing thread's busy time and the repeats of the last hand-over census, for the look governor */
+	unsigned hd_repeated = 0, missed_refr = 0, pal_planned = 0;   /* pal_planned: refreshes that owed no frame (the 6th of a PAL game) */
 	uint64_t stall_max_us = 0, work_max_us = 0;
 	unsigned s_w16 = 0, s_w20 = 0, s_w25 = 0;
 	double s_stall = 0, s_work = 0, s_agap = 0;
@@ -1145,6 +1176,7 @@ int main(int argc, char **argv)
 		}
 		unsigned elapsed = vc - last_vc;
 		last_vc = vc;
+		if (elapsed > 1) missed_refr += elapsed - 1;   /* refreshes the loop was too late for */
 		if (elapsed == 0) elapsed = 1;
 		if (elapsed > 2) elapsed = 2;       /* a long stall (menu, suspend) is not caught up */
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
@@ -1177,9 +1209,11 @@ int main(int argc, char **argv)
 				if (hd_quiesce()) { snes_wide_split(want_split ? 1 : 0); g_wide_split = want_split; }
 			}
 		}
-		const int to_run = (half || hd) ? (int) elapsed : 1;
+		int to_run = (half || hd) ? (int) elapsed : 1;
+		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
 		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
+		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
 			bool render = g_pl->want_render(emu_frame);
@@ -1342,7 +1376,12 @@ int main(int argc, char **argv)
 			/* one census line a second while the hand-over is on: pictures made / shown / repeated / dropped, depth, and the game's
 			 * time against the wall's (a game that lost time shows a negative drift) */
 			char hl[512];
-			if (g_pipe.box().census_line(now, hl, sizeof hl)) logf_("%s draw_ms=%.1f\n", hl, g_hd_draw_us.exchange(0) / 1000.0);
+			if (g_pipe.box().census_line(now, hl, sizeof hl)) {
+				hd_draw_ms = g_hd_draw_us.exchange(0) / 1000.0;
+				const char *rp = strstr(hl, "repeated=");
+				hd_repeated = rp ? (unsigned) atoi(rp + 9) : 0;
+				logf_("%s draw_ms=%.1f\n", hl, hd_draw_ms);
+			}
 		}
 		if (now - sec_start >= 1000000) {
 			double dt = (now - sec_start) / 1e6;
@@ -1355,7 +1394,38 @@ int main(int argc, char **argv)
 				w16 = w20 = w25 = 0; stall_max_us = work_max_us = 0;
 				stats_pending = true;
 			}
+			{
+				/* the look governor's second (costs as fractions of a 60 Hz refresh): emulation per emulated frame, drawing per
+				 * refresh (the drawing thread's busy time with the hand-over, else the main thread's drawing), and the refreshes that
+				 * showed an old picture without the plan wanting it (the 6th refresh of a PAL game is planned) */
+				const double budget = 16683.0, refr = vblanks > 0 ? vblanks : 1;
+				pk::LookSecond ls;
+				ls.refreshes = vblanks;
+				ls.emu = frames_run ? (float) (emu_us / (double) frames_run / budget) : 0.f;
+				ls.draw = g_hd_ok ? (float) (hd_draw_ms * 1000.0 / refr / budget) : (float) ((draw_us + fetch_us + finish_us) / refr / budget);
+				const unsigned planned = pal_planned;
+				pal_planned = 0;
+				/* a PAL game runs 5 frames in 6 refreshes: its cost per refresh is 50.007 / 59.94 of the cost per frame, so one that holds 50 is not overloaded */
+				if (pal && !g_pl->pal_fast()) ls.emu *= (float) (50.007 / 59.94);
+				const unsigned late = g_hd_ok ? (hd_repeated > planned ? hd_repeated - planned : 0) : missed_refr;
+				ls.missed = (int) late;
+				ls.parallel = hd;
+				ls.pace_half = half;
+				g_pl->look_second(ls);
+				missed_refr = 0;
+			}
 			snes_host_thread_stats(&st1);
+			{
+				/* the per-thread CPU census: ms of CPU each thread used in this second (the kernel's run time). The PPU and APU workers
+				 * are made inside the core, so for them the core's own busy time is given (marked b). 2 cores: the sum shows the load. */
+				static SceUID s_main = sceKernelGetThreadId();
+				static double prev[4] = { 0, 0, 0, 0 };
+				const SceUID ids[4] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread };
+				double cur[4], d[4];
+				for (int k = 0; k < 4; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
+				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f ppu_b=%.0f apu_b=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3],
+				    (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6, g_draw_core);
+			}
 			double fr = frames_run ? frames_run : 1;
 			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, drawn / dt, frames_run / dt,
 			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, g_pace.fill_frames());

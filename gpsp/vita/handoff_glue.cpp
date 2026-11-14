@@ -6,7 +6,15 @@
 #include "handoff_glue.h"
 #include "plat.h"
 #include "../../playerkit/src/pk_handoff.cpp"
+/* pk_cores' planner gives the WRONG answer when this file is compiled at -O3
+ * (GCC, as the app's C++ is): the main app's render thread stays on cores
+ * 1+2 in the four-core plan instead of the extra core (-O0/-O1/-O2 are
+ * right; no UBSan or -Wall finding).  Compiled at -O2 here until playerkit
+ * is looked at; the golden tests run at -O1. */
+#pragma GCC push_options
+#pragma GCC optimize("O2")
 #include "../../playerkit/src/pk_cores.cpp"
+#pragma GCC pop_options
 #include "fe_evt.h"
 
 #include <new>

@@ -46,6 +46,7 @@
 #include "audio_pace.h"
 #include "player.h"
 #include "pipe.h"
+#include "pal_pace.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
 #define STB_IMAGE_IMPLEMENTATION
@@ -1096,6 +1097,11 @@ int main(int argc, char **argv)
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
 	const double vita_hz = 59.94;
+	/* PAL: 5 frames in 6 refreshes (see pal_pace.h). The audio pacer measures the speed against frame_hz (50), so its base
+	 * rate follows 50 Hz on its own once the frames come at that rate. NTSC does not use it (one per refresh, as before). */
+	const bool pal = snes_host_is_pal() != 0;
+	FramePace pal_pace;
+	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: 5 of 6 refreshes emulate a frame (%.4f frames per refresh)\n", pal_pace.ratio); }
 	hd_start(tini, frame_hz);
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
 	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. With
@@ -1177,9 +1183,11 @@ int main(int argc, char **argv)
 				if (hd_quiesce()) { snes_wide_split(want_split ? 1 : 0); g_wide_split = want_split; }
 			}
 		}
-		const int to_run = (half || hd) ? (int) elapsed : 1;
+		int to_run = (half || hd) ? (int) elapsed : 1;
+		if (pal) to_run = pal_pace.owed(to_run);   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
 		bool fresh = false, rendered_any = false, want_menu = false;
 		uint64_t emu_pass_us = 0;
+		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
 			bool render = g_pl->want_render(emu_frame);

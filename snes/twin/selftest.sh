@@ -40,6 +40,14 @@ else
 	echo "SKIP  ROMs not found in $ROOT"
 fi
 
+# PAL pacing (a PAL ROM in SNES_PAL_ROM): 5 frames in 6 refreshes keep the game's time within 0.5 % of the display's
+if [ -n "$SNES_PAL_ROM" ] && [ -f "$SNES_PAL_ROM" ]; then
+	PT=${PLAYER_TWIN:-$HERE/build/player_twin}
+	"$PT" pal "$SNES_PAL_ROM" >$T/pal.log 2>&1 && ok "PAL pacing: $(grep 'error' $T/pal.log | sed 's/.*frames run, //')" || { cat $T/pal.log; bad "PAL pacing"; }
+else
+	echo "SKIP  PAL pacing (set SNES_PAL_ROM)"
+fi
+
 python3 -I "$HERE/tests/make_sram_rom.py" $T/sram.sfc
 "$TWIN" $T/sram.sfc --frames 10 --srm $T/g.srm >/dev/null 2>&1
 v1=$(od -An -tu1 -N1 $T/g.srm | tr -d ' ')

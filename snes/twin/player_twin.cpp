@@ -13,6 +13,8 @@
 #include "pk_gfx_soft.h"
 #include "pk_icons.h"
 #include "wide.h"
+#include "host.h"
+#include "pal_pace.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -839,10 +841,48 @@ static int run_wide_test(const char *rom, const std::string &work)
 	return 0;
 }
 
+/* PAL pacing: the Vita loop's frame accumulator (pal_pace.h) over a PAL ROM and 3000 display refreshes at 59.94 Hz. The game's own
+ * time (frames run / console rate) must stay within 0.5 % of the refresh time, no refresh may skip twice in a row (even spread),
+ * and the core must really report PAL. An NTSC ROM is checked to keep one frame per refresh (nothing changes for it). */
+static int run_pal_test(const char *rom)
+{
+	char err[256] = "";
+	if (snes_host_init()) { fprintf(stderr, "pal: init failed\n"); return 1; }
+	if (snes_host_load_rom(rom, NULL, err, sizeof err)) { fprintf(stderr, "pal: load failed: %s\n", err); return 1; }
+	const bool pal = snes_host_is_pal() != 0;
+	const double console_hz = pal ? 50.0070 : 60.0988, vita_hz = 59.94;
+	FramePace fp;
+	if (pal) fp.set(console_hz, vita_hz);
+	const int refreshes = 3000;
+	int frames = 0, run = 0, max_gap = 0, gap = 0, sixth_ok = 1;
+	for (int r = 0; r < refreshes; r++) {
+		int n = pal ? fp.owed(1) : 1;
+		if (n > 1) sixth_ok = 0;
+		if (n == 0) { if (++gap > max_gap) max_gap = gap; } else gap = 0;
+		for (int i = 0; i < n; i++) { snes_host_set_render(1); snes_host_run_frame(); frames++; run++; }
+	}
+	const double emu_s = frames / console_hz, wall_s = refreshes / vita_hz;
+	const double err_pct = 100.0 * (emu_s - wall_s) / wall_s;
+	fprintf(stderr, "pal: %s, %d refreshes, %d frames run, emulated %.3f s, refresh time %.3f s, error %+.3f %%, longest skip %d\n",
+	    pal ? "PAL" : "NTSC", refreshes, frames, emu_s, wall_s, err_pct, max_gap);
+	EXPECT(sixth_ok);
+	if (pal) {
+		EXPECT(err_pct > -0.5 && err_pct < 0.5);
+		EXPECT(max_gap == 1);
+		EXPECT(frames >= 2490 && frames <= 2510);
+	} else {
+		EXPECT(frames == refreshes && max_gap == 0);   /* NTSC: untouched, one per refresh */
+	}
+	snes_host_unload();
+	fprintf(stderr, "player_twin: pal %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
 int run_handoff_test(const char *rom, const std::string &work);   /* handoff_proof.cpp */
 
 int main(int argc, char **argv)
 {
+	if (argc >= 3 && !strcmp(argv[1], "pal")) return run_pal_test(argv[2]);
 	if (argc >= 4 && !strcmp(argv[1], "handoff")) return run_handoff_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "wide")) { int r = run_wide_test(argv[2], argv[3]); fprintf(stderr, "player_twin: wide %d checks, %d failed\n", g_checks, g_fail); return r || g_fail ? 1 : 0; }
 	if (argc >= 5 && !strcmp(argv[1], "test")) return run_test(argv[2], argv[3], argv[4]);

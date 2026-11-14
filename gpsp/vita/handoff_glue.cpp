@@ -6,6 +6,8 @@
 #include "handoff_glue.h"
 #include "plat.h"
 #include "../../playerkit/src/pk_handoff.cpp"
+#include "../../playerkit/src/pk_cores.cpp"
+#include "fe_evt.h"
 
 #include <new>
 #include <stdio.h>
@@ -384,4 +386,185 @@ extern "C" void ho_draw_stats(uint64_t *sum_us, uint32_t *n)
 {
    *sum_us = __atomic_load_n(&g_draw_sum, __ATOMIC_RELAXED);
    *n = __atomic_load_n(&g_draw_n, __ATOMIC_RELAXED);
+}
+
+/* ---- the fourth core ------------------------------------------------------ */
+
+namespace {
+
+#ifndef __vita__
+/* A twin has no extra core: refused, as a console without the plugin.
+ * GBADHOC_FAKE_CORE4=1 pretends the plugin works (a spin share of 100 %),
+ * so the 4-core plan, the watchdog slots and the fallback can be tested. */
+struct FakeSys : pk::CoreSys {
+   uint64_t now_us() { return plat_time_us(); }
+   void sleep_us(uint32_t) {}
+   int probe_once(uint32_t, int)
+   {
+      const char *e = getenv("GBADHOC_FAKE_CORE4");
+      return e && atoi(e) > 0 ? 1000 : -1;
+   }
+};
+alignas(FakeSys) unsigned char g_c4sys_mem[sizeof(FakeSys)];
+#else
+alignas(pk::VitaCoreSys) unsigned char g_c4sys_mem[sizeof(pk::VitaCoreSys)];
+#endif
+alignas(pk::Cores) unsigned char g_c4_mem[sizeof(pk::Cores)];
+pk::Cores *g_c4;
+pk::Plan g_c4plan;
+struct C4Thread { int role, index, thid; };
+C4Thread g_c4thr[8];
+int g_c4n;
+unsigned g_c4_lost_events;
+
+void c4_log(void *, const char *line) { fe_evt("%s", line); }
+
+pk::Request c4_request(void)
+{
+   pk::Request rq(pk::CP_APP);
+   rq.with(pk::R_EMU_MAIN).with(pk::R_RENDER).with(pk::R_UPSCALE)
+     .with(pk::R_AUDIO_OUT).with(pk::R_WRITER).with(pk::R_NET_IO);
+   rq.upscale_n = 3;
+   return rq;
+}
+
+/* The core is gone: re-plan (three cores now) and move every registered
+ * thread whose place changed. */
+void c4_reapply(const char *why)
+{
+   char line[220];
+   int i;
+   const pk::Plan old = g_c4plan;
+   g_c4plan = g_c4->plan(c4_request());
+   g_c4->watchdog().unwatch_all();
+   for (i = 0; i < g_c4n; i++)
+   {
+      const pk::Slot *n = g_c4plan.find((pk::Role)g_c4thr[i].role, g_c4thr[i].index);
+      const pk::Slot *o = old.find((pk::Role)g_c4thr[i].role, g_c4thr[i].index);
+      if (!n || !o || n->mask == o->mask)
+         continue;
+#ifdef __vita__
+      {
+         const int rc = pk::apply_slot(g_c4thr[i].thid, *n);
+         fe_evt("cores: moved role %d.%d back to mask %x rc=%08x (%s)",
+                g_c4thr[i].role, g_c4thr[i].index, (unsigned)n->mask,
+                (unsigned)rc, why);
+      }
+#else
+      fe_evt("cores: moved role %d.%d back to mask %x (%s)",
+             g_c4thr[i].role, g_c4thr[i].index, (unsigned)n->mask, why);
+#endif
+   }
+   g_c4_lost_events++;
+   g_c4->census_line(line, sizeof(line));
+   fe_evt("%s", line);
+}
+
+}  // namespace
+
+extern "C" void core4_init(int off)
+{
+   char line[220];
+   if (g_c4)
+      return;
+#ifdef __vita__
+   pk::CoreSys *sys = new (g_c4sys_mem) pk::VitaCoreSys();
+#else
+   pk::CoreSys *sys = new (g_c4sys_mem) FakeSys();
+#endif
+   g_c4 = new (g_c4_mem) pk::Cores(sys, off ? pk::CORE4_OFF : pk::CORE4_AUTO);
+   g_c4->set_log(c4_log, NULL);
+   g_c4->probe();
+   g_c4plan = g_c4->plan(c4_request());
+   g_c4->census_line(line, sizeof(line));
+   fe_evt("%s", line);
+   fe_evt("cores: %s", g_c4->status_text());
+
+}
+
+extern "C" unsigned core4_mask(int role, int index, unsigned dflt)
+{
+   const pk::Slot *s = g_c4 ? g_c4plan.find((pk::Role)role, index) : NULL;
+   return s && s->mask ? (unsigned)s->mask : dflt;
+}
+
+extern "C" int core4_on_core3(int role, int index)
+{
+   const pk::Slot *s = g_c4 ? g_c4plan.find((pk::Role)role, index) : NULL;
+   return s && s->on_core3 ? 1 : 0;
+}
+
+extern "C" int core4_wd_add(const char *name, int role, int index)
+{
+   int w;
+   if (!core4_on_core3(role, index))
+      return -1;
+   w = g_c4->watchdog().add(name);
+   if (w >= 0)
+   {
+      g_c4->watchdog().watch(w, true);
+      g_c4->watchdog().set_busy(w, false);
+   }
+   return w;
+}
+
+extern "C" void core4_beat(int slot)
+{
+   if (g_c4 && slot >= 0)
+      g_c4->watchdog().beat(slot);
+}
+
+extern "C" void core4_busy(int slot, int busy)
+{
+   if (g_c4 && slot >= 0)
+      g_c4->watchdog().set_busy(slot, busy != 0);
+}
+
+extern "C" void core4_set_thread(int role, int index, int thid)
+{
+   int i;
+   for (i = 0; i < g_c4n; i++)
+      if (g_c4thr[i].role == role && g_c4thr[i].index == index)
+      {
+         g_c4thr[i].thid = thid;
+         return;
+      }
+   if (g_c4n < (int)(sizeof(g_c4thr) / sizeof(g_c4thr[0])))
+   {
+      g_c4thr[g_c4n].role = role;
+      g_c4thr[g_c4n].index = index;
+      g_c4thr[g_c4n].thid = thid;
+      g_c4n++;
+   }
+}
+
+extern "C" int core4_poll(uint64_t now_us)
+{
+   if (!g_c4 || !g_c4->core3_usable())
+      return 0;
+   g_c4->watchdog().ref_beat();
+   if (!g_c4->poll_watchdog(now_us))
+      return 0;
+   c4_reapply("watchdog");
+   return 1;
+}
+
+extern "C" int core4_mark_lost(const char *why)
+{
+#ifdef __vita__
+   const uint64_t now = sceKernelGetProcessTimeWide();
+#else
+   const uint64_t now = plat_time_us();
+#endif
+   if (!g_c4 || !g_c4->mark_lost(why, now))
+      return 0;
+   c4_reapply(why);
+   return 1;
+}
+
+extern "C" int core4_lost(void) { return g_c4 && g_c4->lost(); }
+
+extern "C" const char *core4_status(void)
+{
+   return g_c4 ? g_c4->status_text() : "Extra CPU core: off (setting)";
 }

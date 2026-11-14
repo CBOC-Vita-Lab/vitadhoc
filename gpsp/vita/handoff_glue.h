@@ -72,6 +72,39 @@ uint32_t ho_shown_total(void);
  * governor's per-second draw cost */
 void ho_draw_stats(uint64_t *sum_us, uint32_t *n);
 
+
+/* ---- the fourth CPU core (1.4; playerkit's pk_cores, docs/FOURTH-CORE.md) ----
+ * Lives here because this is the glue file that already compiles playerkit
+ * into the app.  Roles are pk::Role numbers: 1 render thread, 4 upscale
+ * helper (index 0..2), 7 hand-over draw thread.  Everything is a no-op
+ * answer ("as today") when the core is off, refused, unproven or lost. */
+enum { C4_RENDER = 1, C4_UPSCALE = 4, C4_DRAW = 7 };
+/* Once, before the first worker thread exists: off = vita.ini core4 = off.
+ * Probes (10 ms with the plugin, up to 300 ms without), plans, logs. */
+void core4_init(int off);
+/* The planned affinity mask of the role, `dflt` when the role is not
+ * planned or the plan leaves it floating (mask 0). */
+unsigned core4_mask(int role, int index, unsigned dflt);
+/* 1 when the plan puts the role on the extra core. */
+int  core4_on_core3(int role, int index);
+/* A watchdog slot for a thread on the extra core (-1 when it is not there).
+ * beat once per unit of work; busy while it owes progress. */
+int  core4_wd_add(const char *name, int role, int index);
+void core4_beat(int slot);
+void core4_busy(int slot, int busy);
+/* Tell the glue the thread's id, so a fallback can move it. */
+void core4_set_thread(int role, int index, int thid);
+/* Once a frame, on the emulating thread: the reference beat and the
+ * watchdog.  1 = the core was lost now and every registered thread has been
+ * moved back. */
+int  core4_poll(uint64_t now_us);
+/* Outside evidence (a wait that ran out): same as a trip.  1 = it changed
+ * the state (and the threads were moved). */
+int  core4_mark_lost(const char *why);
+int  core4_lost(void);
+/* "Extra CPU core: in use" and its siblings. */
+const char *core4_status(void);
+
 #ifdef __cplusplus
 }
 #endif

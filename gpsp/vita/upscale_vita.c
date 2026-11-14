@@ -6,6 +6,8 @@
 #include <string.h>
 
 #include "pspcompat.h"          /* pspcompat_time_us */
+#include "fe_evt.h"
+#include "handoff_glue.h"       /* core4_*: the fourth core */
 
 #ifdef __vita__
 #include <psp2/kernel/clib.h>
@@ -31,7 +33,9 @@ void xbrz_c_scale_rect_to(int factor, const uint32_t *src, int w, int h,
 #define UP_BUDGET_PX 724000u
 /* Helper threads.  A console has three cores for an application: the
  * emulator's and these two. */
-#define UP_HELPERS 2
+/* Three: the third (index 2) only exists when the extra CPU core is proven
+ * (handoff_glue.h core4_*); without it the pool is the two it always was. */
+#define UP_HELPERS 3
 /* A picture is cut into stripes of this many source rows... */
 #define UP_STRIPE 8
 #define UP_MAX_H 256
@@ -340,6 +344,29 @@ typedef struct
 
 static up_slot g_slot[UPSCALE_SLOTS];
 
+/* A host twin's test of the bounded waits (app_tests.py "stall"): a helper
+ * thread sleeps GBADHOC_STALL_MS in the middle of every stripe it takes, as
+ * a helper the system has not scheduled would.  Never built into the VPK. */
+#ifdef __vita__
+#define stall_hook() ((void)0)
+#else
+#include <unistd.h>
+static __thread int t_helper;
+static void stall_hook(void)
+{
+   static int ms = -1, left = 30;      /* the first 30 stripes */
+   if (!t_helper)
+      return;
+   if (ms < 0)
+   {
+      const char *e = getenv("GBADHOC_STALL_MS");
+      ms = e ? atoi(e) : 0;
+   }
+   if (ms > 0 && __atomic_fetch_sub(&left, 1, __ATOMIC_RELAXED) > 0)
+      usleep((useconds_t)ms * 1000u);
+}
+#endif
+
 #define A_LOAD(x)      __atomic_load_n(&(x), __ATOMIC_SEQ_CST)
 #define A_STORE(x, v)  __atomic_store_n(&(x), (v), __ATOMIC_SEQ_CST)
 #define A_ADD(x, v)    __atomic_fetch_add(&(x), (v), __ATOMIC_SEQ_CST)
@@ -543,6 +570,7 @@ static int claim_and_run(int si)
       i = A_ADD(S->next, 1);
       if (i < S->nstripes)
       {
+         stall_hook();
          stripe_run(S, i);
          if (A_ADD(S->done, 1) + 1 == S->nstripes)
             job_finish(S);
@@ -553,7 +581,10 @@ static int claim_and_run(int si)
    return ran;
 }
 
-static void work_all(void)
+static int g_wd_up2 = -1;      /* watchdog slot of helper 2 (extra core) */
+
+/* `wd`: the watchdog slot to beat once per stripe (-1: none). */
+static void work_all(int wd)
 {
    int si, did;
    do
@@ -561,7 +592,10 @@ static void work_all(void)
       did = 0;
       for (si = 0; si < UPSCALE_SLOTS; si++)
          while (claim_and_run(si))
+         {
             did = 1;
+            core4_beat(wd);
+         }
    } while (did);
 }
 
@@ -584,7 +618,11 @@ static int helper_entry(SceSize args, void *argp)
       sceKernelWaitSema(g_go[i], 1, NULL);
       if (g_pool_quit)
          break;
-      work_all();
+      if (i == 2)
+         core4_busy(g_wd_up2, 1);
+      work_all(i == 2 ? g_wd_up2 : -1);
+      if (i == 2)
+         core4_busy(g_wd_up2, 0);
    }
    return 0;
 }
@@ -594,8 +632,13 @@ static void pool_start(void)
    int i;
    g_pool = 0;
    g_async = 1;
+   g_wd_up2 = -1;
    for (i = 0; i < UP_HELPERS; i++)
    {
+      if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
+         break;                  /* the third helper is the extra core's */
+      if (i == 2)
+         g_wd_up2 = core4_wd_add("up2", C4_UPSCALE, 2);
       /* One wake-up pending is enough: a helper that is told twice finds
        * nothing the second time. */
       g_go[i] = sceKernelCreateSema("gbadhoc_up_go", 0, 0, 1, NULL);
@@ -603,11 +646,14 @@ static void pool_start(void)
        * emulator's thread is least likely to be on. */
       g_th[i] = sceKernelCreateThread("gbadhoc_up", helper_entry, 0x10000100,
                                       0x10000, 0,
-                                      i ? SCE_KERNEL_CPU_MASK_USER_2
-                                        : SCE_KERNEL_CPU_MASK_USER_1, NULL);
+                                      (int)core4_mask(C4_UPSCALE, i,
+                                                      i ? SCE_KERNEL_CPU_MASK_USER_2
+                                                        : SCE_KERNEL_CPU_MASK_USER_1),
+                                      NULL);
       if (g_go[i] < 0 || g_th[i] < 0 ||
           sceKernelStartThread(g_th[i], sizeof(i), &i) < 0)
          break;                  /* fewer helpers than hoped */
+      core4_set_thread(C4_UPSCALE, i, (int)g_th[i]);
       g_pool = i + 1;
    }
    /* With no helper at all the caller scales, and waits. */
@@ -657,13 +703,18 @@ static int g_idx[UP_HELPERS];
 static void *helper_entry(void *p)
 {
    int i = *(int *)p;
+   t_helper = 1;
    for (;;)
    {
       while (sem_wait(&g_go[i]) != 0)
          ;
       if (g_pool_quit)
          break;
-      work_all();
+      if (i == 2)
+         core4_busy(g_wd_up2, 1);
+      work_all(i == 2 ? g_wd_up2 : -1);
+      if (i == 2)
+         core4_busy(g_wd_up2, 0);
    }
    return NULL;
 }
@@ -672,6 +723,7 @@ static void pool_start(void)
 {
    int i;
    g_pool = 0;
+   g_wd_up2 = -1;
    g_async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
    if (getenv("GBADHOC_UPSCALE_SERIAL"))
    {
@@ -680,10 +732,15 @@ static void pool_start(void)
    }
    for (i = 0; i < UP_HELPERS; i++)
    {
+      if (i == 2 && !core4_on_core3(C4_UPSCALE, 2))
+         break;                  /* the third helper is the extra core's */
+      if (i == 2)
+         g_wd_up2 = core4_wd_add("up2", C4_UPSCALE, 2);
       g_idx[i] = i;
       sem_init(&g_go[i], 0, 0);
       if (pthread_create(&g_th[i], NULL, helper_entry, &g_idx[i]) != 0)
          break;
+      core4_set_thread(C4_UPSCALE, i, 0);
       g_pool = i + 1;
    }
    if (!g_pool)
@@ -930,11 +987,72 @@ int upscale_collect(int slot)
                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-/* The slot's job is over and nobody is looking at it any more. */
+/* ---- bounded waits ----------------------------------------------------------
+ * A helper that is not scheduled (the other core is busy with the system, or
+ * the kernel has put it to sleep) must never stop the game: the caller does
+ * the helper's work itself -- the stripes nobody has claimed yet -- and waits
+ * at most UP_WAIT_US for the one a helper is in the middle of.  Why 10 ms: a
+ * whole picture is 3-8 ms of helper time, so a stripe still unfinished after
+ * 10 ms means the helper lost its core, and 10 ms is already more than half
+ * a refresh; waiting longer costs a frame, giving up costs only a repeated
+ * picture (the caller shows the one before, which is whole).
+ * The wall clock, not the twin's simulated one: that does not move while
+ * the app spins. */
+#define UP_WAIT_US 10000u
+/* Teardown (forget, shutdown, a mode switch) has to be SURE nobody writes to
+ * the slot's memory any more -- the caller frees the textures right after --
+ * so it goes on in 10 ms turns, each counted, up to a second, which only a
+ * helper that has died can reach. */
+#define UP_TEARDOWN_TURNS 100
+
+static unsigned g_wait_timeouts;     /* atomic: waits that ran out (census) */
+static unsigned g_wait_abandoned;    /* atomic: teardown waits given up      */
+
+#ifdef __vita__
+static unsigned wall_us(void) { return pspcompat_time_us(); }
+#else
+#include <time.h>
+static unsigned wall_us(void)
+{
+   struct timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (unsigned)((unsigned)ts.tv_sec * 1000000u + (unsigned)ts.tv_nsec / 1000u);
+}
+#endif
+
+/* The slot's job is over and nobody is looking at it any more, or `us`
+ * microseconds went by (0).  Stripes no helper has taken are done here. */
+static int slot_wait_to(up_slot *S, unsigned us)
+{
+   const int si = (int)(S - g_slot);
+   const unsigned t0 = wall_us();
+   while (A_LOAD(S->state) == ST_BUSY && claim_and_run(si))
+      ;
+   while (A_LOAD(S->state) == ST_BUSY || A_LOAD(S->inside))
+   {
+      if (wall_us() - t0 >= us)
+      {
+         A_ADD(g_wait_timeouts, 1);
+         /* A helper stuck inside a stripe on the extra core: the system
+          * took the core back.  Moved to a user core it finishes the
+          * stripe (which cannot be run twice); the next wait finds it done. */
+         if (A_LOAD(S->inside) && g_wd_up2 >= 0 && core4_mark_lost("upscale helper stalled"))
+            g_wd_up2 = -1;
+         return 0;
+      }
+      nap();
+   }
+   return 1;
+}
+
+/* Teardown: see UP_TEARDOWN_TURNS. */
 static void slot_wait(up_slot *S)
 {
-   while (A_LOAD(S->state) == ST_BUSY || A_LOAD(S->inside))
-      nap();
+   int turn;
+   for (turn = 0; turn < UP_TEARDOWN_TURNS; turn++)
+      if (slot_wait_to(S, UP_WAIT_US))
+         return;
+   A_ADD(g_wait_abandoned, 1);
 }
 
 void upscale_forget(int slot)
@@ -1400,7 +1518,11 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
          pool_go();
       while (claim_and_run(slot))
          ;
-      slot_wait(S);
+      /* A helper stalled inside a stripe: the picture is not whole, so it
+       * is not shown (the caller keeps the one before); the slot frees
+       * itself when the helper comes back. */
+      if (!slot_wait_to(S, UP_WAIT_US))
+         return 0;
    }
    return 1;
 }
@@ -1434,6 +1556,16 @@ int upscale_help(unsigned max_us)
 
 void upscale_stats(upscale_stats_t *out)
 {
+   /* The bounded waits' census (called once a window): waits that ran out
+    * and were answered with the previous picture, teardowns given up. */
+   if (g_pool > 0)
+   {
+      static unsigned last_to;
+      const unsigned to = A_LOAD(g_wait_timeouts);
+      fe_evt("vita_up_waits timeouts=%u window=%u abandoned=%u limit_us=%u",
+             to, to - last_to, A_LOAD(g_wait_abandoned), UP_WAIT_US);
+      last_to = to;
+   }
    const int jobs = __atomic_exchange_n(&g_st.jobs, 0, __ATOMIC_SEQ_CST);
    const int sum = __atomic_exchange_n(&g_st.sum_us, 0, __ATOMIC_SEQ_CST);
    const int stripes = __atomic_exchange_n(&g_st.stripes, 0, __ATOMIC_SEQ_CST);

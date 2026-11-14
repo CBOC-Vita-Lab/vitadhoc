@@ -4153,6 +4153,99 @@ def t_render_thread(S):
                         "without" % (rom, n))
 
 
+def t_stall(S):
+    """A helper that stops (an upscaler thread inside a stripe, the render
+    thread before its picture) never stops the game: the bounded waits time
+    out, the previous picture is shown, the census counts them, and the run
+    still ends where it should (GBADHOC_STALL_MS stands in for a thread the
+    system has not scheduled; the twin's helpers run for real with
+    GBADHOC_UPSCALE_ASYNC)."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-test.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-test.gba: skipped")
+        return
+    extra = {"roms/gbadhoc-test.gba": open(rom, "rb").read()}
+    keys = "100:right:200\n+10:shot=a.png\n"
+    for name, ini, ms in (("both", {"render_thread": 1}, "120"),
+                          ("clear", {"render_thread": 1}, "0")):
+        r = S.run("stall_" + name, keys, extra=extra,
+                  config={"scale_gba": 1, "filter_gba": 4,
+                          "last_rom": "gbadhoc-test.gba"},
+                  autoboot="gbadhoc-test.gba", vita_ini=ini,
+                  args=("--frames", "1300"),
+                  env={"GBADHOC_UPSCALE_ASYNC": "1", "GBADHOC_STALL_MS": ms})
+        S.clean(r)
+        S.picture(r, "a.png")
+        rt = r.evt("vita_rt_waits")
+        up = r.evt("vita_up_waits")
+        S.check(rt and up, "%s: both census lines are there (%d rt, %d up)" %
+                (name, len(rt), len(up)))
+        if not (rt and up):
+            continue
+        rto = int(rt[-1]["timeouts"])
+        uto = int(up[-1]["timeouts"])
+        if ms == "0":
+            S.check(rto == 0 and uto == 0,
+                    "no stall, no timeouts (rt %d, up %d)" % (rto, uto))
+        else:
+            S.check(rto > 0 and int(rt[-1]["stale_frames"]) > 0,
+                    "the render thread stalled: waits ran out (%d) and the "
+                    "last whole picture was shown (%s frames)" %
+                    (rto, rt[-1]["stale_frames"]))
+            S.check(r.has(r"^EVT exit ok"),
+                    "and the game ran to its end all the same")
+
+
+def t_core4(S):
+    """The fourth core's wiring (docs/FOURTH-CORE.md), on the twin's fake
+    kernel: without the plugin (the twin's default) the probe is refused and
+    the app runs as before; with GBADHOC_FAKE_CORE4=1 the 4-core plan is
+    in force (render thread and a third upscale helper on the extra core,
+    watchdog slots); a render thread that stops answering (GBADHOC_STALL_MS)
+    is the core taken back: the watchdog or the bounded wait says so and
+    the layout falls back, the game runs on; core4 = off in vita.ini skips
+    the probe.  Also the census lines this build adds, and the hand-over's
+    boot self-check (GBADHOC_FAKE_GXM_ERR stands in for a failing GXM)."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-test.gba")
+    extra = {"roms/gbadhoc-test.gba": open(rom, "rb").read()}
+    keys = "100:right:200\n+10:shot=a.png\n"
+    cfg = {"scale_gba": 1, "filter_gba": 4, "last_rom": "gbadhoc-test.gba"}
+
+    def run(name, env=None, ini=None):
+        ini = dict({"render_thread": 1}, **(ini or {}))
+        r = S.run("core4_" + name, keys, extra=extra, config=cfg,
+                  autoboot="gbadhoc-test.gba", vita_ini=ini,
+                  args=("--frames", "1300"),
+                  env=dict({"GBADHOC_UPSCALE_ASYNC": "1"}, **(env or {})))
+        S.clean(r)
+        return r
+
+    r = run("plain")
+    S.check(r.has(r"^EVT cores: probe 1 of 6: affinity refused") and r.has(r"layout 3-core"),
+            "no plugin: the probe is refused and the layout is the three-core one")
+    S.check(not r.has(r"^EVT cores: moved role"), "no plugin: nothing is moved")
+    S.check(bool(r.evt("vita_threads")), "the per-thread line (run time in ms) is in the census")
+    S.check(bool(r.evt("vita_gxm")) and all(e["skipped"] == "0" for e in r.evt("vita_gxm")),
+            "the GXM error census is there and clean")
+    w = r.evt("handoff:")
+    S.check(w and all("vc_miss" in e and "vc_presents" in e for e in w),
+            "the per-second handoff: line carries the vcount-miss count (%s)" % [e["_"][-30:] for e in w][-1:])
+    S.check(not r.has(r"^EVT handoff_fallback"), "hand-over kept: nothing was wrong")
+    r = run("off", ini={"core4": "off"})
+    S.check(r.has(r"core4 = off") or r.has(r"extra core off"), "core4 = off: not probed")
+    r = run("fake", env={"GBADHOC_FAKE_CORE4": "1"})
+    S.check(r.has(r"decision usable") and r.has(r"layout 4-core"), "with the (fake) plugin: the 4-core layout is planned")
+    S.check(not r.has(r"watchdog trips [1-9]"), "...and the watchdog stays quiet while the threads run")
+    r = run("lost", env={"GBADHOC_FAKE_CORE4": "1", "GBADHOC_STALL_MS": "120"})
+    S.check(r.has(r"^EVT cores: moved role 1\.0 back") and r.has(r"layout 3-core"),
+            "a stalled render thread on the extra core: the core is marked lost and the thread moved back")
+    r = run("gxm", env={"GBADHOC_FAKE_GXM_ERR": "2"})
+    S.check(r.has(r"^EVT handoff_fallback reason=gxm_errors"),
+            "failing GXM on the draw path: hand-over is given up with its reason")
+    r = run("gxm_off", env={"GBADHOC_FAKE_GXM_ERR": "2"}, ini={"handoff_check": "0"})
+    S.check(not r.has(r"^EVT handoff_fallback"), "handoff_check = 0: the self-check is off")
+
+
 def t_render_skips(S):
     """The thread's picture across frames that are never drawn: the frames
     caught up after slow ones (Keep full speed), fast forward (3x: two of
@@ -6826,6 +6919,25 @@ def t_snes_session(S):
     S.check(kv.get("start") == "slot" and kv.get("slot") == "2",
             "a state picked on the SNES shelf is the player's start (states/snes/<xx>/): %s" %
             {k: kv.get(k) for k in ("start", "slot")})
+    # the patch beside the game and RetroArch's save are named for the player
+    # (patch, patch_key, retroarch_save: main_vita.c snes_launch_write)
+    ex2 = dict(ex)
+    ex2["roms/%s.sfc.ips" % name] = b"PATCH" + b"\x00\x00\x10\x00\x01\x7f" + b"EOF"
+    ex2["retroarch/savefiles/%s.srm" % name] = b"\x01" * 2048
+    r = S.run("snes_launch_keys", "90:triangle\n+30:triangle\n+30:triangle\n+40:cross\n+60:quit\n", extra=ex2)
+    S.clean(r, allow="could not be started")
+    lf2 = os.path.join(r.root, "launch", "snes.ini")
+    kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf2) if "=" in l) if os.path.exists(lf2) else {}
+    S.check(kv.get("patch", "").endswith(name + ".sfc.ips") and
+            re.match(r"^\d+ \d+ \d+ \d+ [0-9a-f]{8}$", kv.get("patch_key", "")) and
+            kv.get("retroarch_save", "").endswith(name + ".srm") and "retroarch" in kv.get("retroarch_save", ""),
+            "snes.ini names the patch beside the game, its key and RetroArch's save (%s)" %
+            {k: kv.get(k) for k in ("patch", "patch_key", "retroarch_save")})
+    r = S.run("snes_launch_nokeys", "90:triangle\n+30:triangle\n+30:triangle\n+40:cross\n+60:quit\n", extra=ex)
+    lf3 = os.path.join(r.root, "launch", "snes.ini")
+    kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf3) if "=" in l) if os.path.exists(lf3) else {}
+    S.check(kv.get("patch") == "" and kv.get("patch_key") == "" and kv.get("retroarch_save") == "",
+            "without them the three keys stay empty")
     # back from the player: its report
     sid = "s-1699990000-7"
     launch = ("version=1\nsession_id=%s\nconsole=snes\ngame=x\nsave=x\napp_rom=%s\napp_started_at=1699990000\n" %
@@ -7298,7 +7410,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_n
          ("title_bg", t_title_bg), ("cover_menu", t_cover_menu),
          ("cover_inbox", t_cover_inbox), ("fullspeed", t_fullspeed), ("smooth_gov", t_smooth_gov),
          ("upfade", t_upfade), ("render_thread", t_render_thread),
-         ("render_skips", t_render_skips), ("gpu_xbrz", t_gpu_xbrz),
+         ("render_skips", t_render_skips), ("stall", t_stall), ("core4", t_core4), ("gpu_xbrz", t_gpu_xbrz),
          ("session", t_session),
          ("ff", t_ff),
          ("suspend", t_suspend), ("controls", t_controls), ("turbo", t_turbo),

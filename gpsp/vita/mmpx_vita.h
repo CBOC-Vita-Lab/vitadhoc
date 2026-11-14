@@ -3,12 +3,13 @@
  * MMPX (McGuire and Gagiu, "MMPX Style-Preserving Pixel Art Magnification",
  * 2021) rebuilds the stair-steps of lines and curves at 2x from a 5x5 look
  * around each pixel and invents no colours.  It is a pure compare-and-copy
- * kernel, so it costs a small part of xBRZ at the same output size, and it
+ * kernel, so it costs about two thirds of xBRZ 2x (measured: docs/DEFAULTS-1.4.md), and it
  * keeps flat areas exactly as drawn.  The rules are the authors' (MIT, see
  * licenses/MMPX-MIT.txt); this file pair is a 16-bit rewrite of their
  * reference implementation.  Output is the same as the reference's on the
- * RGBA8 expansion of the picture (tests/upscale and the p6 harness compare
- * them bit for bit), with the edge handling of the original (the border
+ * RGBA8 expansion of the picture (checked bit for bit on real frames with a
+ * harness outside the tree; tests/upscale checks that stripes, rectangles
+ * and the slide/ring paths equal the whole picture), with the edge handling of the original (the border
  * pixel repeats).
  *
  * Where it is used (upscale_vita.c scale_piece): the slot makes a 2x picture

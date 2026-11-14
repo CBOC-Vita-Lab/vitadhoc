@@ -100,18 +100,22 @@ get the new defaults.
 Visibility is a 1..100 judgement, not a measurement. Savings are the governor's first guesses, from the output
 pixels each quality step writes; it replaces them with what it learns on the console.
 
-Where Auto starts (the ceiling) is the largest xBRZ factor whose output is at most 370,000 pixels, because the one
-console measurement is xBRZ 3x of a GBA picture, 345,600 output pixels a frame, which held 59.7 emulated fps but
-drew 44 frames a second on a heavy game (Pokemon Unbound, one physical Vita, `docs/PERFORMANCE.md`, "Pokemon
-Unbound 2.1.1.1 On VitAdhoc 1.2"). That is a console measurement, not a model. 4x of the same picture writes 1.78
-times the pixels (614,400), so it is not an Auto start and not a climb target, only a hand-set choice.
+Where Auto starts is the console's ceiling, and it is a starting point, not a promise: the governor starts a game
+there, steps down in the first bad seconds, remembers where the game settled, and climbs back only with measured
+headroom and never into a miss. The ceilings follow from output pixels, using the real width of the picture (the
+GBA's wide view is 282 wide). The only console measurement is xBRZ 3x of a GBA picture, 345,600 output pixels a
+frame, which held 59.7 emulated fps but drew 44 frames a second on a heavy game (Pokemon Unbound, one physical Vita,
+`docs/PERFORMANCE.md`, "Pokemon Unbound 2.1.1.1 On VitAdhoc 1.2"): a console measurement, not a model. 4x of the
+GBA picture writes 1.78 times the pixels of 3x, so it is not an Auto start and not a climb target, only a hand-set
+choice.
 
 | Console (picture) | Auto starts at | output pixels | quality steps down the ladder |
 | --- | --- | --- | --- |
-| GBA (240x160) | xBRZ 3x | 345,600 | xBRZ 2x, MMPX 2x, sharp |
-| GB, GBC (160x144) | xBRZ 4x | 368,640 | xBRZ 3x, 2x, MMPX 2x, sharp |
+| GBA (282x160 with the wide view, 240x160 without) | xBRZ 3x | 406,080 (345,600) | xBRZ 2x, MMPX 2x, sharp |
+| GB, GBC (160x144) | xBRZ 3x until measured (4x is 368,640 but nothing has run) | 207,360 | xBRZ 2x, MMPX 2x, sharp |
 | WonderSwan (224x144) | xBRZ 3x | 290,304 | xBRZ 2x, MMPX 2x, sharp |
 | NES (256x240) | xBRZ 2x | 245,760 | MMPX 2x, sharp (3x would be 720 lines, taller than the 544-line panel) |
+| any other | xBRZ 2x | | MMPX 2x, sharp |
 
 Rungs (GBA shown; every console has the same kinds, with its own quality steps):
 
@@ -147,11 +151,13 @@ bound by memory writes and the texture upload (the earlier console finding); the
 
 Wide view and hand-over have no rung: they stay on. The old last rung (wide view off) was removed.
 
-Software-3D GBA games: a game that keeps the video in a bitmap mode (3, 4 or 5) at least 7 of any 10 seconds
-redraws its whole picture every frame (Need for Speed, Driver, SSX), so the scaler's "only what changed" and scroll
+Software-3D GBA games: a game that keeps the video in a bitmap mode (3, 4 or 5) while the upscaler had to rescale at
+least 70 % of the picture, in 7 of any 10 seconds, redraws its whole picture every frame (Need for Speed, Driver, SSX), so the scaler's "only what changed" and scroll
 savings never apply. The governor starts such a game at sharp bilinear (no scaler holds 60 on a whole picture every frame until a console
 says so) and remembers it; the usual climb gives MMPX 2x or xBRZ back with measured headroom. Seen in the host twin on the private GBA set: Big Mutha Truckers and Need for Speed
 Porsche Unleashed sit in bitmap modes from the start (see the `look:` lines' `mode=` and `bm=` fields).
+
+The check is skipped for a game that already has a memory file, and `vita.ini` `look_bitmap = 0` turns it off.
 
 The game's memory (`look/<console>/<xx>/<name>.look`) keeps the settled look and the learned costs, so the next
 start begins where the last one settled; a game that held 60 at the full look stores nothing.

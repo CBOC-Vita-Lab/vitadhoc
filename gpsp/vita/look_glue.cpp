@@ -9,6 +9,7 @@
 
 #include "mmpx_vita.h"
 #include "upscale_vita.h"
+#include "fe_util.h"          /* fe_ini_get_int: vita.ini look_bitmap */
 
 #include <new>
 #include <stdio.h>
@@ -29,44 +30,50 @@ void __throw_out_of_range_fmt(const char *, ...) { abort(); }
  * Read once a second, from this thread, while the core writes it: a torn
  * read of one halfword cannot happen, and one stale sample costs nothing. */
 extern "C" uint16_t io_registers[512];
+/* upscale_vita.c: source pixels submitted / scaled since the start (not reset by upscale_stats) */
+extern "C" void upscale_cumulative(unsigned *px, unsigned *scaled);
 
 namespace {
 
 /* ---- the quality ladder of a console ----------------------------------------
  *
  * What a quality step is made of (docs/DEFAULTS-1.4.md section 5): the tiers a
- * console's Auto walks down, from the best it may start at to sharp bilinear.
- * Where each console starts is its CEILING: the largest xBRZ factor whose
- * output the CPU helpers can write at 60 on a heavy game.  The only console
- * evidence is Pokemon Unbound on a GBA at xBRZ 3x full screen: 345,600 output
- * pixels a frame, 44 drawn frames a second (docs/PERFORMANCE.md).  So the
- * rule is the output size: no more than LOOK_MAX_PX pixels (370,000).
- *   GBA   240x160: 3x = 345,600 ok;  4x = 614,400 (1.78 times as many) no
- *   GB/C  160x144: 4x = 368,640 ok
- *   WS    224x144: 3x = 290,304 ok;  4x = 516,096 no
- *   NES   256x240: 2x = 245,760 ok;  3x = 552,960 no, and 720 lines tall:
- *                  more than the 544-line panel, so 2x and the GPU's stretch
- *                  is also the cleaner picture
- * A factor above the ceiling is only ever the player's own choice (Image
- * quality set by hand), never Auto's start and never a climb.
+ * console's Auto walks down, from the factor it STARTS at to sharp bilinear.
+ * The start is a starting point, not a promise: the governor steps down in
+ * the first bad seconds, remembers where the game settled, and climbs back
+ * only with measured headroom.  Where it starts is the console's CEILING,
+ * chosen from output pixels (the only console evidence is Pokemon Unbound on
+ * a GBA at xBRZ 3x full screen: 345,600 output pixels a frame, 59.7 emulated
+ * but 44 drawn frames a second, docs/PERFORMANCE.md), with the real width of
+ * the picture (the GBA's wide view is 282 wide, so its 3x is 406,080):
+ *   GBA   282x160: 3x.  4x is 721k px (1.78 times 3x): hand-set only, never
+ *                  a start and never a climb.  The owner's order puts a
+ *                  locked 60 first, so this is the start to be corrected.
+ *   GB/C  160x144: 3x until measured (4x is 369k px, but nothing has run)
+ *   WS    224x144: 3x
+ *   NES   256x240: 2x; 3x is 553k px and 720 lines tall, more than the
+ *                  544-line panel, so 2x and the GPU's stretch is cleaner too
+ * An unknown console gets 2x.
  *
- * MMPX 2x (mmpx_vita.h) sits between xBRZ 2x and sharp bilinear (the floor): it makes
- * the same-size 2x picture for a small part of xBRZ's work. */
-enum { LOOK_MAX_PX = 370000 };
+ * MMPX 2x (mmpx_vita.h) sits between xBRZ 2x and sharp bilinear (the floor):
+ * it makes the same-size 2x picture for about two thirds of xBRZ's work. */
 
 struct Console {
    const char *dir;       /* the memory's folder: <root>/look/<dir>/ */
-   int w, h;              /* the picture */
-   int wide;              /* has a wide view rung */
+   int w, h;              /* the picture (the wide one where there is a wide view) */
+   int ceil;              /* the factor Auto starts at */
+   int is_gba;
 };
 
 const Console k_consoles[] = {
-   { "gba", 240, 160, 1 },
-   { "gb", 160, 144, 0 },
-   { "gbc", 160, 144, 0 },
-   { "ws", 224, 144, 0 },
-   { "nes", 256, 240, 1 },
+   { "gba", 282, 160, 3, 1 },
+   { "gb", 160, 144, 3, 0 },
+   { "gbc", 160, 144, 3, 0 },
+   { "ws", 224, 144, 3, 0 },
+   { "nes", 256, 240, 2, 0 },
 };
+/* a console this file does not know (never the GBA's numbers) */
+const Console k_other = { "", 256, 240, 2, 0 };
 
 /* One output pixel's cost as a share of a refresh, seeds for the governor.
  * xBRZ: a whole 3x GBA picture redrawn is 20-33 ms at 4x on the two helpers
@@ -95,7 +102,7 @@ struct Tiers
 Tiers tiers_for(const Console &c)
 {
    Tiers r;
-   const int top = pk::look_ceiling_factor(c.w, c.h, LOOK_MAX_PX);
+   const int top = c.ceil < 2 ? 2 : c.ceil > 4 ? 4 : c.ceil;
    int f;
    r.n = 0;
    for (f = top; f >= 2; f--)
@@ -179,17 +186,16 @@ const Console &console_of(const char *path)
 {
    const char *p = path ? strstr(path, "/look/") : NULL;
    size_t i;
-   if (p)
+   if (!p)
+      return k_other;
+   p += 6;
+   for (i = 0; i < sizeof(k_consoles) / sizeof(k_consoles[0]); i++)
    {
-      p += 6;
-      for (i = 0; i < sizeof(k_consoles) / sizeof(k_consoles[0]); i++)
-      {
-         const size_t n = strlen(k_consoles[i].dir);
-         if (strncmp(p, k_consoles[i].dir, n) == 0 && p[n] == '/')
-            return k_consoles[i];
-      }
+      const size_t n = strlen(k_consoles[i].dir);
+      if (strncmp(p, k_consoles[i].dir, n) == 0 && p[n] == '/')
+         return k_consoles[i];
    }
-   return k_consoles[0];
+   return k_other;
 }
 
 alignas(pk::LookGovernor) unsigned char g_mem[sizeof(pk::LookGovernor)];
@@ -203,6 +209,8 @@ int g_reassert;                    /* the ceiling is to be given to the upscaler
 enum { BM_WINDOW = 10, BM_NEED = 7 };
 unsigned char g_bm[BM_WINDOW];
 int g_bm_n, g_bm_head, g_bm_done;
+int g_bm_on;                       /* the check runs (vita.ini look_bitmap, and no memory of the game) */
+unsigned g_cum_px, g_cum_sc;       /* upscale_cumulative at the last second */
 
 void set_rows(unsigned user)
 {
@@ -245,6 +253,19 @@ extern "C" void look_begin(const char *mem_path, int mhz, unsigned user_rows)
    }
    g_mhz = mhz;
    g_bm_n = g_bm_head = g_bm_done = 0;
+   g_bm_on = 1;
+   upscale_cumulative(&g_cum_px, &g_cum_sc);
+   {
+      /* vita.ini look_bitmap = 0 turns the bitmap-mode check off (the A/B switch) */
+      const char *r = strstr(mem_path ? mem_path : "", "/look/");
+      if (r)
+      {
+         char ini[512];
+         snprintf(ini, sizeof(ini), "%.*s/vita.ini", (int)(r - mem_path), mem_path);
+         if (!fe_ini_get_int(ini, "look_bitmap", 1))
+            g_bm_on = 0;
+      }
+   }
    memset(g_bm, 0, sizeof(g_bm));
    g_reassert = 1;
    snprintf(g_path, sizeof(g_path), "%s", mem_path ? mem_path : "");
@@ -254,7 +275,9 @@ extern "C" void look_begin(const char *mem_path, int mhz, unsigned user_rows)
       size_t n = fread(text, 1, sizeof(text) - 1, f);
       fclose(f);
       text[n] = '\0';
-      g_g->load_memory(text, n, mhz);
+      /* a game with a memory of its look has been through this already */
+      if (g_g->load_memory(text, n, mhz))
+         g_bm_on = 0;
    }
    g_g->start();
 }
@@ -336,9 +359,20 @@ static int bitmap_game(void)
 {
    const unsigned dispcnt = io_registers[0];
    const unsigned mode = dispcnt & 7u;
+   unsigned px, sc, dpx, dsc;
+   upscale_cumulative(&px, &sc);
+   dpx = px - g_cum_px;
+   dsc = sc - g_cum_sc;
+   g_cum_px = px;
+   g_cum_sc = sc;
    if (dispcnt & 0x80u)
       return 0;                       /* forced blank says nothing */
-   g_bm[g_bm_head] = mode >= 3 && mode <= 5;
+   /* a second counts when the upscaler really had to rescale most of the
+    * picture: a bitmap-mode title or fade that leaves most of it alone is not
+    * software 3D (no scaler running at all says nothing either way) */
+   if (!dpx)
+      return 0;
+   g_bm[g_bm_head] = mode >= 3 && mode <= 5 && (unsigned long long)dsc * 10u >= (unsigned long long)dpx * 7u;
    g_bm_head = (g_bm_head + 1) % BM_WINDOW;
    if (g_bm_n < BM_WINDOW)
       g_bm_n++;
@@ -370,7 +404,7 @@ extern "C" int look_second(float emu, float draw, float filter, int refreshes,
    /* a GBA game that redraws a bitmap mode whole: start it (and every later
     * start, the governor remembers it) at sharp bilinear; the climb gives MMPX 2x
     * back only with measured headroom */
-   if (g_con == &k_consoles[0] && !g_bm_done && refreshes >= pk::LOOK_MIN_REFRESHES &&
+   if (g_bm_on && (g_con && g_con->is_gba) && !g_bm_done && refreshes >= pk::LOOK_MIN_REFRESHES &&
        bitmap_game())
    {
       uint32_t q = 0;
@@ -436,7 +470,7 @@ extern "C" int look_census_line(char *buf, size_t n)
       return 0;
    /* what the bitmap-mode check saw (GBA): the video mode now, bitmap seconds of the last 10 */
    l = strlen(buf);
-   if (g_con == &k_consoles[0] && l + 40 < n)
+   if ((g_con && g_con->is_gba) && l + 40 < n)
    {
       int i, k = 0;
       for (i = 0; i < g_bm_n; i++)

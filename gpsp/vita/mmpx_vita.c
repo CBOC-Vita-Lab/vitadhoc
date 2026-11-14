@@ -168,7 +168,7 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
 {
    uint16_t buf[(MM_BAND + 2 * MM_PAD) * (MM_SPAN + 2 * MM_PAD)];
    const int bw = xb - xa + 2 * MM_PAD, nrows = yb - ya + 2 * MM_PAD;
-   const uint16_t *rows[MM_BAND + 2 * MM_PAD];
+   const uint16_t *rows[MM_BAND + 2 * MM_PAD];     /* each: the buffer row's start */
    int i, x, y;
 
    /* the rows, the border repeated: ya - 3 .. yb + 2, clamped to the picture */
@@ -180,7 +180,7 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
       int lo = xa - MM_PAD, hi = xb + MM_PAD, k;
       sy = sy < 0 ? 0 : sy > h - 1 ? h - 1 : sy;
       s = src + (size_t)w * (size_t)sy;
-      rows[i] = d + MM_PAD - xa;          /* rows[i][x] is picture column x */
+      rows[i] = d;
       for (k = lo; k < 0; k++)
          d[k - lo] = s[0];
       /* the part inside the picture, in one copy */
@@ -192,11 +192,12 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
       for (k = w; k < hi; k++)
          d[k - lo] = s[w - 1];
    }
-      for (y = ya; y < yb; y++)
+   for (y = ya; y < yb; y++)
    {
       const uint16_t *const *r = rows + (y - ya);   /* r[0..6]: y-3 .. y+3 */
       uint32_t *o = at + dp * 2u * (size_t)(y - y0) + 2u * (size_t)(xa - x0);
-      for (x = xa; x < xb; x++, o += 2)
+      /* x is the column in the buffer: the picture's xa is at MM_PAD */
+      for (x = MM_PAD; x < MM_PAD + (xb - xa); x++, o += 2)
       {
          const uint16_t E = r[3][x];
          /* flat: all 8 neighbours equal the pixel */
@@ -246,44 +247,32 @@ void mmpx_rect(const uint16_t *src, int w, int h, const uint32_t *lut,
 
 /* ---- who asks for it ------------------------------------------------------ */
 
+/* Set on the emulator's thread, read on the drawing thread: upscale_submit
+ * reads them once a picture (mmpx_wanted) and the slot remembers the answer,
+ * so nothing here touches a slot, and a change shows from the next picture
+ * on, whole. */
 static int g_mm_auto, g_mm_choice;
-
-/* What a slot's finished 2x picture holds changes with this: a flat area the
- * two scalers agree on stays, a rim does not, and a picture that is only
- * partly redone would show both.  Start both slots from a whole picture. */
-static void mm_changed(void)
-{
-   upscale_forget(0);
-   upscale_forget(1);
-}
 
 void mmpx_set_auto(int on)
 {
    on = on ? 1 : 0;
-   if (on != g_mm_auto)
-   {
-      g_mm_auto = on;
-      if (on)
-         mm_luma_build();
-      mm_changed();
-   }
+   if (on)
+      mm_luma_build();
+   __atomic_store_n(&g_mm_auto, on, __ATOMIC_SEQ_CST);
 }
 
 void mmpx_set_choice(int on)
 {
    on = on ? 1 : 0;
-   if (on != g_mm_choice)
-   {
-      g_mm_choice = on;
-      if (on)
-         mm_luma_build();
-      mm_changed();
-   }
+   if (on)
+      mm_luma_build();
+   __atomic_store_n(&g_mm_choice, on, __ATOMIC_SEQ_CST);
 }
 
 int mmpx_wanted(int kind)
 {
    /* Auto's step is a 2x picture in the xBRZ slot; the hand choice replaces
     * the Scale2x of the Scale filter (its 3x stays Scale3x) */
-   return (kind == UPSCALE_XBRZ && g_mm_auto) || (kind == UPSCALE_SCALE && g_mm_choice);
+   return (kind == UPSCALE_XBRZ && __atomic_load_n(&g_mm_auto, __ATOMIC_SEQ_CST)) ||
+          (kind == UPSCALE_SCALE && __atomic_load_n(&g_mm_choice, __ATOMIC_SEQ_CST));
 }

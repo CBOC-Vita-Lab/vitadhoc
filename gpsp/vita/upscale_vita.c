@@ -308,6 +308,8 @@ typedef struct
 {
    /* What `big` holds a scaled copy of. */
    int kind, f, bgr;
+   int mm;                     /* the 2x picture is made by MMPX (decided
+                                * once per picture, in upscale_submit)    */
    unsigned w, h;
    uint16_t *cur, *old;        /* the last picture and the one before it,
                                 * w x h, tightly packed                    */
@@ -398,7 +400,7 @@ static void scale_piece(up_slot *S, int y0, int y1, int x0, int x1)
    uint32_t *at = S->big + (size_t)ring_y(S, y0) * (size_t)f * (size_t)W +
                   (size_t)rx0 * (size_t)f;
    int y;
-   if (f == 2 && mmpx_wanted(S->kind))
+   if (f == 2 && S->mm)
       mmpx_rect(S->cur, (int)S->w, (int)S->h, g_lut[S->bgr], at, (size_t)W,
                 y0, y1, x0, x1);
    else if (S->kind == UPSCALE_XBRZ)
@@ -475,6 +477,17 @@ static void stripe_run(up_slot *S, int i)
    A_ADD(g_st.job_us[1], (int)(pspcompat_time_us() - t2));
 }
 
+/* Source pixels submitted / scaled since the program started: what
+ * upscale_stats reports, but not reset by it (the look governor's bitmap
+ * check reads the change over a second beside the stats consumer). */
+static int g_cum_px, g_cum_scaled;
+
+void upscale_cumulative(unsigned *px, unsigned *scaled)
+{
+   *px = (unsigned)A_LOAD(g_cum_px);
+   *scaled = (unsigned)A_LOAD(g_cum_scaled);
+}
+
 /* The last stripe of a job was finished, by this thread. */
 static void job_finish(up_slot *S)
 {
@@ -489,6 +502,8 @@ static void job_finish(up_slot *S)
    A_ADD(g_st.stripes, S->nstripes);
    A_ADD(g_st.px_k, (total + 500) / 1000);
    A_ADD(g_st.scaled_k, (scaled + 500) / 1000);
+   A_ADD(g_cum_px, total);          /* (never reset: look_glue reads the change) */
+   A_ADD(g_cum_scaled, scaled);
    A_STORE(g_st.factor, S->f);
    if (dt > 16683u)
    {
@@ -1145,7 +1160,7 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
    unsigned tp = tin;
    size_t npx, nbig;
    unsigned y, same = 0;
-   int i, fresh, any = 0, dx = 0, dy = 0, fj, whole = 0;
+   int i, fresh, any = 0, dx = 0, dy = 0, fj, whole = 0, mm;
 
    if (slot < 0 || slot >= UPSCALE_SLOTS || !src || !out || !out[0] ||
        !out[1] || !w || !h || h > UP_MAX_H || w > UP_MAX_W ||
@@ -1260,13 +1275,20 @@ int upscale_submit(int slot, int kind, int f, const uint16_t *src,
       fj = fj - g_fade_drop < 2 ? 2 : fj - g_fade_drop;
    else if (fj > 2 && A_LOAD(S->step_down))
       fj--;
+   /* MMPX or xBRZ for a 2x picture: decided here, once, from the settings
+    * as they are now (they change on another thread); a change makes the
+    * picture whole again, like a change of factor, so no picture ever holds
+    * stripes of both */
+   mm = fj == 2 && mmpx_wanted(kind);
+   if (S->mm != mm)
+      fresh = 1;
    if (S->f != fj)
       fresh = 1;                 /* both textures need it all again        */
 
    if (fresh)
    {
       dx = dy = 0;
-      S->kind = kind; S->f = fj; S->bgr = bgr; S->w = w; S->h = h;
+      S->kind = kind; S->f = fj; S->mm = mm; S->bgr = bgr; S->w = w; S->h = h;
       S->out[0] = (unsigned char *)out[0];
       S->out[1] = (unsigned char *)out[1];
       S->out_pitch = out_pitch;

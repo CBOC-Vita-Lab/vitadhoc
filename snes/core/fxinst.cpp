@@ -22,9 +22,18 @@
 */
 
 // 00 - stop - stop GSU execution (and maybe generate an IRQ)
+#ifdef FX_LIMIT
+// Run-loop test merged into one compare: STOP drops the limit to 0, so the loop
+// needs only "vCycles < fx_limit" instead of the G-flag test plus the budget test.
+static uint32 fx_limit;
+#endif
+
 static void fx_stop (void)
 {
 	CF(G);
+#ifdef FX_LIMIT
+	fx_limit = 0;
+#endif
 	GSU.vCounter = 0;
 	GSU.vInstCount = GSU.vCounter;
 
@@ -3987,6 +3996,88 @@ static void fx_sm_r15 (void)
 
 // GSU executions functions
 
+#ifdef FX_PREFIX
+// Prefix opcodes (WITH, TO, FROM, ALT1-3) are about a third of all GSU
+// instructions and do almost nothing, so they are done inline in the run loop
+// without the indirect call. Same effect as fx_with_rn / fx_to_rn / fx_from_rn /
+// fx_alt1-3 (the opcode table has the same entry for all four ALT values for these):
+// TO and FROM with B set (MOVE / MOVES) still go through the table.
+// Class of each opcode: 0 other, 1 WITH, 2 TO, 3 FROM, 4 ALT1, 5 ALT2, 6 ALT3.
+static uint8 fx_prefixClass[256];
+static struct FxPrefixInit
+{
+	FxPrefixInit ()
+	{
+		for (int i = 0x10; i < 0x20; i++) fx_prefixClass[i] = 2;
+		for (int i = 0x20; i < 0x30; i++) fx_prefixClass[i] = 1;
+		for (int i = 0xb0; i < 0xc0; i++) fx_prefixClass[i] = 3;
+		fx_prefixClass[0x3d] = 4;
+		fx_prefixClass[0x3e] = 5;
+		fx_prefixClass[0x3f] = 6;
+	}
+} fx_prefixInit;
+
+#define FX_STEP_PFX \
+{ \
+	uint32	vOpcode = (uint32) PIPE; \
+	FETCHPIPE; \
+	FX_PROF_HIT((GSU.vStatusReg & 0x300) | vOpcode); \
+	switch (fx_prefixClass[vOpcode]) \
+	{ \
+	case 1: \
+		SF(B); \
+		GSU.pvSreg = GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
+		R15++; \
+		break; \
+	case 2: \
+		if (TF(B)) \
+			(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+		else \
+		{ \
+			GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
+			R15++; \
+		} \
+		break; \
+	case 3: \
+		if (TF(B)) \
+			(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+		else \
+		{ \
+			GSU.pvSreg = &GSU.avReg[vOpcode & 15]; \
+			R15++; \
+		} \
+		break; \
+	case 4: SF(ALT1); CF(B); R15++; break; \
+	case 5: SF(ALT2); CF(B); R15++; break; \
+	case 6: SF(ALT1); SF(ALT2); CF(B); R15++; break; \
+	default: \
+		(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+	} \
+}
+#undef FX_STEP
+#define FX_STEP FX_STEP_PFX
+#endif
+
+#ifdef FX_PROF
+#include <stdio.h>
+#include <stdlib.h>
+uint64 fx_prof_hist[1024];
+uint64 fx_prof_runs, fx_prof_cycles;
+static void fx_prof_dump (void)
+{
+	const char *n = getenv("FX_PROF_OUT");
+	FILE *f = n ? fopen(n, "w") : NULL;
+	if (!f)
+		return;
+	fprintf(f, "runs %llu cycles %llu\n", (unsigned long long) fx_prof_runs, (unsigned long long) fx_prof_cycles);
+	for (int i = 0; i < 1024; i++)
+		if (fx_prof_hist[i])
+			fprintf(f, "%03x %llu\n", i, (unsigned long long) fx_prof_hist[i]);
+	fclose(f);
+}
+static struct FxProfInit { FxProfInit () { atexit(fx_prof_dump); } } fx_prof_init;
+#endif
+
 uint32 fx_run (uint32 nInstructions)
 {
 	if (GSU.bCycleMode)
@@ -3994,8 +4085,38 @@ uint32 fx_run (uint32 nInstructions)
 		// nInstructions is a master-cycle budget in this mode; each FX_STEP
 		// accrues its real cost into GSU.vCycles (fetch source, memory ops).
 		GSU.vCycles = 0;
-		while (TF(G) && GSU.vCycles < nInstructions)
+#if defined(FX_LIMIT)
+		fx_limit = TF(G) ? nInstructions : 0;
+#define FX_GO	(GSU.vCycles < fx_limit)
+#else
+#define FX_GO	(TF(G) && GSU.vCycles < nInstructions)
+#endif
+#ifdef FX_UNROLL10
+		// Ten copies of the dispatch, so the indirect call has ten call sites
+		// for the branch predictor and the loop branch is taken a tenth as often.
+		// Every copy keeps its own exit test: the exit point (and so the timing) is unchanged.
+		while (FX_GO)
+		{
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
+			FX_STEP; if (!FX_GO) break;
 			FX_STEP;
+		}
+#else
+		while (FX_GO)
+			FX_STEP;
+#endif
+#undef FX_GO
+#ifdef FX_PROF
+		fx_prof_runs++;
+		fx_prof_cycles += GSU.vCycles;
+#endif
 
 		return (0);
 	}

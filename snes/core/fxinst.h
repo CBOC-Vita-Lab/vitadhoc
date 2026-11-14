@@ -393,11 +393,22 @@ extern struct FxRegs_s	GSU;
 #define PLOT_FREEZEHIGH  (1U << 3) /* 0x08. If set, COLR and GETC instructions will only modify the low nibble, and 8-bit plotting will only test the low nibble for transparency. */
 #define PLOT_OBJECT      (1U << 4) /* 0x10. If set, CMODE will treat the screen height as if it were 256. Used to draw to sprites. */
 
+#ifdef FX_PROF
+// Profiling build only (twin, -DFX_PROF): opcode histogram over (ALT bits << 8 | opcode),
+// dumped at exit to the file named by $FX_PROF_OUT. Not part of any shipped build.
+extern uint64 fx_prof_hist[1024];
+extern uint64 fx_prof_runs, fx_prof_cycles;
+#define FX_PROF_HIT(i)	(fx_prof_hist[(i)]++)
+#else
+#define FX_PROF_HIT(i)
+#endif
+
 // Execute instruction from the pipe, and fetch next byte to the pipe
 #define FX_STEP \
 { \
 	uint32	vOpcode = (uint32) PIPE; \
 	FETCHPIPE; \
+	FX_PROF_HIT((GSU.vStatusReg & 0x300) | vOpcode); \
 	(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
 }
 

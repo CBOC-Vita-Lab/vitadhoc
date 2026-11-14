@@ -79,7 +79,7 @@ $(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
 	$(PREFIX)objcopy --redefine-syms=$(B)/rcopy.map $< $@
 
 # Super FX: the exact speed-up of agent P5 (limit and fast paths in the GSU interpreter)
-$(B)/core/fxinst.o: CXXFLAGS += -DFX_LIMIT -DFX_FAST
+$(B)/core/fxinst.o $(B)/core/fxemu.o: CXXFLAGS += -DFX_LIMIT -DFX_FAST -DFX_LINEFLAGS
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

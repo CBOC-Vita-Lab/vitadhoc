@@ -108,10 +108,12 @@ void snes_wide_clear_game(void);
 
 /* Cost ladder (option "policy", default 1; the twin's proofs run with 0 = always the full margin): the wide view is on for every game and never
  * turned off by cost. The measured compose time (smoothed) steps the work margin, the columns per side that the renderer's passes, widekit and the
- * learned map are asked for, down (full, 5/8, 3/8, floor of 12 columns); the columns beyond are the ambient frame, so the picture keeps its
+ * learned map are asked for, down (full, 5/8, 3/8, centre only: the renderer's own margin passes follow the rung and are skipped at the floor); the columns beyond are the ambient frame, so the picture keeps its
  * width and nothing beyond what is proven is ever drawn as picture. Super FX / SA-1 cartridges (header) start one rung down. Steps up need a
  * long quiet stretch and room to spare. Options "cost_us" (default 9000: smoothed compose microseconds over which a rung is given up) and
- * "cost_frames" (60). */
+ * "cost_frames" (60). Menu: snes_wide_option("mode", 0 Auto | 1 On) each frame (Auto = per side Auto + ladder, On = the full margin always), Off = snes_wide_set(0, 0).
+ * snes_wide_option("pressure", 1|2): the frontend reports trouble (pacer not at full rate, a bad second): the ladder steps down at once (2: to the floor) and
+ * climbs back under the normal rule; ignored in On. */
 
 /* Auto mode (default on): the margins show real picture only while the real share stays high over the last seconds, else the
  * ambient frame; a decision change cross-fades over half a second. "On" in the player = snes_wide_option("auto", 0). */

@@ -65,6 +65,8 @@ static uint64_t now_us(void)
 	return (uint64_t) ts.tv_sec * 1000000ull + (uint64_t) ts.tv_nsec / 1000;
 }
 
+enum { RUNG_N = 4, WORK_FLOOR = 12, PAD_FADE = 12 };
+
 struct SpinLock {
 	std::atomic_flag f = ATOMIC_FLAG_INIT;
 	void lock() { while (f.test_and_set(std::memory_order_acquire)) {} }
@@ -101,7 +103,7 @@ enum { SNAP_N = 5, SS_FREE = 0, SS_FILLING = 1, SS_FILLED = 2, SS_TAKEN = 3, SS_
 struct Snap {
 	std::atomic<uint32_t> state;
 	uint32_t serial;
-	int h, m, mh, ok, wide_hint;
+	int h, m, mh, ok, wide_hint, co;   /* co: a centre only frame (no margin passes: the ambient frame is all there is) */
 	uint32_t clock, epoch;
 	struct SWideLine line[SW_ROWS];
 	uint16_t cgram[256], colors[256];
@@ -174,13 +176,16 @@ struct Adapter {
 	std::atomic<int> auto_on{1};
 	/* cost ladder (option "policy", default on; the twin's proofs switch it off): measured compose time steps the work margin down a rung
 	 * (see work_margin) and, much later and only when it would fit, up again */
-	int policy = 1;
+	std::atomic<int> policy{1};
+	std::atomic<int> pressure{0};     /* option "pressure": the frontend asks for a rung down now (1) or the floor (2); consumed by the next composed frame */
+	bool last_up = false;             /* the last ladder step was up */
 	int chip = 0;                     /* 1 Super FX (GSU), 2 SA-1, from the cartridge header */
 	int rung = 0;
 	int cost_us = 9000;               /* option "cost_us": smoothed compose time that is too much for one 60 Hz frame of the drawing thread */
 	int cost_frames = 60;             /* ... held for this many frames before a step down */
 	int cost_scale = 100;             /* option "cost_scale" (percent): the twin's way to stand in for a slower machine; the ladder sees the measured time times this */
 	uint32_t cost_ema_q4 = 0, cost_n = 0, hold_frames = 600, since_down = 0;
+	uint32_t last_us[RUNG_N];         /* the smoothed compose time a rung had when it was given up (0 = unknown): the way back up is judged by it */
 	int cov_q8[2];             /* smoothed coverage per side, percent * 256 (a scrolling game has real history behind the camera and none ahead: each side decides alone) */
 	int auto_state[2] = { 1, 1 };   /* per side: 1 = real picture, 0 = ambient frame */
 	int xf[2];                 /* per side cross-fade 0 (wide) .. 32 (ambient) */
@@ -244,9 +249,9 @@ static int rom_chip(const uint8_t *rom, size_t n)
 
 /* Rungs: how many columns per side the renderer's passes, widekit and the map are asked for (the "work margin"); the picture keeps its
  * full width, the columns beyond the work margin are the ambient frame (a calm colour field, never structure, so never a wrong tile).
- * 0 full, 1 five eighths, 2 three eighths, 3 the floor (12 columns: little more than the edge fade; composing it costs the per line and
- * per layer fixed part only). */
-enum { RUNG_N = 4, WORK_FLOOR = 12, PAD_FADE = 12 };
+ * 0 full, 1 five eighths, 2 three eighths, 3 the floor: centre only. The core draws no margin passes and takes no capture (PPU thread cost gone,
+ * S9xWideCentreOnly), compose has the ambient frame to do; the picture is as wide as ever. A frame that was already in flight when the floor
+ * was reached is composed with WORK_FLOOR columns. */
 static int work_margin(int rung, int full)
 {
 	static const int num[RUNG_N] = { 8, 5, 3, 0 };
@@ -685,9 +690,17 @@ static Snap *snap_alloc(void) { return new (std::nothrow) Snap(); }
 /* copies what compose needs out of the core's view; touches no compose state, so it can run on any thread while compose runs */
 static void capture(const SWideView *v, Snap *sn)
 {
-	const int H = v->h, Mh = A.cap_mh.load(std::memory_order_relaxed);
-	sn->h = H; sn->m = v->m; sn->mh = Mh; sn->ok = v->ok; sn->clock = v->clock; sn->epoch = v->epoch; sn->wide_hint = 0;
+	const int H = v->h;
+	int Mh = A.cap_mh.load(std::memory_order_relaxed);
+	if (v->m > 0 && Mh > v->m) Mh = v->m;     /* a frame drawn just before the core margin followed the rung up: the narrower one it has */
+	sn->h = H; sn->m = v->m; sn->mh = Mh; sn->ok = v->ok; sn->clock = v->clock; sn->epoch = v->epoch; sn->wide_hint = 0; sn->co = 0;
 	if (H <= 0 || H > MAXH) return;
+	if (v->m == 0) {         /* a centre only frame: the picture and nothing else */
+		sn->co = 1; sn->mh = 0;
+		sn->wide_hint = (v->ok && !A.prof_off.load(std::memory_order_relaxed)) ? 1 : 0;
+		if (sn->wide_hint) for (int y = 0; y < H; y++) memcpy(sn->centre + (size_t) y * 256, v->centre + (size_t) y * v->centre_pitch, 256 * 2);
+		return;
+	}
 	memcpy(sn->line, v->line, (size_t) H * sizeof(SWideLine));
 	int nd = 0, nblank = 0, n7 = 0;
 	for (int y = 0; y < H; y++) {
@@ -749,6 +762,96 @@ static Snap *pool_claim(void)
 
 /* ---- the frame ------------------------------------------------------------------------------------------------ */
 
+/* the cost ladder: called once per composed frame with its time. `co` = the frame was a centre only one (no information about what a wider rung costs) */
+static void apply_core_rung(void)
+{
+	S9xWideCentreOnly(A.rung >= RUNG_N - 1);
+	S9xWideCoreMargin(A.rung >= 1 && A.rung < RUNG_N - 1 ? work_margin(A.rung, A.margin224) : 0);   /* the renderer's passes follow the rung too */
+}
+
+static void ladder_step(int Mh, uint32_t us, bool co)
+{
+	if (!A.policy.load()) { A.pressure.store(0); return; }
+	A.since_down++;
+	const int pr = A.pressure.exchange(0);
+	if (pr > 0 && A.rung < RUNG_N - 1) {
+		/* the frontend sees pressure (the pacer thins frames, the governor reports a bad second): down now, whatever compose took */
+		A.last_us[A.rung] = A.cost_ema_q4 / 16;
+		A.rung = pr >= 2 ? RUNG_N - 1 : A.rung + 1; A.cen.rung_changes++;
+		A.cost_n = 0; A.since_down = 0; A.last_up = false;
+		A.cap_mh.store(work_margin(A.rung, A.margin224));
+		apply_core_rung();
+		return;
+	}
+	if (pr > 0) A.since_down = 0;            /* at the floor already: stay there while the pressure lasts */
+	if (!co && Mh == A.cap_mh.load()) {      /* only a frame composed at the margin now asked for: one from before a step must not reseed the average */
+		const uint32_t q4 = (uint32_t) ((uint64_t) us * (uint32_t) A.cost_scale / 100) * 16;
+		A.cost_ema_q4 = A.cost_n ? A.cost_ema_q4 + (int32_t) (q4 - A.cost_ema_q4) / 32 : q4;
+		A.cost_n++;
+		A.cen.compose_us = A.cost_ema_q4 / 16;
+	}
+	const uint32_t ema = A.cost_ema_q4 / 16;
+	if (!co && A.cost_n >= (uint32_t) A.cost_frames && ema > (uint32_t) A.cost_us && A.rung < RUNG_N - 1) {
+		/* over the budget for long enough: one rung down. A step down soon after a step up makes the next wait longer. */
+		if (A.last_up && A.since_down < 3600 && A.hold_frames < 7200) A.hold_frames *= 2;
+		A.last_us[A.rung] = ema;
+		A.rung++; A.cen.rung_changes++;
+		A.cost_n = 0; A.since_down = 0; A.last_up = false;
+		A.cap_mh.store(work_margin(A.rung, A.margin224));
+		apply_core_rung();
+	} else if (A.rung > 0 && A.since_down >= A.hold_frames && (co || A.cost_n >= (uint32_t) A.cost_frames)) {
+		/* one rung up after hold_frames at this one, if the wider rung would fit: from its own time when it was given up (not trusted after a
+		 * minute: the scene may be easier now, that is a probe), else this rung's time scaled to the wider margin */
+		const int up = work_margin(A.rung - 1, A.margin224);
+		uint64_t pred;
+		if (A.last_us[A.rung - 1] && A.since_down < 3600) pred = A.last_us[A.rung - 1];
+		else if (co) pred = 0;
+		else pred = (uint64_t) ema * (uint32_t) up / (uint32_t) (Mh ? Mh : 1);
+		if (pred <= (uint64_t) A.cost_us * 3 / 4) {
+			A.rung--; A.cen.rung_changes++;
+			A.cost_n = 0; A.since_down = 0; A.last_us[A.rung] = 0; A.last_up = true;
+			A.cap_mh.store(up);
+			apply_core_rung();
+		}
+	}
+}
+
+/* a centre only frame: the picture in the middle, the ambient frame on both sides (what compose can do without the margin passes) */
+static void run_co(const Snap *sn, Out *o, const SWideView *v, int H)
+{
+	snes_wide_stats &st = o->st;
+	const uint64_t t0 = now_us();
+	const int Mfull = margin_for(H);
+	if (!sn->wide_hint || Mfull <= 0) { fallback(o, sn->wide_hint ? 2 : 1); return; }
+	if (!A.L || !make_compose(H, Mfull < WORK_FLOOR ? Mfull : WORK_FLOOR, Mfull) || !A.fr || !A.wo) { fallback(o, 2); return; }
+	const bool reset = v->epoch != A.epoch;
+	A.epoch = ~v->epoch;      /* the layer analysis lost frames: the next frame with margin passes starts a new scene */
+	amb_update(v, H, reset);
+	const int OWf = 256 + 2 * Mfull;
+	for (int y = 0; y < H; y++) {
+		uint16_t *row = o->px + (size_t) y * OWf;
+		uint8_t *prow = o->prov + (size_t) y * OWf;
+		memcpy(row + Mfull, v->centre + (size_t) y * v->centre_pitch, 512);
+		memset(prow, WK_PROV_SOFT, (size_t) OWf);
+		memset(prow + Mfull, WK_PROV_CENTRE, 256);
+		const uint16_t *a0 = amb_row(0, y, Mfull), *a1 = amb_row(1, y, Mfull);
+		for (int d = 0; d < Mfull; d++) { row[Mfull - 1 - d] = a0[d]; row[Mfull + 256 + d] = a1[d]; }
+		o->real[y][0] = o->real[y][1] = 0;
+	}
+	A.cen.frames_wide++; A.cen.frames_ambient++;
+	A.cen.frames_side_amb[0]++; A.cen.frames_side_amb[1]++;
+	if ((A.frame_n & 1) == 0) A.cen.px_pad += (uint64_t) 2 * Mfull * H;
+	A.cov_have = 0; A.auto_state[0] = A.auto_state[1] = 0; A.xf[0] = A.xf[1] = 32;
+	st.serial = A.serial.load() + 1; st.frame = v->clock;
+	st.width = OWf; st.height = H; st.margin = Mfull; st.lines = H;
+	st.coverage_pct = 0; st.auto_wide = 0; st.xfade = 32;
+	for (int s = 0; s < 2; s++) { st.side_wide[s] = 0; st.side_xfade[s] = 32; st.side_cov[s] = 0; }
+	st.work_margin = 0; st.rung = A.rung;
+	st.instr_us = (uint32_t) (now_us() - t0);
+	ladder_step(0, st.instr_us, true);
+	publish(o, 1);
+}
+
 static void run(const Snap *sn)
 {
 	SWideView vv;
@@ -768,6 +871,7 @@ static void run(const Snap *sn)
 	A.cen.frames++;
 	A.frame_n++;
 	if (H <= 0 || H > MAXH || !v->ok || A.margin224 <= 0) { fallback(o, 2); return; }
+	if (sn->co) { run_co(sn, o, v, H); return; }
 	const int Mfull = margin_for(H), Mc = v->m;
 	const int Mh = sn->mh;           /* the work margin of this snapshot (the capture's: see work_margin), at most the picture's margin */
 	if (Mfull <= 0 || Mh <= 0 || Mh > Mfull || Mc < Mh) { fallback(o, 2); return; }
@@ -1230,29 +1334,7 @@ static void run(const Snap *sn)
 	A.cen.coverage_pct = st.coverage_pct; A.cen.auto_wide = st.auto_wide;
 	A.cen.map_cells = (uint32_t) st.map_cells;
 	st.instr_us = (uint32_t) (now_us() - t0);
-	if (A.policy) {
-		/* cost ladder. The smoothed compose time (about 32 frames) over the budget for cost_frames frames: one rung down (a narrower work
-		 * margin). One rung up again only after hold_frames frames at this rung (10 s, doubling after every step down that follows a step
-		 * up too soon, to 2 minutes) and only if the time scaled to the wider margin would still be at most 75% of the budget. */
-		const uint32_t q4 = (uint32_t) ((uint64_t) st.instr_us * (uint32_t) A.cost_scale / 100) * 16;
-		A.cost_ema_q4 = A.cost_n ? A.cost_ema_q4 + (int32_t) (q4 - A.cost_ema_q4) / 32 : q4;
-		A.cost_n++; A.since_down++;
-		A.cen.compose_us = A.cost_ema_q4 / 16;
-		const uint32_t ema = A.cost_ema_q4 / 16;
-		if (A.cost_n >= (uint32_t) A.cost_frames && ema > (uint32_t) A.cost_us && A.rung < RUNG_N - 1 && Mh > WORK_FLOOR) {
-			if (A.since_down < 3600 && A.hold_frames < 7200) A.hold_frames *= 2;   /* stepped up and straight back down: wait longer next time */
-			A.rung++; A.cen.rung_changes++;
-			A.cost_n = 0; A.since_down = 0;
-			A.cap_mh.store(work_margin(A.rung, A.margin224));
-		} else if (A.rung > 0 && A.since_down >= A.hold_frames && A.cost_n >= (uint32_t) A.cost_frames) {
-			const int up = work_margin(A.rung - 1, A.margin224);
-			if ((uint64_t) ema * (uint32_t) up / (uint32_t) (Mh ? Mh : 1) <= (uint64_t) A.cost_us * 3 / 4) {
-				A.rung--; A.cen.rung_changes++;
-				A.cost_n = 0; A.since_down = 0;
-				A.cap_mh.store(up);
-			}
-		}
-	}
+	ladder_step(Mh, st.instr_us, false);
 	publish(o, 1);
 }
 
@@ -1408,6 +1490,7 @@ void snes_wide_set(int on, int margin)
 	if (A.core_margin > SNES_WIDE_MAX_MARGIN) A.core_margin = SNES_WIDE_MAX_MARGIN;
 	A.lk.unlock();
 	S9xWideSet(A.core_margin, on_frame, NULL);
+	apply_core_rung();
 }
 
 int snes_wide_active(void) { return A.on; }
@@ -1440,25 +1523,46 @@ void snes_wide_set_game(const uint8_t *rom, size_t n, const char *title)
 	snprintf(A.title, sizeof A.title, "%s", title ? title : "");
 	A.have_game = A.crc != 0;
 	A.chip = rom_chip(rom, n);
-	A.cost_ema_q4 = 0; A.cost_n = 0; A.since_down = 0; A.hold_frames = 600;
+	A.cost_ema_q4 = 0; A.cost_n = 0; A.since_down = 0; A.hold_frames = 600; memset(A.last_us, 0, sizeof A.last_us);
 	A.rung = (A.policy && A.chip) ? 1 : 0;     /* Super FX / SA-1 start one rung down; the measured cost corrects it either way */
 	ensure_objects();
 	profile_lookup();
 	A.lk.unlock();
 }
 
+static void set_policy(bool on)
+{
+	A.lk.lock();
+	A.policy.store(on ? 1 : 0);
+	A.rung = (on && A.chip) ? 1 : 0;
+	A.cost_n = 0; A.since_down = 0; A.last_up = false; A.hold_frames = 600; A.pressure.store(0);
+	memset(A.last_us, 0, sizeof A.last_us);
+	if (A.margin224) A.cap_mh = work_margin(A.rung, A.margin224);
+	A.lk.unlock();
+	apply_core_rung();
+}
+
 int snes_wide_option(const char *name, int v)
 {
 	if (!name) return 1;
-	if (!strcmp(name, "auto")) {       /* the player calls this every frame: no lock unless it changes (compose holds the lock for a whole frame) */
-		if (A.auto_on.load() != (v != 0)) {
-			A.auto_on.store(v != 0);
-		}
+	/* the player calls these every frame: no lock unless the value changes (compose holds the adapter lock for a whole frame) */
+	if (!strcmp(name, "auto")) {
+		if (A.auto_on.load() != (v != 0)) A.auto_on.store(v != 0);
+		return 0;
+	}
+	if (!strcmp(name, "policy")) { if ((A.policy.load() != 0) != (v != 0)) set_policy(v != 0); return 0; }
+	if (!strcmp(name, "mode")) {          /* the menu's Wide view: 0 Auto (per side Auto + cost ladder), 1 On (the full margin always, no ladder); Off is snes_wide_set(0, 0) */
+		if (A.auto_on.load() != (v == 0)) A.auto_on.store(v == 0);
+		if ((A.policy.load() != 0) != (v == 0)) set_policy(v == 0);
+		return 0;
+	}
+	if (!strcmp(name, "pressure")) {      /* the frontend sees trouble (pacer not at full rate, a bad second): the ladder steps down at once, 2 = to the floor */
+		if (v > 0) A.pressure.store(v > 2 ? 2 : v);
 		return 0;
 	}
 	A.lk.lock();
 	int r = 0;
-	if (!strcmp(name, "policy")) { A.policy = v != 0; if (!A.policy) A.rung = 0; if (A.margin224) A.cap_mh = work_margin(A.rung, A.margin224); }
+	if (false) {}
 	else if (!strcmp(name, "cost_us")) A.cost_us = v;
 	else if (!strcmp(name, "cost_frames")) A.cost_frames = v;
 	else if (!strcmp(name, "cost_scale")) A.cost_scale = v < 1 ? 1 : v;

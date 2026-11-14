@@ -56,6 +56,7 @@ def main():
     ap.add_argument("--list", default=None)
     ap.add_argument("--filter", default="")
     ap.add_argument("--no-mt", action="store_true")
+    ap.add_argument("--wextra", default="", help="extra twin arguments for the runs with the wide view on (C, D), e.g. \"--wopt policy=1 --wopt cost_us=1\" to run at the cost ladder's centre only floor")
     a = ap.parse_args()
     roms = list(a.roms)
     if a.dir:
@@ -74,8 +75,8 @@ def main():
         runs = {}
         plan = []
         if a.base: plan.append(("A", a.base, []))
-        plan += [("B", a.twin, []), ("C", a.twin, ["--wide", str(a.margin)])]
-        if not a.no_mt: plan.append(("D", a.twin, ["--wide", str(a.margin)] + mt))
+        plan += [("B", a.twin, []), ("C", a.twin, ["--wide", str(a.margin)] + a.wextra.split())]
+        if not a.no_mt: plan.append(("D", a.twin, ["--wide", str(a.margin)] + mt + a.wextra.split()))
         fail = None
         for tag, binary, extra in plan:
             res, err = run(binary, rom, a.frames, a.pad, extra, tmp, tag)

@@ -261,6 +261,12 @@ if [ -x "$WT" ]; then
 			echo "$r" | grep -q "centre unmatched 0): wrong real px 0, checked real px [0-9]" && ok "wide view truth ($tag): $n ($r)" || bad "wide view truth ($tag): $n ($r)"
 		done
 	done
+	# pressure from the frontend: the ladder goes down at once, one rung per report (3 reports: to the centre only floor), with the cost budget
+	# out of reach; and a game the ladder never touches stays at rung 0
+	"$WT" $T/wide/wide_scroll64.sfc --frames 400 --wide 70 --wopt policy=1 --pressure 100,101,102 --summary >$T/wide/pr.txt 2>/dev/null
+	grep -q "ladder: rung=3 .*rung_changes=3" $T/wide/pr.txt && ok "pressure: three reports, three rungs down, to the centre only floor" || bad "pressure ($(grep ladder: $T/wide/pr.txt))"
+	"$WT" $T/wide/wide_scroll64.sfc --frames 400 --wide 70 --wopt policy=1 --summary >$T/wide/pr0.txt 2>/dev/null
+	grep -q "ladder: rung=0 .*rung_changes=0" $T/wide/pr0.txt && ok "no pressure, cheap game: the ladder stays at the full margin" || bad "ladder at rest ($(grep ladder: $T/wide/pr0.txt))"
 	# the learned map: two levels with the same scroll coordinates (no tile in common / 85 % in common / the same tilemap with other
 	# graphics) and cells that change (near the camera: written into the ring at once). Pass 1 learns, pass 2 starts from the saved map
 	# (a new session): no pixel claimed real may be wrong in either pass; learned cells not seen live in the run are not claims.

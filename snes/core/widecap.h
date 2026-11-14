@@ -93,6 +93,7 @@ extern uint32 g_s9x_wide_clock;
 extern uint32 g_s9x_wide_epoch;
 extern uint8  g_s9x_wide_stamp;       /* 1: VRAM writes are stamped */
 extern uint8  g_s9x_wide_m;
+extern uint8  g_s9x_wide_fco;         /* centre only (S9xWideCentreOnly), latched for the frame being emulated: no margin passes, the hook still gets the centre picture */
 extern uint8  g_s9x_wide_fm;          /* margin latched for the frame being emulated */           /* margin the next frame is drawn with (0 = wide view off) */
 extern uint16 g_s9x_vage[32768];
 extern uint16 g_s9x_uage[2048];
@@ -101,6 +102,8 @@ extern void  *g_s9x_wide_user;
 
 /* register side (emulation thread) */
 void S9xWideSet(int margin, SWideHook hook, void *user);   /* margin 0 = off; call between frames */
+void S9xWideCoreMargin(int m);                             /* the margin the next frames are drawn with, at most the one of S9xWideSet (0 = that one); any thread, latched at frame start */
+void S9xWideCentreOnly(int on);                            /* the next frame is drawn without margin passes (hook and centre only); any thread */
 void S9xWideReset(void);                                   /* state loaded / console reset */
 void S9xWideFrameStartLive(void);                          /* from S9xStartScreenRefresh */
 void S9xWideFrameEndLive(void);                            /* from S9xEndScreenRefresh, single thread only */

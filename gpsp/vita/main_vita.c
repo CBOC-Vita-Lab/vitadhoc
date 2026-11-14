@@ -2413,7 +2413,7 @@ static void ho_window_check(unsigned vm, unsigned vp, unsigned late_delta)
       return;
    g_ho_boot_left--;
    g_ho_strikes = vm >= 30u && late_delta <= 3u ? g_ho_strikes + 1 : 0;
-   if (g_ho_gxm_errs >= 3u)
+   if (d.fatal || skipped >= 10u)
       why = "gxm_errors";
    else if (g_ho_strikes >= 3)
       why = "vcount_misses";
@@ -3555,13 +3555,19 @@ static unsigned app_look_user_rows(void)
    return u;
 }
 
+/* upscale_vita.c: the governor's own reading of the upscalers' job time */
+unsigned upscale_second_avg_us(void);
+
 void ui_host_look_changed(void)
 {
    int c = pcfg_display_console();
    /* the look governor (look_glue.h): what is set by hand is not its */
    look_set_user_rows(app_look_user_rows());
-   upscale_look_cap(look_quality_cap());
    vid_set_quality(g_pcfg.quality);
+   /* the cap is read once the drawing thread is idle (vid_set_quality waits
+    * for it): look_quality_cap also moves the MMPX flag the drawing side reads */
+   ho_guard();
+   upscale_look_cap(look_quality_cap());
    vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color : VID_COLOR_RAW,
                 g_pcfg.blend && !look_rung(3));
    if (c == FE_CONSOLE_GBC)
@@ -3616,7 +3622,7 @@ static void app_look_begin(void)
    look_begin(path, (int)plat_arm_mhz(), app_look_user_rows());
    memset(&g_lk, 0, sizeof(g_lk));
    look_safe_point(LOOK_AT_START);
-   upscale_look_cap(0);
+   upscale_look_cap(look_quality_cap());
    if (look_generation() != g_lk.gen)
       app_look_apply("start");     /* the look this game needed last time */
    fe_evt("look_start mask=%u user_rows=%u memory=%d", look_mask(),
@@ -3693,7 +3699,8 @@ static void app_look_pass(uint32_t emu_us, int counts)
       (void)look_second(g_lk.emu_n ? (float)g_lk.emu_sum / g_lk.emu_n / ref : 0.f,
                         drawn && handoff ? (float)(dsum - g_lk.draw0) / drawn / ref
                                          : 0.f,
-                        0.f, refreshes, missed, handoff, half);
+                        (float)upscale_second_avg_us() / ref, refreshes, missed,
+                        handoff, half);
       /* (a change applies at once: the governor itself waited for a safe
        * point, or forced it after 12 s) */
       if (look_generation() != g_lk.gen)

@@ -1554,6 +1554,26 @@ int upscale_help(unsigned max_us)
    return n;
 }
 
+/* The look governor's own reading (main_vita.c app_look_pass), once a second:
+ * the average time of the pictures the upscalers finished since the last
+ * call, in microseconds (0 = none).  A separate read of the counters:
+ * upscale_stats resets them for the census and must keep doing so. */
+unsigned upscale_second_avg_us(void)
+{
+   static int last_jobs, last_sum;
+   const int jobs = A_LOAD(g_st.jobs), sum = A_LOAD(g_st.sum_us);
+   const int dj = jobs - last_jobs, ds = sum - last_sum;
+   if (dj < 0 || ds < 0)             /* upscale_stats reset them meanwhile */
+   {
+      last_jobs = jobs;
+      last_sum = sum;
+      return 0;
+   }
+   last_jobs = jobs;
+   last_sum = sum;
+   return dj > 0 ? (unsigned)(ds / dj) : 0u;
+}
+
 void upscale_stats(upscale_stats_t *out)
 {
    /* The bounded waits' census (called once a window): waits that ran out

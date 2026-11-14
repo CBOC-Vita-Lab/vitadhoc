@@ -4239,10 +4239,10 @@ def t_core4(S):
     r = run("lost", env={"GBADHOC_FAKE_CORE4": "1", "GBADHOC_STALL_MS": "120"})
     S.check(r.has(r"^EVT cores: moved role 1\.0 back") and r.has(r"layout 3-core"),
             "a stalled render thread on the extra core: the core is marked lost and the thread moved back")
-    r = run("gxm", env={"GBADHOC_FAKE_GXM_ERR": "2"})
+    r = run("gxm", env={"GBADHOC_FAKE_GXM_ERR": "12"})
     S.check(r.has(r"^EVT handoff_fallback reason=gxm_errors"),
             "failing GXM on the draw path: hand-over is given up with its reason")
-    r = run("gxm_off", env={"GBADHOC_FAKE_GXM_ERR": "2"}, ini={"handoff_check": "0"})
+    r = run("gxm_off", env={"GBADHOC_FAKE_GXM_ERR": "12"}, ini={"handoff_check": "0"})
     S.check(not r.has(r"^EVT handoff_fallback"), "handoff_check = 0: the self-check is off")
 
 

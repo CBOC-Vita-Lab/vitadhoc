@@ -343,6 +343,18 @@ def menu_pick(row, wait=40):
     return s
 
 
+def set_down(n):
+    """DOWN n times from where Settings opens (in game: Screen size; in the
+    browser: Theme).  Since 1.4 the sections run Display, Gameplay, This game,
+    Controls, Library, Interface, Achievements, Link setup."""
+    return "+20:down\n" + "+8:down\n" * (n - 1)
+
+
+def set_up(n):
+    """UP n times from where Settings opens (the list wraps)."""
+    return "+20:up\n" + "+8:up\n" * (n - 1)
+
+
 QUIT_TO_LIST = menu_pick(5)
 EXIT_APP = menu_pick(6)
 
@@ -719,11 +731,10 @@ def t_ff(S):
             S.picture(r, "ff.png", "ff_3x.png" if name == "3x" else None)
         S.summary["ff_%s.audio_crc" % name] = r.host.get("audio_crc")
 
-    # Settings > Fast-forward, in game: Settings wraps upwards to Button
-    # mapping, then up past THIS GAME, CPU speed, Keep full speed, FPS,
-    # Rewind and FF button.  RIGHT: 3x -> 3x with sound, saved.
-    # (+1 since 1.4: Steady pacing, below CPU speed)
-    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 15
+    # Settings > Fast-forward, in game: Settings opens on Screen size
+    # (Display); Fast-forward is the first Gameplay row, nine DOWN.
+    # RIGHT: 3x -> 3x with sound, saved.
+    pick = menu_pick(4, wait=100) + set_down(9)
     r = S.run("ff_row", pick + "+10:shot=row.png\n+4:right\n"
               "+10:shot=row_sound.png\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba")
@@ -902,12 +913,11 @@ def t_sensors(S):
     S.check(near(b[2][1], (0x3A0 + 112) // 8) and near(b[2][0], 0x392 // 8),
             "top edge down half a g: Y higher (%d px)" % b[2][1])
 
-    # Settings > THIS GAME, in a tilt game: wrapping upwards, Button
-    # mapping, then Level -- X makes the way the Vita is held now level, and
+    # Settings > THIS GAME, in a tilt game: 23 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
     # the game's file keeps it.
     r = run("level", "gbadhoc-tilt.gba",
             "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
-            menu_pick(4, wait=60) + "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=level_row.png\n"
+            menu_pick(4, wait=60) + set_down(23) + "+10:shot=level_row.png\n"
             "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
             "+120:shot=level.png\n+10:quit\n")
     S.picture(r, "rows.png")
@@ -1018,11 +1028,10 @@ def t_game_look(S):
                                        "gbadhoc-test.gba.ini")).read() \
         if os.path.exists(os.path.join(r.root, "games",
                                        "gbadhoc-test.gba.ini")) else ""
-    # Settings wraps upwards to Button mapping, then THIS GAME's Display
-    # settings; CROSS gives the game its own look.  Then TRIANGLE (the
+    # Settings opens on Screen size; THIS GAME's Display settings is 19 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
     # size preset) makes it stretch: the game's file, not config.ini.
     r = S.run("game_look_on", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+              set_down(19) + "+10:shot=row.png\n+4:cross\n"
               "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
               "+60:shot=stretch.png\n+10:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg)
@@ -1046,7 +1055,7 @@ def t_game_look(S):
     # Next time it starts in its own look; turning it off brings the
     # console's back, and the next start is the console's.
     r = S.run("game_look_off", menu_pick(4, wait=60) +
-              "+20:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              set_down(19) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg,
               extra={"games/gbadhoc-test.gba.ini":
                      "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
@@ -1131,7 +1140,7 @@ def t_recent(S):
     # Settings > LIBRARY > Game order, from the game list: the browser's
     # Settings, wrapping upwards from the top: Button mapping, then Game
     # order (LIBRARY, between GAMEPLAY and CONTROLS).
-    r = S.run("recent_setting", "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n"
+    r = S.run("recent_setting", "60:start\n+30:up\n+10:shot=row.png\n"
               "+4:right\n+10:shot=row_last.png\n+4:circle\n+60:left\n+30:cross\n"
               "+30:quit\n", config=base, extra=extra)
     S.clean(r)
@@ -1560,7 +1569,8 @@ def t_smc(S):
              "data written next to live code (no trap)",
              "decompress-and-run, 300 rounds", "IWRAM mirror", "EWRAM mirror",
              "code patching its own immediate, 2000 times",
-             "ARM and Thumb code at one address", "chain of 20 linked blocks"]
+             "ARM and Thumb code at one address", "chain of 20 linked blocks",
+             "IWRAM block across the end of the region (mirror)"]
     extra = {"roms/gbadhoc-smc.gba": open(rom, "rb").read()}
     runs = {}
     for mode in ("0", "1"):
@@ -2240,14 +2250,10 @@ def t_look(S):
                 "the dark screen is darker (%d < %d)" % (lum["dark"],
                                                          lum["gba"]))
 
-    # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed, FPS, Rewind, FF button,
-    # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
-    # Screen overlay, Grid strength, (Wide view: menus -- not a row while the
-    # wide view is off, as it is in these tests), Wide view, Motion blend,
-    # Colours
-    script = "100:shot=before.png\n" + menu_pick(4, wait=10) + "+20:up\n" + \
-        "+8:up\n" * 24 + "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
+    # ---- the rows: Settings opens on Screen size, then Image quality, Video
+    # filter, Ambient bars, Colours (4 DOWN); the next row is Motion blend
+    script = "100:shot=before.png\n" + menu_pick(4, wait=10) + set_down(4) + \
+         "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
         "+40:shot=after.png\n" + EXIT_APP
     r = S.run("look_rows", script, config=base, autoboot="gbadhoc-test.gba")
@@ -2494,11 +2500,9 @@ def t_wide(S):
         S.check(all(sum(c) > 60 for c in col),
                 "fit: the picture reaches both edges of the screen (%s)" % col)
 
-    # ---- the rows: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed, FPS, Rewind, FF button,
-    # Fast-forward, Screenshot folder, Game previews, Game list, Theme,
-    # Screen overlay, Grid strength, Wide view: menus, Wide view
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 22 + \
+    # ---- the rows: from Screen size, Wide view: menus is 7 DOWN (Wide view
+    # is the row above it)
+    script = menu_pick(4, wait=100) + set_down(7) + \
         "+10:right\n+10:up\n" \
         "+10:shot=row.png\n+4:right\n+10:shot=row_on.png\n+4:circle\n" \
         "+10:circle\n+60:shot=after.png\n" + EXIT_APP
@@ -2822,7 +2826,7 @@ def t_find(S):
             "unstar removes the filtered Starred result safely; returning to Games keeps the query")
 
     r = run("refresh", "90:circle\n94:type=find-only\n150:start\n" +
-            "+8:down\n" * 23 + "+20:cross\n+70:select\n+70:cross\n"
+            "+8:down\n" * 4 + "+20:cross\n+70:select\n+70:cross\n"
             "+140:shot=game.png\n+20:quit\n", favs=target + "\n")
     S.check(r.has(r"^EVT library_refresh_done console=0 ") and
             r.has(r"^EVT ui_browser_view favs=1 shown=1$") and
@@ -2853,8 +2857,8 @@ def t_library_cache(S):
     # six console tabs (GBA, GB, GBC, SNES, NES, WS) since 1.4: two full turns
     script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:right\n+20:start\n" + "+8:down\n" * 10 +
-              "+20:shot=quality_setting.png\n" + "+8:down\n" * 13 +
+              "+60:right\n+20:start\n" + "+8:down\n" * 18 +
+              "+20:shot=quality_setting.png\n" + "+8:up\n" * 14 +
               "+20:shot=refresh_command.png\n+8:cross\n"
               "+60:shot=refreshed.png\n+8:cross\n+100:shot=game.png\n+20:quit\n")
     r = S.run("library_cache", script,
@@ -2882,7 +2886,7 @@ def t_settings_order(S):
     config = {"ui_home": 1, "scale_gba": 1, "filter_gba": 4, "quality_gba": 1,
               "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
               "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
-    for context, down in (("browser", 9), ("game", 7)):
+    for context, down in (("browser", 17), ("game", 0)):
         enter = "60:start\n" if context == "browser" else \
             "100:shot=before.png\n" + menu_pick(4, wait=10)
         leave = "+30:cross\n+120:shot=game.png\n+10:quit\n" if context == "browser" else \
@@ -3533,7 +3537,7 @@ def near(px, want, tol=40):
 # Settings by wrapping UP: Button mapping, Game order, Game folders, then it.
 # start, then up: Button mapping, Game order, Game folders, Sync RetroArch
 # saves, Cover picture
-COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 7
+COVER_ROW = "60:start\n+30:up\n" + "+8:up\n" * 3
 
 
 def t_cover_menu(S):
@@ -3825,10 +3829,9 @@ def t_fullspeed(S):
                 swap=max(int(w.get("swap_us", "0/0").split("/")[0])
                          for w in wins[1:]) if len(wins) > 1 else -1,
                 under=int(au[-1].get("under", 0)) if au else -1)
-    # ---- the row: Settings wraps upwards to Button mapping, THIS GAME's
-    # Display settings, Clock (RTC), Save type, CPU speed, Keep full speed; CROSS turns it off, and config.ini
-    # keeps that
-    script = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 11 + "+10:shot=row.png\n" \
+    # ---- the row: Keep full speed is 13 DOWN from Screen size; CROSS turns
+    # it off, and config.ini keeps that
+    script = menu_pick(4, wait=100) + set_down(13) + "+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -4975,7 +4978,7 @@ def _t_ra(S, srv):
     # password, each through the keyboard.
     # (1.2: one more UP, for Library > Game folders above Game order)
     # (1.4: and one more, for Library > Game names)
-    r = S.run("ra_login", "60:start\n+30:up\n" + "+8:up\n" * 10 +
+    r = S.run("ra_login", "60:start\n+30:down\n" + "+8:down\n" * 5 +
               "+10:shot=account.png\n+4:cross\n+2:type=ra_tester\n"
               "+20:type=hunter2pw\n+150:shot=signed_in.png\n+10:circle\n"
               "+30:quit\n", vita_ini=ini)
@@ -5002,7 +5005,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              "+20:up\n" + "+8:up\n" * 8 + "+10:cross\n+20:shot=list.png\n"
+              set_up(8) + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -5191,7 +5194,7 @@ def t_save_sync(S):
     S.check(not r.has(r"^EVT save_sync_out "), "...and nothing was written back")
     S.check(ours(r)[64:32768] == src[64:], "the save was still imported")
     # 7. the Settings row (Library, above Game folders): default on, toggles, persists
-    walk = "60:start\n+30:up\n" + "+8:up\n" * 6 + "+10:shot=row.png\n"
+    walk = "60:start\n+30:up\n" + "+8:up\n" * 2 + "+10:shot=row.png\n"
     r = S.run("save_sync_row", walk + "+4:right\n+20:circle\n+30:quit\n")
     S.clean(r)
     S.check(r.has(r"^EVT sync_ra_saves on=0 saved=1"), "the row turns it off and saves it")
@@ -5373,10 +5376,10 @@ def t_save_clock(S):
                 "a chosen type beats detection on the same ROM")
     else:
         S.note("no private Emerald copy here: that leg is skipped")
-    # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME;
-    #    from the last row (Display settings) UP twice.  X steps a value.
+    # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME,
+    #    17 DOWN from Screen size.  X steps a value.
     r = S.run("save_type_rows", menu_pick(4, wait=60) +
-              "+20:up\n" + "+8:up\n" * 7 + "+10:shot=rows.png\n"
+              set_down(17) + "+10:shot=rows.png\n"
               "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
               "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -5533,7 +5536,7 @@ def t_folders_ui(S):
     os.symlink(os.path.join(root, "mine"), A)
     # START: Settings; UP wraps to Button mapping, then Game order, then
     # Game folders
-    walk = "60:start\n+30:up\n+8:up\n+8:up\n+8:up\n+8:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
+    walk = "60:start\n+30:up\n+8:up\n+10:shot=row.png\n+4:cross\n"
     r = S.run("folders_ui", walk + "+4:type=%s\n+40:circle\n+90:quit\n" % A,
               prepared=True)
     S.clean(r)
@@ -5680,8 +5683,8 @@ def t_display_rows(S):
     """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
     saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
     grid."""
-    # browser Settings: 9 DOWN to Screen size, 7 more to Grid strength
-    walk = "60:start\n" + "+8:down\n" * 16 + "+20:shot=grid.png\n"
+    # browser Settings opens on Theme: 17 DOWN to Screen size, 7 more to Grid strength
+    walk = "60:start\n" + "+8:down\n" * 24 + "+20:shot=grid.png\n"
     r = S.run("display_rows", walk + "+4:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)
@@ -5693,7 +5696,7 @@ def t_display_rows(S):
     # Settings > Interface > Screenshot folder, typed on the keyboard
     shots = "/tmp/vad-shots-%d" % os.getpid()
     shutil.rmtree(shots, ignore_errors=True)
-    r = S.run("shot_dir_row", "60:start\n" + "+8:down\n" * 23 +
+    r = S.run("shot_dir_row", "60:start\n" + "+8:down\n" * 5 +
               "+20:shot=row.png\n+4:cross\n+4:type=%s\n+30:circle\n+30:quit\n" % shots)
     S.clean(r)
     S.check(r.has(r'^EVT screenshot_dir set path="%s" saved=1' % re.escape(shots)) and
@@ -5724,9 +5727,8 @@ def t_cpu_speed(S):
     import tempfile
     good = bytes.fromhex("50535653" "30333030" "0b000000" "f4010000"
                          "de000000" "de000000" "a6000000")
-    # the row, in game: Settings wraps upwards to Button mapping, Display
-    # settings, CPU speed
-    pick = menu_pick(4, wait=100) + "+20:up\n" + "+8:up\n" * 10 + "+10:shot=row.png\n"
+    # the row, in game: CPU speed is 14 DOWN from Screen size
+    pick = menu_pick(4, wait=100) + set_down(14) + "+10:shot=row.png\n"
     quit_ = "+4:circle\n+10:circle\n+30:quit\n"
 
     made = []
@@ -5939,7 +5941,7 @@ def t_controls_defaults(S):
     # -- the three rows, at the end of Settings (UP from the top wraps to
     # Button mapping, then Screenshot button combo, Rewind with right stick,
     # A and B buttons)
-    walk = ("60:start\n" + "+8:up\n" * 4 + "+10:shot=ab.png\n+4:right\n"
+    walk = ("60:start\n" + "+8:up\n" * 9 + "+10:shot=ab.png\n+4:right\n"
             "+10:shot=ab2.png\n+8:down\n+4:right\n+10:shot=stick.png\n"
             "+8:down\n+4:right\n+10:shot=combo.png\n+20:quit\n")
     r = S.run("controls_rows", walk, config=fresh)
@@ -5956,7 +5958,7 @@ def t_controls_defaults(S):
     for n in ("ab.png", "ab2.png", "stick.png", "combo.png"):
         S.picture(r, n)
     # ...and the screenshot row switches it off again
-    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 2 +
+    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 7 +
               "+4:right\n+10:shot=off.png\n+20:quit\n", prepared=True)
     S.clean(r)
     S.check(r.has(r"^EVT screenshot_combo_setting on=0") and
@@ -6028,7 +6030,7 @@ def t_snes_library(S):
 
 
 # Settings > LIBRARY > Game names: one above Cover picture (GitHub #16).
-NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 8
+NAMES_ROW = "60:start\n+30:up\n" + "+8:up\n" * 4
 
 
 def names_library(S):
@@ -6753,7 +6755,7 @@ def t_handoff(S):
     for the same frame, in order, through a menu (a flush) and the Settings
     row turned off and on again in the middle; (3) the census line says it
     ran; (4) off in a local link."""
-    toggle = menu_pick(4, wait=30) + "+20:up\n" + "+8:up\n" * 8 + "+10:shot=row.png\n+10:cross\n" + \
+    toggle = menu_pick(4, wait=30) + set_down(16) + "+10:shot=row.png\n+10:cross\n" + \
         "+6:circle\n+10:circle\n"
     script = ("100:right:40\n+30:shot=a.png\n+5:a:3\n+40:shot=b.png\n" + menu_pick(0, wait=20) +
               "+60:shot=c.png\n" + toggle + "+80:shot=d.png\n+5:b:10\n" + toggle +
@@ -6842,7 +6844,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + "+20:up\n" + "+8:up\n" * 4 + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(20) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
@@ -6871,7 +6873,8 @@ def t_save_heal_nes_ws(S):
                             ("wswan", "Heal Test.ws", ws_rom(S, "h_sram.ws"))):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
-        row = menu_pick(4, wait=60) + "+20:up\n" + "+8:up\n" * 4
+        # Export is after Display settings (and a WonderSwan game's three rows)
+        row = menu_pick(4, wait=60) + set_down(17 if kind == "nes" else 20)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})

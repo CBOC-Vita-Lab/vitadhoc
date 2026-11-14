@@ -667,6 +667,9 @@ void fx_flushCache (void)
 	GSU.vCacheFlags = 0;
 	GSU.bCacheActive = FALSE;
 	GSU.vCacheMask = 0;
+#ifdef FX_LINEFLAGS
+	memset(fx_lineOk, 0, sizeof(fx_lineOk));	// fx_cache() flushes while the GSU runs
+#endif
 }
 
 /*

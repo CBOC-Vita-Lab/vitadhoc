@@ -44,7 +44,10 @@ typedef struct snes_wide_stats {
 	uint32_t instr_us;        /* wall time of the hook for this frame (microseconds) */
 	int coverage_pct;         /* margin pixels that are real (tilemap, learned map, continued backdrop) in percent, smoothed over ~2 s */
 	int auto_wide;            /* Auto mode: 1 = real picture is shown, 0 = ambient frame only */
-	int xfade;                /* Auto cross-fade state 0 (wide) .. 32 (ambient frame): the margins already carry this blend */
+	int xfade;                /* Auto cross-fade state 0 (wide) .. 32 (ambient frame): the margins already carry this blend (the lower of the two sides) */
+	int side_wide[2], side_xfade[2], side_cov[2];   /* per side (0 left, 1 right): Auto's decision (1 = real picture), its cross-fade, smoothed real share in percent */
+	int work_margin;          /* columns per side that were composed (the cost ladder's rung); the columns beyond are the ambient frame */
+	int rung;                 /* the cost ladder's rung: 0 full .. 3 floor */
 } snes_wide_stats;
 
 /* Why a picture line's margin is not entirely real picture (one reason per line and frame; the first that applies):
@@ -69,6 +72,7 @@ typedef struct snes_wide_census {
 	uint32_t fb_setup;               /* picture height / margin the core cannot serve */
 	uint32_t frames_ambient;         /* widened frames whose margins are the ambient frame only (Auto with low coverage) */
 	uint32_t frames_crossfade;       /* ... of those and of the real ones: frames while a cross-fade was running */
+	uint32_t frames_side_amb[2];     /* frames on which the left / right margin was the ambient frame (Auto decides per side) */
 	uint32_t auto_switches;          /* Auto decisions changed (real <-> ambient) */
 	uint32_t scenes;                 /* scene changes widekit reported */
 	uint64_t px_tilemap;             /* margin pixels from the layers' tilemap (history, lead, exact composite) */
@@ -81,6 +85,11 @@ typedef struct snes_wide_census {
 	uint64_t line_reason[16];        /* picture lines (summed over frames) by what limits their margin: SNES_WIDE_LR_* */
 	int coverage_pct;                /* smoothed real share of the margins, percent */
 	int auto_wide;                   /* Auto's current decision (1 = real picture) */
+	uint64_t px_pad;                 /* margin pixels beyond the work margin (the ambient frame by the cost ladder) */
+	int chip;                        /* 1 Super FX, 2 SA-1, 0 none (cartridge header) */
+	int rung;                        /* the cost ladder's rung now: 0 full margin .. 3 floor */
+	uint32_t compose_us;             /* smoothed compose time per frame, microseconds (0 until measured; only with the ladder on) */
+	uint32_t rung_changes;           /* steps of the ladder */
 } snes_wide_census;
 void snes_wide_census_get(snes_wide_census *c);
 void snes_wide_census_reset(void);
@@ -96,6 +105,15 @@ int snes_wide_margin(void);
  * (copier header already stripped); title is the internal title. Call after every load, before the first frame. */
 void snes_wide_set_game(const uint8_t *rom, size_t n, const char *title);
 void snes_wide_clear_game(void);
+
+/* Cost ladder (option "policy", default 1; the twin's proofs run with 0 = always the full margin): the wide view is on for every game and never
+ * turned off by cost. The measured compose time (smoothed) steps the work margin, the columns per side that the renderer's passes, widekit and the
+ * learned map are asked for, down (full, 5/8, 3/8, centre only: the renderer's own margin passes follow the rung and are skipped at the floor); the columns beyond are the ambient frame, so the picture keeps its
+ * width and nothing beyond what is proven is ever drawn as picture. Super FX / SA-1 cartridges (header) start one rung down. Steps up need a
+ * long quiet stretch and room to spare. Options "cost_us" (default 9000: smoothed compose microseconds over which a rung is given up) and
+ * "cost_frames" (60). Menu: snes_wide_option("mode", 0 Auto | 1 On) each frame (Auto = per side Auto + ladder, On = the full margin always), Off = snes_wide_set(0, 0).
+ * snes_wide_option("pressure", 1|2): the frontend reports trouble (pacer not at full rate, a bad second): the ladder steps down at once (2: to the floor) and
+ * climbs back under the normal rule; ignored in On. */
 
 /* Auto mode (default on): the margins show real picture only while the real share stays high over the last seconds, else the
  * ambient frame; a decision change cross-fades over half a second. "On" in the player = snes_wide_option("auto", 0). */

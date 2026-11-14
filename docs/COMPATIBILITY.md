@@ -19,7 +19,7 @@ it cannot see: wrong sprites, wrong colours in small places, flicker you only
 notice while playing, how the music sounds, or how it feels. Anything in the
 "not checked" column needs eyes and ears on a Vita.
 
-## Results in 1.3
+## Results in 1.3 (no new per-game testing in 1.4)
 
 | Game | Result | Notes |
 |---|---|---|
@@ -40,6 +40,24 @@ notice while playing, how the music sounds, or how it feels. Anything in the
 
 1.2 and 1.3 gave identical pictures and sound in every game above except the
 two fixed ones (and small timing differences in a game's random choices).
+
+## NES, WonderSwan and Super NES in 1.4
+
+- **NES and WonderSwan** (new in 1.4) have been run only with synthetic test
+  cartridges (NES) and test cartridges plus one game (WonderSwan), on the PC
+  build. No commercial NES game has been tried, so there is no list of games
+  that work yet. Famicom Disk System games need your own `disksys.rom`.
+  Pocket Challenge V2, WonderWitch and WonderSwan games with a clock are
+  untested. Neither console has run on a real Vita.
+- **Super NES** was checked on 15 commercial games the tester owns, three
+  thousand frames each, for wide view (never a wrong tile) and for Super FX
+  speed (identical pictures and sound before and after). European (PAL) games
+  now run at their true 50 Hz speed. Not a Vita test.
+- **GBA** games that rewrite their own code (a self-modifying game) flush only
+  the part that changed in 1.4. Software-3D games (bitmap modes) start on
+  sharp bilinear so they are not asked to redraw a whole smoothed picture each
+  frame. Sprite priority is exact in 1.4; the OAM-order note below was
+  written for 1.3 and has not been rechecked.
 
 ## Not fixed, and not checked
 

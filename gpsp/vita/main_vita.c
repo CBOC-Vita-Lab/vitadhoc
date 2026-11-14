@@ -297,6 +297,13 @@ static int g_look_gov = 1;
 static int g_ho_check = 1;
 static int g_core4_off;
 
+/* jit_lazy_exits = 0 | 1 and jit_lazy_budget = N (GBA recompiler, cpu_threaded.c
+ * "LAZY EXITS"): exits to untranslated ROM code are linked on first execution
+ * once N speculative blocks were translated by one lookup.  Not in g_sw: that
+ * initializer is positional. */
+static int g_jit_lazy = 0;
+static int g_jit_lazy_budget = 0;
+
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
 
@@ -1706,6 +1713,10 @@ static void read_switches(void)
     * "Version 1.4: SMC Without Whole-Cache Flushes"): no Settings row */
    g_sw.smc_partial     = fe_ini_get_int(ini, "smc_partial", 1) ? 1 : 0;
    g_sw.dispatch_cache  = fe_ini_get_int(ini, "dispatch_cache", 1) ? 1 : 0;
+   g_jit_lazy           = fe_ini_get_int(ini, "jit_lazy_exits", g_jit_lazy) ? 1 : 0;
+   g_jit_lazy_budget    = (int)fe_ini_get_int(ini, "jit_lazy_budget", g_jit_lazy_budget);
+   if (g_jit_lazy_budget < 0 || g_jit_lazy_budget > 4096)
+      g_jit_lazy_budget = 0;
    /* smooth hand-over (handoff_glue.h): this launch's override of the
     * setting, and where its drawing thread runs */
    g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);
@@ -4084,6 +4095,15 @@ static void window_begin(void)
                 "blocks=%u vm_syncs=%u revived=%u reclaims=%u dcache_hits=%u "
                 "emergencies=%u", gpsp_smc_partial_active(), d[4], d[6], d[7],
                 d[0] + d[1], d[2], d[8], d[13], d[14], smc_partial_emergencies);
+      if (g_game_console == FE_CONSOLE_GBA)
+      {
+         /* the window's worst frame: demand vs speculative blocks, VM syncs
+          * and their time, translation time, ROM pages (cpu_threaded.c) */
+         extern uint32_t gpsp_jit_worst_line(char *buf, uint32_t cap);
+         char wl[320];
+         if (gpsp_jit_worst_line(wl, sizeof(wl)))
+            fe_evt("%s", wl);
+      }
       if (smc_partial_emergencies && !emerg_told)
       {
          emerg_told = 1;
@@ -5096,6 +5116,11 @@ static int game_boot(const char *rom_path, fe_console_t console)
       extern void gbab_gpsp_smc_partial_set(uint32_t on) __attribute__((weak));
       extern void gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
       extern void gbab_gpsp_dispatch_cache_set(uint32_t on) __attribute__((weak));
+      extern void gpsp_jit_lazy_set(uint32_t on, uint32_t budget);
+      extern void gbab_gpsp_jit_lazy_set(uint32_t on, uint32_t budget) __attribute__((weak));
+      gpsp_jit_lazy_set((uint32_t)g_jit_lazy, (uint32_t)g_jit_lazy_budget);
+      if (gbab_gpsp_jit_lazy_set)
+         gbab_gpsp_jit_lazy_set((uint32_t)g_jit_lazy, (uint32_t)g_jit_lazy_budget);
       gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
       if (gbab_gpsp_smc_partial_set)
          gbab_gpsp_smc_partial_set((uint32_t)g_sw.smc_partial);
@@ -5103,8 +5128,9 @@ static int game_boot(const char *rom_path, fe_console_t console)
          gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
       if (gbab_gpsp_dispatch_cache_set)
          gbab_gpsp_dispatch_cache_set((uint32_t)g_sw.dispatch_cache);
-      fe_evt("jit_switches smc_partial=%d dispatch_cache=%d", g_sw.smc_partial,
-             g_sw.dispatch_cache);
+      fe_evt("jit_switches smc_partial=%d dispatch_cache=%d jit_lazy_exits=%d "
+             "jit_lazy_budget=%d", g_sw.smc_partial, g_sw.dispatch_cache,
+             g_jit_lazy, g_jit_lazy_budget);
    }
    rc = fe_host_boot(&cfg);
    gpsp_rom_load_progress = NULL;

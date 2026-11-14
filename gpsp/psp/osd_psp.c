@@ -6,6 +6,9 @@
 #include "osd_psp.h"
 #include "video_psp.h"
 #include "font_8x16.h"
+#ifdef VITA
+#include "vstyle.h"       /* a page's toast is the app's rounded glass */
+#endif
 
 #define TOAST_MAX     4
 #define TOAST_FRAMES  150   /* ~2.5 s per toast */
@@ -51,9 +54,14 @@ void osd_toast(const char *fmt, ...)
 #ifdef VITA
 /* In a menu the toast is a strip on the screen's top edge, 17 rows: the
  * wordmark begins on row 17. */
-static int toast_y = 6, toast_slim;
+static int toast_y = 6, toast_slim, toast_glass;
 void osd_toast_place(int where)
 {
+   /* A page's toast (a menu, the game list) sits 24 px above the footer,
+    * in rounded glass: at the top edge it was under the header and at the
+    * bottom it was cut off by the screen.  Over the game it is the PSP's
+    * strip, unchanged. */
+   toast_glass = where != OSD_TOAST_GAME;
    toast_slim = where == OSD_TOAST_MENU;
    toast_y = where == OSD_TOAST_MENU ? 0
            : where == OSD_TOAST_LIST ? VID_SCR_H - 20 - (FE_FONT_H + 8) - 4 : 6;
@@ -126,9 +134,11 @@ void osd_take(osd_snap *s)
 #ifdef VITA
    s->toast_y = (short)toast_y;
    s->toast_slim = (short)toast_slim;
+   s->toast_glass = (short)toast_glass;
 #else
    s->toast_y = TOAST_Y;
    s->toast_slim = 0;
+   s->toast_glass = 0;
 #endif
 }
 
@@ -139,6 +149,22 @@ void osd_draw_snap(const osd_snap *s)
 
    vid_overlay_begin(0);
 
+#ifdef VITA
+   if (s->toast[0] && s->toast_glass)
+   {
+      /* Vita pixels (960x544).  The footer is 20 logical rows tall. */
+      char msg[sizeof(s->toast)];
+      float tw, pw, py;
+      memcpy(msg, s->toast, sizeof(msg));
+      vs_text_fit(VS_LABEL, msg, VS_W - 120);
+      tw = vs_text_w(VS_LABEL, msg);
+      pw = tw + 48;
+      py = (float)(VS_H - 2 * 20 - 24 - 48);
+      vs_rrect((VS_W - pw) / 2, py, pw, 48, 24, VS_HEX(0x1A2340, 240));
+      vs_text_c(VS_LABEL, VS_W / 2.0f, py + 12, msg, VS_HEX(0xFFFFFF, 255));
+   }
+   else
+#endif
    if (s->toast[0])
    {
       const char *msg = s->toast;

@@ -19,6 +19,7 @@
 #include <time.h>
 
 #include "upscale_vita.h"
+#include "mmpx_vita.h"
 
 void xbrz_c_init(void);
 void xbrz_c_scale(int factor, const uint32_t *src, uint32_t *dst,
@@ -143,6 +144,10 @@ static void epx_ref(const uint16_t *src, int w, int h, int f, uint32_t *dst)
       }
 }
 
+/* 1: xBRZ-kind pictures made at 2x are MMPX's (the governor's Auto step) */
+static int g_mmpx;
+static uint32_t g_lut565[65536];
+
 static int run(int kind, int f, int w, int mode, int frames, int async)
 {
    const int h = 160;
@@ -160,6 +165,7 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
    upscale_stats_t st;
 
    upscale_forget(0);
+   mmpx_set_auto(g_mmpx);
    upscale_slide_mode(mode);
    upscale_stats(&st);
    for (fr = 0; fr < frames; fr++)
@@ -226,7 +232,9 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
 
       for (i = 0; i < w * h; i++)
          s32[i] = lut0(pic[i]);
-      if (kind == UPSCALE_XBRZ)
+      if (kind == UPSCALE_XBRZ && ff == 2 && g_mmpx)
+         mmpx_rect(pic, w, h, g_lut565, ref, (size_t)2 * w, 0, h, 0, w);
+      else if (kind == UPSCALE_XBRZ)
          xbrz_c_scale(ff, s32, ref, w, h, 0, h);
       else
          epx_ref(pic, w, h, ff, ref);
@@ -255,9 +263,11 @@ static int run(int kind, int f, int w, int mode, int frames, int async)
    }
    upscale_stats(&st);
    slid += (int)st.slid_pct;
+   if (g_mmpx)
+      mmpx_set_auto(0);
    printf("%-5s f=%d w=%d mode=%d async=%d: %d frames, %d wrong, slid %s, "
           "%d at a smaller factor\n",
-          kind == UPSCALE_XBRZ ? "xbrz" : "scale", f, w, mode, async, frames,
+          kind == UPSCALE_XBRZ ? (g_mmpx && f == 2 ? "mmpx" : "xbrz") : "scale", f, w, mode, async, frames,
           bad, slid ? "yes" : "no", small);
    free(pic); free(s32); free(ref); free(tex[0]); free(tex[1]);
    /* the fade: every one of its 4x pictures at 2x, and 4x again some time
@@ -397,6 +407,59 @@ static int gov_test(void)
    return fails;
 }
 
+/* ---- MMPX: pieces equal the whole, on every size ----------------------------
+ * mmpx_rect on the whole picture, then the same picture cut into stripes and
+ * odd rectangles (as the helpers do), then a flat picture.  Sizes with a side
+ * of 1 or 3 pixels, where every read is in the border, and the largest the
+ * upscaler takes.  (The rules themselves are checked against the authors'
+ * reference outside this file: docs/DEFAULTS-1.4.md.) */
+static int mmpx_sizes(void)
+{
+   static const int sz[][2] = { { 1, 1 }, { 1, 37 }, { 41, 1 }, { 2, 2 }, { 3, 3 }, { 5, 4 },
+                                { 37, 23 }, { 240, 160 }, { 282, 160 }, { 320, 256 } };
+   int k, fails = 0;
+   for (k = 0; k < (int)(sizeof(sz) / sizeof(sz[0])); k++)
+   {
+      const int w = sz[k][0], h = sz[k][1];
+      uint16_t *pic = malloc((size_t)w * h * 2);
+      uint32_t *a = malloc((size_t)w * h * 16), *b = calloc((size_t)w * h * 4, 4);
+      int x, y, i;
+      for (i = 0; i < w * h; i++)           /* few colours in blocks and lines: edges everywhere */
+      {
+         const int px = i % w, py = i / w;
+         const unsigned v = (unsigned)((px / 3 + py / 2) * 7 + ((px ^ py) & 1) * ((px + py) % 5 == 0)) % 6;
+         pic[i] = (uint16_t)(v * 11111u + 777u);
+      }
+      mmpx_rect(pic, w, h, g_lut565, a, (size_t)2 * w, 0, h, 0, w);
+      for (y = 0; y < h; y += 8)
+         for (x = 0; x < w; x += 37)
+         {
+            const int y1 = y + 8 > h ? h : y + 8, x1 = x + 37 > w ? w : x + 37;
+            mmpx_rect(pic, w, h, g_lut565, b + 2 * ((size_t)y * 2 * w + x), (size_t)2 * w,
+                      y, y1, x, x1);
+         }
+      if (memcmp(a, b, (size_t)w * h * 16))
+      {
+         fprintf(stderr, "  mmpx %dx%d: stripes differ from the whole\n", w, h);
+         fails++;
+      }
+      /* flat: every output pixel is the colour */
+      for (i = 0; i < w * h; i++)
+         pic[i] = 0x1234;
+      mmpx_rect(pic, w, h, g_lut565, a, (size_t)2 * w, 0, h, 0, w);
+      for (i = 0; i < w * h * 4; i++)
+         if (a[i] != g_lut565[0x1234])
+         {
+            fprintf(stderr, "  mmpx %dx%d: flat picture changed\n", w, h);
+            fails++;
+            break;
+         }
+      free(pic); free(a); free(b);
+   }
+   printf("mmpx sizes: %d failed\n", fails);
+   return fails;
+}
+
 int main(int argc, char **argv)
 {
    int fails = 0, mode, f, wi, async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
@@ -404,6 +467,11 @@ int main(int argc, char **argv)
    int frames = argc > 1 ? atoi(argv[1]) : 200;
    world_make();
    xbrz_c_init();
+   {
+      unsigned v;
+      for (v = 0; v < 65536; v++)
+         g_lut565[v] = lut0((uint16_t)v);
+   }
    for (mode = 0; mode <= 2; mode++)
       for (wi = 0; wi < 2; wi++)
       {
@@ -412,6 +480,13 @@ int main(int argc, char **argv)
          for (f = 2; f <= 3; f++)
             fails += run(UPSCALE_SCALE, f, widths[wi], mode, frames, async);
       }
+   /* MMPX 2x in the xBRZ slot (the governor's Auto step): every slide mode, both widths */
+   g_mmpx = 1;
+   for (mode = 0; mode <= 2; mode++)
+      for (wi = 0; wi < 2; wi++)
+         fails += run(UPSCALE_XBRZ, 2, widths[wi], mode, frames, async);
+   g_mmpx = 0;
+   fails += mmpx_sizes();
    fails += band_split();
    fails += gov_test();
    upscale_shutdown();

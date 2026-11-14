@@ -343,6 +343,22 @@ defsymbl(arm_indirect_branch_thumb)
   restore_flags()
   bx r0
 
+@ GPSP_LAZY_EXITS: the first execution of an exit left unlinked.  Entered by
+@ the exit's `b` through a lazy island (arm_emit.h generate_lazy_exit_island):
+@ r0 = guest pc of the target, r1 = the exit's `b`.  Like an indirect branch,
+@ with the address to patch handed on to the C lookup (r1 survives save_flags).
+defsymbl(arm_lazy_exit_arm)
+  save_flags()
+  call_c_function(block_lookup_address_lazy_arm)
+  restore_flags()
+  bx r0
+
+defsymbl(arm_lazy_exit_thumb)
+  save_flags()
+  call_c_function(block_lookup_address_lazy_thumb)
+  restore_flags()
+  bx r0
+
 defsymbl(arm_indirect_branch_dual_arm)
   save_flags()
   tst r0, #0x01                           @ check lower bit

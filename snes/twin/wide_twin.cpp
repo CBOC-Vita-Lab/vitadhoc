@@ -164,6 +164,7 @@ int main(int argc, char **argv)
 	std::set<int> dumpset, shotset, statset;
 	int trace_every = 0, cg_a = -1, cg_b = -1;
 	bool split_mode = false, bench = false, map_poll = false;
+	std::set<int> pressure_set;
 	const char *save_state = 0, *load_state = 0; int save_at = -1;
 	std::vector<std::pair<uint32_t, uint8_t>> pokes;
 	struct KV { std::string k; int v; };
@@ -190,6 +191,7 @@ int main(int argc, char **argv)
 		else if (arg("--state-hash") && i + 2 < argc) { state_every = atoi(argv[++i]); statef = argv[++i]; }
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--wide-split")) split_mode = true;
+		else if (arg("--pressure")) pressure_set = parse_set(argv[++i]);   /* frames on which the frontend reports pressure (snes_wide_option "pressure") */
 		else if (arg("--save-state") && i + 2 < argc) { save_state = argv[++i]; save_at = atoi(argv[++i]); }   /* emulation state after frame N (no wide data) */
 		else if (arg("--load-state")) load_state = argv[++i];
 		else if (!strcmp(argv[i], "--map-poll")) map_poll = true;   /* save / dirty / census calls from the frame thread while compose runs (TSan) */
@@ -210,6 +212,7 @@ int main(int argc, char **argv)
 		size_t rn = 0;
 		const uint8_t *rimg = snes_host_rom_image(&rn);
 		snes_wide_set_game(rimg, rn, snes_host_rom_title());
+		snes_wide_option("policy", 0);     /* the proofs run the wide view on every game; the cost ladder is tested with --wopt policy=1 */
 		for (auto &o : wopts) if (snes_wide_option(o.k.c_str(), o.v)) { fprintf(stderr, "unknown wide option %s\n", o.k.c_str()); return 2; }
 		if (mapf) {
 			std::vector<uint8_t> m = read_all(mapf);
@@ -368,6 +371,7 @@ int main(int argc, char **argv)
 		if (f == cg_b) { CALLGRIND_STOP_INSTRUMENTATION; CALLGRIND_DUMP_STATS; }
 #endif
 		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
+		if (wide && pressure_set.count(f)) snes_wide_option("pressure", 1);
 		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
 		snes_host_set_pad(0, pad);
 		snes_host_run_frame();
@@ -454,7 +458,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "map saved: %zu bytes\n", got);
 		}
 	}
-	if (summary && wide)
+	if (summary && wide) {
 		printf("wide: frames=%ld available=%ld mean real px L=%.1f R=%.1f, adapter %.0f us/frame\n", n_wide, n_avail,
 		       n_avail ? sum_l / n_avail : 0, n_avail ? sum_r / n_avail : 0, n_avail ? sum_us / n_avail : 0);
 		snes_wide_census c;
@@ -466,6 +470,9 @@ int main(int argc, char **argv)
 		       c.frames, c.frames_wide, c.frames_fallback, c.fb_nothing_drawn, c.fb_profile_off, c.fb_setup, c.frames_ambient, c.frames_crossfade,
 		       c.auto_switches, c.scenes, c.map_cells, c.coverage_pct, c.auto_wide,
 		       tot ? 100.0 * c.px_tilemap / tot : 0, tot ? 100.0 * c.px_learned / tot : 0, tot ? 100.0 * c.px_backdrop / tot : 0, tot ? 100.0 * c.px_unknown / tot : 0);
+		printf("sides: ambient left %u right %u of %u frames\n", c.frames_side_amb[0], c.frames_side_amb[1], c.frames_wide);
+		printf("ladder: rung=%d chip=%d compose_us=%u rung_changes=%u pad_px=%llu\n", c.rung, c.chip, c.compose_us, c.rung_changes, (unsigned long long) c.px_pad);
+	}
 	if (wide) {
 		snes_wide_census c2;
 		snes_wide_census_get(&c2);

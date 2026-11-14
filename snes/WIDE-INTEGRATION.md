@@ -132,10 +132,15 @@ of `run()`, smoothed over about 32 frames; on the split path that is the drawing
 | 0 | the picture's margin (41 / 70 / up to 96) | - |
 | 1 | 5/8 of it | ambient frame |
 | 2 | 3/8 of it | ambient frame |
-| 3 | the floor, 12 columns | ambient frame |
+| 3 | the floor: centre only (no margin passes, no capture) | ambient frame |
 
 The picture keeps its full width: the columns beyond the work margin are the ambient frame (a calm colour field, never structure, so never a
-wrong tile) and the last 12 work columns fade into it (a faded pixel claims nothing). Steps down: smoothed compose time above `cost_us`
+wrong tile) and the last 12 work columns fade into it (a faded pixel claims nothing). At the floor the core is told `S9xWideCentreOnly(1)`
+(a relaxed atomic byte, latched at the start of the next frame, so the compose thread may set it): the renderer draws no margin passes and takes
+no capture of the frame (`S9xWideRenderFrameStart(0)`, no VRAM / stamp copy in the PPU thread's `K_WIDE_END`; the VRAM write stamps stay on so
+the way back up is cheap), the hook still gets the centre picture, and compose (`run_co`) only copies it between two ambient columns
+strips. Hi-res and interlaced frames are told by the rendered size and fall back to the normal picture as before. The step back up is judged
+by the compose time the wider rung had when it was given up (`last_us`), trusted for one minute, after which one probe is made. Steps down: smoothed compose time above `cost_us`
 (default 9000 us, about half of a 60 Hz frame so that the draw thread also has room for the texture copy) for `cost_frames` (60) frames.
 Steps up (hysteresis): only after `hold_frames` (600 frames = 10 s; doubled up to 7200 each time a step up was followed by a step down within
 a minute) at the rung, and only if the time scaled to the wider margin (linear in the margin) is at most 75 % of the budget. Super FX and SA-1
@@ -144,10 +149,20 @@ shrinks the region that is composed and fills the rest with the ambient frame; `
 (`policy=1 cost_us=1`) on scrolling, window and Mode 7 cartridges (0 wrong real pixels, centre identical).
 The twin can stand in for a slower machine with `--wopt cost_scale=PERCENT` (the ladder sees the measured time times this).
 
-What the ladder does not reduce: the renderer's own margin passes (PPU thread) and the capture. Their cost depends little on the margin (a
-tile draw costs the same per call, one call per tile row, line and layer), so the floor still leaves the passes of Super FX games with a
-render batch per line (Yoshi's Island: about 6 M instructions a frame). Cutting that needs a core mode that delivers the hook with the centre
-only (no passes) for the floor rung; snes/core is not in this agent's ownership (see the report).
+Menu semantics (owner, 14 Nov 2026): Wide view **Auto** = per side Auto plus the cost ladder (`snes_wide_option("mode", 0)`), **On** = the full margin
+always, no ladder (`"mode", 1`), **Off** = `snes_wide_set(0, 0)`. The player calls `"mode"` every frame (lock free unless it changes). The core's own
+margin follows the rung (`S9xWideCoreMargin`, latched at the start of the next frame like the centre only flag): the passes are drawn with the
+work margin, so the PPU thread's cost moves with the rung, not only compose; a frame drawn just before the core followed a step up is captured at
+the narrower margin it has. `snes_wide_option("pressure", 1|2)`: the player reports trouble (pacer not at full rate, a governor "bad second"); the
+ladder steps down at once on the next composed frame whatever compose took (1 = one rung, 2 = to the floor), and a step up needs `hold_frames` quiet
+frames after the last report, then the normal rule; ignored in On. This replaces the old valve that switched the wide view off in half pacing.
+Ladder details: the hold time doubles only after a step down that follows a step UP too soon; the average is only fed by frames composed at the
+margin that is asked for now (a frame from before a step does not reseed it).
+
+Cost of the rungs (x86 callgrind, Yoshi's Island, frames 1500 to 1560 of the owner's script, margin 41, instructions per frame in millions): wide off
+8.12; wide on at the full margin (rung 0) 15.24 (+88 %); rung 1 (26 columns) 14.5; rung 2 (16 columns) 10.5; floor (centre only) 8.85 (+9 %): the PPU
+thread's passes and capture, about 6.4 M a frame, are not done. Rung 1 saves little (a tile draw costs the same per call, one call per tile row, line and
+layer, and Yoshi's Island has one render batch per line); rung 2 and the floor are the ones that give frames back.
 
 ## The 15 games (13 Nov 2026; `snes/twin/wide_table.py`, margin 41, 3000 frames of the owner's script, x86 twin)
 

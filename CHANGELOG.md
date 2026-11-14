@@ -1,8 +1,9 @@
 # What's New
 
-## Version 1.4 (in progress)
+## Version 1.4
 
-- **Your saves reach RetroArch.** A save made by an older version (or one that
+- **Your saves reach RetroArch** (GitHub #3, which also had the Game Boy
+  tap-to-open-menu fix: a tap on the screen opens the menu on every console). A save made by an older version (or one that
   was never taken from RetroArch) is now also written, once, as a plain
   `Game.srm` where RetroArch looks, with one sentence saying where. A RetroArch
   file that is newer or different is never overwritten: both are kept and you
@@ -10,7 +11,7 @@
   version left beside the game go to the app's folder. Settings > This game >
   Export save for other emulators makes a plain `.srm` or `.sav` on request.
   See docs/SAVES.md.
-- **Game names** (Settings > Library): show the game's title or its file name.
+- **Game names** (GitHub #16; Settings > Library): show the game's title or its file name.
   Games that would show the same name, such as ROM hacks of one game, also
   show their file name under it.
 - **NES and Famicom games.** A fifth shelf, NES, beside GBA, GB, GBC and SNES:
@@ -55,15 +56,61 @@
   picture options no longer slow the game down. Off in link play. Turn it off
   if the picture ever misbehaves.
 - **The best look by default.** Image quality is Auto on every install (it
-  was Original on a fresh one): xBRZ smoothing at the largest size the
-  console holds at full speed, over sharp bilinear (no more uneven nearest
-  pixels as the base filter). A game that cannot hold 60 with it is eased one
-  small, least visible step at a time (the ambient glow's moving picture
-  first, then xBRZ 4x, 3x, 2x, the frame blend, the wide view last), gets the
-  look back when there is room, and remembers what it needed. The Image
-  quality row then reads, for example, "Auto (xBRZ 3x, eased)". A row you
-  set yourself is never touched. The wide view's margins now continue the
-  picture's own edges by default instead of black bars.
+  was Original on a fresh one): xBRZ smoothing over sharp bilinear (no more
+  uneven nearest pixels as the base filter), starting at a ceiling for each
+  console (GBA, GB, GBC and WonderSwan xBRZ 3x, NES 2x; 4x only when you set
+  it by hand). A game that cannot hold 60 with it is eased one small, least
+  visible step at a time (the ambient glow's moving picture first, then the
+  xBRZ size, MMPX 2x, the frame blend, and last sharp bilinear), gets the
+  look back when there is room, and remembers what it needed. The wide view
+  and the screen fill are never given up. The Image quality row then reads,
+  for example, "Auto (xBRZ 3x, eased)". A row you set yourself is never
+  touched. The wide view's margins now continue the picture's own edges by
+  default instead of black bars.
+- **MMPX 2x smoothing.** A new smoothing step between xBRZ 2x and sharp
+  bilinear: it costs less than xBRZ and keeps pixel art crisp. GBA games that
+  draw their whole picture every frame in software 3D (Need for Speed, Driver,
+  SSX) start on sharp bilinear automatically. Every choice stays available in
+  Settings.
+- **Super NES, European games at their true speed.** PAL games run at 50 Hz
+  (five frames per six refreshes) instead of 20 % fast. Menu row **PAL games
+  speed**: True 50 Hz (default) or Fast 60 Hz.
+- **Super NES wide view, on by default.** Every SNES game fills the 16:9
+  screen without costing a frame: the real picture is kept in the middle, the
+  sides show real picture where the game can afford it and fade into a soft
+  extension elsewhere, and never a wrong tile. Per side, the side the camera
+  came from can show real picture. Menu: Wide view Auto (adapts), On (full
+  margin) or Off.
+- **Super NES picture and sound.** Menu row **Image look** (Auto, Full,
+  Light): Auto eases the blends only when a game cannot hold 60. A new audio
+  pacer fixes crackle and uneven sound (GitHub #15). Snes9x fixes made after
+  1.63 are in, plus cheats, ten state slots with pictures and a new in-game
+  menu.
+- **Super FX games run faster.** About 10 to 15 percent less work for each
+  Super FX instruction, with identical pictures and sound on the 15 games
+  tested; Doom, Stunt Race FX and the like get more game speed.
+- **GBA stutter and picture fixes.** Games that rewrite their own code
+  flush only the part that changed, and a dispatch cache cuts the work of
+  jumping between translated blocks, so fewer stutters. Sprite priority is
+  exact and several renderer bugs are fixed.
+- **Reliability.** Waiting for a helper thread has a time limit, so a stalled
+  helper can no longer hang the app; a hand-over self-check falls back by
+  itself if the drawing thread misbehaves; saves and the log are written off
+  the game thread; the fourth CPU core is used when the CapUnlocker plugin
+  provides it. Link play waits 20 seconds before it gives a silent partner up
+  and keeps the connection alive from its own thread. Achievements pause
+  while two consoles are linked.
+- **Menus.** Settings opens on the most useful section (Display in a game,
+  Interface on the home screen) in a clearer order, and rows that do not
+  apply to the current console are hidden. An always-visible button hint
+  line sits under the home screen buttons, touch targets are bigger and
+  messages are never cut off. Wide view's fill row is called Screen fill.
+- **Settings for every default.** Each of the choices above has a row in
+  Settings, so nothing here is hidden behind a file.
+- **For testers.** `tools/vita-matrix` runs unattended test sessions on a
+  Vita and puts everything back afterwards; the log has per-thread CPU and
+  missed-refresh counts; switches in `vita.ini` bring back the 1.3 behaviour
+  for comparison.
 - **NES and WonderSwan cheat lists.** Cheats > the game's list now has
   ready-made codes for NES and WonderSwan games too (found by the game's
   checksum, then by its name), besides the codes you type yourself.

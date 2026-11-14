@@ -4,6 +4,28 @@ Found something else? Please tell us in
 [GitHub issues](https://github.com/CBOC-Vita-Lab/vitadhoc/issues), with the
 game, its region and what you did.
 
+## Version 1.4: Not Yet Tested On A Console
+
+Everything new in 1.4 was verified on the PC test builds and in an emulator.
+The physical-Vita test is pending, so no 1.4 speed figure exists yet and the
+speeds in the [performance report](docs/PERFORMANCE.md) are those of 1.3. The
+first things to watch on a console: how large a smoothing step each console
+holds at a steady 60 (Image quality Auto starts at a ceiling per console and
+steps down by itself), NES sound and the WonderSwan, the Super NES wide view
+and the drawing-on-its-own-core hand-over. Each can be turned off in Settings
+if it misbehaves (Smooth hand-over, Steady pacing, Wide view, Image quality).
+
+- **Internet play by room code is not in 1.4.** It needs a relay server and
+  was put off. Two Vitas still link over Wi-Fi, ad hoc, or the internet with a
+  reachable UDP port (see Play Together).
+- **Hardware anti-aliasing was dropped:** a game picture is one flat rectangle,
+  so there is no polygon edge for it to smooth; Smoothing and Image quality do
+  that job.
+- **The CBOC Vita Installer** does not yet offer NES or WonderSwan folders;
+  copy those games with VitaShell (`ux0:ROMS/NES`, `ux0:ROMS/WS`).
+- **Link Vitas on the same version.** Link play changed in 1.4 (waiting time,
+  keepalive); update both Vitas.
+
 ## Testing In Progress
 
 Current Vita results are in the [performance report](docs/PERFORMANCE.md).
@@ -32,9 +54,15 @@ Testing continues on:
   the chip at full speed. Super Mario RPG and Kirby Super Star dip a frame
   now and then. The SNES player writes its speed to
   `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
-- The SNES player has its own pause menu (hold **L + R + Start**) with four
-  state slots. Rewind, fast forward, Continue, cheats, patches and
-  RetroAchievements are for GBA and Game Boy games only for now.
+- The SNES player has its own pause menu (hold **L + R + Start**) with ten
+  state slots and cheats. Rewind, fast forward, Continue, patches and
+  RetroAchievements are not in it yet.
+- **Wide view** is on by default and built never to cost a frame: where a
+  game is busy, the real picture at the sides is narrowed and fades into a
+  soft extension. It was checked on 15 games for 3000 frames each, not on a
+  Vita; if a game looks wrong at the sides, set Wide view to Off in the menu.
+- **PAL (European) games** now keep their true 50 Hz speed; **PAL games
+  speed** in the menu returns them to the old fast 60 Hz.
 - **Players 3 and 4** need the Super Multitap (Auto turns it on for games
   known to use it) and extra controllers. Controllers beyond the first have
   not been tried on a real Vita yet.
@@ -42,8 +70,11 @@ Testing continues on:
 ## NES And Famicom
 
 - **New in 1.4, and the least tested console here.** NES has run on the PC
-  build with test cartridges; no game has been played on a real Vita yet.
-  Nothing is measured, and no speed is promised.
+  build with test cartridges only: no commercial NES game has been tried
+  yet, and none has been played on a real Vita. Nothing is measured, and no
+  speed is promised. The ready-made cheat list covers about 2,000 NES games,
+  found by the game's checksum or name; looking one up from the menu has not
+  been tried on a console.
 - **Famicom Disk System games** need your own `disksys.rom` (the system's BIOS,
   which cannot be included). Put it beside the game or in
   `ux0:data/GBAdhoc/nes/`. Without it the game says so and returns.
@@ -77,8 +108,9 @@ Testing continues on:
   Triangle and Square are the game's, so use the right stick for fast forward.
   Button mapping in Settings does not apply to WonderSwan games.
 - **Cheats** are RAM codes (`AAAAA:VV`, hex), from the game's `.cht` file in
-  `ux0:data/GBAdhoc/cheats/` or typed in the Cheats page. No cheat list for
-  WonderSwan or NES games is included yet: use RetroArch's `.cht` files.
+  `ux0:data/GBAdhoc/cheats/` or typed in the Cheats page. The ready-made
+  list for WonderSwan games has a single game (the source data is that small);
+  use RetroArch's `.cht` files or type codes in for the rest.
 - Pocket Challenge V2 (`.pc2`), WonderWitch and games with a clock are
   untested. No descriptions for WonderSwan games yet; names and covers come
   from the No-Intro catalogue.

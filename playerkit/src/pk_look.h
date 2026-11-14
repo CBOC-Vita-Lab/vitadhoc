@@ -112,6 +112,11 @@ public:
 	bool user_row(int row) const;
 	/* the first frame of the game: the remembered look is applied (a change; poll generation()) */
 	void start();
+	/* The frontend knows better than the load can say, in the first seconds, that these rungs are needed (the
+	 * picture is redrawn whole every frame, so no dirty-area saving ever helps): apply them at once, remember
+	 * them for the game like a step that cured an overload, and let the usual climb give them back if the load
+	 * really shows room. Rungs of a row set by hand are skipped. Returns true when the applied look changed. */
+	bool force_rungs(uint32_t rungs, const char *why);
 
 	/* ---- every second of play ---- */
 	/* Returns true when the applied look changed. */
@@ -218,6 +223,23 @@ private:
 	uint32_t mem_mask_ = 0;
 	float mem_peak_ = 0;
 };
+
+/* ---- what a quality step costs, from the pixels it writes ---------------------------------------------------
+ * The smart scalers write every output pixel once (and read a few neighbours of it), so what a tier costs follows
+ * from the size of its output: xBRZ 4x of a 240x160 picture writes 1.78 times the pixels of 3x, not 12 % more. A
+ * frontend gives the cost of one output pixel of each scaler (a share of a refresh, from its own measurements) and
+ * the ladder's first guesses come out of the picture's size. The governor then learns the real values. */
+enum LookTier { LOOK_TIER_XBRZ4 = 0, LOOK_TIER_XBRZ3, LOOK_TIER_XBRZ2, LOOK_TIER_MMPX2, LOOK_TIER_SHARP };
+
+struct LookTierCosts {
+	float xbrz_per_px = 0;          /* a refresh's share for one xBRZ output pixel */
+	float mmpx_per_px = 0;          /* ... one MMPX output pixel */
+};
+
+/* The share of a refresh the tier costs on a w x h picture (sharp bilinear is the GPU's: 0). */
+float look_tier_cost(LookTier t, int w, int h, const LookTierCosts &c);
+/* the largest xBRZ factor (2..4) whose output stays under max_px output pixels; 2 at least */
+int look_ceiling_factor(int w, int h, int max_px);
 
 /* "Auto (xBRZ 4x)" / "Auto (xBRZ 3x, eased)": the label of a governed row, with the current choice visible. */
 std::string look_auto_label(const std::string &current, bool eased);

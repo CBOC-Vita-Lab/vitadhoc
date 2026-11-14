@@ -71,6 +71,10 @@ clarification and the remaining package review.
   overlay loader reads PNG only. The stb_truetype.h (v1.27) and
   stb_image_write.h (v1.17) copies in `gpsp/vita/third_party/stb/` and
   `snes/frontend/third_party/stb/` are unmodified upstream release files.
+- **MMPX:** Morgan McGuire and Mara Gagiu, MIT. The 2x pixel-art scaler
+  `gpsp/vita/mmpx_vita.c` follows their rules (reference C port at
+  https://github.com/ITotalJustice/mmpx) in an RGB565 form; the notice is in
+  the file and in `licenses/MMPX-MIT.txt`.
 - **xBRZ:** Zenju, HqMAME and contributors, used under GPL version 2 with the
   original exception retained. The code and local-change notice are in
   `gpsp/vita/third_party/xbrz/`. The app does not claim the MAME exception as

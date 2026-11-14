@@ -335,7 +335,7 @@ void S9xPPUMTFrameStart(void)
 	s.z = GFX.ZBuffer;
 	s.subz = GFX.SubZBuffer;
 	s.ppl = GFX.ScreenSize;
-	s.wide_m = g_s9x_wide_fm;
+	s.wide_m = g_s9x_wide_fco ? 0 : g_s9x_wide_fm;
 	release();
 }
 
@@ -356,8 +356,11 @@ void S9xPPUMTFrameEnd(int width, int height)
 			s.vage = (uint16 *) malloc(32768 * 2);
 			s.uage = (uint16 *) malloc(2048 * 2);
 		}
-		memcpy(s.vage, g_s9x_vage, 32768 * 2);
-		memcpy(s.uage, g_s9x_uage, 2048 * 2);
+		if (!g_s9x_wide_fco)
+		{
+			memcpy(s.vage, g_s9x_vage, 32768 * 2);
+			memcpy(s.uage, g_s9x_uage, 2048 * 2);
+		}
 		s.wclock = g_s9x_wide_clock;
 		s.wepoch = g_s9x_wide_epoch;
 		s.screen = GFX.Screen;
@@ -582,6 +585,9 @@ uint32 g_s9x_wide_epoch = 1;
 uint8 g_s9x_wide_stamp = 0;
 uint8 g_s9x_wide_m = 0;
 uint8 g_s9x_wide_fm = 0;
+uint8 g_s9x_wide_co_v = 0;
+uint8 g_s9x_wide_rm_v = 0;
+uint8 g_s9x_wide_fco = 0;
 uint16 g_s9x_vage[32768];
 uint16 g_s9x_uage[2048];
 SWideHook g_s9x_wide_hook = NULL;
@@ -605,6 +611,19 @@ void S9xWideSet(int margin, SWideHook hook, void *user)
 	if (!margin) g_s9x_wide_fm = 0;
 }
 
+/* centre only: the PPU side skips the margin passes and the capture of the frame (the adapter's floor rung); a plain byte, read once per frame at
+ * its start, so it may be written from the compose thread */
+void S9xWideCentreOnly(int on)
+{
+	__atomic_store_n(&g_s9x_wide_co_v, (uint8) (on ? 1 : 0), __ATOMIC_RELAXED);
+}
+
+/* the cost ladder's rungs below the full one: the margin passes are drawn with a narrower margin (same latching as centre only) */
+void S9xWideCoreMargin(int m)
+{
+	__atomic_store_n(&g_s9x_wide_rm_v, (uint8) (m < 0 ? 0 : m > SW_MAXM ? SW_MAXM : m), __ATOMIC_RELAXED);
+}
+
 void S9xWideReset(void)
 {
 	g_s9x_wide_epoch++;
@@ -613,6 +632,11 @@ void S9xWideReset(void)
 void S9xWideFrameStartLive(void)
 {
 	g_s9x_wide_fm = g_s9x_wide_m;
+	{
+		const uint8 rm = __atomic_load_n(&g_s9x_wide_rm_v, __ATOMIC_RELAXED);
+		if (rm && rm < g_s9x_wide_fm) g_s9x_wide_fm = rm;
+	}
+	g_s9x_wide_fco = g_s9x_wide_fm ? __atomic_load_n(&g_s9x_wide_co_v, __ATOMIC_RELAXED) : 0;
 	if (!g_s9x_wide_fm)
 		return;
 	if (++g_s9x_wide_clock == 0 || (g_s9x_wide_clock & 0xffff) == 0)

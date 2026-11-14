@@ -922,8 +922,42 @@ static void hm_backdrop(int rom, float dy)
              VS_HEX(0x060914, 246));
 }
 
-/* where the detail's button row ends this frame (the hints keep clear) */
+/* where the detail's button row ends this frame */
 static float g_hm_btn_end;
+
+/* The home page's pad hints: real glyphs for the four face buttons, small
+ * key caps for START, SELECT and the shoulders (the icon set has no
+ * drawing of those).  Left-aligned with the page, y fixed. */
+#define HM_HINT_Y 514
+static float hm_cap(float x, float y, const char *t)
+{
+   float w = vs_text_w(VS_CAPTION, t) + 14;
+   vs_rrect(x, y - 1, w, 26, 8, HC_GLASS_HI);
+   vs_text(VS_CAPTION, x + 7, y, t, HC_TEXT2);
+   return x + w + 6;
+}
+static float hm_hint_word(float x, float y, const char *t)
+{
+   vs_text(VS_CAPTION, x, y, t, HC_TEXT2);
+   return x + vs_text_w(VS_CAPTION, t) + 26;
+}
+static void hm_home_hints(void)
+{
+   float x = HM_X, y = HM_HINT_Y;
+   vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, "Play");
+   vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, "Star");
+   vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, g_find[0] ? "Clear" : "Find");
+   x = hm_cap(x, y, "SELECT");
+   x = hm_hint_word(x, y, "Tabs");
+   vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_cap(x + 26, y, "L R");
+   x = hm_hint_word(x, y, "Console");
+   x = hm_cap(x, y, "START");
+   hm_hint_word(x, y, "Settings");
+}
 
 /* ---- the top bar -------------------------------------------------------- */
 
@@ -1914,23 +1948,10 @@ static void shell_home(const char *rom_dir, int cur, int n, int n_scan,
    }
    else
    {
-      static const int ic[3] = { VS_I_BTN_O, VS_I_BTN_TRI, -1 };
-      /* The pause menu of the SNES and NES players is a chord nobody guesses: said
-       * under the buttons of every SNES and NES game's page (and on the loading
-       * screen, ui_loading_update). */
-      if (ui_menu_chord_is_lrs(g_pcfg.console) && view_count(n_scan) > 0)
-         vs_text(VS_CAPTION, HM_X, HM_BTN_Y + dy + 66,
-                 "In the game, hold L + R + START for the menu", HC_TEXT3);
-      const char *w[3] = { g_find[0] ? "Clear" : "Find", "Console", "START  Settings" };
-      /* Beside the buttons, never under them: the leftmost hints give way
-       * first (the top bar has a search, a console and a settings button
-       * of its own). */
-      int s = 0;
-      while (s < 3 && VS_W - HM_X - hm_hints_w(ic + s, w + s, 3 - s) <
-                      g_hm_btn_end + 8)
-         s++;
-      if (s < 3)
-         hm_hints(VS_W - HM_X, HM_BTN_Y + dy + 16, ic + s, w + s, 3 - s);
+      /* ONE hint line, the same on every console, at its own y under the
+       * buttons (it used to share the buttons' row and vanish whenever a
+       * returning player's five buttons filled it). */
+      hm_home_hints();
    }
    (void)n_scan;
 }

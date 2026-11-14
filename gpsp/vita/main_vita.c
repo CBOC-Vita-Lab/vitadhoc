@@ -288,8 +288,8 @@ static struct
  * "LAZY EXITS"): exits to untranslated ROM code are linked on first execution
  * once N speculative blocks were translated by one lookup.  Not in g_sw: that
  * initializer is positional. */
-static int g_jit_lazy = 1;
-static int g_jit_lazy_budget = 16;
+static int g_jit_lazy = 0;
+static int g_jit_lazy_budget = 0;
 
 /* sync_ra_saves = 0: RetroArch's save file is left alone (save_sync.h) */
 static int g_sync_ra = 1;
@@ -1589,7 +1589,7 @@ static void read_switches(void)
    g_jit_lazy           = fe_ini_get_int(ini, "jit_lazy_exits", g_jit_lazy) ? 1 : 0;
    g_jit_lazy_budget    = (int)fe_ini_get_int(ini, "jit_lazy_budget", g_jit_lazy_budget);
    if (g_jit_lazy_budget < 0 || g_jit_lazy_budget > 4096)
-      g_jit_lazy_budget = 16;
+      g_jit_lazy_budget = 0;
    /* smooth hand-over (handoff_glue.h): this launch's override of the
     * setting, and where its drawing thread runs */
    g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);

@@ -342,7 +342,7 @@ static u32 jd_now_us(void)
 #endif
 /* Lazy exits (below, GPSP_LAZY_EXITS): the switches and the window's counts
  * live here so every build has them. */
-u32 jit_lazy_exits = 1;          /* default; the frontend sets it before load */
+u32 jit_lazy_exits = 0;          /* default OFF: see docs/TECHNICAL.md; the frontend sets it before load */
 u32 jit_lazy_budget = 0;         /* speculative translations per outermost lookup */
 u32 lz_islands, lz_resolved;     /* islands made / exits taken the first time */
 static u32 jd_lz_i0, jd_lz_r0;

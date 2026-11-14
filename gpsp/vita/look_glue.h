@@ -47,6 +47,10 @@ uint32_t look_mask(void);
 int  look_steps_on_row(int row);
 /* the governed values: the largest xBRZ factor (0 = no limit, 1 = none) */
 int  look_quality_cap(void);
+/* The Auto tier in force, as a name for the Image quality row: "xBRZ 4x",
+ * "xBRZ 3x", "xBRZ 2x", "MMPX 2x" or "Sharp" ("" before a game's look
+ * begins). */
+const char *look_tier_name(void);
 int  look_rung(int i);              /* rung i applied */
 /* "look: ..." once a second (after look_second); 1 = written */
 int  look_census_line(char *buf, size_t n);

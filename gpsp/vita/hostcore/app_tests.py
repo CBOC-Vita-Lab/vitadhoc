@@ -2825,7 +2825,7 @@ def t_find(S):
             "unstar removes the filtered Starred result safely; returning to Games keeps the query")
 
     r = run("refresh", "90:circle\n94:type=find-only\n150:start\n" +
-            "+8:down\n" * 23 + "+20:cross\n+70:select\n+70:cross\n"
+            "+8:down\n" * 4 + "+20:cross\n+70:select\n+70:cross\n"
             "+140:shot=game.png\n+20:quit\n", favs=target + "\n")
     S.check(r.has(r"^EVT library_refresh_done console=0 ") and
             r.has(r"^EVT ui_browser_view favs=1 shown=1$") and

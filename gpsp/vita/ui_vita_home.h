@@ -975,8 +975,9 @@ static float hm_topbar(float dy, int n_scan)
       for (t = 0; t < 3; t++)
       {
          vs_text(VS_SUB, x, y, TAB[t], t == on ? HC_TEXT : HC_TEXT3);
+         /* touch: 96 px tall from the screen's top edge, the art unchanged */
          UI_TCH_BTN(t == on ? 0 : BROWSER_TAB_BUTTON(t), (int)(x / 2) - 4,
-                    (int)(y / 2), (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 22);
+                    0, (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 48);
          x += vs_text_w(VS_SUB, TAB[t]) + 14;
       }
    }
@@ -1020,8 +1021,8 @@ static float hm_topbar(float dy, int n_scan)
       else
          vs_text(font, x + pad / 2, ty, CON[c], HC_TEXT3);
       g_hm_chip_x[c] = (int)(x / 2);
-      UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(x / 2), (int)(y / 2),
-                 (int)((w + 2) / 2), 22);
+      UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(x / 2), 0,
+                 (int)((w + 2) / 2), 48);
       x += w + 2;
    }
    }
@@ -1041,9 +1042,9 @@ static float hm_topbar(float dy, int n_scan)
 
    x = right;
    vs_icon(VS_I_GEAR, x - 30, y + 19, 26, HC_TEXT2);
-   VS_TCH_BTN(PSP_CTRL_START, x - 50, y, 44, 44);
+   VS_TCH_BTN(PSP_CTRL_START, x - 54, 0, 52, 96);
    vs_icon(VS_I_SEARCH, x - 80, y + 19, 26, HC_TEXT2);
-   VS_TCH_BTN(BROWSER_FIND_BUTTON, x - 102, y, 44, 44);
+   VS_TCH_BTN(BROWSER_FIND_BUTTON, x - 106, 0, 52, 96);
    if (g_find[0])
    {
       /* The search in force, as a chip under the tabs: what was looked

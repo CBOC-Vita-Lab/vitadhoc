@@ -2704,9 +2704,10 @@ static int set_row_enabled(int idx)
  * with a finger.  26 px is 6 mm, the Play together pages' pitch; the page
  * shows five or six rows instead of nine and scrolls as it already did
  * (the d-pad, a drag, a flick).  Headers keep their extra 4 px. */
-#define SET_PITCH     26
+#define SET_PITCH     32     /* 64 px: a fingertip's row (was 52 px) */
 #define SET_HDR_PITCH 30
 #define SET_BAND_H    24
+#define SET_HIT_H     40     /* 80 px of touch, past the art's 64 */
 #else
 #define SET_PITCH     FE_FONT_H
 #define SET_HDR_PITCH (FE_FONT_H + 3)
@@ -4243,7 +4244,9 @@ static ui_action screen_settings(unsigned edges)
        * touchable only where it shows. */
       if (set_row_enabled(i))
       {
-         int ty = y - (SET_PITCH - FE_FONT_H) / 2, th = SET_PITCH;
+         /* 80 px of touch on a 64 px row: the hit box runs past the art
+          * (neighbours overlap a little; the later row wins the overlap) */
+         int ty = y - (SET_HIT_H - FE_FONT_H) / 2, th = SET_HIT_H;
          if (ty < SET_VIEW_TOP - 2) { th -= SET_VIEW_TOP - 2 - ty; ty = SET_VIEW_TOP - 2; }
          if (ty + th > SET_VIEW_BOT + 2) th = SET_VIEW_BOT + 2 - ty;
          UI_TCH_ROW(i, 0, ty, SET_BAND_W, th);

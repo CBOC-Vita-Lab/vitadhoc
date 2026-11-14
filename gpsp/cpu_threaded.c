@@ -3837,6 +3837,44 @@ static inline u8 *smcr_tagp(u32 pc)
                          : ewram + 0x40000 + (pc & 0x3FFFF);
 }
 
+/* [pc, pc+len) of guest RAM for a block that may run past the end of its
+ * region: RAM mirrors (IWRAM every 32 KiB, EWRAM every 256 KiB), the
+ * translator reads the mirrored bytes, and a block that starts near the end
+ * continues at the region's start.  smcr_mem(pc) + len would run off the end
+ * of the array (into the next object for IWRAM -- the fortify abort in
+ * smcr_translate on Driver 2 Advance -- and into the tag area for EWRAM), so
+ * the source copy, compare and swap go through these in two pieces. */
+static void smcr_mem_pieces(u32 pc, u32 len, u8 **a, u32 *alen, u8 **b)
+{
+  u32 size = (pc >> 24) == 3 ? 0x8000u : 0x40000u;
+  u32 first = size - (pc & (size - 1));
+  *a = smcr_mem(pc);
+  *alen = len < first ? len : first;
+  *b = smcr_mem(pc & ~(size - 1));      /* where the rest continues */
+}
+static void smcr_mem_read(u8 *dst, u32 pc, u32 len)
+{
+  u8 *a, *b; u32 n;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  memcpy(dst, a, n);
+  if (len > n) memcpy(dst + n, b, len - n);
+}
+static void smcr_mem_write(u32 pc, const u8 *src, u32 len)
+{
+  u8 *a, *b; u32 n;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  memcpy(a, src, n);
+  if (len > n) memcpy(b, src + n, len - n);
+}
+static int smcr_mem_cmp(u32 pc, const u8 *ref, u32 len)
+{
+  u8 *a, *b; u32 n; int r;
+  smcr_mem_pieces(pc, len, &a, &n, &b);
+  r = memcmp(a, ref, n);
+  if (!r && len > n) r = memcmp(b, ref + n, len - n);
+  return r;
+}
+
 static u32 smcr_xtrace_lo = ~0u, smcr_xtrace_hi;  /* GPSP_SMC_XTRACE=lo:hi */
 static void smcr_xtrace(u32 pc, u32 off, u32 where)
 {
@@ -4135,7 +4173,6 @@ static void smcr_depth0(void)
 static u32 smcr_find(u32 pc, u32 thumb, u32 *versions)
 {
   u32 key = pc | thumb, i;
-  const u8 *mem = smcr_mem(pc);
   *versions = 0;
   for (i = smcr_hash[smcr_hashf(key)]; i; i = smcr_d[i - 1].next) {
     const smcr_desc *d = &smcr_d[i - 1];
@@ -4143,7 +4180,7 @@ static u32 smcr_find(u32 pc, u32 thumb, u32 *versions)
       continue;
     (*versions)++;
     if (d->s_in == smcr_vb_get(d->nins - 1) &&
-        !memcmp(mem, smcr_srcb + d->src, d->end - pc))
+        !smcr_mem_cmp(pc, smcr_srcb + d->src, d->end - pc))
       return i;
   }
   return 0;
@@ -4174,16 +4211,18 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
 {
   static u8 swapbuf[SMCR_SWAP];
   u8 *start = ram_translation_ptr;
-  u8 *mem = smcr_mem(pc);
   u32 swaplen = 0, len, i, cph_t;
   bool ok;
 
   if (redo) {
     const smcr_desc *r = &smcr_d[redo - 1];
     len = r->end - pc;
-    if (memcmp(mem, smcr_srcb + r->src, len)) {
-      memcpy(swapbuf, mem, len);
-      memcpy(mem, smcr_srcb + r->src, len);
+    if (len > SMCR_SWAP) {              /* cannot happen (checked at build) */
+      return 0;
+    }
+    if (smcr_mem_cmp(pc, smcr_srcb + r->src, len)) {
+      smcr_mem_read(swapbuf, pc, len);
+      smcr_mem_write(pc, smcr_srcb + r->src, len);
       swaplen = len;
     }
   }
@@ -4203,7 +4242,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
   core_phase_leave(CORE_PHASE_FINE, &cph_jit, cph_t);
   smcr_xlat_real = 0;
   if (swaplen)
-    memcpy(mem, swapbuf, swaplen);
+    smcr_mem_write(pc, swapbuf, swaplen);
   if (!ok) {
     ram_translation_ptr = start;
     return 0;
@@ -4257,7 +4296,7 @@ static u32 smcr_translate(u32 pc, u32 thumb, u32 redo)
     d->gate = smcr_last_gate;
     d->nins = len / (thumb ? 2 : 4);
     d->s_in = smcr_vb_get(d->nins - 1);
-    memcpy(smcr_srcb + smcr_nsrc, mem, len);
+    smcr_mem_read(smcr_srcb + smcr_nsrc, pc, len);
     smcr_nsrc += len;
     for (i = 0; i < d->nins; i++)
       smcr_srcb[smcr_nsrc + i] = (u8)smcr_bd_get(i);

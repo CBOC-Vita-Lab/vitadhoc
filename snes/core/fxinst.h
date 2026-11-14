@@ -308,13 +308,23 @@ extern struct FxRegs_s	GSU;
 // Access data in the current program bank
 #define PRGBANK(idx)	GSU.pvPrgBank[USEX16(idx)]
 
+#ifdef FX_FAST
+// bCacheActive folded into the range test: fx_cacheLimit is 512 while the cache is
+// active and 0 otherwise. It is set when fx_run starts and where fx_cache() makes
+// the cache active (the only places that change it while the GSU runs).
+extern uint32 fx_cacheLimit;
+#define FX_CACHE_HIT(fca)	((fca) < fx_cacheLimit)
+#else
+#define FX_CACHE_HIT(fca)	(GSU.bCacheActive && (fca) < 512)
+#endif
+
 // Update pipe from ROM, charging the per-byte fetch cost: 1 cycle from the
 // GSU cache (with a one-time 16-byte line-fill charge), 5-6 from ROM/RAM.
 #define FETCHPIPE \
 { \
 	PIPE = PRGBANK(R15); \
 	uint32 _fca = USEX16(R15 - GSU.vCacheBaseReg); \
-	if (GSU.bCacheActive && _fca < 512) \
+	if (FX_CACHE_HIT(_fca)) \
 	{ \
 		uint32 _flb = 1U << (_fca >> 4); \
 		if (!(GSU.vCacheMask & _flb)) \

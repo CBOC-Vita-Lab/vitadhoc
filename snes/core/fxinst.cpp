@@ -54,6 +54,10 @@ static void fx_nop (void)
 	R15++;
 }
 
+#ifdef FX_FAST
+uint32 fx_cacheLimit;
+#endif
+
 // 02 - cache - reintialize GSU cache
 static void fx_cache (void)
 {
@@ -64,6 +68,9 @@ static void fx_cache (void)
 		fx_flushCache();
 		GSU.vCacheBaseReg = c;
 		GSU.bCacheActive = TRUE;
+#ifdef FX_FAST
+		fx_cacheLimit = 512;
+#endif
 
 	#if 0
 		if (c < (0x10000 - 512))
@@ -4020,38 +4027,34 @@ static struct FxPrefixInit
 #define FX_STEP_PFX \
 { \
 	uint32	vOpcode = (uint32) PIPE; \
+	uint32	vClass = fx_prefixClass[vOpcode]; \
 	FETCHPIPE; \
 	FX_PROF_HIT((GSU.vStatusReg & 0x300) | vOpcode); \
-	switch (fx_prefixClass[vOpcode]) \
+	if (vClass == 0) \
+		(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+	else if (vClass == 1) \
 	{ \
-	case 1: \
 		SF(B); \
 		GSU.pvSreg = GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
 		R15++; \
-		break; \
-	case 2: \
-		if (TF(B)) \
-			(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
-		else \
-		{ \
-			GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
-			R15++; \
-		} \
-		break; \
-	case 3: \
-		if (TF(B)) \
-			(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
-		else \
-		{ \
-			GSU.pvSreg = &GSU.avReg[vOpcode & 15]; \
-			R15++; \
-		} \
-		break; \
-	case 4: SF(ALT1); CF(B); R15++; break; \
-	case 5: SF(ALT2); CF(B); R15++; break; \
-	case 6: SF(ALT1); SF(ALT2); CF(B); R15++; break; \
-	default: \
+	} \
+	else if (vClass <= 3 && TF(B)) \
 		(*fx_OpcodeTable[(GSU.vStatusReg & 0x300) | vOpcode])(); \
+	else if (vClass == 2) \
+	{ \
+		GSU.pvDreg = &GSU.avReg[vOpcode & 15]; \
+		R15++; \
+	} \
+	else if (vClass == 3) \
+	{ \
+		GSU.pvSreg = &GSU.avReg[vOpcode & 15]; \
+		R15++; \
+	} \
+	else \
+	{ \
+		SFR |= (vClass == 4) ? FLG_ALT1 : (vClass == 5) ? FLG_ALT2 : (FLG_ALT1 | FLG_ALT2); \
+		CF(B); \
+		R15++; \
 	} \
 }
 #undef FX_STEP
@@ -4085,6 +4088,9 @@ uint32 fx_run (uint32 nInstructions)
 		// nInstructions is a master-cycle budget in this mode; each FX_STEP
 		// accrues its real cost into GSU.vCycles (fetch source, memory ops).
 		GSU.vCycles = 0;
+#ifdef FX_FAST
+		fx_cacheLimit = GSU.bCacheActive ? 512 : 0;
+#endif
 #if defined(FX_LIMIT)
 		fx_limit = TF(G) ? nInstructions : 0;
 #define FX_GO	(GSU.vCycles < fx_limit)

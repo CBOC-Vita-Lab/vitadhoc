@@ -119,6 +119,23 @@ static inline int psp_state_shot_path(char *out, size_t out_sz,
    return 0;
 }
 
+/* A state's .meta, written by the player kit beside it (playerkit/src/
+ * pk_states.cpp: <name>.stN.meta): the name and play time its slot shows. */
+static inline int psp_state_meta_path(char *out, size_t out_sz,
+                                      const char *state_path)
+{
+   int n;
+   if (!out || !out_sz || !state_path)
+      return -1;
+   n = snprintf(out, out_sz, "%s.meta", state_path);
+   if (n < 0 || (size_t)n >= out_sz)
+   {
+      out[0] = '\0';
+      return -1;
+   }
+   return 0;
+}
+
 /* The .shot header for a w x h frame (16 bytes, little-endian u16s). */
 static inline void psp_state_shot_header(unsigned char hdr[16], unsigned w,
                                          unsigned h)
@@ -189,6 +206,28 @@ static inline int psp_state_delete_paths(char *state, size_t state_sz,
       state[0] = '\0';
       thumb[0] = '\0';
       shot[0] = '\0';
+      return -1;
+   }
+   return 0;
+}
+
+/* The same, and the slot's .meta too (1.4: deleting a state leaves no .meta
+ * naming a slot that is empty).  Fills all four or none. */
+static inline int psp_state_delete_paths_m(char *state, size_t state_sz,
+                                           char *thumb, size_t thumb_sz,
+                                           char *shot, size_t shot_sz,
+                                           char *meta, size_t meta_sz,
+                                           const char *slot1_path,
+                                           unsigned slot)
+{
+   if (meta && meta_sz)
+      meta[0] = '\0';
+   if (!meta || psp_state_delete_paths(state, state_sz, thumb, thumb_sz, shot,
+                                       shot_sz, slot1_path, slot) != 0)
+      return -1;
+   if (psp_state_meta_path(meta, meta_sz, state) != 0)
+   {
+      state[0] = thumb[0] = shot[0] = '\0';
       return -1;
    }
    return 0;

@@ -75,4 +75,4 @@ version before it offers NES and WonderSwan folders; VitaShell works now.
 checksums. No commercial games or proprietary BIOS are included.
 
 SHA-256 `VitAdhoc.vpk`:
-`pending: filled in when the release package is pinned`
+`0000000000000000000000000000000000000000000000000000000000000000`

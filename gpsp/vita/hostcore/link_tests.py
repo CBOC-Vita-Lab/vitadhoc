@@ -897,16 +897,20 @@ def gb_verdict(T, r, who, role, save="gblink.gb.sav"):
 def t_wifi_gb(T):
     """Wi-Fi, Game Boy Link Cable: two Game Boys per console, bytes each way."""
     T.begin("wifi_gb")
+    # An emulated ARM twin plays some 5 frames a second on a busy machine,
+    # and the 200 bytes each way need a few hundred frames: it is given
+    # e seconds more before the cable is pulled.
+    e = 14 if T.slow else 0
     a = T.twin("a", T.arch_a, GBLINK, "Alice",
                host(2, "host.png") + shot(11, "linking.png") +
-               press(15, "a", 20) + shot(17, "running.png") +
-               disconnect(26, "session.png") + shot(33, "after.png") +
-               quit_at(35), vita={"link_peek": "C000:2"})
+               press(15, "a", 20) + shot(17 + e, "running.png") +
+               disconnect(26 + e, "session.png") + shot(33 + e, "after.png") +
+               quit_at(35 + e), vita={"link_peek": "C000:2"})
     b = T.twin("b", T.arch_b, GBLINK, "Bob",
-               join_first(4, wait=3) + shot(17, "running.png") +
-               shot(33, "after.png") + quit_at(35),
+               join_first(4, wait=3) + shot(17 + e, "running.png") +
+               shot(33 + e, "after.png") + quit_at(35 + e),
                vita={"link_peek": "C000:2"})
-    ra, rb = T.run([a, b], 35)
+    ra, rb = T.run([a, b], 35 + e)
     T.clean(ra, "A")
     T.clean(rb, "B")
     rooms = rb.evt("link_scan_room")

@@ -198,6 +198,11 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
    g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
    g_pcfg.smooth_handoff = (int)fe_ini_get_int(cfg_path, "smooth_handoff", 1) ? 1 : 0;
+   {
+      char c4[16];
+      g_pcfg.core4_off = fe_ini_get(cfg_path, "core4", c4, sizeof(c4)) &&
+                         (c4[0] == 'o' || c4[0] == 'O' || c4[0] == '0') ? 1 : 0;
+   }
    if (g_pcfg.nes_wide < 0 || g_pcfg.nes_wide > 2)
       g_pcfg.nes_wide = 0;
 #endif
@@ -675,6 +680,15 @@ void pcfg_save(void)
       fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
    if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)
       fe_ini_set_int(cfg_path, "smooth_handoff", g_pcfg.smooth_handoff);
+   /* "off" once chosen; "auto" is written only to undo it (no new key in
+    * every config file) */
+   {
+      char c4[16];
+      if (g_pcfg.core4_off)
+         fe_ini_set(cfg_path, "core4", "off");
+      else if (fe_ini_get(cfg_path, "core4", c4, sizeof(c4)))
+         fe_ini_set(cfg_path, "core4", "auto");
+   }
    if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
       fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
    if (!g_pcfg.ws_blend)
@@ -868,7 +882,9 @@ const char *pcfg_quality_name(int quality)
 {
    return quality == PCFG_QUALITY_ORIGINAL ? "Original"
         : quality == PCFG_QUALITY_2X ? "Enhanced 2x"
-        : quality == PCFG_QUALITY_3X ? "Enhanced 3x" : "Auto";
+        : quality == PCFG_QUALITY_3X ? "Enhanced 3x"
+        : quality == PCFG_QUALITY_4X ? "Enhanced 4x"
+        : quality == PCFG_QUALITY_MMPX ? "MMPX 2x" : "Auto";
 }
 
 int pcfg_wide_modes(int console)

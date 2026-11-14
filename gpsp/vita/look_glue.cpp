@@ -443,6 +443,14 @@ extern "C" int look_quality_cap(void)
    return cap;
 }
 
+extern "C" const char *look_tier_name(void)
+{
+   const pk::LookTier t = g_g ? g_tiers.t[tier_index()] : pk::LOOK_TIER_SHARP;
+   if (!g_g)
+      return "";
+   return t == pk::LOOK_TIER_SHARP ? "Sharp" : tier_name(t);
+}
+
 /* The app sets the upscaler's cap to 0 right after look_begin and looks at
  * this next: a game's first look is its ceiling, which is no change of the
  * applied rungs, so it is given here once (the app's own call can be

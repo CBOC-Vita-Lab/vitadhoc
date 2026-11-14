@@ -2361,6 +2361,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
        SET_STEADY,   /* 1.4: Steady pacing (pace_steady.h) */
        SET_HANDOFF,  /* 1.4: Smooth hand-over (handoff_glue.h) */
+       SET_CORE4,    /* 1.4: Fourth core Auto / Off (docs/FOURTH-CORE.md) */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2376,6 +2377,8 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* 1.4: the running game's save as a plain file for other emulators
         * (docs/SAVES.md; ui_host_export_save) */
        SET_EXPORT,
+       /* 1.4: a one-line About: facts, not settings (read-only rows) */
+       SET_HDR_ABOUT, SET_ABOUT_CORE4,
        /* The three plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
        SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_CONTROLS,
@@ -2516,6 +2519,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "CPU speed" },
    { 0, "Steady pacing" },
    { 0, "Smooth hand-over" },
+   { 0, "Fourth core" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -2557,6 +2561,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Vertical play" },
    { 0, "Palette" },
    { 0, "Export save for other emulators" },
+   { 1, "ABOUT" },
+   { 0, "Extra CPU core" },
 #endif
 #ifdef REWIND
    /* Hold the Rewind button (Triangle unless remapped) and the game runs
@@ -2734,7 +2740,7 @@ static int set_row_bot(int y)
  * THIS GAME (the running game's own rows) sits after Gameplay. */
 static const unsigned char set_sec_order[] = {
    SET_HDR_VID, SET_HDR_GAME, SET_HDR_THIS, SET_HDR_CTL, SET_HDR_LIB,
-   SET_HDR_UI, SET_HDR_RA, SET_HDR_WL };
+   SET_HDR_UI, SET_HDR_RA, SET_HDR_WL, SET_HDR_ABOUT };
 #endif
 static short set_disp[SET_COUNT];     /* display position -> enum row */
 static short set_pos[SET_COUNT];      /* enum row -> display position */
@@ -3326,6 +3332,11 @@ static void settings_adjust(int id, int dir)
       app_steady_options();
       fe_evt("steady_setting on=%d", g_pcfg.steady_pacing);
       break;
+   case SET_CORE4:
+      g_pcfg.core4_off = !g_pcfg.core4_off;
+      app_core4_options();
+      fe_evt("core4_setting off=%d", g_pcfg.core4_off);
+      break;
    case SET_HANDOFF:
       g_pcfg.smooth_handoff = !g_pcfg.smooth_handoff;
       app_handoff_options();
@@ -3727,6 +3738,10 @@ static const char *set_help(int id)
              ? "Smoothed at twice the game's size, then sized to fit."
            : g_pcfg.quality == PCFG_QUALITY_3X
              ? "Smoothed at three times its size. More detail, more work."
+           : g_pcfg.quality == PCFG_QUALITY_4X
+             ? "Smoothed at four times its size. The most detail and work."
+           : g_pcfg.quality == PCFG_QUALITY_MMPX
+             ? "MMPX at twice its size: crisp pixel art, light on the Vita."
              : "Auto adapts to keep 60 fps; xBRZ smoothing when it can.";
 #endif
    case SET_COLOR:
@@ -3848,6 +3863,11 @@ static const char *set_help(int id)
                                "at full speed."
                              : "Every frame when it can be; busy moments drop "
                                "unevenly.";
+   case SET_ABOUT_CORE4:
+      return "Whether the app is using the Vita's fourth CPU core.";
+   case SET_CORE4:    return g_pcfg.core4_off
+                             ? "Off: the app stays on the three cores it is given."
+                             : "Auto: uses the Vita's fourth core if it works. Next game.";
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
                              ? "Drawn on a second core: heavy looks do not "
                                "slow the game."
@@ -4415,6 +4435,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_export_dest ? "plain .sav" : "for RetroArch");
          break;
+      case SET_ABOUT_CORE4:
+         /* "in use", "not available" or "off" (core4_status, handoff_glue.h) */
+         set_item(y, g_cursor == i, 1, set_rows[i].label, ui_host_core4_status());
+         break;
       case SET_OVERLAY:
       {
          char v[64];
@@ -4549,6 +4573,10 @@ static ui_action screen_settings(unsigned edges)
       case SET_HANDOFF:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.smooth_handoff ? "on" : "off");
+         break;
+      case SET_CORE4:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.core4_off ? "off" : "auto");
          break;
       case SET_SPEED:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -6988,18 +7016,18 @@ static ui_action screen_menu(unsigned edges, int session_active)
 
 /* DELETE A SAVE STATE (docs/CONTROL-REMAP.md section 11).  The three names
  * come from psp_state_delete_paths(), which can only ever produce the slot's
- * .stN, its .stN.thumb and its .stN.shot -- never the ROM, the .sav or
+ * .stN, its .stN.thumb, .stN.shot and .stN.meta -- never the ROM, the .sav or
  * another slot -- and the previews go only once the state itself is gone (or
  * was never there), so a refused remove cannot leave a state without its
  * picture.  0 = the slot is now empty. */
 static int state_delete(const char *slot1_path, unsigned slot)
 {
    char st[PSP_FILE_PATH_CAP], th[PSP_STATE_THUMB_PATH_CAP];
-   char sh[PSP_STATE_SHOT_PATH_CAP];
+   char sh[PSP_STATE_SHOT_PATH_CAP], mt[PSP_FILE_PATH_CAP + 8];
    SceIoStat sst;
    int rc;
-   if (psp_state_delete_paths(st, sizeof(st), th, sizeof(th), sh, sizeof(sh),
-                              slot1_path, slot) != 0)
+   if (psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh, sizeof(sh),
+                                mt, sizeof(mt), slot1_path, slot) != 0)
    {
       fe_evt("state_delete slot=%u rc=bad_path", slot);
       return -1;
@@ -7026,6 +7054,7 @@ static int state_delete(const char *slot1_path, unsigned slot)
    }
    (void)sceIoRemove(th);      /* an "old" state never had one */
    (void)sceIoRemove(sh);      /* nor a 3.1 one this */
+   (void)sceIoRemove(mt);      /* the player kit's .meta: no name for an empty slot */
    fe_evt("state_delete slot=%u file=%s", slot, st);
    return 0;
 }

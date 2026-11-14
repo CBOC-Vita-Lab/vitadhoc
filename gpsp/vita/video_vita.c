@@ -45,6 +45,7 @@
 #include "ambient_look.h"
 #include "fe_evt.h"
 #include "upscale_vita.h"
+#include "mmpx_vita.h"
 #include "stb_image_write.h"
 #include "stb_image.h"           /* psp/stb_impl.c: the overlay PNG */
 
@@ -194,7 +195,12 @@ void vid_set_mode(int scale, int filter)
 void vid_set_quality(int quality)
 {
    VID_ENTER();
-   g_quality = quality >= 0 && quality <= 3 ? quality : 0;
+   /* The Settings choice "MMPX 2x" is factor 2 made by MMPX (look_glue.cpp:
+    * Auto never overrides a hand-set quality); "4x" is factor 4. */
+   mmpx_set_choice(quality == 5);
+   if (quality == 5)
+      quality = 2;
+   g_quality = quality >= 0 && quality <= 4 ? quality : 0;
    upscale_quality(g_quality);
    vid_set_mode(g_scale, g_requested_filter);
 }

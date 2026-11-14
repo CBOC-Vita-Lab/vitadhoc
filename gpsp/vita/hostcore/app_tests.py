@@ -913,11 +913,11 @@ def t_sensors(S):
     S.check(near(b[2][1], (0x3A0 + 112) // 8) and near(b[2][0], 0x392 // 8),
             "top edge down half a g: Y higher (%d px)" % b[2][1])
 
-    # Settings > THIS GAME, in a tilt game: 23 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
+    # Settings > THIS GAME, in a tilt game: 24 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
     # the game's file keeps it.
     r = run("level", "gbadhoc-tilt.gba",
             "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
-            menu_pick(4, wait=60) + set_down(23) + "+10:shot=level_row.png\n"
+            menu_pick(4, wait=60) + set_down(24) + "+10:shot=level_row.png\n"
             "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
             "+120:shot=level.png\n+10:quit\n")
     S.picture(r, "rows.png")
@@ -1028,10 +1028,10 @@ def t_game_look(S):
                                        "gbadhoc-test.gba.ini")).read() \
         if os.path.exists(os.path.join(r.root, "games",
                                        "gbadhoc-test.gba.ini")) else ""
-    # Settings opens on Screen size; THIS GAME's Display settings is 19 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
+    # Settings opens on Screen size; THIS GAME's Display settings is 20 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
     # size preset) makes it stretch: the game's file, not config.ini.
     r = S.run("game_look_on", menu_pick(4, wait=60) +
-              set_down(19) + "+10:shot=row.png\n+4:cross\n"
+              set_down(20) + "+10:shot=row.png\n+4:cross\n"
               "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
               "+60:shot=stretch.png\n+10:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg)
@@ -1055,7 +1055,7 @@ def t_game_look(S):
     # Next time it starts in its own look; turning it off brings the
     # console's back, and the next start is the console's.
     r = S.run("game_look_off", menu_pick(4, wait=60) +
-              set_down(19) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              set_down(20) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg,
               extra={"games/gbadhoc-test.gba.ini":
                      "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
@@ -2857,8 +2857,8 @@ def t_library_cache(S):
     # six console tabs (GBA, GB, GBC, SNES, NES, WS) since 1.4: two full turns
     script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:right\n+20:start\n" + "+8:down\n" * 18 +
-              "+20:shot=quality_setting.png\n" + "+8:up\n" * 14 +
+              "+60:right\n+20:start\n" + "+8:down\n" * 19 +
+              "+20:shot=quality_setting.png\n" + "+8:up\n" * 15 +
               "+20:shot=refresh_command.png\n+8:cross\n"
               "+60:shot=refreshed.png\n+8:cross\n+100:shot=game.png\n+20:quit\n")
     r = S.run("library_cache", script,
@@ -2886,7 +2886,7 @@ def t_settings_order(S):
     config = {"ui_home": 1, "scale_gba": 1, "filter_gba": 4, "quality_gba": 1,
               "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
               "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
-    for context, down in (("browser", 17), ("game", 0)):
+    for context, down in (("browser", 18), ("game", 0)):
         enter = "60:start\n" if context == "browser" else \
             "100:shot=before.png\n" + menu_pick(4, wait=10)
         leave = "+30:cross\n+120:shot=game.png\n+10:quit\n" if context == "browser" else \
@@ -4688,7 +4688,7 @@ def t_old_states(S):
         return
     saved = open(st, "rb").read()
 
-    def interrupted(name, script):
+    def interrupted(name, script, meta=False):
         out = os.path.join(S.outdir, name)
         root = os.path.join(out, "root")
         shutil.rmtree(out, ignore_errors=True)
@@ -4696,6 +4696,9 @@ def t_old_states(S):
         for f in glob.glob(os.path.join(root, "log", "*")):
             os.remove(f)
         os.rename(os.path.join(root, st_rel), os.path.join(root, st_rel + ".old"))
+        if meta:        # the player kit's .meta beside the slot (pk_states.cpp)
+            with open(os.path.join(root, st_rel + ".meta"), "w") as f:
+                f.write("end=1\n")
         return S.run(name, script, prepared=True)
 
     def files(res):
@@ -4728,11 +4731,13 @@ def t_old_states(S):
 
     d = interrupted("old_states_delete",
                     "60:down\n+60:square\n+10:cross\n+40:shot=deleted.png\n"
-                    "+10:quit\n")
+                    "+10:quit\n", meta=True)
     S.check(d.rc == 0, "deleting ran (rc %s)" % d.rc)
     S.check(d.has(r"state_delete slot=2 file=") and files(d) == (False, False),
             "SQUARE then X on the card deletes the slot: neither the state "
             "nor its .old is left (files %s)" % (files(d),))
+    S.check(not os.path.exists(os.path.join(d.root, st_rel + ".meta")),
+            "...and no .meta is left naming the empty slot")
 
     # Deleting the game's last state empties the shelf: it closes once the
     # deletion is read back, and X then plays the game itself.
@@ -4912,7 +4917,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              set_up(8) + "+10:cross\n+20:shot=list.png\n"
+              set_up(9) + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -5284,9 +5289,9 @@ def t_save_clock(S):
     else:
         S.note("no private Emerald copy here: that leg is skipped")
     # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME,
-    #    17 DOWN from Screen size.  X steps a value.
+    #    18 DOWN from Screen size.  X steps a value.
     r = S.run("save_type_rows", menu_pick(4, wait=60) +
-              set_down(17) + "+10:shot=rows.png\n"
+              set_down(18) + "+10:shot=rows.png\n"
               "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
               "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -5590,8 +5595,8 @@ def t_display_rows(S):
     """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
     saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
     grid."""
-    # browser Settings opens on Theme: 17 DOWN to Screen size, 7 more to Grid strength
-    walk = "60:start\n" + "+8:down\n" * 24 + "+20:shot=grid.png\n"
+    # browser Settings opens on Theme: 18 DOWN to Screen size, 7 more to Grid strength
+    walk = "60:start\n" + "+8:down\n" * 25 + "+20:shot=grid.png\n"
     r = S.run("display_rows", walk + "+4:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)
@@ -6652,6 +6657,40 @@ def t_census(S):
     S.check(r.has(r"^EVT save_backup kept "), "census: a save backup was made and checked")
 
 
+def t_hand_set_rows(S):
+    """Settings > Display > Image quality has xBRZ 4x and MMPX 2x as hand-set
+    choices (values 4 and 5; old files keep 0-3), and Settings > Gameplay >
+    Fourth core is Auto or Off (config.ini core4)."""
+    # Screen size, then DOWN to Image quality; RIGHT four times is 4x (Auto,
+    # Original, 2x, 3x, 4x), once more is MMPX 2x
+    script = (menu_pick(4, wait=100) + set_down(1) + "+8:right\n" * 4 +
+              "+10:shot=q4.png\n+8:right\n+10:shot=mmpx.png\n+4:circle\n+10:circle\n+30:quit\n")
+    r = S.run("hand_quality", script, autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    q = [d.get("quality") for d in r.evt("display_quality")]
+    S.check(q[-2:] == ["4", "5"], "Image quality steps to 4x then MMPX 2x (%s)" % q)
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^quality_gba = 5$", ini, re.M), "MMPX 2x is kept in config.ini")
+    # an old config's 0-3 values still load; a value past the end falls back to Auto
+    r = S.run("hand_quality_old", "100:shot=a.png\n+10:quit\n", autoboot="gbadhoc-test.gba",
+              config={"quality_gba": 3})
+    S.check(r.has(r"display_quality console=GBA quality=3"), "an old quality = 3 is still 3x")
+    r = S.run("hand_quality_bad", "100:shot=a.png\n+10:quit\n", autoboot="gbadhoc-test.gba",
+              config={"quality_gba": 9})
+    S.check(r.has(r"display_quality console=GBA quality=0"), "an unknown quality falls back to Auto")
+    # Fourth core: 17 DOWN from Screen size (after Smooth hand-over)
+    script = (menu_pick(4, wait=100) + set_down(17) + "+10:shot=core4.png\n+8:right\n"
+              "+10:shot=core4_off.png\n+4:circle\n+10:circle\n+30:quit\n")
+    r = S.run("hand_core4", script, autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.check(r.has(r"^EVT core4_setting off=1"), "the Fourth core row turns it off")
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^core4 = off$", ini, re.M), "core4 = off is kept in config.ini")
+    r = S.run("hand_core4_load", "100:shot=a.png\n+10:quit\n", autoboot="gbadhoc-test.gba",
+              config={"core4": "off"})
+    S.clean(r)
+
+
 def t_handoff(S):
     """Smooth hand-over (Settings > Gameplay, on by default; handoff_glue.h):
     the picture goes through playerkit's mailbox to the drawing side.  Proofs:
@@ -6751,7 +6790,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + set_down(20) + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(21) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
@@ -6781,7 +6820,7 @@ def t_save_heal_nes_ws(S):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
         # Export is after Display settings (and a WonderSwan game's three rows)
-        row = menu_pick(4, wait=60) + set_down(17 if kind == "nes" else 20)
+        row = menu_pick(4, wait=60) + set_down(18 if kind == "nes" else 21)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})
@@ -7311,7 +7350,7 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_n
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle)]
 

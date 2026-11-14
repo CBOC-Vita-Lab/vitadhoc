@@ -101,6 +101,22 @@ int main(void)
                                 sizeof(sh), "/r/EMERALD.ST0", 5) == 0 &&
          !strcmp(st, "/r/EMERALD.ST4"));
 
+   /* 1b. the .meta beside it goes too */
+   {
+      char mt[PSP_FILE_PATH_CAP + 8];
+      CHECK(psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh,
+                                     sizeof(sh), mt, sizeof(mt),
+                                     "/r/Ruby.st0", 3) == 0 &&
+            !strcmp(mt, "/r/Ruby.st2.meta") && !strcmp(st, "/r/Ruby.st2"));
+      CHECK(psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh,
+                                     sizeof(sh), mt, sizeof(mt),
+                                     "/r/Ruby.gba", 1) == -1 &&
+            mt[0] == '\0' && st[0] == '\0');
+      CHECK(psp_state_delete_paths_m(st, sizeof(st), th, sizeof(th), sh,
+                                     sizeof(sh), mt, 14, "/r/Ruby.st0", 3) == -1 &&
+            mt[0] == '\0' && st[0] == '\0' && th[0] == '\0' && sh[0] == '\0');
+   }
+
    /* 2. refusals leave both outputs empty */
    {
       static const char *bad[] = {

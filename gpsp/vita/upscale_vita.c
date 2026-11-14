@@ -746,7 +746,7 @@ static int g_quality;
 
 void upscale_quality(int quality)
 {
-   g_quality = quality >= 0 && quality <= 3 ? quality : 0;
+   g_quality = quality >= 0 && quality <= 4 ? quality : 0;
 }
 
 /* The look governor's limit on Auto (look_glue.h): the largest factor

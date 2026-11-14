@@ -88,6 +88,18 @@ run when their ROM variable is set.
 byte-identical), `widekit-arm`, `widekit-vita` and `playerkit-vita` (compile for
 the Vita), and `vita-build` (`make -C gpsp/vita vpk`).
 
+## Unattended device sessions (vita-matrix)
+
+`tools/vita-matrix/matrix.py` runs a playlist of timed measurements (game, seconds,
+`vita.ini` / `threads.ini` overrides) on a real Vita through vitacompanion, or on
+Vita3K for a rehearsal, pulls `gbadhoc.log` and `snes/log.txt` back per entry and
+prints a table (missed refreshes per second, emulated fps, hand-over time-outs,
+look level, worst JIT translate/sync, SNES fps and audio, faults). The owner's own
+`vita.ini`, `threads.ini`, `autoboot.txt` and logs are backed up first and restored
+at the end, on Ctrl-C and on any failure. Its unit tests are
+`python3 tools/vita-matrix/test_matrix.py`; the owner session is
+`tools/vita-matrix/session-1.4.txt`; see `tools/vita-matrix/README.md`.
+
 ## Not wired
 
 These exist in the tree and are not run by the gate:

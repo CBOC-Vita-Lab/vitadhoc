@@ -57,6 +57,9 @@ static void fx_nop (void)
 #ifdef FX_FAST
 uint32 fx_cacheLimit;
 #endif
+#ifdef FX_LINEFLAGS
+uint8 fx_lineOk[32];
+#endif
 
 // 02 - cache - reintialize GSU cache
 static void fx_cache (void)
@@ -4081,16 +4084,38 @@ static void fx_prof_dump (void)
 static struct FxProfInit { FxProfInit () { atexit(fx_prof_dump); } } fx_prof_init;
 #endif
 
+#ifdef FX_FAST
+static uint32 fx_run_impl (uint32 nInstructions);
+
+// Per-run setup of the fetch-timing shortcuts (both budget modes fetch through FETCHPIPE).
 uint32 fx_run (uint32 nInstructions)
+{
+	fx_cacheLimit = GSU.bCacheActive ? 512 : 0;
+#ifdef FX_LINEFLAGS
+	// Byte per cache line while running; vCacheMask stays the stored form (snapshot
+	// load and CPU-side flushes change it between runs).
+	for (int i = 0; i < 32; i++)
+		fx_lineOk[i] = (GSU.vCacheMask >> i) & 1;
+#endif
+	uint32 r = fx_run_impl(nInstructions);
+#ifdef FX_LINEFLAGS
+	uint32 m = 0;
+	for (int i = 0; i < 32; i++)
+		m |= (uint32) fx_lineOk[i] << i;
+	GSU.vCacheMask = m;
+#endif
+	return r;
+}
+static uint32 fx_run_impl (uint32 nInstructions)
+#else
+uint32 fx_run (uint32 nInstructions)
+#endif
 {
 	if (GSU.bCycleMode)
 	{
 		// nInstructions is a master-cycle budget in this mode; each FX_STEP
 		// accrues its real cost into GSU.vCycles (fetch source, memory ops).
 		GSU.vCycles = 0;
-#ifdef FX_FAST
-		fx_cacheLimit = GSU.bCacheActive ? 512 : 0;
-#endif
 #if defined(FX_LIMIT)
 		fx_limit = TF(G) ? nInstructions : 0;
 #define FX_GO	(GSU.vCycles < fx_limit)

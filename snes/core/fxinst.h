@@ -318,6 +318,27 @@ extern uint32 fx_cacheLimit;
 #define FX_CACHE_HIT(fca)	(GSU.bCacheActive && (fca) < 512)
 #endif
 
+#ifdef FX_LINEFLAGS
+// One byte per 16-byte cache line instead of the bit mask (needs FX_FAST: see fx_run).
+extern uint8 fx_lineOk[32];
+#define FX_LINE_FILL(fca) \
+	if (!fx_lineOk[(fca) >> 4]) \
+	{ \
+		fx_lineOk[(fca) >> 4] = 1; \
+		FX_CYC(GSU.vCostMem << 4); \
+	}
+#else
+#define FX_LINE_FILL(fca) \
+	{ \
+		uint32 _flb = 1U << ((fca) >> 4); \
+		if (!(GSU.vCacheMask & _flb)) \
+		{ \
+			GSU.vCacheMask |= _flb; \
+			FX_CYC(GSU.vCostMem << 4); \
+		} \
+	}
+#endif
+
 // Update pipe from ROM, charging the per-byte fetch cost: 1 cycle from the
 // GSU cache (with a one-time 16-byte line-fill charge), 5-6 from ROM/RAM.
 #define FETCHPIPE \
@@ -326,12 +347,7 @@ extern uint32 fx_cacheLimit;
 	uint32 _fca = USEX16(R15 - GSU.vCacheBaseReg); \
 	if (FX_CACHE_HIT(_fca)) \
 	{ \
-		uint32 _flb = 1U << (_fca >> 4); \
-		if (!(GSU.vCacheMask & _flb)) \
-		{ \
-			GSU.vCacheMask |= _flb; \
-			FX_CYC(GSU.vCostMem << 4); \
-		} \
+		FX_LINE_FILL(_fca) \
 		FX_CYC(GSU.vCostCache); \
 	} \
 	else \

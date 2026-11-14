@@ -702,24 +702,30 @@ def t_share(T, replace=False):
     mine = bytes((i * 13 + 5) & 0xFF for i in range(32768))
     # replace: B has a save of its own, so taking A's asks first ("Replace
     # your save?", X replace) and keeps B's as linktest.sav.bak.
-    ask = press(21, "cross") if replace else ""
+    # d: the longer walk to the Link setup rows (Settings opens on Theme
+    # since 1.4) makes B join about a second later
+    d = 2
+    ask = press(21 + d, "cross") if replace else ""
     late = 2 if replace else 0
-    down7 = keys(*(["down"] * 7))
+    # Settings opens on Theme in the game list (1.4): down past the rest of
+    # Interface (5) and RetroAchievements' Account and Hardcore (2) to Link
+    # setup, then Name ... OSD (7) to Share game data; Join is one more.
+    down7 = keys(*(["down"] * 15))
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                press(2, "start") + down7 + "+20:shot=settings.png\n" +
                keys("cross", first=AFTER_SHOT) + shot(8, "sharing.png") +
-               shot(26, "shared.png") + press(28, "circle") +
-               shot(30, "after.png") + quit_at(32),
+               shot(26 + d, "shared.png") + press(28 + d, "circle") +
+               shot(30 + d, "after.png") + quit_at(32 + d),
                extra={"roms/linktest.sav": sav})
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                press(5, "start") + down7 + keys("down") +
                "+20:shot=settings.png\n" + keys("cross", first=AFTER_SHOT) +
-               shot(14, "list.png") + press(15, "cross") +
-               shot(18, "their.png") + press(19, "cross") +
-               (shot(20, "ask.png") if replace else "") + ask +
-               shot(24 + late, "done.png") + press(25 + late, "circle") +
-               press(26 + late, "circle") + shot(28 + late, "after.png") +
-               quit_at(32 + late),
+               shot(14 + d, "list.png") + press(15 + d, "cross") +
+               shot(18 + d, "their.png") + press(19 + d, "cross") +
+               (shot(20 + d, "ask.png") if replace else "") + ask +
+               shot(24 + late + d, "done.png") + press(25 + late + d, "circle") +
+               press(26 + late + d, "circle") + shot(28 + late + d, "after.png") +
+               quit_at(32 + late + d),
                extra={"roms/linktest.sav": mine} if replace else None)
     for t in (a, b):
         os.remove(os.path.join(t.root, "autoboot.txt"))   # the game list

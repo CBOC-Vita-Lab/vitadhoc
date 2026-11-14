@@ -3905,8 +3905,10 @@ def t_upfade(S):
     shots = {}
     for name, filt in (("xbrz", 4), ("near", 0)):
         r = S.run("upfade_" + name, script, extra=extra,
-                  config={"scale_gba": 1, "filter_gba": filt,
-                          "last_rom": "gbadhoc-top.gba"},
+                  # 4x is set by hand (Auto's GBA ceiling is 3x since 1.4)
+                  config=dict({"scale_gba": 1, "filter_gba": filt,
+                               "last_rom": "gbadhoc-top.gba"},
+                              **({"quality_gba": 4} if filt == 4 else {})),
                   autoboot="gbadhoc-top.gba")
         S.clean(r)
         shots[name] = {k: S.picture(r, k + ".png")

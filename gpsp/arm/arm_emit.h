@@ -43,6 +43,10 @@ void arm_indirect_branch_arm(u32 address);
 void arm_indirect_branch_thumb(u32 address);
 void arm_indirect_branch_dual_arm(u32 address);
 void arm_indirect_branch_dual_thumb(u32 address);
+void arm_lazy_exit_arm(u32 address);
+void arm_lazy_exit_thumb(u32 address);
+u8 *block_lookup_address_lazy_arm(u32 pc, u8 *exit_branch);
+u8 *block_lookup_address_lazy_thumb(u32 pc, u8 *exit_branch);
 void execute_vram_arm(u32 address);
 void execute_vram_thumb(u32 address);
 
@@ -78,6 +82,28 @@ void execute_swi_thumb(u32 pc);
  * (init_emitter) and are called from RAM-cache code too. */
 #define armfn_div6                15
 #define armfn_divarm7             16
+/* GPSP_LAZY_EXITS (cpu_threaded.c jit_lazy_exits): the first-execution stubs
+ * of exits left unresolved (REG_USERDEF slots 49 and 50; 62 and 63 are the
+ * link stamp and PAL_UPDATED). */
+#define armfn_lazy_arm            17
+#define armfn_lazy_thumb          18
+
+/* A lazy exit: an unlinked block exit's `b` points here instead of at its
+ * target.  Five words, entered by the branch with the guest state live:
+ *     ldr r0, [pc, #4]    r0 = the target's guest pc   (word 3)
+ *     ldr r1, [pc, #4]    r1 = the exit's `b`          (word 4)
+ *     ldr pc, [reg_base, arm_lazy_exit_*]
+ * which looks the target up (translating it on this first execution) and
+ * points the exit at it.  The same trampoline as an indirect branch, plus the
+ * address to patch. */
+#define GPSP_LAZY_EXITS 1
+#define LAZY_ISLAND_BYTES 20
+#define generate_lazy_exit_island(mode, target_pc, exit_branch)               \
+  ARM_LDR_IMM(0, ARMREG_R0, ARMREG_PC, 4);                                    \
+  ARM_LDR_IMM(0, ARMREG_R1, ARMREG_PC, 4);                                    \
+  ARM_LDR_IMM(0, ARMREG_PC, reg_base, 4*(REG_USERDEF + armfn_lazy_##mode));   \
+  write32((u32)(target_pc));                                                  \
+  write32((u32)(uintptr_t)(exit_branch))
 
 #define STORE_TBL_OFF     0x118
 #define SPSR_RAM_OFF      0x100
@@ -2277,6 +2303,8 @@ void init_emitter(bool must_swap) {
   reg[REG_USERDEF + armfn_indirect_dual_arm]   = (u32)arm_indirect_branch_dual_arm;
   reg[REG_USERDEF + armfn_indirect_dual_thumb] = (u32)arm_indirect_branch_dual_thumb;
   reg[REG_USERDEF + armfn_debug_trace] = (u32)trace_instruction;
+  reg[REG_USERDEF + armfn_lazy_arm]   = (u32)arm_lazy_exit_arm;
+  reg[REG_USERDEF + armfn_lazy_thumb] = (u32)arm_lazy_exit_thumb;
 #ifdef ARM_FAR_STUBS
   reg[REG_USERDEF + armfn_div6]    = (u32)div6;
   reg[REG_USERDEF + armfn_divarm7] = (u32)divarm7;

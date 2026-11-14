@@ -340,6 +340,17 @@ static u32 jd_now_us(void)
 }
 #define JD_NOW_US() jd_now_us()
 #endif
+/* Lazy exits (below, GPSP_LAZY_EXITS): the switches and the window's counts
+ * live here so every build has them. */
+u32 jit_lazy_exits = 1;          /* default; the frontend sets it before load */
+u32 jit_lazy_budget = 0;         /* speculative translations per outermost lookup */
+u32 lz_islands, lz_resolved;     /* islands made / exits taken the first time */
+static u32 jd_lz_i0, jd_lz_r0;
+void gpsp_jit_lazy_set(u32 on, u32 budget)
+{
+  jit_lazy_exits = on ? 1 : 0;
+  jit_lazy_budget = budget;
+}
 typedef struct {
   u32 frame, demand, spec, syncs, sync_us, sync_bytes, xlat_us, pages, tops;
 } jd_frame_t;
@@ -393,17 +404,32 @@ u32 gpsp_jit_worst_line(char *buf, u32 cap)
   n = snprintf(buf, cap,
     "vita_jit_worst frame=%u demand=%u spec=%u syncs=%u sync_us=%u "
     "sync_kb=%u xlat_us=%u xlat_pages=%u | win frames=%u demand=%u spec=%u "
-    "syncs=%u sync_us=%u xlat_us=%u xlat_pages=%u pages_total=%u%s%s",
+    "syncs=%u sync_us=%u xlat_us=%u xlat_pages=%u pages_total=%u lazy=%u "
+    "islands=%u resolved=%u%s%s",
     jd_worst.frame, jd_worst.demand, jd_worst.spec, jd_worst.syncs,
     jd_worst.sync_us, jd_worst.sync_bytes >> 10, jd_worst.xlat_us,
     jd_worst.pages, jd_win_frames, jd_win_demand, jd_win_spec, jd_win_syncs,
     jd_win_sync_us, jd_win_xlat_us, jd_win_pages, gamepak_page_loads,
+    jit_lazy_exits, lz_islands - jd_lz_i0, lz_resolved - jd_lz_r0,
     jd_cap_told ? "" : " cap=", jd_cap_told ? "" : gamepak_cap_reason);
   jd_cap_told = 1;
+  jd_lz_i0 = lz_islands; jd_lz_r0 = lz_resolved;
   memset(&jd_worst, 0, sizeof(jd_worst));
   jd_win_demand = jd_win_spec = jd_win_syncs = jd_win_sync_us =
     jd_win_xlat_us = jd_win_pages = jd_win_frames = 0;
   return n > 0 ? (u32)n : 0;
+}
+
+/* Twin diagnostic: GPSP_LAZY_STATS=1 prints the lazy-exit and translation
+ * totals to stderr at exit (instance A only: instance B has no frames). */
+static void __attribute__((destructor)) lz_stats_dump(void)
+{
+  if (getenv("GPSP_LAZY_STATS") && (lz_islands || jctr[0] || jctr[1]))
+    fprintf(stderr, "lazy_stats: lazy=%u budget=%u islands=%u resolved=%u "
+            "blocks=%u syncs=%u\n", (unsigned)jit_lazy_exits,
+            (unsigned)jit_lazy_budget, (unsigned)lz_islands,
+            (unsigned)lz_resolved, (unsigned)(jctr[0] + jctr[1]),
+            (unsigned)jctr[2]);
 }
 
 #ifdef JCTR_DUMP   /* twin diagnostic: totals at exit, to stderr */
@@ -3449,6 +3475,84 @@ static bool defer_external_exit(u8 *branch_source, u32 branch_target,
   return true;
 }
 
+/* LAZY EXITS (vita.ini jit_lazy_exits / jit_lazy_budget, ARM back end).
+ *
+ * An exit to code that is not translated used to translate it on the spot, and
+ * everything that block exits to, and so on: one cold lookup translated the
+ * whole statically reachable graph (the worst frames: 60-80% of the blocks
+ * translated were never asked for by the guest).  With the switch on, the
+ * drain below still links an exit at once when its target is already
+ * translated, and still translates up to jit_lazy_budget targets per
+ * outermost lookup (the nearest ones, in the old order), but once the budget
+ * is spent an exit to an untranslated ROM target is pointed at a 20-byte
+ * island emitted at the end of the ROM cache (generate_lazy_exit_island).
+ * The first time the guest takes that exit the island enters
+ * block_lookup_address_lazy_*, which translates the target like any
+ * indirect branch would and then re-points the exit's `b` at it, so every
+ * later pass is a direct branch again.
+ *
+ * Only ROM -> ROM exits are lazy: ROM blocks are never retired, so a
+ * patched link can only die with a whole ROM flush, which rom_flush_gen
+ * detects (a link is never written into a cache that was flushed during the
+ * lookup).  RAM blocks keep the eager links the SMC machinery tracks.  The
+ * re-pointed word is in published code, so it is synced on its own
+ * (platform_cache_sync; one more call, once per lazily taken exit).
+ * Guest-visible behaviour is the indirect branch's: same lookup, same
+ * cycles.  Twins: GPSP_LAZY_EXITS=0/1, GPSP_LAZY_BUDGET=n. */
+#if defined(GPSP_LAZY_EXITS)
+static u32 lz_spec;              /* translated at depth >= 2 since the outermost began */
+u32 rom_flush_gen;               /* bumped wherever the ROM cache is reset */
+#define LZ_NOTE_BLOCK() do { if (translate_depth >= 2) lz_spec++; } while (0)
+#define LZ_TOP_BEGIN()  do { lz_spec = 0; } while (0)
+#define LZ_FLUSHED()    (rom_flush_gen++)
+
+/* The ROM block for pc|thumb when the hash has it (the lookup's own walk,
+ * with nothing allocated). */
+static inline int lz_rom_has_block(u32 pc, u32 thumb)
+{
+  u32 key = pc | thumb;
+  u32 off = rom_branch_hash[((key * 2654435761U) >> (32 - ROM_BRANCH_HASH_BITS))
+                            & (ROM_BRANCH_HASH_SIZE - 1)];
+  while (off) {
+    hashhdr_type *h = (hashhdr_type *)&rom_translation_cache[off];
+    if (h->pc_value == key)
+      return 1;
+    off = h->next_entry;
+  }
+  return 0;
+}
+
+/* Called by the drain: true when the exit was pointed at an island. */
+static int lz_try_island(u8 *src, u32 target, u32 thumb)
+{
+  u32 region = GBA_PC(target) >> 24;
+  u8 *translation_ptr;
+  if (!jit_lazy_exits || lz_spec < jit_lazy_budget)
+    return 0;
+  if (!(region == 0x0 || (region >= 0x8 && region <= 0xD)) || target == 8)
+    return 0;
+  if (src < rom_translation_cache || src >= rom_translation_ptr)
+    return 0;                               /* a RAM block's exit: eager */
+  if (lz_rom_has_block(target, thumb))
+    return 0;                               /* already there: link it */
+  if (rom_translation_ptr + LAZY_ISLAND_BYTES + 64 >
+      rom_translation_cache + rom_translation_cache_size -
+      (1024u * 1024u) - TRANSLATION_CACHE_LIMIT_THRESHOLD)  /* SMC carve: conservative */
+    return 0;
+  translation_ptr = rom_translation_ptr;
+  if (thumb) { generate_lazy_exit_island(thumb, target, src); }
+  else       { generate_lazy_exit_island(arm, target, src); }
+  generate_branch_patch_unconditional(src, translation_ptr - LAZY_ISLAND_BYTES);
+  rom_translation_ptr = translation_ptr;
+  lz_islands++;
+  return 1;
+}
+#else
+#define LZ_NOTE_BLOCK() do { } while (0)
+#define LZ_TOP_BEGIN()  do { } while (0)
+#define LZ_FLUSHED()    do { } while (0)
+#endif
+
 /* Runs at translate_depth == 1.  An entry is popped before its target is
  * looked up, since the lookup can grow (and move) the queue. */
 static bool process_deferred_exits(void)
@@ -3465,6 +3569,11 @@ static bool process_deferred_exits(void)
     branch_target = deferred_exits[deferred_exit_count].branch_target;
     thumb         = deferred_exits[deferred_exit_count].thumb;
 
+#if defined(GPSP_LAZY_EXITS)
+    if(branch_target != 0x00000008 &&
+       lz_try_island(branch_source, branch_target, thumb))
+      continue;
+#endif
     if(branch_target == 0x00000008)
       translation_target = bios_swi_entrypoint;
     else if(thumb)
@@ -3496,7 +3605,7 @@ static bool process_deferred_exits(void)
 #define XLAT_DEPTH_ENTER()                                                    \
   do {                                                                        \
     if(!translate_depth) { jd_xlat_t0 = JD_NOW_US();                          \
-                           jd_pages0 = gamepak_page_loads; }                  \
+                           jd_pages0 = gamepak_page_loads; LZ_TOP_BEGIN(); }  \
     translate_depth++;                                                        \
   } while(0)
 #define XLAT_DEPTH_LEAVE(result)                                              \
@@ -4338,6 +4447,12 @@ static void smcr_apply(void)
     if (e && *e)
       gpsp_dispatch_cache_set(atoi(e) ? 1 : 0);
 #endif
+    e = getenv("GPSP_LAZY_EXITS");
+    if (e && *e)
+      jit_lazy_exits = atoi(e) ? 1 : 0;
+    e = getenv("GPSP_LAZY_BUDGET");
+    if (e && *e)
+      jit_lazy_budget = (u32)atoi(e);
     e = getenv("GPSP_SMC_XTRACE");
     if (e && *e)
       sscanf(e, "%u:%u", &smcr_xtrace_lo, &smcr_xtrace_hi);
@@ -5229,6 +5344,42 @@ u8 function_cc *block_lookup_address_arm(u32 pc)
   BADJUMP_EXHAUSTED(pc);
 }
 
+#if defined(GPSP_LAZY_EXITS)
+/* The first execution of a lazy exit (arm_lazy_exit_*): look the target up
+ * as an indirect branch would, then point the exit's `b` at it.  Nothing is
+ * written when the ROM cache was reset meanwhile (src then lies in a cache
+ * that is being refilled), when the answer is not a block of the ROM cache's
+ * translated area (BADJUMP recovery answers the BIOS stub), or when the
+ * switch has been turned off. */
+static void lz_link(u8 *src, u8 *ret, u32 gen)
+{
+  if (!jit_lazy_exits || gen != rom_flush_gen || !ret ||
+      ret == BLOCK_LOOKUP_UNMAPPABLE ||
+      ret < rom_translation_cache + rom_cache_watermark ||
+      ret >= rom_translation_ptr ||
+      src < rom_translation_cache || src >= rom_translation_ptr)
+    return;
+  generate_branch_patch_unconditional(src, ret);
+  JCTR_SYNC(src, src + 8);
+  platform_cache_sync(src, src + 8);
+  lz_resolved++;
+}
+u8 function_cc *block_lookup_address_lazy_arm(u32 pc, u8 *src)
+{
+  u32 gen = rom_flush_gen;
+  u8 *ret = block_lookup_address_arm(pc);
+  lz_link(src, ret, gen);
+  return ret;
+}
+u8 function_cc *block_lookup_address_lazy_thumb(u32 pc, u8 *src)
+{
+  u32 gen = rom_flush_gen;
+  u8 *ret = block_lookup_address_thumb(pc);
+  lz_link(src, ret, gen);
+  return ret;
+}
+#endif
+
 u8 function_cc *block_lookup_address_thumb(u32 pc)
 {
   unsigned i;
@@ -5912,6 +6063,7 @@ bool translate_block_arm(u32 pc, bool ram_region)
   DRPH_SCOPE(DRPH_XLAT);
   JCTR(0);
   JD_BLOCK(translate_depth);
+  LZ_NOTE_BLOCK();
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -6257,6 +6409,7 @@ bool translate_block_thumb(u32 pc, bool ram_region)
   DRPH_SCOPE(DRPH_XLAT);
   JCTR(1);
   JD_BLOCK(translate_depth);
+  LZ_NOTE_BLOCK();
   u32 opcode = 0;
   u32 last_opcode;
   u32 condition;
@@ -8369,6 +8522,7 @@ void flush_translation_cache_rom(void)
    * (state load, ROM load, cheats, a full cache, SMC partial activation). */
   jit_code_owner_changed(JOWN_ROM_FLUSH);
 #endif
+  LZ_FLUSHED();
   last_rom_translation_ptr = &rom_translation_cache[rom_cache_watermark];
   rom_translation_ptr      = &rom_translation_cache[rom_cache_watermark];
 
@@ -8401,6 +8555,7 @@ void init_dynarec_caches(void)
 #ifdef JIT_CODE_DISCIPLINE
   jit_code_owner_changed(JOWN_INIT);
 #endif
+  LZ_FLUSHED();
   rom_translation_ptr = last_rom_translation_ptr = &rom_translation_cache[0];
   memset(rom_branch_hash, 0, sizeof(rom_branch_hash));
 
@@ -8512,6 +8667,7 @@ static void jit_small_rebase(void)
   skip &= ~63u;                       /* keep the zones line-exact */
   rom_translation_cache = rom_translation_cache_static + skip;
   ram_translation_cache = ram_translation_cache_static + skip;
+  LZ_FLUSHED();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
 }
@@ -8614,6 +8770,7 @@ void dynarec_select_translation_caches(void)
                                ROM_TRANSLATION_CACHE_SIZE_LARGE;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE_LARGE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE_LARGE;
+  LZ_FLUSHED();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   jit_cache_tier   = JIT_CACHE_LARGE;
@@ -8671,6 +8828,7 @@ void dynarec_release_translation_caches(void)
   ram_translation_cache      = ram_translation_cache_static;
   rom_translation_cache_size = ROM_TRANSLATION_CACHE_SIZE;
   ram_translation_cache_size = RAM_TRANSLATION_CACHE_SIZE;
+  LZ_FLUSHED();
   rom_translation_ptr = last_rom_translation_ptr = rom_translation_cache;
   ram_translation_ptr = last_ram_translation_ptr = ram_translation_cache;
   gamepak_spare_pool       = NULL;

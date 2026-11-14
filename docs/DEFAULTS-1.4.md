@@ -5,8 +5,17 @@ console the same way. A game that cannot hold 60 at the best look is eased one s
 governor (`playerkit/src/pk_look.*`, `playerkit/INTEGRATION.md` section 8), the least visible sacrifice first, and
 gets the look back when there is room. A setting the player changes by hand is never touched again.
 
-Every number below is a host measurement, a model or an estimate. Nothing in this document has been measured on a
-real console; section 6 lists what has to be.
+Numbers below are labelled: a console measurement (one, in section 5), a host measurement (instruction counts under
+qemu-arm, host twin), or an estimate. Section 6 lists what still has to be measured on a console.
+
+**The order (owner decisions, 13 Nov), for every default and for the governor:**
+1. A locked, smooth 60 (no missed refreshes, no hitches) beats everything.
+2. Wide view / screen fill stays ON, and hand-over stays on. The governor has no rung for them.
+3. The best look that fits the budget. The scaler is therefore the first thing the governor gives up and the last it
+   gets back: xBRZ 3x, 2x, MMPX 2x, then sharp bilinear, which is a normal floor whenever MMPX 2x cannot hold 60.
+
+The governor starts low and climbs only with measured headroom, never into a miss. What it trades is the scaler's
+resolution (the 3x GBA ceiling, 2x on NES). A row the player sets by hand is never touched.
 
 ## 1. Anti-aliasing, in plain words
 
@@ -25,8 +34,8 @@ scaled, and that already has two parts under the existing "Smoothing" / "Video f
    bilinear for the last fraction, so edges are crisp and the small final stretch is smooth. Both already fit the
    picture without a visible seam; neither needs extra work in 1.4.
 
-Therefore the single user-visible row is Smoothing, and Auto means "xBRZ at the highest factor that holds 60, else
-sharp bilinear". The Super NES player cannot use xBRZ (xBRZ is GPL, the SNES core is not GPL compatible); its
+Therefore the single user-visible row is Smoothing, and Auto means "the best of xBRZ, MMPX 2x, sharp bilinear that
+holds a locked 60". The Super NES player cannot use xBRZ (xBRZ is GPL, the SNES core is not GPL compatible); its
 smoothing is sharp bilinear plus the two blend rows below.
 
 ## 2. Main app (GBA, GB, GBC, NES, WonderSwan): table
@@ -88,34 +97,73 @@ get the new defaults.
 
 ## 5. Governor ladders (least visible first)
 
-Visibility is a 1..100 judgement, not a measurement. Savings are estimates the governor replaces with what it
-learns on the console.
+Visibility is a 1..100 judgement, not a measurement. Savings are the governor's first guesses, from the output
+pixels each quality step writes; it replaces them with what it learns on the console.
 
-| # | Main app (all consoles) | vis | est. saving |
+Where Auto starts (the ceiling) is the largest xBRZ factor whose output is at most 370,000 pixels, because the one
+console measurement is xBRZ 3x of a GBA picture, 345,600 output pixels a frame, which held 59.7 emulated fps but
+drew 44 frames a second on a heavy game (Pokemon Unbound, one physical Vita, `docs/PERFORMANCE.md`, "Pokemon
+Unbound 2.1.1.1 On VitAdhoc 1.2"). That is a console measurement, not a model. 4x of the same picture writes 1.78
+times the pixels (614,400), so it is not an Auto start and not a climb target, only a hand-set choice.
+
+| Console (picture) | Auto starts at | output pixels | quality steps down the ladder |
+| --- | --- | --- | --- |
+| GBA (240x160) | xBRZ 3x | 345,600 | xBRZ 2x, MMPX 2x, sharp |
+| GB, GBC (160x144) | xBRZ 4x | 368,640 | xBRZ 3x, 2x, MMPX 2x, sharp |
+| WonderSwan (224x144) | xBRZ 3x | 290,304 | xBRZ 2x, MMPX 2x, sharp |
+| NES (256x240) | xBRZ 2x | 245,760 | MMPX 2x, sharp (3x would be 720 lines, taller than the 544-line panel) |
+
+Rungs (GBA shown; every console has the same kinds, with its own quality steps):
+
+| # | Step | vis | first guess of the saving |
 | --- | --- | --- | --- |
 | 0 | Ambient glow: blurred game frame to still art | 8 | 3 % of a refresh |
-| 1 | xBRZ 4x to 3x | 15 | 12 % |
-| 2 | xBRZ 3x to 2x | 25 | 10 % |
+| 1 | xBRZ 3x to 2x | 25 | output pixels: 345,600 to 153,600 |
+| 2 | xBRZ 2x to MMPX 2x | 35 | same size, about a third of xBRZ 2x's cost |
 | 3 | Frame blend off (where it is on) | 40 | 5 % |
-| 4 | xBRZ 2x to sharp bilinear | 55 | 10 % |
-| 5 | Wide view off (GBA, NES; last, it changes the composition) | 80 | 12 % |
+| 4 | MMPX 2x to sharp bilinear (the floor) | 55 | MMPX's whole cost |
 
-| # | Super NES player (no xBRZ) | vis | est. saving |
+The guesses are `output pixels x cost per pixel`: xBRZ is anchored at 0.45 of a refresh for 345,600 pixels (a
+whole 3x picture redrawn is about 11-19 ms on the two helpers, `upscale_vita.c` UP_HOT_HOLD; a game's typical
+picture is about half new), and MMPX at 0.65 of xBRZ 2x's cost per output pixel (measurements below). The old flat guesses (12 % for 4x to 3x) are gone.
+
+MMPX 2x measured (240x160 RGB565 frames dumped from the private GBA games on the host twin; the output is
+bit-identical to the authors' reference on all of them, 50 frames from 17 games, and on synthetic odd sizes):
+
+| frame | MMPX 2x | xBRZ 2x | xBRZ 3x |
 | --- | --- | --- | --- |
-| 0 | Blend interlace lines off | 30 | 4 % |
-| 1 | Blend hi-res columns off | 45 | 4 % |
-| 2 | Wide view off | 70 | 10 % |
+| Big Mutha Truckers (bitmap mode) | 10.3 M instr | 15.7 M | 17.1 M |
+| NfS Porsche (bitmap mode) | 9.0 M | 12.7 M | 14.0 M |
+| Golden Sun | 9.0 M | 12.4 M | 13.6 M |
+| Minish Cap | 7.6 M | 9.6 M | 10.7 M |
+
+Instructions are ARMv7 under qemu-arm (single-stepped count, one scale of the whole picture, tables built
+outside); the same frames on the host x86 take 0.8-1.3 ms for MMPX 2x against 1.2-2.1 ms for xBRZ 2x and 1.4-2.2 ms
+for xBRZ 3x. So MMPX 2x is about 0.65-0.8 of xBRZ 2x and 0.55-0.65 of xBRZ 3x: cheaper, not "much cheaper", and
+it needs no float and no 2 MB distance table, which should favour it on a Cortex-A9's caches (not measured). Note
+what the counts also say: xBRZ's work is mostly per source pixel (3x costs only 8 % more instructions than 2x), so
+the output-pixel guesses above flatter the 3x to 2x step if the console is compute-bound and fit it if it is
+bound by memory writes and the texture upload (the earlier console finding); the governor learns which.
+
+Wide view and hand-over have no rung: they stay on. The old last rung (wide view off) was removed.
+
+Software-3D GBA games: a game that keeps the video in a bitmap mode (3, 4 or 5) at least 7 of any 10 seconds
+redraws its whole picture every frame (Need for Speed, Driver, SSX), so the scaler's "only what changed" and scroll
+savings never apply. The governor starts such a game at sharp bilinear (no scaler holds 60 on a whole picture every frame until a console
+says so) and remembers it; the usual climb gives MMPX 2x or xBRZ back with measured headroom. Seen in the host twin on the private GBA set: Big Mutha Truckers and Need for Speed
+Porsche Unleashed sit in bitmap modes from the start (see the `look:` lines' `mode=` and `bm=` fields).
+
+The game's memory (`look/<console>/<xx>/<name>.look`) keeps the settled look and the learned costs, so the next
+start begins where the last one settled; a game that held 60 at the full look stores nothing.
 
 Why this order: the first rungs change what the player cannot see on a 5 inch screen at arm's length; the last
 rungs change what the player picked the game's presentation for. A row set by hand is skipped.
 
-The only xBRZ evidence on file is one heavy full-screen game that showed 44 fps at xBRZ 3x on a Vita-class
-model run (see `docs/performance/`). So xBRZ cannot be the default without the governor, and with it the heavy
-game starts at the best look, drops to the first factor that holds 60 within a few seconds, and remembers it.
-
 ## 6. Not measured (needs a console)
 
-- Cost of each xBRZ factor per console and per game (all the savings above are estimates).
+- Cost of each xBRZ factor and of MMPX 2x per console and per game on the console (all the savings above are
+  guesses from output pixel counts and qemu-arm instruction counts; no clocks).
+- Whether the bitmap-mode check (7 of 10 seconds) is the right threshold for every software-3D game.
 - Whether the ladder holds 60 on a real Vita for the heavy case, and how long the first drop takes.
 - The look of Wide fill soft edges at menu screens; the visibility order.
 - Real hand-over counters feeding `LookSecond` (only simulated loads have been tested).

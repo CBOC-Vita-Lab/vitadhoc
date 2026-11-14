@@ -6,6 +6,10 @@
 #include <string.h>
 
 #include "pspcompat.h"          /* pspcompat_time_us */
+/* MMPX 2x (mmpx_vita.h) is compiled into this unit: the program's source
+ * lists (app.mk, the host twin's, tests/upscale) need no new file.  If
+ * mmpx_vita.c is ever listed there, drop this line. */
+#include "mmpx_vita.c"
 
 #ifdef __vita__
 #include <psp2/kernel/clib.h>
@@ -394,7 +398,10 @@ static void scale_piece(up_slot *S, int y0, int y1, int x0, int x1)
    uint32_t *at = S->big + (size_t)ring_y(S, y0) * (size_t)f * (size_t)W +
                   (size_t)rx0 * (size_t)f;
    int y;
-   if (S->kind == UPSCALE_XBRZ)
+   if (f == 2 && mmpx_wanted(S->kind))
+      mmpx_rect(S->cur, (int)S->w, (int)S->h, g_lut[S->bgr], at, (size_t)W,
+                y0, y1, x0, x1);
+   else if (S->kind == UPSCALE_XBRZ)
       xbrz_c_scale_rect_to(f, S->src32, (int)S->w, (int)S->h, y0, y1, x0, x1,
                            at, W);
    else

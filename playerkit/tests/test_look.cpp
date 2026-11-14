@@ -514,6 +514,73 @@ TEST(look_auto_label_shows_the_current_choice)
 	CHECK_STR(look_auto_label("Wide view", false), "Auto (Wide view)");
 }
 
+TEST(look_a_forced_look_is_applied_at_once_remembered_and_may_be_climbed_from)
+{
+	/* the frontend knows a game redraws its picture whole: rungs 0, 1, 3 (the quality row's) are needed from the start */
+	LookGovernor g;
+	CHECK(g.set_ladder(kLadder, 5));
+	g.start();
+	CHECK_EQ(g.generation(), 0u);
+	CHECK(g.force_rungs((1u << 0) | (1u << 1) | (1u << 3), "bitmap"));
+	CHECK_EQ(g.mask(), (1u << 0) | (1u << 1) | (1u << 3));
+	CHECK_EQ(g.generation(), 1u);
+	CHECK(!g.force_rungs((1u << 0) | (1u << 1), "again"));               /* nothing new: no change */
+	CHECK_EQ(g.generation(), 1u);
+	CHECK(g.memory_action() == LOOK_MEM_WRITE);
+	/* it is stored like a step that cured an overload, and the next start begins there */
+	const std::string text = g.serialize(444);
+	LookGovernor h;
+	CHECK(h.set_ladder(kLadder, 5));
+	CHECK(h.load_memory(text.data(), text.size(), 444));
+	h.start();
+	CHECK_EQ(h.mask(), g.mask());
+	/* a row set by hand is not forced */
+	LookGovernor u;
+	u.set_ladder(kLadder, 5);
+	u.set_user_row(1, true);
+	u.start();
+	CHECK(u.force_rungs(0x1Fu, "bitmap"));
+	CHECK_EQ(u.mask() & ((1u << 0) | (1u << 1) | (1u << 3)), 0u);
+	CHECK_EQ(u.mask(), (1u << 2) | (1u << 4));
+	/* and with plenty of room the usual climb gives rungs back, one at a time, never forced */
+	LookGovernor c;
+	c.set_ladder(kLadder, 5);
+	c.start();
+	c.force_rungs(1u << 4, "bitmap");
+	LookSecond light; light.emu = 0.25f; light.refreshes = 60;
+	for (int i = 0; i < 400; i++) { c.second(light); c.safe_point(LOOK_SAFE_SCENE); }
+	CHECK(c.ups() >= 1);
+	CHECK_EQ(c.forced(), 0);
+}
+
+TEST(look_output_pixels_set_the_first_guess_of_a_quality_step)
+{
+	LookTierCosts c;
+	c.xbrz_per_px = 1e-6f;
+	c.mmpx_per_px = 0.25e-6f;
+	/* 4x of a GBA picture writes 1.78 times the pixels of 3x, not 12 % more */
+	const float x4 = look_tier_cost(LOOK_TIER_XBRZ4, 240, 160, c), x3 = look_tier_cost(LOOK_TIER_XBRZ3, 240, 160, c);
+	const float x2 = look_tier_cost(LOOK_TIER_XBRZ2, 240, 160, c), m2 = look_tier_cost(LOOK_TIER_MMPX2, 240, 160, c);
+	CHECK(fabsf(x4 / x3 - 16.f / 9.f) < 1e-4f);
+	CHECK(fabsf(x3 / x2 - 9.f / 4.f) < 1e-4f);
+	CHECK(fabsf(m2 / x2 - 0.25f) < 1e-4f);
+	CHECK(look_tier_cost(LOOK_TIER_SHARP, 240, 160, c) == 0.f);
+	CHECK(look_tier_cost(LOOK_TIER_XBRZ3, 0, 160, c) == 0.f);
+	CHECK(x4 > x3 && x3 > x2 && x2 > m2 && m2 > 0.f);
+	/* the ceilings: no more than 370,000 output pixels */
+	CHECK_EQ(look_ceiling_factor(240, 160, 370000), 3);      /* GBA: 3x is 345,600, 4x 614,400 */
+	CHECK_EQ(look_ceiling_factor(160, 144, 370000), 4);      /* GB, GBC: 4x is 368,640 */
+	CHECK_EQ(look_ceiling_factor(224, 144, 370000), 3);      /* WonderSwan */
+	CHECK_EQ(look_ceiling_factor(256, 240, 370000), 2);      /* NES: 3x is 552,960, and taller than the panel */
+	CHECK_EQ(look_ceiling_factor(1000, 1000, 370000), 2);    /* never below 2 */
+	/* the ladder a frontend builds from them: the savings fall down the ladder, each from its pixels */
+	const float s1 = x3 - x2, s2 = x2 - m2, s3 = m2;
+	CHECK(s1 > s2 && s2 > s3 && s3 > 0.f);
+	const LookRung lad[3] = { { "3 -> 2", 1, s1, 25 }, { "2 -> mmpx", 1, s2, 35 }, { "mmpx -> sharp", 1, s3, 55 } };
+	LookGovernor g;
+	CHECK(g.set_ladder(lad, 3));
+}
+
 TEST(look_fuzz_keeps_its_promises_over_many_games)
 {
 	Rng pick(99);

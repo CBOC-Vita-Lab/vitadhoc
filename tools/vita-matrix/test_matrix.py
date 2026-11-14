@@ -224,5 +224,25 @@ class Restore(unittest.TestCase):
         self.assertTrue(M.Session(Stuck(self.data), os.path.join(self.t, "b")).restore())
 
 
+
+class ConfigMergeTest(unittest.TestCase):
+    def test_merge_keeps_owner_lines_and_sets_keys(self):
+        owner = b"theme = dark\nquality_gba = 0\n# note = x\n"
+        out = M.merge_config(owner, {"quality_gba": "3", "core4": "off"}).decode()
+        self.assertIn("theme = dark", out)
+        self.assertIn("quality_gba = 3", out)
+        self.assertNotIn("quality_gba = 0", out)
+        self.assertIn("# note = x", out)
+        self.assertIn("core4 = off", out)
+
+    def test_playlist_c_keys(self):
+        es = M.parse_playlist("G.gba | 10s | look_gov=0 c.quality_gba=5 t.core4=off | x\n", 60) \
+            if hasattr(M, "parse_playlist") else None
+        if es is None:
+            self.skipTest("parser has another name")
+        self.assertEqual(es[0].config, {"quality_gba": "5"})
+        self.assertEqual(es[0].threads, {"core4": "off"})
+        self.assertEqual(es[0].vita, {"look_gov": "0"})
+
 if __name__ == "__main__":
     unittest.main()

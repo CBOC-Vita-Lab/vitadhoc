@@ -22,8 +22,9 @@ APP_ID = "GBAD00001"
 # included so that the logs pulled for an entry belong to that entry alone and the
 # owner's own logs come back afterwards.
 VITA_INI, THREADS_INI, AUTOBOOT = "vita.ini", "snes/threads.ini", "autoboot.txt"
+CONFIG_INI = "config.ini"   # the owner's Settings: c.<key> overrides are MERGED into his file
 GBA_LOG, SNES_LOG = "log/gbadhoc.log", "snes/log.txt"
-MANAGED = [VITA_INI, THREADS_INI, AUTOBOOT, GBA_LOG, SNES_LOG]
+MANAGED = [VITA_INI, THREADS_INI, AUTOBOOT, CONFIG_INI, GBA_LOG, SNES_LOG]
 SNES_EXT = (".smc", ".sfc", ".swc", ".fig")
 FPS = 60.0   # frames per second used to turn seconds into autoexit_frames
 
@@ -34,9 +35,10 @@ class PlaylistError(Exception):
 
 
 class Entry:
-    def __init__(self, line_no, game, secs, vita, threads, label):
+    def __init__(self, line_no, game, secs, vita, threads, label, config=None):
         self.line_no, self.game, self.secs = line_no, game, secs
         self.vita, self.threads, self.label = vita, threads, label
+        self.config = config or {}
 
     @property
     def is_snes(self):
@@ -44,7 +46,8 @@ class Entry:
 
     def to_json(self):
         return dict(line=self.line_no, game=self.game, secs=self.secs,
-                    vita=self.vita, threads=self.threads, label=self.label)
+                    vita=self.vita, threads=self.threads, config=self.config,
+                    label=self.label)
 
 
 def parse_duration(text, default_secs):
@@ -58,8 +61,9 @@ def parse_duration(text, default_secs):
     return v / FPS if (m.group(2) or "").startswith("f") else v
 
 
-def parse_overrides(text, vita, threads):
-    """key=value tokens; a `t.` prefix sends the key to snes/threads.ini."""
+def parse_overrides(text, vita, threads, config=None):
+    """key=value tokens; a `t.` prefix sends the key to snes/threads.ini, a `c.`
+    prefix to config.ini (merged into the owner's own Settings file)."""
     for tok in text.split():
         if "=" not in tok:
             raise PlaylistError("override %r is not key=value" % tok)
@@ -68,6 +72,10 @@ def parse_overrides(text, vita, threads):
             raise PlaylistError("empty key in %r" % tok)
         if k.startswith("t."):
             threads[k[2:]] = v
+        elif k.startswith("c."):
+            if config is None:
+                raise PlaylistError("c. keys are not allowed here")
+            config[k[2:]] = v
         else:
             vita[k] = v
 
@@ -79,7 +87,7 @@ def strip_comment(line):
 
 
 def parse_playlist(text, default_secs=60):
-    entries, base_v, base_t = [], {}, {}
+    entries, base_v, base_t, base_c = [], {}, {}, {}
     for no, raw in enumerate(text.splitlines(), 1):
         line = strip_comment(raw)
         if not line:
@@ -88,20 +96,36 @@ def parse_playlist(text, default_secs=60):
             if line.startswith("@base"):
                 # @base k=v ...  sets the overrides every later entry starts from
                 # (an empty @base clears them); an entry's own keys win.
-                base_v, base_t = {}, {}
-                parse_overrides(line[5:], base_v, base_t)
+                base_v, base_t, base_c = {}, {}, {}
+                parse_overrides(line[5:], base_v, base_t, base_c)
                 continue
             f = [p.strip() for p in line.split("|")]
             if len(f) > 4 or not f[0]:
                 raise PlaylistError("expected: game | duration | key=value ... | label")
             f += [""] * (4 - len(f))
             secs = parse_duration(f[1], default_secs)
-            v, t = dict(base_v), dict(base_t)
-            parse_overrides(f[2], v, t)
-            entries.append(Entry(no, f[0], secs, v, t, f[3]))
+            v, t, c = dict(base_v), dict(base_t), dict(base_c)
+            parse_overrides(f[2], v, t, c)
+            entries.append(Entry(no, f[0], secs, v, t, f[3], c))
         except PlaylistError as e:
             raise PlaylistError("playlist line %d: %s" % (no, e))
     return entries
+
+
+def merge_config(owner, keys):
+    """The owner's config.ini (bytes or None) with `keys` set: existing lines are
+    rewritten in place, new keys appended; everything else is kept byte for byte."""
+    lines = (owner or b"").decode("utf-8", "replace").splitlines()
+    left = dict(keys)
+    out = []
+    for l in lines:
+        k = l.split("=", 1)[0].strip() if "=" in l and not l.lstrip().startswith(("#", ";")) else None
+        if k in left:
+            out.append("%s = %s" % (k, left.pop(k)))
+        else:
+            out.append(l)
+    out += ["%s = %s" % kv for kv in left.items()]
+    return ("\n".join(out) + "\n").encode()
 
 
 def render_ini(d):
@@ -579,7 +603,7 @@ def wait_for_exit(be, entry, log):
             return "timed" if entry.is_snes else "timeout"
 
 
-def run_entry(be, entry, idx, outdir, merge_base=None, log=print):
+def run_entry(be, entry, idx, outdir, merge_base=None, log=print, owner_config=None):
     name = "%02d-%s" % (idx, slug(entry.game))
     if entry.label:
         name += "-" + slug(entry.label)
@@ -598,8 +622,15 @@ def run_entry(be, entry, idx, outdir, merge_base=None, log=print):
         be.put(THREADS_INI, render_ini(entry.threads))
     else:
         be.delete(THREADS_INI)       # the owner's own threads.ini must not colour a baseline
+    # config.ini: the owner's own file every time, plus this entry's c. keys
+    # (a previous entry's keys never leak into the next one)
+    if entry.config:
+        be.put(CONFIG_INI, merge_config(owner_config, entry.config))
+    elif owner_config is not None:
+        be.put(CONFIG_INI, owner_config)
     be.put(AUTOBOOT, (entry.game + "\n").encode())
     meta["vita_ini"], meta["threads_ini"] = vita, entry.threads
+    meta["config_keys"] = entry.config
     status = "ok"
     try:
         be.launch()
@@ -708,13 +739,14 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, on_term)
     try:
         sess.backup()
+        owner_cfg = be.get(CONFIG_INI)
         print("owner's files saved in %s (restore with --restore %s)" % (os.path.join(out, "backup"), out))
         if a.merge:
             owner = dict(l.split("=", 1) for l in decode(be.get(VITA_INI)).replace(" = ", "=").splitlines() if "=" in l)
         for i, e in plan:
             print("[%d/%d] %s  (%.0fs)" % (i, len(entries), e.game, e.secs), flush=True)
             try:
-                meta, L = run_entry(be, e, i, out, owner)
+                meta, L = run_entry(be, e, i, out, owner, owner_config=owner_cfg)
                 rows.append(summarize_row(meta, L))
             except KeyboardInterrupt:
                 raise

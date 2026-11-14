@@ -96,19 +96,54 @@ end (screen hash at the hook, at `S9xControlEOF` and at `S9xSyncSpeed` are equal
 picture is what the unmodified build returns (frame, audio and state hashes are identical to the reference).
 The wide centre is the cleaner frame. Not a wide-view error.
 
-## Auto decision and census
+## Auto decision (per side) and census
 
-`snes_wide_option("auto", 1)` (the player's "Auto") lets the adapter decide per scene whether the margins show the wide picture or
-an ambient frame. Coverage is the share of margin pixels (over the drawn lines) that come from a real tilemap, the learned map or a
-trusted continued backdrop; it is smoothed (EMA over about 60 frames, snapped at scene events). Wide turns on at 85 % and off at 75 %
-(hysteresis); a change cross-fades over 32 frames (about 0.5 s). `snes_wide_option("auto", 0)` ("On") always shows the wide picture.
-The ambient frame is a dimmed, heavily blurred colour field taken from the picture's own edge columns (no structure), the same
-look as the app's ambient backdrop. Pixels not trusted fade over 24 px into it.
+`snes_wide_option("auto", 1)` (the player's "Auto") lets the adapter decide, per side and scene, whether a margin shows the composed wide
+picture or the ambient frame. Coverage is the share of that side's margin pixels (over the drawn lines, status bar lines excluded:
+`hud_excl`, default on) that come from a real tilemap, the learned map or a trusted continued backdrop (soft learned pixels count half);
+it is smoothed (EMA over about 60 frames, snapped at scene events). A side turns real at 85 % and back to ambient at 75 % (hysteresis);
+a change cross-fades over 32 frames (about 0.5 s). The two sides decide alone (13 Nov 2026): a scrolling game has real picture behind the
+camera (the tilemap keeps up to about 240 px of history behind the scroll direction and only 0 to 16 px ahead) and the side the camera came
+from can show it while the other side shows the ambient frame, instead of both falling back together. `snes_wide_option("auto", 0)` ("On")
+always shows the composed picture. A side that is ambient or cross-fading claims no real pixel (`snes_wide_real()` is 0 there and the
+provenance is soft / fade), so the truth tools see exactly what is claimed. The ambient frame is a dimmed, heavily blurred colour field
+taken from the picture's own edge columns (no structure), the same look as the app's ambient backdrop. Pixels not trusted fade over 24 px
+into it. Option calls with "auto" are lock free when the value does not change (the player calls it every frame; compose holds the adapter
+lock for a whole frame).
 
-`snes_wide_census_get()` returns running totals since the game was set (`snes_wide_census_reset()` restarts them): frames, frames
-wide / ambient / cross-fading, fallback reasons (nothing drawn, profile off, setup), Auto switches, scene events, margin pixels by
-provenance (tilemap, learned, backdrop, unknown), map cells, current coverage and the Auto state. The player writes one log line per
-second from it while the wide view is on. `snes_wide_twin --summary` prints the same (`census:` and `censuspx:` lines).
+`snes_wide_census_get()` returns running totals since the game was set (`snes_wide_census_reset()` restarts them): frames, frames wide /
+ambient (both sides) / ambient per side / cross-fading, fallback reasons (nothing drawn, profile off, setup), per line reasons
+(`line_reason[]`, `SNES_WIDE_LR_*`), Auto switches, scene events, margin pixels by provenance (tilemap, learned, backdrop, unknown, soft,
+reveal, pad), map cells, the ladder rung and the smoothed compose time. The player writes one log line per second from it while the wide
+view is on. `snes_wide_twin --summary` prints the same (`census:`, `censuspx:`, `sides:`, `ladder:`, `reasons:` lines).
+
+## Cost ladder: wide stays on, what degrades is how much is composed (13 Nov 2026)
+
+Owner rule: wide on by default for every game, never a missed 60 Hz refresh for it. The adapter therefore never switches the view off for
+cost. Option `policy` (default 1; the twin's proofs run with 0 = always the full margin) measures the compose time per frame (the wall time
+of `run()`, smoothed over about 32 frames; on the split path that is the drawing thread's time) and steps a rung:
+
+| rung | work margin (columns per side that the passes, widekit and the map are asked for) | beyond it |
+|---|---|---|
+| 0 | the picture's margin (41 / 70 / up to 96) | - |
+| 1 | 5/8 of it | ambient frame |
+| 2 | 3/8 of it | ambient frame |
+| 3 | the floor, 12 columns | ambient frame |
+
+The picture keeps its full width: the columns beyond the work margin are the ambient frame (a calm colour field, never structure, so never a
+wrong tile) and the last 12 work columns fade into it (a faded pixel claims nothing). Steps down: smoothed compose time above `cost_us`
+(default 9000 us, about half of a 60 Hz frame so that the draw thread also has room for the texture copy) for `cost_frames` (60) frames.
+Steps up (hysteresis): only after `hold_frames` (600 frames = 10 s; doubled up to 7200 each time a step up was followed by a step down within
+a minute) at the rung, and only if the time scaled to the wider margin (linear in the margin) is at most 75 % of the budget. Super FX and SA-1
+cartridges (header type byte) start at rung 1; the measurement corrects either way. Proof that the rung never shows a wrong tile: it only
+shrinks the region that is composed and fills the rest with the ambient frame; `selftest.sh` runs the truth tools at the floor
+(`policy=1 cost_us=1`) on scrolling, window and Mode 7 cartridges (0 wrong real pixels, centre identical).
+The twin can stand in for a slower machine with `--wopt cost_scale=PERCENT` (the ladder sees the measured time times this).
+
+What the ladder does not reduce: the renderer's own margin passes (PPU thread) and the capture. Their cost depends little on the margin (a
+tile draw costs the same per call, one call per tile row, line and layer), so the floor still leaves the passes of Super FX games with a
+render batch per line (Yoshi's Island: about 6 M instructions a frame). Cutting that needs a core mode that delivers the hook with the centre
+only (no passes) for the floor rung; snes/core is not in this agent's ownership (see the report).
 
 ## Learned map and sub screen layers (13 Nov 2026)
 

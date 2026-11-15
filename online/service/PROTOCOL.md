@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS rooms (
   guest_nick TEXT, guest_pub TEXT, guest_lan TEXT, guest_sym INTEGER, guest_relay_only INTEGER,
   guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER,
   punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,   -- addr_key: the creator's ipKey, for "live rooms per address"
-  created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER);
+  created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER,
+  relay_uses INTEGER DEFAULT 0);                           -- relayed addresses counted as USED credentials (never more than the mints)
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 ```
 
@@ -168,7 +169,8 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 - TURN guards: `turn_day >= TURN_MAX_CREDS_PER_DAY` (800) -> 503 `relay_budget` (retry 3600), counted at
   each mint (reserve before the upstream call, give back on failure, as `turn.js`). The monthly guard
   counts credentials that were USED: each first relayed address a member posts (route 7) adds one to
-  `turn_month`; `turn_month * TURN_EST_MB_PER_USE (50) >= TURN_MONTHLY_BUDGET_MB (50000)` -> route 6
+  `turn_month`, but never more per room than the credentials that room was given (`relay_uses` against
+  `host_mints + guest_mints`: a relayed address posted without a credential costs the month nothing); `turn_month * TURN_EST_MB_PER_USE (50) >= TURN_MONTHLY_BUDGET_MB (50000)` -> route 6
   answers 503 `relay_budget` (retry 86400). No usage-report route (decision D7).
 - Per-address counters: memory only (`budget.js` maps and the route buckets), never stored, never logged.
   They reset when the object leaves memory; the stored lookup-miss protection that matters (enumeration)

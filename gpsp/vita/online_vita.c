@@ -134,6 +134,8 @@ static struct
 
    /* the room card (UI code pad) */
    int         card_asked, card_have;
+   int         card_sent;                /* the lookup of card_code is out */
+   char        card_code[9];
    online_reply card;
 } O;
 
@@ -434,15 +436,40 @@ static void reset_conn(void)
 {
    closing keep = O.cl;
    online_cfg c = O.cfg;
-   int set = O.cfg_set, ca = O.card_asked, ch = O.card_have;
+   int set = O.cfg_set, ca = O.card_asked, ch = O.card_have, cs = O.card_sent;
    online_reply card = O.card;
+   char cc[sizeof O.card_code];
+   memcpy(cc, O.card_code, sizeof cc);
    memset(&O, 0, sizeof O);
    O.cfg = c;
    O.cfg_set = set;
    O.cl = keep;
    O.card_asked = ca;
    O.card_have = ch;
+   O.card_sent = cs;
    O.card = card;
+   memcpy(O.card_code, cc, sizeof cc);
+}
+
+/* The NAT layer refuses punch_arm, stun_start and relay_start until it has
+ * been seeded.  Seed it here, once per connection, and not only on the way
+ * into STUN: "Always use the relay", stun "off" and a STUN name that does
+ * not resolve all skip that stage and still need the punch key armed or
+ * the relay allocated. */
+static void seed_nat(void)
+{
+   uint8_t seed[16];
+   int i;
+   if (O.cfg.entropy)
+      O.cfg.entropy(seed);
+   else
+   {
+      /* no real source given (tests only: the console's caller always has one) */
+      uint64_t t = plat_time_us();
+      for (i = 0; i < 16; i++)
+         seed[i] = (uint8_t)((t >> ((i & 7) * 8)) ^ (uint64_t)(i * 37 + 11));
+   }
+   lan_transport_nat_seed(O.t, seed);
 }
 
 static void begin_common(lan_transport *t, const online_desc *d, int host)
@@ -462,6 +489,7 @@ static void begin_common(lan_transport *t, const online_desc *d, int host)
    O.t_stage = O.t_code;
    O.poll_ms = 2000;
    parse_stun_list();
+   seed_nat();
 }
 
 int online_host(lan_transport *t, const online_desc *room)
@@ -525,22 +553,40 @@ void online_get(online_view *out)
 
 /* ---- the card ------------------------------------------------------------- */
 
+/* The lookup of the card that is wanted goes out once no older lookup is
+ * in flight.  online_http_drop() cancels everything or nothing, so a lookup
+ * the player backed out of cannot be taken back by itself: it is left to
+ * finish and its answer is thrown away (pump).  Sending the next one only
+ * after that is what keeps a late answer for the LAST code from being shown
+ * as the card of THIS one (answers carry their op, not their code). */
+static void card_send(void)
+{
+   if (!O.card_asked || O.card_sent || online_http_busy(ONLINE_OP_LOOKUP))
+      return;
+   if (online_http_lookup(O.card_code) == 0)
+   {
+      O.t_req[ONLINE_OP_LOOKUP] = now_ms();
+      O.card_sent = 1;
+   }
+}
+
 int online_card_begin(const char *code)
 {
    ensure_cfg();
    if (!code || !code[0] || O.card_asked)
       return -1;
    O.card_have = 0;
-   if (online_http_lookup(code) != 0)
-      return -1;
-   O.t_req[ONLINE_OP_LOOKUP] = now_ms();
+   copy_str(O.card_code, sizeof O.card_code, code);
    O.card_asked = 1;
+   O.card_sent = 0;
+   card_send();          /* now, or from pump() when a slot is free */
    return 0;
 }
 
 void online_card_cancel(void)
 {
    O.card_asked = 0;
+   O.card_sent = 0;
    O.card_have = 0;     /* a late answer is discarded in pump() */
 }
 
@@ -555,11 +601,12 @@ static void pump(void)
              (unsigned)(r.op >= 0 && r.op < 10 ? now_ms() - O.t_req[r.op] : 0));
       if (r.op == ONLINE_OP_LOOKUP)
       {
-         if (O.card_asked)
+         if (O.card_asked && O.card_sent)
          {
             O.card = r;
             O.card_have = 1;
             O.card_asked = 0;
+            O.card_sent = 0;
          }
       }
       else if (r.op == ONLINE_OP_CLOSE)
@@ -572,6 +619,7 @@ static void pump(void)
          O.rq[O.rq_n++] = r;
    }
    close_service();
+   card_send();
 }
 
 int online_card_poll(online_reply *card)
@@ -923,6 +971,16 @@ static void on_poll(const online_reply *r)
          guest_left();
          return;
       }
+      else if (O.stage == ON_PUNCH && !O.peer_known && r->state == ONLINE_ROOM_OPEN &&
+               O.t_req[ONLINE_OP_POLL] > O.t_punch0)
+      {
+         /* a joiner's PUNCH opened us (ON_WAITING -> ON_PUNCH), but a poll
+          * sent AFTER that still shows nobody: the joiner gave up before we
+          * ever saw it.  Back to waiting, or the code page would sit in the
+          * punch stage until the room expires. */
+         guest_left();
+         return;
+      }
    }
    /* a member posted its relayed address: the room is on the relay now */
    if ((r->state == ONLINE_ROOM_RELAY || r->mode == ONLINE_MODE_RELAY) && r->have_peer &&
@@ -1048,7 +1106,6 @@ static void stage_stun(void)
    uint16_t port[2];
    int i, n = 0;
    lan_nat_status ns;
-   uint8_t seed[16];
 
    if (!O.stun_started)
    {
@@ -1069,16 +1126,6 @@ static void stage_stun(void)
          go_create_or_join();
          return;
       }
-      if (O.cfg.entropy)
-         O.cfg.entropy(seed);
-      else
-      {
-         /* no real source given (tests only: the console's caller always has one) */
-         uint64_t t = plat_time_us();
-         for (i = 0; i < 16; i++)
-            seed[i] = (uint8_t)((t >> ((i & 7) * 8)) ^ (uint64_t)(i * 37 + 11));
-      }
-      lan_transport_nat_seed(O.t, seed);
       if (lan_transport_stun_start(O.t, ip, port, n) != 0)
       {
          fe_evt("online_stun pub=%s sym=0 rc=-2", "");
@@ -1358,8 +1405,14 @@ static void stage_measure(void)
    if (O.m_frame == 0)
    {
       lan_transport_echo_reset(O.t);
-      if (!O.is_host)
-         lan_transport_set_target(O.t, O.peer_ip_be, O.peer_port);
+      /* the transport refuses when it is not a joiner or already has a
+       * session peer: netdrv's JOIN would then go nowhere, so say so now */
+      if (!O.is_host && lan_transport_set_target(O.t, O.peer_ip_be, O.peer_port) != 0)
+      {
+         fe_evt("online_target rc=-1");
+         fail(ONLINE_FAIL_UNREACHABLE, 0);
+         return;
+      }
    }
    if (O.m_frame % MEASURE_GAP == 0 && O.m_frame / MEASURE_GAP < MEASURE_ECHOES)
    {
@@ -1473,9 +1526,21 @@ void online_stop(void)
    {
       int need_close = O.have_room && !O.room_gone && !O.cl.pending && O.stage != ON_CONNECTED &&
                        O.stage != ON_FAILED;
+      /* online_http_drop() CANCELS what is in flight (the client releases a
+       * running request), it does not let it finish: a close that fail() or
+       * online_linked() sent a moment ago and that has no answer yet would
+       * be lost with the rest, and the room would stay up until it expires.
+       * So a close that is still out is queued again after the drop (the
+       * service answers a second close of the same room with 200 or 404). */
+      int close_out = online_http_busy(ONLINE_OP_CLOSE) && O.cl.code[0];
       relay_down();
       online_http_drop();
       O.rq_n = 0;
+      if (close_out)
+      {
+         O.cl.pending = 1;
+         O.cl.sent = 0;
+      }
       if (need_close)
          close_queue(O.is_host ? "cancel" : "failed");
       /* a close queued by online_linked or fail() before this is kept as it is */

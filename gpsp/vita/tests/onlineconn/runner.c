@@ -607,6 +607,8 @@ int lan_transport_stun_start(lan_transport *t, const uint32_t *ip, const uint16_
 {
    int i;
    (void)t;
+   if (!N.seeds)
+      return -1;                     /* as the real layer: nothing before nat_seed */
    N.stun_calls++;
    N.stun_n = n;
    for (i = 0; i < n && i < 2; i++)
@@ -624,6 +626,8 @@ void lan_transport_stun_keep(lan_transport *t, unsigned ms) { (void)t; N.keep_ms
 int lan_transport_punch_arm(lan_transport *t, const uint8_t key[8])
 {
    (void)t;
+   if (!N.seeds)
+      return -1;
    memcpy(N.key, key, 8);
    N.armed = 1;
    N.arm_calls++;
@@ -665,6 +669,8 @@ int lan_transport_relay_start(lan_transport *t, uint32_t ip, const uint16_t *por
                               const char *user, const char *cred)
 {
    (void)t; (void)ip;
+   if (!N.seeds)
+      return -1;
    N.relay_starts++;
    N.relay_nports = n;
    memcpy(N.relay_ports, ports, (size_t)n * sizeof ports[0]);
@@ -1087,6 +1093,35 @@ static void sc_host_incoming_punch(void)
    CHECK(run_to(ON_CONNECTED, 6000));
    online_get(&v);
    CHECK(!strcmp(v.peer_nick, "Gus"));           /* the poll still told us who it is */
+   online_stop();
+}
+
+/* 5b. A joiner's PUNCH opens the host, but the joiner has already given up
+ * (its close reopened the room): the poll sent after the PUNCH shows nobody.
+ * The host must go back to waiting with the same code, not sit in the punch
+ * stage until the room expires; the next guest then connects. */
+static void sc_host_punch_guest_gone(void)
+{
+   online_desc room = mk_desc("Alice", LAN_KIND_GBA_CABLE);
+   online_desc g = guest_desc("203.0.113.2:40002", "192.168.2.9:19019", 0, 0);
+   online_view v;
+   world();
+   start();
+   online_host(&g_tr, &room);
+   CHECK(run_to(ON_WAITING, 3000));
+   run_for(3300);
+   svc_guest_joins(&g);
+   svc_guest_leaves();                           /* before the host ever polled it */
+   N.incoming_at_ms = (int)ms_now() + 100;       /* its PUNCH was already on the way */
+   N.punch_after_ms = -1;                        /* and nobody answers ours */
+   CHECK(run_to(ON_PUNCH, 1000));
+   CHECK(run_to(ON_WAITING, 3000));
+   online_get(&v);
+   CHECK(v.fail == ONLINE_FAIL_NONE && v.code[0]);
+   CHECK(N.armed == 1);                          /* armed again for the next guest */
+   N.punch_after_ms = 300;
+   svc_guest_joins(&g);
+   CHECK(run_to(ON_CONNECTED, 12000));
    online_stop();
 }
 
@@ -1807,6 +1842,17 @@ static void sc_card(void)
       n += online_card_poll(&c);
    }
    CHECK(n == 0);
+   /* a code the player backed out of, then another one at once: the late
+    * answer of the first (404) must not be shown as the card of the second */
+   CHECK(online_card_begin("ZZZZZ") == 0);
+   online_card_cancel();
+   CHECK(online_card_begin("K7M2Q") == 0);
+   for (i = 0, n = 0; i < 90 && !n; i++)
+   {
+      g_us += 16667;
+      n = online_card_poll(&c);
+   }
+   CHECK(n == 1 && c.err == ONLINE_E_NONE && !strcmp(c.card.game, "BPEE"));
    /* the card does not disturb a connection's answers */
    {
       online_desc me = mk_desc("Gus", LAN_KIND_GBA_CABLE);
@@ -1918,6 +1964,7 @@ static const sc SC[] = {
    { "host_ttl", sc_host_ttl },
    { "host_new_pub", sc_host_new_pub },
    { "host_incoming_punch", sc_host_incoming_punch },
+   { "host_punch_guest_gone", sc_host_punch_guest_gone },
    { "join_punch", sc_join_punch },
    { "same_lan", sc_same_lan },
    { "no_post_lan", sc_no_post_lan },

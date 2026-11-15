@@ -107,6 +107,7 @@
 #define LAN_PUNCH_FAST_MS 200      /* PUNCH every 200 ms for the first 2 s ... */
 #define LAN_PUNCH_SLOW_MS 500      /* ... then every 500 ms */
 #define LAN_PUNCH_MAX_CAND 3
+#define LAN_PUNCH_OPENED_MS 4000   /* the race an incoming PUNCH starts on an armed transport */
 #define LAN_RELAY_PORT_MS 3000     /* no answer at all from a TURN port: try the next */
 #define LAN_RELAY_PORTS_MAX 3
 #define LAN_STUN_SRC_MAX  3        /* STUN servers (2) + the TURN server (1) */
@@ -1565,10 +1566,30 @@ static void lan_io_punch_rx(lan_transport *t, const struct sockaddr_in *from,
       }
       else
          nd_ctr_add(&t->st.disc_limited, 1);
-      /* A peer we did not know: it is a candidate now (a host that had not
-       * polled yet is opened by the joiner's first datagram; a NAT that
-       * changed the port is followed). */
-      if (t->punch_state == LAN_PUNCH_RUNNING)
+      /* Armed and waiting, no race running yet (a host whose poll has not
+       * shown the guest): the joiner's first PUNCH starts the race here,
+       * with its sender as the only candidate (1.8).  The datagram carries
+       * the room's key, which only the two members were given.  Without
+       * this the host would only answer, and learn of the guest at its next
+       * poll, up to ten seconds later. */
+      if (t->punch_state == LAN_PUNCH_ARMED)
+      {
+         uint64_t now_ms = now_us / 1000u;
+         t->ncand = 1;
+         t->cand_ip[0] = ip;
+         t->cand_port[0] = port;
+         t->peer_set = 0;
+         t->peer_lan = 0;
+         t->punch_sent = 0;
+         t->punch_cookie = nat_rand(t);
+         t->punch_t0_ms = now_ms;
+         t->punch_end_ms = now_ms + LAN_PUNCH_OPENED_MS;
+         t->punch_state = LAN_PUNCH_RUNNING;
+         nat_punch_round(t, now_ms);
+      }
+      /* A peer we did not know: it is a candidate now (a NAT that changed
+       * the port is followed). */
+      else if (t->punch_state == LAN_PUNCH_RUNNING)
       {
          int i, known = 0;
          for (i = 0; i < t->ncand; i++)

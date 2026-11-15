@@ -1319,3 +1319,112 @@ Recipe: `playerkit/INTEGRATION.md` sections 7 and 8. What the main app does:
   screenshots and sound for GBA, GB, GBC, NES (NROM, MMC3) and WonderSwan
   test cartridges; the Vita objects were compared instruction by instruction
   (see the 1.4 handoff notes for the list of objects whose code changed).
+
+## Version 2.0: Online
+
+Player-facing description: [Online Play](ONLINE.md). The wire protocol of the
+room service is `online/service/PROTOCOL.md`; this section is how the app and
+the service fit together and why they are shaped this way.
+
+**Pieces.** `online/service/` (Worker + Durable Object), `gpsp/vita/online_http.{h,cpp}`
+(room client), `gpsp/vita/nethttps/` (HTTPS client), `gpsp/vita/online_vita.{h,c}`
+(one online connection), `gpsp/netdrv/transport_lan.{h,c}` (STUN, punch, TURN on the
+link socket), `gpsp/vita/online_lib.{h,c}` (room card to library file),
+`gpsp/vita/ui_vita_online.h` (menus). `link_vita.c` joins them to the link
+session: the session above the transport (`fe_gblink`, netdrv, the Wireless
+Adapter path) is unchanged and does not know a link is online.
+
+**Service.** One Worker (`vitadhoc-online`, custom domain `vitadhoc.psvita.dev`,
+no workers.dev address) in front of one SQLite-backed Durable Object. A room is
+one row (state `open`, `joined`, `relay`, `closed`; both members' nickname,
+addresses and token). The object keeps no room in memory, sets no alarm and no
+timer; expiry is lazy (every request first deletes what has run out), so a
+sleeping object costs nothing. Polls are short; there are no held requests,
+because Durable Object duration is shared with the other services on the
+account. The day's request budget (8000, new rooms from 80 %) is Galaxy's
+`budget.js` with a save step of 20 instead of 200 and a save at the first request
+after the object starts: this object is idle most of the day and would forget the
+count. Per-address limits live in memory only. Relay credentials come from
+Cloudflare Realtime TURN (`turn.js`: REST scheme, UDP URLs only), guarded per
+day (800 minted) and per month (a used credential counts 50 MB against 50,000).
+The zone's one shared rate-limiting rule (`psvita-shared-ratelimit`, 100
+requests / 10 s per address on `/v1/*`) is not changed by this service; one
+host-scoped WAF rule blocks every other path on the host.
+
+**HTTPS client.** Not `ra_http`/`sceSsl`: Cloudflare's free-plan edge
+certificates are ECDSA and `sceSsl` gives no control over the TLS version or
+the ciphers. The project's own client (vendored from Galaxy and Strikers) uses
+Mbed TLS 3.6.7 (TLS 1.2 and 1.3, certificate verification always on, no switch to
+turn it off), eight compiled-in roots (Google Trust Services R1 and R4, ISRG X1
+and X2, four SSL.com), its own worker thread, per-stage time limits and
+answers of at most 64 KiB. A console clock earlier than the build's floor is
+reported as "date is wrong" and not as a certificate fault (a reset Vita reads
+2011). It sends the app's own User-Agent and no custom headers; `?v=<version>`
+is on every request and the member token is in POST bodies only. The twin has a
+plain-HTTP client for loopback tests (`np_http_plain.cpp`): the Vita talks TLS or
+nothing. `EVT online_tls` lines name the stage, the TLS version and, for a refusal,
+each certificate.
+
+**Connection (`online_vita.c`).** A non-blocking stage machine stepped once a
+frame: STUN (Cloudflare, up to two servers, retransmit 250 ms to 2 s, 5.25 s
+in all; two different mappings mean a symmetric NAT) -> create or join the room
+-> poll (2 s for 30 s, 5 s to 2 min, 10 s after; 1.5 s while connecting; stretched up to
+1.4 times from half of the new-room budget) -> the punch race (4 s) with the relay
+credential fetched in parallel -> relay fallback -> measure. The relay is chosen
+at once when either player set Always use the relay, STUN failed, or either NAT is
+symmetric. Failures map to `UI_FAIL_ONLINE_*` sentences that say who has to act.
+
+**NAT layer (`transport_lan.c`).** Everything runs on the link's own UDP socket
+and I/O thread. A datagram from a STUN or TURN server address is taken first
+(STUN/TURN message, or ChannelData `0x40..`); anything else goes to the existing
+router (`"GBLD"` discovery family, bulk, netdrv `'GPN1'`). Routing by source
+first keeps the families apart. Punch is two new discovery types (7 PUNCH,
+8 PUNCH_ACK, 26 bytes, CRC16, the room's 64-bit punch key; an older build ignores
+them). The joiner's declared-to-observed address alias (`nat_rewrite`) then works as on
+the old Internet connection. Relay: an allocation per console, a permission and
+channel for the peer's RELAYED address, data as ChannelData; both consoles post
+their relayed address, which is what hides both public addresses. Keep-alives
+(`DISC_KEEP` once a second, netdrv PING) come from the I/O thread and the pump,
+not the game loop, so an open menu does not drop a mapping. Online rooms are not
+announced on the LAN (`LAN_F_NO_DISCOVERY`); the same-router case uses the `lan`
+candidate the room carries.
+
+**Input delay.** `delay_pick()` clamps Auto at 12 frames for Online and 8 for every
+other connection; a fixed setting stays 1 to 8. The session's own limit is
+`CONFIG_DELAY_MAX` (60), so no protocol change is needed. The quality badge uses
+the measured round trip: Great under 80 ms, Good under 120 ms, Slow above. Both
+numbers are guesses until real paths have been read (`EVT link_rtt`, `gblink_win`,
+`online_quality`).
+
+**Library match.** A room card carries the console, the game code (GBA header code,
+GB/GBC title code) and `rom`, a CRC-32 of the file size and 64 slices of 4 KiB
+taken from the image the core runs (after any patch). The joiner's step is: code,
+then file fingerprint; a cable game is never opened on its code alone, and the
+session's own SHA-1 exchange (`fe_gblink` HELLO/NEED) stays the final word.
+
+**Settings and keys.** Menu: Connection (Same Wi-Fi, Online, Nearby; Direct address
+only with `vita.ini link_direct = 1`), Always use the relay (`online_relay`), Link
+delay. A 1.4 config with Internet becomes Online unless `link_direct = 1`.
+
+**Logging.** `EVT online_*` lines for every stage (`online_stage`, `online_stun`,
+`online_room`, `online_peer`, `online_punch`, `online_relay`, `online_quality`,
+`online_tls`, `online_http`, `online_fail`, `online_lookup`, `online_lib_*`), beside the
+existing `link_*` lines. Addresses are in the log, as with Wi-Fi: review it before
+sharing.
+
+**Build.** The Vita build needs an Mbed TLS prefix (`MBEDTLS=`, from
+`tools/online/build-mbedtls.py`): see [Building](BUILDING.md). Without it everything
+compiles, the client has no TLS and `make vpk` stops, because a package without
+TLS would be an Online that cannot connect. Mbed TLS adds roughly 300 to 400 KB
+of code and a few hundred KB of heap while a request runs; the numbers are
+checked at the Vita build.
+
+**Not verified.** Everything here is proven on the Linux twin against local
+servers and the NAT/TURN simulator (RFC 4787 mapping and filtering models, a test
+TURN server, loss, delay, jitter), not on a console and not against the live
+service. Only two Vitas can show: TLS on the console (its sockets, resolver,
+clock and thread), the extra traffic on one socket beside netdrv, how real home
+routers and phone hotspots behave (the share that needs the relay), Cloudflare's
+TURN details (including whether a relayed session survives its credential's
+hour), and whether the input-delay cap of 12 and the 80/120 ms limits suit real
+paths.

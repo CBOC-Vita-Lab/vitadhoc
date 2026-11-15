@@ -27,12 +27,49 @@ and each vendored component's provenance file. The seven libvita2d shader
 objects are retained licensed upstream inputs with `.cg` source alongside them;
 they are not a bundled proprietary shader compiler.
 
-## Vita Build
+## Mbed TLS (Online play, 2.0)
 
-From the repository root, with the SDK at `/opt/vitasdk`:
+Online play talks HTTPS with the project's own client (`gpsp/vita/nethttps/`),
+which needs Mbed TLS 3.6.7. It is fetched and built once, by a script, into a
+private prefix; it is never installed into VitaSDK and the build itself stays
+offline. The pin (git commit, tag, the one upstream TLS 1.3 clean-up patch and
+every hash) is `gpsp/vita/deps/lock.json`; the recipe is
+`gpsp/vita/deps/Makefile.mbedtls` and the client profile (TLS client only, no
+server, no SHA-1 or MD5) is `gpsp/vita/deps/mbedtls/np_user_config.h`.
 
 ```sh
-make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk
+python3 tools/online/build-mbedtls.py --target vita   --work "$TLS"   # Vita prefix:  $TLS/mbedtls/vita
+python3 tools/online/build-mbedtls.py --target host64 --work "$TLS"   # twin prefix:  $TLS/mbedtls/host64
+```
+
+`$TLS` is any new folder. The first run needs the network once (it clones the
+pinned source and checks the commit); after that `--fetch-only` and
+`--rebuild` exist, and the script refuses to reuse a work folder built from
+different inputs (use a new one). `--target all` builds `vita`, `host32` and
+`host64`. The Vita target needs VitaSDK at `$VITASDK` (default `/opt/vitasdk`)
+and `arm-vita-eabi-gcc`; the host targets need gcc.
+
+Then pass the prefix to the builds:
+
+```sh
+make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS="$TLS/mbedtls/vita"
+make -C gpsp/vita/hostcore ARCH=x86 -j8 MBEDTLS="$TLS/mbedtls/host64"
+```
+
+Without `MBEDTLS=` the Vita build stops at `vpk` on purpose: a package without
+TLS would be an Online that cannot connect. The twin builds without it and then
+speaks plain `http://` only (the TLS test cases are skipped; `MBEDTLS_HOST`
+points the unit tests at the host prefix). The licence of Mbed TLS (Apache-2.0
+or GPL-2.0-or-later, used here under GPL-2.0-or-later) is in
+[Licensing Status](../LICENSING.md).
+
+## Vita Build
+
+From the repository root, with the SDK at `/opt/vitasdk` and the Mbed TLS Vita
+prefix built above:
+
+```sh
+make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS="$TLS/mbedtls/vita"
 ```
 
 Output: `gpsp/vita/VitAdhoc.vpk`; intermediate files are in
@@ -61,7 +98,8 @@ record tool versions before claiming byte-for-byte artwork reproduction.
 python3 -m unittest discover -s tests                     # download checker
 python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py
 make -C gpsp/vita/tests/gamedb test
-make -C gpsp/vita/hostcore ARCH=x86 -j8                   # the app, built for Linux
+make -C gpsp/vita/hostcore ARCH=x86 -j8                   # the app, built for Linux (add MBEDTLS=<host64 prefix> for https://)
+(cd online/service && node --test "test/*.test.mjs")      # the online room service (Online, 2.0)
 python3 gpsp/vita/hostcore/app_tests.py x86 --keep        # whole-app tests
 ```
 

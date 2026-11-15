@@ -1,7 +1,8 @@
 # Play Together
 
 Open the in-game menu > Play together. VitAdhoc does GBA Link Cable, GBA
-Wireless Adapter and Game Boy / Game Boy Color Link Cable games. Back up an
+Wireless Adapter and Game Boy / Game Boy Color Link Cable games, between two
+Vitas on the same Wi-Fi, far apart by code (Online), or side by side (Nearby). Back up an
 important save before linking: two-Vita play is still being confirmed on
 hardware for version 1.0 (see [Known Issues](KNOWN-ISSUES.md)).
 
@@ -13,9 +14,10 @@ supported. Both players must have permission to use the cartridges involved.
 
 | Connection | Setup |
 | --- | --- |
-| Wi-Fi | Join the same router or hotspot. One player chooses Host a game; the other chooses Join a game and selects the discovered room. |
-| Internet | Join the host address shown by the app. The host needs reachable UDP port 19019; automatic UPnP may open it, otherwise router configuration is needed. Do not expose unrelated services or disable a firewall. |
-| Ad hoc | Choose Ad hoc and use the Vita's system connection screen. No router is needed. |
+| Same Wi-Fi | Join the same router or hotspot. One player chooses Host a game; the other chooses Join a game and selects the room that shows up. |
+| Online | For a friend far away. The host's screen shows a code of five characters; the friend types it. See [Online](#online) below. |
+| Nearby (ad hoc) | Use the Vita's system connection screen. No router is needed. |
+| Direct address | Advanced, and hidden until `link_direct = 1` is in `vita.ini`: the joiner types the address the host is shown. The host needs UDP port 19019 reachable; UPnP may open it, otherwise router configuration is needed. Online does this job without any router settings. |
 
 GBA cable sessions can link two different games: Ruby with Sapphire, FireRed
 with LeafGreen, Emerald with FireRed, the way the real cable allows. Each of
@@ -47,6 +49,57 @@ It is off by default and the host's setting controls the session. It does not
 make a weak internet connection reliable. Cheats suspend while linked and
 return afterwards; achievements pause and start counting again afterwards. Rewind, turbo and preview recording are not normal linked
 features. Three- and four-player links and single-cartridge multiboot are absent.
+
+## Online
+
+Online links two Vitas that are far apart, with a code and nothing to set up
+on your router. Version 2.0 or later on both. It works for the same games as
+Wi-Fi: GBA Link Cable, GBA Wireless Adapter and Game Boy / Game Boy Color
+Link Cable. The two of you can be anywhere with an internet connection.
+
+**To host:** open your game, then Play together > Connection: Online > Host a
+game. A code of five characters fills the screen. Tell it to your friend. Your
+game keeps running underneath. When your friend arrives their name shows and
+the link starts by itself; a message says how good the connection is. Cancel
+closes the room. A code nobody uses stops working after 10 minutes.
+
+**To join:** have the same game. Choose Play together > Connection: Online >
+Join a game, or, from the game list, Settings > Join online. Type the code
+(d-pad up and down change a letter, left and right move, Square deletes, or
+touch the keys; Triangle or Start sends it). You see the game and who is
+hosting; press X. If the game is not open, VitAdhoc finds your copy and starts
+it for you; if you do not have it, it says which game to add.
+
+Codes have no I, L, O, 0 or 1, so nothing looks alike.
+
+**How it connects.** VitAdhoc first tries a direct link between the two
+Vitas. If your routers or a phone hotspot will not allow that, the screen says
+"Connecting through the relay." and the link goes through a Cloudflare relay
+instead: a little slower, nothing for you to do. In Connection, "Always use
+the relay" skips the direct try and keeps each player's internet address
+hidden from the other. "Link delay" stays Auto: online it may use up to 12
+frames when the line needs it.
+
+**Good to know**
+
+- Both Vitas need the same VitAdhoc version. If they differ, the message says
+  which of you updates. For the GBA cable you also need the same BIOS file and
+  CPU setting.
+- The first time two different GBA games link, one sends its game to the other
+  (see above); over the internet that takes longer than on Wi-Fi. The screen
+  shows an estimate and you can cancel.
+- The message when the link forms says Great, Good or Slow. Slow still plays;
+  the game may feel delayed. Wi-Fi in the same room is always better.
+- A busy day: the service limits itself. "Online play is busy for today" means
+  try again tomorrow or use Same Wi-Fi.
+- Privacy: no account and no PSN name; only your VitAdhoc nickname is sent. The
+  room (code, game name, nicknames, addresses) lives until the link forms or 10
+  minutes pass, then it is deleted. Details in [Online Play](docs/ONLINE.md).
+- Not in this version: NES, Super NES and WonderSwan two-player over the
+  internet, and three- or four-player links.
+
+Messages and what to do about each of them are in
+[Online Play](docs/ONLINE.md#when-it-does-not-work).
 
 ## Two Players On One Vita (split screen)
 
@@ -142,14 +195,14 @@ and the controller types (DualShock 3, DualShock 4) are written from the
 VitaSDK headers and other homebrew and have not been confirmed on a real
 console. Real-hardware reports are welcome.
 
-Bluetooth between two Vitas is not a link transport; use Wi-Fi or ad hoc.
+Bluetooth between two Vitas is not a link transport; use Wi-Fi, Online or ad hoc.
 
 ## Share A Save Or State
 
 From the home screen, open Settings > Link setup > Share game data. On the other
 Vita, choose Join a share and select the offered file/target state slot.
-Both Vitas need VitAdhoc. This works over local Wi-Fi only, not
-internet or ad hoc. A replaced battery save is retained as `<game>.sav.bak`.
+Both Vitas need VitAdhoc. This works over local Wi-Fi, or Online with
+a code (one Vita shows it, the other types it); not over ad hoc. A replaced battery save is retained as `<game>.sav.bak`.
 Check the received file before removing your own backup.
 
 ## Mystery Gift

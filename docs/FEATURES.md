@@ -382,16 +382,19 @@ menu opens or a state loads. The menu shortcut remains reachable. See
 
 | Mode | Scope and limits |
 | --- | --- |
-| GBA Link Cable | Two Vitas; matching game files; Wi-Fi, internet or ad hoc transport |
-| GBA Wireless Adapter | Supported Wireless Adapter games |
-| GB / GBC cable | Compatible cartridges can differ; cartridge bytes are exchanged in memory for the session |
+| GBA Link Cable | Two Vitas; matching game files; Same Wi-Fi, Online or Nearby (ad hoc) |
+| GBA Wireless Adapter | Supported Wireless Adapter games; Same Wi-Fi, Online or Nearby |
+| GB / GBC cable | Compatible cartridges can differ; cartridge bytes are exchanged in memory for the session; Same Wi-Fi, Online or Nearby |
+| Online (2.0) | A five-character room code links two Vitas anywhere: direct link first, a Cloudflare relay when needed; no router settings, no accounts. See [Online Play](ONLINE.md) |
 | Two players on one Vita | Side-by-side handhelds; switch control or use a supported distinct second pad |
-| Save/state sharing | Local Wi-Fi; first five state slots; receiver should retain backups |
+| Save/state sharing | Same Wi-Fi or Online; first five state slots; receiver should retain backups |
 | Mystery Gift | Receiver for the supported station protocol; full phone-to-game/save flow still needs validation |
 
 Vita-to-PSP, Bluetooth as a Vita-to-Vita transport, three/four players and
-single-cartridge multiboot are not supported. Internet hosting needs a
-reachable UDP port 19019; UPnP is not guaranteed. Controller/plugin setups
+single-cartridge multiboot are not supported. Hosting by typed address (the
+advanced "Direct address" connection, hidden unless `link_direct = 1` is in
+`vita.ini`) needs a reachable UDP port 19019 and UPnP is not guaranteed;
+Online needs no port. Controller/plugin setups
 and two-device reliability need broader hardware confirmation. No plugins
 or clock profiles are installed by the app.
 

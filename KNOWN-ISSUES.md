@@ -4,6 +4,40 @@ Found something else? Please tell us in
 [GitHub issues](https://github.com/CBOC-Vita-Lab/vitadhoc/issues), with the
 game, its region and what you did.
 
+## Version 2.0: Online Play Is Not Yet Tested On Real Consoles
+
+Online play was verified on the PC test builds against simulated home routers
+(several kinds of NAT, packet loss, delay) and a test relay, and against a
+local copy of the room service. It has not been run on two real Vitas or
+against the live service. Please report what you see, with the lines that
+start `online_` in `ux0:data/GBAdhoc/log/gbadhoc.log` (they contain addresses:
+read them before sharing).
+
+- **Two Vitas on two different home networks is the meaningful test.** Two
+  Vitas on one router only prove the same-router shortcut. How many real
+  routers and phone hotspots need the relay is not known.
+- **TLS on the console is new.** The app checks the service's certificate with
+  its own list of eight root certificates. If Cloudflare serves a chain that
+  needs another root, Online says "The online service could not be reached"
+  and the log names the certificate. A Vita whose clock was reset (it shows
+  2011) cannot check certificates: set the date and time.
+- **The relay's hour.** Relay credentials last one hour and are not renewed. If
+  Cloudflare refuses to extend a relayed session past it, such a session would
+  end as "link lost" after about an hour. A direct link never does. Only the
+  live relay can say.
+- **Delay and the Great / Good / Slow limits** (80 and 120 ms, delay up to 12
+  frames) are first guesses to be tuned on real internet paths.
+- **A GBA cable link between two different games sends a whole cartridge once**
+  (up to 32 MB); over the relay that is slow. It is kept in the cache for
+  later sessions.
+- **The service limits itself** (a day's requests, rooms at once, relay use per
+  day and month). "Online play is busy for today" is that limit working, not a
+  fault; Same Wi-Fi never needs the service.
+- **Zipped games** may not be found by the join's library search if the file
+  cannot be read without unpacking it; the message then says to add the game.
+- **Not in 2.0:** NES, Super NES and WonderSwan two-player over the internet
+  (the WonderSwan's link cable is not emulated at all).
+
 ## Version 1.4: Not Yet Tested On A Console
 
 Everything new in 1.4 was verified on the PC test builds and in an emulator.
@@ -15,9 +49,7 @@ steps down by itself), NES sound and the WonderSwan, the Super NES wide view
 and the drawing-on-its-own-core hand-over. Each can be turned off in Settings
 if it misbehaves (Smooth hand-over, Steady pacing, Wide view, Image quality).
 
-- **Internet play by room code is not in 1.4.** It needs a relay server and
-  was put off. Two Vitas still link over Wi-Fi, ad hoc, or the internet with a
-  reachable UDP port (see Play Together).
+- **Internet play by room code was not in 1.4;** it arrived in 2.0 (above).
 - **Hardware anti-aliasing was dropped:** a game picture is one flat rectangle,
   so there is no polygon edge for it to smooth; Smoothing and Image quality do
   that job.

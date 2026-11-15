@@ -168,3 +168,27 @@ test('stubProvider without URLs gives random meaningless credentials', async () 
   assert.match(t.urls[0], /^turn:turn\.example\.invalid/);
   assert.equal(t.username.split(':')[0], '3600');
 });
+
+test('a relayed address posted without a credential is not a use: join, post, cancel in a loop cannot spend the month', async () => {
+  const s = makeServer({ TURN_EST_MB_PER_USE: '50', TURN_MONTHLY_BUDGET_MB: '100', RATE_LIMIT_SCALE: '1000' });
+  const c = await s.create();
+  for (let i = 0; i < 6; i++) {
+    const j = await s.join(c.data.code);
+    assert.equal(j.status, 200);
+    assert.equal((await s.endpoint(c.data.code, j.data.token, `198.18.0.2:${4000 + i}`)).status, 200, 'the post itself is served');
+    assert.equal((await s.close(c.data.code, j.data.token, 'cancel')).status, 200);
+  }
+  assert.equal(s.setting('turn_month'), undefined, 'no credential was minted: nothing was used');
+  // one credential minted in the room: one use, however many guests post after it
+  let j = await s.join(c.data.code);
+  assert.equal((await s.relay(c.data.code, j.data.token)).status, 200);
+  await s.endpoint(c.data.code, j.data.token, '198.18.0.2:5000');
+  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`);
+  for (let i = 0; i < 4; i++) {
+    await s.close(c.data.code, j.data.token, 'cancel');
+    j = await s.join(c.data.code);
+    await s.endpoint(c.data.code, j.data.token, `198.18.0.2:${5001 + i}`);
+  }
+  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`, 'uses never pass the mints of the room');
+  assert.equal((await s.relay(c.data.code, j.data.token)).status, 200, 'the guard did not trip');
+});

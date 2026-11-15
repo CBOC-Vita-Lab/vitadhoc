@@ -307,7 +307,7 @@ void nat_turn_release(nat_turn *c, uint64_t now_ms)
    if (c->have_nonce && c->send &&
        (c->state == NAT_RELAY_ALLOCATED || c->state == NAT_RELAY_BINDING || c->state == NAT_RELAY_READY))
    {
-      uint8_t buf[480], txid[12];
+      uint8_t buf[640], txid[12];      /* as nat_turn_txn.msg: user + realm + nonce at their longest pass 480 */
       turn_msg m;
       size_t len;
       turn_txid(c, txid);
@@ -580,7 +580,7 @@ static void turn_on_error(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, ui
       case 437:                          /* allocation mismatch: an old one of this socket is still there */
          if (kind == TK_ALLOC && c->have_nonce && c->realloc_tries < 2)
          {
-            uint8_t buf[480], txid[12];
+            uint8_t buf[640], txid[12];      /* as nat_turn_txn.msg: user + realm + nonce at their longest pass 480 */
             turn_msg m;
             size_t len;
             turn_txid(c, txid);

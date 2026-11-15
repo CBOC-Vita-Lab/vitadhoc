@@ -837,9 +837,19 @@ static void test_punch(void)
       CHECK(!memcmp(got + 16, KEY, 8), "the key");
       CHECK((uint16_t)(got[24] | got[25] << 8) == crc16(got, 24), "CRC16-CCITT");
    }
-   /* armed but not running: answered, and the sender is NOT adopted */
+   /* armed, no race yet (a host that has not polled): the first PUNCH with
+    * the room's key starts the race, its sender the one candidate (1.8) */
    lan_transport_nat_status(t, &st);
-   CHECK(st.punch == LAN_PUNCH_ARMED && st.punch_rx == 1, "still ARMED, one PUNCH counted");
+   CHECK(st.punch == LAN_PUNCH_RUNNING && st.punch_rx == 1, "opened by the PUNCH: RUNNING, one PUNCH counted (state %d)", st.punch);
+   n = udp_recv(fd, got, sizeof got, 500);
+   CHECK(n == 26 && got[5] == 7 && !memcmp(got + 16, KEY, 8), "and it PUNCHes the sender back (%d)", n);
+   /* armed again by the room's owner (a guest that left): ARMED, quiet */
+   lan_transport_punch_stop(t);
+   CHECK(lan_transport_punch_arm(t, KEY) == 0, "re-armed");
+   while (udp_recv(fd, got, sizeof got, 50) > 0)
+      ;
+   lan_transport_nat_status(t, &st);
+   CHECK(st.punch == LAN_PUNCH_ARMED, "ARMED again");
 
    /* the answer cap: 30 a second, the rest dropped */
    {
@@ -850,7 +860,8 @@ static void test_punch(void)
          udp_send(fd, tport, pkt, 26);
       }
       while (udp_recv(fd, got, sizeof got, 300) > 0)
-         acks++;
+         if (got[5] == 8)                       /* the race the first one opened also sends PUNCHes */
+            acks++;
       CHECK(acks <= 31 && acks >= 20, "answers capped near 30 a second (%d)", acks);
    }
 

@@ -47,7 +47,10 @@ typedef enum
    ,
    UI_ACT_NET_LOCAL,       /* start it; g_pcfg.local_partner says how */
    UI_ACT_NET_LOCAL_STOP,
-   UI_ACT_NET_LOCAL_SWAP   /* the pad drives the other machine */
+   UI_ACT_NET_LOCAL_SWAP,  /* the pad drives the other machine */
+   /* 2.0 online play: quit this game, open ui_online_open_path(), then join
+    * ui_join_target() (the room's game is not the one that is open). */
+   UI_ACT_ONLINE_OPEN_JOIN
 #endif
 } ui_action;
 
@@ -162,6 +165,12 @@ typedef struct
    int signal_pct;       /* Wi-Fi / ad hoc signal 0..100, -1 unknown */
    const char *error;    /* UI_LINK_OFF: why the last Host / local start
                           * failed, one sentence; NULL/"" = nothing */
+   /* 2.0 online play (vita/online_vita.h); all zero when conn is not Online. */
+   const char *online_code;   /* hosting Online: the code to show, NULL/"" until the room exists */
+   int online_stage;          /* ON_* (online_vita.h), 0 when the connection is not Online */
+   int online_ttl_s;          /* seconds until the code expires */
+   int relay;                 /* 1: the link runs through the relay */
+   int quality;               /* ONLINE_Q_* */
 #endif
    int fast;             /* Fast link in the running GBA cable session: 1 /
                             0, -1 = not one (fe_host_fast_link) */
@@ -190,6 +199,7 @@ typedef struct ui_join_info
    char code[5];
    char title[24];
    char nick[16];
+   char online_code[6];  /* conn ONLINE: the room code typed or picked */
 } ui_join_info;
 const ui_join_info *ui_join_target(void);
 
@@ -212,9 +222,34 @@ enum
    UI_FAIL_PORT,            /* the host's port could not be opened         */
    UI_FAIL_MEMORY,
    UI_FAIL_LOCAL,           /* the second machine would not start          */
+   /* 2.0 online play (texts: plan 1.6; the %s of some are filled by
+    * ui_online_fail_text from the last room card's values) */
+   UI_FAIL_ONLINE_CODE,
+   UI_FAIL_ONLINE_UPDATE,
+   UI_FAIL_ONLINE_VER_OLD_HERE,
+   UI_FAIL_ONLINE_VER_OLD_THERE,
+   UI_FAIL_ONLINE_SETUP,
+   UI_FAIL_ONLINE_CLOCK,
+   UI_FAIL_ONLINE_GAME,
+   UI_FAIL_ONLINE_GAME_FILE,
+   UI_FAIL_ONLINE_FULL,
+   UI_FAIL_ONLINE_UNREACHABLE,
+   UI_FAIL_ONLINE_BUSY,
+   UI_FAIL_ONLINE_SERVICE,
+   UI_FAIL_ONLINE_CLOSED,
    UI_FAIL_COUNT
 };
 void ui_link_fail_text(int why, const char **l1, const char **l2);
+/* The Online sentences, with their %s filled from arg1 / arg2 (package U
+ * defines it in ui_vita_online.h; ui_link_fail_text calls it with the last
+ * card's values). */
+void ui_online_fail_text(int why, const char *arg1, const char *arg2, const char **l1, const char **l2);
+/* The path of the game the Online join has to open first (valid after
+ * UI_ACT_ONLINE_OPEN_JOIN). */
+const char *ui_online_open_path(void);
+/* The library chose a game in order to join a room: 1 once, with the target
+ * in *ui_join_target(). */
+int ui_online_take_pending(void);
 
 /* The LINKING screen and the finger: ui_linking_draw() registers its
  * footer's hints ("O cancel", "O back") as touch targets.  Whoever draws

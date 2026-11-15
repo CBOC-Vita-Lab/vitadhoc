@@ -3605,8 +3605,10 @@ static void settings_adjust(int id, int dir)
       break;
    }
    case SET_CONN:
-      g_pcfg.net_conn = (g_pcfg.net_conn + UI_CONN_COUNT + dir) %
-                        UI_CONN_COUNT;
+      /* UI_CONN_ONLINE has no row yet (package U adds it): cycle the
+       * three that are shown. */
+      g_pcfg.net_conn = (g_pcfg.net_conn % UI_CONN_ONLINE + UI_CONN_ONLINE + dir) %
+                        UI_CONN_ONLINE;
       fe_evt("net_conn value=%d", g_pcfg.net_conn);
       break;
    case SET_DELAY:
@@ -6765,6 +6767,7 @@ enum { M_RESUME, M_SAVESTATES, M_WIRELESS, M_CHEATS, M_SETTINGS, M_GAMELIST,
 static char g_menu_note[80];         /* the menu's plate, until the next key */
 
 #include "ui_vita_play.h"
+#include "ui_vita_online.h"
 #include "ui_vita_cheats.h"
 #include "ui_vita_ra.h"
 #include "ui_vita_menu.h"

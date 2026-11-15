@@ -175,6 +175,7 @@ enum
                              * are found by themselves                    */
    UI_CONN_INTERNET,        /* the joiner types the host's address         */
    UI_CONN_ADHOC,           /* no router: the system's ad hoc connection   */
+   UI_CONN_ONLINE,          /* 2.0: over the internet with a room code     */
    UI_CONN_COUNT
 };
 
@@ -287,6 +288,30 @@ typedef struct ui_room
 int  ui_host_rooms_begin(const char *addr);
 int  ui_host_rooms_poll(ui_room *out, int max);
 void ui_host_rooms_end(void);
+
+/* ===========================================================================
+ * 4b ONLINE: a room code over the internet   (2.0; implemented by link_vita.c)
+ * ===========================================================================
+ * The code pad asks the room service what a code is (a "card": the game, the
+ * host, the build), the page shows it, the library finds the game.  The weak
+ * defaults (ui_hooks_default.c) say "not available". */
+typedef struct ui_online_card
+{
+   int  state;               /* 0 looking, 1 found, 2 failed */
+   int  fail;                /* failed: UI_FAIL_* */
+   int  kind;                /* LAN_KIND_* */
+   char console[5], game[9], rom[9], title[24], nick[16], ver[16];
+   int  compatible;          /* same VitAdhoc build for that kind; 0: `fail` already holds which sentence
+                              * (ONLINE_VER_OLD_HERE / _THERE / ONLINE_SETUP) */
+   int  full;
+} ui_online_card;
+/* The identity (1.1 `rom`) of a game file, as the host computes its own: 0 = ok. */
+int  ui_host_online_rom_id(const char *path, char out[9]);
+int  ui_host_online_available(void);          /* 1: Wi-Fi is up and the radio is free for it */
+int  ui_host_online_lookup(const char *code); /* 0 = asked; < 0 = UI_ROOMS_E_* */
+void ui_host_online_card(ui_online_card *out);/* every frame while the card page shows; a few loads */
+void ui_host_online_cancel(void);
+int  ui_host_link_direct(void);               /* vita.ini link_direct = 1: show "Direct address" */
 
 /* ===========================================================================
  * 5  THE LOCAL LINK: two players on this Vita  (implemented by local_vita.c)
@@ -490,7 +515,8 @@ int         ui_host_local_rom_pick(int i);
 /* A file that includes app_vita.h first gets the two enums compared. */
 typedef char ui_conn_matches_link_conn[
    (UI_CONN_WIFI == LINK_CONN_WIFI && UI_CONN_INTERNET == LINK_CONN_INTERNET &&
-    UI_CONN_ADHOC == LINK_CONN_ADHOC && UI_CONN_COUNT == LINK_CONN_COUNT)
+    UI_CONN_ADHOC == LINK_CONN_ADHOC && UI_CONN_ONLINE == LINK_CONN_ONLINE &&
+    UI_CONN_COUNT == LINK_CONN_COUNT)
    ? 1 : -1];
 #endif
 

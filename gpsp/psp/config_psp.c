@@ -354,7 +354,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
     * here, once, instead of differently on every screen. */
    g_pcfg.nick[15] = '\0';
    g_pcfg.net_conn = (int)fe_ini_get_int(cfg_path, "net_conn", 0);
-   if (g_pcfg.net_conn < 0 || g_pcfg.net_conn > 2)
+   if (g_pcfg.net_conn < 0 || g_pcfg.net_conn > 3)
       g_pcfg.net_conn = 0;
    g_pcfg.link_delay = (int)fe_ini_get_int(cfg_path, "link_delay", 0);
    if (g_pcfg.link_delay < 0 || g_pcfg.link_delay > PCFG_LINK_DELAY_MAX)

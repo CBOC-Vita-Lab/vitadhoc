@@ -100,6 +100,35 @@ UI_WEAK int ui_host_rooms_poll(ui_room *out, int max)
 
 UI_WEAK void ui_host_rooms_end(void) { }
 
+/* ---- section 4b: online play (2.0) ----------------------------------------- */
+UI_WEAK int ui_host_online_rom_id(const char *path, char out[9])
+{
+   (void)path;
+   if (out)
+      out[0] = 0;
+   return -1;
+}
+
+UI_WEAK int ui_host_online_available(void) { return 0; }
+
+UI_WEAK int ui_host_online_lookup(const char *code)
+{
+   (void)code;
+   return UI_ROOMS_E_NO_WIFI;
+}
+
+UI_WEAK void ui_host_online_card(ui_online_card *out)
+{
+   if (!out)
+      return;
+   memset(out, 0, sizeof(*out));
+   out->state = 2;
+}
+
+UI_WEAK void ui_host_online_cancel(void) { }
+
+UI_WEAK int ui_host_link_direct(void) { return 0; }
+
 /* ---- section 5: the local link ------------------------------------------- */
 UI_WEAK void ui_host_local_state(ui_local_state *out)
 {

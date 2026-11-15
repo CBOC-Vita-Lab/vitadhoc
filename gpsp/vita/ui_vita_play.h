@@ -1619,8 +1619,10 @@ static const char *delay_name(int d, char *buf, size_t cap)
 
 static ui_action screen_conn(unsigned edges)
 {
-   enum { CN_DELAY = UI_CONN_COUNT, CN_COUNT };
-   static const char *const what[UI_CONN_COUNT] = {
+   /* UI_CONN_ONLINE has no row yet (package U adds it and moves the delay row):
+    * the three connections that are shown. */
+   enum { CN_DELAY = UI_CONN_ONLINE, CN_COUNT };
+   static const char *const what[UI_CONN_ONLINE] = {
       "Same Wi-Fi or hotspot. Rooms are found by themselves.",
       "Far apart: the joiner types the address the host is shown.",
       "No router: the two " UI_DEVS " connect directly, side by side.",
@@ -1662,7 +1664,7 @@ static ui_action screen_conn(unsigned edges)
    ov_backdrop(OV_SCRIM_DENSE);
    vw_head(NULL, "CONNECTION");
    play_status_draw(52, g_pcfg.net_conn, net);
-   for (i = 0; i < UI_CONN_COUNT; i++)
+   for (i = 0; i < UI_CONN_ONLINE; i++)
    {
       int y = 78 + i * 38, sel = g_cursor == i, on = g_pcfg.net_conn == i;
       if (sel)

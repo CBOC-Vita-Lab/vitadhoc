@@ -477,7 +477,7 @@ typedef struct
 #ifdef VITA
    /* THE PS VITA'S OWN KEYS (vita/ui_host_hooks.h section 8).  The Play
     * together pages write them; vita/link_vita.c reads them. */
-   int  net_conn;       /* UI_CONN_*: 0 Wi-Fi (default), 1 Internet, 2 ad hoc */
+   int  net_conn;       /* UI_CONN_*: 0 Wi-Fi (default), 1 Internet, 2 ad hoc, 3 Online */
    int  link_delay;     /* 0 = Auto (default), 1..8 frames of input delay  */
    char net_addr[PCFG_NET_ADDRS][24];  /* the last host addresses typed,
                                         * newest first; "" = unused        */
@@ -523,6 +523,9 @@ extern const int pcfg_rewind_steps[PCFG_REWIND_STEPS];
 #define PCFG_REWIND_DEFAULT 60
 #define PCFG_REWIND_MB_DEFAULT 24
 #define PCFG_LINK_DELAY_MAX 8
+/* Online play: the automatic input delay may reach this many frames (the
+ * session's own wire limit is CONFIG_DELAY_MAX 60, so no protocol change). */
+#define PCFG_LINK_DELAY_ONLINE_MAX 12
 /* Remember a host address the player typed (CONFIG.INI net_addr1..4):
  * newest first, no duplicates, the oldest falls off.  Marks nothing dirty:
  * the caller saves. */

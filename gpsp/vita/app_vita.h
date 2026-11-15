@@ -193,7 +193,8 @@ unsigned app_vcount(void);
 #define LINK_CONN_WIFI      0   /* same Wi-Fi network / hotspot: rooms are found */
 #define LINK_CONN_INTERNET  1   /* the joiner types the host's address           */
 #define LINK_CONN_ADHOC     2   /* no router: console to console                 */
-#define LINK_CONN_COUNT     3
+#define LINK_CONN_ONLINE    3   /* 2.0: over the internet, a room code           */
+#define LINK_CONN_COUNT     4
 
 /* Once, after the configuration is loaded (net_vita_init...). */
 void link_boot(void);

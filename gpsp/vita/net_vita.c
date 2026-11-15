@@ -19,6 +19,8 @@
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>
 #include <psp2/sysmodule.h>
+#include <psp2/kernel/rng.h>
+#include <psp2/kernel/processmgr.h>
 #endif
 
 #include "transport_vadhoc.h"
@@ -154,6 +156,23 @@ int net_vita_wifi_status(net_vita_wifi *out)
       out->rssi_pct = (int)info.rssi_percentage;
    out->connected = 1;
    return 1;
+}
+
+void net_vita_entropy(uint8_t out[16])
+{
+   if (sceKernelGetRandomNumber(out, 16) < 0)
+   {
+      /* The RNG refused: a clock-seeded mix is poor, but better than a
+       * constant (the room service's token is what matters, and a second
+       * source is added by the caller's own clock). */
+      uint64_t t = (uint64_t)sceKernelGetProcessTimeWide() * 6364136223846793005ull;
+      int i;
+      for (i = 0; i < 16; i++)
+      {
+         t = t * 6364136223846793005ull + 1442695040888963407ull;
+         out[i] = (uint8_t)(t >> 56);
+      }
+   }
 }
 #endif /* !NET_VITA_HOST */
 

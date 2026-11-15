@@ -30,6 +30,9 @@ extern "C" {
  * up for the life of the program: it costs the pool and nothing else. */
 int  net_vita_init(void);
 void net_vita_term(void);                 /* at exit, after every release */
+/* 16 bytes of real randomness (the console's RNG; /dev/urandom on the
+ * twin): online play's transaction ids, cookies and room tokens come from it. */
+void net_vita_entropy(uint8_t out[16]);
 uint32_t net_vita_last_sce_error(void);
 
 /* ---- Wi-Fi (infrastructure) state ------------------------------------------ */

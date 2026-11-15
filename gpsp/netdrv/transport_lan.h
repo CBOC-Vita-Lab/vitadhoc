@@ -72,8 +72,11 @@ enum
    LAN_KIND_GBA_WIRELESS = 0,    /* GBA Wireless Adapter (RFU) */
    LAN_KIND_GBA_CABLE    = 1,    /* GBA Link Cable (the mirror) */
    LAN_KIND_GB_CABLE     = 2,    /* Game Boy / Color Link Cable */
-   LAN_KIND_SHARE        = 4     /* Share game data (ROOM_SHARE): no link,
+   LAN_KIND_SHARE        = 4,    /* Share game data (ROOM_SHARE): no link,
                                     saves and states (vita/share_vita.c) */
+   LAN_KIND_PAD          = 5     /* Two players on a NES / WonderSwan game
+                                    (ROOM_PAD): both consoles run one
+                                    machine, one pad each (fe_padpair.h) */
 };
 
 #define LAN_ROOM_F_OPEN   0x01   /* accepting a JOIN right now */

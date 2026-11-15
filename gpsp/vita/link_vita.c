@@ -1281,6 +1281,7 @@ static int online_ui_fail(const online_view *v, int *toast_only)
    case ONLINE_FAIL_FULL:        return UI_FAIL_ONLINE_FULL;
    case ONLINE_FAIL_UNREACHABLE: return UI_FAIL_ONLINE_UNREACHABLE;
    case ONLINE_FAIL_BUSY:        return UI_FAIL_ONLINE_BUSY;
+   case ONLINE_FAIL_SLOW:        return UI_FAIL_ONLINE_SLOW;   /* a short rate limit: "Too many tries from this network." */
    case ONLINE_FAIL_CLOSED:      return UI_FAIL_ONLINE_CLOSED;
    case ONLINE_FAIL_CLOCK:       return UI_FAIL_ONLINE_CLOCK;
    case ONLINE_FAIL_EXPIRED:

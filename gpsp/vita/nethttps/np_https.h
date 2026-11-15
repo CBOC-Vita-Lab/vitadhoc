@@ -127,6 +127,12 @@ int np_https_available(void);
 // 1 if the clock is not earlier than this build (np_https_start would not report CLOCK now), 0 if it is, -1 if the platform has no clock.
 int np_https_clock_ok(void);
 
+// vitadhoc: where the client's log lines go (without the newline; called from the client's own threads, so the callback must be
+// thread-safe and quick; NULL = none) and the User-Agent it sends ("VitAdhoc/2.0.0 (PlayStation Vita)"; printable ASCII, at most 95
+// characters). Set both once, before the first request.
+void np_https_set_log(void (*sink)(const char* line));
+void np_https_set_user_agent(const char* ua);
+
 // "mbedtls 3.6.7" (the TLS backend compiled in) or "none".
 const char* np_https_backend_name(void);
 // The console clock in UTC and the earliest time this build accepts, for the log: "2026-10-30 12:00:00Z (accepted from 2026-10-29 00:00:00Z)".

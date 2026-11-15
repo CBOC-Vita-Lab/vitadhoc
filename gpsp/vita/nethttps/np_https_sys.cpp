@@ -10,7 +10,7 @@
 #include <string.h>
 
 #if defined(NP_TARGET_VITA)
-#include "vlink_vita_radio.h"   // Galaxy: NP_NET_POOL_BYTES
+#include "../net_vita.h"   // vitadhoc: the app brings sceNet up (net_vita_init) and knows the Wi-Fi state
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/rng.h>
 #include <psp2/kernel/threadmgr.h>
@@ -37,6 +37,16 @@
 namespace nph {
 
 int64_t (*g_wall_override)(void) = nullptr;
+
+static char g_userAgent[96] = "VitAdhoc";
+const char* UserAgent() { return g_userAgent; }
+void SetUserAgent(const char* ua) {
+    // printable ASCII only (it goes into a header line); anything else and an empty text keep the old value
+    if (!ua || !*ua || strlen(ua) >= sizeof g_userAgent) return;
+    for (const char* p = ua; *p; p++)
+        if ((unsigned char)*p < 0x20 || (unsigned char)*p > 0x7E) return;
+    strcpy(g_userAgent, ua);
+}
 
 void Log(const char* format, ...) {
     char line[256];
@@ -129,30 +139,15 @@ bool ThreadJoin(Thread* t, uint32_t timeout_ms) {
     return true;
 }
 
-static bool g_netUp;   // sceNet and sceNetCtl are initialised (by us or by the LAN code: either way they stay up for the process)
+// vitadhoc: the app owns sceNet (net_vita.c: one pool, brought up once, taken down at exit after every release).  We only ask it to be
+// up (net_vita_init is idempotent and tolerates a pool somebody else made) and what the Wi-Fi says.  The lock covers the rare first call
+// from a worker thread racing the frame thread's own first call.
+static bool g_netUp;
 static SpinLock g_netLock;
 static bool EnsureNet() {
     if (g_netUp) return true;
     g_netLock.lock();
-    bool ok = true;
-    if (sceSysmoduleIsLoaded(SCE_SYSMODULE_NET) != SCE_SYSMODULE_LOADED && sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0) ok = false;
-    if (ok) {
-        static const int kPool = int(NP_NET_POOL_BYTES);   // Galaxy: the stack-wide size (vlink_vita_radio.h); if the LAN code got there first sceNetInit answers EBUSY and its pool is used; we free only a pool we made
-        void* pool = malloc(kPool);
-        SceNetInitParam param;
-        memset(&param, 0, sizeof param);
-        param.memory = pool;
-        param.size = kPool;
-        const int rc = pool ? sceNetInit(&param) : -1;
-        if (rc < 0) {
-            free(pool);
-            if ((uint32_t)rc != (uint32_t)SCE_NET_ERROR_EBUSY) ok = false;
-        }
-    }
-    if (ok) {
-        const int rc = sceNetCtlInit();
-        if (rc < 0 && (uint32_t)rc != 0x80412102u) ok = false;
-    }
+    const bool ok = net_vita_init() >= 0;
     g_netUp = ok;
     g_netLock.unlock();
     return ok;
@@ -160,8 +155,8 @@ static bool EnsureNet() {
 
 bool NetworkUp() {
     if (!EnsureNet()) return false;
-    int state = 0;
-    return sceNetCtlInetGetState(&state) >= 0 && state == SCE_NETCTL_STATE_CONNECTED;
+    net_vita_wifi w;
+    return net_vita_wifi_status(&w) != 0;
 }
 
 static volatile int g_resolverId = -1;

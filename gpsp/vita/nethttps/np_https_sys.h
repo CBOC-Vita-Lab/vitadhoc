@@ -15,6 +15,10 @@ int64_t WallSeconds();       // UTC seconds since 1970 from the platform clock (
 void SleepMs(uint32_t ms);
 extern int64_t (*g_wall_override)(void);   // host tests: replaces WallSeconds() when non-null
 
+// ---- the User-Agent both backends send (vitadhoc: set by np_https_set_user_agent; "VitAdhoc" until then) ---------------------------
+const char* UserAgent();
+void SetUserAgent(const char* ua);
+
 // ---- log (stderr, "[net-https] ...") ---------------------------------------------------------------------------------------
 void Log(const char* format, ...) __attribute__((format(printf, 1, 2)));
 

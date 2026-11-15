@@ -1,7 +1,7 @@
 /* nat_hash.h -- MD5, SHA-1 and HMAC-SHA1 for the NAT layer (STUN message
  * integrity, TURN long-term credentials).  Pure: no sockets, no threads, no
  * globals, C99, so the Vita build, the twin and the unit tests share it.
- * Owner: package N.  (W0 scaffold: the bodies are placeholders.) */
+ * Owner: package N.  */
 #ifndef NAT_HASH_H
 #define NAT_HASH_H
 

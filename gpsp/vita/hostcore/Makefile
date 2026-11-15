@@ -112,6 +112,18 @@ $(B)/core/libretro/libretro-common/vfs/vfs_implementation.o: CORE_FILE_FLAGS := 
 # -DPSPCOMPAT_PLAT: pspcompat.c's clock, vertical blank and pad are plat.h's,
 # so the UI's modal screens and the main loop share ONE timeline and ONE
 # input script (plat_host.c).
+# Online play (2.0): MBEDTLS=<host prefix> (python3 tools/online/build-mbedtls.py
+# --target host64 --work DIR -> DIR/mbedtls/host64) gives the twin's HTTPS
+# client its TLS (x86 only: the prefix is x86-64).  Without it the twin has
+# plain http:// only (nethttps/np_http_plain.cpp) and np_https_available() = 0.
+ifneq ($(strip $(MBEDTLS)),)
+ifneq ($(ARCH),x86)
+$(error MBEDTLS= is the x86-64 prefix: use it with ARCH=x86)
+endif
+APP_DEFS    += -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
+MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
+endif
+
 APP_FLAGS := $(CORE_ARCH_FLAGS) -O2 -g -Wall -Wextra -std=gnu11 -MMD -MP \
              $(SAN_FLAGS) \
              $(APP_DEFS) -DPSPCOMPAT_PLAT \
@@ -140,7 +152,7 @@ $(foreach s,$(APP_ALL),$(eval $(call APP_RULE,$(s))))
 # (-fno-rtti -fno-exceptions).
 $(B)/gbadhoc_host: $(APP_OBJS) $(FE_OBJS) $(GB_OBJS) $(CORE_A) $(CORE_B) $(CORE_R)
 	$(CC) $(CORE_ARCH_FLAGS) $(LDFLAGS_ARCH) $(SAN_FLAGS) -o $@ $(APP_OBJS) $(FE_OBJS) \
-	  $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) -lm -lpthread
+	  $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(MBEDTLS_LIBS) -lstdc++ -lm -lpthread
 
 # ROMS: a directory of extra test cartridges for run_tests.sh (default: the
 # ones the port builds itself).

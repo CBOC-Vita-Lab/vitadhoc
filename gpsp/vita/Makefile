@@ -109,6 +109,20 @@ APP_DEFS += -DGBADHOC_VERSION=\"$(CORE_VERSION)\" \
             $(if $(filter 1,$(ARM_FAR_STUBS)),-DARM_FAR_STUBS)
 # -Wno-type-limits: psp/ui_psp.h compares an enum with 0, and an ARM EABI
 # enum is unsigned.
+# Online play (2.0): the HTTPS client (nethttps/) is built for the console's
+# sceNet and threads (NP_TARGET_VITA); Mbed TLS comes from MBEDTLS=<prefix>,
+# a private build of tools/online/build-mbedtls.py (python3
+# tools/online/build-mbedtls.py --target vita --work DIR -> DIR/mbedtls/vita).
+# Without the prefix everything compiles, the client has no TLS
+# (np_https_available() = 0), and `make vpk` stops: a package without TLS
+# would be an Online that cannot connect.
+APP_DEFS += -DNP_TARGET_VITA
+ifneq ($(strip $(MBEDTLS)),)
+APP_DEFS += -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
+MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
+else ifneq ($(filter vpk $(VPK),$(MAKECMDGOALS)),)
+$(error make vpk needs MBEDTLS=<prefix>: python3 tools/online/build-mbedtls.py --target vita --work DIR, then MBEDTLS=DIR/mbedtls/vita)
+endif
 APP_WARN := -Wall -Wextra -Wno-type-limits -std=gnu11
 APP_OBJS := $(foreach s,$(APP_ALL_VITA),$(call app_obj,$(s)))
 # What the app calls, each list after what uses it: the UI and the renderer
@@ -132,7 +146,7 @@ $(B)/app/vita/vback_vita2d.o: APP_FILE_FLAGS := -I$(B)/gen
 # host twin); the rest of the app stays -O2.
 $(B)/app/vita/upscale_vita.o: APP_FILE_FLAGS := -O3 -ftree-vectorize
 
-LIBS     := $(APP_LIBS_VITA) $(VITA_UI_LIBS) $(NET_VITA_LIBS) \
+LIBS     := $(APP_LIBS_VITA) $(VITA_UI_LIBS) $(NET_VITA_LIBS) $(MBEDTLS_LIBS) \
             -lSceShaccCg_stub_weak \
             -lSceAppUtil_stub -lSceCommonDialog_stub -lSceDisplay_stub \
             -lSceCtrl_stub -lSceAudio_stub -lScePower_stub -lSceRtc_stub \

@@ -12,6 +12,7 @@ NET_VITA_SRCS := ../netdrv/netdrv.c \
                  ../netdrv/transport_lan.c \
                  ../netdrv/transport_vadhoc.c \
                  ../netdrv/upnp_igd.c \
+                 ../netdrv/nat_hash.c ../netdrv/nat_stun.c ../netdrv/nat_turn.c \
                  net_vita.c
 NET_VITA_OBJS := $(NET_VITA_SRCS:.c=.o)
 

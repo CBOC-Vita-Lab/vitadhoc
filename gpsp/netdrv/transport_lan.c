@@ -2682,6 +2682,8 @@ int lan_transport_punch_arm(lan_transport *t, const uint8_t key[8])
    }
    memcpy(t->punch_key, key, 8);
    t->punch_armed = 1;
+   t->peer_set = 0;                       /* a new guest: the last one's address is not this room's */
+   t->peer_lan = 0;
    if (t->punch_state == LAN_PUNCH_OFF)
       t->punch_state = LAN_PUNCH_ARMED;
    atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);

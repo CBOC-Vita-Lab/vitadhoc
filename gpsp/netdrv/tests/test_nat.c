@@ -1691,6 +1691,55 @@ static void test_relay_fail(uint16_t base)
    pair_close(&p);
 }
 
+static void test_rearm(uint16_t base)
+{
+   pair p;
+   const uint16_t ports[1] = { 3478 };
+   lan_nat_status s[2];
+   uint32_t srv = ip4(198, 51, 100, 9);
+   char user[64], pass[64];
+   printf("[sim: the host's transport serves a second guest: relay_stop + relay_start, punch_stop + punch_arm]\n");
+   if (pair_open(&p, base, "full", "full", 0, 1) != 0)
+   {
+      pair_close(&p);
+      return;
+   }
+   if (pair_stun(&p, 0, 0) == 0)
+   {
+      int round;
+      for (round = 0; round < 2; round++)
+      {
+         pair_punch_start(&p, 0, 0, 4000);
+         CHECK(pair_wait_punch(&p, 5000, LAN_PUNCH_DONE) == 0, "round %d: punch DONE", round);
+         lan_transport_punch_stop(p.t[0]);
+         lan_transport_punch_stop(p.t[1]);
+         lan_transport_nat_status(p.t[0], &s[0]);
+         CHECK(s[0].punch == LAN_PUNCH_OFF, "stopped");
+      }
+      CHECK(lan_transport_punch_arm(p.t[0], PKEY) == 0, "arm again");
+      lan_transport_nat_status(p.t[0], &s[0]);
+      CHECK(s[0].punch == LAN_PUNCH_ARMED && s[0].peer_port == 0, "ARMED, the old peer forgotten");
+      lan_transport_punch_stop(p.t[0]);
+   }
+   if (pair_relay(&p, ports, 1, 6000) == 0)
+   {
+      lan_transport_relay_stop(p.t[0]);
+      lan_transport_nat_status(p.t[0], &s[0]);
+      CHECK(s[0].relay == LAN_RELAY_OFF, "relay OFF after stop");
+      rest_cred(5, user, sizeof user, pass);
+      CHECK(lan_transport_relay_start(p.t[0], srv, ports, 1, user, pass) == 0, "relay_start again on the same transport");
+      WAIT_FOR(8000, ({ lan_nat_status a; lan_transport_nat_status(p.t[0], &a); a.relay == LAN_RELAY_ALLOCATED; }));
+      lan_transport_nat_status(p.t[0], &s[0]);
+      lan_transport_nat_status(p.t[1], &s[1]);
+      CHECK(s[0].relay == LAN_RELAY_ALLOCATED, "ALLOCATED again (%d, error %d)", s[0].relay, s[0].relay_err);
+      CHECK(lan_transport_relay_bind(p.t[0], s[1].relay_ip_be, s[1].relay_port) == 0, "bind again");
+      WAIT_FOR(5000, ({ lan_nat_status a; lan_transport_nat_status(p.t[0], &a); a.relay == LAN_RELAY_READY; }));
+      lan_transport_nat_status(p.t[0], &s[0]);
+      CHECK(s[0].relay == LAN_RELAY_READY, "READY again (%d)", s[0].relay);
+   }
+   pair_close(&p);
+}
+
 static void test_sim(void)
 {
    uint16_t base = (uint16_t)(36000 + (getpid() % 40) * 100);
@@ -1704,6 +1753,7 @@ static void test_sim(void)
    test_relay_pair((uint16_t)(base + 14), "sym", "sym");
    test_relay_ports((uint16_t)(base + 15));
    test_relay_fail((uint16_t)(base + 16));
+   test_rearm((uint16_t)(base + 17));
    if (g_sim_path[0] && !getenv("NATSIM"))
       unlink(g_sim_path);
 }

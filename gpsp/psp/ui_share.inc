@@ -344,12 +344,58 @@ static void sh_notice(const char *title, const char *group, const char *l1,
 
 static const char *sh_net_error(int rc)
 {
+#ifdef VITA
+   /* Online (2.0): the room service's sentence */
+   if (rc == ADHOC_ERR_ONLINE)
+      return share_online_error_text();
+#endif
    return rc == ADHOC_ERR_WLAN_OFF ? UI_RADIO_OFF "." :
           rc == ADHOC_ERR_NO_GROUP ? "The room was not found. Is it still "
                                      "sharing?" :
           rc == ADHOC_ERR_NP_START ? "Not enough memory to start the radio." :
                                      "The radio could not start.";
 }
+
+#ifdef VITA
+#include "online_vita.h"          /* ON_* */
+/* Online (2.0): while the sharer's room forms, share_net_up_online calls this
+ * once a frame: the code to tell the friend, and O to stop.  1 = cancel. */
+static const char *g_sh_on_title = "SHARE GAME DATA";
+static int g_sh_on_guest;            /* the code is the player's, not ours */
+static int sh_online_wait(int stage, const char *code, int ttl_s)
+{
+   static const char *const hint[] = { VID_GLYPH_O " cancel" };
+   unsigned edges = sh_begin();
+   char l[64];
+   int bad = !g_running || g_sh_quit;
+   sh_backdrop(-1, 0);
+   sh_header(g_sh_on_title, NULL, "Online", 0, 0);
+   if (g_sh_on_guest)
+   {
+      snprintf(l, sizeof(l), "Joining %s...", code && code[0] ? code : "");
+      vid_text_center(104, l, C_SEL);
+      vid_text_center(128, stage >= ON_PUNCH ? "Connecting..."
+                                             : "Finding your friend...", SH_DIM);
+   }
+   else if (code && code[0])
+   {
+      vid_text_center(70, "Tell your friend this code", C_ITEM);
+      vid_text_hd((480 - vid_text_hd_w(code)) / 2, 100, code, C_SEL);
+      snprintf(l, sizeof(l), "Waiting for your friend...  %d:%02d", ttl_s / 60,
+               ttl_s % 60);
+      vid_text_center(150, l, SH_DIM);
+      vid_text_center(170, "Join online > Settings > Join a share", SH_DIM);
+   }
+   else
+      vid_text_center(104, stage <= ON_STUN ? "Checking your connection..."
+                                            : "Getting a code...", C_SEL);
+   if (stage >= ON_RELAY_CREDS && stage <= ON_RELAY_WAIT)
+      vid_text_center(196, "Connecting through the relay.", SH_DIM);
+   sh_hints(hint, 1);
+   sh_end();
+   return bad || (edges & PSP_CTRL_CIRCLE);
+}
+#endif
 
 /* ======================================================================== */
 /* THE SHARER                                                                */
@@ -793,7 +839,22 @@ static void share_host_run(const char *rom_dir)
    dg = (uint8_t *)malloc(FE_SHARE_DGRAM_MAX + 8);
    snprintf(l1, sizeof(l1), "Starting %s...", lbl);
    sh_wait_frame("SHARE GAME DATA", h->group, l1, NULL);
+#ifdef VITA
+   share_online_set_wait(sh_online_wait);
+   g_sh_on_title = "SHARE GAME DATA";
+   g_sh_on_guest = 0;
+#endif
    rc = dg ? share_net_up(1, h->group) : ADHOC_ERR_NP_START;
+#ifdef VITA
+   share_online_set_wait(NULL);
+   if (rc == ADHOC_ERR_ONLINE && share_online_cancelled())
+   {
+      free(dg);
+      shh_free(h);
+      g_prev_pad = 0xFFFFFFFFu;
+      return;
+   }
+#endif
    if (rc != ADHOC_OK)
    {
       sh_notice("SHARE GAME DATA", h->group, "Sharing could not start.",
@@ -874,6 +935,11 @@ static void share_host_run(const char *rom_dir)
          vid_text_center(150, l3, C_ITEM);
       else if (s->state != FE_SHARE_SRV_CONNECTED)
       {
+#ifdef VITA
+         if (share_online_selected())
+            snprintf(l3, sizeof(l3), "Connected over the internet.");
+         else
+#endif
          snprintf(l3, sizeof(l3), "On the other " UI_DEV ": join %s as usual.", lbl);
          vid_text_center(150, l3, SH_DIM);
       }
@@ -2198,9 +2264,37 @@ static void share_join_run(const char *rom_dir, const char *group)
    j->ythumb = (uint16_t *)memalign(16, FE_SHARE_SLOTS * SHJ_THUMB_TEXELS * 2);
    j->tthumb = (uint16_t *)memalign(16, FE_SHARE_SLOTS * SHJ_THUMB_TEXELS * 2);
 
+#ifdef VITA
+   if (share_online_selected())
+   {
+      /* Online: the sharer's code, typed on the code pad */
+      char code[6];
+      if (!ui_online_code_modal(code))
+      {
+         shj_free(j);
+         g_prev_pad = 0xFFFFFFFFu;
+         return;
+      }
+      share_online_set_code(code);
+      share_online_set_wait(sh_online_wait);
+      g_sh_on_title = "GAME DATA";
+      g_sh_on_guest = 1;
+      snprintf(l1, sizeof(l1), "Joining %s...", code);
+   }
+   else
+#endif
    snprintf(l1, sizeof(l1), "Joining %s...", j->room);
    sh_wait_frame("GAME DATA", j->group, l1, NULL);
    rc = j->dg ? share_net_up(0, j->group) : ADHOC_ERR_NP_START;
+#ifdef VITA
+   share_online_set_wait(NULL);
+   if (rc == ADHOC_ERR_ONLINE && share_online_cancelled())
+   {
+      shj_free(j);
+      g_prev_pad = 0xFFFFFFFFu;
+      return;
+   }
+#endif
    if (rc != ADHOC_OK)
    {
       sh_notice("GAME DATA", j->group, "Could not join the room.",

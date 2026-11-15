@@ -2083,6 +2083,13 @@ static void rom_roots_init(void)
  * 1 = a game was asked for but cannot be played (g_launch_note says why). */
 static char g_launch_note[200];
 static int  g_launch_tried;
+/* Online play (2.0): "Join online" from the game list or the library match
+ * chose a game to open and then a room to join.  g_next_rom is the game
+ * (consumed by the loop's next turn), g_join_pending asks link_action(0)
+ * once that game has run a few frames. */
+static char g_next_rom[APP_PATH_CAP];
+static int  g_join_pending;
+static unsigned g_join_frames;       /* frames run since the game booted */
 
 static int rom_from_launch(char *out, size_t cap)
 {
@@ -5355,6 +5362,15 @@ static void menu_action(ui_action act)
       /* Stop hosting, cancel a Host still coming up, or end the session. */
       link_disconnect();
       break;
+   case UI_ACT_ONLINE_OPEN_JOIN:
+      /* The room's game is another file than the running one: leave this
+       * game (no notice: the player chose it), open that file, and join
+       * the room once it is up (the target is still *ui_join_target()). */
+      snprintf(g_next_rom, sizeof(g_next_rom), "%s", ui_online_open_path());
+      g_join_pending = g_next_rom[0] != '\0';
+      if (g_join_pending)
+         app_quit_game("");
+      break;
 
    /* ---- Play together: two players on this Vita (part B, local_vita.c).
     * The menu stays open on its page for all three. */
@@ -5647,6 +5663,7 @@ static uint64_t g_chord2_t0;
 static void game_loop(void)
 {
    upscale_gov_reset();            /* a new game starts at the full factor */
+   g_join_frames = 0;
    while (g_running && g_quit == QUIT_NONE)
    {
       unsigned pad, pad_new, fired, frames;
@@ -5802,6 +5819,14 @@ static void game_loop(void)
          link_local_pads(g_app_keys, keys2, have2);
       }
       link_frame();
+      if (g_join_pending && ++g_join_frames >= 20 && g_quit == QUIT_NONE)
+      {
+         /* The game for a room is up and has drawn its first frames: now
+          * join (the room is still *ui_join_target()) */
+         g_join_pending = 0;
+         fe_evt("online_join_pending go frames=%u", g_join_frames);
+         link_action(0);
+      }
       link_local_frame();
       session = link_session_up();
       if (g_quit != QUIT_NONE)
@@ -6476,9 +6501,20 @@ int main(int argc, char **argv)
       /* ---- which game ---- */
       /* the launcher's game, once: a refused one is not asked again (nor
        * replaced by autoboot.txt's) when the list comes back */
-      int launched = g_launch_tried ? -1
-                                    : rom_from_launch(rom_path, sizeof(rom_path));
-      g_launch_tried = 1;
+      int launched = -1;
+      if (g_next_rom[0])
+      {
+         /* Online: the game the room needs (nothing else is asked first) */
+         snprintf(rom_path, sizeof(rom_path), "%s", g_next_rom);
+         g_next_rom[0] = '\0';
+         launched = 0;
+      }
+      else
+      {
+         launched = g_launch_tried ? -1
+                                   : rom_from_launch(rom_path, sizeof(rom_path));
+         g_launch_tried = 1;
+      }
       if (launched == 1)
          app_notice("This game could not be started", g_launch_note,
                     "The launcher's path was used exactly as written.", 6000);
@@ -6505,6 +6541,9 @@ int main(int argc, char **argv)
             fe_evt("browser exit rc=%d", br);
             break;
          }
+         /* "Join online" in the list's Settings chose this game for a room */
+         if (ui_online_take_pending())
+            g_join_pending = 1;
       }
       first = 0;
       if (!g_running)
@@ -6519,6 +6558,7 @@ int main(int argc, char **argv)
       }
       if (console == FE_CONSOLE_SNES)
       {
+         g_join_pending = 0;      /* an Online join is not offered for SNES yet */
          /* snes.bin takes over; it only comes back here on failure */
          char snes_arg[APP_PATH_CAP * 2 + 2];
          int src;
@@ -6585,6 +6625,7 @@ int main(int argc, char **argv)
       artfetch_pause(1);         /* the game has the card and the network */
       if (game_boot(rom_path, console) != 0)
       {
+         g_join_pending = 0;
          pcfg_game_end();
          artfetch_pause(0);
          app_notice("This game could not be started",

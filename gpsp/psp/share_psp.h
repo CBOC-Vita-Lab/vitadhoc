@@ -35,10 +35,32 @@ unsigned share_now_ms(void);
  *                       radio held by a link session) */
 #ifndef ADHOC_OK
 enum { ADHOC_OK = 0, ADHOC_ERR_WLAN_OFF = -1, ADHOC_ERR_NP_START = -14,
-       ADHOC_ERR_NO_GROUP = -15 };
+       ADHOC_ERR_NO_GROUP = -15,
+       ADHOC_ERR_ONLINE = -16 };      /* Online: share_online_error_text() */
 #endif
 /* This console's address as the bulk lane names it (zeros while down). */
 void share_net_local_mac(uint8_t mac[6]);
+
+/* ---- Share game data over the internet (2.0, config.ini net_conn = 3) ----
+ * The same two calls, share_net_up(host, group), open an ONLINE room instead
+ * when Settings > Connection is Online: the group name is ignored, the room
+ * is a LAN_KIND_SHARE room of the room service and the sharer's code is
+ * drawn by the wait callback.  Blocking, as the share screens are. */
+int  share_online_selected(void);
+/* Called once a frame while the room forms: stage is ON_* (online_vita.h),
+ * code is "" until the room exists, ttl_s the seconds the code still lives.
+ * It draws a frame and returns nonzero when the player cancels. */
+typedef int (*share_online_wait_fn)(int stage, const char *code, int ttl_s);
+void share_online_set_wait(share_online_wait_fn fn);
+/* The guest: the sharer's room code, before share_net_up(0, ...). */
+void share_online_set_code(const char *code);
+/* After ADHOC_ERR_ONLINE: 1 when the player cancelled (no notice), else the
+ * sentence to show. */
+int  share_online_cancelled(void);
+const char *share_online_error_text(void);
+/* The one function that does it (share_net_up calls it): host != 0 shares;
+ * code is the guest's room code; code_out (6 bytes) gets the sharer's. */
+int  share_net_up_online(int host, const char *code, char *code_out);
 #endif
 
 /* Who this console is: the core's build string, each core's state format,

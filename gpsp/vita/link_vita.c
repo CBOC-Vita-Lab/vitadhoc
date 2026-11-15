@@ -29,6 +29,17 @@
  *              then PDP datagrams (transport_vadhoc).  No room list: the
  *              joiner's JOIN is a broadcast and the protocol string decides
  *              who answers.
+ *   Online     (2.0, config.ini net_conn = 3) over the internet with a
+ *              five-character room code.  The same transport, but its
+ *              address comes from online_vita.c (the room service, STUN,
+ *              a punched hole or the relay): this file only opens the
+ *              transport with LAN_F_NO_DISCOVERY, hands it to
+ *              online_host / online_join, steps online_step() once a frame
+ *              and, when the peer is reachable, goes on exactly as the
+ *              Internet connection does (netdrv, the session).  Nothing
+ *              above the transport knows the difference, which is why the
+ *              mirror's frame loop is untouched.  The one Online-only rule
+ *              is the input delay's ceiling (12 frames, delay_pick).
  *
  * THREE KINDS (the game decides, docs/GBA-LINK-UI.md):
  *
@@ -72,6 +83,18 @@
  *   link_absorb = 0        no stall absorption
  *   link_copies = N        frames of buttons per unreliable datagram (4)
  *   link_nack = 0          no resend requests
+ *   online_url = URL       the room service (default the shipped one;
+ *                          http://127.0.0.1:PORT for the dev server)
+ *   online_stun = H:P,H:P  STUN servers ("off": no STUN, the address is the
+ *                          console's own)
+ *   online_lan = 0         do not offer the LAN address (same-router pairs)
+ *   online_force_relay = 1 / online_no_relay = 1   tests: relay only / never
+ *   online_punch_ms = N    the punch race's length instead of the service's
+ *   link_natsim = IP:PORT  every datagram of an Online transport goes
+ *   link_natsim_id = N     through the NAT simulator (twin only)
+ *   link_direct = 1        the typed-address connection ("Direct address")
+ *                          stays in the menus; a saved Internet choice is
+ *                          kept (otherwise config load makes it Online)
  *   link_peek = ADDR:N     log N 32-bit words of the player's machine's
  *                          memory at hexadecimal ADDR (EVT link_peek) when a
  *                          session starts running, every ten seconds of it
@@ -140,6 +163,7 @@
 #include "ui_host_hooks.h"
 #include "cheats_vita.h"
 #include "net_vita.h"
+#include "online_vita.h"
 #include "transport_lan.h"
 #include "transport_vadhoc.h"
 #include "upnp_igd.h"
@@ -159,6 +183,9 @@ typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &
                                   * hoc radio; the PSP's needs 4 at a third of
                                   * the CPU.  Read EVT gblink_win lead_min. */
 #define DELAY_MAX         PCFG_LINK_DELAY_MAX
+/* Online's own ceiling for the MEASURED delay (the player's fixed setting
+ * stays 1..8): a transatlantic path with some spread asks for 9..12. */
+#define DELAY_ONLINE_MAX  PCFG_LINK_DELAY_ONLINE_MAX
 /* Auto: echoes sent (one a frame) and frames waited for their answers. */
 #define MEASURE_ECHOES    6
 #define MEASURE_FRAMES    24
@@ -202,7 +229,9 @@ enum
    PH_HOSTING,       /* the room is open, nobody in it; the game runs        */
    PH_MEASURE,       /* cable host: a console arrived, timing the way to it  */
    PH_LINKED,        /* adapter: in the room.  cable / GB: the session       */
-   PH_FAILED         /* a join that did not link: its two lines, until O     */
+   PH_FAILED,        /* a join that did not link: its two lines, until O     */
+   PH_ONLINE         /* Online joiner: the room service, the punch or relay
+                      * (last, so the numbers the logs and tests know stay) */
 };
 
 /* Why a link did not form or did not last, beyond what the session knows. */
@@ -257,6 +286,14 @@ static struct
    int  stall_told;
    int  end_asked;
 
+   /* Online (2.0) */
+   int  on_live;                  /* online_host / online_join began, and
+                                   * net_down has not ended it              */
+   int  on_stage;                 /* online_step()'s answer this frame      */
+   int  on_toast;                 /* host: the quality toast is still to say */
+   int  on_failed;                /* the fail (online_view.fail) this link
+                                   * ended with, for the logs               */
+
    /* watching the radio */
    int  strikes, signal_pct;
 
@@ -291,7 +328,15 @@ static struct
    unsigned peek_addr, peek_words;
    int      drc;
    int      up;                   /* net_vita_init succeeded                 */
-   uint32_t compat[3];            /* by LAN_KIND_*                           */
+   uint32_t compat[6];            /* by LAN_KIND_*; 3 is unused, 4 share,
+                                   * 5 the two-player mirror (milestone B)  */
+   /* Online (vita.ini; docs/ONLINE-PLAY.md) */
+   char     on_url[96], on_stun[96];
+   int      on_lan, on_force_relay, on_no_relay, on_punch_ms;
+   char     natsim[32];           /* link_natsim = ip:port: the NAT simulator */
+   int      natsim_id;
+   int      direct, direct_read;  /* link_direct = 1: the typed address     */
+   int      on_set;               /* online_setup ran                        */
    char     proto_cable[ND_PROTO_LEN], proto_gb[ND_PROTO_LEN];
    int      exit_assist;
 } S;
@@ -300,6 +345,7 @@ static struct
 static struct { lan_scan *scan; int claimed; } R;
 
 static void link_teardown(void);
+static void after_transport(void);
 static void chip_update(void);
 static void win_note(int final);
 
@@ -415,6 +461,11 @@ static void compat_make(void)
             (unsigned)(S.compat[LAN_KIND_GBA_CABLE] & 0xFFFFFFu));
    snprintf(S.proto_gb, sizeof(S.proto_gb), "GBAdhoc GB link v2/%04x",
             (unsigned)(S.compat[LAN_KIND_GB_CABLE] & 0xFFFFu));
+   /* Share game data and the milestone-B mirror: the build alone. */
+   snprintf(build, sizeof(build), "%s|%s|%s", GBADHOC_VERSION, LINK_ABI,
+            S.build);
+   S.compat[LAN_KIND_SHARE] = lan_compat_hash("GBAdhoc share", build);
+   S.compat[5] = lan_compat_hash("GBAdhoc mirror v1", build);
    fe_evt("link_compat backend=%s adapter=%08x cable=%08x gb=%08x",
           backend_name(), (unsigned)S.compat[0], (unsigned)S.compat[1],
           (unsigned)S.compat[2]);
@@ -465,6 +516,26 @@ void link_boot(void)
    /* The PSP's player build has the exit assist on (PLAY_EXIT_ASSIST). */
    S.exit_assist = (int)fe_ini_get_int(ini, "rfu_exit_assist", 1) != 0;
 
+   /* Online play (2.0): every switch is for tests or for a fork of the
+    * service; the defaults are the shipped service and Cloudflare's STUN. */
+   if (!fe_ini_get(ini, "online_url", S.on_url, sizeof(S.on_url)))
+      S.on_url[0] = '\0';
+   if (!fe_ini_get(ini, "online_stun", S.on_stun, sizeof(S.on_stun)))
+      S.on_stun[0] = '\0';
+   S.on_lan = (int)fe_ini_get_int(ini, "online_lan", 1) != 0;
+   S.on_force_relay = (int)fe_ini_get_int(ini, "online_force_relay", 0) != 0;
+   S.on_no_relay = (int)fe_ini_get_int(ini, "online_no_relay", 0) != 0;
+   S.on_punch_ms = (int)fe_ini_get_int(ini, "online_punch_ms", 0);
+   if (S.on_punch_ms < 0)
+      S.on_punch_ms = 0;
+   if (!fe_ini_get(ini, "link_natsim", S.natsim, sizeof(S.natsim)))
+      S.natsim[0] = '\0';
+   S.natsim_id = (int)fe_ini_get_int(ini, "link_natsim_id", 0);
+   if (S.natsim_id < 0 || S.natsim_id > 255)
+      S.natsim_id = 0;
+   S.direct = (int)fe_ini_get_int(ini, "link_direct", 0) != 0;
+   S.direct_read = 1;
+
    rc = net_vita_init();
    S.up = rc == 0;
    fe_evt("link_boot net=%d sce=0x%08x port=%d fault=%d/%d/%d/%d absorb=%d "
@@ -472,11 +543,65 @@ void link_boot(void)
           S.port ? S.port : LAN_PORT_DEFAULT, S.loss, S.dup, S.latency,
           S.jitter, S.absorb, S.copies, S.nack);
    compat_make();
+   /* After net_vita_init, on this thread: the room client's worker calls
+    * the resolver and the clock lazily and expects the stack to be up. */
+   {
+      online_cfg oc;
+      memset(&oc, 0, sizeof(oc));
+      oc.url = S.on_url[0] ? S.on_url : NULL;
+      oc.stun = S.on_stun[0] ? S.on_stun : NULL;
+      oc.post_lan = S.on_lan;
+      oc.force_relay = S.on_force_relay;
+      oc.no_relay = S.on_no_relay;
+      oc.punch_ms = (unsigned)S.on_punch_ms;
+      oc.now_us = plat_time_us;
+      oc.entropy = net_vita_entropy;
+      online_setup(&oc);
+      S.on_set = 1;
+      fe_evt("online_boot url=%s stun=%s lan=%d force_relay=%d no_relay=%d "
+             "punch_ms=%d natsim=%s direct=%d",
+             oc.url ? oc.url : ONLINE_URL_DEFAULT,
+             oc.stun ? oc.stun : ONLINE_STUN_DEFAULT, S.on_lan,
+             S.on_force_relay, S.on_no_relay, S.on_punch_ms,
+             S.natsim[0] ? S.natsim : "-", S.direct);
+   }
+}
+
+/* vita.ini link_direct = 1: the typed address ("Direct address") is shown.
+ * config load asks BEFORE link_boot has run (the main loop loads
+ * config.ini first), so the first answer reads the file itself. */
+int ui_host_link_direct(void)
+{
+   if (!S.direct_read)
+   {
+      char ini[APP_PATH_CAP + 16];
+      snprintf(ini, sizeof(ini), "%s/vita.ini", g_app_root);
+      S.direct = (int)fe_ini_get_int(ini, "link_direct", 0) != 0;
+      S.direct_read = 1;
+   }
+   return S.direct;
 }
 
 void link_shutdown(void)
 {
+   int was_online = L.on_live;
+
    link_teardown();
+   if (S.on_set)
+   {
+      /* A room's close is one request: give it a moment to leave (the
+       * worker is told to stop at exit, which cancels what is running). */
+      if (was_online)
+      {
+         int i;
+         for (i = 0; i < 25; i++)
+         {
+            (void)online_step();
+            plat_sleep_us(10000);
+         }
+      }
+      online_http_shutdown();
+   }
    if (R.scan)
       ui_host_rooms_end();
    if (L.igd)
@@ -720,6 +845,28 @@ static unsigned lan_flags(uint32_t ip_be)
    return (ntohl(ip_be) >> 24) == 127 ? LAN_F_LOOPBACK : 0;
 }
 
+/* What an Online transport is: not announced on the network (the room
+ * service is how it is found), and, in a test build with vita.ini
+ * link_natsim, every datagram goes through the NAT simulator.  Also what
+ * Share game data (share_vita.c) opens its Online room with. */
+void link_online_config(struct lan_config *c)
+{
+   c->flags |= LAN_F_NO_DISCOVERY;
+   if (S.natsim[0])
+   {
+      uint32_t ip = 0;
+      uint16_t port = 0;
+      if (lan_parse_addr(S.natsim, &ip, &port, 0) == 0 && port)
+      {
+         c->sim_ip_be = ip;
+         c->sim_port = port;
+         c->sim_id = (uint8_t)S.natsim_id;
+         /* the port this console declares inside the simulated LAN */
+         c->sim_lan_port = (uint16_t)(S.port ? S.port : LAN_PORT_DEFAULT);
+      }
+   }
+}
+
 /* Wi-Fi / Internet: the socket.  0, or a UI_FAIL_* code + 1 negated. */
 static int infra_open(int is_host, uint32_t target_ip_be, uint16_t target_port)
 {
@@ -740,6 +887,8 @@ static int infra_open(int is_host, uint32_t target_ip_be, uint16_t target_port)
    c.flags = lan_flags(w.ip_be) | LAN_F_IO_KEEPALIVE;
    c.target_ip_be = target_ip_be;
    c.target_port = target_port;
+   if (L.conn == LINK_CONN_ONLINE)
+      link_online_config(&c);
    L.lan = lan_transport_create(&c);
    if (!L.lan)
    {
@@ -771,6 +920,8 @@ static void announce(int players, int open)
       return;
    L.players = players;
    L.open = open;
+   if (L.conn == LINK_CONN_ONLINE)
+      return;                        /* the room service is the room list */
    memset(&ri, 0, sizeof(ri));
    if (L.room_kind == LAN_KIND_GB_CABLE)
       room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
@@ -920,7 +1071,8 @@ static int np_start(void)
    if (net_vita_link_iface(&tp) != 0)
       return -1;
    net_vita_arq_profile(L.transport == TR_ADHOC ? NET_VITA_LINK_ADHOC
-                        : L.conn == LINK_CONN_INTERNET ? NET_VITA_LINK_INTERNET
+                        : L.conn == LINK_CONN_INTERNET ||
+                          L.conn == LINK_CONN_ONLINE ? NET_VITA_LINK_INTERNET
                                                        : NET_VITA_LINK_LAN,
                         &first, &floor_us);
    fe_np_set_arq_timers(first, floor_us);
@@ -1000,7 +1152,16 @@ static void np_stop(void)
  * one of its poll slices (50 ms; ad hoc 250 ms). */
 static void net_down(void)
 {
-   np_stop();
+   np_stop();                        /* its BYE needs the relay still up */
+   if (L.on_live || online_active())
+   {
+      /* The room is closed (cancel / failed, or nothing for a link that
+       * formed), the punch and the relay stop.  A close that did not get
+       * out is retried from online_step() every frame. */
+      online_stop();
+   }
+   L.on_live = 0;
+   L.on_toast = 0;
    net_vita_bulk_enable(0);
    net_vita_link_none();
    if (L.transport == TR_LAN)
@@ -1068,6 +1229,281 @@ static void bringup_failed(int code)
    L.screen = 1;
    hold_game(1);
    phase_set(PH_FAILED);
+}
+
+/* ---- Online (2.0): the room service decides who is where ---------------------------
+ * online_vita.c does everything that needs the internet; what is here is
+ * what only this file knows: the game's description for the room, the
+ * sentences, and what each phase does when the peer is reachable. */
+
+/* "2.0.1" against "2.0": > 0 when a is newer.  Missing parts are zero. */
+static int ver_cmp(const char *a, const char *b)
+{
+   int i;
+   for (i = 0; i < 4; i++)
+   {
+      long x = 0, y = 0;
+      if (*a)
+      {
+         x = strtol(a, (char **)&a, 10);
+         if (*a == '.')
+            a++;
+      }
+      if (*b)
+      {
+         y = strtol(b, (char **)&b, 10);
+         if (*b == '.')
+            b++;
+      }
+      if (x != y)
+         return x > y ? 1 : -1;
+   }
+   return 0;
+}
+
+/* online_view.fail -> the UI's sentence.  *toast_only: the host's code
+ * expired: a toast, no error line. */
+static int online_ui_fail(const online_view *v, int *toast_only)
+{
+   if (toast_only)
+      *toast_only = 0;
+   switch (v->fail)
+   {
+   case ONLINE_FAIL_CODE:        return UI_FAIL_ONLINE_CODE;
+   case ONLINE_FAIL_UPDATE:      return UI_FAIL_ONLINE_UPDATE;
+   case ONLINE_FAIL_VERSION:
+   {
+      /* who has to update: the host's version against ours */
+      int c = ver_cmp(v->host_ver, ONLINE_APP_VERSION);
+      return c > 0 ? UI_FAIL_ONLINE_VER_OLD_HERE
+           : c < 0 ? UI_FAIL_ONLINE_VER_OLD_THERE : UI_FAIL_ONLINE_SETUP;
+   }
+   case ONLINE_FAIL_FULL:        return UI_FAIL_ONLINE_FULL;
+   case ONLINE_FAIL_UNREACHABLE: return UI_FAIL_ONLINE_UNREACHABLE;
+   case ONLINE_FAIL_BUSY:        return UI_FAIL_ONLINE_BUSY;
+   case ONLINE_FAIL_CLOSED:      return UI_FAIL_ONLINE_CLOSED;
+   case ONLINE_FAIL_CLOCK:       return UI_FAIL_ONLINE_CLOCK;
+   case ONLINE_FAIL_EXPIRED:
+      if (toast_only && L.is_host)
+         *toast_only = 1;
+      return UI_FAIL_ONLINE_CODE;
+   case ONLINE_FAIL_SERVICE:
+   default:                      return UI_FAIL_ONLINE_SERVICE;
+   }
+}
+
+/* The identity of a game file as the room carries it (plan 1.1 `rom`): a
+ * CRC-32 over the size and 64 slices of 4 KiB spread over the file (the
+ * whole file under 256 KiB).  Both consoles compute it the same way, so two
+ * copies of one cartridge match and a hack of it does not. */
+static int rom_identity(const char *path, char out[9])
+{
+   FILE *f = fopen(path, "rb");
+   uint8_t buf[4096], le[4];
+   long size;
+   uint32_t crc;
+   int i;
+
+   if (!f)
+      return -1;
+   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)
+   {
+      fclose(f);
+      return -1;
+   }
+   le[0] = (uint8_t)size;
+   le[1] = (uint8_t)(size >> 8);
+   le[2] = (uint8_t)(size >> 16);
+   le[3] = (uint8_t)(size >> 24);
+   crc = fe_crc32(0, le, 4);
+   if (size < 256 * 1024)
+   {
+      size_t n;
+      rewind(f);
+      while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+         crc = fe_crc32(crc, buf, n);
+   }
+   else
+   {
+      long step = (size - 4096) / 63;
+      for (i = 0; i < 64; i++)
+      {
+         if (fseek(f, step * i, SEEK_SET) != 0 ||
+             fread(buf, 1, sizeof(buf), f) != sizeof(buf))
+         {
+            fclose(f);
+            return -1;
+         }
+         crc = fe_crc32(crc, buf, sizeof(buf));
+      }
+   }
+   fclose(f);
+   snprintf(out, 9, "%08x", (unsigned)crc);
+   return 0;
+}
+
+/* Settings > Join online and the host's own description.  The RUNNING game
+ * is identified from the image the core loads (its patched copy or its
+ * unzipped file: g_game.boot_path); a library file from itself, or, when a
+ * patch sits beside it, from the patched copy kept under patched/ when that
+ * is still current; a zip and a patch that was never applied are "unknown"
+ * (-1: the host's description then says "" and the match falls back to the
+ * game code). */
+int ui_host_online_rom_id(const char *path, char out[9])
+{
+   static const char *const pext[] = { ".ips", ".bps", ".ups" };
+   char use[APP_PATH_CAP], pp[APP_PATH_CAP];
+   const char *dot, *slash;
+   struct stat so, sp, sc;
+   size_t stem, i;
+   int has_patch = 0;
+
+   if (out)
+      out[0] = '\0';
+   if (!path || !path[0] || !out)
+      return -1;
+   if (g_game.rom_path[0] && g_game.boot_path[0] &&
+       !strcmp(path, g_game.rom_path))
+      return rom_identity(g_game.boot_path, out);
+   dot = strrchr(path, '.');
+   if (!dot || !strcasecmp(dot, ".zip"))
+      return -1;
+   stem = (size_t)(dot - path);
+   for (i = 0; i < 3 && !has_patch; i++)
+      if (stem + 5 < sizeof(pp))
+      {
+         memcpy(pp, path, stem);
+         strcpy(pp + stem, pext[i]);
+         has_patch = stat(pp, &sp) == 0;
+      }
+   if (!has_patch)
+      return rom_identity(path, out);
+   slash = strrchr(path, '/');
+   if (snprintf(use, sizeof(use), "%s/patched/%s", g_app_root,
+                slash ? slash + 1 : path) >= (int)sizeof(use) ||
+       stat(use, &sc) != 0 || stat(path, &so) != 0 ||
+       sc.st_mtime < so.st_mtime || sc.st_mtime < sp.st_mtime)
+      return -1;
+   return rom_identity(use, out);
+}
+
+static void put_text(char *dst, size_t cap, const char *src)
+{
+   size_t n = 0;
+   for (; src && *src && n + 1 < cap; src++)
+      dst[n++] = (*src < 0x20 || *src > 0x7E || *src == '"' || *src == '\\')
+                 ? '?' : *src;
+   dst[n] = '\0';
+}
+
+/* What this console tells the room service about itself and its game.  A
+ * host's `rom` is its own file's identity; a joiner's kind, console, title
+ * and rom are ignored by the service (the host's decide). */
+static void online_desc_make(online_desc *d)
+{
+   char code[5];
+   int i;
+
+   memset(d, 0, sizeof(*d));
+   d->kind = L.room_kind;
+   snprintf(d->console, sizeof(d->console), "%s",
+            g_game.console == FE_CONSOLE_GBC ? "gbc"
+            : g_game.console == FE_CONSOLE_GB ? "gb" : "gba");
+   if (L.room_kind == LAN_KIND_GB_CABLE)
+      room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
+   else
+      room_code_gba(g_game.code, code);
+   for (i = 0; i < 4; i++)
+      code[i] = (char)((code[i] >= 'a' && code[i] <= 'z') ? code[i] - 32
+                                                          : code[i]);
+   memcpy(d->game, code, 5);
+   put_text(d->title, sizeof(d->title), g_game.name);
+   put_text(d->nick, sizeof(d->nick), g_pcfg.nick);
+   if (!d->nick[0])
+      snprintf(d->nick, sizeof(d->nick), "Vita");
+   d->compat = S.compat[L.room_kind];
+   d->relay_only = g_pcfg.online_relay != 0;
+   if (L.is_host)
+      (void)ui_host_online_rom_id(g_game.rom_path, d->rom);
+}
+
+/* The other console is in (host): the room is closed on the service and the
+ * quality toast is owed once the measurement is done. */
+static void online_arrived(void)
+{
+   if (!L.on_live)
+      return;
+   online_linked();
+   L.on_toast = 1;
+}
+
+/* Once per frame, while an Online link is being made or is up. */
+static void online_service(unsigned pad_new)
+{
+   online_view v;
+   int ui, toast_only = 0;
+
+   if (!L.on_live)
+      return;
+   online_get(&v);
+   if (L.on_toast)
+   {
+      if (v.stage == ON_CONNECTED)
+      {
+         L.on_toast = 0;
+         ui_online_connected_toast(v.peer_nick[0] ? v.peer_nick : L.peer,
+                                   v.quality);
+      }
+      else if (v.stage == ON_FAILED)
+         L.on_toast = 0;
+   }
+   if (L.is_host)
+   {
+      /* A host whose room failed before anybody came: the page says why.
+       * After somebody came the room is no longer needed. */
+      if (v.stage == ON_FAILED && L.phase == PH_HOSTING &&
+          !fe_host_gblink_active())
+      {
+         ui = online_ui_fail(&v, &toast_only);
+         fe_evt("link_online_failed why=%d ui=%d host=1", v.fail, ui);
+         if (toast_only)
+         {
+            net_down();
+            link_off();
+            osd_toast("The code expired. Host again for a new one.");
+         }
+         else
+            bringup_failed(ui);
+      }
+      return;
+   }
+   if (L.phase != PH_ONLINE)
+      return;
+   if (pad_new & CTL_CIRCLE)
+   {
+      fe_evt("link_cancel phase=online stage=%d", v.stage);
+      net_down();
+      link_off();
+      osd_toast("Link cancelled.");
+      return;
+   }
+   if (v.stage == ON_CONNECTED)
+   {
+      /* The peer answers: from here it is the Internet connection's way
+       * (netdrv, then the session). */
+      if (v.peer_nick[0])
+         snprintf(L.peer, sizeof(L.peer), "%.15s", v.peer_nick);
+      ui_online_connected_toast(L.peer, v.quality);
+      fe_evt("link_online_up relayed=%d rtt_ms=%d q=%d", v.relayed, v.rtt_ms,
+             v.quality);
+      after_transport();
+   }
+   else if (v.stage == ON_FAILED)
+   {
+      ui = online_ui_fail(&v, NULL);
+      fe_evt("link_online_failed why=%d ui=%d host=0", v.fail, ui);
+      bringup_failed(ui);
+   }
 }
 
 /* ---- who asks: is a session linked? ---------------------------------------
@@ -1145,7 +1581,15 @@ static void census_tick(void)
 
 static unsigned delay_pick(const char **how)
 {
-   unsigned d, base = L.conn == LINK_CONN_INTERNET ? DELAY_INTERNET
+   /* Online is the Internet case, with a ceiling of its own: what a
+    * measured trip over the internet asks for may be more than the 8 the
+    * other connections stop at (round trip 150 ms with 20 ms of spread
+    * already asks for 8, 200 ms for 10).  The player's fixed setting stays
+    * 1..8 everywhere. */
+   const int inet = L.conn == LINK_CONN_INTERNET || L.conn == LINK_CONN_ONLINE;
+   const unsigned cap = L.conn == LINK_CONN_ONLINE ? DELAY_ONLINE_MAX
+                                                    : DELAY_MAX;
+   unsigned d, want, base = inet ? DELAY_INTERNET
                     : L.conn == LINK_CONN_ADHOC ? DELAY_ADHOC : DELAY_WIFI;
    uint32_t mn = 0, mx = 0, last = 0;
    int n;
@@ -1167,13 +1611,14 @@ static unsigned delay_pick(const char **how)
    if (d < 2)
       d = 2;
    /* An internet path's quiet moment is not its evening. */
-   if (L.conn == LINK_CONN_INTERNET && d < 3)
+   if (inet && d < 3)
       d = 3;
-   if (d > DELAY_MAX)
-      d = DELAY_MAX;
+   want = d;
+   if (d > cap)
+      d = cap;
    *how = "measured";
-   fe_evt("link_rtt n=%d min_us=%u max_us=%u last_us=%u", n, (unsigned)mn,
-          (unsigned)mx, (unsigned)last);
+   fe_evt("link_rtt n=%d min_us=%u max_us=%u last_us=%u want=%u", n,
+          (unsigned)mn, (unsigned)mx, (unsigned)last, want);
    return d;
 }
 
@@ -1398,6 +1843,8 @@ void link_action(int is_host)
     * its screens name the connection instead of guessing a room. */
    if (!is_host && L.conn == LINK_CONN_ADHOC)
       snprintf(L.room, sizeof(L.room), "Ad hoc");
+   else if (L.conn == LINK_CONN_ONLINE)
+      snprintf(L.room, sizeof(L.room), "Online");
    else
       snprintf(L.room, sizeof(L.room), ROOM_LABEL_WORD " %d", L.number);
    /* What the room is and what this game can be in it: the Join list has
@@ -1438,6 +1885,50 @@ void link_action(int is_host)
    if (L.conn == LINK_CONN_ADHOC)
    {
       adhoc_start();
+      return;
+   }
+   if (L.conn == LINK_CONN_ONLINE)
+   {
+      /* No target and no list: the room service finds the other console. */
+      rc = infra_open(is_host, 0, 0);
+      if (rc != 0)
+      {
+         bringup_failed(-rc - 1);
+         return;
+      }
+      if (is_host)
+      {
+         /* The game keeps running and netdrv listens as for any host; the
+          * room is asked for beside it (link_service steps it). */
+         after_transport();
+         if (L.phase == PH_HOSTING)
+         {
+            online_desc d;
+            online_desc_make(&d);
+            if (online_host(L.lan, &d) != 0)
+            {
+               bringup_failed(UI_FAIL_ONLINE_SERVICE);
+               return;
+            }
+            L.on_live = 1;
+            L.on_toast = 0;
+         }
+      }
+      else
+      {
+         online_desc d;
+         L.screen = 1;
+         hold_game(1);
+         online_desc_make(&d);
+         if (!t->online_code[0] ||
+             online_join(L.lan, t->online_code, &d) != 0)
+         {
+            bringup_failed(UI_FAIL_ONLINE_CODE);
+            return;
+         }
+         L.on_live = 1;
+         phase_set(PH_ONLINE);
+      }
       return;
    }
    if (is_host)
@@ -1696,8 +2187,9 @@ static void link_end(int st, unsigned pad_new)
    desync = pr.error == FE_GBLINK_E_DESYNC ||
             (pr.error == FE_GBLINK_E_PEER_ABORT &&
              pr.peer_reason == FE_GBLINK_E_DESYNC);
+   /* (an Online room is closed at the link: its code is no use again) */
    keep_room = st == FE_GBLINK_FAILED && !pr.ran && L.is_host &&
-               why == LW_NONE && L.net_up;
+               why == LW_NONE && L.net_up && L.conn != LINK_CONN_ONLINE;
    fail_screen = st == FE_GBLINK_FAILED && !pr.ran && !keep_room &&
                  why != LW_CANCEL && !L.is_host && !L.flip_now;
    if (!L.ended)
@@ -1919,6 +2411,7 @@ static void adapter_service(unsigned pad_new)
          if (n > was)
          {
             peer_name_take();
+            online_arrived();
             osd_toast("%s joined %s", L.peer[0] ? L.peer : "A player",
                       L.room);
          }
@@ -2009,6 +2502,7 @@ static void mirror_service(unsigned pad_new)
       if (L.phase == PH_HOSTING)
       {
          peer_name_take();
+         online_arrived();
          announce(2, 0);
          fe_evt("link_host_peer room=\"%s\" peer=\"%s\"", L.room, L.peer);
          L.echoes = 0;
@@ -2130,6 +2624,19 @@ static void link_service(unsigned pad_new)
          link_off();
       return;
    }
+   online_service(pad_new);
+   if (L.phase == PH_ONLINE)
+   {
+      /* An Online joiner: the screen is up while the room service, the
+       * punch and the relay do their work.  The Wi-Fi is still watched. */
+      L.screen = 1;
+      if (L.ticks - L.t_watch >= WATCH_EVERY)
+      {
+         L.t_watch = L.ticks;
+         radio_watch();
+      }
+      return;
+   }
    if (L.net_up)
    {
       fe_np_pump();
@@ -2166,6 +2673,10 @@ void link_frame(void)
    if (ui_active() || ui_typing())
       pad_new = 0;
 
+   /* EVERY frame, even with nothing Online going on: a room's close that
+    * did not get out (the worker was busy, a request was dropped with the
+    * link) is retried from here, after online_stop(). */
+   L.on_stage = online_step();
    igd_service();                    /* also the last room's goodbye */
    if (L.phase != PH_OFF || fe_host_gblink_active())
       link_service(pad_new);
@@ -2232,6 +2743,20 @@ static void linking_view(ui_linking_view *v, char *l1, size_t c1, char *l2,
       snprintf(l2, c2, "%s", b);
       v->fail = 1;
       v->busy = 0;
+      return;
+   }
+   if (L.phase == PH_ONLINE)
+   {
+      online_view ov;
+      online_get(&ov);
+      snprintf(l1, c1, "Joining %s", ov.code[0] ? ov.code : "the room");
+      if (ov.stage >= ON_RELAY_CREDS && ov.stage <= ON_RELAY_WAIT)
+         snprintf(l2, c2, "Connecting through the relay.");
+      else if (ov.stage == ON_PUNCH || ov.stage == ON_MEASURE ||
+               ov.stage == ON_CONNECTED)
+         snprintf(l2, c2, "Connecting...");
+      else
+         snprintf(l2, c2, "Finding your friend...");
       return;
    }
    if (L.phase == PH_JOINING)
@@ -2422,6 +2947,23 @@ static void chip_update(void)
    else if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
       snprintf(s, sizeof(s), "Link Cable  %s  P%d", L.room,
                L.is_host ? 1 : 2);
+   /* The quality badge of an Online link (80 / 120 ms, online_vita.c): the
+    * chip names it, so a slow line is no surprise when the game stutters. */
+   if (s[0] && L.conn == LINK_CONN_ONLINE && L.on_live &&
+       (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING ||
+        L.kind == LK_ADAPTER))
+   {
+      online_view ov;
+      online_get(&ov);
+      if (ov.quality != ONLINE_Q_NONE && ov.stage == ON_CONNECTED)
+      {
+         size_t n = strlen(s);
+         snprintf(s + n, sizeof(s) - n, "  %s%s",
+                  ov.quality == ONLINE_Q_GREAT ? "Great"
+                  : ov.quality == ONLINE_Q_GOOD ? "Good" : "Slow",
+                  ov.relayed ? " (relay)" : "");
+      }
+   }
    if (strcmp(s, L.info) != 0)
    {
       snprintf(L.info, sizeof(L.info), "%s", s);
@@ -2442,7 +2984,7 @@ void link_ui_view(ui_link_view *v)
    if (L.phase == PH_HOSTING || L.phase == PH_MEASURE)
       v->state = UI_LINK_HOSTING;
    else if (L.phase == PH_LINKED || L.phase == PH_JOINING ||
-            fe_host_gblink_active())
+            L.phase == PH_ONLINE || fe_host_gblink_active())
       v->state = UI_LINK_LINKED;
    else
    {
@@ -2464,6 +3006,22 @@ void link_ui_view(ui_link_view *v)
       v->rtt_ms = srtt ? (int)((srtt + 500u) / 1000u) : -1;
    }
    v->signal_pct = L.transport == TR_LAN ? L.signal_pct : -1;
+   if (L.conn == LINK_CONN_ONLINE && L.on_live)
+   {
+      /* the code, how long it lives, whether the relay carries the link and
+       * how good the line is (the waiting page and the chip say so) */
+      static char code[6];
+      online_view ov;
+      online_get(&ov);
+      snprintf(code, sizeof(code), "%s", L.is_host ? ov.code : "");
+      v->online_code = code[0] && ov.stage >= ON_WAITING ? code : NULL;
+      v->online_stage = ov.stage;
+      v->online_ttl_s = ov.ttl_s > ov.waited_s ? (int)(ov.ttl_s - ov.waited_s)
+                                               : 0;
+      v->relay = ov.relayed ||
+                 (ov.stage >= ON_RELAY_CREDS && ov.stage <= ON_RELAY_WAIT);
+      v->quality = ov.quality;
+   }
 }
 
 /* ---- ui_host_hooks.h section 3: the network's state ------------------------------------------- */
@@ -2618,4 +3176,125 @@ int ui_host_rooms_poll(ui_room *out, int max)
                 out[i].nick);
    }
    return n;
+}
+
+
+/* ---- ui_host_hooks.h section 4b: Online ---------------------------------------------------------
+ * The room card: what a code is (the game, the host, the build), asked of
+ * the room service without a transport.  One lookup at a time. */
+
+static struct
+{
+   int            asked;           /* a lookup is out or its answer is held */
+   int            have;
+   ui_online_card card;
+} C;
+
+int ui_host_online_available(void)
+{
+   net_vita_wifi w;
+   if (!S.up || !net_vita_wifi_status(&w))
+      return 0;
+   /* the radio must be free for the internet: not ad hoc, not in a link */
+   if (net_vita_use() == NET_VITA_ADHOC || L.phase != PH_OFF ||
+       fe_host_gblink_active())
+      return 0;
+   return 1;
+}
+
+int ui_host_online_lookup(const char *code)
+{
+   net_vita_wifi w;
+
+   online_card_cancel();
+   C.asked = C.have = 0;
+   memset(&C.card, 0, sizeof(C.card));
+   if (!code || !code[0])
+      return UI_ROOMS_E_ADDRESS;
+   if (L.phase != PH_OFF || fe_host_gblink_active() ||
+       net_vita_use() == NET_VITA_ADHOC)
+      return UI_ROOMS_E_BUSY;
+   if (!S.up || !net_vita_wifi_status(&w))
+      return UI_ROOMS_E_NO_WIFI;
+   if (online_card_begin(code) != 0)
+      return UI_ROOMS_E_FAILED;
+   C.asked = 1;
+   fe_evt("online_card ask code=%.5s", code);
+   return 0;
+}
+
+/* A room card from the service, as the page reads it. */
+static void card_from_reply(const online_reply *r)
+{
+   ui_online_card *c = &C.card;
+   int cmp;
+
+   memset(c, 0, sizeof(*c));
+   if (r->err != ONLINE_E_NONE)
+   {
+      c->state = 2;
+      switch (r->err)
+      {
+      case ONLINE_E_NOT_FOUND:  c->fail = UI_FAIL_ONLINE_CODE; break;
+      case ONLINE_E_UPDATE:     c->fail = UI_FAIL_ONLINE_UPDATE; break;
+      case ONLINE_E_BUSY:
+      case ONLINE_E_RATE:       c->fail = UI_FAIL_ONLINE_BUSY; break;
+      case ONLINE_E_CLOCK:      c->fail = UI_FAIL_ONLINE_CLOCK; break;
+      default:                  c->fail = UI_FAIL_ONLINE_SERVICE; break;
+      }
+      return;
+   }
+   c->state = 1;
+   c->kind = r->card.kind;
+   snprintf(c->console, sizeof(c->console), "%s", r->card.console);
+   snprintf(c->game, sizeof(c->game), "%s", r->card.game);
+   snprintf(c->rom, sizeof(c->rom), "%s", r->card.rom);
+   snprintf(c->title, sizeof(c->title), "%s", r->card.title);
+   snprintf(c->nick, sizeof(c->nick), "%s", r->card.nick);
+   snprintf(c->ver, sizeof(c->ver), "%s", r->card.ver);
+   c->full = r->state != ONLINE_ROOM_OPEN;
+   /* WHO has to act (plan 1.6): the version first, then the build word */
+   cmp = ver_cmp(r->card.ver, ONLINE_APP_VERSION);
+   if (cmp > 0)
+      c->fail = UI_FAIL_ONLINE_VER_OLD_HERE;
+   else if (cmp < 0)
+      c->fail = UI_FAIL_ONLINE_VER_OLD_THERE;
+   else if (r->card.kind < 0 || r->card.kind > 5 ||
+            r->card.compat != S.compat[r->card.kind])
+      c->fail = UI_FAIL_ONLINE_SETUP;
+   c->compatible = c->fail == 0;
+}
+
+void ui_host_online_card(ui_online_card *out)
+{
+   if (!out)
+      return;
+   if (C.asked && !C.have)
+   {
+      online_reply r;
+      if (online_card_poll(&r))
+      {
+         card_from_reply(&r);
+         C.have = 1;
+         C.asked = 0;
+         fe_evt("online_card state=%d fail=%d kind=%d game=%s compatible=%d "
+                "full=%d ver=%s", C.card.state, C.card.fail, C.card.kind,
+                C.card.game, C.card.compatible, C.card.full, C.card.ver);
+      }
+   }
+   if (C.have)
+      *out = C.card;
+   else
+   {
+      memset(out, 0, sizeof(*out));
+      out->state = C.asked ? 0 : 2;
+      if (!C.asked)
+         out->fail = UI_FAIL_ONLINE_SERVICE;
+   }
+}
+
+void ui_host_online_cancel(void)
+{
+   online_card_cancel();
+   C.asked = C.have = 0;
 }

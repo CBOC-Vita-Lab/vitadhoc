@@ -201,6 +201,10 @@ void link_boot(void);
 /* For Share game data (vita/share_vita.c): 1 when the network stack is up,
  * and the rooms' base port (vita.ini link_port; 0 = the default). */
 int  link_net_info(uint16_t *disc_port);
+/* Online transports (link_vita.c, share_vita.c): the flags and the test
+ * simulator fields an Online lan_transport is created with (2.0). */
+struct lan_config;
+void link_online_config(struct lan_config *cfg);
 /* At exit. */
 void link_shutdown(void);
 

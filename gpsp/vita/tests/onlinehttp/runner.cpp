@@ -211,7 +211,7 @@ static void t_flow(const char *base, int real)
    online_desc d = sample_desc();
    online_reply r;
 
-   r = one(online_http_create(&d));
+   r = one(online_http_create(&d, "0123456789abcdef"));
    check(r.err == 0 && r.op == ONLINE_OP_CREATE && r.http == 201 && (real || !strcmp(r.code, "K7M2Q")),
          "create answer", "err %d op %d http %d code %s", r.err, r.op, r.http, r.code);
    const char *code = r.code;
@@ -235,12 +235,20 @@ static void t_flow(const char *base, int real)
    r = one(online_http_lookup("k7m2q"));
    check(r.err == 0 && !strcmp(r.code, "K7M2Q"), "lookup lower-case code");
 
-   r = one(online_http_join("K7M2Q", &d));
+   r = one(online_http_join("K7M2Q", &d, "fedcba9876543210"));
    check(r.err == 0 && r.op == ONLINE_OP_JOIN && !strcmp(r.token, token) && !strcmp(r.punch_key, "0123456789abcdef") && r.mode == ONLINE_MODE_PUNCH &&
          r.have_peer && !strcmp(r.peer_nick, "Alice") && !strcmp(r.peer_pub, "203.0.113.7:19019") && !strcmp(r.peer_lan, "192.168.1.23:19019") &&
          r.peer_sym == 1 && r.punch_ms == 6000 && r.poll_ms == 1500, "join answer", "err %d mode %d peer %d %s %s", r.err, r.mode, r.have_peer, r.peer_nick, r.peer_pub);
-   r = one(online_http_join("RELAYM", &d));
+   r = one(online_http_join("RELAYM", &d, NULL));
    check(r.err == 0 && r.mode == ONLINE_MODE_RELAY, "join relay mode");
+   /* a request id that is not 16 lower-case hex digits never leaves the console */
+   const char *badrid[] = { "NOTHEX", "0123456789ABCDEF", "0123456789abcde", "0123456789abcdef0" };
+   for (int i = 0; i < 4; i++) {
+      r = one(online_http_create(&d, badrid[i]));
+      check(r.err == ONLINE_E_BAD && r.op == ONLINE_OP_CREATE, "create with a malformed request id is refused locally", "rid %s err %d", badrid[i], r.err);
+      r = one(online_http_join("K7M2Q", &d, badrid[i]));
+      check(r.err == ONLINE_E_BAD && r.op == ONLINE_OP_JOIN, "join with a malformed request id is refused locally", "rid %s err %d", badrid[i], r.err);
+   }
 
    r = one(online_http_poll("K7M2Q", token, NULL));
    check(r.err == 0 && r.op == ONLINE_OP_POLL && r.state == ONLINE_ROOM_JOINED && r.mode == ONLINE_MODE_PUNCH && r.have_peer && !strcmp(r.peer_nick, "Bob") &&
@@ -338,7 +346,7 @@ static void t_errors(const char *base)
          else if (route == 1)
             r = one(online_http_poll(c.code, "AbCdEfGhIjKlMnOpQrStUv", NULL));
          else
-            r = one(online_http_join(c.code, &d));
+            r = one(online_http_join(c.code, &d, NULL));
          snprintf(name, sizeof name, "error %s via route %d -> %d", c.code, route, c.err);
          int ok = r.err == c.err && (c.http == 0 || r.http == c.http) && r.retry_after == c.retry;
          if (c.a && c.err == ONLINE_E_UPDATE)
@@ -405,6 +413,38 @@ static void t_three(const char *base)
    check(1, "shutdown returned");
 }
 
+/* A drop must never block the frame thread, even when the resolver threads are stuck (a Vita resolver ignores cancel until its own
+ * time-out) and more of them have been abandoned than the client keeps track of. */
+static uint64_t NowMs(void)
+{
+   timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+static void t_dropstuck(void)
+{
+   online_http_config("http://127.0.0.1:1", "2.0.0");
+   nph::TestStallResolve(2500);   // a Resolve that ignores `cancel` for 2.5 s
+   int started = 0;
+   uint64_t worst = 0;
+   for (int round = 0; round < 8; round++)
+   {
+      for (int k = 0; k < 3; k++)
+         if (online_http_resolve("localhost") == 0)
+            started++;
+      const uint64_t t0 = NowMs();
+      online_http_drop();
+      const uint64_t dt = NowMs() - t0;
+      if (dt > worst)
+         worst = dt;
+   }
+   check(started >= 18, "dropstuck: resolves were started", "%d", started);
+   check(worst < 300, "dropstuck: drop returned at once although every resolver is stuck", "worst %u ms", (unsigned)worst);
+   online_http_shutdown();
+   check(1, "dropstuck: shutdown returned");
+}
+
 static void t_badver(const char *base)
 {
    /* a build label is never sent as the version: the fake (like the service) answers 400 to such a `v` */
@@ -428,7 +468,7 @@ static void t_down(int port)
    online_reply r = one(online_http_lookup("K7M2Q"), 5000);
    check(r.err == ONLINE_E_NET && r.op == ONLINE_OP_LOOKUP, "server down -> NET", "err %d", r.err);
    online_desc d = sample_desc();
-   r = one(online_http_create(&d), 5000);
+   r = one(online_http_create(&d, NULL), 5000);
    check(r.err == ONLINE_E_NET, "server down, create -> NET");
 }
 
@@ -495,18 +535,18 @@ static void t_tls(const char *base, const char *expect)
    {
       r = one(online_http_lookup("K7M2Q"), 10000);
       check(r.err == ONLINE_E_CERT, "certificate refused -> CERT", "err %d", r.err);
-      r = one(online_http_create(&d), 10000);
+      r = one(online_http_create(&d, NULL), 10000);
       check(r.err == ONLINE_E_CERT, "certificate refused, create -> CERT", "err %d", r.err);
       return;
    }
    check(np_https_available() == 1, "TLS is available");
-   r = one(online_http_create(&d), 20000);
+   r = one(online_http_create(&d, NULL), 20000);
    check(r.err == 0 && !strcmp(r.code, "K7M2Q") && strlen(r.token) == 22, "tls create", "err %d http %d", r.err, r.http);
    char token[24];
    strcpy(token, r.token);
    r = one(online_http_lookup("K7M2Q"), 10000);
    check(r.err == 0 && !strcmp(r.card.game, "BPEE") && r.card.compat == 0x1a2b3c4d, "tls lookup", "err %d", r.err);
-   r = one(online_http_join("K7M2Q", &d), 10000);
+   r = one(online_http_join("K7M2Q", &d, "fedcba9876543210"), 10000);
    check(r.err == 0 && r.have_peer && !strcmp(r.peer_nick, "Alice"), "tls join");
    r = one(online_http_poll("K7M2Q", token, NULL), 10000);
    check(r.err == 0 && r.state == ONLINE_ROOM_JOINED, "tls poll 1");
@@ -548,6 +588,8 @@ int main(int argc, char **argv)
       t_blackhole(atoi(argv[2]));
    else if (!strcmp(mode, "nohttps"))
       t_nohttps();
+   else if (!strcmp(mode, "dropstuck"))
+      t_dropstuck();
    else if (!strcmp(mode, "tls") && argc > 3)
       t_tls(argv[2], argv[3]);
    else if (!strcmp(mode, "selftest"))

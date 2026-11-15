@@ -129,6 +129,19 @@ static void tm_error(tmsg *m, int code, const char *realm, const char *nonce)
       tm_attr(m, 0x0015, nonce, strlen(nonce));
 }
 
+/* MESSAGE-INTEGRITY, computed here with the long-term key (RFC 5389 15.4): the length field counts the attribute, the HMAC covers
+ * everything before it. */
+static void tm_sign(tmsg *m, const uint8_t key[16])
+{
+   uint8_t mac[20];
+   p16(m->b + 2, (uint32_t)(m->n - 20 + 24));
+   nat_hmac_sha1(mac, key, 16, m->b, m->n);
+   p16(m->b + m->n, 0x0008);
+   p16(m->b + m->n + 2, 20);
+   memcpy(m->b + m->n + 4, mac, 20);
+   m->n += 24;
+}
+
 /* attribute lookup in a message */
 static const uint8_t *tm_find(const uint8_t *d, size_t n, uint16_t type, size_t *len)
 {
@@ -517,6 +530,23 @@ static void test_turn(void)
    t += 40;
    l.now = t;
    nat_turn_tick(&c, t);
+   /* an answer that is not authenticated (none, a wrong key, a flipped byte) must not allocate anything: it is consumed and ignored */
+   CHECK(nat_turn_handle(&c, m.b, m.n, &inner, &il) == 1 && nat_turn_state(&c) == LAN_RELAY_ALLOCATING &&
+         !nat_turn_relayed(&c, &rip, &rport), "an unsigned Allocate success is dropped");
+   {
+      tmsg bad = m;
+      uint8_t wrong[16];
+      memset(wrong, 0x5a, sizeof wrong);
+      tm_sign(&bad, wrong);
+      CHECK(nat_turn_handle(&c, bad.b, bad.n, &inner, &il) == 1 && nat_turn_state(&c) == LAN_RELAY_ALLOCATING,
+            "a success signed with another key is dropped");
+      bad = m;
+      tm_sign(&bad, key);
+      bad.b[24] ^= 1;                     /* inside the signed part */
+      CHECK(nat_turn_handle(&c, bad.b, bad.n, &inner, &il) == 1 && nat_turn_state(&c) == LAN_RELAY_ALLOCATING,
+            "a success with a changed byte is dropped");
+   }
+   tm_sign(&m, key);
    CHECK(nat_turn_handle(&c, m.b, m.n, &inner, &il) == 1, "Allocate success");
    CHECK(nat_turn_state(&c) == LAN_RELAY_ALLOCATED, "ALLOCATED");
    CHECK(nat_turn_relayed(&c, &rip, &rport) && rip == rel && rport == 50000, "relayed address");
@@ -549,9 +579,15 @@ static void test_turn(void)
             l.now = t;
             nat_turn_tick(&c, t);
             tm_init(&m, 0x0108, l.e[perm].d + 8);
+            nat_turn_handle(&c, m.b, m.n, &inner, &il);   /* unsigned: ignored */
+            CHECK(nat_turn_state(&c) == LAN_RELAY_BINDING, "an unsigned CreatePermission success counts for nothing");
+            tm_sign(&m, key);
             nat_turn_handle(&c, m.b, m.n, &inner, &il);
             CHECK(nat_turn_state(&c) == LAN_RELAY_BINDING, "permission alone is not READY");
             tm_init(&m, 0x0109, l.e[bind].d + 8);
+            nat_turn_handle(&c, m.b, m.n, &inner, &il);   /* unsigned: ignored */
+            CHECK(nat_turn_state(&c) == LAN_RELAY_BINDING, "an unsigned ChannelBind success counts for nothing");
+            tm_sign(&m, key);
             nat_turn_handle(&c, m.b, m.n, &inner, &il);
             CHECK(nat_turn_state(&c) == LAN_RELAY_READY, "READY");
          }
@@ -582,6 +618,7 @@ static void test_turn(void)
       nat_turn_tick(&c, t_bind + 180000);
       CHECK(l.n == 1 && g16(l.e[0].d) == 0x0008, "CreatePermission again at 180 s (%d)", l.n);
       tm_init(&m, 0x0108, l.e[0].d + 8);
+      tm_sign(&m, key);
       nat_turn_handle(&c, m.b, m.n, &inner, &il);
       l.n = 0;
       l.now = t_alloc + 299000;
@@ -598,6 +635,7 @@ static void test_turn(void)
          p32(lt, 600);
          tm_attr(&m, 0x000D, lt, 4);
       }
+      tm_sign(&m, key);
       nat_turn_handle(&c, m.b, m.n, &inner, &il);
       l.n = 0;
       l.now = t_bind + 299900;
@@ -1329,6 +1367,20 @@ static int pair_stun(pair *p, int want_sym0, int want_sym1)
    }
    CHECK(st[0].sym == want_sym0 && st[1].sym == want_sym1, "sym detection %d/%d (want %d/%d)", st[0].sym,
          st[1].sym, want_sym0, want_sym1);
+   /* STUN is finished and no keep-alive was asked for: the I/O thread must not take the NAT mutex for every datagram any more, and
+    * what the status says must survive that.  A keep-alive brings the server addresses back, and stopping it takes them away. */
+   for (k = 0; k < 2; k++)
+   {
+      lan_nat_status a;
+      CHECK(lan_transport_nat_listening(p->t[k]) == 0, "side %d: no STUN address checked after STUN finished (%d)", k,
+            lan_transport_nat_listening(p->t[k]));
+      lan_transport_stun_keep(p->t[k], 5000);
+      CHECK(lan_transport_nat_listening(p->t[k]) > 0, "side %d: the keep-alive listens", k);
+      lan_transport_stun_keep(p->t[k], 0);
+      CHECK(lan_transport_nat_listening(p->t[k]) == 0, "side %d: keep-alive off, silent again", k);
+      lan_transport_nat_status(p->t[k], &a);
+      CHECK(a.stun == LAN_STUN_OK && a.pub_port == st[k].pub_port && a.sym == st[k].sym, "side %d: the status is kept", k);
+   }
    return st[0].stun == LAN_STUN_OK && st[1].stun == LAN_STUN_OK ? 0 : -1;
 }
 

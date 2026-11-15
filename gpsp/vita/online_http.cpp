@@ -89,10 +89,11 @@ struct Slot {
 Slot g_slot[kSlots];
 
 struct Zombie { ResolveJob* job; nph::Thread* th; };   // a resolve whose caller dropped it: reaped once its thread ends
-Zombie g_zombie[4];
+const int kZombies = 16;
+Zombie g_zombie[kZombies];
 
 void ReapZombies() {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < kZombies; i++) {
         Zombie& z = g_zombie[i];
         if (!z.job) continue;
         if (!z.job->done) continue;
@@ -580,11 +581,24 @@ void online_http_config(const char *base_url, const char *app_version)
    g_configured = g_ver[0] != 0;
 }
 
-int online_http_create(const online_desc *room)
+// The request id of create and join: 16 lower-case hex digits, or none.  Builds the extra member of the body.
+static bool RidMember(const char *rid, char *out, size_t cap)
 {
-   char body[768];
+   out[0] = 0;
+   if (!rid || !*rid) return true;
+   if (strlen(rid) != 16) return false;
+   for (int i = 0; i < 16; i++)
+      if (!((rid[i] >= '0' && rid[i] <= '9') || (rid[i] >= 'a' && rid[i] <= 'f'))) return false;
+   snprintf(out, cap, "\"rid\":\"%s\"", rid);
+   return true;
+}
+
+int online_http_create(const online_desc *room, const char *rid)
+{
+   char body[768], extra[32];
    if (!room) return -1;
-   if (!online_json_desc(body, sizeof body, room, nullptr)) return Local(ONLINE_OP_CREATE, ONLINE_E_BAD);
+   if (!RidMember(rid, extra, sizeof extra)) return Local(ONLINE_OP_CREATE, ONLINE_E_BAD);
+   if (!online_json_desc(body, sizeof body, room, extra)) return Local(ONLINE_OP_CREATE, ONLINE_E_BAD);
    return StartReq(ONLINE_OP_CREATE, "POST", "/v1/rooms", body);
 }
 
@@ -596,12 +610,13 @@ int online_http_lookup(const char *code)
    return StartReq(ONLINE_OP_LOOKUP, "GET", path, nullptr);
 }
 
-int online_http_join(const char *code, const online_desc *me)
+int online_http_join(const char *code, const online_desc *me, const char *rid)
 {
-   char path[64], body[768];
+   char path[64], body[768], extra[32];
    if (!me) return -1;
    if (!CodeOk(code)) return Local(ONLINE_OP_JOIN, ONLINE_E_NOT_FOUND);
-   if (!online_json_desc(body, sizeof body, me, nullptr)) return Local(ONLINE_OP_JOIN, ONLINE_E_BAD);
+   if (!RidMember(rid, extra, sizeof extra)) return Local(ONLINE_OP_JOIN, ONLINE_E_BAD);
+   if (!online_json_desc(body, sizeof body, me, extra)) return Local(ONLINE_OP_JOIN, ONLINE_E_BAD);
    snprintf(path, sizeof path, "/v1/rooms/%s/join", code);
    return StartReq(ONLINE_OP_JOIN, "POST", path, body);
 }
@@ -764,6 +779,7 @@ int online_http_take(online_reply *out)
 
 void online_http_drop(void)
 {
+   ReapZombies();   // make room first
    for (int i = 0; i < kSlots; i++)
    {
       Slot &s = g_slot[i];
@@ -771,23 +787,15 @@ void online_http_drop(void)
          Release(s);   // cancels a running request, frees an answer
       else if (s.kind == K_RESOLVE)
       {
+         // Never wait here: this runs on the frame thread.  The resolve thread is told to stop and handed to the reaper, which
+         // frees it once it is done (a Vita resolver may need its whole time-out to notice).  If even the reaper's table is full
+         // the thread and its small job are left to finish on their own and are not reclaimed: a few hundred bytes, in a case that
+         // needs more than kZombies resolves abandoned within one resolver time-out.
          s.job->cancel = 1;
          if (!__atomic_load_n(&s.job->done, __ATOMIC_ACQUIRE))
-         {
-            nph::ResolveAbort();
-            for (int z = 0; z < 4; z++)
-               if (!g_zombie[z].job) { g_zombie[z].job = s.job; g_zombie[z].th = s.th; s.job = nullptr; break; }
-            if (s.job)   /* no zombie room: wait for it (bounded by the resolver's own limit) */
-            {
-               nph::ThreadJoin(s.th, kResolveMs + 500);
-               delete s.job;
-            }
-         }
-         else
-         {
-            nph::ThreadJoin(s.th, 200);
-            delete s.job;
-         }
+            nph::ResolveAbortFor(&s.job->cancel);
+         for (int z = 0; z < kZombies; z++)
+            if (!g_zombie[z].job) { g_zombie[z].job = s.job; g_zombie[z].th = s.th; break; }
       }
       memset(&s, 0, sizeof s);
    }
@@ -801,7 +809,7 @@ void online_http_shutdown(void)
 #if !defined(NP_TARGET_VITA)
    np_http_shutdown(2000);
 #endif
-   for (int z = 0; z < 4; z++)
+   for (int z = 0; z < kZombies; z++)
       if (g_zombie[z].job)
       {
          nph::ThreadJoin(g_zombie[z].th, kResolveMs + 500);

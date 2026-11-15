@@ -376,6 +376,9 @@ int  lan_transport_relay_bind(lan_transport *t, uint32_t peer_ip_be, uint16_t pe
 void lan_transport_relay_stop(lan_transport *t);          /* releases the allocation, best effort */
 /* Any thread, never blocks (a copy under the transport's mutex). */
 void lan_transport_nat_status(lan_transport *t, lan_nat_status *out);
+/* Diagnostic: how many STUN / TURN server addresses the I/O thread checks every datagram against (each check takes the NAT mutex).
+ * 0 once STUN has finished and no keep-alive runs and no relay is up: the datagrams of a running link then skip it. */
+int lan_transport_nat_listening(lan_transport *t);
 /* JOIN mode, before the netdrv session starts: the host is at this address (what create's
  * target_ip_be/target_port do).  0 = ok, -1 = not a joiner / a session already has peers. */
 int  lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port);

@@ -154,6 +154,10 @@ void ui_online_fail_text(int why, const char *arg1, const char *arg2,
       s1 = "Online play is busy for today.";
       s2 = "Try again tomorrow, or both use Same Wi-Fi.";
       break;
+   case UI_FAIL_ONLINE_SLOW:
+      s1 = "Too many tries from this network.";
+      s2 = "Wait a minute and try again.";
+      break;
    case UI_FAIL_ONLINE_SERVICE:
       s1 = "The online service could not be reached.";
       s2 = "Check this " UI_DEV "'s internet connection and try again.";

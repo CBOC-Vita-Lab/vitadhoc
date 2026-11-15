@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 DESC_KEYS = {"kind", "console", "game", "rom", "title", "nick", "ver", "compat", "pub", "lan", "sym", "relayOnly"}
 TOKEN = "AbCdEfGhIjKlMnOpQrStUv"   # 22 characters
-STATS = {"requests": 0, "connections": 0, "bad": [], "ua": [], "paths": [], "tls": [], "hello_without_request": 0}
+STATS = {"rids": [], "requests": 0, "connections": 0, "bad": [], "ua": [], "paths": [], "tls": [], "hello_without_request": 0}
 LOCK = threading.Lock()
 
 # code -> (status, error code, extra members of the error object)
@@ -50,6 +50,19 @@ SCRIPTS = {
     "E504": (504, "gateway", {}),
     "E418": (418, "teapot", {}),
 }
+
+
+RID_RE = re.compile(r"[0-9a-f]{16}")
+
+
+def desc_keys_problem(body):
+    """The keys of a create / join body: the known ones, plus an optional well-formed request id (recorded for the tests)."""
+    keys = set(body) - {"rid"}
+    if "rid" in body and not (isinstance(body["rid"], str) and RID_RE.fullmatch(body["rid"])):
+        return "rid"
+    if keys != DESC_KEYS:
+        return "keys " + ",".join(sorted(keys ^ DESC_KEYS))
+    return None
 
 
 def err_body(status, code, extra):
@@ -131,8 +144,11 @@ class Handler(BaseHTTPRequestHandler):
         if code is None:   # POST /v1/rooms
             if method != "POST":
                 return self.send_json(404, err_body(404, "not_found", {}))
-            if set(body) != DESC_KEYS:
-                return self.bad("keys " + ",".join(sorted(set(body) ^ DESC_KEYS)))
+            why = desc_keys_problem(body)
+            if why:
+                return self.bad(why)
+            with LOCK:
+                STATS["rids"].append("create " + body.get("rid", "-"))
             return self.send_json(201, {"code": "K7M2Q", "token": TOKEN, "punchKey": "0123456789abcdef", "ttlSec": 600, "pollMs": 2000})
         if sub is None:
             if method != "GET":
@@ -142,8 +158,11 @@ class Handler(BaseHTTPRequestHandler):
         if method != "POST":
             return self.send_json(404, err_body(404, "not_found", {}))
         if sub == "join":
-            if set(body) != DESC_KEYS:
-                return self.bad("keys " + ",".join(sorted(set(body) ^ DESC_KEYS)))
+            why = desc_keys_problem(body)
+            if why:
+                return self.bad(why)
+            with LOCK:
+                STATS["rids"].append("join " + body.get("rid", "-"))
             return self.send_json(200, {"token": TOKEN, "punchKey": "0123456789abcdef", "mode": "relay" if code == "RELAYM" else "punch",
                                         "peer": {"nick": "Alice", "pub": "203.0.113.7:19019", "lan": "192.168.1.23:19019", "sym": 1}, "punchMs": 6000, "pollMs": 1500})
         if body.get("token") != TOKEN:

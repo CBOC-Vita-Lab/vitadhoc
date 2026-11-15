@@ -46,7 +46,11 @@ enum { NET_OK = 0, NET_TIMEOUT = 1, NET_CANCELLED = 2, NET_FAIL = -1, NET_EOF = 
 bool NetworkUp();                                    // the console has a network connection (always true on the host)
 // IPv4 only. 0 = ok (*ip in host byte order); NET_TIMEOUT, NET_CANCELLED, NET_FAIL (*sys = the system's code).
 int Resolve(const char* host, uint32_t* ip, uint32_t timeout_ms, const volatile int* cancel, int* sys);
-void ResolveAbort();                                 // from any thread: makes a Resolve in progress return soon (cancelled); harmless otherwise
+void ResolveAbort();                                 // from any thread: makes EVERY Resolve in progress return soon (cancelled); harmless otherwise
+void ResolveAbortFor(const volatile int* cancel);    // ...only the one(s) running with this cancel flag (the caller's own request; the others go on)
+#ifdef NP_HTTPS_TEST_HOOKS
+void TestStallResolve(uint32_t ms);                  // host only: a Resolve ignores cancel for this long (a Vita resolver that does not return)
+#endif
 
 struct Sock {
     int fd;

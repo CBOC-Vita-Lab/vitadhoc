@@ -16,11 +16,11 @@ export const SCHEMA = [
     code TEXT PRIMARY KEY, state TEXT NOT NULL,
     kind INTEGER, console TEXT, game TEXT, rom TEXT, title TEXT, ver TEXT, compat TEXT,
     host_nick TEXT, host_pub TEXT, host_lan TEXT, host_sym INTEGER, host_relay_only INTEGER,
-    host_token TEXT, host_relayed TEXT, host_mints INTEGER,
+    host_token TEXT, host_relayed TEXT, host_mints INTEGER, host_req TEXT,
     guest_nick TEXT, guest_pub TEXT, guest_lan TEXT, guest_sym INTEGER, guest_relay_only INTEGER,
-    guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER,
+    guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER, guest_req TEXT,
     punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,
-    created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER, relay_uses INTEGER DEFAULT 0)`,
+    created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER, relay_uses INTEGER DEFAULT 0, old_mints INTEGER DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`,
 ];
 
@@ -68,7 +68,7 @@ export function checkAddr(value, kind, field, cfg) {
 
 // ---------------------------------------------------------------- member descriptions
 
-const DESC_KEYS = ['kind', 'console', 'game', 'rom', 'title', 'nick', 'ver', 'compat', 'pub', 'lan', 'sym', 'relayOnly'];
+const DESC_KEYS = ['kind', 'console', 'game', 'rom', 'title', 'nick', 'ver', 'compat', 'pub', 'lan', 'sym', 'relayOnly', 'rid'];
 
 export function strictKeys(body, allowed) {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) throw bad('a JSON object is expected');
@@ -92,6 +92,10 @@ export function parseDesc(body, host, cfg) {
   d.relayOnly = body.relayOnly === undefined ? 0 : body.relayOnly;
   if (d.sym !== 0 && d.sym !== 1) throw bad('sym must be 0 or 1', 'sym');
   if (d.relayOnly !== 0 && d.relayOnly !== 1) throw bad('relayOnly must be 0 or 1', 'relayOnly');
+  // `rid`: the client's request id (16 lower-case hex digits, the same on every retry of one create or join). Optional: a request
+  // without it is simply not repeatable.
+  if (body.rid !== undefined && (typeof body.rid !== 'string' || !/^[0-9a-f]{16}$/.test(body.rid))) throw bad('rid must be 16 lower-case hex digits', 'rid');
+  d.rid = body.rid || '';
   d.pub = checkAddr(body.pub, 'public', 'pub', cfg);
   d.lan = checkAddr(body.lan, 'lan', 'lan', cfg);
   if (d.relayOnly === 1) { d.pub = ''; d.lan = ''; } // "Always use the relay": no address is stored at all
@@ -176,11 +180,11 @@ export function createRoom(c, d, ipk) {
   const punchKey = hex(randomBytes(8));
   c.db.run(
     `INSERT INTO rooms (code, state, kind, console, game, rom, title, ver, compat,
-       host_nick, host_pub, host_lan, host_sym, host_relay_only, host_token, host_relayed, host_mints,
+       host_nick, host_pub, host_lan, host_sym, host_relay_only, host_token, host_relayed, host_mints, host_req,
        guest_mints, punch_key, mode, reason, addr_key, created_ms, expires_ms)
-     VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, ?, '', '', ?, ?, ?)`,
+     VALUES (?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?, 0, ?, '', '', ?, ?, ?)`,
     code, d.kind, d.console, d.game, d.rom, d.title, d.ver, d.compat,
-    d.nick, d.pub, d.lan, d.sym, d.relayOnly, token, punchKey, ipk, c.now, c.now + c.cfg.roomTtlSec * 1000,
+    d.nick, d.pub, d.lan, d.sym, d.relayOnly, token, d.rid || null, punchKey, ipk, c.now, c.now + c.cfg.roomTtlSec * 1000,
   );
   return { code, token, punchKey };
 }
@@ -197,15 +201,22 @@ export function modeOf(host, guest) {
   return host.relayOnly || guest.relayOnly || !host.pub || !guest.pub || host.sym || guest.sym ? 'relay' : 'punch';
 }
 
+/** A repeated create (same `rid`): the live room it made, so the retry gets the ORIGINAL answer and not a second room. */
+export function roomOfCreate(c, rid) {
+  if (!rid) return null;
+  const r = c.db.get(`SELECT * FROM rooms WHERE host_req = ? AND state != 'closed'`, rid);
+  return r && r.expires_ms > c.now ? r : null;
+}
+
 export function joinRoom(c, r, d) {
   if (r.state !== 'open') throw new ApiError(409, 'room_full', 'somebody already joined this room');
   if (d.compat !== r.compat) throw new ApiError(409, 'version_mismatch', 'the two apps are not compatible', { hostVer: r.ver });
   const token = makeToken();
   const mode = modeOf({ relayOnly: r.host_relay_only, pub: r.host_pub, sym: r.host_sym }, d);
   c.db.run(
-    `UPDATE rooms SET state = 'joined', guest_nick = ?, guest_pub = ?, guest_lan = ?, guest_sym = ?, guest_relay_only = ?, guest_token = ?, guest_relayed = '',
+    `UPDATE rooms SET state = 'joined', guest_nick = ?, guest_pub = ?, guest_lan = ?, guest_sym = ?, guest_relay_only = ?, guest_token = ?, guest_req = ?, guest_relayed = '',
        mode = ?, joined_ms = ?, expires_ms = ? WHERE code = ?`,
-    d.nick, d.pub, d.lan, d.sym, d.relayOnly, token, mode, c.now, c.now + c.cfg.connectSec * 1000, r.code,
+    d.nick, d.pub, d.lan, d.sym, d.relayOnly, token, d.rid || null, mode, c.now, c.now + c.cfg.connectSec * 1000, r.code,
   );
   return { token, mode };
 }
@@ -241,21 +252,23 @@ export function punchMsFor(r, role) {
 }
 
 /** A member's relayed address (route 7). First post of a member: the credential counts as USED (returns true), but a room never counts
- *  more uses than the credentials it was given (`relay_uses` <= host_mints + guest_mints, which the per-room cap holds at 4). Without that
+ *  more uses than the credentials it was given (`relay_uses` <= host_mints + guest_mints + old_mints; the per-room cap holds the live part at 4). Without that
  *  bound the monthly relay guard could be spent by anybody for nothing: route 7 takes any public address, and a guest that joins, posts
  *  one and cancels (the room reopens with its relayed columns cleared) would add a "use" each round without a single credential minted. */
 export function setRelayed(c, r, role, relayed) {
   const col = role === 'host' ? 'host_relayed' : 'guest_relayed';
   const uses = r.relay_uses || 0;
-  const counted = !r[col] && uses < (r.host_mints || 0) + (r.guest_mints || 0);
+  const counted = !r[col] && uses < (r.host_mints || 0) + (r.guest_mints || 0) + (r.old_mints || 0);
   c.db.run(`UPDATE rooms SET ${col} = ?, state = 'relay', relay_uses = ? WHERE code = ?`, relayed, uses + (counted ? 1 : 0), r.code);
   return counted;
 }
 
-/** A guest that cancelled or failed: the same code works for another try (guest columns cleared, back to open). */
+/** A guest that cancelled or failed: the same code works for another try (guest columns cleared, back to open). The guest's credential
+ *  count restarts at 0, so the next guest can fetch its own; what it had minted moves to `old_mints`, which keeps the bound of setRelayed
+ *  (relay_uses <= every credential the room ever minted). */
 export function reopen(c, r) {
   c.db.run(
-    `UPDATE rooms SET state = 'open', guest_nick = NULL, guest_pub = '', guest_lan = '', guest_sym = 0, guest_relay_only = 0, guest_token = NULL, guest_relayed = '',
+    `UPDATE rooms SET state = 'open', guest_nick = NULL, guest_pub = '', guest_lan = '', guest_sym = 0, guest_relay_only = 0, guest_token = NULL, guest_req = NULL, old_mints = COALESCE(old_mints, 0) + COALESCE(guest_mints, 0), guest_mints = 0, guest_relayed = '',
        host_relayed = '', mode = '', joined_ms = NULL, expires_ms = ? WHERE code = ?`,
     r.created_ms + c.cfg.roomTtlSec * 1000, r.code,
   );

@@ -52,9 +52,11 @@ typedef struct online_reply
 void online_http_config(const char *base_url, const char *app_version);   /* copied; before any call */
 /* Each returns 0 = sent, -1 = no free slot.  Up to THREE may be in flight (a poll, the relay credentials
  * and a resolve run beside each other during the punch); answers come back one per take, each with its op. */
-int  online_http_create(const online_desc *room);
+/* rid: the request id, 16 lower-case hex digits chosen once per attempt and passed again on every retry of
+ * it (NULL or "" = none).  The service answers a repeated create / join with the ORIGINAL answer. */
+int  online_http_create(const online_desc *room, const char *rid);
 int  online_http_lookup(const char *code);
-int  online_http_join(const char *code, const online_desc *me);
+int  online_http_join(const char *code, const online_desc *me, const char *rid);
 int  online_http_poll(const char *code, const char *token, const char *new_pub /* NULL = unchanged */);
 int  online_http_relay(const char *code, const char *token);
 int  online_http_endpoint(const char *code, const char *token, const char *relay_addr);

@@ -284,6 +284,14 @@ if [ "$CODE" = 200 ]; then
   case "$(jv 'j.result && j.result.fight_mode')" in true) BOT=ON ;; false) BOT=off ;; esac
 fi
 
+# Everything that can be checked is checked BEFORE the first write: Bot Fight Mode ON would challenge the game's API calls whatever our rule says, so
+# adding the rule and only then reporting it would leave a half-done zone. (A rollback with --remove is always allowed.) An unreadable state
+# (the token has no Bot Management read permission) is only a note here: it is checked by hand.
+if [ "$BOT" = ON ] && [ $VERIFY_ONLY -eq 0 ] && [ $REMOVE -eq 0 ]; then
+  note "!!! Bot Fight Mode is ON for $ZONE_NAME: it may challenge the game's API calls and rules cannot skip it. Turn it off (Security > Settings > Bot traffic) by hand, then run this script again. Nothing was written (this script never changes Bot Fight Mode)."
+  die "Bot Fight Mode is ON: nothing was written"
+fi
+
 FAIL=0
 if [ $VERIFY_ONLY -eq 1 ]; then
   if [ $REMOVE -eq 0 ]; then

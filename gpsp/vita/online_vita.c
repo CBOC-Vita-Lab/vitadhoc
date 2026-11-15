@@ -35,6 +35,9 @@
 #define T_POLL_MAX_MS     15000
 #define T_STUN_KEEP_MS    15000
 #define T_RETRY_MS         1000   /* before a failed create/join/credential request is sent again */
+#define T_POLL_WAIT_MAX_S    30   /* a poll told to wait longer than this (429) ends the attempt instead */
+#define T_SLOW_MAX_S        120   /* a 429 that clears within this reads "wait a minute", not "busy today" */
+#define RCV_TRIES_MAX          3  /* sends of a create / join repeated only to learn its token (see online_stop) */
 #define ROOM_TTL_DEFAULT_S   600
 #define NET_POLLS_MAX          3
 #define MEASURE_ECHOES         6
@@ -57,6 +60,15 @@ typedef struct closing
    int  pending;          /* a close still has to be sent */
    int  sent;             /* how many times it went out (2 at most) */
    char code[6], token[24], reason[12];
+   /* A create / join whose answer never arrived and that online_stop abandoned: the service may have made the
+    * room (or taken us in).  The same request, with the same request id, is sent again only to get the token
+    * back, and the room is closed with it.  Survives online_stop like the close itself. */
+   int  rcv;              /* 0 none, 1 create, 2 join: still to learn the token */
+   int  rcv_out;          /* the repeated request is in flight */
+   int  rcv_tries;
+   uint64_t rcv_at;       /* not before */
+   char rid[17], jcode[6];
+   online_desc desc;
 } closing;
 
 static struct
@@ -83,6 +95,8 @@ static struct
    char        posted_pub[24];           /* the pub the service knows */
    int         net_polls;
    int         create_tries, join_tries;
+   char        rid[17];                  /* the request id of this attempt: the same on every retry of its create / join */
+   int         rid_unknown;              /* a create / join went out and no definite answer came back */
    uint64_t    retry_at;
    int         req_sent;                 /* the stage's own request is out */
 
@@ -293,8 +307,45 @@ static void close_queue(const char *reason)
    O.cl.sent = 0;
 }
 
+/* The abandoned create / join, sent again (same request id) to learn the token. */
+static void recover_send(void)
+{
+   int op, rc;
+   if (!O.cl.rcv || O.cl.rcv_out || O.cl.pending || now_ms() < O.cl.rcv_at)
+      return;
+   op = O.cl.rcv == 1 ? ONLINE_OP_CREATE : ONLINE_OP_JOIN;
+   if (online_http_busy(op))
+      return;
+   rc = O.cl.rcv == 1 ? online_http_create(&O.cl.desc, O.cl.rid) : online_http_join(O.cl.jcode, &O.cl.desc, O.cl.rid);
+   if (rc == 0)
+   {
+      O.t_req[op] = now_ms();
+      O.cl.rcv_out = 1;
+      O.cl.rcv_tries++;
+   }
+}
+
+static void recover_answer(const online_reply *r)
+{
+   O.cl.rcv_out = 0;
+   if (r->err == ONLINE_E_NONE && r->token[0] && (O.cl.rcv == 1 ? r->code[0] : O.cl.jcode[0]))
+   {
+      copy_str(O.cl.code, sizeof O.cl.code, O.cl.rcv == 1 ? r->code : O.cl.jcode);
+      copy_str(O.cl.token, sizeof O.cl.token, r->token);
+      copy_str(O.cl.reason, sizeof O.cl.reason, O.cl.rcv == 1 ? "cancel" : "failed");
+      O.cl.pending = 1;
+      O.cl.sent = 0;
+      O.cl.rcv = 0;
+   }
+   else if (r->err == ONLINE_E_NET && O.cl.rcv_tries < RCV_TRIES_MAX)
+      O.cl.rcv_at = now_ms() + T_RETRY_MS;
+   else
+      O.cl.rcv = 0;           /* the service refused, or we gave up: the room expires by itself */
+}
+
 static void close_service(void)
 {
+   recover_send();
    if (!O.cl.pending || online_http_busy(ONLINE_OP_CLOSE))
       return;
    if (online_http_close(O.cl.code, O.cl.token, O.cl.reason) == 0)
@@ -337,7 +388,7 @@ static void fail(int why, int http)
    set_stage(ON_FAILED);
 }
 
-static int map_err(int err, int op)
+static int map_err(int err, int op, int retry_after)
 {
    switch (err)
    {
@@ -347,8 +398,9 @@ static int map_err(int err, int op)
       case ONLINE_E_FULL:    return ONLINE_FAIL_FULL;
       case ONLINE_E_VERSION: return ONLINE_FAIL_VERSION;
       case ONLINE_E_UPDATE:  return ONLINE_FAIL_UPDATE;
-      case ONLINE_E_BUSY:
-      case ONLINE_E_RATE:    return ONLINE_FAIL_BUSY;
+      case ONLINE_E_BUSY:    return ONLINE_FAIL_BUSY;
+      case ONLINE_E_RATE:    /* slow_down, too_many_rooms, guessing, ...: the wait says which sentence is true */
+         return retry_after > 0 && retry_after <= T_SLOW_MAX_S ? ONLINE_FAIL_SLOW : ONLINE_FAIL_BUSY;
       case ONLINE_E_TOKEN:   return ONLINE_FAIL_CLOSED;
       case ONLINE_E_RELAY:   return ONLINE_FAIL_UNREACHABLE;
       case ONLINE_E_CLOCK:   return ONLINE_FAIL_CLOCK;
@@ -360,7 +412,7 @@ static int map_err(int err, int op)
  * a room we can close when it said the room or our token is gone. */
 static void fail_from_reply(const online_reply *r)
 {
-   int why = map_err(r->err, r->op);
+   int why = map_err(r->err, r->op, r->retry_after);
    if (r->err == ONLINE_E_NOT_FOUND || r->err == ONLINE_E_TOKEN)
       O.room_gone = 1;
    if (r->err == ONLINE_E_VERSION)
@@ -615,6 +667,8 @@ static void pump(void)
          if (r.err != ONLINE_E_NONE && O.cl.sent < 2 && O.cl.code[0])
             O.cl.pending = 1;
       }
+      else if (O.cl.rcv_out && (r.op == ONLINE_OP_CREATE || r.op == ONLINE_OP_JOIN))
+         recover_answer(&r);
       else if (O.conn && O.rq_n < RQ_MAX)
          O.rq[O.rq_n++] = r;
    }
@@ -739,6 +793,8 @@ static void on_create(const online_reply *r)
 {
    if (O.stage != ON_CREATE)
       return;
+   if (r->err != ONLINE_E_NET)
+      O.rid_unknown = 0;                  /* a definite answer: nothing is left to recover */
    if (r->err != ONLINE_E_NONE)
    {
       if (r->err == ONLINE_E_NET && O.create_tries < 2)
@@ -776,6 +832,8 @@ static void on_join(const online_reply *r)
 {
    if (O.stage != ON_JOIN)
       return;
+   if (r->err != ONLINE_E_NET)
+      O.rid_unknown = 0;
    if (r->err != ONLINE_E_NONE)
    {
       if (r->err == ONLINE_E_NET && O.join_tries < 1)
@@ -926,7 +984,7 @@ static void on_poll(const online_reply *r)
             fail(ONLINE_FAIL_SERVICE, r->http);
          return;
       }
-      if (r->err == ONLINE_E_RATE)
+      if (r->err == ONLINE_E_RATE && r->retry_after <= T_POLL_WAIT_MAX_S)
       {
          O.next_poll = now_ms() + (uint64_t)(r->retry_after > 0 ? r->retry_after : 1) * 1000;
          return;
@@ -1019,8 +1077,35 @@ static void own_addr(char *out, size_t cap)
       out[0] = 0;
 }
 
+/* 64 random bits as 16 hex digits: names this attempt's create / join to the service. */
+static void make_rid(void)
+{
+   static const char hx[] = "0123456789abcdef";
+   uint8_t seed[16];
+   int i;
+   if (O.cfg.entropy)
+      O.cfg.entropy(seed);
+   else
+   {
+      uint64_t t = plat_time_us();
+      for (i = 0; i < 16; i++)
+         seed[i] = (uint8_t)((t >> ((i & 7) * 8)) ^ (uint64_t)(i * 53 + 7));
+   }
+   /* the NAT layer was seeded from the same call: fold the bytes so the id is not the transaction ids' own bytes */
+   for (i = 0; i < 8; i++)
+      seed[i] = (uint8_t)(seed[i] ^ (seed[i + 8] * 31u) ^ (uint8_t)(i * 17 + 3));
+   for (i = 0; i < 8; i++)
+   {
+      O.rid[2 * i] = hx[seed[i] >> 4];
+      O.rid[2 * i + 1] = hx[seed[i] & 15];
+   }
+   O.rid[16] = 0;
+}
+
 static void go_create_or_join(void)
 {
+   make_rid();
+   O.rid_unknown = 0;
    O.req_sent = 0;
    O.retry_at = 0;
    set_stage(O.is_host ? ON_CREATE : ON_JOIN);
@@ -1185,20 +1270,28 @@ static void poll_maybe(void)
    }
 }
 
+/* A create / join of an earlier connection that is still being recovered holds the slot: its answer must not be
+ * taken for this attempt's. */
 static void stage_create(void)
 {
-   if (O.req_sent || online_http_busy(ONLINE_OP_CREATE) || now_ms() < O.retry_at)
+   if (O.req_sent || O.cl.rcv || online_http_busy(ONLINE_OP_CREATE) || now_ms() < O.retry_at)
       return;
-   if (req_ok(ONLINE_OP_CREATE, online_http_create(&O.desc)))
+   if (req_ok(ONLINE_OP_CREATE, online_http_create(&O.desc, O.rid)))
+   {
       O.req_sent = 1;
+      O.rid_unknown = 1;
+   }
 }
 
 static void stage_join(void)
 {
-   if (O.req_sent || online_http_busy(ONLINE_OP_JOIN) || now_ms() < O.retry_at)
+   if (O.req_sent || O.cl.rcv || online_http_busy(ONLINE_OP_JOIN) || now_ms() < O.retry_at)
       return;
-   if (req_ok(ONLINE_OP_JOIN, online_http_join(O.code, &O.desc)))
+   if (req_ok(ONLINE_OP_JOIN, online_http_join(O.code, &O.desc, O.rid)))
+   {
       O.req_sent = 1;
+      O.rid_unknown = 1;
+   }
 }
 
 /* Relay credentials, and the TURN host's address, whenever they are wanted. */
@@ -1533,6 +1626,9 @@ void online_stop(void)
        * So a close that is still out is queued again after the drop (the
        * service answers a second close of the same room with 200 or 404). */
       int close_out = online_http_busy(ONLINE_OP_CLOSE) && O.cl.code[0];
+      /* a create / join that was sent and has no definite answer may have reached the service: its room (or our
+       * place in it) would stay until it expires.  Unless an earlier recovery is still running. */
+      int need_rcv = O.rid_unknown && !O.have_room && !O.room_gone && !O.cl.rcv && O.rid[0];
       relay_down();
       online_http_drop();
       O.rq_n = 0;
@@ -1543,6 +1639,16 @@ void online_stop(void)
       }
       if (need_close)
          close_queue(O.is_host ? "cancel" : "failed");
+      if (need_rcv)
+      {
+         O.cl.rcv = O.is_host ? 1 : 2;
+         O.cl.rcv_out = 0;
+         O.cl.rcv_tries = 0;
+         O.cl.rcv_at = 0;
+         copy_str(O.cl.rid, sizeof O.cl.rid, O.rid);
+         copy_str(O.cl.jcode, sizeof O.cl.jcode, O.is_host ? "" : O.code);
+         O.cl.desc = O.desc;
+      }
       /* a close queued by online_linked or fail() before this is kept as it is */
       close_service();
    }

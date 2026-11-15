@@ -95,6 +95,7 @@ export CLOUDFLARE_ACCOUNT_ID=$ACCOUNT_ID
 { [ -n "$KEYID_FILE" ] && [ -z "$TURNTOK_FILE" ]; } && die "--turn-key-id-file and --turn-token-file go together"
 { [ -z "$KEYID_FILE" ] && [ -n "$TURNTOK_FILE" ]; } && die "--turn-key-id-file and --turn-token-file go together"
 SET_SECRETS=0
+EXPECT_APP_VERSION=2.0.0   # the app version this service build is made for: /v1/info must report it as min and latest
 [ -n "$KEYID_FILE" ] && SET_SECRETS=1
 [ $SET_SECRETS -eq 1 ] && [ $VERIFY_ONLY -eq 1 ] && die "--verify-only sets no secrets: no secret options with it"
 command -v curl >/dev/null || die "curl is needed"
@@ -205,7 +206,7 @@ if [ $PRINT_PLAN -eq 1 ]; then
   echo "   curl $CUSTOM_URL/v1/info                    expect 200 with \"service\":\"vitadhoc\" (retried while there is no answer at all: a new custom domain)"
   echo "   curl $CUSTOM_URL/v1/rooms/ZZZZZ?v=2.0.0       expect 404 not_found (the object and the code path are alive)"
   echo "   curl $CUSTOM_URL/                            expect 403 (the zone's WAF rule) or 404 (the Worker): never 200"
-  echo "   curl $CUSTOM_URL/v1/info?v=2.0.0             \"relay\":true once the secrets are set (reported, not a failure)"
+  echo "   curl $CUSTOM_URL/v1/info?v=2.0.0             \"min\":\"$EXPECT_APP_VERSION\", \"latest\":\"$EXPECT_APP_VERSION\" and \"relay\":true (a deploy run without secrets only reports relay false)"
   exit 0
 fi
 
@@ -266,7 +267,14 @@ fi
 if [ "$CODE" = 200 ] && grep -q '"service":"vitadhoc"' "$LAST.body"; then note "GET /v1/info: 200, service vitadhoc"
 else note "GET /v1/info: $CODE (expected 200 with service vitadhoc; see $LAST.*)"; FAIL=1; fi
 if [ "$CODE" = 200 ]; then
-  if grep -q '"relay":true' "$LAST.body"; then note "relay credentials: configured (relay true)"; else note "relay credentials: NOT configured yet (relay false): route 6 answers 503 relay_unavailable until the TURN secrets are set"; fi
+  # What this build of the service must say: the app version it is made for (wrangler.toml MIN_APP_VERSION / LATEST_APP_VERSION) and a working relay.
+  INFO_MIN=$(grep -oE '"min":"[^"]*"' "$LAST.body" | head -1 | cut -d'"' -f4 || true)
+  INFO_LATEST=$(grep -oE '"latest":"[^"]*"' "$LAST.body" | head -1 | cut -d'"' -f4 || true)
+  if [ "$INFO_MIN" = "$EXPECT_APP_VERSION" ] && [ "$INFO_LATEST" = "$EXPECT_APP_VERSION" ]; then note "/v1/info: min $INFO_MIN, latest $INFO_LATEST, as expected"
+  else note "/v1/info: min '${INFO_MIN:-?}', latest '${INFO_LATEST:-?}', expected both $EXPECT_APP_VERSION (MIN_APP_VERSION / LATEST_APP_VERSION of the deployed config; see $LAST.*)"; FAIL=1; fi
+  if grep -q '"relay":true' "$LAST.body"; then note "relay credentials: configured (relay true)"
+  elif [ $VERIFY_ONLY -eq 0 ] && [ $SET_SECRETS -eq 0 ]; then note "relay credentials: NOT configured yet (relay false): route 6 answers 503 relay_unavailable until the TURN secrets are set (this run was told to leave them)"
+  else note "relay credentials: relay is not true in /v1/info (NOT configured yet?): route 6 answers 503 relay_unavailable; set the TURN secrets (see $LAST.*)"; FAIL=1; fi
 fi
 req lookup "/v1/rooms/ZZZZZ?v=2.0.0"
 if [ "$CODE" = 404 ] && grep -q '"code":"not_found"' "$LAST.body"; then note "GET /v1/rooms/ZZZZZ: 404 not_found (the Worker and the object answer)"

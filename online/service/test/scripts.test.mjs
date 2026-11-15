@@ -100,7 +100,7 @@ a = sys.argv[1:]
 url = a[-1]; out = a[a.index('-o') + 1]; hdr = a[a.index('-D') + 1]
 open("${tmp}/curl.log", "a").write(url + "\\n")
 path = url.split("vitadhoc.psvita.dev", 1)[1]
-if path == "/v1/info": code, body = 200, '{"service":"vitadhoc","min":"2.0.0","latest":"2.0.0","relay":${o.relay === false ? 'false' : 'true'},"busy":false,"roomTtlSec":600}'
+if path == "/v1/info": code, body = 200, '{"service":"vitadhoc","min":"${o.min || '2.0.0'}","latest":"${o.latest || '2.0.0'}","relay":${o.relay === false ? 'false' : 'true'},"busy":false,"roomTtlSec":600}'
 elif path.startswith("/v1/rooms/ZZZZZ"): code, body = 404, '{"error":{"code":"not_found","message":"no such room"}}'
 elif path == "/": code, body = ${o.rootCode || 403}, 'blocked'
 else: code, body = 418, ''
@@ -165,6 +165,19 @@ test('deploy script: a wrong account stops before any deploy; an address wrangle
   assert.ok(!/wrangler deploy --config/.test(c2), 'the real deploy never ran');
 });
 
+test('deploy script: the live /v1/info must name min and latest 2.0.0 (the versions this build of the service is made for)', () => {
+  for (const o of [{ min: '1.9.0' }, { latest: '2.1.0' }, { min: '2.0.1' }]) {
+    const tmp = mkdtempSync(join(tmpdir(), 'vad-'));
+    const r = sh(['scripts/deploy-vitadhoc-online.sh', '--account-id', ACCT, '--verify-only', '--log-dir', join(tmp, 'l')], { env: deployStubs(tmp, o) });
+    assert.notEqual(r.code, 0, JSON.stringify(o));
+    assert.match(r.out, /min|latest/, JSON.stringify(o));
+  }
+  const tmp = mkdtempSync(join(tmpdir(), 'vad-'));
+  const ok = sh(['scripts/deploy-vitadhoc-online.sh', '--account-id', ACCT, '--verify-only', '--log-dir', join(tmp, 'l')], { env: deployStubs(tmp) });
+  assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /min 2\.0\.0, latest 2\.0\.0/);
+});
+
 test('deploy script: live checks fail when the root is served (not 403/404)', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'vad-'));
   const env = deployStubs(tmp, { rootCode: 200 });
@@ -173,8 +186,13 @@ test('deploy script: live checks fail when the root is served (not 403/404)', ()
   assert.match(r.out, /SOME CHECKS FAILED/);
   const tmp2 = mkdtempSync(join(tmpdir(), 'vad-'));
   const quiet = sh(['scripts/deploy-vitadhoc-online.sh', '--account-id', ACCT, '--verify-only', '--log-dir', join(tmp2, 'l')], { env: deployStubs(tmp2, { relay: false }) });
-  assert.equal(quiet.code, 0, 'relay false is reported, not a failure');
-  assert.match(quiet.out, /NOT configured yet/);
+  assert.notEqual(quiet.code, 0, 'verifying a deployed service: relay false is a failure');
+  assert.match(quiet.out, /relay.*false|NOT configured/);
+  // a deploy that was told to leave the secrets for later still reports it without failing
+  const tmp3 = mkdtempSync(join(tmpdir(), 'vad-'));
+  const later = sh(['scripts/deploy-vitadhoc-online.sh', '--account-id', ACCT, '--skip-tests', '--log-dir', join(tmp3, 'l')], { env: deployStubs(tmp3, { relay: false }) });
+  assert.equal(later.code, 0, later.out);
+  assert.match(later.out, /NOT configured yet/);
 });
 
 // ------------------------------------------------------------------------------------------------------------------ zone script
@@ -279,6 +297,28 @@ test('zone script: other rules in the WAF phase are kept; a changed rule is upda
   assert.deepEqual(refs(r.st, 'http_request_firewall_custom'), ['other-1', 'other-2']);
   assert.deepEqual(r.writes.map((w) => w.split(' ')[0]), ['DELETE']);
   assert.deepEqual(r.st.phases.http_ratelimit.rules, [RL_RULE]);
+});
+
+test('zone script: Bot Fight Mode ON stops the run BEFORE any write (the rule is not added first and reported afterwards); --remove and --verify-only still work', () => {
+  const z = zoneEnv();
+  z.state({ bot: true, phases: { http_ratelimit: { id: 'rs_http_ratelimit', rules: [RL_RULE] } } });
+  let r = z.run();
+  assert.notEqual(r.code, 0);
+  assert.match(r.out, /Bot Fight Mode is ON/);
+  assert.equal(r.writes.length, 0, `nothing is written while Bot Fight Mode is on: ${r.writes}`);
+  assert.deepEqual(refs(r.st, 'http_request_firewall_custom'), []);
+  r = z.run('--verify-only');
+  assert.notEqual(r.code, 0);
+  assert.equal(r.writes.length, 0);
+  // off: the same run writes the rule
+  z.state({ bot: false, phases: { http_ratelimit: { id: 'rs_http_ratelimit', rules: [RL_RULE] } } });
+  r = z.run();
+  assert.equal(r.code, 0, r.out);
+  assert.equal(r.writes.length, 1);
+  // rollback is allowed whatever Bot Fight Mode says
+  const st = r.st; st.bot = true; writeFileSync(join(z.tmp, 'state.json'), JSON.stringify(st));
+  r = z.run('--remove');
+  assert.deepEqual(r.writes.map((w) => w.split(' ')[0]), ['DELETE']);
 });
 
 test('zone script: stops when the zone already has 5 custom rules and none is ours (nothing is dropped)', () => {

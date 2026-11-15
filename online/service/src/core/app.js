@@ -13,7 +13,7 @@ import { createBudget } from './budget.js';
 import { createLimiter } from './limiter.js';
 import { createProvider, createTurnGuards, udpOnly } from './turn.js';
 import {
-  SCHEMA, TOKEN_RE, parseDesc, strictKeys, checkAddr, loadRoom, sweep, liveRooms, liveRoomsOf, createRoom, card, joinRoom, memberOf, peerFor,
+  SCHEMA, TOKEN_RE, parseDesc, strictKeys, checkAddr, loadRoom, sweep, liveRooms, liveRoomsOf, createRoom, roomOfCreate, card, joinRoom, memberOf, peerFor,
   punchMsFor, hostPollMs, setRelayed, reopen, closeRow, deleteRoom,
 } from './rooms.js';
 
@@ -90,6 +90,9 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
 
   function create(c, body, ipk) {
     const d = parseDesc(body, true, cfg);
+    // a retry of a create that already got through (the answer was lost): the original answer, not a second room
+    const again = roomOfCreate(c, d.rid);
+    if (again) return json(201, { code: again.code, token: again.host_token, punchKey: again.punch_key, ttlSec: cfg.roomTtlSec, pollMs: paced(2000) });
     if (liveRoomsOf(c, ipk) >= limiter.roomsPerAddrCap()) throw limiter.tooManyRooms();
     if (liveRooms(c) >= cfg.maxRooms) throw new ApiError(503, 'rooms_full', 'the service has no free room right now', { retryAfterSec: 60 });
     const { code, token, punchKey } = createRoom(c, d, ipk);
@@ -107,9 +110,10 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
     const d = parseDesc(body, false, cfg);
     const r = loadRoom(c, params.code);
     if (!r || r.state === 'closed') throw new ApiError(404, 'not_found', 'no such room');
-    const { token, mode } = joinRoom(c, r, d);
+    // a retry of a join that already got through: the same guest, the original token (not 409 room_full against ourselves)
+    const token = d.rid && r.guest_req === d.rid && r.guest_token ? r.guest_token : joinRoom(c, r, d).token;
     const nr = loadRoom(c, r.code);
-    return json(200, { token, punchKey: nr.punch_key, mode, peer: peerFor(nr, 'guest'), punchMs: punchMsFor(nr, 'guest'), pollMs: paced(1500) });
+    return json(200, { token, punchKey: nr.punch_key, mode: nr.mode, peer: peerFor(nr, 'guest'), punchMs: punchMsFor(nr, 'guest'), pollMs: paced(1500) });
   }
 
   function poll(c, params, body) {

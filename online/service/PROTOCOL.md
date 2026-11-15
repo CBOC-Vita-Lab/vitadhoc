@@ -48,6 +48,14 @@ runs (after a patch of `rom_patch.c`; `""` if only the unpatched file can be rea
 `sym` 1 = STUN saw two different mappings (symmetric NAT). `relayOnly` 1 = the player set "Always use the
 relay"; then `pub` and `lan` are sent as `""`. A joiner's `kind`, `console`, `title`, `rom` are ignored.
 
+`rid` (optional, create and join only): the client's request id, 16 lower-case hex digits (64 random bits), chosen
+once per attempt and sent unchanged on every retry of it. A repeated create with a `rid` that made a live room
+answers 201 with the ORIGINAL `code`, `token`, `punchKey` (no second room, no use of the per-address room limits); a
+repeated join with the `rid` the room's guest joined with answers 200 with the ORIGINAL `token` (not 409
+`room_full`). The id is forgotten with the room, and when the guest leaves (`close` cancel / failed). Anything but
+16 lower-case hex digits -> 400 `bad_request`. A client that is told to stop while a create / join is in flight
+repeats it with the same `rid` only to learn the token and close the room.
+
 ### 1.2 Routes
 
 | # | method, path | body | 2xx answer |
@@ -110,12 +118,13 @@ CREATE TABLE IF NOT EXISTS rooms (
   code TEXT PRIMARY KEY, state TEXT NOT NULL,            -- open | joined | relay | closed
   kind INTEGER, console TEXT, game TEXT, rom TEXT, title TEXT, ver TEXT, compat TEXT,
   host_nick TEXT, host_pub TEXT, host_lan TEXT, host_sym INTEGER, host_relay_only INTEGER,
-  host_token TEXT, host_relayed TEXT, host_mints INTEGER,
+  host_token TEXT, host_relayed TEXT, host_mints INTEGER, host_req TEXT,      -- *_req: the create / join `rid`
   guest_nick TEXT, guest_pub TEXT, guest_lan TEXT, guest_sym INTEGER, guest_relay_only INTEGER,
-  guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER,
+  guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER, guest_req TEXT,
   punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,   -- addr_key: the creator's ipKey, for "live rooms per address"
   created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER,
-  relay_uses INTEGER DEFAULT 0);                           -- relayed addresses counted as USED credentials (never more than the mints)
+  relay_uses INTEGER DEFAULT 0,                            -- relayed addresses counted as USED credentials (never more than all mints)
+  old_mints INTEGER DEFAULT 0);                            -- guest credentials of earlier guests (a reopen resets guest_mints to 0)
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 ```
 
@@ -130,7 +139,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 
 - `open`: `expires_ms = created_ms + 600 s`. Then `closed`, reason `expired`.
 - `joined` / `relay`: `expires_ms = joined_ms + 120 s` (the connect deadline). A guest `close` with
-  `cancel`/`failed` puts the room back to `open` (guest columns cleared, `expires_ms` back to
+  `cancel`/`failed` puts the room back to `open` (guest columns cleared incl. `guest_mints`, `expires_ms` back to
   `created_ms + 600 s`): the same code works for another try.
 - `closed`: kept 30 s so the other member's poll reads `{"state":"closed","reason":...}` instead of 404;
   lookup and join on it answer 404. `close("linked")` deletes the row at once (addresses do not outlive

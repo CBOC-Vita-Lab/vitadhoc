@@ -18,6 +18,9 @@ It stands on the work of many people:
 - **Normmatt and the VBA/VBA-M team:** the open GBA BIOS from ReGBA.
 - [**rcheevos**](https://github.com/RetroAchievements/rcheevos) by
   RetroAchievements: the achievements runtime.
+- [**Mbed TLS**](https://github.com/Mbed-TLS/mbedtls) by its contributors (Arm
+  Limited and others): the TLS library of online play. **Cloudflare:** the free
+  STUN, relay (Realtime TURN) and Workers services online play runs on.
 - **mGBA and VisualBoyAdvance-M** authors: the cheat engine and its reference.
 - **xerpi and the libvita2d contributors:** graphics. **Sean Barrett and
   contributors:** stb. **Zenju and contributors:** xBRZ. **The Inter and Outfit

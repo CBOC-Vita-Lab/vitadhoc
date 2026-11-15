@@ -41,6 +41,21 @@ the game's path and it starts VitAdhoc again when you quit.
   tag, commit and the few local edits) have the details. No legal opinion has
   been obtained on the separate-program design.
 
+## Online Play: Mbed TLS And The Service
+
+Version 2.0 links Mbed TLS 3.6.7 for the HTTPS client of online play. Mbed TLS
+is offered under **Apache-2.0 OR GPL-2.0-or-later**; VitAdhoc takes the
+GPL-2.0-or-later option, which matches the rest of the program, and both texts
+stay in `licenses/MbedTLS-LICENSE.txt`. It is built from a pinned upstream
+checkout plus one upstream bug-fix hunk (pins and hashes in
+`gpsp/vita/deps/lock.json`) and is not stored in the repository. Apache-2.0 is
+not compatible with GPL-2.0-only, so this relies on the "or later" and on the
+choice Mbed TLS offers: if the Snes9x player or any other separate program
+ever linked it, that would need its own check (the SNES player does not).
+The HTTPS client, the NAT layer and the room service are the project owner's
+own code. Cloudflare's STUN and TURN are services, not code. No legal opinion
+has been obtained.
+
 ## Release Status
 
 Version 1.0's VPK is built from the source in this repository, which sits

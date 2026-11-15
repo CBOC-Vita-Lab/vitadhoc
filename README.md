@@ -19,6 +19,17 @@ You'll need your own games. An open-source GBA BIOS is built in; no BIOS
 download is required. Updating from 1.0, 1.1, 1.2, 1.3 or 1.3.1? Install the VPK over
 the old version. Keep your games, saves, settings and artwork where they are.
 
+## New In Version 2.0
+
+**Online play.** Play Link Cable games with a friend anywhere: one hosts and
+gets a code of five characters, the other types it. No router settings, no
+accounts. The two Vitas link directly when they can and through a relay when
+they cannot. It works for GBA Link Cable, GBA Wireless Adapter, Game Boy / Game
+Boy Color Link Cable and sharing, and the join finds your copy of the game for
+you. Not yet tried on two real Vitas: see [Known Issues](KNOWN-ISSUES.md). See
+[Online Play](docs/ONLINE.md), the [2.0 release notes](release-notes-2.0.md)
+and the [changelog](CHANGELOG.md).
+
 ## New In Version 1.4
 
 **Two more consoles.** NES and Famicom games (`.nes`, `.fds` with your own
@@ -69,7 +80,7 @@ targets are bigger.
 **Steadier link play.** Two linked Vitas wait 20 seconds before giving up on
 each other, and achievements pause while two consoles are linked.
 
-Internet play by room code is not in 1.4. See the
+Internet play by room code is not in 1.4 (it is in 2.0). See the
 [1.4 release notes](release-notes-1.4.md) and the [changelog](CHANGELOG.md).
 
 ## New In Version 1.3.1
@@ -187,8 +198,8 @@ place, alongside folders you add yourself.
 ### Play together
 
 GBA Link Cable and Wireless Adapter support, plus GB/GBC linking: two Vitas
-over Wi-Fi, internet or ad hoc, or two emulated handhelds side by side on one
-Vita. Save/state sharing and a Mystery Gift receiver are included too.
+over Wi-Fi, online by room code, or ad hoc, or two emulated handhelds side by
+side on one Vita. Save/state sharing and a Mystery Gift receiver are included too.
 
 [Play Together](PLAY-TOGETHER.md) has the setup guide and supported modes.
 

@@ -22,6 +22,20 @@ the title ID, safe archive paths and matching notices. No commercial game,
 save file or proprietary BIOS is included; the open-source BIOS is built in.
 The install ZIP includes the same VPK and the corresponding source.
 
+## Version 2.0 (in preparation)
+
+Version 2.0 adds Online play. It is built as above with one more input, an Mbed
+TLS 3.6.7 prefix built from the pinned source by `tools/online/build-mbedtls.py`
+(commit `068ff080b369adfac81509f9b57b2afabaf82dc5`, tag `mbedtls-3.6.7`, plus the
+locked upstream clean-up hunk; `gpsp/vita/deps/lock.json`):
+
+`python3 tools/online/build-mbedtls.py --target vita --work <dir>`, then
+`make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS=<dir>/mbedtls/vita GIT_VERSION=2.0`
+
+The VPK gains the Mbed TLS notice (`licenses/MbedTLS-LICENSE.txt`); the hashes in
+the table above are filled in at release by `tools/pin-release.py`. The room
+service source is in `online/service/` (source package only, not the VPK).
+
 ## Automated Evidence
 
 The 1.3 candidate passed the full gate on the x86 host build of the app:

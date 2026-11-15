@@ -1,5 +1,31 @@
 # What's New
 
+## Version 2.0
+
+- **Online play.** Play together > Connection: Online. The host's screen shows
+  a code of five characters; the friend types it on a code pad (d-pad or
+  touch) from the game menu or the game list (Settings > Join online). The
+  Vitas link directly when they can and through a Cloudflare relay when they
+  cannot ("Connecting through the relay."); **Always use the relay** hides
+  each player's address. Works for GBA Link Cable, GBA Wireless Adapter, Game
+  Boy / Game Boy Color Link Cable and sharing. VitAdhoc finds your copy of
+  the host's game by its cartridge code and file fingerprint and starts it, or
+  says which game to add. Messages say who acts (code expired, a newer or older
+  VitAdhoc on the other Vita, a wrong clock, a busy day). A connection quality
+  message (Great, Good, Slow) appears when the link forms. Link delay Auto may use
+  up to 12 frames online (8 elsewhere). No accounts; the room service stores a room
+  only until the link forms or 10 minutes pass. See docs/ONLINE.md. Not yet
+  tried on two real Vitas or the live service.
+- **The typed-address "Internet" connection is now "Direct address"**, shown
+  only with `link_direct = 1` in `vita.ini`; an Internet setting from 1.4
+  becomes Online.
+- **Under the hood:** a TLS client of our own (Mbed TLS 3.6.7, eight root
+  certificates, certificate checks always on) for the room service, STUN,
+  hole punching and a TURN relay client on the link's own UDP socket, and the
+  room service itself (`online/service/`, one Cloudflare Worker and one
+  Durable Object). See docs/TECHNICAL.md and docs/BUILDING.md (building needs the
+  Mbed TLS prefix).
+
 ## Version 1.4
 
 - **Your saves reach RetroArch** (GitHub #3, which also had the Game Boy

@@ -159,23 +159,43 @@ bool NetworkUp() {
     return net_vita_wifi_status(&w) != 0;
 }
 
-static volatile int g_resolverId = -1;
-void ResolveAbort() {
-    const int rid = g_resolverId;
-    if (rid >= 0) sceNetResolverAbort(rid, 0);
+// One entry per Resolve in progress (the worker's and any caller's resolve thread run side by side), keyed by the caller's cancel flag.  An
+// abort finds its own resolver by that key and cannot hit one that has been destroyed: the entry is removed under the same lock before the
+// resolver is.  A full table only means that resolve cannot be aborted early (its time-out still ends it).
+struct ResolverEnt { const volatile int* cancel; int rid; };
+static ResolverEnt g_resolvers[8];
+static SpinLock g_resolverLock;
+
+static void AbortResolvers(const volatile int* only) {
+    g_resolverLock.lock();
+    for (int i = 0; i < 8; i++)
+        if (g_resolvers[i].cancel && (!only || g_resolvers[i].cancel == only)) sceNetResolverAbort(g_resolvers[i].rid, 0);
+    g_resolverLock.unlock();
 }
+void ResolveAbort() { AbortResolvers(nullptr); }
+void ResolveAbortFor(const volatile int* cancel) { if (cancel) AbortResolvers(cancel); }
 
 int Resolve(const char* host, uint32_t* ip, uint32_t timeout_ms, const volatile int* cancel, int* sys) {
     if (!EnsureNet()) { *sys = -1; return NET_FAIL; }
     if (*cancel) return NET_CANCELLED;
     const int rid = sceNetResolverCreate("np_https", nullptr, 0);
     if (rid < 0) { *sys = rid; return NET_FAIL; }
-    g_resolverId = rid;
+    int slot = -1;
+    g_resolverLock.lock();
+    for (int i = 0; i < 8; i++)
+        if (!g_resolvers[i].cancel) { g_resolvers[i].cancel = cancel; g_resolvers[i].rid = rid; slot = i; break; }
+    g_resolverLock.unlock();
+    // a cancel that came before the entry existed found nothing to abort: look again now that it can
     SceNetInAddr addr;
     memset(&addr, 0, sizeof addr);
-    // microseconds; one retry of the name servers
-    const int rc = sceNetResolverStartNtoa(rid, host, &addr, (int)(timeout_ms * 1000u), 1, 0);
-    g_resolverId = -1;
+    int rc;
+    if (*cancel) rc = -1;
+    else rc = sceNetResolverStartNtoa(rid, host, &addr, (int)(timeout_ms * 1000u), 1, 0);   // microseconds; one retry of the name servers
+    if (slot >= 0) {
+        g_resolverLock.lock();
+        g_resolvers[slot].cancel = nullptr;
+        g_resolverLock.unlock();
+    }
     sceNetResolverDestroy(rid);
     if (*cancel) return NET_CANCELLED;
     if (rc < 0) {
@@ -399,6 +419,11 @@ bool ThreadJoin(Thread* t, uint32_t timeout_ms) {
 
 bool NetworkUp() { return true; }
 void ResolveAbort() {}
+void ResolveAbortFor(const volatile int*) {}
+#ifdef NP_HTTPS_TEST_HOOKS
+static volatile uint32_t g_stallMs;
+void TestStallResolve(uint32_t ms) { g_stallMs = ms; }
+#endif
 
 // getaddrinfo cannot be interrupted: it runs on a helper thread that is abandoned (and cleans up after itself) on time-out / cancel.
 namespace {
@@ -446,6 +471,10 @@ int Resolve(const char* host, uint32_t* ip, uint32_t timeout_ms, const volatile 
     pthread_attr_destroy(&attr);
     const int64_t until = MonoMs() + timeout_ms;
     int result = NET_TIMEOUT;
+#ifdef NP_HTTPS_TEST_HOOKS
+    // a stuck resolver: does not look at `cancel` for a while, then goes on as usual
+    for (const int64_t stall_until = MonoMs() + g_stallMs; MonoMs() < stall_until;) SleepMs(5);
+#endif
     for (;;) {
         if (__atomic_load_n(&job->done, __ATOMIC_ACQUIRE)) {
             if (job->rc == 0) { *ip = job->ip; result = 0; } else { *sys = job->rc; result = NET_FAIL; }

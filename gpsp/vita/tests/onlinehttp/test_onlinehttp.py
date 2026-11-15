@@ -132,6 +132,9 @@ class Plain(Base):
     def test_no_answer_is_net_after_the_limit(self):
         self.runner("blackhole", self.ports["blackhole"], timeout=60)
 
+    def test_drop_never_blocks_the_frame_thread(self):
+        self.runner("dropstuck", timeout=60)
+
     def test_https_without_tls_in_the_build(self):
         self.runner("nohttps")
 

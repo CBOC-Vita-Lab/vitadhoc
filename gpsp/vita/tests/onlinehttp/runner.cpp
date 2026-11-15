@@ -413,6 +413,38 @@ static void t_three(const char *base)
    check(1, "shutdown returned");
 }
 
+/* A drop must never block the frame thread, even when the resolver threads are stuck (a Vita resolver ignores cancel until its own
+ * time-out) and more of them have been abandoned than the client keeps track of. */
+static uint64_t NowMs(void)
+{
+   timespec ts;
+   clock_gettime(CLOCK_MONOTONIC, &ts);
+   return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
+static void t_dropstuck(void)
+{
+   online_http_config("http://127.0.0.1:1", "2.0.0");
+   nph::TestStallResolve(2500);   // a Resolve that ignores `cancel` for 2.5 s
+   int started = 0;
+   uint64_t worst = 0;
+   for (int round = 0; round < 8; round++)
+   {
+      for (int k = 0; k < 3; k++)
+         if (online_http_resolve("localhost") == 0)
+            started++;
+      const uint64_t t0 = NowMs();
+      online_http_drop();
+      const uint64_t dt = NowMs() - t0;
+      if (dt > worst)
+         worst = dt;
+   }
+   check(started >= 18, "dropstuck: resolves were started", "%d", started);
+   check(worst < 300, "dropstuck: drop returned at once although every resolver is stuck", "worst %u ms", (unsigned)worst);
+   online_http_shutdown();
+   check(1, "dropstuck: shutdown returned");
+}
+
 static void t_badver(const char *base)
 {
    /* a build label is never sent as the version: the fake (like the service) answers 400 to such a `v` */
@@ -556,6 +588,8 @@ int main(int argc, char **argv)
       t_blackhole(atoi(argv[2]));
    else if (!strcmp(mode, "nohttps"))
       t_nohttps();
+   else if (!strcmp(mode, "dropstuck"))
+      t_dropstuck();
    else if (!strcmp(mode, "tls") && argc > 3)
       t_tls(argv[2], argv[3]);
    else if (!strcmp(mode, "selftest"))

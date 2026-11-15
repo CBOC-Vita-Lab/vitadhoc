@@ -1058,6 +1058,7 @@ int np_https_poll(NpHttpsHandle h, NpHttpsResult* out) {
 
 void np_https_cancel(NpHttpsHandle h) {
     bool abort_dns = false;
+    const volatile int* cancel_flag = nullptr;
     g_lock.lock();
     Slot* s = SlotOf(h);
     if (s && !s->released) {
@@ -1070,14 +1071,16 @@ void np_https_cancel(NpHttpsHandle h) {
         } else if (s->state == SS_RUNNING) {
             s->cancel = 1;
             abort_dns = true;
+            cancel_flag = &s->cancel;
         }
     }
     g_lock.unlock();
-    if (abort_dns) ResolveAbort();
+    if (abort_dns) ResolveAbortFor(cancel_flag);   // this request's own resolve, not another's
 }
 
 void np_https_release(NpHttpsHandle h) {
     bool abort_dns = false;
+    const volatile int* cancel_flag = nullptr;
     g_lock.lock();
     Slot* s = SlotOf(h);
     if (s && !s->released) {
@@ -1085,13 +1088,14 @@ void np_https_release(NpHttpsHandle h) {
             s->cancel = 1;
             s->released = true;   // the worker frees it
             abort_dns = true;
+            cancel_flag = &s->cancel;
         } else {
             FreeSlotMemory(s);
             s->state = SS_FREE;
         }
     }
     g_lock.unlock();
-    if (abort_dns) ResolveAbort();
+    if (abort_dns) ResolveAbortFor(cancel_flag);
 }
 
 void np_https_shutdown(uint32_t timeout_ms) {

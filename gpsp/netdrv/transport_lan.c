@@ -734,7 +734,8 @@ struct lan_transport
    int      seeded;
    /* STUN */
    nat_stun stun, skeep;            /* the lookup; the mapping keep-alive (server 0 only) */
-   int      stun_on;
+   int      stun_on;                /* the I/O thread listens for STUN answers: a lookup runs, or a keep-alive does */
+   int      stun_used;              /* a lookup was started: the status reports its result (stays after stun_on is cleared) */
    int      pub_valid;
    uint32_t pub_ip_be;
    uint16_t pub_port;
@@ -1764,6 +1765,13 @@ static int lan_io_nat_tick(lan_transport *t, uint64_t now_us)
          else
             busy = 1;
       }
+      /* A finished lookup with no keep-alive: stop checking every datagram against the servers (each check takes the mutex). */
+      if (!busy && (nat_stun_state(&t->stun) == NAT_STUN_OK || nat_stun_state(&t->stun) == NAT_STUN_FAILED) &&
+          !(t->keep_ms && t->pub_valid) && nat_stun_state(&t->skeep) == NAT_STUN_IDLE)
+      {
+         t->stun_on = 0;
+         nat_refresh_srcs(t);
+      }
    }
 
    if (t->punch_state == LAN_PUNCH_RUNNING)
@@ -2673,6 +2681,7 @@ int lan_transport_stun_start(lan_transport *t, const uint32_t *ip_be, const uint
    memset(&t->skeep, 0, sizeof(t->skeep));
    t->pub_valid = 0;
    t->stun_on = 1;
+   t->stun_used = 1;
    atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
    nat_stun_start(&t->stun, nat_cb_stun_send, t, ip_be, port, n, (const uint8_t (*)[12])tx, now);
    nat_refresh_srcs(t);
@@ -2688,6 +2697,18 @@ void lan_transport_stun_keep(lan_transport *t, unsigned every_ms)
    nd_mutex_lock(&t->nx);
    t->keep_ms = every_ms;
    t->keep_next_ms = nd_now_us() / 1000u + every_ms;
+   if (every_ms && t->stun_used && !t->stun_on)
+   {
+      t->stun_on = 1;                      /* the keep-alive's answers come from the servers again */
+      nat_refresh_srcs(t);
+   }
+   else if (!every_ms && t->stun_on && nat_stun_state(&t->skeep) == NAT_STUN_IDLE &&
+            (nat_stun_state(&t->stun) == NAT_STUN_OK || nat_stun_state(&t->stun) == NAT_STUN_FAILED))
+   {
+      t->stun_on = 0;                      /* nothing left to listen for; the tick would do it, this is at once */
+      nat_refresh_srcs(t);
+   }
+   atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
    nd_mutex_unlock(&t->nx);
 }
 
@@ -2822,6 +2843,11 @@ void lan_transport_relay_stop(lan_transport *t)
    nd_mutex_unlock(&t->nx);
 }
 
+int lan_transport_nat_listening(lan_transport *t)
+{
+   return t ? atomic_load_explicit(&t->nat_srcs, memory_order_acquire) : 0;
+}
+
 void lan_transport_nat_status(lan_transport *t, lan_nat_status *out)
 {
    int sym = 0;
@@ -2831,7 +2857,7 @@ void lan_transport_nat_status(lan_transport *t, lan_nat_status *out)
    if (!t)
       return;
    nd_mutex_lock(&t->nx);
-   if (t->stun_on)
+   if (t->stun_used)
    {
       out->stun = nat_stun_state(&t->stun);
       (void)nat_stun_result(&t->stun, NULL, NULL, &sym);

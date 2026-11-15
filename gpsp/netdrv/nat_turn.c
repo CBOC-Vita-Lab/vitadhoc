@@ -431,6 +431,8 @@ typedef struct turn_parsed
    uint16_t relayed_port, peer_port;
    const uint8_t *data;
    size_t   data_len;
+   size_t   mi_at;                 /* offset of MESSAGE-INTEGRITY, 0 = none */
+   const uint8_t *mi;              /* its 20 bytes */
 } turn_parsed;
 
 static int turn_parse(const uint8_t *d, size_t n, turn_parsed *p)
@@ -461,11 +463,35 @@ static int turn_parse(const uint8_t *d, size_t n, turn_parsed *p)
          case TA_RELAYED: p->has_relayed = turn_dec_xor_addr(v, l, &p->relayed_ip, &p->relayed_port); break;
          case TA_PEER: p->has_peer = turn_dec_xor_addr(v, l, &p->peer_ip, &p->peer_port); break;
          case TA_DATA: p->has_data = 1; p->data = v; p->data_len = l; break;
+         case TA_INTEGRITY:
+            if (l == 20 && !p->mi_at)
+            {
+               p->mi_at = o;
+               p->mi = v;
+            }
+            break;
          default: break;
       }
       o += 4 + ((l + 3) & ~(size_t)3);
    }
    return 1;
+}
+
+/* Is this answer signed with our long-term key?  The HMAC covers the message up to the MESSAGE-INTEGRITY attribute with the header's length
+ * field already counting that attribute and nothing after it (RFC 5389 15.4).  Without this anybody who can guess a transaction id and
+ * send from anywhere could "allocate" us a relayed address, or make a permission or channel look bound. */
+static int turn_integrity_ok(const nat_turn *c, const uint8_t *d, const turn_parsed *p)
+{
+   uint8_t copy[512], mac[20], diff = 0;
+   int i;
+   if (!c->have_nonce || !p->mi_at || p->mi_at > sizeof copy)
+      return 0;
+   memcpy(copy, d, p->mi_at);
+   turn_put16(copy + 2, (uint32_t)(p->mi_at - 20 + 24));
+   nat_hmac_sha1(mac, c->key, 16, copy, p->mi_at);
+   for (i = 0; i < 20; i++)
+      diff |= (uint8_t)(mac[i] ^ p->mi[i]);
+   return diff == 0;
 }
 
 /* the request `t` answered, replaced by one with a new nonce */
@@ -636,7 +662,11 @@ int nat_turn_handle(nat_turn *c, const uint8_t *d, size_t n, const uint8_t **inn
       return 0;
    switch (p.type & 0x0110)
    {
-      case 0x0100: turn_on_success(c, t, &p, c->clock_ms); return 1;
+      case 0x0100:
+         if (!turn_integrity_ok(c, d, &p))
+            return 1;                    /* an unauthenticated success: ignored, the request stays pending (and is repeated) */
+         turn_on_success(c, t, &p, c->clock_ms);
+         return 1;
       case 0x0110: turn_on_error(c, t, &p, c->clock_ms); return 1;
       default:     return 0;
    }

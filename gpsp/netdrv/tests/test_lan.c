@@ -21,6 +21,8 @@
  *   nat        joiner and host see each other only through an address-
  *              rewriting relay: the declared->observed alias carries the
  *              session and the bulk lane
+ *   settarget  a joiner created without a target is pointed at its host
+ *              afterwards (lan_transport_set_target), then a session runs
  *   bulk       1 MiB over the bulk lane with 5 % loss, a NACK bitmap on the
  *              ordered channel; nothing of it reaches netdrv
  *   hostile    discovery datagrams, garbage and foreign bulk aimed at a
@@ -1051,6 +1053,51 @@ static void test_nat(void)
    relay_close(&r);
 }
 
+/* ================================================================ settarget == */
+
+/* lan_transport_set_target (online play): a joiner created WITHOUT a target
+ * is pointed at its host afterwards, and netdrv's JOIN goes there. */
+static void test_settarget(void)
+{
+   uint16_t base = test_port(30);
+   lan_transport *th, *tj, *tx;
+   console H, J;
+   uint32_t lo = inet_addr("127.0.0.1");
+
+   printf("[settarget: a joiner is pointed at its host after create]\n");
+   th = mk_host(base, 0);
+   tj = mk_join(base, 0, 0);                  /* no target: it would broadcast */
+   tx = mk_join(base, lo, 9);                 /* a target already (a wrong one) */
+   CHECK(th && tj && tx, "transports: %s", lan_last_error());
+   if (!th || !tj || !tx)
+      return;
+   CHECK(lan_transport_set_target(th, lo, lan_transport_port(tj)) < 0, "a host has no target to set");
+   CHECK(lan_transport_set_target(NULL, lo, 1) < 0, "NULL");
+   CHECK(lan_transport_set_target(tj, 0, 1) < 0, "no address");
+   CHECK(lan_transport_set_target(tx, lo, lan_transport_port(th)) == 0,
+         "a target given at create may be replaced before any session");
+   lan_transport_destroy(tx);
+
+   CHECK(lan_transport_set_target(tj, lo, lan_transport_port(th)) == 0, "set_target");
+   CHECK(con_open(&H, "host", th, 1, PROTO_A, 0x11, NULL) == 0, "H");
+   CHECK(con_open(&J, "join", tj, 0, PROTO_A, 0x22, NULL) == 0, "J");
+   WAIT_FOR(6000, atomic_load(&J.active) && atomic_load(&H.peers) == 1);
+   CHECK(atomic_load(&J.active) && atomic_load(&H.peers) == 1, "joined the host it was pointed at");
+   CHECK(atomic_load(&H.connects) == 1, "admitted once (%d)", atomic_load(&H.connects));
+   CHECK(lan_transport_set_target(tj, lo, lan_transport_port(th)) < 0,
+         "refused once the session has peers");
+   H.to_send = J.to_send = 100;
+   atomic_store(&H.go, 1);
+   atomic_store(&J.go, 1);
+   WAIT_FOR(8000, atomic_load(&J.rx_ok[0]) == 100 && atomic_load(&H.rx_ok[1]) == 100);
+   CHECK(atomic_load(&J.rx_ok[0]) == 100 && atomic_load(&H.rx_ok[1]) == 100,
+         "data both ways (%u/%u)", atomic_load(&J.rx_ok[0]), atomic_load(&H.rx_ok[1]));
+   con_close(&J);
+   con_close(&H);
+   lan_transport_destroy(tj);
+   lan_transport_destroy(th);
+}
+
 /* ==================================================================== bulk == */
 
 #define BLOB_BYTES  (1024u * 1024u)
@@ -1929,6 +1976,7 @@ static const struct { const char *name; void (*fn)(void); } TESTS[] = {
    { "session",   test_session },
    { "bcastjoin", test_bcastjoin },
    { "nat",       test_nat },
+   { "settarget", test_settarget },
    { "bulk",      test_bulk },
    { "hostile",   test_hostile },
    { "cycles",    test_cycles },

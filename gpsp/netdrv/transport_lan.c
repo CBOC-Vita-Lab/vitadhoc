@@ -68,6 +68,8 @@
 #include "transport_lan.h"
 #include "netdrv_wire.h"
 #include "nd_thread.h"
+#include "nat_stun.h"
+#include "nat_turn.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -100,6 +102,27 @@
 #define LAN_KEEP_US      1000000ull /* I/O-thread keepalive, per session peer */
 #define LAN_HEARD_TTL_US 60000000ull /* a peer not heard for this long gets no
                                       * more keepalives (and is forgotten) */
+#define LAN_NAT_WAIT_MS  20        /* I/O poll slice while STUN / punch / TURN is in flight */
+#define LAN_PUNCH_LEN    26
+#define LAN_PUNCH_FAST_MS 200      /* PUNCH every 200 ms for the first 2 s ... */
+#define LAN_PUNCH_SLOW_MS 500      /* ... then every 500 ms */
+#define LAN_PUNCH_MAX_CAND 3
+#define LAN_RELAY_PORT_MS 3000     /* no answer at all from a TURN port: try the next */
+#define LAN_RELAY_PORTS_MAX 3
+#define LAN_STUN_SRC_MAX  3        /* STUN servers (2) + the TURN server (1) */
+
+/* The pure NAT modules use their own copies of the state numbers (they do
+ * not include this header); they must be the same. */
+_Static_assert((int)NAT_STUN_IDLE == (int)LAN_STUN_IDLE && (int)NAT_STUN_RUNNING == (int)LAN_STUN_RUNNING &&
+               (int)NAT_STUN_OK == (int)LAN_STUN_OK && (int)NAT_STUN_FAILED == (int)LAN_STUN_FAILED,
+               "nat_stun.h and transport_lan.h disagree on LAN_STUN_*");
+_Static_assert((int)NAT_RELAY_OFF == (int)LAN_RELAY_OFF && (int)NAT_RELAY_ALLOCATING == (int)LAN_RELAY_ALLOCATING &&
+               (int)NAT_RELAY_ALLOCATED == (int)LAN_RELAY_ALLOCATED && (int)NAT_RELAY_BINDING == (int)LAN_RELAY_BINDING &&
+               (int)NAT_RELAY_READY == (int)LAN_RELAY_READY && (int)NAT_RELAY_FAILED == (int)LAN_RELAY_FAILED &&
+               (int)NAT_RELAY_E_NONE == (int)LAN_RELAY_E_NONE && (int)NAT_RELAY_E_TIMEOUT == (int)LAN_RELAY_E_TIMEOUT &&
+               (int)NAT_RELAY_E_AUTH == (int)LAN_RELAY_E_AUTH && (int)NAT_RELAY_E_QUOTA == (int)LAN_RELAY_E_QUOTA &&
+               (int)NAT_RELAY_E_LOST == (int)LAN_RELAY_E_LOST,
+               "nat_turn.h and transport_lan.h disagree on LAN_RELAY_*");
 
 /* ---- discovery wire format (all little-endian, explicit) -----------------
  *
@@ -137,7 +160,10 @@ enum { DISC_PROBE = 1, DISC_ANNOUNCE = 2, DISC_GONE = 3, DISC_ECHO = 4,
        /* KEEP: PROBE-shaped, sent once a second by the I/O thread to every
         * session peer (LAN_F_IO_KEEPALIVE).  Never answered; its arrival
         * only says "this console's process is alive". */
-       DISC_KEEP = 6 };
+       DISC_KEEP = 6,
+       /* PUNCH / PUNCH_ACK (online play, 2.0): see "NAT layer" below.  An
+        * older build ignores both (disc_check: unknown type). */
+       DISC_PUNCH = 7, DISC_PUNCH_ACK = 8 };
 #define DISC_PROBE_LEN    18
 #define DISC_GONE_LEN     22
 #define DISC_ANNOUNCE_LEN 86
@@ -530,6 +556,15 @@ static size_t disc_build_echo(uint8_t *b, uint8_t type, uint32_t cookie)
    return disc_finish(b, 16);
 }
 
+/* PUNCH / PUNCH_ACK: the 8 bytes of the room's punch key after four zero
+ * bytes; length 26 (see "NAT layer"). */
+static size_t disc_build_punch(uint8_t *b, uint8_t type, uint32_t cookie, const uint8_t key[8])
+{
+   disc_head(b, type, cookie, 0);
+   memcpy(b + 16, key, 8);
+   return disc_finish(b, 24);
+}
+
 static size_t disc_build_gone(uint8_t *b, uint32_t room_id, uint32_t compat)
 {
    disc_head(b, DISC_GONE, 0, compat);
@@ -583,6 +618,8 @@ static int disc_check(const uint8_t *b, size_t n)
       case DISC_KEEP: need = DISC_PROBE_LEN; break;
       case DISC_GONE:     need = DISC_GONE_LEN; break;
       case DISC_ANNOUNCE: need = DISC_ANNOUNCE_LEN; break;
+      case DISC_PUNCH:
+      case DISC_PUNCH_ACK: need = LAN_PUNCH_LEN; break;
       default:            return 0;
    }
    return n >= need ? b[5] : 0;
@@ -682,8 +719,53 @@ struct lan_transport
    uint64_t echo_sent_us[8];
    uint32_t echo_n, echo_min_us, echo_max_us, echo_last_us;
 
+   /* ---- NAT layer (2.0).  The I/O thread runs the state machines; the API
+    * calls from other threads and the I/O thread both hold `nx` while they
+    * touch anything below it.  Lock order: nx, then mx (never the other way).
+    * Nothing under nx blocks: the senders are non-blocking sendto()s. ---- */
+   nd_mutex nx;
+   atomic_int nat_on;               /* any machine started: tick them */
+   atomic_int nat_srcs;             /* STUN / TURN server addresses in use (0 = the receive loop skips them) */
+   uint32_t sim_ip_be;              /* the NAT simulator (tests; never on a console) */
+   uint16_t sim_port;
+   uint8_t  sim_id;
+   uint32_t xs[4];                  /* xorshift128, seeded by lan_transport_nat_seed */
+   int      seeded;
+   /* STUN */
+   nat_stun stun, skeep;            /* the lookup; the mapping keep-alive (server 0 only) */
+   int      stun_on;
+   int      pub_valid;
+   uint32_t pub_ip_be;
+   uint16_t pub_port;
+   unsigned keep_ms;
+   uint64_t keep_next_ms;
+   /* punch */
+   int      punch_armed, punch_state, peer_set, peer_lan;
+   uint8_t  punch_key[8];
+   uint32_t cand_ip[LAN_PUNCH_MAX_CAND];
+   uint16_t cand_port[LAN_PUNCH_MAX_CAND];
+   int      ncand;
+   uint64_t punch_t0_ms, punch_end_ms, punch_next_ms;
+   uint32_t punch_cookie, punch_sent;      /* this round's; rounds sent */
+   uint32_t peer_ip_be;
+   uint16_t peer_port;
+   /* relay */
+   nat_turn turn;
+   int      turn_on, turn_heard, turn_idx, turn_nports, bind_pending;
+   uint16_t turn_ports[LAN_RELAY_PORTS_MAX];
+   uint32_t turn_ip_be;
+   char     turn_user[160], turn_pass[160];
+   uint64_t turn_port_t0_ms;
+   uint32_t bind_ip_be;
+   uint16_t bind_port;
+   /* what lan_raw_send reads without a lock (one 64-bit word each, so a
+    * reader never sees half of an address): bit 49 relay engaged for this
+    * peer, bit 48 READY, bits 47..16 ip (as sin_addr.s_addr), 15..0 port */
+   atomic_uint_fast64_t relay_peer_w, relay_srv_w;
+
    struct
    {
+      nd_ctr stun_tx, stun_rx, punch_tx, punch_rx, ack_rx, relay_tx, relay_rx, nat_foreign;
       nd_ctr tx_pkts, tx_would_block, tx_fail, tx_us, tx_max_us, bcast_pkts;
       nd_ctr rx_pkts, rx_ring_drop, rx_oversize, rx_foreign, rx_err;
       nd_ctr bulk_tx, bulk_txfail, bulk_rx, bulk_drop, bulk_foreign;
@@ -705,13 +787,40 @@ static uint32_t lan_rand(lan_transport *t)
    return x;
 }
 
-/* One datagram out, now.  Any thread.  0 = sent or dropped (loss is the
- * layers' above to repair), -1 = hard error. */
-static int lan_raw_send(lan_transport *t, const struct sockaddr_in *to,
-                        const void *buf, size_t len)
+/* The relay's word for an address (see relay_peer_w). */
+#define RELAY_W_ENGAGED (1ull << 49)
+#define RELAY_W_READY   (1ull << 48)
+static uint64_t relay_word(const struct sockaddr_in *a)
 {
-   ssize_t n = sendto(t->fd, buf, len, MSG_DONTWAIT,
-                      (const struct sockaddr *)to, sizeof(*to));
+   return ((uint64_t)a->sin_addr.s_addr << 16) | ntohs(a->sin_port);
+}
+
+/* A datagram onto the wire: the simulator's wrapper when a test asked for
+ * it (1.8: FE | id | dst ip[4] | dst port[2] | payload to the simulator),
+ * else straight to `to`.  Any thread; no lock.  0 = sent or dropped
+ * (loss is the layers' above to repair), -1 = hard error. */
+static int lan_wire_send(lan_transport *t, const struct sockaddr_in *to,
+                         const void *buf, size_t len)
+{
+   ssize_t n;
+#ifndef VITA
+   if (t->sim_port)
+   {
+      uint8_t w[8 + LAN_RX_SCRATCH];
+      struct sockaddr_in sim;
+      if (len > LAN_RX_SCRATCH)
+         return -1;
+      w[0] = 0xFE;
+      w[1] = t->sim_id;
+      memcpy(w + 2, &to->sin_addr.s_addr, 4);
+      memcpy(w + 6, &to->sin_port, 2);
+      memcpy(w + 8, buf, len);
+      sa_make(&sim, t->sim_ip_be, t->sim_port);
+      n = sendto(t->fd, w, len + 8, MSG_DONTWAIT, (const struct sockaddr *)&sim, sizeof(sim));
+   }
+   else
+#endif
+      n = sendto(t->fd, buf, len, MSG_DONTWAIT, (const struct sockaddr *)to, sizeof(*to));
    if (n >= 0)
    {
       nd_ctr_add(&t->st.tx_pkts, 1);
@@ -724,6 +833,36 @@ static int lan_raw_send(lan_transport *t, const struct sockaddr_in *to,
    }
    nd_ctr_add(&t->st.tx_fail, 1);
    return -1;
+}
+
+/* One datagram out, now.  Any thread.  With a relay engaged for the
+ * destination (the peer's relayed address) the datagram is wrapped as
+ * ChannelData and goes to the TURN server instead; until the channel is
+ * bound it is dropped (netdrv and the session resend).  The emulation
+ * thread's whole cost when no relay is in use: this one atomic load. */
+static int lan_raw_send(lan_transport *t, const struct sockaddr_in *to,
+                        const void *buf, size_t len)
+{
+   uint64_t pw = atomic_load_explicit(&t->relay_peer_w, memory_order_acquire);
+   if (pw && (pw & 0xFFFFFFFFFFFFull) == relay_word(to))
+   {
+      uint8_t w[4 + LAN_RX_SCRATCH];
+      uint64_t sw;
+      struct sockaddr_in srv;
+      size_t n;
+      if (!(pw & RELAY_W_READY))
+         return 0;
+      sw = atomic_load_explicit(&t->relay_srv_w, memory_order_acquire);
+      n = nat_turn_channel_wrap(w, sizeof w, NAT_TURN_CHANNEL, buf, len);
+      if (!sw || !n)
+         return -1;
+      sa_make(&srv, htonl(0), 0);
+      srv.sin_addr.s_addr = (uint32_t)((sw >> 16) & 0xFFFFFFFFu);
+      srv.sin_port = htons((uint16_t)(sw & 0xFFFF));
+      nd_ctr_add(&t->st.relay_tx, 1);
+      return lan_wire_send(t, &srv, w, n);
+   }
+   return lan_wire_send(t, to, buf, len);
 }
 
 /* The emulation thread's send: through the fault shim when one is set,
@@ -1139,7 +1278,7 @@ int lan_transport_bulk_send(lan_transport *t, const uint8_t mac[6],
    return 0;
 }
 
-int lan_transport_bulk_recv(lan_transport *t, void *buf, size_t cap)
+static int bulk_recv_impl(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap)
 {
    if (!t)
       return 0;
@@ -1164,9 +1303,25 @@ int lan_transport_bulk_recv(lan_transport *t, void *buf, size_t cap)
       if ((size_t)len > cap)
          len = (int)cap;
       memcpy(buf, s->data, (size_t)len);
+      if (src_mac)
+         memcpy(src_mac, s->mac, 6);
       nd_ring_drop(&t->bulk);
       return len;
    }
+}
+
+int lan_transport_bulk_recv(lan_transport *t, void *buf, size_t cap)
+{
+   return bulk_recv_impl(t, NULL, buf, cap);
+}
+
+/* ... plus where it came from (a relayed peer's source is its relayed
+ * address, the one netdrv names it by). */
+int lan_transport_bulk_recv_from(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap)
+{
+   if (src_mac)
+      memset(src_mac, 0, 6);
+   return bulk_recv_impl(t, src_mac, buf, cap);
 }
 
 void lan_transport_bulk_any(lan_transport *t, int on)
@@ -1244,6 +1399,396 @@ static void lan_io_announce(lan_transport *t, const struct sockaddr_in *to,
 }
 
 static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
+                         const uint8_t *b, int n, uint64_t now);
+
+/* ---- NAT layer: STUN, punch, TURN (online play, 2.0) -----------------------
+ *
+ * Everything here runs on the transport's own socket, in the I/O thread.
+ * The pure modules (nat_stun.c, nat_turn.c) hold the message codecs and the
+ * retransmission schedules; this part gives them a socket, a clock, a
+ * source address check and the punch race.  Commands from other threads
+ * (lan_transport_stun_start and friends, at the end of this file) and the
+ * I/O thread's ticks both hold `nx`; the senders are non-blocking.
+ *
+ * Who is a STUN / TURN message?  Routing is by SOURCE first (1.7): a
+ * datagram from an address we asked STUN or TURN of is read as one of
+ * theirs, anything else goes to lan_io_route as before.  'GPN1' frames
+ * start with 0x31 (top bits 00, STUN-like) and "GBLD" with 0x47 (the
+ * ChannelData range), but neither ever comes from a STUN / TURN server, so
+ * there is nothing to mistake.  The emulation thread's cost when no relay
+ * is in use is one atomic load in lan_raw_send; the receive loop's is one
+ * in the I/O thread.
+ *
+ * The relay's data path.  Out: lan_raw_send wraps a datagram for the peer's
+ * relayed address as ChannelData and sends it to the TURN server.  In:
+ * ChannelData (or a Data indication) from the server is unwrapped and
+ * handed to lan_io_route with the peer's relayed address as its source, so
+ * to netdrv, the bulk lane, the echo and the keepalive the peer simply IS
+ * that address. */
+
+static uint32_t nat_rand(lan_transport *t)
+{
+   uint32_t x = t->xs[0] ^ (t->xs[0] << 11);
+   t->xs[0] = t->xs[1]; t->xs[1] = t->xs[2]; t->xs[2] = t->xs[3];
+   t->xs[3] = t->xs[3] ^ (t->xs[3] >> 19) ^ x ^ (x >> 8);
+   return t->xs[3];
+}
+
+static void nat_rand_bytes(lan_transport *t, uint8_t *out, size_t n)
+{
+   size_t i;
+   for (i = 0; i < n; i += 4)
+   {
+      uint32_t r = nat_rand(t);
+      size_t k;
+      for (k = 0; k < 4 && i + k < n; k++)
+         out[i + k] = (uint8_t)(r >> (8 * k));
+   }
+}
+
+static int nat_cb_stun_send(void *ctx, uint32_t ip_be, uint16_t port, const void *buf, size_t len)
+{
+   lan_transport *t = (lan_transport *)ctx;
+   struct sockaddr_in to;
+   sa_make(&to, ip_be, port);
+   nd_ctr_add(&t->st.stun_tx, 1);
+   return lan_wire_send(t, &to, buf, len);
+}
+
+static int nat_cb_turn_send(void *ctx, uint32_t ip_be, uint16_t port, const void *buf, size_t len)
+{
+   lan_transport *t = (lan_transport *)ctx;
+   struct sockaddr_in to;
+   sa_make(&to, ip_be, port);
+   return lan_wire_send(t, &to, buf, len);
+}
+
+/* How many server addresses the receive loop has to check. (nx held) */
+static void nat_refresh_srcs(lan_transport *t)
+{
+   int n = (t->stun_on ? t->stun.n : 0) + (t->turn_on ? 1 : 0);
+   atomic_store_explicit(&t->nat_srcs, n, memory_order_release);
+}
+
+/* What lan_raw_send reads.  Engaged from the moment a peer is given to
+ * relay_bind (datagrams for it are dropped, not sent in the clear to the
+ * server's address), READY when the channel is bound.  (nx held) */
+static void nat_publish_relay(lan_transport *t)
+{
+   uint64_t pw = 0, sw = 0;
+   if (t->turn_on)
+   {
+      int st = nat_turn_state(&t->turn);
+      struct sockaddr_in a;
+      sa_make(&a, t->turn_ip_be, t->turn_ports[t->turn_idx]);
+      sw = relay_word(&a);
+      if (t->bind_pending && st != LAN_RELAY_FAILED && st != LAN_RELAY_OFF)
+      {
+         sa_make(&a, t->bind_ip_be, t->bind_port);
+         pw = RELAY_W_ENGAGED | relay_word(&a) | (st == LAN_RELAY_READY ? RELAY_W_READY : 0);
+      }
+   }
+   atomic_store_explicit(&t->relay_srv_w, sw, memory_order_release);
+   atomic_store_explicit(&t->relay_peer_w, pw, memory_order_release);
+}
+
+static int nat_in_subnet(const lan_transport *t, uint32_t ip_be)
+{
+   return t->mask_be && t->ip_be && (ip_be & t->mask_be) == (t->ip_be & t->mask_be);
+}
+
+/* The lookup has answered: remember our public address.  (nx held) */
+static void nat_stun_sync(lan_transport *t, uint64_t now_ms)
+{
+   if (t->stun_on && !t->pub_valid && nat_stun_state(&t->stun) == NAT_STUN_OK &&
+       nat_stun_result(&t->stun, &t->pub_ip_be, &t->pub_port, NULL))
+   {
+      t->pub_valid = 1;
+      if (t->keep_ms)
+         t->keep_next_ms = now_ms + t->keep_ms;
+   }
+}
+
+static void nat_punch_send_to(lan_transport *t, uint32_t ip_be, uint16_t port)
+{
+   uint8_t pkt[LAN_PUNCH_LEN];
+   struct sockaddr_in to;
+   size_t n = disc_build_punch(pkt, DISC_PUNCH, t->punch_cookie, t->punch_key);
+   sa_make(&to, ip_be, port);
+   lan_wire_send(t, &to, pkt, n);
+   nd_ctr_add(&t->st.punch_tx, 1);
+}
+
+/* One round of PUNCH to every candidate; one cookie per round, so an ACK
+ * is valid for any of the last eight rounds.  (nx held) */
+static void nat_punch_round(lan_transport *t, uint64_t now_ms)
+{
+   int i;
+   t->punch_cookie++;
+   t->punch_sent++;
+   for (i = 0; i < t->ncand; i++)
+      nat_punch_send_to(t, t->cand_ip[i], t->cand_port[i]);
+   t->punch_next_ms = now_ms + (now_ms - t->punch_t0_ms < 2000 ? LAN_PUNCH_FAST_MS : LAN_PUNCH_SLOW_MS);
+}
+
+/* A PUNCH or PUNCH_ACK that passed disc_check.  I/O thread. */
+static void lan_io_punch_rx(lan_transport *t, const struct sockaddr_in *from,
+                            const uint8_t *b, int type, uint64_t now_us)
+{
+   uint32_t cookie = get32(b + 8);
+   uint32_t ip = from->sin_addr.s_addr;
+   uint16_t port = ntohs(from->sin_port);
+
+   nd_mutex_lock(&t->nx);
+   if (!t->punch_armed || memcmp(b + 16, t->punch_key, 8) != 0)
+   {
+      nd_mutex_unlock(&t->nx);
+      nd_ctr_add(&t->st.nat_foreign, 1);         /* unarmed, or somebody else's room */
+      return;
+   }
+   if (type == DISC_PUNCH)
+   {
+      nd_ctr_add(&t->st.punch_rx, 1);
+      /* Answer under the same cap as probes: an 26-byte PUNCH draws a
+       * 26-byte answer to whatever address it claims. */
+      if (now_us - t->reply_refill_us >= 1000000ull)
+      {
+         t->reply_tokens = LAN_REPLY_BURST;
+         t->reply_refill_us = now_us;
+      }
+      if (t->reply_tokens)
+      {
+         uint8_t ack[LAN_PUNCH_LEN];
+         size_t n = disc_build_punch(ack, DISC_PUNCH_ACK, cookie, t->punch_key);
+         t->reply_tokens--;
+         lan_wire_send(t, from, ack, n);
+      }
+      else
+         nd_ctr_add(&t->st.disc_limited, 1);
+      /* A peer we did not know: it is a candidate now (a host that had not
+       * polled yet is opened by the joiner's first datagram; a NAT that
+       * changed the port is followed). */
+      if (t->punch_state == LAN_PUNCH_RUNNING)
+      {
+         int i, known = 0;
+         for (i = 0; i < t->ncand; i++)
+            if (t->cand_ip[i] == ip && t->cand_port[i] == port)
+               known = 1;
+         if (!known && t->ncand < LAN_PUNCH_MAX_CAND)
+         {
+            t->cand_ip[t->ncand] = ip;
+            t->cand_port[t->ncand] = port;
+            t->ncand++;
+            nat_punch_send_to(t, ip, port);
+         }
+      }
+   }
+   else
+   {
+      uint32_t age = t->punch_cookie - cookie;
+      nd_ctr_add(&t->st.ack_rx, 1);
+      if (t->punch_state == LAN_PUNCH_RUNNING && age < 8 && age < t->punch_sent)
+      {
+         /* the first ACK wins; a LAN candidate normally answers first */
+         t->punch_state = LAN_PUNCH_DONE;
+         t->peer_set = 1;
+         t->peer_ip_be = ip;
+         t->peer_port = port;
+         t->peer_lan = nat_in_subnet(t, ip);
+      }
+   }
+   nd_mutex_unlock(&t->nx);
+}
+
+static int nat_is_cookie(const uint8_t *b, size_t n)
+{
+   return n >= 20 && (b[0] & 0xC0) == 0 && b[4] == 0x21 && b[5] == 0x12 && b[6] == 0xA4 && b[7] == 0x42;
+}
+
+/* The receive loop's first step (1.7).  1 = the datagram came from a
+ * STUN / TURN server address we use and has been dealt with.  I/O thread. */
+static int lan_io_nat_rx(lan_transport *t, const struct sockaddr_in *from,
+                         const uint8_t *b, int n, uint64_t now_us)
+{
+   uint32_t ip = from->sin_addr.s_addr;
+   uint16_t port = ntohs(from->sin_port);
+   int is_stun = 0, is_turn = 0, i, deliver = 0, consumed = 0;
+   const uint8_t *payload = NULL;
+   size_t plen = 0;
+   struct sockaddr_in peer;
+
+   nd_mutex_lock(&t->nx);
+   if (t->stun_on)
+      for (i = 0; i < t->stun.n; i++)
+         if (t->stun.ip_be[i] == ip && t->stun.port[i] == port)
+            is_stun = 1;
+   if (t->turn_on && t->turn.server_ip_be == ip && t->turn.server_port == port)
+      is_turn = 1;
+   if (!is_stun && !is_turn)
+   {
+      nd_mutex_unlock(&t->nx);
+      return 0;
+   }
+   if (is_turn)
+      t->turn_heard = 1;                       /* it is there: the next port is not needed */
+   if (is_turn && n >= 4 && (b[0] & 0xC0) == 0x40)
+   {
+      /* ChannelData: only our one channel, only once a peer is bound */
+      int st = nat_turn_state(&t->turn);
+      const uint8_t *p = NULL;
+      size_t l = 0;
+      uint16_t ch = nat_turn_channel_unwrap(b, (size_t)n, &p, &l);
+      if (ch == NAT_TURN_CHANNEL && t->bind_pending && (st == LAN_RELAY_BINDING || st == LAN_RELAY_READY))
+      {
+         deliver = 1;
+         payload = p;
+         plen = l;
+         consumed = 1;
+      }
+   }
+   else if (nat_is_cookie(b, (size_t)n))
+   {
+      if (is_stun)
+      {
+         if (nat_stun_handle(&t->stun, ip, port, b, (size_t)n) ||
+             nat_stun_handle(&t->skeep, ip, port, b, (size_t)n))
+         {
+            nd_ctr_add(&t->st.stun_rx, 1);
+            nat_stun_sync(t, now_us / 1000u);
+            consumed = 1;
+         }
+      }
+      if (!consumed && is_turn)
+      {
+         const uint8_t *p = NULL;
+         size_t l = 0;
+         int r = nat_turn_handle(&t->turn, b, (size_t)n, &p, &l);
+         if (r == 2)
+         {
+            deliver = 1;
+            payload = p;
+            plen = l;
+         }
+         consumed = r != 0;
+      }
+   }
+   if (!consumed)
+      nd_ctr_add(&t->st.nat_foreign, 1);         /* not what a server of ours sends */
+   if (deliver)
+      sa_make(&peer, t->bind_ip_be, t->bind_port);
+   nat_publish_relay(t);
+   nd_mutex_unlock(&t->nx);
+
+   if (deliver)
+   {
+      nd_ctr_add(&t->st.relay_rx, 1);
+      lan_io_route(t, &peer, payload, (int)plen, now_us);
+   }
+   return 1;
+}
+
+/* Start (or move on to) the TURN server's port number `idx`.  (nx held) */
+static void nat_relay_begin(lan_transport *t, int idx, uint64_t now_ms)
+{
+   uint8_t seed[16];
+   t->turn_idx = idx;
+   nat_rand_bytes(t, seed, sizeof seed);
+   nat_turn_start(&t->turn, nat_cb_turn_send, t, t->turn_ip_be, t->turn_ports[idx],
+                  t->turn_user, t->turn_pass, seed, now_ms);
+   t->turn_port_t0_ms = now_ms;
+   t->turn_heard = 0;
+}
+
+/* The I/O thread's tick of every machine.  Returns 1 while something is in
+ * flight (the poll slice then drops to LAN_NAT_WAIT_MS). */
+static int lan_io_nat_tick(lan_transport *t, uint64_t now_us)
+{
+   uint64_t now = now_us / 1000u;
+   int busy = 0, i;
+
+   if (!atomic_load_explicit(&t->nat_on, memory_order_relaxed))
+      return 0;
+   nd_mutex_lock(&t->nx);
+
+   if (t->stun_on)
+   {
+      nat_stun_tick(&t->stun, now);
+      nat_stun_sync(t, now);
+      for (i = 0; i < t->stun.n; i++)
+         if (!t->stun.got[i] && !t->stun.gave_up[i])
+            busy = 1;
+      if (t->keep_ms && t->pub_valid && now >= t->keep_next_ms && nat_stun_state(&t->skeep) == NAT_STUN_IDLE)
+      {
+         uint8_t tx[2][12];
+         nat_rand_bytes(t, &tx[0][0], 24);
+         nat_stun_start(&t->skeep, nat_cb_stun_send, t, t->stun.ip_be, t->stun.port, 1, (const uint8_t (*)[12])tx, now);
+         t->keep_next_ms = now + t->keep_ms;
+      }
+      if (nat_stun_state(&t->skeep) != NAT_STUN_IDLE)
+      {
+         uint32_t ip;
+         uint16_t port;
+         nat_stun_tick(&t->skeep, now);
+         if (nat_stun_state(&t->skeep) == NAT_STUN_OK || nat_stun_state(&t->skeep) == NAT_STUN_FAILED)
+         {
+            /* a changed answer is the new public address (the next poll's
+             * description carries it) */
+            if (nat_stun_result(&t->skeep, &ip, &port, NULL) && (ip != t->pub_ip_be || port != t->pub_port))
+            {
+               t->pub_ip_be = ip;
+               t->pub_port = port;
+            }
+            memset(&t->skeep, 0, sizeof(t->skeep));
+         }
+         else
+            busy = 1;
+      }
+   }
+
+   if (t->punch_state == LAN_PUNCH_RUNNING)
+   {
+      if (now >= t->punch_end_ms)
+         t->punch_state = LAN_PUNCH_TIMEOUT;   /* still armed: it keeps answering */
+      else
+      {
+         if (now >= t->punch_next_ms)
+            nat_punch_round(t, now);
+         busy = 1;
+      }
+   }
+
+   if (t->turn_on)
+   {
+      int st;
+      nat_turn_tick(&t->turn, now);
+      st = nat_turn_state(&t->turn);
+      /* 3 s without ANY answer from this port: try the next one (UDP 3478,
+       * then 443: some networks only let the second through) */
+      if (!t->turn_heard && t->turn_idx + 1 < t->turn_nports &&
+          ((st == LAN_RELAY_ALLOCATING && now - t->turn_port_t0_ms >= LAN_RELAY_PORT_MS) ||
+           (st == LAN_RELAY_FAILED && nat_turn_error(&t->turn) == LAN_RELAY_E_TIMEOUT)))
+      {
+         nat_relay_begin(t, t->turn_idx + 1, now);
+         nat_refresh_srcs(t);
+         st = nat_turn_state(&t->turn);
+      }
+      if (st == LAN_RELAY_ALLOCATED && t->bind_pending)
+      {
+         nat_turn_bind(&t->turn, t->bind_ip_be, t->bind_port, now);
+         st = nat_turn_state(&t->turn);
+      }
+      if (st == LAN_RELAY_ALLOCATING || st == LAN_RELAY_BINDING)
+         busy = 1;
+      for (i = 0; i < NAT_TURN_TXNS; i++)
+         if (t->turn.txn[i].active)
+            busy = 1;
+   }
+   nat_publish_relay(t);
+   nd_mutex_unlock(&t->nx);
+   return busy;
+}
+
+static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
                          const uint8_t *b, int n, uint64_t now)
 {
    uint8_t mac[6];
@@ -1270,6 +1815,11 @@ static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
             t->reply_tokens--;
             lan_io_send(t, from, pkt, len);
          }
+         return;
+      }
+      if (type == DISC_PUNCH || type == DISC_PUNCH_ACK)
+      {
+         lan_io_punch_rx(t, from, b, type, now);
          return;
       }
       if (type == DISC_KEEP)
@@ -1387,6 +1937,24 @@ static void lan_io_thread(void *arg)
          }
          if (n == 0 || from.sin_family != AF_INET)
             continue;
+#ifndef VITA
+         if (t->sim_port)
+         {
+            /* the simulator's wrapper (1.8): everything comes from it as
+             * src ip[4] | src port[2] | payload */
+            if (from.sin_addr.s_addr != t->sim_ip_be || from.sin_port != htons(t->sim_port) || n < 6)
+               continue;
+            sa_make(&from, 0, 0);
+            memcpy(&from.sin_addr.s_addr, t->scratch, 4);
+            memcpy(&from.sin_port, t->scratch + 4, 2);
+            n -= 6;
+            memmove(t->scratch, t->scratch + 6, (size_t)n);
+         }
+#endif
+         /* STUN / TURN servers' datagrams first, by source (1.7) */
+         if (atomic_load_explicit(&t->nat_srcs, memory_order_acquire) &&
+             lan_io_nat_rx(t, &from, t->scratch, (int)n, now))
+            continue;
          lan_io_route(t, &from, t->scratch, (int)n, now);
       }
 
@@ -1401,6 +1969,10 @@ static void lan_io_thread(void *arg)
        * main thread that is busy for seconds does not fall silent */
       if (atomic_load_explicit(&t->io_keep, memory_order_relaxed))
          lan_io_keepalives(t, now);
+
+      /* 2c. STUN / punch / TURN timers (a short poll slice while one runs) */
+      if (lan_io_nat_tick(t, nd_now_us()) && wait_ms > LAN_NAT_WAIT_MS)
+         wait_ms = LAN_NAT_WAIT_MS;
 
       /* 3. the room beacon */
       nd_mutex_lock(&t->mx);
@@ -1472,10 +2044,26 @@ lan_transport *lan_transport_create(const lan_config *cfg)
    atomic_init(&t->bulk_magic, 0);
    atomic_init(&t->fault_delay, 0);
    atomic_init(&t->io_keep, (cfg->flags & LAN_F_IO_KEEPALIVE) ? 1 : 0);
+   atomic_init(&t->nat_on, 0);
+   atomic_init(&t->nat_srcs, 0);
+   atomic_init(&t->relay_peer_w, 0);
+   atomic_init(&t->relay_srv_w, 0);
+#ifndef VITA
+   t->sim_ip_be = cfg->sim_ip_be;
+   t->sim_port = cfg->sim_port;
+   t->sim_id = cfg->sim_id;
+#endif
 
    if (nd_mutex_init(&t->mx) != 0)
    {
       g_lan_err = "mutex";
+      free(t);
+      return NULL;
+   }
+   if (nd_mutex_init(&t->nx) != 0)
+   {
+      g_lan_err = "mutex";
+      nd_mutex_destroy(&t->mx);
       free(t);
       return NULL;
    }
@@ -1492,7 +2080,12 @@ lan_transport *lan_transport_create(const lan_config *cfg)
       g_lan_err = "socket (is the network up?)";
       goto fail;
    }
-   if (cfg->mode == LAN_MODE_HOST)
+   if (t->sim_port)
+   {
+      base = 0;                          /* the simulator world has no real ports: any */
+      tries = 1;
+   }
+   else if (cfg->mode == LAN_MODE_HOST)
    {
       base = cfg->port ? cfg->port : t->disc_port;
       tries = cfg->port_tries > 0 ? cfg->port_tries : LAN_PORT_TRIES;
@@ -1516,6 +2109,8 @@ lan_transport *lan_transport_create(const lan_config *cfg)
    t->port = lan_sock_port(t->fd);
    if (!t->port)
       t->port = bind_port;               /* getsockname unavailable */
+   if (t->sim_port && cfg->sim_lan_port)
+      t->port = cfg->sim_lan_port;       /* what this console declares inside the simulated LAN */
 
    if (cfg->mode == LAN_MODE_JOIN && cfg->target_ip_be)
    {
@@ -1544,6 +2139,7 @@ fail:
    if (t->fd >= 0)
       close(t->fd);
    nd_ring_free(&t->rx);
+   nd_mutex_destroy(&t->nx);
    nd_mutex_destroy(&t->mx);
    free(t);
    return NULL;
@@ -1559,6 +2155,7 @@ void lan_transport_destroy(lan_transport *t)
    /* Whatever the shim still holds leaves now: the last thing netdrv does
     * is BYE, and a peer that never hears it waits out an 8 s death timer. */
    lan_dq_flush(t, 0, 1);
+   lan_transport_relay_stop(t);          /* release the allocation while the socket is still open */
    if (t->announcing)
    {
       uint8_t pkt[DISC_GONE_LEN];
@@ -1575,6 +2172,7 @@ void lan_transport_destroy(lan_transport *t)
    nd_ring_free(&t->rx);
    nd_ring_free(&t->bulk);
    free(t->dq);
+   nd_mutex_destroy(&t->nx);
    nd_mutex_destroy(&t->mx);
    free(t);
 }
@@ -1695,6 +2293,14 @@ void lan_transport_census(lan_transport *t, lan_census *out, int reset)
           (ntohl(t->heard[i].a.sin_addr.s_addr) >> 24) != 127)
          out->path = "direct";
    nd_mutex_unlock(&t->mx);
+   /* online play: a relay in use, or a hole punched to a peer outside our
+    * subnet, is more specific than "direct" */
+   nd_mutex_lock(&t->nx);
+   if (t->turn_on && nat_turn_state(&t->turn) == LAN_RELAY_READY)
+      out->path = "relay";
+   else if (t->peer_set && !t->peer_lan)
+      out->path = "punch";
+   nd_mutex_unlock(&t->nx);
    if (reset)
    {
       t->cen_tx_prev = tx;
@@ -2006,80 +2612,262 @@ int lan_discovery_scan(const lan_scan_config *cfg, lan_room *out, int max,
    return n;
 }
 
-/* ------------------------------------------------- online play (2.0): stubs -- */
-/* W0 scaffold.  Package N replaces every function below; until then each
- * one says "not available" so the tree builds and nothing can start a
- * STUN, punch or relay exchange by accident. */
+/* ------------------------------------------------- online play (2.0): the API -- */
+/* Called from the emulation thread (any thread, in fact); each takes nx,
+ * and the I/O thread's ticks do the rest.  The first datagram of a STUN
+ * lookup, a punch round and a TURN allocation is sent from here, at once:
+ * the I/O thread may be asleep in a 50 ms poll slice. */
 
 int lan_transport_nat_seed(lan_transport *t, const uint8_t entropy[16])
 {
-   (void)t; (void)entropy;
-   return -1;
+   int i;
+   if (!t || !entropy)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   for (i = 0; i < 4; i++)
+      t->xs[i] = get32(entropy + 4 * i);
+   if (!(t->xs[0] | t->xs[1] | t->xs[2] | t->xs[3]))
+      t->xs[0] = 0x9E3779B9u;
+   t->seeded = 1;
+   for (i = 0; i < 8; i++)
+      (void)nat_rand(t);                 /* a seed of mostly zeros needs a few rounds */
+   nd_mutex_unlock(&t->nx);
+   return 0;
 }
 
 int lan_transport_stun_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n)
 {
-   (void)t; (void)ip_be; (void)port; (void)n;
-   return -1;
+   uint8_t tx[2][12];
+   uint64_t now = nd_now_us() / 1000u;
+   int rc;
+   if (!t || !ip_be || !port || n < 1 || n > 2)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (!t->seeded)
+   {
+      nd_mutex_unlock(&t->nx);
+      return -1;
+   }
+   nat_rand_bytes(t, &tx[0][0], 24);
+   memset(&t->skeep, 0, sizeof(t->skeep));
+   t->pub_valid = 0;
+   t->stun_on = 1;
+   atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
+   nat_stun_start(&t->stun, nat_cb_stun_send, t, ip_be, port, n, (const uint8_t (*)[12])tx, now);
+   nat_refresh_srcs(t);
+   rc = nat_stun_state(&t->stun) == NAT_STUN_FAILED ? -1 : 0;
+   nd_mutex_unlock(&t->nx);
+   return rc;
 }
 
 void lan_transport_stun_keep(lan_transport *t, unsigned every_ms)
 {
-   (void)t; (void)every_ms;
+   if (!t)
+      return;
+   nd_mutex_lock(&t->nx);
+   t->keep_ms = every_ms;
+   t->keep_next_ms = nd_now_us() / 1000u + every_ms;
+   nd_mutex_unlock(&t->nx);
 }
 
 int lan_transport_punch_arm(lan_transport *t, const uint8_t key[8])
 {
-   (void)t; (void)key;
-   return -1;
+   if (!t || !key)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (!t->seeded)
+   {
+      nd_mutex_unlock(&t->nx);
+      return -1;
+   }
+   memcpy(t->punch_key, key, 8);
+   t->punch_armed = 1;
+   if (t->punch_state == LAN_PUNCH_OFF)
+      t->punch_state = LAN_PUNCH_ARMED;
+   atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
+   nd_mutex_unlock(&t->nx);
+   return 0;
 }
 
 int lan_transport_punch_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n,
                               unsigned timeout_ms)
 {
-   (void)t; (void)ip_be; (void)port; (void)n; (void)timeout_ms;
-   return -1;
+   uint64_t now = nd_now_us() / 1000u;
+   int i;
+   if (!t || n < 0 || n > LAN_PUNCH_MAX_CAND || (n && (!ip_be || !port)))
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (!t->punch_armed)
+   {
+      nd_mutex_unlock(&t->nx);
+      return -1;
+   }
+   t->ncand = n;
+   for (i = 0; i < n; i++)
+   {
+      t->cand_ip[i] = ip_be[i];
+      t->cand_port[i] = port[i];
+   }
+   t->peer_set = 0;
+   t->peer_lan = 0;
+   t->punch_sent = 0;
+   t->punch_cookie = nat_rand(t);
+   t->punch_t0_ms = now;
+   t->punch_end_ms = now + (timeout_ms ? timeout_ms : 4000u);
+   t->punch_state = LAN_PUNCH_RUNNING;
+   atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
+   nat_punch_round(t, now);
+   nd_mutex_unlock(&t->nx);
+   return 0;
 }
 
 void lan_transport_punch_stop(lan_transport *t)
 {
-   (void)t;
+   if (!t)
+      return;
+   nd_mutex_lock(&t->nx);
+   t->punch_armed = 0;
+   t->punch_state = LAN_PUNCH_OFF;        /* the peer, if one was found, stays known */
+   nd_mutex_unlock(&t->nx);
 }
 
 int lan_transport_relay_start(lan_transport *t, uint32_t server_ip_be, const uint16_t *ports, int n_ports,
                               const char *username, const char *credential)
 {
-   (void)t; (void)server_ip_be; (void)ports; (void)n_ports; (void)username; (void)credential;
-   return -1;
+   uint64_t now = nd_now_us() / 1000u;
+   int i;
+   if (!t || !server_ip_be || !ports || n_ports < 1 || n_ports > LAN_RELAY_PORTS_MAX ||
+       !username || !credential)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (!t->seeded)
+   {
+      nd_mutex_unlock(&t->nx);
+      return -1;
+   }
+   if (t->turn_on)
+      nat_turn_release(&t->turn, now);   /* starting again: let the old one go */
+   t->turn_ip_be = server_ip_be;
+   t->turn_nports = n_ports;
+   for (i = 0; i < n_ports; i++)
+      t->turn_ports[i] = ports[i];
+   snprintf(t->turn_user, sizeof t->turn_user, "%s", username);
+   snprintf(t->turn_pass, sizeof t->turn_pass, "%s", credential);
+   t->bind_pending = 0;
+   t->turn_on = 1;
+   atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
+   nat_relay_begin(t, 0, now);
+   nat_refresh_srcs(t);
+   nat_publish_relay(t);
+   nd_mutex_unlock(&t->nx);
+   return 0;
 }
 
 int lan_transport_relay_bind(lan_transport *t, uint32_t peer_ip_be, uint16_t peer_port)
 {
-   (void)t; (void)peer_ip_be; (void)peer_port;
-   return -1;
+   int rc = -1;
+   if (!t || !peer_ip_be || !peer_port)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (t->turn_on && nat_turn_state(&t->turn) != LAN_RELAY_FAILED &&
+       (!t->bind_pending || (t->bind_ip_be == peer_ip_be && t->bind_port == peer_port)))
+   {
+      /* the tick binds as soon as the allocation exists */
+      t->bind_pending = 1;
+      t->bind_ip_be = peer_ip_be;
+      t->bind_port = peer_port;
+      nat_publish_relay(t);
+      rc = 0;
+   }
+   nd_mutex_unlock(&t->nx);
+   return rc;
 }
 
 void lan_transport_relay_stop(lan_transport *t)
 {
-   (void)t;
+   if (!t)
+      return;
+   nd_mutex_lock(&t->nx);
+   if (t->turn_on)
+   {
+      nat_turn_release(&t->turn, nd_now_us() / 1000u);   /* Refresh with lifetime 0, once */
+      t->turn_on = 0;
+      t->bind_pending = 0;
+      nat_refresh_srcs(t);
+      nat_publish_relay(t);
+   }
+   nd_mutex_unlock(&t->nx);
 }
 
 void lan_transport_nat_status(lan_transport *t, lan_nat_status *out)
 {
-   (void)t;
-   if (out)
-      memset(out, 0, sizeof *out);
+   int sym = 0;
+   if (!out)
+      return;
+   memset(out, 0, sizeof *out);
+   if (!t)
+      return;
+   nd_mutex_lock(&t->nx);
+   if (t->stun_on)
+   {
+      out->stun = nat_stun_state(&t->stun);
+      (void)nat_stun_result(&t->stun, NULL, NULL, &sym);
+      out->sym = sym;
+      if (t->pub_valid)
+      {
+         out->pub_ip_be = t->pub_ip_be;
+         out->pub_port = t->pub_port;
+         out->open = t->pub_ip_be == t->ip_be;
+      }
+   }
+   out->punch = t->punch_state;
+   if (t->peer_set)
+   {
+      out->peer_ip_be = t->peer_ip_be;
+      out->peer_port = t->peer_port;
+      out->peer_is_lan = t->peer_lan;
+   }
+   if (t->turn_on)
+   {
+      out->relay = nat_turn_state(&t->turn);
+      out->relay_err = nat_turn_error(&t->turn);
+      (void)nat_turn_relayed(&t->turn, &out->relay_ip_be, &out->relay_port);
+   }
+   nd_mutex_unlock(&t->nx);
+   out->stun_tx = nd_ctr_get(&t->st.stun_tx);
+   out->stun_rx = nd_ctr_get(&t->st.stun_rx);
+   out->punch_tx = nd_ctr_get(&t->st.punch_tx);
+   out->punch_rx = nd_ctr_get(&t->st.punch_rx);
+   out->ack_rx = nd_ctr_get(&t->st.ack_rx);
+   out->relay_tx = nd_ctr_get(&t->st.relay_tx);
+   out->relay_rx = nd_ctr_get(&t->st.relay_rx);
+   out->nat_foreign = nd_ctr_get(&t->st.nat_foreign);
 }
 
 int lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port)
 {
-   (void)t; (void)ip_be; (void)port;
-   return -1;
-}
-
-int lan_transport_bulk_recv_from(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap)
-{
-   if (src_mac)
-      memset(src_mac, 0, 6);
-   return lan_transport_bulk_recv(t, buf, cap);
+   int i;
+   if (!t || t->mode != LAN_MODE_JOIN || !ip_be)
+      return -1;
+   /* A session that already talks to somebody is not ours to move: any
+    * session datagram heard (netdrv, bulk, keepalive; not discovery) or any
+    * address in the book besides the target we were given before.  (That
+    * earlier target is the one thing allowed to be replaced.) */
+   if (nd_ctr_get(&t->st.peer_in) > 0 || t->book_n > (t->have_target ? 1 : 0) ||
+       (t->have_target && t->book_n == 1 && !sa_eq(&t->book[0].a, &t->target)))
+      return -1;
+   if (t->have_target)
+   {
+      nd_mutex_lock(&t->mx);
+      for (i = 0; i < LAN_BOOK_CAP; i++)
+         if (t->heard[i].used && sa_eq(&t->heard[i].a, &t->target))
+            t->heard[i].used = 0;
+      nd_mutex_unlock(&t->mx);
+      t->book_n = 0;
+   }
+   sa_make(&t->target, ip_be, port ? port : LAN_PORT_DEFAULT);
+   t->have_target = 1;
+   book_touch(t, &t->target);             /* JOIN goes there, as create's target does */
+   heard_touch(t, &t->target, nd_now_us());
+   return 0;
 }

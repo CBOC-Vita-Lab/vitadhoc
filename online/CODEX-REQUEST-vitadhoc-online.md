@@ -17,8 +17,8 @@ request. Never touch them, list them, contact them or put their names in a comma
 ## Package (made by the person who prepared this request; you only check it)
 
 * File: `vitadhoc-online-server-20261115a.tgz`, in the same folder as this prompt.
-* SHA-256: `<<SHA256 OF THE TGZ: filled in by the coordinator at release time; do not run this request while this line still shows a placeholder>>`.
-  Compute it yourself first (`shasum -a 256` on macOS). If it differs, or the line above is still a placeholder, STOP and report.
+* SHA-256: `741368345f76afa370e3f57af07c0c31c81ada80ed5f1c82a06ae01d7f20fdfb`.
+  Compute it yourself first (`shasum -a 256` on macOS). If it differs, STOP and report.
 * Unpack it into a NEW empty folder whose path contains a space (for example `~/vitadhoc deploy 20261115/`) and work from `<that folder>/server`.
   It holds the Worker (`wrangler.toml`, `src/`), `test/`, `dev/`, `scripts/` and the docs `README.md`, `PROTOCOL.md`, `DEPLOY.txt`.
 * Network you may use, and nothing else: the npm registry (for `npm install`); `api.cloudflare.com` and Cloudflare's wrangler endpoints, only
@@ -30,7 +30,9 @@ The three scripts you will run (all in `scripts/`, all read by you before use, s
 
 *How this package was made (for the person preparing it, not for you):* from the repository root at the release commit,
 `W=$(mktemp -d); git archive --format=tar --prefix=server/ HEAD:online/service | tar -x -C "$W"; (cd "$W" && tar --sort=name --mtime='UTC 2026-01-01' --owner=0 --group=0 --numeric-owner -cf - server | gzip -n -9) > vitadhoc-online-server-20261115a.tgz; shasum -a 256 vitadhoc-online-server-20261115a.tgz`.
-The result depends only on the content of `online/service`, so the same tree always gives the same hash.
+The result depends only on the content of `online/service`, so the same tree always gives the same hash. The value above is for the tree
+`f2b1d6f02f610b7574c8723b380121debdb40bc3` (`git rev-parse HEAD:online/service`); if that tree changes before the request is handed over (the final pass after the
+twin scenarios), the package is made again and this line, and the test count in A5, are updated.
 
 ## Account id (do not echo it)
 

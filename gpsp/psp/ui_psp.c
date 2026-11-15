@@ -408,7 +408,9 @@ enum { SCR_MENU, SCR_SETTINGS, SCR_WIRELESS, SCR_SCAN, SCR_MGIFT,
         * are never entered.  SCR_CHEATS is the Vita's own cheats page there
         * (the PSP's is compiled only with GPSP_CHEATS). */
        , SCR_JOIN, SCR_ADDR, SCR_ADHOC, SCR_LOCAL, SCR_CONN, SCR_HELP,
-       SCR_CHEAT_ADD, SCR_RA
+       SCR_CHEAT_ADD, SCR_RA,
+       /* 2.0 online play (vita/ui_vita_online.h): the code pad, the room card */
+       SCR_ONLINE_CODE, SCR_ONLINE_CARD
 #endif
      };
 
@@ -543,6 +545,7 @@ static char g_link_room[ROOM_LABEL_CAP];
 static char g_link_game[64];
 #ifdef VITA
 static char g_link_peer[24];         /* the other player's name            */
+static char g_link_online_code[8];   /* the Online room's code, "" until up */
 static char g_link_error[112];       /* why the last start failed, or ""   */
 #endif
 #ifndef VITA
@@ -1263,6 +1266,9 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
 
 #ifdef VITA
 static void join_close(void);            /* vita/ui_vita_play.h */
+static void oc_card_leave(void);         /* vita/ui_vita_online.h */
+static const char *conn_name(int c);     /* vita/ui_vita_play.h */
+static int  conn_step(int conn, int dir);
 static char g_play_note[112];            /* its plate, until the next key */
 static void set_touch_reset(void);       /* Settings' finger scroll */
 #endif
@@ -1311,6 +1317,8 @@ void ui_close(void)
 #ifdef VITA
    if (g_screen == SCR_JOIN)
       join_close();              /* the scan does not outlive its page */
+   if (g_screen == SCR_ONLINE_CARD)
+      oc_card_leave();           /* nor a room lookup or a library walk */
    tch_reset();
    osd_toast_place(OSD_TOAST_GAME);
 #endif
@@ -1352,7 +1360,7 @@ static void screen_to(int scr)
         "controls", "host", "join_ask", "cheats"
 #ifdef VITA
         , "join", "address", "adhoc", "local", "connection", "help",
-        "cheat_add"
+        "cheat_add", "ra", "online_code", "online_card"
 #endif
       };
 #ifdef VITA
@@ -2349,6 +2357,7 @@ static void cht_page_reset(void);
  * does not have; the rest of the list is the PSP's, row for row. */
 enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_FASTLINK, SET_OSD, SET_SHARE, SET_JOIN,
+       SET_ONLINE_JOIN,   /* 2.0: the game list's Join online (browser only) */
        SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_SGB,
        SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
@@ -2451,6 +2460,9 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
     * (vita/share_vita.c); the link's Join list holds only links.  Fast link
     * is up with Link delay. */
    { 0, "Join a share" },
+   /* 2.0, BROWSER ONLY: type a friend's room code from the game list; the
+    * game it needs is found in the library (set_row_shown) */
+   { 0, "Join online" },
 #else
    { 0, "Join: scan for rooms" },
    /* BROWSER ONLY too, and LAST in the section, so no row a harness walker
@@ -2640,8 +2652,8 @@ static int set_row_shown(int idx)
          return 1;
       return 1;
    }
-   return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_COVERS &&
-           idx != SET_REFRESH) ||
+   return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_ONLINE_JOIN &&
+           idx != SET_COVERS && idx != SET_REFRESH) ||
           g_ov_browse;
 #else
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_FASTLINK) ||
@@ -2999,12 +3011,17 @@ void ui_set_link(const ui_link_view *v)
    {
       memset(&g_link, 0, sizeof(g_link));
 #ifdef VITA
-      g_link_peer[0] = g_link_error[0] = '\0';
+      g_link_peer[0] = g_link_error[0] = g_link_online_code[0] = '\0';
       g_link.rtt_ms = g_link.signal_pct = -1;
 #endif
       return;
    }
    g_link = *v;
+#ifdef VITA
+   snprintf(g_link_online_code, sizeof(g_link_online_code), "%s",
+            v->online_code ? v->online_code : "");
+   g_link.online_code = g_link_online_code;
+#endif
    snprintf(g_link_room, sizeof(g_link_room), "%s", v->room ? v->room : "");
    snprintf(g_link_game, sizeof(g_link_game), "%s", v->game ? v->game : "");
    g_link.room = g_link_room;
@@ -3605,10 +3622,8 @@ static void settings_adjust(int id, int dir)
       break;
    }
    case SET_CONN:
-      /* UI_CONN_ONLINE has no row yet (package U adds it): cycle the
-       * three that are shown. */
-      g_pcfg.net_conn = (g_pcfg.net_conn % UI_CONN_ONLINE + UI_CONN_ONLINE + dir) %
-                        UI_CONN_ONLINE;
+      /* the connections the Connection page shows, in its order */
+      g_pcfg.net_conn = conn_step(g_pcfg.net_conn, dir);
       fe_evt("net_conn value=%d", g_pcfg.net_conn);
       break;
    case SET_DELAY:
@@ -3684,8 +3699,10 @@ static const char *set_help(int id)
    {
    case SET_NAME:     return "The name other players see beside your room.";
    case SET_CONN:
-      return g_pcfg.net_conn == UI_CONN_INTERNET
-             ? "Across the internet: the joiner types the host's address."
+      return g_pcfg.net_conn == UI_CONN_ONLINE
+             ? "Far apart: the host shows a code, your friend types it."
+           : g_pcfg.net_conn == UI_CONN_INTERNET
+             ? "Advanced: the joiner types the host's address."
            : g_pcfg.net_conn == UI_CONN_ADHOC
              ? "No router: the two " UI_DEVS " connect directly."
              : "Same Wi-Fi or phone hotspot: rooms appear by themselves.";
@@ -3702,6 +3719,9 @@ static const char *set_help(int id)
                              "and states.";
    case SET_JOIN:     return "Copy saves and states from the Vita sharing "
                              "on your Room.";
+   case SET_ONLINE_JOIN:
+      return "Type your friend's room code. Your copy of their game is "
+             "found and started.";
    case SET_OSD:      return "The small link status in the corner of the "
                              "game.";
    case SET_SCALE:    return "How large the game is drawn. 3x is exact and "
@@ -4183,8 +4203,9 @@ static ui_action screen_settings(unsigned edges)
    /* Share game data / the room list: the browser's Settings loop acts on
     * the request after this frame is drawn (browser_settings). */
    if ((edges & PSP_CTRL_CROSS) && g_ov_browse &&
-       (g_cursor == SET_SHARE || g_cursor == SET_JOIN))
-      g_share_req = g_cursor == SET_SHARE ? 1 : 2;
+       (g_cursor == SET_SHARE || g_cursor == SET_JOIN ||
+        g_cursor == SET_ONLINE_JOIN))
+      g_share_req = g_cursor == SET_SHARE ? 1 : g_cursor == SET_JOIN ? 2 : 3;
    else if (edges & PSP_CTRL_CROSS)
       settings_adjust(g_cursor, +1);
    if (edges & PSP_CTRL_CIRCLE)
@@ -4286,8 +4307,7 @@ static ui_action screen_settings(unsigned edges)
          break;
       case SET_CONN:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.net_conn == UI_CONN_INTERNET ? "Internet"
-                  : g_pcfg.net_conn == UI_CONN_ADHOC ? "Ad hoc" : "Wi-Fi");
+                  conn_name(g_pcfg.net_conn));
          break;
       case SET_DELAY:
       {
@@ -4335,6 +4355,11 @@ static ui_action screen_settings(unsigned edges)
       }
 #else
          set_item(y, g_cursor == i, 1, set_rows[i].label, NULL);
+         break;
+#endif
+#ifdef VITA
+      case SET_ONLINE_JOIN:
+         set_item(y, g_cursor == i, 1, set_rows[i].label, "type a room code");
          break;
 #endif
       case SET_FASTLINK:
@@ -7661,6 +7686,12 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
    case SCR_ADDR:
       act = screen_addr(edges);
       break;
+   case SCR_ONLINE_CODE:
+      act = screen_online_code(edges);
+      break;
+   case SCR_ONLINE_CARD:
+      act = screen_online_card(edges);
+      break;
    case SCR_ADHOC:
       act = screen_adhoc(edges);
       break;
@@ -7734,7 +7765,8 @@ ui_action ui_frame(unsigned pad, int session_active, const char *session_info)
 
 #ifdef VITA
    /* Host keeps the menu open on its waiting page (ui_host_hooks.h). */
-   if (act == UI_ACT_RESUME || act == UI_ACT_EXIT || act == UI_ACT_NET_JOIN)
+   if (act == UI_ACT_RESUME || act == UI_ACT_EXIT || act == UI_ACT_NET_JOIN ||
+       act == UI_ACT_ONLINE_OPEN_JOIN)
       ui_close();
 #else
    if (act == UI_ACT_RESUME || act == UI_ACT_EXIT ||
@@ -12035,6 +12067,20 @@ static int browser_settings(void)
          g_cursor = SET_COVERPIC;
          g_prev_pad = 0xFFFFFFFFu;  /* the O that left the page is spent */
       }
+      if (g_share_req == 3)
+      {
+         /* Join online: the code pad, the room card, the library.  A file
+          * chosen there ends this page and the game list opens it. */
+         g_share_req = 0;
+         if (online_join_modal())
+         {
+            g_screen = SCR_MENU;
+            break;
+         }
+         screen_to(SCR_SETTINGS);
+         g_cursor = SET_ONLINE_JOIN;
+         g_prev_pad = 0xFFFFFFFFu;  /* the O that left the page is spent */
+      }
       if (g_share_req == 1 || g_share_req == 2)
       {
          int req = g_share_req;
@@ -13319,6 +13365,37 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #ifdef VITA
          if (g_ui_home) home_modal_leave(1);
          md_resume();
+         if (g_oc.launch)
+         {
+            /* Settings > Join online chose a game of the library to open
+             * (vita/ui_vita_online.h): it boots as if picked from the list,
+             * and ui_online_take_pending() tells the main loop to join the
+             * room afterwards. */
+            fe_console_t con = oc_console_of(g_oc.open_path);
+            g_oc.launch = 0;
+            if (strlen(g_oc.open_path) >= out_sz)
+               osd_toast("ROM path is too long");
+            else
+            {
+               snprintf(out, out_sz, "%s", g_oc.open_path);
+               if ((int)con != g_pcfg.console)
+               {
+                  g_pcfg.console = con;
+                  pcfg_display_select(con);
+               }
+               if (console_out)
+                  *console_out = con;
+               if (out_state_slot)
+                  *out_state_slot = 0;
+               ui_loading_begin(out);
+               fe_evt("ui_browser_pick rom=%s online=1", out);
+               art_free_all();
+               browser_state_cache_free();
+               browser_switch_settle(n_scan, idle, 1);
+               return 0;
+            }
+            g_oc.pending = 0;
+         }
 #endif
 #ifdef VITA
          if (g_library_resort)

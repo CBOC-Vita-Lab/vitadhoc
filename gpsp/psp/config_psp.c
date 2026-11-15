@@ -9,6 +9,7 @@
 #ifdef VITA
 #include <stdlib.h>
 #include "pspcompat.h"        /* pspcompat_user_name: the default nick */
+#include "ui_host_hooks.h"   /* ui_host_link_direct */
 #endif
 
 psp_config g_pcfg;
@@ -356,6 +357,13 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.net_conn = (int)fe_ini_get_int(cfg_path, "net_conn", 0);
    if (g_pcfg.net_conn < 0 || g_pcfg.net_conn > 3)
       g_pcfg.net_conn = 0;
+   /* 2.0: Connection "Internet" (the typed address) became Online (a room
+    * code).  The typed-address row is hidden unless vita.ini link_direct = 1,
+    * so a saved 1 would pick a connection the page does not show: it is
+    * Online now (the file is rewritten when anything is saved). */
+   if (g_pcfg.net_conn == 1 && !ui_host_link_direct())
+      g_pcfg.net_conn = 3;
+   g_pcfg.online_relay = (int)fe_ini_get_int(cfg_path, "online_relay", 0) ? 1 : 0;
    g_pcfg.link_delay = (int)fe_ini_get_int(cfg_path, "link_delay", 0);
    if (g_pcfg.link_delay < 0 || g_pcfg.link_delay > PCFG_LINK_DELAY_MAX)
       g_pcfg.link_delay = 0;
@@ -757,6 +765,7 @@ void pcfg_save(void)
 #ifdef VITA
    fe_ini_set_int(cfg_path, "net_conn", g_pcfg.net_conn);
    fe_ini_set_int(cfg_path, "link_delay", g_pcfg.link_delay);
+   fe_ini_set_int(cfg_path, "online_relay", g_pcfg.online_relay);
    fe_ini_set_int(cfg_path, "local_partner", g_pcfg.local_partner);
    fe_ini_set_int(cfg_path, "local_layout", g_pcfg.local_layout);
    fe_ini_set_int(cfg_path, "local_touch2", g_pcfg.local_touch2);

@@ -479,6 +479,9 @@ typedef struct
     * together pages write them; vita/link_vita.c reads them. */
    int  net_conn;       /* UI_CONN_*: 0 Wi-Fi (default), 1 Internet, 2 ad hoc, 3 Online */
    int  link_delay;     /* 0 = Auto (default), 1..8 frames of input delay  */
+   int  online_relay;   /* 2.0 online play: 1 = always use the relay, which
+                         * hides this console's internet address from the
+                         * other player (config.ini online_relay, default 0) */
    char net_addr[PCFG_NET_ADDRS][24];  /* the last host addresses typed,
                                         * newest first; "" = unused        */
    int  local_partner;  /* local link: 0 = the partner starts from a copy

@@ -22,8 +22,6 @@
 #include "np_https_roots.h"
 #include "np_https_sys.h"
 
-extern "C" void port_host_heap_log(const char* when) __attribute__((weak));   // memfix: the port layer's C heap line (absent in host tests)
-
 namespace nph {
 namespace tls {
 
@@ -210,13 +208,6 @@ Result Handshake(Conn* c, int* code) {
     *code = 0;
     const int rc = mbedtls_ssl_handshake(&c->ssl);
     if (rc == 0) {
-        {   // memfix: the C heap once, after the first TLS handshake of the process (the buffers of a live connection are in it)
-            static bool noted = false;
-            if (!noted) {
-                noted = true;
-                if (port_host_heap_log) port_host_heap_log("mp first tls");
-            }
-        }
         c->handshaken = true;
         c->details.version = mbedtls_ssl_get_version_number(&c->ssl) == MBEDTLS_SSL_VERSION_TLS1_3 ? 0x0304u : 0x0303u;
         const char* cs = mbedtls_ssl_get_ciphersuite(&c->ssl);

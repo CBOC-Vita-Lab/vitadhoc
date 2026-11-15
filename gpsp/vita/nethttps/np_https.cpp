@@ -613,7 +613,7 @@ int Exchange(Ctx& c, bool* any_bytes, bool* keep) {
     };
     Append("%s %s HTTP/1.1\r\nHost: %s", s->method, s->path, s->host);
     if (s->port != 443) Append(":%u", (unsigned)s->port);
-    Append("\r\nUser-Agent: GalaxyVita\r\nAccept: application/json, */*\r\nAccept-Encoding: identity\r\nConnection: %s\r\n",
+    Append("\r\nUser-Agent: %s\r\nAccept: application/json, */*\r\nAccept-Encoding: identity\r\nConnection: %s\r\n", UserAgent(),
            s->keep_alive ? "keep-alive" : "close");
     if (has_body) Append("Content-Type: %s\r\nContent-Length: %u\r\n", s->ctype, (unsigned)s->body_len);
     Append("%s\r\n", s->headers);
@@ -935,6 +935,11 @@ bool ParseUrl(const char* url, Slot* s) {
 // =============================================================================================================================
 
 extern "C" {
+
+// The app's log callback and User-Agent (vitadhoc: set once, before the first request, by online_http_config).
+void (*np_https_log_sink)(const char* line) = nullptr;
+void np_https_set_log(void (*sink)(const char* line)) { np_https_log_sink = sink; }
+void np_https_set_user_agent(const char* ua) { SetUserAgent(ua); }
 
 NpHttpsHandle np_https_start(const NpHttpsRequest* rq, NpHttpsError* err) {
     NpHttpsError dummy;

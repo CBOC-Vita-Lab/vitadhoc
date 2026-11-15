@@ -3303,16 +3303,16 @@ static void test_online(void)
    vid_swap();
    osd_reset();
 
-   /* the sentences, all thirteen, as the LINKING screen draws a failure */
+   /* the sentences, all fourteen, as the LINKING screen draws a failure */
    {
       static const int why[] = { UI_FAIL_ONLINE_CODE, UI_FAIL_ONLINE_UPDATE,
          UI_FAIL_ONLINE_VER_OLD_HERE, UI_FAIL_ONLINE_VER_OLD_THERE,
          UI_FAIL_ONLINE_SETUP, UI_FAIL_ONLINE_CLOCK, UI_FAIL_ONLINE_GAME,
          UI_FAIL_ONLINE_GAME_FILE, UI_FAIL_ONLINE_FULL,
          UI_FAIL_ONLINE_UNREACHABLE, UI_FAIL_ONLINE_BUSY,
-         UI_FAIL_ONLINE_SERVICE, UI_FAIL_ONLINE_CLOSED };
+         UI_FAIL_ONLINE_SERVICE, UI_FAIL_ONLINE_CLOSED, UI_FAIL_ONLINE_SLOW };
       int i;
-      for (i = 0; i < 13; i++)
+      for (i = 0; i < 14; i++)
       {
          const char *a = NULL, *b = NULL;
          ui_online_fail_text(why[i], "Pokemon Ruby", "2.0.0", &a, &b);

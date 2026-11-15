@@ -580,11 +580,24 @@ void online_http_config(const char *base_url, const char *app_version)
    g_configured = g_ver[0] != 0;
 }
 
-int online_http_create(const online_desc *room)
+// The request id of create and join: 16 lower-case hex digits, or none.  Builds the extra member of the body.
+static bool RidMember(const char *rid, char *out, size_t cap)
 {
-   char body[768];
+   out[0] = 0;
+   if (!rid || !*rid) return true;
+   if (strlen(rid) != 16) return false;
+   for (int i = 0; i < 16; i++)
+      if (!((rid[i] >= '0' && rid[i] <= '9') || (rid[i] >= 'a' && rid[i] <= 'f'))) return false;
+   snprintf(out, cap, "\"rid\":\"%s\"", rid);
+   return true;
+}
+
+int online_http_create(const online_desc *room, const char *rid)
+{
+   char body[768], extra[32];
    if (!room) return -1;
-   if (!online_json_desc(body, sizeof body, room, nullptr)) return Local(ONLINE_OP_CREATE, ONLINE_E_BAD);
+   if (!RidMember(rid, extra, sizeof extra)) return Local(ONLINE_OP_CREATE, ONLINE_E_BAD);
+   if (!online_json_desc(body, sizeof body, room, extra)) return Local(ONLINE_OP_CREATE, ONLINE_E_BAD);
    return StartReq(ONLINE_OP_CREATE, "POST", "/v1/rooms", body);
 }
 
@@ -596,12 +609,13 @@ int online_http_lookup(const char *code)
    return StartReq(ONLINE_OP_LOOKUP, "GET", path, nullptr);
 }
 
-int online_http_join(const char *code, const online_desc *me)
+int online_http_join(const char *code, const online_desc *me, const char *rid)
 {
-   char path[64], body[768];
+   char path[64], body[768], extra[32];
    if (!me) return -1;
    if (!CodeOk(code)) return Local(ONLINE_OP_JOIN, ONLINE_E_NOT_FOUND);
-   if (!online_json_desc(body, sizeof body, me, nullptr)) return Local(ONLINE_OP_JOIN, ONLINE_E_BAD);
+   if (!RidMember(rid, extra, sizeof extra)) return Local(ONLINE_OP_JOIN, ONLINE_E_BAD);
+   if (!online_json_desc(body, sizeof body, me, extra)) return Local(ONLINE_OP_JOIN, ONLINE_E_BAD);
    snprintf(path, sizeof path, "/v1/rooms/%s/join", code);
    return StartReq(ONLINE_OP_JOIN, "POST", path, body);
 }

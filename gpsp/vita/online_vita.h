@@ -26,7 +26,8 @@ enum { ON_IDLE = 0, ON_RESOLVE, ON_STUN, ON_CREATE, ON_WAITING,   /* host: the c
 enum { ONLINE_Q_NONE = 0, ONLINE_Q_GREAT, ONLINE_Q_GOOD, ONLINE_Q_SLOW };   /* < 80 ms, < 120 ms, else */
 enum { ONLINE_FAIL_NONE = 0, ONLINE_FAIL_CODE, ONLINE_FAIL_UPDATE, ONLINE_FAIL_VERSION,
        ONLINE_FAIL_FULL, ONLINE_FAIL_UNREACHABLE, ONLINE_FAIL_BUSY, ONLINE_FAIL_SERVICE,
-       ONLINE_FAIL_CLOSED, ONLINE_FAIL_EXPIRED, ONLINE_FAIL_CLOCK };
+       ONLINE_FAIL_CLOSED, ONLINE_FAIL_EXPIRED, ONLINE_FAIL_CLOCK,
+       ONLINE_FAIL_SLOW /* a 429 that clears within 2 minutes: "wait a minute and try again" */ };
 /* ONLINE_FAIL_VERSION: the view's host_ver says which side is older (1.6) */
 
 typedef struct online_cfg

@@ -90,6 +90,7 @@ typedef struct inject
    int err;            /* ONLINE_E_*; 0 = off */
    int http;
    int count;          /* answers to spoil; -1 = forever */
+   int retry_after;    /* seconds, for a 429 */
    char host_ver[16];
 } inject;
 
@@ -117,6 +118,12 @@ typedef struct svc
    int  closes, room_deleted;
    int  polls_with_pub;
    char last_new_pub[24];
+   /* idempotent create / join (the request id), and answers lost on the way back */
+   char rid_h[20], rid_g[20];
+   int  rooms_made;
+   int  lose[10];         /* ops whose answer is lost after the service processed them (a NET answer) */
+   char rids_c[8][20], rids_j[8][20];
+   int  n_rids_c, n_rids_j;
 } svc;
 
 static svc S;
@@ -183,6 +190,7 @@ static void svc_guest_joins(const online_desc *g)
 
 static void svc_guest_leaves(void)
 {
+   S.rid_g[0] = 0;
    S.have_g = 0;
    memset(&S.g, 0, sizeof S.g);
    S.grel[0] = 0;
@@ -243,6 +251,7 @@ static int spoil(int op, online_reply *r)
    {
       r->err = S.inj[op].err;
       r->http = S.inj[op].http;
+      r->retry_after = S.inj[op].retry_after;
       strcpy(r->host_ver, S.inj[op].host_ver);
       if (S.inj[op].count > 0)
          S.inj[op].count--;
@@ -270,28 +279,49 @@ static void fill_peer(online_reply *r, int as_host)
 static int is_host_token(const char *t) { return !strcmp(t, S.htok); }
 static int is_guest_token(const char *t) { return S.have_g && !strcmp(t, S.gtok); }
 
-int online_http_create(const online_desc *room)
+/* The service lost the answer on its way back: the request was processed, the client sees a dead network. */
+static void maybe_lose(int op, online_reply *r)
+{
+   if (S.lose[op] != 0 && !r->err)
+   {
+      if (S.lose[op] > 0)
+         S.lose[op]--;
+      memset(r, 0, sizeof *r);
+      r->err = ONLINE_E_NET;
+   }
+}
+
+int online_http_create(const online_desc *room, const char *rid)
 {
    online_reply r;
    char extra[40];
    memset(&r, 0, sizeof r);
    snprintf(extra, sizeof extra, "pub=%s", room->pub);
+   if (S.n_rids_c < 8)
+      snprintf(S.rids_c[S.n_rids_c++], 20, "%s", rid ? rid : "");
    if (S.state == RS_OPEN || S.state == RS_JOINED || S.state == RS_RELAY)
    {
       /* a new room replaces nothing: the tests only create once */
    }
    if (!spoil(ONLINE_OP_CREATE, &r))
    {
+      int again = rid && rid[0] && !strcmp(rid, S.rid_h) && (S.state == RS_OPEN || S.state == RS_JOINED || S.state == RS_RELAY);
       r.http = 201;
       strcpy(r.code, S.code);
       strcpy(r.token, S.htok);
       strcpy(r.punch_key, "0123456789abcdef");
       r.ttl_sec = S.ttl_s;
       r.poll_ms = 2000;
-      S.h = *room;
-      S.state = RS_OPEN;
-      S.created_us = g_us;
-      S.have_g = 0;
+      if (!again)
+      {
+         S.h = *room;
+         S.state = RS_OPEN;
+         S.created_us = g_us;
+         S.have_g = 0;
+         S.rooms_made++;
+         snprintf(S.rid_h, sizeof S.rid_h, "%s", rid ? rid : "");
+      }
+      maybe_lose(ONLINE_OP_CREATE, &r);
    }
    queue(ONLINE_OP_CREATE, &r, extra, "");
    return 0;
@@ -325,16 +355,28 @@ int online_http_lookup(const char *code)
    return 0;
 }
 
-int online_http_join(const char *code, const online_desc *me)
+int online_http_join(const char *code, const online_desc *me, const char *rid)
 {
    online_reply r;
    char extra[40];
    memset(&r, 0, sizeof r);
    snprintf(extra, sizeof extra, "pub=%s", me->pub);
+   if (S.n_rids_j < 8)
+      snprintf(S.rids_j[S.n_rids_j++], 20, "%s", rid ? rid : "");
    if (!spoil(ONLINE_OP_JOIN, &r))
    {
       svc_expire();
-      if (strcmp(code, S.code) || (S.state != RS_OPEN && S.state != RS_JOINED && S.state != RS_RELAY))
+      if (rid && rid[0] && S.have_g && !strcmp(rid, S.rid_g) && !strcmp(code, S.code) && S.state != RS_CLOSED && S.state != RS_NONE)
+      {
+         int host_poll = svc_poll_ms();
+         r.http = 200;                    /* the repeated join: the original answer */
+         strcpy(r.token, S.gtok);
+         strcpy(r.punch_key, "0123456789abcdef");
+         fill_peer(&r, 0);
+         r.punch_ms = host_poll + 4000;
+         r.poll_ms = 1500;
+      }
+      else if (strcmp(code, S.code) || (S.state != RS_OPEN && S.state != RS_JOINED && S.state != RS_RELAY))
       {
          r.err = ONLINE_E_NOT_FOUND;
          r.http = 404;
@@ -360,7 +402,9 @@ int online_http_join(const char *code, const online_desc *me)
          fill_peer(&r, 0);
          r.punch_ms = host_poll + 4000;      /* the host's interval + 4 s */
          r.poll_ms = 1500;
+         snprintf(S.rid_g, sizeof S.rid_g, "%s", rid ? rid : "");
       }
+      maybe_lose(ONLINE_OP_JOIN, &r);
    }
    queue(ONLINE_OP_JOIN, &r, extra, code);
    return 0;
@@ -1544,6 +1588,209 @@ static void sc_stop_messages(void)
    CHECK(S.closes == 0);
 }
 
+
+static int hex16(const char *s)
+{
+   int i;
+   if (strlen(s) != 16)
+      return 0;
+   for (i = 0; i < 16; i++)
+      if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')))
+         return 0;
+   return 1;
+}
+
+/* Run until the n-th request of `op` went out. */
+static void run_until_req(int op, int n)
+{
+   unsigned end = ms_now() + 20000;
+   while (count_req(op) < n && ms_now() < end)
+      tick();
+}
+
+/* A. a create whose answer was lost is sent again with the SAME request id: one room, not two. */
+static void sc_create_retry_rid(void)
+{
+   online_desc room = mk_desc("Alice", LAN_KIND_GBA_CABLE);
+   online_view v;
+   world();
+   S.lose[ONLINE_OP_CREATE] = 1;
+   start();
+   online_host(&g_tr, &room);
+   CHECK(run_to(ON_WAITING, 6000));
+   online_get(&v);
+   CHECK(v.stage == ON_WAITING && v.fail == 0);
+   CHECK(S.n_rids_c == 2 && hex16(S.rids_c[0]) && !strcmp(S.rids_c[0], S.rids_c[1]));
+   CHECK(S.rooms_made == 1);
+   online_stop();
+   run_for(100);
+   CHECK(S.closes == 1 && !strcmp(S.last_close, "cancel"));
+   /* the next attempt chooses its own id */
+   world();
+   start();
+   online_host(&g_tr, &room);
+   run_to(ON_WAITING, 3000);
+   online_stop();
+   CHECK(S.n_rids_c == 1 && hex16(S.rids_c[0]));
+}
+
+/* A. a join whose answer was lost: the retry (same id) is the same guest, not "room full". */
+static void sc_join_retry_rid(void)
+{
+   online_desc me = mk_desc("Gus", LAN_KIND_GBA_CABLE);
+   online_view v;
+   world();
+   S.lose[ONLINE_OP_JOIN] = 1;
+   start();
+   script_host("203.0.113.2:40002", "", 0, 0);
+   online_join(&g_tr, "K7M2Q", &me);
+   CHECK(run_to(ON_PUNCH, 6000));
+   online_get(&v);
+   CHECK(v.fail == 0 && v.stage >= ON_PUNCH);
+   CHECK(S.n_rids_j == 2 && hex16(S.rids_j[0]) && !strcmp(S.rids_j[0], S.rids_j[1]));
+   online_stop();
+   run_for(200);
+   CHECK(S.closes == 1 && !strcmp(S.last_close, "failed") && S.state == RS_OPEN);
+}
+
+/* B. a stop while a create is in flight, or between its retries: the room is closed all the same. */
+static void sc_stop_during_create(void)
+{
+   online_desc room = mk_desc("Alice", LAN_KIND_GBA_CABLE);
+   int wait;
+   for (wait = 0; wait < 2; wait++)
+   {
+      world();
+      S.lose[ONLINE_OP_CREATE] = 1;
+      start();
+      online_host(&g_tr, &room);
+      run_until_req(ONLINE_OP_CREATE, 1);
+      run_for(wait ? 100 : 0);        /* 0: the request is out; 100: its answer was lost, the retry waits */
+      online_stop();
+      run_for(500);
+      CHECK(S.rooms_made == 1);
+      CHECK(S.n_rids_c == 2 && !strcmp(S.rids_c[0], S.rids_c[1]));
+      CHECK(S.closes == 1 && !strcmp(S.last_close, "cancel") && S.state == RS_CLOSED);
+      CHECK(!online_active());
+   }
+   /* a new connection right after the stop works, and does not mistake the recovery's answer for its own */
+   world();
+   S.lose[ONLINE_OP_CREATE] = 1;
+   start();
+   online_host(&g_tr, &room);
+   run_until_req(ONLINE_OP_CREATE, 1);
+   run_for(100);
+   online_stop();
+   CHECK(online_host(&g_tr, &room) == 0);
+   CHECK(run_to(ON_WAITING, 6000));
+   {
+      online_view v;
+      online_get(&v);
+      CHECK(v.stage == ON_WAITING && v.fail == 0);
+   }
+   CHECK(S.rooms_made == 2);          /* the recovered room (closed) and the new one */
+   online_stop();
+   run_for(300);
+   CHECK(S.closes == 2);
+}
+
+/* B. the same for a join. */
+static void sc_stop_during_join(void)
+{
+   online_desc me = mk_desc("Gus", LAN_KIND_GBA_CABLE);
+   int wait;
+   for (wait = 0; wait < 2; wait++)
+   {
+      world();
+      S.lose[ONLINE_OP_JOIN] = 1;
+      start();
+      script_host("203.0.113.2:40002", "", 0, 0);
+      online_join(&g_tr, "K7M2Q", &me);
+      run_until_req(ONLINE_OP_JOIN, 1);
+      run_for(wait ? 100 : 0);
+      online_stop();
+      run_for(500);
+      CHECK(S.n_rids_j == 2 && !strcmp(S.rids_j[0], S.rids_j[1]));
+      CHECK(S.closes == 1 && !strcmp(S.last_close, "failed") && S.state == RS_OPEN && !S.have_g);
+      CHECK(!online_active());
+   }
+   /* a join the service refused leaves nothing to recover */
+   world();
+   S.inj[ONLINE_OP_JOIN].err = ONLINE_E_FULL;
+   S.inj[ONLINE_OP_JOIN].http = 409;
+   S.inj[ONLINE_OP_JOIN].count = -1;
+   start();
+   script_host("203.0.113.2:40002", "", 0, 0);
+   online_join(&g_tr, "K7M2Q", &me);
+   run_until_req(ONLINE_OP_JOIN, 1);
+   run_for(300);
+   online_stop();
+   run_for(300);
+   CHECK(S.n_rids_j == 1 && S.closes == 0);
+}
+
+/* C, D. 429 answers: short waits read "wait a minute", long ones "busy"; a poll never waits more than 30 s silently. */
+static void sc_rate_limits(void)
+{
+   struct { int op, retry, want; } T[] = {
+      { ONLINE_OP_CREATE, 60, ONLINE_FAIL_SLOW }, { ONLINE_OP_CREATE, 120, ONLINE_FAIL_SLOW },
+      { ONLINE_OP_CREATE, 121, ONLINE_FAIL_BUSY }, { ONLINE_OP_CREATE, 3600, ONLINE_FAIL_BUSY },
+      { ONLINE_OP_JOIN, 5, ONLINE_FAIL_SLOW }, { ONLINE_OP_JOIN, 3000, ONLINE_FAIL_BUSY },
+      { ONLINE_OP_POLL, 3600, ONLINE_FAIL_BUSY }, { ONLINE_OP_POLL, 31, ONLINE_FAIL_SLOW },
+   };
+   unsigned i;
+   online_desc room = mk_desc("Alice", LAN_KIND_GBA_CABLE);
+   online_desc me = mk_desc("Gus", LAN_KIND_GBA_CABLE);
+   for (i = 0; i < sizeof T / sizeof T[0]; i++)
+   {
+      online_view v;
+      world();
+      start();
+      if (T[i].op == ONLINE_OP_JOIN)
+         script_host("203.0.113.2:40002", "", 0, 0);
+      if (T[i].op == ONLINE_OP_JOIN)
+         online_join(&g_tr, "K7M2Q", &me);
+      else
+      {
+         if (T[i].op == ONLINE_OP_POLL)
+         {
+            online_host(&g_tr, &room);
+            CHECK(run_to(ON_WAITING, 3000));
+         }
+         else
+            online_host(&g_tr, &room);
+      }
+      S.inj[T[i].op].err = ONLINE_E_RATE;
+      S.inj[T[i].op].http = 429;
+      S.inj[T[i].op].retry_after = T[i].retry;
+      S.inj[T[i].op].count = -1;
+      if (T[i].op == ONLINE_OP_JOIN || T[i].op == ONLINE_OP_CREATE)
+         S.inj[T[i].op].count = -1;
+      CHECK(run_to(ON_FAILED, 10000));
+      online_get(&v);
+      if (v.fail != T[i].want)
+         printf("  rate case %u (op %d retry %d): got fail=%d want %d\n", i, T[i].op, T[i].retry, v.fail, T[i].want);
+      CHECK(v.fail == T[i].want);
+      online_stop();
+   }
+   /* a poll told to wait 20 s waits (no failure), then carries on */
+   world();
+   start();
+   online_host(&g_tr, &room);
+   CHECK(run_to(ON_WAITING, 3000));
+   S.inj[ONLINE_OP_POLL].err = ONLINE_E_RATE;
+   S.inj[ONLINE_OP_POLL].http = 429;
+   S.inj[ONLINE_OP_POLL].retry_after = 20;
+   S.inj[ONLINE_OP_POLL].count = 1;
+   run_for(25000);
+   {
+      online_view v;
+      online_get(&v);
+      CHECK(v.stage == ON_WAITING && v.fail == 0);
+   }
+   online_stop();
+}
+
 /* 20. a lost close ("linked") is sent once more, then forgotten. */
 static void sc_linked_retry(void)
 {
@@ -1979,6 +2226,11 @@ static const sc SC[] = {
    { "host_cancels", sc_host_cancels },
    { "guest_leaves", sc_guest_leaves },
    { "stop_messages", sc_stop_messages },
+   { "create_retry_rid", sc_create_retry_rid },
+   { "join_retry_rid", sc_join_retry_rid },
+   { "stop_during_create", sc_stop_during_create },
+   { "stop_during_join", sc_stop_during_join },
+   { "rate_limits", sc_rate_limits },
    { "linked_retry", sc_linked_retry },
    { "service_down", sc_service_down },
    { "errors", sc_errors },

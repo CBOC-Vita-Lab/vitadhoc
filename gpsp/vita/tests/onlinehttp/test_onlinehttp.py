@@ -106,6 +106,10 @@ class Plain(Base):
         self.assertIn("POST /v1/rooms", paths)
         self.assertIn("POST /v1/rooms/K7M2Q/endpoint", paths)
         self.assertFalse([p for p in paths if "etc" in p or ".." in p], "a malformed code must not reach the network")
+        rids = after["rids"][len(before["rids"]):]
+        self.assertEqual(rids[:2], ["create 0123456789abcdef", "join fedcba9876543210"], "the request id rides in the body, unchanged")
+        self.assertFalse([x for x in rids if "NOT" in x.upper() and "HEX" in x.upper()], "a malformed request id reached the network")
+        self.assertIn("join -", rids, "a call without an id sends no rid member")
 
     def test_error_codes_map_as_2_3_says(self):
         self.runner("errors", self.base)

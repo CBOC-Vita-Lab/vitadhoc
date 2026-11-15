@@ -47,7 +47,7 @@ LAN_SAN_thread  := -fsanitize=thread
 LAN_OBJ    := obj$(if $(SAN),-$(SAN))
 LAN_BIN    := test_lan$(if $(SAN),-$(SAN))
 LAN_CFLAGS := $(CFLAGS) -std=gnu11 -pthread $(LAN_SAN_$(SAN))
-LAN_HDRS   := netdrv.h netdrv_wire.h nd_thread.h transport_lan.h
+LAN_HDRS   := netdrv.h netdrv_wire.h nd_thread.h transport_lan.h nat_hash.h nat_stun.h nat_turn.h
 
 $(LAN_OBJ)/lan_%.o: %.c $(LAN_HDRS)
 	@mkdir -p $(LAN_OBJ)
@@ -57,7 +57,8 @@ $(LAN_OBJ)/lan_test_lan.o: tests/test_lan.c $(LAN_HDRS)
 	@mkdir -p $(LAN_OBJ)
 	$(CC) $(LAN_CFLAGS) -c -o $@ $<
 
-$(LAN_BIN): $(LAN_OBJ)/lan_test_lan.o $(LAN_OBJ)/lan_netdrv.o $(LAN_OBJ)/lan_transport_lan.o
+$(LAN_BIN): $(LAN_OBJ)/lan_test_lan.o $(LAN_OBJ)/lan_netdrv.o $(LAN_OBJ)/lan_transport_lan.o \
+            $(LAN_OBJ)/lan_nat_hash.o $(LAN_OBJ)/lan_nat_stun.o $(LAN_OBJ)/lan_nat_turn.o
 	$(CC) $(LAN_CFLAGS) -o $@ $^
 
 test-lan: $(LAN_BIN)
@@ -66,13 +67,25 @@ test-lan: $(LAN_BIN)
 bench-lan: $(LAN_BIN)
 	./$(LAN_BIN) bench
 
+# ---- the NAT layer (2.0 online play): pure modules + the transport's hooks ---
+# tests/test_nat.c is package N's: the pure STUN / TURN / hash modules and the
+# transport's punch and relay machines against tests/natsim/ (the RFC 4787 NAT
+# world).  `make test-nat` builds and runs it.
+NAT_BIN := test_nat$(if $(SAN),-$(SAN))
+
+$(NAT_BIN): tests/test_nat.c netdrv.c transport_lan.c nat_hash.c nat_stun.c nat_turn.c $(LAN_HDRS)
+	$(CC) $(LAN_CFLAGS) -o $@ tests/test_nat.c netdrv.c transport_lan.c nat_hash.c nat_stun.c nat_turn.c
+
+test-nat: $(NAT_BIN)
+	./$(NAT_BIN) $(NAT_TESTS)
+
 # The same tests as a 32-bit ARMv7 hard-float Linux program under qemu-arm
 # (the Vita's CPU family; proves the 32-bit build and that the ring's
 # barriers are emitted -- qemu on an x86 host cannot prove their ORDERING).
 test-lan-arm:
 	arm-linux-gnueabihf-gcc -O2 -g -std=gnu11 -Wall -Wextra -march=armv7-a \
 	   -mfpu=neon -mfloat-abi=hard -marm -pthread -I. -o test_lan-arm \
-	   tests/test_lan.c netdrv.c transport_lan.c
+	   tests/test_lan.c netdrv.c transport_lan.c nat_hash.c nat_stun.c nat_turn.c
 	qemu-arm -L /usr/arm-linux-gnueabihf ./test_lan-arm $(LAN_TESTS)
 
 # ---- transport_vadhoc: the Vita ad hoc transport, against a fake stack -----
@@ -117,7 +130,7 @@ VITA_CC   := $(VITASDK)/bin/arm-vita-eabi-gcc
 VITA_FLAGS := -std=gnu11 -O2 -Wall -Wextra -Werror -DVITA -marm -mcpu=cortex-a9 \
               -mfloat-abi=hard -I. -I../vita \
               -DND_WINDOW=64 -DND_TXQ_CAP=256 -DND_RTO_MAX_US=2500000
-VITA_SRCS := netdrv.c transport_lan.c transport_vadhoc.c upnp_igd.c \
+VITA_SRCS := netdrv.c transport_lan.c nat_hash.c nat_stun.c nat_turn.c transport_vadhoc.c upnp_igd.c \
              ../vita/net_vita.c tests/vita_linkcheck.c
 VITA_LIBS := -lScePspnetAdhoc_stub -lSceCommonDialog_stub -lSceNetCtl_stub \
              -lSceNet_stub -lSceSysmodule_stub
@@ -134,7 +147,7 @@ vita-check:
 
 clean:
 	rm -rf obj obj-address obj-thread obj-vita sesslan-obj $(LIB) test_netdrv test_lan \
-	       test_lan-address test_lan-thread test_vadhoc test_vadhoc-address \
+	       test_lan-address test_lan-thread test_nat test_nat-address test_nat-thread test_vadhoc test_vadhoc-address \
 	       test_vadhoc-thread test_igd test_igd-address test_igd-thread
 
-.PHONY: all test test-lan test-lan-arm bench-lan test-vadhoc test-igd test-session vita-check clean
+.PHONY: all test test-lan test-nat test-lan-arm bench-lan test-vadhoc test-igd test-session vita-check clean

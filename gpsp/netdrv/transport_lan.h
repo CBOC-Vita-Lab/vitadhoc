@@ -167,6 +167,11 @@ typedef struct lan_config
    uint16_t target_port;
    unsigned flags;           /* LAN_F_* */
    unsigned rx_slots;        /* netdrv RX ring depth; 0 = 256 */
+   /* New in 2.0 (online play); all zero = off. */
+   uint32_t sim_ip_be;       /* test builds: the NAT simulator (see 1.8) */
+   uint16_t sim_port;
+   uint8_t  sim_id;
+   uint16_t sim_lan_port;    /* the port this transport declares inside the simulated LAN */
 } lan_config;
 
 typedef struct lan_transport lan_transport;
@@ -325,6 +330,63 @@ void      lan_scan_close(lan_scan *s);
  * wait_ms, return the rooms found.  <0 on socket error. */
 int lan_discovery_scan(const lan_scan_config *cfg, lan_room *out, int max,
                        unsigned wait_ms);
+
+/* ------------------------------------------------- online play: NAT layer (2.0) -- */
+/* Owner: package N.  W0 gives the declarations and stubs that say "not
+ * available"; N fills them in.  See ONLINE-2.0-PLAN.md section 2.1. */
+
+enum { LAN_STUN_IDLE = 0, LAN_STUN_RUNNING, LAN_STUN_OK, LAN_STUN_FAILED };
+enum { LAN_PUNCH_OFF = 0, LAN_PUNCH_ARMED, LAN_PUNCH_RUNNING, LAN_PUNCH_DONE, LAN_PUNCH_TIMEOUT };
+enum { LAN_RELAY_OFF = 0, LAN_RELAY_ALLOCATING, LAN_RELAY_ALLOCATED, LAN_RELAY_BINDING,
+       LAN_RELAY_READY, LAN_RELAY_FAILED };
+enum { LAN_RELAY_E_NONE = 0, LAN_RELAY_E_TIMEOUT, LAN_RELAY_E_AUTH, LAN_RELAY_E_QUOTA, LAN_RELAY_E_LOST };
+
+typedef struct lan_nat_status
+{
+   int      stun;                       /* LAN_STUN_* */
+   uint32_t pub_ip_be;  uint16_t pub_port;   /* OK: our address as the internet sees it */
+   int      sym;                        /* two servers answered differently */
+   int      open;                       /* the mapped address is our own: no NAT */
+   int      punch;                      /* LAN_PUNCH_* */
+   uint32_t peer_ip_be; uint16_t peer_port;  /* DONE: where the peer answered from */
+   int      peer_is_lan;                /* ...and it is in our own subnet */
+   int      relay;                      /* LAN_RELAY_* */
+   int      relay_err;                  /* LAN_RELAY_E_* */
+   uint32_t relay_ip_be; uint16_t relay_port; /* ALLOCATED and later: our relayed address */
+   uint32_t stun_tx, stun_rx, punch_tx, punch_rx, ack_rx, relay_tx, relay_rx, nat_foreign;
+} lan_nat_status;
+
+/* 16 bytes of real randomness for transaction ids and cookies; call before anything below. 0 = ok. */
+int  lan_transport_nat_seed(lan_transport *t, const uint8_t entropy[16]);
+/* Ask n (1..2) STUN servers for our public address.  Restarting is allowed.  0 = started. */
+int  lan_transport_stun_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n);
+/* After LAN_STUN_OK: ask server 0 again every `every_ms` (0 = stop) so the mapping stays. */
+void lan_transport_stun_keep(lan_transport *t, unsigned every_ms);
+/* Accept and answer PUNCH datagrams that carry this key (the 8 characters' bytes). */
+int  lan_transport_punch_arm(lan_transport *t, const uint8_t key[8]);
+/* Send PUNCH to n (0..3) candidates until DONE or timeout_ms.  Needs punch_arm.  0 = started. */
+int  lan_transport_punch_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n,
+                               unsigned timeout_ms);
+void lan_transport_punch_stop(lan_transport *t);          /* also disarms */
+/* Allocate on a TURN server with short-lived credentials (copied).  0 = started. */
+int  lan_transport_relay_start(lan_transport *t, uint32_t server_ip_be, const uint16_t *ports, int n_ports,
+                               const char *username, const char *credential);   /* n_ports 1..3, tried in order */
+/* After LAN_RELAY_ALLOCATED: permission + channel for the peer's relayed address; READY follows. */
+int  lan_transport_relay_bind(lan_transport *t, uint32_t peer_ip_be, uint16_t peer_port);
+void lan_transport_relay_stop(lan_transport *t);          /* releases the allocation, best effort */
+/* Any thread, never blocks (a copy under the transport's mutex). */
+void lan_transport_nat_status(lan_transport *t, lan_nat_status *out);
+/* JOIN mode, before the netdrv session starts: the host is at this address (what create's
+ * target_ip_be/target_port do).  0 = ok, -1 = not a joiner / a session already has peers. */
+int  lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port);
+/* lan_transport_bulk_recv plus where the datagram came from. */
+int  lan_transport_bulk_recv_from(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap);
+
+/* lan_census.path gains the values "punch" (a punch peer is set, not in our
+ * subnet) and "relay".  lan_transport_destroy() calls relay_stop itself.
+ * All state machines tick on the I/O thread (its poll slice drops to 20 ms
+ * while STUN, punch or a TURN request is in flight); commands and status
+ * cross under the transport's mutex. */
 
 /* ------------------------------------------------------------------- helpers -- */
 

@@ -2005,3 +2005,81 @@ int lan_discovery_scan(const lan_scan_config *cfg, lan_room *out, int max,
    lan_scan_close(s);
    return n;
 }
+
+/* ------------------------------------------------- online play (2.0): stubs -- */
+/* W0 scaffold.  Package N replaces every function below; until then each
+ * one says "not available" so the tree builds and nothing can start a
+ * STUN, punch or relay exchange by accident. */
+
+int lan_transport_nat_seed(lan_transport *t, const uint8_t entropy[16])
+{
+   (void)t; (void)entropy;
+   return -1;
+}
+
+int lan_transport_stun_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n)
+{
+   (void)t; (void)ip_be; (void)port; (void)n;
+   return -1;
+}
+
+void lan_transport_stun_keep(lan_transport *t, unsigned every_ms)
+{
+   (void)t; (void)every_ms;
+}
+
+int lan_transport_punch_arm(lan_transport *t, const uint8_t key[8])
+{
+   (void)t; (void)key;
+   return -1;
+}
+
+int lan_transport_punch_start(lan_transport *t, const uint32_t *ip_be, const uint16_t *port, int n,
+                              unsigned timeout_ms)
+{
+   (void)t; (void)ip_be; (void)port; (void)n; (void)timeout_ms;
+   return -1;
+}
+
+void lan_transport_punch_stop(lan_transport *t)
+{
+   (void)t;
+}
+
+int lan_transport_relay_start(lan_transport *t, uint32_t server_ip_be, const uint16_t *ports, int n_ports,
+                              const char *username, const char *credential)
+{
+   (void)t; (void)server_ip_be; (void)ports; (void)n_ports; (void)username; (void)credential;
+   return -1;
+}
+
+int lan_transport_relay_bind(lan_transport *t, uint32_t peer_ip_be, uint16_t peer_port)
+{
+   (void)t; (void)peer_ip_be; (void)peer_port;
+   return -1;
+}
+
+void lan_transport_relay_stop(lan_transport *t)
+{
+   (void)t;
+}
+
+void lan_transport_nat_status(lan_transport *t, lan_nat_status *out)
+{
+   (void)t;
+   if (out)
+      memset(out, 0, sizeof *out);
+}
+
+int lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port)
+{
+   (void)t; (void)ip_be; (void)port;
+   return -1;
+}
+
+int lan_transport_bulk_recv_from(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap)
+{
+   if (src_mac)
+      memset(src_mac, 0, 6);
+   return lan_transport_bulk_recv(t, buf, cap);
+}

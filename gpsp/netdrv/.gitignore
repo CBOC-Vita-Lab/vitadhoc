@@ -10,3 +10,6 @@ test_vadhoc
 test_vadhoc-*
 __pycache__/
 obj-vita/
+test_nat
+test_nat-address
+test_nat-thread

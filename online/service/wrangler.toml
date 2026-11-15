@@ -1,0 +1,65 @@
+# VitAdhoc online play (vitadhoc-online): ONE Worker and ONE Durable Object (class RoomServer, SQLite-backed, its own database). It shares
+# nothing with the other services on the same account and zone. Deploy steps: DEPLOY.txt (scripts/deploy-vitadhoc-online.sh).
+# Nothing here is tied to an account (wrangler picks it from the login / CLOUDFLARE_ACCOUNT_ID, which the script pins).
+
+name = "vitadhoc-online"
+main = "src/worker.js"
+compatibility_date = "2025-10-01"
+# The public address is https://vitadhoc.psvita.dev: a Worker custom domain (the whole hostname goes to this Worker; paths cannot be restricted
+# here, so a WAF custom rule on the zone blocks every path the Worker does not serve: scripts/setup-vitadhoc-zone.sh).
+# The zone psvita.dev must be active on the same account and have no DNS record named "vitadhoc" (the deploy creates it).
+routes = [{ pattern = "vitadhoc.psvita.dev", custom_domain = true }]
+# No workers.dev address: a WAF rule and the zone's rate limit cannot sit in front of it.
+workers_dev = false
+
+[observability]
+enabled = false                    # no request logging on the platform side
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomServer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomServer"]
+
+# Secrets (set by the deploy script from files, never in this file): TURN_KEY_ID, TURN_KEY_API_TOKEN (Cloudflare Realtime TURN key).
+[vars]
+TURN_PROVIDER = "cloudflare"
+MIN_APP_VERSION = "2.0.0"          # older builds get 426 update_required
+LATEST_APP_VERSION = "2.0.0"
+KILL_SWITCH = ""                   # comma list: all, rooms, relay (all / rooms refuse every room route but the close; relay refuses route 6)
+MAINTENANCE_MESSAGE = ""           # shown to the player with 503 switched_off
+# Quota defence (README.md "Quota arithmetic"; core/budget.js). The free plan's 100,000 Worker requests a day belong to the whole ACCOUNT,
+# shared with the other services: this one admits at most DAILY_REQUEST_BUDGET of them. A NEW room stops at (100 - LIVE_RESERVE_PCT) %.
+DAILY_REQUEST_BUDGET = "8000"
+LIVE_RESERVE_PCT = "20"
+BUDGET_SAVE_EVERY = "20"           # the day's count is saved every 20 requests (and at the first request after the object starts)
+POLL_PACE_MAX_PCT = "140"          # clients are asked to stretch their polls up to this much, from half of the new-room budget
+MAX_ROOMS = "300"                  # live rooms at once
+ROOM_TTL_SEC = "600"               # an open room lasts 10 minutes
+CONNECT_SEC = "120"                # a joined room must link within 2 minutes
+# Limits (per address unless said; RATE_LIMIT_SCALE multiplies them, 1 = as listed; PROTOCOL.md 1.2)
+EDGE_IP_BURST = "40"               # the Worker's bucket per address, per isolate
+EDGE_IP_PER_SEC = "1"
+ADDR_DAILY = "1500"                # requests a day per address, then 429 daily_cap until midnight UTC
+CREATE_BURST = "3"                 # new rooms: burst 3, then one per CREATE_EVERY_SEC
+CREATE_EVERY_SEC = "120"
+ROOMS_PER_ADDR = "4"               # live rooms per address
+CREATES_PER_ADDR_DAY = "40"
+LOOKUP_BURST = "8"                 # room lookups: burst 8, then one per LOOKUP_EVERY_SEC
+LOOKUP_EVERY_SEC = "5"
+MISSES_PER_HOUR = "20"             # wrong codes / tokens an address may try in a UTC hour, then 429 guessing until the hour ends
+MISSES_PER_DAY = "60"              # ... in a UTC day, then until midnight
+JOIN_BURST = "4"                   # joins: burst 4, then one per JOIN_EVERY_SEC
+JOIN_EVERY_SEC = "10"
+POLL_MIN_MS = "800"                # one poll per token per 800 ms
+MINTS_PER_MEMBER = "2"             # relay credentials: per member, per room, per address a day, and in all a day
+MINTS_PER_ROOM = "4"
+MINTS_PER_ADDR_DAY = "40"
+TURN_MAX_CREDS_PER_DAY = "800"
+TURN_TTL_SEC = "3600"
+TURN_EST_MB_PER_USE = "50"         # the monthly guard: each USED credential counts this many MB ...
+TURN_MONTHLY_BUDGET_MB = "50000"   # ... and the relay stops at this many (route 6 answers 503 relay_budget)
+# Test-only variables, NEVER set here: RATE_LIMIT_SCALE (multiplies every per-address limit), ALLOW_PRIVATE_ADDR (the dev server and the tests set it),
+# TURN_STUB_URLS / TURN_STUB_SECRET (the stub TURN provider of the dev server).

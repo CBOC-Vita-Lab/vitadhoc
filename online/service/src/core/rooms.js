@@ -20,7 +20,7 @@ export const SCHEMA = [
     guest_nick TEXT, guest_pub TEXT, guest_lan TEXT, guest_sym INTEGER, guest_relay_only INTEGER,
     guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER,
     punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,
-    created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER)`,
+    created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER, relay_uses INTEGER DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`,
 ];
 
@@ -240,12 +240,16 @@ export function punchMsFor(r, role) {
   return hostPollMs(joinedAge) + 4000;
 }
 
-/** A member's relayed address (route 7). First post of a member: the credential counts as USED (returns true). */
+/** A member's relayed address (route 7). First post of a member: the credential counts as USED (returns true), but a room never counts
+ *  more uses than the credentials it was given (`relay_uses` <= host_mints + guest_mints, which the per-room cap holds at 4). Without that
+ *  bound the monthly relay guard could be spent by anybody for nothing: route 7 takes any public address, and a guest that joins, posts
+ *  one and cancels (the room reopens with its relayed columns cleared) would add a "use" each round without a single credential minted. */
 export function setRelayed(c, r, role, relayed) {
   const col = role === 'host' ? 'host_relayed' : 'guest_relayed';
-  const first = !r[col];
-  c.db.run(`UPDATE rooms SET ${col} = ?, state = 'relay' WHERE code = ?`, relayed, r.code);
-  return first;
+  const uses = r.relay_uses || 0;
+  const counted = !r[col] && uses < (r.host_mints || 0) + (r.guest_mints || 0);
+  c.db.run(`UPDATE rooms SET ${col} = ?, state = 'relay', relay_uses = ? WHERE code = ?`, relayed, uses + (counted ? 1 : 0), r.code);
+  return counted;
 }
 
 /** A guest that cancelled or failed: the same code works for another try (guest columns cleared, back to open). */

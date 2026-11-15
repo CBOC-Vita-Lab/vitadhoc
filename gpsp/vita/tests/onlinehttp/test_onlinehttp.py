@@ -143,9 +143,9 @@ class Plain(Base):
             t0 = time.time()
             while time.time() - t0 < 10 and port is None:
                 line = p.stdout.readline()
-                m = re.search(r"127\.0\.0\.1:(\d+)|port[ =:]+(\d+)", line)
+                m = re.search(r"READY (\d+)", line)
                 if m:
-                    port = int(m.group(1) or m.group(2))
+                    port = int(m.group(1))
             if port is None:
                 self.skipTest("SKIPPED: could not read the dev server's port")
             self.runner("flow", f"http://127.0.0.1:{port}", "real")

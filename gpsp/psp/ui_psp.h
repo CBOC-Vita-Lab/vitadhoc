@@ -250,6 +250,14 @@ const char *ui_online_open_path(void);
 /* The library chose a game in order to join a room: 1 once, with the target
  * in *ui_join_target(). */
 int ui_online_take_pending(void);
+/* The code pad as a blocking page, for a screen that needs a room code (the
+ * share screens): 1 and the five characters in out when the player
+ * confirmed, 0 when they backed out. */
+int ui_online_code_modal(char out[6]);
+/* The toast of a link that has just formed over the internet: "Connected to
+ * <peer>. Connection: Great|Good|Slow", and a second line for Slow.  quality
+ * is ONLINE_Q_* (online_vita.h). */
+void ui_online_connected_toast(const char *peer, int quality);
 
 /* The LINKING screen and the finger: ui_linking_draw() registers its
  * footer's hints ("O cancel", "O back") as touch targets.  Whoever draws

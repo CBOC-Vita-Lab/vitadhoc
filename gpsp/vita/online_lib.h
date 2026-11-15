@@ -4,7 +4,11 @@
 #ifndef ONLINE_LIB_H
 #define ONLINE_LIB_H
 
-#include "app_vita.h"            /* APP_PATH_CAP */
+/* APP_PATH_CAP is app_vita.h's (512); not included here so that the host
+ * bench and the unit test can use this header on its own. */
+#ifndef APP_PATH_CAP
+#define APP_PATH_CAP 512
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +21,9 @@ int  online_lib_begin(const char *console, const char *game, const char *rom);
 /* Look at up to `files` more files (8 a frame).  0 searching, 1 finished. */
 int  online_lib_step(int files);
 int  online_lib_hits(online_lib_hit *out, int max);   /* code matches found so far, hash matches first */
+/* Compressed .zip files the walk could not read (their header lies inside
+ * deflated data): the page may say so.  Valid until online_lib_end. */
+int  online_lib_skipped(void);
 void online_lib_end(void);
 /* pure, unit-tested: what the card page does with the hits.
  * ONLINE_PICK_NONE: nothing has that code.  ONLINE_PICK_OPEN: open hits[0] without asking.

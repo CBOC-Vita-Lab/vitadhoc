@@ -1,4 +1,4 @@
-# Codex request: deploy the VitAdhoc 2.0 online service to https://vitadhoc.psvita.dev (15 Nov 2026)
+# Codex request: deploy the VitAdhoc 2.0 online service to https://vitadhoc.psvita.dev (16 Nov 2026)
 
 You are doing ONE job, in this order:
 
@@ -12,12 +12,19 @@ Nothing else. Read all of this before you start.
 **The zone `psvita.dev` is SHARED.** Two other services live in it, each on its own host, each its own Worker. They are not part of this
 request. Never touch them, list them, contact them or put their names in a command: see "Hard rules".
 
+**Already looked at on the live account (read only, 16 Nov 2026, from the dashboard), so you know what to expect:** the zone `psvita.dev`
+is active on the Free plan; it has NO DNS record named `vitadhoc`; Bot Fight Mode is OFF; the shared rate-limiting rule exists, is enabled and
+covers `/v1/*` (Cloudflare gave it an id of its own as `ref`; its description is `psvita-shared-ratelimit`, and the zone script matches it by
+either); the custom-rules phase holds ONE rule of another service (so ours is the second of five); the account has no Worker named
+`vitadhoc-online` and one TURN key of another service (B1 creates a SEPARATE key for this service; never reuse or touch the other one).
+If anything you see differs from this, report it before you write anything.
+
 ---
 
 ## Package (made by the person who prepared this request; you only check it)
 
-* File: `vitadhoc-online-server-20261115a.tgz`, in the same folder as this prompt.
-* SHA-256: `741368345f76afa370e3f57af07c0c31c81ada80ed5f1c82a06ae01d7f20fdfb`.
+* File: `vitadhoc-online-server-20261116a.tgz`, in the same folder as this prompt.
+* SHA-256: `89a5e70c693ddec7c72226e1583c2369908b22eea4cb09f5b378fdf7b21e05b0`.
   Compute it yourself first (`shasum -a 256` on macOS). If it differs, STOP and report.
 * Unpack it into a NEW empty folder whose path contains a space (for example `~/vitadhoc deploy 20261115/`) and work from `<that folder>/server`.
   It holds the Worker (`wrangler.toml`, `src/`), `test/`, `dev/`, `scripts/` and the docs `README.md`, `PROTOCOL.md`, `DEPLOY.txt`.
@@ -29,9 +36,9 @@ The three scripts you will run (all in `scripts/`, all read by you before use, s
 `setup-vitadhoc-zone.sh`. Always run them as `bash scripts/<name> ...` (the files are not marked executable).
 
 *How this package was made (for the person preparing it, not for you):* from the repository root at the release commit,
-`W=$(mktemp -d); git archive --format=tar --prefix=server/ HEAD:online/service | tar -x -C "$W"; (cd "$W" && tar --sort=name --mtime='UTC 2026-01-01' --owner=0 --group=0 --numeric-owner -cf - server | gzip -n -9) > vitadhoc-online-server-20261115a.tgz; shasum -a 256 vitadhoc-online-server-20261115a.tgz`.
+`W=$(mktemp -d); git archive --format=tar --prefix=server/ HEAD:online/service | tar -x -C "$W"; (cd "$W" && tar --sort=name --mtime='UTC 2026-01-01' --owner=0 --group=0 --numeric-owner -cf - server | gzip -n -9) > vitadhoc-online-server-20261116a.tgz; shasum -a 256 vitadhoc-online-server-20261116a.tgz`.
 The result depends only on the content of `online/service`, so the same tree always gives the same hash. The value above is for the tree
-`f2b1d6f02f610b7574c8723b380121debdb40bc3` (`git rev-parse HEAD:online/service`); if that tree changes before the request is handed over (the final pass after the
+`135756d36425eeb88403c2529058f6f8d3432efb` (`git rev-parse HEAD:online/service`); if that tree changes before the request is handed over (the final pass after the
 twin scenarios), the package is made again and this line, and the test count in A5, are updated.
 
 ## Account id (do not echo it)
@@ -90,8 +97,8 @@ this, verbatim, at the top of the report and in your final message, naming only 
 1. Tools: `node` (version 22.5 or newer: the service tests use `node:sqlite`), `npm`, `npx`, `curl`, `python3`, `openssl`, `bash`. A missing or too old
    tool is a STOP; name it. Compute the package's SHA-256 and compare. Read the account id as above. Check that the files of the table above that
    parts B and C need exist (check existence only; do not open or print the token files; refer to them as `~/.cf-psvita-token` and so on).
-2. Unpack, `cd` into `server`, run `npm install --no-audit --no-fund` (this package has no lock file; it installs wrangler 4 beside the scripts, so
-   that `npx wrangler` is the installed one and not a fresh download), then `npx wrangler --version` (must start with `4.`).
+2. Unpack, `cd` into `server`, run `npm ci --no-audit --no-fund` (the package has a lock file: it installs the pinned wrangler 4 beside the
+   scripts, so that `npx wrangler` is the installed one and not a fresh download), then `npx wrangler --version` (must start with `4.`).
 3. **Read the three scripts** (`create-turn-key.sh`, `deploy-vitadhoc-online.sh`, `setup-vitadhoc-zone.sh`) line by line before running any. They
    follow one set of safety rules; what you will find, so that you do not have to guess:
    * `create-turn-key.sh`: curl runs only inside `api()`, the token and the body reach curl on stdin (`-K -`), the reply (which holds the new secret) is
@@ -108,7 +115,7 @@ this, verbatim, at the top of the report and in your final message, naming only 
    * If your own reading finds a line that could leak a token, a TURN secret, the account id or an e-mail address, STOP and name the line.
 4. Run `bash scripts/deploy-vitadhoc-online.sh --self-check`, `bash scripts/setup-vitadhoc-zone.sh --self-check`,
    `bash scripts/create-turn-key.sh --self-check` (each prints `self-check ok`), and `bash scripts/create-turn-key.selftest.sh` (ends `21 ok, 0 failed`).
-5. `node --test "test/*.test.mjs"` (the quotes matter: Node 22 does not expand a folder). Expect `# pass 110`, `# fail 0`, `# skipped 0`. Any other
+5. `node --test "test/*.test.mjs"` (the quotes matter: Node 22 does not expand a folder). Expect `# pass 122`, `# fail 0`, `# skipped 0`. Any other
    number or any failure: STOP (it is the wrong package or a broken one).
 6. Print the three plans and read them; they contact nothing:
    * `bash scripts/create-turn-key.sh --account-id "$ACCOUNT_ID" --token-file ~/.cf-vad-calls-token --key-id-file ~/.vad-turn-key-id --turn-token-file ~/.vad-turn-token --print-plan`
@@ -167,7 +174,8 @@ other lines and decide:
     bash scripts/setup-vitadhoc-zone.sh --account-id "$ACCOUNT_ID" --token-file ~/.cf-psvita-token
 
 How it works: it finds the zone by name (exactly one, active, in this account), reads both phases, keeps every rule that is not ours, prints the exact
-plan, and only then writes ONE rule, found by its ref `vitadhoc-psvita-block-unserved`, action Block:
+plan, and only then writes ONE rule, found by its ref `vitadhoc-psvita-block-unserved` or, if Cloudflare gave it an id of its own as ref, by its
+description (which starts `vitadhoc-online`), action Block:
 
     (http.host eq "vitadhoc.psvita.dev" and not starts_with(http.request.uri.path, "/v1/") and not starts_with(http.request.uri.path, "/.well-known/acme-challenge/") and not starts_with(http.request.uri.path, "/.well-known/pki-validation/"))
 
@@ -213,7 +221,7 @@ down its result, pass or fail, even where a script printed `ALL CHECKS PASSED`.
    the last certificate in the chain is issued by one of them or what else it is.
 6. Write `CODEX-REPORT-vitadhoc-online-20261115.md` next to your working folder. Include: the package SHA-256 as verified; which relay-key way was used
    (created / reused) and the uid's last 4 characters; the Wrangler version id of the deploy; the exit code and last lines of every summary; the test
-   counts (110 pass); the result of every numbered check D1 to D5 (pass / fail / not run); the Bot Fight Mode and Browser Integrity Check readings
+   counts (122 pass); the result of every numbered check D1 to D5 (pass / fail / not run); the Bot Fight Mode and Browser Integrity Check readings
    as the scripts printed them; whether parts B1, B2 and C are DONE or PENDING (with the PENDING line); what you did NOT do (no rate-limit rule, no other
    service, no Bot Fight change, no DNS, no workers.dev, no notifications: the Free plan has none for Workers or Durable Objects); anything unexpected.
    **Never include**: a token, a TURN key value, the account id (last 4 characters at most), an e-mail address, an account name.

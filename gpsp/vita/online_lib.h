@@ -16,7 +16,8 @@ extern "C" {
 
 #define ONLINE_LIB_MAX 8
 typedef struct online_lib_hit { char path[APP_PATH_CAP]; char rom[9]; int rom_match; int patched; } online_lib_hit;
-/* console "gba" "gb" "gbc" (milestone B: "nes" "snes" "ws", where `game` is the CRC).  `rom` may be "". */
+/* console "gba" "gb" "gbc" (code in the header), "nes" "snes" "ws" (Two players: `game` is the 8-digit CRC, the file is hashed whole;
+ * unzipped files only).  `rom` may be "". */
 int  online_lib_begin(const char *console, const char *game, const char *rom);
 /* Look at up to `files` more files (8 a frame).  0 searching, 1 finished. */
 int  online_lib_step(int files);

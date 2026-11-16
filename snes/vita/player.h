@@ -157,6 +157,22 @@ public:
 	/* in-game notices (drawn by the platform over the game) */
 	pk::Notices &notices() { return menu_.notices(); }
 
+	/* ---- a linked two-player game (netplay.h) ----
+	 * The launch file asked for a link: the game starts new, nothing the link computes is saved (no battery RAM watch,
+	 * no resume point, no states, no cheats), and the player's pad 1 is only the LOCAL player's buttons (the session
+	 * feeds both pads of the one machine). The loop steps snesnet::Link instead of snes_host_run_frame(). */
+	bool linked() const { return req_.link.active(); }
+	/* a file holding exactly the image the machine runs (the session's identity): the game file itself, or a copy under
+	 * <root>/launch/ when the image is patched or lost a copier header; "" when not linked */
+	const std::string &link_rom() const { return link_rom_; }
+	/* the local player's buttons of the last input() (the SNES mask of host.h) */
+	unsigned link_pad() const { return link_pad_; }
+	/* how the link ended, for session.txt and the app's message */
+	void set_link_result(const std::string &result, int err, const std::string &err_name, int frames)
+	{
+		link_result_ = result; link_err_ = err; link_err_name_ = err_name; link_frames_ = frames;
+	}
+
 	/* ---- the end ---- */
 	/* resume point, battery RAM, settings, log, session.txt; afterwards the platform starts the app */
 	void finish(pk::ExitReason why);
@@ -263,6 +279,9 @@ private:
 	pk::InputResult in_;
 	pk::PadSample last_pads_[pk::MAX_PLAYERS];
 	bool menu_srm_pending_ = false;
+	std::string link_rom_, link_result_, link_err_name_;
+	unsigned link_pad_ = 0;
+	int link_err_ = 0, link_frames_ = 0;
 	/* wide view */
 	bool wide_on_ = false;
 	int wide_m_ = 0;

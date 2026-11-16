@@ -558,8 +558,39 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		session_write(root_, r);
 		return res;
 	}
+	if (req_.link.active()) {
+		/* the session's identity of the game: the bytes the core runs. The file itself when it is those bytes, else a
+		 * copy (a patched game, a game with a copier header: two consoles with the same game must agree) */
+		std::vector<uint8_t> raw, run;
+		bool have = false;
+		if (req_.patch_path.empty()) have = file_read(rom_, raw, 12u << 20);
+		else {
+			std::vector<uint8_t> romb;
+			PatchResult pr;
+			if (file_read(rom_, romb, 12u << 20)) { pr = patch_apply_files(req_.patch_path, romb, raw); have = pr.status == PS_OK; }
+		}
+		if (have) {
+			size_t off = (raw.size() - (raw.size() / 0x2000) * 0x2000 == 512) ? 512 : 0;
+			run.assign(raw.begin() + (long) off, raw.end());
+			std::vector<uint8_t> orig;
+			if (req_.patch_path.empty() && off == 0) link_rom_ = rom_;
+			else {
+				make_dirs(path_join(root, "launch"));
+				std::string p = path_join(path_join(root, "launch"), "link_rom.bin");
+				if (atomic_write(p, run.data(), run.size()) == W_OK) link_rom_ = p;
+			}
+		}
+		logf("link: role=%s mode=%s identity file %s (%s)\n", req_.link.role.c_str(), req_.link.mode.c_str(), link_rom_.c_str(),
+		     link_rom_ == rom_ ? "the game file" : "a copy of the image the core runs");
+		if (link_rom_.empty()) {
+			res.fatal1 = "The two-player link could not start.";
+			res.fatal2 = "The game file could not be read again.";
+			return res;
+		}
+	}
 	{
-		int nc = snes_host_cheats_load(root.c_str());
+		/* a cheat code pokes the machine on one console only: none is loaded in a linked game */
+		int nc = req_.link.active() ? 0 : snes_host_cheats_load(root.c_str());
 		logf("cheats: %d in the list\n", nc);
 	}
 
@@ -634,6 +665,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 
 void SnesPlayer::apply_start_mode()
 {
+	if (linked()) return;      /* a linked game starts from power-on and from the host's save, never from a resume point or slot */
 	std::vector<uint8_t> d;
 	if (req_.start == START_CONTINUE) {
 		if (!states_->resume_present()) { notice("No point to continue from: the game starts from the beginning", NOTICE_INFO); return; }
@@ -663,6 +695,12 @@ bool SnesPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t 
 	for (int i = 0; i < MAX_PLAYERS; i++) last_pads_[i] = pads[i];
 	mapper_.update(pads, now_ms, frame, &in_);
 	if (in_.menu || tapped) return true;
+	if (linked()) {
+		/* the session sets both pads of its one machine; this console's player is pad 1 only, no quick save or load */
+		link_pad_ = in_.pad[0] & 0xFFFu;
+		session_.tick_running(now_ms);
+		return false;
+	}
 	for (int i = 0; i < MAX_PLAYERS; i++) snes_host_set_pad(i, in_.pad[i]);
 	session_.tick_running(now_ms);
 	if (in_.fired & FIRE_QSAVE) quick_save();
@@ -744,7 +782,7 @@ void SnesPlayer::after_frame(uint64_t now_us)
 	srm_watch(now_us);
 	wide_watch(now_us);
 	/* the resume point: every 2 minutes, and soon after the game saved (at most every 30 s) */
-	if (!resume_busy_) {
+	if (!resume_busy_ && !linked()) {
 		bool after_save = resume_after_srm_at_ && now_us >= resume_after_srm_at_ && states_->resume_due(now_ms_, 30000);
 		if (after_save || states_->resume_due(now_ms_, 120000)) { resume_after_srm_at_ = 0; resume_post(false); }
 	}
@@ -798,6 +836,7 @@ void SnesPlayer::srm_result(int r, const char *how, uint64_t now)
 
 void SnesPlayer::srm_watch(uint64_t now)
 {
+	if (linked()) return;      /* the machine holds the host's game: nothing of it is this console's save (the host's is committed by the session) */
 	if ((++srm_pass_ & 7) == 0 || srm_recheck_) {
 		const size_t sz = snes_host_sram_size();
 		const bool recheck = srm_recheck_;
@@ -823,6 +862,7 @@ void SnesPlayer::srm_watch(uint64_t now)
 void SnesPlayer::suspend()
 {
 	wait_writer();
+	if (linked()) { session_.pause(); return; }
 	if (snes_host_sram_dirty()) {
 		int r = snes_host_sram_save();
 		logf("sram save before suspend rc=%d\n", r);
@@ -1230,15 +1270,19 @@ void SnesPlayer::finish(ExitReason why)
 	}
 	if (settings_dirty_) settings_queue_save();
 	/* the resume point: where the game was left */
-	if (states_ && snes_host_state_size()) resume_post(true);
+	if (states_ && snes_host_state_size() && !linked()) resume_post(true);
 	wait_writer();
-	if (snes_host_sram_dirty()) {
+	if (!linked() && snes_host_sram_dirty()) {
 		int r = snes_host_sram_save();
 		logf("final sram save rc=%d\n", r);
 		srm_result(r, "final", pf_->now_us());
 	}
 	if (states_) session_.set_resume_present(states_->resume_present());
 	SessionReport rep = session_.finish(why);
+	rep.link_result = link_result_;
+	rep.link_error = link_err_;
+	rep.link_error_name = link_err_name_;
+	rep.link_frames = link_frames_;
 	WriteResult w = session_write(root_, rep);
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),

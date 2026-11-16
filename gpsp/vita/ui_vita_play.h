@@ -115,9 +115,18 @@ static int conn_step(int conn, int dir)
    return ids[(conn_row_of(conn) + n + dir) % n];
 }
 
+/* A NES or WonderSwan game links one way only: Two players (both Vitas run
+ * the same game, one pad each). */
+static int pad_console(void)
+{
+   return g_pcfg.console == FE_CONSOLE_NES ||
+          g_pcfg.console == FE_CONSOLE_WSWAN;
+}
+
 static const char *kind_name(int kind)
 {
    return kind == ROOM_ADAPTER ? "Wireless Adapter"
+        : kind == ROOM_PAD ? "Two players"
         : kind == ROOM_CABLE_GB ? "GB Link Cable" : "Link Cable";
 }
 
@@ -208,7 +217,10 @@ static void play_status_draw(int y, int conn, const ui_net_status *n)
 /* What this game links with, in one line (the page's sub-title). */
 static void play_game_line(char *out, size_t cap)
 {
-   if (g_pcfg.console != FE_CONSOLE_GBA)
+   if (pad_console())
+      wl_line_name(out, cap, "Two players: both " UI_DEVS " need ",
+                   own_game_name(), " open.", 436);
+   else if (g_pcfg.console != FE_CONSOLE_GBA)
       wl_line_name(out, cap, "Link Cable game. Player 2 needs ",
                    own_game_name(), ", or is sent it.", 436);
    else
@@ -238,7 +250,8 @@ static int play_rows(int ids[PL_COUNT])
    int n = 0;
    ids[n++] = PL_HOST;
    ids[n++] = PL_JOIN;
-   ids[n++] = PL_LOCAL;
+   if (!pad_console())
+      ids[n++] = PL_LOCAL;           /* a NES / WonderSwan game runs once */
    ids[n++] = PL_CONN;
    if (g_pcfg.console == FE_CONSOLE_GBA && ui_host_mgift_available())
       ids[n++] = PL_MGIFT;
@@ -290,7 +303,7 @@ static void play_host_value(char *out, size_t cap)
       return;
    }
    snprintf(out, cap, "%s  -  %s", room_label(g_pcfg.group, lbl, sizeof(lbl)),
-            m == UI_HOST_ASK ? "Cable or Adapter" : m == UI_HOST_ADAPTER
+            pad_console() ? "Two players" : m == UI_HOST_ASK ? "Cable or Adapter" : m == UI_HOST_ADAPTER
                ? "Wireless Adapter" : "Link Cable");
 }
 
@@ -303,7 +316,8 @@ static ui_action play_session(unsigned edges, const char *session_info)
    int pending = g_link.state == UI_LINK_OFF && g_play_pending;
    int conn = g_link.state != UI_LINK_OFF ? g_link.conn : g_pcfg.net_conn;
    char l1[120], l2[120], la[120], lb[120], lc[120], para[260], big[32];
-   const char *mode = g_link.cable ? "Link Cable" : "Wireless Adapter";
+   const char *mode = pad_console() ? "Two players"
+                    : g_link.cable ? "Link Cable" : "Wireless Adapter";
    int y, online = 0;
 
    if (g_cursor >= PS_COUNT)
@@ -412,22 +426,31 @@ static ui_action play_session(unsigned edges, const char *session_info)
          snprintf(l1, sizeof(l1), "Linked with the other " UI_DEV);
       /* Online has no room to name: a code that did its work */
       if (g_link.cable && g_link.player && conn == UI_CONN_ONLINE)
-         snprintf(l2, sizeof(l2), "You are Player %d%s, by Link Cable.",
-                  g_link.player, g_link.player == 1 ? " (the host)" : "");
-      else if (g_link.cable && g_link.player)
-         snprintf(l2, sizeof(l2), "You are Player %d%s in %s, by Link Cable.",
+         snprintf(l2, sizeof(l2), "You are Player %d%s, %s.",
                   g_link.player, g_link.player == 1 ? " (the host)" : "",
-                  g_link.room);
+                  pad_console() ? "Two players" : "by Link Cable");
+      else if (g_link.cable && g_link.player)
+         snprintf(l2, sizeof(l2), "You are Player %d%s in %s, %s.",
+                  g_link.player, g_link.player == 1 ? " (the host)" : "",
+                  g_link.room,
+                  pad_console() ? "Two players" : "by Link Cable");
       else if (g_link.cable)
-         snprintf(l2, sizeof(l2), "%s, by Link Cable.", conn == UI_CONN_ONLINE
-                  ? "Online" : g_link.room);
+         snprintf(l2, sizeof(l2), "%s, %s.", conn == UI_CONN_ONLINE
+                  ? "Online" : g_link.room,
+                  pad_console() ? "Two players" : "by Link Cable");
       else
          snprintf(l2, sizeof(l2), "%s, by Wireless Adapter. The game pairs "
                   "the players.", conn == UI_CONN_ONLINE ? "Online"
                   : g_link.room);
-      snprintf(para, sizeof(para), "Save states and cheats are off while "
-               "linked. Disconnect ends the link for both players: each "
-               "game saves and carries on alone.");
+      if (pad_console())
+         snprintf(para, sizeof(para), "Save states, cheats, rewind and fast "
+                  "forward are off while linked. Player 2 plays Player 1's "
+                  "game; when the link ends Player 2's own game comes back "
+                  "as it was and Player 1's carries on.");
+      else
+         snprintf(para, sizeof(para), "Save states and cheats are off while "
+                  "linked. Disconnect ends the link for both players: each "
+                  "game saves and carries on alone.");
    }
    else
       snprintf(l1, sizeof(l1), "%s", session_info && session_info[0]
@@ -750,7 +773,8 @@ static const char *join_title(const ui_room *r)
    if (r->kind == ROOM_CABLE_GBA && g_pcfg.console == FE_CONSOLE_GBA &&
        !strncmp(r->code, code, 4))
       return own_game_name();
-   t = r->kind == ROOM_CABLE_GB ? NULL : link_game_title(r->code);
+   t = r->kind == ROOM_CABLE_GB || r->kind == ROOM_PAD
+         ? NULL : link_game_title(r->code);
    return t ? t : r->title[0] ? r->title : "a game";
 }
 
@@ -762,6 +786,16 @@ static int join_other_game(const ui_room *r)
    room_code_gba(g_game_code, code);
    return r->kind == ROOM_CABLE_GBA && g_pcfg.console == FE_CONSOLE_GBA &&
           strncmp(r->code, code, 4) != 0;
+}
+
+/* A Two players room plays one game file: its code is the first 4 hex
+ * digits of the file's CRC (the session's handshake checks the whole file). */
+static int join_same_pad_game(const ui_room *r)
+{
+   char id[9];
+   if (!ui_host_pad_game(id))
+      return 0;
+   return !strncmp(r->code, id, 4);
 }
 
 /* Whether this game can enter a room, and the sentence when it cannot. */
@@ -801,6 +835,14 @@ static void join_decide(const ui_room *r, join_verdict *v)
                               "link.", rl);
    else if (r->kind == ROOM_CABLE_GB && gba)
       JOIN_NO("a Game Boy room", "%s is a Game Boy room.", rl);
+   else if (r->kind == ROOM_PAD && !pad_console())
+      JOIN_NO("a NES / WonderSwan room", "%s is a Two players room for a "
+              "NES or WonderSwan game.", rl);
+   else if (pad_console() && r->kind != ROOM_PAD)
+      JOIN_NO("not a Two players room", "%s is not a Two players room.", rl);
+   else if (r->kind == ROOM_PAD && !join_same_pad_game(r))
+      JOIN_NO("a different game", "%s is playing %s. Open the same game to "
+              "join.", rl, t);
    else if (r->max_players > 0 && r->players >= r->max_players)
       JOIN_NO("full", "%s is full: a room takes %d players.", rl,
               r->max_players);
@@ -1357,7 +1399,8 @@ static ui_action screen_adhoc(unsigned edges)
          return play_host_go(g_host_cable);
       memset(&g_join_tgt, 0, sizeof(g_join_tgt));
       g_join_tgt.conn = UI_CONN_ADHOC;
-      g_join_tgt.kind = g_pcfg.console != FE_CONSOLE_GBA ? ROOM_CABLE_GB
+      g_join_tgt.kind = pad_console() ? ROOM_PAD
+                      : g_pcfg.console != FE_CONSOLE_GBA ? ROOM_CABLE_GB
                       : ui_host_mode() == UI_HOST_ADAPTER ? ROOM_ADAPTER
                                                           : ROOM_CABLE_GBA;
       g_join_tgt.number = room_number(g_pcfg.group);

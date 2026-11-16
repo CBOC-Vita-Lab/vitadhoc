@@ -41,7 +41,7 @@
  *              mirror's frame loop is untouched.  The one Online-only rule
  *              is the input delay's ceiling (12 frames, delay_pick).
  *
- * THREE KINDS (the game decides, docs/GBA-LINK-UI.md):
+ * FOUR KINDS (the game decides, docs/GBA-LINK-UI.md):
  *
  *   GBA Link Cable    the mirror: each console runs BOTH GBAs with the cable
  *                     between them, only buttons cross (fe_gblink over
@@ -50,6 +50,13 @@
  *   GBA Wireless      one core per console; the game's own adapter protocol
  *   Adapter           rides netdrv (fe_np_start) and pairs the players.
  *   GB / GBC cable    the mirror with two Game Boys per console.
+   Two players       (2.0) a NES or WonderSwan game: both consoles run the
+                     SAME machine, the host's pad on port 1, the guest's on
+                     port 2 (the WonderSwan's one pad takes both).  Only
+                     buttons cross, as in the mirror (fe_gblink over
+                     fe_padpair's machines); the host's state and battery
+                     start both, the guest's own game is set aside and put
+                     back, and both need the same game file.
  *
  * WHO MAY LINK WITH WHOM.  The mirror is only a mirror if both consoles
  * compute the same machines cycle for cycle: the same build, the same CPU
@@ -171,7 +178,9 @@
 /* The room kinds are one vocabulary in three headers. */
 typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &&
                                (int)LAN_KIND_GBA_CABLE == (int)ROOM_CABLE_GBA &&
-                               (int)LAN_KIND_GB_CABLE == (int)ROOM_CABLE_GB)
+                               (int)LAN_KIND_GB_CABLE == (int)ROOM_CABLE_GB &&
+                               (int)LAN_KIND_SHARE == (int)ROOM_SHARE &&
+                               (int)LAN_KIND_PAD == (int)ROOM_PAD)
                               ? 1 : -1];
 
 /* ---- numbers ------------------------------------------------------------------ */
@@ -214,12 +223,15 @@ typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &
 
 /* The link session's bulk lane: 1024 data + 13 header (psp/main_psp.c). */
 #define BULK_BYTES        1037u
+/* A WonderSwan frame is 13.25 ms, a display refresh 16.7: the input delay is
+ * counted in emulated frames, so the same time is 126 % of them. */
+#define WS_DELAY_NUM      126u
 /* Scanlines slot 0 may run ahead while the GB cable is quiet (GB-LINK.md 8). */
 #define GB_BATCH          154u
 
 /* ---- state -------------------------------------------------------------------- */
 
-enum { LK_NONE = 0, LK_ADAPTER, LK_CABLE, LK_GB };
+enum { LK_NONE = 0, LK_ADAPTER, LK_CABLE, LK_GB, LK_PAD };
 
 enum
 {
@@ -329,7 +341,7 @@ static struct
    int      drc;
    int      up;                   /* net_vita_init succeeded                 */
    uint32_t compat[6];            /* by LAN_KIND_*; 3 is unused, 4 share,
-                                   * 5 the two-player mirror (milestone B)  */
+                                   * 5 two players (NES / WonderSwan)        */
    /* Online (vita.ini; docs/ONLINE-PLAY.md) */
    char     on_url[96], on_stun[96];
    int      on_lan, on_force_relay, on_no_relay, on_punch_ms;
@@ -337,7 +349,8 @@ static struct
    int      natsim_id;
    int      direct, direct_read;  /* link_direct = 1: the typed address     */
    int      on_set;               /* online_setup ran                        */
-   char     proto_cable[ND_PROTO_LEN], proto_gb[ND_PROTO_LEN];
+   char     proto_cable[ND_PROTO_LEN], proto_gb[ND_PROTO_LEN],
+            proto_pad[ND_PROTO_LEN];
    int      exit_assist;
 } S;
 
@@ -366,6 +379,32 @@ uint32_t gpsp_rfu_now_us(void)
 static int is_gba(void)
 {
    return g_game.console == FE_CONSOLE_GBA;
+}
+
+/* A NES or WonderSwan game: the only link it has is Two players. */
+static int is_pad_game(void)
+{
+   return g_game.console == FE_CONSOLE_NES ||
+          g_game.console == FE_CONSOLE_WSWAN;
+}
+
+/* The game's identity for a Two players room: the 8 hex digits of its file's
+ * CRC (the same text on both consoles), and the 4 the room list shows. */
+static void pad_game8(char out[9])
+{
+   if (!fe_host_pad_game_id(out))
+      snprintf(out, 9, "00000000");
+   for (int i = 0; out[i]; i++)
+      out[i] = (char)((out[i] >= 'a' && out[i] <= 'z') ? out[i] - 32
+                                                       : out[i]);
+}
+
+static void pad_room_code(char code[5])
+{
+   char g[9];
+   pad_game8(g);
+   memcpy(code, g, 4);
+   code[4] = '\0';
 }
 
 static void phase_set(int ph)
@@ -461,11 +500,19 @@ static void compat_make(void)
             (unsigned)(S.compat[LAN_KIND_GBA_CABLE] & 0xFFFFFFu));
    snprintf(S.proto_gb, sizeof(S.proto_gb), "GBAdhoc GB link v2/%04x",
             (unsigned)(S.compat[LAN_KIND_GB_CABLE] & 0xFFFFu));
-   /* Share game data and the milestone-B mirror: the build alone. */
+   /* Share game data: the build alone. */
    snprintf(build, sizeof(build), "%s|%s|%s", GBADHOC_VERSION, LINK_ABI,
             S.build);
    S.compat[LAN_KIND_SHARE] = lan_compat_hash("GBAdhoc share", build);
-   S.compat[5] = lan_compat_hash("GBAdhoc mirror v1", build);
+   /* Two players (NES / WonderSwan): the build and the pad session's own
+    * version.  The machine is the player's own core in both consoles and
+    * the options that would change it are pinned for the session
+    * (fe_host.c pad_link_start), so nothing else tells two builds apart. */
+   snprintf(build, sizeof(build), "%s|%s|%s|pad v1", GBADHOC_VERSION,
+            LINK_ABI, S.build);
+   S.compat[LAN_KIND_PAD] = lan_compat_hash("GBAdhoc pad v1", build);
+   snprintf(S.proto_pad, sizeof(S.proto_pad), "GBAdhoc pad v1/%04x",
+            (unsigned)(S.compat[LAN_KIND_PAD] & 0xFFFFu));
    fe_evt("link_compat backend=%s adapter=%08x cable=%08x gb=%08x",
           backend_name(), (unsigned)S.compat[0], (unsigned)S.compat[1],
           (unsigned)S.compat[2]);
@@ -925,6 +972,8 @@ static void announce(int players, int open)
    memset(&ri, 0, sizeof(ri));
    if (L.room_kind == LAN_KIND_GB_CABLE)
       room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
+   else if (L.room_kind == LAN_KIND_PAD)
+      pad_room_code(code);
    else
       room_code_gba(g_game.code, code);
    room_make(L.room_kind, L.number, code, ri.name, sizeof(ri.name));
@@ -1094,7 +1143,8 @@ static int np_start(void)
              ride_max);
    }
    fe_np_set_gb_protocol(L.kind == LK_CABLE ? S.proto_cable
-                         : L.kind == LK_GB ? S.proto_gb : NULL);
+                         : L.kind == LK_GB ? S.proto_gb
+                         : L.kind == LK_PAD ? S.proto_pad : NULL);
    memset(&npc, 0, sizeof(npc));
    npc.transport = &tp;
    npc.is_host = L.is_host;
@@ -1110,7 +1160,7 @@ static int np_start(void)
    fe_evt("link_net_up kind=%d host=%d arq=%u/%u proto=\"%s\"", L.kind,
           L.is_host, (unsigned)first, (unsigned)floor_us,
           L.kind == LK_CABLE ? S.proto_cable : L.kind == LK_GB ? S.proto_gb
-                                                               : "core");
+                                  : L.kind == LK_PAD ? S.proto_pad : "core");
    return 0;
 }
 
@@ -1350,6 +1400,14 @@ static int rom_identity(const char *path, char out[9])
  * is still current; a zip and a patch that was never applied are "unknown"
  * (-1: the host's description then says "" and the match falls back to the
  * game code). */
+int ui_host_pad_game(char out[9])
+{
+   if (!is_pad_game())
+      return 0;
+   pad_game8(out);
+   return 1;
+}
+
 int ui_host_online_rom_id(const char *path, char out[9])
 {
    static const char *const pext[] = { ".ips", ".bps", ".ups" };
@@ -1409,15 +1467,25 @@ static void online_desc_make(online_desc *d)
    d->kind = L.room_kind;
    snprintf(d->console, sizeof(d->console), "%s",
             g_game.console == FE_CONSOLE_GBC ? "gbc"
-            : g_game.console == FE_CONSOLE_GB ? "gb" : "gba");
-   if (L.room_kind == LAN_KIND_GB_CABLE)
-      room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
+            : g_game.console == FE_CONSOLE_GB ? "gb"
+            : g_game.console == FE_CONSOLE_NES ? "nes"
+            : g_game.console == FE_CONSOLE_WSWAN ? "ws" : "gba");
+   if (L.room_kind == LAN_KIND_PAD)
+   {
+      /* the whole file's CRC: two different games never meet by a code */
+      pad_game8(d->game);
+   }
    else
-      room_code_gba(g_game.code, code);
-   for (i = 0; i < 4; i++)
-      code[i] = (char)((code[i] >= 'a' && code[i] <= 'z') ? code[i] - 32
-                                                          : code[i]);
-   memcpy(d->game, code, 5);
+   {
+      if (L.room_kind == LAN_KIND_GB_CABLE)
+         room_code_gb(g_game.gb_title, sizeof(g_game.gb_title), code);
+      else
+         room_code_gba(g_game.code, code);
+      for (i = 0; i < 4; i++)
+         code[i] = (char)((code[i] >= 'a' && code[i] <= 'z') ? code[i] - 32
+                                                             : code[i]);
+      memcpy(d->game, code, 5);
+   }
    put_text(d->title, sizeof(d->title), g_game.name);
    put_text(d->nick, sizeof(d->nick), g_pcfg.nick);
    if (!d->nick[0])
@@ -1580,6 +1648,17 @@ static void census_tick(void)
 
 /* ---- the session (cable / GB): start ------------------------------------------------------- */
 
+/* A WonderSwan's inputs are counted in its own frames (13.25 ms, not the
+ * 16.7 of a display refresh), so the same time is more of them.  The
+ * player's fixed setting is left as it is. */
+static unsigned ws_delay(unsigned d, unsigned cap)
+{
+   if (L.kind != LK_PAD || g_game.console != FE_CONSOLE_WSWAN)
+      return d;
+   d = (d * WS_DELAY_NUM + 99u) / 100u;
+   return d > cap ? cap : d;
+}
+
 static unsigned delay_pick(const char **how)
 {
    /* Online is the Internet case, with a ceiling of its own: what a
@@ -1603,7 +1682,7 @@ static unsigned delay_pick(const char **how)
    n = L.transport == TR_LAN
           ? lan_transport_echo_result(L.lan, &mn, &mx, &last) : 0;
    if (n < 2)
-      return base;
+      return ws_delay(base, cap);
    /* One frame for the two consoles' phase (they are not synchronised: up
     * to a frame apart), plus what the trip one way and its spread need.
     * The spread is taken from the round trips, so it is counted twice over:
@@ -1620,7 +1699,7 @@ static unsigned delay_pick(const char **how)
    *how = "measured";
    fe_evt("link_rtt n=%d min_us=%u max_us=%u last_us=%u want=%u", n,
           (unsigned)mn, (unsigned)mx, (unsigned)last, want);
-   return d;
+   return ws_delay(d, cap);
 }
 
 /* Start the link session over the driver that is up (psp/main_psp.c
@@ -1828,8 +1907,9 @@ void link_action(int is_host)
       L.conn = LINK_CONN_WIFI;
    if (is_host)
    {
-      rk = !gba ? ROOM_CABLE_GB : ui_host_cable() ? ROOM_CABLE_GBA
-                                                  : ROOM_ADAPTER;
+      rk = is_pad_game() ? ROOM_PAD
+           : !gba ? ROOM_CABLE_GB : ui_host_cable() ? ROOM_CABLE_GBA
+                                                    : ROOM_ADAPTER;
       L.number = room_number(ui_group());
    }
    else
@@ -1851,17 +1931,20 @@ void link_action(int is_host)
    /* What the room is and what this game can be in it: the Join list has
     * already refused the pairs that cannot work; a room that is not this
     * console's kind at all is refused here too. */
-   if (rk != ROOM_ADAPTER && rk != ROOM_CABLE_GBA && rk != ROOM_CABLE_GB)
-      rk = gba ? ROOM_ADAPTER : ROOM_CABLE_GB;
-   if ((rk == ROOM_CABLE_GB) != !gba)
+   if (rk != ROOM_ADAPTER && rk != ROOM_CABLE_GBA && rk != ROOM_CABLE_GB &&
+       rk != ROOM_PAD)
+      rk = is_pad_game() ? ROOM_PAD : gba ? ROOM_ADAPTER : ROOM_CABLE_GB;
+   if ((rk == ROOM_PAD) != is_pad_game() ||
+       (rk == ROOM_CABLE_GB && gba) ||
+       ((rk == ROOM_ADAPTER || rk == ROOM_CABLE_GBA) && !gba))
    {
       L.kind = LK_NONE;
       bringup_failed(UI_FAIL_GAME);
       return;
    }
    L.room_kind = rk;
-   L.kind = rk == ROOM_CABLE_GB ? LK_GB : rk == ROOM_CABLE_GBA ? LK_CABLE
-                                                               : LK_ADAPTER;
+   L.kind = rk == ROOM_PAD ? LK_PAD : rk == ROOM_CABLE_GB ? LK_GB
+            : rk == ROOM_CABLE_GBA ? LK_CABLE : LK_ADAPTER;
    L.flips = 0;
    L.flip_now = 0;
    L.can_flip = !is_host && L.conn == LINK_CONN_ADHOC && gba &&
@@ -1875,6 +1958,13 @@ void link_action(int is_host)
    {
       /* this boot has no second machine: not enough memory at load */
       bringup_failed(UI_FAIL_MEMORY);
+      return;
+   }
+   if (L.kind == LK_PAD && !fe_host_pad_ready())
+   {
+      /* a core that cannot take part (an older core build, a game that is
+       * not running): nothing was started */
+      bringup_failed(UI_FAIL_GAME);
       return;
    }
    if (!is_host)
@@ -2143,7 +2233,7 @@ static int session_fail_code(const fe_gblink_progress *pr)
    if (e == FE_GBLINK_E_PROTO)
       return UI_FAIL_VERSION;
    if (e == FE_GBLINK_E_ROM_MISSING || e == FE_GBLINK_E_ROM_BAD)
-      return UI_FAIL_GAME;
+      return L.kind == LK_PAD ? UI_FAIL_ONLINE_GAME : UI_FAIL_GAME;
    if (e == FE_GBLINK_E_MEMORY || e == FE_GBLINK_E_START)
       return UI_FAIL_MEMORY;
    if (L.why == LW_NOANSWER || e == FE_GBLINK_E_NO_PEER)
@@ -2183,6 +2273,7 @@ static void link_end(int st, unsigned pad_new)
 {
    fe_gblink_progress pr;
    int fail_screen, keep_room, desync, was_cable, why = L.why;
+   const int was_pad = L.kind == LK_PAD, was_host = L.is_host;
 
    fe_host_gblink_facts(&pr);
    desync = pr.error == FE_GBLINK_E_DESYNC ||
@@ -2267,7 +2358,14 @@ static void link_end(int st, unsigned pad_new)
       return;
    }
    link_off();
-   if (st == FE_GBLINK_DONE)
+   if (was_pad && st == FE_GBLINK_DONE)
+      osd_toast(was_host ? "Link ended. Game saved."
+                          : "Link ended. Your own game is back.");
+   else if (was_pad && pr.ran)
+      osd_toast(desync
+                ? "The games fell out of step. Your game is back where it was."
+                : "Link lost: the other Vita is gone. Your game is back where it was.");
+   else if (st == FE_GBLINK_DONE)
       osd_toast("Link ended. Game saved.");
    else if (why == LW_CANCEL)
       osd_toast("Link cancelled.");
@@ -2944,9 +3042,11 @@ static void chip_update(void)
       snprintf(s, sizeof(s), "Wireless Adapter  %s%s", L.room,
                L.phase == PH_HOSTING ? "  waiting" : "");
    else if (L.phase == PH_HOSTING || L.phase == PH_MEASURE)
-      snprintf(s, sizeof(s), "Link Cable  %s  waiting", L.room);
+      snprintf(s, sizeof(s), "%s  %s  waiting",
+               L.kind == LK_PAD ? "Two players" : "Link Cable", L.room);
    else if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
-      snprintf(s, sizeof(s), "Link Cable  %s  P%d", L.room,
+      snprintf(s, sizeof(s), "%s  %s  P%d",
+               L.kind == LK_PAD ? "Two players" : "Link Cable", L.room,
                L.is_host ? 1 : 2);
    /* The quality badge of an Online link (80 / 120 ms, online_vita.c): the
     * chip names it, so a slow line is no surprise when the game stutters. */
@@ -3159,7 +3259,8 @@ int ui_host_rooms_poll(ui_room *out, int max)
       o->players = r->info.players;
       o->max_players = r->info.max_players;
       o->open = (r->info.flags & LAN_ROOM_F_OPEN) != 0;
-      o->compatible = kind >= 0 && kind <= LAN_KIND_GB_CABLE &&
+      o->compatible = kind >= 0 &&
+                      (kind <= LAN_KIND_GB_CABLE || kind == LAN_KIND_PAD) &&
                       r->info.compat == S.compat[kind];
       o->rtt_ms = r->rtt_ms;
       snprintf(o->addr, sizeof(o->addr), "%s", r->addr);

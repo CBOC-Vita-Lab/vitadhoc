@@ -50,6 +50,14 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
 const char *nescore_error(void);
 int nescore_run_frame(nescore_t *core, unsigned buttons);
 void nescore_set_skip_render(nescore_t *core, int skip);
+/* The two-player link (frontend-common/fe_padpair.h): one emulated frame with
+ * both players' pads (bits NESCORE_BUTTON_*); pad 2 is the guest's. */
+int nescore_run_frame2(nescore_t *core, unsigned pad1, unsigned pad2);
+/* While a session runs: the options that change emulation are pinned (Four
+ * Score off); 0 puts the player's own back and lets go of pad 2. */
+void nescore_session_pin(nescore_t *core, int on);
+/* A cheap fingerprint of the battery RAM (0 = none). */
+uint32_t nescore_save_ram_crc(nescore_t *core);
 /* A refresh with no NES frame (a 50 Hz game on a 60 Hz display): the last
  * picture is handed to the video callback again, no sound. */
 int nescore_repeat_frame(nescore_t *core);

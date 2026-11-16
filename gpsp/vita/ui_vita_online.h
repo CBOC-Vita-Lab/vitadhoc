@@ -550,8 +550,17 @@ static int oc_can_enter(const ui_online_card *c)
    if (g_oc.modal)
       return 0;                    /* from the game list: no game is running */
    if (c->kind != ROOM_ADAPTER && c->kind != ROOM_CABLE_GBA &&
-       c->kind != ROOM_CABLE_GB)
+       c->kind != ROOM_CABLE_GB && c->kind != ROOM_PAD)
       return 0;
+   if (c->kind == ROOM_PAD)
+   {
+      /* Two players: the same console and the very same file (its whole
+       * CRC; join_decide below looks at the code's first 4 digits). */
+      char id[9];
+      if (strcmp(c->console, g_pcfg.console == FE_CONSOLE_NES ? "nes" : "ws") ||
+          !ui_host_pad_game(id) || strncmp(c->game, id, 8) != 0)
+         return 0;
+   }
    memset(&r, 0, sizeof(r));
    r.kind = c->kind;
    snprintf(r.code, sizeof(r.code), "%.4s", c->game);
@@ -606,7 +615,7 @@ static void oc_found(void)
    snprintf(g_ol_last_ver, sizeof(g_ol_last_ver), "%s", c->ver);
    snprintf(g_ol_last_title, sizeof(g_ol_last_title), "%.23s", g_oc.title);
    g_oc.cable = c->kind == ROOM_CABLE_GBA || c->kind == ROOM_CABLE_GB ||
-                c->kind == 5;
+                c->kind == ROOM_PAD;
    /* the build first: only a room this build can enter has its game looked
     * at; then a full room */
    if (!c->compatible)

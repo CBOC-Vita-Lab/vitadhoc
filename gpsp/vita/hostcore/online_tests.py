@@ -1096,6 +1096,110 @@ def t_library_join(T):
 
 
 
+# ---- Two players Online: a NES game here, a SNES game handed to snes.bin -----------------------------
+
+def t_nes_relay(T):
+    """Online, Two players on a NES game through the relay: one machine on both consoles, in step"""
+    rom = L.nes_rom()
+    if not rom:
+        T.S.note("no NES game (VITADHOC_NES_ROM, or GATE_NES_ROMS with nes15-NTSC.nes): skipped")
+        return
+    pr = "".join(L.press(40 + i, k, 12) for i, k in enumerate(["a", "right", "down", "start", "left", "b", "up", "a"]))
+    rig = pair(T, "online_nes_relay", rom=rom, nat=("sym", "port"), kind="nes",
+               a_script=host_script(78) + pr + L.shot(60, "running.png") + L.disconnect(70, "session.png") +
+               L.shot(74, "ended.png") + L.quit_at(78))
+    if not rig.ra or not rig.rb:
+        return
+    T.clean(rig.ra, "A")
+    T.clean(rig.rb, "B")
+    T.check(rig.rb.has(r"online_card state=1 .*kind=5 .*compatible=1"), "B: the card is a Two players room it can join")
+    T.check(rig.rb.has(r"link_online_up relayed=1"), "B: the link is relayed")
+    L.pad_checks(T, rig.ra, rig.rb)
+
+
+def snes_link_keys(root):
+    f = os.path.join(root, "launch", "snes.ini")
+    if not os.path.exists(f):
+        return {}
+    return dict(l.rstrip("\n").split("=", 1) for l in open(f) if l.startswith("link.") and "=" in l)
+
+
+def snes_online(T, name, nat, relay):
+    """Both consoles in the game list: A hosts a SNES game Online from Settings > Two players, B joins with the code
+    from the same page.  The app forms the link (room, punch or relay) with no game running and writes it into
+    launch/snes.ini for snes.bin (the twin cannot start that program: snes/twin/link_test.py plays the files' kind)."""
+    rom = os.path.join(T.S.outdir, "Super One (USA).sfc")
+    os.makedirs(T.S.outdir, exist_ok=True)
+    with open(rom, "wb") as f:
+        f.write(bytes(range(256)) * 128)             # (its CRC has letters in it: the room's `rom` must be lower-case)
+    sa = (L.snes_two_walk() + L.keys("cross") + L.keys("down", "cross") + L.shot(14, "hosting.png") + L.quit_at(85))
+
+    def sb(code):
+        return (L.snes_two_walk() + L.keys("down", "cross") + L.keys("down", "cross") + "+30:shot=pad.png\n" +
+                L.keys(*code_keys(code), first=L.AFTER_SHOT) + L.keys("triangle") + "+%d:shot=card.png\n" % L.dur(7) +
+                "+%d:cross:%d\n" % (L.AFTER_SHOT, L.PRESS) + "+%d:shot=linking.png\n" % L.dur(3) + L.quit_at(80))
+
+    def no_autoboot(rig):                            # A starts in its game list too
+        real = T.twin
+
+        def twin(nm, *a, **k):
+            t = real(nm, *a, **k)
+            ab = os.path.join(t.root, "autoboot.txt")
+            if os.path.exists(ab):
+                os.remove(ab)
+            return t
+        T.twin = twin
+    cfg = {"ui_home": 0, "hints": 0}
+    rig = None
+    try:
+        rig = pair(T, name, rom=rom, nat=nat, a_script=sa, b_script=sb, a_cfg=dict(cfg), b_cfg=dict(cfg),
+                   a_end=85, b_end=80, setup=no_autoboot)
+    finally:
+        if "twin" in T.__dict__:
+            del T.__dict__["twin"]
+    ra, rb = rig.ra, rig.rb
+    if not ra or not rb:
+        return
+    T.clean(ra, "A", allow="could not be started")
+    T.clean(rb, "B", allow="could not be started")
+    T.check(ra.has(r"online_room code=%s" % rig.code), "A: the service made the room for a SNES game (%s)" % rig.code)
+    T.check(rb.has(r"online_card state=1 .*kind=5 .*compatible=1") and rb.has(r"online_open_join rom_match=1"),
+            "B: the card is a Two players room and the library has the game")
+    mode = "relay" if relay else "punch"
+    ka, kb = snes_link_keys(ra.root), snes_link_keys(rb.root)
+    for r, who, k, role in ((ra, "A", ka, "host"), (rb, "B", kb, "guest")):
+        rd = r.evt("snes_link_ready")
+        T.check(rd and rd[0].get("ok") == "1" and rd[0].get("mode") == mode,
+                "%s: the link formed and was handed over (snes_link_ready mode=%s: %s)" % (who, mode, [e["_"] for e in rd]))
+        T.check(r.has(r"^EVT snes_launch_file ok=1") and k.get("link.role") == role and k.get("link.mode") == mode,
+                "%s: launch/snes.ini carries the link (role %s, mode %s)" % (who, k.get("link.role"), k.get("link.mode")))
+        T.radio_free(r, who)
+    T.check(ka.get("link.punch_key") and ka.get("link.punch_key") == kb.get("link.punch_key") and
+            ka.get("link.compat") == kb.get("link.compat"), "both carry the same punch key and pad compat word")
+    hs = ra.evt("link_snes_session")
+    T.check(hs and hs[-1].get("how") == "measured" and int(ka.get("link.delay", "0")) >= 3,
+            "A: the host's input delay was measured (%s, link.delay %s)" % (hs and hs[-1]["_"], ka.get("link.delay")))
+    if relay:
+        T.check(ka.get("link.relay_addr") and ka.get("link.relay_addr") == kb.get("link.relay_peer") and
+                kb.get("link.relay_addr") == ka.get("link.relay_peer") and ka.get("link.relay_user"),
+                "each file names its own allocation and the other's as the peer (%s / %s)" %
+                (ka.get("link.relay_addr"), kb.get("link.relay_addr")))
+        tn = rig.st.get("turn", {})
+        T.check(tn.get("allocations") == 2 and tn.get("releases") == 0 and tn.get("live") == 2,
+                "the relay keeps both allocations for snes.bin: none was released (%s)" %
+                dict((k, tn.get(k)) for k in ("allocations", "releases", "live")))
+    else:
+        T.check(ka.get("link.peer", "").startswith("203.0.113.11:") and kb.get("link.peer", "").startswith("203.0.113.10:"),
+                "each file names the other's public address (%s / %s)" % (ka.get("link.peer"), kb.get("link.peer")))
+    T.picture(ra, "A", "hosting.png")
+
+
+def t_snes_online(T):
+    """Online, SNES Two players from the game list: the app forms the link (punch, then relay) and hands it to snes.bin"""
+    snes_online(T, "online_snes_punch", ("port", "port"), False)
+    snes_online(T, "online_snes_relay", ("sym", "port"), True)
+
+
 # ---- two DIFFERENT cartridges (Pokemon Ruby with Sapphire) over Online ------------------------------------
 
 def two_games_online(T, tag, nat, relay, rom_a, rom_b, end, cached=False):
@@ -1185,6 +1289,7 @@ TESTS = [
     ("lost_answer", t_lost_answer), ("cancel_after_failure", t_cancel_after_failure), ("drop", t_drop_midlink),
     ("rtt_100", t_rtt_100), ("rtt_150", t_rtt_150), ("rtt_200", t_rtt_200), ("delay_cap", t_delay_cap),
     ("determinism", t_determinism), ("two_games", t_two_games), ("direct_hidden", t_direct_hidden),
+    ("nes_relay", t_nes_relay), ("snes_online", t_snes_online),
 ]
 # armhf (under qemu, several times the wall time): the sessions
 RUNS = {

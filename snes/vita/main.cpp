@@ -1287,6 +1287,9 @@ int main(int argc, char **argv)
 		uint8_t back = 0;
 		bool tapped = false;
 		touch_read(&tp, &back, loop0, &tapped);
+		/* a linked game: the menu button means "end the session" for BOTH consoles; a brush of the screen must not (the held
+		 * Start + Select chord still does) */
+		if (g_link) tapped = false;
 		read_pads(pads, back);
 		/* a game being played keeps the console awake */
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);

@@ -373,6 +373,7 @@ static struct
    unsigned delay;                /* the host's input delay                 */
    unsigned t_seen;               /* the tick the host's netdrv answered    */
    int      seen;
+   int      peer_heard;           /* netdrv said the other console connected (snes_np_peer), even if it left again */
    unsigned t_begin, prev_pad;
    link_snes_link link;
 } SL;
@@ -1529,7 +1530,14 @@ static void online_desc_make(online_desc *d)
    d->compat = S.compat[L.room_kind];
    d->relay_only = g_pcfg.online_relay != 0;
    if (SL.on)
-      snprintf(d->rom, sizeof(d->rom), "%s", SL.game);   /* (the CRC is the whole identity) */
+   {
+      /* (the CRC is the whole identity.)  `game` is upper-case, `rom` must be LOWER-case hex: the room service
+       * refuses a create whose rom has an A..F (400), which was nearly every SNES game. */
+      snprintf(d->rom, sizeof(d->rom), "%s", SL.game);
+      for (i = 0; d->rom[i]; i++)
+         if (d->rom[i] >= 'A' && d->rom[i] <= 'F')
+            d->rom[i] = (char)(d->rom[i] + 32);
+   }
    else if (L.is_host)
       (void)ui_host_online_rom_id(g_game.rom_path, d->rom);
 }
@@ -2657,7 +2665,9 @@ static void mirror_service(unsigned pad_new)
          announce(2, 0);
          fe_evt("link_host_peer room=\"%s\" peer=\"%s\"", L.room, L.peer);
          L.echoes = 0;
-         if (L.transport == TR_LAN && g_pcfg.link_delay < 1 && !SL.on)
+         /* (a SNES link measures too: its delay goes into the launch file, and without this a relayed or Same
+          * Wi-Fi SNES game ran on the connection's fixed guess whatever the path was) */
+         if (L.transport == TR_LAN && g_pcfg.link_delay < 1)
          {
             lan_transport_echo_reset(L.lan);
             phase_set(PH_MEASURE);
@@ -3545,7 +3555,9 @@ static void snes_watch(void)
    if (SL.sub == 1)
    {
       const unsigned need = L.conn == LINK_CONN_ONLINE ? T_SNES_SEEN_ONLINE : T_SNES_SEEN_LAN;
-      if (!SL.seen && fe_np_gb_peer_ready(NULL))
+      /* (the callback's latch too: a host that hands over at once says BYE one frame, 17 ms, after its answer, and
+       * a guest whose one pump takes in both never reads "ready" here, then waited 15 s for nothing and failed) */
+      if (!SL.seen && (SL.peer_heard || fe_np_gb_peer_ready(NULL)))
       {
          SL.seen = 1;
          SL.t_seen = L.ticks;
@@ -3579,6 +3591,13 @@ static void snes_np_rx(void *user, const void *payload, size_t len, uint8_t src)
    (void)user; (void)payload; (void)len; (void)src;
 }
 
+static void snes_np_peer(void *user, uint8_t id, int connected)
+{
+   (void)user; (void)id;
+   if (connected)
+      SL.peer_heard = 1;
+}
+
 int link_snes_begin(int is_host, const char *rom_path, const char *title)
 {
    const ui_join_info *t = ui_join_target();
@@ -3604,7 +3623,7 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
    SL.prev_pad = g_app_pad;
    fe_evt("link_snes_begin role=%s conn=%d game=%s", is_host ? "host" : "guest", conn, SL.game);
    fe_np_gb_set_receive(snes_np_rx, NULL);
-   fe_np_gb_set_peer_callback(NULL, NULL);
+   fe_np_gb_set_peer_callback(snes_np_peer, NULL);
    link_action(is_host);
    /* a failure to even start was recorded by bringup_failed (SL.phase == LSN_FAILED): the caller reads it */
    return 0;

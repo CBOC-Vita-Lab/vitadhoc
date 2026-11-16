@@ -1270,7 +1270,10 @@ void SnesPlayer::finish(ExitReason why)
 	}
 	if (settings_dirty_) settings_queue_save();
 	/* the resume point: where the game was left */
-	if (states_ && snes_host_state_size() && !linked()) resume_post(true);
+	/* A linked game writes none, except the host after an agreed end: its battery file was just written by the session, and
+	 * an older resume point would bring the older battery back on the next Continue (a state carries the battery RAM, and
+	 * restore_state has it written to the file). The machine is at the session's last frame, so that is the point to keep. */
+	if (states_ && snes_host_state_size() && (!linked() || (req_.link.is_host() && link_result_ == "done"))) resume_post(true);
 	wait_writer();
 	if (!linked() && snes_host_sram_dirty()) {
 		int r = snes_host_sram_save();

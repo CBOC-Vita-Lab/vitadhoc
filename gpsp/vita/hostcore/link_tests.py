@@ -991,6 +991,63 @@ def t_snes_two(T):
             "both carry the same pad compat word (%s)" % ka.get("link.compat"))
 
 
+def nes_rom():
+    """A public NES game for the Two players scenarios (never committed): the file VITADHOC_NES_ROM names, or
+    nes15-NTSC.nes somewhere under GATE_NES_ROMS (the nes-test-roms collection).  None: the scenario is skipped."""
+    f = os.environ.get("VITADHOC_NES_ROM")
+    if f and os.path.isfile(f):
+        return f
+    top = os.environ.get("GATE_NES_ROMS")
+    if top and os.path.isdir(top):
+        for d, _, fs in os.walk(top):
+            if "nes15-NTSC.nes" in fs:
+                return os.path.join(d, "nes15-NTSC.nes")
+    return None
+
+
+def pad_checks(T, ra, rb):
+    """A Two players session (NES / WonderSwan / the mirror of one machine): both ran it, in step, to an agreed end,
+    and the guest has its own game back."""
+    for r, who, n in ((ra, "A", 1), (rb, "B", 2)):
+        T.check(r.has(r"gblink_pad start role=%s" % ("host" if n == 1 else "guest")),
+                "%s: the Two players session started (fe_padpair)" % who)
+        T.check(r.has(r"link_running player=%d" % n), "%s: linked as Player %d" % (who, n))
+        T.check(r.has(r"gblink_done "), "%s: an agreed end" % who)
+        T.check(r.has(r"gblink_resume how=live_end rc=0"), "%s: the machine is the player's again" % who)
+        T.radio_free(r, who)
+    T.same_machines(ra, rb)
+    da, db = ra.evt("gblink_done"), rb.evt("gblink_done")
+    T.check(da and db and da[-1]["frame"] == db[-1]["frame"] and da[-1]["hash"] == db[-1]["hash"] and
+            int(da[-1]["frame"]) > 300,
+            "the same last frame and the same machine on both (%s / %s)" % (da and da[-1]["_"][:40], db and db[-1]["_"][:40]))
+
+
+def t_nes_two(T):
+    """Wi-Fi, Two players on a NES game: one machine on both consoles, a pad each (fe_padpair)."""
+    rom = nes_rom()
+    if not rom:
+        T.S.note("no NES game (VITADHOC_NES_ROM, or GATE_NES_ROMS with nes15-NTSC.nes): skipped")
+        return
+    T.begin("nes_two")
+    e = 14 if T.slow else 0
+    pa = "".join(press(14 + i, k, 12) for i, k in enumerate(["a", "right", "down", "start", "left", "b", "up", "a"]))
+    pb = "".join(press(14.5 + i, k, 12) for i, k in enumerate(["start", "left", "a", "up", "right", "b", "down", "a"]))
+    a = T.twin("a", T.arch_a, rom, "Alice", host(2, "host.png") + shot(11, "linking.png") + pa +
+               shot(24 + e, "running.png") + disconnect(28 + e, "session.png") + shot(35 + e, "after.png") +
+               quit_at(37 + e))
+    b = T.twin("b", T.arch_b, rom, "Bob", join_first(4, wait=3) + pb + shot(24 + e, "running.png") +
+               shot(35 + e, "after.png") + quit_at(37 + e))
+    ra, rb = T.run([a, b], 37 + e)
+    T.clean(ra, "A")
+    T.clean(rb, "B")
+    rooms = rb.evt("link_scan_room")
+    T.check(rooms and rooms[-1]["kind"] == "5" and rooms[-1]["compatible"] == "1",
+            "B's list shows a Two players room of its game")
+    pad_checks(T, ra, rb)
+    T.picture(ra, "A", "running.png")
+    T.picture(rb, "B", "running.png")
+
+
 GBLOCAL = os.path.join(HERE, "testrom", "gblocal.gb")
 
 
@@ -1871,7 +1928,7 @@ TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fas
          ("host_quits", t_host_quits), ("link_lost", t_link_lost),
          ("lossy", t_lossy), ("wifi_lost", t_wifi_lost),
          ("cancel", t_cancel), ("suspend", t_suspend), ("snes_two", t_snes_two),
-         ("mixed_refuse", t_mixed_refuse)]
+         ("nes_two", t_nes_two), ("mixed_refuse", t_mixed_refuse)]
 # Which tests a mode runs when none are named.  x86: everything but the
 # mixed pair's.  armhf (under qemu, five times the wall time): the sessions
 # and what depends on the machines or on timing; the menus' own refusals

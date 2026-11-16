@@ -1602,6 +1602,27 @@ int online_step(void)
 
 /* ---- the ends ------------------------------------------------------------------------- */
 
+int online_handoff_get(online_handoff *out)
+{
+   int i;
+   if (!out)
+      return -1;
+   memset(out, 0, sizeof *out);
+   if (!O.conn || !O.t || O.stage != ON_CONNECTED)
+      return -1;
+   out->relayed = O.relayed;
+   for (i = 0; i < 8; i++)
+      snprintf(out->key + 2 * i, sizeof out->key - 2 * i, "%02x", O.key[i]);
+   out->peer_ip_be = O.peer_ip_be;
+   out->peer_port = O.peer_port;
+   copy_str(out->peer_lan, sizeof out->peer_lan, O.peer_lan);
+   out->local_port = lan_transport_port(O.t);
+   copy_str(out->peer_nick, sizeof out->peer_nick, O.peer_nick);
+   if (O.relayed && lan_transport_relay_handoff(O.t, &out->relay) != 0)
+      return -1;
+   return 0;
+}
+
 void online_linked(void)
 {
    if (!O.conn || !O.is_host || !O.have_room || O.close_linked_asked)

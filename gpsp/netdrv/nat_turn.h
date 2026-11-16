@@ -68,6 +68,7 @@ typedef struct nat_turn
    uint32_t lifetime_s;
    uint64_t refresh_at, expires_at, alloc_retry_at;
    int      refresh_fails, realloc_tries;
+   int      adopting;           /* an allocation made by an earlier program is being taken over (nat_turn_adopt) */
    /* the one peer */
    int      have_peer;
    uint32_t peer_ip_be;
@@ -82,6 +83,15 @@ typedef struct nat_turn
  * the transaction ids. */
 void nat_turn_start(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip_be, uint16_t server_port,
                     const char *user, const char *pass, const uint8_t seed[16], uint64_t now_ms);
+/* Take over an allocation that already exists (2.0: the app made it, then snes.bin took the same local port;
+ * the server keeps it, keyed by our 5-tuple).  NO Allocate is sent: a Refresh asks the server (401 first, then
+ * authenticated) and, when it answers, the state is ALLOCATED with relayed_ip:relayed_port as given.  An answer
+ * of 481 (no such allocation: the router changed the mapping, or it expired) or a refused credential is FAILED
+ * (LAN_RELAY_E_LOST / _AUTH), a silent server TIMEOUT.  Then nat_turn_bind() as usual re-sends the permission and
+ * ChannelBind (the same channel, NAT_TURN_CHANNEL), which refreshes the binding. */
+void nat_turn_adopt(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip_be, uint16_t server_port,
+                    const char *user, const char *pass, uint32_t relayed_ip_be, uint16_t relayed_port,
+                    const uint8_t seed[16], uint64_t now_ms);
 /* After ALLOCATED: permission for the peer's IP and ChannelBind 0x4000 to
  * peer_ip:peer_port (its RELAYED address); READY follows.  0 = started,
  * -1 = not allocated yet / another peer is already bound. */

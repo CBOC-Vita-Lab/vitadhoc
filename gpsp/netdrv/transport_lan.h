@@ -377,6 +377,25 @@ int  lan_transport_relay_start(lan_transport *t, uint32_t server_ip_be, const ui
 /* After LAN_RELAY_ALLOCATED: permission + channel for the peer's relayed address; READY follows. */
 int  lan_transport_relay_bind(lan_transport *t, uint32_t peer_ip_be, uint16_t peer_port);
 void lan_transport_relay_stop(lan_transport *t);          /* releases the allocation, best effort */
+
+/* An allocation that outlives a program (2.0, SNES: the app forms the link, snes.bin plays it).  The server keeps
+ * an allocation by the client's 5-tuple, so the next program, bound to the SAME local port, takes it over instead
+ * of allocating again (a second Allocate would be refused, 437). */
+typedef struct lan_relay_params
+{
+   uint32_t server_ip_be;  uint16_t server_port;    /* the TURN port that answered */
+   char     user[160], pass[160];                   /* the short-lived credentials */
+   uint32_t relay_ip_be;   uint16_t relay_port;     /* our relayed address */
+   uint32_t peer_ip_be;    uint16_t peer_port;      /* the peer's relayed address (the ChannelBind target) */
+} lan_relay_params;
+/* In the program that made the relay, once READY: copy out what the next program needs and let go WITHOUT releasing
+ * (no Refresh lifetime 0): relay_stop and destroy then do nothing to the server.  0 = filled, -1 = not READY. */
+int  lan_transport_relay_handoff(lan_transport *t, lan_relay_params *out);
+/* In the next program (same local port): Refresh the existing allocation (401 then signed) and, when it answers,
+ * ALLOCATED follows, then the permission and the channel are sent again for the same peer (a ChannelBind may be
+ * repeated: it refreshes the binding) and READY follows.  FAILED with LAN_RELAY_E_LOST when the server has no
+ * such allocation.  No Allocate is sent.  0 = started. */
+int  lan_transport_relay_adopt(lan_transport *t, const lan_relay_params *p);
 /* Any thread, never blocks (a copy under the transport's mutex). */
 void lan_transport_nat_status(lan_transport *t, lan_nat_status *out);
 /* Diagnostic: how many STUN / TURN server addresses the I/O thread checks every datagram against (each check takes the NAT mutex).

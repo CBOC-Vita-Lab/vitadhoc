@@ -2,7 +2,8 @@
 #   make -C snes/vita -j1                  builds build/snes.bin
 # Run by VitAdhoc via sceAppMgrLoadExec; packed into the VPK by gpsp/vita/Makefile.
 # Copyright CBOC-Vita. MIT licence for this file; ../core keeps the Snes9x licence.
-# This Makefile builds nothing from gpsp/: the programs are separate.
+# The programs are separate. The one exception is the two-player link (netplay.cpp): the files listed in netplay.mk
+# (the netdrv session driver, the UDP transport, the mirror session) are compiled in; see the licence note there.
 
 VITASDK ?= /opt/vitasdk
 export VITASDK
@@ -17,6 +18,8 @@ V2D  := $(FE)/third_party/vita2d
 B    := build
 
 include $(CORE)/sources.mk
+GP := ../../gpsp
+include netplay.mk
 
 CPUFLAGS := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard
 # S9X_PROF compiles the timing hooks in; they cost nothing while g_s9xp.on is 0
@@ -33,7 +36,9 @@ CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
 # Second, renamed copy of the renderer for the PPU thread (see ../core/rcopy.sh)
 RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
-FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/wide.o $(B)/player.o $(B)/pipe.o $(B)/main.o
+FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/wide.o $(B)/player.o $(B)/pipe.o $(B)/netplay.o $(B)/main.o
+# the two-player link's C files from gpsp/ (netplay.mk), built as the main app builds them (-DVITA: sceKernel threads, netctl)
+NP_OBJS   := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/gp/netplay_stubs.o
 # widekit (MIT, ../../widekit): the wide view's layer analysis, learned map and composition
 WK_SRC    := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
 WK_OBJS   := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
@@ -43,7 +48,7 @@ PK_OBJS   := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita
 V2D_OBJS  := $(B)/v2d/vita2d.o $(B)/v2d/vita2d_draw.o $(B)/v2d/vita2d_texture.o $(B)/v2d/utils.o
 SHADERS   := $(wildcard $(V2D)/shader/*_gxp.o)
 
-LIBS := -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_stub \
+LIBS := -lSceNet_stub -lSceNetCtl_stub -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_stub \
         -lSceCommonDialog_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceTouch_stub \
         -lSceAppUtil_stub -lSceAudio_stub -lScePower_stub -lSceRtc_stub \
         -lSceSysmem_stub -lSceLibKernel_stub -lm
@@ -62,7 +67,7 @@ WEAK_OK := ^(_ITM_|_ZGT|__cxa_pure_virtual$$|__deregister_frame_info$$|__registe
 CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" || $$1 == "v" { print $$2 }' | grep -v -E '$(WEAK_OK)')"; \
 	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
 
-$(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
+$(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(NP_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
 	$(CXX) $(CPUFLAGS) -Wl,-q -o $@ $^ $(LIBS)
 	$(call CHECK_WEAK,$@)
 
@@ -86,7 +91,16 @@ $(B)/core/%.o: $(CORE)/%.cpp
 $(B)/%.o: $(FE)/%.cpp
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
-$(B)/main.o: main.cpp $(FE)/host.h player.h pipe.h
+$(B)/netplay.o: netplay.cpp netplay.h $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/gp/%.o: $(GP)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -Wextra -DVITA $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/gp/netplay_stubs.o: netplay_stubs.c
+	@mkdir -p $(dir $@)
+	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -DVITA $(NETPLAY_INC) -c -o $@ $<
+$(B)/main.o: main.cpp $(FE)/host.h player.h pipe.h netplay.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 $(B)/pipe.o: pipe.cpp pipe.h $(FE)/host.h $(wildcard $(PK)/src/*.h)

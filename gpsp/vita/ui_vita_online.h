@@ -692,8 +692,17 @@ static fe_console_t oc_console_of(const char *path)
       return FE_CONSOLE_GBC;
    if (dot && !strcasecmp(dot, ".gb"))
       return FE_CONSOLE_GB;
+   if (dot && !strcasecmp(dot, ".nes"))
+      return FE_CONSOLE_NES;
+   if (dot && (!strcasecmp(dot, ".sfc") || !strcasecmp(dot, ".smc")))
+      return FE_CONSOLE_SNES;
+   if (dot && (!strcasecmp(dot, ".ws") || !strcasecmp(dot, ".wsc")))
+      return FE_CONSOLE_WSWAN;
    return !strcmp(g_oc.card.console, "gbc") ? FE_CONSOLE_GBC
-        : !strcmp(g_oc.card.console, "gb") ? FE_CONSOLE_GB : FE_CONSOLE_GBA;
+        : !strcmp(g_oc.card.console, "gb") ? FE_CONSOLE_GB
+        : !strcmp(g_oc.card.console, "nes") ? FE_CONSOLE_NES
+        : !strcmp(g_oc.card.console, "snes") ? FE_CONSOLE_SNES
+        : !strcmp(g_oc.card.console, "ws") ? FE_CONSOLE_WSWAN : FE_CONSOLE_GBA;
 }
 
 /* "Pokemon Emerald (Europe).gba" -> "Pokemon Emerald"; the folder it is in. */

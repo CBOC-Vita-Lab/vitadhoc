@@ -353,8 +353,60 @@ int main(void)
    CHECK(online_lib_decide(syn, 2, 0) == ONLINE_PICK_ASK, "adapter, two: ASK");
    CHECK(online_lib_decide(syn, 3, 1) == ONLINE_PICK_ASK, "cable, three: ASK");
 
+   /* ---- 11. Two players games: found by the whole game's CRC (2.0) -------- */
+   {
+      static unsigned char prg[16384], chr_[8192], img[1024 + 512];
+      unsigned char hdr[16 + 512];
+      char want[9], nm[APP_PATH_CAP];
+      unsigned c;
+      FILE *f;
+      int k;
+      for (k = 0; k < (int)sizeof(prg); k++) prg[k] = (unsigned char)(k * 7 + 3);
+      for (k = 0; k < (int)sizeof(chr_); k++) chr_[k] = (unsigned char)(k * 5 + 1);
+      memset(hdr, 0, sizeof(hdr));
+      memcpy(hdr, "NES\x1a", 4); hdr[4] = 1; hdr[5] = 1;
+      /* NES: the CRC of PRG + CHR, with and without a trainer; a file with other bytes must not match */
+      snprintf(nm, sizeof(nm), "%s/roms/Test Cart.nes", root);
+      f = fopen(nm, "wb"); fwrite(hdr, 1, 16, f); fwrite(prg, 1, sizeof(prg), f); fwrite(chr_, 1, sizeof(chr_), f); fclose(f);
+      hdr[6] = 4;
+      snprintf(nm, sizeof(nm), "%s/roms/sub/Test Cart trained.nes", root);
+      f = fopen(nm, "wb"); fwrite(hdr, 1, 16 + 512, f); fwrite(prg, 1, sizeof(prg), f); fwrite(chr_, 1, sizeof(chr_), f); fclose(f);
+      snprintf(nm, sizeof(nm), "%s/roms/Other.nes", root);
+      prg[0] ^= 0xFF;
+      hdr[6] = 0;
+      f = fopen(nm, "wb"); fwrite(hdr, 1, 16, f); fwrite(prg, 1, sizeof(prg), f); fwrite(chr_, 1, sizeof(chr_), f); fclose(f);
+      prg[0] ^= 0xFF;
+      snprintf(want, sizeof(want), "%08X", 0xb45248a4u);
+      n = search("nes", want, "", h, 8);
+      CHECK(n == 2, "NES: the plain and the trained copy are one game by PRG + CHR (%d)", n);
+      CHECK(n >= 1 && h[0].rom_match, "NES: a CRC match is the host's file");
+      n = search("nes", "00000000", "", h, 8);
+      CHECK(n == 0, "NES: another CRC finds nothing (%d)", n);
+      /* SNES: the whole file; a 512 byte copier header is not part of the game */
+      for (k = 0; k < (int)sizeof(img); k++) img[k] = (unsigned char)(k * 11 + 9);
+      snprintf(nm, sizeof(nm), "%s/roms/Game.sfc", root);
+      f = fopen(nm, "wb"); fwrite(img + 512, 1, 1024, f); fclose(f);
+      snprintf(nm, sizeof(nm), "%s/extra/Game (headered).smc", root);
+      f = fopen(nm, "wb"); fwrite(img, 1, 1024 + 512, f); fclose(f);
+      snprintf(want, sizeof(want), "%08X", 0x2b5385b6u);
+      n = search("snes", want, "", h, 8);
+      CHECK(n == 2, "SNES: the plain and the headered copy match (%d)", n);
+      CHECK(online_lib_begin("snes", want, "") == 0, "snes begins");
+      online_lib_end();
+      /* WonderSwan: the whole file */
+      snprintf(nm, sizeof(nm), "%s/roms/Swan.ws", root);
+      f = fopen(nm, "wb"); fwrite(img + 512, 1, 1024, f); fclose(f);
+      snprintf(want, sizeof(want), "%08X", 0x2b5385b6u);
+      n = search("ws", want, "", h, 8);
+      CHECK(n == 1 && !strcmp(base(h[0].path), "Swan.ws"), "WS: one file (%d)", n);
+      /* a GBA search never looks at them, and the other way round */
+      n = search("gba", "BPEE", "", h, 8);
+      CHECK(n >= 3, "GBA search unchanged (%d)", n);
+      (void)c;
+   }
+
    /* unsupported consoles and bad input */
-   CHECK(online_lib_begin("nes", "ABCD", "") != 0, "milestone B consoles: not yet");
+   CHECK(online_lib_begin("n64", "ABCD", "") != 0, "a console with no Two players");
    CHECK(online_lib_begin("gba", "", "") != 0, "an empty code");
    CHECK(online_lib_step(8) == 1, "no search: finished");
    online_lib_end();

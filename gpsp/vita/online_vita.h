@@ -53,6 +53,22 @@ int  online_host(lan_transport *t, const online_desc *room);   /* 0 = begun; pub
 int  online_join(lan_transport *t, const char *code, const online_desc *me);
 int  online_step(void);                                     /* once per frame; returns the stage */
 void online_get(online_view *out);
+/* SNES (2.0): the program that plays the game is another one (snes.bin) and the sockets do not survive the change.  At
+ * ON_CONNECTED, what the next program needs to make the same link again on the SAME local port: the punch key and the
+ * peer's addresses (it punches again), or, for a relayed link, the allocation itself, which is let go WITHOUT being
+ * released (lan_transport_relay_handoff) and adopted there.  Call it once, before online_linked() / online_stop().
+ * 0 = filled; -1 = not connected, or a relayed link that is not READY. */
+typedef struct online_handoff
+{
+   int      relayed;
+   char     key[17];                      /* the punch key, 16 hex digits */
+   uint32_t peer_ip_be;  uint16_t peer_port;   /* punched: where the peer answered; relayed: its relayed address */
+   char     peer_lan[24];                 /* "ip:port" of the peer's own network address, or "" */
+   uint16_t local_port;                   /* this transport's bound port: the next program binds it too */
+   lan_relay_params relay;                /* relayed only */
+   char     peer_nick[16];
+} online_handoff;
+int  online_handoff_get(online_handoff *out);
 void online_linked(void);        /* the session formed: host closes the room ("linked"); relay stays up */
 void online_stop(void);          /* cancel or teardown: close the room, stop punch and relay */
 int  online_active(void);

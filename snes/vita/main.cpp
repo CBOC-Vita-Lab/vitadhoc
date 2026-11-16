@@ -7,8 +7,8 @@
  * console around it: screen, sound, pads, touch, keyboard, clocks and threads.
  *
  * This file and the other files in snes/frontend and snes/vita are new code (MIT); the Snes9x core in
- * snes/core keeps its own non-commercial licence. The menu library is playerkit (MIT). Nothing from gpsp/
- * is linked into this program.
+ * snes/core keeps its own non-commercial licence. The menu library is playerkit (MIT). Only for a two-player
+ * link (netplay.cpp) the files listed in netplay.mk are taken from gpsp/ (the licence note there).
  *
  * Copyright CBOC-Vita. MIT licence (see snes/frontend/LICENSE).
  */
@@ -38,6 +38,10 @@
 #include <psp2/common_dialog.h>
 #include <psp2/kernel/cpu.h>
 #include <psp2/kernel/sysmem.h>
+#include <psp2/kernel/rng.h>
+#include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
+#include <psp2/sysmodule.h>
 #include <vita2d.h>
 
 #include "host.h"
@@ -49,6 +53,7 @@
 #include "pal_pace.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
+#include "netplay.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
@@ -982,6 +987,72 @@ static int ini_int(const char *path, const char *key, int def)
 /* thread priorities from threads.ini: only 0 (leave) or 0x40..0xBF are used; anything else is the default */
 static int prio_ok(int p, int def) { return p == 0 || (p >= 0x40 && p <= 0xBF) ? p : def; }
 
+/* ---- the two-player link (netplay.cpp) ---------------------------------------------------------------- */
+
+static snesnet::Link *g_link;
+static bool g_net_up, g_net_module, g_net_ours, g_netctl_ours;
+static void *g_net_pool;
+
+/* The system's network stack, as the main app brings it up (gpsp/vita/net_vita.c): the transport only opens sockets. */
+static bool link_net_up(void)
+{
+	if (g_net_up) return true;
+	if (sceSysmoduleIsLoaded(SCE_SYSMODULE_NET) != SCE_SYSMODULE_LOADED) {
+		if (sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0) return false;
+		g_net_module = true;
+	}
+	g_net_pool = malloc(1024 * 1024);
+	if (!g_net_pool) return false;
+	SceNetInitParam ip;
+	ip.memory = g_net_pool;
+	ip.size = 1024 * 1024;
+	ip.flags = 0;
+	int rc = sceNetInit(&ip);
+	if (rc >= 0) g_net_ours = true;
+	else { free(g_net_pool); g_net_pool = NULL; if ((unsigned) rc != (unsigned) SCE_NET_ERROR_EBUSY) return false; }
+	rc = sceNetCtlInit();
+	if (rc >= 0) g_netctl_ours = true;
+	else if ((unsigned) rc != 0x80412102u) return false;     /* already up is fine */
+	g_net_up = true;
+	return true;
+}
+
+static void link_net_down(void)
+{
+	if (g_netctl_ours) sceNetCtlTerm();
+	if (g_net_ours) sceNetTerm();
+	free(g_net_pool);
+	g_net_pool = NULL;
+	if (g_net_module) sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
+	g_netctl_ours = g_net_ours = g_net_module = g_net_up = false;
+}
+
+static void link_random(uint8_t *out, int n) { sceKernelGetRandomNumber(out, (SceSize) n); }
+static void link_log(const char *line) { g_pl->logf("link: %s\n", line); }
+
+/* Connecting, waiting, the session's set-up: a plain screen with two lines and the way out. Returns true when the
+ * player asked to leave. */
+static bool link_screen(const pk::PadSample &pad, bool enter_is_cross)
+{
+	std::string l1, l2;
+	int p1 = -1, p2 = -1;
+	g_link->status(&l1, &l2, &p1, &p2);
+	vita2d_start_drawing();
+	vita2d_clear_screen();
+	g_text->draw(pk::F_SUB, 60, 170, "Two-player game", PK_RGBA(255, 255, 255, 255));
+	g_text->draw(pk::F_SUB, 60, 230, l1.c_str(), PK_RGBA(255, 255, 255, 255));
+	if (!l2.empty()) g_text->draw(pk::F_BODY, 60, 280, l2.c_str(), PK_RGBA(192, 192, 192, 255));
+	const int bar = p1 >= 0 ? p1 : p2;
+	if (bar >= 0) {
+		vita2d_draw_rectangle(60, 330, 840, 12, RGBA8(60, 60, 60, 255));
+		vita2d_draw_rectangle(60, 330, (float) (840 * bar / 1000), 12, RGBA8(123, 108, 255, 255));
+	}
+	g_text->draw(pk::F_BODY, 60, 470, enter_is_cross ? "Circle: cancel" : "Cross: cancel", PK_RGBA(160, 160, 160, 255));
+	vita2d_end_drawing();
+	vita2d_swap_buffers();
+	return (pad.buttons & pk::phys_cancel(enter_is_cross)) != 0;
+}
+
 /* ---- the menu ---------------------------------------------------------------- */
 
 /* Runs the control centre until it closes. Returns MENU_RESUME/RESET_DONE (play on), MENU_GAME_LIST or MENU_EXIT. */
@@ -1096,6 +1167,30 @@ int main(int argc, char **argv)
 	cdc.enterButtonAssign = sr.enter_is_cross ? SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS : SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
 	sceCommonDialogSetConfigParam(&cdc);
 
+	/* a two-player link: the connection is made again here (netplay.h); a link that cannot start returns to the app */
+	if (g_pl->linked()) {
+		snesnet::Env env;
+		env.now_us = process_us;
+		env.random = link_random;
+		env.log = link_log;
+		env.local_ip_be = 0;
+		g_link = new snesnet::Link;
+		bool ok = link_net_up();
+		if (!ok) logf_("link: the network could not start\n");
+		if (ok) ok = g_link->open(g_pl->request().link, g_pl->link_rom(), env);
+		if (!ok) {
+			const snesnet::Fail f = ok ? g_link->failure() : snesnet::F_NO_NETWORK;
+			logf_("link: could not open (fail %d)\n", (int) f);
+			g_link->close();
+			g_pl->set_link_result("never", (int) f, "", 0);
+			g_pl->finish(pk::EXIT_GAME_LIST);
+			writer_stop();
+			fatal_screen("The two-player game could not start.", "The connection could not be opened.");
+			link_net_down();
+			return_to_vitadhoc();
+		}
+	}
+
 	/* clocks: the app's CPU speed request (0 = the player's default: 500 MHz, else 444) */
 	{
 		int want = sr.cpu_mhz == 444 ? 444 : 500;
@@ -1196,7 +1291,19 @@ int main(int argc, char **argv)
 		/* a game being played keeps the console awake */
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 
-		g_pl->wide_apply(SCREEN_W, SCREEN_H);
+		/* a linked game that is not playing yet (reaching the other console, the session's set-up) or no longer: a plain
+		 * screen; the session is pumped by step(). Cancel leaves; over (done or failed) leaves with the result. */
+		if (g_link && !g_link->playing()) {
+			const int lr = g_link->step(0);
+			if (lr == snesnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; break; }
+			if (g_link->playing()) { g_pl->look_reset_window(); last_vc = sceDisplayGetVcount(); continue; }
+			if (link_screen(pads[0], g_pl->request().enter_is_cross)) { logf_("link: cancelled by the player\n"); why = pk::EXIT_GAME_LIST; break; }
+			continue;
+		}
+		/* a linked game never skips a picture and never widens it: the core's picture work leaves traces in the machine's own
+		 * state (clip window counts, the sprite range and time flags a game can read), so two consoles must draw alike to stay
+		 * identical (link_twin: a console that never draws diverges within 100 frames) */
+		if (!g_link) g_pl->wide_apply(SCREEN_W, SCREEN_H);
 		const bool half = g_pl->pace_mode() == pk::PACE_HALF;
 		/* Smooth hand-over: the game never waits for a picture, so a pass that came late runs the frames it owes (only the
 		 * last of them is drawn) and the game keeps its true speed; pk_handoff drops older pictures in half mode only. */
@@ -1210,14 +1317,15 @@ int main(int argc, char **argv)
 			}
 		}
 		int to_run = (half || hd) ? (int) elapsed : 1;
+		if (g_link) to_run = 1;           /* lockstep: one frame per refresh, a missed refresh is not caught up */
 		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
-		bool fresh = false, rendered_any = false, want_menu = false;
+		bool fresh = false, rendered_any = false, want_menu = false, link_over = false;
 		uint64_t emu_pass_us = 0;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
-			bool render = g_pl->want_render(emu_frame);
-			if (hd && !half && i != to_run - 1) render = false;
+			bool render = g_link ? true : g_pl->want_render(emu_frame);
+			if (!g_link && hd && !half && i != to_run - 1) render = false;
 			snes_host_set_render(render ? 1 : 0);
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 #ifdef S9X_PROF
@@ -1227,7 +1335,12 @@ int main(int argc, char **argv)
 				g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.on = 1; g_s9xp.last = s9xp_now();
 			}
 #endif
-			snes_host_run_frame();
+			if (g_link) {
+				/* both players' buttons are needed for a frame: a late partner is a stall (no frame this refresh) */
+				const int lr = g_link->step((uint16_t) g_pl->link_pad());
+				if (lr == snesnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; link_over = true; break; }
+				if (lr != snesnet::STEP_FRAME) break;
+			} else snes_host_run_frame();
 #ifdef S9X_PROF
 			if (prof_this) {
 				s9xp_enter(S9XP_FRONT); s9xp_leave();
@@ -1280,6 +1393,13 @@ int main(int argc, char **argv)
 			uint32_t hc;
 			while (g_pipe.box().poll_cost(&hc)) g_pl->drawn_cost(hc);
 			hd_publish_notices();
+		}
+		if (link_over) break;
+		if (want_menu && g_link) {
+			/* a linked game has no menu (a state, a cheat or a reset would change one console's machine): the menu button asks for the clean end */
+			logf_("link: end asked from the menu button\n");
+			g_link->request_end();
+			want_menu = false;
 		}
 		if (want_menu) {
 			hd_quiesce();
@@ -1476,6 +1596,19 @@ int main(int argc, char **argv)
 		char c[220];
 		g_cores->census_line(c, sizeof c);
 		logf_("%s\n", c);
+	}
+	if (g_link) {
+		/* how the link ended, before the session is destroyed (a guest's own game is put back then) */
+		const bool done = g_link->ok();
+		const int gerr = g_link->gblink_error();
+		const snesnet::Fail f = g_link->failure();
+		const uint32_t fr = g_link->frames();
+		const std::string sum = g_link->summary();
+		g_link->close();
+		if (!g_link->restored_ok()) logf_("link: the machine could not be put back on this console's own game\n");
+		logf_("%s\n", sum.c_str());
+		g_pl->set_link_result(done ? "done" : "failed", gerr ? gerr : (int) f, g_link->gblink_error_name(), (int) fr);
+		link_net_down();
 	}
 	/* resume point, battery RAM, settings, log, launch/session.txt */
 	g_pl->finish(why);

@@ -1,0 +1,26 @@
+# link_twin: one player of a two-player SNES link on Linux (the player's own code plus snes/vita/netplay.cpp).
+#   make -C snes/twin -f Makefile.link B=<build dir>        builds <build dir>/link_twin
+# It shares the build directory (and so the Snes9x objects) with the main twin Makefile, which is included for its
+# rules and variables. The gpsp/ files it needs are the list in ../vita/netplay.mk.
+# Copyright CBOC-Vita. MIT licence for this file (see snes/frontend/LICENSE).
+include Makefile
+GP := ../../gpsp
+include ../vita/netplay.mk
+
+NP_OBJS := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/gp/netplay_stubs.o
+$(B)/gp/%.o: $(GP)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -w -std=gnu11 -MMD -MP $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/gp/netplay_stubs.o: ../vita/netplay_stubs.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -w -std=gnu11 -MMD -MP $(NETPLAY_INC) -c -o $@ $<
+$(B)/netplay.o: ../vita/netplay.cpp ../vita/netplay.h $(wildcard $(PK)/src/*.h)
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/link_twin.o: link_twin.cpp ../vita/player.h ../vita/netplay.h
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src $(NETPLAY_INC) -c -o $@ $<
+$(B)/link_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(WK_OBJS) $(B)/player.o $(B)/picture.o $(B)/pipe.o \
+	$(B)/netplay.o $(B)/link_twin.o $(NP_OBJS) $(PK_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+.DEFAULT_GOAL := $(B)/link_twin
+-include $(shell find $(B)/gp -name '*.d' 2>/dev/null)

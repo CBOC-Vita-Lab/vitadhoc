@@ -110,6 +110,7 @@
 #include "zip_rom.h"
 #include "audio_vita.h"
 #include "app_vita.h"
+#include "link_snes.h"
 #include "mgift_vita.h"
 #include "mgift_net.h"       /* MGNET_LISTEN_PORT */
 #include "cheats_vita.h"
@@ -281,9 +282,11 @@ static struct
    char     ra_host[128];     /* ra_host = http://host[:port]: another
                                * RetroAchievements server (the twin's
                                * tests; "" = retroachievements.org)    */
+   int snes_two;              /* snes_two = host | join (1 | 2): a SNES game picked from the list starts a Two players
+                               * link first (the test switch; players use Join online) */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
            "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, -1, 1, 0x60,
-           "", "" };
+           "", "", 0 };
 
 /* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
  * profile (docs/TECHNICAL.md, "A/B keys"): vita.ini
@@ -645,6 +648,8 @@ static int snes_launch(const char *rom_path)
  * the time played and shows its notice; with no report (the player was
  * closed) the time since the launch is the estimate. */
 static char g_snes_session[40];
+static const char *g_snes_end_l1, *g_snes_end_l2;   /* a Two players session that never started: its two lines, shown once the list is up */
+static const link_snes_link *g_snes_lk;   /* the link snes_launch_write puts in the launch file, or NULL */
 static const char *base_name(const char *path);
 static void play_name_of(const char *rom_path, char *out, size_t cap);
 
@@ -849,6 +854,21 @@ static int snes_launch_write(const char *game, const char *save,
                 patch, pkey, ra, rom_path, (unsigned)now);
    if (n < 0 || (size_t)n >= sizeof(text))
       return -1;
+   if (g_snes_lk)
+   {
+      /* Two players: snes.bin makes the link again on the same local port (playerkit/FORMATS.md "link.*") */
+      const link_snes_link *k = g_snes_lk;
+      int m = snprintf(text + n, sizeof(text) - (size_t)n,
+                       "link.role=%s\nlink.mode=%s\nlink.local_port=%u\nlink.peer=%s\nlink.peer_lan=%s\n"
+                       "link.punch_key=%s\nlink.relay_server=%s\nlink.relay_ports=%s\nlink.relay_user=%s\n"
+                       "link.relay_pass=%s\nlink.relay_peer=%s\nlink.relay_addr=%s\nlink.delay=%u\n"
+                       "link.compat=%s\nlink.nick=%s\nlink.wait_s=%u\n",
+                       k->role, k->mode, k->local_port, k->peer, k->peer_lan, k->punch_key, k->relay_server,
+                       k->relay_ports, k->relay_user, k->relay_pass, k->relay_peer, k->relay_addr, k->delay,
+                       k->compat, k->nick, k->wait_s);
+      if (m < 0 || (size_t)m >= sizeof(text) - (size_t)n)
+         return -1;
+   }
    n = snes_file_put(path, text);
    fe_evt("snes_launch_file ok=%d session=%s start=%s slot=%d patch=%d "
           "retroarch_save=%d", n == 0,
@@ -856,6 +876,64 @@ static int snes_launch_write(const char *game, const char *save,
           : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new", slot,
           patch[0] != 0, ra[0] != 0);
    return n;
+}
+
+/* ---- SNES: Two players (2.0, B3) -------------------------------------------------
+ * The link is formed HERE (link_snes.h: the same rooms, code, punch and relay as for a NES game), then snes.bin plays it.
+ * A page of its own runs the link layer a frame at a time; O cancels.  0 = ready (`out` is for the launch file),
+ * -1 = cancelled or failed (the page said why). */
+static void app_notice(const char *title, const char *l1, const char *l2, unsigned hold_ms);
+static int snes_link_page(int is_host, const char *game, const char *title, link_snes_link *out)
+{
+   int rc = link_snes_begin(is_host, game, title);
+   int shown_fail = 0;
+   unsigned prev = pspcompat_pad(), t_fail = 0;
+
+   if (rc == -2)
+   {
+      app_notice("Nearby isn't available for SNES", "Use Same Wi-Fi or Online for two players.", NULL, 5000);
+      return -1;
+   }
+   if (rc > 0)
+   {
+      const char *a, *b;
+      ui_link_fail_text(rc, &a, &b);
+      app_notice(a, b, NULL, 5000);
+      link_snes_end();
+      return -1;
+   }
+   while (g_running)
+   {
+      unsigned pad = pspcompat_pad();
+      int st = link_snes_frame(pad);
+      unsigned edge = pad & ~prev;
+
+      prev = pad;
+      link_snes_draw();
+      vid_overlay_end();
+      pspcompat_wait_vblank();
+      vid_swap();
+      if (st == LSN_READY)
+      {
+         int ok = link_snes_take(out) == 0;
+         fe_evt("snes_link_ready ok=%d mode=%s", ok, ok ? out->mode : "-");
+         return ok ? 0 : -1;
+      }
+      if (st == LSN_CANCELLED)
+      {
+         osd_toast("Link cancelled.");
+         break;
+      }
+      if (st == LSN_FAILED)
+      {
+         if (!shown_fail++)
+            t_fail = (unsigned)(plat_time_us() / 1000u);
+         if ((edge & (PSP_CTRL_CIRCLE | PSP_CTRL_CROSS)) && (unsigned)(plat_time_us() / 1000u) - t_fail > 400)
+            break;
+      }
+   }
+   link_snes_end();
+   return -1;
 }
 
 /* At start-up: a SNES session that ended (or was cut short) since the last
@@ -911,6 +989,32 @@ static void snes_session_collect(void)
       char note[160];
       save_sync_game_start(save, note, sizeof(note));
       save_sync_heal_game(save, rom, SS_KIND_SNES, note, sizeof(note));
+   }
+   /* a Two players session: how it ended, in the words the other games use (link_snes_ended) */
+   if (have_report)
+   {
+      char lres[16], lname[40], role[8], mode[8], toast[100];
+      int ui;
+      lres[0] = lname[0] = role[0] = mode[0] = '\0';
+      if (fe_ini_get(sp, "link_result", lres, sizeof(lres)) && lres[0])
+      {
+         (void)fe_ini_get(sp, "link_error_name", lname, sizeof(lname));
+         (void)fe_ini_get(lp, "link.role", role, sizeof(role));
+         (void)fe_ini_get(lp, "link.mode", mode, sizeof(mode));
+         ui = link_snes_ended(!strcmp(role, "host"), !strcmp(mode, "punch") || !strcmp(mode, "relay"), lres,
+                              (int)fe_ini_get_int(sp, "link_error", 0), lname,
+                              (int)fe_ini_get_int(sp, "link_frames", 0), toast, sizeof(toast));
+         fe_evt("snes_link_end result=%s error=%s frames=%ld ui=%d", lres, lname, fe_ini_get_int(sp, "link_frames", 0), ui);
+         if (ui)
+         {
+            const char *a, *b;
+            ui_link_fail_text(ui, &a, &b);
+            g_snes_end_l1 = a;
+            g_snes_end_l2 = b;
+         }
+         else if (toast[0])
+            snprintf(v, sizeof(v), "%s", toast);
+      }
    }
    remove(lp);
    snes_session_clear();
@@ -1733,6 +1837,11 @@ static void read_switches(void)
    vid_set_auto_xbrz((int)fe_ini_get_int(ini, "auto_xbrz", 1));
    g_sw.drc             = (int)fe_ini_get_int(ini, "drc", g_sw.drc);
    g_sw.autoexit_frames = (unsigned)fe_ini_get_int(ini, "autoexit_frames", 0);
+   {
+      char v[16];
+      g_sw.snes_two = fe_ini_get(ini, "snes_two", v, sizeof(v))
+                         ? (!strcmp(v, "host") ? 1 : !strcmp(v, "join") ? 2 : 0) : 0;
+   }
    g_sw.link_bench      = (int)fe_ini_get_int(ini, "link_bench", 0);
    mgift_vita_set_port((unsigned)fe_ini_get_int(ini, "mgift_port",
                                                 MGNET_LISTEN_PORT));
@@ -6472,6 +6581,11 @@ int main(int argc, char **argv)
    if (path_fmt(path, sizeof(path), "%s/playlog.txt", g_app_root) == 0)
       play_log_load(path);
    snes_session_collect();      /* back from snes.bin: its report */
+   if (g_snes_end_l1)
+   {
+      app_notice(g_snes_end_l1, g_snes_end_l2, NULL, 6000);
+      g_snes_end_l1 = g_snes_end_l2 = NULL;
+   }
    ra_boot(g_app_root, g_sw.ra_host, GBADHOC_VERSION,
 #ifdef __vita__
            ra_online
@@ -6558,7 +6672,10 @@ int main(int argc, char **argv)
       }
       if (console == FE_CONSOLE_SNES)
       {
-         g_join_pending = 0;      /* an Online join is not offered for SNES yet */
+         /* Two players: Join online chose this game for a room (guest), or vita.ini snes_two says which */
+         const int two = g_join_pending ? 2 : g_sw.snes_two;
+         link_snes_link snes_lk;
+         g_join_pending = 0;
          /* snes.bin takes over; it only comes back here on failure */
          char snes_arg[APP_PATH_CAP * 2 + 2];
          int src;
@@ -6579,6 +6696,17 @@ int main(int argc, char **argv)
             }
             snprintf(snes_arg, sizeof(snes_arg), "%s|%.*s.srm", un,
                      (int)(zl - 4), rom_path);
+         }
+         g_snes_lk = NULL;
+         if (two)
+         {
+            char gm[APP_PATH_CAP], nm2[APP_PATH_CAP];
+            const char *bar2 = strchr(snes_arg, '|');
+            snprintf(gm, sizeof(gm), "%.*s", (int)(bar2 ? (size_t)(bar2 - snes_arg) : strlen(snes_arg)), snes_arg);
+            play_name_of(rom_path, nm2, sizeof(nm2));
+            if (snes_link_page(two == 1, gm, nm2, &snes_lk) != 0)
+               continue;            /* cancelled or failed: back to the game list */
+            g_snes_lk = &snes_lk;
          }
          {
             /* 1.4: the SNES save (Game.srm beside the game or its zip) gets
@@ -6617,6 +6745,7 @@ int main(int argc, char **argv)
             (void)play_log_save();
          }
          src = snes_launch(snes_arg);
+         g_snes_lk = NULL;
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);
          app_notice("This game could not be started", base_name(rom_path),
                     "The SNES program (snes.bin) did not start.", 6000);

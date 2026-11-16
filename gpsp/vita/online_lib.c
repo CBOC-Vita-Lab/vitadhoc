@@ -34,7 +34,9 @@
 #include "zip_rom.h"
 #include "../psp/room_label.h"
 
-enum { OL_GBA = 0, OL_GB = 1 };       /* the family of files that can match */
+enum { OL_GBA = 0, OL_GB = 1,         /* the family of files that can match: found by a header's code */
+       OL_NES, OL_SNES, OL_WS };      /* 2.0 "Two players": found by the whole game's CRC (below) */
+#define OL_IS_PAD(f) ((f) >= OL_NES)
 
 #define OL_DEPTH 2                    /* the folder, then one level in      */
 
@@ -86,8 +88,14 @@ int online_lib_begin(const char *console, const char *game, const char *rom)
       G.family = OL_GBA;
    else if (!strcmp(console, "gb") || !strcmp(console, "gbc"))
       G.family = OL_GB;
+   else if (!strcmp(console, "nes"))
+      G.family = OL_NES;
+   else if (!strcmp(console, "snes"))
+      G.family = OL_SNES;
+   else if (!strcmp(console, "ws") || !strcmp(console, "wsc"))
+      G.family = OL_WS;
    else
-      return -1;                      /* milestone B's consoles: not yet */
+      return -1;
    snprintf(G.game, sizeof(G.game), "%s", game);
    snprintf(G.rom, sizeof(G.rom), "%s", rom ? rom : "");
    G.active = 1;
@@ -161,6 +169,87 @@ static int read_header(const char *path, uint8_t hdr[16])
    return ok;
 }
 
+/* ---- Two players games: the game is its CRC-32 ----------------------------------
+ * The room's `game` is the 8 hex digits of the game's CRC, the same text on both consoles (link_vita.c pad_game8):
+ * the NES core's CRC of PRG + CHR (a file without its 16 byte header and trainer), the WonderSwan's of the whole file,
+ * the SNES program's of the whole file without a 512 byte copier header.  Reading a file whole is the expensive thing
+ * here (a few MiB), so the walk does one per call. */
+static uint32_t ol_crc_table[256];
+
+static uint32_t ol_crc(uint32_t crc, const uint8_t *p, size_t n)
+{
+   if (!ol_crc_table[1])
+   {
+      uint32_t i, k, c;
+      for (i = 0; i < 256; i++)
+      {
+         for (c = i, k = 0; k < 8; k++)
+            c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+         ol_crc_table[i] = c;
+      }
+   }
+   crc = ~crc;
+   while (n--)
+      crc = ol_crc_table[(crc ^ *p++) & 255] ^ (crc >> 8);
+   return ~crc;
+}
+
+static int pad_ext_ok(const char *path)
+{
+   if (G.family == OL_NES)
+      return ext_is(path, ".nes");
+   if (G.family == OL_SNES)
+      return ext_is(path, ".sfc") || ext_is(path, ".smc");
+   return ext_is(path, ".ws") || ext_is(path, ".wsc");
+}
+
+/* The id of the file at `path` as 8 upper-case hex digits; 1 = read, 0 = not a game of this family. */
+static int pad_id_of(const char *path, char out[9])
+{
+   FILE *f = fopen(path, "rb");
+   uint8_t buf[8192];
+   long size, from = 0, upto;
+   uint32_t crc = 0;
+   size_t n;
+   if (!f)
+      return 0;
+   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)
+   {
+      fclose(f);
+      return 0;
+   }
+   upto = size;
+   if (G.family == OL_SNES && size % 1024 == 512)
+      from = 512;
+   else if (G.family == OL_NES)
+   {
+      uint8_t h[16];
+      if (fseek(f, 0, SEEK_SET) != 0 || fread(h, 1, 16, f) != 16 || h[0] != 'N' || h[1] != 'E' || h[2] != 'S' ||
+          h[3] != 0x1A)
+      {
+         fclose(f);
+         return 0;
+      }
+      from = 16 + ((h[6] & 4) ? 512 : 0);
+      upto = from + (long)h[4] * 16384 + (long)h[5] * 8192;
+      if (upto > size)
+         upto = size;
+   }
+   if (fseek(f, from, SEEK_SET) != 0)
+   {
+      fclose(f);
+      return 0;
+   }
+   while (from < upto && (n = fread(buf, 1, upto - from < (long)sizeof(buf) ? (size_t)(upto - from) : sizeof(buf), f)) > 0)
+   {
+      crc = ol_crc(crc, buf, n);
+      from += (long)n;
+   }
+   fclose(f);
+   snprintf(out, 9, "%08X", (unsigned)crc);
+   return 1;
+}
+
 /* A patch beside the game (rom_patch.h: Game.ips / .bps / .ups). */
 static int has_patch(const char *path)
 {
@@ -198,7 +287,13 @@ static void add_hit(const char *path)
    /* The host hook knows how a file is identified, patch included: for a
     * patched file it answers with the PATCHED image's identity or fails
     * (then the file simply is not known to be the host's). */
-   if (G.rom[0] && ui_host_online_rom_id(path, h.rom) == 0 && h.rom[0])
+   if (OL_IS_PAD(G.family))
+   {
+      /* found by the game's CRC: it IS the host's file (a patch beside it is not part of what was hashed) */
+      snprintf(h.rom, sizeof(h.rom), "%s", G.game);
+      h.rom_match = !h.patched;
+   }
+   else if (G.rom[0] && ui_host_online_rom_id(path, h.rom) == 0 && h.rom[0])
       h.rom_match = strcmp(h.rom, G.rom) == 0;
    else
       h.rom[0] = '\0';
@@ -285,6 +380,20 @@ int online_lib_step(int files)
          char code[5];
          int rc;
          files--;
+         if (OL_IS_PAD(G.family))
+         {
+            /* the whole file is the identity: a zip cannot be read in a frame, so it is counted and left */
+            char id[9];
+            if (ext_is(path, ".zip"))
+            {
+               G.skipped++;
+               continue;
+            }
+            if (!pad_ext_ok(path) || !pad_id_of(path, id) || strcasecmp(id, G.game) != 0)
+               continue;
+            add_hit(path);
+            break;
+         }
          rc = read_header(path, hdr);
          if (rc < 0)
             G.skipped++;

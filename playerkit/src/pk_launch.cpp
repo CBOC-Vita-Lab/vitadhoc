@@ -69,10 +69,12 @@ LaunchRequest launch_parse(const std::string &text)
 	}
 	static const char *const known[] = { "version", "session_id", "console", "game", "game_name", "save", "root", "shape", "quality",
 		"cpu_mhz", "enter_button", "language", "start", "slot", "patch", "retroarch_save", "patch_key", "wide_supported" };
+	/* link.* keys are read below into r.link and never kept as unknown */
 	const std::vector<std::pair<std::string, std::string> > &items = ini.items();
 	for (size_t i = 0; i < items.size(); i++) {
 		const std::string &k = items[i].first, &v = items[i].second;
 		if (starts_with(k, "ovr.")) { r.overrides[k.substr(4)] = v; continue; }
+		if (starts_with(k, "link.")) continue;
 		bool is_known = false;
 		for (size_t j = 0; j < sizeof known / sizeof known[0]; j++) if (k == known[j]) is_known = true;
 		if (!is_known) r.unknown[k] = v;
@@ -126,6 +128,47 @@ LaunchRequest launch_parse(const std::string &text)
 		else r.warnings.push_back(strf("slot: %d is not 1..10", s));
 	}
 	if (r.start == START_SLOT && (r.slot < 1 || r.slot > 10)) r.start = START_NEW;
+	/* the link: one the player cannot read in full is no link at all (it must never half-start) */
+	{
+		LinkRequest &k = r.link;
+		std::string role = lower(trim(ini.get("link.role")));
+		if (role == "host" || role == "guest") {
+			k.role = role;
+			std::string m = lower(trim(ini.get("link.mode")));
+			if (m == "punch" || m == "relay" || m == "lan") k.mode = m;
+			else if (!m.empty()) r.warnings.push_back("link.mode: unknown value, using lan");
+			int p = ini.get_int("link.local_port", 0);
+			k.local_port = (p >= 0 && p <= 65535) ? p : 0;
+			k.peer = clean_line(ini.get("link.peer"), 64);
+			k.peer_lan = clean_line(ini.get("link.peer_lan"), 64);
+			k.punch_key = lower(clean_line(ini.get("link.punch_key"), 16));
+			k.relay_server = clean_line(ini.get("link.relay_server"), 64);
+			k.relay_ports = clean_line(ini.get("link.relay_ports"), 32);
+			k.relay_user = clean_line(ini.get("link.relay_user"), 200);
+			k.relay_pass = clean_line(ini.get("link.relay_pass"), 200);
+			k.relay_peer = clean_line(ini.get("link.relay_peer"), 64);
+			k.relay_addr = clean_line(ini.get("link.relay_addr"), 64);
+			int d = ini.get_int("link.delay", 0);
+			k.delay = (d >= 0 && d <= 60) ? d : 0;
+			k.compat = lower(clean_line(ini.get("link.compat"), 8));
+			k.nick = clean_line(ini.get("link.nick"), 15);
+			k.local_ip = clean_line(ini.get("link.local_ip"), 20);
+			int w = ini.get_int("link.wait_s", 0);
+			k.wait_s = (w >= 0 && w <= 600) ? w : 0;
+			k.loopback = parse_bool(ini.get("link.loopback"), false);
+			k.sim = clean_line(ini.get("link.sim"), 64);
+			k.sim_id = ini.get_int("link.sim_id", 0) & 255;
+			k.sim_lan_port = ini.get_int("link.sim_lan_port", 0) & 65535;
+			k.loss = ini.get_int("link.loss", 0) & 127;
+			k.latency = ini.get_int("link.latency", 0) & 2047;
+			k.jitter = ini.get_int("link.jitter", 0) & 2047;
+			if (ini.has("link.input_copies")) k.input_copies = ini.get_int("link.input_copies", -1);
+			if (ini.has("link.nack")) k.nack = ini.get_int("link.nack", -1);
+			k.hash_every = ini.get_int("link.hash_every", 0);
+		} else if (!role.empty()) {
+			r.warnings.push_back("link.role: unknown value, no link");
+		}
+	}
 	return r;
 }
 
@@ -150,6 +193,38 @@ std::string launch_serialize(const LaunchRequest &r)
 	if (!r.retroarch_save.empty()) i.set("retroarch_save", r.retroarch_save);
 	if (!r.patch_key.empty()) i.set("patch_key", r.patch_key);
 	i.set("wide_supported", r.wide_supported ? "1" : "0");
+	if (r.link.active()) {
+		const LinkRequest &k = r.link;
+		i.set("link.role", k.role);
+		i.set("link.mode", k.mode);
+		i.set_int("link.local_port", k.local_port);
+		if (!k.peer.empty()) i.set("link.peer", k.peer);
+		if (!k.peer_lan.empty()) i.set("link.peer_lan", k.peer_lan);
+		if (!k.punch_key.empty()) i.set("link.punch_key", k.punch_key);
+		if (!k.relay_server.empty()) i.set("link.relay_server", k.relay_server);
+		if (!k.relay_ports.empty()) i.set("link.relay_ports", k.relay_ports);
+		if (!k.relay_user.empty()) i.set("link.relay_user", k.relay_user);
+		if (!k.relay_pass.empty()) i.set("link.relay_pass", k.relay_pass);
+		if (!k.relay_peer.empty()) i.set("link.relay_peer", k.relay_peer);
+		if (!k.relay_addr.empty()) i.set("link.relay_addr", k.relay_addr);
+		i.set_int("link.delay", k.delay);
+		if (!k.compat.empty()) i.set("link.compat", k.compat);
+		if (!k.nick.empty()) i.set("link.nick", k.nick);
+		if (!k.local_ip.empty()) i.set("link.local_ip", k.local_ip);
+		if (k.wait_s) i.set_int("link.wait_s", k.wait_s);
+		if (k.loopback) i.set("link.loopback", "1");
+		if (!k.sim.empty()) {
+			i.set("link.sim", k.sim);
+			i.set_int("link.sim_id", k.sim_id);
+			i.set_int("link.sim_lan_port", k.sim_lan_port);
+		}
+		if (k.loss) i.set_int("link.loss", k.loss);
+		if (k.latency) i.set_int("link.latency", k.latency);
+		if (k.jitter) i.set_int("link.jitter", k.jitter);
+		if (k.input_copies >= 0) i.set_int("link.input_copies", k.input_copies);
+		if (k.nack >= 0) i.set_int("link.nack", k.nack);
+		if (k.hash_every) i.set_int("link.hash_every", k.hash_every);
+	}
 	for (std::map<std::string, std::string>::const_iterator it = r.overrides.begin(); it != r.overrides.end(); ++it)
 		i.set("ovr." + it->first, it->second);
 	for (std::map<std::string, std::string>::const_iterator it = r.unknown.begin(); it != r.unknown.end(); ++it)
@@ -198,6 +273,12 @@ std::string session_serialize(const SessionReport &s)
 	i.set("resume_present", s.resume_present ? "1" : "0");
 	i.set("exit", exit_name(s.exit));
 	i.set_int("ended_at", s.ended_at);
+	if (!s.link_result.empty()) {
+		i.set("link_result", s.link_result);
+		i.set_int("link_error", s.link_error);
+		i.set("link_error_name", s.link_error_name);
+		i.set_int("link_frames", s.link_frames);
+	}
 	return i.serialize();
 }
 
@@ -223,6 +304,10 @@ SessionReport session_parse(const std::string &text)
 	std::string e = lower(trim(i.get("exit")));
 	s.exit = e == "game_list" ? EXIT_GAME_LIST : e == "error" ? EXIT_ERROR : e == "suspend" ? EXIT_SUSPEND : EXIT_NORMAL;
 	s.ended_at = i.get_i64("ended_at", 0);
+	s.link_result = lower(clean_line(i.get("link_result"), 16));
+	s.link_error = i.get_int("link_error", 0);
+	s.link_error_name = clean_line(i.get("link_error_name"), 32);
+	s.link_frames = i.get_int("link_frames", 0);
 	std::string st = i.get("states_touched");
 	size_t p = 0;
 	while (p < st.size()) {

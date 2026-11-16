@@ -171,6 +171,7 @@
 #include "cheats_vita.h"
 #include "net_vita.h"
 #include "online_vita.h"
+#include "link_snes.h"
 #include "transport_lan.h"
 #include "transport_vadhoc.h"
 #include "upnp_igd.h"
@@ -357,6 +358,25 @@ static struct
 /* The Join page's scan (ui_host_rooms_*). */
 static struct { lan_scan *scan; int claimed; } R;
 
+/* SNES (2.0, B3): the link of a game that is not running here.  link_snes_* at the end of this file. */
+static struct
+{
+   int      on;                   /* a SNES link is being formed: the game is a file, not a core */
+   int      phase;                /* LSN_*                                  */
+   int      sub;                  /* 0 forming, 1 guest: waiting for the host's netdrv, 2 ready to hand over */
+   char     game[9];              /* the room's game id: the file's CRC     */
+   char     title[40];
+   char     rom[APP_PATH_CAP];
+   int      fail;                 /* UI_FAIL_*                              */
+   uint32_t peer_ip_be;           /* guest on Same Wi-Fi: the host's address */
+   uint16_t peer_port;
+   unsigned delay;                /* the host's input delay                 */
+   unsigned t_seen;               /* the tick the host's netdrv answered    */
+   int      seen;
+   unsigned t_begin, prev_pad;
+   link_snes_link link;
+} SL;
+
 static void link_teardown(void);
 static void after_transport(void);
 static void chip_update(void);
@@ -378,13 +398,13 @@ uint32_t gpsp_rfu_now_us(void)
 
 static int is_gba(void)
 {
-   return g_game.console == FE_CONSOLE_GBA;
+   return !SL.on && g_game.console == FE_CONSOLE_GBA;
 }
 
 /* A NES or WonderSwan game: the only link it has is Two players. */
 static int is_pad_game(void)
 {
-   return g_game.console == FE_CONSOLE_NES ||
+   return SL.on || g_game.console == FE_CONSOLE_NES ||
           g_game.console == FE_CONSOLE_WSWAN;
 }
 
@@ -392,6 +412,11 @@ static int is_pad_game(void)
  * CRC (the same text on both consoles), and the 4 the room list shows. */
 static void pad_game8(char out[9])
 {
+   if (SL.on)
+   {
+      snprintf(out, 9, "%s", SL.game);
+      return;
+   }
    if (!fe_host_pad_game_id(out))
       snprintf(out, 9, "00000000");
    for (int i = 0; out[i]; i++)
@@ -425,8 +450,8 @@ static unsigned phase_age(void)
  * covers it: a game nobody can see must not play on. */
 static void hold_game(int on)
 {
-   if (L.held == on)
-      return;
+   if (L.held == on || SL.on)
+      return;                        /* (a SNES link has no game here to hold) */
    L.held = on;
    fe_host_gblink_hold(on);
    if (on)
@@ -437,7 +462,7 @@ static void hold_game(int on)
 
 static void cheats_off(int on)
 {
-   if (L.cheats_off == on)
+   if (L.cheats_off == on || SL.on)
       return;
    L.cheats_off = on;
    cheats_suspend(on);
@@ -983,7 +1008,7 @@ static void announce(int players, int open)
    ri.max_players = L.kind == LK_ADAPTER ? ND_MAX_CLIENTS : 2;
    ri.flags = open ? LAN_ROOM_F_OPEN : LAN_ROOM_F_BUSY;
    snprintf(ri.nick, sizeof(ri.nick), "%.15s", g_pcfg.nick);
-   snprintf(ri.title, sizeof(ri.title), "%.19s", g_game.name);
+   snprintf(ri.title, sizeof(ri.title), "%.19s", SL.on ? SL.title : g_game.name);
    memcpy(ri.code, code, sizeof(ri.code));
    ri.compat = S.compat[L.room_kind];
    lan_transport_announce(L.lan, &ri);
@@ -1264,6 +1289,16 @@ static void link_off(void)
 static void bringup_failed(int code)
 {
    fe_evt("link_failed code=%d host=%d phase=%d", code, L.is_host, L.phase);
+   if (SL.on)
+   {
+      /* SNES: the modal page in main_vita.c shows the sentence; nothing here to hold or draw over */
+      net_down();
+      link_off();
+      L.error = fail_line(code);
+      SL.fail = code;
+      SL.phase = LSN_FAILED;
+      return;
+   }
    net_down();
    if (L.is_host)
    {
@@ -1466,7 +1501,8 @@ static void online_desc_make(online_desc *d)
    memset(d, 0, sizeof(*d));
    d->kind = L.room_kind;
    snprintf(d->console, sizeof(d->console), "%s",
-            g_game.console == FE_CONSOLE_GBC ? "gbc"
+            SL.on ? "snes"
+            : g_game.console == FE_CONSOLE_GBC ? "gbc"
             : g_game.console == FE_CONSOLE_GB ? "gb"
             : g_game.console == FE_CONSOLE_NES ? "nes"
             : g_game.console == FE_CONSOLE_WSWAN ? "ws" : "gba");
@@ -1486,13 +1522,15 @@ static void online_desc_make(online_desc *d)
                                                              : code[i]);
       memcpy(d->game, code, 5);
    }
-   put_text(d->title, sizeof(d->title), g_game.name);
+   put_text(d->title, sizeof(d->title), SL.on ? SL.title : g_game.name);
    put_text(d->nick, sizeof(d->nick), g_pcfg.nick);
    if (!d->nick[0])
       snprintf(d->nick, sizeof(d->nick), "Vita");
    d->compat = S.compat[L.room_kind];
    d->relay_only = g_pcfg.online_relay != 0;
-   if (L.is_host)
+   if (SL.on)
+      snprintf(d->rom, sizeof(d->rom), "%s", SL.game);   /* (the CRC is the whole identity) */
+   else if (L.is_host)
       (void)ui_host_online_rom_id(g_game.rom_path, d->rom);
 }
 
@@ -1708,6 +1746,18 @@ static int session_begin(void)
 {
    const char *how = "host";
    int rc;
+
+   if (SL.on)
+   {
+      /* SNES: the session is snes.bin's.  The host hands over at once (it has seen its guest); the guest waits until
+       * the host's netdrv has answered, so that it never leaves a host that has not noticed it. */
+      SL.delay = L.is_host ? delay_pick(&how) : 0;
+      fe_evt("link_snes_session role=%s delay=%u how=%s", L.is_host ? "host" : "guest", SL.delay, how);
+      SL.sub = L.is_host ? 2 : 1;
+      SL.t_seen = L.ticks;
+      phase_set(PH_LINKED);
+      return 0;
+   }
 
    if (ui_active())
       ui_close();                    /* the session's setup needs the screen */
@@ -1960,14 +2010,14 @@ void link_action(int is_host)
       bringup_failed(UI_FAIL_MEMORY);
       return;
    }
-   if (L.kind == LK_PAD && !fe_host_pad_ready())
+   if (L.kind == LK_PAD && !SL.on && !fe_host_pad_ready())
    {
       /* a core that cannot take part (an older core build, a game that is
        * not running): nothing was started */
       bringup_failed(UI_FAIL_GAME);
       return;
    }
-   if (!is_host)
+   if (!is_host && !SL.on)
    {
       app_snapshot_take();
       app_backdrop_from_snapshot();
@@ -2035,6 +2085,8 @@ void link_action(int is_host)
          bringup_failed(UI_FAIL_ADDRESS);
          return;
       }
+      SL.peer_ip_be = ip;
+      SL.peer_port = port;
       rc = infra_open(0, ip, port);
    }
    if (rc != 0)
@@ -2605,7 +2657,7 @@ static void mirror_service(unsigned pad_new)
          announce(2, 0);
          fe_evt("link_host_peer room=\"%s\" peer=\"%s\"", L.room, L.peer);
          L.echoes = 0;
-         if (L.transport == TR_LAN && g_pcfg.link_delay < 1)
+         if (L.transport == TR_LAN && g_pcfg.link_delay < 1 && !SL.on)
          {
             lan_transport_echo_reset(L.lan);
             phase_set(PH_MEASURE);
@@ -3399,4 +3451,319 @@ void ui_host_online_cancel(void)
 {
    online_card_cancel();
    C.asked = C.have = 0;
+}
+
+/* ---- SNES (2.0, B3): the app forms the link, snes.bin plays it ---------------------------
+ * link_snes.h says what and why.  Everything above is the NES / WonderSwan "Two players" link made with no game running:
+ * is_pad_game() is true, the game's identity is SL.game (the file's CRC), session_begin() stops at SL instead of starting
+ * fe_gblink, bringup_failed() records the sentence instead of holding a screen.  What is added here is the watching
+ * (link_snes_frame), the values for the launch file (snes_fill) and the end. */
+#define T_SNES_SEEN_LAN     60u        /* the guest leaves a second after the host's netdrv answered: the host has
+                                        * seen it too by then (it answers in the same frame) */
+#define T_SNES_SEEN_ONLINE  180u       /* ...three seconds Online: the host's room service stage may lag a little */
+#define T_SNES_SEEN_WAIT    (15u * 60u)/* the host's netdrv never answered */
+#define T_SNES_FILL_WAIT    (8u * 60u) /* Online: the stage did not reach CONNECTED */
+
+static void snes_addr(char *out, size_t cap, uint32_t ip_be, uint16_t port)
+{
+   snprintf(out, cap, "%u.%u.%u.%u:%u", (unsigned)(ip_be & 255u), (unsigned)(ip_be >> 8 & 255u),
+            (unsigned)(ip_be >> 16 & 255u), (unsigned)(ip_be >> 24 & 255u), (unsigned)port);
+}
+
+/* The values for the launch file; 0 = not yet (Online: the room service has not said CONNECTED). */
+static int snes_fill(void)
+{
+   link_snes_link *k = &SL.link;
+
+   memset(k, 0, sizeof(*k));
+   snprintf(k->role, sizeof(k->role), "%s", L.is_host ? "host" : "guest");
+   k->delay = SL.delay;
+   snprintf(k->compat, sizeof(k->compat), "%08x", (unsigned)S.compat[LAN_KIND_PAD]);
+   snprintf(k->nick, sizeof(k->nick), "%.15s", g_pcfg.nick);
+   k->wait_s = 90;
+   if (L.conn == LINK_CONN_ONLINE)
+   {
+      online_handoff h;
+      int i;
+      if (online_handoff_get(&h) != 0)
+         return 0;
+      k->local_port = h.local_port;
+      snprintf(k->punch_key, sizeof(k->punch_key), "%s", h.key);
+      if (h.relayed)
+      {
+         snprintf(k->mode, sizeof(k->mode), "relay");
+         snes_addr(k->relay_server, sizeof(k->relay_server), h.relay.server_ip_be, 0);
+         for (i = 0; k->relay_server[i] && k->relay_server[i] != ':'; i++)
+            ;
+         k->relay_server[i] = '\0';
+         snprintf(k->relay_ports, sizeof(k->relay_ports), "%u", (unsigned)h.relay.server_port);
+         snprintf(k->relay_user, sizeof(k->relay_user), "%s", h.relay.user);
+         snprintf(k->relay_pass, sizeof(k->relay_pass), "%s", h.relay.pass);
+         snes_addr(k->relay_addr, sizeof(k->relay_addr), h.relay.relay_ip_be, h.relay.relay_port);
+         snes_addr(k->relay_peer, sizeof(k->relay_peer), h.relay.peer_ip_be, h.relay.peer_port);
+      }
+      else
+      {
+         snprintf(k->mode, sizeof(k->mode), "punch");
+         snes_addr(k->peer, sizeof(k->peer), h.peer_ip_be, h.peer_port);
+         snprintf(k->peer_lan, sizeof(k->peer_lan), "%s", h.peer_lan);
+      }
+      if (h.peer_nick[0])
+         snprintf(L.peer, sizeof(L.peer), "%.15s", h.peer_nick);
+      fe_evt("link_snes_fill mode=%s port=%u peer=%s relay=%s", k->mode, k->local_port,
+             k->peer[0] ? k->peer : k->relay_peer, h.relayed ? k->relay_addr : "-");
+      return 1;
+   }
+   snprintf(k->mode, sizeof(k->mode), "lan");
+   k->local_port = L.lan ? lan_transport_port(L.lan) : 0;
+   if (!L.is_host)
+      snes_addr(k->peer, sizeof(k->peer), SL.peer_ip_be, SL.peer_port);
+   fe_evt("link_snes_fill mode=lan port=%u peer=%s", k->local_port, k->peer[0] ? k->peer : "-");
+   return 1;
+}
+
+/* After link_frame(): what the link layer's work means for the hand-over. */
+static void snes_watch(void)
+{
+   if (SL.phase != LSN_WORKING)
+      return;
+   if (L.phase == PH_OFF)
+   {
+      /* a cancel (the guest's O in online_service), a code that expired, the Wi-Fi going: nothing to hand over */
+      SL.phase = LSN_CANCELLED;
+      return;
+   }
+   if (SL.sub == 1)
+   {
+      const unsigned need = L.conn == LINK_CONN_ONLINE ? T_SNES_SEEN_ONLINE : T_SNES_SEEN_LAN;
+      if (!SL.seen && fe_np_gb_peer_ready(NULL))
+      {
+         SL.seen = 1;
+         SL.t_seen = L.ticks;
+         fe_evt("link_snes_peer_seen after=%u", L.ticks - SL.t_begin);
+      }
+      if (!SL.seen)
+      {
+         if (L.ticks - SL.t_seen > T_SNES_SEEN_WAIT)
+            bringup_failed(L.conn == LINK_CONN_ONLINE ? UI_FAIL_ONLINE_UNREACHABLE : UI_FAIL_HOST_LEFT);
+         return;
+      }
+      if (L.ticks - SL.t_seen < need)
+         return;
+      SL.sub = 2;
+      SL.t_seen = L.ticks;
+   }
+   if (SL.sub == 2)
+   {
+      if (snes_fill())
+         SL.phase = LSN_READY;
+      else if (L.ticks - SL.t_seen > T_SNES_FILL_WAIT)
+         bringup_failed(UI_FAIL_ONLINE_UNREACHABLE);
+   }
+}
+
+int link_snes_begin(int is_host, const char *rom_path, const char *title)
+{
+   const ui_join_info *t = ui_join_target();
+   int conn = is_host ? g_pcfg.net_conn : t->conn;
+
+   if (!rom_path || !rom_path[0])
+      return UI_FAIL_GAME;
+   if (L.phase != PH_OFF || fe_host_gblink_active() || SL.on)
+      return UI_FAIL_RADIO_BUSY;
+   if (conn == LINK_CONN_ADHOC)
+      return -2;                           /* Nearby: not for SNES in 2.0 */
+   memset(&SL, 0, sizeof(SL));
+   if (!link_snes_game_id(rom_path, SL.game))
+      return UI_FAIL_GAME;
+   snprintf(SL.rom, sizeof(SL.rom), "%s", rom_path);
+   snprintf(SL.title, sizeof(SL.title), "%.39s", title && title[0] ? title : "SNES game");
+   SL.on = 1;
+   SL.phase = LSN_WORKING;
+   SL.t_begin = SL.t_seen = L.ticks;
+   SL.prev_pad = g_app_pad;
+   fe_evt("link_snes_begin role=%s conn=%d game=%s", is_host ? "host" : "guest", conn, SL.game);
+   link_action(is_host);
+   /* a failure to even start was recorded by bringup_failed (SL.phase == LSN_FAILED): the caller reads it */
+   return 0;
+}
+
+int link_snes_frame(unsigned pad)
+{
+   unsigned edge;
+
+   if (!SL.on)
+      return LSN_IDLE;
+   edge = pad & ~SL.prev_pad;
+   SL.prev_pad = pad;
+   if (SL.phase != LSN_WORKING)
+      return SL.phase;
+   g_app_pad = pad;
+   link_frame();
+   snes_watch();
+   if (SL.phase == LSN_WORKING && (edge & CTL_CIRCLE))
+   {
+      fe_evt("link_snes_cancel phase=%d", L.phase);
+      net_down();
+      link_off();
+      SL.phase = LSN_CANCELLED;
+   }
+   return SL.phase;
+}
+
+int link_snes_take(link_snes_link *out)
+{
+   if (!SL.on || SL.phase != LSN_READY || !out)
+      return -1;
+   *out = SL.link;
+   /* The room is closed on the service (online_linked, at the host's arrival) and the transport goes; a relayed link's
+    * allocation was detached from the transport by snes_fill and stays on the server for snes.bin. */
+   net_down();
+   link_off();
+   SL.on = 0;
+   SL.phase = LSN_IDLE;
+   fe_evt("link_snes_take mode=%s role=%s", out->mode, out->role);
+   return 0;
+}
+
+void link_snes_end(void)
+{
+   if (SL.on)
+   {
+      if (L.phase != PH_OFF || L.transport != TR_NONE || L.on_live)
+      {
+         net_down();
+         link_off();
+      }
+      SL.on = 0;
+      SL.phase = LSN_IDLE;
+   }
+}
+
+int link_snes_fail_code(void)
+{
+   return SL.fail;
+}
+
+/* The status page: the LINKING screen's own look, with what a SNES link is doing. */
+void link_snes_draw(void)
+{
+   static char l1[96], l2[96];
+   ui_linking_view v;
+   const char *a, *b;
+
+   if (!SL.on)
+      return;
+   memset(&v, 0, sizeof(v));
+   v.room = L.room;
+   v.game = SL.title;
+   v.frac = -1;
+   v.busy = 1;
+   v.l1 = l1;
+   v.l2 = l2;
+   l1[0] = l2[0] = '\0';
+   if (SL.phase == LSN_FAILED)
+   {
+      ui_link_fail_text(SL.fail, &a, &b);
+      snprintf(l1, sizeof(l1), "%s", a);
+      snprintf(l2, sizeof(l2), "%s", b);
+      v.fail = 1;
+      v.busy = 0;
+   }
+   else if (L.is_host)
+   {
+      if (L.conn == LINK_CONN_ONLINE)
+      {
+         online_view ov;
+         online_get(&ov);
+         if (ov.code[0])
+            snprintf(l1, sizeof(l1), "Room code  %s", ov.code);
+         else
+            snprintf(l1, sizeof(l1), "Opening the room...");
+      }
+      else
+         snprintf(l1, sizeof(l1), "Waiting for the other Vita in %s", L.room);
+      snprintf(l2, sizeof(l2), SL.sub ? "Starting Two players..." : "Tell your friend to join. O cancels.");
+   }
+   else
+   {
+      snprintf(l1, sizeof(l1), "Joining %s", L.conn == LINK_CONN_ONLINE ? "the room" : L.room);
+      snprintf(l2, sizeof(l2), SL.sub ? "Starting Two players..." : "Finding your friend...");
+   }
+   ui_linking_draw(&v);
+}
+
+/* The game id of a SNES file, as online_lib.c computes it for a library match. */
+int link_snes_game_id(const char *rom_path, char out[9])
+{
+   FILE *f = rom_path ? fopen(rom_path, "rb") : NULL;
+   uint8_t buf[8192];
+   uint32_t crc = 0;
+   long size, from = 0;
+   size_t n;
+
+   if (out)
+      out[0] = '\0';
+   if (!f || !out)
+      return 0;
+   if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)
+   {
+      fclose(f);
+      return 0;
+   }
+   if (size % 1024 == 512)
+      from = 512;                        /* a copier header is not part of the game */
+   if (fseek(f, from, SEEK_SET) != 0)
+   {
+      fclose(f);
+      return 0;
+   }
+   while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+      crc = (uint32_t)fe_crc32(crc, buf, n);
+   fclose(f);
+   snprintf(out, 9, "%08X", (unsigned)crc);
+   return 1;
+}
+
+int link_snes_ended(int was_host, int online, const char *result, int error, const char *name, int frames,
+                    char *toast, unsigned toast_cap)
+{
+   int ui = 0;
+   const int gerr_known = name && name[0] && strcmp(name, "ok") != 0;
+
+   if (toast && toast_cap)
+      toast[0] = '\0';
+   if (!result || !result[0])
+      return 0;
+   if (!strcmp(result, "done"))
+   {
+      snprintf(toast, toast_cap, "%s", was_host ? "Link ended. Game saved." : "Link ended. Your own game is back.");
+      return 0;
+   }
+   (void)error;
+   if (frames > 0)
+   {
+      /* it ran, and then it did not last (as link_end says it for the other games) */
+      snprintf(toast, toast_cap, "%s",
+               gerr_known && !strcmp(name, "desync") ? "The games fell out of step. Link ended, nothing saved."
+                                                     : "Link lost: the other Vita is gone. Nothing saved.");
+      return 0;
+   }
+   /* it never started: the joiner reads two lines (link_end's fail_screen), the host a toast */
+   if (gerr_known && (strstr(name, "rom_") != NULL || strstr(name, "missing") != NULL))
+      ui = UI_FAIL_ONLINE_GAME;
+   else if (gerr_known && !strcmp(name, "proto"))
+      ui = UI_FAIL_VERSION;
+   else if (!gerr_known && !strcmp(result, "never") && error == 1)
+      ui = UI_FAIL_NO_WIFI;
+   else
+      ui = online ? UI_FAIL_ONLINE_UNREACHABLE : was_host ? 0 : UI_FAIL_HOST_LEFT;
+   if (was_host || ui == 0)
+   {
+      /* the host keeps no failure screen: its toast (link_end's) */
+      snprintf(toast, toast_cap, "%s",
+               ui == UI_FAIL_ONLINE_GAME ? "The other Vita could not set up the game." : "The link did not start.");
+      return was_host ? 0 : ui;
+   }
+   return ui;
 }

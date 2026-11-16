@@ -26,7 +26,7 @@ the Vita's TLS client then send byte-identical requests):
   handle escapes (it rejects a body that has a backslash).
 - Text fields: `nick` 1..15, `title` 0..23, `game` 1..8 of `[A-Z0-9]`, `console` one of `gba gb gbc nes snes ws`,
   `compat` 8 lower-case hex digits, `kind` one of 0 (GBA Wireless Adapter), 1 (GBA Link Cable), 2 (GB/GBC
-  cable), 4 (share game data), 5 (two-player mirror, milestone B).
+  cable), 4 (share game data), 5 (Two players: one shared NES, WonderSwan or Super NES game).
 - Addresses: `"a.b.c.d:port"` or `""`. `pub` must be a public IPv4 address (not 0/8, 10/8, 100.64/10, 127/8,
   169.254/16, 172.16/12, 192.168/16, 224/3) unless env `ALLOW_PRIVATE_ADDR=1` (dev server, tests). `lan` must be
   private (10/8, 172.16/12, 192.168/16, 169.254/16) unless that env. Port 1..65535.
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
   the host's is newer -> `ONLINE_VER_OLD_HERE`; the host's is older -> `ONLINE_VER_OLD_THERE`; the versions
   are equal but `compat` differs -> `ONLINE_SETUP` (GBA cable only: BIOS file or CPU setting).
 - Game identity, checked separately and only after the two above pass: the card's `console` + `game` (GBA
-  4-character header code; GB/GBC `room_code_gb` title code; milestone B: 8 hex digits of the ROM's CRC-32)
+  4-character header code; GB/GBC `room_code_gb` title code; Two players: 8 hex digits of the game file's CRC-32)
   and `rom` (1.1). The UI decides (package U, "library match"); the session's own SHA-1 exchange (fe_gblink
   HELLO/NEED) stays the final word for cable modes.
 
@@ -238,13 +238,14 @@ Client sentences (one line each, in `ui_link_fail_text`; `UI_DEV` is "Vita" / "P
 | `ONLINE_GAME_FILE` | card: same game code, no file with the host's `rom`; the player may still pick one (U 5) | "Your copy of %s is a different file from your friend's." / "The link checks it when it starts." |
 | `ONLINE_FULL` | card state `full`, 409 `room_full` | "Somebody already joined that room." / "Ask your friend to host again." |
 | `ONLINE_UNREACHABLE` | punch and relay both failed, 502, `relay_unavailable`, `relay_budget` | "Couldn't reach your friend." / "Try again, or both use Same Wi-Fi." |
-| `ONLINE_BUSY` | 503 `over_budget`, `rooms_full`, `switched_off`, 429 `daily_cap` | "Online play is busy for today." / "Try again tomorrow, or both use Same Wi-Fi." |
+| `ONLINE_BUSY` | 503 `over_budget`, `rooms_full`, `switched_off`, 429 `daily_cap`, any other 429 that asks for more than 120 s (or gives no wait) | "Online play is busy for today." / "Try again tomorrow, or both use Same Wi-Fi." |
+| `ONLINE_SLOW` | 429 (`slow_down`, `too_many_rooms`, ...) whose `retryAfterSec` is 1 to 120: the host's create and the joiner's lookup or join | "Too many tries from this network." / "Wait a minute and try again." |
 | `ONLINE_SERVICE` | no answer three times, a certificate refusal (the log says which), 5xx, 400 | "The online service could not be reached." / "Check this " UI_DEV "'s internet connection and try again." |
 | `ONLINE_CLOSED` | poll `closed` with `cancel` | "Your friend closed the room." / "Ask them to host again." |
 
 Not failures: "Connecting through the relay." (LINKING screen line 2 / waiting page while stage is a relay
 stage); the quality toast "Connected to %s. Connection: Great|Good|Slow" (Great < 80 ms, Good < 120 ms round trip, Slow above); with Slow one more toast line
-"Slow connection: the game may feel delayed." Connection lost mid-game: today's `UI_FAIL_LINK_LOST`.
+"Slow connection: the game may feel delayed."; once linked, the session chip reads "Link Cable  P2  Great (relay)" or "Wireless Adapter  Great" (no room code; "(relay)" only when relayed) Connection lost mid-game: today's `UI_FAIL_LINK_LOST`.
 
 
 ---------------------------------------------------------------------------------------------------------------

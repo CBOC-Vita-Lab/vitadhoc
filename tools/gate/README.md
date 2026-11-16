@@ -27,6 +27,9 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
 | `--full` | everything, plus armhf under qemu (including `online-armhf`), the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
 | `--release` | `--full` plus the release pins: `release-package-pinned` (the committed root VitAdhoc.vpk and its pinned hashes) and `check-files` (SHA256SUMS); stale by design between releases |
 
+`--only`, `--skip` and `--changed` act within the tier you name, and
+`--only` ignores tiers. A step's prerequisites are always added.
+
 ### Online play steps (2.0)
 
 All of these stay on the loopback and contact no real service. Node 22.5 or
@@ -44,9 +47,6 @@ newer is needed for the first and the twin step.
 | `online-armhf` | the cheap set of those scenarios on armhf under qemu (full tier) |
 
 `docs/TESTING.md` says what each scenario proves.
-
-`--only`, `--skip` and `--changed` act within the tier you name, and
-`--only` ignores tiers. A step's prerequisites are always added.
 
 ## What gate does
 

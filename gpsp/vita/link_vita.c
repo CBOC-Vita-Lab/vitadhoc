@@ -3090,12 +3090,19 @@ static void chip_update(void)
    s[0] = '\0';
    if (L.screen || L.phase == PH_OFF || L.phase == PH_DIALOG)
       ;
+   /* Online, once linked, the quality badge follows: the room word ("Online") is left out so the
+    * chip still fits the screen with "Great (relay)" at its end. */
+   else if (L.kind == LK_ADAPTER && L.conn == LINK_CONN_ONLINE && L.phase != PH_HOSTING)
+      snprintf(s, sizeof(s), "Wireless Adapter");
    else if (L.kind == LK_ADAPTER)
       snprintf(s, sizeof(s), "Wireless Adapter  %s%s", L.room,
                L.phase == PH_HOSTING ? "  waiting" : "");
    else if (L.phase == PH_HOSTING || L.phase == PH_MEASURE)
       snprintf(s, sizeof(s), "%s  %s  waiting",
                L.kind == LK_PAD ? "Two players" : "Link Cable", L.room);
+   else if ((st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING) && L.conn == LINK_CONN_ONLINE)
+      snprintf(s, sizeof(s), "%s  P%d",
+               L.kind == LK_PAD ? "Two players" : "Link Cable", L.is_host ? 1 : 2);
    else if (st == FE_GBLINK_RUNNING || st == FE_GBLINK_ENDING)
       snprintf(s, sizeof(s), "%s  %s  P%d",
                L.kind == LK_PAD ? "Two players" : "Link Cable", L.room,
@@ -3391,8 +3398,10 @@ static void card_from_reply(const online_reply *r)
       {
       case ONLINE_E_NOT_FOUND:  c->fail = UI_FAIL_ONLINE_CODE; break;
       case ONLINE_E_UPDATE:     c->fail = UI_FAIL_ONLINE_UPDATE; break;
-      case ONLINE_E_BUSY:
-      case ONLINE_E_RATE:       c->fail = UI_FAIL_ONLINE_BUSY; break;
+      case ONLINE_E_BUSY:       c->fail = UI_FAIL_ONLINE_BUSY; break;
+      /* A short rate limit (it clears within 2 minutes) is "wait a minute", as for the host's create
+       * (online_vita.c); only a long or unknown wait reads "busy for today". */
+      case ONLINE_E_RATE:       c->fail = (r->retry_after > 0 && r->retry_after <= 120) ? UI_FAIL_ONLINE_SLOW : UI_FAIL_ONLINE_BUSY; break;
       case ONLINE_E_CLOCK:      c->fail = UI_FAIL_ONLINE_CLOCK; break;
       default:                  c->fail = UI_FAIL_ONLINE_SERVICE; break;
       }

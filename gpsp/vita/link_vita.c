@@ -1529,7 +1529,14 @@ static void online_desc_make(online_desc *d)
    d->compat = S.compat[L.room_kind];
    d->relay_only = g_pcfg.online_relay != 0;
    if (SL.on)
-      snprintf(d->rom, sizeof(d->rom), "%s", SL.game);   /* (the CRC is the whole identity) */
+   {
+      /* (the CRC is the whole identity.)  `game` is upper-case, `rom` must be LOWER-case hex: the room service
+       * refuses a create whose rom has an A..F (400), which was nearly every SNES game. */
+      snprintf(d->rom, sizeof(d->rom), "%s", SL.game);
+      for (i = 0; d->rom[i]; i++)
+         if (d->rom[i] >= 'A' && d->rom[i] <= 'F')
+            d->rom[i] = (char)(d->rom[i] + 32);
+   }
    else if (L.is_host)
       (void)ui_host_online_rom_id(g_game.rom_path, d->rom);
 }

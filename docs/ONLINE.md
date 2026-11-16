@@ -113,7 +113,7 @@ the first two-Vita sittings.
 | Both run the same VitAdhoc, but the Game Boy Advance setup differs. | Use the same BIOS file and the same CPU setting on both. |
 | This Vita's date is wrong. | Set the date and time in the system settings. A Vita whose clock was reset thinks it is 2011 and cannot check the service's certificate. |
 | Your friend is playing a different game. / Add X to this Vita to join. | You need a copy of the host's game. |
-| Your copy of X is a different file from your friend's. | The link checks the two games when it starts. |
+| Your copy of X is a different file from your friend's. | You can still go on. On a Link Cable your own game is used and your friend's is sent across; the link checks both games when it starts. |
 | Somebody already joined that room. | A room holds two players. Ask your friend to host again. |
 | Couldn't reach your friend. | Try again, or both use Same Wi-Fi. A strict network may block the relay too. |
 | Online play is busy for today. | The service limits its day on purpose (below). Try tomorrow, or use Same Wi-Fi. |

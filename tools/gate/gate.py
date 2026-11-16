@@ -74,6 +74,7 @@ CHANGE_MAP = [
     ("tools/", {"release"}),
     ("tests/", {"release"}),
     ("docs/", {"release"}),
+    ("online/", {"online"}),                           # the room service (node)
     ("licenses/", {"release"}),
     ("notices/", {"release"}),
     ("store/", {"release"}),
@@ -85,7 +86,10 @@ CHANGE_MAP = [
     ("gpsp/vita/tests/artfetch/", {"cover"}),
     ("gpsp/vita/tests/upscale/", {"cover"}),
     ("gpsp/vita/tests/gamedb/", {"gamedb"}),
-    ("gpsp/vita/tests/library/", {"library"}),
+    ("gpsp/vita/tests/library/", {"library", "online"}),
+    ("gpsp/vita/tests/onlineconn/", {"online"}),
+    ("gpsp/vita/tests/onlinehttp/", {"online"}),
+    ("gpsp/netdrv/", {"gpsp", "link", "online"}),
     ("gpsp/vita/tests/cheats/", {"cheats"}),
     ("gpsp/vita/tests/rewind/", {"app", "rewind"}),
     ("gpsp/vita/tests/test_release_package.py", {"release"}),
@@ -313,6 +317,36 @@ STEPS = [
          "default", {"nes"}, cwd="nes/twin", inputs=["nes/"], deps=["build-nes-twin"],
          env_req="GATE_NES_ROMS", parse="nes_conf", timeout=7200),
 
+    # ---- online play (2.0): the room service, the NAT layer, the HTTPS room client, the
+    # connection state machine, the library match, the two-player pad adapter, and the twins
+    # linked ONLINE through the real service and the NAT simulator ----
+    Step("online-service", "online play: the room service under node --test (npm ci, then npm test)",
+         "cd online/service && npm ci --no-audit --no-fund && npm test", "default", {"online"},
+         inputs=["online/"], requires=[("exe", "node"), ("exe", "npm")], parse="node_test", timeout=1800),
+    Step("online-nat", "online play: STUN, punch, TURN relay against the NAT simulator (make test-nat)",
+         "make -C gpsp/netdrv test-nat", "default", {"gpsp", "link", "online"}, inputs=["gpsp/netdrv/"],
+         requires=CC, group=GROUP_MAKE, timeout=1800),
+    Step("online-http", "online play: the HTTPS room client, TLS cases when GATE_MBEDTLS_HOST is set (test_onlinehttp.py)",
+         "env ${GATE_MBEDTLS_HOST:+MBEDTLS_HOST=$GATE_MBEDTLS_HOST} python3 -I gpsp/vita/tests/onlinehttp/test_onlinehttp.py",
+         "default", {"gpsp", "online"}, inputs=["gpsp/", "online/"], requires=CXX, parse="unittest",
+         timeout=1800),
+    Step("online-conn", "online play: the connection state machine against fakes (test_onlineconn.py)",
+         "python3 gpsp/vita/tests/onlineconn/test_onlineconn.py", "default", {"gpsp", "online"},
+         inputs=["gpsp/"], requires=CC, parse="unittest", timeout=1800),
+    Step("online-library", "online play: the library match, a code to a game file (online_lib_test)",
+         "make -C gpsp/vita/tests/library -f online_lib.mk test", "default", {"gpsp", "library", "online"},
+         inputs=["gpsp/"], requires=CC, group=GROUP_MAKE, parse="app"),
+    Step("fe-padpair", "two players on one machine under the real session (test_padpair.c)",
+         "mkdir -p {out}/bin && gcc -std=gnu11 -O1 -g -Wall -Wextra -I gpsp/frontend-common "
+         "-o {out}/bin/test_padpair gpsp/tools/tests/test_padpair.c gpsp/frontend-common/fe_padpair.c "
+         "gpsp/frontend-common/fe_gblink.c gpsp/frontend-common/fe_util.c && {out}/bin/test_padpair",
+         "default", {"gpsp"}, inputs=["gpsp/"], requires=CC, parse="padpair"),
+    Step("online-x86", "online play: two twins linked through the room service and a NAT simulator (online_tests.py)",
+         "python3 online_tests.py x86 --hz 20", "default", APP_TAGS | {"app", "online"},
+         cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/", "online/"],
+         deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
+         requires=PIL + CXX + [("exe", "node")], group=GROUP_HOST, parse="app", timeout=14400),
+
     # ---- full: armhf under qemu, the Vita build, private cores runs, long tests ----
     Step("rewind-x86-long", "rewind, full: 20 minutes of play a console (rewind_tests.py x86)",
          "python3 rewind_tests.py x86", "full", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
@@ -359,6 +393,11 @@ STEPS = [
          cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/"],
          deps=["build-hostcore-armhf", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
          requires=PIL + ARMHF, group=GROUP_HOST, parse="app", timeout=14400),
+    Step("online-armhf", "online play on armhf under qemu (online_tests.py armhf)",
+         "python3 online_tests.py armhf --hz 20", "full", APP_TAGS | {"app", "online"},
+         cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/", "online/"],
+         deps=["build-hostcore-armhf", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
+         requires=PIL + ARMHF + CXX + [("exe", "node")], group=GROUP_HOST, parse="app", timeout=14400),
     Step("rewind-unit-armhf", "rewind unit on armhf under qemu (the ARM dynarec's rewind code)",
          "make -C gpsp/vita/tests/rewind build/unit_armhf && cd gpsp/vita/tests/rewind && "
          "for s in 1 2 3; do qemu-arm -L /usr/arm-linux-gnueabihf build/unit_armhf $s 120000 0 && "
@@ -389,11 +428,11 @@ STEPS = [
     Step("playerkit-vita", "playerkit: compiles for the Vita (compile only)",
          "make -C playerkit vita", "full", {"playerkit", "vita"},
          inputs=["playerkit/", "snes/frontend/third_party/"], requires=VITA_GPP, timeout=3600),
-    Step("vita-build", "the Vita package: make vpk (BIOS empty, GIT_VERSION from git describe)",
-         "make -C gpsp/vita -j{jobs} vpk BIOS= VITASDK={vitasdk} GIT_VERSION={gitver}", "full",
+    Step("vita-build", "the Vita package: make vpk (BIOS empty, GIT_VERSION from git describe, MBEDTLS=$GATE_MBEDTLS_VITA)",
+         "make -C gpsp/vita -j{jobs} vpk BIOS= VITASDK={vitasdk} GIT_VERSION={gitver} MBEDTLS={mbedtls_vita}", "full",
          {"gpsp", "vita"},
          inputs=["gpsp/", "nes/", "snes/", "wswan/", "playerkit/", "widekit/", "licenses/", "notices/"],
-         requires=VITA_GCC, group=GROUP_MAKE, timeout=14400),
+         requires=VITA_GCC, env_req="GATE_MBEDTLS_VITA", group=GROUP_MAKE, timeout=14400),
 ]
 BY_NAME = {s.name: s for s in STEPS}
 
@@ -517,7 +556,24 @@ def parse_nes_arm(text):
     return {"checks": same + diff, "failed": diff}
 
 
+def parse_node_test(text):
+    # node --test summary: "# tests 120", "# pass 118", "# fail 0", "# skipped 2" (an "ℹ" prefix in newer node)
+    def num(key):
+        m = _last(r"^(?:#|ℹ) %s (\d+)\s*$" % key, text)
+        return int(m.group(1)) if m else None
+    tests, fail, skip = num("tests"), num("fail"), num("skipped")
+    if tests is None:
+        return {}
+    return {"checks": tests, "failed": fail or 0, "skipped": skip or 0}
+
+
+def parse_padpair(text):
+    m = _last(r"^test_padpair: \d+ scenario\(s\), (\d+) checks, (\d+) failed", text)
+    return {"checks": int(m.group(1)), "failed": int(m.group(2))} if m else {}
+
+
 PARSERS = {
+    "node_test": parse_node_test, "padpair": parse_padpair,
     "exit": lambda text: {}, "app": parse_app, "host": parse_host, "playerkit": parse_playerkit,
     "widekit": parse_widekit, "unittest": parse_unittest, "pass_fail": parse_pass_fail,
     "check_files": parse_check_files, "audio": parse_audio, "snes_mt": parse_snes_mt,
@@ -616,8 +672,9 @@ def missing_requirements(step):
     if step.env_req:
         val = os.environ.get(step.env_req, "")
         if not val or not os.path.exists(val):
-            missing.append("set %s to %s" % (step.env_req, "a folder of ROMs"
-                                             if step.env_req != "GATE_WS_ROM" else "a WonderSwan ROM file"))
+            what = {"GATE_WS_ROM": "a WonderSwan ROM file",
+                    "GATE_MBEDTLS_VITA": "the Vita Mbed TLS prefix (<work>/mbedtls/vita)"}
+            missing.append("set %s to %s" % (step.env_req, what.get(step.env_req, "a folder of ROMs")))
     return missing
 
 
@@ -730,7 +787,9 @@ def step_key(step, keys, inputs, self_digest, out_dir):
 
 def _context(out_dir):
     return {"out": str(out_dir), "repo": str(REPO), "jobs": str(JOBS[0]), "rgbds": RGBDS,
-            "vitasdk": VITASDK, "gitver": GITVER[0]}
+            "vitasdk": VITASDK, "gitver": GITVER[0],
+            # the Mbed TLS prefix of the Vita build (python3 tools/online/build-mbedtls.py --target vita ...)
+            "mbedtls_vita": os.environ.get("GATE_MBEDTLS_VITA", "")}
 
 
 JOBS = [CORES]

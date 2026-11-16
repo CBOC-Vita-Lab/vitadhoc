@@ -19,6 +19,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -42,6 +45,12 @@ static uint64_t NowMs() {
 }
 
 int main(int argc, char** argv) {
+    // A test that dies must not leave this process behind (one did, spinning on a closed stdin for an hour):
+    // the kernel signals us when the parent goes, and the loop below also checks the parent's pid.
+    const pid_t parent = getppid();
+#ifdef __linux__
+    prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
     int port = 47000;
     int lanPort = 19019;   // VitAdhoc: the private port every client declares inside its simulated LAN (--lan-port N)
     bool sameLan = false;
@@ -136,11 +145,13 @@ int main(int argc, char** argv) {
     std::string stdinBuf;
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
     uint8_t buf[2048];
+    bool stdinOpen = true;   // false after end-of-file: a closed stdin is always "readable" and would spin select()
     while (!g_stop) {
+        if (getppid() != parent) break;
         fd_set rf;
         FD_ZERO(&rf);
         FD_SET(fd, &rf);
-        FD_SET(0, &rf);
+        if (stdinOpen) FD_SET(0, &rf);
         timeval tv = {0, 1000};
         select(fd + 1, &rf, 0, 0, &tv);
         const uint64_t now = NowMs();
@@ -159,8 +170,9 @@ int main(int argc, char** argv) {
         }
         // commands
         char tmp[256];
-        const ssize_t got = read(0, tmp, sizeof tmp);
+        const ssize_t got = stdinOpen ? read(0, tmp, sizeof tmp) : -1;
         if (got > 0) stdinBuf.append(tmp, size_t(got));
+        else if (got == 0) stdinOpen = false;
         size_t nl;
         while ((nl = stdinBuf.find('\n')) != std::string::npos) {
             const std::string line = stdinBuf.substr(0, nl);

@@ -1140,6 +1140,8 @@ class FakeRouter:
 
 def t_internet(T):
     """Internet: the host's public address by UPnP, a join by address."""
+    # 2.0: the typed address is the hidden "Direct address" connection; a
+    # saved net_conn 1 turns into Online on load unless link_direct = 1.
     port = T.begin("internet")
     # how long the pretend router may take over one answer: an emulated ARM
     # twin asks once a refresh, twelve times a second
@@ -1151,7 +1153,7 @@ def t_internet(T):
                shot(6, "host_public.png") + shot(16, "running.png") +
                disconnect(26) + shot(31, "after.png") + quit_at(36),
                config={"net_conn": 1},
-               vita={"link_peek": LT_PEEK, "link_upnp_ms": ms,
+               vita={"link_direct": 1, "link_peek": LT_PEEK, "link_upnp_ms": ms,
                      "link_upnp": "127.0.0.1:%d" % router.ssdp})
     # B: Join a game opens the address page on the last address used, the
     # cursor on its Join key; then the list of that one address.
@@ -1161,7 +1163,7 @@ def t_internet(T):
                "%d:shot=join_list.png\n" % at(10.5) + press(11.4, "cross") +
                shot(16, "running.png") + shot(31, "after.png") + quit_at(36),
                config={"net_conn": 1, "net_addr1": "127.0.0.1:%d" % port},
-               vita={"link_peek": LT_PEEK})
+               vita={"link_direct": 1, "link_peek": LT_PEEK})
     ra, rb = T.run([a, b], 36)
     T.clean(ra, "A")
     T.clean(rb, "B")
@@ -1200,7 +1202,7 @@ def t_internet(T):
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                host(EARLY) + shot(12, "host_closed.png") + press(14, "down") +
                keys("cross") + shot(18, "after.png") + quit_at(19),
-               config={"net_conn": 1}, vita={"link_upnp": "127.0.0.1:9"})
+               config={"net_conn": 1}, vita={"link_direct": 1, "link_upnp": "127.0.0.1:9"})
     ra, = T.run([a], 19)
     T.clean(ra, "A")
     T.check(ra.has(r"link_upnp failed"), "A: no gateway answered, and the "
@@ -1219,7 +1221,7 @@ def t_internet(T):
                host(EARLY) + shot(12, "host_noaddr.png") + press(14, "down") +
                keys("cross") + shot(18, "after.png") + quit_at(19),
                config={"net_conn": 1},
-               vita={"link_upnp": "127.0.0.1:%d" % router.ssdp,
+               vita={"link_direct": 1, "link_upnp": "127.0.0.1:%d" % router.ssdp,
                      "link_upnp_ms": ms})
     ra, = T.run([a], 19)
     T.clean(ra, "A")

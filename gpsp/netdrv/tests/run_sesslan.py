@@ -54,7 +54,8 @@ def build(out: Path) -> Path:
        "-Wno-unused-function", "-Wno-unused-variable", "-pthread",
        "-Igbcore", "-Ifrontend-common", "-Inetdrv",
        "-o", str(exe), "netdrv/tests/sesslan.c", "netdrv/netdrv.c",
-       "netdrv/transport_lan.c", *objs)
+       "netdrv/transport_lan.c", "netdrv/nat_hash.c", "netdrv/nat_stun.c",
+       "netdrv/nat_turn.c", *objs)   # transport_lan's NAT layer (2.0) lives in nat_*.c
     return exe
 
 

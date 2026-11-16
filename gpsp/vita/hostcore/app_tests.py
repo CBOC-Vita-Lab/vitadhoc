@@ -5690,8 +5690,9 @@ def t_display_rows(S):
     """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
     saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
     grid."""
-    # browser Settings opens on Theme: 18 DOWN to Screen size, 7 more to Grid strength
-    walk = "60:start\n" + "+8:down\n" * 25 + "+20:shot=grid.png\n"
+    # browser Settings opens on Theme: 19 DOWN to Screen size (2.0 added Join online to the browser's Link setup),
+    # 7 more to Grid strength
+    walk = "60:start\n" + "+8:down\n" * 26 + "+20:shot=grid.png\n"
     r = S.run("display_rows", walk + "+4:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)

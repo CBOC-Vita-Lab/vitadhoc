@@ -210,7 +210,10 @@ read_phase() { # $1 phase $2 our ref $3 desired rule json $4 max rules
     const ref=process.argv[1], want=JSON.parse(process.argv[2]), max=+process.argv[3];
     let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
       const j=JSON.parse(s), r=j.result||{}, rules=r.rules||[];
-      const mine=rules.filter(x=>x.ref===ref), others=rules.length-mine.length;
+      // ours by ref, or by its description where the zone gave the rule an id of its own as ref (rules made in the dashboard or
+      // by another script carry a hex ref; their description is the name the scripts agree on)
+      const tag=String(want.description||"").split(" ")[0];
+      const mine=rules.filter(x=>x.ref===ref||(tag&&String(x.description||"").split(" ")[0]===tag)), others=rules.length-mine.length;
       const norm=e=>String(e||"").replace(/\s+/g,"").replace(/^\((.*)\)$/,"$1");
       const pick=x=>JSON.stringify({d:x.description,e:norm(x.expression),a:x.action,on:x.enabled!==false,
         rl:x.ratelimit?{c:(x.ratelimit.characteristics||[]).slice().sort(),p:x.ratelimit.period,n:x.ratelimit.requests_per_period,m:x.ratelimit.mitigation_timeout}:null});
@@ -239,7 +242,8 @@ if [ "$CODE" = 200 ]; then
   RL_STATE=$(printf '%s' "$BODY" | node -e '
     let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
       let j;try{j=JSON.parse(s)}catch{j={}};
-      const r=((j.result||{}).rules||[]).find(x=>x.ref===process.argv[1]);
+      // by ref, or by description: the live zone holds the shared rule under a hex ref with "psvita-shared-ratelimit" as its description
+      const r=((j.result||{}).rules||[]).find(x=>x.ref===process.argv[1]||String(x.description||"").trim()===process.argv[1]);
       if(!r){console.log("missing");return}
       const covers=/starts_with\(\s*http\.request\.uri\.path\s*,\s*"\/v1\/"\s*\)/.test(String(r.expression||""))&&r.enabled!==false;
       console.log(covers?"ok":"notv1");

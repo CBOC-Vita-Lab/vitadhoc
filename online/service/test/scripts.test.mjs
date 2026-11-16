@@ -255,6 +255,27 @@ test('zone script: creates ONE WAF rule for vitadhoc.psvita.dev, never writes th
   for (const f of allFiles(z.tmp).filter((p) => /log/.test(p))) assert.ok(!readFileSync(f, 'utf8').includes(z.secret), f);
 });
 
+test('zone script: the live zone shape: rules under hex refs are found by their description (the shared rate limit, and ours on a second run)', () => {
+  const z = zoneEnv();
+  const liveRl = { ...RL_RULE, ref: '7ad74ab09438493587879bd717d7bdfa', description: 'psvita-shared-ratelimit' };
+  const galaxy = { ...FOREIGN(1), ref: '4ebb3dd6627343eab717f6d8cd4e743a', description: 'galaxy-psvita-block-unserved', expression: '(http.host eq "galaxy.psvita.dev" and not starts_with(http.request.uri.path, "/v1/"))' };
+  z.state({ phases: { http_ratelimit: { id: 'rs_http_ratelimit', rules: [liveRl] }, http_request_firewall_custom: { id: 'rs_http_request_firewall_custom', rules: [galaxy] } } });
+  const r = z.run();
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /ALL CHECKS PASSED/);
+  assert.deepEqual(r.writes.map((w) => w.split(' ')[0]), ['POST']);
+  assert.deepEqual(r.st.phases.http_ratelimit.rules, [liveRl], 'the shared rule is untouched');
+  // the zone keeps our rule under an id of its own as ref: a second run still finds it (by description) and writes nothing
+  const st = r.st;
+  const ours = st.phases.http_request_firewall_custom.rules.find((x) => x.ref === 'vitadhoc-psvita-block-unserved');
+  ours.ref = '0123456789abcdef0123456789abcdef';
+  writeFileSync(join(z.tmp, 'state.json'), JSON.stringify(st));
+  const again = z.run();
+  assert.equal(again.code, 0, again.out);
+  assert.equal(again.writes.length, 0, 'found by description: nothing written');
+  assert.equal(again.st.phases.http_request_firewall_custom.rules[0].description, 'galaxy-psvita-block-unserved', "Galaxy's rule is kept");
+});
+
 test('zone script: stops with a clear message, writing NOTHING, when the shared rate limit is missing or does not cover /v1/*', () => {
   for (const [what, phases] of [
     ['no entrypoint', {}],

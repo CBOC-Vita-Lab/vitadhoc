@@ -207,7 +207,7 @@ host                           service                         joiner
 
 | Where | Key | Meaning |
 | --- | --- | --- |
-| menu | Connection: Online, Always use the relay, Link delay | as above (`vita.ini`: `net_conn`, `online_relay`, `link_delay`) |
+| menu | Connection: Online, Always use the relay, Link delay | as above (`config.ini`: `net_conn`, `online_relay`, `link_delay`) |
 | `vita.ini` | `link_direct = 1` | Shows the old typed-address connection ("Direct address", needs UDP 19019 forwarded). A 1.4 setting of "Internet" becomes Online unless this is set. |
 | `vita.ini` | `online_url` | Another service address (the twin and tests point it at `http://127.0.0.1:<port>`). |
 

@@ -245,7 +245,7 @@ Client sentences (one line each, in `ui_link_fail_text`; `UI_DEV` is "Vita" / "P
 
 Not failures: "Connecting through the relay." (LINKING screen line 2 / waiting page while stage is a relay
 stage); the quality toast "Connected to %s. Connection: Great|Good|Slow" (Great < 80 ms, Good < 120 ms round trip, Slow above); with Slow one more toast line
-"Slow connection: the game may feel delayed."; once linked, the session chip reads "Link Cable  P2  Great (relay)" or "Wireless Adapter  Great" (no room code; "(relay)" only when relayed) Connection lost mid-game: today's `UI_FAIL_LINK_LOST`.
+"Slow connection: the game may feel delayed."; once linked, the session chip reads "Link Cable  P2  Great (relay)" or "Wireless Adapter  Great" (no room code; "(relay)" only when relayed). Connection lost mid-game: today's `UI_FAIL_LINK_LOST`.
 
 
 ---------------------------------------------------------------------------------------------------------------

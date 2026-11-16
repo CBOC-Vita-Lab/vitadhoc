@@ -116,6 +116,14 @@ UI_WEAK int ui_host_pad_game(char out[9])
    return 0;
 }
 
+UI_WEAK int ui_host_snes_game_id(const char *path, char out[9])
+{
+   (void)path;
+   if (out)
+      out[0] = 0;
+   return 0;
+}
+
 UI_WEAK int ui_host_online_available(void) { return 0; }
 
 UI_WEAK int ui_host_online_lookup(const char *code)

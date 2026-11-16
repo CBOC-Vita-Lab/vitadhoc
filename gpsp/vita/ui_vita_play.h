@@ -57,6 +57,13 @@ const ui_join_info *ui_join_target(void)
    return &g_join_tgt;
 }
 
+/* A page that picks the room itself (the SNES Two players page) hands it over here. */
+void ui_join_set(const ui_join_info *t)
+{
+   if (t)
+      g_join_tgt = *t;
+}
+
 /* The network's state, asked at most twice a second (and at once when
  * `now` -- a page just opened, or the player pressed something that
  * depends on it). */

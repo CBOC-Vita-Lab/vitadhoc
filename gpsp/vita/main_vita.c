@@ -4964,6 +4964,25 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
    return 0;
 }
 
+/* The game id a Two players room names for a SNES library file (the list's Settings > Two players filters the rooms with it).
+ * A zip is unpacked as the start would do it (the same cache, so the start does not unpack it twice). */
+int ui_host_snes_game_id(const char *path, char out[9])
+{
+   char un[APP_PATH_CAP];
+   long usz = 0;
+
+   if (!path || !out)
+      return 0;
+   out[0] = '\0';
+   if (has_ext(path, ".zip"))
+   {
+      if (zip_unpack(path, FE_CONSOLE_SNES, un, sizeof(un), &usz) != 0)
+         return 0;
+      path = un;
+   }
+   return link_snes_game_id(path, out);
+}
+
 static int game_boot(const char *rom_path, fe_console_t console)
 {
    fe_host_config cfg;
@@ -6616,6 +6635,7 @@ int main(int argc, char **argv)
       /* the launcher's game, once: a refused one is not asked again (nor
        * replaced by autoboot.txt's) when the list comes back */
       int launched = -1;
+      int snes_menu = 0;         /* the list's Settings > Two players (SNES): 1 host, 2 join */
       if (g_next_rom[0])
       {
          /* Online: the game the room needs (nothing else is asked first) */
@@ -6658,6 +6678,7 @@ int main(int argc, char **argv)
          /* "Join online" in the list's Settings chose this game for a room */
          if (ui_online_take_pending())
             g_join_pending = 1;
+         snes_menu = ui_snes_two_take();
       }
       first = 0;
       if (!g_running)
@@ -6672,8 +6693,9 @@ int main(int argc, char **argv)
       }
       if (console == FE_CONSOLE_SNES)
       {
-         /* Two players: Join online chose this game for a room (guest), or vita.ini snes_two says which */
-         const int two = g_join_pending ? 2 : g_sw.snes_two;
+         /* Two players: Join online chose this game for a room (guest), or the list's Settings > Two players did (host or guest),
+          * or vita.ini snes_two says which */
+         const int two = g_join_pending ? 2 : snes_menu ? snes_menu : g_sw.snes_two;
          link_snes_link snes_lk;
          g_join_pending = 0;
          /* snes.bin takes over; it only comes back here on failure */

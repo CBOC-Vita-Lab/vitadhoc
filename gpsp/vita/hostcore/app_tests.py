@@ -5974,6 +5974,83 @@ def t_controls_defaults(S):
             "Screenshot button combo off again, kept as NONE")
 
 
+SNES_TWO_DOWNS = 16        # from Theme (where the list's Settings opens): to Two players, which sits last of LINK SETUP
+WIFI_ON = {"nethost.ini": "wifi = 1\nssid = TwinNet\n"}
+
+
+def snes_two_script(steps, downs=SNES_TWO_DOWNS):
+    """The SNES tab, Settings (START), `downs` rows down to Two players, X to open it, then `steps`."""
+    return ("90:triangle\n+30:triangle\n+30:triangle\n+40:start\n+30:shot=settings.png\n" +
+            "+6:down\n" * downs + "+20:shot=row.png\n+6:cross\n+30:shot=page.png\n" + steps)
+
+
+def t_snes_two(S):
+    """Settings > Two players is a SNES game's own row (and only there), a small page: Host a game / Join a game with
+    Same Wi-Fi or Online, and a room list of this game for Same Wi-Fi.  The twin cannot start snes.bin
+    (plat_exec_program says no); what it can show is the page and that a choice reaches the link layer
+    (snes_two_go, link_snes_begin) and the main loop's snes_link_page."""
+    tiny = bytes(0x8000)
+    ex = {"roms/Super One (USA).sfc": tiny, "roms/Super Two (USA).sfc": tiny[:0x4000]}
+    wifi = dict(ex, **WIFI_ON)
+
+    # a GBA game's Settings has no such row: the same walk opens nothing of the page
+    r = S.run("snes_two_gba", "60:start\n+30:shot=settings.png\n" + "+6:down\n" * SNES_TWO_DOWNS +
+              "+20:shot=row.png\n+6:cross\n+30:shot=page.png\n+6:circle\n+10:quit\n", extra=wifi)
+    S.clean(r)
+    S.check(not r.has(r"^EVT snes_two_") and not r.has(r"^EVT online_pad_open"), "a GBA list's Settings has no Two players row")
+
+    # no Wi-Fi: the page says so in the usual words and nothing starts
+    r = S.run("snes_two_nowifi", snes_two_script("+6:cross\n+6:cross\n+30:shot=nowifi.png\n+10:quit\n"), extra=ex)
+    S.clean(r)
+    S.check(r.has(r"^EVT snes_two_open game=[0-9A-F]{8}"), "the page opens with the highlighted game's id (%s)" %
+            [e["_"] for e in r.evt("snes_two_open")])
+    S.check(not r.evt("snes_two_go") and not r.evt("link_snes_begin"), "without Wi-Fi nothing is started")
+    S.picture(r, "page.png")
+    S.picture(r, "nowifi.png")
+
+    # Host, Same Wi-Fi: the room is announced by the link layer (the twin then cannot start snes.bin)
+    r = S.run("snes_two_host_wifi", snes_two_script("+6:cross\n+6:cross\n+120:shot=hosting.png\n+200:quit\n"),
+              extra=wifi, config={"net_conn": 3})
+    S.clean(r, allow="could not be started")
+    go = r.evt("snes_two_go")
+    S.check(go and go[0].get("role") == "host" and go[0].get("conn") == "0",
+            "Host > Same Wi-Fi: hosts on Same Wi-Fi whatever Connection said (%s)" % [e["_"] for e in go])
+    b = r.evt("link_snes_begin")
+    S.check(b and b[0].get("role") == "host" and b[0].get("conn") == "0",
+            "...and link_snes_begin is called as host (%s)" % [e["_"] for e in b])
+    S.check(r.has(r"^EVT snes_launch_file") is False, "...no game starts before the other console arrives")
+    S.picture(r, "hosting.png")
+
+    # Host, Online: the link layer is asked for an Online room (no service in the twin: it ends in its own sentence)
+    r = S.run("snes_two_host_online", snes_two_script("+6:cross\n+6:down\n+6:cross\n+90:shot=online.png\n+200:quit\n"),
+              extra=wifi)
+    S.clean(r, allow="could not be started")
+    b = r.evt("link_snes_begin")
+    S.check(b and b[0].get("role") == "host" and b[0].get("conn") == "3",
+            "Host > Online: link_snes_begin as host on Online (%s)" % [e["_"] for e in b])
+    S.picture(r, "online.png")
+
+    # Join, Same Wi-Fi: the list of this game's rooms (none here); O leaves it, and the page, and Settings
+    r = S.run("snes_two_join_wifi", snes_two_script("+6:down\n+6:cross\n+6:cross\n+120:shot=rooms.png\n+6:circle\n"
+                                                    "+10:shot=back.png\n+6:circle\n+10:circle\n+30:shot=list.png\n+10:quit\n"),
+              extra=wifi)
+    S.clean(r)
+    S.check(r.has(r"^EVT snes_two_scan rc=0"), "Join > Same Wi-Fi searches the rooms")
+    S.check(not r.evt("snes_two_go"), "no room, nothing started")
+    for n in ("rooms.png", "back.png", "list.png"):
+        S.picture(r, n)
+
+    # Join, Online: the code pad (as Settings > Join online); O comes back to the page
+    r = S.run("snes_two_join_online", snes_two_script("+6:down\n+6:cross\n+6:down\n+6:cross\n+30:shot=pad.png\n"
+                                                      "+6:circle\n+20:shot=back.png\n+6:circle\n+10:quit\n"),
+              extra=wifi)
+    S.clean(r)
+    S.check(r.has(r"^EVT online_pad_open modal=1"), "Join > Online opens the code pad")
+    S.check(not r.evt("snes_two_go"), "no code, nothing started")
+    S.picture(r, "pad.png")
+    S.picture(r, "back.png")
+
+
 def t_snes_library(S):
     """SNES games on the card, no setup: every folder under ux0:ROMS (and
     ux0:roms) is a game folder, so "ux0:ROMS/SNES ROM Collection/*.smc" is on
@@ -7438,7 +7515,7 @@ def t_nes_cover(S):
     S.picture(r, "covers.png")
 
 
-TESTS = [("list", t_list), ("snes_library", t_snes_library), ("nes_library", t_nes_library),
+TESTS = [("list", t_list), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),

@@ -2358,6 +2358,7 @@ static void cht_page_reset(void);
 enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_FASTLINK, SET_OSD, SET_SHARE, SET_JOIN,
        SET_ONLINE_JOIN,   /* 2.0: the game list's Join online (browser only) */
+       SET_SNES_TWO,      /* 2.0: a SNES game's Two players (browser, SNES tab only), last of its section */
        SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_SGB,
        SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
@@ -2463,6 +2464,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* 2.0, BROWSER ONLY: type a friend's room code from the game list; the
     * game it needs is found in the library (set_row_shown) */
    { 0, "Join online" },
+   /* 2.0, BROWSER ONLY, SNES tab only: host or join Two players with the highlighted game (snes.bin plays it) */
+   { 0, "Two players" },
 #else
    { 0, "Join: scan for rooms" },
    /* BROWSER ONLY too, and LAST in the section, so no row a harness walker
@@ -2600,6 +2603,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
 /* A GBA profile has no DMG palette: the row stays visible, greyed, and the
  * cursor steps over it. */
 static int linkmode_row_enabled(void);
+static int snes_game_highlighted(void);      /* with the browser's page state, below */
 static void ctl_value(unsigned mask, char *b, size_t n);
 /* Rows that exist only in the browser's Settings: not drawn, not counted
  * and not stopped on anywhere else. */
@@ -2652,6 +2656,9 @@ static int set_row_shown(int idx)
          return 1;
       return 1;
    }
+   if (idx == SET_SNES_TWO)
+      return g_ov_browse && pcfg_display_console() == FE_CONSOLE_SNES &&
+             snes_game_highlighted();
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_ONLINE_JOIN &&
            idx != SET_COVERS && idx != SET_REFRESH) ||
           g_ov_browse;
@@ -3722,6 +3729,9 @@ static const char *set_help(int id)
    case SET_ONLINE_JOIN:
       return "Type your friend's room code. Your copy of their game is "
              "found and started.";
+   case SET_SNES_TWO:
+      return "Play this game with a friend: one hosts, the other joins. "
+             "Both need the same game.";
    case SET_OSD:      return "The small link status in the corner of the "
                              "game.";
    case SET_SCALE:    return "How large the game is drawn. 3x is exact and "
@@ -4204,8 +4214,9 @@ static ui_action screen_settings(unsigned edges)
     * the request after this frame is drawn (browser_settings). */
    if ((edges & PSP_CTRL_CROSS) && g_ov_browse &&
        (g_cursor == SET_SHARE || g_cursor == SET_JOIN ||
-        g_cursor == SET_ONLINE_JOIN))
-      g_share_req = g_cursor == SET_SHARE ? 1 : g_cursor == SET_JOIN ? 2 : 3;
+        g_cursor == SET_ONLINE_JOIN || g_cursor == SET_SNES_TWO))
+      g_share_req = g_cursor == SET_SHARE ? 1 : g_cursor == SET_JOIN ? 2
+                    : g_cursor == SET_ONLINE_JOIN ? 3 : 4;
    else if (edges & PSP_CTRL_CROSS)
       settings_adjust(g_cursor, +1);
    if (edges & PSP_CTRL_CIRCLE)
@@ -4360,6 +4371,9 @@ static ui_action screen_settings(unsigned edges)
 #ifdef VITA
       case SET_ONLINE_JOIN:
          set_item(y, g_cursor == i, 1, set_rows[i].label, "type a room code");
+         break;
+      case SET_SNES_TWO:
+         set_item(y, g_cursor == i, 1, set_rows[i].label, "host or join");
          break;
 #endif
       case SET_FASTLINK:
@@ -6793,6 +6807,7 @@ static char g_menu_note[80];         /* the menu's plate, until the next key */
 
 #include "ui_vita_play.h"
 #include "ui_vita_online.h"
+#include "ui_vita_snes.h"
 #include "ui_vita_cheats.h"
 #include "ui_vita_ra.h"
 #include "ui_vita_menu.h"
@@ -11941,6 +11956,27 @@ static int browse_backdrop_take(void)
    return vid_ambient_source() == 1;
 }
 
+#ifdef VITA
+/* Settings > Two players (SNES): the game the list had highlighted when START opened Settings.  Not through
+ * a game of the running program: the list is all there is, and snes.bin plays the game. */
+static int snes_game_highlighted(void)
+{
+   return g_bpage.rom_dir && g_bpage.n > 0;
+}
+
+static int snes_game_pick(char *path, size_t cap, char *title, size_t tcap)
+{
+   int rom;
+   if (!snes_game_highlighted())
+      return -1;
+   rom = view_rom(g_bpage.cur);
+   if (psp_rom_path_join(path, cap, g_bpage.rom_dir, g_roms[rom].name) != 0)
+      return -1;
+   rom_display_name(&g_roms[rom], title, tcap, 1);
+   return 0;
+}
+#endif
+
 /* Share game data: the PSP's screens on both consoles (the Vita's radio is
  * vita/share_vita.c, Wi-Fi rooms). */
 #include "ui_share.inc"
@@ -12070,6 +12106,22 @@ static int browser_settings(void)
          }
          screen_to(SCR_SETTINGS);
          g_cursor = SET_ONLINE_JOIN;
+         g_prev_pad = 0xFFFFFFFFu;  /* the O that left the page is spent */
+      }
+      if (g_share_req == 4)
+      {
+         /* SNES Two players: host or join.  A choice that starts a game ends this page and the list opens the
+          * game (g_oc.launch), as Join online does; the main loop forms the link (main_vita.c, snes_link_page). */
+         char path[APP_PATH_CAP], title[48];
+         g_share_req = 0;
+         if (snes_game_pick(path, sizeof(path), title, sizeof(title)) == 0 &&
+             snes_two_modal(path, title))
+         {
+            g_screen = SCR_MENU;
+            break;
+         }
+         screen_to(SCR_SETTINGS);
+         g_cursor = SET_SNES_TWO;
          g_prev_pad = 0xFFFFFFFFu;  /* the O that left the page is spent */
       }
       if (g_share_req == 1 || g_share_req == 2)
@@ -13362,7 +13414,8 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
              * (vita/ui_vita_online.h): it boots as if picked from the list,
              * and ui_online_take_pending() tells the main loop to join the
              * room afterwards. */
-            fe_console_t con = oc_console_of(g_oc.open_path);
+            fe_console_t con = g_oc.snes_two ? FE_CONSOLE_SNES    /* a zip too */
+                                             : oc_console_of(g_oc.open_path);
             g_oc.launch = 0;
             if (strlen(g_oc.open_path) >= out_sz)
                osd_toast("ROM path is too long");
@@ -13386,6 +13439,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                return 0;
             }
             g_oc.pending = 0;
+            g_oc.snes_two = 0;
          }
 #endif
 #ifdef VITA

@@ -6761,7 +6761,13 @@ int main(int argc, char **argv)
                snprintf(save, sizeof(save), "%.*s.srm",
                         (int)(dt ? (size_t)(dt - rom_path) : strlen(rom_path)),
                         rom_path);
-            (void)snes_launch_write(game, save, rom_path, slot);
+            if (snes_launch_write(game, save, rom_path, slot) != 0 && g_snes_lk)
+            {
+               /* Two players without its launch file would start the game alone while the other console waits */
+               g_snes_lk = NULL;
+               app_notice("The two-player game could not start", "The launch file could not be written.", NULL, 5000);
+               continue;
+            }
             play_name_of(rom_path, nm, sizeof(nm));
             play_log_add(nm, (uint32_t)plat_wallclock(), 0, 1);
             (void)play_log_save();

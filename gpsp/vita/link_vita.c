@@ -373,6 +373,7 @@ static struct
    unsigned delay;                /* the host's input delay                 */
    unsigned t_seen;               /* the tick the host's netdrv answered    */
    int      seen;
+   int      peer_heard;           /* netdrv said the other console connected (snes_np_peer), even if it left again */
    unsigned t_begin, prev_pad;
    link_snes_link link;
 } SL;
@@ -3552,7 +3553,9 @@ static void snes_watch(void)
    if (SL.sub == 1)
    {
       const unsigned need = L.conn == LINK_CONN_ONLINE ? T_SNES_SEEN_ONLINE : T_SNES_SEEN_LAN;
-      if (!SL.seen && fe_np_gb_peer_ready(NULL))
+      /* (the callback's latch too: a host that hands over at once says BYE one frame, 17 ms, after its answer, and
+       * a guest whose one pump takes in both never reads "ready" here, then waited 15 s for nothing and failed) */
+      if (!SL.seen && (SL.peer_heard || fe_np_gb_peer_ready(NULL)))
       {
          SL.seen = 1;
          SL.t_seen = L.ticks;
@@ -3586,6 +3589,13 @@ static void snes_np_rx(void *user, const void *payload, size_t len, uint8_t src)
    (void)user; (void)payload; (void)len; (void)src;
 }
 
+static void snes_np_peer(void *user, uint8_t id, int connected)
+{
+   (void)user; (void)id;
+   if (connected)
+      SL.peer_heard = 1;
+}
+
 int link_snes_begin(int is_host, const char *rom_path, const char *title)
 {
    const ui_join_info *t = ui_join_target();
@@ -3611,7 +3621,7 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
    SL.prev_pad = g_app_pad;
    fe_evt("link_snes_begin role=%s conn=%d game=%s", is_host ? "host" : "guest", conn, SL.game);
    fe_np_gb_set_receive(snes_np_rx, NULL);
-   fe_np_gb_set_peer_callback(NULL, NULL);
+   fe_np_gb_set_peer_callback(snes_np_peer, NULL);
    link_action(is_host);
    /* a failure to even start was recorded by bringup_failed (SL.phase == LSN_FAILED): the caller reads it */
    return 0;

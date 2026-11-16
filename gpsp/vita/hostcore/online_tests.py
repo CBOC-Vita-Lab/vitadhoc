@@ -1025,14 +1025,17 @@ def t_determinism(T):
 
 # ---- the library path ----------------------------------------------------------------------------------
 
-def settings_join_online(first_down=19):
-    """From the game list: START opens Settings; DOWN 19 rows is 'Join online' (browser Settings only)."""
+def settings_join_online(first_down=17):
+    """From the game list: START opens Settings; DOWN 17 rows (from the Theme row the list opens on; 16 is "Join a share") is "Join online" (browser Settings only)."""
     return L.press(2, "start") + L.keys(*(["down"] * first_down)) + "+20:shot=settings.png\n"
 
 
 def lib_b_script(code, tail, shots=("card.png",), press=True):
-    s = (settings_join_online() + L.keys("cross", first=L.AFTER_SHOT) + "+30:shot=pad.png\n" +
-         L.keys(*code_keys(code)) + L.keys("triangle") + "+%d:shot=card.png\n" % L.dur(8))
+    keys = code_keys(code)
+    half = keys.index("right", keys.index("right") + 1) + 1
+    s = (settings_join_online() + L.keys("cross", first=L.AFTER_SHOT) + "+30:shot=pad_empty.png\n" +
+         L.keys(*keys[:half], first=L.AFTER_SHOT) + "+30:shot=pad_half.png\n" +
+         L.keys(*keys[half:], first=L.AFTER_SHOT) + L.keys("triangle") + "+%d:shot=card.png\n" % L.dur(8))
     return s + tail
 
 
@@ -1064,25 +1067,27 @@ def t_library_join(T):
     T.picture(rb, "B", "card.png")
     # 2. B has only a different file with the host's game code: it asks, shows the file, never opens by itself
     def b_ask(code):
-        return lib_b_script(code, L.shot(30, "asked.png") + L.keys("circle", "circle") + L.quit_at(40))
-    rig = pair(T, "online_library_other_file", b_script=b_ask, b_noauto=True, a_end=60, b_end=44, rom_b=None,
+        return lib_b_script(code, "+%d:shot=asked.png\n" % L.dur(6) + L.keys("circle", "circle", first=L.AFTER_SHOT) +
+                            "+%d:quit\n" % L.dur(3))
+    rig = pair(T, "online_library_other_file", b_script=b_ask, b_noauto=True, a_end=100, b_end=100, rom_b=None,
                b_extra={"roms/linktest.gba": bytes(other)},
-               a_script=host_script(60) + L.quit_at(60), with_world=False)
+               a_script=host_script(100) + L.quit_at(100), with_world=False)
     rb = rig.rb
     T.clean(rig.rb, "B")
     T.clean(rig.ra, "A")
     done = rb.evt("online_lib_done")
-    T.check(done and done[-1]["cable"] == "1" and done[-1]["hits"] == "1" and int(done[-1]["pick"]) != -1,
-            "B: one file with the game's code was found (%s)" % (done[-1]["_"] if done else "none"))
+    T.check(done and done[-1]["cable"] == "1" and done[-1]["hits"] == "1" and int(done[-1]["pick"]) == 2,
+            "B: one file with the game's code was found and the page asks (pick=ASK) (%s)" % (done[-1]["_"] if done else "none"))
     T.check(not rb.has(r"online_open_join") and not rb.has(r"link_running"), "B: nothing was opened by itself")
     T.picture(rb, "B", "asked.png")
     # 3. B has the other file AND the host's: the host's is offered directly (the other is ignored)
     def b_both(code):
-        return lib_b_script(code, L.keys("cross", first=L.AFTER_SHOT) + "+%d:shot=linking.png\n" % L.dur(6) +
-                            L.shot(30, "after.png") + L.quit_at(40))
-    rig = pair(T, "online_library_both_files", b_script=b_both, b_noauto=True, a_end=60, b_end=44,
+        return lib_b_script(code, "+%d:shot=search.png\n" % L.dur(5) + L.keys("cross", first=L.AFTER_SHOT) +
+                            "+%d:shot=linking.png\n" % L.dur(6) + "+%d:shot=after.png\n" % L.dur(20) +
+                            "+%d:quit\n" % L.dur(2))
+    rig = pair(T, "online_library_both_files", b_script=b_both, b_noauto=True, a_end=110, b_end=110,
                b_extra={"roms/zz_other/linktest.gba": bytes(other)},
-               a_script=host_script(60) + L.quit_at(60))
+               a_script=host_script(110) + L.quit_at(110))
     rb = rig.rb
     T.clean(rig.rb, "B")
     T.clean(rig.ra, "A")

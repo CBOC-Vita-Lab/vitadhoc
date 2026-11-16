@@ -259,7 +259,7 @@ static void turn_start_alloc(nat_turn *c, uint64_t now)
    turn_begin(c, TK_ALLOC, now);
 }
 
-void nat_turn_start(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip_be, uint16_t server_port,
+static void turn_init(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip_be, uint16_t server_port,
                     const char *user, const char *pass, const uint8_t seed[16], uint64_t now_ms)
 {
    int i;
@@ -278,9 +278,34 @@ void nat_turn_start(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip
    if (!server_ip_be || !server_port)
    {
       turn_fail(c, NAT_RELAY_E_TIMEOUT);
+   }
+}
+
+void nat_turn_start(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip_be, uint16_t server_port,
+                    const char *user, const char *pass, const uint8_t seed[16], uint64_t now_ms)
+{
+   turn_init(c, send, ctx, server_ip_be, server_port, user, pass, seed, now_ms);
+   if (c->state != NAT_RELAY_FAILED)
+      turn_start_alloc(c, now_ms);
+}
+
+void nat_turn_adopt(nat_turn *c, nat_send_fn send, void *ctx, uint32_t server_ip_be, uint16_t server_port,
+                    const char *user, const char *pass, uint32_t relayed_ip_be, uint16_t relayed_port,
+                    const uint8_t seed[16], uint64_t now_ms)
+{
+   turn_init(c, send, ctx, server_ip_be, server_port, user, pass, seed, now_ms);
+   if (c->state == NAT_RELAY_FAILED || !relayed_ip_be || !relayed_port)
+   {
+      turn_fail(c, NAT_RELAY_E_TIMEOUT);
       return;
    }
-   turn_start_alloc(c, now_ms);
+   /* No Allocate is ever sent: the server still holds the allocation of this 5-tuple and would answer a new
+    * one with 437.  A Refresh finds out whether it is still there (401 with a nonce first, then signed). */
+   c->adopting = 1;
+   c->state = NAT_RELAY_ALLOCATING;
+   c->relayed_ip_be = relayed_ip_be;
+   c->relayed_port = relayed_port;
+   turn_begin(c, TK_REFRESH, now_ms);
 }
 
 int nat_turn_bind(nat_turn *c, uint32_t peer_ip_be, uint16_t peer_port, uint64_t now_ms)
@@ -342,6 +367,11 @@ static void turn_timeout(nat_turn *c, nat_turn_txn *t, uint64_t now)
          turn_fail(c, NAT_RELAY_E_TIMEOUT);
          break;
       case TK_REFRESH:
+         if (c->adopting)
+         {
+            turn_fail(c, NAT_RELAY_E_TIMEOUT);
+            break;
+         }
          if (++c->refresh_fails >= 2)
             turn_fail(c, NAT_RELAY_E_LOST);
          else
@@ -540,6 +570,11 @@ static void turn_on_success(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, 
          c->state = NAT_RELAY_ALLOCATED;
          break;
       case TK_REFRESH:
+         if (c->adopting && c->state == NAT_RELAY_ALLOCATING)
+         {
+            c->adopting = 0;
+            c->state = NAT_RELAY_ALLOCATED;      /* the allocation answered: ours again */
+         }
          if (p->has_lifetime)
             c->lifetime_s = p->lifetime < 10 ? 10 : (p->lifetime > 86400 ? 86400 : p->lifetime);
          c->expires_at = now + (uint64_t)c->lifetime_s * 1000u;
@@ -578,6 +613,13 @@ static void turn_on_error(nat_turn *c, nat_turn_txn *t, const turn_parsed *p, ui
       }
    }
    t->active = 0;
+   if (c->adopting && kind == TK_REFRESH)
+   {
+      /* 481 / 437: no allocation of this 5-tuple (the router moved the mapping, or it expired); else refused */
+      turn_fail(c, code == 481 || code == 437 ? NAT_RELAY_E_LOST : code == 486 || code == 508 ? NAT_RELAY_E_QUOTA
+                                                                                          : NAT_RELAY_E_AUTH);
+      return;
+   }
    switch (code)
    {
       case 401: case 441: case 403:

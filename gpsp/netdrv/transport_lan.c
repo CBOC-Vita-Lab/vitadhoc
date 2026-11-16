@@ -2843,6 +2843,75 @@ void lan_transport_relay_stop(lan_transport *t)
    nd_mutex_unlock(&t->nx);
 }
 
+int lan_transport_relay_handoff(lan_transport *t, lan_relay_params *out)
+{
+   int rc = -1;
+   uint32_t ip;
+   uint16_t port;
+   if (!t || !out)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (t->turn_on && t->bind_pending && nat_turn_state(&t->turn) == LAN_RELAY_READY &&
+       nat_turn_relayed(&t->turn, &ip, &port))
+   {
+      memset(out, 0, sizeof *out);
+      out->server_ip_be = t->turn_ip_be;
+      out->server_port = t->turn_ports[t->turn_idx];
+      snprintf(out->user, sizeof out->user, "%s", t->turn_user);
+      snprintf(out->pass, sizeof out->pass, "%s", t->turn_pass);
+      out->relay_ip_be = ip;
+      out->relay_port = port;
+      out->peer_ip_be = t->bind_ip_be;
+      out->peer_port = t->bind_port;
+      /* let go without telling the server: the allocation stays for the next program */
+      memset(&t->turn, 0, sizeof t->turn);
+      t->turn_on = 0;
+      t->bind_pending = 0;
+      nat_refresh_srcs(t);
+      nat_publish_relay(t);
+      rc = 0;
+   }
+   nd_mutex_unlock(&t->nx);
+   return rc;
+}
+
+int lan_transport_relay_adopt(lan_transport *t, const lan_relay_params *p)
+{
+   uint64_t now = nd_now_us() / 1000u;
+   uint8_t seed[16];
+   if (!t || !p || !p->server_ip_be || !p->server_port || !p->relay_ip_be || !p->relay_port || !p->peer_ip_be ||
+       !p->peer_port)
+      return -1;
+   nd_mutex_lock(&t->nx);
+   if (!t->seeded)
+   {
+      nd_mutex_unlock(&t->nx);
+      return -1;
+   }
+   if (t->turn_on)
+      nat_turn_release(&t->turn, now);
+   t->turn_ip_be = p->server_ip_be;
+   t->turn_nports = 1;
+   t->turn_ports[0] = p->server_port;
+   t->turn_idx = 0;
+   snprintf(t->turn_user, sizeof t->turn_user, "%s", p->user);
+   snprintf(t->turn_pass, sizeof t->turn_pass, "%s", p->pass);
+   t->bind_pending = 1;                  /* the tick binds once the Refresh has been answered */
+   t->bind_ip_be = p->peer_ip_be;
+   t->bind_port = p->peer_port;
+   t->turn_on = 1;
+   atomic_store_explicit(&t->nat_on, 1, memory_order_relaxed);
+   nat_rand_bytes(t, seed, sizeof seed);
+   nat_turn_adopt(&t->turn, nat_cb_turn_send, t, p->server_ip_be, p->server_port, t->turn_user, t->turn_pass,
+                  p->relay_ip_be, p->relay_port, seed, now);
+   t->turn_port_t0_ms = now;
+   t->turn_heard = 0;
+   nat_refresh_srcs(t);
+   nat_publish_relay(t);
+   nd_mutex_unlock(&t->nx);
+   return 0;
+}
+
 int lan_transport_nat_listening(lan_transport *t)
 {
    return t ? atomic_load_explicit(&t->nat_srcs, memory_order_acquire) : 0;

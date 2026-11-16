@@ -16,7 +16,8 @@
  *             reliable payloads each way over every path.
  *
  *   test_nat           everything
- *   test_nat NAME...   only those (hash stun turn punch sim)
+ *   adopt     (2.0) a relay allocation outlives its program: handoff, adopt on the same port, data flows
+ *   test_nat NAME...   only those (hash stun turn punch sim adopt)
  *   NATSIM=/path/to/natsim   use this simulator binary instead of building one
  */
 #include <errno.h>
@@ -1803,6 +1804,77 @@ static void test_rearm(uint16_t base)
    pair_close(&p);
 }
 
+/* 2.0 (SNES): the app forms the relay link, snes.bin takes the allocation over on the same local port. */
+static void test_adopt(uint16_t base)
+{
+   pair p;
+   const uint16_t ports[1] = { 3478 };
+   lan_nat_status s[2];
+   lan_relay_params prm;
+   lan_transport *old;
+   uint32_t srv = ip4(198, 51, 100, 9);
+   printf("[sim: a relay allocation outlives its program: handoff in A, adopt in B on the same port, data flows]\n");
+   if (pair_open(&p, base, "port", "port", 0, 1) != 0)
+   {
+      pair_close(&p);
+      return;
+   }
+   if (pair_relay(&p, ports, 1, 6000) == 0)
+   {
+      const char *st;
+      CHECK(lan_transport_relay_handoff(p.t[0], &prm) == 0, "handoff from the READY side");
+      CHECK(lan_transport_relay_handoff(p.t[0], &prm) != 0, "a second handoff has nothing to give");
+      lan_transport_nat_status(p.t[0], &s[0]);
+      CHECK(s[0].relay == LAN_RELAY_OFF, "side 0 is out of the relay (%d)", s[0].relay);
+      /* program A ends: the transport goes, and with it the socket (but no Refresh 0) */
+      old = p.t[0];
+      lan_transport_destroy(old);
+      p.t[0] = NULL;
+      usleep(300000);
+      st = proxy_stats(&p.px);
+      CHECK(stats_field(st, "live ") == 2 && stats_field(st, "releases ") == 0,
+            "both allocations are still on the server, none released (%s)", st);
+      /* program B: the same simulated client (same private port, so the same mapping) */
+      p.t[0] = sim_transport(base, 0, p.priv_ip[0], 0);
+      CHECK(p.t[0] != NULL, "a new transport for side 0");
+      if (p.t[0])
+      {
+         int tries0 = stats_field(proxy_stats(&p.px), "allocations ");
+         CHECK(lan_transport_relay_adopt(p.t[0], &prm) == 0, "adopt");
+         WAIT_FOR(8000, ({ lan_nat_status a; lan_transport_nat_status(p.t[0], &a); a.relay == LAN_RELAY_READY; }));
+         lan_transport_nat_status(p.t[0], &s[0]);
+         CHECK(s[0].relay == LAN_RELAY_READY, "READY again (%d, error %d)", s[0].relay, s[0].relay_err);
+         CHECK(s[0].relay_ip_be == prm.relay_ip_be && s[0].relay_port == prm.relay_port, "the same relayed address");
+         CHECK(stats_field(proxy_stats(&p.px), "allocations ") == tries0, "no new Allocate reached the server");
+         if (s[0].relay == LAN_RELAY_READY)
+         {
+            pair_session(&p, "adopted", s[0].relay_ip_be, s[0].relay_port);
+            CHECK(!strcmp(census_path(p.t[1]), "relay"), "the session runs through the relay (%s)", census_path(p.t[1]));
+         }
+      }
+      /* an allocation that was released is gone: adopting it fails cleanly, as LOST */
+      if (p.t[0])
+      {
+         lan_transport_relay_stop(p.t[0]);
+         usleep(300000);
+         CHECK(lan_transport_relay_adopt(p.t[0], &prm) == 0, "adopt a released allocation");
+         WAIT_FOR(8000, ({ lan_nat_status a; lan_transport_nat_status(p.t[0], &a); a.relay == LAN_RELAY_FAILED; }));
+         lan_transport_nat_status(p.t[0], &s[0]);
+         CHECK(s[0].relay == LAN_RELAY_FAILED && s[0].relay_err == LAN_RELAY_E_LOST, "FAILED / LOST (%d / %d)", s[0].relay,
+               s[0].relay_err);
+      }
+   }
+   (void)srv;
+   pair_close(&p);
+}
+
+static void test_adopt_only(void)
+{
+   test_adopt((uint16_t)(37000 + (getpid() % 40) * 100));
+   if (g_sim_path[0] && !getenv("NATSIM"))
+      unlink(g_sim_path);
+}
+
 static void test_sim(void)
 {
    uint16_t base = (uint16_t)(36000 + (getpid() % 40) * 100);
@@ -1817,6 +1889,7 @@ static void test_sim(void)
    test_relay_ports((uint16_t)(base + 15));
    test_relay_fail((uint16_t)(base + 16));
    test_rearm((uint16_t)(base + 17));
+   test_adopt((uint16_t)(base + 18));
    if (g_sim_path[0] && !getenv("NATSIM"))
       unlink(g_sim_path);
 }
@@ -1829,6 +1902,7 @@ static const struct { const char *name; void (*fn)(void); } TESTS[] = {
    { "turn", test_turn },
    { "punch", test_punch },
    { "sim", test_sim },
+   { "adopt", test_adopt_only },
 };
 
 int main(int argc, char **argv)

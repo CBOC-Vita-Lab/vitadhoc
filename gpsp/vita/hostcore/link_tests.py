@@ -1832,10 +1832,11 @@ def t_cancel(T):
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                adhoc_go(EARLY, join=True) + shot(5, "joining.png") +
                press(6, "circle") + shot(8, "cancelled.png") +
-               adhoc_go(9, join=True) + shot(32, "noanswer.png") +
-               press(33, "circle") + shot(35, "after.png") + quit_at(36),
+               adhoc_go(9, join=True) + shot(33, "noanswer.png") +
+               press(35, "circle") + shot(37, "after.png") + quit_at(38),
                config={"net_conn": 2}, net=adhoc_net(T, 2, [1]), extra=lm)
-    rb, = T.run([b], 36)
+    # (the join gives up 20 s after it began, about 36 s in: O at 33 s left it 0.15 s and lost that race now and then)
+    rb, = T.run([b], 38)
     T.clean(rb, "B")
     T.check(rb.has(r"link_phase 1 -> 2 kind=1") and
             rb.has(r"link_cancel phase=joining"),

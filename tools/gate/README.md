@@ -58,6 +58,9 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
    | `GATE_SNES_ROMS` (folder) | `snes-mt-compare`, `snes-conformance` (informational); `snes-selftest` also uses it for its ROM sections |
    | `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`) |
    | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section) |
+   | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |
+   | `GATE_MBEDTLS_HOST` (folder, optional) | `online-http`: its TLS cases run against this host64 prefix; they are SKIPPED, loudly, without it |
+   | `GATE_GBA_ROMS` (folder, optional) | also `online-x86`: its determinism scenario plays the first Link Cable game of the folder |
 
    The cache key of a private step includes the folder path, not the ROM files.
    After changing the ROMs, run with `--force` or delete the step's cache file.

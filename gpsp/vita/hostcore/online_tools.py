@@ -25,6 +25,7 @@ import socket
 import struct
 import subprocess
 import sys
+import atexit
 import tempfile
 import threading
 import time
@@ -40,6 +41,61 @@ PROXY = os.path.join(HERE, "build", "natsim", "natsim_proxy")
 STUN_SERVERS = "198.51.100.1:3478,198.51.100.2:3478"
 
 
+_LIVE = []          # every child started here (each leads its own process group)
+_HOOKED = []
+
+
+def _kill_group(p):
+    """SIGTERM then SIGKILL to the child's whole group (node, the proxy, anything they started)."""
+    if p.poll() is not None:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)       # stragglers of a group whose leader already left
+        except OSError:
+            pass
+        return
+    for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(p.pid, sig)
+        except OSError:
+            break
+        try:
+            p.wait(timeout=wait)
+            break
+        except subprocess.TimeoutExpired:
+            pass
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def kill_all_children():
+    for p in list(_LIVE):
+        _kill_group(p)
+    del _LIVE[:]
+
+
+def _hook():
+    """Once: kill every child's group at exit and on SIGTERM / SIGINT of the runner (then die the usual way)."""
+    if _HOOKED:
+        return
+    _HOOKED.append(1)
+    atexit.register(kill_all_children)
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        old = signal.getsignal(sig)
+
+        def handler(num, frame, old=old):
+            kill_all_children()
+            if callable(old):
+                return old(num, frame)
+            signal.signal(num, signal.SIG_DFL)
+            os.kill(os.getpid(), num)
+        try:
+            signal.signal(sig, handler)
+        except ValueError:          # not the main thread
+            pass
+
+
 class Skip(Exception):
     """A tool the scenario needs is missing (node, g++): the scenario SKIPs, naming it."""
 
@@ -52,7 +108,10 @@ class _Proc:
         self.all = []
         self.log = open(log, "w")
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT, text=True, bufsize=1, **kw)
+                                  stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                  start_new_session=True, **kw)
+        _hook()
+        _LIVE.append(self.p)
         if hasattr(T, "procs"):
             T.procs.append(self.p)
         self.t = threading.Thread(target=self._pump, daemon=True)
@@ -89,13 +148,9 @@ class _Proc:
             pass
 
     def stop(self):
-        if self.p.poll() is None:
-            self.p.send_signal(signal.SIGTERM)
-            try:
-                self.p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.p.kill()
-                self.p.wait()
+        _kill_group(self.p)
+        if self.p in _LIVE:
+            _LIVE.remove(self.p)
         self.t.join(timeout=2)
         self.log.close()
 

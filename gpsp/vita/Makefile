@@ -216,12 +216,8 @@ LINK_ELF = $(CC) -Wl,-q -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
 # sanitizer's start hook of a non-ASan build, and the toolchain's own start-up
 # code (crtbegin: transactional-memory and unwind-frame registration, libc's
 # __libc_fini), which tests each address before calling.  A new name here needs the
-# same reason, written next to it.  port_log_summary (nethttps/np_log.h) and
-# port_host_heap_log (nethttps/np_https_tls_mbedtls.cpp) are Galaxy's log hooks
-# in the vendored HTTPS client, each tested (`if (fn)`) before the call and
-# absent here; package H may route them into the app's log and drop the entries.
-WEAK_OK := port_log_summary port_host_heap_log \
-           irq_io_fast timer_lazy jit_big_i_calls jit_big_i_max \
+# same reason, written next to it.
+WEAK_OK := irq_io_fast timer_lazy jit_big_i_calls jit_big_i_max \
            jit_big_d_calls jit_pin_at \
            gbab_irq_io_fast gbab_timer_lazy gbab_jit_big_i_calls \
            gbab_jit_big_i_max gbab_jit_big_d_calls gbab_jit_pin_at \

@@ -31,6 +31,13 @@ are unchanged, so after a small change only the affected steps run.
 - `arm-linux-gnueabihf-gcc` and `qemu-arm` for armhf (`--full`).
 - VitaSDK at `$VITASDK` (default `/opt/vitasdk`) for the Vita package and the
   Vita compile checks. The audio regressions use its headers.
+- Node 22.5 or newer and npm for the online room service (`online-service` and the
+  twins' fake service; the twins need `node` only, `npm ci` is the service step's).
+- Mbed TLS, built once by `python3 tools/online/build-mbedtls.py --target host64|vita --work DIR`
+  (see [Building](BUILDING.md)): `GATE_MBEDTLS_HOST=DIR/mbedtls/host64` lets `online-http`
+  run its TLS cases (without it they are SKIPPED, loudly) and `GATE_MBEDTLS_VITA=DIR/mbedtls/vita`
+  is passed as `MBEDTLS=` to the `make vpk` of `vita-build` (without it that step SKIPs: a
+  package without TLS cannot be built).
 
 A missing tool makes its steps SKIP with the name of the tool.
 
@@ -41,7 +48,7 @@ the folders (or, for WonderSwan, at one file):
 
 | variable | runs |
 |---|---|
-| `GATE_GBA_ROMS` | every GBA, GB and GBC ROM in the folder, x86 against armhf (`--full`) |
+| `GATE_GBA_ROMS` | every GBA, GB and GBC ROM in the folder, x86 against armhf (`--full`); and `online-x86`'s determinism scenario, which then also plays the first ROM the link table marks Link Cable at a 150 ms round trip (the cache key does not include the files: `--force` after changing them) |
 | `GATE_SNES_ROMS` | SNES thread comparison and reference-screenshot conformance; also the SNES selftest's ROM sections |
 | `GATE_NES_ROMS` | NES blargg-style conformance against `nes/twin/conformance_expect.txt` |
 | `GATE_WS_ROM` | the WonderSwan acceptance section |
@@ -131,14 +138,47 @@ and two real Vitas are the only proof of the rest.
 | Library match | `make -C gpsp/vita/tests/library -f online_lib.mk test` | the card-to-file step: folder walks, duplicate codes, the pure decision |
 | Menus | the host UI test (`gpsp/vita/host/ui_host_test.c`) | code pad, room card, host page, sentences, `link_direct` |
 
-The twin scenarios that play whole online sessions (two real menus, a fake
-service, the NAT world: cable, Game Boy, relay, wrong code, different builds,
-cancel and retry, expiry, a busy day, a lost connection, loss and delay at
-100, 150 and 200 ms round trips, determinism, share) are `online_tests.py` in
-`gpsp/vita/hostcore/`, run as `python3 online_tests.py x86 --hz 20`; the
-gate steps for all of the above are listed by `python3 tools/gate/gate.py
---list`. Needs `node` and `g++`; a missing tool makes the step SKIP with its
-name. Hold the build lock on a shared machine.
+Gate steps: `online-service` (`npm ci` then `npm test`), `online-nat`,
+`online-http`, `online-conn`, `online-library`, `fe-padpair` (two players on one
+machine under the real session: `gpsp/tools/tests/test_padpair.c`) and, on the
+twins, `online-x86` (default tier) and `online-armhf` (full tier). A missing
+tool (node, npm, g++, qemu) makes its step SKIP with the tool's name.
+
+### Twin scenarios: `online_tests.py`
+
+Two twins of the whole app, each behind its own simulated home router
+(`gpsp/netdrv/tests/natsim`, with a TURN server), talking to the real service
+code of `online/service` under node (`dev/server.mjs`) on the loopback. Every
+step goes through the real menus: the host's twin logs `EVT online_room
+code=XXXXX`, the test types the code on the joiner's code pad with the d-pad.
+A small HTTP proxy (`HttpProxy`) stands between a twin and the service where a
+scenario needs a lost answer, an answer made up, or a room card that shows
+another version (the twins' own version is fixed).
+
+    cd gpsp/vita/hostcore
+    python3 online_tests.py x86 --hz 20            # all of them (about two hours at 20; --hz 30 is faster)
+    python3 online_tests.py x86 --hz 30 --only punch,relay,gb,share
+    python3 online_tests.py armhf --hz 12          # the cheap set: punch, relay, gb, lost_answer, library_join
+    python3 online_tests.py --list
+
+| scenario | what it proves |
+|---|---|
+| `punch`, `relay`, `relay_joiner` | GBA Link Cable over the punch (port-restricted NATs), and over the relay with the host's, or the joiner's, NAT symmetric: the linktest cartridge's verdict on both, equal machines, the delay at least 3, at most 40 requests to the service, no public address of the other console in either log (relay) |
+| `relay_host_setting`, `relay_joiner_setting` | "Always use the relay" on the host, or on the joiner, with open NATs: the room goes relay |
+| `punch_opens_host` | the room is 200 s old (poll every 10 s): the joiner's PUNCH moves the host on before its poll names the guest |
+| `gb`, `gb_relay` | Game Boy cable over the punch and over the relay: 200 bytes each way, the cartridge's verdict in memory and in the committed save. The cartridge needs its player to press A once the link is up (that console is the master); the first smoke did not and read zeros |
+| `adapter` | Wireless Adapter over Online: room, idle link, teardown (no adapter traffic exists to cross) |
+| `share` | Share game data over Online, byte for byte |
+| `wrong_code`, `expired`, `update_required`, `version` | the card's sentences: a wrong code, a code that aged out (`POST /_test/advance`), a service that wants a newer app (426, joiner and host), the host newer / older (card shown with another `ver`), same release with another setup (`link_build`); no join request is made |
+| `busy`, `slow_down`, `service_down` | 503 `over_budget` for joiner and host, a short 429 (its own sentence), nothing listening |
+| `lost_answer` | the first answer to the create and to the join is lost; the request id makes the retry succeed (two requests each, both answered) |
+| `cancel_after_failure` | a join that fails at the service, Cancel at once: the menus again, radio given back |
+| `drop` | the path dies in the middle of the game: the link ends (`peer_lost`), each game carries on |
+| `rtt_100`, `rtt_150`, `rtt_200` | round trips of 100 / 150 / 200 ms, jitter 20 ms, loss 2 %, made by natsim and again by the transport's own shim (`link_latency` / `link_jitter` / `link_loss`): the delay is measured, at most 12 (the Online cap), `want=` logged, hashes equal; stalls per minute are printed, not judged |
+| `delay_cap` | the same delay on Same Wi-Fi stays capped at 8 |
+| `determinism` | 150 ms round trip, jitter, loss, scripted buttons on both consoles for 90 s: every periodic hash and the final hash agree (linktest.gba always; a private Link Cable game when `GATE_GBA_ROMS` has one) |
+| `different_game`, `library_join` | Join online from the game list: the matching game opens and joins; a cable game whose file differs from the host's asks and opens nothing by itself; with the host's file among two it is the one offered |
+| `direct_hidden` | the Connection page has no Direct address unless `link_direct = 1` |
 
 The Vita build with Mbed TLS and the heap and package-size numbers are
 checked by the build (`vita-build` in the full tier), not by the twin.

@@ -1915,7 +1915,9 @@ int main(int argc, char **argv)
    srand((unsigned)time(NULL) ^ (unsigned)getpid());
    for (i = 0; i < sizeof TESTS / sizeof TESTS[0]; i++)
    {
-      int want = argc < 2;
+      /* "adopt" alone is a part of "sim" (which has removed the simulator it built by the time it ends): everything
+       * runs it once, there */
+      int want = argc < 2 && strcmp(TESTS[i].name, "adopt") != 0;
       for (a = 1; a < argc; a++)
          if (!strcmp(argv[a], TESTS[i].name))
             want = 1;

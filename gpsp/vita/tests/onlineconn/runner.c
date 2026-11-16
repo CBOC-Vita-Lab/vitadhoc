@@ -848,6 +848,20 @@ void lan_mac_from_addr(uint32_t ip, uint16_t port, uint8_t mac[6])
    mac[4] = (uint8_t)(port >> 8);
    mac[5] = (uint8_t)port;
 }
+/* SNES hand-over (online_handoff_get): the bound port, and a relayed link's allocation.  The fake relay has nothing
+ * to hand over beyond "it was READY". */
+uint16_t lan_transport_port(const lan_transport *t) { (void)t; return 19019; }
+int lan_transport_relay_handoff(lan_transport *t, lan_relay_params *out)
+{
+   lan_nat_status s;
+   lan_transport_nat_status(t, &s);
+   if (!out || s.relay != LAN_RELAY_READY)
+      return -1;
+   memset(out, 0, sizeof *out);
+   out->relay_ip_be = s.relay_ip_be;
+   out->relay_port = s.relay_port;
+   return 0;
+}
 const char *lan_transport_addr_str(const lan_transport *t, char *buf, size_t n)
 {
    (void)t;

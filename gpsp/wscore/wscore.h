@@ -108,6 +108,22 @@ int wscore_peek(wscore_t *core, unsigned address);
 int wscore_cheats_set(wscore_t *core, const char *codes);
 void wscore_reset(wscore_t *core);
 
+/* The two-player link (frontend-common/fe_padpair.h).  The console has one
+ * pad: both players' keys are OR-ed onto it.  A session runs ONE emulated
+ * frame whenever both players' keys for it are known, so a refresh is asked
+ * how many frames it covers (1 or 2 at 59.94 Hz, 75.47 / 59.94 on average),
+ * each is run with wscore_session_frame, and the picture of the refresh is
+ * made once they have all run.  Keys are the console's own bits
+ * (wscore_pad_now maps the Vita's through the layout shown), so what crosses
+ * the link needs no layout on the other console. */
+unsigned wscore_pad_now(void);
+int wscore_session_due(wscore_t *core);                  /* frames still to run */
+int wscore_session_frame(wscore_t *core, unsigned pad);  /* 0 = one frame ran */
+int wscore_session_present(wscore_t *core);
+/* The clock the session's machines share (CONFIG's seed); 0 = own again. */
+void wscore_session_clock(int64_t seed);
+uint32_t wscore_save_ram_crc(wscore_t *core);
+
 #ifdef __cplusplus
 }
 #endif

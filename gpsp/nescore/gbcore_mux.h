@@ -70,6 +70,19 @@ int gbmux_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len);
 int gbmux_poke(gbcore_t *core, uint16_t addr, const void *data, unsigned len);
 int gbmux_cheats_set(gbcore_t *core, const gbcore_cheat_t *codes, unsigned count);
 
+/* The two-player link (frontend-common/fe_padpair.h): the NES and the
+ * WonderSwan machine, both players on it.  gbmux_pad_ok = this is such a
+ * machine and the build has the calls. */
+int gbmux_pad_ok(const gbcore_t *core);
+uint16_t gbmux_pad_local(gbcore_t *core, uint16_t gb_buttons);
+int gbmux_pad_run(gbcore_t *core, uint16_t pad1, uint16_t pad2);
+int gbmux_pad_due(gbcore_t *core);
+void gbmux_pad_present(gbcore_t *core, int ran);
+void gbmux_pad_pin(gbcore_t *core, int on);
+void gbmux_pad_clock(gbcore_t *core, int64_t seed);
+uint32_t gbmux_pad_save_crc(gbcore_t *core);
+int gbmux_pad_game_id(const gbcore_t *core, char out[9]);
+
 #ifdef GBADHOC_GBMUX
 #define gbcore_create gbmux_create
 #define gbcore_run_frame gbmux_run_frame

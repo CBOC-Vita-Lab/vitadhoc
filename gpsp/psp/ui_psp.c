@@ -6879,15 +6879,6 @@ static ui_action screen_menu(unsigned edges, int session_active)
          return screen_state_slots(0);   /* draw this frame as the new page */
 #ifdef VITA
       case M_WIRELESS:
-         if (g_pcfg.console == FE_CONSOLE_NES ||
-             g_pcfg.console == FE_CONSOLE_WSWAN)
-         {
-            /* the two-player link is the Game Boy's and the GBA's cable */
-            snprintf(g_menu_note, sizeof(g_menu_note), "Link play is not "
-                     "available for %s games.",
-                     g_pcfg.console == FE_CONSOLE_NES ? "NES" : "WonderSwan");
-            break;
-         }
          screen_to(SCR_WIRELESS);
          play_net(1);
          break;

@@ -5,8 +5,26 @@
 #include "nescore.h"
 #include "../wscore/wscore.h"
 
+#include <stdio.h>
 #include <string.h>
 #include "../frontend-common/fe_evt.h"
+
+/* The two-player link's calls (gbmux_pad_*) are the only ones that reach the
+ * nescore / wscore functions below, and a host test of fe_host.c that links
+ * no NES or WonderSwan machine (tools/tests/fe_host_absent.c) has none of
+ * them: weak, so such a link still resolves, and never called without a
+ * machine (gbmux_pad_ok is checked first). */
+#pragma weak nescore_run_frame2
+#pragma weak nescore_session_pin
+#pragma weak nescore_save_ram_crc
+#pragma weak wscore_pad_now
+#pragma weak wscore_session_due
+#pragma weak wscore_session_frame
+#pragma weak wscore_session_present
+#pragma weak wscore_session_clock
+#pragma weak wscore_save_ram_crc
+#pragma weak nescore_rom_crc
+#pragma weak wscore_rom_crc
 
 static nescore_t *g_nes;                 /* the running NES machine, if any */
 static gbcore_callbacks_t g_gbcb;        /* the frontend's callbacks for it */
@@ -208,3 +226,98 @@ int gbmux_poke(gbcore_t *c, uint16_t a, const void *d, unsigned n)
 { return IS_NES(c) || IS_WS(c) ? -1 : gbcore_poke(c, a, d, n); }
 int gbmux_cheats_set(gbcore_t *c, const gbcore_cheat_t *codes, unsigned n)
 { return IS_NES(c) || IS_WS(c) ? 0 : gbcore_cheats_set(c, codes, n); }
+
+/* ---- the two-player link (frontend-common/fe_padpair.h) ----------------------
+ * Two consoles run ONE machine, the host's pad on port 1 and the guest's on
+ * port 2 (NES), or both onto the one pad (WonderSwan).  fe_host.c owns the
+ * session; these are the machine-specific parts of it. */
+
+int gbmux_pad_ok(const gbcore_t *c)
+{
+  return (gbmux_is_nes(c) && &nescore_run_frame2) ||
+         (gbmux_is_ws(c) && &wscore_session_frame);
+}
+
+/* What this console's player puts on the wire for the frame it samples: the
+ * NES's is the GB bit layout fe_host already has (turned into the console's
+ * pad when it runs), the WonderSwan's is the console's own key bits. */
+uint16_t gbmux_pad_local(gbcore_t *c, uint16_t gb_buttons)
+{
+  return gbmux_is_ws(c) ? (uint16_t)wscore_pad_now() : gb_buttons;
+}
+
+/* ONE emulated frame with both players' words.  0 = it ran. */
+int gbmux_pad_run(gbcore_t *c, uint16_t pad1, uint16_t pad2)
+{
+  if (gbmux_is_ws(c))
+    return wscore_session_frame(g_ws, (unsigned)(pad1 | pad2));
+  if (gbmux_is_nes(c))
+    return nescore_run_frame2(g_nes, nes_pad(pad1), nes_pad(pad2));
+  return -1;
+}
+
+/* How many emulated frames the display refresh now starting covers.  The
+ * WonderSwan's 75.47 Hz is 1 or 2 (0 when the frames a late partner held up
+ * are all done); a PAL / Dendy NES (50 Hz) skips 1 refresh in 6 as it does
+ * on its own; an NTSC NES is 1. */
+int gbmux_pad_due(gbcore_t *c)
+{
+  if (gbmux_is_ws(c))
+    return wscore_session_due(g_ws);
+  if (gbmux_is_nes(c))
+  {
+    double fps = nescore_fps(g_nes);
+    if (fps > 55.0 || fps < 1.0)
+      return 1;
+    g_nes_acc += fps / g_disp_hz;
+    if (g_nes_acc >= 1.0)
+    {
+      g_nes_acc -= 1.0;
+      return 1;
+    }
+    return 0;
+  }
+  return 0;
+}
+
+/* The refresh's picture, after its frames (`ran` of them) have run. */
+void gbmux_pad_present(gbcore_t *c, int ran)
+{
+  if (gbmux_is_ws(c))
+    (void)wscore_session_present(g_ws);
+  else if (gbmux_is_nes(c) && !ran)
+    (void)nescore_repeat_frame(g_nes);        /* the last picture again */
+}
+
+/* The options a session must run alike on both consoles, and their undoing. */
+void gbmux_pad_pin(gbcore_t *c, int on)
+{
+  if (gbmux_is_nes(c))
+  {
+    nescore_session_pin(g_nes, on);
+    g_nes_acc = 0;
+  }
+}
+
+void gbmux_pad_clock(gbcore_t *c, int64_t seed)
+{
+  if (gbmux_is_ws(c))
+    wscore_session_clock(seed);
+}
+
+uint32_t gbmux_pad_save_crc(gbcore_t *c)
+{
+  return gbmux_is_ws(c) ? wscore_save_ram_crc(g_ws)
+       : gbmux_is_nes(c) ? nescore_save_ram_crc(g_nes) : 0;
+}
+
+/* The running game's identity for a room: 8 hex digits, the machine's CRC-32
+ * of the cartridge (the NES core's of PRG + CHR, the WonderSwan's of the
+ * whole file; "00000000" when the core has none, a disk). */
+int gbmux_pad_game_id(const gbcore_t *c, char out[9])
+{
+  uint32_t crc = gbmux_is_nes(c) ? nescore_rom_crc(g_nes)
+               : gbmux_is_ws(c) ? wscore_rom_crc() : 0;
+  snprintf(out, 9, "%08X", (unsigned)crc);
+  return gbmux_is_nes(c) || gbmux_is_ws(c) ? 0 : -1;
+}

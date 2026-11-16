@@ -307,6 +307,10 @@ typedef struct ui_online_card
 } ui_online_card;
 /* The identity (1.1 `rom`) of a game file, as the host computes its own: 0 = ok. */
 int  ui_host_online_rom_id(const char *path, char out[9]);
+/* Two players (NES / WonderSwan): the running game's identity, the 8 hex
+ * digits of its file's CRC as Online names it (a room's first 4 are its
+ * code).  0 = this game cannot play Two players. */
+int  ui_host_pad_game(char out[9]);
 int  ui_host_online_available(void);          /* 1: Wi-Fi is up and the radio is free for it */
 int  ui_host_online_lookup(const char *code); /* 0 = asked; < 0 = UI_ROOMS_E_* */
 void ui_host_online_card(ui_online_card *out);/* every frame while the card page shows; a few loads */

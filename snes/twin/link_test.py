@@ -139,6 +139,11 @@ def common_checks(h, g, rh, rg, frames, hash_at):
     check(gf and gf["crc_before"] == gf["crc_after"] and ge["restored"] == "1",
           "the guest's own game was put back (state CRC %s -> %s)" % (gf and gf["crc_before"], gf and gf["crc_after"]))
     check(sha(g.srm) == g.srm_before, "the guest's own save file is untouched")
+    # the host's resume point is the session's last frame (an older one would bring the older battery back on Continue);
+    # the guest, whose machine never was its own game's, writes none
+    def rsm(p):
+        return [f for d, _, fs in os.walk(os.path.join(p.root, "states")) for f in fs if f.endswith(".rsm")]
+    check(len(rsm(h)) == 1 and not rsm(g), "the host wrote its resume point at the agreed end, the guest none (%s / %s)" % (rsm(h), rsm(g)))
     return True
 
 

@@ -15,6 +15,7 @@
 #define GBADHOC_GBMUX 1   /* the NES machine answers the gb_core calls */
 #include "../nescore/gbcore_mux.h"
 #include "fe_gblink.h"
+#include "fe_padpair.h"
 #include "fe_linkprof.h"
 #include "../netdrv/gb_link.h"
 #include "netpacket_host.h"
@@ -97,6 +98,11 @@ static uint16_t gb_dual_buttons;
 /* A GB/GBC session, single-player or linked: the GB paths below key on this,
  * not on gb_core, because a link session (gbl) runs with no single core. */
 static int gb_family;
+/* The NES / WonderSwan two-player link (fe_padpair.h) is an optional layer of
+ * the build: a frontend or test that links fe_host.c without fe_padpair.o
+ * simply cannot start one. */
+#pragma weak fe_padpair_machines
+#pragma weak fe_padpair_restored
 /* The GB link session (fe_gblink.h), NULL when none. */
 static int save_recover_bak(const char *path);   /* below, with sram_load */
 static int state_file_exists(const char *path);
@@ -109,6 +115,14 @@ static int battery_load_failed;
 static fe_gblink *gbl;
 static int gbl_last;               /* last fe_gblink_step result */
 static int gbl_is_gba;             /* the session is the GBA cable mirror */
+/* The NES / WonderSwan two-player mirror (fe_padpair.h): the player's ONE
+ * machine runs the session, so gb_core is hidden (NULL) for its length and
+ * every `gb_family && !gb_core` rule that guards a link session (no states,
+ * no battery writes, no memory peeks) holds for it too.  pad_core is the
+ * machine meanwhile. */
+static int gbl_pad;
+static gbcore_t *pad_core;
+static const fe_gblink_machines *pad_v;
 static int gbl_ride_set;           /* Fast link: ack riding applied */
 static int gbl_primed;             /* autopilot had its power-on look */
 static uint8_t *gbl_prelink_state; /* the running game when the link began */
@@ -3978,6 +3992,255 @@ static int gba_cable_start(int is_host, unsigned input_delay, int64_t rtc_seed)
 static int gba_cable_close(void);
 #endif
 
+/* ---- NES / WonderSwan two-player link (fe_padpair.h) ---------------------
+ *
+ * Both consoles run the player's ONE machine, the host's pad on port 1 and
+ * the guest's on port 2 (the WonderSwan's one pad takes both), in lockstep
+ * through the same fe_gblink as the cable sessions.  What the machine does
+ * is the frontend's here, because it is the frontend's machine:
+ *
+ *   - the host's state and battery start both consoles; the guest's own game
+ *     is set aside by fe_padpair and put back when the session ends, and the
+ *     guest never writes a battery file: gb_core is hidden for the session
+ *     (see gbl_pad), which switches off every writer and every state call;
+ *   - the options that change emulation are pinned by the mux
+ *     (gbmux_pad_pin) and the session clock is the host's;
+ *   - the same cartridge image on both consoles (HELLO's identity; there is
+ *     no partner cartridge), checked by fe_gblink: a different one is
+ *     refused as FE_GBLINK_E_ROM_MISSING.
+ *
+ * Drawing is the machine's own business: its video and audio callbacks are
+ * the single player's, one emulated frame at a time. */
+
+static void gblink_stats_evt(void);
+
+static int pad_m_run(void *u, uint16_t a, uint16_t b)
+{ return gbmux_pad_run((gbcore_t *)u, a, b); }
+static size_t pad_m_state_size(void *u) { return gbcore_state_size((gbcore_t *)u); }
+static int pad_m_state_save(void *u, void *buf, size_t n)
+{ return gbcore_state_save((gbcore_t *)u, buf, n) > 0 ? 0 : -1; }
+static int pad_m_state_load(void *u, const void *buf, size_t n)
+{ return gbcore_state_load((gbcore_t *)u, buf, n) == 0 ? 0 : -1; }
+static size_t pad_m_save_size(void *u) { return gbcore_save_ram_size((gbcore_t *)u); }
+static int pad_m_save_read(void *u, void *buf, size_t n)
+{ return gbcore_save_ram_read((gbcore_t *)u, buf, n) == 0 ? 0 : -1; }
+static int pad_m_save_write(void *u, const void *buf, size_t n)
+{ return gbcore_save_ram_write((gbcore_t *)u, buf, n) == 0 ? 0 : -1; }
+static void pad_m_clock(void *u, int64_t seed) { gbmux_pad_clock((gbcore_t *)u, seed); }
+static uint32_t pad_m_cart_crc(void *u) { return gbmux_pad_save_crc((gbcore_t *)u); }
+
+/* The host's own battery file at the agreed end: the same writer as the
+ * single player's (the file's extra bytes and its notes), no clock to move. */
+static int pad_commit(void *user, const void *image, size_t size)
+{
+   int rc;
+   (void)user;
+   if (!host.save_path || battery_load_failed)
+      return -1;
+   rc = gb_save_write((const uint8_t *)image, size,
+                      fe_crc32(0, image, size));
+   gb_save_crc_valid = 0;
+   fe_evt("gblink_save_commit size=%u crc=%08x ok=%d (pad)", (unsigned)size,
+          fe_crc32(0, image, size), rc == 0);
+   return rc;
+}
+
+/* Frames of the two-player session are bounded by what fe_gblink carries. */
+#define PAD_STATE_MAX (1024u * 1024u)
+
+static int pad_link_start(int is_host, unsigned input_delay, int64_t rtc_seed)
+{
+   fe_gblink_platform p;
+   fe_gblink_local l;
+   fe_pad_machine pm;
+   const fe_gblink_machines *m;
+   uint8_t *state = NULL, *save = NULL;
+   size_t sn, vn;
+   int other = gbmux_other_console(gb_core);
+
+   if (!&fe_padpair_machines || !gbmux_pad_ok(gb_core) || other < 0)
+      return -1;
+   sn = gbcore_state_size(gb_core);
+   vn = gbcore_save_ram_size(gb_core);
+   if (!sn || sn > PAD_STATE_MAX)
+   {
+      fe_evt("gblink_start FAILED reason=pad_state size=%u", (unsigned)sn);
+      return -1;
+   }
+   /* The player's battery as the game has it now, on the card: what this
+    * console keeps whatever the session does (a guest's is never written
+    * during it, a host's only at the agreed end). */
+   (void)gb_save_flush(0);
+   if (is_host)
+   {
+      state = (uint8_t *)malloc(sn);
+      save = vn ? (uint8_t *)malloc(vn) : NULL;
+      if (!state || (vn && !save) ||
+          gbcore_state_save(gb_core, state, sn) <= 0 ||
+          (vn && gbcore_save_ram_read(gb_core, save, vn) != 0))
+      {
+         fe_evt("gblink_start FAILED reason=pad_snapshot");
+         free(state);
+         free(save);
+         return -1;
+      }
+   }
+   memset(&pm, 0, sizeof(pm));
+   pm.user = gb_core;
+   pm.console = (uint8_t)other;
+   pm.rom_min = 0x40;
+   pm.rom_max = 16u * 1024u * 1024u;
+   pm.save_max = 1024u * 1024u;
+   pm.run_frame = pad_m_run;
+   pm.state_size = pad_m_state_size;
+   pm.state_save = pad_m_state_save;
+   pm.state_load = pad_m_state_load;
+   pm.save_size = pad_m_save_size;
+   pm.save_read = pad_m_save_read;
+   pm.save_write = pad_m_save_write;
+   pm.set_clock = pad_m_clock;
+   pm.cart_crc = pad_m_cart_crc;
+   m = fe_padpair_machines(&pm);
+   if (!m)
+   {
+      fe_evt("gblink_start FAILED reason=pad_machines");
+      free(state);
+      free(save);
+      return -1;
+   }
+   memset(&p, 0, sizeof(p));
+   memset(&l, 0, sizeof(l));
+   p.send = gbl_send;
+   p.max_payload = ND_MAX_PAYLOAD;
+   p.send_room = gbl_room;
+   p.bulk_per_step = gbl_bulk;
+   p.commit_save = pad_commit;
+   p.wait = host.gblink_wait ? gbl_wait : NULL;
+   p.nack = host.gblink_nack;
+   if (host.gb_bulk_send && host.gb_bulk_recv && host.gb_bulk_max &&
+       (!host.gb_bulk_enable || host.gb_bulk_enable(1) == 0))
+   {
+      p.bulk_send = gbl_bulk_send;
+      p.bulk_max = host.gb_bulk_max;
+      p.bulk_rate = host.gb_bulk_rate;
+      p.input_copies = host.gblink_input_copies;
+   }
+   fe_evt("gblink_lane bulk_max=%u rate=%u input_copies=%u",
+          (unsigned)p.bulk_max, p.bulk_rate, p.input_copies);
+   l.is_host = is_host;
+   l.rom_path = host.rom_path;
+   l.console = (fe_console_t)other;
+   /* the host's state and battery start both consoles; a guest brings none */
+   l.save = save;
+   l.save_size = save ? vn : 0;
+   l.state = state;
+   l.state_size = state ? sn : 0;
+   l.wallclock_now = rtc_seed ? rtc_seed
+                              : (int64_t)(host.wallclock ? host.wallclock()
+                                                         : time(NULL));
+   l.audio_rate = core_sample_rate;
+   l.input_delay = input_delay;
+   l.hash_interval = host.gblink_hash_every ? host.gblink_hash_every : 240;
+   l.machines = m;
+   l.rom_sampled = 0;           /* the very same image: the whole-file SHA-1 */
+   /* The machine stays; its options are pinned and gb_core is hidden. */
+   gbmux_pad_pin(gb_core, 1);
+   pad_core = gb_core;
+   gb_core = NULL;
+   gbl = fe_gblink_create(&p, &l);
+   free(state);
+   free(save);
+   if (!gbl)
+   {
+      fe_evt("gblink_start FAILED reason=create");
+      gb_core = pad_core;
+      pad_core = NULL;
+      gbmux_pad_pin(gb_core, 0);
+      if (p.bulk_send && host.gb_bulk_enable)
+         host.gb_bulk_enable(0);
+      return -1;
+   }
+   gbl_pad = 1;
+   pad_v = m;
+   gbl_last = FE_GBLINK_IDLE;
+   gbl_primed = 0;
+   fe_gblink_set_clock(gbl, host.time_us);
+   if (fe_np_gb_peer_ready(NULL))
+   {
+      unsigned i;
+      fe_gblink_peer(gbl, 1);
+      for (i = 0; i < gbl_early_n && gbl; i++)
+         fe_gblink_receive(gbl, gbl_early[i], gbl_early_len[i]);
+   }
+   gbl_early_n = 0;
+   fe_evt("gblink_pad start role=%s console=%d state=%u save=%u",
+          is_host ? "host" : "guest", other, (unsigned)sn, (unsigned)vn);
+   return 0;
+}
+
+/* The session is over (DONE or FAILED): what fe_padpair keeps -- the host's
+ * end state after an agreed end, everyone else's own game as it was -- is the
+ * machine, and the machine is the player's again.  A restore that failed
+ * boots the game from its battery file (which no session wrote). */
+static int pad_link_close(void)
+{
+   const fe_gblink_machines *v = pad_v;
+   int ok, rc = 0, st = fe_gblink_state(gbl);
+   const char *how = "restored";
+
+   gblink_stats_evt();
+   fe_evt("gblink_close state=%d error=%s t_ms=%llu", st,
+          fe_gblink_error_text(fe_gblink_error(gbl)),
+          (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
+   {
+      fe_gblink_stats ss;
+      fe_gblink_get_stats(gbl, &ss);
+      fe_evt("gblink_bulk_stats chunk=%u sent=%u resent=%u rx=%u dup=%u "
+             "bad=%u rate=%u", ss.bulk_chunk, ss.bulk_sent, ss.bulk_resent,
+             ss.bulk_rx, ss.bulk_dup, ss.bulk_bad, ss.bulk_rate);
+   }
+   fe_gblink_destroy(gbl);        /* the machines' stop: the own game back */
+   gbl = NULL;
+   gbl_pad = 0;
+   ok = fe_padpair_restored ? fe_padpair_restored(v) : 0;
+   gb_core = pad_core;
+   pad_core = NULL;
+   pad_v = NULL;
+   gbmux_pad_pin(gb_core, 0);
+   gbl_sessions++;
+   gbl_hold = 0;
+   if (host.gb_bulk_enable)
+      host.gb_bulk_enable(0);
+   if (!ok)
+   {
+      fe_evt("gblink_resume FAILED pad_restore");
+      gbcore_shutdown(gb_core);
+      gb_core = NULL;
+      rc = gb_single_boot();
+      how = "restart";
+   }
+   else if (st == FE_GBLINK_DONE)
+      how = "live_end";
+   FE_EVT_ONLY(how);
+   fe_evt("gblink_resume how=%s rc=%d t_ms=%llu", how, rc,
+          (unsigned long long)(host.time_us ? host.time_us() / 1000u : 0));
+   return rc == 0 ? 0 : -3;
+}
+
+int fe_host_pad_ready(void)
+{
+   return gb_family && gb_core && !gbl && &fe_padpair_machines &&
+          gbmux_pad_ok(gb_core);
+}
+
+int fe_host_pad_game_id(char out[9])
+{
+   gbcore_t *c = gb_core ? gb_core : pad_core;
+   if (out)
+      out[0] = '\0';
+   return c && out ? gbmux_pad_game_id(c, out) : -1;
+}
+
 int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
 {
    fe_gblink_platform p;
@@ -3988,6 +4251,9 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    if (gba_cable)
       return gba_cable_start(is_host, input_delay, rtc_seed);
 #endif
+   if (gb_family && !gbl && gb_core && !gb_dual && !fe_host_gb_local_active() &&
+       gbmux_other_console(gb_core) >= 0)
+      return pad_link_start(is_host, input_delay, rtc_seed);
    if (!gb_family || gbl || !gb_core || gb_dual || fe_host_gb_local_active() ||
        gbmux_other_console(gb_core) >= 0)
       return -1;
@@ -4160,6 +4426,8 @@ int fe_host_gblink_close(void)
 {
    if (!gbl)
       return -1;
+   if (gbl_pad)
+      return pad_link_close();
 #ifdef GBA_LINK
    if (gba_cable)
    {
@@ -5021,6 +5289,79 @@ static void gblink_frame(uint64_t core_t0)
       fps_evt();
       core_prof_evt();
       gblink_stats_evt();
+   }
+}
+
+/* One display refresh of the NES / WonderSwan session.  While it sets up
+ * this is the cable sessions' step.  Once it runs, the refresh covers 1 or 2
+ * emulated frames (WonderSwan, 75.47 Hz), 1 (NES), or 0 now and then (a 50 Hz
+ * NES game on this display): each is one fe_gblink_step, which runs it when
+ * both players' keys for it are in; the picture is made when all of them
+ * have run.  The keys are sampled once for the refresh. */
+static void gblink_pad_frame(uint64_t core_t0)
+{
+   uint32_t pad = (host.input_bitmask ? host.input_bitmask() : 0) |
+                  injected_mask;
+   int st = fe_gblink_state(gbl), due, ran = 0, r = FE_GBLINK_IDLE;
+   uint16_t word;
+   gbl_drain_bulk();
+   gbl_waited_us = 0;
+   word = gbmux_pad_local(pad_core, gb_buttons_from_retro(pad));
+   if (st != FE_GBLINK_RUNNING && st != FE_GBLINK_ENDING)
+   {
+      gbl_last = fe_gblink_step(gbl, word);
+      if (st != fe_gblink_state(gbl))
+         gblink_stats_evt();
+      return;
+   }
+   due = gbmux_pad_due(pad_core);
+   while (ran < due)
+   {
+      r = fe_gblink_step(gbl, word);
+      if (r != FE_GBLINK_FRAME)
+         break;
+      ran++;
+   }
+   if (ran == due)
+   {
+      gbmux_pad_present(pad_core, ran);
+      gbl_last = due ? FE_GBLINK_FRAME : FE_GBLINK_IDLE;
+   }
+   else
+   {
+      gbl_last = r;
+      if (r == FE_GBLINK_STALL && host.video_frame)
+      {
+         /* the keys are late: the last picture again, the rest next time */
+         gbl_repeat = 1;
+         HOST_VIDEO(NULL, gb_pic_w, gb_pic_h, last_pitch);
+         gbl_repeat = 0;
+      }
+   }
+   if (st != fe_gblink_state(gbl))
+      gblink_stats_evt();
+   if (!ran)
+      return;
+   if (core_t0 && host.time_us)
+   {
+      uint32_t elapsed = (uint32_t)(host.time_us() - core_t0);
+      elapsed = elapsed > gbl_waited_us ? elapsed - gbl_waited_us : 0;
+      core_run_us_total += elapsed;
+      core_run_calls++;
+      if (elapsed > core_run_max_us) core_run_max_us = elapsed;
+      if (elapsed > core_win_max_us) core_win_max_us = elapsed;
+   }
+   while (ran--)
+   {
+      frame_count++;
+      if ((frame_count % hb_every) == 0)
+      {
+         fe_evt("heartbeat frames=%u t_us=%llu", frame_count,
+                (unsigned long long)(host.time_us ? host.time_us() : 0));
+         fps_evt();
+         core_prof_evt();
+         gblink_stats_evt();
+      }
    }
 }
 
@@ -7388,7 +7729,10 @@ static void run_frame(void)
 #endif
    if (gbl)
    {
-      gblink_frame(core_t0);
+      if (gbl_pad)
+         gblink_pad_frame(core_t0);
+      else
+         gblink_frame(core_t0);
       return;
    }
    if (gb_core && gbl_hold)

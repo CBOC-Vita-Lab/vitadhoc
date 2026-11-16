@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../frontend-common/fe_util.h"
 
 #define AUDIO_CHUNK 2048
 #define PIX (WSWAN_WIDTH * WSWAN_HEIGHT)
@@ -38,6 +39,7 @@ static int g_skip;
 static unsigned g_buttons;
 static int g_show = -1;
 static unsigned g_changes;
+static time_t (*g_user_time)(void);     /* the player's clock (see the session clock) */
 
 const char *wscore_error(void) { return g_err; }
 
@@ -119,6 +121,7 @@ void wscore_set_mono_palette(int id)
 
 void wscore_set_time_source(time_t (*fn)(void))
 {
+  g_user_time = fn;
   wswan_host_set_time_source(fn);
 }
 
@@ -177,35 +180,13 @@ static void take_audio(struct wscore *c)
       c->cb.audio_batch(c->cb.userdata, c->audio, (size_t)got);
 }
 
-int wscore_run_frame(wscore_t *core)
+/* The picture of this refresh, once its emulated frames have run: the blend
+ * (or the newest frame), turned upright when the layout says so. */
+static int present(struct wscore *c)
 {
-  struct wscore *c = core;
   const uint16_t *px;
-  int w, h, pitch, n, i, blend;
+  int w, h, pitch, i, blend = g_blend_on && g_blend_ok;
   wscore_video_frame_t vf;
-  if (!c || c != g_core) return -1;
-  blend = g_blend_on && g_blend_ok;
-  n = g_blend_ok ? wsb_frames_needed(&g_blend) : 1;
-  /* the layout of this refresh: its pad map is the picture's */
-  show_update();
-  wswan_host_set_pad(wsl_map_pad(g_buttons & 0xFFFu,
-                                 g_show != WSCORE_SHOW_HORIZONTAL,
-                                 g_show == WSCORE_SHOW_TURNED ? WSL_TURNED : WSL_UPRIGHT));
-  for (i = 0; i < n; i++)
-  {
-    /* a frame the picture does not use is not drawn (sound, state equal) */
-    wswan_host_set_render(!g_skip && (blend || i == n - 1));
-    wswan_host_run_frame();
-    take_audio(c);
-    if (g_blend_ok)
-    {
-      px = wswan_host_video(&w, &h, &pitch);
-      if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
-      else g_blend.emu_done++;
-    }
-  }
-  wswan_host_set_render(1);
-  show_update();
   if (g_skip)
   {
     if (g_blend_ok) g_blend.t += g_blend.td;     /* the refresh passes */
@@ -243,6 +224,126 @@ int wscore_run_frame(wscore_t *core)
     c->cb.video(c->cb.userdata, &vf);
   }
   return 0;
+}
+
+int wscore_run_frame(wscore_t *core)
+{
+  struct wscore *c = core;
+  const uint16_t *px;
+  int w, h, pitch, n, i, blend;
+  if (!c || c != g_core) return -1;
+  blend = g_blend_on && g_blend_ok;
+  n = g_blend_ok ? wsb_frames_needed(&g_blend) : 1;
+  /* the layout of this refresh: its pad map is the picture's */
+  show_update();
+  wswan_host_set_pad(wsl_map_pad(g_buttons & 0xFFFu,
+                                 g_show != WSCORE_SHOW_HORIZONTAL,
+                                 g_show == WSCORE_SHOW_TURNED ? WSL_TURNED : WSL_UPRIGHT));
+  for (i = 0; i < n; i++)
+  {
+    /* a frame the picture does not use is not drawn (sound, state equal) */
+    wswan_host_set_render(!g_skip && (blend || i == n - 1));
+    wswan_host_run_frame();
+    take_audio(c);
+    if (g_blend_ok)
+    {
+      px = wswan_host_video(&w, &h, &pitch);
+      if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
+      else g_blend.emu_done++;
+    }
+  }
+  wswan_host_set_render(1);
+  show_update();
+  return present(c);
+}
+
+/* ---- the two-player link (frontend-common/fe_padpair.h) ----------------------
+ * The session runs ONE emulated frame when both players' keys for it are
+ * known, so the refresh is split in three: how many frames it covers
+ * (wscore_session_due), each of them (wscore_session_frame: the same work
+ * as one pass of the loop above) and the picture once they have all run
+ * (wscore_session_present).  A refresh whose keys come late runs the rest
+ * next time: wsb_frames_needed counts from the frames already submitted. */
+
+/* This console's own keys as the console reads them: the Vita's buttons
+ * through the layout shown now (what crosses the link, so the other
+ * console needs no layout of its own). */
+unsigned wscore_pad_now(void)
+{
+  show_update();
+  return wsl_map_pad(g_buttons & 0xFFFu, g_show != WSCORE_SHOW_HORIZONTAL,
+                     g_show == WSCORE_SHOW_TURNED ? WSL_TURNED : WSL_UPRIGHT);
+}
+
+int wscore_session_due(wscore_t *core)
+{
+  if (!core || core != g_core) return 0;
+  return g_blend_ok ? wsb_frames_needed(&g_blend) : 1;
+}
+
+int wscore_session_frame(wscore_t *core, unsigned pad)
+{
+  struct wscore *c = core;
+  const uint16_t *px;
+  int w, h, pitch, last;
+  if (!c || c != g_core) return -1;
+  last = !g_blend_ok || wsb_frames_needed(&g_blend) <= 1;
+  /* both players on the one pad: the keys of either press the console's */
+  wswan_host_set_pad(pad);
+  wswan_host_set_render(!g_skip && ((g_blend_on && g_blend_ok) || last));
+  wswan_host_run_frame();
+  take_audio(c);
+  if (g_blend_ok)
+  {
+    px = wswan_host_video(&w, &h, &pitch);
+    if (px && pitch == WSWAN_WIDTH * 2) wsb_submit(&g_blend, px);
+    else g_blend.emu_done++;
+  }
+  wswan_host_set_render(1);
+  return 0;
+}
+
+int wscore_session_present(wscore_t *core)
+{
+  if (!core || core != g_core) return -1;
+  show_update();
+  return present(core);
+}
+
+/* The session's clock: the cartridge's real-time clock is read once, when
+ * the machine powers on, and the state both consoles load carries the rest;
+ * the host's clock is still what a reload or a reset inside the session
+ * would read, so both consoles are given the same one.  0 = the player's
+ * own again. */
+static int64_t g_sess_clock;
+static time_t sess_time(void) { return (time_t)g_sess_clock; }
+
+void wscore_session_clock(int64_t seed)
+{
+  if (seed)
+  {
+    g_sess_clock = seed;
+    wswan_host_set_time_source(sess_time);
+  }
+  else
+    wswan_host_set_time_source(g_user_time);
+}
+
+/* A cheap fingerprint of the battery data (cartridge SRAM or EEPROM and the
+ * console's own EEPROM), for the session's end agreement.  Reads in place:
+ * nothing is marked saved. */
+uint32_t wscore_save_ram_crc(wscore_t *core)
+{
+  uint32_t crc = 0;
+  int r;
+  if (!core || core != g_core) return 0;
+  for (r = 0; r < 3; r++)
+  {
+    size_t n = wswan_host_save_size(r);
+    const uint8_t *p = n ? wswan_host_save_data(r) : NULL;
+    if (p) crc = fe_crc32(crc, p, n);
+  }
+  return crc;
 }
 
 void wscore_set_skip_render(wscore_t *core, int skip) { (void)core; g_skip = skip != 0; }

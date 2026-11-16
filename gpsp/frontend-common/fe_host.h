@@ -642,6 +642,13 @@ int  fe_host_gblink_facts(struct fe_gblink_progress *out);
 /* 1 when this boot can start a GBA link-cable session (GBA_LINK builds:
  * instance B loaded for sessions, docs/GBA-LINK-MIRROR.md 14). */
 int  fe_host_gba_cable_ready(void);
+/* The NES / WonderSwan two-player link (frontend-common/fe_padpair.h): 1 when
+ * the running game is such a machine, no session runs and this build has the
+ * layer; fe_host_gblink_start then starts it.  fe_host_pad_game_id: the
+ * game's identity for a room, 8 uppercase hex digits (the core's CRC-32 of
+ * the cartridge), 0 / -1 when it is not such a game. */
+int  fe_host_pad_ready(void);
+int  fe_host_pad_game_id(char out[9]);
 /* GBA cable sessions identify the cartridge by sampled slices (default 1,
  * fe_gblink_local.rom_sampled); 0 = the streamed whole-file SHA-1.  Both
  * consoles must agree; harness A/B only. */

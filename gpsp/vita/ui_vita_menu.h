@@ -47,12 +47,6 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
                   g_ov_used, PSP_STATE_SLOT_COUNT);
       break;
    case M_WIRELESS:
-      if (g_pcfg.console == FE_CONSOLE_NES || g_pcfg.console == FE_CONSOLE_WSWAN)
-      {
-         snprintf(out, cap, "Not available for %s games",
-                  g_pcfg.console == FE_CONSOLE_NES ? "NES" : "WonderSwan");
-         break;
-      }
       memset(&ls, 0, sizeof(ls));
       ui_host_local_state(&ls);
       if (ls.active)
@@ -65,7 +59,9 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
       else if (g_link.state == UI_LINK_LINKED || session_active)
          snprintf(out, cap, "Linked to another console");
       else
-         snprintf(out, cap, "Link up over Wi-Fi, ad hoc or on this " UI_DEV);
+         snprintf(out, cap, pad_console()
+                  ? "Two players over Wi-Fi, ad hoc or Online"
+                  : "Link up over Wi-Fi, ad hoc or on this " UI_DEV);
       break;
    case M_CHEATS:
       if (cheats_suspended())

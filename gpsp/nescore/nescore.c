@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "../frontend-common/fe_evt.h"
+#include "../frontend-common/fe_util.h"
 
 #define AUDIO_CHUNK 2048
 
@@ -182,13 +183,14 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
   return &g_core;
 }
 
-int nescore_run_frame(nescore_t *core, unsigned buttons)
+/* One emulated frame with the pads already set: the picture and the sound
+ * of it go to the callbacks.  Shared by the single player's call and the
+ * two-player link's. */
+static int run_set_pads(nescore_t *core)
 {
   nescore_video_frame_t vf;
   const uint16_t *px;
   int w, h, pitch, got;
-  if (core != &g_core || !g_live) return -1;
-  nes_host_set_pad(0, buttons & 0xFFu);
   nes_host_run_frame();
   px = nes_host_video(&w, &h, &pitch);
   if (g_wide != NESCORE_WIDE_OFF)
@@ -221,6 +223,56 @@ int nescore_run_frame(nescore_t *core, unsigned buttons)
     if (core->cb.audio_batch)
       core->cb.audio_batch(core->cb.userdata, core->audio, (size_t)got);
   return 0;
+}
+
+int nescore_run_frame(nescore_t *core, unsigned buttons)
+{
+  if (core != &g_core || !g_live) return -1;
+  nes_host_set_pad(0, buttons & 0xFFu);
+  return run_set_pads(core);
+}
+
+/* The two-player link: both players' pads for this one emulated frame. */
+int nescore_run_frame2(nescore_t *core, unsigned pad1, unsigned pad2)
+{
+  if (core != &g_core || !g_live) return -1;
+  nes_host_set_pad(0, pad1 & 0xFFu);
+  nes_host_set_pad(1, pad2 & 0xFFu);
+  return run_set_pads(core);
+}
+
+/* What a linked session must have the same on both consoles and the player's
+ * own settings must not change under it: the Four Score is off (two plain
+ * pads), whatever the game list or the player chose for the single game.
+ * The region and the power-on RAM are not touched by this app (the region is
+ * the cartridge's own, the RAM comes from the state the host sends).  Undone
+ * with `on` = 0, which also lets go of pad 2. */
+static int g_pinned;
+static int g_pin_fs;
+void nescore_session_pin(nescore_t *core, int on)
+{
+  if (core != &g_core || !g_live) return;
+  if (on && !g_pinned)
+  {
+    g_pin_fs = nes_host_fourscore_mode();
+    nes_host_set_fourscore(NES_4P_OFF);
+    g_pinned = 1;
+  }
+  else if (!on && g_pinned)
+  {
+    nes_host_set_fourscore(g_pin_fs);
+    nes_host_set_pad(1, 0);
+    g_pinned = 0;
+  }
+}
+
+/* A cheap fingerprint of the battery RAM, for the session's end agreement
+ * (it waits while the save keeps changing).  No copy, no "saved" mark. */
+uint32_t nescore_save_ram_crc(nescore_t *core)
+{
+  size_t n;
+  if (core != &g_core || !(n = nes_host_sram_size())) return 0;
+  return fe_crc32(0, nes_host_sram_data(), n);
 }
 
 int nescore_repeat_frame(nescore_t *core)

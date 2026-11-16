@@ -51,6 +51,8 @@ void link_snes_draw(void);
 void link_snes_end(void);
 /* LSN_FAILED: the UI_FAIL_* code (its sentences: ui_link_fail_text). */
 int  link_snes_fail_code(void);
+/* LSN_CANCELLED: 1 when the end was already told in a toast (a host's code expired), so the caller says nothing more. */
+int  link_snes_end_said(void);
 /* The game a SNES library file is, as a room names it: 8 upper-case hex digits (0 = unreadable). */
 int  link_snes_game_id(const char *rom_path, char out[9]);
 /* The way a session ended, from the report snes.bin left (launch/session.txt: link_result, link_error,

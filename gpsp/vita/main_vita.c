@@ -921,7 +921,8 @@ static int snes_link_page(int is_host, const char *game, const char *title, link
       }
       if (st == LSN_CANCELLED)
       {
-         osd_toast("Link cancelled.");
+         if (!link_snes_end_said())
+            osd_toast("Link cancelled.");
          break;
       }
       if (st == LSN_FAILED)

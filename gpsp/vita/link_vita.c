@@ -374,6 +374,7 @@ static struct
    unsigned t_seen;               /* the tick the host's netdrv answered    */
    int      seen;
    int      peer_heard;           /* netdrv said the other console connected (snes_np_peer), even if it left again */
+   int      said;                 /* the link's end was already told in a toast (the code expired): no "Link cancelled." */
    unsigned t_begin, prev_pad;
    link_snes_link link;
 } SL;
@@ -1586,6 +1587,8 @@ static void online_service(unsigned pad_new)
             net_down();
             link_off();
             osd_toast("The code expired. Host again for a new one.");
+            if (SL.on)
+               SL.said = 1;
          }
          else
             bringup_failed(ui);
@@ -3684,6 +3687,11 @@ void link_snes_end(void)
 int link_snes_fail_code(void)
 {
    return SL.fail;
+}
+
+int link_snes_end_said(void)
+{
+   return SL.said;
 }
 
 /* The status page: the LINKING screen's own look, with what a SNES link is doing. */

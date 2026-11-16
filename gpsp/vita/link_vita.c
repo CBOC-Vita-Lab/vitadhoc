@@ -2665,7 +2665,9 @@ static void mirror_service(unsigned pad_new)
          announce(2, 0);
          fe_evt("link_host_peer room=\"%s\" peer=\"%s\"", L.room, L.peer);
          L.echoes = 0;
-         if (L.transport == TR_LAN && g_pcfg.link_delay < 1 && !SL.on)
+         /* (a SNES link measures too: its delay goes into the launch file, and without this a relayed or Same
+          * Wi-Fi SNES game ran on the connection's fixed guess whatever the path was) */
+         if (L.transport == TR_LAN && g_pcfg.link_delay < 1)
          {
             lan_transport_echo_reset(L.lan);
             phase_set(PH_MEASURE);

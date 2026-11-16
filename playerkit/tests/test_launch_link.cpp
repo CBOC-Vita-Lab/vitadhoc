@@ -22,6 +22,7 @@ static LaunchRequest linked()
 	r.link.relay_user = "1700000000:abc";
 	r.link.relay_pass = "s3cret/+=";
 	r.link.relay_peer = "198.51.100.7:50001";
+	r.link.relay_addr = "198.51.100.9:50002";
 	r.link.delay = 5;
 	r.link.compat = "deadbeef";
 	r.link.nick = "Player";
@@ -56,6 +57,7 @@ TEST(launch_link_round_trip)
 	CHECK_STR(b.link.relay_user, a.link.relay_user);
 	CHECK_STR(b.link.relay_pass, a.link.relay_pass);
 	CHECK_STR(b.link.relay_peer, a.link.relay_peer);
+	CHECK_STR(b.link.relay_addr, a.link.relay_addr);
 	CHECK_EQ(b.link.delay, 5);
 	CHECK_STR(b.link.compat, "deadbeef");
 	CHECK_STR(b.link.nick, "Player");

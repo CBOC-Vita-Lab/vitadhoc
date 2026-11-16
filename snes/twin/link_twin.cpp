@@ -30,6 +30,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <string>
+extern "C" {
+#include "transport_lan.h"
+}
 #include <vector>
 
 extern "C" uint32_t fe_crc32(uint32_t crc, const void *data, size_t len);
@@ -88,6 +91,61 @@ static uint32_t state_crc()
 	return fe_crc32(0, b.data(), len);
 }
 
+/* What the app does for a relayed link before snes.bin starts (link_vita.c / online_vita.c): allocate on the relay with the
+ * credentials, swap relayed addresses with the other console (through files here), bind, wait for READY, then LET GO of the
+ * allocation without releasing it (lan_transport_relay_handoff) and close the socket.  The request then asks snes.bin's Link to
+ * ADOPT it: relay_addr + relay_peer.  0 = done. */
+static int form_relay(const pk::LinkRequest &in, pk::LinkRequest &out, const std::string &root, const std::string &peer_file)
+{
+	out = in;
+	lan_config c;
+	memset(&c, 0, sizeof c);
+	c.mode = in.is_host() ? LAN_MODE_HOST : LAN_MODE_JOIN;
+	c.flags = LAN_F_IO_KEEPALIVE | LAN_F_NO_DISCOVERY;
+	uint32_t sip = 0; uint16_t sport = 0;
+	if (lan_parse_addr(in.sim.c_str(), &sip, &sport, 0) != 0 || !sport) return -1;
+	c.sim_ip_be = sip; c.sim_port = sport; c.sim_id = (uint8_t) in.sim_id;
+	c.sim_lan_port = (uint16_t) (in.sim_lan_port ? in.sim_lan_port : LAN_PORT_DEFAULT);
+	c.netmask_be = 0x00FFFFFFu;
+	lan_transport *t = lan_transport_create(&c);
+	if (!t) return -2;
+	uint8_t seed[16];
+	rand_bytes(seed, 16);
+	lan_transport_nat_seed(t, seed);
+	uint32_t rip = 0; uint16_t rport = 0;
+	if (lan_parse_addr(in.relay_server.c_str(), &rip, &rport, 0) != 0 && !rip) { lan_transport_destroy(t); return -3; }
+	uint16_t ports[1] = { (uint16_t) atoi(in.relay_ports.c_str()) };
+	if (lan_transport_relay_start(t, rip, ports, 1, in.relay_user.c_str(), in.relay_pass.c_str()) != 0) { lan_transport_destroy(t); return -4; }
+	lan_nat_status ns;
+	uint64_t t0 = now_us();
+	do { usleep(20000); lan_transport_nat_status(t, &ns); } while (ns.relay != LAN_RELAY_ALLOCATED && ns.relay != LAN_RELAY_FAILED && now_us() - t0 < 12000000);
+	if (ns.relay != LAN_RELAY_ALLOCATED) { printf("LT form relay: no allocation (%d)\n", ns.relay); lan_transport_destroy(t); return -5; }
+	char own[40];
+	snprintf(own, sizeof own, "%u.%u.%u.%u:%u", ns.relay_ip_be & 255, ns.relay_ip_be >> 8 & 255, ns.relay_ip_be >> 16 & 255, ns.relay_ip_be >> 24, ns.relay_port);
+	{ FILE *f = fopen((root + "/form.txt.tmp").c_str(), "wb"); if (f) { fputs(own, f); fclose(f); rename((root + "/form.txt.tmp").c_str(), (root + "/form.txt").c_str()); } }
+	char peer[40] = "";
+	t0 = now_us();
+	while (!peer[0] && now_us() - t0 < 20000000) {
+		FILE *f = fopen(peer_file.c_str(), "rb");
+		if (f) { size_t n = fread(peer, 1, sizeof peer - 1, f); peer[n] = 0; fclose(f); }
+		if (!strchr(peer, ':')) { peer[0] = 0; usleep(50000); }
+	}
+	uint32_t pip = 0; uint16_t pport = 0;
+	if (!peer[0] || lan_parse_addr(peer, &pip, &pport, 0) != 0) { lan_transport_destroy(t); return -6; }
+	lan_transport_relay_bind(t, pip, pport);
+	t0 = now_us();
+	do { usleep(20000); lan_transport_nat_status(t, &ns); } while (ns.relay != LAN_RELAY_READY && ns.relay != LAN_RELAY_FAILED && now_us() - t0 < 10000000);
+	if (ns.relay != LAN_RELAY_READY) { printf("LT form relay: not ready (%d)\n", ns.relay); lan_transport_destroy(t); return -7; }
+	lan_relay_params prm;
+	if (lan_transport_relay_handoff(t, &prm) != 0) { lan_transport_destroy(t); return -8; }
+	lan_transport_destroy(t);          /* no Refresh 0: the allocation stays on the server */
+	out.relay_addr = own;
+	out.relay_peer = peer;
+	printf("LT form relay: handed over %s <-> %s\n", own, peer);
+	fflush(stdout);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) { fprintf(stderr, "usage: link_twin ROOT [--frames N] ... (see the top of link_twin.cpp)\n"); return 2; }
@@ -97,7 +155,7 @@ int main(int argc, char **argv)
 	std::string render = "all";
 	std::vector<int> hash_at;
 	int dump_frame = -1;
-	std::string dump_path;
+	std::string dump_path, form_peer;
 	for (int i = 2; i < argc; i++) {
 		std::string a = argv[i];
 		auto nx = [&]() -> const char * { return i + 1 < argc ? argv[++i] : "0"; };
@@ -109,6 +167,7 @@ int main(int argc, char **argv)
 		else if (a == "--fast") fast = 1;
 		else if (a == "--hash-at") hash_at.push_back(atoi(nx()));
 		else if (a == "--dump-at") { std::string v = nx(); size_t c = v.find(':'); dump_frame = atoi(v.c_str()); if (c != std::string::npos) dump_path = v.substr(c + 1); }
+		else if (a == "--form-relay") form_peer = nx();
 		else if (a == "--stall-ms") stall_ms = atoi(nx());
 		else if (a == "--stall-at") stall_at = atoi(nx());
 		else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
@@ -135,7 +194,14 @@ int main(int argc, char **argv)
 	env.log = say;
 	env.local_ip_be = 0;
 	snesnet::Link link;
-	if (!link.open(pl.request().link, pl.link_rom(), env)) {
+	pk::LinkRequest lreq = pl.request().link;
+	if (!form_peer.empty()) {
+		pk::LinkRequest adopted;
+		int fr = form_relay(lreq, adopted, root, form_peer);
+		if (fr != 0) { printf("LT form relay FAILED %d\n", fr); pl.set_link_result("never", 0, "", 0); pl.finish(pk::EXIT_GAME_LIST); return 1; }
+		lreq = adopted;
+	}
+	if (!link.open(lreq, pl.link_rom(), env)) {
 		printf("LT link open FAILED fail=%d\n", (int) link.failure());
 		link.close();
 		pl.set_link_result("never", 0, "", 0);

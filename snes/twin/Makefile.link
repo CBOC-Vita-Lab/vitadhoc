@@ -17,7 +17,7 @@ $(B)/gp/netplay_stubs.o: ../vita/netplay_stubs.c
 $(B)/netplay.o: ../vita/netplay.cpp ../vita/netplay.h $(wildcard $(PK)/src/*.h)
 	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
 $(B)/link_twin.o: link_twin.cpp ../vita/player.h ../vita/netplay.h
-	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src $(NETPLAY_INC) -c -o $@ $<
 $(B)/link_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(WK_OBJS) $(B)/player.o $(B)/picture.o $(B)/pipe.o \
 	$(B)/netplay.o $(B)/link_twin.o $(NP_OBJS) $(PK_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread

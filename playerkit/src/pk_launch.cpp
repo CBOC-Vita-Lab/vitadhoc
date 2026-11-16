@@ -147,6 +147,7 @@ LaunchRequest launch_parse(const std::string &text)
 			k.relay_user = clean_line(ini.get("link.relay_user"), 200);
 			k.relay_pass = clean_line(ini.get("link.relay_pass"), 200);
 			k.relay_peer = clean_line(ini.get("link.relay_peer"), 64);
+			k.relay_addr = clean_line(ini.get("link.relay_addr"), 64);
 			int d = ini.get_int("link.delay", 0);
 			k.delay = (d >= 0 && d <= 60) ? d : 0;
 			k.compat = lower(clean_line(ini.get("link.compat"), 8));
@@ -205,6 +206,7 @@ std::string launch_serialize(const LaunchRequest &r)
 		if (!k.relay_user.empty()) i.set("link.relay_user", k.relay_user);
 		if (!k.relay_pass.empty()) i.set("link.relay_pass", k.relay_pass);
 		if (!k.relay_peer.empty()) i.set("link.relay_peer", k.relay_peer);
+		if (!k.relay_addr.empty()) i.set("link.relay_addr", k.relay_addr);
 		i.set_int("link.delay", k.delay);
 		if (!k.compat.empty()) i.set("link.compat", k.compat);
 		if (!k.nick.empty()) i.set("link.nick", k.nick);

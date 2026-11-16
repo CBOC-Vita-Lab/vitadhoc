@@ -249,6 +249,58 @@ def scenario_punch(twin, base, roms, frames, nat_a="port", nat_b="port", name="p
         world.stop()
 
 
+def rest_cred(k, secret="turn-test-secret"):
+    """The TURN REST credential natsim's TURN server expects (hmac.new, sha1, base64)."""
+    import hmac, base64
+    user = "%d:player%d" % (int(time.time()) + 3600, k)
+    return user, base64.b64encode(hmac.new(secret.encode(), user.encode(), hashlib.sha1).digest()).decode()
+
+
+def scenario_relay(twin, base, roms, frames, name="relay"):
+    """Through natsim with symmetric NATs (no direct path): the app side (the twin's --form-relay does what link_vita /
+    online_vita do) allocates on the relay, swaps relayed addresses, binds, and lets go WITHOUT releasing; snes.bin's Link then
+    ADOPTS the allocation on the same local port (a Refresh and the same ChannelBind, no new Allocate) and the session runs
+    through the relay. The server's counters prove it: two allocations in all, none released before the end."""
+    import online_tools as ot
+    rom = list(roms.values())[0]
+
+    class T:
+        dir = os.path.join(base, name + "_natsim")
+        procs = []
+    world = ot.NatWorld(T, nat_a="sym", nat_b="sym", turn=True)
+    try:
+        hash_at = [frames // 3, frames - 40]
+        args = ["--frames", str(frames), "--seed", "9", "--render", "all"]
+        for f in hash_at:
+            args += ["--hash-at", str(f)]
+        d = os.path.join(base, name)
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d)
+
+        def lk(role, k):
+            user, pw = rest_cred(k)
+            return {"mode": "relay", "local_port": 0, "delay": 4, "compat": "c0ffee01", "nick": role,
+                    "sim": "127.0.0.1:%d" % world.port, "sim_id": k, "sim_lan_port": 19019, "relay_server": "198.51.100.9",
+                    "relay_ports": "3478", "relay_user": user, "relay_pass": pw, "wait_s": 40}
+        print("[%s] %s, NATs sym / sym" % (name, os.path.basename(rom)))
+        h = Player(d, "host", "host", rom, lk("host", 0), args=args + ["--threads", "0", "--form-relay", os.path.join(d, "guest", "form.txt")])
+        g = Player(d, "guest", "guest", rom, lk("guest", 1), args=args + ["--threads", "1", "--form-relay", os.path.join(d, "host", "form.txt")])
+        h.seed_save(bytes((i * 7 + 1) & 255 for i in range(2048)))
+        g.seed_save(bytes((i * 13 + 5) & 255 for i in range(2048)))
+        h.start(twin)
+        g.start(twin)
+        rh, rg = h.wait(150), g.wait(150)
+        common_checks(h, g, rh, rg, frames, hash_at)
+        st = world.stats()
+        print("  natsim: %s" % st)
+        tn = st.get("turn", {})
+        check(tn.get("allocations") == 2 and tn.get("mismatch", 0) == 0,
+              "the adopt sent no new Allocate: 2 allocations in all, no 437 (%s)" % tn)
+        check(any("adopted" in l for l in h.text().splitlines()) or "adopted" in h.text() + g.text(), "snes.bin's Link logged the adoption")
+    finally:
+        world.stop()
+
+
 def scenario_wrong_game(twin, base, roms):
     names = list(roms)
     a, b = roms[names[0]], roms[names[1]]
@@ -298,6 +350,7 @@ def main():
         "desync": lambda: scenario_desync(a.twin, base, roms),
         "wrong_game": lambda: scenario_wrong_game(a.twin, base, roms),
         "punch": lambda: scenario_punch(a.twin, base, roms, min(a.frames, 900)),
+        "relay": lambda: scenario_relay(a.twin, base, roms, min(a.frames, 900)),
         "punch_sym": lambda: scenario_punch(a.twin, base, roms, min(a.frames, 900), nat_a="port", nat_b="sym", name="punch_sym", expect_fail=True),
     }
     for k, fn in scen.items():

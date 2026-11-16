@@ -44,6 +44,9 @@ struct LinkRequest {
 	std::string relay_ports;       /* "3478,443": the credential's UDP ports, in the order to try */
 	std::string relay_user, relay_pass;   /* the short-lived credential */
 	std::string relay_peer;        /* "ip:port": the peer's relayed address */
+	std::string relay_addr;        /* "ip:port": OUR relayed address, when the app already made the allocation: snes.bin
+	                                * then ADOPTS it (a Refresh, then the same permission and channel; relay_ports names the
+	                                * one port that answered) and never sends an Allocate. Empty: it allocates. */
 	int delay = 0;                 /* host: the input delay in frames (the guest takes the host's) */
 	std::string compat;            /* the pairing's compat word (8 hex digits): the netdrv protocol name carries it */
 	std::string nick;              /* this player's nickname, for netdrv's roster */

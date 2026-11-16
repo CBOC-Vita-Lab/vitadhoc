@@ -431,10 +431,28 @@ bool Link::open(const pk::LinkRequest &req, const std::string &rom_file, const E
 		if (!sip || !np || !parse_addr(req.relay_peer, &p->peer_ip_be, &p->peer_port, 0)) {
 			fail_ = F_RELAY; p->why = "relay credentials"; phase_ = PH_FAILED; return false;
 		}
-		if (lan_transport_relay_start(p->lan, sip, ports, np, req.relay_user.c_str(), req.relay_pass.c_str()) != 0) {
-			fail_ = F_RELAY; p->why = "relay start"; phase_ = PH_FAILED; return false;
+		if (!req.relay_addr.empty()) {
+			/* The app made the allocation and let go without releasing it; this process has the same local port, so the
+			 * server still knows us by that 5-tuple: adopt it (Refresh, permission, ChannelBind), no new Allocate. */
+			lan_relay_params prm;
+			memset(&prm, 0, sizeof prm);
+			prm.server_ip_be = sip;
+			prm.server_port = ports[0];
+			snprintf(prm.user, sizeof prm.user, "%s", req.relay_user.c_str());
+			snprintf(prm.pass, sizeof prm.pass, "%s", req.relay_pass.c_str());
+			prm.peer_ip_be = p->peer_ip_be;
+			prm.peer_port = p->peer_port;
+			if (!parse_addr(req.relay_addr, &prm.relay_ip_be, &prm.relay_port, 0) ||
+			    lan_transport_relay_adopt(p->lan, &prm) != 0) {
+				fail_ = F_RELAY; p->why = "relay adopt"; phase_ = PH_FAILED; return false;
+			}
+			p->log("relay allocation adopted (no Allocate sent)");
+		} else {
+			if (lan_transport_relay_start(p->lan, sip, ports, np, req.relay_user.c_str(), req.relay_pass.c_str()) != 0) {
+				fail_ = F_RELAY; p->why = "relay start"; phase_ = PH_FAILED; return false;
+			}
+			p->log("relay allocation started");
 		}
-		p->log("relay allocation started");
 		phase_ = PH_RELAY;
 	} else {
 		/* Same Wi-Fi / direct: the host just listens, the guest's JOIN goes to the host's address */

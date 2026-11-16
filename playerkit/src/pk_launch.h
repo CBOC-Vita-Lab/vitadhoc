@@ -28,6 +28,39 @@ enum StartMode { START_NEW = 0, START_CONTINUE, START_SLOT };
 enum PictureShape { SHAPE_ORIGINAL = 0, SHAPE_FIT, SHAPE_ZOOM, SHAPE_FULL, SHAPE_PIXEL, SHAPE_COUNT };
 enum ImageQuality { QUALITY_SHARP = 0, QUALITY_SMOOTH };
 
+/* A two-player link the main app formed from the library entry (ONLINE-2.0 plan, milestone B).  The app has the
+ * room, the punch or the relay; a player is another program, so nothing carries over except these keys
+ * (`link.<name>=` in the launch file).  Absent `link.role` = a normal single-player launch.  The player binds the
+ * same local port, punches again with the same key (or re-allocates on the relay with the same credentials) and
+ * runs the session in its own loop. */
+struct LinkRequest {
+	std::string role;              /* "host" or "guest"; empty = no link */
+	std::string mode = "lan";      /* "lan" (Same Wi-Fi / direct: peer = the host's address), "punch" (Online), "relay" */
+	int local_port = 0;            /* the UDP port the app's link socket was bound to; the player binds it again (0 = any) */
+	std::string peer;              /* "ip:port": lan = the host (guest only); punch = the peer's public address */
+	std::string peer_lan;          /* punch: the peer's address inside our own network, when the service gave one */
+	std::string punch_key;         /* the room's 8-byte punch key as 16 hex characters */
+	std::string relay_server;      /* relay: the TURN server's IPv4 address */
+	std::string relay_ports;       /* "3478,443": the credential's UDP ports, in the order to try */
+	std::string relay_user, relay_pass;   /* the short-lived credential */
+	std::string relay_peer;        /* "ip:port": the peer's relayed address */
+	int delay = 0;                 /* host: the input delay in frames (the guest takes the host's) */
+	std::string compat;            /* the pairing's compat word (8 hex digits): the netdrv protocol name carries it */
+	std::string nick;              /* this player's nickname, for netdrv's roster */
+	std::string local_ip;          /* this console's Wi-Fi address ("" = ask the system) */
+	int wait_s = 0;                /* seconds to wait for the other console (0 = the player's default, 90) */
+	/* test builds only (the twin): loopback, and the NAT simulator of gpsp/netdrv/tests/natsim */
+	bool loopback = false;
+	std::string sim;               /* "ip:port" of natsim_proxy */
+	int sim_id = 0, sim_lan_port = 0;
+	int loss = 0, latency = 0, jitter = 0;   /* transport_lan's fault shim (percent, ms, ms): the app's vita.ini link_loss / link_latency / link_jitter */
+	/* switches for the session's own tuning; 0 = the player's default */
+	int input_copies = -1, nack = -1, hash_every = 0;
+
+	bool active() const { return role == "host" || role == "guest"; }
+	bool is_host() const { return role == "host"; }
+};
+
 struct LaunchRequest {
 	int version = LAUNCH_VERSION;
 	std::string session_id;        /* echoed back in the session report; lets the app ignore a stale report */
@@ -50,6 +83,7 @@ struct LaunchRequest {
 	std::string retroarch_save;    /* a RetroArch save to bring in when it is newer than save_path ("" = none) */
 	std::string patch_key;         /* the app's note of which patch is in use; stored beside the resume point */
 	bool wide_supported = false;
+	LinkRequest link;
 	/* per-game overrides: ovr.<key>=<value> in the file, e.g. ovr.scanlines=4 */
 	std::map<std::string, std::string> overrides;
 	/* keys this version does not know, kept so a newer app's file can be written back whole */
@@ -88,6 +122,13 @@ struct SessionReport {
 	bool resume_present = false;      /* a Continue point exists for this game */
 	ExitReason exit = EXIT_NORMAL;
 	int64_t ended_at = 0;             /* Unix seconds */
+	/* a linked game (LaunchRequest::link): how the link ended, for the app's message.  "" = not a linked game,
+	 * else "done" (agreed end, the host's save written), "failed" or "never" (no connection was made);
+	 * link_error is fe_gblink's error code (fe_gblink.h) and link_error_name its short name. */
+	std::string link_result;
+	int link_error = 0;
+	std::string link_error_name;
+	int link_frames = 0;              /* emulated frames both consoles ran together */
 	bool valid = false;               /* set by the parser: the file was there and had a console key */
 	bool newer_version = false;
 };

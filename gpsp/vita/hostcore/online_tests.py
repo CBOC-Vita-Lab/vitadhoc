@@ -254,14 +254,15 @@ def host_script(end, extra="", shots=(12,)):
 def pair(T, name, rom=L.LINKTEST, rom_b=None, nat=("port", "port"), svc_env=(), world_kw=None,
          a_cfg=None, b_cfg=None, a_vita=None, b_vita=None, a_extra=None, b_extra=None,
          a_script=None, b_script=None, a_end=78, b_end=76, actions=(), proxy_a=None, proxy_b=None,
-         with_world=True, peek=None, wait_a=90, setup=None, kind="gba", nick=("Alice", "Bob"), b_noauto=False):
+         with_world=True, peek=None, wait_a=90, setup=None, kind="gba", nick=("Alice", "Bob"), b_noauto=False, keep=None, begin=True):
     """Start the service and the world, the host's twin, read the code, start the joiner's twin, wait.
 
     a_script: str, the host's whole script (default: host, a shot while it waits, then a session of
     70 s and Disconnect).  b_script: callable(code) -> the joiner's script (default: join_script +
     shots).  `actions`: (seconds of the JOINER's script, fn(rig)) run on a thread.  proxy_a / proxy_b:
     callables(rig) -> HttpProxy that make the twin's online_url."""
-    T.begin(name)
+    if begin:
+        T.begin(name)
     rig = Rig()
     rig.T = T
     port = T.port
@@ -297,7 +298,7 @@ def pair(T, name, rom=L.LINKTEST, rom_b=None, nat=("port", "port"), svc_env=(), 
         host_script(a_end) + L.shot(60, "running.png") + L.disconnect(70, "session.png") +
         L.shot(74, "ended.png") + L.quit_at(78))
     rig.a = T.twin("a", T.arch_a, rom, nick[0], sa, config=cfg_a, vita=vita(0, a_vita, rig.pa), net=net_for(0),
-                   extra=a_extra)
+                   extra=a_extra, keep=bool(keep))
     rig.a.start()
     rig.code = wait_code(rig.a, wait_a)
     print("   host code:", rig.code, flush=True)
@@ -310,7 +311,7 @@ def pair(T, name, rom=L.LINKTEST, rom_b=None, nat=("port", "port"), svc_env=(), 
         bs = b_script(rig.code) if b_script else join_script(
             rig.code, L.shot(48, "running.png") + L.shot(70, "ended.png") + L.quit_at(76))
         rig.b = T.twin("b", T.arch_b, rom_b or rom, nick[1], bs, config=cfg_b, vita=vita(1, b_vita, rig.pb),
-                       net=net_for(1), extra=b_extra)
+                       net=net_for(1), extra=b_extra, keep=bool(keep))
         if b_noauto:                    # B starts in its game list, not in a game
             os.remove(os.path.join(rig.b.root, "autoboot.txt"))
         rig.b.start()
@@ -1094,6 +1095,64 @@ def t_library_join(T):
     T.check(rb.has(r"online_open_join rom_match=1"), "B: with the host's file among two, it is the one that opens")
 
 
+
+# ---- two DIFFERENT cartridges (Pokemon Ruby with Sapphire) over Online ------------------------------------
+
+def two_games_online(T, tag, nat, relay, rom_a, rom_b, end, cached=False):
+    """One session: A plays rom_a, B plays rom_b.  The partner's cartridge crosses the link once (cached under its
+    identity) and the second session of the same two data roots finds it in the cache."""
+    name = "online_two_games_" + tag
+    a = (host_script(end) + L.shot(end - 14, "running.png") + L.disconnect(end - 8, "session.png") +
+         L.shot(end - 4, "ended.png") + L.quit_at(end))
+    b = lambda code: join_script(code, L.shot(end - 16, "running.png") + L.shot(end - 6, "ended.png") +
+                                 L.quit_at(end - 2))
+    rig = pair(T, name, rom=rom_a, rom_b=rom_b, nat=nat, a_script=a, b_script=b, a_end=end, b_end=end - 2,
+               keep=cached, begin=not cached, wait_a=120)
+    ra, rb = rig.ra, rig.rb
+    T.clean(ra, "A " + tag)
+    T.clean(rb, "B " + tag)
+    T.check(ra.has(r"link_running player=1") and rb.has(r"link_running player=2"), "%s: linked" % tag)
+    T.check(rb.has(r"online_peer nick=\"Alice\" mode=%s" % ("relay" if relay else "punch")), "%s: the path was the %s" %
+            (tag, "relay" if relay else "punch"))
+    for r, who, mine, theirs in ((ra, "A", rom_a, rom_b), (rb, "B", rom_b, rom_a)):
+        if not cached:
+            rec = r.evt("gblink_rom_received")
+            T.check(r.has(r"gblink_partner_rom source=transfer") and r.has(r"gblink_rom_received size=%d ok=1" %
+                                                                           os.path.getsize(theirs)) and
+                    r.has(r"gblink_rom_send done size=%d" % os.path.getsize(mine)),
+                    "%s, %s: the other's cartridge crossed once (%d bytes, checked) and its own went the other way" %
+                    (tag, who, os.path.getsize(theirs)))
+            T.check(len(rec) == 1 and r.has(r"gbadual_session_partner_rom rc=0") and r.has(r"gblink_start .*partner=received"),
+                    "%s, %s: received once, kept in the cache, the partner machine loaded it" % (tag, who))
+            T.S.note("%s, %s: transfer of %d bytes took %.1f s (%s)" % (
+                tag, who, os.path.getsize(theirs), int(rec[-1]["us"]) / 1e6 if rec else -1, rec[-1]["_"][:120] if rec else ""))
+        else:
+            T.check(r.has(r"gblink_partner_rom source=cache") and not r.has(r"gblink_rom_send begin") and
+                    not r.has(r"gblink_rom_received") and r.has(r"gblink_start .*partner=cache"),
+                    "%s, %s: the second session used the cache: nothing crossed the link" % (tag, who))
+        T.radio_free(r, who)
+    T.same_machines(ra, rb)
+    return rig
+
+
+def t_two_games(T):
+    """Two DIFFERENT cartridges over Online (Ruby with Sapphire): the partner's game crosses once, then the cache"""
+    if not os.path.exists(L.LINKTEST_B):
+        T.S.note("no tools/linktest/linktest_b.gba: skipped")
+        return
+    d = os.path.join(T.S.outdir, "roms_two_games")
+    os.makedirs(d, exist_ok=True)
+    for tag, nat, relay, size in (("punch", ("port", "port"), False, 16 << 20), ("relay", ("sym", "port"), True, 4 << 20)):
+        a, b = os.path.join(d, "ruby_%s.gba" % tag), os.path.join(d, "sapphire_%s.gba" % tag)
+        L.padded(L.LINKTEST, a, size, 1)
+        L.padded(L.LINKTEST_B, b, size + 4096, 2)
+        end = 330 if size > (8 << 20) else 160
+        two_games_online(T, tag, nat, relay, a, b, end)
+        two_games_online(T, tag + "_again", nat, relay, a, b, 130 if size < (8 << 20) else 130, cached=True)
+        for f in (a, b):
+            os.remove(f)
+
+
 # ---- the Connection page ----------------------------------------------------------------------------------
 
 def t_direct_hidden(T):
@@ -1125,7 +1184,7 @@ TESTS = [
     ("busy", t_busy), ("slow_down", t_slow_down), ("service_down", t_service_down),
     ("lost_answer", t_lost_answer), ("cancel_after_failure", t_cancel_after_failure), ("drop", t_drop_midlink),
     ("rtt_100", t_rtt_100), ("rtt_150", t_rtt_150), ("rtt_200", t_rtt_200), ("delay_cap", t_delay_cap),
-    ("determinism", t_determinism), ("direct_hidden", t_direct_hidden),
+    ("determinism", t_determinism), ("two_games", t_two_games), ("direct_hidden", t_direct_hidden),
 ]
 # armhf (under qemu, several times the wall time): the sessions
 RUNS = {

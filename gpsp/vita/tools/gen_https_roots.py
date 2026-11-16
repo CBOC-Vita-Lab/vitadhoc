@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Write net/src/np_https_roots.h: the root certificates the game's HTTPS client trusts.
+"""Write gpsp/vita/nethttps/np_https_roots.h: the root certificates the game's HTTPS client trusts.
 
     NP_HTTPS_ROOTS_DAY=YYYY-MM-DD python3 gpsp/vita/tools/gen_https_roots.py [CERT_DIR ...] [--new-isrg-roots] [--pin STEM=SHA256 ...] \
-        > net/src/np_https_roots.h
+        > gpsp/vita/nethttps/np_https_roots.h
 
 Galaxy 3.0 (tls agent, Nov 11 2026): from Strikers Charged 1.3 native/gpsp/vita/tools/gen_https_roots.py (same owner). With
 NP_HTTPS_ROOTS_DAY=2026-10-30 and the Ubuntu 24.04 ca-certificates 20260816ubuntu0.24.04.1 PEMs in /etc/ssl/certs it reproduces the

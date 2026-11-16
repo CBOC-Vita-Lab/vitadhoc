@@ -35,8 +35,10 @@ read them before sharing).
   fault; Same Wi-Fi never needs the service.
 - **Zipped games** may not be found by the join's library search if the file
   cannot be read without unpacking it; the message then says to add the game.
-- **Not in 2.0:** NES, Super NES and WonderSwan two-player over the internet
-  (the WonderSwan's link cable is not emulated at all).
+- **Two players (NES, WonderSwan, Super NES)** runs one shared game on both
+  Vitas, so both need the very same game file (a patched copy does not match an
+  unpatched one). The WonderSwan's own link cable is not emulated. Super NES
+  has no Nearby (ad hoc) option.
 
 ## Version 1.4: Not Yet Tested On A Console
 
@@ -112,8 +114,8 @@ Testing continues on:
   `ux0:data/GBAdhoc/nes/`. Without it the game says so and returns.
 - NES games use the same menu, state slots, Continue, fast forward, cheats
   (Game Genie codes and RAM codes), patches and RetroAchievements as the Game
-  Boy games, rewind too. Link play is not available for NES games; the link
-  card says so. A few cheat codes of the "RAM" kind change what the game
+  Boy games, rewind too. NES games link one way, Two players (Play together
+  in the menu). A few cheat codes of the "RAM" kind change what the game
   reads but not what it saves.
 - **Box art** finds a NES game by its contents or its name. A UNIF game
   (`.unf`, `.unif`) is found by name only, so a file with an unusual name may

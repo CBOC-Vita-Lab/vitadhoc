@@ -234,8 +234,10 @@ static void play_game_line(char *out, size_t cap)
       switch (ui_host_mode())
       {
       case UI_HOST_CABLE:
-         wl_line_name(out, cap, "Link Cable game: both " UI_DEVS " need ",
-                      own_game_name(), " open.", 436);
+         /* Each side may run its own game (Ruby with Sapphire): the partner's cartridge crosses once
+          * (fe_gblink), so nobody needs this very file. */
+         wl_line_name(out, cap, "Link Cable game. Each " UI_DEV " plays its own game; ",
+                      own_game_name(), " is sent across.", 436);
          break;
       case UI_HOST_ASK:
          snprintf(out, cap, "Links by Link Cable or Wireless Adapter: the "

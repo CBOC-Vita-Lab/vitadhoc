@@ -219,6 +219,40 @@ Both files are written with the safe write, tolerate missing and unknown
 keys, and carry a version; a reader that sees a newer version reads what it
 knows and keeps the rest.
 
+### `link.*` (Two players)
+
+When a Two players session was formed in the app (Super NES: the room, the
+punch or the relay are made before the player starts), the launch file also
+carries the link. A player that cannot read all of it starts no link at all;
+`link.role` absent means a normal single-player launch.
+
+```
+link.role=host               # host | guest
+link.mode=punch              # lan (Same Wi-Fi) | punch (Online, direct) | relay (Online, through the relay)
+link.local_port=40123        # the app's UDP port: the player binds the same one
+link.peer=203.0.113.7:40555  # lan: the host (guest only); punch: the peer's public address
+link.peer_lan=               # punch: the peer's address inside our own network, when the service gave one
+link.punch_key=0123456789abcdef   # the room's punch key, 16 hex digits
+link.relay_server=           # relay: the TURN server's IPv4 address
+link.relay_ports=3478,443    # relay: the UDP ports to try, in order
+link.relay_user=             # relay: the short-lived credential
+link.relay_pass=
+link.relay_peer=             # relay: the peer's relayed address
+link.relay_addr=             # relay: OUR relayed address when the app already allocated it; the player adopts it
+                             # (Refresh, same permission and channel, never a new Allocate). Empty: it allocates.
+link.delay=4                 # host: input delay in frames, 0..60 (the guest takes the host's)
+link.compat=1a2b3c4d         # the pairing's compat word, 8 hex digits
+link.nick=Alice              # this player's nickname
+link.local_ip=               # this console's Wi-Fi address; empty = ask the system
+link.wait_s=0                # seconds to wait for the other console, 0..600 (0 = the player's default, 90)
+```
+
+Test builds also read `link.loopback`, `link.sim`, `link.sim_id`,
+`link.sim_lan_port`, `link.loss`, `link.latency`, `link.jitter`,
+`link.input_copies`, `link.nack` and `link.hash_every`. The relay password is
+a credential that expires within the hour; the launch file is rewritten for
+every start. The keys are parsed in `src/pk_launch.cpp`.
+
 ## Look memory
 
 What the look governor (`pk_look`, `INTEGRATION.md` section 8) learned about one game. Only a game that needed a

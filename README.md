@@ -26,7 +26,11 @@ gets a code of five characters, the other types it. No router settings, no
 accounts. The two Vitas link directly when they can and through a relay when
 they cannot. It works for GBA Link Cable, GBA Wireless Adapter, Game Boy / Game
 Boy Color Link Cable and sharing, and the join finds your copy of the game for
-you. Not yet tried on two real Vitas: see [Known Issues](KNOWN-ISSUES.md). See
+you. Each player can bring their own game on a cable (Ruby with Sapphire).
+
+**Two players for NES, WonderSwan and Super NES.** Both Vitas play the same
+game, the host as player 1 and the friend as player 2, on Same Wi-Fi or Online.
+Not yet tried on two real Vitas: see [Known Issues](KNOWN-ISSUES.md). See
 [Online Play](docs/ONLINE.md), the [2.0 release notes](release-notes-2.0.md)
 and the [changelog](CHANGELOG.md).
 
@@ -199,7 +203,8 @@ place, alongside folders you add yourself.
 
 GBA Link Cable and Wireless Adapter support, plus GB/GBC linking: two Vitas
 over Wi-Fi, online by room code, or ad hoc, or two emulated handhelds side by
-side on one Vita. Save/state sharing and a Mystery Gift receiver are included too.
+side on one Vita. NES, WonderSwan and Super NES games have Two players over
+Wi-Fi or online. Save/state sharing and a Mystery Gift receiver are included too.
 
 [Play Together](PLAY-TOGETHER.md) has the setup guide and supported modes.
 

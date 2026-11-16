@@ -1,8 +1,8 @@
 ## VitAdhoc 2.0: Online play
 
-Play Link Cable games with a friend anywhere. One of you hosts and gets a
-code of five characters; the other types it. No router settings, no port
-forwarding, no accounts.
+Play Link Cable games, and NES, WonderSwan and Super NES games for two, with a
+friend anywhere. One of you hosts and gets a code of five characters; the
+other types it. No router settings, no port forwarding, no accounts.
 
 The online parts are verified on the PC test builds against simulated home
 routers and a test relay. They have not yet been tried on two real Vitas or
@@ -19,7 +19,16 @@ against the live service, so no speed or reliability is promised: see
   game menu or from the game list (Settings > Join online). VitAdhoc finds
   your copy of the game and starts it for you, or tells you which game to add.
 - **It works for the same games as Wi-Fi:** GBA Link Cable, GBA Wireless
-  Adapter, Game Boy and Game Boy Color Link Cable, and sharing a save or state.
+  Adapter, Game Boy and Game Boy Color Link Cable, Two players (below), and
+  sharing a save or state. On a Link Cable each of you can play your own game:
+  Ruby with Sapphire, FireRed with Emerald, a `.gb` game with a `.gbc` game.
+- **Two players for NES, WonderSwan and Super NES.** Two Vitas play one shared
+  game: the host is player 1, the joiner is player 2, over Same Wi-Fi or
+  Online. You both need the very same game file. For NES and WonderSwan open
+  the game, then the menu > Play together > Host a game or Join a game. For
+  Super NES, highlight the game in the game list, press Start for Settings and
+  choose **Two players** (the last row of Link setup), then Host a game or Join
+  a game, then Same Wi-Fi or Online. Nearby is not offered for Super NES.
 - **Direct when possible, through a relay when not.** The two Vitas first try
   to reach each other directly. If a router or a phone hotspot will not allow
   it, the link goes through a Cloudflare relay by itself ("Connecting through
@@ -27,7 +36,9 @@ against the live service, so no speed or reliability is promised: see
   direct try and hides each player's address from the other.
 - **Plain messages that say who acts:** a wrong or expired code; the host has a
   newer or older VitAdhoc (and which of you updates); a different game or file;
-  a wrong clock; a busy day; the connection lost.
+  a wrong clock; a busy day; "wait a minute" when you ask too fast; the
+  connection lost. Once linked, a small label shows your player number and the
+  line, for example "Link Cable  P2  Great (relay)".
 - **More forgiving delay:** Link delay Auto may use up to 12 frames on Online
   (8 on every other connection) so a long line still plays steadily.
 - **Privacy:** no account, no PSN name; only your nickname is sent. A room
@@ -42,8 +53,7 @@ against the live service, so no speed or reliability is promised: see
 - Both Vitas need VitAdhoc 2.0 or later to play online, and the same version as
   each other (the message says who updates). Same Wi-Fi and Nearby are as before.
 
-**Not in 2.0:** NES, Super NES and WonderSwan two-player over the internet,
-three- and four-player links, and single-cartridge multiboot. Online needs the
+**Not in 2.0:** three- and four-player links, and single-cartridge multiboot. Online needs the
 service to be running: it limits its own day, and "busy" means try again
 tomorrow or use Same Wi-Fi.
 

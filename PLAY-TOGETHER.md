@@ -1,22 +1,22 @@
 # Play Together
 
 Open the in-game menu > Play together. VitAdhoc does GBA Link Cable, GBA
-Wireless Adapter and Game Boy / Game Boy Color Link Cable games, between two
+Wireless Adapter and Game Boy / Game Boy Color Link Cable games, and Two
+players for NES, WonderSwan and Super NES games, between two
 Vitas on the same Wi-Fi, far apart by code (Online), or side by side (Nearby). Back up an
 important save before linking: two-Vita play is still being confirmed on
 hardware for version 1.0 (see [Known Issues](KNOWN-ISSUES.md)).
 
 ## Two Vitas
 
-Use the same VitAdhoc version on both consoles. A patched game (a ROM hack or
-translation) needs the same patch on both. Vita-to-PSP linking is not
+Use the same VitAdhoc version on both consoles. Vita-to-PSP linking is not
 supported. Both players must have permission to use the cartridges involved.
 
 | Connection | Setup |
 | --- | --- |
 | Same Wi-Fi | Join the same router or hotspot. One player chooses Host a game; the other chooses Join a game and selects the room that shows up. |
 | Online | For a friend far away. The host's screen shows a code of five characters; the friend types it. See [Online](#online) below. |
-| Nearby (ad hoc) | Use the Vita's system connection screen. No router is needed. |
+| Nearby (ad hoc) | Use the Vita's system connection screen. No router is needed. Not offered for Super NES Two players. |
 | Direct address | Advanced, and hidden until `link_direct = 1` is in `vita.ini`: the joiner types the address the host is shown. The host needs UDP port 19019 reachable; UPnP may open it, otherwise router configuration is needed. Online does this job without any router settings. |
 
 GBA cable sessions can link two different games: Ruby with Sapphire, FireRed
@@ -37,12 +37,33 @@ other (a Pokemon Ruby will not trade with Mario Kart): VitAdhoc checks only
 that both are Game Boy Advance games, as a cable would. To trade between
 versions on one Vita, use Two players on one Vita (below).
 GBA Wireless Adapter
-sessions need a game that supports the adapter. GB/GBC cable mode can use
+sessions need a game that supports the adapter, and the same game on both
+Vitas. GB/GBC cable mode can use
 different cartridges, and a Game Boy (`.gb`) cartridge can play with a Game
 Boy Color (`.gbc`) one: Red with Blue, Yellow, Gold, Silver or Crystal, for
 example. Each Vita runs both games and the implementation exchanges cartridge
 bytes in memory for the session, not to storage. Do not use it to distribute a
 cartridge you are not allowed to share.
+
+**Two players (NES, WonderSwan, Super NES).** Two Vitas play one shared game:
+the host is player 1 and the joiner is player 2. Both need the very same game
+file (a patched copy does not match an unpatched one). Only the buttons cross
+the link. Save states, cheats, rewind and fast forward are off while linked.
+
+- **NES and WonderSwan:** open the game, then the menu > Play together.
+  Choose the Connection (Same Wi-Fi, Online or Nearby). One Vita chooses
+  **Host a game**. The other chooses **Join a game** (over Online it types
+  the host's code; Settings > Join online in the game list also works). The
+  joiner plays the host's game, and the joiner's own game comes back as it
+  was when the link ends. A WonderSwan has only one pad, so both players'
+  buttons drive it.
+- **Super NES:** a Super NES game is played by a separate player, so there is
+  no Play together page in its menu. In the game list, highlight the game and
+  press Start for Settings, then choose **Two players** (the last row of
+  Link setup). Choose **Host a game** or **Join a game**, then **Same Wi-Fi**
+  or **Online**. Joining over Same Wi-Fi shows the Two players rooms for this
+  game; over Online you type the host's code. When the link is up, the game
+  starts by itself.
 
 Fast link, in Settings > Link setup, batches two frames of GBA cable input.
 It is off by default and the host's setting controls the session. It does not
@@ -54,8 +75,9 @@ features. Three- and four-player links and single-cartridge multiboot are absent
 
 Online links two Vitas that are far apart, with a code and nothing to set up
 on your router. Version 2.0 or later on both. It works for the same games as
-Wi-Fi: GBA Link Cable, GBA Wireless Adapter and Game Boy / Game Boy Color
-Link Cable. The two of you can be anywhere with an internet connection.
+Wi-Fi: GBA Link Cable, GBA Wireless Adapter, Game Boy / Game Boy Color Link
+Cable and Two players for NES, WonderSwan and Super NES. The two of you can be
+anywhere with an internet connection.
 
 **To host:** open your game, then Play together > Connection: Online > Host a
 game. A code of five characters fills the screen. Tell it to your friend. Your
@@ -63,7 +85,8 @@ game keeps running underneath. When your friend arrives their name shows and
 the link starts by itself; a message says how good the connection is. Cancel
 closes the room. A code nobody uses stops working after 10 minutes.
 
-**To join:** have the same game. Choose Play together > Connection: Online >
+**To join:** have the game (for Wireless Adapter and Two players, the same
+game as the host; for the Link Cable, your own game is fine). Choose Play together > Connection: Online >
 Join a game, or, from the game list, Settings > Join online. Type the code
 (d-pad up and down change a letter, left and right move, Square deletes, or
 touch the keys; Triangle or Start sends it). You see the game and who is
@@ -85,18 +108,21 @@ frames when the line needs it.
 - Both Vitas need the same VitAdhoc version. If they differ, the message says
   which of you updates. For the GBA cable you also need the same BIOS file and
   CPU setting.
+- Once the link is up, a small label shows it and your player number and the
+  line, for example "Link Cable  P2  Great" ("(relay)" is added when the link
+  goes through the relay).
 - The first time two different GBA games link, one sends its game to the other
   (see above); over the internet that takes longer than on Wi-Fi. The screen
   shows an estimate and you can cancel.
 - The message when the link forms says Great, Good or Slow. Slow still plays;
   the game may feel delayed. Wi-Fi in the same room is always better.
 - A busy day: the service limits itself. "Online play is busy for today" means
-  try again tomorrow or use Same Wi-Fi.
+  try again tomorrow or use Same Wi-Fi. "Too many tries from this network"
+  means wait a minute and try again.
 - Privacy: no account and no PSN name; only your VitAdhoc nickname is sent. The
   room (code, game name, nicknames, addresses) lives until the link forms or 10
   minutes pass, then it is deleted. Details in [Online Play](docs/ONLINE.md).
-- Not in this version: NES, Super NES and WonderSwan two-player over the
-  internet, and three- or four-player links.
+- Not in this version: three- or four-player links.
 
 Messages and what to do about each of them are in
 [Online Play](docs/ONLINE.md#when-it-does-not-work).

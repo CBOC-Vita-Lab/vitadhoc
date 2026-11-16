@@ -149,8 +149,8 @@ games (`.fds`) need your own `disksys.rom` (put it beside the game or in
 `.unif`) play too. Box art and title screens come from the libretro
 thumbnails for the NES and the Famicom Disk System; a NES file is recognised by
 its contents without the 16-byte header (and the 512-byte trainer some files
-carry), a UNIF file by its name only. Rewind works as for Game Boy games; link
-play is not available for NES games. PAL and Dendy games run at their own 50
+carry), a UNIF file by its name only. Rewind works as for Game Boy games, and
+two Vitas can play one NES game together (Two players, below). PAL and Dendy games run at their own 50
 frames a second (five of every six refreshes).
 
 **Wide view** (Settings > Display with the NES selected: Auto, On, Off).
@@ -341,7 +341,10 @@ Where extensions share a stem, name the full file, for example
 
 BPS and UPS verify source/result checksums. IPS does not identify the correct
 base revision. Wide-view profiles and achievement sets need to match the
-patched game. Use the same game and patch on both Vitas when linking.
+patched game. On a GBA Link Cable or Game Boy link each Vita may play its own
+game, or its own patched copy: the partner's game is sent across. Two players
+(NES, WonderSwan and SNES) needs the very same game file on both Vitas, so a
+patched copy does not match an unpatched one.
 
 The bundled cheat catalogue covers about 2,190 GBA and Game Boy games and
 about 2,000 NES games (found by checksum, then by name); WonderSwan has a list
@@ -382,13 +385,36 @@ menu opens or a state loads. The menu shortcut remains reachable. See
 
 | Mode | Scope and limits |
 | --- | --- |
-| GBA Link Cable | Two Vitas; matching game files; Same Wi-Fi, Online or Nearby (ad hoc) |
+| GBA Link Cable | Two Vitas; each can play a different GBA game (Ruby with Sapphire): the partner's game crosses once, is checked and is kept in a cache; Same Wi-Fi, Online or Nearby (ad hoc) |
 | GBA Wireless Adapter | Supported Wireless Adapter games; Same Wi-Fi, Online or Nearby |
-| GB / GBC cable | Compatible cartridges can differ; cartridge bytes are exchanged in memory for the session; Same Wi-Fi, Online or Nearby |
+| GB / GBC cable | Each Vita can play a different cartridge, and a `.gb` game can pair with a `.gbc` game; a cartridge the other Vita does not have is sent in memory for the session; Same Wi-Fi, Online or Nearby |
+| Two players (NES, WonderSwan, SNES) | Two Vitas share one game: the host is player 1, the joiner player 2. Both need the same game file. Same Wi-Fi or Online (NES and WonderSwan also Nearby). See [Play Together](../PLAY-TOGETHER.md) |
 | Online (2.0) | A five-character room code links two Vitas anywhere: direct link first, a Cloudflare relay when needed; no router settings, no accounts. See [Online Play](ONLINE.md) |
 | Two players on one Vita | Side-by-side handhelds; switch control or use a supported distinct second pad |
 | Save/state sharing | Same Wi-Fi or Online; first five state slots; receiver should retain backups |
 | Mystery Gift | Receiver for the supported station protocol; full phone-to-game/save flow still needs validation |
+
+### Two players on two Vitas (2.0)
+
+NES, WonderSwan and Super NES games can be played by two Vitas at once, over
+Same Wi-Fi or Online. Both Vitas run one shared game: the host plays player 1
+and the joiner plays player 2. Both need the very same game file. Only the
+buttons cross the link, so it needs little bandwidth.
+
+- **NES and WonderSwan:** open the game, then the menu (Start + Select) >
+  Play together. Choose the Connection, then **Host a game** on one Vita and
+  **Join a game** on the other (over Online the host shows a code and the
+  joiner types it, or uses Settings > Join online in the game list). Nearby
+  is offered for these two as well. A WonderSwan has only one pad, so both
+  players' buttons drive it.
+- **Super NES:** in the game list, highlight the game and press Start for
+  Settings, then choose **Two players** (the last row of Link setup). Choose
+  **Host a game** or **Join a game**, then **Same Wi-Fi** or **Online**. The
+  game starts by itself once the link is up. Nearby is not offered for Super
+  NES.
+- Save states, cheats, rewind and fast forward are off while linked. On NES
+  and WonderSwan the joiner plays the host's game: the joiner's own game and
+  save come back as they were when the link ends.
 
 Vita-to-PSP, Bluetooth as a Vita-to-Vita transport, three/four players and
 single-cartridge multiboot are not supported. Hosting by typed address (the

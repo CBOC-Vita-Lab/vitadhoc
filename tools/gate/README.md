@@ -23,12 +23,30 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
 | tier | what runs |
 |---|---|
 | `--quick` | release unit tests, the package test on a fresh `make vpk` build, the three save tests, `gamedb`, `playerkit`, `widekit`, the SNES, NES and WonderSwan selftests |
-| default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, audio, cover art, cheats, library, and the private-ROM steps (skipped unless their folder is set) |
-| `--full` | everything, plus armhf under qemu, the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
+| default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, audio, cover art, cheats, library, the online play steps (below), and the private-ROM steps (skipped unless their folder is set) |
+| `--full` | everything, plus armhf under qemu (including `online-armhf`), the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
 | `--release` | `--full` plus the release pins: `release-package-pinned` (the committed root VitAdhoc.vpk and its pinned hashes) and `check-files` (SHA256SUMS); stale by design between releases |
 
 `--only`, `--skip` and `--changed` act within the tier you name, and
 `--only` ignores tiers. A step's prerequisites are always added.
+
+### Online play steps (2.0)
+
+All of these stay on the loopback and contact no real service. Node 22.5 or
+newer is needed for the first and the twin step.
+
+| step | covers |
+|---|---|
+| `online-service` | the room service under `node --test` (`npm ci`, then `npm test`) |
+| `online-nat` | STUN, punch and the TURN client against the NAT simulator (`make -C gpsp/netdrv test-nat`) |
+| `online-http` | the HTTPS room client; its TLS cases need `GATE_MBEDTLS_HOST` |
+| `online-conn` | the connection state machine against fakes |
+| `online-library` | the library match: a room code to a game file |
+| `fe-padpair` | the two-player pad adapter (NES, WonderSwan) under the real session |
+| `online-x86` | two app twins linked through the room service and a NAT simulator (`online_tests.py x86`; `--list` names its scenarios) |
+| `online-armhf` | the cheap set of those scenarios on armhf under qemu (full tier) |
+
+`docs/TESTING.md` says what each scenario proves.
 
 ## What gate does
 

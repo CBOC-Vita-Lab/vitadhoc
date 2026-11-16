@@ -1396,6 +1396,24 @@ the measured round trip: Great under 80 ms, Good under 120 ms, Slow above. Both
 numbers are guesses until real paths have been read (`EVT link_rtt`, `gblink_win`,
 `online_quality`).
 
+**Two players (NES, WonderSwan, Super NES).** A room of the pad kind. Both
+consoles run the host's machine: the host's pad is port 1, the joiner's is port
+2 (a WonderSwan has one pad, which takes both), and only buttons cross, in
+lockstep, over the same `fe_gblink` session as the cable modes. For NES and
+WonderSwan `fe_padpair` is the machine side: the host's state and battery start
+both, the joiner's own game and save are set aside and put back, and only the
+host commits a save. It has no `partner_rom`, so a different file is refused:
+the room's `game` is the 8 hex digits of the whole file's CRC-32 and the game
+list shows the first four. The compatibility word is the version, link ABI and
+build only. A Super NES game is played by the separate player (`snes.bin`), so
+the app forms the link first (`link_snes_begin`: the same room, code, punch and
+relay as for a NES game), then hands the player the peer, the punch key and any
+relay credentials in the launch file (`link.*` keys; `playerkit/src/pk_launch.cpp`);
+the player makes the link again on the same local port. The game list's
+Settings > Two players page (`ui_vita_snes.h`) is the way in for it; Nearby is
+not offered, because the system's ad hoc connection does not outlive the
+change of program.
+
 **Library match.** A room card carries the console, the game code (GBA header code,
 GB/GBC title code) and `rom`, a CRC-32 of the file size and 64 slices of 4 KiB
 taken from the image the core runs (after any patch). The joiner's step is: code,

@@ -130,7 +130,7 @@ and two real Vitas are the only proof of the rest.
 
 | Suite | Run from the repository root | Covers |
 |---|---|---|
-| Room service | `cd online/service && node --test "test/*.test.mjs"` (Node 22.5 or newer; no `npm install`; about 30 s; 110 tests) | the eight routes, lifecycle and lazy expiry, eviction of the Durable Object, rate limits and the day's budget, relay credential guards, privacy (nothing logged, nothing outlives its room), the dev server, and the deploy and zone scripts against a stub `npx`, a stub `curl` and a mock of the zone API (no wrangler or Cloudflare needed). The quotes matter: Node 22 does not expand a folder. |
+| Room service | `cd online/service && node --test "test/*.test.mjs"` (Node 22.5 or newer; no `npm install`; about 30 s; 121 tests when last counted) | the eight routes, lifecycle and lazy expiry, eviction of the Durable Object, rate limits and the day's budget, relay credential guards, privacy (nothing logged, nothing outlives its room), the dev server, and the deploy and zone scripts against a stub `npx`, a stub `curl` and a mock of the zone API (no wrangler or Cloudflare needed). The quotes matter: Node 22 does not expand a folder. |
 | TURN key script | `bash online/service/scripts/create-turn-key.selftest.sh` | the one-time key script against a stub `curl`: file modes, the secret never printed, never two keys, billing and permission refusals |
 | NAT layer | `make -C gpsp/netdrv test-nat` | STUN, punch, keep-alive and the TURN client on the transport, against the NAT/TURN simulator in `gpsp/netdrv/tests/natsim/` (build it with `gpsp/netdrv/tests/natsim/build.sh <out>`; `<out> --port 47000 --turn` runs it by hand) |
 | Room client and HTTPS client | `python3 -I gpsp/vita/tests/onlinehttp/test_onlinehttp.py` | JSON, flows, errors, time limits, the room client against `fake_service.py` and the real `online/service/dev/server.mjs`, TLS 1.2 and 1.3 with ECDSA and RSA leaves, wrong host, untrusted chain, the clock floor, the client's self-test. The TLS cases are SKIPPED without the host Mbed TLS prefix (`MBEDTLS_HOST`, default `/tls/mbedtls/host64`: see [Building](BUILDING.md)). |
@@ -138,11 +138,18 @@ and two real Vitas are the only proof of the rest.
 | Library match | `make -C gpsp/vita/tests/library -f online_lib.mk test` | the card-to-file step: folder walks, duplicate codes, the pure decision |
 | Menus | the host UI test (`gpsp/vita/host/ui_host_test.c`) | code pad, room card, host page, sentences, `link_direct` |
 
-Gate steps: `online-service` (`npm ci` then `npm test`), `online-nat`,
-`online-http`, `online-conn`, `online-library`, `fe-padpair` (two players on one
-machine under the real session: `gpsp/tools/tests/test_padpair.c`) and, on the
-twins, `online-x86` (default tier) and `online-armhf` (full tier). A missing
-tool (node, npm, g++, qemu) makes its step SKIP with the tool's name.
+Gate steps, one per row above and all in the default tier unless said:
+`online-service` (`npm ci` then `npm test`), `online-nat`, `online-http`
+(its TLS cases run only with `GATE_MBEDTLS_HOST` set to the host64 Mbed TLS
+prefix, and are reported as SKIPPED without it), `online-conn`,
+`online-library`, `fe-padpair` (two players on one machine under the real
+session, the adapter behind Two players for NES and WonderSwan:
+`gpsp/tools/tests/test_padpair.c`) and, on the twins, `online-x86` (default
+tier) and `online-armhf` (full tier). `online-x86`'s determinism scenario also
+plays a private Link Cable game when `GATE_GBA_ROMS` has one. The full tier's
+`vita-build` needs `GATE_MBEDTLS_VITA`, the Vita Mbed TLS prefix, and SKIPs
+without it. A missing tool (node, npm, g++, qemu) makes its step SKIP with the
+tool's name.
 
 ### Twin scenarios: `online_tests.py`
 
@@ -159,7 +166,7 @@ another version (the twins' own version is fixed).
     python3 online_tests.py x86 --hz 20            # all of them (about two hours at 20; --hz 30 is faster)
     python3 online_tests.py x86 --hz 30 --only punch,relay,gb,share
     python3 online_tests.py armhf --hz 12          # the cheap set: punch, relay, gb, lost_answer, library_join
-    python3 online_tests.py --list
+    python3 online_tests.py --list                 # every scenario name
 
 | scenario | what it proves |
 |---|---|
@@ -177,7 +184,8 @@ another version (the twins' own version is fixed).
 | `rtt_100`, `rtt_150`, `rtt_200` | round trips of 100 / 150 / 200 ms, jitter 20 ms, loss 2 %, made by natsim and again by the transport's own shim (`link_latency` / `link_jitter` / `link_loss`): the delay is measured, at most 12 (the Online cap), `want=` logged, hashes equal; stalls per minute are printed, not judged |
 | `delay_cap` | the same delay on Same Wi-Fi stays capped at 8 |
 | `determinism` | 150 ms round trip, jitter, loss, scripted buttons on both consoles for 90 s: every periodic hash and the final hash agree (linktest.gba always; a private Link Cable game when `GATE_GBA_ROMS` has one) |
-| `different_game`, `library_join` | Join online from the game list: the matching game opens and joins; a cable game whose file differs from the host's asks and opens nothing by itself; with the host's file among two it is the one offered |
+| `different_game`, `library_join` | `different_game`: a cable game with the host's game code but another file, joined from Play together, ends cleanly on both consoles. `library_join`: Join online from the game list opens the matching game and joins; a cable game whose file differs from the host's asks and opens nothing by itself; with the host's file among two it is the one offered |
+| `two_games` | two different GBA cartridges over Online (Ruby with Sapphire), over the punch and over the relay: the partner's cartridge crosses the link once and is kept in the cache, and a second session of the same two data folders finds it there. Skipped when the second test cartridge (`gpsp/tools/linktest/linktest_b.gba`) is not built |
 | `direct_hidden` | the Connection page has no Direct address unless `link_direct = 1` |
 
 The Vita build with Mbed TLS and the heap and package-size numbers are

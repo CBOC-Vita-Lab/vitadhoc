@@ -75,6 +75,7 @@ static struct
    int  pending;                  /* ui_online_take_pending()               */
    int  launch;                   /* a modal page picked a file: the game
                                    * list opens it (ui_browser)             */
+   int  snes_two;                 /* ui_snes_two_take(): 1 host, 2 join     */
    char out[OC_LEN + 1];          /* ui_online_code_modal's answer          */
 } g_oc;
 
@@ -87,6 +88,13 @@ int ui_online_take_pending(void)
 {
    int p = g_oc.pending;
    g_oc.pending = 0;
+   return p;
+}
+
+int ui_snes_two_take(void)
+{
+   int p = g_oc.snes_two;
+   g_oc.snes_two = 0;
    return p;
 }
 

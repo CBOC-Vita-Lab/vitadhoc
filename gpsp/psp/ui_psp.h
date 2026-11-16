@@ -202,6 +202,11 @@ typedef struct ui_join_info
    char online_code[6];  /* conn ONLINE: the room code typed or picked */
 } ui_join_info;
 const ui_join_info *ui_join_target(void);
+/* Set what UI_ACT_NET_JOIN / the SNES link joins, for a page that picks the room itself (the game list's SNES
+ * "Two players" page; ui_vita_play.h). */
+void ui_join_set(const ui_join_info *t);
+/* The game list's Settings > Two players (SNES) chose a game: 0 nothing, 1 host a room with it, 2 join one.  Once. */
+int ui_snes_two_take(void);
 
 /* Every way a link can fail, in the player's words: two lines for the
  * LINKING screen (ui_linking_view.l1 / .l2 with .fail = 1) or one sentence

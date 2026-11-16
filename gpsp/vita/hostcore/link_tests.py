@@ -941,6 +941,56 @@ def t_wifi_gb(T):
             "(%s / %s)" % (sa, sb))
 
 
+def snes_two_walk(downs=16):
+    """The SNES tab, the list's Settings (START), `downs` rows to Two players, X: its page (app_tests.t_snes_two)."""
+    return ("%d:triangle:%d\n" % (at(1), PRESS) + keys("triangle", "triangle", "start", first=40) +
+            keys(*(["down"] * downs), first=60) + keys("cross", first=30))
+
+
+def t_snes_two(T):
+    """SNES Two players from the game list's Settings: one console hosts on Same Wi-Fi, the other joins from the room
+    list; both form the link (loopback), write launch/snes.ini with the link.* keys and try to start snes.bin (the twin
+    cannot: the part after the hand-over is snes/twin's link_test.py)."""
+    T.begin("snes_two")
+    rom = os.path.join(T.dir, "Super One (USA).sfc")
+    with open(rom, "wb") as f:
+        f.write(bytes(0x8000))
+    a = T.twin("a", T.arch_a, rom, "Alice",
+               snes_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26),
+               config={"ui_home": 0, "hints": 0})
+    b = T.twin("b", T.arch_b, rom, "Bob",
+               snes_two_walk() + keys("down", "cross", "cross") + "+%d:shot=rooms.png\n" % dur(5) +
+               "+%d:cross:%d\n" % (AFTER_SHOT, PRESS) + shot(24, "after.png") + quit_at(26),
+               config={"ui_home": 0, "hints": 0})
+    for t in (a, b):
+        os.remove(os.path.join(t.root, "autoboot.txt"))     # the list, not the game
+    ra, rb = T.run([a, b], 26)
+    T.clean(ra, "A", allow="could not be started")
+    T.clean(rb, "B", allow="could not be started")
+    T.check(ra.has(r"^EVT snes_two_go role=host conn=0") and rb.has(r"^EVT snes_two_go role=guest conn=0"),
+            "A hosted and B joined from the page, both on Same Wi-Fi")
+    rooms = rb.evt("snes_two_join")
+    T.check(rooms and rooms[0].get("addr", "").startswith("127.0.0.1:"), "B joined the room the list showed (%s)" % [e["_"] for e in rooms])
+    for r, who in ((ra, "A"), (rb, "B")):
+        rd = r.evt("snes_link_ready")
+        T.check(rd and rd[0].get("ok") == "1" and rd[0].get("mode") == "lan",
+                "%s: the link formed (snes_link_ready ok=1 mode=lan: %s)" % (who, [e["_"] for e in rd]))
+        T.check(r.has(r"^EVT snes_launch_file ok=1") and r.has(r"^EVT snes_launch rom="),
+                "%s: the launch file is written and snes.bin asked for" % who)
+        lf = os.path.join(r.root, "launch", "snes.ini")
+        kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf) if "=" in l) if os.path.exists(lf) else {}
+        T.check(kv.get("link.mode") == "lan" and kv.get("link.role") == ("host" if who == "A" else "guest"),
+                "%s: launch/snes.ini carries the link (role %s mode %s)" % (who, kv.get("link.role"), kv.get("link.mode")))
+        T.radio_free(r, who)
+        T.picture(r, who, "rooms.png" if who == "B" else "hosting.png")
+    ka = dict(l.rstrip("\n").split("=", 1) for l in open(os.path.join(ra.root, "launch", "snes.ini")) if "=" in l)
+    kb = dict(l.rstrip("\n").split("=", 1) for l in open(os.path.join(rb.root, "launch", "snes.ini")) if "=" in l)
+    T.check(ka.get("link.local_port") and kb.get("link.peer", "").endswith(":" + ka["link.local_port"]),
+            "B's launch file names A's address (%s, A listens on %s)" % (kb.get("link.peer"), ka.get("link.local_port")))
+    T.check(ka.get("link.compat") and ka.get("link.compat") == kb.get("link.compat"),
+            "both carry the same pad compat word (%s)" % ka.get("link.compat"))
+
+
 GBLOCAL = os.path.join(HERE, "testrom", "gblocal.gb")
 
 
@@ -1820,7 +1870,7 @@ TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fas
          ("room_full", t_room_full), ("different_build", t_different_build),
          ("host_quits", t_host_quits), ("link_lost", t_link_lost),
          ("lossy", t_lossy), ("wifi_lost", t_wifi_lost),
-         ("cancel", t_cancel), ("suspend", t_suspend),
+         ("cancel", t_cancel), ("suspend", t_suspend), ("snes_two", t_snes_two),
          ("mixed_refuse", t_mixed_refuse)]
 # Which tests a mode runs when none are named.  x86: everything but the
 # mixed pair's.  armhf (under qemu, five times the wall time): the sessions

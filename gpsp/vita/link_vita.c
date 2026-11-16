@@ -3571,6 +3571,14 @@ static void snes_watch(void)
    }
 }
 
+/* No core runs while the app forms a SNES link, so nobody has told the netpacket layer where a game's messages go (a NES or
+ * Game Boy game does that when it boots): without a receiver fe_np_start_gb refuses ("no GB receive callback") and the link
+ * never starts.  The app only needs the handshake and the peer to be seen; snes.bin makes the real session afterwards. */
+static void snes_np_rx(void *user, const void *payload, size_t len, uint8_t src)
+{
+   (void)user; (void)payload; (void)len; (void)src;
+}
+
 int link_snes_begin(int is_host, const char *rom_path, const char *title)
 {
    const ui_join_info *t = ui_join_target();
@@ -3582,6 +3590,9 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
       return UI_FAIL_RADIO_BUSY;
    if (conn == LINK_CONN_ADHOC)
       return -2;                           /* Nearby: not for SNES in 2.0 */
+   /* link_frame() keeps the link's clock, and no frame has run since the program started (the game list): a joiner would
+    * find its wait for the host already long over on its first frame */
+   L.ticks = (unsigned)(link_now_us() * 3u / 50000u);
    memset(&SL, 0, sizeof(SL));
    if (!link_snes_game_id(rom_path, SL.game))
       return UI_FAIL_GAME;
@@ -3592,6 +3603,8 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
    SL.t_begin = SL.t_seen = L.ticks;
    SL.prev_pad = g_app_pad;
    fe_evt("link_snes_begin role=%s conn=%d game=%s", is_host ? "host" : "guest", conn, SL.game);
+   fe_np_gb_set_receive(snes_np_rx, NULL);
+   fe_np_gb_set_peer_callback(NULL, NULL);
    link_action(is_host);
    /* a failure to even start was recorded by bringup_failed (SL.phase == LSN_FAILED): the caller reads it */
    return 0;

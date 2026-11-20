@@ -420,11 +420,14 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
    return 1;
 }
 
-/* The pause menu of the separate SNES player (snes.bin) is held L + R + START,
- * not START + SELECT as in the player that runs GBA, GB, GBC and NES games. */
-static inline int ui_menu_chord_is_lrs(int console)
+/* The chord that opens the pause menu, named for the hint under a game page
+ * and on the loading screen.  It is START + SELECT held on every console,
+ * the Super NES and Sega players included (L + R + START also opens the menu
+ * of those two players and is named in CONTROLS.md, not on a hint). */
+static inline const char *ui_menu_chord_text(int console)
 {
-   return console == FE_CONSOLE_SNES;
+   (void)console;
+   return "START + SELECT";
 }
 
 static inline size_t ui_rom_stem_length(const char *name)

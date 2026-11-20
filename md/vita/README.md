@@ -142,7 +142,7 @@ draw= writer= scale1= scale2=`, `handoff: on= depth= mode= produced= shown= repe
   and `ACT_REWIND` (`last_input().fired / held`); `main.cpp` has the loop pass where frames are skipped or run again (`md_host_set_render(0)`).
 - **RetroAchievements**: `md_host_ra_read` and `md_host_ra_console` give the memory map; `MdPlayer::after_frame()` (once per emulated frame, game thread) and
   `notice()` are the places the app side module plugs into.
-- **Two players / online**: `set_extra_caps(CAP_PLAY_TOGETHER)`; `start()` already reads `req_.link`. Until then the card is not shown.
+- **Two players / online**: done (2.0). The app forms the room (game list > Settings > Two players; not for the Game Gear) and writes `link.*`; `start()` reads it, `netplay.{h,cpp}` runs playerkit's `pk_link` (MIT) on the project's UDP transport and NAT layer (`gpsp/netdrv/transport_lan.c`, `nat_*.c`: MIT OR GPL-2.0-or-later), and `main.cpp` steps it instead of `md_host_run_frame()`. Nothing of the main app's Game Boy link (netdrv.c, fe_gblink.c, fe_evt.c, fe_util.c) is linked: `make -C md/vita` fails if it is (check-licence). The in-game card stays greyed with a reason (the game list starts it). Pinned while linked: region Auto, pad type Auto, FM discrete, FM unit Auto, no rewind/fast forward/cheats/states, every frame drawn. Test: `md/twin/link_test.py` (Makefile.link).
 - **Wide view**: not implemented for Sega in this version. The Picture page shows the row greyed with the reason. `on_change(ROW_PIC_WIDE)` and `pic_geometry()` are the place.
 - **Adding a look rung**: a line in `kLookLadder` (player.cpp) and its effect in `look_apply()`.
 

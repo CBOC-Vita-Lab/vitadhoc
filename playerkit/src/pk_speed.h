@@ -40,7 +40,7 @@ struct SpeedSettings {
 	int rewind_seconds = 60;            /* 30 or 60 in the menu */
 	size_t rewind_budget = 12u << 20;
 	int ff_factor = 2;                  /* 2 or 3 */
-	bool ff_sound = true;
+	int ff_sound = 1;                   /* 0 off, 1 sped up, 2 normal pitch (FastForward::SOUND_*) */
 	bool ff_toggle = false;
 };
 

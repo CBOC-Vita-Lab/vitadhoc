@@ -98,13 +98,20 @@ Testing continues on:
 
 ## Super NES
 
+- **Wide view at full width on the heaviest games** (Yoshi's Island, Super Mario World, Kirby Super Star): by the model in
+  docs/PERFORMANCE.md the draw thread does not fit a 60 fps frame at the full margin, and at margin 41 only at IPC 1.0. The player measures the real
+  time on the Vita and narrows the margin only when it must; the compose was made 10 to 28 % cheaper in 2.0 but the passes that draw the margin inside the
+  core (merging batches across lines, one pass for the strip, caching it between frames) are not done. Nothing has run on a Vita yet.
+- **Rewind** captures a state every fourth frame on the game thread; it now copies about 300 KB (plain cartridge) to 580 KB (SA-1) instead of 823 KB,
+  which is estimated at 0.5 to 1.2 ms on the Vita for the heaviest games, not yet measured.
+
 - **Super FX games that keep the chip busy** (Doom, the races of Stunt Race
   FX) run at full game speed, but their 3D view gets less chip time than on a
   SNES, so it animates more slowly than on the console. Yoshi's Island runs
   the chip at full speed. Super Mario RPG and Kirby Super Star dip a frame
   now and then. The SNES player writes its speed to
   `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
-- The SNES player has its own pause menu (hold **L + R + Start**) with ten
+- The SNES player has its own pause menu (hold **Start + Select**; L + R + Start also works) with ten
   state slots and cheats. Rewind, fast forward, patches and RetroAchievements
   are in it too, as in the Sega player (see "Rewind, fast forward and
   achievements in the Super NES and Sega players" below).

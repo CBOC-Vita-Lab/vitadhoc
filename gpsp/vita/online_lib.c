@@ -35,7 +35,7 @@
 #include "../psp/room_label.h"
 
 enum { OL_GBA = 0, OL_GB = 1,         /* the family of files that can match: found by a header's code */
-       OL_NES, OL_SNES, OL_WS };      /* 2.0 "Two players": found by the whole game's CRC (below) */
+       OL_NES, OL_SNES, OL_WS, OL_SEGA };      /* 2.0 "Two players": found by the whole game's CRC (below) */
 #define OL_IS_PAD(f) ((f) >= OL_NES)
 
 #define OL_DEPTH 2                    /* the folder, then one level in      */
@@ -44,6 +44,7 @@ static struct
 {
    int  active;
    int  family;                       /* OL_GBA / OL_GB                     */
+   char sega[4];                      /* OL_SEGA: "md" "sms" "gg" "sg"       */
    char game[9];
    char rom[9];
    int  root;                         /* 0 = g_app_rom_dir, 1.. = extras    */
@@ -94,6 +95,11 @@ int online_lib_begin(const char *console, const char *game, const char *rom)
       G.family = OL_SNES;
    else if (!strcmp(console, "ws") || !strcmp(console, "wsc"))
       G.family = OL_WS;
+   else if (!strcmp(console, "md") || !strcmp(console, "sms") || !strcmp(console, "gg") || !strcmp(console, "sg"))
+   {
+      G.family = OL_SEGA;                /* md.bin's Two players: the whole file's CRC, as for the SNES */
+      snprintf(G.sega, sizeof(G.sega), "%s", console);
+   }
    else
       return -1;
    snprintf(G.game, sizeof(G.game), "%s", game);
@@ -200,6 +206,10 @@ static int pad_ext_ok(const char *path)
       return ext_is(path, ".nes");
    if (G.family == OL_SNES)
       return ext_is(path, ".sfc") || ext_is(path, ".smc");
+   if (G.family == OL_SEGA)
+      return !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "gg") ? ext_is(path, ".gg")
+           : !strcmp(G.sega, "sg") ? ext_is(path, ".sg")
+           : ext_is(path, ".md") || ext_is(path, ".gen") || ext_is(path, ".smd") || ext_is(path, ".bin");
    return ext_is(path, ".ws") || ext_is(path, ".wsc");
 }
 
@@ -219,7 +229,7 @@ static int pad_id_of(const char *path, char out[9])
       return 0;
    }
    upto = size;
-   if (G.family == OL_SNES && size % 1024 == 512)
+   if ((G.family == OL_SNES || G.family == OL_SEGA) && size % 1024 == 512)
       from = 512;
    else if (G.family == OL_NES)
    {

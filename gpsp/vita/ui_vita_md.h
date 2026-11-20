@@ -20,7 +20,7 @@
 
 #include "fe_console.h"
 
-#define UI_SEGA_TWO_PLAYERS 0
+#define UI_SEGA_TWO_PLAYERS 1
 
 /* 1 for the four consoles md.bin plays. */
 static inline int ui_console_is_sega(int console)
@@ -32,6 +32,12 @@ static inline int ui_console_is_sega(int console)
 static inline int ui_console_is_player(int console)
 {
    return console == FE_CONSOLE_SNES || ui_console_is_sega(console);
+}
+
+/* 1 when a game of this console has Two players: md.bin's link (playerkit pk_link). Not the Game Gear: it has one controller. */
+static inline int ui_sega_two_ok(int console)
+{
+   return UI_SEGA_TWO_PLAYERS && ui_console_is_sega(console) && console != FE_CONSOLE_GG;
 }
 
 /* The launch file's console id (launch/<id>.ini, `console=<id>`), or NULL when md.bin does not play it. */

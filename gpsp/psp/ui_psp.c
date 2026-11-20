@@ -124,6 +124,8 @@
 #ifdef VITA
 #include "cheats_vita.h"
 #include "ui_vita_touch.h"
+#include "gbkind.h"           /* which Game Boy a .gb / .gbc file is */
+#include "ui_vita_md.h"          /* ui_sega_two_ok (also included again below: guarded) */
 #define UI_TCH_ROW(id, x, y, w, h)  tch_row((id), (x), (y), (w), (h))
 #define UI_TCH_BTN(b, x, y, w, h)   tch_btn((b), (x), (y), (w), (h))
 /* A row of the overlay's 24 px bands, 22 px apart: text y -> its box. */
@@ -2424,7 +2426,8 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_HDR_ABOUT, SET_ABOUT_CORE4,
        /* The three plain choices of the controls come before Button mapping,
         * which stays last (the harness walkers wrap up to it). */
-       SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_CONTROLS,
+       SET_HDR_CTL, SET_ABSWAP, SET_STICKRW, SET_SHOTCOMBO, SET_TAPMENU,
+       SET_CONTROLS,
        SET_COUNT };
 #define SET_FIRST SET_NAME
 #else
@@ -2445,15 +2448,17 @@ enum { SET_HDR_WL, SET_ROOM, SET_LINKMODE, SET_OSD, SET_SHARE, SET_JOIN,
 /* The Fast-forward row's values, slowest first.  2x and 3x can keep the
  * sound, sped up (main_vita.c sink_audio); Unlimited is always silent. */
 static const struct { int mode, sound; } ff_steps[] = {
-   { PCFG_FF_2X, 0 }, { PCFG_FF_2X, 1 }, { PCFG_FF_3X, 0 }, { PCFG_FF_3X, 1 },
+   { PCFG_FF_2X, 0 }, { PCFG_FF_2X, 1 }, { PCFG_FF_2X, 2 },
+   { PCFG_FF_3X, 0 }, { PCFG_FF_3X, 1 }, { PCFG_FF_3X, 2 },
    { PCFG_FF_UNLIMITED, 0 }, { PCFG_FF_SMOOTH, 0 },
 };
 
 static int ff_step_now(void)
 {
    const int mode = pcfg_ff_mode();
-   const int sound = g_pcfg.ff_audio &&
-                     (mode == PCFG_FF_2X || mode == PCFG_FF_3X);
+   const int sound = (mode == PCFG_FF_2X || mode == PCFG_FF_3X)
+                     ? (g_pcfg.ff_audio < 0 ? 0 : g_pcfg.ff_audio > 2 ? 2
+                                                  : g_pcfg.ff_audio) : 0;
    int k;
    for (k = 0; k < (int)(sizeof(ff_steps) / sizeof(ff_steps[0])); k++)
       if (ff_steps[k].mode == mode && ff_steps[k].sound == sound)
@@ -2630,6 +2635,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "A and B buttons" },
    { 0, "Rewind with right stick" },
    { 0, "Screenshot button combo" },
+   { 0, "Tap screen for menu" },
 #endif
    { 0, "Button mapping" },
 };
@@ -2693,7 +2699,7 @@ static int set_row_shown(int idx)
       return 1;
    }
    if (idx == SET_SNES_TWO)
-      return g_ov_browse && pcfg_display_console() == FE_CONSOLE_SNES &&
+      return g_ov_browse && (pcfg_display_console() == FE_CONSOLE_SNES || ui_sega_two_ok(pcfg_display_console())) &&
              snes_game_highlighted();
    return (idx != SET_SHARE && idx != SET_JOIN && idx != SET_ONLINE_JOIN &&
            idx != SET_COVERS && idx != SET_REFRESH) ||
@@ -3417,6 +3423,10 @@ static void settings_adjust(int id, int dir)
       g_pcfg.stick_rewind = !g_pcfg.stick_rewind;
       fe_evt("stick_rewind_setting on=%d", g_pcfg.stick_rewind);
       break;
+   case SET_TAPMENU:
+      g_pcfg.tap_menu = !g_pcfg.tap_menu;
+      fe_evt("tap_menu_setting on=%d", g_pcfg.tap_menu);
+      break;
    case SET_SHOTCOMBO:
    {
       int stolen = -1;
@@ -3937,7 +3947,7 @@ static const char *set_help(int id)
 #endif
 #ifdef VITA
    case SET_FFMULT:   return "How fast it runs. 2x and 3x can play the "
-                             "sound, sped up.";
+                             "sound sped up, or at normal pitch.";
 #else
    case SET_FFMULT:   return "How fast fast-forward runs.";
 #endif
@@ -3993,6 +4003,10 @@ static const char *set_help(int id)
       return g_pcfg.stick_rewind
          ? "Hold the right stick left to rewind."
          : "The right stick does not rewind.";
+   case SET_TAPMENU:
+      return g_pcfg.tap_menu
+         ? "A tap on the game opens the menu. Start + Select always does."
+         : "Only Start + Select (or L + R + Start) opens the menu.";
    case SET_SHOTCOMBO:
       return g_pcfg.controls.bind[CTL_SC_SHOT]
          ? "Shot with the buttons set in Button mapping."
@@ -4493,8 +4507,9 @@ static ui_action screen_settings(unsigned edges)
 #ifdef VITA
       {
          char v[40];
+         const int snd = ff_steps[ff_step_now()].sound;
          snprintf(v, sizeof(v), "%s%s", pcfg_ff_name(),
-                  ff_steps[ff_step_now()].sound ? " with sound" : "");
+                  snd == 2 ? ", normal pitch" : snd ? " with sound" : "");
          set_item(y, g_cursor == i, 1, set_rows[i].label, v);
          break;
       }
@@ -4619,6 +4634,10 @@ static ui_action screen_settings(unsigned edges)
       case SET_STICKRW:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.stick_rewind ? "on" : "off");
+         break;
+      case SET_TAPMENU:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.tap_menu ? "On" : "Off");
          break;
       case SET_SHOTCOMBO:
       {
@@ -9218,6 +9237,12 @@ static char        g_scan_last[48];    /* the latest game met              */
 static void scan_ui_frame(void)
 {
    char msg[64];
+   SceCtrlData pd;
+   sceCtrlPeekBufferPositive(&pd, 1);
+   if (g_scan_input_us == (unsigned)-1)
+      g_scan_input_us = sceKernelGetSystemTimeLow() - g_scan_ui_t0;
+   if ((pd.Buttons & PSP_CTRL_CIRCLE) && !g_scan_stop)
+      g_scan_stop = 1;
    vid_overlay_begin(1);
    page(UI_APP_NAME, NULL);
    snprintf(msg, sizeof(msg), "Finding games... %d found", g_rom_found);
@@ -9237,7 +9262,6 @@ static void scan_ui_frame(void)
 static void scan_ui_tick(void)
 {
    unsigned now;
-   SceCtrlData pd;
    if (!g_scan_ui)
       return;
    now = sceKernelGetSystemTimeLow();
@@ -9245,11 +9269,6 @@ static void scan_ui_tick(void)
       g_scan_stop = 2;
    if (g_scan_ui_frames && now - g_scan_ui_last < SCAN_UI_TICK_US)
       return;
-   sceCtrlPeekBufferPositive(&pd, 1);
-   if (g_scan_input_us == (unsigned)-1)
-      g_scan_input_us = now - g_scan_ui_t0;
-   if ((pd.Buttons & PSP_CTRL_CIRCLE) && !g_scan_stop)
-      g_scan_stop = 1;
    scan_ui_frame();
 }
 #endif
@@ -9267,6 +9286,29 @@ static int rom_bin_ok(const char *dir, const char *nm)
    char full[PSP_FILE_PATH_CAP];
    int fl = snprintf(full, sizeof(full), "%s/%s", dir, nm);
    return fl > 0 && fl < (int)sizeof(full) && ui_host_md_bin_ok(full);
+}
+
+/* A ".gb" or ".gbc" file goes to the Game Boy or Game Boy Color list its
+ * cartridge header says (gbkind.h), unless gb_override.txt says otherwise;
+ * the header is read once per file, not once per console asked. */
+static char g_gb_memo[PSP_FILE_PATH_CAP];     /* the file decided last */
+static int  g_gb_memo_kind;
+static int rom_gb_match(const char *dir, const char *nm, fe_console_t c)
+{
+   char full[PSP_FILE_PATH_CAP];
+   int fl;
+   if ((c != FE_CONSOLE_GB && c != FE_CONSOLE_GBC) ||
+       gbk_ext_kind(nm) == GBK_NONE)
+      return ui_rom_matches_console(nm, c);
+   fl = snprintf(full, sizeof(full), "%s/%s", dir, nm);
+   if (fl <= 0 || fl >= (int)sizeof(full))
+      return ui_rom_matches_console(nm, c);
+   if (strcmp(g_gb_memo, full))
+   {
+      g_gb_memo_kind = gbk_decide(full);
+      snprintf(g_gb_memo, sizeof(g_gb_memo), "%s", full);
+   }
+   return g_gb_memo_kind == (c == FE_CONSOLE_GBC ? GBK_GBC : GBK_GB);
 }
 #endif
 
@@ -9349,7 +9391,7 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       }
 /* (a ".bin" is a Genesis game only when its bytes say so: ui_host_md_bin_ok) */
 #define ROM_MATCH(nm, c) (zipc >= 0 ? zipc == (int)(c) \
-                                    : ui_rom_matches_console((nm), (c)) && \
+                                    : rom_gb_match(dir, (nm), (c)) && \
                                       (!ui_name_is_bin(nm) || rom_bin_ok(dir, (nm))))
 #endif
 
@@ -9671,6 +9713,16 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
 #ifdef VITA
    g_scan_stop = 0;
    g_scan_last[0] = '\0';
+   g_gb_memo[0] = '\0';
+   {
+      extern char g_dir_base[];
+      char ovr[PSP_FILE_PATH_CAP];
+      if (snprintf(ovr, sizeof(ovr), "%s/gb_override.txt", g_dir_base) <
+          (int)sizeof(ovr))
+         (void)gbk_overrides_load(ovr);
+      else
+         gbk_overrides_clear();
+   }
 #endif
    {
       int root_len = snprintf(g_rom_root, sizeof(g_rom_root), "%s", rom_dir);
@@ -11407,10 +11459,9 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
                   (total + 1023) / 1024);
          vs_text_c(VS_CAPTION, VS_W * 0.5f, 342, amount, HC_TEXT3);
       }
-      vs_text_c(VS_CAPTION, VS_W * 0.5f, VS_H - 52,
-                ui_menu_chord_is_lrs(g_pcfg.console)
-                ? "In the game, hold L + R + START for the menu"
-                : "In the game, hold START + SELECT for the menu", HC_TEXT3);
+      snprintf(amount, sizeof(amount), "In the game, hold %s for the menu",
+               ui_menu_chord_text(g_pcfg.console));
+      vs_text_c(VS_CAPTION, VS_W * 0.5f, VS_H - 52, amount, HC_TEXT3);
    }
    else
    {
@@ -11451,10 +11502,9 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
 #ifdef VITA
    /* The one thing a first-time player has to be told, while there is
     * nothing else to read. */
-   vid_text_center(250, ui_menu_chord_is_lrs(g_pcfg.console)
-                   ? "In the game, hold L + R + START for the menu."
-                   : "In the game, hold START + SELECT for the menu.",
-                   C_DIM);
+   snprintf(amount, sizeof(amount), "In the game, hold %s for the menu.",
+            ui_menu_chord_text(g_pcfg.console));
+   vid_text_center(250, amount, C_DIM);
    }
 #endif
    vid_overlay_end();
@@ -13779,8 +13829,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
              * (vita/ui_vita_online.h): it boots as if picked from the list,
              * and ui_online_take_pending() tells the main loop to join the
              * room afterwards. */
-            fe_console_t con = g_oc.snes_two ? FE_CONSOLE_SNES    /* a zip too */
-                                             : oc_console_of(g_oc.open_path);
+            fe_console_t con = oc_console_of(g_oc.open_path);
+            if (g_oc.snes_two && con != FE_CONSOLE_SNES && !ui_sega_two_ok((int)con))     /* a zip too */
+               con = ui_sega_two_ok(pcfg_display_console()) ? (fe_console_t)pcfg_display_console() : FE_CONSOLE_SNES;
             g_oc.launch = 0;
             if (strlen(g_oc.open_path) >= out_sz)
                osd_toast("ROM path is too long");

@@ -77,6 +77,7 @@ struct LaunchRequest {
 	ImageQuality quality = QUALITY_SHARP;
 	int cpu_mhz = 0;               /* 0 = the player's default (ask 500, fall back to 444); 444 or 500 */
 	bool enter_is_cross = true;    /* the Vita's Enter button; Circle plays when false */
+	bool tap_menu = true;           /* a tap on the screen opens the menu (the app's Settings > Tap screen for menu); the chords always do */
 	std::string language = "en";
 	/* how to start */
 	StartMode start = START_NEW;

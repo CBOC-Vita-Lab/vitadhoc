@@ -2,6 +2,7 @@
  *   cc -DVITA -I psp -I frontend-common -I vita tools/test_nes_console.c -o /tmp/t && /tmp/t */
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "ui_psp.h"
 
 int main(void)
@@ -19,8 +20,9 @@ int main(void)
    assert(!ui_rom_matches_console("Game.nesx", FE_CONSOLE_NES));
    assert(!ui_rom_matches_console("nes", FE_CONSOLE_NES));
    assert(!ui_rom_matches_console("", FE_CONSOLE_NES));
-   /* only SNES holds its menu with L + R + START; a NES game uses START + SELECT */
-   assert(ui_menu_chord_is_lrs(FE_CONSOLE_SNES) && !ui_menu_chord_is_lrs(FE_CONSOLE_NES));
+   /* every console's hint says START + SELECT (the SNES and Sega players open on it too) */
+   assert(!strcmp(ui_menu_chord_text(FE_CONSOLE_SNES), "START + SELECT") &&
+          !strcmp(ui_menu_chord_text(FE_CONSOLE_NES), "START + SELECT"));
    puts("nes console matching ok");
    return 0;
 }

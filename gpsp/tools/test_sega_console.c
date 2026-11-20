@@ -43,7 +43,7 @@ int main(void)
    assert(ui_sega_letter(FE_CONSOLE_MD) == 'I' && ui_sega_letter(FE_CONSOLE_SMS) == 'J' &&
           ui_sega_letter(FE_CONSOLE_GG) == 'K' && ui_sega_letter(FE_CONSOLE_SG) == 'L');
    assert(ui_console_is_player(FE_CONSOLE_SNES) && ui_console_is_player(FE_CONSOLE_GG) && !ui_console_is_player(FE_CONSOLE_NES));
-   assert(!ui_menu_chord_is_lrs(FE_CONSOLE_MD));       /* Start + Select opens the menu, as on GBA */
+   assert(!strcmp(ui_menu_chord_text(FE_CONSOLE_MD), "START + SELECT"));   /* Start + Select opens the menu, as on GBA */
    puts("sega console matching ok");
    return 0;
 }

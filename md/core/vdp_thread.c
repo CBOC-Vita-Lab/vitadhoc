@@ -16,6 +16,8 @@ uint16 vw_bg_list_index;
 uint8 vw_hscroll_mask, vw_playfield_shift, vw_playfield_col_mask, vw_odd_frame, vw_interlaced;
 uint16 vw_playfield_row_mask, vw_v_counter, vw_vscroll, vw_lines_per_frame, vw_max_sprite_pixels;
 t_bitmap vw_bitmap;
+extern int vw_wide_m;                                 /* the wide view strip width of the worker's renderer (defined by its copy of vdp_render.c) */
+extern wide_line_t vw_wide_rec[256];
 
 /* the worker's compiled copy of the renderer */
 extern void vw_render_line(int line);
@@ -55,6 +57,7 @@ typedef struct {
 	uint32 rst;                       /* reset_do_not_clear_buffers */
 	uint16 ntab, ntbb, ntwb, satb, hscb, playfield_row_mask, v_counter, vscroll, lines_per_frame, max_sprite_pixels;
 	uint8 hscroll_mask, playfield_shift, playfield_col_mask, odd_frame, interlaced, pad0[3];
+	int wide_m;
 } vdpw_state_t;
 #define STATE_WORDS ((sizeof(vdpw_state_t) + 3) / 4)
 
@@ -83,6 +86,7 @@ typedef struct {
 	int check, stress, started;
 	unsigned long check_errors;
 	vdpw_census_t cen;
+	unsigned long long vdp_busy;   /* written by the worker only, read by the emulating thread in the census (a stale value is fine) */
 } VW;
 static VW W;
 
@@ -132,6 +136,7 @@ static void fill_state(vdpw_state_t *s)
 	s->v_counter = v_counter; s->vscroll = vscroll; s->lines_per_frame = lines_per_frame; s->max_sprite_pixels = max_sprite_pixels;
 	s->hscroll_mask = hscroll_mask; s->playfield_shift = playfield_shift; s->playfield_col_mask = playfield_col_mask;
 	s->odd_frame = odd_frame; s->interlaced = interlaced;
+	s->wide_m = wide_m;
 }
 
 static void emit_state(void)
@@ -288,12 +293,14 @@ void vdpw_q_render_reset(void)
 static void wait_idle(void)
 {
 	unsigned spins = 0;
+	const unsigned long long t0 = W.ops->now_us ? W.ops->now_us(W.ops->user) : 0;
 	publish(1);
 	while (LOADA(W.tail) != W.ph) {
 		W.cen.join_wait_polls++;
 		if (++spins > 64) W.ops->yield(W.ops->user);
 	}
 	W.tail_seen = W.ph;
+	if (t0) W.cen.join_wait_us += (unsigned long) (W.ops->now_us(W.ops->user) - t0);
 }
 
 static void check_state(void)
@@ -346,9 +353,12 @@ void vdpw_frame_end(void)
 	}
 }
 
+/* the per line records of the wide view strip of the frame just finished (valid after vdpw_frame_end) */
+const wide_line_t *vdpw_wide_rec(void) { return vdpw_on ? vw_wide_rec : wide_rec; }
+
 unsigned vdpw_spr_col(void) { return vdpw_on ? vw_spr_col : spr_col; }
 
-void vdpw_census(vdpw_census_t *c) { if (c) *c = W.cen; }
+void vdpw_census(vdpw_census_t *c) { if (c) { *c = W.cen; c->vdp_us = (unsigned long) __atomic_load_n(&W.vdp_busy, __ATOMIC_RELAXED); } }
 void vdpw_set_check(int on) { W.check = on; }
 void vdpw_set_stress(int on) { W.stress = on; }
 unsigned long vdpw_check_errors(void) { return W.check_errors; }
@@ -365,6 +375,7 @@ static void apply_state(const vdpw_state_t *s)
 	vw_v_counter = s->v_counter; vw_vscroll = s->vscroll; vw_lines_per_frame = s->lines_per_frame; vw_max_sprite_pixels = s->max_sprite_pixels;
 	vw_hscroll_mask = s->hscroll_mask; vw_playfield_shift = s->playfield_shift; vw_playfield_col_mask = s->playfield_col_mask;
 	vw_odd_frame = s->odd_frame; vw_interlaced = s->interlaced;
+	vw_wide_m = s->wide_m;
 }
 
 static void worker_main(void *arg)
@@ -385,6 +396,7 @@ static void worker_main(void *arg)
 			W.ops->sem_wait(W.ops->user, W.sem);
 			head = LOADA(W.head);
 		}
+		{ const unsigned long long t0 = W.ops->now_us ? W.ops->now_us(W.ops->user) : 0;
 		while (tail != head) {
 			const unsigned op = W.ring[tail & W.mask];
 			unsigned n = 1, i;
@@ -447,6 +459,7 @@ static void worker_main(void *arg)
 			tail += n;
 			STOREA(W.tail, tail);
 		}
+		if (t0) __atomic_store_n(&W.vdp_busy, W.vdp_busy + (W.ops->now_us(W.ops->user) - t0), __ATOMIC_RELAXED); }
 	}
 	(void) rec;
 }

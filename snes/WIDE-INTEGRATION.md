@@ -281,3 +281,72 @@ SMW only at IPC 1.0; Yoshi's Island does not fit at either margin (the player's 
 frames). The drawing thread's compose does not fit 16.7 ms for SMW at margin 41 at IPC 0.7 (22.7 ms) or at margin 96, nor YI at 96: the
 wide pictures then arrive at a lower rate than the game (the mailbox drops the older ones in its half mode; the game itself is not slowed).
 Nothing here ran on a Vita.
+
+## Compose cost, upscaler, rewind capture (20 Nov 2026, 2.0; host x86_64 callgrind, nothing here ran on a Vita)
+
+What changed in the adapter (`snes/frontend/wide.cpp`; `snes/core` and the margin passes are untouched in this step):
+- **Ambient rows** are built from a table per (phase, distance, channel value) instead of the closed form per pixel, kept in a 1024 row direct mapped cache,
+  and the lookup is hoisted out of the soft pixel loop. `cell_row()` decodes a tile cell row once for the whole margin row.
+- **`describe_layer` ring walk skip.** The walk of a layer's tile ring is not repeated when the key (scroll, size, settle count) is unchanged, no cell was
+  unsettled, the tilemap words and their write stamps are unchanged per block and the graphics hash of every used tile is unchanged. Result and
+  counters are those of the walk (it is a pure function of exactly those inputs).
+- widekit `wk_compose.cpp`: the soft row cache is 1024 rows (was 128) with a better hash. Pure cache: the NES wide golden (37 files) is unchanged.
+- Census: `capture_us` (the capture's own cost), `cache_checks` / `cache_mismatches`. The cost ladder's default budget is 13 ms (was 9) and
+  chip carts (Super FX, SA-1) start at rung 0: the ladder is the last net, not the first resort. It still measures the real compose time on the
+  device and only then narrows.
+- Option `verify_cache=1` (twin proof): every kept result (ring walk, ambient row) is also made fresh and compared; a difference is counted in the census.
+
+Proofs (x86 twin; 15 private games, 3000 frames of the owner's pad script): centre picture, audio and state hashes identical to the reference
+tree before the wide view, single thread and with the workers, margin 41 (`wide_compare.py`, 15 identical); wide output hashes identical to the
+tree before this step on all 15 games at margins 41 and 96 (all 3000 frames); `verify_cache=1`: 26.2 M checks, 0 mismatches (41 and 96);
+selftest (truth ROMs: 0 wrong real px) all passed; TSan over the capture/compose split on Super Mario World, Yoshi's Island (Super FX) and Kirby Super Star
+(SA-1), single / split / split with workers: same hashes, 0 reports.
+
+Cost after (Minstr per frame; frames 1500..1560, owner's script; before in brackets from the table above, same method):
+
+| game | off | margin 41 total | compose 41 | margin 96 total | compose 96 | emulation side extra at 41 |
+|---|---|---|---|---|---|---|
+| Yoshi's Island (Super FX) | 7.84 | 13.71 (14.96) | 4.46 (5.70) | 18.27 (20.72) | 8.02 (10.46) | 1.42 |
+| Super Mario World | 6.95 | 13.95 (15.78) | 4.77 (6.61) | 19.24 (22.00) | 7.97 (10.73) | 2.23 |
+| Super Mario Kart | 5.00 | 10.75 (11.56) | 3.82 (4.63) | 14.26 (15.58) | 5.93 (7.26) | 1.92 |
+| Super Metroid | 6.97 | 9.97 (10.12) | 1.41 (1.56) | 12.57 (12.91) | 2.40 (2.74) | 1.59 |
+| Kirby Super Star (SA-1) | 6.25 | 12.76 (14.13) | 5.13 (6.50) | 16.15 (18.07) | 7.71 (9.63) | 1.38 |
+
+"Emulation side extra" is the core's margin passes plus the capture (total minus off minus compose); it is not changed by this step. Compose is
+-10 to -28 % at margin 41. The per-margin-pixel target (under 100 instructions) is **not reached** (about 240 to 260 now); the W4 steps that
+change the core (merging margin batches across lines, one margin pass with a tag byte, caching the strip between frames) are **not done**.
+
+Per thread on the Vita (model: x86 instructions counted as ARM instructions at 444 MHz, IPC 1.0 / 0.7; ms per frame; core (off) is the sum of
+CPU, PPU and APU work of the whole game and is shared between threads there; the draw thread also runs the scaler and the upload):
+
+| | emulation extra (41) | compose 41 | compose 96 | scaler, xBR 2x (typical / worst) | upload | draw thread 41, typical |
+|---|---|---|---|---|---|---|
+| Yoshi's Island | 3.2 / 4.6 | 10.0 / 14.4 | 18.1 / 25.8 | 3 / 8.5 | 1.5 | 14.5 / 18.9 |
+| Super Mario World | 5.0 / 7.2 | 10.7 / 15.4 | 17.9 / 25.6 | 3 / 8.5 | 1.5 | 15.2 / 19.9 |
+| Super Mario Kart | 4.3 / 6.2 | 8.6 / 12.3 | 13.4 / 19.1 | 3 / 8.5 | 1.5 | 13.1 / 16.8 |
+| Super Metroid | 3.6 / 5.1 | 3.2 / 4.5 | 5.4 / 7.7 | 3 / 8.5 | 1.5 | 7.7 / 9.0 |
+| Kirby Super Star (SA-1) | 3.1 / 4.4 | 11.6 / 16.5 | 17.4 / 24.8 | 3 / 8.5 | 1.5 | 16.1 / 21.0 |
+
+(scaler: about 50 instructions per output source pixel over the 338 x 224 picture with the ScaleCache reusing unchanged blocks, helper threads
+share it; an estimate, not measured on a Vita.) Reading it: at IPC 1.0 the draw thread fits 16.7 ms at margin 41 for every game here except the worst
+scaler seconds; at IPC 0.7 it does not for the three heaviest, and then the cost ladder narrows the margin from the measured time. Full width (96)
+does not fit the draw thread of the Super FX / SA-1 / SMW games at either IPC on this model: it is held only by the ladder or by a lower rate of
+wide pictures (the game itself is not slowed).
+
+## Pixel art scaler (20 Nov 2026)
+
+`snes.bin` links `pk_scale` as `md.bin` does: integer xBR 2x (the definition), MMPX 2x as a look, xBR 3x, with the ScaleCache reusing unchanged
+blocks and the helper threads taking chunks. Ceiling: xBR 2x for 256 x 224/239 including the wide width; none for hi-res 512 and interlace. The
+look governor's first rung is "xBR 2x -> sharp", then the interlace and hi-res blends. Menu row "Pixel art scaler" and the Image quality wording are
+md.bin's. Proof (`snes/twin/scale_proof`): ScaleCache output equals `scale_rows` and, every 100 frames, `xbr_reference_int`, on 15 games with the wide
+view off, at margin 41 (xBR 2x and MMPX 2x) and at 96 (xBR 2x), 1500 frames each, 75 runs, 0 mismatches. The census prints a `scaler=` line
+(pictures, ms per picture, non-flat share, helper chunks, computed % and moved %).
+
+## Rewind capture (20 Nov 2026)
+
+`snes_host_rewind_state_save_buf` writes the same bytes as `snes_host_state_save_buf` (checked byte for byte on 15 games, 300 captures each) but does
+not copy the part of Snes9x's 512 KB cartridge RAM block that cannot hold anything (a plain cartridge: beyond `SRAMMask`; Super FX beyond 128 KB;
+SA-1 beyond 264 KB, each checked at every capture, and the whole block is written from then on if a byte is found there) and skips the sizing pass.
+Bytes copied per capture: about 300 KB (plain), 430 KB (Super FX), 580 KB (SA-1) instead of 823 KB. Host instructions per capture 1.16 M -> 0.53 M
+(callgrind, Super Mario World). On the Vita this is an estimate: about 0.5 to 1.2 ms of the game thread for the heavy games, not yet "well under 0.5 ms";
+the next step would be a dirty page capture or capturing where the game thread waits for the other threads.

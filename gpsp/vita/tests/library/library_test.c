@@ -45,6 +45,8 @@ static void record_art_retry(void);
 static int handed, handed_n;
 static unsigned directory_opens;
 static int fail_directory_read_after = -1;
+static unsigned slow_read_us;            /* simulated card: time per entry */
+void pspcompat_host_advance(unsigned us);
 static char handed_paths[16][PSP_FILE_PATH_CAP * 2];
 static char handed_last[PSP_FILE_PATH_CAP * 2];
 static int art_busy, art_seen, art_total, art_have, art_retries;
@@ -134,6 +136,8 @@ static int record_directory_read(SceUID dir, SceIoDirent *entry)
       return -1;
    if (fail_directory_read_after > 0)
       fail_directory_read_after--;
+   if (slow_read_us)
+      pspcompat_host_advance(slow_read_us);
    return pc_io_dread(dir, entry);
 }
 
@@ -735,6 +739,156 @@ static void test_quality(const char *conf)
          "sparse-profile seeding never overwrites existing inactive profile keys");
 }
 
+static void gb_file(const char *dir, const char *name, unsigned char flag)
+{
+   char path[1024];
+   unsigned char b[0x150];
+   FILE *f;
+   memset(b, 0, sizeof(b));
+   b[0x143] = flag;
+   snprintf(path, sizeof(path), "%s/%s", dir, name);
+   f = fopen(path, "wb");
+   check(f != NULL, "create a synthetic Game Boy header");
+   fwrite(b, 1, sizeof(b), f);
+   fclose(f);
+}
+
+/* A .gb whose header says Color is listed under (and run as) Game Boy Color,
+ * and a .gbc whose header says plain is a Game Boy; gb_override.txt wins;
+ * saves and states keep the file's own name. */
+static void test_gb_header_lists(const char *root)
+{
+   char dir[1024], ovr[1100], st[1024];
+   int n;
+   snprintf(dir, sizeof(dir), "%s/gbkinds", root);
+   check(mkdir(dir, 0777) == 0, "create the Game Boy kinds folder");
+   gb_file(dir, "Blue Color Hack.gb", 0x80);
+   gb_file(dir, "Color Only.gb", 0xC0);
+   gb_file(dir, "Plain.gb", 0x00);
+   gb_file(dir, "Misnamed.gbc", 0x00);
+   gb_file(dir, "Real Color.gbc", 0x80);
+   rom_cache_clear();
+   n = rom_scan(dir, FE_CONSOLE_GBC);
+   check(n == 3 && !strcmp(g_roms[0].base, "Blue Color Hack.gb") &&
+         !strcmp(g_roms[1].base, "Color Only.gb") &&
+         !strcmp(g_roms[2].base, "Real Color.gbc"),
+         "a .gb with a Color header is listed under Game Boy Color");
+   n = rom_scan(dir, FE_CONSOLE_GB);
+   check(n == 2 && !strcmp(g_roms[0].base, "Misnamed.gbc") &&
+         !strcmp(g_roms[1].base, "Plain.gb"),
+         "a plain .gbc is listed under Game Boy, beside the plain .gb");
+   check(g_rom_cache[FE_CONSOLE_GBC].valid && g_rom_cache[FE_CONSOLE_GBC].n == 3,
+         "the other console's list from the same walk agrees");
+   /* the player's override file wins over the header */
+   snprintf(ovr, sizeof(ovr), "%s/gb_override.txt", g_dir_base);
+   {
+      FILE *f = fopen(ovr, "wb");
+      check(f != NULL, "write gb_override.txt");
+      fputs("gb  Blue Color Hack.gb\ngbc plain.GB\n", f);
+      fclose(f);
+   }
+   rom_cache_clear();
+   n = rom_scan(dir, FE_CONSOLE_GBC);
+   check(n == 3 && !strcmp(g_roms[0].base, "Color Only.gb") &&
+         !strcmp(g_roms[1].base, "Plain.gb") && !strcmp(g_roms[2].base, "Real Color.gbc"),
+         "gb_override.txt moves one game each way, whatever its header says");
+   remove(ovr);
+   /* saves and states belong to the file name: a Color game named .gb keeps the gb folder */
+   check(sidecar_state1(st, sizeof(st), "/r", "ux0:roms/Blue Color Hack.gb", FE_CONSOLE_GBC) == 0 &&
+         strstr(st, "/states/gb/") && !strstr(st, "/states/gbc/"),
+         "a .gb run as Color keeps its state folder");
+   check(sidecar_state1(st, sizeof(st), "/r", "ux0:roms/Misnamed.gbc", FE_CONSOLE_GB) == 0 &&
+         strstr(st, "/states/gbc/"), "a .gbc run as a Game Boy keeps its state folder");
+   check(sidecar_state1(st, sizeof(st), "/r", "ux0:roms/Game.gb", FE_CONSOLE_GB) == 0 &&
+         strstr(st, "/states/gb/") && sidecar_state1(st, sizeof(st), "/r", "ux0:roms/A.sfc", FE_CONSOLE_SNES) == 0 &&
+         strstr(st, "/states/snes/"), "ordinary names are as before");
+   rom_cache_clear();
+   puts("PASS: Game Boy / Game Boy Color by cartridge header, override file, save and state names");
+}
+
+static unsigned pad_circle_after_us;     /* press CIRCLE once this much time has passed */
+static unsigned boot_t0;
+static unsigned boot_pad(void)
+{
+   return pad_circle_after_us && sceKernelGetSystemTimeLow() - boot_t0 >= pad_circle_after_us
+          ? PSP_CTRL_CIRCLE : 0u;
+}
+
+/* #17: a cold cache on a slow card.  The card is simulated (a delay per
+ * directory entry, on the host's simulated clock). */
+static void test_cold_start(const char *root)
+{
+   char dir[1024], name[64], missing[1024];
+   unsigned crc_sync, i, n_sync, n_boot, t;
+   const unsigned per_entry_us = 100000u;       /* 600 entries: a 60 s walk */
+   snprintf(dir, sizeof(dir), "%s/cold", root);
+   check(mkdir(dir, 0777) == 0, "create the cold-start library");
+   for (i = 0; i < 600; i++)
+   {
+      snprintf(name, sizeof(name), "Title %03u (USA).gba", i);
+      touch_file(dir, name);
+   }
+   /* the reference: the synchronous scan, no pictures */
+   g_ret_on = 0;
+   g_scan_ui = 0;
+   rom_cache_clear();
+   n_sync = (unsigned)rom_scan(dir, FE_CONSOLE_GBA);
+   crc_sync = rom_list_crc((int)n_sync);
+   check(n_sync == 600, "reference scan finds 600");
+
+   slow_read_us = per_entry_us;
+   pspcompat_host_pad(boot_pad);
+   pad_circle_after_us = 0;
+   rom_cache_clear();
+   boot_t0 = sceKernelGetSystemTimeLow();
+   n_boot = (unsigned)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   t = sceKernelGetSystemTimeLow() - boot_t0;
+   printf("boot_times (simulated 100 ms/entry, host) first_frame_ms=%u input_ms=%u library_ready_ms=%u frames=%u\n",
+          g_scan_first_us / 1000u, g_scan_input_us / 1000u, t / 1000u, g_scan_ui_frames);
+   check(n_boot == 600 && rom_list_crc((int)n_boot) == crc_sync,
+         "the incremental scan's final list is identical to the synchronous one");
+   check(g_scan_first_us < 50000u, "the first frame is drawn before the first directory entry is read");
+   check(g_scan_input_us < 50000u, "the pad is read with the first frame, not after the first entry's time of the start");
+   check(t >= 60000000u, "the simulated walk took a minute, as reported");
+   check(g_scan_ui_frames >= 500u, "frames were drawn throughout the walk (about one per entry here)");
+   check(g_scan_stop == 0 && g_rom_cache[FE_CONSOLE_GBA].valid, "a finished walk is cached");
+
+   /* CIRCLE stops it: the games found so far, not cached */
+   rom_cache_clear();
+   boot_t0 = sceKernelGetSystemTimeLow();
+   pad_circle_after_us = 10u * per_entry_us;
+   n_boot = (unsigned)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   pad_circle_after_us = 0;
+   check(g_scan_stop == 1 && n_boot > 0 && n_boot < 30,
+         "CIRCLE stops the walk within a few entries and lists what was found");
+   check(!g_rom_cache[FE_CONSOLE_GBA].valid, "a stopped walk is not cached");
+   check(rom_scan_boot(dir, FE_CONSOLE_GBA) == 600 && g_scan_stop == 0,
+         "the next visit reads the whole card again");
+
+   /* a card too slow: the budget (240 s) stops it */
+   slow_read_us = 1000000u;               /* 1 s an entry */
+   rom_cache_clear();
+   n_boot = (unsigned)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   check(g_scan_stop == 2 && n_boot > 200 && n_boot < 300 && !g_rom_cache[FE_CONSOLE_GBA].valid,
+         "a walk past the time budget stops with what it has");
+   slow_read_us = 0;
+
+   /* a missing mount: nothing to list, back at once */
+   snprintf(missing, sizeof(missing), "%s/uma0-not-there", root);
+   rom_cache_clear();
+   boot_t0 = sceKernelGetSystemTimeLow();
+   check(rom_scan_boot(missing, FE_CONSOLE_GBA) == 0 &&
+         sceKernelGetSystemTimeLow() - boot_t0 < 100000u && g_scan_ui_frames >= 1,
+         "a missing mount shows the page and returns empty without waiting");
+   /* a cached list: no page, no walk */
+   rom_cache_clear();
+   (void)rom_scan_boot(dir, FE_CONSOLE_GBA);
+   check(rom_scan_boot(dir, FE_CONSOLE_GBA) == 600 && g_scan_ui_frames == 0,
+         "a cached list opens with no walk and no progress page");
+   pspcompat_host_pad(NULL);
+   puts("PASS: cold start (first frame, input, identical final list, stop, budget, missing mount)");
+}
+
 int main(void)
 {
    char root[] = "/tmp/vitadhoc-library-XXXXXX", roms[1024], other[1024];
@@ -748,6 +902,8 @@ int main(void)
    pcfg_load(conf);
    g_pcfg.console = FE_CONSOLE_GBA;
    test_cover_progress();
+   test_cold_start(root);
+   test_gb_header_lists(root);
    test_text_fast();
    test_find_view();
    test_find_words();

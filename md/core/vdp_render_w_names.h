@@ -66,3 +66,5 @@
 #define vram vw_vram
 #define vscroll vw_vscroll
 #define vsram vw_vsram
+#define wide_m vw_wide_m
+#define wide_rec vw_wide_rec

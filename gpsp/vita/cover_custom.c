@@ -391,7 +391,7 @@ static int set_from(const char *stem, const char *path, const char *src,
    {
       drop(tmp);
       free(rgb);
-      snprintf(why, cap, "The picture could not be saved. Is the card full?");
+      snprintf(why, cap, "The picture could not be saved. Check the card has room.");
       return -1;
    }
    /* keep what was there: a download, or a picture put there by hand */

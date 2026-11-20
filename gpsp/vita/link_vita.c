@@ -365,6 +365,7 @@ static struct
    int      phase;                /* LSN_*                                  */
    int      sub;                  /* 0 forming, 1 guest: waiting for the host's netdrv, 2 ready to hand over */
    char     game[9];              /* the room's game id: the file's CRC     */
+   char     console[5];           /* the room's console: "snes", "md", "sms", "sg" (md.bin plays the Sega ones) */
    char     title[40];
    char     rom[APP_PATH_CAP];
    int      fail;                 /* UI_FAIL_*                              */
@@ -1503,7 +1504,7 @@ static void online_desc_make(online_desc *d)
    memset(d, 0, sizeof(*d));
    d->kind = L.room_kind;
    snprintf(d->console, sizeof(d->console), "%s",
-            SL.on ? "snes"
+            SL.on ? SL.console
             : g_game.console == FE_CONSOLE_GBC ? "gbc"
             : g_game.console == FE_CONSOLE_GB ? "gb"
             : g_game.console == FE_CONSOLE_NES ? "nes"
@@ -3618,13 +3619,27 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
    memset(&SL, 0, sizeof(SL));
    if (!link_snes_game_id(rom_path, SL.game))
       return UI_FAIL_GAME;
+   {
+      /* the console of the file: md.bin's four consoles by extension, else the SNES */
+      const char *dot = strrchr(rom_path, '.');
+      const char *id = "snes";
+      if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin")))
+         id = "md";
+      else if (dot && !strcasecmp(dot, ".sms"))
+         id = "sms";
+      else if (dot && !strcasecmp(dot, ".gg"))
+         id = "gg";
+      else if (dot && !strcasecmp(dot, ".sg"))
+         id = "sg";
+      snprintf(SL.console, sizeof(SL.console), "%s", id);
+   }
    snprintf(SL.rom, sizeof(SL.rom), "%s", rom_path);
    snprintf(SL.title, sizeof(SL.title), "%.39s", title && title[0] ? title : "SNES game");
    SL.on = 1;
    SL.phase = LSN_WORKING;
    SL.t_begin = SL.t_seen = L.ticks;
    SL.prev_pad = g_app_pad;
-   fe_evt("link_snes_begin role=%s conn=%d game=%s", is_host ? "host" : "guest", conn, SL.game);
+   fe_evt("link_snes_begin role=%s conn=%d game=%s console=%s", is_host ? "host" : "guest", conn, SL.game, SL.console);
    fe_np_gb_set_receive(snes_np_rx, NULL);
    fe_np_gb_set_peer_callback(snes_np_peer, NULL);
    link_action(is_host);

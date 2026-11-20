@@ -34,6 +34,7 @@ unsigned vdpw_spr_col(void);
 typedef struct {
 	unsigned long records, words, status_joins, joins, join_wait_polls, full_waits, wakes;
 	unsigned long vram_blocks, vram_alls;
+	unsigned long vdp_us, join_wait_us;     /* the worker's busy time, the emulating thread's time waiting in joins (0 without ops->now_us) */
 } vdpw_census_t;
 void vdpw_census(vdpw_census_t *c);
 

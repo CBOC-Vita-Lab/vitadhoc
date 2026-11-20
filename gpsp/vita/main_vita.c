@@ -126,6 +126,9 @@
 #include "net_vita.h"
 #include "../wide.h"
 #include "vstyle.h"
+#include "diskspace.h"
+#include "../../playerkit/src/pk_ffnorm.h"   /* fast forward at normal pitch */
+#include "gbkind.h"
 #include "../gbalink/gbalink_script.h"
 
 /* The control map's bits are the PSP's pad bits (psp/ctl_map.h says so of
@@ -519,6 +522,7 @@ static struct
     * so the game is heard at its own speed-up and the port's rate holds. */
    int32_t   acc[2];
    int       acc_n;
+   pk_ffnorm norm;        /* ff_audio = 2: normal pitch (every mult'th chunk) */
    uint64_t  t0;
 } g_ff;
 static int g_blit_suppress;            /* 3x: an intermediate frame, not drawn */
@@ -618,8 +622,14 @@ static fe_console_t console_for(const char *path)
          return (fe_console_t)e.console;
       return FE_CONSOLE_GBA;
    }
-   if (has_ext(path, ".gbc")) return FE_CONSOLE_GBC;
-   if (has_ext(path, ".gb"))  return FE_CONSOLE_GB;
+   if (has_ext(path, ".gbc") || has_ext(path, ".gb"))
+   {
+      /* the cartridge header's Color flag decides, not the name (gbkind.h) */
+      char ovr[APP_PATH_CAP];
+      if (path_fmt(ovr, sizeof(ovr), "%s/gb_override.txt", g_app_root) == 0)
+         (void)gbk_overrides_load(ovr);
+      return gbk_decide(path) == GBK_GBC ? FE_CONSOLE_GBC : FE_CONSOLE_GB;
+   }
    if (has_ext(path, ".sfc") || has_ext(path, ".smc")) return FE_CONSOLE_SNES;
    if (has_ext(path, ".nes") || has_ext(path, ".fds") || has_ext(path, ".unf") ||
        has_ext(path, ".unif"))
@@ -919,6 +929,7 @@ static int player_launch_write(fe_console_t con, const char *game, const char *s
                 "root=%s\n"
                 "cpu_mhz=%d\n"
                 "enter_button=%s\n"
+                "tap_menu=%d\n"
                 "language=en\n"
                 "start=%s\n"
                 "slot=%d\n"
@@ -931,6 +942,7 @@ static int player_launch_write(fe_console_t con, const char *game, const char *s
                 g_snes_session, id, game, name, save, g_app_root,
                 g_sw.cpu_fast ? 500 : 444,
                 pspcompat_enter_is_circle() ? "circle" : "cross",
+                g_pcfg.tap_menu ? 1 : 0,
                 slot == PSP_STATE_RESUME ? "continue"
                 : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new",
                 slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0,
@@ -1894,7 +1906,10 @@ static int patch_prepare(const char *rom_path, char *out, size_t cap,
       if (!ok)
       {
          remove(tmp);
-         why = "the patched game could not be written (is the card full?)";
+         {
+            static char wbuf[128];     /* what is true of the card, not a guess */
+            why = ds_failed_line("the patched game", out, wbuf, sizeof(wbuf));
+         }
          goto done;
       }
       if ((f = fopen(key, "wb")) != NULL)
@@ -2841,6 +2856,22 @@ static void ff_audio_push(const int16_t *lr, size_t frames)
    int16_t out[256 * 2];
    size_t i, k = 0;
    const int n = g_ff.mult;
+   if (g_pcfg.ff_audio == 2)
+   {
+      /* Normal pitch: one emulated frame's sound in `mult` is played, the
+       * seams faded (pk_ffnorm.h); the speaker still gets one refresh of
+       * sound per refresh. */
+      static int16_t keep[4096 * 2];
+      size_t n_keep = frames < 4096 ? frames : 4096, got;
+      memcpy(keep, lr, n_keep * 2 * sizeof(int16_t));
+      got = pk_ffnorm_chunk(&g_ff.norm, keep, n_keep);
+      if (got)
+      {
+         audio_push(keep, got);
+         g_ff.heard += (unsigned)got;
+      }
+      return;
+   }
    for (i = 0; i < frames; i++)
    {
       g_ff.acc[0] += lr[i * 2 + 0];
@@ -4141,6 +4172,7 @@ static void ff_set(int on)
    g_ff.heard = 0;
    g_ff.acc[0] = g_ff.acc[1] = 0;
    g_ff.acc_n = 0;
+   pk_ffnorm_reset(&g_ff.norm, g_ff.mult ? g_ff.mult : 2);
    g_ff.uncapped = on && !g_ff.mult;
    g_ff.frames0 = g_game_loaded ? fe_host_frame_count() : 0;
    g_ff.vc0 = plat_vcount();
@@ -5233,7 +5265,11 @@ int ui_host_snes_game_id(const char *path, char out[9])
    out[0] = '\0';
    if (has_ext(path, ".zip"))
    {
-      if (zip_unpack(path, FE_CONSOLE_SNES, un, sizeof(un), &usz) != 0)
+      zip_rom_entry e;
+      fe_console_t zc = FE_CONSOLE_SNES;
+      if (zip_rom_peek(path, &e) >= -2 && e.console >= 0 && ui_console_is_sega(e.console))
+         zc = (fe_console_t)e.console;
+      if (zip_unpack(path, zc, un, sizeof(un), &usz) != 0)
          return 0;
       path = un;
    }
@@ -5368,7 +5404,9 @@ static int game_boot(const char *rom_path, fe_console_t console)
                            console == FE_CONSOLE_GBA ? ".sav" :
                            console == FE_CONSOLE_NES ? ".srm" :
                            console == FE_CONSOLE_WSWAN ? ".srm" :
-                           console == FE_CONSOLE_GBC ? ".gbc.sav" : ".gb.sav")
+                           gbk_ext_kind(rom_path) == GBK_GBC ||
+                           (gbk_ext_kind(rom_path) == GBK_NONE &&
+                            console == FE_CONSOLE_GBC) ? ".gbc.sav" : ".gb.sav")
           != 0 ||
        sidecar_state1(g_game.state_path, sizeof(g_game.state_path),
                       g_app_root, rom_path, console) != 0 ||
@@ -6101,7 +6139,11 @@ static void game_loop(void)
             save_fails_seen = fails;
             save_fail_told_us = plat_time_us() ? plat_time_us() : 1;
             fe_evt("save_failed_shown count=%u", fails);
-            toast_now("Save not written - is the memory card full?");
+            {
+               char line[128];
+               toast_now("%s", ds_failed_line("Save", g_game.save_path, line,
+                                              sizeof(line)));
+            }
          }
       }
 
@@ -6375,13 +6417,13 @@ static void game_loop(void)
              * The one already in hand: the menu, as with one game (found on
              * a console: with taps taken for switching there was no way to
              * the menu but the chord). */
-            if (link_local_tap(tx, ty) == 2 && g_sw.touch_menu && !pad)
+            if (link_local_tap(tx, ty) == 2 && g_sw.touch_menu && g_pcfg.tap_menu && !pad)
             {
                menu_open("touch");
                continue;
             }
          }
-         else if (g_sw.touch_menu && !pad && !link_net_busy() && g_last.pix)
+         else if (g_sw.touch_menu && g_pcfg.tap_menu && !pad && !link_net_busy() && g_last.pix)
          {
             /* A tap on the screen opens the menu, which is the touch
              * screen's from there on.  Conservative: a short still tap, no
@@ -7091,7 +7133,11 @@ int main(int argc, char **argv)
          const char *sl = strrchr(rom_path, '/');
          const char *dt = strrchr(rom_path, '.');
          int src;
-         g_join_pending = 0;          /* (Two players is switched off for md.bin: UI_SEGA_TWO_PLAYERS, ui_vita_md.h) */
+         /* Two players (md.bin's link, playerkit pk_link): as for the SNES, Join online chose this game for a room (guest), or the
+          * list's Settings > Two players did, or vita.ini snes_two says which; not for the Game Gear (one controller) */
+         const int two = !ui_sega_two_ok(console) ? 0 : g_join_pending ? 2 : snes_menu ? snes_menu : g_sw.snes_two;
+         link_snes_link sega_lk;
+         g_join_pending = 0;
          snprintf(game, sizeof(game), "%s", rom_path);
          snprintf(save, sizeof(save), "%.*s.srm",
                   (int)(dt && (!sl || dt > sl) ? (size_t)(dt - rom_path) : strlen(rom_path)), rom_path);
@@ -7106,6 +7152,14 @@ int main(int argc, char **argv)
             }
          }
          g_snes_lk = NULL;
+         if (two)
+         {
+            char nm2[APP_PATH_CAP];
+            play_name_of(rom_path, nm2, sizeof(nm2));
+            if (snes_link_page(two == 1, game, nm2, &sega_lk) != 0)
+               continue;            /* cancelled or failed: back to the game list */
+            g_snes_lk = &sega_lk;
+         }
          /* the save (Game.srm) gets the same record, backup and plain copy for RetroArch as the others; md.bin has no way
           * to call back, so this is done now and brings the previous session's changes across */
          save_sync_game_start(save, note, sizeof(note));
@@ -7113,7 +7167,8 @@ int main(int argc, char **argv)
                                            : console == FE_CONSOLE_GG ? SS_KIND_GG : SS_KIND_SG, note, sizeof(note));
          if (player_launch_write(console, game, save, rom_path, slot) != 0)
          {
-            app_notice("This game could not be started", base_name(rom_path),
+            g_snes_lk = NULL;
+            app_notice(two ? "The two-player game could not start" : "This game could not be started", base_name(rom_path),
                        "The launch file could not be written.", 6000);
             continue;
          }
@@ -7152,7 +7207,7 @@ int main(int argc, char **argv)
           * then 0 and saved at once): how to reach the menu, and what
           * Square does. */
          /* (UX review G1: it ran off both screen edges; 40 characters) */
-         osd_toast(g_pcfg.touch && g_sw.touch_menu
+         osd_toast(g_pcfg.touch && g_sw.touch_menu && g_pcfg.tap_menu
                    ? "Menu: tap the screen, or START + SELECT"
                    : "Menu: hold START + SELECT");
          fe_evt("hints shown have=%d", g_pcfg.hints);

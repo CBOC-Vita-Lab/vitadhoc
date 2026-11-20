@@ -20,24 +20,31 @@
 #include <stdint.h>
 #include <string>
 
+#include "pk_ffnorm.h"
+
 namespace pk {
 
 class FastForward {
 public:
-	FastForward() { configure(2, true, false); }
-	/* factor 2 or 3 (anything else is 2); sound on/off; toggle (a press switches it) or hold */
-	void configure(int factor, bool sound, bool toggle);
+	/* what the sound does while it runs: off (silence), sped up (the game's sound at `factor` times its pitch), or at normal pitch
+	 * (every `factor`th chunk, joined with a short fade; pk_ffnorm.h) */
+	enum { SOUND_OFF = 0, SOUND_FAST = 1, SOUND_NORMAL = 2 };
+	FastForward() { configure(2, SOUND_FAST, false); }
+	/* factor 2 or 3 (anything else is 2); sound SOUND_*; toggle (a press switches it) or hold */
+	void configure(int factor, int sound, bool toggle);
 	/* One update per emulated frame's input: `held` = the control is down, `pressed` = it went down on this frame. */
 	void update(bool held, bool pressed, bool locked);
 	bool on() const { return on_; }
 	int factor() const { return on_ ? factor_ : 1; }
 	int configured_factor() const { return factor_; }
-	bool sound() const { return sound_; }
+	bool sound() const { return sound_ != SOUND_OFF; }
+	int sound_mode() const { return sound_; }
 	bool toggle() const { return toggle_; }
 	/* frames to emulate this refresh when `normal` would be run at normal speed */
 	int frames(int normal) const { return on_ ? normal * factor_ : normal; }
 	/* Reduce `frames` stereo frames (L,R int16 pairs) in place; returns the number kept. Without FF the audio is untouched. With FF and no
-	 * sound the same count comes out, zeroed. The remainder of a group of `factor` input frames is carried to the next call. */
+	 * sound the same count comes out, zeroed. The remainder of a group of `factor` input frames is carried to the next call. At normal pitch
+	 * one call is one emulated frame's audio: the first factor-1 calls of a group return 0 and the last returns its whole chunk. */
 	size_t reduce(int16_t *lr, size_t frames);
 	/* a state load, the menu, a pause: forget the half-built group and a toggled-on state */
 	void reset();
@@ -48,10 +55,12 @@ public:
 	bool take_started() { bool e = started_; started_ = false; return e; }
 private:
 	int factor_ = 2;
-	bool sound_ = true, toggle_ = false;
+	int sound_ = SOUND_FAST;
+	bool toggle_ = false;
 	bool on_ = false, locked_ = false, ended_ = false, started_ = false;
 	int32_t acc_[2] = { 0, 0 };
 	int acc_n_ = 0;
+	pk_ffnorm norm_;
 };
 
 }  // namespace pk

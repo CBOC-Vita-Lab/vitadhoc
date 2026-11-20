@@ -2,6 +2,42 @@
 
 ## Version 2.0
 
+- **The home screen appears at once.** The first frame no longer waits for
+  the card to be searched for games: a card that takes a minute to read (a
+  large card in a slow adapter) now shows "Finding games... N found" with the
+  last game found, the games already known from the last visit stay in
+  view, and Circle stops the search and shows what was found. The list is
+  the same one the full search would have made; a search that was stopped is
+  not remembered, so the next visit looks again. A missing card does not
+  hold the start. The log line `boot_times` gives the first frame, the first
+  response to a button and the time the list was ready.
+- **A failed save no longer claims the card is full.** The message now says
+  what is true: "ux0: is full (3 MB free)" when it is, "has 150 GB free; is the
+  folder read-only?" when it is not, or that the card could not be checked.
+  Free space is counted in 64-bit sizes for the card the game is on (ux0,
+  uma0, imc0 or ur0), so a big card no longer reads as nearly empty.
+- **Settings > Controls > Tap screen for menu** (On by default) turns the
+  tap-the-game menu off, in the main app and in the Super NES and Sega players,
+  for players whose thumbs touch the screen. Start + Select opens the menu on
+  every console (the Super NES and Sega players also accept L + R + Start);
+  the game hints now name Start + Select for all of them.
+- **Game Boy and Game Boy Color games are told apart by the cartridge, not
+  the file name.** A `.gb` file whose header says Game Boy Color now plays and
+  is listed as a Color game, and a `.gbc` file that is a plain Game Boy
+  cartridge as a Game Boy game. Saves and states stay where they are: they
+  follow the file's own extension. To override a game, add a line `gbc <file
+  name>` or `gb <file name>` to `gb_override.txt` in the VitAdhoc data folder
+  (a file only, there is no menu for it yet).
+- **Fast forward at normal pitch.** Settings > Fast-forward (and Keep sound in
+  the Super NES and Sega players) has a third choice beside Off and Sped up:
+  the game's sound plays at its normal pitch while the game runs fast, with
+  the skipped stretches joined by a short fade so it does not crackle.
+- **More covers found.** When a game's exact name has no picture, the cover
+  search now also asks for the same title under the other regions, without
+  its revision and language tags, and with a subtitle's dash as a space (at
+  most seven more requests, once per game). On the full No-Intro lists the
+  share of games with a cover available rose from 87.1% to 89.3% on Game Boy
+  Advance and from 84.5% to 88.5% on Super NES.
 - **Rewind, fast forward, patches and RetroAchievements in the Super NES and
   Sega players.** Hold the right stick left to rewind up to 60 seconds (sound
   off), right to fast forward 2x or 3x (with sound if you like; hold or toggle);

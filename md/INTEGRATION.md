@@ -67,3 +67,11 @@ The full list, ranges and defaults are in the comment above `md_host_set_option`
 (default; 1 ASIC, 2 enhanced, 3 and 4 Nuked, never a default), `interlace` (default 1: double height), `sprite_limit` (default 1:
 the hardware's limits), `sms_border`, `gg_extra`, `overscan`, `lowpass`, `vdp_mode`. Defaults are RetroArch's. Options that change
 what a game can see belong in the compat word of a two player session.
+
+## Worker threads
+
+The core has no thread code. Before `md_host_load_mem` a player may call `md_host_set_threads(&ops, MD_THREAD_VDP)` (add
+`MD_THREAD_VDP_SMS` to use the worker on the 8 bit systems too) with a `md_thread_ops` (`core/thread_ops.h`): counting semaphores,
+`spawn(id, fn, arg)` / `wait_end(id)`, `yield`, and an optional `now_us` for the census. The worker is bit-identical to the single
+thread path; `md_host_vdp_census()` returns its counters and `md_host_vdp_debug()` turns on the per frame raw-state check and a join
+after every line (twin only). `md/vita/main.cpp` shows the sceKernel version, `md/twin/main.cpp` the pthread one.

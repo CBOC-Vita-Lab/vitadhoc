@@ -102,6 +102,27 @@
 /* Global variables */
 extern uint16 spr_col;
 
+/* VitAdhoc wide view (md/frontend/wide.c): the Mega Drive line renderer can draw a strip of picture beyond each side of the screen into the
+ * frame buffer (left of bitmap.data and right of the line), by running the unchanged plane and sprite renderers again on a narrow window
+ * with the scroll shifted. It changes nothing the CPUs or the picture inside the screen can see: status, sprite masking and collision state
+ * are saved and put back. wide_rec holds, for every line, what the host needs to judge the strip. */
+typedef struct {
+  uint8 flags;               /* WL_* */
+  uint8 col_mask, shift;     /* playfield column mask and row shift (the plane size) */
+  uint16 xs[2], ys[2];       /* horizontal scroll value and first vertical scroll value of plane A and B for this line */
+  uint16 ntab, ntbb, ntwb;
+  uint16 row_mask;
+} wide_line_t;
+enum { WL_ON = 1,            /* a mode 5 line was drawn */
+       WL_STRIP = 2,         /* the strip beside this line was drawn */
+       WL_WINDOW = 4,        /* the window plane covers part of the line */
+       WL_VSCROLL = 8,       /* per 2-cell vertical scroll with different values */
+       WL_IM2 = 16,          /* interlace mode 2 */
+       WL_H40 = 32,
+       WL_M4 = 64 };           /* a Master System / Game Gear mode 4 line (record only) */
+extern int wide_m;                      /* strip width per side in pixels (0 = off, -1 = the records only: Master System / Game Gear) */
+extern wide_line_t wide_rec[256];
+
 /* Function prototypes */
 extern void render_init(void);
 extern void render_reset(void);

@@ -124,6 +124,30 @@ TEST(input_stick_modes_and_hysteresis)
 	CHECK(r.r.pad[0] == model_snes().btn[0].out_bit);
 }
 
+TEST(input_left_stick_is_the_dpad_by_default_on_every_console)
+{
+	/* the same default as the main app, where the left stick is always the d-pad: on every console the stick left reads as D-pad left */
+	const PadModel *models[] = { &model_snes(), &model_nes(), &model_md(), &model_sms(), &model_gg(), &model_sg() };
+	for (const PadModel *m : models) {
+		Profile d = profile_defaults(*m, true);
+		CHECK_EQ(d.stick_left, STICK_MOVE);
+		CHECK_EQ(d.stick_right, STICK_OFF);
+		Rig a(*m), b(*m);
+		a.step(PH_LEFT);
+		b.step(0, 0, 128);
+		CHECK(a.r.pad[0] != 0);
+		CHECK(a.r.pad[0] == b.r.pad[0]);
+		/* turned off (Controls > Left stick > Off) the stick does nothing; the d-pad still works */
+		Profile off = d;
+		off.stick_left = STICK_OFF;
+		b.set_profile(off);
+		b.step(0, 0, 128);
+		CHECK_EQ(b.r.pad[0], 0);
+		b.step(PH_LEFT);
+		CHECK(b.r.pad[0] == a.r.pad[0]);
+	}
+}
+
 TEST(input_back_touch_zones)
 {
 	Rig r;
@@ -475,7 +499,7 @@ TEST(input_sega_models_defaults)
 	}
 	CHECK_EQ(model_gg().players, 1);
 	CHECK_EQ(model_md().players, 2);
-	CHECK(!model_gg().legacy_chord && model_md().legacy_chord);
+	CHECK(model_gg().legacy_chord && model_md().legacy_chord);     /* L + R + Start opens the menu of every player */
 }
 
 TEST(input_sega_mode_tap_and_menu_chord)
@@ -522,4 +546,30 @@ TEST(input_sega_remap_and_profile_files)
 	CHECK_STR(action_key(model_sms(), 0), "bind_b1");
 	CHECK_STR(action_label(model_gg(), 2), "Start");
 	CHECK_STR(action_label(model_sg(), 2), "Pause");
+}
+
+/* Start + Select held opens the menu on every console the players run, and so does L + R + Start (the NES model is the app's own
+ * and keeps START + SELECT alone); neither leaks into the game; remapping the buttons never takes the chord away */
+TEST(input_menu_chords_open_on_every_console)
+{
+	const PadModel *all[5] = { &model_snes(), &model_md(), &model_sms(), &model_gg(), &model_sg() };
+	for (int k = 0; k < 5; k++) {
+		const PadModel &m = *all[k];
+		for (int variant = 0; variant < 2; variant++) {
+			uint32_t chord = variant == 0 ? (PH_START | PH_SELECT) : (PH_L | PH_R | PH_START);
+			Rig r(m, true);
+			bool fired = false;
+			for (int i = 0; i < 30 && !fired; i++) { r.step(chord); fired = r.r.menu; }
+			CHECK(fired);
+		}
+	}
+	/* Start and Select moved to other buttons in the profile: the physical chord still opens the menu */
+	Rig m(model_snes(), true);
+	Profile p = profile_defaults(model_snes(), true);
+	int stolen = -1;
+	profile_assign(p, model_snes(), 0, 6, PH_TRIANGLE, &stolen);
+	m.set_profile(p);
+	bool fired = false;
+	for (int i = 0; i < 30 && !fired; i++) { m.step(PH_START | PH_SELECT); fired = m.r.menu; }
+	CHECK(fired);
 }

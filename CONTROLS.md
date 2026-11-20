@@ -42,8 +42,11 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | Select + Down | Mystery Gift: listen for a phone (GBA) |
 | Right stick down | Cheat button, for button-activated codes |
 
-SNES games (the separate SNES program) open their menu the same way: hold
-Start + Select (L + R + Start also works).
+SNES and Sega games (the separate players) open their menu the same way: hold
+Start + Select (L + R + Start also works there). Settings > Controls > **Tap
+screen for menu** turns the tap on the game off everywhere, the players
+included; the chords stay. In those players Controls > Left stick can be
+D-pad (the default, as in the main app), Off or its own buttons.
 
 VitAdhoc's own screenshot (L + R + Select, saved in
 `ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot

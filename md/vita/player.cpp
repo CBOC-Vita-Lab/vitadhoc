@@ -333,7 +333,7 @@ void MdPlayer::settings_load()
 	sms_border_ = clampi(pl.get_int("sms_border", 0), 0, 2);
 	gg_lcd_ = clampi(pl.get_int("gg_lcd", 0), 0, 10);
 	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
-	ff_sound_ = pl.get_int("ff_sound", 1) != 0;
+	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
 	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
 	rewind_on_ = pl.get_int("rewind", 1) != 0;
 	rewind_len_ = pl.get_int("rewind_seconds", 60) <= 30 ? 0 : 1;
@@ -398,6 +398,16 @@ void MdPlayer::apply_overrides()
 /* the core's options from what the player holds; the game is loaded */
 void MdPlayer::apply_core_options()
 {
+	if (linked()) {
+		/* what changes what a game can see is the same on both consoles: the system's own values (the two consoles run one machine) */
+		region_ = 0; fm_ = 0; ym2413_ = 2; pad_type_ = 0; pal_fast_ = false;
+		md_host_set_option("vdp_mode", 0);
+		md_host_set_option("force_dtack", 0);
+		md_host_set_option("addr_error", 1);
+		md_host_set_option("sprite_limit", 1);
+		md_host_set_option("interlace", 1);
+		md_host_set_option("overscan", 0);
+	}
 	md_host_set_region(region_);
 	md_host_set_option("fm", fm_);
 	md_host_set_option("ym2413", ym2413_);
@@ -537,6 +547,29 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		session_write(root_, r);
 		return res;
 	}
+	if (req_.link.active()) {
+		/* the session's identity of the game: the bytes the core was given. The file itself, or a copy when it was patched
+		 * (two consoles with the same game must agree on the bytes) */
+		if (system_ == MD_SYS_GG) {
+			res.fatal1 = "The two-player link could not start.";
+			res.fatal2 = "A Game Gear game has one controller.";
+			md_host_unload();
+			return res;
+		}
+		if (req_.patch_path.empty()) link_rom_ = rom_;
+		else {
+			make_dirs(path_join(root, "launch"));
+			std::string lp = path_join(path_join(root, "launch"), "link_rom.bin");
+			if (atomic_write(lp, romb.data(), romb.size()) == W_OK) link_rom_ = lp;
+		}
+		logf("link: role=%s mode=%s identity file %s (%s)\n", req_.link.role.c_str(), req_.link.mode.c_str(), link_rom_.c_str(),
+		     link_rom_ == rom_ ? "the game file" : "a copy of the image the core runs");
+		if (link_rom_.empty()) {
+			res.fatal1 = "The two-player link could not start.";
+			res.fatal2 = "The game file could not be read again.";
+			return res;
+		}
+	} else
 	ra_begin(romb.data(), romb.size());       /* the file as the site knows it (the patched one for a patched game) */
 	{
 		std::vector<uint8_t>().swap(romb);
@@ -565,8 +598,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	store_ = new ProfileStore(root, console_, game_);
 	store_->load_effective(*model, req_.enter_is_cross, profile_);
 	mapper_.configure(*model, profile_, MapperConfig());
-	cheats_.load(path_join(path_join(root, "cheats"), game_ + ".cht"), system_ == MD_SYS_MD);
-	{
+	if (!linked()) cheats_.load(path_join(path_join(root, "cheats"), game_ + ".cht"), system_ == MD_SYS_MD);   /* a code pokes one console's machine only: none in a linked game */
+	if (!linked()) {
 		auto it = req_.unknown.find("cheats_db");
 		int added = it != req_.unknown.end() ? cheats_.merge_file(it->second) : 0;
 		if (added) logf("cheats: %d from the database file %s (off until switched on)\n", added, it->second.c_str());
@@ -583,6 +616,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
+	cfg.play_together_reason = system_ == MD_SYS_GG ? "A Game Gear game has one controller" : "Start it from the game list: Settings > Two players";
 	cfg.accent = system_ == MD_SYS_MD ? 0x2E7DFF : system_ == MD_SYS_GG ? 0xE0B020 : 0xE04A3A;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, model, &profile_);
@@ -660,6 +694,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 
 void MdPlayer::apply_start_mode()
 {
+	if (linked()) return;      /* a linked game starts from power-on and from the host's game, never from a resume point or slot */
 	std::vector<uint8_t> d;
 	if ((req_.start == START_CONTINUE || req_.start == START_SLOT) && ra_.hardcore_blocks()) {
 		notice("Hardcore mode: the game starts from the beginning", NOTICE_INFO);
@@ -694,7 +729,13 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 	for (int i = 0; i < MAX_PLAYERS; i++) last_pads_[i] = pads[i];
 	mapper_.update(pads, now_ms, frame, &in_);
 	speed_.input(in_.fired);
-	if (in_.menu || tapped) return true;
+	if (in_.menu || (tapped && req_.tap_menu)) return true;   /* the chords always open it; a tap only when the app's "Tap screen for menu" is on */
+	if (linked()) {
+		/* the session sets both pads of its one machine; this console's player is pad 1 only, no quick save or load */
+		link_pad_ = in_.pad[0] & 0xFFFu;
+		session_.tick_running(now_ms);
+		return false;
+	}
 	md_host_set_pad(0, in_.pad[0] & 0xFFFu);
 	md_host_set_pad(1, system_ == MD_SYS_GG ? 0u : (in_.pad[1] & 0xFFFu));
 	session_.tick_running(now_ms);
@@ -719,13 +760,15 @@ SpeedSettings MdPlayer::speed_settings() const
 	s.rewind_seconds = rewind_len_ ? 60 : 30;
 	s.rewind_budget = (size_t) rewind_mb_ << 20;
 	s.ff_factor = ff_speed_ ? 3 : 2;
-	s.ff_sound = ff_sound_ != 0;
+	s.ff_sound = ff_sound_;
 	s.ff_toggle = ff_toggle_ != 0;
 	return s;
 }
 
 void MdPlayer::speed_start()
 {
+	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
+	if (linked()) speed_.set_locked(true, "Rewind is off while games are linked");
 	speed_.start(md_host_fps(), 2, speed_settings());
 	/* with a writer thread the rewind states are packed there (the game thread only copies the state); without one capture_commit packs at once */
 	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
@@ -787,7 +830,7 @@ bool MdPlayer::run_frame(bool render)
 	const bool ran = speed_.run_frame(render);
 	if (ran) {
 		if (landing) ra_.state_loaded();      /* a rewound game is another timeline: progress starts over */
-		else ra_.frame(false);
+		else ra_.frame(linked());             /* two players: nothing is processed */
 	}
 	return ran;
 }
@@ -886,7 +929,7 @@ void MdPlayer::after_frame(uint64_t now_us)
 	poll_writer();
 	srm_watch(now_us);
 	/* the resume point: every 2 minutes, and soon after the game saved (at most every 30 s) */
-	if (!resume_busy_) {
+	if (!resume_busy_ && !linked()) {
 		bool after_save = resume_after_srm_at_ && now_us >= resume_after_srm_at_ && states_->resume_due(now_ms_, 30000);
 		if (after_save || states_->resume_due(now_ms_, 120000)) { resume_after_srm_at_ = 0; resume_post(false); }
 	}
@@ -939,6 +982,7 @@ void MdPlayer::srm_result(int r, const char *how, uint64_t now)
 
 void MdPlayer::srm_watch(uint64_t now)
 {
+	if (linked()) return;      /* the machine holds the host's game: nothing of it is this console's save (the host's is committed by the session) */
 	if ((++srm_pass_ & 7) == 0 || srm_recheck_) {
 		const size_t sz = md_host_sram_size();
 		const bool recheck = srm_recheck_;
@@ -966,6 +1010,7 @@ void MdPlayer::srm_watch(uint64_t now)
 void MdPlayer::suspend()
 {
 	wait_writer();
+	if (linked()) { session_.pause(); return; }
 	if (md_host_sram_dirty()) {
 		const size_t sz = md_host_sram_size();
 		std::vector<uint8_t> b(sz);
@@ -978,6 +1023,16 @@ void MdPlayer::suspend()
 	srm_dirty_since_ = 0;
 	srm_recheck_ = true;
 	session_.pause();
+}
+
+/* the host's battery after an agreed end (netplay.h): the same safe file as every other battery save */
+int MdPlayer::link_commit_save(const uint8_t *data, size_t n)
+{
+	wait_writer();
+	const int r = srm_file_.write(srm_, data, n);
+	if (r) srm_err_ = srm_file_.why(); else md_host_sram_mark_saved();
+	srm_result(r, "link", pf_->now_us());
+	return r;
 }
 
 /* ---- cheats --------------------------------------------------------------------- */
@@ -1163,7 +1218,7 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_PALSPEED: pal_fast_ = v != 0; break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
 	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
-	case ROW_SPD_SOUND: ff_sound_ = v != 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;
 	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	case ROW_SPD_REWIND: rewind_on_ = v != 0; speed_.apply(speed_settings()); logf("%s\n", speed_.stats_line().c_str()); break;
 	case ROW_REWIND_LEN: rewind_len_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
@@ -1355,9 +1410,11 @@ void MdPlayer::finish(ExitReason why)
 	if (settings_dirty_) settings_queue_save();
 	if (cheats_.dirty() && !cheats_busy_) cheats_queue_save();
 	/* the resume point: where the game was left */
-	if (states_ && md_host_state_size()) resume_post(true);
+	/* A linked game writes none, except the host after an agreed end (its battery file was just written by the session; the machine is
+	 * at the session's last frame, which is the point to keep). */
+	if (states_ && md_host_state_size() && (!linked() || (req_.link.is_host() && link_result_ == "done"))) resume_post(true);
 	wait_writer();
-	if (md_host_sram_dirty()) {
+	if (!linked() && md_host_sram_dirty()) {
 		const size_t sz = md_host_sram_size();
 		std::vector<uint8_t> b(sz);
 		b.resize(md_host_sram_read(b.data(), sz));
@@ -1371,6 +1428,10 @@ void MdPlayer::finish(ExitReason why)
 	}
 	if (states_) session_.set_resume_present(states_->resume_present());
 	SessionReport rep = session_.finish(why);
+	rep.link_result = link_result_;
+	rep.link_error = link_err_;
+	rep.link_error_name = link_err_name_;
+	rep.link_frames = link_frames_;
 	WriteResult w = session_write(root_, rep);
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),

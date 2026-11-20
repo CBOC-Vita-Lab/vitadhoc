@@ -68,11 +68,13 @@ static struct {
 	void (*log)(const char *);
 	/* options */
 	int opt_fm, opt_fm_hq, opt_psg_hq, opt_ym2413, opt_opll_nuked, opt_fm_preamp, opt_psg_preamp, opt_lowpass, opt_mono;
-	int opt_interlace, opt_sprite_limit, opt_sms_border, opt_gg_extra, opt_overscan, opt_force_dtack, opt_addr_error;
+	int opt_interlace, opt_sprite_limit, opt_sms_border, opt_gg_extra, opt_overscan, opt_force_dtack, opt_addr_error, opt_gg_band;
+	int wide_req;                        /* the margin the host asked for (md_host_set_wide_margin) */
 	int opt_lcd, opt_vdp_mode, opt_region;
 } G;
 
 static uint16_t fb_internal[MD_MAX_WIDTH * MD_MAX_HEIGHT];
+static void wide_apply(void);
 
 static void logf_(const char *s) { if (G.log) G.log(s); }
 
@@ -121,7 +123,7 @@ static void config_defaults(void)
 	input.system[1] = SYSTEM_GAMEPAD;
 	G.opt_fm = 0; G.opt_fm_hq = 1; G.opt_psg_hq = 1; G.opt_ym2413 = 2; G.opt_opll_nuked = 0;
 	G.opt_fm_preamp = 100; G.opt_psg_preamp = 150; G.opt_lowpass = 0; G.opt_mono = 0;
-	G.opt_interlace = 1; G.opt_sprite_limit = 1; G.opt_sms_border = 0; G.opt_gg_extra = 0; G.opt_overscan = 0;
+	G.opt_interlace = 1; G.opt_sprite_limit = 1; G.opt_sms_border = 0; G.opt_gg_extra = 0; G.opt_overscan = 0; G.opt_gg_band = 0;
 	G.opt_force_dtack = 0; G.opt_addr_error = 1; G.opt_lcd = 0; G.opt_vdp_mode = 0; G.opt_region = 0;
 	G.pad_type[0] = G.pad_type[1] = MD_PAD_AUTO;
 	apply_options_to_config();
@@ -174,7 +176,8 @@ static double calc_dar(void)
 	double dotrate, vsr;
 	int h40;
 	if ((system_hw == SYSTEM_GG || system_hw == SYSTEM_GGMS) && config.overscan == 0 && config.gg_extra == 0)
-		return (6.0 / 5.0) * ((double)G.vwidth / (double)G.vheight);
+		return G.opt_gg_band ? ((double)G.vwidth / (double)G.vheight)      /* the wide band: square pixels, 256 x 144 is 16:9 */
+		                     : (6.0 / 5.0) * ((double)G.vwidth / (double)G.vheight);
 	h40 = bitmap.viewport.w == 320;
 	dotrate = system_clock / (h40 ? 8.0 : 10.0);
 	vsr = vdp_pal ? 14750000.0 : 135000000.0 / 11.0;
@@ -184,7 +187,7 @@ static double calc_dar(void)
 static void update_viewport(void)
 {
 	if (system_hw == SYSTEM_GG && !config.gg_extra)
-		bitmap.viewport.x = (config.overscan & 2) ? 14 : -48;
+		bitmap.viewport.x = (config.overscan & 2) ? 14 : (G.opt_gg_band ? 0 : -48);
 	else
 		bitmap.viewport.x = (config.overscan & 2) * 7;
 
@@ -215,7 +218,8 @@ static void refresh_info(void)
 	v.left_mask = (is_sms_family() && (reg[0] & 0x20)) ? 8 : 0;
 	v.crop_left = G.bmdoffset / 2;
 	v.crop_right = (G.vwoffset > 8) ? G.vwoffset - 8 : 0;
-	v.gg_window = ((system_hw == SYSTEM_GG || system_hw == SYSTEM_GGMS) && !config.gg_extra) ? 1 : 0;
+	v.gg_window = ((system_hw == SYSTEM_GG || system_hw == SYSTEM_GGMS) && !config.gg_extra && !G.opt_gg_band) ? 1 : 0;
+	v.gg_band = ((system_hw == SYSTEM_GG || system_hw == SYSTEM_GGMS) && !config.gg_extra && G.opt_gg_band && !(config.overscan & 2)) ? 1 : 0;
 	v.dar = G.vdar;
 	v.par = (v.w > 0) ? G.vdar * v.h / (double)v.w : 0;
 	if (v.par > 0 && v.interlace == 2) v.par = G.vdar * v.h / (double)v.w;
@@ -262,13 +266,13 @@ int md_host_set_threads(const md_thread_ops *ops, unsigned mask)
 
 void md_host_vdp_debug(int check, int stress) { vdpw_set_check(check); vdpw_set_stress(stress); }
 unsigned long md_host_vdp_check_errors(void) { return vdpw_check_errors(); }
-int md_host_vdp_census(unsigned long out[9])
+int md_host_vdp_census(unsigned long out[11])
 {
 	vdpw_census_t c;
 	if (!vdpw_on) return 0;
 	vdpw_census(&c);
 	out[0] = c.records; out[1] = c.words; out[2] = c.status_joins; out[3] = c.joins; out[4] = c.join_wait_polls; out[5] = c.full_waits; out[6] = c.wakes;
-	out[7] = c.vram_blocks; out[8] = c.vram_alls;
+	out[7] = c.vram_blocks; out[8] = c.vram_alls; out[9] = c.vdp_us; out[10] = c.join_wait_us;
 	return 1;
 }
 
@@ -291,7 +295,7 @@ void md_host_unload(void)
 	vdpw_stop();
 	audio_shutdown();
 	system_hw = 0;
-	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0;
+	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;
 	free(G.state_scratch); G.state_scratch = NULL; G.state_size = 0;
 	G.pad[0] = G.pad[1] = 0;
 }
@@ -459,6 +463,7 @@ int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system
 	md_host_set_seed(G.seed);
 	G.loaded = 1;
 	G.system = core_system();
+	wide_apply();
 	if (config.ym3438) OPN2_SetChipType(config.ym3438 == 1 ? ym3438_mode_ym2612 : ym3438_mode_readmode);
 	YM2612Config(config.ym2612);
 	{
@@ -564,6 +569,42 @@ void md_host_set_framebuffer(uint16_t *buf, int pitch_px)
 	G.fb_user = buf; G.fb_user_pitch = pitch_px;
 	if (buf && pitch_px >= MD_MAX_WIDTH) { bitmap.data = (uint8_t *)buf; bitmap.pitch = pitch_px * 2; }
 	else { G.fb_user = NULL; bitmap.data = (uint8_t *)fb_internal; bitmap.pitch = MD_MAX_WIDTH * 2; }
+	wide_apply();
+}
+
+/* ---- wide view ------------------------------------------------------------------------------------------- */
+
+extern const wide_line_t *vdpw_wide_rec(void);
+typedef char md_wide_line_size_check[sizeof(md_wide_line) == sizeof(wide_line_t) ? 1 : -1];
+
+static void wide_apply(void)
+{
+	/* strips only on the Mega Drive and only into a canvas that has the room for them */
+	int m = G.wide_req;
+	if (m < 0) m = 0;
+	if (m > MD_WIDE_MAX) m = MD_WIDE_MAX;
+	if (G.loaded && G.system != MD_SYS_MD) m = m > 0 ? -1 : 0;          /* the 8 bit systems: the line records only */
+	else if (!G.loaded || !G.fb_user || G.fb_user_pitch < MD_WIDE_PITCH) m = 0;
+	wide_m = m;
+}
+
+int md_host_set_wide_margin(int margin)
+{
+	G.wide_req = margin;
+	wide_apply();
+	return wide_m;
+}
+
+void md_host_wide_frame(md_wide_frame *f)
+{
+	int i;
+	memset(f, 0, sizeof *f);
+	if (!G.loaded) return;
+	f->h = bitmap.viewport.h;
+	f->margin = wide_m > 0 ? wide_m : 0;
+	f->line = (const md_wide_line *)vdpw_wide_rec();
+	f->vram = vram; f->vsram = vsram; f->cram = cram;
+	for (i = 0; i < 24; i++) f->reg[i] = reg[i];
 }
 
 /* ---- audio ----------------------------------------------------------------------------------------------- */
@@ -932,7 +973,7 @@ int md_host_set_option(const char *name, int value)
 		{ "interlace", &G.opt_interlace, 0, 1 }, { "sprite_limit", &G.opt_sprite_limit, 0, 1 },
 		{ "sms_border", &G.opt_sms_border, 0, 2 }, { "gg_extra", &G.opt_gg_extra, 0, 1 }, { "overscan", &G.opt_overscan, 0, 3 },
 		{ "force_dtack", &G.opt_force_dtack, 0, 1 }, { "addr_error", &G.opt_addr_error, 0, 1 }, { "lcd", &G.opt_lcd, 0, 100 },
-		{ "vdp_mode", &G.opt_vdp_mode, 0, 2 },
+		{ "vdp_mode", &G.opt_vdp_mode, 0, 2 }, { "gg_band", &G.opt_gg_band, 0, 1 },
 	};
 	size_t i;
 	int old_nuked = config.ym3438, old_opll = config.opll;
@@ -957,7 +998,7 @@ int md_host_set_option(const char *name, int value)
 			if (config.ym3438) OPN2_SetChipType(config.ym3438 == 1 ? ym3438_mode_ym2612 : ym3438_mode_readmode);
 		}
 		if (!strcmp(name, "psg_preamp")) psg_config(0, config.psg_preamp, ((system_hw & SYSTEM_PBC) == SYSTEM_MD) ? 0xFF : io_reg[6]);
-		if (!strcmp(name, "interlace") || !strcmp(name, "sms_border")) { bitmap.viewport.changed |= 9; update_viewport(); refresh_info(); }
+		if (!strcmp(name, "interlace") || !strcmp(name, "sms_border") || !strcmp(name, "gg_band")) { bitmap.viewport.changed |= 9; update_viewport(); refresh_info(); }
 		return 0;
 	}
 	return 1;
@@ -968,10 +1009,10 @@ int md_host_get_option(const char *name, int *value)
 	if (!strcmp(name, "region")) { *value = G.opt_region; return 0; }
 	{
 		static const char *const names[] = { "fm", "fm_hq", "psg_hq", "ym2413", "opll_nuked", "fm_preamp", "psg_preamp", "lowpass", "mono", "interlace",
-			"sprite_limit", "sms_border", "gg_extra", "overscan", "force_dtack", "addr_error", "lcd", "vdp_mode" };
+			"sprite_limit", "sms_border", "gg_extra", "overscan", "force_dtack", "addr_error", "lcd", "vdp_mode", "gg_band" };
 		int *const vals[] = { &G.opt_fm, &G.opt_fm_hq, &G.opt_psg_hq, &G.opt_ym2413, &G.opt_opll_nuked, &G.opt_fm_preamp, &G.opt_psg_preamp, &G.opt_lowpass,
 			&G.opt_mono, &G.opt_interlace, &G.opt_sprite_limit, &G.opt_sms_border, &G.opt_gg_extra, &G.opt_overscan, &G.opt_force_dtack, &G.opt_addr_error,
-			&G.opt_lcd, &G.opt_vdp_mode };
+			&G.opt_lcd, &G.opt_vdp_mode, &G.opt_gg_band };
 		size_t i;
 		for (i = 0; i < sizeof names / sizeof names[0]; i++) if (!strcmp(names[i], name)) { *value = *vals[i]; return 0; }
 	}

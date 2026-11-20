@@ -220,6 +220,17 @@ STEPS = [
          "vita/tests/localsave/test_local_save_fail.c frontend-common/fe_util.c "
          "-Wl,--unresolved-symbols=ignore-all -o {out}/bin/local-save-fail && {out}/bin/local-save-fail",
          "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("disk-space", "free space: the path's own device, 64-bit sizes, an honest failed-write line (test_diskspace.c)",
+         "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror vita/tests/diskspace/test_diskspace.c "
+         "-o {out}/bin/disk-space && {out}/bin/disk-space",
+         "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("gb-kind", "GB / GBC by header flag, with the per-game override file (test_gbkind.c)",
+         "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror vita/tests/gbkind/test_gbkind.c "
+         "-o {out}/bin/gb-kind && {out}/bin/gb-kind",
+         "quick", {"gpsp", "library"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("cover-alt", "cover names: other-release fallbacks (artalt.h); real-list rates when AF_NOINTRO_DIR is set",
+         "python3 gpsp/vita/tests/artfetch/test_artalt.py",
+         "quick", {"gpsp", "cover"}, inputs=["gpsp/"], requires=CC),
     Step("play-log", "play log: the ring of recent games and its file (test_play_log.c)",
          "mkdir -p {out}/bin && gcc -Wall -Wextra -I vita -I frontend-common "
          "vita/tests/playlog/test_play_log.c vita/play_log.c -o {out}/bin/play-log && {out}/bin/play-log",
@@ -258,6 +269,11 @@ STEPS = [
          "make -C snes/twin -f Makefile.link B=build -j{jobs} && python3 snes/twin/link_test.py --twin snes/twin/build/link_twin "
          "--roms \"$GATE_SNES_ROMS\" --frames 3000 --out {out}/snes-link",
          "default", {"snes", "link"}, inputs=["snes/", "playerkit/", "gpsp/netdrv/"], requires=CXX, env_req="GATE_SNES_ROMS",
+         group=GROUP_HOST, timeout=7200),
+    Step("md-link", "two Sega players linked (md/twin link_twin, pk_link): LAN, punched, relayed, wrong game, desync, 3000 frames, SGDK and SMS ROMs (GATE_MD_ROMS, GATE_MD_SMS_ROMS)",
+         "make -C md/twin -f Makefile.link -j{jobs} && python3 md/twin/link_test.py --twin md/twin/build/x86/link_twin "
+         "--roms \"$GATE_MD_ROMS/sample\" --roms \"$GATE_MD_SMS_ROMS\" --frames 3000 --out {out}/md-link",
+         "default", {"md", "link"}, inputs=["md/", "playerkit/", "gpsp/netdrv/"], requires=CXX, env_req="GATE_MD_ROMS",
          group=GROUP_HOST, timeout=7200),
     Step("vita-gxm", "console drawing path: pk_gfx_vita + the app's text format against a GXM-faithful vita2d fake (menu text is coverage not boxes, contrast, same as soft)",
          "make -C playerkit build/vita_gxm && cd playerkit && ./build/vita_gxm", "quick", {"playerkit", "vita"},

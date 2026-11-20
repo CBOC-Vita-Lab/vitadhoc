@@ -289,6 +289,23 @@ class ArtworkWorkerTests(unittest.TestCase):
                     miss = self.root / folder / '.missing.txt'
                     self.assertFalse(miss.exists() and Path(name).stem in miss.read_text())
 
+    def test_other_release_name_is_found_when_the_exact_name_is_missing(self):
+        # a (World) cartridge whose picture the archive files under (USA); a Rev tag; only the picture's name is served
+        name = 'Alt Example (World) (Rev 1).gba'
+        routes = {GBA + 'Named_Boxarts/Alt Example (USA).png': (200, PNG)}
+        stats, requests = self.run_worker([name], routes, titles=False)
+        self.assertEqual(stats['have'], 1, (stats, requests))
+        self.assertTrue((self.root / 'boxart' / (Path(name).stem + '.png')).exists())
+        asked = [r for r in requests if '/Named_Boxarts/' in r]
+        self.assertEqual(asked[0], GBA + 'Named_Boxarts/' + Path(name).stem + '.png')
+        self.assertLessEqual(len(asked), 8, asked)
+
+    def test_name_without_a_region_asks_for_nothing_extra(self):
+        stats, requests = self.run_worker(['Homebrew Thing.gba'], {}, titles=False)
+        self.assertEqual(stats['have'], 0)
+        self.assertEqual([r for r in requests if '/Named_Boxarts/' in r],
+                         [GBA + 'Named_Boxarts/Homebrew Thing.png'])
+
     def test_true_missing_is_cached_and_explicit_retry_refetches(self):
         name = 'Retry Example.gba'
         self.run_worker([name], {}, titles=False)

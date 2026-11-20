@@ -48,6 +48,11 @@
 #include "picture.h"
 #include "audio_pace.h"
 #include "player.h"
+#include "netplay.h"
+#include <psp2/kernel/rng.h>
+#include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
+#include <psp2/sysmodule.h>
 #include "pipe.h"
 #include "pal_pace.h"
 #include "pk_gfx_vita.h"
@@ -325,7 +330,8 @@ static void wk_wait_end(void *, int id)
 	g_wk[id].th = -1;
 }
 static void wk_yield(void *) { sceKernelDelayThread(0); }
-static const md_thread_ops g_wk_ops = { NULL, wk_sem_create, wk_sem_destroy, wk_sem_post, wk_sem_wait, wk_spawn, wk_wait_end, wk_yield };
+static unsigned long long wk_now(void *) { return sceKernelGetProcessTimeWide(); }
+static const md_thread_ops g_wk_ops = { NULL, wk_sem_create, wk_sem_destroy, wk_sem_post, wk_sem_wait, wk_spawn, wk_wait_end, wk_yield, wk_now };
 
 /* ---- the scaler's helpers ------------------------------------------------------------------------------------------------------------
  * One job at a time, cut into chunks of rows. The drawing thread publishes the job (fields first, then `next` with the job's number in
@@ -1121,6 +1127,73 @@ static int ini_int(const char *path, const char *key, int def)
 /* thread priorities from threads.ini: only 0 (leave) or 0x40..0xBF are used; anything else is the default */
 static int prio_ok(int p, int def) { return p == 0 || (p >= 0x40 && p <= 0xBF) ? p : def; }
 
+/* ---- the two-player link (netplay.cpp) ---------------------------------------------------------------- */
+
+static mdnet::Link *g_link;
+static bool g_net_up, g_net_module, g_net_ours, g_netctl_ours;
+static void *g_net_pool;
+
+/* The system's network stack, as the main app brings it up (gpsp/vita/net_vita.c): the transport only opens sockets. */
+static bool link_net_up(void)
+{
+	if (g_net_up) return true;
+	if (sceSysmoduleIsLoaded(SCE_SYSMODULE_NET) != SCE_SYSMODULE_LOADED) {
+		if (sceSysmoduleLoadModule(SCE_SYSMODULE_NET) < 0) return false;
+		g_net_module = true;
+	}
+	g_net_pool = malloc(1024 * 1024);
+	if (!g_net_pool) return false;
+	SceNetInitParam ip;
+	ip.memory = g_net_pool;
+	ip.size = 1024 * 1024;
+	ip.flags = 0;
+	int rc = sceNetInit(&ip);
+	if (rc >= 0) g_net_ours = true;
+	else { free(g_net_pool); g_net_pool = NULL; if ((unsigned) rc != (unsigned) SCE_NET_ERROR_EBUSY) return false; }
+	rc = sceNetCtlInit();
+	if (rc >= 0) g_netctl_ours = true;
+	else if ((unsigned) rc != 0x80412102u) return false;     /* already up is fine */
+	g_net_up = true;
+	return true;
+}
+
+static void link_net_down(void)
+{
+	if (g_netctl_ours) sceNetCtlTerm();
+	if (g_net_ours) sceNetTerm();
+	free(g_net_pool);
+	g_net_pool = NULL;
+	if (g_net_module) sceSysmoduleUnloadModule(SCE_SYSMODULE_NET);
+	g_netctl_ours = g_net_ours = g_net_module = g_net_up = false;
+}
+
+static uint64_t link_now_us(void) { return sceKernelGetProcessTimeWide(); }
+static void link_random(uint8_t *out, int n) { sceKernelGetRandomNumber(out, (SceSize) n); }
+static void link_log(const char *line) { g_pl->logf("link: %s\n", line); }
+static int link_commit(const uint8_t *d, size_t n) { return g_pl->link_commit_save(d, n); }
+
+/* Connecting, waiting, the session's set-up: a plain screen with two lines and the way out. Returns true when the player asked to leave. */
+static bool link_screen(const pk::PadSample &pad, bool enter_is_cross)
+{
+	std::string l1, l2;
+	int p1 = -1, p2 = -1;
+	g_link->status(&l1, &l2, &p1, &p2);
+	vita2d_start_drawing();
+	vita2d_clear_screen();
+	g_text->draw(pk::F_SUB, 60, 170, "Two-player game", PK_RGBA(255, 255, 255, 255));
+	g_text->draw(pk::F_SUB, 60, 230, l1.c_str(), PK_RGBA(255, 255, 255, 255));
+	if (!l2.empty()) g_text->draw(pk::F_BODY, 60, 280, l2.c_str(), PK_RGBA(192, 192, 192, 255));
+	const int bar = p1 >= 0 ? p1 : p2;
+	if (bar >= 0) {
+		vita2d_draw_rectangle(60, 330, 840, 12, RGBA8(60, 60, 60, 255));
+		vita2d_draw_rectangle(60, 330, (float) (840 * bar / 1000), 12, RGBA8(123, 108, 255, 255));
+	}
+	g_text->draw(pk::F_BODY, 60, 470, enter_is_cross ? "Circle: cancel" : "Cross: cancel", PK_RGBA(160, 160, 160, 255));
+	vita2d_end_drawing();
+	vita2d_swap_buffers();
+	return (pad.buttons & pk::phys_cancel(enter_is_cross)) != 0;
+}
+
 /* ---- the menu ---------------------------------------------------------------- */
 
 static pk::MenuEvent menu_loop(int player)
@@ -1155,7 +1228,7 @@ static pk::MenuEvent menu_loop(int player)
 		}
 		if (ev != pk::MENU_NONE && ev != pk::MENU_RESET_DONE && ev != pk::MENU_RESUME) break;
 		if (!g_pl->menu_open()) break;
-		if (g_suspend_flag) { g_suspend_flag = 0; g_pl->suspend(); }
+		if (g_suspend_flag) { g_suspend_flag = 0; if (g_link) g_link->suspend(); g_pl->suspend(); }
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 	}
 	g_pace.set_paused(false);
@@ -1229,6 +1302,30 @@ int main(int argc, char **argv)
 	}
 	cdc.enterButtonAssign = sr.enter_is_cross ? SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS : SCE_SYSTEM_PARAM_ENTER_BUTTON_CIRCLE;
 	sceCommonDialogSetConfigParam(&cdc);
+	/* a two-player link: the connection is made again here (netplay.h); a link that cannot start returns to the app */
+	if (g_pl->linked()) {
+		mdnet::Env env;
+		env.now_us = link_now_us;
+		env.random = link_random;
+		env.log = link_log;
+		env.local_ip_be = 0;
+		env.commit_save = link_commit;
+		g_link = new mdnet::Link;
+		bool ok = link_net_up();
+		if (!ok) logf_("link: the network could not start\n");
+		if (ok) ok = g_link->open(g_pl->request().link, g_pl->link_rom(), env);
+		if (!ok) {
+			const mdnet::Fail f = g_link->failure() != mdnet::F_NONE ? g_link->failure() : mdnet::F_NO_NETWORK;
+			logf_("link: could not open (fail %d)\n", (int) f);
+			g_link->close();
+			g_pl->set_link_result("never", (int) f, "", 0);
+			g_pl->finish(pk::EXIT_GAME_LIST);
+			writer_stop();
+			fatal_screen("The two-player game could not start.", "The connection could not be opened.");
+			link_net_down();
+			return_to_vitadhoc();
+		}
+	}
 	g_is_gg = md_host_system() == MD_SYS_GG;
 	if (g_is_gg) g_lcd = pic_lcd_table();           /* built once, before any other thread needs it */
 
@@ -1247,6 +1344,18 @@ int main(int argc, char **argv)
 	md_host_set_audio_rate(OUT_RATE);
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 	g_pl->apply_start_mode();
+	{	/* census: the memory bus, one 1 MB copy (cached to cached) at start; it is what the picture copies cost on this console */
+		const size_t n = 1u << 20;
+		unsigned char *s = (unsigned char *) malloc(n), *d = (unsigned char *) malloc(n);
+		if (s && d) {
+			memset(s, 0x5A, n); memcpy(d, s, n);
+			const uint64_t t0 = sceKernelGetProcessTimeWide();
+			for (int i = 0; i < 4; i++) { memcpy(d, s, n); s[i] ^= d[i * 977]; }
+			const uint64_t us = sceKernelGetProcessTimeWide() - t0;
+			logf_("bus memcpy_mb_s cached_to_cached=%.0f\n", us ? 4.0 * 1e6 / (double) us : 0.0);
+		}
+		free(s); free(d);
+	}
 	help_start(clampi_(ini_int(tini, "helpers", 3), 0, 3));
 	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
 
@@ -1306,30 +1415,48 @@ int main(int argc, char **argv)
 		uint8_t back = 0;
 		bool tapped = false;
 		touch_read(&tp, &back, loop0, &tapped);
+		/* a linked game: the menu button means "end the session" for BOTH consoles; a brush of the screen must not */
+		if (g_link) tapped = false;
 		read_pads(pads, back);
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
+
+		/* a linked game that is not playing yet (reaching the other console, the session's set-up) or no longer: a plain screen;
+		 * the session is pumped by step(). Cancel leaves; over (done or failed) leaves with the result. */
+		if (g_link && !g_link->playing()) {
+			const int lr = g_link->step(0);
+			if (lr == mdnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; break; }
+			if (g_link->playing()) { last_vc = sceDisplayGetVcount(); prev_loop0 = 0; continue; }
+			if (link_screen(pads[0], g_pl->request().enter_is_cross)) { logf_("link: cancelled by the player\n"); why = pk::EXIT_GAME_LIST; break; }
+			continue;
+		}
 
 		const bool half = g_pl->pace_mode() == pk::PACE_HALF;
 		const bool hd = hd_active();
 		if (hd) g_pipe.box().set_pace_mode(g_pl->pace_mode());
 		int to_run = (half || hd) ? (int) elapsed : 1;
+		if (g_link) to_run = 1;           /* lockstep: one frame per refresh, a missed refresh is not caught up */
 		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }
-		to_run = g_pl->speed_plan(to_run);       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
-		if (hd) g_pipe.box().set_force_drop(g_pl->speed_busy());
-		bool fresh = false, want_menu = false;
+		if (!g_link) to_run = g_pl->speed_plan(to_run);       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
+		if (hd) g_pipe.box().set_force_drop(!g_link && g_pl->speed_busy());
+		bool fresh = false, want_menu = false, link_over = false;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
-			bool render = g_pl->want_render(emu_frame);
-			if (hd && !half && i != to_run - 1) render = false;
-			if (!g_pl->speed_draws(i, to_run)) render = false;       /* fast forward draws the last frame of the refresh */
+			bool render = g_link ? true : g_pl->want_render(emu_frame);       /* a linked game draws every frame (it is part of the machine) */
+			if (!g_link && hd && !half && i != to_run - 1) render = false;
+			if (!g_link && !g_pl->speed_draws(i, to_run)) render = false;       /* fast forward draws the last frame of the refresh */
 			md_host_set_render(render ? 1 : 0);
 			/* no copy: the core draws straight into the mailbox buffer when the gate is open and nothing would be evicted (pipe.h direct_begin) */
 			uint16_t *dfb = NULL;
-			if (hd && render) { int dp = 0; dfb = g_pipe.direct_begin(&dp); if (dfb) md_host_set_framebuffer(dfb, dp); }
+			if (hd && render && !g_link) { int dp = 0; dfb = g_pipe.direct_begin(&dp); if (dfb) md_host_set_framebuffer(dfb, dp); }
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 			g_emu_busy.store(1, std::memory_order_relaxed);
-			g_pl->run_frame(render);
+			if (g_link) {
+				/* both players' buttons are needed for a frame: a late partner is a stall (no frame this refresh) */
+				const int lr = g_link->step((uint16_t) g_pl->link_pad());
+				if (lr == mdnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; link_over = true; g_emu_busy.store(0, std::memory_order_relaxed); break; }
+				if (lr != mdnet::STEP_FRAME) { g_emu_busy.store(0, std::memory_order_relaxed); break; }
+			} else g_pl->run_frame(render);
 			g_emu_busy.store(0, std::memory_order_relaxed);
 			uint64_t t1 = sceKernelGetProcessTimeWide();
 			const uint16_t *dpix = NULL;
@@ -1371,6 +1498,13 @@ int main(int argc, char **argv)
 			uint32_t hc;
 			while (g_pipe.box().poll_cost(&hc)) g_pl->drawn_cost(hc);
 			hd_publish_notices();
+		}
+		if (link_over) break;
+		if (want_menu && g_link) {
+			/* a linked game has no menu (a state, a cheat or a reset would change one console's machine): the menu button asks for the clean end */
+			logf_("link: end asked from the menu button\n");
+			g_link->request_end();
+			want_menu = false;
 		}
 		if (want_menu) {
 			hd_quiesce();
@@ -1418,7 +1552,7 @@ int main(int argc, char **argv)
 		vblanks += elapsed;
 		main_us += work_end - loop0;
 		uint64_t now = sceKernelGetProcessTimeWide();
-		if (g_suspend_flag) { g_suspend_flag = 0; g_pl->suspend(); }
+		if (g_suspend_flag) { g_suspend_flag = 0; if (g_link) g_link->suspend(); g_pl->suspend(); }
 
 		{
 			const uint64_t work = now - loop0;
@@ -1449,6 +1583,14 @@ int main(int argc, char **argv)
 		}
 		if (now - sec_start >= 1000000) {
 			double dt = (now - sec_start) / 1e6;
+			{	/* census: the VDP worker's share of the frame (md/core/vdp_thread.c), deltas over the second; emu_us / fm_us are not split yet */
+				static unsigned long vc0[11];
+				unsigned long vc[11];
+				if (md_host_vdp_census(vc)) {
+					logf_("core_split vdp_us=%lu status_joins=%lu join_wait_us=%lu records=%lu full_waits=%lu\n", vc[9] - vc0[9], vc[2] - vc0[2], vc[10] - vc0[10], vc[0] - vc0[0], vc[5] - vc0[5]);
+					memcpy(vc0, vc, sizeof vc0);
+				}
+			}
 			if (g_hd_ok) { drawn += g_hd_drawn.exchange(0); skipped += g_hd_failed.exchange(0); }
 			{
 				const double sp = speed_meter.update(frames_run, dt, frame_hz);
@@ -1526,6 +1668,19 @@ int main(int argc, char **argv)
 		char c[220];
 		g_cores->census_line(c, sizeof c);
 		logf_("%s\n", c);
+	}
+	if (g_link) {
+		/* how the link ended, before the session is destroyed (a guest's own game is put back then) */
+		const bool done = g_link->ok();
+		const int gerr = g_link->gblink_error();
+		const mdnet::Fail f = g_link->failure();
+		const uint32_t fr = g_link->frames();
+		const std::string sum = g_link->summary();
+		g_link->close();
+		if (!g_link->restored_ok()) logf_("link: the machine could not be put back on this console's own game\n");
+		logf_("%s\n", sum.c_str());
+		g_pl->set_link_result(done ? "done" : "failed", gerr ? gerr : (int) f, g_link->gblink_error_name(), (int) fr);
+		link_net_down();
 	}
 	/* resume point, battery RAM, settings, log, launch/session.txt */
 	g_pl->finish(why);

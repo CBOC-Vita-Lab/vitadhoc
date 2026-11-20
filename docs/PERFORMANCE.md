@@ -1,5 +1,24 @@
 # Performance
 
+## Super NES On VitAdhoc 2.0 (host and model numbers, nothing here ran on a Vita)
+
+Counted on an x86_64 host with callgrind over the emulator's own code (Minstr per emulated frame, 60 frames of gameplay of the owner's pad
+script) and turned into milliseconds by a model: x86 instructions counted as ARM instructions, 444 MHz, IPC 1.0 and 0.7. They are
+estimates; the 1.3 table below is the only measured Vita data in this file.
+
+| Game | Core, wide view off | Wide, margin 41 (core + compose) | Compose alone, 41 / full width | Same at IPC 1.0 / 0.7 (compose, 41) |
+| --- | ---: | ---: | ---: | --- |
+| Yoshi's Island (Super FX) | 7.8 | 13.7 | 4.5 / 8.0 | 10.0 / 14.4 ms |
+| Super Mario World | 6.9 | 13.9 | 4.8 / 8.0 | 10.7 / 15.4 ms |
+| Super Mario Kart | 5.0 | 10.7 | 3.8 / 5.9 | 8.6 / 12.3 ms |
+| Super Metroid | 7.0 | 10.0 | 1.4 / 2.4 | 3.2 / 4.5 ms |
+| Kirby Super Star (SA-1) | 6.2 | 12.8 | 5.1 / 7.7 | 11.6 / 16.5 ms |
+
+The wide compose is 10 to 28 % cheaper than at the end of 1.3's work (same method; see snes/WIDE-INTEGRATION.md for the before column and for what is
+and is not done). The pixel art scaler (xBR 2x) is estimated at about 3 ms of the draw thread typically and 8.5 ms in the worst second, the upload at 1.5 ms.
+The rewind capture on the game thread: 823 KB per state before, about 300 KB (plain cartridge), 430 KB (Super FX) or 580 KB (SA-1) now, 1.16 M -> 0.53 M host
+instructions in Super Mario World.
+
 ## Super NES On VitAdhoc 1.3
 
 Measured on a PS Vita (firmware 3.74, PSVshell profile at
@@ -183,3 +202,32 @@ requested.
 Version 1.2 changes reduce repeated work in rewind, smoothing and texture
 handling. [Source Record](SOURCE.md) lists the automated test results,
 reruns and remaining hardware checks.
+
+## Sega (Genesis, Master System, Game Gear) On VitAdhoc 2.0
+
+Nothing here has run on a Vita. Labels: host = x86_64 callgrind instruction counts, model = those counts at 444 MHz and an assumed IPC.
+
+Instructions per frame, host x86_64 callgrind (120 frames, worker off, scaler not included):
+
+| Game | Frame | VDP line renderer | Sound | Z80 | 68000 |
+|---|---|---|---|---|---|
+| xgm-player (SGDK sample, H40) | 4.20 M | 2.21 M | 0.41 M | 0.64 M | 0.90 M |
+| bad-apple (SGDK sample) | 3.49 M | 1.46 M | 0.83 M | 0.22 M | 0.93 M |
+| busy SMS homebrew | 1.07 M | 0.50 M | 0.24 M | 0.31 M | none |
+| Game Gear (an SMS ROM forced to Game Gear, a stand-in) | 0.92 M | 0.34 M | 0.24 M | 0.31 M | none |
+
+Model, per thread, margin to 16.7 ms (NTSC; PAL has 20 ms, so 3.3 ms more):
+
+| Game | Single thread, IPC 1.0 / 0.7 | Emulating thread with the VDP worker, IPC 1.0 / 0.7 | VDP worker, IPC 1.0 / 0.7 |
+|---|---|---|---|
+| xgm-player | 9.5 ms (7.2) / 13.5 ms (3.2) | 4.5 (12.2) / 6.4 (10.3) | 5.0 (11.7) / 7.1 (9.6) |
+| bad-apple | 7.9 (8.8) / 11.2 (5.5) | 4.6 (12.1) / 6.5 (10.2) | 3.3 (13.4) / 4.7 (12.0) |
+| busy SMS | 2.4 (14.3) / 3.4 (13.3) | 1.3 (15.4) / 1.8 (14.9) | 1.1 (15.6) / 1.6 (15.1) |
+| Game Gear (stand-in) | 2.1 (14.6) / 2.9 (13.8) | 1.3 (15.4) / 1.8 (14.9) | 0.8 (15.9) / 1.1 (15.6) |
+
+The numbers leave out the picture scaler, the upload and the audio thread (all on other threads or in the drawing thread). x86 and ARM
+instruction counts differ (ARM is usually 1.1 to 1.4 times more); with that factor the single thread xgm-player at IPC 0.7 is over 16.7 ms,
+which is what the worker is for.
+
+Measured on the host twin: the VDP worker is bit-identical to the single thread (hashes of picture, sound, state and RAM, 96 ROMs, x86 and
+armhf under qemu). Worker busy time, host x86_64 wall clock, an SMS homebrew: about 41 microseconds a frame, joins about 23 microseconds a frame.

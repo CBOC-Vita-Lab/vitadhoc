@@ -2,6 +2,7 @@
  *   cc -DVITA -I psp -I frontend-common -I vita tools/test_ws_console.c -o /tmp/t && /tmp/t */
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "ui_psp.h"
 
 int main(void)
@@ -17,7 +18,7 @@ int main(void)
    assert(!ui_rom_matches_console("Game.ws", FE_CONSOLE_GBA));
    assert(!ui_rom_matches_console("Game.wsx", FE_CONSOLE_WSWAN));
    assert(!ui_rom_matches_console("ws", FE_CONSOLE_WSWAN));
-   assert(!ui_menu_chord_is_lrs(FE_CONSOLE_WSWAN));
+   assert(!strcmp(ui_menu_chord_text(FE_CONSOLE_WSWAN), "START + SELECT"));
    puts("ws console matching ok");
    return 0;
 }

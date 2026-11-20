@@ -68,7 +68,7 @@ LaunchRequest launch_parse(const std::string &text)
 		if (v > LAUNCH_VERSION) r.newer_version = true;
 	}
 	static const char *const known[] = { "version", "session_id", "console", "game", "game_name", "save", "root", "shape", "quality",
-		"cpu_mhz", "enter_button", "language", "start", "slot", "patch", "retroarch_save", "patch_key", "wide_supported" };
+		"cpu_mhz", "enter_button", "language", "start", "slot", "patch", "retroarch_save", "patch_key", "wide_supported", "tap_menu" };
 	/* link.* keys are read below into r.link and never kept as unknown */
 	const std::vector<std::pair<std::string, std::string> > &items = ini.items();
 	for (size_t i = 0; i < items.size(); i++) {
@@ -89,6 +89,7 @@ LaunchRequest launch_parse(const std::string &text)
 	r.retroarch_save = ini.get("retroarch_save");
 	r.patch_key = ini.get("patch_key");
 	r.wide_supported = parse_bool(ini.get("wide_supported"), false);
+	r.tap_menu = parse_bool(ini.get("tap_menu"), true);
 	if (ini.has("shape")) {
 		PictureShape s;
 		if (shape_parse(ini.get("shape"), &s)) r.shape = s;
@@ -193,6 +194,7 @@ std::string launch_serialize(const LaunchRequest &r)
 	if (!r.retroarch_save.empty()) i.set("retroarch_save", r.retroarch_save);
 	if (!r.patch_key.empty()) i.set("patch_key", r.patch_key);
 	i.set("wide_supported", r.wide_supported ? "1" : "0");
+	i.set("tap_menu", r.tap_menu ? "1" : "0");
 	if (r.link.active()) {
 		const LinkRequest &k = r.link;
 		i.set("link.role", k.role);

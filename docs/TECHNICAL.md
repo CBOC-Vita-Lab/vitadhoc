@@ -802,7 +802,9 @@ a frame-rate measurement on a Vita.
   `ui_game_name` is the test's event.
 - **SNES hint**: the home page's footer and both loading screens say "hold
   L + R + START for the menu" when the console is SNES (the loading screen said
-  START + SELECT for every console).
+  START + SELECT for every console). 2.0: every console's hint says START +
+  SELECT (`ui_menu_chord_text`), which opens the menu on every console; L + R +
+  Start is an extra on the Super NES and Sega players.
 - **Settings fix**: the Cover picture and Sync RetroArch saves labels were in
   the other order from `SET_COVERPIC` / `SET_SYNCRA`, so each row wore the
   other's name.
@@ -1501,3 +1503,38 @@ tag), so the patch, its overlay and the lock's patch entry are gone and
 patch is refused). 3.6.8 also rejects a TLS 1.3 version in a TLS 1.2 ServerHello's
 legacy version field, which our client profile (TLS 1.2 and 1.3, client only) is
 exposed to.
+
+## Version 2.0: Community QA Fixes (start-up, space, taps, GB kind, FF pitch, covers)
+
+- **Start-up scan.** `rom_scan_boot()` (ui_psp.c) draws the first frame before
+  any folder is opened, then `rom_scan_dir` calls `scan_ui_tick()` per entry,
+  which redraws "Finding games... N found" at most every 33 ms, reads the pad
+  (Circle sets `g_scan_stop`) and stops at a 240 s budget. A stopped scan counts
+  as an I/O error so the partial list is never cached. A single blocking
+  `sceIoDopen` cannot be interrupted; a missing mount fails at once.
+  Log: `boot_times first_frame_ms= input_ms= library_ready_ms= walked= stopped=
+  frames=`. Test: `gpsp/vita/tests/library/library_test.c` (`test_cold_start`,
+  600 entries at 100 ms each: same list CRC as the synchronous scan).
+- **Free space.** `gpsp/vita/diskspace.h` (`ds_device_of`, `ds_free_for` via
+  `sceIoDevctl(0x3001)` then `sceAppMgrGetDevInfo`, 64-bit, `ds_failed_line`).
+  Gate step `disk-space`.
+- **Tap screen for menu.** `config.ini tap_menu` (default 1), the launch file
+  key `tap_menu`; the players read it in `input()`. The chords are in
+  `playerkit/src/pk_input.cpp` (`legacy_chord` now also for SMS, GG, SG).
+  Tests: `input_menu_chords_open_on_every_console`, `launch_tap_menu_key`,
+  `app_tests.py --only tap_menu,touch,controls_defaults,snes_session,sega_session`.
+- **GB kind.** `gpsp/vita/gbkind.h`: header flag 0x143 (0x80 / 0xC0 = Color),
+  override file `gb_override.txt` (`gb|gbc <file name>` per line). Identity
+  (save suffix, state folder) follows the extension (`sidecar_file_console`).
+  Gate step `gb-kind`; `library_test.c` `test_gb_header_lists`.
+- **FF normal pitch.** `playerkit/src/pk_ffnorm.h` (every `factor`th chunk, 128
+  sample crossfade); `ff_audio` 0..2 in the main app (`g_ff.norm`), `ff_sound`
+  0..2 in the launch file. Test: `ff_normal_pitch_is_smooth_and_keeps_the_pitch`.
+- **Cover fallbacks.** `gpsp/vita/artalt.h` (pure) feeds `add_alts()` in
+  artfetch.c once every normal candidate has missed. Tests: `test_artalt.py`
+  (gate step `cover-alt`; set `AF_NOINTRO_DIR` to a folder with `gba.dat`,
+  `gba.tree`, `snes.dat`, `snes.tree` for the real-list rates) and two cases
+  in `test_artfetch.py`.
+- **Players' left stick.** Already a Controls row (Off, D-pad, Buttons) with
+  D-pad as the default, as in the main app, where the left stick is always the
+  d-pad. Test `input_left_stick_is_the_dpad_by_default_on_every_console`.

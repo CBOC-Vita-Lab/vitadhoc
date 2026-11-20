@@ -282,7 +282,7 @@ static const char *help_for(int id)
 	case ROW_CTL_APPLY: return "Keep these controls for every game, or only for this one.";
 	case ROW_CTL_RESET: return "Put every button, stick and turbo setting back to the defaults.";
 	case ROW_SPD_FF: return "How fast the game runs while fast-forward is held.";
-	case ROW_SPD_SOUND: return "Play the game's sound while fast-forwarding, sped up.";
+	case ROW_SPD_SOUND: return "The sound while fast-forwarding: off, sped up with the game, or at its normal pitch.";
 	case ROW_SPD_MODE: return "Hold the fast-forward button, or press it once to switch fast-forward on and off.";
 	case ROW_SPD_REWIND: return "Hold the rewind button to run the game backwards.";
 	}
@@ -458,7 +458,10 @@ void Menu::build_rows()
 	}
 	case PAGE_SPEED:
 		b.choice(ROW_SPD_FF, "Fast-forward", kFF, 2, CAP_FF, vals_[ROW_SPD_FF]);
-		b.choice(ROW_SPD_SOUND, "Keep sound", kOnOff, 2, CAP_FF_SOUND, vals_[ROW_SPD_SOUND]);
+		{
+			static const char *const kFFSound[] = { "Off", "Sped up", "Normal pitch" };
+			b.choice(ROW_SPD_SOUND, "Keep sound", kFFSound, 3, CAP_FF_SOUND, vals_[ROW_SPD_SOUND]);
+		}
 		b.choice(ROW_SPD_MODE, "Fast-forward button", kHold, 2, CAP_FF_MODE, vals_[ROW_SPD_MODE]);
 		b.choice(ROW_SPD_REWIND, "Rewind", kOnOff, 2, CAP_REWIND, vals_[ROW_SPD_REWIND]);
 		break;

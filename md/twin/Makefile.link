@@ -1,0 +1,33 @@
+# link_twin: one player of a two-player Sega link on Linux (the player's own code plus md/vita/netplay.cpp, which is playerkit's
+# pk_link on the project's own UDP transport: nothing of the main app's Game Boy link).
+#   make -C md/twin -f Makefile.link              builds build/x86/link_twin   (ARCH=x86; B=<dir> for another build dir)
+# It shares the build directory (and so the core object) with the main twin Makefile, which is included for its rules and variables.
+# Copyright CBOC-Vita. MIT licence for this file (see md/frontend/LICENSE).
+include Makefile
+GP := ../../gpsp
+empty :=
+space := $(empty) $(empty)
+include ../../snes/vita/netplay.mk
+
+NP_OBJS := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/gp/pk_link_net_shim.o $(B)/pk/pk_link.o $(B)/pk/pk_link_net.o
+$(B)/gp/%.o: $(GP)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -w -std=gnu11 -MMD -MP $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/gp/pk_link_net_shim.o: $(PK)/src/pk_link_net_shim.c
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -w -std=gnu11 -c -o $@ $<
+$(B)/pk/pk_link_net.o: $(PK)/src/pk_link_net.cpp $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)/pk
+	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(PK)/src $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/pl/netplay.o: ../vita/netplay.cpp ../vita/netplay.h $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)/pl
+	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I$(PK)/src $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/pl/link_twin.o: link_twin.cpp ../vita/player.h ../vita/netplay.h
+	@mkdir -p $(B)/pl
+	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../vita -I$(PK)/src $(NETPLAY_INC) -c -o $@ $<
+LT_OBJS := $(addprefix $(B)/pl/,$(addsuffix .o,$(PL_FE))) $(B)/pl/player.o $(B)/pl/pipe.o $(B)/pl/netplay.o $(B)/pl/link_twin.o
+$(B)/link_twin: $(LT_OBJS) $(NP_OBJS) $(PK_OBJS) $(B)/mdcore.o
+	$(CXX) $(CPUF) -o $@ $^ -lm -pthread
+
+.DEFAULT_GOAL := $(B)/link_twin
+-include $(shell find $(B)/gp -name '*.d' 2>/dev/null)

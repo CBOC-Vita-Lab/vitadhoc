@@ -64,7 +64,7 @@ enum RowId {
 
 /* the values (RowId order): ROW_PIC_SHAPE 0..4 = Original, Fit, Zoom, Full screen, Pixel perfect; ROW_PIC_WIDE 0..2 = Auto, On, Off;
  * ROW_PIC_QUALITY 0 Sharp, 1 Smooth; scanlines/grid/glow 0..10 (0 = Off); ROW_*_APPLY 0 All games, 1 This game;
- * ROW_SPD_FF 0 = 2x, 1 = 3x; ROW_SPD_SOUND 0 Off 1 On; ROW_SPD_MODE 0 Hold 1 Toggle; ROW_SPD_REWIND 0 Off 1 On. */
+ * ROW_SPD_FF 0 = 2x, 1 = 3x; ROW_SPD_SOUND 0 Off 1 Sped up 2 Normal pitch; ROW_SPD_MODE 0 Hold 1 Toggle; ROW_SPD_REWIND 0 Off 1 On. */
 
 struct CheatItem {
 	std::string name;

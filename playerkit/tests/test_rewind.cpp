@@ -1,4 +1,7 @@
 /* Unit tests: pk_rewind (the delta codec, the ring, the session) and pk_ff. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
+#include <cmath>
+#include <algorithm>
+#include <cstdlib>
 #include "pk_test.h"
 #include "pk_rewind.h"
 #include "pk_ff.h"
@@ -454,6 +457,65 @@ TEST(ff_hold_and_toggle)
 	ff.configure(2, true, false);
 	ff.update(true, true, true);
 	CHECK(!ff.on());
+}
+
+/* Fast forward at normal pitch: a steady tone keeps its pitch, the output is one frame's worth per refresh, and the joins are smooth.
+ * (A plain splice of every Nth chunk is measured too, so the test could tell if the crossfade were missing.) */
+TEST(ff_normal_pitch_is_smooth_and_keeps_the_pitch)
+{
+	const double rate = 44100.0, hz = 440.0, amp = 10000.0, pi = 3.14159265358979;
+	const double slope = 2 * pi * hz / rate * amp;            /* the steepest step of the tone itself */
+	for (int factor = 2; factor <= 3; factor++) {
+		FastForward ff;
+		ff.configure(factor, FastForward::SOUND_NORMAL, false);
+		ff.update(true, true, false);
+		std::vector<int16_t> out, naive;
+		size_t t = 0, in = 0, per_refresh_ok = 0;
+		for (int refresh = 0; refresh < 200; refresh++) {
+			size_t got = 0, last_len = 0;
+			for (int f = 0; f < factor; f++) {
+				const size_t n = 734 + (size_t) ((refresh + f) % 3);          /* a frame is not a whole number of samples */
+				std::vector<int16_t> buf(n * 2);
+				for (size_t i = 0; i < n; i++, t++) {
+					int16_t v = (int16_t) (amp * sin(2 * pi * hz * (double) t / rate));
+					buf[i * 2] = v; buf[i * 2 + 1] = (int16_t) -v;
+				}
+				in += n; last_len = n;
+				if (f == factor - 1) naive.insert(naive.end(), buf.begin(), buf.end());
+				const size_t k = ff.reduce(buf.data(), n);
+				got += k;
+				out.insert(out.end(), buf.begin(), buf.begin() + (long) (k * 2));
+			}
+			if (got == last_len) per_refresh_ok++;
+		}
+		CHECK_EQ((int) per_refresh_ok, 200);                                       /* one frame's worth every refresh, as at normal speed */
+		CHECK(out.size() / 2 < in / factor + 800 && out.size() / 2 > in / factor - 800);
+		/* no spike: the largest step between neighbouring samples (both channels) stays near the tone's own slope */
+		double worst = 0, worst_naive = 0;
+		for (size_t i = 1; i < out.size() / 2; i++) {
+			worst = std::max(worst, (double) std::abs(out[i * 2] - out[(i - 1) * 2]));
+			worst = std::max(worst, (double) std::abs(out[i * 2 + 1] - out[(i - 1) * 2 + 1]));
+		}
+		for (size_t i = 1; i < naive.size() / 2; i++) worst_naive = std::max(worst_naive, (double) std::abs(naive[i * 2] - naive[(i - 1) * 2]));
+		CHECK(worst_naive > 5 * slope);                                            /* a bare splice does spike (so the check can fail) */
+		CHECK(worst <= 1.5 * slope);                                               /* the fades do not */
+		/* the pitch is the game's: zero crossings per second near 2 * 440, not 2 * 440 * factor */
+		size_t crossings = 0;
+		for (size_t i = 1; i < out.size() / 2; i++) if ((out[i * 2] < 0) != (out[(i - 1) * 2] < 0)) crossings++;
+		const double secs = (double) (out.size() / 2) / rate, per_s = (double) crossings / secs;
+		CHECK(per_s > 2 * hz * 0.85 && per_s < 2 * hz * 1.15);
+	}
+	/* what is dropped is dropped: the first chunks of a group return nothing */
+	FastForward ff;
+	ff.configure(3, FastForward::SOUND_NORMAL, false);
+	ff.update(true, true, false);
+	std::vector<int16_t> a(300 * 2, 5);
+	CHECK_EQ((int) ff.reduce(a.data(), 300), 0);
+	CHECK_EQ((int) ff.reduce(a.data(), 300), 0);
+	CHECK_EQ((int) ff.reduce(a.data(), 300), 300);
+	/* off again: the audio is untouched */
+	ff.update(false, false, false);
+	CHECK_EQ((int) ff.reduce(a.data(), 300), 300);
 }
 
 TEST(ff_sound_is_mixed_down_so_the_pacer_sees_real_time)

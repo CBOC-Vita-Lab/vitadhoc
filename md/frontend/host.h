@@ -65,7 +65,7 @@ void md_host_vdp_debug(int check, int stress);
 unsigned long md_host_vdp_check_errors(void);
 /* census of the worker since it started: records queued, status joins, frame joins, polls spent waiting, queue full waits, wake-ups,
  * VRAM patterns / whole VRAM images sent. Returns 0 when the worker is off. */
-int md_host_vdp_census(unsigned long out[9]);
+int md_host_vdp_census(unsigned long out[11]);   /* [9] worker busy us, [10] join wait us: 0 without now_us */
 
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 
@@ -123,6 +123,7 @@ typedef struct md_video_info {
 	int left_mask;             /* Master System: pixels at the left edge the game masks with the backdrop colour (8 or 0); still in the picture unless sms_border is on */
 	int crop_left, crop_right; /* pixels removed at the left / right by the sms_border option (already out of w) */
 	int gg_window;             /* 1: the 160x144 Game Gear LCD window (native_w x native_h is that window), 0: the full 256x192 (option gg_extra) */
+	int gg_band;               /* 1: the Game Gear wide view's picture: 256x144, the LCD window in its middle (option gg_band; w = 256, native_w = 256) */
 	double dar;                /* display aspect ratio (width / height) of the picture, from the pixel clock; 0 = square pixels */
 	double par;                /* pixel aspect ratio (a pixel's width / height) behind dar */
 	double fps;                /* 59.9227 / 49.7014 (the console's frame rate) */
@@ -137,6 +138,39 @@ int md_host_pixel_format(void);
 /* Draw straight into a buffer the caller owns (a texture, a wide-view canvas): at least MD_MAX_HEIGHT rows of pitch_px
  * pixels (pitch_px >= MD_MAX_WIDTH). NULL goes back to the internal buffer. Effective from the next frame. */
 void md_host_set_framebuffer(uint16_t *buf, int pitch_px);
+
+/* ---- wide view --------------------------------------------------------------------------------------------- */
+
+/* Mega Drive: the VDP worker (or the core's own renderer) can draw a strip of picture beyond each side of the screen, into the frame buffer next
+ * to the picture: `margin` pixels (0..MD_WIDE_MAX, 0 = off) at columns -margin .. -1 and w .. w + margin - 1 of every drawn line. The machine, the
+ * picture inside the screen, the sound and the saved state are identical with the strips on and off (the strip pass saves and restores the
+ * sprite status; tests: md/twin/selftest.sh). The frame buffer must be a canvas: give md_host_set_framebuffer(canvas + MD_WIDE_MAX,
+ * MD_WIDE_PITCH) (rows of MD_WIDE_PITCH pixels, MD_MAX_HEIGHT of them); with the internal buffer the margin stays 0.
+ * Lines the strip cannot be drawn for (window plane on the line, interlace, per 2-cell vertical scroll with different values, display off)
+ * have WL_STRIP clear in md_wide_frame; the strip pixels of such a line are not written (stale). Returns the margin in force. */
+#define MD_WIDE_MAX 96
+#define MD_WIDE_PITCH 512            /* MD_WIDE_MAX + 320 + MD_WIDE_MAX */
+int md_host_set_wide_margin(int margin);
+
+/* What the line renderer saw for each line of the frame just run (the Mega Drive in mode 5 and, for the Master System / Game Gear, in mode 4
+ * with xs[0] / ys[0] = the scroll registers as the line used them, col_mask 31, ntab = the name table base). Same layout as the core's
+ * wide_line_t (md/core/vdp_render.h). */
+enum { MDW_ON = 1, MDW_STRIP = 2, MDW_WINDOW = 4, MDW_VSCROLL = 8, MDW_IM2 = 16, MDW_H40 = 32, MDW_M4 = 64 };
+typedef struct md_wide_line {
+	uint8_t flags, col_mask, shift, pad;
+	uint16_t xs[2], ys[2];
+	uint16_t ntab, ntbb, ntwb, row_mask;
+} md_wide_line;
+typedef struct md_wide_frame {
+	int h;                       /* lines in the picture */
+	int margin;                  /* the strip width in force (Mega Drive) */
+	const md_wide_line *line;    /* h entries, valid until the next md_host_run_frame */
+	const uint8_t *vram;         /* 64 KB (the emulating thread's copy: complete when the frame has finished) */
+	const uint8_t *vsram;        /* 128 bytes */
+	const uint8_t *cram;         /* 128 bytes */
+	int reg[24];                 /* the VDP registers 0..23 */
+} md_wide_frame;
+void md_host_wide_frame(md_wide_frame *f);
 
 /* ---- audio ----------------------------------------------------------------------------------------------- */
 
@@ -240,6 +274,9 @@ uint32_t md_host_rom_crc(void);            /* CRC-32 of the ROM as dumped withou
  *   sms_border 0..2    Master System: 0 = full 256 pixel picture (default), 1 = hide the 8 pixel masked column at the left (the
  *                      game masks it when it scrolls), 2 = hide 8 pixels at both sides
  *   gg_extra 0/1       Game Gear: 1 = the full 256x192 picture instead of the 160x144 window (next load)
+ *   gg_band 0/1        Game Gear wide view: 1 = the picture is the 256 columns of the VDP's rows that the LCD shows (256x144, the LCD window in the
+ *                      middle columns 48..207); the machine runs exactly as without it (unlike gg_extra, which also changes what the core
+ *                      does with sprites outside the window); effective at once
  *   overscan 0..3      bit 0 = top / bottom borders, bit 1 = side borders (next load; default 0)
  *   force_dtack 0/1, addr_error 0/1 (default 1)
  *   lcd 0..100         Game Gear LCD ghosting in percent (default 0)

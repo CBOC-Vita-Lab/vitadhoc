@@ -37,6 +37,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdint.h>
 #include <sys/stat.h>
 #include "state_slots.h"
@@ -100,6 +101,23 @@ static inline uint32_t sidecar_crc32(const char *s, size_t n)
    return c ^ 0xFFFFFFFFu;
 }
 
+/* A Game Boy game's saves and states belong to its FILE, not to the
+ * hardware it runs on: a ".gb" file the header calls a Color game (gbkind.h)
+ * keeps the "gb" folder it always had, so deciding by the header cannot
+ * strand an old save state.  Other consoles, and names with another
+ * extension, are as given. */
+static inline fe_console_t sidecar_file_console(const char *rom_path, fe_console_t console)
+{
+   size_t n = rom_path ? strlen(rom_path) : 0;
+   if (console != FE_CONSOLE_GB && console != FE_CONSOLE_GBC)
+      return console;
+   if (n > 4 && !strcasecmp(rom_path + n - 4, ".gbc"))
+      return FE_CONSOLE_GBC;
+   if (n > 3 && !strcasecmp(rom_path + n - 3, ".gb"))
+      return FE_CONSOLE_GB;
+   return console;
+}
+
 /* The slot-1 state path of `rom_path` booted as `console` (the base every
  * psp_state_path_for_slot / psp_state_resume_path call derives from).
  * `root` is the app folder.  0 = ok, -1 = too long. */
@@ -112,6 +130,7 @@ static inline int sidecar_state1(char *out, size_t out_sz, const char *root,
    int n;
    if (!out || !out_sz || !root || !rom_path)
       return -1;
+   console = sidecar_file_console(rom_path, console);
    slash = strrchr(rom_path, '/');
    if (!slash)
       slash = strrchr(rom_path, ':');
@@ -178,6 +197,7 @@ static inline int sidecar_legacy_state1(char *out, size_t out_sz,
                                         const char *rom_path,
                                         fe_console_t console)
 {
+   console = sidecar_file_console(rom_path, console);
    return psp_rom_path_suffix(out, out_sz, rom_path,
                               psp_state_slot1_suffix(console));
 }

@@ -166,7 +166,7 @@ const PadModel &model_sms()
 			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
-		0, 1, PH_SQUARE, PH_TRIANGLE, false
+		0, 1, PH_SQUARE, PH_TRIANGLE, true
 	};
 	return m;
 }
@@ -185,7 +185,7 @@ const PadModel &model_gg()
 			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
-		0, 1, PH_SQUARE, PH_TRIANGLE, false
+		0, 1, PH_SQUARE, PH_TRIANGLE, true
 	};
 	return m;
 }
@@ -204,7 +204,7 @@ const PadModel &model_sg()
 			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
 			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
 		},
-		0, 1, PH_SQUARE, PH_TRIANGLE, false
+		0, 1, PH_SQUARE, PH_TRIANGLE, true
 	};
 	return m;
 }

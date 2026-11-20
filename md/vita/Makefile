@@ -32,10 +32,16 @@ CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/i
 RA_CC     = $(CC)
 RA_CFLAGS = -MMD -MP $(CPUFLAGS) -O2 -g -w -D__vita__
 include $(PK)/ra.mk
+# the two-player link: playerkit's pk_link (MIT) on the project's own UDP transport and NAT layer from gpsp/ (netplay.mk: the owner's
+# files, MIT OR GPL-2.0-or-later, taken as MIT here). NOTHING of the main app's Game Boy link (netdrv.c, fe_gblink.c, fe_evt.c, fe_util.c).
+GP := ../../gpsp
+empty :=
+space := $(empty) $(empty)
+include ../../snes/vita/netplay.mk
 .DEFAULT_GOAL := all
 
-FE_OBJS := $(B)/fe/picture.o $(B)/fe/audio_pace.o $(B)/fe/cheats.o $(B)/fe/savefile.o $(B)/player.o $(B)/pipe.o $(B)/main.o
-PK_SRC  := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed pk_ra
+FE_OBJS := $(B)/fe/picture.o $(B)/fe/audio_pace.o $(B)/fe/cheats.o $(B)/fe/savefile.o $(B)/player.o $(B)/pipe.o $(B)/netplay.o $(B)/main.o
+PK_SRC  := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed pk_link pk_link_net pk_ra
 PK_OBJS := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o $(B)/pk/pk_ra_plat_vita.o $(RA_OBJS)
 # newlib's FILE-slot allocation has no lock on the console (playerkit/vita/pk_stdio_lock.c puts a real one in place with --wrap)
 STDIO_LOCK ?= 1
@@ -43,6 +49,7 @@ ifeq ($(STDIO_LOCK),1)
 PK_OBJS += $(B)/pk/pk_stdio_lock.o
 STDIO_LOCK_LD := -Wl,--wrap=__sfp -Wl,--wrap=__sfp_lock_acquire -Wl,--wrap=__sfp_lock_release
 endif
+NP_OBJS := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/pk/pk_link_net_shim.o
 V2D_OBJS := $(B)/v2d/vita2d.o $(B)/v2d/vita2d_draw.o $(B)/v2d/vita2d_texture.o $(B)/v2d/utils.o
 SHADERS  := $(wildcard $(V2D)/shader/*_gxp.o)
 
@@ -70,12 +77,22 @@ $(B)/mdcore.o: FORCE
 	$(MAKE) -C $(CORE) TARGET=vita B=$(BA) all
 FORCE:
 
-MD_OBJS := $(B)/mdcore.o $(FE_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
-LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $(B)/md.elf $(MD_OBJS) $(1) $(LIBS)
+MD_OBJS := $(B)/mdcore.o $(FE_OBJS) $(NP_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
+LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q -Wl,-Map=$(B)/md.map $(STDIO_LOCK_LD) -o $(B)/md.elf $(MD_OBJS) $(1) $(LIBS)
 $(B)/md.elf: $(MD_OBJS)
 	$(call LINK_ELF,)
 	$(call CHECK_WEAK,$@)
+	$(call CHECK_LICENCE,$@)
 	@$(MAKE) --no-print-directory check-links LINKED="$^"
+
+# LICENCE CHECK: no file of the main app's Game Boy link (GBAdhoc, GPL-2.0) in the object list, the linker's map or the symbol table.
+FORBID_RE := $(subst .,\.,$(subst $(space),|,$(strip $(NETPLAY_FORBIDDEN))))
+FORBID_SYM := ^(netdrv_|fe_gblink_|fe_evt|fe_crc32|fe_util_|fe_padpair_|gbdual_|gbcore_|gblink_)
+CHECK_LICENCE = @bad="$$( { for o in $(MD_OBJS); do basename $$o; done | grep -E '^($(FORBID_RE))$$'; \
+	grep -E '[/( ]($(FORBID_RE))' $(B)/md.map; \
+	$(NM) $(1) | awk '$$2 ~ /^[TtDdBbRrWw]$$/ { print $$3 }' | grep -E '$(FORBID_SYM)'; } )"; \
+	if [ -n "$$bad" ]; then echo "LICENCE: md.bin links a file of the main app's Game Boy link (GBAdhoc, GPL-2.0): $$bad"; rm -f $(1); exit 1; fi; \
+	echo "check-licence: none of $(NETPLAY_FORBIDDEN) in the object list, the link map or the symbol table (the link is pk_link + transport_lan + nat_*)"
 
 # ROOM FOR THE SCE DATA (see snes/vita/Makefile, gpsp/vita/Makefile): when vita-elf-create reports
 # "segment 1 overlaps" (the text ends within ~3.3 KB below a 64 KiB boundary: any change can cause it)
@@ -98,12 +115,12 @@ $(B)/md.bin: $(B)/md.velf
 # non-commercial core) and no GPL file of playerkit's tests. Run on the object list of the link (the build path is under md/vita/build).
 LINKED ?= $(B)/mdcore.o $(FE_OBJS) $(PK_OBJS) $(V2D_OBJS)
 check-links:
-	@bad=""; for f in $(LINKED); do case "$$f" in *third_party/vita2d/*) ;; */build/ra/*|build/ra/*) n=$$(basename $$f .o); ok=0; for r in $(RA_NAMES:.c=); do [ "$$r" = "$$n" ] && ok=1; done; [ $$ok = 1 ] || bad="$$bad $$f";; *gpsp*|*xbrz*|*xBRZ*|*../snes/*|*../nes/*) bad="$$bad $$f";; esac; done; \
+	@bad=""; for f in $(LINKED); do case "$$f" in *third_party/vita2d/*) ;; */build/ra/*|build/ra/*) n=$$(basename $$f .o); ok=0; for r in $(RA_NAMES:.c=); do [ "$$r" = "$$n" ] && ok=1; done; [ $$ok = 1 ] || bad="$$bad $$f";; */build/gp/netdrv/transport_lan.o|*/build/gp/netdrv/nat_hash.o|*/build/gp/netdrv/nat_stun.o|*/build/gp/netdrv/nat_turn.o|build/gp/netdrv/*) ;; *gpsp*|*xbrz*|*xBRZ*|*../snes/*|*../nes/*) bad="$$bad $$f";; esac; done; \
 	if [ -n "$$bad" ]; then echo "md.bin links code it must not:$$bad"; exit 1; fi; \
 	for f in $(RA_MIT_FILES); do grep -q 'MIT' $$f || { echo "RetroAchievements file without an MIT licence: $$f"; exit 1; }; done; \
 	if grep -l 'GPL-2.0-only\|GNU General Public' $(RA_SRCS) $(PK)/src/pk_ra.cpp $(PK)/src/pk_ra.h >/dev/null 2>&1; then echo "a GPL-only file is in the RetroAchievements list"; exit 1; fi; \
 	for f in $(PK_SRC); do [ -f $(PK)/src/$$f.cpp ] || { echo "missing $$f.cpp"; exit 1; }; done; \
-	echo "check-links: $(words $(LINKED)) objects, none from gpsp/ or xBRZ; sources are md/, playerkit/, the vendored libvita2d and, for RetroAchievements, $(words $(RA_SRCS)) MIT files (ra_http.c is dual MIT OR GPL-2.0-or-later, taken as MIT; the rcheevos client is MIT)"
+	echo "check-links: $(words $(LINKED)) objects, none from gpsp/ or xBRZ except the transport and NAT layer of the link (transport_lan, nat_*); sources are md/, playerkit/, the vendored libvita2d and, for RetroAchievements, $(words $(RA_SRCS)) MIT files (ra_http.c is dual MIT OR GPL-2.0-or-later, taken as MIT; the rcheevos client is MIT)"
 
 $(B)/fe/%.o: $(FE)/%.cpp $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/fe
@@ -115,6 +132,18 @@ $(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
 $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pk
 	$(CXX) $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti -D__vita__ -I$(PK)/src -I$(PK)/vita $(PK_EXTRA_INC) -c -o $@ $<
+$(B)/gp/%.o: $(GP)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -DVITA -c -o $@ $<
+$(B)/pk/pk_link_net_shim.o: $(PK)/src/pk_link_net_shim.c
+	@mkdir -p $(B)/pk
+	$(CC) $(CFLAGS) -c -o $@ $<
+$(B)/pk/pk_link_net.o: $(PK)/src/pk_link_net.cpp $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)/pk
+	$(CXX) $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti -D__vita__ -I$(PK)/src -I$(PK)/vita $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+$(B)/netplay.o: netplay.cpp netplay.h $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
 $(B)/pk/pk_ra_plat_vita.o: $(PK)/vita/pk_ra_plat_vita.c $(PK)/src/pk_ra_plat.h
 	@mkdir -p $(B)/pk
 	$(CC) $(CFLAGS) -I$(PK)/src -c -o $@ $<

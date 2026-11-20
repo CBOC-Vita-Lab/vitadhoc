@@ -23,6 +23,7 @@ static LaunchRequest sample()
 	r.retroarch_save = "ux0:data/retroarch/saves/Super Example World (USA).srm";
 	r.patch_key = "hack-v2";
 	r.wide_supported = true;
+	r.tap_menu = false;
 	r.overrides["scanlines"] = "4";
 	r.overrides["glow"] = "6";
 	r.unknown["future_key"] = "yes";
@@ -49,6 +50,7 @@ TEST(launch_round_trip)
 	CHECK_STR(b.retroarch_save, a.retroarch_save);
 	CHECK_STR(b.patch_key, "hack-v2");
 	CHECK(b.wide_supported);
+	CHECK(!b.tap_menu);
 	CHECK_EQ(b.override_int("scanlines", 0), 4);
 	CHECK_EQ(b.override_int("glow", 0), 6);
 	CHECK_EQ(b.override_int("nothing", -3), -3);
@@ -65,6 +67,7 @@ TEST(launch_tolerant_of_missing_and_bad_values)
 	CHECK(r.slot >= 0 && r.slot <= 10);
 	CHECK(!r.warnings.empty());
 	CHECK(r.enter_is_cross);                      /* default */
+	CHECK(r.tap_menu);                            /* a tap opens the menu unless the app says not */
 	CHECK_STR(r.root, "ux0:data/GBAdhoc");
 	LaunchRequest e = launch_parse("");
 	CHECK(e.console.empty());
@@ -170,4 +173,16 @@ TEST(session_tracker_counts_only_running_time)
 	CHECK_STR(s.notice, "State saved to slot 3");
 	t.note_save_error("full");
 	CHECK(t.current().save_error);
+}
+
+TEST(launch_tap_menu_key)
+{
+	CHECK(launch_parse("version=1\nconsole=snes\ngame=a.sfc\n").tap_menu);
+	CHECK(launch_parse("version=1\ntap_menu=1\n").tap_menu);
+	CHECK(!launch_parse("version=1\ntap_menu=0\n").tap_menu);
+	CHECK(!launch_parse("version=1\ntap_menu=off\n").tap_menu);
+	CHECK(launch_parse("version=1\ntap_menu=banana\n").tap_menu);     /* unreadable: the default, On */
+	LaunchRequest r = launch_parse("version=1\ntap_menu=0\nconsole=md\n");
+	CHECK(r.unknown.count("tap_menu") == 0);                               /* a known key, not an unknown one */
+	CHECK(!launch_parse(launch_serialize(r)).tap_menu);
 }

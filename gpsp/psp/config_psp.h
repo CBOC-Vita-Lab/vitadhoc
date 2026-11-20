@@ -189,6 +189,11 @@ typedef struct
     * stick_rewind): 1 = the right stick held left rewinds; 0 = it does not
     * (the default; the Rewind button still does). */
    int  stick_rewind;
+   /* Settings > Controls > Tap screen for menu (CONFIG.INI tap_menu): 1 =
+    * a short tap on the game opens the menu (the default); 0 = only the
+    * buttons do (Start + Select, L + R + Start), so a ghost tap cannot.
+    * Passed to the Super NES and Sega players in the launch file. */
+   int  tap_menu;
    /* Settings > Display > WonderSwan smoothing (CONFIG.INI ws_blend): 1 =
     * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
     * scrolling, the default); 0 = the newest frame only. */

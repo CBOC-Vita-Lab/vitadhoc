@@ -501,6 +501,20 @@ static struct clip_t
   uint8 enable;
 } clip[2];
 
+/* VitAdhoc wide view: the strip pass (see vdp_render.h). While wide_pass is set the plane and sprite renderers draw wide_cols columns with the
+ * picture shifted by wide_dx pixels; outside the pass every macro below is the original expression. */
+int wide_m;
+wide_line_t wide_rec[256];
+static int wide_pass, wide_cols, wide_px, wide_dx;
+#define WIDE_COLS(orig)   (wide_pass ? wide_cols : (orig))
+#define WIDE_VW           (wide_pass ? wide_px : bitmap.viewport.w)
+#define WIDE_SPR_DX       (wide_pass ? wide_dx : 0)
+#ifdef LSB_FIRST
+static inline uint32 wide_xs(uint32 x) { return wide_pass ? ((((x & 0xFFFF) + (uint32) wide_dx) & 0xFFFF) | (((x >> 16) + (uint32) wide_dx) << 16)) : x; }
+#else
+static inline uint32 wide_xs(uint32 x) { return wide_pass ? (((((x >> 16) + (uint32) wide_dx) & 0xFFFF) << 16) | ((x + (uint32) wide_dx) & 0xFFFF)) : x; }
+#endif
+
 /* Pattern attribute (priority + palette bits) expansion table */
 static const uint32 atex_table[] =
 {
@@ -2519,14 +2533,14 @@ void render_bg_m5(int line)
   uint8 *lb;
 
   /* Scroll Planes common data */
-  uint32 xscroll      = *(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)];
+  uint32 xscroll      = wide_xs(*(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)]);
   uint32 yscroll      = *(uint32 *)&vsram[0];
   uint32 pf_col_mask  = playfield_col_mask;
   uint32 pf_row_mask  = playfield_row_mask;
   uint32 pf_shift     = playfield_shift;
 
   /* Number of columns to draw */
-  int width = bitmap.viewport.w >> 4;
+  int width = WIDE_COLS(bitmap.viewport.w >> 4);
 
   /* Layer priority table */
   uint8 *table = lut[(reg[12] & 8) >> 2];
@@ -2556,7 +2570,7 @@ void render_bg_m5(int line)
   {
     /* Plane A width */
     start = clip[0].left;
-    end   = clip[0].right;
+    end   = WIDE_COLS(clip[0].right);
 
     /* Plane A scroll */
 #ifdef LSB_FIRST
@@ -2676,7 +2690,7 @@ void render_bg_m5_vs(int line)
   uint8 *lb;
 
   /* Scroll Planes common data */
-  uint32 xscroll      = *(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)];
+  uint32 xscroll      = wide_xs(*(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)]);
   uint32 yscroll      = 0;
   uint32 pf_col_mask  = playfield_col_mask;
   uint32 pf_row_mask  = playfield_row_mask;
@@ -2684,7 +2698,7 @@ void render_bg_m5_vs(int line)
   uint32 *vs          = (uint32 *)&vsram[0];
 
   /* Number of columns to draw */
-  int width = bitmap.viewport.w >> 4;
+  int width = WIDE_COLS(bitmap.viewport.w >> 4);
 
   /* Layer priority table */
   uint8 *table = lut[(reg[12] & 8) >> 2];
@@ -2723,7 +2737,7 @@ void render_bg_m5_vs(int line)
   {
     /* Plane A width */
     start = clip[0].left;
-    end   = clip[0].right;
+    end   = WIDE_COLS(clip[0].right);
 
     /* Plane A horizontal scroll */
 #ifdef LSB_FIRST
@@ -2874,7 +2888,7 @@ void render_bg_m5_vs_enhanced(int line)
   int v_offset = 0;
 
   /* Scroll Planes common data */
-  uint32 xscroll      = *(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)];
+  uint32 xscroll      = wide_xs(*(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)]);
   uint32 yscroll      = 0;
   uint32 pf_col_mask  = playfield_col_mask;
   uint32 pf_row_mask  = playfield_row_mask;
@@ -2882,7 +2896,7 @@ void render_bg_m5_vs_enhanced(int line)
   uint32 *vs          = (uint32 *)&vsram[0];
 
   /* Number of columns to draw */
-  int width = bitmap.viewport.w >> 4;
+  int width = WIDE_COLS(bitmap.viewport.w >> 4);
 
   /* Layer priority table */
   uint8 *table = lut[(reg[12] & 8) >> 2];
@@ -2921,7 +2935,7 @@ void render_bg_m5_vs_enhanced(int line)
   {
     /* Plane A width */
     start = clip[0].left;
-    end   = clip[0].right;
+    end   = WIDE_COLS(clip[0].right);
 
     /* Plane A horizontal scroll */
 #ifdef LSB_FIRST
@@ -3850,7 +3864,7 @@ void render_obj_m5(int line)
     }
 
     /* Display area offset */
-    xpos = xpos - 0x80;
+    xpos = xpos - 0x80 + WIDE_SPR_DX;
 
     /* Sprite size */
     temp = object_info->size;
@@ -3862,7 +3876,7 @@ void render_obj_m5(int line)
     pixelcount += width;
 
     /* Is sprite across visible area ? */
-    if (((xpos + width) > 0) && (xpos < bitmap.viewport.w) && !masked)
+    if (((xpos + width) > 0) && (xpos < WIDE_VW) && !masked)
     {
       /* Sprite attributes */
       attr = object_info->attr;
@@ -3963,7 +3977,7 @@ void render_obj_m5_ste(int line)
     }
 
     /* Display area offset */
-    xpos = xpos - 0x80;
+    xpos = xpos - 0x80 + WIDE_SPR_DX;
 
     /* Sprite size */
     temp = object_info->size;
@@ -3975,7 +3989,7 @@ void render_obj_m5_ste(int line)
     pixelcount += width;
 
     /* Is sprite across visible area ? */
-    if (((xpos + width) > 0) && (xpos < bitmap.viewport.w) && !masked)
+    if (((xpos + width) > 0) && (xpos < WIDE_VW) && !masked)
     {
       /* Sprite attributes */
       attr = object_info->attr;
@@ -4861,8 +4875,88 @@ void render_reset(void)
 /* Line rendering functions                                                 */
 /*--------------------------------------------------------------------------*/
 
+/* VitAdhoc wide view: what the host needs to know about this line, and (when the line allows it) the strip of picture beside it. Called
+ * after the line was drawn and remapped; draws nothing the screen shows. */
+static void wide_line(int line, int spr_in)
+{
+  wide_line_t *r;
+  uint16 *vs16 = (uint16 *)vsram;
+  int h40 = (reg[12] & 1), a, w, full, side, i, ok = 1;
+  const int W = bitmap.viewport.w;
+
+  if (line < 0 || line > 255) return;
+  r = &wide_rec[line];
+  memset(r, 0, sizeof *r);
+  if (system_hw >= SYSTEM_MARKIII && system_hw < SYSTEM_MD)
+  {
+    /* Master System / Game Gear mode 4 (the Game Gear wide view and the learned picture need what the line scrolled by); no strip pass here */
+    if ((reg[1] & 0x40) && (reg[0] & 0x04))
+    {
+      r->flags = WL_ON | WL_M4;
+      r->xs[0] = (uint16) (((reg[0] & 0x40) && (line < 0x10)) ? 0 : reg[0x08]);
+      r->ys[0] = (uint16) vscroll;
+      r->ntab = (uint16) (~0x3C00 ^ (reg[2] << 10));          /* the core's name table mask */
+      r->col_mask = 31;
+      if (reg[0] & 0x80) r->flags |= WL_VSCROLL;               /* the right eight columns do not scroll vertically */
+    }
+    return;
+  }
+  if (!(reg[1] & 0x40) || !(reg[1] & 0x04) || (system_hw & SYSTEM_PBC) != SYSTEM_MD) return;     /* blank, or not mode 5 */
+  r->flags = WL_ON | (h40 ? WL_H40 : 0);
+  r->col_mask = (uint8) playfield_col_mask; r->shift = (uint8) playfield_shift; r->row_mask = (uint16) playfield_row_mask;
+  r->ntab = (uint16) ntab; r->ntbb = (uint16) ntbb; r->ntwb = (uint16) ntwb;
+  {
+    uint32 xs = *(uint32 *)&vram[hscb + ((line & hscroll_mask) << 2)];
+#ifdef LSB_FIRST
+    r->xs[0] = (uint16) xs; r->xs[1] = (uint16) (xs >> 16);
+#else
+    r->xs[0] = (uint16) (xs >> 16); r->xs[1] = (uint16) xs;
+#endif
+  }
+  /* the vertical scroll of the first columns; per 2-cell scrolling is judged by the whole table */
+  r->ys[0] = (uint16) (vs16[0] & 0x7FF); r->ys[1] = (uint16) (vs16[1] & 0x7FF);
+  if (reg[12] & 0x02) { r->flags |= WL_IM2; ok = 0; }          /* interlaced (mode 1 draws one field, mode 2 two): no strip */
+  if (reg[11] & 0x04)
+  {
+    /* per 2-cell vertical scroll: the strip is exact only while every column scrolls alike (same value for both planes: the left-most
+     * column of the H40 renderer reads the two planes' values ANDed) */
+    const int n = (h40 ? 40 : 32);
+    for (i = 0; i < n; i++) if ((vs16[i] & 0x7FF) != (vs16[0] & 0x7FF)) { r->flags |= WL_VSCROLL; ok = 0; break; }
+  }
+  /* the window plane: a window covering part of the line is not continued sideways */
+  a = (reg[18] & 0x1F) << 3;
+  w = (reg[18] >> 7) & 1;
+  full = (w == (line >= a));
+  if (full || clip[1].enable || !clip[0].enable) { r->flags |= WL_WINDOW; ok = 0; }
+  if (!ok || wide_m <= 0 || !bitmap.data || bitmap.viewport.x != 0 || bitmap.viewport.y != 0 || interlaced || !render_bg || !render_obj) return;
+
+  {
+    PIXEL_OUT_T *row = (PIXEL_OUT_T *)&bitmap.data[line * bitmap.pitch];
+    const uint16 st = status, sc = spr_col;
+    const uint8 so = spr_ovr;
+    const int cols = (wide_m + 15) >> 4;
+    for (side = 0; side < 2; side++)
+    {
+      uint8 *src;
+      wide_cols = cols; wide_px = cols << 4;
+      wide_dx = side == 0 ? wide_px : -W;
+      wide_pass = 1;
+      spr_ovr = (uint8) spr_in;
+      render_bg(line);
+      render_obj(line & 1);
+      wide_pass = 0;
+      src = &linebuf[0][0x20];
+      if (side == 0) { PIXEL_OUT_T *d = row - wide_m; const uint8 *p = src + wide_px - wide_m; for (i = 0; i < wide_m; i++) d[i] = pixel[p[i]]; }
+      else { PIXEL_OUT_T *d = row + W; for (i = 0; i < wide_m; i++) d[i] = pixel[src[i]]; }
+    }
+    status = st; spr_col = sc; spr_ovr = so;
+  }
+  r->flags |= WL_STRIP;
+}
+
 void render_line(int line)
 {
+  const int wide_spr_in = spr_ovr;
   /* Check display status */
   if (reg[1] & 0x40)
   {
@@ -4920,6 +5014,9 @@ void render_line(int line)
 
   /* Pixel color remapping */
   remap_line(line);
+
+  /* VitAdhoc wide view */
+  if (wide_m != 0) wide_line(line, wide_spr_in);
 }
 
 void blank_line(int line, int offset, int width)

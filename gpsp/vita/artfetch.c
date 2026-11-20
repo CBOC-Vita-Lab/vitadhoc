@@ -17,6 +17,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#include "artalt.h"
 #include "gamedb.h"
 #include "plat.h"
 #include "stb_image.h"
@@ -1089,9 +1090,10 @@ static const char *const SYS[12] = {
 
 typedef struct
 {
-   char stem[AF_NAME_CAP], cand[5][AF_NAME_CAP];
+   char stem[AF_NAME_CAP], cand[5 + AF_ALT_MAX][AF_NAME_CAP];
    int ncand, sys[2], nsys, ready, crc_allowed, crc_tried, crc_unavailable;
    int no_crc;                  /* UNIF: the checksum names nothing */
+   int alts_done;               /* the fallback names (artalt.h) are in cand[] */
 } af_candidates;
 
 /* The cartridge's checksum as the console's catalogue has it: SNES without
@@ -1103,6 +1105,34 @@ static int cart_crc(const af_candidates *a, const char *path, uint32_t *crc)
         : a->sys[0] == 8 ? gamedb_md_crc_cancel(path, crc, stop_now)
         : a->sys[0] >= 9 ? gamedb_sms_crc_cancel(path, crc, stop_now)
         : gamedb_file_crc_cancel(path, crc, stop_now);
+}
+
+/* Every name asked for has missed: the same game under the name of another
+ * release of it (artalt.h).  Appended once; returns how many. */
+static int add_alts(af_candidates *a)
+{
+   const char *have[5 + AF_ALT_MAX];
+   int b, i, added = 0;
+   if (a->alts_done)
+      return 0;
+   a->alts_done = 1;
+   for (i = 0; i < a->ncand; i++)
+      have[i] = a->cand[i];
+   for (b = 0; b < a->ncand && added < AF_ALT_MAX; b++)
+   {
+      af_alts alts;
+      alt_names(a->cand[b], have, a->ncand, &alts);
+      for (i = 0; i < alts.n && added < AF_ALT_MAX && a->ncand < 5 + AF_ALT_MAX; i++)
+      {
+         memmove(a->cand[a->ncand], alts.name[i], strlen(alts.name[i]) + 1);
+         have[a->ncand] = a->cand[a->ncand];
+         a->ncand++;
+         added++;
+      }
+   }
+   if (added)
+      { char n[16]; snprintf(n, sizeof(n), "%d", added); say("art_alt name=\"%s\" tries=%s", a->stem, n); }
+   return added;
 }
 
 static void candidates_init(af_candidates *a, const char *path, const char *name)
@@ -1228,7 +1258,14 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
          if (a->crc_unavailable)
             return 2;
          if (!a->crc_allowed || a->crc_tried)
+         {
+            if (add_alts(a))
+            {
+               c--;
+               continue;
+            }
             break;
+         }
          a->crc_tried = 1;
          if (stop_now())
          {
@@ -1252,7 +1289,14 @@ static int fetch_one(int kind, const char *path, const char *name, af_candidates
          }
          if (!gamedb_name_by_crc(crc, a->cand[a->ncand], AF_NAME_CAP) ||
              !strcmp(a->cand[a->ncand], a->stem))
+         {
+            if (add_alts(a))
+            {
+               c--;
+               continue;
+            }
             break;
+         }
          a->ncand++;
       }
       if (c && !strcmp(a->cand[c], a->cand[c - 1]))

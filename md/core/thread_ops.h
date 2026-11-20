@@ -24,6 +24,8 @@ typedef struct md_thread_ops {
 	void (*wait_end)(void *user, int id);
 	/* gives up the rest of the time slice (a short wait for the other side) */
 	void (*yield)(void *user);
+	/* optional (NULL = no timing in the census): microseconds from any steady clock */
+	unsigned long long (*now_us)(void *user);
 } md_thread_ops;
 
 #ifdef __cplusplus

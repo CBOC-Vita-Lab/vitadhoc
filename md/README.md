@@ -42,7 +42,23 @@ Genesis Plus GX's own PS Vita build (`psp2/Makefile`, read, not vendored) uses `
 - Sega CD, 32X and Pico are not supported. The Sega CD code is compiled out of the load path behind `MD_SEGACD` (OFF).
 - Largest ROM: 10 MB (the plan said 32 MB; only Sega CD images needed that).
 
+## Threads (performance)
+
+- VDP worker (`core/vdp_thread.c`, `threads.ini` `vdp_thread=0|1|2`: off, Mega Drive only (default), all systems): the line renderer runs on
+  its own thread behind a write log. The emulating thread joins before a VDP status read, at the end of every frame, and at reset, state
+  save / load, unload and option changes. Output is bit-identical with the worker on and off: picture, sound, state and RAM hashes on all
+  96 test ROMs (30 SGDK samples + 66 8 bit ROMs), x86 and armhf under qemu, also with a join after every drawn line (`md_twin
+  --vdp-stress`), with a per frame comparison of the raw VDP memory (`--vdp-check`), and the state round trip with the worker on.
+  ThreadSanitizer (x86, 16 ROMs, check mode + state round trip): no report. Census: `core_split vdp_us= status_joins= join_wait_us=`
+  once a second in the player log.
+- Games that read the VDP status register on every line make the emulating thread wait for the worker on every line (a Mega Drive
+  hello-world sample does this about 200 times a frame); that is correct but gives no overlap. Not measured on a Vita.
+- The FM synthesis worker is not built (see "Not done / open").
+- Fourth core and priorities: `R_RENDER` is placed on core 1 next to the drawing thread (`playerkit/src/pk_cores.cpp`, `CP_MD`).
+
 ## Not done / open
+
+- The FM (YM2612 + PSG + resample) worker is not written; FM stays on the emulating thread.
 
 - Nothing has run on a real Vita: speeds are host numbers and a model (see the baseline). A locked 60 on a busy Mega Drive game
   is expected to be tight on one thread and is not proven.

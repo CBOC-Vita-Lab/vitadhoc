@@ -394,7 +394,7 @@ void SnesPlayer::settings_load()
 	pal_fast_ = pl.get_int("pal_speed", 0) != 0;
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
 	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
-	ff_sound_ = pl.get_int("ff_sound", 1) != 0;
+	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
 	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
 	rewind_on_ = pl.get_int("rewind", 1) != 0;
 	rewind_len_ = pl.get_int("rewind_seconds", 60) <= 30 ? 0 : 1;
@@ -655,6 +655,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = 4;
+	cfg.play_together_reason = "Start it from the game list: Settings > Two players";
 	cfg.accent = 0x7B6CFF;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, &model_snes(), &profile_);
@@ -750,7 +751,7 @@ bool SnesPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t 
 	for (int i = 0; i < MAX_PLAYERS; i++) last_pads_[i] = pads[i];
 	mapper_.update(pads, now_ms, frame, &in_);
 	speed_.input(in_.fired);
-	if (in_.menu || tapped) return true;
+	if (in_.menu || (tapped && req_.tap_menu)) return true;   /* the chords always open it; a tap only when the app's "Tap screen for menu" is on */
 	if (linked()) {
 		/* the session sets both pads of its one machine; this console's player is pad 1 only, no quick save or load */
 		link_pad_ = in_.pad[0] & 0xFFFu;
@@ -780,7 +781,7 @@ SpeedSettings SnesPlayer::speed_settings() const
 	s.rewind_seconds = rewind_len_ ? 60 : 30;
 	s.rewind_budget = (size_t) rewind_mb_ << 20;
 	s.ff_factor = ff_speed_ ? 3 : 2;
-	s.ff_sound = ff_sound_ != 0;
+	s.ff_sound = ff_sound_;
 	s.ff_toggle = ff_toggle_ != 0;
 	return s;
 }
@@ -1127,7 +1128,7 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PALSPEED: pal_fast_ = v != 0; break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
 	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
-	case ROW_SPD_SOUND: ff_sound_ = v != 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;
 	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	case ROW_SPD_REWIND: rewind_on_ = v != 0; speed_.apply(speed_settings()); logf("%s\n", speed_.stats_line().c_str()); break;
 	case ROW_REWIND_LEN: rewind_len_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;

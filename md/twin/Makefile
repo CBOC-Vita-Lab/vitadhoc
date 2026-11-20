@@ -23,8 +23,11 @@ override CXX := $(call ccw,$(CXX))
 all: $(B)/md_twin $(B)/player_twin $(B)/scale_proof $(B)/sidebyside
 $(B)/mdcore.o: FORCE
 	$(MAKE) -C ../core TARGET=$(TARGET) B=$(BA) PROFILE=$(PROFILE) all
-$(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h
-	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -o $@ main.cpp $(B)/mdcore.o -lm -pthread
+# the wide view (--wide): the adapter ../frontend/wide.cpp over widekit (MIT) and its PNG writer
+WK       := ../../widekit
+WK_FILES := $(WK)/src/wk_layers.cpp $(WK)/src/wk_map.cpp $(WK)/src/wk_compose.cpp $(WK)/src/wk_profile.cpp $(WK)/src/wk_util.cpp
+$(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES) $(wildcard $(WK)/include/*.h)
+	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -I$(WK)/include -I$(WK)/src -I$(WK)/tests -o $@ main.cpp $(FE)/wide.cpp $(WK_FILES) $(WK)/tests/png.cpp $(B)/mdcore.o -lm -pthread
 
 $(B)/scale_proof: scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm

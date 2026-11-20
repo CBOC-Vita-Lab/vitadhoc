@@ -686,6 +686,10 @@ def t_ff(S):
         ("3x_sound", {"ff_audio": 1}, hold, 3.0, 3.0, 1.0, 1.0),
         ("2x_sound", {"ff_mult_x10": 20, "ff_audio": 1}, hold,
          2.0, 2.0, 1.0, 1.0),
+        # normal pitch (ff_audio = 2): one emulated frame's sound in `mult`
+        ("3x_normal", {"ff_audio": 2}, hold, 3.0, 3.0, 1.0, 1.0),
+        ("2x_normal", {"ff_mult_x10": 20, "ff_audio": 2}, hold,
+         2.0, 2.0, 1.0, 1.0),
         # the twin gives a frame 3 ms: unlimited is 16.67 / 3 = 5.56 x
         ("unlimited", {"ff_mult_x10": 0, "ff_smooth": 0}, hold,
          5.3, 5.8, 0.45, 0.56),
@@ -720,7 +724,7 @@ def t_ff(S):
                 "%s: outside fast forward one frame per refresh (%d frames "
                 "in %d refreshes)" % (name, total - fr, outside))
         heard = int(st[0].get("heard", -1))
-        if "sound" in name:
+        if "sound" in name or "normal" in name:
             # one refresh of sound per refresh: 32768 or 48000 Hz / 59.7
             S.check(500 * vc <= heard <= 850 * vc,
                     "%s: %d sound frames in %d refreshes = %.0f per refresh"
@@ -2165,6 +2169,7 @@ def t_touch(S):
     S.picture(r, "cheats.png")
 
     for name, kw in (("touch_off", {"config": {"touch": 0}}),
+                     ("tap_menu_off", {"config": {"tap_menu": 0}}),
                      ("touch_menu_off", {"vita_ini": {"touch_menu": 0}})):
         r = S.run(name, "100:touch=480/272\n+40:shot=game.png\n+10:quit\n",
                   autoboot="gbadhoc-test.gba", **kw)
@@ -6294,24 +6299,27 @@ def t_controls_defaults(S):
     # -- the three rows, at the end of Settings (UP from the top wraps to
     # Button mapping, then Screenshot button combo, Rewind with right stick,
     # A and B buttons)
-    walk = ("60:start\n" + "+8:up\n" * 9 + "+10:shot=ab.png\n+4:right\n"
+    walk = ("60:start\n" + "+8:up\n" * 10 + "+10:shot=ab.png\n+4:right\n"
             "+10:shot=ab2.png\n+8:down\n+4:right\n+10:shot=stick.png\n"
-            "+8:down\n+4:right\n+10:shot=combo.png\n+20:quit\n")
+            "+8:down\n+4:right\n+10:shot=combo.png\n"
+            "+8:down\n+4:right\n+10:shot=tap.png\n+20:quit\n")
     r = S.run("controls_rows", walk, config=fresh)
     S.clean(r)
     S.check(r.has(r"^EVT ab_buttons_setting value=1") and
             r.has(r"^EVT stick_rewind_setting on=1") and
-            r.has(r"^EVT screenshot_combo_setting on=1"),
-            "each row changes its setting")
+            r.has(r"^EVT screenshot_combo_setting on=1") and
+            r.has(r"^EVT tap_menu_setting on=0"),
+            "each row changes its setting (Tap screen for menu: On, then Off)")
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(re.search(r"^ab_buttons = 1$", ini, re.M) and
             re.search(r"^stick_rewind = 1$", ini, re.M) and
-            re.search(r"^bind_screenshot = SELECT\+L\+R$", ini, re.M),
-            "and config.ini keeps all three")
-    for n in ("ab.png", "ab2.png", "stick.png", "combo.png"):
+            re.search(r"^bind_screenshot = SELECT\+L\+R$", ini, re.M) and
+            re.search(r"^tap_menu = 0$", ini, re.M),
+            "and config.ini keeps all four")
+    for n in ("ab.png", "ab2.png", "stick.png", "combo.png", "tap.png"):
         S.picture(r, n)
     # ...and the screenshot row switches it off again
-    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 7 +
+    r = S.run("controls_rows", "60:start\n" + "+8:up\n" * 8 +
               "+4:right\n+10:shot=off.png\n+20:quit\n", prepared=True)
     S.clean(r)
     S.check(r.has(r"^EVT screenshot_combo_setting on=0") and
@@ -6395,6 +6403,68 @@ def t_snes_two(S):
     S.check(not r.evt("snes_two_go"), "no code, nothing started")
     S.picture(r, "pad.png")
     S.picture(r, "back.png")
+
+
+def sega_two_script(steps, downs=SNES_TWO_DOWNS):
+    """The Sega tab (the config opens on it), Settings (START), `downs` rows down to Two players, X to open it, then `steps`."""
+    return ("90:start\n+30:shot=settings.png\n" + "+6:down\n" * downs + "+20:shot=row.png\n+6:cross\n+30:shot=page.png\n" + steps)
+
+
+def t_sega_two(S):
+    """Settings > Two players for a Mega Drive / Master System / SG-1000 game (md.bin's link, UI_SEGA_TWO_PLAYERS): the row is
+    there for those consoles and not for a Game Gear game (one controller); the page opens with the game's id; Host > Same
+    Wi-Fi and Host > Online reach the link layer with the Sega console of the file (the room's console is "md" / "sms"); the
+    twin cannot start md.bin (plat_exec_program says no), what it shows is the page, the link layer's call and the
+    unchanged single-player start."""
+    cwd = os.path.join(S.outdir, "sega_two_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    md, sms = sega_rom("md"), sega_rom("sms", 0x8000)
+    files = {"ux0:ROMS/Genesis/Alpha Quest (USA).md": md, "ux0:ROMS/SMS/Master One.sms": sms, "ux0:ROMS/GG/Gear One.gg": sms}
+    for rel, data in files.items():
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+
+    # a Game Gear game has one controller: no such row, the same walk opens nothing
+    r = S.run("sega_two_gg", sega_two_script("+6:circle\n+10:quit\n"), cwd=cwd, extra=WIFI_ON, config={"console": 8})
+    S.clean(r)
+    S.check(not r.has(r"^EVT snes_two_"), "a Game Gear game has no Two players row")
+
+    # the page opens for a Genesis game with the game's id
+    r = S.run("sega_two_page", sega_two_script("+6:circle\n+10:quit\n"), cwd=cwd, extra=WIFI_ON, config={"console": 6})
+    S.clean(r)
+    S.check(r.has(r"^EVT snes_two_open game=[0-9A-F]{8}"), "Genesis: the page opens with the highlighted game's id (%s)" %
+            [e["_"] for e in r.evt("snes_two_open")])
+    S.picture(r, "page.png", "sega_two_page.png")
+
+    # Host, Same Wi-Fi, a Genesis game, then a Master System game
+    for con, name in ((6, "md"), (7, "sms")):
+        r = S.run("sega_two_host_%s" % name, sega_two_script("+6:cross\n+6:cross\n+120:shot=hosting.png\n+200:quit\n"),
+                  cwd=cwd, extra=WIFI_ON, config={"console": con, "net_conn": 3})
+        S.clean(r, allow="could not be started")
+        go = r.evt("snes_two_go")
+        S.check(go and go[0].get("role") == "host" and go[0].get("conn") == "0",
+                "%s: Host > Same Wi-Fi hosts on Same Wi-Fi (%s)" % (name, [e["_"] for e in go]))
+        b = r.evt("link_snes_begin")
+        S.check(b and b[0].get("role") == "host" and b[0].get("console") == name,
+                "%s: link_snes_begin names the Sega console of the file (%s)" % (name, [e["_"] for e in b]))
+        S.check(r.has(r"^EVT sega_launch") is False, "%s: no game starts before the other console arrives" % name)
+        S.picture(r, "hosting.png", "sega_two_hosting_%s.png" % name)
+
+    # Host, Online
+    r = S.run("sega_two_host_online", sega_two_script("+6:cross\n+6:down\n+6:cross\n+90:shot=online.png\n+200:quit\n"),
+              cwd=cwd, extra=WIFI_ON, config={"console": 6})
+    S.clean(r, allow="could not be started")
+    b = r.evt("link_snes_begin")
+    S.check(b and b[0].get("role") == "host" and b[0].get("conn") == "3" and b[0].get("console") == "md",
+            "Host > Online: link_snes_begin as host on Online for a Genesis game (%s)" % [e["_"] for e in b])
+
+    # Join, Same Wi-Fi: the rooms of this game (none here)
+    r = S.run("sega_two_join_wifi", sega_two_script("+6:down\n+6:cross\n+6:cross\n+120:shot=rooms.png\n+6:circle\n+10:circle\n+10:circle\n+30:quit\n"),
+              cwd=cwd, extra=WIFI_ON, config={"console": 6})
+    S.clean(r)
+    S.check(r.has(r"^EVT snes_two_scan rc=0") and not r.evt("snes_two_go"), "Join > Same Wi-Fi searches the rooms, none: nothing starts")
 
 
 def t_snes_library(S):
@@ -7375,6 +7445,13 @@ def t_snes_session(S):
             kv.get("start") == "new" and kv.get("cpu_mhz") in ("444", "500") and kv.get("enter_button") in ("cross", "circle"),
             "launch/snes.ini says what to run and how (%s)" % kv)
     S.check(r.has(r"^EVT snes_launch_file ok=1 ") and r.has(r"^EVT snes_launch rom="), "written, then snes.bin is started")
+    S.check(kv.get("tap_menu") == "1", "the launch file says a tap opens the menu (Settings > Tap screen for menu: On)")
+    r = S.run("snes_launch_notap", "90:triangle\n+30:triangle\n+30:triangle\n+40:cross\n+60:quit\n", extra=ex,
+              config={"tap_menu": 0})
+    S.clean(r, allow="could not be started")
+    lf0 = os.path.join(r.root, "launch", "snes.ini")
+    kv0 = dict(l.rstrip("\n").split("=", 1) for l in open(lf0) if "=" in l) if os.path.exists(lf0) else {}
+    S.check(kv0.get("tap_menu") == "0", "Tap screen for menu: Off reaches snes.bin in the launch file (%s)" % kv0.get("tap_menu"))
     pl = open(os.path.join(r.root, "playlog.txt")).read() if os.path.exists(os.path.join(r.root, "playlog.txt")) else ""
     S.check(name in pl, "the start is in Recent")
     # the shelf's slot 2
@@ -7546,6 +7623,10 @@ def t_sega_session(S):
             "launch/md.ini says what to run and how (%s)" % kv)
     S.check(r.has(r"^EVT sega_launch_file ok=1 ") and r.has(r"^EVT sega_launch console=md rom="),
             "written, then md.bin is started")
+    S.check(kv.get("tap_menu") == "1", "md.ini carries tap_menu=1 by default")
+    r = S.run("sega_launch_notap", "90:cross\n+60:quit\n", extra=ex, config={"console": 6, "tap_menu": 0})
+    S.clean(r, allow="could not be started")
+    S.check(ini(r, "md").get("tap_menu") == "0", "Tap screen for menu: Off reaches md.bin in the launch file")
     pl = os.path.join(r.root, "playlog.txt")
     S.check(plain in (open(pl).read() if os.path.exists(pl) else ""), "the start is in Recent")
 
@@ -8000,9 +8081,9 @@ def t_nes_direct(S):
             "a zipped NES game runs and its save is named beside the zip")
     # the hint under the game page and on the loading screen: the GB chord
     src = open(os.path.join(HERE, "..", "..", "psp", "ui_psp.h")).read()
-    k = src.index("ui_menu_chord_is_lrs")
-    S.check("FE_CONSOLE_NES" not in src[k:k + 300],
-            "the L + R + START hint is SNES's alone: a NES game opens its menu with START + SELECT")
+    k = src.index("ui_menu_chord_text")
+    S.check("L + R" not in src[k:k + 600] and "START + SELECT" in src[k:k + 600],
+            "the menu hint is START + SELECT on every console: a NES, SNES or Sega game opens its menu with it")
 
 
 def t_nes_cover(S):
@@ -8382,7 +8463,7 @@ def t_boot_guard(S):
             "config.ini holds the safe values (hand-over and steady pacing off)")
 
 
-TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_library", t_sega_library), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
+TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),

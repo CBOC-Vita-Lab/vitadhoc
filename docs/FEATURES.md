@@ -116,7 +116,7 @@ The [install guide](../INSTALL.md#starting-a-game-from-another-app) has an examp
 ## Super NES
 
 SNES games open in their own player and return to the home screen when you
-quit. **L + R + Start** opens its pause menu (the game page and the loading
+quit. **Start + Select** (or L + R + Start) opens its pause menu (the game page and the loading
 screen of a SNES game say so): Resume, Picture, Multitap, ten
 save-state slots with pictures, Cheats, Reset and Quit. Battery saves are `Game.srm` beside the game.
 
@@ -361,7 +361,9 @@ positions together. These improvements are all included in 1.2.
 Fast forward is silent unless you choose **2x with sound** or **3x with
 sound** in **Settings > Fast-forward** (1.3): then the game's sound plays
 along, sped up and higher, without a break when fast forward starts or stops.
-Unlimited and Unlimited Smooth stay silent.
+Unlimited and Unlimited Smooth stay silent. 2.0 adds **2x / 3x at normal
+pitch**: the sound keeps its pitch and the skipped stretches are joined by a
+short fade.
 
 ## Patches And Cheats
 

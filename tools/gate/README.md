@@ -74,7 +74,8 @@ newer is needed for the first and the twin step.
    |---|---|
    | `GATE_GBA_ROMS` (folder) | `cores-private-gba` (run_tests.sh over the folder, x86 against armhf) |
    | `GATE_SNES_ROMS` (folder) | `snes-mt-compare`, `snes-conformance` (informational), `snes-link` (two SNES players over LAN, punch and relay, 3000 frames); `snes-selftest` also uses it for its ROM sections |
-   | `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`) |
+   | `GATE_MD_ROMS` (folder, the SGDK samples tree), `GATE_MD_SMS_ROMS` (folder) | `md-link` (two Sega players over LAN, punch and relay, 3000 frames; `md-selftest` uses them too) |
+| `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`) |
    | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section) |
    | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |
    | `GATE_MBEDTLS_HOST` (folder, optional) | `online-http`: its TLS cases run against this host64 prefix; they are SKIPPED, loudly, without it |

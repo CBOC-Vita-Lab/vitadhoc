@@ -188,13 +188,14 @@ shape=original               # original | fit | zoom | full | pixel
 quality=sharp                # sharp | smooth
 cpu_mhz=0                    # 0 = the player's default, else 444 or 500
 enter_button=cross           # cross | circle
+tap_menu=1                   # 1 = a tap on the game opens the menu (Settings > Controls > Tap screen for menu); 0 = it does not. Missing = 1
 language=en
 start=new                    # new | continue | slot
 slot=0                       # 1..10 when start=slot
 patch=                       # IPS / BPS / UPS applied to the ROM in memory (SNES and Sega players)
 patch_key=                   # told apart in .rsm.pt; a different key is a different game to Continue
 ff_speed=0                   # fast forward: 0 = 2x, 1 = 3x   (SNES and Sega players)
-ff_sound=1                   # 1 = with sound
+ff_sound=1                   # 0 = off, 1 = with sound (sped up), 2 = with sound at normal pitch
 ff_mode=0                    # 0 = hold, 1 = toggle
 rewind=1                     # 0 = off
 rewind_seconds=60            # 30 or 60
@@ -260,7 +261,7 @@ The battery save of a Mega Drive game is the 64 KiB-capped cartridge RAM the cor
 
 ### `link.*` (Two players)
 
-When a Two players session was formed in the app (Super NES: the room, the
+When a Two players session was formed in the app (Super NES and the Sega consoles except the Game Gear: the room, the
 punch or the relay are made before the player starts), the launch file also
 carries the link. A player that cannot read all of it starts no link at all;
 `link.role` absent means a normal single-player launch.
@@ -279,7 +280,7 @@ link.relay_pass=
 link.relay_peer=             # relay: the peer's relayed address
 link.relay_addr=             # relay: OUR relayed address when the app already allocated it; the player adopts it
                              # (Refresh, same permission and channel, never a new Allocate). Empty: it allocates.
-link.delay=4                 # host: input delay in frames, 0..60 (the guest takes the host's)
+link.delay=4                 # host: input delay in frames, 1..60 fixed; 0 = the player chooses (Auto: up to 8, 12 Online) (the guest takes the host's)
 link.compat=1a2b3c4d         # the pairing's compat word, 8 hex digits
 link.nick=Alice              # this player's nickname
 link.local_ip=               # this console's Wi-Fi address; empty = ask the system
@@ -288,7 +289,9 @@ link.wait_s=0                # seconds to wait for the other console, 0..600 (0 
 
 Test builds also read `link.loopback`, `link.sim`, `link.sim_id`,
 `link.sim_lan_port`, `link.loss`, `link.latency`, `link.jitter`,
-`link.input_copies`, `link.nack` and `link.hash_every`. The relay password is
+`link.input_copies`, `link.nack` (both ignored by pk_link) and `link.hash_every`.
+
+The session is playerkit's `pk_link` (MIT, `src/pk_link.{h,cpp}` and `pk_link_net.{h,cpp}`): UDP lockstep with redundant inputs, the host's state sent once at the start, a state hash every `hash_every` frames, a 20 s peer-dead rule, a clean BYE. `session.txt`'s `link_error` numbers: 1 proto, 2 rom_missing, 3 rom_bad, 4 memory, 5 start, 6 desync, 7 peer_lost, 8 peer_abort, 9 commit, 10 local, 11 no_peer, 12 suspend, 13 state. The relay password is
 a credential that expires within the hour; the launch file is rewritten for
 every start. The keys are parsed in `src/pk_launch.cpp`.
 

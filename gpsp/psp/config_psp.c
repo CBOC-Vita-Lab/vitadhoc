@@ -192,7 +192,9 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    if (g_pcfg.frameskip_sparse < 0 || g_pcfg.frameskip_sparse > 15)
       g_pcfg.frameskip_sparse = 0;
    g_pcfg.ff_smooth   = (int)fe_ini_get_int(cfg_path, "ff_smooth", 0) ? 1 : 0;
-   g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0) ? 1 : 0;
+   g_pcfg.ff_audio    = (int)fe_ini_get_int(cfg_path, "ff_audio", 0);
+   if (g_pcfg.ff_audio < 0 || g_pcfg.ff_audio > 2)
+      g_pcfg.ff_audio = g_pcfg.ff_audio ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
    g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
 #ifdef VITA
@@ -207,6 +209,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    if (g_pcfg.ab_buttons < -1 || g_pcfg.ab_buttons > 1)
       g_pcfg.ab_buttons = -1;
    g_pcfg.stick_rewind = (int)fe_ini_get_int(cfg_path, "stick_rewind", 0) ? 1 : 0;
+   g_pcfg.tap_menu = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
    g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
@@ -703,6 +706,8 @@ void pcfg_save(void)
    if (g_pcfg.ab_buttons >= 0)
       fe_ini_set_int(cfg_path, "ab_buttons", g_pcfg.ab_buttons);
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
+   if (!g_pcfg.tap_menu || fe_ini_get_int(cfg_path, "tap_menu", 1) == 0)
+      fe_ini_set_int(cfg_path, "tap_menu", g_pcfg.tap_menu);
    if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
       fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
    if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)

@@ -3,6 +3,8 @@
 // Copyright CBOC-Vita. MIT licence for this file; the core in ../core keeps its own licence (non-commercial).
 #include "host.h"
 #include "thread_ops.h"
+#include "wide.h"
+#include "png.h"
 #include <pthread.h>
 #include <semaphore.h>
 #include <sched.h>
@@ -132,6 +134,19 @@ static Script g_p1, g_p2;
 
 static std::vector<u64> g_fh;   // per frame picture hash (debug: MD_TWIN_VFRAMES)
 
+// wide view (--wide M): the core draws into a canvas with room for the strips; the picture hashed below is the screen only
+static std::vector<uint16_t> g_canvas;
+static int g_wide = 0;
+static mdw::Wide *g_wa = 0;                     // the adapter (analysis + compose), with --wide
+static double g_t_an = 0, g_t_co = 0;           // seconds spent in analyse() / compose()
+static unsigned g_n_an = 0, g_n_co = 0;
+static std::string g_shot_prefix;
+static std::vector<int> g_shot_frames;
+static int g_cap = 1 << 20;                     // --wide-cap: the governor's real margin limit
+
+// where the view starts in the picture buffer: the Mega Drive picture is the screen, the Game Gear band has the LCD window 48 columns in
+static const uint16_t *px_wide_view(const md_video_info &vi, const uint16_t *px, int) { return vi.gg_band ? px + 48 : px; }
+
 static void step_frame(int f, Acc &acc, double *dt)
 {
 	static int16_t abuf[4800 * 2];
@@ -143,11 +158,49 @@ static void step_frame(int f, Acc &acc, double *dt)
 	if (dt) *dt = t1 - t0;
 	int w, h, pitch;
 	const uint16_t *px = md_host_video(&w, &h, &pitch);
+	{	// the Game Gear wide band is 256 wide: the picture the player would show without it is the LCD window in its middle
+		md_video_info bvi; md_host_video_info(&bvi);
+		if (bvi.gg_band) { px += 48; w = 160; }
+	}
 	int dim[2] = { w, h };
 	u64 v0 = acc.v;
 	acc.v = hash_bytes(acc.v, dim, sizeof dim);
 	for (int y = 0; y < h; y++) acc.v = hash_bytes(acc.v, (const char *)px + (size_t)y * pitch, (size_t)w * 2);
 	g_fh.push_back(acc.v ^ v0);
+	if (g_wa) {
+		md_video_info vi; md_host_video_info(&vi);
+		mdw::Meta *meta = new mdw::Meta;
+		const int m = vi.system == MD_SYS_GG ? 48 : g_wide;
+		double a0 = now();
+		g_wa->analyse((uint32_t) f + 1, vi, m, g_wide, meta);
+		g_t_an += now() - a0; g_n_an++;
+		if (getenv("MD_WIDE_DEBUG") && f % 100 == 50 && meta->valid) {
+			const int y = vi.h / 2;
+			printf("WD f=%d y=%d valid=%d layers=%d strip=%d on=%d kind=%d/%d hud=%d real A=%d,%d B=%d,%d ring %d,%d dir=%d/%d epoch=%u main=%d coh=%d/%d\n", f, y, meta->valid, meta->nlayers, meta->strip[y], meta->on[y],
+				meta->ana.kind[0], meta->ana.kind[1], meta->ana.line[y].hud, meta->ana.line[y].real[0][0], meta->ana.line[y].real[1][0], meta->ana.line[y].real[0][1], meta->ana.line[y].real[1][1],
+				meta->ana.line[y].ring[0][0], meta->ana.line[y].ring[1][0], meta->ana.dir[0], meta->ana.dir[1], meta->ana.epoch, meta->ana.main_layer, meta->ana.coherent[0][y], meta->ana.coherent[1][y]);
+		}
+		if (meta->valid) {
+			const uint16_t *v0 = px_wide_view(vi, md_host_video(&w, &h, &pitch), pitch);
+			a0 = now();
+			int ow = 0, oh = 0;
+			const uint16_t *wp = g_wa->compose(*meta, v0, pitch / 2, &ow, &oh);
+			g_t_co += now() - a0; g_n_co++;
+			for (size_t k = 0; k < g_shot_frames.size(); k++) if (g_shot_frames[k] == f && wp) {
+				std::vector<uint8_t> rgb((size_t) ow * oh * 3);
+				for (int i = 0; i < ow * oh; i++) rgb565_to_rgb(wp[i], &rgb[(size_t) i * 3]);
+				char nm[600]; snprintf(nm, sizeof nm, "%s_%04d.png", g_shot_prefix.c_str(), f);
+				png_write(nm, ow, oh, rgb);
+				// the raw strips: what the core drew beside the picture, whether or not it can be believed
+				const int M = meta->margin;
+				std::vector<uint8_t> raw((size_t) ow * oh * 3);
+				for (int y = 0; y < oh; y++) for (int x = 0; x < ow; x++) rgb565_to_rgb(v0[(size_t) y * (pitch / 2) + x - M], &raw[((size_t) y * ow + x) * 3]);
+				snprintf(nm, sizeof nm, "%s_%04d_raw.png", g_shot_prefix.c_str(), f);
+				png_write(nm, ow, oh, raw);
+			}
+		}
+		delete meta;
+	}
 	int n = md_host_audio_take(abuf, 4800);
 	acc.a = hash_bytes(acc.a, abuf, (size_t)n * 4);
 	acc.samples += (size_t)n; acc.frames++;
@@ -180,7 +233,8 @@ static void t_sem_wait(void *, void *s) { while (sem_wait((sem_t *)s) != 0) {} }
 static int t_spawn(void *, int id, void (*fn)(void *), void *arg) { g_sarg[id].fn = fn; g_sarg[id].arg = arg; return pthread_create(&g_wthr[id], NULL, thr_main, &g_sarg[id]); }
 static void t_wait_end(void *, int id) { pthread_join(g_wthr[id], NULL); }
 static void t_yield(void *) { sched_yield(); }
-static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield };
+static unsigned long long t_now(void *) { timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (unsigned long long) ts.tv_sec * 1000000ull + (unsigned long long) ts.tv_nsec / 1000; }
+static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, t_now };
 
 int main(int argc, char **argv)
 {
@@ -220,6 +274,10 @@ int main(int argc, char **argv)
 		else if (a == "--vdp-check") { vdpthr = 1; vdpcheck = 1; }
 		else if (a == "--vdp-stress") { vdpthr = 1; vdpstress = 1; }
 		else if (a == "--quiet") quiet = 1;
+		else if (a == "--wide") g_wide = atoi(need());
+		else if (a == "--wide-cap") g_cap = atoi(need());
+		else if (a == "--shots") { std::string v = need(); size_t c = v.find(':'); g_shot_prefix = v.substr(0, c);
+			for (size_t q = c + 1; q < v.size() && c != std::string::npos;) { size_t e = v.find(',', q); if (e == std::string::npos) e = v.size(); g_shot_frames.push_back(atoi(v.substr(q, e - q).c_str())); q = e + 1; } }
 		else if (a[0] != '-' && !rom) rom = argv[i];
 		else { usage(); return 2; }
 	}
@@ -245,6 +303,16 @@ int main(int argc, char **argv)
 	const char *bn = strrchr(rom, '/'); bn = bn ? bn + 1 : rom;
 	if (md_host_load_mem(g_rom.data(), g_rom.size(), bn, system, err, sizeof err)) { printf("LOADFAIL %s: %s\n", bn, err); return 1; }
 	if (padtype) { md_host_set_pad_type(0, padtype); md_host_set_pad_type(1, padtype); }
+	if (g_wide > 0) {
+		g_wa = new mdw::Wide;
+		g_wa->set_real_cap_default(g_cap);
+		if (md_host_system() == MD_SYS_GG) md_host_set_option("gg_band", 1);
+		else {
+			g_canvas.assign((size_t)MD_WIDE_PITCH * MD_MAX_HEIGHT, 0);
+			md_host_set_framebuffer(g_canvas.data() + MD_WIDE_MAX, MD_WIDE_PITCH);
+			md_host_set_wide_margin(g_wide);
+		}
+	}
 	if (norender) md_host_set_render(0);
 	if (cheat) printf("cheats accepted: %d\n", md_host_cheat_add(cheat));
 	if (info) {
@@ -310,6 +378,11 @@ int main(int argc, char **argv)
 	if (!quiet)
 		printf("RESULT %s sys=%d frames=%d video=%016llx audio=%016llx state=%016llx ram=%016llx samples=%zu size=%dx%d p50=%.3fms p99=%.3fms avg=%.3fms\n",
 			bn, md_host_system(), frames, all.v, all.a, sh, rh, all.samples, vi.w, vi.h, p50 * 1e3, p99 * 1e3, tot / (double)dts.size() * 1e3);
+	if (g_wa && !quiet) {
+		mdw::Stats st; g_wa->census(&st);
+		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d\n", st.frames, st.analysed, st.composed,
+			g_n_an ? g_t_an / g_n_an * 1e3 : 0.0, g_n_co ? g_t_co / g_n_co * 1e3 : 0.0, st.real_pct, st.soft_lines, st.scene_events, st.hs_missed, st.hs_checked);
+	}
 
 	if (roundtrip) {
 		// run to state_frame from a fresh power on, save, run M frames hashing video, load, run M frames again, compare
@@ -345,8 +418,8 @@ int main(int argc, char **argv)
 			a1.a == a2.a ? "SAME" : "DIFF", rb == 3 ? "yes" : "NO");
 	}
 	if (vdpthr) {
-		unsigned long c[9];
-		if (md_host_vdp_census(c)) printf("VDPW %s records=%lu words=%lu status_joins=%lu joins=%lu join_wait_polls=%lu full_waits=%lu wakes=%lu vram_blocks=%lu vram_alls=%lu check_errors=%lu\n", bn, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], md_host_vdp_check_errors());
+		unsigned long c[11];
+		if (md_host_vdp_census(c)) printf("VDPW %s records=%lu words=%lu status_joins=%lu joins=%lu join_wait_polls=%lu full_waits=%lu wakes=%lu vram_blocks=%lu vram_alls=%lu vdp_us=%lu join_wait_us=%lu check_errors=%lu\n", bn, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], md_host_vdp_check_errors());
 		else printf("VDPW %s worker off\n", bn);
 	}
 	md_host_shutdown();

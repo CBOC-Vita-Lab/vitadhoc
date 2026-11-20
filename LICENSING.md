@@ -25,6 +25,18 @@ original project and the clarification. Original notices remain intact.
   SDK/runtime components retain their own notices. See
   [Third-Party Notices](notices/THIRD-PARTY.md).
 
+## The Two-Player Link of the Players
+
+`snes.bin` and `md.bin` play two-player games with playerkit's `pk_link` (MIT, written
+for the players) on the project's own UDP transport and NAT layer
+(`gpsp/netdrv/transport_lan.c`, `nat_*.c`, owner's code, `MIT OR GPL-2.0-or-later`
+in their SPDX headers). They do not link `netdrv.c`, `fe_gblink.c`, `fe_evt.c`,
+`fe_util.c` or `gb_link.c` (the GBAdhoc-derived Game Boy link): each player's
+Makefile fails the build when one of them is in the object list, the linker map or
+the symbol table (`check-licence`). Open point: `transport_lan.c` still includes the
+headers `netdrv.h`, `netdrv_wire.h` and `nd_thread.h`, whose provenance has not been
+confirmed; a header-free player mode of the transport would remove the question.
+
 ## The SNES Player (Snes9x)
 
 Super NES games run in `snes.bin`, a separate program in the same VPK. It is

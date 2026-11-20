@@ -984,6 +984,7 @@ struct Acc {         /* what the lines of one worker add up */
 struct CellMemo {
 	uint32_t gen;
 	int32_t wx, wrow;
+	uint8_t nb;                  /* the cells beside a blank ring row: 0 not asked, 1 none of them has a tile that draws, 2 one has */
 	uint8_t st[MEMO_N];          /* 0 not asked, 1 the map has no cell, 2 a cell */
 	uint8_t hok[MEMO_N], blank[MEMO_N];   /* its tile's graphics are what they were when it was learned; the tile is blank */
 	wk_cell cell[MEMO_N];
@@ -1085,7 +1086,7 @@ static int memo_cell(const Frame &F, Work &K, int l, int s, int y, int idx, wk_c
 	CellMemo &m = K.memo[l][s];
 	const int32_t wx = wo->world_x[l][y], wrow = wo->world_row[l][y] >> (Ly->tile_px == 16 ? 4 : 3);
 	if (m.gen != F.gen || m.wx != wx || m.wrow != wrow) {
-		m.gen = F.gen; m.wx = wx; m.wrow = wrow;
+		m.gen = F.gen; m.wx = wx; m.wrow = wrow; m.nb = 0;
 		memset(m.st, 0, sizeof m.st);
 	}
 	const bool keep = idx >= 0 && idx < MEMO_N;
@@ -1159,12 +1160,18 @@ static void cand_line(const Frame &F, Work &K, int y)
 					/* blank all around the ring: assumed blank beyond it too, unless the learned map knows a tile there */
 					bool nonblank = false;
 					if (A.M && wo->coherent[l][y]) {
-						for (int idx = 1; idx <= Mh / tp + 1 && !nonblank; idx++) {
-							const wk_cell *c2;
-							wk_cell hold2;
-							int h2, b2;
-							if (!memo_cell(F, K, l, s, y, idx, &hold2, &c2, &h2, &b2)) continue;
-							if (!b2) nonblank = true;
+						CellMemo &cm = K.memo[l][s];
+						const int32_t wrow = wo->world_row[l][y] >> tsh;
+						if (cm.gen == F.gen && cm.wx == wo->world_x[l][y] && cm.wrow == wrow && cm.nb) nonblank = cm.nb == 2;     /* asked for a line of this tile row already */
+						else {
+							for (int idx = 1; idx <= Mh / tp + 1 && !nonblank; idx++) {
+								const wk_cell *c2;
+								wk_cell hold2;
+								int h2, b2;
+								if (!memo_cell(F, K, l, s, y, idx, &hold2, &c2, &h2, &b2)) continue;
+								if (!b2) nonblank = true;
+							}
+							cm.nb = nonblank ? 2 : 1;      /* memo_cell has set the memo's key to this line's */
 						}
 					}
 					if (!nonblank) {

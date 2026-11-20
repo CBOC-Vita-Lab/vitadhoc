@@ -2972,6 +2972,15 @@ def t_picker(S):
             "a tap beside the list closes it, and nothing else (%s)" % ev)
     S.picture(r, "t_open.png", "picker_touch_open.png", box=PICKER_BOX)
     S.picture(r, "t_snes.png", "picker_touch_snes.png", box=PICKER_BOX)
+    # opened by a finger it waits for the tap (no 1.2 s close while the finger looks for its row), and a
+    # drag scrolls it: the two rows under the panel's lower edge (Super Nintendo, WonderSwan) come into reach
+    r = picker_run(S, "picker_drag", "90:touch=%d/%d\n+120:drag=450/%d/450/%d:20\n+30:shot=t_drag.png\n"
+                   "+4:touch=450/%d\n+40:quit\n" % (x, y, picker_row_y(6), picker_row_y(2), picker_row_y(7)))
+    ev = [e["_"].replace("EVT ui_picker ", "") for e in r.evt("ui_picker")]
+    S.check(ev == ["open console=0", "move row=9 console=5", "close console=5 idle=0"],
+            "a list opened by touch stays open, a drag scrolls it without picking, a tap on the last row "
+            "(WonderSwan) picks it (%s)" % ev)
+    S.picture(r, "t_drag.png")
     # ten consoles are the real list now; the host twin can repeat the table
     # (GBADHOC_PICKER_ROWS=4: fourteen rows) to show a longer list -- it holds
     # eight rows, scrolls to keep the highlight in view, never reaches the hint line

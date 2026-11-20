@@ -146,8 +146,9 @@ void md_host_set_framebuffer(uint16_t *buf, int pitch_px);
  * picture inside the screen, the sound and the saved state are identical with the strips on and off (the strip pass saves and restores the
  * sprite status; tests: md/twin/selftest.sh). The frame buffer must be a canvas: give md_host_set_framebuffer(canvas + MD_WIDE_MAX,
  * MD_WIDE_PITCH) (rows of MD_WIDE_PITCH pixels, MD_MAX_HEIGHT of them); with the internal buffer the margin stays 0.
- * Lines the strip cannot be drawn for (window plane on the line, interlace, per 2-cell vertical scroll with different values, display off)
- * have WL_STRIP clear in md_wide_frame; the strip pixels of such a line are not written (stale). Returns the margin in force. */
+ * Lines the strip cannot be drawn for (interlace, display off, a window plane that is not empty at the edge, per 2-cell vertical scroll whose
+ * columns at the edge differ) have MDW_STRIP clear in md_wide_frame, or the side's bit clear in md_wide_line.side; the strip pixels of such a
+ * line are not written (stale). Returns the margin in force. */
 #define MD_WIDE_MAX 96
 #define MD_WIDE_PITCH 512            /* MD_WIDE_MAX + 320 + MD_WIDE_MAX */
 int md_host_set_wide_margin(int margin);
@@ -158,23 +159,49 @@ void md_host_set_wide_planes(int mask);
 /* What the line renderer saw for each line of the frame just run (the Mega Drive in mode 5 and, for the Master System / Game Gear, in mode 4
  * with xs[0] / ys[0] = the scroll registers as the line used them, col_mask 31, ntab = the name table base). Same layout as the core's
  * wide_line_t (md/core/vdp_render.h). */
-enum { MDW_ON = 1, MDW_STRIP = 2, MDW_WINDOW = 4, MDW_VSCROLL = 8, MDW_IM2 = 16, MDW_H40 = 32, MDW_M4 = 64 };
+enum { MDW_ON = 1, MDW_STRIP = 2, MDW_WINDOW = 4, MDW_VSCROLL = 8, MDW_IM2 = 16, MDW_H40 = 32, MDW_M4 = 64, MDW_WFULL = 128 /* the window plane takes the whole line */ };
+/* md_wide_line.side: which strips the line has and what is in them */
+enum { MDS_L = 1, MDS_R = 2,             /* the left / right strip was drawn */
+       MDS_NOA_L = 4, MDS_NOA_R = 8,     /* ... without plane A (the window plane takes that side of the line; plane B and the sprites go on) */
+       MDS_OVR_A = 16, MDS_OVR_B = 32,   /* the strips of this line were drawn from a learned row of plane A / B (md_host_wide_row) */
+       MDS_PAL = 64,                     /* 8 bit consoles: the palette changed inside the picture (md_wide_frame.pal is not this line's) */
+       MDS_VSE = 128 };                  /* per 2-cell vertical scroll: the strips scroll like the column at their edge */
 typedef struct md_wide_line {
-	uint8_t flags, col_mask, shift, pad;
+	uint8_t flags, col_mask, shift, side;
 	uint16_t xs[2], ys[2];
 	uint16_t ntab, ntbb, ntwb, row_mask;
 } md_wide_line;
 typedef struct md_wide_frame {
 	int h;                       /* lines in the picture */
 	int margin;                  /* the strip width in force (Mega Drive) */
-	const md_wide_line *line;    /* h entries, valid until the next md_host_run_frame */
+	const md_wide_line *line;    /* h entries */
 	const uint32_t *opq;         /* [256][2][3]: per line and side (0 left, 1 right) 96 bits, bit d = the strip pixel d pixels from the screen's edge is opaque */
-	const uint8_t *vram;         /* 64 KB (the emulating thread's copy: complete when the frame has finished) */
+	const uint8_t *vram;         /* 64 KB as the frame ended (the renderer's copy) */
 	const uint8_t *vsram;        /* 128 bytes */
 	const uint8_t *cram;         /* 128 bytes */
+	const uint16_t *pal;         /* 8 bit consoles: the 32 colours (RGB565) line 0 of the frame was drawn with */
+	const uint16_t *dirty;       /* the 32 byte VRAM blocks (address / 32) written since the previous md_host_wide_run ... */
+	int ndirty;
+	int dirty_all;               /* ... or 1: anything may have changed (a load, a state, the first call) */
 	int reg[24];                 /* the VDP registers 0..23 */
+	int sms1;                    /* the first Master System VDP (registers 3 and 4 mask the tile index) */
 } md_wide_frame;
-void md_host_wide_frame(md_wide_frame *f);
+/* The wide view's analysis of the frame just run. Call after md_host_run_frame() on the emulating thread: fn(user, &frame) runs on the VDP
+ * worker thread when that runs (md_host_set_threads; the call returns at once and the emulating thread goes on: nothing of the next frame
+ * is drawn before fn has returned, and the next md_host_run_frame's end, md_host_wide_run and md_host_wide_join wait for it), else here and
+ * now. Everything `frame` points to is valid inside fn only. What fn sees does not depend on which thread runs it. */
+typedef void (*md_wide_fn)(void *user, const md_wide_frame *f);
+void md_host_wide_run(md_wide_fn fn, void *user);
+void md_host_wide_join(void);
+/* Inside fn only. Learned rows: `words` (n cells, as md_wide_frame.vram holds them) is what the strips of the next frames show for row `row`
+ * (0..) of plane A (0) / B (1), whose VRAM row is at `addr`, for as long as the game leaves that VRAM row as it is now. A line drawn from one
+ * says so in md_wide_line.side. md_host_wide_rows_clear() forgets every row given. */
+void md_host_wide_rows_clear(void);
+void md_host_wide_row(int plane, int row, unsigned addr, const uint16_t *words, int n);
+/* The worker renderer keeps each line's strips and copies them while nothing they are drawn from has changed (on with the worker). check = 1:
+ * draw anyway and count copies that differ from the fresh draw (tests). stat: strips copied, drawn, copies that differed. */
+void md_host_wide_cache(int on, int check);
+void md_host_wide_cache_stat(unsigned long out[3]);
 
 /* ---- audio ----------------------------------------------------------------------------------------------- */
 
@@ -219,8 +246,10 @@ int md_host_state_load_mem(const uint8_t *buf, size_t n);   /* 0 ok, 1 no game, 
 /* ---- memory for achievements and tools ------------------------------------------------------------------- */
 
 /* RetroAchievements (rc_consoles.h: MEGA_DRIVE, MASTER_SYSTEM, GAME_GEAR, SG1000): the address space rcheevos expects.
- *   Mega Drive:   $000000-$00FFFF system RAM = the 68000's $FF0000-$FFFFFF (true byte addresses, the core's byte swapped
- *                 RAM is un-swapped here), $010000-$01FFFF cartridge RAM (the save RAM buffer as held, no swap)
+ *   Mega Drive:   $000000-$00FFFF system RAM = the 68000's $FF0000-$FFFFFF AS THE CORE HOLDS IT (words in the host's byte
+ *                 order: on the Vita the byte at RA address X is the 68000's byte at X ^ 1). That is the layout the site's
+ *                 achievements are written against: its reference emulator is this core under libretro, which hands out
+ *                 work_ram as it is, and rcheevos does no swap. $010000-$01FFFF cartridge RAM (the save RAM buffer as held)
  *   Master System / Game Gear: $0000-$1FFF system RAM (Z80 $C000-$DFFF), $2000-$9FFF cartridge RAM (the save RAM buffer)
  *   SG-1000:      $0000-$03FF RAM ($C000), $0400-$1FFF extended RAM ($C400), $2000-$3FFF ($2000), $4000-$5FFF ($8000):
  *                 only what the cartridge really has is readable

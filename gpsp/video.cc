@@ -3803,6 +3803,7 @@ void update_scanline(void)
 #endif
     if (vcount == 0)
     {
+      me_capture_buf->line0_seen = 1;
       me_capture_buf->affine_seed[0] = affine_reference_x[0];
       me_capture_buf->affine_seed[1] = affine_reference_x[1];
       me_capture_buf->affine_seed[2] = affine_reference_y[0];

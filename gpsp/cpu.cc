@@ -3700,7 +3700,9 @@ void init_cpu(void)
      * sound driver into IWRAM, so the early VBlank ran the driver first, called
      * zeroed IWRAM and the game derailed in its first frames.  init_memory has
      * just cleared the I/O block: reset_gba runs it before init_cpu. */
+#ifndef GPSP_BOOT_LINE0   /* (test builds: -DGPSP_BOOT_LINE0 starts on line 0, as before) */
     write_ioreg(REG_VCOUNT, 0x7E);
+#endif
   } else {
     reg[REG_SP] = 0x03007F00;
     reg[REG_PC] = 0x00000000;

@@ -61,6 +61,27 @@ the game's path and it starts VitAdhoc again when you quit.
   tag, commit and the few local edits) have the details. No legal opinion has
   been obtained on the separate-program design.
 
+## The Sega Player (Genesis Plus GX)
+
+Genesis / Mega Drive, Master System, Game Gear and SG-1000 games run in
+`md.bin`, a second separate program in the same VPK, built only from `md/`,
+`playerkit/` and `widekit/` (plus the dual-licensed files named in this
+document) and started and left the same way as `snes.bin`.
+
+- The Genesis Plus GX core in `md/core` keeps its own licence
+  (`md/core/LICENSE.txt`, shipped as `licenses/GenesisPlusGX-LICENSE.txt`). It
+  allows non-commercial use and changes only and is not GPL-compatible, which
+  is why it is its own program. The same file carries the notices of the parts
+  it includes (Nuked OPN2 and OPLL and blip_buf under LGPL-2.1, the MAME-derived
+  sound and Z80 cores, Musashi).
+- Our frontend in `md/frontend`, `md/vita` and `md/twin` is MIT.
+- Because the package contains Genesis Plus GX, the same condition as for
+  Snes9x applies a second time: VitAdhoc must stay free of charge and must not
+  be sold, bundled in a commercial product or used to promote one.
+- [Sega notice](notices/MD-GenesisPlusGX.md) and `md/core/PROVENANCE.md` (the
+  pinned commit and every local edit) have the details. No legal opinion has
+  been obtained on the separate-program design.
+
 ## Online Play: Mbed TLS And The Service
 
 Version 2.0 links Mbed TLS 3.6.8 for the HTTPS client of online play. Mbed TLS

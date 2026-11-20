@@ -20,6 +20,12 @@ extern int vw_wide_m;                                 /* the wide view strip wid
 extern wide_line_t vw_wide_rec[256];
 extern int vw_wide_planes;
 extern uint32 vw_wide_opq[256][2][3];
+extern uint16 vw_wide_pal[32];
+extern void vw_wide_rows_clear(void);
+extern void vw_wide_row_set(int plane, int row, unsigned int addr, const uint16 *words, int n);
+extern uint32 vw_wide_gen, vw_wide_parse_gen;      /* the strip cache of the worker's renderer: bumped by every record that changes what a strip is drawn from */
+extern int vw_wide_cache_on, vw_wide_cache_check;
+extern unsigned long vw_wide_cache_stat[3];
 
 /* the worker's compiled copy of the renderer */
 extern void vw_render_line(int line);
@@ -46,7 +52,7 @@ int vdpw_on;
 /* ---- the queue ----------------------------------------------------------------------------------------------------------------------- */
 enum {
 	OP_STATE = 1, OP_PUSH, OP_VBLK, OP_VALL, OP_SAT, OP_VSRAM, OP_VMARK, OP_RENDER, OP_REMAP, OP_BLANK, OP_PARSE, OP_WCLIP, OP_COLOR,
-	OP_INIT, OP_RESET, OP_STOP
+	OP_INIT, OP_RESET, OP_STOP, OP_CALL
 };
 
 /* what the renderer reads of the machine besides the raw arrays; sent whenever it differs from the last one sent */
@@ -278,6 +284,18 @@ void vdpw_q_color(int m5, int index, unsigned data)
 
 static void wait_idle(void);
 
+/* run fn(arg) on the worker, after everything queued so far and with the worker's copy of the VDP brought level with the emulating thread's
+ * (the wide view's analysis of the frame just finished: it reads only the worker's copy while the emulating thread goes on) */
+void vdpw_q_call(void (*fn)(void *), void *arg)
+{
+	uint32 w[4] = { 0, 0, 0, 0 };
+	emit_world();
+	memcpy(&w[0], &fn, sizeof fn);
+	memcpy(&w[2], &arg, sizeof arg);
+	reserve(5); put(OP_CALL); put(w[0]); put(w[1]); put(w[2]); put(w[3]);
+	publish(1);
+}
+
 void vdpw_q_render_init(void)
 {
 	reserve(1); put(OP_INIT);
@@ -358,6 +376,15 @@ void vdpw_frame_end(void)
 /* the per line records of the wide view strip of the frame just finished (valid after vdpw_frame_end) */
 const wide_line_t *vdpw_wide_rec(void) { return vdpw_on ? vw_wide_rec : wide_rec; }
 const uint32 *vdpw_wide_opq(void) { return vdpw_on ? &vw_wide_opq[0][0][0] : &wide_opq[0][0][0]; }
+/* the renderer's copy of the VDP memory (the worker's own while it runs: only its thread, or a joined emulating thread, may read it) */
+const uint8 *vdpw_r_vram(void) { return vdpw_on ? vw_vram : vram; }
+const uint8 *vdpw_r_vsram(void) { return vdpw_on ? vw_vsram : vsram; }
+const uint8 *vdpw_r_reg(void) { return vdpw_on ? vw_reg : reg; }
+const uint16 *vdpw_wide_pal(void) { return vdpw_on ? vw_wide_pal : wide_pal; }
+void vdpw_wide_rows_clear(void) { if (vdpw_on) vw_wide_rows_clear(); else wide_rows_clear(); }
+void vdpw_wide_row_set(int plane, int row, unsigned int addr, const uint16 *words, int n) { if (vdpw_on) vw_wide_row_set(plane, row, addr, words, n); else wide_row_set(plane, row, addr, words, n); }
+void vdpw_wide_cache(int on, int check) { vw_wide_cache_on = on; vw_wide_cache_check = check; }
+void vdpw_wide_cache_stat(unsigned long out[3]) { out[0] = vw_wide_cache_stat[0]; out[1] = vw_wide_cache_stat[1]; out[2] = vw_wide_cache_stat[2]; }
 
 unsigned vdpw_spr_col(void) { return vdpw_on ? vw_spr_col : spr_col; }
 
@@ -370,6 +397,15 @@ unsigned long vdpw_check_errors(void) { return W.check_errors; }
 
 static void apply_state(const vdpw_state_t *s)
 {
+	/* the strip cache: a state that differs in anything a strip is drawn from is a new generation (the frame buffer, the line counter and, off
+	 * interlace, the field are not) */
+	{
+		static vdpw_state_t prev;
+		vdpw_state_t k = *s;
+		k.bm_data = 0; k.bm_pitch = 0; k.bm_width = 0; k.bm_height = 0; k.rst = 0; k.v_counter = 0;
+		if (!k.interlaced) k.odd_frame = 0;
+		if (memcmp(&k, &prev, sizeof k)) { prev = k; vw_wide_gen++; }
+	}
 	memcpy(vw_reg, s->reg, sizeof vw_reg);
 	vw_bitmap.data = s->bm_data; vw_bitmap.pitch = s->bm_pitch; vw_bitmap.width = s->bm_width; vw_bitmap.height = s->bm_height;
 	vw_bitmap.viewport.x = s->vx; vw_bitmap.viewport.y = s->vy; vw_bitmap.viewport.w = s->vw; vw_bitmap.viewport.h = s->vh;
@@ -421,12 +457,14 @@ static void worker_main(void *arg)
 				uint32 *d = (uint32 *) (vw_vram + (name << 5));
 				for (i = 0; i < 8; i++) d[i] = W.ring[(tail + 2 + i) & W.mask];
 				n = 10;
+				vw_wide_gen++;
 				break;
 			}
 			case OP_VALL: {
 				uint32 *d = (uint32 *) vw_vram;
 				for (i = 0; i < 0x4000; i++) d[i] = W.ring[(tail + 1 + i) & W.mask];
 				n = 1 + 0x4000;
+				vw_wide_gen++;
 				break;
 			}
 			case OP_SAT: case OP_VSRAM: {
@@ -434,6 +472,7 @@ static void worker_main(void *arg)
 				uint32 *d = (uint32 *) ((op == OP_SAT ? vw_sat : vw_vsram) + c * 32);
 				for (i = 0; i < 8; i++) d[i] = W.ring[(tail + 2 + i) & W.mask];
 				n = 10;
+				vw_wide_gen++;
 				break;
 			}
 			case OP_VMARK: {
@@ -442,20 +481,33 @@ static void worker_main(void *arg)
 				if (vw_bg_name_dirty[name] == 0) vw_bg_name_list[vw_bg_list_index++] = (uint16) name;
 				vw_bg_name_dirty[name] |= (uint8) m;
 				n = 3;
+				vw_wide_gen++;
 				break;
 			}
 			case OP_RENDER: vw_render_line((int) W.ring[(tail + 1) & W.mask]); n = 2; break;
 			case OP_REMAP: vw_remap_line((int) W.ring[(tail + 1) & W.mask]); n = 2; break;
 			case OP_BLANK: vw_blank_line((int) W.ring[(tail + 1) & W.mask], (int) W.ring[(tail + 2) & W.mask], (int) W.ring[(tail + 3) & W.mask]); n = 4; break;
-			case OP_PARSE: vw_parse_satb((int) W.ring[(tail + 1) & W.mask]); n = 2; break;
-			case OP_WCLIP: vw_window_clip(W.ring[(tail + 1) & W.mask], W.ring[(tail + 2) & W.mask]); n = 3; break;
+			case OP_PARSE: vw_parse_satb((int) W.ring[(tail + 1) & W.mask]); vw_wide_parse_gen = vw_wide_gen; n = 2; break;
+			case OP_WCLIP: vw_window_clip(W.ring[(tail + 1) & W.mask], W.ring[(tail + 2) & W.mask]); vw_wide_gen++; n = 3; break;
 			case OP_COLOR:
 				if (W.ring[(tail + 1) & W.mask]) vw_color_update_m5((int) W.ring[(tail + 2) & W.mask], W.ring[(tail + 3) & W.mask]);
 				else vw_color_update_m4((int) W.ring[(tail + 2) & W.mask], W.ring[(tail + 3) & W.mask]);
 				n = 4;
+				vw_wide_gen++;
 				break;
-			case OP_INIT: vw_render_init(); n = 1; break;
-			case OP_RESET: vw_render_reset(); n = 1; break;
+			case OP_INIT: vw_render_init(); vw_wide_gen++; n = 1; break;
+			case OP_RESET: vw_render_reset(); vw_wide_gen++; n = 1; break;
+			case OP_CALL: {
+				uint32 w[4];
+				void (*fn)(void *) = 0;
+				void *arg = 0;
+				for (i = 0; i < 4; i++) w[i] = W.ring[(tail + 1 + i) & W.mask];
+				memcpy(&fn, &w[0], sizeof fn);
+				memcpy(&arg, &w[2], sizeof arg);
+				if (fn) fn(arg);
+				n = 5;
+				break;
+			}
 			case OP_STOP: STOREA(W.tail, tail + 1); return;
 			default: n = 1; break;
 			}
@@ -480,6 +532,7 @@ int vdpw_start(const md_thread_ops *ops)
 	memset(&vw_bitmap, 0, sizeof vw_bitmap);
 	W.push_needed = 1;
 	W.vall = 1;                                  /* the first drawing call carries the whole VRAM */
+	vw_wide_cache_on = 1;
 	vdpw_on = 1;
 	if (ops->spawn(ops->user, MD_WORKER_VDP, worker_main, NULL)) {
 		vdpw_on = 0;

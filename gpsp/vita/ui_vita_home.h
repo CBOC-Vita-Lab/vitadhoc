@@ -1166,8 +1166,9 @@ static float hm_topbar(float dy, int n_scan)
  * behind it at once (the same switch as ever, rescanning and writing
  * config.ini only once the list has rested).  It opens on TRIANGLE with the
  * active console highlighted, moves on TRIANGLE / DOWN, back on UP, and
- * closes by itself 1.2 s after the last move.  Unfolds from the pill's
- * lower edge, so the pill is never covered. */
+ * closes by itself 1.2 s after the last move (opened by a finger it waits
+ * for the tap instead: a row, or beside it to close; a drag scrolls it).
+ * Unfolds from the pill's lower edge, so the pill is never covered. */
 #define HM_PICK_ROW   52
 #define HM_PICK_PAD   10
 #define HM_PICK_HOLD  72          /* frames: 1.2 s at 60 Hz */
@@ -1175,6 +1176,10 @@ static float hm_topbar(float dy, int n_scan)
 static float g_pick_scr;          /* the first visible row (fractional)   */
 static float g_pick_hy;           /* the highlight's offset in the panel  */
 static int   g_pick_snap;         /* put the highlight in place at once    */
+static float g_pick_drag;         /* rows a finger has dragged the list by  */
+static int   g_pick_touch;        /* opened by a finger: it stays open until
+                                   * a tap (no 1.2 s close under a finger
+                                   * that is still looking for its row)     */
 
 /* How many rows fit between the pill and the hint line. */
 static int hm_pick_vis(void)
@@ -1217,6 +1222,16 @@ static void hm_pick_draw(int n_scan)
       target = (float)(hm_con_n() - vis);
    if (target < 0)
       target = 0;
+   {
+      /* a finger's drag moves the rows from there, within the list */
+      float base = target;
+      target += g_pick_drag;
+      if (target > hm_con_n() - vis)
+         target = (float)(hm_con_n() - vis);
+      if (target < 0)
+         target = 0;
+      g_pick_drag = target - base;
+   }
    if (g_pick_snap)
       g_pick_scr = target;
    else
@@ -2332,6 +2347,8 @@ static void hm_pick_pad(unsigned *e)
          g_pick_sel = hm_con_row(g_pcfg.console);
          g_pick_idle = 0;
          g_pick_snap = 1;
+         g_pick_drag = 0.0f;
+         g_pick_touch = (in & BROWSER_CON_BUTTON) != 0;
          fe_evt("ui_picker open console=%d", g_pcfg.console);
       }
       return;
@@ -2339,6 +2356,16 @@ static void hm_pick_pad(unsigned *e)
 
    /* open */
    g_pick_idle++;
+   /* the finger: a drag that began on a row scrolls the list (a list longer
+    * than the panel has rows no tap could reach otherwise), and the list
+    * does not close under a finger that is down */
+   if (g_tch.down && !g_tch.dead)
+   {
+      g_pick_idle = 0;
+      if (g_tch.moved && g_tch.axis == 2 && g_tch.land >= 0 &&
+          g_tch.land_r.btn == BROWSER_CON_BUTTON && g_tch.land_r.id >= 1)
+         g_pick_drag -= g_tch.dy * 2.0f / HM_PICK_ROW;
+   }
    if (in & BROWSER_CON_BUTTON)
    {
       if (g_tch.land_r.id >= 1 && g_tch.land_r.id <= hm_con_n())
@@ -2371,12 +2398,15 @@ static void hm_pick_pad(unsigned *e)
    if (step)
    {
       g_pick_idle = 0;
+      g_pick_drag = 0.0f;
+      if (step == 1)
+         g_pick_touch = 0;          /* the pad has it: its 1.2 s rule again */
       if (hm_con_at(g_pick_sel) != g_pcfg.console)
          g_con_pick = hm_con_at(g_pick_sel);
       fe_evt("ui_picker move row=%d console=%d", g_pick_sel,
              hm_con_at(g_pick_sel));
    }
-   if (g_pick_idle >= HM_PICK_HOLD)
+   if (g_pick_idle >= HM_PICK_HOLD && !g_pick_touch)
       close = 1;
    if (close)
    {

@@ -576,6 +576,11 @@ void md_host_set_framebuffer(uint16_t *buf, int pitch_px)
 
 extern const wide_line_t *vdpw_wide_rec(void);
 extern const uint32 *vdpw_wide_opq(void);
+extern const uint8 *vdpw_r_vram(void);
+extern const uint8 *vdpw_r_vsram(void);
+extern const uint16 *vdpw_wide_pal(void);
+extern void vdpw_wide_rows_clear(void);
+extern void vdpw_wide_row_set(int plane, int row, unsigned int addr, const uint16 *words, int n);
 typedef char md_wide_line_size_check[sizeof(md_wide_line) == sizeof(wide_line_t) ? 1 : -1];
 
 static void wide_apply(void)
@@ -586,6 +591,7 @@ static void wide_apply(void)
 	if (m > MD_WIDE_MAX) m = MD_WIDE_MAX;
 	if (G.loaded && G.system != MD_SYS_MD) m = m > 0 ? -1 : 0;          /* the 8 bit systems: the line records only */
 	else if (!G.loaded || !G.fb_user || G.fb_user_pitch < MD_WIDE_PITCH) m = 0;
+	if (m && !wide_m) wide_vall = 1;                                     /* the list of written VRAM blocks was not kept while it was off */
 	wide_m = m;
 }
 
@@ -598,18 +604,50 @@ int md_host_set_wide_margin(int margin)
 	return wide_m > 0 ? wide_m : 0;
 }
 
-void md_host_wide_frame(md_wide_frame *f)
+/* the frame handed to the wide view's analysis: one at a time (md_host_wide_run joins the one before) */
+static struct {
+	md_wide_frame f;
+	md_wide_fn fn;
+	void *user;
+	uint8_t cram[128];
+	uint16_t dirty[0x800];
+} WJ;
+
+static void wide_job(void *arg) { (void)arg; WJ.fn(WJ.user, &WJ.f); }
+
+void md_host_wide_join(void) { vdpw_join(); }
+
+void md_host_wide_run(md_wide_fn fn, void *user)
 {
 	int i;
-	memset(f, 0, sizeof *f);
-	if (!G.loaded) return;
-	f->h = bitmap.viewport.h;
-	f->margin = wide_m > 0 ? wide_m : 0;
-	f->line = (const md_wide_line *)vdpw_wide_rec();
-	f->opq = vdpw_wide_opq();
-	f->vram = vram; f->vsram = vsram; f->cram = cram;
-	for (i = 0; i < 24; i++) f->reg[i] = reg[i];
+	if (!fn) return;
+	vdpw_join();
+	memset(&WJ.f, 0, sizeof WJ.f);
+	WJ.fn = fn; WJ.user = user;
+	if (G.loaded) {
+		WJ.f.h = bitmap.viewport.h;
+		WJ.f.margin = wide_m > 0 ? wide_m : 0;
+		WJ.f.line = (const md_wide_line *)vdpw_wide_rec();
+		WJ.f.opq = vdpw_wide_opq();
+		WJ.f.vram = vdpw_r_vram(); WJ.f.vsram = vdpw_r_vsram();
+		memcpy(WJ.cram, cram, sizeof WJ.cram);
+		WJ.f.cram = WJ.cram;
+		WJ.f.pal = vdpw_wide_pal();
+		WJ.f.sms1 = (system_hw <= SYSTEM_SMS);
+		for (i = 0; i < 24; i++) WJ.f.reg[i] = reg[i];
+		/* the VRAM blocks written since the last call */
+		for (i = 0; i < wide_vn; i++) { WJ.dirty[i] = wide_vl[i]; wide_vd[wide_vl[i]] = 0; }
+		WJ.f.dirty = WJ.dirty; WJ.f.ndirty = wide_vn; WJ.f.dirty_all = wide_vall;
+		wide_vn = 0; wide_vall = 0;
+	}
+	if (vdpw_on) vdpw_q_call(wide_job, NULL);
+	else wide_job(NULL);
 }
+
+void md_host_wide_rows_clear(void) { vdpw_wide_rows_clear(); }
+void md_host_wide_row(int plane, int row, unsigned addr, const uint16_t *words, int n) { vdpw_wide_row_set(plane, row, addr, (const uint16 *)words, n); }
+void md_host_wide_cache(int on, int check) { vdpw_wide_cache(on, check); }
+void md_host_wide_cache_stat(unsigned long out[3]) { vdpw_join(); vdpw_wide_cache_stat(out); }
 
 /* ---- audio ----------------------------------------------------------------------------------------------- */
 
@@ -767,7 +805,7 @@ int md_host_ra_read(unsigned addr, uint8_t *out, unsigned n)
 	if (!G.loaded || !out) return 0;
 	if (G.system == MD_SYS_MD) {
 		unsigned end;
-		if (addr < 0x10000) { end = 0x10000; for (i = 0; addr + i < end && i < n; i++) out[i] = work_ram[(addr + i) ^ 1]; return (int)i; }
+		if (addr < 0x10000) { end = 0x10000; for (i = 0; addr + i < end && i < n; i++) out[i] = work_ram[addr + i]; return (int)i; }   /* as held: see host.h */
 		if (addr >= 0x10000 && addr < 0x20000) { end = 0x20000; for (i = 0; addr + i < end && i < n; i++) out[i] = sram.sram[addr + i - 0x10000]; return (int)i; }
 		return 0;
 	}

@@ -29,6 +29,9 @@ void vdpw_status_changed(void);                       /* the emulating thread wr
 void vdpw_vram_all_changed(void);                     /* VRAM was rewritten in bulk without the per-pattern marks */
 void vdpw_mark_vram(unsigned name);                   /* one 32 byte VRAM pattern changed (MARK_BG_DIRTY) */
 unsigned vdpw_spr_col(void);
+void vdpw_q_call(void (*fn)(void *), void *arg);   /* fn(arg) on the worker after everything queued, its copy of the VDP level with the emulating thread's */
+void vdpw_wide_cache(int on, int check);           /* the worker renderer's strip cache (on by default with the worker); check: draw anyway and compare */
+void vdpw_wide_cache_stat(unsigned long out[3]);   /* strips copied, drawn, copies that differed (check mode) */
 
 /* census (the emulating thread's view; counters since start) */
 typedef struct {

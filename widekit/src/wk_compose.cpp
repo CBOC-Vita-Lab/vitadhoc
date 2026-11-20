@@ -10,6 +10,31 @@
 #include <arm_neon.h>
 #endif
 
+/* ----- vectors (8 x 16 bit or 16 x 8 bit a step: NEON on the Vita, SSE2 on the host) ----- */
+
+#if defined(__GNUC__) && (defined(__ARM_NEON) || defined(__SSE2__))
+#define WK_VEC 1
+namespace {
+typedef uint16_t vu16 __attribute__((vector_size(16)));
+typedef int16_t vs16 __attribute__((vector_size(16)));
+typedef uint8_t vu8 __attribute__((vector_size(16)));
+typedef uint8_t vu8h __attribute__((vector_size(8)));
+template <class V> inline V vld(const void *p) { V v; memcpy(&v, p, sizeof v); return v; }
+template <class V> inline void vst(void *p, V v) { memcpy(p, &v, sizeof v); }
+inline vu16 widen8(const uint8_t *p) { return __builtin_convertvector(vld<vu8h>(p), vu16); }
+inline vu16 splat16(unsigned v) { const uint16_t x = (uint16_t)v; return (vu16){x, x, x, x, x, x, x, x}; }
+inline vu16 rev16v(vu16 v) { return __builtin_shuffle(v, (vu16){7, 6, 5, 4, 3, 2, 1, 0}); }
+inline vu8 rev8v(vu8 v)
+{
+    vu16 w = (vu16)v;
+    w = (vu16)((w << 8) | (w >> 8));                 /* bytes swapped inside each 16 bit lane */
+    return (vu8)rev16v(w);
+}
+}  // namespace
+#else
+#define WK_VEC 0
+#endif
+
 /* ----- blend kernel ----------------------------------------------------------- */
 
 void wk_blend_row_scalar(uint16_t *dst, const uint16_t *src, const uint8_t *w,
@@ -58,35 +83,21 @@ void wk_blend_row(uint16_t *dst, const uint16_t *src, const uint8_t *w,
                                 vmulq_u16(vandq_u16(d, m31), iw)), t), 5);
         vst1q_u16(dst + i, vorrq_u16(vorrq_u16(vshlq_n_u16(r, 11), vshlq_n_u16(g, 5)), b));
     }
+#elif WK_VEC
+    /* the same sums in 16 bit lanes (at most 63 * 32 + 31) */
+    const vu16 k32 = splat16(32), m63 = splat16(63), m31 = splat16(31);
+    for (; i + 8 <= n; i += 8) {
+        const vu16 sv = vld<vu16>(src + i), dv = vld<vu16>(dst + i);
+        const vu16 wv = widen8(w + i), iw = k32 - wv, t = widen8(dither + i);
+        const vu16 r = ((sv >> 11) * wv + (dv >> 11) * iw + t) >> 5;
+        const vu16 g = (((sv >> 5) & m63) * wv + ((dv >> 5) & m63) * iw + t) >> 5;
+        const vu16 b = ((sv & m31) * wv + (dv & m31) * iw + t) >> 5;
+        vst(dst + i, (vu16)((r << 11) | (g << 5) | b));
+    }
 #endif
     if (i < n)
         wk_blend_row_scalar(dst + i, src + i, w + i, dither + i, n - i);
 }
-
-/* ----- row kernels (wk_compose.h) ------------------------------------------------ */
-
-#if defined(__GNUC__) && (defined(__ARM_NEON) || defined(__SSE2__))
-#define WK_VEC 1
-namespace {
-typedef uint16_t vu16 __attribute__((vector_size(16)));
-typedef int16_t vs16 __attribute__((vector_size(16)));
-typedef uint8_t vu8 __attribute__((vector_size(16)));
-typedef uint8_t vu8h __attribute__((vector_size(8)));
-template <class V> inline V vld(const void *p) { V v; memcpy(&v, p, sizeof v); return v; }
-template <class V> inline void vst(void *p, V v) { memcpy(p, &v, sizeof v); }
-inline vu16 widen8(const uint8_t *p) { return __builtin_convertvector(vld<vu8h>(p), vu16); }
-inline vu16 splat16(unsigned v) { const uint16_t x = (uint16_t)v; return (vu16){x, x, x, x, x, x, x, x}; }
-inline vu16 rev16v(vu16 v) { return __builtin_shuffle(v, (vu16){7, 6, 5, 4, 3, 2, 1, 0}); }
-inline vu8 rev8v(vu8 v)
-{
-    vu16 w = (vu16)v;
-    w = (vu16)((w << 8) | (w >> 8));                 /* bytes swapped inside each 16 bit lane */
-    return (vu8)rev16v(w);
-}
-}  // namespace
-#else
-#define WK_VEC 0
-#endif
 
 void wk_soft_row_scalar(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th)
 {
@@ -588,8 +599,8 @@ static void base_fill(const wk_compose *c, wk_compose_scratch *t, const base_t &
         return;
     }
     const int e0 = b.e[0], e1 = b.e[1], e2 = b.e[2];
-    if (n >= c->M / 2) {
-        /* whole row from the cache (computed for every distance on a miss) */
+    if (n >= 8) {
+        /* whole row from the cache (computed for every distance on a miss, 8 pixels a step) */
         const uint8_t ph = (uint8_t)((b.y & 3) | (b.s << 2));
         softrow_t *sr = &t->softc[(((unsigned)e0 * 0x9E3779B1u) ^ ((unsigned)e1 * 0x85EBCA6Bu) ^ ((unsigned)e2 * 0xC2B2AE35u) ^ ((unsigned)ph * 0x27D4EB2Fu)) >> 23];
         if (!sr->ok || sr->ph != ph || sr->e[0] != e0 || sr->e[1] != e1 || sr->e[2] != e2) {

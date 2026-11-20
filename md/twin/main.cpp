@@ -139,10 +139,14 @@ static std::vector<uint16_t> g_canvas;
 static int g_wide = 0;
 static mdw::Wide *g_wa = 0;                     // the adapter (analysis + compose), with --wide
 static double g_t_an = 0, g_t_co = 0;           // seconds spent in analyse() / compose()
+static unsigned long long g_real_sum = 0, g_map_sum = 0;   // over the run: real margin pixels composed, pixels the learned map gave
 static unsigned g_n_an = 0, g_n_co = 0;
 static std::string g_shot_prefix;
 static std::vector<int> g_shot_frames;
 static int g_cap = 1 << 20;                     // --wide-cap: the governor's real margin limit
+static std::string g_dump_prefix;                // --wide-dump PREFIX[:FROM[:STEP]]
+static int g_dump_from = 0, g_dump_step = 1;
+static int g_learn = 1, g_cache = 1, g_cache_check = 0;
 
 // where the view starts in the picture buffer: the Mega Drive picture is the screen, the Game Gear band has the LCD window 48 columns in
 static const uint16_t *px_wide_view(const md_video_info &vi, const uint16_t *px, int) { return vi.gg_band ? px + 48 : px; }
@@ -180,9 +184,8 @@ static void step_frame(int f, Acc &acc, double *dt)
 		g_t_an += now() - a0; g_n_an++;
 		if (getenv("MD_WIDE_DEBUG") && f % 100 == 50 && meta->valid) {
 			const int y = vi.h / 2;
-			printf("WD f=%d y=%d valid=%d layers=%d strip=%d on=%d kind=%d/%d hud=%d real A=%d,%d B=%d,%d ring %d,%d dir=%d/%d epoch=%u main=%d coh=%d/%d\n", f, y, meta->valid, meta->nlayers, meta->strip[y], meta->on[y],
-				meta->ana.kind[0], meta->ana.kind[1], meta->ana.line[y].hud, meta->ana.line[y].real[0][0], meta->ana.line[y].real[1][0], meta->ana.line[y].real[0][1], meta->ana.line[y].real[1][1],
-				meta->ana.line[y].ring[0][0], meta->ana.line[y].ring[1][0], meta->ana.dir[0], meta->ana.dir[1], meta->ana.epoch, meta->ana.main_layer, meta->ana.coherent[0][y], meta->ana.coherent[1][y]);
+			printf("WD f=%d y=%d valid=%d layers=%d planes=%d real=%d,%d pic=%d,%d hud=%d epoch=%u scene=%d allop=%d\n", f, y, meta->valid, meta->nlayers, meta->planes,
+				meta->real[0][y], meta->real[1][y], meta->pic[0][y], meta->pic[1][y], meta->hud[y], meta->epoch, meta->scene_event, meta->all_opaque);
 		}
 		if (meta->valid) {
 			const uint16_t *v0 = px_wide_view(vi, md_host_video(&w, &h, &pitch), pitch);
@@ -190,6 +193,7 @@ static void step_frame(int f, Acc &acc, double *dt)
 			int ow = 0, oh = 0;
 			const uint16_t *wp = g_wa->compose(*meta, v0, pitch / 2, &ow, &oh);
 			g_t_co += now() - a0; g_n_co++;
+			{ mdw::Stats st; g_wa->census(&st); g_map_sum += st.map_px; for (int y = 0; y < oh; y++) g_real_sum += (unsigned long long) (g_wa->last_real(0, y) + g_wa->last_real(1, y)); }
 			for (size_t k = 0; k < g_shot_frames.size(); k++) if (g_shot_frames[k] == f && wp) {
 				std::vector<uint8_t> rgb((size_t) ow * oh * 3);
 				for (int i = 0; i < ow * oh; i++) rgb565_to_rgb(wp[i], &rgb[(size_t) i * 3]);
@@ -201,6 +205,18 @@ static void step_frame(int f, Acc &acc, double *dt)
 				for (int y = 0; y < oh; y++) for (int x = 0; x < ow; x++) rgb565_to_rgb(v0[(size_t) y * (pitch / 2) + x - M], &raw[((size_t) y * ow + x) * 3]);
 				snprintf(nm, sizeof nm, "%s_%04d_raw.png", g_shot_prefix.c_str(), f);
 				png_write(nm, ow, oh, raw);
+			}
+			if (!g_dump_prefix.empty() && wp && f >= g_dump_from && (f - g_dump_from) % g_dump_step == 0) {
+				// for the truth check (wide_truth.py): size, margin, per line the real margins, then the picture (RGB565) and widekit's provenance bytes
+				char nm[600]; snprintf(nm, sizeof nm, "%s_%05d.wd", g_dump_prefix.c_str(), f);
+				if (FILE *fp = fopen(nm, "wb")) {
+					int hd[4] = { ow, oh, meta->margin, f };
+					fwrite(hd, sizeof hd, 1, fp);
+					for (int y = 0; y < oh; y++) { int r2[2] = { g_wa->last_real(0, y), g_wa->last_real(1, y) }; fwrite(r2, sizeof r2, 1, fp); }
+					fwrite(wp, 2, (size_t) ow * oh, fp);
+					fwrite(g_wa->last_prov(), 1, (size_t) ow * oh, fp);
+					fclose(fp);
+				}
 			}
 		}
 		delete meta;
@@ -280,6 +296,16 @@ int main(int argc, char **argv)
 		else if (a == "--quiet") quiet = 1;
 		else if (a == "--wide") g_wide = atoi(need());
 		else if (a == "--wide-cap") g_cap = atoi(need());
+		else if (a == "--wide-dump") {
+			std::string v = need();
+			size_t c1 = v.find(':');
+			g_dump_prefix = v.substr(0, c1);
+			if (c1 != std::string::npos) { g_dump_from = atoi(v.c_str() + c1 + 1); size_t c2 = v.find(':', c1 + 1); if (c2 != std::string::npos) g_dump_step = atoi(v.c_str() + c2 + 1); }
+			if (g_dump_step < 1) g_dump_step = 1;
+		}
+		else if (a == "--wide-nolearn") g_learn = 0;
+		else if (a == "--wide-nocache") g_cache = 0;
+		else if (a == "--wide-cache-check") g_cache_check = 1;
 		else if (a == "--shots") { std::string v = need(); size_t c = v.find(':'); g_shot_prefix = v.substr(0, c);
 			for (size_t q = c + 1; q < v.size() && c != std::string::npos;) { size_t e = v.find(',', q); if (e == std::string::npos) e = v.size(); g_shot_frames.push_back(atoi(v.substr(q, e - q).c_str())); q = e + 1; } }
 		else if (a[0] != '-' && !rom) rom = argv[i];
@@ -310,6 +336,9 @@ int main(int argc, char **argv)
 	if (g_wide > 0) {
 		g_wa = new mdw::Wide;
 		g_wa->set_real_cap_default(g_cap);
+		g_wa->set_learn(g_learn != 0);
+		g_wa->set_prov(!g_dump_prefix.empty());
+		if (vdpthr) md_host_wide_cache(g_cache, g_cache_check);
 		if (md_host_system() == MD_SYS_GG) { md_host_set_option("gg_band", 1); md_host_set_wide_margin(g_wide); }
 		else {
 			g_canvas.assign((size_t)MD_WIDE_PITCH * MD_MAX_HEIGHT, 0);
@@ -384,8 +413,10 @@ int main(int argc, char **argv)
 			bn, md_host_system(), frames, all.v, all.a, sh, rh, all.samples, vi.w, vi.h, p50 * 1e3, p99 * 1e3, tot / (double)dts.size() * 1e3);
 	if (g_wa && !quiet) {
 		mdw::Stats st; g_wa->census(&st);
-		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d\n", st.frames, st.analysed, st.composed,
-			g_n_an ? g_t_an / g_n_an * 1e3 : 0.0, g_n_co ? g_t_co / g_n_co * 1e3 : 0.0, st.real_pct, st.soft_lines, st.scene_events, st.hs_missed, st.hs_checked);
+		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d map_cells=%d rooms=%d bound=%d map_px=%u rows=%u rejected=%u real_sum=%llu map_sum=%llu\n", st.frames, st.analysed, st.composed,
+			g_n_an ? g_t_an / g_n_an * 1e3 : 0.0, g_n_co ? g_t_co / g_n_co * 1e3 : 0.0, st.real_pct, st.soft_lines, st.scene_events, st.hs_missed, st.hs_checked,
+			st.map_cells, st.map_rooms, st.map_bound, st.map_px, st.rows, st.map_rejected, g_real_sum, g_map_sum);
+		if (vdpthr) { unsigned long cs[3]; md_host_wide_cache_stat(cs); printf("WIDECACHE copied=%lu drawn=%lu differed=%lu\n", cs[0], cs[1], cs[2]); }
 	}
 
 	if (roundtrip) {

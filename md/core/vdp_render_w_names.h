@@ -70,3 +70,11 @@
 #define wide_rec vw_wide_rec
 #define wide_planes vw_wide_planes
 #define wide_opq vw_wide_opq
+#define wide_pal vw_wide_pal
+#define wide_rows_clear vw_wide_rows_clear
+#define wide_row_set vw_wide_row_set
+#define wide_gen vw_wide_gen
+#define wide_parse_gen vw_wide_parse_gen
+#define wide_cache_on vw_wide_cache_on
+#define wide_cache_check vw_wide_cache_check
+#define wide_cache_stat vw_wide_cache_stat

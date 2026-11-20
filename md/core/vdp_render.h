@@ -109,21 +109,35 @@ extern uint16 spr_col;
 typedef struct {
   uint8 flags;               /* WL_* */
   uint8 col_mask, shift;     /* playfield column mask and row shift (the plane size) */
+  uint8 side;                /* WS_* */
   uint16 xs[2], ys[2];       /* horizontal scroll value and first vertical scroll value of plane A and B for this line */
   uint16 ntab, ntbb, ntwb;
   uint16 row_mask;
 } wide_line_t;
 enum { WL_ON = 1,            /* a mode 5 line was drawn */
-       WL_STRIP = 2,         /* the strip beside this line was drawn */
-       WL_WINDOW = 4,        /* the window plane covers part of the line */
+       WL_STRIP = 2,         /* a strip beside this line was drawn (WS_L / WS_R say which) */
+       WL_WINDOW = 4,        /* the window plane covers the line or part of it */
        WL_VSCROLL = 8,       /* per 2-cell vertical scroll with different values */
        WL_IM2 = 16,          /* interlace mode 2 */
        WL_H40 = 32,
-       WL_M4 = 64 };           /* a Master System / Game Gear mode 4 line (record only) */
+       WL_M4 = 64,           /* a Master System / Game Gear mode 4 line (record only) */
+       WL_WFULL = 128 };     /* the window plane takes the whole line (plane A is not shown on it) */
+enum { WS_L = 1, WS_R = 2,           /* the left / right strip was drawn */
+       WS_NOA_L = 4, WS_NOA_R = 8,   /* ... without plane A: the window plane takes that side of the line, plane B and the sprites go on */
+       WS_OVR_A = 16, WS_OVR_B = 32, /* the strip pass read a learned row for plane A / B (wide_row_set) */
+       WS_PAL = 64,                  /* 8 bit consoles: the palette is not the one line 0 had (wide_pal) */
+       WS_VSE = 128 };               /* per 2-cell vertical scroll: the strips scroll like the column at their edge */
 extern int wide_m;                      /* strip width per side in pixels (0 = off, -1 = the records only: Master System / Game Gear) */
 extern int wide_planes;                 /* planes drawn into the strips: bit 0 A, bit 1 B (default 3) */
 extern uint32 wide_opq[256][2][3];      /* strip pixels that are opaque (see md_wide_frame) */
 extern wide_line_t wide_rec[256];
+extern uint16 wide_pal[32];
+extern void wide_rows_clear(void);
+extern void wide_row_set(int plane, int row, unsigned int addr, const uint16 *words, int n);
+/* the emulating thread's list of the 32 byte VRAM blocks written since the host last took it (vdp_ctrl.c) */
+extern uint8 wide_vd[0x800];
+extern uint16 wide_vl[0x800];
+extern int wide_vn, wide_vall;
 
 /* Function prototypes */
 extern void render_init(void);

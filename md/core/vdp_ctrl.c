@@ -57,10 +57,16 @@ static void vdp_set_all_vram(const uint8 *src);
   }                                                 \
   bg_name_dirty[name] |= (1 << ((addr >> 2) & 7));  \
   if (vdpw_on) vdpw_mark_vram(name);                \
+  if (wide_m && !wide_vd[name]) { wide_vd[name] = 1; wide_vl[wide_vn++] = (uint16) name; } \
 }
 
+/* VitAdhoc wide view: the 32 byte VRAM blocks written since the host last asked (md_host_wide_run); read by nothing the machine can see */
+uint8 wide_vd[0x800];
+uint16 wide_vl[0x800];
+int wide_vn, wide_vall = 1;
+
 /* VitAdhoc: the VDP worker (vdp_thread.h) learns about bulk VRAM changes and the status bits this file writes itself */
-#define VDPW_VRAM_ALL() { if (vdpw_on) vdpw_vram_all_changed(); }
+#define VDPW_VRAM_ALL() { wide_vall = 1; if (vdpw_on) vdpw_vram_all_changed(); }
 #define VDPW_STATUS() { if (vdpw_on) vdpw_status_changed(); }
 
 /* VINT timings */
@@ -3371,6 +3377,7 @@ static void vdp_set_all_vram(const uint8 *src)
   /* Copies entire vram area from a savestate, and updates the dirty tile flags */
   int name = 0;
   int addr = 0;
+  wide_vall = 1;   /* VitAdhoc wide view */
 
   for (addr = 0; addr < sizeof(vram); addr += 32)
   {

@@ -15,6 +15,13 @@ It stands on the work of many people:
 - [**Snes9x**](https://github.com/snes9xgit/snes9x) by its many authors: the
   Super NES emulator inside the SNES player (version 1.63), including Shay
   Green's snes_spc sound code.
+- [**Genesis Plus GX**](https://github.com/ekeeke/Genesis-Plus-GX) by Charles
+  MacDonald and Eke-Eke, with the authors of the cores it includes (Musashi,
+  the MAME sound and Z80 cores, Nuked OPN2 / OPLL, blip_buf): the Genesis /
+  Mega Drive, Master System, Game Gear and SG-1000 emulator inside the Sega
+  player.
+- **FCEUmm** by its many authors: the NES emulator. **Beetle WonderSwan**
+  (Mednafen's Cygne core, libretro): the WonderSwan emulator.
 - **Normmatt and the VBA/VBA-M team:** the open GBA BIOS from ReGBA.
 - [**rcheevos**](https://github.com/RetroAchievements/rcheevos) by
   RetroAchievements: the achievements runtime.
@@ -31,6 +38,6 @@ It stands on the work of many people:
 [Third-Party Notices](notices/THIRD-PARTY.md) has their licences, revisions and
 local changes. Original copyright notices stay in their files.
 
-An unofficial fan project. Nintendo, Sony, the Snes9x team, RetroAchievements
+An unofficial fan project. Nintendo, Sega, Bandai, Sony, the Snes9x and Genesis Plus GX teams, RetroAchievements
 and the game publishers are not affiliated with it and do not endorse it. No ownership of
 their games, firmware, artwork or trademarks is claimed.

@@ -337,6 +337,13 @@ void gpsp_visible_done_hook(void)
    unsigned t0;
    if (!g_mode || skip_next_frame || g_posted)
       return;
+   /* A boot that starts on a late line (cpu.cc) has no whole first
+    * frame: lines 0..start-1 were never captured, so the thread would
+    * draw them from empty registers.  That one partial picture is not
+    * handed over (the next frame is whole). */
+   if (!g_cap.line0_seen)
+      return;
+   g_cap.line0_seen = 0;
    t0 = pspcompat_time_us();
    /* VRAM: the pages written since the last copy (every path that writes
     * VRAM marks its page: the C stores, DMA, a state loaded, and the code

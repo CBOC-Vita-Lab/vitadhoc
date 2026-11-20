@@ -189,6 +189,7 @@ typedef struct
   u32 log_n;                       /* core: entries valid for THIS frame     */
   u32 log_flags;                   /* core: ME_LOGF_* (diagnostic)           */
 #endif
+  u32 line0_seen;                  /* core: line 0 was captured (a boot that starts on a later line has no whole first frame) */
 } me_capture_frame;
 #define ME_LOGF_OVERFLOW  1u       /* log dropped: more than log_cap entries */
 #define ME_LOGF_PAL       2u       /* palette entries this frame             */

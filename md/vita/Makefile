@@ -28,7 +28,7 @@ CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -Wall -Wextra -Wno-unuse
 CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/include
 
 FE_OBJS := $(B)/fe/picture.o $(B)/fe/audio_pace.o $(B)/fe/cheats.o $(B)/fe/savefile.o $(B)/player.o $(B)/pipe.o $(B)/main.o
-PK_SRC  := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale
+PK_SRC  := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed
 PK_OBJS := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o
 # newlib's FILE-slot allocation has no lock on the console (playerkit/vita/pk_stdio_lock.c puts a real one in place with --wrap)
 STDIO_LOCK ?= 1

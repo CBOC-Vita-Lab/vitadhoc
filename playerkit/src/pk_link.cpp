@@ -2,6 +2,7 @@
 #include "pk_link.h"
 #include "pk_util.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <algorithm>
@@ -212,7 +213,7 @@ struct Link::Impl {
 
 	/* the run */
 	unsigned delay = 0, hash_every = 240;
-	uint32_t cur = 0, lnext = 0, peer_ack = 0, rcontig = 0, max_sent = 0;
+	uint32_t cur = 0, lnext = 0, peer_ack = 0, rcontig = 0, rtop = 0, max_sent = 0;
 	uint16_t lin[RING], rin[RING];
 	uint8_t rhave[RING];
 	uint64_t lsent[RING];
@@ -522,7 +523,7 @@ struct Link::Impl {
 		const unsigned idx = r.u16();
 		const uint32_t ts = r.u32();
 		if (!r.ok || idx >= nchunks) { st.bad++; return; }
-		const size_t want = idx + 1 == nchunks ? comp_len - (size_t) idx * CHUNK : CHUNK;
+		const size_t want = idx + 1 == nchunks ? comp_len - (size_t) idx * CHUNK : (size_t) CHUNK;
 		if (r.left() != want) { st.bad++; return; }
 		note_echo(ts);
 		echo_chunk_ts = ts; echo_chunk_at = now; have_chunk_echo = true;
@@ -572,7 +573,7 @@ struct Link::Impl {
 	void begin_run()
 	{
 		cur = 0;
-		lnext = peer_ack = rcontig = delay;
+		lnext = peer_ack = rcontig = rtop = delay;
 		memset(rhave, 0, sizeof rhave);
 		for (unsigned f = 0; f < delay; f++) { lin[f & 255] = 0; rin[f & 255] = 0; rhave[f & 255] = 1; }
 		committed = false;
@@ -615,6 +616,7 @@ struct Link::Impl {
 		uint32_t first = std::min<uint32_t>(peer_ack, lnext > N ? lnext - N : 0);
 		const uint32_t lo = lnext > MAX_INPUTS ? lnext - MAX_INPUTS : 0;
 		if (first < lo) first = lo;
+		if (first < delay) first = delay;
 		if (first > lnext) first = lnext;
 		uint32_t count = lnext - first;
 		uint8_t b[256];
@@ -624,11 +626,9 @@ struct Link::Impl {
 		HashRec pick[2];
 		for (int i = 0; i < HASHES; i++) {
 			if (!mine[i].used) continue;
-			if (nh < 2) pick[nh++] = mine[i];
-			else {
-				const int lowest = (int32_t) (pick[0].frame - pick[1].frame) < 0 ? 0 : 1;
-				if ((int32_t) (mine[i].frame - pick[lowest].frame) > 0) pick[lowest] = mine[i];
-			}
+			if (nh < 2) { pick[nh++] = mine[i]; continue; }
+			const int lowest = (int32_t) (pick[0].frame - pick[1].frame) < 0 ? 0 : 1;
+			if ((int32_t) (mine[i].frame - pick[lowest].frame) > 0) pick[lowest] = mine[i];
 		}
 		if (end_at != NO_END) flags |= 1;
 		flags |= (unsigned) nh << 1;
@@ -645,7 +645,7 @@ struct Link::Impl {
 		const uint64_t late = (have_rtt ? srtt + 4ull * rttvar : 150000ull) + 2ull * (cfg.frame_us ? cfg.frame_us : 16667);
 		for (uint32_t f = first; f < lnext; f++) {
 			o.u16(lin[f & 255]);
-			if (f + 1 < lnext && f >= max_sent ? false : (f + 1 < lnext && now - lsent[f & 255] > late)) st.retx++;
+			if (f >= delay && f + 1 < lnext && now - lsent[f & 255] > late) st.retx++;
 		}
 		if (lnext > max_sent) max_sent = lnext;
 		send_pkt(peer, T_INPUT, sid, b, o.n);
@@ -667,7 +667,7 @@ struct Link::Impl {
 		note_echo(ts);
 		if (flags & 8) rtt_sample(now32() - echo - hold);
 		if (ack > peer_ack && ack <= lnext) { peer_ack = ack; st.acks++; }
-		bool gap = false, news = false;
+		bool gap = false;
 		for (unsigned i = 0; i < count; i++) {
 			const uint32_t f = first + i;
 			const uint16_t v = (uint16_t) (r.p[r.i + 2 * i] | r.p[r.i + 2 * i + 1] << 8);
@@ -676,12 +676,10 @@ struct Link::Impl {
 			if (rhave[f & 255]) { st.dups++; continue; }
 			rin[f & 255] = v;
 			rhave[f & 255] = 1;
-			news = true;
-			if (f > rcontig) gap = true;
+			if ((int32_t) (f + 1 - rtop) > 0) rtop = f + 1;
 		}
-		(void) news;
 		while (rhave[rcontig & 255] && rcontig - cur < HORIZON) rcontig++;
-		if (first > rcontig) gap = true;
+		if ((int32_t) (rtop - rcontig) > 0 || first > rcontig) gap = true;
 		for (unsigned i = 0; i < nh; i++) add_hash(theirs, hr[i].frame, hr[i].hash);
 		if (phase == LP_FAILED) return;
 		if (end != NO_END) adopt_end(end);
@@ -819,7 +817,8 @@ struct Link::Impl {
 			if (cfg.host && !guest_running && now - last_start >= 50000) send_start();
 			/* a stalled or idle console keeps the other's window moving: a resend at a rate that backs off */
 			const uint64_t sl = stalled ? now - stall_since : 0;
-			const uint64_t every = !stalled ? 250000 : sl < 500000 ? 10000 : sl < 3000000 ? 30000 : 100000;
+			const bool at_end = phase == LP_ENDING && (int32_t) (cur - end_at) >= 0;
+			const uint64_t every = at_end ? 20000 : !stalled ? 250000 : sl < 500000 ? 10000 : sl < 3000000 ? 30000 : 100000;
 			if (now - last_tx >= every) send_input(true);
 			if (phase == LP_ENDING && cfg.host && done_sending && now - done_last >= 50000) send_done();
 			if (phase == LP_ENDING && cfg.host && done_sending && now - done_t0 > 1500000) { phase = LP_DONE; log("link: ended together at frame %u (no BYE back)", end_at); }

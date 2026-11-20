@@ -487,7 +487,7 @@ TEST(ff_sound_is_mixed_down_so_the_pacer_sees_real_time)
 	CHECK_EQ(b[1], 60);
 }
 
-TEST(ff_without_sound_drops_it_and_normal_speed_is_untouched)
+TEST(ff_without_sound_is_silence_and_normal_speed_is_untouched)
 {
 	FastForward ff;
 	ff.configure(2, false, false);
@@ -495,5 +495,7 @@ TEST(ff_without_sound_drops_it_and_normal_speed_is_untouched)
 	CHECK_EQ(ff.reduce(b, 4), 4);              /* not fast forwarding: untouched */
 	CHECK_EQ(b[0], 1);
 	ff.update(true, true, false);
-	CHECK_EQ(ff.reduce(b, 4), 0);
+	CHECK_EQ(ff.reduce(b, 4), 2);              /* silence, at the real-time count */
+	CHECK_EQ(b[0], 0);
+	CHECK_EQ(b[3], 0);
 }

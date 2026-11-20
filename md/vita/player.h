@@ -8,9 +8,10 @@
  * Licence: links only md/, playerkit/ and widekit/ code (Genesis Plus GX has a non-commercial licence: nothing from gpsp/ may be
  * linked into md.bin).
  *
+ * Rewind and fast forward (playerkit pk_speed / pk_rewind / pk_ff) are built in: the game loop (main.cpp, twin) asks speed_plan() how many
+ * frames to run this refresh, runs each with run_frame(), and passes the core's audio through audio_filter().
+ *
  * Hooks left for features that plug in here (all are named, none is half done):
- *   rewind / fast forward   set_extra_caps(CAP_REWIND | CAP_FF ...) before start(); the menu then shows the rows; the game loop (main.cpp,
- *                           twin) calls md_host_set_render(0) for skipped frames; Mapper's ACT_FF / ACT_REWIND are in in_.fired / in_.held.
  *   RetroAchievements       md_host_ra_read / md_host_ra_console give the memory map (host.h); the app side module plugs into
  *                           after_frame() (once per emulated frame, game thread) and notice() for toasts.
  *   two players / online    set_extra_caps(CAP_PLAY_TOGETHER); until then the card is not shown. start() already reads req_.link.
@@ -36,6 +37,7 @@
 #include "pk_notice.h"
 #include "pk_pace.h"
 #include "pk_look.h"
+#include "pk_speed.h"
 
 namespace mdp {
 
@@ -120,7 +122,7 @@ public:
 
 	/* ---- look governor (playerkit/INTEGRATION.md section 8; the ladder is the pixel art scaler's tiers, md/vita/README.md) ----
 	 * Every game starts with the best look: the pixel art scaler tier of the system's ceiling (Game Gear xBR 3x, Master System and
-	 * H32 Mega Drive xBR 2x, H40 Mega Drive MMPX 2x). When this game cannot hold full speed with it, the next tier down is taken
+	 * Mega Drive xBR 2x; MMPX 2x is only a look picked by hand). When this game cannot hold full speed with it, the next tier down is taken
 	 * (remembered for the game, <root>/look/<console>/..), and given back when there is room. A scaler chosen by hand in the Pixel
 	 * art scaler row is never eased. picture() is the look to show: the settings with the governor's steps applied (tier_steps). */
 	void look_start(int mhz);
@@ -135,6 +137,22 @@ public:
 	bool input(const pk::PadSample pads[pk::MAX_PLAYERS], bool tapped, uint64_t now_ms, uint32_t frame);
 	/* draw (render) emulated frame number `frame`? (steady pacing: even frames only in half mode) */
 	bool want_render(uint32_t frame) const;
+	/* ---- fast forward and rewind (playerkit pk_speed) ----
+	 * speed_plan: once per display refresh, before the frames; `normal` = the frames this refresh would run (1, or what the pacing says).
+	 * Fast forward multiplies it (2x or 3x), rewinding makes it 1 (a landing or a standing picture). run_frame replaces md_host_run_frame
+	 * (it captures the state for rewind); true when the core ran a frame. audio_filter works in place on the core's audio and returns the
+	 * frames to keep (mixed down under fast forward, none while rewinding). speed_draws: draw frame `i` of `n` this refresh?
+	 * speed_busy: fast forward is on or the game is rewinding (the picture hand-over drops, nothing waits). */
+	int speed_plan(int normal);
+	bool run_frame(bool render);
+	size_t audio_filter(int16_t *lr, size_t frames);
+	bool speed_draws(int i, int n) const { return speed_.draw_this(i, n); }
+	bool speed_busy() const { return speed_.busy(); }
+	/* the helper thread's step (called by the writer thread when it has nothing else): packs the newest rewind state */
+	bool speed_pack() { return speed_.pack(); }
+	/* two-player or online play, Hardcore: rewind and fast forward are off (a press gives `why` as its notice) */
+	void set_speed_locked(bool locked, const char *why = 0) { speed_.set_locked(locked, why); }
+	const pk::Speed &speed() const { return speed_; }
 	pk::PaceMode pace_mode() const { return pacer_.mode(); }
 	/* cost of a drawn frame (us): the frame's own work, for the pacing decision */
 	void drawn_cost(uint32_t cost_us);
@@ -250,11 +268,29 @@ private:
 	pic_settings eff_;             /* ps_ with the governor's steps: what is shown */
 	/* the settings the menu's own rows do not cover; stored in <console>/player.ini */
 	int region_ = 0, fm_ = 0, ym2413_ = 2, pad_type_ = 0, sms_border_ = 0, gg_lcd_ = 0;
+	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
+	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;
+	struct SpeedGlue : pk::SpeedHost {
+		MdPlayer *p;
+		explicit SpeedGlue(MdPlayer *pl) : p(pl) {}
+		size_t state_size();
+		bool save_state(uint8_t *buf, size_t cap);
+		bool load_state(const uint8_t *buf, size_t n);
+		void run_frame(bool render);
+		void clear_pads();
+		static void wake(void *self);
+	} glue_;
+	pk::Speed speed_;
+	bool speed_was_busy_ = false;
+	std::string chip_text_;
+	uint64_t chip_at_ms_ = 0;
+	pk::SpeedSettings speed_settings() const;
+	void speed_start();
 	bool timing_changed_ = false;
 	pk::LookGovernor look_;
 	bool look_on_ = false;
 	std::string look_path_, look_written_;
-	int look_mhz_ = 0, look_ceiling_ = 3;
+	int look_mhz_ = 0, look_ceiling_ = 2;
 	uint32_t look_gen_ = 0;
 	bool look_busy_ = false;
 	bool settings_dirty_ = false;

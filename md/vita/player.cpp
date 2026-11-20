@@ -25,7 +25,7 @@ bool Writer::work_one(MdPlayer *p)
 	WriterJob *j = 0;
 	{
 		SpinGuard g(lk_);
-		if (todo_.empty()) return false;
+		if (todo_.empty()) { return p->speed_pack(); }     /* nothing to write: pack the newest rewind state, if one waits */
 		j = todo_.front();
 		todo_.erase(todo_.begin());
 		running_++;
@@ -131,7 +131,7 @@ std::string MdPlayer::pick_launch(const std::string &root, const std::string &ar
 
 /* ---- construction ------------------------------------------------------------- */
 
-MdPlayer::MdPlayer(Platform *pf) : pf_(pf)
+MdPlayer::MdPlayer(Platform *pf) : pf_(pf), glue_(this)
 {
 	pic_defaults(&ps_);
 	g_changed = 0;
@@ -331,6 +331,12 @@ void MdPlayer::settings_load()
 	pad_type_ = clampi(pl.get_int("pad_type", 0), 0, 2);
 	sms_border_ = clampi(pl.get_int("sms_border", 0), 0, 2);
 	gg_lcd_ = clampi(pl.get_int("gg_lcd", 0), 0, 10);
+	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
+	ff_sound_ = pl.get_int("ff_sound", 1) != 0;
+	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
+	rewind_on_ = pl.get_int("rewind", 1) != 0;
+	rewind_len_ = pl.get_int("rewind_seconds", 60) <= 30 ? 0 : 1;
+	rewind_mb_ = clampi(pl.get_int("rewind_mb", 12), 4, 24);
 }
 
 static int word_scaler(const std::string &w0)
@@ -378,6 +384,9 @@ void MdPlayer::apply_overrides()
 	if ((v = req_.override_int("fm", -1)) >= 0) fm_ = clampi(v, 0, 2);
 	if ((v = req_.override_int("pad_type", -1)) >= 0) pad_type_ = clampi(v, 0, 2);
 	if ((v = req_.override_int("sms_border", -1)) >= 0) sms_border_ = clampi(v, 0, 2);
+	if ((v = req_.override_int("rewind", -1)) >= 0) rewind_on_ = v != 0;
+	if ((v = req_.override_int("rewind_mb", -1)) >= 0) rewind_mb_ = clampi(v, 4, 24);
+	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = v == 1 ? 1 : 0;
 	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
 	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_fast_ = v != 0;
 	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_fast_ = true; else if (w == "true" || w == "50") pal_fast_ = false; }
@@ -417,6 +426,11 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 	menu_.set_value(ROW_PALSPEED, pal_fast_ ? 1 : 0);
 	menu_.set_value(ROW_LOOK, look_mode_);
+	menu_.set_value(ROW_SPD_FF, ff_speed_);
+	menu_.set_value(ROW_SPD_SOUND, ff_sound_);
+	menu_.set_value(ROW_SPD_MODE, ff_toggle_);
+	menu_.set_value(ROW_SPD_REWIND, rewind_on_);
+	menu_.set_value(ROW_REWIND_LEN, rewind_len_);
 }
 
 StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool system_enter_cross)
@@ -564,7 +578,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
-	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | extra_caps_;
+	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
 	cfg.accent = system_ == MD_SYS_MD ? 0x2E7DFF : system_ == MD_SYS_GG ? 0xE0B020 : 0xE04A3A;
@@ -605,6 +619,12 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		if (system_ == MD_SYS_MD)
 			menu_.add_host_row(Menu::PAGE_CONTROLS, ROW_PADTYPE, "Pad type",
 			                   "Auto follows the game: 3 buttons or 6. A few games misread the 6 button pad; choose 3 buttons for them.", pad, pad_type_, ROW_CTL_MAPPING);
+		{
+			std::vector<std::string> rl;
+			rl.push_back("30 s"); rl.push_back("1 min");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
+			                   "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
+		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "Region",
 		                   "Auto follows the game. Europe runs a game at its 50 Hz speed, USA and Japan at 60 Hz; some games only work in their own region.", region, region_);
 		if (system_ == MD_SYS_MD)
@@ -628,6 +648,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	logf("title: %s | %s | %s pal=%d fps=%.4f sram=%u | picture: shape=%d quality=%d glow=%d scan=%d grid=%d scaler=%d own=%d steady=%d handoff=%d\n",
 	     md_host_rom_title(), md_host_system_hw(), md_host_rom_info(), md_host_is_pal(), md_host_fps(), (unsigned) md_host_sram_size(), ps_.shape,
 	     ps_.quality, ps_.glow, ps_.scan, ps_.grid, ps_.scaler, ps_.use_game, steady_ ? 1 : 0, handoff_ ? 1 : 0);
+	speed_.set_host(&glue_);
+	speed_start();
 	states_->resume_mark(pf_->now_us() / 1000);
 	res.ok = true;
 	return res;
@@ -663,6 +685,7 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 	now_ms_ = now_ms;
 	for (int i = 0; i < MAX_PLAYERS; i++) last_pads_[i] = pads[i];
 	mapper_.update(pads, now_ms, frame, &in_);
+	speed_.input(in_.fired);
 	if (in_.menu || tapped) return true;
 	md_host_set_pad(0, in_.pad[0] & 0xFFFu);
 	md_host_set_pad(1, system_ == MD_SYS_GG ? 0u : (in_.pad[1] & 0xFFFu));
@@ -672,6 +695,53 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 	return false;
 }
 
+/* ---- fast forward and rewind ---------------------------------------------------------------------------------------------- */
+
+size_t MdPlayer::SpeedGlue::state_size() { return md_host_state_size(); }
+bool MdPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { return md_host_state_save_mem(buf, cap) == md_host_state_size(); }
+bool MdPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return md_host_state_load_mem(buf, n) == 0; }
+void MdPlayer::SpeedGlue::run_frame(bool render) { md_host_set_render(render ? 1 : 0); md_host_run_frame(); }
+void MdPlayer::SpeedGlue::clear_pads() { md_host_set_pad(0, 0); md_host_set_pad(1, 0); }
+void MdPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
+
+SpeedSettings MdPlayer::speed_settings() const
+{
+	SpeedSettings s;
+	s.rewind_on = rewind_on_ != 0;
+	s.rewind_seconds = rewind_len_ ? 60 : 30;
+	s.rewind_budget = (size_t) rewind_mb_ << 20;
+	s.ff_factor = ff_speed_ ? 3 : 2;
+	s.ff_sound = ff_sound_ != 0;
+	s.ff_toggle = ff_toggle_ != 0;
+	return s;
+}
+
+void MdPlayer::speed_start()
+{
+	speed_.start(md_host_fps(), 2, speed_settings());
+	/* with a writer thread the rewind states are packed there (the game thread only copies the state); without one capture_commit packs at once */
+	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
+	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) md_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
+}
+
+int MdPlayer::speed_plan(int normal)
+{
+	int n = speed_.plan(normal);
+	const bool b = speed_.busy();
+	if (b != speed_was_busy_) {
+		/* the pacing and the look governor start afresh at both ends: what they measured is not what a normal frame costs */
+		pacer_.reset(PACE_FULL);
+		look_.reset_window();
+		speed_.take_ended();
+		speed_was_busy_ = b;
+	}
+	return n;
+}
+
+bool MdPlayer::run_frame(bool render) { return speed_.run_frame(render); }
+
+size_t MdPlayer::audio_filter(int16_t *lr, size_t frames) { return speed_.audio(lr, frames); }
+
 bool MdPlayer::want_render(uint32_t frame) const
 {
 	return !steady_ || pacer_.mode() == PACE_FULL || (frame & 1) == 0;
@@ -679,6 +749,7 @@ bool MdPlayer::want_render(uint32_t frame) const
 
 void MdPlayer::drawn_cost(uint32_t cost_us)
 {
+	if (speed_.busy()) return;           /* fast forward and rewind cost a multiple of a frame: the pacer would only back off */
 	if (!steady_) { pacer_.add(cost_us); return; }
 	bool changed = false;
 	PaceMode m = pacer_.add(cost_us, &changed);
@@ -742,6 +813,15 @@ void MdPlayer::after_frame(uint64_t now_us)
 	prev_frame_us_ = now_us;
 	menu_.notices().update(dt);
 	now_ms_ = now_us / 1000;
+	{
+		/* what fast forward and rewind have to say, and their chip (">> 2x", "<< REWIND 12 s") kept on screen while they last */
+		std::string n = speed_.take_notice();
+		if (!n.empty()) notice(n, NOTICE_INFO);
+		std::string c = speed_.chip();
+		if (!c.empty()) {
+			if (c != chip_text_ || now_ms_ - chip_at_ms_ >= 400) { chip_text_ = c; chip_at_ms_ = now_ms_; menu_.notices().push(c, NOTICE_INFO, 700); }
+		} else chip_text_.clear();
+	}
 	poll_writer();
 	srm_watch(now_us);
 	/* the resume point: every 2 minutes, and soon after the game saved (at most every 30 s) */
@@ -976,6 +1056,12 @@ void MdPlayer::settings_queue_save()
 	pl.set_int("pad_type", pad_type_);
 	pl.set_int("sms_border", sms_border_);
 	pl.set_int("gg_lcd", gg_lcd_);
+	pl.set_int("ff_speed", ff_speed_);
+	pl.set_int("ff_sound", ff_sound_);
+	pl.set_int("ff_mode", ff_toggle_);
+	pl.set_int("rewind", rewind_on_);
+	pl.set_int("rewind_seconds", rewind_len_ ? 60 : 30);
+	pl.set_int("rewind_mb", rewind_mb_);
 	j->text = pl.serialize();
 	post(j);
 }
@@ -1013,6 +1099,11 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_HANDOFF: handoff_ = v != 0; break;
 	case ROW_PALSPEED: pal_fast_ = v != 0; break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
+	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_SOUND: ff_sound_ = v != 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_REWIND: rewind_on_ = v != 0; speed_.apply(speed_settings()); logf("%s\n", speed_.stats_line().c_str()); break;
+	case ROW_REWIND_LEN: rewind_len_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	default: return;
 	}
 	settings_dirty_ = true;
@@ -1024,6 +1115,7 @@ void MdPlayer::on_reset()
 {
 	md_host_reset();
 	cheats_apply();
+	speed_.state_changed();
 	srm_recheck_ = true;
 	logf("reset\n");
 }
@@ -1044,6 +1136,7 @@ bool MdPlayer::restore_state(const uint8_t *data, size_t n)
 	const int r = md_host_state_load_mem(data, n);
 	srm_recheck_ = true;
 	pacer_.reset(PACE_FULL);
+	speed_.state_changed();              /* "a moment ago" is another timeline now */
 	return r == 0;
 }
 
@@ -1081,8 +1174,7 @@ bool MdPlayer::queue_state_write(StateJob &job)
  * replaces with what it learns. To add a rung: a line here and its effect in look_apply(). */
 static const LookRung kLookLadder[] = {
 	{ "xBR 3x -> 2x", MdPlayer::ROW_SCALER, 0.10f, 25 },
-	{ "xBR 2x -> MMPX 2x", MdPlayer::ROW_SCALER, 0.10f, 35 },
-	{ "MMPX 2x -> sharp", MdPlayer::ROW_SCALER, 0.15f, 55 },
+	{ "xBR 2x -> sharp", MdPlayer::ROW_SCALER, 0.20f, 45 },
 };
 
 /* a row on Auto is the governor's; a row set to something else is the player's, by hand */
@@ -1121,7 +1213,7 @@ void MdPlayer::look_start(int mhz)
 	md_video_info vi;
 	md_host_video_info(&vi);
 	look_ceiling_ = pic_scaler_ceiling(system_, vi.native_w, vi.native_h);
-	const int rungs = 3 - look_ceiling_;
+	const int rungs = 2 - look_ceiling_;
 	if (rungs <= 0 || !look_.set_ladder(kLookLadder + look_ceiling_, rungs)) {
 		look_on_ = false;
 		logf("look: no ladder (picture %dx%d has no scaler tier)\n", vi.native_w, vi.native_h);
@@ -1144,6 +1236,7 @@ void MdPlayer::look_start(int mhz)
 void MdPlayer::look_second(const LookSecond &s)
 {
 	if (!look_on_) return;
+	if (speed_.busy() || speed_was_busy_) { look_.reset_window(); return; }     /* fast forward / rewind seconds are no measure of the look */
 	look_bad_ = pk::LookGovernor::load_of(s) >= look_.config().bad_load;
 	const bool changed = look_.second(s);
 	char line[400];
@@ -1184,6 +1277,7 @@ void MdPlayer::look_save(bool final_)
 
 void MdPlayer::finish(ExitReason why)
 {
+	speed_.stop();
 	wait_writer();
 	if (look_on_) {
 		char sum[600];

@@ -20,7 +20,7 @@ endif
 # ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
 include ../../tools/build/ccache.mk
 override CXX := $(call ccw,$(CXX))
-all: $(B)/md_twin $(B)/player_twin $(B)/scale_proof
+all: $(B)/md_twin $(B)/player_twin $(B)/scale_proof $(B)/sidebyside
 $(B)/mdcore.o: FORCE
 	$(MAKE) -C ../core TARGET=$(TARGET) B=$(BA) PROFILE=$(PROFILE) all
 $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h
@@ -28,9 +28,11 @@ $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h
 
 $(B)/scale_proof: scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
+$(B)/sidebyside: sidebyside.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
+	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ sidebyside.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
 # player_twin: the Sega player's own logic (../vita/player.cpp) over the core, with playerkit's software renderer (no gpsp/ code)
 PK       := ../../playerkit
-PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale
+PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed
 PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
 PL_FE    := picture cheats savefile audio_pace
 PL_OBJS  := $(addprefix $(B)/pl/,$(addsuffix .o,$(PL_FE))) $(B)/pl/player.o $(B)/pl/pipe.o $(B)/pl/handoff_proof.o $(B)/pl/player_twin.o

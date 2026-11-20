@@ -865,8 +865,8 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 		mdp::MdPlayer *pl = run(work + "/look1", 60, 0, -1, 444, &a);
 		md_host_video_info(&vi);
 		ceiling = pl->look_ceiling_tier();
-		fprintf(stderr, "look: %s native %dx%d -> ceiling tier %d (0 xBR3, 1 xBR2, 2 MMPX2, 3 sharp), end level %d, scaler now %d\n", con.c_str(), vi.native_w, vi.native_h, ceiling, pl->look().level(), eff(pl));
-		EXPECT(pl->look().level() == 3 - ceiling);               /* every rung taken under a long overload */
+		fprintf(stderr, "look: %s native %dx%d -> ceiling tier %d (0 xBR3, 1 xBR2, 2 sharp), end level %d, scaler now %d\n", con.c_str(), vi.native_w, vi.native_h, ceiling, pl->look().level(), eff(pl));
+		EXPECT(pl->look().level() == 2 - ceiling);               /* every rung taken under a long overload */
 		EXPECT(eff(pl) == SCALER_OFF);
 		pl->finish(EXIT_NORMAL);
 	}
@@ -878,13 +878,13 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 	EXPECT(a == b);                                           /* the same script, the same looks */
 	/* starts at the ceiling's tier; the ladder only goes down, one tier per step */
 	{
-		static const char tier_digit[4] = { (char) ('0' + SCALER_XBR3), (char) ('0' + SCALER_XBR2), (char) ('0' + SCALER_MMPX2), (char) ('0' + SCALER_OFF) };
-		EXPECT(a.size() > 4 && a[a.size() - 2] == tier_digit[3]);          /* ends on the sharp fit */
-		EXPECT(a.find(tier_digit[0]) != std::string::npos || a.find(tier_digit[1]) != std::string::npos || a.find(tier_digit[2]) != std::string::npos);   /* and was on a scaler before */
+		static const char tier_digit[3] = { (char) ('0' + SCALER_XBR3), (char) ('0' + SCALER_XBR2), (char) ('0' + SCALER_OFF) };
+		EXPECT(a.size() > 4 && a[a.size() - 2] == tier_digit[2]);          /* ends on the sharp fit */
+		EXPECT(a.find(tier_digit[0]) != std::string::npos || a.find(tier_digit[1]) != std::string::npos);   /* and was on a scaler before */
 		int prev = -1; bool mono = true;
 		for (size_t i = 0; i < a.size(); i += 2) {
 			int t = -1;
-			for (int k = 0; k < 4; k++) if (a[i] == tier_digit[k]) t = k;
+			for (int k = 0; k < 3; k++) if (a[i] == tier_digit[k]) t = k;
 			if (prev >= 0 && t < prev) mono = false;
 			prev = t;
 		}
@@ -897,7 +897,7 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 		mdp::MdPlayer *pl = run(work + "/look_mild", 60, 0, -1, 444, &c);
 		bad_emu = 1.25f;
 		fprintf(stderr, "look sequence (mild overload 0.985): %s\n", c.c_str());
-		if (ceiling == 0) EXPECT(c.find((char) ('0' + SCALER_MMPX2)) != std::string::npos);    /* Game Gear: xBR 3x, then MMPX 2x, then sharp: a rung at a time */
+		if (ceiling == 0) EXPECT(c.find((char) ('0' + SCALER_XBR2)) != std::string::npos);    /* Game Gear: xBR 3x, then xBR 2x, then sharp: a rung at a time */
 		pl->finish(EXIT_NORMAL);
 	}
 	/* a scaler chosen by hand is held as chosen */
@@ -926,7 +926,7 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 			EXPECT(std::string((const char *) m.data(), 9) == "pk-look 1");
 			std::string e;
 			mdp::MdPlayer *p1 = run(work + "/look4", 0, 0, -1, 444, &e);
-			EXPECT(p1->look().mask() != 0 || ceiling == 3);
+			EXPECT(p1->look().mask() != 0 || ceiling == 2);
 			p1->finish(EXIT_NORMAL);
 			mdp::MdPlayer *p2 = run(work + "/look4", 0, 0, -1, 333, &e);
 			EXPECT(p2->look().mask() == 0);
@@ -948,7 +948,7 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 			pl->look_start(444);
 			pl->on_change(mdp::MdPlayer::ROW_LOOK, 1);
 			for (int i = 0; i < 40; i++) { pk::LookSecond ls; ls.emu = 1.25f; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true; pl->look_second(ls); }
-			EXPECT(eff(pl) != SCALER_OFF || ceiling == 3);
+			EXPECT(eff(pl) != SCALER_OFF || ceiling == 2);
 			pl->on_change(mdp::MdPlayer::ROW_LOOK, 2);
 			EXPECT(pl->picture().scaler == SCALER_OFF);
 			pl->on_change(mdp::MdPlayer::ROW_PALSPEED, 1);
@@ -977,18 +977,23 @@ static int run_ceiling_test()
 	EXPECT(pic_scaler_ceiling(MD_SYS_SMS, 256, 192) == 1);
 	EXPECT(pic_scaler_ceiling(MD_SYS_SG, 256, 192) == 1);
 	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 256, 224) == 1);
-	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 224) == 2);
-	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 240) == 2);
-	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 448) == 3);      /* interlaced double height */
-	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 400, 224) == 3);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 224) == 1);      /* xBR 2x also on H40: 3x would be 672 rows for 544 */
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 240) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 256, 240) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_SMS, 256, 224) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 448) == 2);      /* interlaced double height */
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 400, 224) == 2);
 	pic_settings s; pic_defaults(&s);
 	EXPECT(pic_scaler_effective(&s, 0, 0) == SCALER_XBR3);
 	EXPECT(pic_scaler_effective(&s, 0, 1) == SCALER_XBR2);
-	EXPECT(pic_scaler_effective(&s, 0, 2) == SCALER_MMPX2);
-	EXPECT(pic_scaler_effective(&s, 0, 3) == SCALER_OFF);
+	EXPECT(pic_scaler_effective(&s, 0, 2) == SCALER_OFF);
 	EXPECT(pic_scaler_effective(&s, 0, 9) == SCALER_OFF);
-	EXPECT(pic_scaler_effective(&s, 2, 0) == SCALER_MMPX2);
-	EXPECT(pic_scaler_effective(&s, 2, 1) == SCALER_OFF);
+	EXPECT(pic_scaler_effective(&s, 1, 0) == SCALER_XBR2);
+	EXPECT(pic_scaler_effective(&s, 1, 1) == SCALER_OFF);
+	EXPECT(pic_scaler_effective(&s, 2, 0) == SCALER_OFF);
+	s.scaler = SCALER_MMPX2;
+	EXPECT(pic_scaler_effective(&s, 1, 1) == SCALER_MMPX2);    /* MMPX is a look chosen by hand, never a rung */
+	s.scaler = SCALER_AUTO;
 	s.scaler = SCALER_XBR3;
 	EXPECT(pic_scaler_effective(&s, 2, 1) == SCALER_XBR3);     /* by hand: held */
 	/* the layout: Original keeps the display aspect, Pixel perfect integer, Full fills; Game Gear 160x144 */

@@ -60,7 +60,7 @@ void pic_prescale(const pic_rect *r, int *kx, int *ky);
 int pic_blank_rows(const unsigned short *px, int pitch_bytes, int w, int h, int from_top, int max_rows);
 
 /* ---- the pixel art scaler ceilings (docs/DEFAULTS-1.4.md section 5, with the Sega numbers of md/vita/README.md) ----
- * The tier Auto starts at, per system and picture size: 0 = xBR 3x, 1 = xBR 2x, 2 = MMPX 2x, 3 = none (sharp bilinear). A picture
+ * The tier Auto starts at, per system and picture size: 0 = xBR 3x, 1 = xBR 2x, 2 = none (sharp bilinear); MMPX 2x is only ever chosen by hand. A picture
  * that is interlaced double height or wider than 352 columns never gets a scaler. */
 int pic_scaler_ceiling(int system, int w, int h);
 

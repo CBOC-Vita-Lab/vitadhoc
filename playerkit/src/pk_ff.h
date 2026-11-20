@@ -4,7 +4,7 @@
  * The game is emulated `factor` frames per display refresh; only the last of them is drawn (the others are not rendered, which the
  * cores allow). With sound, the audio of `factor` emulated frames is mixed down to one frame's worth (a box filter over `factor` samples
  * of each channel: the sound plays at `factor` times its pitch, as on a console running fast, and the audio pacer sees the same number
- * of samples per refresh as at normal speed). Without sound the audio of those frames is dropped.
+ * of samples per refresh as at normal speed). Without sound the same number of samples comes out as silence, so the pacer never runs dry.
  *
  * Off in two-player and online play (`locked`): two machines that must stay equal cannot run ahead of each other.
  * It is also the player's job to leave the pacer (pk_pace) and the look governor alone while it runs: their costs are a multiple of the
@@ -37,7 +37,7 @@ public:
 	/* frames to emulate this refresh when `normal` would be run at normal speed */
 	int frames(int normal) const { return on_ ? normal * factor_ : normal; }
 	/* Reduce `frames` stereo frames (L,R int16 pairs) in place; returns the number kept. Without FF the audio is untouched. With FF and no
-	 * sound it returns 0. The remainder of a group of `factor` input frames is carried to the next call. */
+	 * sound the same count comes out, zeroed. The remainder of a group of `factor` input frames is carried to the next call. */
 	size_t reduce(int16_t *lr, size_t frames);
 	/* a state load, the menu, a pause: forget the half-built group and a toggled-on state */
 	void reset();

@@ -135,26 +135,24 @@ int pic_blank_rows(const unsigned short *px, int pitch_bytes, int w, int h, int 
 	return n;
 }
 
-/* Output pixels of one frame at each tier, and the model's cost (md/vita/README.md "Sega scaler costs"; x86 callgrind instruction counts
- * of pk_scale at 350 M instr/s, an estimate with a 1.5x error bar, split over two threads), give the ceilings:
- *   Game Gear 160x144       xBR 3x (480x432 = 207,360 output pixels)
- *   Master System / SG 256x192   xBR 2x (512x384 = 196,608)
- *   Mega Drive 256x224 (H32)     xBR 2x (512x448 = 229,376)
- *   Mega Drive 320x224 / 240     MMPX 2x (640x448 = 286,720): xBR 2x costs more than MMPX and a busy picture does not fit two threads
+/* The ceilings (tiers: 0 xBR 3x, 1 xBR 2x, 2 none = sharp bilinear; MMPX 2x is a look the player picks, not a rung):
+ *   Game Gear 160x144       xBR 3x (480x432 shown on 544 rows: 3x is not wasted, 144 x 3 = 432)
+ *   everything else up to 352x256 (Master System / SG-1000 256x192, Mega Drive 256 or 320 wide, 224 / 240 rows)   xBR 2x
+ * 3x on 192..240 rows makes 576..720 rows for a 544 row screen: the extra pixels are computed to be averaged away again (md-perf2/sidebyside
+ * has the pictures and the differences). Since the integer NEON xBR (pk_scale) xBR 2x costs less than MMPX 2x, so MMPX is not a rung.
  * Not for pictures taller than 256 rows (interlace) or wider than 352. */
 int pic_scaler_ceiling(int system, int w, int h)
 {
-	if (w > 352 || h > 256 || w < 1 || h < 1) return 3;
+	if (w > 352 || h > 256 || w < 1 || h < 1) return 2;
 	(void) system;
 	const long px = (long) w * h;
 	if (px <= 160L * 144L + 1) return 0;           /* 160x144 */
-	if (px <= 256L * 224L + 1) return 1;           /* 256x192, 256x224, 256x240 */
-	return 2;                                       /* 320x224 and up */
+	return 1;                                       /* 256x192 .. 352x256 */
 }
 
 int pic_scaler_effective(const pic_settings *s, int ceiling, int steps)
 {
-	static const int kTier[4] = { SCALER_XBR3, SCALER_XBR2, SCALER_MMPX2, SCALER_OFF };
+	static const int kTier[3] = { SCALER_XBR3, SCALER_XBR2, SCALER_OFF };
 	switch (s->scaler) {
 	case SCALER_OFF: return SCALER_OFF;
 	case SCALER_MMPX2: case SCALER_XBR2: case SCALER_XBR3: return s->scaler;    /* chosen by hand: held as chosen */
@@ -162,7 +160,7 @@ int pic_scaler_effective(const pic_settings *s, int ceiling, int steps)
 	}
 	int t = ceiling + steps;
 	if (t < 0) t = 0;
-	if (t > 3) t = 3;
+	if (t > 2) t = 2;
 	return kTier[t];
 }
 

@@ -2794,6 +2794,27 @@ PICKER_PILL = (522, 37)
 PICKER_BOX = (0, 0, 700, 544)
 
 
+# The picker lists the consoles ALPHABETICALLY by the name its rows show (ui_vita_home.h hm_con_at):
+# Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega Genesis / Mega Drive,
+# SG-1000, Super Nintendo, WonderSwan.  fe_console_t of each row (GBA 0, GB 1, GBC 2, SNES 3, NES 4, WS 5,
+# MD 6, SMS 7, GG 8, SG 9):
+PICK_ORDER = [1, 0, 2, 8, 7, 4, 6, 9, 3, 5]
+
+
+def pick_row(console):
+    return PICK_ORDER.index(console)
+
+
+def pick_steps(frm, to):
+    """TRIANGLE presses that move the picker's highlight from console `frm` to console `to`."""
+    return (pick_row(to) - pick_row(frm)) % len(PICK_ORDER)
+
+
+def pick_script(to, frm=0, first=90, gap=30):
+    """The script lines that open the picker (home screen) and walk it from console `frm` to `to`."""
+    return "%d:triangle\n" % first + ("+%d:triangle\n" % gap) * pick_steps(frm, to)
+
+
 def picker_row_y(i):
     return 96 + 52 * i
 
@@ -2840,32 +2861,33 @@ def t_picker(S):
     pill_box = (int(pill[0]["x"]) * 2, 0, (int(pill[0]["x"]) + int(pill[0]["w"])) * 2, 60)
     S.check(ImageChops.difference(a.crop(pill_box), b.crop(pill_box)).getbbox() is not None,
             "the open pill is outlined in the console's colour, and the list starts below it")
-    # the highlight: row 0 is lit (fill behind it), row 1 is not
+    # the highlight: the active console's row (Game Boy Advance, the second) is lit (fill behind it), the next is not
     bg = lambda im, i: sum(im.getpixel((600, picker_row_y(i))))
-    S.check(bg(b, 0) > bg(b, 1) + 30, "the active console's row is highlighted (%d vs %d)" %
-            (bg(b, 0), bg(b, 1)))
-    # a console with no games (GBC) is dimmed, one with games is not
+    S.check(bg(b, 1) > bg(b, 2) + 30, "the active console's row is highlighted (%d vs %d)" %
+            (bg(b, 1), bg(b, 2)))
+    # a console with no games (GBC) is dimmed, one with games (NES) is not
     def ink(im, i):
         y = picker_row_y(i)
         return max(sum(px) for px in im.crop((440, y - 12, 640, y + 12)).get_flattened_data())
-    S.check(ink(b, 2) < ink(b, 4) - 60 and ink(b, 2) > 3 * 0 + 150,
-            "GBC (0 games) is dimmed but readable, NES (2 games) is not (%d, %d)" % (ink(b, 2), ink(b, 4)))
+    S.check(ink(b, 2) < ink(b, 5) - 60 and ink(b, 2) > 3 * 0 + 150,
+            "GBC (0 games) is dimmed but readable, NES (2 games) is not (%d, %d)" % (ink(b, 2), ink(b, 5)))
     # N presses move N rows, wrapping; the library follows each
-    r = picker_run(S, "picker_steps", "90:triangle\n" + "+6:triangle\n" * 8 + "+260:shot=rest.png\n+10:quit\n")
-    S.check(picker_moves(r) == [1, 2, 3, 4, 5, 0, 1, 2],
-            "eight presses after opening move 1,2,3,4,5,0,1,2 (wrap): %s" % picker_moves(r))
+    r = picker_run(S, "picker_steps", "90:triangle\n" + "+6:triangle\n" * 12 + "+260:shot=rest.png\n+10:quit\n")
+    S.check(picker_moves(r) == [2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3],
+            "twelve presses after opening move 2..9, 0..3 (wrap): %s" % picker_moves(r))
     cons = [int(d["console"]) for d in r.evt("ui_browser_console")]
-    S.check(cons == [1, 2, 3, 4, 5, 0, 1, 2],
+    S.check(cons == [PICK_ORDER[i] for i in picker_moves(r)] and cons[:3] == [2, 8, 7],
             "the library is switched live at every step (%s)" % cons)
     names = [p["name"].strip('"') for p in r.evt("hm_pill")]
-    S.check(names[0] == "Game Boy Advance" and names[-1] == "Game Boy Color" and "Super Nintendo" in names,
+    S.check(names[0] == "Game Boy Advance" and names[-1] == "Game Gear" and "Super Nintendo" in names and
+            "WonderSwan" in names and "Master System" in names and "SG-1000" in names,
             "the pill follows (%s)" % names)
     S.check(len(r.evt("ui_browser_settle")) == 1 and r.evt("ui_browser_settle")[0].get("what") == "config" and
             len(r.evt("rom_scan_time")) == 1,
             "the config is written once after the list rests and nothing is walked again (%s)" %
             [e["_"] for e in r.evt("ui_browser_settle")])
     cfg = open(os.path.join(r.root, "config.ini")).read()
-    S.check(re.search(r"^console = 2$", cfg, re.M) is not None, "config.ini says GBC after the rest")
+    S.check(re.search(r"^console = 8$", cfg, re.M) is not None, "config.ini says Game Gear after the rest")
     # auto-close: 72 frames after the last move
     cl = r.evt("ui_picker close")
     S.check(len(cl) == 1 and cl[0]["idle"] == "72", "it closes by itself 1.2 s after the last move (%s)" %
@@ -2873,7 +2895,7 @@ def t_picker(S):
     S.picture(r, "rest.png")   # (it shows the data folder's path: no reference)
     # d-pad: DOWN, DOWN, UP, UP, UP wraps backwards
     r = picker_run(S, "picker_dpad", "90:triangle\n+6:down\n+6:down\n+6:up\n+6:up\n+6:up\n+6:shot=up.png\n+200:quit\n")
-    S.check(picker_moves(r) == [1, 2, 1, 0, 5], "DOWN steps on, UP steps back and wraps: %s" % picker_moves(r))
+    S.check(picker_moves(r) == [2, 3, 2, 1, 0], "DOWN steps on, UP steps back: %s" % picker_moves(r))
     S.picture(r, "up.png", "picker_up.png", box=PICKER_BOX)
     # CROSS and CIRCLE close it and nothing else happens
     for btn in ("cross", "circle"):
@@ -2882,7 +2904,7 @@ def t_picker(S):
         S.check(len(cl) == 1 and int(cl[0]["idle"]) < 72, "%s closes the list at once (%s)" % (btn, [c["_"] for c in cl]))
         S.check(not r.evt("ui_browser_pick") and not r.has(r"^EVT game rom=") and not r.evt("ui_text_open"),
                 "%s is spent on closing: no game starts, no search opens" % btn)
-        S.check(picker_moves(r) == [1], "the highlighted console stays (%s)" % picker_moves(r))
+        S.check(picker_moves(r) == [2], "the highlighted console stays (%s)" % picker_moves(r))
     # any other button closes too
     r = picker_run(S, "picker_other", "90:triangle\n+6:right\n+30:quit\n")
     S.check(len(r.evt("ui_picker close")) == 1 and int(r.evt("ui_picker close")[0]["idle"]) < 72,

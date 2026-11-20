@@ -267,7 +267,11 @@ class Suite:
         path = os.path.join(REF, ref)
         if self.update and self.arch == "x86":
             os.makedirs(REF, exist_ok=True)
-            im.save(path, optimize=True)
+            keep = im
+            if box == PICKER_BOX_EMPTY:      # the folder line is this machine's path: not kept
+                keep = im.copy()
+                keep.paste((0, 0, 0), (0, PICKER_PATH_ROWS[0], keep.width, PICKER_PATH_ROWS[1]))
+            keep.save(path, optimize=True)
         if not os.path.exists(path):
             self.note("no reference %s yet (--update-refs on x86)" % ref)
             return
@@ -2840,6 +2844,11 @@ PICKER_PILL = (400, 37)     # inside every pill, whatever the console's name is 
 # (the references leave out the count column: how many games the Game Boy has depends on
 # whether the test cartridge testrom/gbsave.gb was built)
 PICKER_BOX = (0, 0, 700, 544)
+# a console with no games shows the folder to copy games into: a path of the machine the test runs on.
+# Pictures of such a page are compared above that line only, and the references have it painted over
+# (PICKER_PATH_ROWS) so that no machine's path is kept in the repository.
+PICKER_BOX_EMPTY = (0, 0, 700, 336)
+PICKER_PATH_ROWS = (336, 400)
 
 
 # The picker lists the consoles ALPHABETICALLY by the name its rows show (ui_vita_home.h hm_con_at):
@@ -2971,7 +2980,7 @@ def t_picker(S):
             len(r.evt("ui_browser_console")) == 2,
             "a tap beside the list closes it, and nothing else (%s)" % ev)
     S.picture(r, "t_open.png", "picker_touch_open.png", box=PICKER_BOX)
-    S.picture(r, "t_snes.png", "picker_touch_snes.png", box=PICKER_BOX)
+    S.picture(r, "t_snes.png", "picker_touch_snes.png", box=PICKER_BOX_EMPTY)
     # opened by a finger it waits for the tap (no 1.2 s close while the finger looks for its row), and a
     # drag scrolls it: the two rows under the panel's lower edge (Super Nintendo, WonderSwan) come into reach
     r = picker_run(S, "picker_drag", "90:touch=%d/%d\n+120:drag=450/%d/450/%d:20\n+30:shot=t_drag.png\n"
@@ -2995,7 +3004,7 @@ def t_picker(S):
             max(max(px) for px in end.crop((400, 500, 760, 506)).get_flattened_data()) < 120,
             "the last row is in view and the list ends above the hint line")
     S.picture(r, "ten_open.png", "picker_ten_open.png", box=PICKER_BOX)
-    S.picture(r, "ten_end.png", "picker_ten_end.png", box=PICKER_BOX)
+    S.picture(r, "ten_end.png", "picker_ten_end.png", box=PICKER_BOX_EMPTY)
 
 
 def t_find(S):

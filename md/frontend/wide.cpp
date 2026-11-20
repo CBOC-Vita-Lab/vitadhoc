@@ -37,7 +37,7 @@ void Wide::wait(const Meta &m)
 
 Wide::Wide() : L_(0), M_(0), map_system_(0), C_(0), cvw_(0), cvh_(0), cm_(0), fr_(0), out_(0), ana2_(0), wide_(0), prov_(0), th_(0), thok_(0),
 	have_prev_(0), map_w_(0), map_h_(0), layout_key_(0), have_cram_(0), cap_default_(1 << 20), learn_(true), want_prov_(false),
-	ovr_live_(0), ovr_next_(0), rowbuf_(0), seam_prev_(0), crc_(0), c_real_pct_(0), c_soft_lines_(0), c_composed_(0), planes_cur_(3), planes_next_(3)
+	ovr_live_(0), ovr_next_(0), rowbuf_(0), seam_prev_(0), content_gen_(0), map_key_(0), map_key_ok_(0), check_(false), claims_(0), crc_(0), c_real_pct_(0), c_soft_lines_(0), c_composed_(0), planes_cur_(3), planes_next_(3)
 {
 	cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
 	for (int p = 0; p < 2; p++) {
@@ -61,7 +61,7 @@ void Wide::free_all()
 	if (M_) wk_map_destroy(M_);
 	C_ = 0; L_ = 0; M_ = 0;
 	free(fr_); free(out_); free(ana2_); free(wide_); free(prov_); free(cand_[0]); free(cand_[1]); free(opq_[0]); free(opq_[1]);
-	free(th_); free(thok_); free(rowbuf_);
+	free(th_); free(thok_); free(rowbuf_); free(claims_); claims_ = 0;
 	fr_ = 0; out_ = 0; ana2_ = 0; wide_ = 0; prov_ = 0; cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0; th_ = 0; thok_ = 0; rowbuf_ = 0;
 	for (int p = 0; p < 2; p++) {
 		free(hash_[p]); free(stamp_[p]); free(wstamp_[p]); free(code_[p]); free(prev_[p]); free(line_on_[p]); free(used_[p]); free(thprev_[p]);
@@ -83,6 +83,7 @@ void Wide::reset()
 	sync();
 	if (L_) wk_layers_reset(L_);
 	if (M_) wk_map_clear(M_);
+	map_key_ok_ = 0;
 	have_prev_ = 0; layout_key_ = 0; have_cram_ = 0;
 	ovr_live_ = 0;
 	memset(ovr_row_, 0, sizeof ovr_row_);
@@ -214,6 +215,7 @@ void Wide::pass_plane(const md_wide_frame &f, int p, unsigned base, unsigned shi
 	}
 	nused_[p] = nused;
 	settle_[p] = settle;
+	content_gen_++;
 }
 
 bool Wide::describe_md(const md_wide_frame &f, const md_video_info &vi, uint32_t frame, int margin)
@@ -395,6 +397,10 @@ void Wide::verify_md(const md_wide_frame &f, int H)
 							if (a >= (int) lo.real[s][l]) break;      /* nothing is claimed from here on */
 							if (!M_ || !wk_map_margin_cell(M_, fr_, out_, l, y, s, i, &c) || !cell_ok(f, c, 0x7FF)) { v = a; st_.map_rejected++; break; }
 							claimed = c.code;
+							if (check_ && drawn == claimed) {
+								Claim *q = claim_find(l, col, wr, true);
+								if (q && q->state == 0) { q->state = 1; q->code = (uint16_t) c.code; st_.chk_claims++; }
+							}
 						}
 						if (drawn != claimed) { v = a; st_.map_rejected++; break; }
 					}
@@ -407,6 +413,54 @@ void Wide::verify_md(const md_wide_frame &f, int H)
 				if ((int) lo.ring[s][l] > lim[s]) lo.ring[s][l] = (uint16_t) lim[s];
 			}
 			wk_out_refresh_line(out_, y);
+		}
+	}
+}
+
+/* tests: the learned cells shown as real, by layer and world cell, for the hindsight check */
+Wide::Claim *Wide::claim_find(int l, int col, int row, bool add)
+{
+	enum { N = 1 << 16 };
+	if (!claims_) { if (!add) return 0; claims_ = (Claim *) calloc(N, sizeof(Claim)); if (!claims_) return 0; }
+	const uint32_t ep = out_->epoch + 1;
+	uint32_t h = mix32(mix32((uint32_t) col, (uint32_t) row), (uint32_t) l) & (N - 1);
+	for (int n = 0; n < 64; n++, h = (h + 1) & (N - 1)) {
+		Claim *q = &claims_[h];
+		if (q->state && q->epoch == ep && q->col == col && q->row == row && q->l == l) return q;
+		if (!q->state || q->epoch != ep) {
+			if (!add) return 0;
+			q->col = col; q->row = row; q->epoch = ep; q->l = (uint8_t) l; q->state = 0; q->code = 0;
+			return q;
+		}
+	}
+	return 0;
+}
+
+/* tests: every cell the screen shows now that was shown beside the screen from the learned map before: is it the same cell? */
+void Wide::check_seen(int H)
+{
+	if (!claims_) return;
+	const int mw = map_w_, mh = map_h_;
+	for (int l = 0; l < 2; l++) {
+		if (out_->kind[l] != WK_KIND_LEVEL) continue;
+		int have = 0, p_wx = 0, p_wr = 0;
+		for (int y = 0; y < H && y < 256; y++) {
+			if (!out_->coherent[l][y] || !line_on_[l][y]) continue;
+			const int wx = out_->world_x[l][y], wr = fdiv(out_->world_row[l][y], 8);
+			if (have && wx == p_wx && wr == p_wr) continue;
+			have = 1; p_wx = wx; p_wr = wr;
+			wk_geom g;
+			wk_line_geom(fr_, out_, l, y, &g);
+			const int rr = imod(wr, mh);
+			for (int i = 0; i < g.nvis; i++) {
+				const int col = g.tile_first + i, k = rr * mw + imod(col, mw);
+				if (code_[l][k] == WK_CODE_NOREC) continue;
+				Claim *q = claim_find(l, col, wr, false);
+				if (!q || q->state != 1) continue;
+				q->state = 2;
+				st_.chk_seen++;
+				if (q->code != prev_[l][k]) st_.chk_wrong++;
+			}
 		}
 	}
 }
@@ -627,8 +681,27 @@ void Wide::run(const md_wide_frame &f)
 		m->nlayers = fr_->nlayers;
 		const int H = m->vh;
 		if (!md) for (int y = 0; y < H; y++) { real0_[0][y] = out_->line[y].real[0][0]; real0_[1][y] = out_->line[y].real[1][0]; }
-		if (M_) { wk_map_update(M_, fr_, out_); wk_map_serve(M_, fr_, out_); }
+		if (M_) {
+			/* the map looks at the cells the screen shows: while it is bound and those are the cells it looked at last time (no name table or tile
+			 * was written, no line moved to another tile, same scene) there is nothing for it to record or to verify again */
+			uint32_t key = mix32(out_->epoch, (uint32_t) content_gen_);
+			for (int l = 0; l < fr_->nlayers; l++) {
+				key = mix32(key, (uint32_t) out_->kind[l]);
+				for (int y = 0; y < H && y < 256; y++) {
+					if (!out_->coherent[l][y]) { key = mix32(key, 0x5bd1e995u); continue; }
+					const int wx = out_->world_x[l][y];
+					key = mix32(key, (uint32_t) fdiv(wx, 8) * 0x10001u + (uint32_t) fdiv(wx + fr_->view_w - 1, 8) * 31u + (uint32_t) fdiv(out_->world_row[l][y], 8) * 0x1000193u);
+				}
+			}
+			wk_map_stats ms;
+			wk_map_stats_get(M_, &ms);
+			if (!(ms.bound && map_key_ok_ && key == map_key_ && !out_->scene_event)) wk_map_update(M_, fr_, out_);
+			else st_.map_skips++;
+			map_key_ = key; map_key_ok_ = 1;
+			wk_map_serve(M_, fr_, out_);
+		}
 		if (md) {
+			if (check_) check_seen(H);
 			verify_md(f, H);
 			decide_md(f, m, H);
 			memcpy(m->opq, f.opq, sizeof m->opq);

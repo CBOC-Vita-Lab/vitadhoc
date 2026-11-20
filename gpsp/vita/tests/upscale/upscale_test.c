@@ -460,6 +460,66 @@ static int mmpx_sizes(void)
    return fails;
 }
 
+/* ---- MMPX: the NEON loop equals the C loop, pixel for pixel ------------------
+ * (on a build without NEON both runs are the C loop: it still checks that the
+ * switch changes nothing.)  Pictures: noise in few colours, flat areas with
+ * thin lines and single pixels, widths that are not a multiple of 8, and
+ * stripes cut at odd columns so groups of 8 start anywhere. */
+static int mmpx_neon_same(void)
+{
+   static const int sz[][2] = { { 7, 9 }, { 8, 8 }, { 9, 5 }, { 15, 16 }, { 16, 3 }, { 33, 17 },
+                                { 240, 160 }, { 282, 160 }, { 320, 256 }, { 160, 144 }, { 256, 224 } };
+   int k, kind, fails = 0;
+   unsigned rs = 12345u;
+   for (k = 0; k < (int)(sizeof(sz) / sizeof(sz[0])); k++)
+      for (kind = 0; kind < 4; kind++)
+      {
+         const int w = sz[k][0], h = sz[k][1];
+         uint16_t *pic = malloc((size_t)w * h * 2);
+         uint32_t *a = malloc((size_t)w * h * 16), *b = malloc((size_t)w * h * 16);
+         int i, x, y;
+         for (i = 0; i < w * h; i++)
+         {
+            const int px = i % w, py = i / w;
+            rs = rs * 1664525u + 1013904223u;
+            switch (kind)
+            {
+               case 0:  pic[i] = (uint16_t)((rs >> 16) % 5u * 9001u); break;            /* noise, 5 colours */
+               case 1:  pic[i] = (uint16_t)(((rs >> 20) % 97u) ? 0x4208u : 0xF800u); break; /* flat + specks */
+               case 2:  pic[i] = (uint16_t)((px % 17 == 3 || py % 11 == 5) ? 0x07E0u : 0x0841u); break; /* lines */
+               default: pic[i] = (uint16_t)(rs >> 16); break;                           /* all colours */
+            }
+         }
+         memset(a, 0xA5, (size_t)w * h * 16);
+         memset(b, 0xA5, (size_t)w * h * 16);
+         mmpx_test_c_only(1);
+         mmpx_rect(pic, w, h, g_lut565, a, (size_t)2 * w, 0, h, 0, w);
+         mmpx_test_c_only(0);
+         mmpx_rect(pic, w, h, g_lut565, b, (size_t)2 * w, 0, h, 0, w);
+         if (memcmp(a, b, (size_t)w * h * 16))
+         {
+            fprintf(stderr, "  mmpx %dx%d kind %d: the NEON loop differs from the C loop\n", w, h, kind);
+            fails++;
+         }
+         /* pieces cut at odd columns: the groups of 8 start anywhere */
+         memset(b, 0xA5, (size_t)w * h * 16);
+         for (y = 0; y < h; y += 8)
+            for (x = 0; x < w; x += 29)
+            {
+               const int y1 = y + 8 > h ? h : y + 8, x1 = x + 29 > w ? w : x + 29;
+               mmpx_rect(pic, w, h, g_lut565, b + 2 * ((size_t)y * 2 * w + x), (size_t)2 * w, y, y1, x, x1);
+            }
+         if (memcmp(a, b, (size_t)w * h * 16))
+         {
+            fprintf(stderr, "  mmpx %dx%d kind %d: NEON pieces differ from the C whole\n", w, h, kind);
+            fails++;
+         }
+         free(pic); free(a); free(b);
+      }
+   printf("mmpx neon vs c: %d failed\n", fails);
+   return fails;
+}
+
 int main(int argc, char **argv)
 {
    int fails = 0, mode, f, wi, async = getenv("GBADHOC_UPSCALE_ASYNC") != NULL;
@@ -487,6 +547,7 @@ int main(int argc, char **argv)
          fails += run(UPSCALE_XBRZ, 2, widths[wi], mode, frames, async);
    g_mmpx = 0;
    fails += mmpx_sizes();
+   fails += mmpx_neon_same();
    fails += band_split();
    fails += gov_test();
    upscale_shutdown();

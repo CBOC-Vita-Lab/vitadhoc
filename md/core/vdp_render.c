@@ -4039,7 +4039,7 @@ void render_obj_m5_ste(int line)
   int count = object_count[line];
 
   /* Clear sprite line buffer */
-  memset(&linebuf[1][0], 0, bitmap.viewport.w + 0x40);
+  memset(&linebuf[1][0], 0, WIDE_VW + 0x40);
 
   /* Draw sprites in front-to-back order */
   while (count--)
@@ -4123,7 +4123,7 @@ void render_obj_m5_ste(int line)
       spr_ovr = (pixelcount >= bitmap.viewport.w);
 
       /* Merge background & sprite layers */
-      merge(&linebuf[1][0x20], &linebuf[0][0x20], &linebuf[0][0x20], lut[4], bitmap.viewport.w);
+      merge(&linebuf[1][0x20], &linebuf[0][0x20], &linebuf[0][0x20], lut[4], WIDE_VW);
 
       /* Stop sprite rendering */
       return;
@@ -4137,7 +4137,7 @@ void render_obj_m5_ste(int line)
   spr_ovr = 0;
 
   /* Merge background & sprite layers */
-  merge(&linebuf[1][0x20], &linebuf[0][0x20], &linebuf[0][0x20], lut[4], bitmap.viewport.w);
+  merge(&linebuf[1][0x20], &linebuf[0][0x20], &linebuf[0][0x20], lut[4], WIDE_VW);
 }
 
 void render_obj_m5_im2(int line)

@@ -75,8 +75,10 @@ unsigned int _newlib_heap_size_user = 56 * 1024 * 1024;     /* 40 MB before rewi
 
 static mdp::MdPlayer *g_pl;
 static mdp::PicturePipe g_pipe;      /* frame hand-over to the drawing thread (pipe.h); idle unless started */
-/* The wide view (md/frontend/wide.h): analyse() runs on the emulating thread after a drawn frame, compose() on the drawing thread (or inline
- * when the hand-over is off). The Meta of a picture in flight is in g_meta[seq & 7] (at most 4 pictures are in flight). */
+/* The wide view (md/frontend/wide.h): after a drawn frame the emulating thread hands the frame to the analysis (frame(): on the VDP worker
+ * thread when it runs, so the emulating thread does not pay for it), compose() runs on the drawing thread (or inline when the hand-over is
+ * off) and waits for the analysis if it has not finished. The Meta of a picture in flight is in g_meta[seq & 7] (at most 4 pictures are in
+ * flight). */
 static mdw::Wide *g_wide;
 static mdw::Meta g_meta[8];
 static uint16_t *g_canvas;           /* the core's picture buffer when it draws beside the mailbox: MD_WIDE_PITCH wide, the picture at column MD_WIDE_MAX */
@@ -88,6 +90,8 @@ static std::atomic<unsigned> g_wide_compose_us(0), g_wide_composed(0);
 static int g_wide_S, g_wide_rung, g_wide_hold, g_wide_applied = -1;
 static double g_wide_ema;
 static unsigned long long g_wide_an_us, g_wide_an_n;
+
+static void wide_yield(void) { sceKernelDelayThread(100); }       /* the drawing thread waiting for an analysis that is still running */
 
 static void wide_cost_update(double cost_us, double budget_us)
 {
@@ -1381,6 +1385,7 @@ int main(int argc, char **argv)
 	g_is_gg = md_host_system() == MD_SYS_GG;
 	if (g_is_gg) g_lcd = pic_lcd_table();
 	g_wide = new mdw::Wide;
+	mdw::Wide::set_yield(wide_yield);
 	g_canvas = (uint16_t *) calloc((size_t) MD_WIDE_PITCH * MD_MAX_HEIGHT, 2);
 	if (!g_canvas) { delete g_wide; g_wide = NULL; }           /* built once, before any other thread needs it */
 
@@ -1551,10 +1556,10 @@ int main(int argc, char **argv)
 					int sw = pw;
 					mdw::Meta *mt = NULL;
 					if (wide_run) {
-						/* the wide view: widekit's analysis of this frame (the emulating thread's share), the picture is composed where it is drawn */
+						/* the wide view: this frame goes to widekit's analysis (the emulating thread's share is the hand-over), the picture is composed where it is drawn */
 						mt = &g_meta[frames_run & 7];
 						const uint64_t a0 = sceKernelGetProcessTimeWide();
-						g_wide->analyse((uint32_t) emu_frame, vi, g_pl->wide_margin(), g_wide_S, mt);
+						g_wide->frame((uint32_t) emu_frame, vi, g_pl->wide_margin(), g_wide_S, mt);
 						const uint64_t an = sceKernelGetProcessTimeWide() - a0;
 						g_wide_an_us += an; g_wide_an_n++;
 						render_emu_us += an; emu_us += an;
@@ -1721,8 +1726,11 @@ int main(int argc, char **argv)
 				mdw::Stats ws;
 				g_wide->census(&ws);
 				const unsigned cu = g_wide_compose_us.exchange(0), cn = g_wide_composed.exchange(0);
-				logf_("wide: margin=%d strips=%d rung=%d analyse_us/fr=%.0f compose_us/pic=%.0f real=%d%% soft_lines=%d scenes=%d cost_ema_ms=%.2f\n", g_pl->wide_margin(), g_wide_S, g_wide_rung,
-				    g_wide_an_n ? (double) g_wide_an_us / (double) g_wide_an_n : 0.0, cn ? (double) cu / cn : 0.0, ws.real_pct, ws.soft_lines, ws.scene_events, g_wide_ema / 1000.0);
+				unsigned long wc[3] = { 0, 0, 0 };
+				md_host_wide_cache_stat(wc);
+				logf_("wide: margin=%d strips=%d rung=%d handover_us/fr=%.0f compose_us/pic=%.0f real=%d%% soft_lines=%d scenes=%d cost_ema_ms=%.2f map_cells=%d bound=%d map_px=%u rows=%u strips_copied=%lu drawn=%lu\n", g_pl->wide_margin(), g_wide_S, g_wide_rung,
+				    g_wide_an_n ? (double) g_wide_an_us / (double) g_wide_an_n : 0.0, cn ? (double) cu / cn : 0.0, ws.real_pct, ws.soft_lines, ws.scene_events, g_wide_ema / 1000.0,
+				    ws.map_cells, ws.map_bound, ws.map_px, ws.rows, wc[0], wc[1]);
 				g_wide_an_us = g_wide_an_n = 0;
 			}
 			double fr = frames_run ? frames_run : 1;

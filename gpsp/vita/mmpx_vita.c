@@ -29,10 +29,20 @@
 
 #include <string.h>
 
+#if (defined(__ARM_NEON) || defined(__ARM_NEON__)) && !defined(MMPX_NO_NEON)
+#include <arm_neon.h>
+#define MM_NEON 1
+#endif
+
 /* The widest and tallest piece done in one go; the border is on top. */
 #define MM_PAD 3
 #define MM_BAND 8
 #define MM_SPAN 320
+
+/* tests: 1 = the plain C loop even where NEON is built in (the NEON path is
+ * checked against it, pixel for pixel) */
+static int g_mm_c_only;
+void mmpx_test_c_only(int on) { g_mm_c_only = on; }
 
 static uint16_t g_mm_luma[65536];
 static int g_mm_luma_ready;
@@ -197,7 +207,61 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
       const uint16_t *const *r = rows + (y - ya);   /* r[0..6]: y-3 .. y+3 */
       uint32_t *o = at + dp * 2u * (size_t)(y - y0) + 2u * (size_t)(xa - x0);
       /* x is the column in the buffer: the picture's xa is at MM_PAD */
-      for (x = MM_PAD; x < MM_PAD + (xb - xa); x++, o += 2)
+      x = MM_PAD;
+#ifdef MM_NEON
+      /* Eight pixels at a time: the flat test (the 8 neighbours all equal
+       * the pixel) for the eight at once.  Eight flat pixels in a row are
+       * one colour (each equals the next), so that case is one lookup and
+       * four vector stores a row; otherwise the flat lanes look their
+       * colour up and the others go through the rules, as in the scalar
+       * loop below -- the same answer for every pixel. */
+      for (; !g_mm_c_only && x + 8 <= MM_PAD + (xb - xa); x += 8, o += 16)
+      {
+         const uint16x8_t e = vld1q_u16(r[3] + x);
+         uint16x8_t f = vceqq_u16(e, vld1q_u16(r[2] + x - 1));
+         uint8_t fl[8];
+         int i;
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[2] + x)));
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[2] + x + 1)));
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[3] + x - 1)));
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[3] + x + 1)));
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x - 1)));
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x)));
+         f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x + 1)));
+         vst1_u8(fl, vmovn_u16(f));
+         if ((vgetq_lane_u64(vreinterpretq_u64_u16(f), 0) &
+              vgetq_lane_u64(vreinterpretq_u64_u16(f), 1)) == ~(uint64_t)0)
+         {
+            const uint32x4_t c = vdupq_n_u32(lut[r[3][x]]);
+            vst1q_u32(o, c);
+            vst1q_u32(o + 4, c);
+            vst1q_u32(o + 8, c);
+            vst1q_u32(o + 12, c);
+            vst1q_u32(o + dp, c);
+            vst1q_u32(o + dp + 4, c);
+            vst1q_u32(o + dp + 8, c);
+            vst1q_u32(o + dp + 12, c);
+            continue;
+         }
+         for (i = 0; i < 8; i++)
+         {
+            uint32_t *q = o + 2 * i;
+            if (fl[i])
+            {
+               const uint32_t c = lut[r[3][x + i]];
+               q[0] = c; q[1] = c; q[dp] = c; q[dp + 1] = c;
+            }
+            else
+            {
+               uint16_t v[4];
+               mmpx_pixel(r, x + i, v);
+               q[0] = lut[v[0]]; q[1] = lut[v[1]];
+               q[dp] = lut[v[2]]; q[dp + 1] = lut[v[3]];
+            }
+         }
+      }
+#endif
+      for (; x < MM_PAD + (xb - xa); x++, o += 2)
       {
          const uint16_t E = r[3][x];
          /* flat: all 8 neighbours equal the pixel */

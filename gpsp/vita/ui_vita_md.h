@@ -6,14 +6,9 @@
  * letter (gamedb_sega.h has the rest: extensions, thumbnail folders, folder names).
  *
  * TWO PLAYERS.  A Sega game's Two players is formed by the app the way a SNES game's is (link_snes.h: the same rooms, code,
- * punch and relay; the launch file's link.* keys; playerkit/FORMATS.md) and then md.bin plays it.  The path is written in
- * main_vita.c (sega_launch / player_launch_write take the same link_snes_link as the SNES one) but is SWITCHED OFF until the
- * link module of the player (playerkit, MIT) lands: UI_SEGA_TWO_PLAYERS is 0 and the Settings > Two players row stays hidden for
- * a Sega game.  To switch it on:
- *   1. build the player with the link module (md/vita/netplay.*) and set UI_SEGA_TWO_PLAYERS to 1 here;
- *   2. psp/ui_psp.c set_row_shown(SET_SNES_TWO): `pcfg_display_console() == FE_CONSOLE_SNES` becomes ui_console_is_player();
- *   3. main_vita.c: the `two` value of the Sega branch (sega_two) reads g_join_pending / snes_menu like the SNES branch;
- *   4. link_snes_game_id() (link_vita.c) learns the four Sega file kinds for the room's game id (ui_host_snes_game_id).
+ * punch and relay; the launch file's link.* keys; playerkit/FORMATS.md) and then md.bin plays it with playerkit's pk_link
+ * (md/vita/netplay.*).  UI_SEGA_TWO_PLAYERS is the one switch: 0 hides the Settings > Two players row for every Sega game.
+ * The Game Gear has one controller and never has the row (ui_sega_two_ok).
  * Plain C, header only; included by psp/ui_psp.c and by main_vita.c. */
 #ifndef UI_VITA_MD_H
 #define UI_VITA_MD_H

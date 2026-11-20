@@ -37,6 +37,10 @@ extern "C" {
 void mmpx_rect(const uint16_t *src, int w, int h, const uint32_t *lut,
                uint32_t *at, size_t dp, int y0, int y1, int x0, int x1);
 
+/* Tests: 1 makes mmpx_rect use the plain C loop (the NEON loop is checked
+ * against it); 0 is the normal choice. */
+void mmpx_test_c_only(int on);
+
 /* The governor's Auto ladder is on its MMPX 2x step (look_glue.cpp). */
 void mmpx_set_auto(int on);
 /* The player picked MMPX 2x by hand (the Settings filter choice). */

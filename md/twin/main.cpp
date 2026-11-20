@@ -146,7 +146,7 @@ static std::vector<int> g_shot_frames;
 static int g_cap = 1 << 20;                     // --wide-cap: the governor's real margin limit
 static std::string g_dump_prefix;                // --wide-dump PREFIX[:FROM[:STEP]]
 static int g_dump_from = 0, g_dump_step = 1;
-static int g_learn = 1, g_cache = 1, g_cache_check = 0;
+static int g_learn = 1, g_cache = 1, g_cache_check = 0, g_check = 0;
 
 // where the view starts in the picture buffer: the Mega Drive picture is the screen, the Game Gear band has the LCD window 48 columns in
 static const uint16_t *px_wide_view(const md_video_info &vi, const uint16_t *px, int) { return vi.gg_band ? px + 48 : px; }
@@ -304,6 +304,7 @@ int main(int argc, char **argv)
 			if (g_dump_step < 1) g_dump_step = 1;
 		}
 		else if (a == "--wide-nolearn") g_learn = 0;
+		else if (a == "--wide-check") g_check = 1;
 		else if (a == "--wide-nocache") g_cache = 0;
 		else if (a == "--wide-cache-check") g_cache_check = 1;
 		else if (a == "--shots") { std::string v = need(); size_t c = v.find(':'); g_shot_prefix = v.substr(0, c);
@@ -337,6 +338,7 @@ int main(int argc, char **argv)
 		g_wa = new mdw::Wide;
 		g_wa->set_real_cap_default(g_cap);
 		g_wa->set_learn(g_learn != 0);
+		g_wa->set_check(g_check != 0);
 		g_wa->set_prov(!g_dump_prefix.empty());
 		if (vdpthr) md_host_wide_cache(g_cache, g_cache_check);
 		if (md_host_system() == MD_SYS_GG) { md_host_set_option("gg_band", 1); md_host_set_wide_margin(g_wide); }
@@ -416,6 +418,7 @@ int main(int argc, char **argv)
 		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d map_cells=%d rooms=%d bound=%d map_px=%u rows=%u rejected=%u real_sum=%llu map_sum=%llu\n", st.frames, st.analysed, st.composed,
 			g_n_an ? g_t_an / g_n_an * 1e3 : 0.0, g_n_co ? g_t_co / g_n_co * 1e3 : 0.0, st.real_pct, st.soft_lines, st.scene_events, st.hs_missed, st.hs_checked,
 			st.map_cells, st.map_rooms, st.map_bound, st.map_px, st.rows, st.map_rejected, g_real_sum, g_map_sum);
+		if (g_check) printf("WIDECHECK learned cells shown=%u seen later=%u wrong=%u\n", st.chk_claims, st.chk_seen, st.chk_wrong);
 		if (vdpthr) { unsigned long cs[3]; md_host_wide_cache_stat(cs); printf("WIDECACHE copied=%lu drawn=%lu differed=%lu\n", cs[0], cs[1], cs[2]); }
 	}
 

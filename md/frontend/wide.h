@@ -78,6 +78,10 @@ struct Stats {
 	unsigned map_px;       /* real strip pixels of the last analysed frame that came from the learned map */
 	unsigned map_rejected; /* learned cells not shown because the strip was not drawn from them or their tile had changed (sum) */
 	unsigned rows;         /* learned rows given to the VDP for the next frame (Mega Drive) */
+	unsigned map_skips;    /* analysed frames the map had nothing new to look at */
+	/* set_check(true), Mega Drive: learned cells shown as real (first time each), those the game later showed on screen at the same place,
+	 * and those of them that were then a different cell (a wrong tile was shown) */
+	unsigned chk_claims, chk_seen, chk_wrong;
 };
 
 class Wide {
@@ -100,6 +104,7 @@ public:
 	void set_real_cap_default(int px) { cap_default_ = px; }
 	void set_learn(bool on) { learn_ = on; }             /* the learned map (on by default); before the first frame() */
 	void set_prov(bool on) { want_prov_ = on; }          /* tests: keep widekit's provenance of the last composed picture */
+	void set_check(bool on) { check_ = on; }             /* tests: hindsight on the learned cells (Stats.chk_*) */
 	const uint8_t *last_prov() const { return prov_; }
 	void census(Stats *s);                               /* emulating thread (waits for the analysis) */
 	/* the real margin the last composed frame had per line (tests, the twin's truth check) */
@@ -118,6 +123,9 @@ private:
 	bool cell_ok(const md_wide_frame &f, const wk_cell &c, unsigned tile_mask);
 	void pass_plane(const md_wide_frame &f, int p, unsigned base, unsigned shift, unsigned tile_mask, int mw, int mh, uint32_t frame, bool m4);
 	void rows_off();
+	struct Claim { int32_t col, row; uint32_t epoch; uint16_t code; uint8_t l, state; };   /* state 0 free, 1 shown, 2 checked */
+	Claim *claim_find(int l, int col, int row, bool add);
+	void check_seen(int H);
 	bool describe_md(const md_wide_frame &f, const md_video_info &vi, uint32_t frame, int margin);
 	bool describe_m4(const md_wide_frame &f, const md_video_info &vi, uint32_t frame, int margin, bool gg);
 	void decide_md(const md_wide_frame &f, Meta *m, int H);
@@ -164,6 +172,11 @@ private:
 	uint16_t *rowbuf_;
 	uint16_t *real0_[2];  /* mode 4: what the ring alone made real, per side and line */
 	uint32_t seam_prev_;
+	unsigned content_gen_;   /* counts the name table passes */
+	uint32_t map_key_;
+	int map_key_ok_;
+	bool check_;
+	Claim *claims_;
 	uint32_t crc_;
 	Stats st_;
 	std::atomic<int> c_real_pct_, c_soft_lines_;

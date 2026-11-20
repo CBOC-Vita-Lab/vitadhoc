@@ -1945,6 +1945,11 @@ int fe_host_state_recover(const char *path)
 
 /* A writer may stream a stable snapshot in small blocks; it returns zero
  * only when all bytes reached stdio. This helper owns close and promotion. */
+/* Set by fe_host_state_save around a SLOT's write: the file it replaces is
+ * kept as <slot>.bak (the one undo of "Undo save"), an empty .bak marking a
+ * slot that held nothing.  Everything else (saves, Continue) keeps no copy. */
+static int state_keep_bak;
+
 static int state_file_replace_writer(const char *path,
                                      int (*write_image)(FILE *, void *),
                                      void *user)
@@ -1993,7 +1998,31 @@ static int state_file_replace_writer(const char *path,
        * or slot scan. Never overwrite it with an empty/new slot. */
       return -1;
    }
-   if (exists)
+   if (state_keep_bak)
+   {
+      /* The old file moves to .bak by one rename (atomic: the .bak is
+       * the whole previous state or the one before it, never half of
+       * either); a slot that was empty gets an empty marker. */
+      char bak[512];
+      if (snprintf(bak, sizeof(bak), "%s.bak", path) < (int)sizeof(bak))
+      {
+         (void)remove(bak);
+         if (exists)
+         {
+            if (rename(old, bak) != 0)
+               remove(old);
+         }
+         else
+         {
+            FILE *m = fopen(bak, "wb");
+            if (m)
+               fclose(m);
+         }
+      }
+      else if (exists)
+         remove(old);
+   }
+   else if (exists)
       remove(old);
    return 0;
 }
@@ -2016,9 +2045,159 @@ static int state_file_replace(const char *path, const void *data, size_t size)
    return state_file_replace_writer(path, state_file_write_image, &image);
 }
 
+/* ---- slot lock and undo (docs/FEATURES.md, Save states) ------------------ */
+
+static int path_is_slot(const char *path)
+{
+   size_t n = path ? strlen(path) : 0;
+   return n > 4 && path[n - 4] == '.' && (path[n - 3] | 0x20) == 's' &&
+          (path[n - 2] | 0x20) == 't' && path[n - 1] >= '0' && path[n - 1] <= '9';
+}
+
+static int side_path(char *out, size_t cap, const char *path, const char *ext)
+{
+   return snprintf(out, cap, "%s%s", path, ext) < (int)cap ? 0 : -1;
+}
+
+static int file_has(const char *path)
+{
+   struct stat st;
+   return stat(path, &st) == 0;
+}
+
+int fe_host_state_locked(const char *path)
+{
+   char l[520];
+   return path && side_path(l, sizeof(l), path, ".lock") == 0 && file_has(l);
+}
+
+int fe_host_state_set_lock(const char *path, int on)
+{
+   char l[520], t[528];
+   FILE *f;
+   if (!path || side_path(l, sizeof(l), path, ".lock") != 0)
+      return -1;
+   if (!on)
+   {
+      (void)remove(l);
+      fe_evt("state_lock file=%s on=0", path);
+      return file_has(l) ? -1 : 0;
+   }
+   snprintf(t, sizeof(t), "%s.tmp", l);
+   f = fopen(t, "wb");
+   if (!f)
+      return -1;
+   if (fputs("locked\n", f) < 0 || fclose(f) != 0 || rename(t, l) != 0)
+   {
+      remove(t);
+      return -1;
+   }
+   fe_evt("state_lock file=%s on=1", path);
+   return 0;
+}
+
+/* The companions (.thumb, .shot, .meta) follow the state in and out of
+ * .bak, so an undone slot shows its own picture again. */
+static const char *const state_side[] = { ".thumb", ".shot", ".meta" };
+
+void fe_host_state_keep_companions(const char *path)
+{
+   unsigned i;
+   char a[528], b[536];
+   for (i = 0; path && i < 3; i++)
+      if (side_path(a, sizeof(a), path, state_side[i]) == 0 &&
+          snprintf(b, sizeof(b), "%s.bak", a) < (int)sizeof(b))
+      {
+         (void)remove(b);
+         (void)rename(a, b);
+      }
+}
+
+/* A delete takes the undo copy with it (the slot asked "delete?"). */
+void fe_host_state_forget_undo(const char *path)
+{
+   unsigned i;
+   char a[528], b[536];
+   if (!path || side_path(a, sizeof(a), path, ".bak") != 0)
+      return;
+   (void)remove(a);
+   for (i = 0; i < 3; i++)
+      if (side_path(a, sizeof(a), path, state_side[i]) == 0 &&
+          snprintf(b, sizeof(b), "%s.bak", a) < (int)sizeof(b))
+         (void)remove(b);
+}
+
+int fe_host_state_undo_available(const char *path)
+{
+   char b[520];
+   return path && path_is_slot(path) &&
+          side_path(b, sizeof(b), path, ".bak") == 0 && file_has(b);
+}
+
+/* 0 = the slot is as it was before the last save; 1 = it was empty before
+ * it, and is again; -1 = nothing to undo; -2 = could not. */
+int fe_host_state_undo_save(const char *path)
+{
+   char bak[520], old[520], a[528], b[536];
+   struct stat st;
+   unsigned i;
+   int had_old = 0;
+   if (!fe_host_state_undo_available(path) ||
+       side_path(bak, sizeof(bak), path, ".bak") != 0 ||
+       side_path(old, sizeof(old), path, ".old") != 0 ||
+       stat(bak, &st) != 0)
+      return -1;
+   if (st.st_size == 0)
+   {
+      /* an empty marker: the slot held nothing before */
+      remove(path);
+      if (file_has(path))
+         return -2;
+      for (i = 0; i < 3; i++)
+         if (side_path(a, sizeof(a), path, state_side[i]) == 0)
+            remove(a);
+      fe_host_state_forget_undo(path);
+      fe_evt("state_undo_save file=%s now=empty", path);
+      return 1;
+   }
+   if (file_has(path))
+   {
+      (void)remove(old);
+      if (rename(path, old) != 0)
+         return -2;
+      had_old = 1;
+   }
+   if (rename(bak, path) != 0)
+   {
+      if (had_old)
+         (void)rename(old, path);
+      return -2;
+   }
+   if (had_old)
+      remove(old);
+   for (i = 0; i < 3; i++)
+      if (side_path(a, sizeof(a), path, state_side[i]) == 0 &&
+          snprintf(b, sizeof(b), "%s.bak", a) < (int)sizeof(b))
+      {
+         (void)remove(a);
+         (void)rename(b, a);
+      }
+   fe_evt("state_undo_save file=%s now=previous", path);
+   return 0;
+}
+
 int fe_host_state_save(const char *path)
 {
    size_t sz;
+
+   /* A locked slot is never written (Save states: L).  -1 would read as a
+    * card error, so the caller asks fe_host_state_locked first for its
+    * words; this is the guard behind it. */
+   if (path_is_slot(path) && fe_host_state_locked(path))
+   {
+      fe_evt("state_save file=%s FAILED reason=locked", path);
+      return -1;
+   }
 
    if (gb_family && !gb_core)
    {
@@ -2061,11 +2240,14 @@ int fe_host_state_save(const char *path)
          return -1;
       }
    }
+   state_keep_bak = path_is_slot(path);
    if (state_file_replace(path, state_buf, sz) != 0)
    {
+      state_keep_bak = 0;
       fe_evt("state_save file=%s FAILED reason=io", path);
       return -1;
    }
+   state_keep_bak = 0;
    fe_evt("state_save file=%s size=%u crc=%08x", path, (unsigned)sz,
           (unsigned)fe_crc32(0, state_buf, sz));
    return 0;
@@ -3368,6 +3550,12 @@ static int gb_single_boot(void)
                            core_sample_rate ? core_sample_rate : 32768, &cb);
    if (!gb_core)
       return -1;
+   {
+      uint16_t pv[12];
+      fe_evt("gb_colours boot id=%d name=\"%s\" combo=%d", host.gb_palette,
+             gbcore_palette_name((unsigned)host.gb_palette),
+             gbcore_palette_preview((unsigned)host.gb_palette, pv));
+   }
    if (gb_save_load() != 0)
    {
       gbcore_shutdown(gb_core);
@@ -4312,7 +4500,8 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
    l.is_host = is_host;
    l.rom_path = host.rom_path;
    l.console = host.console;
-   l.palette = (unsigned)host.gb_palette;
+   /* the peer runs our machine headless: the model, not the colours */
+   l.palette = (unsigned)GBCORE_PALETTE_WIRE((unsigned)host.gb_palette);
    l.save = save;
    l.save_size = n;
    l.wallclock_now = rtc_seed ? rtc_seed
@@ -4682,6 +4871,13 @@ int fe_host_boot(const fe_host_config *cfg)
       fe_evt("gb_rom_loaded console=%s title=%s", host.console == FE_CONSOLE_GBC ?
              "GBC" : host.console == FE_CONSOLE_NES ? "NES" :
              host.console == FE_CONSOLE_WSWAN ? "WS" : "GB", title);
+      if (host.console == FE_CONSOLE_GB || host.console == FE_CONSOLE_GBC)
+      {
+         uint16_t pv[12];
+         fe_evt("gb_colours boot id=%d name=\"%s\" combo=%d", host.gb_palette,
+                gbcore_palette_name((unsigned)host.gb_palette),
+                gbcore_palette_preview((unsigned)host.gb_palette, pv));
+      }
       fe_evt("av_info fps=%.4f rate=%u w=%u h=%u", gbmux_fps(gb_core),
              core_sample_rate, gbcore_frame_width(gb_core), gbcore_frame_height(gb_core));
       if (host.boot_status) host.boot_status("Loading GB save");
@@ -4890,6 +5086,12 @@ void fe_host_gb_palette_set(int id)
 {
    host.gb_palette = id;
    gbcore_set_palette((unsigned)id);
+   {
+      uint16_t pv[12];
+      fe_evt("gb_colours set id=%d name=\"%s\" combo=%d", id,
+             gbcore_palette_name((unsigned)id),
+             gbcore_palette_preview((unsigned)id, pv));
+   }
 }
 
 int fe_host_gb_palette_count(void)
@@ -4900,6 +5102,11 @@ int fe_host_gb_palette_count(void)
 const char *fe_host_gb_palette_name(int id)
 {
    return gbcore_palette_name((unsigned)id);
+}
+
+int fe_host_gb_palette_preview(int id, uint16_t rgb565[12])
+{
+   return gbcore_palette_preview((unsigned)id, rgb565);
 }
 
 void fe_host_core_prof(unsigned *calls, uint32_t *total_us, uint32_t *max_us)

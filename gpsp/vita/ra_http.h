@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_http.h -- one web request at a time, on a thread of its own.
  *
  * RetroAchievements' client (ra_vita.c) asks its server things: sign in,

@@ -243,9 +243,11 @@ typedef struct
    /* 1 once the player has seen the Controls page's one-time note about
     * putting Quick save / Quick load on the stick alone (`stick_warned`). */
    int  stick_warned;
-   /* GB/GBC DMG palette, a GBCORE_PALETTE_* id (gbcore.h): 0 = Auto (Super
-    * Game Boy colours where the game has them, grey otherwise, default),
-    * 1 Grey, 2 DMG green, 3 Pocket.  Unknown ids fall back to Auto. */
+   /* GB/GBC colours for DMG games, a GBCORE_PALETTE_* id (gbcore.h): GBC
+    * auto (the Game Boy Color's own colours for the game, the default), the
+    * 12 GBC button palettes, the 32 Super Game Boy palettes, 0 = Super Game
+    * Boy colours where the game has them (grey otherwise), Grey, DMG green,
+    * Pocket.  Unknown ids fall back to GBC auto. */
    int  gb_palette;
    /* Ambient bars (PCFG_AMB_*): what fills the bars beside a picture that
     * does not cover the screen.  Like scale, filter and gb_palette this is
@@ -679,7 +681,7 @@ typedef struct
     * 2 the picture stretched. */
    int wide, wide_fill;
    /* SUPER GAME BOY BORDER (CONFIG.INI sgb_border_gb, the GB profile's):
-    * 1 = a game running as a Super Game Boy (GB palette Auto) is shown in
+    * 1 = a game running as a Super Game Boy (GB colours: Super Game Boy) is shown in
     * the border it sends (the default), 0 = the picture alone. */
    int sgb_border;
 #endif
@@ -763,6 +765,12 @@ void pcfg_game_begin(const char *path, int console);
 void pcfg_game_end(void);
 /* Write the file now (0 = written or nothing to write). */
 int  pcfg_game_save(void);
+/* The crash-loop guard (vita/boot_guard.h): the running game's own look gets
+ * Wide view off and Image quality Original; and, after the app closed twice
+ * before the list, every risky setting (Smooth hand-over, Steady pacing,
+ * Fourth core, Wide view, Image quality) back to its safe value. */
+void pcfg_game_safe_look(void);
+void pcfg_revert_risky(void);
 /* Give the running game its own look (1, starting from the current one) or
  * hand it back to the console's profile (0).  Selects the result. */
 void pcfg_game_set_override(int on);

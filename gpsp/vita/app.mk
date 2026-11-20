@@ -66,7 +66,7 @@ APP_SRCS      += gamedb.c artfetch.c cover_custom.c
 # the GBA's picture drawn on another core (render_thread.h)
 APP_SRCS      += render_thread.c
 # the CPU speed setting (500 MHz, PSVshell profile)
-APP_SRCS      += cpuclock.c
+APP_SRCS      += cpuclock.c boot_guard.c
 # what has been played, when and for how long (play_log.h); patches applied
 # to a game as it starts (rom_patch.h)
 APP_SRCS      += play_log.c rom_patch.c zip_rom.c save_sync.c

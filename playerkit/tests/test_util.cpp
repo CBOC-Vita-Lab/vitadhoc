@@ -127,3 +127,33 @@ TEST(util_make_dirs_and_clock)
 	set_clock_for_tests(0);
 	CHECK(now_unix() > 1600000000);
 }
+
+
+/* The spin lock gives the CPU up when it cannot get in at once (a pure spin
+ * deadlocks when the waiter outranks the holder on one core), and still keeps
+ * its promise: eight threads, a plain counter. */
+#include <pthread.h>
+#include <unistd.h>
+namespace {
+pk::SpinLock g_lk;
+long g_count;
+void *bump(void *) { for (int i = 0; i < 20000; i++) { pk::SpinGuard g(g_lk); g_count++; } return 0; }
+void *hold_then_release(void *) { g_lk.lock(); usleep(30000); g_lk.unlock(); return 0; }
+}
+TEST(util_spinlock_yields_and_excludes)
+{
+	pthread_t t[8];
+	g_count = 0;
+	for (int i = 0; i < 8; i++) pthread_create(&t[i], 0, bump, 0);
+	for (int i = 0; i < 8; i++) pthread_join(t[i], 0);
+	CHECK_EQ(g_count, 160000);
+	/* a holder that stays for 30 ms: the waiter must not spin through it */
+	unsigned before = pk::spin_waits();
+	pthread_t h;
+	pthread_create(&h, 0, hold_then_release, 0);
+	usleep(5000);
+	{ pk::SpinGuard g(g_lk); g_count++; }
+	pthread_join(h, 0);
+	CHECK(pk::spin_waits() > before);
+	CHECK_EQ(g_count, 160001);
+}

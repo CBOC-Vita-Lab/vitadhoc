@@ -71,6 +71,12 @@ uint32_t ho_shown_total(void);
 /* the drawing side's work in total (us) and pictures drawn: the look
  * governor's per-second draw cost */
 void ho_draw_stats(uint64_t *sum_us, uint32_t *n);
+/* The draw callback says how long its present (vid_swap) waited, once per
+ * picture, before it returns: that wait is taken out of the cost the pacer
+ * and the look governor are given (the display's queue being full is not
+ * drawing load).  ho_swap_stats: the waits in total and how many pictures. */
+void ho_note_present_wait(uint32_t us);
+void ho_swap_stats(uint64_t *sum_us, uint32_t *n);
 
 
 /* ---- the fourth CPU core (1.4; playerkit's pk_cores, docs/FOURTH-CORE.md) ----

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_http.c -- see ra_http.h. */
 #include "ra_http.h"
 
@@ -112,6 +114,36 @@ static void fail(int status, const char *why)
 
 /* Headers end in the buffer's first `got` bytes: parse the status, the
  * length and the coding.  The body is moved to the front. */
+/* The request's head, every piece counted: the host and the agent are the
+ * caller's text, not a fixed size.  malloc'd, NULL = out of memory or a
+ * head that cannot be measured.  (Not static: tests/ra/test_ra_head.c.) */
+char *ra_http_build_request(const char *path, const char *host,
+                            const char *agent, const char *type, int post,
+                            size_t plen)
+{
+   size_t cap = 512 + strlen(path) + strlen(host) + strlen(agent) +
+                (type ? strlen(type) : 0);
+   char *hdr = (char *)malloc(cap);
+   int n;
+   if (!hdr)
+      return NULL;
+   if (post)
+      n = snprintf(hdr, cap, "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                   "Content-Type: %s\r\nContent-Length: %u\r\n"
+                   "Connection: close\r\n\r\n", path, host, agent,
+                   type ? type : "application/x-www-form-urlencoded",
+                   (unsigned)plen);
+   else
+      n = snprintf(hdr, cap, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
+                   "Connection: close\r\n\r\n", path, host, agent);
+   if (n < 0 || (size_t)n >= cap)
+   {
+      free(hdr);
+      return NULL;
+   }
+   return hdr;
+}
+
 static void http_plain(void)
 {
    char host[128], portstr[8], *hdr = NULL;
@@ -151,21 +183,12 @@ static void http_plain(void)
       goto out;
    }
    plen = H.post ? strlen(H.post) : 0;
-   hdr = (char *)malloc(1024 + strlen(path));
+   hdr = ra_http_build_request(path, host, H.agent, H.type, H.post != NULL, plen);
    if (!hdr)
    {
       fail(RA_HTTP_RETRY, "memory");
       goto out;
    }
-   if (H.post)
-      sprintf(hdr, "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
-              "Content-Type: %s\r\nContent-Length: %u\r\n"
-              "Connection: close\r\n\r\n", path, host, H.agent,
-              H.type ? H.type : "application/x-www-form-urlencoded",
-              (unsigned)plen);
-   else
-      sprintf(hdr, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: %s\r\n"
-              "Connection: close\r\n\r\n", path, host, H.agent);
    if (send(s, hdr, strlen(hdr), 0) != (ssize_t)strlen(hdr) ||
        (plen && send(s, H.post, plen, 0) != (ssize_t)plen))
    {

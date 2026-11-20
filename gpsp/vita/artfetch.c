@@ -1073,14 +1073,19 @@ static int warm_one(const char *name)
 }
 
 /* 0 GBA, 1 GB, 2 GBC, 3 SNES, 4 NES, 5 Famicom Disk System, 6 WonderSwan,
- * 7 WonderSwan Color */
-static const char *const SYS[8] = {
+ * 7 WonderSwan Color, 8 Genesis / Mega Drive, 9 Master System, 10 Game Gear,
+ * 11 SG-1000 (gamedb_sega.h has the same folder names; the game database's
+ * system letters are A..L in this order) */
+static const char *const SYS[12] = {
    "Nintendo%20-%20Game%20Boy%20Advance", "Nintendo%20-%20Game%20Boy",
    "Nintendo%20-%20Game%20Boy%20Color",
    "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System",
    "Nintendo%20-%20Nintendo%20Entertainment%20System",
    "Nintendo%20-%20Family%20Computer%20Disk%20System",
-   "Bandai%20-%20WonderSwan", "Bandai%20-%20WonderSwan%20Color" };
+   "Bandai%20-%20WonderSwan", "Bandai%20-%20WonderSwan%20Color",
+   "Sega%20-%20Mega%20Drive%20-%20Genesis",
+   "Sega%20-%20Master%20System%20-%20Mark%20III",
+   "Sega%20-%20Game%20Gear", "Sega%20-%20SG-1000" };
 
 typedef struct
 {
@@ -1095,6 +1100,8 @@ static int cart_crc(const af_candidates *a, const char *path, uint32_t *crc)
 {
    return a->sys[0] == 3 ? gamedb_snes_crc_cancel(path, crc, stop_now)
         : a->sys[0] == 4 || a->sys[0] == 5 ? gamedb_nes_crc_cancel(path, crc, stop_now)
+        : a->sys[0] == 8 ? gamedb_md_crc_cancel(path, crc, stop_now)
+        : a->sys[0] >= 9 ? gamedb_sms_crc_cancel(path, crc, stop_now)
         : gamedb_file_crc_cancel(path, crc, stop_now);
 }
 
@@ -1134,6 +1141,27 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       a->sys[0] = 7; a->sys[1] = 6;  /* WonderSwan Color (the whole file's CRC) */
       a->nsys = 2;
    }
+   else if (ext && (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
+                    !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin")))
+   {
+      a->sys[0] = 8;               /* Genesis: the plain ROM's checksum (SMD de-interleaved) */
+      a->nsys = 1;
+   }
+   else if (ext && !strcasecmp(ext, ".sms"))
+   {
+      a->sys[0] = 9; a->sys[1] = 10; /* Master System; some Game Gear games run as .sms */
+      a->nsys = 2;
+   }
+   else if (ext && !strcasecmp(ext, ".gg"))
+   {
+      a->sys[0] = 10;              /* Game Gear */
+      a->nsys = 1;
+   }
+   else if (ext && !strcasecmp(ext, ".sg"))
+   {
+      a->sys[0] = 11;              /* SG-1000 */
+      a->nsys = 1;
+   }
    else if (ext && !strcasecmp(ext, ".gbc"))
    {
       a->sys[0] = 2; a->sys[1] = 1;
@@ -1168,7 +1196,8 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
     * file may be (gamedb N records) */
    if (a->ncand < 2)
    {
-      static const char TAG[8] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H' };
+      static const char TAG[12] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                    'I', 'J', 'K', 'L' };
       int k;
       for (k = 0; k < a->nsys && a->ncand < 3; k++)
          if (gamedb_name_loose(TAG[a->sys[k]], a->stem, a->cand[a->ncand], AF_NAME_CAP))

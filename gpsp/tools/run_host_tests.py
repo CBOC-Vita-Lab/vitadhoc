@@ -507,7 +507,15 @@ def suites(env: Env, baseline: Path | None):
           "-o /tmp/t_ap_engine tools/tests/test_ap_engine.c && /tmp/t_ap_engine && "
           "gcc -std=gnu99 -Wall -Wextra -Wno-unused-function -Ifrontend-common "
           "-o /tmp/t_evt_gap tools/tests/test_evt_gap_ini_audit.c && "
-          "/tmp/t_evt_gap")),
+          "/tmp/t_evt_gap && "
+          # B12: four producer threads on the ring (ThreadSanitizer + counts)
+          "gcc -std=gnu99 -O1 -g -pthread -Wall -Wextra -Wno-unused-function "
+          "-fsanitize=thread -Ifrontend-common "
+          "-o /tmp/t_evt_threads tools/tests/test_evt_threads.c && "
+          "/tmp/t_evt_threads /tmp/t_evt_threads.log && "
+          # G9: an over-long line is cut, marked and counted
+          "gcc -std=gnu99 -Wall -o /tmp/t_evt_cut tools/tests/test_evt_cut.c && "
+          "/tmp/t_evt_cut /tmp/t_evt_cut.log")),
 
         # The rig's PC side: the golden-save editor (synthetic-save round
         # trip, sector isolation, refusal of a corrupt input), hw_loop against
@@ -657,7 +665,20 @@ def suites(env: Env, baseline: Path | None):
           "cmp /tmp/ini-n-$c.dump /tmp/ini-l-$c.dump && "
           "cmp /tmp/ini-n-$c.ini /tmp/ini-l-$c.ini || exit 1; "
           "echo \"PASS $c config: same fields loaded, same bytes saved\"; "
-          "done")),
+          "done && "
+          # A CONFIG.INI written by VitAdhoc 1.3.1 and by 2.0-rc1 (their own
+          # pcfg_save, tools/tests/fixtures/README-config.md) keeps the
+          # player's choices in this build, new switches default ON, and
+          # survives a save and a load.
+          "gcc -std=gnu99 -DVITA -O1 -g -Wall -Wextra -Werror "
+          "-fsanitize=address,undefined -Ivita -Ipsp -Ifrontend-common "
+          "-Ilibretro/libretro-common/include -I. "
+          "-o /tmp/t_config_migrate tools/tests/test_config_migrate.c "
+          "psp/config_psp.c psp/ctl_map.c frontend-common/fe_util.c "
+          "-Wl,--unresolved-symbols=ignore-all && "
+          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_config_migrate "
+          "tools/tests/fixtures/config-1.3.1.ini "
+          "tools/tests/fixtures/config-2.0-rc1.ini")),
     ]
 
 

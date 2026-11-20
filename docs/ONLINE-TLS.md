@@ -10,7 +10,7 @@ side of online play is in [Online Play](ONLINE.md); building Mbed TLS is in
 
 Cloudflare's free edge certificates are ECDSA, and the Vita's own `sceHttp` /
 `sceSsl` give no control over the trusted roots or the TLS versions. The client is the one Galaxy and Strikers use
-(same owner), built on Mbed TLS 3.6.7: TLS 1.2 and 1.3, client side only,
+(same owner), built on Mbed TLS 3.6.8: TLS 1.2 and 1.3, client side only,
 certificate checks always on, no system store. The Linux twin builds the same
 code without TLS (plain HTTP to the local test service) unless `MBEDTLS=` is
 given.

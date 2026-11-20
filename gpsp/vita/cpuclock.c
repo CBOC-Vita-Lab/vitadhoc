@@ -348,6 +348,28 @@ void cpuclk_set(int fast)
    measure("after the change");
 }
 
+/* The console's clocks after a sleep: the system may bring the CPU, bus and
+ * GPU back at their defaults (444 / 222 / 111-ish), and a PSVshell profile
+ * is applied by the plugin at the title's start only.  Ask again for what
+ * the setting says and log the answer and the measured clock.  Returns the
+ * request's result (negative: refused, as at the start). */
+int cpuclk_reapply(void)
+{
+   int want = g_fast ? FAST_MHZ : STD_MHZ;
+   int rc = plat_cpu_set_mhz(want);
+   fe_evt("clocks: reapplied after resume: asked for %d MHz, result %d", want, rc);
+   if (rc < 0 && g_fast)
+   {
+      int rc2 = plat_cpu_set_mhz(STD_MHZ);
+      fe_evt("clocks: reapplied: asked for %d MHz, result %d", STD_MHZ, rc2);
+      g_granted = 0;
+   }
+   else
+      g_granted = (rc >= 0) && g_fast;
+   measure("after resume");
+   return rc;
+}
+
 void cpuclk_tick(void)
 {
    if (g_second_done || plat_time_us() - g_t0 < SECOND_MEASURE_US)

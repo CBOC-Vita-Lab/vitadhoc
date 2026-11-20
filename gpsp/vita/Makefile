@@ -125,6 +125,19 @@ $(error make vpk needs MBEDTLS=<prefix>: python3 tools/online/build-mbedtls.py -
 endif
 APP_WARN := -Wall -Wextra -Wno-type-limits -std=gnu11
 APP_OBJS := $(foreach s,$(APP_ALL_VITA),$(call app_obj,$(s)))
+# newlib's FILE-slot allocation (__sfp) has no lock on the console: two threads
+# in fopen() at once can be handed one FILE.  playerkit/vita/pk_stdio_lock.c is
+# a real recursive lock the linker puts in place of the three no-ops
+# (--wrap).  On by default; `make STDIO_LOCK=0` builds without it.
+STDIO_LOCK ?= 1
+ifeq ($(STDIO_LOCK),1)
+STDIO_LOCK_OBJ := $(B)/app/pk_stdio_lock.o
+STDIO_LOCK_LD  := -Wl,--wrap=__sfp -Wl,--wrap=__sfp_lock_acquire -Wl,--wrap=__sfp_lock_release
+APP_OBJS += $(STDIO_LOCK_OBJ)
+$(STDIO_LOCK_OBJ): ../../playerkit/vita/pk_stdio_lock.c
+	@mkdir -p $(dir $@)
+	$(CC) $(APP_FLAGS) -w -c -o $@ $<
+endif
 # What the app calls, each list after what uses it: the UI and the renderer
 # (ui.mk), the transports (net.mk), then plat_vita.c's own.  arm-vita-eabi-
 # gcc's specs add newlib's needs (SceLibKernel, SceIofilemgr, SceNet, ...).
@@ -203,7 +216,7 @@ $(foreach s,$(APP_ALL_VITA),$(eval $(call APP_RULE,$(s))))
 # -Wl,-q keeps the relocations vita-elf-create turns into the SCE module's.
 # Order: B before A is irrelevant to the result (their symbols are disjoint);
 # the archive last, so only what something references is pulled from it.
-LINK_ELF = $(CC) -Wl,-q -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
+LINK_ELF = $(CC) -Wl,-q $(STDIO_LOCK_LD) -Wl,-Map,$(B)/gbadhoc.map -o $(ELF) $(APP_OBJS) \
 	  $(VITA_UI_SHADERS) $(FE_OBJS) $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(1) $(LIBS)
 
 # A WEAK undefined symbol links without complaint and is a null call or a

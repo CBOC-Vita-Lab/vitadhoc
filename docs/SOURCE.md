@@ -25,9 +25,8 @@ The install ZIP includes the same VPK and the corresponding source.
 ## Version 2.0 (in preparation)
 
 Version 2.0 adds Online play. It is built as above with one more input, an Mbed
-TLS 3.6.7 prefix built from the pinned source by `tools/online/build-mbedtls.py`
-(commit `068ff080b369adfac81509f9b57b2afabaf82dc5`, tag `mbedtls-3.6.7`, plus the
-locked upstream clean-up hunk; `gpsp/vita/deps/lock.json`):
+TLS 3.6.8 prefix built from the pinned source by `tools/online/build-mbedtls.py`
+(commit `82e69999f91126589a28b70dd75b69fbcabe2711`, tag `mbedtls-3.6.8`, unpatched; `gpsp/vita/deps/lock.json`):
 
 `python3 tools/online/build-mbedtls.py --target vita --work <dir>`, then
 `make -C gpsp/vita -j2 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS=<dir>/mbedtls/vita GIT_VERSION=2.0`
@@ -35,6 +34,16 @@ locked upstream clean-up hunk; `gpsp/vita/deps/lock.json`):
 The VPK gains the Mbed TLS notice (`licenses/MbedTLS-LICENSE.txt`); the hashes in
 the table above are filled in at release by `tools/pin-release.py`. The room
 service source is in `online/service/` (source package only, not the VPK).
+
+### Taken from GBAdhoc 5.0.0-beta.6
+
+GBAdhoc (public repository ShoshinFauteux/GBAdhoc, GPL-2.0-or-later; the author
+gave the permission under which this program is GPL) 5.0.0-beta.6, by commit and
+adapted to this tree, not copied: `4d94b62` (Top Gun - Combat Zones has no backup
+chip), `8db021f` (direct boot starts on scanline 126), `6eb61d6` (STM with R15,
+interpreter hunk only), `abcd4ed` (the open BIOS sound driver,
+`gpsp/bios/source/sound_driver.c`, relocated to 0x2880) and `8c7a93c` (a serial
+port with no cable reads as unplugged). See [Technical notes](TECHNICAL.md).
 
 ## Automated Evidence
 

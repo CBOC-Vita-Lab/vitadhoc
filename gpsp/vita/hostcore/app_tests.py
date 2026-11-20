@@ -391,7 +391,7 @@ def game_pixels(im, w=240, h=160, scale=3):
         for x in range(w):
             dst[x, y] = src[x0 + x * scale + scale // 2,
                             y0 + y * scale + scale // 2]
-    return out
+    return out[:4]
 
 
 def worst_diff(a, b, box=None):
@@ -768,6 +768,11 @@ def t_suspend(S):
     j = r.index(r"sram_flush .*wrote=", i) if i >= 0 else -1
     k = r.index(r"power resume game=1", i) if i >= 0 else -1
     S.check(0 <= i < j < k, "in the game: suspend, the save flushed, resume")
+    # the console may bring the clocks back at their defaults after a sleep:
+    # they are asked for again, once per resume, and the answer is logged
+    S.check(len([l for l in r.log if "clocks: reapplied after resume" in l]) == 2 and
+            len([l for l in r.log if "clocks: the ARM core measures" in l and "after resume" in l]) == 2,
+            "each of the two resumes asks for the CPU/bus/GPU clocks again, logs the result and the measured clock")
     S.picture(r, "wake.png", "wake.png")
     S.check(r.has(r"wake_menu choice=continue"), "the wake overlay, Continue")
     a = r.shot_evt("after.png")
@@ -874,7 +879,7 @@ def sensor_bars(im):
         while n < 240 and sum(g.getpixel((n, y))) > 120:
             n += 1
         out.append(n)
-    return out
+    return out[:4]
 
 
 def t_sensors(S):
@@ -1359,7 +1364,8 @@ def t_sgb(S):
     border off is the picture alone."""
     sys.path.insert(0, os.path.join(HERE, "testrom"))
     import sgbborder
-    cfg = {"scale_gb": 0, "quality_gb": 1, "gb_palette_gb": 0, "gb_palette": 0}
+    cfg = {"scale_gb": 0, "quality_gb": 1, "gb_palette_gb": 0, "gb_palette": 0,
+           "gb_colours": 2}   # 2.0: without it a stored 0 means the new default
     rom = sgbborder.rom()
 
     def at(im, x, y):
@@ -1491,7 +1497,10 @@ def t_cpufix(S):
              "NV (condition 0xF) words never run (IWRAM)",
              "NV (condition 0xF) words never run (EWRAM)",
              "IWRAM code run via a mirror first sees its own pc (RAM_MIRROR_FIX)",
-             "EWRAM code run via a mirror first sees its own pc (RAM_MIRROR_FIX)"]
+             "EWRAM code run via a mirror first sees its own pc (RAM_MIRROR_FIX)",
+             "STM with R15 stores the address + 12 (ROM, dynarec)",
+             "STM with R15 stores the address + 12 (VRAM, interpreter)",
+             "serial port with no cable reads as unplugged"]
     extra = {"roms/gbadhoc-cpufix.gba": open(rom, "rb").read()}
     r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(6, wait=20),
               autoboot="gbadhoc-cpufix.gba", extra=extra)
@@ -1506,13 +1515,40 @@ def t_cpufix(S):
     # flags): they are only enforced on the ARM twins.
     arm_only = {13, 20, 21}
     for n, name in enumerate(names):
-        seen = int.from_bytes(sav[0x20 + 4 * n:0x24 + 4 * n], "little")
+        seen = int.from_bytes(sav[0x40 + 4 * n:0x44 + 4 * n], "little")
         if n in arm_only and S.arch.startswith("x86"):
             S.note("%s: x86 dynarec not fixed (result %d); checked on armhf" %
                    (name, sav[0x08 + n]))
             continue
         S.check(sav[0x08 + n] == 1, "%s (saw 0x%x, result %d)" %
                 (name, seen, sav[0x08 + n]))
+
+
+def t_biossound(S):
+    """The open BIOS's sound driver (SWI 1Ah/1Bh/1Ch/1Dh): a cartridge that
+    leaves its PCM mixing to the BIOS (testrom/biossound.c) must be heard.
+    With the driver answering those calls by a bare return the sound hardware
+    is never switched on and the WAV is silence.  The tone is a steady
+    sine, so a second run gives the same sound (same audio CRC)."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-biossound.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-biossound.gba (make -C testrom biossound): skipped")
+        return
+    crcs = []
+    for n in (1, 2):
+        extra = {"roms/gbadhoc-biossound.gba": open(rom, "rb").read()}
+        r = S.run("biossound%d" % n, "400:quit\n", autoboot="gbadhoc-biossound.gba",
+                  extra=extra)
+        S.clean(r)
+        wav = os.path.join(r.out, "audio.wav")
+        frames, peak, loud = wav_stats(wav) if os.path.exists(wav) else (0, 0, 0)
+        S.check(frames > 48000 and peak > 2000 and loud > 0.5,
+                "run %d: the BIOS sound driver is heard (%d frames, peak %d, "
+                "%.0f%% above the noise floor)" % (n, frames, peak, loud * 100))
+        crcs.append(r.host.get("audio_crc"))
+    S.check(crcs[0] is not None and crcs[0] == crcs[1],
+            "the sound is the same on a second run (audio crc %s / %s)" % tuple(crcs))
+    S.summary["biossound.audio_crc"] = crcs[0]
 
 
 def t_chain(S):
@@ -2758,10 +2794,10 @@ def picker_row_y(i):
     return 96 + 52 * i
 
 
-def picker_run(S, name, script, config=None):
+def picker_run(S, name, script, config=None, env=None):
     cfg = {"ui_home": 1}
     cfg.update(config or {})
-    r = S.run(name, script, config=cfg, extra=PICKER_ROMS)
+    r = S.run(name, script, config=cfg, extra=PICKER_ROMS, env=env)
     S.clean(r)
     return r
 
@@ -2788,7 +2824,7 @@ def t_picker(S):
             [e["_"] for e in r.evt("ui_picker")])
     S.check(not r.evt("hm_chips"), "there is no row of console tabs any more")
     pill = r.evt("hm_pill")
-    S.check(bool(pill and pill[0]["name"] == "Game Boy Advance"),
+    S.check(bool(pill and pill[0]["name"] == '"Game Boy Advance"'),
             "the top bar shows the active console's full name (%s)" % [p["_"] for p in pill])
     S.check(pill and int(pill[0]["x"]) + int(pill[0]["w"]) < int(pill[0]["search"]),
             "the pill ends before the search icon")
@@ -2820,7 +2856,7 @@ def t_picker(S):
     cons = [int(d["console"]) for d in r.evt("ui_browser_console")]
     S.check(cons == [1, 2, 3, 4, 5, 0, 1, 2],
             "the library is switched live at every step (%s)" % cons)
-    names = [p["name"] for p in r.evt("hm_pill")]
+    names = [p["name"].strip('"') for p in r.evt("hm_pill")]
     S.check(names[0] == "Game Boy Advance" and names[-1] == "Game Boy Color" and "Super Nintendo" in names,
             "the pill follows (%s)" % names)
     S.check(len(r.evt("ui_browser_settle")) == 1 and r.evt("ui_browser_settle")[0].get("what") == "config" and
@@ -2865,6 +2901,21 @@ def t_picker(S):
             "a tap beside the list closes it, and nothing else (%s)" % ev)
     S.picture(r, "t_open.png", "picker_touch_open.png")
     S.picture(r, "t_snes.png", "picker_touch_snes.png")
+    # ten consoles (the four Sega ones are coming): the host twin repeats the
+    # table four times over to show the list at that length -- it holds eight
+    # rows, scrolls to keep the highlight in view, never reaches the hint line
+    ten = {"GBADHOC_PICKER_ROWS": "4"}
+    r = picker_run(S, "picker_ten", "90:triangle\n+20:shot=ten_open.png\n" + "+6:triangle\n" * 9 +
+                   "+30:shot=ten_end.png\n+4:touch=450/%d\n+40:shot=ten_tap.png\n+10:quit\n" % picker_row_y(4), env=ten)
+    S.check(picker_moves(r) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 6],
+            "ten rows: nine presses reach the last row, a tap on a row of the scrolled list picks that row (%s)" %
+            picker_moves(r))
+    end = r.shot("ten_end.png")
+    S.check(max(max(px) for px in end.crop((400, 440, 760, 500)).getdata()) > 120 and
+            max(max(px) for px in end.crop((400, 500, 760, 506)).getdata()) < 120,
+            "the last row is in view and the list ends above the hint line")
+    S.picture(r, "ten_open.png", "picker_ten_open.png")
+    S.picture(r, "ten_end.png", "picker_ten_end.png")
 
 
 def t_find(S):
@@ -2952,9 +3003,9 @@ def t_find(S):
             len(r.evt("ui_text_open")) == 1 and picked(r, target),
             "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
 
-    # (six consoles since 1.4: six presses go round to the GBA again)
+    # (six consoles: the first press opens the picker, six more go round to the GBA again)
     r = run("console", "90:circle\n94:type=find-only\n150:triangle\n215:triangle\n"
-            "280:triangle\n330:triangle\n380:triangle\n430:triangle\n500:cross\n640:shot=game.png\n660:quit\n")
+            "280:triangle\n330:triangle\n380:triangle\n430:triangle\n480:triangle\n560:cross\n700:shot=game.png\n720:quit\n")
     S.check(r.has(r"^EVT browser_find active=0 ") and
             len(r.evt("ui_browser_console")) == 6 and picked(r, "gbadhoc-test.gba"),
             "a console change clears Find instead of hiding the remembered game on return")
@@ -3473,7 +3524,7 @@ def t_art_progress(S):
     S.check(len(covers) == 2,
             "returning from the game resumes and finishes both controlled cover downloads (%d)" % len(covers))
     if ready:
-        red = sum(1 for c in ready.crop((60, 102, 160, 200)).get_flattened_data()
+        red = sum(1 for c in ready.crop((60, 102, 160, 200)).getdata()
                   if c[0] > 180 and c[1] < 60 and c[2] < 60)
         S.check(red > 8000, "the focused cover appears automatically after returning (%d red pixels)" % red)
     S.summary["art_progress_evidence"] = {"requests": requests, "covers": len(covers)}
@@ -3599,7 +3650,7 @@ def t_art_settings(S):
     S.picture(r, "settings_done.png")
     if before and after:
         box = (60, 102, 160, 200)
-        red = lambda im: sum(1 for c in im.crop(box).get_flattened_data()
+        red = lambda im: sum(1 for c in im.crop(box).getdata()
                              if c[0] > 180 and c[1] < 60 and c[2] < 60)
         before_red, after_red = red(before), red(after)
         S.check(before_red < 100 and after_red > 8000,
@@ -4492,7 +4543,7 @@ def many_games(count, seed):
         w = [rnd.choice(words) for _ in range(rnd.randint(1, 3))]
         w[0] = w[0].lower() if rnd.random() < 0.3 else w[0]
         out.append("%s %05d %s [!].gba" % (" ".join(w), i, rnd.choice(tags)))
-    return out
+    return out[:4]
 
 
 def t_extra_roms(S):
@@ -5000,6 +5051,15 @@ class RaServer:
         import threading
         import urllib.parse
         self.md5, self.calls, self.password_seen = game_md5, [], 0
+        # rich: also an achievement that is primed by the first A press (a
+        # challenge), one with a progress count, a leaderboard that starts on
+        # it, and a rich presence script
+        self.rich = False
+        self.boards = [{"ID": 9, "Title": "Press Score", "Description": "A",
+                        "Mem": "STA:0xH048001=23::CAN:0xH000000=88::"
+                               "SUB:0xH000000=77::VAL:0xH048001",
+                        "Format": "VALUE", "LowerIsBetter": False,
+                        "Hidden": False}]
         srv = self
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -5034,6 +5094,13 @@ class RaServer:
     def stop(self):
         self.httpd.shutdown()
 
+    @staticmethod
+    def rich_ach(ach):
+        return [ach(1003, "Almost There", "Primed, never done", 3,
+                    "0xH048001=23_T:0xH000000=1_T:0xH000000=2"),
+                ach(1004, "Count Up", "Progress to 100", 4,
+                    "M:0xH048001=100")]
+
     def answer(self, q):
         r, ok = q.get("r"), q.get("u") == "ra_tester"
         if r == "login2":
@@ -5059,15 +5126,19 @@ class RaServer:
             img = "http://127.0.0.1/Images/000001.png"
             return 200, {"Success": True, "GameId": 77,
                          "Title": "GBAdhoc Test", "ConsoleId": 5,
-                         "ImageIconUrl": img, "RichPresencePatch": "",
+                         "ImageIconUrl": img,
+                         "RichPresencePatch": ("Display:\nTesting, A at @Number(0xH048001)"
+                                               if self.rich else ""),
                          "Sets": [{"AchievementSetId": 7, "GameId": 77,
                                    "Title": "GBAdhoc Test", "Type": "core",
-                                   "ImageIconUrl": img, "Leaderboards": [],
+                                   "ImageIconUrl": img,
+                                   "Leaderboards": self.boards if self.rich else [],
                                    "Achievements": [
                                        ach(1001, "First Press", "Press A once",
                                            5, "0xH048001=23"),
                                        ach(1002, "Never", "Cannot be earned",
-                                           10, "0xH000000=1_0xH000000=2")]}]}
+                                           10, "0xH000000=1_0xH000000=2")] +
+                                       (self.rich_ach(ach) if self.rich else [])}]}
         if r == "startsession":
             return 200, {"Success": True, "Unlocks": [],
                          "HardcoreUnlocks": [], "ServerNow": 1700000000}
@@ -5125,13 +5196,13 @@ def _t_ra(S, srv):
 
     # Play: the token signs in, the game is found, A earns First Press, and
     # Settings > Achievements (in game: up past Button mapping and Display
-    # settings) lists both.
+    # settings; 2.0: and Achievement indicators) lists both.
     keep = {"retroachievements.txt": "user=ra_tester\ntoken=tok-1\n"
                                      "hardcore=0\n"}
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              set_up(9) + "+10:cross\n+20:shot=list.png\n"
+              set_up(10) + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -5174,6 +5245,53 @@ def _t_ra(S, srv):
     S.check(r.has(r"^EVT ra_http api=login2 status=-2"),
             "the sign-in that cannot reach the server is logged")
     S.picture(r, "game.png")
+
+
+def t_ra_indicators(S):
+    """RetroAchievements indicators (ra_vita.c, osd_psp.c): a primed
+    achievement shows a challenge chip, a measured one a progress pill, a
+    started leaderboard its live value; rich presence goes out with the
+    ping; Settings > Achievement indicators Off draws none of them."""
+    import hashlib
+    md5 = hashlib.md5(open(OWN_GBA, "rb").read()).hexdigest()
+    srv = RaServer(md5)
+    srv.rich = True
+    try:
+        ini = {"ra_host": srv.url()}
+        # (leaderboards run in Hardcore only: rc_client's rule)
+        keep = {"retroachievements.txt": "user=ra_tester\ntoken=tok-1\nhardcore=1\n"}
+        r = S.run("ra_ind_on", "60:cross\n+400:shot=before.png\n+10:cross:10\n"
+                  "+30:shot=chip.png\n+60:shot=pill.png\n+200:shot=later.png\n"
+                  "+2000:shot=ping.png\n+10:quit\n", vita_ini=ini, extra=keep)
+        S.clean(r)
+        S.check(r.has(r"^EVT ra_game ok=1 id=77 core=\d+ unlocked=0 hardcore=1"),
+                "the game is known with its extra achievements and a leaderboard")
+        S.check(r.has(r'^EVT ra_challenge show id=1003 '),
+                "a primed achievement shows the challenge indicator")
+        S.check(r.has(r'^EVT ra_progress (show|update) id=1004 progress="23/100"'),
+                "a measured achievement shows its progress (23/100)")
+        S.check(r.has(r'^EVT ra_tracker show id=\d+ value="23"') and r.has(r"^EVT ra_lboard start id=9$"),
+                "a started leaderboard shows its tracker")
+        S.check(r.has(r'^EVT ra_ping n=1 status=200 rich_presence="Testing, A at 23"'),
+                "rich presence goes out with the ping")
+        S.picture(r, "chip.png")
+        S.picture(r, "pill.png")
+        S.picture(r, "ping.png")
+
+        r = S.run("ra_ind_off", "60:cross\n+400:shot=before.png\n" + menu_pick(4) +
+                  set_up(9) + "+10:cross\n+20:shot=row_off.png\n+10:circle\n+10:circle\n"
+                  "+10:circle\n+30:cross:10\n+60:shot=off.png\n+10:quit\n",
+                  vita_ini=ini, extra=keep)
+        S.clean(r)
+        S.check(r.has(r"^EVT ra_indicators_setting on=0"),
+                "the Achievement indicators row turns them off")
+        S.picture(r, "row_off.png")
+        S.picture(r, "off.png")
+        acct = os.path.join(r.root, "retroachievements.txt")
+        S.check("indicators=0" in (open(acct).read() if os.path.exists(acct) else ""),
+                "...and the choice is kept with the account")
+    finally:
+        srv.stop()
 
 
 def t_save_import(S):
@@ -5805,6 +5923,89 @@ def t_sidecars(S):
             "(beside the game, or in leftovers/ since 1.4's tidy: save_sync.h)")
 
 
+def t_state_undo_lock(S):
+    """Save states, every console: Undo save puts the slot's previous state
+    back (one .bak beside it), Undo load returns to just before the last
+    load, and a locked slot is neither overwritten nor deleted.  Files are
+    written whole (no .tmp or .old left)."""
+    stem = "gbadhoc-test"
+    sub = "states/gba/%s/%s.st0" % (bkt(stem), stem)
+
+    def sd(r):
+        return os.path.join(r.root, "states", "gba", bkt(stem))
+
+    def left(r):
+        return [n for n in os.listdir(sd(r)) if n.endswith((".tmp", ".old", ".new"))]
+
+    def rd(r, name=stem + ".st0"):
+        with open(os.path.join(sd(r), name), "rb") as f:
+            return f.read()
+
+    ra = S.run("undo_first", "150:a:20\n" + menu_pick(1) +
+               "+10:square\n+30:quit\n", autoboot=stem + ".gba")
+    S.clean(ra)
+    A = rd(ra)
+    S.check(len(A) > 1000 and not left(ra), "a first save is a whole state, no temporary files")
+
+    # overwrite without undo: the old state is kept as .bak
+    rc = S.run("undo_kept", "150:a:20\n" + menu_pick(1, wait=240) +
+               "+10:square\n+10:cross\n+40:shot=saved.png\n+10:quit\n",
+               autoboot=stem + ".gba", extra={sub: A})
+    S.clean(rc)
+    B = rd(rc)
+    S.check(B != A and os.path.exists(os.path.join(sd(rc), stem + ".st0.bak")) and
+            rd(rc, stem + ".st0.bak") == A,
+            "overwriting a slot keeps what was there as .bak")
+    S.check(not left(rc), "...and leaves no temporary files")
+
+    # overwrite, then R and X: Undo save
+    ru = S.run("undo_save", "150:a:20\n" + menu_pick(1, wait=240) +
+               "+10:square\n+10:cross\n+40:shot=saved.png\n+10:r\n+20:shot=ask.png\n"
+               "+10:cross\n+40:shot=undone.png\n+10:quit\n",
+               autoboot=stem + ".gba", extra={sub: A})
+    S.clean(ru)
+    S.check(rd(ru) == A and not os.path.exists(os.path.join(sd(ru), stem + ".st0.bak")),
+            "Undo save puts the slot's previous state back")
+    S.check(ru.has(r"^EVT state_undo_save .*now=previous") and not left(ru),
+            "...logged, and atomic")
+    S.picture(ru, "ask.png")
+    S.picture(ru, "undone.png")
+
+    # lock: neither save nor delete gets through
+    rl = S.run("slot_lock", "150:a:20\n" + menu_pick(1, wait=240) +
+               "+10:l\n+20:shot=locked.png\n+10:square\n+20:shot=refused_save.png\n"
+               "+10:triangle\n+20:shot=refused_delete.png\n+10:l\n+10:quit\n",
+               autoboot=stem + ".gba", extra={sub: A})
+    S.clean(rl)
+    S.check(rl.has(r"^EVT state_lock .*on=1") and rl.has(r"^EVT state_lock .*on=0"),
+            "L locks the slot, and L again unlocks it")
+    S.check(rd(rl) == A and not rl.has(r"^EVT state_save "),
+            "a locked slot is not overwritten")
+    S.check(not os.path.exists(os.path.join(sd(rl), stem + ".st0.lock")),
+            "...and unlocking removes the flag")
+    rl2 = S.run("slot_lock_delete", "150:a:20\n" + menu_pick(1, wait=240) +
+                "+10:l\n+10:triangle\n+10:cross\n+20:shot=del.png\n+10:quit\n",
+                autoboot=stem + ".gba", extra={sub: A})
+    S.clean(rl2)
+    S.check(rd(rl2) == A and os.path.exists(os.path.join(sd(rl2), stem + ".st0.lock")),
+            "a locked slot is not deleted")
+    S.picture(rl, "locked.png")
+    S.picture(rl, "refused_save.png")
+
+    # Undo load: back to just before the last load
+    rb = S.run("undo_load",
+               "150:a:20\n" + menu_pick(1, wait=240) + "+10:cross\n+60:shot=loaded.png\n" +
+               menu_pick(1, wait=30) + "+10:r\n+20:shot=ask_load.png\n+10:cross\n"
+               "+40:shot=back.png\n+10:quit\n",
+               autoboot=stem + ".gba", extra={sub: A})
+    S.clean(rb)
+    S.check(rb.has(r"^EVT state_undo_capture .*rc=0") and
+            rb.has(r"^EVT state_undo_load rc=0"),
+            "Undo load returns to just before the last load")
+    S.check(not left(rb), "...with the undo point written whole")
+    S.picture(rb, "ask_load.png")
+
+
 def t_display_rows(S):
     """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
     saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
@@ -6213,18 +6414,19 @@ def t_snes_library(S):
 
     # The Vita's home screen (ui_home = 1): the SNES chip in the top bar
     # names itself, and the button row's hints stay clear of the buttons.
-    r = S.run("snes_home", "90:triangle\n+30:triangle\n+30:triangle\n"
-              "+90:shot=home_snes.png\n+2:triangle\n+90:shot=home_gba.png\n"
+    r = S.run("snes_home", "90:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
+              "+90:shot=home_snes.png\n+2:triangle\n+6:down\n+6:down\n+6:down\n+90:shot=home_gba.png\n"
               "+10:quit\n", cwd=cwd, config={"ui_home": 1})
     S.clean(r)
     sw = r.evt("ui_browser_console")
     S.check(sw and any(e["console"] == "3" for e in sw),
-            "TRIANGLE reaches the SNES shelf on the home screen (%s)" %
+            "TRIANGLE opens the picker and three more presses reach the SNES shelf on the home screen (%s)" %
             [e["_"] for e in sw])
+    S.check(sw and sw[-1]["console"] == "0", "DOWN carries on round to GBA again (%s)" % [e["_"] for e in sw])
 
     # A cover of your own for a SNES game: a picture in covers/ named like it
     # is taken as for the other consoles.
-    r = S.run("snes_cover", "90:triangle\n+30:triangle\n+30:triangle\n"
+    r = S.run("snes_cover", "90:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
               "+120:shot=home_cover.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1},
               extra={"covers/Game Two (Europe).png": cover_png((300, 400), (200, 40, 40))})
     S.clean(r)
@@ -6252,7 +6454,7 @@ def names_seen(r):
     out = {}
     for d in r.evt("ui_game_name"):
         out[d["rom"].strip('"')] = (d["title"].strip('"'), d["sub"].strip('"'), d["mode"])
-    return out
+    return out[:4]
 
 
 def t_names_duplicate_subtitle(S):
@@ -6584,24 +6786,21 @@ def t_ws_library(S):
     S.check(r.has(r"^EVT game rom=.*\.(ws|wsc|pc2) .*console=WS") and r.has(r"^EVT gb_rom_loaded console=WS"),
             "picking one runs it in the app as a WonderSwan game")
     S.picture(r, "ws.png")
-    # the home screen's top bar: six chips, each whole and touchable
+    # the home screen's top bar: the console in use as one pill, before the
+    # search icon; a tap on it and on the WS row goes to WS, again and on GBA back
     r = S.run("ws_home", "90:shot=bar.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1})
     S.clean(r)
-    ch = r.evt("hm_chips")
-    if S.check(bool(ch), "the top bar logs where its chips are"):
-        xs = [int(v) for v in ch[-1]["x"].split(",")]
-        search = int(ch[-1]["search"])
-        S.check(len(xs) == 7 and all(b > a for a, b in zip(xs, xs[1:])) and xs[-1] <= search,
-                "six chips side by side, all of them before the search icon (%s, search %d)" % (xs, search))
-        ws_x = (xs[5] + xs[6]) // 2 * 2
-        gba_x = (xs[0] + xs[1]) // 2 * 2
-        r2 = S.run("ws_touch", "90:touch=%d/37\n+80:shot=ws_tab.png\n+10:touch=%d/37\n+80:shot=gba_tab.png\n"
-                   "+10:quit\n" % (ws_x, gba_x), cwd=cwd, config={"ui_home": 1})
+    pl = r.evt("hm_pill")
+    if S.check(bool(pl), "the top bar logs where its pill is"):
+        x, w, search = int(pl[-1]["x"]), int(pl[-1]["w"]), int(pl[-1]["search"])
+        S.check(x + w <= search, "the pill is whole before the search icon (x %d w %d, search %d)" % (x, w, search))
+        px, py = (x + w // 2) * 2, 37
+        r2 = S.run("ws_touch", "90:touch=%d/%d\n+40:touch=450/%d\n+80:shot=ws_tab.png\n+10:touch=%d/%d\n+40:touch=450/%d\n"
+                   "+80:shot=gba_tab.png\n+10:quit\n" % (px, py, picker_row_y(5), px, py, picker_row_y(0)),
+                   cwd=cwd, config={"ui_home": 1})
         S.clean(r2)
-        picks = [d.get("pick") for d in r2.evt("ui_console_chip")]
         cons = [d["console"] for d in r2.evt("ui_browser_console")]
-        S.check(picks[:2] == ["5", "0"] and "5" in cons and cons[-1] == "0",
-                "a tap on WS goes to the WS tab, a tap on GBA back (%s, %s)" % (picks, cons))
+        S.check(cons == ["5", "0"], "a tap on the pill and on WS goes to the WS shelf, the same on GBA back (%s)" % cons)
         S.picture(r2, "ws_tab.png", "ws_home_bar.png")
 
 
@@ -7490,8 +7689,8 @@ def t_nes_library(S):
     S.picture(r, "nes.png")
 
     # the Vita's home screen: the NES chip in the top bar, five of them fit
-    r = S.run("nes_home", "90:triangle\n" + "+30:triangle\n" * 3 + "+90:shot=home_nes.png\n"
-              "+2:triangle\n+30:triangle\n+90:shot=home_gba.png\n+10:quit\n", cwd=cwd,
+    r = S.run("nes_home", "90:triangle\n" + "+30:triangle\n" * 4 + "+90:shot=home_nes.png\n"
+              "+2:triangle\n+30:triangle\n+30:triangle\n+90:shot=home_gba.png\n+10:quit\n", cwd=cwd,
               config={"ui_home": 1})
     S.clean(r)
     sw = r.evt("ui_browser_console")
@@ -7501,7 +7700,7 @@ def t_nes_library(S):
     S.picture(r, "home_gba.png")
 
     # a cover of your own for a NES game, taken as for the other consoles
-    r = S.run("nes_cover_own", "90:triangle\n" + "+30:triangle\n" * 3 + "+120:shot=home_cover.png\n"
+    r = S.run("nes_cover_own", "90:triangle\n" + "+30:triangle\n" * 4 + "+120:shot=home_cover.png\n"
               "+10:quit\n", cwd=cwd, config={"ui_home": 1},
               extra={"covers/Alpha (USA).png": cover_png((300, 400), (200, 40, 40)),
                      "covers/Disk Game (Japan).png": cover_png((300, 400), (40, 200, 40))})
@@ -7607,7 +7806,7 @@ def t_nes_cover(S):
         with open(os.path.join(cwd, "ux0:ROMS", "NES", n), "wb") as f:
             f.write(d)
     try:
-        r = S.run("nes_cover_run", "90:triangle\n" + "+30:triangle\n" * 3 + "+600:shot=covers.png\n+10:quit\n",
+        r = S.run("nes_cover_run", "90:triangle\n" + "+30:triangle\n" * 4 + "+600:shot=covers.png\n+10:quit\n",
                   cwd=cwd, config={"ui_home": 1}, args=("--app", app),
                   vita_ini={"art_url": "http://127.0.0.1:%d" % srv.server_port, "art_titles": 0})
     finally:
@@ -7635,7 +7834,301 @@ def t_nes_cover(S):
     S.picture(r, "covers.png")
 
 
-TESTS = [("list", t_list), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("nes_library", t_nes_library),
+# ---- 2.0: Game Boy colours, save state undo and lock, achievement indicators ----
+
+def dmg_rom(title, lic="old"):
+    """A 32 KiB original-Game-Boy cartridge with the given header title and
+    licensee that draws the whole screen in tiles of the four shades
+    0,0,1,1,2,2,3,3 (BGP $E4): the picture is the palette."""
+    logo = bytes([0xCE,0xED,0x66,0x66,0xCC,0x0D,0x00,0x0B,0x03,0x73,0x00,0x83,
+                  0x00,0x0C,0x00,0x0D,0x00,0x08,0x11,0x1F,0x88,0x89,0x00,0x0E,
+                  0xDC,0xCC,0x6E,0xE6,0xDD,0xDD,0xD9,0x99,0xBB,0xBB,0x67,0x63,
+                  0x6E,0x0E,0xEC,0xCC,0xDD,0xDC,0x99,0x9F,0xBB,0xB9,0x33,0x3E])
+    rom = bytearray(0x8000)
+    rom[0x100:0x103] = bytes([0xC3, 0x50, 0x01])
+    rom[0x104:0x104 + 48] = logo
+    rom[0x134:0x134 + len(title)] = title.encode()
+    rom[0x14A] = 1
+    if lic == "old":
+        rom[0x14B] = 0x01
+    elif lic == "new":
+        rom[0x14B] = 0x33
+        rom[0x144:0x146] = b"01"
+    else:
+        rom[0x14B] = 0x08                    # not Nintendo
+    chk = 0
+    for i in range(0x134, 0x14D):
+        chk = (chk - rom[i] - 1) & 0xFF
+    rom[0x14D] = chk
+    code = bytes([0x31,0xFE,0xFF, 0x21,0x00,0x80, 0x06,0x08, 0x3E,0x33, 0x22,
+                  0x3E,0x0F, 0x22, 0x05, 0x20,0xF7, 0x3E,0xE4, 0xE0,0x47,
+                  0x3E,0x91, 0xE0,0x40, 0x18,0xFE])
+    rom[0x150:0x150 + len(code)] = code
+    tot = sum(rom[i] for i in range(0x8000) if i not in (0x14E, 0x14F))
+    rom[0x14E], rom[0x14F] = (tot >> 8) & 0xFF, tot & 0xFF
+    return bytes(rom)
+
+
+def _lcd_tables():
+    txt = open(os.path.join(HERE, "..", "..", "gbcore", "tgbdual",
+                            "_cgb_lcd_table.h")).read()
+    def arr(name):
+        body = txt.split("const unsigned char " + name + " = ", 1)[1].split("{", 1)[1].split("}", 1)[0]
+        return [int(x) for x in re.findall(r"\d+", body)]
+    return arr("_cgb_lcd_curve[32]"), arr("_cgb_lcd_green[32 * 32]")
+
+
+def gbc_screen(c15, lcd=True):
+    """A BGR555 colour as the app draws it (RGB888 of the 565 picture)."""
+    r, g, b = c15 & 31, (c15 >> 5) & 31, (c15 >> 10) & 31
+    if lcd:
+        curve, green = _lcd_tables()
+        r8, g8, b8 = curve[r], green[g * 32 + b], curve[b]
+    else:
+        r8, g8, b8 = [(c << 3) | (c >> 2) for c in (r, g, b)]
+    return ((r8 >> 3) << 3 | (r8 >> 3) >> 2, (g8 >> 2) << 2 | (g8 >> 2) >> 4,
+            (b8 >> 3) << 3 | (b8 >> 3) >> 2)
+
+
+def picture_colours(im):
+    """The distinct colours of the game's picture, in order along a row
+    through its middle (the stripes of dmg_rom)."""
+    bbox = im.point(lambda v: 255 if v > 12 else 0).convert("L").getbbox()
+    if not bbox:
+        return []
+    y = (bbox[1] + bbox[3]) // 2
+    out = []
+    for x in range(bbox[0], bbox[2]):
+        c = im.getpixel((x, y))
+        if not out or max(abs(a - b) for a, b in zip(c, out[-1])) > 6:
+            out.append(c)
+    return out[:4]
+
+
+def t_gb_colours(S):
+    """Game Boy colours (gbcore _cgb_dmg_pal.h, Settings > Display): an
+    original Game Boy game is coloured as a Game Boy Color would colour it
+    (GBC auto, the default: the boot ROM's choice by the cartridge's
+    licensee and title), or in a button palette, a Super Game Boy palette or
+    the plain shades; a game can have its own (own look); an older config's
+    plain 0 becomes the new default; the row shows the name and the colours
+    live."""
+    def want(c15s, lcd=True):
+        return [gbc_screen(c, lcd) for c in c15s]
+
+    def same(got, exp):
+        return len(got) == len(exp) and all(
+            max(abs(a - b) for a, b in zip(g, e)) <= 8 for g, e in zip(got, exp))
+
+    tetris = dmg_rom("TETRIS")                       # combination 3: palette 24
+    zelda = dmg_rom("ZELDA")                         # 44: BG palette 4
+    other = dmg_rom("TETRIS", lic="other")           # not Nintendo: combination 0
+    pal24 = [0x7FFF, 0x03FF, 0x001F, 0x0000]
+    pal4 = [0x7FFF, 0x421F, 0x1CF2, 0x0000]
+    pal29 = [0x7FFF, 0x1BEF, 0x6180, 0x0000]
+    roms = {"roms/tetris.gb": tetris, "roms/zelda.gb": zelda, "roms/other.gb": other}
+
+    def boot(name, rom, cfg=None, extra=None, script="60:shot=%s.png\n+10:quit\n"):
+        x = dict(roms)
+        x.update(extra or {})
+        r = S.run(name, script % name if "%s" in script else script,
+                  autoboot=rom, config=cfg, extra=x)
+        S.clean(r)
+        return r
+
+    # GBC auto is the default (no key in config.ini at all).
+    r = boot("gbc_auto_tetris", "tetris.gb")
+    S.check(r.has(r'^EVT gb_colours boot id=4 name="GBC auto" combo=3'),
+            "no setting: GBC auto, the game's own combination (3)")
+    S.check(same(picture_colours(r.shot("gbc_auto_tetris.png")), want(pal24)),
+            "TETRIS is shown in its Game Boy Color palette (%s)" %
+            picture_colours(r.shot("gbc_auto_tetris.png")))
+    S.picture(r, "gbc_auto_tetris.png")
+    shot1 = os.path.join(r.out, "gbc_auto_tetris.png")
+    r = boot("gbc_auto_zelda", "zelda.gb")
+    S.check(r.has(r'^EVT gb_colours boot id=4 .*combo=44') and
+            same(picture_colours(r.shot("gbc_auto_zelda.png")), want(pal4)),
+            "ZELDA gets another one (combination 44)")
+    r = boot("gbc_auto_other", "other.gb")
+    S.check(r.has(r'^EVT gb_colours boot id=4 .*combo=0') and
+            same(picture_colours(r.shot("gbc_auto_other.png")), want(pal29)),
+            "a game from another publisher gets the boot ROM's default (0)")
+
+    # A button palette, a Super Game Boy palette, the plain shades.
+    r = boot("gbc_up", "tetris.gb", {"gb_palette_gb": 5, "gb_colours": 2})
+    S.check(r.has(r'^EVT gb_colours boot id=5 name="GBC Up - brown" combo=5'),
+            "GBC Up (brown) is the 12 button palettes' first")
+    S.check(same(picture_colours(r.shot("gbc_up.png")),
+                 want([0x7FFF, 0x32BF, 0x00D0, 0x0000])), "...and its colours")
+    r = boot("sgb_2b", "tetris.gb", {"gb_palette_gb": 26, "gb_colours": 2})
+    S.check(r.has(r'^EVT gb_colours boot id=26 name="SGB 2-B"'),
+            "SGB 2-B is Super Game Boy palette 2-B")
+    exp = [tuple((v >> 3 << 3) | (v >> 3 >> 2) if i != 1 else (v >> 2 << 2) | (v >> 2 >> 4)
+                 for i, v in enumerate(c))
+           for c in ((0xF8, 0xF8, 0xF8), (0xF8, 0xE8, 0x50), (0xF8, 0x30, 0x00),
+                     (0x50, 0x00, 0x58))]
+    S.check(same(picture_colours(r.shot("sgb_2b.png")), exp),
+            "...in the colours the Super Game Boy lists (no LCD model) (%s)" %
+            picture_colours(r.shot("sgb_2b.png")))
+    S.picture(r, "sgb_2b.png")
+    r = boot("grey", "tetris.gb", {"gb_palette_gb": 1, "gb_colours": 2})
+    S.check(len(picture_colours(r.shot("grey.png"))) == 4 and
+            same(picture_colours(r.shot("grey.png"))[:1], [(248, 252, 248)]),
+            "Grey is the four plain shades")
+
+    # An older config's 0 (Auto) was never chosen on purpose: it is the new
+    # default; once the file carries gb_colours, 0 is Super Game Boy again.
+    r = boot("legacy_zero", "tetris.gb", {"gb_palette_gb": 0})
+    S.check(r.has(r'^EVT gb_colours boot id=4 '), "an old config's 0 becomes GBC auto")
+    r = boot("sgb_zero", "tetris.gb", {"gb_palette_gb": 0, "gb_colours": 2})
+    S.check(r.has(r'^EVT gb_colours boot id=0 name="Super Game Boy"'),
+            "...and a chosen Super Game Boy stays")
+
+    # A game's own colours (own look, games/<rom>.ini) beat the console's.
+    r = boot("own_colours", "tetris.gb", {"gb_palette_gb": 4, "gb_colours": 2},
+             extra={"games/tetris.gb.ini": "override = 1\ngb_palette = 5\n"})
+    S.check(r.has(r'^EVT gb_colours boot id=5 '),
+            "a game's own look carries its own Game Boy colours")
+    r = boot("own_colours_other", "zelda.gb", {"gb_palette_gb": 4, "gb_colours": 2},
+             extra={"games/tetris.gb.ini": "override = 1\ngb_palette = 5\n"})
+    S.check(r.has(r'^EVT gb_colours boot id=4 '),
+            "...and another game keeps the console's")
+
+    # Settings > Game Boy colours, in game: the row and its preview, stepped
+    # live.  Settings opens on Screen size; the row is the fifth.
+    step = ("+10:shot=row_%d.png\n+6:right\n")
+    r = S.run("gb_colours_row", menu_pick(4, wait=60) + set_down(4) +
+              "+10:shot=row_auto.png\n+6:right\n+10:shot=row_sgb.png\n"
+              "+6:right\n+6:right\n+6:right\n+6:right\n+10:shot=row_up.png\n+6:left\n+6:left\n"
+              "+6:left\n+6:left\n+6:left\n+10:shot=row_back.png\n+6:circle\n+10:circle\n"
+              "+30:shot=live.png\n+10:quit\n",
+              autoboot="tetris.gb", extra=roms, config={"gb_colours": 2,
+                                                        "gb_palette_gb": 4})
+    S.clean(r)
+    S.check(r.has(r'^EVT gb_colours set id=0 name="Super Game Boy"') and
+            r.has(r'^EVT gb_colours set id=5 name="GBC Up - brown" combo=5') and
+            r.has(r'^EVT gb_colours set id=4 name="GBC auto" combo=3'),
+            "right steps GBC auto, Super Game Boy, Grey, DMG green, Pocket, "
+            "then the button palettes; left steps back")
+    for n in ("row_auto", "row_sgb", "row_up", "row_back"):
+        S.picture(r, n + ".png")
+    ini = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^gb_palette_gb = 4$", ini, re.M) and
+            re.search(r"^gb_colours = 2$", ini, re.M),
+            "config.ini keeps the choice and marks the new default")
+
+
+
+def t_old_config(S):
+    """A config.ini and vita.ini written by VitAdhoc 1.3.1 and by 2.0-rc1 (the
+    fixtures are those versions' own writer's output, tools/tests/fixtures):
+    the app starts, a game runs, the player's choices are still in the files
+    afterwards, the improvements the old file never had are on, and what a
+    2.0-rc1 player turned off stays off."""
+    fx = os.path.join(HERE, "..", "..", "tools", "tests", "fixtures")
+    def load(name):
+        d = {}
+        for line in open(os.path.join(fx, name)):
+            if "=" in line:
+                k, v = line.split("=", 1)
+                d[k.strip()] = v.strip()
+        return d
+    for ver, fixture, off in (("1.3.1", "config-1.3.1.ini", False), ("2.0-rc1", "config-2.0-rc1.ini", True)):
+        cfg = load(fixture)
+        cfg.update({"last_rom": "gbadhoc-test.gba", "hints": 0, "ui_home": 0})
+        # what 1.3.1's vita_ini_put and the Settings rows wrote into vita.ini
+        vini = {"cpu_mhz": 444, "grid_strength": 7, "overlays": 0, "sync_ra_saves": 0}
+        r = S.run("old_config_" + ver.replace(".", "_"), "60:cross\n+90:shot=g.png\n+10:quit\n",
+                  config=cfg, vita_ini=vini)
+        S.clean(r)
+        S.check(r.has(r"^EVT clocks: setting=444 MHz"), "%s: vita.ini cpu_mhz = 444 is honoured" % ver)
+        S.check(r.has(r"^EVT vita_ini bound=1"), "%s: vita.ini is read" % ver)
+        S.check(r.has(r"^EVT steady_options on=%d" % (0 if off else 1)),
+                "%s: Steady pacing is %s" % (ver, "still off (the player's choice)" if off else "on (a key the old file never had)"))
+        S.check(r.has(r"^EVT core4_option") is False, "%s: nothing alarms at start" % ver)
+        S.picture(r, "g.png")
+        after = open(os.path.join(r.root, "config.ini")).read()
+        for k in ("scale_gba", "filter_gba", "quality_gba", "wide_gba", "color_gba", "rewind",
+                  "stick_rewind", "ff_mult_x10", "theme", "gb_palette_gb"):
+            S.check(re.search(r"^%s = %s$" % (k, re.escape(cfg[k])), after, re.M),
+                    "%s: config.ini still has %s = %s" % (ver, k, cfg[k]))
+        if off:
+            S.check(re.search(r"^smooth_handoff = 0$", after, re.M) and
+                    re.search(r"^core4 = off$", after, re.M),
+                    "%s: Smooth hand-over and Fourth core stay off in the file" % ver)
+
+
+def t_boot_guard(S):
+    """The crash-loop guard (boot_guard.c): a game that ends the app twice in a
+    row starts with safe picture settings and a one-time notice; one crash
+    changes nothing; a clean exit and stable play clear the marker; the app
+    itself twice before the list reverts the risky settings."""
+    cfg = {"ui_home": 1, "last_rom": "gbadhoc-test.gba", "wide_gba": 1, "quality_gba": 3}
+    game = os.path.join("guard")
+    def again(prev, name, script, config=None):
+        out = os.path.join(S.outdir, name)
+        shutil.rmtree(out, ignore_errors=True)
+        shutil.copytree(prev.root, os.path.join(out, "root"))
+        for f in glob.glob(os.path.join(out, "root", "log", "*")):
+            os.remove(f)
+        return S.run(name, script, prepared=True)
+    marks = lambda r: sorted(os.listdir(os.path.join(r.root, "guard"))) \
+        if os.path.isdir(os.path.join(r.root, "guard")) else []
+    unfinished = lambda r: [l for l in r.log if "boot_guard unfinished" in l]
+    # -- one crash: nothing happens
+    r1 = S.run("guard_c1", "60:cross\n+100:kill\n", config=cfg)
+    S.check("game.mark" in marks(r1) and r1.has(r"boot_guard game_begin game=\"gbadhoc-test\" safe=0 marker=1"),
+            "a risky game start leaves the marker; the app is killed with it there")
+    r2 = again(r1, "guard_c2", "60:cross\n+100:kill\n", cfg)
+    S.check(any("count=1 action=none" in l for l in unfinished(r2)),
+            "next start: one unfinished start is counted, nothing is changed")
+    S.check(not r2.has(r"^EVT notice") and r2.has(r"boot_guard game_begin game=\"gbadhoc-test\" safe=0"),
+            "one crash: no notice, the game starts with its usual settings")
+    # -- the second crash in a row
+    r3 = again(r2, "guard_c3", "60:cross\n+20:cross\n+30:shot=safe.png\n+60:kill\n", cfg)
+    S.check(any("action=safe game=\"gbadhoc-test\"" in l for l in unfinished(r3)),
+            "the second unfinished start of the same game: safe settings")
+    S.check(r3.has(r"^EVT notice title=\"VitAdhoc closed unexpectedly twice\" l1=\"with gbadhoc-test; it now starts with safe picture settings\.\"") and
+            r3.has(r"boot_guard notice text="),
+            "the one-time notice names the game")
+    S.check(r3.has(r"boot_guard game_begin game=\"gbadhoc-test\" safe=1 marker=0") and
+            r3.has(r"steady_options on=0 .* safe=1") and
+            r3.has(r"boot_guard look_applied"),
+            "the game starts safe: no hand-over, no steady pacing, safe look written once")
+    ini = os.path.join(r3.root, "games", "gbadhoc-test.gba.ini")
+    txt = open(ini).read() if os.path.exists(ini) else ""
+    S.check(re.search(r"^override = 1$", txt, re.M) and re.search(r"^wide = 0$", txt, re.M)
+            and re.search(r"^quality = 1$", txt, re.M),
+            "the game's own look (Settings > This game): Wide view off, Image quality Original (%r)" % txt[:120])
+    # -- it stays safe, and the notice is not shown again
+    r4 = again(r3, "guard_c4", "60:cross\n+60:kill\n", cfg)
+    S.check(not r4.has(r"^EVT notice title=\"VitAdhoc closed unexpectedly twice\"") and
+            r4.has(r"boot_guard game_begin game=\"gbadhoc-test\" safe=1") and
+            not r4.has(r"boot_guard look_applied"),
+            "later starts: still safe, no second notice, the look is not rewritten")
+    # -- a clean exit clears the marker
+    r5 = S.run("guard_clean", "60:cross\n+100:left\n" + QUIT_TO_LIST + "+60:quit\n", config=cfg)
+    S.clean(r5)
+    S.check("game.mark" not in marks(r5) and "app.mark" not in marks(r5) and r5.has(r"boot_guard clean_end"),
+            "leaving the game cleanly removes the marker (and so does exiting)")
+    # -- stable play (20 s) clears it
+    r6 = S.run("guard_stable", "60:cross\n+1500:kill\n", config=cfg)
+    S.check(r6.has(r"boot_guard stable seconds=20") and "game.mark" not in marks(r6),
+            "twenty seconds of play clear the marker by themselves")
+    # -- the app twice before the list: the risky settings are reverted
+    a1 = S.run("guard_app1", "+10:kill\n", config=cfg)
+    S.check("app.mark" in marks(a1), "the app killed before the list leaves app.mark")
+    a2 = again(a1, "guard_app2", "+10:kill\n", cfg)
+    a3 = again(a2, "guard_app3", "+200:quit\n", cfg)
+    S.check(a3.has(r"boot_guard reverted_global") and
+            a3.has(r"^EVT notice title=\"VitAdhoc closed unexpectedly twice\" l1=\"before the game list"),
+            "twice before the list: the risky settings are reverted and the notice says so")
+    c = open(os.path.join(a3.root, "config.ini")).read()
+    S.check(re.search(r"^smooth_handoff = 0$", c, re.M) and re.search(r"^steady_pacing = 0$", c, re.M),
+            "config.ini holds the safe values (hand-over and steady pacing off)")
+
+
+TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
@@ -7658,12 +8151,13 @@ TESTS = [("list", t_list), ("snes_library", t_snes_library), ("snes_two", t_snes
          ("cheats", t_cheats), ("play", t_play), ("touch", t_touch), ("touch_feedback", t_touch_feedback),
          ("typing", t_typing), ("look", t_look), ("wide", t_wide),
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
-         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
+         ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
-         ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle)]
+         ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),
+         ("gb_colours", t_gb_colours), ("boot_guard", t_boot_guard), ("old_config", t_old_config)]
 
 
 def main():

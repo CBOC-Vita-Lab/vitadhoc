@@ -1,22 +1,19 @@
 # Mbed TLS for the HTTPS client of the vendored net/ stack (net/src/np_https.*; from Strikers Charged 1.3): built into a
 # PRIVATE prefix, never into the SDK. Use: python3 tools/online/build-mbedtls.py [--target vita|host32|host64] [--work DIR]
 #
-#   tools/online/build-mbedtls.py supplies SRC=<immutable checkout>, OUT=<new prefix>, TARGET=vita|host32|host64
-#   and TLS13_KEYS_SRC=<verified one-file overlay>.
+#   tools/online/build-mbedtls.py supplies SRC=<immutable checkout>, OUT=<new prefix>, TARGET=vita|host32|host64.
 #
 #   OUT/include/mbedtls, OUT/include/psa   the library's headers; mbedtls/mbedtls_config.h is the stock file plus one
 #                                           line that includes mbedtls/np_user_config.h (the client profile)
 #   OUT/lib/libmbedtls.a libmbedx509.a libmbedcrypto.a   (link in this order)
 #
-# The checkout stays unmodified; the locked TLS 1.3 cleanup overlay replaces only ssl_tls13_keys.c. vitasdk patches net_sockets, timing and the
-# platform entropy source for the Vita; this profile builds none of the three (see np_user_config.h), so its patch
-# has nothing to apply to. The ABI flags are those of the Strikers game objects (unsigned char, no short
+# The checkout stays unmodified and unpatched (3.6.8 carries the TLS 1.3 transform clean-up itself). vitasdk patches
+# net_sockets, timing and the platform entropy source for the Vita; this profile builds none of the three (see np_user_config.h). The ABI flags are those of the Strikers game objects (unsigned char, no short
 # enums, no strict aliasing). Galaxy compiles net/ with -fsigned-char: char signedness does not change any struct
 # layout, and -fno-short-enums (which does) matches Galaxy's Vita flags, so a struct shared with the game means the same thing on both sides.
 TARGET ?= vita
 SRC ?= $(error SRC= the mbedtls checkout)
 OUT ?= $(error OUT= the prefix)
-TLS13_KEYS_SRC ?= $(error TLS13_KEYS_SRC= the verified TLS 1.3 cleanup overlay)
 HERE := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 VITASDK ?= /opt/vitasdk
 
@@ -60,10 +57,6 @@ $(OUT)/.headers: $(SRC)/include/mbedtls/mbedtls_config.h $(HERE)/mbedtls/np_user
 	touch $@
 
 $(OBJDIR)/%.o: $(SRC)/library/%.c $(OUT)/.headers
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -MMD -c $< -o $@
-
-$(OBJDIR)/ssl_tls13_keys.o: $(TLS13_KEYS_SRC) $(OUT)/.headers
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -c $< -o $@
 

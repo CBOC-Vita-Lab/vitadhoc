@@ -30,7 +30,12 @@ int  cheatdb_find_crc(uint32_t crc);
  * every release with this code has this list (no need to hash the ROM). */
 int  cheatdb_find_serial(const char code[4], int *unique);
 /* A ROM's file name (any directory and extension are ignored), system 'A'
- * (GBA), 'G' (GB / GBC), 'N' (NES) or 'W' (WonderSwan / Color).  *exact: 1 = title, region and revision matched,
+ * (GBA), 'G' (GB / GBC), 'N' (NES), 'W' (WonderSwan / Color), and (2.0) 'I'
+ * (Genesis / Mega Drive), 'J' (Master System), 'K' (Game Gear) or 'L' (SG-1000):
+ * the game database's system letters (gamedb.h).  The game table's system byte is
+ * 0 GBA, 1 GB, 2 GBC, 3 NES, 4 WonderSwan, 5 WonderSwan Color, 6 Genesis, 7 Master
+ * System, 8 Game Gear, 9 SG-1000; the Sega codes are "ADDRESS:VALUE[:COMPARE]"
+ * parts (tests/cheats/SEGA-CODES.md).  *exact: 1 = title, region and revision matched,
  * 0 = the title alone did. */
 int  cheatdb_find_name(char system, const char *file_name, int *exact);
 /* A cartridge header's title ("POKEMON EMER", "ZELDA"): the one game whose

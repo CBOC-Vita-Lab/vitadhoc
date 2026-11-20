@@ -5,7 +5,8 @@ cheatdb.c) in Python, for the tests of the NES and WonderSwan twins.
     read_db(path) -> (games, crcs, names)
       games: list of dict(name, sys, crc, cheats=[(title, code), ...])
       crcs:  {crc32: game index}        names: {key string: game index}
-sys is the database's system number: 0 GBA, 1 GB, 2 GBC, 3 NES, 4 WS, 5 WSC.
+sys is the database's system number: 0 GBA, 1 GB, 2 GBC, 3 NES, 4 WS, 5 WSC,
+6 Genesis, 7 Master System, 8 Game Gear, 9 SG-1000.
 
 Copyright CBOC-Vita. MIT licence.
 """
@@ -14,7 +15,8 @@ import sys
 
 
 def read_db(path):
-    b = open(path, "rb").read()
+    with open(path, "rb") as f:
+        b = f.read()
     (magic, ver, games, ncrc, ocrc, nser, oser, nname, oname, okeys, skeys,
      ogames, oblocks, size, total) = struct.unpack_from("<8sIIIIIIIIIIIIII", b, 0)
     if magic != b"GBADCHT1" or size != len(b):

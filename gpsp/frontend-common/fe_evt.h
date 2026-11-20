@@ -114,6 +114,8 @@ int  fe_evt_pending(void);
 /* Lines dropped because the async ring was full, since boot.  Every gap is
  * also marked in-band (`EVT evt_gap`); this is for the exit/RESULT report. */
 unsigned fe_evt_drops(void);
+/* Lines cut because they outgrew the line buffer (each ends in '~'). */
+unsigned fe_evt_cuts(void);
 void fe_evt_prof_io(unsigned *io_us, unsigned *io_max_us, unsigned *dropped,
                     unsigned *ring_hi);
 

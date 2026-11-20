@@ -30,7 +30,7 @@ See [Performance](PERFORMANCE.md) for Vita measurements and display settings.
 
 ## Library And Continue
 
-The home screen has console tabs, All/Starred/Recent views, sorting and
+The home screen shows the console in use in the top bar, with a drop-down list of every console and its game count (Triangle), All/Starred/Recent views, sorting and
 play time. Find matches words in any order and ignores accents and
 punctuation. Latin accents are folded for the menu font; unsupported scripts
 may display as `?` without preventing the game from loading.
@@ -71,6 +71,14 @@ existing save or recovery file prevents overwriting it. The accepted file is
 copied; only an `import/` source is renamed `.imported` afterwards. Save
 states from other emulators are not portable battery saves. Import size is
 limited to 256 KiB and compatibility still depends on the save layout.
+
+**Undo and lock.** On the state page, R undoes: the save just made over the
+slot (its `.bak`, one per slot, written before the new state replaces it) or
+the last load (the game is captured into a hidden `Game.st0.undo` before every
+load). L locks a slot (a `.lock` flag file; a padlock shows on its card): a
+locked slot is not overwritten or deleted, quick save included. State files are
+written to a temporary name and renamed. The SNES player has the same wording
+and files (`playerkit/src/pk_states`).
 
 State menus show five entries at a time and scroll through all ten. Quick
 save/load (Select + L / Select + R) uses slot 1. State sharing remains limited to five slots
@@ -353,6 +361,18 @@ supported too. Some codes require an enable code, and some code types are
 unsupported. Cheats suspend during link play and in recognised Hardcore
 games. Back up a battery save before experimenting.
 
+## Game Boy Colours
+
+Original Game Boy games are coloured by Settings > Display > Game Boy colours
+(per game too, under "This game"): **GBC auto** (default; the palette the
+Game Boy Color's boot ROM chose for the cartridge: Nintendo-licensed games by
+their title, others the default), the 12 Color button palettes, the 32 Super
+Game Boy palettes, Grey, DMG green and Pocket. Colour-model palettes pass through the
+same LCD model as Game Boy Color games. Game Boy Color games keep their own
+colours. The tables are data from SameBoy (Expat) and Gambatte (GPL-2); see
+`notices/THIRD-PARTY.md`. Linked peers see grey for the palettes outside the
+original DMG model, so both screens stay readable.
+
 ## RetroAchievements
 
 Sign in through Settings. The password is sent for authentication, not stored;
@@ -362,6 +382,10 @@ delete that file to remove them. Do not publish it with logs or backups.
 Recognition uses the game file's hash, including soft-patched content.
 Hardcore restrictions apply to recognised games from the next launch;
 unsupported games do not gain an achievement set by enabling the option.
+Indicators (Settings > Achievement indicators, on by default): a mark for an
+achievement one step from unlocking, a progress count such as 3/10 under the
+toast, and the live value of a leaderboard attempt (Hardcore). Rich presence
+is sent with the 30-second ping and logged.
 Achievement processing pauses during link play and resets progress after
 state loading, rewind or link sessions. Network retries do not establish
 that every offline unlock has been accepted by the service.

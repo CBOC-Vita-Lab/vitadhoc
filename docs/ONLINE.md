@@ -163,7 +163,7 @@ never needs the service.
 | --- | --- | --- |
 | Room service | `online/service/` | One Cloudflare Worker and one Durable Object (SQLite, one row per room). Routes under `/v1/`. `PROTOCOL.md` has the wire protocol, `README.md` the layout and the quota arithmetic, `DEPLOY.txt` the owner's steps. |
 | Room client | `gpsp/vita/online_http.{h,cpp}` | The app's side of the eight routes, a non-blocking request slot polled once a frame. |
-| HTTPS client | `gpsp/vita/nethttps/` | The project's own TLS client (Mbed TLS 3.6.7, TLS 1.2 and 1.3, certificate checks always on, eight compiled-in roots, a clock floor). Not `sceHttp`: Cloudflare's free edge certificates are ECDSA and `sceSsl` gives no control. `ra_http.c` stays RetroAchievements'. |
+| HTTPS client | `gpsp/vita/nethttps/` | The project's own TLS client (Mbed TLS 3.6.8, TLS 1.2 and 1.3, certificate checks always on, eight compiled-in roots, a clock floor). Not `sceHttp`: Cloudflare's free edge certificates are ECDSA and `sceSsl` gives no control. `ra_http.c` stays RetroAchievements'. |
 | Connection | `gpsp/vita/online_vita.{h,c}` | The stage machine: STUN, create or join, the punch race with relay credentials fetched in parallel, relay fallback, the quality measure. Every stage logs an `EVT online_*` line. |
 | NAT layer | `gpsp/netdrv/transport_lan.{h,c}` | STUN, punch, keep-alive and the TURN client on the link's own UDP socket and I/O thread. |
 | Library match | `gpsp/vita/online_lib.{h,c}` | The joiner's step from a room card to a file: code first, then the file fingerprint; a cable game is never opened on its code alone. |

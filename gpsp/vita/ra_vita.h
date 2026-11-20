@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_vita.h -- RetroAchievements: sign in, earn achievements as you play.
  *
  * The rules are the site's and its runtime's (third_party/rcheevos, the
@@ -60,6 +62,10 @@ void ra_logout(void);
 /* The Hardcore setting (for the next game started). */
 int  ra_hardcore_pref(void);
 void ra_hardcore_set(int on);
+/* The achievement indicators (challenge, progress, leaderboard tracker): on
+ * by default; off shows none of them (unlocks and submissions still toast). */
+int  ra_indicators_pref(void);
+void ra_indicators_set(int on);
 
 /* ---- a game ------------------------------------------------------------ */
 /* `boot_path` is the file the core runs (a patched copy when patched). */

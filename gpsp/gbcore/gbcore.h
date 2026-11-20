@@ -180,16 +180,53 @@ void gbcore_set_wallclock(time_t (*wallclock)(void));
  * the SGB (decided when the game boots) and GREY otherwise; the others are
  * plain four-shade palettes.  Colour-only changes apply to a running game
  * at once; switching an SGB game in or out of SGB colours takes effect the
- * next time it boots.  Unknown ids fall back to AUTO. */
+ * next time it boots.  Unknown ids fall back to AUTO.
+ *
+ * GBC_AUTO and the twelve GBC_* after it are the Game Boy Color's colours
+ * for DMG games.  GBC_AUTO is the BG/OBJ0/OBJ1 combination the GBC boot ROM
+ * picks from the cartridge header (Nintendo licensee, title sum, 4th
+ * letter: gbcore/tgbdual/_cgb_dmg_pal.h); the others are the palettes a
+ * player gets by holding a d-pad direction (+A/B) at boot.  SGB_1A..SGB_4H
+ * are the Super Game Boy's 32 system palettes, one four-shade ramp for the
+ * whole picture.  Like GREY all of them boot the game as a plain DMG and
+ * change only the display, never the machine, its state or its timing.
+ * They apply wherever a DMG palette is shown (DMG games on FE_CONSOLE_GB
+ * and FE_CONSOLE_GBC), never to CGB games.  The GBC ones go through the GBC
+ * LCD model (gbcore_set_color_correction); the SGB ones do not. */
 enum {
   GBCORE_PALETTE_AUTO = 0,
   GBCORE_PALETTE_GREY,
   GBCORE_PALETTE_GREEN,
   GBCORE_PALETTE_POCKET,
+  GBCORE_PALETTE_GBC_AUTO,
+  GBCORE_PALETTE_GBC_UP, GBCORE_PALETTE_GBC_UP_A, GBCORE_PALETTE_GBC_UP_B,
+  GBCORE_PALETTE_GBC_LEFT, GBCORE_PALETTE_GBC_LEFT_A,
+  GBCORE_PALETTE_GBC_LEFT_B,
+  GBCORE_PALETTE_GBC_DOWN, GBCORE_PALETTE_GBC_DOWN_A,
+  GBCORE_PALETTE_GBC_DOWN_B,
+  GBCORE_PALETTE_GBC_RIGHT, GBCORE_PALETTE_GBC_RIGHT_A,
+  GBCORE_PALETTE_GBC_RIGHT_B,
+  GBCORE_PALETTE_SGB_1A,                       /* ... through SGB_4H */
+  GBCORE_PALETTE_SGB_4H = GBCORE_PALETTE_SGB_1A + 31,
   GBCORE_PALETTE_COUNT
 };
+/* What a GB link session tells the peer about this side's palette.  The
+ * peer runs this machine headless, so only the model the palette implies
+ * matters to it (AUTO: SGB for SGB carts; anything else: DMG).  The GBC
+ * and SGB palettes go out as GREY, which a build without them reads the
+ * same way: mixed builds still boot the same machine. */
+#define GBCORE_PALETTE_WIRE(p) \
+  ((p) >= GBCORE_PALETTE_GBC_AUTO && (p) < GBCORE_PALETTE_COUNT \
+   ? GBCORE_PALETTE_GREY : (p))
 void gbcore_set_palette(unsigned palette);
 const char *gbcore_palette_name(unsigned palette);
+/* The twelve colours (BG[4], OBJ0[4], OBJ1[4], RGB565 as the frontend
+ * draws, red high) a DMG game shows with `palette`, as the picture will be
+ * (the GBC LCD model included), for a preview.  GBC_AUTO is the running
+ * game's own combination (the boot ROM's default one with no game loaded);
+ * AUTO shows the Super Game Boy's first palette.  Returns the GBC boot ROM
+ * combination number (0..50) for the GBC palettes, -1 otherwise. */
+int gbcore_palette_preview(unsigned palette, uint16_t rgb565[12]);
 
 /* Game Boy Color colours.  On (the default), a CGB palette entry is shown
  * as the GBC's own LCD shows it: its response curve lifts the mid-tones and

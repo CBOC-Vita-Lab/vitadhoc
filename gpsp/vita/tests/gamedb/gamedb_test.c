@@ -6,11 +6,15 @@
  *    ./gamedb_test ../../assets/gamedb.txt keys.txt
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gamedb.h"
 
 static int fails;
+/* the file's size (assets/gamedb.txt): update with the generator's output */
+#define EXPECT_RECORDS 48253
+#define EXPECT_C_RECORDS 23933
 
 static void expect(int cond, const char *what)
 {
@@ -19,6 +23,181 @@ static void expect(int cond, const char *what)
       printf("FAIL %s\n", what);
       fails++;
    }
+}
+
+/* ---- Sega (2.0): the SMD and copier-header rules ---- */
+
+static unsigned long long rng = 0x1234567ull;
+static unsigned char next_byte(void)
+{
+   rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+   return (unsigned char)(rng >> 56);
+}
+
+static int write_file(const char *path, const unsigned char *d, size_t n)
+{
+   FILE *t = fopen(path, "wb");
+   if (!t)
+      return -1;
+   fwrite(d, 1, n, t);
+   fclose(t);
+   return 0;
+}
+
+/* plain ROM -> SMD: a 512-byte header (blocks, 3, ..., AA BB, 6), then each
+ * 16 KiB block with the odd bytes first and the even bytes second: the
+ * inverse of Genesis Plus GX's deinterleave_block, written here on its own */
+static size_t make_smd(const unsigned char *plain, size_t n, unsigned char *out)
+{
+   size_t b, i;
+   memset(out, 0, 512);
+   out[0] = (unsigned char)(n / 16384);
+   out[1] = 3;
+   out[8] = 0xAA;
+   out[9] = 0xBB;
+   out[10] = 6;
+   for (b = 0; b < n / 16384; b++)
+      for (i = 0; i < 8192; i++)
+      {
+         out[512 + b * 16384 + i] = plain[b * 16384 + i * 2 + 1];
+         out[512 + b * 16384 + 8192 + i] = plain[b * 16384 + i * 2];
+      }
+   return 512 + n;
+}
+
+static void sega_files(void)
+{
+   enum { PLAIN = 5 * 16384 };
+   static unsigned char rom[PLAIN], smd[512 + PLAIN], junk[PLAIN + 512];
+   uint32_t a = 0, b = 0, c = 0;
+   size_t i;
+   for (i = 0; i < PLAIN; i++)
+      rom[i] = next_byte();
+   memcpy(rom + 0x100, "SEGA MEGA DRIVE ", 16);
+   make_smd(rom, PLAIN, smd);
+   write_file("md_plain.md", rom, PLAIN);
+   write_file("md_plain.bin", rom, PLAIN);
+   write_file("md_smd.smd", smd, sizeof(smd));
+   write_file("md_smd.bin", smd, sizeof(smd));
+   expect(gamedb_file_crc("md_plain.md", &a, NULL) == 0, "crc of the plain Genesis ROM");
+   expect(gamedb_md_crc_cancel("md_plain.md", &b, NULL) == 0 && b == a,
+          "Genesis: a plain .md is hashed whole");
+   expect(gamedb_md_crc_cancel("md_plain.bin", &b, NULL) == 0 && b == a,
+          "Genesis: a plain .bin is hashed whole");
+   expect(gamedb_md_crc_cancel("md_smd.smd", &c, NULL) == 0 && c == a,
+          "Genesis: an SMD file (.smd) has the plain ROM's CRC");
+   expect(gamedb_md_crc_cancel("md_smd.bin", &c, NULL) == 0 && c == a,
+          "Genesis: an SMD file (.bin) has the plain ROM's CRC");
+   expect(gamedb_file_crc("md_smd.smd", &b, NULL) == 0 && b != a,
+          "the SMD file's own CRC is not the ROM's");
+   expect(gamedb_md_rom_kind("md_plain.md") == GAMEDB_MD_PLAIN, "kind: plain");
+   expect(gamedb_md_rom_kind("md_smd.bin") == GAMEDB_MD_SMD, "kind: SMD");
+   expect(gamedb_md_accept("md_plain.bin") && gamedb_md_accept("md_smd.bin"),
+          ".bin with SEGA at 0x100, or with an SMD header, is a Genesis game");
+   /* an .smd with a header that lacks AA BB is still SMD (the extension says so) */
+   smd[8] = smd[9] = 0;
+   write_file("md_smd_nomark.smd", smd, sizeof(smd));
+   write_file("md_smd_nomark.bin", smd, sizeof(smd));
+   expect(gamedb_md_crc_cancel("md_smd_nomark.smd", &c, NULL) == 0 && c == a,
+          ".smd without AA BB: still de-interleaved");
+   expect(gamedb_md_rom_kind("md_smd_nomark.bin") == GAMEDB_MD_NONE &&
+          !gamedb_md_accept("md_smd_nomark.bin"),
+          ".bin of that shape without AA BB is rejected");
+   /* a .bin that is no Genesis ROM: no SEGA at 0x100, no SMD header */
+   for (i = 0; i < sizeof(junk); i++)
+      junk[i] = next_byte();
+   junk[0x100] = 'X';
+   write_file("md_junk.bin", junk, 3 * 16384);
+   write_file("md_junk512.bin", junk, 3 * 16384 + 512);
+   expect(gamedb_md_rom_kind("md_junk.bin") == GAMEDB_MD_NONE &&
+          !gamedb_md_accept("md_junk.bin"), "a .bin without SEGA is rejected");
+   junk[8] = 0xAA; junk[9] = 0xBB;
+   write_file("md_junk512.bin", junk, 3 * 16384 + 512);
+   expect(gamedb_md_accept("md_junk512.bin"),
+          "a .bin of 512 + n x 16 KiB with AA BB is an SMD");
+   junk[8] = 0xAA; junk[9] = 0xBB;
+   write_file("md_junk_size.bin", junk, 3 * 16384 + 100);
+   expect(!gamedb_md_accept("md_junk_size.bin"), "AA BB at the wrong size is not an SMD");
+   memcpy(junk + 0x100, "SEGA 32X        ", 16);
+   write_file("md_32x.bin", junk, 4 * 16384);
+   expect(gamedb_md_rom_kind("md_32x.bin") == GAMEDB_MD_32X && !gamedb_md_accept("md_32x.bin"),
+          "a 32X .bin is not a Genesis game");
+   expect(gamedb_md_accept("md_32x.bin") == 0 && !gamedb_md_accept("x.sms") &&
+          !gamedb_md_accept("x.zip") && gamedb_md_accept("nothing.GEN") &&
+          gamedb_md_accept("nothing.MD") && gamedb_md_accept("nothing.smd"),
+          "extensions: .md .gen .smd always (any case); nothing else");
+   expect(gamedb_md_crc_cancel("no_such_file.md", &b, NULL) != 0, "a missing file fails");
+   /* Master System family: a 512-byte copier header is left out */
+   {
+      static unsigned char sms[32768], hd[32768 + 512], odd[24576 + 512];
+      uint32_t p = 0, h = 0, o = 0, w = 0;
+      for (i = 0; i < sizeof(sms); i++)
+         sms[i] = next_byte();
+      memset(hd, 0x55, 512);
+      memcpy(hd + 512, sms, sizeof(sms));
+      write_file("sms_plain.sms", sms, sizeof(sms));
+      write_file("sms_headed.sms", hd, sizeof(hd));
+      memcpy(odd + 512, sms, 24576);          /* 24 KiB (SG-1000 size): size % 16384 = 8192 + 512 */
+      write_file("sg_headed.sg", odd, sizeof(odd));
+      write_file("sg_plain.sg", sms, 24576);
+      expect(gamedb_file_crc("sms_plain.sms", &p, NULL) == 0 &&
+             gamedb_sms_crc_cancel("sms_plain.sms", &w, NULL) == 0 && w == p,
+             "SMS: a plain image is hashed whole");
+      expect(gamedb_sms_crc_cancel("sms_headed.sms", &h, NULL) == 0 && h == p,
+             "SMS: a 512-byte copier header (size 512 over 16 KiB) is left out");
+      expect(gamedb_file_crc("sg_plain.sg", &p, NULL) == 0 &&
+             gamedb_sms_crc_cancel("sg_headed.sg", &o, NULL) == 0 && o != p,
+             "SG-1000: 24 KiB + 512 is not the 16 KiB-multiple rule (left whole)");
+      expect(gamedb_sms_crc_cancel("sg_plain.sg", &o, NULL) == 0 && o == p,
+             "SG-1000: a 24 KiB image is hashed whole");
+   }
+   /* every real ROM listed in GAMEDB_MD_ROMLIST (one path a line; private, not
+    * in the repository): its SMD copy has the same CRC */
+   {
+      const char *list = getenv("GAMEDB_MD_ROMLIST");
+      FILE *l = list ? fopen(list, "r") : NULL;
+      char path[1024];
+      int n = 0;
+      while (l && fgets(path, sizeof(path), l))
+      {
+         static unsigned char *buf, *sm;
+         long sz;
+         FILE *r;
+         uint32_t x = 0, y = 0;
+         path[strcspn(path, "\r\n")] = '\0';
+         r = fopen(path, "rb");
+         if (!r)
+            continue;
+         fseek(r, 0, SEEK_END);
+         sz = ftell(r);
+         fseek(r, 0, SEEK_SET);
+         if (sz % 16384)          /* pad to whole blocks, as an SMD tool does */
+            sz += 16384 - sz % 16384;
+         buf = calloc(1, (size_t)sz);
+         sm = calloc(1, (size_t)sz + 512);
+         if (fread(buf, 1, (size_t)sz, r) != (size_t)sz)
+            sz = 0;
+         fclose(r);
+         write_file("md_real_plain.md", buf, (size_t)sz);
+         make_smd(buf, (size_t)sz, sm);
+         write_file("md_real.smd", sm, (size_t)sz + 512);
+         expect(gamedb_md_crc_cancel("md_real_plain.md", &x, NULL) == 0 &&
+                gamedb_md_crc_cancel("md_real.smd", &y, NULL) == 0 && x == y,
+                "a real ROM and its SMD copy have one CRC");
+         free(buf);
+         free(sm);
+         n++;
+      }
+      if (l)
+         fclose(l);
+      printf("  %d real ROMs compared with their SMD copies\n", n);
+   }
+   remove("md_plain.md"); remove("md_plain.bin"); remove("md_smd.smd");
+   remove("md_smd.bin"); remove("md_smd_nomark.smd"); remove("md_smd_nomark.bin");
+   remove("md_junk.bin"); remove("md_junk512.bin"); remove("md_junk_size.bin");
+   remove("md_32x.bin"); remove("sms_plain.sms"); remove("sms_headed.sms");
+   remove("sg_headed.sg"); remove("sg_plain.sg"); remove("md_real_plain.md");
+   remove("md_real.smd");
 }
 
 int main(int argc, char **argv)
@@ -129,6 +308,56 @@ int main(int argc, char **argv)
       }
       fclose(f);
    }
+   /* every C record resolves to its own name (crcs.txt is written from the same
+    * file by the Makefile), Sega's catalogues among them */
+   f = fopen(argc > 3 ? argv[3] : "crcs.txt", "r");
+   if (f)
+   {
+      int bad = 0, total = 0;
+      while (fgets(line, sizeof(line), f))
+      {
+         char *tab = strchr(line, '\t'), *nl;
+         if (!tab)
+            continue;
+         *tab = '\0';
+         nl = strchr(tab + 1, '\n');
+         if (nl)
+            *nl = '\0';
+         total++;
+         if (!gamedb_name_by_crc((uint32_t)strtoul(line, NULL, 16), out, sizeof(out)) ||
+             strcmp(out, tab + 1))
+         {
+            if (bad++ < 5)
+               printf("FAIL crc %s -> \"%s\", want \"%s\"\n", line, out, tab + 1);
+            fails++;
+         }
+      }
+      fclose(f);
+      printf("%d CRC records resolved to their names\n", total - bad);
+      expect(total == EXPECT_C_RECORDS, "the file has the C records expected");
+   }
+   expect(n == EXPECT_RECORDS, "the file has the records expected");
+   /* Sega: loose titles by console (N records I J K L), checksums, names */
+   expect(gamedb_name_by_crc(0xF9394E97u, out, sizeof(out)) &&
+          !strcmp(out, "Sonic The Hedgehog (USA, Europe)"), "Genesis: Sonic 1 by CRC");
+   expect(gamedb_name_by_crc(0x17A40E29u, out, sizeof(out)) &&
+          !strcmp(out, "Alex Kidd in Miracle World (USA, Europe)"), "SMS: Alex Kidd by CRC");
+   expect(gamedb_name_by_crc(0x95A18EC7u, out, sizeof(out)) &&
+          !strcmp(out, "Sonic The Hedgehog 2 (World)"), "Game Gear: Sonic 2 by CRC");
+   expect(gamedb_name_by_crc(0x1898F274u, out, sizeof(out)) &&
+          !strcmp(out, "Girl's Garden (Japan, Australia) (Ja)"), "SG-1000: Girl's Garden by CRC");
+   expect(gamedb_name_loose('I', "Sonic the Hedgehog", out, sizeof(out)) &&
+          !strcmp(out, "Sonic The Hedgehog (USA, Europe)"), "Genesis: loose 'Sonic the Hedgehog'");
+   expect(gamedb_name_loose('J', "Alex Kidd in Miracle World", out, sizeof(out)) &&
+          !strcmp(out, "Alex Kidd in Miracle World (USA, Europe)"), "SMS: loose Alex Kidd");
+   expect(gamedb_name_loose('K', "Sonic The Hedgehog 2", out, sizeof(out)) &&
+          !strcmp(out, "Sonic The Hedgehog 2 (World)"), "Game Gear: loose Sonic 2");
+   expect(gamedb_name_loose('L', "Girls Garden", out, sizeof(out)) &&
+          !strncmp(out, "Girl's Garden", 13), "SG-1000: loose 'Girls Garden'");
+   expect(!gamedb_name_loose('L', "Sonic The Hedgehog 2", out, sizeof(out)),
+          "the console matters: no SG-1000 Sonic 2");
+   expect(gamedb_known_name("Sonic & Knuckles (World)"), "a Genesis name with '&' is known");
+   sega_files();
    printf("%d keys compared\n%s: %d failed\n", keys, fails ? "FAIL" : "ok",
           fails);
    gamedb_close();

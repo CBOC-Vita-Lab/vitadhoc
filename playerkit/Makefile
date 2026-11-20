@@ -45,12 +45,13 @@ $(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan
+test: $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
 	$(B)/vita_gxm
 	$(B)/handoff_tsan
 	$(B)/cores_tsan
+	$(B)/spin_tsan
 
 # the console's drawing path (pk_gfx_vita.cpp, unchanged) against a GXM-faithful fake of vita2d, with the real SDK headers
 VITA2D_INC ?= ../snes/frontend/third_party/vita2d/include
@@ -71,9 +72,29 @@ $(B)/cores_tsan: tests/cores_tsan_main.cpp src/pk_cores.cpp src/pk_cores.h
 	@mkdir -p $(B)
 	$(CXX) $(TSAN_FLAGS) -Isrc tests/cores_tsan_main.cpp src/pk_cores.cpp -o $@ -pthread
 
-tsan: $(B)/handoff_tsan $(B)/cores_tsan
+# the spin lock (pk_util.h) with real threads under ThreadSanitizer
+$(B)/spin_tsan: tests/spin_tsan_main.cpp src/pk_util.cpp src/pk_util.h
+	@mkdir -p $(B)
+	$(CXX) $(TSAN_FLAGS) -Isrc tests/spin_tsan_main.cpp src/pk_util.cpp -o $@ -pthread
+
+# vita/pk_stdio_lock.c (the FILE-slot lock the console builds link with --wrap) on the host: the same
+# unlocked "scan, claim" through a fake libc, unwrapped (double claims, shown) and wrapped (none); the wrapped one
+# also under ThreadSanitizer.
+STDIO_WRAP := -Wl,--wrap=__sfp -Wl,--wrap=__sfp_lock_acquire -Wl,--wrap=__sfp_lock_release
+stdio_lock:
+	@mkdir -p $(B)
+	$(CC) -O1 -g -Itests/stdio_lock tests/stdio_lock/test_stdio_lock.c tests/stdio_lock/fake_sfp.c -o $(B)/stdio_raw -pthread
+	$(B)/stdio_raw
+	$(CC) -O1 -g -DWRAPPED -Itests/stdio_lock tests/stdio_lock/test_stdio_lock.c tests/stdio_lock/fake_sfp.c vita/pk_stdio_lock.c $(STDIO_WRAP) -o $(B)/stdio_wrapped -pthread
+	$(B)/stdio_wrapped
+	$(CC) -O1 -g -fsanitize=thread -DWRAPPED -Itests/stdio_lock tests/stdio_lock/test_stdio_lock.c tests/stdio_lock/fake_sfp.c vita/pk_stdio_lock.c $(STDIO_WRAP) -o $(B)/stdio_wrapped_tsan -pthread
+	$(B)/stdio_wrapped_tsan
+.PHONY: stdio_lock
+
+tsan: $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan
 	$(B)/handoff_tsan
 	$(B)/cores_tsan
+	$(B)/spin_tsan
 
 # the pacing model (virtual time, no console): make model ARGS="all"
 $(B)/pacing_model: tools/pacing_model.cpp tools/pacing_model.h src/pk_pace.cpp src/pk_handoff.cpp src/pk_handoff.h

@@ -99,6 +99,7 @@ CHANGE_MAP = [
     ("snes/", {"snes", "vita"}),
     ("snes/frontend/third_party/", {"snes", "playerkit", "widekit", "vita"}),
     ("wswan/", {"wswan", "vita"}),
+    ("md/", {"md", "vita"}),                           # the Sega player (md.bin), separate non-commercial licence
     ("playerkit/", {"playerkit", "vita"}),
     ("widekit/", {"widekit", "vita"}),
 ]
@@ -144,6 +145,9 @@ STEPS = [
     Step("build-wswan-twin", "WonderSwan twin and blend_test (wswan/twin)",
          "make -C wswan/twin -j{jobs}", "quick", {"wswan"}, inputs=["wswan/"], requires=CXX + CC,
          outputs=["wswan/twin/build/wswan_twin", "wswan/twin/build/blend_test"], timeout=3600),
+    Step("build-md-twin", "Sega twin: headless runner (md/twin)",
+         "make -C md/twin -j{jobs}", "quick", {"md"}, inputs=["md/"], requires=CXX + CC,
+         outputs=["md/twin/build/x86/md_twin"], timeout=3600),
     Step("build-hostcore-x86", "the Vita app for Linux, x86 dynarec (hostcore ARCH=x86)",
          "make -C gpsp/vita/hostcore ARCH=x86 -j{jobs}", "default", APP_TAGS,
          inputs=["gpsp/", "nes/"], requires=CC, group=GROUP_MAKE,
@@ -220,6 +224,26 @@ STEPS = [
          "mkdir -p {out}/bin && gcc -Wall -Wextra -I vita -I frontend-common "
          "vita/tests/playlog/test_play_log.c vita/play_log.c -o {out}/bin/play-log && {out}/bin/play-log",
          "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("boot-guard", "crash-loop guard: two unfinished starts put a game on safe settings (test_boot_guard.c)",
+         "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -fsanitize=address,undefined -I vita -I frontend-common "
+         "vita/tests/guard/test_boot_guard.c vita/boot_guard.c frontend-common/fe_util.c "
+         "-o {out}/bin/boot-guard && ASAN_OPTIONS=detect_leaks=0 {out}/bin/boot-guard",
+         "quick", {"gpsp", "save"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("init-once", "one-time init two threads race into (init_once.h, ThreadSanitizer)",
+         "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror -g -fsanitize=thread -I vita "
+         "vita/tests/guard/test_init_once.c -lpthread -o {out}/bin/init-once && {out}/bin/init-once",
+         "quick", {"gpsp", "online"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("ra-head", "RetroAchievements request head: every piece counted, under ASan (test_ra_head.c)",
+         "mkdir -p {out}/bin && gcc -Wall -fsanitize=address,undefined -I vita -I frontend-common -I . "
+         "-I vita/third_party/rcheevos/src -I vita/third_party/rcheevos/include "
+         "vita/tests/ra/test_ra_head.c vita/ra_http.c vita/third_party/rcheevos/src/rhash/md5.c "
+         "-lpthread -o {out}/bin/ra-head && {out}/bin/ra-head",
+         "quick", {"gpsp", "ra"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("handoff-swap", "smooth hand-over: a slow present is not drawing load (test_ho_swap.cpp)",
+         "mkdir -p {out}/bin && g++ -std=gnu++14 -fsanitize=address,undefined -I vita -I frontend-common "
+         "vita/tests/handoff/test_ho_swap.cpp vita/handoff_glue.cpp -lpthread -o {out}/bin/handoff-swap && "
+         "{out}/bin/handoff-swap",
+         "quick", {"gpsp", "app"}, inputs=["gpsp/", "playerkit/"], cwd="gpsp", requires=CXX),
     Step("playerkit", "playerkit: unit tests and menu walk, ASan and UBSan",
          "make -C playerkit test", "quick", {"playerkit"},
          inputs=["playerkit/", "snes/frontend/third_party/"], requires=CXX, parse="playerkit",
@@ -240,6 +264,9 @@ STEPS = [
     Step("wswan-selftest", "WonderSwan host glue: determinism, states, SRAM and EEPROM, orientation",
          "sh wswan/twin/selftest.sh", "quick", {"wswan"}, inputs=["wswan/"],
          deps=["build-wswan-twin"], parse="pass_fail"),
+    Step("md-selftest", "Sega core and host glue: determinism, states, SRAM, regions, pads, cheats (GATE_MD_ROMS, GATE_MD_SMS_ROMS)",
+         "MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/selftest.sh",
+         "default", {"md"}, inputs=["md/", "gpsp/vita/tests/cheats/"], deps=["build-md-twin"], parse="pass_fail", timeout=3600),
 
     # ---- default: the host app, cores, audio, cover art, cheats, library ----
     Step("unit-host", "host unit suites: ~40 C suites under ASan and UBSan (run_host_tests.py)",
@@ -423,6 +450,9 @@ STEPS = [
     Step("nes-arm-check", "NES core: host and armhf give byte-identical results (arm_check.sh)",
          "sh nes/twin/arm_check.sh", "full", {"nes"}, inputs=["nes/"],
          requires=ARMHF + [("exe", "arm-linux-gnueabihf-gcc")], parse="nes_arm", timeout=7200),
+    Step("md-arm-check", "Sega core: host and armhf give identical results (arm_check.sh)",
+         "MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/arm_check.sh", "full", {"md"},
+         inputs=["md/"], requires=ARMHF + [("exe", "arm-linux-gnueabihf-gcc")], parse="nes_arm", timeout=14400),
     Step("widekit-arm", "widekit: NEON and scalar agree under qemu (make arm-check)",
          "make -C widekit arm-check", "full", {"widekit"}, inputs=["widekit/"],
          requires=[("exe", "arm-linux-gnueabihf-g++"), ("exe", "qemu-arm")], timeout=3600),

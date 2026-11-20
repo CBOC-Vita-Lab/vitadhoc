@@ -2,6 +2,13 @@
 
 ## Version 2.0
 
+- **A console picker instead of a row of console tabs.** The top bar names
+  only the console in use. Triangle (or a tap on its name) drops a list of every
+  console under it, with the number of games found in each, the one in use
+  highlighted. Each further Triangle or Down moves along it, Up goes back, and
+  the library behind follows at once. The list closes by itself after a
+  moment, on any other button, or on a tap beside it; a tap on a row picks it.
+  Adding a console to the app is one line in its table.
 - **Online play.** Play together > Connection: Online. The host's screen shows
   a code of five characters; the friend types it on a code pad (d-pad or
   touch) from the game menu or the game list (Settings > Join online). The
@@ -19,12 +26,38 @@
 - **The typed-address "Internet" connection is now "Direct address"**, shown
   only with `link_direct = 1` in `vita.ini`; an Internet setting from 1.4
   becomes Online.
-- **Under the hood:** a TLS client of our own (Mbed TLS 3.6.7, eight root
+- **Game Boy colours.** Original Game Boy games are now coloured as a Game
+  Boy Color coloured them: **GBC auto** (the default) picks the palette the
+  Color's start-up chose for that game. Settings > Display > Game Boy colours
+  also offers the twelve palettes you could hold buttons for at start-up
+  (GBC Up - brown and the rest), the Super Game Boy's 32 palettes (1-A to
+  4-H), and the plain Grey, DMG green and Pocket. The row shows the four colours as you
+  choose, and "This game" can use its own. A colour you chose before 2.0 is kept (the old
+  Auto becomes GBC auto).
+- **Undo for save states, and slot lock, on every console.** In the save
+  states page, R undoes the last save over a slot (the state that was there
+  comes back, one step) or the last load (you go back to just before it).
+  L locks a slot: a locked slot shows a padlock and cannot be overwritten or
+  deleted, by a menu save or a quick save, until you unlock it. Not in Hardcore or while linked.
+- **RetroAchievements shows more.** A small mark when an achievement is one
+  step from unlocking, a progress count ("3/10") under the toast, and the live
+  value of a leaderboard run at the corner of the screen (leaderboards run
+  in Hardcore). Your rich presence is now logged when it is sent. Settings >
+  Achievement indicators turns the marks off; unlock toasts stay.
+- **Under the hood:** a TLS client of our own (Mbed TLS 3.6.8, eight root
   certificates, certificate checks always on) for the room service, STUN,
   hole punching and a TURN relay client on the link's own UDP socket, and the
   room service itself (`online/service/`, one Cloudflare Worker and one
   Durable Object). See docs/TECHNICAL.md and docs/BUILDING.md (building needs the
   Mbed TLS prefix).
+- **GBA fixes from GBAdhoc 5.0.0-beta.6.** Top Gun: Combat Zones now has no
+  save chip, as on the real cartridge, so its menu opens. Games that start
+  without the BIOS begin on the screen line where the BIOS hands over (Polarium
+  Advance no longer derails in its first frames). Rock 'N Roll Racing no longer
+  breaks when a routine pushes the program counter. A game that probes for a
+  link cable (Activision Anthology's two-player test) finds none instead of a
+  ghost player. The built-in BIOS now plays the BIOS sound driver, so games that
+  leave mixing to it (X-Men: Reign of Apocalypse) are no longer silent.
 
 ## Version 1.4
 

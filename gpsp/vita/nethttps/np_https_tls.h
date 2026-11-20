@@ -54,7 +54,7 @@ struct Details {
 
 struct Conn;   // one connection's TLS state
 
-const char* BackendName();                                          // "mbedtls 3.6.7"
+const char* BackendName();                                          // "mbedtls 3.6.8"
 // Loads the roots and the random generator, once. False = permanent failure (why = a short reason); every later call returns the same.
 bool Init(char* why, size_t why_cap, int* roots_loaded);
 int State();                                                        // 0 = not tried, 1 = ready, -1 = failed

@@ -53,6 +53,7 @@
 #include "fe_favs.h"
 #include "fe_evt.h"
 #include "fe_host.h"
+#include "../gbcore/gbcore.h"       /* GBCORE_PALETTE_*: Game Boy colours */
 #ifdef VITA
 #include "video_vita.h"
 #include "menu_diag.h"
@@ -481,6 +482,12 @@ static char  g_ov_title[100];               /* the game's name            */
  * Filled ONCE when the slots screen opens -- never per frame: a stat per
  * slot per frame is Memory Stick I/O inside the draw loop. */
 static unsigned char g_ov_slot[PSP_STATE_SLOT_COUNT];
+/* 2.0: per slot, 1 = locked (a padlock; no overwrite, no delete) and 1 = a
+ * .bak holds what the last save replaced (Undo); and whether a state load
+ * can be undone (Game.st0.undo).  Same stats as the slot's, same scan. */
+static unsigned char g_ov_lock[PSP_STATE_SLOT_COUNT];
+static unsigned char g_ov_bak[PSP_STATE_SLOT_COUNT];
+static int  g_ov_undo_load;
 /* Each state's time, "3 Oct 2026, 14:32", from the same stat (st_mtime): no
  * extra I/O and no new bytes on the card.  "" = empty slot. */
 static char g_ov_stamp[PSP_STATE_SLOT_COUNT][24];
@@ -489,7 +496,7 @@ static int  g_ov_used;                      /* slots holding a state      */
  * plate -- 0 none, SLOT_ASK_DELETE or SLOT_ASK_OVERWRITE -- for the slot
  * g_slot_ask_n; while it is up X answers it and any other key keeps the
  * slot.  The plate that reports what happened is cleared by the next key. */
-enum { SLOT_ASK_DELETE = 1, SLOT_ASK_OVERWRITE = 2 };
+enum { SLOT_ASK_DELETE = 1, SLOT_ASK_OVERWRITE = 2, SLOT_ASK_UNDO = 3 };
 static int  g_slot_ask;
 static int  g_slot_ask_n;
 static char g_slot_note[48];
@@ -1030,6 +1037,7 @@ static int g_profile_at_open;
 
 static int set_start_row(void);          /* Settings' first row, below */
 static void footer(const char *hint);   /* defined with the other chrome */
+static int  gbpal_step(int id, int dir);      /* Game Boy colours, with set_item */
 static void ctl_page_reset(void);       /* Settings > Controls state */
 #ifdef GPSP_CHEATS
 static void cht_page_reset(void);       /* the Cheats page, below */
@@ -2378,6 +2386,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* The account and Hardcore in the browser; a running game's list
         * in game, when it has achievements (ra_vita.h). */
        SET_HDR_RA, SET_RA_ACCOUNT, SET_RA_HARDCORE, SET_RA_LIST,
+       SET_RA_INDIC,      /* 2.0: challenge / progress / leaderboard indicators */
        SET_HDR_LIB, SET_NAMES, SET_COVERPIC, SET_SYNCRA, SET_FOLDERS, SET_SORT,
        SET_HDR_THIS, SET_SAVETYPE, SET_CLOCK, SET_OWN_LOOK, SET_MOTION, SET_SENS,
        SET_REVERSE, SET_LEVEL, SET_SUN,
@@ -2485,7 +2494,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
 #endif
    { 0, "Video filter" },
    { 0, "Ambient bars" },
-   { 0, "GB palette" },
+   { 0, "Game Boy colours" },
 #ifdef VITA
    /* A Game Boy's only, and greyed (stepped over) on the others, so no row
     * a harness walker counts on a GBA moves. */
@@ -2539,6 +2548,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Account" },
    { 0, "Hardcore" },
    { 0, "Achievements" },
+   { 0, "Achievement indicators" },
    { 1, "LIBRARY" },
    /* 1.4: Game title / File name (GitHub #16).  First under the header, so
     * the walkers that wrap up from the top to Cover picture, Game folders
@@ -2628,6 +2638,8 @@ static int set_row_shown(int idx)
       return g_ov_browse;
    if (idx == SET_RA_ACCOUNT || idx == SET_RA_HARDCORE)
       return g_ov_browse;
+   if (idx == SET_RA_INDIC)
+      return g_ov_browse || ra_summary(NULL, NULL, NULL, NULL, NULL);
    if (idx == SET_HDR_RA || idx == SET_RA_LIST)
       return g_ov_browse ? idx == SET_HDR_RA
                          : ra_summary(NULL, NULL, NULL, NULL, NULL);
@@ -3400,6 +3412,9 @@ static void settings_adjust(int id, int dir)
    case SET_RA_HARDCORE:
       ra_hardcore_set(!ra_hardcore_pref());
       break;
+   case SET_RA_INDIC:
+      ra_indicators_set(!ra_indicators_pref());
+      break;
    case SET_RA_ACCOUNT:
    case SET_RA_LIST:
       /* not values: X acts (screen_settings) */
@@ -3498,11 +3513,9 @@ static void settings_adjust(int id, int dir)
       /* Applies to a running GB game at once (and to the next boot); an
        * out-of-range id read from config.ini counts as Auto (0).  Per
        * console: GB and GBC keep their own; a GBA profile has none. */
-      int n = fe_host_gb_palette_count();
-      int cur = g_pcfg.gb_palette < n ? g_pcfg.gb_palette : 0;
       if (!set_row_enabled(SET_GBPAL))
          return;
-      g_pcfg.gb_palette = (cur + n + dir) % n;
+      g_pcfg.gb_palette = gbpal_step(g_pcfg.gb_palette, dir);
       pcfg_display_commit();
       fe_host_gb_palette_set(g_pcfg.gb_palette);
       break;
@@ -3674,6 +3687,48 @@ static int ui_cover_progress(int *seen, int *total, int *have)
 
 /* One settings row in the overlay: label at 30, value right-aligned at 440,
  * the cursor row on the left-bleed band. */
+/* GAME BOY COLOURS: the order the row steps through (the order of the
+ * GBCORE_PALETTE_* ids is the core's, not the menu's): the Game Boy Color's
+ * own colours for the game first, then the classic four-shade looks, the
+ * GBC button palettes, and the Super Game Boy's 32. */
+static int gbpal_order(int pos)
+{
+   static const int head[5] = { GBCORE_PALETTE_GBC_AUTO, GBCORE_PALETTE_AUTO,
+                                GBCORE_PALETTE_GREY, GBCORE_PALETTE_GREEN,
+                                GBCORE_PALETTE_POCKET };
+   if (pos < 5)
+      return head[pos];
+   return GBCORE_PALETTE_GBC_UP + (pos - 5);   /* ids 5.. follow in order */
+}
+
+static int gbpal_step(int id, int dir)
+{
+   int n = fe_host_gb_palette_count(), pos = 0, i;
+   for (i = 0; i < n; i++)
+      if (gbpal_order(i) == id)
+         pos = i;
+   return gbpal_order((pos + n + (dir < 0 ? -1 : 1)) % n);
+}
+
+/* The palette's colours as chips left of its name: the four of the
+ * background, then the four of the sprites where those differ.  What the
+ * game will show (the GBC LCD model included), for the game that is running
+ * (GBC auto is its own combination), live as the row steps. */
+static void gbpal_swatch(int xr, int y, int id)
+{
+   uint16_t c[12];
+   int i, chips = 4, w;
+   (void)fe_host_gb_palette_preview(id, c);
+   if (memcmp(c, c + 4, 8) != 0)
+      chips = 8;
+   w = chips * 9 + (chips > 4 ? 4 : 0);
+   xr -= w;
+   for (i = 0; i < chips; i++)
+   {
+      vid_rect(xr + i * 9 + (i >= 4 ? 4 : 0), y + 1, 8, 12, c[i], 255);
+   }
+}
+
 static void set_item(int y, int sel, int enabled, const char *label,
                      const char *value)
 {
@@ -3786,7 +3841,7 @@ static const char *set_help(int id)
       if (pcfg_display_console() == FE_CONSOLE_GBC)
          return g_pcfg.color ? "As on a Game Boy Color's screen."
                              : "Colours exactly as the game sends them.";
-      return "An original Game Boy's shades are its palette, above.";
+      return "An original Game Boy's shades are its colours, above.";
    case SET_GRID:     return "How dark the LCD grid and scanline looks are "
                              "(Video filter).";
    case SET_NESWIDE:  return g_pcfg.nes_wide == 2
@@ -3843,8 +3898,8 @@ static const char *set_help(int id)
            : "Screens with no more to show keep black bars.";
    case SET_AMBIENT:  return "What fills the space beside the game's "
                              "picture.";
-   case SET_GBPAL:    return "The four shades an original Game Boy game is "
-                             "shown in.";
+   case SET_GBPAL:    return "GBC auto: the colours a Game Boy Color gave "
+                             "this game.";
    case SET_THEME:    return "Dark or light menus.";
 #ifdef VITA
    case SET_SHELL:    return "Tiles over your game, a list with art, or art "
@@ -3923,13 +3978,17 @@ static const char *set_help(int id)
                                "keep speed."
                              : "Busy moments slow the game and its sound down.";
    case SET_SGB:      return "Super Game Boy games in the border they bring "
-                             "(GB palette: Auto).";
+                             "(Game Boy colours: Super Game Boy).";
    case SET_RA_ACCOUNT: return "Your retroachievements.org account.";
    case SET_RA_HARDCORE: return ra_hardcore_pref()
                              ? "No states, rewind or cheats. From the next "
                                "game."
                              : "States, rewind and cheats allowed.";
    case SET_RA_LIST:  return "This game's achievements and what each asks.";
+   case SET_RA_INDIC: return ra_indicators_pref()
+                             ? "Small marks for a challenge, progress and a "
+                               "leaderboard attempt."
+                             : "No marks over the game. Unlocks still show.";
    case SET_SYNCRA:   return ui_host_sync_ra_on()
                              ? "Each save also goes where RetroArch looks, "
                                "kept in step."
@@ -4647,6 +4706,10 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   ra_hardcore_pref() ? "on (from the next game)" : "off");
          break;
+      case SET_RA_INDIC:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  ra_indicators_pref() ? "On" : "Off");
+         break;
       case SET_RA_LIST:
       {
          unsigned have = 0, total = 0;
@@ -4773,6 +4836,9 @@ static ui_action screen_settings(unsigned edges)
          int en = set_row_enabled(i);
          set_item(y, g_cursor == i, en, set_rows[i].label,
              en ? fe_host_gb_palette_name(gp) : "GB / GBC only");
+         if (en)
+            gbpal_swatch(440 - vid_text_w(fe_host_gb_palette_name(gp)) - 8,
+                         y, gp);
          break;
       }
       }
@@ -7066,6 +7132,11 @@ static int state_delete(const char *slot1_path, unsigned slot)
       fe_evt("state_delete slot=%u rc=bad_path", slot);
       return -1;
    }
+   if (fe_host_state_locked(st))
+   {
+      fe_evt("state_delete slot=%u refused=locked", slot);
+      return -2;                  /* a locked slot is never deleted */
+   }
    /* A leftover replacement backup must not resurrect a deleted slot. */
    {
       char old[PSP_FILE_PATH_CAP + 4];
@@ -7089,6 +7160,7 @@ static int state_delete(const char *slot1_path, unsigned slot)
    (void)sceIoRemove(th);      /* an "old" state never had one */
    (void)sceIoRemove(sh);      /* nor a 3.1 one this */
    (void)sceIoRemove(mt);      /* the player kit's .meta: no name for an empty slot */
+   fe_host_state_forget_undo(st);   /* ...and no undo copy of a deleted one */
    fe_evt("state_delete slot=%u file=%s", slot, st);
    return 0;
 }
@@ -7144,14 +7216,27 @@ static void ov_slots_stat_io(void)
    SceIoStat st;
    int i;
    g_ov_used = 0;
+   {
+      char u[PSP_FILE_PATH_CAP + 8];
+      snprintf(u, sizeof(u), "%s.undo", g_state_base);
+      g_ov_undo_load = g_state_base[0] && sceIoGetstat(u, &st) >= 0;
+   }
    for (i = 0; i < PSP_STATE_SLOT_COUNT; i++)
    {
       g_ov_slot[i] = 0;
+      g_ov_lock[i] = g_ov_bak[i] = 0;
       g_ov_stamp[i][0] = '\0';
       if (!g_state_base[0] ||
           psp_state_path_for_slot(path, sizeof(path), g_state_base,
                                   (unsigned)i + 1) != 0)
          continue;
+      {
+         char side[PSP_FILE_PATH_CAP + 8];
+         snprintf(side, sizeof(side), "%s.lock", path);
+         g_ov_lock[i] = sceIoGetstat(side, &st) >= 0;
+         snprintf(side, sizeof(side), "%s.bak", path);
+         g_ov_bak[i] = sceIoGetstat(side, &st) >= 0;
+      }
       if (sceIoGetstat(path, &st) < 0)
       {
          char old[PSP_FILE_PATH_CAP + 4];
@@ -7306,7 +7391,9 @@ int ui_state_save_done(int rc)
    if (!g_active || g_screen != SCR_STATE_SLOTS || !s)
       return 0;
    snprintf(g_slot_note, sizeof(g_slot_note),
-            rc == 0 ? "Slot %d saved" : "Slot %d could not be saved", s);
+            rc == 0 ? "Slot %d saved" : rc == -3 ? "Slot %d is locked"
+                                                  : "Slot %d could not be saved",
+            s);
    g_slots_dirty = 1;
    return 1;
 }
@@ -7429,6 +7516,18 @@ static void ss_panel(int i)
    }
 }
 
+/* A padlock, 9 x 11 logical px: the shackle's two posts and bar over a
+ * body, in `c` -- the mark of a locked slot (a card's right edge, and the
+ * preview's corner). */
+static void ss_padlock(int x, int y, uint16_t c)
+{
+   vid_rect(x + 2, y, 5, 2, c, 255);       /* shackle: top bar            */
+   vid_rect(x + 2, y + 2, 2, 3, c, 255);   /* ...left post                */
+   vid_rect(x + 5, y + 2, 2, 3, c, 255);   /* ...right post               */
+   vid_rect(x, y + 5, 9, 6, c, 255);       /* body                        */
+   vid_rect(x + 4, y + 7, 1, 2, C_SHADOW, 255);   /* keyhole              */
+}
+
 static ui_action screen_state_slots(unsigned edges)
 {
    ui_action act = UI_ACT_NONE;
@@ -7445,11 +7544,35 @@ static ui_action screen_state_slots(unsigned edges)
       {
          int s = g_slot_ask_n, ask = g_slot_ask;
          g_slot_ask = 0;
-         if (ask == SLOT_ASK_DELETE)
+         if (ask == SLOT_ASK_UNDO)
          {
-            if (state_delete(g_state_base, (unsigned)s) == 0)
+            /* X: undo the save of this slot when it has one (else the
+             * load); Square, when both are offered, the load. */
+            if (g_ov_bak[s - 1])
+            {
+               char sp[PSP_FILE_PATH_CAP];
+               int urc = -1;
+               if (psp_state_path_for_slot(sp, sizeof(sp), g_state_base,
+                                           (unsigned)s) == 0)
+                  urc = fe_host_state_undo_save(sp);
+               snprintf(g_slot_note, sizeof(g_slot_note), urc == 0
+                        ? "Slot %d is as it was before the save" : urc == 1
+                        ? "Slot %d is empty again" : "Slot %d could not be undone",
+                        s);
+               ov_slots_scan();
+            }
+            else
+               act = UI_ACT_UNDOLOAD;
+         }
+         else if (ask == SLOT_ASK_DELETE)
+         {
+            int drc = state_delete(g_state_base, (unsigned)s);
+            if (drc == 0)
                snprintf(g_slot_note, sizeof(g_slot_note), "Slot %d deleted",
                         s);
+            else if (drc == -2)
+               snprintf(g_slot_note, sizeof(g_slot_note),
+                        "Slot %d is locked", s);
             else
                snprintf(g_slot_note, sizeof(g_slot_note),
                         "Slot %d could not be deleted", s);
@@ -7460,6 +7583,12 @@ static ui_action screen_state_slots(unsigned edges)
             g_slot_saving = s;
             act = UI_ACT_SAVESTATE;
          }
+      }
+      else if (g_slot_ask == SLOT_ASK_UNDO && (edges & PSP_CTRL_SQUARE) &&
+               g_ov_bak[g_slot_ask_n - 1] && g_ov_undo_load)
+      {
+         g_slot_ask = 0;
+         act = UI_ACT_UNDOLOAD;
       }
       else if (edges)
          g_slot_ask = 0;
@@ -7518,7 +7647,10 @@ static ui_action screen_state_slots(unsigned edges)
       }
       else if (edges & PSP_CTRL_SQUARE)
       {
-         if (g_ov_slot[cur])
+         if (g_ov_lock[cur])
+            snprintf(g_slot_note, sizeof(g_slot_note),
+                     "Slot %d is locked: L unlocks it", g_state_slot);
+         else if (g_ov_slot[cur])
          {
             g_slot_ask = SLOT_ASK_OVERWRITE;
             g_slot_ask_n = g_state_slot;
@@ -7531,8 +7663,44 @@ static ui_action screen_state_slots(unsigned edges)
       }
       else if ((edges & PSP_CTRL_TRIANGLE) && g_ov_slot[cur])
       {
-         g_slot_ask = SLOT_ASK_DELETE;
-         g_slot_ask_n = g_state_slot;
+         if (g_ov_lock[cur])
+            snprintf(g_slot_note, sizeof(g_slot_note),
+                     "Slot %d is locked: L unlocks it", g_state_slot);
+         else
+         {
+            g_slot_ask = SLOT_ASK_DELETE;
+            g_slot_ask_n = g_state_slot;
+         }
+      }
+      else if ((edges & PSP_CTRL_LTRIGGER) && g_ov_slot[cur])
+      {
+         /* L: lock or unlock; a locked slot is neither overwritten nor
+          * deleted (and so neither by a quick save). */
+         char sp[PSP_FILE_PATH_CAP];
+         if (psp_state_path_for_slot(sp, sizeof(sp), g_state_base,
+                                     (unsigned)g_state_slot) == 0 &&
+             fe_host_state_set_lock(sp, !g_ov_lock[cur]) == 0)
+         {
+            g_ov_lock[cur] = !g_ov_lock[cur];
+            snprintf(g_slot_note, sizeof(g_slot_note), g_ov_lock[cur]
+                     ? "Slot %d locked" : "Slot %d unlocked", g_state_slot);
+         }
+         else
+            snprintf(g_slot_note, sizeof(g_slot_note),
+                     "Slot %d could not be locked", g_state_slot);
+      }
+      else if (edges & PSP_CTRL_RTRIGGER)
+      {
+         /* R: undo -- the save just made over this slot, and/or the last
+          * state load; what is possible is what the plate offers. */
+         if (g_ov_bak[cur] || g_ov_undo_load)
+         {
+            g_slot_ask = SLOT_ASK_UNDO;
+            g_slot_ask_n = g_state_slot;
+         }
+         else
+            snprintf(g_slot_note, sizeof(g_slot_note),
+                     "Nothing to undo");
       }
    }
 
@@ -7592,6 +7760,8 @@ static ui_action screen_state_slots(unsigned edges)
          vid_rect(20, by + 4, 36, 24, C_CARD, 255);
       snprintf(lbl, sizeof(lbl), "Slot %d", i + 1);
       vid_text(64, y, lbl, sel ? C_SEL : C_ITEM);
+      if (g_ov_lock[i])
+         ss_padlock(192, y + 10, sel ? C_SEL : C_DIM);
       if (g_ov_slot[i])
          vid_text(64, y + 14, g_ov_stamp[i][0] ? g_ov_stamp[i] : "saved",
                   sel ? C_VALUE : C_DIM);
@@ -7602,15 +7772,31 @@ static ui_action screen_state_slots(unsigned edges)
    ss_panel(cur);
    {
       char cap[48];
-      snprintf(cap, sizeof(cap), "Slot %d of %d  -  %s", cur + 1,
+      snprintf(cap, sizeof(cap), "Slot %d of %d  -  %s%s", cur + 1,
                PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? "empty"
-               : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved");
+               : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved",
+               g_ov_lock[cur] ? "  -  locked" : "");
       vid_text(SS_PX, 228, cap, C_DIM);
    }
    if (g_slot_ask)
    {
       char q[72];
-      if (g_slot_ask == SLOT_ASK_DELETE)
+      if (g_slot_ask == SLOT_ASK_UNDO)
+      {
+         const int us = g_ov_bak[g_slot_ask_n - 1];
+         if (us && g_ov_undo_load)
+            snprintf(q, sizeof(q), "Undo?      " VID_GLYPH_X " the save in "
+                     "Slot %d     " VID_GLYPH_SQ " the last load     "
+                     VID_GLYPH_O " keep", g_slot_ask_n);
+         else if (us)
+            snprintf(q, sizeof(q), "Undo the save in Slot %d?      "
+                     VID_GLYPH_X " undo     " VID_GLYPH_O " keep",
+                     g_slot_ask_n);
+         else
+            snprintf(q, sizeof(q), "Undo the last load?      " VID_GLYPH_X
+                     " undo     " VID_GLYPH_O " keep");
+      }
+      else if (g_slot_ask == SLOT_ASK_DELETE)
          snprintf(q, sizeof(q), "Delete Slot %d?      " VID_GLYPH_X
                   " delete     " VID_GLYPH_O " keep", g_slot_ask_n);
       else
@@ -7624,10 +7810,10 @@ static ui_action screen_state_slots(unsigned edges)
    else if (g_slot_note[0])
       ov_plate(g_slot_note);
    else if (g_ov_slot[cur])
-      footer(VID_GLYPH_X " load     " VID_GLYPH_SQ " save     " VID_GLYPH_TRI
-             " delete     " VID_GLYPH_O " back");
+      footer(VID_GLYPH_X " load   " VID_GLYPH_SQ " save   " VID_GLYPH_TRI
+             " delete   L lock   R undo   " VID_GLYPH_O " back");
    else
-      footer(VID_GLYPH_SQ " save     " VID_GLYPH_O " back");
+      footer(VID_GLYPH_SQ " save   R undo   " VID_GLYPH_O " back");
    return act;
 }
 
@@ -12880,7 +13066,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          pspcompat_io_get_diag(&io);
          vb_ownership_get(&gpu);
          fe_evt("menu_platform heap_free=%u vcount=%u swap_state=%d",
-                plat_heap_free(), plat_vcount(), vb_present_state());
+                (unsigned)plat_heap_free(), plat_vcount(), vb_present_state());
          fe_evt("menu_preview wanted=%u worker_token=%u phase=%u age_us=%llu "
                 "open_us=%u read_us=%u decode_us=%u published=%u stale=%u "
                 "bad=%u ready=%u pinned=%u coherent=%d", sample.wanted, sample.token,

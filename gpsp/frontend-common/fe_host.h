@@ -75,8 +75,9 @@ typedef struct fe_host_config
     * clock (base + emulated frames).  0 = the cartridge clock follows
     * gpsp_wallclock, the console's own clock (gba_memory.c, rtc_clock.h). */
    int gba_rtc_frames_only;
-   /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (0 = Auto: Super
-    * Game Boy colours where the game has them, grey otherwise). */
+   /* GB/GBC only: the DMG palette, a GBCORE_PALETTE_* id (the default is
+    * GBC auto, the Game Boy Color's colours for each game; 0 = Super Game
+    * Boy colours where the game has them, grey otherwise). */
    int gb_palette;
    /* GBC only: 1 = show CGB colours raw (the 5-to-8-bit expansion); 0, the
     * default, = through the Game Boy Color LCD model
@@ -389,6 +390,19 @@ const uint16_t *fe_host_last_frame(size_t *pitch_bytes);
  * while a wireless session is active — RFU state is not serialized). */
 int fe_host_state_save(const char *path);
 int fe_host_state_load(const char *path);
+/* Save-state slots (a path ending .st0 .. .st9): a LOCK (<slot>.lock) makes
+ * fe_host_state_save refuse the slot; every save of a slot keeps the file it
+ * replaces as <slot>.bak (written by one rename: atomic), which
+ * fe_host_state_undo_save puts back (0 restored, 1 the slot is empty again,
+ * -1 nothing to undo, -2 failed).  The companions (.thumb .shot .meta) are
+ * moved aside by fe_host_state_keep_companions once the new state is on the
+ * card, and a delete drops the undo copy (fe_host_state_forget_undo). */
+int  fe_host_state_locked(const char *path);
+int  fe_host_state_set_lock(const char *path, int on);
+int  fe_host_state_undo_available(const char *path);
+int  fe_host_state_undo_save(const char *path);
+void fe_host_state_keep_companions(const char *path);
+void fe_host_state_forget_undo(const char *path);
 /* Restore a missing slot from an interrupted .old replacement. 0 = nothing
  * to recover, 1 = recovered, -1 = I/O/path failure. Call before UI slot stats. */
 int fe_host_state_recover(const char *path);
@@ -434,6 +448,9 @@ void     fe_host_battery_changed(void);
 void        fe_host_gb_palette_set(int id);
 int         fe_host_gb_palette_count(void);
 const char *fe_host_gb_palette_name(int id);
+/* The twelve colours (BG, OBJ0, OBJ1; RGB565) the picture shows with
+ * palette `id` (gbcore_palette_preview): the Settings row's live preview. */
+int         fe_host_gb_palette_preview(int id, uint16_t rgb565[12]);
 
 /* CRC-compare the 128 KiB SRAM buffer and write the .sav if dirty.
  * force_write=1 writes even when clean (used by round-trip tests) AND

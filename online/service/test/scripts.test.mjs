@@ -92,7 +92,13 @@ case "$*" in *"wrangler whoami"*)
   echo "| Account Name        | Account ID |"; echo "| Acme Hat Company    | \${STUB_WHOAMI_ID:-${ACCT}} |"; exit 0 ;; esac
 case "$*" in *"deploy --dry-run"*|*"deploy --config"*) echo "Deployed vitadhoc-online ${o.deployExtra || ''}"; echo "  vitadhoc.psvita.dev (custom domain)"; exit 0 ;; esac
 case "$*" in *"secret put"*) echo "Success! Uploaded secret"; exit 0 ;; esac
+case "$*" in *"deployments list"*) exit \${STUB_DEPLOYMENTS_RC:-0} ;; esac
 exit 0
+`, { mode: 0o755 });
+  // the DNS guard's lookup: the name resolves when STUB_DNS=1 (a record of that name exists), else it does not
+  writeFileSync(join(tmp, 'bin/getent'), `#!/bin/bash
+[ "\${STUB_DNS:-0}" = 1 ] && { echo "104.18.0.1 vitadhoc.psvita.dev"; exit 0; }
+exit 2
 `, { mode: 0o755 });
   writeFileSync(join(tmp, 'bin/curl'), `#!/usr/bin/env python3
 import sys
@@ -163,6 +169,36 @@ test('deploy script: a wrong account stops before any deploy; an address wrangle
   assert.match(bad.out, /NOTHING WAS DEPLOYED/);
   const c2 = readFileSync(join(tmp2, 'npx.log'), 'utf8');
   assert.ok(!/wrangler deploy --config/.test(c2), 'the real deploy never ran');
+});
+
+test('deploy script: the first deploy stops when the hostname already resolves (a custom-domain publish could overwrite that DNS record); a re-deploy and --allow-existing-dns go on', () => {
+  const run = (env, extra = []) => {
+    const tmp = mkdtempSync(join(tmpdir(), 'vad-'));
+    const e = { ...deployStubs(tmp), ...env };
+    const r = sh(['scripts/deploy-vitadhoc-online.sh', '--account-id', ACCT, '--skip-tests', '--log-dir', join(tmp, 'l'), ...extra], { env: e });
+    return { r, calls: readFileSync(join(tmp, 'npx.log'), 'utf8') };
+  };
+  // first deploy (no deployment yet), the name already resolves: refused before the dry run, nothing deployed
+  const first = run({ STUB_DEPLOYMENTS_RC: '1', STUB_DNS: '1' });
+  assert.notEqual(first.r.code, 0, first.r.out);
+  assert.match(first.r.out, /already resolves/);
+  assert.ok(!/deploy --dry-run|wrangler deploy --config/.test(first.calls), 'nothing was deployed or even dry-run');
+  // the owner has looked: it goes on
+  const forced = run({ STUB_DEPLOYMENTS_RC: '1', STUB_DNS: '1' }, ['--allow-existing-dns']);
+  assert.equal(forced.r.code, 0, forced.r.out);
+  assert.match(forced.r.out, /--allow-existing-dns given/);
+  // first deploy, the name is free: the deploy creates it
+  const free = run({ STUB_DEPLOYMENTS_RC: '1', STUB_DNS: '0' });
+  assert.equal(free.r.code, 0, free.r.out);
+  assert.match(free.r.out, /does not resolve yet/);
+  // a re-deploy: the Worker exists, the name resolves (it is ours)
+  const again = run({ STUB_DEPLOYMENTS_RC: '0', STUB_DNS: '1' });
+  assert.equal(again.r.code, 0, again.r.out);
+  assert.match(again.r.out, /already deployed/);
+  // the plan names the guard
+  const tmp = mkdtempSync(join(tmpdir(), 'vad-'));
+  const plan = sh(['scripts/deploy-vitadhoc-online.sh', '--account-id', ACCT, '--print-plan'], { env: deployStubs(tmp) });
+  assert.match(plan.out, /DNS guard/);
 });
 
 test('deploy script: the live /v1/info must name min and latest 2.0.0 (the versions this build of the service is made for)', () => {

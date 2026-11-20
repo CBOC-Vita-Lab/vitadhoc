@@ -50,6 +50,22 @@ static unsigned evt_drop, evt_hi;
 /* Drops already announced by an in-band gap marker (see emit()). */
 static unsigned evt_drop_marked __attribute__((unused));
 static unsigned evt_io_us, evt_io_max_us;
+/* MORE THAN ONE PRODUCER (the lesson of the Vita ports' stdio crash, B12).
+ * The ring was written for "the emulation thread" alone, but the I/O worker
+ * logs too (fe_host's sram_flush lines, sram_delta_failed, fe_log) while the
+ * emulation thread logs: two threads in ring_push read the same write index,
+ * copy over each other and publish one line for two.  So the producer side is
+ * a TRY-lock: a thread that finds it taken DROPS its line and counts it
+ * (evt_contend), it never waits.  Waiting would be a priority-inversion hang
+ * (the worker runs below the emulation thread, on a core the emulation thread
+ * may share); a counted drop is already the ring's own answer to "no room",
+ * and the next line that gets in carries the in-band `evt_gap` marker. */
+static volatile int evt_lock;
+static volatile unsigned evt_contend;
+/* Lines longer than the line buffer: cut, and MARKED (G9).  A cut line used to
+ * look like a complete one with its last keys missing (a settings line
+ * outgrew its buffer and the newer defaults were set but never printed). */
+static unsigned evt_cut;
 
 void fe_evt_set_clock(unsigned long long (*now_us)(void))
 {
@@ -73,7 +89,7 @@ void fe_evt_prof_io(unsigned *io_us, unsigned *io_max_us, unsigned *dropped,
 {
    if (io_us)     *io_us     = EVT_LOAD(evt_io_us);
    if (io_max_us) *io_max_us = EVT_LOAD(evt_io_max_us);
-   if (dropped)   *dropped   = evt_drop;
+   if (dropped)   *dropped   = evt_drop + EVT_LOAD(evt_contend);
    if (ring_hi)   *ring_hi   = evt_hi;
 }
 
@@ -107,6 +123,9 @@ int fe_evt_init(const char *path, int echo_stderr)
    evt_limit = evt_bytes = 0;
    evt_timestamps = evt_capped = evt_buffered = 0;
    evt_wake = NULL;
+   evt_lock = 0;
+   evt_contend = 0;
+   evt_cut = 0;
    if (path && path[0])
       evt_file = fopen(path, "w");
    return evt_file ? 0 : -1;
@@ -232,9 +251,14 @@ int fe_evt_service(void)
 #endif   /* GPSP_NO_TELEMETRY */
 }
 
+unsigned fe_evt_cuts(void)
+{
+   return evt_cut;
+}
+
 unsigned fe_evt_drops(void)
 {
-   return evt_drop;
+   return evt_drop + EVT_LOAD(evt_contend);
 }
 
 int fe_evt_pending(void)
@@ -275,7 +299,7 @@ void fe_evt_finish_buffered(void)
    /* Keep queueing enabled until after the final marker has space. This also
     * avoids stderr fallback if the file could not be opened. */
    fe_evt_service();
-   fe_evt("evt_finish dropped=%u pending=%d", fe_evt_drops(), fe_evt_pending());
+   fe_evt("evt_finish dropped=%u cut=%u pending=%d", fe_evt_drops(), fe_evt_cuts(), fe_evt_pending());
    fe_evt_service();
    evt_wake = NULL;
    evt_buffered = 0;
@@ -324,7 +348,7 @@ static void emit(const char *prefix, const char *fmt, va_list ap)
    unsigned long long t0 = evt_clock ? evt_clock() : 0;
    unsigned pl = (unsigned)strlen(prefix);
    unsigned n;
-   int fn;
+   int fn, cut = 0;
 
    memcpy(line, prefix, pl);
    unsigned reserve = evt_timestamps ? 48 : 1;
@@ -332,11 +356,24 @@ static void emit(const char *prefix, const char *fmt, va_list ap)
    if (fn < 0)
       fn = 0;
    if ((unsigned)fn > sizeof(line) - pl - reserve - 1)
+   {
       fn = (int)(sizeof(line) - pl - reserve - 1);
+      line[pl + (unsigned)fn - 1] = '~';   /* the line is cut: it says so */
+      cut = 1;
+   }
    n = pl + (unsigned)fn;
    if (evt_timestamps)
       n += (unsigned)snprintf(line + n, sizeof(line) - n, " ts_us=%llu", t0);
    line[n++] = '\n';
+
+   /* One producer at a time (see evt_lock): a second one drops its line. */
+   if (__atomic_exchange_n(&evt_lock, 1, __ATOMIC_ACQUIRE))
+   {
+      __atomic_fetch_add(&evt_contend, 1u, __ATOMIC_RELAXED);
+      return;
+   }
+   evt_drop += __atomic_exchange_n(&evt_contend, 0u, __ATOMIC_RELAXED);
+   evt_cut += (unsigned)cut;
 
    if (evt_buffered)
    {
@@ -384,6 +421,7 @@ static void emit(const char *prefix, const char *fmt, va_list ap)
       if (d > evt_max_us)
          evt_max_us = d;
    }
+   __atomic_store_n(&evt_lock, 0, __ATOMIC_RELEASE);
 #endif
 }
 

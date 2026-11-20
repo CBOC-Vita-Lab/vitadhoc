@@ -12,8 +12,18 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#else
+#include <sched.h>
+#endif
 
 namespace pk {
+
+/* How many times a SpinLock gave the CPU up (all locks; for the tests).  A function-local static in an
+ * inline function: one counter for the program, and no .cpp file for the users of the header to link. */
+inline std::atomic<unsigned> &spin_wait_counter() { static std::atomic<unsigned> n(0); return n; }
+inline unsigned spin_waits() { return spin_wait_counter().load(std::memory_order_relaxed); }
 
 /* ---- checksums --------------------------------------------------------- */
 uint32_t crc32(uint32_t crc, const void *data, size_t n);   /* start with 0 */
@@ -94,9 +104,29 @@ bool recover_old(const std::string &path);
 class SpinLock {
 public:
 	SpinLock() { f_.clear(); }
-	void lock() { while (f_.test_and_set(std::memory_order_acquire)) {} }
+	/* A short spin (the holders only touch memory: a few hundred ns), then
+	 * give the CPU up.  A pure spin is a deadlock when the waiter outranks the
+	 * holder on the same core: the holder never runs.  The wait is
+	 * sceKernelDelayThread(1) on the Vita (a real sleep, so a lower-priority
+	 * holder gets the core; sched_yield is not used: it did not hand the core
+	 * to a lower thread and acted as a 1 ms sleep where it did), and
+	 * sched_yield on the Linux tests. */
+	void lock() {
+		for (unsigned spins = 0; f_.test_and_set(std::memory_order_acquire); ) {
+			if (++spins >= SPIN_LIMIT) { spin_wait(); spins = 0; }
+		}
+	}
 	void unlock() { f_.clear(std::memory_order_release); }
+	enum { SPIN_LIMIT = 200 };
 private:
+	static void spin_wait() {
+		spin_wait_counter().fetch_add(1, std::memory_order_relaxed);
+#ifdef __vita__
+		sceKernelDelayThread(1);
+#else
+		sched_yield();
+#endif
+	}
 	std::atomic_flag f_;
 	SpinLock(const SpinLock &);
 	SpinLock &operator=(const SpinLock &);

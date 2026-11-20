@@ -9,6 +9,8 @@ Input (a sparse checkout of https://github.com/libretro/libretro-database):
     cht/Nintendo - Game Boy Color/*.cht
     cht/Nintendo - Nintendo Entertainment System/*.cht      (1.4)
     cht/Bandai - WonderSwan/*.cht, cht/Bandai - WonderSwan Color/*.cht (1.4)
+    cht/Sega - Mega Drive - Genesis/*.cht, cht/Sega - Master System - Mark III/,
+    cht/Sega - Game Gear/, cht/Sega - SG-1000/                          (2.0)
     metadat/no-intro/<the same systems>.dat       (name <-> CRC-32 <-> serial)
 
 Output: cheats.db, read on the console by vita/cheatdb.c (the format is
@@ -27,6 +29,10 @@ What it does to the data:
     counting the reason (see the report).  A NES game's CRC is the No-Intro
     headerless one (the app hashes without the iNES header and trainer), a
     WonderSwan game's the whole file's;
+  * Sega codes (2.0) are decoded here (convert_md, convert_sms; the rules are
+    in tools/md-cheats/SPEC.md, kept with the test vectors): Game Genie and
+    Pro Action Replay lines become "ADDRESS:VALUE[:COMPARE]" parts, and what
+    cannot be represented is dropped and counted (see the report);
   * with --check (a binary built from vita/tools/cheatcheck.c, built
     automatically when a C compiler is on the path) every code is run
     through the console's own decoder: codes it can never run (not a code at
@@ -48,7 +54,8 @@ File format (all integers little-endian):
     56  u32 file size          60  u32 cheats in all
   game table, 16 bytes a game
         u32 block offset, u32 block size, u16 cheats, u8 system (0 GBA,
-        1 GB, 2 GBC, 3 NES, 4 WonderSwan, 5 WonderSwan Color), u8 0,
+        1 GB, 2 GBC, 3 NES, 4 WonderSwan, 5 WonderSwan Color, 6 Genesis /
+        Mega Drive, 7 Master System, 8 Game Gear, 9 SG-1000), u8 0,
         u32 CRC-32 of the block
   CRC index, 8 bytes an entry, sorted by CRC:      u32 crc, u32 game
   serial index, 8 bytes, sorted by the 4 bytes:    char[4], u32 game
@@ -58,7 +65,9 @@ File format (all integers little-endian):
         keys (NUL-terminated, in the key strings):
           <s>f<title>(<regions>)[r<rev>]    a full name
           <s>b<title>                       the title alone
-        <s> is A (GBA), G (GB and GBC), N (NES) or W (WonderSwan and Color);
+        <s> is A (GBA), G (GB and GBC), N (NES), W (WonderSwan and Color),
+        I (Genesis), J (Master System), K (Game Gear) or L (SG-1000) --
+        the game database's system letters for the last four (gamedb.h);
         <title> the lower-case letters and
         digits of the name before its first parenthesis; <regions> the
         region names, lower case, sorted, comma separated.
@@ -76,15 +85,21 @@ import tempfile
 import zlib
 from collections import Counter, defaultdict
 
-SYSTEMS = (  # directory, system id, key letter, extensions
+SYSTEMS = [  # directory, system id, key letter, extensions
     ("Nintendo - Game Boy Advance", 0, "A"),
     ("Nintendo - Game Boy", 1, "G"),
     ("Nintendo - Game Boy Color", 2, "G"),
     ("Nintendo - Nintendo Entertainment System", 3, "N"),
     ("Bandai - WonderSwan", 4, "W"),
     ("Bandai - WonderSwan Color", 5, "W"),
-)
-SYSTEM_NAMES = {0: "GBA", 1: "GB", 2: "GBC", 3: "NES", 4: "WS", 5: "WSC"}
+    ("Sega - Mega Drive - Genesis", 6, "I"),
+    ("Sega - Master System - Mark III", 7, "J"),
+    ("Sega - Game Gear", 8, "K"),
+    ("Sega - SG-1000", 9, "L"),
+]
+SYSTEM_NAMES = {0: "GBA", 1: "GB", 2: "GBC", 3: "NES", 4: "WS", 5: "WSC",
+                6: "MD", 7: "SMS", 8: "GG", 9: "SG"}
+SEGA_IDS = (6, 7, 8, 9)
 # The NES catalogue lists every cartridge twice: a headered .nes (its CRC
 # includes the 16-byte iNES header) and a headerless one.  The app hashes
 # without the header (gamedb_nes_crc_cancel), so only those CRCs are kept --
@@ -322,7 +337,156 @@ def convert_ws(code):
     return "+".join(out), None
 
 
+# ---- Sega codes (2.0) ---------------------------------------------------------
+# One part is "ADDRESS:VALUE[:COMPARE]", upper-case hex, parts joined by '+'.
+#   Genesis / Mega Drive   AAAAAA:VVVV, 24-bit address, 16-bit value (a RAM
+#                          code with 00 in the high byte is a byte store)
+#   Master System, Game Gear, SG-1000   AAAA:VV or AAAA:VV:CC, Z80 address
+# tools/md-cheats/SPEC.md says how the player applies them; the decoders follow
+# Genesis Plus GX (libretro/libretro.c decode_cheat) and are checked against
+# it by tools/md-cheats/check_gpgx.sh.
+
+MD_GG_CHARS = "ABCDEFGHJKLMNPRSTVWXYZ0123456789"      # ggvalidchars
+HEX = "0123456789ABCDEF"
+RAM_BASE = 0xFF0000       # Genesis work RAM; Z80 RAM is 0xC000 and up
+
+
+def md_gg_decode(code):
+    """A Mega Drive Game Genie code "XXXX-XXXX" -> (address, data): the
+    24-bit address and 16-bit word (decode_cheat's Game-Genie branch)."""
+    data = address = 0
+    chars = code.replace("-", "")
+    for i, ch in enumerate(chars):
+        n = MD_GG_CHARS.index(ch)
+        if i == 0:
+            data |= n << 3
+        elif i == 1:
+            data |= n >> 2
+            address |= (n & 3) << 14
+        elif i == 2:
+            address |= n << 9
+        elif i == 3:
+            address |= (n & 0xF) << 20 | (n >> 4) << 8
+        elif i == 4:
+            data |= (n & 1) << 12
+            address |= (n >> 1) << 16
+        elif i == 5:
+            data |= (n & 1) << 15 | (n >> 1) << 8
+        elif i == 6:
+            data |= (n >> 3) << 13
+            address |= (n & 7) << 5
+        else:
+            address |= n
+    return address, data
+
+
+def md_gg_encode(address, data):
+    """The inverse of md_gg_decode (used by the tests)."""
+    n = [0] * 8
+    n[0] = (data >> 3) & 0x1F
+    n[1] = ((data & 7) << 2) | ((address >> 14) & 3)
+    n[2] = (address >> 9) & 0x1F
+    n[3] = ((address >> 20) & 0xF) | (((address >> 8) & 1) << 4)
+    n[4] = ((data >> 12) & 1) | (((address >> 16) & 0xF) << 1)
+    n[5] = ((data >> 15) & 1) | (((data >> 8) & 0xF) << 1)
+    n[6] = (((data >> 13) & 3) << 3) | ((address >> 5) & 7)
+    n[7] = address & 0x1F
+    s = "".join(MD_GG_CHARS[x] for x in n)
+    return s[:4] + "-" + s[4:]
+
+
+def sms_gg_decode(code):
+    """A Master System / Game Gear Game Genie code "DDA-AAB" or "DDA-AAB-RRr"
+    -> (address, data, compare or None) (decode_cheat's Master branch)."""
+    c = code.replace("-", "")
+    data = int(c[0:2], 16)
+    address = int(c[2:5], 16) | ((int(c[5], 16) ^ 0xF) << 12)
+    ref = None
+    if len(c) == 9:
+        r = (int(c[6], 16) << 4) | int(c[8], 16)
+        r = ((r >> 2) | ((r & 3) << 6)) & 0xFF      # 2-bit right rotation
+        ref = r ^ 0xBA
+    return address, data, ref
+
+
+def sms_gg_encode(address, data, ref=None):
+    """The inverse of sms_gg_decode (used by the tests)."""
+    s = "%02X%03X%X" % (data, address & 0xFFF, ((address >> 12) & 0xF) ^ 0xF)
+    s = s[:3] + "-" + s[3:]
+    if ref is not None:
+        r = (ref ^ 0xBA) & 0xFF
+        r = ((r << 2) | (r >> 6)) & 0xFF            # undo the right rotation
+        s += "-%X%X%X" % (r >> 4, 0, r & 0xF)
+    return s
+
+
+def split_sega(code):
+    return [t for t in re.split(r"[+\s]+", code.strip().upper()) if t]
+
+
+def convert_md(code):
+    """A libretro Genesis code -> (parts joined by '+', None) or (None, why).
+    An entry is all or nothing."""
+    out = []
+    for u in split_sega(code):
+        if re.fullmatch(r"[A-Z0-9]{4}-[A-Z0-9]{4}", u) and set(u) - {"-"} <= set(MD_GG_CHARS):
+            address, data = md_gg_decode(u)
+            value = "%04X" % data
+        elif re.fullmatch(r"[0-9A-F]{6}:([0-9A-F]{2}|[0-9A-F]{4})", u):
+            address = int(u[:6], 16)
+            data = int(u[7:], 16)
+            value = "%04X" % data
+            if len(u) == 9 and address < RAM_BASE:
+                # "AAAAAA:VV" is a byte store: Genesis Plus GX would read it as
+                # VV00 (and ROM has no byte patch here): not a code (none such
+                # in the 2026-09 lists)
+                return None, "not a code"
+        elif re.search(r"[?*X]", u) and \
+                re.fullmatch(r"[0-9A-F?*X]{6}:[0-9A-F?*X]{2,4}", u):
+            return None, "placeholder"
+        else:
+            return None, "not a code"
+        if 0x400000 <= address < RAM_BASE:
+            return None, "unreachable address"
+        out.append("%06X:%s" % (address, value))
+    if not out:
+        return None, "not a code"
+    return "+".join(out), None
+
+
+def convert_sms(code):
+    """A libretro Master System / Game Gear / SG-1000 code -> (parts joined by
+    '+', None) or (None, why).  Game Genie (DDA-AAB, DDA-AAB-RRr), Pro Action
+    Replay (00AA-AAVV: the type byte is 00), Fusion RAM (AAAA:VV) and Fusion
+    ROM (RRAAAA:VV) are read; the rest is not a code."""
+    out = []
+    for u in split_sega(code):
+        if re.fullmatch(r"[0-9A-F]{3}-[0-9A-F]{3}(-[0-9A-F]{3})?", u):
+            address, data, ref = sms_gg_decode(u)
+        elif re.fullmatch(r"00[0-9A-F]{2}-[0-9A-F]{4}", u):
+            address, data, ref = int(u[2:4] + u[5:7], 16), int(u[7:], 16), None
+        elif re.fullmatch(r"[0-9A-F]{4}:[0-9A-F]{2}", u):
+            address, data, ref = int(u[:4], 16), int(u[5:], 16), None
+        elif re.fullmatch(r"[0-9A-F]{2}[0-9A-F]{4}:[0-9A-F]{2}", u):
+            address, data, ref = int(u[2:6], 16), int(u[7:], 16), int(u[:2], 16)
+        elif re.search(r"[?*X]", u) and re.fullmatch(
+                r"([0-9A-F?*X]{4}-[0-9A-F?*X]{4}|[0-9A-F?*X]{4}:[0-9A-F?*X]{2}|"
+                r"[0-9A-F?*X]{3}-[0-9A-F?*X]{3}(-[0-9A-F?*X]{3})?)", u):
+            return None, "placeholder"
+        else:
+            return None, "not a code"
+        out.append("%04X:%02X%s" % (address, data,
+                                    ":%02X" % ref if ref is not None else ""))
+    if not out:
+        return None, "not a code"
+    return "+".join(out), None
+
+
 def convert_other(sysid, code):
+    if sysid == 6:
+        return convert_md(code)
+    if sysid in SEGA_IDS:
+        return convert_sms(code)
     return convert_nes(code) if sysid == 3 else convert_ws(code)
 
 
@@ -374,7 +538,13 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--check", help="cheatcheck binary (default: build it)")
     ap.add_argument("--no-check", action="store_true")
+    ap.add_argument("--systems", default="",
+                    help="only these system ids, e.g. 0,1,2,3,4,5 (the 1.4 "
+                         "consoles: reproduces the 1.4 database byte for byte)")
     args = ap.parse_args()
+    if args.systems:
+        keep = {int(x) for x in args.systems.split(",")}
+        SYSTEMS[:] = [t for t in SYSTEMS if t[1] in keep]
     here = os.path.dirname(os.path.abspath(__file__))
 
     checker = None
@@ -464,7 +634,8 @@ def main():
     by_id = {g["id"]: g for g in groups.values()}
     outcome = {}     # (system, file, entry) -> what became of it
     RANK = {"duplicate": 0, "empty": 1, "too long": 1, "not a code": 2,
-            "xploder": 2, "placeholder": 2, "outside the RAM map": 2, "over the limit": 3,
+            "xploder": 2, "placeholder": 2, "outside the RAM map": 2,
+            "unreachable address": 2, "over the limit": 3,
             "unsupported type": 4,
             "encrypted, no master code": 4, "needs a value": 4, "usable": 5,
             "unchecked": 5}
@@ -580,7 +751,8 @@ def main():
     stats["games without a usable entry"] = len(games) - len(live)
     # the GBA, then GB and GBC, then (1.4) the NES and WonderSwan: the games of
     # the first three keep the numbers they had without the other two
-    live.sort(key=lambda g: (g["sysid"] > 2, g["sysid"] != 0,
+    # (2.0: the four Sega consoles come last, so nothing before them moves)
+    live.sort(key=lambda g: (g["sysid"] > 5, g["sysid"] > 2, g["sysid"] != 0,
                              g["name"].lower(), g["ids"]))
     for i, g in enumerate(live):
         g["index"] = i
@@ -676,7 +848,7 @@ def main():
                                      len(keys), dat_total))
     rep.append("games tied to at least one No-Intro release: %d of %d; GBA "
                "game codes that need the CRC to tell revisions apart: %d" %
-               (sum(stats["dat %d" % s] for s in range(6)), len(live),
+               (sum(stats["dat %d" % s] for s in range(10)), len(live),
                 sum(1 for s in serial_all.values() if len(s) > 1)))
     rep.append("CRC-32 shared by games of two consoles (left to the first): %d" %
                stats["CRC shared by two consoles"])
@@ -692,7 +864,7 @@ def main():
     rep.append("")
     rep.append("%-5s %7s %7s %8s %8s %8s %8s %8s" % (
         "", ".cht", "entries", "games", "cheats", "usable", "value?", "encr."))
-    sids = [sid for sid in range(6) if stats["files %d" % sid]]
+    sids = [sid for sid in range(10) if stats["files %d" % sid]]
     for sid in sids:
         rep.append("%-5s %7d %7d %8d %8d %8d %8d %8d" % (
             names[sid], stats["files %d" % sid], stats["entries %d" % sid],
@@ -706,8 +878,9 @@ def main():
                    "%d of %d" % (names[sid], stats["dat %d" % sid],
                                  stats["games %d" % sid]))
     rep.append("CRC-32 index entries by console: GBA %d, GB+GBC %d, NES %d, "
-               "WonderSwan+Color %d" % (ncrc["A"], ncrc["G"], ncrc["N"],
-                                        ncrc["W"]))
+               "WonderSwan+Color %d, Genesis %d, Master System %d, Game Gear "
+               "%d, SG-1000 %d" % (ncrc["A"], ncrc["G"], ncrc["N"], ncrc["W"],
+                                   ncrc["I"], ncrc["J"], ncrc["K"], ncrc["L"]))
     rep.append("")
     oc = Counter((src[0], what) for src, what in outcome.items())
     rep.append("every entry of the .cht files, once (it may be in several "
@@ -715,9 +888,9 @@ def main():
     cols = ("usable", "needs a value", "encrypted, no master code",
             "unsupported type", "xploder", "not a code", "empty",
             "duplicate", "over the limit", "too long", "placeholder",
-            "outside the RAM map")
+            "outside the RAM map", "unreachable address")
     heads = ("usable", "value?", "encr.", "type", "xploder", "garbage",
-             "empty", "dup.", ">1000", "long", "no-val", "no-RAM")
+             "empty", "dup.", ">1000", "long", "no-val", "no-RAM", "no-addr")
     rep.append("%-5s %7s  %s" % ("", "entries", "  ".join(heads)))
     for sid in sids:
         rep.append("%-5s %7d  %s" % (
@@ -749,6 +922,12 @@ def main():
     rep.append("shipped whole or not at all.  PAR codes rewritten as AAAA:VV "
                "pokes (NES): %d (counted per game)." %
                stats["PAR codes rewritten as pokes"])
+    rep.append("Sega (Genesis, Master System, Game Gear, SG-1000): Game Genie and Pro "
+               "Action Replay lines are")
+    rep.append("decoded to ADDRESS:VALUE[:COMPARE] parts (all usable); garbage here "
+               "is a line that is no code")
+    rep.append("the core reads, and no-addr a Genesis address that is neither "
+               "cartridge (below 4 MiB) nor work RAM.")
     rep.append("")
     rep.append("titles whose every entry was left out (no list shipped): %d" %
                stats["games without a usable entry"])

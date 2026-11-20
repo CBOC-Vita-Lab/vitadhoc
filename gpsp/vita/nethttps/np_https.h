@@ -133,7 +133,7 @@ int np_https_clock_ok(void);
 void np_https_set_log(void (*sink)(const char* line));
 void np_https_set_user_agent(const char* ua);
 
-// "mbedtls 3.6.7" (the TLS backend compiled in) or "none".
+// "mbedtls 3.6.8" (the TLS backend compiled in) or "none".
 const char* np_https_backend_name(void);
 // The console clock in UTC and the earliest time this build accepts, for the log: "2026-10-30 12:00:00Z (accepted from 2026-10-29 00:00:00Z)".
 void np_https_clock_text(char* out, size_t cap);

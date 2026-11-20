@@ -25,6 +25,7 @@ typedef enum
    UI_ACT_RESUME,          /* close the menu */
    UI_ACT_SAVESTATE,
    UI_ACT_LOADSTATE,
+   UI_ACT_UNDOLOAD,      /* Save states > Undo: back to before the last load */
    UI_ACT_NET_HOST,        /* host on ui_group() */
    UI_ACT_NET_JOIN,        /* join ui_group() */
    UI_ACT_NET_DISCONNECT,

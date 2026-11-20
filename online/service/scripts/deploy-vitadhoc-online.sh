@@ -15,6 +15,9 @@
 #   --self-check           check that no wrangler call exists outside the wr() function, then exit
 #   --verify-only          deploy nothing, set no secret: run the live checks against https://vitadhoc.psvita.dev
 #   --skip-tests           do not run the local test suite first (it contacts nothing)
+#   --allow-existing-dns   the FIRST deploy of the Worker is refused when the name vitadhoc.psvita.dev already resolves: a Worker custom
+#                          domain publish can take over (overwrite) an existing DNS record of that name without asking. Pass this only after
+#                          looking at the zone's DNS records and deciding that the record may be replaced.
 #   --log-dir DIR          where every reply is kept (default deploy-logs/<UTC time>)
 #
 # NOT DONE BY THIS SCRIPT: the zone's security rule (scripts/setup-vitadhoc-zone.sh does it). The shared rate-limiting rule of psvita.dev
@@ -46,6 +49,7 @@ WR_URLS=""
 WR_HOSTS=""
 VERIFY_ONLY=0
 SKIP_TESTS=0
+ALLOW_DNS=0
 KEYID_FILE=""
 TURNTOK_FILE=""
 LOG_DIR=""
@@ -62,6 +66,7 @@ while [ $# -gt 0 ]; do
     --self-check) SELF_CHECK=1; shift ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     --skip-tests) SKIP_TESTS=1; shift ;;
+    --allow-existing-dns) ALLOW_DNS=1; shift ;;
     --log-dir) LOG_DIR=${2:-}; shift 2 ;;
     -h|--help) awk 'NR>1 { if ($0 ~ /^set -/) exit; print }' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -190,6 +195,9 @@ if [ $PRINT_PLAN -eq 1 ]; then
   wr whoami whoami
   if [ $VERIFY_ONLY -eq 0 ]; then
     [ $SKIP_TESTS -eq 0 ] && echo "2. local suite: node --test \"test/*.test.mjs\"   (contacts nothing)"
+    echo "2b. DNS guard: if the Worker is not deployed yet (wrangler deployments list fails) and $HOSTNAME_OK already resolves, stop before the dry run"
+    echo "    (a custom-domain publish can overwrite an existing DNS record silently); --allow-existing-dns overrides after the owner has looked"
+    wr deployments deployments list
     echo "3. dry run; wrangler must report no workers.dev address and no psvita.dev name but $HOSTNAME_OK, else stop before the deploy:"
     wr dry-run deploy --dry-run --outdir "<log-dir>/bundle"
     echo "4. the deploy; the addresses it reports must be as above and include the custom domain $HOSTNAME_OK, else stop at once:"
@@ -239,7 +247,28 @@ if [ $SKIP_TESTS -eq 0 ] && [ $VERIFY_ONLY -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------- 2. deploy
+# A Worker custom-domain publish creates the DNS record of the hostname and, if one of that name exists already, may take it over without asking.
+# A Worker that is already deployed owns its record (a re-deploy); for the FIRST deploy the name must not resolve yet. getent / host / dig
+# answer; with none of them the guard cannot look and says so.
+dns_resolves() { # 0 = resolves, 1 = does not, 2 = cannot tell
+  if command -v getent >/dev/null; then getent hosts "$HOSTNAME_OK" >/dev/null 2>&1 && return 0 || return 1; fi
+  if command -v dig >/dev/null; then [ -n "$(dig +short "$HOSTNAME_OK" 2>/dev/null)" ] && return 0 || return 1; fi
+  if command -v host >/dev/null; then host "$HOSTNAME_OK" >/dev/null 2>&1 && return 0 || return 1; fi
+  return 2
+}
+dns_guard() {
+  local rc=0
+  if wr deployments deployments list; then note "DNS guard: the Worker is already deployed, so $HOSTNAME_OK is its own record"; return 0; fi
+  dns_resolves || rc=$?
+  case $rc in
+    0) if [ $ALLOW_DNS -eq 1 ]; then note "DNS guard: $HOSTNAME_OK already resolves; --allow-existing-dns given: the deploy may replace that record"; return 0; fi
+       die "first deploy, but $HOSTNAME_OK already resolves: a custom-domain publish could overwrite that DNS record. Nothing was deployed. Look at the zone's DNS records for the name vitadhoc; remove it, or pass --allow-existing-dns" ;;
+    1) note "DNS guard: first deploy and $HOSTNAME_OK does not resolve yet: the deploy will create it" ;;
+    *) note "DNS guard: cannot look ($HOSTNAME_OK: no getent, dig or host here). Check the zone's DNS records for the name vitadhoc by hand before going on" ;;
+  esac
+}
 if [ $VERIFY_ONLY -eq 0 ]; then
+  dns_guard
   wr dry-run deploy --dry-run --outdir "$LOG_DIR/bundle" || die "the bundle does not build: nothing deployed"
   check_urls dry
   wr deploy deploy || die "wrangler deploy failed (see the log above); check with --verify-only before trying again"

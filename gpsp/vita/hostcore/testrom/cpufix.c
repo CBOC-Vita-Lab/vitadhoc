@@ -5,7 +5,7 @@
  *   0x00..0x05  "CPUFIX"
  *   0x06        number of tests
  *   0x08 + n    test n: 1 = passed, 2 = failed, 0 = never reached
- *   0x20 + 4n   test n: the value it saw (little endian), for the log
+ *   0x40 + 4n   test n: the value it saw (little endian), for the log
  *
  * The backdrop turns green when everything passed, red otherwise.
  *
@@ -55,6 +55,14 @@
  *     mirror's: one translation, canonical (The Morrow's Golden Country)
  * 28  ...and the same in EWRAM (mirror +0x40000)
  *
+ * 29  STM with R15 in the list stores the STM's address + 12 (ARM7TDMI;
+ *     Rock 'N Roll Racing calls through "stmfd sp!, {pc}; bx r7"), in ROM
+ *     (dynarec)
+ * 30  ...and in VRAM (interpreter): interpreter == dynarec
+ * 31  a serial port with no cable reads as unplugged: in multiplayer mode SIOCNT
+ *     shows SI and SD high (a child, ID 0) and its start bit does nothing
+ *     (Activision Anthology's MultiBoot probe)
+ *
  * "SRAM_V113" below makes the emulator give the cartridge battery SRAM. */
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -66,7 +74,7 @@ typedef volatile u32 vu32;
 
 #define REG(a) (*(vu16 *)(0x04000000 + (a)))
 #define SRAM ((vu8 *)0x0E000000)
-#define NTESTS 29
+#define NTESTS 32
 #ifndef VENEER_ITERS
 #define VENEER_ITERS 50
 #endif
@@ -83,7 +91,7 @@ static void result(int n, int ok, u32 seen)
    int k;
    SRAM[0x08 + n] = ok ? 1 : 2;
    for (k = 0; k < 4; k++)
-      SRAM[0x20 + 4 * n + k] = (u8)(seen >> (8 * k));
+      SRAM[0x40 + 4 * n + k] = (u8)(seen >> (8 * k));
 }
 
 typedef u32 (*fn_t)(u32);
@@ -385,6 +393,23 @@ __asm__(
    "  .global mirror_probe_end\n"
    "mirror_probe_end:\n"
    "  .align 2\n"
+   /* STM with R15: r0 = a two-word buffer.  stm_probe (offset 0) returns the
+    * R15 word of "stmia r0, {r1, pc}"; the routine at offset 12 returns the
+    * one of "stmfd sp!, {pc}".  Position independent, so it runs from ROM
+    * (dynarec) and from a copy in VRAM (interpreter). */
+   "  .global stm_probe\n"
+   "stm_probe:\n"
+   "  stmia r0, {r1, pc}\n"
+   "  ldr r0, [r0, #4]\n"
+   "  bx lr\n"
+   "  mov r2, sp\n"
+   "  stmfd sp!, {pc}\n"
+   "  ldr r0, [sp]\n"
+   "  mov sp, r2\n"
+   "  bx lr\n"
+   "  .global stm_probe_end\n"
+   "stm_probe_end:\n"
+   "  .align 2\n"
    /* FIQ: r0 = 0 when everything held, else the number of the failed check.
     * Interrupts stay masked throughout (I and F set in every mode). */
    "  .global fiq_test\n  .type fiq_test, %function\n"
@@ -474,6 +499,7 @@ __asm__(
 extern u32 bx_veneer[], bx_veneer_end[], cond_run[], cond_run_end[];
 extern u32 nv_slots[], nv_slots_end[];
 extern u32 mirror_probe[], mirror_probe_end[];
+extern u32 stm_probe[], stm_probe_end[];
 extern u32 fiq_test(void), ldm_spsr(void), msr_flags(void);
 u32 ldm_buf[4];
 
@@ -812,6 +838,36 @@ int main(void)
    v1 = ((fn_t)(home + 0x40000))(0);
    v = ((fn_t)home)(0);
    result(28, v == home + 8, v);
+   }
+
+   if (RUN_MASK & (1u << 29)) {
+   /* 29, 30: STM {.., pc} stores the instruction's address + 12, from ROM
+    * and from VRAM, 100 runs each (the translated routine too). */
+   static u32 buf[2];
+   u32 k, base, w1 = 0, w2 = 0;
+   for (k = 0; k < 2; k++) {
+      base = k ? to_iwram(stm_probe, stm_probe_end, 0x06008300, 0) : (u32)stm_probe;
+      for (a = 1, i = 0; i < 100; i++) {
+         w1 = ((fn_t)base)((u32)buf);
+         w2 = ((fn_t)(base + 12))((u32)buf);
+         a &= (w1 == base + 12) && (w2 == base + 28);
+      }
+      result(29 + k, a == 1, a ? 0 : (w1 - base) | ((w2 - base) << 16));
+   }
+   }
+
+   if (RUN_MASK & (1u << 31)) {
+   /* 31: multiplayer mode, nothing plugged in (the emulator's default
+    * serial mode): SIOCNT bits 2 (SI) and 3 (SD) high, ID (4-5) 0, and a
+    * written start bit (7) is not kept. */
+   u32 v1, v2;
+   REG(0x134) = 0x0000;                        /* RCNT: serial, not GPIO */
+   REG(0x128) = 0x2003;                        /* multiplayer, 115200 baud */
+   v1 = REG(0x128);
+   REG(0x128) = 0x2083;                        /* start */
+   v2 = REG(0x128);
+   result(31, (v1 & 0x3C) == 0x0C && !(v2 & 0x80), (v2 << 16) | (v1 & 0xFFFF));
+   REG(0x128) = 0x0000;
    }
 
    for (i = 0; i < NTESTS; i++)

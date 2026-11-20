@@ -135,6 +135,7 @@ static unsigned tch_hint_button(const char *s, int len)
    static const struct { const char *word; unsigned btn; } w[] = {
       { "START", PSP_CTRL_START }, { "SELECT", PSP_CTRL_SELECT },
       { "L/R", PSP_CTRL_RTRIGGER }, { "Left", PSP_CTRL_LEFT },
+      { "L", PSP_CTRL_LTRIGGER }, { "R", PSP_CTRL_RTRIGGER },
    };
    unsigned i;
    if (len <= 0)

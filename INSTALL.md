@@ -39,7 +39,7 @@ The checker verifies listed bytes; it does not test game compatibility.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then close it.
 3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use a folder you already
    have (below).
-4. Start VitAdhoc again. Triangle switches between GBA, GB, GBC, SNES and NES; Cross plays.
+4. Start VitAdhoc again. Triangle opens the console list (GBA, GB, GBC, SNES, NES, WonderSwan) and moves along it; Cross plays.
 
 ### Transfer With VitaShell
 
@@ -339,7 +339,7 @@ off in Settings > Interface > Game previews.
 
 | Problem | Try |
 | --- | --- |
-| No games listed | Check the console tab (Triangle) and the file extension, then restart the app. |
+| No games listed | Check the console in the top bar (Triangle opens the list, which shows how many games each console found) and the file extension, then restart the app. |
 | A save seems missing | Look next to the game's file, in case it was moved or renamed. A Game Boy save is `Game.gb.sav`, a Color one `Game.gbc.sav`. To bring one from another emulator, see above. |
 | A game fails with the built-in BIOS | Put your own BIOS dump at `ux0:data/GBAdhoc/gba_bios.bin`. |
 | The picture is slow or odd | Settings > Display: Image quality Original, and leave GPU xBRZ off. See the [performance report](docs/PERFORMANCE.md) for measured settings, not a universal speed promise. |

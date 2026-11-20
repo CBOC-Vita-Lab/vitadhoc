@@ -1067,7 +1067,10 @@ inline cpu_alert_type exec_arm_block_mem(u32 rn, u32 reglist, s32 &cycles_remain
       if (mode == AccLoad) {
         load_aligned32(address, reg[i]);
       } else {
-        store_aligned32(address, (i == REG_PC) ? reg[REG_PC] + 4 : reg[i]);
+        /* STM stores R15 as the STM's address + 12 (ARM7TDMI; reg[REG_PC]
+         * is the address + 4 here), the same as STR (arm_access_memory) and
+         * as the x86 and ARM dynarec back ends already do. */
+        store_aligned32(address, (i == REG_PC) ? reg[REG_PC] + 8 : reg[i]);
       }
       address += 4;
     }
@@ -3690,6 +3693,14 @@ void init_cpu(void)
     reg[REG_PC] = 0x08000000;
     reg[REG_CPSR] = 0x0000001F;   // system mode
     reg[CPU_MODE] = MODE_SYSTEM;
+    /* Start on the scanline where the BIOS hands over to the cartridge, not
+     * on line 0: 0x7E, as mGBA's GBAVideoSkipBIOS (a real BIOS run reaches
+     * 0x08000000 on line 127).  From line 0 the first VBlank came ~126 lines
+     * early: Polarium Advance enables its VBlank IRQ and only then copies its
+     * sound driver into IWRAM, so the early VBlank ran the driver first, called
+     * zeroed IWRAM and the game derailed in its first frames.  init_memory has
+     * just cleared the I/O block: reset_gba runs it before init_cpu. */
+    write_ioreg(REG_VCOUNT, 0x7E);
   } else {
     reg[REG_SP] = 0x03007F00;
     reg[REG_PC] = 0x00000000;

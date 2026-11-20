@@ -203,3 +203,13 @@ The vendored loop stored both bytes of the word at the even address
 (`get_sram()+i*2` twice): every word read back as its low byte twice.  The
 second store is now `+i*2+1`, as the single-word write (WRITE) already did.
 
+## Game Boy colours (2.0)
+
+`_cgb_dmg_pal.h` (new) is the Game Boy Color's per-game palette data (51
+combinations, title-sum table, 12 button palettes) and the 32 Super Game Boy
+system palettes; its sources and licences are in `notices/THIRD-PARTY.md`.
+`tgb_shared.c` holds the tables and the lookups (`tgbshared_cgbpal_auto`,
+`_manual`, `_colors`, `tgbshared_sgbpal_colors`). `tgb_port.h` declares
+`tgb_dmg_is_cgb`. `lcd.c`: a DMG game's palette entries go through the GBC LCD
+model (`cgb_lcd_color`) when that flag is set (a GBC palette is chosen), so
+they look as a Game Boy Color showed them; otherwise unchanged.

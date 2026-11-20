@@ -1,11 +1,11 @@
-cheats.db: 3835304 bytes, 4228 games, 88835 cheats
-index: 4613 CRC-32, 808 GBA game codes, 8369 names; No-Intro entries read: 23092
-games tied to at least one No-Intro release: 3537 of 4228; GBA game codes that need the CRC to tell revisions apart: 0
+cheats.db: 6850549 bytes, 7005 games, 152937 cheats
+index: 6896 CRC-32, 808 GBA game codes, 13197 names; No-Intro entries read: 28747
+games tied to at least one No-Intro release: 5565 of 7005; GBA game codes that need the CRC to tell revisions apart: 0
 CRC-32 shared by games of two consoles (left to the first): 0
 a game here is one distinct list: the .cht files of a title that fit a release's
 region and revision, merged (so a file can serve several games, and the per-system
 cheat counts below count such a file's entries once per game).
-largest list: 1000 cheats (Pokemon - Gelbe Edition - Special Pikachu Edition (Germany) (CGB+SGB Enhanced))
+largest list: 1000 cheats (Shadow Dancer - The Secret of Shinobi (World))
 largest block: 51988 bytes
 
          .cht entries    games   cheats   usable   value?    encr.
@@ -15,15 +15,35 @@ GBC       960   26864      709    10603    10101      502        0
 NES      2262   44508     2037    56916    56916        0        0
 WS          6      17        1        1        1        0        0
 WSC         9      15        0        0        0        0        0
+MD       2094   38546     1586    50723    50723        0        0
+SMS       724    4749      621     6016     6016        0        0
+GG        818    7284      544     7294     7294        0        0
+SG         26      70       26       69       69        0        0
+
+GBA   games tied to a No-Intro release (CRC-32 lookup): 496 of 511
+GB    games tied to a No-Intro release (CRC-32 lookup): 815 of 970
+GBC   games tied to a No-Intro release (CRC-32 lookup): 582 of 709
+NES   games tied to a No-Intro release (CRC-32 lookup): 1643 of 2037
+WS    games tied to a No-Intro release (CRC-32 lookup): 1 of 1
+WSC   games tied to a No-Intro release (CRC-32 lookup): 0 of 0
+MD    games tied to a No-Intro release (CRC-32 lookup): 1226 of 1586
+SMS   games tied to a No-Intro release (CRC-32 lookup): 376 of 621
+GG    games tied to a No-Intro release (CRC-32 lookup): 400 of 544
+SG    games tied to a No-Intro release (CRC-32 lookup): 26 of 26
+CRC-32 index entries by console: GBA 955, GB+GBC 1578, NES 2079, WonderSwan+Color 1, Genesis 1426, Master System 392, Game Gear 421, SG-1000 44
 
 every entry of the .cht files, once (it may be in several games' lists):
-      entries  usable  value?  encr.  type  xploder  garbage  empty  dup.  >1000  long  no-val  no-RAM
-GBA      7017    6473     157    193     0        0       28      2   164      0     0       0       0
-GB      17516   12506     245      0     0      258       21    667  2057   1762     0       0       0
-GBC     26864    7387     242      0     0      505       11  17590  1129      0     0       0       0
-NES     44508   37917       0      0     0        0       62    821  5426    255     0      27       0
-WS         17       1       0      0     0        0        0      0     0      0     0       0      16
-WSC        15       0       0      0     0        0        0      0     0      0     0       0      15
+      entries  usable  value?  encr.  type  xploder  garbage  empty  dup.  >1000  long  no-val  no-RAM  no-addr
+GBA      7017    6473     157    193     0        0       28      2   164      0     0       0       0        0
+GB      17516   12506     245      0     0      258       21    667  2057   1762     0       0       0        0
+GBC     26864    7387     242      0     0      505       11  17590  1129      0     0       0       0        0
+NES     44508   37917       0      0     0        0       62    821  5426    255     0      27       0        0
+WS         17       1       0      0     0        0        0      0     0      0     0       0      16        0
+WSC        15       0       0      0     0        0        0      0     0      0     0       0      15        0
+MD      38546   34309       0      0     0        0      223    994  2157     87     0     762       0       14
+SMS      4749    3569       0      0     0        0        3     70   923      0     0     184       0        0
+GG       7284    5575       0      0     0        0        9     10  1581      0     0     109       0        0
+SG         70      69       0      0     0        0        0      1     0      0     0       0       0        0
 
 usable: the console's decoder runs it.  value?: the code has ?? / XX where the
 player chooses a value (shipped, greyed).  encr.: CodeBreaker lines encrypted with a
@@ -36,5 +56,8 @@ files have 2575 and 1194 entries; a list holds 1000).  NES and WonderSwan only: 
 poke outside the RetroAchievements map -- the libretro files' 7-digit codes are ROM
 patches, which the engine does not have: not shipped).  An entry of several parts is
 shipped whole or not at all.  PAR codes rewritten as AAAA:VV pokes (NES): 182 (counted per game).
+Sega (Genesis, Master System, Game Gear, SG-1000): Game Genie and Pro Action Replay lines are
+decoded to ADDRESS:VALUE[:COMPARE] parts (all usable); garbage here is a line that is no code
+the core reads, and no-addr a Genesis address that is neither cartridge (below 4 MiB) nor work RAM.
 
-titles whose every entry was left out (no list shipped): 135
+titles whose every entry was left out (no list shipped): 193

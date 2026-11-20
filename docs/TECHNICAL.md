@@ -1354,7 +1354,7 @@ host-scoped WAF rule blocks every other path on the host.
 **HTTPS client.** Not `ra_http`/`sceSsl`: Cloudflare's free-plan edge
 certificates are ECDSA and `sceSsl` gives no control over the TLS version or
 the ciphers. The project's own client (vendored from Galaxy and Strikers) uses
-Mbed TLS 3.6.7 (TLS 1.2 and 1.3, certificate verification always on, no switch to
+Mbed TLS 3.6.8 (TLS 1.2 and 1.3, certificate verification always on, no switch to
 turn it off), eight compiled-in roots (Google Trust Services R1 and R4, ISRG X1
 and X2, four SSL.com), its own worker thread, per-stage time limits and
 answers of at most 64 KiB. A console clock earlier than the build's floor is
@@ -1446,3 +1446,56 @@ routers and phone hotspots behave (the share that needs the relay), Cloudflare's
 TURN details (including whether a relayed session survives its credential's
 hour), and whether the input-delay cap of 12 and the 80/120 ms limits suit real
 paths.
+
+## Version 2.0: Fixes From GBAdhoc 5.0.0-beta.6, And Mbed TLS 3.6.8
+
+Taken from the public GBAdhoc repository (the author of our GPL permission),
+each diffed against this tree first: our core has moved on, so none was pasted.
+Source commit ids are in [Source Record](SOURCE.md).
+
+- **No backup chip** (`4d94b62`). New `BACKUP_NONE` and a table flag
+  `FLAGS_NO_BACKUP` (`gba_over.h`; the table's `flags` is now 32 bits, the 16
+  were used up). `read_backup` reads 0xFF, `write_backup` and `write_eeprom`
+  ignore writes, so the cart is never turned into EEPROM or flash by a probe;
+  savestates accept the new value (`memory_check_savestate`). One row: Top Gun -
+  Combat Zones (`A2YE`), whose copy check passes only when all three of its
+  SRAM and flash probes find nothing. A player's save-type choice (Settings > This
+  game) still wins. Test: `tools/tests/test_rtc_save_type.c`
+  (`test_no_backup`), and the savestate preflight test's out-of-range value is now
+  `BACKUP_NONE + 1`.
+- **Direct boot on scanline 126** (`8db021f`): with the BIOS skipped, `init_cpu`
+  writes VCOUNT = 0x7E, as mGBA's skip-BIOS start (a real BIOS run reaches the
+  cartridge on line 127). Every direct-booted game's first-frame timing moves by 126
+  lines, so boot-time hashes change and only those.
+- **STM with R15** (`6eb61d6`): the interpreter stored the instruction address + 8; it
+  is + 12 (ARM7TDMI), like STR. The x86 and ARM dynarec back ends already stored
+  + 12 (`arm_block_memory_final_store`). Test: `testrom/cpufix.c` 29 (ROM, dynarec)
+  and 30 (VRAM, interpreter), `stmia {r1, pc}` and `stmfd sp!, {pc}`, so the two
+  must agree.
+- **Open BIOS sound driver** (`abcd4ed`): SWI 19h, 1Ah, 1Bh, 1Ch, 1Dh, 1Eh, 28h and
+  29h were `swi_Invalid` (a bare return; `swi_SoundDriverMain` in
+  `softwareinterrupts.c` was never in the table). `bios/source/sound_driver.c` is
+  the direct-sound driver; the image is `patch_unaligned_decomp.py` then
+  `splice_sound_driver.sh`, with the driver at 0x2880 after our decompression stubs
+  (upstream used 0x2800, which those occupy). The music player (20h-24h) and the
+  sequencer jump table are still empty returns. Test: `testrom/biossound.c` (a
+  cartridge that calls 1Ah, 1Bh, 1Dh, 1Ch and starts a voice) through `app_tests.py`
+  `biossound`: the WAV is a steady tone, the same twice.
+- **No cable on the serial port** (`8c7a93c`): multiplayer mode with no cable device
+  (AUTO, DISABLED, GBP, RFU) reads SI = SD = 1, ID 0 (a child) and its start bit does
+  nothing, instead of a cabled parent whose transfers complete with stale
+  SIOMULTI. The netplay modes (POKE, AW1, AW2) and the link-cable session are
+  unchanged. Test: `testrom/cpufix.c` 31.
+- **Not taken:** `8c1b1e0` (a client's scheduled ticks keep it on the host roster)
+  and the two netdrv commits after it. They fix the Wireless Adapter's scheduled
+  ticks (`RFU_SCHED`, `rfu_sched`), which this tree does not have: the host
+  already refreshes `clttl` on a client's keepalive ACK, and nothing in `rfu.c`
+  stops that keepalive. `aeb96a6` (GB palettes) is another change.
+
+Mbed TLS moves from 3.6.7 to 3.6.8 (commit `82e69999`). It carries the TLS 1.3
+transform clean-up that was our one local patch (`afa648aa` is an ancestor of the
+tag), so the patch, its overlay and the lock's patch entry are gone and
+`build-mbedtls.py` builds the pinned checkout as it is (a lock entry that names a
+patch is refused). 3.6.8 also rejects a TLS 1.3 version in a TLS 1.2 ServerHello's
+legacy version field, which our client profile (TLS 1.2 and 1.3, client only) is
+exposed to.

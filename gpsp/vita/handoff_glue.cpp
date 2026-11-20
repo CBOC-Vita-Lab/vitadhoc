@@ -94,8 +94,11 @@ size_t g_extra;            /* the host's bytes, at the start of each buffer */
 int g_running, g_threaded, g_enabled = 1;
 pk::HandoffFrame *g_staged;
 volatile unsigned g_guard_waits;
-uint64_t g_draw_sum;          /* the drawing side's work, in total */
+uint64_t g_draw_sum;          /* the drawing side's WORK, in total (the present's wait is not in it) */
 uint32_t g_draw_n;
+uint64_t g_swap_sum;          /* the time the present waited, in total (display queue full: not load) */
+uint32_t g_swap_n;
+uint32_t g_swap_cur;          /* the present wait of the picture being drawn (one drawer at a time) */
 char g_where[48] = "off";
 #ifdef __vita__
 SceUID g_thid = -1;
@@ -109,6 +112,7 @@ unsigned g_slow_us;
 void draw_one(pk::HandoffFrame *f)
 {
    const uint64_t t0 = g_sys->now_us();
+   __atomic_store_n(&g_swap_cur, 0u, __ATOMIC_RELAXED);
    g_draw((const uint16_t *)(f->data + g_extra), (unsigned)f->w, (unsigned)f->h,
           (size_t)f->pitch, f->seq, f->user, g_extra ? f->data : NULL);
 #ifndef __vita__
@@ -121,9 +125,18 @@ void draw_one(pk::HandoffFrame *f)
    const uint64_t dt = g_sys->now_us() - t0;
    const uint32_t d = dt > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)dt;
 #endif
-   __atomic_add_fetch(&g_draw_sum, (uint64_t)d, __ATOMIC_RELAXED);
+   /* The draw callback reports how long vid_swap() waited (ho_note_present_wait):
+    * the wait for the flip queue is the display being busy, not the work of
+    * drawing.  Fed to Steady pacing and the look governor it read as load, and
+    * a console whose queue was merely full looked too slow to keep its picture.
+    * Both numbers are kept and logged; only the work is the cost. */
+   const uint32_t swap = __atomic_load_n(&g_swap_cur, __ATOMIC_RELAXED);
+   const uint32_t work = d > swap ? d - swap : 0u;
+   __atomic_add_fetch(&g_swap_sum, (uint64_t)swap, __ATOMIC_RELAXED);
+   __atomic_add_fetch(&g_swap_n, 1u, __ATOMIC_RELAXED);
+   __atomic_add_fetch(&g_draw_sum, (uint64_t)work, __ATOMIC_RELAXED);
    __atomic_add_fetch(&g_draw_n, 1u, __ATOMIC_RELAXED);
-   g_box->release(f, d);
+   g_box->release(f, work);
 }
 
 #ifdef __vita__
@@ -380,6 +393,17 @@ extern "C" unsigned ho_guard_waits(void) { return g_guard_waits; }
 extern "C" uint32_t ho_shown_total(void)
 {
    return g_running ? g_box->census().shown : 0;
+}
+
+extern "C" void ho_note_present_wait(uint32_t us)
+{
+   __atomic_store_n(&g_swap_cur, us, __ATOMIC_RELAXED);
+}
+
+extern "C" void ho_swap_stats(uint64_t *sum_us, uint32_t *n)
+{
+   *sum_us = __atomic_load_n(&g_swap_sum, __ATOMIC_RELAXED);
+   *n = __atomic_load_n(&g_swap_n, __ATOMIC_RELAXED);
 }
 
 extern "C" void ho_draw_stats(uint64_t *sum_us, uint32_t *n)

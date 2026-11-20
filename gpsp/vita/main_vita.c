@@ -103,6 +103,7 @@
 
 #include "plat.h"
 #include "cpuclock.h"
+#include "boot_guard.h"
 #include "fe_sensor.h"
 #include "play_log.h"
 #include "save_sync.h"
@@ -538,6 +539,8 @@ static unsigned long long evt_clock(void)
 /* snprintf that says when the result did not fit, so no path is ever used
  * truncated (a truncated save path is somebody else's save). */
 static int path_fmt(char *out, size_t cap, const char *fmt, ...)
+   __attribute__((format(printf, 3, 4)));
+static int path_fmt(char *out, size_t cap, const char *fmt, ...)
 {
    va_list ap;
    int n;
@@ -869,7 +872,22 @@ static int snes_launch_write(const char *game, const char *save,
       if (m < 0 || (size_t)m >= sizeof(text) - (size_t)n)
          return -1;
    }
+   if (boot_guard_is_safe_game(rom_path))
+   {
+      /* the crash-loop guard: this game closed the app twice; the player
+       * starts it with the safe picture (its own launch overrides) */
+      static const char safe[] = "ovr.wide_view=2\novr.steady_pacing=0\n"
+                                 "ovr.smooth_handoff=0\novr.quality=0\n"
+                                 "ovr.look_mode=2\n";
+      size_t len = strlen(text);
+      if (len + sizeof(safe) < sizeof(text))
+         memcpy(text + len, safe, sizeof(safe));
+      fe_evt("boot_guard player_safe game=%s", rom_path);
+   }
    n = snes_file_put(path, text);
+   if (n == 0 && !boot_guard_is_safe_game(rom_path))
+      boot_guard_player_begin(rom_path, BG_RISK_HANDOFF | BG_RISK_CORE4 |
+                              BG_RISK_WIDE | BG_RISK_QUALITY | BG_RISK_STEADY);
    fe_evt("snes_launch_file ok=%d session=%s start=%s slot=%d patch=%d "
           "retroarch_save=%d", n == 0,
           g_snes_session, slot == PSP_STATE_RESUME ? "continue"
@@ -975,6 +993,10 @@ static void snes_session_collect(void)
    }
    if (secs < 0)
       secs = 0;
+   /* the crash-loop guard: a report (any exit) settles the marker; with none
+    * the player died, when the app is back soon after the launch */
+   boot_guard_player_end(have_report,
+                         started && now > started ? (long)(now - started) : -1);
    play_name_of(rom, name, sizeof(name));
    if (secs)
    {
@@ -1059,10 +1081,30 @@ void app_ws_options(void)
 void app_nes_options(void)
 {
    /* (Auto gives way to the look governor's last rung: look_glue.h) */
-   nescore_set_wide(g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
+   nescore_set_wide(boot_guard_safe() ? NESCORE_WIDE_OFF
+                    : g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
                     : g_pcfg.nes_wide == 2 || look_rung(5) ? NESCORE_WIDE_OFF
                     : NESCORE_WIDE_AUTO);
    fe_evt("nes_options wide=%d", g_pcfg.nes_wide);
+}
+
+/* The crash-loop guard (boot_guard.h): which risky features are on for a
+ * game of `console` now. */
+static unsigned guard_risky(int console)
+{
+   unsigned r = 0;
+   if (g_sw.handoff >= 0 ? g_sw.handoff != 0 : g_pcfg.smooth_handoff)
+      r |= BG_RISK_HANDOFF;
+   if (strstr(core4_status(), "in use"))
+      r |= BG_RISK_CORE4;
+   if (console == FE_CONSOLE_NES ? g_pcfg.nes_wide != 2
+                                 : g_pcfg.wide != 0)
+      r |= BG_RISK_WIDE;
+   if (g_pcfg.quality != PCFG_QUALITY_ORIGINAL)
+      r |= BG_RISK_QUALITY;
+   if (g_pcfg.steady_pacing)
+      r |= BG_RISK_STEADY;
+   return r;
 }
 
 /* The ambient look in force: the row's, or still art where the look
@@ -1078,18 +1120,24 @@ static int app_ambient_mode(void)
 static int g_ho_want;              /* (defined with the hand-over below) */
 void app_handoff_options(void)
 {
+   boot_guard_release();              /* the row was changed: theirs again */
    g_ho_want = -1;
 }
 
 /* Steady pacing: the refresh it measures against, and on or off. */
+static int g_steady_at_boot;           /* the call is the game's start, not the row */
 void app_steady_options(void)
 {
    uint32_t budget = g_sw.pace_mode == PACE_VSYNC && plat_refresh_mhz()
                    ? (uint32_t)(1000000000ull / plat_refresh_mhz())
                    : (uint32_t)(g_frame_ns / 1000u);
+   if (!g_steady_at_boot)
+      boot_guard_release();            /* the row was changed: theirs again */
    steady_config(budget);
-   steady_enable(g_pcfg.steady_pacing);
-   fe_evt("steady_options on=%d budget_us=%u", g_pcfg.steady_pacing, (unsigned)budget);
+   steady_enable(g_pcfg.steady_pacing && !boot_guard_safe());
+   fe_evt("steady_options on=%d budget_us=%u safe=%d",
+          g_pcfg.steady_pacing && !boot_guard_safe(), (unsigned)budget,
+          boot_guard_safe());
 }
 
 /* The first time each layout shows in a session (the game turned the
@@ -3391,9 +3439,17 @@ static int state_save_slot(unsigned slot)
    uint64_t t0 = plat_time_us();
 
    if (psp_state_path_for_slot(path, sizeof(path), g_game.state_path,
-                               slot) != 0 ||
-       fe_host_state_save(path) != 0)
+                               slot) != 0)
       return -1;
+   if (fe_host_state_locked(path))
+   {
+      fe_evt("state_save slot=%u refused=locked", slot);
+      return -3;                   /* the slot's lock (Save states: L) */
+   }
+   if (fe_host_state_save(path) != 0)
+      return -1;
+   /* the slot's picture before this save goes with its .bak (Undo save) */
+   fe_host_state_keep_companions(path);
    if (preview_frame(&w, &h) == 0)
    {
       thumb_rc = state_thumb_write(path, w, h);
@@ -3422,14 +3478,57 @@ static int state_save_slot(unsigned slot)
 static int state_load_path(const char *path, const char *via);
 static void state_loaded(const char *path);
 
+/* UNDO LOAD: the moment before a state load is kept in a hidden file
+ * (Game.st0.undo, one per game), taken just before the load and put back by
+ * the Save states page's Undo.  Loads made as a game starts (Continue, the
+ * shelf) keep none: the "moment before" is a fresh boot. */
+static int state_undo_path(char *out, size_t cap)
+{
+   char p[PSP_FILE_PATH_CAP];
+   if (psp_state_path_for_slot(p, sizeof(p), g_game.state_path, 1) != 0)
+      return -1;
+   return snprintf(out, cap, "%s.undo", p) < (int)cap ? 0 : -1;
+}
+
+/* Taken to Game.st0.undo.new; the load that follows makes it the undo point
+ * (state_undo_commit) -- a load that fails leaves the old one alone. */
+static int state_undo_capture(const char *via)
+{
+   char u[PSP_FILE_PATH_CAP + 8], n[PSP_FILE_PATH_CAP + 12];
+   int rc;
+   if (state_undo_path(u, sizeof(u)) != 0)
+      return -1;
+   snprintf(n, sizeof(n), "%s.new", u);
+   rc = fe_host_state_save(n);
+   fe_evt("state_undo_capture via=%s rc=%d", via, rc);
+   return rc;
+}
+
+static void state_undo_commit(int captured, int loaded)
+{
+   char u[PSP_FILE_PATH_CAP + 8], n[PSP_FILE_PATH_CAP + 12];
+   if (!captured || state_undo_path(u, sizeof(u)) != 0)
+      return;
+   snprintf(n, sizeof(n), "%s.new", u);
+   if (!loaded)
+      remove(n);
+   else
+   {
+      remove(u);
+      if (rename(n, u) != 0)
+         remove(n);
+   }
+}
+
 static int state_load_slot(unsigned slot, const char *via)
 {
    char path[PSP_FILE_PATH_CAP];
-   int rc;
+   int rc, captured;
 
    if (psp_state_path_for_slot(path, sizeof(path), g_game.state_path,
                                slot) != 0)
       return -1;
+   captured = strcmp(via, "shelf") != 0 && state_undo_capture(via) == 0;
    {
       char alt[PSP_FILE_PATH_CAP];
       rc = fe_host_state_load(sidecar_read_path(path, g_game.legacy_state_path,
@@ -3437,6 +3536,7 @@ static int state_load_slot(unsigned slot, const char *via)
                                                 sizeof(alt)));
    }
    fe_evt("state_load slot=%u via=%s rc=%d", slot, via, rc);
+   state_undo_commit(captured, rc == 0);
    if (rc == 0)
       state_loaded(path);
    return rc;
@@ -3449,6 +3549,35 @@ static int state_load_path(const char *path, const char *via)
    fe_evt("state_load path=%s via=%s rc=%d", path, via, rc);
    if (rc == 0)
       state_loaded(path);
+   return rc;
+}
+
+/* Back to the moment before the last state load.  What is there now is kept
+ * in its place, so a second Undo goes forward again. */
+static int state_undo_load(void)
+{
+   char u[PSP_FILE_PATH_CAP + 8], t[PSP_FILE_PATH_CAP + 12];
+   FILE *f;
+   int rc;
+   if (state_undo_path(u, sizeof(u)) != 0 || (f = fopen(u, "rb")) == NULL)
+      return -1;
+   fclose(f);
+   snprintf(t, sizeof(t), "%s.now", u);
+   if (fe_host_state_save(t) != 0)       /* now, aside */
+      t[0] = '\0';
+   rc = fe_host_state_load(u);
+   fe_evt("state_undo_load rc=%d", rc);
+   if (rc == 0)
+   {
+      state_loaded(u);
+      if (t[0])
+      {
+         remove(u);
+         rename(t, u);
+      }
+   }
+   else if (t[0])
+      remove(t);
    return rc;
 }
 
@@ -3591,6 +3720,7 @@ static void power_service(void)
    if (e & PLAT_POWER_RESUME)
    {
       fe_evt("power resume game=%d", g_game_loaded);
+      (void)cpuclk_reapply();   /* the clocks may come back at their defaults */
       link_power(1);
       link_local_power(1);
       if (g_game_loaded)
@@ -3615,6 +3745,12 @@ static void modal_tick(void)
    plat_present_hook();
    power_service();
    cpuclk_tick();               /* the second clock measurement, 8 s in */
+   {
+      /* the app has been drawing its screens for 1.5 s: this start worked */
+      static unsigned guard_frames;
+      if (guard_frames < 90 && ++guard_frames == 90)
+         boot_guard_app_ready();
+   }
    ra_pump();                   /* the server's answers, in the menus too */
    if (plat_quit_requested())
       g_running = 0;
@@ -3780,6 +3916,7 @@ const char *ui_host_core4_status(void)
  * layout are decided once at start, so the new choice applies next start */
 void app_core4_options(void)
 {
+   boot_guard_release();              /* the row was changed: theirs again */
    fe_evt("core4_option off=%d applies=next_start", g_pcfg.core4_off);
 }
 
@@ -5086,6 +5223,11 @@ static int game_boot(const char *rom_path, fe_console_t console)
             gpath[0] = 0;
       }
       pcfg_game_begin(gpath, (int)console);
+      /* The crash-loop guard: the marker for this start; a game that closed
+       * the app twice in a row starts with the safe picture */
+      if (boot_guard_game_begin(rom_path, guard_risky((int)console)) &&
+          boot_guard_take_look())
+         pcfg_game_safe_look();
    }
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    ui_host_look_changed();
@@ -5314,7 +5456,9 @@ static int game_boot(const char *rom_path, fe_console_t console)
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
 
+   g_steady_at_boot = 1;
    app_steady_options();
+   g_steady_at_boot = 0;
    g_audio_ok = audio_start(fe_host_sample_rate(), pace_speed_x1e6()) == 0;
    fe_evt("audio on=%d in_rate=%u out_rate=%u grain=%u speed_x1e6=%u",
           g_audio_ok, fe_host_sample_rate(), AUDIO_OUT_RATE, AUDIO_GRAIN,
@@ -5366,6 +5510,7 @@ static void game_unload(int hold)
 {
    unsigned frames = fe_host_frame_count();
 
+   boot_guard_game_end();       /* a clean leave: the start worked */
    pcfg_game_end();             /* its own settings written, the console's back */
    sensor_game_end();
 
@@ -5443,7 +5588,18 @@ static void menu_action(ui_action act)
       int rc = link_locks_states() ? -1
              : state_save_slot((unsigned)ui_state_slot());
       if (!ui_state_save_done(rc))
-         osd_toast(rc == 0 ? "State saved" : "State save FAILED");
+         osd_toast(rc == 0 ? "State saved" : rc == -3 ? "Slot is locked"
+                                                      : "State save FAILED");
+      break;
+   }
+   case UI_ACT_UNDOLOAD:
+   {
+      int rc = link_locks_states() ? -1
+             : ra_hardcore_active() ? -2 : state_undo_load();
+      if (rc == -2)
+         fe_evt("hardcore_refused what=state_load via=undo");
+      if (!ui_state_load_done(rc))
+         osd_toast(rc == 0 ? "Load undone" : "Nothing to undo");
       break;
    }
    case UI_ACT_LOADSTATE:
@@ -5583,6 +5739,7 @@ static void ho_draw(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
       g_win.swap_sum += d;
       if (d > g_win.swap_max)
          g_win.swap_max = d;
+      ho_note_present_wait(d);   /* the cost handed to the pacer leaves this out */
    }
    (void)ts0;
 }
@@ -5960,12 +6117,14 @@ static void game_loop(void)
       session = link_session_up();
       if (g_quit != QUIT_NONE)
          break;                  /* app_quit_game from inside a link layer */
+      boot_guard_tick(plat_time_us());   /* 20 s of play: the start worked */
       {
          /* Smooth hand-over: as set (or vita.ini's override), never in a
           * link of either kind nor the bench pair (lockstepped machines
           * draw where they run) */
          const int want = (g_sw.handoff >= 0 ? g_sw.handoff != 0
                                              : g_pcfg.smooth_handoff) &&
+                          !boot_guard_safe() &&
                           !session && !local && !g_sw.link_bench &&
                           !link_owns_picture() && !g_ho_fell_back;
          if (ho_running() && want != g_ho_want)
@@ -6142,7 +6301,11 @@ static void game_loop(void)
          if (link_locks_states())
             toast_now("Cannot save a state during a link session");
          else
-            toast_now(state_save_slot(1) == 0 ? "State saved" : "Save failed");
+         {
+            int src = state_save_slot(1);
+            toast_now(src == 0 ? "State saved" : src == -3 ? "Slot 1 is locked"
+                                                           : "Save failed");
+         }
       }
       else if (fired & CTL_FIRE_LOAD)
       {
@@ -6406,8 +6569,16 @@ static void game_loop(void)
          char hl[320];
          ho_second_tick();
          if (ho_census_line(hl, sizeof(hl)))
-            fe_evt("%s guard_waits=%u vc_miss=%u vc_presents=%u", hl,
-                   ho_guard_waits(), g_vc_last_vm, g_vc_last_vp);
+         {
+            uint64_t dsum, ssum;
+            uint32_t dn, sn;
+            ho_draw_stats(&dsum, &dn);
+            ho_swap_stats(&ssum, &sn);
+            fe_evt("%s guard_waits=%u vc_miss=%u vc_presents=%u draw_work_us=%llu "
+                   "present_wait_us=%llu pictures=%u", hl, ho_guard_waits(),
+                   g_vc_last_vm, g_vc_last_vp, (unsigned long long)dsum,
+                   (unsigned long long)ssum, dn);
+         }
       }
       if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active())
       {
@@ -6490,6 +6661,7 @@ int main(int argc, char **argv)
    fe_evt("diag_session revision=6 history=3 file_limit=2097152 tracking=local");
    fe_evt("boot app=GBAdhoc version=%s platform=vita root=%s", GBADHOC_VERSION,
           g_app_root);
+   boot_guard_init(g_app_root);   /* settles what an earlier run left unfinished */
    /* vita.ini, read once: the switches, the extra folders and the link's
     * settings ask it for some fifty keys, each of which was an open, a scan
     * and a close of the file on the card. */
@@ -6535,7 +6707,7 @@ int main(int argc, char **argv)
       const int cfg_off = g_app_config[0] &&
                           fe_ini_get(g_app_config, "core4", c4, sizeof(c4)) &&
                           (c4[0] == 'o' || c4[0] == 'O' || c4[0] == '0');
-      core4_init(g_core4_off || cfg_off);
+      core4_init(g_core4_off || cfg_off || boot_guard_core4_off());
    }
    plat_thread_watch("main", 0);
    if (g_sw.main_cpu >= 0)
@@ -6566,6 +6738,11 @@ int main(int argc, char **argv)
    }
 
    pcfg_load(g_app_config);
+   if (boot_guard_take_app_revert())
+   {
+      pcfg_revert_risky();     /* closed twice before the list: safe picture */
+      fe_evt("boot_guard reverted_global");
+   }
    /* What every system dialog needs once per process -- the keyboard a
     * cheat's name is typed on, the ad hoc connection screen: here, before
     * either can be asked for (pspcompat.c; nothing on the twin). */
@@ -6605,6 +6782,13 @@ int main(int argc, char **argv)
    {
       app_notice(g_snes_end_l1, g_snes_end_l2, NULL, 6000);
       g_snes_end_l1 = g_snes_end_l2 = NULL;
+   }
+   boot_guard_player_end(0, -1);   /* (settled above when a report was due) */
+   {
+      char gt[64], g1[160], g2[160], gfull[400];
+      if (boot_guard_take_notice(gt, sizeof(gt), g1, sizeof(g1), g2, sizeof(g2),
+                                 gfull, sizeof(gfull)))
+         app_notice(gt, g1, g2, 9000);
    }
    ra_boot(g_app_root, g_sw.ra_host, GBADHOC_VERSION,
 #ifdef __vita__
@@ -6784,6 +6968,7 @@ int main(int argc, char **argv)
       if (game_boot(rom_path, console) != 0)
       {
          g_join_pending = 0;
+         boot_guard_game_end();     /* refused cleanly: not a crash */
          pcfg_game_end();
          artfetch_pause(0);
          app_notice("This game could not be started",
@@ -6895,6 +7080,8 @@ int main(int argc, char **argv)
    link_shutdown();
    pcfg_save();
    vid_term();
+   boot_guard_game_end();
+   boot_guard_app_ready();       /* a clean exit is a start that worked */
    fe_evt("exit ok");
    if (!menu_log_stop()) plat_exit(1); /* do not close a live writer's FILE */
    fe_evt_close();

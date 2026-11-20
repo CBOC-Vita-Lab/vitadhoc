@@ -31,6 +31,73 @@ static char chip_ff_txt[24];   /* "<ff> Unlimited Smooth" + NUL */
  * had no x/r counters.  480px / 8px per glyph = 60 chars fit on screen. */
 static char chip_fps_txt[64];
 
+/* ---- achievement indicators -------------------------------------------- */
+#define IND_CHAL_MAX    8
+#define IND_PROGRESS_FRAMES 300     /* a progress pill the runtime never hid */
+static int      ind_on = 1;
+static struct { unsigned id; char ini; } ind_chal[IND_CHAL_MAX];
+static int      ind_chal_n;
+static char     ind_progress_txt[48], ind_tracker_txt[24];
+static int      ind_progress_timer;
+
+void osd_ind_enable(int on)
+{
+   ind_on = on ? 1 : 0;
+   if (!ind_on)
+      osd_ind_clear();
+}
+
+void osd_ind_clear(void)
+{
+   ind_chal_n = 0;
+   ind_progress_txt[0] = ind_tracker_txt[0] = '\0';
+   ind_progress_timer = 0;
+}
+
+void osd_ind_challenge(unsigned id, int on, const char *title)
+{
+   int i;
+   if (!ind_on)
+      return;
+   for (i = 0; i < ind_chal_n; i++)
+      if (ind_chal[i].id == id)
+         break;
+   if (on && i == ind_chal_n && ind_chal_n < IND_CHAL_MAX)
+   {
+      char c = title && title[0] ? title[0] : '!';
+      ind_chal[i].id = id;
+      ind_chal[i].ini = c >= 'a' && c <= 'z' ? (char)(c - 32) : c;
+      ind_chal_n++;
+   }
+   else if (!on && i < ind_chal_n)
+   {
+      for (; i + 1 < ind_chal_n; i++)
+         ind_chal[i] = ind_chal[i + 1];
+      ind_chal_n--;
+   }
+}
+
+void osd_ind_progress(const char *title, const char *progress)
+{
+   if (!ind_on || !progress || !progress[0])
+   {
+      ind_progress_txt[0] = '\0';
+      ind_progress_timer = 0;
+      return;
+   }
+   snprintf(ind_progress_txt, sizeof(ind_progress_txt), "%s%s%s",
+            title ? title : "", title && title[0] ? "  " : "", progress);
+   ind_progress_timer = IND_PROGRESS_FRAMES;
+}
+
+void osd_ind_tracker(const char *text)
+{
+   if (!ind_on || !text || !text[0])
+      ind_tracker_txt[0] = '\0';
+   else
+      snprintf(ind_tracker_txt, sizeof(ind_tracker_txt), "%s", text);
+}
+
 void osd_toast(const char *fmt, ...)
 {
    va_list ap;
@@ -84,6 +151,7 @@ void osd_reset(void)
    chip_session_txt[0] = '\0';
    chip_ff_txt[0] = '\0';
    chip_fps_txt[0] = '\0';
+   osd_ind_clear();
 }
 
 void osd_chip_session(const char *text)
@@ -112,9 +180,18 @@ void osd_chip_fps(const char *text)
 
 void osd_take(osd_snap *s)
 {
+   int i;
+   if (ind_progress_txt[0] && --ind_progress_timer <= 0)
+      ind_progress_txt[0] = '\0';
    s->any = toast_count || chip_session_txt[0] || chip_ff_txt[0] ||
-            chip_fps_txt[0];
+            chip_fps_txt[0] || ind_chal_n || ind_progress_txt[0] ||
+            ind_tracker_txt[0];
    s->toast[0] = '\0';
+   memcpy(s->ind_tracker, ind_tracker_txt, sizeof(s->ind_tracker));
+   memcpy(s->ind_progress, ind_progress_txt, sizeof(s->ind_progress));
+   s->ind_chal_n = (short)ind_chal_n;
+   for (i = 0; i < ind_chal_n; i++)
+      s->ind_chal[i] = ind_chal[i].ini;
    if (!s->any)
       return;
    if (toast_count)
@@ -204,6 +281,42 @@ void osd_draw_snap(const osd_snap *s)
       int py = VID_SCR_H - FE_FONT_H - 8;
       vid_rect(px - 4, py - 2, tw + 12, FE_FONT_H + 4, COL_PANEL, 180);
       vid_text(px + 2, py, s->chip_session, COL_ACCENT);
+   }
+
+   if (!s->toast_glass)
+   {
+      /* Indicators: small, in the corners, over the game's edge only.  The
+       * challenge chips sit above the session chip's row at the bottom
+       * right, the tracker at the bottom left, the progress pill a line
+       * under the toasts. */
+      int i;
+      if (s->ind_progress[0])
+      {
+         int tw = vid_text_w(s->ind_progress);
+         int px = (VID_SCR_W - tw - 28) / 2, py = 28;
+         vid_rect(px, py, tw + 28, FE_FONT_H + 6, COL_PANEL, 200);
+         vid_rect(px, py, 18, FE_FONT_H + 6, COL_FF, 255);
+         vid_text(px + 5, py + 3, "*", COL_PANEL);
+         vid_text(px + 22, py + 3, s->ind_progress, COL_TEXT);
+      }
+      if (s->ind_tracker[0])
+      {
+         int tw = vid_text_w(s->ind_tracker);
+         int py = VID_SCR_H - FE_FONT_H - 10;
+         vid_rect(8, py - 2, tw + 12, FE_FONT_H + 4, COL_PANEL, 190);
+         vid_rect(8, py - 2, 2, FE_FONT_H + 4, COL_ACCENT, 255);
+         vid_text(14, py, s->ind_tracker, COL_TEXT);
+      }
+      for (i = 0; i < s->ind_chal_n; i++)
+      {
+         char g[2];
+         int px = VID_SCR_W - 8 - (i + 1) * 18, py = VID_SCR_H - 52;
+         g[0] = s->ind_chal[i];
+         g[1] = '\0';
+         vid_rect(px, py, 16, 16, COL_PANEL, 200);
+         vid_rect(px, py, 16, 2, COL_FF, 255);
+         vid_text(px + (16 - vid_text_w(g)) / 2, py + 1, g, COL_FF);
+      }
    }
 
    vid_overlay_end();

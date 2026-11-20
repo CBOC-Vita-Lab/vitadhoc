@@ -1,10 +1,10 @@
 gamedb.txt -- the game list's own knowledge (gamedb.h), written by
 tools/make_gamedb.py.
 
-records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, FDS, WS, WSC: 19260)
+records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, FDS, WS, WSC, Genesis, SMS, GG, SG: 23933)
           S  GBA header game code -> No-Intro name   (2756)
           Z  GBA header game code -> cartridge size  (2756)
-          N  console + loose title -> No-Intro name  (11486)
+          N  console + loose title -> No-Intro name  (14327)
           T  title key -> English Wikipedia article  (2451)
           W  article -> its first sentences          (2030)
 
@@ -12,7 +12,8 @@ sources:  the No-Intro catalogues as published in libretro-database
           (metadat/no-intro/Nintendo - Game Boy Advance / Game Boy /
           Game Boy Color / Super Nintendo Entertainment System / Nintendo Entertainment System /
           Family Computer Disk System .dat, metadat/no-intro/Bandai - WonderSwan /
-          WonderSwan Color .dat);
+          WonderSwan Color .dat, Sega - Mega Drive - Genesis / Master System - Mark III /
+          Game Gear / SG-1000 .dat);
           Wikidata (CC0): the video games released for those consoles and
           their English Wikipedia articles; English Wikipedia (CC BY-SA
           4.0): the opening sentences of each article, at most ~200
@@ -27,6 +28,16 @@ sources:  the No-Intro catalogues as published in libretro-database
           the headerless CRCs are kept, as the app hashes without the iNES header.
           The WonderSwan (G) and WonderSwan Color (H) records were added for 1.4
           the same way (GAMEDB_SYSTEMS=GH): names and whole-file checksums.
+          The Sega Genesis / Mega Drive (I, 2800 games), Master System (J, 1057),
+          Game Gear (K, 607) and SG-1000 (L, 211) records were added for 2.0 the same
+          way, from libretro-database 7d716259 (catalogue version 2026.11.14), with
+          GAMEDB_KEEP=1 GAMEDB_SYSTEMS=IJKL (nothing earlier changes): 4673 C records
+          (two ROMs are in two catalogues and keep the first console's name) and 2841
+          N records, no descriptions (Wikidata and Wikipedia were not used; a game
+          shares the description of a title the other consoles have). The Genesis
+          CRCs are of the plain ROM (an SMD file is de-interleaved first,
+          gamedb_md_crc_cancel); the others of the whole image without a 512-byte copier
+          header (gamedb_sms_crc_cancel).
 
 The descriptions are adapted from Wikipedia and stay under CC BY-SA 4.0;
 the app shows them with a "From Wikipedia" chip and the README credits

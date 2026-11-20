@@ -696,6 +696,10 @@ u8 read_backup(u32 address)
       return tilt;
   }
 
+  /* No chip answers in the SRAM/flash region: the bus reads 0xFF. */
+  if(backup_type == BACKUP_NONE)
+    return 0xff;
+
   if(backup_type == BACKUP_EEPROM)
   {
     if(!backup_type_eeprom_guessed || eeprom_really_used)
@@ -789,6 +793,8 @@ u32 eeprom_counter = 0;
 void function_cc write_eeprom(u32 unused_address, u32 value)
 {
   DRPH_SCOPE(DRPH_MEMC);
+  if (backup_type == BACKUP_NONE)
+    return;   /* no chip: the write must not turn the cart into EEPROM */
   cph_bkw++;   /* phase 5h */
   eeprom_really_used = 1;
 #ifdef GBA_LINK
@@ -1594,6 +1600,8 @@ void function_cc write_backup(u32 address, u32 value)
   backup_writes++;   /* gba_memory.h */
 #endif
 
+  if(backup_type == BACKUP_NONE)
+    return;
   if(backup_type == BACKUP_EEPROM)
   {
     if(!backup_type_eeprom_guessed || eeprom_really_used)
@@ -2365,7 +2373,7 @@ cpu_alert_type function_cc write_memory32(u32 address, u32 value)
 typedef struct
 {
    char gamepak_code[5];
-   u16 flags;
+   u32 flags;
    u32 idle_loop_target_pc;
    u32 translation_gate_target_1;
    u32 translation_gate_target_2;
@@ -2379,6 +2387,7 @@ typedef struct
 #define FLAGS_SOLAR          0x1000   // Boktai's light sensor (cart_sensor.h).
 #define FLAGS_GYRO           0x2000   // WarioWare: Twisted!'s rotation sensor.
 #define FLAGS_TILT           0x4000   // Yoshi Topsy-Turvy's tilt sensor.
+#define FLAGS_NO_BACKUP     0x10000   // The board has no backup chip (Top Gun: Combat Zones).
 
 #define FLAGS_SERIAL         0x8000   // Configure a serial mode by default.
 #define FLAGS_SERIAL_MASK    0x00FF
@@ -2428,6 +2437,9 @@ static void load_game_config_over(const char *gamecode)
 
      if (gbaover[i].flags & FLAGS_EEPROM)
        backup_type_reset = BACKUP_EEPROM;
+
+     if (gbaover[i].flags & FLAGS_NO_BACKUP)
+       backup_type_reset = BACKUP_NONE;
 
      if (serial_mode == SERIAL_MODE_AUTO && (gbaover[i].flags & FLAGS_SERIAL))
      {
@@ -3615,7 +3627,7 @@ bool memory_check_savestate(const u8 *src)
   /* Serialized protocol state is normally bounded by hardware writes.  A
    * damaged/imported state must not turn those values into array indexes or
    * invalid shift counts on the next cartridge access. */
-  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_UNKN ||
+  if (!bson_read_int32(bakdoc, "backup-type", &backup_kind) || backup_kind > BACKUP_NONE ||
       !bson_read_int32(bakdoc, "flash-mode", &flash_mode_val) || flash_mode_val > FLASH_BANKSWITCH_MODE ||
       !bson_read_int32(bakdoc, "flash-cmd-pos", &flash_cmd_pos) || flash_cmd_pos > 2 ||
       !bson_read_int32(bakdoc, "flash-bank-num", &flash_bank) || flash_bank > 1 ||
@@ -4322,6 +4334,7 @@ const char *gpsp_backup_name(void)
                                ? "flash128" : "flash64";
     case BACKUP_EEPROM: return eeprom_size_forced == EEPROM_8_KBYTE ? "eeprom8k"
                                : eeprom_size_forced ? "eeprom512" : "eeprom";
+    case BACKUP_NONE:   return "none";
     default:            return "sram-default";
   }
 }

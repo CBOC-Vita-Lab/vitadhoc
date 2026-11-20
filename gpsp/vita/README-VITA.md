@@ -10,7 +10,7 @@ AI assistant (Claude) and tested on a real Vita; GPL-2.0, like GBAdhoc and gpSP.
   otherwise the last scene you saw in it. VitAdhoc saves that scene each time you leave a game.
   Left and right move along the row, Cross plays. Down lifts the page and shows the game's save
   states as cards: pick one and press Cross to continue from it. Square stars a game, Select
-  shows only starred games, Triangle switches between GBA, GB and GBC, Start opens Settings.
+  shows only starred games, Triangle opens the console list, Start opens Settings.
   The time and the battery sit top right. The old list layouts are still in Settings > Game list.
 - **Previews.** Rest on a game for about a second and the picture behind it starts to move: the
   last ten seconds you played of it, real frames of your own game, a little like a streaming

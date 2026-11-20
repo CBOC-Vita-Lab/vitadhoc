@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ui_vita_ra.h -- Settings > Achievements: the running game's
  * RetroAchievements, in the runtime's grouping (ra_vita.h).
  *

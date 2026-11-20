@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static char *g_text;               /* the whole file, NUL-terminated lines */
 static char **g_line;              /* each record's start, in file order   */
@@ -468,6 +469,33 @@ int gamedb_name_by_header(const char *path, char *out, size_t cap)
    return gamedb_name_by_code(code, out, cap);
 }
 
+/* What a Genesis / Mega Drive file is (see gamedb.h).  `size` is the file's
+ * length; `path` only gives the extension (.smd: the SMD rule without its
+ * AA BB marker). */
+static int md_kind_of(FILE *f, long size, const char *path)
+{
+   unsigned char h[0x104];
+   const char *ext = path ? strrchr(path, '.') : NULL;
+   int has_sega, smd_size, smd_mark;
+   if (size < 0x104 || fseek(f, 0, SEEK_SET) != 0 ||
+       fread(h, 1, sizeof(h), f) != sizeof(h))
+      return GAMEDB_MD_NONE;
+   has_sega = !memcmp(h + 0x100, "SEGA", 4);
+   smd_size = size >= 512 + 16384 && size % 16384 == 512;
+   smd_mark = h[8] == 0xAA && h[9] == 0xBB;
+   if (has_sega)
+   {
+      unsigned char t[8];
+      if (fseek(f, 0x100, SEEK_SET) == 0 && fread(t, 1, 8, f) == 8 &&
+          !memcmp(t, "SEGA 32X", 8))
+         return GAMEDB_MD_32X;
+      return GAMEDB_MD_PLAIN;
+   }
+   if (smd_size && (smd_mark || (ext && !strcasecmp(ext, ".smd"))))
+      return GAMEDB_MD_SMD;
+   return GAMEDB_MD_NONE;
+}
+
 static uint32_t g_crc_tab[256];
 
 static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
@@ -478,6 +506,7 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
    FILE *f;
    size_t got;
    unsigned long limit = 0;      /* mode 2: bytes of PRG + CHR to hash (0 = to the end) */
+   long md_skip = 0;             /* mode 4: a copier header to leave out */
 
    if (!g_crc_tab[1])
    {
@@ -528,6 +557,59 @@ static int file_crc(const char *path, uint32_t *crc, volatile const int *abort,
             skip = 16;
       }
       if (fseek(f, (long)skip, SEEK_SET) != 0)
+      {
+         fclose(f);
+         return -1;
+      }
+   }
+   else if (mode == 3 || mode == 4)
+   {
+      long size;
+      int smd = 0;
+      if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0)
+      {
+         fclose(f);
+         return -1;
+      }
+      if (mode == 3)
+         smd = md_kind_of(f, size, path) == GAMEDB_MD_SMD;
+      else if (size % 16384 == 512)
+         md_skip = 512;       /* a Master System family copier header */
+      if (smd)
+      {
+         /* SMD: a 512-byte header, then 16 KiB blocks with the odd bytes in
+          * the first half and the even bytes in the second (Genesis Plus GX
+          * loadrom.c deinterleave_block), hashed as the plain ROM */
+         static unsigned char blk[16384], out[16384];
+         long left = size - 512;
+         if (fseek(f, 512, SEEK_SET) != 0)
+         {
+            fclose(f);
+            return -1;
+         }
+         while (left >= 16384)
+         {
+            int i;
+            if ((abort && *abort) || (cancel && cancel()) ||
+                fread(blk, 1, 16384, f) != 16384)
+            {
+               fclose(f);
+               return -1;
+            }
+            for (i = 0; i < 8192; i++)
+            {
+               out[i * 2 + 0] = blk[8192 + i];
+               out[i * 2 + 1] = blk[i];
+            }
+            for (i = 0; i < 16384; i++)
+               c = g_crc_tab[(c ^ out[i]) & 0xFF] ^ (c >> 8);
+            left -= 16384;
+         }
+         fclose(f);
+         *crc = c ^ 0xFFFFFFFFu;
+         return 0;
+      }
+      if (fseek(f, md_skip, SEEK_SET) != 0)
       {
          fclose(f);
          return -1;
@@ -594,4 +676,43 @@ int gamedb_snes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 int gamedb_nes_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
 {
    return file_crc(path, crc, NULL, abort, 2);
+}
+
+int gamedb_md_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 3);
+}
+
+int gamedb_sms_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void))
+{
+   return file_crc(path, crc, NULL, abort, 4);
+}
+
+int gamedb_md_rom_kind(const char *path)
+{
+   FILE *f = path ? fopen(path, "rb") : NULL;
+   long size;
+   int kind = GAMEDB_MD_NONE;
+   if (!f)
+      return GAMEDB_MD_NONE;
+   if (fseek(f, 0, SEEK_END) == 0 && (size = ftell(f)) >= 0)
+      kind = md_kind_of(f, size, path);
+   fclose(f);
+   return kind;
+}
+
+int gamedb_md_accept(const char *path)
+{
+   const char *ext = path ? strrchr(path, '.') : NULL;
+   if (!ext)
+      return 0;
+   if (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
+       !strcasecmp(ext, ".smd"))
+      return 1;
+   if (!strcasecmp(ext, ".bin"))
+   {
+      int k = gamedb_md_rom_kind(path);
+      return k == GAMEDB_MD_PLAIN || k == GAMEDB_MD_SMD;
+   }
+   return 0;
 }

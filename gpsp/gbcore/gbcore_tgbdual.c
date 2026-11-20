@@ -19,6 +19,8 @@
 #include <string.h>
 
 #include "tgbdual/gb.h"
+#include "tgbdual/_cgb_dmg_pal.h"
+#include "tgbdual/_cgb_lcd_table.h"
 
 /* Largest cartridge any supported mapper addresses (MBC5: 512 x 16 KiB). */
 #define GBCORE_ROM_MAX (8u * 1024u * 1024u)
@@ -145,7 +147,7 @@ word tgb_dmg_palette[12];
                             ((((rgb) >> 11) & 0x1f) << 5) | \
                             ((((rgb) >> 3) & 0x1f) << 10)))
 
-static const uint32_t palette_rgb[GBCORE_PALETTE_COUNT][4] = {
+static const uint32_t palette_rgb[GBCORE_PALETTE_GBC_AUTO][4] = {
   /* AUTO outside SGB: MasterBoy's default greys. */
   { 0xFFFFFF, 0xA8A8A8, 0x585858, 0x000000 },
   { 0xFFFFFF, 0xA8A8A8, 0x585858, 0x000000 },
@@ -156,16 +158,89 @@ static const uint32_t palette_rgb[GBCORE_PALETTE_COUNT][4] = {
 };
 
 static const char *const palette_names[GBCORE_PALETTE_COUNT] = {
-  "Auto", "Grey", "DMG green", "Pocket"
+  "Super Game Boy", "Grey", "DMG green", "Pocket",
+  "GBC auto",
+  "GBC Up - brown", "GBC Up+A - red", "GBC Up+B - dark brown",
+  "GBC Left - blue", "GBC Left+A - dark blue", "GBC Left+B - grayscale",
+  "GBC Down - pastel", "GBC Down+A - orange", "GBC Down+B - yellow",
+  "GBC Right - green", "GBC Right+A - dark green", "GBC Right+B - inverted",
+  "SGB 1-A", "SGB 1-B", "SGB 1-C", "SGB 1-D", "SGB 1-E", "SGB 1-F",
+  "SGB 1-G", "SGB 1-H",
+  "SGB 2-A", "SGB 2-B", "SGB 2-C", "SGB 2-D", "SGB 2-E", "SGB 2-F",
+  "SGB 2-G", "SGB 2-H",
+  "SGB 3-A", "SGB 3-B", "SGB 3-C", "SGB 3-D", "SGB 3-E", "SGB 3-F",
+  "SGB 3-G", "SGB 3-H",
+  "SGB 4-A", "SGB 4-B", "SGB 4-C", "SGB 4-D", "SGB 4-E", "SGB 4-F",
+  "SGB 4-G", "SGB 4-H"
 };
+
+/* tgb_port.h: the DMG palette holds GBC colours (lcd.c shows them through
+ * the GBC LCD model, as a GBC's screen shows them). */
+int tgb_dmg_is_cgb;
+
+/* The colours of `id` as BGR555 x 12 (BG, OBJ0, OBJ1); `header` is the
+ * cartridge header from 0x134 (NULL: none loaded).  Returns the GBC boot
+ * ROM combination, or -1 for a palette that is not a GBC one. */
+static int palette_colors(unsigned id, const uint8_t *header,
+                          unsigned short out[12])
+{
+  unsigned i;
+  if (id >= GBCORE_PALETTE_SGB_1A && id <= GBCORE_PALETTE_SGB_4H)
+  {
+    unsigned short c[4];
+    tgbshared_sgbpal_colors(id - GBCORE_PALETTE_SGB_1A, c);
+    for (i = 0; i < 12; i++)
+      out[i] = c[i & 3];
+    return -1;
+  }
+  if (id >= GBCORE_PALETTE_GBC_AUTO)
+  {
+    unsigned combo = id == GBCORE_PALETTE_GBC_AUTO
+      ? (header ? tgbshared_cgbpal_auto(header) : 0)
+      : tgbshared_cgbpal_manual(id - GBCORE_PALETTE_GBC_UP);
+    tgbshared_cgbpal_colors(combo, out);
+    return (int)combo;
+  }
+  if (id == GBCORE_PALETTE_AUTO)
+  {
+    unsigned short c[4];
+    tgbshared_sgbpal_colors(0, c);   /* SGB's default; a game sets its own */
+    for (i = 0; i < 12; i++)
+      out[i] = c[i & 3];
+    return -1;
+  }
+  for (i = 0; i < 12; i++)
+    out[i] = BGR555(palette_rgb[id][i & 3]);
+  return -1;
+}
 
 static void palette_apply(void)
 {
-  unsigned i;
-  const uint32_t *p = palette_rgb[palette_id];
-  for (i = 0; i < 12; i++)
-    tgb_dmg_palette[i] = BGR555(p[i & 3]);
+  int combo = palette_colors(palette_id, active ? active->header : NULL,
+                             tgb_dmg_palette);
+  tgb_dmg_is_cgb = combo >= 0;
   gb_invalidate_palette(0);
+}
+
+int gbcore_palette_preview(unsigned palette, uint16_t rgb565[12])
+{
+  unsigned short c[12];
+  unsigned i;
+  int combo;
+  if (palette >= GBCORE_PALETTE_COUNT)
+    palette = GBCORE_PALETTE_AUTO;
+  combo = palette_colors(palette, active ? active->header : NULL, c);
+  for (i = 0; i < 12; i++)
+  {
+    unsigned r = c[i] & 0x1f, g = (c[i] >> 5) & 0x1f, b = (c[i] >> 10) & 0x1f;
+    if (combo >= 0 && tgb_cgb_lcd)
+      rgb565[i] = MAKE_COLOR(_cgb_lcd_curve[r], _cgb_lcd_green[(g << 5) | b],
+                             _cgb_lcd_curve[b]);
+    else
+      rgb565[i] = MAKE_COLOR((r << 3) | (r >> 2), (g << 3) | (g >> 2),
+                             (b << 3) | (b >> 2));
+  }
+  return combo;
 }
 
 void gbcore_set_palette(unsigned palette)

@@ -45,6 +45,13 @@ WK_OBJS   := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
 # playerkit (MIT): the in-game menu, states, input mapping, launch protocol, patches, notices, pacing
 PK_SRC    := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look
 PK_OBJS   := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o
+# newlib's FILE-slot allocation has no lock on the console (playerkit/vita/pk_stdio_lock.c puts a real
+# one in place with --wrap); `make STDIO_LOCK=0` builds without it, as the main app's Makefile does too
+STDIO_LOCK ?= 1
+ifeq ($(STDIO_LOCK),1)
+PK_OBJS += $(B)/pk/pk_stdio_lock.o
+STDIO_LOCK_LD := -Wl,--wrap=__sfp -Wl,--wrap=__sfp_lock_acquire -Wl,--wrap=__sfp_lock_release
+endif
 V2D_OBJS  := $(B)/v2d/vita2d.o $(B)/v2d/vita2d_draw.o $(B)/v2d/vita2d_texture.o $(B)/v2d/utils.o
 SHADERS   := $(wildcard $(V2D)/shader/*_gxp.o)
 
@@ -68,7 +75,7 @@ CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" || $$1 == "v" { print $$2 }' | 
 	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
 
 $(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(NP_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
-	$(CXX) $(CPUFLAGS) -Wl,-q -o $@ $^ $(LIBS)
+	$(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $@ $^ $(LIBS)
 	$(call CHECK_WEAK,$@)
 
 $(B)/snes.velf: $(B)/snes.elf
@@ -118,6 +125,9 @@ $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
 $(B)/pk/pk_gfx_vita.o: $(PK)/vita/pk_gfx_vita.cpp $(wildcard $(PK)/vita/*.h) $(PK)/src/pk_gfx.h
 	@mkdir -p $(B)/pk
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/pk/pk_stdio_lock.o: $(PK)/vita/pk_stdio_lock.c
+	@mkdir -p $(B)/pk
+	$(CC) $(CFLAGS) -c -o $@ $<
 $(B)/v2d/%.o: $(V2D)/source/%.c
 	@mkdir -p $(B)/v2d
 	$(CC) $(CFLAGS) -c -o $@ $<

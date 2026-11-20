@@ -18,7 +18,8 @@
  * server over Wi-Fi; a picture that arrives replaces the tile's card or
  * scene (hm_art_arrived).
  *
- *   a top bar       Games / Starred (SELECT), the console (TRIANGLE), the
+ *   a top bar       Games / Starred (SELECT), the console in use (TRIANGLE
+ *                   drops a list of them all: hm_pick_draw), the
  *                   time and the battery
  *   the row         the focused game large with its name beside it, the
  *                   next ones small; a tile is the game's box art, else the
@@ -969,13 +970,37 @@ static const signed char HM_CON_ORDER[] = {
    FE_CONSOLE_GBA, FE_CONSOLE_GB, FE_CONSOLE_GBC, FE_CONSOLE_SNES,
    FE_CONSOLE_NES, FE_CONSOLE_WSWAN,
 };
-#define HM_CON_N ((int)(sizeof(HM_CON_ORDER) / sizeof(HM_CON_ORDER[0])))
+#define HM_CON_COUNT ((int)(sizeof(HM_CON_ORDER) / sizeof(HM_CON_ORDER[0])))
+
+/* The rows the picker shows.  (The host twin can add rows that repeat the
+ * table, GBADHOC_PICKER_ROWS=n, to test the list scrolling with more consoles
+ * than the build has yet; a Vita build always shows the table.) */
+static int hm_con_n(void)
+{
+#ifndef __vita__
+   static int extra = -1;
+   if (extra < 0)
+   {
+      const char *e = getenv("GBADHOC_PICKER_ROWS");
+      extra = e ? atoi(e) : 0;
+      if (extra < 0 || extra > 20)
+         extra = 0;
+   }
+   return HM_CON_COUNT + extra;
+#else
+   return HM_CON_COUNT;
+#endif
+}
+static int hm_con_at(int row)
+{
+   return HM_CON_ORDER[row % HM_CON_COUNT];
+}
 
 static int hm_con_row(int console)       /* its row in the picker, or 0 */
 {
    int i;
-   for (i = 0; i < HM_CON_N; i++)
-      if (HM_CON_ORDER[i] == console)
+   for (i = 0; i < hm_con_n(); i++)
+      if (hm_con_at(i) == console)
          return i;
    return 0;
 }
@@ -1135,7 +1160,7 @@ static int hm_pick_vis(void)
 {
    int fit = (int)((VS_H - 44 - (g_pick_py + 8) - 2 * HM_PICK_PAD) /
                    HM_PICK_ROW);
-   return fit < HM_CON_N ? (fit < 2 ? 2 : fit) : HM_CON_N;
+   return fit < hm_con_n() ? (fit < 2 ? 2 : fit) : hm_con_n();
 }
 
 static void hm_pick_draw(int n_scan)
@@ -1149,9 +1174,9 @@ static void hm_pick_draw(int n_scan)
       return;
    a = g_pick_a;
    aa = a * 1.5f > 1.0f ? 1.0f : a * 1.5f;          /* text and fill: fade */
-   for (i = 0; i < HM_CON_N; i++)
+   for (i = 0; i < hm_con_n(); i++)
    {
-      float t = vs_text_w(VS_LABEL, skin_of(HM_CON_ORDER[i])->full);
+      float t = vs_text_w(VS_LABEL, skin_of(hm_con_at(i))->full);
       if (t > cw)
          cw = t;
    }
@@ -1167,8 +1192,8 @@ static void hm_pick_draw(int n_scan)
 
    /* the rows that show: the highlighted one stays in view */
    target = (float)g_pick_sel - (vis - 1) * 0.5f;
-   if (target > HM_CON_N - vis)
-      target = (float)(HM_CON_N - vis);
+   if (target > hm_con_n() - vis)
+      target = (float)(hm_con_n() - vis);
    if (target < 0)
       target = 0;
    if (g_pick_snap)
@@ -1193,16 +1218,16 @@ static void hm_pick_draw(int n_scan)
    {
       /* the highlight, in the console's colour at its edge */
       float hy = y + HM_PICK_PAD + g_pick_hy;
-      const ui_skin *ss = &SKIN_DARK[HM_CON_ORDER[g_pick_sel]];
+      const ui_skin *ss = &SKIN_DARK[hm_con_at(g_pick_sel)];
       vs_rrect(x + 8, hy, w - 16, HM_PICK_ROW - 4, 14,
                VS_ALPHA(HC_GLASS_HI, (int)(70 * aa)));
       vs_rrect(x + 8, hy + 8, 5, HM_PICK_ROW - 20, 2,
                VS_HEX(((ss->accent >> 11) << 19) | (((ss->accent >> 5) & 63) << 10) |
                       ((ss->accent & 31) << 3), (int)(255 * aa)));
    }
-   for (i = 0; i < HM_CON_N; i++)
+   for (i = 0; i < hm_con_n(); i++)
    {
-      int c = HM_CON_ORDER[i], games = hm_con_games(c, n_scan);
+      int c = hm_con_at(i), games = hm_con_games(c, n_scan);
       int on = i == g_pick_sel, none = games == 0;
       float ry = y + HM_PICK_PAD + ((float)i - g_pick_scr) * HM_PICK_ROW;
       float ty, cy = ry + (HM_PICK_ROW - 4) * 0.5f;
@@ -1235,7 +1260,7 @@ static void hm_pick_draw(int n_scan)
    }
    if (g_pick_scr > 0.05f)
       hm_caret(x + w * 0.5f, y + 8, 12, 1, VS_ALPHA(HC_TEXT3, (int)(200 * aa)));
-   if (g_pick_scr < HM_CON_N - vis - 0.05f)
+   if (g_pick_scr < hm_con_n() - vis - 0.05f)
       hm_caret(x + w * 0.5f, y + h - 8, 12, 0, VS_ALPHA(HC_TEXT3, (int)(200 * aa)));
    vs_clip_off();
 
@@ -1244,13 +1269,13 @@ static void hm_pick_draw(int n_scan)
    if (g_pick_on)
    {
       UI_TCH_BTN(BROWSER_CON_BUTTON, 0, 0, VID_SCR_W, VID_SCR_H);
-      for (i = 0; i < HM_CON_N; i++)
+      for (i = 0; i < hm_con_n(); i++)
       {
          float r0 = y + HM_PICK_PAD + ((float)i - g_pick_scr) * HM_PICK_ROW;
          float r1 = r0 + HM_PICK_ROW;
          if (i == 0)
             r0 -= HM_PICK_PAD;
-         if (i == HM_CON_N - 1)
+         if (i == hm_con_n() - 1)
             r1 += HM_PICK_PAD;
          if (r0 < y)
             r0 = y;
@@ -2230,9 +2255,8 @@ static void home_empty(const char *rom_dir, int n_scan)
       }
       if (others > 0)
       {
-         snprintf(msg, sizeof(msg), others == 1 ? "Show my other game"
-                                                : "Show my %d other games",
-                  others);
+         /* the button opens the console picker, which lists the counts */
+         snprintf(msg, sizeof(msg), "Choose another console");
          {
             float w = vs_text_w(VS_LABEL, msg) + 76;
             hm_button(VS_W * 0.5f - w * 0.5f, y + 262, VS_I_BTN_TRI, msg, 1,
@@ -2266,7 +2290,7 @@ static void hm_pick_pad(unsigned *e)
    int want_open = 0, step = 0, close = 0, row = -1;
    int can = !g_browser_state_open && !g_shelf_del && !g_ret_on &&
              !g_swap.active && !g_pop.active && g_hm_lift <= 0.02f &&
-             HM_CON_N > 1;
+             hm_con_n() > 1;
 
    if (!g_pick_on)
    {
@@ -2296,7 +2320,7 @@ static void hm_pick_pad(unsigned *e)
    g_pick_idle++;
    if (in & BROWSER_CON_BUTTON)
    {
-      if (g_tch.land_r.id >= 1 && g_tch.land_r.id <= HM_CON_N)
+      if (g_tch.land_r.id >= 1 && g_tch.land_r.id <= hm_con_n())
          row = g_tch.land_r.id - 1;
       else
          close = 1;
@@ -2311,13 +2335,13 @@ static void hm_pick_pad(unsigned *e)
    }
    else if (in & (PSP_CTRL_TRIANGLE | PSP_CTRL_DOWN))
    {
-      g_pick_sel = (g_pick_sel + 1) % HM_CON_N;
+      g_pick_sel = (g_pick_sel + 1) % hm_con_n();
       step = 1;
       in = 0;
    }
    else if (in & PSP_CTRL_UP)
    {
-      g_pick_sel = (g_pick_sel + HM_CON_N - 1) % HM_CON_N;
+      g_pick_sel = (g_pick_sel + hm_con_n() - 1) % hm_con_n();
       step = 1;
       in = 0;
    }
@@ -2326,17 +2350,17 @@ static void hm_pick_pad(unsigned *e)
    if (step)
    {
       g_pick_idle = 0;
-      if (HM_CON_ORDER[g_pick_sel] != g_pcfg.console)
-         g_con_pick = HM_CON_ORDER[g_pick_sel];
+      if (hm_con_at(g_pick_sel) != g_pcfg.console)
+         g_con_pick = hm_con_at(g_pick_sel);
       fe_evt("ui_picker move row=%d console=%d", g_pick_sel,
-             HM_CON_ORDER[g_pick_sel]);
+             hm_con_at(g_pick_sel));
    }
    if (g_pick_idle >= HM_PICK_HOLD)
       close = 1;
    if (close)
    {
       g_pick_on = 0;
-      fe_evt("ui_picker close console=%d idle=%d", HM_CON_ORDER[g_pick_sel],
+      fe_evt("ui_picker close console=%d idle=%d", hm_con_at(g_pick_sel),
              g_pick_idle);
       tch_reset();
    }

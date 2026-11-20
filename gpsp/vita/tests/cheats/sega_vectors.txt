@@ -1,0 +1,122 @@
+# sega_vectors.txt -- test vectors for the Sega cheat decoders (SEGA-CODES.md).
+#
+# Three TAB-separated columns: console, the code as a libretro .cht file has it,
+# the result: the database's canonical code ("ADDRESS:VALUE[:COMPARE]" parts
+# joined by '+'), or DROP:<reason> when the code is not shipped.  console is MD
+# (Genesis / Mega Drive) or SMS (Master System, Game Gear and SG-1000 alike).
+# Lines starting with '#' are comments.  Every code that is not marked "made
+# up" is taken from the libretro-database lists (revision d5bae90), and its
+# result was also checked against Genesis Plus GX's own decode_cheat.
+#
+# -- hand-picked: forms, boundaries, case, spacing (made up unless it says otherwise)
+# Genesis Game Genie: "XXXX-XXXX" is an address and a 16-bit word
+MD	ATGA-AA56	000C7C:6004
+MD	atga-aa56	000C7C:6004
+MD	ABXA-BA0Y	0066D4:5000
+# Pro Action Replay: AAAAAA:VVVV; "FFxxxx:VV" (two digits) is the byte VV
+MD	FFE4A2:0020	FFE4A2:0020
+MD	FF9EE9:0064	FF9EE9:0064
+MD	FFF7DB:FF	FFF7DB:00FF
+MD	ffc9fc:0098	FFC9FC:0098
+MD	000338:6004	000338:6004
+# several parts, any of '+' and white space between them
+MD	FFC843:0000+FFC846:0000	FFC843:0000+FFC846:0000
+MD	FFC843:0000 FFC846:0000	FFC843:0000+FFC846:0000
+MD	AMKA-AA7E+FFE4A2:0020	00D2A4:6002+FFE4A2:0020
+# address range: cartridge up to 4 MiB and work RAM
+MD	3FFFFF:0001	3FFFFF:0001
+MD	400000:0001	DROP:unreachable address
+MD	FEFFFF:0001	DROP:unreachable address
+MD	FF0000:0001	FF0000:0001
+MD	FFFFFF:00FF	FFFFFF:00FF
+# a byte store of ROM, 5-digit addresses, no colon, placeholders: not codes
+MD	000338:60	DROP:not a code
+MD	FF806:03E7	DROP:not a code
+MD	FFDEC80063	DROP:not a code
+MD	FFA0E:59	DROP:not a code
+MD	FFB064	DROP:not a code
+MD	FF0060:XX	DROP:placeholder
+MD	FF7E26:??	DROP:placeholder
+MD	FFFE10:XX	DROP:placeholder
+MD	AMKA-AA7E+FF7E26:??	DROP:placeholder
+MD	AMKA-AA7E+FFB064	DROP:not a code
+# Game Genie letters: no I, O, Q or U
+MD	AIKA-AA7E	DROP:not a code
+MD	AMKA-AA7U	DROP:not a code
+# Master System / Game Gear / SG-1000: Game Genie DDA-AAB (data, address) or
+# DDA-AAB-RRr (and a compare value); Pro Action Replay 00AA-AAVV; Fusion RAM
+# AAAA:VV and Fusion ROM RRAAAA:VV
+SMS	00C0-BD03	C0BD:03
+SMS	00c0-bd03	C0BD:03
+SMS	B6E-E1D-3BE	2EE1:B6:35
+SMS	2A8-24C-6E2	3824:2A:22
+SMS	050-C4F	00C4:05
+SMS	C0BD:03	C0BD:03
+SMS	00C16A:08	C16A:08:00
+SMS	00C8-1308+00C8-1503	C813:08+C815:03
+SMS	00C8-1308 00C8-1503	C813:08+C815:03
+SMS	00C1-09	DROP:not a code
+SMS	N/A	DROP:not a code
+SMS	00D5-BD0X	DROP:placeholder
+SMS	C4E0:XX	DROP:placeholder
+SMS	00C8-1308+00D5-BD0X	DROP:placeholder
+SMS	01C0-BD03	DROP:not a code
+# -- from the lists (one of each shape, see above)
+MD	FF806:03E7	DROP:not a code
+MD	FF00220010	DROP:not a code
+MD	FF002C+1800	DROP:not a code
+MD	FFB064	DROP:not a code
+MD	FFD5E3FF	DROP:not a code
+MD	ATGA-AA56	000C7C:6004
+MD	AMKA-AA7E+ALST-AA9J+ALBA-AA8J+AB7A-AA5T+ALMA-AA2W+ALDA-AA52	00D2A4:6002+009FE8:6002+0082C8:6002+007A70:6000+009612:6002+008678:6002
+MD	R1KA-A6ZA+RZ7A-A6XN+R0AS-861C+R0MA-A6TJ+R0DA-A6WG	00D2A0:4E75+007A6C:4E75+FF80E2:4E75+009608:4E75+008646:4E75
+MD	FFE4A2:0020	FFE4A2:0020
+MD	AJ0T-CA9Y+AJXT-CA80+ALFA-CA9E+ACTT-AA3L+AJ3T-CA9W+AM6T-CA8J	012DF4:6002+0127D6:6002+018AE4:6002+00A12A:6000+0133F2:6002+01F9C8:6002
+MD	RYAA-C6XT+R0MT-A6VA+RYAT-C6WG	010070:4E75+009720:4E75+010146:4E75
+MD	ABXA-BA0Y	0066D4:5000
+MD	AXWW-GN90	23E5F6:6604
+MD	FFC843:0000+FFC846:0000	FFC843:0000+FFC846:0000
+MD	SX0V-BCC8+AD0V-AADA+NX0V-AADC	10ED5E:117C+10ED60:0000+10ED62:0064
+MD	FF0060:XX	DROP:placeholder
+MD	FFC011:0?	DROP:placeholder
+MD	FF7E26:??	DROP:placeholder
+MD	FFFE20:00??	DROP:placeholder
+MD	FF11B2:000?	DROP:placeholder
+MD	AASG-ATZE	DROP:unreachable address
+MD	1AKK-GTAA	DROP:unreachable address
+MD	DFBF-C4D4	DROP:unreachable address
+MD	E1E3FF:FFE1	DROP:unreachable address
+MD	B00080:3200+FFF620:0200	DROP:unreachable address
+SMS	00C1-09	DROP:not a code
+SMS	N/A	DROP:not a code
+SMS	00DF-CE99	DFCE:99
+SMS	2A8-24C-6E2	3824:2A:22
+SMS	3A1-0DE-2A2+3AC-85D-2A2+3AC-38D-2A2+3A6-AE8-2A2+3AC-61D-2A2	110D:3A:32+2C85:3A:32+2C38:3A:32+76AE:3A:32+2C61:3A:32
+SMS	00C8-1308+00C8-1503+00C8-1604	C813:08+C815:03+C816:04
+SMS	D00-C0F	00C0:D0
+SMS	00C16A:08	C16A:08:00
+SMS	00D5-BD0X	DROP:placeholder
+SMS	00D5-BAXX	DROP:placeholder
+SMS	00C1-150?	DROP:placeholder
+SMS	00C1-34??	DROP:placeholder
+SMS	C4E0:XX+C4E1:XX	DROP:placeholder
+GG	00DD+5E03	DROP:not a code
+GG	00CX-X1YY	DROP:not a code
+GG	A247-OXTV	DROP:not a code
+GG	FX2T-PD8N	DROP:not a code
+GG	ATEA-AA5J	DROP:not a code
+GG	00C4-2200	C422:00
+GG	187-456-4CA+188-6F6-6EA+188-5E6-4CA	9745:18:28+986F:18:20+985E:18:28
+GG	006-46F-F7A	0646:00:04
+GG	00CA-5D00+00D6-5D00	CA5D:00+D65D:00
+GG	030-DDF	00DD:03
+GG	DD6-4C9+8C4-E26-E66	664C:DD+94E2:8C:03
+GG	008-C7F+008-E7F+009-07F+009-27F+009-47F	08C7:00+08E7:00+0907:00+0927:00+0947:00
+GG	00C4-22XX	DROP:placeholder
+GG	00CA-5DXX+00D6-5DXX	DROP:placeholder
+GG	00C4-2F0X	DROP:placeholder
+GG	002-2FD-XXX	DROP:placeholder
+GG	00CX-X720	DROP:placeholder
+SG	00C0-DE03	C0DE:03
+SG	3A6-4AB-2A2	464A:3A:32
+SG	017-3CF-A21+01A-E7F-A21	073C:01:D2+0AE7:01:D2

@@ -29,6 +29,15 @@ gbadhoc-audio.gba: crt0.S audio.c gba.ld
 	$(CROSS)objcopy -O binary gbadhoc-audio.elf $@
 	@ls -l $@
 
+# A cartridge that leaves its PCM mixing to the BIOS sound driver (app_tests.py, biossound).
+biossound: gbadhoc-biossound.gba
+.PHONY: biossound
+gbadhoc-biossound.gba: crt0.S biossound.c gba.ld
+	$(CROSS)gcc $(CFLAGS) -nostdlib -nostartfiles -T gba.ld -o gbadhoc-biossound.elf \
+	  crt0.S biossound.c -lgcc
+	$(CROSS)objcopy -O binary gbadhoc-biossound.elf $@
+	@ls -l $@
+
 # The wide picture's "Mode 7" floor (app_tests.py, wide): see wide7.c.
 wide: gbadhoc-wide.gba
 gbadhoc-wide.gba: crt0.S wide7.c gba.ld

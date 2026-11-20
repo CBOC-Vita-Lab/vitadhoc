@@ -6,6 +6,7 @@
 #include "video_psp.h"
 #include "fe_util.h"
 #include "fe_evt.h"
+#include "../gbcore/gbcore.h"   /* GBCORE_PALETTE_* */
 #ifdef VITA
 #include <stdlib.h>
 #include "pspcompat.h"        /* pspcompat_user_name: the default nick */
@@ -13,6 +14,17 @@
 #endif
 
 psp_config g_pcfg;
+
+/* 1 while the config file predates the Game Boy colours default (no
+ * `gb_colours` key): a stored 0 is then the old, never-chosen "Auto". */
+static int g_gbpal_legacy;
+static int gbpal_load(int v)
+{
+   if (v < 0 || v >= GBCORE_PALETTE_COUNT)
+      return GBCORE_PALETTE_GBC_AUTO;
+   return v == GBCORE_PALETTE_AUTO && g_gbpal_legacy ? GBCORE_PALETTE_GBC_AUTO
+                                                     : v;
+}
 
 static char cfg_path[256];
 
@@ -232,9 +244,16 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       g_pcfg.stick_warned =
          (int)fe_ini_get_int(cfg_path, "stick_warned", 0) ? 1 : 0;
    }
-   g_pcfg.gb_palette  = (int)fe_ini_get_int(cfg_path, "gb_palette", 0);
-   if (g_pcfg.gb_palette < 0 || g_pcfg.gb_palette > 15)
-      g_pcfg.gb_palette = 0;
+   /* 2.0: Game Boy colours default to GBC auto (the Game Boy Color's own
+    * colours for each game).  A file written before it carries no
+    * `gb_colours` key, and its 0 meant "Auto" (Super Game Boy colours),
+    * which nobody chose on purpose: it becomes the new default. */
+   {
+      char gv[16];
+      g_gbpal_legacy = !fe_ini_get(cfg_path, "gb_colours", gv, sizeof(gv));
+   }
+   g_pcfg.gb_palette  = gbpal_load((int)fe_ini_get_int(cfg_path, "gb_palette",
+                                                         GBCORE_PALETTE_GBC_AUTO));
    g_pcfg.bench_mode  = (int)fe_ini_get_int(cfg_path, "bench_mode", 0) ? 1 : 0;
 #ifdef GPSP_PLAYABLE
    /* Bench mode is a HARNESS facility: it forces uncapped + every-frame
@@ -731,6 +750,7 @@ void pcfg_save(void)
                   g_pcfg.gbc_color_correction);
    fe_ini_set_int(cfg_path, "gb_palette",
                   g_pdisp[FE_CONSOLE_GB].gb_palette);
+   fe_ini_set_int(cfg_path, "gb_colours", 2);   /* see pcfg_load_doc */
    fe_ini_set_int(cfg_path, "bench_mode", g_pcfg.bench_mode);
    fe_ini_set_int(cfg_path, "net_frameskip", g_pcfg.net_frameskip);
    fe_ini_set_int(cfg_path, "net_tx_thread", g_pcfg.net_tx_thread);
@@ -862,8 +882,8 @@ static void pdisp_clamp(pcfg_display *d)
    d->filter = pcfg_filter_clamp(d->filter);
    if (d->ambient < 0 || d->ambient >= PCFG_AMB_MODES)
       d->ambient = PCFG_AMBIENT_DEF;
-   if (d->gb_palette < 0 || d->gb_palette > 15)
-      d->gb_palette = 0;
+   if (d->gb_palette < 0 || d->gb_palette >= GBCORE_PALETTE_COUNT)
+      d->gb_palette = GBCORE_PALETTE_GBC_AUTO;
 #ifdef VITA
    {
       /* a console's profile, or a game's own (pcfg_game: its console) */
@@ -978,7 +998,8 @@ static void pdisp_load(void)
       d->ambient = (int)pdisp_get("ambient", c, PCFG_AMBIENT_DEF);
       /* GBA has no DMG palette; its slot just carries the legacy value. */
       d->gb_palette = c == FE_CONSOLE_GBA ? g_pcfg.gb_palette
-                    : (int)pdisp_get("gb_palette", c, g_pcfg.gb_palette);
+                    : gbpal_load((int)pdisp_get("gb_palette", c,
+                                                g_pcfg.gb_palette));
 #ifdef VITA
       {
          char key[24], value[24];
@@ -1092,7 +1113,10 @@ static int pdisp_write(int c)
    rc |= pdisp_set("filter", c, d->filter);
    rc |= pdisp_set("ambient", c, d->ambient);
    if (c != FE_CONSOLE_GBA)
+   {
       rc |= pdisp_set("gb_palette", c, d->gb_palette);
+      rc |= fe_ini_set_int(cfg_path, "gb_colours", 2);   /* pcfg_load_doc */
+   }
 #ifdef VITA
    rc |= pdisp_set("quality", c, d->quality);
    if (c != FE_CONSOLE_GB)
@@ -1392,5 +1416,40 @@ void pcfg_game_end(void)
    (void)pcfg_game_save();
    g_pgame.on = 0;
    pcfg_display_select(g_pdisp_live);
+}
+
+/* The crash-loop guard (vita/boot_guard.h) ------------------------------- */
+
+/* The running game's own look gets the safe picture: Wide view off, Image
+ * quality Original.  Written to games/<ROM>.ini (the game's own look, so
+ * Settings > This game shows and changes it). */
+void pcfg_game_safe_look(void)
+{
+   if (!g_pgame.on)
+      return;
+   if (!g_pgame.override)
+      pcfg_game_set_override(1);
+   g_pgame.disp.wide = 0;
+   g_pgame.disp.quality = PCFG_QUALITY_ORIGINAL;
+   pcfg_display_select(g_pgame.console);
+   (void)pcfg_game_save();
+}
+
+/* The app closed twice before the game list: every risky setting back to
+ * its safe value, in every console's profile, and written. */
+void pcfg_revert_risky(void)
+{
+   int c;
+   g_pcfg.smooth_handoff = 0;
+   g_pcfg.steady_pacing = 0;
+   g_pcfg.core4_off = 1;
+   g_pcfg.nes_wide = 2;
+   for (c = 0; c < FE_CONSOLE_COUNT; c++)
+   {
+      g_pdisp[c].wide = 0;
+      g_pdisp[c].quality = PCFG_QUALITY_ORIGINAL;
+   }
+   pcfg_display_select(pcfg_display_console());
+   pcfg_save();
 }
 #endif

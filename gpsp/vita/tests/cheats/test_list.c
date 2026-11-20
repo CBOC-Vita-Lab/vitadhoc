@@ -483,14 +483,52 @@ static void test_fixture(const char *db)
 
 /* ---- 4. the bundled database --------------------------------------------------- */
 
+/* 2.0, the Sega consoles: a part is "AAAAAA:VVVV" (Genesis) or "AAAA:VV[:CC]"
+ * (Master System, Game Gear, SG-1000), upper-case hex (tests/cheats/SEGA-CODES.md);
+ * the shared cheat engine does not know these consoles yet (the player's hook
+ * does), so their lists are checked for their shape here and in
+ * test_sega_codes.py */
+static int hex_run(const char *p, int n)
+{
+   int i;
+   for (i = 0; i < n; i++)
+      if (!((p[i] >= '0' && p[i] <= '9') || (p[i] >= 'A' && p[i] <= 'F')))
+         return 0;
+   return 1;
+}
+
+static int sega_code_ok(int genesis, const char *code)
+{
+   const char *p = code;
+   for (;;)
+   {
+      size_t len = strcspn(p, "+");
+      if (genesis)
+      {
+         if (len != 11 || !hex_run(p, 6) || p[6] != ':' || !hex_run(p + 7, 4))
+            return 0;
+      }
+      else if (!((len == 7 && hex_run(p, 4) && p[4] == ':' && hex_run(p + 5, 2)) ||
+                 (len == 10 && hex_run(p, 4) && p[4] == ':' && hex_run(p + 5, 2) &&
+                  p[7] == ':' && hex_run(p + 8, 2))))
+         return 0;
+      p += len;
+      if (!*p)
+         return 1;
+      p++;
+   }
+}
+
 static void test_real(const char *db)
 {
    int games, g, i, same = 0, unique;
    unsigned total = 0;
    /* per system: games, entries, usable, value, encrypted, unsupported, other */
-   unsigned stat[4][7];
+   unsigned stat[8][7];
    char rom[700];
-   static const char *sysname[4] = { "GBA", "GB+GBC", "NES", "WS+WSC" };
+   static const char *sysname[8] = { "GBA", "GB+GBC", "NES", "WS+WSC", "Genesis",
+                                     "SMS", "Game Gear", "SG-1000" };
+   static const char sega_letter[4] = { 'I', 'J', 'K', 'L' };
 
    printf("the bundled database\n");
    memset(stat, 0, sizeof(stat));
@@ -556,7 +594,40 @@ static void test_real(const char *db)
             by_title = cheatdb_find_name('W', block, &exact);
             if (by_title == g && exact)
                sys = 3;
+            else
+            {
+               int k;
+               for (k = 0; k < 4; k++)
+               {
+                  by_title = cheatdb_find_name(sega_letter[k], block, &exact);
+                  if (by_title == g && exact)
+                     sys = 4 + k;
+               }
+            }
          }
+      }
+      if (sys >= 4)
+      {
+         /* Sega: found again by its own name; every code of the right shape */
+         const char *q = block + strlen(block) + 1;
+         unsigned k;
+         stat[sys][0]++;
+         for (k = 0; k < n; k++)
+         {
+            const char *code = q + strlen(q) + 1;
+            stat[sys][1]++;
+            if (sega_code_ok(sys == 4, code))
+               stat[sys][2]++;
+            else
+            {
+               stat[sys][6]++;
+               CHECK(0, "\"%s\": code \"%.60s\" is not in the Sega form", block, code);
+            }
+            q = code + strlen(code) + 1;
+         }
+         same++;
+         free(block);
+         continue;
       }
       p = block + strlen(block) + 1;
       snprintf(first_code, sizeof(first_code), "%.60s", p + strlen(p) + 1);
@@ -600,12 +671,19 @@ static void test_real(const char *db)
    CHECK((int)total == cheatdb_cheats(), "cheats: %u in the blocks, %d in the header", total,
          cheatdb_cheats());
    printf("   %d games, %u cheats; through cheats_validate:\n", games, total);
-   printf("   %-7s %6s %8s %8s %8s %8s %8s %8s\n", "", "games", "entries", "usable",
+   printf("   %-9s %6s %8s %8s %8s %8s %8s %8s\n", "", "games", "entries", "usable",
           "value?", "encrypt.", "type", "other");
-   for (i = 0; i < 4; i++)
-      printf("   %-7s %6u %8u %8u %8u %8u %8u %8u\n", sysname[i], stat[i][0],
+   for (i = 0; i < 8; i++)
+      printf("   %-9s %6u %8u %8u %8u %8u %8u %8u\n", sysname[i], stat[i][0],
              stat[i][1], stat[i][2], stat[i][3], stat[i][4], stat[i][5], stat[i][6]);
    CHECK(stat[0][6] == 0 && stat[1][6] == 0 && stat[2][6] == 0 && stat[3][6] == 0, "entries that are not codes shipped");
+   CHECK(stat[4][0] == 1586 && stat[5][0] == 621 && stat[6][0] == 544 && stat[7][0] == 26,
+         "Sega games: %u %u %u %u", stat[4][0], stat[5][0], stat[6][0], stat[7][0]);
+   CHECK(stat[4][1] == 50723 && stat[5][1] == 6016 && stat[6][1] == 7294 && stat[7][1] == 69 &&
+         stat[4][6] + stat[5][6] + stat[6][6] + stat[7][6] == 0,
+         "Sega cheats: %u %u %u %u", stat[4][1], stat[5][1], stat[6][1], stat[7][1]);
+   CHECK(cheatdb_find_crc(0xF9394E97u) >= 0 && cheatdb_find_crc(0x17A40E29u) >= 0 &&
+         cheatdb_find_crc(0x95A18EC7u) >= 0, "Sonic (Genesis), Alex Kidd, Sonic 2 (Game Gear) by CRC");
    cheatdb_close();
 }
 

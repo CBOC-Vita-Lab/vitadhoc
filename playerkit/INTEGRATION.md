@@ -424,3 +424,38 @@ What each line proves and what it cannot: a `usable` verdict proves a thread pin
 ### 9.6 Tests
 
 `make -C playerkit test` (33 `cores_*` cases): the probe against a fake kernel (100 %; 3 then 97; 3 x6; affinity refused; flapping 50; 59.9 versus 60 %; off; configurable tries), the spin measure against a fake clock, resume with and without hysteresis, the planner (golden three-core tables for the SNES player, the main app and the NES; four-core tables; every role combination of every profile checked for: priorities in 0x40..0xBF, core 0 alone for the emulating thread, no two whole-core roles on a core, audio never with a spinner, optional helpers at the bottom, no system core in a 3-core plan, only the listed roles move and never change priority), the watchdog (quiet while alive, trip timing, no trip while the game is paused, idle versus dead, per-slot limits, recovery, recovery cap, outside evidence). `make -C playerkit tsan` runs the watchdog with real threads under ThreadSanitizer.
+
+## 10. Undo save and slot lock (recipe; the main app has it since 2.0)
+
+The main app's state page (`gpsp/frontend-common/fe_host.c`, `gpsp/psp/ui_psp.c`,
+`gpsp/vita/main_vita.c`) has these; the SNES player should match them file for
+file and word for word, so a state folder is the same on every console.
+
+- **Undo save.** Before `States::save` swaps the new state in (step 2 of the
+  job, after the old note is emptied), copy the slot's current main file and its
+  `.thumb`, `.shot` and `.meta` to `<slot>.bak`, `.bak.thumb`, `.bak.shot` and
+  `.bak.meta`, each through `atomic_write` (temp file, read back, rename). One `.bak` per slot; a
+  new save replaces it. A slot that was empty gets an empty `<slot>.bak` marker. `undo_save(slot)`:
+  move the `.bak` set back over the slot (an empty `.bak` removes the slot's files),
+  remove the `.bak` set, rescan the slot. The state page offers it on R as
+  "Undo the save in Slot N?" with X undo / O keep; the note afterwards is
+  "Slot N is as it was before the save" or "Slot N is empty again".
+- **Undo load.** `undo_store`/`undo_fetch` already keep the point in memory; to
+  survive leaving the game, also write it to `<slot 0 path>.undo` (the
+  `StateLayout::undo_path()`) with `atomic_write` before every state load, and
+  commit it only when the load succeeded (write to `.undo.new`, rename when the
+  load returned OK). Undoing first saves "now" aside (`.undo.now`) so a second
+  undo goes forward again. R offers "Undo the last load?" when there is no
+  `.bak` to undo for the slot under the cursor.
+- **Lock.** A flag file `<slot>.lock` (content `locked`, written through
+  temp + rename). `States::save`, `States::remove` and the quick-save path
+  return a new status `ST_LOCKED` when it exists; the UI shows the toast
+  "Slot N is locked: L unlocks it" (state page) or "Slot is locked" (quick
+  save). L on the state page toggles it ("Slot N locked" / "Slot N
+  unlocked"); a padlock is drawn on a locked slot's card. The lock files
+  are in the `leftovers[]` list of `scan` as ordinary companions, never removed
+  by the sweep.
+- **Tests** (host): overwrite, then undo save, gives the first state's bytes
+  back; load, then undo load, restores; a locked slot refuses save and delete with
+  the toast; no `.tmp`, `.old` or `.new` is left after any of them. The main
+  app's versions are `state_undo_lock` in `gpsp/vita/hostcore/app_tests.py`.

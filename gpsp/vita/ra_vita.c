@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Copyright (c) 2026 VitAdhoc contributors */
 /* ra_vita.c -- see ra_vita.h. */
 #include "ra_vita.h"
 
@@ -38,6 +40,10 @@ static struct
    char path[600];                 /* the account file */
    char user[64], token[96];       /* as kept on the card */
    int  hardcore;                  /* the setting */
+   int  indic;                     /* the indicators setting (default on) */
+   unsigned frame;                 /* emulated frames, for throttling */
+   unsigned prog_at;               /* frame of the last progress update */
+   unsigned ping_n;                /* pings sent (rich presence) */
    int  login_busy;
    char login_name[64];
    int  game_on;                   /* between ra_game_begin and _end */
@@ -166,6 +172,7 @@ static void account_load(void)
    f = fopen(R.path, "r");
    R.user[0] = R.token[0] = '\0';
    R.hardcore = 0;
+   R.indic = 1;
    if (!f)
       return;
    while (fgets(line, sizeof(line), f))
@@ -182,6 +189,8 @@ static void account_load(void)
          snprintf(R.token, sizeof(R.token), "%s", v);
       else if (!strcmp(line, "hardcore"))
          R.hardcore = atoi(v) != 0;
+      else if (!strcmp(line, "indicators"))
+         R.indic = atoi(v) != 0;
    }
    fclose(f);
 }
@@ -199,7 +208,7 @@ static int account_save(void)
               "kept).\n");
    if (R.user[0] && R.token[0])
       fprintf(f, "user=%s\ntoken=%s\n", R.user, R.token);
-   fprintf(f, "hardcore=%d\n", R.hardcore);
+   fprintf(f, "hardcore=%d\nindicators=%d\n", R.hardcore, R.indic);
    if (fclose(f) != 0)
    {
       remove(tmp);
@@ -273,6 +282,58 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
                                              : "");
       toast("Submitted: %s", t);
       break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_SHOW:
+      fe_evt("ra_challenge show id=%u title=\"%s\"", e->achievement->id,
+             e->achievement->title);
+      osd_ind_challenge(e->achievement->id, 1, e->achievement->title);
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_CHALLENGE_INDICATOR_HIDE:
+      fe_evt("ra_challenge hide id=%u", e->achievement->id);
+      osd_ind_challenge(e->achievement->id, 0, NULL);
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW:
+   case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_UPDATE:
+      /* The runtime shows it for two seconds and moves it on as the value
+       * changes; a value that changes every frame is drawn at most every
+       * 20th, and the first one always. */
+      if (e->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW ||
+          R.frame - R.prog_at >= 20)
+      {
+         R.prog_at = R.frame;
+         fe_evt("ra_progress %s id=%u progress=\"%s\"",
+                e->type == RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_SHOW
+                ? "show" : "update", e->achievement->id,
+                e->achievement->measured_progress);
+         osd_ind_progress(e->achievement->title,
+                          e->achievement->measured_progress);
+      }
+      break;
+   case RC_CLIENT_EVENT_ACHIEVEMENT_PROGRESS_INDICATOR_HIDE:
+      fe_evt("ra_progress hide");
+      osd_ind_progress(NULL, NULL);
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_SHOW:
+      fe_evt("ra_tracker show id=%u value=\"%s\"",
+             e->leaderboard_tracker->id, e->leaderboard_tracker->display);
+      osd_ind_tracker(e->leaderboard_tracker->display);
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_UPDATE:
+      osd_ind_tracker(e->leaderboard_tracker->display);   /* no log: per frame */
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_TRACKER_HIDE:
+      fe_evt("ra_tracker hide id=%u", e->leaderboard_tracker->id);
+      osd_ind_tracker(NULL);
+      break;
+   case RC_CLIENT_EVENT_LEADERBOARD_SCOREBOARD:
+      fe_evt("ra_scoreboard id=%u rank=%u of=%u score=%s",
+             e->leaderboard_scoreboard->leaderboard_id,
+             e->leaderboard_scoreboard->new_rank,
+             e->leaderboard_scoreboard->num_entries,
+             e->leaderboard_scoreboard->submitted_score);
+      snprintf(t, sizeof(t), "Rank %u of %u", e->leaderboard_scoreboard->new_rank,
+               e->leaderboard_scoreboard->num_entries);
+      toast("%s", t);
+      break;
    case RC_CLIENT_EVENT_SERVER_ERROR:
       fe_evt("ra_server_error api=%s rc=%d msg=\"%s\"",
              e->server_error->api ? e->server_error->api : "",
@@ -297,6 +358,14 @@ static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
    default:
       break;
    }
+}
+
+/* The runtime's clock (the progress pill's two seconds, the ping every 30):
+ * the app's monotonic one, which the host twin simulates. */
+static rc_clock_t RC_CCONV now_ms(const rc_client_t *client)
+{
+   (void)client;
+   return (rc_clock_t)(plat_time_us() / 1000u);
 }
 
 static void RC_CCONV on_log(const char *msg, const rc_client_t *client)
@@ -388,6 +457,8 @@ void ra_boot(const char *data, const char *host, const char *version,
       fe_evt("ra_boot FAILED");
       return;
    }
+   osd_ind_enable(R.indic);
+   rc_client_set_get_time_millisecs_function(R.rc, now_ms);
    rc_client_enable_logging(R.rc, RC_CLIENT_LOG_LEVEL_WARN, on_log);
    rc_client_set_event_handler(R.rc, on_event);
    if (host && host[0])
@@ -434,6 +505,32 @@ void ra_shutdown(void)
 
 static void hash_done(const ra_http_res *res);
 
+/* The runtime's ping is how rich presence reaches the site (m=<text>, sent
+ * every couple of minutes while a game runs): say what went out. */
+static void ping_log(const char *post, int status)
+{
+   const char *m = post ? strstr(post, "&m=") : NULL;
+   char rp[96];
+   size_t n = 0;
+   if (m)
+      for (m += 3; *m && *m != '&' && n + 1 < sizeof(rp); m++)
+      {
+         if (*m == '+')
+            rp[n++] = ' ';
+         else if (*m == '%' && m[1] && m[2])
+         {
+            char hx[3] = { m[1], m[2], 0 };
+            rp[n++] = (char)strtol(hx, NULL, 16);
+            m += 2;
+         }
+         else
+            rp[n++] = *m;
+      }
+   rp[n] = '\0';
+   R.ping_n++;
+   fe_evt("ra_ping n=%u status=%d rich_presence=\"%s\"", R.ping_n, status, rp);
+}
+
 void ra_pump(void)
 {
    ra_http_res res;
@@ -452,6 +549,8 @@ void ra_pump(void)
             R.tail = NULL;
          fe_evt("ra_http api=%s status=%d len=%u note=%s", c->api,
                 res.status, (unsigned)res.len, res.note);
+         if (!strcmp(c->api, "ping"))
+            ping_log(c->post, res.status);
          r.body = res.body ? res.body : "";
          r.body_length = res.len;
          r.http_status_code = res.status;
@@ -542,6 +641,19 @@ void ra_logout(void)
 int ra_hardcore_pref(void)
 {
    return R.hardcore;
+}
+
+int ra_indicators_pref(void)
+{
+   return R.indic;
+}
+
+void ra_indicators_set(int on)
+{
+   R.indic = on ? 1 : 0;
+   osd_ind_enable(R.indic);
+   account_save();
+   fe_evt("ra_indicators_setting on=%d", R.indic);
 }
 
 void ra_hardcore_set(int on)
@@ -646,6 +758,7 @@ static void hash_done(const ra_http_res *res)
 void ra_game_end(void)
 {
    ra_list_free();
+   osd_ind_clear();
    if (!R.game_on)
       return;
    R.game_on = 0;
@@ -677,12 +790,14 @@ void ra_frame(int linked)
       R.stale = 0;
       rc_client_deserialize_progress_sized(R.rc, NULL, 0);
    }
+   R.frame++;
    rc_client_do_frame(R.rc);
    R.framed = 1;
 }
 
 void ra_state_loaded(void)
 {
+   osd_ind_clear();                 /* the other timeline's indicators */
    if (R.game_on)
       R.stale = 1;
 }

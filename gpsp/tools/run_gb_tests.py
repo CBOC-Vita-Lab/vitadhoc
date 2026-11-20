@@ -359,6 +359,18 @@ def main() -> int:
              *core_objs, str(shared), "-lm"])
         run([str(t / "cgb_lcd")], asan)
 
+        # Colours for DMG games: the Game Boy Color boot ROM's selection
+        # against known headers, the 51 combinations, the 12 button palettes,
+        # the 32 Super Game Boy palettes, the GBC LCD model, CGB games
+        # untouched, the preview, and a machine that does not depend on the
+        # palette.
+        # (linked as the PSP links it: the instance partial link, so that
+        # gbcore_power_on can boot several machines in one process)
+        run(["gcc", "-std=gnu11", *WARN, *SAN, "-Igbcore", "-o",
+             str(t / "cgb_dmg_pal"), "gbcore/tests/cgb_dmg_pal.c", inst_a,
+             str(shared), "-lm"])
+        run([str(t / "cgb_dmg_pal")], asan)
+
         # The cable hook in the core: SC write -> callback -> SB/IF.
         run(["gcc", "-std=gnu11", *WARN, *SAN, "-Igbcore", "-o",
              str(t / "serial"), "gbcore/tests/serial.c", str(glue),

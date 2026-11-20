@@ -30,10 +30,9 @@ they are not a bundled proprietary shader compiler.
 ## Mbed TLS (Online play, 2.0)
 
 Online play talks HTTPS with the project's own client (`gpsp/vita/nethttps/`),
-which needs Mbed TLS 3.6.7. It is fetched and built once, by a script, into a
+which needs Mbed TLS 3.6.8. It is fetched and built once, by a script, into a
 private prefix; it is never installed into VitaSDK and the build itself stays
-offline. The pin (git commit, tag, the one upstream TLS 1.3 clean-up patch and
-every hash) is `gpsp/vita/deps/lock.json`; the recipe is
+offline. The pin (git commit, tag, and every hash) is `gpsp/vita/deps/lock.json`; the recipe is
 `gpsp/vita/deps/Makefile.mbedtls` and the client profile (TLS client only, no
 server, no SHA-1 or MD5) is `gpsp/vita/deps/mbedtls/np_user_config.h`.
 

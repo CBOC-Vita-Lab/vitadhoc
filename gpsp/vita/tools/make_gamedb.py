@@ -19,7 +19,7 @@ The output is one text file, sorted, one record a line, TAB-separated:
                                   borrows codes: a file much smaller than
                                   the cartridge is not it)
   N<sys><loose> <No-Intro name>   a game by a loose form of its title
-                                  (squash below; sys A-F as in SYSTEMS),
+                                  (squash below; sys A-L as in SYSTEMS),
                                   for files named "Act Raiser" or
                                   "7th Saga" instead of the No-Intro name
   T<title key>  <article>         a game by its title (title_key below)
@@ -62,6 +62,17 @@ SYSTEMS = [
     # whole-file checksums only (no Wikidata set: no blurbs yet)
     ("Bandai - WonderSwan", None, "G"),
     ("Bandai - WonderSwan Color", None, "H"),
+    # 2.0: the Sega consoles of md.bin (Genesis Plus GX), names and
+    # checksums only, like the NES and WonderSwan (no Wikidata set: the
+    # descriptions the games share by title with other consoles still show).
+    # The Genesis catalogue's CRCs are of the plain, de-interleaved ROM
+    # (gamedb_md_crc_cancel); the others' of the whole cartridge image
+    # (gamedb_sms_crc_cancel).  The names are also the libretro-thumbnails
+    # folder names (artfetch.c SYS, gamedb_sega.h).
+    ("Sega - Mega Drive - Genesis", None, "I"),
+    ("Sega - Master System - Mark III", None, "J"),
+    ("Sega - Game Gear", None, "K"),
+    ("Sega - SG-1000", None, "L"),
 ]
 # which file extensions of a catalogue's entries give a checksum record
 CRC_EXT = {"E": (".nes",), "F": (".qd",)}   # ...the ones left OUT
@@ -113,7 +124,7 @@ def title_key(s):
 def base_title(nointro):
     """'Legend of Zelda, The - The Minish Cap (USA)' -> 'The Legend of
     Zelda - The Minish Cap'."""
-    t = re.split(r" \(", nointro, 1)[0].strip()
+    t = re.split(r" \(", nointro, maxsplit=1)[0].strip()
     m = re.match(r"^(.*?), (The|A|An)( - .*)?$", t)
     if m:
         t = "%s %s%s" % (m.group(2), m.group(1), m.group(3) or "")
@@ -134,10 +145,27 @@ def region_rank(name):
     return len(REGION_ORDER)
 
 
-def plain_release(name):
+def plain_release(name, sega=False):
     """Not a beta, demo, prototype, hack, pirate, sample or kiosk copy."""
     return not re.search(r"\((Beta|Demo|Proto|Sample|Kiosk|Pirate|Unl|Hack|"
-                         r"Program|Debug)[^)]*\)", name)
+                         r"Program|Debug" + ("|Auto Demo|Putative Proto" if sega else "")
+                         + r")[^)]*\)", name)
+
+
+PLAIN_TAGS = re.compile(r"^(USA|Europe|Japan|World|Asia|Australia|Brazil|Canada|"
+                        r"China|Denmark|Finland|France|Germany|Greece|Hong Kong|"
+                        r"Italy|Korea|Mexico|Netherlands|New Zealand|Norway|"
+                        r"Portugal|Russia|Scandinavia|Spain|Sweden|Taiwan|UK|"
+                        r"Latin America|Unknown|Rev [0-9A-Z]+|v[0-9.]+|"
+                        r"[A-Z][a-z](,[A-Z][a-z])*)(, .*)?$")
+
+
+def extra_tags(name):
+    """How many parenthesised tags of a No-Intro name are neither region,
+    language nor revision: "(Virtual Console)", "(Sega Channel)", "(Evercade)".
+    The Sega consoles' loose names prefer the release with the fewest."""
+    return sum(1 for t in re.findall(r"\(([^)]*)\)", name)
+               if not PLAIN_TAGS.match(t))
 
 
 def variants(key):
@@ -279,12 +307,27 @@ def main():
     keys_wanted = {}            # title key -> article
     names = []                  # (key, base title) per cartridge
     only = os.environ.get("GAMEDB_SYSTEMS")      # e.g. "D": one console's records
+    # GAMEDB_KEEP=1: start from OUTDIR/gamedb.txt and add the records of the
+    # consoles named in GAMEDB_SYSTEMS (an existing record is never replaced);
+    # GAMEDB_DATS=DIR: read the catalogues from DIR/<name>.dat, not the net.
+    keep = bool(os.environ.get("GAMEDB_KEEP"))
+    datdir = os.environ.get("GAMEDB_DATS")
+    if keep:
+        with open(os.path.join(outdir, "gamedb.txt"), encoding="utf-8") as f:
+            for line in f:
+                k, v = line.rstrip("\n").split("\t", 1)
+                recs[k] = v
     for dat, qid, tag in SYSTEMS:
         if only and tag not in only:
             continue
-        text = get("https://raw.githubusercontent.com/libretro/libretro-database/"
-                   "master/metadat/no-intro/" + urllib.parse.quote(dat) + ".dat",
-                   os.path.join(cache, dat + ".dat")).decode("utf-8", "replace")
+        if datdir:
+            with open(os.path.join(datdir, dat + ".dat"), encoding="utf-8",
+                      errors="replace") as f:
+                text = f.read()
+        else:
+            text = get("https://raw.githubusercontent.com/libretro/libretro-database/"
+                       "master/metadat/no-intro/" + urllib.parse.quote(dat) + ".dat",
+                       os.path.join(cache, dat + ".dat")).decode("utf-8", "replace")
         games = parse_dat(text)
         wd = wikidata(qid, cache) if qid else []
         index = {}
@@ -295,10 +338,19 @@ def main():
         loose = {}              # squash(key) -> (rank, name)
         for g in games:
             if g["crc"] and not g["file"].lower().endswith(CRC_EXT.get(tag, ())):
-                recs["C" + g["crc"]] = g["name"]
-            if plain_release(g["name"]):
+                if keep:        # an earlier console's record is kept
+                    if recs.setdefault("C" + g["crc"], g["name"]) != g["name"]:
+                        print("CRC %s of %s is already %s" %
+                              (g["crc"], g["name"], recs["C" + g["crc"]]),
+                              file=sys.stderr)
+                else:
+                    recs["C" + g["crc"]] = g["name"]
+            sega = tag in "IJKL"
+            if plain_release(g["name"], sega):
                 kk = squash(title_key(base_title(g["name"])))
                 rank = (region_rank(g["name"]), "(Rev" in g["name"], g["name"])
+                if sega:    # 2.0: reissues, compilations and the like last
+                    rank = (extra_tags(g["name"]),) + rank
                 if kk and (kk not in loose or rank < loose[kk][0]):
                     loose[kk] = (rank, g["name"])
             code = g["serial"] if g["serial"] and tag == "A" and \

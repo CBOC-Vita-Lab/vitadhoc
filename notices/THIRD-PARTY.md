@@ -22,6 +22,17 @@ clarification and the remaining package review.
 - **TGB Dual:** GB/GBC core by the TGB Dual authors, with the libretro
   contributors and local linked-instance changes. Its GPL notice and source
   are in `gpsp/gbcore/tgbdual/`.
+- **Game Boy colours (SameBoy, Gambatte):** `gpsp/gbcore/tgbdual/_cgb_dmg_pal.h`
+  holds the Game Boy Color's per-game palette choice (the 51 palette
+  combinations, the title-sum table and the 12 button palettes) as data in the
+  layout of SameBoy's clean-room boot ROM (`BootROMs/cgb_boot.asm`), Expat
+  licence, Copyright (c) 2015-2026 Lior Halphon,
+  <https://github.com/LIJI32/SameBoy>; `licenses/SameBoy-Expat.txt`. SameBoy's
+  own extra palettes are left out. The 32 Super Game Boy system palette colours
+  follow the libretro Gambatte core, GPL-2.0, Copyright (C) 2007 Sindre Aamas
+  (`licenses/GPL-2.0.txt`). Checked entry by entry against SameBoy at
+  revision `ea667ad7` during development; the table
+  came to VitAdhoc through GBAdhoc (commit aeb96a6).
 - **Snes9x 1.63 (SNES player, separate program):** the Snes9x team,
   <https://github.com/snes9xgit/snes9x>. Snes9x licence (non-commercial, not
   GPL), `snes/core/LICENSE`, shipped as `licenses/Snes9x-LICENSE.txt`; it
@@ -125,13 +136,22 @@ clarification and the remaining package review.
   <https://github.com/libretro/libretro-database/tree/d5bae90b22018ce3c9c5a8eff4141a4768c8dd5f>.
   Published there under CC BY-SA 4.0; `licenses/CC-BY-SA-4.0.txt`.
   The `cht/` lists used are those of Game Boy Advance, Game Boy, Game Boy
-  Color, Nintendo Entertainment System, WonderSwan and WonderSwan Color, and
-  the No-Intro lists of `metadat/no-intro/` for the same systems. The local
+  Color, Nintendo Entertainment System, WonderSwan, WonderSwan Color and (2.0)
+  Sega Mega Drive - Genesis, Master System - Mark III, Game Gear and SG-1000,
+  and the No-Intro lists of `metadat/no-intro/` for the same systems. The
+  game list (`assets/gamedb.txt`, built by `gpsp/vita/tools/make_gamedb.py`)
+  takes its cartridge names and checksums from the same No-Intro lists; the
+  four Sega lists in it are those of libretro-database revision
+  `7d716259` (version 2026.11.14, the newest when 2.0 was built) and its
+  thumbnail folder names are those of the libretro-thumbnails repositories
+  (artwork is fetched at run time from thumbnails.libretro.com, never stored). The local
   converter (`gpsp/vita/tools/make_cheatdb.py`, run offline on a local
   checkout of that revision; `assets/cheats.db.txt` lists what it kept and
   dropped) merges and deduplicates lists, filters supported codes (for the
   NES: Game Genie and `AAAA:VV` / `AAAA?CC:VV` forms, with Pro Action Rocky
-  hex codes rewritten as `AAAA:VV`; for WonderSwan: `AAAAA:VV` RAM pokes),
+  hex codes rewritten as `AAAA:VV`; for WonderSwan: `AAAAA:VV` RAM pokes;
+  for the Sega consoles: Game Genie and Pro Action Replay lines decoded to
+  `ADDRESS:VALUE[:COMPARE]` as in Genesis Plus GX, the rest dropped),
   shortens display names and associates records with cartridge checksums.
   This database remains separately licensed; it is not relicensed as GPL.
 - **Experimental GPU xBRZ:** a separate implementation referring to libretro's
@@ -141,17 +161,16 @@ clarification and the remaining package review.
   upstream shader revision was not recorded. This is not the same license
   evidence as the vendored CPU xBRZ copy. Combined-binary licensing remains
   under review; adding notices or leaving GPU mode off does not settle it.
-- **Mbed TLS 3.6.7 (Online play, 2.0):** the Mbed TLS contributors (Arm Limited and others),
-  <https://github.com/Mbed-TLS/mbedtls>, tag `mbedtls-3.6.7`, commit
-  `068ff080b369adfac81509f9b57b2afabaf82dc5`. Dual-licensed Apache-2.0 OR GPL-2.0-or-later;
+- **Mbed TLS 3.6.8 (Online play, 2.0):** the Mbed TLS contributors (Arm Limited and others),
+  <https://github.com/Mbed-TLS/mbedtls>, tag `mbedtls-3.6.8`, commit
+  `82e69999f91126589a28b70dd75b69fbcabe2711`. Dual-licensed Apache-2.0 OR GPL-2.0-or-later;
   VitAdhoc uses it under GPL-2.0-or-later, which is how it sits with the rest of the program
   (`licenses/MbedTLS-LICENSE.txt` is upstream's `LICENSE` with both texts; `licenses/GPL-2.0.txt`).
   It is linked as three static libraries into the app (TLS client for the room service; the SNES
   player does not use it). Our changes: a client-only build profile
-  (`gpsp/vita/deps/mbedtls/np_user_config.h`) and ONE upstream bug fix, the non-PSA TLS 1.3
-  transform clean-up of upstream commit `afa648aa44c698f6f01b1dd653edc3dfbe140355` (a one-file
-  overlay applied at build time; the checkout is never modified). Pins, hashes and the recipe:
-  `gpsp/vita/deps/lock.json`, `gpsp/vita/deps/Makefile.mbedtls`, `gpsp/vita/deps/mbedtls/patches/`;
+  (`gpsp/vita/deps/mbedtls/np_user_config.h`); the source is stock upstream, no patch (3.6.8
+  includes the TLS 1.3 transform clean-up that 3.6.7 needed). Pin and recipe:
+  `gpsp/vita/deps/lock.json`, `gpsp/vita/deps/Makefile.mbedtls`;
   built by `tools/online/build-mbedtls.py` (MIT, `licenses/CBOC-tools-MIT.txt`). The library is not
   stored in this repository.
 - **The HTTPS client (`gpsp/vita/nethttps/`):** the project owner's own code, written for the

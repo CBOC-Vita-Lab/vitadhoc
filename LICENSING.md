@@ -43,11 +43,11 @@ the game's path and it starts VitAdhoc again when you quit.
 
 ## Online Play: Mbed TLS And The Service
 
-Version 2.0 links Mbed TLS 3.6.7 for the HTTPS client of online play. Mbed TLS
+Version 2.0 links Mbed TLS 3.6.8 for the HTTPS client of online play. Mbed TLS
 is offered under **Apache-2.0 OR GPL-2.0-or-later**; VitAdhoc takes the
 GPL-2.0-or-later option, which matches the rest of the program, and both texts
 stay in `licenses/MbedTLS-LICENSE.txt`. It is built from a pinned upstream
-checkout plus one upstream bug-fix hunk (pins and hashes in
+checkout, unpatched (pin in
 `gpsp/vita/deps/lock.json`) and is not stored in the repository. Apache-2.0 is
 not compatible with GPL-2.0-only, so this relies on the "or later" and on the
 choice Mbed TLS offers: if the Snes9x player or any other separate program
@@ -55,6 +55,20 @@ ever linked it, that would need its own check (the SNES player does not).
 The HTTPS client, the NAT layer and the room service are the project owner's
 own code. Cloudflare's STUN and TURN are services, not code. No legal opinion
 has been obtained.
+
+## RetroAchievements Client: MIT Or GPL-2.0-or-later
+
+`gpsp/vita/ra_vita.c`, `ra_vita.h`, `ra_http.c`, `ra_http.h` and
+`ui_vita_ra.h` are the project's own code (written for VitAdhoc, none of it
+from GBAdhoc or another project) and carry `SPDX-License-Identifier: MIT OR
+GPL-2.0-or-later`, so the SNES and Genesis players can link them. They build
+on rcheevos (MIT, `gpsp/vita/third_party/rcheevos`). `ra_roots.h` is generated
+certificate data and is not part of this grant. Dependencies on GPL-only
+gpsp files that remain, and that a separate player must replace with its own
+small shims: `frontend-common/fe_evt.h` (logging), `frontend-common/fe_host.h`
+(`fe_host_ra_read`, memory reads), `frontend-common/fe_console.h`,
+`psp/osd_psp.h` (toasts and the indicator overlay), `vita/cheats_vita.h`
+and `vita/plat.h` (threads, time).
 
 ## Release Status
 

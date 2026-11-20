@@ -24,6 +24,8 @@ CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
 # the *_R copies defined in core/ppu_mt.cpp. See core/rcopy.sh.
 RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
+# Third copy (suffix _w, state *_W): the wide view's margin thread, see core/ppu_mt.cpp
+RCOPY_OBJS += $(addprefix $(B)/wcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 OBJCOPY ?= objcopy
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/audio_sim.o $(B)/main.o
 
@@ -103,6 +105,11 @@ $(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rco
 $(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
 	@mkdir -p $(B)/rcopy
 	$(OBJCOPY) --redefine-syms=$(B)/rcopy.map $< $@
+$(B)/wcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh
+	RCOPY_SUF=w sh $(CORE)/rcopy.sh $@ $(filter %.o,$^)
+$(B)/wcopy/%.o: $(B)/core/%.o $(B)/wcopy.map
+	@mkdir -p $(B)/wcopy
+	$(OBJCOPY) --redefine-syms=$(B)/wcopy.map $< $@
 
 # Super FX speed-ups (exact, identity-tested on the 15 ROMs): merged run-loop test, cache range
 # test, byte-per-line cache fill flags. The Vita Makefile uses the same defines for these two files.

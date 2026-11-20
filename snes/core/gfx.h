@@ -138,6 +138,11 @@ void S9xPPUMTVRAMDirty (uint32 address);
 bool S9xPPUMTSet (bool enable);
 const uint16 *S9xPPUMTVideo (int *width, int *height);
 void S9xPPUMTConfig (int core, int prio);
+// CBOC-Vita: the wide view's margin passes on a thread of their own (a third renderer copy that reads the same slots; only with the PPU thread)
+void S9xWideMTConfig (int core, int prio);	// core 0..2, -1 = the system's choice, or a Vita affinity mask (>= 0x10000)
+void S9xWideMTSet (bool want);			// default on; takes effect between frames
+bool S9xWideMTActive (void);
+void S9xWideMTStats (uint64_t *busy_ns, uint64_t *frames, uint64_t *centre_waits);
 /* Non-blocking: queues the end-of-frame copy and returns the newest picture the worker has finished
  * (usually the previous frame), or NULL when none exists yet. *serial counts finished pictures. */
 const uint16 *S9xPPUMTVideoNoWait (int *width, int *height, unsigned *serial);

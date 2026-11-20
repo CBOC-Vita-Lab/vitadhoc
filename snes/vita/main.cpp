@@ -1348,6 +1348,17 @@ int main(int argc, char **argv)
 	int want_apu = ini_int(tini, "apu_thread", 1), want_ppu = ini_int(tini, "ppu_thread", 1);
 	int spin = ini_int(tini, "spin", 300);
 	snes_host_thread_config(2, 0x60, 1, 0x60, spin);
+	/* The wide view's margin thread (snes/WIDE-INTEGRATION.md "Margin thread"): the core's wide passes and the capture, off the PPU thread.
+	 * threads.ini: wide_thread=1 (default) / 0 (the PPU thread draws them, as before); wide_core=-1 (default: cores 0 and 2, in the gaps the
+	 * emulating thread and the sound chip thread leave), 0, 1 or 2 (that core only); wide_prio (default 0x68: below those two threads, above
+	 * the scaler's helpers). */
+	const int want_wide_thr = ini_int(tini, "wide_thread", 1) != 0 ? 1 : 0;
+	{
+		const int wc = ini_int(tini, "wide_core", -1);
+		const int wprio = prio_ok(ini_int(tini, "wide_prio", 0x68), 0x68);
+		snes_host_wide_thread_config(wc >= 0 && wc <= 2 ? wc : (int) (SCE_KERNEL_CPU_MASK_USER_0 | SCE_KERNEL_CPU_MASK_USER_2), wprio > 0 ? wprio : 0x68);
+		logf_("wide margin thread: %s, core %s, priority 0x%x\n", want_wide_thr ? "on" : "off", wc == 0 ? "0" : wc == 1 ? "1" : wc == 2 ? "2" : "0+2", wprio > 0 ? wprio : 0x68);
+	}
 	const int audio_prio = prio_ok(ini_int(tini, "audio_prio", PRIO_AUDIO_DEFAULT), PRIO_AUDIO_DEFAULT);
 	const int main_prio = prio_ok(ini_int(tini, "main_prio", PRIO_MAIN_DEFAULT), PRIO_MAIN_DEFAULT);
 	const bool audio_legacy = ini_int(tini, "audio_legacy", 0) != 0;
@@ -1357,6 +1368,7 @@ int main(int argc, char **argv)
 	}
 	snes_host_set_option("apu_thread", want_apu);
 	snes_host_set_option("ppu_thread", want_ppu);
+	snes_host_set_option("wide_thread", want_wide_thr);
 	snes_host_set_log([](const char *line) { logf_("%s", line); });
 
 	/* the game: launch file or argument, patch, saves, states, settings (player.cpp) */
@@ -1765,8 +1777,9 @@ int main(int argc, char **argv)
 				const SceUID ids[6] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread, g_help_thread[0], g_help_thread[1] };
 				double cur[6], d[6];
 				for (int k = 0; k < 6; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
-				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f scale1=%.0f scale2=%.0f ppu_b=%.0f apu_b=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3], d[4], d[5],
-				    (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6, g_draw_core);
+				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f scale1=%.0f scale2=%.0f ppu_b=%.0f apu_b=%.0f wide_b=%.0f (wide frames %u, ppu waited for it %u) (draw core %d)\n", d[0], d[1], d[2], d[3], d[4], d[5],
+				    (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6, (st1.wide_busy_ns - st0.wide_busy_ns) / 1e6,
+				    (unsigned) (st1.wide_frames - st0.wide_frames), (unsigned) (st1.wide_centre_waits - st0.wide_centre_waits), g_draw_core);
 			}
 			double fr = frames_run ? frames_run : 1;
 			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, drawn / dt, frames_run / dt,
@@ -1781,7 +1794,14 @@ int main(int argc, char **argv)
 			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
 			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
 			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
-			logf_(" | wide_lines jobs=%u helped=%u", g_lines_jobs.exchange(0), g_lines_helped.exchange(0));     /* compose's line jobs (3 a frame) and how many a helper joined */
+			{
+				/* compose's line jobs (3 a frame), how many a helper joined, and the lines the helpers really did of all the jobs' lines */
+				static unsigned la0, lh0;
+				unsigned la = 0, lh = 0;
+				snes_wide_line_counts(&la, &lh);
+				logf_(" | wide_lines jobs=%u helped=%u lines=%u by_helpers=%u", g_lines_jobs.exchange(0), g_lines_helped.exchange(0), la - la0, lh - lh0);
+				la0 = la; lh0 = lh;
+			}
 			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());
 			st0 = st1;
 #ifdef S9X_PROF

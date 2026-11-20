@@ -312,6 +312,18 @@ if [ -x "$WT" ]; then
 	echo "INFO  residual (RAM-only change beyond the ring, destr_far, pass 2): $(python3 -I "$HERE/tests/wide_truth.py" $T/wide/wide_destr_far.json $T/wide/fr.p2 2>&1 | head -1)"
 	python3 -I "$HERE/wide_compare.py" --twin "$WT" --frames 500 --roms $T/wide/wide_scroll64.sfc $T/wide/wide_mode7.sfc $T/wide/wide_win64_a.sfc >$T/wide/id.txt 2>&1 \
 		&& ok "wide view identity (frames, audio, state; single thread and workers): $(tail -1 $T/wide/id.txt | cut -d'(' -f1)" || { cat $T/wide/id.txt; bad "wide view identity"; }
+	# the margin thread (core/ppu_mt.cpp): the wide picture is the one of a single thread whether the core's wide passes are drawn on the emulating
+	# thread, on the PPU thread or on their own thread, and whether the view is switched off and on while it runs
+	mth=same
+	for n in wide_scroll64 wide_win64_a wide_mode7; do
+		"$WT" $T/wide/$n.sfc --frames 600 --wide 96 --whashes $T/wide/mt0.wh >/dev/null 2>&1
+		"$WT" $T/wide/$n.sfc --frames 600 --wide 96 --opt ppu_thread=1 --opt apu_thread=1 --whashes $T/wide/mt1.wh >/dev/null 2>&1
+		"$WT" $T/wide/$n.sfc --frames 600 --wide 96 --opt ppu_thread=1 --opt wide_thread=0 --whashes $T/wide/mt2.wh >/dev/null 2>&1
+		"$WT" $T/wide/$n.sfc --frames 600 --wide 96 --opt ppu_thread=1 --wide-split --wide-workers 3 --wide-toggle 41 --whashes $T/wide/mt3.wh >/dev/null 2>&1
+		"$WT" $T/wide/$n.sfc --frames 600 --wide 96 --opt ppu_thread=1 --opt wide_thread=0 --wide-split --wide-workers 3 --wide-toggle 41 --whashes $T/wide/mt4.wh >/dev/null 2>&1
+		[ -s $T/wide/mt0.wh ] && cmp -s $T/wide/mt0.wh $T/wide/mt1.wh && cmp -s $T/wide/mt0.wh $T/wide/mt2.wh && [ -s $T/wide/mt3.wh ] && cmp -s $T/wide/mt3.wh $T/wide/mt4.wh || mth="DIFF ($n)"
+	done
+	[ "$mth" = same ] && ok "wide view, margin thread: same wide picture as one thread, with and without it, and through off / on switches (3 cartridges, 600 frames)" || bad "wide view, margin thread: $mth"
 	if [ -x "$PT" ]; then
 		mkdir -p $T/ptwide
 		"$PT" wide $T/wide/wide_scroll64.sfc $T/ptwide >$T/ptwide.txt 2>&1 && ok "wide view in the player: $(grep 'player_twin:' $T/ptwide.txt | tail -1 | sed 's/player_twin: //')" \

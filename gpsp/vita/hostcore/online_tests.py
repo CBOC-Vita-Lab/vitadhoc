@@ -139,6 +139,14 @@ def join_script(code, tail="", card_shot="card.png", press_join=True):
     return s + tail
 
 
+def join_script_hold(code, tail="", card_shot="card.png"):
+    """join_script for a scenario that stops at the card: every press is held until the app logged what it did (the pad's
+    keys, the card), so a busy machine cannot drop one and type another code"""
+    return (L.open_play(L.EARLY) + "+20:down:%d\n" % L.PRESS + "+%d:hold=cross=online_pad_open\n" % L.GAP +
+            "+30:shot=pad_empty.png\n" + hold_code(code) + "+%d:hold=triangle=online_card_begin\n" % L.GAP +
+            "+0:wait=online_card state=\n" + "+%d:shot=%s\n" % (L.dur(1), card_shot) + tail)
+
+
 def advance(svc, ms):
     """The dev server's clock goes forward (POST /_test/advance): a room ages without waiting."""
     req = urllib.request.Request(svc.url + "/_test/advance", method="POST", data=json.dumps({"ms": ms}).encode(),
@@ -1249,7 +1257,7 @@ def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True
             s += ("+%d:hold=cross=online_open_join\n" % L.AFTER_SHOT + "+0:wait=snes_link_ready\n" + "+%d:shot=linking.png\n" % L.dur(2) +
                   b_tail + "+120:quit\n")
             return s
-        return s + b_tail + L.quit_at(b_end)
+        return s + (b_tail or L.quit_at(b_end))
 
     def no_autoboot(rig):                            # A starts in its game list too
         real = T.twin
@@ -1382,11 +1390,11 @@ def refuse_pair(T, fam, name, rom_b=None, edit=None, svc_env=(), **kw):
     proxy = (lambda rig, e=edit: HttpProxy(rig.T, rig.svc, edit=e)) if edit else None
     if fam in CORE_FAMS:
         kind = "gba" if fam == "gba" else "gb" if fam in ("gb", "gbc") else "nes"
-        return pair(T, name, rom=a, rom_b=rom_b, with_world=False, kind=kind, a_end=45, b_end=40, svc_env=svc_env,
-                    a_script=host_script(45) + L.quit_at(45),
-                    b_script=lambda code: join_script(code, L.quit_at(40), press_join=False), proxy_b=proxy, **kw)
-    return tp_pair(T, name, fam, ("port", "port"), a, rom_b=rom_b, host_end=48, b_end=44, join=False, with_world=False,
-                   svc_env=svc_env, proxy_b=proxy, **kw)
+        return pair(T, name, rom=a, rom_b=rom_b, with_world=False, kind=kind, a_end=32, b_end=30, svc_env=svc_env,
+                    a_script=host_script(32) + L.quit_at(32),
+                    b_script=lambda code: join_script_hold(code, "+60:quit\n"), proxy_b=proxy, **kw)
+    return tp_pair(T, name, fam, ("port", "port"), a, rom_b=rom_b, host_end=32, b_end=30, join=False, with_world=False,
+                   svc_env=svc_env, proxy_b=proxy, b_tail="+60:quit\n", **kw)
 
 
 def refuse_check(T, rig, fam, want, tag, no_join=True):
@@ -1449,17 +1457,17 @@ def refuse_version(T, fam):
     a, _ = refuse_roms(T, fam)
     env = ("MIN_APP_VERSION=2.9.0", "LATEST_APP_VERSION=2.9.0")
     if fam in CORE_FAMS:
-        rig = solo(T, "online_update_%s" % fam, code="ZZZZZ", svc_env=env, rom=a)
+        rig = solo(T, "online_update_%s" % fam, code="ZZZZZ", svc_env=env, rom=a, b_end=40)
     else:
         walk = tp_walk(fam)
         sb = (walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) +
               "+%d:hold=cross=online_pad_open\n" % L.GAP + "+30:shot=pad.png\n" + hold_code("ZZZZZ") +
               "+%d:hold=triangle=online_card_begin\n" % L.GAP + "+0:wait=online_card state=\n" +
-              "+%d:shot=card.png\n" % L.dur(1) + L.quit_at(44))
+              "+%d:shot=card.png\n" % L.dur(1) + "+60:quit\n")
         cfg = {"ui_home": 0, "hints": 0}
         if fam in SEGA:
             cfg["console"] = SEGA[fam][1]
-        rig = solo(T, "online_update_%s" % fam, code="ZZZZZ", svc_env=env, rom=a, script=sb, b_cfg=cfg, noauto=True, b_end=44)
+        rig = solo(T, "online_update_%s" % fam, code="ZZZZZ", svc_env=env, rom=a, script=sb, b_cfg=cfg, noauto=True, b_end=30)
     r = rig.rb
     T.clean(r, "B %s update" % FAM_NAMES[fam], allow="could not be started")
     bad = r.evt("online_card_bad")
@@ -1576,7 +1584,9 @@ TESTS = [
     ("snes_online", t_snes_online), ("sega_online", t_sega_online),
 ]
 for _fam in CORE_FAMS + TP_FAMS:
-    TESTS.append(("game_" + _fam, _fam_test(refuse_game, _fam, "Online with another game is refused cleanly (the card names the game to add)")))
+    TESTS.append(("game_" + _fam, _fam_test(refuse_game, _fam, (
+        "Online with another copy of the game: the host's file is carried across the link, both end cleanly"
+        if _fam in ("gba", "gb", "gbc") else "Online with another game is refused cleanly (the card names the game to add)"))))
     TESTS.append(("version_" + _fam, _fam_test(refuse_version, _fam, "Online version mismatch and a service that wants an update are refused cleanly")))
 # armhf (under qemu, several times the wall time): the sessions
 RUNS = {

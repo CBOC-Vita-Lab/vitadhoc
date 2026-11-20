@@ -122,7 +122,7 @@ The 8 bit consoles (no VDP worker by default: the analysis and the drawing of th
 Identity and cross-machine: `selftest.sh` section 11 (96 ROMs: picture inside the window, sound, state, RAM, wide view on / off, with and without the VDP worker thread),
 11b (the same decisions on the worker thread and on the emulating thread; the worker's strip cache against a fresh draw of every cached strip: 1.4 M strips,
 0 different), 12 (the learned picture and the Mega Drive strips against the worlds of test cartridges, pixel by pixel: 0 wrong of 1.7 M, 1.7 M, 1.8 M and 1.1 M
-real margin pixels; on the Mega Drive samples 29.6 K learned cells shown, 26.1 K of them reached by the screen later, 0 a different cell), `arm_check.sh` (armhf ==
+real margin pixels; on the Mega Drive samples 14.3 K learned cells shown, 11.4 K of them reached by the screen later, 0 a different cell), `arm_check.sh` (armhf ==
 x86_64 with the wide view on too: picture, sound, RAM and the wide view's own decisions), `wide_pipe_proof` (through the picture pipe, the VDP and the analysis on the
 worker, the compose on a second thread with its lines shared between three threads: bit for bit the pictures of one thread doing everything), the same under
 ThreadSanitizer (0 reports).

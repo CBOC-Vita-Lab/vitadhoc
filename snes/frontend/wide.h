@@ -138,6 +138,9 @@ int snes_wide_profiles_load(const char *text, size_t n, char *msgs, size_t cap);
 #define SNES_WIDE_MAX_WORKERS 4
 typedef void (*snes_wide_pfor)(void *user, void (*job)(void *arg, int worker), void *arg, int workers);
 void snes_wide_parallel(snes_wide_pfor fn, void *user, int workers);
+/* running totals of the lines of the per line jobs: all of them, and those a worker other than worker 0 did (how much the frontend's helpers
+ * really take: a helper that only wakes after the lines are gone has done none) */
+void snes_wide_line_counts(unsigned *all, unsigned *by_helpers);
 
 /* Capture / compose split (for a consumer that composes on its own thread, e.g. the hand-over's draw thread). snes_wide_split(1) makes
  * the frame hook only capture (a fixed-size snapshot of what compose needs, taken on the thread that renders the margins); the consumer takes

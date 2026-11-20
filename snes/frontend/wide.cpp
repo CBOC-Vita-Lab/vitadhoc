@@ -1458,6 +1458,7 @@ static void fin_line(const Frame &F, Work &K, int y)
 }
 
 typedef void (*LineFn)(const Frame &, Work &, int);
+static std::atomic<unsigned> g_helper_lines(0), g_all_lines(0);   /* line jobs' lines: done by the frontend's workers (not worker 0) / all */
 struct LineJob { const Frame *F; LineFn fn; std::atomic<int> next; };
 enum { LINE_CHUNK = 8 };
 
@@ -1471,6 +1472,7 @@ static void line_worker(void *arg, int worker)
 		if (y0 >= H) break;
 		const int y1 = y0 + LINE_CHUNK < H ? y0 + LINE_CHUNK : H;
 		for (int y = y0; y < y1; y++) j->fn(*j->F, K, y);
+		if (worker) g_helper_lines.fetch_add((unsigned) (y1 - y0), std::memory_order_relaxed);
 	}
 }
 
@@ -1483,6 +1485,7 @@ static void for_lines(const Frame &F, LineFn fn)
 	const int nw = A.pfor ? A.nwork : 1;
 	if (nw > 1) A.pfor(A.pfor_user, line_worker, &j, nw);
 	else line_worker(&j, 0);
+	g_all_lines.fetch_add((unsigned) F.H, std::memory_order_relaxed);
 }
 
 /* a centre only frame: the picture in the middle, the ambient frame on both sides (what compose can do without the margin passes) */
@@ -1855,6 +1858,12 @@ void snes_wide_parallel(snes_wide_pfor fn, void *user, int workers)
 }
 
 size_t snes_wide_snapshot_size(void) { return sizeof(Snap); }
+
+void snes_wide_line_counts(unsigned *all, unsigned *by_helpers)
+{
+	if (all) *all = g_all_lines.load(std::memory_order_relaxed);
+	if (by_helpers) *by_helpers = g_helper_lines.load(std::memory_order_relaxed);
+}
 
 /* the oldest captured frame nobody took yet: 1 and its handle; *widenable is the capture's verdict (0: compose will answer 0, use the
  * normal picture of that frame) */

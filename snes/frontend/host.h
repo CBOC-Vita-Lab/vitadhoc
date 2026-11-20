@@ -132,7 +132,10 @@ const uint16_t *snes_host_video_nowait(int *width, int *height, int *pitch_bytes
  * worker makes before it blocks on a semaphore. Call before enabling the threads. */
 void snes_host_thread_config(int apu_core, int apu_prio, int ppu_core, int ppu_prio, int spin);
 void snes_host_sync(void); /* wait until the worker threads have caught up with the emulation */
-int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread */
+int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread, bit 2 the wide view's margin thread (only while the wide view is on) */
+/* The wide view's margin thread (option "wide_thread", default 1; it exists only with the PPU thread and while the wide view is on): core 0..2,
+ * -1 = any, or a Vita affinity mask (>= 0x10000), and its priority. Call before the wide view is switched on. */
+void snes_host_wide_thread_config(int core, int prio);
 typedef struct {
 	uint64_t apu_busy_ns;  /* time the APU thread spent working (not waiting) */
 	uint64_t apu_cmds;     /* work items it ran */
@@ -143,6 +146,9 @@ typedef struct {
 	uint64_t ppu_batches;  /* snapshots it drew */
 	uint64_t ppu_waits;    /* times the register side waited for it (full ring, picture asked for) */
 	uint64_t ppu_wait_ns;
+	uint64_t wide_busy_ns;       /* time the margin thread spent on the wide view's passes and the capture */
+	uint64_t wide_frames;        /* frames it captured */
+	uint64_t wide_centre_waits;  /* times the PPU thread waited for it (it was three frames behind) */
 } snes_thread_stats;
 void snes_host_thread_stats(snes_thread_stats *st);
 

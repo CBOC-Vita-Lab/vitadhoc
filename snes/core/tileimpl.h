@@ -663,6 +663,21 @@ namespace TileImpl {
 							continue;
 						}
 					}
+					if (PIXEL::math_t::Vec && PIXEL::Step == 1 && v0 == 0)
+					{
+						// CBOC-Vita: plain add / subtract maths on a group nothing has drawn on yet and that is not uniform (the sub
+						// screen shows through some of it): the eight results by the vector form (the same values as Calc() per
+						// pixel, as in DrawRow8). Same pixels, same depth as DRAW_PIXEL(x, 1).
+						uint32 mc[8];
+						const uint32 c0 = ctx.ScreenColors[0];
+						for (int i = 0; i < 8; i++)
+							mc[i] = c0;
+						PIXEL::math_t::CalcRow8(ctx, mc, Offset + x, ctx.S + Offset + x);
+						const uint64 ones = 0x0101010101010101ULL;
+						memcpy(ctx.DB + Offset + x, &ones, 8);
+						x += Group;
+						continue;
+					}
 					for (uint32 xe = x + Group; x < xe; x++)
 						DRAW_PIXEL(x, 1);
 				}

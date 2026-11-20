@@ -48,6 +48,8 @@ CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
 # Second, renamed copy of the renderer for the PPU thread (see ../core/rcopy.sh)
 RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
+# Third copy (suffix _w, state *_W): the wide view's margin thread, see ../core/ppu_mt.cpp
+RCOPY_OBJS += $(addprefix $(B)/wcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/wide.o $(B)/player.o $(B)/pipe.o $(B)/netplay.o $(B)/main.o
 # the two-player link's C files from gpsp/ (netplay.mk), built as the main app builds them (-DVITA: sceKernel threads, netctl),
 # (no netdrv header: PK_PLAYER, playerkit/src/pk_lan_compat.h)
@@ -144,6 +146,11 @@ $(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rco
 $(B)/rcopy/%.o: $(B)/core/%.o $(B)/rcopy.map
 	@mkdir -p $(B)/rcopy
 	$(PREFIX)objcopy --redefine-syms=$(B)/rcopy.map $< $@
+$(B)/wcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh
+	NM=$(PREFIX)nm RCOPY_SUF=w sh $(CORE)/rcopy.sh $@ $(filter %.o,$^)
+$(B)/wcopy/%.o: $(B)/core/%.o $(B)/wcopy.map
+	@mkdir -p $(B)/wcopy
+	$(PREFIX)objcopy --redefine-syms=$(B)/wcopy.map $< $@
 
 # Super FX: the exact speed-up of agent P5 (limit and fast paths in the GSU interpreter)
 $(B)/core/fxinst.o $(B)/core/fxemu.o: CXXFLAGS += -DFX_LIMIT -DFX_FAST -DFX_LINEFLAGS

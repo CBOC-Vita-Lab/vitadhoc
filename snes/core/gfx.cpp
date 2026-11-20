@@ -645,6 +645,8 @@ void S9xRenderBatch (const S9xRenderJob &job)
 extern "C" void s9x_render_batch (const S9xRenderJob *job) { S9xRenderBatch(*job); }
 extern "C" void s9x_clear_z (uint8 *z, uint8 *subz) { S9xClearZBuffers(z, subz); }
 extern "C" void s9x_render_setup (void) { S9xInitTileRenderer(); }
+// the margin thread's copy (suffix _w): only the wide view's passes of a batch, from the same snapshot the PPU thread draws the picture from
+extern "C" void s9x_wide_batch (const S9xRenderJob *job) { S9xWideBatch(*job); }
 
 static void SetupOBJ (void)
 {
@@ -2378,10 +2380,16 @@ static uint32 hash_cg (void)
 
 static void wide_alloc (void)
 {
+	size_t rows = SW_ROWS + 2;
+	// the seventh picture is only for S9xWideVerify (a test): made when that is first asked for
+	if (!W.scr[SW_NPASS] && __atomic_load_n(&g_s9x_wide_verify, __ATOMIC_RELAXED))
+	{
+		W.z[SW_NPASS]   = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
+		W.scr[SW_NPASS] = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
+	}
 	if (W.alloc)
 		return;
-	size_t rows = SW_ROWS + 2;
-	for (int p = 0; p <= SW_NPASS; p++)
+	for (int p = 0; p < SW_NPASS; p++)
 	{
 		W.scr[p] = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
 		W.z[p]   = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
@@ -2647,6 +2655,8 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 		uint8 *z = (p <= SW_NPASS) ? W.z[p] : W.subz;
 		if (p <= SW_NPASS ? !(g_wide_zdirty & (1u << p)) : !g_wide_zdirty)
 			continue;
+		if (!z)
+			continue;
 		if (moved) { memset(z, 0, (size_t) (SW_ROWS + 2) * SW_PITCH); continue; }
 		if (m2 >= 64)
 		{
@@ -2833,7 +2843,7 @@ static void S9xWideBatch (const S9xRenderJob &job)
 	else if (!(pflags & SWLP_NOCOMP))
 		wide_pass(job, SWP_COMPOSITE, 0xff, true);
 	W.vfy = false;
-	if ((pflags & SWLP_NOCOMP) && __atomic_load_n(&g_s9x_wide_verify, __ATOMIC_RELAXED))
+	if ((pflags & SWLP_NOCOMP) && W.scr[SW_NPASS] && __atomic_load_n(&g_s9x_wide_verify, __ATOMIC_RELAXED))
 	{
 		wide_pass(job, SW_NPASS, 0xff, true);		// test: the composite whole, for the adapter to compare
 		W.vfy = true;

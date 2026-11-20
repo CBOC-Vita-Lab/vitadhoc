@@ -97,6 +97,7 @@ struct Thread {
 	{
 		fn = f; arg = a; core = c;
 		int mask = c == 0 ? 0x10000 : c == 1 ? 0x20000 : c == 2 ? 0x40000 : 0; /* SCE_KERNEL_CPU_MASK_USER_0..2; 0 = default */
+		if (c >= 0x10000) mask = c;     /* an affinity mask as it is (several cores, or the extra core) */
 		id = sceKernelCreateThread(name, entry, prio, 0x10000, 0, mask, NULL);
 		if (id < 0) return false;
 		Thread *self = this;

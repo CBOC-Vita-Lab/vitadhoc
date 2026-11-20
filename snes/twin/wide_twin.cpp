@@ -203,6 +203,7 @@ int main(int argc, char **argv)
 	int wide_workers = 1;
 	static LinePool pool;
 	std::set<int> pressure_set;
+	int toggle_every = 0;
 	const char *save_state = 0, *load_state = 0; int save_at = -1;
 	std::vector<std::pair<uint32_t, uint8_t>> pokes;
 	struct KV { std::string k; int v; };
@@ -233,6 +234,7 @@ int main(int argc, char **argv)
 		else if (arg("--pressure")) pressure_set = parse_set(argv[++i]);   /* frames on which the frontend reports pressure (snes_wide_option "pressure") */
 		else if (arg("--save-state") && i + 2 < argc) { save_state = argv[++i]; save_at = atoi(argv[++i]); }   /* emulation state after frame N (no wide data) */
 		else if (arg("--load-state")) load_state = argv[++i];
+		else if (arg("--wide-toggle")) toggle_every = atoi(argv[++i]);   /* every N frames the view is switched off and on again and the margin thread option flipped twice (the margin thread leaves and joins the slot ring) */
 		else if (!strcmp(argv[i], "--map-poll")) map_poll = true;   /* save / dirty / census calls from the frame thread while compose runs (TSan) */
 		else if (!strcmp(argv[i], "--bench")) bench = true;   /* no harness hashing: for instruction counts */
 		else if (arg("--opt") || arg("--wopt")) {
@@ -412,6 +414,14 @@ int main(int argc, char **argv)
 #endif
 		while (ev < script.size() && script[ev].frame <= f) pad = script[ev++].mask;
 		if (wide && pressure_set.count(f)) snes_wide_option("pressure", 1);
+		if (wide && toggle_every > 0 && f > 0 && f % toggle_every == 0) {
+			if ((f / toggle_every) & 1) { snes_wide_set(0, 0); snes_wide_set(1, wide); }
+			else {
+				int wt = 1;
+				for (auto &o : opts) if (o.k == "wide_thread") wt = o.v != 0;
+				snes_host_set_option("wide_thread", !wt); snes_host_set_option("wide_thread", wt);
+			}
+		}
 		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
 		snes_host_set_pad(0, pad);
 		snes_host_run_frame();

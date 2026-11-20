@@ -43,6 +43,11 @@ extern "C" void s9x_render_setup_r(void);
 extern "C" void s9x_clear_z_r(uint8 *z, uint8 *subz);
 extern "C" void S9xWideRenderFrameStart_r(int margin);
 extern "C" void S9xWideFillView_r(struct SWideView *v);
+/* the third copy (suffix _w): the wide view's margin passes on their own thread, see "the margin thread" below */
+extern "C" void s9x_wide_batch_w(const S9xRenderJob *job);
+extern "C" void s9x_render_setup_w(void);
+extern "C" void S9xWideRenderFrameStart_w(int margin);
+extern "C" void S9xWideFillView_w(struct SWideView *v);
 
 /* The renamed renderer copy reads these instead of PPU, IPPU, GFX, BG, Memory,
  * LineData, LineMatrixData, DirectColourMaps and brightness_cap. */
@@ -55,6 +60,17 @@ struct SLineData LineData_R[240];
 struct SLineMatrixData LineMatrixData_R[240];
 uint16 DirectColourMaps_R[8][256];
 uint8 brightness_cap_R[64];
+
+/* the same for the margin thread's copy */
+struct SPPU PPU_W;
+struct InternalPPU IPPU_W;
+struct SGFX GFX_W;
+struct SBG BG_W;
+CMemory Memory_W;
+struct SLineData LineData_W[240];
+struct SLineMatrixData LineMatrixData_W[240];
+uint16 DirectColourMaps_W[8][256];
+uint8 brightness_cap_W[64];
 
 bool8 g_s9x_vram_track = FALSE;
 uint32 g_s9x_colour_version = 0;
@@ -74,10 +90,14 @@ static const size_t IP_C = sizeof(InternalPPU) - offsetof(InternalPPU, ScreenCol
 static const int NBLK = 0x10000 / 32;
 static const unsigned SLOTS = 16, MASK = SLOTS - 1;
 static const int NOUT = 4;
+static const unsigned NCEN = 3;        /* centre pictures kept for the margin thread (it may be this many frames behind the PPU thread) */
+static const int CEN_ROWS = 240;
 
 struct Slot
 {
 	int kind, flags, nblocks, row0, nrows, obj_from, w, h, wide_m;
+	int wr;			/* the margin thread reads this slot too (it draws the wide passes and makes the capture; the PPU thread does not) */
+	unsigned cseq;		/* K_WIDE_END with wr: number of the frame's centre picture */
 	uint32 wclock, wepoch;
 	uint16 *vage, *uage;	/* wide view: stamps of the frame end (allocated when first needed) */
 	S9xRenderJob job;
@@ -108,6 +128,21 @@ static std::atomic<uint64_t> busy_ns, batches, waits, wait_ns;
 static int spin_idle = 3000;
 static int core_hint = -1, prio_hint = 0x40;
 
+/* the margin thread: a second reader of the slot ring. `wattached` says whether it reads (only while the wide view is on); it is changed by
+ * the register side while both readers are idle and the margin thread is parked. */
+static std::atomic<unsigned> wtail, wdone;
+static std::atomic<int> wsleeping, wquit, wattached, wparked;
+static s9xmt::Sem wwake;
+static s9xmt::Thread wthr;
+static bool wstarted, wreads, wmem;	/* register side: thread exists / it reads the slots posted now / its buffers exist */
+static bool wwant = true;
+static int wcore_hint = -1, wprio_hint = 0x40;
+static uint16 *cen_pic[NCEN];
+static std::atomic<uint64_t> wbusy_ns, wframes, cen_waits;
+static unsigned wide_cseq;		/* register side */
+static void wide_reader_update(void);
+static void wide_reader_stop(void);
+
 /* register side bookkeeping */
 static uint16 dirty_list[NBLK];
 static uint8 dirty_flag[NBLK];
@@ -122,17 +157,32 @@ static uint16 *out_pic[NOUT];
 static int out_w[NOUT], out_h[NOUT];
 static std::atomic<unsigned> frames_done;
 
+/* the slot both readers have finished with (register side) */
+static inline unsigned low_tail(void)
+{
+	unsigned t = tail.load(std::memory_order_acquire);
+	if (wreads)
+	{
+		const unsigned w = wtail.load(std::memory_order_acquire);
+		if ((int) (w - t) < 0)
+			t = w;
+	}
+	return t;
+}
+
 static Slot &acquire(void)
 {
-	if (prod - tail.load(std::memory_order_acquire) >= SLOTS)
+	if (prod - low_tail() >= SLOTS)
 	{
 		uint64_t t0 = s9xmt::now_ns();
-		while (prod - tail.load(std::memory_order_acquire) >= SLOTS)
+		while (prod - low_tail() >= SLOTS)
 			s9xmt::yield_cpu();
 		waits.fetch_add(1, std::memory_order_relaxed);
 		wait_ns.fetch_add(s9xmt::now_ns() - t0, std::memory_order_relaxed);
 	}
-	return slots[prod & MASK];
+	Slot &s = slots[prod & MASK];
+	s.wr = wreads ? 1 : 0;
+	return s;
 }
 
 static void wait_idle(void);
@@ -142,13 +192,15 @@ static void release(void)
 	head.store(prod, std::memory_order_seq_cst);
 	if (sleeping.load(std::memory_order_seq_cst))
 		wake.post();
+	if (wreads && wsleeping.load(std::memory_order_seq_cst))
+		wwake.post();
 }
 
 static void wait_idle(void)
 {
 	uint64_t t0 = 0;
 	bool counted = false;
-	for (int i = 0; tail.load(std::memory_order_acquire) != prod; i++)
+	for (int i = 0; low_tail() != prod; i++)
 	{
 		if (!counted) { counted = true; t0 = s9xmt::now_ns(); }
 		if (i < 2000) s9xmt::cpu_relax(); else s9xmt::yield_cpu();
@@ -162,30 +214,89 @@ static void wait_idle(void)
 
 /* ---- worker side ------------------------------------------------------- */
 
-static void invalidate(uint32 address)
+static inline void invalidate(struct InternalPPU &ip, uint32 address)
 {
-	IPPU_R.TileCached[TILE_2BIT][address >> 4] = FALSE;
-	IPPU_R.TileCached[TILE_4BIT][address >> 5] = FALSE;
-	IPPU_R.TileCached[TILE_8BIT][address >> 6] = FALSE;
-	IPPU_R.TileCached[TILE_2BIT_EVEN][address >> 4] = FALSE;
-	IPPU_R.TileCached[TILE_2BIT_EVEN][((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
-	IPPU_R.TileCached[TILE_2BIT_ODD] [address >> 4] = FALSE;
-	IPPU_R.TileCached[TILE_2BIT_ODD] [((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
-	IPPU_R.TileCached[TILE_4BIT_EVEN][address >> 5] = FALSE;
-	IPPU_R.TileCached[TILE_4BIT_EVEN][((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
-	IPPU_R.TileCached[TILE_4BIT_ODD] [address >> 5] = FALSE;
-	IPPU_R.TileCached[TILE_4BIT_ODD] [((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
+	ip.TileCached[TILE_2BIT][address >> 4] = FALSE;
+	ip.TileCached[TILE_4BIT][address >> 5] = FALSE;
+	ip.TileCached[TILE_8BIT][address >> 6] = FALSE;
+	ip.TileCached[TILE_2BIT_EVEN][address >> 4] = FALSE;
+	ip.TileCached[TILE_2BIT_EVEN][((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
+	ip.TileCached[TILE_2BIT_ODD] [address >> 4] = FALSE;
+	ip.TileCached[TILE_2BIT_ODD] [((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
+	ip.TileCached[TILE_4BIT_EVEN][address >> 5] = FALSE;
+	ip.TileCached[TILE_4BIT_EVEN][((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
+	ip.TileCached[TILE_4BIT_ODD] [address >> 5] = FALSE;
+	ip.TileCached[TILE_4BIT_ODD] [((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
 }
 
-static void clear_caches(void)
+static void clear_caches(struct InternalPPU &ip)
 {
-	memset(IPPU_R.TileCached[TILE_2BIT], 0, MAX_2BIT_TILES);
-	memset(IPPU_R.TileCached[TILE_4BIT], 0, MAX_4BIT_TILES);
-	memset(IPPU_R.TileCached[TILE_8BIT], 0, MAX_8BIT_TILES);
-	memset(IPPU_R.TileCached[TILE_2BIT_EVEN], 0, MAX_2BIT_TILES);
-	memset(IPPU_R.TileCached[TILE_2BIT_ODD], 0, MAX_2BIT_TILES);
-	memset(IPPU_R.TileCached[TILE_4BIT_EVEN], 0, MAX_4BIT_TILES);
-	memset(IPPU_R.TileCached[TILE_4BIT_ODD], 0, MAX_4BIT_TILES);
+	memset(ip.TileCached[TILE_2BIT], 0, MAX_2BIT_TILES);
+	memset(ip.TileCached[TILE_4BIT], 0, MAX_4BIT_TILES);
+	memset(ip.TileCached[TILE_8BIT], 0, MAX_8BIT_TILES);
+	memset(ip.TileCached[TILE_2BIT_EVEN], 0, MAX_2BIT_TILES);
+	memset(ip.TileCached[TILE_2BIT_ODD], 0, MAX_2BIT_TILES);
+	memset(ip.TileCached[TILE_4BIT_EVEN], 0, MAX_4BIT_TILES);
+	memset(ip.TileCached[TILE_4BIT_ODD], 0, MAX_4BIT_TILES);
+}
+
+static void alloc_caches(struct InternalPPU &ip)
+{
+	ip.TileCache[TILE_2BIT]       = (uint8 *) calloc(MAX_2BIT_TILES, 64);
+	ip.TileCache[TILE_4BIT]       = (uint8 *) calloc(MAX_4BIT_TILES, 64);
+	ip.TileCache[TILE_8BIT]       = (uint8 *) calloc(MAX_8BIT_TILES, 64);
+	ip.TileCache[TILE_2BIT_EVEN]  = (uint8 *) calloc(MAX_2BIT_TILES, 64);
+	ip.TileCache[TILE_2BIT_ODD]   = (uint8 *) calloc(MAX_2BIT_TILES, 64);
+	ip.TileCache[TILE_4BIT_EVEN]  = (uint8 *) calloc(MAX_4BIT_TILES, 64);
+	ip.TileCache[TILE_4BIT_ODD]   = (uint8 *) calloc(MAX_4BIT_TILES, 64);
+	ip.TileCached[TILE_2BIT]      = (uint8 *) calloc(MAX_2BIT_TILES, 1);
+	ip.TileCached[TILE_4BIT]      = (uint8 *) calloc(MAX_4BIT_TILES, 1);
+	ip.TileCached[TILE_8BIT]      = (uint8 *) calloc(MAX_8BIT_TILES, 1);
+	ip.TileCached[TILE_2BIT_EVEN] = (uint8 *) calloc(MAX_2BIT_TILES, 1);
+	ip.TileCached[TILE_2BIT_ODD]  = (uint8 *) calloc(MAX_2BIT_TILES, 1);
+	ip.TileCached[TILE_4BIT_EVEN] = (uint8 *) calloc(MAX_4BIT_TILES, 1);
+	ip.TileCached[TILE_4BIT_ODD]  = (uint8 *) calloc(MAX_4BIT_TILES, 1);
+}
+
+/* everything a batch slot carries, into one renderer copy's state */
+static inline void load_batch(const Slot &s, struct SPPU &ppu, struct InternalPPU &ip, struct SGFX &gfx, CMemory &mem,
+	struct SLineData *ld, struct SLineMatrixData *lm, uint16 (*dcm)[256], uint8 *bcap)
+{
+	memcpy(&ppu, &s.ppu, sizeof(ppu));
+	memcpy((uint8 *) &ip + offsetof(InternalPPU, Clip), s.ipa, IP_A);
+	memcpy((uint8 *) &ip + offsetof(InternalPPU, Interlace), s.ipb, IP_B);
+	memcpy((uint8 *) &ip + offsetof(InternalPPU, ScreenColors), s.ipc, IP_C);
+	gfx.Screen = s.screen;
+	gfx.SubScreen = s.sub;
+	gfx.ZBuffer = s.z;
+	gfx.SubZBuffer = s.subz;
+	gfx.ZERO = s.zero;
+	gfx.PPL = s.ppl;
+	gfx.DoInterlace = s.dointerlace;
+	gfx.FixedColour = s.fixedcolour;
+	gfx.StartY = s.starty;
+	gfx.EndY = s.endy;
+	memcpy(gfx.OBJWidths, s.objwidths, sizeof(s.objwidths));
+	memcpy(gfx.OBJVisibleTiles, s.objvis, sizeof(s.objvis));
+	memcpy(mem.FillRAM + 0x2100, s.fillram, sizeof(s.fillram));
+	memcpy(&ld[s.row0], s.ld, s.nrows * sizeof(s.ld[0]));
+	memcpy(&lm[s.row0], s.lm, s.nrows * sizeof(s.lm[0]));
+	if (s.flags & F_COLOURS)
+	{
+		memcpy(dcm, s.dcm, sizeof(s.dcm));
+		memcpy(bcap, s.bcap, sizeof(s.bcap));
+	}
+	if (s.obj_from >= 0)
+		memcpy(&gfx.OBJLines[s.obj_from], s.obj, (NOBJ - s.obj_from) * OBJ_ELEM);
+	if (s.flags & F_FULL)
+		clear_caches(ip);
+	for (int i = 0; i < s.nblocks; i++)
+	{
+		uint32 base = (uint32) s.blk_idx[i] * 32;
+		memcpy(mem.VRAM + base, s.blk + (size_t) i * 32, 32);
+		invalidate(ip, base);
+		invalidate(ip, base + 16);
+	}
 }
 
 static void run_slot(Slot &s)
@@ -194,11 +305,26 @@ static void run_slot(Slot &s)
 	{
 	case K_FRAME_START:
 		s9x_clear_z_r(s.z, s.subz);
-		S9xWideRenderFrameStart_r(s.wide_m);
+		S9xWideRenderFrameStart_r(s.wr ? 0 : s.wide_m);		/* with the margin thread this copy draws no wide pass */
 		break;
 
 	case K_WIDE_END:
 	{
+		if (s.wr)
+		{
+			/* the margin thread makes the capture; it needs this frame's picture after this thread has gone on to the next frame */
+			if (s.cseq - wdone.load(std::memory_order_acquire) >= NCEN)
+			{
+				cen_waits.fetch_add(1, std::memory_order_relaxed);
+				for (int i = 0; s.cseq - wdone.load(std::memory_order_acquire) >= NCEN; i++)
+					if (i < 2000) s9xmt::cpu_relax(); else s9xmt::yield_cpu();
+			}
+			uint16 *dst = cen_pic[s.cseq % NCEN];
+			const int rows = (PPU_R.ScreenHeight > 0 && PPU_R.ScreenHeight <= CEN_ROWS) ? PPU_R.ScreenHeight : CEN_ROWS;	/* the capture reads the visible lines */
+			for (int y = 0; y < rows; y++)
+				memcpy(dst + (size_t) y * 256, s.screen + (size_t) y * MAX_SNES_WIDTH, 256 * 2);
+			break;
+		}
 		SWideHook hook = g_s9x_wide_hook;
 		if (!hook)
 			break;
@@ -230,44 +356,192 @@ static void run_slot(Slot &s)
 	}
 
 	case K_BATCH:
-		memcpy(&PPU_R, &s.ppu, sizeof(PPU_R));
-		memcpy((uint8 *) &IPPU_R + offsetof(InternalPPU, Clip), s.ipa, IP_A);
-		memcpy((uint8 *) &IPPU_R + offsetof(InternalPPU, Interlace), s.ipb, IP_B);
-		memcpy((uint8 *) &IPPU_R + offsetof(InternalPPU, ScreenColors), s.ipc, IP_C);
-		GFX_R.Screen = s.screen;
-		GFX_R.SubScreen = s.sub;
-		GFX_R.ZBuffer = s.z;
-		GFX_R.SubZBuffer = s.subz;
-		GFX_R.ZERO = s.zero;
-		GFX_R.PPL = s.ppl;
-		GFX_R.DoInterlace = s.dointerlace;
-		GFX_R.FixedColour = s.fixedcolour;
-		GFX_R.StartY = s.starty;
-		GFX_R.EndY = s.endy;
-		memcpy(GFX_R.OBJWidths, s.objwidths, sizeof(s.objwidths));
-		memcpy(GFX_R.OBJVisibleTiles, s.objvis, sizeof(s.objvis));
-		memcpy(Memory_R.FillRAM + 0x2100, s.fillram, sizeof(s.fillram));
-		memcpy(&LineData_R[s.row0], s.ld, s.nrows * sizeof(s.ld[0]));
-		memcpy(&LineMatrixData_R[s.row0], s.lm, s.nrows * sizeof(s.lm[0]));
-		if (s.flags & F_COLOURS)
-		{
-			memcpy(DirectColourMaps_R, s.dcm, sizeof(s.dcm));
-			memcpy(brightness_cap_R, s.bcap, sizeof(s.bcap));
-		}
-		if (s.obj_from >= 0)
-			memcpy(&GFX_R.OBJLines[s.obj_from], s.obj, (NOBJ - s.obj_from) * OBJ_ELEM);
-		if (s.flags & F_FULL)
-			clear_caches();
-		for (int i = 0; i < s.nblocks; i++)
-		{
-			uint32 base = (uint32) s.blk_idx[i] * 32;
-			memcpy(Memory_R.VRAM + base, s.blk + (size_t) i * 32, 32);
-			invalidate(base);
-			invalidate(base + 16);
-		}
+		load_batch(s, PPU_R, IPPU_R, GFX_R, Memory_R, LineData_R, LineMatrixData_R, DirectColourMaps_R, brightness_cap_R);
 		s9x_render_batch_r(&s.job);
 		break;
 	}
+}
+
+/* ---- the margin thread ------------------------------------------------------
+ * The wide view's passes of a batch (gfx.cpp, S9xWideBatch) read the same snapshot as the picture and write only their own buffers, so a
+ * third copy of the renderer (suffix _w, state *_W) can draw them from the same slots at the same time as the PPU thread draws the picture.
+ * This thread reads every slot the PPU thread reads while the wide view is on: a batch is loaded into its own state and only the wide
+ * passes are drawn; at the end of the frame it makes the capture and calls the hook (the 256 columns of the picture come from the copy the
+ * PPU thread put aside for it). The PPU thread's renderer then draws no wide pass at all. */
+static void run_slot_w(Slot &s, unsigned t)
+{
+	switch (s.kind)
+	{
+	case K_FRAME_START:
+		S9xWideRenderFrameStart_w(s.wide_m);
+		break;
+
+	case K_BATCH:
+		load_batch(s, PPU_W, IPPU_W, GFX_W, Memory_W, LineData_W, LineMatrixData_W, DirectColourMaps_W, brightness_cap_W);
+		s9x_wide_batch_w(&s.job);
+		break;
+
+	case K_WIDE_END:
+	{
+		/* the picture of this frame: the PPU thread must have finished this slot */
+		for (int i = 0; (int) (tail.load(std::memory_order_acquire) - (t + 1)) < 0; i++)
+			if (i < 2000) s9xmt::cpu_relax(); else s9xmt::yield_cpu();
+		SWideHook hook = g_s9x_wide_hook;
+		if (hook)
+		{
+			struct SWideView v;
+			S9xWideFillView_w(&v);
+			v.vram = Memory_W.VRAM;
+			v.vage = s.vage;
+			v.uage = s.uage;
+			v.clock = s.wclock;
+			v.epoch = s.wepoch;
+			v.centre = cen_pic[s.cseq % NCEN];
+			v.centre_pitch = 256;
+			hook(&v, g_s9x_wide_user);
+		}
+		wdone.store(s.cseq + 1, std::memory_order_release);
+		wframes.fetch_add(1, std::memory_order_relaxed);
+		break;
+	}
+
+	default:
+		break;
+	}
+}
+
+static void wthread_main(void *)
+{
+	for (;;)
+	{
+		if (wquit.load(std::memory_order_acquire))
+			break;
+		if (!wattached.load(std::memory_order_acquire))
+		{
+			/* parked: the register side may change this copy's state now */
+			wparked.store(1, std::memory_order_seq_cst);
+			wsleeping.store(1, std::memory_order_seq_cst);
+			if (!wattached.load(std::memory_order_seq_cst) && !wquit.load(std::memory_order_seq_cst))
+				wwake.wait();
+			wsleeping.store(0, std::memory_order_seq_cst);
+			continue;
+		}
+		wparked.store(0, std::memory_order_seq_cst);
+		if (!wattached.load(std::memory_order_seq_cst))
+			continue;		/* detached in between: park (the register side waits for it) */
+		unsigned t = wtail.load(std::memory_order_relaxed);
+		if (head.load(std::memory_order_acquire) != t)
+		{
+			uint64_t t0 = s9xmt::now_ns();
+			run_slot_w(slots[t & MASK], t);
+			wtail.store(t + 1, std::memory_order_release);
+			wbusy_ns.fetch_add(s9xmt::now_ns() - t0, std::memory_order_relaxed);
+			continue;
+		}
+		int i = 0;
+		for (; i < spin_idle; i++)
+		{
+			if (head.load(std::memory_order_acquire) != t || !wattached.load(std::memory_order_relaxed)) break;
+			s9xmt::cpu_relax();
+		}
+		if (i < spin_idle) continue;
+		wsleeping.store(1, std::memory_order_seq_cst);
+		if (head.load(std::memory_order_seq_cst) != t || !wattached.load(std::memory_order_seq_cst) || wquit.load(std::memory_order_seq_cst))
+		{
+			wsleeping.store(0, std::memory_order_seq_cst);
+			continue;
+		}
+		wwake.wait();
+		wsleeping.store(0, std::memory_order_seq_cst);
+	}
+}
+
+/* register side, between frames: the margin thread reads the slots from now on / no longer. */
+static void wide_reader_set(bool want)
+{
+	if (want == wreads)
+		return;
+	wait_idle();			/* both readers have finished every slot */
+	if (!want)
+	{
+		wattached.store(0, std::memory_order_seq_cst);
+		wwake.post();
+		while (!wparked.load(std::memory_order_seq_cst))
+			s9xmt::yield_cpu();
+		wreads = false;
+		return;
+	}
+	if (!wmem)
+	{
+		Memory_W.FillRAM = (uint8 *) calloc(1, 0x10000);
+		alloc_caches(IPPU_W);
+		for (unsigned i = 0; i < NCEN; i++)
+			cen_pic[i] = (uint16 *) calloc((size_t) 256 * CEN_ROWS, 2);
+		wwake.init();
+		s9x_render_setup_w();
+		wmem = true;
+	}
+	if (!wstarted)
+	{
+		wquit.store(0); wattached.store(0); wparked.store(0); wsleeping.store(0);
+		if (!wthr.start(wthread_main, 0, "snes_wide", wcore_hint, wprio_hint))
+		{
+			wwant = false;		/* no thread: the PPU thread goes on drawing the passes */
+			return;
+		}
+		wstarted = true;
+	}
+	while (!wparked.load(std::memory_order_seq_cst))
+		s9xmt::yield_cpu();
+	/* this copy starts from what the PPU thread's copy holds now (the PPU thread is idle); the slots from here on bring both the same changes */
+	uint8 *fill = Memory_W.FillRAM;
+	memcpy(Memory_W.VRAM, Memory_R.VRAM, sizeof(Memory_W.VRAM));
+	memcpy(fill, Memory_R.FillRAM, 0x10000);
+	Memory_W.FillRAM = fill;
+	{
+		uint8 *tc[7], *tcd[7];
+		memcpy(tc, IPPU_W.TileCache, sizeof(tc));
+		memcpy(tcd, IPPU_W.TileCached, sizeof(tcd));
+		memcpy(&IPPU_W, &IPPU_R, sizeof(IPPU_W));
+		memcpy(IPPU_W.TileCache, tc, sizeof(tc));
+		memcpy(IPPU_W.TileCached, tcd, sizeof(tcd));
+		clear_caches(IPPU_W);
+	}
+	memcpy(&PPU_W, &PPU_R, sizeof(PPU_W));
+	memcpy(&GFX_W, &GFX_R, sizeof(GFX_W));
+	memcpy(&BG_W, &BG, sizeof(BG_W));
+	BG_W.Buffer = BG_W.BufferFlip = BG_W.Buffered = BG_W.BufferedFlip = NULL; /* set again by the tile selector */
+	memcpy(LineData_W, LineData_R, sizeof(LineData_W));
+	memcpy(LineMatrixData_W, LineMatrixData_R, sizeof(LineMatrixData_W));
+	memcpy(DirectColourMaps_W, DirectColourMaps_R, sizeof(DirectColourMaps_W));
+	memcpy(brightness_cap_W, brightness_cap_R, sizeof(brightness_cap_W));
+	S9xWideRenderFrameStart_w(0);	/* the frame that starts now sets the margin */
+	wtail.store(prod, std::memory_order_seq_cst);
+	wdone.store(0, std::memory_order_seq_cst);
+	wide_cseq = 0;
+	wreads = true;
+	wattached.store(1, std::memory_order_seq_cst);
+	wwake.post();
+}
+
+static void wide_reader_stop(void)
+{
+	wide_reader_set(false);
+	if (!wstarted)
+		return;
+	wquit.store(1, std::memory_order_seq_cst);
+	wwake.post();
+	wthr.join();
+	wstarted = false;
+}
+
+/* Called at the start of every frame (register side), so a frame's wide passes are drawn wholly by one renderer copy: the margin thread reads the
+ * slots of the frames whose margin is latched on (centre only frames included), and of no others. */
+static inline void wide_reader_update(void)
+{
+	const bool want = wwant && g_s9x_wide_fm > 0;
+	if (want != wreads)
+		wide_reader_set(want);
 }
 
 static void thread_main(void *)
@@ -330,6 +604,7 @@ void S9xPPUMTSync(void)
 
 void S9xPPUMTFrameStart(void)
 {
+	wide_reader_update();
 	Slot &s = acquire();
 	s.kind = K_FRAME_START;
 	s.z = GFX.ZBuffer;
@@ -364,6 +639,7 @@ void S9xPPUMTFrameEnd(int width, int height)
 		s.wclock = g_s9x_wide_clock;
 		s.wepoch = g_s9x_wide_epoch;
 		s.screen = GFX.Screen;
+		s.cseq = s.wr ? wide_cseq++ : 0;
 		release();
 	}
 }
@@ -513,20 +789,7 @@ bool S9xPPUMTSet(bool enable)
 			for (int i = 0; i < NOUT; i++)
 				out_pic[i] = (uint16 *) calloc((size_t) MAX_SNES_WIDTH * MAX_SNES_HEIGHT, 2);
 			Memory_R.FillRAM = (uint8 *) calloc(1, 0x10000);
-			IPPU_R.TileCache[TILE_2BIT]       = (uint8 *) calloc(MAX_2BIT_TILES, 64);
-			IPPU_R.TileCache[TILE_4BIT]       = (uint8 *) calloc(MAX_4BIT_TILES, 64);
-			IPPU_R.TileCache[TILE_8BIT]       = (uint8 *) calloc(MAX_8BIT_TILES, 64);
-			IPPU_R.TileCache[TILE_2BIT_EVEN]  = (uint8 *) calloc(MAX_2BIT_TILES, 64);
-			IPPU_R.TileCache[TILE_2BIT_ODD]   = (uint8 *) calloc(MAX_2BIT_TILES, 64);
-			IPPU_R.TileCache[TILE_4BIT_EVEN]  = (uint8 *) calloc(MAX_4BIT_TILES, 64);
-			IPPU_R.TileCache[TILE_4BIT_ODD]   = (uint8 *) calloc(MAX_4BIT_TILES, 64);
-			IPPU_R.TileCached[TILE_2BIT]      = (uint8 *) calloc(MAX_2BIT_TILES, 1);
-			IPPU_R.TileCached[TILE_4BIT]      = (uint8 *) calloc(MAX_4BIT_TILES, 1);
-			IPPU_R.TileCached[TILE_8BIT]      = (uint8 *) calloc(MAX_8BIT_TILES, 1);
-			IPPU_R.TileCached[TILE_2BIT_EVEN] = (uint8 *) calloc(MAX_2BIT_TILES, 1);
-			IPPU_R.TileCached[TILE_2BIT_ODD]  = (uint8 *) calloc(MAX_2BIT_TILES, 1);
-			IPPU_R.TileCached[TILE_4BIT_EVEN] = (uint8 *) calloc(MAX_4BIT_TILES, 1);
-			IPPU_R.TileCached[TILE_4BIT_ODD]  = (uint8 *) calloc(MAX_4BIT_TILES, 1);
+			alloc_caches(IPPU_R);
 			wake.init();
 			s9x_render_setup_r();
 			started = true;
@@ -552,9 +815,11 @@ bool S9xPPUMTSet(bool enable)
 			on = false;
 			g_s9x_vram_track = FALSE;
 		}
+		wbusy_ns = 0; wframes = 0; cen_waits = 0;
 	}
 	else
 	{
+		wide_reader_stop();
 		wait_idle();
 		quit.store(1);
 		head.store(prod, std::memory_order_seq_cst);
@@ -575,6 +840,24 @@ void S9xPPUMTConfig(int core, int prio)
 void S9xPPUMTStats(uint64_t *busy, uint64_t *nbatches, uint64_t *nwaits, uint64_t *waitns)
 {
 	*busy = busy_ns.load(); *nbatches = batches.load(); *nwaits = waits.load(); *waitns = wait_ns.load();
+}
+
+void S9xWideMTConfig(int core, int prio)
+{
+	wcore_hint = core;
+	wprio_hint = prio;
+}
+
+void S9xWideMTSet(bool want)
+{
+	wwant = want;		/* followed at the start of the next frame */
+}
+
+bool S9xWideMTActive(void) { return wreads; }
+
+void S9xWideMTStats(uint64_t *busy, uint64_t *frames, uint64_t *centre_waits)
+{
+	*busy = wbusy_ns.load(); *frames = wframes.load(); *centre_waits = cen_waits.load();
 }
 
 

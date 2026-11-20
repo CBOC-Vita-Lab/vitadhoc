@@ -449,6 +449,7 @@ int snes_host_set_option(const char *name, int v)
 		if (g_loaded) S9xPPUMTSet(v != 0);
 		return 0;
 	}
+	if (!strcmp(name, "wide_thread")) { S9xWideMTSet(v != 0); return 0; }   /* the wide view's margin passes on a thread of their own (with ppu_thread; default on) */
 	if (!strcmp(name, "multitap")) { snes_host_set_multitap(v); return 0; }
 	S9xAPUMTSync(); /* the APU thread reads Settings (interpolation, ...) */
 	S9xPPUMTSync();
@@ -466,12 +467,14 @@ int snes_host_set_option(const char *name, int v)
 }
 
 void snes_host_sync(void) { S9xAPUMTSync(); S9xPPUMTSync(); }
-int snes_host_threads_active(void) { return (S9xAPUMTActive() ? 1 : 0) | (S9xPPUMTActive() ? 2 : 0); }
+int snes_host_threads_active(void) { return (S9xAPUMTActive() ? 1 : 0) | (S9xPPUMTActive() ? 2 : 0) | (S9xWideMTActive() ? 4 : 0); }
+void snes_host_wide_thread_config(int core, int prio) { S9xWideMTConfig(core, prio); }
 void snes_host_thread_stats(snes_thread_stats *st)
 {
 	memset(st, 0, sizeof *st);
 	S9xAPUMTStats(&st->apu_busy_ns, &st->apu_cmds, &st->apu_helped, &st->apu_waits, &st->apu_wait_ns);
 	S9xPPUMTStats(&st->ppu_busy_ns, &st->ppu_batches, &st->ppu_waits, &st->ppu_wait_ns);
+	S9xWideMTStats(&st->wide_busy_ns, &st->wide_frames, &st->wide_centre_waits);
 }
 
 void snes_host_set_audio_enabled(int on) { g_audio_on = on != 0; }

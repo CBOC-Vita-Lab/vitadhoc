@@ -636,6 +636,36 @@ uint16 spr_col;
 /* VitAdhoc: set by parse_satb_tms (status bits 0-4 written by the renderer) */
 uint8 tms_status_set;
 
+/* VitAdhoc: what the renderer carries from the end of one frame into the next and no save state holds: the sprite list parsed for the
+ * first line, the pending overflow flag and the collision position. A state load clears them (render_reset), which is what a load from
+ * a file has always done; run-ahead (md_host_run_frame_ahead) goes back to a moment it has just left and must find them as they were. */
+typedef struct
+{
+  object_info_t obj[2][MAX_SPRITES_PER_LINE];
+  uint8 count[2];
+  uint8 ovr;
+  uint8 tms_set;
+  uint16 col;
+} render_carry_t;
+
+int render_carry_size(void) { return (int)sizeof(render_carry_t); }
+
+void render_carry_save(void *p)
+{
+  render_carry_t *c = (render_carry_t *)p;
+  memcpy(c->obj, obj_info, sizeof(obj_info));
+  c->count[0] = object_count[0]; c->count[1] = object_count[1];
+  c->ovr = spr_ovr; c->tms_set = tms_status_set; c->col = spr_col;
+}
+
+void render_carry_load(void *p)
+{
+  const render_carry_t *c = (const render_carry_t *)p;
+  memcpy(obj_info, c->obj, sizeof(obj_info));
+  object_count[0] = c->count[0]; object_count[1] = c->count[1];
+  spr_ovr = c->ovr; tms_status_set = c->tms_set; spr_col = c->col;
+}
+
 /* Function pointers */
 void (*render_bg)(int line);
 void (*render_obj)(int line);
@@ -3674,6 +3704,7 @@ void render_obj_tms(int line)
   /* Sprite list for current line */
   object_info_t *object_info = obj_info[line];
   int count = object_count[line];
+  int ext_idx = 0, ext_status = -1;      /* VitAdhoc "no flicker" */
 
   /* Default sprite width (8 pixels) */
   int width = 8;
@@ -3693,6 +3724,9 @@ void render_obj_tms(int line)
   /* Draw sprites in front-to-back order */
   while (count--)
   {
+    /* VitAdhoc "no flicker": from the fifth sprite on the hardware draws nothing, so what these do to the status is undone below */
+    if (ext_idx++ == 4) ext_status = status;
+
     /* Sprite X position */
     start = object_info->xpos;
 
@@ -3777,6 +3811,7 @@ void render_obj_tms(int line)
     /* Next sprite entry */
     object_info++;
   }
+  if (ext_status >= 0) status = (uint16) ext_status;
 
   /* handle Game Gear reduced screen (160x144) */
   if ((system_hw == SYSTEM_GG) && !config.gg_extra && (v_counter < bitmap.viewport.h))
@@ -3806,6 +3841,10 @@ void render_obj_m4(int line)
   /* Sprite list for current line */
   object_info_t *object_info = obj_info[line];
   int count = object_count[line];
+  /* VitAdhoc "no flicker": sprites beyond the hardware's 8 (parse_satb_m4 lists them only with config.no_sprite_limit) */
+  int ext_idx = 0, ext_status = -1, ext_width;
+  const int ext_real = (count > 8) ? 8 : count;
+  uint16 ext_col = 0;
 
   /* Default sprite width */
   int width = 8;
@@ -3818,6 +3857,7 @@ void render_obj_m4(int line)
   {
     width <<= (reg[1] & 0x01);
   }
+  ext_width = width;
 
   /* Unused bits used as a mask on 315-5124 VDP only */
   if (system_hw > SYSTEM_SMS)
@@ -3834,16 +3874,21 @@ void render_obj_m4(int line)
   /* Draw sprites in front-to-back order */
   while (count--)
   {
+    /* VitAdhoc "no flicker": from the ninth sprite on the hardware draws nothing, so what these do to the status (collision bit and
+     * position) is undone below; they are drawn as the game asked for them (zoomed when zoom is on) */
+    if (ext_idx == 8) { ext_status = status; ext_col = spr_col; width = ext_width; }
+
     /* 315-5124 VDP specific */
     if (system_hw <= SYSTEM_SMS)
     {
       /* last 4 sprites can not be zoomed */
-      if (count < 4)
+      if ((ext_idx < ext_real) && (ext_idx >= ext_real - 4))
       {
         /* force default width for remaining sprites */
         width = 8;
       }
     }
+    ext_idx++;
 
     /* Sprite pattern index */
     temp = (object_info->attr | 0x100) & sg_mask;
@@ -3892,6 +3937,7 @@ void render_obj_m4(int line)
     /* Next sprite entry */
     object_info++;
   }
+  if (ext_status >= 0) { status = (uint16) ext_status; spr_col = ext_col; }
 
   /* handle Game Gear reduced screen (160x144) */
   if ((system_hw == SYSTEM_GG) && !config.gg_extra && (v_counter < bitmap.viewport.h))
@@ -4378,6 +4424,7 @@ void parse_satb_tms(int line)
 
   /* Sprite counter (4 max. per line) */
   int count = 0;
+  int ovr_seen = 0, ovr_i = 0;      /* VitAdhoc: see "Sprite overflow" below */
 
   /* no sprites in Text modes */
   if (!(reg[1] & 0x10))
@@ -4425,14 +4472,18 @@ void parse_satb_tms(int line)
       if ((ypos >= 0) && (ypos < height))
       {
         /* Sprite overflow */
-        if (count == TMS_MAX_SPRITES_PER_LINE)
+        /* VitAdhoc: the flag and the fifth sprite's number are set at the hardware's limit of 4 whatever the option; with "no flicker"
+         * (config.no_sprite_limit) the sprites beyond it are still listed, for render_obj_tms to draw without touching the status */
+        if ((count >= 4) && !ovr_seen)
         {
           /* Flag is set only during active area */
           if (line < bitmap.viewport.h)
           {
             spr_ovr = 0x40;
           }
-          break;
+          ovr_seen = 1;
+          ovr_i = i;
+          if (!config.no_sprite_limit) break;
         }
 
         /* Store sprite attributes for later processing */
@@ -4455,6 +4506,7 @@ void parse_satb_tms(int line)
   object_count[(line + 1) & 1] = count;
 
   /* Insert number of last sprite entry processed */
+  if (ovr_seen) i = ovr_i;
   status = (status & 0xE0) | (i & 0x1F);
   tms_status_set = 1;      /* VitAdhoc: the VDP worker merges the low status bits back only when this ran */
 }
@@ -4466,6 +4518,7 @@ void parse_satb_m4(int line)
 
   /* Sprite counter (8 max. per line) */
   int count = 0;
+  int ovr_seen = 0;                 /* VitAdhoc: see "Sprite overflow" below */
 
   /* Sprite Y position */
   int ypos;
@@ -4519,14 +4572,17 @@ void parse_satb_m4(int line)
     if ((ypos >= 0) && (ypos < height))
     {
       /* Sprite overflow */
-      if (count == MODE4_MAX_SPRITES_PER_LINE)
+      /* VitAdhoc: the flag is set at the hardware's limit of 8 whatever the option; with "no flicker" (config.no_sprite_limit) the
+       * sprites beyond it are still listed, for render_obj_m4 to draw without touching the status */
+      if ((count >= 8) && !ovr_seen)
       {
         /* Flag is set only during active area */
         if ((line >= 0) && (line < bitmap.viewport.h))
         {
           spr_ovr = 0x40;
         }
-        break;
+        ovr_seen = 1;
+        if (!config.no_sprite_limit) break;
       }
 
       /* Store sprite attributes for later processing */
@@ -5242,6 +5298,34 @@ static void wide_line(int line, int spr_in)
 void render_line(int line)
 {
   const int wide_spr_in = spr_ovr;
+  /* VitAdhoc: a frame that is not shown (vdp_thread.h, VDP_LINE_STATUS_ONLY): the sprite pass alone, for the status bits it sets */
+  if (line >= 0 && (line & 0x10000))
+  {
+    line &= 0xFFFF;
+    if (reg[1] & 0x40)
+    {
+      if (bg_list_index)
+      {
+        update_bg_pattern_cache(bg_list_index);
+        bg_list_index = 0;
+      }
+      /* the background's pixels never carry the sprite marker (bit 7): an empty line gives the same collisions */
+      memset(&linebuf[0][0], 0, sizeof(linebuf[0]));
+      render_obj(line & 1);
+      if (line < (bitmap.viewport.h - 1))
+      {
+        parse_satb(line);
+        wide_parse_gen = wide_gen;
+      }
+    }
+    else if (system_hw < SYSTEM_MD)
+    {
+      status |= spr_ovr;
+      spr_ovr = 0;
+      parse_satb(line);
+    }
+    return;
+  }
   /* Check display status */
   if (reg[1] & 0x40)
   {

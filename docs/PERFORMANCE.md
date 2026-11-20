@@ -69,6 +69,13 @@ and 1.5 ms of upload, Yoshi's Island, Super Mario World and Kirby are over). Whe
 wide view narrows its margin, as before. The pixel art scaler (xBR 2x) is estimated at about 3 ms of the draw thread typically and 8.5 ms in the
 worst second.
 
+A later step (snes/WIDE-INTEGRATION.md, "Margin thread"; host and model numbers, proofs not complete) moves the core's margin passes and
+the capture to a thread of their own. By the same model at IPC 0.7 the picture thread at the full width is then about 7.4 ms (Super Mario
+World, was 17.4), 11.9 ms (Super Metroid, was 21.9) and 7.4 ms (Yoshi's Island, was 12.4), and the new margin thread 7.7, 10.3 and 5.0 ms: each
+thread fits a 60 Hz frame. The threads still share three cores (four with the extra core), and a heavy frame of Super Mario World or Yoshi's
+Island adds up to about 46 to 49 ms of the 50 ms three cores have, so this does not show a locked 60 at the full width on three cores. The
+tables above were not regenerated for that step.
+
 The rewind capture: 823 KB per state before 2.0, about 300 KB (plain cartridge), 430 KB (Super FX) or 570 KB (SA-1) now (1.16 M -> 0.53 M host
 instructions in Super Mario World), estimated 0.5 to 1.2 ms on the Vita. It is now written after the frame's picture and sound have been handed
 on, in the time the game thread would wait for the next refresh, and put off (at most 8 refreshes) on a pass that is already late: it is off the

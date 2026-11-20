@@ -39,6 +39,7 @@ if [ -n "$MD" ]; then
 	run "Mega Drive region and PAL pacing" pal "$MD"
 	run "Mega Drive smooth hand-over on / off, bit for bit" handoff "$MD" "$T/h_md"
 	run "Mega Drive patch CRC, rewind 5 s (bit for bit), fast forward 2x / 3x" speed md "$MD" "$T/s_md"
+	run "Mega Drive Quick response (run-ahead): Off, On, Auto: the same machine after every refresh" ahead md "$MD" "$T/q_md"
 	run "Mega Drive RetroAchievements (fake server: stored token, unlock toast, Hardcore)" ra md "$MD" "$T/a_md"
 else echo "SKIP  Mega Drive player tests (MD_TEST_ROMS not set)"; fi
 if [ -n "$SMS" ]; then
@@ -47,6 +48,7 @@ if [ -n "$SMS" ]; then
 	run "Master System look governor" look sms "$SMS" "$T/l_sms"
 	run "Master System smooth hand-over on / off, bit for bit" handoff "$SMS" "$T/h_sms"
 	run "Master System patch CRC, rewind 5 s, fast forward 2x / 3x" speed sms "$SMS" "$T/s_sms"
+	run "Master System Quick response (run-ahead)" ahead sms "$SMS" "$T/q_sms"
 	run "Master System RetroAchievements" ra sms "$SMS" "$T/a_sms"
 else echo "SKIP  Master System player tests (MD_TEST_SMS_ROMS not set)"; fi
 if [ -n "$GG" ]; then
@@ -54,6 +56,7 @@ if [ -n "$GG" ]; then
 	run "Game Gear pad model" pads gg "$GG" "$T/p_gg"
 	run "Game Gear look governor" look gg "$GG" "$T/l_gg"
 	run "Game Gear patch CRC, rewind 5 s, fast forward 2x / 3x" speed gg "$GG" "$T/s_gg"
+	run "Game Gear Quick response (run-ahead)" ahead gg "$GG" "$T/q_gg"
 	run "Game Gear RetroAchievements" ra gg "$GG" "$T/a_gg"
 else echo "SKIP  Game Gear player tests (MD_TEST_SMS_ROMS not set)"; fi
 # the wide view through the picture pipe (direct drawing and copies, composed on a second thread) against composing at once, bit for bit

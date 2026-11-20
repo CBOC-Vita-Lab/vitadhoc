@@ -134,7 +134,10 @@ on Wi-Fi: both games save and carry on alone.
   local address (the relay's address when a relay is used). It keeps them until
   the link forms or 10 minutes pass (2 minutes after a friend joins without
   linking). They are then deleted, at the next request the service receives
-  after that. It keeps nothing for statistics and has no log of its own.
+  after that. It keeps nothing for statistics and has no log of its own. One
+  thing outlives a room, until the end of the day (UTC): a network that sent
+  a wrong code or key is counted, under a scrambled fingerprint and never its
+  address, so that nobody can try codes all day.
   Cloudflare, like any web host, sees the requests.
 - **Your friend sees your internet address** on a direct link (that is what a
   direct link is). **Always use the relay** hides it from them: then each Vita
@@ -143,6 +146,14 @@ on Wi-Fi: both games save and carry on alone.
   through Cloudflare's relay when that is needed. As on Wi-Fi, VitAdhoc does
   not encrypt the link's packets.
 - The app remembers nothing between visits: not the code, not your friend.
+  The log file is the exception (`ux0:data/GBAdhoc/log/gbadhoc.log`, the last
+  few sessions): its `online_` lines hold the room code, your friend's
+  nickname and both internet addresses. Read it before you share it.
+- **Play online with people you know.** The host's console sends its game
+  state (and, for a Game Boy cable link with one cartridge, the game) to the
+  guest's console, which loads it, as it would load a save state someone gave
+  you. VitAdhoc checks sizes and checksums, but the emulator cores were not
+  written to withstand a state that was damaged on purpose.
 
 ### Limits
 

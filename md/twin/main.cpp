@@ -117,7 +117,7 @@ static void print_globdiff(const std::vector<uint8_t> &a, const std::vector<uint
 	size_t k = 0, shown = 0;
 	long base = (long)(uintptr_t)&md_host_run_frame;
 	long d0 = (long)(uintptr_t)&__data_start - base;
-	while (k < a.size() && k < b.size() && shown < 400) {
+	while (k < a.size() && k < b.size() && shown < 200000) {
 		if (a[k] != b[k]) {
 			size_t e = k;
 			while (e < a.size() && a[e] != b[e]) e++;
@@ -151,13 +151,33 @@ static int g_learn = 1, g_cache = 1, g_cache_check = 0, g_check = 0;
 // where the view starts in the picture buffer: the Mega Drive picture is the screen, the Game Gear band has the LCD window 48 columns in
 static const uint16_t *px_wide_view(const md_video_info &vi, const uint16_t *px, int) { return vi.gg_band ? px + 48 : px; }
 
+// --ahead: every frame through md_host_run_frame_ahead (the player's "Quick response"); --frame-hashes FILE: one picture hash per frame
+static int g_ahead = 0;
+static unsigned long g_ahead_ran = 0, g_ahead_plain = 0;
+static std::vector<u64> g_pic;
+static mdw::Meta *g_ahead_meta = 0;
+static int g_ahead_f = 0;
+static void ahead_shown(void *)
+{
+	// the machine is the one of the picture just drawn: the wide view's analysis reads it here, as the player does
+	if (!g_wa) return;
+	md_video_info vi; md_host_video_info(&vi);
+	g_ahead_meta = new mdw::Meta;
+	const int m = vi.system == MD_SYS_GG ? 48 : g_wide;
+	double a0 = now();
+	g_wa->analyse((uint32_t) g_ahead_f + 1, vi, m, g_wide, g_ahead_meta);
+	g_t_an += now() - a0; g_n_an++;
+}
+
 static void step_frame(int f, Acc &acc, double *dt)
 {
 	static int16_t abuf[4800 * 2];
 	md_host_set_pad(0, mask_at(g_p1, f, 0));
 	md_host_set_pad(1, mask_at(g_p2, f, 1));
 	double t0 = now();
-	md_host_run_frame();
+	g_ahead_meta = 0; g_ahead_f = f;
+	if (g_ahead) { if (md_host_run_frame_ahead(ahead_shown, 0) == 0) g_ahead_ran++; else g_ahead_plain++; }
+	else md_host_run_frame();
 	double t1 = now();
 	if (dt) *dt = t1 - t0;
 	int w, h, pitch;
@@ -175,13 +195,20 @@ static void step_frame(int f, Acc &acc, double *dt)
 	acc.v = hash_bytes(acc.v, dim, sizeof dim);
 	for (int y = 0; y < h; y++) acc.v = hash_bytes(acc.v, (const char *)px + (size_t)y * pitch, (size_t)w * 2);
 	g_fh.push_back(acc.v ^ v0);
+	{
+		u64 ph = hash_bytes(FNV0, dim, sizeof dim);
+		for (int y = 0; y < h; y++) ph = hash_bytes(ph, (const char *)px + (size_t)y * pitch, (size_t)w * 2);
+		g_pic.push_back(ph);
+	}
 	if (g_wa) {
 		md_video_info vi; md_host_video_info(&vi);
-		mdw::Meta *meta = new mdw::Meta;
+		mdw::Meta *meta = g_ahead_meta ? g_ahead_meta : new mdw::Meta;
 		const int m = vi.system == MD_SYS_GG ? 48 : g_wide;
 		double a0 = now();
-		g_wa->analyse((uint32_t) f + 1, vi, m, g_wide, meta);
-		g_t_an += now() - a0; g_n_an++;
+		if (!g_ahead_meta) {
+			g_wa->analyse((uint32_t) f + 1, vi, m, g_wide, meta);
+			g_t_an += now() - a0; g_n_an++;
+		}
 		if (getenv("MD_WIDE_DEBUG") && f % 100 == 50 && meta->valid) {
 			const int y = vi.h / 2;
 			printf("WD f=%d y=%d valid=%d layers=%d planes=%d real=%d,%d pic=%d,%d hud=%d epoch=%u scene=%d allop=%d\n", f, y, meta->valid, meta->nlayers, meta->planes,
@@ -260,7 +287,7 @@ int main(int argc, char **argv)
 {
 	std::vector<unsigned> peeks;
 	int reset_at = -1, vdpthr = 0, vdpcheck = 0, vdpstress = 0;
-	const char *rom = NULL, *hashes = NULL, *srm = NULL, *save_st = NULL, *load_st = NULL, *cheat = NULL;
+	const char *rom = NULL, *hashes = NULL, *srm = NULL, *save_st = NULL, *load_st = NULL, *cheat = NULL, *frame_hashes = NULL;
 	int frames = 1500, checkpoint = 100, region = 0, system = 0, padtype = 0, roundtrip = 0, state_frame = 300, quiet = 0, norender = 0, info = 0;
 	unsigned seed = 1, arate = 0;
 	std::vector<std::string> opts;
@@ -286,6 +313,8 @@ int main(int argc, char **argv)
 		else if (a == "--load-state") load_st = need();
 		else if (a == "--audio-rate") arate = (unsigned)atoi(need());
 		else if (a == "--no-render") norender = 1;
+		else if (a == "--ahead") g_ahead = 1;
+		else if (a == "--frame-hashes") frame_hashes = need();
 		else if (a == "--cheat") cheat = need();
 		else if (a == "--peek") peeks.push_back((unsigned)strtoul(need(), NULL, 16));
 		else if (a == "--reset-at") reset_at = atoi(need());
@@ -380,6 +409,13 @@ int main(int argc, char **argv)
 		if (fr == reset_at) md_host_reset();
 		step_frame(f0 + fr, all, &dt);
 		dts.push_back(dt);
+		if (const char *ad = getenv("MD_TWIN_AHEADDIFF")) if (atoi(ad) == fr + 1) {
+			// debug: what run-ahead's look-ahead frame and its way back leave behind in the process's globals (anything listed here that is
+			// the machine's is state the save state does not hold; the picture and the caches are expected). tools/globdiff.py names them.
+			std::vector<uint8_t> gA = snap_globals();
+			md_host_ahead_debug_tail();
+			print_globdiff(gA, snap_globals(), "ahead");
+		}
 		if (save_st && fr + 1 == state_frame) {
 			size_t sn = md_host_state_save_mem(sbuf.data(), sbuf.size());
 			FILE *s = fopen(save_st, "wb"); if (s) { fwrite(sbuf.data(), 1, sn, s); fclose(s); }
@@ -413,6 +449,18 @@ int main(int argc, char **argv)
 	if (!quiet)
 		printf("RESULT %s sys=%d frames=%d video=%016llx audio=%016llx state=%016llx ram=%016llx samples=%zu size=%dx%d p50=%.3fms p99=%.3fms avg=%.3fms\n",
 			bn, md_host_system(), frames, all.v, all.a, sh, rh, all.samples, vi.w, vi.h, p50 * 1e3, p99 * 1e3, tot / (double)dts.size() * 1e3);
+	if (frame_hashes) {
+		// the run's own frames only (the round trip below adds more)
+		if (FILE *pf = fopen(frame_hashes, "w")) { for (int i = 0; i < frames && i < (int) g_pic.size(); i++) fprintf(pf, "%d %016llx\n", f0 + i, g_pic[(size_t) i]); fclose(pf); }
+	}
+	if (g_ahead && !quiet) {
+		unsigned long as[2]; md_host_ahead_stat(as);
+		std::vector<uint8_t> sb(0x10000); size_t sk = md_host_sram_read(sb.data(), sb.size());
+		printf("AHEAD frames=%lu plain=%lu sram_put_back=%lu possible=%d sram=%016llx\n", g_ahead_ran, g_ahead_plain, as[1], md_host_ahead_possible(), hash_bytes(FNV0, sb.data(), sk));
+	} else if (frame_hashes && !quiet) {
+		std::vector<uint8_t> sb(0x10000); size_t sk = md_host_sram_read(sb.data(), sb.size());
+		printf("PLAIN sram=%016llx\n", hash_bytes(FNV0, sb.data(), sk));
+	}
 	if (g_wa && !quiet) {
 		mdw::Stats st; g_wa->census(&st);
 		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d map_cells=%d rooms=%d bound=%d map_px=%u rows=%u rejected=%u real_sum=%llu map_sum=%llu map_skips=%u win_sides=%llu vs_sides=%llu\n", st.frames, st.analysed, st.composed,

@@ -2519,7 +2519,15 @@ static void peer_name_take(void)
          n = vp[0].nick;
    }
    if (n && n[0])
+   {
+      size_t i;
       snprintf(L.peer, sizeof(L.peer), "%.23s", n);
+      /* The other console's text: it goes on the screen and into the log, so
+       * printable ASCII only (the room lists and the online card do the same). */
+      for (i = 0; L.peer[i]; i++)
+         if ((unsigned char)L.peer[i] < 0x20 || (unsigned char)L.peer[i] > 0x7E)
+            L.peer[i] = '?';
+   }
 }
 
 /* The Wireless Adapter kind: netdrv carries the game's own protocol. */

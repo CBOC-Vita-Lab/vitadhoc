@@ -132,7 +132,8 @@ struct Rig {
 	uint32_t frame = 0;
 	int nshot;
 	int tex_w = 0, tex_h = 0;
-	unsigned ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0;
+	unsigned ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0, ahead_frames = 0;
+	uint32_t emu_cost_us = 0;       /* what the test says a plain frame costs the emulating thread (0: Quick response's Auto is not fed) */
 	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
 	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
 
@@ -153,6 +154,9 @@ struct Rig {
 			if (pl->input(p, tap && i == 0, pf.clock_us / 1000, frame)) return true;
 			const bool render = pl->want_render(frame) && pl->speed_draws(i, n);
 			if (pl->run_frame(render)) ran_frames++;
+			if (pl->ahead_ran()) ahead_frames++;
+			/* as the Vita loop does: the emulating thread's time of a normal frame (here a figure the test sets) */
+			if (n == 1 && render && emu_cost_us) pl->ahead_cost(pl->ahead_ran() ? emu_cost_us * 22 / 10 + 500 : emu_cost_us);
 			int16_t ab[4096 * 2];
 			int k;
 			while ((k = md_host_audio_take(ab, 4096)) > 0) { audio_in += (unsigned) k; audio_out += (unsigned) pl->audio_filter(ab, (size_t) k); }
@@ -1209,6 +1213,78 @@ struct Sess {
 	~Sess() { end(); }
 };
 
+/* ---- Quick response (run-ahead by one frame) through the player -------------------------------------------------------------- */
+
+/* One session with a button script (presses, a rewind, a fast forward, a quick save and load); returns the machine after every refresh. */
+static std::vector<uint64_t> ahead_session(const std::string &root, const std::string &con, const char *rom, int quick, uint32_t emu_cost, unsigned *ahead_frames,
+                                           unsigned *audio, unsigned *ff_ahead, std::string *line)
+{
+	std::vector<uint64_t> H;
+	Sess s(root + "/shots");
+	EXPECT(s.start(root, con, rom, strf("ovr.quick_response=%d\n", quick)));
+	if (!s.pl) return H;
+	Rig &rig = s.rig;
+	rig.emu_cost_us = emu_cost;
+	EXPECT(s.pl->quick() == quick);
+	for (int f = 0; f < 900; f++) {
+		uint32_t b = 0;
+		if (f % 50 >= 20 && f % 50 < 30) b |= PH_CROSS;
+		if (f % 70 >= 35 && f % 70 < 50) b |= PH_RIGHT;
+		if (f % 110 == 60) b |= PH_START;
+		if (f >= 300 && f < 340) b = PH_RS_RIGHT;           /* fast forward */
+		if (f >= 500 && f < 560) b = PH_RS_LEFT;            /* rewind */
+		if (f == 700) b = PH_SELECT;
+		if (f == 701) b = PH_SELECT | PH_L;                 /* quick save */
+		if (f == 760) b = PH_SELECT;
+		if (f == 761) b = PH_SELECT | PH_R;                 /* quick load */
+		const unsigned a0 = rig.ahead_frames;
+		rig.game_frame(b);
+		if (f >= 302 && f < 338 && rig.ahead_frames != a0) (*ff_ahead)++;
+		if (f == 702 || f == 762) s.pl->wait_writer();
+		H.push_back(machine_sig());
+	}
+	*ahead_frames = rig.ahead_frames;
+	*audio = rig.audio_out;
+	*line = s.pl->ahead_line();
+	return H;
+}
+
+static int run_ahead_test(const std::string &con, const char *rom, const std::string &work)
+{
+	fprintf(stderr, "player_twin ahead: console %s, ROM %s\n", con.c_str(), rom);
+	make_dirs(work);
+	unsigned a_off = 0, a_on = 0, a_auto = 0, a_heavy = 0, au_off = 0, au_on = 0, au_auto = 0, au_heavy = 0, ff_off = 0, ff_on = 0, ff_auto = 0, ff_heavy = 0;
+	std::string l_off, l_on, l_auto, l_heavy;
+	/* The first game a process loads does not give the same state hashes as the same game loaded again in that process (Mega Drive: every
+	 * refresh; Master System: the first three): something of the core survives md_host_unload. It has nothing to do with run-ahead (two
+	 * sessions with it off differ the same way) and the console starts a new process for every game, so one session goes first here and
+	 * is not compared. */
+	{ unsigned a = 0, b = 0, c = 0; std::string l; ahead_session(work + "/first", con, rom, 0, 0, &a, &b, &c, &l); }
+	/* Off, On, Auto on a light game (2 ms a frame) and Auto on a heavy one (9 ms): the machine after every refresh must be the same in all */
+	std::vector<uint64_t> off = ahead_session(work + "/off", con, rom, 0, 2000, &a_off, &au_off, &ff_off, &l_off);
+	std::vector<uint64_t> on = ahead_session(work + "/on", con, rom, 2, 2000, &a_on, &au_on, &ff_on, &l_on);
+	std::vector<uint64_t> au = ahead_session(work + "/auto", con, rom, 1, 2000, &a_auto, &au_auto, &ff_auto, &l_auto);
+	std::vector<uint64_t> hv = ahead_session(work + "/heavy", con, rom, 1, 9000, &a_heavy, &au_heavy, &ff_heavy, &l_heavy);
+	fprintf(stderr, "off: %s\non: %s\nauto: %s\nauto, heavy: %s\n", l_off.c_str(), l_on.c_str(), l_auto.c_str(), l_heavy.c_str());
+	fprintf(stderr, "frames run ahead: off %u, on %u, auto %u, auto on a heavy game %u; sound frames out %u / %u / %u / %u\n", a_off, a_on, a_auto, a_heavy, au_off, au_on, au_auto, au_heavy);
+	EXPECT(off.size() == 900 && on.size() == 900 && au.size() == 900 && hv.size() == 900);
+	size_t d_on = 0, d_au = 0, d_hv = 0;
+	for (size_t i = 0; i < off.size() && i < on.size() && i < au.size() && i < hv.size(); i++) { if (off[i] != on[i]) d_on++; if (off[i] != au[i]) d_au++; if (off[i] != hv[i]) d_hv++; }
+	{ size_t f_on = 9999, f_hv = 9999; for (size_t i = off.size(); i-- > 0;) { if (i < on.size() && off[i] != on[i]) f_on = i; if (i < hv.size() && off[i] != hv[i]) f_hv = i; }
+	  fprintf(stderr, "refreshes whose machine differs from Off: on %zu (first %zu), auto %zu, auto heavy %zu (first %zu)\n", d_on, f_on, d_au, d_hv, f_hv); }
+	EXPECT(d_on == 0);                                      /* the machine is the same after every refresh, through fast forward, rewind and a state load */
+	EXPECT(d_au == 0);
+	EXPECT(d_hv == 0);
+	EXPECT(au_off == au_on && au_off == au_auto && au_off == au_heavy);      /* and so is the amount of sound */
+	EXPECT(a_off == 0);
+	EXPECT(a_on > 700);                                     /* every normal frame (not the fast forward and rewind ones) */
+	EXPECT(ff_on == 0 && ff_auto == 0);                     /* never under fast forward */
+	EXPECT(a_auto > 400 && a_auto < a_on);                  /* Auto: after it has seen what the game costs, and again after each fast forward / rewind */
+	EXPECT(a_heavy == 0);                                   /* Auto leaves a heavy game alone */
+	fprintf(stderr, "player_twin: ahead %s %d checks, %d failed\n", con.c_str(), g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
 static int run_speed_test(const std::string &con, const char *rom, const std::string &work)
 {
 	fprintf(stderr, "player_twin speed: console %s, ROM %s\n", con.c_str(), rom);
@@ -1561,6 +1637,7 @@ int main(int argc, char **argv)
 {
 	if (argc >= 4 && !strcmp(argv[1], "costs")) return run_costs_test(argv[2], argv[3]);
 	if (argc >= 5 && !strcmp(argv[1], "speed")) return run_speed_test(argv[2], argv[3], argv[4]);
+	if (argc >= 5 && !strcmp(argv[1], "ahead")) return run_ahead_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "ra")) return run_ra_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "look")) return run_look_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "pads")) return run_pads_test(argv[2], argv[3], argv[4]);

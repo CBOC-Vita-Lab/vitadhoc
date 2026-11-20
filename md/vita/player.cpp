@@ -327,6 +327,8 @@ void MdPlayer::settings_load()
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 	pal_fast_ = pl.get_int("pal_speed", 0) != 0;
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
+	quick_ = clampi(pl.get_int("quick_response", 0), 0, 2);
+	flicker_ = pl.get_int("no_sprite_flicker", 1) != 0;
 	region_ = clampi(pl.get_int("region", 0), 0, 3);
 	fm_ = clampi(pl.get_int("fm", 0), 0, 2);
 	ym2413_ = clampi(pl.get_int("ym2413", 2), 0, 2);
@@ -395,6 +397,8 @@ void MdPlayer::apply_overrides()
 	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_fast_ = v != 0;
 	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_fast_ = true; else if (w == "true" || w == "50") pal_fast_ = false; }
 	if ((v = req_.override_int("look_mode", -1)) >= 0) look_mode_ = clampi(v, 0, 2);
+	if ((v = req_.override_int("quick_response", -1)) >= 0) quick_ = clampi(v, 0, 2);
+	if ((v = req_.override_int("no_sprite_flicker", -1)) >= 0) flicker_ = v != 0;
 	if (req_.overrides.count("look_mode")) { std::string w = lower(req_.overrides.find("look_mode")->second); if (w == "auto") look_mode_ = 0; else if (w == "full") look_mode_ = 1; else if (w == "light") look_mode_ = 2; }
 }
 
@@ -407,7 +411,6 @@ void MdPlayer::apply_core_options()
 		md_host_set_option("vdp_mode", 0);
 		md_host_set_option("force_dtack", 0);
 		md_host_set_option("addr_error", 1);
-		md_host_set_option("sprite_limit", 1);
 		md_host_set_option("interlace", 1);
 		md_host_set_option("overscan", 0);
 	}
@@ -416,6 +419,8 @@ void MdPlayer::apply_core_options()
 	md_host_set_option("ym2413", ym2413_);
 	md_host_set_option("sms_border", sms_border_);
 	md_host_set_option("lcd", gg_lcd_ * 10);
+	/* pictures only (md/twin/ahead_check.sh): the machine and its status register are the same either way, so linked play keeps it too */
+	md_host_set_option("sprite_limit", flicker_ ? 0 : 1);
 	md_host_set_pad_type(0, pad_type_);
 	md_host_set_pad_type(1, pad_type_);
 }
@@ -438,6 +443,8 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_FM, fm_);
 	menu_.set_value(ROW_YM2413, ym2413_);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
+	menu_.set_value(ROW_QUICK, quick_);
+	menu_.set_value(ROW_FLICKER, flicker_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 	menu_.set_value(ROW_PALSPEED, pal_fast_ ? 1 : 0);
 	menu_.set_value(ROW_LOOK, look_mode_);
@@ -652,6 +659,11 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_GG_LCD, "LCD ghosting",
 			                   "The slow Game Gear screen left a trail behind moving things. 0 is off, 10 is strong.", lcd, gg_lcd_, ROW_PIC_APPLY);
 		}
+		if (system_ != MD_SYS_MD)
+			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FLICKER, "No sprite flicker",
+			                   system_ == MD_SYS_SG ? "The console drew only 4 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same."
+			                                        : "The console drew only 8 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same.",
+			                   onoff, flicker_ ? 1 : 0, ROW_PIC_APPLY);
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_LOOK, "Image look",
 		                   "Auto keeps the best scaler and eases it only when a game cannot hold full speed. Full keeps the scaler as set, Light turns it off, both always.",
 		                   lookv, look_mode_, ROW_PIC_APPLY);
@@ -677,6 +689,14 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
 		                   "European games run at 50 Hz. True 50 Hz plays them at their real speed (one frame in six is shown again); Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
 		                   palv, 0);
+		/* Quick response is not finished (md/README.md, "Quick response"): the row is added only when player.ini or the launch file already asks for it */
+		if (quick_ != 0) {
+			std::vector<std::string> qv;
+			qv.push_back("Off"); qv.push_back("Auto"); qv.push_back("On");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "Quick response",
+			                   "Shows what you press one frame sooner: the next frame is worked out ahead and shown. The game itself runs the same. Auto uses it while the game leaves time for it.",
+			                   qv, quick_);
+		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
 		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.", onoff, 1);
 	}
@@ -752,7 +772,51 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 size_t MdPlayer::SpeedGlue::state_size() { return md_host_state_size(); }
 bool MdPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { return md_host_state_save_quick(buf, cap) == md_host_state_size(); }
 bool MdPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; p->jumps_++; return md_host_state_load_quick(buf, n) == 0; }
-void MdPlayer::SpeedGlue::run_frame(bool render) { md_host_set_render(render ? 1 : 0); md_host_run_frame(); }
+void MdPlayer::SpeedGlue::run_frame(bool render)
+{
+	md_host_set_render(render ? 1 : 0);
+	/* Quick response: a drawn frame at normal speed is run ahead (the real frame undrawn, then the picture of the one after it) */
+	p->ahead_ran_ = false;
+	if (render && !p->speed_.busy() && p->ahead_.want()) { p->ahead_ran_ = md_host_run_frame_ahead(p->ahead_hook_, p->ahead_user_) == 0; return; }
+	md_host_run_frame();
+}
+
+/* ---- Quick response (run-ahead) -------------------------------------------------------------------------------------------- */
+
+void MdPlayer::ahead_update_blocked()
+{
+	/* never in a linked game (two machines in lockstep), under fast forward or rewind, while steady pacing shows every second frame, or
+	 * with a cartridge whose EEPROM or flash chip the save state cannot put back */
+	ahead_.set_blocked(linked() || speed_.busy() || pacer_.mode() == PACE_HALF || !md_host_ahead_possible());
+}
+
+void MdPlayer::set_quick(int mode)
+{
+	quick_ = clampi(mode, 0, 2);
+	ahead_.set_mode(quick_);
+	ahead_update_blocked();
+	logf("quick response: %s%s\n", quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", md_host_ahead_possible() ? "" : " (not for this cartridge: its save chip cannot be put back)");
+}
+
+void MdPlayer::ahead_cost(uint32_t emu_us)
+{
+	ahead_update_blocked();
+	const bool was = ahead_.on();
+	ahead_.add(emu_us, ahead_ran_);
+	if (ahead_.on() != was)
+		logf("quick response: %s (a frame costs %.1f ms plain, %.1f ms run ahead)\n", ahead_.on() ? "started" : "stopped", ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0);
+}
+
+std::string MdPlayer::ahead_line()
+{
+	unsigned long st[2];
+	md_host_ahead_stat(st);
+	std::string s = strf("ahead: mode=%s on=%d frames=%u/%u plain_ms=%.2f ahead_ms=%.2f ratio=%.2f starts=%u stops=%u sram_put_back=%lu",
+	                     quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", ahead_.want() ? 1 : 0, ahead_.frames_ahead(), ahead_.frames(),
+	                     ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0, ahead_.ratio_x100() / 100.0, ahead_.starts(), ahead_.stops(), st[1]);
+	ahead_.census_reset();
+	return s;
+}
 void MdPlayer::SpeedGlue::clear_pads() { md_host_set_pad(0, 0); md_host_set_pad(1, 0); }
 void MdPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
 
@@ -773,6 +837,8 @@ void MdPlayer::speed_start()
 	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
 	if (linked()) speed_.set_locked(true, "Rewind is off while games are linked");
 	speed_.start(md_host_fps(), 2, speed_settings());
+	ahead_.set_frame_us((uint32_t) (1e6 / md_host_fps() + 0.5));
+	set_quick(quick_);
 	/* with a writer thread the rewind states are packed there (the game thread only copies the state); without one capture_commit packs at once */
 	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
 	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) md_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
@@ -1171,6 +1237,8 @@ void MdPlayer::settings_queue_save()
 	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
 	pl.set_int("pal_speed", pal_fast_ ? 1 : 0);
 	pl.set_int("look_mode", look_mode_);
+	pl.set_int("quick_response", quick_);
+	pl.set_int("no_sprite_flicker", flicker_ ? 1 : 0);
 	pl.set_int("region", region_);
 	pl.set_int("fm", fm_);
 	pl.set_int("ym2413", ym2413_);
@@ -1212,7 +1280,7 @@ void MdPlayer::on_change(int row, int v)
 		const double before = md_host_fps();
 		region_ = clampi(v, 0, 3);
 		md_host_set_region(region_);
-		if (md_host_fps() != before) { timing_changed_ = true; logf("region %d: %.4f Hz now\n", region_, md_host_fps()); }
+		if (md_host_fps() != before) { timing_changed_ = true; ahead_.set_frame_us((uint32_t) (1e6 / md_host_fps() + 0.5)); logf("region %d: %.4f Hz now\n", region_, md_host_fps()); }
 		break;
 	}
 	case ROW_FM: fm_ = clampi(v, 0, 2); md_host_set_option("fm", fm_); break;
@@ -1221,6 +1289,8 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_HANDOFF: handoff_ = v != 0; break;
 	case ROW_PALSPEED: pal_fast_ = v != 0; break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
+	case ROW_QUICK: set_quick(v); break;
+	case ROW_FLICKER: flicker_ = v != 0; md_host_set_option("sprite_limit", flicker_ ? 0 : 1); break;
 	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;
 	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;

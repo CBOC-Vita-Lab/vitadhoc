@@ -1068,6 +1068,19 @@ static int hd_draw_thread(SceSize, void *)
 
 static bool hd_active(void) { return g_hd_ok && g_pipe.box().enabled() && g_pl->smooth_handoff(); }
 
+/* Quick response (run-ahead): the wide view's analysis has to read the machine while it is still the one of the picture just drawn, so
+ * the player calls this between the look-ahead frame and the way back (md_host_run_frame_ahead). The loop fills the request first. */
+static struct { bool armed, done; uint32_t frame; int margin, S; mdw::Meta *mt; md_video_info vi; uint64_t us; } g_ahead_an;
+static void ahead_shown_hook(void *)
+{
+	if (!g_ahead_an.armed || !g_wide) return;
+	const uint64_t a0 = sceKernelGetProcessTimeWide();
+	md_host_video_info(&g_ahead_an.vi);
+	g_wide->frame(g_ahead_an.frame, g_ahead_an.vi, g_ahead_an.margin, g_ahead_an.S, g_ahead_an.mt);
+	g_ahead_an.us = sceKernelGetProcessTimeWide() - a0;
+	g_ahead_an.done = true;
+}
+
 static void hd_start(const char *tini, double frame_hz)
 {
 	if (!g_pl->smooth_handoff()) { logf_("handoff: off (setting)\n"); return; }
@@ -1379,6 +1392,7 @@ int main(int argc, char **argv)
 	/* the game: launch file or argument, patch, saves, states, settings (player.cpp) */
 	writer_start();
 	mdp::StartResult sr = g_pl->start(argc, argv, APP_ROOT, enter == SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS);
+	g_pl->set_ahead_hook(ahead_shown_hook, NULL);
 	if (!sr.ok) {
 		logf_("cannot start: %s / %s\n", sr.fatal1.c_str(), sr.fatal2.c_str());
 		g_pl->log_flush(true);
@@ -1551,6 +1565,9 @@ int main(int argc, char **argv)
 			if (hd && render && !g_link) { int dp = 0; dfb = g_pipe.direct_begin(&dp); if (dfb) md_host_set_framebuffer(wide_run ? dfb + MD_WIDE_MAX : dfb, dp); }
 			if (wide_run && !dfb && g_canvas) md_host_set_framebuffer(g_canvas + MD_WIDE_MAX, MD_WIDE_PITCH);
 			const bool own_fb = dfb || (wide_run && g_canvas);
+			/* the wide view's analysis of this frame, should the player run it ahead (ahead_shown_hook); frames_run is the count after this frame */
+			g_ahead_an.armed = wide_run; g_ahead_an.done = false; g_ahead_an.us = 0;
+			if (wide_run) { g_ahead_an.frame = (uint32_t) emu_frame + 1; g_ahead_an.margin = g_pl->wide_margin(); g_ahead_an.S = g_wide_S; g_ahead_an.mt = &g_meta[(frames_run + 1) & 7]; }
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 			g_emu_busy.store(1, std::memory_order_relaxed);
 			if (g_link) {
@@ -1566,6 +1583,8 @@ int main(int argc, char **argv)
 			if (own_fb) { dpix = md_host_video(&dw, &dh, &dpp); md_host_set_framebuffer(NULL, 0); }
 			emu_us += t1 - t0;
 			last_frame_us = t1 - t0;
+			/* Quick response decides from the emulating thread's time for a frame at normal speed (with the hand-over the drawing is not on it) */
+			if (!g_link && hd && !half && to_run == 1 && render) g_pl->ahead_cost((uint32_t) (t1 - t0 - g_ahead_an.us));
 			frames_run++;
 			emu_frame++;
 			if (render) render_emu_us = t1 - t0; else not_rendered++;
@@ -1589,8 +1608,8 @@ int main(int argc, char **argv)
 						/* the wide view: this frame goes to widekit's analysis (the emulating thread's share is the hand-over), the picture is composed where it is drawn */
 						mt = &g_meta[frames_run & 7];
 						const uint64_t a0 = sceKernelGetProcessTimeWide();
-						g_wide->frame((uint32_t) emu_frame, vi, g_pl->wide_margin(), g_wide_S, mt);
-						const uint64_t an = sceKernelGetProcessTimeWide() - a0;
+						if (!g_ahead_an.done) g_wide->frame((uint32_t) emu_frame, vi, g_pl->wide_margin(), g_wide_S, mt);      /* run ahead: done in ahead_shown_hook */
+						const uint64_t an = g_ahead_an.done ? g_ahead_an.us : sceKernelGetProcessTimeWide() - a0;
 						g_wide_an_us += an; g_wide_an_n++;
 						render_emu_us += an; emu_us += an;
 						int off = vi.system == MD_SYS_GG ? 48 : 0;
@@ -1773,6 +1792,7 @@ int main(int argc, char **argv)
 			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
 			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
 			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s\n", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());
+			if (g_pl->quick() && !g_link) logf_("%s\n", g_pl->ahead_line().c_str());
 			sec_start = now;
 			vblanks = frames_run = 0;
 			emu_us = main_us = fetch_us = draw_us = finish_us = vwait_us = 0;

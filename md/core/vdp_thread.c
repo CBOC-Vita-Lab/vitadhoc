@@ -48,6 +48,7 @@ extern unsigned vdp_fn_encode(void);
 extern int8 reset_do_not_clear_buffers;
 
 int vdpw_on;
+uint8 vdp_status_only;
 
 /* ---- the queue ----------------------------------------------------------------------------------------------------------------------- */
 enum {
@@ -387,6 +388,24 @@ void vdpw_wide_cache(int on, int check) { vw_wide_cache_on = on; vw_wide_cache_c
 void vdpw_wide_cache_stat(unsigned long out[3]) { out[0] = vw_wide_cache_stat[0]; out[1] = vw_wide_cache_stat[1]; out[2] = vw_wide_cache_stat[2]; }
 
 unsigned vdpw_spr_col(void) { return vdpw_on ? vw_spr_col : spr_col; }
+
+/* the renderers' carried state (vdp_render.c, render_carry_t) of both copies, for run-ahead: `buf` holds 2 * vdpw_carry_size() bytes */
+extern int render_carry_size(void);
+extern void render_carry_save(void *p);
+extern void render_carry_load(void *p);
+extern void vw_render_carry_save(void *p);
+extern void vw_render_carry_load(void *p);
+int vdpw_carry_size(void) { return 2 * render_carry_size(); }
+void vdpw_carry_save(void *buf)
+{
+	render_carry_save(buf);
+	if (vdpw_on) { vdpw_q_call(vw_render_carry_save, (char *) buf + render_carry_size()); vdpw_join(); }
+}
+void vdpw_carry_load(void *buf)
+{
+	render_carry_load(buf);
+	if (vdpw_on) { vdpw_q_call(vw_render_carry_load, (char *) buf + render_carry_size()); vdpw_join(); }
+}
 
 void vdpw_census(vdpw_census_t *c) { if (c) { *c = W.cen; c->vdp_us = (unsigned long) __atomic_load_n(&W.vdp_busy, __ATOMIC_RELAXED); } }
 void vdpw_set_check(int on) { W.check = on; }

@@ -410,6 +410,21 @@ int lan_transport_nat_listening(lan_transport *t);
 /* JOIN mode, before the netdrv session starts: the host is at this address (what create's
  * target_ip_be/target_port do).  0 = ok, -1 = not a joiner / a session already has peers. */
 int  lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port);
+/* The peer lock (2.0 security review).  Once the one peer of a session is known (online play: the
+ * punch has answered or the relay is bound) the transport takes session datagrams -- netdrv frames,
+ * the bulk lane, keepalives, echo answers -- ONLY from that address, from the addresses the room
+ * gave for it (the punch candidates, the address a keyed PUNCH came from) and from its relayed
+ * address; what anyone else sends is counted in rx_foreign and dropped on the I/O thread before it
+ * can fill a ring, count as "a peer was heard" or draw a keepalive.  Discovery, PUNCH (it carries
+ * the room's key) and STUN / TURN are not affected.  ip_be 0 = unlock.  Any thread.  0 = ok. */
+int  lan_transport_peer_lock(lan_transport *t, uint32_t ip_be, uint16_t port);
+/* ...and before the peer is known (an online connection that is still looking up its address,
+ * waiting in its room or punching): session datagrams are taken from NOBODY.  A stranger's
+ * datagram then cannot pass for "a session peer was heard" (which made lan_transport_set_target
+ * refuse the real host) or wait in a ring for the session that starts later.  The other
+ * console's first JOIN / HELLO may be dropped while this side is still held; both are repeated.
+ * lan_transport_peer_lock() ends it (with the peer, or with 0 = anyone).  Any thread. */
+void lan_transport_peer_hold(lan_transport *t);
 /* lan_transport_bulk_recv plus where the datagram came from. */
 int  lan_transport_bulk_recv_from(lan_transport *t, uint8_t src_mac[6], void *buf, size_t cap);
 

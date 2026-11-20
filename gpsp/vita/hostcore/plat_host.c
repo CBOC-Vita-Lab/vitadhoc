@@ -58,7 +58,7 @@
  *     FRAME:wait=TEXT              the script clock stops at FRAME until a
  *                                  new line of the app's log holds TEXT
  *                                  (--realtime only; 90 s at most, 8 s for a hold; the
- *                                  waits come in order, at most 64)
+ *                                  waits come in order, at most 256)
  *     FRAME:hold=BUTTONS=TEXT      the same wait with BUTTONS held down all
  *                                  the while: a press that cannot be missed
  *                                  by a slow loop (the app logs what the
@@ -144,7 +144,7 @@ static struct
    /* FRAME:wait=TEXT: the script clock stops at FRAME until the app's own
     * log (<root>/log/gbadhoc.log) gets a new line holding TEXT (or 90 s go
     * by): the test waits for the screen it needs, not for a guessed time */
-   struct { unsigned frame; char text[SHOT_PATH / 4]; uint32_t buttons; } wait[64];
+   struct { unsigned frame; char text[SHOT_PATH / 4]; uint32_t buttons; } wait[256];
    unsigned    nwait;
    struct { unsigned frame; int on; } plug[16];
    unsigned    nplug;
@@ -644,7 +644,7 @@ static void parse_input(const char *script, unsigned *cursor)
       }
       else if (n > 5 && !strncasecmp(p, "wait=", 5))
       {
-         if (opt.nwait >= 64 || n - 5 >= sizeof(opt.wait[0].text) ||
+         if (opt.nwait >= 256 || n - 5 >= sizeof(opt.wait[0].text) ||
              (opt.nwait && opt.wait[opt.nwait - 1].frame > frame))
             break;
          opt.wait[opt.nwait].frame = frame;
@@ -658,7 +658,7 @@ static void parse_input(const char *script, unsigned *cursor)
          /* hold=BUTTONS=TEXT: the buttons are down, and the clock stands, until TEXT is logged */
          const char *q = p + 5, *eq = memchr(p + 5, '=', n - 5), *stop = p + n;
          uint32_t buttons = 0;
-         if (opt.nwait >= 64 || (size_t)(stop - eq - 1) >= sizeof(opt.wait[0].text) ||
+         if (opt.nwait >= 256 || (size_t)(stop - eq - 1) >= sizeof(opt.wait[0].text) ||
              (opt.nwait && opt.wait[opt.nwait - 1].frame > frame))
             break;
          for (;;)

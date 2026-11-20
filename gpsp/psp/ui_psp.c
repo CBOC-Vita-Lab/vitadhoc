@@ -2897,6 +2897,7 @@ static void set_cursor_step(int dir)
       p = (p + SET_COUNT + dir) % SET_COUNT;
    while (set_rows[set_disp[p]].header || !set_row_enabled(set_disp[p]));
    g_cursor = set_disp[p];
+   fe_evt("settings_row row=%d", g_cursor);
 }
 
 /* Follow the cursor, and pull the section header in with the first item

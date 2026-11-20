@@ -164,6 +164,10 @@ struct Adapter {
 	uint8_t xl[MAXH];
 	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
 	uint8_t softany[MAXH][2];         /* a bit of softm is set on this line and side */
+	int stagger = 0;                  /* option "stagger" (off by default: its proofs are not finished, see WIDE-INTEGRATION.md "Margin thread"): 1 = the two sides' coverage is
+	                                     counted on alternate frames (left on the even ones, right on the odd ones) instead of both on the even ones, so two sides that show the
+	                                     ambient frame are never both composed on one frame. It moves the right side's Auto cross-fades by a frame or a few. */
+	int cov_snap[2] = { 0, 0 };       /* stagger: a scene event fell on a frame on which this side was not counted: it is counted (and set, not smoothed) on the next one */
 	int lazy = 1;                     /* option "lazy": a side that shows the ambient frame is not composed on the frames whose coverage is not counted */
 	snes_wide_pfor pfor = NULL;       /* snes_wide_parallel: the frontend's way to share the lines of a frame between threads */
 	void *pfor_user = NULL;
@@ -1008,7 +1012,8 @@ struct Frame {       /* the frame being composed: read only while the lines run 
 	int H, Mh, Mfull, OW, nlay, fade;
 	uint32_t gen;                /* of the workers' memos */
 	bool skip[2];                /* this side shows the ambient frame and nothing reads its composed pixels on this frame: they are not made */
-	bool covf;                   /* the coverage is counted on this frame */
+	bool covf;                   /* the coverage is counted on this frame (of one side at least) */
+	bool cov[2];                 /* ... of this side */
 	bool sprites_off;
 	int xf[2];                   /* the cross-fade of this frame (set before fin_line) */
 	wk_compose_in ci;
@@ -1410,6 +1415,7 @@ static void out_line(const Frame &F, Work &K, int y)
 	/* census and coverage: this line's margin pixels by provenance */
 	if (F.covf && !(A.hud_excl && lo->hud)) {      /* a status bar is original width by design: not a gap in the margin */
 		for (int s = 0; s < 2; s++) {
+			if (!F.cov[s]) continue;
 			int ring_e = 0, real_e = 0;
 			for (int l = 0; l < 4; l++) {
 				if (lo->ring[s][l] > ring_e) ring_e = lo->ring[s][l];
@@ -1636,8 +1642,9 @@ static void run(const Snap *sn)
 	/* the coverage is counted on every second frame. On the frames between, a side that shows the ambient frame and is not fading (Auto can only
 	 * decide otherwise on a counted frame) shows none of its composed pixels and nothing later reads them (option "lazy", default on): the extents
 	 * and widekit's hysteresis still advance, the pixels are not made. */
-	F.covf = (A.frame_n & 1) == 0 || !A.cov_have;
-	for (int s = 0; s < 2; s++) F.skip[s] = A.lazy && auto_on && !F.covf && !A.auto_state[s] && A.xf[s] >= 32;
+	for (int s = 0; s < 2; s++) F.cov[s] = ((A.frame_n + (A.stagger ? (uint32_t) s : 0u)) & 1) == 0 || !A.cov_have || A.cov_snap[s];
+	F.covf = F.cov[0] || F.cov[1];
+	for (int s = 0; s < 2; s++) F.skip[s] = A.lazy && auto_on && !F.cov[s] && !A.auto_state[s] && A.xf[s] >= 32;
 	F.xf[0] = F.xf[1] = 0;
 	for (int i = 0; i < SNES_WIDE_MAX_WORKERS; i++) memset(&g_work[i]->acc, 0, sizeof(Acc));
 	(void) Mc;
@@ -1700,10 +1707,12 @@ static void run(const Snap *sn)
 			 * behind the camera and little ahead of it, and the side the camera came from can carry real picture while the other
 			 * one shows the ambient frame. */
 			for (int s = 0; s < 2; s++) {
+				if (!F.cov[s]) { if (wo->scene_event) A.cov_snap[s] = 1; continue; }
 				if (!T.ctot[s]) continue;
 				const int c256 = (int) (T.cnum[s] * 50 * 256 / T.ctot[s]);
-				if (!A.cov_have || wo->scene_event) A.cov_q8[s] = c256;
+				if (!A.cov_have || wo->scene_event || A.cov_snap[s]) A.cov_q8[s] = c256;
 				else A.cov_q8[s] += (c256 - A.cov_q8[s]) / 60;
+				A.cov_snap[s] = 0;
 			}
 			A.cov_have = 1;
 		}
@@ -2035,6 +2044,7 @@ int snes_wide_option(const char *name, int v)
 	else if (!strcmp(name, "hud_excl")) A.hud_excl = v != 0;
 	else if (!strcmp(name, "verify_cache")) { A.verify_cache = v != 0; S9xWideVerify(v != 0); }
 	else if (!strcmp(name, "lazy")) A.lazy = v != 0;
+	else if (!strcmp(name, "stagger")) A.stagger = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
 	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
 	else if (!strcmp(name, "map_safe")) {

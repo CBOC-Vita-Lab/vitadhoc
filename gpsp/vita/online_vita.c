@@ -364,6 +364,7 @@ static void relay_down(void)
    if (!O.t)
       return;
    lan_transport_nat_status(O.t, &ns);
+   lan_transport_peer_lock(O.t, 0, 0);
    lan_transport_punch_stop(O.t);
    if (ns.relay != LAN_RELAY_OFF)
       lan_transport_relay_stop(O.t);
@@ -542,6 +543,9 @@ static void begin_common(lan_transport *t, const online_desc *d, int host)
    O.poll_ms = 2000;
    parse_stun_list();
    seed_nat();
+   /* Nobody is this connection's peer until the room says who (stage_measure
+    * locks the transport to it): until then no session datagram is taken. */
+   lan_transport_peer_hold(O.t);
 }
 
 int online_host(lan_transport *t, const online_desc *room)
@@ -775,6 +779,7 @@ static void guest_left(void)
 {
    lan_nat_status ns;
    lan_transport_nat_status(O.t, &ns);
+   lan_transport_peer_hold(O.t);          /* the next guest is somebody else, and not known yet */
    lan_transport_punch_stop(O.t);
    lan_transport_punch_arm(O.t, O.key);
    if (ns.relay != LAN_RELAY_OFF)
@@ -1506,6 +1511,11 @@ static void stage_measure(void)
          fail(ONLINE_FAIL_UNREACHABLE, 0);
          return;
       }
+      /* The peer is known: from here on the transport takes session datagrams
+       * (netdrv, the bulk lane, keepalives, echo answers) from it alone, and
+       * from the other addresses the room gave for it.  The port is open to
+       * the Internet; nobody else has any business on it. */
+      lan_transport_peer_lock(O.t, O.peer_ip_be, O.peer_port);
    }
    if (O.m_frame % MEASURE_GAP == 0 && O.m_frame / MEASURE_GAP < MEASURE_ECHOES)
    {

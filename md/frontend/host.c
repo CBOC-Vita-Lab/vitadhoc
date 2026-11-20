@@ -63,6 +63,11 @@ static struct {
 	/* state */
 	size_t state_payload_cap, state_size;
 	uint8_t *state_scratch;
+	/* run-ahead (md_host_run_frame_ahead) */
+	uint8_t *ahead_state, *ahead_sram, *ahead_carry;
+	int ahead_debug_tail;                /* md_host_ahead_debug_tail: steps 2 and 3 only */
+	int ahead_quiet;                     /* the frame being run is the look-ahead one: its sound is dropped */
+	unsigned long ahead_frames, ahead_sram_undone;
 	/* cheats */
 	patch cheat[MAX_PATCHES]; int ncheat;
 	void (*log)(const char *);
@@ -297,6 +302,7 @@ void md_host_unload(void)
 	system_hw = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;
 	free(G.state_scratch); G.state_scratch = NULL; G.state_size = 0;
+	free(G.ahead_state); G.ahead_state = NULL; free(G.ahead_sram); G.ahead_sram = NULL; free(G.ahead_carry); G.ahead_carry = NULL; G.ahead_quiet = 0;
 	G.pad[0] = G.pad[1] = 0;
 }
 
@@ -408,7 +414,8 @@ static void measure_state(void)
 	free(tmp);
 	G.state_payload_cap = ((used + 512 + 1023) / 1024) * 1024;
 	G.state_size = STATE_HDR + G.state_payload_cap + STATE_TRAILER;
-	G.state_scratch = (uint8_t *)malloc(G.state_payload_cap + 65536);
+	/* zeroed: the core's state writer leaves gaps (padding it skips), and what was in them went into every state, its hash and its file */
+	G.state_scratch = (uint8_t *)calloc(1, G.state_payload_cap + 65536);
 	if (!G.state_scratch) G.state_size = 0;
 }
 
@@ -537,10 +544,11 @@ void md_host_run_frame(void)
 	if ((system_hw & SYSTEM_PBC) == SYSTEM_MD) system_frame_gen(skip);
 	else system_frame_sms(skip);
 	vdpw_frame_end();                  /* every line is drawn, the sprite status bits are merged */
+	vdp_status_only = 0;
 	n = audio_update(G.sndbuf);
 	if (n > SOUND_MAX_FRAMES) n = SOUND_MAX_FRAMES;
 	if (!G.audio_on) memset(G.sndbuf, 0, (size_t)n * 4);
-	ring_push(G.sndbuf, n);
+	if (!G.ahead_quiet) ring_push(G.sndbuf, n);
 	if (is_sms_family() && reg[0] != G.reg0_prev) bitmap.viewport.changed |= 8;
 	G.reg0_prev = reg[0];
 	if (bitmap.viewport.changed & 9) {
@@ -549,6 +557,86 @@ void md_host_run_frame(void)
 	}
 	refresh_info();
 }
+
+/* ---- run-ahead ------------------------------------------------------------------------------------------- */
+
+static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc);
+static int state_load_from(const uint8_t *buf, size_t n, int check_crc);
+extern int psg_carry_size(void);
+extern int vdp_carry_size(void);
+extern void vdp_carry_save(void *p);
+extern void vdp_carry_load(const void *p);
+extern void psg_carry_save(void *p);
+extern void psg_carry_load(const void *p);
+
+/* What the core's save state does not hold and a frame can change: the battery RAM (plain RAM is put back below) and the serial EEPROMs'
+ * and flash chips' protocol position (no way to put those back, so such cartridges get no run-ahead). */
+int md_host_ahead_possible(void)
+{
+	return G.loaded && G.state_size && sram.type == DEFAULT_SRAM;
+}
+
+static int ahead_alloc(void)
+{
+	if (!G.ahead_state) G.ahead_state = (uint8_t *)malloc(G.state_size);
+	if (!G.ahead_sram) G.ahead_sram = (uint8_t *)malloc(SRAM_BYTES);
+	if (!G.ahead_carry) G.ahead_carry = (uint8_t *)malloc((size_t)vdpw_carry_size());
+	return G.ahead_state && G.ahead_sram && G.ahead_carry;
+}
+
+int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
+{
+	const int render = G.render;
+	md_video_info vi;
+	int vwidth, vheight, vwoffset, bmdoffset;
+	double vdar;
+	int psg_carry[16];
+	uint32 vdp_carry[32];
+	if ((size_t)psg_carry_size() > sizeof psg_carry || (size_t)vdp_carry_size() > sizeof vdp_carry || !md_host_ahead_possible() || !render || !ahead_alloc()) { md_host_run_frame(); return 1; }
+
+	/* 1. the real frame: not drawn (the sprite pass still runs for the status bits), its sound goes to the ring */
+	if (!G.ahead_debug_tail) {
+		G.render = 0;
+		md_host_run_frame();
+		G.render = render;
+	}
+	if (state_save_to(G.ahead_state, G.state_size, 0) != G.state_size) return 1;      /* cannot happen (the size was measured); the real frame stands */
+	if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);
+	vdpw_carry_save(G.ahead_carry);     /* the sprite list of the next frame's first line and the pending sprite flags: in no save state */
+	vdp_carry_save(vdp_carry);          /* the VDP's own: FIFO byte flag, HV latch, latched scroll, ... */
+	psg_carry_save(psg_carry);          /* level changes the PSG has queued for its next edges: in no save state either */
+
+	/* 2. the frame after it with the same buttons: drawn, silent */
+	G.ahead_quiet = 1;
+	md_host_run_frame();
+	if (shown) shown(user);            /* the machine is the one of the picture just drawn (the wide view reads it here) */
+	vi = G.vi; vwidth = G.vwidth; vheight = G.vheight; vwoffset = G.vwoffset; bmdoffset = G.bmdoffset; vdar = G.vdar;
+
+	/* 3. back to the end of the real frame */
+	if (state_load_from(G.ahead_state, G.state_size, 0) != 0) { G.ahead_quiet = 0; return 2; }     /* cannot happen: the state is our own */
+	G.ahead_quiet = 0;
+	vdpw_carry_load(G.ahead_carry);
+	vdp_carry_load(vdp_carry);
+	psg_carry_load(psg_carry);
+	if (sram.on && memcmp(G.ahead_sram, sram.sram, SRAM_BYTES)) { memcpy(sram.sram, G.ahead_sram, SRAM_BYTES); G.ahead_sram_undone++; }
+	/* what md_host_video / md_host_video_info describe is the picture in the buffer, the look-ahead one */
+	G.vi = vi; G.vwidth = vwidth; G.vheight = vheight; G.vwoffset = vwoffset; G.bmdoffset = bmdoffset; G.vdar = vdar;
+	G.serial = vi.serial;
+	G.ahead_frames++;
+	return 0;
+}
+
+/* debug (md_twin MD_TWIN_AHEADDIFF): only the look-ahead frame and the way back, so that the caller can compare the process before and after */
+int md_host_ahead_debug_tail(void)
+{
+	int r;
+	G.ahead_debug_tail = 1;
+	r = md_host_run_frame_ahead(NULL, NULL);
+	G.ahead_debug_tail = 0;
+	return r;
+}
+
+void md_host_ahead_stat(unsigned long out[2]) { out[0] = G.ahead_frames; out[1] = G.ahead_sram_undone; }
 
 /* ---- video ----------------------------------------------------------------------------------------------- */
 
@@ -751,9 +839,12 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	if (used == 0 || used > G.state_payload_cap) return 3;
 	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
 	memcpy(G.state_scratch, buf + STATE_HDR, used);      /* the core wants a writable buffer */
+	/* run-ahead's own load keeps the picture just drawn, the pattern cache and the palette tables (the core then marks only the patterns
+	 * whose VRAM differs); every other load starts from cleared buffers as before */
+	fast_savestates = G.ahead_quiet ? 1 : 0;
+	if (!state_load(G.state_scratch)) { fast_savestates = 0; return 3; }
 	fast_savestates = 0;
-	if (!state_load(G.state_scratch)) return 3;
-	G.ring_r = G.ring_w = G.ring_n = 0;
+	if (!G.ahead_quiet) G.ring_r = G.ring_w = G.ring_n = 0;      /* run-ahead goes back to a moment whose sound is already in the ring */
 	G.reg0_prev = reg[0];
 	update_viewport();                       /* the window origin is not in the state: derive it now, before the next frame draws */
 	bitmap.viewport.changed &= ~9;

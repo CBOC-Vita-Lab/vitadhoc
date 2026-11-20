@@ -47,6 +47,17 @@ void vdpw_set_check(int on);
 unsigned long vdpw_check_errors(void);
 void vdpw_set_stress(int on);       /* debug: a join after every drawn line */
 
+/* VitAdhoc: a frame the host does not want drawn (fast forward, half-rate pacing, the real frame behind a run-ahead picture) still has to
+ * leave the machine as a drawn frame would: the sprite collision and overflow bits of the status register come out of the sprite renderer.
+ * While vdp_status_only is set (system_frame_* sets it for such a frame) every render_line() call carries VDP_LINE_STATUS_ONLY and the
+ * renderer does the sprite pass and the sprite table parse only: no background, no pixels to the frame buffer, no wide view strip. */
+#define VDP_LINE_STATUS_ONLY 0x10000
+extern uint8 vdp_status_only;
+
+int vdpw_carry_size(void);
+void vdpw_carry_save(void *buf);
+void vdpw_carry_load(void *buf);
+
 /* wrapper entry points (the queue side) */
 void vdpw_q_render_line(int line);
 void vdpw_q_remap_line(int line);
@@ -60,7 +71,7 @@ void vdpw_q_render_reset(void);
 #ifndef VDPW_NO_WRAP
 /* The names below are macros so that the core's own sources (vdp_ctrl.c, system.c) stay as they were. The parentheses around the real
  * function in the else branches stop the macro expanding again. */
-static inline void vdpw_do_render_line(int l) { if (vdpw_on) vdpw_q_render_line(l); else (render_line)(l); }
+static inline void vdpw_do_render_line(int l) { if (vdp_status_only && l >= 0) l |= VDP_LINE_STATUS_ONLY; if (vdpw_on) vdpw_q_render_line(l); else (render_line)(l); }
 static inline void vdpw_do_remap_line(int l) { if (vdpw_on) vdpw_q_remap_line(l); else (remap_line)(l); }
 static inline void vdpw_do_blank_line(int l, int o, int w) { if (vdpw_on) vdpw_q_blank_line(l, o, w); else (blank_line)(l, o, w); }
 static inline void vdpw_do_parse_satb(int l) { if (vdpw_on) vdpw_q_parse_satb(l); else (parse_satb)(l); }

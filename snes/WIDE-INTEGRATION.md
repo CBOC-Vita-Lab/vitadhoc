@@ -34,9 +34,11 @@ The normal picture is drawn by the unchanged code first.
 
 ## Threading
 
-* Capture and margin drawing happen inside the renderer's own pass, from the same state snapshot as the normal picture: on
-  the PPU thread when `ppu_thread=1` (the slot ring carries the margin; `K_WIDE_END` ends the frame's capture), else on the
-  emulation thread at the end of the frame.
+* Capture and margin drawing are made from the same state snapshot as the normal picture. Single thread: inside the renderer's own
+  pass on the emulation thread, the capture at the end of the frame. With `ppu_thread=1` (20 Nov 2026, "Margin thread" at the end of this
+  file): on the margin thread, a third copy of the renderer that reads the same slots of the ring as the PPU thread and draws only the wide
+  passes (`K_WIDE_END` ends the frame's capture there; the PPU thread only puts the frame's 256 columns aside for it). With
+  `wide_thread=0`, or if that thread cannot be started, the PPU thread draws them inside its own pass, as before that step.
 * The adapter is two halves (13 Nov 2026), `capture()` and `run()` ("compose") in `snes/frontend/wide.cpp`:
   - **capture** runs in the frame hook (the thread that drew the margins). It copies into a fixed-size snapshot (`Snap`, about 1.1 MB, a
     pool of 5) exactly what compose reads: the line records, CGRAM and the palette as drawn, VRAM + the write stamps (not on a Mode 7
@@ -478,3 +480,89 @@ were (three a frame) and how many a helper joined. Memory: each of the four work
   whole block. Checked on Kirby Super Star, Super Mario RPG (SA-1), Yoshi's Island, Stunt Race FX, Doom (Super FX), Super Mario World and Super
   Metroid: 300 captures each equal the whole state byte for byte, the part left out stays zero, and a byte put there by hand with a state load is
   found by the next capture (`player_twin costs`, 621 checks each, 0 failed).
+
+## Margin thread (20 Nov 2026, third step; host x86_64 callgrind, qemu and a model, nothing here ran on a Vita)
+
+Goal of this step: the full Vita width (margin 96) with every thread of the player inside a 60 Hz frame at the model's IPC 0.7 (the IPC that
+agrees with the 7 November console calibration of 2.9 to 3.4 ms per million host instructions, so the realistic end of the model, not the
+pessimistic one). After the second step the PPU thread of Super Mario World (17.4 ms) and of Super Metroid (21.9 ms) did not fit, because
+that thread drew the picture and the wide passes.
+
+What was done:
+
+1. **The core's wide passes and the capture run on a thread of their own** (`snes/core/ppu_mt.cpp`; every edit is in `core/PROVENANCE.md`).
+   A third copy of the renderer objects (suffix `_w`, state `*_W`, its own tile cache) is a second reader of the PPU thread's slot ring. It
+   loads each batch into its own state and draws only the wide passes of that batch (`S9xWideBatch`), at the same time as the PPU thread
+   draws the picture from the same slot; the PPU thread's copy draws no wide pass on such a frame. At the end of the frame the PPU thread
+   copies the 256 columns of the picture into one of three buffers (115 KB), and the margin thread, once the PPU thread has passed that
+   slot, fills the view and calls the adapter's hook: the capture, and the compose when the adapter is not split. The emulating thread
+   waits for the slower of the two readers when the ring (16 slots) is full; the PPU thread waits only if the margin thread is three
+   frames behind (counted, `wide_centre_waits`). The margin thread reads the ring only on frames whose margin is on; it joins and leaves at
+   the start of a frame, so a frame's passes are always drawn wholly by one copy and the wide picture does not depend on it (proofs below).
+   Option `wide_thread` (`snes_host_set_option`, default 1; 0 = the PPU thread draws the passes as before). It exists only with `ppu_thread=1`.
+2. **The backdrop with colour math** (`core/tileimpl.h`, `DrawBackdrop16`): a group of eight backdrop pixels nothing has drawn on, with add or
+   subtract maths and the sub screen showing through part of it, is made eight at a time by the vector form the tile rows already use. This is
+   the sky of Super Mario World and Yoshi's Island (a gradient with a far layer on the sub screen), in the picture and in the wide pass. Exact.
+3. **Option `stagger` (adapter, off by default, not finished).** Auto counts the coverage of both sides on every second frame, so in a scene
+   whose two sides show the ambient frame both are composed whole on the same frame and neither on the next: the dear frame is twice the
+   cheap one. With `stagger=1` the left side is counted on the even frames and the right side on the odd ones, so the dearest frame of such a
+   scene costs what the average frame does. It can be seen: the right side's cross-fades to and from the ambient frame begin a frame or a few
+   earlier or later (one run: Super Mario World, margin 96, 131 of 3000 frames differ, largest channel difference 25 of 255, the picture in the
+   middle identical). The owner allowed such changes on 20 Nov 2026, but its proofs (centre, audio, state with it on; the difference table and
+   pictures for the 15 games; the cost) were not finished, so it ships **off**; with it off the wide picture is bit for bit the one before.
+4. Small: the seventh pass picture of the core (only read by `verify_cache`) is no longer allocated in a release (372 KB); the player's log
+   line `wide_lines` also says how many lines the helpers really did (`lines= by_helpers=`, from `snes_wide_line_counts`), not only how many
+   line jobs a helper joined; the thread line has `wide_b=` (the margin thread's busy ms per second), its frames and the PPU thread's waits for it.
+
+**Not done, plainly.** W4 step 2 (merging the margin batches of a game that changes a register on every line) and step 3 (keeping the margin
+strips between frames): with the passes on their own thread no thread needs them by the model, and step 3 has no exactness proof yet. The
+Mode 7 pixel loop with colour math (Super Metroid's title and intro: 5.5 M of its 11.4 M) is still one pixel at a time. A coverage count
+that does not make the pixels of an ambient side at all (only the extents) is not done either.
+
+Where the margin thread runs on the Vita (`snes/vita/main.cpp`, `threads.ini`): `wide_thread=1` (default) / `0`; `wide_core=-1` (default: affinity
+cores 0 and 2, i.e. in the gaps the emulating thread and the sound chip thread leave), `0`, `1` or `2`; `wide_prio` (default 104 = 0x68: below
+those two threads at 0x60, above the scaler's helpers at 0xA0). Core 1 is left alone: it has the PPU thread and, on three cores, the drawing
+thread. Whether the Vita's scheduler moves a thread with a two-core mask promptly is not known here (the main app's render thread uses such
+a mask); `wide_core=0` pins it.
+
+Memory on the Vita (computed from the sizes, not measured): heap + 1.26 MB (the third tile cache) + 64 KB + 346 KB (three centre pictures)
+- 372 KB (the verify picture no longer allocated) = about + 1.3 MB of the 72 MB newlib heap; BSS + 0.3 MB (`Memory_W` 238 KB, `GFX_W` 63 KB).
+The six pass pictures (2.6 MB) are allocated by the copy that draws the passes, so once, as before.
+
+The line helpers on the Vita, read from the code (not run): on three cores the plan puts helper 0 on core 1, the drawing thread's own core,
+below its priority, so it cannot run while that thread composes; only helper 1 (core 2, in the gaps of the sound chip and audio threads) can
+take lines. On four cores the drawing thread is on core 3 and both helpers (cores 1 and 2) can. `by_helpers=` in the log will show it.
+
+Cost (host callgrind, Minstr per frame, frames 1500 to 1560; measured on the tree of this step before the last small edits, the full
+five-game and fifteen-game tables were **not** regenerated): Super Mario World wide off 6.62 (was 6.95), margin 96 12.33 (was 13.14), of that
+compose 3.33 and the margin thread's work (passes, line records, capture) 2.38 (was 2.86 on the PPU thread); Yoshi's Island 7.70 / 12.57 /
+3.31 / 1.56; Super Metroid 6.99 / 11.38 / 1.19 / 3.20. By the model (x86 instructions as ARM instructions, 444 MHz, IPC 0.7), ms per frame:
+
+| | PPU thread at full width (before this step) | margin thread | reading |
+|---|---|---|---|
+| Super Mario World | about 7.4 (17.4) | 7.7 | both inside 16.7 |
+| Super Metroid | about 11.9 (21.9) | 10.3 | both inside 16.7 |
+| Yoshi's Island | about 7.4 (12.4) | 5.0 | both inside 16.7 |
+
+The CPU, APU and compose columns of the "Full width" table are unchanged by this step. So **per thread** the model at IPC 0.7 now fits at
+margin 96 for the five measured games, with the compose still needing a helper for Yoshi's Island, Super Mario World and Kirby (12.9 to
+13.5 ms alone plus about 4.5 ms of scaler and upload). **Per core it is not shown to fit on three cores**: the work of a counted frame of Super
+Mario World or Yoshi's Island adds up to about 46 to 49 ms of the 50 ms three cores have (CPU, PPU, APU, margin thread, compose, scaler,
+upload), so Auto may still narrow there; with the fourth core there is room. The ten other games were not measured in this step.
+
+Proofs of this step (x86 twin unless said; the owner's 15 games, the pad script):
+- margin thread tree (before the `stagger` option was added): `mt_compare.py` 15 identical (3000 frames); ThreadSanitizer on Super Mario World,
+  Yoshi's Island, Kirby Super Star (600 frames, margin 96), Super Metroid, Super Mario Kart (450 frames, margin 41), each as single thread /
+  PPU + margin thread with the compose on it and 3 line workers / split with PPU, APU, margin thread and 4 workers / the same without the
+  margin thread / the view switched off and on every 37 frames (with the margin thread against one thread, and with the split) / the ladder at
+  its floor: hashes same in every comparison, 0 reports; wide and normal hashes against the tree before this step, 3000 frames, single thread and
+  with the PPU, APU and margin threads: 42 runs compared, 42 same (margin 96 on all 15 games, the run was then stopped); `verify_cache=1`
+  0 mismatches on the games run; `make -C playerkit test` 252 tests 0 failed; `make -C widekit test arm-check` 1101 checks 0 failed, NEON
+  equal; NES `wide_golden.sh` 37 files match;
+- final tree with `stagger=0` (= the default): wide and normal hashes against the tree before this step, 3000 frames, margins 96 and 41,
+  single thread and split with PPU, APU, margin threads and 3 workers, all 15 games, and on five games at margin 96 also 3 line workers,
+  `lazy=0` with the PPU thread, and the PPU thread without the margin thread: 75 runs, 75 same, 0 different (the binary of that run had the
+  `stagger` default at 1 and was run with `stagger=0`; the default was set to 0 afterwards, not rebuilt).
+- **Not run on the final tree**: `wide_compare.py` against the pre-wide base, `selftest.sh` (it has a new margin thread case), the armhf
+  twin under qemu, the 75-run `scale_proof`, the regenerated cost tables, the Vita build of the final edits (an earlier build of this step
+  linked `snes.bin`), the VPK.

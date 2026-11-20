@@ -377,6 +377,9 @@ void system_frame_gen(int do_skip)
   /* line counters */
   int start, end, line;
 
+  /* VitAdhoc: a skipped frame keeps its sprite status bits (vdp_thread.h) */
+  vdp_status_only = do_skip ? 1 : 0;
+
   /* reset frame cycle counter */
   mcycles_vdp = 0;
 
@@ -655,7 +658,7 @@ void system_frame_gen(int do_skip)
     }
 
     /* render scanline */
-    if (!do_skip)
+    if (!do_skip || vdp_status_only)
     {
       render_line(line);
     }
@@ -988,7 +991,7 @@ void system_frame_scd(int do_skip)
     }
 
     /* render scanline */
-    if (!do_skip)
+    if (!do_skip || vdp_status_only)
     {
       render_line(line);
     }
@@ -1337,6 +1340,10 @@ void system_frame_sms(int do_skip)
   }
 
   /* 3-D glasses faking: skip rendering of left lens frame */
+  /* VitAdhoc: a frame the host skips still runs the sprite pass for the status bits (vdp_thread.h); a lens frame the core itself skips stays
+   * as it always was */
+  vdp_status_only = do_skip ? 1 : 0;
+  if (work_ram[0x1ffb] & cart.special & HW_3D_GLASSES) vdp_status_only = 0;
   do_skip |= (work_ram[0x1ffb] & cart.special & HW_3D_GLASSES);
 
   /* Mega Drive VDP specific */
@@ -1396,7 +1403,7 @@ void system_frame_sms(int do_skip)
       v_counter = line;
 
       /* render scanline */
-      if (!do_skip)
+      if (!do_skip || vdp_status_only)
       {
         render_line(line);
       }

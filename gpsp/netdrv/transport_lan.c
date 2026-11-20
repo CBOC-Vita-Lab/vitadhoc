@@ -118,6 +118,8 @@
 #define LAN_RELAY_PORT_MS 3000     /* no answer at all from a TURN port: try the next */
 #define LAN_RELAY_PORTS_MAX 3
 #define LAN_STUN_SRC_MAX  3        /* STUN servers (2) + the TURN server (1) */
+#define LAN_LOCK_MAX      (2 + LAN_PUNCH_MAX_CAND) /* the peer, its relayed address, the punch candidates */
+#define LAN_HEARD_KEEP_US 5000000ull /* a peer heard this recently is never pushed out of the table by a new address */
 
 /* The pure NAT modules use their own copies of the state numbers (they do
  * not include this header); they must be the same. */
@@ -771,6 +773,11 @@ struct lan_transport
     * reader never sees half of an address): bit 49 relay engaged for this
     * peer, bit 48 READY, bits 47..16 ip (as sin_addr.s_addr), 15..0 port */
    atomic_uint_fast64_t relay_peer_w, relay_srv_w;
+   /* the peer lock (lan_transport_peer_lock): session datagrams are taken
+    * only from these addresses (relay_word form); lock_n = 0: from anyone,
+    * -1: from nobody (lan_transport_peer_hold) */
+   atomic_uint_fast64_t lock_w[LAN_LOCK_MAX];
+   atomic_int lock_n;
 
    struct
    {
@@ -1009,6 +1016,15 @@ static void heard_touch(lan_transport *t, const struct sockaddr_in *a,
          old_i = i;
    }
    i = free_i >= 0 ? free_i : old_i;
+   if (free_i < 0 && now - t->heard[old_i].rx_us < LAN_HEARD_KEEP_US)
+   {
+      /* Full, and even the quietest entry was heard a moment ago: a new
+       * address does not push a live peer out (anybody can send a datagram
+       * that looks like a session's from sixteen invented addresses; the
+       * peer's liveness and its keepalives must not depend on that). */
+      nd_mutex_unlock(&t->mx);
+      return;
+   }
    t->heard[i].a = *a;
    t->heard[i].rx_us = now;
    t->heard[i].keep_us = now;       /* the first keepalive is a second away */
@@ -1832,6 +1848,22 @@ static int lan_io_nat_tick(lan_transport *t, uint64_t now_us)
    return busy;
 }
 
+/* The peer lock: 1 = a lock is set and `from` is not one of its addresses. */
+static int lan_locked_out(lan_transport *t, const struct sockaddr_in *from)
+{
+   int n = atomic_load_explicit(&t->lock_n, memory_order_acquire), i;
+   uint64_t w;
+   if (!n)
+      return 0;
+   if (n < 0)
+      return 1;                          /* held: the peer is not known yet, so nobody is it */
+   w = relay_word(from);
+   for (i = 0; i < n && i < LAN_LOCK_MAX; i++)
+      if (atomic_load_explicit(&t->lock_w[i], memory_order_relaxed) == w)
+         return 0;
+   return 1;
+}
+
 static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
                          const uint8_t *b, int n, uint64_t now)
 {
@@ -1864,6 +1896,11 @@ static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
       if (type == DISC_PUNCH || type == DISC_PUNCH_ACK)
       {
          lan_io_punch_rx(t, from, b, type, now);
+         return;
+      }
+      if ((type == DISC_KEEP || type == DISC_ECHO_REPLY) && lan_locked_out(t, from))
+      {
+         nd_ctr_add(&t->st.rx_foreign, 1);     /* a stranger's keepalive or echo answer */
          return;
       }
       if (type == DISC_KEEP)
@@ -1917,6 +1954,15 @@ static void lan_io_route(lan_transport *t, const struct sockaddr_in *from,
    }
 
    mac_from_sa(from, mac);
+
+   /* A locked transport has one session peer: what anybody else sends in a
+    * session's clothes is not queued, does not count as a peer heard and
+    * cannot fill the rings (online play: the port is open to the Internet). */
+   if (lan_locked_out(t, from))
+   {
+      nd_ctr_add(&t->st.rx_foreign, 1);
+      return;
+   }
 
    if (n >= 4 && atomic_load_explicit(&t->bulk_on, memory_order_acquire))
    {
@@ -2092,6 +2138,12 @@ lan_transport *lan_transport_create(const lan_config *cfg)
    atomic_init(&t->nat_srcs, 0);
    atomic_init(&t->relay_peer_w, 0);
    atomic_init(&t->relay_srv_w, 0);
+   atomic_init(&t->lock_n, 0);
+   {
+      int k;
+      for (k = 0; k < LAN_LOCK_MAX; k++)
+         atomic_init(&t->lock_w[k], 0);
+   }
 #ifndef VITA
    t->sim_ip_be = cfg->sim_ip_be;
    t->sim_port = cfg->sim_port;
@@ -2975,6 +3027,59 @@ void lan_transport_nat_status(lan_transport *t, lan_nat_status *out)
    out->relay_tx = nd_ctr_get(&t->st.relay_tx);
    out->relay_rx = nd_ctr_get(&t->st.relay_rx);
    out->nat_foreign = nd_ctr_get(&t->st.nat_foreign);
+}
+
+int lan_transport_peer_lock(lan_transport *t, uint32_t ip_be, uint16_t port)
+{
+   uint64_t w[LAN_LOCK_MAX];
+   struct sockaddr_in a;
+   int n = 0, i, k;
+   if (!t)
+      return -1;
+   if (!ip_be || !port)
+   {
+      atomic_store_explicit(&t->lock_n, 0, memory_order_release);
+      return 0;
+   }
+   /* (A reader between the stores below may match against a list that is
+    * half the old one and half the new: every address in either was given
+    * by the room, and it lasts a few instructions.) */
+   sa_make(&a, ip_be, port);
+   w[n++] = relay_word(&a);
+   nd_mutex_lock(&t->nx);
+   /* The addresses the room gave for this peer and the ones a PUNCH with the
+    * room's key came from: a path that formed differently on the two sides
+    * (one over the LAN, the other through the router) still gets through. */
+   if (t->punch_armed)
+   {
+      for (i = 0; i < t->ncand && n < LAN_LOCK_MAX; i++)
+         if (t->cand_ip[i] && t->cand_port[i])
+         {
+            sa_make(&a, t->cand_ip[i], t->cand_port[i]);
+            w[n++] = relay_word(&a);
+         }
+      if (t->peer_set && n < LAN_LOCK_MAX)
+      {
+         sa_make(&a, t->peer_ip_be, t->peer_port);
+         w[n++] = relay_word(&a);
+      }
+   }
+   if (t->turn_on && t->bind_pending && n < LAN_LOCK_MAX)
+   {
+      sa_make(&a, t->bind_ip_be, t->bind_port);
+      w[n++] = relay_word(&a);
+   }
+   nd_mutex_unlock(&t->nx);
+   for (k = 0; k < n; k++)
+      atomic_store_explicit(&t->lock_w[k], w[k], memory_order_relaxed);
+   atomic_store_explicit(&t->lock_n, n, memory_order_release);
+   return 0;
+}
+
+void lan_transport_peer_hold(lan_transport *t)
+{
+   if (t)
+      atomic_store_explicit(&t->lock_n, -1, memory_order_release);
 }
 
 int lan_transport_set_target(lan_transport *t, uint32_t ip_be, uint16_t port)

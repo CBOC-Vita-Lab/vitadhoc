@@ -79,6 +79,18 @@ $(NAT_BIN): tests/test_nat.c netdrv.c transport_lan.c nat_hash.c nat_stun.c nat_
 test-nat: $(NAT_BIN)
 	./$(NAT_BIN) $(NAT_TESTS)
 
+# Malformed-input test of the STUN / TURN codecs (2.0 security review): pure functions, no sockets, a few seconds.
+#   make fuzz-nat            AddressSanitizer + UBSan, 400,000 datagrams
+#   make fuzz-nat FUZZ_N=5000000 FUZZ_SEED=7
+FUZZ_N    ?= 400000
+FUZZ_SEED ?= 1
+fuzz_nat: tests/fuzz_nat.c nat_hash.c nat_stun.c nat_turn.c nat_hash.h nat_stun.h nat_turn.h
+	$(CC) -O1 -g -std=gnu11 -Wall -Wextra -I. -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer \
+	   -o $@ tests/fuzz_nat.c nat_hash.c nat_stun.c nat_turn.c
+
+fuzz-nat: fuzz_nat
+	./fuzz_nat $(FUZZ_N) $(FUZZ_SEED)
+
 # The same tests as a 32-bit ARMv7 hard-float Linux program under qemu-arm
 # (the Vita's CPU family; proves the 32-bit build and that the ring's
 # barriers are emitted -- qemu on an x86 host cannot prove their ORDERING).
@@ -148,6 +160,6 @@ vita-check:
 clean:
 	rm -rf obj obj-address obj-thread obj-vita sesslan-obj $(LIB) test_netdrv test_lan \
 	       test_lan-address test_lan-thread test_nat test_nat-address test_nat-thread test_vadhoc test_vadhoc-address \
-	       test_vadhoc-thread test_igd test_igd-address test_igd-thread
+	       test_vadhoc-thread test_igd test_igd-address test_igd-thread fuzz_nat
 
-.PHONY: all test test-lan test-nat test-lan-arm bench-lan test-vadhoc test-igd test-session vita-check clean
+.PHONY: all test test-lan test-nat fuzz-nat test-lan-arm bench-lan test-vadhoc test-igd test-session vita-check clean

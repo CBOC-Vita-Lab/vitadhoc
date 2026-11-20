@@ -24,6 +24,9 @@
 #define render_bg_m5_im2_vs vw_render_bg_m5_im2_vs
 #define render_bg_m5_vs vw_render_bg_m5_vs
 #define render_bg_m5_vs_enhanced vw_render_bg_m5_vs_enhanced
+#define render_carry_load vw_render_carry_load
+#define render_carry_save vw_render_carry_save
+#define render_carry_size vw_render_carry_size
 #define render_init vw_render_init
 #define render_line vw_render_line
 #define render_obj vw_render_obj

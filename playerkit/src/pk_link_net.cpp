@@ -254,6 +254,9 @@ bool NetLink::open(const LinkRequest &req, const std::string &rom_file, uint32_t
 
 	/* ---- how the other console is reached ---- */
 	p->t_phase = env.now_us();
+	/* Online: until the punch has answered or the relay is bound nobody is the peer, and no session datagram is taken
+	 * (set_peer below locks the transport to it). The other console repeats its HELLO. */
+	if (req.mode == "punch" || req.mode == "relay") lan_transport_peer_hold(p->lan);
 	if (req.mode == "punch") {
 		uint8_t key[8];
 		if (req.punch_key.size() != 16) return die(NF_NO_CONNECT, "punch key");
@@ -323,6 +326,9 @@ static void set_peer(NetLink::Impl *p, uint32_t ip, uint16_t port)
 	a.ip_be = ip;
 	a.port = port;
 	if (!p->host) lan_transport_set_target(p->lan, ip, port);     /* the I/O thread's keepalives and heard-age start here */
+	/* Online (punch / relay): the port is open to the Internet, and the peer is known now. The transport drops what
+	 * anybody else sends before it can fill the datagram lane or pass for the peer's keepalive. */
+	lan_transport_peer_lock(p->lan, ip, port);
 	p->core.set_peer(a);
 	p->peer_set = true;
 }

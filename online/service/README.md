@@ -17,7 +17,7 @@ src/sqlite-node.js       the same SQL handle over node:sqlite (tests, dev server
 src/core/app.js          createApp({sql, tx, env, now, turnFetch}) -> { handle(request), rooms(), status() }: the pipeline and the eight routes
 src/core/rooms.js        the rows: validation, codes, lifecycle, lazy expiry, address checks
 src/core/budget.js       the day's request budget, the per-address daily cap, the poll pace
-src/core/limiter.js      the in-memory per-address / per-token limits (memory only, never stored)
+src/core/limiter.js      the in-memory per-address / per-token limits (memory only; the guess counters are also kept as salted fingerprints until the UTC day ends)
 src/core/turn.js         the TURN provider (Cloudflare, stub), the UDP filter, the daily / monthly credential guards
 src/core/edge.js         the route table shared by the Worker and the application, and the checks that need only the request
 src/core/{config,util,edge_bucket}.js
@@ -100,6 +100,8 @@ each console reported (the relayed address when a relay is used), the game, the 
 "at most 4 live rooms per address". A room lives until the link forms (the host's close deletes the row at once) or 10 minutes pass (2 minutes
 after a guest joined); an expired room loses every address, nickname and key at the next request after that (rows nobody asks about: within 5 s of any
 request), and a stub of it (code, state, reason, the two tokens) is kept for 30 more seconds so the other console's poll can read "closed", then
-deleted. Nothing is kept for statistics: no account, no history, no per-address record on disk (the rate limits are memory only and are lost when the
-object leaves memory), nothing is logged (`observability` is off and the code never writes a log line, which a test checks). Cloudflare itself sees
+deleted. Nothing is kept for statistics: no account, no history, no address on disk outside a live room's row. The rate limits are memory only and are
+lost when the object leaves memory, with one exception (2.0 security review): an address that sent a wrong code or token gets a row in `misses`
+with a salted fingerprint of its key (two 32-bit hashes, never the address) and its two counts, so the `guessing` limit survives the object leaving
+memory; the salt (`settings.miss_day`) is new every UTC day and the first miss of a day deletes the rows of the day before. Nothing is logged (`observability` is off and the code never writes a log line, which a test checks). Cloudflare itself sees
 the requests as any host does; that is outside this service.

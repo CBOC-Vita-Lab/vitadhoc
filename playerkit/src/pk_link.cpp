@@ -159,18 +159,18 @@ const char *kErrNames[LE_COUNT] = { "ok", "proto", "rom_missing", "rom_bad", "me
                                     "peer_abort", "commit", "local", "no_peer", "suspend", "state" };
 const char *kErrText[LE_COUNT] = {
 	"The link is fine.",
-	"The other console has a different VitAdhoc version or different settings.",
-	"The other console plays a different game.",
-	"The other console's game did not match.",
+	"The other Vita runs a different version of VitAdhoc.",
+	"The other Vita plays a different game.",
+	"The other Vita's game did not match.",
 	"There was not enough memory to start the link.",
 	"The game could not be started together.",
 	"The two games fell out of step. The link ended and nothing was saved.",
-	"The other console went away.",
-	"The other console ended the link.",
+	"Link lost: the other Vita is gone.",
+	"The other Vita ended the link.",
 	"The game could not be saved.",
 	"The link was cancelled.",
-	"The other console did not answer.",
-	"This console went to sleep, so the link ended.",
+	"Nobody answered.",
+	"This Vita went to sleep, so the link ended.",
 	"The game did not arrive intact. Try again."
 };
 const char *kPhaseName[] = { "idle", "wait", "state", "start", "run", "ending", "done", "failed" };
@@ -431,7 +431,11 @@ struct Link::Impl {
 		locked = true;
 		peer = from;
 		nonce = nn;
-		sid = (nn * 2654435761u + now32() + 0x9E3779B9u) | 1u;
+		/* The session id every later datagram must carry. Not a secret between the two consoles, but nobody else should
+		 * be able to work it out from the time alone: the state's two checksums (unknown off the path) and where this
+		 * object happens to live go in as well. */
+		sid = ((nn * 2654435761u + now32() + 0x9E3779B9u) ^ (raw_crc * 0x85EBCA6Bu) ^ (comp_crc * 0xC2B2AE35u) ^
+		       ((uint32_t) (uintptr_t) this * 0x27D4EB2Fu)) | 1u;
 		phase = LP_STATE;
 		t_lock = now;
 		cstate.assign(nchunks, 0);

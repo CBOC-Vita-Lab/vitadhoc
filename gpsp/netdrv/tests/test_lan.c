@@ -1451,6 +1451,158 @@ static void test_hostile(void)
    lan_transport_destroy(th);
 }
 
+/* ================================================================ peerlock == */
+
+/* One well-formed keepalive ("GBLD" v1 type KEEP, 18 bytes, CRC over 16). */
+static size_t mk_keep(uint8_t *pkt, uint32_t cookie)
+{
+   uint16_t c;
+   memset(pkt, 0, 18);
+   memcpy(pkt, "GBLD", 4);
+   pkt[4] = 1; pkt[5] = 6; pkt[6] = 18; pkt[7] = 0;
+   memcpy(pkt + 8, &cookie, 4);
+   c = nd_crc16(0xFFFF, pkt, 16);
+   pkt[16] = (uint8_t)c; pkt[17] = (uint8_t)(c >> 8);
+   return 18;
+}
+
+/* 2.0 security review.  (a) Sixteen and more invented addresses that send a
+ * session-shaped datagram do not push the real peer out of the "who is
+ * alive" table.  (b) A locked transport (online play, once the peer is
+ * known) queues nothing a stranger sends -- netdrv frames, the bulk lane,
+ * keepalives -- and the session with the locked peer goes on. */
+static void test_peerlock(void)
+{
+   uint16_t base = test_port(11);
+   lan_transport *th, *tj;
+   console H, J;
+   struct sockaddr_in to;
+   nd_transport itf;
+   uint8_t pkt[1600], jmac[6];
+   lan_stats sb, sa;
+   nd_stats nb, na;
+   int fds[24], i, k;
+   unsigned ok0, locked_foreign = 0;
+   uint64_t age;
+
+   printf("[peerlock: strangers cannot evict the peer, and a locked transport hears only its peer]\n");
+   th = mk_host(base, 0);
+   tj = mk_join(base, inet_addr("127.0.0.1"), base);
+   CHECK(th && tj, "transports");
+   if (!th || !tj)
+      return;
+   lan_transport_set_io_keepalive(th, 1);
+   lan_transport_set_io_keepalive(tj, 1);
+   lan_transport_bulk_open(th, 64, "GBLK");
+   lan_transport_bulk_any(th, 1);          /* the lane's own filter off: the lock is what is tested */
+   CHECK(con_open(&H, "host", th, 1, PROTO_A, 0x91, NULL) == 0, "H");
+   CHECK(con_open(&J, "join", tj, 0, PROTO_A, 0x92, NULL) == 0, "J");
+   WAIT_FOR(5000, atomic_load(&J.active) && atomic_load(&H.peers) == 1);
+   CHECK(atomic_load(&J.active), "session up");
+   lan_mac_from_addr(inet_addr("127.0.0.1"), lan_transport_port(tj), jmac);
+   lan_transport_iface(th, &itf);
+
+   memset(&to, 0, sizeof(to));
+   to.sin_family = AF_INET;
+   to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+   to.sin_port = htons(lan_transport_port(th));
+   for (i = 0; i < 24; i++)
+      fds[i] = socket(AF_INET, SOCK_DGRAM, 0);
+
+   /* (a) not locked: 24 strangers' keepalives, three rounds */
+   for (k = 0; k < 3; k++)
+   {
+      for (i = 0; i < 24; i++)
+         sendto(fds[i], pkt, mk_keep(pkt, (uint32_t)(k * 100 + i)), 0, (struct sockaddr *)&to, sizeof(to));
+      nd_sleep_us(150000);
+   }
+   age = itf.heard_age_us(itf.ctx, jmac);
+   CHECK(age != UINT64_MAX && age < 3000000ull, "the real peer is still in the table after the flood (age %llu us)",
+         (unsigned long long)age);
+
+   /* (b) locked to the joiner */
+   CHECK(lan_transport_peer_lock(th, inet_addr("127.0.0.1"), lan_transport_port(tj)) == 0, "lock");
+   nd_sleep_us(50000);
+   lan_transport_get_stats(th, &sb);
+   netdrv_get_stats(H.nd, &nb);
+   ok0 = atomic_load(&H.rx_ok[1]);
+   for (i = 0; i < 300; i++)
+   {
+      size_t n;
+      switch (i % 3)
+      {
+         case 0:                         /* netdrv magic and a plausible length */
+            memset(pkt, 0, sizeof(pkt));
+            pkt[0] = 0x31; pkt[1] = 0x4E; pkt[2] = 0x50; pkt[3] = 0x47; pkt[4] = 2;
+            n = 24;
+            break;
+         case 1:                         /* the bulk lane's magic */
+            memset(pkt, 0x55, sizeof(pkt));
+            memcpy(pkt, "GBLK", 4);
+            n = 200;
+            break;
+         default:
+            n = mk_keep(pkt, (uint32_t)i);
+            break;
+      }
+      sendto(fds[i % 24], pkt, n, 0, (struct sockaddr *)&to, sizeof(to));
+      if ((i % 50) == 49)
+         nd_sleep_us(20000);
+   }
+   /* the locked peer still gets through */
+   J.to_send = 20;
+   J.send_every_ms = 5;
+   atomic_store(&J.go, 1);
+   WAIT_FOR(4000, atomic_load(&H.rx_ok[1]) >= ok0 + 20);
+   CHECK(atomic_load(&H.rx_ok[1]) >= ok0 + 20, "the peer's data still arrives (%u of 20)",
+         atomic_load(&H.rx_ok[1]) - ok0);
+   lan_transport_get_stats(th, &sa);
+   netdrv_get_stats(H.nd, &na);
+   CHECK(sa.rx_foreign - sb.rx_foreign == 300, "all 300 strangers' datagrams counted foreign (+%u)",
+         sa.rx_foreign - sb.rx_foreign);
+   locked_foreign = sa.rx_foreign - sb.rx_foreign;
+   CHECK(sa.bulk_rx == sb.bulk_rx && sa.bulk_drop == sb.bulk_drop, "none reached the bulk lane");
+   CHECK(na.rx_drop_malformed == nb.rx_drop_malformed && na.rx_drop_crc == nb.rx_drop_crc &&
+         na.rx_drop_unknown_peer == nb.rx_drop_unknown_peer, "none reached netdrv");
+   {
+      uint8_t b[LAN_BULK_MAX];
+      CHECK(lan_transport_bulk_recv(th, b, sizeof(b)) == 0, "the bulk ring is empty");
+   }
+   /* held (the peer is not known yet): nobody gets through, the old peer included */
+   lan_transport_peer_hold(th);
+   nd_sleep_us(20000);
+   lan_transport_get_stats(th, &sb);
+   memset(pkt, 0x55, 64);
+   memcpy(pkt, "GBLK", 4);
+   sendto(fds[1], pkt, 64, 0, (struct sockaddr *)&to, sizeof(to));
+   nd_sleep_us(1200000);                   /* the joiner's keepalives (one a second) arrive too */
+   lan_transport_get_stats(th, &sa);
+   {
+      uint8_t b[LAN_BULK_MAX];
+      CHECK(lan_transport_bulk_recv(th, b, sizeof(b)) == 0, "held: the lane takes nothing");
+   }
+   CHECK(sa.rx_foreign - sb.rx_foreign >= 2, "held: the stranger's and the old peer's datagrams are both dropped (+%u)",
+         sa.rx_foreign - sb.rx_foreign);
+   /* unlock: a stranger's bulk datagram is taken again (bulk_any is on) */
+   CHECK(lan_transport_peer_lock(th, 0, 0) == 0, "unlock");
+   memset(pkt, 0x55, 64);
+   memcpy(pkt, "GBLK", 4);
+   sendto(fds[0], pkt, 64, 0, (struct sockaddr *)&to, sizeof(to));
+   {
+      uint8_t b[LAN_BULK_MAX];
+      int got = 0;
+      WAIT_FOR(1000, (got = lan_transport_bulk_recv(th, b, sizeof(b))) > 0);
+      CHECK(got == 64, "unlocked: the lane takes it again (%d)", got);
+   }
+   printf("  heard age %llu us, locked: foreign +%u of 300\n", (unsigned long long)age, locked_foreign);
+   for (i = 0; i < 24; i++)
+      close(fds[i]);
+   con_close(&J);
+   con_close(&H);
+   lan_transport_destroy(tj);
+   lan_transport_destroy(th);
+}
+
 /* ================================================================== cycles == */
 
 static int count_dir(const char *path)
@@ -1979,6 +2131,7 @@ static const struct { const char *name; void (*fn)(void); } TESTS[] = {
    { "settarget", test_settarget },
    { "bulk",      test_bulk },
    { "hostile",   test_hostile },
+   { "peerlock",  test_peerlock },
    { "cycles",    test_cycles },
    { "realnet",   test_realnet },
    { "stall12",   test_stall12 },

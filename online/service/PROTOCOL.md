@@ -269,6 +269,9 @@ stage); the quality toast "Connected to %s. Connection: Great|Good|Slow" (Great 
 - **Guessing.** The "misses" of the lookup limit also count an unknown code or a wrong token on routes 4 to 8 (a poll or a join cannot be used to
   enumerate codes); while an address is blocked as `guessing`, even a right code is refused, so the answer never tells a hit from a miss. A hit
   never counts.
+  The two miss counts are the one per-address limit that is also written to the object's storage (table `misses`: a salted fingerprint
+  of the address key, the hour, the counts; `settings.miss_day` holds the day and its salt): an idle object leaves memory after about
+  ten seconds, and a guesser who waits for that would otherwise start again from zero. The rows of a day go at the first miss of the next.
 - **Tombstones.** A closed room keeps for 30 s only its code, state, reason and the two member tokens (so the other member's poll can read
   `closed`); every address, nickname, the creator's address key and the punch key are wiped at the moment it closes. `mode` is `""` in a poll
   while the room is open or closed. Once a member has posted a relayed address the poll says `state: "relay"`, `mode: "relay"`.

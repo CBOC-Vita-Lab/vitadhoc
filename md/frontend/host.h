@@ -100,9 +100,21 @@ int md_host_pad_type(int port);        /* the type in force: MD_PAD_3, MD_PAD_6,
 
 /* Run one frame (from the start of vertical blank to the next). Cheats are applied inside. */
 void md_host_run_frame(void);
+/* Run-ahead by one frame ("Quick response"): runs ONE real frame without drawing it (its sound is kept), saves the machine, runs the
+ * frame after it with the same buttons, drawn and silent, and puts the machine back. What is on screen is then one frame newer than the
+ * machine, so a button press shows one frame sooner; the machine itself, its sound and its save are those of md_host_run_frame() called
+ * once (checked by md/twin/ahead_check.sh). `shown` is called while the machine is still the one of the drawn picture (the wide view's
+ * analysis belongs there). Returns 0 when it ran ahead, 1 when it ran a plain frame instead: the render flag is off, there is no memory,
+ * or the cartridge keeps protocol state the save state does not hold (a serial EEPROM, flash: md_host_ahead_possible() = 0).
+ * Costs a second frame of emulation and a state save and load per frame. Not for linked play. */
+int md_host_run_frame_ahead(void (*shown)(void *user), void *user);
+int md_host_ahead_possible(void);
+int md_host_ahead_debug_tail(void);                 /* debug: the look-ahead frame and the way back only (the machine must not change) */
+void md_host_ahead_stat(unsigned long out[2]);      /* frames run ahead; times the look-ahead frame wrote battery RAM and it was put back */
 void md_host_reset(void);              /* the console's reset button: the game stays loaded; uses the seed */
 /* Render flag: 0 = the next frames skip drawing (game logic, sound and the state are identical; the video buffer keeps the
- * last drawn picture). For fast forward and rewind. Default 1. */
+ * last drawn picture). For fast forward and rewind. Default 1.  An undrawn frame still runs the sprite
+ * pass of every line, because the collision and overflow bits of the VDP status come out of it (md/twin/ahead_check.sh). */
 void md_host_set_render(int on);
 
 /* ---- video ----------------------------------------------------------------------------------------------- */

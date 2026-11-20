@@ -75,8 +75,11 @@
 #define MAX_SPRITES_PER_LINE 80
 #define TMS_MAX_SPRITES_PER_LINE (config.no_sprite_limit ? MAX_SPRITES_PER_LINE : 4)
 #define MODE4_MAX_SPRITES_PER_LINE (config.no_sprite_limit ? MAX_SPRITES_PER_LINE : 8)
-#define MODE5_MAX_SPRITES_PER_LINE (config.no_sprite_limit ? MAX_SPRITES_PER_LINE : (bitmap.viewport.w >> 4))
-#define MODE5_MAX_SPRITE_PIXELS (config.no_sprite_limit ? MAX_SPRITES_PER_LINE * 32 : max_sprite_pixels)
+/* VitAdhoc: config.no_sprite_limit ("No sprite flicker") acts in the TMS and Mode 4 renderers only (Master System, Game Gear, SG-1000),
+ * where vdp_render.c keeps the status register exactly as the hardware's limit leaves it. The Mega Drive's Mode 5 keeps the hardware's
+ * limits: lifting them there changes the status bits and what some games hide on purpose. */
+#define MODE5_MAX_SPRITES_PER_LINE (bitmap.viewport.w >> 4)
+#define MODE5_MAX_SPRITE_PIXELS max_sprite_pixels
 
 typedef struct
 {

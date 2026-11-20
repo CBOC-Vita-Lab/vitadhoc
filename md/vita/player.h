@@ -38,6 +38,7 @@
 #include "pk_pace.h"
 #include "pk_look.h"
 #include "pk_speed.h"
+#include "pk_ahead.h"
 #include "pk_ra.h"
 
 namespace mdp {
@@ -103,7 +104,8 @@ struct StartResult {
 class MdPlayer : public pk::MenuHost {
 public:
 	enum { ROW_SCALER = pk::ROW_HOST_BASE + 1, ROW_SMS_BORDER, ROW_GG_COLORS, ROW_GG_LCD, ROW_PADTYPE, ROW_REGION, ROW_FM, ROW_YM2413, ROW_STEADY,
-	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30, ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42 };
+	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30, ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42,
+	       ROW_QUICK = pk::ROW_HOST_BASE + 43, ROW_FLICKER = pk::ROW_HOST_BASE + 44 };
 	explicit MdPlayer(Platform *pf);
 	~MdPlayer();
 
@@ -155,6 +157,16 @@ public:
 	void set_speed_locked(bool locked, const char *why = 0) { speed_.set_locked(locked, why); }
 	const pk::Speed &speed() const { return speed_; }
 	pk::PaceMode pace_mode() const { return pacer_.mode(); }
+	/* ---- "Quick response": run-ahead by one frame (md_host_run_frame_ahead, playerkit pk_ahead.h) ----
+	 * run_frame() runs a drawn frame ahead when the governor wants it. The platform gives the hook that must run while the machine is
+	 * the one of the picture (the wide view's analysis), and reports the emulating thread's time for every frame at normal speed. */
+	void set_ahead_hook(void (*fn)(void *), void *user) { ahead_hook_ = fn; ahead_user_ = user; }
+	void ahead_cost(uint32_t emu_us);
+	bool ahead_ran() const { return ahead_ran_; }           /* the last run_frame() ran ahead */
+	int quick() const { return quick_; }
+	void set_quick(int mode);                               /* 0 Off, 1 Auto, 2 On */
+	const pk::AheadGovernor &ahead() const { return ahead_; }
+	std::string ahead_line();                               /* one census line for the log; counters start over */
 	/* cost of a drawn frame (us): the frame's own work, for the pacing decision */
 	void drawn_cost(uint32_t cost_us);
 	/* after each emulated frame (battery RAM watch, resume point, finished writes, notices) */
@@ -353,6 +365,14 @@ private:
 	bool pal_fast_ = false;
 	bool look_bad_ = false;
 	int look_mode_ = 0;
+	/* Quick response (0 Off, 1 Auto, 2 On; NOT FINISHED: off, and its menu row is not added, see md/README.md) and No sprite flicker
+	 * (8 bit systems); player.ini quick_response / no_sprite_flicker */
+	int quick_ = 0, flicker_ = 1;
+	pk::AheadGovernor ahead_;
+	void (*ahead_hook_)(void *) = 0;
+	void *ahead_user_ = 0;
+	bool ahead_ran_ = false;
+	void ahead_update_blocked();
 	uint32_t extra_caps_ = 0;
 	std::string link_rom_, link_result_, link_err_name_;
 	unsigned link_pad_ = 0;

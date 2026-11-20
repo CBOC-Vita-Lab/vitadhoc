@@ -616,6 +616,7 @@ typedef struct nat
    uint8_t  key[8];
    char     user[160], cred[160];
    uint32_t target_ip; uint16_t target_port;
+   int locks, unlocks, holds; uint32_t lock_ip; uint16_t lock_port;   /* lan_transport_peer_lock / _hold */
    uint32_t bound_ip;  uint16_t bound_port;
    /* internal */
    uint64_t t_stun, t_punch, t_relay, t_bind;
@@ -831,6 +832,30 @@ int lan_transport_set_target(lan_transport *t, uint32_t ip, uint16_t port)
    return 0;
 }
 
+void lan_transport_peer_hold(lan_transport *t)
+{
+   (void)t;
+   N.holds++;
+   N.lock_ip = 0;
+   N.lock_port = 0;
+}
+
+int lan_transport_peer_lock(lan_transport *t, uint32_t ip, uint16_t port)
+{
+   (void)t;
+   if (!ip)
+   {
+      N.unlocks++;
+      N.lock_ip = 0;
+      N.lock_port = 0;
+      return 0;
+   }
+   N.locks++;
+   N.lock_ip = ip;
+   N.lock_port = port;
+   return 0;
+}
+
 int lan_transport_echo(lan_transport *t, const uint8_t mac[6]) { (void)t; (void)mac; N.echoes++; return 0; }
 void lan_transport_echo_reset(lan_transport *t) { (void)t; N.echo_resets++; N.echoes = 0; }
 int lan_transport_echo_result(lan_transport *t, uint32_t *mn, uint32_t *mx, uint32_t *last)
@@ -1015,6 +1040,7 @@ static void sc_host_punch(void)
    CHECK(N.echoes == 6 && N.echo_resets == 1);
    CHECK(v.quality == ONLINE_Q_GREAT && v.rtt_ms == 40);
    CHECK(N.targets == 0);                       /* the host does not set a target */
+   CHECK(N.holds == 1 && N.locks == 1 && N.lock_ip == ip4(203, 0, 113, 2) && N.lock_port == 40002);   /* ... held from the start, and it hears only its guest from here on */
    /* no relay request waited for the punch? it is fetched beside it, and unused */
    CHECK(N.relay_starts == 0);
    CHECK(ms_now() - joined_at < 5000);
@@ -1198,6 +1224,7 @@ static void sc_join_punch(void)
    CHECK(N.punch_starts == 1 && N.punch_timeout_ms == 6000);       /* the host's 2 s interval + 4 s */
    CHECK(N.targets == 1);
    CHECK(N.target_ip == ip4(203, 0, 113, 2) && N.target_port == 40002);
+   CHECK(N.locks == 1 && N.lock_ip == ip4(203, 0, 113, 2) && N.lock_port == 40002);
    CHECK(count_req(ONLINE_OP_LOOKUP) == 0 && count_req(ONLINE_OP_JOIN) == 1);
    CHECK(S.state == RS_JOINED);                  /* D14: the joiner never closes */
    online_linked();                              /* a joiner's linked is nothing */
@@ -1261,6 +1288,7 @@ static void sc_join_relay_sym(void)
    CHECK(!strcmp(N.user, "1700000000:u") && !strcmp(N.cred, "secret"));
    CHECK(N.relay_binds == 1 && N.bound_ip == ip4(198, 51, 100, 77) && N.bound_port == 50999);
    CHECK(N.targets == 1 && N.target_port == 50999);
+   CHECK(N.locks == 1 && N.lock_ip == ip4(198, 51, 100, 77) && N.lock_port == 50999);   /* the peer's RELAYED address */
    CHECK(evt_time("online_quality") - (int)t_join < 3000);
    CHECK(!evt_has("203.0.113.2"));               /* never the other side's address */
    CHECK(evt_has("online_relay alloc=198.51.100.77:50000 peer=198.51.100.77:50999"));

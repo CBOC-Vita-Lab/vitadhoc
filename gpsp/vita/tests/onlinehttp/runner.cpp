@@ -135,6 +135,11 @@ static void t_json(void)
    check(online_json_get("{\"error\":{\"code\":\"update_required\",\"message\":\"m\",\"min\":\"2.1.0\"}}", "error.min", out, sizeof out) && !strcmp(out, "2.1.0"), "json error shape");
    check(online_json_get(S_CREATE, "token", out, 10) == 0 && out[0] == 0, "json never hands out a truncated value");
    check(online_json_get("{\"a\":\"x\\\"y\"}", "a", out, sizeof out) == 0, "json refuses a backslash");
+   /* 2.0 security review: the service only sends printable ASCII inside a string; anything else is not its answer */
+   check(online_json_get("{\"a\":\"Bob\xc3\xa9\"}", "a", out, sizeof out) == 0, "json refuses a byte above 0x7E in the value");
+   check(online_json_get("{\"n\":\"x\x7fy\",\"a\":\"1\"}", "a", out, sizeof out) == 0, "json refuses DEL in an earlier value");
+   check(online_json_get("{\"k\xff\":\"1\",\"a\":\"1\"}", "a", out, sizeof out) == 0, "json refuses a byte above 0x7E in a key");
+   check(online_json_get("{\"a\":\"~ !\"}", "a", out, sizeof out) && !strcmp(out, "~ !"), "json keeps the whole printable range");
    check(online_json_get("{\"a\":\"1\",\"a\":\"2\"}", "a", out, sizeof out) && !strcmp(out, "1"), "json first duplicate wins");
    check(online_json_get(" \n{ \"a\" : \"1\" , \"b\" : [ 1 , { \"c\" : \"d\" } ] } ", "b.1.c", out, sizeof out) && !strcmp(out, "d"), "json whitespace");
    check(online_json_get("{\"a\":{\"b\":[1,2,{\"c\":3}]},\"z\":\"end\"}", "z", out, sizeof out) && !strcmp(out, "end"), "json skips nested values");
@@ -176,6 +181,47 @@ static void t_json(void)
          online_json_int(buf, "a", 3);
       }
       check(1, "json random bytes (20000) did not crash", "found %d", found);
+      /* mutations of real answers (every byte value, cuts, repeats), into a small output: no crash, no overrun, and a value
+       * that is handed out is always terminated, shorter than its buffer and printable */
+      const char *real[] = {S_CREATE, S_POLL, S_RELAY};
+      int dirty = 0;
+      for (int it = 0; it < 30000; it++)
+      {
+         char buf[1200], small[24];
+         const char *src = real[it % 3];
+         size_t len = strlen(src);
+         if (len >= sizeof buf) len = sizeof buf - 1;
+         memcpy(buf, src, len);
+         buf[len] = 0;
+         for (int m = 0; m < 1 + (int)(seed % 4); m++)
+         {
+            seed = seed * 1103515245u + 12345u;
+            const size_t at = (seed >> 8) % len;
+            seed = seed * 1103515245u + 12345u;
+            switch ((seed >> 16) % 4)
+            {
+               case 0: buf[at] = (char)(seed >> 20); break;                  /* any byte, NUL included */
+               case 1: buf[at] = "{}[]\",:\\"[(seed >> 20) % 8]; break;        /* a structural one */
+               case 2: buf[at] = 0; break;                                    /* cut */
+               default: memmove(buf + at, buf + at / 2, len - at); break;      /* a repeat */
+            }
+         }
+         static const char *paths[] = {"token", "code", "peer.nick", "peer.pub", "servers.0.username", "servers.0.urls.1", "state", "error.code"};
+         for (size_t k = 0; k < sizeof paths / sizeof *paths; k++)
+         {
+            memset(small, 0x5A, sizeof small);
+            if (online_json_get(buf, paths[k], small, sizeof small - 4))
+            {
+               const size_t l = strnlen(small, sizeof small);
+               if (l >= sizeof small - 4) dirty++;
+               for (size_t c = 0; c < l; c++)
+                  if ((unsigned char)small[c] < 0x20 || (unsigned char)small[c] > 0x7E) dirty++;
+            }
+            if (small[sizeof small - 4] != 0x5A || small[sizeof small - 1] != 0x5A) dirty++;   /* nothing past the cap given */
+            online_json_int(buf, paths[k], 1);
+         }
+      }
+      check(dirty == 0, "json mutated answers (30000): bounded, terminated, printable", "%d bad", dirty);
    }
 
    /* the description writer */

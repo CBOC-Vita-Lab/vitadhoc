@@ -118,12 +118,14 @@ const char* Ws(const char* p) {
     return p;
 }
 
-// After the string that starts at p (a quote); null if it is not terminated or holds a control character.
+// After the string that starts at p (a quote); null if it is not terminated or holds anything but printable ASCII.  The service
+// only ever sends 0x20..0x7E inside a string (PROTOCOL 1.1); a control character, DEL or a byte with the top bit set means the
+// answer is not the service's, and it is refused whole instead of handing such bytes to the screen, the log or an address parser.
 const char* SkipString(const char* p) {
     if (*p != '"') return nullptr;
     for (p++; *p; p++) {
         if (*p == '"') return p + 1;
-        if ((unsigned char)*p < 0x20) return nullptr;
+        if ((unsigned char)*p < 0x20 || (unsigned char)*p > 0x7E) return nullptr;
     }
     return nullptr;
 }

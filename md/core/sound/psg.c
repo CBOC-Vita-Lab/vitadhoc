@@ -142,6 +142,13 @@ void psg_reset(void)
   psg.clocks = 0;
 }
 
+/* VitAdhoc: the level changes a register write has queued for the channel's next edge (chanDelta) are in no save state; a write just
+   before the end of a frame leaves some pending. Run-ahead (md/frontend/host.c, md_host_run_frame_ahead) keeps them across its look-ahead
+   frame with these three. */
+int psg_carry_size(void) { return (int)sizeof(psg.chanDelta); }
+void psg_carry_save(void *p) { memcpy(p, psg.chanDelta, sizeof(psg.chanDelta)); }
+void psg_carry_load(const void *p) { memcpy(psg.chanDelta, p, sizeof(psg.chanDelta)); }
+
 int psg_context_save(uint8 *state)
 {
   int bufferptr = 0;

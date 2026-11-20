@@ -1207,15 +1207,17 @@ def tp_rom(T, con, other=False):
 
 
 def tp_walk(con):
-    """The console's list, START for Settings, the rows down to Two players, X: the page (and its event)."""
+    """The console's list, START for Settings, the rows down to Two players, X: the page.  Every press waits for the line
+    the app logs for it (the Settings page's row moves, the page opening), so a press a busy machine did not see, or saw
+    twice, cannot send the walk to another row."""
+    from app_tests import SNES_TWO_DOWNS
+    downs = "+%d:hold=down=settings_row row=\n" % L.GAP * SNES_TWO_DOWNS
     if con in SEGA:
-        from app_tests import SNES_TWO_DOWNS
-        w = "90:start\n+30:shot=settings.png\n" + "+10:down\n" * SNES_TWO_DOWNS + "+20:shot=row.png\n+10:hold=cross=snes_two_open\n+30:shot=page.png\n"
+        w = ("90:hold=start=ui_screen name=settings\n+30:shot=settings.png\n" + downs +
+             "+20:shot=row.png\n+10:hold=cross=snes_two_open\n+30:shot=page.png\n")
     else:
-        lines = L.snes_two_walk().rstrip("\n").split("\n")
-        assert lines[-1].endswith(":cross:%d" % L.PRESS), lines[-1]
-        lines[-1] = "+%d:hold=cross=snes_two_open" % L.GAP
-        w = "\n".join(lines) + "\n+30:shot=page.png\n"
+        w = ("%d:triangle:%d\n" % (L.at(1), L.PRESS) + L.keys("triangle", "triangle", first=40) +
+             "+40:hold=start=ui_screen name=settings\n" + downs + "+30:hold=cross=snes_two_open\n+30:shot=page.png\n")
     return w
 
 
@@ -1390,10 +1392,10 @@ def refuse_pair(T, fam, name, rom_b=None, edit=None, svc_env=(), **kw):
     proxy = (lambda rig, e=edit: HttpProxy(rig.T, rig.svc, edit=e)) if edit else None
     if fam in CORE_FAMS:
         kind = "gba" if fam == "gba" else "gb" if fam in ("gb", "gbc") else "nes"
-        return pair(T, name, rom=a, rom_b=rom_b, with_world=False, kind=kind, a_end=32, b_end=30, svc_env=svc_env,
-                    a_script=host_script(32) + L.quit_at(32),
+        return pair(T, name, rom=a, rom_b=rom_b, with_world=False, kind=kind, a_end=40, b_end=30, svc_env=svc_env,
+                    a_script=host_script(40) + L.quit_at(40),
                     b_script=lambda code: join_script_hold(code, "+60:quit\n"), proxy_b=proxy, **kw)
-    return tp_pair(T, name, fam, ("port", "port"), a, rom_b=rom_b, host_end=32, b_end=30, join=False, with_world=False,
+    return tp_pair(T, name, fam, ("port", "port"), a, rom_b=rom_b, host_end=45, b_end=30, join=False, with_world=False,
                    svc_env=svc_env, proxy_b=proxy, b_tail="+60:quit\n", **kw)
 
 

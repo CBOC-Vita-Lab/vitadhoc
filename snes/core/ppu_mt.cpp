@@ -508,7 +508,7 @@ static void wide_reader_set(bool want)
 		clear_caches(IPPU_W);
 	}
 	memcpy(&PPU_W, &PPU_R, sizeof(PPU_W));
-	memcpy(&GFX_W, &GFX_R, sizeof(GFX_W));
+	memcpy(GFX_W.OBJLines, GFX_R.OBJLines, sizeof(GFX_W.OBJLines));	/* the sprite lines come in parts; every other field of GFX a batch sets itself */
 	memcpy(&BG_W, &BG, sizeof(BG_W));
 	BG_W.Buffer = BG_W.BufferFlip = BG_W.Buffered = BG_W.BufferedFlip = NULL; /* set again by the tile selector */
 	memcpy(LineData_W, LineData_R, sizeof(LineData_W));

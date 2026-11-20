@@ -208,3 +208,31 @@ test('every limit scales with RATE_LIMIT_SCALE', async () => {
   for (let i = 0; i < 6; i++) assert.equal((await s.create(hostDesc(), { ip })).status, 201, `room ${i}`);
   rl(await s.create(hostDesc(), { ip }), 429, 'slow_down');
 });
+
+test('enumeration: the guess counters survive the object leaving memory (a salted fingerprint on disk, never the address)', async () => {
+  const s = makeServer({ RATE_LIMIT_SCALE: '1', LOOKUP_BURST: '1000' });
+  const c = await s.create();
+  const ip = '203.0.113.99';
+  for (let i = 0; i < 20; i++) {
+    const r = await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip });
+    assert.equal(r.status, 404, `miss ${i}`);
+    if (i % 5 === 4) s.rebuild(); // the object forgets everything it held in memory
+  }
+  s.rebuild();
+  rl(await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip }), 429, 'guessing');
+  rl(await s.call('GET', `/v1/rooms/${c.data.code}`, undefined, { ip }), 429, 'guessing');
+  // another address is not touched, and what is stored is not an address
+  assert.equal((await s.call('GET', `/v1/rooms/${c.data.code}`, undefined, { ip: '203.0.113.98' })).status, 200);
+  const stored = JSON.stringify(s.store.sql.exec('SELECT * FROM misses').toArray()) + String(s.setting('miss_day'));
+  assert.ok(!stored.includes('203.0.113'), stored);
+  assert.equal(s.store.sql.exec('SELECT COUNT(*) AS n FROM misses').toArray()[0].n, 1);
+  // the next hour: the hourly block is over, the day's count goes on
+  s.advance(3600 * 1000);
+  s.rebuild();
+  assert.equal((await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip })).status, 404);
+  // the next UTC day: a new salt, yesterday's rows are gone at the first miss
+  s.advance(24 * 3600 * 1000);
+  s.rebuild();
+  assert.equal((await s.call('GET', '/v1/rooms/ABCDE', undefined, { ip: '203.0.113.97' })).status, 404);
+  assert.equal(s.store.sql.exec('SELECT COUNT(*) AS n FROM misses').toArray()[0].n, 1);
+});

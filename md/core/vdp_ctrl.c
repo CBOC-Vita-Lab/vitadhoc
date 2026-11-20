@@ -675,6 +675,50 @@ int vdp_context_load(uint8 *state)
 
 
 /*--------------------------------------------------------------------------*/
+/* VitAdhoc: what a state load does not put back exactly                    */
+/*--------------------------------------------------------------------------*/
+/* vdp_context_load derives these from the registers (or leaves them as they are); the values a running machine holds can differ: the
+ * FIFO's byte access flag follows the last control port write, the HV latch and the latched vertical scroll follow the frame, the FIFO
+ * slot times and the line counter are the frame's. Run-ahead (md/frontend/host.c, md_host_run_frame_ahead) goes back to a moment it has
+ * just left, so it keeps them across its look-ahead frame; a state loaded from a file gets what it always got. */
+typedef char vdp_carry_viewport_check[sizeof(bitmap.viewport) == 7 * sizeof(int) ? 1 : -1];
+typedef struct
+{
+  uint32 fifo_cycles[4];
+  uint32 hvc_latch;
+  int fifo_byte_access;
+  uint16 v_counter, vscroll, ntab, ntbb, ntwb, satb, hscb, sat_base_mask, sat_addr_mask;
+  uint8 border;
+  int viewport[7];      /* bitmap.viewport: the picture's height is the machine's too (where vertical blank starts) */
+} vdp_carry_t;
+
+int vdp_carry_size(void) { return (int)sizeof(vdp_carry_t); }
+
+void vdp_carry_save(void *p)
+{
+  vdp_carry_t *c = (vdp_carry_t *)p;
+  memcpy(c->fifo_cycles, fifo_cycles, sizeof(fifo_cycles));
+  c->hvc_latch = hvc_latch; c->fifo_byte_access = fifo_byte_access;
+  c->v_counter = v_counter; c->vscroll = vscroll;
+  c->ntab = ntab; c->ntbb = ntbb; c->ntwb = ntwb; c->satb = satb; c->hscb = hscb;
+  c->sat_base_mask = sat_base_mask; c->sat_addr_mask = sat_addr_mask;
+  c->border = border;
+  memcpy(c->viewport, &bitmap.viewport, sizeof(bitmap.viewport));
+}
+
+void vdp_carry_load(const void *p)
+{
+  const vdp_carry_t *c = (const vdp_carry_t *)p;
+  memcpy(fifo_cycles, c->fifo_cycles, sizeof(fifo_cycles));
+  hvc_latch = c->hvc_latch; fifo_byte_access = c->fifo_byte_access;
+  v_counter = c->v_counter; vscroll = c->vscroll;
+  ntab = c->ntab; ntbb = c->ntbb; ntwb = c->ntwb; satb = c->satb; hscb = c->hscb;
+  sat_base_mask = c->sat_base_mask; sat_addr_mask = c->sat_addr_mask;
+  border = c->border;
+  memcpy(&bitmap.viewport, c->viewport, sizeof(bitmap.viewport));
+}
+
+/*--------------------------------------------------------------------------*/
 /* DMA update function (Mega Drive VDP only)                                */
 /*--------------------------------------------------------------------------*/
 

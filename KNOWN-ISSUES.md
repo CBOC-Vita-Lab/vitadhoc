@@ -25,6 +25,13 @@ read them before sharing).
   Cloudflare refuses to extend a relayed session past it, such a session would
   end as "link lost" after about an hour. A direct link never does. Only the
   live relay can say.
+- **Join the rooms of people you know.** When a link starts, the host's game
+  state is loaded on the guest's console (Two players on NES, SNES, Genesis,
+  Master System, SG-1000 and WonderSwan; the Game Boy cable). Sizes and
+  checksums are checked, but a state that was damaged on purpose can crash an
+  emulator core: the 2.0 security review made the Genesis core crash that way
+  on the PC test build (see `docs/ONLINE.md`, privacy). The same is true of a
+  save state file from an untrusted source and of Share game data.
 - **Delay and the Great / Good / Slow limits** (80 and 120 ms, delay up to 12
   frames) are first guesses to be tuned on real internet paths.
 - **A GBA cable link between two different games sends a whole cartridge once**
@@ -118,8 +125,11 @@ Testing continues on:
   instruction per clock cycle. At the pessimistic end of the model (IPC 0.7) the picture thread of Super Mario World and of Super Metroid does not fit
   at the full width (17.4 and 21.9 ms of 16.7; Super Metroid is at the limit at the default margin 41 too), and the drawing thread needs one of the
   scaler's helper threads to share the compose. Where it does not fit the player measures it and Auto narrows the margin, as before; "On" keeps the
-  full width and may drop frames there. Not done: merging the margin passes of a game that changes a register on every line, caching the margin
-  between frames, and drawing the margins on a thread of their own (the step that would take them off the picture thread).
+  full width and may drop frames there. Since then the margins are drawn on a thread of their own (the margin thread, snes/WIDE-INTEGRATION.md):
+  by the same model the picture thread of Super Mario World and Super Metroid is back at about 7 and 12 ms and the margin thread at 8 and 10 ms,
+  so every thread fits on its own; but on a console without the fourth core the threads share three cores and the heaviest frames of Super
+  Mario World and Yoshi's Island use nearly all of them, so Auto may still narrow the margin there. The proofs of that step are not complete
+  (listed in that file). Not done: merging the margin passes of a game that changes a register on every line, caching the margin between frames.
 - **Wide view, a ghost fade after the ambient frame.** A side that shows the ambient frame is composed only on every second frame. If a layer's known
   extent shrinks by 12 pixels or more in the three frames in which that side fades back in, the short "ghost" fade of the old picture there is left
   out (it would weigh under a tenth of a pixel's colour). It did not happen once in 90,000 frames of the 15 test games.

@@ -31,7 +31,7 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
   };
   for (const stmt of SCHEMA) db.run(stmt);
   const budget = createBudget(db, cfg, cfg.scale);
-  const limiter = createLimiter(cfg);
+  const limiter = createLimiter(cfg, db);
   const guards = createTurnGuards(db, cfg);
   const provider = createProvider(cfg.turn, turnFetch);
   let lastSweep = -Infinity;

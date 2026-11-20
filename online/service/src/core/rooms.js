@@ -23,6 +23,8 @@ export const SCHEMA = [
     punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,
     created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER, relay_uses INTEGER DEFAULT 0, old_mints INTEGER DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`,
+  // wrong codes / tokens per address today: a salted fingerprint, never the address (limiter.js createMissStore); emptied every UTC day
+  `CREATE TABLE IF NOT EXISTS misses (fp TEXT PRIMARY KEY, hour INTEGER, h INTEGER, d INTEGER)`,
 ];
 
 const bad = (msg, field) => new ApiError(400, 'bad_request', msg, field ? { field } : {});

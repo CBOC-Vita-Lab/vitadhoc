@@ -766,8 +766,8 @@ bool SnesPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t 
 
 /* ---- fast forward and rewind ---------------------------------------------------------------------------------------------- */
 
-size_t SnesPlayer::SpeedGlue::state_size() { return snes_host_state_size(); }
-bool SnesPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { size_t len = 0; return snes_host_state_save_buf(buf, cap, &len) == 0 && len == snes_host_state_size(); }
+size_t SnesPlayer::SpeedGlue::state_size() { return snes_host_rewind_state_size(); }
+bool SnesPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { size_t len = 0; return snes_host_rewind_state_save_buf(buf, cap, &len) == 0 && len == cap; }
 bool SnesPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return snes_host_state_load_buf(buf, n) == 0; }
 void SnesPlayer::SpeedGlue::run_frame(bool render) { snes_host_set_render(render ? 1 : 0); snes_host_run_frame(); }
 void SnesPlayer::SpeedGlue::clear_pads() { for (int i = 0; i < 5; i++) snes_host_set_pad(i, 0); }

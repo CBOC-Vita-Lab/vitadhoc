@@ -1357,7 +1357,8 @@ static int run_ra_test(const char *rom, const std::string &work)
 }
 
 /* ---- what rewind costs per frame (host numbers; under callgrind the instruction counts of the cost_* functions, see docs/PERFORMANCE.md) ---- */
-static __attribute__((noinline)) size_t cost_save(std::vector<uint8_t> &st) { size_t n = 0; if (snes_host_state_save_buf(st.data(), st.size(), &n)) return 0; return n; }
+static __attribute__((noinline)) size_t cost_save(std::vector<uint8_t> &st) { size_t n = 0; if (snes_host_rewind_state_save_buf(st.data(), st.size(), &n)) return 0; return n; }
+static __attribute__((noinline)) size_t cost_save_full(std::vector<uint8_t> &st) { size_t n = 0; if (snes_host_state_save_buf(st.data(), st.size(), &n)) return 0; return n; }
 static __attribute__((noinline)) size_t cost_encode(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b, std::vector<uint8_t> &out)
 {
 	return pk::delta_encode(a.data(), b.data(), a.size(), out.data(), out.size());
@@ -1379,7 +1380,7 @@ static int run_costs_test(const char *rom)
 	const int N = 200;
 	for (int i = 0; i < 120; i++) cost_frame(true);
 	std::vector<std::vector<uint8_t> > S((size_t) N + 2);
-	const size_t sz = snes_host_state_size();
+	const size_t sz = snes_host_rewind_state_size();
 	for (size_t i = 0; i < S.size(); i++) { cost_frame(true); S[i].resize(sz); S[i].resize(cost_save(S[i])); }
 	/* state capture: what the game thread does at a capture */
 	double t0 = now_ms();
@@ -1387,6 +1388,54 @@ static int run_costs_test(const char *rom)
 	double worst = 0;
 	for (int i = 0; i < N; i++) { double a = now_ms(); cost_save(tmp); double b = now_ms() - a; if (b > worst) worst = b; }
 	const double save_ms = (now_ms() - t0) / N;
+	if (getenv("STATE_BLOCKS")) {        /* the blocks of a state, by name and size */
+		const uint8_t *q = S[0].data(), *e = q + S[0].size();
+		while (q < e && *q != '\n') q++;
+		q++;
+		while (q + 11 < e) {
+			unsigned len = 0;
+			if (q[4] == '-') len = (unsigned) q[7] << 24 | (unsigned) q[8] << 16 | (unsigned) q[9] << 8 | q[10]; else len = (unsigned) atoi((const char *) q + 4);
+			fprintf(stderr, "  block %.3s %u\n", (const char *) q, len);
+			q += 11 + len;
+		}
+	}
+	/* what a capture cost before: the whole state, screenshot block included */
+	const size_t full_sz = snes_host_state_size();
+	std::vector<uint8_t> tmp_full(full_sz);
+	double tf0 = now_ms();
+	for (int i = 0; i < N; i++) cost_save_full(tmp_full);
+	const double full_ms = (now_ms() - tf0) / N;
+	/* what is restored is unchanged: capture, run 40 frames, load it back, capture again: the same bytes; and both machines then run on alike */
+	{
+		std::vector<uint8_t> a(sz), b(sz), c(sz), d(sz);
+		EXPECT(snes_host_rewind_state_save_buf(a.data(), a.size(), NULL) == 0);
+		std::vector<uint8_t> full_a(full_sz);
+		EXPECT(snes_host_state_save_buf(full_a.data(), full_a.size(), NULL) == 0);
+		for (int i = 0; i < 40; i++) cost_frame(true);
+		EXPECT(snes_host_state_load_buf(a.data(), a.size()) == 0);
+		EXPECT(snes_host_rewind_state_save_buf(b.data(), b.size(), NULL) == 0);
+		EXPECT(a == b);
+		EXPECT(a == full_a);                                  /* the same bytes as the whole state */
+		for (int i = 0; i < 40; i++) cost_frame(true);
+		EXPECT(snes_host_rewind_state_save_buf(c.data(), c.size(), NULL) == 0);
+		EXPECT(snes_host_state_load_buf(full_a.data(), full_a.size()) == 0);     /* the same moment through the whole state */
+		for (int i = 0; i < 40; i++) cost_frame(true);
+		EXPECT(snes_host_rewind_state_save_buf(d.data(), d.size(), NULL) == 0);
+		EXPECT(c == d);
+		/* every frame of 600: the saved bytes are the whole state's, the part left out is zero in the machine */
+		size_t nz = 0; unsigned diff = 0;
+		for (int i = 0; i < 600; i++) {
+			cost_frame(true);
+			if ((i & 1) == 0) continue;
+			EXPECT(snes_host_rewind_state_save_buf(c.data(), c.size(), NULL) == 0);
+			EXPECT(snes_host_state_save_buf(full_a.data(), full_a.size(), NULL) == 0);
+			if (c != full_a) diff++;
+			nz += snes_host_rewind_tail_nonzero();
+		}
+		EXPECT(diff == 0 && nz == 0 && !snes_host_rewind_whole());
+		fprintf(stderr, "  600 frames, 300 captures: %u differ from the whole state, %u nonzero bytes in the part left out, whole block %d\n", diff, (unsigned) nz, snes_host_rewind_whole());
+		fprintf(stderr, "  restore check: state %u bytes (was %u): load gives the same machine as the whole state, 40 frames on equal\n", (unsigned) sz, (unsigned) full_sz);
+	}
 	/* the helper's work: the difference of two states two frames apart, squeezed */
 	std::vector<uint8_t> out(pk::delta_bound(sz));
 	size_t enc_total = 0, enc_max = 0;
@@ -1405,7 +1454,7 @@ static int run_costs_test(const char *rom)
 	for (int i = 0; i < N; i++) cost_frame(true);
 	const double frame_ms = (now_ms() - t0) / N;
 	fprintf(stderr, "costs (%s, host x86_64, %d runs, state %u bytes):\n", "snes", N, (unsigned) sz);
-	fprintf(stderr, "  capture on the game thread (state save)  avg %.3f ms, worst %.3f ms\n", save_ms, worst);
+	fprintf(stderr, "  capture on the game thread (state save)  avg %.3f ms, worst %.3f ms (the whole state, as before: avg %.3f ms)\n", save_ms, worst, full_ms);
 	fprintf(stderr, "  pack on the helper (XOR + squeeze)       avg %.3f ms, worst %.3f ms; a step is %u bytes on average (largest %u)\n", enc_ms, worst_enc, (unsigned) (enc_total / N), (unsigned) enc_max);
 	fprintf(stderr, "  one step back (apply)                    avg %.3f ms\n", apply_ms);
 	fprintf(stderr, "  one emulated frame of the core           avg %.3f ms\n", frame_ms);

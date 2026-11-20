@@ -3079,7 +3079,7 @@ def t_settings_order(S):
     config = {"ui_home": 1, "scale_gba": 1, "filter_gba": 4, "quality_gba": 1,
               "scale_gb": 0, "filter_gb": 5, "quality_gb": 3,
               "scale_gbc": 4, "filter_gbc": 2, "quality_gbc": 0}
-    for context, down in (("browser", 19), ("game", 0)):
+    for context, down in (("browser", 20), ("game", 0)):
         enter = "60:start\n" if context == "browser" else \
             "100:shot=before.png\n" + menu_pick(4, wait=10)
         leave = "+30:cross\n+120:shot=game.png\n+10:quit\n" if context == "browser" else \
@@ -6320,7 +6320,7 @@ def t_controls_defaults(S):
             "Screenshot button combo off again, kept as NONE")
 
 
-SNES_TWO_DOWNS = 16        # from Theme (where the list's Settings opens): to Two players, which sits last of LINK SETUP
+SNES_TWO_DOWNS = 17        # from Theme (where the list's Settings opens): to Two players, which sits last of LINK SETUP
 WIFI_ON = {"nethost.ini": "wifi = 1\nssid = TwinNet\n"}
 
 

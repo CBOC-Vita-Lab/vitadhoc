@@ -1173,6 +1173,97 @@ int snes_host_state_save_buf(uint8_t *out, size_t cap, size_t *len)
 	return 0;
 }
 
+/* ---- rewind's states: the same bytes as snes_host_state_save_buf, written without most of the battery RAM block ----
+ *
+ * Snes9x always saves the whole 512 KB of cartridge RAM (Memory.SRAM), nearly two thirds of a state's 823 KB, although a plain cartridge
+ * has 0 to 32 KB of it (every access is masked with SRAMMask) and the chips use 128 or 256 KB. Rewind keeps each state in a buffer of its
+ * own that it only ever fills with whole states (the helper XORs the buffers, and zero bytes stay zero). So the capture writes the bytes up
+ * to `ext` and leaves the rest of the block alone: it is zero in the buffer (cleared once per buffer) and zero in the machine. The second
+ * is proven for a plain cartridge by the mask; for the chips (Super FX, SA-1) and any other cartridge with extra hardware a hint is used
+ * and every capture checks that the part not written is still zero in the machine: if a byte is not, the capture (and every one after
+ * it in this game) writes the whole block, so the saved state is always the one snes_host_state_save_buf would have written. */
+namespace {
+size_t g_rw_ext = 0;               /* bytes of the SRAM block written; 0: the whole block */
+bool g_rw_scan = false;            /* check the rest is zero in the machine at each capture */
+bool g_rw_whole = false;           /* a byte past `ext` was found: the whole block from now on */
+const uint8_t *g_rw_zeroed[4];     /* buffers whose rest of the block is cleared */
+unsigned g_rw_nz = 0;
+
+class CountStream : public memStream
+{
+public:
+	CountStream(uint8 *b, size_t n) : memStream(b, n), base(b) {}
+	size_t write(void *buf, size_t len) override
+	{
+		asked += len;
+		if (buf == (void *) Memory.SRAM && len == Memory.SRAM_SIZE && g_rw_ext && g_rw_ext < len && !g_rw_whole) {
+			const uint8_t *tail = (const uint8_t *) buf + g_rw_ext;
+			const size_t rest = len - g_rw_ext;
+			if (g_rw_scan) {
+				const uint64_t *q = (const uint64_t *) tail;
+				uint64_t acc = 0;
+				for (size_t k = 0; k < rest / 8; k += 8) acc |= q[k] | q[k + 1] | q[k + 2] | q[k + 3] | q[k + 4] | q[k + 5] | q[k + 6] | q[k + 7];
+				if (acc) { g_rw_whole = true; return memStream::write(buf, len); }
+			}
+			size_t done = memStream::write(buf, g_rw_ext);
+			bool known = false;
+			for (unsigned k = 0; k < 4; k++) if (g_rw_zeroed[k] == base) known = true;
+			if (!known) {
+				static const uint8_t z[4096] = { 0 };
+				for (size_t o = 0; o < rest; o += sizeof z) done += memStream::write((void *) z, rest - o < sizeof z ? rest - o : sizeof z);
+				for (unsigned k = 0; k < 4; k++) if (!g_rw_zeroed[k]) { g_rw_zeroed[k] = base; break; }
+			} else {
+				revert(SEEK_CUR, (int32) rest);
+				done += rest;
+			}
+			return done;
+		}
+		return memStream::write(buf, len);
+	}
+	size_t asked = 0;
+	const uint8_t *base;
+};
+}
+
+size_t snes_host_rewind_state_size(void)
+{
+	if (!g_loaded) return 0;
+	memset(g_rw_zeroed, 0, sizeof g_rw_zeroed);
+	g_rw_whole = false;
+	g_rw_ext = 0;
+	g_rw_scan = false;
+	const size_t full = Memory.SRAM_SIZE;
+	if (Settings.SuperFX && !Settings.SA1) { g_rw_ext = 0x20000; g_rw_scan = true; }
+	else if (Settings.SA1) { g_rw_ext = 0x42000; g_rw_scan = true; }
+	else if (!Settings.DSP && !Settings.C4 && !Settings.SETA && !Settings.OBC1 && !Settings.SPC7110 && !Settings.SRTC && !Settings.BS && !Multi.cartType) {
+		g_rw_ext = ((size_t) Memory.SRAMMask + 1 + 0xFFF) & ~(size_t) 0xFFF;
+		if (g_rw_ext < 0x1000) g_rw_ext = 0x1000;
+	}
+	if (g_rw_ext >= full) g_rw_ext = 0;
+	return (size_t) S9xFreezeSize();
+}
+
+/* `cap` is the size snes_host_rewind_state_size() gave: one pass writes the state and the byte count must be exactly that */
+int snes_host_rewind_state_save_buf(uint8_t *out, size_t cap, size_t *len)
+{
+	if (!g_loaded) return 1;
+	if (!out || !cap) return 2;
+	CountStream st(out, cap);
+	S9xFreezeToStream(&st);
+	if (len) *len = st.asked;
+	return st.asked == cap ? 0 : 2;
+}
+
+/* twin proof: how many bytes of the part left out are not zero in the machine now (must stay 0 for a plain cartridge) */
+size_t snes_host_rewind_tail_nonzero(void)
+{
+	if (!g_loaded || !g_rw_ext) return 0;
+	size_t n = 0;
+	for (size_t i = g_rw_ext; i < Memory.SRAM_SIZE; i++) n += Memory.SRAM[i] != 0;
+	return n;
+}
+int snes_host_rewind_whole(void) { return g_rw_whole ? 1 : 0; }
+
 int snes_host_state_load_buf(const uint8_t *data, size_t n)
 {
 	if (!g_loaded) return 1;

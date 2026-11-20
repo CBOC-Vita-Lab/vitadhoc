@@ -92,6 +92,13 @@ int snes_host_state_load(const char *path);
 size_t snes_host_state_size(void);
 int snes_host_state_save_buf(uint8_t *out, size_t cap, size_t *len);
 int snes_host_state_load_buf(const uint8_t *data, size_t n);
+/* The same two for rewind and fast forward's history (snes_host_state_load_buf loads them): the same bytes, but a capture writes
+ * only the part of the 512 KB cartridge RAM block that can hold anything (see host.cpp). It must be given buffers that only ever
+ * hold such states. snes_host_rewind_state_size() also starts a new set of buffers (call it when rewind opens). */
+size_t snes_host_rewind_state_size(void);
+int snes_host_rewind_state_save_buf(uint8_t *out, size_t cap, size_t *len);
+size_t snes_host_rewind_tail_nonzero(void);   /* twin proof, see host.cpp */
+int snes_host_rewind_whole(void);              /* 1 once a capture had to write the whole cartridge RAM block */
 
 /* Core options by name; returns 0 when the name is known:
  *   block_vram 0/1       block CPU/DMA VRAM access while the screen is drawn (Snes9x default 1)

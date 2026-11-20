@@ -195,6 +195,19 @@ VPK_EXTRA += $(SNES_BIN)=snes.bin \
 # so a changed SNES source is seen; it touches snes.bin only when it relinks.
 $(SNES_BIN): FORCE
 	+$(MAKE) -C ../../snes/vita
+# ---- Sega (VitAdhoc 2.0) ---------------------------------------------------
+# md.bin is a SEPARATE PROGRAM (../../md: Genesis Plus GX core, own MIT frontend)
+# for the Mega Drive / Genesis, Master System, Game Gear and SG-1000.  Built by
+# its own Makefile (which builds the core object first) and only packed here;
+# nothing of it is linked into eboot.bin (Genesis Plus GX's non-commercial
+# licence is not GPL-compatible), and nothing of this app is linked into it
+# (make -C ../../md/vita check-links).  Its licence and provenance travel in the VPK.
+MD_BIN := ../../md/vita/build/md.bin
+VPK_EXTRA += $(MD_BIN)=md.bin \
+             ../../md/core/LICENSE.txt=licenses/GenesisPlusGX-LICENSE.txt \
+             ../../md/core/PROVENANCE.md=licenses/GenesisPlusGX-PROVENANCE.md
+$(MD_BIN): FORCE
+	+$(MAKE) -C ../../md/vita
 FORCE:
 VPK_FILES := -a sce_sys/icon0.png=sce_sys/icon0.png \
              -a sce_sys/livearea/contents/bg.png=sce_sys/livearea/contents/bg.png \
@@ -315,7 +328,7 @@ $(VPK): $(SELF) $(SFO) $(LIVEAREA) $(VPK_EXTRA_FILES)
 # The result has the same member list, order, modes and per-member contents
 # as `make vpk`; tools/build/vpk_repack.py verifies that before it replaces
 # the old file.  Releases are built with `make vpk` from a clean tree.
-vpk-repack: $(SFO) $(SNES_BIN)
+vpk-repack: $(SFO) $(SNES_BIN) $(MD_BIN)
 	@test -f $(VPK) || { echo "vpk-repack: no $(VPK) yet: run make vpk once first"; exit 1; }
 	@test -f $(SELF) || { echo "vpk-repack: no $(SELF): run make first"; exit 1; }
 	python3 ../../tools/build/vpk_repack.py $(VPK) -s $(SFO) -b $(SELF) $(VPK_FILES)

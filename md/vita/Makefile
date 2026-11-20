@@ -78,7 +78,7 @@ $(B)/md.bin: $(B)/md.velf
 # non-commercial core) and no GPL file of playerkit's tests. Run on the object list of the link (the build path is under md/vita/build).
 LINKED ?= $(B)/mdcore.o $(FE_OBJS) $(PK_OBJS) $(V2D_OBJS)
 check-links:
-	@bad=""; for f in $(LINKED); do case "$$f" in *gpsp*|*xbrz*|*xBRZ*|*../snes/*) bad="$$bad $$f";; esac; done; \
+	@bad=""; for f in $(LINKED); do case "$$f" in *third_party/vita2d/*) ;; *gpsp*|*xbrz*|*xBRZ*|*../snes/*|*../nes/*) bad="$$bad $$f";; esac; done; \
 	if [ -n "$$bad" ]; then echo "md.bin links code it must not:$$bad"; exit 1; fi; \
 	for f in $(PK_SRC); do [ -f $(PK)/src/$$f.cpp ] || { echo "missing $$f.cpp"; exit 1; }; done; \
 	echo "check-links: $(words $(LINKED)) objects, none from gpsp/ or xBRZ; sources are md/, playerkit/ and the vendored libvita2d"

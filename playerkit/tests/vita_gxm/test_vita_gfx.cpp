@@ -10,6 +10,7 @@
 #include "harness.h"
 #include "pk_gfx_soft.h"
 #include "pk_gfx_vita.h"
+#include <vita2d.h>
 #include "vita2d_fake.h"
 #include <math.h>
 #include <stdio.h>
@@ -160,12 +161,34 @@ static void thread_hazard_is_seen()
 	g.tex_free(t);
 }
 
+/* 5. the main app's own texture table (gpsp/vita/vback_vita2d.c): its A8 slot, the one every in-process console's menu text
+ * and the 2.0 overlays use, must be the alpha-from-byte swizzle too. The file is C for the console; read it as text. */
+static void app_text_format()
+{
+	FILE *f = fopen("../gpsp/vita/vback_vita2d.c", "r");
+	if (!f) { fprintf(stderr, "vita_gxm: FAIL cannot open the app's vback_vita2d.c\n"); g_fail++; return; }
+	std::string src;
+	char buf[4096];
+	size_t n;
+	while ((n = fread(buf, 1, sizeof buf, f)) > 0) src.append(buf, n);
+	fclose(f);
+	size_t a = src.find("gxm_fmt[4]");
+	EXPECT(a != std::string::npos);
+	std::string tab = a == std::string::npos ? "" : src.substr(a, 400);
+	size_t i565 = tab.find("U5U6U5_RGB"), ibgr = tab.find("U5U6U5_BGR"), ia8 = tab.find("U8_"), i32 = tab.find("U8U8U8U8_ABGR");
+	EXPECT(i565 < ibgr && ibgr < ia8 && ia8 < i32);       /* slot 2 = VB_FMT_A8 */
+	EXPECT(tab.compare(ia8, 7, "U8_R111") == 0);
+	fakegxm::Swizzle sw = fakegxm::decode_u8(SCE_GXM_TEXTURE_FORMAT_U8_R111);
+	EXPECT(sw.alpha_from_data && !sw.rgb_from_data);
+}
+
 int main()
 {
 	text_is_not_boxes();
 	menu_contrast();
 	same_as_soft();
 	thread_hazard_is_seen();
+	app_text_format();
 	printf("vita_gxm: %d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;
 }

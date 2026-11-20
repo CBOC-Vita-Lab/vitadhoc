@@ -102,7 +102,7 @@ static void vita_browser_touch(int *cur, int n, unsigned *edges, int *idle,
    {
       x = 0; y = HM_ROW_Y / 2; w = VID_SCR_W; h = HM_BIG / 2;
       row_h = (HM_SMALL + HM_GAP) / 2;
-      k = tch_steps_axis(&g_br_ts, row_h, x, y, w, h, 1);
+      k = g_pick_on ? 0 : tch_steps_axis(&g_br_ts, row_h, x, y, w, h, 1);
       if ((g_tch.down && !g_tch.dead && tch_in(x, y, w, h)) || g_br_ts.on)
          *idle = 0;
    }

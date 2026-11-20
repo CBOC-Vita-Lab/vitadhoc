@@ -953,8 +953,7 @@ static void hm_home_hints(void)
    x = hm_cap(x, y, "SELECT");
    x = hm_hint_word(x, y, "Tabs");
    vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_cap(x + 26, y, "L R");
-   x = hm_hint_word(x, y, "Console");
+   x = hm_hint_word(x + 26, y, "Console");
    x = hm_cap(x, y, "START");
    hm_hint_word(x, y, "Settings");
 }
@@ -2252,6 +2251,96 @@ static void home_empty(const char *rom_dir, int n_scan)
          vs_text_c(VS_CAPTION, VS_W * 0.5f, y + 330, dir, HC_TEXT2);
       }
    }
+}
+
+/* The picker's share of the pad and the finger, before home_remap turns the
+ * directions sideways.  Closed: TRIANGLE (or a tap on the pill) opens it on
+ * the console in use -- that press moves nothing.  Open: TRIANGLE / DOWN
+ * step on, UP steps back (wrapping), a tap on a row picks it and closes, and
+ * any other button, or a tap beside the list, closes it and is spent on
+ * that.  A move asks the browser for the console (g_con_pick); the switch
+ * itself is done where the browser keeps its list. */
+static void hm_pick_pad(unsigned *e)
+{
+   unsigned in = *e;
+   int want_open = 0, step = 0, close = 0, row = -1;
+   int can = !g_browser_state_open && !g_shelf_del && !g_ret_on &&
+             !g_swap.active && !g_pop.active && g_hm_lift <= 0.02f &&
+             HM_CON_N > 1;
+
+   if (!g_pick_on)
+   {
+      if (!can)
+         return;
+      if (in & PSP_CTRL_TRIANGLE)
+         want_open = 1;
+      if (in & BROWSER_CON_BUTTON)
+      {
+         /* only the pill is a region of this button while closed */
+         want_open = 1;
+         tch_reset();
+      }
+      *e = in & ~(PSP_CTRL_TRIANGLE | BROWSER_CON_BUTTON);
+      if (want_open)
+      {
+         g_pick_on = 1;
+         g_pick_sel = hm_con_row(g_pcfg.console);
+         g_pick_idle = 0;
+         g_pick_snap = 1;
+         fe_evt("ui_picker open console=%d", g_pcfg.console);
+      }
+      return;
+   }
+
+   /* open */
+   g_pick_idle++;
+   if (in & BROWSER_CON_BUTTON)
+   {
+      if (g_tch.land_r.id >= 1 && g_tch.land_r.id <= HM_CON_N)
+         row = g_tch.land_r.id - 1;
+      else
+         close = 1;
+      in &= ~BROWSER_CON_BUTTON;
+   }
+   if (row >= 0)
+   {
+      g_pick_sel = row;
+      step = 2;
+      close = 1;
+      in = 0;
+   }
+   else if (in & (PSP_CTRL_TRIANGLE | PSP_CTRL_DOWN))
+   {
+      g_pick_sel = (g_pick_sel + 1) % HM_CON_N;
+      step = 1;
+      in = 0;
+   }
+   else if (in & PSP_CTRL_UP)
+   {
+      g_pick_sel = (g_pick_sel + HM_CON_N - 1) % HM_CON_N;
+      step = 1;
+      in = 0;
+   }
+   else if (in)
+      close = 1;
+   if (step)
+   {
+      g_pick_idle = 0;
+      if (HM_CON_ORDER[g_pick_sel] != g_pcfg.console)
+         g_con_pick = HM_CON_ORDER[g_pick_sel];
+      fe_evt("ui_picker move row=%d console=%d", g_pick_sel,
+             HM_CON_ORDER[g_pick_sel]);
+   }
+   if (g_pick_idle >= HM_PICK_HOLD)
+      close = 1;
+   if (close)
+   {
+      g_pick_on = 0;
+      fe_evt("ui_picker close console=%d idle=%d", HM_CON_ORDER[g_pick_sel],
+             g_pick_idle);
+      tch_reset();
+   }
+   *e = 0;
 }
 
 /* The browser's directions, for a row that runs sideways (see the top). */

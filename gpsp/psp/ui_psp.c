@@ -7916,7 +7916,7 @@ static int            g_find_n;
 /* Home: the Cover button -- a picture of your own for the game
  * (vita/ui_vita_cover.h). */
 #define BROWSER_COVER_BUTTON  (1u << 29)
-/* Home: the console picker (2.1, ui_vita_home.h).  The top bar shows only
+/* Home: the console picker (2.0, ui_vita_home.h).  The top bar shows only
  * the console in use, as a pill; TRIANGLE or a tap on it drops a list of
  * every console down from it.  BROWSER_CON_BUTTON is any touch on the pill,
  * a row of the list or beside it (which one: the region the finger landed
@@ -12834,6 +12834,9 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #ifdef VITA
    g_ui_home = g_pcfg.ui_home;
    home_reset();
+   g_pick_on = 0;
+   g_pick_a = 0.0f;
+   g_con_pick = -1;
 #endif
    g_scroll_cur = -1;                 /* no slide on the first frame */
    g_art_fade_idx = -1;
@@ -12956,7 +12959,10 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                                              g_hm_lift > 0.02f));
          md_input(g_tch.down || g_br_ts.on);
          if (g_ui_home)
+         {
+            hm_pick_pad(&edges);
             edges = home_remap(edges);
+         }
       }
 #else
       edges = pad_edges(pd.Buttons);
@@ -13021,25 +13027,37 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
        * the rescan now if the peak has not passed -- and starts the next
        * from the console it landed on.  The state shelf is keyed by list
        * index, so no switch starts while it is open. */
+      /* The console picker (Home) asks for a console by g_con_pick: shown
+       * at once, no flare -- a list that is walked row by row must not
+       * flash bands at every step.  Every other layout keeps TRIANGLE as
+       * the next console, as a flare. */
 #ifdef VITA
-      if ((edges & BROWSER_CON_BUTTON) && !g_browser_state_open)
+      if (g_ui_home && g_con_pick >= 0 && !g_browser_state_open)
       {
-         /* a tap on a console chip: that console, or nothing if it is the
-          * one shown */
-         int c, at = g_tch.land_r.x, pick = -1;
-         for (c = 0; c < FE_CONSOLE_COUNT; c++)
-            if (at >= g_hm_chip_x[c] && at < g_hm_chip_x[c + 1])
-               pick = c;
-         fe_evt("ui_console_chip pick=%d at=%d", pick, at);
-         edges &= ~BROWSER_CON_BUTTON;
-         if (pick >= 0 && pick != g_pcfg.console)
+         int to = g_con_pick;
+         g_con_pick = -1;
+         if (g_find[0])
          {
-            g_con_pick = pick;
-            edges |= PSP_CTRL_TRIANGLE;
+            rom = n > 0 ? view_rom(cur) : -1;
+            cur = browser_find_set("", n_scan, rom);
+            n = view_count(n_scan);
+            tch_reset();
+            tch_scroll_stop(&g_br_ts);
+         }
+         if (to != g_pcfg.console)
+         {
+            g_sw.to = to;
+            browser_switch_apply(rom_dir, &n_scan, &n, &cur, &idle);
+            g_pop.active = 0;
+            g_swap.active = 0;
          }
       }
 #endif
-      if ((edges & PSP_CTRL_TRIANGLE) && !g_browser_state_open)
+      if ((edges & PSP_CTRL_TRIANGLE) && !g_browser_state_open
+#ifdef VITA
+          && !g_ui_home
+#endif
+         )
       {
          int skipped = 0;
 #ifdef VITA
@@ -13684,6 +13702,10 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          shell_marquee(rom_dir, cur, n, n_scan, idle);
       else
          shell_shelf(rom_dir, cur, n, n_scan, idle);
+#ifdef VITA
+      if (g_ui_home)
+         hm_pick_draw(n_scan);      /* over the whole page, under the flare */
+#endif
 #ifdef VITA
       if (!g_ui_home)
 #endif

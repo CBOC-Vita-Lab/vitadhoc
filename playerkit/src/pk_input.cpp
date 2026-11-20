@@ -115,10 +115,108 @@ const PadModel &model_nes()
 	return m;
 }
 
+/* ---- the Sega player's pads (out_bit = the MD_* pad bits of md/frontend/host.h) ---- */
+#define MDB_UP 0x0001u
+#define MDB_DOWN 0x0002u
+#define MDB_LEFT 0x0004u
+#define MDB_RIGHT 0x0008u
+#define MDB_B 0x0010u
+#define MDB_C 0x0020u
+#define MDB_A 0x0040u
+#define MDB_START 0x0080u
+#define MDB_Z 0x0100u
+#define MDB_Y 0x0200u
+#define MDB_X 0x0400u
+#define MDB_MODE 0x0800u
+
+const PadModel &model_md()
+{
+	static const PadModel m = {
+		"md", 2, 12,
+		{
+			{ "a", "A", MDB_A, PH_SQUARE, PH_SQUARE },
+			{ "b", "B", MDB_B, PH_CROSS, PH_CROSS },
+			{ "c", "C", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "x", "X", MDB_X, PH_L, PH_L },
+			{ "y", "Y", MDB_Y, PH_TRIANGLE, PH_TRIANGLE },
+			{ "z", "Z", MDB_Z, PH_R, PH_R },
+			{ "start", "Start", MDB_START, PH_START, PH_START },
+			{ "mode", "Mode", MDB_MODE, PH_SELECT, PH_SELECT },
+			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT }
+		},
+		0, 1, 0, 0, true
+	};
+	return m;
+}
+
+const PadModel &model_sms()
+{
+	static const PadModel m = {
+		"sms", 2, 7,
+		{
+			{ "b1", "Button 1", MDB_B, PH_CROSS, PH_CROSS },
+			{ "b2", "Button 2", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "start", "Pause", MDB_START, PH_START, PH_START },
+			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
+			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
+		},
+		0, 1, PH_SQUARE, PH_TRIANGLE, false
+	};
+	return m;
+}
+
+const PadModel &model_gg()
+{
+	static const PadModel m = {
+		"gg", 1, 7,
+		{
+			{ "b1", "Button 1", MDB_B, PH_CROSS, PH_CROSS },
+			{ "b2", "Button 2", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "start", "Start", MDB_START, PH_START, PH_START },
+			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
+			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
+		},
+		0, 1, PH_SQUARE, PH_TRIANGLE, false
+	};
+	return m;
+}
+
+const PadModel &model_sg()
+{
+	static const PadModel m = {
+		"sg", 2, 7,
+		{
+			{ "b1", "Button 1", MDB_B, PH_CROSS, PH_CROSS },
+			{ "b2", "Button 2", MDB_C, PH_CIRCLE, PH_CIRCLE },
+			{ "start", "Pause", MDB_START, PH_START, PH_START },
+			{ "up", "Up", MDB_UP, PH_UP, PH_UP },
+			{ "down", "Down", MDB_DOWN, PH_DOWN, PH_DOWN },
+			{ "left", "Left", MDB_LEFT, PH_LEFT, PH_LEFT },
+			{ "right", "Right", MDB_RIGHT, PH_RIGHT, PH_RIGHT },
+			{ 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 }
+		},
+		0, 1, PH_SQUARE, PH_TRIANGLE, false
+	};
+	return m;
+}
+
 const PadModel *model_by_name(const std::string &c)
 {
 	if (c == "snes") return &model_snes();
 	if (c == "nes") return &model_nes();
+	if (c == "md") return &model_md();
+	if (c == "sms") return &model_sms();
+	if (c == "gg") return &model_gg();
+	if (c == "sg") return &model_sg();
 	return 0;
 }
 

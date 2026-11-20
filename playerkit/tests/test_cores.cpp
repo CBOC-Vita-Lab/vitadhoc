@@ -378,10 +378,38 @@ TEST(cores_plan_4core_nes_and_wide)
 	SLOT(s, R_APU, 0, CORE_U2, 0x60, 0x60);
 }
 
+Request md_req() {
+	Request r(CP_MD);
+	r.with(R_EMU_MAIN).with(R_AUDIO_OUT).with(R_WRITER).with(R_DRAW).with(R_UPSCALE);
+	r.upscale_n = 2;
+	return r;
+}
+
+/* the Sega player (md.bin): the core on core 0 alone, the drawing thread on core 1, audio out + writer + one scaler helper on core 2;
+ * with the extra core audio and writer move there and a second helper goes with them; the drawing thread never moves */
+TEST(cores_plan_md_player_golden)
+{
+	const Plan p3 = make_plan(md_req(), false);
+	SLOT(p3, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
+	SLOT(p3, R_DRAW, 0, CORE_U1, 0x60, 0x60);
+	SLOT(p3, R_AUDIO_OUT, 0, CORE_U2, 0x40, 0x40);
+	SLOT(p3, R_WRITER, 0, CORE_U2, 0xA0, 0xA0);
+	SLOT(p3, R_UPSCALE, 0, CORE_U2, 0xA0, 0xA0);
+	CHECK(p3.find(R_UPSCALE, 1) == 0);            /* two helpers asked, one planned without the extra core */
+	const Plan p4 = make_plan(md_req(), true);
+	SLOT(p4, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
+	SLOT(p4, R_DRAW, 0, CORE_U1, 0x60, 0x60);
+	SLOT(p4, R_AUDIO_OUT, 0, CORE_SYS, 0x40, 0x40);
+	SLOT(p4, R_WRITER, 0, CORE_SYS, 0xA0, 0xA0);
+	SLOT(p4, R_UPSCALE, 0, CORE_U2, 0xA0, 0xA0);
+	SLOT(p4, R_UPSCALE, 1, CORE_SYS, 0xA0, 0xA0);
+	CHECK(!p4.find(R_AUDIO_OUT)->spins && !p4.find(R_EMU_MAIN)->on_core3);
+}
+
 TEST(cores_plan_invariants_every_role_combination)
 {
 	long combos = 0;
-	for (int prof = 0; prof < 3; prof++) {
+	for (int prof = 0; prof < 4; prof++) {
 		for (unsigned bits = 0; bits < (1u << R_COUNT); bits++) {
 			for (int up = 0; up <= 3; up++) {
 				if (!(bits & (1u << R_UPSCALE)) && up) continue;
@@ -428,7 +456,7 @@ TEST(cores_plan_invariants_every_role_combination)
 				for (int i = 0; i < p4.n; i++) {
 					const Slot &a = p4.slots[i];
 					const Slot *b = p3.find(a.role, a.index);
-					if (!b) { CHECK(a.role == R_UPSCALE && a.index == 2); continue; }
+					if (!b) { CHECK(a.role == R_UPSCALE && a.index == (prof == CP_MD ? 1 : 2)); continue; }
 					if (a.mask == b->mask) { CHECK_EQ(a.prio, b->prio); continue; }
 					if (prof == CP_APP) CHECK(a.role == R_RENDER || a.role == R_UPSCALE);
 					else CHECK(a.role == R_AUDIO_OUT || a.role == R_DRAW || a.role == R_WRITER || a.role == R_WIDE_COMPOSE || a.role == R_WIDE_SCOUT || a.role == R_UPSCALE);

@@ -89,6 +89,11 @@ clarification and the remaining package review.
   `gpsp/vita/mmpx_vita.c` follows their rules (reference C port at
   https://github.com/ITotalJustice/mmpx) in an RGB565 form; the notice is in
   the file and in `licenses/MMPX-MIT.txt`.
+- **xBR (level 2):** Hyllian, MIT (xBR-lv2 shader from the libretro glsl-shaders
+  collection, with ideas from the SABR shader by Joshua Street). The CPU port in
+  `playerkit/src/pk_scale.cpp` (used by the Sega player's Image quality tiers) is
+  written from that shader's source; the notice is in the file and in
+  `licenses/xBR-MIT.txt`. This is xBR, not the GPL xBRZ.
 - **xBRZ:** Zenju, HqMAME and contributors, used under GPL version 2 with the
   original exception retained. The code and local-change notice are in
   `gpsp/vita/third_party/xbrz/`. The app does not claim the MAME exception as

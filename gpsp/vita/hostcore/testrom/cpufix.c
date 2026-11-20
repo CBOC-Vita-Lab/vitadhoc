@@ -62,6 +62,9 @@
  * 31  a serial port with no cable reads as unplugged: in multiplayer mode SIOCNT
  *     shows SI and SD high (a child, ID 0) and its start bit does nothing
  *     (Activision Anthology's MultiBoot probe)
+ * 32  direct (BIOS skipped) boot starts on scanline 126: VCOUNT, read at the top
+ *     of main() after the start-up code (about 31 lines), is 150 to 170, not
+ *     about 31 (Polarium Advance)
  *
  * "SRAM_V113" below makes the emulator give the cartridge battery SRAM. */
 typedef unsigned char u8;
@@ -74,7 +77,7 @@ typedef volatile u32 vu32;
 
 #define REG(a) (*(vu16 *)(0x04000000 + (a)))
 #define SRAM ((vu8 *)0x0E000000)
-#define NTESTS 32
+#define NTESTS 33
 #ifndef VENEER_ITERS
 #define VENEER_ITERS 50
 #endif
@@ -592,6 +595,7 @@ int main(void)
 {
    u32 a, b, v;
    int i, all = 1;
+   u32 vcount0 = REG(0x006);          /* before anything else takes time */
 
    REG(0x000) = 0x0000;              /* mode 0, nothing on: the backdrop */
    *(vu16 *)0x05000000 = 0x7FFF;      /* white while running */
@@ -869,6 +873,8 @@ int main(void)
    result(31, (v1 & 0x3C) == 0x0C && !(v2 & 0x80), (v2 << 16) | (v1 & 0xFFFF));
    REG(0x128) = 0x0000;
    }
+
+   result(32, vcount0 >= 150 && vcount0 <= 170, vcount0);
 
    for (i = 0; i < NTESTS; i++)
       all &= SRAM[0x08 + i] == 1;

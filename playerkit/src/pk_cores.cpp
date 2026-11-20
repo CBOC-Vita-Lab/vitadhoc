@@ -255,6 +255,18 @@ struct Place { uint32_t mask; int prio; int kprio; };
 static Place place3(CoreProfile p, Role r, int idx)
 {
 	Place o = { 0, 0xA0, 0xA0 };
+	if (p == CP_MD) {                   /* md/vita/main.cpp */
+		switch (r) {
+		case R_EMU_MAIN: { Place x = { CORE_U0, 0x60, 0x60 }; return x; }
+		case R_DRAW: { Place x = { CORE_U1, 0x60, 0x60 }; return x; }
+		case R_AUDIO_OUT: { Place x = { CORE_U2, 0x40, 0x40 }; return x; }
+		case R_WRITER: { Place x = { CORE_U2, 0xA0, 0xA0 }; return x; }
+		case R_UPSCALE: { Place x = { CORE_U2, 0xA0, 0xA0 }; return x; }
+		case R_WIDE_COMPOSE: { Place x = { CORE_U1, 0x68, 0x68 }; return x; }
+		case R_NET_IO: { Place x = { 0, 0xB8, 0xB8 }; return x; }
+		default: break;                 /* RENDER / APU / SCOUT: md.bin has none; the SNES layout keeps a plan that asks anyway sane */
+		}
+	}
 	if (p != CP_APP) {                  /* snes/vita/main.cpp, nes/vita/main.cpp */
 		switch (r) {
 		case R_EMU_MAIN: { Place x = { CORE_U0, 0x60, 0x60 }; return x; }          /* main_prio default, core 0 */
@@ -289,6 +301,14 @@ static Place place3(CoreProfile p, Role r, int idx)
 static Place place4(CoreProfile p, Role r, int idx, const Request &req)
 {
 	Place o = place3(p, r, idx);
+	if (p == CP_MD) {
+		switch (r) {
+		case R_AUDIO_OUT: case R_WRITER: o.mask = CORE_SYS; return o;
+		case R_UPSCALE: if (idx >= 1) o.mask = CORE_SYS; return o;
+		case R_DRAW: case R_EMU_MAIN: case R_NET_IO: return o;
+		default: break;
+		}
+	}
 	if (p != CP_APP) {
 		const bool cores_taken = req.has[R_RENDER] || req.has[R_APU];
 		switch (r) {
@@ -325,7 +345,7 @@ Plan make_plan(const Request &req, bool core3)
 		int count = 1;
 		if (r == R_UPSCALE) {
 			count = req.upscale_n < 0 ? 0 : req.upscale_n;
-			const int cap = core3 ? 3 : 2;
+			const int cap = req.profile == CP_MD ? (core3 ? 2 : 1) : (core3 ? 3 : 2);
 			if (count > cap) count = cap;
 		}
 		for (int i = 0; i < count && pl.n < PLAN_MAX_SLOTS; i++) {
@@ -338,7 +358,7 @@ Plan make_plan(const Request &req, bool core3)
 			s.kprio = pc.kprio;
 			s.on_core3 = (pc.mask & CORE_SYS) != 0;
 			s.whole_core = is_whole((Role) r);
-			s.spins = req.profile != CP_APP && (r == R_RENDER || r == R_APU);
+			s.spins = (req.profile == CP_SNES || req.profile == CP_NES) && (r == R_RENDER || r == R_APU);
 			s.optional = is_optional((Role) r);
 		}
 	}

@@ -148,13 +148,13 @@ uint32_t Menu::accent(int a) const { return PK_HEX(cfg_.accent, a); }
 /* the accent as TEXT on the sheet: lightened toward white until it reads at 4.5:1 (a dark accent, like the SNES violet, was 3.4:1) */
 uint32_t Menu::accent_text() const
 {
-	auto lin = [](int c) { float v = (float) c / 255.0f; return v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f); };
+	auto lin = [](int c) { float v = (float) c / 255.0f; return v * v; };       /* gamma 2 stands in for sRGB's 2.4: no libm powf (it changed the console link layout) */
 	auto lum = [&](uint32_t rgb) { return 0.2126f * lin((int) ((rgb >> 16) & 255)) + 0.7152f * lin((int) ((rgb >> 8) & 255)) + 0.0722f * lin((int) (rgb & 255)); };
 	const float lb = lum(C_SHEET) + 0.03f;      /* the sheet is 92% opaque: a bright game shows through a little */
 	uint32_t c = cfg_.accent;
 	for (int i = 0; i <= 20; i++) {
 		c = mix_rgb(cfg_.accent, 0xFFFFFF, (float) i * 0.05f);
-		if ((lum(c) + 0.05f) / (lb + 0.05f) >= 4.6f) break;
+		if ((lum(c) + 0.05f) / (lb + 0.05f) >= 4.9f) break;
 	}
 	return col(c);
 }

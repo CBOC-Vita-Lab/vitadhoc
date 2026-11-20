@@ -73,6 +73,14 @@ struct PadModel {
 /* out_bit values equal the SNES_* / NES_* flags of snes/frontend/host.h and nes/frontend/host.h */
 const PadModel &model_snes();
 const PadModel &model_nes();
+/* The Sega player (md.bin). out_bit values equal the MD_* pad bits of md/frontend/host.h (the core's own pad word). Mega Drive:
+ * A B C X Y Z Start Mode and the d-pad (owner mapping: A Square, B Cross, C Circle, X L, Y Triangle, Z R, Start, Mode Select; a tap
+ * of Select is Mode, Start + Select held still opens the menu). Master System / SG-1000: button 1 = MD_B (Cross), 2 = MD_C (Circle),
+ * Start = Pause (MD_START). Game Gear: 1, 2, Start. */
+const PadModel &model_md();
+const PadModel &model_sms();
+const PadModel &model_gg();
+const PadModel &model_sg();
 const PadModel *model_by_name(const std::string &console);
 
 /* ---- actions: the model's buttons first, then these ------------------------ */

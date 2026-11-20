@@ -1500,7 +1500,8 @@ def t_cpufix(S):
              "EWRAM code run via a mirror first sees its own pc (RAM_MIRROR_FIX)",
              "STM with R15 stores the address + 12 (ROM, dynarec)",
              "STM with R15 stores the address + 12 (VRAM, interpreter)",
-             "serial port with no cable reads as unplugged"]
+             "serial port with no cable reads as unplugged",
+             "direct boot starts on scanline 126"]
     extra = {"roms/gbadhoc-cpufix.gba": open(rom, "rb").read()}
     r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(6, wait=20),
               autoboot="gbadhoc-cpufix.gba", extra=extra)
@@ -5883,6 +5884,8 @@ def t_sidecars(S):
     # the same files as 1.2 left them, beside the ROM
     legacy = {}
     for n in have:
+        if n.endswith(".bak"):          # 2.0's undo copy: no older version had one
+            continue
         legacy["roms/" + n] = open(os.path.join(sd, n), "rb").read()
     legacy["boxart/%s.t2.565" % stem] = b"565R" + bytes(12) + b"\x00\x00"
     # (a) Continue from the home screen
@@ -7902,7 +7905,7 @@ def picture_colours(im):
         c = im.getpixel((x, y))
         if not out or max(abs(a - b) for a, b in zip(c, out[-1])) > 6:
             out.append(c)
-    return out
+    return out[:4]
 
 
 def t_gb_colours(S):

@@ -92,6 +92,80 @@ ImageMagick 7 and run `make -C gpsp/vita assets`. It uses the bundled Outfit
 and Inter fonts and produces 8-bit indexed PNGs. A normal VPK build does not
 need ImageMagick. Keep the masters with the working files when moving this tree.
 
+## Fast builds
+
+Everything here is optional: without it the Makefiles build as they always did.
+Numbers are in the table at the end of the section (host measurements on a
+shared 2-core machine; nothing here has run on a Vita).
+
+**ccache.** `tools/build/ccache.mk` is included by every Makefile that compiles
+C or C++ (the Vita app, its host twin, the SNES, NES, WonderSwan and Sega
+programs and twins, playerkit, widekit). When `ccache` is on `PATH` it is put in
+front of the compiler inside `CC` and `CXX` themselves; no wrapper directory of
+symlinks is involved, so there is nothing that can vanish and turn a build cold
+without saying so. Without ccache the variable is empty and nothing changes.
+
+- `make ccache-stats` (in `gpsp/vita` and `gpsp/vita/hostcore`) and the end of
+  `make vpk` print this build's hits and misses, or say plainly that ccache was
+  not used. The gate prints the same for its whole run.
+- `USE_CCACHE=0` turns it off (a bisect, or a doubt about a cached object);
+  `CCACHE=/path/to/ccache` picks another binary.
+- The cache lives in ccache's default directory (`~/.cache/ccache`) unless
+  `CCACHE_DIR` is set. On a machine whose home directory is thrown away,
+  `tools/build/ccache-setup.sh <persistent dir>` installs the package when it is
+  missing and (as root) writes `/etc/ccache.conf` with that directory and a 5 GB
+  cap; run it again after the machine image is rebuilt. The Makefiles cap the
+  cache at 5 GB when nothing else sets `CCACHE_MAXSIZE`.
+- `CCACHE_BASEDIR` is the parent of the checkout and `CCACHE_NOHASHDIR=1`, so a
+  second checkout, a worktree beside it, or a scratch build directory
+  (`B=...`) with the same layout shares hits. The only thing a hit carries from
+  another directory is the debug info's recorded working directory; no shipped
+  file contains it. No `sloppiness` is set: file times and `__DATE__`-style
+  macros stay in the hash, so a hit is what a cold compile would produce.
+- The Makefiles' flag stamps (`.flags`, `.feflags`, `.appflags`) name the compiler
+  without the ccache prefix, so turning ccache on or off does not make every
+  object look out of date.
+- Compile-and-link-in-one-command rules (the test programs of playerkit,
+  widekit and the twins' `main`) cannot be cached by ccache; the per-object
+  rules, which are almost all the time, are.
+
+**Jobs.** `make vpk` builds `snes.bin` through `make -C snes/vita`, which
+inherits the job slots of the outer make (it used to be forced to `-j1`; the SNES
+objects are independent and the link waits for all of them). Use `-j2` on the
+two-core build machines; `nice` it if others are working.
+
+**Dependency files.** Every object is compiled with `-MMD -MP`, and every
+Makefile reads the `.d` files of all of them (the render-thread pair and the GB
+pair glue of the Vita build were missing). A header change rebuilds what
+includes it, and a build with nothing changed compiles and links nothing:
+`make vpk` twice in a row repacks nothing the second time.
+
+**`make vpk-repack`** (`gpsp/vita`): a package from the last package, for a
+change that is not code: new LiveArea art, `gamedb.txt` or `cheats.db`, a
+notice, or a rebuilt `snes.bin` (`make -C snes/vita`, then this). It reads
+the last `VitAdhoc.vpk` and the same inputs `make vpk` packs
+(`tools/build/vpk_repack.py`, which takes the same `-s`, `-b` and `-a` arguments
+as `vita-pack-vpk`), copies every member whose content is unchanged as its stored
+bytes, compresses only those that changed, prints what changed, and checks the
+result (zip structure and CRCs, member list and order, every member against its
+input) before it replaces the old file. The package it writes has the same file
+list, order, modes and per-member contents as a full `make vpk`; compressed sizes
+of changed members may differ by a few bytes from the packer's own. It compiles
+nothing of the app: run `make` first if `eboot.bin` should change. Check the
+result like any package:
+`python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py`
+(or the gate's `release-package` step). A release is always a full `make vpk`
+from a clean tree.
+
+**Habits that keep a fast build fast** (learned on the sister ports):
+
+- One gated build per batch of changes, with every change behind a runtime
+  switch, rather than a build per edit.
+- Never edit a shell script while a run is using it: bash reads a script as it
+  goes, so a change mid-run executes a mixture of the old and the new text.
+- Compiler levers (ThinLTO, PGO, section ordering) gave the sister ports no run-time
+  gain, and a PGO build at `-O3` once miscompiled. They are not used here.
+
 ## Tests
 
 ```sh

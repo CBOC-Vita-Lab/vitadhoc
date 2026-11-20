@@ -1,0 +1,1109 @@
+/*
+ * player_twin (Sega): runs the Sega player's own code (md/vita/player.cpp: launch file, playerkit menu, states, battery RAM writer
+ * with its verified backup, cheats, patches, session report, steady pacing, the look governor, pad models) on Linux with playerkit's
+ * software renderer, over a running game, and checks it. Writes a PNG of every menu screen.
+ *
+ *   player_twin test CONSOLE ROM SHOTS WORK   the scripted walk and checks for one console id (md, sms, gg, sg); exit 1 on a failure
+ *   player_twin pal ROM                        region / PAL pacing (FramePace over the core's own frame rate)
+ *   player_twin look CONSOLE ROM WORK          the look governor (scaler tiers) steps, memory and hand-set rows
+ *   player_twin pads CONSOLE ROM WORK          pad models, mapping, the menu chord, the six button pad
+ *   player_twin handoff ROM WORK               smooth hand-over on / off, bit for bit (handoff_proof.cpp)
+ *
+ * ROMs are public homebrew (Stephane-D's SGDK samples, SMS homebrew): inputs only, none is shipped. A Game Gear run uses an SMS ROM
+ * with the console id forced to gg in the launch file (the core then runs it as a Game Gear game).
+ * Copyright CBOC-Vita. MIT licence (see md/frontend/LICENSE).
+ */
+#include "player.h"
+#include "pk_gfx_soft.h"
+#include "pk_icons.h"
+#include "host.h"
+#include "pal_pace.h"
+#include "picture.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <time.h>
+#include <algorithm>
+#include <sys/stat.h>
+#include <atomic>
+#include <thread>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+
+using namespace pk;
+#undef W_OK
+
+static int g_fail = 0, g_checks = 0;
+#define EXPECT(c) do { g_checks++; if (!(c)) { fprintf(stderr, "player_twin: FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
+
+/* ---- the platform ----------------------------------------------------------------- */
+
+struct TwinPlatform : mdp::Platform {
+	uint64_t clock_us = 1000000;
+	bool threaded = false;
+	mdp::MdPlayer *player = 0;
+	std::vector<uint16_t> frame_px;
+	int fw = 320, fh = 224;
+	std::vector<std::string> ime_answers;      /* code, name, code, name, ... */
+	bool ime_asked = false;
+	std::string log_path, log_text;
+	int pic_changes = 0;
+	std::thread th;
+	std::mutex mu;
+	std::condition_variable cv;
+	bool stop = false, kick = false;
+
+	uint64_t now_us() { return clock_us; }
+	void pause_us(unsigned us) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }
+	bool wake_writer()
+	{
+		if (!threaded) return false;
+		{ std::lock_guard<std::mutex> g(mu); kick = true; }
+		cv.notify_one();
+		return true;
+	}
+	void start_thread()
+	{
+		threaded = true;
+		th = std::thread([this]() {
+			for (;;) {
+				{
+					std::unique_lock<std::mutex> g(mu);
+					cv.wait(g, [this]() { return kick || stop; });
+					if (stop) return;
+					kick = false;
+				}
+				while (player->writer().work_one(player)) {}
+			}
+		});
+	}
+	void stop_thread()
+	{
+		if (!threaded) return;
+		{ std::lock_guard<std::mutex> g(mu); stop = true; }
+		cv.notify_one();
+		th.join();
+		threaded = false;
+	}
+	bool current_frame(Frame *f)
+	{
+		if (frame_px.empty()) return false;
+		*f = Frame(&frame_px[0], fw, fh, fw * 2);
+		return true;
+	}
+	void grab()
+	{
+		int w, h, pitch;
+		const uint16_t *v = md_host_video(&w, &h, &pitch);
+		if (!v || w <= 0 || h <= 0) return;
+		fw = w; fh = h;
+		frame_px.resize((size_t) w * h);
+		for (int y = 0; y < h; y++) memcpy(&frame_px[(size_t) y * w], (const uint8_t *) v + (size_t) y * pitch, (size_t) w * 2);
+	}
+	void ask_cheat_text() { ime_asked = true; }
+	void picture_changed() { pic_changes++; }
+	void log_write(const std::string &chunk)
+	{
+		log_text += chunk;
+		FILE *f = fopen(log_path.c_str(), "ab");
+		if (f) { fwrite(chunk.data(), 1, chunk.size(), f); fclose(f); }
+	}
+};
+
+/* ---- driving the player ----------------------------------------------------------- */
+
+struct Rig {
+	TwinPlatform pf;
+	mdp::MdPlayer *pl;
+	SoftGfx gfx;
+	Text text;
+	Texture *game_tex;
+	std::string shots;
+	uint32_t frame = 0;
+	int nshot;
+	int tex_w = 0, tex_h = 0;
+	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
+	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
+
+	void pads_none(PadSample p[MAX_PLAYERS]) { for (int i = 0; i < MAX_PLAYERS; i++) { p[i] = PadSample(); p[i].connected = i < 2; } }
+	/* one game frame (pads as given); returns true when the menu was asked for */
+	bool game_frame(uint32_t phys = 0, uint32_t phys2 = 0, bool tap = false)
+	{
+		PadSample p[MAX_PLAYERS];
+		pads_none(p);
+		p[0].buttons = phys;
+		p[1].buttons = phys2;
+		pf.clock_us += 16683;
+		if (pl->input(p, tap, pf.clock_us / 1000, frame)) return true;
+		md_host_set_render(pl->want_render(frame) ? 1 : 0);
+		md_host_run_frame();
+		int16_t ab[4096 * 2];
+		while (md_host_audio_take(ab, 4096) > 0) {}
+		frame++;
+		pf.grab();
+		pl->drawn_cost(9000);
+		pl->after_frame(pf.clock_us);
+		return false;
+	}
+	void run(int n) { for (int i = 0; i < n; i++) game_frame(); }
+	MenuInput mi(uint32_t phys = 0)
+	{
+		MenuInput in;
+		for (int i = 0; i < MAX_PLAYERS; i++) { in.pads[i] = PadSample(); in.pads[i].connected = i < 2; }
+		in.pads[0].buttons = phys;
+		in.dt_ms = 16;
+		return in;
+	}
+	MenuEvent menu_frame(const MenuInput &in)
+	{
+		pf.clock_us += 16683;
+		MenuEvent ev = pl->menu_update(in);
+		if (pl->menu_open()) { draw(); pl->menu_drawn(); }
+		if (pf.ime_asked) {
+			pf.ime_asked = false;
+			if (pf.ime_answers.size() >= 2) {
+				std::string c = pf.ime_answers[0], n = pf.ime_answers[1];
+				pf.ime_answers.erase(pf.ime_answers.begin(), pf.ime_answers.begin() + 2);
+				pl->cheat_entered(true, c, n);
+			} else pl->cheat_entered(false, "", "");
+		}
+		return ev;
+	}
+	MenuEvent press(uint32_t phys)
+	{
+		MenuEvent a = menu_frame(mi(phys));
+		MenuEvent b = menu_frame(mi(0));
+		return a != MENU_NONE ? a : b;
+	}
+	void settle(int n = 12) { for (int i = 0; i < n; i++) menu_frame(mi(0)); }
+	/* the game as the player shows it: the picture's own shape from md_host_video_info through pic_geometry (and the Game Gear's LCD colours) */
+	void draw()
+	{
+		gfx.clear(PK_RGBA(0, 0, 0, 255));
+		if (!pf.frame_px.empty()) {
+			if (game_tex && (tex_w != pf.fw || tex_h != pf.fh)) { gfx.tex_free(game_tex); game_tex = 0; }
+			if (!game_tex) { game_tex = gfx.tex_create(pf.fw, pf.fh, TEX_RGB565); tex_w = pf.fw; tex_h = pf.fh; }
+			md_video_info vi; md_host_video_info(&vi);
+			pic_info pi;
+			pi.w = pf.fw; pi.h = pf.fh; pi.logical_rows = vi.native_h > 0 ? vi.native_h : pf.fh; pi.dar = vi.dar; pi.par = vi.par; pi.system = vi.system;
+			pic_rect r;
+			pic_geometry(&pl->picture(), &pi, 0, 0, 960, 544, &r);
+			std::vector<uint16_t> px = pf.frame_px;
+			if (vi.system == MD_SYS_GG && pl->picture().gg_colors) {
+				const unsigned short *t = pic_lcd_table();
+				if (t) for (size_t i = 0; i < px.size(); i++) px[i] = t[px[i]];
+			}
+			gfx.tex_update(game_tex, &px[0], pf.fw * 2);
+			gfx.tex_draw(game_tex, (float) r.sx, (float) r.sy, (float) r.sw, (float) r.sh, r.dx, r.dy, r.dw, r.dh, 0xFFFFFFFFu, pl->picture().quality == PIC_SMOOTH);
+		}
+		if (pl->menu_open()) pl->menu_draw(&gfx, &text);
+		else pl->notices().draw(&gfx, &text, PK_HEX(0x7B6CFF, 255), 26, true);
+	}
+	void snap(const char *name)
+	{
+		draw();
+		char p[512];
+		snprintf(p, sizeof p, "%s/%02d_%s.png", shots.c_str(), ++nshot, name);
+		EXPECT(gfx.write_png(p));
+	}
+	/* holds START + SELECT until the menu opens */
+	bool open_by_chord()
+	{
+		for (int i = 0; i < 40; i++)
+			if (game_frame(PH_START | PH_SELECT)) { pl->open_menu(0); return true; }
+		return false;
+	}
+	int row_of(const char *label)
+	{
+		for (int i = 0; i < pl->menu().row_count(); i++) if (pl->menu().row_label(i) == label) return i;
+		return -1;
+	}
+	void go_row(const char *label)
+	{
+		int row = row_of(label);
+		EXPECT(row >= 0);
+		for (int k = 0; k < 40 && row >= 0 && pl->menu().cursor() != row; k++) press(pl->menu().cursor() < row ? PH_DOWN : PH_UP);
+	}
+};
+
+static bool write_bytes(const std::string &p, const std::vector<uint8_t> &b)
+{
+	FILE *f = fopen(p.c_str(), "wb");
+	if (!f) return false;
+	bool ok = fwrite(b.data(), 1, b.size(), f) == b.size();
+	return fclose(f) == 0 && ok;
+}
+static bool write_text(const std::string &p, const std::string &s) { return write_bytes(p, std::vector<uint8_t>(s.begin(), s.end())); }
+static std::vector<uint8_t> read_bytes(const std::string &p) { std::vector<uint8_t> b; file_read(p, b); return b; }
+static std::string bucket(const std::string &root, const std::string &con, const std::string &game)
+{
+	StateLayout l; l.root = root; l.console = con; l.name = game;
+	return l.states_dir() + "/" + game;
+}
+static bool exists(const std::string &p) { struct stat st; return stat(p.c_str(), &st) == 0; }
+static int count_files(const std::string &dir, const char *needle)
+{
+	int n = 0;
+	std::vector<std::string> names;
+	if (!list_dir(dir, names)) return 0;
+	for (size_t i = 0; i < names.size(); i++) if (names[i].find(needle) != std::string::npos) n++;
+	return n;
+}
+
+static FsOps g_real;
+static std::string g_fail_dir_part;
+static bool fail_state_tmp(const std::string &p, const uint8_t *d, size_t n)
+{
+	if (p.find(g_fail_dir_part) != std::string::npos && ends_with_ci(p, ".tmp")) return false;
+	return g_real.write_all(p, d, n);
+}
+
+static unsigned sys_of(const std::string &con) { return con == "gg" ? MD_SYS_GG : con == "sms" ? MD_SYS_SMS : con == "sg" ? MD_SYS_SG : MD_SYS_MD; }
+
+/* a patch: one byte of the header's checksum field (never read by the cores): MD 0x18E, the 8 bit consoles 0x7FFA (the Z80 sees it at 0x7FFA) */
+static unsigned patch_offset(const std::string &con) { return con == "md" ? 0x18Eu : 0x7FFAu; }
+
+static int run_test(const std::string &con, const char *rom, const std::string &shots, const std::string &work)
+{
+	const bool md = con == "md";
+	std::string root = work + "/root";
+	make_dirs(root);
+	make_dirs(shots);
+	const std::string game = path_stem(rom);
+	fprintf(stderr, "player_twin test: console %s, ROM %s\n", con.c_str(), rom);
+
+	/* ---- a real state of this game, made by the core, for the one-slot checks ---- */
+	std::vector<uint8_t> real_state;
+	{
+		EXPECT(md_host_init() == 0);
+		std::vector<uint8_t> rb = read_bytes(rom);
+		char e[128];
+		EXPECT(md_host_load_mem(rb.data(), rb.size(), rom, sys_of(con), e, sizeof e) == 0);
+		for (int i = 0; i < 30; i++) md_host_run_frame();
+		real_state.resize(md_host_state_size());
+		size_t len = md_host_state_save_mem(real_state.data(), real_state.size());
+		EXPECT(len > 0);
+		real_state.resize(len);
+		std::vector<uint8_t> junk(100, 0x5A);
+		EXPECT(md_host_state_load_mem(junk.data(), junk.size()) != 0);
+		EXPECT(md_host_state_load_mem(real_state.data(), real_state.size()) == 0);
+		md_host_unload();
+	}
+
+	/* a patch */
+	std::vector<uint8_t> ips;
+	const char *hdr = "PATCH";
+	ips.insert(ips.end(), hdr, hdr + 5);
+	const unsigned po = patch_offset(con);
+	uint8_t rec[] = { (uint8_t) (po >> 16), (uint8_t) (po >> 8), (uint8_t) po, 0x00, 0x01, 0x5A };
+	ips.insert(ips.end(), rec, rec + sizeof rec);
+	ips.insert(ips.end(), (const uint8_t *) "EOF", (const uint8_t *) "EOF" + 3);
+	EXPECT(write_bytes(work + "/fix.ips", ips));
+
+	/* an older save, and a newer RetroArch save to bring in (RetroArch's .srm is the raw battery RAM) */
+	make_dirs(root + "/saves");
+	make_dirs(work + "/ra");
+	std::string srm = root + "/saves/" + game + ".srm", ra = work + "/ra/" + game + ".srm";
+	std::vector<uint8_t> old_srm(8192, 0x01), ra_srm(8192, 0x77);
+	EXPECT(write_bytes(srm, old_srm));
+	EXPECT(write_bytes(ra, ra_srm));
+	{
+		struct timespec ts[2];
+		ts[0].tv_sec = ts[1].tv_sec = time(0) - 3600; ts[0].tv_nsec = ts[1].tv_nsec = 0;
+		utimensat(AT_FDCWD, srm.c_str(), ts, 0);
+	}
+
+	/* a cheat database export for this game (the app's file): one entry the player merges in, switched off */
+	make_dirs(work + "/db");
+	std::string dbcht = work + "/db/" + game + ".cht";
+	if (md) EXPECT(write_text(dbcht, "cheats = 1\n\ncheat0_desc = \"Database entry\"\ncheat0_code = \"FFF010:0042\"\ncheat0_enable = false\n"));
+	else EXPECT(write_text(dbcht, "cheats = 1\n\ncheat0_desc = \"Database entry\"\ncheat0_code = \"C010:42\"\ncheat0_enable = false\n"));
+
+	/* the launch file the main app will write */
+	make_dirs(root + "/launch");
+	std::string ini =
+	    "version=1\nsession_id=s-test-1\nconsole=" + con + "\ngame=" + std::string(rom) + "\ngame_name=Sega Test (World)\nsave=" + srm +
+	    "\nroot=" + root + "\nshape=zoom\nquality=smooth\ncpu_mhz=444\nenter_button=circle\nlanguage=en\nstart=new\nslot=0\npatch=" +
+	    work + "/fix.ips\npatch_key=fix-1\nretroarch_save=" + ra + "\nwide_supported=0\novr.scanlines=4\nfuture_key=kept\ncheats_db=" + dbcht + "\n";
+	EXPECT(write_text(root + "/launch/" + con + ".ini", ini));
+
+	Rig rig(shots);
+	rig.pf.log_path = root + "/" + con + "/log.txt";
+	mdp::MdPlayer *pl = new mdp::MdPlayer(&rig.pf);
+	rig.pl = pl;
+	rig.pf.player = pl;
+	char a0[] = "app0:md.bin";
+	std::string romarg = rom;
+	char *argv[] = { a0, &romarg[0], 0 };
+	mdp::StartResult sr = pl->start(2, argv, root, true);
+	EXPECT(sr.ok);
+	if (!sr.ok) { fprintf(stderr, "start: %s / %s\n", sr.fatal1.c_str(), sr.fatal2.c_str()); return 1; }
+	EXPECT(sr.console == con);
+	EXPECT(md_host_system() == (int) sys_of(con));
+	EXPECT(pl->have_launch_file());
+	EXPECT(sr.cpu_mhz == 444);
+	EXPECT(!sr.enter_is_cross);
+	EXPECT(pl->picture().scan == 4);
+	EXPECT(pl->picture().shape == PIC_ZOOM);
+	EXPECT(pl->picture().quality == PIC_SMOOTH);
+	EXPECT(pl->request().session_id == "s-test-1");
+	EXPECT(pl->request().unknown.count("future_key") == 1);
+	EXPECT(pl->request().unknown.count("cheats_db") == 1);
+	/* the database cheat is in the list, off */
+	EXPECT(pl->cheats().size() == 1);
+	EXPECT(pl->cheats().size() == 1 && !pl->cheats().at(0).on && pl->cheats().at(0).usable);
+	/* RetroArch save brought in, the old one kept in the backups */
+	EXPECT(read_bytes(srm) == ra_srm);
+	EXPECT(read_bytes(root + "/backups/" + con + "/" + game + ".before-retroarch.srm") == old_srm);
+	pl->apply_start_mode();
+
+	/* ---- the patch reached the game ---- */
+	rig.run(30);
+	EXPECT(md_host_peek(po) == 0x5A);
+	rig.snap("ingame");
+
+	/* ---- the menu: START + SELECT held, and a tap on the picture ---- */
+	EXPECT(rig.open_by_chord());
+	rig.settle(14);
+	rig.snap("menu_top");
+	EXPECT(pl->menu().page() == Menu::PAGE_TOP);
+	/* the Play-together card is not shown (nothing plays together yet), the wide view row is greyed */
+	EXPECT(rig.press(PH_CROSS) == MENU_RESUME);         /* Enter is Circle here: Cross is Back = resume */
+	rig.run(20);
+	EXPECT(rig.game_frame(0, 0, true));                  /* a tap on the picture */
+	pl->open_menu(0);
+	rig.settle(14);
+
+	/* ---- battery RAM: the game's save changes, the player writes it after the menu is drawn, with a verified backup of what it replaces ---- */
+	{
+		std::vector<uint8_t> sv(md_host_sram_capacity() ? 4096 : 0, 0xA5);
+		if (!sv.empty()) {
+			md_host_sram_write(sv.data(), sv.size());
+			md_host_sram_mark_unsaved();
+			EXPECT(md_host_sram_dirty());
+			rig.settle(3);
+			pl->after_frame(rig.pf.clock_us += 16683);
+			pl->menu_drawn();
+			rig.run(1);
+			pl->wait_writer();
+			for (int i = 0; i < 12; i++) { rig.pf.clock_us += 1000000; rig.game_frame(); pl->wait_writer(); }
+			std::vector<uint8_t> now = read_bytes(srm);
+			EXPECT(!now.empty() && now != ra_srm);
+			EXPECT(!md_host_sram_dirty());
+			EXPECT(pl->session().current().save_changed);
+			/* RetroArch compatible: the file is the raw battery RAM, the same bytes the core gives */
+			std::vector<uint8_t> core(0x10000);
+			size_t k = md_host_sram_read(core.data(), core.size());
+			core.resize(k);
+			EXPECT(now == core);
+			/* a verified backup of the replaced file (<name>.<crc>.<size>.bak in backups/<console>/) */
+			EXPECT(count_files(root + "/backups/" + con, ".bak") >= 1);
+		} else {
+			fprintf(stderr, "player_twin: %s has no battery RAM: the save checks are skipped\n", rom);
+		}
+	}
+
+	/* ---- Save states: all 10 slots, with thumbnails ---- */
+	rig.press(PH_RIGHT);
+	rig.snap("menu_top_states_card");
+	rig.press(PH_CIRCLE);
+	EXPECT(pl->menu().page() == Menu::PAGE_STATES);
+	rig.settle(4);
+	rig.snap("states_empty");
+	std::string b = bucket(root, con, game);
+	std::vector<std::vector<uint8_t>> saved(10);
+	for (int slot = 0; slot < 10; slot++) {
+		if (!pl->menu_open()) { pl->open_menu(0); rig.settle(3); }
+		pl->menu().goto_page(Menu::PAGE_STATES);
+		rig.settle(2);
+		pl->menu().select_slot(slot + 1);
+		EXPECT(pl->menu().selected_slot() == slot + 1);
+		rig.press(PH_CIRCLE);                              /* Enter on an empty slot saves */
+		rig.settle(4);
+		std::string sp = b + ".st" + std::to_string(slot);
+		EXPECT(exists(sp));
+		EXPECT(exists(sp + ".thumb"));
+		EXPECT(exists(sp + ".shot"));
+		EXPECT(exists(sp + ".meta"));
+		saved[slot] = read_bytes(sp);
+		EXPECT(saved[slot].size() == md_host_state_size());
+		EXPECT(pl->menu().notices().kind() == NOTICE_OK);
+		/* leave the menu, play a while, come back */
+		pl->menu().goto_page(Menu::PAGE_TOP);
+		rig.settle(1);
+		EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
+		rig.run(5);
+	}
+	EXPECT(pl->states()->used_count() == 10);
+	for (int i = 1; i < 10; i++) EXPECT(saved[i] != saved[i - 1]);
+	pl->open_menu(0);
+	rig.settle(4);
+	pl->menu().goto_page(Menu::PAGE_STATES);
+	rig.settle(4);
+	rig.snap("states_ten_slots");
+	pl->menu().select_slot(5);
+	rig.settle(2);
+	rig.snap("states_slot5_thumb");
+	/* forced write failure: overwrite slot 5 with the card refusing the temp file */
+	g_fail_dir_part = "/states/" + con + "/";
+	g_real = fs();
+	fs().write_all = fail_state_tmp;
+	rig.press(PH_SQUARE);                                  /* save over a filled slot: asks first */
+	EXPECT(pl->menu().modal_open());
+	rig.snap("states_overwrite_ask");
+	rig.press(PH_CIRCLE);
+	fs() = g_real;
+	rig.settle(8);
+	EXPECT(pl->menu().notices().kind() == NOTICE_ERROR);
+	EXPECT(read_bytes(b + ".st4") == saved[4]);            /* the slot is untouched */
+	rig.snap("states_write_failed");
+	/* load slot 8 after the game moved on, then undo */
+	pl->menu().select_slot(8);
+	std::vector<uint8_t> moved;
+	pl->capture_state(moved);
+	EXPECT(moved != saved[7]);
+	EXPECT(rig.press(PH_CIRCLE) == MENU_RESUME);           /* Enter on a filled slot loads and resumes */
+	std::vector<uint8_t> after_load;
+	pl->capture_state(after_load);
+	EXPECT(after_load == saved[7]);
+	pl->open_menu(0);
+	rig.settle(6);
+	rig.press(PH_RIGHT);
+	rig.press(PH_CIRCLE);
+	rig.settle(4);
+	rig.snap("states_undo_offered");
+	EXPECT(rig.press(PH_SELECT) == MENU_RESUME);           /* undo the load */
+	std::vector<uint8_t> after_undo;
+	pl->capture_state(after_undo);
+	EXPECT(after_undo == moved);
+
+	/* ---- Settings > Picture ---- */
+	pl->open_menu(0);
+	rig.settle(4);
+	pl->menu().goto_page(Menu::PAGE_SETTINGS);
+	rig.settle(2);
+	rig.snap("settings");
+	pl->menu().goto_page(Menu::PAGE_PICTURE);
+	rig.settle(2);
+	rig.snap("picture");
+	{
+		EXPECT(rig.row_of("Pixel art scaler") >= 0);
+		EXPECT(rig.row_of("Image look") >= 0);
+		EXPECT(rig.row_of("Screen size") >= 0);
+		EXPECT((rig.row_of("Hide masked edge") >= 0) == (con == "sms"));
+		EXPECT((rig.row_of("LCD colours") >= 0) == (con == "gg"));
+		EXPECT((rig.row_of("LCD ghosting") >= 0) == (con == "gg"));
+		/* the wide view is not available: the row says so */
+		int wide = -1;
+		for (int i = 0; i < pl->menu().row_count(); i++) if (pl->menu().row_label(i).find("ide") != std::string::npos) wide = i;
+		(void) wide;
+		rig.go_row("Scanlines");
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().scan == 5);
+		/* the scaler row steps through Auto, Off, MMPX, xBR 2x, xBR 3x */
+		rig.go_row("Pixel art scaler");
+		EXPECT(pl->menu().value(mdp::MdPlayer::ROW_SCALER) == SCALER_AUTO);
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().scaler == SCALER_OFF);
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().scaler == SCALER_MMPX2);
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().scaler == SCALER_XBR2);
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().scaler == SCALER_XBR3);
+		rig.snap("picture_scaler_xbr3");
+		rig.press(PH_RIGHT);                                /* wraps or stops: set it back to Auto */
+		while (pl->picture().scaler != SCALER_AUTO) rig.press(PH_LEFT);
+		/* Screen size never offers Fit */
+		while (pl->menu().cursor() != 0) rig.press(PH_UP);
+		std::vector<std::string> seen;
+		for (int k = 0; k < 4; k++) { rig.press(PH_RIGHT); seen.push_back(pl->menu().row_value_text(0)); }
+		for (size_t k = 0; k < seen.size(); k++) EXPECT(seen[k] != "Fit");
+		bool had_pixel = false;
+		for (size_t k = 0; k < seen.size(); k++) if (seen[k] == "Pixel perfect") had_pixel = true;
+		EXPECT(had_pixel);
+	}
+	rig.snap("picture_changed");
+	pl->menu().goto_page(Menu::PAGE_SPEED);
+	rig.settle(2);
+	EXPECT(rig.row_of("Region") >= 0);
+	EXPECT(rig.row_of("Steady pacing") >= 0);
+	EXPECT(rig.row_of("PAL games speed") >= 0);
+	EXPECT(rig.row_of("Smooth hand-over") >= 0);
+	EXPECT((rig.row_of("FM sound") >= 0) == md);
+	EXPECT((rig.row_of("FM sound unit") >= 0) == (con == "sms"));
+	rig.snap("speed");
+	/* Region: Japan (NTSC) -> the frame rate stays 60 Hz, Europe -> 50 Hz and the platform is told to set its pacing again */
+	rig.go_row("Region");
+	{
+		EXPECT(pl->menu().value(mdp::MdPlayer::ROW_REGION) == 0);
+		pl->on_change(mdp::MdPlayer::ROW_REGION, 2);                       /* Europe */
+		EXPECT(md_host_is_pal() == 1);
+		EXPECT(pl->take_timing_changed());
+		EXPECT(!pl->take_timing_changed());
+		EXPECT(md_host_fps() > 49.6 && md_host_fps() < 49.8);    /* the Mega Drive's PAL rate is 49.70 Hz, the 8 bit ones' 49.70 too */
+		pl->on_change(mdp::MdPlayer::ROW_REGION, 1);                       /* USA */
+		EXPECT(md_host_is_pal() == 0);
+		EXPECT(pl->take_timing_changed());
+		pl->on_change(mdp::MdPlayer::ROW_REGION, 0);                       /* Auto */
+		pl->take_timing_changed();
+	}
+	if (con == "gg") {
+		pl->menu().goto_page(Menu::PAGE_PICTURE);
+		rig.settle(2);
+		rig.snap("picture_gg_lcd");
+	}
+
+	/* ---- Controls and remapping ---- */
+	pl->menu().goto_page(Menu::PAGE_CONTROLS);
+	rig.settle(2);
+	rig.snap("controls");
+	EXPECT((rig.row_of("Pad type") >= 0) == md);
+	pl->menu().goto_page(Menu::PAGE_MAPPING);
+	rig.settle(2);
+	rig.snap("mapping");
+	{
+		const char *btn = md ? "A" : "Button 1";
+		rig.go_row(btn);
+		rig.press(PH_CIRCLE);
+		EXPECT(pl->menu().modal_open());
+		rig.settle(2);
+		rig.snap("mapping_capture");
+		rig.press(PH_SQUARE);
+		rig.settle(3);
+		rig.snap("mapping_assigned");
+	}
+	EXPECT(exists(root + "/controls/" + con + ".ini"));
+	while (pl->menu().page() != Menu::PAGE_TOP) rig.press(PH_CROSS);
+	EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
+	rig.run(3);
+	rig.game_frame(PH_SQUARE, PH_CROSS);
+	EXPECT(pl->last_input().pad[0] & (md ? MD_A : MD_B));        /* the button moved to Square */
+	rig.game_frame(PH_CIRCLE);
+	EXPECT(!(pl->last_input().pad[0] & (md ? MD_A : MD_B)));
+
+	/* ---- Cheats: a typed code, toggle, delete, and the database entry ---- */
+	pl->open_menu(0);
+	rig.settle(6);
+	pl->menu().goto_page(Menu::PAGE_CHEATS);
+	rig.settle(2);
+	rig.snap("cheats_database_entry");
+	rig.press(PH_DOWN);                                    /* onto "Add a cheat" or the entry: find the add row */
+	rig.pf.ime_answers.push_back("nonsense!");
+	rig.pf.ime_answers.push_back("Bad");
+	pl->add_cheat();
+	rig.menu_frame(rig.mi(0));
+	EXPECT(pl->menu().notices().kind() == NOTICE_ERROR);
+	rig.settle(8);
+	rig.snap("cheats_bad_code");
+	const unsigned ram_addr = md ? 0xFFF000u : 0xC200u;
+	rig.pf.ime_answers.push_back(md ? "FFF000:00AA" : "C200:AA");
+	rig.pf.ime_answers.push_back("Colour");
+	pl->add_cheat();
+	rig.menu_frame(rig.mi(0));
+	rig.settle(8);
+	rig.snap("cheats_added");
+	EXPECT(md_host_cheat_count() == 1);
+	EXPECT(pl->cheats().size() == 2);
+	EXPECT(rig.press(PH_CROSS) == MENU_NONE);
+	EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
+	rig.run(3);
+	EXPECT(md_host_peek(ram_addr) == 0xAA);
+	pl->wait_writer();
+	rig.run(2);
+	pl->wait_writer();
+	EXPECT(exists(root + "/cheats/" + game + ".cht"));
+	{
+		std::vector<uint8_t> t = read_bytes(root + "/cheats/" + game + ".cht");
+		std::string s(t.begin(), t.end());
+		EXPECT(s.find("Colour") != std::string::npos && s.find("Database entry") != std::string::npos);
+	}
+	/* switch it off from the list */
+	pl->set_cheat(1, false);
+	rig.run(2);
+	EXPECT(md_host_cheat_count() == 0);
+	pl->set_cheat(1, true);
+	EXPECT(md_host_cheat_count() == 1);
+	/* the .cht written back keeps its form: read it again with a second list */
+	{
+		mdp::CheatList again;
+		EXPECT(again.load(root + "/cheats/" + game + ".cht", md) == 2);
+		EXPECT(again.size() == 2 && again.at(0).label == "Database entry");
+	}
+	EXPECT(pl->delete_cheat(1));
+	EXPECT(md_host_cheat_count() == 0);
+	pl->open_menu(0);
+	rig.settle(4);
+	pl->menu().goto_page(Menu::PAGE_CHEATS);
+	rig.settle(2);
+	rig.snap("cheats_deleted");
+
+	/* ---- Reset and Game list need confirmation ---- */
+	pl->menu().goto_page(Menu::PAGE_TOP);
+	rig.settle(2);
+	for (int k = 0; k < 8 && pl->menu().cursor() != 5; k++) rig.press(PH_RIGHT);
+	rig.snap("top_reset_card");
+	rig.press(PH_CIRCLE);
+	EXPECT(pl->menu().modal_open());
+	rig.snap("reset_ask");
+	rig.press(PH_CROSS);
+	rig.press(PH_RIGHT);
+	rig.press(PH_CIRCLE);
+	rig.snap("game_list_ask");
+	MenuEvent ev = rig.press(PH_CIRCLE);
+	EXPECT(ev == MENU_GAME_LIST);
+	pl->finish(EXIT_GAME_LIST);
+
+	/* ---- the session report ---- */
+	SessionReport rep;
+	EXPECT(session_read(root, rep));
+	EXPECT(rep.valid && rep.session_id == "s-test-1");
+	EXPECT(rep.seconds_played >= 2);
+	EXPECT(!rep.save_error);
+	EXPECT(rep.resume_present);
+	EXPECT(rep.exit == EXIT_GAME_LIST);
+	EXPECT(exists(b + ".rsm"));
+	{ std::vector<uint8_t> pt = read_bytes(b + ".rsm.pt"); EXPECT(std::string(pt.begin(), pt.end()) == "fix-1"); }
+	EXPECT(exists(root + "/scenes/" + game + ".shot"));
+	{
+		Ini p;
+		EXPECT(p.load(root + "/" + con + "/picture.ini"));
+		EXPECT(p.get_int("scanlines", -1) == 5);
+		EXPECT(p.get_int("quality", -1) == 0);        /* the launch file's "smooth" was not written into the player's file */
+	}
+	std::string session_text;
+	{ std::vector<uint8_t> bb = read_bytes(root + "/launch/session.txt"); session_text.assign(bb.begin(), bb.end()); }
+	fprintf(stderr, "---- session.txt\n%s----\n", session_text.c_str());
+	EXPECT(session_text.find("session_id=s-test-1") != std::string::npos);
+	delete pl;
+	md_host_unload();
+
+	/* ---- second start: no launch file (today's argument), quick save/load and the threaded writer ---- */
+	file_remove(root + "/launch/" + con + ".ini");
+	{
+		Rig r2(shots, 60);
+		r2.pf.log_path = root + "/" + con + "/log.txt";
+		mdp::MdPlayer *p2 = new mdp::MdPlayer(&r2.pf);
+		r2.pl = p2; r2.pf.player = p2;
+		std::string arg = std::string(rom) + "|" + srm;
+		char *av[] = { a0, &arg[0], 0 };
+		mdp::StartResult s2 = p2->start(2, av, root, true);
+		EXPECT(s2.ok && !p2->have_launch_file());
+		EXPECT(s2.enter_is_cross && s2.cpu_mhz == 0);
+		EXPECT(s2.console == (md ? "md" : "sms") || con == "gg" || con == "sg");     /* by extension: .sms is sms */
+		EXPECT(p2->srm_path() == srm);
+		if (s2.console == con) EXPECT(p2->picture().scan == 5);       /* a forced console id (gg on an .sms file) has no launch file here: the extension's console, its own settings */
+		r2.pf.start_thread();
+		p2->apply_start_mode();
+		r2.run(40);
+		EXPECT(md_host_peek(po) != 0x5A);                  /* no patch this time */
+		r2.game_frame(PH_SELECT);
+		r2.game_frame(PH_SELECT | PH_L);
+		r2.run(2);
+		p2->wait_writer();
+		r2.run(1);
+		EXPECT(p2->notices().text() == "State saved to slot 1");
+		EXPECT(read_bytes(bucket(root, s2.console, game) + ".st0").size() == md_host_state_size());
+		r2.snap("quicksave_notice");
+		p2->finish(EXIT_NORMAL);
+		r2.pf.stop_thread();
+		SessionReport rp;
+		EXPECT(session_read(root, rp));
+		EXPECT(rp.session_id.empty() && rp.exit == EXIT_NORMAL);
+		delete p2;
+		md_host_unload();
+	}
+	const bool s_gg_forced = con == "gg";
+	/* ---- third start: Continue from the resume point (the patch key must match) ---- */
+	{
+		/* the second start had no launch file and so another console id for a forced gg game: continue where the walk left off */
+		std::string ini3 = "version=1\nsession_id=s-test-3\nconsole=" + con + "\ngame=" + std::string(rom) + "\nsave=" + srm + "\nstart=continue\npatch_key=other\n";
+		write_text(root + "/launch/" + con + ".ini", ini3);
+		Rig r3(shots);
+		r3.pf.log_path = root + "/" + con + "/log.txt";
+		mdp::MdPlayer *p3 = new mdp::MdPlayer(&r3.pf);
+		r3.pl = p3; r3.pf.player = p3;
+		char *av[] = { a0, 0 };
+		EXPECT(p3->start(1, av, root, true).ok);
+		p3->apply_start_mode();
+		EXPECT(p3->notices().text().find("another patch") != std::string::npos);
+		delete p3;
+		md_host_unload();
+		ini3 = "version=1\nsession_id=s-test-4\nconsole=" + con + "\ngame=" + std::string(rom) + "\nsave=" + srm + "\nstart=continue\n" +
+		    (s_gg_forced ? "patch=" + work + "/fix.ips\npatch_key=fix-1\n" : std::string());     /* the resume point of the forced run was made with the patch */
+		write_text(root + "/launch/" + con + ".ini", ini3);
+		Rig r4(shots);
+		r4.pf.log_path = root + "/" + con + "/log.txt";
+		mdp::MdPlayer *p4 = new mdp::MdPlayer(&r4.pf);
+		r4.pl = p4; r4.pf.player = p4;
+		EXPECT(p4->start(1, av, root, true).ok);
+		std::vector<uint8_t> rsm;
+		file_read(b + ".rsm", rsm);
+		p4->apply_start_mode();
+		std::vector<uint8_t> now;
+		p4->capture_state(now);
+		EXPECT(now == rsm);
+		EXPECT(!rsm.empty());
+		delete p4;
+		md_host_unload();
+	}
+	/* ---- a patch that does not fit: the game is not started, the app is told ---- */
+	{
+		std::vector<uint8_t> bad(ips.begin(), ips.begin() + 8);
+		write_bytes(work + "/bad.ips", bad);
+		std::string ini5 = "version=1\nsession_id=s-test-5\nconsole=" + con + "\ngame=" + std::string(rom) + "\npatch=" + work + "/bad.ips\n";
+		write_text(root + "/launch/" + con + ".ini", ini5);
+		Rig r5(shots);
+		mdp::MdPlayer *p5 = new mdp::MdPlayer(&r5.pf);
+		r5.pl = p5; r5.pf.player = p5;
+		char *av[] = { a0, 0 };
+		mdp::StartResult s5 = p5->start(1, av, root, true);
+		EXPECT(!s5.ok);
+		fprintf(stderr, "bad patch: %s / %s\n", s5.fatal1.c_str(), s5.fatal2.c_str());
+		SessionReport rp;
+		EXPECT(session_read(root, rp) && rp.session_id == "s-test-5" && rp.exit == EXIT_ERROR && !rp.notice.empty());
+		delete p5;
+	}
+	fprintf(stderr, "player_twin: %s %d checks, %d failed; %d screenshots in %s\n", con.c_str(), g_checks, g_fail, rig.nshot, shots.c_str());
+	return g_fail ? 1 : 0;
+}
+
+/* ---- region and PAL pacing: the Vita loop's frame accumulator (pal_pace.h) over 3000 display refreshes at 59.94 Hz ----------- */
+static int run_pal_test(const char *rom)
+{
+	std::vector<uint8_t> rb = read_bytes(rom);
+	for (int pass = 0; pass < 2; pass++) {
+		char err[256] = "";
+		if (md_host_init()) { fprintf(stderr, "pal: init failed\n"); return 1; }
+		if (md_host_set_region(pass == 0 ? MD_REGION_EUROPE : MD_REGION_USA)) return 1;
+		if (md_host_load_mem(rb.data(), rb.size(), rom, MD_SYS_AUTO, err, sizeof err)) { fprintf(stderr, "pal: load failed: %s\n", err); return 1; }
+		const bool pal = md_host_is_pal() != 0;
+		EXPECT(pal == (pass == 0));
+		const double console_hz = md_host_fps(), vita_hz = 59.94;
+		FramePace fp;
+		if (pal) fp.set(console_hz, vita_hz);
+		const int refreshes = 3000;
+		int frames = 0, max_gap = 0, gap = 0, sixth_ok = 1;
+		for (int r = 0; r < refreshes; r++) {
+			int n = pal ? fp.owed(1) : 1;
+			if (n > 1) sixth_ok = 0;
+			if (n == 0) { if (++gap > max_gap) max_gap = gap; } else gap = 0;
+			for (int i = 0; i < n; i++) { md_host_set_render(1); md_host_run_frame(); frames++; }
+		}
+		const double emu_s = frames / console_hz, wall_s = refreshes / vita_hz;
+		const double err_pct = 100.0 * (emu_s - wall_s) / wall_s;
+		fprintf(stderr, "pal: %s (core %.4f Hz), %d refreshes, %d frames run, emulated %.3f s, refresh time %.3f s, error %+.3f %%, longest skip %d\n",
+		    pal ? "PAL" : "NTSC", console_hz, refreshes, frames, emu_s, wall_s, err_pct, max_gap);
+		EXPECT(sixth_ok);
+		if (pal) {
+			EXPECT(console_hz > 49.6 && console_hz < 50.1);
+			EXPECT(err_pct > -0.5 && err_pct < 0.5);
+			EXPECT(max_gap == 1);
+			EXPECT(frames >= 2470 && frames <= 2510);
+		} else {
+			EXPECT(console_hz > 59.8 && console_hz < 60.2);   /* 59.92 Hz */
+			EXPECT(frames == refreshes && max_gap == 0);
+		}
+		/* the sound of the frames run: the audio the core made is the frames' share at the console's rate, so the sound pacer needs no change */
+		md_host_unload();
+	}
+	fprintf(stderr, "player_twin: pal %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
+/* ---- the look governor: the ladder is the scaler's tiers ------------------------------------------------------------------- */
+static int run_look_test(const std::string &con, const char *rom, const std::string &work)
+{
+	char a0[] = "app0:md.bin";
+	std::string arg = std::string(rom);
+	char *av[] = { a0, &arg[0], 0 };
+	const std::string game = path_stem(rom);
+	/* a forced console id needs its launch file */
+	auto prep = [&](const std::string &root) {
+		make_dirs(root + "/launch");
+		write_text(root + "/launch/" + con + ".ini", "version=1\nsession_id=s-look\nconsole=" + con + "\ngame=" + std::string(rom) + "\n");
+	};
+	/* the scaler the drawing code uses: the picture's own ceiling plus the steps the governor has taken */
+	auto eff = [&](mdp::MdPlayer *pl) {
+		md_video_info v; md_host_video_info(&v);
+		return pic_scaler_effective(&pl->picture(), pic_scaler_ceiling(v.system, v.native_w, v.native_h), pl->picture().tier_steps);
+	};
+	float bad_emu = 1.25f;
+	auto run = [&](const std::string &root, int bad_s, int good_s, int hand_scaler, int mhz, std::string *seq) -> mdp::MdPlayer * {
+		make_dirs(root);
+		prep(root);
+		Rig *rig = new Rig(root + "/shots");
+		mdp::MdPlayer *pl = new mdp::MdPlayer(&rig->pf);
+		rig->pl = pl; rig->pf.player = pl;
+		rig->pf.log_path = root + "/" + con + "/log.txt";
+		mdp::StartResult sr = pl->start(2, av, root, true);
+		EXPECT(sr.ok);
+		pl->apply_start_mode();
+		if (hand_scaler >= 0) pl->on_change(mdp::MdPlayer::ROW_SCALER, hand_scaler);
+		rig->run(4);
+		pl->look_start(mhz);
+		auto sec = [&](float emu) {
+			pk::LookSecond ls;
+			ls.emu = emu; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true;
+			pl->look_second(ls);
+			for (int i = 0; i < 3; i++) rig->game_frame();
+			if (seq) *seq += (char) ('0' + eff(pl)), *seq += ' ';
+		};
+		for (int i = 0; i < bad_s; i++) sec(bad_emu);
+		for (int i = 0; i < good_s; i++) sec(0.35f);
+		return pl;
+	};
+	md_video_info vi;
+	int ceiling = -1;
+
+	std::string a, b;
+	{
+		mdp::MdPlayer *pl = run(work + "/look1", 60, 0, -1, 444, &a);
+		md_host_video_info(&vi);
+		ceiling = pl->look_ceiling_tier();
+		fprintf(stderr, "look: %s native %dx%d -> ceiling tier %d (0 xBR3, 1 xBR2, 2 MMPX2, 3 sharp), end level %d, scaler now %d\n", con.c_str(), vi.native_w, vi.native_h, ceiling, pl->look().level(), eff(pl));
+		EXPECT(pl->look().level() == 3 - ceiling);               /* every rung taken under a long overload */
+		EXPECT(eff(pl) == SCALER_OFF);
+		pl->finish(EXIT_NORMAL);
+	}
+	{
+		mdp::MdPlayer *pl = run(work + "/look2", 60, 0, -1, 444, &b);
+		pl->finish(EXIT_NORMAL);
+	}
+	fprintf(stderr, "look sequence: %s\n", a.c_str());
+	EXPECT(a == b);                                           /* the same script, the same looks */
+	/* starts at the ceiling's tier; the ladder only goes down, one tier per step */
+	{
+		static const char tier_digit[4] = { (char) ('0' + SCALER_XBR3), (char) ('0' + SCALER_XBR2), (char) ('0' + SCALER_MMPX2), (char) ('0' + SCALER_OFF) };
+		EXPECT(a.size() > 4 && a[a.size() - 2] == tier_digit[3]);          /* ends on the sharp fit */
+		EXPECT(a.find(tier_digit[0]) != std::string::npos || a.find(tier_digit[1]) != std::string::npos || a.find(tier_digit[2]) != std::string::npos);   /* and was on a scaler before */
+		int prev = -1; bool mono = true;
+		for (size_t i = 0; i < a.size(); i += 2) {
+			int t = -1;
+			for (int k = 0; k < 4; k++) if (a[i] == tier_digit[k]) t = k;
+			if (prev >= 0 && t < prev) mono = false;
+			prev = t;
+		}
+		EXPECT(mono);
+	}
+	/* a mild overload takes the rungs one at a time */
+	{
+		std::string c;
+		bad_emu = 0.985f;
+		mdp::MdPlayer *pl = run(work + "/look_mild", 60, 0, -1, 444, &c);
+		bad_emu = 1.25f;
+		fprintf(stderr, "look sequence (mild overload 0.985): %s\n", c.c_str());
+		if (ceiling == 0) EXPECT(c.find((char) ('0' + SCALER_MMPX2)) != std::string::npos);    /* Game Gear: xBR 3x, then MMPX 2x, then sharp: a rung at a time */
+		pl->finish(EXIT_NORMAL);
+	}
+	/* a scaler chosen by hand is held as chosen */
+	{
+		std::string c;
+		mdp::MdPlayer *pl = run(work + "/look3", 60, 0, SCALER_XBR2, 444, &c);
+		EXPECT(pl->picture().scaler == SCALER_XBR2);
+		EXPECT(pl->look().level() == 0);
+		pl->finish(EXIT_NORMAL);
+	}
+	/* memory: a cured overload is written; the next start at the same clock begins with it; another clock does not */
+	{
+		std::string d;
+		mdp::MdPlayer *pl = run(work + "/look4", 30, 40, -1, 444, &d);
+		fprintf(stderr, "look sequence (cured): %s\n", d.c_str());
+		pl->finish(EXIT_NORMAL);
+		std::vector<std::string> found;
+		for (int x = 0; x < 256; x++) {
+			char buf[16]; snprintf(buf, sizeof buf, "%02x", x);
+			std::string f = work + "/look4/look/" + con + "/" + buf + "/" + game + ".look";
+			if (!read_bytes(f).empty()) found.push_back(f);
+		}
+		EXPECT(found.size() == 1);
+		if (found.size() == 1) {
+			std::vector<uint8_t> m = read_bytes(found[0]);
+			EXPECT(std::string((const char *) m.data(), 9) == "pk-look 1");
+			std::string e;
+			mdp::MdPlayer *p1 = run(work + "/look4", 0, 0, -1, 444, &e);
+			EXPECT(p1->look().mask() != 0 || ceiling == 3);
+			p1->finish(EXIT_NORMAL);
+			mdp::MdPlayer *p2 = run(work + "/look4", 0, 0, -1, 333, &e);
+			EXPECT(p2->look().mask() == 0);
+			p2->finish(EXIT_NORMAL);
+		}
+	}
+	/* the Image look row: Full never eases, Light is the sharp fit at once; both kept for the next start */
+	{
+		const std::string root = work + "/look5";
+		make_dirs(root); prep(root);
+		{
+			Rig *rig = new Rig(root + "/shots");
+			mdp::MdPlayer *pl = new mdp::MdPlayer(&rig->pf);
+			rig->pl = pl; rig->pf.player = pl;
+			rig->pf.log_path = root + "/" + con + "/log.txt";
+			EXPECT(pl->start(2, av, root, true).ok);
+			pl->apply_start_mode();
+			EXPECT(!pl->pal_fast() && pl->look_mode() == 0);
+			pl->look_start(444);
+			pl->on_change(mdp::MdPlayer::ROW_LOOK, 1);
+			for (int i = 0; i < 40; i++) { pk::LookSecond ls; ls.emu = 1.25f; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true; pl->look_second(ls); }
+			EXPECT(eff(pl) != SCALER_OFF || ceiling == 3);
+			pl->on_change(mdp::MdPlayer::ROW_LOOK, 2);
+			EXPECT(pl->picture().scaler == SCALER_OFF);
+			pl->on_change(mdp::MdPlayer::ROW_PALSPEED, 1);
+			pl->finish(EXIT_NORMAL);
+		}
+		{
+			Rig *rig = new Rig(root + "/shots2");
+			mdp::MdPlayer *pl = new mdp::MdPlayer(&rig->pf);
+			rig->pl = pl; rig->pf.player = pl;
+			rig->pf.log_path = root + "/" + con + "/log.txt";
+			EXPECT(pl->start(2, av, root, true).ok);
+			EXPECT(pl->pal_fast() && pl->look_mode() == 2);
+			EXPECT(pl->picture().scaler == SCALER_OFF);
+			EXPECT(pl->menu().value(mdp::MdPlayer::ROW_LOOK) == 2 && pl->menu().value(mdp::MdPlayer::ROW_PALSPEED) == 1);
+			pl->finish(EXIT_NORMAL);
+		}
+	}
+	fprintf(stderr, "player_twin: look %s %d checks, %d failed\n", con.c_str(), g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
+/* ---- the picture ceilings by native size (portable, no ROM needed) ---------------------------------------------------------- */
+static int run_ceiling_test()
+{
+	EXPECT(pic_scaler_ceiling(MD_SYS_GG, 160, 144) == 0);
+	EXPECT(pic_scaler_ceiling(MD_SYS_SMS, 256, 192) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_SG, 256, 192) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 256, 224) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 224) == 2);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 240) == 2);
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 448) == 3);      /* interlaced double height */
+	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 400, 224) == 3);
+	pic_settings s; pic_defaults(&s);
+	EXPECT(pic_scaler_effective(&s, 0, 0) == SCALER_XBR3);
+	EXPECT(pic_scaler_effective(&s, 0, 1) == SCALER_XBR2);
+	EXPECT(pic_scaler_effective(&s, 0, 2) == SCALER_MMPX2);
+	EXPECT(pic_scaler_effective(&s, 0, 3) == SCALER_OFF);
+	EXPECT(pic_scaler_effective(&s, 0, 9) == SCALER_OFF);
+	EXPECT(pic_scaler_effective(&s, 2, 0) == SCALER_MMPX2);
+	EXPECT(pic_scaler_effective(&s, 2, 1) == SCALER_OFF);
+	s.scaler = SCALER_XBR3;
+	EXPECT(pic_scaler_effective(&s, 2, 1) == SCALER_XBR3);     /* by hand: held */
+	/* the layout: Original keeps the display aspect, Pixel perfect integer, Full fills; Game Gear 160x144 */
+	pic_defaults(&s);
+	pic_info gg = { 160, 144, 144, 160.0 / 144.0, 1.0, MD_SYS_GG };
+	pic_rect r;
+	pic_geometry(&s, &gg, 0, 0, 960, 544, &r);
+	EXPECT(r.dh == 544.0f && r.dw > 603.0f && r.dw < 605.0f);
+	s.shape = PIC_PIXEL;
+	pic_geometry(&s, &gg, 0, 0, 960, 544, &r);
+	EXPECT(r.dh == 432.0f && r.dw == 480.0f);                  /* 3x */
+	s.shape = PIC_FULL;
+	pic_geometry(&s, &gg, 0, 0, 960, 544, &r);
+	EXPECT(r.dw == 960.0f && r.dh == 544.0f);
+	pic_info md = { 320, 224, 224, 4.0 / 3.0, 0.0, MD_SYS_MD };
+	pic_defaults(&s);
+	pic_geometry(&s, &md, 0, 0, 960, 544, &r);
+	EXPECT(r.dh == 544.0f && r.dw > 724.0f && r.dw < 726.0f);  /* 4:3 */
+	/* the Game Gear LCD table: black lifts, white stays near white, grey stays grey */
+	const unsigned short *t = pic_lcd_table();
+	EXPECT(t && t[0] != 0 && t[0xFFFF] > 0xF000);
+	EXPECT(t && ((t[0x8410] >> 11) & 31) > 8);
+	fprintf(stderr, "player_twin: ceilings %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
+/* ---- pads: models, the mapping, the menu chord and the Mode tap ---------------------------------------------------------------- */
+static int run_pads_test(const std::string &con, const char *rom, const std::string &work)
+{
+	const bool md = con == "md";
+	const std::string root = work + "/root";
+	make_dirs(root + "/launch");
+	write_text(root + "/launch/" + con + ".ini", "version=1\nsession_id=s-pads\nconsole=" + con + "\ngame=" + std::string(rom) + "\nenter_button=cross\n");
+	Rig rig(work + "/shots");
+	rig.pf.log_path = root + "/" + con + "/log.txt";
+	mdp::MdPlayer *pl = new mdp::MdPlayer(&rig.pf);
+	rig.pl = pl; rig.pf.player = pl;
+	char a0[] = "app0:md.bin";
+	std::string arg = rom;
+	char *av[] = { a0, &arg[0], 0 };
+	EXPECT(pl->start(2, av, root, true).ok);
+	pl->apply_start_mode();
+	rig.run(5);
+	auto bits = [&](uint32_t phys) -> unsigned { rig.run(8); rig.game_frame(phys); return pl->last_input().pad[0]; };
+	/* Start and Select wait a few frames (they may be the first button of the menu chord), then pass while held */
+	auto held = [&](uint32_t phys) -> unsigned { rig.run(8); unsigned seen = 0; for (int i = 0; i < 12; i++) { rig.game_frame(phys); seen |= pl->last_input().pad[0]; } return seen; };
+	EXPECT(bits(PH_UP) == (unsigned) MD_UP);
+	EXPECT(bits(PH_DOWN) == (unsigned) MD_DOWN);
+	EXPECT(bits(PH_LEFT) == (unsigned) MD_LEFT);
+	EXPECT(bits(PH_RIGHT) == (unsigned) MD_RIGHT);
+	if (md) {
+		/* A Square, B Cross, C Circle, X L, Y Triangle, Z R, Start */
+		EXPECT(bits(PH_SQUARE) == (unsigned) MD_A);
+		EXPECT(bits(PH_CROSS) == (unsigned) MD_B);
+		EXPECT(bits(PH_CIRCLE) == (unsigned) MD_C);
+		EXPECT(bits(PH_L) == (unsigned) MD_X);
+		EXPECT(bits(PH_TRIANGLE) == (unsigned) MD_Y);
+		EXPECT(bits(PH_R) == (unsigned) MD_Z);
+		EXPECT(held(PH_START) == (unsigned) MD_START);
+		/* a tap of Select is Mode: press and release, Mode is seen by the core; the pad word is 12 bits */
+		unsigned seen = 0;
+		for (int i = 0; i < 4; i++) { rig.game_frame(PH_SELECT); seen |= pl->last_input().pad[0]; }
+		for (int i = 0; i < 6; i++) { rig.game_frame(0); seen |= pl->last_input().pad[0]; }
+		EXPECT(seen & MD_MODE);
+		/* the core takes the 6 button pad: a six button game sees X Y Z Mode; pad type 3 hides them */
+		pl->on_change(mdp::MdPlayer::ROW_PADTYPE, 2);
+		EXPECT(md_host_pad_type(0) == MD_PAD_6 && md_host_pad_type(1) == MD_PAD_6);
+		pl->on_change(mdp::MdPlayer::ROW_PADTYPE, 1);
+		EXPECT(md_host_pad_type(0) == MD_PAD_3);
+		pl->on_change(mdp::MdPlayer::ROW_PADTYPE, 0);
+	} else {
+		/* two buttons: 1 = Cross (MD_B), 2 = Circle (MD_C), Start = Pause */
+		EXPECT(bits(PH_CROSS) == (unsigned) MD_B);
+		EXPECT(bits(PH_CIRCLE) == (unsigned) MD_C);
+		EXPECT(held(PH_START) == (unsigned) MD_START);
+		EXPECT(bits(PH_L) == 0u && bits(PH_R) == 0u);          /* no X Y Z on an 8 bit console */
+		EXPECT(md_host_pad_type(0) == 0);
+		/* Square is Button 1's turbo: pressed it gives MD_B on some frames */
+		unsigned t = 0;
+		for (int i = 0; i < 8; i++) t |= bits(PH_SQUARE);
+		EXPECT(t & MD_B);
+	}
+	/* two diagonals do not hide each other, the pad of a second player */
+	rig.game_frame(PH_RIGHT, PH_CROSS);
+	EXPECT(pl->last_input().pad[0] == (unsigned) MD_RIGHT);
+	EXPECT(con == "gg" ? true : (pl->last_input().pad[1] & (md ? MD_B : MD_B)) != 0);
+	/* Start + Select held opens the menu, and only when held */
+	{
+		bool opened = false;
+		for (int i = 0; i < 40 && !opened; i++) opened = rig.game_frame(PH_START | PH_SELECT);
+		EXPECT(opened);
+	}
+	/* Select alone for a long time does not */
+	{
+		bool opened = false;
+		for (int i = 0; i < 90 && !opened; i++) opened = rig.game_frame(PH_SELECT);
+		EXPECT(!opened);
+	}
+	pl->finish(EXIT_NORMAL);
+	delete pl;
+	md_host_unload();
+	fprintf(stderr, "player_twin: pads %s %d checks, %d failed\n", con.c_str(), g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
+int run_handoff_test(const char *rom, const std::string &work);   /* handoff_proof.cpp */
+
+int main(int argc, char **argv)
+{
+	if (argc >= 5 && !strcmp(argv[1], "look")) return run_look_test(argv[2], argv[3], argv[4]);
+	if (argc >= 5 && !strcmp(argv[1], "pads")) return run_pads_test(argv[2], argv[3], argv[4]);
+	if (argc >= 3 && !strcmp(argv[1], "pal")) return run_pal_test(argv[2]);
+	if (argc >= 2 && !strcmp(argv[1], "ceilings")) return run_ceiling_test();
+	if (argc >= 4 && !strcmp(argv[1], "handoff")) return run_handoff_test(argv[2], argv[3]);
+	if (argc >= 6 && !strcmp(argv[1], "test")) return run_test(argv[2], argv[3], argv[4], argv[5]);
+	fprintf(stderr, "usage: player_twin test CONSOLE ROM SHOTS WORK | look CONSOLE ROM WORK | pads CONSOLE ROM WORK | pal ROM | ceilings | handoff ROM WORK\n");
+	return 2;
+}

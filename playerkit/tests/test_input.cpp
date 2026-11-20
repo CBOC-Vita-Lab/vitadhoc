@@ -438,3 +438,88 @@ TEST(input_enter_convention)
 	CHECK_EQ(phys_cancel(true), PH_CIRCLE);
 	CHECK_EQ(phys_cancel(false), PH_CROSS);
 }
+
+/* ---- the Sega player's pads (md.bin) ------------------------------------------------------------ */
+
+TEST(input_sega_models_defaults)
+{
+	CHECK(model_by_name("md") == &model_md());
+	CHECK(model_by_name("sms") == &model_sms());
+	CHECK(model_by_name("gg") == &model_gg());
+	CHECK(model_by_name("sg") == &model_sg());
+	const PadModel &m = model_md();
+	CHECK_EQ(m.n, 12);
+	for (int i = 0; i < m.n; i++) for (int j = i + 1; j < m.n; j++) CHECK(m.btn[i].out_bit != m.btn[j].out_bit);
+	/* the owner mapping: A Square, B Cross, C Circle, X L, Y Triangle, Z R, Start, Mode Select */
+	Rig r(m, true);
+	r.step(PH_SQUARE); CHECK_EQ(r.r.pad[0], 0x0040u);        /* A */
+	r.step(PH_CROSS); CHECK_EQ(r.r.pad[0], 0x0010u);         /* B */
+	r.step(PH_CIRCLE); CHECK_EQ(r.r.pad[0], 0x0020u);        /* C */
+	r.step(PH_L); CHECK_EQ(r.r.pad[0], 0x0400u);             /* X */
+	r.step(PH_TRIANGLE); CHECK_EQ(r.r.pad[0], 0x0200u);      /* Y */
+	r.step(PH_R); CHECK_EQ(r.r.pad[0], 0x0100u);             /* Z */
+	r.step(PH_UP | PH_LEFT); CHECK_EQ(r.r.pad[0], 0x0005u);
+	/* the console layout is fixed: the Enter button does not move it */
+	Rig c(m, false);
+	c.step(PH_CROSS); CHECK_EQ(c.r.pad[0], 0x0010u);
+	/* Master System / Game Gear / SG-1000: 1 = Cross, 2 = Circle, Pause or Start = Start */
+	const PadModel *two[3] = { &model_sms(), &model_gg(), &model_sg() };
+	for (int k = 0; k < 3; k++) {
+		Rig s(*two[k], true);
+		s.step(PH_CROSS); CHECK_EQ(s.r.pad[0], 0x0010u);
+		s.step(PH_CIRCLE); CHECK_EQ(s.r.pad[0], 0x0020u);
+		s.step(PH_DOWN | PH_RIGHT); CHECK_EQ(s.r.pad[0], 0x000Au);
+		s.step(PH_SQUARE); CHECK((s.r.pad[0] & ~0x0010u) == 0u);   /* no third button: Square is Button 1's turbo */
+		for (int i = 0; i < 14; i++) s.step(PH_START);
+		CHECK_EQ(s.r.pad[0], 0x0080u);                        /* a held Start reaches the game after the chord guard's wait */
+	}
+	CHECK_EQ(model_gg().players, 1);
+	CHECK_EQ(model_md().players, 2);
+	CHECK(!model_gg().legacy_chord && model_md().legacy_chord);
+}
+
+TEST(input_sega_mode_tap_and_menu_chord)
+{
+	Rig r(model_md(), true);
+	/* a tap of Select alone is Mode (a short press), Start + Select held opens the menu, and the game sees neither then */
+	bool saw_mode = false;
+	for (int i = 0; i < 4; i++) { r.step(PH_SELECT); saw_mode |= (r.r.pad[0] & 0x0800u) != 0; }
+	for (int i = 0; i < 8; i++) { r.step(0); saw_mode |= (r.r.pad[0] & 0x0800u) != 0; }
+	CHECK(saw_mode);
+	Rig h(model_md(), true);
+	for (int i = 0; i < 14; i++) h.step(PH_SELECT);
+	CHECK(h.r.pad[0] & 0x0800u);                              /* a held Select is Mode after the guard's wait */
+	Rig q(model_md(), true);
+	bool fired = false, leaked = false;
+	for (int i = 0; i < 30; i++) { q.step(PH_START | PH_SELECT); fired |= q.r.menu; leaked |= (q.r.pad[0] & (0x0080u | 0x0800u)) != 0; }
+	CHECK(fired);
+	CHECK(!leaked);
+	/* L + R + Start (the SNES player's old chord) also opens it on the Mega Drive: X + Z + Start is not played then */
+	Rig l(model_md(), true);
+	fired = false;
+	for (int i = 0; i < 30; i++) { l.step(PH_L | PH_R | PH_START); fired |= l.r.menu; }
+	CHECK(fired);
+}
+
+TEST(input_sega_remap_and_profile_files)
+{
+	const PadModel &m = model_md();
+	Profile p = profile_defaults(m, true);
+	CHECK(profile_is_default(p, m, true));
+	int stolen = -1;
+	/* X on the right trigger's partner: put X on Square: A loses it */
+	CHECK_EQ((int) profile_assign(p, m, 0, 3, PH_SQUARE, &stolen), (int) ASSIGN_OK);
+	CHECK_EQ(stolen, 0);
+	Rig r(m, true);
+	r.set_profile(p);
+	r.step(PH_SQUARE); CHECK_EQ(r.r.pad[0], 0x0400u);
+	Ini i = profile_to_ini(p, m);
+	CHECK_STR(i.get("console", ""), "md");
+	Profile q;
+	CHECK_EQ(profile_parse(i, m, true, q), 0);
+	CHECK(q.bind[0][3] == PH_SQUARE && q.bind[0][0] == 0);
+	/* the 8-bit pads keep their own key names */
+	CHECK_STR(action_key(model_sms(), 0), "bind_b1");
+	CHECK_STR(action_label(model_gg(), 2), "Start");
+	CHECK_STR(action_label(model_sg(), 2), "Pause");
+}

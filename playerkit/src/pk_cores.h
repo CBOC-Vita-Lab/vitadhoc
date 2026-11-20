@@ -67,6 +67,10 @@
  *       (audio is light and runs at 0x40; it no longer shares with the APU spinner), WIDE_COMPOSE on
  *       core 3 when a PPU or APU role exists, else on core 1; WIDE_SCOUT on core 3 when an APU
  *       exists, else on core 2.
+ *   CP_MD (md.bin, the Sega player): the core is one thread, so R_EMU_MAIN has core 0 alone. Three cores: DRAW (the hand-over
+ *       thread: upload, pixel-art scaler, bands, present) core 1; AUDIO_OUT (0x40) and WRITER (0xA0) core 2 with one optional
+ *       UPSCALE helper (0xA0) that takes a stripe of the scaler's work whenever the audio thread is asleep. Four cores: AUDIO_OUT,
+ *       WRITER core 3, the helper core 2 and a second helper (0xA0) on core 3; DRAW stays on core 1. Nothing depends on core 3.
  *   CP_APP (the main app): RENDER on core 3 (the three upscale helpers' cores 1 and 2 are then
  *       free of it), UPSCALE helpers 0, 1 on cores 1, 2 as today, helper 2 on core 3 (it only runs
  *       while the render thread, which outranks it, is idle); AUDIO_OUT, WRITER, NET_IO float.
@@ -169,7 +173,7 @@ enum Role {
 	R_NET_IO,          /* network io */
 	R_COUNT
 };
-enum CoreProfile { CP_SNES = 0, CP_NES, CP_APP };
+enum CoreProfile { CP_SNES = 0, CP_NES, CP_APP, CP_MD };
 
 struct Request {
 	CoreProfile profile;

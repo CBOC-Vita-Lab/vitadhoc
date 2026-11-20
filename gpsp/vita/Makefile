@@ -120,11 +120,14 @@ APP_DEFS += -DGBADHOC_VERSION=\"$(CORE_VERSION)\" \
 # (np_https_available() = 0), and `make vpk` stops: a package without TLS
 # would be an Online that cannot connect.
 APP_DEFS += -DNP_TARGET_VITA
+# MBEDTLS= may also come from the environment (MBEDTLS_VITA, or GATE_MBEDTLS_VITA, the
+# gate's variable) so a shell can set it once.
+MBEDTLS ?= $(or $(MBEDTLS_VITA),$(GATE_MBEDTLS_VITA))
 ifneq ($(strip $(MBEDTLS)),)
 APP_DEFS += -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
 MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
 else ifneq ($(filter vpk $(VPK),$(MAKECMDGOALS)),)
-$(error make vpk needs MBEDTLS=<prefix>: python3 tools/online/build-mbedtls.py --target vita --work DIR, then MBEDTLS=DIR/mbedtls/vita)
+$(error make vpk needs MBEDTLS=<prefix>: python3 tools/online/build-mbedtls.py --target vita --work DIR, then MBEDTLS=DIR/mbedtls/vita (or export MBEDTLS_VITA=that prefix); docs/BUILDING.md, Mbed TLS)
 endif
 APP_WARN := -Wall -Wextra -Wno-type-limits -std=gnu11
 APP_OBJS := $(foreach s,$(APP_ALL_VITA),$(call app_obj,$(s)))

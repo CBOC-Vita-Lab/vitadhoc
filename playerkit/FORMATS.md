@@ -10,7 +10,7 @@ little-endian.
 ## Save states
 
 Folder: `<root>/states/<console>/<xx>/`, with `<console>` = `snes`, `nes`,
-`gba`, `gb`, `gbc`, `ws`, and `<xx>` the game's bucket: the first two hex
+`gba`, `gb`, `gbc`, `ws`, and the Sega player's `md`, `sms`, `gg`, `sg`, and `<xx>` the game's bucket: the first two hex
 digits (lower case) of the CRC-32 (zlib's) of `<name>`'s bytes, e.g.
 `Super Example World (USA)` -> crc32 `f3a54da3` -> `states/snes/f3/`. 256
 small folders instead of one with thousands of files: a lookup in a big
@@ -219,6 +219,39 @@ Both files are written with the safe write, tolerate missing and unknown
 keys, and carry a version; a reader that sees a newer version reads what it
 knows and keeps the rest.
 
+### The Sega player (`md.bin`): console ids, extra keys, settings files
+
+One program, four consoles: the launch file's `console=` is `md` (Mega Drive / Genesis, extensions `.md .gen .smd .bin`), `sms` (Master
+System, `.sms`), `gg` (Game Gear, `.gg`) or `sg` (SG-1000, `.sg .sc`). The app writes `launch/<console>.ini`, so up to four launch files exist
+beside each other; the player takes the one whose `game=` is the argument it was started with, else the newest. A game file is run as
+the console the app names, whatever its extension (a Game Gear game that carries an `.sms` name is started with `console=gg`); without a
+launch file the extension decides. Everything keyed by console (states, look memory, controls, settings, backups, the log) uses the
+console id.
+
+Keys the Sega player reads beside the common ones:
+
+| key | meaning |
+| --- | --- |
+| `cheats_db=<path>` | a RetroArch `.cht` export of the app's cheat database for this game (Game Genie, Pro Action Replay, Fusion RAM / ROM codes). Its entries whose codes are not in the player's own list yet are merged in, switched OFF; the player's list (`<root>/cheats/<name>.cht`) is the one that is saved. Unknown to other players, which ignore it |
+| `ovr.<key>=<value>` | per-game overrides: `scanlines`, `lcd_grid`, `glow`, `scaler` (0 auto, 1 off, 2 MMPX 2x, 3 xBR 2x, 4 xBR 3x), `region` (0 auto, 1 USA, 2 Europe, 3 Japan NTSC), `fm`, `ym2413`, `pad_type` (0 auto, 1 three buttons, 2 six), `sms_border`, `gg_colors` |
+
+Files the Sega player writes under `<root>/`:
+
+```
+<console>/picture.ini        shape, pixel_square, quality, glow, scanlines, lcd_grid, scaler, gg_colors, own_settings
+<console>/games/<game>.ini   the same, for a game that has its own settings
+<console>/player.ini         steady_pacing, smooth_handoff, pal_speed, look_mode, region, fm, ym2413, pad_type, sms_border, gg_lcd
+<console>/log.txt            the log (see md/vita/README.md "Reading the log")
+controls/<console>.ini       the mapping (playerkit Controls)
+cheats/<game>.cht            the cheats of the game, RetroArch .cht (cheatN_desc / cheatN_code / cheatN_enable), written with the safe write
+saves/<game>.srm             battery RAM, the raw bytes RetroArch's .srm holds; written by the writer thread with the safe write
+backups/<console>/<game>.<crc>.<size>.bak   the verified backup of a save file the first time a session replaces it
+look/<console>/<xx>/<game>.look   look memory (the ladder is the pixel art scaler's tiers: "xBR 3x -> 2x", "xBR 2x -> MMPX 2x", "MMPX 2x -> sharp")
+```
+
+The battery save of a Mega Drive game is the 64 KiB-capped cartridge RAM the core reports (`md_host_sram_size()` bytes), the save of the
+8 bit consoles the cartridge's RAM; both are what RetroArch's Genesis Plus GX core writes, so a `.srm` moves between the two unchanged.
+
 ### `link.*` (Two players)
 
 When a Two players session was formed in the app (Super NES: the room, the
@@ -259,7 +292,7 @@ What the look governor (`pk_look`, `INTEGRATION.md` section 8) learned about one
 lighter look than the best one has a file; a game that held 60 at the full look has none (and a file whose look
 turned out not to be needed any more is deleted: `LOOK_MEM_DELETE`).
 
-Path: `<root>/look/<console>/<xx>/<name>.look`, `<console>` as for states (`gba`, `gb`, `gbc`, `nes`, `ws`, `snes`),
+Path: `<root>/look/<console>/<xx>/<name>.look`, `<console>` as for states (`gba`, `gb`, `gbc`, `nes`, `ws`, `snes`, `md`, `sms`, `gg`, `sg`),
 `<xx>` and `<name>` as for states (the CRC-32 bucket and the game's file name without extension). Written with the
 safe write (see "Safe writes") by the frontend's writer thread, at the end of the game or when the menu opens, never
 on the game thread; the module only makes and reads the text (`LookGovernor::serialize`, `load_memory`).

@@ -55,7 +55,8 @@ make -C gpsp/vita -j4 vpk BIOS= VITASDK=/opt/vitasdk MBEDTLS="$TLS/mbedtls/vita"
 make -C gpsp/vita/hostcore ARCH=x86 -j8 MBEDTLS="$TLS/mbedtls/host64"
 ```
 
-Without `MBEDTLS=` the Vita build stops at `vpk` on purpose: a package without
+`MBEDTLS_VITA` (or the gate's `GATE_MBEDTLS_VITA`) in the environment does the same as
+`MBEDTLS=`. Without a prefix the Vita build stops at `vpk` on purpose: a package without
 TLS would be an Online that cannot connect. The twin builds without it and then
 speaks plain `http://` only (the TLS test cases are skipped; `MBEDTLS_HOST`
 points the unit tests at the host prefix). The licence of Mbed TLS (Apache-2.0

@@ -76,12 +76,29 @@ WEAK_OK := ^(_ITM_|_ZGT|__cxa_pure_virtual$$|__deregister_frame_info$$|__registe
 CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" || $$1 == "v" { print $$2 }' | grep -v -E '$(WEAK_OK)')"; \
 	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
 
+SNES_OBJS := $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(NP_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
+LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $(B)/snes.elf $(SNES_OBJS) $(1) $(LIBS)
+
 $(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(NP_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
-	$(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $@ $^ $(LIBS)
+	$(call LINK_ELF,)
 	$(call CHECK_WEAK,$@)
 
-$(B)/snes.velf: $(B)/snes.elf
-	$(VITASDK)/bin/vita-elf-create $< $@
+# ROOM FOR THE SCE DATA (same cure as gpsp/vita/Makefile $(VELF)): vita-elf-create writes its import
+# tables (a few KiB) behind the last byte of segment 0 and gives up ("Cannot allocate N bytes for SCE
+# data at end of segment 0; segment 1 overlaps", then a crash) when segment 1, which the linker starts
+# on the next 64 KiB boundary, is nearer than that.  Whether it is depends on the last 16 bits of the
+# program's size, so ANY change anywhere can trigger it.  Then the program is linked once more with
+# 8 KiB of constants, which carries the end of segment 0 over the boundary.
+$(B)/elfpad.o:
+	@mkdir -p $(B)
+	echo 'const char snes_elf_pad[8192] = { 1 };' | $(CC) -x c -c -o $@ -
+
+$(B)/snes.velf: $(B)/snes.elf $(B)/elfpad.o
+	$(VITASDK)/bin/vita-elf-create $< $@ > $(B)/elf-create.log 2>&1 || \
+	  { grep -q 'segment 1 overlaps' $(B)/elf-create.log && \
+	    echo "  no room for the SCE data behind segment 0 ($$(grep -o "Cannot allocate [0-9]* bytes" $(B)/elf-create.log); text ends at $$($(PREFIX)readelf -lW $< | awk '$$1 == "LOAD" && n++ == 0 { printf "%x", $$3 + $$6 }'), next segment at 64 KiB boundary): linking again with 8 KiB of padding" && \
+	    $(call LINK_ELF,$(B)/elfpad.o) && \
+	    $(VITASDK)/bin/vita-elf-create $< $@; } || { cat $(B)/elf-create.log; exit 1; }
 
 $(B)/snes.bin: $(B)/snes.velf
 	$(VITASDK)/bin/vita-make-fself -s -c $< $@

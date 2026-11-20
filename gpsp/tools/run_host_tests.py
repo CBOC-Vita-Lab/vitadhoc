@@ -670,7 +670,7 @@ def suites(env: Env, baseline: Path | None):
           # pcfg_save, tools/tests/fixtures/README-config.md) keeps the
           # player's choices in this build, new switches default ON, and
           # survives a save and a load.
-          "gcc -std=gnu99 -DVITA -O1 -g -Wall -Wextra -Werror "
+          "gcc -std=gnu99 -DVITA -O1 -g -Wall -Wextra -Werror -Wno-format-truncation "
           "-fsanitize=address,undefined -Ivita -Ipsp -Ifrontend-common "
           "-Ilibretro/libretro-common/include -I. "
           "-o /tmp/t_config_migrate tools/tests/test_config_migrate.c "

@@ -22,7 +22,7 @@ python3 tools/gate/gate.py --baseline F    # compare with a saved summary.json
 
 | tier | what runs |
 |---|---|
-| `--quick` | release unit tests, the package test on a fresh `make vpk` build, the three save tests, `gamedb`, `playerkit`, `widekit`, the SNES, NES and WonderSwan selftests |
+| `--quick` | release unit tests, the package test on a fresh `make vpk` build, the three save tests, `gamedb`, `playerkit` (with `pk-link`, the players' own link under ASan+UBSan and TSan), `widekit`, the SNES, NES and WonderSwan selftests |
 | default | quick, plus the host app (`app`, `rewind`, `local`, `link` on x86), the unit suites, audio, cover art, cheats, library, the online play steps (below), and the private-ROM steps (skipped unless their folder is set) |
 | `--full` | everything, plus armhf under qemu (including `online-armhf`), the cheats end-to-end, the NES armhf check, the Vita compile checks, and the Vita package build (`make vpk`) |
 | `--release` | `--full` plus the release pins: `release-package-pinned` (the committed root VitAdhoc.vpk and its pinned hashes) and `check-files` (SHA256SUMS); stale by design between releases |
@@ -73,7 +73,7 @@ newer is needed for the first and the twin step.
    | variable | steps |
    |---|---|
    | `GATE_GBA_ROMS` (folder) | `cores-private-gba` (run_tests.sh over the folder, x86 against armhf) |
-   | `GATE_SNES_ROMS` (folder) | `snes-mt-compare`, `snes-conformance` (informational); `snes-selftest` also uses it for its ROM sections |
+   | `GATE_SNES_ROMS` (folder) | `snes-mt-compare`, `snes-conformance` (informational), `snes-link` (two SNES players over LAN, punch and relay, 3000 frames); `snes-selftest` also uses it for its ROM sections |
    | `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`) |
    | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section) |
    | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |

@@ -59,7 +59,7 @@
 
 extern "C" {
 unsigned int sceUserMainThreadStackSize = 1024 * 1024;
-unsigned int _newlib_heap_size_user = 40 * 1024 * 1024;
+unsigned int _newlib_heap_size_user = 56 * 1024 * 1024;     /* 40 MB before rewind: its 12 MB ring is on top */
 }
 
 #define APP_ROOT "ux0:data/GBAdhoc"
@@ -131,12 +131,15 @@ static void audio_init(bool legacy, int prio)
 	    g_pace.grain(), OUT_RATE, prio, g_athread >= 0 ? "started" : "NOT started");
 }
 
+static int g_vdp_mode;      /* threads.ini vdp_thread: 0 off, 1 Mega Drive (default), 2 all systems */
+
 /* the roles of the Sega player (pk_cores.h, CP_MD): the emulating thread, the drawing thread, the sound thread, the writer, and the scaler helpers */
 static pk::Request core4_request(void)
 {
 	pk::Request rq(pk::CP_MD);
 	rq.with(pk::R_EMU_MAIN).with(pk::R_DRAW).with(pk::R_AUDIO_OUT).with(pk::R_WRITER).with(pk::R_UPSCALE);
-	rq.upscale_n = 2;     /* the plan gives one helper on three cores, two on four */
+	rq.upscale_n = 3;     /* the plan gives two helpers on three cores (core 2, and core 0 below the emulating thread), three on four */
+	if (g_vdp_mode) rq.with(pk::R_RENDER);      /* the VDP line renderer thread (md/core/vdp_thread.c) */
 	return rq;
 }
 
@@ -159,7 +162,11 @@ static void core4_start(const char *path)
 	logf_("%s\n%s\n", c, g_cores->status_text());
 }
 
-static SceUID g_wthread = -1, g_hd_thread = -1, g_help_thread[2] = { -1, -1 };
+static SceUID g_wthread = -1, g_hd_thread = -1, g_help_thread[3] = { -1, -1, -1 };
+/* A helper on core 0 (below the emulating thread's priority) only claims chunks while the emulating thread is between frames: a chunk it
+ * claimed and was then preempted in would hold the drawing thread up for the rest of the emulated frame. */
+static std::atomic<int> g_emu_busy(0);
+static std::atomic<int> g_help_on_core0[3];
 
 static void core4_fallback(void)
 {
@@ -168,9 +175,9 @@ static void core4_fallback(void)
 	const pk::Slot *w = g_core_plan.find(pk::R_WRITER);
 	const int rc = a && g_athread >= 0 ? sceKernelChangeThreadCpuAffinityMask(g_athread, a->mask) : -1;
 	const int rc2 = w && g_wthread >= 0 ? sceKernelChangeThreadCpuAffinityMask(g_wthread, w->mask) : -1;
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 3; i++) {
 		const pk::Slot *h = g_core_plan.find(pk::R_UPSCALE, i);
-		if (h && g_help_thread[i] >= 0) sceKernelChangeThreadCpuAffinityMask(g_help_thread[i], h->mask);
+		if (h && g_help_thread[i] >= 0) { sceKernelChangeThreadCpuAffinityMask(g_help_thread[i], h->mask); g_help_on_core0[i] = h->mask == (unsigned) SCE_KERNEL_CPU_MASK_USER_0; }
 	}
 	g_wd_audio = g_wd_writer = -1;
 	char c[220];
@@ -180,7 +187,7 @@ static void core4_fallback(void)
 
 /* ---- video ------------------------------------------------------------- */
 /* The picture goes through the GPU: the core's frame is copied into a texture (through the Game Gear's LCD colour table when that is on),
- * optionally scaled by the CPU pixel art scaler (MMPX / xBR, playerkit pk_scale, on the drawing thread with one or two helpers taking
+ * optionally scaled by the CPU pixel art scaler (MMPX / xBR, playerkit pk_scale, on the drawing thread with up to three helpers taking
  * stripes) into a second texture, then
  *   1. (Sharp)  drawn with nearest sampling at an integer scale into a render target,
  *   2. (Glow)   every few frames shrunk twice (64x64, 16x16) into two tiny render targets,
@@ -283,6 +290,42 @@ static void bezel_load(const std::string &game, const std::string &console)
 	stbi_image_free(px);
 }
 
+/* ---- the core's worker threads (md/core/thread_ops.h): the VDP line renderer ------------------------------------------------------------ */
+struct WorkerSlot { SceUID th; void (*fn)(void *); void *arg; };
+static WorkerSlot g_wk[MD_WORKERS] = { { -1, NULL, NULL }, { -1, NULL, NULL } };
+static int worker_entry(SceSize, void *argp)
+{
+	WorkerSlot *w = *(WorkerSlot **) argp;
+	w->fn(w->arg);
+	return sceKernelExitThread(0);
+}
+static void *wk_sem_create(void *) { const SceUID s = sceKernelCreateSema("md_worker", 0, 0, 0x7FFFFFFF, NULL); return s < 0 ? NULL : (void *) (intptr_t) s; }
+static void wk_sem_destroy(void *, void *s) { if (s) sceKernelDeleteSema((SceUID) (intptr_t) s); }
+static void wk_sem_post(void *, void *s) { sceKernelSignalSema((SceUID) (intptr_t) s, 1); }
+static void wk_sem_wait(void *, void *s) { sceKernelWaitSema((SceUID) (intptr_t) s, 1, NULL); }
+static int wk_spawn(void *, int id, void (*fn)(void *), void *arg)
+{
+	const pk::Slot *sl = g_core_plan.find(id == MD_WORKER_VDP ? pk::R_RENDER : pk::R_APU);
+	const int prio = sl ? sl->prio : 0x60;
+	const unsigned mask = sl ? sl->mask : (unsigned) SCE_KERNEL_CPU_MASK_USER_1;
+	g_wk[id].fn = fn; g_wk[id].arg = arg;
+	g_wk[id].th = sceKernelCreateThread(id == MD_WORKER_VDP ? "md_vdp" : "md_fm", worker_entry, prio, 0x10000, 0, mask, NULL);
+	if (g_wk[id].th < 0) return -1;
+	WorkerSlot *self = &g_wk[id];
+	if (sceKernelStartThread(g_wk[id].th, sizeof self, &self) < 0) { sceKernelDeleteThread(g_wk[id].th); g_wk[id].th = -1; return -2; }
+	logf_("worker %d on mask %x priority 0x%x\n", id, mask, prio);
+	return 0;
+}
+static void wk_wait_end(void *, int id)
+{
+	if (g_wk[id].th < 0) return;
+	sceKernelWaitThreadEnd(g_wk[id].th, NULL, NULL);
+	sceKernelDeleteThread(g_wk[id].th);
+	g_wk[id].th = -1;
+}
+static void wk_yield(void *) { sceKernelDelayThread(0); }
+static const md_thread_ops g_wk_ops = { NULL, wk_sem_create, wk_sem_destroy, wk_sem_post, wk_sem_wait, wk_spawn, wk_wait_end, wk_yield };
+
 /* ---- the scaler's helpers ------------------------------------------------------------------------------------------------------------
  * One job at a time, cut into chunks of rows. The drawing thread publishes the job (fields first, then `next` with the job's number in
  * its upper half), takes chunks itself, and waits until every chunk has been finished; a helper that is awake takes chunks the same way
@@ -299,16 +342,17 @@ struct ScaleJob {
 };
 static ScaleJob g_job;
 static uint32_t g_job_no;
-static SceUID g_help_sema[2] = { -1, -1 };
+static SceUID g_help_sema[3] = { -1, -1, -1 };
 static volatile int g_help_stop;
 static int g_help_n;
-static pk::ScaleScratch g_draw_scratch, g_help_scratch[2];
+static pk::ScaleScratch g_draw_scratch, g_help_scratch[3];
 
 /* take and run chunks of the current job; returns how many this thread ran */
-static int job_work(pk::ScaleScratch &sc, bool helper)
+static int job_work(pk::ScaleScratch &sc, bool helper, bool low = false)
 {
 	int ran = 0;
 	for (;;) {
+		if (low && g_emu_busy.load(std::memory_order_relaxed)) return ran;
 		uint64_t n = g_job.next.load(std::memory_order_acquire);
 		pk::ScaleCache *cache = g_job.cache;
 		const int nch = g_job.nchunks;
@@ -329,19 +373,20 @@ static int help_thread(SceSize, void *argp)
 	while (!g_help_stop) {
 		sceKernelWaitSema(g_help_sema[idx], 1, NULL);
 		if (g_help_stop) break;
-		job_work(g_help_scratch[idx], true);
+		job_work(g_help_scratch[idx], true, g_help_on_core0[idx].load(std::memory_order_relaxed) != 0);
 	}
 	return sceKernelExitThread(0);
 }
 
 static void help_start(int n_wanted)
 {
-	static int idx[2] = { 0, 1 };
-	for (int i = 0; i < n_wanted && i < 2; i++) {
+	static int idx[3] = { 0, 1, 2 };
+	for (int i = 0; i < n_wanted && i < 3; i++) {
 		const pk::Slot *s = g_core_plan.find(pk::R_UPSCALE, i);
 		if (!s) break;
 		char nm[16];
 		snprintf(nm, sizeof nm, "md_scale%d", i);
+		g_help_on_core0[i] = s->mask == (unsigned) SCE_KERNEL_CPU_MASK_USER_0;
 		g_help_sema[i] = sceKernelCreateSema(nm, 0, 0, 1 << 16, NULL);
 		if (g_help_sema[i] < 0) break;
 		g_help_thread[i] = sceKernelCreateThread(nm, help_thread, s->prio, 0x10000, 0, s->mask, NULL);
@@ -431,13 +476,6 @@ static pk::ScalerKind scaler_kind_for(const pic_settings &ps, const pic_info &gi
 static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, const pic_info &gi)
 {
 	int w = s.w, h = s.h;
-	int idx = -1;
-	for (int n = 1; n <= 4; n++) {
-		int c = (g_src_i + n) % 4;
-		if (gtex_writable(g_src[c])) { idx = c; break; }
-	}
-	if (idx < 0) { g_fence_skips++; return 0; }          /* the GPU is behind: show the old picture again */
-	g_serial_seen = ++g_up_serial;
 	if (w > 512) w = 512;
 	if (h > 512) h = 512;
 	if (ps.shape == PIC_ZOOM && frame_no % 20 == 0) {
@@ -447,28 +485,19 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, cons
 		if (g_crop_votes >= 2) { g_crop_top = t; g_crop_bot = b; }
 		else { if (t < g_crop_top) g_crop_top = t; if (b < g_crop_bot) g_crop_bot = b; }
 	}
-	vita2d_texture *tx = g_src[idx].t;
-	uint8_t *dst = (uint8_t *) vita2d_texture_get_datap(tx);
-	unsigned dpitch = vita2d_texture_get_stride(tx);
 	/* the scaler reads CPU memory (the mailbox's copy, or the Game Gear's mapped copy), never the texture */
 	static uint16_t lcdbuf[160 * 256];
 	const uint16_t *scaler_src = s.p;
 	int scaler_pitch_px = s.pitch / 2;
-	if (g_is_gg && g_lcd && ps.gg_colors && w * h <= 160 * 256 && w <= 160) {
+	const bool lcd = g_is_gg && g_lcd && ps.gg_colors && w * h <= 160 * 256 && w <= 160;
+	if (lcd) {
 		for (int y = 0; y < h; y++) {
 			const uint16_t *row = (const uint16_t *) ((const uint8_t *) s.p + (size_t) y * s.pitch);
 			uint16_t *o = lcdbuf + (size_t) y * w;
 			for (int x = 0; x < w; x++) o[x] = g_lcd[row[x]];
-			memcpy(dst + (size_t) y * dpitch, o, (size_t) w * 2);
 		}
 		scaler_src = lcdbuf; scaler_pitch_px = w;
-	} else {
-		for (int y = 0; y < h; y++)
-			memcpy(dst + (size_t) y * dpitch, (const uint8_t *) s.p + (size_t) y * s.pitch, (size_t) w * 2);
 	}
-	if (w != g_src_w || h != g_src_h) { g_crop_top = g_crop_bot = g_crop_cand_top = g_crop_cand_bot = 0; }
-	g_src_i = idx; g_src_w = w; g_src_h = h; g_src_info = gi;
-	g_have_picture = 1;
 
 	/* the pixel art scaler: the look's choice for this picture, into a scaled texture the GPU is done with */
 	g_sc_f = 0;
@@ -492,6 +521,26 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, cons
 			g_sc_i = si; g_sc_f = f;
 		} else g_fence_skips++;
 	}
+	/* The source texture is only needed when the picture is shown unscaled (the glow samples the scaled picture when there is one): with a
+	 * scaler on, its 143 KB copy is skipped. The first picture always makes one, so there is a texture to point at. */
+	if (g_sc_f == 0 || g_src_i < 0) {
+		int idx = -1;
+		for (int n = 1; n <= 4; n++) {
+			int c = (g_src_i + n + 4) % 4;
+			if (gtex_writable(g_src[c])) { idx = c; break; }
+		}
+		if (idx < 0) { g_fence_skips++; return 0; }          /* the GPU is behind: show the old picture again */
+		vita2d_texture *tx = g_src[idx].t;
+		uint8_t *dst = (uint8_t *) vita2d_texture_get_datap(tx);
+		const unsigned dpitch = vita2d_texture_get_stride(tx);
+		for (int y = 0; y < h; y++)
+			memcpy(dst + (size_t) y * dpitch, (const uint8_t *) scaler_src + (size_t) y * scaler_pitch_px * 2, (size_t) w * 2);
+		g_src_i = idx;
+	}
+	g_serial_seen = ++g_up_serial;
+	if (w != g_src_w || h != g_src_h) { g_crop_top = g_crop_bot = g_crop_cand_top = g_crop_cand_bot = 0; }
+	g_src_w = w; g_src_h = h; g_src_info = gi;
+	g_have_picture = 1;
 	return 1;
 }
 
@@ -579,10 +628,10 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 	bool glow_on = extras && src && g_have_picture && !bezel && ps.glow > 0 && ps.shape != PIC_FULL && g_glowA.t && g_glowB.t;
 	if (glow_on && (++g_glow_age >= 4 || g_glow_serial == 0) && g_serial_seen != g_glow_serial &&
 	    gtex_writable(g_glowA) && gtex_writable(g_glowB)) {
-		filt(src->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
+		filt(img->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
 		if (rt_scene(g_glowA)) {
-			gtex_read(*src);
-			draw_into_rt(src->t, 64, 64, r.sx, r.sy, r.sw, r.sh, 64, 64);
+			gtex_read(*img);
+			draw_into_rt(img->t, 64, 64, rs.sx, rs.sy, rs.sw, rs.sh, 64, 64);
 			vita2d_end_drawing();
 			if (rt_scene(g_glowB)) {
 				gtex_read(g_glowA);
@@ -899,7 +948,7 @@ static int hd_draw_thread(SceSize, void *)
 		if (!f) break;
 		const uint64_t t0 = sceKernelGetProcessTimeWide();
 		Pic s;
-		s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch; s.serial = (unsigned) (f->user & 0x3FFFFFFF);
+		s.p = (const uint16_t *) (f->data + f->offset); s.w = f->w; s.h = f->h; s.pitch = f->pitch; s.serial = (unsigned) (f->user & 0x3FFFFFFF);
 		const pic_info gi = g_geo[s.serial & 15];
 		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
 		video_upload(ps, (int) f->seq, s, gi);
@@ -1147,8 +1196,9 @@ int main(int argc, char **argv)
 	pk::scale_init();
 	video_init();
 
-	/* the plan of the threads (threads.ini: core4=auto|off, audio_prio, main_prio, draw_prio, helpers=0|1|2, audio_legacy) */
+	/* the plan of the threads (threads.ini: core4=auto|off, audio_prio, main_prio, draw_prio, helpers=0..3, audio_legacy) */
 	const char *tini = APP_ROOT "/md/threads.ini";
+	g_vdp_mode = clampi_(ini_int(tini, "vdp_thread", 1), 0, 2);
 	core4_start(tini);
 	const int audio_prio = prio_ok(ini_int(tini, "audio_prio", PRIO_AUDIO_DEFAULT), PRIO_AUDIO_DEFAULT);
 	const pk::Slot *mslot = g_core_plan.find(pk::R_EMU_MAIN);
@@ -1164,6 +1214,7 @@ int main(int argc, char **argv)
 	}
 	md_host_set_log([](const char *line) { logf_("%s\n", line); });
 	if (md_host_init() != 0) { fatal_screen("The Sega core could not start.", "Not enough memory."); return_to_vitadhoc(); }
+	if (g_vdp_mode && g_core_plan.find(pk::R_RENDER)) md_host_set_threads(&g_wk_ops, MD_THREAD_VDP | (g_vdp_mode == 2 ? MD_THREAD_VDP_SMS : 0u));
 
 	/* the game: launch file or argument, patch, saves, states, settings (player.cpp) */
 	writer_start();
@@ -1195,7 +1246,7 @@ int main(int argc, char **argv)
 	md_host_set_audio_rate(OUT_RATE);
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 	g_pl->apply_start_mode();
-	help_start(clampi_(ini_int(tini, "helpers", 2), 0, 2));
+	help_start(clampi_(ini_int(tini, "helpers", 3), 0, 3));
 	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
 
 	double frame_hz = md_host_fps();
@@ -1262,16 +1313,27 @@ int main(int argc, char **argv)
 		if (hd) g_pipe.box().set_pace_mode(g_pl->pace_mode());
 		int to_run = (half || hd) ? (int) elapsed : 1;
 		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }
+		to_run = g_pl->speed_plan(to_run);       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
+		if (hd) g_pipe.box().set_force_drop(g_pl->speed_busy());
 		bool fresh = false, want_menu = false;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;
 		for (int i = 0; i < to_run; i++) {
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
 			bool render = g_pl->want_render(emu_frame);
 			if (hd && !half && i != to_run - 1) render = false;
+			if (!g_pl->speed_draws(i, to_run)) render = false;       /* fast forward draws the last frame of the refresh */
 			md_host_set_render(render ? 1 : 0);
+			/* no copy: the core draws straight into the mailbox buffer when the gate is open and nothing would be evicted (pipe.h direct_begin) */
+			uint16_t *dfb = NULL;
+			if (hd && render) { int dp = 0; dfb = g_pipe.direct_begin(&dp); if (dfb) md_host_set_framebuffer(dfb, dp); }
 			uint64_t t0 = sceKernelGetProcessTimeWide();
-			md_host_run_frame();
+			g_emu_busy.store(1, std::memory_order_relaxed);
+			g_pl->run_frame(render);
+			g_emu_busy.store(0, std::memory_order_relaxed);
 			uint64_t t1 = sceKernelGetProcessTimeWide();
+			const uint16_t *dpix = NULL;
+			int dw = 0, dh = 0, dpp = 0;
+			if (dfb) { dpix = md_host_video(&dw, &dh, &dpp); md_host_set_framebuffer(NULL, 0); }
 			emu_us += t1 - t0;
 			last_frame_us = t1 - t0;
 			frames_run++;
@@ -1279,23 +1341,27 @@ int main(int argc, char **argv)
 			if (render) render_emu_us = t1 - t0; else not_rendered++;
 			static int16_t abuf[2048 * 2];
 			int n;
-			while ((n = md_host_audio_take(abuf, 2048)) > 0) g_pace.push(abuf, n);
+			while ((n = md_host_audio_take(abuf, 2048)) > 0) { n = (int) g_pl->audio_filter(abuf, (size_t) n); if (n > 0) g_pace.push(abuf, n); }
 			if (render) {
 				uint64_t f0 = sceKernelGetProcessTimeWide();
 				int pw = 0, ph = 0, pp = 0;
-				const uint16_t *pix = md_host_video(&pw, &ph, &pp);
+				const uint16_t *pix = dfb ? dpix : md_host_video(&pw, &ph, &pp);
+				if (dfb) { pw = dw; ph = dh; pp = dpp; }
 				md_video_info vi;
 				md_host_video_info(&vi);
 				if (vi.serial != g_geo_serial) { g_geo[vi.serial & 15] = geo_now(vi); g_geo_serial = vi.serial; }
 				if (pix && pw > 0 && ph > 0) {
 					if (hd) {
 						g_pipe.box().note_emulated(1);
-						if (g_pipe.put(pix, pw, ph, pp, (int) (vi.serial & 0x3FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) fresh = true;
+						const int pr = dfb ? g_pipe.direct_commit(pix, pw, ph, pp, (int) (vi.serial & 0x3FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us)
+						                   : g_pipe.put(pix, pw, ph, pp, (int) (vi.serial & 0x3FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us);
+						if (pr > 0) fresh = true;
 					} else {
 						Pic s; s.p = pix; s.w = pw; s.h = ph; s.pitch = pp; s.serial = vi.serial;
 						if (video_upload(g_pl->picture(), frames_run, s, geo_now(vi))) fresh = true;
 					}
 				}
+				if (dfb && g_pipe.direct_open()) g_pipe.direct_abandon();
 				fetch_us += sceKernelGetProcessTimeWide() - f0;
 			} else if (hd) g_pipe.box().note_emulated(1);
 			g_pl->after_frame(sceKernelGetProcessTimeWide());

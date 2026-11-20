@@ -199,8 +199,8 @@ def scenario_all_roms(twin, base, roms, frames):
             n, st.get("state_size"), st.get("sram"), rh, rg, he.get("hashes"), hash_at))
     sizes = [int(r[1]) for r in rows if r[1].isdigit()]
     if sizes:
-        print("  state sizes: min %d, max %d (fe_gblink STATE_MAX 1048576)" % (min(sizes), max(sizes)))
-        check(max(sizes) <= 1 << 20, "every state fits STATE_MAX (1 MiB)")
+        print("  state sizes: min %d, max %d (pk_link state_max 4194304)" % (min(sizes), max(sizes)))
+        check(max(sizes) <= 4 << 20, "every state fits the state cap (4 MiB)")
 
 
 def scenario_desync(twin, base, roms):
@@ -311,16 +311,18 @@ def scenario_wrong_game(twin, base, roms):
     a, b = roms[names[0]], roms[names[1]]
     ph, pg = free_udp_port(), free_udp_port()
     print("[wrong_game] %s vs %s" % (os.path.basename(a), os.path.basename(b)))
-    h, g, rh, rg = run_pair(twin, base, "wrong_game", a, b, lan_link("host", ph), lan_link("guest", pg, "127.0.0.1:%d" % ph),
+    # the host keeps waiting for the right console (a stranger must not be able to end a hosted session): it gives up at wait_s
+    h, g, rh, rg = run_pair(twin, base, "wrong_game", a, b, lan_link("host", ph, wait_s=8), lan_link("guest", pg, "127.0.0.1:%d" % ph),
                             args_h=["--frames", "600"], args_g=["--frames", "600"], timeout=90)
     he, ge = h.kv("end"), g.kv("end")
     check(rh == 1 and rg == 1, "both refused (exit %s / %s)" % (rh, rg))
     check(he and ge and he["ok"] == "0" and ge["ok"] == "0", "ok=0 on both")
     names_ = [x.get("gerr", "") for x in (he or {}, ge or {})]
-    pr = [re.search(r"peer_reason=(-?\d+)", p.text()).group(1) for p in (h, g)]
+    pr = [(re.search(r"peer_reason=(-?\d+)", p.text()) or [None, "?"])[1] for p in (h, g)]
     # the console that sees the other image refuses with ROM_MISSING; the other hears "peer aborted" carrying that reason (2)
-    check(any("rom_missing" in n for n in names_) and all(("rom_missing" in n) or (pr[i] == "2") for i, n in enumerate(names_)),
-          "FE_GBLINK_E_ROM_MISSING (own or as the peer's reason): %s, peer_reason %s" % (names_, pr))
+    check(any("rom_missing" in n for n in names_) or "2" in pr,
+          "ROM_MISSING (own, or as the peer's reason: the guest hears the host's refusal): %s, peer_reason %s" % (names_, pr))
+    check("refused a console (rom_missing)" in h.text(), "the host logged the refusal and went on waiting, then ended with no_peer: %s" % (he and he.get("gerr")))
     check(sha(h.srm) == h.srm_before and sha(g.srm) == g.srm_before, "no save file was written")
     check(int((he or {}).get("frames", "1")) == 0 and int((ge or {}).get("frames", "1")) == 0, "no frame ran")
 
@@ -354,9 +356,9 @@ def main():
         "all_roms": lambda: scenario_all_roms(a.twin, base, roms, min(a.frames, 600)),
         "desync": lambda: scenario_desync(a.twin, base, roms),
         "wrong_game": lambda: scenario_wrong_game(a.twin, base, roms),
-        "punch": lambda: scenario_punch(a.twin, base, roms, min(a.frames, 900)),
-        "relay": lambda: scenario_relay(a.twin, base, roms, min(a.frames, 900)),
-        "punch_sym": lambda: scenario_punch(a.twin, base, roms, min(a.frames, 900), nat_a="port", nat_b="sym", name="punch_sym", expect_fail=True),
+        "punch": lambda: scenario_punch(a.twin, base, roms, a.frames),
+        "relay": lambda: scenario_relay(a.twin, base, roms, a.frames),
+        "punch_sym": lambda: scenario_punch(a.twin, base, roms, a.frames, nat_a="port", nat_b="sym", name="punch_sym", expect_fail=True),
     }
     for k, fn in scen.items():
         if only and k not in only:

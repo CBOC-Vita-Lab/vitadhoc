@@ -40,6 +40,8 @@
  *
  ****************************************************************************************/
 
+/* VitAdhoc: this file is compiled twice (vdp_render_w.c renames its globals for the VDP worker); the call wrappers of vdp_thread.h are not for it */
+#define VDPW_NO_WRAP
 #include "shared.h"
 
 extern int8 reset_do_not_clear_buffers;
@@ -598,6 +600,9 @@ static uint8 object_count[2];
 
 /* Sprite Collision Info */
 uint16 spr_col;
+
+/* VitAdhoc: set by parse_satb_tms (status bits 0-4 written by the renderer) */
+uint8 tms_status_set;
 
 /* Function pointers */
 void (*render_bg)(int line);
@@ -4354,6 +4359,7 @@ void parse_satb_tms(int line)
 
   /* Insert number of last sprite entry processed */
   status = (status & 0xE0) | (i & 0x1F);
+  tms_status_set = 1;      /* VitAdhoc: the VDP worker merges the low status bits back only when this ran */
 }
 
 void parse_satb_m4(int line)
@@ -4967,4 +4973,43 @@ void remap_line(int line)
     }
  #endif
   }
+}
+
+
+/*--------------------------------------------------------------------------*/
+/* VitAdhoc: the renderer's function pointers as small numbers (VDP worker)  */
+/*--------------------------------------------------------------------------*/
+/* The worker runs its own compiled copy of this file (vdp_render_w.c), so the addresses in render_bg / render_obj / parse_satb /
+ * update_bg_pattern_cache differ between the two. The emulating thread sends these codes, the worker sets its pointers from them. */
+
+static void (*const fn_tab_bg[])(int) = {
+  render_bg_m0, render_bg_m1, render_bg_m1x, render_bg_m2, render_bg_m3, render_bg_m3x, render_bg_inv, render_bg_m4,
+  render_bg_m5, render_bg_m5_vs, render_bg_m5_vs_enhanced, render_bg_m5_im2, render_bg_m5_im2_vs
+};
+static void (*const fn_tab_obj[])(int) = {
+  render_obj_tms, render_obj_m4, render_obj_m5, render_obj_m5_ste, render_obj_m5_im2, render_obj_m5_im2_ste
+};
+static void (*const fn_tab_sat[])(int) = { parse_satb_tms, parse_satb_m4, parse_satb_m5, parse_satb_m5_im2 };
+static void (*const fn_tab_pat[])(int) = { update_bg_pattern_cache_m4, update_bg_pattern_cache_m5 };
+
+#define FN_CODE(tab, ptr, out, sh) \
+  { unsigned c = 63, k; for (k = 0; k < sizeof(tab) / sizeof(tab[0]); k++) if ((tab)[k] == (ptr)) c = k; (out) |= c << (sh); }
+
+unsigned vdp_fn_encode(void)
+{
+  unsigned o = 0;
+  FN_CODE(fn_tab_bg, render_bg, o, 0)
+  FN_CODE(fn_tab_obj, render_obj, o, 6)
+  FN_CODE(fn_tab_sat, parse_satb, o, 12)
+  FN_CODE(fn_tab_pat, update_bg_pattern_cache, o, 18)
+  return o;
+}
+
+void vdp_fn_decode(unsigned c)
+{
+  unsigned b = c & 63, ob = (c >> 6) & 63, s = (c >> 12) & 63, p = (c >> 18) & 63;
+  render_bg = b < sizeof(fn_tab_bg) / sizeof(fn_tab_bg[0]) ? fn_tab_bg[b] : 0;
+  render_obj = ob < sizeof(fn_tab_obj) / sizeof(fn_tab_obj[0]) ? fn_tab_obj[ob] : 0;
+  parse_satb = s < sizeof(fn_tab_sat) / sizeof(fn_tab_sat[0]) ? fn_tab_sat[s] : 0;
+  update_bg_pattern_cache = p < sizeof(fn_tab_pat) / sizeof(fn_tab_pat[0]) ? fn_tab_pat[p] : 0;
 }

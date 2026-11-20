@@ -65,6 +65,7 @@ struct PassOut {
 	std::string census;
 	bool started = false;
 	std::vector<char> half;          /* steady pacing's mode when each frame was handed over */
+	int direct = 0;                  /* pictures the core drew straight into the mailbox */
 };
 
 const int FRAMES = 700;
@@ -99,6 +100,7 @@ bool run_pass(const char *rom, const std::string &work, bool use_pipe, PassOut *
 	mdp::PicturePipe pipe;
 	std::thread consumer;
 	std::atomic<int> busy(0), bad(0);
+	int direct_frames = 0;
 	if (use_pipe) {
 		out->started = pipe.start(&sys, 2, true, 16683, 16639);
 		HEXPECT(out->started);
@@ -108,8 +110,8 @@ bool run_pass(const char *rom, const std::string &work, bool use_pipe, PassOut *
 				HandoffFrame *f = pipe.box().take();
 				if (!f) break;
 				busy = 1;
-				Rec r; r.seq = f->seq; r.hash = fnv(f->data, f->w, f->h, f->pitch);
-				if (f->pitch != f->w * 2) bad++;
+				Rec r; r.seq = f->seq; r.hash = fnv(f->data + f->offset, f->w, f->h, f->pitch);
+				if (f->pitch < f->w * 2 || (f->offset == 0 && f->pitch != f->w * 2 && f->pitch != mdp::PicturePipe::MAX_W * 2)) bad++;
 				out->shown.push_back(r);
 				rs = rs * 1664525u + 1013904223u;
 				std::this_thread::sleep_for(std::chrono::microseconds(rs % 1500));      /* a drawing thread that is slow now and then */
@@ -127,10 +129,17 @@ bool run_pass(const char *rom, const std::string &work, bool use_pipe, PassOut *
 		pl->input(p, false, pf.clock_us / 1000, (uint32_t) f);
 		const bool rendered = pl->want_render((uint32_t) f);
 		md_host_set_render(rendered ? 1 : 0);
+		bool off = f >= OFF_FROM && f < OFF_TO;
+		if (use_pipe && f % 3 == 0) std::this_thread::sleep_for(std::chrono::microseconds(1500));      /* the producer is not infinitely fast: the gate is open some of the time */
+		/* the core draws straight into the mailbox buffer when it can (no copy), as the player does; otherwise the copy of put() */
+		uint16_t *dfb = NULL;
+		if (use_pipe && !off && rendered) { int dp = 0; dfb = pipe.direct_begin(&dp); if (dfb) { md_host_set_framebuffer(dfb, dp); direct_frames++; } }
 		md_host_run_frame();
+		const uint16_t *dv = NULL;
+		int dw = 0, dh = 0, dpp = 0;
+		if (dfb) { dv = md_host_video(&dw, &dh, &dpp); md_host_set_framebuffer(NULL, 0); }
 		int16_t ab[4096 * 2];
 		while (md_host_audio_take(ab, 4096) > 0) {}
-		bool off = f >= OFF_FROM && f < OFF_TO;
 		if (use_pipe) {
 			if (f == OFF_FROM) pipe.box().set_enabled(false);
 			if (f == OFF_TO) pipe.box().set_enabled(true);
@@ -145,7 +154,8 @@ bool run_pass(const char *rom, const std::string &work, bool use_pipe, PassOut *
 			pipe.box().note_emulated(1);
 		}
 		int vw = 0, vh = 0, vp = 0;
-		const uint16_t *v = rendered ? md_host_video(&vw, &vh, &vp) : 0;
+		const uint16_t *v = dfb ? dv : rendered ? md_host_video(&vw, &vh, &vp) : 0;
+		if (dfb) { vw = dw; vh = dh; vp = dpp; }
 		if (!use_pipe || off) {
 			/* the way it was: the picture of the frame, straight from the core */
 			if (v) {
@@ -154,9 +164,10 @@ bool run_pass(const char *rom, const std::string &work, bool use_pipe, PassOut *
 			}
 			if (use_pipe && off && v) HEXPECT(pipe.put(v, vw, vh, vp, 0, (uint32_t) f, 4000) == -1);       /* off: the host draws inline */
 		} else if (v) {
-			int r = pipe.put(v, vw, vh, vp, 0, (uint32_t) f, 4000);
+			int r = dfb ? pipe.direct_commit(v, vw, vh, vp, 0, (uint32_t) f, 4000) : pipe.put(v, vw, vh, vp, 0, (uint32_t) f, 4000);
 			HEXPECT(r >= 0);
 		}
+		if (dfb && pipe.direct_open()) pipe.direct_abandon();
 		/* the same cost script in both runs, so steady pacing decides the same way in both */
 		out->half.push_back(pl->pace_mode() == PACE_HALF ? 1 : 0);
 		pl->drawn_cost(f >= HALF_FROM && f < HALF_TO ? 60000u : 9000u);
@@ -167,6 +178,7 @@ bool run_pass(const char *rom, const std::string &work, bool use_pipe, PassOut *
 	if (use_pipe) {
 		HEXPECT(pipe.box().flush(5000000));
 		HandoffCensus k = pipe.box().census();
+		out->direct = direct_frames;
 		out->produced = k.produced; out->dropped = k.dropped; out->gate_waits = k.gate_waits; out->depth_end = k.depth;
 		HEXPECT(k.shown + k.dropped == k.produced);
 		char line[512];
@@ -257,6 +269,8 @@ int run_handoff_test(const char *rom, const std::string &work)
 	fprintf(stderr, "handoff proof: %s\n", on.census.c_str());
 	HEXPECT(on.census.find("handoff:") != std::string::npos);
 	HEXPECT(on.produced > 100);
+	fprintf(stderr, "handoff proof: %d pictures drawn straight into the mailbox (no copy), the rest by put()\n", on.direct);
+	HEXPECT(on.direct > 5);          /* the proof's consumer is slow on purpose, so the gate is often closed and put() copies */
 	fprintf(stderr, "handoff proof: %d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;
 }

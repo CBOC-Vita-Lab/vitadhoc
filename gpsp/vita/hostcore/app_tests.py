@@ -2788,7 +2788,7 @@ def t_home(S):
 PICKER_ROMS = {"roms/a.sfc": b"x" * 300, "roms/b.nes": b"x" * 300, "roms/c.nes": b"y" * 300,
                "roms/d.ws": b"z" * 300, "roms/g1.gb": b"a" * 300, "roms/g2.gb": b"b" * 300}
 # the picker's geometry on the 960 x 544 screen: the pill, and the centre of row i
-PICKER_PILL = (522, 37)
+PICKER_PILL = (400, 37)     # inside every pill, whatever the console's name is long or short
 # (the references leave out the count column: how many games the Game Boy has depends on
 # whether the test cartridge testrom/gbsave.gb was built)
 PICKER_BOX = (0, 0, 700, 544)
@@ -2912,26 +2912,26 @@ def t_picker(S):
     # the finger: the pill opens it, a row picks a console and closes it
     x, y = PICKER_PILL
     r = picker_run(S, "picker_touch", "90:touch=%d/%d\n+40:shot=t_open.png\n+4:touch=450/%d\n+40:shot=t_snes.png\n"
-                   "+4:touch=%d/%d\n+40:touch=450/%d\n+40:touch=%d/%d\n+40:touch=800/470\n+40:quit\n" %
-                   (x, y, picker_row_y(3), x, y, picker_row_y(5), x, y))
+                   "+4:touch=%d/%d\n+40:touch=450/%d\n+40:touch=%d/%d\n+40:touch=800/528\n+40:quit\n" %
+                   (x, y, picker_row_y(6), x, y, picker_row_y(3), x, y))   # (opened on row 6 the list is scrolled two rows)
     ev = [e["_"].replace("EVT ui_picker ", "") for e in r.evt("ui_picker")]
-    S.check(ev[:3] == ["open console=0", "move row=3 console=3", "close console=3 idle=0"],
-            "a tap on the pill opens it; a tap on the SNES row switches and closes (%s)" % ev)
-    S.check([int(d["console"]) for d in r.evt("ui_browser_console")] == [3, 5],
+    S.check(ev[:3] == ["open console=0", "move row=6 console=6", "close console=6 idle=0"],
+            "a tap on the pill opens it; a tap on the Genesis row switches and closes (%s)" % ev)
+    S.check([int(d["console"]) for d in r.evt("ui_browser_console")] == [6, 4],
             "the second tap on a row switched again (%s)" % [d["_"] for d in r.evt("ui_browser_console")])
     S.check(len(r.evt("ui_picker close")) == 3 and len(r.evt("ui_picker open")) == 3 and
             len(r.evt("ui_browser_console")) == 2,
             "a tap beside the list closes it, and nothing else (%s)" % ev)
     S.picture(r, "t_open.png", "picker_touch_open.png", box=PICKER_BOX)
     S.picture(r, "t_snes.png", "picker_touch_snes.png", box=PICKER_BOX)
-    # ten consoles (the four Sega ones are coming): the host twin repeats the
-    # table four times over to show the list at that length -- it holds eight
-    # rows, scrolls to keep the highlight in view, never reaches the hint line
+    # ten consoles are the real list now; the host twin can repeat the table
+    # (GBADHOC_PICKER_ROWS=4: fourteen rows) to show a longer list -- it holds
+    # eight rows, scrolls to keep the highlight in view, never reaches the hint line
     ten = {"GBADHOC_PICKER_ROWS": "4"}
-    r = picker_run(S, "picker_ten", "90:triangle\n+20:shot=ten_open.png\n" + "+6:triangle\n" * 9 +
+    r = picker_run(S, "picker_ten", "90:triangle\n+20:shot=ten_open.png\n" + "+6:triangle\n" * 12 +
                    "+30:shot=ten_end.png\n+4:touch=450/%d\n+40:shot=ten_tap.png\n+10:quit\n" % picker_row_y(4), env=ten)
-    S.check(picker_moves(r) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 6],
-            "ten rows: nine presses reach the last row, a tap on a row of the scrolled list picks that row (%s)" %
+    S.check(picker_moves(r) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 10],
+            "fourteen rows: twelve presses reach the last row, a tap on a row of the scrolled list picks that row (%s)" %
             picker_moves(r))
     end = r.shot("ten_end.png")
     S.check(max(max(px) for px in end.crop((400, 440, 760, 500)).get_flattened_data()) > 120 and
@@ -3026,11 +3026,11 @@ def t_find(S):
             len(r.evt("ui_text_open")) == 1 and picked(r, target),
             "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
 
-    # (six consoles: the first press opens the picker, six more go round to the GBA again)
-    r = run("console", "90:circle\n94:type=find-only\n150:triangle\n215:triangle\n"
-            "280:triangle\n330:triangle\n380:triangle\n430:triangle\n480:triangle\n560:cross\n700:shot=game.png\n720:quit\n")
+    # (ten consoles: the first press opens the picker, ten more go round to the GBA again)
+    r = run("console", "90:circle\n94:type=find-only\n150:triangle\n" + "+50:triangle\n" * 10 +
+            "+80:cross\n+140:shot=game.png\n+20:quit\n")
     S.check(r.has(r"^EVT browser_find active=0 ") and
-            len(r.evt("ui_browser_console")) == 6 and picked(r, "gbadhoc-test.gba"),
+            len(r.evt("ui_browser_console")) == 10 and picked(r, "gbadhoc-test.gba"),
             "a console change clears Find instead of hiding the remembered game on return")
 
     r = run("touch", "90:touch=715/37\n95:type=find-only-02\n"
@@ -3047,10 +3047,9 @@ def t_library_cache(S):
     """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
     with open(OWN_GBA, "rb") as cartridge:
         second_game = cartridge.read()
-    # six console tabs (GBA, GB, GBC, SNES, NES, WS) since 1.4: two full turns
-    # (TRIANGLE opens the picker, then 12 more presses; 100 frames of rest close it)
-    script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+    # ten console tabs (GBA, GB, GBC, SNES, NES, WS and the four Sega ones): two full turns
+    # (TRIANGLE opens the picker, then 20 more presses; 100 frames of rest close it)
+    script = ("60:triangle\n" + "+60:triangle\n" * 9 + "+70:triangle\n" + "+60:triangle\n" * 9 + "+70:triangle\n"
               "+100:right\n+20:start\n" + "+8:down\n" * 19 +
               "+20:shot=quality_setting.png\n" + "+8:up\n" * 15 +
               "+20:shot=refresh_command.png\n+8:cross\n"
@@ -3062,8 +3061,8 @@ def t_library_cache(S):
     scans = r.evt("rom_scan_time")
     sides = r.evt("rom_scan_side")
     S.check(len(scans) == 2 and {d.get("console") for d in scans} == {"0"} and
-            len(sides) == 10 and {d.get("console") for d in sides} == {"1", "2", "3", "4", "5"},
-            "one walk lists all six consoles; only the explicit refresh walks again "
+            len(sides) == 18 and {d.get("console") for d in sides} == {"1", "2", "3", "4", "5", "6", "7", "8", "9"},
+            "one walk lists all ten consoles; only the explicit refresh walks again "
             "(scans %s, side lists %s)" % ([d["_"] for d in scans], [d["_"] for d in sides]))
     S.check(len(r.evt("rom_cache_hit")) >= 4, "revisited console tabs use cached lists")
     S.check(r.has(r"library_refresh_asked") and r.has(r"library_refresh_done console=0 roms=2"),
@@ -6440,19 +6439,19 @@ def t_snes_library(S):
 
     # The Vita's home screen (ui_home = 1): the SNES chip in the top bar
     # names itself, and the button row's hints stay clear of the buttons.
-    r = S.run("snes_home", "90:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
+    r = S.run("snes_home", pick_script(3) +
               "+90:shot=home_snes.png\n+2:triangle\n+6:down\n+6:down\n+6:down\n+90:shot=home_gba.png\n"
               "+10:quit\n", cwd=cwd, config={"ui_home": 1})
     S.clean(r)
     sw = r.evt("ui_browser_console")
     S.check(sw and any(e["console"] == "3" for e in sw),
-            "TRIANGLE opens the picker and three more presses reach the SNES shelf on the home screen (%s)" %
+            "TRIANGLE opens the picker and more presses reach the SNES shelf on the home screen (%s)" %
             [e["_"] for e in sw])
     S.check(sw and sw[-1]["console"] == "0", "DOWN carries on round to GBA again (%s)" % [e["_"] for e in sw])
 
     # A cover of your own for a SNES game: a picture in covers/ named like it
     # is taken as for the other consoles.
-    r = S.run("snes_cover", "90:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
+    r = S.run("snes_cover", pick_script(3) +
               "+120:shot=home_cover.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1},
               extra={"covers/Game Two (Europe).png": cover_png((300, 400), (200, 40, 40))})
     S.clean(r)
@@ -6821,12 +6820,14 @@ def t_ws_library(S):
         x, w, search = int(pl[-1]["x"]), int(pl[-1]["w"]), int(pl[-1]["search"])
         S.check(x + w <= search, "the pill is whole before the search icon (x %d w %d, search %d)" % (x, w, search))
         px, py = (x + w // 2) * 2, 37
-        r2 = S.run("ws_touch", "90:touch=%d/%d\n+40:touch=450/%d\n+80:shot=ws_tab.png\n+10:touch=%d/%d\n+40:touch=450/%d\n"
-                   "+80:shot=gba_tab.png\n+10:quit\n" % (px, py, picker_row_y(5), px, py, picker_row_y(0)),
+        # WS is the last row of ten (rows scroll), so DOWN walks to it; a tap on the pill opens it again and a tap on
+        # the first visible row (Game Boy Color once WS is selected) goes there
+        r2 = S.run("ws_touch", "90:touch=%d/%d\n" % (px, py) + "+40:down\n" * 8 + "+40:cross\n+80:shot=ws_tab.png\n"
+                   "+10:touch=%d/%d\n+40:touch=450/%d\n+80:shot=gba_tab.png\n+10:quit\n" % (px, py, picker_row_y(0)),
                    cwd=cwd, config={"ui_home": 1})
         S.clean(r2)
         cons = [d["console"] for d in r2.evt("ui_browser_console")]
-        S.check(cons == ["5", "0"], "a tap on the pill and on WS goes to the WS shelf, the same on GBA back (%s)" % cons)
+        S.check(cons[-2:] == ["5", "2"], "the pill and DOWN reach the WS shelf, a tap on the picker's first row goes back (%s)" % cons)
         S.picture(r2, "ws_tab.png", "ws_home_bar.png")
 
 
@@ -7427,6 +7428,233 @@ def t_snes_session(S):
             "another session's report is ignored; the time since the launch is the estimate (%s)" % [e["_"] for e in ev])
 
 
+SEGA_CHEAT_GAME = "Shadow Dancer - The Secret of Shinobi (World)"   # a Genesis game of the bundled cheats.db
+
+
+def sega_rom(kind, size=0x20000, seed=1):
+    """A synthetic cartridge image (no real game): enough bytes for the library's header rules."""
+    body = bytearray((i * 7 + seed) & 0xFF for i in range(size))
+    if kind == "md":
+        body[0x100:0x110] = b"SEGA MEGA DRIVE "
+    elif kind == "smd":                       # a copier file: 512-byte header, AA BB mark, 16 KiB blocks
+        body = bytearray(512) + bytearray(body[:2 * 16384])
+        body[8], body[9] = 0xAA, 0xBB
+    elif kind == "sms":
+        body[0x7FF0:0x7FF8] = b"TMR SEGA"
+    return bytes(body)
+
+
+def sega_zip(entry, data):
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        z.writestr(entry, data)
+    return buf.getvalue()
+
+
+def t_sega_library(S):
+    """The four Sega consoles in the library, no setup: ux0:ROMS/Genesis, ux0:ROMS/Sega - Mega Drive - Genesis (an alias
+    folder), ux0:ROMS/SMS, ux0:roms/Master System, ux0:ROMS/GG, ux0:roms/Game Gear, ux0:ROMS/Sega - SG-1000; .md .gen
+    .smd .sms .gg .sg and a zip; a .bin only when it says SEGA at 0x100 (a non-Sega .bin and a README.md are not
+    listed anywhere); ._ and dot files left out; the picker (home screen) lists ten consoles with their counts;
+    picking a game starts md.bin (the twin only logs it) and writes nothing beside the game."""
+    cwd = os.path.join(S.outdir, "sega_library_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    md, sms = sega_rom("md"), sega_rom("sms", 0x8000)
+    junk = b"\x00\x05\x16\x07" + bytes(4092)
+    files = {
+        "ux0:ROMS/Genesis/Alpha Quest (USA).md": md,
+        "ux0:ROMS/Genesis/Beta Run (Europe).gen": md,
+        "ux0:ROMS/Genesis/Gamma Bin.bin": md,
+        "ux0:ROMS/Genesis/Other Data.bin": bytes(0x20000),            # not a Genesis image
+        "ux0:ROMS/Genesis/Delta Copier.smd": sega_rom("smd"),
+        "ux0:ROMS/Genesis/README.md": b"# notes\nnot a game\n",
+        "ux0:ROMS/Genesis/._Alpha Quest (USA).md": junk,
+        "ux0:ROMS/Genesis/.Hidden.md": md,
+        "ux0:ROMS/Genesis/Alpha Quest (USA).srm": b"keep me",
+        "ux0:ROMS/Sega - Mega Drive - Genesis/Epsilon Zip.zip": sega_zip("Epsilon Zip.gen", md),
+        "ux0:ROMS/SMS/Master One.sms": sms,
+        "ux0:ROMS/SMS/Master Two.sms": sms,
+        "ux0:roms/Master System/Master Three.sms": sms,
+        "ux0:ROMS/GG/Gear One.gg": sms,
+        "ux0:roms/Game Gear/Gear Two.gg": sms,
+        "ux0:ROMS/Sega - SG-1000/Tiny One.sg": bytes(0x8000),
+        "ux0:ROMS/NES/Stray.bin": bytes(0x8000),                      # a .bin in another console's folder
+    }
+    for rel, data in files.items():
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+    gdir = os.path.join(cwd, "ux0:ROMS/Genesis")
+    before = {n: open(os.path.join(gdir, n), "rb").read() for n in os.listdir(gdir)}
+
+    want = {"6": 5, "7": 3, "8": 2, "9": 1}
+    for con, label in (("6", "Genesis"), ("7", "Master System"), ("8", "Game Gear"), ("9", "SG-1000")):
+        r = S.run("sega_lib_" + con, "90:shot=shelf.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1, "console": int(con)})
+        S.clean(r)
+        sw = [d for d in r.evt("ui_browser") if d["console"] == con]
+        S.check(sw and int(sw[0]["roms"]) == want[con],
+                "the %s shelf holds %d games (%s)" % (label, want[con], sw[0]["_"] if sw else "no ui_browser line"))
+        S.picture(r, "shelf.png", "sega_%s.png" % con)
+
+    # a game of the shelf: the player is started with it, nothing beside the game changes
+    r = S.run("sega_pick", "90:cross\n+60:quit\n", cwd=cwd, config={"console": 6})
+    S.clean(r, allow="could not be started")
+    ln = r.evt("sega_launch")
+    S.check(ln and "console=md" in ln[0]["_"] and "Alpha Quest" in ln[0]["_"],
+            "picking one starts md.bin with the game (%s)" % (ln[0]["_"] if ln else "no sega_launch line"))
+    after = {n: open(os.path.join(gdir, n), "rb").read() for n in os.listdir(gdir)}
+    S.check(before == after, "the card's files (save, junk) are untouched")
+
+    # the picker (home screen): ten consoles in alphabetical order, each with its game count
+    r = S.run("sega_picker", "90:triangle\n+10:shot=picker.png\n+10:quit\n", cwd=cwd, config={"ui_home": 1})
+    S.clean(r)
+    S.picture(r, "picker.png", "sega_picker.png")
+    # classic UI: TRIANGLE reaches each Sega console in turn (6 Genesis, 7 Master System, 8 Game Gear, 9 SG-1000)
+    r = S.run("sega_classic", "90:triangle\n" + "+30:triangle\n" * 8 + "+30:quit\n", cwd=cwd)
+    S.clean(r)
+    got = [(d["console"], int(d["roms"])) for d in r.evt("ui_browser_console")]
+    S.check([c for c, _ in got][:9] == ["1", "2", "3", "4", "5", "6", "7", "8", "9"] and
+            dict(got).get("6") == 5 and dict(got).get("7") == 3 and dict(got).get("8") == 2 and dict(got).get("9") == 1,
+            "TRIANGLE steps GB .. SG-1000 with the right counts (%s)" % got)
+
+
+def t_sega_session(S):
+    """md.bin's launch protocol (playerkit/FORMATS.md "Sega player", main_vita.c player_launch_write): picking a game
+    writes launch/<id>.ini (console md/sms/gg/sg, game, save .srm, start new / continue / slot, the patch and
+    RetroArch save keys) and counts the start in Recent; a game of the bundled cheats database brings cheats_db=
+    (a RetroArch .cht in launch/); when VitAdhoc starts again the player's launch/session.txt with the same id adds
+    the time played; a report of another session is not read; two starts that end with no report (a crash) make
+    the third start carry the safe picture keys."""
+    md = sega_rom("md")
+    plain = "Open Test (USA)"
+    st = "states/md/%s/%s" % (bkt(plain), plain)
+    ex = {"roms/%s.md" % plain: md, st + ".st0": b"state one", st + ".st1": b"state two"}
+
+    def ini(r, ident):
+        lf = os.path.join(r.root, "launch", ident + ".ini")
+        return dict(l.rstrip("\n").split("=", 1) for l in open(lf) if "=" in l) if os.path.exists(lf) else {}
+
+    r = S.run("sega_launch_new", "90:cross\n+60:quit\n", extra=ex, config={"console": 6})
+    S.clean(r, allow="could not be started")
+    kv = ini(r, "md")
+    S.check(kv.get("version") == "1" and kv.get("console") == "md" and kv.get("session_id", "").startswith("s-") and
+            kv.get("game", "").endswith(plain + ".md") and kv.get("save", "").endswith(plain + ".srm") and
+            kv.get("start") == "new" and kv.get("cpu_mhz") in ("444", "500") and
+            kv.get("enter_button") in ("cross", "circle") and "cheats_db" not in kv,
+            "launch/md.ini says what to run and how (%s)" % kv)
+    S.check(r.has(r"^EVT sega_launch_file ok=1 ") and r.has(r"^EVT sega_launch console=md rom="),
+            "written, then md.bin is started")
+    pl = os.path.join(r.root, "playlog.txt")
+    S.check(plain in (open(pl).read() if os.path.exists(pl) else ""), "the start is in Recent")
+
+    # the other three consoles name themselves: one launch file each, never two at once
+    other = {}
+    for con, ident, ext, data in ((7, "sms", ".sms", sega_rom("sms", 0x8000)), (8, "gg", ".gg", sega_rom("sms", 0x8000)),
+                                  (9, "sg", ".sg", bytes(0x8000))):
+        r = S.run("sega_launch_" + ident, "90:cross\n+60:quit\n", extra={"roms/Cart One" + ext: data},
+                  config={"console": con})
+        S.clean(r, allow="could not be started")
+        other[ident] = ini(r, ident)
+        left = sorted(n for n in os.listdir(os.path.join(r.root, "launch")) if n.endswith(".ini"))
+        S.check(other[ident].get("console") == ident and other[ident].get("save", "").endswith("Cart One.srm") and
+                left == [ident + ".ini"],
+                "%s: launch/%s.ini names its console and its .srm, and is the only launch file (%s)" % (ident, ident, left))
+
+    # the shelf's slot 2
+    r = S.run("sega_launch_slot", "90:left\n+30:down\n+10:shot=shelf.png\n+10:cross\n+60:quit\n", extra=ex,
+              config={"console": 6})
+    S.clean(r, allow="could not be started")
+    kv = ini(r, "md")
+    S.check(kv.get("start") == "slot" and kv.get("slot") == "2",
+            "a state picked on the Genesis shelf is the player's start (states/md/<xx>/): %s" %
+            {k: kv.get(k) for k in ("start", "slot")})
+
+    # patch and RetroArch's save are named for the player
+    ex2 = dict(ex)
+    ex2["roms/%s.md.ips" % plain] = b"PATCH" + b"\x00\x00\x10\x00\x01\x7f" + b"EOF"
+    ex2["retroarch/savefiles/Genesis Plus GX/%s.srm" % plain] = b"\x01" * 2048
+    r = S.run("sega_launch_keys", "90:cross\n+60:quit\n", extra=ex2, config={"console": 6})
+    S.clean(r, allow="could not be started")
+    kv = ini(r, "md")
+    S.check(kv.get("patch", "").endswith(plain + ".md.ips") and
+            re.match(r"^\d+ \d+ \d+ \d+ [0-9a-f]{8}$", kv.get("patch_key", "")) and
+            kv.get("retroarch_save", "").endswith(plain + ".srm") and "Genesis Plus GX" in kv.get("retroarch_save", ""),
+            "md.ini names the patch, its key and RetroArch's Genesis Plus GX save (%s)" %
+            {k: kv.get(k) for k in ("patch", "patch_key", "retroarch_save")})
+
+    # a game of the cheats database: its cheats go in launch/md_cheats.cht, named by cheats_db=
+    r = S.run("sega_launch_cheats", "90:cross\n+60:quit\n", extra={"roms/%s.md" % SEGA_CHEAT_GAME: md},
+              config={"console": 6})
+    S.clean(r, allow="could not be started")
+    kv = ini(r, "md")
+    cht = os.path.join(r.root, "launch", "md_cheats.cht")
+    text = open(cht).read() if os.path.exists(cht) else ""
+    S.check(kv.get("cheats_db", "").endswith("md_cheats.cht") and "cheats = " in text and "cheat0_code" in text,
+            "cheats_db= names a RetroArch .cht made of the database's cheats for the game (%s, %d bytes)" %
+            (kv.get("cheats_db"), len(text)))
+
+    # an SMD copier file is a game with its own name
+    r = S.run("sega_launch_smd", "90:cross\n+60:quit\n", extra={"roms/Copier Game.smd": sega_rom("smd")},
+              config={"console": 6})
+    S.clean(r, allow="could not be started")
+    S.check(ini(r, "md").get("game", "").endswith("Copier Game.smd"), "an .smd file is started like any other")
+
+    # back from the player: its report
+    sid = "s-1699990000-7"
+    launch = ("version=1\nsession_id=%s\nconsole=md\ngame=x\nsave=x\napp_rom=%s\napp_started_at=1699990000\n" %
+              (sid, "roms/%s.md" % plain))
+    rep = ("version=1\nsession_id=%s\nconsole=md\nseconds_played=125\nsave_changed=0\nsave_error=0\n"
+           "notice=Could not save the game: the memory card is full\nexit=normal\n" % sid)
+    r = S.run("sega_back", "60:quit\n", extra={"roms/%s.md" % plain: md, "launch/md.ini": launch.encode(),
+                                               "launch/session.txt": rep.encode()})
+    S.clean(r)
+    ev = r.evt("sega_session")
+    S.check(ev and ev[0]["report"] == "1" and ev[0]["secs"] == "125", "the report is read (%s)" % [e["_"] for e in ev])
+    S.check(not os.path.exists(os.path.join(r.root, "launch", "session.txt")) and
+            not os.path.exists(os.path.join(r.root, "launch", "md.ini")), "...once: both files are gone")
+    S.check(r.has(r"memory card is full"), "its notice is shown")
+    r = S.run("sega_back_stale", "60:quit\n", extra={"roms/%s.md" % plain: md, "launch/md.ini": launch.encode(),
+                                                     "launch/session.txt": rep.replace(sid, "s-1-1").encode()})
+    S.clean(r)
+    ev = r.evt("sega_session")
+    S.check(ev and ev[0]["report"] == "0" and 9000 < int(ev[0]["secs"]) < 11000 and not r.has(r"memory card is full"),
+            "another session's report is ignored; the time since the launch is the estimate (%s)" % [e["_"] for e in ev])
+
+    # the crash-loop guard: two starts with no report, the third carries the safe keys
+    def again(prev, name, script):
+        out = os.path.join(S.outdir, name)
+        shutil.rmtree(out, ignore_errors=True)
+        shutil.copytree(prev.root, os.path.join(out, "root"))
+        for f in glob.glob(os.path.join(out, "root", "log", "*")):
+            os.remove(f)
+        # (the twin's clock starts again at every run: the launch time is put a few seconds before this run's start)
+        lf = os.path.join(out, "root", "launch", "md.ini")
+        txt = open(lf).read()
+        open(lf, "w").write(re.sub(r"^app_started_at=\d+$", "app_started_at=1699999990", txt, flags=re.M))
+        return S.run(name, script, prepared=True, cwd=gcwd)
+    # (the guard names a game by its path: the game sits in a folder of its own, the same for the three starts)
+    gcwd = os.path.join(S.outdir, "sega_guard_cwd")
+    shutil.rmtree(gcwd, ignore_errors=True)
+    os.makedirs(os.path.join(gcwd, "ux0:ROMS/Genesis"))
+    with open(os.path.join(gcwd, "ux0:ROMS/Genesis", plain + ".md"), "wb") as f:
+        f.write(md)
+    g1 = S.run("sega_guard1", "90:cross\n+60:quit\n", cwd=gcwd, config={"console": 6})
+    S.clean(g1, allow="could not be started")
+    S.check("ovr.steady_pacing" not in ini(g1, "md"), "the first start has no safe keys")
+    g2 = again(g1, "sega_guard2", "90:cross\n+60:quit\n")
+    S.clean(g2, allow="could not be started")
+    S.check("ovr.steady_pacing" not in ini(g2, "md"), "one crash changes nothing")
+    g3 = again(g2, "sega_guard3", "90:cross\n+60:cross\n+60:quit\n")   # (the first press closes the notice)
+    S.clean(g3, allow="could not be started|closed unexpectedly")
+    kv = ini(g3, "md")
+    S.check(kv.get("ovr.steady_pacing") == "0" and kv.get("ovr.smooth_handoff") == "0" and kv.get("ovr.scaler") == "1" and
+            kv.get("ovr.look_mode") == "2" and g3.has(r"boot_guard player_safe"),
+            "two crashes in a row: the third start carries ovr.steady_pacing=0, smooth_handoff=0, scaler=1, look_mode=2 (%s)" %
+            {k: v for k, v in kv.items() if k.startswith("ovr.")})
+
+
 def t_savset(S):
     """The game list's "save present" comes from the names the scan read
     (lessons-audit 1b): no stat per drawn row.  A battery file beside a game
@@ -7687,8 +7915,8 @@ def t_nes_library(S):
                os.path.join(cwd, "ux0:ROMS/SNES ROM Collection")]
     before = {d: {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d)
                   if os.path.isfile(os.path.join(d, n))} for d in folders}
-    # GBA -> GB -> GBC -> SNES -> NES -> WS -> GBA, then the NES shelf again, pick
-    steps = "90:triangle\n" + "+30:triangle\n" * 5
+    # classic UI: GBA -> GB -> GBC -> SNES -> NES -> WS -> MD -> SMS -> GG -> SG -> GBA, then the NES shelf again, pick
+    steps = "90:triangle\n" + "+30:triangle\n" * 9
     r = S.run("nes_library", steps + "+30:shot=gba.png\n"
               "+2:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
               "+60:shot=nes.png\n+2:cross\n+60:quit\n", cwd=cwd)
@@ -7697,8 +7925,8 @@ def t_nes_library(S):
     order = [c for c, _ in sw if c]
     while order and order[0] == "0" and order[1:2] != ["1"]:
         order.pop(0)                       # (the first listing of the GBA shelf)
-    S.check(order[:10] == ["1", "2", "3", "4", "5", "0", "1", "2", "3", "4"],
-            "TRIANGLE steps GB, GBC, SNES, NES, WS and back to GBA, then on again (%s)" % sw)
+    S.check(order[:14] == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "1", "2", "3", "4"],
+            "TRIANGLE steps GB, GBC, SNES, NES, WS, MD, SMS, GG, SG and back to GBA, then on again (%s)" % sw)
     nes = [n for c, n in sw if c == "4"]
     snes = [n for c, n in sw if c == "3"]
     S.check(nes and nes[0] == 6,
@@ -7715,8 +7943,8 @@ def t_nes_library(S):
     S.picture(r, "nes.png")
 
     # the Vita's home screen: the NES chip in the top bar, five of them fit
-    r = S.run("nes_home", "90:triangle\n" + "+30:triangle\n" * 4 + "+90:shot=home_nes.png\n"
-              "+2:triangle\n+30:triangle\n+30:triangle\n+90:shot=home_gba.png\n+10:quit\n", cwd=cwd,
+    r = S.run("nes_home", pick_script(4) + "+90:shot=home_nes.png\n"
+              "+2:triangle\n" + "+30:triangle\n" * (pick_steps(4, 0) - 1) + "+90:shot=home_gba.png\n+10:quit\n", cwd=cwd,
               config={"ui_home": 1})
     S.clean(r)
     sw = r.evt("ui_browser_console")
@@ -7726,7 +7954,7 @@ def t_nes_library(S):
     S.picture(r, "home_gba.png")
 
     # a cover of your own for a NES game, taken as for the other consoles
-    r = S.run("nes_cover_own", "90:triangle\n" + "+30:triangle\n" * 4 + "+120:shot=home_cover.png\n"
+    r = S.run("nes_cover_own", pick_script(4) + "+120:shot=home_cover.png\n"
               "+10:quit\n", cwd=cwd, config={"ui_home": 1},
               extra={"covers/Alpha (USA).png": cover_png((300, 400), (200, 40, 40)),
                      "covers/Disk Game (Japan).png": cover_png((300, 400), (40, 200, 40))})
@@ -7832,7 +8060,7 @@ def t_nes_cover(S):
         with open(os.path.join(cwd, "ux0:ROMS", "NES", n), "wb") as f:
             f.write(d)
     try:
-        r = S.run("nes_cover_run", "90:triangle\n" + "+30:triangle\n" * 4 + "+600:shot=covers.png\n+10:quit\n",
+        r = S.run("nes_cover_run", pick_script(4) + "+600:shot=covers.png\n+10:quit\n",
                   cwd=cwd, config={"ui_home": 1}, args=("--app", app),
                   vita_ini={"art_url": "http://127.0.0.1:%d" % srv.server_port, "art_titles": 0})
     finally:
@@ -8154,7 +8382,7 @@ def t_boot_guard(S):
             "config.ini holds the safe values (hand-over and steady pacing off)")
 
 
-TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("nes_library", t_nes_library),
+TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_library", t_sega_library), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),

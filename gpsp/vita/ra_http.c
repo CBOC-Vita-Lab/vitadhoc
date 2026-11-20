@@ -22,7 +22,11 @@
 #include "ra_roots.h"
 #endif
 
+#ifdef PK_RA_PLAYER
+#include "pk_ra_plat.h"     /* snes.bin / md.bin: playerkit's own thread and network layer */
+#else
 #include "plat.h"
+#endif
 #include "rhash/md5.h"
 
 #define A_LOAD(x)      __atomic_load_n(&(x), __ATOMIC_SEQ_CST)

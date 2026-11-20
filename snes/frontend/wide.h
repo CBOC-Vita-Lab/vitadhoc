@@ -89,6 +89,9 @@ typedef struct snes_wide_census {
 	int chip;                        /* 1 Super FX, 2 SA-1, 0 none (cartridge header) */
 	int rung;                        /* the cost ladder's rung now: 0 full margin .. 3 floor */
 	uint32_t compose_us;             /* smoothed compose time per frame, microseconds (0 until measured; only with the ladder on) */
+	uint32_t capture_us;             /* smoothed capture time per frame (the thread that draws the margins: the PPU thread or the emulating thread), microseconds */
+	uint64_t cache_checks;           /* option "verify_cache": frames in which a kept result (ring walk, ambient rows) was compared with a fresh one ... */
+	uint64_t cache_mismatches;       /* ... and the number of differences found (must stay 0) */
 	uint32_t rung_changes;           /* steps of the ladder */
 } snes_wide_census;
 void snes_wide_census_get(snes_wide_census *c);

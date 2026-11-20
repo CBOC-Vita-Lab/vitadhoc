@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests of the Sega player's own code (md/vita/player.cpp) on Linux with playerkit's software renderer: launch protocol, menu walk with
 # screenshots, 10 state slots with thumbnails, Continue, battery RAM writes with the verified backup, RetroArch import, patches, cheats,
-# region / PAL pacing, pad models, the look governor, smooth hand-over bit for bit, session.txt.
+# region / PAL pacing, pad models, the look governor, smooth hand-over bit for bit, session.txt, patch CRC, rewind and fast forward, RetroAchievements
+# against a fake server on the loopback (these use a loopback port: run the twin suites ALONE).
 #   MD_TEST_ROMS=<dir>      tree with the SGDK sample ROMs (sample/**/out/release/rom.bin)
 #   MD_TEST_SMS_ROMS=<dir>  tree with Master System homebrew (.sms); a Game Gear run forces the console id gg on one of them
 #   MD_PLAYER_SHOTS=<dir>   where the screenshots go (default: a temporary folder)
@@ -37,17 +38,23 @@ if [ -n "$MD" ]; then
 	run "Mega Drive look governor (scaler tiers, memory, rows)" look md "$MD" "$T/l_md"
 	run "Mega Drive region and PAL pacing" pal "$MD"
 	run "Mega Drive smooth hand-over on / off, bit for bit" handoff "$MD" "$T/h_md"
+	run "Mega Drive patch CRC, rewind 5 s (bit for bit), fast forward 2x / 3x" speed md "$MD" "$T/s_md"
+	run "Mega Drive RetroAchievements (fake server: stored token, unlock toast, Hardcore)" ra md "$MD" "$T/a_md"
 else echo "SKIP  Mega Drive player tests (MD_TEST_ROMS not set)"; fi
 if [ -n "$SMS" ]; then
 	run "Master System walk" test sms "$SMS" "$SHOTS/sms" "$T/w_sms"
 	run "Master System pad model" pads sms "$SMS" "$T/p_sms"
 	run "Master System look governor" look sms "$SMS" "$T/l_sms"
 	run "Master System smooth hand-over on / off, bit for bit" handoff "$SMS" "$T/h_sms"
+	run "Master System patch CRC, rewind 5 s, fast forward 2x / 3x" speed sms "$SMS" "$T/s_sms"
+	run "Master System RetroAchievements" ra sms "$SMS" "$T/a_sms"
 else echo "SKIP  Master System player tests (MD_TEST_SMS_ROMS not set)"; fi
 if [ -n "$GG" ]; then
 	run "Game Gear walk (an SMS ROM with the console id forced to gg)" test gg "$GG" "$SHOTS/gg" "$T/w_gg"
 	run "Game Gear pad model" pads gg "$GG" "$T/p_gg"
 	run "Game Gear look governor" look gg "$GG" "$T/l_gg"
+	run "Game Gear patch CRC, rewind 5 s, fast forward 2x / 3x" speed gg "$GG" "$T/s_gg"
+	run "Game Gear RetroAchievements" ra gg "$GG" "$T/a_gg"
 else echo "SKIP  Game Gear player tests (MD_TEST_SMS_ROMS not set)"; fi
 [ -n "$MD_PLAYER_SHOTS" ] && echo "screenshots: $(find "$SHOTS" -name '*.png' | wc -l) in $SHOTS"
 exit $fail

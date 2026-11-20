@@ -124,7 +124,7 @@ struct Handoff::Impl {
 		}
 		if (nfree == 0) return 0;      /* cannot happen with the pool's size; refuse rather than corrupt */
 		HandoffFrame *f = freel[--nfree];
-		f->w = f->h = f->pitch = 0; f->seq = 0; f->emu_us = 0; f->user = 0; f->span = 1;
+		f->w = f->h = f->pitch = 0; f->seq = 0; f->emu_us = 0; f->user = 0; f->offset = 0; f->span = 1;
 		return f;
 	}
 	/* evict the oldest queued picture: its buffer goes back to the pool */
@@ -230,6 +230,14 @@ HandoffFrame *Handoff::try_begin_write()
 {
 	if (!inited_) return 0;
 	SpinGuard g(p_->lk);
+	return p_->acquire_locked();
+}
+
+HandoffFrame *Handoff::try_begin_write_direct()
+{
+	if (!inited_) return 0;
+	SpinGuard g(p_->lk);
+	if (p_->drop_mode()) return 0;
 	return p_->acquire_locked();
 }
 

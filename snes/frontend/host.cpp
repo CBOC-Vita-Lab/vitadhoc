@@ -866,6 +866,20 @@ int snes_host_cheat_decode(const char *code, char *raw, size_t cap)
 }
 
 int snes_host_peek_wram(uint32_t offset) { return g_loaded && offset < 0x20000 ? Memory.RAM[offset] : -1; }
+int snes_host_ra_read(unsigned addr, uint8_t *out, unsigned n)
+{
+	if (!g_loaded || !n) return 0;
+	if (addr < 0x20000) {
+		unsigned k = 0x20000 - addr < n ? 0x20000 - addr : n;
+		memcpy(out, Memory.RAM + addr, k);
+		return (int) k;
+	}
+	size_t sz = snes_host_sram_size(), off = addr - 0x20000;
+	if (!Memory.SRAM || off >= sz) return 0;
+	size_t k = sz - off < n ? sz - off : n;
+	memcpy(out, Memory.SRAM + off, k);
+	return (int) k;
+}
 void snes_host_poke_wram(uint32_t offset, uint8_t value) { if (g_loaded && offset < 0x20000) Memory.RAM[offset] = value; }
 int snes_host_ppu_scroll(int *h, int *v)
 {
@@ -1114,6 +1128,16 @@ void snes_host_cheat_disable_all(void)
 	for (size_t i = 0; i < g_ch.size(); i++) if (g_ch[i].on && g_ch[i].usable) S9xDisableCheatGroup((uint32) cheat_gidx((int) i));
 	for (auto &e : g_ch) e.on = false;
 	snes_host_cheats_save();
+}
+
+void snes_host_cheats_hold(int hold)
+{
+	snes_host_sync();
+	for (size_t i = 0; i < g_ch.size(); i++)
+		if (g_ch[i].on && g_ch[i].usable) {
+			if (hold) S9xDisableCheatGroup((uint32) cheat_gidx((int) i));
+			else S9xEnableCheatGroup((uint32) cheat_gidx((int) i));
+		}
 }
 
 void snes_host_cheat_reset(void)

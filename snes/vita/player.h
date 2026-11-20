@@ -27,6 +27,8 @@
 #include "pk_notice.h"
 #include "pk_pace.h"
 #include "pk_look.h"
+#include "pk_speed.h"
+#include "pk_ra.h"
 
 namespace snesp {
 
@@ -91,7 +93,8 @@ struct StartResult {
 
 class SnesPlayer : public pk::MenuHost {
 public:
-	enum { ROW_PIXELS = pk::ROW_HOST_BASE + 1, ROW_HIRES, ROW_INTERLACE, ROW_MULTITAP, ROW_STEADY };
+	enum { ROW_PIXELS = pk::ROW_HOST_BASE + 1, ROW_HIRES, ROW_INTERLACE, ROW_MULTITAP, ROW_STEADY, ROW_SCALER,
+	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30 };
 	explicit SnesPlayer(Platform *pf);
 	~SnesPlayer();
 
@@ -117,11 +120,11 @@ public:
 
 	/* ---- look governor (playerkit/INTEGRATION.md section 8; the ladder is docs/DEFAULTS-1.4.md section 5) ----
 	 * Every game starts with the best look. When this game cannot hold 60 with it, the least visible sacrifice is made
-	 * first (interlace blend off, then hi-res blend off; the wide view is never switched off, its resolution will be degraded instead), remembered for the game (<root>/look/snes/..) and
+	 * first (the pixel art scaler xBR 2x -> sharp, then interlace blend off, then hi-res blend off; the wide view is never switched off, its resolution will be degraded instead), remembered for the game (<root>/look/snes/..) and
 	 * given back when there is room. A row the player set by hand (blend Off) is never touched.
 	 * picture() is the look to show: the player's settings with the governor's sacrifices applied; the settings files
 	 * only ever get the player's own values. */
-	enum { LOOK_ILACE = 0, LOOK_HIRES };   /* rung ids = positions in the ladder (player.cpp) */
+	enum { LOOK_SCALER = 0, LOOK_ILACE, LOOK_HIRES };   /* rung ids = positions in the ladder (player.cpp) */
 	/* the game starts: the CPU clock in MHz now (the remembered look is for one clock); call once, before the first frame */
 	void look_start(int mhz);
 	/* once a second of play (not while a menu, pause or load is up): the costs are fractions of one refresh (1 = 16.7 ms) */
@@ -136,6 +139,22 @@ public:
 	bool input(const pk::PadSample pads[pk::MAX_PLAYERS], bool tapped, uint64_t now_ms, uint32_t frame);
 	/* draw (render) emulated frame number `frame`? (steady pacing: even frames only in half mode) */
 	bool want_render(uint32_t frame) const;
+	/* ---- fast forward and rewind (playerkit pk_speed) ----
+	 * speed_plan: once per display refresh, before the frames; `normal` = the frames this refresh would run. Fast forward multiplies it (2x or
+	 * 3x), rewinding makes it 1 (a landing or a standing picture). run_frame replaces snes_host_run_frame (it captures the state for rewind);
+	 * true when the core ran a frame. audio_filter works in place on the core's audio and returns the frames to keep (mixed down under fast
+	 * forward, none while rewinding). speed_draws: draw frame `i` of `n` this refresh? speed_busy: fast forward is on or the game is rewinding
+	 * (the picture hand-over drops, nothing waits). Not in a linked game: the session steps both machines itself. */
+	int speed_plan(int normal);
+	bool run_frame(bool render);
+	size_t audio_filter(int16_t *lr, size_t frames);
+	bool speed_draws(int i, int n) const { return speed_.draw_this(i, n); }
+	bool speed_busy() const { return speed_.busy(); }
+	/* the helper thread's step (called by the writer thread when it has nothing else): packs the newest rewind state */
+	bool speed_pack() { return speed_.pack(); }
+	/* two-player or online play, Hardcore: rewind and fast forward are off (a press gives `why` as its notice) */
+	void set_speed_locked(bool locked, const char *why = 0) { speed_.set_locked(locked, why); }
+	const pk::Speed &speed() const { return speed_; }
 	pk::PaceMode pace_mode() const { return pacer_.mode(); }
 	/* cost of a drawn frame (us): the frame's own work, for the pacing decision */
 	void drawn_cost(uint32_t cost_us);
@@ -214,7 +233,15 @@ public:
 	/* waits for the writer (the game thread, before a load/delete; at the end) */
 	void wait_writer();
 
+	/* RetroAchievements (pk_ra): the web answers are collected once per display refresh, in game and in the menu; the twin points `server` at a
+	 * fake one before start() (never set on the console: the real site). Not started in a linked game. */
+	void ra_pump();
+	void set_ra_server(const std::string &server) { ra_server_ = server; }
+	const pk::Ra &ra() const { return ra_; }
+
 	/* MenuHost */
+	const char *state_load_refused();
+	const char *cheats_refused();
 	void on_change(int row_id, int value);
 	void on_reset();
 	bool capture_state(std::vector<uint8_t> &out);
@@ -267,6 +294,34 @@ private:
 	bool handoff_ = true;
 	bool pal_fast_ = false;
 	bool look_bad_ = false;               /* the last second was bad for the look governor */
+	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
+	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;
+	struct SpeedGlue : pk::SpeedHost {
+		SnesPlayer *p;
+		explicit SpeedGlue(SnesPlayer *pl) : p(pl) {}
+		size_t state_size();
+		bool save_state(uint8_t *buf, size_t cap);
+		bool load_state(const uint8_t *buf, size_t n);
+		void run_frame(bool render);
+		void clear_pads();
+		static void wake(void *self);
+	} glue_;
+	pk::Speed speed_;
+	bool speed_was_busy_ = false;
+	pk::Ra ra_;
+	std::string ra_server_;
+	bool ra_blocks_ = false;               /* Hardcore is in force (or not known yet): no rewind, no cheats, no state loads */
+	uint64_t ra_toast_until_ = 0;
+	void ra_begin(const uint8_t *rom, size_t n);
+	void ra_update();
+	static uint32_t ra_read(void *ud, uint32_t addr, uint8_t *out, uint32_t n);
+	static uint64_t ra_now(void *ud);
+	static int ra_online(void *ud);
+	static void ra_log(void *ud, const char *line);
+	std::string chip_text_;
+	uint64_t chip_at_ms_ = 0;
+	pk::SpeedSettings speed_settings() const;
+	void speed_start();
 	int wide_policy_ini_ = 1, wide_policy_set_ = -1, wide_mode_set_ = -1, pace_half_secs_ = 0;
 	int look_mode_ = 0;
 	pk::Pacer pacer_;

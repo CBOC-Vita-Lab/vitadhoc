@@ -190,6 +190,10 @@ int snes_host_cheat_validate(const char *code, char *canon, size_t cap);
 int snes_host_cheat_decode(const char *code, char *raw, size_t cap);
 /* Work RAM byte at offset 0..0x1FFFF (address $7E0000 + offset), or -1; for tests. */
 int snes_host_peek_wram(uint32_t offset);
+/* RetroAchievements (rc_consoles.h SUPER_NINTENDO) address space: $000000-$01FFFF work RAM ($7E0000-$7FFFFF), $020000 on the cartridge's battery RAM
+ * as held (snes_host_sram_size() bytes). Copies n bytes from addr into out and returns how many were inside a window (a request is cut at the
+ * end of its window; 0 = unmapped or nothing loaded). Reads have no side effects. */
+int snes_host_ra_read(unsigned addr, uint8_t *out, unsigned n);
 /* PPU registers for tests and traces: BG mode and the scroll of BG1..BG4 (h[n], v[n]) */
 int snes_host_ppu_scroll(int *h, int *v);
 /* Writes one work RAM byte (offset 0..0x1FFFF); for test scripts only (they hold lives or invulnerability to stay in play). */
@@ -204,6 +208,9 @@ int snes_host_cheat_remove(int index);
 int snes_host_cheat_count(void);
 int snes_host_cheat_get(int index, snes_cheat_info *out);
 void snes_host_cheat_disable_all(void);
+/* Holds the codes that are on out of the machine (1) and puts them back (0), without touching the list or the file: RetroAchievements
+ * Hardcore, which lasts as long as one game. */
+void snes_host_cheats_hold(int hold);
 /* Removes every code (memory is restored) and writes the empty list. */
 void snes_host_cheat_reset(void);
 /* Writes the list now (a retry after a failed write). 0 or SNES_CHEAT_E_IO. */

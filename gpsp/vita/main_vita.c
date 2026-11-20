@@ -657,9 +657,16 @@ static int sega_launch(fe_console_t con, const char *game)
    return plat_exec_program("md.bin", game);   /* returns only on failure */
 }
 
-/* ".bin" is a Genesis game only when its bytes say so (gamedb_md_accept: SEGA at 0x100, or an SMD header); the library's scan asks. */
+/* ".bin" is a Genesis game only when its bytes say so (gamedb_md_accept: SEGA at 0x100, or an SMD header), a ".md" only when it is not a tiny text file; the library's scan asks. */
 int ui_host_md_bin_ok(const char *path)
 {
+   const char *dot = path ? strrchr(path, '.') : NULL;
+   if (dot && !strcasecmp(dot, ".md"))
+   {
+      /* a .md is a Genesis game, unless it is a text file (README.md): smaller than any cartridge */
+      struct stat st;
+      return stat(path, &st) == 0 && st.st_size >= 0x4000;
+   }
    return gamedb_md_accept(path);
 }
 
@@ -1078,7 +1085,7 @@ static void player_session_collect(const char *pid)
    /* the crash-loop guard: a report (any exit) settles the marker; with none
     * the player died, when the app is back soon after the launch */
    boot_guard_player_end(have_report,
-                         started && now > started ? (long)(now - started) : -1);
+                         started && now >= started ? (long)(now - started) : -1);
    play_name_of(rom, name, sizeof(name));
    if (secs)
    {

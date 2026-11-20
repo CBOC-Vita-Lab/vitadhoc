@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* nat_stun.h -- the STUN binding client of the NAT layer (RFC 5389, the one
  * request this project needs).  Pure: no sockets, no threads, no globals,
  * C99; a callback sends and the caller passes the time.  Owner: package N.

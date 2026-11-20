@@ -2,6 +2,10 @@
 // picture, the audio and the state at checkpoints, frame time statistics, and the save-state round trip.
 // Copyright CBOC-Vita. MIT licence for this file; the core in ../core keeps its own licence (non-commercial).
 #include "host.h"
+#include "thread_ops.h"
+#include <pthread.h>
+#include <semaphore.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -158,16 +162,30 @@ static u64 state_hash(std::vector<uint8_t> &buf)
 static void usage()
 {
 	puts("usage: md_twin ROM [--frames N] [--pad SCRIPT|auto|none] [--pad2 SCRIPT] [--seed N] [--region auto|usa|eur|jp|jppal]\n"
-	     "       [--system md|sms|gg|sg] [--pad3|--pad6] [--opt name=value]... [--checkpoint N] [--hashes FILE] [--state-roundtrip [N]]\n"
+	     "       [--system md|sms|gg|sg] [--pad3|--pad6] [--opt name=value]... [--checkpoint N] [--hashes FILE] [--state-roundtrip [N]] [--vdp-thread|--vdp-check|--vdp-stress]\n"
 	     "       [--srm FILE] [--save-state FILE] [--load-state FILE] [--state-frame N] [--audio-rate HZ] [--no-render] [--quiet]\n"
 	     "       [--cheat CODE] [--peek HEXADDR]... [--reset-at FRAME] [--info]\n"
 	     "SCRIPT = FRAME:buttons,FRAME:buttons ... (buttons joined with +: u d l r a b c x y z start mode; none)");
 }
 
+// threads for the VDP / FM workers (the Vita hands over sceKernel threads instead)
+static pthread_t g_wthr[MD_WORKERS];
+struct SpawnArg { void (*fn)(void *); void *arg; };
+static SpawnArg g_sarg[MD_WORKERS];
+static void *thr_main(void *p) { SpawnArg *a = (SpawnArg *)p; a->fn(a->arg); return NULL; }
+static void *t_sem_create(void *) { sem_t *s = new sem_t; sem_init(s, 0, 0); return s; }
+static void t_sem_destroy(void *, void *s) { sem_destroy((sem_t *)s); delete (sem_t *)s; }
+static void t_sem_post(void *, void *s) { sem_post((sem_t *)s); }
+static void t_sem_wait(void *, void *s) { while (sem_wait((sem_t *)s) != 0) {} }
+static int t_spawn(void *, int id, void (*fn)(void *), void *arg) { g_sarg[id].fn = fn; g_sarg[id].arg = arg; return pthread_create(&g_wthr[id], NULL, thr_main, &g_sarg[id]); }
+static void t_wait_end(void *, int id) { pthread_join(g_wthr[id], NULL); }
+static void t_yield(void *) { sched_yield(); }
+static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield };
+
 int main(int argc, char **argv)
 {
 	std::vector<unsigned> peeks;
-	int reset_at = -1;
+	int reset_at = -1, vdpthr = 0, vdpcheck = 0, vdpstress = 0;
 	const char *rom = NULL, *hashes = NULL, *srm = NULL, *save_st = NULL, *load_st = NULL, *cheat = NULL;
 	int frames = 1500, checkpoint = 100, region = 0, system = 0, padtype = 0, roundtrip = 0, state_frame = 300, quiet = 0, norender = 0, info = 0;
 	unsigned seed = 1, arate = 0;
@@ -198,6 +216,9 @@ int main(int argc, char **argv)
 		else if (a == "--peek") peeks.push_back((unsigned)strtoul(need(), NULL, 16));
 		else if (a == "--reset-at") reset_at = atoi(need());
 		else if (a == "--info") info = 1;
+		else if (a == "--vdp-thread") vdpthr = 1;
+		else if (a == "--vdp-check") { vdpthr = 1; vdpcheck = 1; }
+		else if (a == "--vdp-stress") { vdpthr = 1; vdpstress = 1; }
 		else if (a == "--quiet") quiet = 1;
 		else if (a[0] != '-' && !rom) rom = argv[i];
 		else { usage(); return 2; }
@@ -215,6 +236,7 @@ int main(int argc, char **argv)
 		size_t e = opts[i].find('=');
 		if (e == std::string::npos || md_host_set_option(opts[i].substr(0, e).c_str(), atoi(opts[i].c_str() + e + 1))) { fprintf(stderr, "bad option %s\n", opts[i].c_str()); return 2; }
 	}
+	if (vdpthr) { md_host_set_threads(&g_tops, MD_THREAD_VDP | MD_THREAD_VDP_SMS); md_host_vdp_debug(vdpcheck, vdpstress); }
 	md_host_set_seed(seed);
 	if (arate) md_host_set_audio_rate(arate);
 	if (region) md_host_set_region(region);
@@ -321,6 +343,11 @@ int main(int argc, char **argv)
 		int rb = md_host_state_load_mem(bad.data(), bad.size());
 		printf("ROUNDTRIP %s load=%d video=%s state=%s audio=%s corrupt_refused=%s\n", bn, rc, a1.v == a2.v ? "SAME" : "DIFF", s1 == s2h ? "SAME" : "DIFF",
 			a1.a == a2.a ? "SAME" : "DIFF", rb == 3 ? "yes" : "NO");
+	}
+	if (vdpthr) {
+		unsigned long c[9];
+		if (md_host_vdp_census(c)) printf("VDPW %s records=%lu words=%lu status_joins=%lu joins=%lu join_wait_polls=%lu full_waits=%lu wakes=%lu vram_blocks=%lu vram_alls=%lu check_errors=%lu\n", bn, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], md_host_vdp_check_errors());
+		else printf("VDPW %s worker off\n", bn);
 	}
 	md_host_shutdown();
 	return 0;

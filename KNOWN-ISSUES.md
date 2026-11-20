@@ -80,6 +80,22 @@ Testing continues on:
   full trade between versions has not been played through.
 - **Mystery Gift** from a phone, all the way into the game's save.
 
+## Sega: Genesis / Mega Drive, Master System, Game Gear, SG-1000
+
+- None of this has run on a real Vita; the app side was checked on the PC test
+  twin (library, launch file, play-time read-back, crash protection), the
+  player on PC and emulated ARM.
+- **Two players is not in yet** for these four consoles. The path is written
+  but switched off (the Settings > Two players row stays hidden) until the
+  player's link module lands.
+- A `.bin` is listed as a Genesis game when its header says SEGA; a `.bin`
+  inside a zip is taken as Genesis without that check. `.sc` (SG-1000) files
+  are not listed: rename to `.sg`.
+- A `.sms` file that is really a Game Gear game is played as a Master System
+  game; save and states stay together under Master System.
+- Join online does not know these games yet.
+- RetroAchievements badges in the library are not shown for them.
+
 ## Super NES
 
 - **Super FX games that keep the chip busy** (Doom, the races of Stunt Race

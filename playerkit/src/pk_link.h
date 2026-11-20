@@ -70,6 +70,11 @@ public:
 	virtual uint64_t heard_age_us(const LinkAddr &peer) { (void) peer; return UINT64_MAX; }
 	/* a stalled frame waits: return after about `us` microseconds or when something may have arrived */
 	virtual void idle(unsigned us) = 0;
+	/* The network's own round trip, before the session has any traffic of its own: a probe the other console's I/O thread
+	 * answers at once (so the answer does not include its game loop). echo_result: how many answers came back since
+	 * the start and the smallest and largest round trip in microseconds; false = this wire cannot probe. */
+	virtual void echo_probe(const LinkAddr &peer) { (void) peer; }
+	virtual bool echo_result(uint32_t *n, uint32_t *min_us, uint32_t *max_us) { (void) n; (void) min_us; (void) max_us; return false; }
 	virtual void log(const char *line) { (void) line; }
 	/* "lan", "direct", "punch" or "relay": for the census line */
 	virtual const char *path() { return "lan"; }

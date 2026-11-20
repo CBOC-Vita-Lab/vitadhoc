@@ -24,7 +24,7 @@ all: $(B)/md_twin $(B)/player_twin $(B)/scale_proof $(B)/sidebyside
 $(B)/mdcore.o: FORCE
 	$(MAKE) -C ../core TARGET=$(TARGET) B=$(BA) PROFILE=$(PROFILE) all
 $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h
-	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -o $@ main.cpp $(B)/mdcore.o -lm
+	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -o $@ main.cpp $(B)/mdcore.o -lm -pthread
 
 $(B)/scale_proof: scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
@@ -32,13 +32,28 @@ $(B)/sidebyside: sidebyside.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ sidebyside.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
 # player_twin: the Sega player's own logic (../vita/player.cpp) over the core, with playerkit's software renderer (no gpsp/ code)
 PK       := ../../playerkit
-PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed
-PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
+# RetroAchievements (playerkit/ra.mk): pk_ra, the rcheevos client and ra_http.c, the thread layer of the twin
+ifeq ($(ARCH),armhf)
+RA_CC    := $(call ccw,arm-linux-gnueabihf-gcc)
+else
+RA_CC    := $(call ccw,gcc)
+endif
+RA_GP     := ../../gpsp/vita
+RA_OBJDIR := $(B)/ra
+RA_CFLAGS := -std=gnu11 -O2 -g -w $(CPUF)
+include $(PK)/ra.mk
+.DEFAULT_GOAL := all
+$(B)/ra/pk_ra_plat_posix.o: $(PK)/ra/pk_ra_plat_posix.c $(PK)/src/pk_ra_plat.h
+	@mkdir -p $(B)/ra
+	$(RA_CC) $(RA_CFLAGS) -I$(PK)/src -c -o $@ $<
+$(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
+PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed pk_ra
+PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/ra/pk_ra_plat_posix.o $(RA_OBJS)
 PL_FE    := picture cheats savefile audio_pace
 PL_OBJS  := $(addprefix $(B)/pl/,$(addsuffix .o,$(PL_FE))) $(B)/pl/player.o $(B)/pl/pipe.o $(B)/pl/handoff_proof.o $(B)/pl/player_twin.o
 $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pk
-	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(PK)/src -c -o $@ $<
+	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(PK)/src $(PK_EXTRA_INC) -c -o $@ $<
 $(B)/pl/%.o: $(FE)/%.cpp $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
 	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I$(PK)/src -c -o $@ $<
@@ -47,7 +62,7 @@ $(B)/pl/%.o: ../vita/%.cpp $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildc
 	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I$(PK)/src -c -o $@ $<
 $(B)/pl/%.o: %.cpp $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
-	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../vita -I$(PK)/src -c -o $@ $<
+	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../vita -I$(PK)/src -I$(PK)/tests -c -o $@ $<
 $(B)/player_twin: $(PL_OBJS) $(PK_OBJS) $(B)/mdcore.o
 	$(CXX) $(CPUF) -o $@ $^ -lm -pthread
 player_twin: $(B)/player_twin

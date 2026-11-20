@@ -103,7 +103,7 @@ struct softrow_t {
     uint8_t ph, ok;
     uint16_t px[WK_MAX_MARGIN];
 };
-#define SOFTROWS 128
+#define SOFTROWS 1024     /* a sky gradient has a colour per line and side; 128 thrashed (a pure cache: no output depends on its size) */
 
 struct wk_compose {
     wk_compose_cfg cfg;
@@ -362,7 +362,7 @@ static void base_fill(const wk_compose *c, const base_t &b, uint16_t *row, uint8
     if (n >= c->M / 2) {
         /* whole row from the cache (computed for every distance on a miss) */
         const uint8_t ph = (uint8_t)((b.y & 3) | (b.s << 2));
-        softrow_t *sr = &((wk_compose *)c)->softc[(unsigned)(e0 * 31 + e1 * 17 + e2 * 7 + ph * 5) & (SOFTROWS - 1)];
+        softrow_t *sr = &((wk_compose *)c)->softc[(((unsigned)e0 * 0x9E3779B1u) ^ ((unsigned)e1 * 0x85EBCA6Bu) ^ ((unsigned)e2 * 0xC2B2AE35u) ^ ((unsigned)ph * 0x27D4EB2Fu)) >> 22];
         if (!sr->ok || sr->ph != ph || sr->e[0] != e0 || sr->e[1] != e1 || sr->e[2] != e2) {
             const uint16_t *sf = c->softf;
             const uint8_t *th4 = c->th4[b.y & 3][b.s];

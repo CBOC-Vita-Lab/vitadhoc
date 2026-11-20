@@ -1,6 +1,7 @@
 /* See player.h. Copyright CBOC-Vita. MIT licence (see md/frontend/LICENSE). */
 #include "player.h"
 #include "pk_patch.h"
+#include "pk_ra_plat.h"
 #include "pk_util.h"
 
 #include <stdarg.h>
@@ -536,6 +537,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		session_write(root_, r);
 		return res;
 	}
+	ra_begin(romb.data(), romb.size());       /* the file as the site knows it (the patched one for a patched game) */
 	{
 		std::vector<uint8_t>().swap(romb);
 		std::vector<uint8_t> sv;
@@ -650,6 +652,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	     ps_.quality, ps_.glow, ps_.scan, ps_.grid, ps_.scaler, ps_.use_game, steady_ ? 1 : 0, handoff_ ? 1 : 0);
 	speed_.set_host(&glue_);
 	speed_start();
+	ra_update();
 	states_->resume_mark(pf_->now_us() / 1000);
 	res.ok = true;
 	return res;
@@ -658,6 +661,11 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 void MdPlayer::apply_start_mode()
 {
 	std::vector<uint8_t> d;
+	if ((req_.start == START_CONTINUE || req_.start == START_SLOT) && ra_.hardcore_blocks()) {
+		notice("Hardcore mode: the game starts from the beginning", NOTICE_INFO);
+		logf("hardcore: the start from a saved state is refused\n");
+		return;
+	}
 	if (req_.start == START_CONTINUE) {
 		if (!states_->resume_present()) { notice("No point to continue from: the game starts from the beginning", NOTICE_INFO); return; }
 		States::PatchMatch pm = states_->resume_patch(req_.patch_key);
@@ -698,8 +706,8 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 /* ---- fast forward and rewind ---------------------------------------------------------------------------------------------- */
 
 size_t MdPlayer::SpeedGlue::state_size() { return md_host_state_size(); }
-bool MdPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { return md_host_state_save_mem(buf, cap) == md_host_state_size(); }
-bool MdPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return md_host_state_load_mem(buf, n) == 0; }
+bool MdPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { return md_host_state_save_quick(buf, cap) == md_host_state_size(); }
+bool MdPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return md_host_state_load_quick(buf, n) == 0; }
 void MdPlayer::SpeedGlue::run_frame(bool render) { md_host_set_render(render ? 1 : 0); md_host_run_frame(); }
 void MdPlayer::SpeedGlue::clear_pads() { md_host_set_pad(0, 0); md_host_set_pad(1, 0); }
 void MdPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
@@ -724,6 +732,41 @@ void MdPlayer::speed_start()
 	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) md_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
 }
 
+/* ---- RetroAchievements ----------------------------------------------------------------------------------------------------- */
+
+uint32_t MdPlayer::ra_read(void *, uint32_t addr, uint8_t *out, uint32_t n) { return (uint32_t) md_host_ra_read(addr, out, n); }
+uint64_t MdPlayer::ra_now(void *ud) { return ((MdPlayer *) ud)->pf_->now_us(); }
+int MdPlayer::ra_online(void *) { return pk_ra_net_online(); }
+void MdPlayer::ra_log(void *ud, const char *line) { ((MdPlayer *) ud)->logf("ra: %s\n", line); }
+
+void MdPlayer::ra_begin(const uint8_t *rom, size_t n)
+{
+	pk::RaHost h;
+	h.read = &MdPlayer::ra_read;
+	h.now_us = &MdPlayer::ra_now;
+	h.online = &MdPlayer::ra_online;
+	h.log = &MdPlayer::ra_log;
+	h.ud = this;
+	if (!ra_.boot(root_.c_str(), ra_server_.empty() ? 0 : ra_server_.c_str(), "2.0", h)) return;       /* no account on file: nothing runs */
+	ra_.game_begin(rom, n, md_host_ra_console());
+}
+
+void MdPlayer::ra_pump() { if (ra_.up()) ra_.pump(); }
+
+/* Hardcore turns up (or goes away: the game has no achievements) a moment after the game started: rewind and the cheats follow it */
+void MdPlayer::ra_update()
+{
+	const bool b = ra_.hardcore_blocks();
+	if (b == ra_blocks_) return;
+	ra_blocks_ = b;
+	speed_.set_rewind_locked(b, PK_RA_NO_REWIND);
+	cheats_apply();
+	logf("hardcore: %s\n", b ? "in force: no rewind, no cheats, no state loads" : "not in force");
+}
+
+const char *MdPlayer::state_load_refused() { return ra_.hardcore_blocks() ? PK_RA_NO_STATE : 0; }
+const char *MdPlayer::cheats_refused() { return ra_.hardcore_blocks() ? PK_RA_NO_CHEATS : 0; }
+
 int MdPlayer::speed_plan(int normal)
 {
 	int n = speed_.plan(normal);
@@ -738,7 +781,16 @@ int MdPlayer::speed_plan(int normal)
 	return n;
 }
 
-bool MdPlayer::run_frame(bool render) { return speed_.run_frame(render); }
+bool MdPlayer::run_frame(bool render)
+{
+	const bool landing = speed_.rewinding();
+	const bool ran = speed_.run_frame(render);
+	if (ran) {
+		if (landing) ra_.state_loaded();      /* a rewound game is another timeline: progress starts over */
+		else ra_.frame(false);
+	}
+	return ran;
+}
 
 size_t MdPlayer::audio_filter(int16_t *lr, size_t frames) { return speed_.audio(lr, frames); }
 
@@ -781,6 +833,7 @@ void MdPlayer::quick_save()
 
 void MdPlayer::quick_load()
 {
+	if (const char *why = state_load_refused()) { notice(why, NOTICE_ERROR); return; }
 	wait_writer();
 	std::vector<uint8_t> d, now;
 	StateStatus st = states_->load(1, d);
@@ -817,8 +870,16 @@ void MdPlayer::after_frame(uint64_t now_us)
 		/* what fast forward and rewind have to say, and their chip (">> 2x", "<< REWIND 12 s") kept on screen while they last */
 		std::string n = speed_.take_notice();
 		if (!n.empty()) notice(n, NOTICE_INFO);
+		ra_pump();
+		ra_update();
+		if (now_ms_ >= ra_toast_until_) {
+			std::string t;
+			NoticeKind k;
+			if (ra_.take_toast(&t, &k)) { notice(t, k); ra_toast_until_ = now_ms_ + (k == NOTICE_ERROR ? 5000 : 2200); }
+		}
 		std::string c = speed_.chip();
-		if (!c.empty()) {
+		if (c.empty() && now_ms_ >= ra_toast_until_) c = ra_.indicator();       /* the achievement indicators: the least urgent line */
+		if (!c.empty() && now_ms_ >= ra_toast_until_) {
 			if (c != chip_text_ || now_ms_ - chip_at_ms_ >= 400) { chip_text_ = c; chip_at_ms_ = now_ms_; menu_.notices().push(c, NOTICE_INFO, 700); }
 		} else chip_text_.clear();
 	}
@@ -924,6 +985,7 @@ void MdPlayer::suspend()
 void MdPlayer::cheats_apply()
 {
 	md_host_cheat_reset();
+	if (ra_.hardcore_blocks()) return;         /* Hardcore: the list stays, none of it is applied */
 	const std::vector<std::string> parts = cheats_.active_parts();
 	int refused = 0;
 	for (size_t i = 0; i < parts.size(); i++) {
@@ -1023,6 +1085,7 @@ void MdPlayer::menu_drawn()
 MenuEvent MdPlayer::menu_update(const MenuInput &in)
 {
 	MenuEvent ev = menu_.update(in);
+	ra_pump();
 	poll_writer();
 	if (ev == MENU_RESUME || ev == MENU_RESET_DONE) {
 		mapper_.menu_closed(in.pads);
@@ -1114,6 +1177,7 @@ void MdPlayer::on_change(int row, int v)
 void MdPlayer::on_reset()
 {
 	md_host_reset();
+	ra_.reset();
 	cheats_apply();
 	speed_.state_changed();
 	srm_recheck_ = true;
@@ -1133,7 +1197,9 @@ bool MdPlayer::capture_state(std::vector<uint8_t> &out)
 
 bool MdPlayer::restore_state(const uint8_t *data, size_t n)
 {
+	if (ra_.hardcore_blocks()) return false;
 	const int r = md_host_state_load_mem(data, n);
+	ra_.state_loaded();
 	srm_recheck_ = true;
 	pacer_.reset(PACE_FULL);
 	speed_.state_changed();              /* "a moment ago" is another timeline now */
@@ -1309,6 +1375,7 @@ void MdPlayer::finish(ExitReason why)
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),
 	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w));
+	ra_.shutdown();                  /* an unlock earned a moment ago gets up to three seconds to reach the server */
 	log_flush(true);
 }
 

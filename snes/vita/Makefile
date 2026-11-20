@@ -2,8 +2,9 @@
 #   make -C snes/vita -j2                  builds build/snes.bin (any -j: the objects are independent, the link waits for all)
 # Run by VitAdhoc via sceAppMgrLoadExec; packed into the VPK by gpsp/vita/Makefile.
 # Copyright CBOC-Vita. MIT licence for this file; ../core keeps the Snes9x licence.
-# The programs are separate. The one exception is the two-player link (netplay.cpp): the files listed in netplay.mk
-# (the netdrv session driver, the UDP transport, the mirror session) are compiled in; see the licence note there.
+# The programs are separate. The one exception is the two-player link (netplay.cpp): the project's own UDP transport and NAT
+# layer from gpsp/netdrv (netplay.mk, owner's code, MIT OR GPL-2.0-or-later) are compiled in beside playerkit's pk_link. None
+# of the main app's Game Boy link (netdrv.c, fe_gblink.c, fe_evt.c, fe_util.c) is: the build checks it (CHECK_LICENCE).
 
 VITASDK ?= /opt/vitasdk
 export VITASDK
@@ -22,6 +23,8 @@ B    := build
 include $(CORE)/sources.mk
 GP := ../../gpsp
 include netplay.mk
+empty :=
+space := $(empty) $(empty)
 
 CPUFLAGS := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard
 # S9X_PROF compiles the timing hooks in; they cost nothing while g_s9xp.on is 0
@@ -33,20 +36,28 @@ INC := -I$(WK)/include -I$(CORE) -I$(CORE)/apu -I$(CORE)/apu/bapu -I$(FE) -I$(FE
 OPT ?= -O3
 CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti $(CORE_DEFS) $(INC)
 CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/include
+# RetroAchievements (playerkit/ra.mk): pk_ra, the rcheevos client and ra_http.c: MIT code only (check-ra says so)
+RA_GP     := ../../gpsp/vita
+RA_OBJDIR := $(B)/ra
+RA_CC     = $(CC)
+RA_CFLAGS = -MMD -MP $(CPUFLAGS) -O2 -g -w -D__vita__
+include $(PK)/ra.mk
+.DEFAULT_GOAL := all
 
 CORE_OBJS := $(addprefix $(B)/core/,$(CORE_SRCS:.cpp=.o))
 # Second, renamed copy of the renderer for the PPU thread (see ../core/rcopy.sh)
 RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/wide.o $(B)/player.o $(B)/pipe.o $(B)/netplay.o $(B)/main.o
-# the two-player link's C files from gpsp/ (netplay.mk), built as the main app builds them (-DVITA: sceKernel threads, netctl)
-NP_OBJS   := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/gp/netplay_stubs.o
+# the two-player link's C files from gpsp/ (netplay.mk), built as the main app builds them (-DVITA: sceKernel threads, netctl),
+# and the one name transport_lan.c wants from the session driver (playerkit/src/pk_link_net_shim.c)
+NP_OBJS   := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/pk/pk_link_net_shim.o
 # widekit (MIT, ../../widekit): the wide view's layer analysis, learned map and composition
 WK_SRC    := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
 WK_OBJS   := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
 # playerkit (MIT): the in-game menu, states, input mapping, launch protocol, patches, notices, pacing
-PK_SRC    := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look
-PK_OBJS   := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o
+PK_SRC    := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed pk_link pk_link_net pk_ra
+PK_OBJS   := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o $(B)/pk/pk_ra_plat_vita.o $(RA_OBJS)
 # newlib's FILE-slot allocation has no lock on the console (playerkit/vita/pk_stdio_lock.c puts a real
 # one in place with --wrap); `make STDIO_LOCK=0` builds without it, as the main app's Makefile does too
 STDIO_LOCK ?= 1
@@ -60,7 +71,7 @@ SHADERS   := $(wildcard $(V2D)/shader/*_gxp.o)
 LIBS := -lSceNet_stub -lSceNetCtl_stub -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_stub \
         -lSceCommonDialog_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceTouch_stub \
         -lSceAppUtil_stub -lSceAudio_stub -lScePower_stub -lSceRtc_stub \
-        -lSceSysmem_stub -lSceLibKernel_stub -lm
+        -lSceHttp_stub -lSceSsl_stub -lSceSysmem_stub -lSceLibKernel_stub -lm
 
 all: $(B)/snes.bin
 
@@ -77,11 +88,33 @@ CHECK_WEAK = @w="$$($(NM) $(1) | awk '$$1 == "w" || $$1 == "v" { print $$2 }' | 
 	if [ -n "$$w" ]; then echo "weak undefined in $(1), not on the allowlist (snes/vita/Makefile WEAK_OK): $$w"; rm -f $(1); exit 1; fi
 
 SNES_OBJS := $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(NP_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
-LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $(B)/snes.elf $(SNES_OBJS) $(1) $(LIBS)
+LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q -Wl,-Map=$(B)/snes.map $(STDIO_LOCK_LD) -o $(B)/snes.elf $(SNES_OBJS) $(1) $(LIBS)
+
+# LICENCE CHECK: the player must not link the main app's Game Boy link (third-party GPL-2.0 from the GBAdhoc project):
+# not in the object list, not in the linker's map, and none of its symbols defined in the program. The build fails if one is.
+FORBID_RE := $(subst .,\.,$(subst $(space),|,$(strip $(NETPLAY_FORBIDDEN))))
+FORBID_SYM := ^(netdrv_|fe_gblink_|fe_evt|fe_crc32|fe_util_|fe_padpair_|gbdual_|gbcore_|gblink_)
+CHECK_LICENCE = @bad="$$( { for o in $(SNES_OBJS); do basename $$o; done | grep -E '^($(FORBID_RE))$$'; \
+	grep -E '[/( ]($(FORBID_RE))' $(B)/snes.map; \
+	$(NM) $(1) | awk '$$2 ~ /^[TtDdBbRrWw]$$/ { print $$3 }' | grep -E '$(FORBID_SYM)'; } )"; \
+	if [ -n "$$bad" ]; then echo "LICENCE: snes.bin links a file of the main app's Game Boy link (GBAdhoc, GPL-2.0): $$bad"; rm -f $(1); exit 1; fi; \
+	echo "check-licence: none of $(NETPLAY_FORBIDDEN) in the object list, the link map or the symbol table (the link is pk_link + transport_lan + nat_*)"
+
+# RetroAchievements: of everything from gpsp/ in the program only the files of RA_SRCS (ra.mk) may be there, and each is MIT
+# (ra_http.c and ra_roots.h are the owner's, dual MIT OR GPL-2.0-or-later; the rcheevos client is MIT; ra_vita.c is not linked).
+check-ra:
+	@bad=""; for f in $(SNES_OBJS); do case "$$f" in */ra/*|build/ra/*) n=$$(basename $$f .o); ok=0; for r in $(RA_NAMES:.c=); do [ "$$r" = "$$n" ] && ok=1; done; [ $$ok = 1 ] || bad="$$bad $$f";; esac; done; \
+	if [ -n "$$bad" ]; then echo "snes.bin links an unlisted RetroAchievements object:$$bad"; exit 1; fi; \
+	if grep -E '[/( ](ra_vita|fe_evt|fe_util|netdrv|fe_gblink)\.o' $(B)/snes.map >/dev/null 2>&1; then echo "snes.bin's link map names a GPL file of the app"; exit 1; fi; \
+	for f in $(RA_MIT_FILES); do grep -q 'MIT' $$f || { echo "RetroAchievements file without an MIT licence: $$f"; exit 1; }; done; \
+	if grep -l 'GPL-2.0-only\|GNU General Public' $(RA_SRCS) $(PK)/src/pk_ra.cpp $(PK)/src/pk_ra.h >/dev/null 2>&1; then echo "a GPL-only file is in the RetroAchievements list"; exit 1; fi; \
+	echo "check-ra: $(words $(RA_SRCS)) MIT files from gpsp/ for RetroAchievements (ra_http.c dual MIT OR GPL-2.0-or-later taken as MIT, the rcheevos client), ra_vita.c not linked, link map clean"
 
 $(B)/snes.elf: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS) $(NP_OBJS) $(WK_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
 	$(call LINK_ELF,)
 	$(call CHECK_WEAK,$@)
+	$(call CHECK_LICENCE,$@)
+	@$(MAKE) --no-print-directory check-ra SNES_OBJS="$(SNES_OBJS)"
 
 # ROOM FOR THE SCE DATA (same cure as gpsp/vita/Makefile $(VELF)): vita-elf-create writes its import
 # tables (a few KiB) behind the last byte of segment 0 and gives up ("Cannot allocate N bytes for SCE
@@ -123,9 +156,12 @@ $(B)/netplay.o: netplay.cpp netplay.h $(wildcard $(PK)/src/*.h)
 $(B)/gp/%.o: $(GP)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -Wextra -DVITA $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
-$(B)/gp/netplay_stubs.o: netplay_stubs.c
+$(B)/pk/pk_link_net_shim.o: $(PK)/src/pk_link_net_shim.c
 	@mkdir -p $(dir $@)
-	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -DVITA $(NETPLAY_INC) -c -o $@ $<
+	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -DVITA -c -o $@ $<
+$(B)/pk/pk_link_net.o: $(PK)/src/pk_link_net.cpp $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
 $(B)/main.o: main.cpp $(FE)/host.h player.h pipe.h netplay.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
@@ -138,9 +174,13 @@ $(B)/player.o: player.cpp player.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
 $(B)/wk/%.o: $(WK)/src/%.cpp $(wildcard $(WK)/include/*.h) $(wildcard $(WK)/src/*.h)
 	@mkdir -p $(B)/wk
 	$(CXX) $(CPUFLAGS) $(OPT) -g -std=gnu++11 -fno-exceptions -fno-rtti -I$(WK)/include -c -o $@ $<
+$(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
 $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pk
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(PK_EXTRA_INC) -c -o $@ $<
+$(B)/pk/pk_ra_plat_vita.o: $(PK)/vita/pk_ra_plat_vita.c $(PK)/src/pk_ra_plat.h
+	@mkdir -p $(B)/pk
+	$(CC) $(CFLAGS) -I$(PK)/src -c -o $@ $<
 $(B)/pk/pk_gfx_vita.o: $(PK)/vita/pk_gfx_vita.cpp $(wildcard $(PK)/vita/*.h) $(PK)/src/pk_gfx.h
 	@mkdir -p $(B)/pk
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
@@ -155,4 +195,4 @@ $(B)/v2d/%.o: $(V2D)/source/%.c
 
 clean:
 	rm -rf $(B)
-.PHONY: all clean
+.PHONY: all clean check-ra

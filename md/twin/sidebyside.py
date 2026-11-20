@@ -36,5 +36,5 @@ def main():
     sheet = np.concatenate([canvas(a), canvas(b), canvas(np.clip(d * 8, 0, 255))], 1)
     out = sys.argv[2] if len(sys.argv) > 2 else pre + '.png'
     Image.fromarray(np.clip(sheet + 0.5, 0, 255).astype(np.uint8)).save(out)
-    print("SBS %s %dx%d (native %sx%s) fit %dx%d mean_abs_diff=%.3f p99.9=%.1f max=%.0f px_over_16=%.3f%%" % (m['name'], w, h, m['native_w'], m['native_h'], dw, dh, mean, p999, pmax, frac16))
+    print("SBS %s %dx%d (native %sx%s) fit %dx%d mean_abs_diff=%.3f p99.9=%.1f max=%.0f px_over_16=%.3f%%" % (pre.split('/')[-1], w, h, m['native_w'], m['native_h'], dw, dh, mean, p999, pmax, frac16))
 main()

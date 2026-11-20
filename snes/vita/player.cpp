@@ -2,6 +2,7 @@
 #include "player.h"
 #include "wide.h"
 #include "pk_patch.h"
+#include "pk_ra_plat.h"
 #include "pk_util.h"
 
 #include <stdarg.h>
@@ -26,7 +27,7 @@ bool Writer::work_one(SnesPlayer *p)
 	WriterJob *j = 0;
 	{
 		SpinGuard g(lk_);
-		if (todo_.empty()) return false;
+		if (todo_.empty()) { return p->speed_pack(); }     /* nothing to write: pack the newest rewind state, if one waits */
 		j = todo_.front();
 		todo_.erase(todo_.begin());
 		running_++;
@@ -81,6 +82,17 @@ static std::string srm_for(const std::string &rom)
 }
 
 /* menu shape (Original, Fit, Zoom, Full screen, Pixel perfect) <-> the SNES picture's shapes */
+static int word_scaler(const std::string &w0)
+{
+	const std::string w = lower(w0);
+	if (w == "auto") return SCALER_AUTO;
+	if (w == "off" || w == "sharp") return SCALER_OFF;
+	if (w == "mmpx" || w == "mmpx2") return SCALER_MMPX2;
+	if (w == "xbr2") return SCALER_XBR2;
+	if (w == "xbr3") return SCALER_XBR3;
+	return -1;
+}
+
 static int shape_to_pic(int v)
 {
 	switch (v) { case 2: return PIC_ZOOM; case 3: return PIC_FULL; case 4: return PIC_PIXEL; default: return PIC_ORIGINAL; }
@@ -95,7 +107,7 @@ static const char *kMultitapGames[] = { "BOMBERMAN", "SECRET OF MANA", "SEIKEN D
 /* fields of pic_settings the player changed in the menu (only these are written back to the files, so a
  * per-game value the app sent in the launch file never leaks into picture.ini) */
 enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_HIRES = 64, CH_ILACE = 128,
-       CH_MULTITAP = 256, CH_USEGAME = 512, CH_WIDE = 1024 };
+       CH_MULTITAP = 256, CH_USEGAME = 512, CH_WIDE = 1024, CH_SCALER = 2048 };
 static unsigned g_changed;
 static pic_settings g_ps_file;
 
@@ -111,6 +123,7 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_ILACE) dst.interlace_blend = src.interlace_blend;
 	if (m & CH_MULTITAP) dst.multitap = src.multitap;
 	if (m & CH_WIDE) dst.wide = src.wide;
+	if (m & CH_SCALER) dst.scaler = src.scaler;
 	if (m & CH_USEGAME) dst.use_game = src.use_game;
 }
 
@@ -125,7 +138,7 @@ static void apply_1_4_defaults(pic_settings *s)
 	s->interlace_blend = 1;
 }
 
-SnesPlayer::SnesPlayer(Platform *pf) : pf_(pf)
+SnesPlayer::SnesPlayer(Platform *pf) : pf_(pf), glue_(this)
 {
 	pic_defaults(&ps_);
 	apply_1_4_defaults(&ps_);
@@ -380,6 +393,12 @@ void SnesPlayer::settings_load()
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 	pal_fast_ = pl.get_int("pal_speed", 0) != 0;
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
+	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
+	ff_sound_ = pl.get_int("ff_sound", 1) != 0;
+	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
+	rewind_on_ = pl.get_int("rewind", 1) != 0;
+	rewind_len_ = pl.get_int("rewind_seconds", 60) <= 30 ? 0 : 1;
+	rewind_mb_ = clampi(pl.get_int("rewind_mb", 12), 4, 24);
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -410,8 +429,13 @@ void SnesPlayer::apply_overrides()
 	if ((v = req_.override_int("multitap", -1)) >= 0) ps_.multitap = clampi(v, 0, 2);
 	if ((v = req_.override_int("wide_view", -1)) >= 0) ps_.wide = clampi(v, 0, 2);
 	if (req_.overrides.count("wide_view")) { std::string w = lower(req_.overrides.find("wide_view")->second); if (w == "auto") ps_.wide = 0; else if (w == "on") ps_.wide = 1; else if (w == "off") ps_.wide = 2; }
+	if ((v = req_.override_int("scaler", -1)) >= 0) ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1);
+	if (req_.overrides.count("scaler")) { int sc = word_scaler(req_.overrides.find("scaler")->second); if (sc >= 0) ps_.scaler = sc; }
 	if ((v = req_.override_int("steady_pacing", -1)) >= 0) steady_ = v != 0;
 	if ((v = req_.override_int("smooth_handoff", -1)) >= 0) handoff_ = v != 0;
+	if ((v = req_.override_int("rewind", -1)) >= 0) rewind_on_ = v != 0;
+	if ((v = req_.override_int("rewind_mb", -1)) >= 0) rewind_mb_ = clampi(v, 4, 24);
+	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = v == 1 ? 1 : 0;
 	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
 	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_fast_ = v != 0;
 	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_fast_ = true; else if (w == "true" || w == "50") pal_fast_ = false; }
@@ -432,10 +456,16 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_INTERLACE, ps_.interlace_blend ? 1 : 0);
 	menu_.set_value(ROW_MULTITAP, ps_.multitap);
 	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
+	menu_.set_value(ROW_SCALER, ps_.scaler);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 	menu_.set_value(ROW_PALSPEED, pal_fast_ ? 1 : 0);
 	menu_.set_value(ROW_LOOK, look_mode_);
+	menu_.set_value(ROW_SPD_FF, ff_speed_);
+	menu_.set_value(ROW_SPD_SOUND, ff_sound_);
+	menu_.set_value(ROW_SPD_MODE, ff_toggle_);
+	menu_.set_value(ROW_SPD_REWIND, rewind_on_);
+	menu_.set_value(ROW_REWIND_LEN, rewind_len_);
 }
 
 int SnesPlayer::multitap_wanted() const
@@ -532,6 +562,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	snes_host_set_backup_dir(path_join(path_join(root, "backups"), "snes").c_str());
 	if (snes_host_init()) { res.fatal1 = "The SNES core could not start."; res.fatal2 = "Not enough memory."; return res; }
 	int lr;
+	std::vector<uint8_t> ra_img;       /* the patched file, kept for RetroAchievements' hash (the site knows a patched game by its own) */
 	if (!req_.patch_path.empty()) {
 		std::vector<uint8_t> romb, out;
 		if (!file_read(rom_, romb, 12u << 20)) { res.fatal1 = "This game could not be started."; res.fatal2 = "The game file could not be read."; return res; }
@@ -546,6 +577,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 			return res;
 		}
 		lr = snes_host_load_rom_mem(out.data(), out.size(), rom_.c_str(), srm_.c_str(), err, sizeof err);
+		ra_img.swap(out);
 	} else {
 		lr = snes_host_load_rom(rom_.c_str(), srm_.c_str(), err, sizeof err);
 	}
@@ -557,6 +589,11 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		r.notice = std::string("This game could not be started: ") + err;
 		session_write(root_, r);
 		return res;
+	}
+	if (!linked() && pk::Ra::has_account(root_.c_str())) {
+		if (ra_img.empty() && !file_read(rom_, ra_img, 12u << 20)) ra_img.clear();
+		if (!ra_img.empty()) ra_begin(ra_img.data(), ra_img.size());
+		std::vector<uint8_t>().swap(ra_img);
 	}
 	if (req_.link.active()) {
 		/* the session's identity of the game: the bytes the core runs. The file itself when it is those bytes, else a
@@ -615,7 +652,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
-	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT;
+	           CAP_WIDE | CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = 4;
 	cfg.accent = 0x7B6CFF;
@@ -623,12 +660,16 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	menu_.attach_input(&mapper_, store_, &model_snes(), &profile_);
 	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* no "Fit": Original already fills the height */
 	{
-		std::vector<std::string> px, onoff, mt, st;
+		std::vector<std::string> px, onoff, mt, st, sc;
 		px.push_back("8:7 (console)"); px.push_back("Square");
+		sc.push_back("Auto"); sc.push_back("Sharp (none)"); sc.push_back("MMPX 2x"); sc.push_back("xBR 2x"); sc.push_back("xBR 3x");
 		onoff.push_back("Off"); onoff.push_back("On");
 		mt.push_back("Auto"); mt.push_back("On"); mt.push_back("Off");
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_PIXELS, "Pixel shape",
 		                   "Pixel perfect only: the console's slightly wide pixels (8:7), or square ones.", px, 0, ROW_PIC_QUALITY);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SCALER, "Pixel art scaler",
+		                   "Redraws the picture at 2x or 3x its size with smooth diagonals before it is fitted to the screen (xBR, MMPX). Auto picks the best that holds full speed.",
+		                   sc, ps_.scaler, ROW_PIC_QUALITY);
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_HIRES, "Blend hi-res columns",
 		                   "Averages pairs of columns in 512-wide pictures, smoothing their dithered see-through effects. Softens text.", onoff, 0, ROW_PIC_APPLY);
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_INTERLACE, "Blend interlace lines",
@@ -642,8 +683,14 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
 		lookv.push_back("Auto"); lookv.push_back("Full"); lookv.push_back("Light");
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_LOOK, "Image look",
-		                   "Auto keeps the best look and eases the blends only when a game cannot hold 60. Full keeps the blends as set, Light turns them off, both always.",
+		                   "Auto keeps the best scaler and eases it only when a game cannot hold full speed. Full keeps the scaler as set, Light turns it off, both always.",
 		                   lookv, 0, ROW_PIC_APPLY);
+		{
+			std::vector<std::string> rl;
+			rl.push_back("30 s"); rl.push_back("1 min");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
+			                   "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
+		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
 		                   "European games run at 50 Hz. True 50 Hz plays them at their real speed (one frame in six is shown again); Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
 		                   palv, 0);
@@ -658,6 +705,9 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	logf("title: %s  pal=%d  sram=%u  picture: shape=%d quality=%d glow=%d scan=%d grid=%d multitap=%d own=%d steady=%d handoff=%d\n",
 	     snes_host_rom_title(), snes_host_is_pal(), (unsigned) snes_host_sram_size(), ps_.shape, ps_.quality, ps_.glow, ps_.scan,
 	     ps_.grid, ps_.multitap, ps_.use_game, steady_ ? 1 : 0, handoff_ ? 1 : 0);
+	speed_.set_host(&glue_);
+	speed_start();
+	ra_update();
 	states_->resume_mark(pf_->now_us() / 1000);
 	res.ok = true;
 	return res;
@@ -666,6 +716,11 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 void SnesPlayer::apply_start_mode()
 {
 	if (linked()) return;      /* a linked game starts from power-on and from the host's save, never from a resume point or slot */
+	if ((req_.start == START_CONTINUE || req_.start == START_SLOT) && ra_.hardcore_blocks()) {
+		notice("Hardcore mode: the game starts from the beginning", NOTICE_INFO);
+		logf("hardcore: the start from a saved state is refused\n");
+		return;
+	}
 	std::vector<uint8_t> d;
 	if (req_.start == START_CONTINUE) {
 		if (!states_->resume_present()) { notice("No point to continue from: the game starts from the beginning", NOTICE_INFO); return; }
@@ -694,6 +749,7 @@ bool SnesPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t 
 	now_ms_ = now_ms;
 	for (int i = 0; i < MAX_PLAYERS; i++) last_pads_[i] = pads[i];
 	mapper_.update(pads, now_ms, frame, &in_);
+	speed_.input(in_.fired);
 	if (in_.menu || tapped) return true;
 	if (linked()) {
 		/* the session sets both pads of its one machine; this console's player is pad 1 only, no quick save or load */
@@ -708,6 +764,98 @@ bool SnesPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t 
 	return false;
 }
 
+/* ---- fast forward and rewind ---------------------------------------------------------------------------------------------- */
+
+size_t SnesPlayer::SpeedGlue::state_size() { return snes_host_state_size(); }
+bool SnesPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { size_t len = 0; return snes_host_state_save_buf(buf, cap, &len) == 0 && len == snes_host_state_size(); }
+bool SnesPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return snes_host_state_load_buf(buf, n) == 0; }
+void SnesPlayer::SpeedGlue::run_frame(bool render) { snes_host_set_render(render ? 1 : 0); snes_host_run_frame(); }
+void SnesPlayer::SpeedGlue::clear_pads() { for (int i = 0; i < 5; i++) snes_host_set_pad(i, 0); }
+void SnesPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
+
+SpeedSettings SnesPlayer::speed_settings() const
+{
+	SpeedSettings s;
+	s.rewind_on = rewind_on_ != 0;
+	s.rewind_seconds = rewind_len_ ? 60 : 30;
+	s.rewind_budget = (size_t) rewind_mb_ << 20;
+	s.ff_factor = ff_speed_ ? 3 : 2;
+	s.ff_sound = ff_sound_ != 0;
+	s.ff_toggle = ff_toggle_ != 0;
+	return s;
+}
+
+void SnesPlayer::speed_start()
+{
+	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
+	if (linked()) speed_.set_locked(true, "Rewind is off while games are linked");
+	speed_.start(snes_host_is_pal() ? 50.0 : 60.0988, 4, speed_settings());
+	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
+	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) snes_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
+}
+
+/* ---- RetroAchievements ----------------------------------------------------------------------------------------------------- */
+
+uint32_t SnesPlayer::ra_read(void *, uint32_t addr, uint8_t *out, uint32_t n) { return (uint32_t) snes_host_ra_read(addr, out, n); }
+uint64_t SnesPlayer::ra_now(void *ud) { return ((SnesPlayer *) ud)->pf_->now_us(); }
+int SnesPlayer::ra_online(void *) { return pk_ra_net_online(); }
+void SnesPlayer::ra_log(void *ud, const char *line) { ((SnesPlayer *) ud)->logf("ra: %s\n", line); }
+
+void SnesPlayer::ra_begin(const uint8_t *rom, size_t n)
+{
+	pk::RaHost h;
+	h.read = &SnesPlayer::ra_read;
+	h.now_us = &SnesPlayer::ra_now;
+	h.online = &SnesPlayer::ra_online;
+	h.log = &SnesPlayer::ra_log;
+	h.ud = this;
+	if (!ra_.boot(root_.c_str(), ra_server_.empty() ? 0 : ra_server_.c_str(), "2.0", h)) return;       /* no account on file: nothing runs */
+	ra_.game_begin(rom, n, pk::RA_SNES);
+}
+
+void SnesPlayer::ra_pump() { if (ra_.up()) ra_.pump(); }
+
+/* Hardcore turns up (or goes away: the game has no achievements) a moment after the game started: rewind and the cheats follow it */
+void SnesPlayer::ra_update()
+{
+	const bool b = ra_.hardcore_blocks();
+	if (b == ra_blocks_) return;
+	ra_blocks_ = b;
+	speed_.set_rewind_locked(b, PK_RA_NO_REWIND);
+	snes_host_cheats_hold(b ? 1 : 0);
+	logf("hardcore: %s\n", b ? "in force: no rewind, no cheats, no state loads" : "not in force");
+}
+
+const char *SnesPlayer::state_load_refused() { return ra_.hardcore_blocks() ? PK_RA_NO_STATE : 0; }
+const char *SnesPlayer::cheats_refused() { return ra_.hardcore_blocks() ? PK_RA_NO_CHEATS : 0; }
+
+int SnesPlayer::speed_plan(int normal)
+{
+	int n = speed_.plan(normal);
+	const bool b = speed_.busy();
+	if (b != speed_was_busy_) {
+		/* the pacing and the look governor start afresh at both ends: what they measured is not what a normal frame costs */
+		pacer_.reset(PACE_FULL);
+		look_.reset_window();
+		speed_.take_ended();
+		speed_was_busy_ = b;
+	}
+	return n;
+}
+
+bool SnesPlayer::run_frame(bool render)
+{
+	const bool landing = speed_.rewinding();
+	const bool ran = speed_.run_frame(render);
+	if (ran) {
+		if (landing) ra_.state_loaded();      /* a rewound game is another timeline: progress starts over */
+		else ra_.frame(linked());             /* two players: nothing is processed */
+	}
+	return ran;
+}
+
+size_t SnesPlayer::audio_filter(int16_t *lr, size_t frames) { return speed_.audio(lr, frames); }
+
 bool SnesPlayer::want_render(uint32_t frame) const
 {
 	return !steady_ || pacer_.mode() == PACE_FULL || (frame & 1) == 0;
@@ -715,6 +863,7 @@ bool SnesPlayer::want_render(uint32_t frame) const
 
 void SnesPlayer::drawn_cost(uint32_t cost_us)
 {
+	if (speed_.busy()) return;           /* fast forward and rewind cost a multiple of a frame: the pacer would only back off */
 	if (!steady_) { pacer_.add(cost_us); return; }
 	bool changed = false;
 	PaceMode m = pacer_.add(cost_us, &changed);
@@ -746,6 +895,7 @@ void SnesPlayer::quick_save()
 
 void SnesPlayer::quick_load()
 {
+	if (const char *why = state_load_refused()) { notice(why, NOTICE_ERROR); return; }
 	wait_writer();
 	std::vector<uint8_t> d, now;
 	StateStatus st = states_->load(1, d);
@@ -778,6 +928,23 @@ void SnesPlayer::after_frame(uint64_t now_us)
 	prev_frame_us_ = now_us;
 	menu_.notices().update(dt);
 	now_ms_ = now_us / 1000;
+	{
+		/* what fast forward and rewind have to say, and their chip (">> 2x", "<< REWIND 12 s") kept on screen while they last */
+		std::string n = speed_.take_notice();
+		if (!n.empty()) notice(n, NOTICE_INFO);
+		ra_pump();
+		ra_update();
+		if (now_ms_ >= ra_toast_until_) {
+			std::string t;
+			NoticeKind k;
+			if (ra_.take_toast(&t, &k)) { notice(t, k); ra_toast_until_ = now_ms_ + (k == NOTICE_ERROR ? 5000 : 2200); }
+		}
+		std::string c = speed_.chip();
+		if (c.empty() && now_ms_ >= ra_toast_until_) c = ra_.indicator();       /* the achievement indicators: the least urgent line */
+		if (!c.empty() && now_ms_ >= ra_toast_until_) {
+			if (c != chip_text_ || now_ms_ - chip_at_ms_ >= 400) { chip_text_ = c; chip_at_ms_ = now_ms_; menu_.notices().push(c, NOTICE_INFO, 700); }
+		} else chip_text_.clear();
+	}
 	poll_writer();
 	srm_watch(now_us);
 	wide_watch(now_us);
@@ -895,6 +1062,7 @@ void SnesPlayer::menu_drawn()
 MenuEvent SnesPlayer::menu_update(const MenuInput &in)
 {
 	MenuEvent ev = menu_.update(in);
+	ra_pump();
 	poll_writer();
 	if (ev == MENU_RESUME || ev == MENU_RESET_DONE) {
 		mapper_.menu_closed(in.pads);
@@ -923,6 +1091,12 @@ void SnesPlayer::settings_queue_save()
 	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
 	pl.set_int("pal_speed", pal_fast_ ? 1 : 0);
 	pl.set_int("look_mode", look_mode_);
+	pl.set_int("ff_speed", ff_speed_);
+	pl.set_int("ff_sound", ff_sound_);
+	pl.set_int("ff_mode", ff_toggle_);
+	pl.set_int("rewind", rewind_on_);
+	pl.set_int("rewind_seconds", rewind_len_ ? 60 : 30);
+	pl.set_int("rewind_mb", rewind_mb_);
 	j->text = pl.serialize();
 	post(j);
 }
@@ -940,17 +1114,23 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PIC_APPLY:
 		ps_.use_game = v ? 1 : 0;
 		/* "This game" stores every value as now shown; "All games" only what was changed here */
-		g_changed |= CH_USEGAME | (v ? 0x7FF : 0);
+		g_changed |= CH_USEGAME | (v ? 0xFFF : 0);
 		break;
 	case ROW_PIXELS: ps_.pixel_sq = v ? 1 : 0; g_changed |= CH_PIXEL; break;
 	case ROW_HIRES: ps_.hires_blend = v ? 1 : 0; g_changed |= CH_HIRES; break;
 	case ROW_INTERLACE: ps_.interlace_blend = v ? 1 : 0; g_changed |= CH_ILACE; break;
 	case ROW_MULTITAP: ps_.multitap = clampi(v, 0, 2); g_changed |= CH_MULTITAP; snes_host_set_multitap(multitap_wanted()); break;
 	case ROW_PIC_WIDE: ps_.wide = clampi(v, 0, 2); g_changed |= CH_WIDE; break;
+	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
 	case ROW_PALSPEED: pal_fast_ = v != 0; break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
+	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_SOUND: ff_sound_ = v != 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_REWIND: rewind_on_ = v != 0; speed_.apply(speed_settings()); logf("%s\n", speed_.stats_line().c_str()); break;
+	case ROW_REWIND_LEN: rewind_len_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	default: return;
 	}
 	settings_dirty_ = true;
@@ -961,6 +1141,8 @@ void SnesPlayer::on_change(int row, int v)
 void SnesPlayer::on_reset()
 {
 	snes_host_reset();
+	ra_.reset();
+	speed_.state_changed();
 	srm_recheck_ = true;
 	logf("reset\n");
 }
@@ -977,9 +1159,12 @@ bool SnesPlayer::capture_state(std::vector<uint8_t> &out)
 
 bool SnesPlayer::restore_state(const uint8_t *data, size_t n)
 {
+	if (ra_.hardcore_blocks()) return false;
 	int r = snes_host_state_load_buf(data, n);
+	ra_.state_loaded();
 	srm_recheck_ = true;
 	pacer_.reset(PACE_FULL);
+	speed_.state_changed();              /* "a moment ago" is another timeline now */
 	return r == 0;
 }
 
@@ -1136,7 +1321,7 @@ void SnesPlayer::wide_watch(uint64_t now_us)
 		     (unsigned long long) c.frames_fallback, (unsigned long long) c.fb_nothing_drawn, (unsigned long long) c.fb_profile_off, (unsigned long long) c.fb_setup,
 		     (unsigned long long) c.auto_switches, (unsigned long long) c.scenes, (int) c.coverage_pct, c.auto_wide ? "wide" : "ambient", (unsigned) c.map_cells);
 		/* the cost ladder (snes/frontend/wide.h): rung 0 full margin .. 3 floor, the smoothed compose time, frames each side showed the ambient frame */
-		logf("wide ladder: rung=%d compose_us=%u steps=%u side_amb_frames L=%u R=%u chip=%d\n", c.rung, (unsigned) c.compose_us, (unsigned) c.rung_changes,
+		logf("wide ladder: rung=%d compose_us=%u capture_us=%u steps=%u side_amb_frames L=%u R=%u chip=%d\n", c.rung, (unsigned) c.compose_us, (unsigned) c.capture_us, (unsigned) c.rung_changes,
 		     (unsigned) c.frames_side_amb[0], (unsigned) c.frames_side_amb[1], c.chip);
 	}
 	if (!wide_on_ && !snes_wide_map_dirty()) return;
@@ -1152,6 +1337,7 @@ void SnesPlayer::wide_watch(uint64_t now_us)
  * resolution (narrower margin, lower resolution side strips, 30 Hz strips) by rungs appended here once snes/frontend/wide.*
  * offers them. To add one: a line here, a LOOK_* id in player.h, and its effect in look_apply(). */
 static const LookRung kLookLadder[] = {
+	{ "xBR 2x -> sharp", SnesPlayer::ROW_SCALER, 0.20f, 25 },
 	{ "interlace blend off", SnesPlayer::ROW_INTERLACE, 0.04f, 30 },
 	{ "hi-res blend off", SnesPlayer::ROW_HIRES, 0.04f, 45 },
 };
@@ -1163,6 +1349,7 @@ void SnesPlayer::look_sync_rows()
 	if (look_on_) {
 		/* a fixed look (Full / Light) is the player's choice: the governor touches nothing */
 		const bool fixed = look_mode_ != 0;
+		look_.set_user_row(ROW_SCALER, fixed || ps_.scaler != SCALER_AUTO);
 		look_.set_user_row(ROW_INTERLACE, fixed || ps_.interlace_blend == 0);
 		look_.set_user_row(ROW_HIRES, fixed || ps_.hires_blend == 0);
 	}
@@ -1175,8 +1362,10 @@ void SnesPlayer::look_apply(const char *why)
 	/* Built in a local and stored int by int, only what differs: this runs on the game thread during play while the drawing thread
 	 * reads picture() (it takes a copy per picture), so eff_ is never rewritten as a whole and nothing is stored that did not change. */
 	pic_settings n = ps_;
-	if (look_mode_ == 2) { n.interlace_blend = 0; n.hires_blend = 0; }   /* Light: blends off, fixed */
+	n.tier_steps = 0;
+	if (look_mode_ == 2) { n.interlace_blend = 0; n.hires_blend = 0; n.scaler = SCALER_OFF; }   /* Light: scaler and blends off, fixed */
 	else if (look_on_) {
+		if (look_.applied(LOOK_SCALER)) n.tier_steps = 1;
 		if (look_.applied(LOOK_ILACE)) n.interlace_blend = 0;
 		if (look_.applied(LOOK_HIRES)) n.hires_blend = 0;
 	}
@@ -1189,7 +1378,7 @@ void SnesPlayer::look_apply(const char *why)
 	if (!changed) return;
 	pf_->picture_changed();
 	if (why) {
-		logf("look: %s -> mask=%u (interlace blend %d, hi-res blend %d)\n", why, look_.mask(), eff_.interlace_blend, eff_.hires_blend);
+		logf("look: %s -> mask=%u (scaler steps %d, row %d, interlace blend %d, hi-res blend %d)\n", why, look_.mask(), eff_.tier_steps, eff_.scaler, eff_.interlace_blend, eff_.hires_blend);
 		/* no toast at launch, where only a remembered look is applied */
 		if (strcmp(why, "start") != 0 && look_.level() > 0) notice("Look eased to keep full speed", NOTICE_INFO);
 	}
@@ -1217,6 +1406,7 @@ void SnesPlayer::look_start(int mhz)
 void SnesPlayer::look_second(const LookSecond &s)
 {
 	if (!look_on_) return;
+	if (speed_.busy() || speed_was_busy_) { look_.reset_window(); return; }     /* fast forward / rewind seconds are no measure of the look */
 	look_bad_ = pk::LookGovernor::load_of(s) >= look_.config().bad_load;
 	/* the wide view's ladder takes the player's trouble once per second (it is consumed by the next composed frame): 1 = step down, 2 = to the
 	 * floor when the steady pacer has been thinning frames for 3 seconds in a row */
@@ -1259,6 +1449,7 @@ void SnesPlayer::look_save(bool final_)
 
 void SnesPlayer::finish(ExitReason why)
 {
+	speed_.stop();
 	wait_writer();
 	wide_post(true);
 	if (look_on_) {
@@ -1290,6 +1481,7 @@ void SnesPlayer::finish(ExitReason why)
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),
 	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w));
+	ra_.shutdown();                  /* an unlock earned a moment ago gets up to three seconds to reach the server */
 	log_flush(true);
 }
 

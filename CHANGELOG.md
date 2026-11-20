@@ -2,6 +2,15 @@
 
 ## Version 2.0
 
+- **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each is
+  a console in the picker with its own shelf, folders (`ux0:ROMS/Genesis`,
+  `SMS`, `GG`, `SG-1000` and RetroFlow's Sega folders), zip and `.smd` support,
+  names and box art by checksum, Starred, Recent, play time, Continue, state
+  shelf, cheats from the bundled database, RetroArch save import and export,
+  crash protection and the Cover button, played in the separate `md.bin`
+  program. Two players for them is written but switched off for now.
+- **The console picker is alphabetical** by the console's displayed name, so
+  any new console lands in place; the game counts stay.
 - **A console picker instead of a row of console tabs.** The top bar names
   only the console in use. Triangle (or a tap on its name) drops a list of every
   console under it, with the number of games found in each, the one in use

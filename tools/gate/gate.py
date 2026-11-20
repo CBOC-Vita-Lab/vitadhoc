@@ -248,6 +248,17 @@ STEPS = [
          "make -C playerkit test", "quick", {"playerkit"},
          inputs=["playerkit/", "snes/frontend/third_party/"], requires=CXX, parse="playerkit",
          timeout=3600),
+    # pk_link (playerkit/src/pk_link*.cpp): the players' own two-console lockstep session, MIT, no netdrv. Real UDP and real
+    # time (a 12 s stall, a dead peer, loss); alone in its group so no other loopback run takes its CPU and skews the clocks.
+    Step("pk-link", "players' link (pk_link): lossy/reordered/stalled/dead/desynced sessions under ASan+UBSan and TSan (playerkit link-test)",
+         "make -C playerkit link-test", "quick", {"playerkit", "link"},
+         inputs=["playerkit/", "gpsp/netdrv/transport_lan.c", "gpsp/netdrv/nat_hash.c", "gpsp/netdrv/nat_stun.c", "gpsp/netdrv/nat_turn.c"],
+         requires=CXX, group=GROUP_HOST, timeout=3600),
+    Step("snes-link", "two SNES players linked (snes/twin link_twin, pk_link): LAN, punched, relayed, wrong game, desync, 3000 frames, every private ROM (GATE_SNES_ROMS)",
+         "make -C snes/twin -f Makefile.link B=build -j{jobs} && python3 snes/twin/link_test.py --twin snes/twin/build/link_twin "
+         "--roms \"$GATE_SNES_ROMS\" --frames 3000 --out {out}/snes-link",
+         "default", {"snes", "link"}, inputs=["snes/", "playerkit/", "gpsp/netdrv/"], requires=CXX, env_req="GATE_SNES_ROMS",
+         group=GROUP_HOST, timeout=7200),
     Step("vita-gxm", "console drawing path: pk_gfx_vita + the app's text format against a GXM-faithful vita2d fake (menu text is coverage not boxes, contrast, same as soft)",
          "make -C playerkit build/vita_gxm && cd playerkit && ./build/vita_gxm", "quick", {"playerkit", "vita"},
          inputs=["playerkit/", "gpsp/vita/vback_vita2d.c", "snes/frontend/third_party/vita2d/"],
@@ -283,6 +294,11 @@ STEPS = [
     # backup); quick, so it runs in --quick too
     Step("census", "default-on features act (app_tests.py --only census)",
          "python3 app_tests.py x86 --only census", "quick", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
+         inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom"],
+         requires=PIL, group=GROUP_HOST, parse="app", timeout=1800),
+    # the four Sega consoles in the library and the md.bin launch protocol (host twin; md.bin itself is not run)
+    Step("app-sega", "Genesis, Master System, Game Gear, SG-1000 in the app (app_tests.py --only sega_library,sega_session)",
+         "python3 app_tests.py x86 --only sega_library,sega_session", "quick", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=1800),
     Step("app-x86", "the whole app on x86: game list, menus, states, fast forward (app_tests.py)",

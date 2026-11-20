@@ -37,5 +37,10 @@
 #include "svp.h"
 #include "state.h"
 
+/* VitAdhoc: the call wrappers of the VDP worker (not for the renderer itself: vdp_render.c defines VDPW_NO_WRAP) */
+#ifndef VDPW_NO_WRAP
+#include "vdp_thread.h"
+#endif
+
 #endif /* _SHARED_H_ */
 

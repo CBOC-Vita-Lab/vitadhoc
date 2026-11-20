@@ -381,12 +381,13 @@ TEST(cores_plan_4core_nes_and_wide)
 Request md_req() {
 	Request r(CP_MD);
 	r.with(R_EMU_MAIN).with(R_AUDIO_OUT).with(R_WRITER).with(R_DRAW).with(R_UPSCALE);
-	r.upscale_n = 2;
+	r.upscale_n = 3;
 	return r;
 }
 
-/* the Sega player (md.bin): the core on core 0 alone, the drawing thread on core 1, audio out + writer + one scaler helper on core 2;
- * with the extra core audio and writer move there and a second helper goes with them; the drawing thread never moves */
+/* the Sega player (md.bin): the core on core 0, the drawing thread on core 1, audio out + writer + scaler helper 0 on core 2, scaler helper 1 on
+ * core 0 below the core's priority (it runs in that thread's gaps); with the extra core audio, writer and helper 1 move there and a third
+ * helper takes core 0's gaps; the drawing thread never moves */
 TEST(cores_plan_md_player_golden)
 {
 	const Plan p3 = make_plan(md_req(), false);
@@ -395,7 +396,8 @@ TEST(cores_plan_md_player_golden)
 	SLOT(p3, R_AUDIO_OUT, 0, CORE_U2, 0x40, 0x40);
 	SLOT(p3, R_WRITER, 0, CORE_U2, 0xA0, 0xA0);
 	SLOT(p3, R_UPSCALE, 0, CORE_U2, 0xA0, 0xA0);
-	CHECK(p3.find(R_UPSCALE, 1) == 0);            /* two helpers asked, one planned without the extra core */
+	SLOT(p3, R_UPSCALE, 1, CORE_U0, 0xA0, 0xA0);
+	CHECK(p3.find(R_UPSCALE, 2) == 0);            /* three helpers asked, two planned without the extra core */
 	const Plan p4 = make_plan(md_req(), true);
 	SLOT(p4, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
 	SLOT(p4, R_DRAW, 0, CORE_U1, 0x60, 0x60);
@@ -403,6 +405,7 @@ TEST(cores_plan_md_player_golden)
 	SLOT(p4, R_WRITER, 0, CORE_SYS, 0xA0, 0xA0);
 	SLOT(p4, R_UPSCALE, 0, CORE_U2, 0xA0, 0xA0);
 	SLOT(p4, R_UPSCALE, 1, CORE_SYS, 0xA0, 0xA0);
+	SLOT(p4, R_UPSCALE, 2, CORE_U0, 0xA0, 0xA0);
 	CHECK(!p4.find(R_AUDIO_OUT)->spins && !p4.find(R_EMU_MAIN)->on_core3);
 }
 
@@ -433,7 +436,7 @@ TEST(cores_plan_invariants_every_role_combination)
 						if (a.mask == 0) CHECK(!a.on_core3);
 						/* R1: core 0 belongs to the emulating thread alone (pinned roles) */
 						if (a.role == R_EMU_MAIN) CHECK_EQ(a.mask, CORE_U0);
-						else if (a.mask) CHECK_EQ(a.mask & CORE_U0, 0);
+						else if (a.mask && !(prof == CP_MD && a.role == R_UPSCALE && a.optional)) CHECK_EQ(a.mask & CORE_U0, 0);   /* (the Sega player's helper in core 0's gaps: below the emulating thread by R5) */
 						/* R5: optional helpers are at the bottom */
 						if (a.optional) CHECK(a.prio >= 0xA0);
 						for (int j = 0; j < p.n; j++) {
@@ -456,7 +459,7 @@ TEST(cores_plan_invariants_every_role_combination)
 				for (int i = 0; i < p4.n; i++) {
 					const Slot &a = p4.slots[i];
 					const Slot *b = p3.find(a.role, a.index);
-					if (!b) { CHECK(a.role == R_UPSCALE && a.index == (prof == CP_MD ? 1 : 2)); continue; }
+					if (!b) { CHECK(a.role == R_UPSCALE && a.index == 2); continue; }
 					if (a.mask == b->mask) { CHECK_EQ(a.prio, b->prio); continue; }
 					if (prof == CP_APP) CHECK(a.role == R_RENDER || a.role == R_UPSCALE);
 					else CHECK(a.role == R_AUDIO_OUT || a.role == R_DRAW || a.role == R_WRITER || a.role == R_WIDE_COMPOSE || a.role == R_WIDE_SCOUT || a.role == R_UPSCALE);

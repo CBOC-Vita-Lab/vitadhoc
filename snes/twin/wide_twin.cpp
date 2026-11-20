@@ -471,6 +471,7 @@ int main(int argc, char **argv)
 		       c.auto_switches, c.scenes, c.map_cells, c.coverage_pct, c.auto_wide,
 		       tot ? 100.0 * c.px_tilemap / tot : 0, tot ? 100.0 * c.px_learned / tot : 0, tot ? 100.0 * c.px_backdrop / tot : 0, tot ? 100.0 * c.px_unknown / tot : 0);
 		printf("sides: ambient left %u right %u of %u frames\n", c.frames_side_amb[0], c.frames_side_amb[1], c.frames_wide);
+		printf("cache: checks=%llu mismatches=%llu\n", (unsigned long long) c.cache_checks, (unsigned long long) c.cache_mismatches);
 		printf("ladder: rung=%d chip=%d compose_us=%u rung_changes=%u pad_px=%llu\n", c.rung, c.chip, c.compose_us, c.rung_changes, (unsigned long long) c.px_pad);
 	}
 	if (wide) {

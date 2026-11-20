@@ -249,6 +249,29 @@ static void ring_push(const int16_t *s, int n)
 
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 
+/* the worker threads (md/core/vdp_thread.c): the platform's thread functions and which workers it wants (kept across md_host_init) */
+static md_thread_ops g_ops;
+static unsigned g_worker_mask;
+
+int md_host_set_threads(const md_thread_ops *ops, unsigned mask)
+{
+	if (ops) g_ops = *ops; else memset(&g_ops, 0, sizeof g_ops);
+	g_worker_mask = ops ? (mask & (MD_THREAD_VDP | MD_THREAD_VDP_SMS)) : 0;
+	return 0;
+}
+
+void md_host_vdp_debug(int check, int stress) { vdpw_set_check(check); vdpw_set_stress(stress); }
+unsigned long md_host_vdp_check_errors(void) { return vdpw_check_errors(); }
+int md_host_vdp_census(unsigned long out[9])
+{
+	vdpw_census_t c;
+	if (!vdpw_on) return 0;
+	vdpw_census(&c);
+	out[0] = c.records; out[1] = c.words; out[2] = c.status_joins; out[3] = c.joins; out[4] = c.join_wait_polls; out[5] = c.full_waits; out[6] = c.wakes;
+	out[7] = c.vram_blocks; out[8] = c.vram_alls;
+	return 1;
+}
+
 int md_host_init(void)
 {
 	memset(&G, 0, sizeof G);
@@ -265,6 +288,7 @@ void md_host_unload(void)
 {
 	if (!G.inited) return;
 	if (G.loaded) { ggenie_shutdown(); areplay_shutdown(); }
+	vdpw_stop();
 	audio_shutdown();
 	system_hw = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0;
@@ -427,6 +451,9 @@ int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system
 	G.rom_src = NULL;
 
 	audio_init((int)G.audio_rate, 0);
+	/* the VDP worker: always for the Mega Drive when asked for; for the 8 bit systems only when MD_THREAD_VDP_SMS is set too */
+	if ((g_worker_mask & MD_THREAD_VDP) && ((system_hw & SYSTEM_PBC) == SYSTEM_MD || (g_worker_mask & MD_THREAD_VDP_SMS)) && vdpw_start(&g_ops))
+		g_worker_mask &= ~MD_THREAD_VDP;       /* the worker could not start: one thread */
 	system_init();
 	system_reset();
 	md_host_set_seed(G.seed);
@@ -504,6 +531,7 @@ void md_host_run_frame(void)
 	skip = !G.render;
 	if ((system_hw & SYSTEM_PBC) == SYSTEM_MD) system_frame_gen(skip);
 	else system_frame_sms(skip);
+	vdpw_frame_end();                  /* every line is drawn, the sprite status bits are merged */
 	n = audio_update(G.sndbuf);
 	if (n > SOUND_MAX_FRAMES) n = SOUND_MAX_FRAMES;
 	if (!G.audio_on) memset(G.sndbuf, 0, (size_t)n * 4);
@@ -609,24 +637,28 @@ static uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1
 
 size_t md_host_state_size(void) { return G.loaded ? G.state_size : 0; }
 
-size_t md_host_state_save_mem(uint8_t *buf, size_t cap)
+static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc)
 {
 	size_t used;
 	if (!G.loaded || !G.state_size || cap < G.state_size) return 0;
 	fast_savestates = 0;
 	used = (size_t)state_save(G.state_scratch);
 	if (used > G.state_payload_cap) return 0;
-	memset(buf, 0, G.state_size);
+	memset(buf, 0, STATE_HDR);
+	memset(buf + STATE_HDR + used, 0, G.state_size - STATE_HDR - used);   /* the tail is zero so two states differ only where the machine did */
 	memcpy(buf, "MDST", 4);
 	put32(buf + 4, STATE_VERSION_ID);
 	put32(buf + 8, (uint32_t)G.system);
 	put32(buf + 12, (uint32_t)used);
 	memcpy(buf + STATE_HDR, G.state_scratch, used);
-	put32(buf + G.state_size - STATE_TRAILER, (uint32_t)crc32(0, buf, (unsigned)(G.state_size - STATE_TRAILER)));
+	put32(buf + G.state_size - STATE_TRAILER, with_crc ? (uint32_t)crc32(0, buf, (unsigned)(G.state_size - STATE_TRAILER)) : 0u);
 	return G.state_size;
 }
 
-int md_host_state_load_mem(const uint8_t *buf, size_t n)
+size_t md_host_state_save_mem(uint8_t *buf, size_t cap) { return state_save_to(buf, cap, 1); }
+size_t md_host_state_save_quick(uint8_t *buf, size_t cap) { return state_save_to(buf, cap, 0); }
+
+static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 {
 	uint32_t used;
 	if (!G.loaded) return 1;
@@ -634,7 +666,7 @@ int md_host_state_load_mem(const uint8_t *buf, size_t n)
 	if (memcmp(buf, "MDST", 4) || get32(buf + 4) != STATE_VERSION_ID || get32(buf + 8) != (uint32_t)G.system) return 3;
 	used = get32(buf + 12);
 	if (used == 0 || used > G.state_payload_cap) return 3;
-	if (get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
+	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
 	memcpy(G.state_scratch, buf + STATE_HDR, used);      /* the core wants a writable buffer */
 	fast_savestates = 0;
 	if (!state_load(G.state_scratch)) return 3;
@@ -645,6 +677,9 @@ int md_host_state_load_mem(const uint8_t *buf, size_t n)
 	refresh_info();
 	return 0;
 }
+
+int md_host_state_load_mem(const uint8_t *buf, size_t n) { return state_load_from(buf, n, 1); }
+int md_host_state_load_quick(const uint8_t *buf, size_t n) { return state_load_from(buf, n, 0); }
 
 /* ---- memory for achievements ----------------------------------------------------------------------------- */
 
@@ -901,6 +936,7 @@ int md_host_set_option(const char *name, int value)
 	};
 	size_t i;
 	int old_nuked = config.ym3438, old_opll = config.opll;
+	vdpw_join();                       /* the workers only ever run inside a frame; this is for a caller that changes options mid-frame */
 	for (i = 0; i < sizeof defs / sizeof defs[0]; i++) {
 		if (strcmp(defs[i].name, name)) continue;
 		if (value < defs[i].min) value = defs[i].min;

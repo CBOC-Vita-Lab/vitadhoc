@@ -261,10 +261,16 @@ static Place place3(CoreProfile p, Role r, int idx)
 		case R_DRAW: { Place x = { CORE_U1, 0x60, 0x60 }; return x; }
 		case R_AUDIO_OUT: { Place x = { CORE_U2, 0x40, 0x40 }; return x; }
 		case R_WRITER: { Place x = { CORE_U2, 0xA0, 0xA0 }; return x; }
-		case R_UPSCALE: { Place x = { CORE_U2, 0xA0, 0xA0 }; return x; }
+		/* helper 0 on core 2; helper 1 on core 0 at a priority below the emulating thread's (0xA0 against 0x60): it only runs in that thread's gaps,
+		 * which the VDP / FM workers and the hand-over leave */
+		case R_UPSCALE: { Place x = { idx == 1 ? CORE_U0 : CORE_U2, 0xA0, 0xA0 }; return x; }
 		case R_WIDE_COMPOSE: { Place x = { CORE_U1, 0x68, 0x68 }; return x; }
 		case R_NET_IO: { Place x = { 0, 0xB8, 0xB8 }; return x; }
-		default: break;                 /* RENDER / APU / SCOUT: md.bin has none; the SNES layout keeps a plan that asks anyway sane */
+		/* the VDP line renderer (md/core/vdp_thread.c) shares core 1 with the drawing thread; the FM synthesis worker shares core 2 with the sound
+		 * thread, which keeps its higher priority (0x40) */
+		case R_RENDER: { Place x = { CORE_U1, 0x60, 0x60 }; return x; }
+		case R_APU: { Place x = { CORE_U2, 0x60, 0x60 }; return x; }
+		default: break;                 /* SCOUT: md.bin has none; the SNES layout keeps a plan that asks anyway sane */
 		}
 	}
 	if (p != CP_APP) {                  /* snes/vita/main.cpp, nes/vita/main.cpp */
@@ -304,8 +310,8 @@ static Place place4(CoreProfile p, Role r, int idx, const Request &req)
 	if (p == CP_MD) {
 		switch (r) {
 		case R_AUDIO_OUT: case R_WRITER: o.mask = CORE_SYS; return o;
-		case R_UPSCALE: if (idx >= 1) o.mask = CORE_SYS; return o;
-		case R_DRAW: case R_EMU_MAIN: case R_NET_IO: return o;
+		case R_UPSCALE: o.mask = idx == 0 ? CORE_U2 : idx == 1 ? CORE_SYS : CORE_U0; return o;      /* the extra core takes helper 1; helper 2 is the one in core 0's gaps */
+		case R_DRAW: case R_EMU_MAIN: case R_NET_IO: case R_RENDER: case R_APU: return o;
 		default: break;
 		}
 	}
@@ -345,7 +351,7 @@ Plan make_plan(const Request &req, bool core3)
 		int count = 1;
 		if (r == R_UPSCALE) {
 			count = req.upscale_n < 0 ? 0 : req.upscale_n;
-			const int cap = req.profile == CP_MD ? (core3 ? 2 : 1) : (core3 ? 3 : 2);
+			const int cap = req.profile == CP_MD ? (core3 ? 3 : 2) : (core3 ? 3 : 2);
 			if (count > cap) count = cap;
 		}
 		for (int i = 0; i < count && pl.n < PLAN_MAX_SLOTS; i++) {
@@ -357,7 +363,7 @@ Plan make_plan(const Request &req, bool core3)
 			s.prio = pc.prio < PRIO_HIGHEST ? PRIO_HIGHEST : pc.prio > PRIO_LOWEST ? PRIO_LOWEST : pc.prio;
 			s.kprio = pc.kprio;
 			s.on_core3 = (pc.mask & CORE_SYS) != 0;
-			s.whole_core = is_whole((Role) r);
+			s.whole_core = is_whole((Role) r) && !(req.profile == CP_MD && (r == R_RENDER || r == R_APU));   /* md.bin's workers sleep on semaphores */
 			s.spins = (req.profile == CP_SNES || req.profile == CP_NES) && (r == R_RENDER || r == R_APU);
 			s.optional = is_optional((Role) r);
 		}

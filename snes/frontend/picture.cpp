@@ -18,6 +18,8 @@ void pic_defaults(pic_settings *s)
 	s->multitap = 0; /* 0 auto, 1 on, 2 off */
 	s->use_game = 0;
 	s->wide = 0;
+	s->scaler = SCALER_AUTO;
+	s->tier_steps = 0;
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -41,6 +43,7 @@ int pic_load(const char *path, pic_settings *s)
 		else if (!strcmp(line, "hires_blend")) s->hires_blend = v ? 1 : 0;
 		else if (!strcmp(line, "interlace_blend")) s->interlace_blend = v ? 1 : 0;
 		else if (!strcmp(line, "multitap")) s->multitap = clampi(v, 0, 2);
+		else if (!strcmp(line, "scaler")) s->scaler = clampi(v, 0, SCALER_CHOICES - 1);
 		else if (!strcmp(line, "wide_view")) s->wide = clampi(v, 0, 2);
 		else if (!strcmp(line, "own_settings")) s->use_game = v ? 1 : 0;
 	}
@@ -54,8 +57,8 @@ int pic_save(const char *path, const pic_settings *s)
 	snprintf(tmp, sizeof tmp, "%s.tmp", path);
 	FILE *f = fopen(tmp, "wb");
 	if (!f) return 1;
-	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\nhires_blend=%d\ninterlace_blend=%d\nmultitap=%d\nwide_view=%d\nown_settings=%d\n",
-	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->hires_blend, s->interlace_blend, s->multitap, s->wide, s->use_game);
+	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\nhires_blend=%d\ninterlace_blend=%d\nmultitap=%d\nwide_view=%d\nscaler=%d\nown_settings=%d\n",
+	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->hires_blend, s->interlace_blend, s->multitap, s->wide, s->scaler, s->use_game);
 	int bad = ferror(f);
 	if (fclose(f) != 0 || bad) { remove(tmp); return 2; }
 	remove(path);
@@ -195,4 +198,24 @@ void pic_gov_update(pic_governor *g, unsigned work_us, unsigned budget_us)
 		g->since_change = 0;
 	}
 	if (g->level == 0 && g->since_change > 3600) g->backoff = 1;
+}
+
+int pic_scaler_ceiling(int w, int h)
+{
+	if (w < 1 || h < 1 || w > 448 || h > 240) return 2;     /* hi-res 512 wide, interlaced 400+ rows: none */
+	return 1;                                                /* 256 .. 448 wide (wide view included), 224 / 239 rows: xBR 2x */
+}
+
+int pic_scaler_effective(const pic_settings *s, int ceiling, int steps)
+{
+	static const int kTier[3] = { SCALER_XBR3, SCALER_XBR2, SCALER_OFF };
+	switch (s->scaler) {
+	case SCALER_OFF: return SCALER_OFF;
+	case SCALER_MMPX2: case SCALER_XBR2: case SCALER_XBR3: return s->scaler;    /* chosen by hand: held as chosen */
+	default: break;
+	}
+	int t = ceiling + steps;
+	if (t < 0) t = 0;
+	if (t > 2) t = 2;
+	return kTier[t];
 }

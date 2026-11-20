@@ -39,4 +39,37 @@ int PicturePipe::put(const uint16_t *src, int w, int h, int pitch, int user, uin
 	return 1;
 }
 
+uint16_t *PicturePipe::direct_begin(int *pitch_px)
+{
+	if (!started_ || !box_.enabled() || direct_) return 0;
+	direct_ = box_.try_begin_write_direct();
+	if (!direct_) return 0;
+	if (pitch_px) *pitch_px = MAX_W;
+	return (uint16_t *) direct_->data;
+}
+
+int PicturePipe::direct_commit(const uint16_t *pix, int w, int h, int pitch, int user, uint32_t seq, uint32_t emu_us)
+{
+	pk::HandoffFrame *f = direct_;
+	if (!f) return -1;
+	direct_ = 0;
+	const uint8_t *p = (const uint8_t *) pix;
+	if (!pix || w <= 0 || h <= 0 || p < f->data || (size_t) (p - f->data) + (size_t) (h - 1) * (size_t) pitch + (size_t) w * 2 > f->cap) {
+		box_.abandon(f);
+		return 0;
+	}
+	f->offset = (uint32_t) (p - f->data);
+	f->w = w; f->h = h; f->pitch = pitch;
+	f->seq = seq; f->emu_us = emu_us; f->user = user;
+	box_.commit(f);
+	return 1;
+}
+
+void PicturePipe::direct_abandon()
+{
+	if (!direct_) return;
+	box_.abandon(direct_);
+	direct_ = 0;
+}
+
 }  // namespace mdp

@@ -27,7 +27,7 @@ RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 OBJCOPY ?= objcopy
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/audio_sim.o $(B)/main.o
 
-all: $(B)/snes_twin $(B)/player_twin $(B)/snes_wide_twin
+all: $(B)/snes_twin $(B)/player_twin $(B)/snes_wide_twin $(B)/scale_proof
 
 # snes_wide_twin: the wide view runner (adapter ../frontend/wide.cpp + widekit, MIT) for the proofs in wide_selftest.sh
 WK       := ../../widekit
@@ -38,12 +38,23 @@ $(B)/wk/%.o: $(WK)/src/%.cpp $(wildcard $(WK)/include/*.h) $(wildcard $(WK)/src/
 	$(CXX) $(OPT) -std=c++11 -Wall -fno-exceptions -fno-rtti -I$(WK)/include -c -o $@ $<
 # player_twin: the Vita player's own logic (../vita/player.cpp) with playerkit's software renderer
 PK       := ../../playerkit
-PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look
-PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC)))
+# RetroAchievements (playerkit/ra.mk): pk_ra, the rcheevos client and ra_http.c, the thread layer of the twin
+RA_CC     := $(call ccw,gcc)
+RA_GP     := ../../gpsp/vita
+RA_OBJDIR := $(B)/ra
+RA_CFLAGS := -std=gnu11 -O2 -g -w
+include $(PK)/ra.mk
+.DEFAULT_GOAL := all
+$(B)/ra/pk_ra_plat_posix.o: $(PK)/ra/pk_ra_plat_posix.c $(PK)/src/pk_ra_plat.h
+	@mkdir -p $(B)/ra
+	$(RA_CC) $(RA_CFLAGS) -I$(PK)/src -c -o $@ $<
+$(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
+PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_rewind pk_ff pk_speed pk_ra
+PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/ra/pk_ra_plat_posix.o $(RA_OBJS)
 PLAYER_OBJS := $(B)/player.o $(B)/picture.o $(B)/pipe.o $(B)/handoff_proof.o $(B)/player_twin.o
 $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pk
-	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(PK)/src -c -o $@ $<
+	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(PK)/src $(PK_EXTRA_INC) -c -o $@ $<
 $(B)/player.o: ../vita/player.cpp ../vita/player.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
 	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
 $(B)/pipe.o: ../vita/pipe.cpp ../vita/pipe.h $(FE)/host.h $(wildcard $(PK)/src/*.h)
@@ -52,8 +63,8 @@ $(B)/handoff_proof.o: handoff_proof.cpp ../vita/player.h ../vita/pipe.h $(wildca
 	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
 $(B)/picture.o: $(FE)/picture.cpp $(FE)/picture.h
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
-$(B)/player_twin.o: player_twin.cpp ../vita/player.h $(wildcard $(PK)/src/*.h)
-	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -c -o $@ $<
+$(B)/player_twin.o: player_twin.cpp ../vita/player.h $(wildcard $(PK)/src/*.h) $(PK)/tests/fake_ra.h
+	$(CXX) $(CXXFLAGS) -Wall -I../vita -I$(PK)/src -I$(PK)/tests -c -o $@ $<
 $(B)/player_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(WK_OBJS) $(PLAYER_OBJS) $(PK_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread
 
@@ -68,6 +79,23 @@ $(B)/wide_twin.o: wide_twin.cpp $(FE)/host.h $(FE)/wide.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 $(B)/snes_wide_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin.o $(WK_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+# scale_proof: the pixel art scaler (playerkit pk_scale) on the pictures of real runs, normal and wide, against its own definition
+$(B)/pk/pk_scale.o: $(PK)/src/pk_scale.cpp $(wildcard $(PK)/src/*.h)
+	@mkdir -p $(B)/pk
+	$(CXX) $(OPT) -std=gnu++14 -Wall -I$(PK)/src -c -o $@ $<
+$(B)/scale_proof.o: scale_proof.cpp $(FE)/host.h $(FE)/wide.h $(PK)/src/pk_scale.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -I$(PK)/src -c -o $@ $<
+$(B)/scale_proof: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/scale_proof.o $(B)/pk/pk_scale.o $(WK_OBJS)
+	$(CXX) -o $@ $^ -lm -pthread
+
+# snes_wide_twin_cg: the same with Valgrind's client requests (--cg A,B instruments frames A..B only; run under valgrind --tool=callgrind --instr-atstart=no)
+$(B)/wide_twin_cg.o: wide_twin.cpp $(FE)/host.h $(FE)/wide.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -DWIDE_CALLGRIND -c -o $@ $<
+$(B)/snes_wide_twin_cg: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin_cg.o $(WK_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread
 
 $(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh

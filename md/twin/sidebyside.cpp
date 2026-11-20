@@ -39,10 +39,11 @@ static void dump(const std::string &p, const uint16_t *px, int w, int h, int pit
 int main(int argc, char **argv)
 {
 	const char *rom = NULL, *out = "sbs";
-	int frame = 300, system = 0;
+	int frame = 300, system = 0, nopad = 0;
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
 		if (a == "--frame" && i + 1 < argc) frame = atoi(argv[++i]);
+		else if (a == "--nopad") nopad = 1;
 		else if (a == "--out" && i + 1 < argc) out = argv[++i];
 		else if (a == "--system" && i + 1 < argc) { std::string r = argv[++i]; system = r == "md" ? MD_SYS_MD : r == "sms" ? MD_SYS_SMS : r == "gg" ? MD_SYS_GG : r == "sg" ? MD_SYS_SG : 0; }
 		else if (a[0] != '-' && !rom) rom = argv[i];
@@ -60,7 +61,7 @@ int main(int argc, char **argv)
 	char err[128];
 	const char *bn = strrchr(rom, '/'); bn = bn ? bn + 1 : rom;
 	if (md_host_load_mem(data.data(), data.size(), bn, system, err, sizeof err)) { printf("LOADFAIL %s\n", err); return 1; }
-	for (int fr = 0; fr <= frame; fr++) { md_host_set_pad(0, auto_mask(fr)); md_host_run_frame(); }
+	for (int fr = 0; fr <= frame; fr++) { md_host_set_pad(0, nopad ? ((fr % 150) >= 40 && (fr % 150) < 46 ? MD_START : 0) : auto_mask(fr)); md_host_run_frame(); }
 	int w, h, pitch;
 	const uint16_t *px = md_host_video(&w, &h, &pitch);
 	md_video_info vi;

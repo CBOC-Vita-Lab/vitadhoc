@@ -1,6 +1,6 @@
 # VitAdhoc
 
-**Game Boy Advance, Game Boy, Game Boy Color, Super NES, NES and WonderSwan, native on PS Vita.**
+**Game Boy Advance, Game Boy, Game Boy Color, Super NES, NES, WonderSwan, Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000, native on PS Vita.**
 
 Your games, together on a home screen with box art, a little history and
 previews of your own play. Pick up where you left off, smooth the pixels or
@@ -20,6 +20,18 @@ download is required. Updating from 1.0, 1.1, 1.2, 1.3 or 1.3.1? Install the VPK
 the old version. Keep your games, saves, settings and artwork where they are.
 
 ## New In Version 2.0
+
+**Four Sega consoles.** Sega Genesis / Mega Drive, Master System, Game Gear
+and SG-1000 games each have their own shelf in the console list, with box art,
+names, descriptions, Starred, Recent, play time, Continue, ten state slots,
+cheats and the RetroArch save import, like the Super NES. They play in their own
+program (`md.bin`, a separate non-commercial-licence player, like `snes.bin`).
+Games go in `ux0:ROMS/Genesis`, `Mega Drive`, `SMS`, `Master System`, `GG`,
+`Game Gear` or `SG-1000` (or any folder under `ux0:ROMS/`); `.md`, `.gen`,
+`.smd`, `.bin` (only when it is a Genesis game), `.sms`, `.gg` and `.sg`, zipped
+too. Nothing has run on a real Vita yet: see [Known Issues](KNOWN-ISSUES.md).
+Two players for these consoles is built but switched off until the player's link
+module lands.
 
 **Online play.** Play Link Cable games with a friend anywhere: one hosts and
 gets a code of five characters, the other types it. No router settings, no
@@ -269,7 +281,7 @@ You need a homebrew-enabled PS Vita, VitaShell and your own games.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
 3. Add games to `ux0:data/GBAdhoc/roms/`, use an automatically detected folder,
    or choose **Settings > Library > Game folders**.
-4. Pick a game and press Cross. Triangle opens a list of consoles (GBA, GB, GBC, SNES, NES, WonderSwan) under the top bar; press it again, or Down, to move along it.
+4. Pick a game and press Cross. Triangle opens a list of consoles under the top bar, in alphabetical order (Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega Genesis / Mega Drive, SG-1000, Super Nintendo, WonderSwan); press it again, or Down, to move along it.
 
 For the desktop installer, update precautions, save import, launchers and
 every folder, use the [manual install guide](INSTALL.md).

@@ -9199,11 +9199,11 @@ static void rom_side_add(int c, const char *rel, const char *file,
  * obvious thing to do with one, and 2.0 ignored every one. */
 #ifdef VITA
 /* 2.0: a name ending ".bin" is a Genesis game only when the file's bytes say
- * so (SEGA at 0x100 or an SMD header): rom_bin_ok asks the app. */
+ * so (SEGA at 0x100 or an SMD header): rom_bin_ok asks the app.  A ".md" is asked too: a README.md is not a game. */
 static int ui_name_is_bin(const char *nm)
 {
    size_t n = strlen(nm);
-   return n > 4 && !strcasecmp(nm + n - 4, ".bin");
+   return n > 3 && (!strcasecmp(nm + n - 4, ".bin") || !strcasecmp(nm + n - 3, ".md"));
 }
 static int rom_bin_ok(const char *dir, const char *nm)
 {
@@ -13849,6 +13849,10 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
           * console looks like any other. */
          vid_overlay_begin(1);
          browser_empty(rom_dir, n_scan);
+#ifdef VITA
+         if (g_ui_home)
+            hm_pick_draw(n_scan);   /* the console list stays on screen over an empty console too (stepping through one) */
+#endif
          switch_draw();
          ret_fade_layer();
          vid_overlay_end();

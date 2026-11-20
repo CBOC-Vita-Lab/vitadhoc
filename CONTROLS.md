@@ -49,6 +49,23 @@ VitAdhoc's own screenshot (L + R + Select, saved in
 `ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
 button combo turns it on; Button mapping can give Screenshot any other chord.
 
+## Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000
+
+These play in `md.bin`. Every button can be remapped per game in its menu,
+which opens with Start + Select held (or a tap on the game).
+
+| Vita | Genesis / Mega Drive | Master System, SG-1000 | Game Gear |
+| --- | --- | --- | --- |
+| D-pad / left stick | D-pad | D-pad | D-pad |
+| Square | A | | |
+| Cross | B | 1 | 1 |
+| Circle | C | 2 | 2 |
+| L / Triangle / R | X / Y / Z (six-button games) | | |
+| Start | Start | Pause | Start |
+| Select | Mode (a tap) | | |
+
+Three-button games use A, B and C only.
+
 ## WonderSwan
 
 | Held | Sideways game | Upright game (Vertical play: Upright) | Vita turned on its side |

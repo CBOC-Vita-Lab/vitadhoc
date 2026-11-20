@@ -48,6 +48,25 @@ enum { MD_PIXEL_RGB565 = 1 };
 /* the six values md_host_system_hw() can name (what the core decided inside one system): "Mega Drive", "Master System II",
  * "Master System", "Mark III", "Game Gear", "Game Gear (SMS mode)", "SG-1000", "SG-1000 II", "SC-3000" ... */
 
+/* ---- worker threads ---------------------------------------------------------------------------------------- */
+
+/* Optional. The VDP line renderer can run on its own thread (md/core/vdp_thread.h: a write log, bit identical pictures, sound and state).
+ * The core has no thread code: pass the platform's functions (md/core/thread_ops.h) and MD_THREAD_VDP before md_host_load_mem; the threads
+ * start inside the load and end in md_host_unload. ops = NULL or mask 0: everything on the calling thread (the default). The worker is
+ * idle whenever a host call returns, so every other API call stays valid from the calling thread only. Returns 0. */
+#define MD_THREAD_VDP 1u          /* the VDP line renderer on its own thread (Mega Drive) */
+#define MD_THREAD_VDP_SMS 2u      /* ... also for Master System / Game Gear / SG-1000 (with MD_THREAD_VDP) */
+struct md_thread_ops;
+int md_host_set_threads(const struct md_thread_ops *ops, unsigned mask);
+/* Debug and census for the VDP worker (the Linux twin's --vdp-check / --vdp-stress / census line). check: compare the worker's copy of the
+ * raw VDP state with the emulating thread's at the end of every frame and count the differences; stress: join after every drawn line (a
+ * game that reads the status register every line). Both only matter while the worker runs. */
+void md_host_vdp_debug(int check, int stress);
+unsigned long md_host_vdp_check_errors(void);
+/* census of the worker since it started: records queued, status joins, frame joins, polls spent waiting, queue full waits, wake-ups,
+ * VRAM patterns / whole VRAM images sent. Returns 0 when the worker is off. */
+int md_host_vdp_census(unsigned long out[9]);
+
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 
 /* Once, before anything else. Returns 0 on success. Starts with: audio rate 48000, region automatic, FM chip "discrete
@@ -155,6 +174,8 @@ void md_host_sram_mark_unsaved(void);
  * click: both consoles load the same state, so lockstep holds; PROVENANCE.md has the details). */
 size_t md_host_state_size(void);
 size_t md_host_state_save_mem(uint8_t *buf, size_t cap);    /* needs cap >= state_size; returns the size, 0 on failure */
+size_t md_host_state_save_quick(uint8_t *buf, size_t cap);  /* as save_mem without the CRC (rewind keeps its states in memory only) */
+int md_host_state_load_quick(const uint8_t *buf, size_t n);  /* as load_mem without the CRC: only for what save_quick wrote */
 int md_host_state_load_mem(const uint8_t *buf, size_t n);   /* 0 ok, 1 no game, 3 refused (length, header or CRC; machine untouched) */
 
 /* ---- memory for achievements and tools ------------------------------------------------------------------- */

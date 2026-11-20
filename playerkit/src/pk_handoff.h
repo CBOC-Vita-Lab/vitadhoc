@@ -104,6 +104,7 @@ struct HandoffFrame {
 	uint32_t seq;           /* the host's emulated frame number */
 	uint32_t emu_us;        /* the emulating thread's work for this picture (set by the host before commit) */
 	int user;               /* anything else the host wants to carry */
+	uint32_t offset;        /* bytes from `data` to the picture's first pixel (a host that emulated straight into data); 0 otherwise */
 	/* set by the Handoff */
 	uint8_t span;           /* refreshes this picture stands for (1 full, 2 half) */
 	uint64_t made_us;
@@ -142,6 +143,9 @@ public:
 	 * then the host draws inline. */
 	HandoffFrame *begin_write();
 	HandoffFrame *try_begin_write();       /* never waits: NULL also when the gate is closed */
+	/* For a host that draws straight into data (no copy): like try_begin_write, but NULL as well in drop mode (half / fast forward), where taking
+	 * a buffer early would evict a queued picture before the next one exists: the caller then draws into its own buffer and copies at put time. */
+	HandoffFrame *try_begin_write_direct();
 	void commit(HandoffFrame *f);          /* queue it (the host has set w, h, pitch, seq, emu_us) */
 	void abandon(HandoffFrame *f);         /* give it back unused */
 	/* n emulated frames just ran (all of them, drawn or not): feeds the emulated-vs-wall counter */

@@ -100,6 +100,18 @@ struct Wire : pk::LinkWire {
 	}
 	uint64_t heard_age_us(const pk::LinkAddr &) { return net->last_heard[side] ? net->t - net->last_heard[side] : UINT64_MAX; }
 	void idle(unsigned) {}
+	uint32_t e_n = 0, e_min = 0, e_max = 0;
+	void echo_probe(const pk::LinkAddr &)
+	{
+		Net::Dir &a = net->dir[side], &b = net->dir[1 - side];
+		if (net->blackhole) return;
+		if ((a.loss && (int) (net->rnd() % 100) < a.loss) || (b.loss && (int) (net->rnd() % 100) < b.loss)) return;
+		const uint32_t rtt = a.lat + (a.jit ? net->rnd() % (a.jit + 1) : 0) + b.lat + (b.jit ? net->rnd() % (b.jit + 1) : 0) + 200;
+		if (!e_n || rtt < e_min) e_min = rtt;
+		if (!e_n || rtt > e_max) e_max = rtt;
+		e_n++;
+	}
+	bool echo_result(uint32_t *n, uint32_t *mn, uint32_t *mx) { *n = e_n; *mn = e_min; *mx = e_max; return true; }
 	void log(const char *l) { lines.push_back(l); if (print) fprintf(stderr, "[%d] %s\n", side, l); }
 	const char *path() { return "sim"; }
 	bool saw(const char *needle) const { for (size_t i = 0; i < lines.size(); i++) if (lines[i].find(needle) != std::string::npos) return true; return false; }
@@ -127,8 +139,9 @@ struct Machine {
 		m->put(0, f);
 		uint32_t h = m->get(4) * 2654435761u ^ ((uint32_t) p1 << 16 | p2) ^ f * 40503u;
 		m->put(4, h);
-		for (int k = 0; k < 16; k++) { h = h * 1664525u + 1013904223u; m->put(64 + (size_t) (h % 1000) * 4, h); }
-		if (m->diverge_at >= 0 && (int) f == m->diverge_at) m->s[5000] ^= 0x10;
+		const size_t words = m->s.size() >= 4200 ? 1000 : (m->s.size() - 72) / 4;
+		for (int k = 0; k < 16; k++) { h = h * 1664525u + 1013904223u; m->put(64 + (size_t) (h % words) * 4, h); }
+		if (m->diverge_at >= 0 && (int) f == m->diverge_at) m->s[m->s.size() > 5000 ? 5000 : 100] ^= 0x10;
 		return 0;
 	}
 	static size_t size(void *u) { return ((Machine *) u)->s.size(); }

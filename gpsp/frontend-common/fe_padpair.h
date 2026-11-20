@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* fe_padpair.h -- a two-player session on ONE machine, as a fe_gblink
  * machines vtable (docs: ONLINE-2.0 plan, section 4).
  *

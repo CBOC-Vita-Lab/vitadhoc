@@ -48,7 +48,7 @@ void Speed::input(uint32_t fired)
 int Speed::plan(int normal)
 {
 	act_ = RW_PLAY;
-	act_ = rw_.refresh(want_rw_, locked_, why_);
+	act_ = rw_.refresh(want_rw_, locked_ || rw_locked_, locked_ ? why_ : rw_why_);
 	std::string n = rw_.take_notice();
 	if (!n.empty()) notice_ = n;
 	if (!locked_ && ff_.on() && rw_.active()) ff_.reset();      /* rewinding wins */

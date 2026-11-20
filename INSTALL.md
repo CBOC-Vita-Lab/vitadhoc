@@ -39,7 +39,7 @@ The checker verifies listed bytes; it does not test game compatibility.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then close it.
 3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use a folder you already
    have (below).
-4. Start VitAdhoc again. Triangle opens the console list (GBA, GB, GBC, SNES, NES, WonderSwan) and moves along it; Cross plays.
+4. Start VitAdhoc again. Triangle opens the console list (alphabetical: Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega Genesis / Mega Drive, SG-1000, Super Nintendo, WonderSwan) and moves along it; Cross plays.
 
 ### Transfer With VitaShell
 
@@ -81,12 +81,19 @@ ux0:ROMS/WS                  ux0:ROMS/WSC
 ux0:roms/WS                  ux0:roms/WSC
 ux0:data/RetroFlow/ROMS/Bandai - WonderSwan
 ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color
+ux0:ROMS/Genesis, Mega Drive, MD, GEN   ux0:ROMS/SMS, Master System
+ux0:ROMS/GG, Game Gear                  ux0:ROMS/SG-1000, SG1000
+(the same under ux0:roms/)
+ux0:data/RetroFlow/ROMS/Sega - Mega Drive - Genesis
+ux0:data/RetroFlow/ROMS/Sega - Master System - Mark III
+ux0:data/RetroFlow/ROMS/Sega - Game Gear
+ux0:data/RetroFlow/ROMS/Sega - SG-1000
 ```
 
 Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
 (a `SNES ROM Collection` or `NES Games` folder, for example). The file ending
 decides the console, not the folder's name: `.gba`, `.gb`, `.gbc`, `.sfc` or
-`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`. NES and
+`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`, `.md`, `.gen` or `.smd`, `.sms`, `.gg`, `.sg`. A `.bin` is a Genesis game only if its header says SEGA; any other `.bin` is left unlisted. NES and
 Famicom games go in `ux0:ROMS/NES/`, WonderSwan games in `ux0:ROMS/WS/`, or
 in any of these folders.
 
@@ -147,6 +154,7 @@ Beside each game, VitAdhoc keeps only its battery save:
 | Super NES | `Game.srm` (the same name RetroArch and Snes9x use) |
 | NES / Famicom | `Game.srm` (the same name RetroArch uses) |
 | WonderSwan / Color | `Game.srm` (the same name RetroArch uses) |
+| Genesis, Master System, Game Gear, SG-1000 | `Game.srm` (the same name RetroArch uses) |
 
 Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 

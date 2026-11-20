@@ -53,6 +53,7 @@
 #include "pal_pace.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
+#include "pk_scale.h"
 #include "netplay.h"
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -62,7 +63,7 @@
 
 extern "C" {
 unsigned int sceUserMainThreadStackSize = 1024 * 1024;
-unsigned int _newlib_heap_size_user = 56 * 1024 * 1024;
+unsigned int _newlib_heap_size_user = 72 * 1024 * 1024;     /* 56 MB before rewind: its 12 MB ring is on top */
 }
 
 #define APP_ROOT "ux0:data/GBAdhoc"
@@ -91,6 +92,7 @@ static std::atomic<unsigned> g_agap_max_us(0);   /* longest gap between two sceA
  * (CapUnlocker plugin) the audio thread moves to it, so the sound-chip thread has core 2 to itself. Without it
  * nothing below changes: the plan puts the audio thread on core 2 exactly as before. */
 static pk::Cores *g_cores;
+static SceUID g_help_thread[2] = { -1, -1 };   /* the pixel art scaler's helpers */
 static pk::Plan g_core_plan;
 static int g_wd_audio = -1;              /* watchdog slot of the audio thread; only registered when it runs on core 3 */
 
@@ -140,7 +142,8 @@ static void audio_init(bool legacy, int prio)
 static pk::Request core4_request(void)
 {
 	pk::Request rq(pk::CP_SNES);
-	rq.with(pk::R_EMU_MAIN).with(pk::R_RENDER).with(pk::R_APU).with(pk::R_AUDIO_OUT);
+	rq.with(pk::R_EMU_MAIN).with(pk::R_RENDER).with(pk::R_APU).with(pk::R_AUDIO_OUT).with(pk::R_UPSCALE);
+	rq.upscale_n = 2;     /* the plan gives one helper on three cores, two on four */
 	return rq;
 }
 
@@ -169,6 +172,10 @@ static void core4_fallback(void)
 	g_core_plan = g_cores->plan(core4_request());
 	const pk::Slot *a = g_core_plan.find(pk::R_AUDIO_OUT);
 	const int rc = a && g_athread >= 0 ? sceKernelChangeThreadCpuAffinityMask(g_athread, a->mask) : -1;
+	for (int i = 0; i < 2; i++) {
+		const pk::Slot *h = g_core_plan.find(pk::R_UPSCALE, i);
+		if (h && g_help_thread[i] >= 0) sceKernelChangeThreadCpuAffinityMask(g_help_thread[i], h->mask);
+	}
 	g_wd_audio = -1;
 	char c[220];
 	g_cores->census_line(c, sizeof c);
@@ -192,6 +199,12 @@ struct GTex {
 };
 
 static GTex g_src[4];            /* the core's picture, 512x512 RGB565 */
+#define SC_W 1024              /* the scaler's output texture: 896x480 (xBR 2x of the widest wide picture, 448x240) is the largest */
+#define SC_H 512
+static GTex g_scaled[3];         /* the scaler's picture */
+static int g_sc_i = -1, g_sc_f = 0;       /* newest scaled texture and its factor (0: the picture is shown unscaled) */
+static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0), g_scale_blocks(0), g_scale_blocks_done(0), g_scale_blocks_moved(0);   /* the scaler, per second */
+static std::atomic<int> g_scale_last(0);     /* the scaler of the last picture (pk::ScalerKind), for the log */
 static GTex g_rt, g_glowA, g_glowB, g_blend;   /* g_blend: 512x512, made when a blend option is first used */
 static unsigned g_blend_serial;
 static std::atomic<bool> g_pic_dirty(false);     /* the picture settings changed: frame_draw resets its caches (set by any thread) */
@@ -220,6 +233,11 @@ static void video_init(void)
 		g_src[i].t = vita2d_create_empty_texture_format(512, 512, SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB);
 		if (g_src[i].t) vita2d_texture_set_filters(g_src[i].t, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
 	}
+	for (int i = 0; i < 3; i++) {
+		memset(&g_scaled[i], 0, sizeof g_scaled[i]);
+		g_scaled[i].t = vita2d_create_empty_texture_format(SC_W, SC_H, SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB);
+		if (g_scaled[i].t) vita2d_texture_set_filters(g_scaled[i].t, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
+	}
 	memset(&g_rt, 0, sizeof g_rt);
 	g_rt.t = vita2d_create_empty_texture_rendertarget(RT_SIZE, RT_SIZE, SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_ABGR);
 	memset(&g_glowA, 0, sizeof g_glowA);
@@ -229,7 +247,8 @@ static void video_init(void)
 	GTex *all[3] = { &g_rt, &g_glowA, &g_glowB };
 	for (int i = 0; i < 3; i++)
 		if (all[i]->t) vita2d_texture_set_filters(all[i]->t, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
-	logf_("render targets: sharp=%d glow=%d/%d\n", g_rt.t != NULL, g_glowA.t != NULL, g_glowB.t != NULL);
+	logf_("render targets: sharp=%d glow=%d/%d scaled textures=%d\n", g_rt.t != NULL, g_glowA.t != NULL, g_glowB.t != NULL,
+	    (int) (g_scaled[0].t != NULL) + (int) (g_scaled[1].t != NULL) + (int) (g_scaled[2].t != NULL));
 }
 
 /* Bezel / overlay PNG: overlays/<game>.png, else overlays/snes.png. Loaded once. */
@@ -273,6 +292,122 @@ static void bezel_load(const std::string &game)
 
 /* Takes the newest finished picture from the core without waiting and copies it into a texture the GPU is
  * done with. Returns 1 when the picture changed. */
+/* ---- the scaler's helpers ------------------------------------------------------------------------------------------------------------
+ * One job at a time, cut into chunks of rows. The drawing thread publishes the job (fields first, then `next` with the job's number in
+ * its upper half), takes chunks itself, and waits until every chunk has been finished; a helper that is awake takes chunks the same way
+ * (compare-and-swap on `next`, so a late helper can never take a chunk of a job it did not read). A helper that is not scheduled costs
+ * nothing: the drawing thread has done its chunks. */
+struct ScaleJob {
+	pk::ScaleCache *cache;
+	int nchunks;
+	std::atomic<uint64_t> next;      /* (job << 32) | next chunk */
+	std::atomic<int> done;
+	std::atomic<unsigned> nonflat;
+	std::atomic<int> by_helpers;
+	ScaleJob() : cache(0), nchunks(0), next(0), done(0), nonflat(0), by_helpers(0) {}
+};
+static ScaleJob g_job;
+static uint32_t g_job_no;
+static SceUID g_help_sema[2] = { -1, -1 };
+static volatile int g_help_stop;
+static int g_help_n;
+static pk::ScaleScratch g_draw_scratch, g_help_scratch[2];
+
+/* take and run chunks of the current job; returns how many this thread ran */
+static int job_work(pk::ScaleScratch &sc, bool helper)
+{
+	int ran = 0;
+	for (;;) {
+		uint64_t n = g_job.next.load(std::memory_order_acquire);
+		pk::ScaleCache *cache = g_job.cache;
+		const int nch = g_job.nchunks;
+		const uint32_t c = (uint32_t) (n & 0xFFFFFFFFu);
+		if (!cache || (int) c >= nch) return ran;
+		if (!g_job.next.compare_exchange_strong(n, n + 1, std::memory_order_acq_rel)) continue;
+		const unsigned nf = cache->run_chunk((int) c, sc);
+		g_job.nonflat.fetch_add(nf, std::memory_order_relaxed);
+		if (helper) g_job.by_helpers.fetch_add(1, std::memory_order_relaxed);
+		g_job.done.fetch_add(1, std::memory_order_acq_rel);
+		ran++;
+	}
+}
+
+static int help_thread(SceSize, void *argp)
+{
+	const int idx = *(int *) argp;
+	while (!g_help_stop) {
+		sceKernelWaitSema(g_help_sema[idx], 1, NULL);
+		if (g_help_stop) break;
+		job_work(g_help_scratch[idx], true);
+	}
+	return sceKernelExitThread(0);
+}
+
+static void help_start(int n_wanted)
+{
+	static int idx[2] = { 0, 1 };
+	for (int i = 0; i < n_wanted && i < 2; i++) {
+		const pk::Slot *s = g_core_plan.find(pk::R_UPSCALE, i);
+		if (!s) break;
+		char nm[16];
+		snprintf(nm, sizeof nm, "snes_scale%d", i);
+		g_help_sema[i] = sceKernelCreateSema(nm, 0, 0, 1 << 16, NULL);
+		if (g_help_sema[i] < 0) break;
+		g_help_thread[i] = sceKernelCreateThread(nm, help_thread, s->prio, 0x10000, 0, s->mask, NULL);
+		if (g_help_thread[i] >= 0 && sceKernelStartThread(g_help_thread[i], sizeof(int), &idx[i]) < 0) { sceKernelDeleteThread(g_help_thread[i]); g_help_thread[i] = -1; }
+		if (g_help_thread[i] < 0) break;
+		g_help_n++;
+		logf_("scaler helper %d: core mask %05x priority 0x%x\n", i, s->mask, s->prio);
+	}
+	logf_("scaler helpers: %d\n", g_help_n);
+}
+
+static void help_stop(void)
+{
+	g_help_stop = 1;
+	for (int i = 0; i < g_help_n; i++) {
+		sceKernelSignalSema(g_help_sema[i], 1);
+		sceKernelWaitThreadEnd(g_help_thread[i], NULL, NULL);
+		sceKernelDeleteThread(g_help_thread[i]);
+		sceKernelDeleteSema(g_help_sema[i]);
+		g_help_thread[i] = -1;
+	}
+	g_help_n = 0;
+}
+
+/* The incremental scaler (pk::ScaleCache): the chunks of rows / columns that changed since the last picture are computed by this thread and the
+ * helpers (work stealing), the rest of the picture comes from the kept scaled picture. Then the changed rows go into the texture. */
+static pk::ScaleCache g_scache;
+static pk::TexSync g_scaled_sync[3];
+
+static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, int h, int spitch_px, uint16_t *dst, int dpitch_px, pk::TexSync &ts)
+{
+	const int nch = g_scache.plan(kind, src, w, h, spitch_px);
+	unsigned nf = 0;
+	if (nch > 0) {
+		g_job.nchunks = 0;
+		g_job.cache = &g_scache;
+		g_job.done.store(0); g_job.nonflat.store(0); g_job.by_helpers.store(0);
+		g_job.nchunks = nch;
+		g_job.next.store((uint64_t) (++g_job_no) << 32, std::memory_order_release);
+		for (int i = 0; i < g_help_n && nch > 1; i++) sceKernelSignalSema(g_help_sema[i], 1);
+		job_work(g_draw_scratch, false);
+		unsigned waits = 0;
+		while (g_job.done.load(std::memory_order_acquire) < g_job.nchunks) { sceKernelDelayThread(20); waits++; }
+		g_scale_waits.fetch_add(waits);
+		g_scale_helped.fetch_add((unsigned) g_job.by_helpers.load());
+		nf = g_job.nonflat.load();
+		g_job.cache = 0;          /* a helper that wakes late finds nothing to take */
+		g_job.nchunks = 0;
+	}
+	const pk::ScaleStats &st = g_scache.stats();
+	g_scale_blocks.fetch_add((unsigned) st.blocks);
+	g_scale_blocks_done.fetch_add((unsigned) st.computed);
+	g_scale_blocks_moved.fetch_add((unsigned) st.shifted);
+	g_scache.blit(dst, dpitch_px, ts);
+	return nf;
+}
+
 struct PicSrc { const uint16_t *p; int w, h, pitch; unsigned serial; bool is_wide; };
 
 /* Where the next picture comes from (the wide view's frame or the core's own); false when there is nothing new. The three
@@ -345,6 +480,39 @@ static int video_upload(const pic_settings &ps, int frame_no, const PicSrc &ps_s
 	g_src_i = idx; g_src_w = w; g_src_h = h;
 	g_src_wide = is_wide ? 1 : 0; g_src_margin = is_wide ? (w - 256) / 2 : 0;
 	g_have_picture = 1;
+
+	/* the pixel art scaler: the look's choice for this picture (xBR 2x for 256 .. 448 wide pictures of 224 / 239 rows, the wide view's
+	 * included; never for hi-res or interlaced ones), into a scaled texture the GPU is done with. It reads CPU memory (the mailbox's copy
+	 * or the wide view's frame), never the texture. */
+	g_sc_f = 0;
+	pk::ScalerKind kind = pk::SC_NONE;
+	if (g_pl->look_mode() != 2 && pic_scaler_ceiling(w, h) <= 1) {     /* a hand-set scaler is held, but not on pictures it cannot take */
+		switch (pic_scaler_effective(&ps, pic_scaler_ceiling(w, h), ps.tier_steps)) {
+		case SCALER_MMPX2: kind = pk::SC_MMPX2; break;
+		case SCALER_XBR2: kind = pk::SC_XBR2; break;
+		case SCALER_XBR3: kind = pk::SC_XBR3; break;
+		default: break;
+		}
+	}
+	g_scale_last.store((int) kind, std::memory_order_relaxed);
+	if (kind != pk::SC_NONE) {
+		const int f = pk::scaler_factor(kind);
+		int si = -1;
+		for (int n = 1; n <= 3; n++) {
+			int c = (g_sc_i + n + 3) % 3;
+			if (gtex_writable(g_scaled[c])) { si = c; break; }
+		}
+		if (si >= 0 && w * f <= SC_W && h * f <= SC_H) {
+			vita2d_texture *st = g_scaled[si].t;
+			const uint64_t t0 = sceKernelGetProcessTimeWide();
+			const unsigned nf = scale_picture(kind, src, w, h, pitch / 2, (uint16_t *) vita2d_texture_get_datap(st),
+			    (int) (vita2d_texture_get_stride(st) / 2), g_scaled_sync[si]);
+			g_scale_us.fetch_add((unsigned) (sceKernelGetProcessTimeWide() - t0));
+			g_scale_pics.fetch_add(1);
+			g_scale_nonflat.fetch_add(nf);
+			g_sc_i = si; g_sc_f = f;
+		} else g_fence_skips++;
+	}
 	return 1;
 }
 
@@ -412,7 +580,8 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 {
 	if (g_pic_dirty.exchange(false)) { g_rtkey_valid = false; g_glow_serial = 0; g_glow_age = 99; g_blend_serial = 0; }
 	vita2d_pool_reset();
-	pic_rect r;
+	pic_rect r;                  /* in the core's own picture pixels: the layout, the scanlines, the grid, the glow */
+	pic_rect rs;                 /* the same in the pixels of the picture that is drawn (the scaler's output is g_sc_f times bigger) */
 	GTex *src = g_src_i >= 0 ? &g_src[g_src_i] : NULL;
 	int eff_w = g_src_w, eff_h = g_src_h, crop_top = g_crop_top, crop_bot = g_crop_bot;
 	/* Optional blends (Picture menu), done by the GPU at no cost to the emulation: 512-wide pictures (hi-res
@@ -448,12 +617,18 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 		if (g_src_wide && src == &g_src[g_src_i]) pic_geometry_wide(&ps, eff_w, eff_h, crop_top, crop_bot, SCREEN_W, SCREEN_H, &r);
 		else pic_geometry(&ps, eff_w, eff_h, crop_top, crop_bot, SCREEN_W, SCREEN_H, &r);
 	}
+	/* the scaler's picture stands in for the core's own (never for the blend target: the scaler takes no hi-res or interlaced picture) */
+	GTex *img = src;
+	int F = 1;
+	if (src && g_src_i >= 0 && src == &g_src[g_src_i] && g_have_picture && g_sc_f > 0 && g_sc_i >= 0 && g_scaled[g_sc_i].t) { img = &g_scaled[g_sc_i]; F = g_sc_f; }
+	rs = r;
+	rs.sx *= F; rs.sy *= F; rs.sw *= F; rs.sh *= F;
 	bool bezel = g_bezel.t != NULL;
 	int kx = 1, ky = 1;
 	bool use_rt = false, exact = false;
 	if (src && g_have_picture) {
-		pic_prescale(&r, &kx, &ky);
-		exact = fabsf(r.dw - r.sw * kx) < 0.5f && fabsf(r.dh - r.sh * ky) < 0.5f && kx == ky;
+		pic_prescale(&rs, &kx, &ky);
+		exact = fabsf(rs.dw - rs.sw * kx) < 0.5f && fabsf(rs.dh - rs.sh * ky) < 0.5f && kx == ky;
 		use_rt = extras && ps.quality == PIC_SHARP && !exact && g_rt.t != NULL && (kx > 1 || ky > 1);
 	}
 
@@ -482,16 +657,16 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 		 * is open) reuses it and saves a whole GPU pass. */
 		RtKey key;
 		memset(&key, 0, sizeof key);
-		key.idx = (src == &g_blend) ? -2 : g_src_i; key.serial = g_serial_seen; key.kx = kx; key.ky = ky;
-		key.sx = r.sx; key.sy = r.sy; key.sw = r.sw; key.sh = r.sh;
+		key.idx = (src == &g_blend) ? -2 : (img == src ? g_src_i : 8 + g_sc_i); key.serial = g_serial_seen; key.kx = kx; key.ky = ky;
+		key.sx = rs.sx; key.sy = rs.sy; key.sw = rs.sw; key.sh = rs.sh;
 		if (g_rtkey_valid && !memcmp(&key, &g_rtkey, sizeof key)) {
 			g_rt_reused++;
 		} else if (rt_scene(g_rt)) {
-			gtex_read(*src);
-			filt(src->t, SCE_GXM_TEXTURE_FILTER_POINT);
-			draw_into_rt(src->t, RT_SIZE, RT_SIZE, r.sx, r.sy, r.sw, r.sh, r.sw * kx, r.sh * ky);
+			gtex_read(*img);
+			filt(img->t, SCE_GXM_TEXTURE_FILTER_POINT);
+			draw_into_rt(img->t, RT_SIZE, RT_SIZE, rs.sx, rs.sy, rs.sw, rs.sh, rs.sw * kx, rs.sh * ky);
 			vita2d_end_drawing();
-			filt(src->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
+			filt(img->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
 			g_rtkey = key; g_rtkey_valid = true;
 		} else { use_rt = false; g_rtkey_valid = false; }
 	}
@@ -507,14 +682,14 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 	if (src && g_have_picture) {
 		if (use_rt) {
 			gtex_read(g_rt);
-			vita2d_draw_texture_part_scale(g_rt.t, r.dx, r.dy, 0, 0, (float) (r.sw * kx), (float) (r.sh * ky),
-			    r.dw / (r.sw * kx), r.dh / (r.sh * ky));
+			vita2d_draw_texture_part_scale(g_rt.t, rs.dx, rs.dy, 0, 0, (float) (rs.sw * kx), (float) (rs.sh * ky),
+			    rs.dw / (rs.sw * kx), rs.dh / (rs.sh * ky));
 		} else {
-			gtex_read(*src);
-			filt(src->t, (ps.quality == PIC_SHARP && exact) ? SCE_GXM_TEXTURE_FILTER_POINT : SCE_GXM_TEXTURE_FILTER_LINEAR);
-			vita2d_draw_texture_part_scale(src->t, r.dx, r.dy, (float) r.sx, (float) r.sy, (float) r.sw, (float) r.sh,
-			    r.dw / r.sw, r.dh / r.sh);
-			filt(src->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
+			gtex_read(*img);
+			filt(img->t, (ps.quality == PIC_SHARP && exact) ? SCE_GXM_TEXTURE_FILTER_POINT : SCE_GXM_TEXTURE_FILTER_LINEAR);
+			vita2d_draw_texture_part_scale(img->t, rs.dx, rs.dy, (float) rs.sx, (float) rs.sy, (float) rs.sw, (float) rs.sh,
+			    rs.dw / rs.sw, rs.dh / rs.sh);
+			filt(img->t, SCE_GXM_TEXTURE_FILTER_LINEAR);
 		}
 		/* CRT scanlines and LCD grid: dark bands between SNES lines / pixels, drawn as alpha rectangles */
 		if (extras && (ps.scan > 0 || ps.grid > 0)) {
@@ -1089,7 +1264,7 @@ static pk::MenuEvent menu_loop(int player)
 		}
 		if (ev != pk::MENU_NONE && ev != pk::MENU_RESET_DONE && ev != pk::MENU_RESUME) break;
 		if (!g_pl->menu_open()) break;
-		if (g_suspend_flag) { g_suspend_flag = 0; g_pl->suspend(); }
+		if (g_suspend_flag) { g_suspend_flag = 0; if (g_link) g_link->suspend(); g_pl->suspend(); }
 		sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
 	}
 	g_pace.set_paused(false);
@@ -1135,6 +1310,7 @@ int main(int argc, char **argv)
 	vita2d_set_clear_color(0xFF000000);
 	g_gfx = new pk::VitaGfx();
 	g_text = new pk::Text(g_gfx);
+	pk::scale_init();
 	video_init();
 
 	/* worker threads: switches in threads.ini (apu_thread, ppu_thread, spin); on by default */
@@ -1207,10 +1383,10 @@ int main(int argc, char **argv)
 	audio_init(audio_legacy, audio_prio > 0 ? audio_prio : PRIO_AUDIO_DEFAULT);
 	g_pl->apply_start_mode();
 	/* the wide view's cost ladder (threads.ini): wide_policy 1 (default) steps the composed margin down when the compose time is too high,
-	 * 0 keeps the full margin; wide_cost_us (default 9000) is the smoothed compose time over which a rung is given up */
+	 * 0 keeps the full margin; wide_cost_us (default 13000) is the smoothed compose time over which a rung is given up */
 	g_pl->set_wide_policy_ini(ini_int(tini, "wide_policy", 1) != 0 ? 1 : 0);   /* the player sets it with the menu's Wide view row */
-	snes_wide_option("cost_us", clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
-	logf_("wide ladder: policy=%d cost_us=%d\n", ini_int(tini, "wide_policy", 1) != 0, clampi_(ini_int(tini, "wide_cost_us", 9000), 500, 30000));
+	snes_wide_option("cost_us", clampi_(ini_int(tini, "wide_cost_us", 13000), 500, 30000));
+	logf_("wide ladder: policy=%d cost_us=%d\n", ini_int(tini, "wide_policy", 1) != 0, clampi_(ini_int(tini, "wide_cost_us", 13000), 500, 30000));
 	g_pl->look_start(scePowerGetArmClockFrequency());   /* the look governor: the best look first, the game's memory of what it needed */
 
 	const double frame_hz = snes_host_is_pal() ? 50.0 : 60.0988;
@@ -1221,6 +1397,7 @@ int main(int argc, char **argv)
 	FramePace pal_pace;
 	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: %s\n", g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
 	hd_start(tini, frame_hz);
+	help_start(clampi_(ini_int(tini, "helpers", 2), 0, 2));
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
 	 * the game's sound arrives 0.265% slower than real time; the audio rate control absorbs that. With
 	 * steady pacing in half mode a pass that missed a refresh runs the missed frame too (undrawn), so the
@@ -1322,6 +1499,10 @@ int main(int argc, char **argv)
 		int to_run = (half || hd) ? (int) elapsed : 1;
 		if (g_link) to_run = 1;           /* lockstep: one frame per refresh, a missed refresh is not caught up */
 		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
+		if (!g_link) {
+			to_run = g_pl->speed_plan(to_run);       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
+			if (hd) g_pipe.box().set_force_drop(g_pl->speed_busy());
+		}
 		bool fresh = false, rendered_any = false, want_menu = false, link_over = false;
 		uint64_t emu_pass_us = 0;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;   /* a tap on a refresh that runs no frame still counts */
@@ -1329,6 +1510,7 @@ int main(int argc, char **argv)
 			if (g_pl->input(pads, tapped && i == 0, loop0 / 1000, emu_frame)) { want_menu = true; break; }
 			bool render = g_link ? true : g_pl->want_render(emu_frame);
 			if (!g_link && hd && !half && i != to_run - 1) render = false;
+			if (!g_link && !g_pl->speed_draws(i, to_run)) render = false;       /* fast forward draws the last frame of the refresh */
 			snes_host_set_render(render ? 1 : 0);
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 #ifdef S9X_PROF
@@ -1343,7 +1525,7 @@ int main(int argc, char **argv)
 				const int lr = g_link->step((uint16_t) g_pl->link_pad());
 				if (lr == snesnet::STEP_OVER) { why = pk::EXIT_GAME_LIST; link_over = true; break; }
 				if (lr != snesnet::STEP_FRAME) break;
-			} else snes_host_run_frame();
+			} else g_pl->run_frame(render);
 #ifdef S9X_PROF
 			if (prof_this) {
 				s9xp_enter(S9XP_FRONT); s9xp_leave();
@@ -1361,7 +1543,7 @@ int main(int argc, char **argv)
 			if (render) { render_emu_us = t1 - t0; rendered_any = true; } else not_rendered++;
 			static int16_t abuf[2048 * 2];
 			int n;
-			while ((n = snes_host_audio_take(abuf, 2048)) > 0) g_pace.push(abuf, n);
+			while ((n = snes_host_audio_take(abuf, 2048)) > 0) { if (!g_link) n = (int) g_pl->audio_filter(abuf, (size_t) n); if (n > 0) g_pace.push(abuf, n); }
 			{
 				uint64_t f0 = sceKernelGetProcessTimeWide();
 				if (hd) {
@@ -1452,7 +1634,7 @@ int main(int argc, char **argv)
 		main_us += work_end - loop0;
 		/* Super FX pacing (see snes/README.md): the chip's speed is matched to what this Vita manages so the
 		 * game, its music and its controls keep full speed. Only for Super FX carts. */
-		if (superfx) {
+		if (superfx && !g_link) {           /* linked: both consoles run the chip at full speed (the adaptive clock would desync them) */
 			fx_emu_us += emu_pass_us;
 			fx_chip_us += snes_host_superfx_take_us();
 			if ((fx_frames += to_run) >= 30) {
@@ -1476,7 +1658,7 @@ int main(int argc, char **argv)
 			}
 		}
 		uint64_t now = sceKernelGetProcessTimeWide();
-		if (g_suspend_flag) { g_suspend_flag = 0; g_pl->suspend(); }
+		if (g_suspend_flag) { g_suspend_flag = 0; if (g_link) g_link->suspend(); g_pl->suspend(); }
 
 		/* per pass bookkeeping for the pacing diagnostics */
 		{
@@ -1517,6 +1699,8 @@ int main(int argc, char **argv)
 				w16 = w20 = w25 = 0; stall_max_us = work_max_us = 0;
 				stats_pending = true;
 			}
+			const unsigned sc_us = g_scale_us.exchange(0), sc_pics = g_scale_pics.exchange(0), sc_nonflat = g_scale_nonflat.exchange(0),
+			    sc_help = g_scale_helped.exchange(0), sc_waits = g_scale_waits.exchange(0);
 			{
 				/* the look governor's second (costs as fractions of a 60 Hz refresh): emulation per emulated frame, drawing per
 				 * refresh (the drawing thread's busy time with the hand-over, else the main thread's drawing), and the refreshes that
@@ -1525,7 +1709,9 @@ int main(int argc, char **argv)
 				pk::LookSecond ls;
 				ls.refreshes = vblanks;
 				ls.emu = frames_run ? (float) (emu_us / (double) frames_run / budget) : 0.f;
-				ls.draw = g_hd_ok ? (float) (hd_draw_ms * 1000.0 / refr / budget) : (float) ((draw_us + fetch_us + finish_us) / refr / budget);
+				const double all_draw_us = g_hd_ok ? hd_draw_ms * 1000.0 : (double) (draw_us + fetch_us + finish_us);
+				ls.filter = (float) (sc_us / refr / budget);
+				ls.draw = (float) ((all_draw_us > sc_us ? all_draw_us - sc_us : 0.0) / refr / budget);
 				const unsigned planned = pal_planned;
 				pal_planned = 0;
 				/* a PAL game runs 5 frames in 6 refreshes: its cost per refresh is 50.007 / 59.94 of the cost per frame, so one that holds 50 is not overloaded */
@@ -1542,11 +1728,11 @@ int main(int argc, char **argv)
 				/* the per-thread CPU census: ms of CPU each thread used in this second (the kernel's run time). The PPU and APU workers
 				 * are made inside the core, so for them the core's own busy time is given (marked b). 2 cores: the sum shows the load. */
 				static SceUID s_main = sceKernelGetThreadId();
-				static double prev[4] = { 0, 0, 0, 0 };
-				const SceUID ids[4] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread };
-				double cur[4], d[4];
-				for (int k = 0; k < 4; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
-				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f ppu_b=%.0f apu_b=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3],
+				static double prev[6] = { 0, 0, 0, 0, 0, 0 };
+				const SceUID ids[6] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread, g_help_thread[0], g_help_thread[1] };
+				double cur[6], d[6];
+				for (int k = 0; k < 6; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
+				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f scale1=%.0f scale2=%.0f ppu_b=%.0f apu_b=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3], d[4], d[5],
 				    (st1.ppu_busy_ns - st0.ppu_busy_ns) / 1e6, (st1.apu_busy_ns - st0.apu_busy_ns) / 1e6, g_draw_core);
 			}
 			double fr = frames_run ? frames_run : 1;
@@ -1558,6 +1744,10 @@ int main(int argc, char **argv)
 			    ((st1.ppu_wait_ns - st0.ppu_wait_ns) + (st1.apu_wait_ns - st0.apu_wait_ns)) / 1e6,
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr,
 			    drawn, skipped, not_rendered, pic_fresh, g_fence_skips, g_rt_reused);
+			const unsigned sc_blocks = g_scale_blocks.exchange(0), sc_bdone = g_scale_blocks_done.exchange(0), sc_bmoved = g_scale_blocks_moved.exchange(0);
+			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
+			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
+			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
 			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());
 			st0 = st1;
 #ifdef S9X_PROF
@@ -1594,6 +1784,7 @@ int main(int argc, char **argv)
 	}
 
 	hd_stop();
+	help_stop();
 	g_quit = 1;
 	{
 		char c[220];

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* nat_stun.c -- see nat_stun.h.  Port of Galaxy's np_stun.cpp to plain C:
  * the Binding request / answer codec and the retransmission state machine
  * for one or two servers.  Static names start with stun_ (the twin builds

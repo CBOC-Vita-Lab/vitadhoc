@@ -220,8 +220,10 @@ struct Link::Impl {
 	bool committed = false, guest_running = false;
 	bool stalled = false;
 	uint64_t stall_since = 0;
-	uint32_t srtt = 0, rttvar = 0;
+	uint32_t srtt = 0, rttvar = 0, rtt_min_p = 0;
 	bool have_rtt = false;
+	unsigned echo_sent = 0;
+	uint64_t last_echo = 0, t_lock = 0;
 	uint32_t echo_ts = 0;
 	uint64_t echo_at = 0;
 	bool have_echo = false;
@@ -320,8 +322,12 @@ struct Link::Impl {
 	{
 		if (s > 10000000u) return;
 		if (!s) s = 1;
-		if (!have_rtt) { srtt = s; rttvar = s / 2; have_rtt = true; }
+		/* a sample is inflated by whatever the other console's game loop held the datagram for: a long outlier
+		 * (a state save over there) must not drag the estimate */
+		if (have_rtt && s > 4 * srtt + 200000u) s = 4 * srtt + 200000u;
+		if (!have_rtt) { srtt = s; rttvar = s / 2; rtt_min_p = s; have_rtt = true; }
 		else {
+			if (s < rtt_min_p) rtt_min_p = s;
 			const uint32_t d = srtt > s ? srtt - s : s - srtt;
 			rttvar = (3 * rttvar + d) / 4;
 			srtt = (7 * srtt + s) / 8;
@@ -335,11 +341,28 @@ struct Link::Impl {
 		if (!have_echo || (int32_t) (ts - echo_ts) > 0) { echo_ts = ts; echo_at = now; have_echo = true; }
 	}
 
+	/* the network's round trip as the wire measured it (answered by the other I/O thread), when it can */
+	bool echo_ready(uint32_t *base, uint32_t *spread) const
+	{
+		uint32_t n = 0, mn = 0, mx = 0;
+		if (!w->echo_result(&n, &mn, &mx) || n < 6) return false;
+		*base = mn;
+		*spread = mx - mn;
+		return true;
+	}
+
+	/* One frame of delay carries the one-way trip rounded up, plus one for the two game loops' own tick; the spread
+	 * between the fastest and slowest answer is what the trip may vary by. */
 	unsigned choose_delay() const
 	{
 		if (cfg.delay > 0) return (unsigned) std::min(cfg.delay, 60);
-		if (!have_rtt) return 4;
-		const uint64_t owd = srtt / 2, need = owd + 2ull * rttvar;
+		uint32_t base = 0, spread = 0;
+		if (!echo_ready(&base, &spread)) {
+			if (!have_rtt) return 4;
+			base = rtt_min_p;
+			spread = 2 * rttvar;
+		}
+		const uint64_t need = base / 2 + (uint64_t) spread;
 		const uint64_t ft = cfg.frame_us ? cfg.frame_us : 16667;
 		unsigned d = (unsigned) ((need + ft - 1) / ft) + 1;
 		const unsigned cap = (unsigned) std::max(2, std::min(cfg.delay_cap, 60));
@@ -410,6 +433,7 @@ struct Link::Impl {
 		nonce = nn;
 		sid = (nn * 2654435761u + now32() + 0x9E3779B9u) | 1u;
 		phase = LP_STATE;
+		t_lock = now;
 		cstate.assign(nchunks, 0);
 		csent.assign(nchunks, 0);
 		ack_base = acked = 0;
@@ -590,6 +614,11 @@ struct Link::Impl {
 		if (!cfg.host) return;
 		if (phase == LP_RUN || phase == LP_ENDING) { if (!guest_running && now - last_start > 20000) send_start(); return; }
 		if (phase != LP_STATE) return;
+		{
+			/* the delay is chosen from the network's own round trip: wait for the probes (a second at most) */
+			uint32_t b = 0, sp = 0;
+			if (cfg.delay <= 0 && !echo_ready(&b, &sp) && echo_sent > 0 && now - t_lock < 1500000) return;
+		}
 		if (cfg.host_reload) {
 			if (m.state_load(m.user, raw.data(), raw.size()) != 0) { log("link: the host could not load its own state"); fail(LE_START, true); return; }
 		}
@@ -645,7 +674,7 @@ struct Link::Impl {
 		const uint64_t late = (have_rtt ? srtt + 4ull * rttvar : 150000ull) + 2ull * (cfg.frame_us ? cfg.frame_us : 16667);
 		for (uint32_t f = first; f < lnext; f++) {
 			o.u16(lin[f & 255]);
-			if (f >= delay && f + 1 < lnext && now - lsent[f & 255] > late) st.retx++;
+			if (f >= peer_ack && f >= delay && f + 1 < lnext && now - lsent[f & 255] > late) st.retx++;
 		}
 		if (lnext > max_sent) max_sent = lnext;
 		send_pkt(peer, T_INPUT, sid, b, o.n);
@@ -709,16 +738,13 @@ struct Link::Impl {
 		const uint32_t f = r.u32(), h = r.u32();
 		if (!r.ok) { st.bad++; return; }
 		if (f != end_at) return;
+		add_hash(theirs, f, h);            /* counted and compared like any other; a mismatch ends it as a desync */
+		if (phase != LP_ENDING) return;
 		for (int i = 0; i < HASHES; i++) {
-			if (mine[i].used && mine[i].frame == f) {
-				if (mine[i].hash != h) {
-					log("link: out of sync at the end (frame %u: this console %08x, the host %08x)", f, mine[i].hash, h);
-					fail(LE_DESYNC, true);
-				} else {
-					phase = LP_DONE;
-					send_bye(0);
-					log("link: ended together at frame %u", f);
-				}
+			if (mine[i].used && mine[i].frame == f && mine[i].hash == h) {
+				phase = LP_DONE;
+				send_bye(0);
+				log("link: ended together at frame %u", f);
 				return;
 			}
 		}
@@ -806,6 +832,7 @@ struct Link::Impl {
 		}
 		switch (phase) {
 		case LP_STATE:
+			if (cfg.host && cfg.delay <= 0 && echo_sent < 24 && now - last_echo >= 25000) { w->echo_probe(peer); echo_sent++; last_echo = now; }
 			if (cfg.host) send_chunks();
 			else if (now - last_cack >= 100000) send_cack(true);
 			break;

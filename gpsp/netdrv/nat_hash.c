@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* nat_hash.c -- MD5 (RFC 1321), SHA-1 (RFC 3174) and HMAC-SHA1 (RFC 2104),
  * written from the RFCs.  Both hashes are broken as security primitives and
  * are here only because STUN / TURN (RFC 5389 / 8656) mandate them for the

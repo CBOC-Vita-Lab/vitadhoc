@@ -56,7 +56,12 @@ static void vdp_set_all_vram(const uint8 *src);
     bg_name_list[bg_list_index++] = name;           \
   }                                                 \
   bg_name_dirty[name] |= (1 << ((addr >> 2) & 7));  \
+  if (vdpw_on) vdpw_mark_vram(name);                \
 }
+
+/* VitAdhoc: the VDP worker (vdp_thread.h) learns about bulk VRAM changes and the status bits this file writes itself */
+#define VDPW_VRAM_ALL() { if (vdpw_on) vdpw_vram_all_changed(); }
+#define VDPW_STATUS() { if (vdpw_on) vdpw_status_changed(); }
 
 /* VINT timings */
 #define VINT_H32_MCYCLE (770)
@@ -265,6 +270,7 @@ void vdp_reset(void)
   {
     memset((char *)sat, 0, sizeof(sat));
     memset((char *)vram, 0, sizeof(vram));
+    VDPW_VRAM_ALL();
     memset((char *)cram, 0, sizeof(cram));
     memset((char *)vsram, 0, sizeof(vsram));
   }
@@ -324,6 +330,7 @@ void vdp_reset(void)
   {
     status = 0;
   }
+  VDPW_STATUS();
 
   /* default display area */
   bitmap.viewport.w   = 256;
@@ -631,6 +638,9 @@ int vdp_context_load(uint8 *state)
     }
     color_update_m4(0x40, *(uint16 *)&cram[(0x10 | (border & 0x0F)) << 1]);
   }
+
+  VDPW_VRAM_ALL();
+  VDPW_STATUS();
 
   /* If we have a tile cache with any clean tiles */
   if (bg_list_index_save != bg_list_index)
@@ -1267,6 +1277,9 @@ unsigned int vdp_68k_ctrl_r(unsigned int cycles)
 {
   unsigned int temp;
 
+  /* VitAdhoc: the sprite collision / overflow bits come from the VDP worker */
+  if (vdpw_on) vdpw_join_status();
+
   /* Cycle-accurate VDP status read (adjust CPU time with current instruction execution time) */
   cycles += m68k_cycles();
 
@@ -1289,6 +1302,7 @@ unsigned int vdp_68k_ctrl_r(unsigned int cycles)
 
   /* Clear SOVR & SCOL flags */
   status &= 0xFF9F;
+  VDPW_STATUS();   /* the worker's copy of the status bits is replaced before the next line it draws */
 
   /* Check if FIFO last entry read-out cycle has been reached */
   if (cycles >= fifo_cycles[(fifo_idx + 3) & 3])
@@ -1340,6 +1354,9 @@ unsigned int vdp_z80_ctrl_r(unsigned int cycles)
 {
   unsigned int temp;
 
+  /* VitAdhoc: the sprite collision / overflow bits (and the collision position) come from the VDP worker */
+  if (vdpw_on) vdpw_join_status();
+
   /* Check if DMA busy flag is set (Mega Drive VDP specific) */
   if (status & 2)
   {
@@ -1388,6 +1405,7 @@ unsigned int vdp_z80_ctrl_r(unsigned int cycles)
 
   /* Clear VINT, SOVR & SCOL flags */
   status &= 0xFF1F;
+  VDPW_STATUS();   /* the worker's copy of the status bits is replaced before the next line it draws */
 
   /* Mega Drive VDP specific */
   if (system_hw & SYSTEM_MD)
@@ -1683,6 +1701,7 @@ static void vdp_reg_w(unsigned int r, unsigned int d, unsigned int cycles)
           int i;
           
           /* make temporary copy of 16KB VRAM */
+          VDPW_VRAM_ALL();
           memcpy(vram + 0x4000, vram, 0x4000);
 
           /* re-arrange 16KB VRAM address decoding */
@@ -1807,6 +1826,7 @@ static void vdp_reg_w(unsigned int r, unsigned int d, unsigned int cycles)
           int i, j;
           uint8 temp[0x400];
 
+          VDPW_VRAM_ALL();
           if (d & 0x04)
           {
             /* 16K->64K address decoding */

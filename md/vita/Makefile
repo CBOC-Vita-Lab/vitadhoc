@@ -20,16 +20,23 @@ STB  := ../../snes/frontend/third_party/stb
 PK   := ../../playerkit
 B    := build
 BA   := $(abspath $(B))
+# RetroAchievements (playerkit/ra.mk): pk_ra, the rcheevos client and ra_http.c: MIT code only (check-links says so)
+RA_GP     := ../../gpsp/vita
+RA_OBJDIR := $(B)/ra
 
 CPUFLAGS := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard
 INC := -I$(FE) -I. -I$(STB) -I$(V2D)/include -I$(PK)/src -I$(PK)/vita
 OPT ?= -O3
 CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing -fno-rtti -D__vita__ $(INC)
 CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/include
+RA_CC     = $(CC)
+RA_CFLAGS = -MMD -MP $(CPUFLAGS) -O2 -g -w -D__vita__
+include $(PK)/ra.mk
+.DEFAULT_GOAL := all
 
 FE_OBJS := $(B)/fe/picture.o $(B)/fe/audio_pace.o $(B)/fe/cheats.o $(B)/fe/savefile.o $(B)/player.o $(B)/pipe.o $(B)/main.o
-PK_SRC  := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed
-PK_OBJS := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o
+PK_SRC  := pk_util pk_text pk_font_data pk_icons pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_cores pk_look pk_scale pk_rewind pk_ff pk_speed pk_ra
+PK_OBJS := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/pk/pk_gfx_vita.o $(B)/pk/pk_ra_plat_vita.o $(RA_OBJS)
 # newlib's FILE-slot allocation has no lock on the console (playerkit/vita/pk_stdio_lock.c puts a real one in place with --wrap)
 STDIO_LOCK ?= 1
 ifeq ($(STDIO_LOCK),1)
@@ -42,7 +49,7 @@ SHADERS  := $(wildcard $(V2D)/shader/*_gxp.o)
 LIBS := -lSceShaccCg_stub_weak -lSceGxm_stub -lSceDisplay_stub -lSceSysmodule_stub \
         -lSceCommonDialog_stub -lSceAppMgr_stub -lSceCtrl_stub -lSceTouch_stub \
         -lSceAppUtil_stub -lSceAudio_stub -lScePower_stub -lSceRtc_stub \
-        -lSceSysmem_stub -lSceLibKernel_stub -lm
+        -lSceNet_stub -lSceNetCtl_stub -lSceHttp_stub -lSceSsl_stub -lSceSysmem_stub -lSceLibKernel_stub -lm
 
 all: $(B)/md.bin
 
@@ -91,10 +98,12 @@ $(B)/md.bin: $(B)/md.velf
 # non-commercial core) and no GPL file of playerkit's tests. Run on the object list of the link (the build path is under md/vita/build).
 LINKED ?= $(B)/mdcore.o $(FE_OBJS) $(PK_OBJS) $(V2D_OBJS)
 check-links:
-	@bad=""; for f in $(LINKED); do case "$$f" in *third_party/vita2d/*) ;; *gpsp*|*xbrz*|*xBRZ*|*../snes/*|*../nes/*) bad="$$bad $$f";; esac; done; \
+	@bad=""; for f in $(LINKED); do case "$$f" in *third_party/vita2d/*) ;; */build/ra/*|build/ra/*) n=$$(basename $$f .o); ok=0; for r in $(RA_NAMES:.c=); do [ "$$r" = "$$n" ] && ok=1; done; [ $$ok = 1 ] || bad="$$bad $$f";; *gpsp*|*xbrz*|*xBRZ*|*../snes/*|*../nes/*) bad="$$bad $$f";; esac; done; \
 	if [ -n "$$bad" ]; then echo "md.bin links code it must not:$$bad"; exit 1; fi; \
+	for f in $(RA_MIT_FILES); do grep -q 'MIT' $$f || { echo "RetroAchievements file without an MIT licence: $$f"; exit 1; }; done; \
+	if grep -l 'GPL-2.0-only\|GNU General Public' $(RA_SRCS) $(PK)/src/pk_ra.cpp $(PK)/src/pk_ra.h >/dev/null 2>&1; then echo "a GPL-only file is in the RetroAchievements list"; exit 1; fi; \
 	for f in $(PK_SRC); do [ -f $(PK)/src/$$f.cpp ] || { echo "missing $$f.cpp"; exit 1; }; done; \
-	echo "check-links: $(words $(LINKED)) objects, none from gpsp/ or xBRZ; sources are md/, playerkit/ and the vendored libvita2d"
+	echo "check-links: $(words $(LINKED)) objects, none from gpsp/ or xBRZ; sources are md/, playerkit/, the vendored libvita2d and, for RetroAchievements, $(words $(RA_SRCS)) MIT files (ra_http.c is dual MIT OR GPL-2.0-or-later, taken as MIT; the rcheevos client is MIT)"
 
 $(B)/fe/%.o: $(FE)/%.cpp $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/fe
@@ -102,9 +111,13 @@ $(B)/fe/%.o: $(FE)/%.cpp $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 $(B)/%.o: %.cpp $(wildcard *.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+$(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
 $(B)/pk/%.o: $(PK)/src/%.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pk
-	$(CXX) $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti -D__vita__ -I$(PK)/src -I$(PK)/vita -c -o $@ $<
+	$(CXX) $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti -D__vita__ -I$(PK)/src -I$(PK)/vita $(PK_EXTRA_INC) -c -o $@ $<
+$(B)/pk/pk_ra_plat_vita.o: $(PK)/vita/pk_ra_plat_vita.c $(PK)/src/pk_ra_plat.h
+	@mkdir -p $(B)/pk
+	$(CC) $(CFLAGS) -I$(PK)/src -c -o $@ $<
 $(B)/pk/pk_gfx_vita.o: $(PK)/vita/pk_gfx_vita.cpp $(wildcard $(PK)/vita/*.h) $(PK)/src/pk_gfx.h
 	@mkdir -p $(B)/pk
 	$(CXX) $(CPUFLAGS) $(OPT) -g -std=gnu++14 -w -fno-strict-aliasing -fno-rtti -D__vita__ -I$(PK)/src -I$(PK)/vita -I$(V2D)/include -c -o $@ $<

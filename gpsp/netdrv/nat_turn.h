@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* nat_turn.h -- the TURN (RFC 8656, UDP) client of the NAT layer, reduced to
  * ONE peer: allocate, permission, channel bind, refresh, release.  Pure: no
  * sockets, no threads, no globals, C99, no heap; a callback sends and the

@@ -61,7 +61,7 @@ Label of every number below: **host** = measured on the Linux twin (x86), **qemu
 
   The helpers are work stealers: the drawing thread cuts the picture into 8 row chunks, takes chunks itself and the helpers take what they get
   to; a helper that is not scheduled costs nothing. `threads.ini` (`<root>/md/threads.ini`): `core4=auto|off`, `audio_prio`, `main_prio`,
-  `draw_prio`, `helpers=0|1|2`, `audio_legacy`.
+  `draw_prio`, `helpers=0..3`, `audio_legacy`.
 
 ## The pixel art scaler and the look governor
 
@@ -87,12 +87,15 @@ each carrying half the rows the model gives roughly half those figures, with the
 | native picture | ceiling | output pixels |
 |---|---|---|
 | 160x144 (Game Gear) | xBR 3x | 480x432 |
-| 256x192 / 256x224 / 256x240 (Master System, SG-1000, H32 Mega Drive) | xBR 2x | 512x384 .. 512x480 |
-| 320x224 / 320x240 (H40 Mega Drive) | MMPX 2x | 640x448 .. 640x480 |
+| 256x192 / 256x224 / 256x240 / 320x224 / 320x240 (Master System, SG-1000, Mega Drive H32 and H40) | xBR 2x | 512x384 .. 640x480 |
 | interlaced (more than 256 rows) or wider than 352 | none (sharp bilinear) | |
 
-The H40 ceiling is MMPX, not xBR, because xBR 2x is the dearer of the two on a busy picture and neither fits one thread. The look governor
-(playerkit `pk_look`) owns the **Auto** scaler row: it starts at the ceiling and takes one tier off (xBR 3x -> xBR 2x -> MMPX 2x -> sharp) when
+3x is kept for the Game Gear only: on 192..240 rows it would make 576..720 rows for a 544 row screen, computing pixels that the fit averages away
+again. `md/twin/sidebyside.{cpp,py}` makes the 960x544 comparison (xBR 2x | xBR 3x | difference x8, each fitted with the player's bilinear draw);
+over 8 Mega Drive and 7 Master System pictures the mean absolute difference is 0.05 .. 1.0 (Mega Drive) and 0.2 .. 3.8 (Master System) of 255,
+and the differences are one screen pixel wide along edges. MMPX 2x is no longer a rung: since the integer NEON xBR (`pk_scale`) xBR 2x costs less than
+MMPX 2x, so MMPX stays a look the player can pick by hand in the Pixel art scaler row, never one Auto chooses. The look governor
+(playerkit `pk_look`) owns the **Auto** scaler row: it starts at the ceiling and takes one tier off (xBR 3x -> xBR 2x -> sharp) when
 this game cannot hold full speed, remembers it per game (`look/<console>/..`), gives it back when there is room. A scaler chosen by hand in the row
 is never eased. **Image look**: Auto (the governor), Full (the scaler as set, never eased), Light (no scaler). The scaler of a picture is the picture's
 own ceiling plus the governor's steps, so a game that switches H32 to H40 follows without a new ladder.

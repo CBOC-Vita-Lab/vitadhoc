@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* nat_turn.c -- see nat_turn.h.  Port of Galaxy's np_turn.cpp to plain C,
  * reduced to one peer and no heap.  Static names start with turn_ (the twin
  * builds the three nat files as one translation unit). */

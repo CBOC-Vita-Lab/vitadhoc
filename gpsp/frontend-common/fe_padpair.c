@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* fe_padpair.c -- see fe_padpair.h.
  *
  * One machine, both players: fe_gblink's lockstep (inputs by frame number,

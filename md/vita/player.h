@@ -38,6 +38,7 @@
 #include "pk_pace.h"
 #include "pk_look.h"
 #include "pk_speed.h"
+#include "pk_ra.h"
 
 namespace mdp {
 
@@ -102,7 +103,7 @@ struct StartResult {
 class MdPlayer : public pk::MenuHost {
 public:
 	enum { ROW_SCALER = pk::ROW_HOST_BASE + 1, ROW_SMS_BORDER, ROW_GG_COLORS, ROW_GG_LCD, ROW_PADTYPE, ROW_REGION, ROW_FM, ROW_YM2413, ROW_STEADY,
-	       ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42 };
+	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30, ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42 };
 	explicit MdPlayer(Platform *pf);
 	~MdPlayer();
 
@@ -218,7 +219,15 @@ public:
 	/* the launch file to use among md / sms / gg / sg: the one whose game is `arg_rom`, else the newest; "" when none */
 	static std::string pick_launch(const std::string &root, const std::string &arg_rom);
 
+	/* RetroAchievements (pk_ra): the web answers are collected once per display refresh, in game and in the menu; the twin points `server` at a
+	 * fake one before start() (never set on the console: the real site). */
+	void ra_pump();
+	void set_ra_server(const std::string &server) { ra_server_ = server; }
+	const pk::Ra &ra() const { return ra_; }
+
 	/* MenuHost */
+	const char *state_load_refused();
+	const char *cheats_refused();
 	void on_change(int row_id, int value);
 	void on_reset();
 	bool capture_state(std::vector<uint8_t> &out);
@@ -282,6 +291,16 @@ private:
 	} glue_;
 	pk::Speed speed_;
 	bool speed_was_busy_ = false;
+	pk::Ra ra_;
+	std::string ra_server_;
+	bool ra_blocks_ = false;               /* Hardcore is in force (or not known yet): no rewind, no cheats, no state loads */
+	uint64_t ra_toast_until_ = 0;
+	void ra_begin(const uint8_t *rom, size_t n);
+	void ra_update();
+	static uint32_t ra_read(void *ud, uint32_t addr, uint8_t *out, uint32_t n);
+	static uint64_t ra_now(void *ud);
+	static int ra_online(void *ud);
+	static void ra_log(void *ud, const char *line);
 	std::string chip_text_;
 	uint64_t chip_at_ms_ = 0;
 	pk::SpeedSettings speed_settings() const;

@@ -22,6 +22,7 @@
 #include "player.h"
 #include "netplay.h"
 #include "host.h"
+#include "pk_util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,7 +36,6 @@ extern "C" {
 }
 #include <vector>
 
-extern "C" uint32_t fe_crc32(uint32_t crc, const void *data, size_t len);
 
 using namespace pk;
 #undef W_OK
@@ -88,7 +88,7 @@ static uint32_t state_crc()
 	std::vector<uint8_t> b(n);
 	size_t len = 0;
 	if (!n || snes_host_state_save_buf(b.data(), n, &len) != 0) return 0;
-	return fe_crc32(0, b.data(), len);
+	return pk::crc32(0, b.data(), len);
 }
 
 /* What the app does for a relayed link before snes.bin starts (link_vita.c / online_vita.c): allocate on the relay with the
@@ -273,7 +273,7 @@ int main(int argc, char **argv)
 	printf("LT end ok=%d fail=%d gerr=%d(%s) frames=%u stalls=%u/%u hashes=%u/%u passes=%u stall_passes=%u delay=%u restored=%d\n", ok ? 1 : 0, (int) fail, gerr,
 	       gname.c_str(), frames_run, st.stalls, st.stall_episodes, st.hashes_matched, st.hashes_sent, passes, stall_passes, st.delay, restored ? 1 : 0);
 	printf("LT final role=%s crc_before=%08x crc_after=%08x sram_crc=%08x %s\n", host ? "host" : "guest", crc_before, crc_after,
-	       snes_host_sram_size() ? fe_crc32(0, snes_host_sram_data(), snes_host_sram_size()) : 0u, sum.c_str());
+	       snes_host_sram_size() ? pk::crc32(0, snes_host_sram_data(), snes_host_sram_size()) : 0u, sum.c_str());
 	pl.set_link_result(ok ? "done" : "failed", gerr, gname, (int) frames_run);
 	pl.finish(pk::EXIT_GAME_LIST);
 	fflush(stdout);

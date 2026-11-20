@@ -1,6 +1,6 @@
 # Features And Settings
 
-VitAdhoc combines GB, GBC, GBA, Super NES, NES and WonderSwan emulation with a Vita-native library,
+VitAdhoc combines GB, GBC, GBA, Super NES, NES, WonderSwan and Sega (Genesis / Mega Drive, Master System, Game Gear, SG-1000) emulation with a Vita-native library,
 display pipeline, touch input and motion controls. This is the detailed guide;
 start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 [Play Together](../PLAY-TOGETHER.md) for a specific task.
@@ -15,6 +15,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Super NES | Snes9x 1.63 in its own program (`snes.bin`, non-commercial licence); sound and picture drawing on their own cores; up to four players with the Super Multitap |
 | NES / Famicom | FCEUmm inside the app (GPL-2.0-or-later); NES, Famicom Disk System (your own `disksys.rom`) and UNIF games |
 | WonderSwan / Color | Beetle WonderSwan (Mednafen) inside the app (GPL-2.0-or-later); 224 x 144 at 75.47 frames a second, blended into each 59.94 Hz refresh; horizontal and vertical games |
+| Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000 | Genesis Plus GX in its own program (`md.bin`, non-commercial licence), one player for the four consoles; the app's library, Starred, Recent, play time, Continue, ten state slots, cheats from the bundled database, RetroArch save import and crash protection work as for the Super NES; saves are `Game.srm` beside the game |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
 | Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`; supported stored/deflated `.zip` entries up to 32 MiB |
@@ -213,6 +214,22 @@ followed the Video filter); `look_bitmap = 0` turns the bitmap-mode rule off.
 **MMPX 2x** (Image quality, Video filter) is a 2x pixel-art scaler (MIT
 licence) that costs less than xBRZ 2x and has no tables to build. It sits
 between xBRZ 2x and sharp bilinear on the ladder and can be picked by hand.
+
+## Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000
+
+Each is its own console in the list (alphabetical by name). Folders: see
+[Install](../INSTALL.md); every folder directly inside `ux0:ROMS/` is scanned
+and the file ending picks the console (`.md`, `.gen`, `.smd`, `.sms`, `.gg`,
+`.sg`; `.bin` only when it is a Genesis image, zips too). Names, box art and
+descriptions come from the game database by checksum (an `.smd` file's header
+is removed before its checksum is taken) or by name. Cheats: the bundled
+`cheats.db` entries for the game are handed to the player as a RetroArch
+`.cht` file (Genesis `AAAAAA:VVVV`, others `AAAA:VV`). Starting a game writes
+`launch/<console>.ini`; the player writes `launch/session.txt` back when it
+ends (play time, Continue). Two crashes in a row start the next launch with the
+safe picture settings. Saves import from and export to RetroArch's
+Genesis Plus GX, PicoDrive, BlastEm and SMS Plus GX folders. Settings rows that
+only the GBA and Game Boy cores have are hidden for these games.
 
 ## WonderSwan
 

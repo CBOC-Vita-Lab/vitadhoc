@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* transport_lan.c -- UDP/IPv4 netdrv backend with room discovery.
  * See transport_lan.h for the contract; this file's comments are the "why".
  *

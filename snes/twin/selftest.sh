@@ -227,6 +227,17 @@ if [ -x "$PT" ]; then
 		|| { grep -v '^Map_' $T/lk.txt | tail -20; bad "look governor (player_twin look)"; }
 fi
 
+# rewind (5 s back, the machine bit for bit where it was), fast forward 2x / 3x with its sound, the patch changing the ROM CRC, and RetroAchievements
+# against a fake server on the loopback (stored token, unlock toast, Hardcore blocking rewind / state loads / cheats): the loopback port means run alone
+if [ -x "$PT" ]; then
+	python3 -I "$HERE/tests/make_speed_rom.py" $T/sp.sfc
+	mkdir -p $T/spw $T/raw
+	"$PT" speed $T/sp.sfc $T/spw >$T/sp.txt 2>&1 && ok "rewind, fast forward, patch CRC: $(grep 'player_twin speed:' $T/sp.txt | tail -1 | sed 's/player_twin speed: //')" \
+		|| { grep -v '^Map_' $T/sp.txt | tail -20; bad "rewind, fast forward, patch (player_twin speed)"; }
+	"$PT" ra $T/sp.sfc $T/raw >$T/ra.txt 2>&1 && ok "RetroAchievements: $(grep 'player_twin ra:' $T/ra.txt | tail -1 | sed 's/player_twin ra: //')" \
+		|| { grep -v '^Map_' $T/ra.txt | tail -20; bad "RetroAchievements (player_twin ra)"; }
+fi
+
 # frame hand-over ("Smooth hand-over", playerkit pk_handoff through snes/vita/pipe.cpp): the setting row (default on, kept), and the
 # pictures it delivers are bit for bit those of the plain run, in order, none missing outside steady pacing's half mode; with a
 # second thread, a slow drawing side, a flush, and the mailbox switched off and on again (two-player lockstep)

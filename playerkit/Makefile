@@ -19,7 +19,7 @@ B        := build
 SHOTS    ?= $(B)/shots
 
 LIB_SRC  := src/pk_util.cpp src/pk_text.cpp src/pk_font_data.cpp src/pk_icons.cpp src/pk_gfx_soft.cpp src/pk_states.cpp \
-            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp src/pk_look.cpp src/pk_cores.cpp src/pk_scale.cpp src/pk_rewind.cpp src/pk_ff.cpp src/pk_speed.cpp
+            src/pk_launch.cpp src/pk_patch.cpp src/pk_input.cpp src/pk_notice.cpp src/pk_menu.cpp src/pk_pace.cpp src/pk_handoff.cpp src/pk_look.cpp src/pk_cores.cpp src/pk_scale.cpp src/pk_rewind.cpp src/pk_ff.cpp src/pk_speed.cpp src/pk_link.cpp
 LIB_OBJ  := $(patsubst src/%.cpp,$(B)/linux/%.o,$(LIB_SRC))
 TEST_SRC := $(wildcard tests/test_*.cpp)
 TEST_OBJ := $(patsubst tests/%.cpp,$(B)/linux/tests/%.o,$(TEST_SRC))
@@ -48,13 +48,38 @@ $(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock
+test: $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock link-test ra-test
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
 	$(B)/vita_gxm
 	$(B)/handoff_tsan
 	$(B)/cores_tsan
 	$(B)/spin_tsan
+
+# pk_link over the real UDP transport (loopback, the transport's own I/O threads): link_tests (ASan + UBSan, with the 12 s stall
+# and the 20 s dead peer in real time) and link_tsan (ThreadSanitizer, quick). They use loopback ports and wall-clock time:
+# run them ALONE (check `pgrep -af link_tests` first). The transport and NAT layer are the project's own files in ../gpsp/netdrv.
+include link.mk
+
+# pk_ra (RetroAchievements for the players) against the real rcheevos client and ra_http.c, talking to a fake server on the loopback
+# (tests/fake_ra.h): sign-in with the app's token, a game found by its hash, an unlock toasted and sent, Hardcore, the account file never
+# written, the token never in a log. ra.mk lists the sources; pk_ra_plat_posix.c is the thread layer. Uses a loopback port: run it ALONE.
+RA_GP     := ../gpsp/vita
+RA_OBJDIR := $(B)/ra
+RA_CC     := $(CC)
+RA_CFLAGS := -std=gnu11 -O1 -g -w $(SAN)
+PK        := .
+include ra.mk
+$(B)/ra/pk_ra_plat_posix.o: ra/pk_ra_plat_posix.c src/pk_ra_plat.h
+	@mkdir -p $(B)/ra
+	$(CC) -std=gnu11 -O1 -g -w $(SAN) -Isrc -c -o $@ $<
+$(B)/ra_tests: tests/ra_tests_main.cpp tests/fake_ra.h tests/pk_test.h src/pk_ra.cpp src/pk_ra.h $(RA_OBJS) $(B)/ra/pk_ra_plat_posix.o
+	$(CXX) $(CXXFLAGS) -Isrc -Itests $(RA_INC) tests/ra_tests_main.cpp src/pk_ra.cpp \
+	  $(RA_OBJS) $(B)/ra/pk_ra_plat_posix.o -o $@ -pthread
+ra-test: $(B)/ra_tests
+	@if pgrep -af 'build/[r]a_tests' >/dev/null; then echo "another ra_tests run is active"; exit 1; fi
+	$(B)/ra_tests
+.PHONY: ra-test
 
 # the console's drawing path (pk_gfx_vita.cpp, unchanged) against a GXM-faithful fake of vita2d, with the real SDK headers
 VITA2D_INC ?= ../snes/frontend/third_party/vita2d/include

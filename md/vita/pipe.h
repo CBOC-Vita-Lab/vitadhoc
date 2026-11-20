@@ -17,7 +17,7 @@ namespace mdp {
 
 class PicturePipe {
 public:
-	enum { MAX_W = 352, MAX_H = 512 };       /* the largest picture the player draws (put() clamps to it) */
+	enum { MAX_W = 352, MAX_H = 576 };       /* the largest picture the core draws (md_host's MD_MAX_WIDTH x MD_MAX_HEIGHT: a core drawing straight in may use all of it) */
 	PicturePipe() : started_(false) {}
 	/* depth_max: pictures in flight when there is headroom (the model's choice is 2) */
 	bool start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint32_t refresh_us, uint32_t frame_us);
@@ -33,7 +33,17 @@ public:
 	 *  -1  the mailbox is off (two-player lockstep, shut down, not started): draw the old way. */
 	int put(const uint16_t *src, int w, int h, int pitch, int user, uint32_t seq, uint32_t emu_us);
 
+	/* Producer, no copy: the core draws straight into a mailbox buffer. direct_begin() returns the buffer (and its pitch in pixels, MAX_W) to give
+	 * md_host_set_framebuffer before the frame runs, or NULL when the mailbox is off, its gate is closed, or it is in drop mode (half rate,
+	 * fast forward): then run the frame as usual and put() it. After the frame: direct_commit() hands over what md_host_video() returned (a
+	 * pointer inside the buffer), direct_abandon() gives the buffer back unused (a frame that drew nothing). */
+	uint16_t *direct_begin(int *pitch_px);
+	int direct_commit(const uint16_t *pix, int w, int h, int pitch, int user, uint32_t seq, uint32_t emu_us);
+	void direct_abandon();
+	bool direct_open() const { return direct_ != 0; }
+
 private:
+	pk::HandoffFrame *direct_ = 0;
 	pk::Handoff box_;
 	bool started_;
 };

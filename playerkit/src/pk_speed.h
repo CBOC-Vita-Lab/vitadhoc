@@ -55,6 +55,9 @@ public:
 	void stop();
 
 	void set_locked(bool locked, const char *why = 0) { locked_ = locked; why_ = why; }
+	/* Hardcore: rewinding is refused (a press gives `why`), fast forward stays */
+	void set_rewind_locked(bool locked, const char *why = 0) { rw_locked_ = locked; rw_why_ = why; }
+	bool rewind_locked() const { return rw_locked_; }
 	bool locked() const { return locked_; }
 	void input(uint32_t fired);
 	int plan(int normal_frames);
@@ -79,6 +82,7 @@ public:
 	/* the helper thread's step (nothing to do without one) */
 	bool pack() { return rw_.pack_pending(); }
 	Rewind &rewind() { return rw_; }
+	const Rewind &rewind() const { return rw_; }
 	FastForward &ff() { return ff_; }
 	const SpeedSettings &settings() const { return set_; }
 	std::string stats_line() const;
@@ -90,7 +94,8 @@ private:
 	SpeedSettings set_;
 	double fps_ = 60.0;
 	int imin_ = 2;
-	bool locked_ = false;
+	bool locked_ = false, rw_locked_ = false;
+	const char *rw_why_ = 0;
 	const char *why_ = 0;
 	bool want_rw_ = false;
 	RewindAct act_ = RW_PLAY;

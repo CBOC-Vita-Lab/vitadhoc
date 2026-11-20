@@ -84,6 +84,9 @@ public:
 	virtual bool capture_state(std::vector<uint8_t> &out) { (void) out; return false; }
 	/* put a state back; false if the core refused it */
 	virtual bool restore_state(const uint8_t *data, size_t n) { (void) data; (void) n; return false; }
+	/* RetroAchievements Hardcore: non-NULL = loading a state / undoing a load / using a cheat is refused now, and this is why (shown as the notice) */
+	virtual const char *state_load_refused() { return 0; }
+	virtual const char *cheats_refused() { return 0; }
 	/* the picture on screen now, for the thumbnails (valid until the next call) */
 	virtual bool current_frame(Frame *f) { (void) f; return false; }
 	virtual int64_t play_seconds() { return -1; }

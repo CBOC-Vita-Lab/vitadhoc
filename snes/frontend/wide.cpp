@@ -93,6 +93,10 @@ struct Layer {
 	uint8_t tblank[1024];
 	uint8_t bitmap;                  /* the tilemap is a framebuffer ramp: nearly every tile number differs */
 	uint8_t rowblank[64];            /* ring tile row is made of blank tiles only (the layer draws nothing on it, anywhere) */
+	/* what the last full ring walk saw, so that a frame in which none of it changed does not walk again (describe_layer) */
+	uint8_t walk_ok, walk_unsettled;
+	int wkey[6];                     /* the Key and the settle count of that walk */
+	uint16_t pw[4096], pv[4096];     /* the tilemap words and their write stamps, per 32x32 screen block in address order */
 };
 
 /* One captured frame: exactly what the compose half reads (see "Capture and compose" in snes/WIDE-INTEGRATION.md). Margin pass
@@ -161,6 +165,7 @@ struct Adapter {
 	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
 	uint8_t softm[MAXH][2][SNES_WIDE_MAX_MARGIN];   /* per margin pixel: bit n = layer n shows a learned cell that has not been seen live in this run (blended toward the ambient frame) */
 	int soft_on;
+	int verify_cache = 0;             /* option "verify_cache": every kept result is also made fresh and compared (the twin's proof; census cache_*) */
 	int hud_excl = 1;                 /* option "hud_excl": HUD rows do not count against the Auto coverage */
 	int fgfade = 1;                   /* option "fgfade": unknown foreground fades out over fade_px (B) */
 	uint16_t tailpx[4][2][MAXH];      /* per layer, side, line: the layer's own pixel at the view edge (colour) ... */
@@ -181,7 +186,7 @@ struct Adapter {
 	bool last_up = false;             /* the last ladder step was up */
 	int chip = 0;                     /* 1 Super FX (GSU), 2 SA-1, from the cartridge header */
 	int rung = 0;
-	int cost_us = 9000;               /* option "cost_us": smoothed compose time that is too much for one 60 Hz frame of the drawing thread */
+	int cost_us = 13000;              /* option "cost_us": smoothed compose time that is too much for one 60 Hz frame of the drawing thread (16.7 ms less the texture copy and the scaler's share) */
 	int cost_frames = 60;             /* ... held for this many frames before a step down */
 	int cost_scale = 100;             /* option "cost_scale" (percent): the twin's way to stand in for a slower machine; the ladder sees the measured time times this */
 	uint32_t cost_ema_q4 = 0, cost_n = 0, hold_frames = 600, since_down = 0;
@@ -201,6 +206,7 @@ struct Adapter {
 	std::atomic<int> cap_mh;          /* the margin the capture copies (= margin224; 0 = off) */
 	std::atomic<int> prof_off;        /* the game's profile switches the view off (a hint for capture) */
 	std::atomic<unsigned> dropped;    /* snapshots overwritten before they were composed */
+	std::atomic<uint32_t> cap_us_q4;  /* smoothed capture time, microseconds x 16 (census) */
 };
 
 static Adapter A;
@@ -314,9 +320,51 @@ static int cell_index(const SWideView *v, const Layer *Ly, uint32_t word, int xi
 	return Ly->palbase + pal * 4 + c;
 }
 
+/* All pixels of one row of a tile cell: out[x] (x < tile_px) is what cell_index(v, Ly, word, x, fy) returns. A learned-map margin walks along
+ * a cell, so the row is decoded once for its 8 or 16 pixels instead of bit by bit for each. */
+static void cell_row(const SWideView *v, const Layer *Ly, uint32_t word, int fy, int16_t *out)
+{
+	const int tp = Ly->tile_px, bpp = Ly->bpp, bytes = bpp * 8;
+	if (word & 0x8000) fy = tp - 1 - fy;
+	const int tile0 = word & 0x3ff, pal = (word >> 10) & 7, hflip = (word & 0x4000) != 0;
+	int16_t col[16];
+	for (int g = 0; g < tp / 8; g++) {
+		const int tile = tp == 16 ? ((tile0 + g + ((fy >> 3) << 4)) & 0x3ff) : tile0;
+		const uint32_t a = ((uint32_t) Ly->name * 2 + (uint32_t) tile * (uint32_t) bytes) & 0xffff;
+		int c[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+		for (int p = 0; p < bpp; p += 2) {
+			const uint32_t o = (a + (uint32_t) (p >> 1) * 16 + (uint32_t) (fy & 7) * 2) & 0xffff;
+			const unsigned lo = v->vram[o], hi = v->vram[(o + 1) & 0xffff];
+			for (int j = 0; j < 8; j++) {
+				const int b = 7 - j;
+				c[j] |= (int) ((((lo >> b) & 1) << p) | (((hi >> b) & 1) << (p + 1)));
+			}
+		}
+		for (int j = 0; j < 8; j++) {
+			int r;
+			if (!c[j]) r = -1;
+			else if (bpp == 8) r = c[j];
+			else if (bpp == 4) r = pal * 16 + c[j];
+			else r = Ly->palbase + pal * 4 + c[j];
+			col[g * 8 + j] = (int16_t) r;
+		}
+	}
+	for (int x = 0; x < tp; x++) out[x] = col[hflip ? tp - 1 - x : x];
+}
+
 /* ---- describing a frame -------------------------------------------------------------------------------------- */
 
 struct Key { int scbase, scsize, name, bgsize, bpp, n; };
+
+/* do the 1024 tilemap words (and write stamps) of a screen block at word address wa0 equal what the last walk saw? */
+static bool region_same(const SWideView *v, int wa0, const uint16_t *pw, const uint16_t *pv)
+{
+	int n1 = 0x8000 - wa0;
+	if (n1 > 1024) n1 = 1024;
+	if (memcmp(v->vram + (size_t) wa0 * 2, pw, (size_t) n1 * 2) || memcmp(v->vage + wa0, pv, (size_t) n1 * 2)) return false;
+	if (n1 < 1024 && (memcmp(v->vram, pw + n1, (size_t) (1024 - n1) * 2) || memcmp(v->vage, pv + n1, (size_t) (1024 - n1) * 2))) return false;
+	return true;
+}
 
 static inline bool line_ok(const SWideLine &L)
 {
@@ -397,10 +445,40 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 	int sc3 = (K.scsize & 1) ? sc2 + 1024 : sc2;
 	const int scr[4] = { sc[0] & 0x7fff, sc[1] & 0x7fff, sc2 & 0x7fff, sc3 & 0x7fff };
 	const uint32_t settle_n = (uint32_t) (A.settle ? A.settle : 1);
+	/* A frame in which no tilemap word, no write stamp and no graphics of a tile in use changed, after a walk in which every cell had settled, gives the
+	 * walk's results again (they depend on the clock only for cells written within the last settle frames): the ring walk is not made. */
+	bool skip_walk = false;
+	{
+		const int wkey_now[6] = { K.scbase, K.scsize, K.name, K.bgsize, K.bpp, (int) settle_n };
+		if (Ly->walk_ok && !Ly->walk_unsettled && !memcmp(Ly->wkey, wkey_now, sizeof wkey_now)) {
+			const int nb = (mw / 32) * (mh / 32);
+			bool same = true;
+			for (int b = 0; b < nb && same; b++) same = region_same(v, scr[b], Ly->pw + b * 1024, Ly->pv + b * 1024);
+			if (same) {
+				const uint32_t g2 = ++A.gen;
+				for (i = 0; i < 1024 && same; i++)
+					if (Ly->used[i]) same = layer_tile_th(Ly, v, i, g2, false) == Ly->gh[i];
+				if (same) { Ly->gen = g2; skip_walk = true; }
+			}
+		}
+		memcpy(Ly->wkey, wkey_now, sizeof wkey_now);
+	}
+	/* verify_cache: make the walk anyway and compare it with what the kept result says */
+	static uint32_t v_code[4096], v_hash[4096], v_stamp[4096];
+	uint8_t v_row[64], v_bitmap = 0;
+	uint32_t v_gid = 0;
+	const bool verifying = skip_walk && A.verify_cache;
+	if (verifying) {
+		memcpy(v_code, Ly->code, sizeof v_code); memcpy(v_hash, Ly->hash, sizeof v_hash); memcpy(v_stamp, Ly->stamp, sizeof v_stamp);
+		memcpy(v_row, Ly->rowblank, sizeof v_row); v_bitmap = Ly->bitmap; v_gid = Ly->gid;
+		skip_walk = false;
+	}
+	const uint32_t gen = skip_walk ? Ly->gen : ++A.gen;
+	if (!skip_walk) {
 	memset(Ly->used, 0, sizeof Ly->used);
 	memset(Ly->rowblank, 1, sizeof Ly->rowblank);
-	const uint32_t gen = ++A.gen;
 	Ly->gen = gen;
+	Ly->walk_unsettled = 0;
 	for (int ry = 0; ry < mh; ry++)
 		for (int rx = 0; rx < mw; rx++) {
 			const int k = ry * mw + rx;
@@ -425,8 +503,15 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 				Ly->hash[k] ^= 0x7F4A7C15u * (uint32_t) (clk | 1u);
 				Ly->stamp[k] = 0xFFFFFFFFu;
 				Ly->code[k] = WK_CODE_NOREC;
+				Ly->walk_unsettled = 1;
+			}
+			{
+				const int pk = s * 1024 + (ry & 31) * 32 + (rx & 31);
+				memcpy(&Ly->pw[pk], v->vram + wa * 2, 2);
+				Ly->pv[pk] = w16;
 			}
 		}
+	Ly->walk_ok = 1;
 
 	{
 		/* a tilemap in which almost every visible tile number differs is a framebuffer (Super FX, bitmap games), not a level */
@@ -441,6 +526,7 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 			}
 		Ly->bitmap = n > 0 && distinct * 10 >= n * 9;
 	}
+	}      /* if (!skip_walk) */
 
 	/* graphics identity: kept through cosmetic animation (a few tiles changing), new for a tile set swap */
 	{
@@ -462,6 +548,12 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 		for (i = 0; i < 1024; i++) if (Ly->used[i]) { Ly->gh_prev[i] = Ly->gh[i]; Ly->gh_prev_ok[i] = 1; }
 	}
 
+	if (verifying) {
+		A.cen.cache_checks++;
+		if (memcmp(v_code, Ly->code, (size_t) (mw * mh) * 4) || memcmp(v_hash, Ly->hash, (size_t) (mw * mh) * 4) ||
+		    memcmp(v_stamp, Ly->stamp, (size_t) (mw * mh) * 4) || memcmp(v_row, Ly->rowblank, (size_t) mh) || v_bitmap != Ly->bitmap || v_gid != Ly->gid)
+			A.cen.cache_mismatches++;
+	}
 	wk_layer *L = &fr->layer[n];
 	memset(L, 0, sizeof *L);
 	L->active = 1;
@@ -653,26 +745,60 @@ static void amb_update(const SWideView *v, int H, bool reset)
 /* The ambient row (distances 0 .. M - 1) for a colour, side and dither phase: a pure function of those, so rows built for a
  * neighbouring line or an earlier frame are reused. Direct mapped. */
 struct ARow { uint16_t key; uint8_t ph, ok; uint16_t px[SNES_WIDE_MAX_MARGIN]; };
-static ARow g_arow[256];
+enum { AROWS = 1024 };    /* a picture has up to 2 x 239 rows of distinct colour (a sky gradient: one per line) and 8 dither phases: 256 thrashed */
+static ARow g_arow[AROWS];
 static int g_arow_m;
+/* the row's pixels are three table lookups each: per distance and dither phase, the 5 / 6 / 5 bit output for every 5 / 6 / 5 bit input channel
+ * (what the closed form below computes, evaluated once per margin) */
+struct AmbTab { uint8_t r[8][SNES_WIDE_MAX_MARGIN][32], g[8][SNES_WIDE_MAX_MARGIN][64], b[8][SNES_WIDE_MAX_MARGIN][32]; };
+static AmbTab g_atab;
+static void amb_tab_build(int M);
 
 static const uint16_t *amb_row(int s, int y, int M)
 {
-	if (g_arow_m != M) { memset(g_arow, 0, sizeof g_arow); g_arow_m = M; }
+	if (g_arow_m != M) { memset(g_arow, 0, sizeof g_arow); amb_tab_build(M); g_arow_m = M; }
 	const uint16_t key = A.amb_px[s][y];
 	const uint8_t ph = (uint8_t) ((y & 3) | (s << 2));
-	ARow *r = &g_arow[(unsigned) (key * 31u + ph * 7u + (key >> 8) * 5u) & 255];
+	ARow *r = &g_arow[((unsigned) key * 2654435761u + (unsigned) ph * 40503u) >> 22];     /* 10 bits */
 	if (!r->ok || r->key != key || r->ph != ph) {
-		const int r8 = ((key >> 11) & 31) * 255 / 31, g8 = ((key >> 5) & 63) * 255 / 63, b8 = (key & 31) * 255 / 31;
-		for (int d = 0; d < M; d++) {
-			const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
-			int rr = ((r8 * f) >> 8) + (th >> 1), gg = ((g8 * f) >> 8) + (th >> 2), bb = ((b8 * f) >> 8) + (th >> 1);
-			rr = rr > 255 ? 255 : rr; gg = gg > 255 ? 255 : gg; bb = bb > 255 ? 255 : bb;
-			r->px[d] = (uint16_t) (((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3));
+		const int kr = (key >> 11) & 31, kg = (key >> 5) & 63, kb = key & 31;
+		for (int d = 0; d < M; d++)
+			r->px[d] = (uint16_t) ((g_atab.r[ph][d][kr] << 11) | (g_atab.g[ph][d][kg] << 5) | g_atab.b[ph][d][kb]);
+		if (A.verify_cache) {        /* the closed form the tables stand for */
+			const int r8 = kr * 255 / 31, g8 = kg * 255 / 63, b8 = kb * 255 / 31;
+			A.cen.cache_checks++;
+			for (int d = 0; d < M; d++) {
+				const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
+				int rr = ((r8 * f) >> 8) + (th >> 1), gg = ((g8 * f) >> 8) + (th >> 2), bb = ((b8 * f) >> 8) + (th >> 1);
+				rr = rr > 255 ? 255 : rr; gg = gg > 255 ? 255 : gg; bb = bb > 255 ? 255 : bb;
+				if (r->px[d] != (uint16_t) (((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3))) { A.cen.cache_mismatches++; break; }
+			}
 		}
 		r->key = key; r->ph = ph; r->ok = 1;
 	}
 	return r->px;
+}
+
+static void amb_tab_build(int M)
+{
+	for (int ph = 0; ph < 8; ph++) {
+		const int s = ph >> 2, yq = ph & 3;
+		for (int d = 0; d < M; d++) {
+			const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[yq][xs & 3];
+			for (int v = 0; v < 32; v++) {
+				const int c8 = v * 255 / 31;
+				int rr = ((c8 * f) >> 8) + (th >> 1), bb = rr;
+				rr = rr > 255 ? 255 : rr; bb = bb > 255 ? 255 : bb;
+				g_atab.r[ph][d][v] = (uint8_t) (rr >> 3); g_atab.b[ph][d][v] = (uint8_t) (bb >> 3);
+			}
+			for (int v = 0; v < 64; v++) {
+				const int c8 = v * 255 / 63;
+				int gg = ((c8 * f) >> 8) + (th >> 2);
+				gg = gg > 255 ? 255 : gg;
+				g_atab.g[ph][d][v] = (uint8_t) (gg >> 2);
+			}
+		}
+	}
 }
 
 /* w (0..32) of the ambient pixel over the margin pixel */
@@ -883,7 +1009,7 @@ static void run(const Snap *sn)
 		wk_layers_reset(A.L);
 		wk_compose_reset(A.C);
 		A.have_pal_prev = 0;
-		for (int l = 0; l < 4; l++) A.lay[l].have_gid = 0;
+		for (int l = 0; l < 4; l++) { A.lay[l].have_gid = 0; A.lay[l].walk_ok = 0; }
 		memset(A.th2, 0, sizeof A.th2); memset(A.th4, 0, sizeof A.th4); memset(A.th8, 0, sizeof A.th8);
 	}
 	const int OW = 256 + 2 * Mh;      /* the work picture's row; the output row is 256 + 2 * Mfull (padded at the end) */
@@ -1027,7 +1153,9 @@ static void run(const Snap *sn)
 					const bool tsx_math = ((Ln.tsx >> l) & 1) && Ln.cgadsub == 0x20;   /* a sub screen layer added to the backdrop: the map cell gets the same maths */
 					int have_geom = wo->coherent[l][y] != 0 && A.M && (!((Ln.tsx >> l) & 1) || tsx_math);
 					if (have_geom) wk_line_geom(fr, wo, l, y, &g);
-					int cidx = 0x7fffffff, cok = 0;
+					int cidx = 0x7fffffff, cok = 0, crow_ok = 0;
+					const uint16_t *soft_amb = NULL;
+					int16_t crow[16];
 					wk_cell cell;
 					for (; d < real; d++) {
 						if (!have_geom) { lo->real[s][l] = (uint16_t) d; break; }
@@ -1041,16 +1169,19 @@ static void run(const Snap *sn)
 								const uint32_t hh = mix32(cell.code * 0x10001u + 0x1234567u, th);
 								cok = (uint16_t) ((hh ^ (hh >> 16)) & 0xFFFF) == cell.h16;
 							}
+							crow_ok = 0;
 						}
 						if (!cok) { lo->real[s][l] = (uint16_t) d; break; }
 						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
-						const int ci = cell_index(v, Ly, cell.code, fmod_(xw, tp), fmod_(wo->world_row[l][y], tp));
+						if (!crow_ok) { cell_row(v, Ly, cell.code, fmod_(wo->world_row[l][y], tp), crow); crow_ok = 1; }
+						const int ci = crow[fmod_(xw, tp)];
 						if (tsx_math) { dst[d] = math_add565(Ln.backdrop, ci < 0 ? Ln.fix565 : v->colors[ci]); op[d] = 1; }
 						else if (ci < 0) { dst[d] = 0; op[d] = 0; }
 						else { dst[d] = v->colors[ci]; op[d] = 1; }
 						if (A.soft_on && !cell.live && op[d]) {
 							/* a memory of an earlier run or session, not seen in this one: a hint, shown softly */
-							dst[d] = mix565(dst[d], amb_row(s, y, Mfull)[d], SOFT_W);
+							if (!soft_amb) soft_amb = amb_row(s, y, Mfull);
+							dst[d] = mix565(dst[d], soft_amb[d], SOFT_W);
 							A.softm[y][s][d] |= (uint8_t) (1 << l);
 						}
 					}
@@ -1339,20 +1470,30 @@ static void run(const Snap *sn)
 }
 
 
+static void cap_time(uint64_t us)
+{
+	const uint32_t q4 = (uint32_t) (us > 100000 ? 100000 : us) * 16, e = A.cap_us_q4.load(std::memory_order_relaxed);
+	A.cap_us_q4.store(e ? e + (int32_t) (q4 - e) / 32 : q4 + 1, std::memory_order_relaxed);
+}
+
 static void on_frame(const SWideView *v, void *)
 {
 	if (!A.on) return;
 	if (A.split.load(std::memory_order_acquire)) {
 		Snap *sn = pool_claim();
 		if (!sn) return;
+		const uint64_t c0 = now_us();
 		capture(v, sn);
+		cap_time(now_us() - c0);
 		sn->serial = A.snap_serial.fetch_add(1) + 1;
 		sn->state.store(SS_FILLED, std::memory_order_release);
 		return;
 	}
 	if (!A.own) A.own = snap_alloc();
 	if (!A.own) return;
+	const uint64_t c0 = now_us();
 	capture(v, A.own);
+	cap_time(now_us() - c0);
 	A.lk.lock();
 	if (A.on) run(A.own);
 	A.lk.unlock();
@@ -1524,7 +1665,7 @@ void snes_wide_set_game(const uint8_t *rom, size_t n, const char *title)
 	A.have_game = A.crc != 0;
 	A.chip = rom_chip(rom, n);
 	A.cost_ema_q4 = 0; A.cost_n = 0; A.since_down = 0; A.hold_frames = 600; memset(A.last_us, 0, sizeof A.last_us);
-	A.rung = (A.policy && A.chip) ? 1 : 0;     /* Super FX / SA-1 start one rung down; the measured cost corrects it either way */
+	A.rung = 0;     /* every game starts at the full margin (Super FX and SA-1 too): the measured cost and the player's pressure report are the last safety net */
 	ensure_objects();
 	profile_lookup();
 	A.lk.unlock();
@@ -1534,7 +1675,7 @@ static void set_policy(bool on)
 {
 	A.lk.lock();
 	A.policy.store(on ? 1 : 0);
-	A.rung = (on && A.chip) ? 1 : 0;
+	A.rung = 0;
 	A.cost_n = 0; A.since_down = 0; A.last_up = false; A.hold_frames = 600; A.pressure.store(0);
 	memset(A.last_us, 0, sizeof A.last_us);
 	if (A.margin224) A.cap_mh = work_margin(A.rung, A.margin224);
@@ -1572,6 +1713,7 @@ int snes_wide_option(const char *name, int v)
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
 	else if (!strcmp(name, "debug")) A.debug = v != 0;
 	else if (!strcmp(name, "hud_excl")) A.hud_excl = v != 0;
+	else if (!strcmp(name, "verify_cache")) A.verify_cache = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
 	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
 	else if (!strcmp(name, "map_safe")) {
@@ -1690,6 +1832,7 @@ void snes_wide_census_get(snes_wide_census *c)
 	A.lk.lock();
 	*c = A.cen;
 	c->chip = A.chip; c->rung = A.rung;
+	c->capture_us = A.cap_us_q4.load(std::memory_order_relaxed) / 16;
 	A.lk.unlock();
 }
 

@@ -619,7 +619,11 @@ void Menu::apply_value(Row &r, int v)
 		return;
 	}
 	if (page_ == PAGE_CHEATS) {
-		if (r.tag >= 0 && r.tag < (int) cheats_.size()) { cheats_[(size_t) r.tag].on = v != 0; if (host_) host_->set_cheat(r.tag, v != 0); }
+		if (r.tag >= 0 && r.tag < (int) cheats_.size()) {
+			if (v != 0 && host_ && host_->cheats_refused()) { notify(host_->cheats_refused(), NOTICE_ERROR); r.value = 0; cheats_[(size_t) r.tag].on = false; return; }
+			cheats_[(size_t) r.tag].on = v != 0;
+			if (host_) host_->set_cheat(r.tag, v != 0);
+		}
 		return;
 	}
 	if (r.id == ID_MAP_PLAYER) { map_player_ = v; build_rows(); return; }
@@ -677,7 +681,7 @@ void Menu::activate_row(int i)
 	case K_SLIDER: apply_value(r, r.value >= r.vmax ? r.vmin : r.value + 1); break;
 	case K_LINK: set_page((PageId) r.tag, true); break;
 	case K_ACTION:
-		if (r.id == ID_CHEAT_ADD) { if (host_) host_->add_cheat(); }
+		if (r.id == ID_CHEAT_ADD) { if (host_ && host_->cheats_refused()) notify(host_->cheats_refused(), NOTICE_ERROR); else if (host_) host_->add_cheat(); }
 		else if (r.id == ROW_CTL_RESET) open_modal(M_CTL_RESET, 0);
 		else if (page_ == PAGE_MAPPING && r.tag == TAG_MAP_RESET) {
 			if (profile_ && model_) {
@@ -780,6 +784,7 @@ void Menu::do_save(int slot)
 void Menu::do_load(int slot)
 {
 	if (!states_ || !host_) { notify("Loading states is not available", NOTICE_ERROR); return; }
+	if (const char *why = host_->state_load_refused()) { notify(why, NOTICE_ERROR); return; }
 	host_->wait_state_writes();
 	std::vector<uint8_t> data;
 	StateStatus st = states_->load(slot, data);
@@ -801,6 +806,7 @@ void Menu::do_load(int slot)
 void Menu::do_undo()
 {
 	if (!states_ || !host_) return;
+	if (const char *why = host_->state_load_refused()) { notify(why, NOTICE_ERROR); return; }
 	std::vector<uint8_t> data;
 	if (states_->undo_fetch(data) != ST_OK) { notify("Nothing to undo", NOTICE_INFO); return; }
 	if (!host_->restore_state(data.data(), data.size())) { notify("The undo could not be applied", NOTICE_ERROR); return; }

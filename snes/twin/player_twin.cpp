@@ -4,6 +4,8 @@
  * renderer, over a running game, and checks it. Writes a PNG of every menu screen.
  *
  *   player_twin test ROM SHOTS_DIR WORK_DIR      the scripted walk and checks (exit status 1 on a failure)
+ *   player_twin speed ROM WORK                   patch changes the ROM CRC, rewind 5 s (the machine is bit for bit where it was), fast forward 2x / 3x
+ *   player_twin ra ROM WORK                      RetroAchievements against a fake server on the loopback (ROM: tests/make_speed_rom.py)
  *   player_twin bench-saves DIR N FILL [threaded] N state saves (400 KB) into a states folder holding FILL
  *                                                 other files, for counting the card operations (strace -c)
  *
@@ -15,6 +17,10 @@
 #include "wide.h"
 #include "host.h"
 #include "pal_pace.h"
+#include "fake_ra.h"
+#include "pk_ra.h"
+#include "pk_rewind.h"
+#include "pk_util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +35,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <functional>
 
 using namespace pk;
 #undef W_OK
@@ -121,6 +128,7 @@ struct Rig {
 	Texture *game_tex;
 	std::string shots;
 	uint32_t frame = 0;
+	unsigned ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0;
 	int nshot;
 	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
 	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
@@ -131,15 +139,23 @@ struct Rig {
 	{
 		PadSample p[MAX_PLAYERS];
 		pads_none(p);
-		p[0].buttons = phys;
+		p[0].buttons = phys & PH_BUTTONS;
 		p[1].buttons = phys2;
+		if (phys & PH_RS_LEFT) p[0].rx = 0;          /* the right stick (fast forward, rewind): the analog value, as the pad gives it */
+		if (phys & PH_RS_RIGHT) p[0].rx = 255;
 		pf.clock_us += 16683;
-		if (pl->input(p, tap, pf.clock_us / 1000, frame)) return true;
-		snes_host_set_render(pl->want_render(frame) ? 1 : 0);
-		snes_host_run_frame();
-		int16_t ab[4096 * 2];
-		while (snes_host_audio_take(ab, 4096) > 0) {}
-		frame++;
+		/* as the Vita loop does: how many frames this refresh (fast forward, rewinding), then each one's input, frame and audio */
+		const int n = pl->speed_plan(1);
+		for (int i = 0; i < n; i++) {
+			if (pl->input(p, tap && i == 0, pf.clock_us / 1000, frame)) return true;
+			const bool render = pl->want_render(frame) && pl->speed_draws(i, n);
+			if (pl->run_frame(render)) ran_frames++;
+			int16_t ab[4096 * 2];
+			int k;
+			while ((k = snes_host_audio_take(ab, 4096)) > 0) { audio_in += (unsigned) k; audio_out += (unsigned) pl->audio_filter(ab, (size_t) k); }
+			frame++;
+		}
+		refreshes++;
 		pf.grab();
 		pl->drawn_cost(9000);
 		pl->after_frame(pf.clock_us);
@@ -1013,14 +1029,402 @@ static int run_look_test(const char *rom, const std::string &work)
 
 int run_handoff_test(const char *rom, const std::string &work);   /* handoff_proof.cpp */
 
+/* ---- rewind, fast forward, patches, RetroAchievements ---------------------------------------------------------------------- */
+
+static uint64_t fnv64(const uint8_t *p, size_t n)
+{
+	uint64_t h = 1469598103934665603ull;
+	for (size_t i = 0; i < n; i++) { h ^= p[i]; h *= 1099511628211ull; }
+	return h;
+}
+/* the whole machine as one number: the core's own save state, hashed */
+static uint64_t machine_sig()
+{
+	static std::vector<uint8_t> st;
+	st.resize(snes_host_state_size());
+	size_t n = 0;
+	if (snes_host_state_save_buf(st.data(), st.size(), &n)) return 0;
+	return fnv64(st.data(), n);
+}
+static uint32_t rom_crc()
+{
+	size_t n = 0;
+	const uint8_t *img = snes_host_rom_image(&n);
+	return img ? crc32(0, img, n) : 0;
+}
+
+struct Sess {
+	Rig rig;
+	snesp::SnesPlayer *pl;
+	std::string root;
+	explicit Sess(const std::string &shots) : rig(shots), pl(0) {}
+	bool start(const std::string &root_, const std::string &con, const char *rom, const std::string &extra, const std::string &server = "")
+	{
+		(void) con;
+		root = root_;
+		make_dirs(root + "/launch");
+		make_dirs(root + "/saves");
+		std::string ini = "version=1\nsession_id=s-sp\nconsole=snes\ngame=" + std::string(rom) + "\nsave=" + root + "/saves/" + path_stem(rom) +
+		    ".srm\nroot=" + root + "\nstart=new\nslot=0\ncpu_mhz=444\nenter_button=circle\nlanguage=en\n" + extra;
+		write_text(root + "/launch/snes.ini", ini);
+		rig.pf.log_path = root + "/snes/log.txt";
+		pl = new snesp::SnesPlayer(&rig.pf);
+		rig.pl = pl;
+		rig.pf.player = pl;
+		if (!server.empty()) pl->set_ra_server(server);
+		char a0[] = "app0:snes.bin";
+		std::string r = rom;
+		char *argv[] = { a0, &r[0], 0 };
+		snesp::StartResult sr = pl->start(2, argv, root, true);
+		if (!sr.ok) { fprintf(stderr, "start: %s / %s\n", sr.fatal1.c_str(), sr.fatal2.c_str()); return false; }
+		pl->apply_start_mode();
+		return true;
+	}
+	void end()
+	{
+		if (!pl) return;
+		pl->finish(EXIT_NORMAL);
+		delete pl;
+		pl = 0;
+		snes_host_unload();
+	}
+	~Sess() { end(); }
+};
+
+static int run_speed_test(const char *rom, const std::string &work)
+{
+	const std::string con = "snes";
+	fprintf(stderr, "player_twin speed: ROM %s\n", rom);
+	make_dirs(work);
+	/* a one byte patch (a header field no core reads) */
+	std::vector<uint8_t> ips;
+	ips.insert(ips.end(), (const uint8_t *) "PATCH", (const uint8_t *) "PATCH" + 5);
+	const unsigned po = 0x0D;                  /* the operand the game writes to $7E0011 */
+	uint8_t rec[] = { 0x00, 0x00, (uint8_t) po, 0x00, 0x01, 0x5A };
+	ips.insert(ips.end(), rec, rec + sizeof rec);
+	ips.insert(ips.end(), (const uint8_t *) "EOF", (const uint8_t *) "EOF" + 3);
+	EXPECT(write_bytes(work + "/fix.ips", ips));
+
+	/* ---- the patch changes the ROM the core runs (its CRC), the launch keys patch / patch_key as FORMATS.md says ---- */
+	uint32_t crc_plain = 0, crc_patched = 0;
+	{
+		Sess a(work + "/shots");
+		EXPECT(a.start(work + "/r1", con, rom, ""));
+		crc_plain = rom_crc();
+		a.rig.run(5);
+	}
+	{
+		Sess b(work + "/shots");
+		EXPECT(b.start(work + "/r2", con, rom, "patch=" + work + "/fix.ips\npatch_key=fix-1\n"));
+		crc_patched = rom_crc();
+		b.rig.run(5);
+		{ size_t n = 0; const uint8_t *img = snes_host_rom_image(&n); EXPECT(img && n > po && img[po] == 0x5A); }
+	}
+	fprintf(stderr, "ROM CRC plain %08x, patched %08x\n", crc_plain, crc_patched);
+	EXPECT(crc_plain != 0 && crc_patched != 0 && crc_plain != crc_patched);
+
+	Sess s(work + "/shots");
+	EXPECT(s.start(work + "/r3", con, rom, ""));
+	Rig &rig = s.rig;
+	snesp::SnesPlayer *pl = s.pl;
+	EXPECT(pl->speed().rewind().is_open());
+	rig.run(30);
+
+	/* ---- rewind 5 seconds: the machine is bit for bit where it was, and goes on the same way ---- */
+	const int N = 600;
+	std::vector<uint64_t> H;
+	for (int i = 0; i < N; i++) { rig.game_frame(); H.push_back(machine_sig()); }
+	const unsigned hist = pl->speed().rewind().history_frames();
+	fprintf(stderr, "rewind: %u frames of history in %u steps, interval %u, ring %u bytes used\n", hist, pl->speed().rewind().entries(),
+	        pl->speed().rewind().interval(), (unsigned) pl->speed().rewind().stats().used_bytes);
+	EXPECT(hist >= (unsigned) 5 * 60);
+	int held = 0;
+	while (held < 900 && !pl->speed().rewinding()) { rig.game_frame(PH_RS_LEFT); held++; }     /* the control is read for the refresh after it */
+	EXPECT(pl->speed().rewinding());
+	const unsigned audio0 = rig.audio_out;
+	while (held < 900 && pl->speed().rewind().back_seconds() < 5 && pl->speed().rewinding()) { rig.game_frame(PH_RS_LEFT); held++; }
+	const unsigned back = pl->speed().rewind().back_seconds();
+	EXPECT(pl->speed().rewinding());
+	EXPECT(back >= 5);
+	EXPECT(rig.audio_out == audio0);                        /* silent while rewinding */
+	EXPECT(pl->speed().chip().find("REWIND") != std::string::npos);
+	for (int k = 0; k < 4 && pl->speed().rewinding(); k++) rig.game_frame(0);       /* the control is let go: the game carries on from the frame on screen */
+	EXPECT(!pl->speed().rewinding());
+	/* where it stands is a state seen before: the one `back` seconds ago (a landing is the stored state plus one silent frame) */
+	uint64_t now_sig = machine_sig();
+	int at = -1;
+	for (int i = 0; i < N; i++) if (H[(size_t) i] == now_sig) at = i;
+	fprintf(stderr, "rewind: held %d refreshes, %u s back, the machine is at recorded frame %d of %d (target about %d)\n", held, back, at, N, N - (int) back * 60);
+	EXPECT(at >= 0);
+	EXPECT(at >= N - (int) back * 60 - 70 && at <= N - (int) back * 60 + 70);
+	/* and from there the game runs exactly as it did the first time */
+	bool same = at >= 0;
+	for (int k = 1; k <= 40 && at >= 0 && at + k < N; k++) { rig.game_frame(); if (machine_sig() != H[(size_t) (at + k)]) same = false; }
+	EXPECT(same);
+	/* the oldest moment: a notice, no crash */
+	for (int i = 0; i < 4000 && pl->speed().rewind().history_frames() > 0; i++) rig.game_frame(PH_RS_LEFT);
+	rig.game_frame(0);
+	rig.run(10);
+
+	/* ---- fast forward: 2x and 3x frames per refresh, sound mixed down to the real time count ---- */
+	rig.run(30);
+	for (int factor = 2; factor <= 3; factor++) {
+		pl->on_change(pk::ROW_SPD_FF, factor == 3 ? 1 : 0);
+		unsigned r0 = rig.ran_frames, f0 = rig.refreshes, ai0 = rig.audio_in, ao0 = rig.audio_out;
+		rig.game_frame(PH_RS_RIGHT);                        /* the press itself */
+		r0 = rig.ran_frames; f0 = rig.refreshes; ai0 = rig.audio_in; ao0 = rig.audio_out;
+		for (int i = 0; i < 60; i++) rig.game_frame(PH_RS_RIGHT);
+		const unsigned ran = rig.ran_frames - r0, refr = rig.refreshes - f0;
+		fprintf(stderr, "fast forward %dx: %u frames in %u refreshes; audio in %u frames, out %u\n", factor, ran, refr, rig.audio_in - ai0, rig.audio_out - ao0);
+		EXPECT(pl->speed().ff_on());
+		EXPECT(ran == (unsigned) factor * refr);
+		EXPECT(pl->speed().chip() == (factor == 3 ? ">> 3x" : ">> 2x"));
+		/* the sound plays at its normal length: about 1 / factor of what the core made */
+		const double want = (rig.audio_in - ai0) / (double) factor;
+		EXPECT((rig.audio_out - ao0) > want * 0.97 && (rig.audio_out - ao0) < want * 1.03);
+		rig.game_frame(0);
+		EXPECT(!pl->speed().ff_on());
+		rig.run(5);
+	}
+	/* without sound: silence of the same length (the audio never runs dry) */
+	pl->on_change(pk::ROW_SPD_SOUND, 0);
+	{
+		unsigned ai0 = rig.audio_in, ao0 = rig.audio_out;
+		for (int i = 0; i < 30; i++) rig.game_frame(PH_RS_RIGHT);
+		const double want = (rig.audio_in - ai0) / 3.0;
+		EXPECT((rig.audio_out - ao0) > want * 0.97 && (rig.audio_out - ao0) < want * 1.03);
+		rig.game_frame(0);
+	}
+	/* toggle mode: one press switches it on, a second off */
+	pl->on_change(pk::ROW_SPD_SOUND, 1);
+	pl->on_change(pk::ROW_SPD_MODE, 1);
+	rig.game_frame(PH_RS_RIGHT);
+	rig.game_frame(0);
+	rig.run(5);
+	EXPECT(pl->speed().ff_on());
+	rig.game_frame(PH_RS_RIGHT);
+	rig.game_frame(0);
+	rig.run(3);
+	EXPECT(!pl->speed().ff_on());
+	fprintf(stderr, "player_twin speed: %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
+static int run_ra_test(const char *rom, const std::string &work)
+{
+	const std::string con = "snes";
+	fprintf(stderr, "player_twin ra: ROM %s\n", rom);
+	make_dirs(work);
+	const int console = pk::RA_SNES;
+	std::vector<uint8_t> rb = read_bytes(rom);
+	char hash[33];
+	EXPECT(pk::Ra::hash_rom(rb.data(), rb.size(), console, hash));
+	const char *mem = "0xH000010=7";                  /* $7E0010: the test pokes it (the game sets it once, to 5) */
+
+	pk_test::FakeRa srv;
+	srv.md5 = hash;
+	pk_test::FakeAch a1 = { 1001, "First Change", "The counter moves", 5, mem };
+	pk_test::FakeAch a2 = { 1002, "Never", "Cannot be earned", 10, "0xH000000=77_0xH000000=78" };
+	srv.achs.push_back(a1);
+	srv.achs.push_back(a2);
+	EXPECT(srv.start());
+
+	auto account = [&](const std::string &root, int hardcore) {
+		make_dirs(root);
+		return write_text(root + "/retroachievements.txt", "# test\nuser=ra_tester\ntoken=tok-1\nhardcore=" + std::to_string(hardcore) + "\nindicators=1\n");
+	};
+	auto seen_has = [](const std::vector<std::string> &v, const char *sub) { for (size_t i = 0; i < v.size(); i++) if (v[i].find(sub) != std::string::npos) return true; return false; };
+	auto frames_until = [&](Sess &x, const std::function<bool()> &done, std::vector<std::string> *seen, int max, uint32_t buttons = 0) {
+		for (int i = 0; i < max; i++) {
+			x.rig.game_frame(buttons);
+			if (seen && x.pl->notices().active()) { const std::string &t = x.pl->notices().text(); if (seen->empty() || seen->back() != t) seen->push_back(t); }
+			if (done()) return true;
+			usleep(3000);
+		}
+		return false;
+	};
+
+	/* ---- softcore: the stored token signs in, the game is found by its hash, the change is an unlock: a toast, and sent ---- */
+	{
+		const std::string root = work + "/ra_soft";
+		EXPECT(account(root, 0));
+		const std::vector<uint8_t> before = read_bytes(root + "/retroachievements.txt");
+		std::vector<std::string> seen;
+		Sess s(work + "/shots");
+		EXPECT(s.start(root, con, rom, "", srv.url()));
+		EXPECT(s.pl->ra().up());
+		EXPECT(frames_until(s, [&] { return s.pl->ra().game_state() != 0; }, &seen, 800));
+		EXPECT(s.pl->ra().game_state() == 1);
+		EXPECT(srv.count("login2") == 1);
+		EXPECT(s.pl->ra().total() == 2);
+		s.rig.run(30);
+		snes_host_poke_wram(0x10, 7);
+		EXPECT(frames_until(s, [&] { return srv.count("awardachievement") >= 1; }, &seen, 800));
+		EXPECT(frames_until(s, [&] { return seen_has(seen, "Achievement: First Change"); }, &seen, 600));     /* the toasts come one at a time */
+		fprintf(stderr, "ra: toasts seen: ");
+		for (size_t i = 0; i < seen.size(); i++) fprintf(stderr, "[%s] ", seen[i].c_str());
+		fprintf(stderr, "\n");
+		EXPECT(seen_has(seen, "1 of 2") || seen_has(seen, "0 of 2"));
+		EXPECT(seen_has(seen, "Achievement: First Change (5)"));
+		std::vector<std::map<std::string, std::string> > cs = srv.calls();
+		int award = 0;
+		for (size_t i = 0; i < cs.size(); i++) if (cs[i]["r"] == "awardachievement") { award++; EXPECT(cs[i]["a"] == "1001"); EXPECT(cs[i]["h"] == "0"); }
+		EXPECT(award == 1);
+		/* softcore: the player still rewinds and loads states, and the cheats apply */
+		EXPECT(!s.pl->ra().hardcore_blocks());
+		EXPECT(s.pl->state_load_refused() == 0);
+		EXPECT(s.pl->cheats_refused() == 0);
+		EXPECT(read_bytes(root + "/retroachievements.txt") == before);          /* the player never writes the account file */
+		EXPECT(s.pl->ra().frames() > 20);
+		s.pl->log_flush(true);
+		const std::string log = s.rig.pf.log_text;
+		EXPECT(log.find("tok-1") == std::string::npos);                           /* the token is never logged */
+		EXPECT(log.find("ra: ra_unlock id=1001") != std::string::npos);
+		s.end();
+		std::vector<uint8_t> lg = read_bytes(root + "/" + con + "/log.txt");
+		EXPECT(std::string(lg.begin(), lg.end()).find("tok-1") == std::string::npos);
+	}
+
+	/* ---- Hardcore: no rewind, no state loads, no cheats; fast forward stays; the unlock goes out as hardcore ---- */
+	srv.clear_calls();
+	{
+		const std::string root = work + "/ra_hard";
+		EXPECT(account(root, 1));
+		std::vector<std::string> seen;
+		Sess s(work + "/shots");
+		EXPECT(s.start(root, con, rom, "", srv.url()));
+		EXPECT(s.pl->ra().hardcore_blocks());                                      /* pending counts: refused from the first frame */
+		EXPECT(s.pl->state_load_refused() != 0);
+		EXPECT(frames_until(s, [&] { return s.pl->ra().game_state() != 0; }, &seen, 800));
+		EXPECT(s.pl->ra().hardcore_active());
+		EXPECT(s.pl->state_load_refused() != 0);
+		EXPECT(s.pl->cheats_refused() != 0);
+		EXPECT(std::string(s.pl->state_load_refused()).find("Hardcore") == 0);
+		s.rig.run(120);
+		EXPECT(s.pl->speed().rewind().history_frames() > 0);                       /* the history is kept, the control is not */
+		std::vector<std::string> seen2;
+		for (int i = 0; i < 60; i++) {
+			s.rig.game_frame(PH_RS_LEFT);
+			if (s.pl->notices().active()) { const std::string &t = s.pl->notices().text(); if (seen2.empty() || seen2.back() != t) seen2.push_back(t); }
+			EXPECT(!s.pl->speed().rewinding());
+		}
+		EXPECT(seen_has(seen2, "Hardcore mode: rewind is off"));
+		s.rig.game_frame(0);
+		/* the menu's state load is refused with the same words, the state stays unloaded */
+		std::vector<uint8_t> blob(snes_host_state_size(), 0);
+		EXPECT(!s.pl->restore_state(blob.data(), blob.size()));
+		/* fast forward stays */
+		const unsigned r0 = s.rig.ran_frames, f0 = s.rig.refreshes;
+		for (int i = 0; i < 30; i++) s.rig.game_frame(PH_RS_RIGHT);
+		EXPECT(s.pl->speed().ff_on());
+		EXPECT(s.rig.ran_frames - r0 >= 2 * (s.rig.refreshes - f0 - 1));        /* it starts with the refresh after the press */
+		s.rig.game_frame(0);
+		snes_host_poke_wram(0x10, 7);
+		EXPECT(frames_until(s, [&] { return srv.count("awardachievement") >= 1; }, &seen, 800));
+		std::vector<std::map<std::string, std::string> > cs = srv.calls();
+		for (size_t i = 0; i < cs.size(); i++) if (cs[i]["r"] == "awardachievement") EXPECT(cs[i]["h"] == "1");
+	}
+
+	/* ---- a game the site does not know: Hardcore blocks nothing, and the player says so once ---- */
+	{
+		pk_test::FakeRa other;
+		other.md5 = "00000000000000000000000000000000";
+		EXPECT(other.start());
+		const std::string root = work + "/ra_unknown";
+		EXPECT(account(root, 1));
+		std::vector<std::string> seen;
+		Sess s(work + "/shots");
+		EXPECT(s.start(root, con, rom, "", other.url()));
+		EXPECT(frames_until(s, [&] { return s.pl->ra().game_state() != 0; }, &seen, 800));
+		EXPECT(s.pl->ra().game_state() == -1);
+		s.rig.run(10);
+		EXPECT(!s.pl->ra().hardcore_blocks());
+		EXPECT(s.pl->state_load_refused() == 0);
+		EXPECT(!s.pl->speed().rewind_locked());
+	}
+	/* ---- no account on file: nothing starts, no request is made ---- */
+	srv.clear_calls();
+	{
+		Sess s(work + "/shots");
+		EXPECT(s.start(work + "/ra_none", con, rom, "", srv.url()));
+		EXPECT(!s.pl->ra().up());
+		s.rig.run(60);
+		EXPECT(srv.calls().empty());
+	}
+	srv.stop();
+	fprintf(stderr, "player_twin ra: %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
+/* ---- what rewind costs per frame (host numbers; under callgrind the instruction counts of the cost_* functions, see docs/PERFORMANCE.md) ---- */
+static __attribute__((noinline)) size_t cost_save(std::vector<uint8_t> &st) { size_t n = 0; if (snes_host_state_save_buf(st.data(), st.size(), &n)) return 0; return n; }
+static __attribute__((noinline)) size_t cost_encode(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b, std::vector<uint8_t> &out)
+{
+	return pk::delta_encode(a.data(), b.data(), a.size(), out.data(), out.size());
+}
+static __attribute__((noinline)) bool cost_apply(std::vector<uint8_t> &cur, const uint8_t *d, size_t n) { return pk::delta_apply(cur.data(), cur.size(), d, n); }
+static __attribute__((noinline)) void cost_frame(bool render) { snes_host_set_render(render ? 1 : 0); snes_host_run_frame(); }
+static double now_ms()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
+static int run_costs_test(const char *rom)
+{
+	EXPECT(snes_host_init() == 0);
+	char e[128];
+	EXPECT(snes_host_load_rom(rom, NULL, e, sizeof e) == 0);
+	const int N = 200;
+	for (int i = 0; i < 120; i++) cost_frame(true);
+	std::vector<std::vector<uint8_t> > S((size_t) N + 2);
+	const size_t sz = snes_host_state_size();
+	for (size_t i = 0; i < S.size(); i++) { cost_frame(true); S[i].resize(sz); S[i].resize(cost_save(S[i])); }
+	/* state capture: what the game thread does at a capture */
+	double t0 = now_ms();
+	std::vector<uint8_t> tmp(sz);
+	double worst = 0;
+	for (int i = 0; i < N; i++) { double a = now_ms(); cost_save(tmp); double b = now_ms() - a; if (b > worst) worst = b; }
+	const double save_ms = (now_ms() - t0) / N;
+	/* the helper's work: the difference of two states two frames apart, squeezed */
+	std::vector<uint8_t> out(pk::delta_bound(sz));
+	size_t enc_total = 0, enc_max = 0;
+	t0 = now_ms();
+	double worst_enc = 0;
+	for (int i = 0; i < N; i++) { double a = now_ms(); size_t n = cost_encode(S[(size_t) i], S[(size_t) i + 2], out); double b = now_ms() - a; if (b > worst_enc) worst_enc = b; enc_total += n; if (n > enc_max) enc_max = n; }
+	const double enc_ms = (now_ms() - t0) / N;
+	/* one step back */
+	std::vector<uint8_t> cur = S[(size_t) N + 1], keep;
+	size_t n = cost_encode(S[(size_t) N - 1], S[(size_t) N + 1], out);
+	t0 = now_ms();
+	for (int i = 0; i < N; i++) cost_apply(cur, out.data(), n);
+	const double apply_ms = (now_ms() - t0) / N;
+	/* a whole frame of the core, picture on */
+	t0 = now_ms();
+	for (int i = 0; i < N; i++) cost_frame(true);
+	const double frame_ms = (now_ms() - t0) / N;
+	fprintf(stderr, "costs (%s, host x86_64, %d runs, state %u bytes):\n", "snes", N, (unsigned) sz);
+	fprintf(stderr, "  capture on the game thread (state save)  avg %.3f ms, worst %.3f ms\n", save_ms, worst);
+	fprintf(stderr, "  pack on the helper (XOR + squeeze)       avg %.3f ms, worst %.3f ms; a step is %u bytes on average (largest %u)\n", enc_ms, worst_enc, (unsigned) (enc_total / N), (unsigned) enc_max);
+	fprintf(stderr, "  one step back (apply)                    avg %.3f ms\n", apply_ms);
+	fprintf(stderr, "  one emulated frame of the core           avg %.3f ms\n", frame_ms);
+	EXPECT(save_ms < 0.5);
+	fprintf(stderr, "player_twin costs: %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
+	if (argc >= 3 && !strcmp(argv[1], "costs")) return run_costs_test(argv[2]);
+	if (argc >= 4 && !strcmp(argv[1], "speed")) return run_speed_test(argv[2], argv[3]);
+	if (argc >= 4 && !strcmp(argv[1], "ra")) return run_ra_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "look")) return run_look_test(argv[2], argv[3]);
 	if (argc >= 3 && !strcmp(argv[1], "pal")) return run_pal_test(argv[2]);
 	if (argc >= 4 && !strcmp(argv[1], "handoff")) return run_handoff_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "wide")) { int r = run_wide_test(argv[2], argv[3]); fprintf(stderr, "player_twin: wide %d checks, %d failed\n", g_checks, g_fail); return r || g_fail ? 1 : 0; }
 	if (argc >= 5 && !strcmp(argv[1], "test")) return run_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "bench-saves")) return bench(argv[2], atoi(argv[3]), atoi(argv[4]));
-	fprintf(stderr, "usage: player_twin test ROM SHOTS WORK | bench-saves DIR N FILL\n");
+	fprintf(stderr, "usage: player_twin test ROM SHOTS WORK | speed ROM WORK | ra ROM WORK | bench-saves DIR N FILL\n");
 	return 2;
 }

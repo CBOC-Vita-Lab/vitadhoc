@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT OR GPL-2.0-or-later
+ * Written for VitAdhoc by its owner; offered under either licence so the separate players (snes.bin, md.bin) can link it. */
 /* nat_hash.h -- MD5, SHA-1 and HMAC-SHA1 for the NAT layer (STUN message
  * integrity, TURN long-term credentials).  Pure: no sockets, no threads, no
  * globals, C99, so the Vita build, the twin and the unit tests share it.

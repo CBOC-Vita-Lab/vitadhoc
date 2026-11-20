@@ -679,7 +679,7 @@ static void test_real(const char *db)
    CHECK(stat[0][6] == 0 && stat[1][6] == 0 && stat[2][6] == 0 && stat[3][6] == 0, "entries that are not codes shipped");
    CHECK(stat[4][0] == 1586 && stat[5][0] == 621 && stat[6][0] == 544 && stat[7][0] == 26,
          "Sega games: %u %u %u %u", stat[4][0], stat[5][0], stat[6][0], stat[7][0]);
-   CHECK(stat[4][1] == 50723 && stat[5][1] == 6016 && stat[6][1] == 7294 && stat[7][1] == 69 &&
+   CHECK(stat[4][1] == 49722 && stat[5][1] == 6016 && stat[6][1] == 7294 && stat[7][1] == 69 &&
          stat[4][6] + stat[5][6] + stat[6][6] + stat[7][6] == 0,
          "Sega cheats: %u %u %u %u", stat[4][1], stat[5][1], stat[6][1], stat[7][1]);
    CHECK(cheatdb_find_crc(0xF9394E97u) >= 0 && cheatdb_find_crc(0x17A40E29u) >= 0 &&

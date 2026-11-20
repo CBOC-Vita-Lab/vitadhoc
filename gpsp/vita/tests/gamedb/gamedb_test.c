@@ -126,6 +126,22 @@ static void sega_files(void)
           !gamedb_md_accept("x.zip") && gamedb_md_accept("nothing.GEN") &&
           gamedb_md_accept("nothing.MD") && gamedb_md_accept("nothing.smd"),
           "extensions: .md .gen .smd always (any case); nothing else");
+   expect(gamedb_md_accept("raw.68k") && gamedb_md_accept("RAW.68K"), "a .68k (raw Genesis image) is listed");
+   {
+      /* the same test on the first bytes of a file that is not on the card (a .bin in a .zip) */
+      static unsigned char h[0x110];
+      memset(h, 0, sizeof(h));
+      expect(!gamedb_md_head_ok(h, sizeof(h), 0x20000), "zipped .bin: no SEGA, not Genesis");
+      memcpy(h + 0x100, "SEGA MEGA DRIVE ", 16);
+      expect(gamedb_md_head_ok(h, sizeof(h), 0x20000), "zipped .bin: SEGA at 0x100 is Genesis");
+      expect(!gamedb_md_head_ok(h, 0x100, 0x20000), "zipped .bin: too few bytes to say");
+      memcpy(h + 0x100, "SEGA 32X        ", 16);
+      expect(!gamedb_md_head_ok(h, sizeof(h), 0x20000), "zipped .bin: 32X is not Genesis");
+      memset(h, 0, sizeof(h));
+      h[8] = 0xAA; h[9] = 0xBB;
+      expect(gamedb_md_head_ok(h, sizeof(h), 512 + 2 * 16384), "zipped .bin: SMD header at the right size");
+      expect(!gamedb_md_head_ok(h, sizeof(h), 0x20000), "zipped .bin: AA BB at the wrong size is not SMD");
+   }
    expect(gamedb_md_crc_cancel("no_such_file.md", &b, NULL) != 0, "a missing file fails");
    /* Master System family: a 512-byte copier header is left out */
    {

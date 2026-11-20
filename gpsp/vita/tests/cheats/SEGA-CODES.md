@@ -33,7 +33,8 @@ or white space):
   `md_gg_decode` in `make_cheatdb.py` (a copy of Genesis Plus GX's
   `decode_cheat`) gives address and word. Written `AAAAAA:VVVV`.
 - Genesis Pro Action Replay `AAAAAA:VVVV`, and `AAAAAA:VV` (a byte, only for a
-  work-RAM address, written `AAAAAA:00VV`).
+  work-RAM address): the byte at that 68000 address, written as `AAAAAA^1:00VV`
+  (see "Byte order" below; the lists' four digit `AAAAAA:00VV` is kept as it is).
 - Master System / Game Gear Game Genie `DDA-AAB` and `DDA-AAB-RRr`:
   data `DD`, address `A-AA` with the high nibble `B` inverted, compare byte from
   the first and third digit of the last group (2-bit right rotation, then XOR
@@ -44,10 +45,13 @@ or white space):
 ## What the hook does
 
 Genesis (`AAAAAA:VVVV`):
-- Address `FF0000`-`FFFFFF`: work RAM, written every frame. If the high byte of
-  the value is 0 it is a byte store at exactly that address (`address & 0xFFFF`
-  of the 64 KiB work RAM; odd addresses allowed); otherwise a big-endian word
-  store at `address & 0xFFFE`.
+- Address `FF0000`-`FFFFFF`: work RAM, written every frame as Genesis Plus GX's
+  libretro `RAMCheatUpdate` does. If the high byte of the value is 0 it is a
+  byte store at `work_ram[address & 0xFFFF]`, the 64 KiB work RAM as the core
+  holds it (16-bit words in host order, so on a little-endian host that is the
+  OTHER byte of the 68000 word: the byte at 68000 address `address ^ 1`);
+  otherwise a word store at `address & 0xFFFE`, the value in host order, which
+  is the big-endian word `VVVV` at that 68000 address.
 - Address below `400000`: a 16-bit ROM patch, applied when the cheat is switched
   on and undone when it is switched off: the big-endian word at
   `address & 0xFFFFFE` becomes the value. Ignored when the address is not inside
@@ -66,13 +70,32 @@ Master System / Game Gear / SG-1000 (`AAAA:VV[:CC]`):
 - Genesis Plus GX keeps at most 150 cheats (`MAX_CHEATS`) for the whole game, one
   per part.
 
+## Byte order of a work-RAM byte code
+
+Two kinds of byte code reach the database and the player treats both as Genesis
+Plus GX does (`work_ram[address & 0xFFFF] = VV`, no `^1`):
+
+- the lists' four digit `AAAAAA:00VV`: written for GPGX (and for RetroArch's
+  cheat lists), so the byte lands where GPGX puts it, the other byte of the
+  word. Kept exactly as listed.
+- the two digit `AAAAAA:VV` (a Pro Action Replay byte), which means the byte at
+  that exact 68000 address: the database tool converts it to
+  `(AAAAAA ^ 1):00VV`, which GPGX then stores in the right byte. A part that
+  the player is given as text through the cheat menu is converted the same way
+  (`md/frontend/cheats.cpp part_md`). 1,001 database entries collapsed into
+  others of the same game this way (the two forms of one cheat), the database has
+  49,722 Genesis cheats in 1,586 games.
+
+The two are told apart only at the source, because both end up as the same
+GPGX operation: the stored part says what is written, not how it was typed.
+
 ## Where this differs from Genesis Plus GX (checked against its source)
 
 - `AAAAAA:VV` (two digits): `decode_cheat` reads it as `VV00` from the digits
   after the colon and whatever follows in memory (single-line cases give `VV00`:
   a word store of `VV00` at the even address). The lists mean a byte, so the
-  database writes `AAAAAA:00VV`, which Genesis Plus GX reads as the byte. 2,156
-  distinct parts are affected.
+  database writes it as a byte patch of the byte's own address (see "Byte
+  order" above). 2,156 distinct parts are affected.
 - Lower-case hex: `decode_cheat` refuses it (`strchr` on upper-case digits), the
   lists have some. The database upper-cases.
 - Every other part that ships decodes to the same address, data and compare as

@@ -767,11 +767,12 @@ void Wide::run(const md_wide_frame &f)
 				if (out_->kind[l] == WK_KIND_BACKDROP || out_->kind[l] == WK_KIND_LEVEL) pl |= 1 << l;
 				else if (out_->kind[l] == WK_KIND_UNKNOWN) {
 					/* a plane widekit has not named (it scrolls but the game does not stream columns into it: a level no wider than its
-					 * ring) goes in while the ring's own history vouches for a fair part of the margin (a quarter to get in, a twelfth to
-					 * stay): a plane that vouches for nothing would only hide the other one */
+					 * ring) goes in while the ring's own history vouches for a good part of the margin (two fifths to get in: a whole
+					 * side is half; a fifth to stay): a plane that vouches for little would only hide the other one, which is real
+					 * only as far as every plane in the strip is */
 					long sum = 0, tot = 0;
 					for (int y = 0; y < H && y < 256; y++) if (line_on_[l][y]) { sum += out_->line[y].real[0][l] + out_->line[y].real[1][l]; tot += 2 * out_->margin; }
-					if (tot > 0 && (sum * 4 >= tot || (((planes_next_ >> l) & 1) && sum * 12 >= tot))) pl |= 1 << l;
+					if (tot > 0 && (sum * 5 >= tot * 2 || (((planes_next_ >> l) & 1) && sum * 5 >= tot))) pl |= 1 << l;
 				}
 			}
 			planes_next_ = pl;

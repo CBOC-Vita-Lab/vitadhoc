@@ -5180,18 +5180,40 @@ static void wide_line(int line, int spr_in)
         src = &linebuf[0][0x20];
         /* a strip with every plane the line has is opaque everywhere; with a plane left out a pixel nothing drew is transparent */
         all = mode[side] == 2 ? ((wide_planes & 2) != 0) : ((wide_planes & 3) == 3);
-        if (side == 0)
+        if (all)
         {
-          const uint8 *p = src + wide_px - wide_m;
-          for (i = 0; i < wide_m; i++) d[i] = pixel[p[i]];
-          if (!all) for (i = 0; i < wide_m; i++) if (p[i] & 0x0F) { const int k = wide_m - 1 - i; ob[k >> 5] |= 1u << (k & 31); }
+          if (side == 0) { const uint8 *p = src + wide_px - wide_m; for (i = 0; i < wide_m; i++) d[i] = pixel[p[i]]; }
+          else for (i = 0; i < wide_m; i++) d[i] = pixel[src[i]];
+          for (i = 0; i < wide_m; i += 32) ob[i >> 5] = (wide_m - i >= 32) ? 0xFFFFFFFFu : ((1u << (wide_m - i)) - 1u);
         }
         else
         {
-          for (i = 0; i < wide_m; i++) d[i] = pixel[src[i]];
-          if (!all) for (i = 0; i < wide_m; i++) if (src[i] & 0x0F) ob[i >> 5] |= 1u << (i & 31);
+          /* bit k of the mask: the pixel k pixels from the screen's edge was drawn by a plane or a sprite */
+          uint32 acc = 0;
+          if (side == 0)
+          {
+            const uint8 *p = src + wide_px - 1;         /* the pixel next to the edge; d[] runs the other way */
+            PIXEL_OUT_T *e = d + wide_m - 1;
+            for (i = 0; i < wide_m; i++)
+            {
+              const uint8 v = p[-i];
+              e[-i] = pixel[v];
+              acc |= (uint32) ((v & 0x0F) != 0) << (i & 31);
+              if ((i & 31) == 31) { ob[i >> 5] = acc; acc = 0; }
+            }
+          }
+          else
+          {
+            for (i = 0; i < wide_m; i++)
+            {
+              const uint8 v = src[i];
+              d[i] = pixel[v];
+              acc |= (uint32) ((v & 0x0F) != 0) << (i & 31);
+              if ((i & 31) == 31) { ob[i >> 5] = acc; acc = 0; }
+            }
+          }
+          if (wide_m & 31) ob[wide_m >> 5] = acc;
         }
-        if (all) for (i = 0; i < wide_m; i += 32) ob[i >> 5] = (wide_m - i >= 32) ? 0xFFFFFFFFu : ((1u << (wide_m - i)) - 1u);
       }
       status = st; spr_col = sc; spr_ovr = so;
       memcpy(linebuf[0], lbsave[0], (size_t) save_n);

@@ -1234,8 +1234,11 @@ def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True
     """Both consoles in their game list: A hosts a game of `con` Online from Settings > Two players, B joins with the code
     from the same page (join=False: B stops at the room's card).  The app forms the link with no game running."""
     walk = tp_walk(con)
-    sa = (walk + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:hold=cross=snes_two_go role=host conn=3\n" % L.GAP +
-          L.shot(14, "hosting.png") + L.quit_at(host_end))
+    sa = (walk + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:hold=cross=snes_two_go role=host conn=3\n" % L.GAP)
+    if join:                     # until the link is handed over, then a moment, then the end
+        sa += "+0:wait=snes_link_ready\n+%d:shot=hosting.png\n+120:quit\n" % L.dur(2)
+    else:
+        sa += L.shot(14, "hosting.png") + L.quit_at(host_end)
 
     def sb(code):
         s = (walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) +
@@ -1243,7 +1246,9 @@ def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True
              "+%d:hold=triangle=online_card_begin\n" % L.GAP + "+0:wait=online_card state=\n" +
              "+%d:shot=card.png\n" % L.dur(1))
         if join:
-            s += "+%d:hold=cross=online_open_join\n" % L.AFTER_SHOT + "+0:wait=snes_link_ready\n" + "+%d:shot=linking.png\n" % L.dur(3)
+            s += ("+%d:hold=cross=online_open_join\n" % L.AFTER_SHOT + "+0:wait=snes_link_ready\n" + "+%d:shot=linking.png\n" % L.dur(2) +
+                  b_tail + "+120:quit\n")
+            return s
         return s + b_tail + L.quit_at(b_end)
 
     def no_autoboot(rig):                            # A starts in its game list too

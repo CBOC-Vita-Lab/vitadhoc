@@ -9,13 +9,10 @@ empty :=
 space := $(empty) $(empty)
 include ../../snes/vita/netplay.mk
 
-NP_OBJS := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/gp/pk_link_net_shim.o $(B)/pk/pk_link.o $(B)/pk/pk_link_net.o
+NP_OBJS := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/pk/pk_link.o $(B)/pk/pk_link_net.o
 $(B)/gp/%.o: $(GP)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -O2 -g -w -std=gnu11 -MMD -MP $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
-$(B)/gp/pk_link_net_shim.o: $(PK)/src/pk_link_net_shim.c
-	@mkdir -p $(dir $@)
-	$(CC) -O2 -g -w -std=gnu11 -c -o $@ $<
 $(B)/pk/pk_link_net.o: $(PK)/src/pk_link_net.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pk
 	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(PK)/src $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<

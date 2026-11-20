@@ -133,6 +133,7 @@ struct SessionReport {
 	int link_error = 0;
 	std::string link_error_name;
 	int link_frames = 0;              /* emulated frames both consoles ran together */
+	int link_peer_reason = -1;        /* link_error 8 (the other console ended it): the reason it gave (a LinkError), else -1 */
 	bool valid = false;               /* set by the parser: the file was there and had a console key */
 	bool newer_version = false;
 };

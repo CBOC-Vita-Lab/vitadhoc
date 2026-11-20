@@ -123,6 +123,11 @@ void        ui_savset_add(const char *path);
  * dest 0 = for RetroArch, 1 = plain .sav beside the game.  0 = done. */
 int         ui_host_export_save(int dest, char *where, size_t wcap, char *note,
                                 size_t cap);
+/* Settings > This game > Game Boy type (main_vita.c, gbkind.h): the running
+ * Game Boy game's own override in gb_override.txt.  get: 0 Auto, 1 Game Boy,
+ * 2 Game Boy Color.  set: the same values; 0 = written, -1 = not. */
+int         ui_host_gb_kind_get(void);
+int         ui_host_gb_kind_set(int kind);
 int         ui_host_extra_roots(void);
 const char *ui_host_extra_root(int i);
 /* Settings > Game folders: add a folder, or remove it when it is listed,

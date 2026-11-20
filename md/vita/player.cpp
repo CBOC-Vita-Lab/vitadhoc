@@ -87,7 +87,7 @@ static int pic_to_shape(int p)
 
 /* fields of pic_settings the player changed in the menu (only these are written back to the files, so a per-game value the app sent in
  * the launch file never leaks into picture.ini) */
-enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_SCALER = 64, CH_GGCOL = 128, CH_USEGAME = 256 };
+enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_SCALER = 64, CH_GGCOL = 128, CH_USEGAME = 256, CH_WIDE = 512 };
 static unsigned g_changed;
 static pic_settings g_ps_file;
 
@@ -102,6 +102,7 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_SCALER) dst.scaler = src.scaler;
 	if (m & CH_GGCOL) dst.gg_colors = src.gg_colors;
 	if (m & CH_USEGAME) dst.use_game = src.use_game;
+	if (m & CH_WIDE) dst.wide = src.wide;
 }
 
 static const char *kConsoles[4] = { "md", "sms", "gg", "sg" };
@@ -372,6 +373,8 @@ void MdPlayer::apply_overrides()
 	if ((v = req_.override_int("grid", -1)) >= 0) ps_.grid = clampi(v, 0, 10);
 	if ((v = req_.override_int("glow", -1)) >= 0) ps_.glow = clampi(v, 0, 10);
 	if ((v = req_.override_int("pixel_square", -1)) >= 0) ps_.pixel_sq = v ? 1 : 0;
+	if ((v = req_.override_int("wide_view", -1)) >= 0) ps_.wide = clampi(v, 0, 2);
+	if (req_.overrides.count("wide_view")) { std::string w = lower(req_.overrides.find("wide_view")->second); if (w == "auto") ps_.wide = 0; else if (w == "on") ps_.wide = 1; else if (w == "off") ps_.wide = 2; }
 	if ((v = req_.override_int("scaler", -1)) >= 0) ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1);
 	if (req_.overrides.count("scaler")) { int s = word_scaler(req_.overrides.find("scaler")->second); if (s >= 0) ps_.scaler = s; }
 	if ((v = req_.override_int("gg_colors", -1)) >= 0) ps_.gg_colors = v ? 1 : 0;
@@ -420,6 +423,7 @@ void MdPlayer::apply_core_options()
 void MdPlayer::sync_menu_values()
 {
 	menu_.set_value(ROW_PIC_SHAPE, pic_to_shape(ps_.shape));
+	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
 	menu_.set_value(ROW_PIC_QUALITY, ps_.quality == PIC_SMOOTH ? 1 : 0);
 	menu_.set_value(ROW_PIC_SCANLINES, ps_.scan);
 	menu_.set_value(ROW_PIC_GRID, ps_.grid);
@@ -612,7 +616,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	cfg.console_label = system_ == MD_SYS_MD ? "Mega Drive" : system_ == MD_SYS_SMS ? "Master System" : system_ == MD_SYS_GG ? "Game Gear" : "SG-1000";
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
-	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
+	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
 	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
@@ -621,7 +625,6 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, model, &profile_);
 	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* no "Fit": Original already fills the height */
-	menu_.set_row_note(ROW_PIC_WIDE, "The wide view is not available for Sega games in this version");
 	{
 		std::vector<std::string> px, onoff, sc, border, lcd, pad, region, fm, ym, palv, lookv;
 		px.push_back("Console"); px.push_back("Square");
@@ -748,7 +751,7 @@ bool MdPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t no
 
 size_t MdPlayer::SpeedGlue::state_size() { return md_host_state_size(); }
 bool MdPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { return md_host_state_save_quick(buf, cap) == md_host_state_size(); }
-bool MdPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return md_host_state_load_quick(buf, n) == 0; }
+bool MdPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; p->jumps_++; return md_host_state_load_quick(buf, n) == 0; }
 void MdPlayer::SpeedGlue::run_frame(bool render) { md_host_set_render(render ? 1 : 0); md_host_run_frame(); }
 void MdPlayer::SpeedGlue::clear_pads() { md_host_set_pad(0, 0); md_host_set_pad(1, 0); }
 void MdPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
@@ -1190,6 +1193,7 @@ void MdPlayer::on_change(int row, int v)
 {
 	switch (row) {
 	case ROW_PIC_SHAPE: ps_.shape = shape_to_pic(v); g_changed |= CH_SHAPE; break;
+	case ROW_PIC_WIDE: ps_.wide = clampi(v, 0, 2); g_changed |= CH_WIDE; break;
 	case ROW_PIC_QUALITY: ps_.quality = v ? PIC_SMOOTH : PIC_SHARP; g_changed |= CH_QUALITY; break;
 	case ROW_PIC_SCANLINES: ps_.scan = clampi(v, 0, 10); g_changed |= CH_SCAN; break;
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
@@ -1236,6 +1240,7 @@ void MdPlayer::on_reset()
 	cheats_apply();
 	speed_.state_changed();
 	srm_recheck_ = true;
+	jumps_++;
 	logf("reset\n");
 }
 
@@ -1256,6 +1261,7 @@ bool MdPlayer::restore_state(const uint8_t *data, size_t n)
 	const int r = md_host_state_load_mem(data, n);
 	ra_.state_loaded();
 	srm_recheck_ = true;
+	jumps_++;
 	pacer_.reset(PACE_FULL);
 	speed_.state_changed();              /* "a moment ago" is another timeline now */
 	return r == 0;
@@ -1432,12 +1438,32 @@ void MdPlayer::finish(ExitReason why)
 	rep.link_error = link_err_;
 	rep.link_error_name = link_err_name_;
 	rep.link_frames = link_frames_;
+	rep.link_peer_reason = link_peer_reason_;
 	WriteResult w = session_write(root_, rep);
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),
 	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w));
 	ra_.shutdown();                  /* an unlock earned a moment ago gets up to three seconds to reach the server */
 	log_flush(true);
+}
+
+/* ---- wide view ----------------------------------------------------------------------------------------------- */
+
+void MdPlayer::wide_apply(int scr_w, int scr_h)
+{
+	md_video_info vi;
+	md_host_video_info(&vi);
+	const pic_info gi = pic_info_from_video(&vi);
+	/* a Game Gear's band is 256 columns (48 beside the 160 of its LCD); the others' strips are at most MD_WIDE_MAX columns */
+	const int mx = system_ == MD_SYS_GG ? 48 : MD_WIDE_MAX;
+	const int m = pic_wide_margin(&eff_, &gi, scr_w, scr_h, mx);
+	/* Owner decision: the wide view is on by default and is never switched off to save time; what it costs is held down by narrowing its real
+	 * strips (main.cpp's ladder, rung 0..2) and finally showing only the soft extension. A linked game never widens its picture. */
+	const bool want = m > 0 && eff_.wide != 2 && !linked();
+	if (want == wide_on_ && (!want || m == wide_m_)) return;
+	if (system_ == MD_SYS_GG) md_host_set_option("gg_band", want ? 1 : 0);
+	wide_on_ = want; wide_m_ = want ? m : 0;
+	logf("wide view %s margin=%d (setting %d, shape %d)\n", want ? "on" : "off", wide_m_, eff_.wide, eff_.shape);
 }
 
 }  // namespace mdp

@@ -110,6 +110,7 @@ CHANGE_MAP = [
 # parse: the key of PARSERS below; "exit" uses the exit status only
 GROUP_MAKE = "gpsp-make"     # make inside gpsp/ (shared object and build directories)
 GROUP_HOST = "hostcore-run"  # host app runs: shared data roots, screenshot folder, loopback ports
+GROUP_NET = "loopback"       # held by every step that binds loopback ports (Step.net, and all GROUP_HOST steps)
 GROUP_TMP = "tmp-fixed"      # run_host_tests.py compiles into fixed /tmp names
 
 APP_TAGS = {"gpsp", "app", "host", "nes"}   # the app and what it links; NES is built into it
@@ -125,13 +126,25 @@ PIL = [("py", "PIL")]
 
 class Step:
     def __init__(self, name, desc, cmd, tier, tags, inputs=(), deps=(), cwd=".", outputs=(),
-                 requires=(), env_req=None, parse="exit", timeout=1800, group=None, gating=True):
+                 requires=(), env_req=None, parse="exit", timeout=1800, group=None, gating=True, net=False):
         assert tier in TIERS, (name, tier)
         self.name, self.desc, self.cmd, self.tier = name, desc, cmd, tier
         self.tags = frozenset(tags)
         self.inputs, self.deps, self.cwd = list(inputs), list(deps), cwd
         self.outputs, self.requires, self.env_req = list(outputs), list(requires), env_req
         self.parse, self.timeout, self.group, self.gating = parse, timeout, group, gating
+        # net: the step binds loopback ports (link, realtime, online, pk_link, the playerkit net tests).  Every
+        # such step, and every GROUP_HOST step (app runs open them too), holds the one "loopback" resource, so
+        # two of them never run together whatever their other group is.
+        self.net = net
+
+    def resources(self):
+        r = set()
+        if self.group:
+            r.add(self.group)
+        if self.net or self.group == GROUP_HOST:
+            r.add(GROUP_NET)
+        return r
 
 
 STEPS = [
@@ -258,13 +271,13 @@ STEPS = [
     Step("playerkit", "playerkit: unit tests and menu walk, ASan and UBSan",
          "make -C playerkit test", "quick", {"playerkit"},
          inputs=["playerkit/", "snes/frontend/third_party/"], requires=CXX, parse="playerkit",
-         timeout=3600),
+         timeout=3600, net=True),
     # pk_link (playerkit/src/pk_link*.cpp): the players' own two-console lockstep session, MIT, no netdrv. Real UDP and real
     # time (a 12 s stall, a dead peer, loss); alone in its group so no other loopback run takes its CPU and skews the clocks.
     Step("pk-link", "players' link (pk_link): lossy/reordered/stalled/dead/desynced sessions under ASan+UBSan and TSan (playerkit link-test)",
          "make -C playerkit link-test", "quick", {"playerkit", "link"},
          inputs=["playerkit/", "gpsp/netdrv/transport_lan.c", "gpsp/netdrv/nat_hash.c", "gpsp/netdrv/nat_stun.c", "gpsp/netdrv/nat_turn.c"],
-         requires=CXX, group=GROUP_HOST, timeout=3600),
+         requires=CXX, group=GROUP_HOST, timeout=3600, net=True),
     Step("snes-link", "two SNES players linked (snes/twin link_twin, pk_link): LAN, punched, relayed, wrong game, desync, 3000 frames, every private ROM (GATE_SNES_ROMS)",
          "make -C snes/twin -f Makefile.link B=build -j{jobs} && python3 snes/twin/link_test.py --twin snes/twin/build/link_twin "
          "--roms \"$GATE_SNES_ROMS\" --frames 3000 --out {out}/snes-link",
@@ -343,10 +356,10 @@ STEPS = [
          "make -C gpsp/netdrv test_netdrv test-lan LAN_TESTS=\"stall12 peerdead\" && ./gpsp/netdrv/test_netdrv >/dev/null && "
          "python3 gpsp/netdrv/tests/run_sesslan.py {out}/sesslan-live stall kill",
          "default", {"gpsp", "link"}, inputs=["gpsp/netdrv/", "gpsp/frontend-common/", "gpsp/gbcore/", "gpsp/tools/gblink/"],
-         requires=CC, group=GROUP_MAKE, timeout=1800),
+         requires=CC, group=GROUP_MAKE, timeout=1800, net=True),
     Step("link-liveness-long", "link liveness: a 25 s stall rides on the I/O keepalive, ends without it (test_lan stall25)",
          "make -C gpsp/netdrv test-lan LAN_TESTS=stall25",
-         "full", {"gpsp", "link"}, inputs=["gpsp/netdrv/"], requires=CC, group=GROUP_MAKE, timeout=1800),
+         "full", {"gpsp", "link"}, inputs=["gpsp/netdrv/"], requires=CC, group=GROUP_MAKE, timeout=1800, net=True),
     Step("audio-regressions", "audio: mixer, output, lifecycle, timer, safety, sim, GB audio",
          "python3 gpsp/tools/run_audio_regressions.py --vita-headers {vitasdk}/arm-vita-eabi/include",
          "default", {"gpsp", "audio"}, inputs=["gpsp/"], requires=CC, parse="audio"),
@@ -385,17 +398,17 @@ STEPS = [
     # linked ONLINE through the real service and the NAT simulator ----
     Step("online-service", "online play: the room service under node --test (npm ci, then npm test)",
          "cd online/service && npm ci --no-audit --no-fund && npm test", "default", {"online"},
-         inputs=["online/"], requires=[("exe", "node"), ("exe", "npm")], parse="node_test", timeout=1800),
+         inputs=["online/"], requires=[("exe", "node"), ("exe", "npm")], parse="node_test", timeout=1800, net=True),
     Step("online-nat", "online play: STUN, punch, TURN relay against the NAT simulator (make test-nat)",
          "make -C gpsp/netdrv test-nat", "default", {"gpsp", "link", "online"}, inputs=["gpsp/netdrv/"],
-         requires=CC, group=GROUP_MAKE, timeout=1800),
+         requires=CC, group=GROUP_MAKE, timeout=1800, net=True),
     Step("online-http", "online play: the HTTPS room client, TLS cases when GATE_MBEDTLS_HOST is set (test_onlinehttp.py)",
          "env ${GATE_MBEDTLS_HOST:+MBEDTLS_HOST=$GATE_MBEDTLS_HOST} python3 -I gpsp/vita/tests/onlinehttp/test_onlinehttp.py",
          "default", {"gpsp", "online"}, inputs=["gpsp/", "online/"], requires=CXX, parse="unittest",
-         timeout=1800),
+         timeout=1800, net=True),
     Step("online-conn", "online play: the connection state machine against fakes (test_onlineconn.py)",
          "python3 gpsp/vita/tests/onlineconn/test_onlineconn.py", "default", {"gpsp", "online"},
-         inputs=["gpsp/"], requires=CC, parse="unittest", timeout=1800),
+         inputs=["gpsp/"], requires=CC, parse="unittest", timeout=1800, net=True),
     Step("online-library", "online play: the library match, a code to a game file (online_lib_test)",
          "make -C gpsp/vita/tests/library -f online_lib.mk test", "default", {"gpsp", "library", "online"},
          inputs=["gpsp/"], requires=CC, group=GROUP_MAKE, parse="app"),
@@ -1030,14 +1043,13 @@ def execute(order, steps, a, out_dir, inputs, keys):
                               "log": rel_to_repo(prev_log) if prev_log.exists() else "",
                               "cmd": ""})
                 continue
-            if len(running) >= JOBS[0] or (step.group and step.group in busy):
+            if len(running) >= JOBS[0] or (step.resources() & busy):
                 continue  # waits in place for a free slot; the poll below sleeps
             pending.remove(name)
             progressed = True
             running[name] = start_step(step, out_dir, logs_dir)
             RUNNING[name] = running[name]
-            if step.group:
-                busy.add(step.group)
+            busy |= step.resources()
         # poll
         for name, run in list(running.items()):
             rc = run.proc.poll()
@@ -1049,8 +1061,7 @@ def execute(order, steps, a, out_dir, inputs, keys):
                 continue
             del running[name]
             RUNNING.pop(name, None)
-            if run.step.group:
-                busy.discard(run.step.group)
+            busy -= run.step.resources()
             res = finish_run(run, rc)
             if res["result"] == "PASS":
                 write_cache(run.step, keys[name], res, cache_dir)

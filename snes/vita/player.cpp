@@ -1478,6 +1478,7 @@ void SnesPlayer::finish(ExitReason why)
 	rep.link_error = link_err_;
 	rep.link_error_name = link_err_name_;
 	rep.link_frames = link_frames_;
+	rep.link_peer_reason = link_peer_reason_;
 	WriteResult w = session_write(root_, rep);
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),

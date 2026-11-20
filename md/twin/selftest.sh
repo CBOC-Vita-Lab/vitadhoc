@@ -127,7 +127,7 @@ if [ "$nsms" -gt 0 ]; then
 		case "$a" in *"load=0 video=SAME state=SAME audio=SAME corrupt_refused=yes"*) sok=$((sok + 1));; *) sbad=$((sbad + 1)); echo "  $r: $a";; esac
 	done
 	[ $sbad = 0 ] && ok "$sok 8 bit ROMs boot, run 600 frames and round trip the state exactly" || bad "8 bit ROMs ($sok ok, $sbad failed)"
-	f1=$(echo "$SMSL" | head -1)
+	f1=$(echo "$SMSL" | grep -i "\.sms$" | head -1); [ -n "$f1" ] || f1=$(echo "$SMSL" | head -1)
 	i1=$("$TWIN" "$f1" --frames 3 --info | grep '^video' | head -1)
 	case "$i1" in *"256x192 native 256x192"*"left_mask="*) ok "Master System picture info: 256x192 native, left column blank flag reported";; *) bad "SMS picture info ($i1)";; esac
 	i2=$("$TWIN" "$f1" --system gg --frames 3 --info | grep '^video' | head -1)
@@ -137,6 +137,27 @@ if [ "$nsms" -gt 0 ]; then
 	[ "$nsg" = 0 ] && skip "real SG-1000 ROMs (none in the tree)"
 else
 	skip "Master System / Game Gear / SG-1000 ROM tests (set MD_TEST_SMS_ROMS)"
+fi
+
+# 11. the wide view changes nothing the console does: with it on (the VDP draws strips beside the picture, the analysis reads the VDP's memory,
+# the Game Gear draws its 256 wide band) the picture inside the original window, the sound, the machine state and the work RAM are bit for bit
+# the same as with it off, with the VDP worker thread too (the strips are drawn in the worker's copy of the renderer)
+WALL="$ROMS
+$SMSL"
+nw=$(echo "$WALL" | grep -c .)
+if [ "$nw" -gt 0 ] && [ -n "$(echo "$WALL" | head -c 1)" ]; then
+	WF=$FRAMES; [ "$WF" -gt 600 ] && WF=600
+	wok=0; wbad=0; wcov=0
+	for r in $WALL; do
+		[ -f "$r" ] || continue
+		base=$("$TWIN" "$r" --frames "$WF" --pad auto 2>&1 | grep '^RESULT' | sed 's/ samples=.*//')
+		w1=$("$TWIN" "$r" --frames "$WF" --pad auto --wide 45 2>&1 | grep '^RESULT' | sed 's/ samples=.*//')
+		w2=$("$TWIN" "$r" --frames "$WF" --pad auto --wide 45 --vdp-thread 2>&1 | grep '^RESULT' | sed 's/ samples=.*//')
+		if [ -n "$base" ] && [ "$base" = "$w1" ] && [ "$base" = "$w2" ]; then wok=$((wok + 1)); else wbad=$((wbad + 1)); echo "  wide view changes the game: $r"; echo "    off:  $base"; echo "    on:   $w1"; echo "    on+worker: $w2"; fi
+	done
+	[ $wbad = 0 ] && ok "wide view on or off: picture in the original window, sound, state and RAM identical on $wok ROMs (with and without the VDP worker thread)" || bad "wide view identity ($wok same, $wbad different)"
+else
+	skip "wide view identity (needs MD_TEST_ROMS or MD_TEST_SMS_ROMS)"
 fi
 
 [ $fail = 0 ]

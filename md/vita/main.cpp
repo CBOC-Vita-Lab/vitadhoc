@@ -54,6 +54,7 @@
 #include <psp2/net/netctl.h>
 #include <psp2/sysmodule.h>
 #include "pipe.h"
+#include "wide.h"
 #include "pal_pace.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
@@ -74,6 +75,48 @@ unsigned int _newlib_heap_size_user = 56 * 1024 * 1024;     /* 40 MB before rewi
 
 static mdp::MdPlayer *g_pl;
 static mdp::PicturePipe g_pipe;      /* frame hand-over to the drawing thread (pipe.h); idle unless started */
+/* The wide view (md/frontend/wide.h): analyse() runs on the emulating thread after a drawn frame, compose() on the drawing thread (or inline
+ * when the hand-over is off). The Meta of a picture in flight is in g_meta[seq & 7] (at most 4 pictures are in flight). */
+static mdw::Wide *g_wide;
+static mdw::Meta g_meta[8];
+static uint16_t *g_canvas;           /* the core's picture buffer when it draws beside the mailbox: MD_WIDE_PITCH wide, the picture at column MD_WIDE_MAX */
+#define USER_WIDE 0x40000000         /* HandoffFrame.user: the picture has a Meta in g_meta[seq & 7] */
+static std::atomic<unsigned> g_wide_compose_us(0), g_wide_composed(0);
+/* the wide view's cost ladder: three rungs, by the smoothed cost of the emulating thread's frame (emulation + analysis) against the frame time.
+ * Rung 0 draws the real strips in full, 1 draws half of them (the lead side of a scroll is only a few pixels anyway), 2 draws none and the
+ * picture beside the console's is the soft extension only. "On" in the menu stays on rung 0; Auto steps down at once and up slowly. */
+static int g_wide_S, g_wide_rung, g_wide_hold, g_wide_applied = -1;
+static double g_wide_ema;
+static unsigned long long g_wide_an_us, g_wide_an_n;
+
+static void wide_cost_update(double cost_us, double budget_us)
+{
+	g_wide_ema = g_wide_ema <= 0.0 ? cost_us : g_wide_ema * 0.9 + cost_us * 0.1;
+	if (g_wide_hold > 0) g_wide_hold--;
+	if (g_pl->wide_mode() == 1) { g_wide_rung = 0; return; }
+	if (g_wide_ema > 0.80 * budget_us && g_wide_rung < 2) { g_wide_rung++; g_wide_hold = 240; }
+	else if (g_wide_ema < 0.55 * budget_us && g_wide_rung > 0 && g_wide_hold == 0) { g_wide_rung--; g_wide_hold = 240; }
+}
+
+/* what the core draws beside the picture this frame; run once per refresh, before the frames */
+static void wide_core_apply(void)
+{
+	const bool on = g_wide && g_pl->wide_active();
+	const int M = on ? g_pl->wide_margin() : 0;
+	const int sys = md_host_system();
+	int S = 0, want = 0;
+	if (on) {
+		if (sys == MD_SYS_MD) { S = g_wide_rung == 0 ? M : g_wide_rung == 1 ? M / 2 : 0; want = S; }
+		else want = M;                    /* the 8-bit consoles keep the records the analysis needs; their picture has no strips */
+	}
+	g_wide_S = S;
+	if (want != g_wide_applied) {
+		md_host_set_wide_margin(want);
+		g_wide_applied = want;
+		if (g_wide) g_wide->set_real_cap_default(sys == MD_SYS_MD ? S : (1 << 20));
+		g_pl->logf("wide view: %s margin=%d strips=%d rung=%d\n", on ? "on" : "off", M, S, g_wide_rung);
+	}
+}
 #define logf_(...) g_pl->logf(__VA_ARGS__)
 static FILE *g_log;
 static std::string g_data_root;       /* ux0:data/GBAdhoc/<console>, known once the launch file is read */
@@ -203,7 +246,7 @@ static void core4_fallback(void)
 
 #define RT_SIZE 1024
 #define SC_W 1024              /* the scaler's output texture: 640x448 (MMPX of a 320x224 picture) is the largest */
-#define SC_H 512
+#define SC_H 576               /* 576: xBR 3x of a 192 row picture (Master System, SG-1000) */
 
 struct GTex {
 	vita2d_texture *t;
@@ -218,7 +261,8 @@ static GTex g_bezel;
 static int g_bezel_w, g_bezel_h;
 static int g_src_i = -1;
 static int g_src_w = 320, g_src_h = 224;
-static pic_info g_src_info;               /* the geometry of the uploaded picture */
+static pic_info g_src_info;               /* the geometry of the uploaded picture (the console's own, without the wide view's margin) */
+static int g_src_margin;                  /* the uploaded picture is a wide view picture with this many columns of margin per side (0: the plain picture) */
 static int g_sc_i = -1, g_sc_f = 0;       /* newest scaled texture and its factor (0: the picture is shown unscaled) */
 static unsigned g_serial_seen, g_up_serial;
 static int g_crop_top, g_crop_bot, g_crop_cand_top, g_crop_cand_bot, g_crop_votes;
@@ -453,20 +497,13 @@ static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, i
 
 /* ---- the picture: upload, scaler ---------------------------------------------------------------------------------------------------- */
 
-struct Pic { const uint16_t *p; int w, h, pitch; unsigned serial; };
+struct Pic { const uint16_t *p; int w, h, pitch; unsigned serial; int margin; };       /* margin > 0: a wide view picture (w = the console's width + 2 margin) */
 
 /* geometry of the pictures in flight, by serial (the emulating thread fills it before the hand-over, the drawing thread reads it after) */
 static pic_info g_geo[16];
 static unsigned g_geo_serial = 0xFFFFFFFFu;
 
-static pic_info geo_now(const md_video_info &vi)
-{
-	pic_info g;
-	g.w = vi.w; g.h = vi.h;
-	g.logical_rows = vi.h > vi.native_h * 3 / 2 ? vi.h / 2 : vi.h;      /* interlaced double height: two picture rows per console line */
-	g.dar = vi.dar; g.par = vi.par; g.system = vi.system;
-	return g;
-}
+static pic_info geo_now(const md_video_info &vi) { return pic_info_from_video(&vi); }
 
 static pk::ScalerKind scaler_kind_for(const pic_settings &ps, const pic_info &gi)
 {
@@ -493,10 +530,10 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, cons
 		else { if (t < g_crop_top) g_crop_top = t; if (b < g_crop_bot) g_crop_bot = b; }
 	}
 	/* the scaler reads CPU memory (the mailbox's copy, or the Game Gear's mapped copy), never the texture */
-	static uint16_t lcdbuf[160 * 256];
+	static uint16_t lcdbuf[256 * 160];
 	const uint16_t *scaler_src = s.p;
 	int scaler_pitch_px = s.pitch / 2;
-	const bool lcd = g_is_gg && g_lcd && ps.gg_colors && w * h <= 160 * 256 && w <= 160;
+	const bool lcd = g_is_gg && g_lcd && ps.gg_colors && w <= 256 && h <= 160;
 	if (lcd) {
 		for (int y = 0; y < h; y++) {
 			const uint16_t *row = (const uint16_t *) ((const uint8_t *) s.p + (size_t) y * s.pitch);
@@ -510,7 +547,7 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, cons
 	g_sc_f = 0;
 	const pk::ScalerKind kind = (g_pl->look_mode() == 2) ? pk::SC_NONE : scaler_kind_for(ps, gi);
 	g_scale_last.store((int) kind, std::memory_order_relaxed);
-	if (kind != pk::SC_NONE && w == gi.w && h == gi.h) {
+	if (kind != pk::SC_NONE && w == gi.w + 2 * s.margin && h == gi.h) {
 		const int f = pk::scaler_factor(kind);
 		int si = -1;
 		for (int n = 1; n <= 3; n++) {
@@ -545,8 +582,8 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, cons
 		g_src_i = idx;
 	}
 	g_serial_seen = ++g_up_serial;
-	if (w != g_src_w || h != g_src_h) { g_crop_top = g_crop_bot = g_crop_cand_top = g_crop_cand_bot = 0; }
-	g_src_w = w; g_src_h = h; g_src_info = gi;
+	if (w != g_src_w || h != g_src_h || s.margin != g_src_margin) { g_crop_top = g_crop_bot = g_crop_cand_top = g_crop_cand_bot = 0; }
+	g_src_w = w; g_src_h = h; g_src_info = gi; g_src_margin = s.margin;
 	g_have_picture = 1;
 	return 1;
 }
@@ -618,7 +655,8 @@ static bool frame_draw(const pic_settings &ps, int extras, int frame_no)
 	int F = 1;
 	if (src && g_have_picture && g_sc_f > 0 && g_sc_i >= 0 && g_scaled[g_sc_i].t) { img = &g_scaled[g_sc_i]; F = g_sc_f; }
 	if (src && g_have_picture) {
-		pic_geometry(&ps, &g_src_info, g_crop_top, g_crop_bot, SCREEN_W, SCREEN_H, &r);
+		if (g_src_margin > 0) pic_geometry_wide(&ps, &g_src_info, g_src_w, g_crop_top, g_crop_bot, SCREEN_W, SCREEN_H, &r);
+		else pic_geometry(&ps, &g_src_info, g_crop_top, g_crop_bot, SCREEN_W, SCREEN_H, &r);
 		rs = r;
 		rs.sx *= F; rs.sy *= F; rs.sw *= F; rs.sh *= F;
 	}
@@ -948,6 +986,18 @@ static void hd_publish_notices(void)
 	g_hd_notice_on = on ? 1 : 0;
 }
 
+/* The picture to show for a frame that has a Meta: the wide view's composed picture, or the console's own when it cannot be made. */
+static void wide_pic(mdw::Meta &m, const uint16_t *view0, int pitch_bytes, Pic *s)
+{
+	int ww = 0, wh = 0;
+	const uint64_t c0 = sceKernelGetProcessTimeWide();
+	const uint16_t *wp = g_wide ? g_wide->compose(m, view0, pitch_bytes / 2, &ww, &wh) : NULL;
+	g_wide_compose_us.fetch_add((unsigned) (sceKernelGetProcessTimeWide() - c0));
+	g_wide_composed.fetch_add(1);
+	if (wp) { s->p = wp; s->w = ww; s->h = wh; s->pitch = ww * 2; s->margin = m.margin; }
+	else { s->p = view0; s->w = m.vw; s->h = m.vh; s->pitch = pitch_bytes; s->margin = 0; }
+}
+
 static int hd_draw_thread(SceSize, void *)
 {
 	for (;;) {
@@ -955,7 +1005,8 @@ static int hd_draw_thread(SceSize, void *)
 		if (!f) break;
 		const uint64_t t0 = sceKernelGetProcessTimeWide();
 		Pic s;
-		s.p = (const uint16_t *) (f->data + f->offset); s.w = f->w; s.h = f->h; s.pitch = f->pitch; s.serial = (unsigned) (f->user & 0x3FFFFFFF);
+		s.p = (const uint16_t *) (f->data + f->offset); s.w = f->w; s.h = f->h; s.pitch = f->pitch; s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.margin = 0;
+		if (f->user & USER_WIDE) { mdw::Meta &m = g_meta[f->seq & 7]; wide_pic(m, s.p + m.view_off, f->pitch, &s); }
 		const pic_info gi = g_geo[s.serial & 15];
 		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
 		video_upload(ps, (int) f->seq, s, gi);
@@ -1327,7 +1378,10 @@ int main(int argc, char **argv)
 		}
 	}
 	g_is_gg = md_host_system() == MD_SYS_GG;
-	if (g_is_gg) g_lcd = pic_lcd_table();           /* built once, before any other thread needs it */
+	if (g_is_gg) g_lcd = pic_lcd_table();
+	g_wide = new mdw::Wide;
+	g_canvas = (uint16_t *) calloc((size_t) MD_WIDE_PITCH * MD_MAX_HEIGHT, 2);
+	if (!g_canvas) { delete g_wide; g_wide = NULL; }           /* built once, before any other thread needs it */
 
 	/* clocks: the app's CPU speed request (0 = the player's default: 500 MHz, else 444) */
 	{
@@ -1385,6 +1439,7 @@ int main(int argc, char **argv)
 	double s_stall = 0, s_work = 0, s_agap = 0;
 	uint32_t emu_frame = 0;
 	uint64_t render_emu_us = 0;
+	unsigned wide_jumps_seen = 0;
 	pk::ExitReason why = pk::EXIT_NORMAL;
 	g_pl->log_flush(false);
 
@@ -1430,6 +1485,14 @@ int main(int argc, char **argv)
 			continue;
 		}
 
+		if (!g_link && g_wide) g_pl->wide_apply(SCREEN_W, SCREEN_H);
+		if (g_wide && g_pl->wide_jumps() != wide_jumps_seen) {
+			/* a state loaded, a rewind, a reset: what the analysis remembers of the screen is not this game's any more */
+			wide_jumps_seen = g_pl->wide_jumps();
+			hd_quiesce();
+			g_wide->reset();
+		}
+		wide_core_apply();
 		const bool half = g_pl->pace_mode() == pk::PACE_HALF;
 		const bool hd = hd_active();
 		if (hd) g_pipe.box().set_pace_mode(g_pl->pace_mode());
@@ -1448,7 +1511,10 @@ int main(int argc, char **argv)
 			md_host_set_render(render ? 1 : 0);
 			/* no copy: the core draws straight into the mailbox buffer when the gate is open and nothing would be evicted (pipe.h direct_begin) */
 			uint16_t *dfb = NULL;
-			if (hd && render && !g_link) { int dp = 0; dfb = g_pipe.direct_begin(&dp); if (dfb) md_host_set_framebuffer(dfb, dp); }
+			const bool wide_run = render && !g_link && g_wide && g_pl->wide_active();
+			if (hd && render && !g_link) { int dp = 0; dfb = g_pipe.direct_begin(&dp); if (dfb) md_host_set_framebuffer(wide_run ? dfb + MD_WIDE_MAX : dfb, dp); }
+			if (wide_run && !dfb && g_canvas) md_host_set_framebuffer(g_canvas + MD_WIDE_MAX, MD_WIDE_PITCH);
+			const bool own_fb = dfb || (wide_run && g_canvas);
 			uint64_t t0 = sceKernelGetProcessTimeWide();
 			g_emu_busy.store(1, std::memory_order_relaxed);
 			if (g_link) {
@@ -1461,7 +1527,7 @@ int main(int argc, char **argv)
 			uint64_t t1 = sceKernelGetProcessTimeWide();
 			const uint16_t *dpix = NULL;
 			int dw = 0, dh = 0, dpp = 0;
-			if (dfb) { dpix = md_host_video(&dw, &dh, &dpp); md_host_set_framebuffer(NULL, 0); }
+			if (own_fb) { dpix = md_host_video(&dw, &dh, &dpp); md_host_set_framebuffer(NULL, 0); }
 			emu_us += t1 - t0;
 			last_frame_us = t1 - t0;
 			frames_run++;
@@ -1473,19 +1539,38 @@ int main(int argc, char **argv)
 			if (render) {
 				uint64_t f0 = sceKernelGetProcessTimeWide();
 				int pw = 0, ph = 0, pp = 0;
-				const uint16_t *pix = dfb ? dpix : md_host_video(&pw, &ph, &pp);
-				if (dfb) { pw = dw; ph = dh; pp = dpp; }
+				const uint16_t *pix = own_fb ? dpix : md_host_video(&pw, &ph, &pp);
+				if (own_fb) { pw = dw; ph = dh; pp = dpp; }
 				md_video_info vi;
 				md_host_video_info(&vi);
 				if (vi.serial != g_geo_serial) { g_geo[vi.serial & 15] = geo_now(vi); g_geo_serial = vi.serial; }
 				if (pix && pw > 0 && ph > 0) {
+					int user = (int) (vi.serial & 0x3FFFFFFFu);
+					const uint16_t *src = pix;
+					int sw = pw;
+					mdw::Meta *mt = NULL;
+					if (wide_run) {
+						/* the wide view: widekit's analysis of this frame (the emulating thread's share), the picture is composed where it is drawn */
+						mt = &g_meta[frames_run & 7];
+						const uint64_t a0 = sceKernelGetProcessTimeWide();
+						g_wide->analyse((uint32_t) emu_frame, vi, g_pl->wide_margin(), g_wide_S, mt);
+						const uint64_t an = sceKernelGetProcessTimeWide() - a0;
+						g_wide_an_us += an; g_wide_an_n++;
+						render_emu_us += an; emu_us += an;
+						int off = vi.system == MD_SYS_GG ? 48 : 0;
+						if (!dfb && vi.system == MD_SYS_MD && g_wide_S > 0) { src = pix - g_wide_S; sw = pw + 2 * g_wide_S; off += g_wide_S; }
+						mt->view_off = off;
+						user |= USER_WIDE;
+						wide_cost_update((double) (t1 - t0 + an), 1e6 / frame_hz);
+					}
 					if (hd) {
 						g_pipe.box().note_emulated(1);
-						const int pr = dfb ? g_pipe.direct_commit(pix, pw, ph, pp, (int) (vi.serial & 0x3FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us)
-						                   : g_pipe.put(pix, pw, ph, pp, (int) (vi.serial & 0x3FFFFFFFu), (uint32_t) frames_run, (uint32_t) render_emu_us);
+						const int pr = dfb ? g_pipe.direct_commit(pix, pw, ph, pp, user, (uint32_t) frames_run, (uint32_t) render_emu_us)
+						                   : g_pipe.put(src, sw, ph, pp, user, (uint32_t) frames_run, (uint32_t) render_emu_us);
 						if (pr > 0) fresh = true;
 					} else {
-						Pic s; s.p = pix; s.w = pw; s.h = ph; s.pitch = pp; s.serial = vi.serial;
+						Pic s; s.p = pix; s.w = pw; s.h = ph; s.pitch = pp; s.serial = vi.serial; s.margin = 0;
+						if (mt) wide_pic(*mt, pix + mt->view_off, pp, &s);
 						if (video_upload(g_pl->picture(), frames_run, s, geo_now(vi))) fresh = true;
 					}
 				}
@@ -1631,6 +1716,14 @@ int main(int argc, char **argv)
 				for (int k = 0; k < 6; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
 				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f scale1=%.0f scale2=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3], d[4], d[5], g_draw_core);
 			}
+			if (g_wide && g_pl->wide_active()) {
+				mdw::Stats ws;
+				g_wide->census(&ws);
+				const unsigned cu = g_wide_compose_us.exchange(0), cn = g_wide_composed.exchange(0);
+				logf_("wide: margin=%d strips=%d rung=%d analyse_us/fr=%.0f compose_us/pic=%.0f real=%d%% soft_lines=%d scenes=%d cost_ema_ms=%.2f\n", g_pl->wide_margin(), g_wide_S, g_wide_rung,
+				    g_wide_an_n ? (double) g_wide_an_us / (double) g_wide_an_n : 0.0, cn ? (double) cu / cn : 0.0, ws.real_pct, ws.soft_lines, ws.scene_events, g_wide_ema / 1000.0);
+				g_wide_an_us = g_wide_an_n = 0;
+			}
 			double fr = frames_run ? frames_run : 1;
 			logf_("t=%d fps=%.1f emu_fps=%.1f emu_ms=%.2f last_ms=%.2f aq=%u", secs, drawn / dt, frames_run / dt,
 			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, g_pace.fill_frames());
@@ -1680,6 +1773,7 @@ int main(int argc, char **argv)
 		if (!g_link->restored_ok()) logf_("link: the machine could not be put back on this console's own game\n");
 		logf_("%s\n", sum.c_str());
 		g_pl->set_link_result(done ? "done" : "failed", gerr ? gerr : (int) f, g_link->gblink_error_name(), (int) fr);
+		g_pl->set_link_peer_reason(g_link->peer_reason());
 		link_net_down();
 	}
 	/* resume point, battery RAM, settings, log, launch/session.txt */

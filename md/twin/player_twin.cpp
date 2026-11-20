@@ -512,10 +512,24 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		EXPECT((rig.row_of("Hide masked edge") >= 0) == (con == "sms"));
 		EXPECT((rig.row_of("LCD colours") >= 0) == (con == "gg"));
 		EXPECT((rig.row_of("LCD ghosting") >= 0) == (con == "gg"));
-		/* the wide view is not available: the row says so */
-		int wide = -1;
-		for (int i = 0; i < pl->menu().row_count(); i++) if (pl->menu().row_label(i).find("ide") != std::string::npos) wide = i;
-		(void) wide;
+		/* the wide view: the row is there (Auto / On / Off, the same row as the SNES player's), on by default, Off gives the 4:3 picture back */
+		EXPECT(rig.row_of("Wide view") >= 0);
+		EXPECT(pl->menu().value(ROW_PIC_WIDE) == 0);
+		pl->wide_apply(960, 544);
+		EXPECT(pl->wide_active());
+		EXPECT(pl->wide_margin() > 0 && pl->wide_margin() <= (con == "gg" ? 48 : 96));
+		fprintf(stderr, "wide: %s margin %d on 960x544 (Original shape)\n", con.c_str(), pl->wide_margin());
+		rig.go_row("Wide view");
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().wide == 1 && pl->wide_mode() == 1);
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().wide == 2);
+		pl->wide_apply(960, 544);
+		EXPECT(!pl->wide_active() && pl->wide_margin() == 0);
+		rig.press(PH_RIGHT);                                  /* wraps to Auto */
+		EXPECT(pl->picture().wide == 0);
+		pl->wide_apply(960, 544);
+		EXPECT(pl->wide_active());
 		rig.go_row("Scanlines");
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().scan == 5);

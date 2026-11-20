@@ -407,6 +407,13 @@ int main(void)
 
    /* unsupported consoles and bad input */
    CHECK(online_lib_begin("n64", "ABCD", "") != 0, "a console with no Two players");
+   CHECK(online_lib_begin("md", "ABCD1234", "") == 0, "md begins");
+   online_lib_end();
+   CHECK(online_lib_begin("sms", "ABCD1234", "") == 0, "sms begins");
+   online_lib_end();
+   CHECK(online_lib_begin("sg", "ABCD1234", "") == 0, "sg begins");
+   online_lib_end();
+   CHECK(online_lib_begin("gg", "ABCD1234", "") != 0, "the Game Gear has no Two players: a gg room is refused");
    CHECK(online_lib_begin("gba", "", "") != 0, "an empty code");
    CHECK(online_lib_step(8) == 1, "no search: finished");
    online_lib_end();

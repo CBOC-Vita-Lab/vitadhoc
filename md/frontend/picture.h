@@ -37,6 +37,7 @@ int pic_load(const char *path, pic_settings *s);
 int pic_save(const char *path, const pic_settings *s);
 
 /* What the layout needs to know about the picture in the buffer (from md_video_info). */
+struct md_video_info;
 typedef struct {
 	int w, h;            /* the picture in the buffer */
 	int logical_rows;    /* console lines: h, or h / 2 for an interlaced double height picture */
@@ -50,6 +51,10 @@ typedef struct {
 	int sx, sy, sw, sh;    /* which part of the picture (pixels) */
 	int logical_rows;      /* visible console lines */
 } pic_rect;
+
+/* The pic_info of the console's normal picture (the Game Gear's 160x144 window also when the wide view's 256 wide band is drawn). */
+struct md_video_info;
+pic_info pic_info_from_video(const struct md_video_info *vi);
 
 /* crop_top / crop_bottom: blank rows (in picture rows) the Zoom shape may remove */
 void pic_geometry(const pic_settings *s, const pic_info *in, int crop_top, int crop_bottom, int scr_w, int scr_h, pic_rect *r);

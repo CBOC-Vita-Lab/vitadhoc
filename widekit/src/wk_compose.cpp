@@ -63,20 +63,218 @@ void wk_blend_row(uint16_t *dst, const uint16_t *src, const uint8_t *w,
         wk_blend_row_scalar(dst + i, src + i, w + i, dither + i, n - i);
 }
 
+/* ----- row kernels (wk_compose.h) ------------------------------------------------ */
+
+#if defined(__GNUC__) && (defined(__ARM_NEON) || defined(__SSE2__))
+#define WK_VEC 1
+namespace {
+typedef uint16_t vu16 __attribute__((vector_size(16)));
+typedef int16_t vs16 __attribute__((vector_size(16)));
+typedef uint8_t vu8 __attribute__((vector_size(16)));
+typedef uint8_t vu8h __attribute__((vector_size(8)));
+template <class V> inline V vld(const void *p) { V v; memcpy(&v, p, sizeof v); return v; }
+template <class V> inline void vst(void *p, V v) { memcpy(p, &v, sizeof v); }
+inline vu16 widen8(const uint8_t *p) { return __builtin_convertvector(vld<vu8h>(p), vu16); }
+inline vu16 splat16(unsigned v) { const uint16_t x = (uint16_t)v; return (vu16){x, x, x, x, x, x, x, x}; }
+inline vu16 rev16v(vu16 v) { return __builtin_shuffle(v, (vu16){7, 6, 5, 4, 3, 2, 1, 0}); }
+inline vu8 rev8v(vu8 v)
+{
+    vu16 w = (vu16)v;
+    w = (vu16)((w << 8) | (w >> 8));                 /* bytes swapped inside each 16 bit lane */
+    return (vu8)rev16v(w);
+}
+}  // namespace
+#else
+#define WK_VEC 0
+#endif
+
+void wk_soft_row_scalar(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th)
+{
+    for (int d = 0; d < n; d++) {
+        const int fd = f[d], t = th[d];
+        int r = ((e0 * fd) >> 8) + (t >> 1);
+        int g = ((e1 * fd) >> 8) + (t >> 2);
+        int bl = ((e2 * fd) >> 8) + (t >> 1);
+        r = r > 255 ? 255 : r;
+        g = g > 255 ? 255 : g;
+        bl = bl > 255 ? 255 : bl;
+        dst[d] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (bl >> 3));
+    }
+}
+
+void wk_soft_row(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th)
+{
+    int d = 0;
+#if WK_VEC
+    if (e0 >= 0 && e0 <= 255 && e1 >= 0 && e1 <= 255 && e2 >= 0 && e2 <= 255) {   /* e * f fits 16 bits (f <= 256) */
+        const vu16 E0 = splat16((unsigned)e0), E1 = splat16((unsigned)e1), E2 = splat16((unsigned)e2), k255 = splat16(255);
+        for (; d + 8 <= n; d += 8) {
+            const vu16 fv = vld<vu16>(f + d), t = widen8(th + d);
+            vu16 r = ((E0 * fv) >> 8) + (t >> 1);
+            vu16 g = ((E1 * fv) >> 8) + (t >> 2);
+            vu16 b = ((E2 * fv) >> 8) + (t >> 1);
+            const vu16 mr = (vu16)(r > k255), mg = (vu16)(g > k255), mb = (vu16)(b > k255);
+            r = (r & ~mr) | (k255 & mr);
+            g = (g & ~mg) | (k255 & mg);
+            b = (b & ~mb) | (k255 & mb);
+            vst(dst + d, (vu16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)));
+        }
+    }
+#endif
+    if (d < n)
+        wk_soft_row_scalar(dst + d, n - d, e0, e1, e2, f + d, th + d);
+}
+
 /* dst[i] = src[i] where op[i] != 0 */
-static void copy_masked(uint16_t *dst, const uint16_t *src, const uint8_t *op, int n)
+void wk_copy_masked(uint16_t *dst, const uint16_t *src, const uint8_t *op, int n)
 {
     int i = 0;
-#if defined(__ARM_NEON)
+#if WK_VEC
     for (; i + 8 <= n; i += 8) {
-        uint16x8_t keep = vmovl_u8(vtst_u8(vld1_u8(op + i), vdup_n_u8(0xFF)));
-        keep = vcgtq_u16(keep, vdupq_n_u16(0));
-        vst1q_u16(dst + i, vbslq_u16(keep, vld1q_u16(src + i), vld1q_u16(dst + i)));
+        const vu16 keep = (vu16)(widen8(op + i) != splat16(0));
+        const vu16 sv = vld<vu16>(src + i), dv = vld<vu16>(dst + i);
+        vst(dst + i, (vu16)((sv & keep) | (dv & ~keep)));
     }
 #endif
     for (; i < n; i++)
         if (op[i])
             dst[i] = src[i];
+}
+
+void wk_fill_masked8(uint8_t *dst, const uint8_t *op, uint8_t v, int n)
+{
+    if (n <= 0)
+        return;
+    if (!op) {
+        memset(dst, v, (size_t)n);
+        return;
+    }
+    int i = 0;
+#if WK_VEC
+    const vu8 vv = (vu8){v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v}, z = (vu8){0};
+    for (; i + 16 <= n; i += 16) {
+        const vu8 keep = (vu8)(vld<vu8>(op + i) != z);
+        const vu8 dv = vld<vu8>(dst + i);
+        vst(dst + i, (vu8)((vv & keep) | (dv & ~keep)));
+    }
+#endif
+    for (; i < n; i++)
+        if (op[i])
+            dst[i] = v;
+}
+
+void wk_or_nz8(uint8_t *dst, const uint8_t *src, int n)
+{
+    int i = 0;
+#if WK_VEC
+    const vu8 z = (vu8){0}, one = (vu8){1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    for (; i + 16 <= n; i += 16)
+        vst(dst + i, (vu8)(vld<vu8>(dst + i) | ((vu8)(vld<vu8>(src + i) != z) & one)));
+#endif
+    for (; i < n; i++)
+        dst[i] |= (uint8_t)(src[i] != 0);
+}
+
+void wk_nz8(uint8_t *dst, const uint8_t *src, int n)
+{
+    int i = 0;
+#if WK_VEC
+    const vu8 z = (vu8){0}, one = (vu8){1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    for (; i + 16 <= n; i += 16)
+        vst(dst + i, (vu8)((vu8)(vld<vu8>(src + i) != z) & one));
+#endif
+    for (; i < n; i++)
+        dst[i] = (uint8_t)(src[i] != 0);
+}
+
+void wk_rev16(uint16_t *dst, const uint16_t *src, int n)
+{
+    int i = 0;
+#if WK_VEC
+    for (; i + 8 <= n; i += 8)
+        vst(dst + i, rev16v(vld<vu16>(src + n - 8 - i)));
+#endif
+    for (; i < n; i++)
+        dst[i] = src[n - 1 - i];
+}
+
+void wk_rev8(uint8_t *dst, const uint8_t *src, int n)
+{
+    int i = 0;
+#if WK_VEC
+    for (; i + 16 <= n; i += 16)
+        vst(dst + i, rev8v(vld<vu8>(src + n - 16 - i)));
+#endif
+    for (; i < n; i++)
+        dst[i] = src[n - 1 - i];
+}
+
+void wk_rev16_inplace(uint16_t *p, int n)
+{
+    int a = 0, b = n;
+#if WK_VEC
+    for (; b - a >= 16; a += 8, b -= 8) {
+        const vu16 lo = vld<vu16>(p + a), hi = vld<vu16>(p + b - 8);
+        vst(p + a, rev16v(hi));
+        vst(p + b - 8, rev16v(lo));
+    }
+#endif
+    for (b--; a < b; a++, b--) {
+        const uint16_t t = p[a];
+        p[a] = p[b];
+        p[b] = t;
+    }
+}
+
+void wk_rev8_inplace(uint8_t *p, int n)
+{
+    int a = 0, b = n;
+#if WK_VEC
+    for (; b - a >= 32; a += 16, b -= 16) {
+        const vu8 lo = vld<vu8>(p + a), hi = vld<vu8>(p + b - 16);
+        vst(p + a, rev8v(hi));
+        vst(p + b - 16, rev8v(lo));
+    }
+#endif
+    for (b--; a < b; a++, b--) {
+        const uint8_t t = p[a];
+        p[a] = p[b];
+        p[b] = t;
+    }
+}
+
+void wk_mix565_row_scalar(uint16_t *dst, const uint16_t *amb, int w, int n)
+{
+    for (int i = 0; i < n; i++) {
+        const unsigned a = dst[i], b = amb[i];
+        const int ar = (int)(a >> 11), ag = (int)((a >> 5) & 63u), ab = (int)(a & 31u);
+        const int br = (int)(b >> 11), bg = (int)((b >> 5) & 63u), bb = (int)(b & 31u);
+        dst[i] = (uint16_t)(((ar + (br - ar) * w / 32) << 11) | ((ag + (bg - ag) * w / 32) << 5) | (ab + (bb - ab) * w / 32));
+    }
+}
+
+void wk_mix565_row(uint16_t *dst, const uint16_t *amb, int w, int n)
+{
+    int i = 0;
+#if WK_VEC
+    if (w >= 0 && w <= 32) {
+        const vs16 wv = (vs16)splat16((unsigned)w), k31 = (vs16)splat16(31);
+        const vu16 m63 = splat16(63), m31 = splat16(31);
+        for (; i + 8 <= n; i += 8) {
+            const vu16 a = vld<vu16>(dst + i), b = vld<vu16>(amb + i);
+            const vs16 ar = (vs16)(a >> 11), ag = (vs16)((a >> 5) & m63), ab = (vs16)(a & m31);
+            const vs16 br = (vs16)(b >> 11), bg = (vs16)((b >> 5) & m63), bb = (vs16)(b & m31);
+            /* t / 32 towards zero: (t + (t < 0 ? 31 : 0)) >> 5 (arithmetic) */
+            vs16 tr = (br - ar) * wv, tg = (bg - ag) * wv, tb = (bb - ab) * wv;
+            tr = (tr + ((tr >> 15) & k31)) >> 5;
+            tg = (tg + ((tg >> 15) & k31)) >> 5;
+            tb = (tb + ((tb >> 15) & k31)) >> 5;
+            vst(dst + i, (vu16)(((vu16)(ar + tr) << 11) | ((vu16)(ag + tg) << 5) | (vu16)(ab + tb)));
+        }
+    }
+#endif
+    if (i < n)
+        wk_mix565_row_scalar(dst + i, amb + i, w, n - i);
 }
 
 /* ----- state -------------------------------------------------------------------- */
@@ -103,7 +301,18 @@ struct softrow_t {
     uint8_t ph, ok;
     uint16_t px[WK_MAX_MARGIN];
 };
-#define SOFTROWS 1024     /* a sky gradient has a colour per line and side; 128 thrashed (a pure cache: no output depends on its size) */
+#define SOFTROWS 512      /* a sky gradient has a colour per line and side; 128 thrashed (a pure cache: no output depends on its size) */
+
+/* what one caller of wk_compose_lines works in (rows being built, the soft row cache) */
+struct wk_compose_scratch {
+    int M;
+    uint16_t *row, *srow;
+    uint8_t *prow, *wrow;
+    uint8_t *mat;      /* per pixel of the row being built: 1 = row[] holds the final value so far */
+    uint16_t *seq;     /* inner strip + real run + tail */
+    uint8_t *seqo;
+    softrow_t softc[SOFTROWS];
+};
 
 struct wk_compose {
     wk_compose_cfg cfg;
@@ -112,28 +321,23 @@ struct wk_compose {
     uint8_t *stable;
     uint8_t *lvl_prev; /* [side][H] */
     uint8_t *gh_ext, *gh_t;
+    uint8_t *prev_stale; /* [side][H] 1: the line's row of the last frame was not drawn (side_skip): prev holds an older one */
     uint16_t *prev;    /* [side][H][M] last final margin rows */
     int16_t *edge;     /* [side][H][3] blurred edge colour */
     uint8_t smooth[65];
     uint8_t ramp[65][65];                /* [F][k]: weight k px from the outer end of a ramp of F px */
-    softrow_t softc[SOFTROWS];
-    uint16_t softf[WK_MAX_MARGIN + 1];   /* soft edge darkening factor per distance (256 = none) */
+    uint16_t softf[WK_MAX_MARGIN + 8];   /* soft edge darkening factor per distance (256 = none) */
     /* per phase (y & 3, y & 7) and side (s) and distance d: the Bayer thresholds the rows use */
     uint8_t th4[4][2][WK_MAX_MARGIN];    /* kBayer4 value (0..15)                              */
     uint8_t dth4[4][2][WK_MAX_MARGIN];   /* 2 * kBayer4: the blend dither                      */
     uint8_t th8[8][2][WK_MAX_MARGIN];    /* kBayer8 value (stipple threshold)                  */
     uint8_t zero[WK_MAX_MARGIN];         /* all-zero dither (stipple)                          */
     int lut5[32], lut6[64];              /* 5 and 6 bit channel to 0..255 (edge colours)       */
-    /* scratch rows */
-    uint16_t *row, *srow;
-    uint8_t *prow, *wrow, *drow;
-    uint8_t *mat;      /* per pixel of the row being built: 1 = row[] holds the final value so far */
+    wk_compose_scratch *own;             /* the scratch of wk_compose_frame and of the per frame part */
     int primed;
     /* periodic continuation */
     per_t *per;          /* [layer][side][H] */
     uint8_t *per_el;     /* [H] eligibility scratch */
-    uint16_t *seq;       /* inner strip + real run + tail */
-    uint8_t *seqo;
     uint16_t per_ban[WK_MAX_LAYERS];
     uint8_t per_strikes[WK_MAX_LAYERS];
     uint32_t last_epoch;
@@ -186,24 +390,18 @@ wk_compose *wk_compose_create(const wk_compose_cfg *cfg, int view_w, int view_h,
     c->lvl_prev = (uint8_t *)calloc(2 * HL, 1);
     c->gh_ext = (uint8_t *)calloc(2 * HL, 1);
     c->gh_t = (uint8_t *)calloc(2 * HL, 1);
+    c->prev_stale = (uint8_t *)calloc(2 * HL, 1);
     c->prev = (uint16_t *)calloc(2 * HL * (size_t)(margin ? margin : 1), 2);
     c->edge = (int16_t *)calloc(2 * HL * 3, 2);
-    c->row = (uint16_t *)calloc((size_t)(margin ? margin : 1) + 16, 2);
-    c->srow = (uint16_t *)calloc((size_t)(margin ? margin : 1) + 16, 2);
-    c->prow = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
-    c->wrow = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
-    c->drow = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
-    c->mat = (uint8_t *)calloc((size_t)(margin ? margin : 1) + 16, 1);
     c->per = (per_t *)calloc(WK_MAX_LAYERS * 2 * HL, sizeof(per_t));
     c->per_el = (uint8_t *)calloc(HL, 1);
-    c->seq = (uint16_t *)calloc((size_t)WK_MAX_INNER + (size_t)(margin ? margin : 1) + 40, 2);
-    c->seqo = (uint8_t *)calloc((size_t)WK_MAX_INNER + (size_t)(margin ? margin : 1) + 40, 1);
-    if (!c->per || !c->per_el || !c->seq || !c->seqo) {
+    c->own = wk_compose_scratch_create(c);
+    if (!c->per || !c->per_el || !c->own) {
         wk_compose_destroy(c);
         return NULL;
     }
     if (!c->ext || !c->stable || !c->lvl_prev || !c->gh_ext || !c->gh_t || !c->prev ||
-        !c->edge || !c->row || !c->srow || !c->prow || !c->wrow || !c->drow || !c->mat) {
+        !c->edge || !c->prev_stale) {
         wk_compose_destroy(c);
         return NULL;
     }
@@ -245,9 +443,39 @@ void wk_compose_destroy(wk_compose *c)
     if (!c)
         return;
     free(c->ext); free(c->stable); free(c->lvl_prev); free(c->gh_ext); free(c->gh_t);
-    free(c->per); free(c->per_el); free(c->seq); free(c->seqo);
-    free(c->prev); free(c->edge); free(c->row); free(c->srow); free(c->prow); free(c->wrow); free(c->drow); free(c->mat);
+    free(c->per); free(c->per_el);
+    free(c->prev); free(c->edge); free(c->prev_stale);
+    wk_compose_scratch_destroy(c->own);
     free(c);
+}
+
+wk_compose_scratch *wk_compose_scratch_create(const wk_compose *c)
+{
+    wk_compose_scratch *t = (wk_compose_scratch *)calloc(1, sizeof *t);
+    if (!t)
+        return NULL;
+    const size_t m = (size_t)(c->M ? c->M : 1);
+    t->M = c->M;
+    t->row = (uint16_t *)calloc(m + 16, 2);
+    t->srow = (uint16_t *)calloc(m + 16, 2);
+    t->prow = (uint8_t *)calloc(m + 16, 1);
+    t->wrow = (uint8_t *)calloc(m + 16, 1);
+    t->mat = (uint8_t *)calloc(m + 16, 1);
+    t->seq = (uint16_t *)calloc((size_t)WK_MAX_INNER + m + 40, 2);
+    t->seqo = (uint8_t *)calloc((size_t)WK_MAX_INNER + m + 40, 1);
+    if (!t->row || !t->srow || !t->prow || !t->wrow || !t->mat || !t->seq || !t->seqo) {
+        wk_compose_scratch_destroy(t);
+        return NULL;
+    }
+    return t;
+}
+
+void wk_compose_scratch_destroy(wk_compose_scratch *t)
+{
+    if (!t)
+        return;
+    free(t->row); free(t->srow); free(t->prow); free(t->wrow); free(t->mat); free(t->seq); free(t->seqo);
+    free(t);
 }
 
 void wk_compose_reset(wk_compose *c)
@@ -347,7 +575,7 @@ struct base_t {
 /* row[a + i] := base for i < n unless already final (mat); a pixel a blend covers fully (wgt[i] == 32) needs no
  * base (the blend result does not read it), it only becomes final.  The soft edge is evaluated in one loop per span
  * with the line's edge colour in locals. */
-static void base_fill(const wk_compose *c, const base_t &b, uint16_t *row, uint8_t *mat, int a, int n, const uint8_t *wgt)
+static void base_fill(const wk_compose *c, wk_compose_scratch *t, const base_t &b, uint16_t *row, uint8_t *mat, int a, int n, const uint8_t *wgt)
 {
     if (!b.soft) {
         for (int i = 0; i < n; i++) {
@@ -362,20 +590,9 @@ static void base_fill(const wk_compose *c, const base_t &b, uint16_t *row, uint8
     if (n >= c->M / 2) {
         /* whole row from the cache (computed for every distance on a miss) */
         const uint8_t ph = (uint8_t)((b.y & 3) | (b.s << 2));
-        softrow_t *sr = &((wk_compose *)c)->softc[(((unsigned)e0 * 0x9E3779B1u) ^ ((unsigned)e1 * 0x85EBCA6Bu) ^ ((unsigned)e2 * 0xC2B2AE35u) ^ ((unsigned)ph * 0x27D4EB2Fu)) >> 22];
+        softrow_t *sr = &t->softc[(((unsigned)e0 * 0x9E3779B1u) ^ ((unsigned)e1 * 0x85EBCA6Bu) ^ ((unsigned)e2 * 0xC2B2AE35u) ^ ((unsigned)ph * 0x27D4EB2Fu)) >> 23];
         if (!sr->ok || sr->ph != ph || sr->e[0] != e0 || sr->e[1] != e1 || sr->e[2] != e2) {
-            const uint16_t *sf = c->softf;
-            const uint8_t *th4 = c->th4[b.y & 3][b.s];
-            for (int d = 0; d < c->M; d++) {
-                const int f = sf[d], th = th4[d];
-                int r = ((e0 * f) >> 8) + (th >> 1);
-                int g = ((e1 * f) >> 8) + (th >> 2);
-                int bl = ((e2 * f) >> 8) + (th >> 1);
-                r = r > 255 ? 255 : r;
-                g = g > 255 ? 255 : g;
-                bl = bl > 255 ? 255 : bl;
-                sr->px[d] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (bl >> 3));
-            }
+            wk_soft_row(sr->px, c->M, e0, e1, e2, c->softf, c->th4[b.y & 3][b.s]);
             sr->e[0] = (int16_t)e0; sr->e[1] = (int16_t)e1; sr->e[2] = (int16_t)e2; sr->ph = ph; sr->ok = 1;
         }
         const uint16_t *px = sr->px;
@@ -426,20 +643,22 @@ static void base_fill(const wk_compose *c, const base_t &b, uint16_t *row, uint8
 /* ----- periodic continuation ------------------------------------------------------ */
 
 /* seq = inner strip (far .. near the edge) followed by the real margin run */
-static void build_seq(wk_compose *c, const wk_compose_in *in, int l, int s, int y, int ext)
+static void build_seq(const wk_compose *c, wk_compose_scratch *t, const wk_compose_in *in, int l, int s, int y, int ext)
 {
     const int IN = in->inner_n, M = c->M;
+    uint16_t *const seq = t->seq;
+    uint8_t *const seqo = t->seqo;
     const uint16_t *inn = in->inner[l][s] + (size_t)y * (size_t)IN;
     const uint8_t *ino = in->inner_opaque[l][s] ? in->inner_opaque[l][s] + (size_t)y * (size_t)IN : NULL;
     for (int k = 0; k < IN; k++) {
-        c->seq[k] = inn[IN - 1 - k];
-        c->seqo[k] = ino ? (uint8_t)(ino[IN - 1 - k] != 0) : 1;
+        seq[k] = inn[IN - 1 - k];
+        seqo[k] = ino ? (uint8_t)(ino[IN - 1 - k] != 0) : 1;
     }
     const uint16_t *cand = in->cand[l][s] ? in->cand[l][s] + (size_t)y * (size_t)M : NULL;
     const uint8_t *op = in->opaque[l][s] ? in->opaque[l][s] + (size_t)y * (size_t)M : NULL;
     for (int d = 0; d < ext; d++) {
-        c->seq[IN + d] = cand ? cand[d] : 0;
-        c->seqo[IN + d] = (cand && (!op || op[d])) ? 1 : 0;
+        seq[IN + d] = cand ? cand[d] : 0;
+        seqo[IN + d] = (cand && (!op || op[d])) ? 1 : 0;
     }
 }
 
@@ -559,12 +778,12 @@ static void period_layer(wk_compose *c, const wk_compose_in *in, int l)
                 continue;
             }
             /* remember what is predicted, keyed by world column */
-            build_seq(c, in, l, s, y, ext);
+            build_seq(c, c->own, in, l, s, y, ext);
             const int Pp = pl.P;
             for (int d = ext; d < ext + pl.ptail; d++) {
-                c->seq[IN + d] = c->seq[IN + d - Pp];
-                c->seqo[IN + d] = 1;
-                pl.proto[wk_floormod(per_wx(c, ana, l, s, y, d), Pp)] = c->seq[IN + d];
+                c->own->seq[IN + d] = c->own->seq[IN + d - Pp];
+                c->own->seqo[IN + d] = 1;
+                pl.proto[wk_floormod(per_wx(c, ana, l, s, y, d), Pp)] = c->own->seq[IN + d];
             }
             if (s == 1) {
                 pl.lo = per_wx(c, ana, l, s, y, ext);
@@ -580,10 +799,10 @@ static void period_layer(wk_compose *c, const wk_compose_in *in, int l)
 
 /* ----- the frame ------------------------------------------------------------------ */
 
-void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
+void wk_compose_begin(wk_compose *c, const wk_compose_in *in)
 {
     const wk_out *ana = in->ana;
-    const int H = c->H, W = c->W, M = c->M;
+    const int H = c->H, M = c->M;
     const wk_compose_cfg &cfg = c->cfg;
     const int nl = in->norder;
     {   /* the soft edge is only needed on lines nothing continues on */
@@ -636,8 +855,29 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
             period_layer(c, in, in->order[oi]);
     else
         memset(c->per, 0, WK_MAX_LAYERS * 2 * (size_t)H * sizeof(per_t));
+}
 
-    for (int y = 0; y < H; y++) {
+void wk_compose_end(wk_compose *c) { c->primed = 1; }
+
+void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
+{
+    wk_compose_begin(c, in);
+    wk_compose_lines(c, in, 0, c->H, NULL);
+    wk_compose_end(c);
+}
+
+void wk_compose_lines(wk_compose *c, const wk_compose_in *in, int y0, int y1, wk_compose_scratch *t)
+{
+    const wk_out *ana = in->ana;
+    const int H = c->H, W = c->W, M = c->M;
+    const wk_compose_cfg &cfg = c->cfg;
+    const int nl = in->norder;
+    if (!t)
+        t = c->own;
+    if (y0 < 0) y0 = 0;
+    if (y1 > H) y1 = H;
+
+    for (int y = y0; y < y1; y++) {
         uint16_t *orow = in->out + (size_t)y * (size_t)in->out_stride;
         uint8_t *oprov = in->prov ? in->prov + (size_t)y * (size_t)in->out_stride : NULL;
         memcpy(orow + M, in->centre + (size_t)y * (size_t)in->centre_stride, (size_t)W * 2);
@@ -650,9 +890,37 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
         for (int s = 0; s < 2; s++) {
             if (M <= 0)
                 break;
-            uint16_t *row = c->row;
-            uint8_t *prow = c->prow;
-            uint8_t *mat = c->mat;
+            if (in->side_skip[s]) {
+                /* not shown this frame: only what the next frames' hysteresis reads (the level extent, the ghost timers) */
+                int lvl = 0;
+                for (int oi = 0; oi < nl; oi++) {
+                    const int l = in->order[oi];
+                    const int is_back = (lo.backdrop_mask >> l) & 1;
+                    const int is_level = (lo.level_mask >> l) & 1;
+                    if (lo.hud || !in->cand[l][s] || (!is_back && !is_level))
+                        continue;
+                    const int e = EXT(c, l, s, y);
+                    if (is_level && e > lvl)
+                        lvl = e;
+                }
+                uint8_t &lp = c->lvl_prev[s * H + y];
+                uint8_t &ge = c->gh_ext[s * H + y];
+                uint8_t &gt = c->gh_t[s * H + y];
+                if (cfg.ghost_frames > 0 && c->primed && !ana->scene_event && lp - lvl >= cfg.ghost_min_px) {
+                    ge = lp;
+                    gt = (uint8_t)cfg.ghost_frames;
+                }
+                lp = (uint8_t)lvl;
+                if (gt > 0 && !ana->scene_event && !lo.hud)
+                    gt--;
+                else
+                    gt = 0;
+                c->prev_stale[s * H + y] = 1;
+                continue;
+            }
+            uint16_t *row = t->row;
+            uint8_t *prow = t->prow;
+            uint8_t *mat = t->mat;
             base_t bs;
             bs.soft = lo.hud || lo.backdrop_mask == 0 || cfg.soft_always;
             bs.s = s;
@@ -684,25 +952,24 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                 const uint8_t *op = in->opaque[l][s] ? in->opaque[l][s] + (size_t)y * (size_t)M : NULL;
                 if (ptail > 0) {
                     const int IN = in->inner_n, Pp = PER(c, l, s, y).P;
-                    build_seq(c, in, l, s, y, ext);
+                    build_seq(c, t, in, l, s, y, ext);
                     for (int d = ext; d < ext + ptail; d++) {
-                        c->seq[IN + d] = c->seq[IN + d - Pp];
-                        c->seqo[IN + d] = 1;
+                        t->seq[IN + d] = t->seq[IN + d - Pp];
+                        t->seqo[IN + d] = 1;
                     }
-                    cdat = c->seq + IN;
-                    op = c->seqo + IN;
+                    cdat = t->seq + IN;
+                    op = t->seqo + IN;
                 }
                 /* weights: full weight up to n-F (a plain opaque copy), the ramp over the last F */
                 const int n = ext + ptail;
                 const int F = (n >= M || use_tail) ? 0 : wk_min(wk_min(cfg.fade_px, 64), n);
                 const int smear = (is_level && n < M && cfg.smear_px > 0) ? wk_min(cfg.smear_px, M - n) : 0;
                 const int a0 = smear ? wk_clamp(cfg.smear_alpha, 0, 32) : 0;
-                uint8_t *w = c->wrow;
+                uint8_t *w = t->wrow;
                 const int nf = n - F;
                 if (op) {
-                    copy_masked(row, cdat, op, nf);
-                    for (int d = 0; d < nf; d++)
-                        mat[d] |= (uint8_t)(op[d] != 0);
+                    wk_copy_masked(row, cdat, op, nf);
+                    wk_or_nz8(mat, op, nf);
                 } else {
                     memcpy(row, cdat, (size_t)nf * 2);
                     memset(mat, 1, (size_t)nf);
@@ -715,7 +982,7 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                     w[d] = (uint8_t)(op && !op[d] ? 0 : wv);
                 }
                 if (F > 0) {
-                    base_fill(c, bs, row, mat, nf, F, w + nf);
+                    base_fill(c, t, bs, row, mat, nf, F, w + nf);
                     wk_blend_row(row + nf, cdat + nf, w + nf, dith + nf, F);
                 }
                 if (oprov) {
@@ -728,9 +995,18 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                             const int ej = EXT(c, lj, s, y);       /* the upper layer is fully there only up to its ramp */
                             lim = wk_min(lim, ej >= M ? M : ej - wk_min(wk_min(cfg.fade_px, 64), ej));
                         }
-                    for (int d = 0; d < n; d++) {
-                        const int full = d < nf ? (!op || op[d]) : w[d] == 32;
-                        const int any = d < nf ? full : w[d] != 0;
+                    /* the full weight part (d < nf): the same value over each of up to three stretches, wherever the layer is opaque */
+                    {
+                        const uint8_t hi = (uint8_t)(l << 4);
+                        const int b1 = wk_clamp(wk_min(lim, (int)ext), 0, nf);      /* [0, b1): the layer's own real pixels */
+                        const int b2 = wk_clamp(lim, b1, nf);                       /* [b1, b2): predicted (d >= ext), [b2, nf): revealed */
+                        wk_fill_masked8(prow, op, (uint8_t)(hi | (is_back ? WK_PROV_BACKDROP : WK_PROV_LEVEL)), b1);
+                        wk_fill_masked8(prow + b1, op ? op + b1 : NULL, (uint8_t)(hi | WK_PROV_PERIOD), b2 - b1);
+                        wk_fill_masked8(prow + b2, op ? op + b2 : NULL, (uint8_t)(hi | WK_PROV_REVEAL), nf - b2);
+                    }
+                    for (int d = nf; d < n; d++) {
+                        const int full = w[d] == 32;
+                        const int any = w[d] != 0;
                         if (!any)
                             continue;
                         const int pred = d >= ext;
@@ -748,16 +1024,15 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                     else if (n == 0 && in->tail_op[l][s] && in->tail_op[l][s][y]) { tc = in->tail_px[l][s][y]; have = 1; }
                     const int ft = wk_min(tailreq - n, M - n);
                     if (have && ft > 0) {
-                        uint16_t *sp = c->srow;
+                        uint16_t *sp = t->srow;
                         for (int d = 0; d < ft; d++) {
                             w[d] = c->ramp[wk_min(ft, 64)][wk_min(ft, 64) - (d < 64 ? d : 63)];
                             sp[d] = tc;
                         }
-                        base_fill(c, bs, row, mat, n, ft, w);
+                        base_fill(c, t, bs, row, mat, n, ft, w);
                         wk_blend_row(row + n, sp, w, c->zero + n, ft);
                         if (oprov)
-                            for (int d = 0; d < ft; d++)
-                                prow[n + d] = (uint8_t)((l << 4) | WK_PROV_SMEAR);
+                            memset(prow + n, (uint8_t)((l << 4) | WK_PROV_SMEAR), (size_t)ft);
                     }
                 }
                 if (smear) {
@@ -772,13 +1047,13 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                     }
                     if (cnt >= 2) {
                         uint16_t sc = (uint16_t)(((r / cnt) << 11) | ((g / cnt) << 5) | (b / cnt));
-                        uint16_t *sp = c->srow;
+                        uint16_t *sp = t->srow;
                         for (int d = 0; d < smear; d++) {
-                            int t = 32 - d * 32 / smear;          /* 32 .. 1 */
-                            w[d] = (uint8_t)(a0 * t / 32);
+                            int tt = 32 - d * 32 / smear;          /* 32 .. 1 */
+                            w[d] = (uint8_t)(a0 * tt / 32);
                             sp[d] = sc;
                         }
-                        base_fill(c, bs, row, mat, n, smear, w);
+                        base_fill(c, t, bs, row, mat, n, smear, w);
                         wk_blend_row(row + n, sp, w, dith4 + n, smear);
                         if (oprov)
                             for (int d = 0; d < smear; d++)
@@ -800,31 +1075,32 @@ void wk_compose_frame(wk_compose *c, const wk_compose_in *in)
                 const int lo_d = lvl_now, hi_d = ge;
                 const uint16_t *pv = c->prev + ((size_t)s * (size_t)H + (size_t)y) * (size_t)M;
                 int wv = 32 * gt / (cfg.ghost_frames + 1);
+                const int stale = c->prev_stale[s * H + y];   /* nothing to fade from: the stretch is marked, not blended */
                 for (int d = lo_d; d < hi_d && d < M; d++) {
                     uint8_t wk8 = (uint8_t)wv;
-                    base_fill(c, bs, row, mat, d, 1, &wk8);
-                    wk_blend_row(row + d, pv + d, &wk8, dith4 + d, 1);
+                    base_fill(c, t, bs, row, mat, d, 1, &wk8);
+                    if (!stale)
+                        wk_blend_row(row + d, pv + d, &wk8, dith4 + d, 1);
                     prow[d] = WK_PROV_GHOST;
                 }
                 gt--;
             } else {
                 gt = 0;
             }
-            base_fill(c, bs, row, mat, 0, M, NULL);      /* what nothing covered shows the base */
+            base_fill(c, t, bs, row, mat, 0, M, NULL);      /* what nothing covered shows the base */
             memcpy(c->prev + ((size_t)s * (size_t)H + (size_t)y) * (size_t)M, row, (size_t)M * sizeof(uint16_t));
+            c->prev_stale[s * H + y] = 0;
             /* write out (left side runs outwards from the centre) */
-            if (s == 0) {
-                for (int d = 0; d < M; d++)
-                    orow[M - 1 - d] = row[d];
+            if (s == 0 && !in->left_by_distance) {
+                wk_rev16(orow, row, M);
                 if (oprov)
-                    for (int d = 0; d < M; d++)
-                        oprov[M - 1 - d] = prow[d];
+                    wk_rev8(oprov, prow, M);
             } else {
-                memcpy(orow + M + W, row, (size_t)M * 2);
+                uint16_t *const dst = s == 0 ? orow : orow + M + W;
+                memcpy(dst, row, (size_t)M * 2);
                 if (oprov)
-                    memcpy(oprov + M + W, prow, (size_t)M);
+                    memcpy(s == 0 ? oprov : oprov + M + W, prow, (size_t)M);
             }
         }
     }
-    c->primed = 1;
 }

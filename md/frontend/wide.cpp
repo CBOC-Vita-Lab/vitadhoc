@@ -224,7 +224,7 @@ bool Wide::describe_gg(const md_wide_frame &f, const md_video_info &vi, uint32_t
 void Wide::analyse(uint32_t frame, const md_video_info &vi, int margin, int strip_px, Meta *m)
 {
 	m->valid = 0; m->system = vi.system; m->vw = vi.w; m->vh = vi.h; m->margin = margin; m->real_cap = margin < cap_default_ ? margin : cap_default_;
-	m->have_strips = 0; m->nlayers = 0; m->frame = frame; m->planes = (uint8_t) (vi.system == MD_SYS_MD ? planes_ : 3);
+	m->view_off = 0; m->have_strips = 0; m->nlayers = 0; m->frame = frame; m->planes = (uint8_t) (vi.system == MD_SYS_MD ? planes_ : 3);
 	memset(m->strip, 0, sizeof m->strip);
 	memset(m->on, 0, sizeof m->on);
 	st_.frames++;

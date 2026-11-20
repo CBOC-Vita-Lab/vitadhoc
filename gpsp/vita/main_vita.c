@@ -1007,7 +1007,9 @@ static int snes_link_page(int is_host, const char *game, const char *title, link
 
    if (rc == -2)
    {
-      app_notice("Nearby isn't available for SNES", "Use Same Wi-Fi or Online for two players.", NULL, 5000);
+      char nb[64];
+      snprintf(nb, sizeof(nb), "Nearby isn't available for %s games", link_snes_console_name(link_snes_console_of_file(game)));
+      app_notice(nb, "Use Same Wi-Fi or Online for two players.", NULL, 5000);
       return -1;
    }
    if (rc > 0)
@@ -1127,6 +1129,7 @@ static void player_session_collect(const char *pid)
          (void)fe_ini_get(lp, "link.mode", mode, sizeof(mode));
          ui = link_snes_ended(!strcmp(role, "host"), !strcmp(mode, "punch") || !strcmp(mode, "relay"), lres,
                               (int)fe_ini_get_int(sp, "link_error", 0), lname,
+                              (int)fe_ini_get_int(sp, "link_peer_reason", -1), pid,
                               (int)fe_ini_get_int(sp, "link_frames", 0), toast, sizeof(toast));
          fe_evt("snes_link_end result=%s error=%s frames=%ld ui=%d", lres, lname, fe_ini_get_int(sp, "link_frames", 0), ui);
          if (ui)
@@ -5004,6 +5007,30 @@ int ui_host_export_save(int dest, char *where, size_t wcap, char *note, size_t c
                                where, wcap, note, cap);
 }
 
+/* Settings > This game > Game Boy type: the running game's line in
+ * gb_override.txt (gbkind.h), the file the list scan and the direct launch
+ * already read; used from the next start. */
+int ui_host_gb_kind_get(void)
+{
+   char ovr[APP_PATH_CAP];
+   if (path_fmt(ovr, sizeof(ovr), "%s/gb_override.txt", g_app_root) != 0)
+      return 0;
+   (void)gbk_overrides_load(ovr);
+   return gbk_override_for(g_game.rom_path);
+}
+
+int ui_host_gb_kind_set(int kind)
+{
+   char ovr[APP_PATH_CAP];
+   if (path_fmt(ovr, sizeof(ovr), "%s/gb_override.txt", g_app_root) != 0)
+      return -1;
+   kind = kind == GBK_GB ? GBK_GB : kind == GBK_GBC ? GBK_GBC : GBK_NONE;
+   if (gbk_override_store(ovr, g_game.rom_path, kind) != 0)
+      return -1;
+   (void)gbk_overrides_load(ovr);
+   return 0;
+}
+
 void ui_host_sync_ra_set(int on)
 {
    g_sync_ra = on ? 1 : 0;
@@ -5884,6 +5911,7 @@ static void ho_draw(const uint16_t *pix, unsigned w, unsigned h, size_t pitch,
    const uint64_t ts0 = plat_time_us();
    uint32_t d;
    (void)user;
+   (void)seq;                  /* only the picture trace reads it */
    PIC_TRACE(seq, pix, w, h, pitch);
    vid_draw_frame(pix, w, h, pitch);
    osd_draw_snap((const osd_snap *)extra);

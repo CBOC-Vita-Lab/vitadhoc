@@ -114,11 +114,13 @@ TEST(session_report_link_result)
 	s.link_error = 2;
 	s.link_error_name = "rom_missing";
 	s.link_frames = 1234;
+	s.link_peer_reason = 2;
 	SessionReport p = session_parse(session_serialize(s));
 	CHECK_STR(p.link_result, "failed");
 	CHECK_EQ(p.link_error, 2);
 	CHECK_STR(p.link_error_name, "rom_missing");
 	CHECK_EQ(p.link_frames, 1234);
+	CHECK_EQ(p.link_peer_reason, 2);
 	SessionReport n;
 	n.console = "snes";
 	CHECK(session_serialize(n).find("link_") == std::string::npos);

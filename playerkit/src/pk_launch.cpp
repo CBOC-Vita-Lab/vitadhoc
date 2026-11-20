@@ -280,6 +280,7 @@ std::string session_serialize(const SessionReport &s)
 		i.set_int("link_error", s.link_error);
 		i.set("link_error_name", s.link_error_name);
 		i.set_int("link_frames", s.link_frames);
+		if (s.link_peer_reason >= 0) i.set_int("link_peer_reason", s.link_peer_reason);
 	}
 	return i.serialize();
 }
@@ -310,6 +311,7 @@ SessionReport session_parse(const std::string &text)
 	s.link_error = i.get_int("link_error", 0);
 	s.link_error_name = clean_line(i.get("link_error_name"), 32);
 	s.link_frames = i.get_int("link_frames", 0);
+	s.link_peer_reason = i.get_int("link_peer_reason", -1);
 	std::string st = i.get("states_touched");
 	size_t p = 0;
 	while (p < st.size()) {

@@ -36,6 +36,7 @@ struct Meta {
 	int vw, vh;           /* the view: the console's picture (the window of the Game Gear) */
 	int margin;           /* the wide picture's margin per side */
 	int real_cap;         /* the largest real margin the governor allows now (<= margin); 0: soft extension only */
+	int view_off;         /* pixels from the start of the picture's data to the view's column 0 (the player sets it: where its buffer puts the view) */
 	int have_strips;      /* the picture buffer holds candidate strips beside the view (Mega Drive, Game Gear) */
 	uint32_t frame;
 	uint8_t strip[256];   /* per line: 1 if the strip beside this line was drawn */

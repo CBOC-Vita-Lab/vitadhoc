@@ -1,5 +1,6 @@
 /* See picture.h. Copyright CBOC-Vita. MIT licence (see md/frontend/LICENSE). */
 #include "picture.h"
+#include "host.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +19,16 @@ void pic_defaults(pic_settings *s)
 	s->use_game = 0;
 	s->wide = 0;
 	s->tier_steps = 0;
+}
+
+pic_info pic_info_from_video(const struct md_video_info *vi)
+{
+	pic_info g;
+	g.w = vi->w; g.h = vi->h;
+	g.logical_rows = vi->h > vi->native_h * 3 / 2 ? vi->h / 2 : vi->h;      /* interlaced double height: two picture rows per console line */
+	g.dar = vi->dar; g.par = vi->par; g.system = vi->system;
+	if (vi->gg_band) { g.w = 160; g.logical_rows = 144; g.par = 1.2; g.dar = 1.2 * 160.0 / 144.0; }   /* the band's picture is shaped like the Game Gear's own window */
+	return g;
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }

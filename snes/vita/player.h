@@ -191,6 +191,7 @@ public:
 	{
 		link_result_ = result; link_err_ = err; link_err_name_ = err_name; link_frames_ = frames;
 	}
+	void set_link_peer_reason(int r) { link_peer_reason_ = r; }
 
 	/* ---- the end ---- */
 	/* resume point, battery RAM, settings, log, session.txt; afterwards the platform starts the app */
@@ -336,7 +337,7 @@ private:
 	bool menu_srm_pending_ = false;
 	std::string link_rom_, link_result_, link_err_name_;
 	unsigned link_pad_ = 0;
-	int link_err_ = 0, link_frames_ = 0;
+	int link_err_ = 0, link_frames_ = 0, link_peer_reason_ = -1;
 	/* wide view */
 	bool wide_on_ = false;
 	int wide_m_ = 0;

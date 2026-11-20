@@ -17,7 +17,7 @@ namespace mdp {
 
 class PicturePipe {
 public:
-	enum { MAX_W = 352, MAX_H = 576 };       /* the largest picture the core draws (md_host's MD_MAX_WIDTH x MD_MAX_HEIGHT: a core drawing straight in may use all of it) */
+	enum { MAX_W = 512, MAX_H = 576 };       /* the largest picture the core draws (md_host's MD_MAX_WIDTH x MD_MAX_HEIGHT) and the wide view's canvas pitch (MD_WIDE_PITCH: strips beside the picture) */
 	PicturePipe() : started_(false) {}
 	/* depth_max: pictures in flight when there is headroom (the model's choice is 2) */
 	bool start(pk::HandoffSys *sys, int depth_max, bool adaptive, uint32_t refresh_us, uint32_t frame_us);

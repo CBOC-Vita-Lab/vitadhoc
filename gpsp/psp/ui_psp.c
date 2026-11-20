@@ -2419,6 +2419,8 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        /* 1.4: a WonderSwan game's (set_row_shown), after every other row
         * of THIS GAME so nothing above moved */
        SET_WSROT, SET_WSVPLAY, SET_WSPAL,
+       /* 2.0: a Game Boy game's own type (gb_override.txt) */
+       SET_GBTYPE,
        /* 1.4: the running game's save as a plain file for other emulators
         * (docs/SAVES.md; ui_host_export_save) */
        SET_EXPORT,
@@ -2614,6 +2616,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Rotation" },
    { 0, "Vertical play" },
    { 0, "Palette" },
+   { 0, "Game Boy type" },
    { 0, "Export save for other emulators" },
    { 1, "ABOUT" },
    { 0, "Extra CPU core" },
@@ -2679,6 +2682,9 @@ static int set_row_shown(int idx)
       return pcfg_display_console() == FE_CONSOLE_NES;
    if (idx >= SET_WSROT && idx <= SET_WSPAL)
       return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_WSWAN;
+   if (idx == SET_GBTYPE)
+      return !g_ov_browse && g_pgame.on &&
+             (g_pgame.console == FE_CONSOLE_GB || g_pgame.console == FE_CONSOLE_GBC);
    if (idx == SET_EXPORT)
       return !g_ov_browse && g_pgame.on;
    if (idx >= SET_HDR_THIS && idx <= SET_SUN)
@@ -2720,6 +2726,23 @@ static int fastlink_row_enabled(void)
 {
    return pcfg_display_console() == FE_CONSOLE_GBA;
 }
+
+#ifdef VITA
+/* The running Game Boy game's type (gb_override.txt), read once per game and
+ * after a change, not once per drawn frame. */
+static char g_gbtype_path[320];
+static int  g_gbtype_have, g_gbtype_val;
+static int gbtype_now(void)
+{
+   if (!g_gbtype_have || strcmp(g_gbtype_path, g_pgame.path) != 0)
+   {
+      snprintf(g_gbtype_path, sizeof(g_gbtype_path), "%s", g_pgame.path);
+      g_gbtype_val = ui_host_gb_kind_get();
+      g_gbtype_have = 1;
+   }
+   return g_gbtype_val;
+}
+#endif
 
 static int set_row_enabled(int idx)
 {
@@ -3640,6 +3663,19 @@ static void settings_adjust(int id, int dir)
       app_ws_options();
       fe_evt("ws_setting palette=%d", g_pgame.ws_palette);
       break;
+   case SET_GBTYPE:
+   {
+      int k = (gbtype_now() + 3 + (dir < 0 ? -1 : 1)) % 3;
+      if (ui_host_gb_kind_set(k) == 0)
+      {
+         g_gbtype_have = 0;
+         osd_toast("Game Boy type is used the next time the game starts");
+         fe_evt("game_setting gb_type=%d", k);
+      }
+      else
+         osd_toast("Could not write gb_override.txt");
+      break;
+   }
    case SET_EXPORT:
       /* LEFT / RIGHT choose where; X exports (screen_settings) */
       g_export_dest = !g_export_dest;
@@ -3900,6 +3936,8 @@ static const char *set_help(int id)
                              ? "X: a plain .sav beside the game (mGBA, "
                                "SameBoy...)."
                              : "X: a copy RetroArch can use, where it looks.";
+   case SET_GBTYPE:   return "Auto follows the cartridge. Takes effect at "
+                             "the next start.";
    case SET_WSPAL:    return "Black-and-white games: grey, or the original "
                              "LCD's tint. Colour games keep theirs.";
    case SET_OVERLAY:  return ui_host_overlay_on()
@@ -4570,6 +4608,13 @@ static ui_action screen_settings(unsigned edges)
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pgame.ws_palette ? "Classic LCD tint" : "Greyscale");
          break;
+      case SET_GBTYPE:
+      {
+         int k = gbtype_now();
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  k == 1 ? "Game Boy" : k == 2 ? "Game Boy Color" : "Auto");
+         break;
+      }
       case SET_EXPORT:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_export_dest ? "plain .sav" : "for RetroArch");

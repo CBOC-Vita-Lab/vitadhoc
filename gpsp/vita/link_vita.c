@@ -3602,6 +3602,35 @@ static void snes_np_peer(void *user, uint8_t id, int connected)
       SL.peer_heard = 1;
 }
 
+/* The console id of a library file: md.bin's consoles by extension, else the SNES. */
+const char *link_snes_console_of_file(const char *rom_path)
+{
+   const char *dot = rom_path ? strrchr(rom_path, '.') : NULL;
+   if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin")))
+      return "md";
+   if (dot && !strcasecmp(dot, ".sms"))
+      return "sms";
+   if (dot && !strcasecmp(dot, ".gg"))
+      return "gg";
+   if (dot && !strcasecmp(dot, ".sg"))
+      return "sg";
+   return "snes";
+}
+
+/* What a console's games are called in a sentence ("Genesis game"): the same on every console. */
+const char *link_snes_console_name(const char *id)
+{
+   if (id && !strcmp(id, "md"))
+      return "Genesis";
+   if (id && !strcmp(id, "sms"))
+      return "Master System";
+   if (id && !strcmp(id, "gg"))
+      return "Game Gear";
+   if (id && !strcmp(id, "sg"))
+      return "SG-1000";
+   return "SNES";
+}
+
 int link_snes_begin(int is_host, const char *rom_path, const char *title)
 {
    const ui_join_info *t = ui_join_target();
@@ -3619,22 +3648,17 @@ int link_snes_begin(int is_host, const char *rom_path, const char *title)
    memset(&SL, 0, sizeof(SL));
    if (!link_snes_game_id(rom_path, SL.game))
       return UI_FAIL_GAME;
+   snprintf(SL.console, sizeof(SL.console), "%s", link_snes_console_of_file(rom_path));
+   if (!strcmp(SL.console, "gg"))
    {
-      /* the console of the file: md.bin's four consoles by extension, else the SNES */
-      const char *dot = strrchr(rom_path, '.');
-      const char *id = "snes";
-      if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin")))
-         id = "md";
-      else if (dot && !strcasecmp(dot, ".sms"))
-         id = "sms";
-      else if (dot && !strcasecmp(dot, ".gg"))
-         id = "gg";
-      else if (dot && !strcasecmp(dot, ".sg"))
-         id = "sg";
-      snprintf(SL.console, sizeof(SL.console), "%s", id);
+      memset(&SL, 0, sizeof(SL));          /* the Game Gear has one controller: no Two players, no room */
+      return UI_FAIL_GAME;
    }
    snprintf(SL.rom, sizeof(SL.rom), "%s", rom_path);
-   snprintf(SL.title, sizeof(SL.title), "%.39s", title && title[0] ? title : "SNES game");
+   if (title && title[0])
+      snprintf(SL.title, sizeof(SL.title), "%.39s", title);
+   else
+      snprintf(SL.title, sizeof(SL.title), "%s game", link_snes_console_name(SL.console));
    SL.on = 1;
    SL.phase = LSN_WORKING;
    SL.t_begin = SL.t_seen = L.ticks;
@@ -3789,11 +3813,16 @@ int link_snes_game_id(const char *rom_path, char out[9])
    return 1;
 }
 
-int link_snes_ended(int was_host, int online, const char *result, int error, const char *name, int frames,
-                    char *toast, unsigned toast_cap)
+int link_snes_ended(int was_host, int online, const char *result, int error, const char *name, int peer_reason,
+                    const char *console, int frames, char *toast, unsigned toast_cap)
 {
    int ui = 0;
-   const int gerr_known = name && name[0] && strcmp(name, "ok") != 0;
+   int gerr_known = name && name[0] && strcmp(name, "ok") != 0;
+   (void)console;                       /* every console reads the same sentences */
+   const int asleep = error == 12 || (gerr_known && !strcmp(name, "suspend"));       /* pk_link LE_SUSPEND */
+   /* the other console ended it and said why (pk_link LE_ROM_MISSING 2 / LE_ROM_BAD 3: it plays another game): the guest
+    * reads that as the host's own refusal */
+   const int other_game = (error == 8 || (gerr_known && !strcmp(name, "peer_abort"))) && (peer_reason == 2 || peer_reason == 3);
 
    if (toast && toast_cap)
       toast[0] = '\0';
@@ -3804,7 +3833,11 @@ int link_snes_ended(int was_host, int online, const char *result, int error, con
       snprintf(toast, toast_cap, "%s", was_host ? "Link ended. Game saved." : "Link ended. Your own game is back.");
       return 0;
    }
-   (void)error;
+   if (asleep)
+   {
+      snprintf(toast, toast_cap, "%s", "This Vita went to sleep, so the link ended.");
+      return 0;
+   }
    if (frames > 0)
    {
       /* it ran, and then it did not last (as link_end says it for the other games) */
@@ -3814,7 +3847,7 @@ int link_snes_ended(int was_host, int online, const char *result, int error, con
       return 0;
    }
    /* it never started: the joiner reads two lines (link_end's fail_screen), the host a toast */
-   if (gerr_known && (strstr(name, "rom_") != NULL || strstr(name, "missing") != NULL))
+   if (other_game || (gerr_known && (strstr(name, "rom_") != NULL || strstr(name, "missing") != NULL)))
       ui = UI_FAIL_ONLINE_GAME;
    else if (gerr_known && !strcmp(name, "proto"))
       ui = UI_FAIL_VERSION;
@@ -3826,7 +3859,7 @@ int link_snes_ended(int was_host, int online, const char *result, int error, con
    {
       /* the host keeps no failure screen: its toast (link_end's) */
       snprintf(toast, toast_cap, "%s",
-               ui == UI_FAIL_ONLINE_GAME ? "The other Vita could not set up the game." : "The link did not start.");
+               ui == UI_FAIL_ONLINE_GAME ? "The other Vita has a different game." : "The link did not start.");
       return was_host ? 0 : ui;
    }
    return ui;

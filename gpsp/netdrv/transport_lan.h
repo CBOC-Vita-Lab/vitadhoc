@@ -45,7 +45,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef PK_PLAYER
+#include "pk_lan_compat.h"   /* the separate players: MIT types of their own, no app driver headers */
+#else
 #include "netdrv.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {

@@ -162,6 +162,10 @@ static void step_frame(int f, Acc &acc, double *dt)
 		md_video_info bvi; md_host_video_info(&bvi);
 		if (bvi.gg_band) { px += 48; w = 160; }
 	}
+	if (const char *df = getenv("MD_DUMP_FRAME")) if (atoi(df) == f) {   // debug: the picture the hashes see, as raw RGB565 rows
+		char nm[300]; snprintf(nm, sizeof nm, "%s.%d.raw", getenv("MD_DUMP_PREFIX") ? getenv("MD_DUMP_PREFIX") : "dump", f);
+		if (FILE *fp = fopen(nm, "wb")) { for (int y = 0; y < h; y++) fwrite((const char *)px + (size_t)y * pitch, 1, (size_t)w * 2, fp); fclose(fp); }
+	}
 	int dim[2] = { w, h };
 	u64 v0 = acc.v;
 	acc.v = hash_bytes(acc.v, dim, sizeof dim);

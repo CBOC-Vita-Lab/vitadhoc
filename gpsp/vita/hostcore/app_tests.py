@@ -1450,6 +1450,49 @@ def t_vita_ini_once(S):
     S.check(r.has(r"^EVT switches2 .* up_slide=1 .* fade_drop=1 "), "values set in vita.ini still apply")
 
 
+def t_gb_type(S):
+    """Settings > THIS GAME > Game Boy type (Auto / Game Boy / Game Boy Color):
+    the running game's own line in gb_override.txt, the file the list scan and
+    the direct launch read (gbkind.h).  X steps it, Auto takes the line out,
+    other games' lines and comments stay, and the next start plays the game
+    as the line says."""
+    if not os.path.exists(OWN_GB):
+        S.note("no testrom/gbsave.gb: skipped")
+        return
+    keep = "# my overrides\ngbc  Other Game.gb\n"
+    # the header of gbsave.gb is a plain Game Boy: it starts as one
+    r = S.run("gb_type_auto", "60:quit\n", autoboot="gbsave.gb")
+    S.clean(r)
+    S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GB code="),
+            "no override: the cartridge header decides (a Game Boy)")
+    # three presses: Game Boy, Game Boy Color, back to Auto
+    steps = menu_pick(4, wait=60) + set_down(19) + "+10:shot=row.png\n"
+    r = S.run("gb_type_row", steps + "+6:cross\n+30:quit\n", autoboot="gbsave.gb",
+              extra={"gb_override.txt": keep})
+    S.clean(r)
+    S.picture(r, "row.png")
+    f = os.path.join(r.root, "gb_override.txt")
+    t = open(f).read() if os.path.exists(f) else ""
+    S.check(r.has(r"^EVT game_setting gb_type=1$"),
+            "X on Game Boy type: Game Boy")
+    S.check(re.search(r"^gb\s+gbsave\.gb$", t, re.M) and "# my overrides" in t and
+            re.search(r"^gbc\s+Other Game\.gb$", t, re.M),
+            "the line is written and the rest of the file is kept (%r)" % t)
+    r = S.run("gb_type_cycle", steps + "+6:cross\n+8:cross\n+8:cross\n+30:quit\n",
+              autoboot="gbsave.gb", extra={"gb_override.txt": keep})
+    S.clean(r)
+    t = open(os.path.join(r.root, "gb_override.txt")).read()
+    S.check(r.has(r"gb_type=2") and r.has(r"gb_type=0") and
+            "gbsave" not in t and "Other Game.gb" in t,
+            "Color, then Auto: the game's line is gone, the other one stays (%r)" % t)
+    # the next start follows the file
+    r = S.run("gb_type_color", "60:quit\n", autoboot="gbsave.gb",
+              extra={"gb_override.txt": "gbc  gbsave.gb\n"})
+    S.clean(r)
+    S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GBC code="),
+            "the next start plays it as a Game Boy Color")
+
+
 def t_gb_save_soon(S):
     """A Game Boy save is on the card within about two seconds of being made:
     the Vita gives no warning before the app is closed from LiveArea, so the
@@ -8488,7 +8531,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("wide_auto", t_wide_auto), ("wide_top", t_wide_top),
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
-         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("launch_param", t_launch_param),
+         ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),

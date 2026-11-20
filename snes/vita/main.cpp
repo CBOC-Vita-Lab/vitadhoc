@@ -1802,6 +1802,7 @@ int main(int argc, char **argv)
 		if (!g_link->restored_ok()) logf_("link: the machine could not be put back on this console's own game\n");
 		logf_("%s\n", sum.c_str());
 		g_pl->set_link_result(done ? "done" : "failed", gerr ? gerr : (int) f, g_link->gblink_error_name(), (int) fr);
+		g_pl->set_link_peer_reason(g_link->peer_reason());
 		link_net_down();
 	}
 	/* resume point, battery RAM, settings, log, launch/session.txt */

@@ -63,6 +63,23 @@ int main(void)
    check(kind_of(dir, "Color Only.gb") == GBK_GBC && kind_of(dir, "Plain Misnamed.gbc") == GBK_GB, "files without an override follow the header");
    gbk_overrides_clear();
    check(kind_of(dir, "Plain.gb") == GBK_GB, "no overrides: the header again");
+   /* the menu's "Game Boy type" writes the same file, keeping the rest of it */
+   check(gbk_override_store(ovr, "ux0:data/roms/Sub/Plain.gb", GBK_GB) == 0 &&
+         gbk_overrides_load(ovr) == 3 && kind_of(dir, "Plain.gb") == GBK_GB,
+         "store: one game's line changed, the others kept");
+   check(gbk_override_store(ovr, "New Game.gb", GBK_GBC) == 0 && gbk_overrides_load(ovr) == 4 &&
+         gbk_override_for("New Game.gb") == GBK_GBC, "store: a new game's line added");
+   check(gbk_override_store(ovr, "REAL COLOR.gbc", GBK_NONE) == 0 && gbk_overrides_load(ovr) == 3 &&
+         gbk_override_for("Real Color.gbc") == GBK_NONE && kind_of(dir, "Real Color.gbc") == GBK_GBC,
+         "store: Auto takes the game's line out, whatever the case");
+   {
+      char buf[1024] = "";
+      FILE *f = fopen(ovr, "rb");
+      if (f) { size_t n = fread(buf, 1, sizeof(buf) - 1, f); buf[n] = '\0'; fclose(f); }
+      check(strstr(buf, "# my overrides") && strstr(buf, "bogus line"), "store: comments and unknown lines kept");
+   }
+   check(gbk_override_store("/nonexistent-dir/gb_override.txt", "X.gb", GBK_GB) == -1, "store: an unwritable folder reports it");
+   gbk_overrides_clear();
    if (fails) return 1;
    puts("PASS: gbkind (header flag, both directions, unreadable header, override)");
    return 0;

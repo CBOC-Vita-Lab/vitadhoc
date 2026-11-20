@@ -117,6 +117,15 @@ typedef struct wk_compose_in {
      * margin) and whether it is opaque there; used when the layer is not known at all beside the view on that line */
     const uint16_t *tail_px[WK_MAX_LAYERS][2];   /* [y] */
     const uint8_t *tail_op[WK_MAX_LAYERS][2];    /* [y] */
+    /* optional (0 = as before).  side_skip[s]: the caller will not show this side's margin of this frame (it shows
+     * something of its own there): nothing is written to out / prov for that side and its cand / opaque strips are not
+     * read; the hysteresis (pass A, the ghost timers) advances exactly as if it had been drawn.  The one thing that is
+     * not kept is the "previous row" a ghost fade blends from: a ghost in the first ghost_frames frames after a skipped
+     * frame blends from the last row that was drawn. */
+    uint8_t side_skip[2];
+    /* 1: the left margin is written by distance (out[y][d], d = 0 next to the picture) instead of in screen order; the
+     * caller turns it round (wk_rev16 / wk_rev8) when it has finished working on it */
+    int left_by_distance;
 } wk_compose_in;
 
 #define WK_EDGE_N 8     /* pixels per line and side of wk_compose_in.edge_px (>= soft_sample, which is at most 8) */
@@ -129,6 +138,19 @@ void wk_compose_destroy(wk_compose *c);
 void wk_compose_reset(wk_compose *c);   /* forget hysteresis (new game/session) */
 void wk_compose_frame(wk_compose *c, const wk_compose_in *in);
 
+/* The same frame in three steps, so that the lines can be shared between threads:
+ *   wk_compose_begin   the per frame part (hysteresis of every line, periodic continuation); one thread
+ *   wk_compose_lines   lines y0 .. y1 - 1; calls for disjoint line ranges may run at the same time, each with its
+ *                      own scratch (NULL = the handle's own: one caller at a time)
+ *   wk_compose_end     one thread, after every line
+ * wk_compose_frame is begin + lines(0, H, NULL) + end.  Output does not depend on how the lines are split. */
+typedef struct wk_compose_scratch wk_compose_scratch;
+wk_compose_scratch *wk_compose_scratch_create(const wk_compose *c);
+void wk_compose_scratch_destroy(wk_compose_scratch *s);
+void wk_compose_begin(wk_compose *c, const wk_compose_in *in);
+void wk_compose_lines(wk_compose *c, const wk_compose_in *in, int y0, int y1, wk_compose_scratch *s);
+void wk_compose_end(wk_compose *c);
+
 /* The blend kernel, exposed for tests: for i < n,
  *   dst = (src * w + dst * (32 - w) + dither) >> 5   per 565 channel,
  * w in 0..32, dither in 0..31.  The _scalar version is the reference; the
@@ -138,6 +160,29 @@ void wk_blend_row_scalar(uint16_t *dst, const uint16_t *src, const uint8_t *w,
 void wk_blend_row(uint16_t *dst, const uint16_t *src, const uint8_t *w,
                   const uint8_t *dither, int n);
 int wk_have_neon(void);
+
+/* Row kernels (8 pixels per step with NEON or SSE2, else plain C; the _scalar versions are the definitions and the
+ * results are identical; checked by the tests and, for NEON, under qemu-arm).
+ *   wk_soft_row      dst[d] = the soft edge / ambient colour of distance d: per channel min(255, ((e * f[d]) >> 8) + (th[d] >> 1))
+ *                    (green: th[d] >> 2), packed to 565; e 0..255, f 0..256, th 0..15
+ *   wk_copy_masked   dst[i] = src[i] where op[i] != 0
+ *   wk_fill_masked8  dst[i] = v where op[i] != 0 (op NULL: everywhere)
+ *   wk_or_nz8        dst[i] |= (src[i] != 0)
+ *   wk_nz8           dst[i] = (src[i] != 0)
+ *   wk_rev16 / 8     dst[i] = src[n - 1 - i] (dst and src do not overlap); wk_rev16_inplace / wk_rev8_inplace turn a row round
+ *   wk_mix565_row    dst[i] = a + (b - a) * w / 32 per 565 channel with a = dst[i], b = amb[i] (C division: towards zero), w 0..32 */
+void wk_soft_row(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th);
+void wk_soft_row_scalar(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f, const uint8_t *th);
+void wk_copy_masked(uint16_t *dst, const uint16_t *src, const uint8_t *op, int n);
+void wk_fill_masked8(uint8_t *dst, const uint8_t *op, uint8_t v, int n);
+void wk_or_nz8(uint8_t *dst, const uint8_t *src, int n);
+void wk_nz8(uint8_t *dst, const uint8_t *src, int n);
+void wk_rev16(uint16_t *dst, const uint16_t *src, int n);
+void wk_rev8(uint8_t *dst, const uint8_t *src, int n);
+void wk_rev16_inplace(uint16_t *p, int n);
+void wk_rev8_inplace(uint8_t *p, int n);
+void wk_mix565_row(uint16_t *dst, const uint16_t *amb, int w, int n);
+void wk_mix565_row_scalar(uint16_t *dst, const uint16_t *amb, int w, int n);
 
 /* How often hindsight switched periodic continuation off (diagnostics). */
 int wk_compose_period_bans(const wk_compose *c);

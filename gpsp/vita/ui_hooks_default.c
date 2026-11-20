@@ -49,6 +49,8 @@ UI_WEAK const char *ui_host_look_label(void)    { return NULL; }
 UI_WEAK int ui_host_export_save(int dest, char *where, size_t wcap, char *note,
                                 size_t cap)
 { (void)dest; (void)where; (void)wcap; (void)note; (void)cap; return -1; }
+UI_WEAK int         ui_host_gb_kind_get(void)   { return 0; }
+UI_WEAK int         ui_host_gb_kind_set(int k)  { (void)k; return -1; }
 UI_WEAK int         ui_host_extra_roots(void)   { return 0; }
 UI_WEAK int         ui_host_extra_root_toggle(const char *f) { (void)f; return -3; }
 UI_WEAK int         ui_host_zip_console(const char *p, unsigned n) { (void)p; (void)n; return -1; }

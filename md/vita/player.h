@@ -192,6 +192,7 @@ public:
 	{
 		link_result_ = result; link_err_ = err; link_err_name_ = err_name; link_frames_ = frames;
 	}
+	void set_link_peer_reason(int r) { link_peer_reason_ = r; }
 	/* the host's save after an agreed end: written through the same safe file as every battery save; 0 = written */
 	int link_commit_save(const uint8_t *data, size_t n);
 
@@ -201,6 +202,17 @@ public:
 
 	/* ---- for the platform and tests ---- */
 	const pic_settings &picture() const { return eff_; }   /* ps_ with the look governor applied */
+
+	/* ---- wide view (the Wide view row: Auto, On, Off; md/frontend/wide.h does the work) ----
+	 * wide_apply() is called once per refresh with the screen's size: it works out the margin the picture's shape wants (pic_wide_margin) and
+	 * whether the view is on (not Off, not a linked game), and switches the Game Gear's 256 wide band on or off. The main loop draws the strips
+	 * and composes while wide_active(). wide_mode(): 0 Auto (the cost ladder), 1 On (always the full strips), 2 Off. wide_jumps() counts the
+	 * state loads, rewinds and resets after which the analysis must start again. */
+	void wide_apply(int scr_w, int scr_h);
+	bool wide_active() const { return wide_on_; }
+	int wide_margin() const { return wide_m_; }
+	int wide_mode() const { return eff_.wide; }
+	unsigned wide_jumps() const { return jumps_; }
 	const pk::LaunchRequest &request() const { return req_; }
 	bool have_launch_file() const { return have_launch_; }
 	const std::string &console() const { return console_; }
@@ -295,6 +307,9 @@ private:
 	int system_ = MD_SYS_MD;
 	pic_settings ps_;              /* what the player chose (and what the files hold) */
 	pic_settings eff_;             /* ps_ with the governor's steps: what is shown */
+	bool wide_on_ = false;         /* the wide view is on (wide_apply) */
+	int wide_m_ = 0;               /* its margin per side, in console pixels */
+	unsigned jumps_ = 0;           /* state loads, rewinds, resets */
 	/* the settings the menu's own rows do not cover; stored in <console>/player.ini */
 	int region_ = 0, fm_ = 0, ym2413_ = 2, pad_type_ = 0, sms_border_ = 0, gg_lcd_ = 0;
 	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
@@ -341,7 +356,7 @@ private:
 	uint32_t extra_caps_ = 0;
 	std::string link_rom_, link_result_, link_err_name_;
 	unsigned link_pad_ = 0;
-	int link_err_ = 0, link_frames_ = 0;
+	int link_err_ = 0, link_frames_ = 0, link_peer_reason_ = -1;
 	pk::Pacer pacer_;
 	pk::States *states_ = 0;
 	pk::SessionTracker session_;

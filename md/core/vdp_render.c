@@ -4984,7 +4984,9 @@ static void wide_line(int line, int spr_in)
     PIXEL_OUT_T *row = (PIXEL_OUT_T *)&bitmap.data[line * bitmap.pitch];
     const uint16 st = status, sc = spr_col;
     const uint8 so = spr_ovr;
+    uint8 lbsave[sizeof linebuf];
     const int cols = (wide_m + 15) >> 4;
+    memcpy(lbsave, linebuf, sizeof linebuf);
     for (side = 0; side < 2; side++)
     {
       uint8 *src;
@@ -5013,6 +5015,7 @@ static void wide_line(int line, int spr_in)
       }
     }
     status = st; spr_col = sc; spr_ovr = so;
+    memcpy(linebuf, lbsave, sizeof linebuf);
   }
   r->flags |= WL_STRIP;
 }

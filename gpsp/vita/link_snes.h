@@ -58,8 +58,12 @@ int  link_snes_game_id(const char *rom_path, char out[9]);
 /* The way a session ended, from the report snes.bin left (launch/session.txt: link_result, link_error,
  * link_error_name, link_frames) and the launch file (link.role, link.mode): the toast the app says, or a UI_FAIL_*
  * code for a failure that has its own two lines (the joiner's, as link_end does).  Returns the UI code or 0. */
-int  link_snes_ended(int was_host, int online, const char *result, int error, const char *name, int frames,
-                     char *toast, unsigned toast_cap);
+int  link_snes_ended(int was_host, int online, const char *result, int error, const char *name, int peer_reason,
+                     const char *console, int frames, char *toast, unsigned toast_cap);
+/* The console id ("snes", "md", "sms", "gg", "sg") a library file is played by, and how its games are named in a sentence
+ * ("SNES", "Genesis", "Master System", "Game Gear", "SG-1000"). */
+const char *link_snes_console_of_file(const char *rom_path);
+const char *link_snes_console_name(const char *id);
 
 #ifdef __cplusplus
 }

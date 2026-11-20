@@ -50,8 +50,8 @@ RCOPY_SRC := gfx tile tileimpl-h2x1 tileimpl-n1x1 tileimpl-n2x1
 RCOPY_OBJS := $(addprefix $(B)/rcopy/,$(addsuffix .o,$(RCOPY_SRC)))
 FE_OBJS   := $(B)/host.o $(B)/prof.o $(B)/audio_pace.o $(B)/picture.o $(B)/wide.o $(B)/player.o $(B)/pipe.o $(B)/netplay.o $(B)/main.o
 # the two-player link's C files from gpsp/ (netplay.mk), built as the main app builds them (-DVITA: sceKernel threads, netctl),
-# and the one name transport_lan.c wants from the session driver (playerkit/src/pk_link_net_shim.c)
-NP_OBJS   := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC)) $(B)/pk/pk_link_net_shim.o
+# (no netdrv header: PK_PLAYER, playerkit/src/pk_lan_compat.h)
+NP_OBJS   := $(patsubst $(GP)/%.c,$(B)/gp/%.o,$(NETPLAY_GP_SRC))
 # widekit (MIT, ../../widekit): the wide view's layer analysis, learned map and composition
 WK_SRC    := $(notdir $(basename $(wildcard $(WK)/src/*.cpp)))
 WK_OBJS   := $(addprefix $(B)/wk/,$(addsuffix .o,$(WK_SRC)))
@@ -93,12 +93,15 @@ LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q -Wl,-Map=$(B)/snes.map $(STDIO_LOCK_LD) -o 
 # LICENCE CHECK: the player must not link the main app's Game Boy link (third-party GPL-2.0 from the GBAdhoc project):
 # not in the object list, not in the linker's map, and none of its symbols defined in the program. The build fails if one is.
 FORBID_RE := $(subst .,\.,$(subst $(space),|,$(strip $(NETPLAY_FORBIDDEN))))
+FORBID_HDR_RE := $(subst .,\.,$(subst $(space),|,$(strip $(NETPLAY_FORBIDDEN_HDR))))
 FORBID_SYM := ^(netdrv_|fe_gblink_|fe_evt|fe_crc32|fe_util_|fe_padpair_|gbdual_|gbcore_|gblink_)
 CHECK_LICENCE = @bad="$$( { for o in $(SNES_OBJS); do basename $$o; done | grep -E '^($(FORBID_RE))$$'; \
 	grep -E '[/( ]($(FORBID_RE))' $(B)/snes.map; \
 	$(NM) $(1) | awk '$$2 ~ /^[TtDdBbRrWw]$$/ { print $$3 }' | grep -E '$(FORBID_SYM)'; } )"; \
 	if [ -n "$$bad" ]; then echo "LICENCE: snes.bin links a file of the main app's Game Boy link (GBAdhoc, GPL-2.0): $$bad"; rm -f $(1); exit 1; fi; \
-	echo "check-licence: none of $(NETPLAY_FORBIDDEN) in the object list, the link map or the symbol table (the link is pk_link + transport_lan + nat_*)"
+	hdr="$$(cat $$(find $(B) -name '*.d' 2>/dev/null) 2>/dev/null | tr ' \\' '\n\n' | grep -E '(^|/)($(FORBID_HDR_RE))$$' | sort -u)"; \
+	if [ -n "$$hdr" ]; then echo "LICENCE: snes.bin was compiled against a header of the main app's Game Boy link driver (GBAdhoc, GPL-2.0): $$hdr"; rm -f $(1); exit 1; fi; \
+	echo "check-licence: none of $(NETPLAY_FORBIDDEN) in the object list, the link map or the symbol table, none of $(NETPLAY_FORBIDDEN_HDR) in any compile's dependency file (the link is pk_link + transport_lan + nat_*)"
 
 # RetroAchievements: of everything from gpsp/ in the program only the files of RA_SRCS (ra.mk) may be there, and each is MIT
 # (ra_http.c and ra_roots.h are the owner's, dual MIT OR GPL-2.0-or-later; the rcheevos client is MIT; ra_vita.c is not linked).
@@ -152,16 +155,13 @@ $(B)/%.o: $(FE)/%.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 $(B)/netplay.o: netplay.cpp netplay.h $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)
-	$(CXX) $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+	$(CXX) -MMD -MP $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
 $(B)/gp/%.o: $(GP)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -Wextra -DVITA $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
-$(B)/pk/pk_link_net_shim.o: $(PK)/src/pk_link_net_shim.c
-	@mkdir -p $(dir $@)
-	$(CC) -MMD -MP $(CPUFLAGS) -O2 -g -Wall -DVITA -c -o $@ $<
 $(B)/pk/pk_link_net.o: $(PK)/src/pk_link_net.cpp $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
+	$(CXX) -MMD -MP $(CXXFLAGS) $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
 $(B)/main.o: main.cpp $(FE)/host.h player.h pipe.h netplay.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

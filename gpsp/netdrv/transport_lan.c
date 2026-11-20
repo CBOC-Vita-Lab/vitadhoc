@@ -68,8 +68,13 @@
  *   players (which is every link-cable mode); more need everybody on one LAN.
  */
 #include "transport_lan.h"
+#ifdef PK_PLAYER
+/* snes.bin / md.bin: no netdrv headers (see playerkit/src/pk_lan_compat.h); the roster rewrite below is app-only */
+#include "pk_lan_compat.h"
+#else
 #include "netdrv_wire.h"
 #include "nd_thread.h"
+#endif
 #include "nat_stun.h"
 #include "nat_turn.h"
 
@@ -1063,6 +1068,7 @@ static void lan_io_keepalives(lan_transport *t, uint64_t now)
 
 /* ---- NAT translation (emulation thread; see the top of the file) --------- */
 
+#ifndef PK_PLAYER
 static int frame_crc_ok(const uint8_t *f, int n)
 {
    uint8_t hdr[ND_HDR_SIZE];
@@ -1147,6 +1153,13 @@ static void nat_rewrite(lan_transport *t, const struct sockaddr_in *from,
    if (changed)
       frame_crc_set(f, n);
 }
+#else
+/* a player carries no netdrv frame (pk_link uses the datagram lane only) */
+static void nat_rewrite(lan_transport *t, const struct sockaddr_in *from, uint8_t *f, int n)
+{
+   (void)t; (void)from; (void)f; (void)n;
+}
+#endif
 
 /* ---- nd_transport vtable (emulation thread) ------------------------------ */
 

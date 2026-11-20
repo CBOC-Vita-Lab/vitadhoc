@@ -105,7 +105,7 @@ test('create: every field validation, the message names the field', async () => 
     ['ver', { ver: '2.0.0-dev' }], ['ver', { ver: '' }], ['ver', { ver: 2 }], ['ver', { ver: undefined }],
     ['compat', { compat: '1A2B3C4D' }], ['compat', { compat: '1a2b3c4' }], ['compat', { compat: 'zzzzzzzz' }], ['compat', { compat: undefined }],
     ['kind', { kind: 3 }], ['kind', { kind: 6 }], ['kind', { kind: '1' }], ['kind', { kind: undefined }],
-    ['console', { console: 'n64' }], ['console', { console: 'GBA' }], ['console', { console: undefined }],
+    ['console', { console: 'n64' }], ['console', { console: 'gg' }], ['console', { console: 'MD' }], ['console', { console: 'wsc' }], ['console', { console: 'GBA' }], ['console', { console: undefined }],
     ['game', { game: 'bpee' }], ['game', { game: '' }], ['game', { game: 'ABCDEFGHI' }], ['game', { game: 'AB-C' }], ['game', { game: undefined }],
     ['rom', { rom: '9F3A01C2' }], ['rom', { rom: '9f3a01c' }], ['rom', { rom: 7 }],
     ['title', { title: 7 }],
@@ -123,6 +123,14 @@ test('create: every field validation, the message names the field', async () => 
   // allowed alternatives
   for (const over of [{ rom: '' }, { title: '' }, { console: 'ws' }, { kind: 0 }, { kind: 2 }, { kind: 4 }, { kind: 5 }, { pub: '' }, { lan: '' }, { game: 'A' }, { game: 'ABCDEFG9' }]) {
     assert.equal((await s.create(hostDesc(over))).status, 201, JSON.stringify(over));
+  }
+  // every console with Two players is accepted, and its card comes back with the console the host named
+  for (const con of ['gba', 'gb', 'gbc', 'nes', 'snes', 'ws', 'md', 'sms', 'sg']) {
+    const c = await s.create(hostDesc({ console: con, kind: 5, game: 'A1B2C3D4' }));
+    assert.equal(c.status, 201, con);
+    const g = await s.call('GET', `/v1/rooms/${c.data.code}`);
+    assert.equal(g.data.console, con, con);
+    assert.equal((await s.join(c.data.code)).status, 200, 'join ' + con);
   }
   // rom, title, pub, lan, sym and relayOnly may be left out
   const slim = hostDesc(); delete slim.rom; delete slim.title; delete slim.pub; delete slim.lan; delete slim.sym; delete slim.relayOnly;

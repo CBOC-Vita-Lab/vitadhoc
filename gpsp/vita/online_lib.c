@@ -44,7 +44,7 @@ static struct
 {
    int  active;
    int  family;                       /* OL_GBA / OL_GB                     */
-   char sega[4];                      /* OL_SEGA: "md" "sms" "gg" "sg"       */
+   char sega[4];                      /* OL_SEGA: "md" "sms" "sg"            */
    char game[9];
    char rom[9];
    int  root;                         /* 0 = g_app_rom_dir, 1.. = extras    */
@@ -95,7 +95,7 @@ int online_lib_begin(const char *console, const char *game, const char *rom)
       G.family = OL_SNES;
    else if (!strcmp(console, "ws") || !strcmp(console, "wsc"))
       G.family = OL_WS;
-   else if (!strcmp(console, "md") || !strcmp(console, "sms") || !strcmp(console, "gg") || !strcmp(console, "sg"))
+   else if (!strcmp(console, "md") || !strcmp(console, "sms") || !strcmp(console, "sg"))   /* not "gg": one controller, no Two players */
    {
       G.family = OL_SEGA;                /* md.bin's Two players: the whole file's CRC, as for the SNES */
       snprintf(G.sega, sizeof(G.sega), "%s", console);
@@ -207,8 +207,7 @@ static int pad_ext_ok(const char *path)
    if (G.family == OL_SNES)
       return ext_is(path, ".sfc") || ext_is(path, ".smc");
    if (G.family == OL_SEGA)
-      return !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "gg") ? ext_is(path, ".gg")
-           : !strcmp(G.sega, "sg") ? ext_is(path, ".sg")
+      return !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "sg") ? ext_is(path, ".sg")
            : ext_is(path, ".md") || ext_is(path, ".gen") || ext_is(path, ".smd") || ext_is(path, ".bin");
    return ext_is(path, ".ws") || ext_is(path, ".wsc");
 }

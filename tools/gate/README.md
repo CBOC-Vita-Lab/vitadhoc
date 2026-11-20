@@ -60,7 +60,9 @@ newer is needed for the first and the twin step.
 3. **Shares resources safely.** Steps in one group never overlap: `gpsp-make`
    (make inside `gpsp/`), `hostcore-run` (app runs that share data roots, the
    screenshot folder and loopback ports), `tmp-fixed` (`run_host_tests.py`
-   compiles into fixed `/tmp` names).
+   compiles into fixed `/tmp` names). Every step that binds loopback ports (link, realtime, pk-link, the
+   playerkit net tests, online, and every `hostcore-run` step) also holds the
+   `loopback` resource, so two of them never run at once, whatever their group.
 4. **Caches PASSes.** The key of a step is a SHA-256 of: its command, its
    working directory, the content of its input directories (tracked and
    untracked files that git does not ignore), its prerequisites' keys, the

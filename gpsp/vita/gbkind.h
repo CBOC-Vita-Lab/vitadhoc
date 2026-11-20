@@ -128,6 +128,87 @@ static inline int gbk_override_for(const char *name)
    return GBK_NONE;
 }
 
+/* Write one game's override into the file and keep every other line as it
+ * was (comments and the other games included): kind GBK_GB / GBK_GBC sets it,
+ * GBK_NONE (Auto) takes the game's line out.  The settings menu's "Game Boy
+ * type" uses this, so the menu and a hand-edited file are the same thing.
+ * 0 = written, -1 = not written. */
+static inline int gbk_override_store(const char *file, const char *name, int kind)
+{
+   static char text[GBK_OVR_MAX * (GBK_OVR_NAME + 16) + 256];
+   static char outb[sizeof(text) + GBK_OVR_NAME + 16];
+   char tmp[600];
+   const char *slash = name ? strrchr(name, '/') : NULL;
+   const char *p;
+   size_t n = 0, o = 0;
+   FILE *f;
+   if (slash)
+      name = slash + 1;
+   if (!file || !name || !*name || strlen(name) >= GBK_OVR_NAME ||
+       snprintf(tmp, sizeof(tmp), "%s.tmp", file) >= (int)sizeof(tmp))
+      return -1;
+   f = fopen(file, "rb");
+   if (f)
+   {
+      n = fread(text, 1, sizeof(text) - 1, f);
+      fclose(f);
+   }
+   text[n] = '\0';
+   for (p = text; *p; )
+   {
+      const char *eol = strchr(p, '\n');
+      size_t len = eol ? (size_t)(eol - p) : strlen(p), k = 0, e = len;
+      char line[GBK_OVR_NAME + 16];
+      int drop = 0;
+      if (len < sizeof(line))
+      {
+         const char *q;
+         memcpy(line, p, len);
+         line[len] = '\0';
+         while (e && (line[e - 1] == '\r' || line[e - 1] == ' ' || line[e - 1] == '\t'))
+            line[--e] = '\0';
+         while (line[k] == ' ' || line[k] == '\t')
+            k++;
+         q = line + k;
+         if ((!strncasecmp(q, "gbc", 3) && (q[3] == ' ' || q[3] == '\t')) ||
+             (!strncasecmp(q, "gb", 2) && (q[2] == ' ' || q[2] == '\t')))
+         {
+            q += strncasecmp(q, "gbc", 3) ? 2 : 3;
+            while (*q == ' ' || *q == '\t')
+               q++;
+            drop = !strcasecmp(q, name);
+         }
+      }
+      if (!drop)
+      {
+         size_t keep = len + (eol ? 1 : 0);
+         memcpy(outb + o, p, keep);
+         o += keep;
+         if (!eol && len)
+            outb[o++] = '\n';
+      }
+      p = eol ? eol + 1 : p + len;
+   }
+   if (kind == GBK_GB || kind == GBK_GBC)
+      o += (size_t)snprintf(outb + o, sizeof(outb) - o, "%s  %s\n",
+                            kind == GBK_GBC ? "gbc" : "gb", name);
+   f = fopen(tmp, "wb");
+   if (!f)
+      return -1;
+   if (fwrite(outb, 1, o, f) != o)
+   {
+      fclose(f);
+      remove(tmp);
+      return -1;
+   }
+   if (fclose(f) != 0 || rename(tmp, file) != 0)
+   {
+      remove(tmp);
+      return -1;
+   }
+   return 0;
+}
+
 /* The answer: the override, else the header, else the extension. */
 static inline int gbk_decide(const char *path)
 {

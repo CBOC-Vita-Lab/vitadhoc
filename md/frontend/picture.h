@@ -26,6 +26,7 @@ typedef struct {
 	int scaler;    /* SCALER_* (default Auto) */
 	int gg_colors; /* Game Gear: 1 = LCD colours (softer, lifted blacks), 0 = the core's colours */
 	int use_game;  /* 1: this game has its own file; 0: the console file is used */
+	int wide;      /* wide view (the console's picture as wide as the screen): 0 auto, 1 on, 2 off */
 	int tier_steps;/* not stored: the tiers the look governor has taken off the scaler's ceiling (pic_scaler_effective) */
 } pic_settings;
 
@@ -52,6 +53,13 @@ typedef struct {
 
 /* crop_top / crop_bottom: blank rows (in picture rows) the Zoom shape may remove */
 void pic_geometry(const pic_settings *s, const pic_info *in, int crop_top, int crop_bottom, int scr_w, int scr_h, pic_rect *r);
+
+/* Wide view. pic_wide_margin: pixels per side (0..max_m) of extra picture that make the console's picture as wide as the screen for
+ * the shape and the screen (0 when the shape is Full screen or nothing fits). `in` is the console's normal picture (the Game Gear's
+ * 160x144 window, not its 256 wide band). The wide picture is (in->w + 2 * M) columns; pic_geometry_wide places it with the same scale per
+ * column as the normal picture and trims the same number of columns from both sides if it is wider than the screen. */
+int pic_wide_margin(const pic_settings *s, const pic_info *in, int scr_w, int scr_h, int max_m);
+void pic_geometry_wide(const pic_settings *s, const pic_info *in, int wide_w, int crop_top, int crop_bottom, int scr_w, int scr_h, pic_rect *r);
 
 /* Integer prescale factors for the sharp-bilinear pass (1 = none needed). */
 void pic_prescale(const pic_rect *r, int *kx, int *ky);

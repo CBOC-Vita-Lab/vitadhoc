@@ -2,6 +2,9 @@
 #include "pk_test.h"
 #include "harness.h"
 #include "pk_states.h"
+#include <stdlib.h>
+#include <time.h>
+#include <string>
 
 using namespace pk;
 
@@ -253,7 +256,17 @@ TEST(states_undo_and_scene)
 
 TEST(states_stamp_text)
 {
+	/* the stamp is local time (what the player sees); pin the zone so the test does not depend on the machine's */
+	const char *oldtz = getenv("TZ");
+	std::string saved = oldtz ? oldtz : "";
+	setenv("TZ", "UTC", 1);
+	tzset();
 	CHECK_STR(stamp_text(0), "");
-	/* TZ=UTC in the test run: 2026-10-03 14:32:00 */
+	/* 2026-10-03 14:32:00 UTC */
 	CHECK_STR(stamp_text(1791037920), "3 Oct 2026, 14:32");
+	setenv("TZ", "UTC-2", 1);
+	tzset();
+	CHECK_STR(stamp_text(1791037920), "3 Oct 2026, 16:32");
+	if (oldtz) setenv("TZ", saved.c_str(), 1); else unsetenv("TZ");
+	tzset();
 }

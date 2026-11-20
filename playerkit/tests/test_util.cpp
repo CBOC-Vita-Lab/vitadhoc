@@ -138,7 +138,8 @@ namespace {
 pk::SpinLock g_lk;
 long g_count;
 void *bump(void *) { for (int i = 0; i < 20000; i++) { pk::SpinGuard g(g_lk); g_count++; } return 0; }
-void *hold_then_release(void *) { g_lk.lock(); usleep(30000); g_lk.unlock(); return 0; }
+volatile int g_held;
+void *hold_then_release(void *) { g_lk.lock(); __sync_lock_test_and_set(&g_held, 1); usleep(30000); g_lk.unlock(); return 0; }
 }
 TEST(util_spinlock_yields_and_excludes)
 {
@@ -150,8 +151,9 @@ TEST(util_spinlock_yields_and_excludes)
 	/* a holder that stays for 30 ms: the waiter must not spin through it */
 	unsigned before = pk::spin_waits();
 	pthread_t h;
+	g_held = 0;
 	pthread_create(&h, 0, hold_then_release, 0);
-	usleep(5000);
+	while (!g_held) usleep(100);	/* the holder really has the lock (no timing guess) */
 	{ pk::SpinGuard g(g_lk); g_count++; }
 	pthread_join(h, 0);
 	CHECK(pk::spin_waits() > before);

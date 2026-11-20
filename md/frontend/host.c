@@ -575,6 +575,7 @@ void md_host_set_framebuffer(uint16_t *buf, int pitch_px)
 /* ---- wide view ------------------------------------------------------------------------------------------- */
 
 extern const wide_line_t *vdpw_wide_rec(void);
+extern const uint32 *vdpw_wide_opq(void);
 typedef char md_wide_line_size_check[sizeof(md_wide_line) == sizeof(wide_line_t) ? 1 : -1];
 
 static void wide_apply(void)
@@ -588,11 +589,13 @@ static void wide_apply(void)
 	wide_m = m;
 }
 
+void md_host_set_wide_planes(int mask) { wide_planes = mask & 3; }
+
 int md_host_set_wide_margin(int margin)
 {
 	G.wide_req = margin;
 	wide_apply();
-	return wide_m;
+	return wide_m > 0 ? wide_m : 0;
 }
 
 void md_host_wide_frame(md_wide_frame *f)
@@ -603,6 +606,7 @@ void md_host_wide_frame(md_wide_frame *f)
 	f->h = bitmap.viewport.h;
 	f->margin = wide_m > 0 ? wide_m : 0;
 	f->line = (const md_wide_line *)vdpw_wide_rec();
+	f->opq = vdpw_wide_opq();
 	f->vram = vram; f->vsram = vsram; f->cram = cram;
 	for (i = 0; i < 24; i++) f->reg[i] = reg[i];
 }

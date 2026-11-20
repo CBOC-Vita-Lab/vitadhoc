@@ -17,9 +17,9 @@ static inline uint32_t mix32(uint32_t a, uint32_t b)
 enum { RING_MAX = 4096 };
 
 Wide::Wide() : L_(0), C_(0), cvw_(0), cvh_(0), cm_(0), fr_(0), out_(0), ana2_(0), wide_(0), wide_cap_(0), vram_prev_(0), tilever_(0),
-	have_prev_(0), map_w_(0), map_h_(0), layout_key_(0), gfx_gen_(1), have_cram_(0), cap_default_(1 << 20), analysed_frame_(0)
+	have_prev_(0), map_w_(0), map_h_(0), layout_key_(0), gfx_gen_(1), have_cram_(0), cap_default_(1 << 20), analysed_frame_(0), planes_(3)
 {
-	cand_[0] = cand_[1] = 0;
+	cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
 	for (int p = 0; p < 2; p++) { hash_[p] = 0; stamp_[p] = 0; prev_[p] = 0; line_on_[p] = 0; }
 	memset(&st_, 0, sizeof st_);
 	memset(lastreal_, 0, sizeof lastreal_);
@@ -33,9 +33,9 @@ void Wide::free_all()
 	if (C_) wk_compose_destroy(C_);
 	if (L_) wk_layers_destroy(L_);
 	C_ = 0; L_ = 0;
-	free(fr_); free(out_); free(ana2_); free(wide_); free(cand_[0]); free(cand_[1]);
+	free(fr_); free(out_); free(ana2_); free(wide_); free(cand_[0]); free(cand_[1]); free(opq_[0]); free(opq_[1]);
 	free(vram_prev_); free(tilever_);
-	fr_ = 0; out_ = 0; ana2_ = 0; wide_ = 0; cand_[0] = cand_[1] = 0; vram_prev_ = 0; tilever_ = 0;
+	fr_ = 0; out_ = 0; ana2_ = 0; wide_ = 0; cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0; vram_prev_ = 0; tilever_ = 0;
 	for (int p = 0; p < 2; p++) { free(hash_[p]); free(stamp_[p]); free(prev_[p]); free(line_on_[p]); hash_[p] = 0; stamp_[p] = 0; prev_[p] = 0; line_on_[p] = 0; }
 	cvw_ = cvh_ = cm_ = 0; wide_cap_ = 0;
 }
@@ -50,6 +50,7 @@ void Wide::reset()
 	for (int p = 0; p < 2; p++) if (stamp_[p]) memset(stamp_[p], 0, RING_MAX * sizeof(uint32_t));
 	memset(lastreal_, 0, sizeof lastreal_);
 	analysed_frame_ = 0;
+	planes_ = 3; md_host_set_wide_planes(3);
 }
 
 void Wide::ensure_layers()
@@ -223,7 +224,7 @@ bool Wide::describe_gg(const md_wide_frame &f, const md_video_info &vi, uint32_t
 void Wide::analyse(uint32_t frame, const md_video_info &vi, int margin, int strip_px, Meta *m)
 {
 	m->valid = 0; m->system = vi.system; m->vw = vi.w; m->vh = vi.h; m->margin = margin; m->real_cap = margin < cap_default_ ? margin : cap_default_;
-	m->have_strips = 0; m->nlayers = 0; m->frame = frame;
+	m->have_strips = 0; m->nlayers = 0; m->frame = frame; m->planes = (uint8_t) (vi.system == MD_SYS_MD ? planes_ : 3);
 	memset(m->strip, 0, sizeof m->strip);
 	memset(m->on, 0, sizeof m->on);
 	st_.frames++;
@@ -253,6 +254,15 @@ void Wide::analyse(uint32_t frame, const md_video_info &vi, int margin, int stri
 		m->on[y] = (uint8_t) (line_on_[0][y] | (m->nlayers > 1 ? line_on_[1][y] << 1 : 0));
 	}
 	m->have_strips = 1;
+	if (vi.system == MD_SYS_MD && f.opq) memcpy(m->opq, f.opq, sizeof m->opq);
+	if (vi.system == MD_SYS_MD && m->nlayers == 2) {
+		/* next frame's strips hold the planes widekit trusts to continue past the edge (backdrop, level); a HUD or unknown plane is
+		 * left out, so what shows there is the soft extension and the sprites, never a plane's stale or fixed tiles */
+		int pl = 0;
+		for (int l = 0; l < 2; l++) if (out_->kind[l] == WK_KIND_BACKDROP || out_->kind[l] == WK_KIND_LEVEL) pl |= 1 << l;
+		planes_ = pl;
+		md_host_set_wide_planes(pl);
+	}
 	st_.analysed++;
 	st_.hs_checked = out_->hs_checked; st_.hs_missed = out_->hs_missed;
 	if (out_->scene_event) st_.scene_events++;
@@ -263,8 +273,8 @@ void Wide::ensure_compose(int vw, int vh, int margin)
 {
 	if (C_ && cvw_ == vw && cvh_ == vh && cm_ == margin) return;
 	if (C_) { wk_compose_destroy(C_); C_ = 0; }
-	free(wide_); free(cand_[0]); free(cand_[1]);
-	wide_ = 0; cand_[0] = cand_[1] = 0;
+	free(wide_); free(cand_[0]); free(cand_[1]); free(opq_[0]); free(opq_[1]);
+	wide_ = 0; cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
 	if (!ana2_) ana2_ = (wk_out *) calloc(1, sizeof(wk_out));
 	wk_compose_cfg cc;
 	wk_compose_cfg_default(&cc);
@@ -274,9 +284,11 @@ void Wide::ensure_compose(int vw, int vh, int margin)
 	wide_ = (uint16_t *) calloc((size_t) (vw + 2 * margin) * (size_t) vh, 2);
 	cand_[0] = (uint16_t *) calloc((size_t) vh * (size_t) margin, 2);
 	cand_[1] = (uint16_t *) calloc((size_t) vh * (size_t) margin, 2);
-	if (!C_ || !wide_ || !cand_[0] || !cand_[1] || !ana2_) {
+	opq_[0] = (uint8_t *) calloc((size_t) vh * (size_t) margin, 1);
+	opq_[1] = (uint8_t *) calloc((size_t) vh * (size_t) margin, 1);
+	if (!C_ || !wide_ || !cand_[0] || !cand_[1] || !opq_[0] || !opq_[1] || !ana2_) {
 		if (C_) wk_compose_destroy(C_);
-		C_ = 0; free(wide_); free(cand_[0]); free(cand_[1]); wide_ = 0; cand_[0] = cand_[1] = 0;
+		C_ = 0; free(wide_); free(cand_[0]); free(cand_[1]); free(opq_[0]); free(opq_[1]); wide_ = 0; cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
 		cvw_ = cvh_ = cm_ = 0;
 		return;
 	}
@@ -306,8 +318,9 @@ const uint16_t *Wide::compose(const Meta &m, const uint16_t *view0, int pitch_px
 		if (use && m.strip[y] && m.on[y]) {
 			for (int s = 0; s < 2; s++) {
 				int v = M;
-				for (int l = 0; l < m.nlayers; l++) if ((m.on[y] >> l) & 1) {
-					const int x = m.ana.line[y].real[s][l];
+				for (int l = 0; l < m.nlayers; l++) if (((m.on[y] & m.planes) >> l) & 1) {
+					const int k = m.ana.kind[l];
+					const int x = k == WK_KIND_BACKDROP ? M : k == WK_KIND_LEVEL ? m.ana.line[y].real[s][l] : 0;
 					if (x < v) v = x;
 				}
 				if (v > m.real_cap) v = m.real_cap;
@@ -338,10 +351,13 @@ const uint16_t *Wide::compose(const Meta &m, const uint16_t *view0, int pitch_px
 			const uint16_t *row = view0 + (size_t) y * (size_t) pitch_px;
 			const int rl = a->line[y].real[0][0], rr = a->line[y].real[1][0];
 			uint16_t *cl = cand_[0] + (size_t) y * (size_t) M, *cr = cand_[1] + (size_t) y * (size_t) M;
-			for (int d = 0; d < rl; d++) cl[d] = row[-1 - d];
-			for (int d = 0; d < rr; d++) cr[d] = row[V + d];
+			uint8_t *ol = opq_[0] + (size_t) y * (size_t) M, *orr = opq_[1] + (size_t) y * (size_t) M;
+			const bool md = m.system == MD_SYS_MD;
+			for (int d = 0; d < rl; d++) { cl[d] = row[-1 - d]; ol[d] = (uint8_t) (md ? (m.opq[y][0][d >> 5] >> (d & 31)) & 1 : 1); }
+			for (int d = 0; d < rr; d++) { cr[d] = row[V + d]; orr[d] = (uint8_t) (md ? (m.opq[y][1][d >> 5] >> (d & 31)) & 1 : 1); }
 		}
 		ci.cand[0][0] = cand_[0]; ci.cand[0][1] = cand_[1];
+		ci.opaque[0][0] = opq_[0]; ci.opaque[0][1] = opq_[1];
 		ci.order[0] = 0; ci.norder = 1;
 	}
 	wk_compose_frame(C_, &ci);

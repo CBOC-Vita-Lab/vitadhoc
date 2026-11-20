@@ -68,3 +68,5 @@
 #define vsram vw_vsram
 #define wide_m vw_wide_m
 #define wide_rec vw_wide_rec
+#define wide_planes vw_wide_planes
+#define wide_opq vw_wide_opq

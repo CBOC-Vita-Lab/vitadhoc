@@ -151,6 +151,9 @@ void md_host_set_framebuffer(uint16_t *buf, int pitch_px);
 #define MD_WIDE_MAX 96
 #define MD_WIDE_PITCH 512            /* MD_WIDE_MAX + 320 + MD_WIDE_MAX */
 int md_host_set_wide_margin(int margin);
+/* Which planes the strips contain (bit 0 plane A, bit 1 plane B; default 3). A plane left out is drawn as nothing in the strips: the strip
+ * pixel is then transparent wherever no sprite and no other plane drew (md_wide_frame.opq says which pixels are opaque). Sprites are always in. */
+void md_host_set_wide_planes(int mask);
 
 /* What the line renderer saw for each line of the frame just run (the Mega Drive in mode 5 and, for the Master System / Game Gear, in mode 4
  * with xs[0] / ys[0] = the scroll registers as the line used them, col_mask 31, ntab = the name table base). Same layout as the core's
@@ -165,6 +168,7 @@ typedef struct md_wide_frame {
 	int h;                       /* lines in the picture */
 	int margin;                  /* the strip width in force (Mega Drive) */
 	const md_wide_line *line;    /* h entries, valid until the next md_host_run_frame */
+	const uint32_t *opq;         /* [256][2][3]: per line and side (0 left, 1 right) 96 bits, bit d = the strip pixel d pixels from the screen's edge is opaque */
 	const uint8_t *vram;         /* 64 KB (the emulating thread's copy: complete when the frame has finished) */
 	const uint8_t *vsram;        /* 128 bytes */
 	const uint8_t *cram;         /* 128 bytes */

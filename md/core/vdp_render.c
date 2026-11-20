@@ -504,6 +504,8 @@ static struct clip_t
 /* VitAdhoc wide view: the strip pass (see vdp_render.h). While wide_pass is set the plane and sprite renderers draw wide_cols columns with the
  * picture shifted by wide_dx pixels; outside the pass every macro below is the original expression. */
 int wide_m;
+int wide_planes = 3;                 /* bit 0: plane A, bit 1: plane B are drawn into the strips (a plane left out is transparent there) */
+uint32 wide_opq[256][2][3];         /* per line and side: bit d set = the strip pixel at distance d from the screen's edge is opaque */
 wide_line_t wide_rec[256];
 static int wide_pass, wide_cols, wide_px, wide_dx;
 #define WIDE_COLS(orig)   (wide_pass ? wide_cols : (orig))
@@ -2565,6 +2567,13 @@ void render_bg_m5(int line)
     w = clip[1].enable;
   }
 
+  /* VitAdhoc wide view: a plane left out of the strip pass is drawn as nothing */
+  if (wide_pass && !(wide_planes & 1))
+  {
+    a = 0; w = 0;
+    memset(&linebuf[0][0x20 - 16], 0, wide_px + 48);
+  }
+
   /* Plane A */
   if (a)
   {
@@ -2646,6 +2655,15 @@ void render_bg_m5(int line)
     }
   }
 
+  /* VitAdhoc wide view: plane B left out of the strip pass: the plane A pixels go through the priority table alone */
+  if (wide_pass && !(wide_planes & 2))
+  {
+    uint8 *q = &linebuf[0][0x20];
+    int n = wide_px, i;
+    for (i = 0; i < n; i++) q[i] = table[q[i]];
+    return;
+  }
+
   /* Plane B scroll */
 #ifdef LSB_FIRST
   shift  = (xscroll >> 16) & 0x0F;
@@ -2721,6 +2739,13 @@ void render_bg_m5_vs(int line)
     /* Window and Plane A share the line */
     a = clip[0].enable;
     w = clip[1].enable;
+  }
+
+  /* VitAdhoc wide view: a plane left out of the strip pass is drawn as nothing */
+  if (wide_pass && !(wide_planes & 1))
+  {
+    a = 0; w = 0;
+    memset(&linebuf[0][0x20 - 16], 0, wide_px + 48);
   }
 
   /* Left-most column vertical scrolling when partially shown horizontally (verified on PAL MD2)  */
@@ -2827,6 +2852,15 @@ void render_bg_m5_vs(int line)
     }
   }
 
+  /* VitAdhoc wide view: plane B left out of the strip pass: the plane A pixels go through the priority table alone */
+  if (wide_pass && !(wide_planes & 2))
+  {
+    uint8 *q = &linebuf[0][0x20];
+    int n = wide_px, i;
+    for (i = 0; i < n; i++) q[i] = table[q[i]];
+    return;
+  }
+
   /* Plane B horizontal scroll */
 #ifdef LSB_FIRST
   shift = (xscroll >> 16) & 0x0F;
@@ -2919,6 +2953,13 @@ void render_bg_m5_vs_enhanced(int line)
     /* Window and Plane A share the line */
     a = clip[0].enable;
     w = clip[1].enable;
+  }
+
+  /* VitAdhoc wide view: a plane left out of the strip pass is drawn as nothing */
+  if (wide_pass && !(wide_planes & 1))
+  {
+    a = 0; w = 0;
+    memset(&linebuf[0][0x20 - 16], 0, wide_px + 48);
   }
 
   /* Left-most column vertical scrolling when partially shown horizontally (verified on PAL MD2)  */
@@ -3069,6 +3110,15 @@ void render_bg_m5_vs_enhanced(int line)
       atbuf = nt[column];
       DRAW_COLUMN(atbuf, v_line)
     }
+  }
+
+  /* VitAdhoc wide view: plane B left out of the strip pass: the plane A pixels go through the priority table alone */
+  if (wide_pass && !(wide_planes & 2))
+  {
+    uint8 *q = &linebuf[0][0x20];
+    int n = wide_px, i;
+    for (i = 0; i < n; i++) q[i] = table[q[i]];
+    return;
   }
 
   /* Plane B horizontal scroll */
@@ -4946,8 +4996,21 @@ static void wide_line(int line, int spr_in)
       render_obj(line & 1);
       wide_pass = 0;
       src = &linebuf[0][0x20];
-      if (side == 0) { PIXEL_OUT_T *d = row - wide_m; const uint8 *p = src + wide_px - wide_m; for (i = 0; i < wide_m; i++) d[i] = pixel[p[i]]; }
-      else { PIXEL_OUT_T *d = row + W; for (i = 0; i < wide_m; i++) d[i] = pixel[src[i]]; }
+      {
+        uint32 *ob = wide_opq[line][side];
+        const int all = (wide_planes & 3) == 3;
+        ob[0] = ob[1] = ob[2] = 0;
+        if (side == 0)
+        {
+          PIXEL_OUT_T *d = row - wide_m; const uint8 *p = src + wide_px - wide_m;
+          for (i = 0; i < wide_m; i++) { d[i] = pixel[p[i]]; if (all || (p[i] & 0x0F)) { const int k = wide_m - 1 - i; ob[k >> 5] |= 1u << (k & 31); } }
+        }
+        else
+        {
+          PIXEL_OUT_T *d = row + W;
+          for (i = 0; i < wide_m; i++) { d[i] = pixel[src[i]]; if (all || (src[i] & 0x0F)) ob[i >> 5] |= 1u << (i & 31); }
+        }
+      }
     }
     status = st; spr_col = sc; spr_ovr = so;
   }

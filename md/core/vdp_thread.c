@@ -18,6 +18,8 @@ uint16 vw_playfield_row_mask, vw_v_counter, vw_vscroll, vw_lines_per_frame, vw_m
 t_bitmap vw_bitmap;
 extern int vw_wide_m;                                 /* the wide view strip width of the worker's renderer (defined by its copy of vdp_render.c) */
 extern wide_line_t vw_wide_rec[256];
+extern int vw_wide_planes;
+extern uint32 vw_wide_opq[256][2][3];
 
 /* the worker's compiled copy of the renderer */
 extern void vw_render_line(int line);
@@ -57,7 +59,7 @@ typedef struct {
 	uint32 rst;                       /* reset_do_not_clear_buffers */
 	uint16 ntab, ntbb, ntwb, satb, hscb, playfield_row_mask, v_counter, vscroll, lines_per_frame, max_sprite_pixels;
 	uint8 hscroll_mask, playfield_shift, playfield_col_mask, odd_frame, interlaced, pad0[3];
-	int wide_m;
+	int wide_m, wide_planes;
 } vdpw_state_t;
 #define STATE_WORDS ((sizeof(vdpw_state_t) + 3) / 4)
 
@@ -136,7 +138,7 @@ static void fill_state(vdpw_state_t *s)
 	s->v_counter = v_counter; s->vscroll = vscroll; s->lines_per_frame = lines_per_frame; s->max_sprite_pixels = max_sprite_pixels;
 	s->hscroll_mask = hscroll_mask; s->playfield_shift = playfield_shift; s->playfield_col_mask = playfield_col_mask;
 	s->odd_frame = odd_frame; s->interlaced = interlaced;
-	s->wide_m = wide_m;
+	s->wide_m = wide_m; s->wide_planes = wide_planes;
 }
 
 static void emit_state(void)
@@ -355,6 +357,7 @@ void vdpw_frame_end(void)
 
 /* the per line records of the wide view strip of the frame just finished (valid after vdpw_frame_end) */
 const wide_line_t *vdpw_wide_rec(void) { return vdpw_on ? vw_wide_rec : wide_rec; }
+const uint32 *vdpw_wide_opq(void) { return vdpw_on ? &vw_wide_opq[0][0][0] : &wide_opq[0][0][0]; }
 
 unsigned vdpw_spr_col(void) { return vdpw_on ? vw_spr_col : spr_col; }
 
@@ -375,7 +378,7 @@ static void apply_state(const vdpw_state_t *s)
 	vw_v_counter = s->v_counter; vw_vscroll = s->vscroll; vw_lines_per_frame = s->lines_per_frame; vw_max_sprite_pixels = s->max_sprite_pixels;
 	vw_hscroll_mask = s->hscroll_mask; vw_playfield_shift = s->playfield_shift; vw_playfield_col_mask = s->playfield_col_mask;
 	vw_odd_frame = s->odd_frame; vw_interlaced = s->interlaced;
-	vw_wide_m = s->wide_m;
+	vw_wide_m = s->wide_m; vw_wide_planes = s->wide_planes;
 }
 
 static void worker_main(void *arg)

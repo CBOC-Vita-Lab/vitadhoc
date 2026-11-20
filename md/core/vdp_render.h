@@ -121,6 +121,8 @@ enum { WL_ON = 1,            /* a mode 5 line was drawn */
        WL_H40 = 32,
        WL_M4 = 64 };           /* a Master System / Game Gear mode 4 line (record only) */
 extern int wide_m;                      /* strip width per side in pixels (0 = off, -1 = the records only: Master System / Game Gear) */
+extern int wide_planes;                 /* planes drawn into the strips: bit 0 A, bit 1 B (default 3) */
+extern uint32 wide_opq[256][2][3];      /* strip pixels that are opaque (see md_wide_frame) */
 extern wide_line_t wide_rec[256];
 
 /* Function prototypes */

@@ -40,6 +40,8 @@ struct Meta {
 	uint32_t frame;
 	uint8_t strip[256];   /* per line: 1 if the strip beside this line was drawn */
 	uint8_t on[256];      /* per line: bit 0 plane A (the Game Gear's one layer), bit 1 plane B were described to widekit on this line */
+	uint8_t planes;       /* planes drawn into the strips of this frame (bit 0 A, bit 1 B); the others are transparent there */
+	uint32_t opq[256][2][3];  /* Mega Drive: strip pixels that are opaque, bit d = d pixels from the view's edge */
 	wk_out ana;           /* decisions of widekit for the planes; compose() derives the one picture layer from it */
 	int nlayers;
 };
@@ -84,6 +86,7 @@ private:
 	wk_out *ana2_;
 	uint16_t *wide_;      /* the composed picture */
 	int wide_cap_;
+	uint8_t *opq_[2];     /* opaque flags of the strips for wk_compose */
 	uint16_t *cand_[2];   /* strips for wk_compose: vh x margin, index d = distance from the view edge */
 	/* name table memory of the planes: hash, write stamp, previous words */
 	uint32_t *hash_[2], *stamp_[2];
@@ -99,6 +102,7 @@ private:
 	int lastreal_[2][256];
 	Stats st_;
 	uint32_t analysed_frame_;
+	int planes_;          /* the planes mask the core draws the next frame's strips with */
 };
 
 }  // namespace mdw

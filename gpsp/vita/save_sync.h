@@ -51,7 +51,8 @@ void save_sync_game_start(const char *save_path, char *note, size_t cap);
  * never wrote one; 1.3 only for a save it had taken from RetroArch).  Rules
  * and the file layouts: docs/SAVES.md.  `kind`: */
 enum { SS_KIND_GBA = 0, SS_KIND_GB = 1, SS_KIND_GBC = 2, SS_KIND_SNES = 3,
-       SS_KIND_NES = 4, SS_KIND_WSWAN = 5 };
+       SS_KIND_NES = 4, SS_KIND_WSWAN = 5,
+       SS_KIND_MD = 6, SS_KIND_SMS = 7, SS_KIND_GG = 8, SS_KIND_SG = 9 };   /* md.bin: Game.srm, as RetroArch's Genesis Plus GX writes it */
 
 /* Call at a game's start, after save_sync_game_start.  `note` (may be empty)
  * is the one-time sentence for the player ("Save is now also at <place>,

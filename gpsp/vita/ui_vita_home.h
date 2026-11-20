@@ -961,14 +961,15 @@ static void hm_home_hints(void)
 
 /* ---- the console picker's table ----------------------------------------
  *
- * The consoles in the order the picker lists them: the ONE place to say
- * which consoles the Home offers and in what order.  A console joins the
+ * The consoles the picker lists: the ONE place to say which consoles the
+ * Home offers (the order is alphabetical by name: hm_con_at).  A console joins the
  * library with one line here (plus its skin in ui_psp.c); one that is not
  * compiled into a build is left out of the line with its #if.  Names come
  * from the skins (full name; the short id when the pill cannot hold it). */
 static const signed char HM_CON_ORDER[] = {
    FE_CONSOLE_GBA, FE_CONSOLE_GB, FE_CONSOLE_GBC, FE_CONSOLE_SNES,
    FE_CONSOLE_NES, FE_CONSOLE_WSWAN,
+   FE_CONSOLE_MD, FE_CONSOLE_SMS, FE_CONSOLE_GG, FE_CONSOLE_SG,
 };
 #define HM_CON_COUNT ((int)(sizeof(HM_CON_ORDER) / sizeof(HM_CON_ORDER[0])))
 
@@ -991,9 +992,29 @@ static int hm_con_n(void)
    return HM_CON_COUNT;
 #endif
 }
+/* The list is ALPHABETICAL by the full name the rows show, without regard to
+ * case ("Game Boy", "Game Boy Advance", "Game Boy Color", "Game Gear", ...):
+ * HM_CON_ORDER above is only the set of consoles; the order is made once from
+ * the skins' names, so a console added to the table lands in its place and a
+ * renamed one moves with its name. */
 static int hm_con_at(int row)
 {
-   return HM_CON_ORDER[row % HM_CON_COUNT];
+   static signed char sorted[HM_CON_COUNT];
+   static int done;
+   if (!done)
+   {
+      int i, j;
+      for (i = 0; i < HM_CON_COUNT; i++)
+      {
+         int c = HM_CON_ORDER[i];
+         for (j = i; j > 0 && strcasecmp(skin_of(sorted[j - 1])->full,
+                                         skin_of(c)->full) > 0; j--)
+            sorted[j] = sorted[j - 1];
+         sorted[j] = (signed char)c;
+      }
+      done = 1;
+   }
+   return sorted[row % HM_CON_COUNT];
 }
 
 static int hm_con_row(int console)       /* its row in the picker, or 0 */

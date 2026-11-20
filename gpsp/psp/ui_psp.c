@@ -257,7 +257,7 @@ static const ui_theme *g_thm = &THM_DARK;
  * Atomic Purple sits too close to the GBA indigo to read as a change.
  *
  * Each has a light-theme accent: the dark ones vanish on the off-white page.
- * Indexed by fe_console_t: GBA, GB, GBC, SNES, NES. */
+ * Indexed by fe_console_t: GBA, GB, GBC, SNES, NES, WS, then the four Sega ones. */
 #define RGB565(r, g, b) \
    ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 
@@ -293,7 +293,19 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
    /* The WonderSwan (and Color): amber, the one warm hue the others left */
    { "WS", "WonderSwan", "ws", RGB565(0xF2, 0xB1, 0x34),
      { RGB565(0x4A, 0x32, 0x0A), RGB565(0xB8, 0x7A, 0x12),
-       RGB565(0xF2, 0xB1, 0x34), 0, 0 }, 3, 1 },
+       RGB565(0xF2, 0xB1, 0x34), 0, 0 }, 3, 1 },   /* 2.0: the four Sega consoles (md.bin), one hue each: azure, rose, violet, orange */
+   { "Genesis", "Sega Genesis / Mega Drive", "md", RGB565(0x4F, 0xA3, 0xFF),
+     { RGB565(0x0E, 0x1F, 0x3F), RGB565(0x2B, 0x5F, 0xA8),
+       RGB565(0x4F, 0xA3, 0xFF), 0, 0 }, 3, 0 },
+   { "SMS", "Master System", "sms", RGB565(0xF2, 0x55, 0x7F),
+     { RGB565(0x3F, 0x0E, 0x1D), RGB565(0xA8, 0x32, 0x52),
+       RGB565(0xF2, 0x55, 0x7F), 0, 0 }, 3, 0 },
+   { "GG", "Game Gear", "gg", RGB565(0xB5, 0x7C, 0xFF),
+     { RGB565(0x24, 0x13, 0x3F), RGB565(0x6B, 0x3F, 0xA8),
+       RGB565(0xB5, 0x7C, 0xFF), 0, 0 }, 3, 1 },
+   { "SG-1000", "SG-1000", "sg", RGB565(0xFF, 0x9B, 0x3D),
+     { RGB565(0x3F, 0x23, 0x08), RGB565(0xA8, 0x60, 0x1F),
+       RGB565(0xFF, 0x9B, 0x3D), 0, 0 }, 3, 0 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -317,7 +329,19 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
        RGB565(0xC9, 0xCE, 0xD8), 0, 0 }, 3, 0 },
    { "WS", "WonderSwan", "ws", RGB565(0x7A, 0x52, 0x00),
      { RGB565(0x4A, 0x32, 0x0A), RGB565(0xB8, 0x7A, 0x12),
-       RGB565(0xF2, 0xB1, 0x34), 0, 0 }, 3, 1 },
+       RGB565(0xF2, 0xB1, 0x34), 0, 0 }, 3, 1 },   /* 2.0: the four Sega consoles (md.bin), one hue each: azure, rose, violet, orange */
+   { "Genesis", "Sega Genesis / Mega Drive", "md", RGB565(0x1C, 0x5F, 0xB8),
+     { RGB565(0x0E, 0x1F, 0x3F), RGB565(0x2B, 0x5F, 0xA8),
+       RGB565(0x4F, 0xA3, 0xFF), 0, 0 }, 3, 0 },
+   { "SMS", "Master System", "sms", RGB565(0xA8, 0x1E, 0x45),
+     { RGB565(0x3F, 0x0E, 0x1D), RGB565(0xA8, 0x32, 0x52),
+       RGB565(0xF2, 0x55, 0x7F), 0, 0 }, 3, 0 },
+   { "GG", "Game Gear", "gg", RGB565(0x6A, 0x2F, 0xB8),
+     { RGB565(0x24, 0x13, 0x3F), RGB565(0x6B, 0x3F, 0xA8),
+       RGB565(0xB5, 0x7C, 0xFF), 0, 0 }, 3, 1 },
+   { "SG-1000", "SG-1000", "sg", RGB565(0x9A, 0x4A, 0x00),
+     { RGB565(0x3F, 0x23, 0x08), RGB565(0xA8, 0x60, 0x1F),
+       RGB565(0xFF, 0x9B, 0x3D), 0, 0 }, 3, 0 },
 };
 
 static const ui_skin *skin_of(int console)
@@ -6874,6 +6898,7 @@ static char g_menu_note[80];         /* the menu's plate, until the next key */
 #include "ui_vita_play.h"
 #include "ui_vita_online.h"
 #include "ui_vita_snes.h"
+#include "ui_vita_md.h"
 #include "ui_vita_cheats.h"
 #include "ui_vita_ra.h"
 #include "ui_vita_menu.h"
@@ -9113,7 +9138,8 @@ static int rom_has_sav(int idx)
                     (int)ui_rom_stem_length(rom), rom)
          : (g_pcfg.console == FE_CONSOLE_SNES ||
             g_pcfg.console == FE_CONSOLE_NES ||
-            g_pcfg.console == FE_CONSOLE_WSWAN)   /* Game.srm */
+            g_pcfg.console == FE_CONSOLE_WSWAN ||
+            ui_console_is_sega(g_pcfg.console))   /* Game.srm */
          ? snprintf(sav, sizeof(sav), "%.*s.srm",
                     (int)ui_rom_stem_length(rom), rom)
          : snprintf(sav, sizeof(sav), "%s.sav", rom);
@@ -9171,6 +9197,22 @@ static void rom_side_add(int c, const char *rel, const char *file,
  * or trailing slash (under the extra folder being walked, on the Vita).
  * Directories are walked because sorting a library into folders is the
  * obvious thing to do with one, and 2.0 ignored every one. */
+#ifdef VITA
+/* 2.0: a name ending ".bin" is a Genesis game only when the file's bytes say
+ * so (SEGA at 0x100 or an SMD header): rom_bin_ok asks the app. */
+static int ui_name_is_bin(const char *nm)
+{
+   size_t n = strlen(nm);
+   return n > 4 && !strcasecmp(nm + n - 4, ".bin");
+}
+static int rom_bin_ok(const char *dir, const char *nm)
+{
+   char full[PSP_FILE_PATH_CAP];
+   int fl = snprintf(full, sizeof(full), "%s/%s", dir, nm);
+   return fl > 0 && fl < (int)sizeof(full) && ui_host_md_bin_ok(full);
+}
+#endif
+
 static void rom_scan_dir(const char *rel, int depth, int *n,
                          fe_console_t console)
 {
@@ -9240,8 +9282,10 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
                                           (unsigned)ent.d_stat.st_size);
          }
       }
+/* (a ".bin" is a Genesis game only when its bytes say so: ui_host_md_bin_ok) */
 #define ROM_MATCH(nm, c) (zipc >= 0 ? zipc == (int)(c) \
-                                    : ui_rom_matches_console((nm), (c)))
+                                    : ui_rom_matches_console((nm), (c)) && \
+                                      (!ui_name_is_bin(nm) || rom_bin_ok(dir, (nm))))
 #endif
 
       if (is_dir)

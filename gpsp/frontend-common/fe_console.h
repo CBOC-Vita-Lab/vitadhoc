@@ -14,6 +14,12 @@ typedef enum fe_console
   FE_CONSOLE_SNES,   /* run by the separate program snes.bin (snes/), never by a core here */
   FE_CONSOLE_NES,    /* FCEUmm (nes/core) inside this program, through nescore.h */
   FE_CONSOLE_WSWAN,  /* WonderSwan and Color: Beetle (wswan/core) inside, wscore.h */
+  /* 2.0: the four Sega consoles, run by the separate program md.bin (md/): never by a core here.
+   * Console ids of the launch file: md, sms, gg, sg (playerkit/FORMATS.md). */
+  FE_CONSOLE_MD,     /* Sega Genesis / Mega Drive: .md .gen .smd .bin */
+  FE_CONSOLE_SMS,    /* Sega Master System: .sms */
+  FE_CONSOLE_GG,     /* Sega Game Gear: .gg */
+  FE_CONSOLE_SG,     /* Sega SG-1000: .sg */
   FE_CONSOLE_COUNT
 } fe_console_t;
 

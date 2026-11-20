@@ -341,7 +341,7 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
    const char *ext;
    size_t len, i;
    static const char *const suffix[] = { ".gba", ".gb", ".gbc", ".sfc", ".smc" };
-   if (!name || console < FE_CONSOLE_GBA || console > FE_CONSOLE_WSWAN)
+   if (!name || console < FE_CONSOLE_GBA || console >= FE_CONSOLE_COUNT)
       return 0;
    len = strlen(name);
    if (console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN)
@@ -352,6 +352,35 @@ static inline int ui_rom_matches_console(const char *name, fe_console_t console)
       static const char *const nes_ext[] = { ".nes", ".fds", ".unf", ".unif" };
       static const char *const ws_ext[] = { ".ws", ".wsc", ".pc2", "" };
       const char *const *exts = console == FE_CONSOLE_NES ? nes_ext : ws_ext;
+      size_t k;
+      for (k = 0; k < 4 && exts[k][0]; k++)
+      {
+         size_t el = strlen(exts[k]);
+         if (len <= el)
+            continue;
+         for (i = 0; i < el; i++)
+         {
+            unsigned char a = (unsigned char)name[len - el + i];
+            if (a >= 'A' && a <= 'Z') a = (unsigned char)(a + ('a' - 'A'));
+            if (a != (unsigned char)exts[k][i]) break;
+         }
+         if (i == el)
+            return 1;
+      }
+      return 0;
+   }
+   if (console >= FE_CONSOLE_MD)
+   {
+      /* the Sega consoles (md.bin): Genesis in four spellings (.bin is only
+       * a candidate here; the scan asks gamedb_md_accept about the bytes),
+       * the others one each */
+      static const char *const md_ext[] = { ".md", ".gen", ".smd", ".bin" };
+      static const char *const sms_ext[] = { ".sms", "", "", "" };
+      static const char *const gg_ext[] = { ".gg", "", "", "" };
+      static const char *const sg_ext[] = { ".sg", "", "", "" };
+      const char *const *exts = console == FE_CONSOLE_MD ? md_ext
+                              : console == FE_CONSOLE_SMS ? sms_ext
+                              : console == FE_CONSOLE_GG ? gg_ext : sg_ext;
       size_t k;
       for (k = 0; k < 4 && exts[k][0]; k++)
       {

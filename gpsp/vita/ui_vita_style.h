@@ -48,6 +48,15 @@ static uint32_t hm_tint(int console, int a)
       return VS_HEX(0xC9CED8, a);
    if (console == FE_CONSOLE_WSWAN)
       return VS_HEX(0xF2B134, a);
+   /* 2.0: the four Sega consoles (md.bin) */
+   if (console == FE_CONSOLE_MD)
+      return VS_HEX(0x4FA3FF, a);
+   if (console == FE_CONSOLE_SMS)
+      return VS_HEX(0xF2557F, a);
+   if (console == FE_CONSOLE_GG)
+      return VS_HEX(0xB57CFF, a);
+   if (console == FE_CONSOLE_SG)
+      return VS_HEX(0xFF9B3D, a);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(rgb[console], a);
@@ -62,6 +71,14 @@ static uint32_t hm_deep(int console, int bottom)
       return VS_HEX(bottom ? 0x1D2027 : 0x6A6F7B, 255);
    if (console == FE_CONSOLE_WSWAN)
       return VS_HEX(bottom ? 0x2E1F05 : 0x9A6A14, 255);
+   if (console == FE_CONSOLE_MD)
+      return VS_HEX(bottom ? 0x0E1F3F : 0x2B5FA8, 255);
+   if (console == FE_CONSOLE_SMS)
+      return VS_HEX(bottom ? 0x3F0E1D : 0xA83252, 255);
+   if (console == FE_CONSOLE_GG)
+      return VS_HEX(bottom ? 0x24133F : 0x6B3FA8, 255);
+   if (console == FE_CONSOLE_SG)
+      return VS_HEX(bottom ? 0x3F2308 : 0xA8601F, 255);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(bottom ? bot[console] : top[console], 255);

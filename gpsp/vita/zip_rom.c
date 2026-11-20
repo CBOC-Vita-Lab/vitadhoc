@@ -34,11 +34,13 @@ static unsigned long rd32(const unsigned char *p)
 
 static int name_console(const char *name, size_t len)
 {
-   static const char *const ext[12] = { ".gba", ".gb", ".gbc", ".sfc", ".smc",
+   static const char *const ext[19] = { ".gba", ".gb", ".gbc", ".sfc", ".smc",
                                         ".nes", ".fds", ".unf", ".unif",
-                                        ".ws", ".wsc", ".pc2" };
+                                        ".ws", ".wsc", ".pc2",
+                                        ".md", ".gen", ".smd", ".bin",
+                                        ".sms", ".gg", ".sg" };
    int c;
-   for (c = 0; c < 12; c++)
+   for (c = 0; c < 19; c++)
    {
       size_t e = strlen(ext[c]), i;
       if (len <= e)
@@ -53,8 +55,9 @@ static int name_console(const char *name, size_t len)
       }
       if (i == e)
          /* .sfc/.smc: 3 (SNES); .nes/.fds/.unf/.unif: 4 (NES);
-          * .ws/.wsc/.pc2: 5 (WonderSwan) */
-         return c > 8 ? 5 : c > 4 ? 4 : c > 3 ? 3 : c;
+          * .ws/.wsc/.pc2: 5 (WonderSwan); .md/.gen/.smd/.bin: 6 (Genesis);
+          * .sms: 7; .gg: 8; .sg: 9 (fe_console_t) */
+         return c > 17 ? 9 : c > 16 ? 8 : c > 15 ? 7 : c > 11 ? 6 : c > 8 ? 5 : c > 4 ? 4 : c > 3 ? 3 : c;
    }
    return -1;
 }
@@ -122,6 +125,9 @@ int zip_rom_peek(const char *path, zip_rom_entry *out)
          for (j = 0; j < nlen; j++)
             if (nm[j] == '/' || nm[j] == '\\')
                leaf = nm + j + 1;
+         /* a Genesis ROM is never under 16 KiB: a README.md or a .bin of a few bytes beside the game is no game */
+         if (c == 6 && rd32(e + 24) < 0x4000ul)
+            c = -1;
          if (c >= 0 && leaf < nm + nlen && leaf[0] != '.')
          {
             out->console  = c;

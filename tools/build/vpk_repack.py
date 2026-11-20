@@ -14,7 +14,7 @@ is what a fresh pack would have written:
     compressed bytes (not decompressed and compressed again), with its
     header, date and permissions exactly as they were;
   * a member whose content changed (compared by SHA-256 of the uncompressed
-    data against the input file) is compressed again from the file, deflate,
+    data against the input file) is compressed again from the file (deflate, or stored when deflate does not shrink it, as the packer does),
     mode 0100644, dated from the file as the packer does;
   * a member that is new is added, one that is no longer wanted is dropped
     (both are reported), so the result never carries a stale file.
@@ -39,6 +39,7 @@ import struct
 import sys
 import time
 import zipfile
+import zlib
 
 LEVEL = 9
 ATTR = 0o100644 << 16          # what vita-pack-vpk stores: regular file, rw-r--r--
@@ -125,10 +126,13 @@ def repack(old, new, wanted, quiet=False):
                     stats["same"] += 1
                     continue
                 zi = zipfile.ZipInfo(name, dos_time(src))
-                zi.compress_type = zipfile.ZIP_DEFLATED
+                # the packer stores a member that deflate does not make smaller
+                c = zlib.compressobj(LEVEL, zlib.DEFLATED, -15)
+                kind = zipfile.ZIP_DEFLATED if len(c.compress(data) + c.flush()) < len(data) else zipfile.ZIP_STORED
+                zi.compress_type = kind
                 zi.external_attr = ATTR
                 zi.create_system = 3
-                zout.writestr(zi, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=LEVEL)
+                zout.writestr(zi, data, compress_type=kind, compresslevel=LEVEL)
                 if info is None:
                     stats["added"] += 1
                     report.append("  added    %-46s %9d bytes" % (name, len(data)))
@@ -157,7 +161,7 @@ def verify(path, wanted):
                 if sha(f.read()) != sha(z.read(name)):
                     return "content of %s differs from %s" % (name, src)
         for i in z.infolist():
-            if i.external_attr != ATTR or i.compress_type != zipfile.ZIP_DEFLATED:
+            if i.external_attr != ATTR or i.compress_type not in (zipfile.ZIP_DEFLATED, zipfile.ZIP_STORED):
                 return "%s: attributes/compression differ from the packer's" % i.filename
     return None
 

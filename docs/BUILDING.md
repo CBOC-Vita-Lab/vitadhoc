@@ -130,6 +130,14 @@ without saying so. Without ccache the variable is empty and nothing changes.
   widekit and the twins' `main`) cannot be cached by ccache; the per-object
   rules, which are almost all the time, are.
 
+**Linking.** `vita-elf-create` needs about 3.3 KB of room behind the end of the
+first segment for the module's import tables; when the program's text ends in the
+last 3.3 KB before a 64 KiB boundary it stops with "Cannot allocate N bytes for
+SCE data at end of segment 0; segment 1 overlaps" (any change anywhere can cause
+that). The Vita Makefiles (`gpsp/vita`, `snes/vita`, `md/vita`) detect exactly
+that message, print how many bytes were missing, and link again with 8 KiB of
+padding; nothing else changes.
+
 **Jobs.** `make vpk` builds `snes.bin` through `make -C snes/vita`, which
 inherits the job slots of the outer make (it used to be forced to `-j1`; the SNES
 objects are independent and the link waits for all of them). Use `-j2` on the
@@ -157,6 +165,18 @@ result like any package:
 `python3 -m unittest discover -s gpsp/vita/tests -p test_release_package.py`
 (or the gate's `release-package` step). A release is always a full `make vpk`
 from a clean tree.
+
+**Measured** (host timings, 2 cores shared with other builds, so the CPU seconds
+of the build's children are the figure to trust; "load" was 4 to 11 throughout):
+
+| build | before | after |
+|---|---|---|
+| Vita app cores + app (`make all`), cold, no cache | 2167 s wall, 597 s CPU | 967 s wall, 595 s CPU (cache empty: the first build costs the same) |
+| same, new checkout or scratch `B=`, cache warm | 2167 s wall, 597 s CPU | 12 s wall, 8 s CPU |
+| SNES `snes.bin`, cold | 2339 s wall, 716 s CPU (`-j1`) | 952 s wall, 683 s CPU (`-j2`, cache empty); 13 s wall, 6 s CPU with the cache warm |
+| `make vpk`, nothing changed | repacked each time | 1 s, nothing rebuilt or repacked |
+| one `.c` touched, `make` | 9 s wall, 3.5 s CPU | the same (one compile and a link; a hit if the content was seen before) |
+| art, data or notice only | full `make vpk` | `make vpk-repack`, under 1 s |
 
 **Habits that keep a fast build fast** (learned on the sister ports):
 

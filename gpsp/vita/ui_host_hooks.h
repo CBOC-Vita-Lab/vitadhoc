@@ -133,6 +133,9 @@ int         ui_host_extra_root_toggle(const char *folder);
  * 2 GBC), or -1 when it holds none this app can start (zip_rom.h).  `size`
  * is the file's, for the host's cache of answers. */
 int         ui_host_zip_console(const char *path, unsigned size);
+/* 2.0: a ".bin" file is a Genesis game only when its bytes say so (SEGA at 0x100, or an SMD header: gamedb_md_accept);
+ * the scan asks before it lists one.  1 = list it.  (The default lists every .bin.) */
+int         ui_host_md_bin_ok(const char *path);
 
 /* Settings > Display: Grid strength 1..10 (the LCD grid and scanline looks;
  * 5 is the default), Screen overlay on/off and the overlay in use ("" when

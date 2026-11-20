@@ -92,6 +92,22 @@ TEST(scale_mmpx_invents_no_colours_and_smooths)
 	CHECK(differs > 20);
 }
 
+TEST(scale_mmpx_vector_flat_test_equals_the_one_pixel_columns)
+{
+	/* a one pixel wide column range never reaches the 8 pixel flat test, so it is the plain per pixel rule: the whole picture must equal it */
+	scale_init();
+	for (int seed = 1; seed <= 4; seed++) {
+		const int w = 50 + seed * 7, h = 21 + seed;
+		std::vector<uint16_t> s = art(w, h, 300 + seed);
+		for (int y = 4; y < 14; y++) for (int x = 3; x < 40; x++) s[(size_t) y * w + x] = 0x1234;   /* a flat region wider than 8 */
+		std::vector<uint16_t> a((size_t) w * 2 * h * 2, 1), b(a.size(), 2);
+		ScaleScratch s1, s2;
+		scale_rows(SC_MMPX2, &s[0], w, h, w, &a[0], w * 2, 0, h, s1);
+		for (int x = 0; x < w; x++) scale_rect(SC_MMPX2, &s[0], w, h, w, &b[0], w * 2, 0, h, x, x + 1, s2);
+		CHECK(a == b);
+	}
+}
+
 TEST(scale_xbr_fast_path_equals_the_integer_reference_and_tracks_the_float_shader)
 {
 	scale_init();

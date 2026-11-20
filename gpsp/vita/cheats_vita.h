@@ -99,6 +99,10 @@ int  cheats_load(const char *root, const char *rom_path, fe_console_t console);
 /* The game is going away. */
 void cheats_unload(void);
 
+/* 2.0: md.bin's cheats.  Writes the loaded game's usable database entries (all switched off) as a RetroArch .cht to `path`
+ * for the launch file's cheats_db= key.  Returns the number written (0: none, no file), -1 on a write failure. */
+int  cheats_export_database(const char *path);
+
 int                cheats_count(void);
 const cheat_entry *cheats_get(int i);          /* NULL out of range */
 int                cheats_enabled_count(void);

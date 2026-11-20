@@ -854,8 +854,8 @@ static int set_path(char *dst, const char *src)
 
 static const char *kind_name(int k)
 {
-   static const char *const n[] = { "gba", "gb", "gbc", "snes", "nes", "wswan" };
-   return k >= 0 && k < 6 ? n[k] : "?";
+   static const char *const n[] = { "gba", "gb", "gbc", "snes", "nes", "wswan", "md", "sms", "gg", "sg" };
+   return k >= 0 && k < 10 ? n[k] : "?";
 }
 
 /* "<dir of the game>" into dir (with its trailing slash), and the game's name
@@ -885,13 +885,15 @@ static const char *const k_sub_gb[] = { "", "/Gambatte", "/mGBA", "/SameBoy", "/
 static const char *const k_sub_gba[] = { "", "/gpSP", "/mGBA", "/VBA-M", "/VBA Next", NULL };
 static const char *const k_sub_snes[] = { "", "/Snes9x", "/Snes9x 2010", "/Snes9x 2005",
    "/bsnes", "/bsnes-mercury Balanced", NULL };
+static const char *const k_sub_sega[] = { "", "/Genesis Plus GX", "/Genesis Plus GX Wide",
+   "/PicoDrive", "/BlastEm", "/SMS Plus GX", NULL };
 static const char *const k_sub_other[] = { "", "/FCEUmm", "/Nestopia", "/Mesen",
    "/QuickNES", "/Beetle WonderSwan", "/Beetle Cygne", NULL };
 
 static const char *const *subs_for(int kind)
 {
    return kind == 0 ? k_sub_gba : kind == 1 || kind == 2 ? k_sub_gb :
-          kind == 3 ? k_sub_snes : k_sub_other;
+          kind == 3 ? k_sub_snes : kind >= 6 ? k_sub_sega : k_sub_other;
 }
 
 /* Is the data of the two files the same save?  Same bytes as far as both go;

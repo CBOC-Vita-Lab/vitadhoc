@@ -38,6 +38,7 @@
 #ifndef CHEATS_VITA_NO_CORE
 #include "gbcore/gbcore.h"
 #include "nescore/gbcore_mux.h"
+#include "gamedb.h"          /* the Sega catalogues' CRCs (gamedb_md_crc_cancel) */
 #endif
 
 /* The engine's kinds are the contract's kinds. */
@@ -320,6 +321,57 @@ static int nes_code_kind(const char *s)
 }
 
 /* ======================================================================== */
+/* Sega codes (md.bin applies them: the app only keeps and validates them)  */
+/* ======================================================================== */
+
+/* gpsp/vita/tests/cheats/SEGA-CODES.md: a code is parts joined by '+' (or a
+ * blank, ',' ';').  Genesis: AAAAAA:VVVV (24-bit address, 16-bit value).
+ * Master System, Game Gear, SG-1000: AAAA:VV or AAAA:VV:CC (a Z80 address, a
+ * byte, and a compare byte).  Hex digits in either case.  Returns
+ * CHEAT_KIND_GBA_RAW (a RAM / ROM poke) or 0. */
+static int sega_code_kind(const char *s, fe_console_t console)
+{
+   int any = 0;
+   while (*s)
+   {
+      const char *t = s;
+      size_t n = 0, i;
+      while (*s && *s != '+' && *s != ',' && *s != ';' && *s != ' ')
+      {
+         n++;
+         s++;
+      }
+      while (*s == '+' || *s == ',' || *s == ';' || *s == ' ')
+         s++;
+      if (!n)
+         continue;
+      if (console == FE_CONSOLE_MD)
+      {
+         if (n != 11 || t[6] != ':')
+            return 0;
+         for (i = 0; i < n; i++)
+            if (i != 6 && !isxdigit((unsigned char)t[i]))
+               return 0;
+      }
+      else
+      {
+         if ((n != 7 && n != 10) || t[4] != ':' || (n == 10 && t[7] != ':'))
+            return 0;
+         for (i = 0; i < n; i++)
+            if (i != 4 && i != 7 && !isxdigit((unsigned char)t[i]))
+               return 0;
+      }
+      any = 1;
+   }
+   return any ? CHEAT_KIND_GBA_RAW : 0;
+}
+
+static int is_sega(fe_console_t c)
+{
+   return c >= FE_CONSOLE_MD && c < FE_CONSOLE_COUNT;
+}
+
+/* ======================================================================== */
 /* the cores                                                                */
 /* ======================================================================== */
 
@@ -391,6 +443,8 @@ static int push(void)
    g_rom_failed = 0;
    if (!g_loaded)
       return -1;
+   if (is_sega(g_console))
+      return -1;                 /* md.bin has its own list (the launch file's cheats_db) */
    if (g_console == FE_CONSOLE_NES || g_console == FE_CONSOLE_WSWAN)
    {
       static char joined[CHEATS_CODE_CAP * 8];
@@ -508,6 +562,11 @@ static void validate_one(int i)
    else if (g_console == FE_CONSOLE_WSWAN)
    {
       kind = ws_code_kind(g_list[i].code);
+      rc = kind ? CE_OK : CE_E_FORMAT;
+   }
+   else if (is_sega(g_console))
+   {
+      kind = sega_code_kind(g_list[i].code, g_console);
       rc = kind ? CE_OK : CE_E_FORMAT;
    }
    else
@@ -931,6 +990,25 @@ static int rom_crc(const char *rom_path, fe_console_t console,
       }
    }
 
+   if (is_sega(console))
+   {
+      /* the catalogue's CRC of the plain cartridge (an SMD file de-interleaved,
+       * a copier header left out): gamedb.c knows how */
+#ifndef CHEATS_VITA_NO_CORE
+      uint32_t sc = 0;
+      fclose(f);
+      if ((console == FE_CONSOLE_MD ? gamedb_md_crc_cancel(rom_path, &sc, NULL)
+                                    : gamedb_sms_crc_cancel(rom_path, &sc, NULL)) != 0)
+         return -1;
+      crc = sc;
+      if (!(f = fopen(rom_path, "rb")))
+         return -1;
+      fseek(f, 0, SEEK_END);
+      size = ftell(f);
+      fseek(f, 0, SEEK_SET);
+      goto crc_done;
+#endif
+   }
    if (console == FE_CONSOLE_NES)
    {
       /* The catalogue's CRC-32 is of the cartridge without the 16-byte iNES
@@ -950,6 +1028,9 @@ static int rom_crc(const char *rom_path, fe_console_t console,
       fclose(f);
       return -1;
    }
+#ifndef CHEATS_VITA_NO_CORE
+crc_done:
+#endif
    fclose(f);
 
    {
@@ -1049,6 +1130,23 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
          return game;
       }
       game = cheatdb_find_name(sys, rom_path, &exact);
+      if (game >= 0)
+         *match = exact ? CHEATS_MATCH_NAME : CHEATS_MATCH_TITLE;
+      return game;
+   }
+   if (is_sega(console))
+   {
+      /* the cartridge's CRC-32 as the catalogue has it (an SMD file de-interleaved; no copier header), then its name */
+      sys = (char)('I' + (console - FE_CONSOLE_MD));
+      if (rom_crc(rom_path, console, &crc) == 0 &&
+          (game = cheatdb_find_crc(crc)) >= 0)
+      {
+         *match = CHEATS_MATCH_CRC;
+         return game;
+      }
+      game = cheatdb_find_name(sys, rom_path, &exact);
+      if (game < 0 && console == FE_CONSOLE_SMS)
+         game = cheatdb_find_name('K', rom_path, &exact);     /* a Game Gear game under a .sms name */
       if (game >= 0)
          *match = exact ? CHEATS_MATCH_NAME : CHEATS_MATCH_TITLE;
       return game;
@@ -1190,6 +1288,43 @@ int cheats_load(const char *root, const char *rom_path, fe_console_t console)
    return g_count;
 }
 
+/* The database's usable entries for the loaded game, as a RetroArch .cht for md.bin (the launch file's cheats_db=): every
+ * one OFF, the player merges what it does not have.  The player's own .cht of the game (the same file name in cheats/) is not
+ * touched and its entries are not exported.  Returns how many were written, -1 when the file could not be. */
+int cheats_export_database(const char *path)
+{
+   int i, n = 0;
+   FILE *f;
+   if (!g_loaded || !path)
+      return -1;
+   for (i = 0; i < g_count; i++)
+      if (g_list[i].builtin && g_list[i].usable)
+         n++;
+   if (!n)
+   {
+      remove(path);
+      return 0;
+   }
+   if (!(f = fopen(path, "wb")))
+      return -1;
+   fprintf(f, "cheats = %d\n", n);
+   n = 0;
+   for (i = 0; i < g_count; i++)
+   {
+      const char *p;
+      if (!g_list[i].builtin || !g_list[i].usable)
+         continue;
+      fprintf(f, "cheat%d_desc = \"", n);
+      for (p = g_list[i].name; *p; p++)
+         fputc(*p == '"' || (unsigned char)*p < 0x20 ? '\'' : *p, f);
+      fprintf(f, "\"\ncheat%d_code = \"%s\"\ncheat%d_enable = false\n", n, g_list[i].code, n);
+      n++;
+   }
+   if (fclose(f) != 0)
+      return -1;
+   return n;
+}
+
 int cheats_count(void)
 {
    return g_count;
@@ -1298,6 +1433,11 @@ int cheats_validate(const char *code, fe_console_t console)
    else if (console == FE_CONSOLE_WSWAN)
    {
       kind = ws_code_kind(clean);
+      rc = kind ? CE_OK : CE_E_FORMAT;
+   }
+   else if (is_sega(console))
+   {
+      kind = sega_code_kind(clean, console);
       rc = kind ? CE_OK : CE_E_FORMAT;
    }
    else
@@ -1510,5 +1650,9 @@ const char *cheats_format_hint(fe_console_t console)
       return "6 or 8 letters (Game Genie) or AAAA:VV (RAM). + between codes.";
    if (console == FE_CONSOLE_WSWAN)
       return "AAAAA:VV: a RAM address and a byte, in hex. + between codes.";
+   if (console == FE_CONSOLE_MD)
+      return "AAAAAA:VVVV: an address and a word, in hex. + between codes.";
+   if (console >= FE_CONSOLE_SMS && console < FE_CONSOLE_COUNT)
+      return "AAAA:VV or AAAA:VV:CC: an address, a byte and a compare byte, in hex.";
    return "8 digits (GameShark) or 3-3-3 digits (Game Genie). + between codes.";
 }

@@ -112,6 +112,7 @@
 #include "audio_vita.h"
 #include "app_vita.h"
 #include "link_snes.h"
+#include "ui_vita_md.h"       /* the four Sega consoles (md.bin) */
 #include "mgift_vita.h"
 #include "mgift_net.h"       /* MGNET_LISTEN_PORT */
 #include "cheats_vita.h"
@@ -625,6 +626,12 @@ static fe_console_t console_for(const char *path)
       return FE_CONSOLE_NES;
    if (has_ext(path, ".ws") || has_ext(path, ".wsc") || has_ext(path, ".pc2"))
       return FE_CONSOLE_WSWAN;
+   if (has_ext(path, ".md") || has_ext(path, ".gen") || has_ext(path, ".smd") ||
+       (has_ext(path, ".bin") && gamedb_md_accept(path)))
+      return FE_CONSOLE_MD;
+   if (has_ext(path, ".sms")) return FE_CONSOLE_SMS;
+   if (has_ext(path, ".gg"))  return FE_CONSOLE_GG;
+   if (has_ext(path, ".sg"))  return FE_CONSOLE_SG;
    return FE_CONSOLE_GBA;
 }
 
@@ -639,6 +646,21 @@ static int snes_launch(const char *rom_path)
 {
    fe_evt("snes_launch rom=%s", rom_path);
    return plat_exec_program("snes.bin", rom_path);   /* returns only on failure */
+}
+
+/* ---- Genesis, Master System, Game Gear, SG-1000 (VitAdhoc 2.0): md.bin ------
+ * The same coupling as for the SNES: md.bin (md/, Genesis Plus GX: a non-commercial licence) is another program of the
+ * package; the launch file (player_launch_write) says which of the four consoles and how, the game's path is its argument. */
+static int sega_launch(fe_console_t con, const char *game)
+{
+   fe_evt("sega_launch console=%s rom=%s", ui_sega_id(con), game);
+   return plat_exec_program("md.bin", game);   /* returns only on failure */
+}
+
+/* ".bin" is a Genesis game only when its bytes say so (gamedb_md_accept: SEGA at 0x100, or an SMD header); the library's scan asks. */
+int ui_host_md_bin_ok(const char *path)
+{
+   return gamedb_md_accept(path);
 }
 
 /* ---- SNES (1.4): the launch file and the session report ------------------
@@ -721,7 +743,10 @@ static unsigned char *patch_read(const char *path, long *len, long cap);
  *                         config is not read here), "" = none.  The player
  *                         imports it when it is newer than `save`.
  * All three are "" for any failure: never a half-filled pair. */
-static int snes_patch_find(const char *rom_path, char *out, size_t cap)
+static const char *const k_snes_carts[] = { ".smc", ".sfc", ".swc", ".fig", ".zip" };
+static const char *const k_sega_carts[] = { ".md", ".gen", ".smd", ".bin", ".sms", ".gg", ".sg", ".zip" };
+static int snes_patch_find(const char *rom_path, char *out, size_t cap,
+                           const char *const *carts, size_t ncarts)
 {
    static const char *const ext[3] = { ".ips", ".bps", ".ups" };
    struct stat ps;
@@ -734,13 +759,11 @@ static int snes_patch_find(const char *rom_path, char *out, size_t cap)
          continue;
       if (i >= 3)
       {
-         static const char *const carts[] = { ".smc", ".sfc", ".swc", ".fig",
-                                              ".zip" };
          const char *own = strrchr(rom_path, '.');
          char other[APP_PATH_CAP];
          size_t k;
          int clash = 0;
-         for (k = 0; k < sizeof(carts) / sizeof(carts[0]); k++)
+         for (k = 0; k < ncarts; k++)
             if ((!own || strcasecmp(own, carts[k])) &&
                 psp_rom_path_suffix(other, sizeof(other), rom_path,
                                     carts[k]) == 0 &&
@@ -755,13 +778,14 @@ static int snes_patch_find(const char *rom_path, char *out, size_t cap)
 }
 
 static void snes_patch_keys(const char *rom_path, char *patch, size_t pcap,
-                            char *key, size_t kcap)
+                            char *key, size_t kcap,
+                            const char *const *carts, size_t ncarts)
 {
    struct stat rs;
    unsigned char *data;
    long plen = 0;
    patch[0] = key[0] = 0;
-   if (snes_patch_find(rom_path, patch, pcap) != 0)
+   if (snes_patch_find(rom_path, patch, pcap, carts, ncarts) != 0)
    {
       patch[0] = 0;
       return;
@@ -780,10 +804,8 @@ static void snes_patch_keys(const char *rom_path, char *patch, size_t pcap,
 }
 
 static void snes_ra_save(const char *rom_path, const char *save, char *out,
-                         size_t cap)
+                         size_t cap, const char *const *sub, size_t nsub)
 {
-   static const char *const sub[] = { "", "/Snes9x", "/Snes9x 2010",
-      "/Snes9x 2005", "/bsnes", "/bsnes-mercury Balanced" };
    char stem[APP_PATH_CAP];
    const char *bn = base_name(rom_path), *dot = strrchr(bn, '.');
    size_t i;
@@ -793,7 +815,7 @@ static void snes_ra_save(const char *rom_path, const char *save, char *out,
             (int)(dot && dot != bn ? (size_t)(dot - bn) : strlen(bn)), bn);
    if (!stem[0])
       return;
-   for (i = 0; i < sizeof(sub) / sizeof(sub[0]); i++)
+   for (i = 0; i < nsub; i++)
    {
       char p[APP_PATH_CAP];
       if (path_fmt(p, sizeof(p), "%s%s/%s.srm", save_sync_ra_dir(), sub[i],
@@ -806,15 +828,27 @@ static void snes_ra_save(const char *rom_path, const char *save, char *out,
    }
 }
 
-/* `game` is what snes.bin runs (the unpacked file of a zip), `save` its
- * battery file, `rom_path` the game as the list knows it; `slot` the shelf's
- * choice (PSP_STATE_RESUME: Continue).  0 = written. */
-static int snes_launch_write(const char *game, const char *save,
-                             const char *rom_path, int slot)
+/* The launch files of the two players: snes.ini (snes.bin) and, for the Sega
+ * consoles (2.0), md.ini / sms.ini / gg.ini / sg.ini (md.bin; ui_vita_md.h).
+ * The one written for a start is the only one left on the card. */
+static const char *const k_launch_ids[] = { "snes", "md", "sms", "gg", "sg" };
+
+/* `con` the console (FE_CONSOLE_SNES, or one of the four Sega ones), `game`
+ * is what the player runs (the unpacked file of a zip), `save` its battery
+ * file, `rom_path` the game as the list knows it; `slot` the shelf's choice
+ * (PSP_STATE_RESUME: Continue).  0 = written. */
+static int player_launch_write(fe_console_t con, const char *game, const char *save,
+                               const char *rom_path, int slot)
 {
    static unsigned seq;
    char dir[APP_PATH_CAP], path[APP_PATH_CAP], text[3600], name[200];
-   char patch[APP_PATH_CAP], pkey[200], ra[APP_PATH_CAP];
+   char patch[APP_PATH_CAP], pkey[200], ra[APP_PATH_CAP], extra[APP_PATH_CAP + 32];
+   const char *id = con == FE_CONSOLE_SNES ? "snes" : ui_sega_id(con);
+   const int sega = ui_console_is_sega(con);
+   size_t li;
+   if (!id)
+      return -1;
+   extra[0] = 0;
    const char *b = base_name(rom_path);
    const char *dot = strrchr(b, '.');
    const uint32_t now = (uint32_t)plat_wallclock();
@@ -822,18 +856,56 @@ static int snes_launch_write(const char *game, const char *save,
    snprintf(name, sizeof(name), "%.*s",
             (int)(dot && dot != b ? (size_t)(dot - b) : strlen(b)), b);
    if (path_fmt(dir, sizeof(dir), "%s/launch", g_app_root) != 0 ||
-       path_fmt(path, sizeof(path), "%s/snes.ini", dir) != 0)
+       path_fmt(path, sizeof(path), "%s/%s.ini", dir, id) != 0)
       return -1;
    mkdir(dir, 0777);
-   snes_patch_keys(rom_path, patch, sizeof(patch), pkey, sizeof(pkey));
-   snes_ra_save(rom_path, save, ra, sizeof(ra));
+   /* only this console's launch file: a player takes the one whose game= it was
+    * started with, else the newest, and an older one must not answer for it */
+   for (li = 0; li < sizeof(k_launch_ids) / sizeof(k_launch_ids[0]); li++)
+      if (strcmp(k_launch_ids[li], id))
+      {
+         char other[APP_PATH_CAP];
+         if (path_fmt(other, sizeof(other), "%s/%s.ini", dir, k_launch_ids[li]) == 0)
+            remove(other);
+      }
+   if (sega)
+   {
+      /* the database's cheats for this game, for md.bin to merge (switched off) */
+      char cht[APP_PATH_CAP];
+      int cn;
+      if (path_fmt(cht, sizeof(cht), "%s/%s_cheats.cht", dir, id) == 0)
+      {
+         cheats_load(g_app_root, rom_path, con);
+         cn = cheats_export_database(cht);
+         cheats_unload();
+         if (cn > 0)
+            snprintf(extra, sizeof(extra), "cheats_db=%s\n", cht);
+         fe_evt("sega_cheats console=%s entries=%d", id, cn);
+      }
+   }
+   if (sega)
+   {
+      static const char *const sub[] = { "", "/Genesis Plus GX", "/Genesis Plus GX Wide",
+         "/PicoDrive", "/BlastEm", "/SMS Plus GX" };
+      snes_patch_keys(rom_path, patch, sizeof(patch), pkey, sizeof(pkey),
+                      k_sega_carts, sizeof(k_sega_carts) / sizeof(k_sega_carts[0]));
+      snes_ra_save(rom_path, save, ra, sizeof(ra), sub, sizeof(sub) / sizeof(sub[0]));
+   }
+   else
+   {
+      static const char *const sub[] = { "", "/Snes9x", "/Snes9x 2010",
+         "/Snes9x 2005", "/bsnes", "/bsnes-mercury Balanced" };
+      snes_patch_keys(rom_path, patch, sizeof(patch), pkey, sizeof(pkey),
+                      k_snes_carts, sizeof(k_snes_carts) / sizeof(k_snes_carts[0]));
+      snes_ra_save(rom_path, save, ra, sizeof(ra), sub, sizeof(sub) / sizeof(sub[0]));
+   }
    snes_session_clear();          /* an old report is never read for this one */
    snprintf(g_snes_session, sizeof(g_snes_session), "s-%u-%u", (unsigned)now,
             (unsigned)(++seq + (unsigned)(plat_time_us() & 0xFFFF)));
    n = snprintf(text, sizeof(text),
                 "version=1\n"
                 "session_id=%s\n"
-                "console=snes\n"
+                "console=%s\n"
                 "game=%s\n"
                 "game_name=%s\n"
                 "save=%s\n"
@@ -847,14 +919,15 @@ static int snes_launch_write(const char *game, const char *save,
                 "patch_key=%s\n"
                 "retroarch_save=%s\n"
                 "app_rom=%s\n"
-                "app_started_at=%u\n",
-                g_snes_session, game, name, save, g_app_root,
+                "app_started_at=%u\n"
+                "%s",
+                g_snes_session, id, game, name, save, g_app_root,
                 g_sw.cpu_fast ? 500 : 444,
                 pspcompat_enter_is_circle() ? "circle" : "cross",
                 slot == PSP_STATE_RESUME ? "continue"
                 : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new",
                 slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? slot : 0,
-                patch, pkey, ra, rom_path, (unsigned)now);
+                patch, pkey, ra, rom_path, (unsigned)now, extra);
    if (n < 0 || (size_t)n >= sizeof(text))
       return -1;
    if (g_snes_lk)
@@ -879,17 +952,23 @@ static int snes_launch_write(const char *game, const char *save,
       static const char safe[] = "ovr.wide_view=2\novr.steady_pacing=0\n"
                                  "ovr.smooth_handoff=0\novr.quality=0\n"
                                  "ovr.look_mode=2\n";
+      /* md.bin (the keys its player reads): no steady pacing, no hand-over,
+       * no pixel art scaler (scaler 1 = off), the light look */
+      static const char safe_sega[] = "ovr.steady_pacing=0\novr.smooth_handoff=0\n"
+                                      "ovr.scaler=1\novr.look_mode=2\n";
+      const char *sf = sega ? safe_sega : safe;
+      const size_t sl = sega ? sizeof(safe_sega) : sizeof(safe);
       size_t len = strlen(text);
-      if (len + sizeof(safe) < sizeof(text))
-         memcpy(text + len, safe, sizeof(safe));
+      if (len + sl < sizeof(text))
+         memcpy(text + len, sf, sl);
       fe_evt("boot_guard player_safe game=%s", rom_path);
    }
    n = snes_file_put(path, text);
    if (n == 0 && !boot_guard_is_safe_game(rom_path))
       boot_guard_player_begin(rom_path, BG_RISK_HANDOFF | BG_RISK_CORE4 |
-                              BG_RISK_WIDE | BG_RISK_QUALITY | BG_RISK_STEADY);
-   fe_evt("snes_launch_file ok=%d session=%s start=%s slot=%d patch=%d "
-          "retroarch_save=%d", n == 0,
+                              (sega ? 0 : BG_RISK_WIDE) | BG_RISK_QUALITY | BG_RISK_STEADY);
+   fe_evt("%s_launch_file ok=%d session=%s start=%s slot=%d patch=%d "
+          "retroarch_save=%d", sega ? "sega" : "snes", n == 0,
           g_snes_session, slot == PSP_STATE_RESUME ? "continue"
           : slot >= 1 && slot <= PSP_STATE_SLOT_COUNT ? "slot" : "new", slot,
           patch[0] != 0, ra[0] != 0);
@@ -955,16 +1034,19 @@ static int snes_link_page(int is_host, const char *game, const char *title, link
    return -1;
 }
 
-/* At start-up: a SNES session that ended (or was cut short) since the last
- * run of this program. */
-static void snes_session_collect(void)
+/* At start-up: a session of a player program (snes.bin, md.bin) that ended (or
+ * was cut short) since the last run of this program.  `pid` is the console id
+ * of its launch file (k_launch_ids).  */
+static void player_session_collect(const char *pid)
 {
    char lp[APP_PATH_CAP], sp[APP_PATH_CAP], id[80], rid[80], rom[APP_PATH_CAP],
         save[APP_PATH_CAP], v[400], name[APP_PATH_CAP];
    long secs;
    int have_report, save_changed = 0, save_error = 0;
+   const int skind = !strcmp(pid, "snes") ? SS_KIND_SNES : !strcmp(pid, "md") ? SS_KIND_MD
+                   : !strcmp(pid, "sms") ? SS_KIND_SMS : !strcmp(pid, "gg") ? SS_KIND_GG : SS_KIND_SG;
    uint32_t now = (uint32_t)plat_wallclock(), started;
-   if (path_fmt(lp, sizeof(lp), "%s/launch/snes.ini", g_app_root) != 0 ||
+   if (path_fmt(lp, sizeof(lp), "%s/launch/%s.ini", g_app_root, pid) != 0 ||
        path_fmt(sp, sizeof(sp), "%s/launch/session.txt", g_app_root) != 0 ||
        !fe_ini_get(lp, "session_id", id, sizeof(id)) || !id[0] ||
        !fe_ini_get(lp, "app_rom", rom, sizeof(rom)) || !rom[0])
@@ -1003,15 +1085,15 @@ static void snes_session_collect(void)
       play_log_add(name, now, (uint32_t)secs, 0);
       (void)play_log_save();
    }
-   fe_evt("snes_session report=%d secs=%ld save_changed=%d save_error=%d "
-          "notice=\"%s\" rom=%s", have_report, secs, save_changed, save_error,
-          v, rom);
+   fe_evt("%s_session report=%d secs=%ld save_changed=%d save_error=%d "
+          "notice=\"%s\" rom=%s", !strcmp(pid, "snes") ? "snes" : "sega",
+          have_report, secs, save_changed, save_error, v, rom);
    if (save_changed && save[0])
    {
       /* the battery the player wrote: its record and RetroArch's copy now */
       char note[160];
       save_sync_game_start(save, note, sizeof(note));
-      save_sync_heal_game(save, rom, SS_KIND_SNES, note, sizeof(note));
+      save_sync_heal_game(save, rom, skind, note, sizeof(note));
    }
    /* a Two players session: how it ended, in the words the other games use (link_snes_ended) */
    if (have_report)
@@ -1045,11 +1127,20 @@ static void snes_session_collect(void)
       osd_toast("%s", v);          /* over the game list */
 }
 
+static void snes_session_collect(void)
+{
+   size_t i;
+   for (i = 0; i < sizeof(k_launch_ids) / sizeof(k_launch_ids[0]); i++)
+      player_session_collect(k_launch_ids[i]);
+}
+
 static const char *console_name(fe_console_t c)
 {
    return c == FE_CONSOLE_GBC ? "GBC" : c == FE_CONSOLE_GB ? "GB"
         : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES"
-        : c == FE_CONSOLE_WSWAN ? "WS" : "GBA";
+        : c == FE_CONSOLE_WSWAN ? "WS" : c == FE_CONSOLE_MD ? "MD"
+        : c == FE_CONSOLE_SMS ? "SMS" : c == FE_CONSOLE_GG ? "GG"
+        : c == FE_CONSOLE_SG ? "SG" : "GBA";
 }
 
 /* ---- WonderSwan (VitAdhoc 1.4): the per-game Rotation / Vertical play /
@@ -1997,7 +2088,16 @@ static const char *const k_builtin_roots[] = {
    /* WonderSwan and WonderSwan Color (in-process core): one tab, both */
    "ux0:ROMS/WS", "ux0:ROMS/WSC", "ux0:roms/WS", "ux0:roms/WSC",
    "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan",
-   "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color"
+   "ux0:data/RetroFlow/ROMS/Bandai - WonderSwan Color",
+   /* Genesis / Mega Drive, Master System, Game Gear, SG-1000 (md.bin).  Their
+    * folders under ux0:ROMS and ux0:roms (MD, Genesis, Mega Drive, SMS, GG,
+    * SG-1000, "Sega - Game Gear", ... gamedb_sega.h) need no line here: every
+    * folder directly under those two is read (extra_roots_add_subfolders);
+    * only RetroFlow's, which sit elsewhere, are named. */
+   "ux0:data/RetroFlow/ROMS/Sega - Mega Drive - Genesis",
+   "ux0:data/RetroFlow/ROMS/Sega - Master System - Mark III",
+   "ux0:data/RetroFlow/ROMS/Sega - Game Gear",
+   "ux0:data/RetroFlow/ROMS/Sega - SG-1000"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -2218,7 +2318,8 @@ static void rom_roots_init(void)
     * the list is (Settings > Game folders writes it, with these in it). */
    if (strcmp(source, "ini") && strcmp(source, "off"))
    {
-      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms", "nes_roms", "ws_roms" };
+      static const char *const keys[] = { "gba_roms", "gb_roms", "gbc_roms", "snes_roms", "nes_roms", "ws_roms",
+                                        "md_roms", "sms_roms", "gg_roms", "sg_roms" };
       for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++)
          if (fe_ini_get(ini, keys[i], list, sizeof(list)) ||
              fe_ini_get(g_app_config, keys[i], list, sizeof(list)))
@@ -4929,7 +5030,7 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws" };
+      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg" };
       char op[APP_PATH_CAP];
       int c = g_pcfg.console >= 0 && g_pcfg.console < FE_CONSOLE_COUNT ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
@@ -5032,6 +5133,17 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
       size_t nl = strlen(e.name);
       ext = nl > 4 && !strcasecmp(e.name + nl - 4, ".wsc") ? ".wsc"
           : nl > 4 && !strcasecmp(e.name + nl - 4, ".pc2") ? ".pc2" : ".ws";
+   }
+   if (ui_console_is_sega(console))
+   {
+      /* the entry's own extension: md.bin runs it as the console the launch file names, and an SMD file is told by its bytes */
+      static const char *const sx[] = { ".md", ".gen", ".smd", ".bin", ".sms", ".gg", ".sg" };
+      size_t nl = strlen(e.name), k;
+      ext = console == FE_CONSOLE_MD ? ".md" : console == FE_CONSOLE_SMS ? ".sms"
+          : console == FE_CONSOLE_GG ? ".gg" : ".sg";
+      for (k = 0; k < sizeof(sx) / sizeof(sx[0]); k++)
+         if (nl > strlen(sx[k]) && !strcasecmp(e.name + nl - strlen(sx[k]), sx[k]))
+            ext = sx[k];
    }
    snprintf(stem, sizeof(stem), "%s", base_name(zip));
    stem[strlen(stem) - 4] = '\0';                      /* ".zip" */
@@ -6946,7 +7058,7 @@ int main(int argc, char **argv)
                snprintf(save, sizeof(save), "%.*s.srm",
                         (int)(dt ? (size_t)(dt - rom_path) : strlen(rom_path)),
                         rom_path);
-            if (snes_launch_write(game, save, rom_path, slot) != 0 && g_snes_lk)
+            if (player_launch_write(FE_CONSOLE_SNES, game, save, rom_path, slot) != 0 && g_snes_lk)
             {
                /* Two players without its launch file would start the game alone while the other console waits */
                g_snes_lk = NULL;
@@ -6962,6 +7074,49 @@ int main(int argc, char **argv)
          fe_evt("snes_launch failed rc=%08x", (unsigned)src);
          app_notice("This game could not be started", base_name(rom_path),
                     "The SNES program (snes.bin) did not start.", 6000);
+         continue;
+      }
+      if (ui_console_is_sega(console))
+      {
+         /* md.bin takes over (it only comes back here on failure).  A zipped game is unpacked to unzipped/ with its own
+          * extension; its save sits beside the zip, as the SNES one does. */
+         char game[APP_PATH_CAP], save[APP_PATH_CAP], nm[APP_PATH_CAP], note[160];
+         const char *sl = strrchr(rom_path, '/');
+         const char *dt = strrchr(rom_path, '.');
+         int src;
+         g_join_pending = 0;          /* (Two players is switched off for md.bin: UI_SEGA_TWO_PLAYERS, ui_vita_md.h) */
+         snprintf(game, sizeof(game), "%s", rom_path);
+         snprintf(save, sizeof(save), "%.*s.srm",
+                  (int)(dt && (!sl || dt > sl) ? (size_t)(dt - rom_path) : strlen(rom_path)), rom_path);
+         if (has_ext(rom_path, ".zip"))
+         {
+            long usz = 0;
+            if (zip_unpack(rom_path, console, game, sizeof(game), &usz) != 0)
+            {
+               app_notice("This game could not be started", base_name(rom_path),
+                          "The zip file could not be opened.", 6000);
+               continue;
+            }
+         }
+         g_snes_lk = NULL;
+         /* the save (Game.srm) gets the same record, backup and plain copy for RetroArch as the others; md.bin has no way
+          * to call back, so this is done now and brings the previous session's changes across */
+         save_sync_game_start(save, note, sizeof(note));
+         save_sync_heal_game(save, rom_path, console == FE_CONSOLE_MD ? SS_KIND_MD : console == FE_CONSOLE_SMS ? SS_KIND_SMS
+                                           : console == FE_CONSOLE_GG ? SS_KIND_GG : SS_KIND_SG, note, sizeof(note));
+         if (player_launch_write(console, game, save, rom_path, slot) != 0)
+         {
+            app_notice("This game could not be started", base_name(rom_path),
+                       "The launch file could not be written.", 6000);
+            continue;
+         }
+         play_name_of(rom_path, nm, sizeof(nm));
+         play_log_add(nm, (uint32_t)plat_wallclock(), 0, 1);
+         (void)play_log_save();
+         src = sega_launch(console, game);
+         fe_evt("sega_launch failed rc=%08x", (unsigned)src);
+         app_notice("This game could not be started", base_name(rom_path),
+                    "The Sega program (md.bin) did not start.", 6000);
          continue;
       }
       artfetch_pause(1);         /* the game has the card and the network */

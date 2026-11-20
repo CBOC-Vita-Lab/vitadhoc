@@ -63,13 +63,26 @@ $(B)/mdcore.o: FORCE
 	$(MAKE) -C $(CORE) TARGET=vita B=$(BA) all
 FORCE:
 
-$(B)/md.elf: $(B)/mdcore.o $(FE_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
-	$(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $@ $^ $(LIBS)
+MD_OBJS := $(B)/mdcore.o $(FE_OBJS) $(PK_OBJS) $(V2D_OBJS) $(SHADERS)
+LINK_ELF = $(CXX) $(CPUFLAGS) -Wl,-q $(STDIO_LOCK_LD) -o $(B)/md.elf $(MD_OBJS) $(1) $(LIBS)
+$(B)/md.elf: $(MD_OBJS)
+	$(call LINK_ELF,)
 	$(call CHECK_WEAK,$@)
 	@$(MAKE) --no-print-directory check-links LINKED="$^"
 
-$(B)/md.velf: $(B)/md.elf
-	$(VITASDK)/bin/vita-elf-create $< $@
+# ROOM FOR THE SCE DATA (see snes/vita/Makefile, gpsp/vita/Makefile): when vita-elf-create reports
+# "segment 1 overlaps" (the text ends within ~3.3 KB below a 64 KiB boundary: any change can cause it)
+# the program is linked again with 8 KiB of constants.
+$(B)/elfpad.o:
+	@mkdir -p $(B)
+	echo 'const char md_elf_pad[8192] = { 1 };' | $(CC) -x c -c -o $@ -
+
+$(B)/md.velf: $(B)/md.elf $(B)/elfpad.o
+	$(VITASDK)/bin/vita-elf-create $< $@ > $(B)/elf-create.log 2>&1 || \
+	  { grep -q 'segment 1 overlaps' $(B)/elf-create.log && \
+	    echo "  no room for the SCE data behind segment 0 ($$(grep -o 'Cannot allocate [0-9]* bytes' $(B)/elf-create.log)): linking again with 8 KiB of padding" && \
+	    $(call LINK_ELF,$(B)/elfpad.o) && \
+	    $(VITASDK)/bin/vita-elf-create $< $@; } || { cat $(B)/elf-create.log; exit 1; }
 
 $(B)/md.bin: $(B)/md.velf
 	$(VITASDK)/bin/vita-make-fself -s -c $< $@

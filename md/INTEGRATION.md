@@ -61,6 +61,20 @@ header's peripheral field has the "6". On Master System / Game Gear / SG-1000 bu
   `gpsp/vita/tests/cheats/SEGA-CODES.md`, summarised at the cheat block of `host.h`; at most 150 per game;
   `md_host_cheat_reset` undoes the ROM patches.
 
+## Wide view (picture beside the picture)
+
+A player that shows the console's picture as wide as its screen asks the core for more than the console drew; the emulation does not change (the
+picture in the original window, the sound, the state and the RAM are bit for bit the same with it on or off, with the VDP worker thread too).
+
+- `md_host_set_framebuffer(canvas + MD_WIDE_MAX, MD_WIDE_PITCH)`: a buffer with `MD_WIDE_PITCH` (512) pixels a row, the picture at column `MD_WIDE_MAX` (96), room for strips on both sides.
+- `md_host_set_wide_margin(m)`: Mega Drive: the VDP draws `m` (0..96) more pixels on each side of every line it can (mode 5, not interlaced, no window plane
+  segment, uniform vertical scroll, display on): the planes and the sprites beyond the edge, at columns -m..-1 and w..w+m-1 of the row. The 8 bit systems: any `m > 0` keeps
+  the per line records the analysis needs (their tile map is exactly the screen wide, so there is nothing to draw beside the picture).
+- `md_host_set_wide_planes(mask)`: bit 0 plane A, bit 1 plane B (default 3): a plane left out is not drawn into the strips (it is transparent there); `md_wide_frame.opq` says which strip pixels are opaque.
+- `md_host_wide_frame(&f)`: after the frame, what the analysis needs: per line what the VDP scrolled by and where its name tables are (`line[]`), the VRAM, VSRAM, CRAM and registers.
+- Option `gg_band` (Game Gear): the picture is 256 x 144 (square pixels, the LCD window in columns 48..207) instead of the 160 x 144 window; the same machine.
+- `md/frontend/wide.h` (`mdw::Wide`) is the adapter over widekit: `analyse()` on the emulating thread after the frame, `compose()` on the drawing thread; md/vita/main.cpp and md/twin/wide_pipe_proof.cpp show the hand-over.
+
 ## Options (`md_host_set_option(name, value)`)
 
 The full list, ranges and defaults are in the comment above `md_host_set_option` in `host.h`. Highlights: `fm` 0 = discrete YM2612

@@ -56,5 +56,21 @@ if [ -n "$GG" ]; then
 	run "Game Gear patch CRC, rewind 5 s, fast forward 2x / 3x" speed gg "$GG" "$T/s_gg"
 	run "Game Gear RetroAchievements" ra gg "$GG" "$T/a_gg"
 else echo "SKIP  Game Gear player tests (MD_TEST_SMS_ROMS not set)"; fi
+# the wide view through the picture pipe (direct drawing and copies, composed on a second thread) against composing at once, bit for bit
+WP=${MD_WIDE_PIPE_PROOF:-$HERE/build/x86/wide_pipe_proof}
+[ -x "$WP" ] || make -C "$HERE" -j2 ARCH=x86 build/x86/wide_pipe_proof >"$T/build2.log" 2>&1
+wpone() {
+	name=$1; shift
+	out=$("$WP" "$@" --frames 400 2>&1 | tail -1)
+	case "$out" in *"mismatches=0 "*"empty=0") echo "PASS  $name ($out)";; *) echo "FAIL  $name ($out)"; fail=1;; esac
+}
+if [ -x "$WP" ]; then
+	if [ -n "$MD" ]; then
+		MDG=$(find "$MD_TEST_ROMS" -path '*/game/platformer/*' -name rom.bin | head -1)
+		[ -n "$MDG" ] && wpone "Mega Drive wide view through the picture pipe" "$MDG"
+	fi
+	[ -n "$SMS" ] && wpone "Master System wide view through the picture pipe" "$SMS" --margin 41
+	[ -n "$GG" ] && wpone "Game Gear wide band through the picture pipe (an SMS ROM forced to gg)" "$GG" --system gg
+else echo "SKIP  wide view through the picture pipe (wide_pipe_proof not built)"; fi
 [ -n "$MD_PLAYER_SHOTS" ] && echo "screenshots: $(find "$SHOTS" -name '*.png' | wc -l) in $SHOTS"
 exit $fail

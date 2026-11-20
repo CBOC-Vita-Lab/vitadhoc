@@ -33,9 +33,17 @@ for the players) on the project's own UDP transport and NAT layer
 in their SPDX headers). They do not link `netdrv.c`, `fe_gblink.c`, `fe_evt.c`,
 `fe_util.c` or `gb_link.c` (the GBAdhoc-derived Game Boy link): each player's
 Makefile fails the build when one of them is in the object list, the linker map or
-the symbol table (`check-licence`). Open point: `transport_lan.c` still includes the
-headers `netdrv.h`, `netdrv_wire.h` and `nd_thread.h`, whose provenance has not been
-confirmed; a header-free player mode of the transport would remove the question.
+the symbol table (`check-licence`).
+
+The players do not use the app driver's headers either. A player build defines
+`PK_PLAYER`: `transport_lan.[ch]` then take the few types they need (clock, thread,
+mutex, counters, a datagram ring, the transport vtable) from
+`playerkit/src/pk_lan_compat.h`, written from scratch for playerkit (MIT), and the
+app-only rewrite of a netdrv roster frame is compiled out (no `nd_crc16`, no shim).
+The app build (no `PK_PLAYER`) is unchanged. `check-licence` in `snes/vita` and
+`md/vita` also fails the build when the dependency file of any object of the player
+names `netdrv.h`, `netdrv_wire.h`, `nd_thread.h`, `gb_link.h` or another transport
+header of the app driver.
 
 ## The SNES Player (Snes9x)
 

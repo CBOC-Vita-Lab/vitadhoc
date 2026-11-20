@@ -588,6 +588,7 @@ uint8 g_s9x_wide_fm = 0;
 uint8 g_s9x_wide_co_v = 0;
 uint8 g_s9x_wide_rm_v = 0;
 uint8 g_s9x_wide_fco = 0;
+uint8 g_s9x_wide_verify = 0;
 uint16 g_s9x_vage[32768];
 uint16 g_s9x_uage[2048];
 SWideHook g_s9x_wide_hook = NULL;
@@ -613,6 +614,11 @@ void S9xWideSet(int margin, SWideHook hook, void *user)
 
 /* centre only: the PPU side skips the margin passes and the capture of the frame (the adapter's floor rung); a plain byte, read once per frame at
  * its start, so it may be written from the compose thread */
+void S9xWideVerify(int on)
+{
+	__atomic_store_n(&g_s9x_wide_verify, (uint8) (on ? 1 : 0), __ATOMIC_RELAXED);
+}
+
 void S9xWideCentreOnly(int on)
 {
 	__atomic_store_n(&g_s9x_wide_co_v, (uint8) (on ? 1 : 0), __ATOMIC_RELAXED);

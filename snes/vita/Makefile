@@ -99,7 +99,7 @@ CHECK_LICENCE = @bad="$$( { for o in $(SNES_OBJS); do basename $$o; done | grep 
 	grep -E '[/( ]($(FORBID_RE))' $(B)/snes.map; \
 	$(NM) $(1) | awk '$$2 ~ /^[TtDdBbRrWw]$$/ { print $$3 }' | grep -E '$(FORBID_SYM)'; } )"; \
 	if [ -n "$$bad" ]; then echo "LICENCE: snes.bin links a file of the main app's Game Boy link (GBAdhoc, GPL-2.0): $$bad"; rm -f $(1); exit 1; fi; \
-	hdr="$$(cat $$(find $(B) -name '*.d' 2>/dev/null) 2>/dev/null | tr ' \\' '\n\n' | grep -E '(^|/)($(FORBID_HDR_RE))$$' | sort -u)"; \
+	hdr="$$( for o in $(SNES_OBJS); do d="$${o%.o}.d"; [ -f "$$d" ] && cat "$$d"; done 2>/dev/null | tr ' \\' '\n\n' | grep -E '(^|/)($(FORBID_HDR_RE))$$' | sort -u)"; \
 	if [ -n "$$hdr" ]; then echo "LICENCE: snes.bin was compiled against a header of the main app's Game Boy link driver (GBAdhoc, GPL-2.0): $$hdr"; rm -f $(1); exit 1; fi; \
 	echo "check-licence: none of $(NETPLAY_FORBIDDEN) in the object list, the link map or the symbol table, none of $(NETPLAY_FORBIDDEN_HDR) in any compile's dependency file (the link is pk_link + transport_lan + nat_*)"
 

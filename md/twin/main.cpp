@@ -310,7 +310,7 @@ int main(int argc, char **argv)
 	if (g_wide > 0) {
 		g_wa = new mdw::Wide;
 		g_wa->set_real_cap_default(g_cap);
-		if (md_host_system() == MD_SYS_GG) md_host_set_option("gg_band", 1);
+		if (md_host_system() == MD_SYS_GG) { md_host_set_option("gg_band", 1); md_host_set_wide_margin(g_wide); }
 		else {
 			g_canvas.assign((size_t)MD_WIDE_PITCH * MD_MAX_HEIGHT, 0);
 			md_host_set_framebuffer(g_canvas.data() + MD_WIDE_MAX, MD_WIDE_PITCH);

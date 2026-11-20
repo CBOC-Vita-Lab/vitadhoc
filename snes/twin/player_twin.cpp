@@ -1436,6 +1436,23 @@ static int run_costs_test(const char *rom)
 		EXPECT(diff == 0 && nz == 0 && !snes_host_rewind_whole());
 		fprintf(stderr, "  600 frames, 300 captures: %u differ from the whole state, %u nonzero bytes in the part left out, whole block %d\n", diff, (unsigned) nz, snes_host_rewind_whole());
 		fprintf(stderr, "  restore check: state %u bytes (was %u): load gives the same machine as the whole state, 40 frames on equal\n", (unsigned) sz, (unsigned) full_sz);
+		fprintf(stderr, "  cartridge RAM written per capture: %u of %u bytes; captures that checked the rest: %u\n", (unsigned) snes_host_rewind_ext(), 512u * 1024u, snes_host_rewind_scans());
+		/* the net under the reasoning: a state with a byte in the part left out (it cannot come from the emulated machine: it is put there
+		 * by hand) is loaded; the next capture finds it and writes the whole block, from then on */
+		if (snes_host_rewind_ext()) {
+			((uint8_t *) snes_host_sram_data())[snes_host_rewind_ext() + 5] = 0x5A;
+			EXPECT(snes_host_state_save_buf(full_a.data(), full_a.size(), NULL) == 0);
+			EXPECT(snes_host_state_load_buf(full_a.data(), full_a.size()) == 0);
+			EXPECT(snes_host_rewind_state_save_buf(c.data(), c.size(), NULL) == 0);
+			EXPECT(c == full_a && snes_host_rewind_whole());
+			cost_frame(true);
+			EXPECT(snes_host_rewind_state_save_buf(c.data(), c.size(), NULL) == 0);
+			EXPECT(snes_host_state_save_buf(full_a.data(), full_a.size(), NULL) == 0);
+			EXPECT(c == full_a);
+			fprintf(stderr, "  a byte put past the written part and a state load: found by the next capture, whole block from then on: %s\n", (c == full_a && snes_host_rewind_whole()) ? "yes" : "NO");
+			((uint8_t *) snes_host_sram_data())[snes_host_rewind_ext() + 5] = 0;
+			(void) snes_host_rewind_state_size();     /* a new set of buffers for what follows */
+		}
 	}
 	/* the helper's work: the difference of two states two frames apart, squeezed */
 	std::vector<uint8_t> out(pk::delta_bound(sz));

@@ -113,7 +113,8 @@ void wk_soft_row(uint16_t *dst, int n, int e0, int e1, int e2, const uint16_t *f
             vu16 r = ((E0 * fv) >> 8) + (t >> 1);
             vu16 g = ((E1 * fv) >> 8) + (t >> 2);
             vu16 b = ((E2 * fv) >> 8) + (t >> 1);
-            const vu16 mr = (vu16)(r > k255), mg = (vu16)(g > k255), mb = (vu16)(b > k255);
+            /* the sums are below 32768: a signed compare (what SSE2 has) is the unsigned one */
+            const vu16 mr = (vu16)((vs16)r > (vs16)k255), mg = (vu16)((vs16)g > (vs16)k255), mb = (vu16)((vs16)b > (vs16)k255);
             r = (r & ~mr) | (k255 & mr);
             g = (g & ~mg) | (k255 & mg);
             b = (b & ~mb) | (k255 & mb);

@@ -34,6 +34,18 @@ enum {
 	SWL_HIRES    = 128     /* hi-res (modes 5/6) or pseudo hi-res */
 };
 
+/* SWideLine::pflags: passes that were left out because of what the adapter (snes/frontend/wide.cpp) reads on such a line. The bits of
+ * `pass` are set as if every pass had been drawn. */
+enum {
+	SWLP_NOLAYERS = 1,     /* a window, colour math on a layer or a clip-to-black is in force: the adapter shows only the composite and the sprite pass on
+	                          such a line and never reads the BG passes; they were not drawn */
+	SWLP_NOCOMP   = 2,     /* no window, and colour math at most on the backdrop: the composite is the sprite pass and the main screen's BG passes by depth
+	                          over the backdrop, and was not drawn (the adapter builds the columns it needs). The backdrop is the line's backdrop colour, or */
+	SWLP_BASE     = 4,     /* ... with colour math on the backdrop: the composite pass was drawn without the main screen's layers and holds the backdrop as
+	                          the composite has it (sub screen and colour math applied) */
+	SWLP_TSXBASE  = 8      /* ... and the one layer of `tsx` has no pass of its own: its pass (backdrop + that layer) is that same picture */
+};
+
 /* What the PPU was set up to do on one scanline (one batch of the renderer = one group of lines). */
 struct SWideLine
 {
@@ -59,6 +71,7 @@ struct SWideLine
 	uint8   obj_size, obj_prio_rot; /* sprite size select, priority rotation */
 	uint16  obj_base, obj_gap;      /* sprite name base, name select */
 	uint8   pass;                   /* bit p: pass p of SWP_* drawn for this line (margin candidates valid) */
+	uint8   pflags;                 /* SWLP_*: passes of `pass` that were left out */
 };
 
 struct SWideView
@@ -77,6 +90,8 @@ struct SWideView
 	const uint16 *cgram;            /* 256 BGR555 */
 	const uint16 *colors;           /* 256 RGB565 as the last batch of the frame drew them (brightness applied) */
 	const uint8  *oam;              /* 544 bytes */
+	const uint16 *verify_px;        /* S9xWideVerify(1): the composite drawn whole on the lines with verify_lines[y] set (lines with SWLP_NOCOMP: what the adapter builds must equal it) */
+	const uint8  *verify_lines;     /* [SW_ROWS] */
 	const uint16 *centre;           /* the normal picture of this frame, 256 wide */
 	int      centre_pitch;          /* in pixels */
 	int      rendered_w;            /* 256 or 512 */
@@ -93,6 +108,7 @@ extern uint32 g_s9x_wide_clock;
 extern uint32 g_s9x_wide_epoch;
 extern uint8  g_s9x_wide_stamp;       /* 1: VRAM writes are stamped */
 extern uint8  g_s9x_wide_m;
+extern uint8  g_s9x_wide_verify;      /* S9xWideVerify: draw every pass (test) */
 extern uint8  g_s9x_wide_fco;         /* centre only (S9xWideCentreOnly), latched for the frame being emulated: no margin passes, the hook still gets the centre picture */
 extern uint8  g_s9x_wide_fm;          /* margin latched for the frame being emulated */           /* margin the next frame is drawn with (0 = wide view off) */
 extern uint16 g_s9x_vage[32768];
@@ -104,6 +120,7 @@ extern void  *g_s9x_wide_user;
 void S9xWideSet(int margin, SWideHook hook, void *user);   /* margin 0 = off; call between frames */
 void S9xWideCoreMargin(int m);                             /* the margin the next frames are drawn with, at most the one of S9xWideSet (0 = that one); any thread, latched at frame start */
 void S9xWideCentreOnly(int on);                            /* the next frame is drawn without margin passes (hook and centre only); any thread */
+void S9xWideVerify(int on);                                /* test: the composite is also drawn whole where SWLP_NOCOMP leaves it out (SWideView::verify_px); any thread, between frames */
 void S9xWideReset(void);                                   /* state loaded / console reset */
 void S9xWideFrameStartLive(void);                          /* from S9xStartScreenRefresh */
 void S9xWideFrameEndLive(void);                            /* from S9xEndScreenRefresh, single thread only */

@@ -32,7 +32,7 @@
 
 namespace {
 
-enum { MAXH = 240, RING_MAX = 64 * 64, NOUT = 4, PROV_EXACT = 10, PROV_SOFTL = 12, SOFT_W = 16, COV_ON = 85, COV_OFF = 75 };
+enum { MAXH = 240, RING_MAX = 64 * 64, NOUT = 4, MEMO_N = 16, PROV_EXACT = 10, PROV_SOFTL = 12, SOFT_W = 16, COV_ON = 85, COV_OFF = 75 };
 
 static inline uint32_t mix32(uint32_t a, uint32_t b)
 {
@@ -163,6 +163,11 @@ struct Adapter {
 	uint16_t xr[MAXH][2][4];   /* per line: the ring-backed real margin of a line whose layers cannot be continued from the map */
 	uint8_t xl[MAXH];
 	uint8_t bdm[MAXH];                /* line with colour math on the backdrop alone */
+	uint8_t softany[MAXH][2];         /* a bit of softm is set on this line and side */
+	int lazy = 1;                     /* option "lazy": a side that shows the ambient frame is not composed on the frames whose coverage is not counted */
+	snes_wide_pfor pfor = NULL;       /* snes_wide_parallel: the frontend's way to share the lines of a frame between threads */
+	void *pfor_user = NULL;
+	int nwork = 1;
 	uint8_t softm[MAXH][2][SNES_WIDE_MAX_MARGIN];   /* per margin pixel: bit n = layer n shows a learned cell that has not been seen live in this run (blended toward the ambient frame) */
 	int soft_on;
 	int verify_cache = 0;             /* option "verify_cache": every kept result is also made fresh and compared (the twin's proof; census cache_*) */
@@ -207,6 +212,7 @@ struct Adapter {
 	std::atomic<int> prof_off;        /* the game's profile switches the view off (a hint for capture) */
 	std::atomic<unsigned> dropped;    /* snapshots overwritten before they were composed */
 	std::atomic<uint32_t> cap_us_q4;  /* smoothed capture time, microseconds x 16 (census) */
+	std::atomic<uint32_t> vfy_checks{0}, vfy_bad{0};   /* verify_cache: lines whose built composite was compared with the core's (capture's thread) */
 };
 
 static Adapter A;
@@ -322,34 +328,39 @@ static int cell_index(const SWideView *v, const Layer *Ly, uint32_t word, int xi
 
 /* All pixels of one row of a tile cell: out[x] (x < tile_px) is what cell_index(v, Ly, word, x, fy) returns. A learned-map margin walks along
  * a cell, so the row is decoded once for its 8 or 16 pixels instead of bit by bit for each. */
+static uint64_t g_spread[256];     /* byte j of the entry = bit (7 - j) of the index: a bit plane byte as eight pixels */
+static void spread_init(void)
+{
+	if (g_spread[1]) return;
+	for (int v = 255; v >= 0; v--) {
+		uint64_t r = 0;
+		for (int j = 0; j < 8; j++) if ((v >> (7 - j)) & 1) r |= 1ull << (8 * j);
+		g_spread[v] = r;
+	}
+}
+
 static void cell_row(const SWideView *v, const Layer *Ly, uint32_t word, int fy, int16_t *out)
 {
 	const int tp = Ly->tile_px, bpp = Ly->bpp, bytes = bpp * 8;
 	if (word & 0x8000) fy = tp - 1 - fy;
 	const int tile0 = word & 0x3ff, pal = (word >> 10) & 7, hflip = (word & 0x4000) != 0;
+	const int base = bpp == 8 ? 0 : bpp == 4 ? pal * 16 : Ly->palbase + pal * 4;
 	int16_t col[16];
 	for (int g = 0; g < tp / 8; g++) {
 		const int tile = tp == 16 ? ((tile0 + g + ((fy >> 3) << 4)) & 0x3ff) : tile0;
 		const uint32_t a = ((uint32_t) Ly->name * 2 + (uint32_t) tile * (uint32_t) bytes) & 0xffff;
-		int c[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+		uint64_t c = 0;
 		for (int p = 0; p < bpp; p += 2) {
 			const uint32_t o = (a + (uint32_t) (p >> 1) * 16 + (uint32_t) (fy & 7) * 2) & 0xffff;
-			const unsigned lo = v->vram[o], hi = v->vram[(o + 1) & 0xffff];
-			for (int j = 0; j < 8; j++) {
-				const int b = 7 - j;
-				c[j] |= (int) ((((lo >> b) & 1) << p) | (((hi >> b) & 1) << (p + 1)));
-			}
+			c |= (g_spread[v->vram[o]] << p) | (g_spread[v->vram[(o + 1) & 0xffff]] << (p + 1));
 		}
 		for (int j = 0; j < 8; j++) {
-			int r;
-			if (!c[j]) r = -1;
-			else if (bpp == 8) r = c[j];
-			else if (bpp == 4) r = pal * 16 + c[j];
-			else r = Ly->palbase + pal * 4 + c[j];
-			col[g * 8 + j] = (int16_t) r;
+			const int cj = (int) ((c >> (8 * j)) & 0xff);
+			col[g * 8 + j] = (int16_t) (cj ? base + cj : -1);
 		}
 	}
-	for (int x = 0; x < tp; x++) out[x] = col[hflip ? tp - 1 - x : x];
+	if (hflip) for (int x = 0; x < tp; x++) out[x] = col[tp - 1 - x];
+	else memcpy(out, col, (size_t) tp * sizeof(int16_t));
 }
 
 /* ---- describing a frame -------------------------------------------------------------------------------------- */
@@ -576,21 +587,28 @@ static void describe_layer(const SWideView *v, int n, int H, Layer *Ly)
 		ndom += on;
 	}
 	/* off lines follow the previous line so that they do not look like a scroll difference */
-	for (y = 0; y < H; y++)
-		if (!Ly->line_on[y]) {
-			int j = y - 1;
-			while (j >= 0 && !Ly->line_on[j]) j--;
-			if (j < 0) { j = y + 1; while (j < H && !Ly->line_on[j]) j++; }
-			if (j >= 0 && j < H) { L->scroll_x[y] = L->scroll_x[j]; L->row_y[y] = L->row_y[j]; }
+	{
+		int first = 0, last = -1;                 /* the first line that is on; the last one above y */
+		while (first < H && !Ly->line_on[first]) first++;
+		for (y = 0; y < H; y++) {
+			if (Ly->line_on[y]) { last = y; continue; }
+			const int j = last >= 0 ? last : first;
+			if (j < H) { L->scroll_x[y] = L->scroll_x[j]; L->row_y[y] = L->row_y[j]; }
 		}
+	}
 	(void) ndom;
 	Ly->active = 1;
 }
 
 /* ---- output -------------------------------------------------------------------------------------------------- */
 
+static void work_free(void);
+static int work_make(void);
+static void amb_tab_build(int M);
+
 static void free_objects(void)
 {
+	work_free();
 	if (A.C) wk_compose_destroy(A.C);
 	A.C = NULL; A.cH = A.cM = A.cF = 0;
 	for (int i = 0; i < NOUT; i++) { free(A.out[i].px); free(A.out[i].prov); A.out[i].px = NULL; A.out[i].prov = NULL; }
@@ -616,6 +634,9 @@ static int make_compose(int H, int Mh, int Mf)
 	if (A.appear > 0) cc.appear_frames = A.appear;
 	A.C = wk_compose_create(&cc, 256, H, Mh);
 	if (!A.C) return 0;
+	if (!work_make()) { wk_compose_destroy(A.C); A.C = NULL; return 0; }
+	amb_tab_build(Mf);
+	spread_init();
 	A.cH = H; A.cM = Mh; A.cF = Mf;
 	for (int i = 0; i < NOUT; i++) {
 		if (A.out[i].px && A.out[i].prov) continue;   /* the output ring never moves while a consumer may hold a picture of it */
@@ -742,61 +763,38 @@ static void amb_update(const SWideView *v, int H, bool reset)
 	}
 }
 
-/* The ambient row (distances 0 .. M - 1) for a colour, side and dither phase: a pure function of those, so rows built for a
- * neighbouring line or an earlier frame are reused. Direct mapped. */
-struct ARow { uint16_t key; uint8_t ph, ok; uint16_t px[SNES_WIDE_MAX_MARGIN]; };
-enum { AROWS = 1024 };    /* a picture has up to 2 x 239 rows of distinct colour (a sky gradient: one per line) and 8 dither phases: 256 thrashed */
-static ARow g_arow[AROWS];
-static int g_arow_m;
-/* the row's pixels are three table lookups each: per distance and dither phase, the 5 / 6 / 5 bit output for every 5 / 6 / 5 bit input channel
- * (what the closed form below computes, evaluated once per margin) */
-struct AmbTab { uint8_t r[8][SNES_WIDE_MAX_MARGIN][32], g[8][SNES_WIDE_MAX_MARGIN][64], b[8][SNES_WIDE_MAX_MARGIN][32]; };
-static AmbTab g_atab;
-static void amb_tab_build(int M);
-
-static const uint16_t *amb_row(int s, int y, int M)
-{
-	if (g_arow_m != M) { memset(g_arow, 0, sizeof g_arow); amb_tab_build(M); g_arow_m = M; }
-	const uint16_t key = A.amb_px[s][y];
-	const uint8_t ph = (uint8_t) ((y & 3) | (s << 2));
-	ARow *r = &g_arow[((unsigned) key * 2654435761u + (unsigned) ph * 40503u) >> 22];     /* 10 bits */
-	if (!r->ok || r->key != key || r->ph != ph) {
-		const int kr = (key >> 11) & 31, kg = (key >> 5) & 63, kb = key & 31;
-		for (int d = 0; d < M; d++)
-			r->px[d] = (uint16_t) ((g_atab.r[ph][d][kr] << 11) | (g_atab.g[ph][d][kg] << 5) | g_atab.b[ph][d][kb]);
-		if (A.verify_cache) {        /* the closed form the tables stand for */
-			const int r8 = kr * 255 / 31, g8 = kg * 255 / 63, b8 = kb * 255 / 31;
-			A.cen.cache_checks++;
-			for (int d = 0; d < M; d++) {
-				const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
-				int rr = ((r8 * f) >> 8) + (th >> 1), gg = ((g8 * f) >> 8) + (th >> 2), bb = ((b8 * f) >> 8) + (th >> 1);
-				rr = rr > 255 ? 255 : rr; gg = gg > 255 ? 255 : gg; bb = bb > 255 ? 255 : bb;
-				if (r->px[d] != (uint16_t) (((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3))) { A.cen.cache_mismatches++; break; }
-			}
-		}
-		r->key = key; r->ph = ph; r->ok = 1;
-	}
-	return r->px;
-}
+/* The ambient row (distances 0 .. M - 1) of a line and side: a pure function of the line's ambient colour, the side and the dither phase,
+ * made 8 pixels a step by widekit's soft row kernel from two small tables per margin (the darkening per distance, the dither per phase). */
+struct AmbTab { int m; uint16_t f[SNES_WIDE_MAX_MARGIN + 8]; uint8_t th[8][SNES_WIDE_MAX_MARGIN + 8]; };
+static AmbTab g_amb;
 
 static void amb_tab_build(int M)
 {
+	memset(&g_amb, 0, sizeof g_amb);
+	for (int d = 0; d < M; d++) g_amb.f[d] = A.amb_dk[d];
 	for (int ph = 0; ph < 8; ph++) {
 		const int s = ph >> 2, yq = ph & 3;
 		for (int d = 0; d < M; d++) {
-			const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[yq][xs & 3];
-			for (int v = 0; v < 32; v++) {
-				const int c8 = v * 255 / 31;
-				int rr = ((c8 * f) >> 8) + (th >> 1), bb = rr;
-				rr = rr > 255 ? 255 : rr; bb = bb > 255 ? 255 : bb;
-				g_atab.r[ph][d][v] = (uint8_t) (rr >> 3); g_atab.b[ph][d][v] = (uint8_t) (bb >> 3);
-			}
-			for (int v = 0; v < 64; v++) {
-				const int c8 = v * 255 / 63;
-				int gg = ((c8 * f) >> 8) + (th >> 2);
-				gg = gg > 255 ? 255 : gg;
-				g_atab.g[ph][d][v] = (uint8_t) (gg >> 2);
-			}
+			const int xs = s == 0 ? M - 1 - d : M + 256 + d;
+			g_amb.th[ph][d] = kBay4[yq][xs & 3];
+		}
+	}
+	g_amb.m = M;
+}
+
+static void amb_fill(uint16_t *dst, int s, int y, int M, uint32_t *checks, uint32_t *mismatches)
+{
+	const uint16_t key = A.amb_px[s][y];
+	const int kr = (key >> 11) & 31, kg = (key >> 5) & 63, kb = key & 31;
+	const int r8 = kr * 255 / 31, g8 = kg * 255 / 63, b8 = kb * 255 / 31;
+	wk_soft_row(dst, M, r8, g8, b8, g_amb.f, g_amb.th[(y & 3) | (s << 2)]);
+	if (A.verify_cache) {        /* the closed form the kernel and its tables stand for */
+		(*checks)++;
+		for (int d = 0; d < M; d++) {
+			const int f = A.amb_dk[d], xs = s == 0 ? M - 1 - d : M + 256 + d, th = kBay4[y & 3][xs & 3];
+			int rr = ((r8 * f) >> 8) + (th >> 1), gg = ((g8 * f) >> 8) + (th >> 2), bb = ((b8 * f) >> 8) + (th >> 1);
+			rr = rr > 255 ? 255 : rr; gg = gg > 255 ? 255 : gg; bb = bb > 255 ? 255 : bb;
+			if (dst[d] != (uint16_t) (((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3))) { (*mismatches)++; break; }
 		}
 	}
 }
@@ -812,6 +810,28 @@ static inline uint16_t mix565(uint16_t a, uint16_t amb, int w)
 /* ---- capture (the frame hook's own work) ------------------------------------------------------------------------- */
 
 static Snap *snap_alloc(void) { return new (std::nothrow) Snap(); }
+
+/* Option "verify_cache" (the twin's proof): the core drew the composite of this line whole as well; what compose would build for it (derive_composite:
+ * the sprite pass and the main screen's BG passes by depth over the backdrop) is compared over the whole margin the core drew, both sides. */
+static void verify_composite(const SWideView *v, const SWideLine &L, int y)
+{
+	const size_t row = (size_t) y * SW_PITCH;
+	const int Mc = v->m;
+	bool bad = false;
+	for (int x = 0; x < 2 * Mc + 256 && !bad; x++) {
+		if (x == Mc) x = Mc + 256;
+		uint16_t px = (L.pflags & SWLP_BASE) ? v->pass_px[SWP_COMPOSITE][row + x] : L.backdrop;
+		uint8_t zb = 0;
+		for (int p = SWP_OBJ; p < SW_NPASS; p++) {
+			if (!((L.pass >> p) & 1) || (p >= SWP_BG0 && !((L.tm >> (p - SWP_BG0)) & 1))) continue;
+			const uint8_t z = v->pass_z[p][row + x];
+			if (z > zb) { zb = z; px = v->pass_px[p][row + x]; }
+		}
+		bad = px != v->verify_px[row + x];
+	}
+	A.vfy_checks.fetch_add(1, std::memory_order_relaxed);
+	if (bad) A.vfy_bad.fetch_add(1, std::memory_order_relaxed);
+}
 
 /* copies what compose needs out of the core's view; touches no compose state, so it can run on any thread while compose runs */
 static void capture(const SWideView *v, Snap *sn)
@@ -849,12 +869,19 @@ static void capture(const SWideView *v, Snap *sn)
 	for (int y = 0; y < H; y++) {
 		const SWideLine &L = sn->line[y];
 		if (!line_ok(L)) continue;
+		if (v->verify_lines && v->verify_lines[y] && (L.pflags & SWLP_NOCOMP)) verify_composite(v, L, y);
 		for (int p = 0; p < SW_NPASS; p++) {
 			if (!((L.pass >> p) & 1)) continue;
+			/* passes the core left out because compose does not read them on such a line (widecap.h, SWLP_*) */
+			if (p == SWP_COMPOSITE && (L.pflags & SWLP_NOCOMP) && !(L.pflags & SWLP_BASE)) continue;
+			if (p >= SWP_BG0 && (L.pflags & SWLP_NOLAYERS)) continue;
 			const size_t row = (size_t) y * SW_PITCH;
-			memcpy(sn->px[p][y][0], v->pass_px[p] + row + (Mc - Mh), (size_t) Mh * 2);
-			memcpy(sn->px[p][y][1], v->pass_px[p] + row + Mc + 256, (size_t) Mh * 2);
-			if (p) {
+			/* the one sub screen layer's pass is the composite pass's picture (the backdrop with that layer: every pixel drawn, no depth read) */
+			const bool base = p >= SWP_BG0 && (L.pflags & SWLP_TSXBASE) && L.tsx == (1 << (p - SWP_BG0));
+			const uint16_t *src = v->pass_px[base ? SWP_COMPOSITE : p];
+			memcpy(sn->px[p][y][0], src + row + (Mc - Mh), (size_t) Mh * 2);
+			memcpy(sn->px[p][y][1], src + row + Mc + 256, (size_t) Mh * 2);
+			if (p && !base) {
 				memcpy(sn->z[p][y][0], v->pass_z[p] + row + (Mc - Mh), (size_t) Mh);
 				memcpy(sn->z[p][y][1], v->pass_z[p] + row + Mc + 256, (size_t) Mh);
 			}
@@ -942,6 +969,515 @@ static void ladder_step(int Mh, uint32_t us, bool co)
 	}
 }
 
+/* ---- the frame: a part that one thread does (description, widekit's analysis, the Auto decision) and a part per picture line (candidates,
+ * composition, exact composite, ambient frame) that the lines' workers share (snes_wide_parallel; one worker = the caller alone) --------- */
+
+struct Acc {         /* what the lines of one worker add up */
+	long sl, sr;
+	int nreal, lines_exact, lines_hud;
+	uint32_t reason[SNES_WIDE_LR_N];
+	uint64_t ctm, cln, cbd, cun, csf, crv, cpad, cnum[2], ctot[2];
+	uint32_t cache_checks, cache_mismatches;
+};
+
+/* the learned map's answer for the cells beside one tile row of a layer and side: lines of the same tile row with the same scroll ask for the same cells */
+struct CellMemo {
+	uint32_t gen;
+	int32_t wx, wrow;
+	uint8_t st[MEMO_N];          /* 0 not asked, 1 the map has no cell, 2 a cell */
+	uint8_t hok[MEMO_N], blank[MEMO_N];   /* its tile's graphics are what they were when it was learned; the tile is blank */
+	wk_cell cell[MEMO_N];
+};
+
+struct Work {        /* one worker's own */
+	wk_compose_scratch *scr;
+	Acc acc;
+	CellMemo memo[4][2];
+	uint32_t amb_gen[2];
+	int amb_y[2];
+	uint16_t amb[2][SNES_WIDE_MAX_MARGIN + 8];
+	uint16_t t16[SNES_WIDE_MAX_MARGIN + 8];
+	uint8_t t8[SNES_WIDE_MAX_MARGIN + 16];
+};
+
+struct Frame {       /* the frame being composed: read only while the lines run */
+	const Snap *sn;
+	const SWideView *v;
+	Out *o;
+	int H, Mh, Mfull, OW, nlay, fade;
+	uint32_t gen;                /* of the workers' memos */
+	bool skip[2];                /* this side shows the ambient frame and nothing reads its composed pixels on this frame: they are not made */
+	bool covf;                   /* the coverage is counted on this frame */
+	bool sprites_off;
+	int xf[2];                   /* the cross-fade of this frame (set before fin_line) */
+	wk_compose_in ci;
+};
+
+static Work *g_work[SNES_WIDE_MAX_WORKERS];
+static uint32_t g_fgen;
+
+static void work_free(void)
+{
+	for (int i = 0; i < SNES_WIDE_MAX_WORKERS; i++)
+		if (g_work[i]) { wk_compose_scratch_destroy(g_work[i]->scr); free(g_work[i]); g_work[i] = NULL; }
+}
+
+static int work_make(void)
+{
+	work_free();
+	for (int i = 0; i < SNES_WIDE_MAX_WORKERS; i++) {
+		g_work[i] = (Work *) calloc(1, sizeof(Work));
+		if (!g_work[i]) return 0;
+		g_work[i]->scr = wk_compose_scratch_create(A.C);
+		if (!g_work[i]->scr) return 0;
+	}
+	return 1;
+}
+
+/* the ambient row of line y and side s (distances 0 .. Mfull - 1), made once per line and worker */
+static const uint16_t *amb_of(const Frame &F, Work &K, int s, int y)
+{
+	if (K.amb_gen[s] != F.gen || K.amb_y[s] != y) {
+		amb_fill(K.amb[s], s, y, F.Mfull, &K.acc.cache_checks, &K.acc.cache_mismatches);
+		K.amb_gen[s] = F.gen; K.amb_y[s] = y;
+	}
+	return K.amb[s];
+}
+
+/* a tile's hash and blankness as layer_tile_th gives them, without writing the caches (the lines' workers share them) */
+static uint32_t tile_hash_ro(const SWideView *v, int bpp, int tile, int name, int *blank)
+{
+	const int bytes = bpp * 8;
+	const uint32_t a = ((uint32_t) name * 2 + (uint32_t) tile * (uint32_t) bytes) & 0xffff;
+	const TileHash *c = bpp == 2 ? &A.th2[a >> 4] : bpp == 4 ? &A.th4[a >> 5] : &A.th8[a >> 6];
+	uint16_t age = v->uage[a >> 5];
+	if (bytes == 64) { uint16_t b = v->uage[(a >> 5) + 1]; if (b > age) age = b; }
+	if (c->ok && c->age == age) { *blank = c->blank; return c->h; }
+	uint32_t h = 0x811C9DC5u, any = 0;
+	for (int i = 0; i < bytes; i += 4) {
+		const uint32_t w = (uint32_t) v->vram[(a + i) & 0xffff] | ((uint32_t) v->vram[(a + i + 1) & 0xffff] << 8) |
+		                   ((uint32_t) v->vram[(a + i + 2) & 0xffff] << 16) | ((uint32_t) v->vram[(a + i + 3) & 0xffff] << 24);
+		any |= w;
+		h = mix32(h, w);
+	}
+	*blank = any == 0;
+	return h;
+}
+
+static uint32_t layer_tile_th_ro(const Layer *Ly, const SWideView *v, int tile, int *blank)
+{
+	if (Ly->tgen[tile] == Ly->gen) { *blank = Ly->tblank[tile]; return Ly->tcache[tile]; }
+	if (Ly->tile_px == 8) return tile_hash_ro(v, Ly->bpp, tile, Ly->name, blank);
+	const int t1 = (tile + 1) & 0x3ff, t2 = (tile + 16) & 0x3ff, t3 = (tile + 17) & 0x3ff;
+	int b0, b1, b2, b3;
+	const uint32_t h0 = tile_hash_ro(v, Ly->bpp, tile, Ly->name, &b0), h1 = tile_hash_ro(v, Ly->bpp, t1, Ly->name, &b1);
+	const uint32_t h2 = tile_hash_ro(v, Ly->bpp, t2, Ly->name, &b2), h3 = tile_hash_ro(v, Ly->bpp, t3, Ly->name, &b3);
+	*blank = b0 && b1 && b2 && b3;
+	return mix32(mix32(mix32(h0, h1), h2), h3);
+}
+
+/* the learned map's cell `idx` beside line y of layer l on side s (wk_map_margin_cell), with its tile's blankness and whether the tile's graphics are
+ * today what they were when the cell was learned. 0: the map has no cell there. */
+static int memo_cell(const Frame &F, Work &K, int l, int s, int y, int idx, wk_cell *hold, const wk_cell **cell, int *hok, int *blank)
+{
+	const wk_out *wo = A.wo;
+	const Layer *Ly = &A.lay[l];
+	CellMemo &m = K.memo[l][s];
+	const int32_t wx = wo->world_x[l][y], wrow = wo->world_row[l][y] >> (Ly->tile_px == 16 ? 4 : 3);
+	if (m.gen != F.gen || m.wx != wx || m.wrow != wrow) {
+		m.gen = F.gen; m.wx = wx; m.wrow = wrow;
+		memset(m.st, 0, sizeof m.st);
+	}
+	const bool keep = idx >= 0 && idx < MEMO_N;
+	wk_cell *c = keep ? &m.cell[idx] : hold;
+	int st = keep ? m.st[idx] : 0, h = 0, b = 0;
+	if (!st) {
+		st = wk_map_margin_cell(A.M, A.fr, wo, l, y, s, idx, c) ? 2 : 1;
+		if (st == 2) {
+			const uint32_t th = layer_tile_th_ro(Ly, F.v, (int) (c->code & 0x3ff), &b);
+			const uint32_t hh = mix32(c->code * 0x10001u + 0x1234567u, th);
+			h = (uint16_t) ((hh ^ (hh >> 16)) & 0xFFFF) == c->h16;
+		}
+		if (keep) { m.st[idx] = (uint8_t) st; m.hok[idx] = (uint8_t) h; m.blank[idx] = (uint8_t) b; }
+	} else { h = m.hok[idx]; b = m.blank[idx]; }
+	if (st != 2) return 0;
+	*cell = c; *hok = h; *blank = b;
+	return 1;
+}
+
+/* step 3 for one line: per layer and side the candidate strip (the core's layer pass out to the ring, then cells of the learned map drawn here), how far
+ * it is real, and the layers' own pixels at the view edge */
+static void cand_line(const Frame &F, Work &K, int y)
+{
+	const SWideView *v = F.v;
+	const Snap *sn = F.sn;
+	wk_frame *fr = A.fr;
+	wk_out *wo = A.wo;
+	const int Mh = F.Mh, nlay = F.nlay;
+	const SWideLine &Ln = v->line[y];
+	wk_line_out *lo = &wo->line[y];
+	const bool drawn = line_ok(Ln);
+	if (lo->hud) K.acc.lines_hud++;
+	/* windows and colour math act on the composite, not on the layers: the layered continuation (map, history) knows
+	 * neither, so on such lines only the core's own composite out to the ring is shown as real */
+	A.xl[y] = (Ln.wsel_any || (Ln.cgadsub & 0x3F) || (Ln.cgwsel & 0xC0)) ? 1 : 0;
+	A.bdm[y] = 0;
+	/* colour math on the backdrop alone (a sky gradient: fixed colour, or a sub screen with no layers): layer and sprite pixels
+	 * are untouched, so the layered continuation applies; only pixels where no layer is opaque would show the (maths'd) backdrop,
+	 * and those are filled with the soft edge, never with a guessed colour */
+	if (A.xl[y] && drawn && !Ln.wsel_any && !(Ln.cgadsub & 0x1F) && (Ln.cgadsub & 0x20) && !(Ln.cgwsel & 0xC0) && !(Ln.ts & ~Ln.tsx) &&
+	    !(Ln.flags & SWL_MODE7)) {
+		A.bdm[y] = 1; A.xl[y] = 0;
+	}
+	if (A.xl[y])
+		for (int l = 0; l < 4; l++)
+			for (int s = 0; s < 2; s++) {
+				const int r = lo->real[s][l], g = lo->ring[s][l];
+				A.xr[y][s][l] = (uint16_t) (g < r ? g : r);
+				if (nlay && A.lay[l].active && drawn && A.lay[l].line_on[y] &&
+				    A.lay[l].rowblank[fmod_(((int) Ln.vofs[l] + y) / A.lay[l].tile_px, A.lay[l].mh)])
+					A.xr[y][s][l] = (uint16_t) Mh;           /* blank ring row: draws nothing here */
+				lo->real[s][l] = 0; lo->ring[s][l] = 0;
+			}
+	for (int s = 0; s < 2; s++)
+		if (A.softany[y][s]) { memset(A.softm[y][s], 0, sizeof A.softm[y][s]); A.softany[y][s] = 0; }
+	for (int l = 0; l < 4; l++) {
+		if (!(nlay && A.lay[l].active)) continue;
+		const Layer *Ly = &A.lay[l];
+		const int pass = SWP_BG0 + l;
+		const int tp = Ly->tile_px, tsh = tp == 16 ? 4 : 3, tmask = tp - 1;
+		for (int s = 0; s < 2; s++) {
+			const bool px = !F.skip[s];
+			uint16_t *dst = A.cand[l][s] + (size_t) y * Mh;
+			uint8_t *op = A.opq[l][s] + (size_t) y * Mh;
+			int real = lo->real[s][l], ring = lo->ring[s][l];
+			if (!drawn || !Ly->line_on[y] || !((Ln.pass >> pass) & 1)) { lo->real[s][l] = 0; lo->ring[s][l] = 0; continue; }
+			{
+				/* the layer's ring row is blank all around: it draws nothing on this line, margin included */
+				const int ty = (((int) Ln.vofs[l] + y) >> tsh) & (Ly->mh - 1);
+				if (Ly->rowblank[ty]) {
+					/* blank all around the ring: assumed blank beyond it too, unless the learned map knows a tile there */
+					bool nonblank = false;
+					if (A.M && wo->coherent[l][y]) {
+						for (int idx = 1; idx <= Mh / tp + 1 && !nonblank; idx++) {
+							const wk_cell *c2;
+							wk_cell hold2;
+							int h2, b2;
+							if (!memo_cell(F, K, l, s, y, idx, &hold2, &c2, &h2, &b2)) continue;
+							if (!b2) nonblank = true;
+						}
+					}
+					if (!nonblank) {
+						if (px) memset(op, 0, (size_t) Mh);
+						lo->real[s][l] = lo->ring[s][l] = (uint16_t) Mh;
+						continue;
+					}
+				}
+			}
+			if (real > Mh) real = Mh;
+			if (ring > real) ring = real;
+			if (px && ring > 0) {
+				const uint16_t *pp = sn->px[pass][y][s];
+				const uint8_t *pz = sn->z[pass][y][s];
+				const bool all = ((Ln.tsx >> l) & 1) != 0;   /* a backdrop + sub layer composite draws every pixel */
+				if (s == 0) {
+					wk_rev16(dst, pp + Mh - ring, ring);
+					if (all) memset(op, 1, (size_t) ring);
+					else { wk_rev8(op, pz + Mh - ring, ring); wk_nz8(op, op, ring); }
+				} else {
+					memcpy(dst, pp, (size_t) ring * 2);
+					if (all) memset(op, 1, (size_t) ring);
+					else wk_nz8(op, pz, ring);
+				}
+			}
+			if (real > ring) {
+				const bool tsx_math = ((Ln.tsx >> l) & 1) && Ln.cgadsub == 0x20;   /* a sub screen layer added to the backdrop: the map cell gets the same maths */
+				const int have_geom = wo->coherent[l][y] != 0 && A.M && (!((Ln.tsx >> l) & 1) || tsx_math);
+				if (!have_geom) lo->real[s][l] = (uint16_t) ring;
+				else {
+					wk_geom g;
+					wk_line_geom(fr, wo, l, y, &g);
+					const int wx = wo->world_x[l][y];
+					const int fy = wo->world_row[l][y] & tmask;
+					const uint16_t *soft_amb = NULL;
+					int16_t crow[16];
+					for (int d = ring; d < real; ) {
+						/* the stretch of this line inside one cell */
+						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
+						const int idx = s == 0 ? (int) (g.tile_first - (xw >> tsh)) : (int) ((xw >> tsh) - (g.tile_first + g.nvis - 1));
+						int n = s == 0 ? (xw & tmask) + 1 : tp - (xw & tmask);
+						if (n > real - d) n = real - d;
+						const wk_cell *cell;
+						wk_cell hold;
+						int hok, cb;
+						/* the map holds a tilemap word, not pixels: shown only if that tile's graphics are today what they were when it was learned */
+						if (!memo_cell(F, K, l, s, y, idx, &hold, &cell, &hok, &cb) || !hok) { lo->real[s][l] = (uint16_t) d; break; }
+						if (px) {
+							cell_row(v, Ly, cell->code, fy, crow);
+							const int step = s == 0 ? -1 : 1;
+							if (tsx_math)
+								for (int k = 0, x = xw; k < n; k++, x += step) {
+									const int ci = crow[x & tmask];
+									dst[d + k] = math_add565(Ln.backdrop, ci < 0 ? Ln.fix565 : v->colors[ci]); op[d + k] = 1;
+								}
+							else
+								for (int k = 0, x = xw; k < n; k++, x += step) {
+									const int ci = crow[x & tmask];
+									dst[d + k] = ci < 0 ? 0 : v->colors[ci]; op[d + k] = ci >= 0;
+								}
+							if (A.soft_on && !cell->live) {
+								/* a memory of an earlier run or session, not seen in this one: a hint, shown softly (a transparent pixel's colour is never read) */
+								if (!soft_amb) soft_amb = amb_of(F, K, s, y);
+								wk_mix565_row(dst + d, soft_amb + d, SOFT_W, n);
+								uint8_t any = 0;
+								for (int k = 0; k < n; k++) { any |= op[d + k]; if (op[d + k]) A.softm[y][s][d + k] |= (uint8_t) (1 << l); }
+								if (any) A.softany[y][s] = 1;
+							}
+						}
+						d += n;
+					}
+				}
+			}
+		}
+	}
+	wk_out_refresh_line(wo, y);
+
+	/* the layers' own pixels at the view edge, for the foreground fade (what a layer that is not known beside the view continues with) */
+	if (A.fgfade && nlay)
+		for (int l = 0; l < 4; l++) {
+			const Layer *Ly = &A.lay[l];
+			if (!Ly->active) continue;
+			const int tp = Ly->tile_px;
+			const bool ok = line_ok(Ln) && Ly->line_on[y] && !A.xl[y] && !wo->line[y].hud && !(Ln.flags & SWL_MODE7);
+			for (int s = 0; s < 2; s++) {
+				A.tailop[l][s][y] = 0;
+				if (!ok || F.skip[s]) continue;
+				const int X = (int) Ln.hofs[l] + (s ? 255 : 0), Y = (int) Ln.vofs[l] + y;
+				const uint32_t word = Ly->code[fmod_(fdiv(Y, tp), Ly->mh) * Ly->mw + fmod_(fdiv(X, tp), Ly->mw)];
+				if (word == WK_CODE_NOREC) continue;
+				const int pxi = cell_index(v, Ly, word, fmod_(X, tp), fmod_(Y, tp));
+				if (pxi < 0) continue;
+				A.tailpx[l][s][y] = v->colors[pxi];
+				A.tailop[l][s][y] = 1;
+			}
+		}
+}
+
+/* The composite of a line whose layers have no window and no colour math (SWLP_NOCOMP: the core did not draw it), distances 0 .. n - 1 of side s: the
+ * sprite pass and the main screen's BG passes by depth (every pass keeps the depth the composite would have given the pixel; depths of different passes
+ * never tie) over the backdrop: its colour, or with colour math on the backdrop the picture the core drew of it (SWLP_BASE). */
+static void derive_composite(const Frame &F, const SWideLine &Ln, int y, int s, int n, uint16_t *out)
+{
+	const Snap *sn = F.sn;
+	const int Mh = F.Mh;
+	uint8_t zb[SNES_WIDE_MAX_MARGIN];
+	memset(zb, 0, (size_t) n);
+	if (Ln.pflags & SWLP_BASE) {
+		const uint16_t *cp = sn->px[SWP_COMPOSITE][y][s];
+		if (s == 0) wk_rev16(out, cp + Mh - n, n);
+		else memcpy(out, cp, (size_t) n * 2);
+	} else for (int d = 0; d < n; d++) out[d] = Ln.backdrop;
+	for (int p = SWP_OBJ; p < SW_NPASS; p++) {
+		if (!((Ln.pass >> p) & 1) || (p >= SWP_BG0 && !((Ln.tm >> (p - SWP_BG0)) & 1))) continue;
+		const uint16_t *pp = sn->px[p][y][s];
+		const uint8_t *pz = sn->z[p][y][s];
+		if (s == 0) { pp += Mh - 1; pz += Mh - 1; for (int d = 0; d < n; d++) if (pz[-d] > zb[d]) { zb[d] = pz[-d]; out[d] = pp[-d]; } }
+		else for (int d = 0; d < n; d++) if (pz[d] > zb[d]) { zb[d] = pz[d]; out[d] = pp[d]; }
+	}
+}
+
+/* steps 4 and 5 for one line: widekit's composition, then the exact composite where every layer of the line is real, sprites over the rest (Mode 7:
+ * the composite whole), the provenance of soft learned pixels and the line's share of the census. Both margins are held by distance from the
+ * picture here (index d; fin_line turns the left one round). */
+static void out_line(const Frame &F, Work &K, int y)
+{
+	const SWideView *v = F.v;
+	const Snap *sn = F.sn;
+	const wk_out *wo = A.wo;
+	Out *o = F.o;
+	const int Mh = F.Mh, nlay = F.nlay, fade = F.fade;
+	const SWideLine &Ln = v->line[y];
+	const wk_line_out *lo = &wo->line[y];
+	const bool shown = (Ln.flags & SWL_VALID) && !(Ln.flags & SWL_BLANK);     /* fin_line lays the ambient frame over this line */
+	if ((F.skip[0] || F.skip[1]) && !shown) {
+		wk_compose_in ci = F.ci;
+		ci.side_skip[0] = ci.side_skip[1] = 0;
+		wk_compose_lines(A.C, &ci, y, y + 1, K.scr);
+	} else wk_compose_lines(A.C, &F.ci, y, y + 1, K.scr);
+
+	uint16_t *const rs[2] = { o->px + (size_t) y * F.OW, o->px + (size_t) y * F.OW + Mh + 256 };
+	uint8_t *const ps[2] = { o->prov + (size_t) y * F.OW, o->prov + (size_t) y * F.OW + Mh + 256 };
+	o->real[y][0] = o->real[y][1] = 0;
+	if (!(Ln.flags & SWL_VALID)) { K.acc.reason[SNES_WIDE_LR_NOTVALID]++; return; }
+	if (Ln.flags & SWL_BLANK) {
+		K.acc.reason[SNES_WIDE_LR_BLANK]++;
+		for (int s = 0; s < 2; s++) { memset(rs[s], 0, (size_t) Mh * 2); memset(ps[s], PROV_EXACT, (size_t) Mh); }
+		return;
+	}
+	if (!line_ok(Ln)) {
+		K.acc.reason[(Ln.flags & SWL_HIRES) ? SNES_WIDE_LR_HIRES : (Ln.flags & SWL_OPT) ? SNES_WIDE_LR_OPT : (Ln.flags & SWL_MOSAIC) ? SNES_WIDE_LR_MOSAIC : SNES_WIDE_LR_INTERLACE]++;
+		return;
+	}
+	int why = 0;
+	for (int s = 0; s < 2; s++) {
+		int nex = Mh, nlay_ = Mh, rmax_ = 0;   /* nex: every enabled layer is real (exact composite); nlay_: every layer that is not a HUD; rmax_: the widest real extent of any layer */
+		if (!(Ln.flags & SWL_MODE7)) {
+			if (lo->hud) { nex = nlay_ = 0; if (!why) why = SNES_WIDE_LR_HUD; }
+			for (int l = 0; l < bg_count(Ln.mode); l++) {
+				if (!((Ln.tm | Ln.tsx) & (1 << l))) continue;
+				if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; rmax_ = 0; if (!why) why = SNES_WIDE_LR_NOLAYER; break; }
+				const int r = A.xl[y] ? A.xr[y][s][l] : lo->real[s][l];
+				const int rr = A.xl[y] ? r : (lo->ring[s][l] < r ? lo->ring[s][l] : r);   /* the core's composite pass only knows the ring */
+				const int kind = wo->kind[l];
+				if (rr < nex) nex = rr;
+				if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r < nlay_) nlay_ = r;
+				if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r > rmax_) rmax_ = r;
+				if (kind == WK_KIND_HUD || kind == WK_KIND_OFF) nex = 0;
+			}
+		}
+		if (!why && !(Ln.flags & SWL_MODE7) && nex < Mh) {
+			if (A.xl[y] && nlay_ >= Mh) why = Ln.wsel_any ? SNES_WIDE_LR_WINDOW : SNES_WIDE_LR_MATH;
+			else {
+				why = SNES_WIDE_LR_RING;
+				for (int l = 0; l < 4; l++) if (nlay && A.lay[l].active && A.lay[l].line_on[y] && A.lay[l].bitmap) why = SNES_WIDE_LR_BITMAP;
+			}
+		}
+		const int cex = nex >= Mh ? Mh : (nex > fade ? nex - fade : 0);
+		const int cla = nlay_ >= Mh ? Mh : (nlay_ > fade ? nlay_ - fade : 0);
+		if (!F.skip[s]) {
+			const uint16_t *cp = sn->px[SWP_COMPOSITE][y][s];
+			if (cex > 0) {
+				if (Ln.pflags & SWLP_NOCOMP) derive_composite(F, Ln, y, s, cex, rs[s]);
+				else if (s == 0) wk_rev16(rs[0], cp + Mh - cex, cex);
+				else memcpy(rs[1], cp, (size_t) cex * 2);
+				memset(ps[s], PROV_EXACT, (size_t) cex);
+			}
+			if (!(Ln.flags & SWL_MODE7) && !F.sprites_off && ((Ln.pass >> SWP_OBJ) & 1)) {
+				/* sprites end where the layers' real picture ends (same fade): never a sprite floating on the ambient colour */
+				const int sbm = rmax_ > nlay_ ? rmax_ : nlay_;
+				const int sb = sbm >= Mh ? Mh : sbm;
+				const int n = sb - cex;
+				if (n > 0) {
+					/* the sprite pass of distances cex .. sb - 1 */
+					const uint16_t *sp;
+					const uint8_t *sz;
+					if (s == 0) {
+						wk_rev16(K.t16, sn->px[SWP_OBJ][y][0] + Mh - sb, n);
+						wk_rev8(K.t8, sn->z[SWP_OBJ][y][0] + Mh - sb, n);
+						sp = K.t16; sz = K.t8;
+					} else { sp = sn->px[SWP_OBJ][y][1] + cex; sz = sn->z[SWP_OBJ][y][1] + cex; }
+					int nfull = n;                    /* full weight up to here, then the fade (only when the sprites end inside the margin) */
+					if (sb < Mh) { nfull = sb - fade - cex; if (nfull < 0) nfull = 0; }
+					wk_copy_masked(rs[s] + cex, sp, sz, nfull);
+					wk_fill_masked8(ps[s] + cex, sz, PROV_EXACT, nfull);
+					for (int i = nfull; i < n; i++) {
+						if (!sz[i]) continue;
+						const int d = cex + i;
+						const int w = (sb - d) * 32 / fade;
+						rs[s][d] = w >= 32 ? sp[i] : mix565(rs[s][d], sp[i], w);
+						ps[s][d] = w >= 32 ? PROV_EXACT : WK_PROV_FADE;      /* a faded sprite pixel is not a claim of real picture */
+					}
+				}
+			}
+		}
+		o->real[y][s] = (uint8_t) (cla > cex ? cla : cex);
+		if (s == 0) K.acc.sl += o->real[y][0]; else K.acc.sr += o->real[y][1];
+	}
+	K.acc.nreal++;
+	if (o->real[y][0] == Mh && o->real[y][1] == Mh) { K.acc.lines_exact++; why = SNES_WIDE_LR_EXACT; }
+	else if (!why) why = SNES_WIDE_LR_RING;
+	K.acc.reason[why]++;
+
+	/* provenance of soft learned pixels: a hint, never a claim of real picture */
+	if (A.soft_on)
+		for (int s = 0; s < 2; s++) {
+			if (!A.softany[y][s] || F.skip[s]) continue;
+			const uint8_t *sm = A.softm[y][s];
+			for (int d = 0; d < Mh; d++) {
+				if (!sm[d]) continue;
+				uint8_t &p = ps[s][d];
+				if ((p & 15) == WK_PROV_LEVEL && ((sm[d] >> (p >> 4)) & 1)) p = (uint8_t) ((p & 0xF0) | PROV_SOFTL);
+			}
+		}
+
+	/* census and coverage: this line's margin pixels by provenance */
+	if (F.covf && !(A.hud_excl && lo->hud)) {      /* a status bar is original width by design: not a gap in the margin */
+		for (int s = 0; s < 2; s++) {
+			int ring_e = 0, real_e = 0;
+			for (int l = 0; l < 4; l++) {
+				if (lo->ring[s][l] > ring_e) ring_e = lo->ring[s][l];
+				if (lo->real[s][l] > real_e) real_e = lo->real[s][l];
+			}
+			int cnt[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+			const uint8_t *pp = ps[s];
+			for (int d = 0; d < Mh; d++) cnt[pp[d] & 15]++;
+			const int tm = cnt[WK_PROV_LEVEL] + cnt[PROV_EXACT] + cnt[WK_PROV_FADE], bd = cnt[WK_PROV_BACKDROP] + cnt[WK_PROV_BG];
+			const int sf = cnt[PROV_SOFTL], rv = cnt[WK_PROV_REVEAL], un = Mh - tm - bd - sf - rv;
+			int ln_ = real_e > ring_e ? real_e - ring_e : 0;
+			if (ln_ > tm) ln_ = tm;
+			K.acc.ctm += (uint64_t) (tm - ln_); K.acc.cln += (uint64_t) ln_; K.acc.cbd += (uint64_t) bd; K.acc.cun += (uint64_t) un;
+			K.acc.csf += (uint64_t) sf; K.acc.crv += (uint64_t) rv;
+			K.acc.cnum[s] += (uint64_t) ((tm + bd + rv) * 2 + sf); K.acc.ctot[s] += (uint64_t) Mh;
+			K.acc.cpad += (uint64_t) (F.Mfull - Mh);
+		}
+	}
+}
+
+/* the last step for one line: the ambient frame over a side that Auto does not show (or the cross-fade to it), and the left margin into screen order */
+static void fin_line(const Frame &F, Work &K, int y)
+{
+	Out *o = F.o;
+	const int Mh = F.Mh;
+	const SWideLine &Ln = F.v->line[y];
+	uint16_t *const rs[2] = { o->px + (size_t) y * F.OW, o->px + (size_t) y * F.OW + Mh + 256 };
+	uint8_t *const ps[2] = { o->prov + (size_t) y * F.OW, o->prov + (size_t) y * F.OW + Mh + 256 };
+	bool left_done = false;
+	if ((Ln.flags & SWL_VALID) && !(Ln.flags & SWL_BLANK))
+		for (int s = 0; s < 2; s++) {
+			const int xf = F.xf[s];
+			if (xf <= 0) continue;
+			const uint16_t *ap = amb_of(F, K, s, y);
+			o->real[y][s] = 0;        /* a blend with the ambient frame is not a claim of real picture, whatever the weight */
+			if (xf >= 32) {
+				if (s == 0) { wk_rev16(rs[0], ap, Mh); left_done = true; }
+				else memcpy(rs[1], ap, (size_t) Mh * 2);
+				memset(ps[s], WK_PROV_SOFT, (size_t) Mh);
+			} else {
+				wk_mix565_row(rs[s], ap, xf, Mh);
+				for (int d = 0; d < Mh; d++) ps[s][d] = (uint8_t) ((ps[s][d] & 0xF0) | WK_PROV_FADE);
+			}
+		}
+	if (!left_done) { wk_rev16_inplace(rs[0], Mh); wk_rev8_inplace(ps[0], Mh); }
+}
+
+typedef void (*LineFn)(const Frame &, Work &, int);
+struct LineJob { const Frame *F; LineFn fn; std::atomic<int> next; };
+enum { LINE_CHUNK = 8 };
+
+static void line_worker(void *arg, int worker)
+{
+	LineJob *j = (LineJob *) arg;
+	Work &K = *g_work[worker];
+	const int H = j->F->H;
+	for (;;) {
+		const int y0 = j->next.fetch_add(LINE_CHUNK, std::memory_order_relaxed);
+		if (y0 >= H) break;
+		const int y1 = y0 + LINE_CHUNK < H ? y0 + LINE_CHUNK : H;
+		for (int y = y0; y < y1; y++) j->fn(*j->F, K, y);
+	}
+}
+
+/* every line of the frame through fn: on the caller alone, or shared with the frontend's workers (snes_wide_parallel). A line is done by one worker;
+ * what the lines write is per line or per worker, so the result does not depend on who did which line. */
+static void for_lines(const Frame &F, LineFn fn)
+{
+	LineJob j;
+	j.F = &F; j.fn = fn; j.next.store(0);
+	const int nw = A.pfor ? A.nwork : 1;
+	if (nw > 1) A.pfor(A.pfor_user, line_worker, &j, nw);
+	else line_worker(&j, 0);
+}
+
 /* a centre only frame: the picture in the middle, the ambient frame on both sides (what compose can do without the margin passes) */
 static void run_co(const Snap *sn, Out *o, const SWideView *v, int H)
 {
@@ -954,16 +1490,20 @@ static void run_co(const Snap *sn, Out *o, const SWideView *v, int H)
 	A.epoch = ~v->epoch;      /* the layer analysis lost frames: the next frame with margin passes starts a new scene */
 	amb_update(v, H, reset);
 	const int OWf = 256 + 2 * Mfull;
+	uint32_t vc = 0, vm = 0;
+	uint16_t a0[SNES_WIDE_MAX_MARGIN + 8], a1[SNES_WIDE_MAX_MARGIN + 8];
 	for (int y = 0; y < H; y++) {
 		uint16_t *row = o->px + (size_t) y * OWf;
 		uint8_t *prow = o->prov + (size_t) y * OWf;
 		memcpy(row + Mfull, v->centre + (size_t) y * v->centre_pitch, 512);
 		memset(prow, WK_PROV_SOFT, (size_t) OWf);
 		memset(prow + Mfull, WK_PROV_CENTRE, 256);
-		const uint16_t *a0 = amb_row(0, y, Mfull), *a1 = amb_row(1, y, Mfull);
-		for (int d = 0; d < Mfull; d++) { row[Mfull - 1 - d] = a0[d]; row[Mfull + 256 + d] = a1[d]; }
+		amb_fill(a0, 0, y, Mfull, &vc, &vm); amb_fill(a1, 1, y, Mfull, &vc, &vm);
+		wk_rev16(row, a0, Mfull);
+		memcpy(row + Mfull + 256, a1, (size_t) Mfull * 2);
 		o->real[y][0] = o->real[y][1] = 0;
 	}
+	A.cen.cache_checks += vc; A.cen.cache_mismatches += vm;
 	A.cen.frames_wide++; A.cen.frames_ambient++;
 	A.cen.frames_side_amb[0]++; A.cen.frames_side_amb[1]++;
 	if ((A.frame_n & 1) == 0) A.cen.px_pad += (uint64_t) 2 * Mfull * H;
@@ -1074,148 +1614,27 @@ static void run(const Snap *sn)
 		st.map_cells = ms.cells; st.map_rooms = ms.rooms; st.map_bound = ms.bound; st.map_served = (int) ms.served_tiles;
 	}
 
-	/* 3. candidates */
+	/* 3. candidates (per line) */
 	amb_update(v, H, wo->scene_event != 0);
-	if (A.soft_on) memset(A.softm, 0, sizeof A.softm);
+	Frame F;
+	F.sn = sn; F.v = v; F.o = o; F.H = H; F.Mh = Mh; F.Mfull = Mfull; F.OW = OW; F.nlay = nlay;
+	F.fade = A.fade_px > 0 ? A.fade_px : 20;
+	F.gen = ++g_fgen;
+	if (!F.gen) F.gen = ++g_fgen;
+	F.sprites_off = A.prof && A.prof->sprites_off;
+	const bool auto_on = A.auto_on.load() != 0;
+	/* the coverage is counted on every second frame. On the frames between, a side that shows the ambient frame and is not fading (Auto can only
+	 * decide otherwise on a counted frame) shows none of its composed pixels and nothing later reads them (option "lazy", default on): the extents
+	 * and widekit's hysteresis still advance, the pixels are not made. */
+	F.covf = (A.frame_n & 1) == 0 || !A.cov_have;
+	for (int s = 0; s < 2; s++) F.skip[s] = A.lazy && auto_on && !F.covf && !A.auto_state[s] && A.xf[s] >= 32;
+	F.xf[0] = F.xf[1] = 0;
+	for (int i = 0; i < SNES_WIDE_MAX_WORKERS; i++) memset(&g_work[i]->acc, 0, sizeof(Acc));
 	(void) Mc;
-	for (int y = 0; y < H; y++) {
-		const SWideLine &Ln = v->line[y];
-		wk_line_out *lo = &wo->line[y];
-		const bool drawn = line_ok(Ln);
-		if (lo->hud) st.lines_hud++;
-		/* windows and colour math act on the composite, not on the layers: the layered continuation (map, history) knows
-		 * neither, so on such lines only the core's own composite out to the ring is shown as real */
-		A.xl[y] = (Ln.wsel_any || (Ln.cgadsub & 0x3F) || (Ln.cgwsel & 0xC0)) ? 1 : 0;
-		A.bdm[y] = 0;
-		/* colour math on the backdrop alone (a sky gradient: fixed colour, or a sub screen with no layers): layer and sprite pixels
-		 * are untouched, so the layered continuation applies; only pixels where no layer is opaque would show the (maths'd) backdrop,
-		 * and those are filled with the soft edge, never with a guessed colour */
-		if (A.xl[y] && drawn && !Ln.wsel_any && !(Ln.cgadsub & 0x1F) && (Ln.cgadsub & 0x20) && !(Ln.cgwsel & 0xC0) && !(Ln.ts & ~Ln.tsx) &&
-		    !(Ln.flags & SWL_MODE7)) {
-			A.bdm[y] = 1; A.xl[y] = 0;
-		}
-		if (A.xl[y])
-			for (int l = 0; l < 4; l++)
-				for (int s = 0; s < 2; s++) {
-					const int r = lo->real[s][l], g = lo->ring[s][l];
-					A.xr[y][s][l] = (uint16_t) (g < r ? g : r);
-					if (nlay && A.lay[l].active && drawn && A.lay[l].line_on[y] &&
-					    A.lay[l].rowblank[fmod_(((int) Ln.vofs[l] + y) / A.lay[l].tile_px, A.lay[l].mh)])
-						A.xr[y][s][l] = (uint16_t) Mh;           /* blank ring row: draws nothing here */
-					lo->real[s][l] = 0; lo->ring[s][l] = 0;
-				}
-		for (int l = 0; l < 4; l++) {
-			if (!(nlay && A.lay[l].active)) continue;
-			Layer *Ly = &A.lay[l];
-			const int pass = SWP_BG0 + l;
-			for (int s = 0; s < 2; s++) {
-				uint16_t *dst = A.cand[l][s] + (size_t) y * Mh;
-				uint8_t *op = A.opq[l][s] + (size_t) y * Mh;
-				int real = lo->real[s][l], ring = lo->ring[s][l];
-				if (!drawn || !Ly->line_on[y] || !((Ln.pass >> pass) & 1)) { lo->real[s][l] = 0; lo->ring[s][l] = 0; continue; }
-				{
-					/* the layer's ring row is blank all around: it draws nothing on this line, margin included */
-					const int ty = fmod_(((int) Ln.vofs[l] + y) / Ly->tile_px, Ly->mh);
-					if (Ly->rowblank[ty]) {
-						/* blank all around the ring: assumed blank beyond it too, unless the learned map knows a tile there */
-						bool nonblank = false;
-						if (A.M && wo->coherent[l][y]) {
-							wk_geom g2;
-							wk_line_geom(fr, wo, l, y, &g2);
-							for (int idx = 1; idx <= Mh / g2.tp + 1 && !nonblank; idx++) {
-								wk_cell c2;
-								if (!wk_map_margin_cell(A.M, fr, wo, l, y, s, idx, &c2)) continue;
-								const int t2 = (int) (c2.code & 0x3ff);
-								layer_tile_th(Ly, v, t2, Ly->gen, false);
-								if (!Ly->tblank[t2]) nonblank = true;
-							}
-						}
-						if (!nonblank) {
-							memset(op, 0, (size_t) Mh);
-							lo->real[s][l] = lo->ring[s][l] = (uint16_t) Mh;
-							continue;
-						}
-					}
-				}
-				if (real > Mh) real = Mh;
-				if (ring > real) ring = real;
-				const uint16_t *pp = sn->px[pass][y][s];
-				const uint8_t *pz = sn->z[pass][y][s];
-				int d;
-				for (d = 0; d < ring; d++) {
-					const int col = s == 0 ? Mh - 1 - d : d;
-					dst[d] = pp[col];
-					op[d] = ((Ln.tsx >> l) & 1) || pz[col] != 0;   /* a backdrop + sub layer composite draws every pixel */
-				}
-				if (real > ring) {
-					const int tp = Ly->tile_px;
-					wk_geom g;
-					const bool tsx_math = ((Ln.tsx >> l) & 1) && Ln.cgadsub == 0x20;   /* a sub screen layer added to the backdrop: the map cell gets the same maths */
-					int have_geom = wo->coherent[l][y] != 0 && A.M && (!((Ln.tsx >> l) & 1) || tsx_math);
-					if (have_geom) wk_line_geom(fr, wo, l, y, &g);
-					int cidx = 0x7fffffff, cok = 0, crow_ok = 0;
-					const uint16_t *soft_amb = NULL;
-					int16_t crow[16];
-					wk_cell cell;
-					for (; d < real; d++) {
-						if (!have_geom) { lo->real[s][l] = (uint16_t) d; break; }
-						const int wx = wo->world_x[l][y];
-						const int idx = s == 0 ? (int) (g.tile_first - fdiv(wx - 1 - d, tp))
-						                       : (int) (fdiv(wx + 256 + d, tp) - (g.tile_first + g.nvis - 1));
-						if (idx != cidx) {
-							cok = wk_map_margin_cell(A.M, fr, wo, l, y, s, idx, &cell); cidx = idx;
-							if (cok) {   /* the map holds a tilemap word, not pixels: shown only if that tile's graphics are today what they were when it was learned */
-								const uint32_t th = layer_tile_th(Ly, v, (int) (cell.code & 0x3ff), Ly->gen, false);
-								const uint32_t hh = mix32(cell.code * 0x10001u + 0x1234567u, th);
-								cok = (uint16_t) ((hh ^ (hh >> 16)) & 0xFFFF) == cell.h16;
-							}
-							crow_ok = 0;
-						}
-						if (!cok) { lo->real[s][l] = (uint16_t) d; break; }
-						const int xw = s == 0 ? wx - 1 - d : wx + 256 + d;
-						if (!crow_ok) { cell_row(v, Ly, cell.code, fmod_(wo->world_row[l][y], tp), crow); crow_ok = 1; }
-						const int ci = crow[fmod_(xw, tp)];
-						if (tsx_math) { dst[d] = math_add565(Ln.backdrop, ci < 0 ? Ln.fix565 : v->colors[ci]); op[d] = 1; }
-						else if (ci < 0) { dst[d] = 0; op[d] = 0; }
-						else { dst[d] = v->colors[ci]; op[d] = 1; }
-						if (A.soft_on && !cell.live && op[d]) {
-							/* a memory of an earlier run or session, not seen in this one: a hint, shown softly */
-							if (!soft_amb) soft_amb = amb_row(s, y, Mfull);
-							dst[d] = mix565(dst[d], soft_amb[d], SOFT_W);
-							A.softm[y][s][d] |= (uint8_t) (1 << l);
-						}
-					}
-				}
-			}
-		}
-		wk_out_refresh_line(wo, y);
-	}
+	for_lines(F, cand_line);
 
-	/* the layers' own pixels at the view edge, for the foreground fade (what a layer that is not known beside the view continues with) */
-	if (A.fgfade && nlay)
-		for (int l = 0; l < 4; l++) {
-			Layer *Ly = &A.lay[l];
-			if (!Ly->active) continue;
-			const int tp = Ly->tile_px;
-			for (int y = 0; y < H; y++) {
-				const SWideLine &Ln = v->line[y];
-				const bool ok = line_ok(Ln) && Ly->line_on[y] && !A.xl[y] && !wo->line[y].hud && !(Ln.flags & SWL_MODE7);
-				for (int s = 0; s < 2; s++) {
-					A.tailop[l][s][y] = 0;
-					if (!ok) continue;
-					const int X = (int) Ln.hofs[l] + (s ? 255 : 0), Y = (int) Ln.vofs[l] + y;
-					const uint32_t word = Ly->code[fmod_(fdiv(Y, tp), Ly->mh) * Ly->mw + fmod_(fdiv(X, tp), Ly->mw)];
-					if (word == WK_CODE_NOREC) continue;
-					const int px = cell_index(v, Ly, word, fmod_(X, tp), fmod_(Y, tp));
-					if (px < 0) continue;
-					A.tailpx[l][s][y] = v->colors[px];
-					A.tailop[l][s][y] = 1;
-				}
-			}
-		}
-
-	/* 4. compose */
-	wk_compose_in ci;
+	/* 4. compose: widekit's per frame part here, its lines with step 5 in out_line */
+	wk_compose_in &ci = F.ci;
 	memset(&ci, 0, sizeof ci);
 	ci.edge_px[0] = A.edge_px[0]; ci.edge_px[1] = A.edge_px[1];
 	for (int y = 0; y < H; y++) {
@@ -1239,149 +1658,40 @@ static void run(const Snap *sn)
 			}
 	ci.out = o->px; ci.out_stride = OW;
 	ci.prov = o->prov;
-	wk_compose_frame(A.C, &ci);
+	ci.left_by_distance = 1;
+	ci.side_skip[0] = F.skip[0]; ci.side_skip[1] = F.skip[1];
+	wk_compose_begin(A.C, &ci);
+	for_lines(F, out_line);
+	wk_compose_end(A.C);
 
-	/* 5. exact composite where every layer of the line is real, sprites over the rest, Mode 7 whole */
-	const int fade = A.fade_px > 0 ? A.fade_px : 20;
-	const bool sprites_off = A.prof && A.prof->sprites_off;
-	long sl = 0, sr = 0;
-	int nreal = 0;
-	for (int y = 0; y < H; y++) {
-		const SWideLine &Ln = v->line[y];
-		wk_line_out *lo = &wo->line[y];
-		uint16_t *row = o->px + (size_t) y * OW;
-		uint8_t *prow = o->prov + (size_t) y * OW;
-		o->real[y][0] = o->real[y][1] = 0;
-		if (!(Ln.flags & SWL_VALID)) { A.cen.line_reason[SNES_WIDE_LR_NOTVALID]++; continue; }
-		if (Ln.flags & SWL_BLANK) {
-			A.cen.line_reason[SNES_WIDE_LR_BLANK]++;
-			for (int d = 0; d < Mh; d++) { row[Mh - 1 - d] = 0; row[Mh + 256 + d] = 0; prow[Mh - 1 - d] = prow[Mh + 256 + d] = PROV_EXACT; }
-			continue;
-		}
-		if (!line_ok(Ln)) {
-			A.cen.line_reason[(Ln.flags & SWL_HIRES) ? SNES_WIDE_LR_HIRES : (Ln.flags & SWL_OPT) ? SNES_WIDE_LR_OPT : (Ln.flags & SWL_MOSAIC) ? SNES_WIDE_LR_MOSAIC : SNES_WIDE_LR_INTERLACE]++;
-			continue;
-		}
-		int why = 0;
-		for (int s = 0; s < 2; s++) {
-			int nex = Mh, nlay_ = Mh, rmax_ = 0;   /* nex: every enabled layer is real (exact composite); nlay_: every layer that is not a HUD; rmax_: the widest real extent of any layer */
-			if (!(Ln.flags & SWL_MODE7)) {
-				if (lo->hud) { nex = nlay_ = 0; if (!why) why = SNES_WIDE_LR_HUD; }
-				for (int l = 0; l < bg_count(Ln.mode); l++) {
-					if (!((Ln.tm | Ln.tsx) & (1 << l))) continue;
-					if (!(nlay && A.lay[l].active && A.lay[l].line_on[y])) { nex = nlay_ = 0; rmax_ = 0; if (!why) why = SNES_WIDE_LR_NOLAYER; break; }
-					const int r = A.xl[y] ? A.xr[y][s][l] : lo->real[s][l];
-					const int rr = A.xl[y] ? r : (lo->ring[s][l] < r ? lo->ring[s][l] : r);   /* the core's composite pass only knows the ring */
-					const int kind = wo->kind[l];
-					if (rr < nex) nex = rr;
-					if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r < nlay_) nlay_ = r;
-					if (kind != WK_KIND_HUD && kind != WK_KIND_OFF && r > rmax_) rmax_ = r;
-					if (kind == WK_KIND_HUD || kind == WK_KIND_OFF) nex = 0;
-				}
-			}
-			if (!why && !(Ln.flags & SWL_MODE7) && nex < Mh) {
-				if (A.xl[y] && nlay_ >= Mh) why = Ln.wsel_any ? SNES_WIDE_LR_WINDOW : SNES_WIDE_LR_MATH;
-				else {
-					why = SNES_WIDE_LR_RING;
-					for (int l = 0; l < 4; l++) if (nlay && A.lay[l].active && A.lay[l].line_on[y] && A.lay[l].bitmap) why = SNES_WIDE_LR_BITMAP;
-				}
-			}
-			const int cex = nex >= Mh ? Mh : (nex > fade ? nex - fade : 0);
-			const int cla = nlay_ >= Mh ? Mh : (nlay_ > fade ? nlay_ - fade : 0);
-			const uint16_t *cp = sn->px[SWP_COMPOSITE][y][s];
-			for (int d = 0; d < cex; d++) {
-				const int col = s == 0 ? Mh - 1 - d : d;
-				const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
-				row[dx] = cp[col];
-				prow[dx] = PROV_EXACT;
-			}
-			if (!(Ln.flags & SWL_MODE7) && !sprites_off && ((Ln.pass >> SWP_OBJ) & 1)) {
-				const uint16_t *sp = sn->px[SWP_OBJ][y][s];
-				const uint8_t *sz = sn->z[SWP_OBJ][y][s];
-				/* sprites end where the layers' real picture ends (same fade): never a sprite floating on the ambient colour */
-				const int sbm = rmax_ > nlay_ ? rmax_ : nlay_;
-				const int sb = sbm >= Mh ? Mh : sbm;
-				for (int d = cex; d < sb; d++) {
-					const int col = s == 0 ? Mh - 1 - d : d;
-					const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
-					if (!sz[col]) continue;
-					const int w = (sb < Mh && d >= sb - fade) ? (sb - d) * 32 / fade : 32;
-					row[dx] = w >= 32 ? sp[col] : mix565(row[dx], sp[col], w);
-					prow[dx] = w >= 32 ? PROV_EXACT : WK_PROV_FADE;      /* a faded sprite pixel is not a claim of real picture */
-				}
-			}
-			o->real[y][s] = (uint8_t) (cla > cex ? cla : cex);
-			if (s == 0) sl += o->real[y][0]; else sr += o->real[y][1];
-		}
-		nreal++;
-		if (o->real[y][0] == Mh && o->real[y][1] == Mh) { st.lines_exact++; why = SNES_WIDE_LR_EXACT; }
-		else if (!why) why = SNES_WIDE_LR_RING;
-		A.cen.line_reason[why]++;
+	Acc T;
+	memset(&T, 0, sizeof T);
+	for (int i = 0; i < SNES_WIDE_MAX_WORKERS; i++) {
+		const Acc &a = g_work[i]->acc;
+		T.sl += a.sl; T.sr += a.sr; T.nreal += a.nreal; T.lines_exact += a.lines_exact; T.lines_hud += a.lines_hud;
+		for (int k = 0; k < SNES_WIDE_LR_N; k++) T.reason[k] += a.reason[k];
+		T.ctm += a.ctm; T.cln += a.cln; T.cbd += a.cbd; T.cun += a.cun; T.csf += a.csf; T.crv += a.crv; T.cpad += a.cpad;
+		for (int s = 0; s < 2; s++) { T.cnum[s] += a.cnum[s]; T.ctot[s] += a.ctot[s]; }
 	}
-	st.real_l = nreal ? (int) (sl / nreal) : 0;
-	st.real_r = nreal ? (int) (sr / nreal) : 0;
-
-	/* provenance of soft learned pixels: a hint, never a claim of real picture */
-	if (A.soft_on)
-		for (int y = 0; y < H; y++) {
-			if (!line_ok(v->line[y])) continue;
-			uint8_t *prow = o->prov + (size_t) y * OW;
-			for (int s = 0; s < 2; s++) {
-				const uint8_t *sm = A.softm[y][s];
-				for (int d = 0; d < Mh; d++) {
-					if (!sm[d]) continue;
-					uint8_t &p = prow[s == 0 ? Mh - 1 - d : Mh + 256 + d];
-					if ((p & 15) == WK_PROV_LEVEL && ((sm[d] >> (p >> 4)) & 1)) p = (uint8_t) ((p & 0xF0) | PROV_SOFTL);
-				}
-			}
-		}
+	st.lines_hud = T.lines_hud; st.lines_exact = T.lines_exact;
+	for (int k = 0; k < SNES_WIDE_LR_N; k++) A.cen.line_reason[k] += T.reason[k];
+	st.real_l = T.nreal ? (int) (T.sl / T.nreal) : 0;
+	st.real_r = T.nreal ? (int) (T.sr / T.nreal) : 0;
 
 	/* 6. census, coverage and the Auto decision (per game and scene) */
 	if (wo->scene_event) A.cen.scenes++;
-	if ((A.frame_n & 1) == 0 || !A.cov_have) {
-		uint64_t ctm = 0, cln = 0, cbd = 0, cun = 0, csf = 0, crv = 0, cpad = 0;
-		uint64_t cnum[2] = { 0, 0 }, ctot[2] = { 0, 0 };   /* per side: good pixels (soft ones half, doubled) and pixels counted */
-		for (int y = 0; y < H; y++) {
-			const SWideLine &Ln = v->line[y];
-			if (!line_ok(Ln)) continue;
-			const wk_line_out *lo = &wo->line[y];
-			if (A.hud_excl && lo->hud) continue;      /* a status bar is original width by design: not a gap in the margin */
-			const uint8_t *prow = o->prov + (size_t) y * OW;
-			for (int s = 0; s < 2; s++) {
-				int ring_e = 0, real_e = 0;
-				for (int l = 0; l < 4; l++) {
-					if (lo->ring[s][l] > ring_e) ring_e = lo->ring[s][l];
-					if (lo->real[s][l] > real_e) real_e = lo->real[s][l];
-				}
-				int tm = 0, bd = 0, un = 0, sf = 0, rv = 0;
-				const uint8_t *pp = prow + (s == 0 ? 0 : Mh + 256);
-				for (int d = 0; d < Mh; d++) {
-					const int p = pp[s == 0 ? Mh - 1 - d : d] & 15;
-					if (p == WK_PROV_LEVEL || p == PROV_EXACT || p == WK_PROV_FADE) tm++;
-					else if (p == WK_PROV_BACKDROP || p == WK_PROV_BG) bd++;
-					else if (p == PROV_SOFTL) sf++;
-					else if (p == WK_PROV_REVEAL) rv++;
-					else un++;
-				}
-				int ln_ = real_e > ring_e ? real_e - ring_e : 0;
-				if (ln_ > tm) ln_ = tm;
-				ctm += (uint64_t) (tm - ln_); cln += (uint64_t) ln_; cbd += (uint64_t) bd; cun += (uint64_t) un;
-				csf += (uint64_t) sf; crv += (uint64_t) rv;
-				cnum[s] += (uint64_t) ((tm + bd + rv) * 2 + sf); ctot[s] += (uint64_t) Mh;
-				cpad += (uint64_t) (Mfull - Mh);
-			}
-		}
-		const uint64_t tot = ctm + cln + cbd + cun + csf + crv;
-		A.cen.px_tilemap += ctm; A.cen.px_learned += cln; A.cen.px_backdrop += cbd; A.cen.px_unknown += cun;
-		A.cen.px_soft += csf; A.cen.px_reveal += crv; A.cen.px_pad += cpad;
+	if (F.covf) {
+		const uint64_t tot = T.ctm + T.cln + T.cbd + T.cun + T.csf + T.crv;
+		A.cen.px_tilemap += T.ctm; A.cen.px_learned += T.cln; A.cen.px_backdrop += T.cbd; A.cen.px_unknown += T.cun;
+		A.cen.px_soft += T.csf; A.cen.px_reveal += T.crv; A.cen.px_pad += T.cpad;
 		if (tot) {
 			/* a revealed lower layer is real picture (the layer above it fades out over it: B); soft learned pixels are memory of an
 			 * earlier run, not a proven picture: they count half. Each side has its own coverage: a scrolling game has real history
 			 * behind the camera and little ahead of it, and the side the camera came from can carry real picture while the other
 			 * one shows the ambient frame. */
 			for (int s = 0; s < 2; s++) {
-				if (!ctot[s]) continue;
-				const int c256 = (int) (cnum[s] * 50 * 256 / ctot[s]);
+				if (!T.ctot[s]) continue;
+				const int c256 = (int) (T.cnum[s] * 50 * 256 / T.ctot[s]);
 				if (!A.cov_have || wo->scene_event) A.cov_q8[s] = c256;
 				else A.cov_q8[s] += (c256 - A.cov_q8[s]) / 60;
 			}
@@ -1389,48 +1699,30 @@ static void run(const Snap *sn)
 		}
 	}
 	for (int s = 0; s < 2; s++) {
-		if (A.auto_on.load()) {
+		if (auto_on) {
 			const int want = A.auto_state[s] ? (A.cov_q8[s] >= COV_OFF * 256) : (A.cov_q8[s] >= COV_ON * 256);
 			if (want != A.auto_state[s]) { A.auto_state[s] = want; A.cen.auto_switches++; }
 		} else {
 			A.auto_state[s] = 1;
 		}
 		const int target = A.auto_state[s] ? 0 : 32;
-		if (!A.auto_on.load()) A.xf[s] = 0;
+		if (!auto_on) A.xf[s] = 0;
 		else if (A.xf[s] < target) A.xf[s]++;
 		else if (A.xf[s] > target) A.xf[s]--;
+		F.xf[s] = A.xf[s];
 	}
+	for_lines(F, fin_line);
+	for (int i = 0; i < SNES_WIDE_MAX_WORKERS; i++) { A.cen.cache_checks += g_work[i]->acc.cache_checks; A.cen.cache_mismatches += g_work[i]->acc.cache_mismatches; }
 	if (A.xf[0] > 0 || A.xf[1] > 0) {
-		for (int y = 0; y < H; y++) {
-			const SWideLine &Ln = v->line[y];
-			if (!(Ln.flags & SWL_VALID) || (Ln.flags & SWL_BLANK)) continue;
-			uint16_t *row = o->px + (size_t) y * OW;
-			for (int s = 0; s < 2; s++) {
-				const int xf = A.xf[s];
-				if (xf <= 0) continue;
-				const uint16_t *ap = amb_row(s, y, Mfull);
-				o->real[y][s] = 0;        /* a blend with the ambient frame is not a claim of real picture, whatever the weight */
-				uint8_t *prow = o->prov + (size_t) y * OW;
-				if (xf >= 32) {
-					if (s == 0) for (int d = 0; d < Mh; d++) row[Mh - 1 - d] = ap[d];
-					else memcpy(row + Mh + 256, ap, (size_t) Mh * 2);
-					for (int d = 0; d < Mh; d++) prow[s == 0 ? Mh - 1 - d : Mh + 256 + d] = WK_PROV_SOFT;
-				} else {
-					for (int d = 0; d < Mh; d++) {
-						const int dx = s == 0 ? Mh - 1 - d : Mh + 256 + d;
-						row[dx] = mix565(row[dx], ap[d], xf);
-						prow[dx] = (uint8_t) ((prow[dx] & 0xF0) | WK_PROV_FADE);
-					}
-				}
-			}
-		}
 		if (A.xf[0] >= 32 && A.xf[1] >= 32) A.cen.frames_ambient++; else A.cen.frames_crossfade++;
 	}
 	for (int s = 0; s < 2; s++) if (A.xf[s] >= 32) A.cen.frames_side_amb[s]++;
 	/* a work margin narrower than the picture's: the columns beyond it are the ambient frame, and the work margin's last columns fade into
 	 * it (faded pixels are not claimed as real) */
 	if (Mh < Mfull) {
-		const int OWf = 256 + 2 * Mfull, padn = Mfull - Mh, F = Mh < 3 * PAD_FADE ? Mh / 3 : PAD_FADE;
+		const int OWf = 256 + 2 * Mfull, padn = Mfull - Mh, Fd = Mh < 3 * PAD_FADE ? Mh / 3 : PAD_FADE;
+		uint16_t apb[SNES_WIDE_MAX_MARGIN + 8];
+		uint32_t vc = 0, vm = 0;
 		for (int y = H - 1; y >= 0; y--) {
 			uint16_t *src = o->px + (size_t) y * OW, *dst = o->px + (size_t) y * OWf;
 			uint8_t *psrc = o->prov + (size_t) y * OW, *pdst = o->prov + (size_t) y * OWf;
@@ -1439,22 +1731,24 @@ static void run(const Snap *sn)
 			const SWideLine &Ln = v->line[y];
 			const bool blank = (Ln.flags & SWL_VALID) && (Ln.flags & SWL_BLANK);
 			for (int sd = 0; sd < 2; sd++) {
-				const uint16_t *ap = amb_row(sd, y, Mfull);
+				amb_fill(apb, sd, y, Mfull, &vc, &vm);
+				const uint16_t *ap = apb;
 				for (int d = Mh; d < Mfull; d++) {
 					const int dx = sd == 0 ? Mfull - 1 - d : Mfull + 256 + d;
 					dst[dx] = blank ? 0 : ap[d];
 					pdst[dx] = blank ? PROV_EXACT : WK_PROV_SOFT;
 				}
 				if (!blank && (Ln.flags & SWL_VALID))
-					for (int d = Mh - F; d < Mh; d++) {
+					for (int d = Mh - Fd; d < Mh; d++) {
 						const int dx = sd == 0 ? Mfull - 1 - d : Mfull + 256 + d;
-						const int w = (d - (Mh - F) + 1) * 32 / (F + 1);
+						const int w = (d - (Mh - Fd) + 1) * 32 / (Fd + 1);
 						dst[dx] = mix565(dst[dx], ap[d], w);
 						pdst[dx] = (uint8_t) ((pdst[dx] & 0xF0) | WK_PROV_FADE);
 					}
-				if (o->real[y][sd] > Mh - F) o->real[y][sd] = (uint8_t) (Mh - F);
+				if (o->real[y][sd] > Mh - Fd) o->real[y][sd] = (uint8_t) (Mh - Fd);
 			}
 		}
+		A.cen.cache_checks += vc; A.cen.cache_mismatches += vm;
 	}
 	st.width = 256 + 2 * Mfull; st.margin = Mfull;
 	st.coverage_pct = (A.cov_q8[0] > A.cov_q8[1] ? A.cov_q8[0] : A.cov_q8[1]) >> 8;
@@ -1542,6 +1836,16 @@ void snes_wide_split(int on)
 }
 
 int snes_wide_split_active(void) { return A.split.load(); }
+
+void snes_wide_parallel(snes_wide_pfor fn, void *user, int workers)
+{
+	A.lk.lock();         /* no compose is running */
+	if (workers > SNES_WIDE_MAX_WORKERS) workers = SNES_WIDE_MAX_WORKERS;
+	A.pfor = fn && workers > 1 ? fn : NULL;
+	A.pfor_user = user;
+	A.nwork = A.pfor ? workers : 1;
+	A.lk.unlock();
+}
 
 size_t snes_wide_snapshot_size(void) { return sizeof(Snap); }
 
@@ -1713,7 +2017,8 @@ int snes_wide_option(const char *name, int v)
 	else if (!strcmp(name, "settle_frames")) A.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1;
 	else if (!strcmp(name, "debug")) A.debug = v != 0;
 	else if (!strcmp(name, "hud_excl")) A.hud_excl = v != 0;
-	else if (!strcmp(name, "verify_cache")) A.verify_cache = v != 0;
+	else if (!strcmp(name, "verify_cache")) { A.verify_cache = v != 0; S9xWideVerify(v != 0); }
+	else if (!strcmp(name, "lazy")) A.lazy = v != 0;
 	else if (!strcmp(name, "layered")) A.layered = v != 0;
 	else if (!strcmp(name, "fgfade")) { A.fgfade = v != 0; if (A.C) { wk_compose_destroy(A.C); A.C = NULL; A.cH = A.cM = A.cF = 0; } }
 	else if (!strcmp(name, "map_safe")) {
@@ -1833,6 +2138,8 @@ void snes_wide_census_get(snes_wide_census *c)
 	*c = A.cen;
 	c->chip = A.chip; c->rung = A.rung;
 	c->capture_us = A.cap_us_q4.load(std::memory_order_relaxed) / 16;
+	c->cache_checks += A.vfy_checks.load(std::memory_order_relaxed);
+	c->cache_mismatches += A.vfy_bad.load(std::memory_order_relaxed);
 	A.lk.unlock();
 }
 
@@ -1840,6 +2147,7 @@ void snes_wide_census_reset(void)
 {
 	A.lk.lock();
 	memset(&A.cen, 0, sizeof A.cen);
+	A.vfy_checks.store(0); A.vfy_bad.store(0);
 	A.lk.unlock();
 }
 

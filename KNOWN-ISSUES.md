@@ -95,6 +95,12 @@ Testing continues on:
   game; save and states stay together under Master System.
 - Join online does not know these games yet.
 - RetroAchievements badges in the library are not shown for them.
+- **Wide view (Sega).** On by default, Off in the menu gives the 4:3 picture back. The **learned map is not done** for any Sega console (the Super NES
+  player has it): on the Mega Drive the real picture beside the lead side of a scroll reaches only as far as the name table lets widekit trust it (a few to a few
+  tens of pixels), on the Master System and SG-1000 there is nothing beside the picture (the tile map is exactly the screen wide) so only the soft extension
+  is shown, and the Game Gear's 256 column band shows what the VDP drew there with the same fade. Lines with a window plane, per 2-cell vertical
+  scroll or interlace get the soft extension. The Game Gear band was tested with a test program written for the purpose and Master System ROMs forced to the
+  Game Gear: no real Game Gear or SG-1000 ROM was available. The cost ladder (halve the strips, then none) is by the model; nothing has run on a Vita.
 
 ## Super NES
 

@@ -86,11 +86,20 @@ each carrying half the rows the model gives roughly half those figures, with the
 
 | native picture | ceiling | output pixels |
 |---|---|---|
-| 160x144 (Game Gear) | xBR 3x | 480x432 |
-| 256x192 / 256x224 / 256x240 / 320x224 / 320x240 (Master System, SG-1000, Mega Drive H32 and H40) | xBR 2x | 512x384 .. 640x480 |
-| interlaced (more than 256 rows) or wider than 352 | none (sharp bilinear) | |
+| 160x144 (Game Gear; the wide view's 256x144 band too) | xBR 3x | 480x432 (768x432 wide) |
+| 256x192 (Master System, SG-1000; the wide view's up to 338x192 too) | xBR 3x (owner decision, 2.0: was xBR 2x) | 768x576 (1014x576 wide) |
+| 256x224 / 256x240 / 320x224 / 320x240 (Mega Drive H32 and H40, Master System games of 224 / 240 rows) | xBR 2x | 512x448 .. 640x480 (the wide Mega Drive picture, up to 512x224, is 1024x448) |
+| interlaced (more than 256 rows) or wider than 352 (the normal picture's size is what counts) | none (sharp bilinear) | |
 
-3x is kept for the Game Gear only: on 192..240 rows it would make 576..720 rows for a 544 row screen, computing pixels that the fit averages away
+The ladder is xBR 3x -> xBR 2x -> sharp on the Master System, SG-1000 and Game Gear, xBR 2x -> sharp on the Mega Drive. 3x on a 192 row picture makes 576 rows
+for a 544 row screen: a little more than the screen can show, so the fit averages the surplus away; the look governor steps it down when the frame budget needs it.
+**Budget of xBR 3x with the wide view on the Master System** (`scale_proof --widen 41`, three homebrew games, 150 frames, the picture the player scales: 338x192 with the
+soft extension): the player scales incrementally (`pk_scale` ScaleCache: only the 8 pixel blocks that changed), per picture **host** average 0.05 - 0.10 ms, p99 0.4 - 0.9 ms; **qemu**
+(armhf, ratio only, not Vita time) average 0.20 - 0.43 ms, p99 1.3 - 4.0 ms; the full recompute at a scene cut costs host 0.7 - 2.5 ms, qemu 2.2 - 19 ms (p99), which the drawing
+thread and the two scaler helpers share and which the emulating thread (a Master System frame is about 0.08 ms host, 0.6 ms qemu, 3 - 4 ms model on the Vita) never waits for. Within
+the 16.7 ms budget on every measured frame; xBR 3x on the 256 wide picture without the wide view costs about 40 percent less (host average 0.03 - 0.06 ms).
+
+3x was kept for the Game Gear only before 2.0: on 192..240 rows it makes 576..720 rows for a 544 row screen, computing pixels that the fit averages away
 again. `md/twin/sidebyside.{cpp,py}` makes the 960x544 comparison (xBR 2x | xBR 3x | difference x8, each fitted with the player's bilinear draw);
 over 8 Mega Drive and 7 Master System pictures the mean absolute difference is 0.05 .. 1.0 (Mega Drive) and 0.2 .. 3.8 (Master System) of 255,
 and the differences are one screen pixel wide along edges. MMPX 2x is no longer a rung: since the integer NEON xBR (`pk_scale`) xBR 2x costs less than
@@ -136,6 +145,31 @@ draw= writer= scale1= scale2=`, `handoff: on= depth= mode= produced= shown= repe
 4. `gpsp/vita/Makefile` packs `md/vita/build/md.bin` into the VPK next to `snes.bin` (see the line added there).
 5. Per-game overrides `ovr.<key>`: `scaler`, `region`, `fm`, `pad_type`, `scanlines`, `glow`, `lcd_grid`, `gg_colors`, `look_mode`, `pal_speed`.
 
+## Wide view (Picture page, Auto / On / Off: the same row and words as the Super NES and NES players)
+
+The console's picture stays pixel exact in the middle and the rest of the screen's width (Original shape: 960 of 960 px at 544 rows) is filled with
+more picture: **real** picture where it can be shown truthfully, and a **soft extension** of the picture's own edge colours where it cannot. On by
+default; Off gives the 4:3 picture back. The emulation does not know: picture inside the original window, sound, state and RAM are bit for bit the
+same with the view on or off, with and without the VDP worker thread (`selftest.sh` section 11 checks it on every test ROM, `arm_check.sh` on armhf).
+
+| Console | Margin per side | What is beside the picture |
+|---|---|---|
+| Mega Drive / Genesis | 51 px (H40) at the Original shape, about 41 px (H32) (at most 96; `pic_wide_margin` of the player's 960x544 screen) | the VDP draws a narrow strip beside the picture for every line: the planes and sprites that exist beyond the edge (`core/vdp_render.c`, `wide_line()`, in the VDP worker's copy too); `md/frontend/wide.cpp` hands the name tables of planes A and B to widekit (`wk_layers`: what is the level, the backdrop, a HUD), and `wk_compose` shows the strip where widekit trusts it and fades into the soft extension where it does not. A plane widekit does not trust (a fixed HUD plane) is left out of the strip, so the soft extension and the sprites show there |
+| Game Gear | 25 px at the Original shape (at most 48) | the VDP always draws 256 x 192 and the LCD shows the middle 160 x 144; the wide view draws the 256 columns of the LCD's rows (`gg_band`: the same machine, nothing else changes) and fades out where the game leaves stale tiles beside its window |
+| Master System, SG-1000 | 41 px at the Original shape | the tile map is exactly the screen wide, so nothing exists beside the picture: the soft extension only |
+
+Lines with a window plane, a per 2-cell vertical scroll, interlace or the display off get no strip (soft extension); a linked two-player game never widens its picture.
+
+**Never costs a frame**: on the emulating thread the strips cost the VDP about 15 percent of a Mega Drive frame (host) plus the analysis (about 40 K
+instructions, 0.05 ms host); the compose runs on the drawing thread. A three rung ladder (`main.cpp`, `wide_cost_update`) watches the smoothed cost of the
+emulating thread's frame against the frame time: over 80 percent of it the real strips are halved (rung 1), then dropped (rung 2: soft extension only); under 55
+percent for 240 frames it steps back. "On" keeps rung 0. A line log `wide: margin= strips= rung= analyse_us/fr= compose_us/pic= real= soft_lines= ...` appears each second.
+
+**Not done, said plainly**: the learned map (the SNES player remembers what it saw of a level and shows it before the player gets there) is not implemented for any Sega
+console: on the Mega Drive the real strip beside the lead side of a scroll is only as far as widekit trusts the name table without a map (a few to a few tens of pixels),
+the Master System and SG-1000 have the soft extension only. A Game Gear test ROM with real content was not available: the band was checked with a
+purpose written scrolling test program and with Master System ROMs forced to the Game Gear. Nothing has run on a Vita.
+
 ## Hooks left in place
 
 - **Rewind / fast forward**: `MdPlayer::set_extra_caps(CAP_REWIND | CAP_FF)` before `start()` shows the menu rows; the Mapper already reports `ACT_FF`
@@ -143,11 +177,11 @@ draw= writer= scale1= scale2=`, `handoff: on= depth= mode= produced= shown= repe
 - **RetroAchievements**: `md_host_ra_read` and `md_host_ra_console` give the memory map; `MdPlayer::after_frame()` (once per emulated frame, game thread) and
   `notice()` are the places the app side module plugs into.
 - **Two players / online**: done (2.0). The app forms the room (game list > Settings > Two players; not for the Game Gear) and writes `link.*`; `start()` reads it, `netplay.{h,cpp}` runs playerkit's `pk_link` (MIT) on the project's UDP transport and NAT layer (`gpsp/netdrv/transport_lan.c`, `nat_*.c`: MIT OR GPL-2.0-or-later), and `main.cpp` steps it instead of `md_host_run_frame()`. Nothing of the main app's Game Boy link (netdrv.c, fe_gblink.c, fe_evt.c, fe_util.c) is linked: `make -C md/vita` fails if it is (check-licence). The in-game card stays greyed with a reason (the game list starts it). Pinned while linked: region Auto, pad type Auto, FM discrete, FM unit Auto, no rewind/fast forward/cheats/states, every frame drawn. Test: `md/twin/link_test.py` (Makefile.link).
-- **Wide view**: not implemented for Sega in this version. The Picture page shows the row greyed with the reason. `on_change(ROW_PIC_WIDE)` and `pic_geometry()` are the place.
+- **Wide view**: done (2.0), see "Wide view" below. `MdPlayer::wide_apply()` (player.cpp) decides the margin, `main.cpp` draws the strips and composes.
 - **Adding a look rung**: a line in `kLookLadder` (player.cpp) and its effect in `look_apply()`.
 
 ## Known limits
 
-- The scaler ceilings are a model. No console measurement exists yet.
+- The scaler ceilings are a model. No console measurement exists yet. Master System and SG-1000 start at xBR 3x (the wide picture is up to 338 x 192, 1014 x 576 scaled; the governor steps it down to xBR 2x and sharp), the Game Gear at xBR 3x, the Mega Drive at xBR 2x.
 - A Game Gear state picture carries the LCD colours (it is read back from the picture texture).
 - A game that changes between H32 and H40 keeps the ladder it started with; its scaler follows the picture's own ceiling.

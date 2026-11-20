@@ -20,7 +20,7 @@ endif
 # ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
 include ../../tools/build/ccache.mk
 override CXX := $(call ccw,$(CXX))
-all: $(B)/md_twin $(B)/player_twin $(B)/scale_proof $(B)/sidebyside
+all: $(B)/md_twin $(B)/player_twin $(B)/scale_proof $(B)/sidebyside $(B)/wide_pipe_proof
 $(B)/mdcore.o: FORCE
 	$(MAKE) -C ../core TARGET=$(TARGET) B=$(BA) PROFILE=$(PROFILE) all
 # the wide view (--wide): the adapter ../frontend/wide.cpp over widekit (MIT) and its PNG writer
@@ -29,8 +29,11 @@ WK_FILES := $(WK)/src/wk_layers.cpp $(WK)/src/wk_map.cpp $(WK)/src/wk_compose.cp
 $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES) $(wildcard $(WK)/include/*.h)
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -I$(WK)/include -I$(WK)/src -I$(WK)/tests -o $@ main.cpp $(FE)/wide.cpp $(WK_FILES) $(WK)/tests/png.cpp $(B)/mdcore.o -lm -pthread
 
-$(B)/scale_proof: scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
-	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
+$(B)/scale_proof: scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES)
+	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -I$(WK)/include -I$(WK)/src -o $@ scale_proof.cpp $(FE)/wide.cpp $(WK_FILES) $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
+# wide_pipe_proof: the wide view through the player's picture pipe (../vita/pipe.cpp) on a second thread, bit for bit against composing at once
+$(B)/wide_pipe_proof: wide_pipe_proof.cpp ../vita/pipe.cpp ../vita/pipe.h $(B)/pk/pk_handoff.o $(B)/mdcore.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES)
+	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I../../playerkit/src -I$(WK)/include -I$(WK)/src -o $@ wide_pipe_proof.cpp ../vita/pipe.cpp $(FE)/wide.cpp $(WK_FILES) $(B)/pk/pk_handoff.o $(B)/mdcore.o -lm -pthread
 $(B)/sidebyside: sidebyside.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -o $@ sidebyside.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
 # player_twin: the Sega player's own logic (../vita/player.cpp) over the core, with playerkit's software renderer (no gpsp/ code)

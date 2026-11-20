@@ -632,6 +632,12 @@ void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
         int32_t prev_wx = 0, prev_row = 0;
         uint16_t memo[2] = {0, 0};
         int have = 0;
+        /* whether the map has cell n beside the view is the same for every line of a tile row with the same scroll: asked once
+         * (0 = not asked yet, 1 = no, 2 = yes) */
+        enum { CK_N = WK_MAX_MARGIN / 8 + 4 };
+        uint8_t ck[2][CK_N];
+        int32_t ck_wx = 0, ck_trow = 0;
+        int ck_have = 0;
         for (int y = 0; y < out->nlines; y++) {
             if (!out->coherent[l][y] || (out->line[y].backdrop_mask >> l) & 1)
                 continue;
@@ -649,6 +655,15 @@ void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
             prev_row = wr;
             wk_geom g;
             wk_line_geom(f, out, l, y, &g);
+            {
+                const int32_t trow = wk_floordiv(wr, g.tp);
+                if (!ck_have || ck_wx != wx || ck_trow != trow) {
+                    ck_have = 1;
+                    ck_wx = wx;
+                    ck_trow = trow;
+                    memset(ck, 0, sizeof ck);
+                }
+            }
             for (int s = 0; s < 2; s++) {
                 int ring = out->line[y].ring[s][l];
                 int part = g.part[s];
@@ -656,9 +671,19 @@ void wk_map_serve(wk_map *m, const wk_frame *f, wk_out *out)
                 int real = out->line[y].real[s][l];
                 if (real < M) {
                     int n0 = n;
-                    while (part + g.tp * n < M &&
-                           cell_at(m, f, out, l, y, s, n + 1, NULL))
+                    while (part + g.tp * n < M) {
+                        int okc;
+                        if (n + 1 < CK_N) {
+                            if (!ck[s][n + 1])
+                                ck[s][n + 1] = (uint8_t)(cell_at(m, f, out, l, y, s, n + 1, NULL) ? 2 : 1);
+                            okc = ck[s][n + 1] == 2;
+                        } else {
+                            okc = cell_at(m, f, out, l, y, s, n + 1, NULL);
+                        }
+                        if (!okc)
+                            break;
                         n++;
+                    }
                     if (n > n0) {
                         int px = wk_min(M, part + g.tp * n);
                         if (px > real) {

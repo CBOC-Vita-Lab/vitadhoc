@@ -1006,8 +1006,9 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 static int run_ceiling_test()
 {
 	EXPECT(pic_scaler_ceiling(MD_SYS_GG, 160, 144) == 0);
-	EXPECT(pic_scaler_ceiling(MD_SYS_SMS, 256, 192) == 1);
-	EXPECT(pic_scaler_ceiling(MD_SYS_SG, 256, 192) == 1);
+	EXPECT(pic_scaler_ceiling(MD_SYS_SMS, 256, 192) == 0);      /* xBR 3x since 2.0 (the wide view's picture is scaled by the ceiling of the console's own) */
+	EXPECT(pic_scaler_ceiling(MD_SYS_SG, 256, 192) == 0);
+	EXPECT(pic_scaler_ceiling(MD_SYS_GG, 256, 144) == 0);       /* the wide view's Game Gear band */
 	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 256, 224) == 1);
 	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 224) == 1);      /* xBR 2x also on H40: 3x would be 672 rows for 544 */
 	EXPECT(pic_scaler_ceiling(MD_SYS_MD, 320, 240) == 1);
@@ -1044,6 +1045,27 @@ static int run_ceiling_test()
 	pic_defaults(&s);
 	pic_geometry(&s, &md, 0, 0, 960, 544, &r);
 	EXPECT(r.dh == 544.0f && r.dw > 724.0f && r.dw < 726.0f);  /* 4:3 */
+	/* the wide view: the margin that fills 960 columns at the Original shape, the same scale per column, Full screen has none */
+	{
+		pic_defaults(&s);
+		const int mmd = pic_wide_margin(&s, &md, 960, 544, 96);
+		pic_info ggw = { 160, 144, 144, 1.2 * 160.0 / 144.0, 1.2, MD_SYS_GG };      /* what pic_info_from_video gives: 6:5 pixels, a 4:3 picture */
+		const int mgg = pic_wide_margin(&s, &ggw, 960, 544, 48);
+		pic_info sms = { 256, 192, 192, 0.0, 1.0, MD_SYS_SMS };
+		const int msm = pic_wide_margin(&s, &sms, 960, 544, 96);
+		fprintf(stderr, "wide margins at 960x544, Original: Mega Drive H40 %d, Game Gear %d, Master System %d\n", mmd, mgg, msm);
+		EXPECT(mmd >= 48 && mmd <= 56 && mgg >= 20 && mgg <= 30 && msm >= 36 && msm <= 46);
+		pic_geometry_wide(&s, &md, 320 + 2 * mmd, 0, 0, 960, 544, &r);
+		EXPECT(r.sx == 0 && r.sw == 320 + 2 * mmd && r.dw > 955.0f && r.dw <= 960.5f && r.dh == 544.0f);
+		const float per = r.dw / (float) r.sw;
+		EXPECT(per > 2.26f && per < 2.28f);                          /* the normal picture's 725 / 320 columns */
+		pic_geometry_wide(&s, &ggw, 256, 0, 0, 960, 544, &r);        /* the 256 wide band is wider than the screen shows: trimmed evenly */
+		EXPECT(r.sx > 0 && r.sx * 2 + r.sw == 256 && r.dw <= 960.5f);
+		s.shape = PIC_FULL;
+		EXPECT(pic_wide_margin(&s, &md, 960, 544, 96) == 0);
+		pic_defaults(&s);
+		EXPECT(s.wide == 0);
+	}
 	/* the Game Gear LCD table: black lifts, white stays near white, grey stays grey */
 	const unsigned short *t = pic_lcd_table();
 	EXPECT(t && t[0] != 0 && t[0xFFFF] > 0xF000);

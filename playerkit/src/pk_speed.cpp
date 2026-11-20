@@ -76,10 +76,26 @@ bool Speed::run_frame(bool render)
 	}
 	if (act_ == RW_STAND) return false;
 	host_->run_frame(render);
+	if (defer_) { pend_++; return true; }
 	if (uint8_t *b = rw_.capture_begin()) {
 		if (host_->save_state(b, rw_.cur_size())) rw_.capture_commit(rw_.cur_size());
 	}
 	return true;
+}
+
+void Speed::capture_idle(bool late)
+{
+	if (pend_ <= 0) return;
+	if (!host_ || act_ != RW_PLAY) { pend_ = 0; put_off_ = 0; return; }     /* rewinding: the frames that ran are not history */
+	if (late && put_off_ < kPutOffMax) { put_off_++; put_off_total_++; return; }
+	put_off_ = 0;
+	/* one request per frame that ran, as run_frame() would have made them; at most one of them is due */
+	for (; pend_ > 0; pend_--)
+		if (uint8_t *b = rw_.capture_begin()) {
+			if (host_->save_state(b, rw_.cur_size())) rw_.capture_commit(rw_.cur_size());
+			pend_ = 0;
+			break;
+		}
 }
 
 size_t Speed::audio(int16_t *lr, size_t frames)

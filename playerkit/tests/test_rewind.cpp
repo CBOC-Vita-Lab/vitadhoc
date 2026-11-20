@@ -5,6 +5,7 @@
 #include "pk_test.h"
 #include "pk_rewind.h"
 #include "pk_ff.h"
+#include "pk_speed.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -424,6 +425,74 @@ TEST(rewind_speed_ramps_with_the_hold)
 	land(60, &g);  CHECK(g >= 4 * 60 - 8 && g <= 4 * 60 + 8);
 	land(60, &g);  CHECK(g >= 4 * 60 - 8 && g <= 4 * 60 + 8);
 	land(100, &g); CHECK(g >= 8 * 99 + 4 - 24 && g <= 8 * 99 + 4 + 24);
+}
+
+/* ---- the capture off the frame's path (pk_speed: set_defer_capture / capture_idle) ---- */
+
+namespace {
+struct DeferHost : SpeedHost {
+	Machine m;
+	unsigned saves = 0;
+	uint32_t saved_frame = 0;
+	DeferHost() : m(4096, 2, 5) {}
+	size_t state_size() override { return m.st.size(); }
+	bool save_state(uint8_t *buf, size_t cap) override { if (cap != m.st.size()) return false; memcpy(buf, m.st.data(), cap); saves++; saved_frame = m.frame; return true; }
+	bool load_state(const uint8_t *buf, size_t n) override { if (n != m.st.size()) return false; memcpy(m.st.data(), buf, n); memcpy(&m.frame, buf, 4); return true; }
+	void run_frame(bool) override { m.step(); }
+	void clear_pads() override {}
+};
+}
+
+TEST(deferred_capture_takes_the_same_states_at_the_idle_point)
+{
+	SpeedSettings set;
+	set.rewind_budget = 4u << 20;
+	DeferHost a, b;
+	Speed inl, def;
+	inl.set_host(&a); def.set_host(&b);
+	inl.start(60.0, 2, set); def.start(60.0, 2, set);
+	def.set_defer_capture(true);
+	for (int f = 0; f < 600; f++) {
+		inl.run_frame(true);
+		const unsigned before = b.saves;
+		def.run_frame(true);
+		CHECK_EQ(b.saves, before);                  /* nothing is written on the frame's path */
+		CHECK(def.capture_pending());
+		def.capture_idle(false);
+		CHECK(!def.capture_pending());
+		CHECK_EQ(a.saves, b.saves);                 /* the same frames are captured ... */
+		CHECK_EQ(a.saved_frame, b.saved_frame);     /* ... with the same state */
+	}
+	CHECK(b.saves > 100);
+	CHECK_EQ(inl.rewind().entries(), def.rewind().entries());
+}
+
+TEST(deferred_capture_is_put_off_on_late_passes_but_not_for_ever)
+{
+	SpeedSettings set;
+	set.rewind_budget = 4u << 20;
+	DeferHost h;
+	Speed sp;
+	sp.set_host(&h);
+	sp.start(60.0, 2, set);
+	sp.set_defer_capture(true);
+	/* every pass is late: a capture still happens, after at most kPutOffMax passes */
+	unsigned last = 0, worst = 0, gap = 0;
+	for (int f = 0; f < 400; f++) {
+		sp.run_frame(true);
+		sp.capture_idle(true);
+		if (h.saves != last) { last = h.saves; gap = 0; } else if (++gap > worst) worst = gap;
+	}
+	CHECK(h.saves >= 400 / (Speed::kPutOffMax + 2) - 2);
+	CHECK(worst <= (unsigned) Speed::kPutOffMax + 2);
+	CHECK(sp.captures_put_off() > 0);
+	/* two frames in one pass (a catch-up) count as two towards the interval */
+	const unsigned s0 = h.saves;
+	for (int p = 0; p < 100; p++) { sp.run_frame(true); sp.run_frame(true); sp.capture_idle(false); }
+	CHECK(h.saves - s0 >= 45);
+	/* a rewind drops what was pending: the frames it ran are not history */
+	sp.run_frame(true);
+	CHECK(sp.capture_pending());
 }
 
 /* ---- fast forward ---- */

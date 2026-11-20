@@ -2,6 +2,11 @@
 
 ## Version 2.0
 
+- **Wide view for the Sega consoles.** The Mega Drive / Genesis, Master System, Game Gear and SG-1000 fill the Vita's whole width like the Super NES
+  and NES do: the console's picture stays pixel exact in the middle and the sides show more of the game's world where that can be shown truthfully, and a soft
+  continuation of the picture's edge where it cannot. Picture > Wide view: Auto (on, and it narrows the real sides on a busy game before it would cost a
+  frame), On, Off (the 4:3 picture back). Nothing the game does changes, with the view on or off. The Master System and SG-1000 upscale with xBR 3x now
+  (it steps down to 2x and sharp when the game needs the time); the Game Gear and the Mega Drive keep xBR 3x and 2x.
 - **The home screen appears at once.** The first frame no longer waits for
   the card to be searched for games: a card that takes a minute to read (a
   large card in a slow adapter) now shows "Finding games... N found" with the

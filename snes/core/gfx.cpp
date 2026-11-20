@@ -2339,8 +2339,8 @@ struct WideState
 	int		m;			// margin in pixels, 0 = off
 	bool	bad;			// the frame has hi-res or interlace lines: no margin at all
 	bool	alloc;
-	uint16	*scr[SW_NPASS];
-	uint8	*z[SW_NPASS];
+	uint16	*scr[SW_NPASS + 1];		// [SW_NPASS]: the whole composite of S9xWideVerify
+	uint8	*z[SW_NPASS + 1];
 	uint16	*sub;
 	uint8	*subz;
 	struct SWideLine line[SW_ROWS];
@@ -2349,6 +2349,8 @@ struct WideState
 	bool	merged;
 	uint16	hsave[SW_ROWS][4];
 	// sprites of the margin pass
+	bool	vfy;
+	uint8	vline[SW_ROWS];		// S9xWideVerify: the whole composite of this line is in scr[SW_NPASS]
 	uint8	mobj_n[SW_ROWS];
 	struct WideObjEnt mobj[SW_ROWS][40];
 	int		h;
@@ -2356,11 +2358,21 @@ struct WideState
 
 static WideState W;
 
+// the hash of the palette in force; a batch whose palette is the one of the batch before it (a line by line HDMA effect on
+// something else makes a batch per line) has the same hash
 static uint32 hash_cg (void)
 {
+	static uint16 last[256];
+	static uint32 last_h;
+	static bool have = false;
+	if (have && !memcmp(last, PPU.CGDATA, sizeof(last)))
+		return last_h;
 	uint32 h = 2166136261u;
 	for (int i = 0; i < 256; i++)
 		h = (h ^ PPU.CGDATA[i]) * 16777619u;
+	memcpy(last, PPU.CGDATA, sizeof(last));
+	last_h = h;
+	have = true;
 	return h;
 }
 
@@ -2369,7 +2381,7 @@ static void wide_alloc (void)
 	if (W.alloc)
 		return;
 	size_t rows = SW_ROWS + 2;
-	for (int p = 0; p < SW_NPASS; p++)
+	for (int p = 0; p <= SW_NPASS; p++)
 	{
 		W.scr[p] = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
 		W.z[p]   = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
@@ -2622,6 +2634,7 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 		W.m = margin = SW_MAXM;
 	wide_alloc();
 	memset(W.line, 0, sizeof(W.line));
+	memset(W.vline, 0, sizeof(W.vline));
 	// only the Z buffers a pass drew into last frame are dirty (an unused pass costs nothing)
 	// the passes only draw (and the adapter only reads) the two margin strips [0, m) and [m + 256, 2m + 256): clear just those
 	static int prev_m = 0;
@@ -2629,27 +2642,26 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 	prev_m = W.m;
 	if (moved) g_wide_zdirty = ~0u;
 	const int m2 = W.m;
-	for (int p = 0; p < SW_NPASS; p++)
-		if (g_wide_zdirty & (1u << p))
-		{
-			if (moved) { memset(W.z[p], 0, (size_t) (SW_ROWS + 2) * SW_PITCH); continue; }
-			for (int y = 0; y < SW_ROWS + 2; y++)
-			{
-				uint8 *r = W.z[p] + (size_t) y * SW_PITCH;
-				memset(r, 0, (size_t) m2);
-				memset(r + m2 + 256, 0, (size_t) m2);
-			}
-		}
-	if (g_wide_zdirty)
+	for (int p = 0; p <= SW_NPASS + 1; p++)		// the pass buffers, then the sub screen's
 	{
-		if (moved) memset(W.subz, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
-		else
+		uint8 *z = (p <= SW_NPASS) ? W.z[p] : W.subz;
+		if (p <= SW_NPASS ? !(g_wide_zdirty & (1u << p)) : !g_wide_zdirty)
+			continue;
+		if (moved) { memset(z, 0, (size_t) (SW_ROWS + 2) * SW_PITCH); continue; }
+		if (m2 >= 64)
+		{
+			// a wide margin: the right strip of a row, the unused columns after it and the left strip of the next row are one run
+			memset(z, 0, (size_t) m2);
 			for (int y = 0; y < SW_ROWS + 2; y++)
-			{
-				uint8 *r = W.subz + (size_t) y * SW_PITCH;
-				memset(r, 0, (size_t) m2);
-				memset(r + m2 + 256, 0, (size_t) m2);
-			}
+				memset(z + (size_t) y * SW_PITCH + m2 + 256, 0, (y < SW_ROWS + 1) ? (size_t) (SW_PITCH - 256) : (size_t) m2);
+			continue;
+		}
+		for (int y = 0; y < SW_ROWS + 2; y++)
+		{
+			uint8 *r = z + (size_t) y * SW_PITCH;
+			memset(r, 0, (size_t) m2);
+			memset(r + m2 + 256, 0, (size_t) m2);
+		}
 	}
 	g_wide_zdirty = 0;
 	W.h = 0;
@@ -2789,8 +2801,43 @@ static void S9xWideBatch (const S9xRenderJob &job)
 	wide_setup_obj(y0, y1);
 	wide_clip_prep();
 
+	// Passes the adapter does not read on these lines are not drawn (the rules are the adapter's own: snes/frontend/wide.cpp, cand_line and
+	// out_line; snes/WIDE-INTEGRATION.md).
+	// `xl`: a window, colour math on a layer or a clip-to-black is in force: only the composite and the sprite pass are shown, the BG passes
+	// are never read.
+	// `bdm`: colour math on the backdrop alone (a sky gradient). The main screen's layers are drawn without maths, so the composite is
+	// those layers by depth over the backdrop; the composite pass is drawn without them (the sub screen and the backdrop with its maths:
+	// the same code with a narrower layer mask). With one sub screen layer that picture is also that layer's pass.
+	// plain: no window, no colour math, no clipping, the backdrop over the whole line: the composite is the layers over the backdrop colour.
+	uint8 pflags = 0;
+	if (mode != 7)
+	{
+		const uint8 cgadsub = Memory.FillRAM[0x2131], cgwsel = Memory.FillRAM[0x2130];
+		const bool wsel = W.line[y0].wsel_any != 0;
+		const bool xl = wsel || (cgadsub & 0x3F) || (cgwsel & 0xC0);
+		const bool bdm = xl && !wsel && !(cgadsub & 0x1F) && (cgadsub & 0x20) && !(cgwsel & 0xC0) && !(ts & ~tsx);
+		const struct ClipData &bd = IPPU.Clip[0][5];
+		if (bdm)
+			pflags = SWLP_NOCOMP | SWLP_BASE;
+		else if (xl)
+			pflags = SWLP_NOLAYERS;
+		else if (!job.sub && !Settings.ForcedBackdrop && bd.Count == 1 && bd.Left[0] == 0 && bd.Right[0] == 256 && (bd.DrawMode[0] & 1))
+			pflags = SWLP_NOCOMP;
+		if ((pflags & SWLP_BASE) && tsx && !(tsx & (tsx - 1)))
+			pflags |= SWLP_TSXBASE;
+	}
+
 	uint8 drawn = 1 << SWP_COMPOSITE;
-	wide_pass(job, SWP_COMPOSITE, 0xff, true);
+	if (pflags & SWLP_BASE)
+		wide_pass(job, SWP_COMPOSITE, tsx, true);
+	else if (!(pflags & SWLP_NOCOMP))
+		wide_pass(job, SWP_COMPOSITE, 0xff, true);
+	W.vfy = false;
+	if ((pflags & SWLP_NOCOMP) && __atomic_load_n(&g_s9x_wide_verify, __ATOMIC_RELAXED))
+	{
+		wide_pass(job, SW_NPASS, 0xff, true);		// test: the composite whole, for the adapter to compare
+		W.vfy = true;
+	}
 	if (mode != 7)
 	{
 		if (tm & 0x10)
@@ -2798,16 +2845,19 @@ static void S9xWideBatch (const S9xRenderJob &job)
 			wide_pass(job, SWP_OBJ, 0x10, false);
 			drawn |= 1 << SWP_OBJ;
 		}
+		const bool layers = !(pflags & SWLP_NOLAYERS);
 		int nbg = (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
 		for (int n = 0; n < nbg; n++)
 			if (tm & (1 << n))
 			{
-				wide_pass(job, SWP_BG0 + n, 1 << n, false);
+				if (layers)
+					wide_pass(job, SWP_BG0 + n, 1 << n, false);
 				drawn |= 1 << (SWP_BG0 + n);
 			}
 			else if (tsx & (1 << n))
 			{
-				wide_pass(job, SWP_BG0 + n, 1 << n, true);
+				if (layers && !(pflags & SWLP_TSXBASE))
+					wide_pass(job, SWP_BG0 + n, 1 << n, true);
 				drawn |= 1 << (SWP_BG0 + n);
 			}
 	}
@@ -2816,6 +2866,8 @@ static void S9xWideBatch (const S9xRenderJob &job)
 		for (int n = 0; n < 4; n++)
 			LineData[y].BG[n].HOffset = W.hsave[y][n];
 		W.line[y].pass = drawn;
+		W.line[y].pflags = pflags;
+		if (W.vfy) W.vline[y] = 1;
 		W.line[y].flags |= SWL_DRAWN;
 	}
 }
@@ -2833,6 +2885,8 @@ extern "C" void S9xWideFillView (struct SWideView *v)
 		v->pass_px[p] = W.scr[p];
 		v->pass_z[p] = W.z[p];
 	}
+	v->verify_px = W.alloc ? W.scr[SW_NPASS] : NULL;
+	v->verify_lines = W.vline;
 	v->cgram = PPU.CGDATA;
 	v->colors = IPPU.ScreenColors;
 	v->oam = PPU.OAMData;

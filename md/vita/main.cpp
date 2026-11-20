@@ -879,7 +879,8 @@ struct VitaPlatform : mdp::Platform {
 		if (g_pipe.running()) g_pipe.box().flush(300000);
 		if (!g_have_picture || g_src_i < 0 || !g_src[g_src_i].t) return false;
 		vita2d_texture *t = g_src[g_src_i].t;
-		*f = pk::Frame((const uint16_t *) vita2d_texture_get_datap(t), g_src_w, g_src_h, (int) vita2d_texture_get_stride(t));
+		/* a wide view picture: the state's picture is the console's own, the columns in the middle */
+		*f = pk::Frame((const uint16_t *) vita2d_texture_get_datap(t) + g_src_margin, g_src_w - 2 * g_src_margin, g_src_h, (int) vita2d_texture_get_stride(t));
 		return true;
 	}
 	void ask_cheat_text() { g_ime_wanted = true; }
@@ -1558,7 +1559,7 @@ int main(int argc, char **argv)
 						g_wide_an_us += an; g_wide_an_n++;
 						render_emu_us += an; emu_us += an;
 						int off = vi.system == MD_SYS_GG ? 48 : 0;
-						if (!dfb && vi.system == MD_SYS_MD && g_wide_S > 0) { src = pix - g_wide_S; sw = pw + 2 * g_wide_S; off += g_wide_S; }
+						if (hd && !dfb && vi.system == MD_SYS_MD && g_wide_S > 0) { src = pix - g_wide_S; sw = pw + 2 * g_wide_S; off += g_wide_S; }       /* put() copies the strips with the picture */
 						mt->view_off = off;
 						user |= USER_WIDE;
 						wide_cost_update((double) (t1 - t0 + an), 1e6 / frame_hz);

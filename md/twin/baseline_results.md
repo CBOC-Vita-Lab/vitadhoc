@@ -67,3 +67,36 @@ The model says a busy Mega Drive game takes 9 - 13.5 ms of the 16.7 ms frame on 
 Gear game 3 - 4 ms. The Mega Drive is therefore within the frame but with little headroom for the app's own per frame work
 on one thread; the plan's thread split (core on one thread, picture and sound output on others) is what keeps 60 Hz locked. These are
 estimates with a x1.5 error bar: **a locked 60 Hz Mega Drive is not proven**; it has to be measured on the device.
+
+## Wide view cost (2.0)
+
+`md_twin --wide 45` (md/frontend/wide.cpp over widekit, strips drawn by the VDP) against the same run without it, `--pad auto`, 900 frames on the host and 240 under qemu
+(`qemu-arm -cpu max`, armhf, ratio only). **host** = this x86_64 machine, **qemu** = emulated ARM user mode; both on a shared, noisy machine; neither is Vita time.
+Core frame = `md_host_run_frame` (the strips are drawn inside it); analyse = the emulating thread's share of the wide view after the frame; compose = the drawing
+thread's share (not on the emulating thread when the hand-over is on).
+
+| game | host core p50 off -> on | host analyse | host compose | qemu core p50 off -> on | qemu analyse | qemu compose |
+|---|---|---|---|---|---|---|
+| Mega Drive platformer | 0.350 -> 0.387 ms | 0.042 ms | 0.082 ms | 2.25 -> 2.82 ms | 0.56 ms | 0.61 ms |
+| Mega Drive sonic (title) | 0.298 -> 0.348 ms | 0.049 ms | 0.070 ms | 2.27 -> 2.53 ms | 0.57 ms | 0.63 ms |
+| Mega Drive linescroll | 0.274 -> 0.316 ms | 0.042 ms | 0.080 ms | 1.73 -> 1.99 ms | 0.42 ms | 0.56 ms |
+| Mega Drive tmx-map | 0.280 -> 0.353 ms | 0.045 ms | 0.086 ms | 1.78 -> 2.05 ms | 0.48 ms | 0.50 ms |
+| Master System (2 games) | 0.073 -> 0.074, 0.124 -> 0.127 ms | 0.000 ms | 0.033 ms | 0.61 -> 0.62, 0.86 -> 0.86 ms | 0.004 ms | 0.32 ms |
+| Game Gear (SMS ROMs forced) | 0.066 -> 0.072, 0.073 -> 0.079 ms | 0.001 ms | 0.025 - 0.035 ms | 0.57 -> 0.60, 0.55 -> 0.58 ms | 0.007 ms | 0.22 ms |
+| SG-1000 (an SMS ROM forced) | 0.057 -> 0.057 ms | 0.000 ms | 0.032 ms | 0.43 -> 0.43 ms | 0.004 ms | 0.32 ms |
+
+The Mega Drive strips add 13 - 26 percent to the core frame (host) and the analysis about 0.045 ms (the model's 40 K instructions). Scaled the way the table above
+scales host time to the Vita (platformer: 0.35 ms host = 11.4 ms model, a factor of about 33), the wide view costs the emulating thread of a Mega Drive game about
+**+1.2 ms (strips) +1.5 ms (analysis) = 2.5 - 4 ms**, with the compose (2.5 - 3 ms) on the drawing thread; x1.5 error bar either way, **not measured on a Vita**. A Mega Drive game at the model's
+13.5 ms would therefore go to 16 - 17.5 ms and the ladder (main.cpp) halves, then drops, the real strips before the frame is missed. The 8 bit consoles pay
+under 0.3 ms on the emulating thread (the compose, on the drawing thread, is the soft extension only).
+
+Identity and cross-machine: `selftest.sh` section 11 (96 ROMs: picture inside the window, sound, state, RAM, wide view on / off, with and without the VDP worker thread),
+`arm_check.sh` (armhf == x86_64 with the wide view on too: picture, sound, RAM and the wide view's own decisions), `wide_pipe_proof` (through the picture pipe,
+direct drawing and copies, composed on a second thread: bit for bit the same composed pictures).
+
+Also found while building this: the core keeps some memory across `md_host_unload` / `md_host_load_mem` in one process (two loads of the same ROM can differ in a few
+pixels of a late frame); the player starts per game and `md_twin` runs one game per process, so nothing is affected; `wide_pipe_proof` runs each pass in its own process.
+The SGDK `game/sonic` "ILLEGAL INSTRUCTION" the twin showed under the random pad script (`--pad auto`) is in the ROM, not the core: the 68000 executes an `ILLEGAL` opcode (0x4AFC at 0x00AA64)
+that the ROM's code runs into after certain button mixes, and the unmodified Genesis Plus GX libretro core and PicoDrive (two other 68000 implementations) stop at the same
+address with the same registers on the same inputs. With no buttons pressed (and with a held right / jump script) the ROM plays on.

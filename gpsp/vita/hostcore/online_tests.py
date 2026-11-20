@@ -1117,25 +1117,36 @@ def t_nes_relay(T):
     L.pad_checks(T, rig.ra, rig.rb)
 
 
-def snes_link_keys(root):
-    f = os.path.join(root, "launch", "snes.ini")
+def snes_link_keys(root, pid="snes"):
+    f = os.path.join(root, "launch", pid + ".ini")
     if not os.path.exists(f):
         return {}
     return dict(l.rstrip("\n").split("=", 1) for l in open(f) if l.startswith("link.") and "=" in l)
 
 
-def snes_online(T, name, nat, relay):
+def snes_online(T, name, nat, relay, con="snes"):
     """Both consoles in the game list: A hosts a SNES game Online from Settings > Two players, B joins with the code
     from the same page.  The app forms the link (room, punch or relay) with no game running and writes it into
     launch/snes.ini for snes.bin (the twin cannot start that program: snes/twin/link_test.py plays the files' kind)."""
-    rom = os.path.join(T.S.outdir, "Super One (USA).sfc")
+    # con: "snes", or a Sega console of md.bin ("md", "sms", "sg"): the same page and the same hand-over, the file a synthetic
+    # cartridge image of that console (the app only forms the link; the player starts afterwards)
+    sega = {"md": ("Alpha Quest (USA).md", 6), "sms": ("Master One.sms", 7), "sg": ("Tiny One.sg", 9)}.get(con)
+    if sega:
+        from app_tests import sega_rom, SNES_TWO_DOWNS
+        rom = os.path.join(T.S.outdir, sega[0])
+        data = sega_rom("md" if con == "md" else "sms", 0x20000 if con == "md" else 0x8000)
+        walk = "90:start\n+30:shot=settings.png\n" + "+6:down\n" * SNES_TWO_DOWNS + "+20:shot=row.png\n+6:cross\n+30:shot=page.png\n"
+    else:
+        rom = os.path.join(T.S.outdir, "Super One (USA).sfc")
+        data = bytes(range(256)) * 128               # (its CRC has letters in it: the room's `rom` must be lower-case)
+        walk = L.snes_two_walk()
     os.makedirs(T.S.outdir, exist_ok=True)
     with open(rom, "wb") as f:
-        f.write(bytes(range(256)) * 128)             # (its CRC has letters in it: the room's `rom` must be lower-case)
-    sa = (L.snes_two_walk() + L.keys("cross") + L.keys("down", "cross") + L.shot(14, "hosting.png") + L.quit_at(85))
+        f.write(data)
+    sa = (walk + L.keys("cross") + L.keys("down", "cross") + L.shot(14, "hosting.png") + L.quit_at(85))
 
     def sb(code):
-        return (L.snes_two_walk() + L.keys("down", "cross") + L.keys("down", "cross") + "+30:shot=pad.png\n" +
+        return (walk + L.keys("down", "cross") + L.keys("down", "cross") + "+30:shot=pad.png\n" +
                 L.keys(*code_keys(code), first=L.AFTER_SHOT) + L.keys("triangle") + "+%d:shot=card.png\n" % L.dur(7) +
                 "+%d:cross:%d\n" % (L.AFTER_SHOT, L.PRESS) + "+%d:shot=linking.png\n" % L.dur(3) + L.quit_at(80))
 
@@ -1150,6 +1161,8 @@ def snes_online(T, name, nat, relay):
             return t
         T.twin = twin
     cfg = {"ui_home": 0, "hints": 0}
+    if sega:
+        cfg["console"] = sega[1]
     rig = None
     try:
         rig = pair(T, name, rom=rom, nat=nat, a_script=sa, b_script=sb, a_cfg=dict(cfg), b_cfg=dict(cfg),
@@ -1162,16 +1175,18 @@ def snes_online(T, name, nat, relay):
         return
     T.clean(ra, "A", allow="could not be started")
     T.clean(rb, "B", allow="could not be started")
-    T.check(ra.has(r"online_room code=%s" % rig.code), "A: the service made the room for a SNES game (%s)" % rig.code)
+    T.check(ra.has(r"online_room code=%s" % rig.code), "A: the service made the room for a %s game (%s)" % (con, rig.code))
+    T.check(ra.has(r"link_snes_begin role=host .*console=%s" % con), "A: the room's console is %s" % con)
     T.check(rb.has(r"online_card state=1 .*kind=5 .*compatible=1") and rb.has(r"online_open_join rom_match=1"),
             "B: the card is a Two players room and the library has the game")
     mode = "relay" if relay else "punch"
-    ka, kb = snes_link_keys(ra.root), snes_link_keys(rb.root)
+    pid = "snes" if con == "snes" else "md"
+    ka, kb = snes_link_keys(ra.root, pid), snes_link_keys(rb.root, pid)
     for r, who, k, role in ((ra, "A", ka, "host"), (rb, "B", kb, "guest")):
         rd = r.evt("snes_link_ready")
         T.check(rd and rd[0].get("ok") == "1" and rd[0].get("mode") == mode,
                 "%s: the link formed and was handed over (snes_link_ready mode=%s: %s)" % (who, mode, [e["_"] for e in rd]))
-        T.check(r.has(r"^EVT snes_launch_file ok=1") and k.get("link.role") == role and k.get("link.mode") == mode,
+        T.check(r.has(r"^EVT %s_launch_file ok=1" % ("snes" if con == "snes" else "sega")) and k.get("link.role") == role and k.get("link.mode") == mode,
                 "%s: launch/snes.ini carries the link (role %s, mode %s)" % (who, k.get("link.role"), k.get("link.mode")))
         T.radio_free(r, who)
     T.check(ka.get("link.punch_key") and ka.get("link.punch_key") == kb.get("link.punch_key") and
@@ -1198,6 +1213,14 @@ def t_snes_online(T):
     """Online, SNES Two players from the game list: the app forms the link (punch, then relay) and hands it to snes.bin"""
     snes_online(T, "online_snes_punch", ("port", "port"), False)
     snes_online(T, "online_snes_relay", ("sym", "port"), True)
+
+
+def t_sega_online(T):
+    """Online, Two players on a Genesis, a Master System and an SG-1000 game: the room names the console, the link forms
+    (punch, then relay) and is handed to md.bin"""
+    for con in ("md", "sms", "sg"):
+        snes_online(T, "online_%s_punch" % con, ("port", "port"), False, con)
+        snes_online(T, "online_%s_relay" % con, ("sym", "port"), True, con)
 
 
 # ---- two DIFFERENT cartridges (Pokemon Ruby with Sapphire) over Online ------------------------------------
@@ -1289,7 +1312,7 @@ TESTS = [
     ("lost_answer", t_lost_answer), ("cancel_after_failure", t_cancel_after_failure), ("drop", t_drop_midlink),
     ("rtt_100", t_rtt_100), ("rtt_150", t_rtt_150), ("rtt_200", t_rtt_200), ("delay_cap", t_delay_cap),
     ("determinism", t_determinism), ("two_games", t_two_games), ("direct_hidden", t_direct_hidden),
-    ("nes_relay", t_nes_relay), ("snes_online", t_snes_online),
+    ("nes_relay", t_nes_relay), ("snes_online", t_snes_online), ("sega_online", t_sega_online),
 ]
 # armhf (under qemu, several times the wall time): the sessions
 RUNS = {

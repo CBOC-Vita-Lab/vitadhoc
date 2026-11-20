@@ -2,10 +2,13 @@
 // For every frame of a ROM it makes the picture two ways: scale_rows over the whole picture (the definition) and ScaleCache
 // (plan, chunks, blit into three rotating "textures" as the player does), and compares them byte for byte. Prints one line:
 //   SCALE <rom> kind=<k> size=WxH frames=N mismatches=M  rows computed p50/p95/p99 (percent) shifted_frames=S  host_us full=.. inc=.. (p50/p95/p99)
-// usage: scale_proof ROM [--frames N] [--kind auto|mmpx|xbr2|xbr3] [--system md|sms|gg|sg] [--mode auto|right] [--noshift] [--quiet]
+// usage: scale_proof ROM [--frames N] [--kind auto|mmpx|xbr2|xbr3] [--system md|sms|gg|sg] [--mode auto|right] [--noshift] [--widen M] [--quiet]
+// --widen M: the picture is the wide view's (the console's picture plus M columns each side, composed by md/frontend/wide.cpp: the soft extension on
+//          the 8 bit consoles) so the scaler cost of the wide picture is measured
 // Copyright CBOC-Vita. MIT licence for this file; the core keeps its own licence.
 #include "host.h"
 #include "pk_scale.h"
+#include "wide.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,7 +69,7 @@ static double pct(std::vector<double> v, double p)
 int main(int argc, char **argv)
 {
 	const char *rom = NULL;
-	int frames = 400, system = 0, noshift = 0, quiet = 0, right = 0, refs = 0;
+	int frames = 400, system = 0, noshift = 0, quiet = 0, right = 0, refs = 0, widen = 0;
 	unsigned long px_tot = 0, px_float_diff = 0, px_int_diff = 0, ch_over1 = 0;
 	std::string kind = "auto";
 	for (int i = 1; i < argc; i++) {
@@ -76,6 +79,7 @@ int main(int argc, char **argv)
 		else if (a == "--system" && i + 1 < argc) { std::string r = argv[++i]; system = r == "md" ? MD_SYS_MD : r == "sms" ? MD_SYS_SMS : r == "gg" ? MD_SYS_GG : r == "sg" ? MD_SYS_SG : 0; }
 		else if (a == "--mode" && i + 1 < argc) right = std::string(argv[++i]) == "right";
 		else if (a == "--noshift") noshift = 1;
+		else if (a == "--widen" && i + 1 < argc) widen = atoi(argv[++i]);
 		else if (a == "--refs") refs = 1;
 		else if (a == "--quiet") quiet = 1;
 		else if (a[0] != '-' && !rom) rom = argv[i];
@@ -94,6 +98,8 @@ int main(int argc, char **argv)
 	const char *bn = strrchr(rom, '/'); bn = bn ? bn + 1 : rom;
 	if (md_host_load_mem(data.data(), data.size(), bn, system, err, sizeof err)) { printf("LOADFAIL %s\n", err); return 1; }
 
+	mdw::Wide wide;
+	mdw::Meta meta;
 	pk::ScaleCache cache;
 	pk::ScaleScratch sc;
 	std::vector<uint16_t> ref, tex[3];
@@ -110,6 +116,15 @@ int main(int argc, char **argv)
 		int w, h, pitch;
 		const uint16_t *px = md_host_video(&w, &h, &pitch);
 		if (w > 352 || h > 256) continue;
+		if (widen > 0) {
+			md_video_info vi;
+			md_host_video_info(&vi);
+			wide.analyse((uint32_t) fr + 1, vi, widen, 0, &meta);
+			int ww = 0, wh = 0;
+			const uint16_t *wp = wide.compose(meta, px, pitch / 2, &ww, &wh);
+			if (!wp) continue;
+			px = wp; w = ww; h = wh; pitch = ww * 2;
+		}
 		pk::ScalerKind k = kind == "mmpx" ? pk::SC_MMPX2 : kind == "xbr2" ? pk::SC_XBR2 : kind == "xbr3" ? pk::SC_XBR3 : (w <= 160 ? pk::SC_XBR3 : w <= 256 ? pk::SC_XBR2 : pk::SC_MMPX2);
 		const int fct = pk::scaler_factor(k);
 		const int ow = w * fct;
@@ -122,7 +137,7 @@ int main(int argc, char **argv)
 		for (int c = 0; c < nch; c++) cache.run_chunk(c, sc);
 		const pk::ScaleStats st = cache.stats();
 		ti = (ti + 1) % 3;
-		if ((int) tex[ti].size() < 1024 * 512) { tex[ti].assign(1024 * 512, 0); ts[ti] = pk::TexSync(); }
+		if ((int) tex[ti].size() < 1024 * 576) { tex[ti].assign(1024 * 576, 0); ts[ti] = pk::TexSync(); }
 		cache.blit(&tex[ti][0], 1024, ts[ti]);
 		double t2 = now();
 		if (refs && (k == pk::SC_XBR2 || k == pk::SC_XBR3) && fr % 8 == 0) {

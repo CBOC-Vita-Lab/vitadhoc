@@ -128,6 +128,17 @@ int snes_wide_option(const char *name, int value);
 /* widekit profile table (by CRC or title); returns the number of parse problems, messages appended to msgs */
 int snes_wide_profiles_load(const char *text, size_t n, char *msgs, size_t cap);
 
+/* Sharing a frame's compose between threads. Most of compose is work per picture line (candidates, composition, exact composite, ambient
+ * frame); with snes_wide_parallel(fn, user, n) the adapter hands that part to the frontend: fn(user, job, arg, n) must call job(arg, w) once for
+ * every w in 0 .. n - 1, on up to n threads at the same time (w = 0 may be the caller itself), and return when all of them have returned. The
+ * workers take lines in chunks until none are left; a line is done by one worker and writes only its own rows, so the picture does not depend on
+ * how the lines fall (proof: the twin's --wide-workers N gives the hashes of one thread). fn = NULL or n <= 1: the caller does it all (default).
+ * Call it while no compose runs (it waits for one). Option "lazy" (default 1): a side that shows the ambient frame is composed only on the frames
+ * whose coverage is counted (every second one); the extents and the hysteresis advance all the same. */
+#define SNES_WIDE_MAX_WORKERS 4
+typedef void (*snes_wide_pfor)(void *user, void (*job)(void *arg, int worker), void *arg, int workers);
+void snes_wide_parallel(snes_wide_pfor fn, void *user, int workers);
+
 /* Capture / compose split (for a consumer that composes on its own thread, e.g. the hand-over's draw thread). snes_wide_split(1) makes
  * the frame hook only capture (a fixed-size snapshot of what compose needs, taken on the thread that renders the margins); the consumer takes
  * them in order with snes_wide_snap_take (emulating thread, once per frame), hands the handle on, and calls snes_wide_compose on any one

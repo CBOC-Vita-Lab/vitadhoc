@@ -1179,12 +1179,25 @@ int snes_host_state_save_buf(uint8_t *out, size_t cap, size_t *len)
  * has 0 to 32 KB of it (every access is masked with SRAMMask) and the chips use 128 or 256 KB. Rewind keeps each state in a buffer of its
  * own that it only ever fills with whole states (the helper XORs the buffers, and zero bytes stay zero). So the capture writes the bytes up
  * to `ext` and leaves the rest of the block alone: it is zero in the buffer (cleared once per buffer) and zero in the machine. The second
- * is proven for a plain cartridge by the mask; for the chips (Super FX, SA-1) and any other cartridge with extra hardware a hint is used
- * and every capture checks that the part not written is still zero in the machine: if a byte is not, the capture (and every one after
- * it in this game) writes the whole block, so the saved state is always the one snes_host_state_save_buf would have written. */
+ * holds because nothing the emulated machine does writes past `ext` (the block starts as zeros: this frontend never calls ClearSRAM):
+ *   - a plain cartridge: every access is masked with SRAMMask; ext = SRAMMask + 1.
+ *   - Super FX: the GSU's RAM is two 64 KB banks (SuperFX.nRamBanks = 2; apvRamBank[i] = pvRam + ((i % 2) << 16)) and the 65816 reaches
+ *     it through banks $70/$71 and $6000-$7FFF of the same 128 KB; ext = 128 KB.
+ *   - SA-1 (every use of Memory.SRAM / BWRAM in sa1.cpp, getset.h and Map_SA1LoROMMap): banks $40-$4F and the bitmap view of $60-$6F index
+ *     the block with `& 0x3ffff` (below 256 KB); the $6000-$7FFF window is a base of at most 0x1f * 0x2000 plus 0x1fff (below 256 KB); the
+ *     SA-1's bitmap view of that window is a base of at most 0x7f * 0x800 = 0x3F800 plus at most 0xFFF, so the highest byte is 0x407FF;
+ *     the SA-1's DMA into BW-RAM (S9xSA1DMA) masks start and length with SRAMMask each, so it ends below 2 * (SRAMMask + 1).
+ *     ext = the larger of 0x41000 (260 KB) and 2 * (SRAMMask + 1); a cartridge whose header gives 256 KB or more gets the whole block.
+ * What is not the emulated machine (a state that was loaded, the battery file) is checked: the first capture after rewind opens and after
+ * every state load scans the part left out, and for the chips every 32nd capture does too (a tripwire for the reasoning above, a few KB per
+ * capture on average instead of 250 to 380 KB every time). A byte that is not zero there makes this capture and every one after it in this
+ * game write the whole block, so the saved state is the one snes_host_state_save_buf would have written. */
 namespace {
 size_t g_rw_ext = 0;               /* bytes of the SRAM block written; 0: the whole block */
-bool g_rw_scan = false;            /* check the rest is zero in the machine at each capture */
+bool g_rw_scan = false;            /* a chip cartridge: every 32nd capture checks that the rest is zero in the machine */
+bool g_rw_rescan = false;          /* the next capture checks it (rewind opened, a state was loaded) */
+unsigned g_rw_caps = 0;
+unsigned g_rw_scans = 0;
 bool g_rw_whole = false;           /* a byte past `ext` was found: the whole block from now on */
 const uint8_t *g_rw_zeroed[4];     /* buffers whose rest of the block is cleared */
 unsigned g_rw_nz = 0;
@@ -1199,7 +1212,10 @@ public:
 		if (buf == (void *) Memory.SRAM && len == Memory.SRAM_SIZE && g_rw_ext && g_rw_ext < len && !g_rw_whole) {
 			const uint8_t *tail = (const uint8_t *) buf + g_rw_ext;
 			const size_t rest = len - g_rw_ext;
-			if (g_rw_scan) {
+			g_rw_caps++;
+			if (g_rw_rescan || (g_rw_scan && (g_rw_caps & 31) == 0)) {
+				g_rw_rescan = false;
+				g_rw_scans++;
 				const uint64_t *q = (const uint64_t *) tail;
 				uint64_t acc = 0;
 				for (size_t k = 0; k < rest / 8; k += 8) acc |= q[k] | q[k + 1] | q[k + 2] | q[k + 3] | q[k + 4] | q[k + 5] | q[k + 6] | q[k + 7];
@@ -1232,9 +1248,15 @@ size_t snes_host_rewind_state_size(void)
 	g_rw_whole = false;
 	g_rw_ext = 0;
 	g_rw_scan = false;
+	g_rw_rescan = true;
+	g_rw_caps = g_rw_scans = 0;
 	const size_t full = Memory.SRAM_SIZE;
 	if (Settings.SuperFX && !Settings.SA1) { g_rw_ext = 0x20000; g_rw_scan = true; }
-	else if (Settings.SA1) { g_rw_ext = 0x42000; g_rw_scan = true; }
+	else if (Settings.SA1) {
+		const size_t dma = (((size_t) Memory.SRAMMask + 1) * 2 + 0xFFF) & ~(size_t) 0xFFF;     /* where the SA-1's DMA into BW-RAM can end */
+		g_rw_ext = dma > 0x41000 ? dma : 0x41000;
+		g_rw_scan = true;
+	}
 	else if (!Settings.DSP && !Settings.C4 && !Settings.SETA && !Settings.OBC1 && !Settings.SPC7110 && !Settings.SRTC && !Settings.BS && !Multi.cartType) {
 		g_rw_ext = ((size_t) Memory.SRAMMask + 1 + 0xFFF) & ~(size_t) 0xFFF;
 		if (g_rw_ext < 0x1000) g_rw_ext = 0x1000;
@@ -1263,6 +1285,8 @@ size_t snes_host_rewind_tail_nonzero(void)
 	return n;
 }
 int snes_host_rewind_whole(void) { return g_rw_whole ? 1 : 0; }
+size_t snes_host_rewind_ext(void) { return g_rw_ext; }
+unsigned snes_host_rewind_scans(void) { return g_rw_scans; }
 
 int snes_host_state_load_buf(const uint8_t *data, size_t n)
 {
@@ -1270,6 +1294,7 @@ int snes_host_state_load_buf(const uint8_t *data, size_t n)
 	if (!data || !n) return 3;
 	std::vector<int> on;
 	cheats_suspend(on);
+	g_rw_rescan = true;     /* rewind: the cartridge RAM block is the state's now */
 	int r = S9xUnfreezeGameMem(data, (uint32) n) == SUCCESS ? 0 : 3;
 	cheats_resume(on);
 	return r;
@@ -1282,6 +1307,7 @@ int snes_host_state_load(const char *path)
 	if (!read_file(path, buf)) return 2;
 	std::vector<int> on;
 	cheats_suspend(on);   /* the state holds the game's own bytes; the codes poke them again after the load */
+	g_rw_rescan = true;
 	int r = S9xUnfreezeGameMem(buf.data(), (uint32) buf.size()) == SUCCESS ? 0 : 3;
 	cheats_resume(on);
 	return r;

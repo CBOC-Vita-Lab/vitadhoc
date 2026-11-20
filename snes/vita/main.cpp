@@ -332,6 +332,30 @@ static int job_work(pk::ScaleScratch &sc, bool helper)
 	}
 }
 
+/* The same helpers share the lines of the wide view's compose (snes_wide_parallel, snes/frontend/wide.h): the composing thread publishes the job,
+ * wakes the helpers and works itself (worker 0) until no line is left; a helper that is awake in time takes lines as worker 1 or 2. `open` is
+ * cleared before the composing thread waits for `active` to fall to zero, and a helper counts itself in before it looks at `open`, so a helper that
+ * wakes late never touches a job that is over. */
+struct LineJob {
+	void (*fn)(void *, int);
+	void *arg;
+	std::atomic<int> open, active;
+	LineJob() : fn(0), arg(0), open(0), active(0) {}
+};
+static LineJob g_lines;
+static std::atomic<unsigned> g_lines_jobs(0), g_lines_helped(0);
+
+static void wide_pfor(void *, void (*job)(void *, int), void *arg, int)
+{
+	g_lines.fn = job; g_lines.arg = arg;
+	g_lines.open.store(1);
+	for (int i = 0; i < g_help_n; i++) sceKernelSignalSema(g_help_sema[i], 1);
+	job(arg, 0);
+	g_lines.open.store(0);
+	while (g_lines.active.load()) sceKernelDelayThread(20);
+	g_lines_jobs.fetch_add(1, std::memory_order_relaxed);
+}
+
 static int help_thread(SceSize, void *argp)
 {
 	const int idx = *(int *) argp;
@@ -339,6 +363,9 @@ static int help_thread(SceSize, void *argp)
 		sceKernelWaitSema(g_help_sema[idx], 1, NULL);
 		if (g_help_stop) break;
 		job_work(g_help_scratch[idx], true);
+		g_lines.active.fetch_add(1);
+		if (g_lines.open.load()) { g_lines.fn(g_lines.arg, idx + 1); g_lines_helped.fetch_add(1, std::memory_order_relaxed); }
+		g_lines.active.fetch_sub(1);
 	}
 	return sceKernelExitThread(0);
 }
@@ -360,10 +387,12 @@ static void help_start(int n_wanted)
 		logf_("scaler helper %d: core mask %05x priority 0x%x\n", i, s->mask, s->prio);
 	}
 	logf_("scaler helpers: %d\n", g_help_n);
+	snes_wide_parallel(g_help_n > 0 ? wide_pfor : NULL, NULL, 1 + g_help_n);     /* the wide view's compose shares its lines with them */
 }
 
 static void help_stop(void)
 {
+	snes_wide_parallel(NULL, NULL, 1);       /* waits for a compose that is running */
 	g_help_stop = 1;
 	for (int i = 0; i < g_help_n; i++) {
 		sceKernelSignalSema(g_help_sema[i], 1);
@@ -1436,7 +1465,11 @@ int main(int argc, char **argv)
 	pk::ExitReason why = pk::EXIT_NORMAL;
 	g_pl->log_flush(false);
 
+	g_pl->set_capture_deferred(true);
 	for (;;) {
+		/* rewind's state of the frame(s) of the last pass is written here, after the picture and the sound were handed on, in the time this
+		 * thread would wait for the refresh; a pass that already missed its refresh puts it off (pk_speed) */
+		g_pl->capture_idle(sceDisplayGetVcount() != last_vc);
 		/* One pass per display refresh, counted by the display itself: a pass whose picture went into the
 		 * queue without waiting must not start the next frame early (that ran games at twice their speed). */
 		unsigned vc = sceDisplayGetVcount();
@@ -1748,6 +1781,7 @@ int main(int argc, char **argv)
 			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
 			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
 			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
+			logf_(" | wide_lines jobs=%u helped=%u", g_lines_jobs.exchange(0), g_lines_helped.exchange(0));     /* compose's line jobs (3 a frame) and how many a helper joined */
 			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());
 			st0 = st1;
 #ifdef S9X_PROF

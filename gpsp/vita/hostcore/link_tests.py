@@ -941,7 +941,7 @@ def t_wifi_gb(T):
             "(%s / %s)" % (sa, sb))
 
 
-def snes_two_walk(downs=16):
+def snes_two_walk(downs=17):
     """The SNES tab, the list's Settings (START), `downs` rows to Two players, X: its page (app_tests.t_snes_two)."""
     return ("%d:triangle:%d\n" % (at(1), PRESS) + keys("triangle", "triangle", "start", first=40) +
             keys(*(["down"] * downs), first=60) + keys("cross", first=30))

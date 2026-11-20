@@ -65,6 +65,16 @@ public:
 	bool run_frame(bool render);
 	/* in place; returns the frames kept */
 	size_t audio(int16_t *lr, size_t frames);
+	/* Rewind's capture off the frame's path (opt-in; off: run_frame() captures right after the frame, as ever). With it on, run_frame() only
+	 * notes that a frame ran, and the platform calls capture_idle() once per refresh where the game thread has nothing left to do but wait
+	 * for the next refresh (the picture is handed over, the sound is pushed): the state is written there, in time that would be idle. A pass
+	 * that is already late (`late`) puts the capture off, at most `kPutOffMax` passes in a row; the frames count towards the interval all the
+	 * same. The state is the machine's at that moment, on the same thread: nothing emulates in between. */
+	void set_defer_capture(bool on) { defer_ = on; if (!on) pend_ = 0; }
+	bool capture_pending() const { return pend_ > 0; }
+	void capture_idle(bool late);
+	unsigned captures_put_off() const { return put_off_total_; }
+	enum { kPutOffMax = 8 };
 
 	bool ff_on() const { return ff_.on(); }
 	bool rewinding() const { return rw_.active(); }
@@ -100,6 +110,9 @@ private:
 	bool want_rw_ = false;
 	RewindAct act_ = RW_PLAY;
 	bool was_busy_ = false, ended_ = false;
+	bool defer_ = false;
+	int pend_ = 0, put_off_ = 0;
+	unsigned put_off_total_ = 0;
 	std::string notice_;
 };
 

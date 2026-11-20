@@ -99,6 +99,8 @@ size_t snes_host_rewind_state_size(void);
 int snes_host_rewind_state_save_buf(uint8_t *out, size_t cap, size_t *len);
 size_t snes_host_rewind_tail_nonzero(void);   /* twin proof, see host.cpp */
 int snes_host_rewind_whole(void);              /* 1 once a capture had to write the whole cartridge RAM block */
+size_t snes_host_rewind_ext(void);             /* bytes of the cartridge RAM block a capture writes (0: all of it) */
+unsigned snes_host_rewind_scans(void);         /* captures that checked the part left out */
 
 /* Core options by name; returns 0 when the name is known:
  *   block_vram 0/1       block CPU/DMA VRAM access while the screen is drawn (Snes9x default 1)

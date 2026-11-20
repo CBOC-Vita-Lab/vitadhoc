@@ -12,6 +12,7 @@
  *   --wide M         switch the wide view on with M px per side (224 lines); --wopt name=value (adapter option, repeatable)
  *   --map FILE       load the learned map from FILE at the start and save it at the end (a first pass makes the file)
  *   --summary        mean claimed real px and the adapter's mean wall time per frame
+ *   --wide-workers N the lines of a frame's compose are shared between N threads (snes_wide_parallel); the hashes must be those of one thread
  * Everything else as snes_twin (--frames, --pad, --opt name=value, --srm).
  * Copyright CBOC-Vita. MIT licence.
  */
@@ -35,6 +36,41 @@
 #endif
 
 struct PadEv { int frame; unsigned mask; };
+
+/* --wide-workers: the frontend's side of snes_wide_parallel. N - 1 threads wait for a job; the caller is worker 0. */
+struct LinePool {
+	std::mutex mu; std::condition_variable cv, done_cv;
+	std::vector<std::thread> th;
+	void (*job)(void *, int) = 0; void *arg = 0;
+	unsigned gen = 0; int pending = 0, n = 0; bool quit = false;
+	void start(int workers) {
+		n = workers;
+		for (int w = 1; w < workers; w++)
+			th.emplace_back([this, w]() {
+				unsigned seen = 0;
+				std::unique_lock<std::mutex> lk(mu);
+				for (;;) {
+					cv.wait(lk, [&] { return quit || gen != seen; });
+					if (quit) return;
+					seen = gen;
+					void (*j)(void *, int) = job; void *a = arg;
+					lk.unlock();
+					j(a, w);
+					lk.lock();
+					if (--pending == 0) done_cv.notify_all();
+				}
+			});
+	}
+	void stop() { { std::lock_guard<std::mutex> lk(mu); quit = true; cv.notify_all(); } for (auto &t : th) t.join(); th.clear(); }
+	static void pfor(void *user, void (*j)(void *, int), void *a, int workers) {
+		LinePool *p = (LinePool *) user;
+		(void) workers;
+		{ std::lock_guard<std::mutex> lk(p->mu); p->job = j; p->arg = a; p->pending = p->n - 1; p->gen++; p->cv.notify_all(); }
+		j(a, 0);
+		std::unique_lock<std::mutex> lk(p->mu);
+		p->done_cv.wait(lk, [&] { return p->pending == 0; });
+	}
+};
 
 static unsigned parse_buttons(const char *s)
 {
@@ -164,6 +200,8 @@ int main(int argc, char **argv)
 	std::set<int> dumpset, shotset, statset;
 	int trace_every = 0, cg_a = -1, cg_b = -1;
 	bool split_mode = false, bench = false, map_poll = false;
+	int wide_workers = 1;
+	static LinePool pool;
 	std::set<int> pressure_set;
 	const char *save_state = 0, *load_state = 0; int save_at = -1;
 	std::vector<std::pair<uint32_t, uint8_t>> pokes;
@@ -191,6 +229,7 @@ int main(int argc, char **argv)
 		else if (arg("--state-hash") && i + 2 < argc) { state_every = atoi(argv[++i]); statef = argv[++i]; }
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--wide-split")) split_mode = true;
+		else if (arg("--wide-workers")) wide_workers = atoi(argv[++i]);
 		else if (arg("--pressure")) pressure_set = parse_set(argv[++i]);   /* frames on which the frontend reports pressure (snes_wide_option "pressure") */
 		else if (arg("--save-state") && i + 2 < argc) { save_state = argv[++i]; save_at = atoi(argv[++i]); }   /* emulation state after frame N (no wide data) */
 		else if (arg("--load-state")) load_state = argv[++i];
@@ -221,6 +260,7 @@ int main(int argc, char **argv)
 		snes_host_snapshot_enable(1);
 		snes_wide_set(1, wide);
 		if (split_mode) snes_wide_split(1);
+		if (wide_workers > 1) { if (wide_workers > SNES_WIDE_MAX_WORKERS) wide_workers = SNES_WIDE_MAX_WORKERS; pool.start(wide_workers); snes_wide_parallel(LinePool::pfor, &pool, wide_workers); }
 	}
 	if (load_state) {
 		std::vector<uint8_t> sb = read_all(load_state);
@@ -445,6 +485,7 @@ int main(int argc, char **argv)
 	}
 	if (split_mode) { flush_split(frames); { std::lock_guard<std::mutex> lk(job.mu); job.quit = true; job.cv.notify_all(); } comp.join(); }
 	snes_host_sync();
+	if (wide && wide_workers > 1) { snes_wide_parallel(NULL, NULL, 1); pool.stop(); }
 	int n;
 	while ((n = snes_host_audio_take(abuf.data(), 4096)) > 0)
 		if (wav) pcm.insert(pcm.end(), abuf.begin(), abuf.begin() + n * 2);

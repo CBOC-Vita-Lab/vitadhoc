@@ -772,6 +772,11 @@ struct CompHarness {
     }
     void frame()
     {
+        prepare();
+        wk_compose_frame(c, &in);
+    }
+    void prepare()
+    {
         memset(&in, 0, sizeof in);
         in.ana = &ana;
         in.centre = centre.data();
@@ -786,7 +791,6 @@ struct CompHarness {
         in.out = out.data();
         in.out_stride = V + 2 * M;
         in.prov = prov.data();
-        wk_compose_frame(c, &in);
     }
     int stride() const { return V + 2 * M; }
     // pixels of kind k on line y, side s (0 left)
@@ -982,6 +986,143 @@ static void t_blend()
     printf("    neon compiled in: %s\n", wk_have_neon() ? "yes" : "no");
 }
 
+/* the row kernels of wk_compose.h against their plain definitions: every length, odd starts, nothing written past the end */
+static void t_kernels()
+{
+    printf("C3  row kernels (8 pixels a step with NEON / SSE2, else C) == their definitions\n");
+    unsigned x = 777;
+    auto rnd = [&]() { x = x * 1103515245u + 12345u; return x >> 8; };
+    int bad = 0;
+    enum { N = 140 };
+    for (int round = 0; round < 600; round++) {
+        const int n = (int)(rnd() % 110), off = (int)(rnd() % 9);
+        uint16_t a[N], b[N], r1[N], r2[N], f[N];
+        uint8_t m[N], q1[N], q2[N], th[N];
+        for (int i = 0; i < N; i++) {
+            a[i] = (uint16_t)rnd(); b[i] = (uint16_t)rnd();
+            m[i] = (uint8_t)((rnd() & 3) ? rnd() : 0);
+            f[i] = (uint16_t)(rnd() % 257); th[i] = (uint8_t)(rnd() % 16);
+            q1[i] = q2[i] = (uint8_t)rnd();
+        }
+        if (round % 5 == 0) memset(m, 0, sizeof m);
+        if (round % 7 == 0) memset(m, 9, sizeof m);
+        const int e0 = (int)(rnd() % 256), e1 = (int)(rnd() % 256), e2 = (int)(rnd() % 256);
+        /* soft row */
+        memcpy(r1, a, sizeof r1); memcpy(r2, a, sizeof r2);
+        wk_soft_row(r1 + off, n, e0, e1, e2, f + off, th + off);
+        wk_soft_row_scalar(r2 + off, n, e0, e1, e2, f + off, th + off);
+        if (memcmp(r1, r2, sizeof r1)) bad++;
+        /* masked copy */
+        memcpy(r1, a, sizeof r1); memcpy(r2, a, sizeof r2);
+        wk_copy_masked(r1 + off, b + off, m + off, n);
+        for (int i = 0; i < n; i++) if (m[off + i]) r2[off + i] = b[off + i];
+        if (memcmp(r1, r2, sizeof r1)) bad++;
+        /* masked fill, or, test */
+        wk_fill_masked8(q1 + off, m + off, 0x4B, n);
+        for (int i = 0; i < n; i++) if (m[off + i]) q2[off + i] = 0x4B;
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        wk_fill_masked8(q1 + off, NULL, 0x31, n);
+        for (int i = 0; i < n; i++) q2[off + i] = 0x31;
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        for (int i = 0; i < N; i++) q1[i] = q2[i] = (uint8_t)(rnd() & 1);
+        wk_or_nz8(q1 + off, m + off, n);
+        for (int i = 0; i < n; i++) q2[off + i] |= (uint8_t)(m[off + i] != 0);
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        wk_nz8(q1 + off, m + off, n);
+        for (int i = 0; i < n; i++) q2[off + i] = (uint8_t)(m[off + i] != 0);
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        memcpy(q1, m, sizeof q1); memcpy(q2, m, sizeof q2);
+        wk_nz8(q1 + off, q1 + off, n);                       /* in place */
+        for (int i = 0; i < n; i++) q2[off + i] = (uint8_t)(m[off + i] != 0);
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        /* turning rows round */
+        memcpy(r1, a, sizeof r1); memcpy(r2, a, sizeof r2);
+        wk_rev16(r1 + off, b + off, n);
+        for (int i = 0; i < n; i++) r2[off + i] = b[off + n - 1 - i];
+        if (memcmp(r1, r2, sizeof r1)) bad++;
+        wk_rev16_inplace(r1 + off, n);
+        for (int i = 0; i < n; i++) r2[off + i] = b[off + i];
+        if (memcmp(r1, r2, sizeof r1)) bad++;
+        for (int i = 0; i < N; i++) q1[i] = q2[i] = (uint8_t)rnd();
+        wk_rev8(q1 + off, m + off, n);
+        for (int i = 0; i < n; i++) q2[off + i] = m[off + n - 1 - i];
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        wk_rev8_inplace(q1 + off, n);
+        for (int i = 0; i < n; i++) q2[off + i] = m[off + i];
+        if (memcmp(q1, q2, sizeof q1)) bad++;
+        /* the mix towards another row, every weight */
+        const int w = (int)(rnd() % 33);
+        memcpy(r1, a, sizeof r1); memcpy(r2, a, sizeof r2);
+        wk_mix565_row(r1 + off, b + off, w, n);
+        wk_mix565_row_scalar(r2 + off, b + off, w, n);
+        if (memcmp(r1, r2, sizeof r1)) bad++;
+    }
+    CHECK(bad == 0);
+}
+
+/* wk_compose_lines: the frame in bands with a scratch each, the left margin by distance, a side that is not shown */
+static void t_lines()
+{
+    printf("C4  wk_compose_lines: bands == whole frame; left margin by distance; a skipped side keeps the hysteresis\n");
+    wk_compose_cfg cfg;
+    wk_compose_cfg_default(&cfg);
+    CompHarness A(&cfg), B(&cfg), C(&cfg);
+    wk_compose_scratch *s1 = wk_compose_scratch_create(B.c), *s2 = wk_compose_scratch_create(B.c);
+    CHECK(s1 && s2);
+    unsigned x = 99;
+    auto rnd = [&]() { x = x * 1103515245u + 12345u; return x >> 8; };
+    int bad_bands = 0, bad_dist = 0, bad_skip = 0, touched = 0;
+    const int V = CompHarness::V, H = CompHarness::H, M = CompHarness::M;
+    for (int f = 0; f < 160; f++) {
+        if (f % 23 == 0) { const int l = (int)(rnd() % (unsigned)(M + 1)), r = (int)(rnd() % (unsigned)(M + 1)); A.set_real(l, r); B.set_real(l, r); C.set_real(l, r); }
+        for (int s = 0; s < 2; s++)
+            for (size_t i = 0; i < A.cand[s].size(); i += 7) { const uint16_t v = (uint16_t)rnd(); A.cand[s][i] = B.cand[s][i] = C.cand[s][i] = v; }
+        for (size_t i = 0; i < A.op.size(); i += 5) { const uint8_t v = (uint8_t)((rnd() & 7) != 0); A.op[i] = B.op[i] = C.op[i] = v; }
+        A.frame();
+        /* B: the same frame in three bands, out of order, two scratches, the left margin by distance */
+        B.prepare();
+        B.in.left_by_distance = 1;
+        wk_compose_begin(B.c, &B.in);
+        wk_compose_lines(B.c, &B.in, H / 2, H, s2);
+        wk_compose_lines(B.c, &B.in, 0, H / 4, s1);
+        wk_compose_lines(B.c, &B.in, H / 4, H / 2, s2);
+        wk_compose_end(B.c);
+        for (int y = 0; y < H; y++) {
+            uint16_t *row = &B.out[(size_t)y * (size_t)B.stride()];
+            uint8_t *prow = &B.prov[(size_t)y * (size_t)B.stride()];
+            for (int d = 0; d < M; d++)          /* by distance: d = 0 is next to the picture */
+                if (row[d] != A.out[(size_t)y * (size_t)A.stride() + (size_t)(M - 1 - d)] ||
+                    prow[d] != A.prov[(size_t)y * (size_t)A.stride() + (size_t)(M - 1 - d)]) bad_dist++;
+            wk_rev16_inplace(row, M);
+            wk_rev8_inplace(prow, M);
+        }
+        if (B.out != A.out || B.prov != A.prov) bad_bands++;
+        /* C: the right side is not shown on two frames of three; the left side and, on the frames it is shown, the right side's
+         * provenance (what the hysteresis decides) are those of A */
+        C.prepare();
+        const bool skip = (f % 3) != 0;
+        C.in.side_skip[1] = skip;
+        if (skip) for (int y = 0; y < H; y++) for (int d = 0; d < M; d++) { C.out[(size_t)y * (size_t)C.stride() + (size_t)(M + V + d)] = 0xBEEF; C.prov[(size_t)y * (size_t)C.stride() + (size_t)(M + V + d)] = 0xEE; }
+        wk_compose_begin(C.c, &C.in);
+        wk_compose_lines(C.c, &C.in, 0, H, NULL);
+        wk_compose_end(C.c);
+        for (int y = 0; y < H; y++)
+            for (int xx = 0; xx < C.stride(); xx++) {
+                const size_t i = (size_t)y * (size_t)C.stride() + (size_t)xx;
+                const bool right = xx >= M + V;
+                if (!right) { if (C.out[i] != A.out[i] || C.prov[i] != A.prov[i]) bad_skip++; }
+                else if (skip) { if (C.out[i] != 0xBEEF || C.prov[i] != 0xEE) touched++; }
+                else if (C.prov[i] != A.prov[i] || ((A.prov[i] & 15) != WK_PROV_GHOST && C.out[i] != A.out[i])) bad_skip++;
+            }
+    }
+    CHECK(bad_bands == 0);
+    CHECK(bad_dist == 0);
+    CHECK(bad_skip == 0);
+    CHECK(touched == 0);
+    wk_compose_scratch_destroy(s1);
+    wk_compose_scratch_destroy(s2);
+}
+
 /* ------------------------------------------------------------------------ */
 
 
@@ -1159,7 +1300,7 @@ int main(int argc, char **argv)
         (void)rc;
     }
     static const TestEntry tests[] = {
-        {"blend", t_blend}, {"compose", t_compose}, {"profile_parser", t_profile_parser},
+        {"blend", t_blend}, {"kernels", t_kernels}, {"lines", t_lines}, {"compose", t_compose}, {"profile_parser", t_profile_parser},
         {"s2_single_screen", s2_single_screen}, {"s5b_gfx_gate", s5b_margin_cell_gfx_gate},
         {"s6_split_hud", s6_split_hud}, {"s3_rooms", s3_rooms}, {"s4_stale_lead", s4_stale_lead},
         {"s7_page_loader", s7_page_loader}, {"s8_sky_streams", s8_sky_streams},

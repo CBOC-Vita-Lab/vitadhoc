@@ -27,4 +27,14 @@ for r in $LIST; do
 	if [ -s "$T/x.out" ] && cmp -s "$T/x.out" "$T/a.out"; then same=$((same + 1)); else diff=$((diff + 1)); echo "DIFF  $r"; fi
 done
 echo "armhf vs x86_64 over $((same + diff)) ROMs, $F frames each: identical $same, different $diff"
-[ $diff = 0 ]
+# the same with the wide view on: the picture inside the window, the sound and the RAM as above, and what the wide view decided (how much of the
+# margin was real picture, how many lines had only the soft extension, how many scene changes it saw) must not depend on the machine either
+wsame=0; wdiff=0
+wstrip() { grep -E '^RESULT|^WIDE' | sed 's/ state=[0-9a-f]*//; s/ p50=.*//; s/ analyse=[0-9.]*ms compose=[0-9.]*ms//; s/^WIDE frames=[0-9]* analysed=[0-9]* composed=[0-9]*/WIDE/'; }
+for r in $LIST; do
+	"$T/x86/md_twin" "$r" --frames $F --pad auto --wide 45 2>&1 | wstrip >"$T/x.out"
+	qemu-arm -cpu max "$T/armhf/md_twin" "$r" --frames $F --pad auto --wide 45 2>&1 | wstrip >"$T/a.out"
+	if [ -s "$T/x.out" ] && cmp -s "$T/x.out" "$T/a.out"; then wsame=$((wsame + 1)); else wdiff=$((wdiff + 1)); echo "DIFF (wide view)  $r"; fi
+done
+echo "armhf vs x86_64 with the wide view on, over $((wsame + wdiff)) ROMs, $F frames each: identical $wsame, different $wdiff"
+[ $diff = 0 ] && [ $wdiff = 0 ]

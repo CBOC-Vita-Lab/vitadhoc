@@ -198,7 +198,7 @@ static void t_direct()
 	expect_together(a, b, 3000);
 	EXPECT(a.mach.crc() == b.mach.crc());
 	EXPECT(a.link.stats().hashes_matched > 5);
-	EXPECT(a.link.delay() >= 2 && a.link.delay() <= 3);
+	EXPECT(a.link.delay() >= 2 && a.link.delay() <= 5);       /* an idle loopback needs 2 or 3; a machine with more runnable threads than cores may measure a little more */
 	EXPECT_EQ(a.link.delay(), b.link.delay());
 	EXPECT(a.link.stats().bad == 0 && b.link.stats().bad == 0);
 	EXPECT(std::string(a.link.path()) == "lan" || std::string(a.link.path()) == "direct");

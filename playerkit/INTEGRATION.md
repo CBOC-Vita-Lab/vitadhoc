@@ -459,3 +459,33 @@ file and word for word, so a state folder is the same on every console.
   back; load, then undo load, restores; a locked slot refuses save and delete with
   the toast; no `.tmp`, `.old` or `.new` is left after any of them. The main
   app's versions are `state_undo_lock` in `gpsp/vita/hostcore/app_tests.py`.
+
+## 9. Rewind, fast forward and RetroAchievements (`pk_speed`, `pk_ra`)
+
+Both standalone players (`snes.bin`, `md.bin`) use the same three modules.
+
+- **`pk_speed`** wraps `pk_rewind` (a ring of compressed state differences:
+  the game thread only saves the state into a buffer, a helper thread XORs and
+  squeezes it) and `pk_ff`. Call order each refresh: `plan()` (how many frames),
+  `input()`, `run_frame()` per frame, `audio()` on the mixed samples. The right
+  stick drives it (`rx` 0 = rewind, 255 = fast forward), so both begin one
+  refresh after the stick moves. `set_rewind_locked(true, why)` locks rewind
+  only (Hardcore); `set_locked` locks both (two players). The host supplies
+  `state_size`, `save_state`, `load_state`, `run_frame`, `clear_pads`. Rewind
+  states stay in memory, so a host may use a save without its file CRC (the
+  Sega player does: `md_host_state_save_quick`).
+- **`pk_ra`** is written against rcheevos `rc_client`, with `ra_http.c` for the
+  network. Build with `playerkit/ra.mk` plus `pk_ra_plat_vita.c` (Vita) or
+  `ra/pk_ra_plat_posix.c` (host). Only MIT files from `gpsp/` link (24), and
+  `ra_vita.c` does not: check with `make check-links` (Sega) and `make check-ra`
+  (Super NES). The player supplies a memory reader per console; the token comes
+  from `<root>/retroachievements.txt` (`user`, `token`, `hardcore`, `indicators`),
+  read only, never logged or written. Without a user and token nothing starts.
+  The MenuHost hooks `state_load_refused()` and `cheats_refused()` let Hardcore
+  stop state loads and cheats.
+- **`player.ini` keys** the players read and write: `ff_speed` (0 = 2x, 1 = 3x),
+  `ff_sound`, `ff_mode` (0 hold, 1 toggle), `rewind`, `rewind_seconds` (30 or 60),
+  `rewind_mb` (4 to 24).
+- **Tests:** `make -C playerkit test` (unit tests, `ra-test` against a fake
+  server), then each player's twin: `player_twin speed ...`, `player_twin ra ...`,
+  `player_twin costs ...` (per frame costs, host numbers).

@@ -44,6 +44,7 @@
 #include <vita2d.h>
 
 #include "host.h"
+#include "thread_ops.h"
 #include "picture.h"
 #include "audio_pace.h"
 #include "player.h"

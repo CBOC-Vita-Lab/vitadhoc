@@ -2,6 +2,13 @@
 
 ## Version 2.0
 
+- **Rewind, fast forward, patches and RetroAchievements in the Super NES and
+  Sega players.** Hold the right stick left to rewind up to 60 seconds (sound
+  off), right to fast forward 2x or 3x (with sound if you like; hold or toggle);
+  both are off in two player games and rewind is off in Hardcore. Sega games take
+  an IPS, BPS or UPS patch like the others. Signed-in players get achievement
+  toasts, challenge, progress and leaderboard markers, and Hardcore rules
+  (no rewind, cheats or state loads), with the account taken from the app.
 - **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each is
   a console in the picker with its own shelf, folders (`ux0:ROMS/Genesis`,
   `SMS`, `GG`, `SG-1000` and RetroFlow's Sega folders), zip and `.smd` support,

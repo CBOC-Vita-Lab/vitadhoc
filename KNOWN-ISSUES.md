@@ -105,8 +105,20 @@ Testing continues on:
   now and then. The SNES player writes its speed to
   `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
 - The SNES player has its own pause menu (hold **L + R + Start**) with ten
-  state slots and cheats. Rewind, fast forward, Continue, patches and
-  RetroAchievements are not in it yet.
+  state slots and cheats. Rewind, fast forward, patches and RetroAchievements
+  are in it too, as in the Sega player (see "Rewind, fast forward and
+  achievements in the Super NES and Sega players" below).
+- **Rewind, fast forward and achievements in the Super NES and Sega players.**
+  Rewind keeps up to 60 s (30 s or 60 s, 4 to 24 MB, `rewind_mb`), off in two
+  player games and in Hardcore. A Super NES state is about 800 KB, so a rewind
+  capture there copies that much on the game thread (about 0.1 ms on a PC, a
+  few milliseconds on the Vita by our estimate, once every few frames, never
+  every frame); the Sega state is 145 KB and costs far less. The right stick
+  starts rewind and fast forward one refresh after it moves, and stops one
+  refresh after it is let go. Unlimited fast forward is not offered in these
+  players. The players have no RetroAchievements settings: sign in and choose
+  Hardcore in the app. A Super NES game started as a linked two-player game
+  does not run achievements. No SG-1000 game was available to test achievements.
 - **Wide view** is on by default and built never to cost a frame: where a
   game is busy, the real picture at the sides is narrowed and fades into a
   soft extension. It was checked on 15 games for 3000 frames each, not on a

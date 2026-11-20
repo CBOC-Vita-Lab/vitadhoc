@@ -25,7 +25,7 @@ RA_GP     := ../../gpsp/vita
 RA_OBJDIR := $(B)/ra
 
 CPUFLAGS := -marm -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard
-INC := -I$(FE) -I. -I$(STB) -I$(V2D)/include -I$(PK)/src -I$(PK)/vita
+INC := -I$(FE) -I$(CORE) -I. -I$(STB) -I$(V2D)/include -I$(PK)/src -I$(PK)/vita
 OPT ?= -O3
 CXXFLAGS := -MMD -MP $(CPUFLAGS) $(OPT) -g -std=gnu++14 -Wall -Wextra -Wno-unused-parameter -fno-strict-aliasing -fno-rtti -D__vita__ $(INC)
 CFLAGS   := -MMD -MP $(CPUFLAGS) -O2 -g -w -DVITA2D_NO_PGF -D__vita__ -I$(V2D)/include

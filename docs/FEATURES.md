@@ -143,6 +143,11 @@ New in 1.4:
   blends only when a game cannot hold 60; Full and Light fix the choice.
 - **Cheats** and ten state slots with pictures, from Snes9x's post-1.63 fixes;
   a new audio pacer keeps the sound even.
+- **Rewind** (up to 60 s, sound off), **fast forward** (2x or 3x, hold or toggle,
+  with or without sound), **ROM patches** (IPS, BPS, UPS) and **RetroAchievements**
+  (toasts, challenge, progress and leaderboard markers, Hardcore) also work in the
+  Sega player. Rewind is off in two player games and in Hardcore; fast forward
+  stays on in Hardcore.
 - Super FX games do about 10 to 15 percent less work per Super FX
   instruction, with identical pictures and sound.
 

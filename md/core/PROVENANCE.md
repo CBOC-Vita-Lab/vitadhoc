@@ -104,6 +104,26 @@ constant size, CRC-32 trailer; a state with a flipped byte is refused and leaves
 - **Save RAM, EEPROM, flash** share one 64 KB buffer as upstream; `.srm` is that buffer up to the last byte that is not 0xFF, which is what
   RetroArch's core writes.
 
+### VDP worker thread (performance edit, opt-in at run time)
+
+The line renderer (`vdp_render.c`) can run on its own thread. Files added: `thread_ops.h` (what the platform hands over: semaphores,
+thread start; the core has no thread code of its own), `vdp_thread.h/.c` (the write log: a single producer, single consumer ring of
+32 bit words, the worker, the joins), `vdp_render_w.c` + `vdp_render_w_names.h` (the same `vdp_render.c`, compiled a second time with
+its functions and the 22 shared names renamed `vw_*`, so the worker owns a private copy of everything the renderer touches).
+Edits to upstream files:
+
+- `vdp_render.c`: `VDPW_NO_WRAP` before the includes; one global `tms_status_set` (the TMS9918 status bits the sprite parser sets,
+  merged by the emulating thread); `vdp_fn_encode/decode` (the renderer's function tables as numbers for the log).
+- `shared.h`: includes `vdp_thread.h`, whose macros turn `render_line`, `remap_line`, `blank_line`, `parse_satb`, `window_clip`,
+  `color_update_m4/m5`, `render_init/reset` and `spr_col` into queue calls while the worker runs (and the plain calls otherwise).
+- `vdp_ctrl.c`: `MARK_BG_DIRTY` also sends the pattern to the worker; bulk VRAM rewrites (reset, state load, SG 4K/16K decode, 16K/64K
+  switch) mark the whole VRAM changed; the two status register reads join the worker first (the sprite collision / overflow bits come
+  from the renderer); the places that clear those bits tell the worker.
+- Joins: before a status register read (only when a line was drawn since), at the end of every frame, at reset / state save / load /
+  unload and before an option change. With the worker off nothing changes: the proof is the same hashes (picture, sound, state, RAM) on
+  all 96 test ROMs with the worker on and off, on x86 and armhf (qemu), also with a join after every drawn line and with a per frame
+  comparison of the raw VDP memory (`md_twin --vdp-thread | --vdp-check | --vdp-stress`).
+
 ### Open
 
 - A Master System image run with the console forced to Game Gear (a smoke test, no real Game Gear ROM was available) shows the

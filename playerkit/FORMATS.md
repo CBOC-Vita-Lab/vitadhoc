@@ -191,8 +191,14 @@ enter_button=cross           # cross | circle
 language=en
 start=new                    # new | continue | slot
 slot=0                       # 1..10 when start=slot
-patch=                       # IPS / BPS / UPS applied to the ROM in memory
-patch_key=
+patch=                       # IPS / BPS / UPS applied to the ROM in memory (SNES and Sega players)
+patch_key=                   # told apart in .rsm.pt; a different key is a different game to Continue
+ff_speed=0                   # fast forward: 0 = 2x, 1 = 3x   (SNES and Sega players)
+ff_sound=1                   # 1 = with sound
+ff_mode=0                    # 0 = hold, 1 = toggle
+rewind=1                     # 0 = off
+rewind_seconds=60            # 30 or 60
+rewind_mb=12                 # 4 to 24, the ring's memory
 retroarch_save=              # a RetroArch save to bring in when newer than `save`
 wide_supported=0
 ovr.scanlines=4              # per-game overrides, ovr.<key>=<value>

@@ -33,8 +33,8 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | L / R, Start, Select | The same buttons |
 | Hold Start + Select, or tap the game | Open the menu |
 | Square | Fast forward (hold or toggle; 2x, 3x or Unlimited, with or without sound, in Settings > Fast-forward) |
-| Right stick right | Fast forward while held |
-| Select + Square | Rewind while held (the right stick left too, if you turn on Rewind with right stick) |
+| Right stick right | Fast forward while held (the Super NES and Sega players too) |
+| Select + Square | Rewind while held (the right stick left too, if you turn on Rewind with right stick; in the Super NES and Sega players the right stick left is the way) |
 | Select + L / Select + R | Quick save / quick load |
 | Triangle | Next picture preset |
 | Select + Triangle | Pause screen |

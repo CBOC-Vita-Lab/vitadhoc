@@ -153,6 +153,21 @@ worker, on every test ROM) and `arm_check.sh`. Edits to upstream files:
   copy of the VDP brought level with the emulating thread's first: the wide view's analysis); the generation counter of the strip cache is
   bumped by every record that changes what a strip is drawn from; accessors for the renderer's copy of the VDP memory.
 
+### Frames that are not shown (2.0)
+
+- `system.c`, `vdp_thread.h/.c` (`vdp_status_only`, `VDP_LINE_STATUS_ONLY`), `vdp_render.c` (`render_line`): a frame the host skips
+  still runs the sprite renderer and the sprite table parse of every line (no background, no pixels out), because the collision and
+  overflow bits of the status register come from there. Upstream drew nothing, so a skipped frame was a different machine. A lens frame
+  the core itself skips (3-D glasses) is unchanged. Proof: `md/twin/ahead_check.sh` part 1.
+- `vdp_render.c` (`parse_satb_tms`, `parse_satb_m4`, `render_obj_tms`, `render_obj_m4`), `osd.h`: `config.no_sprite_limit` draws the
+  sprites beyond the hardware's 4 / 8 per line without changing the status register: the overflow flag and the fifth sprite number are
+  set at the hardware's limit, and what the extra sprites do to the collision bit and position is undone. Upstream lifted the limit
+  for the flags too. Mode 5 (Mega Drive) ignores the option. Proof: `ahead_check.sh` part 3.
+- Run-ahead support, used only by `md_host_run_frame_ahead` (NOT FINISHED, off in the player; `md/README.md`): `render_carry_*`
+  (`vdp_render.c`), `vdp_carry_*` (`vdp_ctrl.c`), `psg_carry_*` (`sound/psg.c`), `vdpw_carry_*` (`vdp_thread.c`) save and put back
+  what no save state holds (the first line's sprite list and pending sprite flags, the FIFO byte flag, HV latch, latched scroll,
+  viewport, the PSG's queued level changes). No other caller; a state loaded from a file is as before.
+
 ### Open
 
 - A Master System image run with the console forced to Game Gear (a smoke test, no real Game Gear ROM was available) shows the

@@ -283,7 +283,11 @@ static Place place3(CoreProfile p, Role r, int idx)
 		case R_WRITER: { Place x = { CORE_U1, 0xA0, 0xA0 }; return x; }            /* writer_start */
 		case R_WIDE_COMPOSE: { Place x = { CORE_U1, 0x68, 0x68 }; return x; }      /* (new) */
 		case R_WIDE_SCOUT: { Place x = { CORE_U2, 0xA0, 0xA0 }; return x; }        /* (new) */
-		case R_UPSCALE: { Place x = { idx ? CORE_U2 : CORE_U1, 0xA0, 0xA0 }; return x; }   /* (new) */
+		/* (new) The scaler's helpers also share the wide view's compose lines (snes/vita/main.cpp wide_pfor), and the composing thread is the drawing
+		 * thread on core 1, next to the PPU thread: a helper on core 1 could only run when both are idle, never beside the thread it helps. They sit
+		 * in the gaps of the two cores that have room instead: helper 0 below the emulating thread on core 0 (0xA0 against 0x60; that thread is
+		 * 4 to 10 ms of 16.7), helper 1 below the sound chip and audio threads on core 2 (as before). The margin thread (0x68, cores 0 and 2) outranks them. */
+		case R_UPSCALE: { Place x = { idx ? CORE_U2 : CORE_U0, 0xA0, 0xA0 }; return x; }
 		case R_NET_IO: { Place x = { 0, 0xB8, 0xB8 }; return x; }                  /* (new) */
 		default: return o;
 		}

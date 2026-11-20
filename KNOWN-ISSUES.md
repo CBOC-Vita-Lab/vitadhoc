@@ -99,6 +99,8 @@ Testing continues on:
   game; save and states stay together under Master System.
 - Join online does not know these games yet.
 - RetroAchievements badges in the library are not shown for them.
+- **No sprite flicker** (Master System, Game Gear, SG-1000; on by default) was checked with homebrew only. A game that hides
+  something behind the console's sprite limit on purpose would show it: turn the row off for that game. Not offered for the Mega Drive.
 - **Wide view (Sega).** On by default, Off in the menu gives the 4:3 picture back. Beside the picture you see real picture only where
   it can be shown truthfully, a soft continuation of the edge elsewhere:
   - The **learned picture** (what the game has already shown at that place) is kept for the play session only: it is not saved with the

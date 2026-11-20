@@ -222,6 +222,10 @@ between xBRZ 2x and sharp bilinear on the ladder and can be picked by hand.
 
 ## Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000
 
+**No sprite flicker** (Picture, Master System / Game Gear / SG-1000, on by default): the sprites beyond the console's 8 (SG-1000: 4)
+on a line are drawn instead of blinking; the game's own flags keep the hardware's limit, so nothing but the picture changes. Frames
+that are not drawn (fast forward, Steady pacing's half mode) leave the game exactly as drawn ones do.
+
 Each is its own console in the list (alphabetical by name). Folders: see
 [Install](../INSTALL.md); every folder directly inside `ux0:ROMS/` is scanned
 and the file ending picks the console (`.md`, `.gen`, `.smd`, `.sms`, `.gg`,

@@ -529,9 +529,15 @@ Memory on the Vita (computed from the sizes, not measured): heap + 1.26 MB (the 
 - 372 KB (the verify picture no longer allocated) = about + 1.3 MB of the 72 MB newlib heap; BSS + 0.3 MB (`Memory_W` 238 KB, `GFX_W` 63 KB).
 The six pass pictures (2.6 MB) are allocated by the copy that draws the passes, so once, as before.
 
-The line helpers on the Vita, read from the code (not run): on three cores the plan puts helper 0 on core 1, the drawing thread's own core,
-below its priority, so it cannot run while that thread composes; only helper 1 (core 2, in the gaps of the sound chip and audio threads) can
-take lines. On four cores the drawing thread is on core 3 and both helpers (cores 1 and 2) can. `by_helpers=` in the log will show it.
+The line helpers on the Vita, read from the code (not run). Before this pass the plan put helper 0 on core 1, the drawing thread's own core (the thread
+that composes, next to the PPU thread), below its priority, so it could not run while that thread composed; only helper 1 (core 2) could take lines.
+A first reading of this file also said the drawing thread moves to core 3 on four cores: it does not (snes.bin takes its core from threads.ini
+`draw_core`, default 1, and the plan is not asked for R_DRAW; md.bin does the same). Now (pk_cores, `CP_SNES` / `CP_NES`; its golden test changed
+deliberately, the main app's and md.bin's did not): helper 0 on core 0 in the gaps below the emulating thread (0xA0 against 0x60), helper 1 on
+core 2 below the sound chip and audio threads, with and without the fourth core (this player starts two helpers; a third, planned on core 3 only,
+is not started). Both cores have room by the model (the emulating thread 4.5 to 10 ms and the sound chip thread 4.4 to 5.1 ms of 16.7), and
+neither is the core of the thread being helped. The margin thread (0x68, cores 0 and 2) outranks the helpers on those cores, so lines are taken
+only when it is idle: by the model the three cores are still full for the heaviest scenes (below). `by_helpers=` in the log will show it.
 
 Cost (host callgrind, Minstr per frame, frames 1500 to 1560; measured on the tree of this step before the last small edits, the full
 five-game and fifteen-game tables were **not** regenerated): Super Mario World wide off 6.62 (was 6.95), margin 96 12.33 (was 13.14), of that

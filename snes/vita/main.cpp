@@ -143,7 +143,7 @@ static pk::Request core4_request(void)
 {
 	pk::Request rq(pk::CP_SNES);
 	rq.with(pk::R_EMU_MAIN).with(pk::R_RENDER).with(pk::R_APU).with(pk::R_AUDIO_OUT).with(pk::R_UPSCALE);
-	rq.upscale_n = 2;     /* the plan gives one helper on three cores, two on four */
+	rq.upscale_n = 2;     /* two helpers (this player uses two): core 0 and core 2, in the gaps of the emulating and the sound chip threads; core 1 holds the composing draw thread and the PPU thread */
 	return rq;
 }
 

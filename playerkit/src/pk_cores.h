@@ -66,7 +66,10 @@
  *   CP_SNES / CP_NES: PPU(RENDER) core 1, APU core 2 (each whole), AUDIO_OUT, DRAW, WRITER on core 3
  *       (audio is light and runs at 0x40; it no longer shares with the APU spinner), WIDE_COMPOSE on
  *       core 3 when a PPU or APU role exists, else on core 1; WIDE_SCOUT on core 3 when an APU
- *       exists, else on core 2.
+ *       exists, else on core 2. The scaler / compose-line helpers (R_UPSCALE, 0xA0) are the same with and without the extra core:
+ *       helper 0 on core 0 in the gaps below the emulating thread, helper 1 on core 2 below the sound chip and audio threads, helper 2 (four
+ *       cores only) on core 3. They are NOT on core 1: the drawing thread that composes the wide view sits there next to the PPU thread, and a
+ *       helper beside it could only run when both are idle (changed 20 Nov 2026; before, helper 0 was on core 1).
  *   CP_MD (md.bin, the Sega player): the core is one thread, so R_EMU_MAIN has core 0 alone. Three cores: DRAW (the hand-over
  *       thread: upload, pixel-art scaler, bands, present) core 1; AUDIO_OUT (0x40) and WRITER (0xA0) core 2 with one optional
  *       UPSCALE helper (0xA0) that takes a stripe of the scaler's work whenever the audio thread is asleep. Four cores: AUDIO_OUT,

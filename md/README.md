@@ -58,6 +58,15 @@ Genesis Plus GX's own PS Vita build (`psp2/Makefile`, read, not vendored) uses `
 
 ## Not done / open
 
+- **Quick response (run-ahead by one frame) is in the code and switched off.** `md_host_run_frame_ahead` (host.h), the governor
+  `playerkit/src/pk_ahead.h` and the player's `quick_response` setting exist; the menu row is only added when `player.ini` or the launch
+  file (`ovr.quick_response=1|2`) already asks for it. On the PC build the machine is the same with it on or off (sound, state, RAM,
+  battery RAM: 105 ROMs, 900 frames; through the player with fast forward, rewind and a state load on three consoles). Open before it
+  may be offered: the picture of two Game Gear test cartridges is not the next frame's (the tile cache note in `core/PROVENANCE.md`,
+  "Open"); with the VDP worker two SG-1000 test ROMs differ; what the wide view learns while it is on is not checked; the cost is not
+  measured on the model; the latency test in `twin/ahead_check.sh` needs a ROM that answers a press a frame later. `ahead_check.sh` is
+  not in the gate and fails on exactly those points.
+
 - The FM (YM2612 + PSG + resample) worker is not written; FM stays on the emulating thread.
 
 - Nothing has run on a real Vita: speeds are host numbers and a model (see the baseline). A locked 60 on a busy Mega Drive game

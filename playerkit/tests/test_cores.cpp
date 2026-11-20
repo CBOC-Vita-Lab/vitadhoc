@@ -70,6 +70,13 @@ Request snes_req() {
 	r.with(R_EMU_MAIN).with(R_RENDER).with(R_APU).with(R_AUDIO_OUT).with(R_DRAW).with(R_WRITER);
 	return r;
 }
+/* what snes/vita/main.cpp asks for (core4_request) */
+Request snes_player_req() {
+	Request r(CP_SNES);
+	r.with(R_EMU_MAIN).with(R_RENDER).with(R_APU).with(R_AUDIO_OUT).with(R_UPSCALE);
+	r.upscale_n = 2;
+	return r;
+}
 Request app_req(int up) {
 	Request r(CP_APP);
 	r.with(R_EMU_MAIN).with(R_RENDER).with(R_AUDIO_OUT).with(R_WRITER).with(R_NET_IO).with(R_UPSCALE);
@@ -314,6 +321,27 @@ TEST(cores_plan_3core_snes_is_todays_layout)
 	SLOT(p, R_WRITER, 0, CORE_U1, 0xA0, 0xA0);
 }
 
+/* The scaler helpers of snes.bin share the wide view's compose lines with the drawing thread (core 1, next to the PPU thread): they must not sit
+ * on that core. Changed deliberately (20 Nov 2026, 2.0): helper 0 moved from core 1 to core 0 (in the gaps below the emulating thread), helper 1
+ * stays on core 2. The main app (CP_APP) and md.bin (CP_MD) are unchanged: their goldens below are as before. */
+TEST(cores_plan_snes_player_helpers_beside_the_composer)
+{
+	for (int c3 = 0; c3 < 2; c3++) {
+		const Plan p = make_plan(snes_player_req(), c3 != 0);
+		SLOT(p, R_EMU_MAIN, 0, CORE_U0, 0x60, 0x60);
+		SLOT(p, R_RENDER, 0, CORE_U1, 0x60, 0x60);
+		SLOT(p, R_APU, 0, CORE_U2, 0x60, 0x60);
+		SLOT(p, R_UPSCALE, 0, CORE_U0, 0xA0, 0xA0);
+		SLOT(p, R_UPSCALE, 1, CORE_U2, 0xA0, 0xA0);
+		SLOT(p, R_AUDIO_OUT, 0, c3 ? CORE_SYS : CORE_U2, 0x40, 0x40);
+		/* the drawing thread (compose) is on core 1 (three cores; threads.ini draw_core) and no helper shares that core with it or with the PPU thread */
+		CHECK_EQ(p.find(R_UPSCALE, 0)->mask & CORE_U1, 0);
+		CHECK_EQ(p.find(R_UPSCALE, 1)->mask & CORE_U1, 0);
+		CHECK(p.find(R_UPSCALE, 0)->mask != p.find(R_UPSCALE, 1)->mask);
+		CHECK(p.find(R_UPSCALE, 0)->prio > p.find(R_EMU_MAIN)->prio);       /* in its gaps only */
+	}
+}
+
 TEST(cores_plan_3core_app_is_todays_layout)
 {
 	const Plan p = make_plan(app_req(2), false);
@@ -436,7 +464,12 @@ TEST(cores_plan_invariants_every_role_combination)
 						if (a.mask == 0) CHECK(!a.on_core3);
 						/* R1: core 0 belongs to the emulating thread alone (pinned roles) */
 						if (a.role == R_EMU_MAIN) CHECK_EQ(a.mask, CORE_U0);
-						else if (a.mask && !(prof == CP_MD && a.role == R_UPSCALE && a.optional)) CHECK_EQ(a.mask & CORE_U0, 0);   /* (the Sega player's helper in core 0's gaps: below the emulating thread by R5) */
+						else if (a.mask && !((prof == CP_MD || prof == CP_SNES || prof == CP_NES) && a.role == R_UPSCALE && a.optional)) CHECK_EQ(a.mask & CORE_U0, 0);   /* (the Sega and SNES players' helper in core 0's gaps: below the emulating thread by R5) */
+						/* the SNES / NES players' first two helpers help the composer: never on the core of the render or the drawing thread */
+						if ((prof == CP_SNES || prof == CP_NES) && a.role == R_UPSCALE && a.index < 2 && !core3) {
+							for (int j = 0; j < p.n; j++)
+								if (p.slots[j].role == R_RENDER || p.slots[j].role == R_DRAW) CHECK_EQ(eff(a.mask) & eff(p.slots[j].mask) & CORE_U1, 0);
+						}
 						/* R5: optional helpers are at the bottom */
 						if (a.optional) CHECK(a.prio >= 0xA0);
 						for (int j = 0; j < p.n; j++) {

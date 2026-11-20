@@ -2,6 +2,20 @@
 
 ## Version 2.0
 
+- **Sega games no longer lose sprite collisions on frames that are not drawn.** Fast forward, Steady pacing's half mode and catching up
+  after a long frame run frames without drawing them, and the Sega core took its sprite collision and overflow flags from the drawing:
+  in 15 of 67 test games the game itself then ran differently. An undrawn frame now still runs the sprite pass of every line, and
+  leaves the machine exactly as a drawn frame does (sound, state and memory equal on 105 test games, PC build).
+- **No sprite flicker (Master System, Game Gear, SG-1000).** These consoles drew 8 sprites on a line (4 on the SG-1000) and games blinked
+  the rest. Picture > No sprite flicker (on by default) draws them all. Only the picture changes: the console's overflow and collision
+  flags are still set by the hardware's limit, so the game runs exactly the same (73 test games, PC build). Turn it off for a game that
+  hides something behind the limit on purpose. The Mega Drive keeps its own limit.
+- **Sega save states no longer carry stray memory.** A few unused bytes of a state file held whatever was in memory.
+
+- **Online Two players on a NES or WonderSwan game compares the games.** A room made from inside a NES or WonderSwan game carried an
+  all-zero game number, so a joiner running another game was let in and only turned back when the link started, and the game list's
+  "Join online" had no number to look for among its games. The room now carries the game's own number (its CRC) and the joiner's card
+  says "Your friend is playing a different game. Add it to this Vita to join." at once.
 - **Wide view for the Sega consoles.** The Mega Drive / Genesis, Master System, Game Gear and SG-1000 fill the Vita's whole width like the Super NES
   and NES do: the console's picture stays pixel exact in the middle and the sides show more of the game's world where that can be shown truthfully, and a soft
   continuation of the picture's edge where it cannot. Picture > Wide view: Auto (on, and it narrows the real sides on a busy game before it would cost a

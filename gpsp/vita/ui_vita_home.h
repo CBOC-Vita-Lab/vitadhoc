@@ -959,13 +959,56 @@ static void hm_home_hints(void)
    hm_hint_word(x, y, "Settings");
 }
 
+/* ---- the console picker's table ----------------------------------------
+ *
+ * The consoles in the order the picker lists them: the ONE place to say
+ * which consoles the Home offers and in what order.  A console joins the
+ * library with one line here (plus its skin in ui_psp.c); one that is not
+ * compiled into a build is left out of the line with its #if.  Names come
+ * from the skins (full name; the short id when the pill cannot hold it). */
+static const signed char HM_CON_ORDER[] = {
+   FE_CONSOLE_GBA, FE_CONSOLE_GB, FE_CONSOLE_GBC, FE_CONSOLE_SNES,
+   FE_CONSOLE_NES, FE_CONSOLE_WSWAN,
+};
+#define HM_CON_N ((int)(sizeof(HM_CON_ORDER) / sizeof(HM_CON_ORDER[0])))
+
+static int hm_con_row(int console)       /* its row in the picker, or 0 */
+{
+   int i;
+   for (i = 0; i < HM_CON_N; i++)
+      if (HM_CON_ORDER[i] == console)
+         return i;
+   return 0;
+}
+
+/* Games found for a console: the one on screen from the scan in hand, the
+ * others from what the last walk of the folders put in their caches (one
+ * walk lists every console).  -1 = not known. */
+static int hm_con_games(int console, int n_scan)
+{
+   if (console == g_pcfg.console)
+      return n_scan;
+   return g_rom_cache[console].valid ? g_rom_cache[console].n : -1;
+}
+
+/* where the pill is (native px), for the list that drops from it */
+static float g_pick_px, g_pick_pw, g_pick_py;
+
+/* A small filled caret, pointing down (or up). */
+static void hm_caret(float cx, float cy, float w, int up, uint32_t c)
+{
+   int k, rows = (int)(w / 4);        /* 2 px rows, 2 px less each side */
+   for (k = 0; k < rows; k++)
+      vs_rect(cx - (w - 4.0f * k) * 0.5f,
+              up ? cy + rows - 2 - 2.0f * k : cy - rows + 2.0f * k,
+              w - 4.0f * k, 2, c);
+}
+
 /* ---- the top bar -------------------------------------------------------- */
 
 static float hm_topbar(float dy, int n_scan)
 {
-   static const char *const CON[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES", "WS" };
-   float x = HM_X, y = 18 + dy, cx, right, pad, need;
-   int c;
+   float x = HM_X, y = 18 + dy, right;
 
    /* Games | Starred | Recent: SELECT steps through them (Recent once a
     * game has been played), a tap goes straight to one. */
@@ -983,62 +1026,55 @@ static float hm_topbar(float dy, int n_scan)
    }
 
    /* the right first: settings, the time, the battery, and the search,
-    * whose icon starts at right - 102: the chips end before it */
+    * whose icon starts at right - 102: the pill ends before it */
    right = hm_status(VS_W - HM_X, y);
 
-   /* the consoles: TRIANGLE steps through them, a tap on one goes to it.
-    * Six chips beside the search: the padding shrinks until every label
-    * fits whole before the search icon (a 1.4 UX review found the fifth
-    * one under it), each chip its own touch target. */
-   cx = x;
+   /* THE CONSOLE: one pill, the console in use.  TRIANGLE (or a tap on it)
+    * drops the list of them from under it (hm_pick_draw).  The full name
+    * where it fits, the short one where it does not. */
    {
-      int font = VS_LABEL;
-      float ty = y + 7;
-      need = 0;
-      for (c = 0; c < FE_CONSOLE_COUNT; c++)
-         need += vs_text_w(font, CON[c]) + 2;
-      pad = (right - 106 - cx - need) / FE_CONSOLE_COUNT;
-      if (pad < 12)
+      const ui_skin *sk = skin_of(g_pcfg.console);
+      char name[48];
+      float px = x + 10, avail = right - 106 - px, pw, tw;
+      snprintf(name, sizeof(name), "%s", sk->full);
+      tw = vs_text_w(VS_LABEL, name);
+      pw = 12 + 22 + 8 + tw + 10 + 14 + 14;
+      if (pw > avail)
       {
-         /* not room for the label size: the caption size, whole */
-         font = VS_CAPTION;
-         ty = y + 9;
-         need = 0;
-         for (c = 0; c < FE_CONSOLE_COUNT; c++)
-            need += vs_text_w(font, CON[c]) + 2;
-         pad = (right - 106 - cx - need) / FE_CONSOLE_COUNT;
+         snprintf(name, sizeof(name), "%s", sk->id);
+         tw = vs_text_w(VS_LABEL, name);
+         pw = 12 + 22 + 8 + tw + 10 + 14 + 14;
       }
-      if (pad > 20) pad = 20;
-      if (pad < 4) pad = 4;
-   for (c = 0; c < FE_CONSOLE_COUNT; c++)
-   {
-      float w = vs_text_w(font, CON[c]) + pad;
-      if (c == g_pcfg.console)
+      if (pw > avail)
       {
-         vs_rrect(x, y + 2, w, 34, 17, HC_GLASS_HI);
-         vs_text(font, x + pad / 2, ty, CON[c], HC_TEXT);
+         vs_text_fit(VS_LABEL, name, avail - 80);
+         tw = vs_text_w(VS_LABEL, name);
+         pw = 12 + 22 + 8 + tw + 10 + 14 + 14;
       }
-      else
-         vs_text(font, x + pad / 2, ty, CON[c], HC_TEXT3);
-      g_hm_chip_x[c] = (int)(x / 2);
-      UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(x / 2), 0,
-                 (int)((w + 2) / 2), 48);
-      x += w + 2;
-   }
-   }
-   g_hm_chip_x[FE_CONSOLE_COUNT] = (int)(x / 2);
-   {
-      /* (the harness: where each chip is, logged when it moves) */
-      static int logged[FE_CONSOLE_COUNT + 1];
-      if (memcmp(logged, g_hm_chip_x, sizeof(logged)))
+      vs_rrect(px, y + 2, pw, 34, 17, HC_GLASS_HI);
+      if (g_pick_on)
+         vs_rrect_line(px, y + 2, pw, 34, 17, 2, hm_tint(g_pcfg.console, 200));
+      vs_icon(VS_I_BTN_TRI, px + 23, y + 19, 22, HC_TEXT2);
+      vs_text(VS_LABEL, px + 12 + 22 + 8, y + 7, name, HC_TEXT);
+      hm_caret(px + pw - 21, y + 19, 12, g_pick_on, HC_TEXT2);
+      UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(px / 2), 0,
+                 (int)((pw + 2) / 2), 48);
+      g_pick_px = px;
+      g_pick_pw = pw;
+      g_pick_py = y + 36;
       {
-         memcpy(logged, g_hm_chip_x, sizeof(logged));
-         fe_evt("hm_chips x=%d,%d,%d,%d,%d,%d,%d search=%d", g_hm_chip_x[0],
-                g_hm_chip_x[1], g_hm_chip_x[2], g_hm_chip_x[3], g_hm_chip_x[4],
-                g_hm_chip_x[5], g_hm_chip_x[6], (int)((right - 102) / 2));
+         /* (the harness: where the pill is, logged when it moves) */
+         static int lx = -1, lw = -1, lr = -1;
+         if (lx != (int)(px / 2) || lw != (int)(pw / 2) ||
+             lr != (int)((right - 102) / 2))
+         {
+            lx = (int)(px / 2);
+            lw = (int)(pw / 2);
+            lr = (int)((right - 102) / 2);
+            fe_evt("hm_pill x=%d w=%d search=%d name=%s", lx, lw, lr, name);
+         }
       }
    }
-   (void)cx;
 
    x = right;
    vs_icon(VS_I_GEAR, x - 30, y + 19, 26, HC_TEXT2);
@@ -1075,6 +1111,157 @@ static float hm_topbar(float dy, int n_scan)
       }
    }
    return y;
+}
+
+/* ---- the console picker: the list that drops from the pill -------------
+ *
+ * Every console in HM_CON_ORDER, one row each: its colour, its name, and how
+ * many games it has (dimmed at 0, still a row you can land on).  The
+ * highlighted row IS the console on screen: each move switches the library
+ * behind it at once (the same switch as ever, rescanning and writing
+ * config.ini only once the list has rested).  It opens on TRIANGLE with the
+ * active console highlighted, moves on TRIANGLE / DOWN, back on UP, and
+ * closes by itself 1.2 s after the last move.  Unfolds from the pill's
+ * lower edge, so the pill is never covered. */
+#define HM_PICK_ROW   52
+#define HM_PICK_PAD   10
+#define HM_PICK_HOLD  72          /* frames: 1.2 s at 60 Hz */
+
+static float g_pick_scr;          /* the first visible row (fractional)   */
+static float g_pick_hy;           /* the highlight's offset in the panel  */
+static int   g_pick_snap;         /* put the highlight in place at once    */
+
+/* How many rows fit between the pill and the hint line. */
+static int hm_pick_vis(void)
+{
+   int fit = (int)((VS_H - 44 - (g_pick_py + 8) - 2 * HM_PICK_PAD) /
+                   HM_PICK_ROW);
+   return fit < HM_CON_N ? (fit < 2 ? 2 : fit) : HM_CON_N;
+}
+
+static void hm_pick_draw(int n_scan)
+{
+   int i, vis = hm_pick_vis();
+   float a, w, h, x, y, aa, cw = 0, target;
+   char cnt[16];
+
+   hm_ease(&g_pick_a, g_pick_on ? 1.0f : 0.0f, 0.34f);
+   if (g_pick_a <= 0.0f)
+      return;
+   a = g_pick_a;
+   aa = a * 1.5f > 1.0f ? 1.0f : a * 1.5f;          /* text and fill: fade */
+   for (i = 0; i < HM_CON_N; i++)
+   {
+      float t = vs_text_w(VS_LABEL, skin_of(HM_CON_ORDER[i])->full);
+      if (t > cw)
+         cw = t;
+   }
+   w = 24 + 14 + 14 + cw + 36 + 56 + 26;     /* edge, dot, gap, name, gap,
+                                               * count, edge             */
+   if (w < g_pick_pw)
+      w = g_pick_pw;
+   h = vis * HM_PICK_ROW + 2 * HM_PICK_PAD;
+   x = g_pick_px;
+   if (x + w > VS_W - HM_X + 12)
+      x = VS_W - HM_X + 12 - w;
+   y = g_pick_py + 8;
+
+   /* the rows that show: the highlighted one stays in view */
+   target = (float)g_pick_sel - (vis - 1) * 0.5f;
+   if (target > HM_CON_N - vis)
+      target = (float)(HM_CON_N - vis);
+   if (target < 0)
+      target = 0;
+   if (g_pick_snap)
+      g_pick_scr = target;
+   else
+      hm_ease(&g_pick_scr, target, 0.4f);
+   {
+      float hy = ((float)g_pick_sel - g_pick_scr) * HM_PICK_ROW;
+      if (g_pick_snap)
+         g_pick_hy = hy;
+      else
+         hm_ease(&g_pick_hy, hy, 0.45f);
+      g_pick_snap = 0;
+   }
+
+   /* unfolding: the panel is cut to what has come down so far */
+   vs_clip(0, y - 2, VS_W, h * a + 30);
+   vs_shadow(x, y, w, h, 18, 28, VS_HEX(0x000000, (int)(150 * aa)));
+   vs_rrect(x, y, w, h, 18, VS_HEX(0x0D1428, (int)(246 * aa)));
+   vs_rrect_line(x, y, w, h, 18, 2, VS_HEX(0xFFFFFF, (int)(40 * aa)));
+   vs_clip(x, y, w, h * a);
+   {
+      /* the highlight, in the console's colour at its edge */
+      float hy = y + HM_PICK_PAD + g_pick_hy;
+      const ui_skin *ss = &SKIN_DARK[HM_CON_ORDER[g_pick_sel]];
+      vs_rrect(x + 8, hy, w - 16, HM_PICK_ROW - 4, 14,
+               VS_ALPHA(HC_GLASS_HI, (int)(70 * aa)));
+      vs_rrect(x + 8, hy + 8, 5, HM_PICK_ROW - 20, 2,
+               VS_HEX(((ss->accent >> 11) << 19) | (((ss->accent >> 5) & 63) << 10) |
+                      ((ss->accent & 31) << 3), (int)(255 * aa)));
+   }
+   for (i = 0; i < HM_CON_N; i++)
+   {
+      int c = HM_CON_ORDER[i], games = hm_con_games(c, n_scan);
+      int on = i == g_pick_sel, none = games == 0;
+      float ry = y + HM_PICK_PAD + ((float)i - g_pick_scr) * HM_PICK_ROW;
+      float ty, cy = ry + (HM_PICK_ROW - 4) * 0.5f;
+      const ui_skin *ss = &SKIN_DARK[c];
+      uint32_t ink = on ? (none ? HC_TEXT2 : HC_TEXT)
+                        : (none ? HC_TEXT3 : HC_TEXT2);
+      uint32_t dot = VS_HEX(((ss->accent >> 11) << 19) |
+                            (((ss->accent >> 5) & 63) << 10) |
+                            ((ss->accent & 31) << 3), 255);
+      int face = on ? VS_LABEL : VS_BODY;
+      if (ry + HM_PICK_ROW < y || ry > y + h)
+         continue;
+      if (none)
+      {
+         ink = VS_ALPHA(ink, on ? 190 : 150);
+         dot = VS_ALPHA(dot, 110);
+      }
+      ink = VS_ALPHA(ink, (int)(((ink >> 24) & 0xFF) * aa));
+      dot = VS_ALPHA(dot, (int)(((dot >> 24) & 0xFF) * aa));
+      ty = cy - vs_line_h(face) * 0.5f;
+      vs_circle(x + 36, cy, 6, dot);
+      vs_text(face, x + 56, ty, ss->full, ink);
+      if (games >= 0)
+      {
+         snprintf(cnt, sizeof(cnt), "%d", games);
+         vs_text_r(VS_BODY, x + w - 26, cy - vs_line_h(VS_BODY) * 0.5f, cnt,
+                   VS_ALPHA(none ? HC_TEXT3 : HC_TEXT2,
+                            (int)((none ? 150 : 255) * aa)));
+      }
+   }
+   if (g_pick_scr > 0.05f)
+      hm_caret(x + w * 0.5f, y + 8, 12, 1, VS_ALPHA(HC_TEXT3, (int)(200 * aa)));
+   if (g_pick_scr < HM_CON_N - vis - 0.05f)
+      hm_caret(x + w * 0.5f, y + h - 8, 12, 0, VS_ALPHA(HC_TEXT3, (int)(200 * aa)));
+   vs_clip_off();
+
+   /* the finger: a tap beside the list closes it (the whole screen, first
+    * so that everything after answers before it), a row is that console */
+   if (g_pick_on)
+   {
+      UI_TCH_BTN(BROWSER_CON_BUTTON, 0, 0, VID_SCR_W, VID_SCR_H);
+      for (i = 0; i < HM_CON_N; i++)
+      {
+         float r0 = y + HM_PICK_PAD + ((float)i - g_pick_scr) * HM_PICK_ROW;
+         float r1 = r0 + HM_PICK_ROW;
+         if (i == 0)
+            r0 -= HM_PICK_PAD;
+         if (i == HM_CON_N - 1)
+            r1 += HM_PICK_PAD;
+         if (r0 < y)
+            r0 = y;
+         if (r1 > y + h)
+            r1 = y + h;
+         if (r1 - r0 >= 8)
+            tch_add(TCH_K_BTN, i + 1, BROWSER_CON_BUTTON, (int)(x / 2),
+                    (int)(r0 / 2), (int)(w / 2), (int)((r1 - r0) / 2));
+      }
+   }
 }
 
 /* ---- the row ------------------------------------------------------------ */

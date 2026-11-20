@@ -259,6 +259,7 @@ private:
 	void upload_textures(Gfx *g);
 	uint32_t accent(int a) const;
 	uint32_t accent_deep() const;
+	uint32_t accent_text() const;
 
 	MenuConfig cfg_;
 	MenuHost *host_;

@@ -117,7 +117,7 @@ void VitaGfx::gradient_v(float x, float y, float w, float h, uint32_t top, uint3
 static SceGxmTextureFormat gxm_format(TexFormat f)
 {
 	switch (f) {
-	case TEX_A8:     return SCE_GXM_TEXTURE_FORMAT_U8_111R;     /* the byte is the alpha; the tint is the colour */
+	case TEX_A8:     return SCE_GXM_TEXTURE_FORMAT_U8_R111;     /* alpha = the byte, colour = white (then the tint): names read A,B,G,R, so 111R would be an OPAQUE box (solid text boxes on a real Vita) */
 	case TEX_RGB565: return SCE_GXM_TEXTURE_FORMAT_U5U6U5_RGB;
 	case TEX_BGR565: return SCE_GXM_TEXTURE_FORMAT_U5U6U5_BGR;
 	default:         return SCE_GXM_TEXTURE_FORMAT_A8B8G8R8;

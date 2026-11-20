@@ -45,11 +45,20 @@ $(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: $(B)/unit_tests $(B)/menu_walk $(B)/handoff_tsan $(B)/cores_tsan
+test: $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
+	$(B)/vita_gxm
 	$(B)/handoff_tsan
 	$(B)/cores_tsan
+
+# the console's drawing path (pk_gfx_vita.cpp, unchanged) against a GXM-faithful fake of vita2d, with the real SDK headers
+VITA2D_INC ?= ../snes/frontend/third_party/vita2d/include
+VITASDK ?= /opt/vitasdk
+$(B)/vita_gxm: $(LIB_OBJ) tests/vita_gxm/test_vita_gfx.cpp tests/vita_gxm/vita2d_fake.cpp tests/vita_gxm/vita2d_fake.h vita/pk_gfx_vita.cpp $(wildcard tests/*.h)
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -Isrc -Itests -Ivita -Itests/vita_gxm -I$(VITA2D_INC) -idirafter $(VITASDK)/arm-vita-eabi/include \
+	  tests/vita_gxm/test_vita_gfx.cpp tests/vita_gxm/vita2d_fake.cpp vita/pk_gfx_vita.cpp $(LIB_OBJ) -o $@ -pthread
 
 # the frame hand-over mailbox under ThreadSanitizer (a separate binary: it cannot share one with AddressSanitizer)
 TSAN_FLAGS ?= -std=c++11 -Wall -Wextra -O1 -g -fsanitize=thread
@@ -99,6 +108,6 @@ regen-font: tools/gen_font.cpp
 	$(B)/gen_font ../gpsp/assets/fonts src/pk_font_data.cpp
 
 clean:
-	rm -rf $(B)/linux $(B)/unit_tests $(B)/menu_walk $(B)/vita $(B)/handoff_tsan $(B)/cores_tsan $(B)/pacing_model
+	rm -rf $(B)/linux $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/vita $(B)/handoff_tsan $(B)/cores_tsan $(B)/pacing_model
 
 .PHONY: all test shots vita regen-font clean tsan model

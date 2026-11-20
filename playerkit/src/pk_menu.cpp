@@ -145,6 +145,19 @@ void Menu::set_row_note(int id, const std::string &reason)
 }
 
 uint32_t Menu::accent(int a) const { return PK_HEX(cfg_.accent, a); }
+/* the accent as TEXT on the sheet: lightened toward white until it reads at 4.5:1 (a dark accent, like the SNES violet, was 3.4:1) */
+uint32_t Menu::accent_text() const
+{
+	auto lin = [](int c) { float v = (float) c / 255.0f; return v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f); };
+	auto lum = [&](uint32_t rgb) { return 0.2126f * lin((int) ((rgb >> 16) & 255)) + 0.7152f * lin((int) ((rgb >> 8) & 255)) + 0.0722f * lin((int) (rgb & 255)); };
+	const float lb = lum(C_SHEET);
+	uint32_t c = cfg_.accent;
+	for (int i = 0; i <= 20; i++) {
+		c = mix_rgb(cfg_.accent, 0xFFFFFF, (float) i * 0.05f);
+		if ((lum(c) + 0.05f) / (lb + 0.05f) >= 4.6f) break;
+	}
+	return col(c);
+}
 uint32_t Menu::accent_deep() const { return col(mix_rgb(cfg_.accent, C_INK, 0.5f)); }
 
 void Menu::notify(const std::string &text, NoticeKind k) { notices_.push(text, k); }
@@ -1397,7 +1410,7 @@ void Menu::draw_rows(Gfx *g, Text *t)
 			t->draw_center(F_BODY, dx + 60, y + (RH - t->line_h(F_BODY)) * 0.5f, "Delete", col(C_RED));
 		}
 		t->draw(F_LABEL, VX + 28, ly, lab.c_str(), ink);
-		uint32_t vcol = !r.enabled ? col(C_TEXT3) : sel ? accent_deep() : accent(255);
+		uint32_t vcol = !r.enabled ? col(C_TEXT3) : sel ? accent_deep() : accent_text();
 		if (!r.enabled) {
 			if (!r.reason.empty()) {
 				std::string rs = t->fit(F_BODY, r.reason, 440);
@@ -1549,7 +1562,7 @@ void Menu::draw_modal(Gfx *g, Text *t)
 		int secs = (cap_ms_ + 999) / 1000;
 		if (secs < 0) secs = 0;
 		std::string w = cap_bits_ ? phys_label(cap_bits_, cfg_.enter_is_cross) : strf("Waiting...  %d", secs);
-		t->draw_center(F_SUB, cx + cw * 0.5f, cy + 150, w.c_str(), accent(255));
+		t->draw_center(F_SUB, cx + cw * 0.5f, cy + 150, w.c_str(), accent_text());
 	}
 	g->fill_rrect(cx + 24, by, 250, 80, 22, modal_ == M_CAPTURE ? col(0xFFFFFF, 40) : (modal_ == M_DELETE || modal_ == M_CHEAT_DELETE || modal_ == M_RESET || modal_ == M_LIST || modal_ == M_EXIT ? col(C_RED) : accent(255)));
 	uint32_t yink = (modal_ == M_CAPTURE) ? col(C_TEXT) : col(C_INK);

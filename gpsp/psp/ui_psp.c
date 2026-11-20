@@ -7916,11 +7916,17 @@ static int            g_find_n;
 /* Home: the Cover button -- a picture of your own for the game
  * (vita/ui_vita_cover.h). */
 #define BROWSER_COVER_BUTTON  (1u << 29)
-/* Home: a console chip of the top bar (hm_topbar); which one: the chip the
- * finger landed on (g_hm_chip_x holds their left edges, logical px). */
+/* Home: the console picker (2.1, ui_vita_home.h).  The top bar shows only
+ * the console in use, as a pill; TRIANGLE or a tap on it drops a list of
+ * every console down from it.  BROWSER_CON_BUTTON is any touch on the pill,
+ * a row of the list or beside it (which one: the region the finger landed
+ * on, g_tch.land_r). */
 #define BROWSER_CON_BUTTON    (1u << 30)
-static int g_hm_chip_x[FE_CONSOLE_COUNT + 1];
-static int g_con_pick = -1;     /* the console a chip tap asked for */
+static int g_con_pick = -1;     /* the console the picker asks to be shown */
+static int   g_pick_on;         /* the list is open (it takes the pad)      */
+static int   g_pick_sel;        /* its highlighted row (hm_con_order)       */
+static int   g_pick_idle;       /* frames since the highlight last moved    */
+static float g_pick_a;          /* its fade and slide, 0 = gone, 1 = open   */
 /* RECENT AND THE ORDERS.  The Recent tab (the Home's third: games played,
  * the latest first) and Settings > Game order (by name, last played first,
  * most played first) are one more permutation over the scan, under the

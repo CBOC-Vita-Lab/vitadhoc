@@ -1,5 +1,5 @@
 # snes.bin: the SNES program of VitAdhoc (Snes9x core + our Vita frontend).
-#   make -C snes/vita -j1                  builds build/snes.bin
+#   make -C snes/vita -j2                  builds build/snes.bin (any -j: the objects are independent, the link waits for all)
 # Run by VitAdhoc via sceAppMgrLoadExec; packed into the VPK by gpsp/vita/Makefile.
 # Copyright CBOC-Vita. MIT licence for this file; ../core keeps the Snes9x licence.
 # The programs are separate. The one exception is the two-player link (netplay.cpp): the files listed in netplay.mk
@@ -8,8 +8,10 @@
 VITASDK ?= /opt/vitasdk
 export VITASDK
 PREFIX := $(VITASDK)/bin/arm-vita-eabi-
-CC  := $(PREFIX)gcc
-CXX := $(PREFIX)g++
+# ccache (tools/build/ccache.mk): the prefix is part of CC/CXX; a no-op without ccache, USE_CCACHE=0 turns it off
+include ../../tools/build/ccache.mk
+CC  := $(call ccw,$(PREFIX)gcc)
+CXX := $(call ccw,$(PREFIX)g++)
 NM  := $(PREFIX)nm
 
 CORE := ../core

@@ -18,7 +18,10 @@ clarification and the remaining package review.
   See source headers and `gpsp/original_readme.txt` for the original credits.
 - **Open GBA BIOS:** Normmatt and the VBA/VBA-M team, from
   <https://github.com/Nebuleon/ReGBA/tree/master/bios>. GPL-2.0. Source is in
-  `gpsp/bios/`. This is not Nintendo's BIOS.
+  `gpsp/bios/`. This is not Nintendo's BIOS. Its sound driver
+  (`gpsp/bios/source/sound_driver.c`, GPL-2.0-or-later) comes from GBAdhoc
+  5.0.0-beta.6 (upstream commit `abcd4ed`), written from the public interface
+  description with no Nintendo code.
 - **TGB Dual:** GB/GBC core by the TGB Dual authors, with the libretro
   contributors and local linked-instance changes. Its GPL notice and source
   are in `gpsp/gbcore/tgbdual/`.

@@ -41,7 +41,9 @@ else
 FP := -g -fomit-frame-pointer
 endif
 
-CC      := $(CROSS)gcc
+# ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
+include ../../tools/build/ccache.mk
+CC      := $(call ccw,$(CROSS)gcc)
 LD_R    := $(CROSS)ld
 OBJCOPY := $(CROSS)objcopy
 NM      := $(CROSS)nm

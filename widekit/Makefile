@@ -27,7 +27,8 @@ build/bench: $(SRC) tests/bench.cpp tests/synth.cpp tests/png.cpp $(HDR) tests/s
 bench: build/bench
 	./build/bench
 
-VITA_CXX = /opt/vitasdk/bin/arm-vita-eabi-g++
+include ../tools/build/ccache.mk
+VITA_CXX = $(call ccw,/opt/vitasdk/bin/arm-vita-eabi-g++)
 VITA_FLAGS = -std=c++11 -O3 -mcpu=cortex-a9 -mfpu=neon -mfloat-abi=hard $(WARN) -fno-exceptions -fno-rtti -Iinclude -Isrc
 
 vita: $(SRC) $(HDR)

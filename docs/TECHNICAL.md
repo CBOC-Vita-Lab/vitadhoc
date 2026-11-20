@@ -1452,6 +1452,8 @@ paths.
 Taken from the public GBAdhoc repository (the author of our GPL permission),
 each diffed against this tree first: our core has moved on, so none was pasted.
 Source commit ids are in [Source Record](SOURCE.md).
+The two test cartridges are built by hand (`make -C gpsp/vita/hostcore/testrom cpufix biossound`)
+and run with `python3 app_tests.py x86 --only cpufix,biossound` (and `armhf`).
 
 - **No backup chip** (`4d94b62`). New `BACKUP_NONE` and a table flag
   `FLAGS_NO_BACKUP` (`gba_over.h`; the table's `flags` is now 32 bits, the 16

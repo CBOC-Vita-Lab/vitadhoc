@@ -56,9 +56,11 @@ comma := ,
 B  := build/$(ARCH)$(if $(filter 0,$(DYNAREC)),-interp)$(if $(filter 1,$(VITASIM)),-vitasim)$(if $(filter 1,$(SAN)),-san)
 SAN_FLAGS := $(if $(filter 1,$(SAN)),-fsanitize=address$(comma)undefined -fno-omit-frame-pointer)
 
+# ccache (tools/build/ccache.mk): the prefix is part of CC/CXX, no symlinks.
+include ../../../tools/build/ccache.mk
 ifeq ($(ARCH),x86)
-CC      := gcc
-CXX     := g++
+CC      := $(call ccw,gcc)
+CXX     := $(call ccw,g++)
 AR      := ar
 NM      := nm
 OBJCOPY := objcopy
@@ -68,8 +70,8 @@ CORE_ARCH_FLAGS := -fomit-frame-pointer -fno-math-errno
 LDFLAGS_ARCH := -no-pie
 else ifeq ($(ARCH),armhf)
 CROSS   := arm-linux-gnueabihf-
-CC      := $(CROSS)gcc
-CXX     := $(CROSS)g++
+CC      := $(call ccw,$(CROSS)gcc)
+CXX     := $(call ccw,$(CROSS)g++)
 AR      := $(CROSS)ar
 NM      := $(CROSS)nm
 OBJCOPY := $(CROSS)objcopy
@@ -168,5 +170,6 @@ test:
 clean:
 	rm -rf $(B)
 
+include ../../../tools/build/ccache-stats.mk
 -include $(APP_OBJS:.o=.d)
 .PHONY: all clean test

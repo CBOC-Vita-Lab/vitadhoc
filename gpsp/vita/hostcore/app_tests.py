@@ -391,7 +391,7 @@ def game_pixels(im, w=240, h=160, scale=3):
         for x in range(w):
             dst[x, y] = src[x0 + x * scale + scale // 2,
                             y0 + y * scale + scale // 2]
-    return out[:4]
+    return out
 
 
 def worst_diff(a, b, box=None):
@@ -879,7 +879,7 @@ def sensor_bars(im):
         while n < 240 and sum(g.getpixel((n, y))) > 120:
             n += 1
         out.append(n)
-    return out[:4]
+    return out
 
 
 def t_sensors(S):
@@ -4543,7 +4543,7 @@ def many_games(count, seed):
         w = [rnd.choice(words) for _ in range(rnd.randint(1, 3))]
         w[0] = w[0].lower() if rnd.random() < 0.3 else w[0]
         out.append("%s %05d %s [!].gba" % (" ".join(w), i, rnd.choice(tags)))
-    return out[:4]
+    return out
 
 
 def t_extra_roms(S):
@@ -6454,7 +6454,7 @@ def names_seen(r):
     out = {}
     for d in r.evt("ui_game_name"):
         out[d["rom"].strip('"')] = (d["title"].strip('"'), d["sub"].strip('"'), d["mode"])
-    return out[:4]
+    return out
 
 
 def t_names_duplicate_subtitle(S):
@@ -7902,7 +7902,7 @@ def picture_colours(im):
         c = im.getpixel((x, y))
         if not out or max(abs(a - b) for a, b in zip(c, out[-1])) > 6:
             out.append(c)
-    return out[:4]
+    return out
 
 
 def t_gb_colours(S):

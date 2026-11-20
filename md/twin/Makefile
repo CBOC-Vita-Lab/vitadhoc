@@ -17,6 +17,9 @@ CXX  ?= g++
 TARGET := host
 CPUF :=
 endif
+# ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
+include ../../tools/build/ccache.mk
+override CXX := $(call ccw,$(CXX))
 all: $(B)/md_twin
 $(B)/mdcore.o: FORCE
 	$(MAKE) -C ../core TARGET=$(TARGET) B=$(BA) PROFILE=$(PROFILE) all

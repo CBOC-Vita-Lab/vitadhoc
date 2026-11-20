@@ -10,6 +10,9 @@
 # Copyright CBOC-Vita. MIT licence (see LICENSE).
 
 CXX      ?= g++
+# ccache (tools/build/ccache.mk): a no-op without ccache; USE_CCACHE=0 turns it off.
+include ../tools/build/ccache.mk
+override CXX := $(call ccw,$(CXX))
 SAN      ?= -fsanitize=address,undefined -fno-sanitize-recover=undefined
 CXXFLAGS ?= -std=c++11 -Wall -Wextra -O3 -g -fno-omit-frame-pointer $(SAN)
 B        := build
@@ -109,7 +112,7 @@ shots: $(B)/menu_walk
 
 # ---- PS Vita (compile only: nothing here can be run off the console) ----
 VITASDK ?= /opt/vitasdk
-VITACXX := $(VITASDK)/bin/arm-vita-eabi-g++
+VITACXX := $(call ccw,$(VITASDK)/bin/arm-vita-eabi-g++)
 VITAFLAGS := -std=c++11 -Wall -Wextra -O2 -Isrc -I../snes/frontend/third_party/vita2d/include -D__vita__
 VITA_SRC := $(filter-out src/pk_gfx_soft.cpp,$(LIB_SRC)) vita/pk_gfx_vita.cpp
 VITA_OBJ := $(patsubst %.cpp,$(B)/vita/%.o,$(VITA_SRC))

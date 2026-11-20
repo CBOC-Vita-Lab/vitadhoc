@@ -7,6 +7,10 @@ FE   := ../frontend
 B    := build
 
 CXX ?= g++
+# ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
+include ../../tools/build/ccache.mk
+override CC := $(call ccw,$(CC))
+override CXX := $(call ccw,$(CXX))
 OPT ?= -O2
 CORE_DEFS := -DHAVE_STDINT_H -DNDEBUG -DS9X_PROF -DUSE_SELF_THREADED=0
 CORE_DEFS += -DSA1_FAST_RUN=15

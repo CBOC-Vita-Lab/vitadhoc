@@ -11,6 +11,10 @@ B    := build
 
 CC  ?= gcc
 CXX ?= g++
+# ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
+include ../../tools/build/ccache.mk
+override CC := $(call ccw,$(CC))
+override CXX := $(call ccw,$(CXX))
 OPT ?= -O2
 CORE_DEFS := -D__LIBRETRO__ -DPATH_MAX=1024 -DFCEU_VERSION_NUMERIC=9900 -DNDEBUG
 CINC := -I$(WK)/include -I$(CORE)/compat -I$(CORE)/libretro-common/include -I$(CORE) -I$(CORE)/input -I$(CORE)/boards

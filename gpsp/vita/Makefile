@@ -57,8 +57,11 @@
 VITASDK ?= /opt/vitasdk
 export VITASDK
 PREFIX  := $(VITASDK)/bin/arm-vita-eabi-
-CC      := $(PREFIX)gcc
-CXX     := $(PREFIX)g++
+# ccache (tools/build/ccache.mk): CC and CXX carry the prefix themselves, no
+# symlinks; empty and a no-op when ccache is not installed (USE_CCACHE=0 too).
+include ../../tools/build/ccache.mk
+CC      := $(call ccw,$(PREFIX)gcc)
+CXX     := $(call ccw,$(PREFIX)g++)
 AR      := $(PREFIX)ar
 NM      := $(PREFIX)nm
 OBJCOPY := $(PREFIX)objcopy
@@ -184,8 +187,11 @@ SNES_BIN := ../../snes/vita/build/snes.bin
 VPK_EXTRA += $(SNES_BIN)=snes.bin \
              ../../snes/core/LICENSE=licenses/Snes9x-LICENSE.txt \
              ../../snes/core/PROVENANCE.md=licenses/Snes9x-PROVENANCE.md
+# The sub-make inherits this make's job slots (no -j1: snes/vita's rules are
+# independent per object and the link waits for all of them).  It always runs,
+# so a changed SNES source is seen; it touches snes.bin only when it relinks.
 $(SNES_BIN): FORCE
-	$(MAKE) -C ../../snes/vita -j1
+	+$(MAKE) -C ../../snes/vita
 FORCE:
 VPK_FILES := -a sce_sys/icon0.png=sce_sys/icon0.png \
              -a sce_sys/livearea/contents/bg.png=sce_sys/livearea/contents/bg.png \
@@ -210,6 +216,7 @@ LIVEAREA := sce_sys/icon0.png sce_sys/livearea/contents/bg.png \
 .DEFAULT_GOAL := all
 all: $(SELF)
 vpk: $(VPK)
+	$(call ccache_summary)
 
 $(foreach s,$(APP_ALL_VITA),$(eval $(call APP_RULE,$(s))))
 
@@ -297,6 +304,19 @@ $(VPK): $(SELF) $(SFO) $(LIVEAREA) $(VPK_EXTRA_FILES)
 	@rm -f $@
 	$(VITASDK)/bin/vita-pack-vpk -s $(SFO) -b $(SELF) $(VPK_FILES) $@
 
+# The fast path for a change that is not code (new art, gamedb.txt, cheats.db, a
+# notice, a rebuilt snes.bin): rewrite the last package replacing only the
+# members whose content changed, the others copied as stored.  It compiles
+# nothing of the app (run `make` first when eboot.bin should change) and
+# builds snes.bin only through its own make (a no-op when it is current).
+# The result has the same member list, order, modes and per-member contents
+# as `make vpk`; tools/build/vpk_repack.py verifies that before it replaces
+# the old file.  Releases are built with `make vpk` from a clean tree.
+vpk-repack: $(SFO) $(SNES_BIN)
+	@test -f $(VPK) || { echo "vpk-repack: no $(VPK) yet: run make vpk once first"; exit 1; }
+	@test -f $(SELF) || { echo "vpk-repack: no $(SELF): run make first"; exit 1; }
+	python3 ../../tools/build/vpk_repack.py $(VPK) -s $(SFO) -b $(SELF) $(VPK_FILES)
+
 # The LiveArea pictures are committed (a build needs no Pillow); this
 # regenerates them from the logo.
 assets:
@@ -323,5 +343,6 @@ endif
 clean:
 	rm -rf $(B) $(VPK)
 
+include ../../tools/build/ccache-stats.mk
 -include $(APP_OBJS:.o=.d)
-.PHONY: all vpk assets report clean FORCE
+.PHONY: all vpk vpk-repack assets report clean FORCE

@@ -66,12 +66,14 @@ CORE_A := $(B)/libgpsp_a.a
 CORE_B := $(B)/gpsp_b.o
 
 # ---- flag tracking -------------------------------------------------------
+# (the stamps name the compiler WITHOUT the ccache prefix: turning ccache on or
+# off must not make every object look stale.)
 # make does not see a changed -D.  A core built with stale objects after a
 # flag change silently keeps the old emulator (docs: "the franken-build
 # trap", ADR-0035).  Every object depends on this stamp, which is rewritten
 # only when the flag text differs.
 FLAGS_STAMP := $(B)/.flags
-FLAGS_TEXT   = $(CC) | $(CORE_CFLAGS)
+FLAGS_TEXT   = $(call ccplain,$(CC)) | $(CORE_CFLAGS)
 $(shell mkdir -p $(B))
 $(FLAGS_STAMP): FORCE
 	$(file >$@.new,$(FLAGS_TEXT))
@@ -82,7 +84,7 @@ $(FLAGS_STAMP): FORCE
 # never sees, so changing it rebuilds a dozen files and not the core.
 FE_STAMP := $(B)/.feflags
 $(FE_STAMP): FORCE
-	$(file >$@.new,$(CC) | $(FE_FLAGS) | $(FE_INC) | $(TGB_CFLAGS))
+	$(file >$@.new,$(call ccplain,$(CC)) | $(FE_FLAGS) | $(FE_INC) | $(TGB_CFLAGS))
 	@cmp -s $@.new $@ || cp $@.new $@
 	@rm -f $@.new
 # The same for the includer's own objects: APP_FLAGS (theirs to define) and
@@ -91,7 +93,7 @@ $(FE_STAMP): FORCE
 # not every core object.
 APP_STAMP := $(B)/.appflags
 $(APP_STAMP): FORCE
-	$(file >$@.new,$(CC) | $(APP_FLAGS) | $(GIT_VERSION))
+	$(file >$@.new,$(call ccplain,$(CC)) | $(APP_FLAGS) | $(GIT_VERSION))
 	@cmp -s $@.new $@ || cp $@.new $@
 	@rm -f $@.new
 FORCE:
@@ -238,5 +240,10 @@ $(B)/frontend-common/fe_autopilot_b.o: $(B)/frontend-common/fe_autopilot.o
 	  'fe_host_sram_crc_now gbab_fe_host_sram_crc_now' >> $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $< $@
 
-CORE_DEPS := $(CORE_OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d) $(FE_OBJS:.o=.d)
+# Every object compiled with -MMD -MP has a .d: the render thread's pair and the
+# GB pair glue (gbcore_dual.o, tgb_shared.o) did not have theirs read, so a header
+# change under them rebuilt nothing.  (The *_linked*.o files are partial links and
+# have no .d; a missing one is ignored.)
+CORE_DEPS := $(CORE_OBJS:.o=.d) $(GB_OBJS:.o=.d) $(GB_CORE_OBJS:.o=.d) $(FE_OBJS:.o=.d) \
+             $(B)/render/video_r.d $(B)/render/render_data.d
 -include $(CORE_DEPS)

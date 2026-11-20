@@ -31,3 +31,5 @@ gpsp/vita/hostcore/shots/
 # generated test output
 gpsp/audit/
 host-test-results.json
+# tools/build holds the build helpers (ccache.mk, vpk_repack.py), not build output
+!/tools/build/

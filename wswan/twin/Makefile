@@ -7,6 +7,10 @@ STB  := ../../snes/frontend/third_party/stb
 B    := build
 CC  ?= gcc
 CXX ?= g++
+# ccache (tools/build/ccache.mk): prefix inside CC/CXX, a no-op without ccache; USE_CCACHE=0 turns it off.
+include ../../tools/build/ccache.mk
+override CC := $(call ccw,$(CC))
+override CXX := $(call ccw,$(CXX))
 OPT ?= -O2
 CINC := -I$(CORE) -I$(CORE)/mednafen -I$(CORE)/mednafen/include -I$(CORE)/libretro-common/include -I$(FE)
 CFLAGS := -MMD -MP $(OPT) -std=gnu99 -w -fno-strict-aliasing -DMEDNAFEN_VERSION_NUMERIC=0x00093501 $(CINC) $(EXTRA)

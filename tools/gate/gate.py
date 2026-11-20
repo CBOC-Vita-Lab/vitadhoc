@@ -1122,6 +1122,31 @@ def write_summary(out_dir, meta, results, order, flags, steps):
     (out_dir / "summary.md").write_text("\n".join(md))
 
 
+def _ccache_line(log):
+    """This run's ccache hits and misses (the steps' makes append to `log`); empty log = no compiles."""
+    try:
+        if os.path.getsize(log) == 0:
+            return "ccache: no compiles went through it in this run (everything was cached or up to date)"
+    except OSError:
+        return "ccache: no compiles went through it in this run"
+    env = dict(os.environ, CCACHE_STATSLOG=log)
+    try:
+        text = subprocess.run(["ccache", "--show-log-stats"], env=env, capture_output=True, text=True,
+                              timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "ccache: stats log unreadable"
+    hits = misses = None
+    for line in text.splitlines():
+        t = line.split()
+        if t[:1] == ["Hits:"] and hits is None:
+            hits = int(t[1])
+        elif t[:1] == ["Misses:"] and misses is None:
+            misses = int(t[1])
+    if hits is None or misses is None or hits + misses == 0:
+        return "ccache: no cacheable compiles in this run"
+    return "ccache: %d hits, %d misses (%.0f%% hit rate)" % (hits, misses, 100.0 * hits / (hits + misses))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     tier = ap.add_mutually_exclusive_group()
@@ -1184,6 +1209,17 @@ def main(argv=None):
             print("  %-22s %-12s %s" % (name, what, fmt(s.cmd, _context(out_dir)) if what == "run" else ""))
         return 0
 
+    # ccache (tools/build/ccache.mk): one stats log for the whole run, inherited by every make the
+    # steps start (the Makefiles keep a log already in the environment), read again at the end
+    ccache_log = None
+    if shutil.which("ccache") and "CCACHE_STATSLOG" not in os.environ:
+        ccache_log = str(out_dir / "ccache-stats.log")
+        try:
+            Path(ccache_log).unlink()
+        except OSError:
+            pass
+        os.environ["CCACHE_STATSLOG"] = ccache_log
+
     started = datetime.datetime.now().isoformat(timespec="seconds")
     t0 = time.time()
     print("gate: %d steps (%s); jobs %d; out %s" % (len(order), how, JOBS[0], rel_to_repo(out_dir)),
@@ -1223,6 +1259,13 @@ def main(argv=None):
     print("gate: " + ", ".join("%s %d" % (k, counts[k]) for k in sorted(counts))
           + "  (%.0f s)" % wall)
     print("summary: %s and %s" % (rel_to_repo(out_dir / "summary.md"), rel_to_repo(out_dir / "summary.json")))
+    slow = sorted(((results[n].get("seconds") or 0, n) for n in order
+                   if not results[n].get("cached") and results[n]["result"] in ("PASS", "FAIL", "INFO")),
+                  reverse=True)[:5]
+    if slow:
+        print("slowest steps: " + ", ".join("%s %.0f s" % (n, t) for t, n in slow))
+    if ccache_log:
+        print(_ccache_line(ccache_log))
     bad = [n for n in order if results[n]["result"] in FAILING]
     if bad:
         print("gate: FAILED: " + ", ".join(bad))

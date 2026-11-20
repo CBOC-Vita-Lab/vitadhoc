@@ -1034,28 +1034,28 @@ static float hm_topbar(float dy, int n_scan)
    {
       const ui_skin *sk = skin_of(g_pcfg.console);
       char name[48];
-      float px = x + 10, avail = right - 106 - px, pw, tw;
+      float px = x, avail = right - 106 - 8 - px, pw, tw;
       snprintf(name, sizeof(name), "%s", sk->full);
       tw = vs_text_w(VS_LABEL, name);
-      pw = 12 + 22 + 8 + tw + 10 + 14 + 14;
+      pw = 10 + 22 + 6 + tw + 8 + 12 + 12;
       if (pw > avail)
       {
          snprintf(name, sizeof(name), "%s", sk->id);
          tw = vs_text_w(VS_LABEL, name);
-         pw = 12 + 22 + 8 + tw + 10 + 14 + 14;
+         pw = 10 + 22 + 6 + tw + 8 + 12 + 12;
       }
       if (pw > avail)
       {
          vs_text_fit(VS_LABEL, name, avail - 80);
          tw = vs_text_w(VS_LABEL, name);
-         pw = 12 + 22 + 8 + tw + 10 + 14 + 14;
+         pw = 10 + 22 + 6 + tw + 8 + 12 + 12;
       }
       vs_rrect(px, y + 2, pw, 34, 17, HC_GLASS_HI);
       if (g_pick_on)
          vs_rrect_line(px, y + 2, pw, 34, 17, 2, hm_tint(g_pcfg.console, 200));
-      vs_icon(VS_I_BTN_TRI, px + 23, y + 19, 22, HC_TEXT2);
-      vs_text(VS_LABEL, px + 12 + 22 + 8, y + 7, name, HC_TEXT);
-      hm_caret(px + pw - 21, y + 19, 12, g_pick_on, HC_TEXT2);
+      vs_icon(VS_I_BTN_TRI, px + 21, y + 19, 22, HC_TEXT2);
+      vs_text(VS_LABEL, px + 10 + 22 + 6, y + 7, name, HC_TEXT);
+      hm_caret(px + pw - 18, y + 19, 12, g_pick_on, HC_TEXT2);
       UI_TCH_BTN(BROWSER_CON_BUTTON, (int)(px / 2), 0,
                  (int)((pw + 2) / 2), 48);
       g_pick_px = px;
@@ -1070,7 +1070,7 @@ static float hm_topbar(float dy, int n_scan)
             lx = (int)(px / 2);
             lw = (int)(pw / 2);
             lr = (int)((right - 102) / 2);
-            fe_evt("hm_pill x=%d w=%d search=%d name=%s", lx, lw, lr, name);
+            fe_evt("hm_pill x=%d w=%d search=%d name=\"%s\" avail=%d", lx, lw, lr, name, (int)avail);
          }
       }
    }

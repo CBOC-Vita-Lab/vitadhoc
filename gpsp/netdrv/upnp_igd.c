@@ -433,6 +433,8 @@ struct upnp_igd
 };
 
 static void igd_fail(upnp_igd *u, const char *fmt, ...)
+   __attribute__((format(printf, 2, 3)));
+static void igd_fail(upnp_igd *u, const char *fmt, ...)
 {
    va_list ap;
    va_start(ap, fmt);
@@ -442,6 +444,8 @@ static void igd_fail(upnp_igd *u, const char *fmt, ...)
    u->state = UPNP_IGD_FAILED;
 }
 
+static char *fmt_alloc(const char *fmt, ...)
+   __attribute__((format(printf, 1, 2)));
 static char *fmt_alloc(const char *fmt, ...)
 {
    va_list ap;

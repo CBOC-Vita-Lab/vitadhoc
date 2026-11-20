@@ -314,6 +314,8 @@ static int ring_push(const char *p, unsigned n)
 }
 
 static void emit(const char *prefix, const char *fmt, va_list ap)
+   __attribute__((format(printf, 2, 0)));
+static void emit(const char *prefix, const char *fmt, va_list ap)
 {
 #ifdef GPSP_NO_TELEMETRY
    (void)prefix; (void)fmt; (void)ap;   /* ADR-0067, see fe_evt_init */

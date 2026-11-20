@@ -2748,6 +2748,125 @@ def t_home(S):
             "RIGHT moves the focus along the row")
 
 
+PICKER_ROMS = {"roms/a.sfc": b"x" * 300, "roms/b.nes": b"x" * 300, "roms/c.nes": b"y" * 300,
+               "roms/d.ws": b"z" * 300, "roms/g1.gb": b"a" * 300, "roms/g2.gb": b"b" * 300}
+# the picker's geometry on the 960 x 544 screen: the pill, and the centre of row i
+PICKER_PILL = (522, 37)
+
+
+def picker_row_y(i):
+    return 96 + 52 * i
+
+
+def picker_run(S, name, script, config=None):
+    cfg = {"ui_home": 1}
+    cfg.update(config or {})
+    r = S.run(name, script, config=cfg, extra=PICKER_ROMS)
+    S.clean(r)
+    return r
+
+
+def picker_moves(r):
+    return [int(d["row"]) for d in r.evt("ui_picker move")]
+
+
+def t_picker(S):
+    """The Home's console picker: the top bar names only the console in use
+    (a pill); TRIANGLE opens a list of every console under it with the active
+    one highlighted (that press moves nothing), each further TRIANGLE / DOWN
+    moves the highlight and the library live, UP goes back, both wrap; the
+    list closes by itself 1.2 s after the last move, at once on CROSS /
+    CIRCLE (which are spent on closing); a tap on the pill opens it, a tap on
+    a row picks that console, a tap beside it closes it; the games found are
+    shown and dimmed at 0; the config is written and the covers matched once,
+    after the list rests."""
+    # open: only opens, the active console highlighted, no tabs of consoles
+    r = picker_run(S, "picker_open", "90:shot=closed.png\n+2:triangle\n+30:shot=open.png\n+10:quit\n")
+    S.check(len(r.evt("ui_picker open")) == 1 and not r.evt("ui_picker move") and
+            not r.evt("ui_browser_console"),
+            "the first TRIANGLE only opens the list (no move, no switch): %s" %
+            [e["_"] for e in r.evt("ui_picker")])
+    S.check(not r.evt("hm_chips"), "there is no row of console tabs any more")
+    pill = r.evt("hm_pill")
+    S.check(bool(pill and pill[0]["name"] == "Game Boy Advance"),
+            "the top bar shows the active console's full name (%s)" % [p["_"] for p in pill])
+    S.check(pill and int(pill[0]["x"]) + int(pill[0]["w"]) < int(pill[0]["search"]),
+            "the pill ends before the search icon")
+    a, b = r.shot("closed.png"), r.shot("open.png")
+    S.picture(r, "closed.png", "picker_closed.png")
+    S.picture(r, "open.png", "picker_open.png")
+    # the list is there only when open; the active row (0) is the bright one
+    S.check(worst_diff(a, b) > 0, "the list is drawn under the pill")
+    pill_box = (int(pill[0]["x"]) * 2, 0, (int(pill[0]["x"]) + int(pill[0]["w"])) * 2, 60)
+    S.check(ImageChops.difference(a.crop(pill_box), b.crop(pill_box)).getbbox() is not None,
+            "the open pill is outlined in the console's colour, and the list starts below it")
+    def lum(im, i, x0=640, x1=740):
+        y = picker_row_y(i)
+        return max(max(px) for px in im.crop((x0, y - 10, x1, y + 10)).getdata())
+    # the highlight: row 0 is lit (fill behind it), row 1 is not
+    bg = lambda im, i: sum(im.getpixel((600, picker_row_y(i))))
+    S.check(bg(b, 0) > bg(b, 1) + 30, "the active console's row is highlighted (%d vs %d)" %
+            (bg(b, 0), bg(b, 1)))
+    # a console with no games (GBC) is dimmed, one with games is not
+    def ink(im, i):
+        y = picker_row_y(i)
+        return max(sum(px) for px in im.crop((440, y - 12, 640, y + 12)).getdata())
+    S.check(ink(b, 2) < ink(b, 4) - 60 and ink(b, 2) > 3 * 0 + 150,
+            "GBC (0 games) is dimmed but readable, NES (2 games) is not (%d, %d)" % (ink(b, 2), ink(b, 4)))
+    # N presses move N rows, wrapping; the library follows each
+    r = picker_run(S, "picker_steps", "90:triangle\n" + "+6:triangle\n" * 8 + "+260:shot=rest.png\n+10:quit\n")
+    S.check(picker_moves(r) == [1, 2, 3, 4, 5, 0, 1, 2],
+            "eight presses after opening move 1,2,3,4,5,0,1,2 (wrap): %s" % picker_moves(r))
+    cons = [int(d["console"]) for d in r.evt("ui_browser_console")]
+    S.check(cons == [1, 2, 3, 4, 5, 0, 1, 2],
+            "the library is switched live at every step (%s)" % cons)
+    names = [p["name"] for p in r.evt("hm_pill")]
+    S.check(names[0] == "Game Boy Advance" and names[-1] == "Game Boy Color" and "Super Nintendo" in names,
+            "the pill follows (%s)" % names)
+    S.check(len(r.evt("ui_browser_settle")) == 1 and r.evt("ui_browser_settle")[0].get("what") == "config" and
+            len(r.evt("rom_scan_time")) == 1,
+            "the config is written once after the list rests and nothing is walked again (%s)" %
+            [e["_"] for e in r.evt("ui_browser_settle")])
+    cfg = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^console = 2$", cfg, re.M) is not None, "config.ini says GBC after the rest")
+    # auto-close: 72 frames after the last move
+    cl = r.evt("ui_picker close")
+    S.check(len(cl) == 1 and cl[0]["idle"] == "72", "it closes by itself 1.2 s after the last move (%s)" %
+            [c["_"] for c in cl])
+    S.picture(r, "rest.png", "picker_rest.png")
+    # d-pad: DOWN, DOWN, UP, UP, UP wraps backwards
+    r = picker_run(S, "picker_dpad", "90:triangle\n+6:down\n+6:down\n+6:up\n+6:up\n+6:up\n+6:shot=up.png\n+200:quit\n")
+    S.check(picker_moves(r) == [1, 2, 1, 0, 5], "DOWN steps on, UP steps back and wraps: %s" % picker_moves(r))
+    S.picture(r, "up.png", "picker_up.png")
+    # CROSS and CIRCLE close it and nothing else happens
+    for btn in ("cross", "circle"):
+        r = picker_run(S, "picker_" + btn, "90:triangle\n+6:triangle\n+10:%s\n+40:shot=after.png\n+10:quit\n" % btn)
+        cl = r.evt("ui_picker close")
+        S.check(len(cl) == 1 and int(cl[0]["idle"]) < 72, "%s closes the list at once (%s)" % (btn, [c["_"] for c in cl]))
+        S.check(not r.evt("ui_browser_pick") and not r.has(r"^EVT game rom=") and not r.evt("ui_text_open"),
+                "%s is spent on closing: no game starts, no search opens" % btn)
+        S.check(picker_moves(r) == [1], "the highlighted console stays (%s)" % picker_moves(r))
+    # any other button closes too
+    r = picker_run(S, "picker_other", "90:triangle\n+6:right\n+30:quit\n")
+    S.check(len(r.evt("ui_picker close")) == 1 and int(r.evt("ui_picker close")[0]["idle"]) < 72,
+            "another button closes it")
+    # the finger: the pill opens it, a row picks a console and closes it
+    x, y = PICKER_PILL
+    r = picker_run(S, "picker_touch", "90:touch=%d/%d\n+40:shot=t_open.png\n+4:touch=450/%d\n+40:shot=t_snes.png\n"
+                   "+4:touch=%d/%d\n+40:touch=450/%d\n+40:touch=%d/%d\n+40:touch=800/470\n+40:quit\n" %
+                   (x, y, picker_row_y(3), x, y, picker_row_y(5), x, y))
+    ev = [e["_"].replace("EVT ui_picker ", "") for e in r.evt("ui_picker")]
+    S.check(ev[:3] == ["open console=0", "move row=3 console=3", "close console=3 idle=0"],
+            "a tap on the pill opens it; a tap on the SNES row switches and closes (%s)" % ev)
+    S.check([int(d["console"]) for d in r.evt("ui_browser_console")] == [3, 5],
+            "the second tap on a row switched again (%s)" % [d["_"] for d in r.evt("ui_browser_console")])
+    S.check(len(r.evt("ui_picker close")) == 3 and len(r.evt("ui_picker open")) == 3 and
+            len(r.evt("ui_browser_console")) == 2,
+            "a tap beside the list closes it, and nothing else (%s)" % ev)
+    S.picture(r, "t_open.png", "picker_touch_open.png")
+    S.picture(r, "t_snes.png", "picker_touch_snes.png")
+
+
 def t_find(S):
     """Find composes with Starred, resolves real ROMs, and owns IME dismissal input."""
     cartridge = open(OWN_GBA, "rb").read()
@@ -7519,7 +7638,7 @@ def t_nes_cover(S):
 TESTS = [("list", t_list), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
-         ("home", t_home), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
+         ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
          ("quality_preset", t_quality_preset), ("art_requeue", t_art_requeue),
          ("favs_recover", t_favs_recover), ("gb_save_soon", t_gb_save_soon),

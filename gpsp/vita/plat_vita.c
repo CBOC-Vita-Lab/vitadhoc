@@ -170,6 +170,8 @@ void plat_console(const char *line)
 }
 
 static void report_line(const char *fmt, ...)
+   __attribute__((format(printf, 1, 2)));
+static void report_line(const char *fmt, ...)
 {
    char buf[256];
    va_list ap;
@@ -213,6 +215,8 @@ void plat_sleep_us(uint32_t us)
 
 static struct { int mode; const char *path; } g_vmp;
 
+static void vmp_say(const char *fmt, ...)
+   __attribute__((format(printf, 1, 2)));
 static void vmp_say(const char *fmt, ...)
 {
    char line[200];

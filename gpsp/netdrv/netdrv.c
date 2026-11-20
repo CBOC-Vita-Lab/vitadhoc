@@ -296,6 +296,8 @@ struct netdrv
 /* ------------------------------------------------------------------ misc -- */
 
 static void nd_logf(netdrv *nd, const char *fmt, ...)
+   __attribute__((format(printf, 2, 3)));
+static void nd_logf(netdrv *nd, const char *fmt, ...)
 {
    char line[192];
    va_list ap;

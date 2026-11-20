@@ -15,6 +15,8 @@
 
 namespace pk {
 
+static void xbr_tables_init();
+
 const char *scaler_name(ScalerKind k)
 {
 	switch (k) {
@@ -43,6 +45,7 @@ void scale_init()
 	for (int i = 0; i < 64; i++) g_ug[i] = (float) i / 63.0f;
 	for (int i = 0; i < 32; i++) { g_wr[i] = ((float) i / 31.0f) * 14.352f; g_wb[i] = ((float) i / 31.0f) * 5.472f; }
 	for (int i = 0; i < 64; i++) g_wg[i] = ((float) i / 63.0f) * 28.176f;
+	xbr_tables_init();
 	__atomic_store_n(&g_ready, 1, __ATOMIC_RELEASE);
 }
 
@@ -160,36 +163,35 @@ static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_
 
 /* ---- xBR lv2 ---------------------------------------------------------------------------------------------------- */
 
-typedef float v4f __attribute__((vector_size(16)));
-typedef int v4i __attribute__((vector_size(16)));
+/* ---- xBR lv2, integer (the definition of xBR here) ---------------------------------------------------------------------------------
+ * Hyllian's shader, with its arithmetic done in integers so that eight pixels can be decided at once in 16 bit vector lanes (NEON on the
+ * console, SSE on a PC) and every platform makes the same picture. What differs from the shader's float arithmetic (xbr_reference): the
+ * luminance is rounded to 1/64 (rgbw = 14.352, 28.176, 5.472 times the channel in 0..1, each term rounded), so "equal within 15" is
+ * 960 and the shader's 0.1 bias is 6; the ramps are rounded to 1/256; a blend is done on 12 bit channels with the weight in 1/256.
+ * Decisions differ from the float shader only at exact luminance ties and blends by at most one step of a 5 / 6 bit channel
+ * (tests/test_scale.cpp counts both). xbr_reference_int() is the literal per output pixel transcription; scale_rows() must equal it. */
 
-static inline v4f V4(float a, float b, float c, float d) { v4f v = { a, b, c, d }; return v; }
-static inline v4f vsplat(float a) { return V4(a, a, a, a); }
-static inline v4f vabs(v4f a) { const v4i m = { 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff }; return (v4f) ((v4i) a & m); }
-static inline v4f vmask(v4i m) { return (v4f) (m & (v4i) vsplat(1.0f)); }      /* 1.0 where the comparison held, else 0.0 */
-static inline v4f vstep(v4f edge, v4f x) { return vmask(x >= edge); }          /* GLSL step */
-static inline v4f vmax(v4f a, v4f b) { return (v4f) (((v4i) (a > b) & (v4i) a) | (~(v4i) (a > b) & (v4i) b)); }
-static inline v4f vclamp01(v4f a) { return vmax(vsplat(0.0f), (v4f) (((v4i) (a < vsplat(1.0f)) & (v4i) a) | (~(v4i) (a < vsplat(1.0f)) & (v4i) vsplat(1.0f)))); }
-static inline v4f vdf(v4f a, v4f b) { return vabs(a - b); }
-static inline v4f vdiff(v4f a, v4f b) { return vmask(a != b); }
-static inline v4f veq(v4f a, v4f b) { return vmask(vdf(a, b) <= vsplat(15.0f)); }
-static inline v4f vneq(v4f a, v4f b) { return vsplat(1.0f) - veq(a, b); }
-static inline v4f vwd(v4f a, v4f b, v4f c, v4f d, v4f e, v4f f, v4f g, v4f h)
-{
-	return vdf(a, b) + vdf(a, c) + vdf(d, e) + vdf(d, f) + vsplat(4.0f) * vdf(g, h);
-}
-
-/* the shader's constants, lane order as in the GLSL */
 static const float kAo[4] = { 1.0f, -1.0f, -1.0f, 1.0f }, kBo[4] = { 1.0f, 1.0f, -1.0f, -1.0f }, kCo[4] = { 1.5f, 0.5f, -0.5f, 0.5f };
 static const float kAx[4] = { 1.0f, -1.0f, -1.0f, 1.0f }, kBx[4] = { 0.5f, 2.0f, -0.5f, -2.0f }, kCx[4] = { 1.0f, 1.0f, -0.5f, 0.0f };
 static const float kAy[4] = { 1.0f, -1.0f, -1.0f, 1.0f }, kBy[4] = { 2.0f, 0.5f, -2.0f, -0.5f }, kCy[4] = { 2.0f, 0.0f, -1.0f, 0.5f };
 static const float kCi = 0.25f;
-static const float kLv2 = 2.0f;
 
 static inline float clamp01f(float x) { return x < 0.0f ? 0.0f : x > 1.0f ? 1.0f : x; }
 
-/* The four ramps of one sub pixel (scale s, sub pixel sx, sy), per lane: what the shader computes from fract(texCoord * TextureSize). */
-struct SubRamp { v4f f45i, f45, f30, f60; };
+enum { XQ_EQ = 960, XQ_BIAS = 6 };           /* 15 and 0.1 of the shader, in 1/64 */
+static uint16_t g_lq_r[32], g_lq_g[64], g_lq_b[32];     /* luminance in 1/64 */
+static uint16_t g_c12_r[32], g_c12_g[64];                /* a channel as 0..4095 (blue uses the red table) */
+
+static void xbr_tables_init()
+{
+	for (int i = 0; i < 32; i++) { g_lq_r[i] = (uint16_t) (int) ((double) i / 31.0 * 14.352 * 64.0 + 0.5); g_lq_b[i] = (uint16_t) (int) ((double) i / 31.0 * 5.472 * 64.0 + 0.5); g_c12_r[i] = (uint16_t) ((i * 4095 + 15) / 31); }
+	for (int i = 0; i < 64; i++) { g_lq_g[i] = (uint16_t) (int) ((double) i / 63.0 * 28.176 * 64.0 + 0.5); g_c12_g[i] = (uint16_t) ((i * 4095 + 31) / 63); }
+}
+
+static inline unsigned lumq(unsigned v) { return (unsigned) g_lq_r[(v >> 11) & 31] + g_lq_g[(v >> 5) & 63] + g_lq_b[v & 31]; }
+
+/* The four ramps of one sub pixel (scale s, sub pixel sx, sy), per lane, in 1/256: what the shader computes from fract(texCoord * TextureSize). */
+struct SubRamp { int f45i[4], f45[4], f30[4], f60[4]; };
 static void make_ramps(int s, SubRamp *out)
 {
 	const float S = (float) s;
@@ -197,22 +199,18 @@ static void make_ramps(int s, SubRamp *out)
 	for (int sy = 0; sy < s; sy++)
 		for (int sx = 0; sx < s; sx++) {
 			const float fpx = ((float) sx + 0.5f) / S, fpy = ((float) sy + 0.5f) / S;
-			float a[4], b[4], c[4], d[4];
+			SubRamp &r = out[sy * s + sx];
 			for (int l = 0; l < 4; l++) {
 				const float fx = kAo[l] * fpy + kBo[l] * fpx, fxl = kAx[l] * fpy + kBx[l] * fpx, fxu = kAy[l] * fpy + kBy[l] * fpx;
-				a[l] = clamp01f((fx + delta - kCo[l] - kCi) / (2.0f * delta));
-				b[l] = clamp01f((fx + delta - kCo[l]) / (2.0f * delta));
-				c[l] = clamp01f((fxl + dl[l] - kCx[l]) / (2.0f * dl[l]));
-				d[l] = clamp01f((fxu + du[l] - kCy[l]) / (2.0f * du[l]));
+				r.f45i[l] = (int) (clamp01f((fx + delta - kCo[l] - kCi) / (2.0f * delta)) * 256.0f + 0.5f);
+				r.f45[l] = (int) (clamp01f((fx + delta - kCo[l]) / (2.0f * delta)) * 256.0f + 0.5f);
+				r.f30[l] = (int) (clamp01f((fxl + dl[l] - kCx[l]) / (2.0f * dl[l])) * 256.0f + 0.5f);
+				r.f60[l] = (int) (clamp01f((fxu + du[l] - kCy[l]) / (2.0f * du[l])) * 256.0f + 0.5f);
 			}
-			SubRamp &r = out[sy * s + sx];
-			r.f45i = V4(a[0], a[1], a[2], a[3]);
-			r.f45 = V4(b[0], b[1], b[2], b[3]);
-			r.f30 = V4(c[0], c[1], c[2], c[3]);
-			r.f60 = V4(d[0], d[1], d[2], d[3]);
 		}
 }
 
+/* the float helpers of the literal float transcription below */
 static inline void unpack565(unsigned v, float c[3])
 {
 	c[0] = g_ur[(v >> 11) & 31];
@@ -225,120 +223,203 @@ static inline unsigned pack565(const float c[3])
 	r = r < 0 ? 0 : r > 31 ? 31 : r; g = g < 0 ? 0 : g > 63 ? 63 : g; b = b < 0 ? 0 : b > 31 ? 31 : b;
 	return (unsigned) ((r << 11) | (g << 5) | b);
 }
-static inline void mix3(const float x[3], const float y[3], float a, float out[3])
-{
-	for (int k = 0; k < 3; k++) out[k] = x[k] * (1.0f - a) + y[k] * a;
-}
 static inline float cdf(const float a[3], const float b[3])
 {
 	const float d0 = fabsf(a[0] - b[0]), d1 = fabsf(a[1] - b[1]), d2 = fabsf(a[2] - b[2]);
 	return d0 + d1 + d2;
 }
 
-/* the shader's last lines: the colour of one output pixel from its four maxima and the choice of side (px) */
-static inline unsigned xbr_resolve(const float E[3], const float cand[4][3], const float mx[4])
+/* ---- the decisions of one pixel, written once as a template over the lane type: scalar (the reference) or eight 16 bit lanes ---------- */
+
+typedef uint16_t v8u __attribute__((vector_size(16)));
+typedef int16_t v8m __attribute__((vector_size(16)));
+
+static inline v8u vabd(v8u a, v8u b) { const v8m c = (v8m) (a > b); return (v8u) ((c & (v8m) (a - b)) | (~c & (v8m) (b - a))); }
+
+/* Decision of one lane from the twelve luminances. Returns edr | edr_l << 1 | edr_u << 2 | edri << 3 | px << 4. */
+static inline unsigned xdec_lane(int b, int c, int d, int e, int f, int g, int h, int i, int i4, int i5, int h5, int f4)
 {
-	float res1[3] = { E[0], E[1], E[2] }, res2[3] = { E[0], E[1], E[2] }, t[3];
-	if (mx[0] > 0.0f) { mix3(res1, cand[0], mx[0], t); res1[0] = t[0]; res1[1] = t[1]; res1[2] = t[2]; }
-	if (mx[2] > 0.0f) { mix3(res1, cand[2], mx[2], t); res1[0] = t[0]; res1[1] = t[1]; res1[2] = t[2]; }
-	if (mx[1] > 0.0f) { mix3(res2, cand[1], mx[1], t); res2[0] = t[0]; res2[1] = t[1]; res2[2] = t[2]; }
-	if (mx[3] > 0.0f) { mix3(res2, cand[3], mx[3], t); res2[0] = t[0]; res2[1] = t[1]; res2[2] = t[2]; }
-	const float d1 = cdf(E, res1), d2 = cdf(E, res2);
-	return pack565(d2 >= d1 ? res2 : res1);
+#define AD(a, b_) ((a) > (b_) ? (a) - (b_) : (b_) - (a))
+#define EQ(a, b_) (AD(a, b_) <= XQ_EQ)
+#define NEQ(a, b_) (!EQ(a, b_))
+	const bool irlv0 = e != f && e != h;
+	if (!irlv0) {
+		/* edri, edr, edr_l and edr_u all need irlv0 or edr (which is built on irlv1 = irlv0 * ...): only px remains */
+		return (unsigned) (AD(e, h) >= AD(e, f)) << 4;
+	}
+	const bool irlv1 = (NEQ(f, b) && NEQ(f, c)) || (NEQ(h, d) && NEQ(h, g)) ||
+	                   (EQ(e, i) && ((NEQ(f, f4) && NEQ(f, i4)) || (NEQ(h, h5) && NEQ(h, i5)))) || EQ(e, g) || EQ(e, c);
+	const bool irlv2l = e != g && d != g, irlv2u = e != c && b != c;
+	const int wd1 = AD(e, c) + AD(e, g) + AD(i, h5) + AD(i, f4) + 4 * AD(h, f);
+	const int wd2 = AD(h, d) + AD(h, i5) + AD(f, i4) + AD(f, b) + 4 * AD(e, i);
+	const bool edri = wd2 >= wd1;
+	const bool edr = wd2 >= wd1 + XQ_BIAS && irlv1;
+	const bool edr_l = edr && irlv2l && AD(h, c) >= 2 * AD(f, g);
+	const bool edr_u = edr && irlv2u && AD(f, g) >= 2 * AD(h, c);
+	const bool px = AD(e, h) >= AD(e, f);
+	return (unsigned) edr | (unsigned) edr_l << 1 | (unsigned) edr_u << 2 | (unsigned) edri << 3 | (unsigned) px << 4;
+#undef AD
+#undef EQ
+#undef NEQ
+}
+
+/* Eight pixels at once: the same expressions on 16 bit lanes. Returns the five masks. */
+struct XMasks { v8m edr, edl, edu, edi, px, any; };
+static inline XMasks xdec_lane8(v8u b, v8u c, v8u d, v8u e, v8u f, v8u g, v8u h, v8u i, v8u i4, v8u i5, v8u h5, v8u f4)
+{
+	const v8u K = { XQ_EQ, XQ_EQ, XQ_EQ, XQ_EQ, XQ_EQ, XQ_EQ, XQ_EQ, XQ_EQ };
+	const v8u BIAS = { XQ_BIAS, XQ_BIAS, XQ_BIAS, XQ_BIAS, XQ_BIAS, XQ_BIAS, XQ_BIAS, XQ_BIAS };
+#define NEQM(a, b_) ((v8m) (vabd(a, b_) > K))
+#define EQM(a, b_) ((v8m) (vabd(a, b_) <= K))
+	const v8m irlv0 = (v8m) (e != f) & (v8m) (e != h);
+	const v8m irlv1 = irlv0 & ((NEQM(f, b) & NEQM(f, c)) | (NEQM(h, d) & NEQM(h, g)) |
+	                            (EQM(e, i) & ((NEQM(f, f4) & NEQM(f, i4)) | (NEQM(h, h5) & NEQM(h, i5)))) | EQM(e, g) | EQM(e, c));
+	const v8m irlv2l = (v8m) (e != g) & (v8m) (d != g), irlv2u = (v8m) (e != c) & (v8m) (b != c);
+	const v8u wd1 = vabd(e, c) + vabd(e, g) + vabd(i, h5) + vabd(i, f4) + (vabd(h, f) << 2);
+	const v8u wd2 = vabd(h, d) + vabd(h, i5) + vabd(f, i4) + vabd(f, b) + (vabd(e, i) << 2);
+	XMasks m;
+	m.edi = (v8m) (wd2 >= wd1) & irlv0;
+	m.edr = (v8m) (wd2 >= wd1 + BIAS) & irlv1;
+	const v8u dhc = vabd(h, c), dfg = vabd(f, g);
+	m.edl = (v8m) (dhc >= (dfg << 1)) & irlv2l & m.edr;
+	m.edu = (v8m) (dfg >= (dhc << 1)) & irlv2u & m.edr;
+	m.px = (v8m) (vabd(e, h) >= vabd(e, f));
+	m.any = m.edr | m.edl | m.edu | m.edi;
+	return m;
+#undef NEQM
+#undef EQM
+}
+
+/* ---- the colour of one output pixel ---------------------------------------------------------------------------------------------- */
+
+struct Q12 { int r, g, b; };
+static inline Q12 q12(unsigned v) { Q12 c = { g_c12_r[(v >> 11) & 31], g_c12_g[(v >> 5) & 63], g_c12_r[v & 31] }; return c; }
+static inline Q12 qmix(Q12 x, Q12 y, int m)
+{
+	Q12 c = { (x.r * (256 - m) + y.r * m + 128) >> 8, (x.g * (256 - m) + y.g * m + 128) >> 8, (x.b * (256 - m) + y.b * m + 128) >> 8 };
+	return c;
+}
+static inline int qabs(int a) { return a < 0 ? -a : a; }
+static inline int qcdf(Q12 a, Q12 b) { return qabs(a.r - b.r) + qabs(a.g - b.g) + qabs(a.b - b.b); }
+static inline unsigned qpack(Q12 c)
+{
+	return (unsigned) ((((c.r * 31 + 2047) / 4095) << 11) | (((c.g * 63 + 2047) / 4095) << 5) | ((c.b * 31 + 2047) / 4095));
+}
+
+/* from the pixel, its four neighbours' colours and the decision word: the colour of the sub pixel with ramps rp (the shader's last lines) */
+static inline unsigned xbr_resolve_q(unsigned E16, Q12 E, const Q12 cand[4], const SubRamp &rp, unsigned dec)
+{
+	int mx[4];
+	for (int l = 0; l < 4; l++) {
+		int m = 0;
+		if (dec >> (4 + l) & 1) { if (rp.f30[l] > m) m = rp.f30[l]; }          /* edr_l */
+		if (dec >> (8 + l) & 1) { if (rp.f60[l] > m) m = rp.f60[l]; }          /* edr_u */
+		if (dec >> l & 1) { if (rp.f45[l] > m) m = rp.f45[l]; }                /* edr */
+		if (dec >> (12 + l) & 1) { if (rp.f45i[l] > m) m = rp.f45i[l]; }      /* edri */
+		mx[l] = m;
+	}
+	if (!(mx[0] | mx[1] | mx[2] | mx[3])) return E16;
+	Q12 res1 = E, res2 = E;
+	if (mx[0] > 0) res1 = qmix(res1, cand[0], mx[0]);
+	if (mx[2] > 0) res1 = qmix(res1, cand[2], mx[2]);
+	if (mx[1] > 0) res2 = qmix(res2, cand[1], mx[1]);
+	if (mx[3] > 0) res2 = qmix(res2, cand[3], mx[3]);
+	return qpack(qcdf(E, res2) >= qcdf(E, res1) ? res2 : res1);
+}
+
+/* the decision word's layout: bit l edr, 4 + l edr_l, 8 + l edr_u, 12 + l edri, 16 + l px */
+static inline unsigned xdec_word(const unsigned lane[4])
+{
+	unsigned w = 0;
+	for (int l = 0; l < 4; l++) {
+		const unsigned q = lane[l];
+		w |= (q & 1u) << l | (q >> 1 & 1u) << (4 + l) | (q >> 2 & 1u) << (8 + l) | (q >> 3 & 1u) << (12 + l) | (q >> 4 & 1u) << (16 + l);
+	}
+	return w;
 }
 
 template <int s>
 static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1, ScaleScratch &sc)
 {
 	SubRamp ramps[9];
-	make_ramps(s, ramps);   /* a few dozen floats: cheap next to a picture */
-	/* the luminance plane of the stripe and two rows / columns around it, the border repeated */
-	const int lp = (cx1 - cx0) + 4, lr = y1 - y0 + 4;
+	make_ramps(s, ramps);
+	/* the luminance plane of the stripe: two rows above and below, two columns left and right, the border repeated; the stride has room for
+	 * whole vectors of eight past the last pixel */
+	const int nx = cx1 - cx0, lp = ((nx + 7) & ~7) + 4 + 8, lr = y1 - y0 + 4;
 	if ((int) sc.lum.size() < lp * lr) sc.lum.resize((size_t) lp * lr);
-	float *L = &sc.lum[0];
+	uint16_t *L = &sc.lum[0];
 	for (int r = 0; r < lr; r++) {
 		int sy = y0 - 2 + r;
 		sy = sy < 0 ? 0 : sy > h - 1 ? h - 1 : sy;
 		const uint16_t *sp = src + (size_t) spitch * sy;
-		float *d = L + (size_t) lp * r;
-		for (int c = 0; c < lp; c++) {
+		uint16_t *d = L + (size_t) lp * r;
+		for (int c = 0; c < nx + 4; c++) {
 			int sx = cx0 - 2 + c;
 			sx = sx < 0 ? 0 : sx > w - 1 ? w - 1 : sx;
-			d[c] = lum565(sp[sx]);
+			d[c] = (uint16_t) lumq(sp[sx]);
 		}
+		for (int c = nx + 4; c < lp; c++) d[c] = 0;
 	}
 	unsigned busy = 0;
-	const v4f ONE = vsplat(1.0f);
 	for (int y = y0; y < y1; y++) {
-		const float *lc = L + (size_t) lp * (y - y0 + 2) + 2;       /* lc[0] = the pixel (cx0, y) */
-		int ym = y > 0 ? y - 1 : 0, yp = y < h - 1 ? y + 1 : h - 1;
+		const uint16_t *lc = L + (size_t) lp * (y - y0 + 2) + 2;
+		const int ym = y > 0 ? y - 1 : 0, yp = y < h - 1 ? y + 1 : h - 1;
 		const uint16_t *rm = src + (size_t) spitch * ym, *r0 = src + (size_t) spitch * y, *rp = src + (size_t) spitch * yp;
 		uint16_t *o = dst + (size_t) dpitch * (size_t) (y * s);
-		for (int x = cx0; x < cx1; x++) {
-			const int xl = x - cx0;
-			const float lE = lc[xl], lB = lc[xl - lp], lD = lc[xl - 1], lF = lc[xl + 1], lH = lc[xl + lp];
-			/* a flat spot: no lane of irlv0 is set, nothing to blend, the pixel is copied */
-			if ((lE == lF || lE == lH) && (lE == lB || lE == lF) && (lE == lD || lE == lB) && (lE == lH || lE == lD)) {
-				const uint16_t E = r0[x];
-				uint16_t *q = o + (size_t) s * x;
-				for (int sy = 0; sy < s; sy++) for (int sx = 0; sx < s; sx++) q[(size_t) dpitch * sy + sx] = E;
+		for (int xg = 0; xg < nx; xg += 8) {
+#define P(dy, dx) ({ v8u v_; memcpy(&v_, lc + (dy) * lp + xg + (dx), 16); v_; })
+			const v8u A = P(-1, -1), B = P(-1, 0), C = P(-1, 1), D = P(0, -1), E = P(0, 0), F = P(0, 1), G = P(1, -1), H = P(1, 0), I = P(1, 1);
+			const v8u A1 = P(-2, -1), B1 = P(-2, 0), C1 = P(-2, 1), G5 = P(2, -1), H5 = P(2, 0), I5 = P(2, 1);
+			const v8u A0 = P(-1, -2), D0 = P(0, -2), G0 = P(1, -2), C4 = P(-1, 2), F4 = P(0, 2), I4 = P(1, 2);
+#undef P
+			/* flat: no lane has e != f and e != h; that is the same for all four rotations of the neighbours */
+			const v8m act = ((v8m) (E != F) & (v8m) (E != H)) | ((v8m) (E != D) & (v8m) (E != B)) | ((v8m) (E != B) & (v8m) (E != F)) | ((v8m) (E != H) & (v8m) (E != D));
+			const v8m anyact = act;
+			unsigned long long a0, a1;
+			memcpy(&a0, &anyact, 8); memcpy(&a1, (const char *) &anyact + 8, 8);
+			const int left = nx - xg < 8 ? nx - xg : 8;
+			if (!(a0 | a1)) {
+				for (int k = 0; k < left; k++) {
+					const uint16_t Ev = r0[cx0 + xg + k];
+					uint16_t *q = o + (size_t) s * (cx0 + xg + k);
+					for (int sy = 0; sy < s; sy++) for (int sx = 0; sx < s; sx++) q[(size_t) dpitch * sy + sx] = Ev;
+				}
 				continue;
 			}
-			busy++;
-			const float lA1 = lc[xl - 1 - 2 * lp], lB1 = lc[xl - 2 * lp], lC1 = lc[xl + 1 - 2 * lp];
-			const float lA = lc[xl - 1 - lp], lC = lc[xl + 1 - lp];
-			const float lG = lc[xl - 1 + lp], lI = lc[xl + 1 + lp];
-			const float lG5 = lc[xl - 1 + 2 * lp], lH5 = lc[xl + 2 * lp], lI5 = lc[xl + 1 + 2 * lp];
-			const float lA0 = lc[xl - 2 - lp], lD0 = lc[xl - 2], lG0 = lc[xl - 2 + lp];
-			const float lC4 = lc[xl + 2 - lp], lF4 = lc[xl + 2], lI4 = lc[xl + 2 + lp];
-			const v4f b = V4(lB, lD, lH, lF), c = V4(lC, lA, lG, lI), d = V4(lD, lH, lF, lB), e = vsplat(lE), f = V4(lF, lB, lD, lH);
-			const v4f g = V4(lG, lI, lC, lA), hh = V4(lH, lF, lB, lD), i = V4(lI, lC, lA, lG);
-			const v4f i4 = V4(lI4, lC1, lA0, lG5), i5 = V4(lI5, lC4, lA1, lG0), h5 = V4(lH5, lF4, lB1, lD0), f4 = V4(lF4, lB1, lD0, lH5);
-			const v4f irlv0 = vdiff(e, f) * vdiff(e, hh);
-			/* CORNER_C */
-			const v4f irlv1 = irlv0 * (vneq(f, b) * vneq(f, c) + vneq(hh, d) * vneq(hh, g) +
-			                           veq(e, i) * (vneq(f, f4) * vneq(f, i4) + vneq(hh, h5) * vneq(hh, i5)) + veq(e, g) + veq(e, c));
-			const v4f irlv2l = vdiff(e, g) * vdiff(d, g), irlv2u = vdiff(e, c) * vdiff(b, c);
-			const v4f wd1 = vwd(e, c, g, i, h5, f4, hh, f), wd2 = vwd(hh, d, i5, f, i4, b, e, i);
-			const v4f edri = vstep(wd1, wd2) * irlv0;
-			const v4f edr = vstep(wd1 + vsplat(0.1f), wd2) * vstep(vsplat(0.5f), irlv1);
-			const v4f edr_l = vstep(vsplat(kLv2) * vdf(f, g), vdf(hh, c)) * irlv2l * edr;
-			const v4f edr_u = vstep(vsplat(kLv2) * vdf(hh, c), vdf(f, g)) * irlv2u * edr;
-			/* not flat, but nothing to blend (no lane's edge test passed): the pixel is copied */
-			{
-				const v4f any = edr_l + edr_u + edr + edri;
-				if (any[0] + any[1] + any[2] + any[3] <= 0.0f) {
-					const uint16_t E = r0[x];
-					uint16_t *q = o + (size_t) s * x;
-					for (int sy = 0; sy < s; sy++) for (int sx = 0; sx < s; sx++) q[(size_t) dpitch * sy + sx] = E;
+			const XMasks m0 = xdec_lane8(B, C, D, E, F, G, H, I, I4, I5, H5, F4);
+			const XMasks m1 = xdec_lane8(D, A, H, E, B, I, F, C, C1, C4, F4, B1);
+			const XMasks m2 = xdec_lane8(H, G, F, E, D, C, B, A, A0, A1, B1, D0);
+			const XMasks m3 = xdec_lane8(F, I, B, E, H, A, D, G, G5, G0, D0, H5);
+			const v8m anyd = m0.any | m1.any | m2.any | m3.any;
+			int16_t ed[4][5][8], anyv[8];
+			memcpy(ed[0][0], &m0.edr, 16); memcpy(ed[0][1], &m0.edl, 16); memcpy(ed[0][2], &m0.edu, 16); memcpy(ed[0][3], &m0.edi, 16); memcpy(ed[0][4], &m0.px, 16);
+			memcpy(ed[1][0], &m1.edr, 16); memcpy(ed[1][1], &m1.edl, 16); memcpy(ed[1][2], &m1.edu, 16); memcpy(ed[1][3], &m1.edi, 16); memcpy(ed[1][4], &m1.px, 16);
+			memcpy(ed[2][0], &m2.edr, 16); memcpy(ed[2][1], &m2.edl, 16); memcpy(ed[2][2], &m2.edu, 16); memcpy(ed[2][3], &m2.edi, 16); memcpy(ed[2][4], &m2.px, 16);
+			memcpy(ed[3][0], &m3.edr, 16); memcpy(ed[3][1], &m3.edl, 16); memcpy(ed[3][2], &m3.edu, 16); memcpy(ed[3][3], &m3.edi, 16); memcpy(ed[3][4], &m3.px, 16);
+			memcpy(anyv, &anyd, 16);
+			for (int k = 0; k < left; k++) {
+				const int x = cx0 + xg + k;
+				const uint16_t E16 = r0[x];
+				uint16_t *q = o + (size_t) s * x;
+				if (!anyv[k]) {
+					for (int sy = 0; sy < s; sy++) for (int sx = 0; sx < s; sx++) q[(size_t) dpitch * sy + sx] = E16;
 					continue;
 				}
+				busy++;
+				unsigned lane[4];
+				for (int l = 0; l < 4; l++)
+					lane[l] = (unsigned) (ed[l][0][k] & 1) | (unsigned) (ed[l][1][k] & 1) << 1 | (unsigned) (ed[l][2][k] & 1) << 2 | (unsigned) (ed[l][3][k] & 1) << 3 | (unsigned) (ed[l][4][k] & 1) << 4;
+				const unsigned dec = xdec_word(lane);
+				const int xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
+				const Q12 cE = q12(E16), cB = q12(rm[x]), cD = q12(r0[xm]), cF = q12(r0[xp]), cH = q12(rp[x]);
+				Q12 cand[4];
+				cand[0] = (dec >> 16 & 1) ? cF : cH;
+				cand[1] = (dec >> 17 & 1) ? cB : cF;
+				cand[2] = (dec >> 18 & 1) ? cD : cB;
+				cand[3] = (dec >> 19 & 1) ? cH : cD;
+				for (int sy = 0; sy < s; sy++)
+					for (int sx = 0; sx < s; sx++) q[(size_t) dpitch * sy + sx] = (uint16_t) xbr_resolve_q(E16, cE, cand, ramps[sy * s + sx], dec);
 			}
-			const v4f px = vstep(vdf(e, f), vdf(e, hh));
-			/* the colours that can be mixed in: the pixel and its four neighbours, read only now */
-			const int xm = x > 0 ? x - 1 : 0, xp = x < w - 1 ? x + 1 : w - 1;
-			float cE[3], cB[3], cD[3], cF[3], cH[3];
-			unpack565(r0[x], cE); unpack565(rm[x], cB); unpack565(r0[xm], cD); unpack565(r0[xp], cF); unpack565(rp[x], cH);
-			float cand[4][3];
-			const float pxv[4] = { px[0], px[1], px[2], px[3] };
-			for (int k = 0; k < 3; k++) {
-				cand[0][k] = pxv[0] > 0.5f ? cF[k] : cH[k];
-				cand[1][k] = pxv[1] > 0.5f ? cB[k] : cF[k];
-				cand[2][k] = pxv[2] > 0.5f ? cD[k] : cB[k];
-				cand[3][k] = pxv[3] > 0.5f ? cH[k] : cD[k];
-			}
-			const uint16_t E16 = r0[x];
-			uint16_t *q = o + (size_t) s * x;
-			for (int sy = 0; sy < s; sy++)
-				for (int sx = 0; sx < s; sx++) {
-					const SubRamp &rp_ = ramps[sy * s + sx];
-					const v4f mxv = vmax(vmax(edr_l * rp_.f30, edr_u * rp_.f60), vmax(edr * rp_.f45, edri * rp_.f45i));
-					const float m0 = mxv[0], m1 = mxv[1], m2 = mxv[2], m3 = mxv[3];
-					if (m0 + m1 + m2 + m3 <= 0.0f) { q[(size_t) dpitch * sy + sx] = E16; continue; }
-					const float mx[4] = { m0, m1, m2, m3 };
-					q[(size_t) dpitch * sy + sx] = (uint16_t) xbr_resolve(cE, cand, mx);
-				}
-			(void) ONE;
 		}
 	}
 	return busy;
@@ -797,6 +878,40 @@ int ScaleCache::blit(uint16_t *dst, int dpitch, TexSync &t)
 	}
 	t.epoch = d.frame; t.gen = d.gen;
 	return rows;
+}
+
+
+void xbr_reference_int(const uint16_t *src, int w, int h, int spitch, int scale, uint16_t *dst, int dpitch)
+{
+	scale_init();
+	SubRamp ramps[9];
+	make_ramps(scale, ramps);
+	for (int oy = 0; oy < h * scale; oy++)
+		for (int ox = 0; ox < w * scale; ox++) {
+			const int px_ = ox / scale, py_ = oy / scale;
+			auto at = [&](int dx, int dy) {
+				int xx = px_ + dx, yy = py_ + dy;
+				xx = xx < 0 ? 0 : xx > w - 1 ? w - 1 : xx; yy = yy < 0 ? 0 : yy > h - 1 ? h - 1 : yy;
+				return (unsigned) src[(size_t) spitch * yy + xx];
+			};
+			auto L = [&](int dx, int dy) { return (int) lumq(at(dx, dy)); };
+			const int A1 = L(-1, -2), B1 = L(0, -2), C1 = L(1, -2), A = L(-1, -1), B = L(0, -1), C = L(1, -1), D = L(-1, 0), E = L(0, 0), F = L(1, 0);
+			const int G = L(-1, 1), H = L(0, 1), I = L(1, 1), G5 = L(-1, 2), H5 = L(0, 2), I5 = L(1, 2), A0 = L(-2, -1), D0 = L(-2, 0), G0 = L(-2, 1);
+			const int C4 = L(2, -1), F4 = L(2, 0), I4 = L(2, 1);
+			unsigned lane[4];
+			lane[0] = xdec_lane(B, C, D, E, F, G, H, I, I4, I5, H5, F4);
+			lane[1] = xdec_lane(D, A, H, E, B, I, F, C, C1, C4, F4, B1);
+			lane[2] = xdec_lane(H, G, F, E, D, C, B, A, A0, A1, B1, D0);
+			lane[3] = xdec_lane(F, I, B, E, H, A, D, G, G5, G0, D0, H5);
+			const unsigned dec = xdec_word(lane);
+			const Q12 cE = q12(at(0, 0)), cB = q12(at(0, -1)), cD = q12(at(-1, 0)), cF = q12(at(1, 0)), cH = q12(at(0, 1));
+			Q12 cand[4];
+			cand[0] = (dec >> 16 & 1) ? cF : cH;
+			cand[1] = (dec >> 17 & 1) ? cB : cF;
+			cand[2] = (dec >> 18 & 1) ? cD : cB;
+			cand[3] = (dec >> 19 & 1) ? cH : cD;
+			dst[(size_t) dpitch * oy + ox] = (uint16_t) xbr_resolve_q(at(0, 0), cE, cand, ramps[(oy % scale) * scale + ox % scale], dec);
+		}
 }
 
 }  // namespace pk

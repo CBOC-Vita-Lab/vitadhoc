@@ -31,7 +31,7 @@ void scale_init();
 
 /* A thread's working memory; a thread must use its own. */
 struct ScaleScratch {
-	std::vector<float> lum;
+	std::vector<uint16_t> lum;
 	std::vector<uint16_t> pad;
 };
 
@@ -48,6 +48,9 @@ unsigned scale_rect(ScalerKind k, const uint16_t *src, int w, int h, int spitch,
 
 /* The literal transcription (slow; for tests and as the written definition of "xBR lv2 here"). scale 2 or 3. */
 void xbr_reference(const uint16_t *src, int w, int h, int spitch, int scale, uint16_t *dst, int dpitch);
+
+/* The definition of xBR here: the same, in integer arithmetic (see pk_scale.cpp). scale_rows() for SC_XBR2/3 must give exactly this picture. */
+void xbr_reference_int(const uint16_t *src, int w, int h, int spitch, int scale, uint16_t *dst, int dpitch);
 
 /* ---- the incremental scaler (ScaleCache) ------------------------------------------------------------------------------------------
  * Most pictures of a console game change in a part of their rows only (a HUD stands still, a menu blinks, sprites move over a flat

@@ -66,7 +66,8 @@ static double pct(std::vector<double> v, double p)
 int main(int argc, char **argv)
 {
 	const char *rom = NULL;
-	int frames = 400, system = 0, noshift = 0, quiet = 0, right = 0;
+	int frames = 400, system = 0, noshift = 0, quiet = 0, right = 0, refs = 0;
+	unsigned long px_tot = 0, px_float_diff = 0, px_int_diff = 0, ch_over1 = 0;
 	std::string kind = "auto";
 	for (int i = 1; i < argc; i++) {
 		std::string a = argv[i];
@@ -75,6 +76,7 @@ int main(int argc, char **argv)
 		else if (a == "--system" && i + 1 < argc) { std::string r = argv[++i]; system = r == "md" ? MD_SYS_MD : r == "sms" ? MD_SYS_SMS : r == "gg" ? MD_SYS_GG : r == "sg" ? MD_SYS_SG : 0; }
 		else if (a == "--mode" && i + 1 < argc) right = std::string(argv[++i]) == "right";
 		else if (a == "--noshift") noshift = 1;
+		else if (a == "--refs") refs = 1;
 		else if (a == "--quiet") quiet = 1;
 		else if (a[0] != '-' && !rom) rom = argv[i];
 		else { fprintf(stderr, "usage: scale_proof ROM [--frames N] [--kind auto|mmpx|xbr2|xbr3] [--system md|sms|gg|sg] [--mode auto|right] [--noshift]\n"); return 2; }
@@ -123,6 +125,20 @@ int main(int argc, char **argv)
 		if ((int) tex[ti].size() < 1024 * 512) { tex[ti].assign(1024 * 512, 0); ts[ti] = pk::TexSync(); }
 		cache.blit(&tex[ti][0], 1024, ts[ti]);
 		double t2 = now();
+		if (refs && (k == pk::SC_XBR2 || k == pk::SC_XBR3) && fr % 8 == 0) {
+			std::vector<uint16_t> rf((size_t) ow * h * fct), ri(rf.size());
+			pk::xbr_reference(px, w, h, pitch / 2, fct, &rf[0], ow);
+			pk::xbr_reference_int(px, w, h, pitch / 2, fct, &ri[0], ow);
+			for (size_t i = 0; i < rf.size(); i++) {
+				px_tot++;
+				px_int_diff += ref[i] != ri[i];
+				if (ref[i] != rf[i]) {
+					px_float_diff++;
+					const int dr = abs(((ref[i] >> 11) & 31) - ((rf[i] >> 11) & 31)), dg = abs(((ref[i] >> 5) & 63) - ((rf[i] >> 5) & 63)), db = abs((ref[i] & 31) - (rf[i] & 31));
+					if (dr > 1 || dg > 1 || db > 1) ch_over1++;
+				}
+			}
+		}
 		bool bad = false;
 		if (memcmp(cache.out(), &ref[0], ref.size() * 2) != 0) bad = true;
 		for (int y = 0; y < h * fct && !bad; y++)
@@ -158,6 +174,7 @@ int main(int argc, char **argv)
 		    bn, pk::scaler_name(K), W, H, frames, mism, pct(comp, .5), pct(comp, .95), pct(comp, .99), sframes,
 		    pct(tfull, .5), pct(tfull, .95), pct(tfull, .99), pct(tinc, .5), pct(tinc, .95), pct(tinc, .99),
 		    avg(tfull), avg(tinc));
+	if (refs) printf("REFS %s px=%lu differ_from_int=%lu differ_from_float=%lu (%.4f%%) channel_off_by_more_than_one=%lu\n", bn, px_tot, px_int_diff, px_float_diff, px_tot ? 100.0 * (double) px_float_diff / (double) px_tot : 0.0, ch_over1);
 	md_host_shutdown();
 	return mism ? 1 : 0;
 }

@@ -92,22 +92,32 @@ TEST(scale_mmpx_invents_no_colours_and_smooths)
 	CHECK(differs > 20);
 }
 
-TEST(scale_xbr_fast_path_equals_the_literal_shader)
+TEST(scale_xbr_fast_path_equals_the_integer_reference_and_tracks_the_float_shader)
 {
 	scale_init();
+	size_t total = 0, off_float = 0, big = 0;
 	for (int sc_ = 2; sc_ <= 3; sc_++) {
 		for (int seed = 1; seed <= 6; seed++) {
 			const int w = 37 + seed, h = 29 + seed;
 			const std::vector<uint16_t> s = art(w, h, 100 + seed);
-			std::vector<uint16_t> a((size_t) w * sc_ * h * sc_), b(a.size());
+			std::vector<uint16_t> a((size_t) w * sc_ * h * sc_), b(a.size()), c(a.size());
 			ScaleScratch scr;
 			scale_rows(sc_ == 2 ? SC_XBR2 : SC_XBR3, &s[0], w, h, w, &a[0], w * sc_, 0, h, scr);
-			xbr_reference(&s[0], w, h, w, sc_, &b[0], w * sc_);
+			xbr_reference_int(&s[0], w, h, w, sc_, &b[0], w * sc_);
+			xbr_reference(&s[0], w, h, w, sc_, &c[0], w * sc_);
 			size_t bad = 0;
 			for (size_t i = 0; i < a.size(); i++) bad += a[i] != b[i];
-			CHECK_EQ(bad, 0u);
+			CHECK_EQ(bad, 0u);                      /* the definition: bit identical */
+			for (size_t i = 0; i < a.size(); i++) {
+				total++;
+				if (a[i] == c[i]) continue;
+				off_float++;
+				if (abs(((a[i] >> 11) & 31) - ((c[i] >> 11) & 31)) > 1 || abs(((a[i] >> 5) & 63) - ((c[i] >> 5) & 63)) > 1 || abs((a[i] & 31) - (c[i] & 31)) > 1) big++;
+			}
 		}
 	}
+	CHECK(off_float * 100 < total);                 /* the float shader: under 1 % of the pixels differ on these busy test pictures ... */
+	CHECK(big * 1000 < total);                      /* ... and hardly any by more than one step of a channel */
 }
 
 TEST(scale_xbr_smooths_a_diagonal_and_keeps_edges)

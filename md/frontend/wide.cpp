@@ -18,7 +18,7 @@ static inline uint32_t cell_hash(uint32_t code, uint32_t th) { return mix32(code
 static inline int imod(int a, int n) { int r = a % n; return r < 0 ? r + n : r; }
 static inline int fdiv(int a, int n) { int q = a / n; return (a % n < 0) ? q - 1 : q; }
 
-enum { RING_MAX = 4096, NTILE = 0x800 };
+enum { RING_MAX = 4096, NTILE = 0x800, MAP_RUNS = 64 };
 
 Meta::Meta() : ready(1), valid(0), system(0), vw(0), vh(0), margin(0), real_cap(0), view_off(0), have_strips(0), own_strips(0), nlayers(0), frame(0),
 	planes(3), all_opaque(1), epoch(0), scene_event(0), px(0), px_cap(0), mask_left(0)
@@ -52,6 +52,8 @@ Wide::Wide() : L_(0), M_(0), map_system_(0), C_(0), ci_(0), cmeta_(0), edge_(0),
 	memset(lastreal_, 0, sizeof lastreal_);
 	memset(cram_prev_, 0, sizeof cram_prev_);
 	memset(ovr_row_, 0, sizeof ovr_row_);
+	memset(map_runs_, 0, sizeof map_runs_);
+	memset(rowok_, 0, sizeof rowok_);
 }
 
 Wide::~Wide() { sync(); free_all(); }
@@ -493,7 +495,7 @@ void Wide::rows_md(const md_wide_frame &f, int H)
 	for (int y = 0; y < H && y < 256; y++) if (f.line[y].flags & MDW_ON) { l0 = &f.line[y]; break; }
 	if (!l0) return;
 	for (int l = 0; l < 2; l++) {
-		if (out_->kind[l] != WK_KIND_LEVEL || !((planes_next_ >> l) & 1)) continue;
+		if (out_->kind[l] != WK_KIND_LEVEL || !((planes_next_ >> l) & 1) || map_runs_[l] > MAP_RUNS) continue;
 		int have = 0, p_wx = 0, p_wr = 0;
 		for (int y = 0; y < H && y < 256; y++) {
 			if (!out_->coherent[l][y] || !line_on_[l][y]) continue;
@@ -727,6 +729,20 @@ void Wide::run(const md_wide_frame &f)
 			 * record or to verify again: it is left alone. */
 			int kind0[WK_MAX_LAYERS];
 			for (int l = 0; l < WK_MAX_LAYERS; l++) { kind0[l] = out_->kind[l]; if (md && out_->kind[l] == WK_KIND_UNKNOWN) out_->kind[l] = WK_KIND_OFF; }
+			/* a layer whose lines scroll apart (a wave, a line by line effect: more runs of lines than MAP_RUNS) is not a place to learn a
+			 * picture by, and looking at it line by line would cost more than the rest of the analysis: not given to the map this frame */
+			for (int l = 0; l < fr_->nlayers; l++) {
+				if (out_->kind[l] != WK_KIND_LEVEL && out_->kind[l] != WK_KIND_UNKNOWN) continue;
+				int runs = 0, have = 0, p_wx = 0, p_wr = 0;
+				for (int y = 0; y < H && y < 256; y++) {
+					if (!out_->coherent[l][y]) continue;
+					const int wx = out_->world_x[l][y], wr = fdiv(out_->world_row[l][y], 8);
+					if (have && wx == p_wx && wr == p_wr) continue;
+					have = 1; p_wx = wx; p_wr = wr; runs++;
+				}
+				map_runs_[l] = runs;
+				if (runs > MAP_RUNS) out_->kind[l] = WK_KIND_OFF;
+			}
 			uint32_t key = out_->epoch * 0x9E3779B1u + 1u;
 			for (int l = 0; l < fr_->nlayers; l++) {
 				uint32_t k2 = (uint32_t) out_->kind[l];

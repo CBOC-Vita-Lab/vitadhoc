@@ -84,9 +84,11 @@ static mdw::Meta g_meta[8];
 static uint16_t *g_canvas;           /* the core's picture buffer when it draws beside the mailbox: MD_WIDE_PITCH wide, the picture at column MD_WIDE_MAX */
 #define USER_WIDE 0x40000000         /* HandoffFrame.user: the picture has a Meta in g_meta[seq & 7] */
 static std::atomic<unsigned> g_wide_compose_us(0), g_wide_composed(0), g_wide_helped(0);
-/* the wide view's cost ladder: three rungs, by the smoothed cost of the emulating thread's frame (emulation + analysis) against the frame time.
- * Rung 0 draws the real strips in full, 1 draws half of them (the lead side of a scroll is only a few pixels anyway), 2 draws none and the
- * picture beside the console's is the soft extension only. "On" in the menu stays on rung 0; Auto steps down at once and up slowly. */
+/* the wide view's cost ladder: three rungs, by the smoothed time of the emulating thread's frame against the frame time. That time is the
+ * emulation and the wait for the VDP worker at the end of the frame, and the worker draws the strips and analyses the frame before: a worker
+ * that is too busy shows here. After the frame the emulating thread only hands the picture over, so nine tenths of the frame time is the line
+ * (it was four fifths while the analysis ran on this thread). Rung 0 draws the real strips in full, 1 draws half of them, 2 draws none and
+ * the picture beside the console's is the soft extension only. "On" in the menu stays on rung 0; Auto steps down at once and up slowly. */
 static int g_wide_S, g_wide_rung, g_wide_hold, g_wide_applied = -1;
 static double g_wide_ema;
 static unsigned long long g_wide_an_us, g_wide_an_n;
@@ -98,8 +100,8 @@ static void wide_cost_update(double cost_us, double budget_us)
 	g_wide_ema = g_wide_ema <= 0.0 ? cost_us : g_wide_ema * 0.9 + cost_us * 0.1;
 	if (g_wide_hold > 0) g_wide_hold--;
 	if (g_pl->wide_mode() == 1) { g_wide_rung = 0; return; }
-	if (g_wide_ema > 0.80 * budget_us && g_wide_rung < 2) { g_wide_rung++; g_wide_hold = 240; }
-	else if (g_wide_ema < 0.55 * budget_us && g_wide_rung > 0 && g_wide_hold == 0) { g_wide_rung--; g_wide_hold = 240; }
+	if (g_wide_ema > 0.90 * budget_us && g_wide_rung < 2) { g_wide_rung++; g_wide_hold = 240; }
+	else if (g_wide_ema < 0.62 * budget_us && g_wide_rung > 0 && g_wide_hold == 0) { g_wide_rung--; g_wide_hold = 240; }
 }
 
 /* what the core draws beside the picture this frame; run once per refresh, before the frames */

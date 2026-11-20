@@ -420,7 +420,7 @@ static void pad_game8(char out[9])
       snprintf(out, 9, "%s", SL.game);
       return;
    }
-   if (!fe_host_pad_game_id(out))
+   if (fe_host_pad_game_id(out) != 0)         /* 0 = the id is in `out` (-1: not such a game) */
       snprintf(out, 9, "00000000");
    for (int i = 0; out[i]; i++)
       out[i] = (char)((out[i] >= 'a' && out[i] <= 'z') ? out[i] - 32

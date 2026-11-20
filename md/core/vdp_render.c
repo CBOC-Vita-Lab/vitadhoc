@@ -5188,31 +5188,24 @@ static void wide_line(int line, int spr_in)
         }
         else
         {
-          /* bit k of the mask: the pixel k pixels from the screen's edge was drawn by a plane or a sprite */
-          uint32 acc = 0;
-          if (side == 0)
+          /* bit k of the mask: the pixel k pixels from the screen's edge was drawn by a plane or a sprite (colour index not 0); four pixels a step */
+          static const uint8 rev4[16] = { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
+          const uint8 *p = side == 0 ? src + wide_px - wide_m : src;
+          int k;
+          for (i = 0; i < wide_m; i++) d[i] = pixel[p[i]];
+          for (k = 0; k < wide_m; k += 4)
           {
-            const uint8 *p = src + wide_px - 1;         /* the pixel next to the edge; d[] runs the other way */
-            PIXEL_OUT_T *e = d + wide_m - 1;
-            for (i = 0; i < wide_m; i++)
-            {
-              const uint8 v = p[-i];
-              e[-i] = pixel[v];
-              acc |= (uint32) ((v & 0x0F) != 0) << (i & 31);
-              if ((i & 31) == 31) { ob[i >> 5] = acc; acc = 0; }
-            }
+            /* the four pixels at distances k .. k + 3 (the line buffer has room beyond the strip on both sides) */
+            uint32 x, t;
+            memcpy(&x, side == 0 ? src + wide_px - 4 - k : src + k, 4);
+#ifndef LSB_FIRST
+            x = (x >> 24) | ((x >> 8) & 0xFF00) | ((x << 8) & 0xFF0000) | (x << 24);
+#endif
+            t = ((((x & 0x0F0F0F0F) + 0x7F7F7F7F) & 0x80808080) >> 7) * 0x01020408u >> 24;
+            if (side == 0) t = rev4[t & 15];
+            if (wide_m - k < 4) t &= (1u << (wide_m - k)) - 1u;
+            ob[k >> 5] |= (t & 15) << (k & 31);
           }
-          else
-          {
-            for (i = 0; i < wide_m; i++)
-            {
-              const uint8 v = src[i];
-              d[i] = pixel[v];
-              acc |= (uint32) ((v & 0x0F) != 0) << (i & 31);
-              if ((i & 31) == 31) { ob[i >> 5] = acc; acc = 0; }
-            }
-          }
-          if (wide_m & 31) ob[wide_m >> 5] = acc;
         }
       }
       status = st; spr_col = sc; spr_ovr = so;

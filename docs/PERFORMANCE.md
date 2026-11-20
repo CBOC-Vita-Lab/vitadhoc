@@ -34,22 +34,45 @@ in the render_thread test).
 
 ## Super NES On VitAdhoc 2.0 (host and model numbers, nothing here ran on a Vita)
 
-Counted on an x86_64 host with callgrind over the emulator's own code (Minstr per emulated frame, 60 frames of gameplay of the owner's pad
+Counted on an x86_64 host with callgrind over the emulator's own code (Minstr per emulated frame, frames 1500 to 1560 of the owner's pad
 script) and turned into milliseconds by a model: x86 instructions counted as ARM instructions, 444 MHz, IPC 1.0 and 0.7. They are
-estimates; the 1.3 table below is the only measured Vita data in this file.
+estimates; the 1.3 table below is the only measured Vita data in this file. "Counted frame" is a frame on which the wide view counts its
+coverage and composes both margins whole (every second frame); on the frames between, a side that shows the ambient frame is not composed.
 
-| Game | Core, wide view off | Wide, margin 41 (core + compose) | Compose alone, 41 / full width | Same at IPC 1.0 / 0.7 (compose, 41) |
-| --- | ---: | ---: | ---: | --- |
-| Yoshi's Island (Super FX) | 7.8 | 13.7 | 4.5 / 8.0 | 10.0 / 14.4 ms |
-| Super Mario World | 6.9 | 13.9 | 4.8 / 8.0 | 10.7 / 15.4 ms |
-| Super Mario Kart | 5.0 | 10.7 | 3.8 / 5.9 | 8.6 / 12.3 ms |
-| Super Metroid | 7.0 | 10.0 | 1.4 / 2.4 | 3.2 / 4.5 ms |
-| Kirby Super Star (SA-1) | 6.2 | 12.8 | 5.1 / 7.7 | 11.6 / 16.5 ms |
+| Game | Core, wide view off | Wide, margin 41: all / compose (average, counted frame) | Wide, full width (margin 96): all / compose (average, counted frame) | Full width before this pass: all / compose |
+| --- | ---: | --- | --- | --- |
+| Yoshi's Island (Super FX) | 7.8 | 11.3 / 2.5, 3.0 | 12.7 / 3.3, 4.2 | 18.3 / 8.0 |
+| Super Mario World | 6.9 | 11.3 / 2.8, 3.3 | 13.1 / 3.3, 4.0 | 19.2 / 8.0 |
+| Super Mario Kart | 5.0 | 9.0 / 2.7, 2.9 | 10.4 / 3.2, 3.5 | 14.3 / 5.9 |
+| Super Metroid | 7.0 | 9.5 / 0.95, 0.95 | 11.4 / 1.2, 1.2 | 12.6 / 2.4 |
+| Kirby Super Star (SA-1) | 6.2 | 10.0 / 2.9, 3.6 | 10.9 / 3.3, 4.2 | 16.2 / 7.7 |
 
-The wide compose is 10 to 28 % cheaper than at the end of 1.3's work (same method; see snes/WIDE-INTEGRATION.md for the before column and for what is
-and is not done). The pixel art scaler (xBR 2x) is estimated at about 3 ms of the draw thread typically and 8.5 ms in the worst second, the upload at 1.5 ms.
-The rewind capture on the game thread: 823 KB per state before, about 300 KB (plain cartridge), 430 KB (Super FX) or 580 KB (SA-1) now, 1.16 M -> 0.53 M host
-instructions in Super Mario World.
+Per thread at the full width (model, ms per frame at IPC 1.0 / 0.7; a 60 Hz frame is 16.7 ms):
+
+| Game | Game thread (CPU, chip) | Picture thread, wide off | Picture thread, full width | Sound thread | Compose of a counted frame, alone | ... with one helper sharing the lines |
+| --- | --- | --- | --- | --- | --- | --- |
+| Yoshi's Island | 7.7 / 11.0 | 5.4 / 7.8 | 8.7 / 12.4 | 4.5 / 6.5 | 9.4 / 13.5 | 6.0 / 8.6 |
+| Super Mario World | 4.3 / 6.2 | 5.9 / 8.5 | 12.2 / 17.4 | 5.4 / 7.7 | 9.1 / 12.9 | 6.1 / 8.7 |
+| Super Mario Kart | 3.2 / 4.6 | 3.4 / 4.8 | 8.0 / 11.4 | 4.7 / 6.7 | 7.9 / 11.3 | 5.2 / 7.4 |
+| Super Metroid | 3.0 / 4.3 | 8.3 / 11.8 | 15.3 / 21.9 | 4.4 / 6.3 | 2.7 / 3.8 | 1.7 / 2.4 |
+| Kirby Super Star | 6.9 / 9.8 | 2.4 / 3.5 | 5.3 / 7.6 | 4.8 / 6.8 | 9.4 / 13.5 | 6.2 / 8.8 |
+
+What changed in this pass (all of it leaves the wide picture bit for bit as it was; the proofs are in snes/WIDE-INTEGRATION.md, "Full width"):
+the compose works line by line and its lines can be shared with the scaler's helper threads; its row loops are 8 pixels a step (NEON on the
+Vita); a side that shows the ambient frame is composed only on the frames whose coverage is counted; and the core no longer draws margin passes
+the compose never reads (4 or 2 passes instead of 5 or 6). The compose at the full width is 46 to 59 % cheaper on average than before this pass
+and the core's margin work 34 to 37 % cheaper on four of the five games (Super Metroid's is unchanged: its lines need the whole composite).
+
+What the model says, plainly: at IPC 1.0 every thread fits a 60 Hz frame at the full width. At IPC 0.7 the picture thread of Super Mario World
+(17.4 ms) and of Super Metroid (21.9 ms; 16.7 at margin 41) does not, and the drawing thread needs the helper (alone, with about 3 ms of scaler
+and 1.5 ms of upload, Yoshi's Island, Super Mario World and Kirby are over). Where a thread does not fit, the player's pacing reports it and the
+wide view narrows its margin, as before. The pixel art scaler (xBR 2x) is estimated at about 3 ms of the draw thread typically and 8.5 ms in the
+worst second.
+
+The rewind capture: 823 KB per state before 2.0, about 300 KB (plain cartridge), 430 KB (Super FX) or 570 KB (SA-1) now (1.16 M -> 0.53 M host
+instructions in Super Mario World), estimated 0.5 to 1.2 ms on the Vita. It is now written after the frame's picture and sound have been handed
+on, in the time the game thread would wait for the next refresh, and put off (at most 8 refreshes) on a pass that is already late: it is off the
+frame's path, the copy itself is not smaller.
 
 ## Super NES On VitAdhoc 1.3
 

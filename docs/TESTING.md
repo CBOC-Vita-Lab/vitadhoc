@@ -50,8 +50,9 @@ the folders (or, for WonderSwan, at one file):
 |---|---|
 | `GATE_GBA_ROMS` | every GBA, GB and GBC ROM in the folder, x86 against armhf (`--full`); and `online-x86`'s determinism scenario, which then also plays the first ROM the link table marks Link Cable at a 150 ms round trip (the cache key does not include the files: `--force` after changing them) |
 | `GATE_SNES_ROMS` | SNES thread comparison and reference-screenshot conformance; also the SNES selftest's ROM sections |
-| `GATE_NES_ROMS` | NES blargg-style conformance against `nes/twin/conformance_expect.txt` |
-| `GATE_WS_ROM` | the WonderSwan acceptance section |
+| `GATE_NES_ROMS` | NES blargg-style conformance against `nes/twin/conformance_expect.txt`; Same Wi-Fi and Online Two players on a NES game (`link_tests.py nes_two`, `online_tests.py nes_punch / nes_relay`, and the NES refusals): they play `nes15-NTSC.nes` found under the folder (a `git clone` of the public nes-test-roms collection), or the file `VITADHOC_NES_ROM` names |
+| `GATE_WS_ROM` | the WonderSwan acceptance section; Same Wi-Fi and Online Two players on a WonderSwan game (`ws_two`, `ws_punch`, `ws_relay`, the WonderSwan refusals): any homebrew test ROM will do (a prebuilt one is in the testroms folder of the public WonderSwan_MiSTer repository) |
+| `GATE_SG_ROM` (file), or a `.sg` file in the `GATE_MD_SMS_ROMS` folder | the SG-1000 game of `link_tests.py sega_two`, `online_tests.py sega_online / game_sg / version_sg` and `md/twin/link_test.py` (a homebrew built with SDCC and the public devkitSMS SGlib); without one they use a synthetic image |
 
 Before and after a change to the GBA core, a private set of cartridges can be compared between two host builds (a scripted pad,
 the same N frames, a hash of every audio sample and of screenshots taken at fixed frames). The direct (skip-BIOS) boot starts on
@@ -180,6 +181,10 @@ another version (the twins' own version is fixed).
 | `punch`, `relay`, `relay_joiner` | GBA Link Cable over the punch (port-restricted NATs), and over the relay with the host's, or the joiner's, NAT symmetric: the linktest cartridge's verdict on both, equal machines, the delay at least 3, at most 40 requests to the service, no public address of the other console in either log (relay) |
 | `relay_host_setting`, `relay_joiner_setting` | "Always use the relay" on the host, or on the joiner, with open NATs: the room goes relay |
 | `punch_opens_host` | the room is 200 s old (poll every 10 s): the joiner's PUNCH moves the host on before its poll names the guest |
+| `nes_punch`, `nes_relay`, `ws_punch`, `ws_relay` | Two players on a NES / WonderSwan game over the punch and over the relay: both consoles run one machine (fe_padpair), the same last frame and machine hash, an agreed end, the radio given back. Need `GATE_NES_ROMS` / `GATE_WS_ROM` (skipped, with a note, without) |
+| `snes_online`, `sega_online` | Two players Online from the game list (Settings > Two players) for SNES, Genesis, Master System and SG-1000, over the punch and over the relay: the room names the console, the link forms and is written to `launch/<console>.ini` for snes.bin / md.bin (the punch key, the compat word and the delay agree; relay: each file names its own allocation and the other's, none released). Every key press that matters waits for the app's log line that shows it was seen (see below) |
+| `game_<console>`, `version_<console>` for gba, gb, gbc, nes, ws, snes, md, sms, sg | per console: the joiner has no copy of the host's game (`UI_FAIL_ONLINE_GAME`, "Your friend is playing a different game. Add X to join."), the host newer (`ONLINE_VER_OLD_HERE`), the host older (`ONLINE_VER_OLD_THERE`), a service that wants a newer app for a joiner and, for the consoles played in the app, a host (`ONLINE_UPDATE`): no join request, no link, nothing started |
+| `gbc`, `gbc_relay` | Game Boy Color cable over the punch and over the relay (the same cartridge as `gb`, built for the Color) |
 | `gb`, `gb_relay` | Game Boy cable over the punch and over the relay: 200 bytes each way, the cartridge's verdict in memory and in the committed save. The cartridge needs its player to press A once the link is up (that console is the master); the first smoke did not and read zeros |
 | `adapter` | Wireless Adapter over Online: room, idle link, teardown (no adapter traffic exists to cross) |
 | `share` | Share game data over Online, byte for byte |
@@ -194,6 +199,15 @@ another version (the twins' own version is fixed).
 | `different_game`, `library_join` | `different_game`: a cable game with the host's game code but another file, joined from Play together, ends cleanly on both consoles. `library_join`: Join online from the game list opens the matching game and joins; a cable game whose file differs from the host's asks and opens nothing by itself; with the host's file among two it is the one offered |
 | `two_games` | two different GBA cartridges over Online (Ruby with Sapphire), over the punch and over the relay: the partner's cartridge crosses the link once and is kept in the cache, and a second session of the same two data folders finds it there. Skipped when the second test cartridge (`gpsp/tools/linktest/linktest_b.gba`) is not built |
 | `direct_hidden` | the Connection page has no Direct address unless `link_direct = 1` |
+
+WAITING FOR THE SCREEN, NOT FOR A CLOCK.  A twin's input script is timed in display frames, and a busy machine (two twins, a
+service, a NAT simulator and other jobs on two cores) can stall the app's loop for longer than a press lasts, so a fixed
+script dropped presses (a wrong code typed, a menu row missed).  plat_host.c has two more script entries for this:
+`FRAME:wait=TEXT` stops the script clock until a new line of the app's own log holds TEXT (at most 90 s), and
+`FRAME:hold=BUTTONS=TEXT` does the same with BUTTONS held down all the while (at most 8 s), so the press ends once the
+app has logged what it did.  The code pad logs `online_pad_key box= sym=` for every key; `snes_online`, `sega_online`
+and the refusals of the SNES and Sega consoles type the code that way. The twin built elsewhere can be named with
+`GBADHOC_HOST_X86` (make ARCH=x86 B=<dir>).
 
 The Vita build with Mbed TLS and the heap and package-size numbers are
 checked by the build (`vita-build` in the full tier), not by the twin.

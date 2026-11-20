@@ -124,6 +124,35 @@ Edits to upstream files:
   all 96 test ROMs with the worker on and off, on x86 and armhf (qemu), also with a join after every drawn line and with a per frame
   comparison of the raw VDP memory (`md_twin --vdp-thread | --vdp-check | --vdp-stress`).
 
+### Wide view (2.0): strips beside the picture, drawn by the same renderer
+
+The player can ask the Mega Drive renderer for a narrow strip of picture beyond each side of every line (`md/INTEGRATION.md`, "Wide view";
+`md/frontend/wide.cpp` decides what of it is shown). Nothing the CPUs, the sound or the picture inside the screen can see changes: the proof is
+`md/twin/selftest.sh` section 11 (picture in the window, sound, state and RAM identical with the strips on and off, with and without the VDP
+worker, on every test ROM) and `arm_check.sh`. Edits to upstream files:
+
+- `vdp_render.c`:
+  - the strip pass (`wide_line()`, called at the end of `render_line`): `render_bg` and `render_obj` run again per side on a few columns with the
+    scroll shifted (`wide_pass`, `WIDE_COLS`, `WIDE_VW`, `WIDE_SPR_DX`, `wide_xs()` in the three mode 5 plane renderers and the two sprite
+    renderers); the status bits, the sprite masking state and the part of the line buffers the pass writes are saved and put back;
+  - a plane can be left out of the strips (`wide_planes`), and plane A is on the side of a line the window plane takes (`wide_a`; the window
+    plane is never continued, and that side gets a strip only where the window's two cells at the edge are empty);
+  - lines with per 2-cell vertical scroll: a side gets its strip only where the three columns next to that edge scroll alike (on the left the
+    partly shown column too); the strip scrolls like the column at the edge (`wide_vsb`, `wide_ys` in `render_bg_m5_vs`);
+  - learned rows (`wide_row_set`, `wide_rows_clear`): name table rows the strip pass of the plain renderer reads instead of the VRAM row while the
+    VRAM row is byte for byte what it was when the row was given (`wide_ovr`, `wide_ovo`, `wide_ont`);
+  - the strip cache of the worker's copy (`wide_cache`, `wide_gen`, `wide_parse_gen`): a line's strips are copied from the last frame while no
+    record that changes what they are drawn from has arrived; `--wide-cache-check` draws anyway and compares;
+  - `render_obj_m5_ste` clears and merges its sprite buffer over the strip's width inside the pass (the screen's width outside it, as before);
+  - per line records for the host (`wide_rec`, `wide_line_t`, flags `WL_*` / `WS_*`), the opaque masks (`wide_opq`), and for the 8 bit consoles
+    the palette line 0 was drawn with (`wide_pal`) and the mode 4 scroll / name table mask of every line.
+- `vdp_render.h`: the declarations of the above. `vdp_render_w_names.h`: their `vw_` names.
+- `vdp_ctrl.c`: `MARK_BG_DIRTY` also notes the written 32 byte VRAM block in a list the host takes after the frame (`wide_vd`, `wide_vl`,
+  `wide_vn`; `wide_vall` at bulk rewrites): the analysis rereads only what was written. Not read by anything the machine can see.
+- `vdp_thread.c/.h`: the wide fields of the state record; `OP_CALL` / `vdpw_q_call` (run a function on the worker after everything queued, its
+  copy of the VDP brought level with the emulating thread's first: the wide view's analysis); the generation counter of the strip cache is
+  bumped by every record that changes what a strip is drawn from; accessors for the renderer's copy of the VDP memory.
+
 ### Open
 
 - A Master System image run with the console forced to Game Gear (a smoke test, no real Game Gear ROM was available) shows the

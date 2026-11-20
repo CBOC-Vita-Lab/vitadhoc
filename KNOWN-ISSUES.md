@@ -92,21 +92,41 @@ Testing continues on:
   game; save and states stay together under Master System.
 - Join online does not know these games yet.
 - RetroAchievements badges in the library are not shown for them.
-- **Wide view (Sega).** On by default, Off in the menu gives the 4:3 picture back. The **learned map is not done** for any Sega console (the Super NES
-  player has it): on the Mega Drive the real picture beside the lead side of a scroll reaches only as far as the name table lets widekit trust it (a few to a few
-  tens of pixels), on the Master System and SG-1000 there is nothing beside the picture (the tile map is exactly the screen wide) so only the soft extension
-  is shown, and the Game Gear's 256 column band shows what the VDP drew there with the same fade. Lines with a window plane, per 2-cell vertical
-  scroll or interlace get the soft extension. The Game Gear band was tested with a test program written for the purpose and Master System ROMs forced to the
-  Game Gear: no real Game Gear or SG-1000 ROM was available. The cost ladder (halve the strips, then none) is by the model; nothing has run on a Vita.
+- **Wide view (Sega).** On by default, Off in the menu gives the 4:3 picture back. Beside the picture you see real picture only where
+  it can be shown truthfully, a soft continuation of the edge elsewhere:
+  - The **learned picture** (what the game has already shown at that place) is kept for the play session only: it is not saved with the
+    game, and a state load, a rewind or a reset forgets it (the Super NES player keeps it in a file). It shows cells seen since the level
+    was recognised; a level you have not walked through yet has the soft side on the side you walk towards.
+  - **Master System**: the sides are learned picture only (nothing exists beside the 256 pixels in the console). A game that masks the
+    first 8 columns keeps its border colour there on the lines whose left side is not known. Sprites end at the picture's edge.
+    Games in the 224 / 240 line modes, and games that scroll the right 8 columns apart, get the soft sides.
+  - **SG-1000**: soft sides only. These games have no scroll registers (they move the picture by rewriting it), so there is no place
+    to learn the picture by; not done.
+  - **Mega Drive / Genesis**: lines under a window plane get the picture behind it (plane B and sprites) where the window is empty at
+    that edge, the soft side where a status panel reaches the edge. Lines whose columns scroll apart vertically get a strip only on
+    a side whose three edge columns scroll together. Interlaced pictures get the soft sides.
+  - A tile the game changes while it is off screen (a broken block, an opened door) can show its old look beside the picture until
+    the screen reaches it again; the same limit as on the Super NES and NES.
+  - Tested with homebrew and with test cartridges written for the purpose (`md/twin/tools`): no commercial Sega ROM, and no real Game
+    Gear or SG-1000 ROM, was available. The cost figures are a model; nothing has run on a Vita. The cost ladder (halve the strips,
+    then none, in Auto) is still there as the safety net.
 
 ## Super NES
 
-- **Wide view at full width on the heaviest games** (Yoshi's Island, Super Mario World, Kirby Super Star): by the model in
-  docs/PERFORMANCE.md the draw thread does not fit a 60 fps frame at the full margin, and at margin 41 only at IPC 1.0. The player measures the real
-  time on the Vita and narrows the margin only when it must; the compose was made 10 to 28 % cheaper in 2.0 but the passes that draw the margin inside the
-  core (merging batches across lines, one pass for the strip, caching it between frames) are not done. Nothing has run on a Vita yet.
-- **Rewind** captures a state every fourth frame on the game thread; it now copies about 300 KB (plain cartridge) to 580 KB (SA-1) instead of 823 KB,
-  which is estimated at 0.5 to 1.2 ms on the Vita for the heaviest games, not yet measured.
+- **Wide view at full width on the heaviest games** (Yoshi's Island, Super Mario World, Kirby Super Star, Super Metroid). Nothing has run on a
+  Vita yet; by the model in docs/PERFORMANCE.md the full width (margin 96) fits a 60 fps frame on every thread if the Vita runs this code at about one
+  instruction per clock cycle. At the pessimistic end of the model (IPC 0.7) the picture thread of Super Mario World and of Super Metroid does not fit
+  at the full width (17.4 and 21.9 ms of 16.7; Super Metroid is at the limit at the default margin 41 too), and the drawing thread needs one of the
+  scaler's helper threads to share the compose. Where it does not fit the player measures it and Auto narrows the margin, as before; "On" keeps the
+  full width and may drop frames there. Not done: merging the margin passes of a game that changes a register on every line, caching the margin
+  between frames, and drawing the margins on a thread of their own (the step that would take them off the picture thread).
+- **Wide view, a ghost fade after the ambient frame.** A side that shows the ambient frame is composed only on every second frame. If a layer's known
+  extent shrinks by 12 pixels or more in the three frames in which that side fades back in, the short "ghost" fade of the old picture there is left
+  out (it would weigh under a tenth of a pixel's colour). It did not happen once in 90,000 frames of the 15 test games.
+- **Rewind** captures a state every fourth frame at best (less often in a busy game); it copies about 300 KB (plain cartridge) to 570 KB (SA-1) instead of 823 KB, estimated at
+  0.5 to 1.2 ms on the Vita. The copy is now made after the frame has been handed to the screen, while the game thread would wait for the next
+  refresh, so it does not delay a frame unless the game thread has no time left at all (then it is put off, at most 8 refreshes). The copy itself is
+  not smaller: a dirty page capture is not done. Not measured on a Vita.
 
 - **Super FX games that keep the chip busy** (Doom, the races of Stunt Race
   FX) run at full game speed, but their 3D view gets less chip time than on a

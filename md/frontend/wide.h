@@ -195,6 +195,7 @@ private:
 	uint32_t seam_prev_;
 	unsigned content_gen_;   /* counts the name table passes */
 	uint32_t map_key_;
+	int map_runs_[WK_MAX_LAYERS];   /* per layer: runs of lines with their own scroll, as of the last analysis */
 	int map_key_ok_;
 	bool check_;
 	Claim *claims_;

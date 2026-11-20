@@ -70,30 +70,62 @@ estimates with a x1.5 error bar: **a locked 60 Hz Mega Drive is not proven**; it
 
 ## Wide view cost (2.0)
 
-`md_twin --wide 45` (md/frontend/wide.cpp over widekit, strips drawn by the VDP) against the same run without it, `--pad auto`, 900 frames on the host and 240 under qemu
-(`qemu-arm -cpu max`, armhf, ratio only). **host** = this x86_64 machine, **qemu** = emulated ARM user mode; both on a shared, noisy machine; neither is Vita time.
-Core frame = `md_host_run_frame` (the strips are drawn inside it); analyse = the emulating thread's share of the wide view after the frame; compose = the drawing
-thread's share (not on the emulating thread when the hand-over is on).
+Instructions per frame, **host** x86_64, `valgrind --tool=callgrind --separate-threads=yes` over 300 frames of `md_twin ROM --vdp-thread --wide 51`
+(`--wide 41` Master System, 48 Game Gear), counted per thread and per function (inclusive). "Model ms" = instructions / 350 M per second, the
+estimate used above, x1.5 either way; **nothing here is Vita time**. "Before" is the first wide view (the build of 20 Nov morning), "now" the build with the
+analysis handed to the VDP worker, the learned picture, the window / per 2-cell vertical scroll lines, the strip cache and the shared compose.
+The twin composes on its main thread; in the player the compose is the drawing thread's and its lines are shared with the scaler's helpers.
 
-| game | host core p50 off -> on | host analyse | host compose | qemu core p50 off -> on | qemu analyse | qemu compose |
-|---|---|---|---|---|---|---|
-| Mega Drive platformer | 0.350 -> 0.387 ms | 0.042 ms | 0.082 ms | 2.25 -> 2.82 ms | 0.56 ms | 0.61 ms |
-| Mega Drive sonic (title) | 0.298 -> 0.348 ms | 0.049 ms | 0.070 ms | 2.27 -> 2.53 ms | 0.57 ms | 0.63 ms |
-| Mega Drive linescroll | 0.274 -> 0.316 ms | 0.042 ms | 0.080 ms | 1.73 -> 1.99 ms | 0.42 ms | 0.56 ms |
-| Mega Drive tmx-map | 0.280 -> 0.353 ms | 0.045 ms | 0.086 ms | 1.78 -> 2.05 ms | 0.48 ms | 0.50 ms |
-| Master System (2 games) | 0.073 -> 0.074, 0.124 -> 0.127 ms | 0.000 ms | 0.033 ms | 0.61 -> 0.62, 0.86 -> 0.86 ms | 0.004 ms | 0.32 ms |
-| Game Gear (SMS ROMs forced) | 0.066 -> 0.072, 0.073 -> 0.079 ms | 0.001 ms | 0.025 - 0.035 ms | 0.57 -> 0.60, 0.55 -> 0.58 ms | 0.007 ms | 0.22 ms |
-| SG-1000 (an SMS ROM forced) | 0.057 -> 0.057 ms | 0.000 ms | 0.032 ms | 0.43 -> 0.43 ms | 0.004 ms | 0.32 ms |
+Mega Drive, the five heaviest samples (VDP worker on, as the player runs them):
 
-The Mega Drive strips add 13 - 26 percent to the core frame (host) and the analysis about 0.045 ms (the model's 40 K instructions). Scaled the way the table above
-scales host time to the Vita (platformer: 0.35 ms host = 11.4 ms model, a factor of about 33), the wide view costs the emulating thread of a Mega Drive game about
-**+1.2 ms (strips) +1.5 ms (analysis) = 2.5 - 4 ms**, with the compose (2.5 - 3 ms) on the drawing thread; x1.5 error bar either way, **not measured on a Vita**. A Mega Drive game at the model's
-13.5 ms would therefore go to 16 - 17.5 ms and the ladder (main.cpp) halves, then drops, the real strips before the frame is missed. The 8 bit consoles pay
-under 0.3 ms on the emulating thread (the compose, on the drawing thread, is the soft extension only).
+| sample | emulation, emulating thread | VDP worker, wide off | before: worker (of it strips) + analysis on the emulating thread | now: worker (strips + analysis), nothing on the emulating thread | compose before -> now |
+|---|---|---|---|---|---|
+| xgm-player | 2.58 M | 2.67 M | 3.26 M (0.59 M) + 0.70 M | 3.79 M (0.39 M + 0.69 M) | 0.76 -> 0.81 M |
+| fx/h-int/wobble (shadow / highlight sprites on every line) | 2.43 M | 2.68 M | 5.01 M (2.33 M) + 0.65 M | 4.69 M (1.13 M + 0.85 M) | 0.75 -> 0.69 M |
+| demo/starfield-donut | 2.43 M | 2.20 M | 2.98 M (0.78 M) + 0.85 M | 3.80 M (0.91 M + 0.66 M) | 0.85 -> 0.79 M |
+| game/platformer | 2.91 M | 1.71 M | 2.29 M (0.58 M) + 0.63 M | 3.00 M (0.62 M + 0.65 M) | 0.93 -> 0.86 M |
+| demo/bad-apple | 2.50 M | 1.69 M | 2.21 M (0.52 M) + 0.80 M | 2.49 M (0.14 M + 0.64 M) | 0.90 -> 0.83 M |
+| test cartridge (window lines, per 2-cell vertical scroll; `tools/md_scroll_gen.py`) | 2.55 M | | (no strips on these lines before) | 3.70 M (1.01 M + 0.72 M) | 0.99 M |
+
+What the frame costs in time (model): a frame is finished when the worker has drawn it, and before this work the emulating thread then still analysed it.
+
+| sample | before: emulating thread busy until | now: emulating thread | now: VDP worker | of the 16.7 ms frame |
+|---|---|---|---|---|
+| xgm-player | 9.3 + 2.0 = 11.3 ms | 7.4 ms | 10.8 ms | 65 % |
+| fx/h-int/wobble | 14.3 + 1.8 = 16.1 ms (the ladder dropped the strips) | 7.0 ms | 13.4 ms | 80 % |
+| demo/starfield-donut | 8.5 + 2.4 = 10.9 ms | 6.9 ms | 10.9 ms | 65 % |
+| game/platformer | 8.4 + 1.8 = 10.2 ms | 8.3 ms | 8.6 ms | 51 % |
+| demo/bad-apple | 7.1 + 2.3 = 9.4 ms | 7.2 ms | 7.1 ms | 43 % |
+
+- The emulating thread's share of the wide view is the hand-over: under 2 K instructions (`Wide::frame`, `md_host_wide_run`).
+- Strips: 0.14 M on a still picture with few changes (bad-apple: two fifths of the line strips are copied from the frame before, and a strip no plane
+  or sprite goes into is not drawn at all), 0.4 - 0.6 M normally, 0.9 - 1.1 M where every line has its own scroll or the shadow / highlight sprite pass runs
+  for each strip (wobble: 2.33 M before; that pass now clears and merges the strip's width, not the screen's).
+- Analysis: 0.64 - 0.85 M, most of it widekit (`wk_layers_update` 0.2 - 0.5 M: it walks every run of lines with its own scroll; `wk_map_update` up to
+  0.6 M on the frames the screen shows other cells, nothing on the others). The name tables are reread only when the game wrote them (the core keeps the
+  list of written VRAM blocks). A layer whose lines scroll apart into more than 64 runs is not given to the map (starfield-donut: 1.98 M with it, 0.66 M without).
+- Compose: 0.69 - 0.86 M (0.99 M on the test cartridge, whose margins are all real noise), of which `wk_compose_lines` 0.44 - 0.47 M can be taken by the
+  helpers: the drawing thread's own share is about 0.39 M + a third of the lines = 0.54 M (1.6 ms) with two helpers, 0.86 M (2.4 ms) alone.
+- With the VDP worker off everything is on the emulating thread: xgm-player 4.74 M off, 5.33 + 0.70 = 6.03 M before, 5.15 + 0.70 = 5.85 M now (16.7 ms by the
+  model: one thread does not hold it, which is why the player runs the Mega Drive with the worker).
+- By the model every sample keeps the full real strips with the worker at 51 - 80 % of the frame. At the model's upper error bar (x1.5) wobble is over
+  (20 ms) and xgm-player at the line (16.2 ms): there the ladder in `md/vita/main.cpp` halves, then drops, the real strips in Auto, as before.
+
+The 8 bit consoles (no VDP worker by default: the analysis and the drawing of the learned strips are on the emulating thread):
+
+| game | emulation | analysis before -> now | compose before -> now | emulating thread, model |
+|---|---|---|---|---|
+| Master System test cartridge (`tools/sms_scroll_gen.py`), both sides learned on every line: the most there is to draw | 1.21 M | 0.002 -> 0.87 M | 0.51 -> 0.69 M | 5.9 ms |
+| Master System gaudream (homebrew, the left side learned) | 0.92 M | 0.002 -> 0.32 M | 0.44 -> 0.45 M | 3.5 ms |
+| Game Gear test cartridge | 1.16 M | 0.31 -> 0.34 M | 0.93 -> 0.70 M | 4.3 ms |
 
 Identity and cross-machine: `selftest.sh` section 11 (96 ROMs: picture inside the window, sound, state, RAM, wide view on / off, with and without the VDP worker thread),
-`arm_check.sh` (armhf == x86_64 with the wide view on too: picture, sound, RAM and the wide view's own decisions), `wide_pipe_proof` (through the picture pipe,
-direct drawing and copies, composed on a second thread: bit for bit the same composed pictures).
+11b (the same decisions on the worker thread and on the emulating thread; the worker's strip cache against a fresh draw of every cached strip: 1.4 M strips,
+0 different), 12 (the learned picture and the Mega Drive strips against the worlds of test cartridges, pixel by pixel: 0 wrong of 1.7 M, 1.7 M, 1.8 M and 1.1 M
+real margin pixels; on the Mega Drive samples 29.6 K learned cells shown, 26.1 K of them reached by the screen later, 0 a different cell), `arm_check.sh` (armhf ==
+x86_64 with the wide view on too: picture, sound, RAM and the wide view's own decisions), `wide_pipe_proof` (through the picture pipe, the VDP and the analysis on the
+worker, the compose on a second thread with its lines shared between three threads: bit for bit the pictures of one thread doing everything), the same under
+ThreadSanitizer (0 reports).
 
 Also found while building this: the core keeps some memory across `md_host_unload` / `md_host_load_mem` in one process (two loads of the same ROM can differ in a few
 pixels of a late frame); the player starts per game and `md_twin` runs one game per process, so nothing is affected; `wide_pipe_proof` runs each pass in its own process.

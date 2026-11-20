@@ -5,8 +5,23 @@
 - **Wide view for the Sega consoles.** The Mega Drive / Genesis, Master System, Game Gear and SG-1000 fill the Vita's whole width like the Super NES
   and NES do: the console's picture stays pixel exact in the middle and the sides show more of the game's world where that can be shown truthfully, and a soft
   continuation of the picture's edge where it cannot. Picture > Wide view: Auto (on, and it narrows the real sides on a busy game before it would cost a
-  frame), On, Off (the 4:3 picture back). Nothing the game does changes, with the view on or off. The Master System and SG-1000 upscale with xBR 3x now
-  (it steps down to 2x and sharp when the game needs the time); the Game Gear and the Mega Drive keep xBR 3x and 2x.
+  frame), On, Off (the 4:3 picture back). Nothing the game does changes, with the view on or off.
+  - **It remembers what you have seen.** On the Master System, the Game Gear and the Mega Drive the sides show the level you have already walked
+    through (the part that scrolled off, and the part ahead when you turn back), not only a soft edge. Master System games have nothing beside their
+    picture in the console itself, so there this is all of the real picture at the sides. Never a guessed tile: a remembered cell is shown only
+    while its graphics are unchanged and the level is recognised; otherwise the soft side. (SG-1000 games keep the soft sides.)
+  - **More of the Mega Drive picture is covered**: lines under a status window (the playfield behind it continues), and lines of games that scroll
+    columns of the picture up and down, where the columns at that edge move together.
+  - **It costs the game nothing**: the extra picture is drawn and judged on the picture thread while the game's own thread goes on, strips of a
+    picture that stands still are reused, and the last step is shared between the helper threads. By the model the heaviest test programs keep the
+    full real sides at 60 frames a second (not measured on a Vita; Auto still narrows the sides if a game ever needs the time).
+  - The Master System and SG-1000 upscale with xBR 3x now (it steps down to 2x and sharp when the game needs the time); the Game Gear and the Mega
+    Drive keep xBR 3x and 2x.
+- **Super NES wide view: the same picture for about half the work.** At the Vita's full width the wide view's own work is roughly halved (its
+  picture is bit for bit what it was): a side that shows the soft frame is no longer worked out on every frame, margin layers that never reach the
+  screen are not drawn, and the rest is shared with a helper thread. Rewind's snapshot is now written while the game waits for the screen instead of
+  before the frame is shown. By the estimates the heaviest games (Yoshi's Island, Kirby Super Star) can keep the full width more often; Super Mario
+  World and Super Metroid may still narrow it. Not yet measured on a Vita.
 - **The home screen appears at once.** The first frame no longer waits for
   the card to be searched for games: a card that takes a minute to read (a
   large card in a slow adapter) now shows "Finding games... N found" with the

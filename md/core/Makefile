@@ -69,6 +69,11 @@ check:
 $(B)/core/%.o: $(CORE)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CCORE) $(OPT) -c -o $@ $<
+# The .d files name their target the way B was spelled when they were written (relative or absolute): a build with the other spelling does
+# not see them. So the two dependencies a stale object would be wrong by are said outright: the worker's copy of the renderer is
+# vdp_render.c, and every object sees the VDP's shared structures (vdp_render.h: the wide view's line records) and the host's (host.h).
+$(B)/core/vdp_render_w.o: $(CORE)/vdp_render.c $(CORE)/vdp_render_w_names.h
+$(CORE_OBJS) $(B)/host.o: $(CORE)/vdp_render.h $(CORE)/vdp_thread.h $(CORE)/shared.h $(FE)/host.h
 $(B)/host.o: $(FE)/host.c $(FE)/host.h
 	@mkdir -p $(B)
 	$(CC) $(CHOST) -c -o $@ $<

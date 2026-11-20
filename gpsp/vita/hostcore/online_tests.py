@@ -1403,8 +1403,34 @@ def refuse_check(T, rig, fam, want, tag, no_join=True):
     T.picture(rig.rb, "B", "card.png")
 
 
+def different_file(T, fam):
+    """Link Cable consoles (GBA, GB, GBC) carry a partner's cartridge across the link (Ruby with Sapphire), so a joiner whose
+    copy of the game differs from the host's is not refused at the card: the session's own check has the last word, and
+    on both consoles the outcome must be a clean one (the host's file carried over, or a refusal)"""
+    a, _ = refuse_roms(T, fam)
+    b = _mutated(T, a, "other")
+    kind = "gba" if fam == "gba" else "gb"
+    rig = pair(T, "online_file_" + fam, rom=a, rom_b=b, kind=kind, a_end=78, b_end=76,
+               a_script=host_script(78) + L.shot(60, "late.png") + L.quit_at(78),
+               b_script=lambda code: join_script(code, L.shot(60, "after.png") + L.quit_at(76), press_join=True))
+    who = FAM_NAMES[fam]
+    T.S.note("%s: another file with the host's game code: %s" % (who, "the link formed (the host's file carried over)"
+             if rig.rb.has(r"link_running") else "the session refused it"))
+    T.clean(rig.rb, "B " + who)
+    T.clean(rig.ra, "A " + who)
+    c = rig.rb.evt("online_card")
+    T.check(c and c[-1].get("compatible") == "1", "B %s: the card is compatible (same game)" % who)
+    T.check(rig.rb.has(r"link_running") or rig.rb.has(r"gblink_(refused|end|need|rom)|link_ended|link_failed|link_fail_screen"),
+            "B %s: the session said what it made of another file" % who)
+    T.check(rig.ra.has(r"link_running") or rig.ra.has(r"gblink_(refused|end|need|rom)|link_ended|link_failed|link_fail_screen") or
+            rig.ra.has(r"link_online_failed"), "A %s: and the host ended cleanly too" % who)
+
+
 def refuse_game(T, fam):
-    """Another game: B's library has no copy of the host's game, so the card says to add it and nothing joins"""
+    """Another game: B's library has no copy of the host's game, so the card says to add it and nothing joins (Link Cable
+    consoles: the copy that differs is carried across the link, see different_file)"""
+    if fam in ("gba", "gb", "gbc"):
+        return different_file(T, fam)
     rig = refuse_pair(T, fam, "online_game_" + fam, rom_b="other")
     if rig:
         refuse_check(T, rig, fam, "ONLINE_GAME", "(another game)")

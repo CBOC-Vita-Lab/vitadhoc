@@ -59,6 +59,13 @@ The normal picture is drawn by the unchanged code first.
   valid for three further frames). In split mode the drawing thread uses the pointer that `snes_wide_compose` returns (valid until the third
   next compose; the player copies it into a texture at once). Control calls (`snes_wide_set`, `snes_wide_split`, options, game, map) are
   for the thread that runs the frames, between frames; `snes_wide_set` / `_split` wait for the PPU thread and for a running compose.
+* Compose is one part that a single thread does (description, widekit's layer and map analysis, the Auto decision) and one part per picture
+  line (candidates, widekit's composition, exact composite, ambient frame). `snes_wide_parallel(fn, user, n)` lets the frontend share the lines
+  between up to 4 threads: the adapter calls `fn(user, job, arg, n)`, which must run `job(arg, w)` for w = 0 .. n - 1 (w = 0 on the caller) and
+  return when all have returned; the workers take lines in chunks of 8 until none are left. A line is done by one worker and writes only its
+  own rows, and what a worker keeps (scratch rows, the soft row cache, the memo of map cells, the sums for the census) is its own, so the
+  picture does not depend on who did which line (`snes_wide_twin --wide-workers N`: the hashes of one thread). The Vita player gives its
+  scaler helper threads (one on three cores, two with the fourth core) as workers 1 and 2; a helper that wakes late finds no line left and does nothing.
 * The learned map belongs to compose. All access to it (compose, `snes_wide_map_save/load/dirty/mark_saved`, census, options) is
   under the adapter's one spin lock, which compose holds for the whole frame: a map save requested while compose runs waits for that frame
   (at most one compose time), and a compose that wants to start while the map is serialised waits for the serialisation (measured below,
@@ -313,8 +320,8 @@ Cost after (Minstr per frame; frames 1500..1560, owner's script; before in brack
 | Kirby Super Star (SA-1) | 6.25 | 12.76 (14.13) | 5.13 (6.50) | 16.15 (18.07) | 7.71 (9.63) | 1.38 |
 
 "Emulation side extra" is the core's margin passes plus the capture (total minus off minus compose); it is not changed by this step. Compose is
--10 to -28 % at margin 41. The per-margin-pixel target (under 100 instructions) is **not reached** (about 240 to 260 now); the W4 steps that
-change the core (merging margin batches across lines, one margin pass with a tag byte, caching the strip between frames) are **not done**.
+-10 to -28 % at margin 41. The per-margin-pixel target (under 100 instructions) was not reached by this step (about 240 to 260); the next section
+("Full width") is the step after it and has the numbers that hold now.
 
 Per thread on the Vita (model: x86 instructions counted as ARM instructions at 444 MHz, IPC 1.0 / 0.7; ms per frame; core (off) is the sum of
 CPU, PPU and APU work of the whole game and is shared between threads there; the draw thread also runs the scaler and the upload):
@@ -348,5 +355,126 @@ view off, at margin 41 (xBR 2x and MMPX 2x) and at 96 (xBR 2x), 1500 frames each
 not copy the part of Snes9x's 512 KB cartridge RAM block that cannot hold anything (a plain cartridge: beyond `SRAMMask`; Super FX beyond 128 KB;
 SA-1 beyond 264 KB, each checked at every capture, and the whole block is written from then on if a byte is found there) and skips the sizing pass.
 Bytes copied per capture: about 300 KB (plain), 430 KB (Super FX), 580 KB (SA-1) instead of 823 KB. Host instructions per capture 1.16 M -> 0.53 M
-(callgrind, Super Mario World). On the Vita this is an estimate: about 0.5 to 1.2 ms of the game thread for the heavy games, not yet "well under 0.5 ms";
-the next step would be a dirty page capture or capturing where the game thread waits for the other threads.
+(callgrind, Super Mario World). On the Vita this is an estimate: about 0.5 to 1.2 ms of the game thread for the heavy games. See "Rewind capture, second
+step" at the end of this file for where that time now goes and for the bound of the SA-1's RAM.
+
+## Full width: compose by lines, fewer margin passes (20 Nov 2026, second step; host x86_64 callgrind and a model, nothing here ran on a Vita)
+
+Goal: the full Vita width (margin 96) on the heaviest games without the cost ladder having to narrow it. What was done, each proven to leave the
+wide picture bit for bit as it was (the proofs are listed below):
+
+1. **Compose is per line and can be shared between threads** (`cand_line`, `out_line`, `fin_line` in `snes/frontend/wide.cpp`;
+   `wk_compose_begin / _lines / _end` in widekit; `snes_wide_parallel`, see Threading). Inside a line both margins are held by distance from the
+   picture and the left one is turned round once at the end.
+2. **Row kernels** in widekit (`wk_soft_row`, `wk_copy_masked`, `wk_fill_masked8`, `wk_or_nz8`, `wk_nz8`, `wk_rev16/8`, `wk_mix565_row`, and the
+   blend): 8 pixels a step, written once with GCC vector types, so the Vita build is NEON and the host build SSE2 (the host count is then like
+   the Vita's); the plain C versions are the definitions (`make -C widekit test`, and `arm-check` under qemu: 40,000 runs, 0 different).
+3. **Less repeated work**: the learned map's answer for a cell is asked once per tile row, layer and side instead of once per line (adapter memo;
+   the same in `wk_map_serve`); a tile row is decoded from the bit planes through a table; the ambient row is made by the soft row kernel instead
+   of a cache that missed every frame; the soft learned pixels are blended a run at a time; the census counts through a histogram.
+4. **A side that shows the ambient frame is not composed on the frames whose coverage is not counted** (option `lazy`, default on). Auto counts
+   the coverage on every second frame and can only change its mind there, so on the frames between a side that is ambient and not fading shows
+   none of its composed pixels and nothing reads them later. The extents, the trimming by the learned map and widekit's hysteresis still advance
+   for that side (`wk_compose_in.side_skip`), so the frame on which Auto turns the side back on is composed from the same state. One thing is not
+   kept: the "previous row" a ghost fade (3 frames after a layer's extent shrank by 12 px or more) blends from; such a ghost in the first frames
+   of a cross-fade out of the ambient frame is marked in the provenance as before but not blended (its weight in the picture would be at most
+   3/32 of 24/32). On the 15 games (2 x 45,000 frames) this never changed a pixel: the hashes with `lazy` on, off and of the tree before are equal.
+   The heavy games spend most of their time there: Yoshi's Island and Kirby Super Star show the ambient frame on 81 to 82 % of the first 1560 frames
+   of the script at margin 96, Super Mario World on 53 to 62 % (left / right), and that is also where compose cost most (many lines whose tilemap ring is shorter than the margin).
+5. **Margin passes the adapter never reads are not drawn** (`snes/core/gfx.cpp`, `SWideLine.pflags`; every edit is in `core/PROVENANCE.md`). The
+   core applies the adapter's own rules to the line record it has just written:
+   - windows, colour math on a layer or clip-to-black (the adapter shows only the composite and the sprite pass there): the BG passes are left out
+     (composite + sprites: 2 passes instead of up to 6);
+   - no window and no colour math: the composite is left out; the adapter builds the columns it shows from the sprite and BG passes by the depth
+     byte each pass keeps per pixel (`derive_composite`);
+   - colour math on the backdrop alone (Super Mario World, Yoshi's Island: a sky gradient with a far layer on the sub screen): the composite pass
+     is drawn with the sub screen and the backdrop only, the main screen's layers are laid over it by depth, and with one sub screen layer that
+     picture is also that layer's pass (4 passes instead of 5, and the heaviest one without its main layers).
+   `verify_cache=1` makes the core draw the whole composite as well and the capture compares it with what would be built, over the whole margin
+   of every such line.
+6. Small: the palette hash is kept across batches; the margin strips of the pass depth buffers are cleared as one run per row at wide margins.
+
+W4 of the performance design, honestly: step 4 (compose cost) is continued by 1 to 4 above. Step 1 (one margin pass with a tag byte) is done in
+another form, 5 above: fewer passes, the depth byte as the tag; a single pass is not possible without changing the picture because compose needs
+each layer's own pixels under the layers above it (the fade of a foreground whose extent is shorter). Step 2 (merging margin batches across
+lines) is **not done**: in the measured scenes the heavy games have 1 to 9 batches a frame, so it would gain nothing there; a game with a batch
+per line (a line by line HDMA effect) still pays a call per line and pass. Step 3 (caching the strip between frames) is **not done**. Also **not
+done**, and the one thing that would take the margin passes off the PPU thread: a third copy of the renderer on its own thread that replays the
+same slots and draws only the margins (the slot ring would need a second reader, `rcopy.sh` a second rename map).
+
+Cost now (Minstr per frame; frames 1500 to 1560 of the owner's script; in brackets the start of this step, same method). "Counted frame" is a frame
+whose coverage is counted (`lazy=0`: every frame is composed whole), the dearest kind:
+
+| game | off | margin 41: total | compose, average / counted frame | core's passes + capture | margin 96: total | compose, average / counted frame | core's passes + capture |
+|---|---|---|---|---|---|---|---|
+| Yoshi's Island (Super FX) | 7.84 | 11.34 (13.71) | 2.51 / 3.01 (4.46) | 0.99 (1.41) | 12.68 (18.27) | 3.31 / 4.19 (8.02) | 1.53 (2.41) |
+| Super Mario World | 6.95 | 11.31 (13.95) | 2.79 / 3.31 (4.77) | 1.57 (2.23) | 13.14 (19.24) | 3.33 / 4.02 (7.97) | 2.86 (4.32) |
+| Super Mario Kart | 5.00 | 8.96 (10.75) | 2.67 / 2.94 (3.82) | 1.29 (1.93) | 10.36 (14.26) | 3.20 / 3.50 (5.93) | 2.16 (3.33) |
+| Super Metroid | 6.96 | 9.51 (9.97) | 0.95 / 0.95 (1.41) | 1.60 (1.59) | 11.35 (12.57) | 1.19 / 1.19 (2.40) | 3.20 (3.21) |
+| Kirby Super Star (SA-1) | 6.25 | 10.03 (12.76) | 2.85 / 3.58 (5.13) | 0.93 (1.38) | 10.94 (16.15) | 3.32 / 4.19 (7.71) | 1.37 (2.19) |
+
+Per margin pixel (2 x margin x 224 pixels), compose: at margin 96 about 74 to 77 instructions on average and 81 to 97 on a counted frame (was 138 to
+186; Super Metroid 28, was 56); at margin 41 about 137 to 155 on average and up to 195 on a counted frame (was 208 to 279; Super Metroid 52). The
+target of the design (under 100) is met at the full width and **not at margin 41**: about 1.1 to 1.4 M of compose is work per frame, not per pixel
+(layer description, widekit's analysis, the learned map, the ambient colours). Of a counted frame at margin 96, 2.4 to 3.0 M is the per line part
+that the workers share.
+
+Per thread on the Vita (model: x86 instructions counted as ARM instructions at 444 MHz, IPC 1.0 / 0.7; ms per frame, 16.7 is a 60 Hz frame; CPU =
+65816, cartridge chip, DMA, PPU registers; PPU = the renderer, the margin passes and the capture; draw = compose of a counted frame at margin 96,
+alone and with one helper sharing the lines; the draw thread also has the scaler, about 3 ms typically, and the upload, 1.5 ms):
+
+| | CPU | PPU, wide off | PPU, margin 41 | PPU, margin 96 | APU | compose 96, alone | compose 96, one helper |
+|---|---|---|---|---|---|---|---|
+| Yoshi's Island | 7.7 / 11.0 | 5.4 / 7.8 | 7.5 / 10.6 | 8.7 / 12.4 | 4.5 / 6.5 | 9.4 / 13.5 | 6.0 / 8.6 |
+| Super Mario World | 4.3 / 6.2 | 5.9 / 8.5 | 9.2 / 13.2 | 12.2 / 17.4 | 5.4 / 7.7 | 9.1 / 12.9 | 6.1 / 8.7 |
+| Super Mario Kart | 3.2 / 4.6 | 3.4 / 4.8 | 6.1 / 8.7 | 8.0 / 11.4 | 4.7 / 6.7 | 7.9 / 11.3 | 5.2 / 7.4 |
+| Super Metroid | 3.0 / 4.3 | 8.3 / 11.8 | 11.7 / 16.7 | 15.3 / 21.9 | 4.4 / 6.3 | 2.7 / 3.8 | 1.7 / 2.4 |
+| Kirby Super Star | 6.9 / 9.8 | 2.4 / 3.5 | 4.3 / 6.2 | 5.3 / 7.6 | 4.8 / 6.8 | 9.4 / 13.5 | 6.2 / 8.8 |
+
+Reading it. At IPC 1.0 every thread of the five games fits a 60 Hz frame at the full width (Super Metroid's PPU thread with 1.4 ms to spare). At
+IPC 0.7 the draw thread fits with a helper (about 13 ms with the scaler and the upload; alone it does not for Yoshi's Island, Super Mario World and Kirby), the
+CPU and APU threads fit, and the PPU thread of Yoshi's Island, Mario Kart and Kirby fits; **the PPU thread of Super Mario World (17.4 ms) and of
+Super Metroid (21.9 ms) does not fit at margin 96**, and Super Metroid's is at the limit at margin 41 (16.7 ms): there the player's pacing reports
+pressure and the ladder narrows the margin, as before. Which IPC is the Vita's is not known; the first console run decides. What would remove the
+PPU thread's share is the renderer copy for the margins named above. The helper is the scaler's (one on three cores, on the core the plan gives it,
+two with the fourth core); how much of a frame it really gets there is also for the console run to show (the player's log has `wide_lines jobs= helped=`).
+
+Proofs of this step (x86 twin, final tree; the owner's 15 games, 3000 frames of the pad script each):
+- wide picture: the per frame hashes of the whole wide picture, its centre and the claimed real extents, and of the normal picture, are equal to
+  those of the tree before this step, margins 41 and 96, all 15 games (30 runs, 90,000 frames); the same with 3 line workers and with `lazy=0`
+  on five games at margin 96 (10 runs);
+- `verify_cache=1`, margins 41 and 96, 15 games: 35.1 M checks (ring walk, ambient rows, and the built composite against the drawn one), 0 different;
+- `wide_compare.py` against the tree before the wide view: frames, audio and state identical, single thread and with the PPU and APU threads,
+  margin 41, and margin 96 with 3 line workers: 15 identical each;
+- ThreadSanitizer, 900 frames at margin 96 on Super Mario World, Yoshi's Island and Kirby Super Star and 600 at margin 41 on Super Metroid and Super
+  Mario Kart, each as single call, 3 line workers, capture / compose split with 3 workers, and split with the PPU and APU threads and 4 workers
+  (with map save / census calls from the frame thread): same hashes in all four, 0 reports;
+- `selftest.sh` 58 passed, 0 failed (truth ROMs: 0 wrong real pixels; ladder floor; pressure; player test); `make -C widekit test` 1101 checks,
+  0 failed; `arm-check` (NEON kernels and whole frames against the host) equal; NES `wide_golden.sh` with `WG_VERIFY=1`: 37 files match;
+  `make -C playerkit test` 252 tests, 0 failed; `scale_proof` (xBR 2x of the wide picture at margin 96, 900 frames, three heavy games): 0 mismatches;
+- the armhf build (NEON kernels) of `snes_wide_twin` under qemu-arm, margin 96, 2 line workers, 3000 frames, on Super Mario World, Kirby Super Star,
+  Yoshi's Island, Super Metroid and Super Mario Kart: wide and normal hashes equal to the x86 reference tree.
+
+Not proven: anything on a Vita. The player's side of the line workers (`wide_pfor` in `snes/vita/main.cpp`, the scaler's helpers) is compiled for
+the Vita and follows the twin's tested scheme, but has not run; its log line `wide_lines jobs= helped=` shows per second how many line jobs there
+were (three a frame) and how many a helper joined. Memory: each of the four workers keeps about 105 KB (rows and a 512 row soft row cache).
+
+## Rewind capture, second step (20 Nov 2026)
+
+- **Where it runs.** The player no longer writes rewind's state between the end of the frame and the hand-over of its picture. `pk::Speed` has an
+  opt-in (`set_defer_capture`): `run_frame()` only notes that a frame ran, and the platform calls `capture_idle(late)` once per refresh at the
+  point where the game thread has handed the picture and the sound on and would only wait for the next refresh. A pass that has already missed
+  its refresh puts the capture off, at most 8 passes in a row. The state written is the machine's at that moment on the same thread (nothing
+  emulates in between), and the frames count towards the interval as before (playerkit tests: the same states are captured as inline; put off
+  but not for ever). So the copy (still about 300 KB plain, 430 KB Super FX, 570 KB SA-1; estimated 0.5 to 1.2 ms) is no longer on the frame's
+  path: it costs the frame nothing while the game thread has that much time left before the refresh (by the model it has 5 ms or more in the heavy
+  games), and at most one late pass in nine otherwise. A dirty page capture is **not done** (the SNES RAM and the chips' RAM have no write hook).
+- **The SA-1 bound, decided.** 264 KB was a hint with a scan of the rest of the 512 KB block at every capture (reading 250 KB to save writing
+  it). The bound is now derived (the comment above `g_rw_ext` in `snes/frontend/host.cpp` lists every access path): the SA-1 and the 65816 reach
+  the block below 256 KB except through the SA-1's bitmap view of the $6000 window, whose highest byte is 0x407FF, and through the SA-1's DMA into
+  BW-RAM, which ends below twice the header's RAM size. A capture writes max(0x41000, 2 x RAM size) bytes of the block (260 KB for the usual
+  8 to 64 KB cartridges; the whole block when the header says 256 KB). The scan is kept as a net, not as the proof: at the first capture after
+  rewind opens and after every state load, and every 32nd capture for the chip cartridges; a byte found there makes every later capture write the
+  whole block. Checked on Kirby Super Star, Super Mario RPG (SA-1), Yoshi's Island, Stunt Race FX, Doom (Super FX), Super Mario World and Super
+  Metroid: 300 captures each equal the whole state byte for byte, the part left out stays zero, and a byte put there by hand with a state load is
+  found by the next capture (`player_twin costs`, 621 checks each, 0 failed).

@@ -67,13 +67,26 @@ A player that shows the console's picture as wide as its screen asks the core fo
 picture in the original window, the sound, the state and the RAM are bit for bit the same with it on or off, with the VDP worker thread too).
 
 - `md_host_set_framebuffer(canvas + MD_WIDE_MAX, MD_WIDE_PITCH)`: a buffer with `MD_WIDE_PITCH` (512) pixels a row, the picture at column `MD_WIDE_MAX` (96), room for strips on both sides.
-- `md_host_set_wide_margin(m)`: Mega Drive: the VDP draws `m` (0..96) more pixels on each side of every line it can (mode 5, not interlaced, no window plane
-  segment, uniform vertical scroll, display on): the planes and the sprites beyond the edge, at columns -m..-1 and w..w+m-1 of the row. The 8 bit systems: any `m > 0` keeps
-  the per line records the analysis needs (their tile map is exactly the screen wide, so there is nothing to draw beside the picture).
+- `md_host_set_wide_margin(m)`: Mega Drive: the VDP draws `m` (0..96) more pixels on each side of every line it can (mode 5, not interlaced, display on): the planes and
+  the sprites beyond the edge, at columns -m..-1 and w..w+m-1 of the row. On the side of a line the window plane takes, the strip is drawn without plane A (plane B and
+  the sprites go on; the window plane never does) and only where the window's two cells at that edge are empty. With per 2-cell vertical scroll a side gets its strip
+  only where the three columns next to that edge scroll alike; the strip scrolls like the edge column. `md_wide_line.side` says per line which strips were drawn and how.
+  The 8 bit systems: any `m > 0` keeps the per line records the analysis needs (their tile map is exactly the screen wide, so there is nothing to draw beside the picture).
 - `md_host_set_wide_planes(mask)`: bit 0 plane A, bit 1 plane B (default 3): a plane left out is not drawn into the strips (it is transparent there); `md_wide_frame.opq` says which strip pixels are opaque.
-- `md_host_wide_frame(&f)`: after the frame, what the analysis needs: per line what the VDP scrolled by and where its name tables are (`line[]`), the VRAM, VSRAM, CRAM and registers.
+- `md_host_wide_run(fn, user)`: after `md_host_run_frame()`, on the emulating thread: `fn(user, &frame)` gets what the analysis needs (per line what the VDP scrolled by,
+  where its name tables are and which strips it drew (`line[]`), the opaque masks, the VRAM, VSRAM, CRAM, the registers, the 8 bit palette of line 0, and the list of the
+  32 byte VRAM blocks written since the last call). With the VDP worker running `fn` runs on the worker thread and the call returns at once: the emulating thread does
+  not pay for the analysis; nothing of the next frame is drawn before `fn` has returned; `md_host_wide_join()` (and the end of the next frame) wait for it. Without the
+  worker `fn` runs before the call returns. What `fn` sees is the same either way.
+- `md_host_wide_row(plane, row, addr, words, n)` / `md_host_wide_rows_clear()` (inside `fn` only): learned rows. The strips of the next frames are drawn from `words` instead
+  of the VRAM row at `addr` for as long as the game leaves that VRAM row as it is; a line drawn from one says so (`MDS_OVR_A/B`). This is how cells the player has seen
+  before come back beside the screen through the VDP's own renderer (priorities, the other plane, sprites and shadow / highlight as on the screen).
+- `md_host_wide_cache(on, check)`, `md_host_wide_cache_stat(out)`: the worker renderer copies a line's strips from the last frame while nothing they are drawn from has
+  changed (on with the worker); `check` draws anyway and counts differences (0 on every test ROM: `selftest.sh` 11b).
 - Option `gg_band` (Game Gear): the picture is 256 x 144 (square pixels, the LCD window in columns 48..207) instead of the 160 x 144 window; the same machine.
-- `md/frontend/wide.h` (`mdw::Wide`) is the adapter over widekit: `analyse()` on the emulating thread after the frame, `compose()` on the drawing thread; md/vita/main.cpp and md/twin/wide_pipe_proof.cpp show the hand-over.
+- `md/frontend/wide.h` (`mdw::Wide`) is the adapter over widekit: `frame()` on the emulating thread after the frame hands it to the analysis (`md_host_wide_run`),
+  `compose()` (or `compose_begin` / `compose_lines` / `compose_end` with the lines shared between threads) on the drawing thread, which waits for the analysis if it has
+  not finished; md/vita/main.cpp and md/twin/wide_pipe_proof.cpp show the hand-over. `analyse()` is `frame()` + wait for callers with one thread.
 
 ## Options (`md_host_set_option(name, value)`)
 

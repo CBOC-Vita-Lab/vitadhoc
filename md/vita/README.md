@@ -154,21 +154,49 @@ same with the view on or off, with and without the VDP worker thread (`selftest.
 
 | Console | Margin per side | What is beside the picture |
 |---|---|---|
-| Mega Drive / Genesis | 51 px (H40) at the Original shape, about 41 px (H32) (at most 96; `pic_wide_margin` of the player's 960x544 screen) | the VDP draws a narrow strip beside the picture for every line: the planes and sprites that exist beyond the edge (`core/vdp_render.c`, `wide_line()`, in the VDP worker's copy too); `md/frontend/wide.cpp` hands the name tables of planes A and B to widekit (`wk_layers`: what is the level, the backdrop, a HUD), and `wk_compose` shows the strip where widekit trusts it and fades into the soft extension where it does not. A plane widekit does not trust (a fixed HUD plane) is left out of the strip, so the soft extension and the sprites show there |
-| Game Gear | 25 px at the Original shape (at most 48) | the VDP always draws 256 x 192 and the LCD shows the middle 160 x 144; the wide view draws the 256 columns of the LCD's rows (`gg_band`: the same machine, nothing else changes) and fades out where the game leaves stale tiles beside its window |
-| Master System, SG-1000 | 41 px at the Original shape | the tile map is exactly the screen wide, so nothing exists beside the picture: the soft extension only |
+| Mega Drive / Genesis | 51 px (H40) at the Original shape, about 41 px (H32) (at most 96; `pic_wide_margin` of the player's 960x544 screen) | the VDP draws a narrow strip beside the picture for every line: the planes and sprites that exist beyond the edge (`core/vdp_render.c`, `wide_line()`, in the VDP worker's copy too). `md/frontend/wide.cpp` hands the name tables of planes A and B to widekit (`wk_layers`: what is the level, the backdrop, a HUD; which columns the game has shown or written) and `wk_compose` shows the strip where every plane in it is trusted and fades into the soft extension where it is not. A plane widekit does not trust (a fixed HUD plane) is left out of the strip, so the other plane, the sprites and the soft extension show there. **Learned picture**: cells the game showed earlier at the world columns now beside the screen (`wk_map`) are written into copies of the name table rows (`md_host_wide_row`) and the VDP draws the strips from those, with the other plane and the sprites as on the screen; a strip pixel counts as real only when the row it was drawn from is the row the map vouches for at analysis time |
+| Master System | 41 px at the Original shape | the tile map is exactly the screen wide, so nothing exists beside the picture in the console: the strips are the **learned picture** only, drawn by `wide.cpp` from the cells the picture has shown (`wk_map`), with the tile graphics and palette of the frame, and only while a cell's tile graphics are what they were when it was seen. Where a game masks the first 8 columns, those show the learned picture too on the lines whose left strip is real (the border colour stays on the others), and the soft extension continues the picture, not the border |
+| Game Gear | 25 px at the Original shape (at most 48) | the VDP always draws 256 x 192 and the LCD shows the middle 160 x 144; the wide view draws the 256 columns of the LCD's rows (`gg_band`: the same machine, nothing else changes) as far as the name table can be trusted, then learned cells, then the soft extension |
+| SG-1000 | 41 px at the Original shape | the soft extension only (no scroll registers: there is no place to learn the picture by) |
 
-Lines with a window plane, a per 2-cell vertical scroll, interlace or the display off get no strip (soft extension); a linked two-player game never widens its picture.
+Lines the Mega Drive strips cover (2.0): every mode 5 line that is not interlaced. Under a **window plane** the side the window takes gets a strip
+without plane A (the window is never continued; plane B and the sprites are) where the window's two cells at that edge are empty, and no strip where a
+panel reaches the edge. With **per 2-cell vertical scroll** a side gets its strip where the three columns next to that edge scroll alike (and the partly
+shown left-most column too); the strip scrolls like the edge column. A linked two-player game never widens its picture.
 
-**Never costs a frame**: on the emulating thread the strips cost the VDP about 15 percent of a Mega Drive frame (host) plus the analysis (about 40 K
-instructions, 0.05 ms host); the compose runs on the drawing thread. A three rung ladder (`main.cpp`, `wide_cost_update`) watches the smoothed cost of the
-emulating thread's frame against the frame time: over 80 percent of it the real strips are halved (rung 1), then dropped (rung 2: soft extension only); under 55
-percent for 240 frames it steps back. "On" keeps rung 0. A line log `wide: margin= strips= rung= analyse_us/fr= compose_us/pic= real= soft_lines= ...` appears each second.
+**Who does what** (the point is that the emulating thread pays nothing):
 
-**Not done, said plainly**: the learned map (the SNES player remembers what it saw of a level and shows it before the player gets there) is not implemented for any Sega
-console: on the Mega Drive the real strip beside the lead side of a scroll is only as far as widekit trusts the name table without a map (a few to a few tens of pixels),
-the Master System and SG-1000 have the soft extension only. A Game Gear test ROM with real content was not available: the band was checked with a
-purpose written scrolling test program and with Master System ROMs forced to the Game Gear. Nothing has run on a Vita.
+| Step | Thread | Cost, model (350 M instructions a second; host callgrind counts; x1.5 either way; not measured on a Vita) |
+|---|---|---|
+| strips | the VDP worker, inside its line pass; a line's strips are copied from the last frame while nothing they are drawn from changed | 0.14 - 1.13 M instructions a frame (0.4 - 3.2 ms): 0.6 M on a platformer, 1.1 M with shadow / highlight on every line |
+| analysis (name tables, `wk_layers`, `wk_map`, the learned rows, what is real) | the VDP worker, after the frame's last line, while the emulating thread goes on (`md_host_wide_run`); the name tables are reread only when the game wrote them, the map only when the screen shows other cells | 0.64 - 0.85 M (1.8 - 2.4 ms). Without the worker (the 8 bit consoles by default) it runs on the emulating thread: 0.31 - 0.87 M on a Master System game that takes 0.9 - 1.2 M itself |
+| hand-over | the emulating thread | under 2 K instructions (it was the whole analysis, 0.63 - 0.85 M, 1.8 - 2.4 ms) |
+| compose (`wk_compose`) | the drawing thread; the lines are shared with the scaler's helper threads (`compose_begin / compose_lines / compose_end`) | 0.69 - 0.86 M in all (it was 0.75 - 0.93 M), of which 0.47 M are lines any helper can take: 0.54 M (1.6 ms) on the drawing thread when two helpers take their share |
+
+Heaviest samples, wide view on at full width, per thread (model): xgm-player emulating thread 7.4 ms, VDP worker 10.8 ms; h-int/wobble 7.0 / 13.4 ms;
+starfield-donut 6.9 / 10.9 ms; platformer 8.3 / 8.6 ms; bad-apple 7.1 / 7.1 ms; against 16.7 ms. Before this work the frame was over when the worker
+had finished and the emulating thread had analysed after it: 11.3, 16.1, 10.9, 10.2 and 9.4 ms for the same five. Table and method: `md/twin/baseline_results.md`.
+
+**The ladder stays as the safety net**: `main.cpp`, `wide_cost_update` watches the smoothed time of the emulating thread's frame (emulation and the wait for
+the worker, so a worker that is too busy shows) against the frame time: over 90 percent the real strips are halved (rung 1), then dropped (rung 2: soft
+extension only); under 62 percent for 240 frames it steps back. "On" keeps rung 0. By the model no measured ROM reaches the line; at the model's upper error
+bar (x1.5) wobble does and xgm-player comes close. A log line `wide: margin= strips= rung= handover_us/fr= compose_us/pic= real= soft_lines= map_cells= map_px= rows=
+strips_copied= drawn= compose_chunks_by_helpers=` appears each second.
+
+**Proof that the sides are true** (`selftest.sh` section 12, tools in `md/twin/tools`): test cartridges written for the purpose, whose worlds are known
+functions (Master System with and without the masked columns, Game Gear, and a Mega Drive cartridge with a window plane and per 2-cell vertical scroll),
+are played through a script of scrolling out and back and every margin pixel shown at full weight as real is compared with the world: 0 wrong of 1.7 M
+(Master System), 1.7 M (the same without the mask), 1.8 M (Game Gear) and 1.1 M (Mega Drive) pixels. On the Mega Drive samples every learned cell shown
+beside the screen is compared with the cell the game shows when the screen gets there (`md_twin --wide-check`): 0 different. The worker's strip cache
+is compared with a fresh draw of every cached strip (`--wide-cache-check`): 0 different on the 96 test ROMs. What the analysis decides is the same on the worker
+thread and on the emulating thread (`selftest.sh` 11b), on armhf and x86 (`arm_check.sh`), and through the picture pipe with the compose shared between three
+threads (`wide_pipe_proof`, also under ThreadSanitizer).
+
+**Not done, said plainly**: the learned picture lasts for the play session (no file; a state load, a rewind or a reset forgets it) and shows only cells
+seen since the level was recognised (the Super NES player also shows older memories at half strength). SG-1000 has no learned picture. Master System
+games in the 224 / 240 line modes, or with the right 8 columns scrolling apart, get the soft sides. The Mega Drive's interlaced modes get the soft sides.
+On lines whose columns scroll apart vertically the learned rows are not used (the strip is the ring's own content or nothing). No commercial ROM and no real
+Game Gear or SG-1000 ROM was available: the 8 bit learned picture was tested with Master System homebrew and the test cartridges. Nothing has run on a Vita.
 
 ## Hooks left in place
 

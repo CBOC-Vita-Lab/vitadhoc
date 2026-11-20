@@ -934,7 +934,8 @@ static int run_look_test(const char *rom, const std::string &work)
 	std::string a, b;
 	{
 		snesp::SnesPlayer *pl = run(work + "/look1", 40, 0, false, 444, &a, false);
-		EXPECT(pl->look().level() == 2);
+		EXPECT(pl->look().level() == 3);                 /* the pixel art scaler first, then the interlace and the hi-res blend */
+		EXPECT(pl->look().applied(snesp::SnesPlayer::LOOK_SCALER) && pl->look().applied(snesp::SnesPlayer::LOOK_ILACE) && pl->look().applied(snesp::SnesPlayer::LOOK_HIRES));
 		EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0 && pl->picture().wide == 0);   /* wide stays Auto */
 		pl->finish(EXIT_NORMAL);
 	}
@@ -955,7 +956,7 @@ static int run_look_test(const char *rom, const std::string &work)
 	{
 		std::string c;
 		snesp::SnesPlayer *pl = run(work + "/look3", 40, 0, true, 444, &c, false);
-		EXPECT(pl->look().level() == 1);                 /* interlace blend only: hi-res blend was set to Off by hand */
+		EXPECT(pl->look().level() == 2);                 /* the scaler and the interlace blend: hi-res blend was set to Off by hand */
 		EXPECT(pl->picture().hires_blend == 0 && pl->picture().interlace_blend == 0 && pl->picture().wide == 0);
 		EXPECT(!pl->look().applied(snesp::SnesPlayer::LOOK_HIRES));
 		pl->finish(EXIT_NORMAL);

@@ -9198,6 +9198,63 @@ static void rom_side_add(int c, const char *rel, const char *file,
  * Directories are walked because sorting a library into folders is the
  * obvious thing to do with one, and 2.0 ignored every one. */
 #ifdef VITA
+/* ---- the first frame while the library is read (#17) --------------------
+ * A cold cache walks every folder, and on a slow card that was a minute of
+ * black screen (one report: 50.6 s on uma0:).  The walk now gives the screen
+ * back about thirty times a second: a page that says what is happening, how
+ * many games it has met and the last one, and CIRCLE stops it (the games
+ * found so far are listed; that partial list is not cached, so the next visit
+ * reads the card again).  A card that has not finished in SCAN_BUDGET_US is
+ * stopped the same way.  A directory that does not answer cannot be
+ * interrupted from here: an absent mount fails at once and is skipped. */
+#define SCAN_UI_TICK_US  33000u
+#define SCAN_BUDGET_US   240000000u
+static int         g_scan_ui;          /* 1: draw while walking            */
+static unsigned    g_scan_ui_t0, g_scan_ui_last, g_scan_ui_frames;
+static int         g_scan_stop;        /* 1 player stopped it, 2 too slow  */
+static unsigned    g_scan_first_us = (unsigned)-1, g_scan_input_us = (unsigned)-1;
+static char        g_scan_last[48];    /* the latest game met              */
+
+static void scan_ui_frame(void)
+{
+   char msg[64];
+   vid_overlay_begin(1);
+   page(UI_APP_NAME, NULL);
+   snprintf(msg, sizeof(msg), "Finding games... %d found", g_rom_found);
+   vid_text_center(104, msg, C_SEL);
+   vid_text_center(134, g_scan_last[0] ? g_scan_last : "Reading the memory card",
+                   C_ITEM);
+   vid_text_center(178, "CIRCLE: stop and show what is found", C_ITEM);
+   vid_overlay_end();
+   sceDisplayWaitVblankStart();
+   vid_swap();
+   g_scan_ui_last = sceKernelGetSystemTimeLow();
+   g_scan_ui_frames++;
+   if (g_scan_first_us == (unsigned)-1)
+      g_scan_first_us = g_scan_ui_last - g_scan_ui_t0;
+}
+
+static void scan_ui_tick(void)
+{
+   unsigned now;
+   SceCtrlData pd;
+   if (!g_scan_ui)
+      return;
+   now = sceKernelGetSystemTimeLow();
+   if (now - g_scan_ui_t0 > SCAN_BUDGET_US && !g_scan_stop)
+      g_scan_stop = 2;
+   if (g_scan_ui_frames && now - g_scan_ui_last < SCAN_UI_TICK_US)
+      return;
+   sceCtrlPeekBufferPositive(&pd, 1);
+   if (g_scan_input_us == (unsigned)-1)
+      g_scan_input_us = now - g_scan_ui_t0;
+   if ((pd.Buttons & PSP_CTRL_CIRCLE) && !g_scan_stop)
+      g_scan_stop = 1;
+   scan_ui_frame();
+}
+#endif
+
+#ifdef VITA
 /* 2.0: a name ending ".bin" is a Genesis game only when the file's bytes say
  * so (SEGA at 0x100 or an SMD header): rom_bin_ok asks the app.  A ".md" is asked too: a README.md is not a game. */
 static int ui_name_is_bin(const char *nm)
@@ -9250,6 +9307,14 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
 #endif
    while ((read_rc = sceIoDread(d, &ent)) > 0)
    {
+#ifdef VITA
+      scan_ui_tick();
+      if (g_scan_stop)
+      {
+         g_rom_scan_io_errors++;     /* partial: never cached */
+         break;
+      }
+#endif
       /* Memory Stick reports a directory in st_mode on some firmwares and
        * only in st_attr on others.  Test both, rather than pick one and find
        * out which from a bug report. */
@@ -9334,6 +9399,9 @@ static void rom_scan_dir(const char *rel, int depth, int *n,
       {
          g_rom_found++;
          ret_scan_tick();
+#ifdef VITA
+         snprintf(g_scan_last, sizeof(g_scan_last), "%s", ent.d_name);
+#endif
          if (*n < BROWSER_MAX)
          {
             char        path[PSP_ROM_REL_PATH_CAP];
@@ -9600,6 +9668,10 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
    g_rom_pool_used = 0;
    g_rom_found     = 0;
    g_rom_scan_path_errors = 0;
+#ifdef VITA
+   g_scan_stop = 0;
+   g_scan_last[0] = '\0';
+#endif
    {
       int root_len = snprintf(g_rom_root, sizeof(g_rom_root), "%s", rom_dir);
       if (root_len < 0 || (size_t)root_len >= sizeof(g_rom_root))
@@ -9626,7 +9698,7 @@ static int rom_scan(const char *rom_dir, fe_console_t console)
       if (roots > 0)
          fe_evt("rom_scan_root path=\"%s\" found=%d listed=%d", g_rom_root,
                 g_rom_found, n);
-      for (k = 0; k < roots; k++)
+      for (k = 0; k < roots && !g_scan_stop; k++)
       {
          const char *root = ui_host_extra_root(k);
          found0 = g_rom_found;
@@ -9704,6 +9776,41 @@ static int rom_scan_cached(const char *rom_dir, fe_console_t console)
    g_rom_view_revision = cache->revision;
    fe_evt("rom_cache_hit console=%d n=%d", (int)console, cache->n);
    return cache->n;
+}
+
+/* The scan the browser opens on: the first frame is on screen at once, the
+ * walk keeps drawing and reading the pad (scan_ui_tick), and the three times
+ * are logged: boot_times first_frame_ms= input_ms= library_ready_ms= (from
+ * the browser's start; a list already cached has no walk and no page). */
+static int rom_scan_boot(const char *rom_dir, fe_console_t console)
+{
+   unsigned t0 = sceKernelGetSystemTimeLow(), done;
+   int n, hit = (unsigned)console < FE_CONSOLE_COUNT &&
+                g_rom_cache[console].valid &&
+                !strcmp(g_rom_cache[console].root, rom_dir) &&
+                g_rom_cache[console].roots_key == rom_roots_key();
+   g_scan_first_us = g_scan_input_us = (unsigned)-1;
+   g_scan_ui_frames = 0;
+   g_scan_ui = !hit && !g_ret_on;
+   g_scan_ui_t0 = t0;
+   if (g_scan_ui)
+   {
+      g_rom_found = 0;
+      g_scan_last[0] = '\0';
+      scan_ui_frame();                 /* before the first directory is opened */
+   }
+   n = rom_scan_cached(rom_dir, console);
+   g_scan_ui = 0;
+   done = sceKernelGetSystemTimeLow() - t0;
+   fe_evt("boot_times first_frame_ms=%u input_ms=%u library_ready_ms=%u "
+          "walked=%d stopped=%d frames=%u",
+          g_scan_first_us == (unsigned)-1 ? 0u : g_scan_first_us / 1000u,
+          g_scan_input_us == (unsigned)-1 ? 0u : g_scan_input_us / 1000u,
+          done / 1000u, !hit, g_scan_stop, g_scan_ui_frames);
+   if (g_scan_stop)
+      osd_toast(g_scan_stop == 1 ? "Scan stopped: showing what was found"
+                                 : "The card is slow: showing what was found");
+   return n;
 }
 #else
 #define rom_scan_cached rom_scan
@@ -12957,7 +13064,11 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                int *out_state_slot, fe_console_t *console_out)
 {
+#ifdef VITA
+   int n_scan = rom_scan_boot(rom_dir, (fe_console_t)g_pcfg.console);
+#else
    int n_scan = rom_scan_cached(rom_dir, (fe_console_t)g_pcfg.console);
+#endif
    int n, cur = 0, i, idle = 0;
 #ifdef VITA
    unsigned find_ignore_pad = 0;

@@ -110,7 +110,7 @@ bool Link::open(const pk::LinkRequest &req, const std::string &rom_file, const E
 	e.random = env.random;
 	e.log = env.log;
 	e.local_ip_be = env.local_ip_be;
-	return p->net.open(req, rom_file, core_tag(), m, e, 16667);
+	return p->net.open(req, rom_file, core_tag(), m, e, snes_host_is_pal() ? 20000u : 16667u);
 }
 
 int Link::step(uint16_t buttons)

@@ -7,8 +7,6 @@
 
 #include <math.h>
 #include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <vector>
 
 #if defined(__ARM_NEON)
@@ -604,6 +602,7 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 	const u64 full = nb >= 64 ? ~(u64) 0 : (((u64) 1 << nb) - 1);
 	const bool usable = nb <= MAXB && !restart;
 	u64 *m0 = &d.m0[0], *keep = &d.keep[0], *mv = &d.mv[0];
+	for (int y = 0; y < h; y++) mv[y] = 0;
 	int shape = 0;               /* 0 none, 1 vertical, 2 horizontal */
 	int kk = 0;
 	if (usable) {
@@ -725,7 +724,6 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 		const int bl = __builtin_ctzll(need), bh = 63 - __builtin_clzll(need);
 		Impl::Chunk c; c.y0 = y0; c.y1 = y1; c.x0 = bl * BLK; c.x1 = (bh + 1) * BLK < w ? (bh + 1) * BLK : w;
 		d.chunks.push_back(c);
-		if (getenv("PKDBG") && y0 == 40) fprintf(stderr, "chunk %d..%d x %d..%d need=%llx keep44=%llx m0_44=%llx\n", y0, y1, c.x0, c.x1, (unsigned long long) need, (unsigned long long) keep[44], (unsigned long long) m0[44]);
 		for (int y = y0; y < y1; y++) if (~(keep[y] | mv[y]) & full) d.ver[y] = frame;
 	}
 	d.st.computed = computed_blocks; d.st.shifted = moved; d.st.same = kept_blocks;

@@ -507,8 +507,9 @@ struct ScaleCache::Impl {
 	std::vector<Chunk> chunks;
 	const uint16_t *src;
 	int spitch;
+	int fail, skip;          /* the shift search found nothing this many times in a row; pictures to go before it looks again */
 	ScaleStats st;
-	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), frame(0), gen(0), src(0), spitch(0) { memset(&st, 0, sizeof st); }
+	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), frame(0), gen(0), src(0), spitch(0), fail(0), skip(0) { memset(&st, 0, sizeof st); }
 };
 
 ScaleCache::ScaleCache() : p_(new Impl) {}
@@ -521,14 +522,33 @@ const ScaleStats &ScaleCache::stats() const { return p_->st; }
 
 static inline int pop64(u64 v) { return __builtin_popcountll(v); }
 
+/* eight pixels (one block) equal */
+static inline bool eq8(const uint16_t *a, const uint16_t *b)
+{
+#if defined(__ARM_NEON)
+	const uint64x2_t q = vreinterpretq_u64_u16(veorq_u16(vld1q_u16(a), vld1q_u16(b)));
+	return (vgetq_lane_u64(q, 0) | vgetq_lane_u64(q, 1)) == 0;
+#else
+	uint64_t a0, a1, b0, b1;
+	memcpy(&a0, a, 8); memcpy(&a1, a + 4, 8); memcpy(&b0, b, 8); memcpy(&b1, b + 4, 8);
+	return ((a0 ^ b0) | (a1 ^ b1)) == 0;
+#endif
+}
+
 /* Equal blocks of the row `c` against the row `p` shifted: c[x] == p[x + dx]. A block whose shifted pixels leave the picture is not equal. */
 static u64 eq_blocks(const uint16_t *c, const uint16_t *p, int w, int nb, int dx)
 {
 	u64 m = 0;
 	for (int b = 0; b < nb; b++) {
-		const int x0 = b * BLK, x1 = x0 + BLK < w ? x0 + BLK : w;
-		if (x0 + dx < 0 || x1 + dx > w) continue;
-		if (rows_equal(c + x0, p + x0 + dx, x1 - x0)) m |= (u64) 1 << b;
+		const int x0 = b * BLK;
+		if (x0 + dx < 0) continue;
+		if (x0 + BLK <= w) {
+			if (x0 + BLK + dx > w) continue;
+			if (eq8(c + x0, p + x0 + dx)) m |= (u64) 1 << b;
+		} else {
+			if (w + dx > w || x0 + dx < 0) continue;       /* the last, short block: the shifted pixels must stay inside */
+			if (rows_equal(c + x0, p + x0 + dx, w - x0)) m |= (u64) 1 << b;
+		}
 	}
 	return m;
 }
@@ -569,8 +589,15 @@ static void shift_scores(const uint16_t *cur, int cp, const uint16_t *prev, int 
 		next++;
 		for (int k = -range; k <= range; k++) {
 			if (k == 0) continue;
-			if (horizontal) score[k + range] += pop64(eq_blocks(cur + (size_t) cp * y, prev + (size_t) w * y, w, nb, k));
-			else if (y + k >= 0 && y + k < h) score[k + range] += pop64(eq_blocks(cur + (size_t) cp * y, prev + (size_t) w * (y + k), w, nb, 0));
+			/* every third block is enough to rank the shifts (the real gain is counted afterwards) */
+			int sc_ = 0;
+			for (int b = 1; b < nb - 1; b += 3) {
+				const int x0 = b * BLK;
+				const int sy = horizontal ? y : y + k, sx = horizontal ? x0 + k : x0;
+				if (sy < 0 || sy >= h || sx < 0 || sx + BLK > w || x0 + BLK > w) continue;
+				sc_ += eq8(cur + (size_t) cp * y + x0, prev + (size_t) w * sy + sx);
+			}
+			score[k + range] += sc_;
 		}
 	}
 }
@@ -593,6 +620,7 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 		d.m0.assign((size_t) h, 0); d.ms.assign((size_t) h, 0); d.keep.assign((size_t) h, 0); d.mv.assign((size_t) h, 0); d.tmp.assign((size_t) h, 0);
 		d.dxr.assign((size_t) h, 0); d.pdx.assign((size_t) h, 0);
 		d.gen++;
+		d.fail = d.skip = 0;
 		d.valid = true;
 	}
 	d.src = src; d.spitch = spitch;
@@ -610,7 +638,9 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 		int kept = 0;
 		for (int y = 0; y < h; y++) { keep[y] = reusable(m0, 0, y, h, nb, F, 0, true); kept += pop64(keep[y]); }
 		int best = kept;
-		if (allow_shift && kept * 10 < h * nb * 7 && h >= 16 && nb >= 4) {
+		const bool want_search = allow_shift && kept * 10 < h * nb * 7 && h >= 16 && nb >= 4;
+		if (want_search && d.skip > 0) d.skip--;
+		else if (want_search) {
 			/* a vertical shift of the whole picture */
 			{
 				const int K = h / 4 < 24 ? h / 4 : 24;
@@ -640,6 +670,7 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 					std::vector<int16_t> &dx = d.dxr;
 					std::vector<u64> &msh = d.ms;
 					for (int y = 0; y < h; y++) {
+						if (m0[y] == full) { dx[y] = 0; msh[y] = 0; continue; }       /* unchanged: kept as it is */
 						int cands[6], nc = 0;
 						if (y > 0 && dx[y - 1]) cands[nc++] = dx[y - 1];
 						if (d.pdx[y]) cands[nc++] = d.pdx[y];
@@ -661,6 +692,8 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 					if (tot > best) { best = tot; shape = 2; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
 				}
 			}
+			/* a picture that changes all over and moves nowhere (a fade, a video) does not pay the search every time */
+			if (best * 100 < kept * 100 + 5 * h * nb) { if (d.fail < 3) d.fail++; d.skip = (1 << d.fail) - 1; } else d.fail = 0;
 		}
 	} else {
 		for (int y = 0; y < h; y++) { m0[y] = 0; keep[y] = 0; mv[y] = 0; }
@@ -721,8 +754,11 @@ int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch
 		u64 need = 0;
 		for (int y = y0; y < y1; y++) { const u64 n = ~(keep[y] | mv[y]) & full; need |= n; computed_blocks += pop64(n); }
 		if (!need) continue;
-		const int bl = __builtin_ctzll(need), bh = 63 - __builtin_clzll(need);
-		Impl::Chunk c; c.y0 = y0; c.y1 = y1; c.x0 = bl * BLK; c.x1 = (bh + 1) * BLK < w ? (bh + 1) * BLK : w;
+		Impl::Chunk c; c.y0 = y0; c.y1 = y1; c.x0 = 0; c.x1 = w;
+		if (nb <= MAXB) {
+			const int bl = __builtin_ctzll(need), bh = 63 - __builtin_clzll(need);
+			c.x0 = bl * BLK; c.x1 = (bh + 1) * BLK < w ? (bh + 1) * BLK : w;
+		}
 		d.chunks.push_back(c);
 		for (int y = y0; y < y1; y++) if (~(keep[y] | mv[y]) & full) d.ver[y] = frame;
 	}

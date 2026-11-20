@@ -211,7 +211,7 @@ static unsigned g_serial_seen, g_up_serial;
 static int g_crop_top, g_crop_bot, g_crop_cand_top, g_crop_cand_bot, g_crop_votes;
 static int g_have_picture;
 static unsigned g_fence_skips;
-static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0);   /* the drawing thread's scaler, per second */
+static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0), g_scale_blocks(0), g_scale_blocks_done(0), g_scale_blocks_moved(0);   /* the drawing thread's scaler, per second */
 static std::atomic<int> g_scale_last(0);     /* the scaler of the last picture (pk::ScalerKind), for the log */
 static const unsigned short *g_lcd;          /* the Game Gear's LCD colour table, built once before any thread */
 static bool g_is_gg;
@@ -289,16 +289,13 @@ static void bezel_load(const std::string &game, const std::string &console)
  * (compare-and-swap on `next`, so a late helper can never take a chunk of a job it did not read). A helper that is not scheduled costs
  * nothing: the drawing thread has done its chunks. */
 struct ScaleJob {
-	pk::ScalerKind kind;
-	const uint16_t *src;
-	int w, h, spitch;
-	uint16_t *dst;
-	int dpitch, chunk_rows, nchunks;
+	pk::ScaleCache *cache;
+	int nchunks;
 	std::atomic<uint64_t> next;      /* (job << 32) | next chunk */
 	std::atomic<int> done;
 	std::atomic<unsigned> nonflat;
 	std::atomic<int> by_helpers;
-	ScaleJob() : kind(pk::SC_NONE), src(0), w(0), h(0), spitch(0), dst(0), dpitch(0), chunk_rows(8), nchunks(0), next(0), done(0), nonflat(0), by_helpers(0) {}
+	ScaleJob() : cache(0), nchunks(0), next(0), done(0), nonflat(0), by_helpers(0) {}
 };
 static ScaleJob g_job;
 static uint32_t g_job_no;
@@ -313,15 +310,12 @@ static int job_work(pk::ScaleScratch &sc, bool helper)
 	int ran = 0;
 	for (;;) {
 		uint64_t n = g_job.next.load(std::memory_order_acquire);
-		const pk::ScalerKind kind = g_job.kind;
-		const uint16_t *src = g_job.src;
-		const int w = g_job.w, h = g_job.h, sp = g_job.spitch, dp = g_job.dpitch, cr = g_job.chunk_rows, nch = g_job.nchunks;
-		uint16_t *dst = g_job.dst;
+		pk::ScaleCache *cache = g_job.cache;
+		const int nch = g_job.nchunks;
 		const uint32_t c = (uint32_t) (n & 0xFFFFFFFFu);
-		if (kind == pk::SC_NONE || (int) c >= nch) return ran;
+		if (!cache || (int) c >= nch) return ran;
 		if (!g_job.next.compare_exchange_strong(n, n + 1, std::memory_order_acq_rel)) continue;
-		const int y0 = (int) c * cr, y1 = y0 + cr < h ? y0 + cr : h;
-		const unsigned nf = pk::scale_rows(kind, src, w, h, sp, dst, dp, y0, y1, sc);
+		const unsigned nf = cache->run_chunk((int) c, sc);
 		g_job.nonflat.fetch_add(nf, std::memory_order_relaxed);
 		if (helper) g_job.by_helpers.fetch_add(1, std::memory_order_relaxed);
 		g_job.done.fetch_add(1, std::memory_order_acq_rel);
@@ -372,24 +366,36 @@ static void help_stop(void)
 	g_help_n = 0;
 }
 
-/* scale the whole picture: the helpers are woken, this thread works too and then waits for the chunks the helpers hold */
-static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, int h, int spitch_px, uint16_t *dst, int dpitch_px)
+/* The incremental scaler (pk::ScaleCache): the chunks of rows / columns that changed since the last picture are computed by this thread and the
+ * helpers (work stealing), the rest of the picture comes from the kept scaled picture. Then the changed rows go into the texture. */
+static pk::ScaleCache g_scache;
+static pk::TexSync g_scaled_sync[3];
+
+static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, int h, int spitch_px, uint16_t *dst, int dpitch_px, pk::TexSync &ts)
 {
-	g_job.nchunks = 0;
-	g_job.kind = kind; g_job.src = src; g_job.w = w; g_job.h = h; g_job.spitch = spitch_px; g_job.dst = dst; g_job.dpitch = dpitch_px;
-	g_job.chunk_rows = 8;
-	g_job.nchunks = (h + g_job.chunk_rows - 1) / g_job.chunk_rows;
-	g_job.done.store(0); g_job.nonflat.store(0); g_job.by_helpers.store(0);
-	g_job.next.store((uint64_t) (++g_job_no) << 32, std::memory_order_release);
-	for (int i = 0; i < g_help_n; i++) sceKernelSignalSema(g_help_sema[i], 1);
-	job_work(g_draw_scratch, false);
-	unsigned waits = 0;
-	while (g_job.done.load(std::memory_order_acquire) < g_job.nchunks) { sceKernelDelayThread(20); waits++; }
-	g_scale_waits.fetch_add(waits);
-	g_scale_helped.fetch_add((unsigned) g_job.by_helpers.load());
-	const unsigned nf = g_job.nonflat.load();
-	g_job.kind = pk::SC_NONE;          /* a helper that wakes late finds nothing to take */
-	g_job.nchunks = 0;
+	const int nch = g_scache.plan(kind, src, w, h, spitch_px);
+	unsigned nf = 0;
+	if (nch > 0) {
+		g_job.nchunks = 0;
+		g_job.cache = &g_scache;
+		g_job.done.store(0); g_job.nonflat.store(0); g_job.by_helpers.store(0);
+		g_job.nchunks = nch;
+		g_job.next.store((uint64_t) (++g_job_no) << 32, std::memory_order_release);
+		for (int i = 0; i < g_help_n && nch > 1; i++) sceKernelSignalSema(g_help_sema[i], 1);
+		job_work(g_draw_scratch, false);
+		unsigned waits = 0;
+		while (g_job.done.load(std::memory_order_acquire) < g_job.nchunks) { sceKernelDelayThread(20); waits++; }
+		g_scale_waits.fetch_add(waits);
+		g_scale_helped.fetch_add((unsigned) g_job.by_helpers.load());
+		nf = g_job.nonflat.load();
+		g_job.cache = 0;          /* a helper that wakes late finds nothing to take */
+		g_job.nchunks = 0;
+	}
+	const pk::ScaleStats &st = g_scache.stats();
+	g_scale_blocks.fetch_add((unsigned) st.blocks);
+	g_scale_blocks_done.fetch_add((unsigned) st.computed);
+	g_scale_blocks_moved.fetch_add((unsigned) st.shifted);
+	g_scache.blit(dst, dpitch_px, ts);
 	return nf;
 }
 
@@ -479,7 +485,7 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, cons
 			vita2d_texture *st = g_scaled[si].t;
 			const uint64_t t0 = sceKernelGetProcessTimeWide();
 			const unsigned nf = scale_picture(kind, scaler_src, w, h, scaler_pitch_px, (uint16_t *) vita2d_texture_get_datap(st),
-			    (int) (vita2d_texture_get_stride(st) / 2));
+			    (int) (vita2d_texture_get_stride(st) / 2), g_scaled_sync[si]);
 			g_scale_us.fetch_add((unsigned) (sceKernelGetProcessTimeWide() - t0));
 			g_scale_pics.fetch_add(1);
 			g_scale_nonflat.fetch_add(nf);
@@ -1421,8 +1427,10 @@ int main(int argc, char **argv)
 			    frames_run ? emu_us / 1000.0 / frames_run : 0.0, last_frame_us / 1000.0, g_pace.fill_frames());
 			logf_(" | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | drawn=%u skipped=%u not_rendered=%u new_pic=%u fence_skip=%u rt_reuse=%u",
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr, drawn, skipped, not_rendered, pic_fresh, g_fence_skips, g_rt_reused);
-			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
-			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits);
+			const unsigned sc_blocks = g_scale_blocks.exchange(0), sc_bdone = g_scale_blocks_done.exchange(0), sc_bmoved = g_scale_blocks_moved.exchange(0);
+			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
+			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
+			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
 			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s\n", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());
 			sec_start = now;
 			vblanks = frames_run = 0;

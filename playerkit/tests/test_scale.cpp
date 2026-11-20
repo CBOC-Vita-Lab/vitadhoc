@@ -211,7 +211,7 @@ int run_sequence(ScalerKind kind, int w, int h, int frames, int mode, bool allow
 	World world(256, 256, 77u + (unsigned) mode);
 	ScaleCache cache;
 	ScaleScratch sc;
-	const int f = scaler_factor(kind), ow = w * f, tp = 1024;
+	const int f = scaler_factor(kind), ow = w * f, tp = 2048;
 	std::vector<uint16_t> tex[3], ref, pic;
 	TexSync ts[3];
 	for (int i = 0; i < 3; i++) tex[i].assign((size_t) tp * 512, 0);

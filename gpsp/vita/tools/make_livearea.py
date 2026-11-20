@@ -1,137 +1,80 @@
 #!/usr/bin/env python3
-"""make_livearea.py -- VitAdhoc's bubble and LiveArea pictures.
+"""Render the local Neon Link artwork masters as Vita-indexed PNGs."""
 
-    python3 tools/make_livearea.py            (from gpsp/vita)
+import shutil
+import struct
+import subprocess
+import tempfile
+from pathlib import Path
 
-Writes sce_sys/icon0.png (128 x 128, the bubble), and
-sce_sys/livearea/contents/bg.png (840 x 500) and startup.png (280 x 158, the
-gate).  The system wants all three as 8-bit indexed PNG: they are drawn in
-full colour and reduced to 256 colours at the end, dithered.
-
-The pictures use the app's own palette (ui_vita_style.h): the navy page,
-one glow per console (indigo, pea green, teal) and the mark -- two
-handhelds, linked -- from vstyle_art.py.  The wordmark is Outfit Bold.
-"""
-import io
-import os
-import sys
-
-import cairosvg
-from PIL import Image, ImageDraw, ImageFont
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-import vstyle_art as A  # noqa: E402
-
-VITA = os.path.dirname(HERE)
-FONTS = os.path.join(VITA, "..", "assets", "fonts")
-NAVY = "#070B18"
+VITA = Path(__file__).resolve().parents[1]
+MASTERS = VITA / "artwork" / "livearea"
+FONTS = VITA.parent / "assets" / "fonts"
+WHITE, MINT, CORAL, GOLD = "#f1faf5", "#71f4ef", "#ff8f79", "#f3c56a"
 
 
-def svg_png(svg, w, h):
-    return Image.open(io.BytesIO(cairosvg.svg2png(bytestring=svg.encode(),
-                                                  output_width=w,
-                                                  output_height=h))).convert("RGBA")
+def text(font, size, color, position, words):
+    x, y = position
+    return ["-font", str(FONTS / (font + ".ttf")), "-pointsize", str(size),
+            "-fill", color, "-draw", f"text {x},{y} '{words}'"]
 
 
-def glows(w, h, spots):
-    """A navy field with soft colour glows: (cx, cy, r, colour, opacity)."""
-    g = "".join(
-        '<radialGradient id="g%d" cx="%f" cy="%f" r="%f" gradientUnits="userSpaceOnUse">'
-        '<stop offset="0" stop-color="%s" stop-opacity="%f"/>'
-        '<stop offset="1" stop-color="%s" stop-opacity="0"/></radialGradient>'
-        % (i, cx, cy, r, c, o, c) for i, (cx, cy, r, c, o) in enumerate(spots))
-    rects = "".join('<rect width="%d" height="%d" fill="url(#g%d)"/>' % (w, h, i)
-                    for i in range(len(spots)))
-    return ('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">'
-            '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">'
-            '<stop offset="0" stop-color="#0E1530"/><stop offset="1" stop-color="%s"/>'
-            '</linearGradient>%s</defs><rect width="%d" height="%d" fill="url(#bg)"/>%s</svg>'
-            % (w, h, NAVY, g, w, h, rects))
+def logo(mark, size, position):
+    x, y = position
+    return ["(", "-background", "none", str(mark), "-resize", f"{size}x{size}", ")",
+            "-gravity", "NorthWest", "-geometry", f"+{x}+{y}", "-compose", "Over",
+            "-composite", "+geometry", "-gravity", "Forget"]
 
 
-def wordmark(px, color=(255, 255, 255)):
-    k = 4
-    f = ImageFont.truetype(os.path.join(FONTS, "Outfit-Bold.ttf"), px * k)
-    w = int(f.getlength("VitAdhoc")) + 4 * k
-    asc, desc = f.getmetrics()
-    im = Image.new("L", (w, asc + desc), 0)
-    ImageDraw.Draw(im).text((2 * k, 0), "VitAdhoc", font=f, fill=255)
-    bb = im.getbbox()
-    im = im.crop((bb[0], bb[1], bb[2], bb[3]))
-    im = im.resize((max(1, im.width // k), max(1, im.height // k)), Image.LANCZOS)
-    out = Image.new("RGBA", im.size, color + (0,))
-    out.putalpha(im)
-    return out
+def background(mark):
+    # The a1 template draws the Start gate over the middle of this picture.
+    args = logo(mark, 73, (21, 10))
+    args += text("Outfit-Bold", 39, WHITE, (99, 50), "VitAdhoc")
+    args += text("Inter-SemiBold", 14, MINT, (101, 72), "PLAY TOGETHER")
+    args += ["-fill", "none", "-stroke", "#356269", "-strokewidth", "1",
+             "-draw", "line 40,425 800,425", "-stroke", "none"]
+    families = [(42, "GB/GBC", MINT), (190, "GBA", GOLD), (326, "NES", CORAL),
+                (461, "SNES", MINT), (601, "WonderSwan", CORAL)]
+    for x, label, color in families:
+        args += ["-fill", color, "-draw", f"rectangle {x},446 {x + 4},460"]
+        args += text("Outfit-Bold", 21, WHITE, (x + 13, 461), label)
+    return args
 
 
-def indexed(im, path):
-    """256 colours through pngquant when it is installed (its dithering is
-    far quieter on smooth gradients), else Pillow's own."""
-    import shutil
-    import subprocess
-    import tempfile
-    pq = shutil.which("pngquant")
-    if pq:
-        with tempfile.TemporaryDirectory() as d:
-            src = os.path.join(d, "in.png")
-            im.convert("RGB").save(src)
-            subprocess.run([pq, "--force", "--quality=80-100", "--speed", "1",
-                            "256", "--output", path, src], check=True)
-        return
-    im.convert("RGB").quantize(colors=256, method=Image.MEDIANCUT,
-                               dither=Image.FLOYDSTEINBERG).save(path, optimize=True)
-
-
-def icon0():
-    s = 128
-    im = svg_png(glows(s, s, [(30, 20, 120, "#7B6CFF", 0.75),
-                              (120, 120, 110, "#19C3B4", 0.45)]), s, s)
-    mark = svg_png(A.mark_svg(s), 96, 96)
-    im.alpha_composite(mark, (16, 18))
-    return im
-
-
-def bg():
-    w, h = 840, 500
-    im = svg_png(glows(w, h, [(160, 80, 420, "#7B6CFF", 0.55),
-                              (720, 420, 360, "#19C3B4", 0.35),
-                              (680, 60, 260, "#8CC63F", 0.18)]), w, h)
-    # the mark, very large and faint, off the right edge
-    big = svg_png(A.mark_svg(512), 520, 520)
-    a = big.getchannel("A").point(lambda v: v * 22 // 255)
-    big.putalpha(a)
-    im.alpha_composite(big, (w - 420, 40))
-    return im
-
-
-def startup():
-    w, h = 280, 158
-    im = svg_png(glows(w, h, [(40, 20, 220, "#7B6CFF", 0.7),
-                              (260, 150, 180, "#19C3B4", 0.45)]), w, h)
-    mark = svg_png(A.mark_svg(64), 64, 64)
-    word = wordmark(34)
-    total = mark.width + 10 + word.width
-    x = (w - total) // 2
-    im.alpha_composite(mark, (x, (h - 64) // 2 - 14))
-    im.alpha_composite(word, (x + mark.width + 10, (h - word.height) // 2 - 14))
-    tag = ImageFont.truetype(os.path.join(FONTS, "Inter-Regular.ttf"), 13)
-    d = ImageDraw.Draw(im)
-    t = "GBA, GB and GBC, together"
-    d.text(((w - tag.getlength(t)) / 2, h - 44), t, font=tag,
-           fill=(200, 208, 226, 255))
-    return im
+def gate(mark):
+    # LiveArea adds the blue Start button at the bottom; don't draw a second one.
+    return (logo(mark, 80, (18, 22))
+            + text("Outfit-Bold", 34, WHITE, (102, 64), "VitAdhoc")
+            + text("Inter-SemiBold", 12, MINT, (104, 84), "MULTIPLAYER"))
 
 
 def main():
-    out = {
-        os.path.join(VITA, "sce_sys", "icon0.png"): icon0(),
-        os.path.join(VITA, "sce_sys", "livearea", "contents", "bg.png"): bg(),
-        os.path.join(VITA, "sce_sys", "livearea", "contents", "startup.png"): startup(),
-    }
-    for path, im in out.items():
-        indexed(im, path)
-        print("wrote", path, im.size, Image.open(path).mode)
+    magick = shutil.which("magick")
+    if magick is None:
+        raise SystemExit("Install ImageMagick 7 to regenerate LiveArea art (not needed for normal VPK builds).")
+    mark = MASTERS / "vitadhoc-mark.svg"
+    with tempfile.TemporaryDirectory(dir=VITA) as temp:
+        jobs = [
+            (None, "sce_sys/icon0.png", (128, 128), logo(mark, 106, (11, 11))),
+            ("background-master.png", "sce_sys/livearea/contents/bg.png", (840, 500), background(mark)),
+            ("gate-master.png", "sce_sys/livearea/contents/startup.png", (280, 158), gate(mark)),
+        ]
+        staged = []
+        for master, destination, (width, height), overlay in jobs:
+            out = Path(temp) / Path(destination).name
+            size = f"{width}x{height}"
+            source = str(MASTERS / master) if master else "xc:#091422"
+            subprocess.run([magick, source, "-filter", "Lanczos", "-resize", size + "^",
+                            "-gravity", "Center", "-extent", size, "-gravity", "Forget",
+                            *overlay, "-alpha", "off", "-dither", "Riemersma", "-colors", "256",
+                            "-strip", "-interlace", "none", f"PNG8:{out}"], check=True)
+            header = out.read_bytes()[:29]
+            if header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" or struct.unpack(">IIBBBBB", header[16:]) != (width, height, 8, 3, 0, 0, 0):
+                raise ValueError(f"Unexpected Vita artwork format: {out.name}")
+            staged.append((out, VITA / destination))
+        for out, destination in staged:
+            out.replace(destination)
+            print("wrote", destination.relative_to(VITA))
 
 
 if __name__ == "__main__":

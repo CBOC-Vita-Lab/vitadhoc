@@ -4,7 +4,7 @@
 | --- | --- |
 | Emulator/frontend source | GBAdhoc maintainer's contributions are GPL-2.0-or-later; other components retain their terms. See [Licensing Status](../LICENSING.md) |
 | Open GBA BIOS | GPL-2.0, Normmatt and VBA/VBA-M; `gpsp/bios/` source |
-| Vita LiveArea art | Original linked-handheld mark and generator, `gpsp/vita/tools/make_livearea.py` and `vstyle_art.py` |
+| Vita LiveArea art | Neon Link illustrations and the editable Vita Shell logo, `vitadhoc-mark.svg`, in `gpsp/vita/artwork/livearea/`. `gpsp/vita/tools/make_livearea.py` generates the Vita assets in `gpsp/vita/sce_sys/`. |
 | Inter and Outfit fonts | SIL OFL 1.1; complete notices in `licenses/` |
 | libvita2d/stb and shaders | Their MIT/dual notices and provenance retained |
 | CPU xBRZ | GPL version 2 with original exception/notices retained |

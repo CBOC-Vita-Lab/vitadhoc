@@ -86,11 +86,12 @@ SFO version.
 app writes in its log. Version 1.0 was built with
 `GIT_VERSION=library-r7-20261022` ([Source record](SOURCE.md) has its hashes).
 
-Committed LiveArea images allow a normal build without Python graphics tools.
-To regenerate them, install Pillow, CairoSVG and their normal dependencies,
-then run `make -C gpsp/vita assets`. This now calls `tools/make_livearea.py`,
-not the obsolete `make_assets.py`. pngquant is optional and changes PNG bytes;
-record tool versions before claiming byte-for-byte artwork reproduction.
+The VPK target uses the ready-to-package images under `gpsp/vita/sce_sys/`.
+For this working tree, the Neon Link masters are under `gpsp/vita/artwork/livearea/`.
+To regenerate the bubble, LiveArea background, and Start gate, install
+ImageMagick 7 and run `make -C gpsp/vita assets`. It uses the bundled Outfit
+and Inter fonts and produces 8-bit indexed PNGs. A normal VPK build does not
+need ImageMagick. Keep the masters with the working files when moving this tree.
 
 ## Tests
 

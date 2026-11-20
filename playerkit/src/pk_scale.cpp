@@ -7,6 +7,13 @@
 
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 namespace pk {
 
@@ -110,15 +117,15 @@ static inline void mmpx_pixel(const uint16_t *const r[7], int x, uint16_t out[4]
 	out[0] = J; out[1] = K; out[2] = L; out[3] = M;
 }
 
-static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1)
+static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1)
 {
 	uint16_t buf[(MM_BAND + 2 * MM_PAD) * (MM_SPAN + 2 * MM_PAD)];
 	const uint16_t *rows[MM_BAND + 2 * MM_PAD];
 	unsigned busy = 0;
 	for (int ya = y0; ya < y1; ya += MM_BAND) {
 		const int yb = ya + MM_BAND < y1 ? ya + MM_BAND : y1;
-		for (int xa = 0; xa < w; xa += MM_SPAN) {
-			const int xb = xa + MM_SPAN < w ? xa + MM_SPAN : w;
+		for (int xa = cx0; xa < cx1; xa += MM_SPAN) {
+			const int xb = xa + MM_SPAN < cx1 ? xa + MM_SPAN : cx1;
 			const int bw = xb - xa + 2 * MM_PAD, nrows = yb - ya + 2 * MM_PAD;
 			for (int i = 0; i < nrows; i++) {
 				int sy = ya - MM_PAD + i;
@@ -243,12 +250,12 @@ static inline unsigned xbr_resolve(const float E[3], const float cand[4][3], con
 }
 
 template <int s>
-static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, ScaleScratch &sc)
+static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int cx0, int cx1, ScaleScratch &sc)
 {
 	SubRamp ramps[9];
 	make_ramps(s, ramps);   /* a few dozen floats: cheap next to a picture */
 	/* the luminance plane of the stripe and two rows / columns around it, the border repeated */
-	const int lp = w + 4, lr = y1 - y0 + 4;
+	const int lp = (cx1 - cx0) + 4, lr = y1 - y0 + 4;
 	if ((int) sc.lum.size() < lp * lr) sc.lum.resize((size_t) lp * lr);
 	float *L = &sc.lum[0];
 	for (int r = 0; r < lr; r++) {
@@ -256,19 +263,22 @@ static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t
 		sy = sy < 0 ? 0 : sy > h - 1 ? h - 1 : sy;
 		const uint16_t *sp = src + (size_t) spitch * sy;
 		float *d = L + (size_t) lp * r;
-		d[0] = d[1] = lum565(sp[0]);
-		for (int x = 0; x < w; x++) d[x + 2] = lum565(sp[x]);
-		d[w + 2] = d[w + 3] = d[w + 1];
+		for (int c = 0; c < lp; c++) {
+			int sx = cx0 - 2 + c;
+			sx = sx < 0 ? 0 : sx > w - 1 ? w - 1 : sx;
+			d[c] = lum565(sp[sx]);
+		}
 	}
 	unsigned busy = 0;
 	const v4f ONE = vsplat(1.0f);
 	for (int y = y0; y < y1; y++) {
-		const float *lc = L + (size_t) lp * (y - y0 + 2) + 2;       /* lc[0] = the pixel (0, y) */
+		const float *lc = L + (size_t) lp * (y - y0 + 2) + 2;       /* lc[0] = the pixel (cx0, y) */
 		int ym = y > 0 ? y - 1 : 0, yp = y < h - 1 ? y + 1 : h - 1;
 		const uint16_t *rm = src + (size_t) spitch * ym, *r0 = src + (size_t) spitch * y, *rp = src + (size_t) spitch * yp;
 		uint16_t *o = dst + (size_t) dpitch * (size_t) (y * s);
-		for (int x = 0; x < w; x++) {
-			const float lE = lc[x], lB = lc[x - lp], lD = lc[x - 1], lF = lc[x + 1], lH = lc[x + lp];
+		for (int x = cx0; x < cx1; x++) {
+			const int xl = x - cx0;
+			const float lE = lc[xl], lB = lc[xl - lp], lD = lc[xl - 1], lF = lc[xl + 1], lH = lc[xl + lp];
 			/* a flat spot: no lane of irlv0 is set, nothing to blend, the pixel is copied */
 			if ((lE == lF || lE == lH) && (lE == lB || lE == lF) && (lE == lD || lE == lB) && (lE == lH || lE == lD)) {
 				const uint16_t E = r0[x];
@@ -277,12 +287,12 @@ static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t
 				continue;
 			}
 			busy++;
-			const float lA1 = lc[x - 1 - 2 * lp], lB1 = lc[x - 2 * lp], lC1 = lc[x + 1 - 2 * lp];
-			const float lA = lc[x - 1 - lp], lC = lc[x + 1 - lp];
-			const float lG = lc[x - 1 + lp], lI = lc[x + 1 + lp];
-			const float lG5 = lc[x - 1 + 2 * lp], lH5 = lc[x + 2 * lp], lI5 = lc[x + 1 + 2 * lp];
-			const float lA0 = lc[x - 2 - lp], lD0 = lc[x - 2], lG0 = lc[x - 2 + lp];
-			const float lC4 = lc[x + 2 - lp], lF4 = lc[x + 2], lI4 = lc[x + 2 + lp];
+			const float lA1 = lc[xl - 1 - 2 * lp], lB1 = lc[xl - 2 * lp], lC1 = lc[xl + 1 - 2 * lp];
+			const float lA = lc[xl - 1 - lp], lC = lc[xl + 1 - lp];
+			const float lG = lc[xl - 1 + lp], lI = lc[xl + 1 + lp];
+			const float lG5 = lc[xl - 1 + 2 * lp], lH5 = lc[xl + 2 * lp], lI5 = lc[xl + 1 + 2 * lp];
+			const float lA0 = lc[xl - 2 - lp], lD0 = lc[xl - 2], lG0 = lc[xl - 2 + lp];
+			const float lC4 = lc[xl + 2 - lp], lF4 = lc[xl + 2], lI4 = lc[xl + 2 + lp];
 			const v4f b = V4(lB, lD, lH, lF), c = V4(lC, lA, lG, lI), d = V4(lD, lH, lF, lB), e = vsplat(lE), f = V4(lF, lB, lD, lH);
 			const v4f g = V4(lG, lI, lC, lA), hh = V4(lH, lF, lB, lD), i = V4(lI, lC, lA, lG);
 			const v4f i4 = V4(lI4, lC1, lA0, lG5), i5 = V4(lI5, lC4, lA1, lG0), h5 = V4(lH5, lF4, lB1, lD0), f4 = V4(lF4, lB1, lD0, lH5);
@@ -336,19 +346,27 @@ static unsigned xbr_rows(const uint16_t *src, int w, int h, int spitch, uint16_t
 	return busy;
 }
 
-unsigned scale_rows(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, ScaleScratch &sc)
+unsigned scale_rect(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int x0, int x1,
+                    ScaleScratch &sc)
 {
 	if (!src || !dst || w < 1 || h < 1) return 0;
 	if (y0 < 0) y0 = 0;
 	if (y1 > h) y1 = h;
-	if (y1 <= y0) return 0;
+	if (x0 < 0) x0 = 0;
+	if (x1 > w) x1 = w;
+	if (y1 <= y0 || x1 <= x0) return 0;
 	scale_init();
 	switch (k) {
-	case SC_MMPX2: return mmpx_rows(src, w, h, spitch, dst, dpitch, y0, y1);
-	case SC_XBR2: return xbr_rows<2>(src, w, h, spitch, dst, dpitch, y0, y1, sc);
-	case SC_XBR3: return xbr_rows<3>(src, w, h, spitch, dst, dpitch, y0, y1, sc);
+	case SC_MMPX2: return mmpx_rows(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1);
+	case SC_XBR2: return xbr_rows<2>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc);
+	case SC_XBR3: return xbr_rows<3>(src, w, h, spitch, dst, dpitch, y0, y1, x0, x1, sc);
 	default: return 0;
 	}
+}
+
+unsigned scale_rows(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, ScaleScratch &sc)
+{
+	return scale_rect(k, src, w, h, spitch, dst, dpitch, y0, y1, 0, w, sc);
 }
 
 /* ---- the literal transcription of the fragment program ------------------------------------------------------- */
@@ -439,6 +457,312 @@ void xbr_reference(const uint16_t *src, int w, int h, int spitch, int scale, uin
 			const Rgb res = s2 < s1 ? res1 : res2;     /* mix(res1, res2, step(c_df(E, res1), c_df(E, res2))) */
 			dst[(size_t) dpitch * oy + ox] = (uint16_t) pack565(res.c);
 		}
+}
+
+
+/* ---- the incremental scaler ---------------------------------------------------------------------------------------------------- */
+
+bool rows_equal_scalar(const uint16_t *a, const uint16_t *b, int n)
+{
+	for (int i = 0; i < n; i++) if (a[i] != b[i]) return false;
+	return true;
+}
+
+bool rows_equal(const uint16_t *a, const uint16_t *b, int n)
+{
+#if defined(__ARM_NEON)
+	int i = 0;
+	for (; i + 32 <= n; i += 32) {
+		const uint16x8_t x0 = veorq_u16(vld1q_u16(a + i), vld1q_u16(b + i)), x1 = veorq_u16(vld1q_u16(a + i + 8), vld1q_u16(b + i + 8));
+		const uint16x8_t x2 = veorq_u16(vld1q_u16(a + i + 16), vld1q_u16(b + i + 16)), x3 = veorq_u16(vld1q_u16(a + i + 24), vld1q_u16(b + i + 24));
+		const uint64x2_t q = vreinterpretq_u64_u16(vorrq_u16(vorrq_u16(x0, x1), vorrq_u16(x2, x3)));
+		if (vgetq_lane_u64(q, 0) | vgetq_lane_u64(q, 1)) return false;
+	}
+	for (; i + 8 <= n; i += 8) {
+		const uint64x2_t q = vreinterpretq_u64_u16(veorq_u16(vld1q_u16(a + i), vld1q_u16(b + i)));
+		if (vgetq_lane_u64(q, 0) | vgetq_lane_u64(q, 1)) return false;
+	}
+	for (; i < n; i++) if (a[i] != b[i]) return false;
+	return true;
+#else
+	return memcmp(a, b, (size_t) n * 2u) == 0;
+#endif
+}
+
+/* The picture is cut into blocks of 8 columns; a row's blocks are one 64 bit mask (pictures up to 512 columns wide; wider ones are
+ * scaled in full every time). `eq` = the block's pixels equal the kept picture's (at the shift in question). An output block can be
+ * taken from the kept scaled picture when every block its footprint touches is equal: the blocks to its left and right in the rows
+ * y - F .. y + F (F = 3 source pixels / rows at most, so one block of margin is enough). */
+typedef uint64_t u64;
+enum { BLK = 8, MAXB = 64 };
+
+struct ScaleCache::Impl {
+	struct Chunk { int y0, y1, x0, x1; };
+	ScalerKind kind;
+	int w, h, f, ow, nb;
+	bool valid;
+	uint32_t frame, gen;
+	std::vector<uint16_t> prev, out;
+	std::vector<uint32_t> ver;
+	std::vector<u64> m0, ms, keep, mv, tmp;       /* per row: equal blocks unshifted, equal blocks at the shift, reusable blocks (kept, shifted) */
+	std::vector<int16_t> dxr, pdx;                /* per row: the horizontal shift in use, and last picture's */
+	std::vector<Chunk> chunks;
+	const uint16_t *src;
+	int spitch;
+	ScaleStats st;
+	Impl() : kind(SC_NONE), w(0), h(0), f(1), ow(0), nb(0), valid(false), frame(0), gen(0), src(0), spitch(0) { memset(&st, 0, sizeof st); }
+};
+
+ScaleCache::ScaleCache() : p_(new Impl) {}
+ScaleCache::~ScaleCache() { delete p_; }
+void ScaleCache::reset() { p_->valid = false; p_->chunks.clear(); }
+int ScaleCache::chunks() const { return (int) p_->chunks.size(); }
+const uint16_t *ScaleCache::out() const { return p_->out.empty() ? 0 : &p_->out[0]; }
+int ScaleCache::out_pitch() const { return p_->ow; }
+const ScaleStats &ScaleCache::stats() const { return p_->st; }
+
+static inline int pop64(u64 v) { return __builtin_popcountll(v); }
+
+/* Equal blocks of the row `c` against the row `p` shifted: c[x] == p[x + dx]. A block whose shifted pixels leave the picture is not equal. */
+static u64 eq_blocks(const uint16_t *c, const uint16_t *p, int w, int nb, int dx)
+{
+	u64 m = 0;
+	for (int b = 0; b < nb; b++) {
+		const int x0 = b * BLK, x1 = x0 + BLK < w ? x0 + BLK : w;
+		if (x0 + dx < 0 || x1 + dx > w) continue;
+		if (rows_equal(c + x0, p + x0 + dx, x1 - x0)) m |= (u64) 1 << b;
+	}
+	return m;
+}
+
+/* The blocks of output row y that can be reused: all blocks of the window of rows y - F .. y + F equal (and next to equal blocks left and
+ * right). `shifted` rows (a shift of the whole picture) need the window and its source inside the picture; the unshifted picture clamps
+ * at its edge on both sides alike, so there the edge counts as equal. `dyk` the rows' source offset, `dxs` per row (or null). */
+static u64 reusable(const u64 *m, const int16_t *dxs, int y, int h, int nb, int F, int dyk, bool edge_ok)
+{
+	int lo = y - F, hi = y + F;
+	if (dyk) { if (lo < 0 || hi >= h || lo + dyk < 0 || hi + dyk >= h) return 0; }
+	else { if (lo < 0) lo = 0; if (hi > h - 1) hi = h - 1; }
+	u64 a = nb >= 64 ? ~(u64) 0 : (((u64) 1 << nb) - 1);
+	const u64 all = a;
+	for (int j = lo; j <= hi; j++) {
+		if (dxs && dxs[j] != dxs[y]) return 0;
+		a &= m[j];
+	}
+	u64 l = a << 1, r = a >> 1;
+	if (edge_ok) { l |= 1; r |= (u64) 1 << (nb - 1); }
+	return a & l & r & all;
+}
+
+/* Samples some changed rows for the best shift: the score of a shift is the equal blocks over the sample. `horizontal`: dx in [-D, D]. */
+static void shift_scores(const uint16_t *cur, int cp, const uint16_t *prev, int w, int h, int nb, const u64 *m0, bool horizontal, int range, int *score)
+{
+	const int n = 2 * range + 1;
+	for (int i = 0; i < n; i++) score[i] = 0;
+	const u64 full = nb >= 64 ? ~(u64) 0 : (((u64) 1 << nb) - 1);
+	int nc = 0;
+	for (int y = 0; y < h; y++) nc += m0[y] != full;
+	if (!nc) return;
+	const int take = nc < 8 ? nc : 8;
+	int idx = 0, next = 0;
+	for (int y = 0; y < h && next < take; y++) {
+		if (m0[y] == full) continue;
+		if (idx++ != (next * nc) / take + nc / (2 * take)) continue;       /* the middle of each eighth of the changed rows */
+		next++;
+		for (int k = -range; k <= range; k++) {
+			if (k == 0) continue;
+			if (horizontal) score[k + range] += pop64(eq_blocks(cur + (size_t) cp * y, prev + (size_t) w * y, w, nb, k));
+			else if (y + k >= 0 && y + k < h) score[k + range] += pop64(eq_blocks(cur + (size_t) cp * y, prev + (size_t) w * (y + k), w, nb, 0));
+		}
+	}
+}
+
+int ScaleCache::plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch, bool allow_shift)
+{
+	Impl &d = *p_;
+	d.chunks.clear();
+	memset(&d.st, 0, sizeof d.st);
+	if (!src || k == SC_NONE || w < 1 || h < 1 || w > 4096 || h > 4096) { d.valid = false; return 0; }
+	scale_init();
+	const int f = scaler_factor(k), F = k == SC_MMPX2 ? 3 : 2;
+	const int nb = (w + BLK - 1) / BLK;
+	const bool restart = !d.valid || d.kind != k || d.w != w || d.h != h;
+	if (restart) {
+		d.kind = k; d.w = w; d.h = h; d.f = f; d.ow = w * f; d.nb = nb;
+		d.prev.assign((size_t) w * h, 0);
+		d.out.assign((size_t) d.ow * (size_t) (h * f), 0);
+		d.ver.assign((size_t) h, 0);
+		d.m0.assign((size_t) h, 0); d.ms.assign((size_t) h, 0); d.keep.assign((size_t) h, 0); d.mv.assign((size_t) h, 0); d.tmp.assign((size_t) h, 0);
+		d.dxr.assign((size_t) h, 0); d.pdx.assign((size_t) h, 0);
+		d.gen++;
+		d.valid = true;
+	}
+	d.src = src; d.spitch = spitch;
+	d.frame++;
+	const uint32_t frame = d.frame;
+	d.st.rows = h; d.st.restarted = restart; d.st.blocks = h * nb;
+	const u64 full = nb >= 64 ? ~(u64) 0 : (((u64) 1 << nb) - 1);
+	const bool usable = nb <= MAXB && !restart;
+	u64 *m0 = &d.m0[0], *keep = &d.keep[0], *mv = &d.mv[0];
+	int shape = 0;               /* 0 none, 1 vertical, 2 horizontal */
+	int kk = 0;
+	if (usable) {
+		for (int y = 0; y < h; y++) m0[y] = eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * y], w, nb, 0);
+		int kept = 0;
+		for (int y = 0; y < h; y++) { keep[y] = reusable(m0, 0, y, h, nb, F, 0, true); kept += pop64(keep[y]); }
+		int best = kept;
+		if (allow_shift && kept * 10 < h * nb * 7 && h >= 16 && nb >= 4) {
+			/* a vertical shift of the whole picture */
+			{
+				const int K = h / 4 < 24 ? h / 4 : 24;
+				int sc_[49];
+				shift_scores(src, spitch, &d.prev[0], w, h, nb, m0, false, K, sc_);
+				int bk = 0, bs = 0;
+				for (int q = -K; q <= K; q++) if (sc_[q + K] > bs) { bs = sc_[q + K]; bk = q; }
+				if (bk) {
+					for (int y = 0; y < h; y++) d.ms[y] = (y + bk >= 0 && y + bk < h) ? eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * (y + bk)], w, nb, 0) : 0;
+					int tot = 0;
+					for (int y = 0; y < h; y++) { d.tmp[y] = reusable(&d.ms[0], 0, y, h, nb, F, bk, false) & ~keep[y]; tot += pop64(keep[y] | d.tmp[y]); }
+					if (tot > best) { best = tot; shape = 1; kk = bk; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
+				}
+			}
+			/* a horizontal shift, per row (parallax layers scroll at their own speeds) */
+			{
+				const int D = 16;
+				int sc_[2 * D + 1];
+				shift_scores(src, spitch, &d.prev[0], w, h, nb, m0, true, D, sc_);
+				int top[3] = { 0, 0, 0 }, nt = 0;
+				for (int t = 0; t < 3; t++) {
+					int bk = 0, bs = 0;
+					for (int q = -D; q <= D; q++) { if (!q) continue; bool used = false; for (int u = 0; u < nt; u++) used |= top[u] == q; if (!used && sc_[q + D] > bs) { bs = sc_[q + D]; bk = q; } }
+					if (bk && bs > 0) top[nt++] = bk;
+				}
+				if (nt) {
+					std::vector<int16_t> &dx = d.dxr;
+					std::vector<u64> &msh = d.ms;
+					for (int y = 0; y < h; y++) {
+						int cands[6], nc = 0;
+						if (y > 0 && dx[y - 1]) cands[nc++] = dx[y - 1];
+						if (d.pdx[y]) cands[nc++] = d.pdx[y];
+						for (int t = 0; t < nt; t++) cands[nc++] = top[t];
+						int bd = 0, bp = -1;
+						u64 bm = 0;
+						for (int c = 0; c < nc; c++) {
+							bool dup = false;
+							for (int e = 0; e < c; e++) dup |= cands[e] == cands[c];
+							if (dup) continue;
+							const u64 mm = eq_blocks(src + (size_t) spitch * y, &d.prev[(size_t) w * y], w, nb, cands[c]);
+							const int pc = pop64(mm);
+							if (pc > bp) { bp = pc; bd = cands[c]; bm = mm; }
+						}
+						dx[y] = (int16_t) bd; msh[y] = bm;
+					}
+					int tot = 0;
+					for (int y = 0; y < h; y++) { d.tmp[y] = dx[y] ? (reusable(&msh[0], &dx[0], y, h, nb, F, 0, false) & ~keep[y]) : 0; tot += pop64(keep[y] | d.tmp[y]); }
+					if (tot > best) { best = tot; shape = 2; for (int y = 0; y < h; y++) mv[y] = d.tmp[y]; }
+				}
+			}
+		}
+	} else {
+		for (int y = 0; y < h; y++) { m0[y] = 0; keep[y] = 0; mv[y] = 0; }
+	}
+	if (shape != 2) for (int y = 0; y < h; y++) d.dxr[y] = 0;
+	d.st.shift_k = shape == 1 ? kk : shape == 2 ? 1 : 0;
+	d.st.shape = shape;
+	/* the moves: whole runs of blocks, in an order that never reads what a move has already written */
+	const size_t orow = (size_t) d.ow;
+	int moved = 0, kept_blocks = 0;
+	for (int y = 0; y < h; y++) kept_blocks += pop64(keep[y]);
+	if (shape == 1) {
+		for (int yy = 0; yy < h; yy++) {
+			const int y = kk > 0 ? yy : h - 1 - yy;
+			u64 r = mv[y];
+			while (r) {
+				const int a = __builtin_ctzll(r);
+				int e = a;
+				while (e < nb && (r >> e & 1)) e++;
+				r &= ~((((u64) 1 << (e - a)) - 1) << a) ;
+				const int px0 = a * BLK, px1 = e * BLK < w ? e * BLK : w;
+				for (int sb = 0; sb < f; sb++)
+					memmove(&d.out[(size_t) (y * f + sb) * orow + (size_t) px0 * f], &d.out[(size_t) ((y + kk) * f + sb) * orow + (size_t) px0 * f], (size_t) (px1 - px0) * f * 2u);
+				moved += e - a;
+			}
+			if (mv[y]) d.ver[y] = frame;
+		}
+	} else if (shape == 2) {
+		for (int y = 0; y < h; y++) {
+			u64 r = mv[y];
+			if (!r) continue;
+			const int dx = d.dxr[y];
+			/* runs, ascending for a source on the right, descending for one on the left */
+			int runs_a[33], runs_e[33], nr = 0;
+			while (r && nr < 33) {
+				const int a = __builtin_ctzll(r);
+				int e = a;
+				while (e < nb && (r >> e & 1)) e++;
+				r &= ~((((u64) 1 << (e - a)) - 1) << a);
+				runs_a[nr] = a; runs_e[nr] = e; nr++;
+			}
+			for (int q = 0; q < nr; q++) {
+				const int qi = dx > 0 ? q : nr - 1 - q;
+				const int a = runs_a[qi], e = runs_e[qi];
+				const int px0 = a * BLK, px1 = e * BLK < w ? e * BLK : w;
+				for (int sb = 0; sb < f; sb++)
+					memmove(&d.out[(size_t) (y * f + sb) * orow + (size_t) px0 * f], &d.out[(size_t) (y * f + sb) * orow + (size_t) (px0 + dx) * f], (size_t) (px1 - px0) * f * 2u);
+				moved += e - a;
+			}
+			d.ver[y] = frame;
+		}
+	}
+	/* what is left is computed: per stripe of 8 rows, the columns from the first to the last block that is not reusable */
+	const int CH = 8;
+	int computed_blocks = 0;
+	for (int y0 = 0; y0 < h; y0 += CH) {
+		const int y1 = y0 + CH < h ? y0 + CH : h;
+		u64 need = 0;
+		for (int y = y0; y < y1; y++) { const u64 n = ~(keep[y] | mv[y]) & full; need |= n; computed_blocks += pop64(n); }
+		if (!need) continue;
+		const int bl = __builtin_ctzll(need), bh = 63 - __builtin_clzll(need);
+		Impl::Chunk c; c.y0 = y0; c.y1 = y1; c.x0 = bl * BLK; c.x1 = (bh + 1) * BLK < w ? (bh + 1) * BLK : w;
+		d.chunks.push_back(c);
+		if (getenv("PKDBG") && y0 == 40) fprintf(stderr, "chunk %d..%d x %d..%d need=%llx keep44=%llx m0_44=%llx\n", y0, y1, c.x0, c.x1, (unsigned long long) need, (unsigned long long) keep[44], (unsigned long long) m0[44]);
+		for (int y = y0; y < y1; y++) if (~(keep[y] | mv[y]) & full) d.ver[y] = frame;
+	}
+	d.st.computed = computed_blocks; d.st.shifted = moved; d.st.same = kept_blocks;
+	/* the kept picture is now this one; the shift of each row is the next picture's first guess */
+	for (int y = 0; y < h; y++)
+		if (!usable || m0[y] != full) memcpy(&d.prev[(size_t) w * y], src + (size_t) spitch * y, (size_t) w * 2u);
+	for (int y = 0; y < h; y++) d.pdx[y] = d.dxr[y];
+	d.st.chunks = (int) d.chunks.size();
+	return (int) d.chunks.size();
+}
+
+unsigned ScaleCache::run_chunk(int i, ScaleScratch &sc)
+{
+	Impl &d = *p_;
+	if (i < 0 || i >= (int) d.chunks.size()) return 0;
+	const Impl::Chunk &c = d.chunks[i];
+	return scale_rect(d.kind, d.src, d.w, d.h, d.spitch, &d.out[0], d.ow, c.y0, c.y1, c.x0, c.x1, sc);
+}
+
+int ScaleCache::blit(uint16_t *dst, int dpitch, TexSync &t)
+{
+	Impl &d = *p_;
+	if (!d.valid || !dst || dpitch < d.ow) return 0;
+	const bool all = t.gen != d.gen;
+	int rows = 0, y = 0;
+	while (y < d.h) {
+		if (!all && d.ver[y] <= t.epoch) { y++; continue; }
+		int e = y + 1;
+		while (e < d.h && (all || d.ver[e] > t.epoch)) e++;
+		const size_t r0 = (size_t) y * d.f, r1 = (size_t) e * d.f;
+		if (dpitch == d.ow) memcpy(dst + r0 * (size_t) dpitch, &d.out[r0 * (size_t) d.ow], (r1 - r0) * (size_t) d.ow * 2u);
+		else for (size_t r = r0; r < r1; r++) memcpy(dst + r * (size_t) dpitch, &d.out[r * (size_t) d.ow], (size_t) d.ow * 2u);
+		rows += e - y;
+		y = e;
+	}
+	t.epoch = d.frame; t.gen = d.gen;
+	return rows;
 }
 
 }  // namespace pk

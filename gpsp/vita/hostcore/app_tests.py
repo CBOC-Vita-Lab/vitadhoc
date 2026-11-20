@@ -2789,6 +2789,9 @@ PICKER_ROMS = {"roms/a.sfc": b"x" * 300, "roms/b.nes": b"x" * 300, "roms/c.nes":
                "roms/d.ws": b"z" * 300, "roms/g1.gb": b"a" * 300, "roms/g2.gb": b"b" * 300}
 # the picker's geometry on the 960 x 544 screen: the pill, and the centre of row i
 PICKER_PILL = (522, 37)
+# (the references leave out the count column: how many games the Game Boy has depends on
+# whether the test cartridge testrom/gbsave.gb was built)
+PICKER_BOX = (0, 0, 700, 544)
 
 
 def picker_row_y(i):
@@ -2830,16 +2833,13 @@ def t_picker(S):
     S.check(pill and int(pill[0]["x"]) + int(pill[0]["w"]) < int(pill[0]["search"]),
             "the pill ends before the search icon")
     a, b = r.shot("closed.png"), r.shot("open.png")
-    S.picture(r, "closed.png", "picker_closed.png")
-    S.picture(r, "open.png", "picker_open.png")
+    S.picture(r, "closed.png", "picker_closed.png", box=PICKER_BOX)
+    S.picture(r, "open.png", "picker_open.png", box=PICKER_BOX)
     # the list is there only when open; the active row (0) is the bright one
     S.check(worst_diff(a, b) > 0, "the list is drawn under the pill")
     pill_box = (int(pill[0]["x"]) * 2, 0, (int(pill[0]["x"]) + int(pill[0]["w"])) * 2, 60)
     S.check(ImageChops.difference(a.crop(pill_box), b.crop(pill_box)).getbbox() is not None,
             "the open pill is outlined in the console's colour, and the list starts below it")
-    def lum(im, i, x0=640, x1=740):
-        y = picker_row_y(i)
-        return max(max(px) for px in im.crop((x0, y - 10, x1, y + 10)).getdata())
     # the highlight: row 0 is lit (fill behind it), row 1 is not
     bg = lambda im, i: sum(im.getpixel((600, picker_row_y(i))))
     S.check(bg(b, 0) > bg(b, 1) + 30, "the active console's row is highlighted (%d vs %d)" %
@@ -2847,7 +2847,7 @@ def t_picker(S):
     # a console with no games (GBC) is dimmed, one with games is not
     def ink(im, i):
         y = picker_row_y(i)
-        return max(sum(px) for px in im.crop((440, y - 12, 640, y + 12)).getdata())
+        return max(sum(px) for px in im.crop((440, y - 12, 640, y + 12)).get_flattened_data())
     S.check(ink(b, 2) < ink(b, 4) - 60 and ink(b, 2) > 3 * 0 + 150,
             "GBC (0 games) is dimmed but readable, NES (2 games) is not (%d, %d)" % (ink(b, 2), ink(b, 4)))
     # N presses move N rows, wrapping; the library follows each
@@ -2870,11 +2870,11 @@ def t_picker(S):
     cl = r.evt("ui_picker close")
     S.check(len(cl) == 1 and cl[0]["idle"] == "72", "it closes by itself 1.2 s after the last move (%s)" %
             [c["_"] for c in cl])
-    S.picture(r, "rest.png", "picker_rest.png")
+    S.picture(r, "rest.png")   # (it shows the data folder's path: no reference)
     # d-pad: DOWN, DOWN, UP, UP, UP wraps backwards
     r = picker_run(S, "picker_dpad", "90:triangle\n+6:down\n+6:down\n+6:up\n+6:up\n+6:up\n+6:shot=up.png\n+200:quit\n")
     S.check(picker_moves(r) == [1, 2, 1, 0, 5], "DOWN steps on, UP steps back and wraps: %s" % picker_moves(r))
-    S.picture(r, "up.png", "picker_up.png")
+    S.picture(r, "up.png", "picker_up.png", box=PICKER_BOX)
     # CROSS and CIRCLE close it and nothing else happens
     for btn in ("cross", "circle"):
         r = picker_run(S, "picker_" + btn, "90:triangle\n+6:triangle\n+10:%s\n+40:shot=after.png\n+10:quit\n" % btn)
@@ -2900,8 +2900,8 @@ def t_picker(S):
     S.check(len(r.evt("ui_picker close")) == 3 and len(r.evt("ui_picker open")) == 3 and
             len(r.evt("ui_browser_console")) == 2,
             "a tap beside the list closes it, and nothing else (%s)" % ev)
-    S.picture(r, "t_open.png", "picker_touch_open.png")
-    S.picture(r, "t_snes.png", "picker_touch_snes.png")
+    S.picture(r, "t_open.png", "picker_touch_open.png", box=PICKER_BOX)
+    S.picture(r, "t_snes.png", "picker_touch_snes.png", box=PICKER_BOX)
     # ten consoles (the four Sega ones are coming): the host twin repeats the
     # table four times over to show the list at that length -- it holds eight
     # rows, scrolls to keep the highlight in view, never reaches the hint line
@@ -2912,11 +2912,11 @@ def t_picker(S):
             "ten rows: nine presses reach the last row, a tap on a row of the scrolled list picks that row (%s)" %
             picker_moves(r))
     end = r.shot("ten_end.png")
-    S.check(max(max(px) for px in end.crop((400, 440, 760, 500)).getdata()) > 120 and
-            max(max(px) for px in end.crop((400, 500, 760, 506)).getdata()) < 120,
+    S.check(max(max(px) for px in end.crop((400, 440, 760, 500)).get_flattened_data()) > 120 and
+            max(max(px) for px in end.crop((400, 500, 760, 506)).get_flattened_data()) < 120,
             "the last row is in view and the list ends above the hint line")
-    S.picture(r, "ten_open.png", "picker_ten_open.png")
-    S.picture(r, "ten_end.png", "picker_ten_end.png")
+    S.picture(r, "ten_open.png", "picker_ten_open.png", box=PICKER_BOX)
+    S.picture(r, "ten_end.png", "picker_ten_end.png", box=PICKER_BOX)
 
 
 def t_find(S):
@@ -3026,9 +3026,10 @@ def t_library_cache(S):
     with open(OWN_GBA, "rb") as cartridge:
         second_game = cartridge.read()
     # six console tabs (GBA, GB, GBC, SNES, NES, WS) since 1.4: two full turns
-    script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
+    # (TRIANGLE opens the picker, then 12 more presses; 100 frames of rest close it)
+    script = ("60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
               "+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+60:triangle\n+70:triangle\n"
-              "+60:right\n+20:start\n" + "+8:down\n" * 19 +
+              "+100:right\n+20:start\n" + "+8:down\n" * 19 +
               "+20:shot=quality_setting.png\n" + "+8:up\n" * 15 +
               "+20:shot=refresh_command.png\n+8:cross\n"
               "+60:shot=refreshed.png\n+8:cross\n+100:shot=game.png\n+20:quit\n")
@@ -3525,7 +3526,7 @@ def t_art_progress(S):
     S.check(len(covers) == 2,
             "returning from the game resumes and finishes both controlled cover downloads (%d)" % len(covers))
     if ready:
-        red = sum(1 for c in ready.crop((60, 102, 160, 200)).getdata()
+        red = sum(1 for c in ready.crop((60, 102, 160, 200)).get_flattened_data()
                   if c[0] > 180 and c[1] < 60 and c[2] < 60)
         S.check(red > 8000, "the focused cover appears automatically after returning (%d red pixels)" % red)
     S.summary["art_progress_evidence"] = {"requests": requests, "covers": len(covers)}
@@ -3651,7 +3652,7 @@ def t_art_settings(S):
     S.picture(r, "settings_done.png")
     if before and after:
         box = (60, 102, 160, 200)
-        red = lambda im: sum(1 for c in im.crop(box).getdata()
+        red = lambda im: sum(1 for c in im.crop(box).get_flattened_data()
                              if c[0] > 180 and c[1] < 60 and c[2] < 60)
         before_red, after_red = red(before), red(after)
         S.check(before_red < 100 and after_red > 8000,

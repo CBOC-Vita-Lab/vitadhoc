@@ -42,8 +42,59 @@ struct ScaleScratch {
 unsigned scale_rows(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1,
                     ScaleScratch &sc);
 
+/* The same for the columns [x0, x1) of those rows only (the output columns x0 * f .. x1 * f - 1); the rest of the output is not touched. */
+unsigned scale_rect(ScalerKind k, const uint16_t *src, int w, int h, int spitch, uint16_t *dst, int dpitch, int y0, int y1, int x0, int x1,
+                    ScaleScratch &sc);
+
 /* The literal transcription (slow; for tests and as the written definition of "xBR lv2 here"). scale 2 or 3. */
 void xbr_reference(const uint16_t *src, int w, int h, int spitch, int scale, uint16_t *dst, int dpitch);
+
+/* ---- the incremental scaler (ScaleCache) ------------------------------------------------------------------------------------------
+ * Most pictures of a console game change in a part of their rows only (a HUD stands still, a menu blinks, sprites move over a flat
+ * background) and a full-screen scroll moves rows up or down without changing them. ScaleCache keeps the last source picture and the
+ * last scaled picture (in cached memory, one copy, whatever number of textures the caller rotates through) and per frame
+ *   1. compares the new source rows with the kept ones (NEON on the console; exact compare, no hash),
+ *   2. when many rows differ, looks for a vertical shift (the scaled rows of the last picture are moved, not computed again),
+ *   3. computes only the output rows whose footprint (the scaler's reach: 3 source rows for MMPX, 2 for xBR) holds a changed row,
+ *   4. hands the changed output rows to the caller's texture (blit): a texture that is a few pictures old gets every row that changed
+ *      since it was written.
+ * The picture is BIT IDENTICAL to scale_rows over the whole picture (tests/test_scale.cpp, md/twin/scale_proof.cpp: every frame of
+ * every test ROM). A change of kind or size starts over. Threads: plan() on one thread, then run_chunk(i) for i < chunks() on any
+ * threads (disjoint output rows), then, when all are done, blit() on one thread. */
+struct TexSync {                  /* what one texture holds: which picture of the cache it is in step with */
+	uint32_t epoch, gen;
+	TexSync() : epoch(0), gen(0) {}
+};
+
+struct ScaleStats {               /* of the last plan() */
+	int rows, blocks, computed, shifted, same, shift_k, shape, chunks;   /* blocks of 8 columns: all, computed, moved, kept; shape 0 none 1 vertical 2 horizontal */
+	bool restarted;
+};
+
+class ScaleCache {
+public:
+	ScaleCache();
+	~ScaleCache();
+	void reset();                                     /* forget the kept pictures (the next plan() computes everything) */
+	/* `allow_shift` 0 turns the vertical shift search off (tests). Returns the number of chunks (0 for SC_NONE or a bad size). */
+	int plan(ScalerKind k, const uint16_t *src, int w, int h, int spitch, bool allow_shift = true);
+	unsigned run_chunk(int i, ScaleScratch &sc);      /* returns the non flat count of its rows */
+	int chunks() const;
+	/* Copies the rows that changed since `t` was written into the texture memory (dpitch in pixels, at least w * factor). */
+	int blit(uint16_t *dst, int dpitch, TexSync &t);
+	const uint16_t *out() const;                      /* the cached scaled picture, pitch out_pitch() pixels */
+	int out_pitch() const;
+	const ScaleStats &stats() const;
+private:
+	struct Impl;
+	Impl *p_;
+	ScaleCache(const ScaleCache &);
+	ScaleCache &operator=(const ScaleCache &);
+};
+
+/* Exact comparison of two rows of n pixels (NEON on the console, scalar elsewhere; the scalar one is the definition). */
+bool rows_equal(const uint16_t *a, const uint16_t *b, int n);
+bool rows_equal_scalar(const uint16_t *a, const uint16_t *b, int n);
 
 }  // namespace pk
 

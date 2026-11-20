@@ -13,8 +13,8 @@
  *
  * Extensions (matched without regard to case; a ".zip" holding one of them
  * is read by zip_rom.c as for the other consoles):
- *    Genesis  .md .gen .smd .bin   (.bin only when gamedb_md_accept says so)
- *    SMS      .sms                 Game Gear  .gg      SG-1000  .sg
+ *    Genesis  .md .gen .smd .bin .68k   (.bin only when gamedb_md_accept says so)
+ *    SMS      .sms                 Game Gear  .gg      SG-1000  .sg .sc
  * A ".sms" in the Game Gear catalogue (25 games are Game Gear titles that
  * run in Master System mode) is looked up under Master System first, then
  * Game Gear.  A ".bin" that is not a Genesis file (gamedb_md_rom_kind NONE or
@@ -45,7 +45,7 @@ typedef struct
 
 static const gamedb_sega_console gamedb_sega_consoles[GAMEDB_SEGA_CONSOLES] = {
    { 'I', 8, "Genesis / Mega Drive", "Sega - Mega Drive - Genesis",
-     ".md|.gen|.smd|.bin",
+     ".md|.gen|.smd|.bin|.68k",
      "MD|GEN|SMD|Genesis|MegaDrive|Mega Drive|MegaDrive-Genesis|Sega Genesis|Sega Mega Drive|"
      "Sega - Mega Drive - Genesis",
      "Sega - Mega Drive - Genesis" },
@@ -59,7 +59,7 @@ static const gamedb_sega_console gamedb_sega_consoles[GAMEDB_SEGA_CONSOLES] = {
      "GG|GameGear|Game Gear|Sega Game Gear|Sega - Game Gear",
      "Sega - Game Gear" },
    { 'L', 11, "SG-1000", "Sega - SG-1000",
-     ".sg",
+     ".sg|.sc",
      "SG|SG1000|SG-1000|SG 1000|Sega SG-1000|Sega - SG-1000",
      "Sega - SG-1000" },
 };

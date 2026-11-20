@@ -30,6 +30,10 @@ int main(void)
    assert(!ui_rom_matches_console("Columns.gg", FE_CONSOLE_SMS));
    assert(!ui_rom_matches_console("Columns.gb", FE_CONSOLE_GG));
    assert(ui_rom_matches_console("Girl's Garden.sg", FE_CONSOLE_SG));
+   assert(ui_rom_matches_console("Sonic.68K", FE_CONSOLE_MD));
+   assert(!ui_rom_matches_console("Sonic.68k", FE_CONSOLE_SG));
+   assert(ui_rom_matches_console("Sega Card.SC", FE_CONSOLE_SG));
+   assert(!ui_rom_matches_console("Sega Card.sc", FE_CONSOLE_SMS));
    assert(!ui_rom_matches_console("Girl's Garden.sg", FE_CONSOLE_SMS));
    assert(!ui_rom_matches_console("Game.gba", FE_CONSOLE_GG));
    /* other consoles keep their files */

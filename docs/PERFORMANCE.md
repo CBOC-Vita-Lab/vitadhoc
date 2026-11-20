@@ -1,5 +1,37 @@
 # Performance
 
+## 2.0 performance pass: MMPX, the NES wide view, the wide-view boot frame (host, qemu and model numbers; nothing here ran on a Vita)
+
+Nothing in this pass lowers a picture: every change is bit-identical to what it replaces, and the tests below prove it.
+Labels: **host** = x86_64 callgrind (instructions), **qemu** = armhf guest instructions counted under qemu-arm, **model** = a
+conversion to milliseconds (444 MHz, IPC 0.7 to 1.0), **estimate** = a judgement. The pictures of the MMPX measurements are
+six frames of a private test set resampled to 240 x 160 (noisier than a true 1:1 frame, so they have more edges than a real
+game picture and are close to a worst case for the scaler).
+
+| Change | Proof of identity | Cost before / after | Vita (model) |
+| --- | --- | --- | --- |
+| MMPX 2x in NEON (gpsp/vita/mmpx_vita.c): eight pixels at a time, all the rules as compares and selects, luma computed from the 565 value, a whole group of eight flat pixels is one lookup and eight vector stores | upscale_test: NEON loop equals the C loop on 44 pictures (noise, flat with specks, lines, all colours; 11 sizes; cut at odd columns) under qemu, plus the existing MMPX stripe / slide / ring tests; the same output hash as the C loop on all six real frames | qemu, guest instructions per 240 x 160 frame, C -> NEON: 9.19 M -> 3.99 M, 3.61 M -> 1.33 M, 5.62 M -> 2.50 M (2.3x to 2.7x fewer; NEON instructions are not all one cycle, so the time gain is smaller) | about 1.5x to 2x faster MMPX (estimate); runs on the draw helper threads, not the game thread |
+| NES wide view adapter (nes/frontend/wide.c): the margin fill runs as three runs (map seam, raw margin, learned map) with the palette pass hoisted out of the pixel loop; the fixed-line "one colour" test checks a tile's row once when its two bit planes are 00 or FF | wide_golden.sh: all 37 composed-picture hash files equal the committed baseline (wide_golden_sha256.txt), before and after | host, scrolling cartridge, 300 frames with the view on: compose 304.6 M -> 192.3 M; wide view's extra cost (view on minus off, twin hashing left out) 3.50 M -> 2.97 M per frame (-15 %) | about 1.2 to 1.7 ms less per frame on the compose thread (model, 444 MHz, IPC 1.0 / 0.7) |
+| WonderSwan portrait rotation (wswan/frontend/layout.c): 8 x 8 blocks, a transpose in registers on ARM | rotate_test (blocked equals one-pixel-at-a-time, x86 and armhf under qemu), wswan-selftest orientation property test | the strided write of the pixel loop touched a new cache line per pixel; counted only as correct, not timed | small (32 K pixels a frame), estimate under 0.3 ms |
+
+What the copy audit found. The per-frame picture path is: core draws into its buffer, the hand-over copies it into a slot (needed:
+the core overwrites its buffer while the draw thread works), the upscaler copies it into its own "current" buffer while comparing it
+with the picture before (one pass; the old picture has to be kept anyway), then the upscaled picture is uploaded. For a 240 x 160
+GBA picture each copy is 77 KB, well under 0.1 ms; the Super Game Boy border copies only when the border changes and the game's 160
+rows each frame; the NES palette pass and the WonderSwan mix (already NEON) are single passes. No copy was found that a change could
+remove without a risk to the hand-over's timing, so none was removed: they are listed here so nobody looks for them again. What was
+found and fixed is a loop, not a copy: the WonderSwan rotation above.
+
+Not done, plainly: the NES wide view does not cache the nametable ring analysis (describe) between frames. Its output depends on the
+frame counter while a cell is "settling" (a few frames after a write), so a cache would need a per-cell settle test, for about 3 % of
+the view's cost; the learned map, the margin recorder in the core (nesp_tiles, on the emulation thread, 7 % of a wide-view frame)
+and widekit's own passes (base_fill, edge colours) are other people's code in this pass and were left alone. The NEON MMPX loop is not
+timed on a Vita; the first run on one should compare the `up_us` of the log with the C loop (build with -DMMPX_NO_NEON).
+
+The GBA boot picture: a boot that starts on scanline 126 (the Polarium Advance fix, as mGBA does) has no whole first frame, so the
+render thread's check no longer compares that one partial picture (it was the only frame the check ever failed on, once per start,
+in the render_thread test).
+
 ## Super NES On VitAdhoc 2.0 (host and model numbers, nothing here ran on a Vita)
 
 Counted on an x86_64 host with callgrind over the emulator's own code (Minstr per emulated frame, 60 frames of gameplay of the owner's pad

@@ -340,7 +340,10 @@ def convert_ws(code):
 # ---- Sega codes (2.0) ---------------------------------------------------------
 # One part is "ADDRESS:VALUE[:COMPARE]", upper-case hex, parts joined by '+'.
 #   Genesis / Mega Drive   AAAAAA:VVVV, 24-bit address, 16-bit value (a RAM
-#                          code with 00 in the high byte is a byte store)
+#                          code with 00 in the high byte is a byte store, as
+#                          Genesis Plus GX does it: at work_ram[address] as
+#                          held, the other byte of the 68000 word; the 2-digit
+#                          form AAAAAA:VV is written for address^1)
 #   Master System, Game Gear, SG-1000   AAAA:VV or AAAA:VV:CC, Z80 address
 # tools/md-cheats/SPEC.md says how the player applies them; the decoders follow
 # Genesis Plus GX (libretro/libretro.c decode_cheat) and are checked against
@@ -436,11 +439,17 @@ def convert_md(code):
             address = int(u[:6], 16)
             data = int(u[7:], 16)
             value = "%04X" % data
-            if len(u) == 9 and address < RAM_BASE:
-                # "AAAAAA:VV" is a byte store: Genesis Plus GX would read it as
-                # VV00 (and ROM has no byte patch here): not a code (none such
-                # in the 2026-09 lists)
-                return None, "not a code"
+            if len(u) == 9:
+                if address < RAM_BASE:
+                    # "AAAAAA:VV" is a byte store: Genesis Plus GX would read it as
+                    # VV00 (and ROM has no byte patch here): not a code (none such
+                    # in the 2026-09 lists)
+                    return None, "not a code"
+                # The lists mean the byte at that 68000 address.  Genesis Plus GX
+                # stores a "00VV" byte patch at work_ram[address & 0xFFFF] as the
+                # core holds it (16-bit words in host order), which is the OTHER
+                # byte of the word, so the byte at address A is the patch for A^1.
+                address ^= 1
         elif re.search(r"[?*X]", u) and \
                 re.fullmatch(r"[0-9A-F?*X]{6}:[0-9A-F?*X]{2,4}", u):
             return None, "placeholder"

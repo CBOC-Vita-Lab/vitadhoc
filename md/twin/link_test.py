@@ -337,7 +337,7 @@ def scenario_wrong_game(twin, base, roms):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--twin", required=True)
-    ap.add_argument("--roms", required=True, action="append", help="a folder with ROMs (repeat for more): SGDK samples (rom.bin), *.sms, *.gg")
+    ap.add_argument("--roms", required=True, action="append", help="a folder with ROMs (repeat for more): SGDK samples (rom.bin), *.sms, *.gg, *.sg")
     ap.add_argument("--only", default="")
     ap.add_argument("--frames", type=int, default=1200)
     ap.add_argument("--out", default=None)
@@ -348,7 +348,7 @@ def main():
       for d, _, fs in os.walk(root_dir):
         for f in sorted(fs):
             low = f.lower()
-            if low == "rom.bin" or low.endswith((".sms", ".gg", ".gen")):
+            if low == "rom.bin" or low.endswith((".sms", ".gg", ".gen", ".sg")):
                 nm = os.path.relpath(os.path.join(d, f), root_dir).replace("/out/release/rom.bin", "").replace("sample/", "")
                 roms[nm] = os.path.join(d, f)
     roms = dict(sorted(roms.items()))

@@ -69,6 +69,7 @@ static int part_md(const std::string &t, std::string *out)
 	} else if ((n == 9 || n == 11) && (t[6] == ':' || t[6] == '=') && is_hex(t, 0, 6) && is_hex(t, 7, n - 7)) {
 		a = hex(t, 0, 6); v = hex(t, 7, n - 7);
 		if (n == 9 && a < 0xFF0000u) return CHEAT_E_FORMAT;       /* a byte patch of ROM does not exist */
+		if (n == 9) a ^= 1u;      /* "AAAAAA:VV" = the byte at that 68000 address; the player stores a 00VV patch as Genesis Plus GX does, in the other byte of the word */
 	} else return CHEAT_E_FORMAT;
 	if (a >= 0x400000u && a < 0xFF0000u) return CHEAT_E_RANGE;
 	a &= 0xFFFFFFu;

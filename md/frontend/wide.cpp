@@ -21,8 +21,9 @@ static inline int fdiv(int a, int n) { int q = a / n; return (a % n < 0) ? q - 1
 enum { RING_MAX = 4096, NTILE = 0x800 };
 
 Meta::Meta() : ready(1), valid(0), system(0), vw(0), vh(0), margin(0), real_cap(0), view_off(0), have_strips(0), own_strips(0), nlayers(0), frame(0),
-	planes(3), all_opaque(1), epoch(0), scene_event(0), px(0), px_cap(0)
+	planes(3), all_opaque(1), epoch(0), scene_event(0), px(0), px_cap(0), mask_left(0)
 {
+	memset(bar_ok, 0, sizeof bar_ok);
 	memset(hud, 0, sizeof hud); memset(real, 0, sizeof real); memset(pic, 0, sizeof pic); memset(opq, 0, sizeof opq);
 }
 Meta::~Meta() { free(px); }
@@ -35,11 +36,12 @@ void Wide::wait(const Meta &m)
 	while (!m.ready.load(std::memory_order_acquire)) { if (++spins > 64 && g_yield) g_yield(); }
 }
 
-Wide::Wide() : L_(0), M_(0), map_system_(0), C_(0), cvw_(0), cvh_(0), cm_(0), fr_(0), out_(0), ana2_(0), wide_(0), prov_(0), th_(0), thok_(0),
+Wide::Wide() : L_(0), M_(0), map_system_(0), C_(0), ci_(0), cmeta_(0), edge_(0), cvw_(0), cvh_(0), cm_(0), fr_(0), out_(0), ana2_(0), wide_(0), prov_(0), th_(0), thok_(0),
 	have_prev_(0), map_w_(0), map_h_(0), layout_key_(0), have_cram_(0), cap_default_(1 << 20), learn_(true), want_prov_(false),
 	ovr_live_(0), ovr_next_(0), rowbuf_(0), seam_prev_(0), content_gen_(0), map_key_(0), map_key_ok_(0), check_(false), claims_(0), crc_(0), c_real_pct_(0), c_soft_lines_(0), c_composed_(0), planes_cur_(3), planes_next_(3)
 {
 	cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
+	for (int i = 0; i < COMPOSE_WHO; i++) scr_[i] = 0;
 	for (int p = 0; p < 2; p++) {
 		hash_[p] = 0; stamp_[p] = 0; wstamp_[p] = 0; code_[p] = 0; prev_[p] = 0; line_on_[p] = 0; used_[p] = 0; thprev_[p] = 0;
 		nused_[p] = settle_[p] = need_[p] = have_gid_[p] = 0; gid_[p] = 0; span_base_[p] = span_len_[p] = 0;
@@ -56,6 +58,8 @@ Wide::~Wide() { sync(); free_all(); }
 
 void Wide::free_all()
 {
+	for (int i = 0; i < COMPOSE_WHO; i++) { if (scr_[i]) wk_compose_scratch_destroy(scr_[i]); scr_[i] = 0; }
+	free(ci_); ci_ = 0; free(edge_); edge_ = 0;
 	if (C_) wk_compose_destroy(C_);
 	if (L_) wk_layers_destroy(L_);
 	if (M_) wk_map_destroy(M_);
@@ -215,7 +219,6 @@ void Wide::pass_plane(const md_wide_frame &f, int p, unsigned base, unsigned shi
 	}
 	nused_[p] = nused;
 	settle_[p] = settle;
-	content_gen_++;
 }
 
 bool Wide::describe_md(const md_wide_frame &f, const md_video_info &vi, uint32_t frame, int margin)
@@ -261,16 +264,24 @@ bool Wide::describe_md(const md_wide_frame &f, const md_video_info &vi, uint32_t
 	int on_n = 0;
 	for (y = 0; y < H && y < 256; y++) {
 		const md_wide_line &r = f.line[y];
-		/* a plane is described on the lines that show it whole with one vertical scroll: not plane A under a window that takes the line, neither
-		 * plane where the columns scroll apart */
-		const int same = (r.flags & MDW_ON) && !(r.flags & (MDW_VSCROLL | MDW_IM2)) && r.ntab == l0.ntab && r.ntbb == l0.ntbb &&
+		/* a plane is described on the lines that show it: not plane A under a window that takes the line. Where the columns scroll apart
+		 * vertically (per 2-cell scrolling) the line is described by the columns at the edge that has a strip (the left one when both have):
+		 * that is the row the strip continues; the other side's strip counts only if its edge shows the same row. */
+		const int base = (r.flags & MDW_ON) && !(r.flags & MDW_IM2) && r.ntab == l0.ntab && r.ntbb == l0.ntbb &&
 		                 r.col_mask == l0.col_mask && r.shift == l0.shift && r.row_mask == l0.row_mask;
+		const int vs = (r.flags & MDW_VSCROLL) != 0;
+		const int sl = (r.side & MDS_L) != 0, sr = (r.side & MDS_R) != 0;
+		const int same = base && (!vs || sl || sr);
+		const int from_right = vs && !sl && sr;
 		line_on_[0][y] = (uint8_t) (same && !(r.flags & MDW_WFULL) ? 1 : 0);
 		line_on_[1][y] = (uint8_t) (same ? 1 : 0);
 		for (int p = 0; p < 2; p++) {
 			wk_layer *L = &fr_->layer[p];
+			const int ys = from_right ? r.ysr[p] : r.ys[p];
 			L->scroll_x[y] = imod(-(int) (r.xs[p] & (uint16_t) (ringpx - 1)), ringpx);
-			L->row_y[y] = (y + (int) r.ys[p]) & rowmask;
+			L->row_y[y] = (y + ys) & rowmask;
+			/* bit s: the strip of side s shows the row the plane is described with */
+			rowok_[p][y] = (uint8_t) (!vs ? 3 : from_right ? 2 : (1 | ((((int) r.ysr[p] ^ (int) r.ys[p]) & rowmask) == 0 ? 2 : 0)));
 		}
 		on_n += same;
 	}
@@ -535,13 +546,15 @@ void Wide::decide_md(const md_wide_frame &f, Meta *m, int H)
 					const int k = out_->kind[l];
 					int x = 0;
 					if (k == WK_KIND_BACKDROP) x = M;
-					else if (k == WK_KIND_LEVEL && line_on_[l][y]) { x = lo.real[s][l]; if (x > (int) lo.ring[s][l]) mappx += (unsigned) (x - lo.ring[s][l]); }
+					else if ((k == WK_KIND_LEVEL || k == WK_KIND_UNKNOWN) && line_on_[l][y] && ((rowok_[l][y] >> s) & 1)) { x = lo.real[s][l]; if (x > (int) lo.ring[s][l]) mappx += (unsigned) (x - lo.ring[s][l]); }
 					if (x < v) v = x;
 				}
 				if (v < 0) v = 0;
 				if (v > M) v = M;
 			}
 			m->real[s][y] = m->pic[s][y] = (uint16_t) v;
+			if (v > 0 && (r.side & (MDS_NOA_L << s))) st_.win_sides++;
+			if (v > 0 && (r.side & MDS_VSE)) st_.vs_sides++;
 			if (v > 0 && allop) {
 				const uint32_t *ob = f.opq + ((size_t) y * 2 + (size_t) s) * 3;
 				for (int d = 0; d < v; d += 32) {
@@ -567,6 +580,7 @@ void Wide::strips_m4(const md_wide_frame &f, Meta *m, bool gg)
 	if (!m->px) return;
 	const int kind = out_->kind[0];
 	const int blank = (f.reg[0] & 0x20) != 0;
+	m->mask_left = (uint8_t) (!gg && blank);
 	const uint16_t *pal = f.pal;
 	const uint8_t *vram = f.vram;
 	enum { NT = WK_MAX_MARGIN / 8 + 3 };
@@ -629,6 +643,30 @@ void Wide::strips_m4(const md_wide_frame &f, Meta *m, bool gg)
 			m->pic[s][y] = (uint16_t) r0;
 			mappx += (unsigned) (d - r0);
 		}
+		/* the masked first eight columns of a line whose left strip is real: the same learned picture (the column under the mask from the map,
+		 * the next one is on screen and in the ring) */
+		if (!gg && blank && m->real[0][y] > 0 && !back && M_) {
+			int ok = 1;
+			for (int x = 0; x < 8 && ok; x++) {
+				const int xw = wx + x, col = fdiv(xw, 8);
+				uint32_t code;
+				if (col == g.tile_first) {
+					if (!memo[0][0]) {
+						wk_cell c;
+						memo[0][0] = (uint8_t) ((wk_map_margin_cell(M_, fr_, out_, 0, y, 0, 0, &c) && cell_ok(f, c, 0x1FF)) ? 2 : 1);
+						mcode[0][0] = c.code;
+					}
+					if (memo[0][0] != 2) { ok = 0; break; }
+					code = mcode[0][0];
+				} else code = prev_[0][rr * mw + imod(col, mw)];
+				const unsigned t = code & 0x1FF;
+				const uint8_t *b = vram + ((t * 32 + (unsigned) ((code & 0x400) ? 7 - fy : fy) * 4) & 0x3FFF);
+				const int px = xw & 7, bit = (code & 0x200) ? px : 7 - px;
+				const unsigned ci = ((b[0] >> bit) & 1) | (((b[1] >> bit) & 1) << 1) | (((b[2] >> bit) & 1) << 2) | (((b[3] >> bit) & 1) << 3);
+				m->bar[y][x] = pal[(((code >> 11) & 1) << 4) | ci];
+			}
+			m->bar_ok[y] = (uint8_t) ok;
+		}
 	}
 	st_.map_px = mappx;
 }
@@ -659,6 +697,7 @@ void Wide::run(const md_wide_frame &f)
 	m->have_strips = 0; m->own_strips = 0; m->nlayers = 0; m->frame = frame;
 	m->planes = (uint8_t) (vi.system == MD_SYS_MD ? job_.planes : 3);
 	m->all_opaque = 1; m->epoch = 0; m->scene_event = 0;
+	m->mask_left = 0; memset(m->bar_ok, 0, sizeof m->bar_ok);
 	do {
 		if (margin <= 0 || vi.h <= 0 || vi.h > 256 || vi.w <= 0 || !f.line) break;
 		if (vi.interlace == 2) break;
@@ -682,16 +721,31 @@ void Wide::run(const md_wide_frame &f)
 		const int H = m->vh;
 		if (!md) for (int y = 0; y < H; y++) { real0_[0][y] = out_->line[y].real[0][0]; real0_[1][y] = out_->line[y].real[1][0]; }
 		if (M_) {
-			/* the map looks at the cells the screen shows: while it is bound and those are the cells it looked at last time (no name table or tile
-			 * was written, no line moved to another tile, same scene) there is nothing for it to record or to verify again */
-			uint32_t key = mix32(out_->epoch, (uint32_t) content_gen_);
+			/* The map looks at the cells the screen shows, at their place in the world. On the Mega Drive it is given the level planes only (a
+			 * plane widekit has not made up its mind about is not drawn into the strips either). While it is bound and the screen shows the
+			 * cells it looked at last time (no line moved to another tile, no cell on screen changed, same scene) there is nothing for it to
+			 * record or to verify again: it is left alone. */
+			int kind0[WK_MAX_LAYERS];
+			for (int l = 0; l < WK_MAX_LAYERS; l++) { kind0[l] = out_->kind[l]; if (md && out_->kind[l] == WK_KIND_UNKNOWN) out_->kind[l] = WK_KIND_OFF; }
+			uint32_t key = out_->epoch * 0x9E3779B1u + 1u;
 			for (int l = 0; l < fr_->nlayers; l++) {
-				key = mix32(key, (uint32_t) out_->kind[l]);
-				for (int y = 0; y < H && y < 256; y++) {
-					if (!out_->coherent[l][y]) { key = mix32(key, 0x5bd1e995u); continue; }
-					const int wx = out_->world_x[l][y];
-					key = mix32(key, (uint32_t) fdiv(wx, 8) * 0x10001u + (uint32_t) fdiv(wx + fr_->view_w - 1, 8) * 31u + (uint32_t) fdiv(out_->world_row[l][y], 8) * 0x1000193u);
+				uint32_t k2 = (uint32_t) out_->kind[l];
+				if (out_->kind[l] == WK_KIND_LEVEL || out_->kind[l] == WK_KIND_UNKNOWN) {
+					const uint32_t *cc = code_[l], *hh = hash_[l];
+					const int mw = map_w_, mh = map_h_;
+					int have = 0, p_tf = 0, p_tl = 0, p_wr = 0;
+					for (int y = 0; y < H && y < 256; y++) {
+						if (!out_->coherent[l][y]) continue;
+						const int wx = out_->world_x[l][y], tf = fdiv(wx, 8), tl = fdiv(wx + fr_->view_w - 1, 8), wr = fdiv(out_->world_row[l][y], 8);
+						if (have && tf == p_tf && tl == p_tl && wr == p_wr) continue;
+						have = 1; p_tf = tf; p_tl = tl; p_wr = wr;
+						k2 = k2 * 0x01000193u ^ ((uint32_t) tf * 0x10001u + (uint32_t) tl * 31u + (uint32_t) wr * 0x9E3779B1u);
+						const int rr = imod(wr, mh) * mw;
+						int c = imod(tf, mw);
+						for (int i = tf; i <= tl; i++) { k2 = (k2 ^ cc[rr + c] ^ (hh[rr + c] << 7)) * 0x01000193u; if (++c == mw) c = 0; }
+					}
 				}
+				key = mix32(key, k2);
 			}
 			wk_map_stats ms;
 			wk_map_stats_get(M_, &ms);
@@ -699,6 +753,7 @@ void Wide::run(const md_wide_frame &f)
 			else st_.map_skips++;
 			map_key_ = key; map_key_ok_ = 1;
 			wk_map_serve(M_, fr_, out_);
+			for (int l = 0; l < WK_MAX_LAYERS; l++) out_->kind[l] = kind0[l];
 		}
 		if (md) {
 			if (check_) check_seen(H);
@@ -708,7 +763,17 @@ void Wide::run(const md_wide_frame &f)
 			/* the strips of the frames to come hold the planes widekit trusts to continue past the edge (backdrop, level); a HUD or unknown
 			 * plane is left out, so what shows there is the soft extension and the sprites, never a plane's stale or fixed tiles */
 			int pl = 0;
-			for (int l = 0; l < 2; l++) if (out_->kind[l] == WK_KIND_BACKDROP || out_->kind[l] == WK_KIND_LEVEL) pl |= 1 << l;
+			for (int l = 0; l < 2; l++) {
+				if (out_->kind[l] == WK_KIND_BACKDROP || out_->kind[l] == WK_KIND_LEVEL) pl |= 1 << l;
+				else if (out_->kind[l] == WK_KIND_UNKNOWN) {
+					/* a plane widekit has not named (it scrolls but the game does not stream columns into it: a level no wider than its
+					 * ring) goes in while the ring's own history vouches for a fair part of the margin (a quarter to get in, a twelfth to
+					 * stay): a plane that vouches for nothing would only hide the other one */
+					long sum = 0, tot = 0;
+					for (int y = 0; y < H && y < 256; y++) if (line_on_[l][y]) { sum += out_->line[y].real[0][l] + out_->line[y].real[1][l]; tot += 2 * out_->margin; }
+					if (tot > 0 && (sum * 4 >= tot || (((planes_next_ >> l) & 1) && sum * 12 >= tot))) pl |= 1 << l;
+				}
+			}
 			planes_next_ = pl;
 			rows_md(f, H);
 			m->have_strips = 1;
@@ -748,7 +813,9 @@ void Wide::census(Stats *s)
 void Wide::ensure_compose(int vw, int vh, int margin)
 {
 	if (C_ && cvw_ == vw && cvh_ == vh && cm_ == margin) return;
+	for (int i = 0; i < COMPOSE_WHO; i++) { if (scr_[i]) wk_compose_scratch_destroy(scr_[i]); scr_[i] = 0; }
 	if (C_) { wk_compose_destroy(C_); C_ = 0; }
+	if (!ci_) ci_ = (wk_compose_in *) calloc(1, sizeof(wk_compose_in));
 	free(wide_); free(prov_); free(cand_[0]); free(cand_[1]); free(opq_[0]); free(opq_[1]);
 	wide_ = 0; prov_ = 0; cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
 	if (!ana2_) ana2_ = (wk_out *) calloc(1, sizeof(wk_out));
@@ -763,7 +830,9 @@ void Wide::ensure_compose(int vw, int vh, int margin)
 	cand_[1] = (uint16_t *) calloc((size_t) vh * (size_t) margin, 2);
 	opq_[0] = (uint8_t *) calloc((size_t) vh * (size_t) margin, 1);
 	opq_[1] = (uint8_t *) calloc((size_t) vh * (size_t) margin, 1);
-	if (!C_ || !wide_ || !prov_ || !cand_[0] || !cand_[1] || !opq_[0] || !opq_[1] || !ana2_) {
+	if (C_) for (int i = 1; i < COMPOSE_WHO; i++) scr_[i] = wk_compose_scratch_create(C_);      /* who 0 works in the handle's own */
+	if (!C_ || !wide_ || !prov_ || !cand_[0] || !cand_[1] || !opq_[0] || !opq_[1] || !ana2_ || !ci_ || !scr_[1] || !scr_[2] || !scr_[3]) {
+		for (int i = 0; i < COMPOSE_WHO; i++) { if (scr_[i]) wk_compose_scratch_destroy(scr_[i]); scr_[i] = 0; }
 		if (C_) wk_compose_destroy(C_);
 		C_ = 0; free(wide_); free(prov_); free(cand_[0]); free(cand_[1]); free(opq_[0]); free(opq_[1]); wide_ = 0; prov_ = 0; cand_[0] = cand_[1] = 0; opq_[0] = opq_[1] = 0;
 		cvw_ = cvh_ = cm_ = 0;
@@ -775,10 +844,37 @@ void Wide::ensure_compose(int vw, int vh, int margin)
 
 const uint16_t *Wide::compose(const Meta &m, const uint16_t *view0, int pitch_px, int *w, int *h)
 {
+	const int n = compose_begin(m, view0, pitch_px, w, h);
+	if (n <= 0) return 0;
+	compose_lines(0, n, 0);
+	return compose_end();
+}
+
+void Wide::compose_lines(int y0, int y1, int who)
+{
+	if (C_ && ci_ && who >= 0 && who < COMPOSE_WHO) wk_compose_lines(C_, ci_, y0, y1, scr_[who]);
+}
+
+const uint16_t *Wide::compose_end()
+{
+	if (!C_) return 0;
+	wk_compose_end(C_);
+	if (cmeta_ && cmeta_->mask_left) {
+		const Meta &m = *cmeta_;
+		const int stride = m.vw + 2 * m.margin;
+		for (int y = 0; y < m.vh; y++) if (m.bar_ok[y] && lastreal_[0][y] > 0) memcpy(wide_ + (size_t) y * (size_t) stride + m.margin, m.bar[y], sizeof m.bar[y]);
+	}
+	cmeta_ = 0;
+	c_composed_.fetch_add(1);
+	return wide_;
+}
+
+int Wide::compose_begin(const Meta &m, const uint16_t *view0, int pitch_px, int *w, int *h)
+{
 	wait(m);
 	if (!m.valid || m.margin <= 0 || m.vw <= 0 || m.vh <= 0 || m.vh > 256 || m.margin > WK_MAX_MARGIN || !view0) return 0;
 	ensure_compose(m.vw, m.vh, m.margin);
-	if (!C_ || !wide_) return 0;
+	if (!C_ || !wide_ || !ci_) return 0;
 	const int M = m.margin, V = m.vw, H = m.vh;
 	wk_out *a = ana2_;
 	const int use = (m.have_strips || m.own_strips) && m.nlayers > 0;
@@ -825,21 +921,29 @@ const uint16_t *Wide::compose(const Meta &m, const uint16_t *view0, int pitch_px
 	}
 	c_real_pct_.store((int) (real_total * 100L / (2L * M * H)));
 	c_soft_lines_.store(soft_lines);
-	wk_compose_in ci;
+	wk_compose_in &ci = *ci_;
 	memset(&ci, 0, sizeof ci);
 	ci.ana = a;
 	ci.centre = view0; ci.centre_stride = pitch_px;
 	ci.out = wide_; ci.out_stride = V + 2 * M;
 	if (want_prov_) ci.prov = prov_;
+	cmeta_ = &m;
+	if (m.mask_left && V >= 16) {
+		/* the first eight columns are the border colour: the soft extension continues the picture, not the mask */
+		if (!edge_) edge_ = (uint16_t *) calloc((size_t) 256 * WK_EDGE_N, 2);
+		if (edge_) {
+			for (int y = 0; y < H; y++) memcpy(edge_ + (size_t) y * WK_EDGE_N, view0 + (size_t) y * (size_t) pitch_px + 8, WK_EDGE_N * 2);
+			ci.edge_px[0] = edge_;
+		}
+	}
 	if (use) {
 		ci.cand[0][0] = cand_[0]; ci.cand[0][1] = cand_[1];
 		if (masks) { ci.opaque[0][0] = opq_[0]; ci.opaque[0][1] = opq_[1]; }
 		ci.order[0] = 0; ci.norder = 1;
 	}
-	wk_compose_frame(C_, &ci);
-	c_composed_.fetch_add(1);
+	wk_compose_begin(C_, &ci);
 	*w = V + 2 * M; *h = H;
-	return wide_;
+	return H;
 }
 
 }  // namespace mdw

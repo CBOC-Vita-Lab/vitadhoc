@@ -2954,14 +2954,26 @@ def t_picker(S):
     r = picker_run(S, "picker_dpad", "90:triangle\n+6:down\n+6:down\n+6:up\n+6:up\n+6:up\n+6:shot=up.png\n+200:quit\n")
     S.check(picker_moves(r) == [2, 3, 2, 1, 0], "DOWN steps on, UP steps back: %s" % picker_moves(r))
     S.picture(r, "up.png", "picker_up.png", box=PICKER_BOX)
-    # CROSS and CIRCLE close it and nothing else happens
+    # CROSS keeps the console the highlight is on, CIRCLE cancels back to the one in use when the list opened;
+    # both close it at once and are spent on that
     for btn in ("cross", "circle"):
         r = picker_run(S, "picker_" + btn, "90:triangle\n+6:triangle\n+10:%s\n+40:shot=after.png\n+10:quit\n" % btn)
         cl = r.evt("ui_picker close")
         S.check(len(cl) == 1 and int(cl[0]["idle"]) < 72, "%s closes the list at once (%s)" % (btn, [c["_"] for c in cl]))
         S.check(not r.evt("ui_browser_pick") and not r.has(r"^EVT game rom=") and not r.evt("ui_text_open"),
                 "%s is spent on closing: no game starts, no search opens" % btn)
-        S.check(picker_moves(r) == [2], "the highlighted console stays (%s)" % picker_moves(r))
+        S.check(picker_moves(r) == [2], "the list moved once (%s)" % picker_moves(r))
+        cons = [int(d["console"]) for d in r.evt("ui_browser_console")]
+        if btn == "cross":
+            S.check(cons[-1:] == [2] and not r.evt("ui_picker cancel"), "CROSS keeps the highlighted console (%s)" % cons)
+        else:
+            S.check(len(r.evt("ui_picker cancel")) == 1 and cons[-2:] == [2, 0],
+                    "CIRCLE cancels: the console in use when the list opened is shown again (%s)" % cons)
+            S.picture(r, "after.png", "picker_cancel.png", box=PICKER_BOX)
+    # the open list's own buttons are on the hint line
+    r = picker_run(S, "picker_hints", "90:triangle\n+30:shot=hint_open.png\n+10:circle\n+40:shot=hint_closed.png\n+10:quit\n")
+    S.picture(r, "hint_open.png", "picker_hints_open.png", box=(0, 500, 960, 544))
+    S.picture(r, "hint_closed.png", "picker_hints_closed.png", box=(0, 500, 960, 544))
     # any other button closes too
     r = picker_run(S, "picker_other", "90:triangle\n+6:right\n+30:quit\n")
     S.check(len(r.evt("ui_picker close")) == 1 and int(r.evt("ui_picker close")[0]["idle"]) < 72,
@@ -7658,6 +7670,41 @@ def t_sega_library(S):
             "TRIANGLE steps GB .. SG-1000 with the right counts (%s)" % got)
 
 
+def t_sega_exts(S):
+    """The less common Sega spellings: .68k (a raw Genesis image) is a Genesis game, .sc (an SC-3000 cartridge) an SG-1000
+    one, and a .bin in a .zip gets the loose .bin's test (SEGA at 0x100 or an SMD header: another system's .bin in an
+    archive is not listed); the same names inside a .zip are read."""
+    cwd = os.path.join(S.outdir, "sega_exts_cwd")
+    shutil.rmtree(cwd, ignore_errors=True)
+    md = sega_rom("md")
+    files = {
+        "ux0:ROMS/Genesis/Raw One.68k": md,
+        "ux0:ROMS/Genesis/Zip Bin.zip": sega_zip("Zip Bin.bin", md),
+        "ux0:ROMS/Genesis/Zip Smd Bin.zip": sega_zip("Zip Smd Bin.bin", sega_rom("smd")),
+        "ux0:ROMS/Genesis/Zip Other.zip": sega_zip("Zip Other.bin", bytes(0x20000)),     # not a Genesis image
+        "ux0:ROMS/Genesis/Zip Raw.zip": sega_zip("Zip Raw.68k", md),
+        "ux0:ROMS/Sega - SG-1000/Card One.sc": bytes(0x8000),
+        "ux0:ROMS/Sega - SG-1000/Card Two.SC": bytes(0x8000),
+        "ux0:ROMS/Sega - SG-1000/Zip Card.zip": sega_zip("Zip Card.sc", bytes(0x8000)),
+    }
+    for rel, data in files.items():
+        path = os.path.join(cwd, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(data)
+    want = {"6": 4, "9": 3}
+    for con, label in (("6", "Genesis"), ("9", "SG-1000")):
+        r = S.run("sega_exts_" + con, "90:quit\n", cwd=cwd, config={"ui_home": 1, "console": int(con)})
+        S.clean(r)
+        sw = [d for d in r.evt("ui_browser") if d["console"] == con]
+        S.check(sw and int(sw[0]["roms"]) == want[con],
+                "the %s shelf holds %d games (%s)" % (label, want[con], sw[0]["_"] if sw else "no ui_browser line"))
+    r = S.run("sega_exts_pick", "90:cross\n+60:quit\n", cwd=cwd, config={"console": 9})
+    S.clean(r, allow="could not be started")
+    ln = r.evt("sega_launch")
+    S.check(ln and "console=sg" in ln[0]["_"], "an .sc game starts md.bin as the SG-1000 (%s)" % (ln[0]["_"] if ln else "no sega_launch line"))
+
+
 def t_sega_session(S):
     """md.bin's launch protocol (playerkit/FORMATS.md "Sega player", main_vita.c player_launch_write): picking a game
     writes launch/<id>.ini (console md/sms/gg/sg, game, save .srm, start new / continue / slot, the patch and
@@ -8524,7 +8571,7 @@ def t_boot_guard(S):
             "config.ini holds the safe values (hand-over and steady pacing off)")
 
 
-TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
+TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_exts", t_sega_exts), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),

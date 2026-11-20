@@ -77,8 +77,9 @@ newer is needed for the first and the twin step.
    | `GATE_GBA_ROMS` (folder) | `cores-private-gba` (run_tests.sh over the folder, x86 against armhf) |
    | `GATE_SNES_ROMS` (folder) | `snes-mt-compare`, `snes-conformance` (informational), `snes-link` (two SNES players over LAN, punch and relay, 3000 frames); `snes-selftest` also uses it for its ROM sections |
    | `GATE_MD_ROMS` (folder, the SGDK samples tree), `GATE_MD_SMS_ROMS` (folder) | `md-link` (two Sega players over LAN, punch and relay, 3000 frames; `md-selftest` uses them too) |
-| `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`) |
-   | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section) |
+   | `GATE_NES_ROMS` (folder) | `nes-conformance` (against `nes/twin/conformance_expect.txt`); also `link-x86` (Same Wi-Fi Two players) and `online-x86` (Online direct and relay, other-game and version refusals): they play `nes15-NTSC.nes` from the nes-test-roms collection (`git clone https://github.com/christopherpow/nes-test-roms`), or the file `VITADHOC_NES_ROM` names |
+   | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section); also `link-x86` and `online-x86` for WonderSwan (any homebrew test ROM will do, e.g. `testroms/spritepriority/spritepriority.ws` of `git clone https://github.com/MiSTer-devel/WonderSwan_MiSTer`) |
+   | `GATE_SG_ROM` (file) or a `.sg` file under `GATE_MD_SMS_ROMS` | `link-x86` and `online-x86` play it as the SG-1000 game (e.g. a build of the SGlib of `git clone https://github.com/sverx/devkitSMS` with SDCC); without one they use a synthetic image of the right kind |
    | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |
    | `GATE_MBEDTLS_HOST` (folder, optional) | `online-http`: its TLS cases run against this host64 prefix; they are SKIPPED, loudly, without it |
    | `GATE_GBA_ROMS` (folder, optional) | also `online-x86`: its determinism scenario plays the first Link Cable game of the folder |

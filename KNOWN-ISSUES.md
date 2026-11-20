@@ -85,12 +85,9 @@ Testing continues on:
 - None of this has run on a real Vita; the app side was checked on the PC test
   twin (library, launch file, play-time read-back, crash protection), the
   player on PC and emulated ARM.
-- **Two players is not in yet** for these four consoles. The path is written
-  but switched off (the Settings > Two players row stays hidden) until the
-  player's link module lands.
-- A `.bin` is listed as a Genesis game when its header says SEGA; a `.bin`
-  inside a zip is taken as Genesis without that check. `.sc` (SG-1000) files
-  are not listed: rename to `.sg`.
+- A `.bin` is listed as a Genesis game when its header says SEGA (or it is a
+  Super Magic Drive file), also when it is inside a zip. `.68k` (raw Genesis) and
+  `.sc` (SC-3000 cartridges, played as SG-1000) files are listed too.
 - A `.sms` file that is really a Game Gear game is played as a Master System
   game; save and states stay together under Master System.
 - Join online does not know these games yet.
@@ -130,8 +127,9 @@ Testing continues on:
   starts rewind and fast forward one refresh after it moves, and stops one
   refresh after it is let go. Unlimited fast forward is not offered in these
   players. The players have no RetroAchievements settings: sign in and choose
-  Hardcore in the app. A Super NES game started as a linked two-player game
-  does not run achievements. No SG-1000 game was available to test achievements.
+  Hardcore in the app. Achievements and link play: see "Achievements pause
+  during link play" under Gameplay. No SG-1000 game was available to test
+  achievements.
 - **Wide view** is on by default and built never to cost a frame: where a
   game is busy, the real picture at the sides is narrowed and fades into a
   soft extension. It was checked on 15 games for 3000 frames each, not on a
@@ -215,8 +213,11 @@ flicker or missing instruments, which we could not judge without a Vita.
 
 - **Hardcore mode** applies from the next game you start, and only to games
   RetroAchievements knows.
-- **Achievements pause during link play** and start counting again afterwards,
-  as after loading a state.
+- **Achievements pause during link play** and start counting again afterwards.
+  In the Game Boy Advance, Game Boy and NES games that happens inside the game, as
+  after loading a state. In the Super NES and Sega players a linked game is a
+  whole session of its own, so nothing is counted in it, and achievements count
+  again from the next game you start on its own.
 - **Game clocks follow the Vita's clock.** A game saved by an older version
   while its clock ran ahead can see the date go backwards once; the clock then
   waits until the real time catches up. Two Vitas in link play share one

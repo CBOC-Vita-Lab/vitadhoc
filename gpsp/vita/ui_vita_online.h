@@ -429,6 +429,8 @@ static ui_action screen_online_code(unsigned edges)
          oc_cycle(+1);
       else if (dir == PSP_CTRL_DOWN)
          oc_cycle(-1);
+      if (dir)
+         fe_evt("online_pad_key box=%d sym=%c", g_oc.box, g_oc.c[g_oc.box] ? g_oc.c[g_oc.box] : '-');
       g_cursor = OC_BOX_BASE + g_oc.box;
       /* X or a shoulder button: on to the pad */
       if ((edges & PSP_CTRL_CROSS) ||
@@ -706,13 +708,13 @@ static fe_console_t oc_console_of(const char *path)
       return FE_CONSOLE_SNES;
    if (dot && (!strcasecmp(dot, ".ws") || !strcasecmp(dot, ".wsc")))
       return FE_CONSOLE_WSWAN;
-   if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin")))
+   if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin") || !strcasecmp(dot, ".68k")))
       return FE_CONSOLE_MD;
    if (dot && !strcasecmp(dot, ".sms"))
       return FE_CONSOLE_SMS;
    if (dot && !strcasecmp(dot, ".gg"))
       return FE_CONSOLE_GG;
-   if (dot && !strcasecmp(dot, ".sg"))
+   if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
       return FE_CONSOLE_SG;
    return !strcmp(g_oc.card.console, "gbc") ? FE_CONSOLE_GBC
         : !strcmp(g_oc.card.console, "gb") ? FE_CONSOLE_GB

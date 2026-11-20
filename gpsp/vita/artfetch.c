@@ -1172,7 +1172,7 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       a->nsys = 2;
    }
    else if (ext && (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
-                    !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin")))
+                    !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".bin") || !strcasecmp(ext, ".68k")))
    {
       a->sys[0] = 8;               /* Genesis: the plain ROM's checksum (SMD de-interleaved) */
       a->nsys = 1;
@@ -1187,7 +1187,7 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       a->sys[0] = 10;              /* Game Gear */
       a->nsys = 1;
    }
-   else if (ext && !strcasecmp(ext, ".sg"))
+   else if (ext && (!strcasecmp(ext, ".sg") || !strcasecmp(ext, ".sc")))
    {
       a->sys[0] = 11;              /* SG-1000 */
       a->nsys = 1;

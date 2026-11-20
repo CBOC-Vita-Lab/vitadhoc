@@ -1199,48 +1199,55 @@ static void fill_strips(const Snap *sn, const wk_frame *fr, wk_out *out)
 			   game rewrites (the seam), so the part of it left of the screen comes from the learned map or not at all */
 			mpart = (s == 0 && have_geom && W.st.ring_w == 32 && !(nl->p1 & 2)) ? g.part[0] : 0;
 			/* the learned map's cell is the same for the 8 px of one tile: look it up once per tile */
-			int cidx = 0x7fffffff, cok = 0, nsc = 0, fin = real;
+			int cidx = 0x7fffffff, cok = 0, nsc = 0, fin = real, stop = 0;
 			wk_cell cell;
-			for (d = 0; d < real; d++) {
-				const uint8_t raw = s == 0 ? src[M - 1 - d] : src[d];   /* raw pixel: through the line's grayscale / emphasis pass below */
-				uint8_t px = 0;
-				int ov = 0;
-				if (d < mpart) {
-					ov = 1;
-					wk_cell c0;
-					if (wk_map_margin_cell(W.M, fr, out, 0, y, s, 0, &c0)) {
-						px = post_px(nl->p1, cell_px(sn, D, c0.code, (out->world_x[0][y] - 1 - d) & 7, out->world_row[0][y] & 7));
-					} else {
-						lo->real[s][0] = (uint16_t) d; lo->ring[s][0] = (uint16_t) (ring < d ? ring : d);
-						fin = d;
-						break;
-					}
-				} else if (have_geom && d >= ring) {
-					int wx = out->world_x[0][y], idx, xw;
-					ov = 1;
-					idx = s == 0 ? (int)(g.tile_first - fdiv8(wx - 1 - d)) : (int)(fdiv8(wx + 256 + d) - (g.tile_first + g.nvis - 1));
-					if (idx != cidx) {
-						cok = wk_map_margin_cell(W.M, fr, out, 0, y, s, idx, &cell);
-						cidx = idx;
-					}
-					if (cok) {
-						int fy = out->world_row[0][y] & 7;
-						xw = s == 0 ? wx - 1 - d : wx + 256 + d;
-						px = post_px(nl->p1, cell_px(sn, D, cell.code, xw & 7, fy));
-					} else {
-						/* widekit said real but the map has no cell here: never show the raw ring in its place */
-						lo->real[s][0] = (uint16_t) d;
-						fin = d;
-						break;
-					}
+			/* three runs in order, as the pixels come: d < mpart (the learned map's seam cells), then d < ring (the raw margin
+			   the PPU drew: a plain table lookup, the line's palette pass is the same for every pixel of it), then d >= ring (the
+			   map's cells).  A run that gives up ends the line's margin there. */
+			d = 0;
+			for (; d < real && d < mpart; d++) {
+				uint8_t px;
+				wk_cell c0;
+				if (wk_map_margin_cell(W.M, fr, out, 0, y, s, 0, &c0)) {
+					px = post_px(nl->p1, cell_px(sn, D, c0.code, (out->world_x[0][y] - 1 - d) & 7, out->world_row[0][y] & 7));
+					dst[d] = rgb_line(pal, deemp, px);
+				} else {
+					lo->real[s][0] = (uint16_t) d; lo->ring[s][0] = (uint16_t) (ring < d ? ring : d);
+					fin = d;
+					stop = 1;
+					break;
 				}
-				if (ov) { dst[d] = rgb_line(pal, deemp, px); if (d >= mpart && cok && cell.scout) nsc++; continue; }
-				if (!rt_ok || rt_p1 != nl->p1 || rt_dm != (int) deemp) {
-					int v;
-					for (v = 0; v < 128; v++) rt[v] = rgb_line(pal, deemp, post_px(nl->p1, (uint8_t) v));
-					rt_ok = 1; rt_p1 = nl->p1; rt_dm = (int) deemp;
+			}
+			if (!stop) {
+				const int rend = have_geom ? (ring < real ? ring : real) : real;
+				if (d < rend) {
+					if (!rt_ok || rt_p1 != nl->p1 || rt_dm != (int) deemp) {
+						int v;
+						for (v = 0; v < 128; v++) rt[v] = rgb_line(pal, deemp, post_px(nl->p1, (uint8_t) v));
+						rt_ok = 1; rt_p1 = nl->p1; rt_dm = (int) deemp;
+					}
+					if (s == 0) for (; d < rend; d++) dst[d] = rt[src[M - 1 - d] & 127];
+					else for (; d < rend; d++) dst[d] = rt[src[d] & 127];
 				}
-				dst[d] = rt[raw & 127];
+			}
+			for (; !stop && have_geom && d < real; d++) {
+				int wx = out->world_x[0][y], idx, xw;
+				idx = s == 0 ? (int)(g.tile_first - fdiv8(wx - 1 - d)) : (int)(fdiv8(wx + 256 + d) - (g.tile_first + g.nvis - 1));
+				if (idx != cidx) {
+					cok = wk_map_margin_cell(W.M, fr, out, 0, y, s, idx, &cell);
+					cidx = idx;
+				}
+				if (cok) {
+					int fy = out->world_row[0][y] & 7;
+					xw = s == 0 ? wx - 1 - d : wx + 256 + d;
+					dst[d] = rgb_line(pal, deemp, post_px(nl->p1, cell_px(sn, D, cell.code, xw & 7, fy)));
+					if (cell.scout) nsc++;
+				} else {
+					/* widekit said real but the map has no cell here: never show the raw ring in its place */
+					lo->real[s][0] = (uint16_t) d;
+					fin = d;
+					break;
+				}
 			}
 			{
 				/* census: of the fin px drawn, the raw ones are d >= mpart and (with a geometry) d < ring; the rest came from the map */
@@ -1491,6 +1498,13 @@ int nes_host_wide_compose(const nes_wide_snapshot *ps, const uint16_t **rgb, int
 					int name = np[cy * 32 + cx], k;
 					uint32_t a = np[0x3c0 + (cy >> 2) * 8 + (cx >> 2)], cc = (a >> ((cx & 2) + ((cy & 2) << 1))) & 3;
 					const uint8_t *G = C0->chr[l->bp[name >> 6]] + (name & 63) * 16 + fy;
+					if ((G[0] == 0 || G[0] == 0xFF) && (G[8] == 0 || G[8] == 0xFF)) {
+						/* one colour index across the tile's row: the same test as the 8 pixels below, once */
+						int idx = (G[8] ? 2 : 0) | (G[0] ? 1 : 0);
+						int c = idx ? l->pal[(cc << 2) | idx] : l->pal[0];
+						if (col < 0) col = c; else if (c != col) uni = 0;
+						continue;
+					}
 					for (k = 0; uni && k < 8; k++) {
 						int idx = (((G[8] >> k) & 1) << 1) | ((G[0] >> k) & 1);
 						int c = idx ? l->pal[(cc << 2) | idx] : l->pal[0];

@@ -53,6 +53,13 @@ the folders (or, for WonderSwan, at one file):
 | `GATE_NES_ROMS` | NES blargg-style conformance against `nes/twin/conformance_expect.txt` |
 | `GATE_WS_ROM` | the WonderSwan acceptance section |
 
+Before and after a change to the GBA core, a private set of cartridges can be compared between two host builds (a scripted pad,
+the same N frames, a hash of every audio sample and of screenshots taken at fixed frames). The direct (skip-BIOS) boot starts on
+scanline 126 (cpu.cc), which moves every game's timeline by half a frame and so changes every audio hash; to see only the other
+changes, build the host twin with `make -C gpsp/vita/hostcore ARCH=x86 B=build/x86-nb CORE_PLAT_DEFS="-DMMAP_JIT_CACHE -DGPSP_BOOT_LINE0"`
+(`GPSP_BOOT_LINE0` starts on line 0 as before the change). On six private cartridges that build matches the 2.0 release's audio and
+pictures bit for bit over 3000 frames.
+
 ## What each step covers
 
 **Release** (`--quick`): `release-unit` (the download checker, `tests/`),

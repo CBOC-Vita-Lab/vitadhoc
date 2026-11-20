@@ -104,7 +104,11 @@ has been obtained.
 from GBAdhoc or another project) and carry `SPDX-License-Identifier: MIT OR
 GPL-2.0-or-later`, so the SNES and Genesis players can link them. They build
 on rcheevos (MIT, `gpsp/vita/third_party/rcheevos`). `ra_roots.h` is generated
-certificate data and is not part of this grant. Dependencies on GPL-only
+by our own script (`gpsp/vita/tools/ra_roots.py`, dual-licensed like the rest of
+these files, so the file's wrapper and its SPDX line are covered by the grant); the
+PEM certificates inside it are the CAs' public root certificates, taken from the
+Mozilla root store as packaged by Debian, and are not ours to license (see
+`notices/THIRD-PARTY.md`). Dependencies on GPL-only
 gpsp files that remain, and that a separate player must replace with its own
 small shims: `frontend-common/fe_evt.h` (logging), `frontend-common/fe_host.h`
 (`fe_host_ra_read`, memory reads), `frontend-common/fe_console.h`,

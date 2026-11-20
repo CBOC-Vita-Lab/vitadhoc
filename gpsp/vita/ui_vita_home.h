@@ -945,6 +945,20 @@ static float hm_hint_word(float x, float y, const char *t)
 static void hm_home_hints(void)
 {
    float x = HM_X, y = HM_HINT_Y;
+   if (g_pick_on)
+   {
+      /* the open list's own buttons (hm_pick_pad): the console moves live as the highlight does */
+      x = hm_cap(x, y, "UP");
+      x = hm_cap(x, y, "DOWN");
+      x = hm_hint_word(x, y, "Step");
+      vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
+      x = hm_hint_word(x + 26, y, "Next");
+      vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
+      x = hm_hint_word(x + 26, y, "Keep");
+      vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
+      hm_hint_word(x + 26, y, "Cancel");
+      return;
+   }
    vs_icon(VS_I_BTN_X, x + 10, y + 12, 22, HC_TEXT2);
    x = hm_hint_word(x + 26, y, "Play");
    vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
@@ -1177,6 +1191,7 @@ static float g_pick_scr;          /* the first visible row (fractional)   */
 static float g_pick_hy;           /* the highlight's offset in the panel  */
 static int   g_pick_snap;         /* put the highlight in place at once    */
 static float g_pick_drag;         /* rows a finger has dragged the list by  */
+static int   g_pick_open_con;     /* the console in use when the list opened (CIRCLE goes back to it) */
 static int   g_pick_touch;        /* opened by a finger: it stays open until
                                    * a tap (no 1.2 s close under a finger
                                    * that is still looking for its row)     */
@@ -2316,10 +2331,13 @@ static void home_empty(const char *rom_dir, int n_scan)
 /* The picker's share of the pad and the finger, before home_remap turns the
  * directions sideways.  Closed: TRIANGLE (or a tap on the pill) opens it on
  * the console in use -- that press moves nothing.  Open: TRIANGLE / DOWN
- * step on, UP steps back (wrapping), a tap on a row picks it and closes, and
- * any other button, or a tap beside the list, closes it and is spent on
- * that.  A move asks the browser for the console (g_con_pick); the switch
- * itself is done where the browser keeps its list. */
+ * step on, UP steps back (wrapping), a tap on a row picks it and closes,
+ * CIRCLE cancels (closes and shows the console that was in use when the list
+ * opened again), and any other button, or a tap beside the list, closes it,
+ * keeps the console the highlight is on and is spent on that.  Every step
+ * shows its console at once; the list closing by itself 1.2 s after the last
+ * step keeps it.  A move asks the browser for the console (g_con_pick); the
+ * switch itself is done where the browser keeps its list. */
 static void hm_pick_pad(unsigned *e)
 {
    unsigned in = *e;
@@ -2345,6 +2363,7 @@ static void hm_pick_pad(unsigned *e)
       {
          g_pick_on = 1;
          g_pick_sel = hm_con_row(g_pcfg.console);
+         g_pick_open_con = g_pcfg.console;
          g_pick_idle = 0;
          g_pick_snap = 1;
          g_pick_drag = 0.0f;
@@ -2392,6 +2411,14 @@ static void hm_pick_pad(unsigned *e)
       g_pick_sel = (g_pick_sel + hm_con_n() - 1) % hm_con_n();
       step = 1;
       in = 0;
+   }
+   else if (in & PSP_CTRL_CIRCLE)
+   {
+      /* cancel: back to the console that was in use when the list opened */
+      g_pick_sel = hm_con_row(g_pick_open_con);
+      g_con_pick = g_pick_open_con;
+      fe_evt("ui_picker cancel console=%d", g_pick_open_con);
+      close = 1;
    }
    else if (in)
       close = 1;

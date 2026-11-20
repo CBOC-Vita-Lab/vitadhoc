@@ -13,10 +13,15 @@
 MD	ATGA-AA56	000C7C:6004
 MD	atga-aa56	000C7C:6004
 MD	ABXA-BA0Y	0066D4:5000
-# Pro Action Replay: AAAAAA:VVVV; "FFxxxx:VV" (two digits) is the byte VV
+# Pro Action Replay: AAAAAA:VVVV; "FFxxxx:VV" (two digits) is the byte VV at that exact
+# 68000 address.  Genesis Plus GX holds work RAM in host word order and a "00VV" patch is
+# work_ram[address & 0xFFFF], the other byte of the word, so the two digit form is written
+# for address^1 (the four digit form stays as the lists have it: GPGX's own behaviour)
 MD	FFE4A2:0020	FFE4A2:0020
 MD	FF9EE9:0064	FF9EE9:0064
-MD	FFF7DB:FF	FFF7DB:00FF
+MD	FFF7DB:FF	FFF7DA:00FF
+MD	FFF7DA:FF	FFF7DB:00FF
+MD	FFF7DA:00FF	FFF7DA:00FF
 MD	ffc9fc:0098	FFC9FC:0098
 MD	000338:6004	000338:6004
 # several parts, any of '+' and white space between them

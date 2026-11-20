@@ -641,7 +641,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 	EXPECT(rig.press(PH_CROSS) == MENU_NONE);
 	EXPECT(rig.press(PH_CROSS) == MENU_RESUME);
 	rig.run(3);
-	EXPECT(md_host_peek(ram_addr) == 0xAA);
+	EXPECT(md_host_peek(md ? ram_addr ^ 1u : ram_addr) == 0xAA);     /* Genesis: a 00VV patch lands in the other byte of the word, as Genesis Plus GX does */
 	pl->wait_writer();
 	rig.run(2);
 	pl->wait_writer();

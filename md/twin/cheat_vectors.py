@@ -58,7 +58,7 @@ for ln in open(vec):
             a, v = int(pt[0], 16), int(pt[1], 16)
             if a >= 0xFF0000:
                 if v < 0x100:
-                    exp[a & 0xFFFF | 0xFF0000] = v
+                    exp[((a & 0xFFFF) ^ 1) | 0xFF0000] = v      # Genesis Plus GX: a 00VV patch lands in work_ram[a] as held = the 68000 byte a^1
                 else:
                     exp[(a & 0xFFFE) | 0xFF0000], exp[(a & 0xFFFE) + 1 | 0xFF0000] = v >> 8, v & 255
                 kept += 1

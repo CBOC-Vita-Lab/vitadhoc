@@ -55,6 +55,14 @@
  *                                  taken away (hot-plug: with these in the
  *                                  script it exists as the latest one says,
  *                                  and before the first, the opposite)
+ *     FRAME:wait=TEXT              the script clock stops at FRAME until a
+ *                                  new line of the app's log holds TEXT
+ *                                  (--realtime only; 90 s at most, 8 s for a hold; the
+ *                                  waits come in order, at most 64)
+ *     FRAME:hold=BUTTONS=TEXT      the same wait with BUTTONS held down all
+ *                                  the while: a press that cannot be missed
+ *                                  by a slow loop (the app logs what the
+ *                                  press did; the press ends then)
  *     FRAME:quit                   end the run (as --frames)
  *
  * FRAME is absolute, or "+N": N frames after the previous entry ENDED.
@@ -133,6 +141,11 @@ static struct
    unsigned    nmotion;
    int         no_motion;         /* --no-motion: a PS TV, no sensor */
    unsigned    suspend_at[8], nsuspend;
+   /* FRAME:wait=TEXT: the script clock stops at FRAME until the app's own
+    * log (<root>/log/gbadhoc.log) gets a new line holding TEXT (or 90 s go
+    * by): the test waits for the screen it needs, not for a guessed time */
+   struct { unsigned frame; char text[SHOT_PATH / 4]; uint32_t buttons; } wait[64];
+   unsigned    nwait;
    struct { unsigned frame; int on; } plug[16];
    unsigned    nplug;
    unsigned    quit_at;           /* 0 = none */
@@ -181,10 +194,100 @@ static uint64_t refresh_ns(void)
    return 1000000000000ull / opt.refresh_mhz;
 }
 
-/* The refresh the script and the screenshots count: sleeps taken out. */
+/* ---- FRAME:wait=TEXT ------------------------------------------------------ */
+static pthread_mutex_t wait_mu = PTHREAD_MUTEX_INITIALIZER;
+static unsigned wait_next;        /* the next wait entry to reach           */
+static int      waiting;
+static unsigned wait_frame;       /* the frame the clock stands at          */
+static uint64_t wait_t0_ns, wait_poll_ns;
+static long     wait_log_from;
+
+static long wait_log_size(FILE **fp)
+{
+   char path[1024];
+   snprintf(path, sizeof(path), "%s/log/gbadhoc.log", opt.root);
+   *fp = fopen(path, "rb");
+   if (!*fp)
+      return -1;
+   fseek(*fp, 0, SEEK_END);
+   return ftell(*fp);
+}
+
+/* Is TEXT in what the log gained since the wait began? */
+static pthread_t main_tid;
+static int main_tid_set;
+
+static int wait_seen(const char *text)
+{
+   FILE *f;
+   long n, from = wait_log_from;
+   char *buf;
+   int hit = 0;
+   /* with no worker thread the menu's log is written by the main thread, when 12 KB are queued: the poll on the main
+    * thread is the writer too, so the line is on disk when the wait looks */
+   if (!opt.worker && main_tid_set && pthread_equal(pthread_self(), main_tid))
+      fe_evt_service();
+   n = wait_log_size(&f);
+   if (n < 0)
+      return 0;
+   if (n < from)                  /* the log rotated: all of it is new */
+      from = 0;
+   if (n - from > (1 << 20))
+      from = n - (1 << 20);
+   buf = malloc((size_t)(n - from) + 1);
+   if (buf)
+   {
+      size_t got;
+      fseek(f, from, SEEK_SET);
+      got = fread(buf, 1, (size_t)(n - from), f);
+      buf[got] = '\0';
+      hit = strstr(buf, text) != NULL;
+      free(buf);
+   }
+   fclose(f);
+   return hit;
+}
+
+/* The refresh the script and the screenshots count: sleeps (and waits) taken out. */
 static unsigned script_frame(void)
 {
-   return (unsigned)((now_ns() - slept_ns) / refresh_ns());
+   unsigned f;
+   if (!opt.nwait || !opt.realtime)
+      return (unsigned)((now_ns() - slept_ns) / refresh_ns());
+   pthread_mutex_lock(&wait_mu);
+   f = (unsigned)((now_ns() - slept_ns) / refresh_ns());
+   if (waiting)
+   {
+      uint64_t t = now_ns();
+      if (t - wait_t0_ns > (opt.wait[wait_next].buttons ? 8000000000ull : 90000000000ull) ||
+          (t - wait_poll_ns > 40000000ull && (wait_poll_ns = t, wait_seen(opt.wait[wait_next].text))))
+      {
+         slept_ns += t - wait_t0_ns;
+         waiting = 0;
+         wait_next++;
+         f = (unsigned)((t - slept_ns) / refresh_ns());
+      }
+      else
+         f = wait_frame;
+   }
+   if (!waiting && wait_next < opt.nwait && f >= opt.wait[wait_next].frame)
+   {
+      FILE *lf;
+      wait_frame = opt.wait[wait_next].frame;
+      wait_t0_ns = slept_ns + (uint64_t)wait_frame * refresh_ns();
+      wait_poll_ns = 0;
+      if (!opt.worker && main_tid_set && pthread_equal(pthread_self(), main_tid))
+         fe_evt_service();            /* what was logged before the wait is on disk before it begins */
+      wait_log_from = wait_log_size(&lf);
+      if (lf)
+         fclose(lf);
+      if (wait_log_from < 0)
+         wait_log_from = 0;
+      waiting = 1;
+      f = wait_frame;
+   }
+   pthread_mutex_unlock(&wait_mu);
+   return f;
 }
 
 /* ---- GBADHOC_PCPROF=file: a statistical profile of the guest -------------
@@ -539,6 +642,42 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.motion[opt.nmotion].rate_z = z;
          opt.nmotion++;
       }
+      else if (n > 5 && !strncasecmp(p, "wait=", 5))
+      {
+         if (opt.nwait >= 64 || n - 5 >= sizeof(opt.wait[0].text) ||
+             (opt.nwait && opt.wait[opt.nwait - 1].frame > frame))
+            break;
+         opt.wait[opt.nwait].frame = frame;
+         memcpy(opt.wait[opt.nwait].text, p + 5, n - 5);
+         opt.wait[opt.nwait].text[n - 5] = '\0';
+         opt.wait[opt.nwait].buttons = 0;
+         opt.nwait++;
+      }
+      else if (n > 5 && !strncasecmp(p, "hold=", 5) && memchr(p + 5, '=', n - 5))
+      {
+         /* hold=BUTTONS=TEXT: the buttons are down, and the clock stands, until TEXT is logged */
+         const char *q = p + 5, *eq = memchr(p + 5, '=', n - 5), *stop = p + n;
+         uint32_t buttons = 0;
+         if (opt.nwait >= 64 || (size_t)(stop - eq - 1) >= sizeof(opt.wait[0].text) ||
+             (opt.nwait && opt.wait[opt.nwait - 1].frame > frame))
+            break;
+         for (;;)
+         {
+            size_t k = 0;
+            while (q + k < eq && q[k] != '+')
+               k++;
+            buttons |= button_named(q, k);
+            q += k;
+            if (q >= eq)
+               break;
+            q++;
+         }
+         opt.wait[opt.nwait].frame = frame;
+         memcpy(opt.wait[opt.nwait].text, eq + 1, (size_t)(stop - eq - 1));
+         opt.wait[opt.nwait].text[stop - eq - 1] = '\0';
+         opt.wait[opt.nwait].buttons = buttons;
+         opt.nwait++;
+      }
       else if (n == 4 && !strncasecmp(p, "quit", 4))
          opt.quit_at = frame ? frame : 1;
       else if (n == 4 && !strncasecmp(p, "kill", 4))
@@ -634,6 +773,8 @@ int plat_init(int argc, char **argv)
 {
    unsigned cursor = 0;
    int i;
+   main_tid = pthread_self();
+   main_tid_set = 1;
    pcprof_init();
    for (i = 1; i < argc; i++)
    {
@@ -1257,6 +1398,8 @@ static void pad_at(plat_pad *pad, int pad2)
       if (opt.press[i].pad2 == pad2 && f >= opt.press[i].frame &&
           f < opt.press[i].frame + opt.press[i].len)
          b |= opt.press[i].buttons;
+   if (!pad2 && opt.nwait && waiting)
+      b |= opt.wait[wait_next].buttons;
    pad->buttons = b & 0xFFFFu;
    pad->lx = (b & HOST_LS_LEFT) ? 0 : (b & HOST_LS_RIGHT) ? 255 : 128;
    pad->ly = (b & HOST_LS_UP) ? 0 : (b & HOST_LS_DOWN) ? 255 : 128;
@@ -1289,6 +1432,8 @@ unsigned plat_pad_pressed(void)
       if (!opt.press[i].pad2 && opt.press[i].frame <= f &&
           opt.press[i].frame + opt.press[i].len > from)
          b |= opt.press[i].buttons;
+   if (opt.nwait && waiting)
+      b |= opt.wait[wait_next].buttons;
    b &= 0xFFFFu;
    if (g_face_swap && ((b & PLAT_BTN_CROSS) != 0) != ((b & PLAT_BTN_CIRCLE) != 0))
       b ^= PLAT_BTN_CROSS | PLAT_BTN_CIRCLE;

@@ -3606,13 +3606,13 @@ static void snes_np_peer(void *user, uint8_t id, int connected)
 const char *link_snes_console_of_file(const char *rom_path)
 {
    const char *dot = rom_path ? strrchr(rom_path, '.') : NULL;
-   if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin")))
+   if (dot && (!strcasecmp(dot, ".md") || !strcasecmp(dot, ".gen") || !strcasecmp(dot, ".smd") || !strcasecmp(dot, ".bin") || !strcasecmp(dot, ".68k")))
       return "md";
    if (dot && !strcasecmp(dot, ".sms"))
       return "sms";
    if (dot && !strcasecmp(dot, ".gg"))
       return "gg";
-   if (dot && !strcasecmp(dot, ".sg"))
+   if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
       return "sg";
    return "snes";
 }

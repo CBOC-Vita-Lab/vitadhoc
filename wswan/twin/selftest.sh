@@ -129,6 +129,11 @@ if command -v python3 >/dev/null 2>&1; then
 	[ -f "$DB" ] && { TMPDIR=$T $PY/cheatdb_test.py "$TWIN" "$R" "$DB" >$T/cdb.txt 2>&1 && ok "bundled cheat database, WonderSwan part: $(grep -c PASS $T/cdb.txt) checks" || { cat $T/cdb.txt; bad "bundled cheat database, WonderSwan part"; }; }
 else echo "SKIP  property and save tests (python3 missing)"; fi
 
+# 11. the blocked picture rotation equals the one-pixel-at-a-time definition
+if command -v cc >/dev/null 2>&1; then
+	cc -O2 -I"$HERE/../frontend" -o $T/rotate_test "$HERE/tests/rotate_test.c" "$HERE/../frontend/layout.c" >$T/rot.txt 2>&1 && $T/rotate_test >>$T/rot.txt 2>&1 && ok "picture rotation: blocked equals one pixel at a time" || { cat $T/rot.txt; bad "picture rotation"; }
+else echo "SKIP  rotation test (cc missing)"; fi
+
 # optional acceptance with a private ROM, used only as an input file
 if [ -n "$WSWAN_PRIVATE_ROM" ] && [ -f "$WSWAN_PRIVATE_ROM" ]; then
 	r=$("$TWIN" "$WSWAN_PRIVATE_ROM" --frames 1500 --pad 120:start,140:none,200:a,220:none --srm $T/p.srm 2>/dev/null)

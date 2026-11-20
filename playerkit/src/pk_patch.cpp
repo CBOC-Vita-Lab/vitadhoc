@@ -88,6 +88,7 @@ PatchStatus apply_ips(const uint8_t *patch, size_t pn, const std::vector<uint8_t
 			uint32_t run = r.be(2), val = r.u8();
 			if (r.bad) return PS_TRUNCATED;
 			if (off + run > max_out) return PS_TOO_BIG;
+			if (run == 0) continue;                                  /* an empty run changes nothing (and &out[size] is not a byte) */
 			if (out.size() < off + run) out.resize((size_t) (off + run), 0);
 			memset(&out[(size_t) off], (int) val, run);
 		} else {

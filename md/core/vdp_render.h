@@ -113,6 +113,8 @@ typedef struct {
   uint16 xs[2], ys[2];       /* horizontal scroll value and first vertical scroll value of plane A and B for this line */
   uint16 ntab, ntbb, ntwb;
   uint16 row_mask;
+  uint16 ysr[2];             /* the vertical scroll value of the last column (per 2-cell scrolling; else the same as ys) */
+  uint16 pad[2];
 } wide_line_t;
 enum { WL_ON = 1,            /* a mode 5 line was drawn */
        WL_STRIP = 2,         /* a strip beside this line was drawn (WS_L / WS_R say which) */

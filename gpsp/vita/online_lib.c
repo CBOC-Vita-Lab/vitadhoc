@@ -207,8 +207,8 @@ static int pad_ext_ok(const char *path)
    if (G.family == OL_SNES)
       return ext_is(path, ".sfc") || ext_is(path, ".smc");
    if (G.family == OL_SEGA)
-      return !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "sg") ? ext_is(path, ".sg")
-           : ext_is(path, ".md") || ext_is(path, ".gen") || ext_is(path, ".smd") || ext_is(path, ".bin");
+      return !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "sg") ? (ext_is(path, ".sg") || ext_is(path, ".sc"))
+           : ext_is(path, ".md") || ext_is(path, ".gen") || ext_is(path, ".smd") || ext_is(path, ".bin") || ext_is(path, ".68k");
    return ext_is(path, ".ws") || ext_is(path, ".wsc");
 }
 

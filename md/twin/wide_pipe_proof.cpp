@@ -112,7 +112,17 @@ static bool run_pass(const std::vector<uint8_t> &rom, const char *name, int syst
 				mdw::Meta &m = S->ring[f->seq & 7];
 				const uint16_t *v0 = (const uint16_t *) (f->data + f->offset) + m.view_off;
 				int w = 0, h = 0;
-				const uint16_t *wp = S->wide.compose(m, v0, f->pitch / 2, &w, &h);
+				/* the lines shared between this thread and two more, the way the player's scaler helpers take them */
+				const uint16_t *wp = NULL;
+				const int nl = S->wide.compose_begin(m, v0, f->pitch / 2, &w, &h);
+				if (nl > 0) {
+					std::atomic<int> next(0);
+					auto work = [&](int who) { for (;;) { const int c = next.fetch_add(1); if (c * 32 >= nl) break; S->wide.compose_lines(c * 32, (c + 1) * 32 < nl ? (c + 1) * 32 : nl, who); } };
+					std::thread t1(work, 1), t2(work, 2);
+					work(0);
+					t1.join(); t2.join();
+					wp = S->wide.compose_end();
+				}
 				(*hashes)[f->seq] = wp ? fnv(wp, w, h, w) : fnv(v0, m.vw, m.vh, f->pitch / 2);
 				pipe.box().release(f, 4000);
 			}

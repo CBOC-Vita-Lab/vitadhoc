@@ -415,9 +415,9 @@ int main(int argc, char **argv)
 			bn, md_host_system(), frames, all.v, all.a, sh, rh, all.samples, vi.w, vi.h, p50 * 1e3, p99 * 1e3, tot / (double)dts.size() * 1e3);
 	if (g_wa && !quiet) {
 		mdw::Stats st; g_wa->census(&st);
-		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d map_cells=%d rooms=%d bound=%d map_px=%u rows=%u rejected=%u real_sum=%llu map_sum=%llu\n", st.frames, st.analysed, st.composed,
+		printf("WIDE frames=%u analysed=%u composed=%u analyse=%.3fms compose=%.3fms real=%d%% soft_lines=%d scenes=%d hindsight=%d/%d map_cells=%d rooms=%d bound=%d map_px=%u rows=%u rejected=%u real_sum=%llu map_sum=%llu map_skips=%u win_sides=%llu vs_sides=%llu\n", st.frames, st.analysed, st.composed,
 			g_n_an ? g_t_an / g_n_an * 1e3 : 0.0, g_n_co ? g_t_co / g_n_co * 1e3 : 0.0, st.real_pct, st.soft_lines, st.scene_events, st.hs_missed, st.hs_checked,
-			st.map_cells, st.map_rooms, st.map_bound, st.map_px, st.rows, st.map_rejected, g_real_sum, g_map_sum);
+			st.map_cells, st.map_rooms, st.map_bound, st.map_px, st.rows, st.map_rejected, g_real_sum, g_map_sum, st.map_skips, st.win_sides, st.vs_sides);
 		if (g_check) printf("WIDECHECK learned cells shown=%u seen later=%u wrong=%u\n", st.chk_claims, st.chk_seen, st.chk_wrong);
 		if (vdpthr) { unsigned long cs[3]; md_host_wide_cache_stat(cs); printf("WIDECACHE copied=%lu drawn=%lu differed=%lu\n", cs[0], cs[1], cs[2]); }
 	}

@@ -5027,6 +5027,8 @@ static void wide_line(int line, int spr_in)
   }
   /* the vertical scroll of the first columns; per 2-cell scrolling is judged below */
   r->ys[0] = (uint16) (vs16[0] & 0x7FF); r->ys[1] = (uint16) (vs16[1] & 0x7FF);
+  r->ysr[0] = r->ys[0]; r->ysr[1] = r->ys[1];
+  if (reg[11] & 0x04) { const int lc = ((h40 ? 40 : 32) >> 1) - 1; r->ysr[0] = (uint16) (vs16[lc * 2] & 0x7FF); r->ysr[1] = (uint16) (vs16[lc * 2 + 1] & 0x7FF); }
   mode[0] = mode[1] = 1;
   if (reg[12] & 0x02) { r->flags |= WL_IM2; mode[0] = mode[1] = 0; }          /* interlaced (mode 1 draws one field, mode 2 two): no strip */
   if (reg[11] & 0x04)

@@ -41,6 +41,7 @@ void wsl_layout(int vertical, int presentation, int scr_w, int scr_h, int intege
 
 /* dst (144 wide x 224 high) = src (224 x 144) turned 90 degrees counter-clockwise: the source's right edge becomes the top. */
 void wsl_rotate_ccw(uint16_t *dst, const uint16_t *src);
+void wsl_rotate_ccw_ref(uint16_t *dst, const uint16_t *src);   /* the same, one pixel at a time (for tests) */
 
 #ifdef __cplusplus
 }

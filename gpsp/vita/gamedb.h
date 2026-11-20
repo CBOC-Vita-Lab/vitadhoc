@@ -115,6 +115,9 @@ int gamedb_md_rom_kind(const char *path);
  * always; .bin only when gamedb_md_rom_kind says PLAIN or SMD (32X, Mega-CD,
  * Master System and Pico files use .bin too).  0 for any other extension. */
 int gamedb_md_accept(const char *path);
+/* The same test for a file that is not on the card (an entry of a .zip): its first bytes and its size.
+ * 1 for a plain Genesis ROM ("SEGA" at 0x100, not 32X) or an SMD (AA BB, size 512 + n x 16384). */
+int gamedb_md_head_ok(const unsigned char *head, unsigned n, unsigned long size);
 
 /* The GBA game code of the cartridge file at `path` (bytes 0xAC-0xAF, four
  * capital letters or digits): 1 and code[0..3], or 0. */

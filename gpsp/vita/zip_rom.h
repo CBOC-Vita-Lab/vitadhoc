@@ -1,7 +1,7 @@
 /* zip_rom.h -- games kept in .zip files.
  *
  *   zip_rom_peek     which game a .zip holds: its first entry named .gba,
- *                    .gb, .gbc, .sfc, .smc, .nes, .fds, .unf, .unif, .ws, .wsc, .pc2, .md, .gen, .smd, .bin, .sms, .gg or .sg.  0 = found and usable; -2 = found but in a
+ *                    .gb, .gbc, .sfc, .smc, .nes, .fds, .unf, .unif, .ws, .wsc, .pc2, .md, .gen, .smd, .bin, .68k, .sms, .gg, .sg or .sc.  0 = found and usable; -2 = found but in a
  *                    form this reader refuses (encrypted, another method,
  *                    too large); -1 = no game in it, or not a zip.
  *   zip_rom_extract  that entry, checked against its CRC-32, written to
@@ -25,5 +25,9 @@ typedef struct
 int zip_rom_peek(const char *path, zip_rom_entry *out);
 int zip_rom_extract(const char *path, const zip_rom_entry *e,
                     const char *out_path);
+
+/* The first n bytes of the entry (after the same CRC check); the count, or -1. */
+int zip_rom_head(const char *path, const zip_rom_entry *e, unsigned char *buf,
+                 unsigned n);
 
 #endif

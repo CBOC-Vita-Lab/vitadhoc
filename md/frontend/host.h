@@ -168,8 +168,10 @@ enum { MDS_L = 1, MDS_R = 2,             /* the left / right strip was drawn */
        MDS_VSE = 128 };                  /* per 2-cell vertical scroll: the strips scroll like the column at their edge */
 typedef struct md_wide_line {
 	uint8_t flags, col_mask, shift, side;
-	uint16_t xs[2], ys[2];
+	uint16_t xs[2], ys[2];       /* horizontal scroll, and the vertical scroll of the first column, of plane A and B */
 	uint16_t ntab, ntbb, ntwb, row_mask;
+	uint16_t ysr[2];             /* the vertical scroll of the last column (differs from ys only with per 2-cell scrolling) */
+	uint16_t pad2[2];
 } md_wide_line;
 typedef struct md_wide_frame {
 	int h;                       /* lines in the picture */

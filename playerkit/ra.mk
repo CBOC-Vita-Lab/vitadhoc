@@ -2,7 +2,8 @@
 # Copyright CBOC-Vita. MIT licence (see LICENSE).
 #
 # LICENCE. Only MIT code: pk_ra (playerkit), the rcheevos client (gpsp/vita/third_party/rcheevos, MIT), and ra_http.c with ra_roots.h
-# (owner's files, dual MIT OR GPL-2.0-or-later, taken under the MIT option). NOT gpsp/vita/ra_vita.c (it needs the app's GPL pieces).
+# (owner's files, dual MIT OR GPL-2.0-or-later, taken under the MIT option; the PEM root certificates inside ra_roots.h are the CAs'
+# public certificates from the Mozilla root store, not ours, see LICENSING.md and notices/THIRD-PARTY.md). NOT gpsp/vita/ra_vita.c (it needs the app's GPL pieces).
 # `make check-links` of the players fails on any object of gpsp/ that is not one of RA_SRCS, and on any RA_SRCS file that is not MIT.
 #
 # The includer sets before the include: RA_GP (the gpsp/vita directory relative to it), RA_OBJDIR, RA_CC, RA_CFLAGS (without the RA_* ones),

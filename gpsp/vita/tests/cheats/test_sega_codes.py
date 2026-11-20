@@ -42,7 +42,7 @@ class Decoders(unittest.TestCase):
             out, why = conv(code)
             self.assertEqual(out if out else 'DROP:' + why, want, (kind, code))
             n += 1
-        self.assertEqual(n, 101)
+        self.assertEqual(n, 103)
 
     def test_genesis_game_genie_round_trip(self):
         rnd = random.Random(1)
@@ -96,10 +96,10 @@ class Shipped(unittest.TestCase):
             c[1] += len(g['cheats'])
         self.assertEqual(by, {0: [511, 6909], 1: [970, 14406], 2: [709, 10603],
                               3: [2037, 56916], 4: [1, 1],
-                              6: [1586, 50723], 7: [621, 6016], 8: [544, 7294],
+                              6: [1586, 49722], 7: [621, 6016], 8: [544, 7294],
                               9: [26, 69]})
         self.assertEqual(len(self.games), 7005)
-        self.assertEqual(sum(len(g['cheats']) for g in self.games), 152937)
+        self.assertEqual(sum(len(g['cheats']) for g in self.games), 151936)
         # the 1.4 consoles come first, unchanged in number
         self.assertTrue(all(g['sys'] < 6 for g in self.games[:4228]))
         self.assertTrue(all(g['sys'] >= 6 for g in self.games[4228:]))

@@ -1,4 +1,4 @@
-cheats.db: 6850549 bytes, 7005 games, 152937 cheats
+cheats.db: 6801904 bytes, 7005 games, 151936 cheats
 index: 6896 CRC-32, 808 GBA game codes, 13197 names; No-Intro entries read: 28747
 games tied to at least one No-Intro release: 5565 of 7005; GBA game codes that need the CRC to tell revisions apart: 0
 CRC-32 shared by games of two consoles (left to the first): 0
@@ -15,7 +15,7 @@ GBC       960   26864      709    10603    10101      502        0
 NES      2262   44508     2037    56916    56916        0        0
 WS          6      17        1        1        1        0        0
 WSC         9      15        0        0        0        0        0
-MD       2094   38546     1586    50723    50723        0        0
+MD       2094   38546     1586    49722    49722        0        0
 SMS       724    4749      621     6016     6016        0        0
 GG        818    7284      544     7294     7294        0        0
 SG         26      70       26       69       69        0        0
@@ -40,7 +40,7 @@ GBC     26864    7387     242      0     0      505       11  17590  1129      0
 NES     44508   37917       0      0     0        0       62    821  5426    255     0      27       0        0
 WS         17       1       0      0     0        0        0      0     0      0     0       0      16        0
 WSC        15       0       0      0     0        0        0      0     0      0     0       0      15        0
-MD      38546   34309       0      0     0        0      223    994  2157     87     0     762       0       14
+MD      38546   33781       0      0     0        0      223    994  2684     88     0     762       0       14
 SMS      4749    3569       0      0     0        0        3     70   923      0     0     184       0        0
 GG       7284    5575       0      0     0        0        9     10  1581      0     0     109       0        0
 SG         70      69       0      0     0        0        0      1     0      0     0       0       0        0

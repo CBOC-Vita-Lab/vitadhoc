@@ -126,7 +126,7 @@ PIL = [("py", "PIL")]
 
 class Step:
     def __init__(self, name, desc, cmd, tier, tags, inputs=(), deps=(), cwd=".", outputs=(),
-                 requires=(), env_req=None, parse="exit", timeout=1800, group=None, gating=True, net=False):
+                 requires=(), env_req=None, parse="exit", timeout=1800, group=None, gating=True, net=False, env_opt=()):
         assert tier in TIERS, (name, tier)
         self.name, self.desc, self.cmd, self.tier = name, desc, cmd, tier
         self.tags = frozenset(tags)
@@ -137,6 +137,9 @@ class Step:
         # such step, and every GROUP_HOST step (app runs open them too), holds the one "loopback" resource, so
         # two of them never run together whatever their other group is.
         self.net = net
+        # env_opt: variables the step's scripts read when they are set (ROM folders/files for scenarios that skip
+        # without them); their values are part of the cache key, a SKIP of those scenarios is said in the log
+        self.env_opt = list(env_opt)
 
     def resources(self):
         r = set()
@@ -346,7 +349,7 @@ STEPS = [
          requires=PIL, group=GROUP_HOST, parse="app", timeout=7200),
     Step("link-x86", "two app twins linked over loopback, menus to session (link_tests.py)",
          "python3 link_tests.py x86 --hz 20", "default", APP_TAGS | {"app"},
-         cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/"],
+         cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/"], env_opt=["GATE_NES_ROMS", "GATE_WS_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
          deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=7200),
     # a busy console is not a gone one: 20 s peer-dead limit, keepalives sent by
@@ -420,6 +423,7 @@ STEPS = [
     Step("online-x86", "online play: two twins linked through the room service and a NAT simulator (online_tests.py)",
          "python3 online_tests.py x86 --hz 20", "default", APP_TAGS | {"app", "online"},
          cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/", "online/"],
+         env_opt=["GATE_GBA_ROMS", "GATE_NES_ROMS", "GATE_WS_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
          deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
          requires=PIL + CXX + [("exe", "node")], group=GROUP_HOST, parse="app", timeout=14400),
 
@@ -857,6 +861,8 @@ def step_key(step, keys, inputs, self_digest, out_dir):
     h.update(step.cwd.encode())
     if step.env_req:
         h.update((os.environ.get(step.env_req, "") or "").encode())
+    for v in step.env_opt:
+        h.update(("%s=%s" % (v, os.environ.get(v, ""))).encode())
     scope_digest, _ = inputs.scope(step.inputs)
     h.update(scope_digest.encode())
     for d in step.deps:

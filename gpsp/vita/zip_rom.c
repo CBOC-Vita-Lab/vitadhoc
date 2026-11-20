@@ -34,13 +34,13 @@ static unsigned long rd32(const unsigned char *p)
 
 static int name_console(const char *name, size_t len)
 {
-   static const char *const ext[19] = { ".gba", ".gb", ".gbc", ".sfc", ".smc",
+   static const char *const ext[21] = { ".gba", ".gb", ".gbc", ".sfc", ".smc",
                                         ".nes", ".fds", ".unf", ".unif",
                                         ".ws", ".wsc", ".pc2",
                                         ".md", ".gen", ".smd", ".bin",
-                                        ".sms", ".gg", ".sg" };
+                                        ".sms", ".gg", ".sg", ".68k", ".sc" };
    int c;
-   for (c = 0; c < 19; c++)
+   for (c = 0; c < 21; c++)
    {
       size_t e = strlen(ext[c]), i;
       if (len <= e)
@@ -56,8 +56,9 @@ static int name_console(const char *name, size_t len)
       if (i == e)
          /* .sfc/.smc: 3 (SNES); .nes/.fds/.unf/.unif: 4 (NES);
           * .ws/.wsc/.pc2: 5 (WonderSwan); .md/.gen/.smd/.bin: 6 (Genesis);
-          * .sms: 7; .gg: 8; .sg: 9 (fe_console_t) */
-         return c > 17 ? 9 : c > 16 ? 8 : c > 15 ? 7 : c > 11 ? 6 : c > 8 ? 5 : c > 4 ? 4 : c > 3 ? 3 : c;
+          * .sms: 7; .gg: 8; .sg: 9; .68k: 6 (raw Genesis); .sc: 9 (SC-3000, run
+          * as the SG-1000 family) (fe_console_t) */
+         return c == 19 ? 6 : c == 20 ? 9 : c > 17 ? 9 : c > 16 ? 8 : c > 15 ? 7 : c > 11 ? 6 : c > 8 ? 5 : c > 4 ? 4 : c > 3 ? 3 : c;
    }
    return -1;
 }
@@ -157,18 +158,18 @@ done:
    return rc;
 }
 
-int zip_rom_extract(const char *path, const zip_rom_entry *e,
-                    const char *out_path)
+/* The entry's data, inflated and checked against its CRC-32: malloc'd in *data (the caller frees), usize bytes.
+ * 0 = done; -2 = the data does not match its CRC; -1 = could not. */
+static int zip_rom_load(const char *path, const zip_rom_entry *e, unsigned char **data)
 {
    unsigned char hdr[30], *in = NULL, *out = NULL;
-   char tmp[600];
    unsigned long data_off;
    int rc = -1, n;
-   FILE *f, *o;
+   FILE *f;
 
-   if (!path || !e || !out_path || e->console < 0 ||
-       snprintf(tmp, sizeof(tmp), "%s.part", out_path) >= (int)sizeof(tmp))
+   if (!path || !e || !data || e->console < 0)
       return -1;
+   *data = NULL;
    f = fopen(path, "rb");
    if (!f)
       return -1;
@@ -210,6 +211,44 @@ int zip_rom_extract(const char *path, const zip_rom_entry *e,
       rc = -2;
       goto done;
    }
+   rc = 0;
+done:
+   if (in && in != out)
+      free(in);
+   if (rc == 0)
+      *data = out;                      /* the caller's now */
+   else
+      free(out);
+   fclose(f);
+   return rc;
+}
+
+int zip_rom_head(const char *path, const zip_rom_entry *e, unsigned char *buf, unsigned n)
+{
+   unsigned char *d = NULL;
+   unsigned got;
+   if (!buf || zip_rom_load(path, e, &d) != 0)
+      return -1;
+   got = e->usize < n ? (unsigned)e->usize : n;
+   memcpy(buf, d, got);
+   free(d);
+   return (int)got;
+}
+
+int zip_rom_extract(const char *path, const zip_rom_entry *e,
+                    const char *out_path)
+{
+   unsigned char *out = NULL;
+   char tmp[600];
+   int rc, n;
+   FILE *o;
+
+   if (!out_path || snprintf(tmp, sizeof(tmp), "%s.part", out_path) >= (int)sizeof(tmp))
+      return -1;
+   rc = zip_rom_load(path, e, &out);
+   if (rc != 0)
+      return rc;
+   rc = -1;
    o = fopen(tmp, "wb");
    if (!o)
       goto done;
@@ -224,9 +263,6 @@ int zip_rom_extract(const char *path, const zip_rom_entry *e,
    }
    rc = 0;
 done:
-   if (in && in != out)
-      free(in);
    free(out);
-   fclose(f);
    return rc;
 }

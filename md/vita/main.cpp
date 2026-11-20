@@ -83,7 +83,7 @@ static mdw::Wide *g_wide;
 static mdw::Meta g_meta[8];
 static uint16_t *g_canvas;           /* the core's picture buffer when it draws beside the mailbox: MD_WIDE_PITCH wide, the picture at column MD_WIDE_MAX */
 #define USER_WIDE 0x40000000         /* HandoffFrame.user: the picture has a Meta in g_meta[seq & 7] */
-static std::atomic<unsigned> g_wide_compose_us(0), g_wide_composed(0);
+static std::atomic<unsigned> g_wide_compose_us(0), g_wide_composed(0), g_wide_helped(0);
 /* the wide view's cost ladder: three rungs, by the smoothed cost of the emulating thread's frame (emulation + analysis) against the frame time.
  * Rung 0 draws the real strips in full, 1 draws half of them (the lead side of a scroll is only a few pixels anyway), 2 draws none and the
  * picture beside the console's is the soft extension only. "On" in the menu stays on rung 0; Auto steps down at once and up slowly. */
@@ -388,12 +388,14 @@ static const md_thread_ops g_wk_ops = { NULL, wk_sem_create, wk_sem_destroy, wk_
  * nothing: the drawing thread has done its chunks. */
 struct ScaleJob {
 	pk::ScaleCache *cache;
+	int kind;                        /* 0: chunks of the scaler; 1: lines of the wide view's compose (WIDE_CHUNK lines a chunk) */
+	int lines;
 	int nchunks;
 	std::atomic<uint64_t> next;      /* (job << 32) | next chunk */
 	std::atomic<int> done;
 	std::atomic<unsigned> nonflat;
 	std::atomic<int> by_helpers;
-	ScaleJob() : cache(0), nchunks(0), next(0), done(0), nonflat(0), by_helpers(0) {}
+	ScaleJob() : cache(0), kind(0), lines(0), nchunks(0), next(0), done(0), nonflat(0), by_helpers(0) {}
 };
 static ScaleJob g_job;
 static uint32_t g_job_no;
@@ -402,20 +404,27 @@ static volatile int g_help_stop;
 static int g_help_n;
 static pk::ScaleScratch g_draw_scratch, g_help_scratch[3];
 
-/* take and run chunks of the current job; returns how many this thread ran */
-static int job_work(pk::ScaleScratch &sc, bool helper, bool low = false)
+enum { WIDE_CHUNK = 32 };
+/* take and run chunks of the current job; returns how many this thread ran. who: 0 the thread that owns the job, 1.. the helpers */
+static int job_work(pk::ScaleScratch &sc, bool helper, bool low = false, int who = 0)
 {
 	int ran = 0;
 	for (;;) {
 		if (low && g_emu_busy.load(std::memory_order_relaxed)) return ran;
 		uint64_t n = g_job.next.load(std::memory_order_acquire);
 		pk::ScaleCache *cache = g_job.cache;
+		const int kind = g_job.kind, lines = g_job.lines;
 		const int nch = g_job.nchunks;
 		const uint32_t c = (uint32_t) (n & 0xFFFFFFFFu);
-		if (!cache || (int) c >= nch) return ran;
+		if ((kind == 0 && !cache) || (int) c >= nch) return ran;
 		if (!g_job.next.compare_exchange_strong(n, n + 1, std::memory_order_acq_rel)) continue;
-		const unsigned nf = cache->run_chunk((int) c, sc);
-		g_job.nonflat.fetch_add(nf, std::memory_order_relaxed);
+		if (kind == 1) {
+			const int y0 = (int) c * WIDE_CHUNK, y1 = y0 + WIDE_CHUNK < lines ? y0 + WIDE_CHUNK : lines;
+			if (g_wide && who < mdw::Wide::COMPOSE_WHO) g_wide->compose_lines(y0, y1, who);
+		} else {
+			const unsigned nf = cache->run_chunk((int) c, sc);
+			g_job.nonflat.fetch_add(nf, std::memory_order_relaxed);
+		}
 		if (helper) g_job.by_helpers.fetch_add(1, std::memory_order_relaxed);
 		g_job.done.fetch_add(1, std::memory_order_acq_rel);
 		ran++;
@@ -428,7 +437,7 @@ static int help_thread(SceSize, void *argp)
 	while (!g_help_stop) {
 		sceKernelWaitSema(g_help_sema[idx], 1, NULL);
 		if (g_help_stop) break;
-		job_work(g_help_scratch[idx], true, g_help_on_core0[idx].load(std::memory_order_relaxed) != 0);
+		job_work(g_help_scratch[idx], true, g_help_on_core0[idx].load(std::memory_order_relaxed) != 0, idx + 1);
 	}
 	return sceKernelExitThread(0);
 }
@@ -477,6 +486,7 @@ static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, i
 	unsigned nf = 0;
 	if (nch > 0) {
 		g_job.nchunks = 0;
+		g_job.kind = 0;
 		g_job.cache = &g_scache;
 		g_job.done.store(0); g_job.nonflat.store(0); g_job.by_helpers.store(0);
 		g_job.nchunks = nch;
@@ -996,7 +1006,25 @@ static void wide_pic(mdw::Meta &m, const uint16_t *view0, int pitch_bytes, Pic *
 {
 	int ww = 0, wh = 0;
 	const uint64_t c0 = sceKernelGetProcessTimeWide();
-	const uint16_t *wp = g_wide ? g_wide->compose(m, view0, pitch_bytes / 2, &ww, &wh) : NULL;
+	/* the lines of the compose are shared with the scaler's helpers, the way the scaler's chunks are (a helper that is not scheduled costs
+	 * nothing: this thread does every chunk nobody took) */
+	const uint16_t *wp = NULL;
+	const int nl = g_wide ? g_wide->compose_begin(m, view0, pitch_bytes / 2, &ww, &wh) : 0;
+	if (nl > 0) {
+		g_job.nchunks = 0;
+		g_job.cache = 0;
+		g_job.kind = 1; g_job.lines = nl;
+		g_job.done.store(0); g_job.by_helpers.store(0);
+		g_job.nchunks = (nl + WIDE_CHUNK - 1) / WIDE_CHUNK;
+		g_job.next.store((uint64_t) (++g_job_no) << 32, std::memory_order_release);
+		for (int i = 0; i < g_help_n; i++) sceKernelSignalSema(g_help_sema[i], 1);
+		job_work(g_draw_scratch, false);
+		while (g_job.done.load(std::memory_order_acquire) < g_job.nchunks) sceKernelDelayThread(20);
+		g_wide_helped.fetch_add((unsigned) g_job.by_helpers.load());
+		g_job.nchunks = 0;
+		g_job.kind = 0;
+		wp = g_wide->compose_end();
+	}
 	g_wide_compose_us.fetch_add((unsigned) (sceKernelGetProcessTimeWide() - c0));
 	g_wide_composed.fetch_add(1);
 	if (wp) { s->p = wp; s->w = ww; s->h = wh; s->pitch = ww * 2; s->margin = m.margin; }
@@ -1728,9 +1756,9 @@ int main(int argc, char **argv)
 				const unsigned cu = g_wide_compose_us.exchange(0), cn = g_wide_composed.exchange(0);
 				unsigned long wc[3] = { 0, 0, 0 };
 				md_host_wide_cache_stat(wc);
-				logf_("wide: margin=%d strips=%d rung=%d handover_us/fr=%.0f compose_us/pic=%.0f real=%d%% soft_lines=%d scenes=%d cost_ema_ms=%.2f map_cells=%d bound=%d map_px=%u rows=%u strips_copied=%lu drawn=%lu\n", g_pl->wide_margin(), g_wide_S, g_wide_rung,
+				logf_("wide: margin=%d strips=%d rung=%d handover_us/fr=%.0f compose_us/pic=%.0f real=%d%% soft_lines=%d scenes=%d cost_ema_ms=%.2f map_cells=%d bound=%d map_px=%u rows=%u strips_copied=%lu drawn=%lu compose_chunks_by_helpers=%u\n", g_pl->wide_margin(), g_wide_S, g_wide_rung,
 				    g_wide_an_n ? (double) g_wide_an_us / (double) g_wide_an_n : 0.0, cn ? (double) cu / cn : 0.0, ws.real_pct, ws.soft_lines, ws.scene_events, g_wide_ema / 1000.0,
-				    ws.map_cells, ws.map_bound, ws.map_px, ws.rows, wc[0], wc[1]);
+				    ws.map_cells, ws.map_bound, ws.map_px, ws.rows, wc[0], wc[1], g_wide_helped.exchange(0));
 				g_wide_an_us = g_wide_an_n = 0;
 			}
 			double fr = frames_run ? frames_run : 1;

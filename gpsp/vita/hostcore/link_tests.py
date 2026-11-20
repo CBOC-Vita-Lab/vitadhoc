@@ -64,6 +64,10 @@ LT_PEEK = "02000000:44"
 
 
 def exe_of(arch):
+    # GBADHOC_HOST_<ARCH> (x86 / armhf): a twin built elsewhere (make ARCH=x86 B=<dir>)
+    alt = os.environ.get("GBADHOC_HOST_" + arch.upper().replace("-", "_"))
+    if alt:
+        return alt
     return os.path.join(HERE, "build", arch, "gbadhoc_host")
 
 
@@ -1005,6 +1009,27 @@ def nes_rom():
     return None
 
 
+def ws_rom():
+    """A public WonderSwan game for the Two players scenarios (never committed): the file GATE_WS_ROM names
+    (the gate's own variable; a homebrew test ROM is enough: the session only needs a running machine).  None: skipped."""
+    f = os.environ.get("GATE_WS_ROM")
+    return f if f and os.path.isfile(f) else None
+
+
+def sg_rom():
+    """A public SG-1000 game (a homebrew build): the file GATE_SG_ROM names, or the first .sg under GATE_MD_SMS_ROMS."""
+    f = os.environ.get("GATE_SG_ROM")
+    if f and os.path.isfile(f):
+        return f
+    top = os.environ.get("GATE_MD_SMS_ROMS")
+    if top and os.path.isdir(top):
+        for d, _, fs in sorted(os.walk(top)):
+            for n in sorted(fs):
+                if n.lower().endswith(".sg"):
+                    return os.path.join(d, n)
+    return None
+
+
 def pad_checks(T, ra, rb):
     """A Two players session (NES / WonderSwan / the mirror of one machine): both ran it, in step, to an agreed end,
     and the guest has its own game back."""
@@ -1028,7 +1053,20 @@ def t_nes_two(T):
     if not rom:
         T.S.note("no NES game (VITADHOC_NES_ROM, or GATE_NES_ROMS with nes15-NTSC.nes): skipped")
         return
-    T.begin("nes_two")
+    pad_two(T, "nes_two", rom)
+
+
+def t_ws_two(T):
+    """Wi-Fi, Two players on a WonderSwan game: one machine on both consoles, a pad each (fe_padpair)."""
+    rom = ws_rom()
+    if not rom:
+        T.S.note("no WonderSwan game (GATE_WS_ROM): skipped")
+        return
+    pad_two(T, "ws_two", rom)
+
+
+def pad_two(T, name, rom):
+    T.begin(name)
     e = 14 if T.slow else 0
     pa = "".join(press(14 + i, k, 12) for i, k in enumerate(["a", "right", "down", "start", "left", "b", "up", "a"]))
     pb = "".join(press(14.5 + i, k, 12) for i, k in enumerate(["start", "left", "a", "up", "right", "b", "down", "a"]))
@@ -1922,6 +1960,66 @@ def t_mixed_refuse(T):
     T.picture(rb, "B", "refused.png")
 
 
+def sega_two_files(T, con):
+    """(path, console id) of the cartridge for a Sega console: the public homebrew for SG-1000 when there is one,
+    else a synthetic image (the app only forms the link; the player starts afterwards)."""
+    from app_tests import sega_rom
+    name, num = {"md": ("Alpha Quest (USA).md", 6), "sms": ("Master One.sms", 7), "sg": ("Tiny One.sg", 9)}[con]
+    real = sg_rom() if con == "sg" else None
+    path = os.path.join(T.dir, os.path.basename(real) if real else name)
+    with open(path, "wb") as f:
+        f.write(open(real, "rb").read() if real else sega_rom("md" if con == "md" else "sms", 0x20000 if con == "md" else 0x8000))
+    return path, num
+
+
+def sega_two_walk():
+    """The Sega console's list, START for Settings, the rows down to Two players, X: its page."""
+    from app_tests import SNES_TWO_DOWNS
+    return "90:start\n+30:shot=settings.png\n" + "+10:down\n" * SNES_TWO_DOWNS + "+20:shot=row.png\n+10:cross\n+30:shot=page.png\n"
+
+
+def t_sega_two(T):
+    """Sega Two players (Genesis, Master System, SG-1000) from the list's Settings: one console hosts on Same Wi-Fi, the
+    other joins from the room list; both form the link (loopback) and write launch/<console>.ini for md.bin"""
+    for con in os.environ.get("SEGA_ONLY", "md,sms,sg").split(","):
+        T.begin("sega_two_" + con)
+        rom, num = sega_two_files(T, con)
+        cfg = {"ui_home": 0, "hints": 0, "console": num}
+        a = T.twin("a", T.arch_a, rom, "Alice",
+                   sega_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26), config=dict(cfg))
+        b = T.twin("b", T.arch_b, rom, "Bob",
+                   sega_two_walk() + keys("down", "cross", "cross") + "+%d:shot=rooms.png\n" % dur(5) +
+                   "+%d:cross:%d\n" % (AFTER_SHOT, PRESS) + shot(24, "after.png") + quit_at(26), config=dict(cfg))
+        for t in (a, b):
+            os.remove(os.path.join(t.root, "autoboot.txt"))
+        ra, rb = T.run([a, b], 26)
+        T.clean(ra, "A", allow="could not be started")
+        T.clean(rb, "B", allow="could not be started")
+        T.check(ra.has(r"^EVT snes_two_go role=host conn=0") and rb.has(r"^EVT snes_two_go role=guest conn=0"),
+                "%s: A hosted and B joined from the page, both on Same Wi-Fi" % con)
+        T.check(ra.has(r"link_snes_begin role=host .*console=%s" % con), "%s: the room's console is %s" % (con, con))
+        rooms = rb.evt("snes_two_join")
+        T.check(rooms and rooms[0].get("addr", "").startswith("127.0.0.1:"), "%s: B joined the room the list showed (%s)" %
+                (con, [e["_"] for e in rooms]))
+        ks = []
+        for r, who, role in ((ra, "A", "host"), (rb, "B", "guest")):
+            rd = r.evt("snes_link_ready")
+            T.check(rd and rd[0].get("ok") == "1" and rd[0].get("mode") == "lan",
+                    "%s: %s: the link formed (snes_link_ready ok=1 mode=lan: %s)" % (con, who, [e["_"] for e in rd]))
+            lf = os.path.join(r.root, "launch", con + ".ini")
+            kv = dict(l.rstrip("\n").split("=", 1) for l in open(lf) if "=" in l) if os.path.exists(lf) else {}
+            ks.append(kv)
+            T.check(kv.get("link.mode") == "lan" and kv.get("link.role") == role,
+                    "%s: %s: launch/%s.ini carries the link (role %s mode %s)" % (con, who, con, kv.get("link.role"), kv.get("link.mode")))
+            T.radio_free(r, who)
+            T.picture(r, who, "rooms.png" if who == "B" else "hosting.png")
+        ka, kb = ks
+        T.check(ka.get("link.local_port") and kb.get("link.peer", "").endswith(":" + ka["link.local_port"]),
+                "%s: B's launch file names A's address (%s, A listens on %s)" % (con, kb.get("link.peer"), ka.get("link.local_port")))
+        T.check(ka.get("link.compat") and ka.get("link.compat") == kb.get("link.compat"),
+                "%s: both carry the same pad compat word (%s)" % (con, ka.get("link.compat")))
+
+
 TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fast_link", t_fast_link), ("share", t_share), ("share_replace", t_share_replace), ("mgift", t_mgift), ("gb_two_carts", t_gb_two_carts), ("gb_mixed", t_gb_mixed), ("gb_extra_folder", t_gb_extra_folder), ("three_sessions", t_three_sessions),
          ("wifi_gb", t_wifi_gb), ("wifi_adapter", t_wifi_adapter),
          ("internet", t_internet), ("adhoc", t_adhoc),
@@ -1929,7 +2027,7 @@ TESTS = [("wifi_cable", t_wifi_cable), ("gba_two_games", t_gba_two_games), ("fas
          ("host_quits", t_host_quits), ("link_lost", t_link_lost),
          ("lossy", t_lossy), ("wifi_lost", t_wifi_lost),
          ("cancel", t_cancel), ("suspend", t_suspend), ("snes_two", t_snes_two),
-         ("nes_two", t_nes_two), ("mixed_refuse", t_mixed_refuse)]
+         ("nes_two", t_nes_two), ("ws_two", t_ws_two), ("sega_two", t_sega_two), ("mixed_refuse", t_mixed_refuse)]
 # Which tests a mode runs when none are named.  x86: everything but the
 # mixed pair's.  armhf (under qemu, five times the wall time): the sessions
 # and what depends on the machines or on timing; the menus' own refusals

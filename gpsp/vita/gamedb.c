@@ -701,13 +701,23 @@ int gamedb_md_rom_kind(const char *path)
    return kind;
 }
 
+int gamedb_md_head_ok(const unsigned char *h, unsigned n, unsigned long size)
+{
+   /* as md_kind_of for a ".bin" (no ".smd" leniency): plain, not 32X, or SMD with its marker */
+   if (!h || n < 0x108 || size < 0x104)
+      return 0;
+   if (!memcmp(h + 0x100, "SEGA", 4))
+      return memcmp(h + 0x100, "SEGA 32X", 8) != 0;
+   return size >= 512 + 16384 && size % 16384 == 512 && h[8] == 0xAA && h[9] == 0xBB;
+}
+
 int gamedb_md_accept(const char *path)
 {
    const char *ext = path ? strrchr(path, '.') : NULL;
    if (!ext)
       return 0;
    if (!strcasecmp(ext, ".md") || !strcasecmp(ext, ".gen") ||
-       !strcasecmp(ext, ".smd"))
+       !strcasecmp(ext, ".smd") || !strcasecmp(ext, ".68k"))
       return 1;
    if (!strcasecmp(ext, ".bin"))
    {

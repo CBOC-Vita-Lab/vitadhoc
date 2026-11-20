@@ -63,6 +63,11 @@ struct Meta {
 	int scene_event;
 	uint16_t *px;         /* own_strips: [side][line][d], d = distance from the view's edge; vh * margin pixels per side */
 	int px_cap;
+	/* Master System games that mask the first eight columns of the picture: the soft extension samples the columns after them, and on the
+	 * lines whose left strip is real the masked columns show the learned picture too (bar: 8 pixels a line, bar_ok: the line has them) */
+	uint8_t mask_left;
+	uint8_t bar_ok[256];
+	uint16_t bar[256][8];
 private:
 	Meta(const Meta &);
 	Meta &operator=(const Meta &);
@@ -79,6 +84,9 @@ struct Stats {
 	unsigned map_rejected; /* learned cells not shown because the strip was not drawn from them or their tile had changed (sum) */
 	unsigned rows;         /* learned rows given to the VDP for the next frame (Mega Drive) */
 	unsigned map_skips;    /* analysed frames the map had nothing new to look at */
+	/* Mega Drive, sums over the analysed frames: line sides with a real strip beside a window plane line (drawn without plane A), and beside a
+	 * line whose columns scroll apart vertically */
+	unsigned long long win_sides, vs_sides;
 	/* set_check(true), Mega Drive: learned cells shown as real (first time each), those the game later showed on screen at the same place,
 	 * and those of them that were then a different cell (a wrong tile was shown) */
 	unsigned chk_claims, chk_seen, chk_wrong;
@@ -101,6 +109,14 @@ public:
 	/* drawing thread. view0 = pixel (0,0) of the view in the picture buffer, strips beside it at columns -margin.. and vw.., rows of
 	 * pitch_px. Returns the wide picture (vw + 2 margin) x vh (valid until the next compose) or NULL when it cannot be made. */
 	const uint16_t *compose(const Meta &m, const uint16_t *view0, int pitch_px, int *w, int *h);
+	/* The same in three steps, so that the lines can be shared between threads (the result does not depend on how): compose_begin on the
+	 * drawing thread returns the number of lines (0: no wide picture, use the plain one); compose_lines(y0, y1, who) for disjoint ranges may
+	 * run at the same time on different threads, each with its own `who` (0 .. COMPOSE_WHO - 1); compose_end on the drawing thread when every
+	 * line has been done. */
+	enum { COMPOSE_WHO = 4 };
+	int compose_begin(const Meta &m, const uint16_t *view0, int pitch_px, int *w, int *h);
+	void compose_lines(int y0, int y1, int who);
+	const uint16_t *compose_end();
 	void set_real_cap_default(int px) { cap_default_ = px; }
 	void set_learn(bool on) { learn_ = on; }             /* the learned map (on by default); before the first frame() */
 	void set_prov(bool on) { want_prov_ = on; }          /* tests: keep widekit's provenance of the last composed picture */
@@ -138,6 +154,10 @@ private:
 	wk_map *M_;
 	int map_system_;
 	wk_compose *C_;
+	wk_compose_scratch *scr_[COMPOSE_WHO];
+	wk_compose_in *ci_;
+	const Meta *cmeta_;   /* the Meta of the compose in progress */
+	uint16_t *edge_;      /* the colours the soft extension samples at the left edge of a picture with masked columns */
 	int cvw_, cvh_, cm_;
 	wk_frame *fr_;
 	wk_out *out_;
@@ -150,6 +170,7 @@ private:
 	uint32_t *hash_[2], *stamp_[2], *wstamp_[2], *code_[2];
 	uint16_t *prev_[2];
 	uint8_t *line_on_[2];
+	uint8_t rowok_[2][256];   /* per plane and line: bit s = the strip of side s shows the row the plane is described with on that line */
 	uint8_t *used_[2];    /* per tile: the plane's name table uses it */
 	uint32_t *thprev_[2]; /* per tile: its hash at the plane's last pass (0 = not used then) */
 	int nused_[2], settle_[2], need_[2], have_gid_[2];

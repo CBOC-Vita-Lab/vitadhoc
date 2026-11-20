@@ -858,7 +858,7 @@ static void ram_cheat_update(void)
 		if (!is_ram_patch(p)) continue;
 		if (is_md()) {
 			unsigned o = p->address & 0xFFFF;
-			if ((p->value & 0xFF00) == 0) work_ram[o ^ 1] = (uint8_t)p->value;               /* byte store, exactly that address */
+			if ((p->value & 0xFF00) == 0) work_ram[o] = (uint8_t)p->value;                   /* byte store as Genesis Plus GX: work_ram as held (host word order), no ^1 */
 			else *(uint16_t *)(work_ram + (o & 0xFFFE)) = (uint16_t)p->value;               /* word store */
 		} else {
 			work_ram[p->address & 0x1FFF] = (uint8_t)p->value;

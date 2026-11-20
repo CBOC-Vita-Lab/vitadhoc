@@ -637,11 +637,11 @@ static fe_console_t console_for(const char *path)
    if (has_ext(path, ".ws") || has_ext(path, ".wsc") || has_ext(path, ".pc2"))
       return FE_CONSOLE_WSWAN;
    if (has_ext(path, ".md") || has_ext(path, ".gen") || has_ext(path, ".smd") ||
-       (has_ext(path, ".bin") && gamedb_md_accept(path)))
+       has_ext(path, ".68k") || (has_ext(path, ".bin") && gamedb_md_accept(path)))
       return FE_CONSOLE_MD;
    if (has_ext(path, ".sms")) return FE_CONSOLE_SMS;
    if (has_ext(path, ".gg"))  return FE_CONSOLE_GG;
-   if (has_ext(path, ".sg"))  return FE_CONSOLE_SG;
+   if (has_ext(path, ".sg") || has_ext(path, ".sc")) return FE_CONSOLE_SG;
    return FE_CONSOLE_GBA;
 }
 
@@ -761,7 +761,7 @@ static unsigned char *patch_read(const char *path, long *len, long cap);
  *                         imports it when it is newer than `save`.
  * All three are "" for any failure: never a half-filled pair. */
 static const char *const k_snes_carts[] = { ".smc", ".sfc", ".swc", ".fig", ".zip" };
-static const char *const k_sega_carts[] = { ".md", ".gen", ".smd", ".bin", ".sms", ".gg", ".sg", ".zip" };
+static const char *const k_sega_carts[] = { ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc", ".zip" };
 static int snes_patch_find(const char *rom_path, char *out, size_t cap,
                            const char *const *carts, size_t ncarts)
 {
@@ -5156,6 +5156,18 @@ int ui_host_zip_console(const char *path, unsigned size)
    if (g_zipc[slot].key == key && g_zipc[slot].size == size)
       return g_zipc[slot].console;
    c = zip_rom_peek(path, &e) == 0 ? e.console : -1;
+   if (c == FE_CONSOLE_MD)
+   {
+      /* a .bin in the archive gets the loose file's test: SEGA at 0x100 or an SMD header (another system's .bin is not listed) */
+      size_t nl = strlen(e.name);
+      if (nl > 4 && !strcasecmp(e.name + nl - 4, ".bin"))
+      {
+         unsigned char head[0x110];
+         int got = zip_rom_head(path, &e, head, sizeof(head));
+         if (got < 0 || !gamedb_md_head_ok(head, (unsigned)got, e.usize))
+            c = -1;
+      }
+   }
    g_zipc[slot].key = key;
    g_zipc[slot].size = size;
    g_zipc[slot].console = (signed char)c;
@@ -5203,7 +5215,7 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
    if (ui_console_is_sega(console))
    {
       /* the entry's own extension: md.bin runs it as the console the launch file names, and an SMD file is told by its bytes */
-      static const char *const sx[] = { ".md", ".gen", ".smd", ".bin", ".sms", ".gg", ".sg" };
+      static const char *const sx[] = { ".md", ".gen", ".smd", ".bin", ".68k", ".sms", ".gg", ".sg", ".sc" };
       size_t nl = strlen(e.name), k;
       ext = console == FE_CONSOLE_MD ? ".md" : console == FE_CONSOLE_SMS ? ".sms"
           : console == FE_CONSOLE_GG ? ".gg" : ".sg";

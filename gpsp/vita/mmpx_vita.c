@@ -171,6 +171,116 @@ static void mmpx_pixel(const uint16_t *const r[7], int x, uint16_t out[4])
    out[3] = M;
 }
 
+#ifdef MM_NEON
+/* The same rules as mmpx_pixel, for eight pixels in a row at once (lane k is
+ * the pixel at column x + k).  Every rule is a compare and a select, so
+ * the eight run through them together; the order the rules are applied in
+ * (a later one overrides an earlier one) is the scalar function's, and the
+ * luma is computed from the 565 value the way mm_luma_build does, so each
+ * lane's answer is the scalar one. */
+#define MV(p) vld1q_u16(p)
+#define MEQ(a, b) vceqq_u16((a), (b))
+#define MNE(a, b) vmvnq_u16(vceqq_u16((a), (b)))
+#define MAND(a, b) vandq_u16((a), (b))
+#define MOR(a, b) vorrq_u16((a), (b))
+#define MSEL(m, a, b) vbslq_u16((m), (a), (b))
+#define MANY3(b, a0, a1, a2) MOR(MOR(MEQ(b, a0), MEQ(b, a1)), MEQ(b, a2))
+#define MEQ2(b, a0, a1) MAND(MEQ(b, a0), MEQ(b, a1))
+#define MEQ3(b, a0, a1, a2) MAND(MAND(MEQ(b, a0), MEQ(b, a1)), MEQ(b, a2))
+#define MEQ4(b, a0, a1, a2, a3) MAND(MEQ3(b, a0, a1, a2), MEQ(b, a3))
+#define MNONE2(b, a0, a1) MAND(MNE(b, a0), MNE(b, a1))
+#define MNONE4(b, a0, a1, a2, a3) MAND(MNONE2(b, a0, a1), MNONE2(b, a2, a3))
+
+static inline uint16x8_t mm_luma8(uint16x8_t v)
+{
+   const uint16x8_t r = vshrq_n_u16(v, 11);
+   const uint16x8_t g = vandq_u16(vshrq_n_u16(v, 5), vdupq_n_u16(63));
+   const uint16x8_t b = vandq_u16(v, vdupq_n_u16(31));
+   const uint16x8_t r8 = vorrq_u16(vshlq_n_u16(r, 3), vshrq_n_u16(r, 2));
+   const uint16x8_t g8 = vorrq_u16(vshlq_n_u16(g, 2), vshrq_n_u16(g, 4));
+   const uint16x8_t b8 = vorrq_u16(vshlq_n_u16(b, 3), vshrq_n_u16(b, 2));
+   return vaddq_u16(vaddq_u16(vaddq_u16(r8, g8), b8), vdupq_n_u16(1));
+}
+
+static void mmpx_pixel8(const uint16_t *const r[7], int x, uint16x8_t out[4])
+{
+   const uint16x8_t A = MV(r[2] + x - 1), B = MV(r[2] + x), C = MV(r[2] + x + 1);
+   const uint16x8_t D = MV(r[3] + x - 1), E = MV(r[3] + x), F = MV(r[3] + x + 1);
+   const uint16x8_t G = MV(r[4] + x - 1), H = MV(r[4] + x), I = MV(r[4] + x + 1);
+   const uint16x8_t Q = MV(r[3] + x - 2), R = MV(r[3] + x + 2);
+   const uint16x8_t P = MV(r[1] + x), S = MV(r[5] + x);
+   const uint16x8_t Bl = mm_luma8(B), Dl = mm_luma8(D), El = mm_luma8(E),
+                    Fl = mm_luma8(F), Hl = mm_luma8(H);
+   uint16x8_t J = E, K = E, L = E, M = E, c;
+
+   /* 1:1 slope rules */
+   c = MAND(MAND(MAND(MEQ(D, B), MNE(D, H)), MNE(D, F)),
+            MAND(MAND(MOR(vcgeq_u16(El, Dl), MEQ(E, A)), MANY3(E, A, C, G)),
+                 MOR(MOR(MOR(vcltq_u16(El, Dl), MNE(A, D)), MNE(E, P)), MNE(E, Q))));
+   J = MSEL(c, D, J);
+   c = MAND(MAND(MAND(MEQ(B, F), MNE(B, D)), MNE(B, H)),
+            MAND(MAND(MOR(vcgeq_u16(El, Bl), MEQ(E, C)), MANY3(E, A, C, I)),
+                 MOR(MOR(MOR(vcltq_u16(El, Bl), MNE(C, B)), MNE(E, P)), MNE(E, R))));
+   K = MSEL(c, B, K);
+   c = MAND(MAND(MAND(MEQ(H, D), MNE(H, F)), MNE(H, B)),
+            MAND(MAND(MOR(vcgeq_u16(El, Hl), MEQ(E, G)), MANY3(E, A, G, I)),
+                 MOR(MOR(MOR(vcltq_u16(El, Hl), MNE(G, H)), MNE(E, S)), MNE(E, Q))));
+   L = MSEL(c, H, L);
+   c = MAND(MAND(MAND(MEQ(F, H), MNE(F, B)), MNE(F, D)),
+            MAND(MAND(MOR(vcgeq_u16(El, Fl), MEQ(E, I)), MANY3(E, C, G, I)),
+                 MOR(MOR(MOR(vcltq_u16(El, Fl), MNE(I, H)), MNE(E, R)), MNE(E, S))));
+   M = MSEL(c, F, M);
+
+   /* Intersection rules */
+   c = MAND(MAND(MNE(E, F), MEQ4(E, C, I, D, Q)), MAND(MEQ2(F, B, H), MNE(F, MV(r[3] + x + 3))));
+   K = MSEL(c, F, K); M = MSEL(c, F, M);
+   c = MAND(MAND(MNE(E, D), MEQ4(E, A, G, F, R)), MAND(MEQ2(D, B, H), MNE(D, MV(r[3] + x - 3))));
+   J = MSEL(c, D, J); L = MSEL(c, D, L);
+   c = MAND(MAND(MNE(E, H), MEQ4(E, G, I, B, P)), MAND(MEQ2(H, D, F), MNE(H, MV(r[6] + x))));
+   L = MSEL(c, H, L); M = MSEL(c, H, M);
+   c = MAND(MAND(MNE(E, B), MEQ4(E, A, C, H, S)), MAND(MEQ2(B, D, F), MNE(B, MV(r[0] + x))));
+   J = MSEL(c, B, J); K = MSEL(c, B, K);
+   c = MAND(MAND(vcltq_u16(Bl, El), MEQ4(E, G, H, I, S)), MNONE4(E, A, D, C, F));
+   J = MSEL(c, B, J); K = MSEL(c, B, K);
+   c = MAND(MAND(vcltq_u16(Hl, El), MEQ4(E, A, B, C, P)), MNONE4(E, D, G, I, F));
+   L = MSEL(c, H, L); M = MSEL(c, H, M);
+   c = MAND(MAND(vcltq_u16(Fl, El), MEQ4(E, A, D, G, Q)), MNONE4(E, B, C, I, H));
+   K = MSEL(c, F, K); M = MSEL(c, F, M);
+   c = MAND(MAND(vcltq_u16(Dl, El), MEQ4(E, C, F, I, R)), MNONE4(E, B, A, G, H));
+   J = MSEL(c, D, J); L = MSEL(c, D, L);
+
+   /* 2:1 slope rules (each one reads the values the earlier ones left) */
+   {
+      const uint16x8_t hb = MNE(H, B), fd = MNE(F, D);
+      uint16x8_t g1, c1;
+      g1 = MAND(hb, MAND(MAND(MNE(H, A), MNE(H, E)), MNE(H, C)));
+      c1 = MAND(g1, MAND(MEQ3(H, G, F, R), MNONE2(H, D, MV(r[2] + x + 2))));
+      L = MSEL(c1, M, L);
+      c1 = MAND(g1, MAND(MEQ3(H, I, D, Q), MNONE2(H, F, MV(r[2] + x - 2))));
+      M = MSEL(c1, L, M);
+      g1 = MAND(hb, MAND(MAND(MNE(B, I), MNE(B, G)), MNE(B, E)));
+      c1 = MAND(g1, MAND(MEQ3(B, A, F, R), MNONE2(B, D, MV(r[4] + x + 2))));
+      J = MSEL(c1, K, J);
+      c1 = MAND(g1, MAND(MEQ3(B, C, D, Q), MNONE2(B, F, MV(r[4] + x - 2))));
+      K = MSEL(c1, J, K);
+      g1 = MAND(fd, MAND(MAND(MNE(D, I), MNE(D, E)), MNE(D, C)));
+      c1 = MAND(g1, MAND(MEQ3(D, A, H, S), MNONE2(D, B, MV(r[5] + x + 1))));
+      J = MSEL(c1, L, J);
+      c1 = MAND(g1, MAND(MEQ3(D, G, B, P), MNONE2(D, H, MV(r[1] + x + 1))));
+      L = MSEL(c1, J, L);
+      g1 = MAND(fd, MAND(MAND(MNE(F, E), MNE(F, A)), MNE(F, G)));
+      c1 = MAND(g1, MAND(MEQ3(F, C, H, S), MNONE2(F, B, MV(r[5] + x - 1))));
+      K = MSEL(c1, M, K);
+      c1 = MAND(g1, MAND(MEQ3(F, I, B, P), MNONE2(F, H, MV(r[1] + x - 1))));
+      M = MSEL(c1, K, M);
+   }
+   out[0] = J;
+   out[1] = K;
+   out[2] = L;
+   out[3] = M;
+}
+#endif
+
 /* Rows [ya, yb) (at most MM_BAND), columns [xa, xb) (at most MM_SPAN). */
 static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
                       uint32_t *at, size_t dp, int y0, int ya, int yb, int x0,
@@ -212,14 +322,13 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
       /* Eight pixels at a time: the flat test (the 8 neighbours all equal
        * the pixel) for the eight at once.  Eight flat pixels in a row are
        * one colour (each equals the next), so that case is one lookup and
-       * four vector stores a row; otherwise the flat lanes look their
-       * colour up and the others go through the rules, as in the scalar
-       * loop below -- the same answer for every pixel. */
+       * four vector stores a row; otherwise all eight go through the rules
+       * together (mmpx_pixel8; flat pixels come out as themselves) -- the
+       * same answer for every pixel as the scalar loop below. */
       for (; !g_mm_c_only && x + 8 <= MM_PAD + (xb - xa); x += 8, o += 16)
       {
          const uint16x8_t e = vld1q_u16(r[3] + x);
          uint16x8_t f = vceqq_u16(e, vld1q_u16(r[2] + x - 1));
-         uint8_t fl[8];
          int i;
          f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[2] + x)));
          f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[2] + x + 1)));
@@ -228,7 +337,6 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
          f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x - 1)));
          f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x)));
          f = vandq_u16(f, vceqq_u16(e, vld1q_u16(r[4] + x + 1)));
-         vst1_u8(fl, vmovn_u16(f));
          if ((vgetq_lane_u64(vreinterpretq_u64_u16(f), 0) &
               vgetq_lane_u64(vreinterpretq_u64_u16(f), 1)) == ~(uint64_t)0)
          {
@@ -243,20 +351,19 @@ static void mmpx_band(const uint16_t *src, int w, int h, const uint32_t *lut,
             vst1q_u32(o + dp + 12, c);
             continue;
          }
-         for (i = 0; i < 8; i++)
          {
-            uint32_t *q = o + 2 * i;
-            if (fl[i])
+            uint16x8_t v[4];
+            uint16_t jj[4][8];
+            mmpx_pixel8(r, x, v);
+            vst1q_u16(jj[0], v[0]);
+            vst1q_u16(jj[1], v[1]);
+            vst1q_u16(jj[2], v[2]);
+            vst1q_u16(jj[3], v[3]);
+            for (i = 0; i < 8; i++)
             {
-               const uint32_t c = lut[r[3][x + i]];
-               q[0] = c; q[1] = c; q[dp] = c; q[dp + 1] = c;
-            }
-            else
-            {
-               uint16_t v[4];
-               mmpx_pixel(r, x + i, v);
-               q[0] = lut[v[0]]; q[1] = lut[v[1]];
-               q[dp] = lut[v[2]]; q[dp + 1] = lut[v[3]];
+               uint32_t *q = o + 2 * i;
+               q[0] = lut[jj[0][i]]; q[1] = lut[jj[1][i]];
+               q[dp] = lut[jj[2][i]]; q[dp + 1] = lut[jj[3][i]];
             }
          }
       }

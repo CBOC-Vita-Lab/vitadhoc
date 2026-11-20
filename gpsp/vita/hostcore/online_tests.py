@@ -343,7 +343,7 @@ def pair(T, name, rom=L.LINKTEST, rom_b=None, nat=("port", "port"), svc_env=(), 
 
 
 def solo(T, name, code="ZZZZZ", svc_env=(), b_vita=None, b_cfg=None, before=None, proxy_b=None, tail=None,
-         b_end=40, press_join=False, world=False, rom=L.LINKTEST, b_extra=None):
+         b_end=40, press_join=False, world=False, rom=L.LINKTEST, b_extra=None, script=None, noauto=False):
     """One twin, no host: the joiner types `code` (or a hosting twin if code is None)."""
     T.begin(name)
     rig = Rig()
@@ -362,11 +362,15 @@ def solo(T, name, code="ZZZZZ", svc_env=(), b_vita=None, b_cfg=None, before=None
         v.update(b_vita or {})
         cfg = {"net_conn": 3}
         cfg.update(b_cfg or {})
-        if code:
+        if script is not None:
+            sb = script
+        elif code:
             sb = join_script(code, (tail if tail is not None else "") + L.quit_at(b_end), press_join=press_join)
         else:
             sb = L.host(L.EARLY, "host.png") + (tail or "") + L.quit_at(b_end)
         rig.b = T.twin("b", T.arch_b, rom, "Bob", sb, config=cfg, vita=v, net=net_for(1), extra=b_extra)
+        if noauto:
+            os.remove(os.path.join(rig.b.root, "autoboot.txt"))
         rig.b.start()
         rig.rb = rig.b.finish(rig.b.t0 + (b_end + L.SHIFT) * T.k + 120 - time.time())
         rig.reqs = rig.svc.requests()
@@ -511,6 +515,26 @@ def t_gb_relay(T):
     T.same_machines(rig.ra, rig.rb)
     L.gb_verdict(T, rig.ra, "A", 1)
     L.gb_verdict(T, rig.rb, "B", 2)
+
+
+def t_gbc_punch(T):
+    """Online, Game Boy Color cable over the punch: 200 bytes each way and the verdict"""
+    rig = pair(T, "online_gbc", rom=L.GBLINK_CGB, kind="gb", a_script=gb_script(78))
+    check_link(T, rig, relay=False, kind="gb")
+    for r, who in ((rig.ra, "A"), (rig.rb, "B")):
+        T.check(r.has(r"gblink_done ") and r.has(r"gblink_save_commit .*ok=1"), "%s: agreed end, save committed" % who)
+    T.same_machines(rig.ra, rig.rb)
+    L.gb_verdict(T, rig.ra, "A", 1, save="gblink-cgb.gbc.sav")
+    L.gb_verdict(T, rig.rb, "B", 2, save="gblink-cgb.gbc.sav")
+
+
+def t_gbc_relay(T):
+    """Online, Game Boy Color cable over the relay (symmetric host)"""
+    rig = pair(T, "online_gbc_relay", rom=L.GBLINK_CGB, kind="gb", nat=("sym", "port"), a_script=gb_script(78))
+    check_link(T, rig, relay=True, kind="gb")
+    T.same_machines(rig.ra, rig.rb)
+    L.gb_verdict(T, rig.ra, "A", 1, save="gblink-cgb.gbc.sav")
+    L.gb_verdict(T, rig.rb, "B", 2, save="gblink-cgb.gbc.sav")
 
 
 def t_adapter(T):
@@ -1100,20 +1124,35 @@ def t_library_join(T):
 
 def t_nes_relay(T):
     """Online, Two players on a NES game through the relay: one machine on both consoles, in step"""
-    nes_online(T, "online_nes_relay", ("sym", "port"), True)
+    pad_online(T, "online_nes_relay", ("sym", "port"), True, "nes")
 
 
 def t_nes_punch(T):
     """Online, Two players on a NES game over the direct punch"""
-    nes_online(T, "online_nes_punch", ("port", "port"), False)
+    pad_online(T, "online_nes_punch", ("port", "port"), False, "nes")
 
 
-def nes_online(T, name, nat, relay):
-    rom = L.nes_rom()
+def t_ws_relay(T):
+    """Online, Two players on a WonderSwan game through the relay: one machine on both consoles, in step"""
+    pad_online(T, "online_ws_relay", ("sym", "port"), True, "ws")
+
+
+def t_ws_punch(T):
+    """Online, Two players on a WonderSwan game over the direct punch"""
+    pad_online(T, "online_ws_punch", ("port", "port"), False, "ws")
+
+
+PAD_KINDS = {"nes": ("NES", "kind=5", "GATE_NES_ROMS (nes15-NTSC.nes) or VITADHOC_NES_ROM"),
+             "ws": ("WonderSwan", "kind=5", "GATE_WS_ROM")}
+
+
+def pad_online(T, name, nat, relay, fam):
+    rom = L.nes_rom() if fam == "nes" else L.ws_rom()
     if not rom:
-        T.S.note("no NES game (VITADHOC_NES_ROM, or GATE_NES_ROMS with nes15-NTSC.nes): skipped")
+        T.S.note("no %s game (%s): skipped" % (PAD_KINDS[fam][0], PAD_KINDS[fam][2]))
         return
-    pr = "".join(L.press(40 + i, k, 12) for i, k in enumerate(["a", "right", "down", "start", "left", "b", "up", "a"]))
+    keys = ["a", "right", "down", "start", "left", "b", "up", "a"]
+    pr = "".join(L.press(40 + i, k, 12) for i, k in enumerate(keys))
     rig = pair(T, name, rom=rom, nat=nat, kind="nes",
                a_script=host_script(78) + pr + L.shot(60, "running.png") + L.disconnect(70, "session.png") +
                L.shot(74, "ended.png") + L.quit_at(78))
@@ -1133,31 +1172,79 @@ def snes_link_keys(root, pid="snes"):
     return dict(l.rstrip("\n").split("=", 1) for l in open(f) if l.startswith("link.") and "=" in l)
 
 
-def snes_online(T, name, nat, relay, con="snes"):
-    """Both consoles in the game list: A hosts a SNES game Online from Settings > Two players, B joins with the code
-    from the same page.  The app forms the link (room, punch or relay) with no game running and writes it into
-    launch/snes.ini for snes.bin (the twin cannot start that program: snes/twin/link_test.py plays the files' kind)."""
-    # con: "snes", or a Sega console of md.bin ("md", "sms", "sg"): the same page and the same hand-over, the file a synthetic
-    # cartridge image of that console (the app only forms the link; the player starts afterwards)
-    sega = {"md": ("Alpha Quest (USA).md", 6), "sms": ("Master One.sms", 7), "sg": ("Tiny One.sg", 9)}.get(con)
-    if sega:
-        from app_tests import sega_rom, SNES_TWO_DOWNS
-        rom = os.path.join(T.S.outdir, sega[0])
-        data = sega_rom("md" if con == "md" else "sms", 0x20000 if con == "md" else 0x8000)
-        walk = "90:start\n+30:shot=settings.png\n" + "+10:down\n" * SNES_TWO_DOWNS + "+20:shot=row.png\n+10:cross\n+30:shot=page.png\n"
-    else:
-        rom = os.path.join(T.S.outdir, "Super One (USA).sfc")
-        data = bytes(range(256)) * 128               # (its CRC has letters in it: the room's `rom` must be lower-case)
-        walk = L.snes_two_walk()
+SEGA = {"md": ("Alpha Quest (USA).md", 6), "sms": ("Master One.sms", 7), "sg": ("Tiny One.sg", 9)}
+
+
+def tp_rom(T, con, other=False):
+    """The cartridge of a Two players test (written to the build folder, never committed): a synthetic image, or for the
+    SG-1000 the public homebrew of GATE_SG_ROM / GATE_MD_SMS_ROMS when there is one.  other=True: another game of the
+    same console (another name, other bytes)."""
     os.makedirs(T.S.outdir, exist_ok=True)
-    with open(rom, "wb") as f:
+    sega = SEGA.get(con)
+    if sega:
+        from app_tests import sega_rom
+        real = L.sg_rom() if con == "sg" and not other else None
+        name = os.path.basename(real) if real else sega[0]
+        if other:
+            name = name.replace("Alpha Quest", "Other Game").replace("Master One", "Other Game").replace("Tiny One", "Other Game")
+        data = open(real, "rb").read() if real else sega_rom("md" if con == "md" else "sms", 0x20000 if con == "md" else 0x8000,
+                                                             seed=2 if other else 1)
+    else:
+        name = "Super Two (USA).sfc" if other else "Super One (USA).sfc"
+        data = bytes((i * 7 + 3) & 255 for i in range(0x8000)) if other else bytes(range(256)) * 128   # (a CRC with letters in it: the room's `rom` is lower-case)
+    path = os.path.join(T.S.outdir, name)
+    with open(path, "wb") as f:
         f.write(data)
-    sa = (walk + L.keys("cross") + L.keys("down", "cross") + L.shot(14, "hosting.png") + L.quit_at(85))
+    return path
+
+
+def tp_walk(con):
+    """The console's list, START for Settings, the rows down to Two players, X: the page (and its event)."""
+    if con in SEGA:
+        from app_tests import SNES_TWO_DOWNS
+        w = "90:start\n+30:shot=settings.png\n" + "+10:down\n" * SNES_TWO_DOWNS + "+20:shot=row.png\n+10:hold=cross=snes_two_open\n+30:shot=page.png\n"
+    else:
+        lines = L.snes_two_walk().rstrip("\n").split("\n")
+        assert lines[-1].endswith(":cross:%d" % L.PRESS), lines[-1]
+        lines[-1] = "+%d:hold=cross=snes_two_open" % L.GAP
+        w = "\n".join(lines) + "\n+30:shot=page.png\n"
+    return w
+
+
+def hold_code(code):
+    """The code typed on the pad with every press held until the pad has logged what it did (online_pad_key box= sym=):
+    a press a busy machine would not have seen is held until it has been."""
+    out, box, typed = "", 0, {}
+    for ch in code:
+        k = ALPHA.index(ch)
+        up, down = k + 1, len(ALPHA) - k
+        d, n = ("up", up) if up <= down else ("down", down)
+        cur = None
+        for _ in range(n):
+            cur = ((-1 if d == "up" else 0) if cur is None else cur) + (1 if d == "up" else -1)
+            cur %= len(ALPHA)
+            out += "+%d:hold=%s=online_pad_key box=%d sym=%s\n" % (L.GAP, d, box, ALPHA[cur])
+        typed[box] = ch
+        box = min(box + 1, 4)
+        out += "+%d:hold=right=online_pad_key box=%d sym=%s\n" % (L.GAP, box, typed.get(box, "-"))
+    return out
+
+
+def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True, b_tail="", **kw):
+    """Both consoles in their game list: A hosts a game of `con` Online from Settings > Two players, B joins with the code
+    from the same page (join=False: B stops at the room's card).  The app forms the link with no game running."""
+    walk = tp_walk(con)
+    sa = (walk + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:hold=cross=snes_two_go role=host conn=3\n" % L.GAP +
+          L.shot(14, "hosting.png") + L.quit_at(host_end))
 
     def sb(code):
-        return (walk + L.keys("down", "cross") + L.keys("down", "cross") + "+30:shot=pad.png\n" +
-                L.keys(*code_keys(code), first=L.AFTER_SHOT) + L.keys("triangle") + "+%d:shot=card.png\n" % L.dur(7) +
-                "+%d:cross:%d\n" % (L.AFTER_SHOT, L.PRESS) + "+%d:shot=linking.png\n" % L.dur(3) + L.quit_at(80))
+        s = (walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) +
+             "+%d:hold=cross=online_pad_open\n" % L.GAP + "+30:shot=pad.png\n" + hold_code(code) +
+             "+%d:hold=triangle=online_card_begin\n" % L.GAP + "+0:wait=online_card state=\n" +
+             "+%d:shot=card.png\n" % L.dur(1))
+        if join:
+            s += "+%d:hold=cross=online_open_join\n" % L.AFTER_SHOT + "+0:wait=snes_link_ready\n" + "+%d:shot=linking.png\n" % L.dur(3)
+        return s + b_tail + L.quit_at(b_end)
 
     def no_autoboot(rig):                            # A starts in its game list too
         real = T.twin
@@ -1170,15 +1257,24 @@ def snes_online(T, name, nat, relay, con="snes"):
             return t
         T.twin = twin
     cfg = {"ui_home": 0, "hints": 0}
-    if sega:
-        cfg["console"] = sega[1]
-    rig = None
+    if con in SEGA:
+        cfg["console"] = SEGA[con][1]
     try:
-        rig = pair(T, name, rom=rom, nat=nat, a_script=sa, b_script=sb, a_cfg=dict(cfg), b_cfg=dict(cfg),
-                   a_end=85, b_end=80, setup=no_autoboot)
+        return pair(T, name, rom=rom, rom_b=rom_b, nat=nat, a_script=sa, b_script=sb, a_cfg=dict(cfg), b_cfg=dict(cfg),
+                    a_end=host_end, b_end=b_end, setup=no_autoboot, **kw)
     finally:
         if "twin" in T.__dict__:
             del T.__dict__["twin"]
+
+
+def snes_online(T, name, nat, relay, con="snes"):
+    """Both consoles in the game list: A hosts a SNES game Online from Settings > Two players, B joins with the code
+    from the same page.  The app forms the link (room, punch or relay) with no game running and writes it into
+    launch/snes.ini for snes.bin (the twin cannot start that program: snes/twin/link_test.py plays the files' kind)."""
+    # con: "snes", or a Sega console of md.bin ("md", "sms", "sg"): the same page and the same hand-over, the file a synthetic
+    # cartridge image of that console, or for sg the public homebrew (the app only forms the link; the player starts afterwards)
+    rom = tp_rom(T, con)
+    rig = tp_pair(T, name, con, nat, rom)
     ra, rb = rig.ra, rig.rb
     if not ra or not rb:
         return
@@ -1230,6 +1326,130 @@ def t_sega_online(T):
     for con in os.environ.get("SEGA_ONLINE_ONLY", "md,sms,sg").split(","):     # (to rerun one console)
         snes_online(T, "online_%s_punch" % con, ("port", "port"), False, con)
         snes_online(T, "online_%s_relay" % con, ("sym", "port"), True, con)
+
+
+# ---- every console: another game, a version that does not fit, a service that wants an update -------------------
+
+CORE_FAMS = ("gba", "gb", "gbc", "nes", "ws")          # played in the app itself: the room's card comes from the game's menu
+TP_FAMS = ("snes", "md", "sms", "sg")                 # the player programs: Settings > Two players, the card from the list
+FAM_NAMES = {"gba": "GBA", "gb": "GB", "gbc": "GBC", "nes": "NES", "ws": "WonderSwan", "snes": "SNES",
+             "md": "Genesis", "sms": "Master System", "sg": "SG-1000"}
+
+
+def _mutated(T, src, tag):
+    """The same console's game with one byte changed in the middle: another file (and, with the identity taken from the
+    bytes, another game).  Written to the build folder."""
+    d = os.path.join(T.S.outdir, "refuse_roms")
+    os.makedirs(d, exist_ok=True)
+    data = bytearray(open(src, "rb").read())
+    data[len(data) // 2] ^= 0x5A
+    out = os.path.join(d, tag + "_" + os.path.basename(src))
+    with open(out, "wb") as f:
+        f.write(data)
+    return out
+
+
+def refuse_roms(T, fam):
+    """(the host's game, another game of the same console) for `fam`; (None, None): no game to test with (skipped)."""
+    if fam == "gba":
+        return L.LINKTEST, L.LINKTEST_B
+    if fam == "gb":
+        return L.GBLINK, L.GBLOCAL
+    if fam == "gbc":
+        return L.GBLINK_CGB, os.path.join(HERE, "testrom", "gblocal-cgb.gbc")
+    if fam == "nes":
+        a = L.nes_rom()
+        return (a, _mutated(T, a, "other")) if a else (None, None)
+    if fam == "ws":
+        a = L.ws_rom()
+        return (a, _mutated(T, a, "other")) if a else (None, None)
+    return tp_rom(T, fam), tp_rom(T, fam, other=True)
+
+
+def refuse_pair(T, fam, name, rom_b=None, edit=None, svc_env=(), **kw):
+    """A hosts a game of `fam`; B (its library: rom_b, else the same game) types the code and stops at the card."""
+    a, other = refuse_roms(T, fam)
+    if not a:
+        T.S.note("%s: no game for this console (see the gate README): skipped" % FAM_NAMES[fam])
+        return None
+    if rom_b == "other":
+        rom_b = other
+    proxy = (lambda rig, e=edit: HttpProxy(rig.T, rig.svc, edit=e)) if edit else None
+    if fam in CORE_FAMS:
+        kind = "gba" if fam == "gba" else "gb" if fam in ("gb", "gbc") else "nes"
+        return pair(T, name, rom=a, rom_b=rom_b, with_world=False, kind=kind, a_end=45, b_end=40, svc_env=svc_env,
+                    a_script=host_script(45) + L.quit_at(45),
+                    b_script=lambda code: join_script(code, L.quit_at(40), press_join=False), proxy_b=proxy, **kw)
+    return tp_pair(T, name, fam, ("port", "port"), a, rom_b=rom_b, host_end=48, b_end=44, join=False, with_world=False,
+                   svc_env=svc_env, proxy_b=proxy, **kw)
+
+
+def refuse_check(T, rig, fam, want, tag, no_join=True):
+    """B's card failed with UI_FAIL_<want>: no join was made, no link formed, the host never saw a guest."""
+    who = "B %s %s" % (FAM_NAMES[fam], tag)
+    T.clean(rig.rb, who, allow="could not be started")
+    T.clean(rig.ra, "A %s %s" % (FAM_NAMES[fam], tag), allow="could not be started")
+    bad = rig.rb.evt("online_card_bad")
+    T.check(bad and int(bad[-1]["why"]) == ui_fail(want), "%s: UI_FAIL_%s (%s)" % (who, want, bad[-1]["_"] if bad else "none"))
+    if no_join:
+        T.check(not any(x["path"].endswith("/join") for x in rig.reqs), "%s: no join request was made" % who)
+        T.check(not rig.ra.has(r"online_peer") and not rig.rb.has(r"link_running") and not rig.rb.has(r"snes_link_ready"),
+                "%s: no link formed, the host never saw a guest" % who)
+    T.picture(rig.rb, "B", "card.png")
+
+
+def refuse_game(T, fam):
+    """Another game: B's library has no copy of the host's game, so the card says to add it and nothing joins"""
+    rig = refuse_pair(T, fam, "online_game_" + fam, rom_b="other")
+    if rig:
+        refuse_check(T, rig, fam, "ONLINE_GAME", "(another game)")
+        T.check(not rig.rb.has(r"online_open_join"), "B %s: nothing was opened to join with" % FAM_NAMES[fam])
+
+
+def refuse_version(T, fam):
+    """Version: the host newer ('update this'), the host older ('your friend must update'), and a service that wants an
+    update (426) for a joiner and a host"""
+    for tag, edit, want in (("newer", _card_ver(True), "ONLINE_VER_OLD_HERE"), ("older", _card_ver(False), "ONLINE_VER_OLD_THERE")):
+        rig = refuse_pair(T, fam, "online_version_%s_%s" % (tag, fam), edit=edit)
+        if not rig:
+            return
+        refuse_check(T, rig, fam, want, "(host %s)" % tag)
+    # the service itself wants a newer app: a joiner types a code (any), a host asks for a room
+    a, _ = refuse_roms(T, fam)
+    env = ("MIN_APP_VERSION=2.9.0", "LATEST_APP_VERSION=2.9.0")
+    if fam in CORE_FAMS:
+        rig = solo(T, "online_update_%s" % fam, code="ZZZZZ", svc_env=env, rom=a)
+    else:
+        walk = tp_walk(fam)
+        sb = (walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) +
+              "+%d:hold=cross=online_pad_open\n" % L.GAP + "+30:shot=pad.png\n" + hold_code("ZZZZZ") +
+              "+%d:hold=triangle=online_card_begin\n" % L.GAP + "+0:wait=online_card state=\n" +
+              "+%d:shot=card.png\n" % L.dur(1) + L.quit_at(44))
+        cfg = {"ui_home": 0, "hints": 0}
+        if fam in SEGA:
+            cfg["console"] = SEGA[fam][1]
+        rig = solo(T, "online_update_%s" % fam, code="ZZZZZ", svc_env=env, rom=a, script=sb, b_cfg=cfg, noauto=True, b_end=44)
+    r = rig.rb
+    T.clean(r, "B %s update" % FAM_NAMES[fam], allow="could not be started")
+    bad = r.evt("online_card_bad")
+    T.check(bad and int(bad[-1]["why"]) == ui_fail("ONLINE_UPDATE"), "B %s: 'too old for online play' (%s)" %
+            (FAM_NAMES[fam], bad[-1]["_"] if bad else "none"))
+    T.picture(r, "B", "card.png")
+    if fam in CORE_FAMS:
+        rig = solo(T, "online_update_host_%s" % fam, code=None, svc_env=env, tail=L.shot(14, "failed.png"), b_end=20, rom=a)
+        r = rig.rb
+        T.clean(r, "A %s update" % FAM_NAMES[fam])
+        f = r.evt("link_online_failed")
+        T.check(f and int(f[-1]["ui"]) == ui_fail("ONLINE_UPDATE"), "A %s: the host's try reads 'too old' (%s)" %
+                (FAM_NAMES[fam], f[-1]["_"] if f else "none"))
+        T.picture(r, "A", "failed.png")
+
+
+def _fam_test(fn, fam, what):
+    def t(T):
+        fn(T, fam)
+    t.__doc__ = "%s: %s" % (FAM_NAMES[fam], what)
+    return t
 
 
 # ---- two DIFFERENT cartridges (Pokemon Ruby with Sapphire) over Online ------------------------------------
@@ -1314,15 +1534,19 @@ TESTS = [
     ("punch", t_punch), ("relay", t_relay), ("relay_joiner", t_relay_joiner),
     ("relay_host_setting", t_relay_setting_host), ("relay_joiner_setting", t_relay_setting_joiner),
     ("punch_opens_host", t_punch_opens_host),
-    ("gb", t_gb_punch), ("gb_relay", t_gb_relay), ("adapter", t_adapter), ("share", t_share),
+    ("gb", t_gb_punch), ("gb_relay", t_gb_relay), ("gbc", t_gbc_punch), ("gbc_relay", t_gbc_relay), ("adapter", t_adapter), ("share", t_share),
     ("wrong_code", t_wrong_code), ("expired", t_expired), ("update_required", t_update_required),
     ("version", t_version), ("different_game", t_different_game), ("library_join", t_library_join),
     ("busy", t_busy), ("slow_down", t_slow_down), ("service_down", t_service_down),
     ("lost_answer", t_lost_answer), ("cancel_after_failure", t_cancel_after_failure), ("drop", t_drop_midlink),
     ("rtt_100", t_rtt_100), ("rtt_150", t_rtt_150), ("rtt_200", t_rtt_200), ("delay_cap", t_delay_cap),
     ("determinism", t_determinism), ("two_games", t_two_games), ("direct_hidden", t_direct_hidden),
-    ("nes_relay", t_nes_relay), ("nes_punch", t_nes_punch), ("snes_online", t_snes_online), ("sega_online", t_sega_online),
+    ("nes_relay", t_nes_relay), ("nes_punch", t_nes_punch), ("ws_relay", t_ws_relay), ("ws_punch", t_ws_punch),
+    ("snes_online", t_snes_online), ("sega_online", t_sega_online),
 ]
+for _fam in CORE_FAMS + TP_FAMS:
+    TESTS.append(("game_" + _fam, _fam_test(refuse_game, _fam, "Online with another game is refused cleanly (the card names the game to add)")))
+    TESTS.append(("version_" + _fam, _fam_test(refuse_version, _fam, "Online version mismatch and a service that wants an update are refused cleanly")))
 # armhf (under qemu, several times the wall time): the sessions
 RUNS = {
     "x86": [n for n, _ in TESTS],

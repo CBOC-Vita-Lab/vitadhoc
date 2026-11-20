@@ -53,6 +53,22 @@ TEST(patch_ips_grows_the_rom)
 	CHECK(out[100] == 9 && out[101] == 8 && out[64] == 0);
 }
 
+TEST(patch_ips_empty_run_at_the_end)
+{
+	/* an RLE record of run 0 whose offset is the end of the ROM (or past it) writes nothing and does not grow it */
+	std::vector<uint8_t> src = rom(64), out, p;
+	put(p, "PATCH"); be24(p, 64); be16(p, 0); be16(p, 0); p.push_back(0x55);
+	be24(p, 500); be16(p, 0); be16(p, 0); p.push_back(0x66);
+	be24(p, 3); be16(p, 1); p.push_back(7);
+	put(p, "EOF");
+	PatchResult r = patch_apply(&p[0], p.size(), src, out);
+	CHECK_EQ(r.status, PS_OK);
+	CHECK_EQ(out.size(), 64);
+	CHECK(out[3] == 7 && out[4] == src[4] && out[63] == src[63]);
+	std::vector<uint8_t> none, o2;
+	CHECK_EQ(patch_apply(&p[0], p.size(), none, o2).status, PS_OK);   /* an empty source: the &out[0] edge */
+}
+
 TEST(patch_ips_truncated_and_bad)
 {
 	std::vector<uint8_t> src = rom(1024), out;

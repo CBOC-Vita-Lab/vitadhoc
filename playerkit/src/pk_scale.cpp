@@ -143,7 +143,30 @@ static unsigned mmpx_rows(const uint16_t *src, int w, int h, int spitch, uint16_
 			for (int y = ya; y < yb; y++) {
 				const uint16_t *const *r = rows + (y - ya);
 				uint16_t *o = dst + (size_t) dpitch * 2u * (size_t) y + 2u * (size_t) xa;
-				for (int x = MM_PAD; x < MM_PAD + (xb - xa); x++, o += 2) {
+				const int xend = MM_PAD + (xb - xa);
+				int x = MM_PAD;
+				for (; x + 8 <= xend; x += 8, o += 16) {
+					/* eight pixels at once: which have all eight neighbours equal to themselves (a flat spot, copied) */
+					typedef uint16_t v8h __attribute__((vector_size(16)));
+					v8h Ev, n0, n1, n2, n3, n4, n5, n6, n7;
+					memcpy(&Ev, &r[3][x], 16);
+					memcpy(&n0, &r[2][x - 1], 16); memcpy(&n1, &r[2][x], 16); memcpy(&n2, &r[2][x + 1], 16); memcpy(&n3, &r[3][x - 1], 16);
+					memcpy(&n4, &r[3][x + 1], 16); memcpy(&n5, &r[4][x - 1], 16); memcpy(&n6, &r[4][x], 16); memcpy(&n7, &r[4][x + 1], 16);
+					const v8h ne = (v8h) ((n0 != Ev) | (n1 != Ev) | (n2 != Ev) | (n3 != Ev) | (n4 != Ev) | (n5 != Ev) | (n6 != Ev) | (n7 != Ev));
+					uint16_t nem[8];
+					memcpy(nem, &ne, 16);
+					for (int k = 0; k < 8; k++) {
+						uint16_t *ok = o + 2 * k;
+						if (!nem[k]) { const uint16_t E = r[3][x + k]; ok[0] = ok[1] = ok[dpitch] = ok[dpitch + 1] = E; }
+						else {
+							uint16_t q[4];
+							mmpx_pixel(r, x + k, q);
+							ok[0] = q[0]; ok[1] = q[1]; ok[dpitch] = q[2]; ok[dpitch + 1] = q[3];
+							busy++;
+						}
+					}
+				}
+				for (; x < xend; x++, o += 2) {
 					const uint16_t E = r[3][x];
 					if ((((r[2][x - 1] ^ E) | (r[2][x] ^ E) | (r[2][x + 1] ^ E) | (r[3][x - 1] ^ E) | (r[3][x + 1] ^ E) |
 					      (r[4][x - 1] ^ E) | (r[4][x] ^ E) | (r[4][x + 1] ^ E)) == 0)) {

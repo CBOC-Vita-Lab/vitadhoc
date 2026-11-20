@@ -203,8 +203,8 @@ $(SNES_BIN): FORCE
 # licence is not GPL-compatible), and nothing of this app is linked into it
 # (make -C ../../md/vita check-links).  Its licence and provenance travel in the VPK.
 MD_BIN := ../../md/vita/build/md.bin
+# (licenses/GenesisPlusGX-LICENSE.txt, a copy of md/core/LICENSE.txt, is already in DIST_NOTICES.)
 VPK_EXTRA += $(MD_BIN)=md.bin \
-             ../../md/core/LICENSE.txt=licenses/GenesisPlusGX-LICENSE.txt \
              ../../md/core/PROVENANCE.md=licenses/GenesisPlusGX-PROVENANCE.md
 $(MD_BIN): FORCE
 	+$(MAKE) -C ../../md/vita
@@ -317,6 +317,8 @@ $(SFO): Makefile $(APP_STAMP)
 	  "$(TITLE)" $@
 
 $(VPK): $(SELF) $(SFO) $(LIVEAREA) $(VPK_EXTRA_FILES)
+	@dups="$$(printf '%s\n' $(foreach x,$(filter-out -a,$(VPK_FILES)),$(lastword $(subst =, ,$(x)))) | sort | uniq -d)"; \
+	  if [ -n "$$dups" ]; then echo "duplicate archive member names in the package (VPK_EXTRA / VPK_FILES):"; echo "$$dups"; exit 1; fi
 	@rm -f $@
 	$(VITASDK)/bin/vita-pack-vpk -s $(SFO) -b $(SELF) $(VPK_FILES) $@
 

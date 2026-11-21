@@ -239,7 +239,9 @@ void nes_host_wide_enable(int mode);
 void nes_host_wide_margin(int px);
 int nes_host_wide_active(void);   /* 1 when a game is loaded, mode is on and margin > 0 */
 /* Options: "period" 0/1 (continue provably periodic terrain beyond the trusted edge; OFF by default, a guess that can be wrong
- * in levels with pits: for per-game opt-in), "fade_px", "appear_frames", "debug" 0/1 (keep the provenance image). 0 = known. */
+ * in levels with pits: for per-game opt-in), "fade_px", "appear_frames", "debug" 0/1 (keep the provenance image),
+ * "soft_edge" 0/1 (default 1: where the sides are unknown they are a soft glow of the picture's own edge colours; 0: black bars
+ * there. Real picture is never affected). 0 = known. */
 int nes_host_wide_option(const char *name, int value);
 /* widekit per-game profile table (the text format of widekit/include/wk_profile.h); problems are appended to msgs; returns
  * their number. Applied by CRC (nes_host_rom_crc) or title. */

@@ -28,6 +28,12 @@ static int gbpal_load(int v)
 
 static char cfg_path[256];
 
+#ifdef VITA
+/* vita.ini's old grid_strength, for a filter of LCD grid / scanlines that
+ * becomes a Scanlines or LCD grid strength (config_psp.h). */
+int g_pcfg_legacy_grid = 5;
+#endif
+
 /* PER-CONSOLE DISPLAY PROFILES, at the end of this file. */
 static void pdisp_load(void);
 static int  pdisp_write(int console);
@@ -893,6 +899,10 @@ static void pdisp_clamp(pcfg_display *d)
    if (d->gb_palette < 0 || d->gb_palette >= GBCORE_PALETTE_COUNT)
       d->gb_palette = GBCORE_PALETTE_GBC_AUTO;
 #ifdef VITA
+   /* the LCD grid and scanlines are not filters any more (migrated before
+    * this: pdisp_migrate_filter) */
+   if (d->filter == VID_FILTER_LCD || d->filter == VID_FILTER_SCANLINES)
+      d->filter = VID_FILTER_SHARP;
    {
       /* a console's profile, or a game's own (pcfg_game: its console) */
       int c = d >= g_pdisp && d < g_pdisp + FE_CONSOLE_COUNT
@@ -905,7 +915,14 @@ static void pdisp_clamp(pcfg_display *d)
          d->filter = VID_FILTER_XBRZ;
       if (d->color < 0 || d->color >= pcfg_color_modes(c))
          d->color = 0;
-      d->blend = d->blend ? 1 : 0;
+      if (d->ghost < 0 || d->ghost > 10 || !pcfg_ghost_modes(c))
+         d->ghost = PCFG_GHOST_DEF;
+      if (d->scan < 0 || d->scan > 10)
+         d->scan = PCFG_SCAN_DEF;
+      if (d->grid < 0 || d->grid > 10)
+         d->grid = PCFG_GRID_DEF;
+      if (d->glow < 0 || d->glow > 10)
+         d->glow = PCFG_GLOW_DEF;
       if (d->wide < 0 || d->wide >= pcfg_wide_modes(c))
          d->wide = 0;
       if (d->wide_fill < 0 || d->wide_fill > 2)
@@ -942,7 +959,15 @@ const char *pcfg_wide_fill_name(int fill)
 
 int pcfg_color_modes(int console)
 {
-   return console == FE_CONSOLE_GBA ? 3 : console == FE_CONSOLE_GBC ? 2 : 0;
+   return console == FE_CONSOLE_GBA ? 3
+        : console == FE_CONSOLE_GBC || console == FE_CONSOLE_WSWAN ||
+          console == FE_CONSOLE_NES ? 2 : 0;
+}
+
+int pcfg_ghost_modes(int console)
+{
+   return console == FE_CONSOLE_GBA || console == FE_CONSOLE_GB ||
+          console == FE_CONSOLE_GBC || console == FE_CONSOLE_WSWAN ? 1 : 0;
 }
 
 const char *pcfg_color_name(int console, int color)
@@ -952,7 +977,11 @@ const char *pcfg_color_name(int console, int color)
            : color == 1 ? "GBA screen" : "vivid";
    if (console == FE_CONSOLE_GBC)
       return color ? "GBC screen" : "vivid";
-   return "GBA / GBC only";
+   if (console == FE_CONSOLE_WSWAN)
+      return color ? "WonderSwan screen" : "vivid";
+   if (console == FE_CONSOLE_NES)
+      return color ? "NTSC TV" : "vivid";
+   return "none";
 }
 #endif
 
@@ -984,6 +1013,47 @@ static int pdisp_seed(const char *what, int console, long value)
       return -1;
    return fe_ini_get(cfg_path, key, existing, sizeof(existing))
       ? 0 : pdisp_set(what, console, value);
+}
+#endif
+
+#ifdef VITA
+/* The colour choice a console starts with.  GBA: the GBA screen (1).  The
+ * raw colours of a GBA game were made for a dim, washed-out reflective
+ * screen; on the Vita's saturated OLED, and on the LCD that is brighter
+ * than a GBA ever was, they are garish and glaring (docs/LOOKS.md for how
+ * the choice was made).  The others start vivid, as the core draws them:
+ * the GBC's own correction is a hidden key that already defaults on (it is
+ * the default of the GBC branch of pdisp_load, not this). */
+static int pcfg_color_default(int console)
+{
+   return console == FE_CONSOLE_GBA ? 1 : 0;
+}
+
+/* A `filter` of LCD grid (3) or scanlines (6) -- they were filters, with
+ * one global strength in vita.ini -- becomes sharp bilinear (what drew
+ * under them) plus that look at that strength; a scan_ / grid_ key that is
+ * present wins.  Absent keys read -1 here. */
+static void pdisp_migrate_filter(pcfg_display *d)
+{
+   const int lvl = g_pcfg_legacy_grid < 1 || g_pcfg_legacy_grid > 10
+                 ? 5 : g_pcfg_legacy_grid;
+   if (d->scan < 0)
+      d->scan = d->filter == VID_FILTER_SCANLINES ? lvl : PCFG_SCAN_DEF;
+   if (d->grid < 0)
+      d->grid = d->filter == VID_FILTER_LCD ? lvl : PCFG_GRID_DEF;
+   if (d->filter == VID_FILTER_LCD || d->filter == VID_FILTER_SCANLINES)
+      d->filter = VID_FILTER_SHARP;
+}
+
+/* Ambient glow strength from the 1.x three-way row: off stays off, art and
+ * "art, else game" become the default strength; `ambient` is from now on
+ * the source (a hidden preference) and never "off". */
+static void pdisp_migrate_glow(pcfg_display *d)
+{
+   if (d->glow < 0)
+      d->glow = d->ambient == PCFG_AMB_OFF ? 0 : PCFG_GLOW_DEF;
+   if (d->ambient == PCFG_AMB_OFF)
+      d->ambient = PCFG_AMB_ART_GAME;
 }
 #endif
 
@@ -1026,8 +1096,17 @@ static void pdisp_load(void)
       /* The GBC's correction was a hidden key before it was a row. */
       d->color = c == FE_CONSOLE_GB ? 0
                : (int)pdisp_get("color", c, c == FE_CONSOLE_GBC
-                                            ? g_pcfg.gbc_color_correction : 0);
-      d->blend = (int)pdisp_get("blend", c, 0);
+                                            ? g_pcfg.gbc_color_correction
+                                            : pcfg_color_default(c));
+      /* LCD ghosting 0..10 (was blend 0/1: on is 5, half and half) */
+      d->ghost = (int)pdisp_get("ghost", c,
+                                pdisp_get("blend", c, 0) ? 5 : PCFG_GHOST_DEF);
+      /* Scanlines, LCD grid, Ambient glow 0..10; the 1.x forms migrate */
+      d->scan = (int)pdisp_get("scan", c, -1);
+      d->grid = (int)pdisp_get("grid", c, -1);
+      pdisp_migrate_filter(d);
+      d->glow = (int)pdisp_get("glow", c, -1);
+      pdisp_migrate_glow(d);
       d->wide = c == FE_CONSOLE_GBA
               ? (int)pdisp_get("wide", c, PCFG_WIDE_DEF) : 0;
       d->wide_fill = c == FE_CONSOLE_GBA
@@ -1079,7 +1158,10 @@ void pcfg_display_select(int console)
 #ifdef VITA
    g_pcfg.color      = d->color;
    g_pcfg.quality    = d->quality;
-   g_pcfg.blend      = d->blend;
+   g_pcfg.ghost      = d->ghost;
+   g_pcfg.scan       = d->scan;
+   g_pcfg.grid       = d->grid;
+   g_pcfg.glow       = d->glow;
    g_pcfg.wide       = d->wide;
    g_pcfg.wide_fill  = d->wide_fill;
    g_pcfg.sgb_border = d->sgb_border;
@@ -1096,7 +1178,10 @@ void pcfg_display_commit(void)
 #ifdef VITA
    d->color      = g_pcfg.color;
    d->quality    = g_pcfg.quality;
-   d->blend      = g_pcfg.blend;
+   d->ghost      = g_pcfg.ghost;
+   d->scan       = g_pcfg.scan;
+   d->grid       = g_pcfg.grid;
+   d->glow       = g_pcfg.glow;
    d->wide       = g_pcfg.wide;
    d->wide_fill  = g_pcfg.wide_fill;
    d->sgb_border = g_pcfg.sgb_border;
@@ -1119,7 +1204,15 @@ static int pdisp_write(int c)
    int rc = 0;
    rc |= pdisp_set("scale", c, d->scale);
    rc |= pdisp_set("filter", c, d->filter);
+#ifdef VITA
+   /* ambient_<c> stays what a 1.x build reads: 0 = off, else the source */
+   rc |= pdisp_set("ambient", c, d->glow ? d->ambient : PCFG_AMB_OFF);
+   rc |= pdisp_set("glow", c, d->glow);
+   rc |= pdisp_set("scan", c, d->scan);
+   rc |= pdisp_set("grid", c, d->grid);
+#else
    rc |= pdisp_set("ambient", c, d->ambient);
+#endif
    if (c != FE_CONSOLE_GBA)
    {
       rc |= pdisp_set("gb_palette", c, d->gb_palette);
@@ -1129,7 +1222,8 @@ static int pdisp_write(int c)
    rc |= pdisp_set("quality", c, d->quality);
    if (c != FE_CONSOLE_GB)
       rc |= pdisp_set("color", c, d->color);
-   rc |= pdisp_set("blend", c, d->blend);
+   rc |= pdisp_set("ghost", c, d->ghost);
+   rc |= pdisp_set("blend", c, d->ghost ? 1 : 0);   /* what a 1.x build reads */
    if (c == FE_CONSOLE_GBA)
    {
       rc |= pdisp_set("wide", c, d->wide);
@@ -1192,10 +1286,10 @@ int pcfg_display_save(void)
 #ifdef VITA
 /* ---- PER-GAME SETTINGS (config_psp.h) ------------------------------------- */
 
-#define PGAME_DISP_KEYS 10
+#define PGAME_DISP_KEYS 13
 static const char *const pgame_disp_keys[PGAME_DISP_KEYS] = {
-   "scale", "filter", "ambient", "gb_palette", "quality", "color", "blend",
-   "wide", "wide_fill", "sgb_border" };
+   "scale", "filter", "ambient", "gb_palette", "quality", "color", "ghost",
+   "wide", "wide_fill", "sgb_border", "scan", "grid", "glow" };
 
 static int *pgame_disp_field(pcfg_display *d, int i)
 {
@@ -1207,10 +1301,13 @@ static int *pgame_disp_field(pcfg_display *d, int i)
       case 3: return &d->gb_palette;
       case 4: return &d->quality;
       case 5: return &d->color;
-      case 6: return &d->blend;
+      case 6: return &d->ghost;
       case 7: return &d->wide;
       case 8: return &d->wide_fill;
-      default: return &d->sgb_border;
+      case 9: return &d->sgb_border;
+      case 10: return &d->scan;
+      case 11: return &d->grid;
+      default: return &d->glow;
    }
 }
 
@@ -1305,6 +1402,28 @@ void pcfg_game_begin(const char *path, int console)
       for (i = 0; i < PGAME_DISP_KEYS; i++)
          *pgame_disp_field(&g_pgame.disp, i) = (int)fe_ini_doc_get_int(
                &doc, pgame_disp_keys[i], *pgame_disp_field(&g_pgame.disp, i));
+      /* a file written before the looks were rows: blend, a filter of LCD
+       * grid / scanlines, the three-way ambient (pdisp_migrate_*) */
+      {
+         const long absent = -99;
+         pcfg_display *gd = &g_pgame.disp;
+         const long b = fe_ini_doc_get_int(&doc, "blend", absent);
+         const int lvl = g_pcfg_legacy_grid < 1 || g_pcfg_legacy_grid > 10
+                       ? 5 : g_pcfg_legacy_grid;
+         if (fe_ini_doc_get_int(&doc, "ghost", absent) == absent && b != absent)
+            gd->ghost = b ? 5 : 0;
+         if (fe_ini_doc_get_int(&doc, "scan", absent) == absent &&
+             gd->filter == VID_FILTER_SCANLINES)
+            gd->scan = lvl;
+         if (fe_ini_doc_get_int(&doc, "grid", absent) == absent &&
+             gd->filter == VID_FILTER_LCD)
+            gd->grid = lvl;
+         if (fe_ini_doc_get_int(&doc, "glow", absent) == absent &&
+             fe_ini_doc_get_int(&doc, "ambient", absent) != absent)
+            gd->glow = gd->ambient == PCFG_AMB_OFF ? 0 : PCFG_GLOW_DEF;
+         if (gd->ambient == PCFG_AMB_OFF)
+            gd->ambient = PCFG_AMB_ART_GAME;
+      }
       pdisp_clamp(&g_pgame.disp);
       g_pgame.sensor_mode = pgame_clampi(fe_ini_doc_get_int(&doc, "sensor_mode", 0),
                                          0, PCFG_SENSOR_MODES - 1, 0);

@@ -130,6 +130,7 @@ typedef struct {
 	int mode, margin_req, margin;         /* mode 0 off 1 auto */
 	int active;
 	int period, debug, fade_px, appear, settle;
+	int soft_off;                         /* 1: the soft edge samples black: unknown sides are bars, not a glow of the picture's edge */
 	wk_layers *L;
 	wk_map *M;
 	wk_compose *C;
@@ -1061,6 +1062,7 @@ int nes_host_wide_option(const char *name, int v)
 	if (!name) return 1;
 	if (!strcmp(name, "period")) { W.period = v != 0; if (W.C) { free_objects(); apply(); } return 0; }
 	if (!strcmp(name, "debug")) { W.debug = v != 0; return 0; }
+	if (!strcmp(name, "soft_edge")) { W.soft_off = v == 0; return 0; }
 	if (!strcmp(name, "fade_px")) { W.fade_px = v; if (W.C) { free_objects(); apply(); } return 0; }
 	if (!strcmp(name, "settle_frames")) { W.settle = (v < 0 ? 0 : v > 16 ? 16 : v) + 1; return 0; }
 	if (!strcmp(name, "appear_frames")) { W.appear = v; if (W.C) { free_objects(); apply(); } return 0; }
@@ -1268,6 +1270,11 @@ static void build_edge(const Snap *sn)
 	const SnCore *c = &sn->core;
 	const uint16_t *pal = sn->pal565;
 	int y, i;
+	if (W.soft_off) {
+		memset(W.edge[0], 0, (size_t) H * WK_EDGE_N * sizeof(uint16_t));
+		memset(W.edge[1], 0, (size_t) H * WK_EDGE_N * sizeof(uint16_t));
+		return;
+	}
 	for (y = 0; y < H; y++) {
 		const SnLine *l = &c->line[y];
 		uint16_t *el = W.edge[0] + (size_t) y * WK_EDGE_N, *er = W.edge[1] + (size_t) y * WK_EDGE_N;

@@ -19,6 +19,7 @@
 
 #include "ctl_map.h"
 #include "config_psp.h"
+#include "video_psp.h"
 #include "fe_util.h"
 
 void fe_evt(const char *fmt, ...) { (void)fmt; }
@@ -38,7 +39,7 @@ struct key { const char *name; int *field; };
 static const struct key keys[] = {
    { "scale_gba", &D(FE_CONSOLE_GBA).scale }, { "filter_gba", &D(FE_CONSOLE_GBA).filter },
    { "ambient_gba", &D(FE_CONSOLE_GBA).ambient }, { "quality_gba", &D(FE_CONSOLE_GBA).quality },
-   { "color_gba", &D(FE_CONSOLE_GBA).color }, { "blend_gba", &D(FE_CONSOLE_GBA).blend },
+   { "color_gba", &D(FE_CONSOLE_GBA).color },
    { "wide_gba", &D(FE_CONSOLE_GBA).wide }, { "wide_fill_gba", &D(FE_CONSOLE_GBA).wide_fill },
    { "scale_gb", &D(FE_CONSOLE_GB).scale }, { "filter_gb", &D(FE_CONSOLE_GB).filter },
    { "quality_gb", &D(FE_CONSOLE_GB).quality }, { "gb_palette_gb", &D(FE_CONSOLE_GB).gb_palette },
@@ -157,6 +158,61 @@ int main(int argc, char **argv)
       }
       free(text);
       unlink(work);
+   }
+   /* 2.0: the looks became rows (docs/LOOKS.md).  Each old form migrates, once, and the new keys win. */
+   {
+      const char *w = "/tmp/cfg-looks-migrate.ini";
+      FILE *f;
+      /* a 1.x file: the grid and scanline FILTERS (with vita.ini's one strength), the three-way ambient, blend on/off */
+      f = fopen(w, "wb");
+      fputs("filter_gba = 3\nfilter_gb = 6\nfilter_gbc = 2\nambient_gba = 0\nambient_gb = 1\nambient_gbc = 2\n"
+            "blend_gba = 1\nblend_gb = 0\ncolor_gbc = 0\nconsole = 0\nfilter_nes = 3\n", f);
+      fclose(f);
+      g_pcfg_legacy_grid = 8;                      /* vita.ini grid_strength = 8 */
+      pcfg_load(w);
+      CHECK(D(FE_CONSOLE_GBA).filter == VID_FILTER_SHARP && D(FE_CONSOLE_GBA).grid == 8 && D(FE_CONSOLE_GBA).scan == 0,
+            "filter LCD grid -> sharp + LCD grid at the old strength (%d/%d/%d)", D(FE_CONSOLE_GBA).filter, D(FE_CONSOLE_GBA).grid, D(FE_CONSOLE_GBA).scan);
+      CHECK(D(FE_CONSOLE_GB).filter == VID_FILTER_SHARP && D(FE_CONSOLE_GB).scan == 8 && D(FE_CONSOLE_GB).grid == 0,
+            "filter scanlines -> sharp + Scanlines at the old strength");
+      CHECK(D(FE_CONSOLE_GBC).filter == VID_FILTER_SHARP && D(FE_CONSOLE_GBC).scan == 0 && D(FE_CONSOLE_GBC).grid == 0,
+            "a plain filter brings no look");
+      CHECK(D(FE_CONSOLE_NES).grid == 8 && D(FE_CONSOLE_NES).filter == VID_FILTER_SHARP, "the NES profile migrates too");
+      CHECK(D(FE_CONSOLE_GBA).glow == 0 && D(FE_CONSOLE_GB).glow == PCFG_GLOW_DEF && D(FE_CONSOLE_GBC).glow == PCFG_GLOW_DEF,
+            "ambient off -> glow 0, art / art-else-game -> the default strength (%d %d %d)",
+            D(FE_CONSOLE_GBA).glow, D(FE_CONSOLE_GB).glow, D(FE_CONSOLE_GBC).glow);
+      CHECK(D(FE_CONSOLE_GBA).ambient == PCFG_AMB_ART_GAME && D(FE_CONSOLE_GB).ambient == PCFG_AMB_ART && D(FE_CONSOLE_GBC).ambient == PCFG_AMB_ART_GAME,
+            "the old mode stays the glow's source, never 'off'");
+      CHECK(D(FE_CONSOLE_GBA).ghost == 5 && D(FE_CONSOLE_GB).ghost == 0, "blend on -> LCD ghosting 5 (half and half), off -> 0");
+      CHECK(D(FE_CONSOLE_GBC).color == 0, "a stored GBC colour 0 stays vivid");
+      CHECK(D(FE_CONSOLE_GBA).color == 1, "an absent GBA colour is the new default, the GBA screen");
+      CHECK(D(FE_CONSOLE_WSWAN).color == 0 && D(FE_CONSOLE_NES).color == 0, "WonderSwan and NES colours start vivid");
+      CHECK(D(FE_CONSOLE_NES).ghost == 0 && D(FE_CONSOLE_GBA).scan == 0, "no ghosting on a television");
+      /* saving writes the new keys and a 1.x-readable mirror; loading them again changes nothing; the new keys beat the old */
+      pcfg_save();
+      CHECK(fe_ini_get_int(w, "grid_gba", -1) == 8 && fe_ini_get_int(w, "scan_gb", -1) == 8 &&
+            fe_ini_get_int(w, "glow_gba", -1) == 0 && fe_ini_get_int(w, "glow_gb", -1) == PCFG_GLOW_DEF &&
+            fe_ini_get_int(w, "ghost_gba", -1) == 5 && fe_ini_get_int(w, "blend_gba", -1) == 1 &&
+            fe_ini_get_int(w, "ambient_gba", -1) == 0 && fe_ini_get_int(w, "filter_gba", -1) == VID_FILTER_SHARP,
+            "the new keys are written, with ambient / blend as a 1.x build reads them");
+      g_pcfg_legacy_grid = 3;                      /* a later vita.ini must not matter any more */
+      pcfg_load(w);
+      CHECK(D(FE_CONSOLE_GBA).grid == 8 && D(FE_CONSOLE_GBA).glow == 0 && D(FE_CONSOLE_GBA).ghost == 5 && D(FE_CONSOLE_GB).scan == 8,
+            "a second load keeps what was saved");
+      /* hand-written new keys win over the old ones and are clamped */
+      f = fopen(w, "wb");
+      fputs("filter_gba = 3\ngrid_gba = 2\nscan_gba = 99\nglow_gba = 10\nambient_gba = 0\nghost_gba = 7\nblend_gba = 0\n"
+            "color_gba = 2\nghost_nes = 9\nscan_gb = -4\n", f);
+      fclose(f);
+      pcfg_load(w);
+      CHECK(D(FE_CONSOLE_GBA).grid == 2 && D(FE_CONSOLE_GBA).scan == PCFG_SCAN_DEF, "grid_ key wins over the filter; scan 99 clamps to off (%d/%d)", D(FE_CONSOLE_GBA).grid, D(FE_CONSOLE_GBA).scan);
+      CHECK(D(FE_CONSOLE_GBA).glow == 10 && D(FE_CONSOLE_GBA).ghost == 7 && D(FE_CONSOLE_GBA).color == 2, "glow / ghost / colour keys win");
+      CHECK(D(FE_CONSOLE_NES).ghost == 0 && D(FE_CONSOLE_GB).scan == PCFG_SCAN_DEF, "ghosting is not a television's; a negative scan is off");
+      CHECK(pcfg_ghost_modes(FE_CONSOLE_GBA) && pcfg_ghost_modes(FE_CONSOLE_GB) && pcfg_ghost_modes(FE_CONSOLE_GBC) &&
+            pcfg_ghost_modes(FE_CONSOLE_WSWAN) && !pcfg_ghost_modes(FE_CONSOLE_NES) && !pcfg_ghost_modes(FE_CONSOLE_SNES),
+            "LCD ghosting is for the handhelds");
+      CHECK(pcfg_color_modes(FE_CONSOLE_GBA) == 3 && pcfg_color_modes(FE_CONSOLE_GBC) == 2 && pcfg_color_modes(FE_CONSOLE_WSWAN) == 2 &&
+            pcfg_color_modes(FE_CONSOLE_NES) == 2 && pcfg_color_modes(FE_CONSOLE_GB) == 0, "LCD colours: GBA 3, GBC / WS / NES 2, GB palette row");
+      unlink(w);
    }
    printf("config migrate: %d checks, %d failed\n", checks, fails);
    return fails ? 1 : 0;

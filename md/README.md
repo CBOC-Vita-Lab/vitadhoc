@@ -58,21 +58,29 @@ Genesis Plus GX's own PS Vita build (`psp2/Makefile`, read, not vendored) uses `
 
 ## Not done / open
 
-- **Quick response (run-ahead by one frame) is in the code and switched off.** `md_host_run_frame_ahead` (host.h), the governor
-  `playerkit/src/pk_ahead.h` and the player's `quick_response` setting exist; the menu row is only added when `player.ini` or the launch
-  file (`ovr.quick_response=1|2`) already asks for it. On the PC build the machine is the same with it on or off (sound, state, RAM,
-  battery RAM: 105 ROMs, 900 frames; through the player with fast forward, rewind and a state load on three consoles). Open before it
-  may be offered: the picture of two Game Gear test cartridges is not the next frame's (the tile cache note in `core/PROVENANCE.md`,
-  "Open"); with the VDP worker two SG-1000 test ROMs differ; what the wide view learns while it is on is not checked; the cost is not
-  measured on the model; the latency test in `twin/ahead_check.sh` needs a ROM that answers a press a frame later. `ahead_check.sh` is
-  not in the gate and fails on exactly those points.
+- **Quick response (run-ahead by one frame) is offered** (Speed page: Off / Auto / On, the same wording as the other consoles). Auto on the
+  Master System, Game Gear and SG-1000, Off on the Mega Drive (a heavy Mega Drive frame run twice does not fit a 60 Hz frame on the model:
+  below). The governor (`playerkit/src/pk_ahead.h`) starts it only while the measured cost leaves room and stops it when frames run late, so
+  a game that is too heavy simply runs without it. What was proved on the PC twin (host numbers, `twin/ahead_check.sh`, in the gate as
+  `md-ahead`): the machine is the same with it on or off (sound, state, RAM, battery RAM; 105 ROMs, single thread, VDP worker, wide view);
+  with no button pressed the picture of frame n is the plain run's frame n + 1 (Game Gear included; the tile cache is put back with the
+  state); a small test cartridge that answers the pad one frame later (`twin/tools/sms_latency_gen.py`) shows a press 1 frame after it
+  plain and 0 with run-ahead. Cost (model, `docs/PERFORMANCE.md`): about twice the plain emulation, so the heaviest Mega Drive samples
+  (xgm-player, 4.2 M instructions a frame plain, 7.7 M ahead) do not fit and the busiest 8 bit test ROMs (2.2 M plain, about 4.4 M ahead)
+  fit only at the optimistic IPC; nothing ran on a Vita, so Auto decides on the console from what it measures.
+- **A loaded state continues exactly** as the uninterrupted run (also a rewind landing and the state taken for run-ahead): the state file
+  holds a "carry" block after the core's own state (the first line's sprite list and pending flags, the FIFO byte flag, HV latch, latched
+  scroll, viewport, the PSG's queued changes, the EEPROM chips' protocol position, the ROM banks a flash chip has rewritten). Version 2;
+  version 1 files of the same game still load (without the block, as before). Proof (`md_twin --proof N M`, 105 ROMs): load at frame N,
+  run M frames equals the run that was not interrupted, in the same process, after unloading and loading the ROM again, and into a fresh
+  machine, single thread and worker, N = 1, 97, 300, 655.
 
 - The FM (YM2612 + PSG + resample) worker is not written; FM stays on the emulating thread.
 
 - Nothing has run on a real Vita: speeds are host numbers and a model (see the baseline). A locked 60 on a busy Mega Drive game
   is expected to be tight on one thread and is not proven.
 - No genuine Game Gear or SG-1000 ROM was available: those systems are tested by forcing Master System images onto them (boot, sound,
-  state), and the Game Gear picture after a state load differs from the uninterrupted run (open item in `core/PROVENANCE.md`).
+  state) and by Game Gear test cartridges made for the purpose.
 - `md/frontend/LICENSE` and a `md/frontend` Makefile are not part of this package; the object is built by `core/Makefile`.
 - Core speed work (for example moving the palette remap to NEON, skipping unchanged lines) was measured and left alone: it must keep the
   output bit for bit, and the numbers do not yet show it is needed.

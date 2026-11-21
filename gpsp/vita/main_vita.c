@@ -269,8 +269,6 @@ static struct
                                  screens (artfetch_titles)              */
    int      overlays;         /* overlays = 0: no picture from overlays/
                                * over the game (vid_set_overlay)        */
-   int      grid;             /* grid_strength = 1..10: the LCD grid and
-                               * scanline looks' darkness (5 = default) */
    int      cpu_fast;         /* cpu_mhz = 500 (default) or 444: Settings >
                                * CPU speed (cpuclock.h)                 */
    int      smc_partial;      /* smc_partial = 0 | 1 (default 1): GBA code
@@ -290,7 +288,7 @@ static struct
    int snes_two;              /* snes_two = host | join (1 | 2): a SNES game picked from the list starts a Two players
                                * link first (the test switch; players use Join online) */
 } g_sw = { PACE_VSYNC, 1, 0, 0, 1, 1, 0, -1, -1, 0, 0, 0, 0, 1, 2, -1, 1, 1,
-           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 5, 1, 1, 1, -1, 1, 0x60,
+           "", 0, 2, 1, 0, 0, 0, 0, 0, 3, 2, 1, 1, 1, 1, 1, -1, 1, 0x60,
            "", "", 0 };
 
 /* The A/B keys of 1.4's layers, so the owner can run a "1.3 baseline"
@@ -460,6 +458,7 @@ static struct { const uint16_t *pix; unsigned w, h; size_t pitch; } g_last;
 static struct { const uint16_t *pix; unsigned w, h; size_t pitch; } g_show;
 static int g_wide_mode;                /* what the core was last told       */
 static int g_wide_fill = -1;
+static char g_overlay_name[96];   /* the overlay in use (overlay_apply) */
 
 /* The frame the player was looking at, as the UI wants it: PSP-order 565 at
  * the top-left of a 256x256 texture.  The menu's backdrop, the pause and
@@ -1199,7 +1198,11 @@ void app_nes_options(void)
                     : g_pcfg.nes_wide == 2 || look_rung(5) ? NESCORE_WIDE_OFF
                     : NESCORE_WIDE_AUTO);
    gbmux_set_pal_smooth(g_pcfg.nes_pal_smooth && !boot_guard_safe());
-   fe_evt("nes_options wide=%d pal_smooth=%d", g_pcfg.nes_wide, g_pcfg.nes_pal_smooth);
+   /* Ambient glow off: the wide view's unknown sides are black bars, not a
+    * blurred glow of the picture's own edges */
+   nescore_set_soft_edge(g_pcfg.glow > 0 && !g_overlay_name[0]);
+   fe_evt("nes_options wide=%d pal_smooth=%d soft_edge=%d", g_pcfg.nes_wide,
+          g_pcfg.nes_pal_smooth, g_pcfg.glow > 0 && !g_overlay_name[0]);
 }
 
 /* The crash-loop guard (boot_guard.h): which risky features are on for a
@@ -1221,10 +1224,18 @@ static unsigned guard_risky(int console)
    return r;
 }
 
-/* The ambient look in force: the row's, or still art where the look
- * governor took the blurred game frame away (its first rung). */
+/* The ambient look in force: nothing at Ambient glow 0 or under a screen
+ * overlay, else the source (art, else the game's frame), or still art where
+ * the look governor took the blurred game frame away (its first rung). */
+static int app_glow_on(void)
+{
+   return g_pcfg.glow > 0 && !g_overlay_name[0];
+}
+
 static int app_ambient_mode(void)
 {
+   if (!app_glow_on())
+      return PCFG_AMB_OFF;
    return look_rung(0) && g_pcfg.ambient == PCFG_AMB_ART_GAME ? PCFG_AMB_ART
                                                               : g_pcfg.ambient;
 }
@@ -2046,10 +2057,11 @@ static void read_switches(void)
    g_sync_ra = (int)fe_ini_get_int(ini, "sync_ra_saves", 1) ? 1 : 0;
    save_sync_init(g_app_root);
    save_sync_set_enabled(g_sync_ra);
-   g_sw.grid = (int)fe_ini_get_int(ini, "grid_strength", 5);
-   if (g_sw.grid < 1 || g_sw.grid > 10)
-      g_sw.grid = 5;
-   vid_set_lcd_strength(g_sw.grid * 20);
+   /* 1.x's one strength for the LCD grid and scanline filters: only what a
+    * file that still says "filter = LCD grid / scanlines" becomes (config_psp.h) */
+   g_pcfg_legacy_grid = (int)fe_ini_get_int(ini, "grid_strength", 5);
+   if (g_pcfg_legacy_grid < 1 || g_pcfg_legacy_grid > 10)
+      g_pcfg_legacy_grid = 5;
    g_sw.cpu_fast = (int)fe_ini_get_int(ini, "cpu_mhz", 500) == 444 ? 0 : 1;
    if (!fe_ini_get(ini, "screenshots", g_sw.shot_dir, sizeof(g_sw.shot_dir)))
       g_sw.shot_dir[0] = '\0';
@@ -3952,9 +3964,9 @@ static unsigned app_look_user_rows(void)
    unsigned u = 0;
    if (g_pcfg.quality != PCFG_QUALITY_AUTO)
       u |= 1u << LOOK_ROW_QUALITY;
-   if (g_pcfg.ambient != PCFG_AMBIENT_DEF)
+   if (g_pcfg.glow != PCFG_GLOW_DEF || g_pcfg.ambient != PCFG_AMB_ART_GAME)
       u |= 1u << LOOK_ROW_AMBIENT;
-   if (g_pcfg.blend)
+   if (g_pcfg.ghost)
       u |= 1u << LOOK_ROW_BLEND;
    if (c == FE_CONSOLE_GBA ? g_pcfg.wide != PCFG_WIDE_DEF
                            : c == FE_CONSOLE_NES && g_pcfg.nes_wide != 0)
@@ -3975,12 +3987,23 @@ void ui_host_look_changed(void)
     * for it): look_quality_cap also moves the MMPX flag the drawing side reads */
    ho_guard();
    upscale_look_cap(look_quality_cap());
-   vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color : VID_COLOR_RAW,
-                g_pcfg.blend && !look_rung(3));
+   /* LCD colours: the renderer's table (GBA, WonderSwan, NES), or the Game
+    * Boy Color's own core (gbcore); a Game Boy has its palette row */
+   vid_set_look(c == FE_CONSOLE_GBA ? g_pcfg.color
+                : c == FE_CONSOLE_WSWAN && g_pcfg.color ? VID_COLOR_WS
+                : c == FE_CONSOLE_NES && g_pcfg.color ? VID_COLOR_NES
+                : VID_COLOR_RAW,
+                pcfg_ghost_modes(c) && !look_rung(3) ? g_pcfg.ghost : 0);
+   vid_set_overlays(g_pcfg.scan, g_pcfg.grid);
+   vid_ambient_strength(g_pcfg.glow);
+   vid_ambient_mode(app_ambient_mode());
    if (c == FE_CONSOLE_GBC)
       gbcore_set_color_correction(g_pcfg.color ? 1 : 0);
-   fe_evt("display_look console=%s color=%d blend=%d wide=%d wide_fill=%d",
-          pcfg_console_tag(c), g_pcfg.color, g_pcfg.blend, g_pcfg.wide,
+   if (c == FE_CONSOLE_NES)
+      app_nes_options();             /* the wide view's soft edges follow the glow */
+   fe_evt("display_look console=%s color=%d ghost=%d scan=%d grid=%d glow=%d "
+          "wide=%d wide_fill=%d", pcfg_console_tag(c), g_pcfg.color,
+          g_pcfg.ghost, g_pcfg.scan, g_pcfg.grid, g_pcfg.glow, g_pcfg.wide,
           g_pcfg.wide_fill);
    fe_evt("display_quality console=%s quality=%d", pcfg_console_tag(c),
           g_pcfg.quality);
@@ -3988,7 +4011,7 @@ void ui_host_look_changed(void)
 }
 
 /* ---- the look governor (look_glue.h) ------------------------------------- */
-static char g_overlay_name[96];   /* the overlay in use (overlay_apply) */
+/* (g_overlay_name: declared at the top of the file) */
 static struct
 {
    uint32_t gen;                  /* the generation applied */
@@ -4007,7 +4030,7 @@ static void app_look_apply(const char *why)
 {
    g_lk.gen = look_generation();
    ui_host_look_changed();
-   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : app_ambient_mode());
+   vid_ambient_mode(app_ambient_mode());
    if (g_game_console == FE_CONSOLE_NES)
       app_nes_options();
    fe_evt("look_apply why=%s mask=%u cap=%d gen=%u", why, look_mask(),
@@ -4975,19 +4998,7 @@ static void overlay_apply(const char *rom_path, fe_console_t console)
    }
    /* The glow beside the picture is for a picture with nothing else beside
     * it: a bezel or shell the player put there is not covered by it. */
-   vid_ambient_mode(g_overlay_name[0] ? PCFG_AMB_OFF : app_ambient_mode());
-}
-
-int ui_host_grid_level(void) { return g_sw.grid; }
-
-void ui_host_grid_set(int level)
-{
-   char v[8];
-   g_sw.grid = level < 1 ? 1 : level > 10 ? 10 : level;
-   vid_set_lcd_strength(g_sw.grid * 20);
-   snprintf(v, sizeof(v), "%d", g_sw.grid);
-   fe_evt("grid_strength level=%d saved=%d", g_sw.grid,
-          vita_ini_put("grid_strength", v) == 0);
+   vid_ambient_mode(app_ambient_mode());
 }
 
 int ui_host_sync_ra_on(void) { return g_sync_ra; }

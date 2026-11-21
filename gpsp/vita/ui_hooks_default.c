@@ -35,7 +35,10 @@ UI_WEAK void ui_host_look_changed(void)
 {
    vid_set_look(pcfg_display_console() == FE_CONSOLE_GBA ? g_pcfg.color
                                                           : VID_COLOR_RAW,
-                g_pcfg.blend);
+                g_pcfg.ghost);
+   vid_set_overlays(g_pcfg.scan, g_pcfg.grid);
+   vid_ambient_strength(g_pcfg.glow);
+   vid_ambient_mode(g_pcfg.glow ? g_pcfg.ambient : 0);
 }
 
 /* ---- section 2: ROM folders beside roms/ ---------------------------------- */
@@ -55,8 +58,6 @@ UI_WEAK int         ui_host_extra_roots(void)   { return 0; }
 UI_WEAK int         ui_host_extra_root_toggle(const char *f) { (void)f; return -3; }
 UI_WEAK int         ui_host_zip_console(const char *p, unsigned n) { (void)p; (void)n; return -1; }
 UI_WEAK int         ui_host_md_bin_ok(const char *p) { (void)p; return 1; }
-UI_WEAK int         ui_host_grid_level(void) { return 5; }
-UI_WEAK void        ui_host_grid_set(int l) { (void)l; }
 UI_WEAK int         ui_host_sync_ra_on(void) { return 0; }
 UI_WEAK void        ui_host_sync_ra_set(int on) { (void)on; }
 UI_WEAK int         ui_host_cpu_fast(void) { return 1; }

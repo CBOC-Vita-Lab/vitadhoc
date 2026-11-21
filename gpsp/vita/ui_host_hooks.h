@@ -74,10 +74,12 @@ extern volatile int g_running;
  * session chip (osd_chip_session with the current text, or NULL to hide). */
 void osd_session_chip_refresh(void);
 
-/* Settings > Colours or Motion blend changed g_pcfg.color / g_pcfg.blend of
- * the console in context (pcfg_display_console()): show it.  The renderer
- * takes a GBA's colours and the blend (vid_set_look); a Game Boy Color's
- * colours are its core's.  Also what a main loop calls when a game boots.
+/* A look row of Settings > Display changed (LCD colours, LCD ghosting,
+ * Scanlines, LCD grid, Ambient glow: g_pcfg.color / ghost / scan / grid /
+ * glow) of the console in context (pcfg_display_console()): show it.  The
+ * renderer takes the colours, the ghosting, the scanlines and the grid and
+ * the glow (vid_set_look, vid_set_overlays, vid_ambient_strength); a Game
+ * Boy Color's colours are its core's.  Also what a main loop calls when a game boots.
  * Weak default: the renderer's part. */
 void ui_host_look_changed(void);
 
@@ -142,13 +144,11 @@ int         ui_host_zip_console(const char *path, unsigned size);
  * the scan asks before it lists one.  1 = list it.  (The default lists every .bin.) */
 int         ui_host_md_bin_ok(const char *path);
 
-/* Settings > Display: Grid strength 1..10 (the LCD grid and scanline looks;
- * 5 is the default), Screen overlay on/off and the overlay in use ("" when
+/* Settings > Display: Screen overlay on/off and the overlay in use ("" when
  * none is in overlays/); Settings > Interface: Screenshot folder ("" =
- * screenshots/).  Kept in vita.ini (grid_strength, overlays, screenshots).
+ * screenshots/).  Kept in vita.ini (overlays, screenshots).  (Scanlines and
+ * LCD grid are per-console rows, 0..10, in config.ini: config_psp.h.)
  * shot_dir_set: 0 = taken, -1 = not a usable folder. */
-int         ui_host_grid_level(void);
-void        ui_host_grid_set(int level);
 /* Settings > Library: Sync RetroArch saves (default on; sync_ra_saves in
  * vita.ini; save_sync.h). */
 int         ui_host_sync_ra_on(void);

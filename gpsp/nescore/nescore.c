@@ -43,6 +43,13 @@ void nescore_set_wide(int mode)
     nes_host_wide_margin(g_wide == NESCORE_WIDE_OFF ? 0 : WIDE_MARGIN);
   }
 }
+static int g_soft_edge = 1;
+void nescore_set_soft_edge(int on)
+{
+  g_soft_edge = on ? 1 : 0;
+  if (g_live)
+    nes_host_wide_option("soft_edge", g_soft_edge);
+}
 int nescore_wide_shown(void) { return g_wide_shown; }
 
 static int wide_map_path(char *p, size_t cap)
@@ -173,6 +180,7 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
   g_wide_dark = 0;
   memset(&g_last_vf, 0, sizeof(g_last_vf));
   nescore_set_wide(g_wide);
+  nes_host_wide_option("soft_edge", g_soft_edge);
   if (g_wide != NESCORE_WIDE_OFF)
   {
     char p[600];

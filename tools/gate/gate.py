@@ -311,6 +311,10 @@ STEPS = [
          "MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/selftest.sh",
          "default", {"md"}, inputs=["md/", "gpsp/vita/tests/cheats/"], deps=["build-md-twin"], parse="pass_fail", timeout=3600),
 
+    Step("md-ahead", "Sega undrawn frames, Quick response (run-ahead) and state loads: same machine, next frame's picture, one frame less latency, load at N + M frames equals the uninterrupted run (ahead_check.sh; GATE_MD_ROMS, GATE_MD_SMS_ROMS)",
+         "AHEAD_FRAMES=300 PROOF_FRAMES=\"97 60\" MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/ahead_check.sh",
+         "default", {"md"}, inputs=["md/", "playerkit/src/pk_ahead.h"], deps=["build-md-twin"], parse="pass_fail", env_req="GATE_MD_ROMS", timeout=7200),
+
     # ---- default: the host app, cores, audio, cover art, cheats, library ----
     Step("unit-host", "host unit suites: ~40 C suites under ASan and UBSan (run_host_tests.py)",
          "python3 gpsp/tools/run_host_tests.py --json {out}/host-tests.json", "default",

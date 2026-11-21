@@ -603,7 +603,7 @@ static void test_quality_text(void)
    g_pcfg.filter = VID_FILTER_XBRZ;
    settings_adjust(SET_FILTER, 1);
    check(g_pcfg.quality == PCFG_QUALITY_AUTO &&
-         g_pcfg.filter == (VID_FILTER_SHARP + 1) % VID_FILTER_MODES,
+         g_pcfg.filter == VID_FILTER_XBRZ,
          "under Original a Video filter press steps on from the sharp bilinear it shows, into Auto");
    /* The in-game Video preset under Auto: what it picked stays when the
     * look is re-applied later (the Colours, Blend or Wide rows). */

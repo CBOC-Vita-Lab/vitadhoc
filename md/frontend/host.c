@@ -505,7 +505,7 @@ int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system
 	rompath[0] = 0;
 	bitmap.data = (uint8_t *)(G.fb_user ? G.fb_user : fb_internal);
 	bitmap.pitch = (G.fb_user ? G.fb_user_pitch : MD_MAX_WIDTH) * 2;
-	memset(bitmap.data, 0, (size_t)bitmap.pitch * MD_MAX_HEIGHT);
+	memset(bitmap.data, 0, (size_t)bitmap.pitch * (MD_MAX_HEIGHT - 1) + (size_t)MD_MAX_WIDTH * 2);   /* the last row only as wide as a picture: a wide canvas's buffer starts MD_WIDE_MAX pixels in */
 	input.system[0] = input.system[1] = SYSTEM_GAMEPAD;
 	/* the "6" in the header makes the pad choice: the core reads it in input_init */
 	if (load_rom(G.fname) <= 0) FAIL(4, "the core refused the ROM");

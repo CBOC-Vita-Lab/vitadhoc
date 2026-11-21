@@ -327,7 +327,7 @@ void MdPlayer::settings_load()
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 	pal_mode_ = pk::pal_mode_clamp(pl.get_int("pal_speed", pk::PAL_SMOOTH));
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
-	quick_ = clampi(pl.get_int("quick_response", 0), 0, 2);
+	quick_ = clampi(pl.get_int("quick_response", console_ == "md" ? 0 : 1), 0, 2);    /* Auto on the 8 bit consoles, Off on the Mega Drive (md/README.md, "Quick response") */
 	flicker_ = pl.get_int("no_sprite_flicker", 1) != 0;
 	region_ = clampi(pl.get_int("region", 0), 0, 3);
 	fm_ = clampi(pl.get_int("fm", 0), 0, 2);

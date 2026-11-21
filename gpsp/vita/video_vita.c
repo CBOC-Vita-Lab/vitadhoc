@@ -181,6 +181,10 @@ void vid_set_mode(int scale, int filter)
    VID_ENTER();
    if (scale >= 0 && scale < VID_SCALE_MODES)
       g_scale = scale;
+   /* the LCD grid and scanlines are looks of their own now (vid_set_overlays);
+    * as a filter they are what drew under them */
+   if (filter == VID_FILTER_LCD || filter == VID_FILTER_SCANLINES)
+      filter = VID_FILTER_SHARP;
    g_requested_filter = (filter >= VID_FILTER_SHARP && filter < VID_FILTER_MODES)
             ? filter : filter ? VID_FILTER_BILINEAR : VID_FILTER_NEAREST;
    /* Original (quality 1) is no enhancement: whole-factor sizes draw plain
@@ -858,6 +862,23 @@ void vid_ambient_mode(int mode)
    g_amb_frames = 0;
 }
 
+/* Ambient glow strength 0..10.  The bars' brightness follows the players'
+ * rule (16 + 9 * level, of 255, at their 5 = 61) scaled so that 5 is the look
+ * these bars have always had; 0 is black. */
+static int g_amb_level = 5;
+
+void vid_ambient_strength(int level)
+{
+   g_amb_level = level < 0 ? 0 : level > 10 ? 10 : level;
+}
+
+/* `v` (0..255) at the strength in force. */
+static unsigned amb_level_scale(unsigned v)
+{
+   unsigned o = v * (16u + 9u * (unsigned)g_amb_level) / 61u;
+   return g_amb_level ? (o > 255u ? 255u : o) : 0u;
+}
+
 void vid_ambient_fallback(uint16_t rgb565)
 {
    g_amb_shade = rgb565;
@@ -1146,7 +1167,7 @@ static void backdrop_draw(int covers)
       return;
    if (kind == 2)
    {
-      unsigned k = 255u - (unsigned)g_amb_scrim;
+      unsigned k = amb_level_scale(255u - (unsigned)g_amb_scrim);
       vb_tquad q;
       q.x0 = 0; q.y0 = 0; q.x1 = VB_W; q.y1 = VB_H;
       q.u0 = 0; q.v0 = 0; q.u1 = AMB_W; q.v1 = AMB_H;
@@ -1155,8 +1176,8 @@ static void backdrop_draw(int covers)
    }
    else if (kind == 1)
    {
-      uint32_t top = amb_dim(g_amb_shade, AMB_PAL_RAMP_TOP);
-      uint32_t bot = amb_dim(g_amb_shade, AMB_PAL_RAMP_BOT);
+      uint32_t top = amb_dim(g_amb_shade, 255 - (int)amb_level_scale(255u - AMB_PAL_RAMP_TOP));
+      uint32_t bot = amb_dim(g_amb_shade, 255 - (int)amb_level_scale(255u - AMB_PAL_RAMP_BOT));
       vb_quad(0, 0, VB_W, VB_H, top, top, bot, bot);
    }
    else if (!fresh)
@@ -1226,21 +1247,32 @@ static int picture_mode(unsigned w, const vid_geo *g, int *kx, int *ky)
    return PIC_SHARP;
 }
 
-/* The LCD grid: one alpha byte per DESTINATION pixel of the picture.  The
- * last native pixel of every source pixel -- its right column and its bottom
- * row -- is darkened, the way the gaps between an LCD's cells are.  Computed
- * as coverage, so a non-integer scale (fit is 3.4x) gets an anti-aliased
- * grid and no moire.  Rebuilt only when the picture's geometry changes. */
+/* SCANLINES and LCD GRID (docs/LOOKS.md): one alpha byte per DESTINATION
+ * pixel of the picture, drawn black over it.  Two independent looks, each
+ * 0..10 (0 off), on top of whatever draws the picture (exact, sharp, the
+ * upscalers):
+ *   grid   the last native pixel of every source pixel -- its right column
+ *          and its bottom row -- is darkened, the way the gaps between an
+ *          LCD's cells are;
+ *   scan   the bottom row alone, a little darker than the grid's.
+ * Computed as coverage, so a non-integer scale (fit is 3.4x) gets an
+ * anti-aliased grid and no moire.  Rebuilt only when the picture's geometry
+ * or a strength changes.  Strength N is N * 20 percent of the look the 1.x
+ * grid_strength 5 (= 100) gave, so a migrated value looks as it did. */
 #define LCD_ALPHA 62           /* the gap's darkness at 3x and above, of 255 */
 #define SCAN_ALPHA 96          /* ...and of a scanline                       */
 static vb_tex *g_lcd_tex;
-static int     g_lcd_dw, g_lcd_dh, g_lcd_w, g_lcd_sh, g_lcd_rows;
-static int     g_lcd_pct = 100, g_lcd_built_pct = -1;
+static int     g_lcd_dw, g_lcd_dh, g_lcd_w, g_lcd_sh;
+static int     g_scan_lvl, g_grid_lvl;           /* 0..10, as set          */
+static int     g_lcd_built_scan = -1, g_lcd_built_grid = -1;
 
-void vid_set_lcd_strength(int pct)
+void vid_set_overlays(int scan, int grid)
 {
-   g_lcd_pct = pct < 0 ? 0 : pct > 200 ? 200 : pct;
+   g_scan_lvl = scan < 0 ? 0 : scan > 10 ? 10 : scan;
+   g_grid_lvl = grid < 0 ? 0 : grid > 10 ? 10 : grid;
 }
+int vid_overlay_scan(void) { return g_scan_lvl; }
+int vid_overlay_grid(void) { return g_grid_lvl; }
 static unsigned g_lcd_fail;    /* g_frame_no + 1 of a failed make, or 0 */
 
 static void lcd_axis(unsigned char *cov, int dst, int src)
@@ -1267,15 +1299,15 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
 {
    static unsigned char cx[VB_W], cy[VB_H];
    unsigned char *px;
-   int x, y, strength;
-   /* SCANLINES: the row gaps alone, a little darker than the grid's. */
-   const int rows_only = (g_filter == VID_FILTER_SCANLINES);
+   int x, y, base, gs, ss;
    double k;
+   if (!g_scan_lvl && !g_grid_lvl)
+      return NULL;
    if (g->dw > VB_W || g->dh > VB_H || g->dw <= 0 || g->dh <= 0)
       return NULL;
    if (g_lcd_tex && g_lcd_dw == g->dw && g_lcd_dh == g->dh &&
-       g_lcd_w == (int)w && g_lcd_sh == g->sh && g_lcd_rows == rows_only &&
-       g_lcd_built_pct == g_lcd_pct)
+       g_lcd_w == (int)w && g_lcd_sh == g->sh &&
+       g_lcd_built_scan == g_scan_lvl && g_lcd_built_grid == g_grid_lvl)
       return g_lcd_tex;
    /* (no memory last time: try again now and then, not every frame) */
    if (g_lcd_fail && g_frame_no + 1 - g_lcd_fail < ST_RETRY)
@@ -1289,23 +1321,24 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
       return NULL;
    /* A 1 px gap in a 2 px cell is half the picture: ease it off below 3x. */
    k = (double)g->dw / (double)w;
-   strength = k >= 3.0 ? LCD_ALPHA : (int)(LCD_ALPHA * (k - 1.0) / 2.0);
-   if (strength < 0)
-      strength = 0;
-   if (rows_only)
-      strength = strength * SCAN_ALPHA / LCD_ALPHA;
-   strength = strength * g_lcd_pct / 100;     /* Grid strength (vita.ini grid_strength) */
-   if (strength > 255)
-      strength = 255;
+   base = k >= 3.0 ? LCD_ALPHA : (int)(LCD_ALPHA * (k - 1.0) / 2.0);
+   if (base < 0)
+      base = 0;
+   gs = base * g_grid_lvl * 20 / 100;
+   ss = base * SCAN_ALPHA / LCD_ALPHA * g_scan_lvl * 20 / 100;
+   if (gs > 255) gs = 255;
+   if (ss > 255) ss = 255;
    lcd_axis(cx, g->dw, (int)w);
    lcd_axis(cy, g->dh, g->sh);
    for (y = 0; y < g->dh; y++)
       for (x = 0; x < g->dw; x++)
       {
-         /* 1 - (1-cx)(1-cy): the union of the column gap and the row gap. */
-         int u = rows_only ? cy[y]
-                 : 255 - ((255 - cx[x]) * (255 - cy[y]) + 127) / 255;
-         px[(size_t)y * g->dw + x] = (unsigned char)(u * strength / 255);
+         /* grid: 1 - (1-cx)(1-cy), the union of the column gap and the row
+          * gap; scan: the row gap; the two darken one after the other */
+         int ug = 255 - ((255 - cx[x]) * (255 - cy[y]) + 127) / 255;
+         int ag = ug * gs / 255, as = cy[y] * ss / 255;
+         px[(size_t)y * g->dw + x] =
+            (unsigned char)(255 - ((255 - ag) * (255 - as) + 127) / 255);
       }
    g_lcd_tex = vb_tex_create(g->dw, g->dh, VB_FMT_A8, 0);
    if (g_lcd_tex)
@@ -1315,9 +1348,23 @@ static vb_tex *lcd_tex(unsigned w, const vid_geo *g)
    }
    free(px);
    g_lcd_dw = g->dw; g_lcd_dh = g->dh; g_lcd_w = (int)w; g_lcd_sh = g->sh;
-   g_lcd_rows = rows_only;
-   g_lcd_built_pct = g_lcd_pct;
+   g_lcd_built_scan = g_scan_lvl;
+   g_lcd_built_grid = g_grid_lvl;
    return g_lcd_tex;
+}
+
+/* The grid / scanlines over the picture just drawn at `g`. */
+static void lcd_overlay_draw(unsigned w, const vid_geo *g)
+{
+   vb_tquad q;
+   vb_tex *lcd = lcd_tex(w, g);
+   if (!lcd)
+      return;
+   q.x0 = (float)g->ox; q.y0 = (float)g->oy;
+   q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
+   q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = (float)g->dh;
+   /* Black, the texture's byte as alpha. */
+   vb_tquads(lcd, &q, 1, VB_RGBA(0, 0, 0, 255), VB_NEAREST);
 }
 
 /* ---- xBRZ on the GPU ------------------------------------------------------
@@ -1603,7 +1650,10 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
       return;
    }
    if (gx_ready() && gx_draw(t, w, (unsigned)vb_tex_h(t), g))
+   {
+      lcd_overlay_draw(w, g);
       return;
+   }
    mode = picture_mode(w, g, &kx, &ky);
    if (mode == PIC_SHARP)
    {
@@ -1663,18 +1713,7 @@ static void picture_draw(vb_tex *t, unsigned w, const vid_geo *g)
       vb_tquads(t, &q, 1, 0xFFFFFFFFu,
                 mode == PIC_LINEAR ? VB_LINEAR : VB_NEAREST);
    }
-   if (g_filter == VID_FILTER_LCD || g_filter == VID_FILTER_SCANLINES)
-   {
-      vb_tex *lcd = lcd_tex(w, g);
-      if (lcd)
-      {
-         q.x0 = (float)g->ox; q.y0 = (float)g->oy;
-         q.x1 = (float)(g->ox + g->dw); q.y1 = (float)(g->oy + g->dh);
-         q.u0 = 0; q.v0 = 0; q.u1 = (float)g->dw; q.v1 = (float)g->dh;
-         /* Black, the texture's byte as alpha. */
-         vb_tquads(lcd, &q, 1, VB_RGBA(0, 0, 0, 255), VB_NEAREST);
-      }
-   }
+   lcd_overlay_draw(w, g);
 }
 
 static void prof_add(unsigned stage, unsigned gu)
@@ -1705,12 +1744,50 @@ static void prof_add(unsigned stage, unsigned gu)
  *           fake transparency show it steady.
  *
  * 38,400 pixels through a table: a few hundred microseconds on the console. */
-static int       g_color, g_blend;
+static int       g_color, g_blend;            /* g_blend: the strength 0..10 */
 static uint16_t *g_cc;                 /* 65536 entries, libretro 565 -> 565 */
 static int       g_cc_mode;            /* the mode g_cc was built for       */
 static uint16_t *g_look_out[2], *g_look_prev[2];
 static size_t    g_look_cap[2];
 static unsigned  g_look_w[2], g_look_h[2];   /* the frame in prev; 0 = none */
+
+/* The WonderSwan's and the NES's screens: a table over the same 65536
+ * 565 values, a lift of the black, less colour and a steeper curve -- the
+ * same kind of model as the Game Gear's (md/frontend/picture.cpp), with
+ * numbers that are estimates from how those screens looked, not
+ * measurements (nothing here has run on a console):
+ *   WonderSwan  its TFT reflective LCD: blacks a little lifted, colour 90 %
+ *   NTSC TV     a television's composite decode: colour 90 %, a 1.1 curve
+ *               (darker mid-tones than a modern panel), blacks untouched */
+static void cc_build_flat(int mode)
+{
+   const float sat   = 0.90f;
+   const float curve = mode == VID_COLOR_WS ? 1.08f : 1.10f;
+   const float lift  = mode == VID_COLOR_WS ? 0.03f : 0.0f;
+   unsigned v;
+   if (!g_cc)
+      g_cc = (uint16_t *)malloc(65536 * sizeof(uint16_t));
+   if (!g_cc)
+      return;
+   for (v = 0; v < 65536; v++)
+   {
+      float c[3] = { (float)(v >> 11) / 31.0f, (float)((v >> 5) & 63) / 63.0f,
+                     (float)(v & 31) / 31.0f };
+      const float y = 0.299f * c[0] + 0.587f * c[1] + 0.114f * c[2];
+      unsigned o[3];
+      int i;
+      for (i = 0; i < 3; i++)
+      {
+         float x = y + (c[i] - y) * sat;
+         if (x < 0.0f) x = 0.0f;
+         if (x > 1.0f) x = 1.0f;
+         x = lift + (1.0f - lift) * powf(x, curve);
+         o[i] = (unsigned)(x * (i == 1 ? 63.0f : 31.0f) + 0.5f);
+      }
+      g_cc[v] = (uint16_t)((o[0] << 11) | (o[1] << 5) | o[2]);
+   }
+   g_cc_mode = mode;
+}
 
 static void cc_build(int mode)
 {
@@ -1721,6 +1798,11 @@ static void cc_build(int mode)
       { 0.125f, 0.665f,  0.21f },      /* green            */
       { 0.195f, 0.075f,  0.73f } };    /* blue             */
    const float gamma = 2.2f + (mode == VID_COLOR_GBA_DARK ? 1.0f : 0.0f);
+   if (mode == VID_COLOR_WS || mode == VID_COLOR_NES)
+   {
+      cc_build_flat(mode);
+      return;
+   }
    /* Compression (x ^ 1/2.2) through a table over sqrt(x): steep near black
     * in x, nearly straight in sqrt(x), so 2048 steps are far finer than a
     * 6-bit result.  A table and sqrtf, not 200,000 powf calls: nothing
@@ -1758,7 +1840,7 @@ static void cc_build(int mode)
    g_cc_mode = mode;
 }
 
-void vid_set_look(int color, int blend)
+void vid_set_look(int color, int ghost)
 {
    VID_ENTER();
    if (color < 0 || color >= VID_COLOR_MODES)
@@ -1766,7 +1848,7 @@ void vid_set_look(int color, int blend)
    if (color != VID_COLOR_RAW && (!g_cc || g_cc_mode != color))
       cc_build(color);
    g_color = (color != VID_COLOR_RAW && g_cc) ? color : VID_COLOR_RAW;
-   g_blend = blend ? 1 : 0;
+   g_blend = ghost < 0 ? 0 : ghost > 10 ? 10 : ghost;
    g_look_w[0] = g_look_w[1] = 0;     /* nothing to mix the next frame with */
 }
 
@@ -1788,7 +1870,7 @@ static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
    const uint16_t *lut = g_color ? g_cc : NULL;
    const size_t n = (size_t)w * h, pitch = *pitch_bytes / 2;
    uint16_t *o, *p;
-   unsigned x, y;
+   unsigned x, y, wp;
    int mix;
 
    if (!lut && !g_blend)
@@ -1810,6 +1892,12 @@ static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
       }
       g_look_cap[who] = n;
    }
+   /* LCD ghosting 1..10: how much of the last frame stays (of 32) */
+   {
+      static const unsigned char w32[11] =
+         { 0, 2, 5, 8, 12, 16, 18, 20, 22, 23, 24 };
+      wp = w32[g_blend < 0 ? 0 : g_blend > 10 ? 10 : g_blend];
+   }
    mix = g_blend && g_look_w[who] == w && g_look_h[who] == h;
    for (y = 0; y < h; y++)
    {
@@ -1819,9 +1907,14 @@ static const uint16_t *look_frame(int who, const uint16_t *pix, unsigned w,
       if (mix)
          for (x = 0; x < w; x++)
          {
-            /* the mean of two 565 pixels, field by field, without unpacking */
-            const unsigned a = s[x], b = p[x];
-            const unsigned m = (a & b) + (((a ^ b) & 0xF7DEu) >> 1);
+            /* the new pixel and the last one mixed, field by field without
+             * unpacking: the three fields spread over a 32-bit word with
+             * room to multiply (5 = half and half, the plain mean) */
+            const uint32_t a = s[x], b = p[x];
+            const uint32_t fa = (a | (a << 16)) & 0x07E0F81Fu;
+            const uint32_t fb = (b | (b << 16)) & 0x07E0F81Fu;
+            const uint32_t fm = ((fa * (32u - wp) + fb * wp) >> 5) & 0x07E0F81Fu;
+            const unsigned m = (unsigned)((fm | (fm >> 16)) & 0xFFFFu);
             p[x] = (uint16_t)a;
             o[x] = lut ? lut[m] : (uint16_t)m;
          }
@@ -2202,6 +2295,7 @@ void vid_draw_frame(const uint16_t *pix, unsigned w, unsigned h,
       up_quad(0, tu, f, (float)g.ox, (float)g.oy, (float)(g.ox + g.dw),
               (float)(g.oy + g.dh), 0, (float)g.sy0, (float)w,
               (float)(g.sy0 + g.sh));
+      lcd_overlay_draw(w, &g);          /* Scanlines / LCD grid on the upscaled picture */
       t2 = pspcompat_time_us();
       DP_MAX(VID_DP_DRAW, t2 - t1);
       prof_add(t1 - t0, t2 - t1);

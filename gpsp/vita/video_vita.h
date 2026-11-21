@@ -117,14 +117,15 @@ void vid_image_screen_soft(const uint16_t *pix, int texw, int srcw, int srch,
  * vid_text_w() itself equals the PSP's for every string by construction. */
 float vid_text_advance_dev(int hd, int *worst_char, float *mean_abs);
 
-/* COLOUR and MOTION BLEND of the game's picture (video_vita.c "colour and
- * motion"): `color` is VID_COLOR_*, `blend` 1 mixes each frame with the one
- * before.  The main loop sets them when a game boots (a GBA game's colour;
- * VID_COLOR_RAW for GB and GBC, whose colours their own core corrects) and
- * the Settings rows when they change. */
+/* COLOUR and LCD GHOSTING of the game's picture (video_vita.c "colour and
+ * motion"): `color` is VID_COLOR_*, `ghost` 0..10 how much of the last frame
+ * stays in each new one (0 off, 5 half and half).  The main loop sets them
+ * when a game boots (a GBA's, WonderSwan's or NES's colour; VID_COLOR_RAW for
+ * GB and GBC, whose colours their own core corrects) and the Settings rows
+ * when they change. */
 enum { VID_COLOR_RAW = 0, VID_COLOR_GBA = 1, VID_COLOR_GBA_DARK = 2,
-       VID_COLOR_MODES = 3 };
-void vid_set_look(int color, int blend);
+       VID_COLOR_WS = 3, VID_COLOR_NES = 4, VID_COLOR_MODES = 5 };
+void vid_set_look(int color, int ghost);
 /* 1 = the hints' circle and cross (and the home screen's button icons) are
  * drawn exchanged, for a player whose Circle is the confirm button. */
 void vid_set_face_glyphs(int swap);
@@ -132,8 +133,15 @@ void vid_set_face_glyphs(int swap);
  * whole screen with its own transparency) on top of the game -- a bezel, a
  * Game Boy shell, a dot-matrix mask.  NULL or "" removes it.  0 = shown. */
 int  vid_set_overlay(const char *png_path);
-/* LCD grid / scanlines strength, percent of the default (0..200). */
-void vid_set_lcd_strength(int pct);
+/* SCANLINES and LCD GRID, 0..10 each (0 off), independent of each other and
+ * of the filter: drawn over the picture however it was made. */
+void vid_set_overlays(int scan, int grid);
+int  vid_overlay_scan(void);
+int  vid_overlay_grid(void);
+/* AMBIENT GLOW strength 0..10: how bright the colours beside the picture are
+ * (0 black bars, 5 the look the bars have always had).  vid_ambient_mode
+ * says what the colours come from. */
+void vid_ambient_strength(int level);
 int  vid_look_color(void);
 int  vid_look_blend(void);
 

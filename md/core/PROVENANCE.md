@@ -163,15 +163,25 @@ worker, on every test ROM) and `arm_check.sh`. Edits to upstream files:
   sprites beyond the hardware's 4 / 8 per line without changing the status register: the overflow flag and the fifth sprite number are
   set at the hardware's limit, and what the extra sprites do to the collision bit and position is undone. Upstream lifted the limit
   for the flags too. Mode 5 (Mega Drive) ignores the option. Proof: `ahead_check.sh` part 3.
-- Run-ahead support, used only by `md_host_run_frame_ahead` (NOT FINISHED, off in the player; `md/README.md`): `render_carry_*`
-  (`vdp_render.c`), `vdp_carry_*` (`vdp_ctrl.c`), `psg_carry_*` (`sound/psg.c`), `vdpw_carry_*` (`vdp_thread.c`) save and put back
-  what no save state holds (the first line's sprite list and pending sprite flags, the FIFO byte flag, HV latch, latched scroll,
-  viewport, the PSG's queued level changes). No other caller; a state loaded from a file is as before.
+- Run-ahead and exact state loads (`md_host_run_frame_ahead`, and every state the player saves or loads): `render_carry_*`
+  (`vdp_render.c`), `vdp_carry_*` (`vdp_ctrl.c`), `psg_carry_*` (`sound/psg.c`), `vdpw_carry_*` (`vdp_thread.c`) and `machine_carry`
+  (`system.c`: the pause latch, `eeprom_i2c_carry`, `eeprom_spi_carry`, `eeprom_93c_carry`, `cart_flash_carry` / `flash_cfi_carry`) save and
+  put back what the core's own state does not hold: the first line's sprite list and pending sprite flags, the FIFO byte flag and cycles,
+  HV latch, latched scroll, table bases, border, viewport, the PSG's queued level changes, the serial EEPROMs' protocol position, and, on a
+  cartridge with a flash chip, the save window (`sram.sram`) and the ROM banks the chip has rewritten (the first change of each 64KB bank
+  keeps its original; four at most). The host appends them to the state (`md/frontend/host.c`, state version 2).
+- `md_cart.c` (`md_cart_context_load`): on a flash cartridge a state load moves only which 64KB bank sits in the save window; the flash
+  chip's own handlers stay (upstream put the plain SRAM handlers there, which broke the next flash access after a load).
+- `vdp_ctrl.c` (`vdp_context_load`): a fast load (`fast_savestates`, the run-ahead way back) puts back the tile cache's dirty flags and
+  list as they were with the state, and refreshes only the blocks of VRAM that really differ (`vdp_set_all_vram` marks them per block for
+  the worker and the wide view; it no longer sets "all VRAM changed"); a normal load invalidates the whole cache as before. Upstream
+  refreshed only tiles that are drawn, which left the Game Gear's undrawn tiles stale. `vdp_z80_data_w_sg` tells the worker and the wide
+  list when it writes VRAM through the SG-1000 path.
+- Start-up state that upstream left to chance and that made the first game in a process differ from the next: `gen_init` clears the 68000
+  context, `z80_init` the effective address and last fetch, `sound_init` the FM buffer, `vdp_init` the FIFO and its cycles, `render_init`
+  the object lists and flags; the host clears the rest of the ROM buffer after the game (a flash cartridge rewrites it; a longer ROM
+  loaded before left its tail), and `md_host_sram_write` fills the rest of the battery RAM with 0xFF.
 
 ### Open
 
-- A Master System image run with the console forced to Game Gear (a smoke test, no real Game Gear ROM was available) shows the
-  picture differing from the uninterrupted run after a state load, starting a few frames in, while the state hash is the same. The
-  difference is in the tile cache (`bg_pattern_cache`, `bg_name_dirty`) which upstream only refreshes for tiles that are drawn,
-  and the Game Gear window does not draw them all. It has not been run down because no genuine Game Gear ROM exists in the test
-  set. The Master System, SG-1000 mode and Mega Drive round trips are exact.
+- None known in this part. (The Game Gear tile cache difference after a state load, recorded here before, is fixed: see "Run-ahead and exact state loads".)

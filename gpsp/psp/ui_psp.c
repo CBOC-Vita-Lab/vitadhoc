@@ -2395,7 +2395,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SNES_TWO,      /* 2.0: a SNES game's Two players (browser, SNES tab only), last of its section */
        SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_SGB,
-       SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
+       SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_LCDGRID, SET_OVERLAY,
        SET_WSBLEND,  /* 1.4: WonderSwan profile only (set_row_shown) */
        SET_NESWIDE,  /* 1.4: NES profile only */
        SET_NESPAL,   /* 2.0: NES profile only: PAL games speed (Smooth 50 Hz / True 50 Hz) */
@@ -2537,7 +2537,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Wide view" },
    { 0, "Screen fill" },        /* the wide view's margins: bars / soft edges / stretch */
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
-   { 0, "Scanlines / grid strength" },
+   { 0, "Scanlines" },          /* 0..10, like the players' */
+   { 0, "LCD grid" },           /* 0..10 */
    { 0, "Screen overlay" },
    { 0, "Smooth 75 Hz motion" },
    { 0, "Wide view" },
@@ -2664,6 +2665,8 @@ static int set_row_shown(int idx)
       return pcfg_display_console() == FE_CONSOLE_GB;
    if (idx == SET_COLOR)
       return pcfg_color_modes(pcfg_display_console()) > 0;
+   if (idx == SET_BLEND)
+      return pcfg_ghost_modes(pcfg_display_console()) > 0;
    if (idx == SET_WIDE || idx == SET_WFILL)
       return pcfg_wide_modes(pcfg_display_console()) > 0;
    if (idx == SET_FASTLINK)
@@ -3341,9 +3344,22 @@ static void settings_adjust(int id, int dir)
             g_pcfg.filter = VID_FILTER_SHARP;
          g_pcfg.quality = PCFG_QUALITY_AUTO;
 #endif
-      /* nearest -> bilinear -> sharp bilinear (docs/SHARP-BILINEAR.md). */
+      /* nearest -> bilinear -> sharp bilinear (docs/SHARP-BILINEAR.md) ->
+       * xBRZ -> Scale3x.  The LCD grid and scanlines are rows of their own
+       * (Scanlines, LCD grid), over any of them. */
+#ifdef VITA
+      {
+         static const int order[5] = { VID_FILTER_NEAREST, VID_FILTER_BILINEAR,
+            VID_FILTER_SHARP, VID_FILTER_XBRZ, VID_FILTER_SCALE };
+         int k;
+         for (k = 0; k < 5 && order[k] != g_pcfg.filter; k++)
+            ;
+         g_pcfg.filter = order[(k % 5 + 5 + (dir < 0 ? -1 : 1)) % 5];
+      }
+#else
       g_pcfg.filter = (g_pcfg.filter + VID_FILTER_MODES + dir) %
                       VID_FILTER_MODES;
+#endif
 #ifdef VITA
       }
 #endif
@@ -3368,11 +3384,21 @@ static void settings_adjust(int id, int dir)
       break;
 #endif
    case SET_AMBIENT:
+#ifdef VITA
+      /* Ambient glow 0..10 (0 off); the source -- art, else the game's own
+       * frame -- is not a row */
+      g_pcfg.glow = (g_pcfg.glow + 11 + (dir < 0 ? -1 : 1)) % 11;
+      pcfg_display_commit();
+      ui_host_look_changed();
+      fe_evt("ambient_glow level=%d profile=%s source=%d", g_pcfg.glow,
+             pcfg_console_tag(pcfg_display_console()), vid_ambient_source());
+#else
       g_pcfg.ambient = (g_pcfg.ambient + PCFG_AMB_MODES + dir) % PCFG_AMB_MODES;
       pcfg_display_commit();
       vid_ambient_mode(g_pcfg.ambient);
       fe_evt("ambient_mode mode=%d profile=%s source=%d", g_pcfg.ambient,
              pcfg_console_tag(pcfg_display_console()), vid_ambient_source());
+#endif
       break;
    case SET_OSD:
       g_pcfg.osd_wireless = !g_pcfg.osd_wireless;
@@ -3502,8 +3528,10 @@ static void settings_adjust(int id, int dir)
    case SET_OWN_LOOK:
       pcfg_game_set_override(!g_pgame.override);
       vid_set_mode(g_pcfg.scale, g_pcfg.filter);
-      ui_host_look_changed();
+      ui_host_look_changed();      /* (also the ambient glow) */
+#ifndef VITA
       vid_ambient_mode(g_pcfg.ambient);
+#endif
       if (pcfg_display_console() != FE_CONSOLE_GBA)
          fe_host_gb_palette_set(g_pcfg.gb_palette);
       fe_evt("game_look own=%d scale=%s quality=%d", g_pgame.override,
@@ -3613,7 +3641,9 @@ static void settings_adjust(int id, int dir)
       break;
    }
    case SET_BLEND:
-      g_pcfg.blend = !g_pcfg.blend;
+      if (!pcfg_ghost_modes(pcfg_display_console()))
+         return;
+      g_pcfg.ghost = (g_pcfg.ghost + 11 + (dir < 0 ? -1 : 1)) % 11;
       pcfg_display_commit();
       ui_host_look_changed();
       break;
@@ -3628,12 +3658,16 @@ static void settings_adjust(int id, int dir)
       break;
    }
    case SET_GRID:
-   {
-      /* 1..10 (5 is the default look); global, live */
-      int v = ui_host_grid_level() + dir;
-      ui_host_grid_set(v < 1 ? 10 : v > 10 ? 1 : v);
+      /* Scanlines 0..10 (0 off), per console like the rest of DISPLAY */
+      g_pcfg.scan = (g_pcfg.scan + 11 + (dir < 0 ? -1 : 1)) % 11;
+      pcfg_display_commit();
+      ui_host_look_changed();
       break;
-   }
+   case SET_LCDGRID:
+      g_pcfg.grid = (g_pcfg.grid + 11 + (dir < 0 ? -1 : 1)) % 11;
+      pcfg_display_commit();
+      ui_host_look_changed();
+      break;
    case SET_OVERLAY:
       ui_host_overlay_set(!ui_host_overlay_on());
       break;
@@ -3876,7 +3910,7 @@ static const char *set_help(int id)
       if (g_pcfg.quality == PCFG_QUALITY_ORIGINAL)
          return "Set by Image quality. Choosing one switches it to Auto.";
 #endif
-      /* What the chosen one does, not a list of all seven. */
+      /* What the chosen one does, not a list of all of them. */
       switch (g_pcfg.filter)
       {
       case VID_FILTER_NEAREST:   return "Exact pixels. Sharpest at 2x, 3x "
@@ -3919,9 +3953,19 @@ static const char *set_help(int id)
       if (pcfg_display_console() == FE_CONSOLE_GBC)
          return g_pcfg.color ? "As on a Game Boy Color's screen."
                              : "Colours exactly as the game sends them.";
+      if (pcfg_display_console() == FE_CONSOLE_WSWAN)
+         return g_pcfg.color ? "As on a WonderSwan's screen: softer, blacks "
+                               "a little lifted."
+                             : "Colours exactly as the game sends them.";
+      if (pcfg_display_console() == FE_CONSOLE_NES)
+         return g_pcfg.color ? "As a television showed them: a little softer "
+                               "and deeper."
+                             : "Colours exactly as the game sends them.";
       return "An original Game Boy's shades are its colours, above.";
-   case SET_GRID:     return "How dark the LCD grid and scanline looks are "
-                             "(Video filter).";
+   case SET_GRID:     return "A dark line under every row of the game's "
+                             "pixels, like a TV. 0 is off, 10 is strong.";
+   case SET_LCDGRID:  return "The gaps between the dots of a handheld's "
+                             "screen. 0 is off, 10 is strong.";
    case SET_NESWIDE:  return g_pcfg.nes_wide == 2
                              ? "The NES picture as it was: 256 columns."
                              : g_pcfg.nes_wide == 1
@@ -3958,9 +4002,10 @@ static const char *set_help(int id)
                                "frame the game.";
    case SET_SHOTDIR:  return VID_GLYPH_X ": type a folder (ux0:pictures/VitAdhoc). "
                              "Empty: screenshots/.";
-   case SET_BLEND:    return g_pcfg.blend
-             ? "Each frame mixes with the last, like the old LCD."
-             : "Steadies flicker that games used as transparency.";
+   case SET_BLEND:    return g_pcfg.ghost
+             ? "The slow LCD left a trail behind moving things. 10 is strong."
+             : "The slow LCD left a trail behind moving things. 0 is off, 5 "
+               "steadies flicker used as transparency.";
    case SET_WIDE:
       if (pcfg_display_console() != FE_CONSOLE_GBA)
          return "A Game Boy's picture has no more to show.";
@@ -3979,8 +4024,8 @@ static const char *set_help(int id)
            : g_pcfg.wide_fill == 1 ? "Screens with no more to show fade "
                                      "out softly at the sides."
            : "Screens with no more to show keep black bars.";
-   case SET_AMBIENT:  return "What fills the space beside the game's "
-                             "picture.";
+   case SET_AMBIENT:  return "The game's own colours glowing in the space "
+                             "beside it. 0 is off (black), 10 is bright.";
    case SET_GBPAL:    return "GBC auto: the colours a Game Boy Color gave "
                              "this game.";
    case SET_THEME:    return "Dark or light menus.";
@@ -4549,9 +4594,19 @@ static ui_action screen_settings(unsigned edges)
 #endif
          break;
       case SET_AMBIENT:
+#ifdef VITA
+      {
+         char v[8];
+         snprintf(v, sizeof(v), "%d", g_pcfg.glow);
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.glow ? v : "off");
+         break;
+      }
+#else
          set_item(y, g_cursor == i, 1, set_rows[i].label,
              pcfg_ambient_name(g_pcfg.ambient));
          break;
+#endif
       case SET_FFMULT:
 #ifdef VITA
       {
@@ -4585,18 +4640,21 @@ static ui_action screen_settings(unsigned edges)
       }
 #ifdef VITA
       case SET_COLOR:
-         set_item(y, g_cursor == i, set_row_enabled(i), set_rows[i].label,
+         /* the NES has a television, not an LCD */
+         set_item(y, g_cursor == i, set_row_enabled(i),
+                  pcfg_display_console() == FE_CONSOLE_NES ? "NTSC colours"
+                                                           : set_rows[i].label,
                   pcfg_color_name(pcfg_display_console(), g_pcfg.color));
          break;
       case SET_BLEND:
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  g_pcfg.blend ? "on" : "off");
-         break;
       case SET_GRID:
+      case SET_LCDGRID:
       {
          char v[8];
-         snprintf(v, sizeof(v), "%d", ui_host_grid_level());
-         set_item(y, g_cursor == i, 1, set_rows[i].label, v);
+         const int n = i == SET_BLEND ? g_pcfg.ghost
+                     : i == SET_GRID ? g_pcfg.scan : g_pcfg.grid;
+         snprintf(v, sizeof(v), "%d", n);
+         set_item(y, g_cursor == i, 1, set_rows[i].label, n ? v : "off");
          break;
       }
       case SET_NESWIDE:

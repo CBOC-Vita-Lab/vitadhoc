@@ -520,9 +520,10 @@ typedef struct
     * the game (vita/main_vita.c chord_guard).  1 by default; 0 = straight
     * through, as on the PSP. */
    int  chord_guard;
-   /* The live console's `color`, `blend` and `wide` (pcfg_display),
-    * mirrored like scale and filter. */
-   int  color, blend, wide, wide_fill;
+   /* The live console's `color`, `ghost`, `wide`, and the looks scan / grid /
+    * glow (pcfg_display), mirrored like scale and filter. */
+   int  color, ghost, wide, wide_fill;
+   int  scan, grid, glow;
    int  sgb_border;     /* the GB profile's Super Game Boy border (pcfg_display) */
    int  quality;      /* 0 legacy auto; 1 native; 2/3 enhancement factor */
 #endif
@@ -666,16 +667,32 @@ typedef struct
 {
    int scale, filter, ambient, gb_palette;
 #ifdef VITA
-   /* COLOURS and MOTION BLEND (vita/video_vita.h vid_set_look), CONFIG.INI
-    * color_gba / color_gbc and blend_gba / blend_gb / blend_gbc:
-    *   color  GBA: 0 as the game sends them, 1 as a GBA's screen showed
-    *               them, 2 the same and as dark as the unlit screen was;
-    *          GBC: 0 as sent, 1 as a Game Boy Color's screen showed them
+   /* THE LOOKS (docs/LOOKS.md), the same on every console, CONFIG.INI
+    * <key>_<console>; each strength is 0..10 and 0 is off:
+    *   color  LCD colours (vita/video_vita.h vid_set_look):
+    *          GBA: 0 as the game sends them (vivid), 1 as a GBA's screen
+    *               showed them (the default), 2 the same and as dark as
+    *               the unlit screen was;
+    *          GBC: 0 vivid, 1 as a Game Boy Color's screen showed them
     *               (the default; an absent key takes gbc_color_correction);
+    *          WS:  0 vivid, 1 as a WonderSwan's screen showed them
+    *          NES: 0 vivid, 1 "NTSC colours": a television's
     *          GB:  none -- an original Game Boy has its palette row.
-    *   blend  1 = each frame mixed with the one before, as the slow LCD
-    *          did (what games that flicker to fake transparency rely on). */
-   int color, blend, quality;
+    *   ghost  LCD ghosting, a slow screen's trail: each frame mixed with the
+    *          one before, 5 = half and half (1.x's "motion blend on", which
+    *          it replaces: an absent ghost_<c> takes blend_<c>).  GBA, GB,
+    *          GBC, WonderSwan.
+    *   scan   Scanlines, grid  LCD grid: dark lines under every row / around
+    *          every pixel (they were one exclusive Video filter and one
+    *          vita.ini grid_strength before: a filter value of 3 or 6
+    *          loads as sharp bilinear with the matching look at that
+    *          strength, once).
+    *   glow   Ambient glow: how bright the picture's own colours are beside
+    *          it (it was ambient_<c> 0 off / 1 art / 2 art, else game, and
+    *          that key stays the source: a file without glow_<c> takes 5
+    *          where the old mode was on, 0 where it was off). */
+   int color, ghost, quality;
+   int scan, grid, glow;
    /* WIDE VIEW (gpsp/wide.c), CONFIG.INI wide_gba: more of the game beside
     * the console's 240 pixels instead of bars.
     *   0 off; 1 in the games it has a profile for (the default);
@@ -694,6 +711,17 @@ typedef struct
 #endif
 } pcfg_display;
 #ifdef VITA
+/* Defaults of the looks (docs/LOOKS.md): glow 5 of 10 (the 1.3 look), the
+ * rest off. */
+#define PCFG_GLOW_DEF   5
+#define PCFG_SCAN_DEF   0
+#define PCFG_GRID_DEF   0
+#define PCFG_GHOST_DEF  0
+/* The strength a file's pre-2.0 `filter` of LCD grid or scanlines becomes:
+ * vita.ini's grid_strength (main_vita.c sets it before pcfg_load; 5 else). */
+extern int g_pcfg_legacy_grid;
+/* Which consoles have a slow LCD for LCD ghosting (GBA, GB, GBC, WS). */
+int pcfg_ghost_modes(int console);
 /* The first four values are what old config files hold; 4X and MMPX are
  * 1.4's hand-set choices (Auto never overrides them): xBRZ at four times,
  * and MMPX at twice (vid_set_quality turns it into factor 2 + the MMPX flag). */
@@ -701,7 +729,7 @@ enum { PCFG_QUALITY_AUTO, PCFG_QUALITY_ORIGINAL, PCFG_QUALITY_2X,
        PCFG_QUALITY_3X, PCFG_QUALITY_4X, PCFG_QUALITY_MMPX,
        PCFG_QUALITY_MODES };
 const char *pcfg_quality_name(int quality);
-/* How many `color` values a console has (GBA 3, GBC 2, GB 0). */
+/* How many `color` values a console has (GBA 3, GBC 2, WS 2, NES 2, GB 0). */
 int pcfg_color_modes(int console);
 /* `wide` values of a console (GBA 3, the others 0) and their names. */
 #define PCFG_WIDE_DEF 1

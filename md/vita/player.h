@@ -368,7 +368,7 @@ private:
 	int pal_mode_ = 2;       /* pal_speed: 0 True 50 Hz, 1 Fast 60 Hz, 2 Smooth 50 Hz (default) */
 	bool look_bad_ = false;
 	int look_mode_ = 0;
-	/* Quick response (0 Off, 1 Auto, 2 On; NOT FINISHED: off, and its menu row is not added, see md/README.md) and No sprite flicker
+	/* Quick response (0 Off, 1 Auto, 2 On; default Auto on the Master System, Game Gear and SG-1000, Off on the Mega Drive: md/README.md) and No sprite flicker
 	 * (8 bit systems); player.ini quick_response / no_sprite_flicker */
 	int quick_ = 0, flicker_ = 1;
 	pk::AheadGovernor ahead_;

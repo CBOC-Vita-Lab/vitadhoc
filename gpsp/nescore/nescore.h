@@ -104,6 +104,10 @@ void nescore_reset(nescore_t *core);
  * at create, written safely at shutdown).  The scout stays off. */
 enum { NESCORE_WIDE_AUTO = 0, NESCORE_WIDE_ON = 1, NESCORE_WIDE_OFF = 2 };
 void nescore_set_wide(int mode);
+/* The wide view's unknown sides: 1 (default) a soft glow of the picture's own
+ * edge colours, 0 black bars (the app's Ambient glow off).  Takes effect at
+ * the next frame; may be set before create. */
+void nescore_set_soft_edge(int on);
 /* 1 while the last frame handed over was the wider picture */
 int nescore_wide_shown(void);
 

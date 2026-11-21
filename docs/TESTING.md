@@ -85,6 +85,12 @@ UBSan), `widekit` (tests under ASan and UBSan), `gamedb` (title database).
 pad mapping, audio pacing, and each core's own picture and blend tests. Each
 needs its twin, built by a shared prerequisite step.
 
+`md-ahead` (default tier, needs `GATE_MD_ROMS`; `md/twin/ahead_check.sh`) is the Sega proof of frames nobody sees: undrawn frames leave the
+machine as drawn ones do; Quick response (run-ahead) changes nothing in the machine, with and without the VDP worker and the wide view, shows the
+next frame's picture, and answers a press one frame sooner (a small test cartridge, `md/twin/tools/sms_latency_gen.py`, answers the pad a frame
+later: 1 frame plain, 0 with run-ahead); and a state loaded at frame N then run M frames equals the run that was never interrupted (picture, sound,
+state, RAM, battery RAM of every frame; same machine, a reloaded ROM, a fresh machine; worker on and off).
+
 **Host app** (default): `unit-host` (about 40 C suites from
 `gpsp/tools/run_host_tests.py`, under sanitizers), `app-x86` (the whole app:
 game list, menus, states, fast forward, screenshots), `rewind-x86` and

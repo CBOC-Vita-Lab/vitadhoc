@@ -65,8 +65,7 @@ sharing).
   same game file (a patched copy does not match an unpatched one). The
   WonderSwan's own link cable is not emulated, the Game Gear has no two-player
   mode, and the Super NES and Sega consoles have no Nearby (ad hoc) option.
-  Both Vitas need VitAdhoc 2.0. Join online from the game list does not know
-  the Sega games yet; start those from the game list's Two players row.
+  Both Vitas need VitAdhoc 2.0.
 - **Zipped games** may not be found by the join's library search if the file
   cannot be read without unpacking it; the message then says to add the game.
 - **State loading was hardened on the PC test build, not on a Vita.** When a
@@ -91,9 +90,8 @@ sharing).
   `.sc` (SC-3000 cartridges, played as SG-1000) are listed too. A `.sms` file
   that is really a Game Gear game plays as a Master System game; its save and
   states stay together under Master System.
-- **Not there yet:** RetroAchievements badges in the library for these games,
-  and Join online from the game list (above). No SG-1000 game was available to
-  test achievements.
+- **Not there yet:** RetroAchievements badges in the library for these games.
+  No SG-1000 game was available to test achievements.
 - **No sprite flicker** (Master System, Game Gear, SG-1000; on by default) was
   checked with homebrew only. A game that hides something behind the console's
   sprite limit on purpose would show it: turn the row off for that game. It is

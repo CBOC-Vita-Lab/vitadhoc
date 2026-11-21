@@ -1075,9 +1075,12 @@ def t_determinism(T):
 
 # ---- the library path ----------------------------------------------------------------------------------
 
-def settings_join_online(first_down=17):
-    """From the game list: START opens Settings; DOWN 17 rows (from the Theme row the list opens on; 16 is "Join a share") is "Join online" (browser Settings only)."""
-    return L.press(2, "start") + L.keys(*(["down"] * first_down)) + "+20:shot=settings.png\n"
+def settings_join_online():
+    """From the game list: START opens Settings, DOWN from the Theme row it opens on to "Join online" (SET_JOIN_ONLINE = row 10,
+    browser Settings only).  Every step waits for the row's own log line (settings_row) and the last names the row it must
+    land on, so a press a busy machine dropped or doubled, or a row added to the list, cannot send the walk elsewhere."""
+    downs = "".join("+%d:hold=down=settings_row row=%s\n" % (L.GAP, "10" if i == 17 else "") for i in range(18))
+    return L.press(2, "start") + downs + "+20:shot=settings.png\n"
 
 
 def lib_b_script(code, tail, shots=("card.png",), press=True):
@@ -1257,7 +1260,7 @@ def hold_code(code):
     return out
 
 
-def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True, b_tail="", **kw):
+def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True, b_tail="", lib=False, **kw):
     """Both consoles in their game list: A hosts a game of `con` Online from Settings > Two players, B joins with the code
     from the same page (join=False: B stops at the room's card).  The app forms the link with no game running."""
     walk = tp_walk(con)
@@ -1268,7 +1271,8 @@ def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True
         sa += L.shot(14, "hosting.png") + L.quit_at(host_end)
 
     def sb(code):
-        s = (walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS) +
+        # lib: B takes the game list's own Settings > Join online row instead of the Two players page
+        s = ((settings_join_online() if lib else walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS)) +
              "+%d:hold=cross=online_pad_open\n" % L.GAP + "+30:shot=pad.png\n" + hold_code(code) +
              "+%d:hold=triangle=online_card_begin\n" % L.GAP + "+0:wait=online_card state=\n" +
              "+%d:shot=card.png\n" % L.dur(1))
@@ -1299,14 +1303,14 @@ def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True
             del T.__dict__["twin"]
 
 
-def snes_online(T, name, nat, relay, con="snes"):
+def snes_online(T, name, nat, relay, con="snes", lib=False):
     """Both consoles in the game list: A hosts a SNES game Online from Settings > Two players, B joins with the code
     from the same page.  The app forms the link (room, punch or relay) with no game running and writes it into
     launch/snes.ini for snes.bin (the twin cannot start that program: snes/twin/link_test.py plays the files' kind)."""
     # con: "snes", or a Sega console of md.bin ("md", "sms", "sg"): the same page and the same hand-over, the file a synthetic
     # cartridge image of that console, or for sg the public homebrew (the app only forms the link; the player starts afterwards)
     rom = tp_rom(T, con)
-    rig = tp_pair(T, name, con, nat, rom)
+    rig = tp_pair(T, name, con, nat, rom, lib=lib)
     ra, rb = rig.ra, rig.rb
     if not ra or not rb:
         return
@@ -1358,6 +1362,13 @@ def t_sega_online(T):
     for con in os.environ.get("SEGA_ONLINE_ONLY", "md,sms,sg").split(","):     # (to rerun one console)
         snes_online(T, "online_%s_punch" % con, ("port", "port"), False, con)
         snes_online(T, "online_%s_relay" % con, ("sym", "port"), True, con)
+
+
+def t_sega_library_join(T):
+    """Join online from the game list's Settings (not the Two players page) on a Genesis, a Master System and an SG-1000 game:
+    the library finds the game by its room code, it opens, and the link is handed to md.bin as a guest"""
+    for con in os.environ.get("SEGA_ONLINE_ONLY", "md,sms,sg").split(","):
+        snes_online(T, "online_%s_library" % con, ("port", "port"), False, con, lib=True)
 
 
 # ---- every console: another game, a version that does not fit, a service that wants an update -------------------
@@ -1601,7 +1612,7 @@ TESTS = [
     ("rtt_100", t_rtt_100), ("rtt_150", t_rtt_150), ("rtt_200", t_rtt_200), ("delay_cap", t_delay_cap),
     ("determinism", t_determinism), ("two_games", t_two_games), ("direct_hidden", t_direct_hidden),
     ("nes_relay", t_nes_relay), ("nes_punch", t_nes_punch), ("ws_relay", t_ws_relay), ("ws_punch", t_ws_punch),
-    ("snes_online", t_snes_online), ("sega_online", t_sega_online),
+    ("snes_online", t_snes_online), ("sega_online", t_sega_online), ("sega_library_join", t_sega_library_join),
 ]
 for _fam in CORE_FAMS + TP_FAMS:
     TESTS.append(("game_" + _fam, _fam_test(refuse_game, _fam, (

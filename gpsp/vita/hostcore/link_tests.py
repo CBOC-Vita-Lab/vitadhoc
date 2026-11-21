@@ -709,13 +709,21 @@ def t_share(T, replace=False):
     # your save?", X replace) and keeps B's as linktest.sav.bak.
     # d: the longer walk to the Link setup rows (Settings opens on Theme
     # since 1.4) makes B join about a second later
-    d = 2
+    d = 3
     ask = press(21 + d, "cross") if replace else ""
     late = 2 if replace else 0
     # Settings opens on Theme in the game list (1.4): down past the rest of
     # Interface (5) and RetroAchievements' Account and Hardcore (2) to Link
     # setup, then Name ... OSD (7) to Share game data; Join is one more.
-    down7 = keys(*(["down"] * 15))
+    # Every step waits for the row's own log line (settings_row), so a press a
+    # busy machine dropped or doubled cannot move the walk; the last step also
+    # names the row it must land on (SET_SHARE = row 8, SET_JOIN = 9, the Link
+    # setup section's rows 1..9 in ui_psp.c).
+    def to_row(n, row):
+        return "".join("+%d:hold=down=settings_row row=%s\n" % (GAP, row if i == n - 1 else "")
+                       for i in range(n))
+    down7 = to_row(16, 8)
+    down8 = to_row(17, 9)
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                press(2, "start") + down7 + "+20:shot=settings.png\n" +
                keys("cross", first=AFTER_SHOT) + shot(8, "sharing.png") +
@@ -723,7 +731,7 @@ def t_share(T, replace=False):
                shot(30 + d, "after.png") + quit_at(32 + d),
                extra={"roms/linktest.sav": sav})
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
-               press(5, "start") + down7 + keys("down") +
+               press(5, "start") + down8 +
                "+20:shot=settings.png\n" + keys("cross", first=AFTER_SHOT) +
                shot(14 + d, "list.png") + press(15 + d, "cross") +
                shot(18 + d, "their.png") + press(19 + d, "cross") +
@@ -1989,7 +1997,8 @@ def t_sega_two(T):
         a = T.twin("a", T.arch_a, rom, "Alice",
                    sega_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26), config=dict(cfg))
         b = T.twin("b", T.arch_b, rom, "Bob",
-                   sega_two_walk() + keys("down", "cross", "cross") + "+%d:shot=rooms.png\n" % dur(5) +
+                   sega_two_walk() + keys("down", "cross", "cross") + "+30:hold=cross=snes_two_join\n" +
+                   "+%d:shot=rooms.png\n" % dur(5) +
                    "+%d:shot=after.png\n" % dur(8) + quit_at(26), config=dict(cfg))
         for t in (a, b):
             os.remove(os.path.join(t.root, "autoboot.txt"))

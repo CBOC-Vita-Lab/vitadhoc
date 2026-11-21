@@ -445,7 +445,7 @@ STEPS = [
          cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/", "online/"],
          env_opt=["GATE_GBA_ROMS", "GATE_NES_ROMS", "GATE_WS_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
          deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
-         requires=PIL + CXX + [("exe", "node")], group=GROUP_HOST, parse="app", timeout=14400),
+         requires=PIL + CXX + [("exe", "node")], group=GROUP_HOST, parse="app", timeout=28800),
 
     # ---- full: armhf under qemu, the Vita build, private cores runs, long tests ----
     Step("rewind-x86-long", "rewind, full: 20 minutes of play a console (rewind_tests.py x86)",

@@ -716,6 +716,8 @@ static fe_console_t oc_console_of(const char *path)
       return FE_CONSOLE_GG;
    if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
       return FE_CONSOLE_SG;
+   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso")))
+      return FE_CONSOLE_SCD;
    return !strcmp(g_oc.card.console, "gbc") ? FE_CONSOLE_GBC
         : !strcmp(g_oc.card.console, "gb") ? FE_CONSOLE_GB
         : !strcmp(g_oc.card.console, "nes") ? FE_CONSOLE_NES
@@ -724,6 +726,7 @@ static fe_console_t oc_console_of(const char *path)
         : !strcmp(g_oc.card.console, "sms") ? FE_CONSOLE_SMS
         : !strcmp(g_oc.card.console, "gg") ? FE_CONSOLE_GG
         : !strcmp(g_oc.card.console, "sg") ? FE_CONSOLE_SG
+        : !strcmp(g_oc.card.console, "scd") ? FE_CONSOLE_SCD
         : !strcmp(g_oc.card.console, "ws") ? FE_CONSOLE_WSWAN : FE_CONSOLE_GBA;
 }
 

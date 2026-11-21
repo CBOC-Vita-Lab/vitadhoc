@@ -282,7 +282,7 @@ static u64 state_hash(std::vector<uint8_t> &buf)
 
 static void usage()
 {
-	puts("usage: md_twin ROM [--frames N] [--pad SCRIPT|auto|none] [--pad2 SCRIPT] [--seed N] [--region auto|usa|eur|jp|jppal]\n"
+	puts("usage: md_twin ROM|DISC [--disc] [--bios FILE|--bios-stand-in] [--frames N] [--pad SCRIPT|auto|none] [--pad2 SCRIPT] [--seed N] [--region auto|usa|eur|jp|jppal]\n"
 	     "       [--system md|sms|gg|sg] [--pad3|--pad6] [--opt name=value]... [--checkpoint N] [--hashes FILE] [--state-roundtrip [N]] [--vdp-thread|--vdp-check|--vdp-stress]\n"
 	     "       [--srm FILE] [--save-state FILE] [--load-state FILE] [--state-frame N] [--audio-rate HZ] [--no-render] [--quiet]\n"
 	     "       [--cheat CODE] [--peek HEXADDR]... [--reset-at FRAME] [--info]\n"

@@ -189,12 +189,12 @@ def extra_tags(name):
 def variants(key):
     """Other keys the same game may be known by (No-Intro adds words
     Wikipedia leaves off)."""
-    out = {key}
+    out = [key]                 # in a fixed order: the exact title wins
     for suffix in (" version", " edition", " advance"):
         if key.endswith(suffix):
-            out.add(key[: -len(suffix)])
-    out.add(re.sub(r"^(disney s|disney|tom clancy s|sid meier s) ", "", key))
-    return out
+            out.append(key[: -len(suffix)])
+    out.append(re.sub(r"^(disney s|disney|tom clancy s|sid meier s) ", "", key))
+    return list(dict.fromkeys(out))
 
 
 def parse_dat(text):
@@ -244,10 +244,10 @@ def wikidata(qid, cachedir):
             art = sl["title"]
             lab = e.get("labels", {}).get("en", {}).get("value")
             if lab:
-                rows.append((lab, art))
+                rows.append((lab, art, "exact"))
             for a in e.get("aliases", {}).get("en", []):
-                rows.append((a["value"], art))
-            rows.append((re.sub(r" \(.*\)$", "", art), art))
+                rows.append((a["value"], art, "alias"))
+            rows.append((re.sub(r" \(.*\)$", "", art), art, "exact"))
     return rows
 
 
@@ -318,6 +318,9 @@ def clean(text):
     return out.replace("\t", " ")
 
 
+REDIRECTED = set()      # articles asked for that Wikipedia answered with another
+
+
 def extracts(titles, cachedir):
     out = {}
     titles = sorted(set(titles))
@@ -333,7 +336,10 @@ def extracts(titles, cachedir):
         data = json.loads(get(url, os.path.join(cachedir, "wp_%s.json" % tag)))
         q = data.get("query", {})
         back = {}
-        for n in q.get("normalized", []) + q.get("redirects", []):
+        for n in q.get("normalized", []):
+            back[n["to"]] = n["from"]
+        for n in q.get("redirects", []):
+            REDIRECTED.add(back.get(n["from"], n["from"]))  # said by another article
             back[n["to"]] = back.get(n["from"], n["from"])
         for p in q.get("pages", {}).values():
             t = p.get("title")
@@ -345,7 +351,110 @@ def extracts(titles, cachedir):
     return out
 
 
+# A description is shown only for the game it is about: the article must be one
+# Wikidata lists as released for THIS console (its platform set), under a title
+# that matches the game's name; the same title on another console, a series
+# article and a remake or port on a different system are not enough.
+SERIES_TEXT = re.compile(r"^.{0,120}?\b(?:is|are|was) (?:a |an |the )?"
+                         r"([A-Za-z\- ]{0,60}?)\b(?:franchise|series)\b")
+
+
+PLATFORM_TEXT = {
+    "A": r"Game Boy Advance|\bGBA\b", "B": r"Game Boy", "C": r"Game Boy Color|Game Boy",
+    "D": r"Super Nintendo|Super NES|\bSNES\b|Super Famicom",
+    "E": r"Nintendo Entertainment System|\bNES\b|Famicom", "G": r"WonderSwan",
+    "H": r"WonderSwan", "I": r"Genesis|Mega Drive", "J": r"Master System",
+    "K": r"Game Gear", "L": r"SG-1000|SG1000", "M": r"Sega CD|Mega-CD|Mega CD"}
+
+
+def about_a_series(text):
+    """"Golden Axe is a series of ..." / "Battletoads is a video game
+    franchise": not a description of one game ("is a platform game based on
+    the Scooby-Doo franchise" is)."""
+    m = SERIES_TEXT.match(text)
+    return bool(m) and not re.search(r"\b(?:based|on|in|for|from|about|of the)\b",
+                                     m.group(1))
+
+
+def redo_blurbs(outdir):
+    """2.0: the U<console><title key> -> article and W records of every
+    console, rebuilt from the platform sets (the T records of 1.x, shared by
+    all consoles, are gone).  Names and checksums are not touched.  The texts
+    come from Wikipedia (the cache; an article it no longer answers keeps the
+    text the file had).  GAMEDB_DATS=DIR holds the catalogues."""
+    cache = os.path.join(outdir, "cache")
+    os.makedirs(cache, exist_ok=True)
+    datdir = os.environ["GAMEDB_DATS"]
+    recs, oldw = {}, {}
+    with open(os.path.join(outdir, "gamedb.txt"), encoding="utf-8") as f:
+        for line in f:
+            k, v = line.rstrip("\n").split("\t", 1)
+            if k[0] == "W":
+                oldw[k[1:]] = tidy(v)
+            elif k[0] not in "TU":
+                recs[k] = v
+    mapping = {}                # (console, key) -> article
+    for dat, qid, tag in SYSTEMS:
+        if not qid:
+            continue
+        with open(os.path.join(datdir, dat + ".dat"), encoding="utf-8",
+                  errors="replace") as f:
+            games = parse_dat(f.read())
+        index = {}
+        for label, art, kind in wikidata(qid, cache):
+            if article_rank(art) == 2:      # a series, not a game
+                continue
+            k = title_key(label)
+            r = (article_rank(art), kind != "exact")
+            if k not in index or r < index[k][1]:
+                index[k] = (art, r, kind)
+        family, hit = {}, 0     # GBA: code[:3] -> article (the same game's regions)
+        for g in games:
+            g["key"] = title_key(base_title(g["name"]))
+            hitv = next((index[v] for v in variants(g["key"]) if v in index), None)
+            g["art"], g["kind"] = (hitv[0], hitv[2]) if hitv else (None, None)
+            code = g["serial"] if tag == "A" and g["serial"] and \
+                re.match(r"^[A-Z0-9]{4}$", g["serial"]) else None
+            g["code"] = code
+            if g["art"] and code:
+                family.setdefault(code[:3], g["art"])
+        for g in games:
+            art = g["art"] or (family.get(g["code"][:3]) if g["code"] else None)
+            if art:
+                # a match by an alias of the article ("Tempo Jr." for Tempo) must
+                # be confirmed by the text naming this console
+                mapping.setdefault((tag, g["key"]), (art, g["kind"] == "alias", tag))
+                hit += 1
+        print("%s: %d cartridges, %d with an article of this console" %
+              (dat, len(games), hit), file=sys.stderr)
+    arts = {m[0] for m in mapping.values()}
+    ex = extracts(arts, cache)
+    for a in arts:              # (an answer Wikipedia no longer gives: the old text)
+        if not ex.get(a) and a in oldw:
+            ex[a] = oldw[a]
+    dropped = unconfirmed = 0
+    for (tag, k), (art, alias, _t) in sorted(mapping.items()):
+        text = ex.get(art, "")
+        if not text or about_a_series(text):
+            dropped += 1
+            continue
+        if (alias or art in REDIRECTED) and not re.search(PLATFORM_TEXT[tag], text):
+            unconfirmed += 1
+            continue
+        recs["U" + tag + k] = art
+        recs["W" + art] = text
+    print("%d U records, %d articles, %d dropped (no text, or about a series), "
+          "%d alias matches without the console in the text" %
+          (sum(1 for k in recs if k[0] == "U"), sum(1 for k in recs if k[0] == "W"),
+           dropped, unconfirmed), file=sys.stderr)
+    with open(os.path.join(outdir, "gamedb.txt"), "w", encoding="utf-8") as f:
+        for k in sorted(recs):
+            f.write("%s\t%s\n" % (k, recs[k]))
+
+
 def main():
+    if os.environ.get("GAMEDB_REDO_BLURBS"):
+        return redo_blurbs(sys.argv[1] if len(sys.argv) > 1 else ".")
     outdir = sys.argv[1] if len(sys.argv) > 1 else "."
     cache = os.path.join(outdir, "cache")
     os.makedirs(cache, exist_ok=True)
@@ -378,7 +487,7 @@ def main():
         games = parse_dat(text)
         wd = wikidata(qid, cache) if qid else []
         index = {}
-        for label, art in wd:
+        for label, art, _kind in wd:
             k = title_key(label)
             if k not in index or article_rank(art) < article_rank(index[k]):
                 index[k] = art

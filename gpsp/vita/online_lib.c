@@ -32,6 +32,7 @@
 #include "online_lib.h"
 #include "ui_host_hooks.h"
 #include "zip_rom.h"
+#include "disc_id.h"
 #include "../psp/room_label.h"
 
 enum { OL_GBA = 0, OL_GB = 1,         /* the family of files that can match: found by a header's code */
@@ -44,7 +45,7 @@ static struct
 {
    int  active;
    int  family;                       /* OL_GBA / OL_GB                     */
-   char sega[4];                      /* OL_SEGA: "md" "sms" "sg"            */
+   char sega[4];                      /* OL_SEGA: "md" "sms" "sg" "scd"      */
    char game[9];
    char rom[9];
    int  root;                         /* 0 = g_app_rom_dir, 1.. = extras    */
@@ -95,7 +96,7 @@ int online_lib_begin(const char *console, const char *game, const char *rom)
       G.family = OL_SNES;
    else if (!strcmp(console, "ws") || !strcmp(console, "wsc"))
       G.family = OL_WS;
-   else if (!strcmp(console, "md") || !strcmp(console, "sms") || !strcmp(console, "sg"))   /* not "gg": one controller, no Two players */
+   else if (!strcmp(console, "md") || !strcmp(console, "sms") || !strcmp(console, "sg") || !strcmp(console, "scd"))   /* not "gg": one controller, no Two players */
    {
       G.family = OL_SEGA;                /* md.bin's Two players: the whole file's CRC, as for the SNES */
       snprintf(G.sega, sizeof(G.sega), "%s", console);
@@ -207,7 +208,8 @@ static int pad_ext_ok(const char *path)
    if (G.family == OL_SNES)
       return ext_is(path, ".sfc") || ext_is(path, ".smc");
    if (G.family == OL_SEGA)
-      return !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "sg") ? (ext_is(path, ".sg") || ext_is(path, ".sc"))
+      return !strcmp(G.sega, "scd") ? (ext_is(path, ".cue") || ext_is(path, ".chd") || ext_is(path, ".iso"))
+           : !strcmp(G.sega, "sms") ? ext_is(path, ".sms") : !strcmp(G.sega, "sg") ? (ext_is(path, ".sg") || ext_is(path, ".sc"))
            : ext_is(path, ".md") || ext_is(path, ".gen") || ext_is(path, ".smd") || ext_is(path, ".bin") || ext_is(path, ".68k");
    return ext_is(path, ".ws") || ext_is(path, ".wsc");
 }
@@ -215,11 +217,14 @@ static int pad_ext_ok(const char *path)
 /* The id of the file at `path` as 8 upper-case hex digits; 1 = read, 0 = not a game of this family. */
 static int pad_id_of(const char *path, char out[9])
 {
-   FILE *f = fopen(path, "rb");
+   FILE *f;
    uint8_t buf[8192];
    long size, from = 0, upto;
    uint32_t crc = 0;
    size_t n;
+   if (G.family == OL_SEGA && !strcmp(G.sega, "scd"))
+      return disc_game_id(path, out, ol_crc);         /* a Sega CD disc: its first sector (disc_id.h) */
+   f = fopen(path, "rb");
    if (!f)
       return 0;
    if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0)

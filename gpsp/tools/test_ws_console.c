@@ -7,7 +7,7 @@
 
 int main(void)
 {
-   assert(FE_CONSOLE_WSWAN == 5 && FE_CONSOLE_COUNT == 10);
+   assert(FE_CONSOLE_WSWAN == 5 && FE_CONSOLE_COUNT == 11);
    assert(ui_rom_matches_console("Game.ws", FE_CONSOLE_WSWAN));
    assert(ui_rom_matches_console("Game.WS", FE_CONSOLE_WSWAN));
    assert(ui_rom_matches_console("Colour.wsc", FE_CONSOLE_WSWAN));

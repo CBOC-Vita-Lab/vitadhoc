@@ -763,7 +763,7 @@ static int mf_header_blurb(const menu_load_job *job, char out[400])
    if (gamedb_get(key, size, sizeof(size)) &&
        (uint64_t)st.st_size * 2 >= strtoul(size, NULL, 10) &&
        gamedb_name_by_code(code, name, sizeof(name)))
-      gamedb_blurb(name, out, 400);
+      gamedb_blurb_sys('A', name, out, 400);
    return mf_cancelled() ? ML_CANCELLED : ML_OK;
 }
 static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
@@ -856,6 +856,7 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
                : job->console == FE_CONSOLE_MD ? 'I'
                : job->console == FE_CONSOLE_SMS ? 'J'
                : job->console == FE_CONSOLE_GG ? 'K' : job->console == FE_CONSOLE_SG ? 'L'
+               : job->console == FE_CONSOLE_SCD ? 'M'
                : job->console == FE_CONSOLE_GB ? 'B' : 'A';
       char named[256];
    if (!gamedb_blurb_sys(sys, job->stem, out->blurb, sizeof(out->blurb)))
@@ -868,7 +869,7 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
       if (sys == 'J' && gamedb_name_loose('K', job->stem, named, sizeof(named)) &&
           gamedb_blurb_sys('K', named, out->blurb, sizeof(out->blurb)))
          goto blurb_done;          /* a Game Gear game under a .sms name */
-      if (job->console >= FE_CONSOLE_MD && job->console < FE_CONSOLE_COUNT)
+      if (job->console >= FE_CONSOLE_MD && job->console < FE_CONSOLE_SCD)   /* (a disc has no cartridge checksum) */
       {
          /* a Sega file the name does not say (a copy named anything, an SMD
           * file): the cartridge's own checksum, as the catalogue has it */

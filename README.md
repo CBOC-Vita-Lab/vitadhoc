@@ -29,6 +29,9 @@ are what we built and aim for, not measured results.
 - **Four Sega consoles.** Genesis / Mega Drive, Master System, Game Gear and
   SG-1000 each get their own shelf, with box art, Continue, ten state slots,
   cheats, rewind, fast forward and RetroAchievements.
+- **Sega CD / Mega CD** as its own shelf, with box art, Continue, ten state
+  slots, rewind, fast forward, cheats, RetroAchievements and two players over
+  the link. Needs your own Sega CD BIOS; plays `.cue`, `.iso` and `.chd` discs.
 - **Play together, anywhere.** Host a game, share a five-character code, and
   your friend joins from any home network. No router settings, no accounts.
 - **Two players on every two-player console.** GBA and Game Boy link cables,

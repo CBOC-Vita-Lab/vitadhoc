@@ -175,6 +175,7 @@
 #include "transport_lan.h"
 #include "transport_vadhoc.h"
 #include "upnp_igd.h"
+#include "disc_id.h"
 
 /* The room kinds are one vocabulary in three headers. */
 typedef char link_kinds_agree[((int)LAN_KIND_GBA_WIRELESS == (int)ROOM_ADAPTER &&
@@ -3622,6 +3623,8 @@ const char *link_snes_console_of_file(const char *rom_path)
       return "gg";
    if (dot && (!strcasecmp(dot, ".sg") || !strcasecmp(dot, ".sc")))
       return "sg";
+   if (dot && (!strcasecmp(dot, ".cue") || !strcasecmp(dot, ".chd") || !strcasecmp(dot, ".iso")))
+      return "scd";
    return "snes";
 }
 
@@ -3636,6 +3639,8 @@ const char *link_snes_console_name(const char *id)
       return "Game Gear";
    if (id && !strcmp(id, "sg"))
       return "SG-1000";
+   if (id && !strcmp(id, "scd"))
+      return "Sega CD";
    return "SNES";
 }
 
@@ -3789,10 +3794,15 @@ void link_snes_draw(void)
    ui_linking_draw(&v);
 }
 
+static uint32_t disc_crc(uint32_t c, const uint8_t *p, size_t n) { return (uint32_t)fe_crc32(c, p, n); }
+
 /* The game id of a SNES file, as online_lib.c computes it for a library match. */
 int link_snes_game_id(const char *rom_path, char out[9])
 {
-   FILE *f = rom_path ? fopen(rom_path, "rb") : NULL;
+   FILE *f;
+   if (disc_is_image(rom_path))          /* a Sega CD disc: its first sector (disc_id.h) */
+      return disc_game_id(rom_path, out, disc_crc);
+   f = rom_path ? fopen(rom_path, "rb") : NULL;
    uint8_t buf[8192];
    uint32_t crc = 0;
    long size, from = 0;

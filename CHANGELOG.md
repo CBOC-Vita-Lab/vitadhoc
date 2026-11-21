@@ -14,6 +14,13 @@ and in emulators; none of it has run on a real Vita yet (see
   Starred, Recent, play time, Continue, ten state slots with pictures, cheats,
   patches and RetroArch save import, like the Super NES. They play in their
   own program (`md.bin`).
+- **Sega CD / Mega CD** is its own console in the list ("Sega CD"), played by
+  the same Sega program. Discs: `.cue` + `.bin`, `.iso` and `.chd`, with audio
+  tracks in raw, wav or Ogg; they are read from storage as the game runs. It
+  needs your own Sega CD BIOS (see INSTALL), which VitAdhoc cannot include.
+  Continue, ten states, rewind, fast forward, cheats, RetroAchievements, wide
+  view, smoothing and Two players work as on the Genesis. Saves (internal
+  backup RAM and the optional RAM cartridge, a new setting) are kept per game.
 - **Every Sega game gets the full treatment**: rewind, fast forward, the same
   picture choices as every other console, RetroAchievements (with Hardcore),
   and a remappable pad (Genesis A / B / C on Square / Cross / Circle, X / Y / Z

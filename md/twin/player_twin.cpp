@@ -1456,7 +1456,9 @@ static int find_changing_address(const std::string &con, const char *rom, unsign
 	}
 	md_host_unload();
 	int best = -1, cnt = 0;
-	for (unsigned k = 0; k < top; k++) if (changes[k] > cnt) { cnt = changes[k]; best = (int) k; }
+	/* the Sega CD stand-in has bytes that change on every frame (the achievement test's "changed" condition does not fire on those: a rule of rcheevos'
+	 * runtime, the same on every console); take the busiest byte that is not one of them */
+	for (unsigned k = 0; k < top; k++) if (changes[k] > cnt && (console != 9 || changes[k] < 150)) { cnt = changes[k]; best = (int) k; }
 	if (best >= 0) *addr = (unsigned) best;
 	fprintf(stderr, "ra: address %06x changes in %d of 179 frames (console id %d)\n", best < 0 ? 0 : (unsigned) best, cnt, console);
 	return cnt >= 20 ? console : 0;

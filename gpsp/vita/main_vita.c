@@ -643,6 +643,7 @@ static fe_console_t console_for(const char *path)
    if (has_ext(path, ".sms")) return FE_CONSOLE_SMS;
    if (has_ext(path, ".gg"))  return FE_CONSOLE_GG;
    if (has_ext(path, ".sg") || has_ext(path, ".sc")) return FE_CONSOLE_SG;
+   if (has_ext(path, ".cue") || has_ext(path, ".chd") || has_ext(path, ".iso")) return FE_CONSOLE_SCD;   /* a disc: Sega CD */
    return FE_CONSOLE_GBA;
 }
 
@@ -849,7 +850,7 @@ static void snes_ra_save(const char *rom_path, const char *save, char *out,
 /* The launch files of the two players: snes.ini (snes.bin) and, for the Sega
  * consoles (2.0), md.ini / sms.ini / gg.ini / sg.ini (md.bin; ui_vita_md.h).
  * The one written for a start is the only one left on the card. */
-static const char *const k_launch_ids[] = { "snes", "md", "sms", "gg", "sg" };
+static const char *const k_launch_ids[] = { "snes", "md", "sms", "gg", "sg", "scd" };
 
 /* `con` the console (FE_CONSOLE_SNES, or one of the four Sega ones), `game`
  * is what the player runs (the unpacked file of a zip), `save` its battery
@@ -1066,7 +1067,8 @@ static void player_session_collect(const char *pid)
    long secs;
    int have_report, save_changed = 0, save_error = 0;
    const int skind = !strcmp(pid, "snes") ? SS_KIND_SNES : !strcmp(pid, "md") ? SS_KIND_MD
-                   : !strcmp(pid, "sms") ? SS_KIND_SMS : !strcmp(pid, "gg") ? SS_KIND_GG : SS_KIND_SG;
+                   : !strcmp(pid, "sms") ? SS_KIND_SMS : !strcmp(pid, "gg") ? SS_KIND_GG
+                   : !strcmp(pid, "scd") ? SS_KIND_SCD : SS_KIND_SG;
    uint32_t now = (uint32_t)plat_wallclock(), started;
    if (path_fmt(lp, sizeof(lp), "%s/launch/%s.ini", g_app_root, pid) != 0 ||
        path_fmt(sp, sizeof(sp), "%s/launch/session.txt", g_app_root) != 0 ||
@@ -1163,7 +1165,7 @@ static const char *console_name(fe_console_t c)
         : c == FE_CONSOLE_SNES ? "SNES" : c == FE_CONSOLE_NES ? "NES"
         : c == FE_CONSOLE_WSWAN ? "WS" : c == FE_CONSOLE_MD ? "MD"
         : c == FE_CONSOLE_SMS ? "SMS" : c == FE_CONSOLE_GG ? "GG"
-        : c == FE_CONSOLE_SG ? "SG" : "GBA";
+        : c == FE_CONSOLE_SG ? "SG" : c == FE_CONSOLE_SCD ? "SCD" : "GBA";
 }
 
 /* ---- WonderSwan (VitAdhoc 1.4): the per-game Rotation / Vertical play /
@@ -2214,7 +2216,8 @@ static const char *const k_builtin_roots[] = {
    "ux0:data/RetroFlow/ROMS/Sega - Mega Drive - Genesis",
    "ux0:data/RetroFlow/ROMS/Sega - Master System - Mark III",
    "ux0:data/RetroFlow/ROMS/Sega - Game Gear",
-   "ux0:data/RetroFlow/ROMS/Sega - SG-1000"
+   "ux0:data/RetroFlow/ROMS/Sega - SG-1000",
+   "ux0:data/RetroFlow/ROMS/Sega - Mega-CD - Sega CD"
 };
 #define EXTRA_ROOT_MAX_LEN 200        /* leaves 119 bytes of a 319-byte name */
 
@@ -5187,7 +5190,7 @@ const char *ui_host_overlay_name(void)
    /* in the game list: what the console's own file would be */
    if (!g_overlay_rom[0] && g_sw.overlays)
    {
-      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg" };
+      static const char *const tag[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg", "scd" };
       char op[APP_PATH_CAP];
       int c = g_pcfg.console >= 0 && g_pcfg.console < FE_CONSOLE_COUNT ? g_pcfg.console : 0;
       if (path_fmt(op, sizeof(op), "%s/overlays/%s.png", g_app_root, tag[c]) == 0 &&
@@ -7319,7 +7322,7 @@ int main(int argc, char **argv)
           * to call back, so this is done now and brings the previous session's changes across */
          save_sync_game_start(save, note, sizeof(note));
          save_sync_heal_game(save, rom_path, console == FE_CONSOLE_MD ? SS_KIND_MD : console == FE_CONSOLE_SMS ? SS_KIND_SMS
-                                           : console == FE_CONSOLE_GG ? SS_KIND_GG : SS_KIND_SG, note, sizeof(note));
+                                           : console == FE_CONSOLE_GG ? SS_KIND_GG : console == FE_CONSOLE_SCD ? SS_KIND_SCD : SS_KIND_SG, note, sizeof(note));
          if (player_launch_write(console, game, save, rom_path, slot) != 0)
          {
             g_snes_lk = NULL;

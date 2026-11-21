@@ -325,7 +325,7 @@ void md_host_unload(void)
 	if (G.loaded) { ggenie_shutdown(); areplay_shutdown(); }
 	vdpw_stop();
 	audio_shutdown();
-	if (G.cd) { cdd_unload(); md_cd_wanted = 0; }
+	if (G.cd) { cdd_unload(); md_cd_wanted = 0; system_bios &= ~0x10; }      /* the core keeps the boot ROM it loaded: the next disc reads it again (it may be another BIOS) */
 	system_hw = 0;
 	G.cd = 0; G.cd_tracks = 0; G.cd_info[0] = 0; G.cd_bios_used[0] = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;

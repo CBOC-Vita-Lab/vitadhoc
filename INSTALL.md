@@ -40,7 +40,7 @@ The checker verifies listed bytes; it does not test game compatibility.
 2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`, then close it.
 3. Copy your games to `ux0:data/GBAdhoc/roms/`, or use a folder you already
    have (below).
-4. Start VitAdhoc again. Triangle opens the console list (alphabetical: Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega Genesis / Mega Drive, SG-1000, Super Nintendo, WonderSwan) and moves along it; Cross plays.
+4. Start VitAdhoc again. Triangle opens the console list (alphabetical: Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega CD / Mega CD, Sega Genesis / Mega Drive, SG-1000, Super Nintendo, WonderSwan) and moves along it; Cross plays.
 
 ### Transfer With VitaShell
 
@@ -94,7 +94,7 @@ ux0:data/RetroFlow/ROMS/Sega - SG-1000
 Every other folder directly inside `ux0:ROMS/` or `ux0:roms/` is read too
 (a `SNES ROM Collection` or `NES Games` folder, for example). The file ending
 decides the console, not the folder's name: `.gba`, `.gb`, `.gbc`, `.sfc` or
-`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`, `.md`, `.gen` or `.smd`, `.sms`, `.gg`, `.sg`. A `.bin` is a Genesis game only if its header says SEGA; any other `.bin` is left unlisted. NES and
+`.smc`, `.nes`, `.fds`, `.unf` or `.unif`, `.ws`, `.wsc` or `.pc2`, `.md`, `.gen` or `.smd`, `.sms`, `.gg`, `.sg`, and for Sega CD `.cue`, `.chd` or `.iso`. A `.bin` is a Genesis game only if its header says SEGA; any other `.bin` is left unlisted. NES and
 Famicom games go in `ux0:ROMS/NES/`, WonderSwan games in `ux0:ROMS/WS/`, or
 in any of these folders.
 
@@ -156,6 +156,7 @@ Beside each game, VitAdhoc keeps only its battery save:
 | NES / Famicom | `Game.srm` (the same name RetroArch uses) |
 | WonderSwan / Color | `Game.srm` (the same name RetroArch uses) |
 | Genesis, Master System, Game Gear, SG-1000 | `Game.srm` (the same name RetroArch uses) |
+| Sega CD | `Game.srm` (VitAdhoc's own layout: backup RAM, then the RAM cartridge; not a RetroArch `.brm`) |
 
 Everything else VitAdhoc makes for a game goes under `ux0:data/GBAdhoc/`:
 
@@ -174,6 +175,15 @@ NES and WonderSwan games keep their states under
 `ux0:data/GBAdhoc/states/nes/` and `states/ws/`, like the
 other consoles, and VitAdhoc keeps a copy of a save before it first writes over
 it.
+
+**Sega CD games** (`.cue` with its `.bin` files, `.iso` or `.chd`) need a Sega CD
+BIOS, which VitAdhoc cannot include: put your own dump in
+`ux0:data/GBAdhoc/bios/` or next to the game. It is recognised by its content,
+so the usual names work: `us_scd1_9210.bin` (USA), `eu_mcd1_9210.bin` (Europe),
+`jp_mcd1_9112.bin` (Japan), also the `us_scd2_9303.bin`, `eu_mcd2_9303.bin`
+and `jp_mcd2_921222.bin` versions. Without one the game says so and returns
+to the library. Keep the `.cue` and its `.bin` files together in one folder
+(for example `ux0:ROMS/SegaCD/`); a lone `.bin` is not listed.
 
 **Famicom Disk System games** (`.fds`) need the disk system's BIOS, which VitAdhoc
 cannot include: put your own `disksys.rom` next to the game or in

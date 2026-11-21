@@ -53,7 +53,8 @@ static inline const char *sidecar_console_dir(fe_console_t console)
           console == FE_CONSOLE_MD ? "md" :              /* md.bin's (pk_states) */
           console == FE_CONSOLE_SMS ? "sms" :
           console == FE_CONSOLE_GG ? "gg" :
-          console == FE_CONSOLE_SG ? "sg" : "gba";
+          console == FE_CONSOLE_SG ? "sg" :
+          console == FE_CONSOLE_SCD ? "scd" : "gba";
 }
 
 /* The cover thumbnails (artfetch.h ART_THUMB_SUFFIX) live here, below the app

@@ -18,7 +18,8 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000 | Genesis Plus GX in its own program (`md.bin`, non-commercial licence), one player for the four consoles; the app's library, Starred, Recent, play time, Continue, ten state slots, cheats from the bundled database, RetroArch save import and crash protection work as for the Super NES; saves are `Game.srm` beside the game |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
-| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries up to 32 MiB |
+| Sega CD / Mega CD | The same Sega player (`md.bin`) with Genesis Plus GX's disc code, libchdr and tremor; your own Sega CD BIOS is needed (not included); `.cue`+`.bin`, `.iso`, `.chd`; all Genesis features, two players, RetroAchievements; saves are `Game.srm` (backup RAM + RAM cartridge) |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
 | Extra folders | Up to 24; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |

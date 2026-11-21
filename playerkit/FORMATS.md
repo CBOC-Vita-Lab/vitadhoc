@@ -229,7 +229,7 @@ knows and keeps the rest.
 ### The Sega player (`md.bin`): console ids, extra keys, settings files
 
 One program, four consoles: the launch file's `console=` is `md` (Mega Drive / Genesis, extensions `.md .gen .smd .bin`), `sms` (Master
-System, `.sms`), `gg` (Game Gear, `.gg`) or `sg` (SG-1000, `.sg .sc`). The app writes `launch/<console>.ini`, so up to four launch files exist
+System, `.sms`), `gg` (Game Gear, `.gg`) `sg` (SG-1000, `.sg .sc`) or `scd` (Sega CD, `.cue .chd .iso`). The app writes `launch/<console>.ini`, so up to four launch files exist
 beside each other; the player takes the one whose `game=` is the argument it was started with, else the newest. A game file is run as
 the console the app names, whatever its extension (a Game Gear game that carries an `.sms` name is started with `console=gg`); without a
 launch file the extension decides. Everything keyed by console (states, look memory, controls, settings, backups, the log) uses the
@@ -258,6 +258,8 @@ look/<console>/<xx>/<game>.look   look memory (the ladder is the pixel art scale
 
 The battery save of a Mega Drive game is the 64 KiB-capped cartridge RAM the core reports (`md_host_sram_size()` bytes), the save of the
 8 bit consoles the cartridge's RAM; both are what RetroArch's Genesis Plus GX core writes, so a `.srm` moves between the two unchanged.
+
+Sega CD (`console=scd`): `game=` is the `.cue`, `.chd` or `.iso`; the player needs a BIOS (`<root>/../bios/` and the game's folder, found by content, see md/README.md). Extra key `ram_cart=0..6` in `player.ini` (off, 16K .. 512K). The save `saves/<game>.srm` is the 8192-byte backup RAM followed by the RAM cartridge when one is on (not a RetroArch `.brm`). A state is about 1.02 MB. Link identity: the 2048-byte header sector plus the disc and BIOS CRCs; the room's game id is the CRC32 of the first sector's user data (the SHA-1 field of the header for `.chd`).
 
 ### `link.*` (Two players)
 

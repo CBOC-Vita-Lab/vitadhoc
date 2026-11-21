@@ -1075,9 +1075,9 @@ static int warm_one(const char *name)
 
 /* 0 GBA, 1 GB, 2 GBC, 3 SNES, 4 NES, 5 Famicom Disk System, 6 WonderSwan,
  * 7 WonderSwan Color, 8 Genesis / Mega Drive, 9 Master System, 10 Game Gear,
- * 11 SG-1000 (gamedb_sega.h has the same folder names; the game database's
- * system letters are A..L in this order) */
-static const char *const SYS[12] = {
+ * 11 SG-1000, 12 Sega CD (gamedb_sega.h has the same folder names; the game
+ * database's system letters are A..M in this order) */
+static const char *const SYS[13] = {
    "Nintendo%20-%20Game%20Boy%20Advance", "Nintendo%20-%20Game%20Boy",
    "Nintendo%20-%20Game%20Boy%20Color",
    "Nintendo%20-%20Super%20Nintendo%20Entertainment%20System",
@@ -1086,7 +1086,8 @@ static const char *const SYS[12] = {
    "Bandai%20-%20WonderSwan", "Bandai%20-%20WonderSwan%20Color",
    "Sega%20-%20Mega%20Drive%20-%20Genesis",
    "Sega%20-%20Master%20System%20-%20Mark%20III",
-   "Sega%20-%20Game%20Gear", "Sega%20-%20SG-1000" };
+   "Sega%20-%20Game%20Gear", "Sega%20-%20SG-1000",
+   "Sega%20-%20Mega-CD%20-%20Sega%20CD" };
 
 typedef struct
 {
@@ -1192,6 +1193,12 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
       a->sys[0] = 11;              /* SG-1000 */
       a->nsys = 1;
    }
+   else if (ext && (!strcasecmp(ext, ".cue") || !strcasecmp(ext, ".chd") || !strcasecmp(ext, ".iso")))
+   {
+      a->sys[0] = 12;              /* Sega CD: a disc has no cartridge checksum: by its name only */
+      a->nsys = 1;
+      a->no_crc = 1;
+   }
    else if (ext && !strcasecmp(ext, ".gbc"))
    {
       a->sys[0] = 2; a->sys[1] = 1;
@@ -1226,8 +1233,8 @@ static void candidates_init(af_candidates *a, const char *path, const char *name
     * file may be (gamedb N records) */
    if (a->ncand < 2)
    {
-      static const char TAG[12] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
-                                    'I', 'J', 'K', 'L' };
+      static const char TAG[13] = { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+                                    'I', 'J', 'K', 'L', 'M' };
       int k;
       for (k = 0; k < a->nsys && a->ncand < 3; k++)
          if (gamedb_name_loose(TAG[a->sys[k]], a->stem, a->cand[a->ncand], AF_NAME_CAP))

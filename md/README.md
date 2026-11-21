@@ -39,8 +39,20 @@ Genesis Plus GX's own PS Vita build (`psp2/Makefile`, read, not vendored) uses `
 - FM: the discrete YM2612 by default (`fm` option: ASIC, enhanced or Nuked on request, never the default). Sound is made at 48 kHz by the core.
 - Region from the header (field at 0x1F0) with Auto / USA / Europe / Japan NTSC / Japan PAL; true 50 Hz (49.7015 Hz) for PAL.
 - Exact save-state round trip (picture, sound and machine) on the Mega Drive and Master System; see `core/PROVENANCE.md`.
-- Sega CD, 32X and Pico are not supported. The Sega CD code is compiled out of the load path behind `MD_SEGACD` (OFF).
-- Largest ROM: 10 MB (the plan said 32 MB; only Sega CD images needed that).
+- Sega CD / Mega CD is supported (see "Sega CD" below). 32X and Pico are not supported.
+- Largest cartridge ROM: 10 MB. Discs are streamed from storage and have no size limit.
+
+## Sega CD
+
+Console id `scd`, shown as "Sega CD / Mega CD" in the library. Built with `MD_SEGACD`, `USE_LIBCHDR`, `USE_LIBTREMOR` (see `core/PROVENANCE.md`).
+
+- BIOS: the player's own, never bundled. Looked for by content (a 128 KB image whose header is a valid Sega CD BIOS) in `ux0:data/GBAdhoc/bios/` and next to the game, then by the usual names (`us_scd1_9210.bin`, `eu_mcd1_9210.bin`, `jp_mcd1_9112.bin`, and the 2.xx / Wondermega variants). Without one the game does not start and a message names the file and the folders.
+- Discs: `.cue` + `.bin` (single or one file per track), `.iso`, `.chd` (libchdr: zlib, lzma, zstd, flac), audio tracks as raw, wav or Ogg (tremor). Streamed, not loaded into memory. No zip. A cooked `.bin` without a `.cue` is not listed (use `.iso`).
+- Saves: internal backup RAM (8 KB) and the optional RAM cartridge (setting "RAM cartridge", Off to 512 KB) are saved per game as one file. RetroArch `.brm` files use a different layout; no import.
+- Features as on Genesis: Continue, 10 states (about 1 MB each), rewind, fast forward, cheats (work RAM only), RetroAchievements (console 9, disc header hash), wide view, smoothing, two players over the link. A linked game pins region and RAM cartridge so both sides match.
+- The core simulates 99 audio tracks for a disc that has only a data track (upstream behaviour).
+
+What the tests cover (host x86 and qemu armhf, synthetic discs and a test-only stand-in BIOS): disc readers byte for byte, BIOS validation, no-BIOS answer, save RAM, state round trip, RA reads, armhf equals x86. What needs the owner's own BIOS and a real disc on a Vita: booting a real game, real CD timing and speed, real BIOS save format, Ogg audio accuracy, state transfer over a real link. Nothing here has run on a Vita.
 
 ## Threads (performance)
 

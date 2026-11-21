@@ -9,9 +9,15 @@
 int main(void)
 {
    assert(FE_CONSOLE_WSWAN == 5 && FE_CONSOLE_MD == 6 && FE_CONSOLE_SMS == 7 && FE_CONSOLE_GG == 8 &&
-          FE_CONSOLE_SG == 9 && FE_CONSOLE_COUNT == 10);
+          FE_CONSOLE_SG == 9 && FE_CONSOLE_COUNT == 11);
    /* Genesis: four spellings (.bin is a candidate; the scan asks the bytes) */
    assert(ui_rom_matches_console("Sonic.md", FE_CONSOLE_MD));
+   assert(ui_rom_matches_console("Game.cue", FE_CONSOLE_SCD));
+   assert(ui_rom_matches_console("Game.CHD", FE_CONSOLE_SCD));
+   assert(ui_rom_matches_console("Game.iso", FE_CONSOLE_SCD));
+   assert(!ui_rom_matches_console("Game.bin", FE_CONSOLE_SCD));
+   assert(!ui_rom_matches_console("Game.cue", FE_CONSOLE_MD));
+   assert(ui_sega_letter(FE_CONSOLE_SCD) == 'M');
    assert(ui_rom_matches_console("Sonic.GEN", FE_CONSOLE_MD));
    assert(ui_rom_matches_console("Sonic.smd", FE_CONSOLE_MD));
    assert(ui_rom_matches_console("Sonic (USA).bin", FE_CONSOLE_MD));

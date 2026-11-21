@@ -24,7 +24,7 @@ the Vita's TLS client then send byte-identical requests):
 - STRINGS THE SERVICE STORES OR RETURNS never contain `"`, `\` or bytes outside 0x20..0x7E: `title` and `nick`
   are sanitised on input (other bytes -> `?`, trimmed, cut to length). So the client's JSON reader need not
   handle escapes (it rejects a body that has a backslash).
-- Text fields: `nick` 1..15, `title` 0..23, `game` 1..8 of `[A-Z0-9]`, `console` one of `gba gb gbc nes snes ws md sms sg` (not `gg`: the Game Gear has no two-player mode),
+- Text fields: `nick` 1..15, `title` 0..23, `game` 1..8 of `[A-Z0-9]`, `console` one of `gba gb gbc nes snes ws md sms sg scd` (not `gg`: the Game Gear has no two-player mode),
   `compat` 8 lower-case hex digits, `kind` one of 0 (GBA Wireless Adapter), 1 (GBA Link Cable), 2 (GB/GBC
   cable), 4 (share game data), 5 (Two players: one shared NES, WonderSwan or Super NES game).
 - Addresses: `"a.b.c.d:port"` or `""`. `pub` must be a public IPv4 address (not 0/8, 10/8, 100.64/10, 127/8,

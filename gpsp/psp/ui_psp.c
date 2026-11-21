@@ -312,6 +312,10 @@ static const ui_skin SKIN_DARK[FE_CONSOLE_COUNT] = {
    { "SG-1000", "SG-1000", "sg", RGB565(0xFF, 0x9B, 0x3D),
      { RGB565(0x3F, 0x23, 0x08), RGB565(0xA8, 0x60, 0x1F),
        RGB565(0xFF, 0x9B, 0x3D), 0, 0 }, 3, 0 },
+   /* the Sega CD: lime, the hue of its logo's disc glow; none of the others has it */
+   { "Sega CD", "Sega CD / Mega CD", "scd", RGB565(0xC8, 0xE0, 0x3C),
+     { RGB565(0x2B, 0x33, 0x0A), RGB565(0x7C, 0x96, 0x1C),
+       RGB565(0xC8, 0xE0, 0x3C), 0, 0 }, 3, 0 },
 };
 
 /* Light accents are DARK: they are read as text on the badge's pale plate
@@ -348,6 +352,9 @@ static const ui_skin SKIN_LIGHT[FE_CONSOLE_COUNT] = {
    { "SG-1000", "SG-1000", "sg", RGB565(0x9A, 0x4A, 0x00),
      { RGB565(0x3F, 0x23, 0x08), RGB565(0xA8, 0x60, 0x1F),
        RGB565(0xFF, 0x9B, 0x3D), 0, 0 }, 3, 0 },
+   { "Sega CD", "Sega CD / Mega CD", "scd", RGB565(0x55, 0x66, 0x00),
+     { RGB565(0x2B, 0x33, 0x0A), RGB565(0x7C, 0x96, 0x1C),
+       RGB565(0xC8, 0xE0, 0x3C), 0, 0 }, 3, 0 },
 };
 
 static const ui_skin *skin_of(int console)

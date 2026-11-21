@@ -131,6 +131,20 @@ sharing).
     it again; the same limit as on the Super NES and NES.
   - The cost ladder (halve the strips, then none, in Auto) is the safety net
     if a game needs the time.
+- **Sega CD: the least tested thing in 2.0.** No Sega CD BIOS or commercial
+  disc was available, so no real game has booted. Checked on the PC twin and
+  emulated ARM with synthetic discs and a stand-in BIOS made for the tests:
+  disc readers (cue, iso, chd, audio), save RAM, states, achievements memory
+  and that ARM equals PC. Not checked: a real game, real CD loading speed on
+  a Vita, Ogg audio accuracy, and a state of about 1 MB sent over a real
+  link. A game that needs the real BIOS timing may misbehave.
+  - You need your own BIOS (INSTALL lists the names). No BIOS: a message and
+    back to the library.
+  - A disc with only a data track shows 99 audio tracks (the core's own
+    behaviour). A lone `.bin` without `.cue` is not listed; use `.iso`. No zip.
+  - Saves are not RetroArch `.brm` files; they cannot be exchanged.
+  - Cheats change main work RAM only; no ROM patches for discs.
+  - In Two players the region and RAM cartridge are fixed (USA/auto, off) on both sides.
 - **Smooth 50 Hz** (PAL games speed, on by default) is judged by arithmetic and
   the twin, not by eye on a Vita. If the mixed refresh looks wrong in a game,
   choose True 50 Hz.

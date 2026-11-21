@@ -213,7 +213,7 @@ const PadModel *model_by_name(const std::string &c)
 {
 	if (c == "snes") return &model_snes();
 	if (c == "nes") return &model_nes();
-	if (c == "md") return &model_md();
+	if (c == "md" || c == "scd") return &model_md();      /* the Sega CD plays with the Mega Drive pad */
 	if (c == "sms") return &model_sms();
 	if (c == "gg") return &model_gg();
 	if (c == "sg") return &model_sg();

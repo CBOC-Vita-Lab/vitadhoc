@@ -876,11 +876,11 @@ void pcfg_net_addr_push(const char *addr)
 pcfg_display g_pdisp[FE_CONSOLE_COUNT];
 static int g_pdisp_live = FE_CONSOLE_GBA;
 
-static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg" };
+static const char *const pdisp_tag_lc[FE_CONSOLE_COUNT] = { "gba", "gb", "gbc", "snes", "nes", "ws", "md", "sms", "gg", "sg", "scd" };
 
 const char *pcfg_console_tag(int console)
 {
-   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES", "WS", "MD", "SMS", "GG", "SG" };
+   static const char *const tag[FE_CONSOLE_COUNT] = { "GBA", "GB", "GBC", "SNES", "NES", "WS", "MD", "SMS", "GG", "SG", "SCD" };
    return (console >= 0 && console < FE_CONSOLE_COUNT) ? tag[console] : "GBA";
 }
 

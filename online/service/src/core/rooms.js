@@ -9,7 +9,7 @@ import { ApiError, b64url, hex, randomBytes, randomInt, isInt } from './util.js'
 export const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const CODE_LEN = 5;
 // every console with Two players / a link. 'gg' is not here: the Game Gear has one controller and no link cable in the core, so a Game Gear room is refused.
-export const CONSOLES = ['gba', 'gb', 'gbc', 'nes', 'snes', 'ws', 'md', 'sms', 'sg'];
+export const CONSOLES = ['gba', 'gb', 'gbc', 'nes', 'snes', 'ws', 'md', 'sms', 'sg', 'scd'];
 export const KINDS = [0, 1, 2, 4, 5];
 
 export const SCHEMA = [
@@ -114,7 +114,7 @@ export function parseDesc(body, host, cfg) {
   if (host) {
     if (!isInt(need('kind'), 0, 5) || !KINDS.includes(body.kind)) throw bad('kind must be 0, 1, 2, 4 or 5', 'kind');
     d.kind = body.kind;
-    if (!CONSOLES.includes(need('console'))) throw bad('console must be one of gba gb gbc nes snes ws md sms sg', 'console');
+    if (!CONSOLES.includes(need('console'))) throw bad('console must be one of gba gb gbc nes snes ws md sms sg scd', 'console');
     d.console = body.console;
     if (typeof need('game') !== 'string' || !/^[A-Z0-9]{1,8}$/.test(body.game)) throw bad('game must be 1 to 8 of A-Z 0-9', 'game');
     d.game = body.game;

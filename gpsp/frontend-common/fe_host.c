@@ -8226,6 +8226,21 @@ static void run_frame(void)
    rw_latch_input();
 #endif
    retro_run();
+#if defined(__linux__)
+   {  /* GBADHOC_AHEAD_GBA_PROBE=1 (twin only, no output of its own): what a run-ahead frame would cost on the GBA -- the state copy out, a second
+       * frame, the state copy back (docs/PERFORMANCE.md "GBA: Quick response is not offered"); the sound of that second frame is not muted */
+      static int probe = -1;
+      static void *img;
+      if (probe < 0)
+         probe = getenv("GBADHOC_AHEAD_GBA_PROBE") ? 1 : 0;
+      if (probe && (img || (img = malloc(GBA_STATE_MEM_SIZE))))
+      {
+         gba_save_state(img);
+         retro_run();
+         gba_load_state(img);
+      }
+   }
+#endif
    }
    fe_host_guest_fault_check();
 

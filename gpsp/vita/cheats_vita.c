@@ -345,7 +345,7 @@ static int sega_code_kind(const char *s, fe_console_t console)
          s++;
       if (!n)
          continue;
-      if (console == FE_CONSOLE_MD)
+      if (console == FE_CONSOLE_MD || console == FE_CONSOLE_SCD)    /* a disc's codes poke work RAM: the Mega Drive's AAAAAA:VVVV */
       {
          if (n != 11 || t[6] != ':')
             return 0;
@@ -950,6 +950,8 @@ static int rom_crc(const char *rom_path, fe_console_t console,
    uint32_t crc = 0;
    size_t got;
 
+   if (console == FE_CONSOLE_SCD)
+      return -1;               /* a disc has no cartridge checksum: its codes are found by name */
    f = fopen(rom_path, "rb");
    if (!f)
       return -1;
@@ -1137,7 +1139,7 @@ static int db_find(const char *rom_path, fe_console_t console, int *match)
    if (is_sega(console))
    {
       /* the cartridge's CRC-32 as the catalogue has it (an SMD file de-interleaved; no copier header), then its name */
-      sys = (char)('I' + (console - FE_CONSOLE_MD));
+      sys = console == FE_CONSOLE_SCD ? 'M' : (char)('I' + (console - FE_CONSOLE_MD));
       if (rom_crc(rom_path, console, &crc) == 0 &&
           (game = cheatdb_find_crc(crc)) >= 0)
       {
@@ -1650,7 +1652,7 @@ const char *cheats_format_hint(fe_console_t console)
       return "6 or 8 letters (Game Genie) or AAAA:VV (RAM). + between codes.";
    if (console == FE_CONSOLE_WSWAN)
       return "AAAAA:VV: a RAM address and a byte, in hex. + between codes.";
-   if (console == FE_CONSOLE_MD)
+   if (console == FE_CONSOLE_MD || console == FE_CONSOLE_SCD)
       return "AAAAAA:VVVV: an address and a word, in hex. + between codes.";
    if (console >= FE_CONSOLE_SMS && console < FE_CONSOLE_COUNT)
       return "AAAA:VV or AAAA:VV:CC: an address, a byte and a compare byte, in hex.";

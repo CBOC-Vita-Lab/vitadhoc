@@ -854,8 +854,8 @@ static int set_path(char *dst, const char *src)
 
 static const char *kind_name(int k)
 {
-   static const char *const n[] = { "gba", "gb", "gbc", "snes", "nes", "wswan", "md", "sms", "gg", "sg" };
-   return k >= 0 && k < 10 ? n[k] : "?";
+   static const char *const n[] = { "gba", "gb", "gbc", "snes", "nes", "wswan", "md", "sms", "gg", "sg", "scd" };
+   return k >= 0 && k < 11 ? n[k] : "?";
 }
 
 /* "<dir of the game>" into dir (with its trailing slash), and the game's name

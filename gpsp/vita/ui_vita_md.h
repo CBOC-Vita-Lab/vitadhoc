@@ -17,10 +17,10 @@
 
 #define UI_SEGA_TWO_PLAYERS 1
 
-/* 1 for the four consoles md.bin plays. */
+/* 1 for the five consoles md.bin plays (the four cartridge ones and the Sega CD). */
 static inline int ui_console_is_sega(int console)
 {
-   return console >= FE_CONSOLE_MD && console <= FE_CONSOLE_SG;
+   return (console >= FE_CONSOLE_MD && console <= FE_CONSOLE_SG) || console == FE_CONSOLE_SCD;
 }
 
 /* 1 for a console a separate program plays (snes.bin or md.bin): rows that only an in-process core has are not for it. */
@@ -39,12 +39,13 @@ static inline int ui_sega_two_ok(int console)
 static inline const char *ui_sega_id(int console)
 {
    return console == FE_CONSOLE_MD ? "md" : console == FE_CONSOLE_SMS ? "sms"
-        : console == FE_CONSOLE_GG ? "gg" : console == FE_CONSOLE_SG ? "sg" : NULL;
+        : console == FE_CONSOLE_GG ? "gg" : console == FE_CONSOLE_SG ? "sg" : console == FE_CONSOLE_SCD ? "scd" : NULL;
 }
 
-/* The game database's system letter (gamedb.h): I Genesis, J Master System, K Game Gear, L SG-1000. */
+/* The game database's system letter (gamedb.h): I Genesis, J Master System, K Game Gear, L SG-1000, M Sega CD. */
 static inline char ui_sega_letter(int console)
 {
+   if (console == FE_CONSOLE_SCD) return 'M';
    return (char)('I' + (console - FE_CONSOLE_MD));
 }
 

@@ -548,7 +548,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 
 	/* 2. the battery save: a cut write is put back, then a newer RetroArch save is brought in */
 	recover_old(srm_);
-	if (!req_.retroarch_save.empty()) {
+	if (!req_.retroarch_save.empty() && !scd_) {          /* (a Sega CD save is the backup RAM and the RAM cartridge in one file: RetroArch keeps them apart) */
 		uint64_t ra_sz = 0, sv_sz = 0;
 		int64_t ra_t = 0, sv_t = 0;
 		if (file_exists(req_.retroarch_save, &ra_sz, &ra_t)) {
@@ -940,7 +940,7 @@ void MdPlayer::speed_start()
 
 /* ---- RetroAchievements ----------------------------------------------------------------------------------------------------- */
 
-uint32_t MdPlayer::ra_read(void *, uint32_t addr, uint8_t *out, uint32_t n) { uint32_t r = (uint32_t) md_host_ra_read(addr, out, n); static int c; if (c++ % 97 == 0) fprintf(stderr, "RAREAD %x %u -> %u %02x\n", addr, n, r, r ? out[0] : 0); return r; }
+uint32_t MdPlayer::ra_read(void *, uint32_t addr, uint8_t *out, uint32_t n) { return (uint32_t) md_host_ra_read(addr, out, n); }
 uint64_t MdPlayer::ra_now(void *ud) { return ((MdPlayer *) ud)->pf_->now_us(); }
 int MdPlayer::ra_online(void *) { return pk_ra_net_online(); }
 void MdPlayer::ra_log(void *ud, const char *line) { ((MdPlayer *) ud)->logf("ra: %s\n", line); }

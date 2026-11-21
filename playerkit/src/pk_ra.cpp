@@ -141,7 +141,7 @@ struct RaCb {
 			r->n_unlocked_ = s.num_unlocked_achievements;
 			/* leaderboards are Hardcore's too: a score is sent as one */
 			r->game_state_ = (s.num_core_achievements || rc_client_has_leaderboards(client)) ? 1 : -1;
-			r->log("ra_game ok=1 id=%u core=%u unsup=%u unlocked=%u hardcore=%d title=\"%s\"", g->id, s.num_core_achievements, s.num_unsupported_achievements,
+			r->log("ra_game ok=1 id=%u core=%u unlocked=%u hardcore=%d title=\"%s\"", g->id, s.num_core_achievements,
 			       s.num_unlocked_achievements, r->game_hardcore_, r->title_.c_str());
 			if (s.num_core_achievements) {
 				char t[96];

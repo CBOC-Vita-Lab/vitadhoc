@@ -314,6 +314,8 @@ int md_host_state_load_mem(const uint8_t *buf, size_t n);   /* 0 ok, 1 no game, 
  *                 achievements are written against: its reference emulator is this core under libretro, which hands out
  *                 work_ram as it is, and rcheevos does no swap. $010000-$01FFFF cartridge RAM (the save RAM buffer as held)
  *   Master System / Game Gear: $0000-$1FFF system RAM (Z80 $C000-$DFFF), $2000-$9FFF cartridge RAM (the save RAM buffer)
+ *   Sega CD:      $000000-$00FFFF 68000 work RAM (same byte order as Mega Drive), $010000-$08FFFF PRG-RAM (512 KB),
+ *                 $090000-$0AFFFF word RAM (2M mode: the first 128 KB), the sub-CPU side being the one the site's lists use
  *   SG-1000:      $0000-$03FF RAM ($C000), $0400-$1FFF extended RAM ($C400), $2000-$3FFF ($2000), $4000-$5FFF ($8000):
  *                 only what the cartridge really has is readable
  * Copies n bytes from addr into out; returns the number of bytes that were inside a window (a request is cut at the end of

@@ -209,7 +209,7 @@ void apu_load_timing(const byte *in)
 		cpu_timing.sweep_timer = apu_get32(&p) % 9; cpu_timing.sweep_shadow = apu_get32(&p) & 2047;
 		cpu_timing.sweep_enabled = apu_get32(&p) & 1; cpu_timing.sweep_negated = apu_get32(&p) & 1;
 		sq1_cur_pos = apu_get32(&p) & 8191; sq2_cur_pos = apu_get32(&p) & 8191;
-		wav_cur_pos = apu_get32(&p) & 65535; noi_cur_pos = apu_get32(&p) % snd_rate;
+		wav_cur_pos = apu_get32(&p) & 65535; noi_cur_pos = apu_get32(&p); if (noi_cur_pos > (dword)snd_rate) noi_cur_pos %= snd_rate; /* == snd_rate is a position the generator really holds */
 		sq1_sample = apu_get32(&p) & 7; sq2_sample = apu_get32(&p) & 7;
 		wav_index = apu_get32(&p) & 31; wav_sample = apu_get32(&p) & 15;
 		noi_sample = (int32_t)apu_get32(&p); noise_index = apu_get32(&p);

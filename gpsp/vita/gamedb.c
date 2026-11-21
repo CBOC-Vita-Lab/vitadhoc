@@ -351,26 +351,24 @@ void gamedb_title_key(const char *title, char *out, size_t cap)
    }
 }
 
-/* sys 0: the shared T records; a console's letter: its own U records first
- * (two games of one title with different articles, make_gamedb.py) */
+/* A description is filed per console (U<letter><title key>, make_gamedb.py): it
+ * is only the one of an article Wikidata lists for that console. */
 static int blurb_find(char sys, const char *name, char *out, size_t cap)
 {
    /* a file named the way people say it ("Pokemon - Emerald") misses the
     * word No-Intro adds: tried with each of them, and without */
    static const char *const more[4] = { "", " version", " edition", NULL };
    char base[256], key[300], art[256], wkey[300];
-   size_t off = sys ? 2 : 1;
    int t;
 
    db_ready();
    if (!name || !g_lines)
       return 0;
    gamedb_base_title(name, base, sizeof(base));
-   key[0] = sys ? 'U' : 'T';
-   if (sys)
-      key[1] = sys;
-   gamedb_title_key(base, key + off, sizeof(key) - 16);
-   if (!key[off])
+   key[0] = 'U';
+   key[1] = sys;
+   gamedb_title_key(base, key + 2, sizeof(key) - 16);
+   if (!key[2])
       return 0;
    for (t = 0; more[t]; t++)
    {
@@ -386,14 +384,27 @@ static int blurb_find(char sys, const char *name, char *out, size_t cap)
    return 0;
 }
 
-int gamedb_blurb(const char *name, char *out, size_t cap)
-{
-   return blurb_find(0, name, out, cap);
-}
-
 int gamedb_blurb_sys(char sys, const char *name, char *out, size_t cap)
 {
-   return (sys && blurb_find(sys, name, out, cap)) || blurb_find(0, name, out, cap);
+   /* the console's own games first, then the one it plays as well: a Game Boy
+    * game on the Color, a WonderSwan one on the Color, a Disk System game that
+    * is also on the NES, a Game Gear game in a .sms file */
+   const char *partner = sys == 'B' ? "C" : sys == 'C' ? "B" : sys == 'G' ? "H"
+                       : sys == 'H' ? "G" : sys == 'F' ? "E" : sys == 'J' ? "K" : "";
+   if (!sys)
+      return 0;
+   if (blurb_find(sys, name, out, cap))
+      return 1;
+   return *partner && blurb_find(*partner, name, out, cap);
+}
+
+int gamedb_blurb(const char *name, char *out, size_t cap)
+{
+   const char *c;
+   for (c = "ABCDEFGHIJKLM"; *c; c++)
+      if (blurb_find(*c, name, out, cap))
+         return 1;
+   return 0;
 }
 
 int gamedb_name_by_code(const char code[4], char *out, size_t cap)
@@ -495,6 +506,9 @@ static int md_kind_of(FILE *f, long size, const char *path)
    if (size < 0x104 || fseek(f, 0, SEEK_SET) != 0 ||
        fread(h, 1, sizeof(h), f) != sizeof(h))
       return GAMEDB_MD_NONE;
+   /* a Sega CD disc's data track (a cooked .bin or .iso) has the Genesis "SEGA" at 0x100 too, after "SEGADISCSYSTEM": it is a Sega CD game */
+   if (!memcmp(h, "SEGADISCSYSTEM  ", 16))
+      return GAMEDB_MD_CD;
    has_sega = !memcmp(h + 0x100, "SEGA", 4);
    smd_size = size >= 512 + 16384 && size % 16384 == 512;
    smd_mark = h[8] == 0xAA && h[9] == 0xBB;
@@ -721,6 +735,8 @@ int gamedb_md_head_ok(const unsigned char *h, unsigned n, unsigned long size)
    /* as md_kind_of for a ".bin" (no ".smd" leniency): plain, not 32X, or SMD with its marker */
    if (!h || n < 0x108 || size < 0x104)
       return 0;
+   if (!memcmp(h, "SEGADISCSYSTEM  ", 16))
+      return 0;                            /* a Sega CD disc */
    if (!memcmp(h + 0x100, "SEGA", 4))
       return memcmp(h + 0x100, "SEGA 32X", 8) != 0;
    return size >= 512 + 16384 && size % 16384 == 512 && h[8] == 0xAA && h[9] == 0xBB;

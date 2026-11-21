@@ -66,12 +66,13 @@ void gamedb_base_title(const char *name, char *out, size_t cap);
 void gamedb_title_key(const char *title, char *out, size_t cap);
 
 /* The lines about the game called `name` (a No-Intro name or a file name
- * without its extension): 1 and the text in out, or 0. */
+ * without its extension) on any console (the first that has one): 1 and the
+ * text in out, or 0. */
 int  gamedb_blurb(const char *name, char *out, size_t cap);
-/* The same for a game of console `sys` (the letters of gamedb_name_loose): a
- * title two consoles' games share with different articles ("Strider" for the
- * Genesis and the NES) has its own U record for the later console; any other
- * title is found as by gamedb_blurb. */
+/* The description of a game of console `sys` (the letters of gamedb_name_loose;
+ * M = Sega CD): only an article about that game on that console (or on the one
+ * it plays as well: B/C, G/H, F->E, J->K), else 0 and nothing is shown.  Two
+ * consoles' games of one title ("Strider") each get their own article. */
 int  gamedb_blurb_sys(char sys, const char *name, char *out, size_t cap);
 
 /* A GBA cartridge's header code (four characters at 0xAC) and a whole
@@ -114,7 +115,8 @@ int gamedb_sms_crc_cancel(const char *path, uint32_t *crc, int (*abort)(void));
 enum { GAMEDB_MD_NONE = 0,   /* not a Genesis ROM (no "SEGA" at 0x100, no SMD header) */
        GAMEDB_MD_PLAIN = 1,  /* "SEGA" at 0x100 */
        GAMEDB_MD_SMD = 2,    /* SMD, as above */
-       GAMEDB_MD_32X = 3 };  /* "SEGA 32X" at 0x100: a 32X ROM, which md.bin cannot run */
+       GAMEDB_MD_32X = 3,    /* "SEGA 32X" at 0x100: a 32X ROM, which md.bin cannot run */
+       GAMEDB_MD_CD = 4 };   /* "SEGADISCSYSTEM" at 0: the data track of a Sega CD disc (a cooked .bin or .iso): a Sega CD game, not a Genesis one */
 int gamedb_md_rom_kind(const char *path);
 /* 1 when the library should list the file as a Genesis game: .md, .gen and .smd
  * always; .bin only when gamedb_md_rom_kind says PLAIN or SMD (32X, Mega-CD,

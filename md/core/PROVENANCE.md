@@ -27,19 +27,38 @@ Game Gear, SG-1000 / SC-3000 (including the YM2413 FM unit, discrete `ym2413.c` 
 ## What is dropped (not vendored)
 
 - `core/ntsc` (md_ntsc / sms_ntsc filters; the app has its own picture filters)
-- `core/sound/tremor` (Ogg Vorbis), `core/sound/minimp3`, `core/cd_hw/libchdr` (with zstd and lzma): audio tracks and CHD
-  images are only used by Sega CD
+- `core/sound/minimp3` (MP3 audio for the one cartridge module that plays it)
 - `core/debug` (the CPU trace tools)
 - The libretro layer (`libretro/`), the libretro cheat code and its `.cht` handling, the front-end option tables.
 - Not copied from upstream: `HISTORY.txt`.
 
 ## Sega CD
 
-The Mega CD code (`cd_hw/*`, `m68k/s68kcpu.c`) is still in the tree and in `sources.mk`, but it cannot be reached: `loadrom.c`
-only looks for a CD image, a Sega CD BIOS or the cartridge add-ons when built with `-DMD_SEGACD`. That define is **OFF** in
-`md/core/Makefile` and nothing in `md/frontend/host.c` can load a disc, a BIOS or a CD save RAM. It has not been built or
-tested with the define on. Turning it on needs a CD image reader (the `cdd_load` path), BIOS files supplied by the user, and
-the CD pieces of the host API; none of that exists. Sega CD is not supported by VitAdhoc 2.0.
+The Mega CD code (`cd_hw/*`, `m68k/s68kcpu.c`, the CD parts of `genesis.c`, `mem68k.c`, `loadrom.c`, `state.c`) is upstream's and is on: `md/core/Makefile`
+builds with `-DMD_SEGACD -DUSE_LIBCHDR -DUSE_LIBTREMOR`. The core reads the disc itself and streams it (`cdd.c`: a few KB cached, never the whole
+image); `md/frontend/host.c` supplies what upstream's libretro layer did: the BIOS images (handed over by the player from the player's own files,
+never shipped: `md_host_cd_bios_add`), the disc by path (`md_host_load_disc`), the backup RAM and the optional RAM cartridge as one save, and the
+state header's system field (a disc state is never loaded into a cartridge). What the tests can and cannot show is in `md/README.md` ("Sega CD").
+
+Vendored for it (all from the pinned commit's `core/`, nothing downloaded since; all permissive licences, texts in `licenses/SegaCD-disc-readers.txt`):
+
+| Path | What | Licence |
+|---|---|---|
+| `cd_hw/libchdr/src`, `include/libchdr` | libchdr, the CHD disc image reader | BSD-3-Clause |
+| `cd_hw/libchdr/deps/lzma` | LZMA SDK (CHD codec; `Lzma86*` files dropped) | public domain |
+| `cd_hw/libchdr/deps/zlib` | zlib 1.2.11 inflate (`crc32.c`/`crc32.h` dropped: the core's `crc32.c` is zlib compatible) | zlib licence |
+| `cd_hw/libchdr/deps/zstd` | Zstandard decoder (common and decompress only) | BSD-3-Clause (the project is dual BSD / GPL-2.0; BSD is used) |
+| `cd_hw/libchdr/include/dr_libs/dr_flac.h` | dr_flac (CHD FLAC codec) | public domain or MIT-0 |
+| `sound/tremor` | Tremor, integer Ogg Vorbis decoder (CD audio as `.ogg`) | BSD-3-Clause |
+
+Edits to the vendored files: `static INLINE` became `static inline` in libchdr (the core's `INLINE` already contains `static`) and the
+`<retro_inline.h>` includes were removed; zlib's `inffixed.h` is not in upstream's folder, so the build defines `BUILDFIXED` (zlib builds the
+fixed tables at run time). The CHD, Ogg and WAV readers are exercised on the Linux twins by synthetic discs (`md/twin/tools/mkscd.py`).
+
+The BIOS (a Sega CD / Mega CD boot ROM, 128 KB) is the player's own file: `us_scd1_9210.bin`, `eu_mcd1_9210.bin`, `jp_mcd1_9112.bin` or another dump,
+found in `ux0:data/GBAdhoc/bios` or beside the game and recognised by its content (`host.c`: a structure check and a table of known dump CRCs),
+never by name alone. No BIOS, fake or real, is in the package or the source. The test suite uses a stand-in written for it
+(`mkscd.py standin`, a few hundred bytes of 68000 code, marked "NOT A BIOS", refused as a BIOS unless a test forces it).
 
 ## Local edits
 
@@ -60,7 +79,14 @@ Changed files
 | File | Change | Why |
 |---|---|---|
 | `genesis.c` | `rand()` becomes `md_rand_unit()` | seeded randomness |
-| `loadrom.c` | `cdd_load` and the cartridge add-on branch only under `MD_SEGACD` | Sega CD stays behind a compile flag, OFF |
+| `loadrom.c` | `md_cd_wanted` (new, under `MD_SEGACD`): `cdd_load` runs only when the host asked for a disc | a cartridge named `rom.md` must never be opened as a disc |
+| `osd.h` | `cdStream*` macros over stdio, `md_cd_fopen` | the core's disc reads go through the host's open (a 32 KB buffered stream) |
+| `cd_hw/cdd.h` | includes `libchdr/chd.h`, `libchdr/cdrom.h` | the vendored libchdr's layout |
+| `cd_hw/cdd.c` | `cdd_load` clears the table of contents first | a refused disc must not leave its TOC behind (the player may try another) |
+| `cd_hw/gfx.c` | `gfx_reset` starts `tracePtr` / `mapPtr` inside Word-RAM | the state held the address of the RAM until the first graphics operation: two runs gave different states |
+| `cd_hw/libchdr/deps/lzma/src/Alloc.c` | `SzAlignedAlloc` uses the file's own aligned allocator on the Vita | the Vita C library has no `posix_memalign` |
+| `state.c` | the version register keeps bit 5 clear for a Mega CD after a load (as `io_reset` leaves it) | a loaded state told the game there was no CD unit |
+| `system.c` | `audio_context_save/load` also hold the CD-DA and PCM blip buffers; `system_frame_scd` sets `vdp_status_only` as `system_frame_gen` | exact sound after a load; the VDP worker's status reads on a disc |
 | `vdp_render.c` | The two `ntsc` includes and the NTSC branch in `remap_line` removed | NTSC filter not vendored |
 | `cart_hw/yx5200.c` | Replaced by an inert stand-in (same functions, do nothing, empty state) | the upstream file decodes MP3 files with minimp3, which is not vendored; the few games with that module run without those tracks |
 | `sound/blip_buf.c/.h` | Added `blip_save_raw` / `blip_load_raw`, a fixed little-endian image of one buffer's offset, two integrators and the carried samples (160 bytes) | exact sound after a load (below) |

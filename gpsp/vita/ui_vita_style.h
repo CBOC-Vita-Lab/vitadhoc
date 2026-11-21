@@ -57,6 +57,8 @@ static uint32_t hm_tint(int console, int a)
       return VS_HEX(0xB57CFF, a);
    if (console == FE_CONSOLE_SG)
       return VS_HEX(0xFF9B3D, a);
+   if (console == FE_CONSOLE_SCD)
+      return VS_HEX(0xC8E03C, a);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(rgb[console], a);
@@ -79,6 +81,8 @@ static uint32_t hm_deep(int console, int bottom)
       return VS_HEX(bottom ? 0x24133F : 0x6B3FA8, 255);
    if (console == FE_CONSOLE_SG)
       return VS_HEX(bottom ? 0x3F2308 : 0xA8601F, 255);
+   if (console == FE_CONSOLE_SCD)
+      return VS_HEX(bottom ? 0x2B330A : 0x7C961C, 255);
    if (console < 0 || console > 2)
       console = 0;
    return VS_HEX(bottom ? bot[console] : top[console], 255);

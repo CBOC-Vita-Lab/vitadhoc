@@ -351,21 +351,26 @@ void gamedb_title_key(const char *title, char *out, size_t cap)
    }
 }
 
-int gamedb_blurb(const char *name, char *out, size_t cap)
+/* sys 0: the shared T records; a console's letter: its own U records first
+ * (two games of one title with different articles, make_gamedb.py) */
+static int blurb_find(char sys, const char *name, char *out, size_t cap)
 {
    /* a file named the way people say it ("Pokemon - Emerald") misses the
     * word No-Intro adds: tried with each of them, and without */
    static const char *const more[4] = { "", " version", " edition", NULL };
    char base[256], key[300], art[256], wkey[300];
+   size_t off = sys ? 2 : 1;
    int t;
 
    db_ready();
    if (!name || !g_lines)
       return 0;
    gamedb_base_title(name, base, sizeof(base));
-   key[0] = 'T';
-   gamedb_title_key(base, key + 1, sizeof(key) - 16);
-   if (!key[1])
+   key[0] = sys ? 'U' : 'T';
+   if (sys)
+      key[1] = sys;
+   gamedb_title_key(base, key + off, sizeof(key) - 16);
+   if (!key[off])
       return 0;
    for (t = 0; more[t]; t++)
    {
@@ -379,6 +384,16 @@ int gamedb_blurb(const char *name, char *out, size_t cap)
       key[n] = '\0';
    }
    return 0;
+}
+
+int gamedb_blurb(const char *name, char *out, size_t cap)
+{
+   return blurb_find(0, name, out, cap);
+}
+
+int gamedb_blurb_sys(char sys, const char *name, char *out, size_t cap)
+{
+   return (sys && blurb_find(sys, name, out, cap)) || blurb_find(0, name, out, cap);
 }
 
 int gamedb_name_by_code(const char code[4], char *out, size_t cap)

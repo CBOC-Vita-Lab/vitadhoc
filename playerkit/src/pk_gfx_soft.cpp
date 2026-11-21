@@ -172,6 +172,14 @@ void SoftGfx::tex_update(Texture *t, const void *pixels, int stride_bytes)
 	for (int y = 0; y < t->h; y++) memcpy(&t->data[(size_t) y * row], (const uint8_t *) pixels + (size_t) y * stride_bytes, row);
 }
 
+void SoftGfx::tex_update_rect(Texture *t, int x, int y, int w, int h, const void *pixels, int stride_bytes)
+{
+	if (!t || !pixels || x < 0 || y < 0 || x + w > t->w || y + h > t->h) return;
+	size_t bpp = (size_t) t->bpp(), row = (size_t) t->w * bpp;
+	for (int j = 0; j < h; j++)
+		memcpy(&t->data[(size_t) (y + j) * row + (size_t) x * bpp], (const uint8_t *) pixels + (size_t) j * stride_bytes, (size_t) w * bpp);
+}
+
 void SoftGfx::tex_free(Texture *t)
 {
 	if (t) { delete t; live_--; }

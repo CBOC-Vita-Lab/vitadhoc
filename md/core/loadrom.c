@@ -92,6 +92,10 @@ typedef struct
 
 ROMINFO rominfo;
 
+#ifdef MD_SEGACD
+int md_cd_wanted; /* VitAdhoc: set by md_host_load_disc around load_rom */
+#endif
+
 /* VitAdhoc: Mega CD / MegaSD add-on detection for cartridges only exists when built with -DMD_SEGACD */
 #ifdef MD_SEGACD
 #define MD_ADDON_ON (config.add_on != HW_ADDON_NONE)
@@ -583,12 +587,17 @@ int load_rom(char *filename)
   }
 
 #ifdef MD_SEGACD
-  /* auto-detect CD image file */
-  size = cdd_load(filename, (char *)(cart.rom));
-  if (size < 0)
+  /* VitAdhoc: a CD image only when the host asked for one (md_host_load_disc): a cartridge is never looked for as a file here */
+  size = 0;
+  if (md_cd_wanted)
   {
-    /* error opening file */
-    return (0);
+    /* auto-detect CD image file */
+    size = cdd_load(filename, (char *)(cart.rom));
+    if (size < 0)
+    {
+      /* error opening file */
+      return (0);
+    }
   }
 #else
   /* VitAdhoc: Sega CD is compiled out of the load path (no CD images, no BIOS files in md.bin), see PROVENANCE.md */

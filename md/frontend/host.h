@@ -41,12 +41,54 @@ enum {
 #define MD_MAX_HEIGHT 576            /* an interlaced double resolution PAL frame with borders; 480 without overscan, 224..240 normally */
 
 /* system: what md_host_load_mem was told, and what md_host_system() reports */
-enum { MD_SYS_AUTO = 0, MD_SYS_MD, MD_SYS_SMS, MD_SYS_GG, MD_SYS_SG };
+enum { MD_SYS_AUTO = 0, MD_SYS_MD, MD_SYS_SMS, MD_SYS_GG, MD_SYS_SG };    /* a Sega CD game is MD_SYS_MD with md_host_is_cd() */
 enum { MD_REGION_AUTO = 0, MD_REGION_USA, MD_REGION_EUROPE, MD_REGION_JAPAN_NTSC, MD_REGION_JAPAN_PAL };
 enum { MD_PAD_AUTO = 0, MD_PAD_3, MD_PAD_6 };
 enum { MD_PIXEL_RGB565 = 1 };
 /* the six values md_host_system_hw() can name (what the core decided inside one system): "Mega Drive", "Master System II",
  * "Master System", "Mark III", "Game Gear", "Game Gear (SMS mode)", "SG-1000", "SG-1000 II", "SC-3000" ... */
+
+/* ---- Sega CD / Mega CD (2.0) ------------------------------------------------------------------------------ */
+
+/* A Sega CD game is a disc, not a memory image: md_host_load_disc opens it from a file (the core reads sectors as the game asks, nothing of
+ * the disc is held in memory) and needs the console's BIOS, which the caller supplies and which is never part of VitAdhoc. The disc formats:
+ * .cue (with .bin tracks, one or several, CD audio tracks raw 16 bit stereo 44.1 kHz, or .wav / .ogg tracks beside the .cue), a single
+ * .bin or .iso (2048 byte cooked sectors or 2352 byte raw ones), and .chd (CD CHD, zlib / lzma / flac / zstd codecs). The machine is a Mega
+ * Drive with the Mega CD add-on: md_host_system() says MD_SYS_MD (the picture, the pads and the wide view are those of the Mega Drive), and
+ * md_host_is_cd() says 1. Everything else in this API works as for a cartridge, with these differences:
+ *  - the save is the internal backup RAM (8 KB) followed by the RAM cartridge, when one is enabled (md_host_set_option "ram_cart"):
+ *    md_host_sram_* hold that image, always at its full size (the BIOS formats it; an unformatted one is formatted at load);
+ *  - the state is about 1.1 MB (two 68000s' RAM, the PCM chip's RAM, the CD controller), the file the player writes is that size;
+ *  - cheats are work RAM patches only (the disc has no cartridge ROM to patch);
+ *  - two consoles in one session need the same BIOS and the same disc (md_host_rom_crc is the disc's identity: the first 2 KB of the
+ *    disc's header sector and the disc's length in sectors). */
+/* Hand the host a BIOS image (128 KB: the BIOS dump of a Mega CD or Sega CD, any model) before md_host_load_disc. It is copied. The region (USA,
+ * Europe or Japan) is read from the BIOS's header; one image per region is kept, a later one of the same region replaces it. `force` 1: accept an
+ * image that does not look like a Sega CD BIOS (the test suite's stand-in only; the player never sets it).
+ * Returns the region (MD_REGION_USA / EUROPE / JAPAN_NTSC), or 0 when the data is not a Sega CD BIOS. */
+int md_host_cd_bios_add(const uint8_t *data, size_t n, int force);
+void md_host_cd_bios_clear(void);
+int md_host_cd_bios_count(void);           /* regions that have an image */
+/* The known dump's name for a BIOS image ("Sega CD (USA) model 1 v1.10", ...) or NULL when it is a dump this table does not know. */
+const char *md_host_cd_bios_name(const uint8_t *data, size_t n);
+/* Is the file a disc image the host can open? Reads the file's first bytes only. 1 yes (a .cue, a .chd, a Sega CD data track); 0 no.
+ * `why`, when not NULL, gets a short reason on 0. */
+int md_host_cd_probe(const char *path, char *why, size_t whylen);
+/* Load a disc and power the console on. Returns 0, else non-zero with a short reason in err (1 not initialised, 2 the disc could not be
+ * read, 3 not a Sega CD disc, 4 the core refused it, 5 no BIOS was handed over). A BIOS of another region than the disc's is used when it
+ * is the only one there is (the console region is then the BIOS's). */
+int md_host_load_disc(const char *path, char *err, size_t errlen);
+int md_host_is_cd(void);                   /* 1 when the loaded game is a disc */
+/* What the loaded disc is: its title from the header, the track count, the BIOS image in use (region and name) in one line. */
+const char *md_host_cd_info(void);
+int md_host_cd_tracks(void);               /* 0 without a disc */
+/* Disc reader checks for the test suite (md/twin/cd_test.cpp), on the machine just loaded and before any frame has run: the table of contents, one
+ * data sector's user data, and the last stereo sample of a run of CD-DA samples as the drive's audio path produces it. */
+int md_host_cd_test_toc(int track, int *start, int *end, int *type);          /* track 1..: first / last LBA, type 0 audio 1 mode 1 2 mode 2; returns the track count */
+int md_host_cd_test_data(int lba, uint8_t *out2048);                           /* 0 ok */
+int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2]);   /* 0 ok: reads `samples` stereo samples from sector `lba` of the track */
+/* option (md_host_set_option) "ram_cart" 0..6, set before md_host_load_disc: the RAM cartridge a game can save to besides the internal 8 KB:
+ * 0 off (default), 1..6 = 16 KB, 32 KB, 64 KB, 128 KB (the size Sega sold), 256 KB, 512 KB. */
 
 /* ---- worker threads ---------------------------------------------------------------------------------------- */
 

@@ -81,6 +81,12 @@ int nescore_save_ram_write(nescore_t *core, const void *source, size_t size);
 size_t nescore_state_size(nescore_t *core);
 long nescore_state_save(nescore_t *core, void *destination, size_t capacity);
 int nescore_state_load(nescore_t *core, const void *source, size_t size);
+/* Quick response (gbcore.h gbcore_ahead_*): the state plus what it does not hold; the look-ahead frame runs with nescore_set_quiet(1)
+ * (it draws, its sound is dropped); the load keeps the picture it drew. */
+size_t nescore_ahead_size(nescore_t *core);
+long nescore_ahead_save(nescore_t *core, void *destination, size_t capacity);
+int nescore_ahead_load(nescore_t *core, const void *source, size_t size);
+void nescore_set_quiet(nescore_t *core, int quiet);
 
 /* RetroAchievements console 7: the CPU's address space ($0000-$07FF,
  * $6000-$7FFF); returns the bytes copied. */

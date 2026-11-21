@@ -186,9 +186,18 @@ extern int frontend_skip_override __attribute__((weak));   /* libretro.c */
  * (an NTSC television's rows; 256x240 PAL) for the NES. */
 static unsigned gb_pic_w = 160, gb_pic_h = 144;
 
+/* Quick response (run-ahead by one frame; gb_ahead_frame below): the real frame's picture is not delivered (the look-ahead frame's is),
+ * the look-ahead frame's sound is dropped. */
+static int ahead_req;              /* fe_host_ahead_set: the next frame is to be run ahead */
+static int ahead_mute_video;       /* the frame being run is the real one: no picture goes out (not even "nothing new") */
+static int ahead_quiet;            /* the frame being run is the look-ahead one: its sound is dropped */
+static unsigned ahead_frames, ahead_fails;
+
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
    (void)userdata;
+   if (ahead_mute_video)
+      return;
    if (gb_skip_frame)
    {
       /* Same contract as the GBA core's frameskip: NULL = nothing new. */
@@ -221,6 +230,8 @@ static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames)
 {
    (void)userdata;
+   if (ahead_quiet)
+      return;
    if (host.audio_frames)
       host.audio_frames(samples, frames);
 }
@@ -7918,6 +7929,183 @@ void fe_host_cpu_stat(uint64_t *emu_ns, uint64_t *frames)
 #endif
 }
 
+/* ---- Quick response (run-ahead by one frame) ------------------------------------------------------------
+ * Game Boy, Game Boy Color, NES and WonderSwan, the machines this file runs through gbcore_* (gbcore_mux.h).  At a refresh the
+ * player sees the picture of the frame AFTER the one the game is at: the real frame is run without drawing (its sound is the
+ * sound), the machine is saved (gbcore_ahead_save: the state plus what no state holds), the next frame is run with the same
+ * buttons (drawn, silent), and the machine is put back (gbcore_ahead_load).  The game, its sound and its saves are the same as
+ * without it; a press shows one frame sooner.  The caller (main_vita.c, pk_ahead.h's governor) asks per frame with
+ * fe_host_ahead_set and never during a link, rewind or fast forward. */
+#ifdef GPSP_CHEATS
+static void gb_cheat_frame(void)
+{
+   unsigned w = fe_cheats_gb_writes();
+   fe_cheats_gb_frame(gb_cheat_poke, gb_core);
+   fe_cheats_gb_writes_set(w);       /* the look-ahead frame's pokes are the next frame's: counted once, by that frame */
+}
+#endif
+
+#if defined(__linux__)
+/* GBADHOC_AHEAD_DIFF=1 (the twin's survey of what the machine keeps outside its state): every byte of the program's initialised and
+ * zero-initialised data that the look-ahead frame and the way back leave changed is remembered; at the end the ranges are logged
+ * (ahead_diff addr=0x.. len=..) for tools/ahead_globdiff.py to name from the binary's symbol table.  Heap data is not seen. */
+extern char __data_start, _end;
+static uint8_t *dbg_snap, *dbg_seen;
+static int dbg_on = -1;
+static void dbg_take(void)
+{
+   const size_t n = (size_t)(&_end - &__data_start);
+   if (dbg_on < 0)
+   {
+      const char *e = getenv("GBADHOC_AHEAD_DIFF");
+      dbg_on = e && *e == '1';
+   }
+   if (!dbg_on)
+      return;
+   if (!dbg_snap)
+   {
+      dbg_snap = (uint8_t *)malloc(n);
+      dbg_seen = (uint8_t *)calloc(1, n);
+   }
+   if (dbg_snap)
+      memcpy(dbg_snap, &__data_start, n);
+}
+static void dbg_compare(void)
+{
+   const size_t n = (size_t)(&_end - &__data_start);
+   size_t i;
+   if (dbg_on != 1 || !dbg_snap || !dbg_seen)
+      return;
+   for (i = 0; i < n; i++)
+      if (((const uint8_t *)&__data_start)[i] != dbg_snap[i])
+         dbg_seen[i] = 1;
+}
+/* the way back must also leave the SAME image: save again and compare (a restore hook that re-derives or clears a field shows here) */
+static uint8_t *dbg_rt;
+static size_t dbg_rt_cap;
+static unsigned dbg_rt_seen;
+static void dbg_roundtrip(const uint8_t *img, size_t n)
+{
+   size_t i, d = 0, first = 0;
+   if (dbg_on != 1)
+      return;
+   if (n > dbg_rt_cap)
+   {
+      free(dbg_rt);
+      dbg_rt = (uint8_t *)malloc(n);
+      dbg_rt_cap = dbg_rt ? n : 0;
+   }
+   if (!dbg_rt || gbcore_ahead_save(gb_core, dbg_rt, n) != (long)n)
+      return;
+   for (i = 0; i < n; i++)
+      if (img[i] != dbg_rt[i])
+      {
+         if (!d++)
+            first = i;
+      }
+   if (d && dbg_rt_seen++ < 12)
+      fe_evt("ahead_roundtrip frame=%u differs bytes=%u first=%u of %u", frame_count, (unsigned)d, (unsigned)first, (unsigned)n);
+}
+static void dbg_report(void)
+{
+   const size_t n = (size_t)(&_end - &__data_start);
+   size_t i = 0;
+   if (dbg_on != 1 || !dbg_seen)
+      return;
+   while (i < n)
+   {
+      size_t j;
+      if (!dbg_seen[i]) { i++; continue; }
+      for (j = i; j < n && (dbg_seen[j] || (j + 1 < n && dbg_seen[j + 1])); j++)
+         ;
+      fe_evt("ahead_diff addr=0x%lx len=%u", (unsigned long)(&__data_start + i), (unsigned)(j - i));
+      i = j;
+   }
+}
+#else
+static void dbg_take(void) {}
+static void dbg_compare(void) {}
+static void dbg_report(void) {}
+static void dbg_roundtrip(const uint8_t *img, size_t n) { (void)img; (void)n; }
+#endif
+
+/* 0 = done (the picture went out); -1 = not possible, nothing was run */
+static int gb_ahead_frame(uint32_t pad)
+{
+   static uint8_t *buf;
+   static size_t cap;
+   const size_t n = gbcore_ahead_size(gb_core);
+   const uint16_t b = gb_buttons_from_retro(pad);
+   int r;
+   if (!n)
+      return -1;
+   if (n > cap)
+   {
+      uint8_t *t = (uint8_t *)realloc(buf, n);
+      if (!t)
+         return -1;
+      buf = t;
+      cap = n;
+   }
+   /* the real frame: not drawn, its sound goes out */
+   ahead_mute_video = 1;
+   gbcore_set_skip_render(gb_core, 1);
+   if (host_sensor_on)                /* (the caller has made this frame's cheat pokes) */
+      gbcore_set_tilt(gb_core, host_sensor);
+   r = gbcore_run_frame(gb_core, b);
+   ahead_mute_video = 0;
+   if (r != 0)
+      fe_evt("gb_run_frame FAILED frame=%u", frame_count);
+   if (gbcore_ahead_save(gb_core, buf, n) != (long)n)
+   {
+      /* cannot happen (the size was just asked for): the real frame stands, shown as a skipped one */
+      ahead_fails++;
+      gb_skip_frame = 1;
+      gb_video_frame(NULL, NULL);
+      return 0;
+   }
+   dbg_take();
+   /* the look-ahead frame: drawn, silent; its pokes are not counted */
+   gbcore_set_skip_render(gb_core, 0);
+   gbcore_set_quiet(gb_core, 1);
+   ahead_quiet = 1;
+#ifdef GPSP_CHEATS
+   gb_cheat_frame();
+#endif
+   r = gbcore_run_frame(gb_core, b);
+   ahead_quiet = 0;
+   gbcore_set_quiet(gb_core, 0);
+   {
+      const int back = gbcore_ahead_load(gb_core, buf, n);
+      dbg_compare();
+      dbg_roundtrip(buf, n);
+      if (back != 0)
+      {
+         /* cannot happen: the image is our own.  The machine is one frame ahead of where it should be: say so. */
+         ahead_fails++;
+         fe_evt("ahead_load FAILED frame=%u", frame_count);
+      }
+   }
+   ahead_frames++;
+   return 0;
+}
+
+int fe_host_ahead_possible(void)
+{
+   return gb_core && !gb_dual && !gbl && !gbl_hold && !gbl_pad && gbcore_ahead_size(gb_core) != 0;
+}
+
+void fe_host_ahead_set(int want)
+{
+   ahead_req = want ? 1 : 0;
+}
+
+void fe_host_ahead_stat(unsigned *frames, unsigned *fails)
+{
+   if (frames) *frames = ahead_frames;
+   if (fails) *fails = ahead_fails;
+}
+
 static void run_frame(void)
 {
    uint64_t core_t0 = host.time_us ? host.time_us() : 0;
@@ -7978,10 +8166,16 @@ static void run_frame(void)
           * dual (link) path above; a no-op with nothing switched on. */
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
+         if (ahead_req && !gb_skip_frame && !gbl_hold && !gb_local_on &&
+             gb_ahead_frame(pad) == 0)
+            ;
+         else
+         {
          if (host_sensor_on)
             gbcore_set_tilt(gb_core, host_sensor);
          if (gbcore_run_frame(gb_core, gb_buttons_from_retro(pad)) != 0)
             fe_evt("gb_run_frame FAILED frame=%u", frame_count);
+         }
       }
       if (core_t0 && host.time_us)
       {
@@ -8496,6 +8690,9 @@ void fe_host_shutdown(void)
    }
    if (gb_family)
    {
+      if (ahead_frames || ahead_fails)
+         fe_evt("ahead_frames n=%u failed=%u", ahead_frames, ahead_fails);
+      dbg_report();
       if (gb_dual)
          gbdual_destroy(gb_dual);
       else

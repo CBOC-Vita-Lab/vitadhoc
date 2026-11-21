@@ -23,6 +23,10 @@ The output is one text file, sorted, one record a line, TAB-separated:
                                   for files named "Act Raiser" or
                                   "7th Saga" instead of the No-Intro name
   T<title key>  <article>         a game by its title (title_key below)
+  U<sys><key>   <article>         2.0: a game by its title for ONE console,
+                                  where another console's game of the same
+                                  title has a different article (tried
+                                  before the T record)
   W<article>    <blurb>           an English Wikipedia article's first lines
 
 The app finds a cartridge's No-Intro name (by file name, header code or
@@ -34,6 +38,7 @@ app and the README credit it.
 
   python3 make_gamedb.py OUTDIR      (downloads into OUTDIR/cache)
 """
+import hashlib
 import json
 import os
 import re
@@ -60,8 +65,11 @@ SYSTEMS = [
     ("Nintendo - Family Computer Disk System", None, "F"),
     # 1.4: the WonderSwan (G) and the WonderSwan Color (H), names and
     # whole-file checksums only (no Wikidata set: no blurbs yet)
-    ("Bandai - WonderSwan", None, "G"),
-    ("Bandai - WonderSwan Color", None, "H"),
+    # 2.0: the descriptions of these consoles come from Wikidata platform
+    # sets (Q ids below), exactly as for the GBA/GB/GBC/SNES; the catalogue
+    # records themselves are unchanged (see GAMEDB_KEEP).
+    ("Bandai - WonderSwan", "Q1065792", "G"),
+    ("Bandai - WonderSwan Color", "Q1048035", "H"),
     # 2.0: the Sega consoles of md.bin (Genesis Plus GX), names and
     # checksums only, like the NES and WonderSwan (no Wikidata set: the
     # descriptions the games share by title with other consoles still show).
@@ -69,11 +77,19 @@ SYSTEMS = [
     # (gamedb_md_crc_cancel); the others' of the whole cartridge image
     # (gamedb_sms_crc_cancel).  The names are also the libretro-thumbnails
     # folder names (artfetch.c SYS, gamedb_sega.h).
-    ("Sega - Mega Drive - Genesis", None, "I"),
-    ("Sega - Master System - Mark III", None, "J"),
-    ("Sega - Game Gear", None, "K"),
-    ("Sega - SG-1000", None, "L"),
+    ("Sega - Mega Drive - Genesis", "Q10676", "I"),
+    ("Sega - Master System - Mark III", "Q209868", "J"),
+    ("Sega - Game Gear", "Q751719", "K"),
+    ("Sega - SG-1000", "Q1136956", "L"),
+    # 2.0: the Sega CD (M).  Its catalogue is a Redump list (discs, not
+    # cartridges): only its titles are used, for descriptions (the checksum
+    # and name records of the Sega CD are not made here: BLURB_ONLY).
+    ("Sega - Mega-CD - Sega CD", "Q1047516", "M"),
 ]
+# consoles whose catalogue gives titles for descriptions only (no C, N, S, Z)
+BLURB_ONLY = "M"
+# the catalogue's folder in libretro-database
+DAT_FOLDER = {"M": "metadat/redump"}
 # which file extensions of a catalogue's entries give a checksum record
 CRC_EXT = {"E": (".nes",), "F": (".qd",)}   # ...the ones left OUT
 # Preference among a game's releases for the loose name index (N records):
@@ -89,17 +105,19 @@ def get(url, cache=None, accept=None):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     if accept:
         req.add_header("Accept", accept)
-    for attempt in range(8):
+    for attempt in range(60):
         try:
             with urllib.request.urlopen(req, timeout=120) as r:
                 data = r.read()
             break
         except Exception as e:          # pragma: no cover (network)
-            if attempt == 7:
+            if attempt == 59:
                 raise
-            # Wikidata's query service may allow one query a minute
+            # Wikimedia rate-limits a shared address: wait as long as it says
             busy = getattr(e, "code", 0) in (429, 503)
-            time.sleep(65 if busy else 3 * (attempt + 1))
+            ra = getattr(getattr(e, "headers", None), "get", lambda *_: None)("Retry-After")
+            time.sleep(int(ra) + 2 if busy and ra and ra.isdigit() else
+                       65 if busy else 3 * (attempt + 1))
     if cache:
         with open(cache, "wb") as f:
             f.write(data)
@@ -249,6 +267,20 @@ def ascii_text(s):
     return "".join(c for c in s if 32 <= ord(c) < 127)
 
 
+def tidy(text):
+    """What is left of a foreign title once its script is gone: "Albert
+    Odyssey (, Arubato Odessei) is" (a bracket that starts with a comma or a
+    semicolon is the romanisation or translation of a title that is not
+    there).  Run on every description (idempotent)."""
+    text = re.sub(r" ?\((?:,|;)(?:[^()]|\([^()]*\))*\)", "", text)
+    text = re.sub(r" ?\(\s*\)", "", text).replace(" ,", ",")
+    m = re.search(r" ?\((?:,|;)[^()]*$", text)     # cut off inside it
+    if m:
+        text = text[:m.start()].rstrip(" ,;")
+        text += "" if text[-1:] in ".!?" else "."
+    return text
+
+
 def clean(text):
     text = text.split("\n")[0]          # the first paragraph
     # pronunciations and foreign titles in the first parentheses
@@ -270,6 +302,7 @@ def clean(text):
         if len(out) + 1 + len(s) > 200:
             break
         out += " " + s
+    out = tidy(out)
     if len(out) < 40:
         return ""
     return out.replace("\t", " ")
@@ -284,7 +317,10 @@ def extracts(titles, cachedir):
                "&prop=extracts&exintro=1&explaintext=1&exsentences=3"
                "&exlimit=20&redirects=1&titles=" +
                urllib.parse.quote("|".join(batch)))
-        data = json.loads(get(url, os.path.join(cachedir, "wp%05d.json" % i)))
+        # cached under a name made from the batch itself, so a different
+        # list of titles never reads another list's answers
+        tag = hashlib.sha1("|".join(batch).encode("utf-8")).hexdigest()[:16]
+        data = json.loads(get(url, os.path.join(cachedir, "wp_%s.json" % tag)))
         q = data.get("query", {})
         back = {}
         for n in q.get("normalized", []) + q.get("redirects", []):
@@ -305,6 +341,7 @@ def main():
     os.makedirs(cache, exist_ok=True)
     recs = {}
     keys_wanted = {}            # title key -> article
+    overrides = {}              # (console, title key) -> article, see U records
     names = []                  # (key, base title) per cartridge
     only = os.environ.get("GAMEDB_SYSTEMS")      # e.g. "D": one console's records
     # GAMEDB_KEEP=1: start from OUTDIR/gamedb.txt and add the records of the
@@ -316,7 +353,7 @@ def main():
         with open(os.path.join(outdir, "gamedb.txt"), encoding="utf-8") as f:
             for line in f:
                 k, v = line.rstrip("\n").split("\t", 1)
-                recs[k] = v
+                recs[k] = tidy(v) if k[0] == "W" else v
     for dat, qid, tag in SYSTEMS:
         if only and tag not in only:
             continue
@@ -326,7 +363,7 @@ def main():
                 text = f.read()
         else:
             text = get("https://raw.githubusercontent.com/libretro/libretro-database/"
-                       "master/metadat/no-intro/" + urllib.parse.quote(dat) + ".dat",
+                       "master/" + DAT_FOLDER.get(tag, "metadat/no-intro") + "/" + urllib.parse.quote(dat) + ".dat",
                        os.path.join(cache, dat + ".dat")).decode("utf-8", "replace")
         games = parse_dat(text)
         wd = wikidata(qid, cache) if qid else []
@@ -336,7 +373,28 @@ def main():
         hit = 0
         family = {}             # GBA: code[:3] -> article
         loose = {}              # squash(key) -> (rank, name)
+        # GAMEDB_BLURBS_ONLY=1: descriptions only, no C/N/S/Z record of any
+        # console named (how the NES, WonderSwan and Sega descriptions were
+        # added for 2.0 without touching one name or checksum record)
+        blurb_only = tag in BLURB_ONLY or bool(os.environ.get("GAMEDB_BLURBS_ONLY"))
         for g in games:
+            if blurb_only:
+                g["code"] = None
+                g["key"] = title_key(base_title(g["name"]))
+                other = next((index[v] for v in variants(g["key"]) if v in index), None)
+                have = keys_wanted.get(g["key"]) or recs.get("T" + g["key"])
+                if other and have and have != other:
+                    # two different games share the title (a Genesis and an
+                    # NES "Strider"): the console's own article is filed
+                    # under U<console><key>, tried before the shared T key
+                    overrides[(tag, g["key"])] = other
+                    if os.environ.get("GAMEDB_SHOW_CLASHES"):
+                        print("CLASH %s: %s keeps %s, not %s" %
+                              (tag, g["key"], have, other), file=sys.stderr)
+                elif other and not have:
+                    keys_wanted[g["key"]] = other
+                    hit += 1
+                continue
             if g["crc"] and not g["file"].lower().endswith(CRC_EXT.get(tag, ())):
                 if keep:        # an earlier console's record is kept
                     if recs.setdefault("C" + g["crc"], g["name"]) != g["name"]:
@@ -362,6 +420,8 @@ def main():
             g["key"], g["code"] = k, code
             if k in keys_wanted:
                 art = keys_wanted[k]
+            elif keep and "T" + k in recs:
+                art = None      # an earlier console's description is kept
             else:
                 art = next((index[v] for v in variants(k) if v in index), None)
                 if art:
@@ -370,7 +430,10 @@ def main():
             if art and code:
                 family.setdefault(code[:3], art)
         for kk, (rank, name) in loose.items():
-            recs["N" + tag + kk] = name
+            if keep:
+                recs.setdefault("N" + tag + kk, name)
+            else:
+                recs["N" + tag + kk] = name
         for g in games:         # the other regions of a game found once
             if g["code"] and g["key"] not in keys_wanted and \
                     g["code"][:3] in family:
@@ -378,12 +441,24 @@ def main():
                 hit += 1
         print("%s: %d cartridges, %d Wikidata names, %d titles matched" %
               (dat, len(games), len(wd), hit), file=sys.stderr)
-    ex = extracts(keys_wanted.values(), cache)
+    wanted = set(keys_wanted.values()) | set(overrides.values())
+    ex = extracts([a for a in wanted if not (keep and "W" + a in recs)], cache)
+    if keep:                    # articles an earlier console already has
+        for a in wanted:
+            if "W" + a in recs:
+                ex[a] = recs["W" + a]
     n = 0
     for k, art in keys_wanted.items():
         if ex.get(art):
+            if keep and "T" + k in recs:
+                continue
             recs["T" + k] = art
-            recs["W" + art] = ex[art]
+            recs.setdefault("W" + art, ex[art])
+            n += 1
+    for (tag, k), art in sorted(overrides.items()):
+        if ex.get(art):
+            recs["U" + tag + k] = art
+            recs.setdefault("W" + art, ex[art])
             n += 1
     print("%d titles with a blurb, %d articles" %
           (n, sum(1 for k in recs if k[0] == "W")), file=sys.stderr)

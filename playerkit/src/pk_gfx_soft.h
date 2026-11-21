@@ -29,6 +29,7 @@ public:
 	void gradient_v(float x, float y, float w, float h, uint32_t top, uint32_t bottom);
 	Texture *tex_create(int w, int h, TexFormat fmt);
 	void tex_update(Texture *t, const void *pixels, int stride_bytes);
+	void tex_update_rect(Texture *t, int x, int y, int w, int h, const void *pixels, int stride_bytes);
 	void tex_free(Texture *t);
 	void tex_draw(Texture *t, float sx, float sy, float sw, float sh,
 	              float dx, float dy, float dw, float dh, uint32_t tint, bool smooth);

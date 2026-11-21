@@ -39,6 +39,7 @@
 #include "video_vita_priv.h"
 #include "font_ui.h"          /* the PSP's glyph tables: advances, metrics */
 #include "vstyle.h"          /* vs_set_face_swap */
+#include "vglyph.h"          /* the characters beyond ASCII, on demand */
 
 extern const unsigned char vv_font_regular[], vv_font_regular_end[];
 extern const unsigned char vv_font_semibold[], vv_font_semibold_end[];
@@ -60,6 +61,7 @@ typedef struct
 {
    vv_glyph g[FU_COUNT];
    vb_tex  *tex;
+   vglyph_set *xs;            /* accents, kana, kanji ...: vglyph.h        */
    float    worst, mean;      /* natural vs used advance, native px        */
    int      worst_ch;
 } vv_face;
@@ -217,7 +219,8 @@ static void bake_extra(packer *pk, vv_glyph *g, int kind, float size,
 
 static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
                      int asc_logical, const fu_glyph *psp, float extra_size,
-                     float extra_star, float extra_stroke, float extra_mid)
+                     float extra_star, float extra_stroke, float extra_mid,
+                     int semibold)
 {
    stbtt_fontinfo font;
    packer pk;
@@ -288,6 +291,9 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
    if (f->tex)
       vb_tex_update(f->tex, 0, 0, ATLAS_W, used_h, pk.px, ATLAS_W);
    free(pk.px);
+   /* the characters beyond ASCII: nothing is read or allocated until one is drawn */
+   f->xs = vglyph_new(ttf, NULL, (int)(px_logical * VV_S), VV_S * asc_logical,
+                      semibold);
    return (f->tex && !pk.overflow) ? 0 : -1;
 }
 
@@ -301,9 +307,9 @@ int vv_text_init(void)
     * were (10 px in a 12 px advance): 10.5 logical px across, the star
     * 11.5 -- about the cap height, the size the system's own prompts use. */
    rc |= bake_face(&g_face[0], vv_font_regular, 15.0f, FU_UI_ASC, fu_ui_g,
-                   21.0f, 23.0f, 2.3f, 9.5f * VV_S);
+                   21.0f, 23.0f, 2.3f, 9.5f * VV_S, 0);
    rc |= bake_face(&g_face[1], vv_font_semibold, 19.0f, FU_HD_ASC, fu_hd_g,
-                   27.0f, 29.0f, 3.0f, 12.0f * VV_S);
+                   27.0f, 29.0f, 3.0f, 12.0f * VV_S, 1);
    g_ready = 1;
    return rc;
 }
@@ -315,6 +321,8 @@ void vv_text_term(void)
    {
       vb_tex_destroy(g_face[i].tex);
       g_face[i].tex = NULL;
+      vglyph_free(g_face[i].xs);
+      g_face[i].xs = NULL;
    }
    g_ready = 0;
 }
@@ -337,15 +345,72 @@ void vid_set_face_glyphs(int swap)
    vs_set_face_swap(g_face_swap);
 }
 
+/* TEXT IS UTF-8.  Byte values 0x7F..0x84 on their own are the six button
+ * glyphs (never part of a valid sequence); a character from U+0080 up is
+ * made on demand by vglyph.c, its advance a whole number of logical pixels
+ * like every other (an em of fullwidth text is 15 / 19, the face's size);
+ * anything else (a control, a stray byte, a character no font has) is '?'. */
+#define VV_X_INVISIBLE 0xFFFFFFFFu
+
+/* The next character: the table index byte (FU_FIRST..FU_LAST) or, from
+ * 0x80 up as a code point, an extra one; *s moves past it. */
+static uint32_t vv_next(const char **s)
+{
+   int n;
+   uint32_t cp = pk_u8_next(*s, &n);
+   if (cp >= PK_U8_RAW && pk_u8_cut_tail(*s))
+   {
+      while (**s)                /* a character cut off by the end: nothing */
+         (*s)++;
+      return VV_X_INVISIBLE;
+   }
+   *s += n;
+   if (cp >= PK_U8_RAW)
+   {
+      cp -= PK_U8_RAW;                /* a lone byte: 0x80..0x84 are button glyphs */
+      return cp <= FU_LAST ? cp : '?';
+   }
+   else if (cp >= 0x80)
+   {
+      if (cp < 0xA0)
+         return '?';                  /* a C1 control */
+      return pk_glyph_invisible(cp) ? VV_X_INVISIBLE : cp;
+   }
+   return cp;
+}
+
+static int vv_xadv(const vv_face *f, uint32_t cp)
+{
+   float a;
+   int w;
+   if (cp == VV_X_INVISIBLE)
+      return 0;
+   if (!vglyph_adv(f->xs, cp, &a))
+      return -1;
+   w = (int)floorf(a / (float)VV_S + 0.5f);
+   return w < 1 ? 1 : w;
+}
+
 /* The PSP's own measure (video_psp.c fu_measure), over the PSP's table. */
 int vv_text_width(int hd, const char *s)
 {
    const fu_glyph *g = hd ? fu_hd_g : fu_ui_g;
+   const vv_face *f = &g_face[hd ? 1 : 0];
    int w = 0;
-   for (; *s; s++)
+   while (*s)
    {
-      unsigned char c = (unsigned char)*s;
-      if (c < FU_FIRST || c > FU_LAST)
+      uint32_t c = vv_next(&s);
+      if (c > FU_LAST)
+      {
+         int a = vv_xadv(f, c);
+         if (a >= 0)
+         {
+            w += a;
+            continue;
+         }
+         c = '?';
+      }
+      else if (c < FU_FIRST)
          c = '?';
       w += g[c - FU_FIRST].xadv;
    }
@@ -364,15 +429,47 @@ void vv_text_cap(int *top, int *h)
 void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
 {
    const vv_face *f = &g_face[hd ? 1 : 0];
-   vb_tquad q[TEXT_BATCH];
-   int n = 0, pen = nx;
+   vb_tquad q[TEXT_BATCH], qx[TEXT_BATCH];
+   vb_tex *xtex = NULL;
+   int n = 0, nxq = 0, pen = nx;
 
    if (!f->tex || !s)
       return;
-   for (; *s; s++)
+   while (*s)
    {
-      unsigned char c = (unsigned char)*s;
+      uint32_t c = vv_next(&s);
       const vv_glyph *g;
+      if (c > FU_LAST)
+      {
+         pk_gglyph xg;
+         vb_tex *t = NULL;
+         if (c == VV_X_INVISIBLE)
+            continue;
+         if (vglyph_get(f->xs, c, &xg, &t))
+         {
+            int a = vv_xadv(f, c);
+            if (xg.w && xg.h)
+            {
+               xtex = t;
+               qx[nxq].x0 = (float)(pen + xg.ox);
+               qx[nxq].y0 = (float)(ny + xg.oy);
+               qx[nxq].x1 = qx[nxq].x0 + (float)xg.w;
+               qx[nxq].y1 = qx[nxq].y0 + (float)xg.h;
+               qx[nxq].u0 = (float)xg.x;
+               qx[nxq].v0 = (float)xg.y;
+               qx[nxq].u1 = (float)(xg.x + xg.w);
+               qx[nxq].v1 = (float)(xg.y + xg.h);
+               if (++nxq == TEXT_BATCH)
+               {
+                  vb_tquads(xtex, qx, nxq, tint, VB_NEAREST);
+                  nxq = 0;
+               }
+            }
+            pen += (a < 0 ? 0 : a) * VV_S;
+            continue;
+         }
+         c = '?';
+      }
       if (g_face_swap && (c == 0x80 || c == 0x81))
          c ^= 1;                /* the circle and the cross, exchanged */
       if (c < FU_FIRST || c > FU_LAST)
@@ -398,4 +495,6 @@ void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
    }
    if (n)
       vb_tquads(f->tex, q, n, tint, VB_NEAREST);
+   if (nxq)
+      vb_tquads(xtex, qx, nxq, tint, VB_NEAREST);
 }

@@ -1601,6 +1601,7 @@ void Menu::draw_overlays(Gfx *g)
 void Menu::draw(Gfx *g, Text *t)
 {
 	if (!open_ || !g || !t) return;
+	t->frame();      /* (the glyph atlases: a frame has passed) */
 	upload_textures(g);
 	draw_backdrop(g);
 	if (page_ == PAGE_TOP) draw_top(g, t);

@@ -843,11 +843,10 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
          out->patch = i + 1;
    }
    if (mf_cancelled()) return ML_CANCELLED;
-   if (!gamedb_blurb(job->stem, out->blurb, sizeof(out->blurb)))
    {
-      /* a loosely named file ("ChronoTrigger", "Act Raiser"): by the game's
-       * No-Intro name for its console */
-      char named[256];
+      /* the console's letter in the game database (a .sms may be a Game Gear
+       * title: tried below); it picks the game's own article where two
+       * consoles' games of one title differ */
       size_t rl = strlen(job->rom);
       char sys = job->console == FE_CONSOLE_WSWAN
                ? (rl > 4 && !strcasecmp(job->rom + rl - 4, ".wsc") ? 'H' : 'G')
@@ -855,14 +854,19 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
                ? (rl > 4 && !strcasecmp(job->rom + rl - 4, ".fds") ? 'F' : 'E')
                : job->console == FE_CONSOLE_SNES ? 'D' : job->console == FE_CONSOLE_GBC ? 'C'
                : job->console == FE_CONSOLE_MD ? 'I'
-               : job->console == FE_CONSOLE_SMS ? 'J'     /* (a .sms may be a Game Gear title: tried below) */
+               : job->console == FE_CONSOLE_SMS ? 'J'
                : job->console == FE_CONSOLE_GG ? 'K' : job->console == FE_CONSOLE_SG ? 'L'
                : job->console == FE_CONSOLE_GB ? 'B' : 'A';
+      char named[256];
+   if (!gamedb_blurb_sys(sys, job->stem, out->blurb, sizeof(out->blurb)))
+   {
+      /* a loosely named file ("ChronoTrigger", "Act Raiser"): by the game's
+       * No-Intro name for its console */
       if (gamedb_name_loose(sys, job->stem, named, sizeof(named)) &&
-          gamedb_blurb(named, out->blurb, sizeof(out->blurb)))
+          gamedb_blurb_sys(sys, named, out->blurb, sizeof(out->blurb)))
          goto blurb_done;
       if (sys == 'J' && gamedb_name_loose('K', job->stem, named, sizeof(named)) &&
-          gamedb_blurb(named, out->blurb, sizeof(out->blurb)))
+          gamedb_blurb_sys('K', named, out->blurb, sizeof(out->blurb)))
          goto blurb_done;          /* a Game Gear game under a .sms name */
       if (job->console >= FE_CONSOLE_MD && job->console < FE_CONSOLE_COUNT)
       {
@@ -873,13 +877,14 @@ static int mf_metadata(const menu_load_job *job, menu_load_meta *out)
                 ? gamedb_md_crc_cancel(job->rom, &crc, mf_cancelled)
                 : gamedb_sms_crc_cancel(job->rom, &crc, mf_cancelled)) == 0 &&
              gamedb_name_by_crc(crc, named, sizeof(named)) &&
-             gamedb_blurb(named, out->blurb, sizeof(out->blurb)))
+             gamedb_blurb_sys(sys, named, out->blurb, sizeof(out->blurb)))
             goto blurb_done;
          if (mf_cancelled()) return ML_CANCELLED;
       }
       rc = mf_header_blurb(job, out->blurb);
       if (rc == ML_CANCELLED) return rc;
       if (rc == ML_ERROR) answer = rc;
+   }
    }
 blurb_done:
    MF_ADD(g_diag.meta_us, mf_elapsed(t));

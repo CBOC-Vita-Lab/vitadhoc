@@ -58,6 +58,7 @@ struct gbcore {
   uint16_t prev_buttons;
   int skip_render;
   int headless;                /* gbcore_set_headless */
+  int quiet;                   /* gbcore_set_quiet: a look-ahead frame */
   unsigned lines;              /* scanlines run in the current frame */
   uint8_t header[0x1C];        /* ROM 0x134..0x14F: identity for states */
   size_t rom_bytes;            /* the cartridge image's size (cheats) */
@@ -1058,7 +1059,7 @@ static void frame_end(gbcore_t *core)
   core->audio_acc %= GB_CLOCK_HZ;
   if (samples > core->audio_capacity)
     samples = core->audio_capacity;
-  if (core->headless)
+  if (core->headless || core->quiet)
   {
     /* Drop the frame's sound-register writes unheard.  They changed the
      * register side of the APU when they were made (apu_write ->
@@ -1511,6 +1512,64 @@ int gbcore_state_load(gbcore_t *core, const void *source, size_t size)
   rebase_clocks();
   cpu_irq_check();
   return 0;
+}
+
+/* ---- Quick response (gbcore.h): the way back from a look-ahead frame ---- */
+#define AHEAD_CARRY 64u
+static void ahead_carry_put(const gbcore_t *core, uint8_t *p)
+{
+  memset(p, 0, AHEAD_CARRY);
+  put_le32(p + 0, (uint32_t)core->frame_number);
+  put_le32(p + 4, (uint32_t)(core->frame_number >> 32));
+  put_le32(p + 8, (uint32_t)rtc.base);
+  put_le32(p + 12, (uint32_t)((uint64_t)rtc.base >> 32));
+  put_le32(p + 16, (uint32_t)rtc.halted_count);
+  put_le32(p + 20, (uint32_t)((uint64_t)rtc.halted_count >> 32));
+  put_le32(p + 24, (uint32_t)rtc.halted);
+  put_le32(p + 28, (uint32_t)rtc.carry);
+  put_le32(p + 32, (uint32_t)wall_last);
+  put_le32(p + 36, (uint32_t)((uint64_t)wall_last >> 32));
+}
+
+static void ahead_carry_get(gbcore_t *core, const uint8_t *p)
+{
+  core->frame_number = (uint64_t)get_le32(p + 0) | ((uint64_t)get_le32(p + 4) << 32);
+  rtc.base = (int64_t)((uint64_t)get_le32(p + 8) | ((uint64_t)get_le32(p + 12) << 32));
+  rtc.halted_count = (int64_t)((uint64_t)get_le32(p + 16) | ((uint64_t)get_le32(p + 20) << 32));
+  rtc.halted = (int)get_le32(p + 24);
+  rtc.carry = (int)get_le32(p + 28);
+  wall_last = (int64_t)((uint64_t)get_le32(p + 32) | ((uint64_t)get_le32(p + 36) << 32));
+}
+
+size_t gbcore_ahead_size(gbcore_t *core)
+{
+  size_t n = gbcore_state_size(core);
+  return n ? n + AHEAD_CARRY : 0;
+}
+
+long gbcore_ahead_save(gbcore_t *core, void *destination, size_t capacity)
+{
+  size_t n = gbcore_state_size(core);
+  if (!n || capacity < n + AHEAD_CARRY || gbcore_state_save(core, destination, capacity) != (long)n)
+    return -1;
+  ahead_carry_put(core, (uint8_t *)destination + n);
+  return (long)(n + AHEAD_CARRY);
+}
+
+int gbcore_ahead_load(gbcore_t *core, const void *source, size_t size)
+{
+  if (!core || core != active || size < AHEAD_CARRY)
+    return -1;
+  if (gbcore_state_load(core, source, size - AHEAD_CARRY) != 0)
+    return -1;
+  ahead_carry_get(core, (const uint8_t *)source + size - AHEAD_CARRY);
+  return 0;
+}
+
+void gbcore_set_quiet(gbcore_t *core, int quiet)
+{
+  if (core)
+    core->quiet = quiet ? 1 : 0;
 }
 
 int gbcore_power_on(void)

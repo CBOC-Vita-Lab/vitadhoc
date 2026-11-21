@@ -141,6 +141,13 @@ size_t nes_host_state_size(void);
 size_t nes_host_state_save_mem(uint8_t *buf, size_t cap);   /* needs cap >= state_size; returns the size, 0 on failure */
 int nes_host_state_load_mem(const uint8_t *buf, size_t n);  /* 0 on success; 1 no game, 3 not a state / refused */
 
+/* Quick response (run-ahead by one frame, gpsp/frontend-common/fe_host.c): the state plus what the state format does not hold (the
+ * sound filter's history and the like), and a load that keeps the picture and the wide view's learning (no discontinuity).
+ * nes_host_ahead_size = nes_host_state_size() + the carry. */
+size_t nes_host_ahead_size(void);
+size_t nes_host_ahead_save(uint8_t *buf, size_t cap);       /* returns the size, 0 on failure */
+int nes_host_ahead_load(const uint8_t *buf, size_t n);      /* 0 on success */
+
 /* ---- memory for achievements and tools ------------------------------------------------------------------- */
 
 /* RetroAchievements console 7 (NES): the address space rcheevos expects is the CPU's own, with two windows:

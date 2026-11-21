@@ -9,6 +9,7 @@
  */
 #include "harness.h"
 #include "pk_gfx_soft.h"
+#include "pk_glyphs.h"
 #include <stdio.h>
 #include <time.h>
 
@@ -87,6 +88,7 @@ int main(int argc, char **argv)
 {
 	std::string out = argc > 1 ? argv[1] : "build/shots";
 	make_dirs(out);
+	{ const char *fd = getenv("PK_FONT_DIR"); pk_glyphs_set_dir(fd && *fd ? fd : "../gpsp/vita/assets"); }
 	pkh::TempDir tmp;
 	setenv("TZ", "UTC", 1);
 	tzset();
@@ -276,11 +278,37 @@ int main(int argc, char **argv)
 		w.snap(menu, "20_touch_tap_flash");
 	}
 
+	/* Japanese names: the game's title, the console, cheat names, an error toast and the exit question */
+	{
+		size_t jp_first = w.shots.size();
+		cfg.game_name = "\xE3\x82\xB9\xE3\x83\xBC\xE3\x83\x91\xE3\x83\xBC\xE3\x83\x9E\xE3\x83\xAA\xE3\x82\xAA\xE3\x83\xAF\xE3\x83\xBC\xE3\x83\xAB\xE3\x83\x89 (\xE6\x97\xA5\xE6\x9C\xAC) Caf\xC3\xA9 \xC5\x8Dsaka \xE2\x80\x93 \xEC\x9E\x91\xEA\xB1\xB4";       /* スーパーマリオワールド (日本) Café ōsaka – 작건 */
+		cfg.console_label = "\xE3\x82\xB9\xE3\x83\xBC\xE3\x83\x91\xE3\x83\xBC\xE3\x83\x95\xE3\x82\xA1\xE3\x83\x9F\xE3\x82\xB3\xE3\x83\xB3";    /* スーパーファミコン */
+		host.cheat_list.resize(3);
+		host.cheat_list[0].name = "\xE7\x84\xA1\xE9\x99\x90\xE3\x83\xA9\xE3\x82\xA4\xE3\x83\x95";                  /* 無限ライフ */
+		host.cheat_list[0].on = true;
+		host.cheat_list[1].name = "\xE3\x82\xB3\xE3\x82\xA4\xE3\x83\xB3\xE3\x82\x99\xEF\xBC\x99\xEF\xBC\x99\xE6\x9E\x9A\xE3\x81\xA7\xE3\x82\xB9\xE3\x82\xBF\xE3\x83\xBC\xE3\x83\x88 Start with 99 coins and a very long name that has to be cut";
+		host.cheat_list[2].name = "\xE5\xA3\x81\xE6\x8A\x9C\xE3\x81\x91";                                                   /* 壁抜け */
+		host.cheat_list[2].available = false;
+		menu.configure(cfg, &host, &states);
+		menu.goto_page(Menu::PAGE_TOP);
+		advance(menu, 300);
+		w.snap(menu, "21_japanese_control_centre");
+		menu.goto_page(Menu::PAGE_CHEATS);
+		advance(menu, 300);
+		w.snap(menu, "22_japanese_cheats");
+		menu.goto_page(Menu::PAGE_TOP);
+		menu.notices().push("\xE3\x82\xBB\xE3\x83\xBC\xE3\x83\x96\xE3\x81\xAB\xE5\xA4\xB1\xE6\x95\x97\xE3\x81\x97\xE3\x81\xBE\xE3\x81\x97\xE3\x81\x9F: Could not save", NOTICE_ERROR);
+		advance(menu, 300);
+		w.snap(menu, "23_japanese_toast");
+		(void) jp_first;
+	}
+
 	w.sheet("contact_1", 0, 4);
 	w.sheet("contact_2", 4, 4);
 	w.sheet("contact_3", 8, 4);
 	w.sheet("contact_4", 12, 4);
 	w.sheet("contact_5", 16, 4);
+	w.sheet("contact_6", 20, 4);
 	menu.release_textures();
 	printf("menu_walk: %d screenshots in %s, %d failed checks\n", (int) w.shots.size(), out.c_str(), g_fail);
 	return g_fail ? 1 : 0;

@@ -136,6 +136,10 @@ clarification and the remaining package review.
   service; signing in is the player's choice and is not required to play.
 - **Inter:** The Inter Project Authors, SIL Open Font License 1.1.
   `licenses/Inter-OFL.txt`. Regular and SemiBold TTFs are embedded.
+- **Noto Sans CJK JP:** The Noto Project Authors, SIL Open Font License 1.1.
+  `licenses/NotoSansCJK-OFL.txt`. A subset (kana, JIS kanji, fullwidth forms,
+  Hangul, Latin, Greek, Cyrillic) is packaged as `cjkfont.otf`; drawn with
+  stb_truetype (public domain).
 - **Outfit:** The Outfit Project Authors, SIL Open Font License 1.1.
   `licenses/Outfit-OFL.txt`. Medium and SemiBold TTFs are embedded; Bold is
   used in generated LiveArea artwork. Font names and notices are unchanged.

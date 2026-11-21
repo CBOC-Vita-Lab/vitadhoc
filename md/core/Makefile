@@ -17,9 +17,14 @@ include $(CORE)/sources.mk
 # writes RGB565 directly (the Vita's native format; no conversion pass). USE_DYNAMIC_ALLOC: the 10 MB cartridge area is
 # allocated at load, not in .bss. HAVE_YM3438_CORE / HAVE_OPLL_CORE: the optional "enhanced" FM chips, never the default.
 CORE_DEFS := -DLSB_FIRST -DBYTE_ORDER=LITTLE_ENDIAN -DALIGN_LONG -DALT_RENDERER -DUSE_16BPP_RENDERING \
-	-DUSE_DYNAMIC_ALLOC -DHAVE_YM3438_CORE -DHAVE_OPLL_CORE -DMAXROMSIZE=10485760 -DMD_HOST -DNDEBUG -U_FORTIFY_SOURCE -fno-stack-protector
+	-DUSE_DYNAMIC_ALLOC -DHAVE_YM3438_CORE -DHAVE_OPLL_CORE -DMAXROMSIZE=10485760 -DMD_HOST -DMD_SEGACD -DUSE_LIBCHDR -DUSE_LIBTREMOR -DNDEBUG -U_FORTIFY_SOURCE -fno-stack-protector
 CINC := -I$(CORE) -I$(CORE)/m68k -I$(CORE)/z80 -I$(CORE)/sound -I$(CORE)/input_hw -I$(CORE)/cart_hw -I$(CORE)/cart_hw/svp \
-	-I$(CORE)/cd_hw
+	-I$(CORE)/cd_hw -I$(CORE)/cd_hw/libchdr/include
+
+# The Sega CD disc readers (libchdr and its lzma / zlib / zstd / dr_flac, tremor) see only their own headers.
+CHDR := $(CORE)/cd_hw/libchdr
+CHDINC := -I$(CHDR)/include -I$(CHDR)/deps/lzma/include -I$(CHDR)/deps/zlib -I$(CHDR)/deps/zstd -I$(CHDR)/deps/zstd/common
+CHDDEF := -D_7ZIP_ST -DZSTD_DISABLE_ASM -DZSTD_NO_TRACE -DBUILDFIXED -DHAVE_STDARG_H
 
 OPT ?= -O3
 CROSS ?=
@@ -69,6 +74,13 @@ check:
 $(B)/core/%.o: $(CORE)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CCORE) $(OPT) -c -o $@ $<
+# libchdr and its libraries: their own include folders (zlib.h, zstd.h and tremor's misc.h / os.h must not shadow anything of the core)
+$(B)/core/cd_hw/libchdr/%.o: $(CORE)/cd_hw/libchdr/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CCORE) $(CHDINC) $(CHDDEF) $(OPT) -c -o $@ $<
+$(B)/core/sound/tremor/%.o: $(CORE)/sound/tremor/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CCORE) -I$(CORE)/sound/tremor $(OPT) -c -o $@ $<
 # The .d files name their target the way B was spelled when they were written (relative or absolute): a build with the other spelling does
 # not see them. So the two dependencies a stale object would be wrong by are said outright: the worker's copy of the renderer is
 # vdp_render.c, and every object sees the VDP's shared structures (vdp_render.h: the wide view's line records) and the host's (host.h).

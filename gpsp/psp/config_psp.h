@@ -213,6 +213,9 @@ typedef struct
     * by default): 1 = off.  main_vita.c reads it where it probes the core
     * (vita.ini core4 = off still wins); app_core4_options() says it changed. */
    int  core4_off;
+   /* Settings > Gameplay > Quick response (CONFIG.INI quick_response): 0 Off, 1 Auto, 2 On; -1 = never chosen, the console's own
+    * default (vita/ahead_glue.h, main_vita.c app_quick_default).  A game's own choice (g_pgame.quick) wins. */
+   int  quick_response;
 #endif
    /* Media Engine dirty-page VRAM copy: send only the 1 KiB pages the
     * frame actually touched instead of all 96 KiB.  Default 1.  Exposed
@@ -788,6 +791,8 @@ typedef struct
     * Vertical play (0 Upright, 1 Turn the Vita), Palette (0 greyscale,
     * 1 classic LCD tint) */
    int ws_rotation, ws_vplay, ws_palette;
+   /* Quick response for this game (games/<ROM>.ini quick_response): -1 follows Settings, else 0 Off, 1 Auto, 2 On */
+   int quick;
 } pcfg_game;
 enum { PCFG_WS_ROT_AUTO, PCFG_WS_ROT_HORIZONTAL, PCFG_WS_ROT_VERTICAL, PCFG_WS_ROT_MODES };
 const char *pcfg_ws_rotation_name(int m);

@@ -67,5 +67,7 @@ void AddExState(void *v, uint32_t s, int type, char *desc);
 #define FCEUSTATE_RLSB_ARRAY(n)  (FCEUSTATE_RLSB | FCEUSTATE_STRIDE(n))
 
 void FCEU_DrawSaveStates(uint8_t *XBuf);
+extern int FCEU_ahead_restore;
+extern uint8_t UPALRAM[0x03];
 
 #endif

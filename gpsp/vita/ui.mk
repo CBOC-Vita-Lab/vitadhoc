@@ -84,6 +84,7 @@ VITA_UI_OBJS := $(VITA_UI_SRCS_C:.c=.o) $(VITA_UI_SRCS_S:.S=.o) \
 VITA_UI_CFLAGS := -DVITA -DVITA2D_NO_PGF \
    -I$(GPSP_DIR)/vita \
    -I$(GPSP_DIR)/vita/third_party/stb \
+   -I$(GPSP_DIR)/../playerkit/src \
    -I$(GPSP_DIR)/vita/third_party/vita2d/include \
    -I$(GPSP_DIR)/psp \
    -I$(GPSP_DIR)/frontend-common

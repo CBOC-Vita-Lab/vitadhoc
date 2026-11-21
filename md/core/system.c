@@ -206,6 +206,12 @@ int audio_context_save(uint8 *state)
   save_param(&llp, sizeof(llp));
   save_param(&rrp, sizeof(rrp));
   bufferptr += blip_save_raw(snd.blips[0], &state[bufferptr]);
+  /* Sega CD: the PCM chip's and the CD-DA output stages too */
+  if (snd.blips[1] && snd.blips[2])
+  {
+    bufferptr += blip_save_raw(snd.blips[1], &state[bufferptr]);
+    bufferptr += blip_save_raw(snd.blips[2], &state[bufferptr]);
+  }
   return bufferptr;
 }
 
@@ -215,6 +221,11 @@ int audio_context_load(uint8 *state)
   load_param(&llp, sizeof(llp));
   load_param(&rrp, sizeof(rrp));
   bufferptr += blip_load_raw(snd.blips[0], &state[bufferptr]);
+  if (snd.blips[1] && snd.blips[2])
+  {
+    bufferptr += blip_load_raw(snd.blips[1], &state[bufferptr]);
+    bufferptr += blip_load_raw(snd.blips[2], &state[bufferptr]);
+  }
   return bufferptr;
 }
 
@@ -755,6 +766,9 @@ void system_frame_scd(int do_skip)
 {
   /* line counters */
   int start, end, line;
+
+  /* VitAdhoc: a skipped frame keeps its sprite status bits (vdp_thread.h) */
+  vdp_status_only = do_skip ? 1 : 0;
 
   /* reset frame cycle counter */
   mcycles_vdp = 0;

@@ -96,6 +96,13 @@ and in emulators; none of it has run on a real Vita yet (see
   player, or read from a file, before using it.
 - Both Vitas need VitAdhoc 2.0.
 
+**Names in every alphabet**
+
+- Japanese (kana and kanji), Korean, fullwidth forms, accented Latin, Greek and
+  Cyrillic names now show as written in the app and in the Super NES and Sega
+  players' menus, instead of `?`. Names are never cut in the middle of a
+  character, and long ones wrap at sensible places.
+
 **Under the hood**
 
 - A TLS client, STUN, hole punching and a relay client of our own, and the

@@ -168,6 +168,16 @@ size_t gbcore_state_size(gbcore_t *core);
 long gbcore_state_save(gbcore_t *core, void *destination, size_t capacity);
 int gbcore_state_load(gbcore_t *core, const void *source, size_t size);
 
+/* Quick response (run-ahead by one frame, fe_host.c): the frontend runs the real frame, saves the machine with
+ * gbcore_ahead_save, runs the NEXT frame with gbcore_set_quiet(1) (it draws, it makes no sound) and puts the machine back with
+ * gbcore_ahead_load.  The image is gbcore_state_save's plus what no state holds (the cartridge clock's registers and the frame
+ * counter), so the way back is exact; the picture the look-ahead frame drew stays.  Size and calls as the state's. */
+size_t gbcore_ahead_size(gbcore_t *core);
+long gbcore_ahead_save(gbcore_t *core, void *destination, size_t capacity);
+int gbcore_ahead_load(gbcore_t *core, const void *source, size_t size);
+/* 1: frames still draw and deliver their picture, but the sound is neither synthesised nor delivered */
+void gbcore_set_quiet(gbcore_t *core, int quiet);
+
 /* Wall clock for cartridge RTCs, as seconds since 1970 (UTC: it stamps the
  * battery image). NULL (the default) means C time(). Required on the PSP,
  * whose time() is roughly uptime: with it every MBC3 save looked like it

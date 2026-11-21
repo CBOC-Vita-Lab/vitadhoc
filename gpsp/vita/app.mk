@@ -54,12 +54,17 @@ APP_SRCS      += clip_vita.c
 APP_SRCS      += preview_vita.c
 APP_SRCS      += menu_diag.c
 APP_SRCS      += menu_load.c menu_files.c
+# names in other alphabets: kana, kanji, Hangul, accents, drawn from font files
+# on demand (vglyph.h; playerkit's glyph cache, MIT, in glyph_glue.cpp)
+APP_SRCS      += vglyph.c glyph_glue.cpp
 # steady pacing: playerkit's pacer (pace_steady.h)
 APP_SRCS      += pace_steady.cpp
 # smooth hand-over: playerkit's mailbox and the drawing thread (handoff_glue.h)
 APP_SRCS      += handoff_glue.cpp
 # the look governor: playerkit's pk_look (look_glue.h)
 APP_SRCS      += look_glue.cpp
+# Quick response (run-ahead by one frame): playerkit's pk_ahead governor (ahead_glue.h)
+APP_SRCS      += ahead_glue.cpp
 # what the game list knows about a cartridge (names, blurbs) and its box art
 # fetched by itself (gamedb.h, artfetch.h)
 APP_SRCS      += gamedb.c artfetch.c cover_custom.c
@@ -92,6 +97,11 @@ APP_LIBS_VITA := -lSceHttp_stub -lSceSsl_stub
 VPK_EXTRA     :=
 
 VPK_EXTRA     += assets/gamedb.txt=gamedb.txt
+# the UI's fonts beyond ASCII (tools/font/make_fonts.py; SIL OFL, licenses/):
+# the CJK file is read by the app and by both players the first time a name
+# needs it; the two Latin ones are the players' (the app has Inter inside it)
+VPK_EXTRA     += assets/cjkfont.otf=cjkfont.otf assets/latinfont.ttf=latinfont.ttf \
+                 assets/latinfont-sb.ttf=latinfont-sb.ttf
 
 -include $(V)/cheats.mk
 -include $(V)/link.mk

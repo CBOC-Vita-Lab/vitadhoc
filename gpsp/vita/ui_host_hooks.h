@@ -116,6 +116,8 @@ void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
 void        app_handoff_options(void); /* Smooth hand-over on/off (main_vita.c) */
 const char *ui_host_core4_status(void);   /* "in use" / "not available" / "off" (main_vita.c: core4_status(), handoff_glue.h) */
 void        app_core4_options(void);   /* Fourth core Auto/Off changed (main_vita.c; g_pcfg.core4_off) */
+void        app_quick_options(void);   /* Quick response changed (main_vita.c; g_pcfg.quick_response, g_pgame.quick) */
+int         app_quick_supported(int console);   /* the console runs ahead (GB, GBC, NES, WonderSwan) */
 /* "Auto (xBRZ 3x, eased)" while the look governor eased the game, else NULL */
 const char *ui_host_look_label(void);
 /* (ui_psp.c) a battery file the app just wrote: the game list's "save

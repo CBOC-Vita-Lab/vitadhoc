@@ -15,6 +15,7 @@
 #include "../psp/osd_psp.h"
 #include "cheats_vita.h"
 #include "plat.h"
+#include "pk_utf8.h"         /* titles are UTF-8 (playerkit/src) */
 #include "ra_http.h"
 
 #define RA_FILE   "retroachievements.txt"
@@ -49,7 +50,7 @@ static struct
    int  game_on;                   /* between ra_game_begin and _end */
    int  game_hardcore;             /* the setting as the game started */
    int  game_state;                /* 0 loading, 1 has achievements, -1 none */
-   char game_title[64];
+   char game_title[128];
    int  framed;                    /* a frame was emulated since ra_pump */
    int  inflight;                  /* the net thread's job: 0, CALL, HASH */
    int  hash_want;                 /* the game's file is to be hashed */
@@ -245,7 +246,7 @@ static int account_save(void)
 
 static void RC_CCONV on_event(const rc_client_event_t *e, rc_client_t *client)
 {
-   char t[96];
+   char t[192];
    (void)client;
    switch (e->type)
    {
@@ -677,8 +678,7 @@ static void RC_CCONV game_done(int result, const char *error,
    if (result == RC_OK && g && g->id)
    {
       rc_client_get_user_game_summary(client, &s);
-      snprintf(R.game_title, sizeof(R.game_title), "%s",
-               g->title ? g->title : "");
+      pk_u8_copy(R.game_title, sizeof(R.game_title), g->title);
       /* Leaderboards are Hardcore's too: a score is sent as one. */
       R.game_state = s.num_core_achievements ||
                      rc_client_has_leaderboards(client) ? 1 : -1;
@@ -870,9 +870,8 @@ int ra_list_build(void)
       {
          const rc_client_achievement_t *a = l->buckets[b].achievements[k];
          ra_ach *o = &R.list[n++];
-         snprintf(o->title, sizeof(o->title), "%s", a->title ? a->title : "");
-         snprintf(o->desc, sizeof(o->desc), "%s",
-                  a->description ? a->description : "");
+         pk_u8_copy(o->title, sizeof(o->title), a->title);    /* (cut between characters) */
+         pk_u8_copy(o->desc, sizeof(o->desc), a->description);
          snprintf(o->progress, sizeof(o->progress), "%s",
                   a->measured_progress);
          o->points = a->points;

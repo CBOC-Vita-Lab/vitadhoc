@@ -640,6 +640,29 @@ extern "C" int wswan_host_state_load_mem(const uint8_t *buf, size_t n)
 	return 0;
 }
 
+/* ---- Quick response: the way back from a look-ahead refresh ----------------------------------------------------- */
+#define WS_AHEAD_CARRY 64u
+extern "C" size_t wswan_host_ahead_size(void) { return G.loaded ? G.state_size - STATE_TRAILER + 4 + WS_AHEAD_CARRY : 0; }
+extern "C" size_t wswan_host_ahead_save(uint8_t *buf, size_t cap)
+{
+	if (!G.loaded || cap < wswan_host_ahead_size()) return 0;
+	size_t len = state_to_scratch();
+	if (!len) return 0;
+	memcpy(buf + 4, G.state_scratch, len);
+	buf[0] = len & 0xFF; buf[1] = (len >> 8) & 0xFF; buf[2] = (len >> 16) & 0xFF; buf[3] = len >> 24;
+	memset(buf + 4 + len, 0, wswan_host_ahead_size() - 4 - len);
+	return wswan_host_ahead_size();
+}
+extern "C" int wswan_host_ahead_load(const uint8_t *buf, size_t n)
+{
+	if (!G.loaded || n != wswan_host_ahead_size()) return 3;
+	size_t len = (size_t)buf[0] | ((size_t)buf[1] << 8) | ((size_t)buf[2] << 16) | ((size_t)buf[3] << 24);
+	if (len > n - 4 - WS_AHEAD_CARRY) return 3;
+	StateMem st;
+	st.data = (uint8_t *)buf + 4; st.loc = 0; st.len = (uint32_t)len; st.malloced = 0; st.initial_malloc = 0;
+	return MDFNSS_LoadSM(&st, 0, 0) ? 0 : 3;
+}
+
 /* ---- memory ---------------------------------------------------------------------------------------------- */
 
 extern "C" int wswan_host_ra_read(unsigned addr, uint8_t *out, unsigned n)

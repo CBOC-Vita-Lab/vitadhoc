@@ -9,6 +9,7 @@
  */
 #define PSPCOMPAT_IMPL
 #include "pspcompat.h"
+#include "pk_utf8.h"      /* UTF-8 text from the keyboard and the system (playerkit/src) */
 
 #include <errno.h>
 #include <stdio.h>
@@ -107,27 +108,35 @@ int pc_ctrl_peek(pc_ctrl *pad, int count)
    return 1;
 }
 
-/* What the keyboard returned, as the UI's two faces can draw it: printable
- * ASCII.  A UTF-8 sequence becomes one '?'; leading and trailing blanks go. */
-static void ime_ascii(char *out, size_t cap, const unsigned char *utf8)
+/* What the keyboard (or the system's user name) returned, as UTF-8 the UI
+ * can draw (its fonts hold Latin, Greek, Cyrillic, kana, kanji, Hangul: a
+ * name typed in any of them stays as typed).  Control characters become
+ * blanks, a byte that is not UTF-8 one '?'; leading and trailing blanks go;
+ * the text is cut between characters to fit `cap`. */
+static void ime_text(char *out, size_t cap, const unsigned char *utf8)
 {
    size_t n = 0;
    if (!out || !cap)
       return;
    while (*utf8 == ' ')
       utf8++;
-   while (*utf8 && n + 1 < cap)
+   while (*utf8)
    {
-      unsigned c = *utf8++;
-      if (c >= 0x80)
-      {
-         while ((*utf8 & 0xC0) == 0x80)
-            utf8++;
-         c = '?';
-      }
-      else if (c < 0x20 || c == 0x7F)
-         c = ' ';
-      out[n++] = (char)c;
+      int l;
+      uint32_t c = pk_u8_next((const char *)utf8, &l);
+      char tmp[4];
+      int m = 1;
+      if (c >= PK_U8_RAW)
+         tmp[0] = '?';
+      else if (c < 0x20 || c == 0x7F || (c >= 0x80 && c < 0xA0))
+         tmp[0] = ' ';
+      else
+         m = pk_u8_put(c, tmp);
+      utf8 += l;
+      if (n + (size_t)m + 1 > cap)
+         break;
+      memcpy(out + n, tmp, (size_t)m);
+      n += (size_t)m;
    }
    while (n && out[n - 1] == ' ')
       n--;
@@ -333,7 +342,7 @@ void pspcompat_user_name(char *out, size_t cap)
    memset(name, 0, sizeof(name));
    if (sceAppUtilSystemParamGetString(SCE_SYSTEM_PARAM_ID_USERNAME, name,
                                       SCE_SYSTEM_PARAM_USERNAME_MAXSIZE) >= 0)
-      ime_ascii(out, cap, (const unsigned char *)name);
+      ime_text(out, cap, (const unsigned char *)name);
 }
 
 /* ---- the system keyboard (after VitaShell's ime_dialog.c, TheFloW, GPLv3:
@@ -351,8 +360,22 @@ static struct
 static void ime_to16(SceWChar16 *dst, size_t cap, const char *src)
 {
    size_t n = 0;
-   for (; src && *src && n + 1 < cap; src++)
-      dst[n++] = (SceWChar16)(unsigned char)(*src < 0x7F ? *src : '?');
+   while (src && *src && n + 2 < cap)
+   {
+      int l;
+      uint32_t c = pk_u8_next(src, &l);
+      src += l;
+      if (c >= PK_U8_RAW || (c < 0x20))
+         c = '?';
+      if (c >= 0x10000)
+      {
+         c -= 0x10000;
+         dst[n++] = (SceWChar16)(0xD800 | (c >> 10));
+         dst[n++] = (SceWChar16)(0xDC00 | (c & 0x3FF));
+      }
+      else
+         dst[n++] = (SceWChar16)c;
+   }
    dst[n] = 0;
 }
 
@@ -428,20 +451,18 @@ int pspcompat_ime_poll(char *out, size_t cap)
    }
    for (i = 0; g_ime.input[i] && n + 4 < sizeof(utf8); i++)
    {
-      unsigned c = g_ime.input[i];
-      if (c < 0x80)
-         utf8[n++] = (unsigned char)c;
-      else if (c < 0x800)
+      uint32_t c = g_ime.input[i];
+      char tmp[4];
+      int m, k;
+      if (c >= 0xD800 && c <= 0xDBFF && g_ime.input[i + 1] >= 0xDC00 &&
+          g_ime.input[i + 1] <= 0xDFFF)
       {
-         utf8[n++] = (unsigned char)(0xC0 | (c >> 6));
-         utf8[n++] = (unsigned char)(0x80 | (c & 0x3F));
+         c = 0x10000 + ((c - 0xD800) << 10) + (g_ime.input[i + 1] - 0xDC00);
+         i++;
       }
-      else
-      {
-         utf8[n++] = (unsigned char)(0xE0 | (c >> 12));
-         utf8[n++] = (unsigned char)(0x80 | ((c >> 6) & 0x3F));
-         utf8[n++] = (unsigned char)(0x80 | (c & 0x3F));
-      }
+      m = pk_u8_put(c, tmp);
+      for (k = 0; k < m; k++)
+         utf8[n++] = (unsigned char)tmp[k];
    }
    utf8[n] = 0;
    if (g_ime.secret)
@@ -456,7 +477,7 @@ int pspcompat_ime_poll(char *out, size_t cap)
       }
    }
    else
-      ime_ascii(out, cap, utf8);
+      ime_text(out, cap, utf8);
    /* nothing typed stays here (a password among it) */
    ime_wipe(utf8, sizeof(utf8));
    ime_wipe(g_ime.input, sizeof(g_ime.input));
@@ -630,7 +651,7 @@ void pspcompat_clock(int *hour, int *minute) { *hour = 13; *minute = 34; }
 void pspcompat_user_name(char *out, size_t cap)
 {
    if (out && cap)
-      ime_ascii(out, cap, (const unsigned char *)g_user_name);
+      ime_text(out, cap, (const unsigned char *)g_user_name);
 }
 
 int pspcompat_ime_open_secret(const char *title, int max_chars)
@@ -665,7 +686,8 @@ int pspcompat_ime_poll(char *out, size_t cap)
    if (t == PSPCOMPAT_HOST_IME_CANCEL)
       return PC_IME_CANCELLED;
    snprintf(clip, sizeof(clip), "%.*s", g_ime.max, t);
-   ime_ascii(out, cap, (const unsigned char *)clip);
+   clip[pk_u8_floor(clip, strlen(clip))] = '\0';
+   ime_text(out, cap, (const unsigned char *)clip);
    return PC_IME_DONE;
 }
 

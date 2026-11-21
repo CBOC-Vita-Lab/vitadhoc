@@ -1171,7 +1171,7 @@ def t_ws_punch(T):
 
 
 PAD_KINDS = {"nes": ("NES", "kind=5", "GATE_NES_ROMS (nes15-NTSC.nes) or VITADHOC_NES_ROM"),
-             "ws": ("WonderSwan", "kind=5", "GATE_WS_ROM")}
+             "ws": ("WonderSwan", "kind=5", "GATE_WS_ONLINE_ROM or GATE_WS_ROM")}
 
 
 def pad_online(T, name, nat, relay, fam):

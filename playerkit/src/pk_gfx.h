@@ -52,6 +52,8 @@ public:
 	/* textures; tex_update copies w x h pixels (stride in bytes) into the texture */
 	virtual Texture *tex_create(int w, int h, TexFormat fmt) = 0;
 	virtual void tex_update(Texture *t, const void *pixels, int stride_bytes) = 0;
+	/* the same for the w x h block at x,y only (the glyph atlas's cells) */
+	virtual void tex_update_rect(Texture *t, int x, int y, int w, int h, const void *pixels, int stride_bytes) = 0;
 	virtual void tex_free(Texture *t) = 0;
 	/* draws the part (sx,sy,sw,sh) of t into (dx,dy,dw,dh); tint multiplies (white = as is);
 	 * smooth = bilinear, else nearest */
@@ -83,13 +85,19 @@ struct FaceData {
 /* the built-in faces (Inter and Outfit rasterised at 20/24/24/30/40 px) */
 const FaceData *builtin_face(int face);
 
-/* Text drawing on top of any Gfx: makes one atlas texture per face on first use. */
+/* Text drawing on top of any Gfx: makes one atlas texture per face on first use. Strings are UTF-8:
+ * printable ASCII is drawn from the baked atlases; any other character (accents, Greek, Cyrillic, kana,
+ * kanji, fullwidth forms, Hangul) from glyphs made on demand from the package's font files (pk_glyphs.h:
+ * call pk_glyphs_set_dir() once; "app0:" is the default on the console). A character no font has, a
+ * control character or a stray byte shows as '?'. Nothing cuts or wraps inside a character. */
 class Text {
 public:
 	explicit Text(Gfx *g);
 	~Text();
 	/* replace a face (the player's own atlas); the data must outlive the Text */
 	void set_face(int face, const FaceData *fd);
+	/* one frame has passed: the glyph atlases may reuse cells idle for a few frames (Menu::draw calls it) */
+	void frame();
 	/* draws with the line box's top-left at x,y; returns the pen x after it */
 	float draw(int face, float x, float y, const char *s, uint32_t rgba);
 	float width(int face, const char *s);

@@ -42,6 +42,7 @@
 #include "video_vita_priv.h"
 #include "video_vita_logo.h"
 #include "vstyle.h"
+#include "vglyph.h"
 #include "ambient_look.h"
 #include "fe_evt.h"
 #include "upscale_vita.h"
@@ -2534,6 +2535,7 @@ void vid_swap(void)
    vb_present();
    g_filled = 0;
    g_frame_no++;
+   vglyph_tick();            /* (the glyph atlases: a frame has gone out) */
    gx_guard();
 }
 

@@ -226,6 +226,9 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
       g_pcfg.core4_off = fe_ini_get(cfg_path, "core4", c4, sizeof(c4)) &&
                          (c4[0] == 'o' || c4[0] == 'O' || c4[0] == '0') ? 1 : 0;
    }
+   g_pcfg.quick_response = (int)fe_ini_get_int(cfg_path, "quick_response", -1);
+   if (g_pcfg.quick_response < -1 || g_pcfg.quick_response > 2)
+      g_pcfg.quick_response = -1;
    if (g_pcfg.nes_wide < 0 || g_pcfg.nes_wide > 2)
       g_pcfg.nes_wide = 0;
 #endif
@@ -728,6 +731,9 @@ void pcfg_save(void)
       else if (fe_ini_get(cfg_path, "core4", c4, sizeof(c4)))
          fe_ini_set(cfg_path, "core4", "auto");
    }
+   /* only once chosen: "the console's default" stays no key */
+   if (g_pcfg.quick_response >= 0)
+      fe_ini_set_int(cfg_path, "quick_response", g_pcfg.quick_response);
    if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
       fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
    if (!g_pcfg.nes_pal_smooth || fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) == 0)
@@ -1342,6 +1348,7 @@ const char *pcfg_ws_rotation_name(int m)
 
 static void pgame_defaults(void)
 {
+   g_pgame.quick = -1;
    g_pgame.ws_rotation = PCFG_WS_ROT_AUTO;
    g_pgame.ws_vplay = 0;
    g_pgame.ws_palette = 0;
@@ -1374,6 +1381,8 @@ static void pgame_render(char *out, size_t cap)
                 g_pgame.sensor_mode, g_pgame.sensor_sens, g_pgame.sensor_rev,
                 g_pgame.sunlight, g_pgame.level_set, g_pgame.level_right,
                 g_pgame.level_down);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " q%d", g_pgame.quick);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " ws%d/%d/%d", g_pgame.ws_rotation,
                     g_pgame.ws_vplay, g_pgame.ws_palette);
@@ -1449,6 +1458,8 @@ void pcfg_game_begin(const char *path, int console)
                                          0, PCFG_WS_ROT_MODES - 1, PCFG_WS_ROT_AUTO);
       g_pgame.ws_vplay = fe_ini_doc_get_int(&doc, "ws_vertical_play", 0) == 1;
       g_pgame.ws_palette = fe_ini_doc_get_int(&doc, "ws_palette", 0) == 1;
+      g_pgame.quick = pgame_clampi(fe_ini_doc_get_int(&doc, "quick_response", -1),
+                                   0, 2, -1);
    }
    g_pgame.on = 1;
    pgame_render(pgame_written, sizeof(pgame_written));
@@ -1502,6 +1513,8 @@ int pcfg_game_save(void)
    rc |= fe_ini_doc_set_int(&doc, "level_set", g_pgame.level_set);
    rc |= fe_ini_doc_set_int(&doc, "level_right", g_pgame.level_right);
    rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);
+   if (g_pgame.quick >= 0 || fe_ini_doc_get_int(&doc, "quick_response", -1) >= 0)
+      rc |= fe_ini_doc_set_int(&doc, "quick_response", g_pgame.quick);
    if (g_pgame.console == FE_CONSOLE_WSWAN)
    {
       rc |= fe_ini_doc_set_int(&doc, "ws_rotation", g_pgame.ws_rotation);
@@ -1570,6 +1583,7 @@ void pcfg_revert_risky(void)
    g_pcfg.smooth_handoff = 0;
    g_pcfg.steady_pacing = 0;
    g_pcfg.core4_off = 1;
+   g_pcfg.quick_response = 0;
    g_pcfg.nes_wide = 2;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {

@@ -289,6 +289,26 @@ static void usage()
 	     "SCRIPT = FRAME:buttons,FRAME:buttons ... (buttons joined with +: u d l r a b c x y z start mode; none)");
 }
 
+// Sega CD: --disc FILE (a .cue, .iso, .bin or .chd) with --bios FILE (a BIOS image, or the test suite's stand-in: --bios-stand-in). The machine is then
+// loaded by md_host_load_disc and every mode below works as for a ROM (the disc stands in for ROM).
+static const char *g_disc = NULL, *g_bios = NULL;
+static int g_bios_force = 0;
+static int load_game(const char *bn, int system, char *err, size_t errlen)
+{
+	if (!g_disc) return md_host_load_mem(g_rom.data(), g_rom.size(), bn, system, err, errlen);
+	return md_host_load_disc(g_disc, err, errlen);
+}
+static bool read_all(const char *p, std::vector<uint8_t> &out)
+{
+	FILE *f = fopen(p, "rb");
+	if (!f) return false;
+	fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+	out.resize((size_t)n);
+	bool ok = fread(out.data(), 1, (size_t)n, f) == (size_t)n;
+	fclose(f);
+	return ok;
+}
+
 // threads for the VDP / FM workers (the Vita hands over sceKernel threads instead)
 static pthread_t g_wthr[MD_WORKERS];
 struct SpawnArg { void (*fn)(void *); void *arg; };
@@ -347,6 +367,9 @@ int main(int argc, char **argv)
 		else if (a == "--vdp-check") { vdpthr = 1; vdpcheck = 1; }
 		else if (a == "--vdp-stress") { vdpthr = 1; vdpstress = 1; }
 		else if (a == "--quiet") quiet = 1;
+		else if (a == "--disc") g_disc = need();
+		else if (a == "--bios") g_bios = need();
+		else if (a == "--bios-stand-in") g_bios_force = 1;
 		else if (a == "--wide") g_wide = atoi(need());
 		else if (a == "--wide-cap") g_cap = atoi(need());
 		else if (a == "--wide-dump") {
@@ -366,13 +389,16 @@ int main(int argc, char **argv)
 		else if (a[0] != '-' && !rom) rom = argv[i];
 		else { usage(); return 2; }
 	}
+	if (g_disc && !rom) rom = g_disc;
 	if (!rom) { usage(); return 2; }
-	FILE *f = fopen(rom, "rb");
-	if (!f) { fprintf(stderr, "cannot open %s\n", rom); return 1; }
-	fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-	g_rom.resize((size_t)n);
-	if (fread(g_rom.data(), 1, (size_t)n, f) != (size_t)n) { fclose(f); return 1; }
-	fclose(f);
+	if (!g_disc) {
+		FILE *f = fopen(rom, "rb");
+		if (!f) { fprintf(stderr, "cannot open %s\n", rom); return 1; }
+		fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+		g_rom.resize((size_t)n);
+		if (fread(g_rom.data(), 1, (size_t)n, f) != (size_t)n) { fclose(f); return 1; }
+		fclose(f);
+	}
 
 	if (md_host_init()) { fprintf(stderr, "init failed\n"); return 1; }
 	for (size_t i = 0; i < opts.size(); i++) {
@@ -386,7 +412,11 @@ int main(int argc, char **argv)
 	if (padtype) { md_host_set_pad_type(0, padtype); md_host_set_pad_type(1, padtype); }
 	char err[128];
 	const char *bn = strrchr(rom, '/'); bn = bn ? bn + 1 : rom;
-	if (md_host_load_mem(g_rom.data(), g_rom.size(), bn, system, err, sizeof err)) { printf("LOADFAIL %s: %s\n", bn, err); return 1; }
+	if (g_disc) {
+		std::vector<uint8_t> bios;
+		if (!g_bios || !read_all(g_bios, bios) || !md_host_cd_bios_add(bios.data(), bios.size(), g_bios_force)) { printf("LOADFAIL %s: no usable BIOS (--bios FILE)\n", bn); return 1; }
+	}
+	if (load_game(bn, system, err, sizeof err)) { printf("LOADFAIL %s: %s\n", bn, err); return 1; }
 	if (padtype) { md_host_set_pad_type(0, padtype); md_host_set_pad_type(1, padtype); }
 	if (g_wide > 0) {
 		g_wa = new mdw::Wide;
@@ -434,7 +464,7 @@ int main(int argc, char **argv)
 		std::vector<uint8_t> gLoad1;
 		if (getenv("MD_TWIN_LOADDIFF")) gLoad1 = snap_globals();
 		auto fresh = [&]() {
-			if (md_host_load_mem(g_rom.data(), g_rom.size(), bn, system, err, sizeof err)) { printf("PROOF %s reload failed\n", bn); exit(1); }
+			if (load_game(bn, system, err, sizeof err)) { printf("PROOF %s reload failed\n", bn); exit(1); }
 			if (padtype) { md_host_set_pad_type(0, padtype); md_host_set_pad_type(1, padtype); }
 			if (norender) md_host_set_render(0);
 			if (getenv("MD_TWIN_LOADDIFF")) print_globdiff(gLoad1, snap_globals(), "load");
@@ -576,7 +606,7 @@ int main(int argc, char **argv)
 
 	if (roundtrip) {
 		// run to state_frame from a fresh power on, save, run M frames hashing video, load, run M frames again, compare
-		md_host_load_mem(g_rom.data(), g_rom.size(), bn, system, err, sizeof err);
+		load_game(bn, system, err, sizeof err);
 		if (padtype) { md_host_set_pad_type(0, padtype); md_host_set_pad_type(1, padtype); }
 		Acc skipacc;
 		for (int fr = 0; fr < state_frame; fr++) step_frame(fr, skipacc, NULL);

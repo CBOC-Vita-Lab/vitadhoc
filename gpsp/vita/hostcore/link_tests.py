@@ -1019,9 +1019,10 @@ def nes_rom():
 
 
 def ws_rom():
-    """A public WonderSwan game for the Two players scenarios (never committed): the file GATE_WS_ROM names
-    (the gate's own variable; a homebrew test ROM is enough: the session only needs a running machine).  None: skipped."""
-    f = os.environ.get("GATE_WS_ROM")
+    """A public WonderSwan game for the Two players scenarios (never committed): the file GATE_WS_ONLINE_ROM names
+    (the gate's own variable, falling back to GATE_WS_ROM; a homebrew test ROM is enough: the session only needs a
+    running machine).  None: skipped."""
+    f = os.environ.get("GATE_WS_ONLINE_ROM") or os.environ.get("GATE_WS_ROM")
     return f if f and os.path.isfile(f) else None
 
 
@@ -1069,7 +1070,7 @@ def t_ws_two(T):
     """Wi-Fi, Two players on a WonderSwan game: one machine on both consoles, a pad each (fe_padpair)."""
     rom = ws_rom()
     if not rom:
-        T.S.note("no WonderSwan game (GATE_WS_ROM): skipped")
+        T.S.note("no WonderSwan game (GATE_WS_ONLINE_ROM or GATE_WS_ROM): skipped")
         return
     pad_two(T, "ws_two", rom)
 

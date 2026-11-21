@@ -332,6 +332,13 @@ void fe_host_cpu_stat(uint64_t *emu_ns, uint64_t *frames);
  * same contract as the core's own frameskip (video callback with NULL).
  * Used by the fast-forward draw gate (docs/FF-PRESETS.md); GBA and GB. */
 void fe_host_skip_override(int skip);
+/* Quick response (run-ahead by one frame): GB, GBC, NES, WonderSwan.  fe_host_ahead_possible: a machine that can, now (no link, no
+ * session).  fe_host_ahead_set(1): the next fe_host_run_frame runs the real frame undrawn, the next one drawn and silent, and puts
+ * the machine back (the picture shown is one frame ahead; sound, state, saves are as without it).  The caller keeps it off in
+ * fast forward, rewind and Steady pacing's half mode.  fe_host_ahead_stat: frames run ahead, and failed ones (0 expected). */
+int fe_host_ahead_possible(void);
+void fe_host_ahead_set(int want);
+void fe_host_ahead_stat(unsigned *frames, unsigned *fails);
 /* Emulation faults the core recovered from by resetting the game (a guest
  * jump to an address that is not code).  Monotonic; the UI toasts on change. */
 unsigned fe_host_guest_faults(void);

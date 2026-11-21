@@ -100,6 +100,12 @@ int wscore_save_ram_dirty(wscore_t *core);
 size_t wscore_state_size(wscore_t *core);
 long wscore_state_save(wscore_t *core, void *dst, size_t cap);
 int wscore_state_load(wscore_t *core, const void *src, size_t size);
+/* Quick response (gbcore.h gbcore_ahead_*): one refresh (its one or two console frames and the blend) is the unit; the load keeps
+ * the picture the look-ahead refresh made and does not restart the blend's phase. */
+size_t wscore_ahead_size(wscore_t *core);
+long wscore_ahead_save(wscore_t *core, void *dst, size_t cap);
+int wscore_ahead_load(wscore_t *core, const void *src, size_t size);
+void wscore_set_quiet(wscore_t *core, int quiet);
 
 /* RetroAchievements console 53 */
 uint32_t wscore_ra_read(wscore_t *core, uint32_t addr, uint8_t *out, uint32_t len);

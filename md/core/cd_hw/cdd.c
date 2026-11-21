@@ -414,6 +414,9 @@ int cdd_load(char *filename, char *header)
   /* first unmount any loaded disc */
   cdd_unload();
 
+  /* a failed attempt must not leave its table of contents behind (the player may try another disc in the same session) */
+  memset(&cdd.toc, 0, sizeof(cdd.toc));
+
   /* open file */
   fd = cdStreamOpen(filename);
   if (!fd)

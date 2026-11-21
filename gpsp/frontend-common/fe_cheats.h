@@ -122,6 +122,7 @@ unsigned fe_cheats_running(void);
 void fe_cheats_gb_frame(int (*poke)(void *ctx, uint16_t addr, uint8_t value),
                         void *ctx);
 unsigned fe_cheats_gb_writes(void);    /* pokes accepted so far */
+void fe_cheats_gb_writes_set(unsigned n);   /* Quick response: the look-ahead frame's pokes are not counted */
 
 /* Words for an entry's error, short enough for a list row. */
 const char *fe_cheats_error_name(int err);

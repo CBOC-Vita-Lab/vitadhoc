@@ -622,6 +622,29 @@ int nes_host_state_load_mem(const uint8_t *buf, size_t n)
 	return 0;
 }
 
+/* ---- Quick response: the way back from a look-ahead frame ---------------------------------------------------- */
+
+#define NES_AHEAD_CARRY 64u
+size_t nes_host_ahead_size(void) { return g_loaded && g_state_size ? g_state_size + NES_AHEAD_CARRY : 0; }
+
+size_t nes_host_ahead_save(uint8_t *buf, size_t cap)
+{
+	size_t n = nes_host_state_save_mem(buf, cap >= NES_AHEAD_CARRY ? cap - NES_AHEAD_CARRY : 0);
+	if (!n) return 0;
+	memset(buf + n, 0, NES_AHEAD_CARRY);
+	memcpy(buf + n, UPALRAM, 3);	/* palette mirrors: not in the state */
+	return n + NES_AHEAD_CARRY;
+}
+
+int nes_host_ahead_load(const uint8_t *buf, size_t n)
+{
+	if (!g_loaded || n < NES_AHEAD_CARRY + 16 || memcmp(buf, "FCS", 3) != 0 || geniestage == 1) return 3;
+	FCEU_ahead_restore = 1;
+	{ const int ok = FCEUSS_Load_Mem(buf, n - NES_AHEAD_CARRY); FCEU_ahead_restore = 0; if (!ok) return 3; }
+	memcpy(UPALRAM, buf + n - NES_AHEAD_CARRY, 3);
+	return 0;
+}
+
 /* ---- memory ------------------------------------------------------------------------------- */
 
 int nes_host_peek(unsigned addr)

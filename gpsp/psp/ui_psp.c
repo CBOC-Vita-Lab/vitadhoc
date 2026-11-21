@@ -61,11 +61,15 @@
 #include "ra_vita.h"
 #include "plat.h"
 #include "vback.h"
+#include "pk_nfc.h"          /* UTF-8 names (playerkit/src): pk_nfc_lite, pk_u8_* */
+/* the byte offset where the character before s[n] starts (a cut never splits one) */
+#define UI_PREV_CHAR(s, n) ((int)(pk_u8_prev((s), (s) + (n)) - (s)))
 #define UI_DIAG_BEGIN() md_begin()
 #define UI_DIAG_END(stage, t) md_end(stage, t)
 #include "ui_host_hooks.h"
 #include "fe_util.h"         /* fe_crc32: the list's CRC in rom_scan */
 #else
+#define UI_PREV_CHAR(s, n) ((n) - 1)
 #define UI_DIAG_BEGIN() 0ull
 #define UI_DIAG_END(stage, t) ((void)(t))
 #include "transport_adhoc.h"
@@ -2407,6 +2411,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_STEADY,   /* 1.4: Steady pacing (pace_steady.h) */
        SET_HANDOFF,  /* 1.4: Smooth hand-over (handoff_glue.h) */
        SET_CORE4,    /* 1.4: Fourth core Auto / Off (docs/FOURTH-CORE.md) */
+       SET_QUICK,    /* 2.0: Quick response Off / Auto / On (vita/ahead_glue.h) */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2422,6 +2427,8 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_WSROT, SET_WSVPLAY, SET_WSPAL,
        /* 2.0: a Game Boy game's own type (gb_override.txt) */
        SET_GBTYPE,
+       /* 2.0: this game's own Quick response (Settings / Off / Auto / On) */
+       SET_QUICKGAME,
        /* 1.4: the running game's save as a plain file for other emulators
         * (docs/SAVES.md; ui_host_export_save) */
        SET_EXPORT,
@@ -2578,6 +2585,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Steady pacing" },
    { 0, "Smooth hand-over" },
    { 0, "Fourth core" },
+   { 0, "Quick response" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -2620,6 +2628,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Vertical play" },
    { 0, "Palette" },
    { 0, "Game Boy type" },
+   { 0, "Quick response" },
    { 0, "Export save for other emulators" },
    { 1, "ABOUT" },
    { 0, "Extra CPU core" },
@@ -2687,6 +2696,10 @@ static int set_row_shown(int idx)
       return pcfg_display_console() == FE_CONSOLE_NES;
    if (idx >= SET_WSROT && idx <= SET_WSPAL)
       return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_WSWAN;
+   if (idx == SET_QUICK)       /* a running game: only a console that runs ahead; the game list: the setting for them all */
+      return g_ov_browse || (g_pgame.on && app_quick_supported(g_pgame.console));
+   if (idx == SET_QUICKGAME)
+      return !g_ov_browse && g_pgame.on && app_quick_supported(g_pgame.console);
    if (idx == SET_GBTYPE)
       return !g_ov_browse && g_pgame.on &&
              (g_pgame.console == FE_CONSOLE_GB || g_pgame.console == FE_CONSOLE_GBC);
@@ -3455,6 +3468,24 @@ static void settings_adjust(int id, int dir)
       app_core4_options();
       fe_evt("core4_setting off=%d", g_pcfg.core4_off);
       break;
+   case SET_QUICK:
+   {
+      /* Off / Auto / On; a setting never chosen shows (and starts from) Auto */
+      const int cur = g_pcfg.quick_response < 0 ? 1 : g_pcfg.quick_response;
+      g_pcfg.quick_response = (cur + 3 + (dir < 0 ? -1 : 1)) % 3;
+      app_quick_options();
+      fe_evt("quick_setting mode=%d", g_pcfg.quick_response);
+      break;
+   }
+   case SET_QUICKGAME:
+   {
+      /* Follows Settings (-1) / Off / Auto / On, kept in the game's own file */
+      g_pgame.quick = (g_pgame.quick + 1 + 4 + (dir < 0 ? -1 : 1)) % 4 - 1;
+      (void)pcfg_game_save();
+      app_quick_options();
+      fe_evt("quick_setting game=%d", g_pgame.quick);
+      break;
+   }
    case SET_HANDOFF:
       g_pcfg.smooth_handoff = !g_pcfg.smooth_handoff;
       app_handoff_options();
@@ -4083,6 +4114,11 @@ static const char *set_help(int id)
    case SET_CORE4:    return g_pcfg.core4_off
                              ? "Off: the app stays on the three cores it is given."
                              : "Auto: uses the Vita's fourth core if it works. Next game.";
+   case SET_QUICK:    return "Shows what you press one frame sooner: the next frame is "
+                             "worked out ahead. The game runs the same. "
+                             "Auto uses it while the game leaves time.";
+   case SET_QUICKGAME: return "This game's own choice. Settings follows the "
+                              "Gameplay row. Auto uses it while there is time.";
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
                              ? "Drawn on a second core: heavy looks do not "
                                "slow the game."
@@ -4830,6 +4866,18 @@ static ui_action screen_settings(unsigned edges)
       case SET_STEADY:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.steady_pacing ? "on" : "off");
+         break;
+      case SET_QUICK:
+      {
+         const int q = g_pcfg.quick_response < 0 ? 1 : g_pcfg.quick_response;
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  q == 0 ? "Off" : q == 1 ? "Auto" : "On");
+         break;
+      }
+      case SET_QUICKGAME:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.quick < 0 ? "Settings" : g_pgame.quick == 0 ? "Off"
+                  : g_pgame.quick == 1 ? "Auto" : "On");
          break;
       case SET_HANDOFF:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -9077,6 +9125,9 @@ static int list_initial(int view_i)
    int c = *p;
    if (c >= 'a' && c <= 'z')
       c -= 'a' - 'A';
+   if (c >= 0x80)
+      return 0x100;      /* a name in Japanese (or any non-ASCII letter): the
+                          * last group, where the byte order sorts it */
    return c >= 'A' && c <= 'Z' ? c : '#';
 }
 
@@ -10849,7 +10900,28 @@ static const uint16_t *hero_decode(int rom_idx, const char *base)
 #endif
 }
 
-/* What the UI's fonts can draw: they hold ASCII alone, so an accented Latin
+#ifdef VITA
+/* NAMES IN OTHER ALPHABETS (2.0).  The Vita's UI draws UTF-8: accented
+ * Latin, Greek, Cyrillic, kana, kanji, fullwidth forms and Hangul come from
+ * the font files of the package (vglyph.h), so a name is shown as it is on
+ * the card.  What is done here is to put a name that came through a Mac
+ * (decomposed: "e" + an accent, a kana + the voiced mark) into the
+ * precomposed form the fonts draw, and to turn a byte that is not UTF-8 at
+ * all into one '?'.  In place: never longer. */
+static void ui_ascii_fold(char *s)
+{
+   unsigned char *r;
+   pk_nfc_lite(s);
+   for (r = (unsigned char *)s; *r;)
+   {
+      int n;
+      if (pk_u8_next((const char *)r, &n) >= PK_U8_RAW)
+         *r = '?';
+      r += n;
+   }
+}
+#else
+/* What the PSP's font can draw: it holds ASCII alone, so an accented Latin
  * letter in a file name is shown as its letter ("Pokémon" reads "Pokemon",
  * not "Pok??mon"), curly quotes and dashes as their plain ones, and any
  * other character as one '?' (not one per byte).  In place: never longer. */
@@ -10898,6 +10970,7 @@ static void ui_ascii_fold(char *s)
    }
    *w = 0;
 }
+#endif
 
 /* Display name: extension already stripped by the caller; additionally cut
  * region tags for the card face ("Pokemon - Emerald Version (USA, Europe)"
@@ -10908,6 +10981,9 @@ static void rom_display_name(const rom_entry *r, char *out, size_t sz,
    size_t n = ui_rom_stem_length(r->base);
    if (n >= sz)
       n = sz - 1;
+#ifdef VITA
+   n = pk_u8_floor(r->base, n);       /* (a name cut to the buffer ends on a character) */
+#endif
    memcpy(out, r->base, n);
    out[n] = '\0';
 #ifdef VITA
@@ -11032,6 +11108,7 @@ static int names_subtitle(int rom, char *out, size_t sz)
    n = ui_rom_stem_length(g_roms[rom].base);
    if (n >= sz)
       n = sz - 1;
+   n = pk_u8_floor(g_roms[rom].base, n);
    memcpy(out, g_roms[rom].base, n);
    out[n] = '\0';
    ui_ascii_fold(out);
@@ -11067,6 +11144,44 @@ static void rom_list_name(int rom, char *out, size_t sz)
 }
 #endif
 
+#ifdef VITA
+static int ui_has_multibyte(const char *p)
+{
+   for (; *p; p++)
+      if ((unsigned char)*p >= 0x80)
+         return 1;
+   return 0;
+}
+
+/* How many bytes of p make the next line of a title wrapped to `px`: the
+ * most whole characters that MEASURE inside it, ending at a space or after a
+ * character that is written without spaces (kana, kanji) where there is one. */
+static int ui_line_take(const char *p, int px)
+{
+   char seg[128];
+   int n = 0, best = 0;
+   while (p[n])
+   {
+      int l = (int)pk_u8_len(p + n), k;
+      uint32_t cp;
+      if (n + l >= (int)sizeof(seg))
+         break;
+      memcpy(seg, p, (size_t)(n + l));
+      seg[n + l] = '\0';
+      if (n > 0 && vid_text_w(seg) > px)
+         break;
+      cp = pk_u8_next(p + n, &k);
+      n += l;
+      if (p[n] == ' ' || (pk_u8_wide(cp) && p[n] &&
+                          !pk_u8_no_line_start(pk_u8_next(p + n, &k))))
+         best = n;
+   }
+   if (!p[n])
+      return n;
+   return best > 0 ? best : (n > 0 ? n : (int)pk_u8_len(p));
+}
+#endif
+
 /* Template card for a ROM with no art: accent header strip, wrapped title,
  * GBA badge.  Deliberately styled so a folder with zero art still looks
  * designed rather than broken. */
@@ -11085,8 +11200,13 @@ static void card_template(int x, int y, int w, int h, const rom_entry *r)
    p = title;
    while (*p && line < max_rows)
    {
-      char seg[40];
+      char seg[128];
       int n = (int)strlen(p);
+#ifdef VITA
+      if (ui_has_multibyte(p))
+         n = ui_line_take(p, w - 16);    /* whole characters, by their width */
+      else
+#endif
       if (n > max_cols)
       {
          /* break at the last space that fits, else hard-break */
@@ -11108,7 +11228,7 @@ static void card_template(int x, int y, int w, int h, const rom_entry *r)
          int b = n - 1;
          while (b > 0 && p[b] != ' ')
             b--;
-         n = b > 0 ? b : n - 1;
+         n = b > 0 ? b : UI_PREV_CHAR(p, n);
          memcpy(seg, p, n);
          seg[n] = '\0';
       }
@@ -11356,7 +11476,8 @@ static void clip_title(char *t, int px)
     * and cost eleven pixels. */
    while (n > 1)
    {
-      t[--n] = 0;
+      n = UI_PREV_CHAR(t, n);
+      t[n] = 0;
       if (vid_text_w(t) + vid_text_w("...") <= px)
          break;
    }
@@ -11504,7 +11625,8 @@ static void clip_title_hd(char *t, int px)
       return;
    while (n > 1)
    {
-      t[--n] = 0;
+      n = UI_PREV_CHAR(t, n);
+      t[n] = 0;
       if (vid_text_hd_w(t) + vid_text_hd_w("...") <= px)
          break;
    }

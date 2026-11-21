@@ -2251,6 +2251,7 @@ static void COOLGIRL_Close(void) {
 
 static void COOLGIRL_Restore(int version) {
 	COOLGIRL_Sync();
+	if (!FCEU_ahead_restore)
 	lreset = 0;
 }
 

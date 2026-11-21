@@ -29,6 +29,10 @@ WK_FILES := $(WK)/src/wk_layers.cpp $(WK)/src/wk_map.cpp $(WK)/src/wk_compose.cp
 $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES) $(wildcard $(WK)/include/*.h)
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -I$(WK)/include -I$(WK)/src -I$(WK)/tests -o $@ main.cpp $(FE)/wide.cpp $(WK_FILES) $(WK)/tests/png.cpp $(B)/mdcore.o -lm -pthread
 
+# cd_test: the Sega CD BIOS check and the disc readers against the synthetic discs (tools/mkscd.py); run by selftest.sh
+$(B)/cd_test: cd_test.cpp $(B)/mdcore.o $(FE)/host.h
+	$(CXX) -O1 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -o $@ cd_test.cpp $(B)/mdcore.o -lm -pthread
+
 # state loader fuzz harness (tools/statefuzz/statefuzz.sh builds it under ASan + UBSan: CXX="g++ -fsanitize=..." with the core built the same way)
 $(B)/statefuzz: statefuzz.cpp ../../tools/statefuzz/sf_common.h $(B)/mdcore.o $(FE)/host.h
 	$(CXX) -O1 -g -std=gnu++14 -Wall $(CPUF) -I$(FE) -o $@ statefuzz.cpp $(B)/mdcore.o -lm -pthread
@@ -57,7 +61,7 @@ $(B)/ra/pk_ra_plat_posix.o: $(PK)/ra/pk_ra_plat_posix.c $(PK)/src/pk_ra_plat.h
 	@mkdir -p $(B)/ra
 	$(RA_CC) $(RA_CFLAGS) -I$(PK)/src -c -o $@ $<
 $(B)/pk/pk_ra.o: PK_EXTRA_INC := $(RA_INC)
-PK_SRC   := pk_util pk_text pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed pk_ra
+PK_SRC   := pk_util pk_text pk_glyphs pk_font_data pk_icons pk_gfx_soft pk_states pk_launch pk_patch pk_input pk_notice pk_menu pk_pace pk_handoff pk_look pk_cores pk_scale pk_rewind pk_ff pk_speed pk_ra
 PK_OBJS  := $(addprefix $(B)/pk/,$(addsuffix .o,$(PK_SRC))) $(B)/ra/pk_ra_plat_posix.o $(RA_OBJS)
 PL_FE    := picture cheats savefile audio_pace
 PL_OBJS  := $(addprefix $(B)/pl/,$(addsuffix .o,$(PL_FE))) $(B)/pl/player.o $(B)/pl/pipe.o $(B)/pl/handoff_proof.o $(B)/pl/player_twin.o

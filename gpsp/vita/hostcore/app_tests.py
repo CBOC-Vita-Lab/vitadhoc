@@ -8645,6 +8645,64 @@ def t_boot_guard(S):
             "config.ini holds the safe values (hand-over and steady pacing off)")
 
 
+# ---- Names in other alphabets (VitAdhoc 2.0): UTF-8 file names and the fonts ---
+CJK_NAMES = ["スーパーマリオ冒険.gba", "どうぶつの森 (Japan).gba",
+             "한국어 게임.gba", "Café ōsaka – ü.gba", "ＦＵＬＬ１２３ ｶﾀｶﾅ.gba",
+             "とても長い日本語のゲームの名前が一覧の幅に収まらないときは省略記号で切られます（日本）.gba",
+             "日本語フォルダ/ゲーム２.gba"]
+
+
+def cjk_library():
+    """The test cartridge under names in Japanese, Korean, accented Latin,
+    fullwidth and halfwidth forms, a very long one, and one in a folder."""
+    rom = open(OWN_GBA, "rb").read()
+    return {"roms/" + n: rom for n in CJK_NAMES}
+
+
+def valid_utf8_file(path):
+    try:
+        open(path, "rb").read().decode("utf-8")
+        return True
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def t_names_cjk(S):
+    """Names in other alphabets (Japanese, Korean, accents, fullwidth forms): the home page, the
+        old list and the finder draw them as letters (the fonts are read on demand from the package's
+        files), cut and sort on whole characters, and the log stays UTF-8."""
+    extra = cjk_library()
+    base = {"ui_home": 1, "last_rom": None}
+    # the home page: the shelf of covers, each game under its name
+    r = S.run("cjk_home", "60:shot=a.png\n" + "+25:right\n" * 4 + "+30:shot=b.png\n" + "+25:right\n" * 4 +
+              "+30:shot=c.png\n" + "+25:right\n" * 4 + "+30:shot=d.png\n+10:quit\n", config=base, extra=extra)
+    S.clean(r)
+    for n in "abcd":
+        S.picture(r, n + ".png")
+    seen = names_seen(r)
+    stems = {n.split("/")[-1] for n in CJK_NAMES}
+    S.check(stems <= set(seen), "every name was drawn by the home page (missing %s of %s)"
+            % (sorted(stems - set(seen)), sorted(seen)))
+    for f in stems & set(seen):
+        S.check(seen[f][0] == f[:-4].split(" (")[0].rstrip() or seen[f][0].startswith(f[:2]),
+                "%s keeps its characters as the title (%r)" % (f, seen[f][0]))
+    S.check("?" not in "".join(v[0] for k, v in seen.items() if k in stems),
+            "no name was turned into question marks (%s)" % [seen[k][0] for k in sorted(stems & set(seen))])
+    S.check(valid_utf8_file(os.path.join(r.root, "log", "gbadhoc.log")), "the log is valid UTF-8")
+    # the old list (ui_home = 0): the PSP-style rows, drawn by the 480x272 text layer
+    r = S.run("cjk_list", "60:shot=a.png\n+30:down\n+30:down\n+30:down\n+30:shot=b.png\n"
+              "+10:quit\n", config={"ui_home": 0, "last_rom": None}, extra=extra)
+    S.clean(r)
+    S.picture(r, "a.png")
+    S.picture(r, "b.png")
+    S.check(valid_utf8_file(os.path.join(r.root, "log", "gbadhoc.log")), "the list's log is valid UTF-8")
+    # a game from a Japanese name starts and keeps its saves under that name
+    r = S.run("cjk_boot", "120:shot=a.png\n+10:quit\n", config={"ui_home": 0},
+              autoboot="スーパーマリオ冒険.gba", extra=extra)
+    S.clean(r)
+    S.check(r.has(r"^EVT rom_loaded code=AGDE"), "the game with a Japanese name boots")
+
+
 TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_exts", t_sega_exts), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_soft_edge", t_nes_soft_edge), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
@@ -8673,6 +8731,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
          ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
+         ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),
          ("gb_colours", t_gb_colours), ("boot_guard", t_boot_guard), ("old_config", t_old_config)]
 

@@ -63,6 +63,11 @@ int gbmux_save_ram_write(gbcore_t *core, const void *src, size_t size);
 size_t gbmux_state_size(gbcore_t *core);
 long gbmux_state_save(gbcore_t *core, void *dst, size_t cap);
 int gbmux_state_load(gbcore_t *core, const void *src, size_t size);
+/* Quick response (gbcore.h gbcore_ahead_*): the same three calls for the machine, whichever it is */
+size_t gbmux_ahead_size(gbcore_t *core);
+long gbmux_ahead_save(gbcore_t *core, void *dst, size_t cap);
+int gbmux_ahead_load(gbcore_t *core, const void *src, size_t size);
+void gbmux_set_quiet(gbcore_t *core, int quiet);
 int gbmux_has_tilt(gbcore_t *core);
 unsigned gbmux_sgb_border(gbcore_t *core, const uint16_t **pixels);
 size_t gbmux_sgb_border_save(gbcore_t *core, void *buf, size_t cap);
@@ -102,6 +107,10 @@ int gbmux_pad_game_id(const gbcore_t *core, char out[9]);
 #define gbcore_state_size gbmux_state_size
 #define gbcore_state_save gbmux_state_save
 #define gbcore_state_load gbmux_state_load
+#define gbcore_ahead_size gbmux_ahead_size
+#define gbcore_ahead_save gbmux_ahead_save
+#define gbcore_ahead_load gbmux_ahead_load
+#define gbcore_set_quiet gbmux_set_quiet
 #define gbcore_has_tilt gbmux_has_tilt
 #define gbcore_sgb_border gbmux_sgb_border
 #define gbcore_sgb_border_save gbmux_sgb_border_save

@@ -1,29 +1,78 @@
-/* Text drawing over a Gfx. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
+/* Text drawing over a Gfx. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE).
+ *
+ * Printable ASCII comes from the baked atlases (pk_font_data.cpp). Everything
+ * else (accented letters, Greek, Cyrillic, Japanese, Korean, fullwidth forms)
+ * is drawn from glyphs rasterised on demand out of the outline fonts of the
+ * package (pk_glyphs.h): one small atlas per face, made the first time such a
+ * character is measured. Strings are UTF-8; no function here ever cuts, wraps
+ * or measures inside a character. */
 #include "pk_gfx.h"
+#include "pk_glyphs.h"
+#include "pk_utf8.h"
 #include <math.h>
 #include <string.h>
+#include <vector>
 
 namespace pk {
+
+namespace {
+/* the faces' sizes (pk_font_data.cpp / gen_font.cpp), their weight and the
+ * synthetic semibold given to the CJK glyphs of the heavier ones */
+struct FaceInfo { int px; int semibold; int embolden; };
+const FaceInfo kFace[F_COUNT] = {
+	{ 20, 0, 0 },      /* F_CAPTION: Inter Regular */
+	{ 24, 0, 0 },      /* F_BODY    */
+	{ 24, 1, 60 },     /* F_LABEL: Inter SemiBold */
+	{ 30, 1, 75 },     /* F_SUB: Outfit Medium    */
+	{ 40, 1, 100 }     /* F_TITLE: Outfit SemiBold */
+};
+const int kCacheBudget = 160 * 1024;     /* bytes of atlas per face, at most */
+}  // namespace
+
+struct GlyphSide {
+	Text::Impl *impl;
+	int face;
+};
 
 struct Text::Impl {
 	Gfx *gfx;
 	const FaceData *fd[F_COUNT];
 	Texture *tex[F_COUNT];
 	bool tried[F_COUNT];
+	/* the on-demand glyphs, per face */
+	pk_gcache *gc[F_COUNT];
+	Texture *gtex[F_COUNT];
+	bool gtried[F_COUNT];
+	GlyphSide side[F_COUNT];
 };
+
+static void glyph_upload(void *user, int x, int y, int w, int h, const uint8_t *pix, int pitch)
+{
+	GlyphSide *s = (GlyphSide *) user;
+	if (s->impl->gtex[s->face]) s->impl->gfx->tex_update_rect(s->impl->gtex[s->face], x, y, w, h, pix, pitch);
+}
 
 Text::Text(Gfx *g) : p_(new Impl)
 {
 	p_->gfx = g;
-	for (int i = 0; i < F_COUNT; i++) { p_->fd[i] = builtin_face(i); p_->tex[i] = 0; p_->tried[i] = false; }
+	for (int i = 0; i < F_COUNT; i++) {
+		p_->fd[i] = builtin_face(i); p_->tex[i] = 0; p_->tried[i] = false;
+		p_->gc[i] = 0; p_->gtex[i] = 0; p_->gtried[i] = false;
+		p_->side[i].impl = p_; p_->side[i].face = i;
+	}
 }
 
 Text::~Text()
 {
-	for (int i = 0; i < F_COUNT; i++)
+	for (int i = 0; i < F_COUNT; i++) {
 		if (p_->tex[i]) p_->gfx->tex_free(p_->tex[i]);
+		if (p_->gtex[i]) p_->gfx->tex_free(p_->gtex[i]);
+		pk_gc_free(p_->gc[i]);
+	}
 	delete p_;
 }
+
+void Text::frame() { pk_gc_tick(); }
 
 void Text::set_face(int face, const FaceData *fd)
 {
@@ -47,16 +96,91 @@ static Texture *face_tex(Text::Impl *p, int face)
 	return p->tex[face];
 }
 
+/* the face's on-demand cache, made on first use (and its atlas texture) */
+static pk_gcache *gcache(Text::Impl *p, int face)
+{
+	if (p->gc[face] || p->gtried[face] || !p->fd[face]) return p->gc[face];
+	p->gtried[face] = true;
+	pk_gc_spec sp;
+	memset(&sp, 0, sizeof sp);
+	sp.px = kFace[face].px;
+	sp.ascent = p->fd[face]->ascent;
+	sp.embolden = kFace[face].embolden;
+	sp.chain[0] = pk_gfont_file(kFace[face].semibold ? PK_FONT_FILE_LATIN_B : PK_FONT_FILE_LATIN);
+	sp.chain[1] = pk_gfont_file(PK_FONT_FILE_CJK);
+	sp.budget_bytes = kCacheBudget;
+	sp.min_slots = 64;
+	pk_gcache *c = pk_gc_new(&sp, glyph_upload, &p->side[face]);
+	if (!c) return 0;
+	int w = 0, h = 0;
+	pk_gc_atlas_size(c, &w, &h);
+	p->gtex[face] = p->gfx->tex_create(w, h, TEX_A8);
+	if (!p->gtex[face]) { pk_gc_free(c); return 0; }
+	p->gc[face] = c;
+	return c;
+}
+
+/* the next character of *s; a character the end of the string cut off is skipped (nothing) */
+static uint32_t next_cp(const char *&s, bool *skip)
+{
+	int n;
+	uint32_t cp = pk_u8_next(s, &n);
+	*skip = false;
+	if (cp >= PK_U8_RAW && pk_u8_cut_tail(s)) {
+		while (*s) s++;
+		*skip = true;
+		return 0;
+	}
+	s += n;
+	return cp;
+}
+
+static const Glyph &qmark(const FaceData *fd) { return fd->g['?' - 32]; }
+
+/* the advance of one character of the face */
+static float char_adv(Text::Impl *p, int face, uint32_t cp)
+{
+	const FaceData *fd = p->fd[face];
+	if (cp >= 32 && cp <= 126) return fd->g[cp - 32].adv;
+	if (cp >= 0x80 && cp < PK_U8_RAW) {
+		pk_gcache *c = gcache(p, face);
+		float a;
+		if (c && pk_gc_adv(c, cp, &a)) return a;
+	}
+	return qmark(fd).adv;
+}
+
 float Text::draw(int face, float x, float y, const char *s, uint32_t rgba)
 {
 	if (face < 0 || face >= F_COUNT || !s) return x;
 	const FaceData *fd = p_->fd[face];
 	if (!fd) return x;
 	Texture *t = (rgba >> 24) ? face_tex(p_, face) : 0;
-	for (; *s; s++) {
-		unsigned char c = (unsigned char) *s;
-		if (c < 32 || c > 126) c = '?';
-		const Glyph &g = fd->g[c - 32];
+	while (*s) {
+		bool skip;
+		uint32_t cp = next_cp(s, &skip);
+		if (skip) break;
+		if (cp >= 32 && cp <= 126) {
+			const Glyph &g = fd->g[cp - 32];
+			if (t && g.w > 0 && g.h > 0)
+				p_->gfx->tex_draw(t, g.ax, g.ay, g.w, g.h, floorf(x + g.ox + 0.5f), floorf(y + g.oy + 0.5f), g.w, g.h, rgba, false);
+			x += g.adv;
+			continue;
+		}
+		if (cp >= 0x80 && cp < PK_U8_RAW) {
+			pk_gcache *c = gcache(p_, face);
+			pk_gglyph g;
+			bool ok = false;
+			if (c && (rgba >> 24)) ok = pk_gc_get(c, cp, &g) != 0;
+			else if (c) { g.w = g.h = 0; ok = pk_gc_adv(c, cp, &g.adv) != 0; }      /* invisible: only the pen moves */
+			if (ok) {
+				if (g.w > 0 && g.h > 0 && p_->gtex[face])
+					p_->gfx->tex_draw(p_->gtex[face], g.x, g.y, g.w, g.h, floorf(x + g.ox + 0.5f), floorf(y + g.oy + 0.5f), g.w, g.h, rgba, false);
+				x += g.adv;
+				continue;
+			}
+		}
+		const Glyph &g = qmark(fd);                 /* a control, a stray byte, a character no font has */
 		if (t && g.w > 0 && g.h > 0)
 			p_->gfx->tex_draw(t, g.ax, g.ay, g.w, g.h, floorf(x + g.ox + 0.5f), floorf(y + g.oy + 0.5f), g.w, g.h, rgba, false);
 		x += g.adv;
@@ -68,10 +192,11 @@ float Text::width(int face, const char *s)
 {
 	if (face < 0 || face >= F_COUNT || !s || !p_->fd[face]) return 0;
 	float w = 0;
-	for (; *s; s++) {
-		unsigned char c = (unsigned char) *s;
-		if (c < 32 || c > 126) c = '?';
-		w += p_->fd[face]->g[c - 32].adv;
+	while (*s) {
+		bool skip;
+		uint32_t cp = next_cp(s, &skip);
+		if (skip) break;
+		w += char_adv(p_, face, cp);
 	}
 	return w;
 }
@@ -92,16 +217,94 @@ void Text::draw_right(int face, float xr, float y, const char *s, uint32_t rgba)
 std::string Text::fit(int face, const std::string &s, float max_w)
 {
 	if (width(face, s.c_str()) <= max_w) return s;
-	std::string t = s;
-	while (!t.empty() && width(face, (t + "...").c_str()) > max_w) t.erase(t.size() - 1);
-	return t + "...";
+	/* the widest prefix, cut between characters, that leaves room for the dots */
+	const float dots = width(face, "...");
+	const char *b = s.c_str();
+	const char *p = b;
+	float w = 0;
+	size_t keep = 0;
+	while (*p) {
+		int n;
+		uint32_t cp = pk_u8_next(p, &n);
+		w += char_adv(p_, face, cp);
+		if (w + dots > max_w) break;
+		p += n;
+		keep = (size_t) (p - b);
+	}
+	return s.substr(0, keep) + "...";
+}
+
+/* the text as pieces a line can be broken between: each holds whether a
+ * space stood before it */
+struct Piece { std::string text; bool space; };
+
+static void pieces(const std::string &s, std::vector<Piece> &out)
+{
+	const char *p = s.c_str();
+	bool space = false;
+	Piece cur; cur.space = false;
+	bool have = false;
+	while (*p) {
+		int n;
+		uint32_t cp = pk_u8_next(p, &n);
+		if (cp == ' ') {
+			if (have) { out.push_back(cur); have = false; }
+			space = true;
+			p += n;
+			continue;
+		}
+		if (pk_u8_wide(cp)) {
+			if (pk_u8_no_line_start(cp) && !space && (have || !out.empty())) {
+				(have ? cur.text : out.back().text).append(p, (size_t) n);      /* sticks to the character before it */
+			} else {
+				if (have) { out.push_back(cur); have = false; }
+				Piece w; w.text.assign(p, (size_t) n); w.space = space;
+				out.push_back(w);
+			}
+			space = false;
+			p += n;
+			continue;
+		}
+		if (!have) { cur.text.clear(); cur.space = space; have = true; }
+		cur.text.append(p, (size_t) n);
+		space = false;
+		p += n;
+	}
+	if (have) out.push_back(cur);
 }
 
 int Text::wrap(int face, float x, float y, float max_w, int max_lines, float line_gap, const std::string &s, uint32_t rgba)
 {
+	bool ascii = true;
+	for (size_t k = 0; k < s.size(); k++) if ((unsigned char) s[k] >= 0x80) { ascii = false; break; }
 	std::string line, word;
 	int lines = 0;
 	float lh = (float) line_h(face) + line_gap;
+	if (!ascii) {
+		std::vector<Piece> pc;
+		pieces(s, pc);
+		for (size_t i = 0; i < pc.size() && lines < max_lines; i++) {
+			std::string cand = line.empty() ? pc[i].text : line + (pc[i].space ? " " : "") + pc[i].text;
+			if (!line.empty() && width(face, cand.c_str()) > max_w) {
+				if (lines == max_lines - 1) {          /* the last line takes the rest, cut to fit */
+					std::string rest = line;
+					for (size_t j = i; j < pc.size(); j++) rest += (pc[j].space ? " " : "") + pc[j].text;
+					draw(face, x, y + lines * lh, fit(face, rest, max_w).c_str(), rgba);
+					return lines + 1;
+				}
+				draw(face, x, y + lines * lh, line.c_str(), rgba);
+				lines++;
+				line = pc[i].text;
+			} else {
+				line = cand;
+			}
+		}
+		if (!line.empty() && lines < max_lines) {
+			draw(face, x, y + lines * lh, fit(face, line, max_w).c_str(), rgba);
+			lines++;
+		}
+		return lines;
+	}
 	size_t i = 0;
 	bool done = false;
 	while (!done && lines < max_lines) {

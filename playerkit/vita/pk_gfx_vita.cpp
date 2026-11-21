@@ -145,6 +145,16 @@ void VitaGfx::tex_update(Texture *t, const void *pixels, int stride_bytes)
 	for (int y = 0; y < t->h; y++) memcpy(dst + (size_t) y * dstride, (const unsigned char *) pixels + (size_t) y * (size_t) stride_bytes, row);
 }
 
+void VitaGfx::tex_update_rect(Texture *t, int x, int y, int w, int h, const void *pixels, int stride_bytes)
+{
+	if (!t || !pixels || x < 0 || y < 0 || x + w > t->w || y + h > t->h) return;
+	unsigned char *dst = (unsigned char *) vita2d_texture_get_datap(t->tex);
+	const unsigned dstride = vita2d_texture_get_stride(t->tex);
+	const size_t bpp = (size_t) bytes_per_pixel(t->fmt);
+	for (int j = 0; j < h; j++)
+		memcpy(dst + (size_t) (y + j) * dstride + (size_t) x * bpp, (const unsigned char *) pixels + (size_t) j * (size_t) stride_bytes, (size_t) w * bpp);
+}
+
 void VitaGfx::tex_free(Texture *t)
 {
 	if (!t) return;

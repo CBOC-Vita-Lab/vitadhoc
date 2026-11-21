@@ -33,8 +33,9 @@ See [Performance](PERFORMANCE.md) for Vita measurements and display settings.
 
 The home screen shows the console in use in the top bar, with a drop-down list of every console and its game count (Triangle), All/Starred/Recent views, sorting and
 play time. Find matches words in any order and ignores accents and
-punctuation. Latin accents are folded for the menu font; unsupported scripts
-may display as `?` without preventing the game from loading.
+punctuation. Names in Japanese, Korean, Greek, Cyrillic and accented Latin
+show as written, in the menus of the app and of both players; only
+Chinese-only hanzi show as `?`.
 
 **Settings > Library > Game names** chooses what the list calls a game: "Game
 title" (the default) cuts the bracketed tags, so `Quest (Hack v2).gba` reads

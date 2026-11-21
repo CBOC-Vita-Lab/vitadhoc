@@ -24,6 +24,7 @@ struct nescore
 };
 
 static struct nescore g_core;
+static int g_quiet;      /* nescore_set_quiet: a look-ahead frame, its sound dropped */
 static int g_live;
 static int g_inited;
 static char g_err[96];
@@ -280,7 +281,7 @@ static int run_set_pads(nescore_t *core)
       core->cb.video(core->cb.userdata, &vf);
   }
   while ((got = nes_host_audio_take(core->audio, AUDIO_CHUNK)) > 0)
-    if (core->cb.audio_batch)
+    if (core->cb.audio_batch && !g_quiet)
       core->cb.audio_batch(core->cb.userdata, core->audio, (size_t)got);
   return 0;
 }
@@ -424,6 +425,22 @@ int nescore_state_load(nescore_t *core, const void *src, size_t size)
 {
   if (core != &g_core) return -1;
   return nes_host_state_load_mem((const uint8_t *)src, size) == 0 ? 0 : -1;
+}
+
+/* Quick response (nescore.h): the look-ahead frame draws and delivers its picture, and its sound is dropped */
+void nescore_set_quiet(nescore_t *core, int quiet) { (void)core; g_quiet = quiet != 0; }
+size_t nescore_ahead_size(nescore_t *core) { return core == &g_core ? nes_host_ahead_size() : 0; }
+long nescore_ahead_save(nescore_t *core, void *dst, size_t cap)
+{
+  size_t r;
+  if (core != &g_core) return -1;
+  r = nes_host_ahead_save((uint8_t *)dst, cap);
+  return r ? (long)r : -1;
+}
+int nescore_ahead_load(nescore_t *core, const void *src, size_t size)
+{
+  if (core != &g_core) return -1;
+  return nes_host_ahead_load((const uint8_t *)src, size) == 0 ? 0 : -1;
 }
 
 int nescore_peek(nescore_t *core, unsigned address)

@@ -214,4 +214,43 @@ else
 	skip "learned picture truth (needs python3)"
 fi
 
+# 13. Sega CD / Mega CD. No commercial disc and no BIOS are here: tools/mkscd.py writes synthetic discs (cooked ISO, raw BIN+CUE, one file per track,
+# WAV and Ogg audio, an uncompressed CHD) and a test-only stand-in "BIOS" (a few hundred bytes of 68000 code that boots both CPUs, plays a PCM ramp and
+# a CD audio track; clearly marked as not a BIOS, refused as a BIOS unless forced). The reader checks (cd_test) compare the table of contents, the data
+# sectors and the audio samples byte for byte; the machine checks run the stand-in on both CPUs. A real BIOS plus a real disc is a test for the owner's
+# Vita (what this does NOT cover: a game booting, the real BIOS's disc handling, the BIOS's own backup RAM format).
+if command -v python3 >/dev/null; then
+	CD="$T/cd"; mkdir -p "$CD"
+	python3 -I "$HERE/tools/mkscd.py" standin "$CD/standin.bin" && python3 -I "$HERE/tools/mkscd.py" discs "$CD/discs" || bad "Sega CD fixtures (mkscd.py)"
+	CDT="$HERE/build/x86/cd_test"
+	[ -x "$CDT" ] || make -C "$HERE" -j2 ARCH=x86 build/x86/cd_test >"$T/cdbuild.log" 2>&1
+	if [ -x "$CDT" ] && [ -f "$CD/standin.bin" ]; then
+		o=$("$CDT" "$CD/discs" "$CD/standin.bin" 2>&1)
+		echo "$o" | grep -v '^cd_test:' | grep -v '^note' | sed 's/^/  /'
+		case "$o" in *" 0 failed"*) ok "Sega CD: BIOS check, no-BIOS refusal, disc probe, TOC / data / audio byte for byte on 7 images (ISO, BIN, CUE, multi-file, WAV, Ogg shape, CHD), backup RAM, RA map, cheats ($(echo "$o" | sed -n 's/^cd_test: \([0-9]*\) checks.*/\1/p') checks)";; *) bad "Sega CD reader checks";; esac
+		CDA="--disc $CD/discs/single.cue --bios $CD/standin.bin --bios-stand-in"
+		cdrun() { "$TWIN" $CDA "$@" 2>&1; }
+		h1=$(cdrun --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //'); h2=$(cdrun --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //')
+		[ -n "$h1" ] && [ "$h1" = "$h2" ] && ok "Sega CD: two runs identical (picture, sound, state, RAM)" || bad "Sega CD determinism ($h1 / $h2)"
+		hc=$("$TWIN" --disc "$CD/discs/disc.chd" --bios "$CD/standin.bin" --bios-stand-in --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //')
+		hm=$("$TWIN" --disc "$CD/discs/multi.cue" --bios "$CD/standin.bin" --bios-stand-in --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //')
+		hw=$("$TWIN" --disc "$CD/discs/wavs.cue" --bios "$CD/standin.bin" --bios-stand-in --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //')
+		hv=$(echo "$h1" | sed 's/ state=[0-9a-f]*//'); hcv=$(echo "$hc" | sed 's/ state=[0-9a-f]*//')
+		[ "$hv" = "$hcv" ] && ok "Sega CD: the same disc as CUE+BIN and as CHD runs identically (picture, sound, RAM)" || bad "Sega CD CUE vs CHD ($hv / $hcv)"
+		[ -n "$hm" ] && [ -n "$hw" ] && ok "Sega CD: multi-file and WAV discs run" || bad "Sega CD multi-file / WAV run"
+		c=$(cdrun --state-roundtrip 600 | grep '^ROUNDTRIP')
+		case "$c" in *"load=0 video=SAME state=SAME audio=SAME corrupt_refused=yes"*) ok "Sega CD: state round trip identical, a corrupt state is refused";; *) bad "Sega CD state round trip: $c";; esac
+		v=$(cdrun --frames 900 --vdp-check | grep '^VDPW'); case "$v" in *"check_errors=0"*) ok "Sega CD: VDP worker copy identical every frame ($(echo "$v" | sed 's/.*records=\([0-9]*\).*/\1/') records)";; *) bad "Sega CD VDP worker: $v";; esac
+		a=$(cdrun --frames 300 --ahead | grep '^AHEAD'); case "$a" in *"plain=0 "*"possible=1"*) ok "Sega CD: run-ahead runs every frame";; *) bad "Sega CD run-ahead: $a";; esac
+		w0=$(cdrun --frames 300 | grep '^RESULT' | sed 's/.*video=[0-9a-f]* //;s/ samples=.*//'); w1=$(cdrun --frames 300 --wide 51 | grep '^RESULT' | sed 's/.*video=[0-9a-f]* //;s/ samples=.*//')
+		[ -n "$w0" ] && [ "$w0" = "$w1" ] && ok "Sega CD: the wide view changes neither sound, state nor RAM" || bad "Sega CD wide view ($w0 / $w1)"
+		p=$(cdrun --frames 120 --peek FFFF01 --cheat FFF000:0042 --peek FFF001 | grep PEEK | tr '\n' ' ')
+		q1=$(cdrun --frames 120 --peek FFFF03 | grep PEEK); q2=$(cdrun --frames 150 --peek FFFF03 | grep PEEK)
+		case "$p" in *"PEEK FFFF01=77"*"PEEK FFF001=42"*) [ -n "$q1" ] && [ "$q1" != "$q2" ] && ok "Sega CD: both CPUs run (the main CPU's frame counter and the sub CPU's counter, which it copies over, both advance), work RAM cheat lands" || bad "Sega CD sub CPU counter ($q1 / $q2)";; *) bad "Sega CD CPUs / cheat: $p";; esac
+		n=$("$TWIN" --disc "$CD/discs/single.cue" --frames 3 2>&1 | head -2); case "$n" in *BIOS*) ok "Sega CD: no BIOS gives a message naming the BIOS ($(echo "$n" | head -1 | cut -c1-60))";; *) bad "Sega CD no-BIOS message: $n";; esac
+	else tail -5 "$T/cdbuild.log"; bad "Sega CD test build"; fi
+else
+	skip "Sega CD (needs python3)"
+fi
+
 [ $fail = 0 ]

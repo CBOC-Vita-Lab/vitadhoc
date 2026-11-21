@@ -140,6 +140,7 @@ static uint32_t scanlines_per_frame;
 uint8_t PPU[4];
 uint8_t PPUSPL;
 uint8_t NTARAM[0x800], PALRAM[0x20], SPRAM[0x100], SPRBUF[0x100];
+int FCEU_ahead_restore;/* set while a quick-response look-ahead frame is undone: restore hooks must not re-derive anything */
 uint8_t UPALRAM[0x03];/* for 0x4/0x8/0xC addresses in palette, the ones in
 					 * 0x20 are 0 to not break fceu rendering.
 					 */

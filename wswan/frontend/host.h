@@ -155,6 +155,11 @@ void wswan_host_rtc_sync(void);
 size_t wswan_host_state_size(void);
 size_t wswan_host_state_save_mem(uint8_t *buf, size_t cap);    /* cap >= state_size; returns the size, 0 on failure */
 int wswan_host_state_load_mem(const uint8_t *buf, size_t n);   /* n must be state_size. 0 ok, 1 no game, 3 refused (wrong length or CRC, machine untouched), 4 no backup, machine untouched */
+/* Quick response (run-ahead by one frame, gpsp/frontend-common/fe_host.c): the machine in memory with no checksum and no backup (the
+ * image is the caller's own, one frame old), plus what the state format does not hold. wswan_host_ahead_size is fixed per game. */
+size_t wswan_host_ahead_size(void);
+size_t wswan_host_ahead_save(uint8_t *buf, size_t cap);   /* returns the size, 0 on failure */
+int wswan_host_ahead_load(const uint8_t *buf, size_t n);  /* 0 ok */
 
 /* ---- memory for achievements and tools ------------------------------------------------------------------- */
 

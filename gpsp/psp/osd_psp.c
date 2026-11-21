@@ -12,7 +12,7 @@
 
 #define TOAST_MAX     4
 #define TOAST_FRAMES  150   /* ~2.5 s per toast */
-#define TOAST_LEN     72   /* "Hosting Room 7 by Link Cable. Waiting for the other PSP." */
+#define TOAST_LEN     168  /* "Hosting Room 7 by Link Cable. Waiting for the other PSP."; names in Japanese take 3 bytes a letter */
 
 #define COL_TEXT   0xFFFF   /* white          */
 #define COL_PANEL  0x0000   /* black          */
@@ -37,7 +37,7 @@ static char chip_fps_txt[64];
 static int      ind_on = 1;
 static struct { unsigned id; char ini; } ind_chal[IND_CHAL_MAX];
 static int      ind_chal_n;
-static char     ind_progress_txt[48], ind_tracker_txt[24];
+static char     ind_progress_txt[160], ind_tracker_txt[24];
 static int      ind_progress_timer;
 
 void osd_ind_enable(int on)

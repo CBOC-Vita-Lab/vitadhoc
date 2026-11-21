@@ -59,7 +59,30 @@ static int is_sep(char c)
           c == ',' || c == ';';
 }
 
-/* A name as the menus can draw it: printable ASCII only (the UI font's bytes
+/* The length of the valid UTF-8 character at s that is above U+009F (the
+ * UI's fonts draw Latin, Greek, Cyrillic, kana, kanji, Hangul), else 0. */
+static int name_utf8_len(const unsigned char *s)
+{
+   unsigned c = s[0];
+   if (c >= 0xC2 && c <= 0xDF && (s[1] & 0xC0) == 0x80)
+      return (c == 0xC2 && s[1] < 0xA0) ? 0 : 2;
+   if (c >= 0xE0 && c <= 0xEF && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80)
+   {
+      unsigned v = ((c & 0x0Fu) << 12) | ((s[1] & 0x3Fu) << 6) | (s[2] & 0x3Fu);
+      return (v >= 0x800 && (v < 0xD800 || v > 0xDFFF)) ? 3 : 0;
+   }
+   if (c >= 0xF0 && c <= 0xF4 && (s[1] & 0xC0) == 0x80 &&
+       (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80)
+   {
+      unsigned v = ((c & 0x07u) << 18) | ((s[1] & 0x3Fu) << 12) |
+                   ((s[2] & 0x3Fu) << 6) | (s[3] & 0x3Fu);
+      return (v >= 0x10000 && v <= 0x10FFFF) ? 4 : 0;
+   }
+   return 0;
+}
+
+/* A name as the menus can draw it: printable ASCII and whole UTF-8
+ * characters (names in Japanese stay Japanese; the UI font's lone bytes
  * 0x7F.. are button glyphs), one '?' per run of anything else, trimmed, in
  * place.  Returns UNNAMED for a name with nothing left. */
 static const char *clean_name(char *s)
@@ -68,18 +91,31 @@ static const char *clean_name(char *s)
    int bad = 0;
    while (*r == ' ' || *r == '\t')
       r++;
-   for (; *r; r++)
+   while (*r)
    {
       unsigned char c = (unsigned char)*r;
+      int l;
       if (c >= 0x20 && c < 0x7F)
       {
          *w++ = (char)c;
          bad = 0;
+         r++;
       }
-      else if (!bad)
+      else if (c >= 0xC2 && (l = name_utf8_len((const unsigned char *)r)) > 0)
       {
-         *w++ = '?';
-         bad = 1;
+         int k;
+         for (k = 0; k < l; k++)
+            *w++ = *r++;
+         bad = 0;
+      }
+      else
+      {
+         if (!bad)
+         {
+            *w++ = '?';
+            bad = 1;
+         }
+         r++;
       }
    }
    while (w > s && w[-1] == ' ')
@@ -746,6 +782,11 @@ void fe_cheats_gb_frame(int (*poke)(void *ctx, uint16_t addr, uint8_t value),
 unsigned fe_cheats_gb_writes(void)
 {
    return g_gb_writes;
+}
+
+void fe_cheats_gb_writes_set(unsigned n)
+{
+   g_gb_writes = n;
 }
 
 const char *fe_cheats_error_name(int err)

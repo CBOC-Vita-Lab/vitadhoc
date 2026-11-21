@@ -211,6 +211,14 @@ long gbmux_state_save(gbcore_t *c, void *d, size_t n)
 { return IS_WS(c) ? wscore_state_save(g_ws, d, n) : IS_NES(c) ? nescore_state_save(g_nes, d, n) : gbcore_state_save(c, d, n); }
 int gbmux_state_load(gbcore_t *c, const void *s, size_t n)
 { return IS_WS(c) ? wscore_state_load(g_ws, s, n) : IS_NES(c) ? nescore_state_load(g_nes, s, n) : gbcore_state_load(c, s, n); }
+size_t gbmux_ahead_size(gbcore_t *c)
+{ return IS_WS(c) ? wscore_ahead_size(g_ws) : IS_NES(c) ? nescore_ahead_size(g_nes) : gbcore_ahead_size(c); }
+long gbmux_ahead_save(gbcore_t *c, void *d, size_t n)
+{ return IS_WS(c) ? wscore_ahead_save(g_ws, d, n) : IS_NES(c) ? nescore_ahead_save(g_nes, d, n) : gbcore_ahead_save(c, d, n); }
+int gbmux_ahead_load(gbcore_t *c, const void *s, size_t n)
+{ return IS_WS(c) ? wscore_ahead_load(g_ws, s, n) : IS_NES(c) ? nescore_ahead_load(g_nes, s, n) : gbcore_ahead_load(c, s, n); }
+void gbmux_set_quiet(gbcore_t *c, int q)
+{ if (IS_WS(c)) wscore_set_quiet(g_ws, q); else if (IS_NES(c)) nescore_set_quiet(g_nes, q); else gbcore_set_quiet(c, q); }
 int gbmux_has_tilt(gbcore_t *c) { return IS_NES(c) || IS_WS(c) ? 0 : gbcore_has_tilt(c); }
 unsigned gbmux_sgb_border(gbcore_t *c, const uint16_t **p)
 { if (IS_NES(c) || IS_WS(c)) { *p = NULL; return 0; } return gbcore_sgb_border(c, p); }

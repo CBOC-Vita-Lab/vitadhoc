@@ -417,6 +417,10 @@ void gfx_reset(void)
 { 
   /* Reset cycle counter */
   gfx.cycles = 0;
+
+  /* the saved state holds these two as offsets into Word-RAM: start them there, not at NULL (a state would otherwise carry the address of the RAM) */
+  gfx.tracePtr = (uint16 *)scd.word_ram_2M;
+  gfx.mapPtr = (uint16 *)scd.word_ram_2M;
 }
 
 int gfx_context_save(uint8 *state)

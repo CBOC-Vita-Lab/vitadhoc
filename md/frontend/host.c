@@ -17,7 +17,8 @@ t_config config;
 char GG_ROM[256], AR_ROM[256], SK_ROM[256], SK_UPMEM[256], GG_BIOS[256], MD_BIOS[256];
 char CD_BIOS_EU[256], CD_BIOS_US[256], CD_BIOS_JP[256], MS_BIOS_US[256], MS_BIOS_EU[256], MS_BIOS_JP[256];
 
-uint8_t cart_size;   /* only read by the Mega CD cartridge code (compiled out of the load path) */
+uint8_t cart_size;   /* the RAM cartridge's size id of the Mega CD (md_host_set_option "ram_cart") */
+extern int md_cd_wanted;                   /* md/core/loadrom.c: a disc is being loaded */
 extern int8 fast_savestates;
 extern void sound_update_fm_function_pointers(void);
 extern int audio_max_frames;      /* md/core/system.c: the most sample frames audio_update may write (G.sndbuf's size) */
@@ -81,7 +82,16 @@ static struct {
 	int opt_interlace, opt_sprite_limit, opt_sms_border, opt_gg_extra, opt_overscan, opt_force_dtack, opt_addr_error, opt_gg_band;
 	int wide_req;                        /* the margin the host asked for (md_host_set_wide_margin) */
 	int opt_lcd, opt_vdp_mode, opt_region;
+	/* Sega CD */
+	int cd, opt_ram_cart, cd_bios_wanted, cd_tracks, cd_force_region;
+	uint32_t cd_crc;
+	char cd_info[160], cd_bios_used[80];
 } G;
+
+/* the BIOS images (one per region, 128 KB each) outlive md_host_init: the player hands them over once */
+#define CD_BIOS_BYTES 0x20000
+static uint8_t *g_cd_bios[3];            /* 0 USA, 1 Europe, 2 Japan */
+static uint32_t g_cd_bios_crc[3];
 
 static uint16_t fb_internal[MD_MAX_WIDTH * MD_MAX_HEIGHT];
 static void wide_apply(void);
@@ -148,7 +158,16 @@ int load_archive(char *filename, unsigned char *buffer, int maxsize, char *exten
 		memcpy(extension, l >= 3 ? &filename[l - 3] : "md", 3);
 		extension[3] = 0;
 	}
-	/* only the game itself comes from the caller; BIOS, lock-on and Game Genie ROMs are never provided */
+	/* Sega CD BIOS: the images the player handed over (a region without one is noted, load_rom then fails and md_host_load_disc tries another) */
+	if (filename == CD_BIOS_US || filename == CD_BIOS_EU || filename == CD_BIOS_JP) {
+		const int k = filename == CD_BIOS_US ? 0 : filename == CD_BIOS_EU ? 1 : 2;
+		if (!g_cd_bios[k] || maxsize < CD_BIOS_BYTES) { G.cd_bios_wanted = k + 1; return 0; }
+		memcpy(buffer, g_cd_bios[k], CD_BIOS_BYTES);
+		G.cd_bios_wanted = 0;
+		snprintf(G.cd_bios_used, sizeof G.cd_bios_used, "%s", k == 0 ? "USA" : k == 1 ? "Europe" : "Japan");
+		return CD_BIOS_BYTES;
+	}
+	/* only the game itself comes from the caller; the other BIOS, lock-on and Game Genie ROMs are never provided */
 	if (filename != G.fname || !G.rom_src) return 0;
 	if (G.rom_n > (size_t)maxsize) return 0;
 	memcpy(buffer, G.rom_src, G.rom_n);
@@ -306,7 +325,9 @@ void md_host_unload(void)
 	if (G.loaded) { ggenie_shutdown(); areplay_shutdown(); }
 	vdpw_stop();
 	audio_shutdown();
+	if (G.cd) { cdd_unload(); md_cd_wanted = 0; }
 	system_hw = 0;
+	G.cd = 0; G.cd_tracks = 0; G.cd_info[0] = 0; G.cd_bios_used[0] = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;
 	free(G.state_scratch); G.state_scratch = NULL; G.state_size = 0;
 	free(G.ahead_state); G.ahead_state = NULL; free(G.ahead_sram); G.ahead_sram = NULL; G.ahead_quiet = 0;
@@ -317,6 +338,7 @@ void md_host_shutdown(void)
 {
 	if (!G.inited) return;
 	md_host_unload();
+	md_host_cd_bios_clear();
 	free(G.ring); G.ring = NULL;
 	G.inited = 0;
 }
@@ -368,6 +390,7 @@ static const char *hw_name(void)
 	case SYSTEM_GG: return "Game Gear";
 	case SYSTEM_GGMS: return "Game Gear (SMS mode)";
 	case SYSTEM_MD: return "Mega Drive";
+	case SYSTEM_MCD: return "Mega CD";
 	case SYSTEM_PBC: return "Mega Drive (Power Base Converter)";
 	case SYSTEM_PICO: return "Pico";
 	default: return "";
@@ -472,6 +495,51 @@ static void measure_state(void)
 	if (!G.state_scratch) G.state_size = 0;
 }
 
+/* what follows a successful load_rom, for a cartridge and for a disc alike */
+#define FAILB(code, msg) do { if (err && errlen) { strncpy(err, msg, errlen - 1); err[errlen - 1] = 0; } md_host_unload(); return (code); } while (0)
+static void cd_format_bram(void);
+static uint32_t cd_save_crc(void);
+static int boot_common(char *err, size_t errlen)
+{
+	int i;
+	audio_init((int)G.audio_rate, 0);
+	/* the VDP worker: always for the Mega Drive when asked for; for the 8 bit systems only when MD_THREAD_VDP_SMS is set too */
+	if ((g_worker_mask & MD_THREAD_VDP) && ((system_hw & SYSTEM_PBC) == SYSTEM_MD || (g_worker_mask & MD_THREAD_VDP_SMS)) && vdpw_start(&g_ops))
+		g_worker_mask &= ~MD_THREAD_VDP;       /* the worker could not start: one thread */
+	system_init();
+	system_reset();
+	if (G.cd) cd_format_bram();            /* the BIOS's backup RAM: formatted when it is empty (a reset clears it) */
+	md_host_set_seed(G.seed);
+	G.loaded = 1;
+	G.system = core_system();
+	wide_apply();
+	if (config.ym3438) OPN2_SetChipType(config.ym3438 == 1 ? ym3438_mode_ym2612 : ym3438_mode_readmode);
+	YM2612Config(config.ym2612);
+	{
+		unsigned rc = region_code;
+		G.region_detected = region_of_code(rc);
+	}
+	G.rom_size = (uint32_t)cart.romsize;
+	G.rom_crc = rom_crc_of_image();
+	memcpy(G.title, rominfo.international, sizeof G.title - 1); G.title[sizeof G.title - 1] = 0;
+	for (i = (int)strlen(G.title) - 1; i >= 0 && G.title[i] == ' '; i--) G.title[i] = 0;
+	snprintf(G.info, sizeof G.info, "%s, %u KB, %s%s%s, region %s, save RAM %s, CRC %08X", hw_name(), (unsigned)(G.rom_size / 1024),
+		rominfo.product[0] ? "product " : "", rominfo.product, rominfo.product[0] ? "" : "", region_name(md_host_region()),
+		sram.on ? "yes" : "no", (unsigned)G.rom_crc);
+	G.ncheat = 0;
+	G.vi.serial = 0; G.serial = 1;
+	bitmap.viewport.changed = 11;
+	update_viewport();
+	G.reg0_prev = reg[0];
+	refresh_info();
+	G.sram_crc = G.cd ? cd_save_crc() : (uint32_t)crc32(0, sram.sram, SRAM_BYTES);
+	G.ring_r = G.ring_w = G.ring_n = 0;
+	measure_state();
+	if (!G.state_size) FAILB(4, "out of memory");
+	return 0;
+}
+#undef FAILB
+
 int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system, char *err, size_t errlen)
 {
 	static const char *const ext_of[] = { "md", "md", "sms", "gg", "sg" };
@@ -514,41 +582,287 @@ int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system
 	if (load_rom(G.fname) <= 0) FAIL(4, "the core refused the ROM");
 	G.rom_src = NULL;
 
-	audio_init((int)G.audio_rate, 0);
-	/* the VDP worker: always for the Mega Drive when asked for; for the 8 bit systems only when MD_THREAD_VDP_SMS is set too */
-	if ((g_worker_mask & MD_THREAD_VDP) && ((system_hw & SYSTEM_PBC) == SYSTEM_MD || (g_worker_mask & MD_THREAD_VDP_SMS)) && vdpw_start(&g_ops))
-		g_worker_mask &= ~MD_THREAD_VDP;       /* the worker could not start: one thread */
-	system_init();
-	system_reset();
-	md_host_set_seed(G.seed);
-	G.loaded = 1;
-	G.system = core_system();
-	wide_apply();
-	if (config.ym3438) OPN2_SetChipType(config.ym3438 == 1 ? ym3438_mode_ym2612 : ym3438_mode_readmode);
-	YM2612Config(config.ym2612);
-	{
-		unsigned rc = region_code;
-		G.region_detected = region_of_code(rc);
-	}
-	G.rom_size = (uint32_t)cart.romsize;
-	G.rom_crc = rom_crc_of_image();
-	memcpy(G.title, rominfo.international, sizeof G.title - 1); G.title[sizeof G.title - 1] = 0;
-	for (i = (int)strlen(G.title) - 1; i >= 0 && G.title[i] == ' '; i--) G.title[i] = 0;
-	snprintf(G.info, sizeof G.info, "%s, %u KB, %s%s%s, region %s, save RAM %s, CRC %08X", hw_name(), (unsigned)(G.rom_size / 1024),
-		rominfo.product[0] ? "product " : "", rominfo.product, rominfo.product[0] ? "" : "", region_name(md_host_region()),
-		sram.on ? "yes" : "no", (unsigned)G.rom_crc);
-	G.ncheat = 0;
-	G.vi.serial = 0; G.serial = 1;
-	bitmap.viewport.changed = 11;
-	update_viewport();
-	G.reg0_prev = reg[0];
-	refresh_info();
-	G.sram_crc = (uint32_t)crc32(0, sram.sram, SRAM_BYTES);
-	G.ring_r = G.ring_w = G.ring_n = 0;
-	measure_state();
-	if (!G.state_size) FAIL(4, "out of memory");
-	return 0;
+	return boot_common(err, errlen);
 #undef FAIL
+}
+
+/* ---- Sega CD ---------------------------------------------------------------------------------------------- */
+
+/* the disc files are read through stdio with a read buffer of their own: a data track is read sector by sector (2 KB), a CD-DA track in
+ * bursts, and a multi track disc keeps one file open per track, so the buffer is a moderate 32 KB */
+FILE *md_cd_fopen(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (f) setvbuf(f, NULL, _IOFBF, 32768);
+	return f;
+}
+
+/* the dumps of the console's BIOS that are known: what they are called (the 240p Test Suite's list, the MAME and No-Intro names) and the
+ * region they are for. A dump that is not here is accepted when it has the structure of a BIOS (below). */
+static const struct { uint32_t crc; int region; const char *name; } k_bios[] = {
+	{ 0xC6D10268, 1, "Sega CD (USA) model 1, v1.10" },       { 0x529AC15A, 2, "Mega CD (Europe) model 1, v1.00" },
+	{ 0x79F85384, 3, "Mega CD (Japan) model 1, v1.00S" },    { 0x9BCE40B2, 3, "Mega CD (Japan) model 1, v1.00G" },
+	{ 0xF18DDE5B, 3, "Mega CD (Japan) model 1, v1.00L" },    { 0x2EA250C0, 3, "Mega CD (Japan) model 1, v1.00O" },
+	{ 0x9D2DA8F2, 3, "Mega CD (Japan) model 1, v1.01" },     { 0x4BE18FF6, 3, "Mega CD (Japan) model 1, v1.11" },
+	{ 0x550F30BB, 3, "Mega CD (Asia) model 1, v1.00" },      { 0x2E49D72C, 1, "Sega CD (USA) model 2, v2.11X" },
+	{ 0x8AF65F58, 1, "Sega CD (USA) model 2, v2.00" },       { 0x9F6F6276, 1, "Sega CD (USA) model 2, v2.00W" },
+	{ 0x4D5CB8DA, 2, "Mega CD (Europe) model 2, v2.00W" },   { 0x0507B590, 2, "Mega CD (Europe) model 2, v2.00" },
+	{ 0xC1AA217F, 2, "Mega CD (Europe) model 2, v2.11X" },   { 0xDD6CC972, 3, "Mega CD (Japan) model 2, v2.00C" },
+	{ 0x8052C7A0, 3, "Aiwa CD-ROM (Japan), v2.11" },         { 0x290F8E33, 1, "X'Eye (USA), v2.00" },
+	{ 0xD21FE71D, 3, "Wondermega (Japan), v1.00" },          { 0x2B19972F, 3, "Wondermega M2 (Japan), v2.00" },
+	{ 0xD48C44B5, 1, "Sega CDX (USA), v2.21X" },             { 0xAACB851E, 2, "Multi-Mega (Europe), v2.21" },
+	{ 0x50CD3D23, 1, "LaserActive (USA), v1.04" },           { 0x3B10CF41, 1, "LaserActive (USA), v1.02" },
+	{ 0x474AAA44, 3, "LaserActive (Japan), v1.05" },         { 0x00EEDB3A, 3, "LaserActive (Japan), v1.02" },
+};
+
+/* the structure of a BIOS dump: "SEGA" in the 68000 header of the boot code at one of the places the models keep it (BIOSCheck.c of the 240p
+ * Test Suite does the same); the region is the first letter of the header's region field ($1F0) */
+static int bios_structure_ok(const uint8_t *d)
+{
+	const uint8_t *p = d + 0x15800;
+	if (!memcmp(p + 0x6D, "SEGA", 4)) return 1;
+	p = d + 0x16000;
+	if (!memcmp(p + 0x6D, "SEGA", 4) || !memcmp(p + 0x6D, "WONDER", 6)) return 1;
+	p = d + 0x1AD00;
+	return !memcmp(p + 0x6D, "SEGA", 4);
+}
+
+const char *md_host_cd_bios_name(const uint8_t *data, size_t n)
+{
+	size_t i;
+	uint32_t c;
+	if (!data || n != CD_BIOS_BYTES) return NULL;
+	c = (uint32_t)crc32(0, data, (unsigned)n);
+	for (i = 0; i < sizeof k_bios / sizeof k_bios[0]; i++) if (k_bios[i].crc == c) return k_bios[i].name;
+	return NULL;
+}
+
+int md_host_cd_bios_add(const uint8_t *data, size_t n, int force)
+{
+	uint8_t tmp[16];
+	uint32_t c;
+	size_t i;
+	int region = 0, swapped = 0;
+	if (!data || n != CD_BIOS_BYTES) return 0;
+	/* a byte swapped dump (MAME's) has "ESAG" where "SEGA" belongs */
+	if (!memcmp(data + 0x100, "ESAG", 4)) swapped = 1;
+	if (swapped) {
+		uint8_t *sw = (uint8_t *)malloc(CD_BIOS_BYTES);
+		int r;
+		if (!sw) return 0;
+		for (i = 0; i < CD_BIOS_BYTES; i += 2) { sw[i] = data[i + 1]; sw[i + 1] = data[i]; }
+		r = md_host_cd_bios_add(sw, n, force);
+		free(sw);
+		return r;
+	}
+	c = (uint32_t)crc32(0, data, (unsigned)n);
+	for (i = 0; i < sizeof k_bios / sizeof k_bios[0]; i++) if (k_bios[i].crc == c) region = k_bios[i].region;
+	if (!region) {
+		if (!force && !bios_structure_ok(data)) return 0;
+		if (!force && memcmp(data + 0x100, "SEGA", 4) && memcmp(data + 0x100, "WOND", 4)) { /* the header of the boot code */ }
+		memcpy(tmp, data + 0x1F0, 16);
+		for (i = 0; i < 16 && tmp[i] == ' '; i++) ;
+		region = tmp[i] == 'U' ? 1 : tmp[i] == 'E' ? 2 : tmp[i] == 'J' ? 3 : 0;
+		if (!region && force) region = 1;
+		if (!region) {          /* a region free patch or an unusual header: look at the whole field */
+			for (i = 0; i < 16; i++) { if (tmp[i] == 'U') { region = 1; break; } if (tmp[i] == 'E') { region = 2; break; } if (tmp[i] == 'J') { region = 3; break; } }
+		}
+		if (!region) return 0;
+	}
+	if (!g_cd_bios[region - 1]) g_cd_bios[region - 1] = (uint8_t *)malloc(CD_BIOS_BYTES);
+	if (!g_cd_bios[region - 1]) return 0;
+	memcpy(g_cd_bios[region - 1], data, CD_BIOS_BYTES);
+	g_cd_bios_crc[region - 1] = c;
+	return region == 1 ? MD_REGION_USA : region == 2 ? MD_REGION_EUROPE : MD_REGION_JAPAN_NTSC;
+}
+
+void md_host_cd_bios_clear(void)
+{
+	int i;
+	for (i = 0; i < 3; i++) { free(g_cd_bios[i]); g_cd_bios[i] = NULL; g_cd_bios_crc[i] = 0; }
+}
+
+int md_host_cd_bios_count(void)
+{
+	int i, n = 0;
+	for (i = 0; i < 3; i++) if (g_cd_bios[i]) n++;
+	return n;
+}
+
+/* the first bytes of a disc image */
+int md_host_cd_probe(const char *path, char *why, size_t whylen)
+{
+	static const uint8_t sync[12] = { 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
+	uint8_t h[32];
+	size_t n, l;
+	FILE *f;
+	int ok = 0;
+	const char *w = "not a Sega CD disc";
+	if (why && whylen) why[0] = 0;
+	if (!path || !*path) { w = "no disc given"; goto done; }
+	f = fopen(path, "rb");
+	if (!f) { w = "the disc file could not be opened"; goto done; }
+	n = fread(h, 1, sizeof h, f);
+	l = strlen(path);
+	if (n >= 8 && !memcmp(h, "MComprHD", 8)) ok = 1;                                   /* a CHD */
+	else if (n >= 16 && !memcmp(h, "SEGADISCSYSTEM", 14)) ok = 1;                       /* cooked 2048 byte sectors */
+	else if (n >= 30 && !memcmp(h, sync, 12) && !memcmp(h + 16, "SEGADISCSYSTEM", 14)) ok = 1;   /* raw 2352 byte sectors */
+	else if (n >= 14 && l > 4 && !strcasecmp(path + l - 4, ".cue")) {
+		/* a cue sheet: it names a FILE and a TRACK */
+		char *txt = (char *)malloc(16384);
+		if (txt) {
+			size_t m;
+			fseek(f, 0, SEEK_SET);
+			m = fread(txt, 1, 16383, f);
+			txt[m] = 0;
+			if (strstr(txt, "FILE") && strstr(txt, "TRACK")) ok = 1; else w = "not a cue sheet";
+			free(txt);
+		}
+	} else if (n >= 16 && !memcmp(h, sync, 12)) w = "a CD data track, but not a Sega CD disc";
+	fclose(f);
+done:
+	if (!ok && why && whylen) { strncpy(why, w, whylen - 1); why[whylen - 1] = 0; }
+	return ok;
+}
+
+/* the format of an empty backup RAM (Genesis Plus GX libretro.c: the header the BIOS expects) */
+static const uint8_t k_brm_format[0x40] = {
+	0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x5f,0x00,0x00,0x00,0x00,0x40, 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+	0x53,0x45,0x47,0x41,0x5f,0x43,0x44,0x5f,0x52,0x4f,0x4d,0x00,0x01,0x00,0x00,0x00, 0x52,0x41,0x4d,0x5f,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x5f,0x5f,0x5f
+};
+
+static void cd_format_one(uint8_t *area, size_t size)
+{
+	uint8_t f[0x40];
+	if (!memcmp(area + size - 0x20, k_brm_format + 0x20, 0x20)) return;       /* already formatted */
+	memset(area, 0, size - 0x40);
+	memcpy(f, k_brm_format, 0x40);
+	f[0x10] = f[0x12] = f[0x14] = f[0x16] = (uint8_t)(((size / 64) - 3) >> 8);
+	f[0x11] = f[0x13] = f[0x15] = f[0x17] = (uint8_t)(((size / 64) - 3) & 0xFF);
+	memcpy(area + size - 0x40, f, 0x40);
+}
+
+static void cd_format_bram(void)
+{
+	cd_format_one(scd.bram, sizeof scd.bram);
+	if (scd.cartridge.id) cd_format_one(scd.cartridge.area, (size_t)scd.cartridge.mask + 1);
+}
+
+static size_t cd_save_size(void) { return sizeof scd.bram + (scd.cartridge.id ? (size_t)scd.cartridge.mask + 1 : 0); }
+static uint32_t cd_save_crc(void)
+{
+	unsigned long c = crc32(0, scd.bram, sizeof scd.bram);
+	if (scd.cartridge.id) c = crc32(c, scd.cartridge.area, (unsigned)scd.cartridge.mask + 1);
+	return (uint32_t)c;
+}
+
+int md_host_is_cd(void) { return G.loaded && G.cd; }
+const char *md_host_cd_info(void) { return G.cd ? G.cd_info : ""; }
+int md_host_cd_tracks(void) { return G.cd ? G.cd_tracks : 0; }
+
+int md_host_cd_test_toc(int track, int *start, int *end, int *type)
+{
+	if (!G.loaded || !G.cd) return 0;
+	if (track >= 1 && track <= cdd.toc.last) {
+		if (start) *start = cdd.toc.tracks[track - 1].start;
+		if (end) *end = cdd.toc.tracks[track - 1].end;
+		if (type) *type = cdd.toc.tracks[track - 1].type;
+	}
+	return cdd.toc.last;
+}
+
+int md_host_cd_test_data(int lba, uint8_t *out)
+{
+	if (!G.loaded || !G.cd) return 1;
+	cdd.index = 0;
+	cdd.lba = lba;
+	cdd_read_data(out, NULL);
+	return 0;
+}
+
+int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2])
+{
+	if (!G.loaded || !G.cd || track < 1 || track > cdd.toc.last || cdd.toc.tracks[track - 1].type) return 1;
+	cdd.index = track - 1;
+	cdd.lba = lba;
+	cdd.fader[0] = cdd.fader[1] = 1024;
+	cdd.audio[0] = cdd.audio[1] = 0;
+	scd.regs[0x36 >> 1].byte.h = 0;
+	cdd_seek_audio(track - 1, lba);
+	cdd_read_audio((unsigned)samples);
+	blip_clear(snd.blips[2]);
+	last[0] = cdd.audio[0]; last[1] = cdd.audio[1];
+	return 0;
+}
+
+/* the identity of a disc for the link and the achievements log: the first 2 KB of its first sector as the core read them, and its length */
+static uint32_t cd_disc_crc(void)
+{
+	unsigned long c = crc32(0, cart.rom, 0x210);
+	uint8_t le[4];
+	put32(le, (uint32_t)cdd.toc.end);
+	return (uint32_t)crc32(c, le, 4);
+}
+
+int md_host_load_disc(const char *path, char *err, size_t errlen)
+{
+	static const int rd_of[3] = { 1, 2, 3 };       /* config.region_detect: 1 USA, 2 Europe (PAL), 3 Japan (NTSC) */
+	int attempt, k, r = 0;
+	char why[100];
+#define FAILD(code, msg) do { if (err && errlen) { strncpy(err, msg, errlen - 1); err[errlen - 1] = 0; } md_host_unload(); return (code); } while (0)
+	if (err && errlen) err[0] = 0;
+	if (!G.inited) FAILD(1, "not initialised");
+	md_host_unload();
+	if (!path || !*path) FAILD(2, "no disc given");
+	if (!md_host_cd_bios_count()) FAILD(5, "no Sega CD BIOS");
+	if (!md_host_cd_probe(path, why, sizeof why)) { why[0] = (char)toupper((unsigned char)why[0]); FAILD(strstr(why, "opened") ? 2 : 3, why); }
+	apply_options_to_config();
+	config.system = 0;
+	config.region_detect = G.opt_region;
+	G.cd_force_region = 0;
+	cart_size = (uint8_t)G.opt_ram_cart;
+	for (attempt = 0; attempt < 2; attempt++) {
+		system_hw = 0;
+		rompath[0] = 0;
+		bitmap.data = (uint8_t *)(G.fb_user ? G.fb_user : fb_internal);
+		bitmap.pitch = (G.fb_user ? G.fb_user_pitch : MD_MAX_WIDTH) * 2;
+		memset(bitmap.data, 0, (size_t)bitmap.pitch * (MD_MAX_HEIGHT - 1) + (size_t)MD_MAX_WIDTH * 2);
+		input.system[0] = input.system[1] = SYSTEM_GAMEPAD;
+		G.cd_bios_wanted = 0;
+		md_cd_wanted = 1;
+		r = load_rom((char *)path);
+		md_cd_wanted = 0;
+		if (r > 0) break;
+		if (G.cd_bios_wanted && attempt == 0) {
+			/* the disc's region has no BIOS here: the console takes the region of one it has (the BIOS refuses a disc of another region only when it
+			 * is told the console is that region) */
+			for (k = 0; k < 3 && !g_cd_bios[k]; k++) ;
+			if (k < 3) { config.region_detect = rd_of[k]; G.cd_force_region = rd_of[k]; continue; }
+		}
+		break;
+	}
+	if (r <= 0 || system_hw != SYSTEM_MCD) FAILD(4, G.cd_bios_wanted ? "no BIOS for this disc's region" : "the core could not start this disc");
+	G.cd = 1;
+	G.rom_src = NULL;
+	{
+		int rc = boot_common(err, errlen);
+		if (rc) return rc;
+	}
+	G.cd_tracks = cdd.toc.last;
+	G.rom_crc = cd_disc_crc();
+	G.rom_size = (uint32_t)cdd.toc.end * 2048u;
+	{
+		const char *bn = NULL;
+		int bi = (int)(config.region_detect ? config.region_detect : 0);
+		(void)bi;
+		for (k = 0; k < 3; k++) if (!strcmp(G.cd_bios_used, k == 0 ? "USA" : k == 1 ? "Europe" : "Japan")) { bn = NULL; if (g_cd_bios[k]) bn = md_host_cd_bios_name(g_cd_bios[k], CD_BIOS_BYTES); }
+		snprintf(G.cd_info, sizeof G.cd_info, "Mega CD disc, %d track%s, %u min, %s%s%s, BIOS %s%s%s%s", G.cd_tracks, G.cd_tracks == 1 ? "" : "s", (unsigned)(cdd.toc.end / 75 / 60),
+			rominfo.product[0] ? "product " : "", rominfo.product, rominfo.product[0] ? "" : "no product code", G.cd_bios_used,
+			bn ? " (" : "", bn ? bn : "", bn ? ")" : "");
+		snprintf(G.info, sizeof G.info, "%s", G.cd_info);
+	}
+	return 0;
+#undef FAILD
 }
 
 void md_host_reset(void)
@@ -594,7 +908,8 @@ void md_host_run_frame(void)
 	int n, skip;
 	if (!G.loaded) return;
 	skip = !G.render;
-	if ((system_hw & SYSTEM_PBC) == SYSTEM_MD) system_frame_gen(skip);
+	if (system_hw == SYSTEM_MCD) system_frame_scd(skip);
+	else if ((system_hw & SYSTEM_PBC) == SYSTEM_MD) system_frame_gen(skip);
 	else system_frame_sms(skip);
 	vdpw_frame_end();                  /* every line is drawn, the sprite status bits are merged */
 	vdp_status_only = 0;
@@ -817,11 +1132,13 @@ void md_host_set_audio_enabled(int on) { G.audio_on = on ? 1 : 0; }
 
 /* ---- battery RAM ----------------------------------------------------------------------------------------- */
 
-size_t md_host_sram_capacity(void) { return (G.loaded && sram.on) ? SRAM_BYTES : 0; }
+static size_t cd_save_size(void);
+size_t md_host_sram_capacity(void) { if (G.loaded && G.cd) return cd_save_size(); return (G.loaded && sram.on) ? SRAM_BYTES : 0; }
 
 size_t md_host_sram_size(void)
 {
 	int i;
+	if (G.loaded && G.cd) return cd_save_size();       /* a formatted backup RAM is a whole image, never cut */
 	if (!G.loaded || !sram.on) return 0;
 	for (i = SRAM_BYTES - 1; i >= 0; i--)
 		if (sram.sram[i] != 0xFF) return (size_t)i + 1;
@@ -831,6 +1148,13 @@ size_t md_host_sram_size(void)
 size_t md_host_sram_read(uint8_t *out, size_t cap)
 {
 	size_t n = md_host_sram_size();
+	if (G.loaded && G.cd) {
+		size_t a = n < sizeof scd.bram ? n : sizeof scd.bram;
+		if (n > cap) return 0;
+		memcpy(out, scd.bram, a);
+		if (n > a) memcpy(out + a, scd.cartridge.area, n - a);
+		return n;
+	}
 	if (n > cap) n = cap;
 	if (n) memcpy(out, sram.sram, n);
 	return n;
@@ -838,6 +1162,20 @@ size_t md_host_sram_read(uint8_t *out, size_t cap)
 
 size_t md_host_sram_write(const uint8_t *data, size_t n)
 {
+	if (G.loaded && G.cd) {
+		/* the internal backup RAM, then the RAM cartridge's; an image that is not formatted is left as the BIOS finds it (formatted at load) */
+		size_t a = n < sizeof scd.bram ? n : sizeof scd.bram, used = a;
+		if (a) memcpy(scd.bram, data, a);
+		if (scd.cartridge.id && n > sizeof scd.bram) {
+			size_t c = n - sizeof scd.bram, cap = (size_t)scd.cartridge.mask + 1;
+			if (c > cap) c = cap;
+			memcpy(scd.cartridge.area, data + sizeof scd.bram, c);
+			used += c;
+		}
+		cd_format_bram();
+		G.sram_crc = cd_save_crc();
+		return used;
+	}
 	if (!G.loaded || !sram.on) return 0;
 	if (n > SRAM_BYTES) n = SRAM_BYTES;
 	memcpy(sram.sram, data, n);
@@ -848,11 +1186,12 @@ size_t md_host_sram_write(const uint8_t *data, size_t n)
 
 int md_host_sram_dirty(void)
 {
+	if (G.loaded && G.cd) return cd_save_crc() != G.sram_crc;
 	if (!G.loaded || !sram.on) return 0;
 	return (uint32_t)crc32(0, sram.sram, SRAM_BYTES) != G.sram_crc;
 }
 
-void md_host_sram_mark_saved(void) { if (G.loaded) G.sram_crc = (uint32_t)crc32(0, sram.sram, SRAM_BYTES); }
+void md_host_sram_mark_saved(void) { if (G.loaded) G.sram_crc = G.cd ? cd_save_crc() : (uint32_t)crc32(0, sram.sram, SRAM_BYTES); }
 void md_host_sram_mark_unsaved(void) { G.sram_crc = ~G.sram_crc; }
 
 /* ---- save states ----------------------------------------------------------------------------------------- */
@@ -874,7 +1213,7 @@ static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc)
 	memset(buf + STATE_HDR + used, 0, G.state_size - STATE_HDR - used);   /* the tail is zero so two states differ only where the machine did */
 	memcpy(buf, "MDST", 4);
 	put32(buf + 4, STATE_VERSION_ID);
-	put32(buf + 8, (uint32_t)G.system);
+	put32(buf + 8, (uint32_t)G.system + (G.cd ? 16u : 0u));       /* a disc's state is never taken for a cartridge's */
 	put32(buf + 12, (uint32_t)used);
 	memcpy(buf + STATE_HDR, G.state_scratch, used);
 	carry_write(buf + STATE_HDR + used);                  /* the sprite lists, FIFO flag, PSG deltas, EEPROM position the core's state lacks */
@@ -897,7 +1236,7 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	if (ver == STATE_VERSION_ID) { if (n != G.state_size) return 3; payload_cap = G.state_payload_cap; }
 	else if (ver == STATE_VERSION_OLD) { if (n != G.state_size_old) return 3; payload_cap = n - STATE_HDR - STATE_TRAILER; }
 	else return 3;
-	if (get32(buf + 8) != (uint32_t)G.system) return 3;
+	if (get32(buf + 8) != (uint32_t)G.system + (G.cd ? 16u : 0u)) return 3;
 	used = get32(buf + 12);
 	if (used == 0 || used > payload_cap || used > G.state_payload_cap) return 3;
 	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
@@ -952,6 +1291,7 @@ uint8_t md_host_peek(unsigned addr)
 
 int md_host_ra_console(void)
 {
+	if (G.loaded && G.cd) return 9;        /* RC_CONSOLE_SEGA_CD */
 	switch (G.system) { case MD_SYS_MD: return 1; case MD_SYS_SMS: return 11; case MD_SYS_GG: return 15; case MD_SYS_SG: return 33; }
 	return 0;
 }
@@ -960,6 +1300,14 @@ int md_host_ra_read(unsigned addr, uint8_t *out, unsigned n)
 {
 	unsigned i, got = 0;
 	if (!G.loaded || !out) return 0;
+	if (G.cd) {
+		/* rcheevos' Sega CD map: $000000 the 68000's work RAM as held, $010000-$08FFFF the sub CPU's 512 KB program RAM, $090000-$0AFFFF the
+		 * first 128 KB of the word RAM as the core holds it in 2M mode (what the core's libretro build hands out as its memory map) */
+		if (addr < 0x10000) { for (i = 0; addr + i < 0x10000 && i < n; i++) out[i] = work_ram[addr + i]; return (int)i; }
+		if (addr >= 0x10000 && addr < 0x90000) { for (i = 0; addr + i < 0x90000 && i < n; i++) out[i] = scd.prg_ram[addr + i - 0x10000]; return (int)i; }
+		if (addr >= 0x90000 && addr < 0xB0000) { for (i = 0; addr + i < 0xB0000 && i < n; i++) out[i] = scd.word_ram_2M[addr + i - 0x90000]; return (int)i; }
+		return 0;
+	}
 	if (G.system == MD_SYS_MD) {
 		unsigned end;
 		if (addr < 0x10000) { end = 0x10000; for (i = 0; addr + i < end && i < n; i++) out[i] = work_ram[addr + i]; return (int)i; }   /* as held: see host.h */
@@ -1045,7 +1393,7 @@ int md_host_cheat_add_patch(unsigned address, unsigned value, int compare)
 		address &= 0xFFFFFF;
 		if (value > 0xFFFF) return 1;
 		if (address >= 0xFF0000) { /* work RAM */ }
-		else if (address < 0x400000 && (address & 0xFFFFFE) + 2 <= cart.romsize) { /* ROM word */ }
+		else if (!G.cd && address < 0x400000 && (address & 0xFFFFFE) + 2 <= cart.romsize) { /* ROM word */ }
 		else return 1;
 		compare = -1;
 	} else {
@@ -1155,6 +1503,7 @@ int md_host_set_region(int region)
 {
 	if (region < MD_REGION_AUTO || region > MD_REGION_JAPAN_PAL) region = 0;
 	G.opt_region = region;
+	if (G.cd && G.cd_force_region && !region) return 0;       /* the console takes the region of the BIOS it has: Auto keeps it */
 	if (G.loaded && config.region_detect != region) { config.region_detect = region; region_changed(); }
 	else config.region_detect = region;
 	return 0;
@@ -1172,7 +1521,7 @@ int md_host_set_option(const char *name, int value)
 		{ "interlace", &G.opt_interlace, 0, 1 }, { "sprite_limit", &G.opt_sprite_limit, 0, 1 },
 		{ "sms_border", &G.opt_sms_border, 0, 2 }, { "gg_extra", &G.opt_gg_extra, 0, 1 }, { "overscan", &G.opt_overscan, 0, 3 },
 		{ "force_dtack", &G.opt_force_dtack, 0, 1 }, { "addr_error", &G.opt_addr_error, 0, 1 }, { "lcd", &G.opt_lcd, 0, 100 },
-		{ "vdp_mode", &G.opt_vdp_mode, 0, 2 }, { "gg_band", &G.opt_gg_band, 0, 1 },
+		{ "vdp_mode", &G.opt_vdp_mode, 0, 2 }, { "gg_band", &G.opt_gg_band, 0, 1 }, { "ram_cart", &G.opt_ram_cart, 0, 6 },
 	};
 	size_t i;
 	int old_nuked = config.ym3438, old_opll = config.opll;
@@ -1208,10 +1557,10 @@ int md_host_get_option(const char *name, int *value)
 	if (!strcmp(name, "region")) { *value = G.opt_region; return 0; }
 	{
 		static const char *const names[] = { "fm", "fm_hq", "psg_hq", "ym2413", "opll_nuked", "fm_preamp", "psg_preamp", "lowpass", "mono", "interlace",
-			"sprite_limit", "sms_border", "gg_extra", "overscan", "force_dtack", "addr_error", "lcd", "vdp_mode", "gg_band" };
+			"sprite_limit", "sms_border", "gg_extra", "overscan", "force_dtack", "addr_error", "lcd", "vdp_mode", "gg_band", "ram_cart" };
 		int *const vals[] = { &G.opt_fm, &G.opt_fm_hq, &G.opt_psg_hq, &G.opt_ym2413, &G.opt_opll_nuked, &G.opt_fm_preamp, &G.opt_psg_preamp, &G.opt_lowpass,
 			&G.opt_mono, &G.opt_interlace, &G.opt_sprite_limit, &G.opt_sms_border, &G.opt_gg_extra, &G.opt_overscan, &G.opt_force_dtack, &G.opt_addr_error,
-			&G.opt_lcd, &G.opt_vdp_mode, &G.opt_gg_band };
+			&G.opt_lcd, &G.opt_vdp_mode, &G.opt_gg_band, &G.opt_ram_cart };
 		size_t i;
 		for (i = 0; i < sizeof names / sizeof names[0]; i++) if (!strcmp(names[i], name)) { *value = *vals[i]; return 0; }
 	}

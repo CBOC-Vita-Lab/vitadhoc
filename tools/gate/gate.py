@@ -344,6 +344,11 @@ STEPS = [
          "python3 app_tests.py x86 --only sega_library,sega_session", "quick", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=1800),
+    # names in other alphabets: Japanese/Korean/accented names on the home page, list and card (host twin)
+    Step("app-names-cjk", "names in other alphabets in the app (app_tests.py --only names_cjk)",
+         "python3 app_tests.py x86 --only names_cjk", "quick", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
+         inputs=["gpsp/", "playerkit/src/pk_glyphs.cpp", "playerkit/src/pk_utf8.h"], deps=["build-hostcore-x86", "build-testrom"],
+         requires=PIL, group=GROUP_HOST, parse="app", timeout=1800),
     Step("app-x86", "the whole app on x86: game list, menus, states, fast forward (app_tests.py)",
          "python3 app_tests.py x86", "default", APP_TAGS | {"app"}, cwd="gpsp/vita/hostcore",
          inputs=["gpsp/", "nes/"], deps=["build-hostcore-x86", "build-testrom", "build-cheatrom"],
@@ -360,7 +365,7 @@ STEPS = [
          requires=PIL, group=GROUP_HOST, parse="app", timeout=7200),
     Step("link-x86", "two app twins linked over loopback, menus to session (link_tests.py)",
          "python3 link_tests.py x86 --hz 20", "default", APP_TAGS | {"app"},
-         cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/"], env_opt=["GATE_NES_ROMS", "GATE_WS_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
+         cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/"], env_opt=["GATE_NES_ROMS", "GATE_WS_ROM", "GATE_WS_ONLINE_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
          deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
          requires=PIL, group=GROUP_HOST, parse="app", timeout=7200),
     # a busy console is not a gone one: 20 s peer-dead limit, keepalives sent by
@@ -443,7 +448,7 @@ STEPS = [
     Step("online-x86", "online play: two twins linked through the room service and a NAT simulator (online_tests.py)",
          "python3 online_tests.py x86 --hz 20", "default", APP_TAGS | {"app", "online"},
          cwd="gpsp/vita/hostcore", inputs=["gpsp/", "nes/", "online/"],
-         env_opt=["GATE_GBA_ROMS", "GATE_NES_ROMS", "GATE_WS_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
+         env_opt=["GATE_GBA_ROMS", "GATE_NES_ROMS", "GATE_WS_ROM", "GATE_WS_ONLINE_ROM", "GATE_MD_SMS_ROMS", "GATE_SG_ROM"],
          deps=["build-hostcore-x86", "build-testrom", "build-testrom-gb", "build-linktest-rom"],
          requires=PIL + CXX + [("exe", "node")], group=GROUP_HOST, parse="app", timeout=28800),
 

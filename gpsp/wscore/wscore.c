@@ -36,6 +36,7 @@ static int g_vplay = WSCORE_UPRIGHT;
 static int g_blend_on = 1;
 static int g_palette;
 static int g_skip;
+static int g_quiet;             /* wscore_set_quiet: a look-ahead refresh, its sound dropped */
 static unsigned g_buttons;
 static int g_show = -1;
 static unsigned g_changes;
@@ -176,7 +177,7 @@ static void take_audio(struct wscore *c)
 {
   int got;
   while ((got = wswan_host_audio_take(c->audio, AUDIO_CHUNK)) > 0)
-    if (c->cb.audio_batch)
+    if (c->cb.audio_batch && !g_quiet)
       c->cb.audio_batch(c->cb.userdata, c->audio, (size_t)got);
 }
 
@@ -416,6 +417,40 @@ int wscore_state_load(wscore_t *core, const void *src, size_t size)
   if (wswan_host_state_load_mem((const uint8_t *)src, size) != 0) return -1;
   if (g_blend_ok) wsb_reset(&g_blend);    /* the phase starts again */
   show_update();
+  return 0;
+}
+
+/* Quick response (wscore.h): the machine and the blend's position (frame count, next refresh's start; not its ring, whose slots
+ * the look-ahead refresh overwrites with the same frames the next real one makes again, nor the picture buffers) */
+void wscore_set_quiet(wscore_t *core, int quiet) { (void)core; g_quiet = quiet != 0; }
+#define AHEAD_BLEND(n) ((n) + sizeof(wsb))
+size_t wscore_ahead_size(wscore_t *core)
+{
+  size_t n = core && core == g_core ? wswan_host_ahead_size() : 0;
+  return n ? AHEAD_BLEND(n) + (size_t)PIX * 2 : 0;
+}
+long wscore_ahead_save(wscore_t *core, void *dst, size_t cap)
+{
+  size_t n = wswan_host_ahead_size(), all = wscore_ahead_size(core);
+  uint8_t *p = (uint8_t *)dst;
+  if (!all || cap < all || wswan_host_ahead_save(p, cap) != n) return -1;
+  memcpy(p + n, &g_blend, sizeof(wsb));
+  if (g_blend_ok && g_blend.prev) memcpy(p + AHEAD_BLEND(n), g_blend.prev, (size_t)PIX * 2);
+  return (long)all;
+}
+int wscore_ahead_load(wscore_t *core, const void *src, size_t size)
+{
+  size_t n = wswan_host_ahead_size();
+  const uint8_t *p = (const uint8_t *)src;
+  if (!core || core != g_core || !n || size != wscore_ahead_size(core)) return -1;
+  if (wswan_host_ahead_load(p, n) != 0) return -1;
+  if (g_blend_ok)
+  {
+    wsb keep = g_blend;                 /* the buffers are this run's own; the numbers are the saved ones */
+    memcpy(&g_blend, p + n, sizeof(wsb));
+    g_blend.ring = keep.ring; g_blend.prev = keep.prev;
+    if (keep.prev) memcpy(keep.prev, p + AHEAD_BLEND(n), (size_t)PIX * 2);
+  }
   return 0;
 }
 

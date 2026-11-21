@@ -14,3 +14,5 @@ Online play (2.0) links Mbed TLS 3.6.8 (Apache-2.0 OR GPL-2.0-or-later, used
 under GPL-2.0-or-later; `licenses/MbedTLS-LICENSE.txt`) and uses Cloudflare's
 STUN and relay as services: see the Mbed TLS entry in
 [the notices](notices/THIRD-PARTY.md).
+The menus' Japanese, Korean, Greek and Cyrillic letters come from a subset of Noto
+Sans CJK JP (SIL Open Font License 1.1; `licenses/NotoSansCJK-OFL.txt`).

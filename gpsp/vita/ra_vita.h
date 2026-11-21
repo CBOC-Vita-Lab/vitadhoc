@@ -86,8 +86,8 @@ int  ra_hardcore_pending(void);
 /* ---- the list (Settings > Achievements) --------------------------------- */
 typedef struct ra_ach
 {
-   char     title[64];
-   char     desc[160];
+   char     title[128];        /* UTF-8: names in Japanese run 3 bytes a character */
+   char     desc[256];
    char     progress[24];      /* "12/50", or "" */
    unsigned points;
    int      unlocked;

@@ -222,9 +222,9 @@ int pspcompat_touch(pc_touch *out);
  *        the caller keeps the old text
  *   every frame after that, pspcompat_ime_poll(out, cap):
  *        PC_IME_RUNNING     still typing: keep drawing frames
- *        PC_IME_DONE        `out` holds what was entered (UTF-8 reduced to
- *                           printable ASCII: the UI's faces have no other
- *                           glyphs; anything else becomes '?'), once
+ *        PC_IME_DONE        `out` holds what was entered, as UTF-8 (the
+ *                           UI draws Latin, Greek, Cyrillic, kana, kanji and
+ *                           Hangul; control characters become blanks), once
  *        PC_IME_CANCELLED   closed without accepting, once
  *        PC_IME_IDLE        nothing is open
  *

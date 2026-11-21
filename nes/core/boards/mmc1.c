@@ -186,6 +186,7 @@ static void MMC1_Restore(int version) {
 	MMC1MIRROR();
 	MMC1CHR();
 	MMC1PRG();
+	if (!FCEU_ahead_restore)
 	lreset = 0;			/* timestamp(base) is not stored in save states. */
 }
 

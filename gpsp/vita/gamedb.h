@@ -68,6 +68,11 @@ void gamedb_title_key(const char *title, char *out, size_t cap);
 /* The lines about the game called `name` (a No-Intro name or a file name
  * without its extension): 1 and the text in out, or 0. */
 int  gamedb_blurb(const char *name, char *out, size_t cap);
+/* The same for a game of console `sys` (the letters of gamedb_name_loose): a
+ * title two consoles' games share with different articles ("Strider" for the
+ * Genesis and the NES) has its own U record for the later console; any other
+ * title is found as by gamedb_blurb. */
+int  gamedb_blurb_sys(char sys, const char *name, char *out, size_t cap);
 
 /* A GBA cartridge's header code (four characters at 0xAC) and a whole
  * cartridge's CRC32 -> its No-Intro name.  1 = found. */

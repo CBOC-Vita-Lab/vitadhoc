@@ -79,6 +79,7 @@
 #include "pace_steady.h"             /* Steady pacing (playerkit's pk_pace) */
 #include "handoff_glue.h"            /* Smooth hand-over (playerkit's pk_handoff) */
 #include "look_glue.h"               /* the look governor (playerkit's pk_look) */
+#include "ahead_glue.h"              /* Quick response: run-ahead by one frame (playerkit's pk_ahead) */
 #include "fe_gbadual.h"
 #include "fe_evt.h"
 #include "fe_util.h"
@@ -91,6 +92,7 @@
 #include "config_psp.h"
 #include "ctl_map.h"
 #include "video_vita.h"
+#include "vglyph.h"
 #include "vback.h"                   /* vb_ownership_get: the GXM error census */
 #include "upscale_vita.h"
 #include "render_thread.h"
@@ -1240,6 +1242,74 @@ static int app_ambient_mode(void)
                                                               : g_pcfg.ambient;
 }
 
+/* ---- Quick response (ahead_glue.h): run-ahead by one frame, Game Boy / Game Boy Color / NES / WonderSwan ----------------------------
+ * The mode of this game: vita.ini quick_response (a launch's override; the twin's GBADHOC_AHEAD sets it), else the game's own choice
+ * (games/<ROM>.ini), else Settings > Gameplay > Quick response, else the console's default.  The crash-loop guard turns it off. */
+static int g_quick_ini = -1;
+static int g_ahead_began;                /* ahead_begin has run for this game */
+static int g_game_console;               /* (defined below) */
+
+/* The default per console: Auto where a run-ahead frame (about twice a plain one, docs/PERFORMANCE.md) leaves room on the model,
+ * Off where it does not.  The GBA's frame, state and translation cache do not leave it: Off, and not offered. */
+static int app_quick_default(int console)
+{
+   switch (console)
+   {
+      case FE_CONSOLE_GB:
+      case FE_CONSOLE_GBC:
+      case FE_CONSOLE_NES:
+      case FE_CONSOLE_WSWAN:
+         return AHEAD_MODE_AUTO;
+      default:
+         return AHEAD_MODE_OFF;
+   }
+}
+
+int app_quick_supported(int console)
+{
+   return console == FE_CONSOLE_GB || console == FE_CONSOLE_GBC ||
+          console == FE_CONSOLE_NES || console == FE_CONSOLE_WSWAN;
+}
+
+int app_quick_effective(int console)
+{
+   if (!app_quick_supported(console) || boot_guard_safe())
+      return AHEAD_MODE_OFF;
+   if (g_quick_ini >= 0 && g_quick_ini <= 2)
+      return g_quick_ini;
+   if (g_pgame.on && g_pgame.quick >= 0)
+      return g_pgame.quick;
+   if (g_pcfg.quick_response >= 0)
+      return g_pcfg.quick_response;
+   return app_quick_default(console);
+}
+
+/* The game starts, or the row changed: the governor hears the mode.  A frame is 1e6 / the console's rate. */
+void app_quick_options(void)
+{
+   const int console = (int)g_game_console;
+   const int mode = app_quick_effective(console);
+   if (console < 0)
+      return;                  /* the game list: the setting is only kept */
+   if (!g_ahead_began)
+   {
+      /* first guess for the cost of a run-ahead frame: two frames, a save and a load (measured: docs/PERFORMANCE.md) */
+      ahead_begin(mode, (uint32_t)(g_frame_ns / 1000u), 230, 600);
+      g_ahead_began = 1;
+   }
+   else
+      ahead_set_mode(mode);
+   fe_evt("quick_response mode=%s supported=%d", mode == AHEAD_MODE_OFF ? "off" : mode == AHEAD_MODE_AUTO ? "auto" : "on",
+          app_quick_supported(console));
+}
+
+/* No pass of play may run ahead when ... (fe_host.c also refuses a machine that cannot) */
+static int app_ahead_blocked(int session, int local, int steady_on, int rewinding)
+{
+   return g_ff.on || session || local || g_sw.link_bench || link_owns_picture() || rewinding || steady_on ||
+          ui_active() || !fe_host_ahead_possible() || (ahead_mode() == AHEAD_MODE_AUTO && !ho_active());
+}
+
 /* Smooth hand-over switched in Settings: the game loop asks again next
  * pass (g_ho_want), the mailbox empties before it is turned off. */
 static int g_ho_want;              /* (defined with the hand-over below) */
@@ -2001,6 +2071,15 @@ static void read_switches(void)
    /* smooth hand-over (handoff_glue.h): this launch's override of the
     * setting, and where its drawing thread runs */
    g_sw.handoff         = (int)fe_ini_get_int(ini, "smooth_handoff", -1);
+   g_quick_ini          = (int)fe_ini_get_int(ini, "quick_response", -1);   /* this launch's override: 0 Off, 1 Auto, 2 On */
+#ifdef PSPCOMPAT_PLAT
+   {
+      /* the twin (hostcore): GBADHOC_AHEAD=0|1|2 forces the mode, for the proofs of docs/TESTING.md */
+      const char *e = getenv("GBADHOC_AHEAD");
+      if (e && *e)
+         g_quick_ini = atoi(e);
+   }
+#endif
    g_look_gov           = fe_ini_get_int(ini, "look_gov", 1) ? 1 : 0;
    g_ho_check           = fe_ini_get_int(ini, "handoff_check", 1) ? 1 : 0;
    {
@@ -5667,6 +5746,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    g_steady_at_boot = 1;
    app_steady_options();
    g_steady_at_boot = 0;
+   g_ahead_began = 0;
+   app_quick_options();       /* Quick response: this game's mode */
    g_audio_ok = audio_start(fe_host_sample_rate(), pace_speed_x1e6()) == 0;
    fe_evt("audio on=%d in_rate=%u out_rate=%u grain=%u speed_x1e6=%u",
           g_audio_ok, fe_host_sample_rate(), AUDIO_OUT_RATE, AUDIO_GRAIN,
@@ -6709,6 +6790,8 @@ static void game_loop(void)
       ho_set_pace(steady_on);
       for (i = 0; i < runs; i++)
       {
+         uint32_t emu_t0 = 0;
+         int ahead_run = 0;
          if (i == runs - 1)
             g_ho_t0 = t_drawn = plat_time_us();
          g_blit_suppress = (i != runs - 1);
@@ -6716,7 +6799,20 @@ static void game_loop(void)
           * (they were drawn and thrown away: the picture's whole cost) */
          if (g_blit_suppress)
             fe_host_skip_override(1);
+         /* Quick response: a drawn frame at normal speed is run ahead (ahead_glue.h) */
+         if (runs == 1 && ahead_mode() != AHEAD_MODE_OFF)
+         {
+            ahead_run = ahead_decide(app_ahead_blocked(session, local, steady_on, rw_want || rewind_active()));
+            fe_host_ahead_set(ahead_run);
+            emu_t0 = (uint32_t)plat_time_us();
+         }
          fe_host_run_frame();    /* -> sink_video, sink_audio */
+         if (runs == 1 && ahead_mode() != AHEAD_MODE_OFF)
+         {
+            fe_host_ahead_set(0);
+            if (!app_ahead_blocked(session, local, steady_on, rw_want || rewind_active()))
+               ahead_cost((uint32_t)plat_time_us() - emu_t0, ahead_run);
+         }
          if (g_game_console == FE_CONSOLE_WSWAN)
             ws_layout_hint();
          ra_frame(session || local || g_sw.link_bench);
@@ -6781,6 +6877,12 @@ static void game_loop(void)
           * "locked 60" on a console whatever the emulated fps */
          char hl[320];
          ho_second_tick();
+         if (ahead_census_line(hl, sizeof(hl)))
+         {
+            unsigned af, ax;
+            fe_host_ahead_stat(&af, &ax);
+            fe_evt("%s failed=%u", hl, ax);
+         }
          if (ho_census_line(hl, sizeof(hl)))
          {
             uint64_t dsum, ssum;
@@ -6966,6 +7068,7 @@ int main(int argc, char **argv)
    pspcompat_host_touch(plat_script_touch);
    pspcompat_host_ime(plat_script_ime);
    vid_init();
+   vglyph_dir(plat_app_dir());   /* the font files of the package: names in other alphabets */
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
    fe_evt("video backend=%s", vid_backend_name());
    ui_set_thumb_buffer(g_thumbs);

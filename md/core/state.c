@@ -111,7 +111,8 @@ int state_load(unsigned char *state)
   load_param(io_reg, sizeof(io_reg));
   if ((system_hw & SYSTEM_PBC) == SYSTEM_MD)
   {
-    io_reg[0] = region_code | 0x20 | (config.bios & 1);
+    /* bit 5 is the Mega CD detection (set when there is no unit): as io_reset leaves it */
+    io_reg[0] = region_code | ((system_hw == SYSTEM_MCD) ? 0x00 : 0x20) | (config.bios & 1);
   }
   else
   {

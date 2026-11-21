@@ -33,9 +33,9 @@ void osd_draw(void);
  * else of this module. */
 typedef struct osd_snap
 {
-   char toast[72];
+   char toast[168];            /* UTF-8: a name in Japanese takes 3 bytes a letter */
    char chip_session[32], chip_ff[24], chip_fps[64];
-   char ind_tracker[24], ind_progress[48], ind_chal[8];   /* chal: initials */
+   char ind_tracker[24], ind_progress[160], ind_chal[8];   /* chal: initials */
    short ind_chal_n, ind_progress_badge;
    short toast_y, toast_slim, any;
    short toast_glass;       /* Vita: a page's toast, above the footer */

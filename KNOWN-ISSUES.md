@@ -268,8 +268,10 @@ flicker or missing instruments, which we could not judge without a Vita.
   need the game unzipped. Encrypted and ZIP64 archives are not read.
 - **Starting from a launcher** works when VitAdhoc is closed; close it first.
 - **Sharing states between two Vitas** covers slots 1 to 5.
-- **Names in other alphabets** (Japanese, for example) show as `?` in the list:
-  the menus' font has Latin letters only. The games still play.
+- **Chinese-only characters** (simplified or traditional hanzi that Japanese
+  does not use) show as `?`: the menu font covers Japanese kana and kanji,
+  Korean, fullwidth forms, and Latin, Greek and Cyrillic letters. The games
+  still play.
 
 ## Install
 

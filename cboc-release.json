@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "releaseId": "vitadhoc-v1.4",
+  "releaseId": "vitadhoc-v2.0",
   "titleId": "GBAD00001",
   "displayName": "VitAdhoc",
-  "version": "1.4",
+  "version": "2.0",
   "minInstallerVersion": "0.1.0",
   "visibility": "public",
   "releaseState": "not-ready",

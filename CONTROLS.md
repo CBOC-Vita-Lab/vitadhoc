@@ -69,6 +69,11 @@ which opens with Start + Select held (or a tap on the game).
 
 Three-button games use A, B and C only.
 
+On the Genesis the face buttons belong to the game, so fast forward and rewind
+are on the right stick (right fast forwards, left rewinds). Start + Select
+opens the menu; Select alone, tapped, is Mode. The pad can be remapped per game
+in the menu.
+
 ## WonderSwan
 
 | Held | Sideways game | Upright game (Vertical play: Upright) | Vita turned on its side |

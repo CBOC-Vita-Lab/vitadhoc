@@ -1,290 +1,88 @@
 # VitAdhoc
 
-**Game Boy Advance, Game Boy, Game Boy Color, Super NES, NES, WonderSwan, Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000, native on PS Vita.**
+**One app, ten consoles, native on your PS Vita.** Game Boy Advance, Game Boy,
+Game Boy Color, NES, WonderSwan, Super NES, Genesis / Mega Drive, Master
+System, Game Gear and SG-1000 live together on one home screen with box art, a
+little history for every game and previews of your own play. Pick up where you
+left off, fill the Vita's whole width with the wide view, smooth the pixels or
+keep them crisp, rewind your mistakes, earn RetroAchievements, and play
+two-player games with a friend anywhere in the world by typing a code of five
+characters. No emulator front-end to wrestle with: it is a Vita app, built for
+the Vita.
 
-Your games, together on a home screen with box art, a little history and
-previews of your own play. Pick up where you left off, smooth the pixels or
-keep them crisp, and trade with a friend. VitAdhoc brings the library and the
-handheld experience together, with touch controls and the Vita's own sensors.
+<!-- Screenshot placeholder: a 2.0 home screen with the new console picker, to be
+captured on a Vita (the existing store/screenshots are from 1.3 and show the
+old tab bar). -->
 
-**[Download VitAdhoc 1.3.1](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
-| [Install or update](INSTALL.md) | [All features](docs/FEATURES.md)
-| [Performance](docs/PERFORMANCE.md)
+**[Download the latest version](https://github.com/CBOC-Vita-Lab/vitadhoc/releases/latest/download/VitAdhoc.vpk)**
+· [Install guide](INSTALL.md) · [Controls](CONTROLS.md) · [What's new](CHANGELOG.md)
 
-![The VitAdhoc home screen on a physical PS Vita, with the new SNES shelf](store/screenshots/vita-1.3/home-snes.png)
-
-*The home screen on a PS Vita running VitAdhoc 1.3, with the new SNES shelf.*
-
-You'll need your own games. An open-source GBA BIOS is built in; no BIOS
-download is required. Updating from 1.0, 1.1, 1.2, 1.3 or 1.3.1? Install the VPK over
-the old version. Keep your games, saves, settings and artwork where they are.
+You'll need your own games. An open-source GBA BIOS is built in, so no BIOS
+download is required.
 
 ## New In Version 2.0
 
-**Four Sega consoles.** Sega Genesis / Mega Drive, Master System, Game Gear
-and SG-1000 games each have their own shelf in the console list, with box art,
-names, descriptions, Starred, Recent, play time, Continue, ten state slots,
-cheats and the RetroArch save import, like the Super NES. They play in their own
-program (`md.bin`, a separate non-commercial-licence player, like `snes.bin`).
-Games go in `ux0:ROMS/Genesis`, `Mega Drive`, `SMS`, `Master System`, `GG`,
-`Game Gear` or `SG-1000` (or any folder under `ux0:ROMS/`); `.md`, `.gen`,
-`.smd`, `.bin` (only when it is a Genesis game), `.sms`, `.gg` and `.sg`, zipped
-too. Nothing has run on a real Vita yet: see [Known Issues](KNOWN-ISSUES.md).
-Two players for these consoles is built but switched off until the player's link
-module lands.
+The biggest update yet: four Sega consoles, online play, and a lot of polish
+for every console. Nothing in 2.0 has been tried on a real Vita yet, so these
+are what we built and aim for, not measured results.
 
-**Online play.** Play Link Cable games with a friend anywhere: one hosts and
-gets a code of five characters, the other types it. No router settings, no
-accounts. The two Vitas link directly when they can and through a relay when
-they cannot. It works for GBA Link Cable, GBA Wireless Adapter, Game Boy / Game
-Boy Color Link Cable and sharing, and the join finds your copy of the game for
-you. Each player can bring their own game on a cable (Ruby with Sapphire).
+- **Four Sega consoles.** Genesis / Mega Drive, Master System, Game Gear and
+  SG-1000 each get their own shelf, with box art, Continue, ten state slots,
+  cheats, rewind, fast forward and RetroAchievements.
+- **Play together, anywhere.** Host a game, share a five-character code, and
+  your friend joins from any home network. No router settings, no accounts.
+- **Two players on every two-player console.** GBA and Game Boy link cables,
+  plus Two players for NES, WonderSwan, Super NES, Genesis / Mega Drive,
+  Master System and SG-1000, over Wi-Fi or online.
+- **Full-width wide view for the Sega consoles,** as on the NES and Super NES:
+  the real picture in the middle, more of your level beside it.
+- **A better-looking picture everywhere.** Smoothing upscalers (xBRZ, MMPX,
+  xBR), Ambient glow, Scanlines, LCD grid and LCD ghosting with 0 to 10
+  strengths, and real Game Boy Color palettes for original Game Boy games.
+- **Smoother motion.** Smooth 50 Hz removes the hitch in European games, no
+  sprite flicker on the 8-bit Sega consoles, and a much faster exact Super FX
+  core for Doom and Stunt Race FX.
+- **A console picker, undo and lock for save states,** and a home screen that
+  appears at once, even on a big card.
 
-**Two players for NES, WonderSwan and Super NES.** Both Vitas play the same
-game, the host as player 1 and the friend as player 2, on Same Wi-Fi or Online.
-Not yet tried on two real Vitas: see [Known Issues](KNOWN-ISSUES.md). See
-[Online Play](docs/ONLINE.md), the [2.0 release notes](release-notes-2.0.md)
-and the [changelog](CHANGELOG.md).
+Full list in the [changelog](CHANGELOG.md).
 
-## New In Version 1.4
+## What To Expect
 
-**Two more consoles.** NES and Famicom games (`.nes`, `.fds` with your own
-`disksys.rom`, `.unf`, `.unif`) and WonderSwan and WonderSwan Color games
-(`.ws`, `.wsc`, `.pc2`) get their own shelves on the home screen, with box
-art, Continue, ten save-state slots with pictures, rewind, fast forward,
-cheats and patches, like the Game Boy games. Tall WonderSwan games turn
-upright by themselves (or play them with the Vita on its side). New and not
-yet played on a real Vita; no speed is promised.
+Everything in 2.0 was checked on PC test builds and in emulators. We do not
+have measured Vita numbers for 2.0 yet; they will go here after hardware tests.
 
-**Wide view and screen fill.** NES and Super NES games fill the 16:9 screen:
-the real picture stays untouched in the middle and the sides continue it
-softly, never a guessed tile. GBA, GB, GBC and WonderSwan fill the screen's
-height as before. Wide view has Auto, On and Off in Settings.
+| | What to expect |
+| --- | --- |
+| **Gameplay** | GBA, Game Boy, Game Boy Color and Super NES games were measured on a real Vita in earlier versions ([results](docs/PERFORMANCE.md)). NES, WonderSwan and the four Sega consoles are newer and untried on a Vita. Every console aims for a locked 60 frames a second (50 for European games), eased down by itself only when a game needs it. |
+| **Heavy scenes** | Wide view and the biggest smoothing steps cost the most; Image quality Auto and Wide view Auto step down before a frame is lost, and can be set by hand. Doom and other Super FX games are the busiest. |
+| **Online** | Verified on PC test builds against simulated routers; not yet on two real Vitas or the live service. Expect to hear what works from you. |
+| **Menus and library** | Browse by buttons or touch. The home screen aims to appear at once. Box art needs Wi-Fi. |
+| **Picture and saves** | Every overwrite of a save is backed up first. Saves are plain `.srm` / `.sav` files other emulators can read. |
 
-**A good look without tuning.** Image quality is Auto on a fresh install: the
-smoothest picture the console can hold at a steady 60, eased down a little
-only when a game needs it and brought back when there is room. A new MMPX 2x
-smoothing sits between xBRZ and sharp. Anything you set yourself is left
-alone. Settings > Display and Gameplay have rows for every one of these
-choices.
-
-**Smoother play.** Drawing now runs on its own core (Smooth hand-over), and
-Steady pacing shows an even rhythm instead of uneven drops when a scene is
-too busy. Fewer stutters in GBA games that rewrite their own code, and
-Super FX games (Doom, Stunt Race FX) get more game speed.
-
-**Super NES.** European (PAL) games now run at their true 50 Hz speed
-instead of 20 % fast (Settings in the SNES menu: True 50 Hz or Fast 60 Hz).
-Crackling and uneven sound are fixed (GitHub #15). Cheats and ten state
-slots with pictures are in the new SNES menu.
-
-**Cheats on every console,** with ready-made lists for NES games and a typed
-codes page for all.
-
-**Saves stay safe, and RetroArch can see them.** Every overwrite is backed up
-first (checked, in `backups/`). Older saves are also written where RetroArch
-looks, and **Settings > This game > Export save for other emulators** makes a
-plain `.srm` or `.sav` on request (GitHub #3). A tap on the screen opens the
-menu on every console (GitHub #3).
-
-**Your library.** A **Game names** setting shows titles or file names, and
-games with the same name show their file names too (GitHub #16). Settings
-opens on the part you most likely want, rows that do not apply to the current
-console are hidden, there is a button hint line on the home screen and touch
-targets are bigger.
-
-**Steadier link play.** Two linked Vitas wait 20 seconds before giving up on
-each other, and achievements pause while two consoles are linked.
-
-Internet play by room code is not in 1.4 (it is in 2.0). See the
-[1.4 release notes](release-notes-1.4.md) and the [changelog](CHANGELOG.md).
-
-## New In Version 1.3.1
-
-**Snappier.** Flicking through the consoles with Triangle no longer
-stalls the screen, buttons you touch now light up so you know the tap
-landed, and VitAdhoc has a new bubble and LiveArea.
-
-## New In Version 1.3
-
-**Super NES joins the family.** Your SNES games sit on the same home screen,
-with box art, title screens and a few lines about each game, and they play at
-full speed with every frame shown.
-
-- **Play Super NES games.** `.sfc` and `.smc` games (zipped too) appear on a
-  new SNES shelf, found in `ux0:ROMS/` (any folder inside it), RetroFlow's
-  folders and your own folders.
-- **Accurate, and spread over the Vita's cores.** Built on Snes9x 1.63: sound
-  and picture each run on a core of their own, with exactly the same result.
-  Super Mario World, Donkey Kong Country, Chrono Trigger and Yoshi's Island
-  need about a third to a half of each frame's time on a Vita.
-- **Super FX and SA-1 at full game speed.** Doom, Stunt Race FX, Super Mario
-  RPG and Kirby Super Star keep their speed, music and controls (the busiest
-  Super FX games draw their 3D view a little less often).
-- **Fills the screen without stretching**, in the SNES's own 4:3 shape with a
-  soft glow at the sides, plus sharp scaling, CRT scanlines and an LCD grid.
-- **Up to four players** with extra controllers and the Super Multitap.
-
-**Play together, more ways.**
-
-- **Split screen for two players** on one Vita or PS TV, with a second
-  controller or player 2 on the touch screen.
-- **Trade between versions.** Pokemon Red, Blue and Yellow now link with Gold,
-  Silver and Crystal, and two Vitas can trade between Ruby and Sapphire, or
-  FireRed and LeafGreen.
-
-**Your library, looked after.**
-
-- **Box art for every game, however it is named.** Games are recognised by
-  their contents and by their names ("Act Raiser", "7th Saga",
-  "Pocket Dogs (U)"), on every console.
-- **Set your own cover** with the Cover button, or drop a PNG or JPG in
-  `covers/`. Your picture always wins over downloaded art.
-- **Saves are never cut short**, RetroArch saves stay in sync both ways, and
-  one backup is kept before anything is written over a save from elsewhere.
-- **Tidy game folders.** Only your game and its save stay beside it.
-- **Pokemon clocks keep the right time**, and ROM hacks can choose their
-  save type.
-
-**Fast forward your way.** A new 2x speed beside 3x, and 2x or 3x can keep
-the game's sound, sped up (Settings > Fast-forward).
-
-**Faster.** VitAdhoc asks for 500 MHz when an overclock plugin allows it,
-and smoothing does less work for exactly the same picture.
-
-## Included From Version 1.2
-
-**Bring your saves, your folders and your zips.**
-
-- **Bring an existing save.** Pick up a RetroArch battery save automatically,
-  or put one in the `import` folder. An existing VitAdhoc save is not replaced.
-- **Play zipped games.** Supported `.zip` files appear under the right console.
-- **Choose your game folders in Settings.** Add or remove folders without
-  editing a configuration file.
-- **Launch straight into a game** from RetroFlow or another launcher.
-- **Ten save-state slots**, up from five, with previews.
-- **Make the screen your own.** PNG overlays, adjustable LCD/scanline strength
-  and a screenshot folder of your choice.
-- **Graphics fixes and a lighter rewind.** Safer texture handling, recovery from graphics
-  errors and less repeated work in the rewind and smoothing paths.
-- **More reliable everyday use.** Readable accented game names and safer
-  settings writes when a memory card refuses a rename or write.
-
-## Included From Version 1.1
-
-**Better sound across GBA, GB and GBC.**
-
-- Steadier playback through fixed, aligned double buffers.
-- Correct stereo, note lengths, volume envelopes and sweep for GBA's
-  Game Boy-style tone channels.
-- GBA DirectSound FIFO resets clear old samples and reset the read/write
-  positions together.
-- Smoother startup, pause, resume and state-load transitions, with fades
-  based on the last sample played and proper audio-channel cleanup on exit.
-
-[Release changelog](CHANGELOG.md) | [Feature guide](docs/FEATURES.md)
-
-## Features
-
-### A library made for the Vita
-
-Browse with buttons or touch. Box art and title screens download on Wi-Fi;
-your own pictures take priority, and any game can have a cover you choose
-(the Cover button, or a picture in `covers/` named like the game). Built-in
-descriptions from Wikipedia cover about 2,000 games across the Game Boy, GBA and Super NES consoles. Star favourites, search by name, check Recent and play time, or rest on
-a game to watch the last ten seconds you recorded.
-
-Continue returns to an automatic resume point. Start over uses the game's
-battery save instead. Existing `ux0:ROMS/` and RetroFlow folders can stay in
-place, alongside folders you add yourself.
-
-### More ways to see and play
-
-- Original pixels, bilinear and sharp-bilinear scaling, CPU xBRZ, MMPX or Scale3x.
-- Colour correction, motion blending, LCD/scanline looks, screen sizes,
-  Super Game Boy borders and your own PNG overlays.
-- Wide view with profiles for supported games, including the original
-  Pokemon Emerald family.
-- Rewind, fast forward, ten save-state slots, turbo buttons and screenshots.
-- IPS, BPS and UPS soft patches, without changing the original game file.
-- RetroAchievements, including Hardcore mode for supported games.
-- Motion and sunlight cartridge support: Twisted!, Yoshi, Koro Koro,
-  Kirby Tilt 'n' Tumble and Boktai, with sensor or stick settings.
-
-### Play together
-
-GBA Link Cable and Wireless Adapter support, plus GB/GBC linking: two Vitas
-over Wi-Fi, online by room code, or ad hoc, or two emulated handhelds side by
-side on one Vita. NES, WonderSwan and Super NES games have Two players over
-Wi-Fi or online. Save/state sharing and a Mystery Gift receiver are included too.
-
-[Play Together](PLAY-TOGETHER.md) has the setup guide and supported modes.
-
-## Performance
-
-The numbers below are the 1.3 measurements from a physical Vita. 1.4
-console measurements are pending: nothing in 1.4 is claimed to run at 60
-frames a second until it has been measured.
-
-**CPU speed (1.3):** VitAdhoc asks for 500 MHz (Settings > CPU speed). The
-system only allows that with an overclock plugin such as PSVshell; otherwise
-the Vita stays at 444 MHz. A faster clock means a warmer Vita and shorter
-battery life; choose "444 MHz (standard)" to go back.
-
-**Super NES on a real Vita (1.3):** Super Mario World, Donkey Kong Country,
-F-Zero, Chrono Trigger and Yoshi's Island (Super FX 2) run at full speed with
-every frame shown; the game thread needs 5-8 ms of each 16.7 ms frame. The
-SA-1 games Super Mario RPG and Kirby Super Star run at 59 of 60 frames a
-second. Super FX games that keep the chip busy all the time now keep their
-game speed too (Doom 59 of 60, Stunt Race FX 49.4 of 50): the chip gets the
-time the Vita has, so their 3D view animates more slowly than on a SNES.
-
-**Pokemon Unbound 2.1.1.1 on a real Vita:** about **60 emulated fps** and
-**44 frontend-produced frames/s** across three samples of the opening beach
-scene, at full-screen CPU xBRZ 3x.
-
-[Full results, settings and screenshots](docs/PERFORMANCE.md).
-
-## Bug Fixes Since 1.0
-
-New in 1.3:
-
-- **Mortal Kombat: Deadly Alliance** no longer sits on its logo for 40 seconds
-  or covers its menus in green speckles.
-- **Need for Speed: Underground** no longer hangs at its language screen.
-- Engine fixes from GBAdhoc 4.5.0 for Golden Sun 2, Mario Golf, Mario Tennis,
-  OpenLara and rare instructions.
-- Saves from other emulators keep their clock data instead of being cut short.
-- No more growing sound delay after the menu, fast forward or rewind, and no
-  loud push from Game Boy games that switch a sound channel off.
-- Games without a Wide view profile are never stretched.
-- The right stick only rewinds if you turn it on.
-
-From earlier versions:
-
-- Recovery from a graphics error that could leave the picture frozen.
-- Safer smoothing and staging textures, deferred GPU frees and fallback
-  handling when texture allocation fails.
-- Audio improvements from 1.1: persistent buffers, stereo routing, timing,
-  fades and state-load cleanup.
-- Accented Latin names fold to readable letters in the menu font.
-- Safer settings writes when a memory card refuses a rename or write.
-
-See the [changelog](CHANGELOG.md) for the player-facing changes and
-[technical notes](docs/TECHNICAL.md) for the implementation details.
+Details, and what we are still checking, are in [Known Issues](KNOWN-ISSUES.md).
+If something runs slowly, Settings > Display > Image quality: Original is the
+lightest picture.
 
 ## Install
 
 You need a homebrew-enabled PS Vita, VitaShell and your own games.
 
-1. Transfer `VitAdhoc.vpk` with VitaShell over USB or FTP, then install it.
-2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
-3. Add games to `ux0:data/GBAdhoc/roms/`, use an automatically detected folder,
-   or choose **Settings > Library > Game folders**.
-4. Pick a game and press Cross. Triangle opens a list of consoles under the top bar, in alphabetical order (Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega Genesis / Mega Drive, SG-1000, Super Nintendo, WonderSwan); press it again, or Down, to move along it.
+**Easy way: CBOC Vita Installer.** Drop the VPK on the
+[desktop installer](DESKTOP-INSTALL.md); it finds your Vita and does the rest.
 
-For the desktop installer, update precautions, save import, launchers and
-every folder, use the [manual install guide](INSTALL.md).
+**Manual way:**
+
+1. Copy `VitAdhoc.vpk` to your Vita with VitaShell (USB or FTP) and install it.
+2. Start VitAdhoc once to create `ux0:data/GBAdhoc/`.
+3. Put your games in `ux0:data/GBAdhoc/roms/`, or in any folder under
+   `ux0:ROMS/` (for example `GBA`, `SNES`, `NES`, `MD`, `SMS`, `GG`, `SG-1000`).
+   RetroFlow's folders work too.
+4. Start VitAdhoc again, pick a game and press Cross. Triangle opens the
+   console list.
+
+**Updating?** Just install the new VPK over the old one. Games, saves and
+settings stay where they are. See the [full install guide](INSTALL.md).
 
 ## Playing
 
@@ -293,70 +91,53 @@ every folder, use the [manual install guide](INSTALL.md).
 | Cross / Circle | A / B (Circle is A on a Vita whose Enter button is Circle, or in Settings) |
 | Hold Start + Select, or tap the game | Open the menu |
 | Square | Fast forward |
-| Select + Square | Rewind (right stick left too, if turned on in Settings) |
+| Select + Square | Rewind (right stick left too) |
 | Select + L / Select + R | Quick save / quick load |
-| PS + Start | The Vita's own screenshot |
-| Start on the home screen | Settings |
+| Triangle (home screen) | Console list |
+| Start (home screen) | Settings, including RetroAchievements |
 
-[All controls](CONTROLS.md) | [Detailed features and settings](docs/FEATURES.md)
-| [Troubleshooting](KNOWN-ISSUES.md)
-
-## Screenshots
-
-All taken on a PS Vita running VitAdhoc 1.3.
-
-| Super NES, in its own shape | Super NES with CRT scanlines |
-| --- | --- |
-| ![A SNES game filling the Vita's height in 4:3, with a soft glow at the sides](store/screenshots/vita-1.3/snes-original.png) | ![A SNES game with CRT scanlines](store/screenshots/vita-1.3/snes-crt.png) |
-| **Split screen for two players** | **Your own cover pictures** |
-| ![Two games side by side, player 2 on the touch screen](store/screenshots/vita-1.3/split-screen.png) | ![Choosing a cover picture for a game](store/screenshots/vita-1.3/covers.png) |
-| **SNES picture settings** | **Super FX at full game speed** |
-| ![The SNES player's Picture menu](store/screenshots/vita-1.3/snes-picture.png) | ![Doom running on the Super FX 2 chip](store/screenshots/vita-1.3/snes-superfx.png) |
-| **A GBA game, never stretched** | |
-| ![A GBA game at its own shape with the glow in the sides](store/screenshots/vita-1.3/gba-fit.png) | |
-
-[Capture details](store/screenshots/vita-1.3/README.md). Pokemon Unbound at
-full-screen CPU xBRZ 3x, from 1.2:
-[ice cavern](store/screenshots/vita-1.2/unbound-intro-ice.png),
-[bridge](store/screenshots/vita-1.2/unbound-intro-bridge.png).
+Genesis games use Square, Cross and Circle for A, B and C, and L, Triangle and
+R for X, Y and Z. [All controls](CONTROLS.md) · [All features](docs/FEATURES.md)
+· [Play together](PLAY-TOGETHER.md) · [Online play](docs/ONLINE.md)
 
 ## Download Contents
 
 | File | Contents |
 | --- | --- |
 | `VitAdhoc.vpk` | The app to install on a Vita. |
-| `VitAdhoc-install.zip` | The same VPK, manual, checksums and complete source. |
-| `cboc-release.json` | Package metadata for the desktop installer. |
-| `SHA256SUMS` | Checksums for the extracted source/install files. |
+| `VitAdhoc-install.zip` | The same VPK, guides, checksums and complete source. |
+
+`cboc-release.json` and `SHA256SUMS` come with each release for the desktop
+installer and for checking a download.
 
 ## For Developers
 
-[Building and tests](docs/BUILDING.md) | [Technical notes](docs/TECHNICAL.md)
-| [Source record](docs/SOURCE.md) | [Check a download](docs/CHECK-DOWNLOAD.md)
-| [Licensing](LICENSING.md) | [Assets](docs/ASSETS.md)
-| [Third-party notices](notices/THIRD-PARTY.md)
+| | |
+| --- | --- |
+| [Building and tests](docs/BUILDING.md) | [Technical notes](docs/TECHNICAL.md) |
+| [Source record](docs/SOURCE.md) | [Check a download](docs/CHECK-DOWNLOAD.md) |
+| [Licensing](LICENSING.md) | [Third-party notices](notices/THIRD-PARTY.md) |
 
-The native frontend is in `gpsp/vita/`; emulator cores and shared frontend
-code are in `gpsp/`. The SNES player (Snes9x 1.63 and its Vita frontend) is
-in `snes/`, built as its own program; the NES core (FCEUmm) is in `nes/` and
-the WonderSwan core (Beetle WonderSwan) in `wswan/`, both built into the app.
+The app is in `gpsp/vita/` (GBA, Game Boy, NES and WonderSwan cores run inside
+it). The Super NES player (`snes/`) and the Sega player (`md/`) are separate
+programs, kept apart because of their non-commercial licences. The shared MIT
+kits are `playerkit/` and `widekit/`, and the online room service is in
+`online/service/`.
 
 ## Credits
 
-VitAdhoc builds on [GBAdhoc by ShoshinFauteux](https://github.com/ShoshinFauteux/GBAdhoc).
-Thank you for the emulator, link-play work and original save formats this
-project builds on. The GBA core is gpSP by Exophase and the libretro
-contributors; GB/GBC uses TGB Dual; NES and Famicom Disk System use
-[FCEUmm](https://github.com/libretro/libretro-fceumm) (GPL-2.0-or-later) by the
-FCE Ultra, FCEUX and FCEUmm authors; WonderSwan uses
-Beetle WonderSwan (GPL-2.0-or-later) from Mednafen; Super NES uses
-[Snes9x](https://github.com/snes9xgit/snes9x) 1.63 by the Snes9x team, whose
-licence allows non-commercial use only, so VitAdhoc is and stays free.
-RetroAchievements uses [rcheevos](https://github.com/RetroAchievements/rcheevos).
-Game descriptions are adapted from Wikipedia (CC BY-SA 4.0).
+Built by AI agents (Claude), directed and play-tested by a human. VitAdhoc
+builds on [GBAdhoc by ShoshinFauteux](https://github.com/ShoshinFauteux/GBAdhoc)
+and on these projects: gpSP (GBA), TGB Dual (Game Boy and Game Boy Color),
+[FCEUmm](https://github.com/libretro/libretro-fceumm) (NES), Beetle WonderSwan
+from Mednafen, [Snes9x](https://github.com/snes9xgit/snes9x) (Super NES),
+[Genesis Plus GX](https://github.com/ekeeke/Genesis-Plus-GX) (the Sega
+consoles), [rcheevos](https://github.com/RetroAchievements/rcheevos)
+(RetroAchievements) and [Mbed TLS](https://github.com/Mbed-TLS/mbedtls) (online
+play). The player kits `playerkit` and `widekit` are ours. Snes9x and Genesis
+Plus GX allow non-commercial use only, so VitAdhoc is and stays free. Game
+descriptions are adapted from Wikipedia (CC BY-SA 4.0). See
+[Credits](CREDITS.md) for everyone else.
 
-Built by AI agents (Claude), directed and play-tested by a human. See
-[Credits](CREDITS.md) for the other projects and contributors.
-
-An unofficial fan project, not affiliated with Nintendo, Sony, the Snes9x
-team or RetroAchievements. No commercial games or proprietary BIOS are supplied.
+An unofficial fan project, not affiliated with Nintendo, Sega, Bandai or Sony.
+No commercial games or proprietary BIOS are supplied.

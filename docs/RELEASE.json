@@ -1,9 +1,9 @@
 {
   "name": "VitAdhoc",
-  "version": "1.4",
-  "date": "2026-11-14",
-  "tag": "v1.4",
-  "title": "VitAdhoc 1.4",
+  "version": "2.0",
+  "date": "TBD at release",
+  "tag": "v2.0",
+  "title": "VitAdhoc 2.0",
   "assets": [
     "VitAdhoc.vpk",
     "VitAdhoc-install.zip",

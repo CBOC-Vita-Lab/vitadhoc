@@ -1,189 +1,111 @@
 # What's New
 
-## Version 2.0
+## Version 2.0 — <date TBD at release>
 
-- **A state sent by the other player, or loaded from a file, can no longer crash or hang an emulator.** Starting a link loads the host's game
-  state on the guest's console, and the same loader reads save state files and Share game data. A state made up on purpose (with its sizes
-  and checksums repaired) used to be able to crash or freeze the Genesis core and others. Every core (Genesis / Master System / Game Gear /
-  SG-1000, Super NES, GBA, Game Boy and Color, NES, WonderSwan) now checks the inside of a state before using it (indexes, banks, sizes,
-  counts, timers) and refuses it, or brings impossible values back into range; and each was fuzzed on the PC build with a memory checker:
-  no crash, no hang, no report. States the consoles themselves wrote, and older versions' states, still load and the game runs on exactly as
-  if it had never been interrupted (all test games, 4 load points each). Not proven on a Vita; the GBA fuzzing ran the interpreter build.
-- **The same looks on every console.** The main app's Settings > Display now has the rows the players have, with the same names and
-  0..10 strengths (0 is off): **Ambient glow**, **Scanlines**, **LCD grid** (two rows now, each on its own; they used to be one Video filter
-  with one strength) and **LCD ghosting** (was on/off) on the GBA, Game Boy, Game Boy Color and WonderSwan. **LCD colours** also for
-  the WonderSwan, and **NTSC colours** for the NES. The GBA now starts with **GBA screen** colours, which look better on the Vita's screen
-  than the raw ones (it is one row to change; judged on PC renders, not on a Vita). Old settings, per game too, are carried over once
-  (the grid and scanline filters become their rows at the same strength). See docs/LOOKS.md.
-- **NES: Ambient glow off now means black bars.** With the wide view on, the glow off still left blurred side bars.
-- **Sega games no longer lose sprite collisions on frames that are not drawn.** Fast forward, Steady pacing's half mode and catching up
-  after a long frame run frames without drawing them, and the Sega core took its sprite collision and overflow flags from the drawing:
-  in 15 of 67 test games the game itself then ran differently. An undrawn frame now still runs the sprite pass of every line, and
-  leaves the machine exactly as a drawn frame does (sound, state and memory equal on 105 test games, PC build).
-- **Quick response for the Sega consoles.** Speed > Quick response (Off / Auto / On) shows a button press one frame sooner: the next frame is
-  worked out ahead and shown, and the machine runs exactly as without it (sound, state, memory and battery save equal on 105 test games, PC
-  build; a small test cartridge shows a press 1 frame after it plain and 0 frames after it with Quick response). Auto is the default on the
-  Master System, Game Gear and SG-1000 and starts only while the game leaves the room; the Mega Drive is Off by default.
-- **Sega states and rewind come back exactly.** A loaded state, a rewind landing and a quick load now continue exactly as the game that was
-  never interrupted (first line of sprites, FIFO flag, PSG changes, EEPROM position, flash save chip included): 105 test games, 4 load
-  points, with and without the VDP worker. The first game started after launch no longer differs from the same game started later. Old
-  states still load.
-- **No sprite flicker (Master System, Game Gear, SG-1000).** These consoles drew 8 sprites on a line (4 on the SG-1000) and games blinked
-  the rest. Picture > No sprite flicker (on by default) draws them all. Only the picture changes: the console's overflow and collision
-  flags are still set by the hardware's limit, so the game runs exactly the same (73 test games, PC build). Turn it off for a game that
-  hides something behind the limit on purpose. The Mega Drive keeps its own limit.
-- **Sega save states no longer carry stray memory.** A few unused bytes of a state file held whatever was in memory.
-- **Frames that are not drawn leave every console's machine as it was.** Fast forward, Steady pacing's half mode and catching up run frames
-  without drawing them. Checked, state, memory and sound compared between drawn and undrawn runs (PC build, one frame in two and one in three
-  undrawn): Super NES 15 of 15 games (3000 frames; the one byte that differs is a drawing cache the next drawn frame refills), NES 263 of 263
-  test cartridges (900 frames), Game Boy and Game Boy Color, GBA and WonderSwan games in the app (see docs/TESTING.md). No core needed a change.
-- **Smooth 50 Hz for European games.** PAL games on the 60 Hz screen showed one picture twice every tenth of a second, a hitch in every scroll.
-  Settings > PAL games speed (Super NES, Sega and, in the app, NES) has a new first choice, **Smooth 50 Hz**, on by default: the game, its sound
-  and its input run exactly as before, but the frame the sixth refresh waited for is run one refresh early and that refresh shows an even mix
-  of the two pictures; the next refresh shows the new one. The picture step per refresh is .5 .5 1 1 1 1 instead of 0 1 1 1 1 1 (the squared
-  deviation from an even step falls from 0.83 to 0.33). Only that refresh differs, and only where something moves. True 50 Hz and Fast 60 Hz
-  are as before. It is not used in a linked game.
+The everything update: ten consoles in one app, and a friend anywhere in the
+world a five-character code away. Everything here was checked on PC test builds
+and in emulators; none of it has run on a real Vita yet (see
+[Known Issues](KNOWN-ISSUES.md)), so speeds are aims, not promises.
 
-- **Online Two players on a NES or WonderSwan game compares the games.** A room made from inside a NES or WonderSwan game carried an
-  all-zero game number, so a joiner running another game was let in and only turned back when the link started, and the game list's
-  "Join online" had no number to look for among its games. The room now carries the game's own number (its CRC) and the joiner's card
-  says "Your friend is playing a different game. Add it to this Vita to join." at once.
-- **Online relay: a joiner whose first relay request is refused asks again.** The service gives relay credentials only once both players have polled the room (403 `relay_not_allowed` before that). The app treated that first refusal as the end of the join ("could not reach your friend"); it now asks again every 3 seconds, up to 12 times, so the relay fallback works when the joiner is quicker than the host's next poll.
-- **Wide view for the Sega consoles.** The Mega Drive / Genesis, Master System, Game Gear and SG-1000 fill the Vita's whole width like the Super NES
-  and NES do: the console's picture stays pixel exact in the middle and the sides show more of the game's world where that can be shown truthfully, and a soft
-  continuation of the picture's edge where it cannot. Picture > Wide view: Auto (on, and it narrows the real sides on a busy game before it would cost a
-  frame), On, Off (the 4:3 picture back). Nothing the game does changes, with the view on or off.
-  - **It remembers what you have seen.** On the Master System, the Game Gear and the Mega Drive the sides show the level you have already walked
-    through (the part that scrolled off, and the part ahead when you turn back), not only a soft edge. Master System games have nothing beside their
-    picture in the console itself, so there this is all of the real picture at the sides. Never a guessed tile: a remembered cell is shown only
-    while its graphics are unchanged and the level is recognised; otherwise the soft side. (SG-1000 games keep the soft sides.)
-  - **More of the Mega Drive picture is covered**: lines under a status window (the playfield behind it continues), and lines of games that scroll
-    columns of the picture up and down, where the columns at that edge move together.
-  - **It costs the game nothing**: the extra picture is drawn and judged on the picture thread while the game's own thread goes on, strips of a
-    picture that stands still are reused, and the last step is shared between the helper threads. By the model the heaviest test programs keep the
-    full real sides at 60 frames a second (not measured on a Vita; Auto still narrows the sides if a game ever needs the time).
-  - The Master System and SG-1000 upscale with xBR 3x now (it steps down to 2x and sharp when the game needs the time); the Game Gear and the Mega
-    Drive keep xBR 3x and 2x.
-- **Super NES wide view: the same picture for about half the work.** At the Vita's full width the wide view's own work is roughly halved (its
-  picture is bit for bit what it was): a side that shows the soft frame is no longer worked out on every frame, margin layers that never reach the
-  screen are not drawn, and the rest is shared with a helper thread. Rewind's snapshot is now written while the game waits for the screen instead of
-  before the frame is shown. By the estimates the heaviest games (Yoshi's Island, Kirby Super Star) can keep the full width more often; Super Mario
-  World and Super Metroid may still narrow it. Not yet measured on a Vita.
-- **Super NES wide view: the sides are drawn on a thread of their own.** The extra picture beside the game is now drawn by a separate thread
-  (the picture thread drew it before), and the helpers that share the wide view's work moved to the two cores that have room (one of them sat on the
-  core of the thread it was meant to help). The picture is bit for bit what it was (15 test games, 3000 frames each, PC build and ARM under an
-  emulator; thread checker clean), and a background colour effect (the sky of Super Mario World and Yoshi's Island) is drawn faster, exactly. By the
-  estimates every thread now fits a 60 fps frame at the full width on all 15 test games; on a console without the fourth core a heavy scene of
-  Yoshi's Island, Super Mario World or Zelda may still make Auto narrow the margin. Not yet measured on a Vita. An option that would save more by
-  counting the two sides on alternate frames exists but is off: it changes the sides' fade timing visibly in some games (Street Fighter Alpha 2).
-- **The home screen appears at once.** The first frame no longer waits for
-  the card to be searched for games: a card that takes a minute to read (a
-  large card in a slow adapter) now shows "Finding games... N found" with the
-  last game found, the games already known from the last visit stay in
-  view, and Circle stops the search and shows what was found. The list is
-  the same one the full search would have made; a search that was stopped is
-  not remembered, so the next visit looks again. A missing card does not
-  hold the start. The log line `boot_times` gives the first frame, the first
-  response to a button and the time the list was ready.
-- **A failed save no longer claims the card is full.** The message now says
-  what is true: "ux0: is full (3 MB free)" when it is, "has 150 GB free; is the
-  folder read-only?" when it is not, or that the card could not be checked.
-  Free space is counted in 64-bit sizes for the card the game is on (ux0,
-  uma0, imc0 or ur0), so a big card no longer reads as nearly empty.
-- **Settings > Controls > Tap screen for menu** (On by default) turns the
-  tap-the-game menu off, in the main app and in the Super NES and Sega players,
-  for players whose thumbs touch the screen. Start + Select opens the menu on
-  every console (the Super NES and Sega players also accept L + R + Start);
-  the game hints now name Start + Select for all of them.
-- **Game Boy and Game Boy Color games are told apart by the cartridge, not
-  the file name.** A `.gb` file whose header says Game Boy Color now plays and
-  is listed as a Color game, and a `.gbc` file that is a plain Game Boy
-  cartridge as a Game Boy game. Saves and states stay where they are: they
-  follow the file's own extension. To override a game, add a line `gbc <file
-  name>` or `gb <file name>` to `gb_override.txt` in the VitAdhoc data folder
-  (a file only, there is no menu for it yet).
-- **Fast forward at normal pitch.** Settings > Fast-forward (and Keep sound in
-  the Super NES and Sega players) has a third choice beside Off and Sped up:
-  the game's sound plays at its normal pitch while the game runs fast, with
-  the skipped stretches joined by a short fade so it does not crackle.
-- **More covers found.** When a game's exact name has no picture, the cover
-  search now also asks for the same title under the other regions, without
-  its revision and language tags, and with a subtitle's dash as a space (at
-  most seven more requests, once per game). On the full No-Intro lists the
-  share of games with a cover available rose from 87.1% to 89.3% on Game Boy
-  Advance and from 84.5% to 88.5% on Super NES.
-- **Rewind, fast forward, patches and RetroAchievements in the Super NES and
-  Sega players.** Hold the right stick left to rewind up to 60 seconds (sound
-  off), right to fast forward 2x or 3x (with sound if you like; hold or toggle);
-  both are off in two player games and rewind is off in Hardcore. Sega games take
-  an IPS, BPS or UPS patch like the others. Signed-in players get achievement
-  toasts, challenge, progress and leaderboard markers, and Hardcore rules
-  (no rewind, cheats or state loads), with the account taken from the app.
-- **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each is
-  a console in the picker with its own shelf, folders (`ux0:ROMS/Genesis`,
-  `SMS`, `GG`, `SG-1000` and RetroFlow's Sega folders), zip and `.smd` support,
-  names and box art by checksum, Starred, Recent, play time, Continue, state
-  shelf, cheats from the bundled database, RetroArch save import and export,
-  crash protection and the Cover button, played in the separate `md.bin`
-  program. Two players for them is written but switched off for now.
-- **The console picker is alphabetical** by the console's displayed name, so
-  any new console lands in place; the game counts stay.
-- **A console picker instead of a row of console tabs.** The top bar names
-  only the console in use. Triangle (or a tap on its name) drops a list of every
-  console under it, with the number of games found in each, the one in use
-  highlighted. Each further Triangle or Down moves along it, Up goes back, and
-  the library behind follows at once. The list closes by itself after a
-  moment, on any other button, or on a tap beside it; a tap on a row picks it.
-  Adding a console to the app is one line in its table.
-- **Online play.** Play together > Connection: Online. The host's screen shows
-  a code of five characters; the friend types it on a code pad (d-pad or
-  touch) from the game menu or the game list (Settings > Join online). The
-  Vitas link directly when they can and through a Cloudflare relay when they
-  cannot ("Connecting through the relay."); **Always use the relay** hides
-  each player's address. Works for GBA Link Cable, GBA Wireless Adapter, Game
-  Boy / Game Boy Color Link Cable and sharing. VitAdhoc finds your copy of
-  the host's game by its cartridge code and file fingerprint and starts it, or
-  says which game to add. Messages say who acts (code expired, a newer or older
-  VitAdhoc on the other Vita, a wrong clock, a busy day). A connection quality
-  message (Great, Good, Slow) appears when the link forms. Link delay Auto may use
-  up to 12 frames online (8 elsewhere). No accounts; the room service stores a room
-  only until the link forms or 10 minutes pass. See docs/ONLINE.md. Not yet
-  tried on two real Vitas or the live service.
-- **The typed-address "Internet" connection is now "Direct address"**, shown
-  only with `link_direct = 1` in `vita.ini`; an Internet setting from 1.4
-  becomes Online.
-- **Game Boy colours.** Original Game Boy games are now coloured as a Game
-  Boy Color coloured them: **GBC auto** (the default) picks the palette the
-  Color's start-up chose for that game. Settings > Display > Game Boy colours
-  also offers the twelve palettes you could hold buttons for at start-up
-  (GBC Up - brown and the rest), the Super Game Boy's 32 palettes (1-A to
-  4-H), and the plain Grey, DMG green and Pocket. The row shows the four colours as you
-  choose, and "This game" can use its own. A colour you chose before 2.0 is kept (the old
-  Auto becomes GBC auto).
-- **Undo for save states, and slot lock, on every console.** In the save
-  states page, R undoes the last save over a slot (the state that was there
-  comes back, one step) or the last load (you go back to just before it).
-  L locks a slot: a locked slot shows a padlock and cannot be overwritten or
-  deleted, by a menu save or a quick save, until you unlock it. Not in Hardcore or while linked.
-- **RetroAchievements shows more.** A small mark when an achievement is one
-  step from unlocking, a progress count ("3/10") under the toast, and the live
-  value of a leaderboard run at the corner of the screen (leaderboards run
-  in Hardcore). Your rich presence is now logged when it is sent. Settings >
-  Achievement indicators turns the marks off; unlock toasts stay.
-- **Under the hood:** a TLS client of our own (Mbed TLS 3.6.8, eight root
-  certificates, certificate checks always on) for the room service, STUN,
-  hole punching and a TURN relay client on the link's own UDP socket, and the
-  room service itself (`online/service/`, one Cloudflare Worker and one
-  Durable Object). See docs/TECHNICAL.md and docs/BUILDING.md (building needs the
-  Mbed TLS prefix).
-- **GBA fixes from GBAdhoc 5.0.0-beta.6.** Top Gun: Combat Zones now has no
-  save chip, as on the real cartridge, so its menu opens. Games that start
-  without the BIOS begin on the screen line where the BIOS hands over (Polarium
-  Advance no longer derails in its first frames). Rock 'N Roll Racing no longer
-  breaks when a routine pushes the program counter. A game that probes for a
-  link cable (Activision Anthology's two-player test) finds none instead of a
-  ghost player. The built-in BIOS now plays the BIOS sound driver, so games that
-  leave mixing to it (X-Men: Reign of Apocalypse) are no longer silent.
+**Four new consoles**
+
+- **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each has
+  its own shelf in the console list, with box art, names, descriptions,
+  Starred, Recent, play time, Continue, ten state slots with pictures, cheats,
+  patches and RetroArch save import, like the Super NES. They play in their
+  own program (`md.bin`).
+- **Every Sega game gets the full treatment**: rewind, fast forward, the same
+  picture choices as every other console, RetroAchievements (with Hardcore),
+  and a remappable pad (Genesis A / B / C on Square / Cross / Circle, X / Y / Z
+  on L / Triangle / R).
+- **No sprite flicker** on the Master System, Game Gear and SG-1000: all the
+  sprites on a line are drawn, not every other frame. The game itself runs
+  exactly the same.
+- **Quick response** on the Sega consoles shows a button press one frame
+  sooner, with the game running exactly as without it.
+
+**Smoother play**
+
+- **Smooth 50 Hz for European games.** PAL games on the Vita's 60 Hz screen
+  no longer show one picture twice every tenth of a second. The game, its sound
+  and its input run at their true speed; scrolling just looks even. On by
+  default for Super NES, Sega and NES. True 50 Hz and Fast 60 Hz stay as
+  choices.
+- **Faster Super FX games** (Doom, Stunt Race FX): the Super FX chip
+  now runs on a much faster exact interpreter, so the 3D view should animate
+  closer to the real console. Results are identical to the old one on every
+  game tested.
+- **Skipped frames can't change a game.** Fast forward, Steady pacing and
+  catching up after a long frame now leave every console exactly as a drawn
+  frame would, including the Sega sprite flags that games read.
+- **The home screen appears at once**, even on a big card in a slow adapter.
+  It shows "Finding games... N found" while it looks, and Circle stops the
+  search.
+
+**Better picture**
+
+- **Wide view for the Sega consoles.** The Genesis, Master System, Game Gear and
+  SG-1000 fill the Vita's whole width like the Super NES and NES. The real
+  picture stays pixel exact in the middle; the sides show more of the world
+  you have already seen, or a soft continuation of the edge. Never a guessed
+  tile. Auto, On and Off in the menu.
+- **Smoothing for the Super NES and the Sega consoles**: xBR upscaling like
+  the other consoles, chosen for you by Image quality Auto.
+- **The same looks on every console.** Ambient glow, Scanlines, LCD grid and
+  LCD ghosting all have their own 0 to 10 strength, with the same names
+  everywhere. WonderSwan gets LCD colours and the NES gets NTSC colours. GBA
+  games start with GBA screen colours, which suit the Vita's screen better.
+- **Game Boy colours.** Original Game Boy games are coloured the way a Game
+  Boy Color coloured them (GBC auto), with the twelve start-up palettes, the
+  Super Game Boy's 32 and the plain greys to choose from.
+- **Game Boy and Game Boy Color games are told apart by the cartridge**, not
+  the file name.
+
+**Controls and gameplay**
+
+- **A console picker.** Triangle drops a list of every console under the top
+  bar, with its game count; Triangle or Down moves along it. A tap on a row
+  picks it.
+- **Undo for save states, and slot lock, on every console.** R undoes your
+  last save or load; L locks a slot so nothing overwrites it.
+- **Rewind, fast forward, patches and RetroAchievements in the Super NES
+  player too.** Hold the right stick left to rewind up to 60 seconds, right to
+  fast forward.
+- **RetroAchievements shows more:** a mark when an achievement is one step
+  away, a progress count ("3/10") and the live value of a leaderboard run.
+- **Fast forward at normal pitch**, with the sound kept low and smooth.
+- **Tap screen for menu** can be turned off for thumbs that touch the screen;
+  Start + Select always opens the menu.
+- **More covers found** (a few percent more of the full game lists on Game Boy
+  Advance and Super NES), and a failed save now says what is really wrong
+  instead of "the card is full".
+- **GBA fixes** for Top Gun: Combat Zones, Polarium Advance, Rock 'N Roll
+  Racing, Activision Anthology and X-Men: Reign of Apocalypse.
+
+**Online and multiplayer**
+
+- **Online play by room code.** One of you hosts and gets a code of five
+  characters; the other types it. No router settings, no accounts. The Vitas
+  link directly when they can and through a relay when they cannot.
+- **Every two-player console.** GBA Link Cable and Wireless Adapter, Game Boy
+  and Game Boy Color Link Cable, save and state sharing, and now Two players
+  for NES, WonderSwan, Super NES, Genesis / Mega Drive, Master System and
+  SG-1000. The join finds your copy of the game for you. On a cable each of
+  you can bring your own game (Ruby with Sapphire).
+- **Safe to join.** Every emulator now checks a game state sent by the other
+  player, or read from a file, before using it.
+- Both Vitas need VitAdhoc 2.0.
+
+**Under the hood**
+
+- A TLS client, STUN, hole punching and a relay client of our own, and the
+  small room service they talk to.
+- New shared kits, `playerkit` (menus, pacing, look governor, link) and
+  `widekit` (wide view), so every console behaves the same way.
+- A fuzz-tested state loader on every core, a test gate, and a lot more
+  testing than any earlier version.
+
+Full engineering list: [docs/TECHNICAL.md](docs/TECHNICAL.md#version-20-changes).
 
 ## Version 1.4
 

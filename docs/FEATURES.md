@@ -18,7 +18,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000 | Genesis Plus GX in its own program (`md.bin`, non-commercial licence), one player for the four consoles; the app's library, Starred, Recent, play time, Continue, ten state slots, cheats from the bundled database, RetroArch save import and crash protection work as for the Super NES; saves are `Game.srm` beside the game |
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, motion sensors; mappings and turbo settings |
-| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`; supported stored/deflated `.zip` entries up to 32 MiB |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
 | Extra folders | Up to 24; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |
@@ -448,7 +448,7 @@ menu opens or a state loads. The menu shortcut remains reachable. See
 | GBA Link Cable | Two Vitas; each can play a different GBA game (Ruby with Sapphire): the partner's game crosses once, is checked and is kept in a cache; Same Wi-Fi, Online or Nearby (ad hoc) |
 | GBA Wireless Adapter | Supported Wireless Adapter games; Same Wi-Fi, Online or Nearby |
 | GB / GBC cable | Each Vita can play a different cartridge, and a `.gb` game can pair with a `.gbc` game; a cartridge the other Vita does not have is sent in memory for the session; Same Wi-Fi, Online or Nearby |
-| Two players (NES, WonderSwan, SNES) | Two Vitas share one game: the host is player 1, the joiner player 2. Both need the same game file. Same Wi-Fi or Online (NES and WonderSwan also Nearby). See [Play Together](../PLAY-TOGETHER.md) |
+| Two players (NES, WonderSwan, SNES, Genesis / Mega Drive, Master System, SG-1000) | Two Vitas share one game: the host is player 1, the joiner player 2. Both need the same game file. Same Wi-Fi or Online (NES and WonderSwan also Nearby). The Game Gear has no two-player mode. See [Play Together](../PLAY-TOGETHER.md) |
 | Online (2.0) | A five-character room code links two Vitas anywhere: direct link first, a Cloudflare relay when needed; no router settings, no accounts. See [Online Play](ONLINE.md) |
 | Two players on one Vita | Side-by-side handhelds; switch control or use a supported distinct second pad |
 | Save/state sharing | Same Wi-Fi or Online; first five state slots; receiver should retain backups |
@@ -456,8 +456,8 @@ menu opens or a state loads. The menu shortcut remains reachable. See
 
 ### Two players on two Vitas (2.0)
 
-NES, WonderSwan and Super NES games can be played by two Vitas at once, over
-Same Wi-Fi or Online. Both Vitas run one shared game: the host plays player 1
+NES, WonderSwan, Super NES, Genesis / Mega Drive, Master System and SG-1000
+games can be played by two Vitas at once, over Same Wi-Fi or Online. Both Vitas run one shared game: the host plays player 1
 and the joiner plays player 2. Both need the very same game file. Only the
 buttons cross the link, so it needs little bandwidth.
 
@@ -467,11 +467,11 @@ buttons cross the link, so it needs little bandwidth.
   joiner types it, or uses Settings > Join online in the game list). Nearby
   is offered for these two as well. A WonderSwan has only one pad, so both
   players' buttons drive it.
-- **Super NES:** in the game list, highlight the game and press Start for
+- **Super NES and the Sega consoles:** in the game list, highlight the game and press Start for
   Settings, then choose **Two players** (the last row of Link setup). Choose
   **Host a game** or **Join a game**, then **Same Wi-Fi** or **Online**. The
   game starts by itself once the link is up. Nearby is not offered for Super
-  NES.
+  NES or the Sega consoles.
 - Save states, cheats, rewind and fast forward are off while linked. On NES
   and WonderSwan the joiner plays the host's game: the joiner's own game and
   save come back as they were when the link ends.

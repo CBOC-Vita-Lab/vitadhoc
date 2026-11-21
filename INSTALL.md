@@ -9,13 +9,14 @@ explains display, achievements, patches and link play in more detail.
 
 - A PS Vita with HENkaku or Ensō, and VitaShell. The app's ID is `GBAD00001`.
 - Your own `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc` and `.nes` games (also `.fds`, `.unf`,
-  `.unif`), or supported `.zip` archives.
+  `.unif`, `.ws`, `.wsc`, and Sega `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`),
+  or supported `.zip` archives.
   Subfolders are fine, two levels deep.
 - Wi-Fi only for box art, RetroAchievements and playing online.
 - No separate BIOS is required: an open replacement is built in. An optional
   BIOS dump you are entitled to use stays on your own Vita, not in the VPK.
 
-## Updating From 1.0 Or 1.1
+## Updating From An Earlier Version
 
 1. Close VitAdhoc. Back up `ux0:data/GBAdhoc/` and any saves or states beside
    games in other folders.
@@ -289,7 +290,7 @@ Settings) to forget the account.
 ## Update
 
 Install the new VPK over the old one, following
-[Updating From 1.0 Or 1.1](#updating-from-10-or-11). Everything above stays.
+[Updating From An Earlier Version](#updating-from-an-earlier-version). Everything above stays.
 
 To remove VitAdhoc, delete its bubble. `ux0:data/GBAdhoc/` stays until you
 delete it yourself, and with it any games and saves kept there.

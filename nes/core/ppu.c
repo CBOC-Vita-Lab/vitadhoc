@@ -1515,6 +1515,12 @@ static uint16_t TempAddrT, RefreshAddrT;
 void FCEUPPU_LoadState(int version) {
 	TempAddr = TempAddrT;
 	RefreshAddr = RefreshAddrT;
+	/* fields that index tables or are small counters: keep them inside what the registers can produce */
+	XOffset &= 7;
+	vtoggle &= 1;
+
+	TempAddr &= 0x7fff;
+	RefreshAddr &= 0x7fff;
 }
 
 SFORMAT FCEUPPU_STATEINFO[] = {

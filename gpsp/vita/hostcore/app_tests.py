@@ -6759,7 +6759,7 @@ def t_settings_labels(S):
                   "+10:up\n+10:cross\n+30:shot=cover_page.png\n+4:circle\n"
                   "+10:circle\n+60:quit\n", config=base)
         S.clean(r)
-        rows = [(d["row"], d["label"].strip('"')) for d in r.evt("settings_row")]
+        rows = [(d["row"], d["label"].strip('"')) for d in r.evt("settings_row") if "label" in d]
         S.check(set(rows) == {("cover", "Cover picture"), ("sync", "Sync RetroArch saves")},
                 "ui_home=%d: the row that opens the cover page wears the name Cover picture and "
                 "the on/off row Sync RetroArch saves, never the other's (%s)" % (ui, rows))

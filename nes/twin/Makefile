@@ -39,6 +39,11 @@ wide-cost: $(B)/wide_cost
 $(B)/nes_twin: $(CORE_OBJS) $(FE_OBJS)
 	$(CXX) $(EXTRA) -o $@ $^ -lm -pthread
 
+# state loader fuzz harness (tools/statefuzz/statefuzz.sh builds it under ASan + UBSan: EXTRA="-fsanitize=address,undefined ..." B=<dir>)
+$(B)/statefuzz: statefuzz.cpp ../../tools/statefuzz/sf_common.h $(CORE_OBJS) $(filter-out $(B)/main.o,$(FE_OBJS))
+	$(CXX) $(CXXFLAGS) -c -o $(B)/statefuzz.o statefuzz.cpp
+	$(CXX) $(EXTRA) -o $@ $(B)/statefuzz.o $(CORE_OBJS) $(filter-out $(B)/main.o,$(FE_OBJS)) -lm -pthread
+
 $(B)/core/%.o: $(CORE)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<

@@ -323,6 +323,11 @@ static SFORMAT *CheckS(SFORMAT *sf, uint32_t tsize, char *desc)
    return(0);
 }
 
+/* CBOC-Vita: a state is walked twice. The first walk (state_dry) only checks the chunk structure and sizes and
+ * changes nothing; the second applies it. A state that is damaged in its structure is therefore refused before a
+ * single byte of the running machine has been touched (it used to be applied chunk by chunk until the damage was reached). */
+static int state_dry;
+
 static int ReadStateChunk(memstream_t *mem, SFORMAT *sf, int size)
 {
    SFORMAT *tmp;
@@ -349,6 +354,12 @@ static int ReadStateChunk(memstream_t *mem, SFORMAT *sf, int size)
           * for this state field, so the read is bounded. Still treat a
           * short read here as a parse failure rather than leaving the
           * buffer in a half-updated state. */
+         if (state_dry)
+         {
+            if (memstream_seek(mem, sf_size(tmp->s), SEEK_CUR) < 0)
+               return 0;
+            continue;
+         }
          if (memstream_read(mem, (char *)tmp->v, sf_size(tmp->s)) != (uint64_t)sf_size(tmp->s))
             return 0;
 
@@ -559,7 +570,14 @@ int FCEUSS_Load_Mem(const void *buf, size_t size)
    }
    totalsize = (int32_t)totalsize_u;
 
+   state_dry = 1;
    x = ReadStateChunks(mem, totalsize);
+   state_dry = 0;
+   if (x)
+   {
+      memstream_seek(mem, 16, SEEK_SET);
+      x = ReadStateChunks(mem, totalsize);
+   }
 
    if (!x)
    {

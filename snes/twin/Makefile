@@ -73,6 +73,11 @@ $(B)/player_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o
 $(B)/snes_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(FE_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread
 
+# state loader fuzz harness (tools/statefuzz/statefuzz.sh builds it under ASan + UBSan: CXX="g++ -fsanitize=..." B=<dir>)
+$(B)/statefuzz: statefuzz.cpp ../../tools/statefuzz/sf_common.h $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o
+	$(CXX) $(CXXFLAGS) -c -o $(B)/statefuzz.o statefuzz.cpp
+	$(CXX) -o $@ $(B)/statefuzz.o $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o -lm -pthread
+
 
 $(B)/wide.o: $(FE)/wide.cpp $(FE)/wide.h $(CORE)/widecap.h $(wildcard $(WK)/include/*.h)
 	@mkdir -p $(B)

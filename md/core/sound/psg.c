@@ -220,7 +220,9 @@ int psg_context_load(uint8 *state)
   psg.noiseShiftValue &= (2 << psg.noiseShiftWidth) - 1;
   for (i=0; i<8; i++)
   {
-    psg.regs[i] &= ((i & 1) || (i == 6)) ? ((i == 6) ? 0x07 : 0x0f) : 0x3ff;
+    /* 0, 2, 4: 10 bit tone, 6: the noise control byte as written (1110-fbb: the chip reads its low 3 bits), odd ones: the volume the attenuation table gives (not the 4 bit register) */
+    if (i & 1) { if (psg.regs[i] < 0) psg.regs[i] = 0; if (psg.regs[i] > chanVolume[0]) psg.regs[i] = chanVolume[0]; }
+    else psg.regs[i] &= (i == 6) ? 0xff : 0x3ff;
   }
   for (i=0; i<4; i++)
   {

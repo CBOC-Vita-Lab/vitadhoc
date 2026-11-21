@@ -92,6 +92,9 @@ static inline void sf_dump(const char *kind)
 	FILE *f = fopen(p, "wb"); if (f) { fwrite(sf_cur.buf, 1, sf_cur.len, f); fclose(f); }
 	fprintf(stderr, "STATEFUZZ %s: case saved to %s\n", kind, p);
 }
+// a UBSan report must end in an abort (not exit) so that the signal handler below can save the case
+extern "C" const char *__ubsan_default_options(void) { return "print_stacktrace=1:abort_on_error=1"; }
+extern "C" const char *__asan_default_options(void) { return "detect_leaks=0:abort_on_error=1"; }
 static void sf_on_signal(int sig) { sf_dump("crash"); signal(sig, SIG_DFL); raise(sig); }
 static void sf_on_death(void) { sf_dump("crash"); }
 extern "C" void __sanitizer_set_death_callback(void (*)(void)) __attribute__((weak));

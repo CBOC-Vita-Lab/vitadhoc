@@ -461,6 +461,13 @@ def gb_press(sec=40):
     return "".join(L.press(sec + 10 * i, "a", 20) for i in range(4))
 
 
+def gb_b_script(code, end=80):
+    """B's side of the cable tests: its clock runs from the moment the link is up (as A's presses do), so A's Disconnect
+    comes before B's quit however long each machine took to get there"""
+    return join_script(code, "+0:wait=link_running player=2\n" + "+%d:shot=running.png\n" % L.dur(40) +
+                       "+%d:shot=ended.png\n" % L.dur(30) + "+%d:quit\n" % L.dur(end - 70))
+
+
 def gb_script(end):
     # the master's presses come once the link is up (the script waits for it: B's code takes as long as a busy machine
     # takes), not at a guessed time
@@ -517,7 +524,7 @@ def t_punch_opens_host(T):
 
 def t_gb_punch(T):
     """Online, GB cable over the punch: 200 bytes each way and the verdict"""
-    rig = pair(T, "online_gb", rom=L.GBLINK, kind="gb", a_script=gb_script(78))
+    rig = pair(T, "online_gb", rom=L.GBLINK, kind="gb", a_script=gb_script(78), b_script=gb_b_script)
     check_link(T, rig, relay=False, kind="gb")
     for r, who, n in ((rig.ra, "A", 1), (rig.rb, "B", 2)):
         T.check(r.has(r"gblink_done ") and r.has(r"gblink_save_commit .*ok=1"), "%s: agreed end, save committed" % who)
@@ -528,7 +535,7 @@ def t_gb_punch(T):
 
 def t_gb_relay(T):
     """Online, GB cable over the relay (symmetric host)"""
-    rig = pair(T, "online_gb_relay", rom=L.GBLINK, kind="gb", nat=("sym", "port"), a_script=gb_script(78))
+    rig = pair(T, "online_gb_relay", rom=L.GBLINK, kind="gb", nat=("sym", "port"), a_script=gb_script(78), b_script=gb_b_script)
     check_link(T, rig, relay=True, kind="gb")
     T.same_machines(rig.ra, rig.rb)
     L.gb_verdict(T, rig.ra, "A", 1)
@@ -537,7 +544,7 @@ def t_gb_relay(T):
 
 def t_gbc_punch(T):
     """Online, Game Boy Color cable over the punch: 200 bytes each way and the verdict"""
-    rig = pair(T, "online_gbc", rom=L.GBLINK_CGB, kind="gb", a_script=gb_script(78))
+    rig = pair(T, "online_gbc", rom=L.GBLINK_CGB, kind="gb", a_script=gb_script(78), b_script=gb_b_script)
     check_link(T, rig, relay=False, kind="gb")
     for r, who in ((rig.ra, "A"), (rig.rb, "B")):
         T.check(r.has(r"gblink_done ") and r.has(r"gblink_save_commit .*ok=1"), "%s: agreed end, save committed" % who)
@@ -548,7 +555,7 @@ def t_gbc_punch(T):
 
 def t_gbc_relay(T):
     """Online, Game Boy Color cable over the relay (symmetric host)"""
-    rig = pair(T, "online_gbc_relay", rom=L.GBLINK_CGB, kind="gb", nat=("sym", "port"), a_script=gb_script(78))
+    rig = pair(T, "online_gbc_relay", rom=L.GBLINK_CGB, kind="gb", nat=("sym", "port"), a_script=gb_script(78), b_script=gb_b_script)
     check_link(T, rig, relay=True, kind="gb")
     T.same_machines(rig.ra, rig.rb)
     L.gb_verdict(T, rig.ra, "A", 1, save="gblink-cgb.gbc.sav")
@@ -1173,7 +1180,7 @@ def pad_online(T, name, nat, relay, fam):
     pr = "".join(L.press(40 + i, k, 12) for i, k in enumerate(keys))
     rig = pair(T, name, rom=rom, nat=nat, kind="nes",
                a_script=host_script(78) + "+0:wait=link_running player=1\n" + pr + L.shot(60, "running.png") +
-               L.disconnect(70, "session.png") + L.shot(74, "ended.png") + L.quit_at(78))
+               L.disconnect(70, "session.png") + L.shot(74, "ended.png") + L.quit_at(78), b_script=gb_b_script)
     if not rig.ra or not rig.rb:
         return
     T.clean(rig.ra, "A")

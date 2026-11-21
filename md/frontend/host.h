@@ -253,6 +253,7 @@ void md_host_sram_mark_unsaved(void);
  * click: both consoles load the same state, so lockstep holds; PROVENANCE.md has the details). */
 size_t md_host_state_size(void);
 size_t md_host_state_save_mem(uint8_t *buf, size_t cap);    /* needs cap >= state_size; returns the size, 0 on failure */
+unsigned long md_host_carry_refused(void);          /* state loads (since power on) whose extra block was refused as not a machine's own: 0 on every state the machine wrote itself */
 size_t md_host_state_save_quick(uint8_t *buf, size_t cap);  /* as save_mem without the CRC (rewind keeps its states in memory only) */
 int md_host_state_load_quick(const uint8_t *buf, size_t n);  /* as load_mem without the CRC: only for what save_quick wrote */
 int md_host_state_load_mem(const uint8_t *buf, size_t n);   /* 0 ok, 1 no game, 3 refused (length, header or CRC; machine untouched) */

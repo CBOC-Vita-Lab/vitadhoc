@@ -42,12 +42,13 @@ int main(int argc, char **argv)
 {
 	if (argc < 3) { fprintf(stderr, "usage: statefuzz ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--case FILE]...\n"); return 2; }
 	const char *rom = argv[1], *dir = argv[2]; double secs = 20; uint64_t seed = 1; int frames = 20, warm = 300;
-	std::vector<const char *> cases;
+	std::vector<const char *> cases; const char *bios = NULL;
 	for (int i = 3; i < argc; i++)
 	{
 		std::string a = argv[i];
 		if (a == "--seconds" && i + 1 < argc) secs = atof(argv[++i]);
 		else if (a == "--seed" && i + 1 < argc) seed = strtoull(argv[++i], 0, 10);
+		else if (a == "--bios" && i + 1 < argc) bios = argv[++i];
 		else if (a == "--frames" && i + 1 < argc) frames = atoi(argv[++i]);
 		else if (a == "--warm" && i + 1 < argc) warm = atoi(argv[++i]);
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
@@ -58,7 +59,12 @@ int main(int argc, char **argv)
 	sf_init(dir, tag, 20);
 	if (nes_host_init()) return 2;
 	char err[256] = "";
-	if (nes_host_load_mem(rv.data(), rv.size(), "fuzz.nes", err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 2; }
+	{	// a Disk System game needs the BIOS: --bios FILE, or STATEFUZZ_FDS_BIOS
+		const char *bp = bios ? bios : getenv("STATEFUZZ_FDS_BIOS");
+		if (bp) { std::vector<uint8_t> bb = sf_read_file(bp); if (!bb.empty()) nes_host_set_fds_bios(bb.data(), bb.size()); }
+	}
+	std::string rn = rom; size_t sl = rn.find_last_of('/'); if (sl != std::string::npos) rn = rn.substr(sl + 1);
+	if (nes_host_load_mem(rv.data(), rv.size(), rn.c_str(), err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 2; }
 	sf_rng rng; sf_seed(&rng, seed);
 	run_frames(warm, &rng);
 	size_t n = nes_host_state_size();

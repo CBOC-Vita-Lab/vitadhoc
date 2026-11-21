@@ -64,9 +64,9 @@ while IFS= read -r r; do
 	ahwide=$((ahwide + 1)); [ -n "$wa" ] && [ "$wa" = "$wb" ] || { ahwidebad=$((ahwidebad + 1)); echo "  run-ahead with the wide view differs: $r"; }
 
 	# 2a. what the wide view learns: run-ahead shows the plain run's frame n + 1 at frame n, so its analysis of frames 0..F-1 is the plain run's
-	#     analysis of frames 1..F (the plain run skips frame 0): the counts must be the same
-	wp=$("$TWIN" "$r" --frames $((F + 1)) --pad auto --wide 48 --wide-skip 1 2>&1 | widel)
-	wq=$("$TWIN" "$r" --frames "$F" --pad auto --wide 48 --ahead 2>&1 | widel)
+	#     analysis of frames 1..F (the plain run skips frame 0): the counts must be the same (no button pressed: a press shows a frame sooner, which is the point)
+	wp=$("$TWIN" "$r" --frames $((F + 1)) --pad none --wide 48 --wide-skip 1 2>&1 | widel)
+	wq=$("$TWIN" "$r" --frames "$F" --pad none --wide 48 --ahead 2>&1 | widel)
 	wl=$((wl + 1)); [ -n "$wp" ] && [ "$wp" = "$wq" ] || { wlbad=$((wlbad + 1)); echo "  wide view learns differently with run-ahead: $r"; echo "    plain: $wp"; echo "    ahead: $wq"; }
 
 	# 2b. the picture: with no button pressed, run-ahead's frame n is the plain run's frame n+1
@@ -81,7 +81,7 @@ while IFS= read -r r; do
 	case "$r" in *.sms|*.gg|*.sg)
 		"$TWIN" "$r" --frames "$F" --pad auto --opt sprite_limit=1 --frame-hashes "$T/l1.fh" > "$T/l1.txt" 2>&1
 		"$TWIN" "$r" --frames "$F" --pad auto --opt sprite_limit=0 --frame-hashes "$T/l0.fh" > "$T/l0.txt" 2>&1
-		fl=$((fl + 1)); [ "$(emu < "$T/l1.txt")" = "$(emu < "$T/l0.txt")" ] || { flbad=$((flbad + 1)); echo "  no sprite flicker changes the machine: $r"; }
+		fl=$((fl + 1)); [ "$(emu < "$T/l1.txt" | sed 's/ state=[0-9a-f]*//')" = "$(emu < "$T/l0.txt" | sed 's/ state=[0-9a-f]*//')" ] || { flbad=$((flbad + 1)); echo "  no sprite flicker changes the machine: $r"; }
 		cmp -s "$T/l1.fh" "$T/l0.fh" || flpic=$((flpic + 1));;
 	esac
 done < "$T/roms"
@@ -93,17 +93,17 @@ done < "$T/roms"
 [ $wlbad = 0 ] && ok "the wide view learns what it learns without run-ahead (picture, map cells, rooms, hindsight; the one frame it sees later accounted for) on $wl ROMs" || bad "wide view learning with run-ahead ($wlbad of $wl differ)"
 [ $shiftbad = 0 ] && ok "run-ahead shows the next frame's picture (frame n = plain frame n+1, no buttons) on $shift ROMs" || bad "run-ahead picture ($shiftbad of $shift are not the next frame's)"
 if [ $fl -gt 0 ]; then
-	[ $flbad = 0 ] && ok "no sprite flicker changes pictures only on $fl 8 bit ROMs ($flpic of them show more sprites)" || bad "no sprite flicker ($flbad of $fl change the machine)"
+	[ $flbad = 0 ] && ok "no sprite flicker changes pictures only on $fl 8 bit ROMs (sound and RAM equal; the state file's carry block holds the sprite list of the next first line, which has more entries) ($flpic of them show more sprites)" || bad "no sprite flicker ($flbad of $fl change the machine)"
 else skip "no 8 bit ROM for the sprite flicker check"; fi
 
 # 4. latency in frames: a small cartridge made here (sms_latency_gen.py) answers the pad one frame later, as most games do.
-#    A press at frame K changes the picture D frames later; run-ahead must make it D-1.
+#    A press (button 1 is "b" in the twin's pad script) at frame K changes the picture D frames later; run-ahead must make it D-1.
 LATROM="$T/latency.sms"
 if python3 "$HERE/tools/sms_latency_gen.py" "$LATROM" > /dev/null 2>&1 && [ -s "$LATROM" ]; then
 	K=300
 	lat() {   # $1 = extra option; prints the first frame whose picture differs from the run without the press, minus K
 		"$TWIN" "$LATROM" --frames 400 --pad none $1 --frame-hashes "$T/q0" > /dev/null 2>&1
-		"$TWIN" "$LATROM" --frames 400 --pad "$K:a" $1 --frame-hashes "$T/q1" > /dev/null 2>&1
+		"$TWIN" "$LATROM" --frames 400 --pad "$K:b" $1 --frame-hashes "$T/q1" > /dev/null 2>&1
 		paste -d' ' "$T/q0" "$T/q1" | awk -v k=$K '$2 != $4 { print $1 - k; exit }'
 	}
 	lp=$(lat ""); la=$(lat "--ahead")
@@ -119,9 +119,9 @@ pr=0; prbad=0; prw=0; prwbad=0
 while IFS= read -r r; do
 	[ -f "$r" ] || continue
 	o=$("$TWIN" "$r" --proof $PF --pad auto 2>&1 | grep '^PROOF')
-	pr=$((pr + 1)); echo "$o" | grep -q 'DIFF\|failed' || [ -z "$o" ] && { prbad=$((prbad + 1)); echo "  state load differs: $r"; }
+	pr=$((pr + 1)); echo "$o" | grep -q 'DIFF\|failed\|carry_refused=[1-9]' || [ -z "$o" ] && { prbad=$((prbad + 1)); echo "  state load differs: $r"; }
 	o=$("$TWIN" "$r" --proof $PF --pad auto --vdp-thread 2>&1 | grep '^PROOF')
-	prw=$((prw + 1)); echo "$o" | grep -q 'DIFF\|failed' || [ -z "$o" ] && { prwbad=$((prwbad + 1)); echo "  state load with the VDP worker differs: $r"; }
+	prw=$((prw + 1)); echo "$o" | grep -q 'DIFF\|failed\|carry_refused=[1-9]' || [ -z "$o" ] && { prwbad=$((prwbad + 1)); echo "  state load with the VDP worker differs: $r"; }
 done < "$T/roms"
 [ $prbad = 0 ] && ok "a loaded state continues exactly as the uninterrupted run ($PF frames, three ways) on $pr ROMs" || bad "state loads ($prbad of $pr differ)"
 [ $prwbad = 0 ] && ok "the same with the VDP worker on $prw ROMs" || bad "state loads with the VDP worker ($prwbad of $prw differ)"

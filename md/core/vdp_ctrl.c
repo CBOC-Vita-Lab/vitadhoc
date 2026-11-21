@@ -547,9 +547,12 @@ int vdp_context_load(uint8 *state)
   state_vram_ptr = &state[bufferptr];
   bufferptr += sizeof(vram);
   load_param(cram, sizeof(cram));
-  /* VitAdhoc: a CRAM word is 9 bits (every write path above stores at most 0x1FF) and indexes the 512 entry palette tables; a
-     state from outside is not trusted */
-  for (i = 0; i < 0x40; i++) ((uint16 *)cram)[i] &= 0x1FF;
+  /* VitAdhoc: a CRAM word is 9 bits (every write path above stores at most 0x1FF; a Game Gear's are 12 bits, and a Game Gear running an SMS game keeps whatever the game wrote: every colour read masks it) and indexes the palette
+     tables; a state from outside is not trusted */
+  {
+    const uint16 cmask = (system_hw & SYSTEM_GG) ? 0xFFFF : 0x1FF;
+    for (i = 0; i < 0x40; i++) ((uint16 *)cram)[i] &= cmask;
+  }
   load_param(vsram, sizeof(vsram));
   load_param(temp_reg, sizeof(temp_reg));
 
@@ -744,7 +747,7 @@ static int vdp_viewport_sane(const int *v)
   if (ow != 160 && ow != 256 && ow != 320 && ow != 0) return 0;
   if (h != 144 && h != 192 && h != 224 && h != 240) return 0;
   if (oh != 144 && oh != 192 && oh != 224 && oh != 240 && oh != 0) return 0;
-  if (v[0] < -48 || v[0] > 16 || v[1] < 0 || v[1] > 48) return 0;       /* x: -48 is the Game Gear's cropped window, 14 the overscan border */
+  if (v[0] < -48 || v[0] > 16 || v[1] < -24 || v[1] > 48) return 0;     /* x: -48 and y: -24 are the Game Gear's cropped window, 14 and 24 / 48 the overscan border */
   if (w + 2 * v[0] < 16) return 0;
   if (v[6] < 0 || v[6] > 15) return 0;
   return 1;
@@ -757,10 +760,9 @@ int vdp_carry_load(const void *p)
   memcpy(&cc, p, sizeof cc);
   /* a state file is the user's own, but the picture size drives buffer writes: refuse values no machine produces (viewport: x y w h ow oh changed) */
   if (!vdp_viewport_sane(c->viewport)) return 1;
-  /* the table addresses are what the register writes above produce (vdp_reg_w): a multiple of the register's step inside VRAM; they index
-     VRAM, the sprite table copy and the line counter indexes the frame */
-  if ((c->ntab & 0x1fff) || (c->ntbb & 0x1fff) || (c->ntwb & 0x7ff) || (c->satb & 0x1ff) || (c->hscb & 0x3ff)) return 1;
-  if ((c->sat_base_mask != 0xFE00 || c->sat_addr_mask != 0x01FF) && (c->sat_base_mask != 0xFC00 || c->sat_addr_mask != 0x03FF)) return 1;
+  /* the table addresses index VRAM and a table is at most 8 KB (name tables), 2 KB (window), 512 bytes (sprites), 1 KB (horizontal scroll): its start leaves room (the power-on values 0xE000 0xE000 0xF800 0xFE00 are the largest)
+     (a Master System's tables sit at steps the Mega Drive's do not, so only the room is held) */
+  if (c->ntab > 0xE000 || c->ntbb > 0xE000 || c->ntwb > 0xF800 || c->satb > 0xFE00 || c->hscb > 0xFC00) return 1;
   if (c->v_counter >= lines_per_frame) return 1;
   memcpy(fifo_cycles, c->fifo_cycles, sizeof(fifo_cycles));
   hvc_latch = c->hvc_latch; fifo_byte_access = c->fifo_byte_access;

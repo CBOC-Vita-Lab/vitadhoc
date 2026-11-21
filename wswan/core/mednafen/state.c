@@ -345,6 +345,12 @@ static int ReadStateChunk(StateMem *st, SFORMAT *sf, int size)
 {
    int temp = st->loc;
 
+   /* CBOC-Vita: a state comes off the network or off a file: the section must lie inside the stream and every
+    * field inside its section.  The sizes are unsigned 32 bit and the seek below wraps, so an unchecked size
+    * walked the read position backwards and the loop never ended. */
+   if (size < 0 || (uint32_t)size > st->len - st->loc)
+      return 0;
+
    while (st->loc < (temp + size))
    {
       /* Don't change to char unless cast 
@@ -362,7 +368,10 @@ static int ReadStateChunk(StateMem *st, SFORMAT *sf, int size)
 
       toa[1 + toa[0]] = 0;
 
-      smem_read32le(st, &recorded_size);
+      if (smem_read32le(st, &recorded_size) != 4)
+         return 0;
+      if (recorded_size > (uint32_t)(temp + size) - st->loc)
+         return 0;
 
       tmp = FindSF((char*)toa + 1, sf);
 
@@ -424,6 +433,9 @@ static int MDFNSS_StateAction_internal(StateMem *st, int load, int data_only,
       while(smem_read(st, (uint8_t *)sname, 32) == 32)
       {
          if(smem_read32le(st, &tmp_size) != 4)
+            return(0);
+
+         if (tmp_size > st->len - st->loc)	/* CBOC-Vita: the section must lie inside the stream */
             return(0);
 
          total += tmp_size + 32 + 4;
@@ -507,6 +519,11 @@ int MDFNSS_LoadSM(void *st_p, int a, int b)
       return(0);
 
    stateversion = MDFN_de32lsb(header + 16);
+
+   /* CBOC-Vita: the version doubles as the "load" flag of the state actions; a version of 0 turned the load into a
+    * save that wrote into (and reallocated) the caller's input buffer */
+   if (stateversion == 0)
+      return(0);
 
    return(StateAction(st, stateversion, 0));
 }

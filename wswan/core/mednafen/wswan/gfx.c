@@ -752,6 +752,11 @@ int WSwan_GfxStateAction(StateMem *sm, int load, int data_only)
          for(j = 0; j < 4; j++)
             wsMonoPal[i][j] &= 0x7;
 
+      /* CBOC-Vita: register values that index tables are brought back into what the port write can produce */
+      SPRBase &= 0x3F;
+      for(i = 0; i < 8; i++)
+         wsColors[i] &= 0xF;
+
       wsSetVideo(VideoMode >> 5, true);
    }
 

@@ -236,7 +236,9 @@ int Blip_Buffer_load_state(Blip_Buffer* bbuf, const Blip_Buffer_state* st)
 
 	/* Reject offsets pointing beyond the allocation; a hostile
 	 * savestate must not become an OOB write through the synth. */
-	if ((blip_long)(st->offset >> BLIP_BUFFER_ACCURACY) > bbuf->buffer_size)
+	/* CBOC-Vita: "inside the allocation" was not enough: the synth writes up to a frame of samples (and the impulse
+	 * width) beyond the stored offset.  A genuine offset is at most one frame (13 ms of the 61 ms buffer). */
+	if (st->offset >> BLIP_BUFFER_ACCURACY > (blip_u64)(bbuf->buffer_size / 2))
 		return 0;
 
 	bbuf->offset       = st->offset;

@@ -215,7 +215,7 @@ static void step_frame(int f, Acc &acc, double *dt)
 		const int m = vi.system == MD_SYS_GG ? 48 : g_wide;
 		double a0 = now();
 		if (!g_ahead_meta) {
-			g_wa->analyse((uint32_t) f + 1, vi, m, g_wide, meta);
+			g_wa->analyse((uint32_t) (f - g_wide_skip) + 1, vi, m, g_wide, meta);   // (the serial counts from the first analysed frame, as a run-ahead run's does)
 			g_t_an += now() - a0; g_n_an++;
 		}
 		if (getenv("MD_WIDE_DEBUG") && f % 100 == 50 && meta->valid) {
@@ -468,7 +468,7 @@ int main(int argc, char **argv)
 		cmp("same machine", &f1, &b1);
 		if (g_snapf >= 0) {
 			size_t k = 0, shown = 0;
-			while (k < snapRef.size() && k < g_snap.size() && shown < 16) { if (snapRef[k] != g_snap[k]) { size_t e = k; while (e < snapRef.size() && snapRef[e] != g_snap[e]) e++; printf("  frame %d state byte offset %zu..%zu differs\n", g_snapf, k, e); k = e; shown++; } else k++; }
+			while (k < snapRef.size() && k < g_snap.size() && shown < 16) { if (snapRef[k] != g_snap[k]) { size_t e = k; while (e < snapRef.size() && snapRef[e] != g_snap[e]) e++; printf("  frame %d state byte offset %zu..%zu differs (%02x -> %02x)\n", g_snapf, k, e, snapRef[k], g_snap[k]); k = e; shown++; } else k++; }
 		}
 		fresh();
 		g_full.clear();
@@ -494,7 +494,7 @@ int main(int argc, char **argv)
 		}
 		// 2: the reloaded machine run on without a load must equal the first one (the "first game in a process" leak)
 		f2 = fh; b2 = bh;
-		printf("PROOF %s N=%d M=%d load=%d same_machine=%s(first_bad=%d bad=%d) second_load_of_rom=%s(first_bad=%d bad=%d) state_into_reloaded=%s(first_bad=%d bad=%d)\n", bn, N, M, rc1 | rc3,
+		printf("PROOF %s N=%d M=%d load=%d carry_refused=%lu same_machine=%s(first_bad=%d bad=%d) second_load_of_rom=%s(first_bad=%d bad=%d) state_into_reloaded=%s(first_bad=%d bad=%d)\n", bn, N, M, rc1 | rc3, md_host_carry_refused(),
 			b1 ? "DIFF" : "SAME", f1, b1, b2 ? "DIFF" : "SAME", f2, b2, b3 ? "DIFF" : "SAME", f3, b3);
 		return (b1 || b2 || b3) ? 3 : 0;
 	}

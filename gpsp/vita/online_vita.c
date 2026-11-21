@@ -35,6 +35,8 @@
 #define T_POLL_MAX_MS     15000
 #define T_STUN_KEEP_MS    15000
 #define T_RETRY_MS         1000   /* before a failed create/join/credential request is sent again */
+#define T_CREDS_403_MS     3000   /* before relay credentials are asked again after a 403 (the host has not polled yet) */
+#define CREDS_TRIES_403      12   /* the service gives credentials once both members polled: about 30 s of asking */
 #define T_POLL_WAIT_MAX_S    30   /* a poll told to wait longer than this (429) ends the attempt instead */
 #define T_SLOW_MAX_S        120   /* a 429 that clears within this reads "wait a minute", not "busy today" */
 #define RCV_TRIES_MAX          3  /* sends of a create / join repeated only to learn its token (see online_stop) */
@@ -883,6 +885,11 @@ static void on_relay_reply(const online_reply *r)
             O.retry_at = now_ms() + T_RETRY_MS;
             return;
          }
+         if (r->err == ONLINE_E_RELAY && O.creds_tries < CREDS_TRIES_403)
+         {
+            O.retry_at = now_ms() + T_CREDS_403_MS;
+            return;
+         }
          if (r->err == ONLINE_E_CLOCK || r->err == ONLINE_E_UPDATE || r->err == ONLINE_E_BUSY ||
              r->err == ONLINE_E_TOKEN)
             fail_from_reply(r);
@@ -1309,7 +1316,7 @@ static void relay_prefetch(void)
    {
       /* beside the punch one try is enough (a failure is not fatal there);
        * at the fallback (stage RELAY_CREDS) there is one more */
-      if (O.creds_tries >= (O.stage == ON_PUNCH ? 1 : 2))
+      if (O.creds_tries >= (O.stage == ON_PUNCH ? 1 : O.creds_err == ONLINE_E_RELAY ? CREDS_TRIES_403 : 2))
          return;
       if (req_ok(ONLINE_OP_RELAY, online_http_relay(O.code, O.token)))
       {
@@ -1404,7 +1411,8 @@ static void stage_relay(void)
          case ON_RELAY_CREDS:
             if (O.creds_ok)
                set_stage(ON_RELAY_RESOLVE);
-            else if (!O.creds_asked && O.creds_tries >= 2 && !O.cfg.no_relay)
+            else if (!O.creds_asked && O.creds_tries >= (O.creds_err == ONLINE_E_RELAY ? CREDS_TRIES_403 : 2) &&
+                     !O.cfg.no_relay)
                fail(ONLINE_FAIL_UNREACHABLE, 0);
             break;
          case ON_RELAY_RESOLVE:

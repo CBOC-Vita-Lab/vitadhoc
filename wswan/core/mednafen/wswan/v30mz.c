@@ -1016,7 +1016,7 @@ static void DoOP(uint8 opcode)
          OP( 0x89, i_mov_wr16  ) { GetModRM; uint16 src = RegWord(ModRM); 	PutRMWord(ModRM,src);	CLK(1); } OP_EPILOGUE;
          OP( 0x8a, i_mov_r8b   ) { GetModRM; uint8 src = GetRMByte(ModRM);	RegByte(ModRM)=src;	CLK(1);	} OP_EPILOGUE;
          OP( 0x8b, i_mov_r16w  ) { GetModRM; uint16 src = GetRMWord(ModRM);	RegWord(ModRM)=src; 	CLK(1); } OP_EPILOGUE;
-         OP( 0x8c, i_mov_wsreg ) { GetModRM; PutRMWord(ModRM,I.sregs[(ModRM & 0x38) >> 3]);		CLK(1);	} OP_EPILOGUE;
+         OP( 0x8c, i_mov_wsreg ) { GetModRM; PutRMWord(ModRM,I.sregs[((ModRM & 0x38) >> 3) & 3]);	/* CBOC-Vita: the segment register field is 2 bits on the V30MZ (it indexed past the 4 entry table) */		CLK(1);	} OP_EPILOGUE;
          OP( 0x8d, i_lea       ) { uint16 ModRM = FETCH; if(ModRM < 192) { (void)(*GetEA[ModRM])(); } RegWord(ModRM)=EO; 	CLK(1);	} OP_EPILOGUE;
          OP( 0x8e, i_mov_sregw ) { GetModRM; uint16 src = GetRMWord(ModRM); CLKM(3,2);
             switch (ModRM & 0x38) {
@@ -1513,6 +1513,14 @@ int v30mz_StateAction(StateMem *sm, int load, int data_only)
    if(load)
    {
       ExpandFlags(PSW);
+
+      /* CBOC-Vita: the cycle counter is what a line starts from: it is never above 0 or far below it between lines, and
+       * a large value ran the CPU (and the sound time stamps, which index the audio buffer) far beyond the frame */
+      if(v30mz_ICount > 0)
+         v30mz_ICount = 0;
+      else if(v30mz_ICount < -1024)
+         v30mz_ICount = -1024;
+      seg_prefix = seg_prefix ? 1 : 0;
    }
 
    return 1;

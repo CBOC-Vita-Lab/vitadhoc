@@ -1493,6 +1493,14 @@ void FCEUSND_LoadState(int version) {
 	{
 		soundtsoffs = 0;
 	} */
+	/* The timestamps index the 40000 entry high quality wave buffer and, scaled, the low quality one: a genuine
+	 * state is saved between frames, where sound_timestamp is 0 and soundtsoffs is a few cycles of leftover.
+	 * Anything bigger can only come from a damaged or hostile state. */
+	if (sound_timestamp > 1023 || soundtsoffs > 4096)
+	{
+		soundtsoffs = 0;
+		sound_timestamp = 0;
+	}
 	if (soundtsoffs + sound_timestamp >= soundtsinc)
 	{
 		soundtsoffs = 0;

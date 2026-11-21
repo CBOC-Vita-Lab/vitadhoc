@@ -130,7 +130,7 @@ that off.
 
 ## The picture (Settings > Display, kept per console: GBA, GB, GBC)
 - **Video scale** -- 2x, 3x, fit (the whole height, 3.4x), stretch, 4x crop.
-- **Video filter** -- nearest, bilinear, sharp bilinear, LCD grid, scanlines, and two that redraw
+- **Video filter** -- nearest, bilinear, sharp bilinear, and two that redraw
   the pixel art: **Scale3x** (rounds stair-steps, light) and **xBRZ smooth** (rebuilds curves
   and diagonals; the heaviest). Those two run beside the game on the Vita's other cores, redraw
   only what changed and recognise scrolling, so the game itself never waits for them. Build 17
@@ -155,8 +155,9 @@ that off.
   to the CPU when a frame's GPU work takes over 10 ms twice in a row
   (`gpu_xbrz off reason=slow`).
 - **LCD colours** -- as the game sends them, or as a GBA's (or Game Boy Color's) own screen showed
-  them: muted, what the art was drawn for. **LCD ghosting** mixes each frame with the last,
-  which is what games that flicker to fake transparency rely on.
+  them: muted, what the art was drawn for (GBA screen is the default on the GBA). **LCD ghosting** (0..10)
+  mixes each frame with the last, which is what games that flicker to fake transparency rely on.
+  **Ambient glow**, **Scanlines** and **LCD grid** are 0..10 rows too (0 off), as in the players.
 - **Wide view** (GBA) -- instead of black bars beside the picture, more of the game:
   - *on* (the default): in games the app has a profile for. That is **Pokémon Emerald
     (USA/Europe)**, tested, and -- written from the same games' published symbol tables but

@@ -123,7 +123,7 @@ save-state slots with pictures, Cheats, Reset and Quit. Battery saves are `Game.
 Picture (saved for all SNES games, or for one with "Apply to: this game"):
 Original shape (4:3 at full height, the default), Zoom (blank rows cropped, not
 stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; ambient glow,
-CRT scanlines and LCD grid, each Off or 1-10; optional blending for hi-res and
+CRT scanlines and LCD grid, each 0 (off) to 10; optional blending for hi-res and
 interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
 is drawn as a bezel.
 
@@ -311,9 +311,9 @@ screen are hidden.
 
 Choose a screen size and filter per console, or keep a game-specific look in
 **Settings > This game**. Sizes include integer scales, fit, stretch and
-crop; filters include nearest, bilinear, sharp bilinear, LCD, scanlines,
-Scale3x, MMPX 2x and CPU xBRZ. Colour correction and motion blending are independent
-choices. Demanding combinations can cost more time than Original pixels.
+crop; filters include nearest, bilinear, sharp bilinear, Scale3x, MMPX 2x and CPU xBRZ.
+Ambient glow, Scanlines, LCD grid, LCD ghosting and LCD colours are separate rows, each
+0..10 (0 is off), the same as in the players (docs/LOOKS.md). Demanding combinations can cost more time than Original pixels.
 
 CPU xBRZ and Scale3x use worker cores and changed regions; the GBA picture
 can be drawn by a separate render worker. **GPU xBRZ is an experiment, not
@@ -350,8 +350,8 @@ PNG screen overlays are separate: put a transparent image in
 console-wide fallback. A 960 x 544 image matches the output; other sizes up
 to 1024 x 1024 stretch to fit.
 
-**Settings > Display > Screen overlay** controls overlays. **Scanlines / grid strength**
-adjusts the LCD/scanline effect from 1 to 10 (default 5). Screenshots use
+**Settings > Display > Screen overlay** controls overlays. **Scanlines** and **LCD grid**
+are separate rows, each 0 (off, the default) to 10. Screenshots use
 **Settings > Interface > Screenshot folder**, or the default
 `ux0:data/GBAdhoc/screenshots/`. The L + R + Select chord is off until
 **Settings > Controls > Screenshot button combo** turns it on; the Vita's own

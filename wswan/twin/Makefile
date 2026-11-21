@@ -22,6 +22,10 @@ FE_OBJS := $(B)/host.o $(B)/blend.o $(B)/layout.o $(B)/safe_io.o $(B)/main.o
 all: $(B)/wswan_twin $(B)/blend_test
 $(B)/wswan_twin: $(CORE_OBJS) $(FE_OBJS)
 	$(CXX) -o $@ $^ -lm
+# state loader fuzz harness (tools/statefuzz/statefuzz.sh builds it under ASan + UBSan: EXTRA="-fsanitize=address,undefined ..." B=<dir>)
+$(B)/statefuzz: statefuzz.cpp ../../tools/statefuzz/sf_common.h $(CORE_OBJS) $(filter-out $(B)/main.o,$(FE_OBJS))
+	$(CXX) $(CXXFLAGS) -fno-exceptions -fno-rtti -c -o $(B)/statefuzz.o statefuzz.cpp
+	$(CXX) $(EXTRA) -o $@ $(B)/statefuzz.o $(CORE_OBJS) $(filter-out $(B)/main.o,$(FE_OBJS)) -lm -pthread
 $(B)/blend_test: tests/blend_test.c $(FE)/blend.c
 	@mkdir -p $(B)
 	$(CC) $(OPT) -std=gnu99 -Wall -I$(FE) -o $@ $^ -lm

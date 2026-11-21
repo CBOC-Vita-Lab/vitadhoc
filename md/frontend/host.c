@@ -66,6 +66,7 @@ static struct {
 	/* state */
 	size_t state_payload_cap, state_size, state_size_old;    /* state_size_old: what a version 1 file of this game measures (no carry block) */
 	size_t carry_len;                    /* bytes of the carry block, header included */
+	unsigned long carry_refused;         /* state loads whose carry block was refused (a machine's own states never are: the tests count it) */
 	uint8_t *state_scratch;
 	/* run-ahead (md_host_run_frame_ahead) */
 	uint8_t *ahead_state, *ahead_sram;
@@ -446,8 +447,8 @@ static void carry_write(uint8_t *p)
 static void carry_read(const uint8_t *p, size_t avail)
 {
 	size_t n = 8;
-	if (avail < G.carry_len || get32(p) != CARRY_MAGIC || get32(p + 4) != (uint32_t)G.carry_len) return;
-	if (vdp_carry_load(p + n + (size_t)vdpw_carry_size())) return;                       /* values no machine produces: leave what the load derived */
+	if (avail < G.carry_len || get32(p) != CARRY_MAGIC || get32(p + 4) != (uint32_t)G.carry_len) { G.carry_refused++; return; }
+	if (vdp_carry_load(p + n + (size_t)vdpw_carry_size())) { G.carry_refused++; return; }                       /* values no machine produces: leave what the load derived */
 	vdpw_carry_load((void *)(p + n)); n += (size_t)vdpw_carry_size();
 	n += (size_t)vdp_carry_size();
 	psg_carry_load(p + n); n += (size_t)psg_carry_size();
@@ -629,6 +630,17 @@ static int ahead_alloc(void)
 	return G.ahead_state && G.ahead_sram;
 }
 
+/* The wide view's list of VRAM blocks written since its last look (wide_vl): run-ahead must show it what a plain run would, the blocks the look-ahead
+ * frame wrote, and not those of the real frame (the look-ahead frame writes them again) or of the way back (the analysis has already seen the
+ * picture that image belongs to): marks made in between are dropped. */
+static void wide_list_cut(int n, int all)
+{
+	int i;
+	for (i = n; i < wide_vn; i++) wide_vd[wide_vl[i]] = 0;
+	if (n < wide_vn) wide_vn = n;
+	wide_vall = all;
+}
+
 int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 {
 	const int render = G.render;
@@ -637,12 +649,14 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	double vdar;
 	if (!md_host_ahead_possible() || !render || !ahead_alloc()) { md_host_run_frame(); return 1; }
 
+	const int wide_n0 = wide_vn, wide_all0 = wide_vall;
 	/* 1. the real frame: not drawn (the sprite pass still runs for the status bits), its sound goes to the ring */
 	if (!G.ahead_debug_tail) {
 		G.render = 0;
 		md_host_run_frame();
 		G.render = render;
 	}
+	wide_list_cut(wide_n0, wide_all0);
 	if (state_save_to(G.ahead_state, G.state_size, 0) != G.state_size) return 1;      /* cannot happen (the size was measured); the real frame stands */
 	if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);     /* (the state holds the sprite list of the next first line, the FIFO flag, the PSG's queued deltas, ...) */
 
@@ -653,8 +667,10 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	vi = G.vi; vwidth = G.vwidth; vheight = G.vheight; vwoffset = G.vwoffset; bmdoffset = G.bmdoffset; vdar = G.vdar;
 
 	/* 3. back to the end of the real frame */
+	const int wide_n1 = wide_vn, wide_all1 = wide_vall;
 	if (state_load_from(G.ahead_state, G.state_size, 0) != 0) { G.ahead_quiet = 0; return 2; }     /* cannot happen: the state is our own */
 	G.ahead_quiet = 0;
+	wide_list_cut(wide_n1, wide_all1);
 	if (sram.on && memcmp(G.ahead_sram, sram.sram, SRAM_BYTES)) { memcpy(sram.sram, G.ahead_sram, SRAM_BYTES); G.ahead_sram_undone++; }
 	/* what md_host_video / md_host_video_info describe is the picture in the buffer, the look-ahead one */
 	G.vi = vi; G.vwidth = vwidth; G.vheight = vheight; G.vwoffset = vwoffset; G.bmdoffset = bmdoffset; G.vdar = vdar;
@@ -845,6 +861,7 @@ static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(
 static uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 
 size_t md_host_state_size(void) { return G.loaded ? G.state_size : 0; }
+unsigned long md_host_carry_refused(void) { return G.carry_refused; }
 
 static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc)
 {

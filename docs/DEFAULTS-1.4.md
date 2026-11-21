@@ -48,14 +48,14 @@ Storage: per console in `config.ini` (`scale_<c>`, `filter_<c>`, `quality_<c>`, 
 | Image quality / Smoothing (`SET_QUALITY`) | `quality_<c>` | Original on a fresh install, Auto only when an older `scale`/`filter` key exists (`config_psp.c` `pdisp_load`) | Auto, where Auto means the governed xBRZ ladder (4x, 3x, 2x, sharp bilinear); Original stays a choice | A fresh install currently never sees the finished improvement, and two installs of the same version look different. Gated on the governor (below): until it is wired, keep Original |
 | Video filter (`SET_FILTER`) | `filter_<c>` | Nearest (Auto follows it); row shows "sharp" under Original | Sharp bilinear stored as the base filter | Auto should never fall back to nearest (uneven pixels at 960 x 544) |
 | Scale (`SET_SCALE`) | `scale_<c>` | Fit (fills the height at the right aspect) | Fit (no change) | Right; no stretch |
-| Ambient glow (`SET_AMBIENT`) | `ambient_<c>` | Hero art, else blurred game frame | no change | Already on; first (least visible) rung of the ladder |
+| Ambient glow (`SET_AMBIENT`) | `glow_<c>` | 5 of 10 (2.0: was three modes) | no change | Already on; first (least visible) rung of the ladder |
 | Wide view GBA (`SET_WIDE`) | `wide_gba` | 1: games with a profile | no change | Already on where it is correct. Name the values the same as NES/SNES (Auto/On/Off) |
 | Wide view NES (`SET_NESWIDE`) | `nes_wide` | 0 = Auto (sides filled where known) | no change | Already on |
 | Wide fill (`SET_WFILL`) | `wide_fill_gba` | 0 black bars | 1 (its own edges continued softly) | A black bar is the look to avoid; the soft edge is finished. Needs a look at a menu screen before release |
-| Frame blend (`SET_BLEND`) | `blend_<c>` | Off | Off | It changes what flickering games look like; the right default is the console's own |
+| LCD ghosting (`SET_BLEND`) | `ghost_<c>` (2.0: 0..10; was `blend_<c>` on/off) | 0 | Off | It changes what flickering games look like; the right default is the console's own |
 | WonderSwan smoothing (`SET_WSBLEND`) | `ws_blend` | On | On | Consistent |
-| Colour correction (`SET_COLOR`) | `color_<c>` | GBA 0, GBC from its old key | no change | A taste, not a quality; leave |
-| LCD grid (`SET_GRID`) | profile | Off | Off | A taste |
+| Colour correction (`SET_COLOR`) | `color_<c>` | GBA 1 (GBA screen, 2.0), GBC from its old key | no change | See docs/LOOKS.md |
+| Scanlines / LCD grid (`SET_GRID`, `SET_LCDGRID`) | `scan_<c>`, `grid_<c>` | 0 / 0 | 0 / 0 | A taste |
 | Steady pacing (`SET_STEADY`) | `steady_pacing` | On | On | Keeps a locked 60 / locked 30 instead of uneven |
 | Smooth hand-over | hand-over key | On | On | Frees the game thread from drawing |
 | Fast-forward multiplier (`SET_FFMULT`) | `ff_mult_x10` | 3.0x | 3.0x | |

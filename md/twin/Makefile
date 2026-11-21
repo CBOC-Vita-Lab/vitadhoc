@@ -29,6 +29,10 @@ WK_FILES := $(WK)/src/wk_layers.cpp $(WK)/src/wk_map.cpp $(WK)/src/wk_compose.cp
 $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES) $(wildcard $(WK)/include/*.h)
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -I$(WK)/include -I$(WK)/src -I$(WK)/tests -o $@ main.cpp $(FE)/wide.cpp $(WK_FILES) $(WK)/tests/png.cpp $(B)/mdcore.o -lm -pthread
 
+# state loader fuzz harness (tools/statefuzz/statefuzz.sh builds it under ASan + UBSan: CXX="g++ -fsanitize=..." with the core built the same way)
+$(B)/statefuzz: statefuzz.cpp ../../tools/statefuzz/sf_common.h $(B)/mdcore.o $(FE)/host.h
+	$(CXX) -O1 -g -std=gnu++14 -Wall $(CPUF) -I$(FE) -o $@ statefuzz.cpp $(B)/mdcore.o -lm -pthread
+
 $(B)/scale_proof: scale_proof.cpp $(B)/mdcore.o $(B)/pk/pk_scale.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(WK_FILES)
 	$(CXX) -O2 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../../playerkit/src -I$(WK)/include -I$(WK)/src -o $@ scale_proof.cpp $(FE)/wide.cpp $(WK_FILES) $(B)/mdcore.o $(B)/pk/pk_scale.o -lm
 # wide_pipe_proof: the wide view through the player's picture pipe (../vita/pipe.cpp) on a second thread, bit for bit against composing at once

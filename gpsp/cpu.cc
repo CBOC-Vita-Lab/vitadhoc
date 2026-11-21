@@ -577,15 +577,18 @@ static const u8 gba_header_logo[156] = {
    (v_flag << 28) | (reg[REG_CPSR] & 0xFF)                                    \
 
 /* Palette RAM and OAM: 1 KiB each, mirrored, with no 32 KiB read page in
- * memory_map_read -- an instruction there is read with read_memory. */
-#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7)
+ * memory_map_read -- an instruction there is read with read_memory.  The I/O
+ * registers (1 KiB too) are mapped as a page, but an instruction fetch read the
+ * whole 32 KiB past them: it is unpaged as well (found by the state fuzzer). */
+#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x4 || (((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7)
 
 #define check_pc_region()                                                     \
   new_pc_region = (reg[REG_PC] >> 15) & 0x1FFF;      /* bits 28-31 unused */   \
   if(new_pc_region != pc_region)                                              \
   {                                                                           \
     pc_region = new_pc_region;                                                \
-    pc_address_block = memory_map_read[new_pc_region];                        \
+    pc_address_block = pc_unpaged(reg[REG_PC]) ? NULL                         \
+                       : memory_map_read[new_pc_region];                      \
     touch_gamepak_page(pc_region);                                            \
                                                                               \
     /* palette RAM / OAM have no read page: fetched with read_memory */      \
@@ -922,7 +925,7 @@ const u32 spsr_masks[4] = { 0x00000000, 0x000000EF, 0xF0000000, 0xF00000EF };
 #define load_aligned32(address, dest)                                         \
 {                                                                             \
   u32 _address = address;                                                     \
-  u8 *map = memory_map_read[_address >> 15];                                  \
+  u8 *map = (_address < 0x10000000) ? memory_map_read[_address >> 15] : NULL; \
   bool _io_handler = ((_address >> 24) == 0x04) &&                            \
                      io_read_requires_handler(_address);                       \
   if(_address < 0x10000000)                                                   \
@@ -1397,7 +1400,7 @@ inline cpu_alert_type exec_thumb_block_mem(u32 rn, u32 reglist, s32 &cycles_rema
   {                                                                           \
     thumb_pc_offset(2);                                                       \
   }                                                                           \
-  cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][0];                      \
+  cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][0];                      \
 }                                                                             \
 
 // When a mode change occurs from non-FIQ to non-FIQ retire the current
@@ -1556,7 +1559,7 @@ static u32 execute_arm_internal(u32 cycles, bool vram_only)
   u32 condition;
   u32 n_flag, z_flag, c_flag, v_flag;
   u32 pc_region = (reg[REG_PC] >> 15) & 0x1FFF;   /* the bus ignores bits 28-31 */
-  u8 *pc_address_block = memory_map_read[pc_region];
+  u8 *pc_address_block = pc_unpaged(reg[REG_PC]) ? NULL : memory_map_read[pc_region];
   u32 new_pc_region;
   s32 cycles_remaining;
   u32 update_ret;
@@ -2182,7 +2185,7 @@ arm_loop:
                    {
                       reg[REG_PC] = src;
                    }
-                   cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                   cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][1];
                 }
                 else
                 {
@@ -3101,7 +3104,7 @@ arm_loop:
                 /* B offset */
                 arm_decode_branch();
                 reg[REG_PC] += offset + 8;
-                cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][1];
                 break;
              }
 
@@ -3111,7 +3114,7 @@ arm_loop:
                 arm_decode_branch();
                 reg[REG_LR] = reg[REG_PC] + 4;
                 reg[REG_PC] += offset + 8;
-                cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][1];
+                cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][1];
                 break;
              }
 
@@ -3593,7 +3596,7 @@ thumb_loop:
                 thumb_decode_branch();
                 s32 br_offset = ((s32)(offset << 21) >> 20) + 4;
                 reg[REG_PC] += br_offset;
-                cycles_remaining -= ws_cyc_nseq[reg[REG_PC] >> 24][0];
+                cycles_remaining -= ws_cyc_nseq[(reg[REG_PC] >> 24) & 0xF][0];
                 break;
              }
 
@@ -3614,7 +3617,7 @@ thumb_loop:
                 u32 newpc = reg[REG_LR] + (offset * 2);
                 reg[REG_LR] = newlr;
                 reg[REG_PC] = newpc;
-                cycles_remaining -= ws_cyc_nseq[newpc >> 24][0];
+                cycles_remaining -= ws_cyc_nseq[(newpc >> 24) & 0xF][0];
                 break;
              }
        }

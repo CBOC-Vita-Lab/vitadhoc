@@ -182,7 +182,7 @@ int state_load(unsigned char *state)
     if (Z80.nmi_pending > 1) Z80.nmi_pending = 1;
     if (Z80.after_ei > 1) Z80.after_ei = 1;
     if (Z80.nmi_state > HOLD_LINE) Z80.nmi_state = CLEAR_LINE;     /* the line states: CLEAR_LINE, ASSERT_LINE, HOLD_LINE */
-    if (Z80.irq_state > HOLD_LINE) Z80.irq_state = CLEAR_LINE;
+    if (Z80.irq_state > 6) Z80.irq_state = CLEAR_LINE;           /* the VDP drives it with its interrupt levels (0, 4 = hint, 6 = vint on the 8 bit systems); the core only tests it for non zero */
 
   }
 

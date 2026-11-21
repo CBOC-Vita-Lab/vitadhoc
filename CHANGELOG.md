@@ -2,6 +2,13 @@
 
 ## Version 2.0
 
+- **The same looks on every console.** The main app's Settings > Display now has the rows the players have, with the same names and
+  0..10 strengths (0 is off): **Ambient glow**, **Scanlines**, **LCD grid** (two rows now, each on its own; they used to be one Video filter
+  with one strength) and **LCD ghosting** (was on/off) on the GBA, Game Boy, Game Boy Color and WonderSwan. **LCD colours** also for
+  the WonderSwan, and **NTSC colours** for the NES. The GBA now starts with **GBA screen** colours, which look better on the Vita's screen
+  than the raw ones (it is one row to change; judged on PC renders, not on a Vita). Old settings, per game too, are carried over once
+  (the grid and scanline filters become their rows at the same strength). See docs/LOOKS.md.
+- **NES: Ambient glow off now means black bars.** With the wide view on, the glow off still left blurred side bars.
 - **Sega games no longer lose sprite collisions on frames that are not drawn.** Fast forward, Steady pacing's half mode and catching up
   after a long frame run frames without drawing them, and the Sega core took its sprite collision and overflow flags from the drawing:
   in 15 of 67 test games the game itself then ran differently. An undrawn frame now still runs the sprite pass of every line, and

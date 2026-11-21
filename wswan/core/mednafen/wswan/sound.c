@@ -354,8 +354,10 @@ int32 WSwan_SoundFlush(int16 **SoundBuf, int32 *SoundBufSize)
          }
       }
 
-      FrameCount = Blip_Buffer_read_samples(&sbuf[0], *SoundBuf    , *SoundBufSize);
-      FrameCount = Blip_Buffer_read_samples(&sbuf[1], *SoundBuf + 1, *SoundBufSize);
+      /* CBOC-Vita: the limit counts stereo frames (two int16 each), the buffer size counts int16: it was passed
+       * as the frame limit, so a buffered backlog larger than half the buffer wrote past its end */
+      FrameCount = Blip_Buffer_read_samples(&sbuf[0], *SoundBuf    , *SoundBufSize / 2);
+      FrameCount = Blip_Buffer_read_samples(&sbuf[1], *SoundBuf + 1, *SoundBufSize / 2);
    }
 
    last_ts = 0;

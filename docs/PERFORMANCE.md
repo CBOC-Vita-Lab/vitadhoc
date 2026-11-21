@@ -180,33 +180,63 @@ and without the extra threads):
   and destination registers resolved, the fetch and cache-line cost of the
   block added up in advance) and runs them with computed-goto dispatch; the
   slice's last few instructions, code in RAM and anything unusual go to the
-  old interpreter. The result is the same to the bit: pictures, sound, saved
+  old interpreter. A second pass (20-21 Nov) made it faster still: a block
+  remembers the two blocks it went on to last, so most block ends need no hash
+  lookup and the pipe byte is only stored when control leaves; flags that no
+  later instruction of the block reads are not written (dead-flag elimination,
+  with variants of the arithmetic instructions); the branch ops account for the
+  delay slot's fetch themselves; the plot and read-pixel code exists once per
+  colour depth; the per-slice set-up of the cache-line flags is eight lines at a
+  time. The result is the same to the bit: pictures, sound, saved
   state and the chip's cycle count match the old interpreter on Doom, Stunt
   Race FX and Yoshi's Island (3,600 frames each at 100, 73, 50 and 35 % clock),
-  on the 58 homebrew GSU test ROMs, on x86 and on armhf under qemu, and in a
-  build that runs every slice with both and compares the whole chip state
-  (3.7 million slices of the three games at 100, 60 and 35 % clock, no difference). Measured, **host x86** (callgrind,
-  instructions inside the chip's run function, 1,560 frames from the title to
-  the game): Doom 2.73 G -> 1.41 G (55.7 -> 28.9 per GSU instruction, 1.94x
-  fewer), Stunt Race FX 1.57 G -> 0.86 G (53.0 -> 28.9, 1.84x). **armhf under
-  qemu** (dynamic ARM instructions of a whole Doom frame, all threads, from a
-  saved state): 13.4 M -> 10.7 M per frame (the chip's share is about 6 M of
-  that, so about 1.8x on the chip). **Model, Vita** (the calibration above,
-  scaled by those ratios; nothing ran on a Vita): Doom's game thread at the
-  chip's full speed goes from 19.5 / 27.8 ms (IPC 1.0 / 0.7) to about 12.5 /
-  18 ms, so it fits a 16.7 ms frame at IPC 1.0 and is on the edge at IPC 0.7;
-  the pacing above should then settle near 75 % (IPC 0.7) or 100 % (IPC 1.0)
-  instead of 35 %, i.e. the 3D view animates about twice as fast as it did.
-  The wall-clock gain on the host is smaller than the instruction count
-  (Doom 3,200 frames 2.8 s -> 2.3 s: the rest of the frame is the picture
-  and the sound) and qemu's own wall time hides most of it. What is left in
-  the chip's time: the plotting (about a quarter of the instructions: four
-  16-bit read-modify-writes per 8-bit pixel), about 10 instructions a block
-  for entering it, and the instructions at the end of each line's budget that still go
-  through the old interpreter (1.2 % at 100 % clock, 3.5 % at 35 %). A pixel cache like the
-  hardware's, which would cut the plotting, and chaining blocks to their
-  successors are **not done**; the first needs care to stay exact when the
-  chip reads the pixels back.
+  on the 58 homebrew GSU test ROMs (at 100 and 40 %), on x86 and on armhf under
+  qemu, under ThreadSanitizer with the picture and sound threads, and in a
+  build that runs every slice with both and compares the whole chip state (the
+  three games at 100, 60 and 35 % clock and the homebrew ROMs at 100 and 30 %,
+  3.7 million slices, no difference; one homebrew ROM that injects code into
+  the chip's cache RAM never enters the fast path). Measured, **host x86**
+  (callgrind, instructions inside the chip's run function, 1,560 frames from
+  the title to the game): Doom 2.74 G (reference interpreter) -> 1.42 G (first
+  block cache) -> **1.00 G** (55.8 -> 28.9 -> 20.5 per GSU instruction), Stunt
+  Race FX 1.57 G -> 0.86 G -> **0.60 G** (53.0 -> 28.9 -> 20.4); 2.7 times
+  fewer than the reference, 1.4 times fewer than the first block cache.
+  Measured, **armhf under qemu** (dynamic ARM instructions per frame inside the
+  chip's run function, three frames from a saved state; the Vita build flags,
+  not a Vita), five places in three games: Doom (frame 1500) 5.2 M (reference)
+  -> 2.49 M (first block cache) -> **1.75 M**, Doom (frame 1100) 7.9 -> 3.26 ->
+  **2.26 M**, Stunt Race FX (frames 2000 and 3000) 5.5 -> 3.73 -> **2.44 M** and
+  2.9 -> 1.92 -> **1.20 M**, Yoshi's Island 1.8 -> 0.73 -> **0.46 M** (the
+  reference figures are the whole frame minus the rest of the emulator, so
+  they are the least exact). The whole emulator in the first Doom place:
+  13.4 M (reference), 10.7 M (first block cache), **10.0 M** instructions a
+  frame. **Model, Vita** (the calibration above, the chip's part of the game
+  thread scaled by the armhf ratios; nothing ran on a Vita): Doom's game thread
+  at the chip's full speed was 19.5 / 27.8 ms (IPC 1.0 / 0.7) with the
+  reference interpreter and about 12.5 / 18 ms with the first block cache;
+  with this one it is about **10 / 14 ms** (9 / 13 ms from the second Doom
+  place), under a 16.7 ms frame at both ends of the model, with the chip at
+  full speed. The pacing above should then settle at 100 % in the model instead
+  of 35 %, i.e. the 3D view should animate at the speed of a SNES. This rests
+  on the instruction counts being a fair stand-in for time on a Cortex-A9 (the
+  block cache has more data dependent branches and a larger working set than
+  the reference interpreter, which the count does not show) and on the split
+  between the chip and the rest of the game thread in the old calibration:
+  treat it as likely, not as measured. The wall-clock gain on the host is
+  smaller than the instruction count (the rest of the frame is the picture and
+  the sound), and qemu's own wall time hides most of it. What is left in the
+  chip's time: plotting (on armhf about 60 instructions a pixel, about 40 % of
+  the chip's time in Doom: four 16-bit read-modify-writes per 8-bit pixel),
+  about 30 instructions a block for entering it, and the instructions at the end
+  of each line's budget that still go through the old interpreter (about 3 % at
+  100 % clock). Tried and dropped: gathering the pixels of a tile row in a
+  register and writing them back together, as the chip's own pixel cache does
+  (cost more instructions on armhf in all five places, because Doom and Stunt
+  Race FX mostly plot a different tile row every pixel and the bookkeeping
+  outweighed the saved writes; not compared on x86). Not done: running a
+  slice's last instructions as part of a block instead of through the old
+  interpreter, and merging blocks into longer ones across unconditional
+  branches.
 
 A faster interpreter still than this one, or the GSU on a core of its own, is what would give these
 games the last of their 3D frame rate.

@@ -53,8 +53,8 @@ measures the GSU's time, `snes_host_set_superfx_clock` sets the share) and still
 3D view follows the real chip now; whether the Vita keeps 60 is not measured here.
 
 The chip's instructions run on a block-cache interpreter (`core/fxfast.cpp`, option `gsu_fast`, 1 by default; 0 selects
-the reference interpreter `fx_run_ref`): the same results to the bit, about 1.8 to 1.9 times fewer host instructions
-in the chip's run function (docs/PERFORMANCE.md). `snes/twin/gsu_check.sh` (gate step `snes-gsu-fast`) compares the two
+the reference interpreter `fx_run_ref`): the same results to the bit, about 2.7 times fewer host instructions
+in the chip's run function on x86 (2.2 to 3.7 times on armhf under qemu; docs/PERFORMANCE.md). `snes/twin/gsu_check.sh` (gate step `snes-gsu-fast`) compares the two
 on every Super FX ROM of a folder; a build with `-DFX_SHADOW` runs every slice with both and compares the whole chip state.
 
 ## Layout

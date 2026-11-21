@@ -141,7 +141,7 @@ Testing continues on:
   their own (the margin thread, snes/WIDE-INTEGRATION.md) and the compose of the wide picture shares its lines with the scaler's helper threads,
   which now sit on cores 0 and 2 (before, one of them was on the core of the drawing thread it was meant to help). By the model **every thread fits**
   a 60 fps frame at the full width, on all 15 test games at IPC 1.0 and 0.7 (the two ends of the model), except Doom, whose game thread (the Super FX
-  chip) does not fit with the wide view off either. **Three cores do not have much room left at IPC 0.7:** the best possible packing of a heavy frame
+  chip) does not fit with the wide view off either by the table's own counts (the Super FX entry below gives what the faster chip interpreter changes by the model). **Three cores do not have much room left at IPC 0.7:** the best possible packing of a heavy frame
   of Yoshi's Island is 96 % of the 50 ms the three cores give, Super Mario World 94 %, Zelda 90 %, Kirby 86 % (at IPC 1.0 they are 50 to 71 %). A
   real scheduler packs worse than the best case, so on a console without the fourth core a heavy scene of those games may still make Auto narrow the
   margin (Auto measures it and does so; "On" keeps the full width and may drop frames). With the fourth core there is room. What would give
@@ -165,9 +165,13 @@ Testing continues on:
   now and then. The SNES player writes its speed to
   `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
   The chip now runs on a block-cache interpreter (`gsu_fast`, on by default,
-  results identical to the old one; see docs/PERFORMANCE.md): by the model the
-  clock the pacing settles on is about twice as high as before for Doom and
-  Stunt Race FX, **not measured on a Vita**. Proven identical (pictures, sound,
+  results identical to the old one; see docs/PERFORMANCE.md): it takes about
+  2.7 times fewer host instructions than the old interpreter on Doom and Stunt
+  Race FX (x86) and 2.2 to 3.7 times fewer on armhf under qemu; by the model
+  Doom's game thread is then about 10 to 14 ms at the chip's full speed (a 60 fps
+  frame is 16.7 ms), so the clock the pacing settles on should rise from about
+  35 % to at or near 100 %, **not measured on a Vita** (the model rests on
+  instruction counts standing in for time). Proven identical (pictures, sound,
   saved state) on Doom, Stunt Race FX, Yoshi's Island and 58 homebrew GSU test
   ROMs, x86 and armhf under qemu; **not tested on Star Fox, Winter Gold, Vortex
   or Dirt Trax FX** (no ROM of them was available), which use the same chip

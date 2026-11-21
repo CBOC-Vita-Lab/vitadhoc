@@ -48,6 +48,7 @@
   all-zero game number, so a joiner running another game was let in and only turned back when the link started, and the game list's
   "Join online" had no number to look for among its games. The room now carries the game's own number (its CRC) and the joiner's card
   says "Your friend is playing a different game. Add it to this Vita to join." at once.
+- **Online relay: a joiner whose first relay request is refused asks again.** The service gives relay credentials only once both players have polled the room (403 `relay_not_allowed` before that). The app treated that first refusal as the end of the join ("could not reach your friend"); it now asks again every 3 seconds, up to 12 times, so the relay fallback works when the joiner is quicker than the host's next poll.
 - **Wide view for the Sega consoles.** The Mega Drive / Genesis, Master System, Game Gear and SG-1000 fill the Vita's whole width like the Super NES
   and NES do: the console's picture stays pixel exact in the middle and the sides show more of the game's world where that can be shown truthfully, and a soft
   continuation of the picture's edge where it cannot. Picture > Wide view: Auto (on, and it narrows the real sides on a busy game before it would cost a

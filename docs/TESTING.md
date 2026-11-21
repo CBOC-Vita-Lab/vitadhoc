@@ -238,6 +238,7 @@ another version (the twins' own version is fixed).
 | `game_gba`, `game_gb`, `game_gbc` | the Link Cable consoles carry the partner's cartridge across the link, so a joiner whose copy of the game differs from the host's is not turned away at the card: the link forms with the host's file and both consoles end cleanly |
 | `version_<console>` for gba, gb, gbc, nes, ws, snes, md, sms, sg | the host newer (`ONLINE_VER_OLD_HERE`: update this Vita), the host older (`ONLINE_VER_OLD_THERE`: your friend must update), a service that wants a newer app for a joiner and, for the consoles played in the app, for a host (`ONLINE_UPDATE`): no join request, no link, nothing started |
 | `gbc`, `gbc_relay` | Game Boy Color cable over the punch and over the relay (the same cartridge as `gb`, built for the Color) |
+| (every `*_relay` and `snes_online` / `sega_online`) | the service gives relay credentials only once both members have polled (403 `relay_not_allowed` before that): the joiner's first ask is refused and the app asks again every 3 s (up to 12 times) instead of failing the join |
 | `gb`, `gb_relay` | Game Boy cable over the punch and over the relay: 200 bytes each way, the cartridge's verdict in memory and in the committed save. The cartridge needs its player to press A once the link is up (that console is the master); the first smoke did not and read zeros |
 | `adapter` | Wireless Adapter over Online: room, idle link, teardown (no adapter traffic exists to cross) |
 | `share` | Share game data over Online, byte for byte |

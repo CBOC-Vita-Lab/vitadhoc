@@ -2224,6 +2224,17 @@ int YM2612LoadContext(unsigned char *state)
   /* restore YM2612 context */
   load_param(&ym2612, sizeof(ym2612));
 
+  /* VitAdhoc: the timer reloads run "do { counter += base } while (counter <= 0)": a base of zero or less never ends, a counter far below
+     zero takes billions of turns. The bases are 1..1024 (timer A) and 16..4096 (timer B), the counters sit between minus a base and it. */
+  if (ym2612.OPN.ST.TAL < 1) ym2612.OPN.ST.TAL = 1;
+  if (ym2612.OPN.ST.TAL > 1024) ym2612.OPN.ST.TAL = 1024;
+  if (ym2612.OPN.ST.TBL < 16) ym2612.OPN.ST.TBL = 16;
+  if (ym2612.OPN.ST.TBL > 4096) ym2612.OPN.ST.TBL = 4096;
+  if (ym2612.OPN.ST.TAC > ym2612.OPN.ST.TAL) ym2612.OPN.ST.TAC = ym2612.OPN.ST.TAL;
+  if (ym2612.OPN.ST.TAC < -ym2612.OPN.ST.TAL) ym2612.OPN.ST.TAC = -ym2612.OPN.ST.TAL;
+  if (ym2612.OPN.ST.TBC > ym2612.OPN.ST.TBL) ym2612.OPN.ST.TBC = ym2612.OPN.ST.TBL;
+  if (ym2612.OPN.ST.TBC < -ym2612.OPN.ST.TBL) ym2612.OPN.ST.TBC = -ym2612.OPN.ST.TBL;
+
   /* validate state used as table indexes */
   ym2612.OPN.LFO_PM &= 0x1f;
   ym2612.OPN.ST.fn_h &= 0x3f;

@@ -1151,6 +1151,10 @@ int md_cart_context_load(uint8 *state)
     /* get offset */
     offset = state[bufferptr++];
 
+    /* VitAdhoc: a bank is a 64 KiB step inside the cartridge area (MAXROMSIZE bytes, 0xff = SRAM, 0xfe = boot ROM); a state from outside
+       is not trusted: anything else maps bank 0 */
+    if ((offset != 0xff) && (offset != 0xfe) && (((unsigned int)offset + 1) << 16) > MAXROMSIZE) offset = 0;
+
     if (m68k.memory_map[0x00].read8 == mapper_flash_r8)
     {
       /* flash chip cartridge: which 64KB bank sits in the save window is all that moves (the chip's own handlers stay) */

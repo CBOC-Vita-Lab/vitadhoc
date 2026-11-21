@@ -83,6 +83,10 @@ int state_load(unsigned char *state)
     load_param(zram, sizeof(zram));
     load_param(&zstate, sizeof(zstate));
     load_param(&zbank, sizeof(zbank));
+    /* VitAdhoc: the Z80's bank register holds a 24 bit address in 32 KiB steps (memz80.c); the two state bits are bit 0 (reset) and bit 1
+       (bus request), bit 2 the wait. zbank indexes the 256 entry zbank_memory_map. */
+    zbank &= 0xFF8000;
+    zstate &= 7;
     if (zstate == 3)
     {
       m68k.memory_map[0xa0].read8   = z80_read_byte;
@@ -166,7 +170,8 @@ int state_load(unsigned char *state)
   Z80.daisy = NULL;
 
   /* VitAdhoc: a state from outside is not trusted. The registers are 16 bit (the opcode fetch indexes the 64 entry memory map with
-     the program counter), the interrupt mode is 0..2, the flags are 0 / 1, and the cycle counter is within a frame of the clock. */
+     the program counter), the interrupt mode is 0..2 and the flags are 0 / 1. (Z80.cycles is a free running unsigned counter: 0xFFFFFFFF
+     is the locked up Z80; z80_run only compares it.) */
   {
     PAIR *rp[13] = { &Z80.pc, &Z80.sp, &Z80.af, &Z80.bc, &Z80.de, &Z80.hl, &Z80.ix, &Z80.iy, &Z80.wz, &Z80.af2, &Z80.bc2, &Z80.de2, &Z80.hl2 };
     for (i=0; i<13; i++) rp[i]->d &= 0xffff;
@@ -178,7 +183,7 @@ int state_load(unsigned char *state)
     if (Z80.after_ei > 1) Z80.after_ei = 1;
     if (Z80.nmi_state > HOLD_LINE) Z80.nmi_state = CLEAR_LINE;     /* the line states: CLEAR_LINE, ASSERT_LINE, HOLD_LINE */
     if (Z80.irq_state > HOLD_LINE) Z80.irq_state = CLEAR_LINE;
-    if (Z80.cycles > 0x200000) Z80.cycles = 0;
+
   }
 
   /* Extra HW */

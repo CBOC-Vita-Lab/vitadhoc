@@ -82,7 +82,8 @@ int main(int argc, char **argv)
 		std::vector<uint8_t> b = bases[sf_below(&rng, (uint32_t)bases.size())];
 		uint32_t used = b[12] | (b[13] << 8) | (b[14] << 16) | ((uint32_t)b[15] << 24);
 		hot.clear();
-		hot.push_back({ 16 + 16 + 0x12000, 0x800 });                     // the IO / VDP / sound area after work ram + zram
+		hot.push_back({ 16 + 0x12000, 0x40 });                           // Genesis: Z80 bus state, bank register, IO registers
+		hot.push_back({ 16 + 0x12020 + 0x400 + 0x10000, 0x300 });        // Genesis: CRAM, VSRAM, VDP registers and the chips after them
 		hot.push_back({ 16 + used > 0x4000 ? 16 + used - 0x4000 : 16, 0x4000 });
 		hot.push_back({ 16 + used, b.size() - 4 - 16 - used });          // the carry block
 		sf_mutate(&rng, b.data(), b.size(), 16, b.size() - 4, hot);

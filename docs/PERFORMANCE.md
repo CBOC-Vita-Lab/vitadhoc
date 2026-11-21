@@ -39,42 +39,73 @@ script) and turned into milliseconds by a model: x86 instructions counted as ARM
 estimates; the 1.3 table below is the only measured Vita data in this file. "Counted frame" is a frame on which the wide view counts its
 coverage and composes both margins whole (every second frame); on the frames between, a side that shows the ambient frame is not composed.
 
-| Game | Core, wide view off | Wide, margin 41: all / compose (average, counted frame) | Wide, full width (margin 96): all / compose (average, counted frame) | Full width before this pass: all / compose |
-| --- | ---: | --- | --- | --- |
-| Yoshi's Island (Super FX) | 7.8 | 11.3 / 2.5, 3.0 | 12.7 / 3.3, 4.2 | 18.3 / 8.0 |
-| Super Mario World | 6.9 | 11.3 / 2.8, 3.3 | 13.1 / 3.3, 4.0 | 19.2 / 8.0 |
-| Super Mario Kart | 5.0 | 9.0 / 2.7, 2.9 | 10.4 / 3.2, 3.5 | 14.3 / 5.9 |
-| Super Metroid | 7.0 | 9.5 / 0.95, 0.95 | 11.4 / 1.2, 1.2 | 12.6 / 2.4 |
-| Kirby Super Star (SA-1) | 6.2 | 10.0 / 2.9, 3.6 | 10.9 / 3.3, 4.2 | 16.2 / 7.7 |
+| Game | Core, wide view off | Wide, margin 41: all / compose (average, counted frame) | Wide, full width (margin 96): all / compose (average, counted frame) |
+| --- | ---: | --- | --- |
+| Yoshi's Island | 7.6 | 11.2 / 2.5, 3.0 | 12.5 / 3.3, 4.2 |
+| Super Mario World | 6.6 | 10.8 / 2.8, 3.3 | 12.3 / 3.3, 4.0 |
+| Super Mario Kart | 5.0 | 9.0 / 2.7, 2.9 | 10.4 / 3.2, 3.5 |
+| Super Metroid | 7.0 | 9.5 / 0.9, 0.9 | 11.4 / 1.2, 1.2 |
+| Kirby Superstar | 6.2 | 10.0 / 2.9, 3.6 | 10.9 / 3.3, 4.2 |
+| ChronoTrigger | 4.8 | not measured | 10.9 / 4.4, 5.0 |
+| Donkey Kong 1 - Country | 6.0 | not measured | 10.9 / 2.6, 2.9 |
+| Doom | 13.8 | not measured | 17.4 / 2.8, 3.1 |
+| F-Zero | 5.9 | not measured | 10.5 / 2.4, 2.5 |
+| Mega Man X 2 | 4.8 | not measured | 9.2 / 3.1, 3.5 |
+| Pilotwings | 6.8 | not measured | 10.9 / 1.4, 1.6 |
+| Street Fighter Alpha 2 | 5.2 | not measured | 8.7 / 2.3, 2.5 |
+| Stunt Race FX | 7.3 | not measured | 10.4 / 2.1, 2.4 |
+| Super Mario RPG | 6.8 | not measured | 9.8 / 1.3, 1.5 |
+| Zelda - A Link to the Past | 5.7 | not measured | 12.4 / 4.2, 4.2 |
 
-Per thread at the full width (model, ms per frame at IPC 1.0 / 0.7; a 60 Hz frame is 16.7 ms):
+(The full width before the second step of this pass cost 18.3 / 8.0 in Yoshi's Island, 19.2 / 8.0 in Super Mario World, 14.3 / 5.9 in Super Mario
+Kart, 12.6 / 2.4 in Super Metroid and 16.2 / 7.7 in Kirby Super Star. "All" includes the margin thread's passes and the capture. Doom's 13.8 is the
+Super FX chip emulation, which the player throttles; it is the same with the wide view off.)
 
-| Game | Game thread (CPU, chip) | Picture thread, wide off | Picture thread, full width | Sound thread | Compose of a counted frame, alone | ... with one helper sharing the lines |
-| --- | --- | --- | --- | --- | --- | --- |
-| Yoshi's Island | 7.7 / 11.0 | 5.4 / 7.8 | 8.7 / 12.4 | 4.5 / 6.5 | 9.4 / 13.5 | 6.0 / 8.6 |
-| Super Mario World | 4.3 / 6.2 | 5.9 / 8.5 | 12.2 / 17.4 | 5.4 / 7.7 | 9.1 / 12.9 | 6.1 / 8.7 |
-| Super Mario Kart | 3.2 / 4.6 | 3.4 / 4.8 | 8.0 / 11.4 | 4.7 / 6.7 | 7.9 / 11.3 | 5.2 / 7.4 |
-| Super Metroid | 3.0 / 4.3 | 8.3 / 11.8 | 15.3 / 21.9 | 4.4 / 6.3 | 2.7 / 3.8 | 1.7 / 2.4 |
-| Kirby Super Star | 6.9 / 9.8 | 2.4 / 3.5 | 5.3 / 7.6 | 4.8 / 6.8 | 9.4 / 13.5 | 6.2 / 8.8 |
+Per thread and per core at the full width, counted frame, tree of 20 Nov 2026 (model, ms per frame at IPC 1.0 / 0.7; a 60 Hz frame is 16.7 ms on
+one core and 50.1 ms on the three cores of a console without the fourth). The game thread is the CPU, the DMA and the chip; the picture thread
+the renderer without margin passes; the margin thread the margin passes and the capture; compose is the whole compose of a counted frame, alone
+(the lines can be shared with the scaler's helpers); "three cores" adds 3 ms of scaler, 1.5 ms of upload and 0.7 ms of audio and divides nothing:
+it is the sum of all the work against 3 x 16.7 ms, the best packing there could be, and the percentage is of 50.1 ms:
 
-What changed in this pass (all of it leaves the wide picture bit for bit as it was; the proofs are in snes/WIDE-INTEGRATION.md, "Full width"):
-the compose works line by line and its lines can be shared with the scaler's helper threads; its row loops are 8 pixels a step (NEON on the
-Vita); a side that shows the ambient frame is composed only on the frames whose coverage is counted; and the core no longer draws margin passes
-the compose never reads (4 or 2 passes instead of 5 or 6). The compose at the full width is 46 to 59 % cheaper on average than before this pass
-and the core's margin work 34 to 37 % cheaper on four of the five games (Super Metroid's is unchanged: its lines need the whole composite).
+| Game | Game thread | Picture thread | Margin thread | Sound thread | Compose, counted frame | All, three cores | of 50.1 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Yoshi's Island | 7.7 / 10.9 | 5.0 / 7.1 | 3.5 / 5.0 | 4.5 / 6.5 | 9.4 / 13.5 | 35.3 / 48.3 | 71 / 96 |
+| Super Mario World | 4.3 / 6.2 | 5.2 / 7.4 | 5.3 / 7.6 | 5.4 / 7.7 | 9.1 / 12.9 | 34.5 / 47.0 | 69 / 94 |
+| Super Mario Kart | 3.2 / 4.6 | 3.4 / 4.8 | 4.9 / 6.9 | 4.7 / 6.7 | 7.9 / 11.3 | 29.2 / 39.5 | 58 / 79 |
+| Super Metroid | 3.0 / 4.3 | 8.3 / 11.8 | 7.2 / 10.3 | 4.4 / 6.3 | 2.7 / 3.8 | 30.8 / 41.8 | 61 / 83 |
+| Kirby Superstar | 6.9 / 9.8 | 2.4 / 3.5 | 3.1 / 4.4 | 4.8 / 6.8 | 9.4 / 13.5 | 31.8 / 43.2 | 63 / 86 |
+| ChronoTrigger | 3.5 / 5.0 | 3.6 / 5.1 | 3.7 / 5.2 | 3.7 / 5.3 | 11.3 / 16.1 | 30.9 / 42.0 | 62 / 84 |
+| Donkey Kong 1 - Country | 3.5 / 5.1 | 5.7 / 8.1 | 5.0 / 7.2 | 4.4 / 6.3 | 6.5 / 9.3 | 30.4 / 41.1 | 61 / 82 |
+| Doom | 19.5 / 27.8 | 6.6 / 9.5 | 1.6 / 2.3 | 5.0 / 7.1 | 6.9 / 9.9 | 44.9 / 61.9 | 90 / 123 |
+| F-Zero | 3.0 / 4.2 | 5.5 / 7.8 | 5.0 / 7.1 | 4.8 / 6.8 | 5.7 / 8.1 | 29.1 / 39.3 | 58 / 79 |
+| Mega Man X 2 | 3.2 / 4.5 | 2.8 / 4.0 | 2.9 / 4.2 | 4.8 / 6.9 | 7.9 / 11.2 | 26.8 / 36.0 | 53 / 72 |
+| Pilotwings | 3.7 / 5.3 | 7.3 / 10.4 | 6.3 / 9.0 | 4.3 / 6.1 | 3.5 / 5.0 | 30.3 / 41.1 | 61 / 82 |
+| Street Fighter Alpha 2 | 3.4 / 4.8 | 3.6 / 5.1 | 2.8 / 4.0 | 4.8 / 6.8 | 5.6 / 8.0 | 25.4 / 34.0 | 51 / 68 |
+| Stunt Race FX | 8.3 / 11.8 | 2.3 / 3.3 | 2.3 / 3.2 | 5.7 / 8.2 | 5.5 / 7.9 | 29.3 / 39.7 | 59 / 79 |
+| Super Mario RPG | 5.2 / 7.4 | 5.4 / 7.8 | 3.7 / 5.2 | 4.8 / 6.8 | 3.3 / 4.7 | 27.6 / 37.1 | 55 / 74 |
+| Zelda - A Link to the Past | 3.1 / 4.4 | 5.0 / 7.1 | 5.5 / 7.9 | 4.8 / 6.8 | 9.5 / 13.5 | 33.1 / 45.0 | 66 / 90 |
 
-What the model says, plainly: at IPC 1.0 every thread fits a 60 Hz frame at the full width. At IPC 0.7 the picture thread of Super Mario World
-(17.4 ms) and of Super Metroid (21.9 ms; 16.7 at margin 41) does not, and the drawing thread needs the helper (alone, with about 3 ms of scaler
-and 1.5 ms of upload, Yoshi's Island, Super Mario World and Kirby are over). Where a thread does not fit, the player's pacing reports it and the
-wide view narrows its margin, as before. The pixel art scaler (xBR 2x) is estimated at about 3 ms of the draw thread typically and 8.5 ms in the
-worst second.
+What the model says, plainly. **Per thread** every game fits a 60 Hz frame at the full width at IPC 1.0 and at 0.7 except Doom, whose game thread
+(the Super FX chip) is 27.8 ms at IPC 0.7 with the wide view off as well, and Stunt Race FX (game thread 11.8) and Super Metroid (picture thread 11.8) are the
+next heaviest; the compose of a counted frame alone is under 16.7 ms everywhere (Chrono Trigger 16.1 is the largest at IPC 0.7), but with the scaler's
+3 ms and the upload's 1.5 ms the drawing thread needs a helper for Chrono Trigger, Yoshi's Island, Super Mario World, Kirby Super Star and
+Zelda at IPC 0.7. **Per core, on three cores,** the best possible packing of a counted frame is 71 % of 50.1 ms at IPC 1.0 (Yoshi's Island) and
+94 to 96 % at IPC 0.7 for Super Mario World and Yoshi's Island (90 % Zelda, 86 % Kirby, 84 % Chrono Trigger, 83 % Super Metroid, 82 % or less for the
+others; Doom 123 %: its chip alone). A real scheduler does not pack that well, so by the model the full width on three cores is held at IPC 1.0
+and is on the edge at IPC 0.7 for Super Mario World and Yoshi's Island; where it is not held the player measures it and Auto narrows the margin, as
+before ("On" keeps the full width and may drop frames). With the fourth core (66.8 ms) there is room everywhere except Doom. Nothing here ran on a
+Vita: the two IPC values are the two ends of the model, and the 7 November console calibration agrees with 0.7.
 
-A later step (snes/WIDE-INTEGRATION.md, "Margin thread"; host and model numbers, proofs not complete) moves the core's margin passes and
-the capture to a thread of their own. By the same model at IPC 0.7 the picture thread at the full width is then about 7.4 ms (Super Mario
-World, was 17.4), 11.9 ms (Super Metroid, was 21.9) and 7.4 ms (Yoshi's Island, was 12.4), and the new margin thread 7.7, 10.3 and 5.0 ms: each
-thread fits a 60 Hz frame. The threads still share three cores (four with the extra core), and a heavy frame of Super Mario World or Yoshi's
-Island adds up to about 46 to 49 ms of the 50 ms three cores have, so this does not show a locked 60 at the full width on three cores. The
-tables above were not regenerated for that step.
+Where the threads run (snes.bin, `playerkit/src/pk_cores.cpp`): the scaler's helpers, which also take lines of the compose, were planned on core 1, the
+core of the drawing thread that composes and of the PPU thread, so they could not run beside it. They are now on core 0 (in the gaps below the
+emulating thread) and core 2 (below the sound chip thread), with and without the fourth core; the margin thread (cores 0 and 2, above the helpers)
+and the helpers share those two cores' gaps. The log line `wide_lines ... by_helpers=` shows how many lines the helpers really took.
+
+An option, `stagger` (off), would count the two sides' coverage on alternate frames and so make the dearest frame of a scene with two ambient
+sides as cheap as the average (Yoshi's Island and Super Mario World by the model: 13.5 to 10.6 and 12.9 to 10.7 ms of compose, 2 to 3 ms of the
+three cores). It changes the margins' cross-fade timing; the difference table is in snes/WIDE-INTEGRATION.md, "Margin thread". It stays off: the
+differences are not small everywhere (Street Fighter Alpha 2 differs on 9.7 % of the frames, up to 239 of 255 in one channel), and the model does
+not show the extra 2 to 3 ms to be needed.
 
 The rewind capture: 823 KB per state before 2.0, about 300 KB (plain cartridge), 430 KB (Super FX) or 570 KB (SA-1) now (1.16 M -> 0.53 M host
 instructions in Super Mario World), estimated 0.5 to 1.2 ms on the Vita. It is now written after the frame's picture and sound have been handed

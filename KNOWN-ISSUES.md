@@ -132,16 +132,20 @@ Testing continues on:
 
 ## Super NES
 
-- **Wide view at full width on the heaviest games** (Yoshi's Island, Super Mario World, Kirby Super Star, Super Metroid). Nothing has run on a
-  Vita yet; by the model in docs/PERFORMANCE.md the full width (margin 96) fits a 60 fps frame on every thread if the Vita runs this code at about one
-  instruction per clock cycle. At the pessimistic end of the model (IPC 0.7) the picture thread of Super Mario World and of Super Metroid does not fit
-  at the full width (17.4 and 21.9 ms of 16.7; Super Metroid is at the limit at the default margin 41 too), and the drawing thread needs one of the
-  scaler's helper threads to share the compose. Where it does not fit the player measures it and Auto narrows the margin, as before; "On" keeps the
-  full width and may drop frames there. Since then the margins are drawn on a thread of their own (the margin thread, snes/WIDE-INTEGRATION.md):
-  by the same model the picture thread of Super Mario World and Super Metroid is back at about 7 and 12 ms and the margin thread at 8 and 10 ms,
-  so every thread fits on its own; but on a console without the fourth core the threads share three cores and the heaviest frames of Super
-  Mario World and Yoshi's Island use nearly all of them, so Auto may still narrow the margin there. The proofs of that step are not complete
-  (listed in that file). Not done: merging the margin passes of a game that changes a register on every line, caching the margin between frames.
+- **Wide view at full width on the heaviest games** (Yoshi's Island, Super Mario World, Kirby Super Star, Zelda, Chrono Trigger, Super Metroid). Nothing
+  has run on a Vita yet; every figure is a host count turned into milliseconds by a model (docs/PERFORMANCE.md). The margins are drawn on a thread of
+  their own (the margin thread, snes/WIDE-INTEGRATION.md) and the compose of the wide picture shares its lines with the scaler's helper threads,
+  which now sit on cores 0 and 2 (before, one of them was on the core of the drawing thread it was meant to help). By the model **every thread fits**
+  a 60 fps frame at the full width, on all 15 test games at IPC 1.0 and 0.7 (the two ends of the model), except Doom, whose game thread (the Super FX
+  chip) does not fit with the wide view off either. **Three cores do not have much room left at IPC 0.7:** the best possible packing of a heavy frame
+  of Yoshi's Island is 96 % of the 50 ms the three cores give, Super Mario World 94 %, Zelda 90 %, Kirby 86 % (at IPC 1.0 they are 50 to 71 %). A
+  real scheduler packs worse than the best case, so on a console without the fourth core a heavy scene of those games may still make Auto narrow the
+  margin (Auto measures it and does so; "On" keeps the full width and may drop frames). With the fourth core there is room. What would give
+  more room and is **not done**: the option `stagger` (counts the two sides on alternate frames, saves 2 to 3 ms of the three cores in a scene with
+  two ambient sides; left off because it changes the margins' fade timing and does so by up to 239 of 255 in a channel on 9.7 % of the frames of
+  one game, difference table in the file above); the Mode 7 pixel loop with colour maths done eight at a time (Super Metroid's title); a coverage
+  count that does not build an ambient side's pixels; merging the margin passes of a game that changes a register on every line; keeping the margin
+  between frames. Whether the Vita's scheduler moves the margin thread (a two-core mask) promptly is not known; `threads.ini` `wide_core=0` pins it.
 - **Wide view, a ghost fade after the ambient frame.** A side that shows the ambient frame is composed only on every second frame. If a layer's known
   extent shrinks by 12 pixels or more in the three frames in which that side fades back in, the short "ghost" fade of the old picture there is left
   out (it would weigh under a tenth of a pixel's colour). It did not happen once in 90,000 frames of the 15 test games.

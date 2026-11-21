@@ -54,6 +54,13 @@
   screen are not drawn, and the rest is shared with a helper thread. Rewind's snapshot is now written while the game waits for the screen instead of
   before the frame is shown. By the estimates the heaviest games (Yoshi's Island, Kirby Super Star) can keep the full width more often; Super Mario
   World and Super Metroid may still narrow it. Not yet measured on a Vita.
+- **Super NES wide view: the sides are drawn on a thread of their own.** The extra picture beside the game is now drawn by a separate thread
+  (the picture thread drew it before), and the helpers that share the wide view's work moved to the two cores that have room (one of them sat on the
+  core of the thread it was meant to help). The picture is bit for bit what it was (15 test games, 3000 frames each, PC build and ARM under an
+  emulator; thread checker clean), and a background colour effect (the sky of Super Mario World and Yoshi's Island) is drawn faster, exactly. By the
+  estimates every thread now fits a 60 fps frame at the full width on all 15 test games; on a console without the fourth core a heavy scene of
+  Yoshi's Island, Super Mario World or Zelda may still make Auto narrow the margin. Not yet measured on a Vita. An option that would save more by
+  counting the two sides on alternate frames exists but is off: it changes the sides' fade timing visibly in some games (Street Fighter Alpha 2).
 - **The home screen appears at once.** The first frame no longer waits for
   the card to be searched for games: a card that takes a minute to read (a
   large card in a slow adapter) now shows "Finding games... N found" with the

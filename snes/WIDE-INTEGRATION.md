@@ -503,13 +503,41 @@ What was done:
 2. **The backdrop with colour math** (`core/tileimpl.h`, `DrawBackdrop16`): a group of eight backdrop pixels nothing has drawn on, with add or
    subtract maths and the sub screen showing through part of it, is made eight at a time by the vector form the tile rows already use. This is
    the sky of Super Mario World and Yoshi's Island (a gradient with a far layer on the sub screen), in the picture and in the wide pass. Exact.
-3. **Option `stagger` (adapter, off by default, not finished).** Auto counts the coverage of both sides on every second frame, so in a scene
-   whose two sides show the ambient frame both are composed whole on the same frame and neither on the next: the dear frame is twice the
-   cheap one. With `stagger=1` the left side is counted on the even frames and the right side on the odd ones, so the dearest frame of such a
-   scene costs what the average frame does. It can be seen: the right side's cross-fades to and from the ambient frame begin a frame or a few
-   earlier or later (one run: Super Mario World, margin 96, 131 of 3000 frames differ, largest channel difference 25 of 255, the picture in the
-   middle identical). The owner allowed such changes on 20 Nov 2026, but its proofs (centre, audio, state with it on; the difference table and
-   pictures for the 15 games; the cost) were not finished, so it ships **off**; with it off the wide picture is bit for bit the one before.
+3. **Option `stagger` (adapter; decided: off).** Auto counts the coverage of both sides on every second frame, so in a scene whose two sides
+   show the ambient frame both are composed whole on the same frame and neither on the next: the dear frame is twice the cheap one. With
+   `stagger=1` the left side is counted on the even frames and the right side on the odd ones, so the dearest frame of such a scene costs what
+   the average frame does (by the model about 2 to 3 ms of the three cores for Yoshi's Island and Super Mario World at IPC 0.7). It changes the
+   margins' cross-fade timing, never the centre, the audio or the state: `wide_compare.py` with `stagger=1`, 3000 frames, 15 games, margins 41
+   and 96: 15 identical (centre picture, audio, state). The wide pictures, `stagger=1` against `stagger=0` (3000 frames of the owner's script,
+   up to 240 evenly chosen differing frames per game compared pixel by pixel after RGB565 -> RGB888; "margin pixels" is the share of the two
+   margins' pixels that differ on a differing frame, mean / most; the picture in the middle was identical on every differing frame):
+
+   | game | frames that differ (margin 96) | margin pixels, mean / most | largest channel difference (of 255) | mean absolute difference over the margins |
+   | --- | --- | --- | --- | --- |
+   | Chrono Trigger | 24 (0.8 %) | 0.6 / 4.2 % | 9 | 0.02 |
+   | Donkey Kong Country | 0 | - | - | - |
+   | Doom | 0 | - | - | - |
+   | F-Zero | 0 | - | - | - |
+   | Kirby Super Star | 12 (0.4 %) | 0.8 / 5.1 % | 9 | 0.02 |
+   | Mega Man X 2 | 11 (0.4 %) | 0.4 / 0.6 % | 8 | 0.01 |
+   | Pilotwings | 32 (1.1 %) | 12.7 / 31.8 % | 9 | 0.36 |
+   | Street Fighter Alpha 2 | 292 (9.7 %) | 25.4 / 100 % | 239 | 9.31 |
+   | Stunt Race FX | 1 (0.03 %) | 2.9 / 2.9 % | 9 | 0.06 |
+   | Super Mario Kart | 27 (0.9 %) | 7.6 / 27.1 % | 9 | 0.22 |
+   | Super Mario RPG | 90 (3.0 %) | 11.1 / 40.5 % | 90 | 0.76 |
+   | Super Mario World | 131 (4.4 %) | 20.3 / 49.7 % | 25 | 1.13 |
+   | Super Metroid | 0 | - | - | - |
+   | Yoshi's Island | 49 (1.6 %) | 11.1 / 19.2 % | 75 | 1.67 |
+   | Zelda: A Link to the Past | 87 (2.9 %) | 6.2 / 21.4 % | 9 | 0.20 |
+
+   At margin 41 the frame counts are the same except Super Mario World (69). A before / after / difference (x8) picture of the worst frame of
+   each of the 11 games that differ was made (not in the repository: it holds no game pictures). Street Fighter Alpha 2's worst frame is a
+   white flash on which the margins fade toward the ambient colour a frame earlier than with `stagger=0`. **Decision: off.** The owner's rule
+   (20 Nov 2026) lets such a change ship when it is hardly noticeable and helps; here the differences are confined to the margins and rare in
+   most games, but not small everywhere (Street Fighter Alpha 2: 9.7 % of the frames and up to 239 of 255 in a channel; Super Mario RPG 90;
+   Yoshi's Island 75), and the model does not show the 2 to 3 ms to be needed (below: at IPC 0.7 the dearest frame of Yoshi's Island is 96 %
+   of the three cores' 50.1 ms with it off, about 91 % with it on; at IPC 1.0 it is 71 %). With it off the wide picture is bit for bit the one
+   before. Turning it on later is a one-line change of the default (`int stagger` in `snes/frontend/wide.cpp`) plus the proofs' `--wopt stagger=0`.
 4. Small: the seventh pass picture of the core (only read by `verify_cache`) is no longer allocated in a release (372 KB); the player's log
    line `wide_lines` also says how many lines the helpers really did (`lines= by_helpers=`, from `snes_wide_line_counts`), not only how many
    line jobs a helper joined; the thread line has `wide_b=` (the margin thread's busy ms per second), its frames and the PPU thread's waits for it.
@@ -539,22 +567,16 @@ is not started). Both cores have room by the model (the emulating thread 4.5 to 
 neither is the core of the thread being helped. The margin thread (0x68, cores 0 and 2) outranks the helpers on those cores, so lines are taken
 only when it is idle: by the model the three cores are still full for the heaviest scenes (below). `by_helpers=` in the log will show it.
 
-Cost (host callgrind, Minstr per frame, frames 1500 to 1560; measured on the tree of this step before the last small edits, the full
-five-game and fifteen-game tables were **not** regenerated): Super Mario World wide off 6.62 (was 6.95), margin 96 12.33 (was 13.14), of that
-compose 3.33 and the margin thread's work (passes, line records, capture) 2.38 (was 2.86 on the PPU thread); Yoshi's Island 7.70 / 12.57 /
-3.31 / 1.56; Super Metroid 6.99 / 11.38 / 1.19 / 3.20. By the model (x86 instructions as ARM instructions, 444 MHz, IPC 0.7), ms per frame:
-
-| | PPU thread at full width (before this step) | margin thread | reading |
-|---|---|---|---|
-| Super Mario World | about 7.4 (17.4) | 7.7 | both inside 16.7 |
-| Super Metroid | about 11.9 (21.9) | 10.3 | both inside 16.7 |
-| Yoshi's Island | about 7.4 (12.4) | 5.0 | both inside 16.7 |
-
-The CPU, APU and compose columns of the "Full width" table are unchanged by this step. So **per thread** the model at IPC 0.7 now fits at
-margin 96 for the five measured games, with the compose still needing a helper for Yoshi's Island, Super Mario World and Kirby (12.9 to
-13.5 ms alone plus about 4.5 ms of scaler and upload). **Per core it is not shown to fit on three cores**: the work of a counted frame of Super
-Mario World or Yoshi's Island adds up to about 46 to 49 ms of the 50 ms three cores have (CPU, PPU, APU, margin thread, compose, scaler,
-upload), so Auto may still narrow there; with the fourth core there is room. The ten other games were not measured in this step.
+Cost (host callgrind, Minstr per frame, frames 1500 to 1560, owner's script, final tree, all 15 games; the tables are in docs/PERFORMANCE.md, "Super NES
+On VitAdhoc 2.0", with the model's per-thread and per-core milliseconds): margin 96, wide off -> wide on, Super Mario World 6.62 -> 12.31 (compose 3.34
+average, 4.02 counted frame; the margin thread's passes and capture 2.35), Yoshi's Island 7.64 -> 12.50 (3.31, 4.19; margin thread 1.55),
+Super Metroid 6.97 -> 11.36 (1.19; margin thread 3.20), Kirby Super Star 6.25 -> 10.94, Zelda 5.70 -> 12.37, Chrono Trigger 4.80 -> 10.86. By the model at
+IPC 0.7 the picture thread of Super Mario World is 7.4 ms (was 17.4 with the passes on it), Super Metroid 11.8 (was 21.9), Yoshi's Island 7.1 (was 12.4); the
+margin thread 7.6, 10.3 and 5.0 ms. **Per thread everything fits** (Doom's game thread alone, the Super FX chip, does not, with or without the wide view).
+**Per core on three cores** the best packing of a counted frame is 96 % (Yoshi's Island), 94 % (Super Mario World), 90 % (Zelda), 86 % (Kirby), 84 %
+(Chrono Trigger), 83 % (Super Metroid) of 50.1 ms at IPC 0.7 and 50 to 71 % at IPC 1.0: held by the model, on the edge at IPC 0.7 for the first two,
+and a real scheduler packs worse than the best case. So the full width is not shown to hold a locked 60 on three cores in those games at the
+pessimistic end; Auto narrows where the player measures that it does not, "On" may drop frames there, and with the fourth core there is room.
 
 Proofs of this step (x86 twin unless said; the owner's 15 games, the pad script):
 - margin thread tree (before the `stagger` option was added): `mt_compare.py` 15 identical (3000 frames); ThreadSanitizer on Super Mario World,
@@ -565,10 +587,25 @@ Proofs of this step (x86 twin unless said; the owner's 15 games, the pad script)
   with the PPU, APU and margin threads: 42 runs compared, 42 same (margin 96 on all 15 games, the run was then stopped); `verify_cache=1`
   0 mismatches on the games run; `make -C playerkit test` 252 tests 0 failed; `make -C widekit test arm-check` 1101 checks 0 failed, NEON
   equal; NES `wide_golden.sh` 37 files match;
-- final tree with `stagger=0` (= the default): wide and normal hashes against the tree before this step, 3000 frames, margins 96 and 41,
-  single thread and split with PPU, APU, margin threads and 3 workers, all 15 games, and on five games at margin 96 also 3 line workers,
-  `lazy=0` with the PPU thread, and the PPU thread without the margin thread: 75 runs, 75 same, 0 different (the binary of that run had the
-  `stagger` default at 1 and was run with `stagger=0`; the default was set to 0 afterwards, not rebuilt).
-- **Not run on the final tree**: `wide_compare.py` against the pre-wide base, `selftest.sh` (it has a new margin thread case), the armhf
-  twin under qemu, the 75-run `scale_proof`, the regenerated cost tables, the Vita build of the final edits (an earlier build of this step
-  linked `snes.bin`), the VPK.
+- final tree (`stagger` default 0, commit 83cf00e plus the playerkit placement change below; every item run on this tree on 20 Nov 2026):
+  - wide and normal hashes against the tree before this step (reference twin built from a copy of it), 3000 frames, margins 96 and 41, single
+    thread and split with PPU, APU, margin thread and 3 workers, all 15 games, and on five games at margin 96 also 3 line workers, `lazy=0` with the
+    PPU thread, and the PPU thread without the margin thread: 75 runs, 75 same, 0 different;
+  - `wide_compare.py` against the pre-wide base (centre picture, audio, state, 3000 frames): margin 41 and margin 96 (with 3 workers) 15 identical,
+    0 different each; the same with `stagger=1`: 15 identical each;
+  - `verify_cache=1`, all 15 games at margin 96, 3000 frames: 35.1 M checks, 0 mismatches (a game's ring walks and ambient rows made fresh and compared);
+  - `selftest.sh`: all passed, 59 PASS (it includes the new margin thread case: wide hashes of three truth ROMs equal with and without the margin
+    thread, with the PPU thread, and through off / on switches at margin 41); it was never run before this pass and needed no fix;
+  - armhf (NEON) twin under qemu: Super Mario World, Kirby Super Star, Yoshi's Island, Super Metroid, Super Mario Kart at margin 96 with the PPU,
+    APU and margin threads and 2 line workers, 3000 frames: wide and normal hashes equal to the x86 reference tree (5 of 5), and the default options
+    on Super Mario World equal to the x86 new tree;
+  - the 75-run `scale_proof` (pixel scaler kinds, 15 games x margins 0, 41, 96): mismatches 0, reference mismatches 0 on all 75;
+  - ThreadSanitizer on this tree: Super Mario World and Yoshi's Island at margin 96 (400 frames), Super Metroid at margin 41 (300 frames), each as
+    single thread / PPU + margin thread with compose on it + 3 workers / split with PPU, APU, margin thread and 4 workers / the same without the
+    margin thread / switched off and on: hashes same in every comparison, 0 reports; (the earlier tree: five games, 0 reports);
+  - `make -C playerkit test` after the placement change: 260 tests, 0 failed (the pk_cores golden for the SNES player's helpers changed on purpose,
+    the main app's and md.bin's goldens did not); `snes.bin` links for the Vita (SDK build) with it.
+- Known caveat: `--wide-split` together with `--wide-toggle` is not deterministic in the twin (with or without the margin thread), so the toggle
+  hashes are compared unsplit.
+- **Still not done:** nothing ran on a Vita. Whether the Vita's scheduler moves the margin thread (two-core mask) promptly, how much of the compose the
+  helpers really take (`by_helpers=`), and the real IPC are for the first console run.

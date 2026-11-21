@@ -83,6 +83,7 @@ newer is needed for the first and the twin step.
    | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |
    | `GATE_MBEDTLS_HOST` (folder, optional) | `online-http`: its TLS cases run against this host64 prefix; they are SKIPPED, loudly, without it |
    | `GATE_GBA_ROMS` (folder, optional) | also `online-x86`: its determinism scenario plays the first Link Cable game of the folder |
+   | `GATE_MD_ROMS`, `GATE_MD_SMS_ROMS`, `GATE_SNES_ROMS`, `GATE_NES_ROMS`, `GATE_WS_ROM`, `GATE_GBA_ROMS` | `state-fuzz` (`tools/statefuzz/statefuzz.sh`): each core's state loader against damaged states (checksums repaired) under ASan + UBSan, and the load proof, 12 s per ROM; a core with no ROM variable is reported SKIP in the step's log, the Game Boy cores use the test cartridges of `build-testrom-gb`. Longer: `STATEFUZZ_SECONDS=300 bash tools/statefuzz/statefuzz.sh <dir>` |
 
    The cache key of a private step includes the folder path, not the ROM files.
    After changing the ROMs, run with `--force` or delete the step's cache file.

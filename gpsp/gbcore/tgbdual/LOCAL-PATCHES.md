@@ -217,4 +217,7 @@ they look as a Game Boy Color showed them; otherwise unchanged.
 ## State loads that are not trusted (20 Nov 2026, 2.0)
 
 The GB / GBC loader (`gb_state_valid`, `state_validate.h`) already validated the state before applying it. `gpsp/gbcore/tests/statefuzz.cpp`
-(ASan + UBSan, random mutation of a real state, MBC and colour variants, frame watchdog) found nothing to change in the core.
+(ASan + UBSan, random mutation of a real state, MBC and colour variants, frame watchdog) found nothing to change in the core: about 175 000
+damaged states (cartridge types MBC1, MBC3 with timer, MBC5 with rumble, MBC7 and an unknown type, made by changing the header byte of the test
+cartridges, plus the GBC test cartridges), 0 crashes, 0 hangs, 0 reports; and the load proof (frames 1, 97, 300, 655, then 60 frames) is equal on
+every test cartridge. The cartridges are small test programs, so a real game's ROM and RAM sizes were not exercised.

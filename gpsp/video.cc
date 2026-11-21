@@ -183,7 +183,8 @@ static const u8 bg_blank_tiles[192] = { 0 };   /* room for the vertical flip off
 static inline const u8 *bg_tile_addr(const u8 *tile_base, u32 tile, bool is8bpp)
 {
   const u8 *p = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
-  return ((uintptr_t)p + 64 > (uintptr_t)vram + sizeof(vram)) ? bg_blank_tiles + 64 : p;
+  /* (not sizeof(vram): with ME_WORK_INDIRECT `vram` is a pointer, and every tile read as blank) */
+  return ((uintptr_t)p + 64 > (uintptr_t)vram + 1024 * 96) ? bg_blank_tiles + 64 : p;
 }
 // The entry just fetched through map_ptr++ is a hole in the row at `base`.
 #define WIDE_HOLE(mask, ptr, base) \

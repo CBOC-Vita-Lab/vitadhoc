@@ -188,6 +188,18 @@ worker, on every test ROM) and `arm_check.sh`. Edits to upstream files:
   `chanVolume[0]`) and register 6 is the whole noise byte; a Game Gear colour word keeps every bit (every colour read masks it; the other
   systems 9 bits); the viewport may be x -48..16 and y -24..48 (Game Gear window); the table bases are checked against the VDP's own maxima.
   Proof points of the load tests: frame 1, 97, 300, 655.
+- State fuzzing (H1, 20 Nov 2026; `tools/statefuzz`, `md/twin/statefuzz.cpp`): the loaders were fuzzed under ASan + UBSan with damaged states
+  (checksums repaired) on the SGDK samples and the Master System / Game Gear / SG-1000 test games, and each limit below was kept only if the
+  load proof (frames 1, 97, 300, 655, then 60 frames, battery RAM carried beside the state) stays equal on 96 test games. Marked `CBOC-Vita`:
+  `system.c` / `frontend/host.c`: `audio_max_frames`, the most sample frames `audio_update` may write (the size of the host's buffer);
+  `sound/blip_buf.c`: a clock offset beyond the buffer is dropped; `sound/sound.c`: `fm_cycles_start` (how far the FM chip ran past the end of the
+  frame) is 0..2 sample steps, else 0 (it set how many samples the next `fm_update` writes into `fm_buffer`); `sound/ym2413.c`:
+  `YM2413ContextKeep` / `YM2413ContextCheck` around the context load put back what the chip's own setup computed (clock, rate, `fn_tab`,
+  the increments and the timer overflow) and hold the table indexes and counters (`ar`, `dr`, `rr`, `ksr`, the envelope shifts and selects,
+  `wavetable`, the wave select, `lfo_am_cnt`, `eg_timer`) to what the tables allow; they are not recomputed, because a freshly reset chip
+  holds zeros there that the formulas would not give; `sound/ym2612.c`: the timer registers; `vdp_ctrl.c`: a pending VDP DMA is dropped on
+  hardware without a Mega Drive VDP (it read the 68k bus of a machine that has none); `md_cart.c`: a bank offset; `state.c`: the Z80 bank and
+  state words. SVP is not in a state (the core's `state.c` holds no SVP block), so there is no SVP load path to harden.
 
 ### Open
 

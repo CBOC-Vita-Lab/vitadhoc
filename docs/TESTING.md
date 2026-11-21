@@ -124,13 +124,14 @@ because a memory checker cannot watch generated code: the dynamic recompiler's o
 `--proof` is the other half: for every ROM, a state loaded at frame 1, 97, 300 and 655 and run 60 more frames must end byte for byte where the
 machine that was never interrupted ends, so no check can have changed a legitimate value. Known exceptions, all upstream bookkeeping that is not in
 the state and is blanked or documented: the NES harness blanks MMC1's last-write time (`LRST`) and the Disk System sound's envelope divider (`EDIV`);
-the GBA differs at frame 1 only (the first frame's state; the same before any of these changes).
+the GBA's proof starts at frame 97 (a state of the very first frame runs on differently, also on the core as it was before any of these
+changes); the Sega proof carries battery RAM beside the state, as a game's own save would be, because a load never takes a save back.
 
 `sh tools/statefuzz/statefuzz.sh OUTDIR [SECONDS]` builds the harnesses and does both for the ROMs the gate variables name (`GATE_MD_ROMS`,
 `GATE_MD_SMS_ROMS`, `GATE_SNES_ROMS`, `GATE_NES_ROMS`, `GATE_WS_ROM`, `GATE_GBA_ROMS`, and the test cartridges under `gpsp/vita/hostcore/testrom`
 for the Game Boy); the gate step `state-fuzz` runs it with a short budget. Longer runs: `STATEFUZZ_SECONDS=300 STATEFUZZ_SEED=7`. Replay a saved case with
-`<harness> ROM DIR --case FILE`. `tools/statefuzz/regress/` holds the cases found so far as small recipes (offset and bytes on a base state of
-the harness' own `--base` option), not game states.
+`<harness> ROM DIR --case FILE`. A case is a whole game state, so it is not committed; `tools/statefuzz/regress/README.md` describes how to keep one as
+a small recipe (changed bytes on the harness' own base state, `--base-out`, `recipe.py`) and lists the classes of damage found.
 
 ## Undrawn frames (fast forward, Steady half mode, catch-up)
 

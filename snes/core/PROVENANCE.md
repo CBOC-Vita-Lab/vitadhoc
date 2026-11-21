@@ -122,3 +122,9 @@ All changes are in `snapshot.cpp` and mark themselves `CBOC-Vita`:
   cache, the screen pointers) are rebuilt from the machine's own values, selectors are masked, the screen pointers are derived again
   (`SnapshotSuperFXKeep` / `SnapshotSuperFXSanitize`). A chip block in a state for a cart without that chip (Super FX, SA-1) is ignored.
 - Audio: the SPC/DSP block is copied into a buffer padded with zeros (the DSP's `extra()` length byte could read past the block).
+  `apu/bapu/dsp/SPC_DSP.cpp` (`copy_state`, marked `CBOC-Vita (H1)`): each voice's sample buffer position, BRR block offset and
+  interpolation position, the envelope mode and the DSP's phase are held to the ranges the DSP keeps them in (a damaged position read past the
+  voice's 24 sample buffer in `decode_brr`; found by the fuzzer on a long run, seed 7).
+- The Super FX screen pointers are derived again after a load, but the chip's own bookkeeping (`vPrevMode`, `vSCBRDirty`,
+  `vPrevScreenHeight`) is left as the state had it, so a genuine state runs on bit for bit as the uninterrupted machine (the load proof on a
+  Super FX game found the difference).

@@ -36,6 +36,7 @@ int main(int argc, char **argv)
 		else if (a == "--system" && i + 1 < argc) { std::string r = argv[++i]; system = r == "md" ? MD_SYS_MD : r == "sms" ? MD_SYS_SMS : r == "gg" ? MD_SYS_GG : r == "sg" ? MD_SYS_SG : 0; }
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
 		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--base" && i + 1 < argc) sf_base_idx = (size_t)atoi(argv[++i]);
 		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
@@ -49,7 +50,20 @@ int main(int argc, char **argv)
 	sf_rng rng; sf_seed(&rng, seed);
 	if (proof)
 	{
-		int f = sf_proof("md", [&]() { std::vector<uint8_t> b(md_host_state_size()); md_host_state_save_mem(b.data(), b.size()); return b; }, [&](const std::vector<uint8_t> &b) { return md_host_state_load_mem(b.data(), b.size()); }, [&](int n, sf_rng *r) { run_frames(n, r); }, seed);
+		// battery RAM, EEPROM and flash are not part of a state (a load never takes a save back): the proof carries them beside the state,
+		// as the game's own save would be, and puts them back before the load. So they are compared too.
+		int f = sf_proof("md", [&]() {
+				std::vector<uint8_t> b(md_host_state_size()); md_host_state_save_mem(b.data(), b.size());
+				std::vector<uint8_t> sr(0x10000); size_t n = md_host_sram_read(sr.data(), sr.size());
+				b.insert(b.end(), sr.begin(), sr.begin() + n);
+				for (int k = 0; k < 4; k++) b.push_back((uint8_t)(n >> (8 * k)));
+				return b; },
+			[&](const std::vector<uint8_t> &b) {
+				size_t n = b[b.size() - 4] | (b[b.size() - 3] << 8) | (b[b.size() - 2] << 16) | ((size_t)b[b.size() - 1] << 24);
+				size_t sn = b.size() - 4 - n;
+				md_host_sram_write(b.data() + sn, n);
+				return md_host_state_load_mem(b.data(), sn); },
+			[&](int n, sf_rng *r) { run_frames(n, r); }, seed);
 		printf(f ? "STATEFUZZ proof FAILED (%d)\n" : "STATEFUZZ proof OK: every state loads and runs on exactly as the uninterrupted machine\n", f);
 		return f ? 1 : 0;
 	}
@@ -73,7 +87,7 @@ int main(int argc, char **argv)
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
+			std::vector<uint8_t> b = sf_read_case(c, bases[sf_base_idx < bases.size() ? sf_base_idx : 0]);
 			sf_arm(b.data(), b.size(), iters++);
 			int rc = md_host_state_load_mem(b.data(), b.size());
 			if (rc == 0) { run_frames(frames, &rng); ok++; } else refused++;

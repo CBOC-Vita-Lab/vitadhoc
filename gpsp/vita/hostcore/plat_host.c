@@ -201,6 +201,7 @@ static int      waiting;
 static unsigned wait_frame;       /* the frame the clock stands at          */
 static uint64_t wait_t0_ns, wait_poll_ns;
 static long     wait_log_from;
+static long     wait_match_end;   /* where the line that ended the last wait finished (-1: it timed out) */
 
 static long wait_log_size(FILE **fp)
 {
@@ -241,7 +242,14 @@ static int wait_seen(const char *text)
       fseek(f, from, SEEK_SET);
       got = fread(buf, 1, (size_t)(n - from), f);
       buf[got] = '\0';
-      hit = strstr(buf, text) != NULL;
+      {
+         char *m = strstr(buf, text), *e;
+         hit = m != NULL;
+         if (m && (e = strchr(m, '\n')))
+            wait_match_end = from + (long)(e - buf) + 1;
+         else
+            wait_match_end = -1;
+      }
       free(buf);
    }
    fclose(f);
@@ -252,6 +260,7 @@ static int wait_seen(const char *text)
 static unsigned script_frame(void)
 {
    unsigned f;
+   long chained = -1;
    if (!opt.nwait || !opt.realtime)
       return (unsigned)((now_ns() - slept_ns) / refresh_ns());
    pthread_mutex_lock(&wait_mu);
@@ -266,6 +275,7 @@ static unsigned script_frame(void)
          waiting = 0;
          wait_next++;
          f = (unsigned)((t - slept_ns) / refresh_ns());
+         chained = wait_match_end;
       }
       else
          f = wait_frame;
@@ -276,6 +286,7 @@ static unsigned script_frame(void)
       wait_frame = opt.wait[wait_next].frame;
       wait_t0_ns = slept_ns + (uint64_t)wait_frame * refresh_ns();
       wait_poll_ns = 0;
+      wait_match_end = -1;
       if (!opt.worker && main_tid_set && pthread_equal(pthread_self(), main_tid))
          fe_evt_service();            /* what was logged before the wait is on disk before it begins */
       wait_log_from = wait_log_size(&lf);
@@ -283,6 +294,9 @@ static unsigned script_frame(void)
          fclose(lf);
       if (wait_log_from < 0)
          wait_log_from = 0;
+      /* a wait that follows another at once starts where that one's line ended: a line logged since is its to see */
+      if (chained >= 0 && chained < wait_log_from)
+         wait_log_from = chained;
       waiting = 1;
       f = wait_frame;
    }

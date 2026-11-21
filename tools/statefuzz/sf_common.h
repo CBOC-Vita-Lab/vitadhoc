@@ -132,11 +132,12 @@ static inline std::vector<uint8_t> sf_read_file(const char *path)
 
 /* ---- regression recipes: a case is kept as a few changed bytes on the state of the machine at the warm point, not as a game state ----
  * "--base-out FILE" writes that base state and exits; a "--case X.recipe" file holds lines "OFFSET HEXBYTES" (decimal offset, bytes in hex,
- * '#' starts a comment; a line "SIZE N" resizes first) that are applied to the first base state before it is loaded.  tools/statefuzz/recipe.py
+ * '#' starts a comment; a line "SIZE N" resizes first) that are applied to a base state (the first, or "--base N") before it is loaded.  tools/statefuzz/recipe.py
  * makes one from a base and a crash case.  Checksums are bytes like any other, so a recipe carries the repaired checksum itself. */
 static const char *sf_base_out = NULL;
+static size_t sf_base_idx = 0;       /* "--base N": which of the harness's base states (the warm point, then later ones) the recipe is on */
 static void sf_write_file(const char *path, const std::vector<uint8_t> &b) { FILE *f = fopen(path, "wb"); if (!f) return; fwrite(b.data(), 1, b.size(), f); fclose(f); }
-template <class V> static void sf_base_dump(const V &bases) { if (sf_base_out && !bases.empty()) { sf_write_file(sf_base_out, bases[0]); printf("base state written (%zu bytes)\n", bases[0].size()); exit(0); } }
+template <class V> static void sf_base_dump(const V &bases) { if (sf_base_out && !bases.empty()) { size_t k = sf_base_idx < bases.size() ? sf_base_idx : 0; sf_write_file(sf_base_out, bases[k]); printf("base state %zu written (%zu bytes)\n", k, bases[k].size()); exit(0); } }
 static std::vector<uint8_t> sf_read_case(const char *path, const std::vector<uint8_t> &base)
 {
 	size_t l = strlen(path);
@@ -167,13 +168,14 @@ static std::vector<uint8_t> sf_read_case(const char *path, const std::vector<uin
  * The state bytes after the M frames are compared (a state holds the whole machine, so a clamp that changed a legitimate value
  * shows as a difference, and a refused state as a failure).  Returns the number of failures. */
 template <class Save, class Load, class Run>
-static int sf_proof(const char *name, Save save, Load load, Run run, uint64_t seed, int M = 60)
+static int sf_proof(const char *name, Save save, Load load, Run run, uint64_t seed, int M = 60, int min_frame = 1)
 {
 	static const int points[] = { 1, 97, 300, 655 };
 	int fails = 0, at = 0;
 	sf_rng rng;
 	for (int p : points)
 	{
+		if (p < min_frame) continue;   // (the GBA harness skips frame 1: the first frame's state differs on the unmodified core too)
 		sf_seed(&rng, seed + at); run(p - at, &rng); at = p;
 		std::vector<uint8_t> s = save();
 		sf_seed(&rng, 7777 + p); run(M, &rng);

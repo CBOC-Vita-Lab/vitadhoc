@@ -30,6 +30,7 @@ int main(int argc, char **argv)
 		else if (a == "--gbc") con = FE_CONSOLE_GBC;
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
 		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--base" && i + 1 < argc) sf_base_idx = (size_t)atoi(argv[++i]);
 		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
@@ -67,7 +68,7 @@ int main(int argc, char **argv)
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
+			std::vector<uint8_t> b = sf_read_case(c, bases[sf_base_idx < bases.size() ? sf_base_idx : 0]);
 			sf_arm(b.data(), b.size(), iters++);
 			int rc = gbcore_state_load(core, b.data(), b.size());
 			if (rc == 0) { run_frames(core, frames); ok++; } else refused++;

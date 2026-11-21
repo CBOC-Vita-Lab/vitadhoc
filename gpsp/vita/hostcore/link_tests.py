@@ -525,8 +525,9 @@ def t_wifi_cable(T):
     for r, who, ch in ((ra, "A", 0), (rb, "B", 2)):
         im = r.shot("running.png")
         left, right = im.getpixel((200, 20)), im.getpixel((700, 20))
-        T.check(left[ch] > 200 and left[2 - ch] < 60 and right[1] > 150 and
-                right[0] < 60 and right[2] < 60,
+        # (dominance, not pure colours: the picture's default colour look softens them)
+        T.check(left[ch] > 180 and left[ch] - left[2 - ch] > 80 and right[1] > 130 and
+                right[1] - right[0] > 40 and right[1] - right[2] > 60,
                 "%s: the cartridge's own screen while linked: role band %s "
                 "(%s), verdict band green %s" %
                 (who, left, "red: parent" if ch == 0 else "blue: child",
@@ -964,7 +965,7 @@ def t_snes_two(T):
                config={"ui_home": 0, "hints": 0})
     b = T.twin("b", T.arch_b, rom, "Bob",
                snes_two_walk() + keys("down", "cross", "cross") + "+%d:shot=rooms.png\n" % dur(5) +
-               "+%d:cross:%d\n" % (AFTER_SHOT, PRESS) + shot(24, "after.png") + quit_at(26),
+               "+%d:shot=after.png\n" % dur(8) + quit_at(26),     # no further press: it would start the game again, over the link file
                config={"ui_home": 0, "hints": 0})
     for t in (a, b):
         os.remove(os.path.join(t.root, "autoboot.txt"))     # the list, not the game
@@ -1989,7 +1990,7 @@ def t_sega_two(T):
                    sega_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26), config=dict(cfg))
         b = T.twin("b", T.arch_b, rom, "Bob",
                    sega_two_walk() + keys("down", "cross", "cross") + "+%d:shot=rooms.png\n" % dur(5) +
-                   "+%d:cross:%d\n" % (AFTER_SHOT, PRESS) + shot(24, "after.png") + quit_at(26), config=dict(cfg))
+                   "+%d:shot=after.png\n" % dur(8) + quit_at(26), config=dict(cfg))
         for t in (a, b):
             os.remove(os.path.join(t.root, "autoboot.txt"))
         ra, rb = T.run([a, b], 26)

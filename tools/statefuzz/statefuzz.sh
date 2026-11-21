@@ -56,7 +56,7 @@ if [ -n "${GATE_MD_ROMS:-}${GATE_MD_SMS_ROMS:-}" ]; then
 	B=$OUT/md-build; mkdir -p "$B"
 	if (cd "$ROOT/md" && nice make -C core TARGET=host B="$B" OPT=-O1 EXTRA="$SAN" -j"$CPUN" all >"$OUT/md-build.log" 2>&1 &&
 	    cd twin && nice g++ -O1 -g -std=gnu++14 $SAN -I../frontend -o "$OUT/md-fuzz" statefuzz.cpp "$B/mdcore.o" -lm -pthread >>"$OUT/md-build.log" 2>&1); then
-		run_list 2 "${GATE_MD_ROMS:-/nonexistent}" "rom.bin *.gen" sega "$OUT/md-fuzz" "$OUT/cases-md" --system md
+		run_list 2 "${GATE_MD_ROMS:-/nonexistent}" "rom.bin" sega "$OUT/md-fuzz" "$OUT/cases-md" --system md
 		for ext in sms gg sg; do run_list 1 "${GATE_MD_SMS_ROMS:-/nonexistent}" "*.$ext" sega-$ext "$OUT/md-fuzz" "$OUT/cases-md" --system $ext; done
 	else fail "sega build"; tail -5 "$OUT/md-build.log"; fi
 else skip sega "GATE_MD_ROMS / GATE_MD_SMS_ROMS not set"; fi

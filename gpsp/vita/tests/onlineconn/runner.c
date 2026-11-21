@@ -2038,7 +2038,9 @@ static void sc_creds_errors(void)
    start();
    script_host("203.0.113.2:40002", "", 0, 0);
    online_join(&g_tr, "K7M2Q", &me);
-   CHECK(run_to(ON_FAILED, 20000));
+   /* a refused credential request is asked again every 3 s, 12 times (the service gives them once both members
+    * have polled), so the fallback gives up after about 36 s, not 20 */
+   CHECK(run_to(ON_FAILED, 60000));
    online_get(&v);
    CHECK(v.fail == ONLINE_FAIL_UNREACHABLE);
    online_stop();

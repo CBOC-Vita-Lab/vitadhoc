@@ -32,7 +32,25 @@
  *       access costs (RAM, ROM buffer, multiplies, plots) are static per op;
  *     - TO/FROM/WITH/ALT fusion, the pipe byte and the delay slot are kept
  *       exactly: the byte after a branch is fetched from the target, not from
- *       the delay slot.
+ *       the delay slot;
+ *     - flags nothing reads are not written: going backwards through a block
+ *       from its end (where every flag is live), an ALU op gets the variant that
+ *       writes only the flags a later op reads before they are overwritten
+ *       (fxf_flagpass); the branches and the delay slot are part of the walk;
+ *     - the pipe byte (the byte at R15 - 1) is not stored while blocks follow
+ *       each other: it is written when control leaves for the reference or the
+ *       slice ends;
+ *     - a block remembers the two blocks it last went on to (by R15; the program
+ *       bank is its own unless it ends in LJMP), so most block ends need no hash
+ *       lookup;
+ *     - PLOT works on the screen RAM directly, a pixel at a time, with one table
+ *       lookup for the plane bits (the chip's own pixel caches only matter for
+ *       the cycle model, which is kept per plot; gathering the pixels of a tile
+ *       row in a register and writing them back together was tried and cost
+ *       more instructions on armhf in every window measured);
+ *     - the interpreter function exists once per plot depth (2, 4 and 8 bits),
+ *       so the depth tests are gone from PLOT and RPIX; blocks are dropped when a
+ *       game changes the depth.
  *   The run loop of the reference stops between two instructions as soon as the
  *   cycle budget is used up. A block is only run when its whole cost (up to the
  *   delay slot) still fits in what is left, so no stop can fall inside it; the
@@ -57,6 +75,7 @@
 #include "fxinst.h"
 #include "fxemu.h"
 #include <string.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -76,12 +95,17 @@ void fx_blocksReset (void) {}
 
 // ---------------------------------------------------------------------------
 // Op kinds. The order of the branch group (BRA..BVS) follows opcodes 05..0f.
+// Kinds that set flags come in variants that leave out the flag writes nothing in the block reads
+// (dead-flag elimination, see fxf_flagpass): V1 (sign/zero), V2 (sign/zero + carry), V3 (+ overflow), VM (MOVES).
+#define FXV1(N) X(N##_0) X(N##_1)
+#define FXV2(N) X(N##_0) X(N##_1) X(N##_2) X(N##_3)
+#define FXV3(N) X(N##_0) X(N##_1) X(N##_2) X(N##_3) X(N##_4) X(N##_5) X(N##_6) X(N##_7)
 #define FXK_LIST(X) \
-	X(STOP) X(CACHE) X(LSR) X(ROL) X(ASR) X(DIV2) X(ROR) X(SEX) X(LOB) X(HIB) X(SWAP) X(NOT) X(MERGE) \
-	X(FMULT) X(LMULT) \
-	X(ADD) X(ADC) X(SUB) X(SBC) X(CMP) X(AND) X(BIC) X(OR) X(XOR) X(MULT) X(UMULT) \
-	X(ADDI) X(ADCI) X(SUBI) X(ANDI) X(BICI) X(ORI) X(XORI) X(MULTI) X(UMULTI) \
-	X(MOVE) X(MOVES) X(INC) X(DEC) X(LINK) X(IBT) X(IWT) \
+	X(STOP) X(CACHE) FXV2(LSR) FXV2(ROL) FXV2(ASR) FXV2(DIV2) FXV2(ROR) FXV1(SEX) FXV1(LOB) FXV1(HIB) FXV1(SWAP) FXV1(NOT) X(MERGE) \
+	FXV2(FMULT) FXV2(LMULT) \
+	FXV3(ADD) FXV3(ADC) FXV3(SUB) FXV3(SBC) FXV3(CMP) FXV1(AND) FXV1(BIC) FXV1(OR) FXV1(XOR) FXV1(MULT) FXV1(UMULT) \
+	FXV3(ADDI) FXV3(ADCI) FXV3(SUBI) FXV1(ANDI) FXV1(BICI) FXV1(ORI) FXV1(XORI) FXV1(MULTI) FXV1(UMULTI) \
+	X(MOVE) FXV2(MOVES) FXV1(INC) FXV1(DEC) X(LINK) X(IBT) X(IWT) \
 	X(LDW) X(LDB) X(STW) X(STB) X(SBK) X(LMS) X(SMS) X(LM) X(SM) \
 	X(GETB) X(GETBH) X(GETBL) X(GETBS) X(GETC) X(COLOR) X(CMODE) X(RAMB) X(ROMB) \
 	X(PLOT) X(RPIX) X(READR14) X(PC) X(DFETCH) \
@@ -95,6 +119,43 @@ enum
 #undef X
 	K_COUNT
 };
+// the full-flag kind of each family (the decoder works with these; fxf_flagpass picks the variant)
+#define K_LSR K_LSR_3
+#define K_ROL K_ROL_3
+#define K_ASR K_ASR_3
+#define K_DIV2 K_DIV2_3
+#define K_ROR K_ROR_3
+#define K_SEX K_SEX_1
+#define K_LOB K_LOB_1
+#define K_HIB K_HIB_1
+#define K_SWAP K_SWAP_1
+#define K_NOT K_NOT_1
+#define K_FMULT K_FMULT_3
+#define K_LMULT K_LMULT_3
+#define K_ADD K_ADD_7
+#define K_ADC K_ADC_7
+#define K_SUB K_SUB_7
+#define K_SBC K_SBC_7
+#define K_CMP K_CMP_7
+#define K_AND K_AND_1
+#define K_BIC K_BIC_1
+#define K_OR K_OR_1
+#define K_XOR K_XOR_1
+#define K_MULT K_MULT_1
+#define K_UMULT K_UMULT_1
+#define K_ADDI K_ADDI_7
+#define K_ADCI K_ADCI_7
+#define K_SUBI K_SUBI_7
+#define K_ANDI K_ANDI_1
+#define K_BICI K_BICI_1
+#define K_ORI K_ORI_1
+#define K_XORI K_XORI_1
+#define K_MULTI K_MULTI_1
+#define K_UMULTI K_UMULTI_1
+#define K_MOVES K_MOVES_3
+#define K_INC K_INC_1
+#define K_DEC K_DEC_1
+typedef char fxf_kinds_fit_a_byte[K_COUNT <= 255 ? 1 : -1];
 
 // kind properties
 enum { P_RS = 1, P_RN = 2, P_WD = 4, P_WN = 8, P_DOK = 16 };	// reads SREG, reads R[n], writes DREG, writes R[n], allowed in a delay slot
@@ -126,6 +187,10 @@ struct FxBlock
 	uint8		hasD;		// the block ends with a delay slot
 	uint8		clsD;
 	uint8		cnt[DC_N];
+	uint8		lkNext;		// successor cache of the block's end op: two (R15, block) pairs; the bank is the block's own
+	uint8		noChain;	// the block changes the program bank (LJMP): no successor cache
+	uint32		lkPc[2];
+	FxBlock		*lkBlk[2];
 	FxOp		ops[1];
 };
 
@@ -133,11 +198,14 @@ enum { MAXI = 24, MAXOPS = 100, HBITS = 12 };
 
 static const void	*s_lab[K_COUNT];
 static uint8		s_kflags[K_COUNT], s_kcls[K_COUNT];
+static uint8		s_fw[K_COUNT], s_fr[K_COUNT], s_vg[K_COUNT];	// flags a kind writes / reads (1 sign+zero, 2 carry, 4 overflow), variant family
 static bool			s_ready;
+static uint64		s_spread[256], s_unpack[256];
 static FxBlock		*s_tab[1 << HBITS];
 static uint8		*s_arena;
 static size_t		s_used, s_cap = 1536 * 1024;
 static uint32		s_epoch = 1;
+static uint32		s_resets;
 static uint32		s_K[DC_N];
 // what the epoch was valid for
 static uint32		s_lastMask = 0xffffffffu, s_lastCBR, s_lastLim, s_lastCache, s_lastK[DC_N];
@@ -183,6 +251,31 @@ static void fxf_init (void)
 	s_kcls[K_PLOT] = DC_PLOT; s_kcls[K_RPIX] = DC_RPIX;
 	s_kcls[K_MULT] = s_kcls[K_UMULT] = s_kcls[K_MULTI] = s_kcls[K_UMULTI] = DC_MULT;
 	s_kcls[K_FMULT] = s_kcls[K_LMULT] = DC_FMULT;
+	memset(s_fw, 0, sizeof s_fw);
+	memset(s_fr, 0, sizeof s_fr);
+	memset(s_vg, 0, sizeof s_vg);
+	static const uint8 v3[] = { K_ADD, K_ADC, K_SUB, K_SBC, K_CMP, K_ADDI, K_ADCI, K_SUBI };
+	for (unsigned i = 0; i < sizeof v3; i++) { s_vg[v3[i]] = 3; s_fw[v3[i]] = 7; }
+	static const uint8 v2[] = { K_LSR, K_ROL, K_ASR, K_DIV2, K_ROR, K_FMULT, K_LMULT };
+	for (unsigned i = 0; i < sizeof v2; i++) { s_vg[v2[i]] = 2; s_fw[v2[i]] = 3; }
+	static const uint8 v1[] = { K_SEX, K_LOB, K_HIB, K_SWAP, K_NOT, K_AND, K_BIC, K_OR, K_XOR, K_MULT, K_UMULT, K_ANDI, K_BICI, K_ORI, K_XORI, K_MULTI, K_UMULTI, K_INC, K_DEC };
+	for (unsigned i = 0; i < sizeof v1; i++) { s_vg[v1[i]] = 1; s_fw[v1[i]] = 1; }
+	s_vg[K_MOVES] = 4; s_fw[K_MOVES] = 1 | 4;
+	s_fw[K_MERGE] = 7; s_fw[K_LOOP] = 1;
+	s_fr[K_ADC] = s_fr[K_ADCI] = s_fr[K_SBC] = s_fr[K_ROL] = s_fr[K_ROR] = 2;
+	s_fr[K_BGE] = s_fr[K_BLT] = 1 | 4;
+	s_fr[K_BNE] = s_fr[K_BEQ] = s_fr[K_BPL] = s_fr[K_BMI] = 1;
+	s_fr[K_BCC] = s_fr[K_BCS] = 2;
+	s_fr[K_BVC] = s_fr[K_BVS] = 4;
+	s_fr[K_RPIX] = 7;
+	for (int c = 0; c < 256; c++)
+	{
+		uint64 w = 0;
+		for (int j = 0; j < 8; j++)
+			if (c & (1 << j)) w |= (uint64) 1 << (8 * j);
+		s_spread[c] = w;
+		s_unpack[c] = w;	// byte j = bit j, the same table
+	}
 	s_ready = true;
 }
 
@@ -190,6 +283,7 @@ void fx_blocksReset (void)
 {
 	memset(s_tab, 0, sizeof s_tab);
 	s_used = 0;
+	s_resets++;
 	s_epoch++;
 	s_lastMask = 0xffffffffu;
 #ifdef FX_STATS
@@ -197,7 +291,7 @@ void fx_blocksReset (void)
 #endif
 }
 
-static uint32 fxf_exec (uint32 cyc, bool init);
+template <int MODE> static uint32 fxf_exec (uint32 cyc, bool init);
 #ifdef FX_SHADOW
 static int sh_trace;
 static uint64 sh_slices, sh_bad;
@@ -310,7 +404,7 @@ static void fxf_emit (Dec &D, int k, uint32 dd, uint32 ss, uint32 nn, uint32 aux
 {
 	FxOp &o = D.ops[D.n++];
 	o.h = s_lab[k];
-	o.d = (uint8) dd; o.s = (uint8) ss; o.n = (uint8) nn; o.a = (uint8) a;
+	o.d = (uint8) dd; o.s = (uint8) ss; o.n = (uint8) nn; o.a = (uint8) k;
 	o.imm = (uint16) imm; o.off = (uint16) off; o.aux = aux;
 	D.cnt[s_kcls[k]]++;
 }
@@ -324,6 +418,7 @@ static inline uint32 fxf_hash (uint32 key, uint32 ps) { return ((key ^ (ps * 0x2
 
 static inline uint32 fxf_pack (uint32 alt, uint32 b, uint32 s, uint32 d) { return alt | (b << 2) | (s << 3) | (d << 7); }
 
+static void fxf_flagpass (FxBlock *b);
 static FxBlock *fxf_store (const Dec &D, uint32 key, uint32 ps, uint32 pc, uint32 first, uint32 nfetch, uint32 ninstr, bool hasD, int clsD, bool slow)
 {
 	size_t sz = sizeof(FxBlock) + (D.n > 1 ? (D.n - 1) : 0) * sizeof(FxOp);
@@ -340,12 +435,48 @@ static FxBlock *fxf_store (const Dec &D, uint32 key, uint32 ps, uint32 pc, uint3
 	b->key = key; b->ps = (uint16) ps; b->pc = (uint16) pc; b->first = (uint8) first; b->nfetch = (uint16) nfetch;
 	b->nops = (uint16) D.n; b->ninstr = (uint16) ninstr; b->slow = slow ? 1 : 0; b->hasD = hasD ? 1 : 0; b->clsD = (uint8) clsD;
 	memcpy(b->cnt, D.cnt, sizeof b->cnt);
+	b->lkPc[0] = b->lkPc[1] = 0xffffffffu;
 	if (D.n)
 		memcpy(b->ops, D.ops, D.n * sizeof(FxOp));
+	fxf_flagpass(b);
+	// the end ops find their block (and its successor cache) through their own distance from it (in bytes)
+	for (int i = 0; i < D.n; i++)
+	{
+		if (b->ops[i].h == s_lab[K_END_SEQ] || b->ops[i].h == s_lab[K_END_J])
+			b->ops[i].off = (uint16) (offsetof(FxBlock, ops) + i * sizeof(FxOp));
+		if (b->ops[i].h == s_lab[K_LJMP])
+			b->noChain = 1;
+	}
 	uint32 h = fxf_hash(key, ps);
 	b->next = s_tab[h];
 	s_tab[h] = b;
 	return b;
+}
+
+// Dead-flag elimination: at the end of a block every flag is live (the next block, the reference and the CPU
+// read them); going backwards, an op only has to write the flags that a later op reads before another op
+// overwrites them. A block runs as a whole, so nothing can look at the flags in between.
+static void fxf_flagpass (FxBlock *b)
+{
+	uint32 live = 7;
+	for (int i = (int) b->nops - 1; i >= 0; i--)
+	{
+		FxOp &o = b->ops[i];
+		uint32 k = o.a, w = s_fw[k];
+		if (w)
+		{
+			uint32 need = live & w;
+			switch (s_vg[k])
+			{
+				case 3: o.h = s_lab[k - 7 + need]; break;
+				case 2: o.h = s_lab[k - 3 + (need & 3)]; break;
+				case 1: o.h = s_lab[k - 1 + (need & 1)]; break;
+				case 4: o.h = s_lab[k - 3 + ((need & 1) | ((need >> 1) & 2))]; break;
+			}
+			live &= ~w;
+		}
+		live |= s_fr[k];
+	}
 }
 
 // Decode the block that starts with the pipe byte at pc - 1, entered with the prefix state ps
@@ -385,7 +516,7 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 	};
 	// The delay slot instruction after a jump-like op, executed in prefix state st = (a2, b2, s2, d2).
 	// false (and nothing emitted): the block has to end before the jump.
-	auto delaySlot = [&](uint32 dpos, uint32 a2, uint32 b2, uint32 s2, uint32 d2) -> bool
+	auto delaySlot = [&](uint32 dpos, uint32 a2, uint32 b2, uint32 s2, uint32 d2, bool fold) -> bool
 	{
 		Ins I;
 		classify(code, ia0, dpos, a2, I);
@@ -433,7 +564,8 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 			default:
 				return false;
 		}
-		fxf_emit(D, K_DFETCH, 0, 0, 0, 0, 0, 0, 0);
+		if (!fold)
+			fxf_emit(D, K_DFETCH, 0, 0, 0, 0, 0, 0, 0);
 		if (k >= 0)
 		{
 			fxf_emit(D, k, dd, ss, nn, aux, imm, 0, 0);
@@ -455,7 +587,9 @@ static FxBlock *fxf_decode (uint32 pbr, uint32 pc, uint32 ps)
 		memcpy(c0, D.cnt, sizeof c0);
 		needPC(k, ss, nn, pos);
 		fxf_emit(D, k, dd, ss, nn, aux, imm, off, 0);
-		bool ok = consumes ? delaySlot(pos + len, 0, 0, 0, 0) : delaySlot(pos + len, alt, b, s, d);
+		// the jump-like ops (branches, LOOP, JMP, LJMP) account for the delay slot's first fetch themselves
+		bool fold = (k >= K_BRA && k <= K_LJMP);
+		bool ok = consumes ? delaySlot(pos + len, 0, 0, 0, 0, fold) : delaySlot(pos + len, alt, b, s, d, fold);
 		if (ok)
 		{
 			hasD = true;
@@ -691,7 +825,7 @@ static inline void fxf_pair (uint8 *p, uint32 vv, uint32 pm)
 	w = (uint16) ((w & ~vv) | (pm & vv));
 	memcpy(p, &w, 2);
 }
-static const uint16 s_pm[4] = { 0x0000, 0x00ff, 0xff00, 0xffff };
+
 
 #define PIPE_FROM_R15()	(GSU.vPipe = PRGBANK(R[15] - 1))
 
@@ -707,7 +841,7 @@ static inline void fxf_materialize (uint32 ps)
 	GSU.pvDreg = &GSU.avReg[(ps >> 7) & 15];
 }
 
-static uint32 fxf_exec (uint32 cyc, bool init)
+template <int MODE> static uint32 fxf_exec (uint32 cyc, bool init)
 {
 #define X(n) &&L_##n,
 	static const void *const labs[K_COUNT] = { FXK_LIST(X) };
@@ -719,16 +853,20 @@ static uint32 fxf_exec (uint32 cyc, bool init)
 	}
 
 	uint32 *const R = GSU.avReg;
-	const uint32 mode = GSU.vMode;
+	// one copy of this function per plot depth (MODE 0: 2 bits, 1: 4 bits (modes 1 and 2), 3: 8 bits); the blocks
+	// hold the labels of the copy that decoded them, so they are dropped when the depth changes (fxf_run)
+	const uint32 mode = MODE;
 	const uint32 cMem = GSU.vCostMem, cCache = GSU.vCostCache;
 	FxOp *o;
 	FxBlock *blk;
 	uint32 base, pc, key, pbr, add, ps;
+	bool pdef;
 
 	// the prefix state (ALT bits, B, source and destination register) lives in ps while blocks run
 	ps = fxf_derive();
 
 next:
+	pdef = false;
 	if (cyc >= fx_limit)
 		goto done_m;
 	pc = R[15] & 0xffff;
@@ -750,6 +888,61 @@ next:
 #endif
 		goto slow1;
 	}
+	goto have;
+
+	// Coming from the end of a block: the pipe byte (the byte at R15 - 1) is not stored while blocks chain,
+	// it is written when control leaves this function or goes to the reference (pdef).
+nextc:
+	pdef = true;
+	{
+		FxBlock *self = (FxBlock *) ((char *) o - o->off);
+		pc = R[15] & 0xffff;
+		if (self->lkPc[0] == pc)
+			blk = self->lkBlk[0];
+		else if (self->lkPc[1] == pc)
+			blk = self->lkBlk[1];
+		else
+		{
+			if (cyc >= fx_limit)
+			{
+				PIPE_FROM_R15();
+				goto done_m;
+			}
+			pbr = GSU.vPrgBankReg;
+			key = (pbr << 16) | pc;
+			uint32 r0 = s_resets;
+			blk = s_tab[fxf_hash(key, ps)];
+			while (blk && (blk->key != key || blk->ps != ps))
+				blk = blk->next;
+			if (!blk)
+			{
+				blk = fxf_decode(pbr, pc, ps);
+				if (!blk)
+				{
+					PIPE_FROM_R15();
+					goto slow1;
+				}
+			}
+			if (blk->slow)
+			{
+				PIPE_FROM_R15();
+				goto slow1;
+			}
+			// the successor is in the block's own bank unless it ends with LJMP (no cache for those)
+			if (r0 == s_resets && !self->noChain && pbr == (self->key >> 16))
+			{
+				uint32 i = self->lkNext;
+				self->lkPc[i] = pc;
+				self->lkBlk[i] = blk;
+				self->lkNext = (uint8) (i ^ 1);
+			}
+		}
+	}
+#ifdef FX_SHADOW
+	pbr = GSU.vPrgBankReg;
+	if (PRGBANK(R[15] - 1) != blk->first || blk->key != ((pbr << 16) | pc)) { fprintf(stderr, "CHAIN blk %02x:%04x wrong\n", (unsigned) pbr, pc); abort(); }
+#endif
+have:
 	if (blk->epoch == s_epoch)
 	{
 #ifdef FX_SHADOW
@@ -778,11 +971,17 @@ next:
 		}
 #endif
 		if (cyc + blk->fit >= fx_limit)
+		{
+			if (pdef) PIPE_FROM_R15();
 			goto tail;
+		}
 		add = blk->cost;
 	}
 	else if (!fxf_prepare(blk, cyc, &add))
+	{
+		if (pdef) PIPE_FROM_R15();
 		goto tail;
+	}
 	cyc += add;
 #ifdef FX_SHADOW
 	if (sh_trace) { fprintf(stderr, "F blk %02x:%04x pipe %02x cyc %u -> %u nops %u ninstr %u R0-3 %x %x %x %x bytes", (unsigned) pbr, pc, GSU.vPipe, cyc - add, cyc, blk->nops, blk->ninstr, R[0], R[1], R[2], R[3]); for (int i = -1; i < 40; i++) fprintf(stderr, " %02x", PRGBANK(pc + i)); fprintf(stderr, "\n"); }
@@ -852,14 +1051,12 @@ done:
 
 L_END_SEQ:
 	R[15] = base + o->aux;
-	PIPE_FROM_R15();
 	ps = o->imm;
-	goto next;
+	goto nextc;
 L_END_J:
 	R[15] += 1;
-	PIPE_FROM_R15();
 	ps = o->imm;
-	goto next;
+	goto nextc;
 
 L_PC:
 	R[15] = base + o->off;
@@ -867,19 +1064,21 @@ L_PC:
 L_READR14:
 	GSU.vRomBuffer = ROM(R[14]);
 	NEXT;
+#define DFETCH_BODY \
+	do { \
+		uint32 fca = USEX16(R[15] - GSU.vCacheBaseReg); \
+		if (fca < fx_cacheLimit) \
+		{ \
+			uint32 li = fca >> 4; \
+			if (!fx_lineOk[li]) { fx_lineOk[li] = 1; cyc += cMem << 4; } \
+			cyc += cCache; \
+		} \
+		else \
+			cyc += cMem; \
+	} while (0)
 L_DFETCH:
-	{
-		// the first fetch of the delay slot instruction: from the address in R15 (target or fall through)
-		uint32 fca = USEX16(R[15] - GSU.vCacheBaseReg);
-		if (fca < fx_cacheLimit)
-		{
-			uint32 li = fca >> 4;
-			if (!fx_lineOk[li]) { fx_lineOk[li] = 1; cyc += cMem << 4; }
-			cyc += cCache;
-		}
-		else
-			cyc += cMem;
-	}
+	// the first fetch of the delay slot instruction: from the address in R15 (target or fall through)
+	DFETCH_BODY;
 	NEXT;
 
 L_STOP:
@@ -909,17 +1108,28 @@ L_CACHE:
 	}
 	NEXT;
 
+// The flag writes are by variant: M has bit 0 = sign/zero, bit 1 = carry, bit 2 = overflow (MOVES: bit 1 = overflow)
+// and only the writes in M are made. Every variant is generated from one body.
+#define FL_SZ(M, v)	do { if ((M) & 1) { GSU.vSign = (v); GSU.vZero = (v); } } while (0)
+#define FL_C(M, v)	do { if ((M) & 2) GSU.vCarry = (v); } while (0)
+#define FL_OV(M, v)	do { if ((M) & 4) GSU.vOverflow = (v); } while (0)
+#define GEN1(B) B(0) B(1)
+#define GEN2(B) B(0) B(1) B(2) B(3)
+#define GEN3(B) B(0) B(1) B(2) B(3) B(4) B(5) B(6) B(7)
+
 // unary group
-L_LSR:  { uint32 sv = S; GSU.vCarry = sv & 1; uint32 v = USEX16(sv) >> 1; Dst = v; SZ(v); } NEXT;
-L_ROL:  { uint32 sv = S; uint32 v = USEX16((sv << 1) + GSU.vCarry); GSU.vCarry = (sv >> 15) & 1; Dst = v; SZ(v); } NEXT;
-L_ASR:  { uint32 sv = S; GSU.vCarry = sv & 1; uint32 v = (uint32) (SEX16(sv) >> 1); Dst = v; SZ(v); } NEXT;
-L_DIV2: { uint32 sv = S; int32 s = SEX16(sv); GSU.vCarry = s & 1; uint32 v; if (s == -1) v = 0; else v = (uint32) (s >> 1); Dst = v; SZ(v); } NEXT;
-L_ROR:  { uint32 sv = S; uint32 v = (USEX16(sv) >> 1) | (GSU.vCarry << 15); GSU.vCarry = sv & 1; Dst = v; SZ(v); } NEXT;
-L_SEX:  { uint32 v = (uint32) SEX8(S); Dst = v; SZ(v); } NEXT;
-L_LOB:  { uint32 v = USEX8(S); Dst = v; GSU.vSign = v << 8; GSU.vZero = v << 8; } NEXT;
-L_HIB:  { uint32 v = USEX8(S >> 8); Dst = v; GSU.vSign = v << 8; GSU.vZero = v << 8; } NEXT;
-L_SWAP: { uint8 c = (uint8) S; uint8 d = (uint8) (S >> 8); uint32 v = (((uint32) c) << 8) | ((uint32) d); Dst = v; SZ(v); } NEXT;
-L_NOT:  { uint32 v = ~S; Dst = v; SZ(v); } NEXT;
+#define H_LSR(M)  L_LSR_##M:  { uint32 sv = S; FL_C(M, sv & 1); uint32 v = USEX16(sv) >> 1; Dst = v; FL_SZ(M, v); } NEXT;
+#define H_ROL(M)  L_ROL_##M:  { uint32 sv = S; uint32 v = USEX16((sv << 1) + GSU.vCarry); FL_C(M, (sv >> 15) & 1); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_ASR(M)  L_ASR_##M:  { uint32 sv = S; FL_C(M, sv & 1); uint32 v = (uint32) (SEX16(sv) >> 1); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_DIV2(M) L_DIV2_##M: { uint32 sv = S; int32 s = SEX16(sv); FL_C(M, s & 1); uint32 v; if (s == -1) v = 0; else v = (uint32) (s >> 1); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_ROR(M)  L_ROR_##M:  { uint32 sv = S; uint32 v = (USEX16(sv) >> 1) | (GSU.vCarry << 15); FL_C(M, sv & 1); Dst = v; FL_SZ(M, v); } NEXT;
+GEN2(H_LSR) GEN2(H_ROL) GEN2(H_ASR) GEN2(H_DIV2) GEN2(H_ROR)
+#define H_SEX(M)  L_SEX_##M:  { uint32 v = (uint32) SEX8(S); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_SWAP(M) L_SWAP_##M: { uint8 c = (uint8) S; uint8 d = (uint8) (S >> 8); uint32 v = (((uint32) c) << 8) | ((uint32) d); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_NOT(M)  L_NOT_##M:  { uint32 v = ~S; Dst = v; FL_SZ(M, v); } NEXT;
+#define H_LOB(M)  L_LOB_##M:  { uint32 v = USEX8(S); Dst = v; FL_SZ(M, v << 8); } NEXT;
+#define H_HIB(M)  L_HIB_##M:  { uint32 v = USEX8(S >> 8); Dst = v; FL_SZ(M, v << 8); } NEXT;
+GEN1(H_SEX) GEN1(H_SWAP) GEN1(H_NOT) GEN1(H_LOB) GEN1(H_HIB)
 L_MERGE:
 	{
 		uint32 v = (R[7] & 0xff00) | ((R[8] & 0xff00) >> 8);
@@ -930,142 +1140,66 @@ L_MERGE:
 		GSU.vCarry = (v & 0xe0e0) != 0;
 	}
 	NEXT;
-L_FMULT:
-	{
-		uint32 c = (uint32) (SEX16(S) * SEX16(R[6]));
-		uint32 v = c >> 16;
-		Dst = v;
-		SZ(v);
-		GSU.vCarry = (c >> 15) & 1;
-	}
-	NEXT;
-L_LMULT:
-	{
-		uint32 c = (uint32) (SEX16(S) * SEX16(R[6]));
-		R[4] = c;
-		uint32 v = c >> 16;
-		Dst = v;
-		SZ(v);
-		GSU.vCarry = (R[4] >> 15) & 1;
-	}
-	NEXT;
+#define H_FMULT(M) L_FMULT_##M: \
+	{ uint32 c = (uint32) (SEX16(S) * SEX16(R[6])); uint32 v = c >> 16; Dst = v; FL_SZ(M, v); FL_C(M, (c >> 15) & 1); } NEXT;
+#define H_LMULT(M) L_LMULT_##M: \
+	{ uint32 c = (uint32) (SEX16(S) * SEX16(R[6])); R[4] = c; uint32 v = c >> 16; Dst = v; FL_SZ(M, v); FL_C(M, (R[4] >> 15) & 1); } NEXT;
+GEN2(H_FMULT) GEN2(H_LMULT)
 
 // register operand group
-L_ADD:
-	{
-		uint32 sv = S, nv = NR;
-		int32 s = SUSEX16(sv) + SUSEX16(nv);
-		GSU.vCarry = s >= 0x10000;
-		GSU.vOverflow = ~(sv ^ nv) & (nv ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_ADC:
-	{
-		uint32 sv = S, nv = NR;
-		int32 s = SUSEX16(sv) + SUSEX16(nv) + SEX16(GSU.vCarry);
-		GSU.vCarry = s >= 0x10000;
-		GSU.vOverflow = ~(sv ^ nv) & (nv ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_SUB:
-	{
-		uint32 sv = S, nv = NR;
-		int32 s = SUSEX16(sv) - SUSEX16(nv);
-		GSU.vCarry = s >= 0;
-		GSU.vOverflow = (sv ^ nv) & (sv ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_SBC:
-	{
-		uint32 sv = S, nv = NR;
-		int32 s = SUSEX16(sv) - SUSEX16(nv) - (SUSEX16(GSU.vCarry ^ 1));
-		GSU.vCarry = s >= 0;
-		GSU.vOverflow = (sv ^ nv) & (sv ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_CMP:
-	{
-		uint32 sv = S, nv = NR;
-		int32 s = SUSEX16(sv) - SUSEX16(nv);
-		GSU.vCarry = s >= 0;
-		GSU.vOverflow = (sv ^ nv) & (sv ^ s) & 0x8000;
-		SZ(s);
-	}
-	NEXT;
-L_AND:  { uint32 v = S & NR;  Dst = v; SZ(v); } NEXT;
-L_BIC:  { uint32 v = S & ~NR; Dst = v; SZ(v); } NEXT;
-L_OR:   { uint32 v = S | NR;  Dst = v; SZ(v); } NEXT;
-L_XOR:  { uint32 v = S ^ NR;  Dst = v; SZ(v); } NEXT;
-L_MULT:  { uint32 v = (uint32) (SEX8(S) * SEX8(NR)); Dst = v; SZ(v); } NEXT;
-L_UMULT: { uint32 v = USEX8(S) * USEX8(NR); Dst = v; SZ(v); } NEXT;
+#define H_ADD(M) L_ADD_##M: \
+	{ uint32 sv = S, nv = NR; int32 s = SUSEX16(sv) + SUSEX16(nv); \
+	  FL_C(M, s >= 0x10000); FL_OV(M, ~(sv ^ nv) & (nv ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+#define H_ADC(M) L_ADC_##M: \
+	{ uint32 sv = S, nv = NR; int32 s = SUSEX16(sv) + SUSEX16(nv) + SEX16(GSU.vCarry); \
+	  FL_C(M, s >= 0x10000); FL_OV(M, ~(sv ^ nv) & (nv ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+#define H_SUB(M) L_SUB_##M: \
+	{ uint32 sv = S, nv = NR; int32 s = SUSEX16(sv) - SUSEX16(nv); \
+	  FL_C(M, s >= 0); FL_OV(M, (sv ^ nv) & (sv ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+#define H_SBC(M) L_SBC_##M: \
+	{ uint32 sv = S, nv = NR; int32 s = SUSEX16(sv) - SUSEX16(nv) - (SUSEX16(GSU.vCarry ^ 1)); \
+	  FL_C(M, s >= 0); FL_OV(M, (sv ^ nv) & (sv ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+#define H_CMP(M) L_CMP_##M: \
+	{ uint32 sv = S, nv = NR; int32 s = SUSEX16(sv) - SUSEX16(nv); \
+	  FL_C(M, s >= 0); FL_OV(M, (sv ^ nv) & (sv ^ s) & 0x8000); FL_SZ(M, s); } NEXT;
+GEN3(H_ADD) GEN3(H_ADC) GEN3(H_SUB) GEN3(H_SBC) GEN3(H_CMP)
+#define H_AND(M)  L_AND_##M:  { uint32 v = S & NR;  Dst = v; FL_SZ(M, v); } NEXT;
+#define H_BIC(M)  L_BIC_##M:  { uint32 v = S & ~NR; Dst = v; FL_SZ(M, v); } NEXT;
+#define H_OR(M)   L_OR_##M:   { uint32 v = S | NR;  Dst = v; FL_SZ(M, v); } NEXT;
+#define H_XOR(M)  L_XOR_##M:  { uint32 v = S ^ NR;  Dst = v; FL_SZ(M, v); } NEXT;
+#define H_MULT(M)  L_MULT_##M:  { uint32 v = (uint32) (SEX8(S) * SEX8(NR)); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_UMULT(M) L_UMULT_##M: { uint32 v = USEX8(S) * USEX8(NR); Dst = v; FL_SZ(M, v); } NEXT;
+GEN1(H_AND) GEN1(H_BIC) GEN1(H_OR) GEN1(H_XOR) GEN1(H_MULT) GEN1(H_UMULT)
 
 // immediate group (#n in o->imm)
-L_ADDI:
-	{
-		uint32 sv = S; int32 imm = o->imm;
-		int32 s = SUSEX16(sv) + imm;
-		GSU.vCarry = s >= 0x10000;
-		GSU.vOverflow = ~(sv ^ imm) & (imm ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_ADCI:
-	{
-		uint32 sv = S; int32 imm = o->imm;
-		int32 s = SUSEX16(sv) + imm + SEX16(GSU.vCarry);
-		GSU.vCarry = s >= 0x10000;
-		GSU.vOverflow = ~(sv ^ imm) & (imm ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_SUBI:
-	{
-		uint32 sv = S; int32 imm = o->imm;
-		int32 s = SUSEX16(sv) - imm;
-		GSU.vCarry = s >= 0;
-		GSU.vOverflow = (sv ^ imm) & (sv ^ s) & 0x8000;
-		SZ(s);
-		Dst = s;
-	}
-	NEXT;
-L_ANDI:  { uint32 v = S & o->imm;  Dst = v; SZ(v); } NEXT;
-L_BICI:  { uint32 v = S & ~(uint32) o->imm; Dst = v; SZ(v); } NEXT;
-L_ORI:   { uint32 v = S | o->imm;  Dst = v; SZ(v); } NEXT;
-L_XORI:  { uint32 v = S ^ o->imm;  Dst = v; SZ(v); } NEXT;
-L_MULTI:  { uint32 v = (uint32) (SEX8(S) * ((int32) o->imm)); Dst = v; SZ(v); } NEXT;
-L_UMULTI: { uint32 v = USEX8(S) * ((uint32) o->imm); Dst = v; SZ(v); } NEXT;
+#define H_ADDI(M) L_ADDI_##M: \
+	{ uint32 sv = S; int32 imm = o->imm; int32 s = SUSEX16(sv) + imm; \
+	  FL_C(M, s >= 0x10000); FL_OV(M, ~(sv ^ imm) & (imm ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+#define H_ADCI(M) L_ADCI_##M: \
+	{ uint32 sv = S; int32 imm = o->imm; int32 s = SUSEX16(sv) + imm + SEX16(GSU.vCarry); \
+	  FL_C(M, s >= 0x10000); FL_OV(M, ~(sv ^ imm) & (imm ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+#define H_SUBI(M) L_SUBI_##M: \
+	{ uint32 sv = S; int32 imm = o->imm; int32 s = SUSEX16(sv) - imm; \
+	  FL_C(M, s >= 0); FL_OV(M, (sv ^ imm) & (sv ^ s) & 0x8000); FL_SZ(M, s); Dst = s; } NEXT;
+GEN3(H_ADDI) GEN3(H_ADCI) GEN3(H_SUBI)
+#define H_ANDI(M)  L_ANDI_##M:  { uint32 v = S & o->imm;  Dst = v; FL_SZ(M, v); } NEXT;
+#define H_BICI(M)  L_BICI_##M:  { uint32 v = S & ~(uint32) o->imm; Dst = v; FL_SZ(M, v); } NEXT;
+#define H_ORI(M)   L_ORI_##M:   { uint32 v = S | o->imm;  Dst = v; FL_SZ(M, v); } NEXT;
+#define H_XORI(M)  L_XORI_##M:  { uint32 v = S ^ o->imm;  Dst = v; FL_SZ(M, v); } NEXT;
+#define H_MULTI(M)  L_MULTI_##M:  { uint32 v = (uint32) (SEX8(S) * ((int32) o->imm)); Dst = v; FL_SZ(M, v); } NEXT;
+#define H_UMULTI(M) L_UMULTI_##M: { uint32 v = USEX8(S) * ((uint32) o->imm); Dst = v; FL_SZ(M, v); } NEXT;
+GEN1(H_ANDI) GEN1(H_BICI) GEN1(H_ORI) GEN1(H_XORI) GEN1(H_MULTI) GEN1(H_UMULTI)
 
 L_MOVE:
 	NR = S;
 	NEXT;
-L_MOVES:
-	{
-		uint32 v = NR;
-		Dst = v;
-		GSU.vOverflow = (v & 0x80) << 16;
-		SZ(v);
-	}
-	NEXT;
-L_INC:
-	NR += 1;
-	GSU.vSign = NR;
-	GSU.vZero = NR;
-	NEXT;
-L_DEC:
-	NR -= 1;
-	GSU.vSign = NR;
-	GSU.vZero = NR;
-	NEXT;
+// MOVES: M bit 0 = sign/zero, bit 1 = overflow
+#define H_MOVES(M) L_MOVES_##M: \
+	{ uint32 v = NR; Dst = v; if ((M) & 2) GSU.vOverflow = (v & 0x80) << 16; FL_SZ(M, v); } NEXT;
+GEN2(H_MOVES)
+#define H_INC(M) L_INC_##M: { uint32 v = NR + 1; NR = v; FL_SZ(M, v); } NEXT;
+#define H_DEC(M) L_DEC_##M: { uint32 v = NR - 1; NR = v; FL_SZ(M, v); } NEXT;
+GEN1(H_INC) GEN1(H_DEC)
 L_LINK:
 	R[11] = base + o->aux;
 	NEXT;
@@ -1230,17 +1364,20 @@ L_PLOT:
 				if (!(GSU.vPlotOptionReg & PLOT_FREEZEHIGH) && !c) NEXT;
 			}
 		}
+		// four read-modify-write pairs (one per two planes); s_spread[c] * v has the pixel's bit in the plane bytes
+		// whose colour bit is set
 		uint8 *a = GSU.apvScreen[y >> 3] + GSU.x[x >> 3] + ((y & 7) << 1);
-		uint32 v = 128 >> (x & 7);
+		uint32 v = 128u >> (x & 7);
 		uint32 vv = v | (v << 8);
-		fxf_pair(a, vv, s_pm[c & 3]);
+		uint64 P = s_spread[c] * v;
+		fxf_pair(a, vv, (uint32) P);
 		if (mode != 0)
 		{
-			fxf_pair(a + 0x10, vv, s_pm[(c >> 2) & 3]);
+			fxf_pair(a + 0x10, vv, (uint32) (P >> 16));
 			if (mode == 3)
 			{
-				fxf_pair(a + 0x20, vv, s_pm[(c >> 4) & 3]);
-				fxf_pair(a + 0x30, vv, s_pm[(c >> 6) & 3]);
+				fxf_pair(a + 0x20, vv, (uint32) (P >> 32));
+				fxf_pair(a + 0x30, vv, (uint32) (P >> 48));
 			}
 		}
 	}
@@ -1280,26 +1417,28 @@ L_RPIX:
 	NEXT;
 
 // control flow: they set R15 (the delay slot op, DFETCH and END_J follow)
-L_BRA: R[15] = base + o->aux; NEXT;
-L_BGE: R[15] = ((TST_S != 0) == (TST_OV != 0)) ? base + o->aux : base + o->off; NEXT;
-L_BLT: R[15] = ((TST_S != 0) != (TST_OV != 0)) ? base + o->aux : base + o->off; NEXT;
-L_BNE: R[15] = (!TST_Z) ? base + o->aux : base + o->off; NEXT;
-L_BEQ: R[15] = (TST_Z) ? base + o->aux : base + o->off; NEXT;
-L_BPL: R[15] = (!TST_S) ? base + o->aux : base + o->off; NEXT;
-L_BMI: R[15] = (TST_S) ? base + o->aux : base + o->off; NEXT;
-L_BCC: R[15] = (!TST_CY) ? base + o->aux : base + o->off; NEXT;
-L_BCS: R[15] = (TST_CY) ? base + o->aux : base + o->off; NEXT;
-L_BVC: R[15] = (!TST_OV) ? base + o->aux : base + o->off; NEXT;
-L_BVS: R[15] = (TST_OV) ? base + o->aux : base + o->off; NEXT;
+L_BRA: R[15] = base + o->aux; DFETCH_BODY; NEXT;
+L_BGE: R[15] = ((TST_S != 0) == (TST_OV != 0)) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BLT: R[15] = ((TST_S != 0) != (TST_OV != 0)) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BNE: R[15] = (!TST_Z) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BEQ: R[15] = (TST_Z) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BPL: R[15] = (!TST_S) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BMI: R[15] = (TST_S) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BCC: R[15] = (!TST_CY) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BCS: R[15] = (TST_CY) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BVC: R[15] = (!TST_OV) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
+L_BVS: R[15] = (TST_OV) ? base + o->aux : base + o->off; DFETCH_BODY; NEXT;
 L_LOOP:
 	GSU.vSign = GSU.vZero = --R[12];
 	if ((uint16) R[12] != 0)
 		R[15] = R[13];
 	else
 		R[15] = base + o->aux;
+	DFETCH_BODY;
 	NEXT;
 L_JMP:
 	R[15] = NR;
+	DFETCH_BODY;
 	NEXT;
 L_LJMP:
 	{
@@ -1314,6 +1453,7 @@ L_LJMP:
 		s_epoch++;
 		R[15] = t;
 	}
+	DFETCH_BODY;
 	NEXT;
 }
 
@@ -1347,17 +1487,26 @@ static void fxf_dumpStats (void)
 static uint32 fxf_run (uint32 nInstructions)
 {
 	if (!s_ready)
-	{
 		fxf_init();
-		fxf_exec(0, true);
+	{
+		static int s_depth = -1;
+		int d = (GSU.vMode == 0) ? 0 : (GSU.vMode == 3) ? 3 : 1;
+		if (d != s_depth)
+		{
+			if (s_depth >= 0)
+				fx_blocksReset();
+			s_depth = d;
+			if (d == 0) fxf_exec<0>(0, true); else if (d == 3) fxf_exec<3>(0, true); else fxf_exec<1>(0, true);
+		}
 	}
 #ifdef FX_STATS
 	static bool sreg;
 	if (!sreg) { sreg = true; atexit(fxf_dumpStats); }
 #endif
 	fx_cacheLimit = GSU.bCacheActive ? 512 : 0;
-	for (int i = 0; i < 32; i++)
-		fx_lineOk[i] = (GSU.vCacheMask >> i) & 1;
+	// the line flags, one byte each, from the stored mask (eight at a time)
+	for (int q = 0; q < 4; q++)
+		memcpy(fx_lineOk + 8 * q, &s_unpack[(GSU.vCacheMask >> (8 * q)) & 0xff], 8);
 	fxf_constants();
 	// a new epoch when anything the cached costs depend on is not what the last run left
 	bool same = GSU.vCacheMask == s_lastMask && GSU.vCacheBaseReg == s_lastCBR && fx_cacheLimit == s_lastLim;
@@ -1368,11 +1517,15 @@ static uint32 fxf_run (uint32 nInstructions)
 		s_epoch++;
 	GSU.vCycles = 0;
 	fx_limit = TF(G) ? nInstructions : 0;
-	uint32 cyc = fxf_exec(0, false);
+	uint32 cyc = GSU.vMode == 0 ? fxf_exec<0>(0, false) : GSU.vMode == 3 ? fxf_exec<3>(0, false) : fxf_exec<1>(0, false);
 	GSU.vCycles = cyc;
 	uint32 m = 0;
-	for (int i = 0; i < 32; i++)
-		m |= (uint32) fx_lineOk[i] << i;
+	for (int q = 0; q < 4; q++)
+	{
+		uint64 w;
+		memcpy(&w, fx_lineOk + 8 * q, 8);
+		m |= (uint32) ((w * 0x0102040810204080ull) >> 56) << (8 * q);
+	}
 	GSU.vCacheMask = m;
 	s_lastMask = m; s_lastCBR = GSU.vCacheBaseReg; s_lastLim = fx_cacheLimit;
 	for (int i = 0; i < DC_N; i++)

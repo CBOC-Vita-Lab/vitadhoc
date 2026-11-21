@@ -1644,8 +1644,11 @@ def t_gb(S):
         S.note("no testrom/gblocal.gb (make -C testrom RGBDS=... gb): skipped")
         return
     rom = open(GBLINK, "rb").read()
+    # (the copy named .gbc is a plain Game Boy image: the header decides what
+    # a game is now, so the per-game type says "Game Boy Color" for it)
     extra = {"roms/gblocal.gb": rom, "roms/gblocal.gbc": rom,
-             "roms/gblocal-blue.gb": rom}
+             "roms/gblocal-blue.gb": rom,
+             "gb_override.txt": "gbc  gblocal.gbc\n"}
     at = S.boot_refresh("gblocal.gb", extra)
     # ---- a copy; A on the player's pad makes his machine the master ----------
     script = """
@@ -1845,7 +1848,10 @@ def t_gb_mixed(S):
     cgb = open(paths[1], "rb").read()
     fast = open(paths[2], "rb").read()
     extra = {"roms/gblocal.gb": plain, "roms/gblocal.gbc": plain,
-             "roms/gblocal-cgb.gbc": cgb, "roms/gblocal-cgbfast.gbc": fast}
+             "roms/gblocal-cgb.gbc": cgb, "roms/gblocal-cgbfast.gbc": fast,
+             # (a plain Game Boy image named .gbc: the header decides, so the
+             # per-game type makes it the Color game this case is about)
+             "gb_override.txt": "gbc  gblocal.gbc\n"}
     # (player's game, partner's game, hardware of each: 1 = GB, 2 = GBC)
     cases = [("gblocal.gb", "gblocal-cgb.gbc", "1/2", "Game Boy with a Color"),
              ("gblocal-cgb.gbc", "gblocal.gb", "2/1", "Color with a Game Boy"),

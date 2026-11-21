@@ -1861,43 +1861,35 @@ unsigned char *YM2413GetContextPtr(void)
 
 /* CBOC-Vita (H1): the context is saved and loaded as one block, so a state from another console (a joiner loads the host's) or from a
    damaged file arrives here unchecked, and several of its fields index tables or bound loops (eg_rate_* by ar/dr/rr + ksr, eg_inc by
-   eg_sel_*, sin_tab by wavetable, lfo_am_table by lfo_am_cnt, the eg_timer loop by eg_timer_overflow). YM2413ContextKeep() is called
-   before the load and YM2413ContextCheck() after it:
-   - what the chip's own setup computed (clock, rate, tables, increments, overflow) is put back: it never belongs to the saved game;
-   - counters are held to their ranges, and rates, shifts, selects and the wave select to what the tables allow: a value the chip
-     itself can hold is never changed (checked by the load proof on every Master System test game). */
+   eg_sel_*, sin_tab by wavetable, lfo_am_table by lfo_am_cnt, the eg_timer and noise loops by their increments). YM2413ContextKeep() is
+   called before the load and YM2413ContextCheck() after it. A value the chip itself can hold is never changed (the load proof on every
+   Master System test game and the link tests compare the state before and after): counters and table indexes are held to what the
+   tables allow, and the few setup values that bound a loop (the envelope timer's overflow and step, the LFO and noise steps) are put
+   back from the running chip only when the loaded one is outside the range the chip's own setup can produce. The rest of the setup
+   (clock, rate, the frequency table) is data and is kept as loaded: it is the saved game's, as before. */
 static struct
 {
-  double clock;
-  int rate;
-  UINT32 eg_timer_add, eg_timer_overflow, lfo_am_inc, lfo_pm_inc, noise_f;
-  UINT32 fn_tab[1024];
+  UINT32 eg_timer_add, eg_timer_overflow, lfo_am_inc, noise_f;
 } ym2413_keep;
 
 void YM2413ContextKeep(void)
 {
-  ym2413_keep.clock = ym2413.clock;
-  ym2413_keep.rate = ym2413.rate;
   ym2413_keep.eg_timer_add = ym2413.eg_timer_add;
   ym2413_keep.eg_timer_overflow = ym2413.eg_timer_overflow;
   ym2413_keep.lfo_am_inc = ym2413.lfo_am_inc;
-  ym2413_keep.lfo_pm_inc = ym2413.lfo_pm_inc;
   ym2413_keep.noise_f = ym2413.noise_f;
-  memcpy(ym2413_keep.fn_tab, ym2413.fn_tab, sizeof(ym2413.fn_tab));
 }
 
 void YM2413ContextCheck(void)
 {
   int c, s;
 
-  ym2413.clock = ym2413_keep.clock;
-  ym2413.rate = ym2413_keep.rate;
-  ym2413.eg_timer_add = ym2413_keep.eg_timer_add;
-  ym2413.eg_timer_overflow = ym2413_keep.eg_timer_overflow;
-  ym2413.lfo_am_inc = ym2413_keep.lfo_am_inc;
-  ym2413.lfo_pm_inc = ym2413_keep.lfo_pm_inc;
-  ym2413.noise_f = ym2413_keep.noise_f;
-  memcpy(ym2413.fn_tab, ym2413_keep.fn_tab, sizeof(ym2413.fn_tab));
+  /* loop bounds: the envelope timer runs eg_timer_add / eg_timer_overflow steps per sample (about 1.1 for the chip's clock and rate), the
+     noise register eg noise_f >> FREQ_SH shifts, the LFO index is lfo_am_cnt >> LFO_SH of 210 entries */
+  if (!ym2413.eg_timer_overflow) ym2413.eg_timer_overflow = ym2413_keep.eg_timer_overflow;
+  if (ym2413.eg_timer_overflow && ym2413.eg_timer_add > 16 * ym2413.eg_timer_overflow) ym2413.eg_timer_add = ym2413_keep.eg_timer_add;
+  if (ym2413.lfo_am_inc >= (LFO_AM_TAB_ELEMENTS<<LFO_SH)) ym2413.lfo_am_inc = ym2413_keep.lfo_am_inc;
+  if (ym2413.noise_f > (16<<FREQ_SH)) ym2413.noise_f = ym2413_keep.noise_f;
 
   if (ym2413.eg_timer_overflow)
     ym2413.eg_timer %= ym2413.eg_timer_overflow;

@@ -86,6 +86,7 @@ int main(int argc, char **argv)
 		else if (a == "--warm" && i + 1 < argc) warm = atoi(argv[++i]);
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
 		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--base" && i + 1 < argc) sf_base_idx = (size_t)atoi(argv[++i]);
 		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
@@ -100,7 +101,7 @@ int main(int argc, char **argv)
 	if (!retro_load_game(&gi)) { fprintf(stderr, "retro_load_game failed\n"); return 2; }
 	if (proof)
 	{
-		int f = sf_proof("gba", [&]() { std::vector<uint8_t> b(retro_serialize_size()); if (!retro_serialize(b.data(), b.size())) b.clear(); return b; }, [&](const std::vector<uint8_t> &b) { return retro_unserialize(b.data(), b.size()) ? 0 : 1; }, [&](int n, sf_rng *r) { g_pad_rng = r; run_frames(n); }, seed);
+		int f = sf_proof("gba", [&]() { std::vector<uint8_t> b(retro_serialize_size()); if (!retro_serialize(b.data(), b.size())) b.clear(); return b; }, [&](const std::vector<uint8_t> &b) { return retro_unserialize(b.data(), b.size()) ? 0 : 1; }, [&](int n, sf_rng *r) { g_pad_rng = r; run_frames(n); }, seed, 60, 2);
 		printf(f ? "STATEFUZZ proof FAILED (%d)\n" : "STATEFUZZ proof OK: every state loads and runs on exactly as the uninterrupted machine\n", f);
 		return f ? 1 : 0;
 	}
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
+			std::vector<uint8_t> b = sf_read_case(c, bases[sf_base_idx < bases.size() ? sf_base_idx : 0]);
 			sf_arm(b.data(), b.size(), iters++);
 			bool r = retro_unserialize(b.data(), b.size());
 			if (r) { run_frames(frames); ok++; } else refused++;

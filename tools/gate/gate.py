@@ -315,6 +315,13 @@ STEPS = [
          "AHEAD_FRAMES=300 PROOF_FRAMES=\"97 60\" MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/ahead_check.sh",
          "default", {"md"}, inputs=["md/", "playerkit/src/pk_ahead.h"], deps=["build-md-twin"], parse="pass_fail", env_req="GATE_MD_ROMS", timeout=7200),
 
+    # state loaders (H1): every core's loader against damaged states with repaired checksums (ASan + UBSan, a watchdog for hangs) and the
+    # load proof (a state loaded at N and run on equals the uninterrupted run); short budget here, longer by STATEFUZZ_SECONDS
+    Step("state-fuzz", "state loaders under ASan + UBSan: damaged states with repaired checksums neither crash nor hang, and a loaded state runs on as the uninterrupted machine (tools/statefuzz; GATE_MD_ROMS, GATE_MD_SMS_ROMS, GATE_SNES_ROMS, GATE_NES_ROMS, GATE_WS_ROM, GATE_GBA_ROMS)",
+         "bash tools/statefuzz/statefuzz.sh {out}/state-fuzz 12", "default", {"state", "security"},
+         inputs=["tools/statefuzz/", "md/", "snes/", "nes/", "wswan/", "gpsp/"], requires=CC + CXX, group=GROUP_MAKE, parse="pass_fail",
+         env_opt=["GATE_MD_ROMS", "GATE_MD_SMS_ROMS", "GATE_SNES_ROMS", "GATE_NES_ROMS", "GATE_WS_ROM", "GATE_GBA_ROMS"], timeout=7200),
+
     # ---- default: the host app, cores, audio, cover art, cheats, library ----
     Step("unit-host", "host unit suites: ~40 C suites under ASan and UBSan (run_host_tests.py)",
          "python3 gpsp/tools/run_host_tests.py --json {out}/host-tests.json", "default",

@@ -62,7 +62,8 @@ static void disc(const char *file, bool audio_exact, bool has_audio_files = true
 	CHECK(r == 0, "%s: load failed %d (%s)", file, r, err);
 	if (r) return;
 	int s, e, t;
-	CHECK(md_host_is_cd() == 1, "%s: is_cd", file); if (getenv("CDT_V")) printf("%s: %s\n", file, md_host_cd_info());
+	CHECK(md_host_is_cd() == 1, "%s: is_cd", file);
+	{ uint8_t h[512]; CHECK(md_host_cd_header(h, sizeof h) == 0 && memcmp(h, "SEGADISCSYSTEM  ", 16) == 0 && memcmp(h + 0x100, "SEGA", 4) == 0, "%s: header for RetroAchievements", file); } if (getenv("CDT_V")) printf("%s: %s\n", file, md_host_cd_info());
 	int nt = md_host_cd_test_toc(1, &s, &e, &t);
 	/* a lone data track gets 99 simulated audio tracks (the core does that: the BIOS of some games wants a table of contents with audio) */
 	CHECK(has_audio_files ? nt == 3 : nt == 99, "%s: track count %d", file, nt);

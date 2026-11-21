@@ -637,6 +637,9 @@ const char *md_host_cd_bios_name(const uint8_t *data, size_t n)
 	return NULL;
 }
 
+static int g_cd_bios_force_all;
+void md_host_cd_bios_test_force(int on) { g_cd_bios_force_all = on; }
+
 int md_host_cd_bios_add(const uint8_t *data, size_t n, int force)
 {
 	uint8_t tmp[16];
@@ -644,6 +647,7 @@ int md_host_cd_bios_add(const uint8_t *data, size_t n, int force)
 	size_t i;
 	int region = 0, swapped = 0;
 	if (!data || n != CD_BIOS_BYTES) return 0;
+	if (g_cd_bios_force_all) force = 1;
 	/* a byte swapped dump (MAME's) has "ESAG" where "SEGA" belongs */
 	if (!memcmp(data + 0x100, "ESAG", 4)) swapped = 1;
 	if (swapped) {
@@ -757,6 +761,7 @@ static uint32_t cd_save_crc(void)
 }
 
 int md_host_is_cd(void) { return G.loaded && G.cd; }
+uint32_t md_host_cd_bios_crc(void) { return G.loaded && G.cd ? G.cd_crc : 0; }
 const char *md_host_cd_info(void) { return G.cd ? G.cd_info : ""; }
 int md_host_cd_tracks(void) { return G.cd ? G.cd_tracks : 0; }
 
@@ -771,13 +776,30 @@ int md_host_cd_test_toc(int track, int *start, int *end, int *type)
 	return cdd.toc.last;
 }
 
+/* one data sector of track 1 as the drive reads it; the drive's position is put back */
+static int cd_sector(int lba, uint8_t *out2048)
+{
+	int si = cdd.index, sl = cdd.lba;
+	cdd.index = 0;
+	cdd.lba = lba;
+	cdd_read_data(out2048, NULL);
+	cdd.index = si; cdd.lba = sl;
+	return 0;
+}
+
+int md_host_cd_header(uint8_t *out, size_t n)
+{
+	uint8_t s[2048];
+	if (!G.loaded || !G.cd || !out || n > sizeof s) return 1;
+	cd_sector(0, s);
+	memcpy(out, s, n);
+	return 0;
+}
+
 int md_host_cd_test_data(int lba, uint8_t *out)
 {
 	if (!G.loaded || !G.cd) return 1;
-	cdd.index = 0;
-	cdd.lba = lba;
-	cdd_read_data(out, NULL);
-	return 0;
+	return cd_sector(lba, out);
 }
 
 int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2])
@@ -853,11 +875,10 @@ int md_host_load_disc(const char *path, char *err, size_t errlen)
 	G.rom_size = (uint32_t)cdd.toc.end * 2048u;
 	{
 		const char *bn = NULL;
-		int bi = (int)(config.region_detect ? config.region_detect : 0);
-		(void)bi;
-		for (k = 0; k < 3; k++) if (!strcmp(G.cd_bios_used, k == 0 ? "USA" : k == 1 ? "Europe" : "Japan")) { bn = NULL; if (g_cd_bios[k]) bn = md_host_cd_bios_name(g_cd_bios[k], CD_BIOS_BYTES); }
-		snprintf(G.cd_info, sizeof G.cd_info, "Mega CD disc, %d track%s, %u min, %s%s%s, BIOS %s%s%s%s", G.cd_tracks, G.cd_tracks == 1 ? "" : "s", (unsigned)(cdd.toc.end / 75 / 60),
-			rominfo.product[0] ? "product " : "", rominfo.product, rominfo.product[0] ? "" : "no product code", G.cd_bios_used,
+		G.cd_crc = 0;
+		for (k = 0; k < 3; k++) if (!strcmp(G.cd_bios_used, k == 0 ? "USA" : k == 1 ? "Europe" : "Japan")) { bn = NULL; if (g_cd_bios[k]) { bn = md_host_cd_bios_name(g_cd_bios[k], CD_BIOS_BYTES); G.cd_crc = g_cd_bios_crc[k]; } }
+		snprintf(G.cd_info, sizeof G.cd_info, "Mega CD disc, %d track%s, %u min, %s%s, BIOS %s%s%s%s", G.cd_tracks, G.cd_tracks == 1 ? "" : "s", (unsigned)(cdd.toc.end / 75 / 60),
+			rominfo.product[0] ? "product " : "no product code", rominfo.product, G.cd_bios_used,
 			bn ? " (" : "", bn ? bn : "", bn ? ")" : "");
 		snprintf(G.info, sizeof G.info, "%s", G.cd_info);
 	}

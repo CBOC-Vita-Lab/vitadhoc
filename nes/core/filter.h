@@ -13,6 +13,8 @@ void SexyFilter2(int32_t *in, int32_t count);
  * cart A's IIR state - audibly minor but breaks frame-determinism for
  * the first samples of cart B. */
 void SexyFilter_Reset(void);
+uint32_t SexyFilter_AheadGet(void);
+void SexyFilter_AheadSet(uint32_t v);
 
 extern int64_t sexyfilter_acc1, sexyfilter_acc2;
 extern int64_t sexyfilter2_acc;

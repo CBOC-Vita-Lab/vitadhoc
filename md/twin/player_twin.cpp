@@ -283,12 +283,27 @@ static bool fail_state_tmp(const std::string &p, const uint8_t *d, size_t n)
 
 static unsigned sys_of(const std::string &con) { return con == "gg" ? MD_SYS_GG : con == "sms" ? MD_SYS_SMS : con == "sg" ? MD_SYS_SG : MD_SYS_MD; }
 
+/* load a game the way the player would, without it: a cartridge from memory, a Sega CD disc by its path with the BIOS found beside it */
+static int load_any(const std::string &con, const char *rom, char *err, size_t errlen)
+{
+	if (con == "scd") {
+		const std::string p = rom;
+		std::vector<uint8_t> b = read_bytes(p.substr(0, p.find_last_of('/') + 1) + "standin.bin");
+		md_host_cd_bios_test_force(1);
+		md_host_cd_bios_clear();
+		md_host_cd_bios_add(b.data(), b.size(), 1);
+		return md_host_load_disc(rom, err, errlen);
+	}
+	std::vector<uint8_t> rb = read_bytes(rom);
+	return md_host_load_mem(rb.data(), rb.size(), rom, sys_of(con), err, errlen);
+}
+
 /* a patch: one byte of the header's checksum field (never read by the cores): MD 0x18E, the 8 bit consoles 0x7FFA (the Z80 sees it at 0x7FFA) */
 static unsigned patch_offset(const std::string &con) { return con == "md" ? 0x18Eu : 0x7FFAu; }
 
 static int run_test(const std::string &con, const char *rom, const std::string &shots, const std::string &work)
 {
-	const bool md = con == "md";
+	const bool md = con == "md" || con == "scd";
 	std::string root = work + "/root";
 	make_dirs(root);
 	make_dirs(shots);
@@ -299,9 +314,8 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 	std::vector<uint8_t> real_state;
 	{
 		EXPECT(md_host_init() == 0);
-		std::vector<uint8_t> rb = read_bytes(rom);
 		char e[128];
-		EXPECT(md_host_load_mem(rb.data(), rb.size(), rom, sys_of(con), e, sizeof e) == 0);
+		EXPECT(load_any(con, rom, e, sizeof e) == 0);
 		for (int i = 0; i < 30; i++) md_host_run_frame();
 		real_state.resize(md_host_state_size());
 		size_t len = md_host_state_save_mem(real_state.data(), real_state.size());
@@ -1102,7 +1116,7 @@ static int run_ceiling_test()
 /* ---- pads: models, the mapping, the menu chord and the Mode tap ---------------------------------------------------------------- */
 static int run_pads_test(const std::string &con, const char *rom, const std::string &work)
 {
-	const bool md = con == "md";
+	const bool md = con == "md" || con == "scd";
 	const std::string root = work + "/root";
 	make_dirs(root + "/launch");
 	write_text(root + "/launch/" + con + ".ini", "version=1\nsession_id=s-pads\nconsole=" + con + "\ngame=" + std::string(rom) + "\nenter_button=cross\n");
@@ -1321,13 +1335,13 @@ static int run_speed_test(const std::string &con, const char *rom, const std::st
 
 	/* ---- the patch changes the ROM the core runs (its CRC), the launch keys patch / patch_key as FORMATS.md says ---- */
 	uint32_t crc_plain = 0, crc_patched = 0;
-	{
+	if (con != "scd") {                  /* a disc is not patched (the player says so in its log) */
 		Sess a(work + "/shots");
 		EXPECT(a.start(work + "/r1", con, rom, ""));
 		crc_plain = md_host_rom_crc();
 		a.rig.run(5);
 	}
-	{
+	if (con != "scd") {
 		Sess b(work + "/shots");
 		EXPECT(b.start(work + "/r2", con, rom, "patch=" + work + "/fix.ips\npatch_key=fix-1\n"));
 		crc_patched = md_host_rom_crc();
@@ -1335,7 +1349,7 @@ static int run_speed_test(const std::string &con, const char *rom, const std::st
 		EXPECT(md_host_peek(po) == 0x5A);
 	}
 	fprintf(stderr, "ROM CRC plain %08x, patched %08x\n", crc_plain, crc_patched);
-	EXPECT(crc_plain != 0 && crc_patched != 0 && crc_plain != crc_patched);
+	EXPECT(con == "scd" || (crc_plain != 0 && crc_patched != 0 && crc_plain != crc_patched));
 
 	Sess s(work + "/shots");
 	EXPECT(s.start(work + "/r3", con, rom, ""));
@@ -1428,11 +1442,10 @@ static int run_speed_test(const std::string &con, const char *rom, const std::st
 static int find_changing_address(const std::string &con, const char *rom, unsigned *addr)
 {
 	EXPECT(md_host_init() == 0);
-	std::vector<uint8_t> rb = read_bytes(rom);
 	char e[128];
-	EXPECT(md_host_load_mem(rb.data(), rb.size(), rom, sys_of(con), e, sizeof e) == 0);
+	EXPECT(load_any(con, rom, e, sizeof e) == 0);
 	const int console = md_host_ra_console();
-	const unsigned top = console == 1 ? 0x10000 : 0x2000;
+	const unsigned top = console == 1 || console == 9 ? 0x10000 : 0x2000;
 	std::vector<uint8_t> a(top), b(top);
 	std::vector<int> changes(top, 0);
 	for (int i = 0; i < 240; i++) {
@@ -1458,6 +1471,7 @@ static int run_ra_test(const std::string &con, const char *rom, const std::strin
 	EXPECT(console != 0);
 	if (!console) { fprintf(stderr, "player_twin ra: %d checks, %d failed\n", g_checks, g_fail); return 1; }
 	std::vector<uint8_t> rb = read_bytes(rom);
+	if (con == "scd") { char e[128]; rb.assign(512, 0); EXPECT(load_any(con, rom, e, sizeof e) == 0 && md_host_cd_header(rb.data(), rb.size()) == 0); md_host_unload(); }    /* rcheevos: the first 512 bytes of the disc's first sector */
 	char hash[33];
 	EXPECT(pk::Ra::hash_rom(rb.data(), rb.size(), console, hash));
 	char mem[96];
@@ -1613,9 +1627,8 @@ static double now_ms()
 static int run_costs_test(const std::string &con, const char *rom)
 {
 	EXPECT(md_host_init() == 0);
-	std::vector<uint8_t> rb = read_bytes(rom);
 	char e[128];
-	EXPECT(md_host_load_mem(rb.data(), rb.size(), rom, sys_of(con), e, sizeof e) == 0);
+	EXPECT(load_any(con, rom, e, sizeof e) == 0);
 	const int N = 200;
 	for (int i = 0; i < 120; i++) cost_frame(true);
 	std::vector<std::vector<uint8_t> > S((size_t) N + 2);
@@ -1656,6 +1669,9 @@ static int run_costs_test(const std::string &con, const char *rom)
 
 int main(int argc, char **argv)
 {
+	/* Sega CD ("scd"): the disc is a synthetic one (tools/mkscd.py) and the BIOS is its stand-in, found by the player's own search (in the disc's folder); */
+	/* the core is told to accept it (it is not a Sega BIOS). */
+	if (argc >= 3 && !strcmp(argv[2], "scd")) md_host_cd_bios_test_force(1);
 	if (argc >= 4 && !strcmp(argv[1], "costs")) return run_costs_test(argv[2], argv[3]);
 	if (argc >= 5 && !strcmp(argv[1], "speed")) return run_speed_test(argv[2], argv[3], argv[4]);
 	if (argc >= 5 && !strcmp(argv[1], "ahead")) return run_ahead_test(argv[2], argv[3], argv[4]);

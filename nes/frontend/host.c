@@ -23,6 +23,7 @@
 #include "video.h"
 #include "fceu-memory.h"
 #include "cheat.h"
+#include "sound.h"
 extern uint8_t *XBuf;
 extern uint8_t *XDBuf;
 extern CartInfo iNESCart;
@@ -624,7 +625,7 @@ int nes_host_state_load_mem(const uint8_t *buf, size_t n)
 
 /* ---- Quick response: the way back from a look-ahead frame ---------------------------------------------------- */
 
-#define NES_AHEAD_CARRY 64u
+#define NES_AHEAD_CARRY (64u + FCEUSND_AHEAD_SIZE)
 size_t nes_host_ahead_size(void) { return g_loaded && g_state_size ? g_state_size + NES_AHEAD_CARRY : 0; }
 
 size_t nes_host_ahead_save(uint8_t *buf, size_t cap)
@@ -633,6 +634,7 @@ size_t nes_host_ahead_save(uint8_t *buf, size_t cap)
 	if (!n) return 0;
 	memset(buf + n, 0, NES_AHEAD_CARRY);
 	memcpy(buf + n, UPALRAM, 3);	/* palette mirrors: not in the state */
+	FCEUSND_AheadSave(buf + n + 64);
 	return n + NES_AHEAD_CARRY;
 }
 
@@ -642,6 +644,7 @@ int nes_host_ahead_load(const uint8_t *buf, size_t n)
 	FCEU_ahead_restore = 1;
 	{ const int ok = FCEUSS_Load_Mem(buf, n - NES_AHEAD_CARRY); FCEU_ahead_restore = 0; if (!ok) return 3; }
 	memcpy(UPALRAM, buf + n - NES_AHEAD_CARRY, 3);
+	FCEUSND_AheadLoad(buf + n - NES_AHEAD_CARRY + 64);
 	return 0;
 }
 

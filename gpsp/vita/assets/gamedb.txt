@@ -41919,7 +41919,7 @@ Tdouble clutch	Double Clutch (video game)
 Tdouble dare	Double Dare (video game)
 Tdouble dragon	Double Dragon (video game)
 Tdouble dragon ii	Double Dragon II (Game Boy)
-Tdouble dragon ii the revenge	Double Dragon II: The Revenge
+Tdouble dragon ii the revenge	Double Dragon II: The Revenge (NES video game)
 Tdouble dragon iii the sacred stones	Double Dragon III: The Sacred Stones
 Tdouble dragon v the shadow falls	Double Dragon V: The Shadow Falls
 Tdouble dribble	Double Dribble (video game)
@@ -41962,7 +41962,7 @@ Tdragon crystal	Dragon Crystal
 Tdragon dance	Dragon Dance (video game)
 Tdragon fighter	Dragon Fighter (video game)
 Tdragon knight 4	Dragon Knight 4
-Tdragon quest	Dragon Quest
+Tdragon quest	Dragon Quest (video game)
 Tdragon quest monsters caravan heart	Dragon Quest Monsters: Caravan Heart
 Tdragon quest vi maboroshi no daichi	Dragon Quest VI
 Tdragon s fury	Devil's Crush
@@ -42122,7 +42122,7 @@ Tfairly oddparents breakin da rules	The Fairly OddParents: Breakin' Da Rules
 Tfairly oddparents shadow showdown	The Fairly OddParents: Shadow Showdown
 Tfamicom bunko hajimari no mori	Famicom Bunko: Hajimari no Mori
 Tfamicom mini 01 super mario bros	Super Mario Bros.
-Tfamicom wars	Wars (series)
+Tfamicom wars	Famicom Wars
 Tfamily basic	Family BASIC
 Tfamily boxing	Ring King
 Tfamily feud	Family Feud (video game series)
@@ -42388,7 +42388,7 @@ Tgourmet warriors	Gourmet Warriors
 Tgp 1	GP-1
 Tgp 1 part ii	GP-1: Part II
 Tgp rider	GP Rider
-Tgradius	Gradius
+Tgradius	Gradius (video game)
 Tgradius advance	Gradius Galaxies
 Tgradius galaxies	Gradius Galaxies
 Tgradius generation	Gradius Galaxies
@@ -43095,7 +43095,7 @@ Tmercs	Mercs
 Tmerlin	Merlin (video game)
 Tmetal combat falcon s revenge	Metal Combat: Falcon's Revenge
 Tmetal fighter	Metal Fighter
-Tmetal gear	Metal Gear
+Tmetal gear	Metal Gear (video game)
 Tmetal gear ghost babel	Metal Gear: Ghost Babel
 Tmetal gear solid	Metal Gear: Ghost Babel
 Tmetal marines	Metal Marines
@@ -43456,7 +43456,7 @@ Tpga tour golf	PGA Tour Golf
 Tpga tour golf ii	PGA Tour Golf II
 Tpga tour golf iii	PGA Tour Golf III
 Tphalanx	Phalanx (video game)
-Tphantasy star	Phantasy Star
+Tphantasy star	Phantasy Star (video game)
 Tphantasy star adventure	Phantasy Star Adventure
 Tphantasy star collection	Phantasy Star Collection
 Tphantasy star ii	Phantasy Star II
@@ -44046,7 +44046,7 @@ Tsonic eraser	Sonic Eraser
 Tsonic labyrinth	Sonic Labyrinth
 Tsonic pinball party	Sonic Pinball Party
 Tsonic spinball	Sonic Spinball
-Tsonic the hedgehog	Sonic the Hedgehog
+Tsonic the hedgehog	Sonic the Hedgehog (1991 video game)
 Tsonic the hedgehog 2	Sonic the Hedgehog 2
 Tsonic the hedgehog 3	Sonic the Hedgehog 3
 Tsonic the hedgehog cd	Sonic CD
@@ -44157,7 +44157,7 @@ Tstar fox 2	Star Fox 2
 Tstar luster	Star Luster
 Tstar ocean	Star Ocean
 Tstar ocean blue sphere	Star Ocean: Blue Sphere
-Tstar soldier	Star Soldier
+Tstar soldier	Star Soldier (video game)
 Tstar trek 25th anniversary	Star Trek: 25th Anniversary (Game Boy video game)
 Tstar trek deep space nine crossroads of time	Star Trek: Deep Space Nine – Crossroads of Time
 Tstar trek generations beyond the nexus	Star Trek Generations: Beyond the Nexus
@@ -44879,7 +44879,7 @@ Tworld masters golf	World Masters Golf
 Tworld of illusion	World of Illusion
 Tworld of illusion starring mickey mouse and donald duck	World of Illusion
 Tworld poker tour	World Poker Tour (video game)
-Tworld series baseball	World Series Baseball (video game series)
+Tworld series baseball	World Series Baseball (1993 video game)
 Tworld series baseball 95	World Series Baseball '95
 Tworld series baseball 96	World Series Baseball '96
 Tworld series baseball 98	World Series Baseball '98
@@ -45010,12 +45010,16 @@ Tzool	Zool
 Tzoom	Zoom!
 Tzoop	Zoop
 UEaddams family	The Addams Family (video game series)
+UEbatman returns	Batman Returns (NES video game)
 UEbattletoads	Battletoads (1991 video game)
 UEbeauty and the beast	Beauty and the Beast (1994 video game)
 UEbeetlejuice	Beetlejuice (1991 video game)
+UEbionic commando	Bionic Commando (1988 video game)
 UEblues brothers	The Blues Brothers (video game)
 UEbram stoker s dracula	Bram Stoker's Dracula (video game)
 UEbubble bobble part 2	Rainbow Islands
+UEcastlevania	Castlevania (1986 video game)
+UEcontra	Contra (video game)
 UEcool world	Cool World (NES video game)
 UEdonkey kong	Donkey Kong (1981 video game)
 UEdragon s lair	Dragon's Lair (1983 video game)
@@ -45023,7 +45027,11 @@ UEfinal fantasy ii	Final Fantasy II
 UEfinal fantasy iii	Final Fantasy III
 UEgoal	Goal! (video game)
 UEkid dracula	Kid Dracula (1990 video game)
+UElegend of zelda	The Legend of Zelda (video game)
+UEmega man	Mega Man (1987 video game)
+UEmetroid	Metroid (video game)
 UEmission impossible	Mission: Impossible (1990 video game)
+UEnobunaga s ambition	Nobunaga's Ambition (video game)
 UEpopeye	Popeye (video game)
 UEprince of persia	Prince of Persia (1989 video game)
 UEsoccer	Soccer (1985 video game)
@@ -45031,14 +45039,18 @@ UEstar trek 25th anniversary	Star Trek: 25th Anniversary (NES video game)
 UEsuper turrican	Super Turrican (1992 video game)
 UEteenage mutant ninja turtles	Teenage Mutant Ninja Turtles (NES video game)
 UEterminator 2 judgment day	Terminator 2 (8-bit video game)
+UEtetris	Tetris (NES video game)
 UEtetsuwan atom	Mighty Atom (1988 video game)
+UEuncharted waters	Uncharted Waters (video game)
 UEwacky races	Wacky Races (1991 video game)
 UEwho framed roger rabbit	Who Framed Roger Rabbit (1989 video game)
 UIaddams family	The Addams Family (video game)
 UIbattletoads	Battletoads (1991 video game)
 UIbonkers	Bonkers (Genesis video game)
 UIbram stoker s dracula	Bram Stoker's Dracula (video game)
+UIdouble dragon ii the revenge	Double Dragon II: The Revenge
 UIdragon s lair	Dragon's Lair (1983 video game)
+UIearthworm jim	Earthworm Jim (video game)
 UIflintstones	The Flintstones (1993 video game)
 UIghostbusters	Ghostbusters (1990 video game)
 UIgolden axe	Golden Axe (video game)
@@ -45046,6 +45058,7 @@ UIincredible hulk	The Incredible Hulk (1994 video game)
 UIjurassic park	Jurassic Park (Genesis video game)
 UIlost world jurassic park	The Lost World: Jurassic Park (Genesis video game)
 UImicro machines	Micro Machines (video game series)
+UImortal kombat	Mortal Kombat (1992 video game)
 UIprince of persia	Prince of Persia (1989 video game)
 UIpunisher	The Punisher (1993 video game)
 UIpuyo puyo	Puyo Puyo
@@ -45057,8 +45070,10 @@ UIsuperman	Superman (1992 video game)
 UItalespin	TaleSpin (Sega video game)
 UItecmo cup football game	Tecmo Cup Football Game
 UIterminator 2	Terminator 2 (16-bit video game)
+UIuncharted waters	Uncharted Waters (video game)
 UJaddams family	The Addams Family (video game)
 UJasterix	Asterix (1992 video game)
+UJearthworm jim	Earthworm Jim (video game)
 UJflintstones	The Flintstones (1988 video game)
 UJincredible hulk	The Incredible Hulk (1994 video game)
 UJjurassic park	Jurassic Park (Game Gear video game)
@@ -45068,24 +45083,31 @@ UJninja gaiden	Ninja Gaiden (1992 video game)
 UJprince of persia	Prince of Persia (1989 video game)
 UJpro wrestling	Pro Wrestling (Master System video game)
 UJrocky	Rocky (1987 video game)
+UJsonic the hedgehog	Sonic the Hedgehog (8-bit video game)
 UJsonic the hedgehog 2	Sonic the Hedgehog 2 (8-bit video game)
 UJsuper tennis	Super Tennis (Master System)
 UJterminator 2 judgment day	Terminator 2: Judgment Day (arcade game)
 UKaddams family	The Addams Family (video game)
 UKbram stoker s dracula	Bram Stoker's Dracula (video game)
+UKearthworm jim	Earthworm Jim (video game)
 UKecco the dolphin	Ecco the Dolphin
 UKjurassic park	Jurassic Park (Game Gear video game)
+UKmega man	Mega Man (1995 video game)
 UKmortal kombat	Mortal Kombat (1992 video game)
 UKninja gaiden	Ninja Gaiden (Game Gear)
 UKpower strike ii	Power Strike II (Game Gear video game)
 UKprince of persia	Prince of Persia (1989 video game)
+UKristar	Ristar (Game Gear video game)
+UKsonic the hedgehog	Sonic the Hedgehog (8-bit video game)
 UKsonic the hedgehog 2	Sonic the Hedgehog 2 (8-bit video game)
 UKterminator 2 judgment day	Terminator 2 (8-bit video game)
+UKworld series baseball	World Series Baseball (video game series)
 UKx men	X-Men (1994 video game)
 UMcobra command	Cobra Command (1984 video game)
 UMdragon s lair	Dragon's Lair (1983 video game)
 UMjurassic park	Jurassic Park (Sega CD video game)
 UMmighty morphin power rangers	Mighty Morphin Power Rangers (Sega CD video game)
+UMmortal kombat	Mortal Kombat (1992 video game)
 UMprince of persia	Prince of Persia (1989 video game)
 UMshadowrun	Shadowrun (1996 video game)
 UMterminator	The Terminator (Sega CD video game)
@@ -45339,6 +45361,7 @@ WBass Masters Classic: Pro Edition	Bass Masters Classic: Pro Edition is an enhan
 WBatman (Genesis video game)	Batman is a 1990 beat 'em up video game developed and published by Sunsoft for the Sega Genesis, based on the 1989 film of the same name.
 WBatman Beyond: Return of the Joker (video game)	Batman Beyond: Return of the Joker, known as Batman of the Future: Return of the Joker in Europe, is a scrolling beat 'em up video game developed by Kemco and released by Ubi Soft for the Game Boy Color, PlayStation and Nintendo 64 in 2000 and 2001.
 WBatman Forever (video game)	Batman Forever is a beat 'em up video game based on the film of the same name.
+WBatman Returns (NES video game)	Batman Returns is a 1993 beat 'em up video game developed and published by Konami for the Nintendo Entertainment System.
 WBatman Returns (Sega video games)	Batman Returns is the name of several video games for various platforms based on the 1992 film of the same name.
 WBatman: Chaos in Gotham	Batman: Chaos in Gotham is a 2001 action video game developed by Digital Eclipse Software and published by Ubisoft for the Game Boy Color. It is based on The New Batman Adventures.
 WBatman: Return of the Joker	Batman: Return of the Joker is a 1991 run and gun video game, the follow-up to Sunsoft's first Batman game on the Nintendo Entertainment System.
@@ -45410,6 +45433,7 @@ WBio-Hazard Battle	Bio-Hazard Battle, released in Japan as Crying: Aseimei Senso
 WBio-ship Paladin	Bio-ship Paladin, known in Japan as Space Battleship Gomora, is a 1990 horizontally scrolling shooter video game developed and published by UPL for arcades.
 WBioMetal (video game)	BioMetal is a single-player horizontally scrolling shooter released on June 1, 1993, for the Super NES.
 WBionic Commando	Bionic Commando is a series of platform video games developed and owned by Capcom.
+WBionic Commando (1988 video game)	Bionic Commando, originally released as Hitler's Resurrection: Top Secret in Japan, is a 1988 platform game developed and published by Capcom for the Nintendo Entertainment System.
 WBionic Commando: Elite Forces	Bionic Commando: Elite Forces is a 2000 platform video game developed by Nintendo Software Technology and published by Nintendo for the Game Boy Color.
 WBionicle Heroes	Bionicle Heroes is a 2006 video game published by Eidos Interactive and TT Games Publishing and based on Lego's Bionicle line of constructible action figures.
 WBionicle: Matoran Adventures	Bionicle: Matoran Adventures is a 2002 platform game based on Lego's Bionicle line of constructible action figures.
@@ -45551,6 +45575,7 @@ WCastle of Dragon	Castle of Dragon is a 1989 beat 'em up platform video game dev
 WCastle of Illusion Starring Mickey Mouse	Castle of Illusion Starring Mickey Mouse is a 1990 platform game developed and published by Sega and released for the Sega Genesis.
 WCastlequest	Castlequest, known in Japan as Castle Excellent, is a 1985 puzzle-action video game developed and published by ASCII Corporation for the FM-7, PC-88, and Sharp X1.
 WCastlevania	Castlevania, known in Japan as Akumajo Dracula, is a gothic horror action-adventure video game series and media franchise created by Konami.
+WCastlevania (1986 video game)	Castlevania, known in Japan as Akumajo Dracula, is a 1986 platform game developed and published by Konami.
 WCastlevania II: Belmont's Revenge	Castlevania II: Belmont's Revenge is a 1991 platform game developed and published by Konami for the Game Boy.
 WCastlevania II: Simon's Quest	Castlevania II: Simon's Quest is a 1987 action role-playing game developed and published by Konami.
 WCastlevania III: Dracula's Curse	Castlevania III: Dracula's Curse is a 1989 platform game developed and published by Konami for the Nintendo Entertainment System.
@@ -45654,6 +45679,7 @@ WCongo's Caper	Congo's Caper is a 1992 platform video game developed and publish
 WConker's Pocket Tales	Conker's Pocket Tales is a 1999 action-adventure game developed and published by Rare for the Game Boy Color.
 WConquest of the Crystal Palace	Conquest of the Crystal Palace, known in Japan as Matendoji is a 1990 platform game developed by Quest and published by Asmik Corporation of America (subsidiary of J:COM) for the Nintendo Entertainment System.
 WContra (series)	Contra is a video game series produced by Konami composed primarily in the run and gun genre.
+WContra (video game)	Contra is a 1987 run and gun video game developed and published by Konami for arcades.
 WContra Force	Contra Force is a 1992 run and gun game developed and published by Konami for the Nintendo Entertainment System in North America.
 WContra III: The Alien Wars	Contra III: The Alien Wars is a 1992 run and gun video game developed and published by Konami for the Super Nintendo Entertainment System (SNES).
 WContra: Hard Corps	Contra: Hard Corps, released as Contra: The Hard Corps in Japan and Probotector in Europe and Australia, is a 1994 run and gun game developed and published by Konami for the Sega Genesis, making it the first game in the Contra series released for a Sega platform.
@@ -45844,10 +45870,11 @@ WDouble Dare (video game)	Double Dare is a video game published by GameTek and b
 WDouble Dragon (video game)	Double Dragon is a 1987 beat 'em up video game developed by Technos Japan and published by Taito for arcades.
 WDouble Dragon II (Game Boy)	Double Dragon II is a 1990 beat 'em up video game developed by Technos Japan for the Game Boy.
 WDouble Dragon II: The Revenge	Double Dragon II: The Revenge is a 1988 beat 'em up video game developed and published by Technos Japan for arcades. It is the first sequel to Double Dragon, released during the previous year.
+WDouble Dragon II: The Revenge (NES video game)	Double Dragon II: The Revenge is a 1989 beat 'em up video game developed and published by Technos Japan for the Nintendo Entertainment System.
 WDouble Dragon III: The Sacred Stones	Double Dragon III: The Sacred Stones, released in Japan as Double Dragon III: The Rosetta Stone (III ), is a 1991 beat 'em up video game developed by Technos Japan for the Nintendo Entertainment System.
 WDouble Dragon V: The Shadow Falls	Double Dragon V: The Shadow Falls is a fighting game developed by Leland Interactive Media and published by Tradewest for the Super Nintendo Entertainment System and Sega Genesis in 1994.
 WDouble Dribble (video game)	Double Dribble is a 1986 basketball video game developed and published by Konami for arcades. It was the second basketball game by Konami, following Super Basketball.
-WDouble Dribble: The Playoff Edition	Double Dribble: The Playoff Edition, originally released in Japan as Hyper Dunk: The Playoff Edition (, Haipa Danku Za Pureiofu Edishon), and later released in Europe as HyperDunk, is a basketball video game developed and published by Konami for the Sega Genesis.
+WDouble Dribble: The Playoff Edition	Double Dribble: The Playoff Edition, originally released in Japan as Hyper Dunk: The Playoff Edition, and later released in Europe as HyperDunk, is a basketball video game developed and published by Konami for the Sega Genesis.
 WDouble Hawk	Double Hawk is a shoot 'em up video game for the Master System.
 WDouble Moon Densetsu	The Nintendo Entertainment System has a library of 1370 officially licensed games released during their lifespans, plus 7 official multicarts and 2 championship cartridges.
 WDouble Switch (video game)	Double Switch is an adventure interactive movie video game originally released for Sega CD, Sega Saturn and Microsoft Windows and later remastered for mobile, Steam, PlayStation 4 and Nintendo Switch.
@@ -45879,7 +45906,6 @@ WDragon Crystal	Dragon Crystal is a 1990 role-playing video game developed and p
 WDragon Dance (video game)	Dragon Dance (released in Japan in 1998 as Pocket Color Block) is a 2000 action game for the Game Boy Color developed by Natsume Co., Ltd. and published in the United States by Crave Entertainment.
 WDragon Fighter (video game)	Dragon Fighter is a fantasy-themed side-scrolling action game developed by Natsume for the Nintendo Entertainment System.
 WDragon Knight 4	Dragon Knight 4 is a role-playing video game developed by ELF Corporation and released only in Japan for several platforms between 1994 and 1997.
-WDragon Quest	Dragon Quest, previously published as Dragon Warrior in North America until 2005, is a series of role-playing video games created by Japanese game designer Yuji Horii (Armor Project), character designer Akira Toriyama (Bird Studio), and composer Koichi Sugiyama (Sugiyama Kobo) and published by Square Enix (formerly Enix).
 WDragon Quest (video game)	Dragon Quest, titled Dragon Warrior when initially localized to North America, is a 1986 role-playing video game developed by Chunsoft and published by Enix for the Nintendo Entertainment System.
 WDragon Quest II	Dragon Quest II: Luminaries of the Legendary Line, titled Dragon Warrior II when initially localized to North America, is a 1987 role-playing video game developed by Chunsoft and published by Enix for the Nintendo Entertainment System as a part of the Dragon Quest series.
 WDragon Quest III	Dragon Quest III: The Seeds of Salvation, titled Dragon Warrior III when initially localized to North America, is a 1988 role-playing video game developed by Chunsoft and published by Enix.
@@ -45949,6 +45975,7 @@ WEarth Defense	Earth Defense, showm as The Earth Defend on the title screen, is 
 WEarth Defense Force (video game)	E.D.F.: Earth Defense Force is a 1991 horizontally scrolling shooter video game developed and published by Jaleco for arcades.
 WEarthBound	EarthBound, originally released in Japan as Mother 2: Gigu no Gyakushu, is a 1994 role-playing video game developed by Ape Inc. (now Creatures Inc.) and HAL Laboratory and published by Nintendo for the Super Nintendo Entertainment System.
 WEarthworm Jim	Earthworm Jim is a series of platform games featuring an earthworm named Jim who wears a robotic suit and battles the forces of evil.
+WEarthworm Jim (video game)	Earthworm Jim is a 1994 run and gun video game developed by Shiny Entertainment and published by Playmates Interactive Entertainment.
 WEarthworm Jim 2	Earthworm Jim 2 is a 1995 run and gun video game developed by Shiny Entertainment and published by Playmates Interactive Entertainment.
 WEarthworm Jim: Menace 2 the Galaxy	Earthworm Jim: Menace 2 the Galaxy is a 1999 platform video game developed by David A. Palmer Productions and published by Crave Entertainment for the Game Boy Color.
 WEcco Jr.	Ecco Jr. is a video game in the Ecco the Dolphin series, released by Sega in 1995.
@@ -46025,6 +46052,7 @@ WFIFA: Road to World Cup 98	FIFA: Road to World Cup 98 is a 1997 football video 
 WFactory Panic	Factory Panic, originally titled Ganbare Gorubi, is an action game developed by Japan System House for the Game Gear handheld game console, and published by Sega in 1991.
 WFahrenheit (1995 video game)	Fahrenheit is a full motion video game developed and published by Sega for release on the Sega CD and Sega 32X CD in 1995.
 WFamicom Bunko: Hajimari no Mori	Nintendo Research & Development No. 1 Department was a division of Nintendo, and is its oldest development team.
+WFamicom Wars	Famicom Wars is a turn-based strategy video game developed by Nintendo and Intelligent Systems and published by Nintendo for the Family Computer. It was released on August 12, 1988, in Japan.
 WFamily BASIC	Family BASIC is a consumer product for programming on the Family Computer video game console.
 WFamily Feud (video game series)	Family Feud is a video game series based on the Family Feud TV game show. It began with ShareData's 1987 release on the Apple II and Commodore 64 consoles.
 WFamily Tennis	Family Tennis is a 1987 tennis video game developed and published by Namco for the Family Computer. It was released only in Japan in December 1987. An arcade version for the Nintendo VS.
@@ -46154,7 +46182,7 @@ WGame & Watch Gallery 3	Game & Watch Gallery 3, known in Japan as Game Boy Galle
 WGame & Watch Gallery 4	Game & Watch Gallery 4, known as Game & Watch Gallery Advance in Europe and Australia and Game Boy Gallery 4 in Japan, is a video game developed by Tose and published by Nintendo for the Game Boy Advance in October 2002.
 WGame Boy Wars	Game Boy Wars is a 1991 turn-based strategy video game developed by Nintendo and Intelligent Systems and published by Nintendo for the Game Boy.
 WGanbare Goemon 2 (Family Computer)	Ganbare Goemon! Karakuri Dochu is a video game produced by Konami.
-WGanbare Goemon: Sarawareta Ebisumaru!	Ganbare Goemon: Sarawareta Ebisumaru! ( ; "Persevere Goemon: Kidnapped Ebisumaru!") is a platform video game released by Konami for the Game Boy in 1991.
+WGanbare Goemon: Sarawareta Ebisumaru!	Ganbare Goemon: Sarawareta Ebisumaru! is a platform video game released by Konami for the Game Boy in 1991.
 WGangster Town	Gangster Town is a light gun shooter game developed and released by Sega for the arcades and Master System console in 1987. It is set in an American city overtaken by crime during the 1920s.
 WGanso JaJaMaru-kun	Ninja JaJaMaru-kun is an action-platform video game developed and published by Jaleco for the Family Computer. It was released in Japan on 15 November 1985, and was ported to the MSX in 1986.
 WGarfield and His Nine Lives	Garfield merchandise is the merchandise based on the "Garfield" comic strip by Jim Davis.
@@ -46220,7 +46248,7 @@ WGoofy's Hysterical History Tour	Goofy's Hysterical History Tour is a 1994 platf
 WGorby no Pipeline Daisakusen	Gorubi no Paipurain Daisakusen is a falling-block puzzle video game developed by Compile for the MSX2, Famicom, and FM Towns. It was published by Tokuma Shoten in 1991.
 WGotcha! The Sport!	Gotcha! The Sport! is a 1987 light gun shooter video game developed by Atlus and published by LJN for the Nintendo Entertainment System (NES).
 WGourmet Warriors	Gourmet Sentai Barayaro is a surrealistic side-scrolling beat-'em-up developed by Winds and published by Virgin Interactive Entertainment for the Super Famicom in 1995 only in Japan.
-WGradius	Gradius is a series of shooter (shoot'em up) video games, introduced in 1985, developed and published by Konami for a variety of portable, console and arcade platforms.
+WGradius (video game)	Gradius is a 1985 horizontally scrolling shooter video game developed and published by Konami for arcades. It is the first installment in the Gradius series.
 WGradius Galaxies	Gradius Galaxies, released in Europe as Gradius Advance and in Japan as Gradius Generation, is a 2001 horizontally scrolling shooter video game developed by Mobile21 and published by Konami for the Game Boy Advance.
 WGradius II	Gradius II, retitled Vulcan Venture in North American arcades, is a 1988 horizontally scrolling shooter video game developed and published by Konami.
 WGradius III	Gradius III is a 1989 scrolling shooter video game developed and published by Konami for arcades. It was originally released only in Japan on December 11, 1989.
@@ -46431,7 +46459,7 @@ WJoy Mech Fight	Joy Mech Fight is a fighting game developed and published by Nin
 WJudge Dredd (1995 video game)	Judge Dredd is a side-view action video game released for the Super NES, Mega Drive/Genesis, Game Gear, and Game Boy, originally in 1995. An MS-DOS version was published in 1996.
 WJudgement Silversword	Judgement Silversword is a vertical-scrolling shooter video game developed and published for the WonderSwan Color by Qute.
 WJuka and the Monophonic Menace	Juka and the Monophonic Menace is an action-adventure video game published and developed by Orbital Media, Inc. in PAL regions, and published by SouthPeak Interactive in NA.
-WJumpin' Kid: Jack to Mame no Ki Monogatari	Jumpin' Kid: Jack to Mame no Ki Monogatari ( ; "Jumping Kid: The Tale of Jack and the Beanstalk") was released on December 19, 1990 in Japan for the Family Computer.
+WJumpin' Kid: Jack to Mame no Ki Monogatari	Jumpin' Kid: Jack to Mame no Ki Monogatari was released on December 19, 1990 in Japan for the Family Computer.
 WJungle Strike	Jungle Strike is a video game developed and published by Electronic Arts in 1993 for the Sega Genesis. The game was later released for the Super NES and an enhanced version for MS-DOS.
 WJurassic Park (Game Gear video game)	Jurassic Park is a 1993 platform game developed and published by Sega for the Game Gear. Another version, with identical gameplay, was also released for the Master System only in Europe.
 WJurassic Park (Genesis video game)	Jurassic Park is a 1993 action-adventure game developed by BlueSky Software and published by Sega for the Sega Genesis.
@@ -46708,6 +46736,7 @@ WMeet the Robinsons (video game)	Meet the Robinsons is a 2007 action-adventure g
 WMega Man	Mega Man is a video game franchise developed and published by Capcom, featuring the eponymous protagonist.
 WMega Man & Bass	Mega Man & Bass is a 1998 action game developed and published by Capcom.
 WMega Man (1987 video game)	Mega Man is a 1987 platformer game developed and published by Capcom for the NES/Famicom.
+WMega Man (1995 video game)	Mega Man is a 1995 platform game developed by Freestyle and published by U.S. Gold for the Game Gear.
 WMega Man 2	Mega Man 2 is a 1988 platform game developed and published by Capcom for the Nintendo Entertainment System (NES).
 WMega Man 3	Mega Man 3 is a 1990 platform game developed and published by Capcom for the Nintendo Entertainment System.
 WMega Man 4	Mega Man 4 is a 1991 platform game developed and published by Capcom for the Nintendo Entertainment System.
@@ -46750,7 +46779,7 @@ WMercs	Mercs, released as Senjo no Okami II in Japan, is a 1990 run and gun vide
 WMerlin (video game)	Merlin is a 2000 action game for the Game Boy Color developed by French company RFX Interactive, published in Europe by Light & Shadow Production and Electronic Arts.
 WMetal Combat: Falcon's Revenge	Metal Combat: Falcon's Revenge is a 1993 light gun shooter video game developed by Intelligent Systems and published by Nintendo for the Super Nintendo Entertainment System.
 WMetal Fighter	Metal Fighter is a side-scrolling shooter game developed in Taiwan by Joy Van and published by Color Dreams and Sachen. It was later published as Metal Fighter in Japan by Kinema Music in 1991.
-WMetal Gear	Metal Gear is a Japanese franchise of action-adventure stealth games created by Hideo Kojima.
+WMetal Gear (video game)	Metal Gear is a 1987 action-adventure stealth game developed and published by Konami for the MSX2.
 WMetal Gear: Ghost Babel	Metal Gear: Ghost Babel, released in North America and Europe as Metal Gear Solid, is a 2000 action-adventure stealth game developed and published by Konami for the Game Boy Color.
 WMetal Marines	Metal Marines, released in Japan as Militia, is a 1993 real-time strategy video game developed and published by Namco for the Super Nintendo Entertainment System.
 WMetal Masters	Metal Masters is a 2D fighting video game first released in 1991 for the Atari ST, IBM PC, and Amiga. It was ported to the Nintendo Game Boy in 1993.
@@ -46763,6 +46792,7 @@ WMetal Walker	Metal Walker, known as Bakusou Senki Metal Walker GB: Kotetsu no Y
 WMetal Warriors	Metal Warriors is a side-scrolling action-platform run and gun video game developed by LucasArts and published by Konami exclusively for the Super Nintendo Entertainment System in North America in April 1995.
 WMetro-Cross	Metro-Cross is a 1985 platform video game developed and published by Namco for arcades. It was released in Japan in May 1985 and in North America by Kitkorp in November 1985.
 WMetroid	Metroid is an action-adventure game franchise created by Nintendo.
+WMetroid (video game)	Metroid is a 1986 action-adventure game developed and published by Nintendo.
 WMetroid Fusion	Metroid Fusion is a 2002 action-adventure game developed and published by Nintendo for the Game Boy Advance. It is the fourth main Metroid game.
 WMetroid II: Return of Samus	Metroid II: Return of Samus is a 1991 action-adventure game developed and published by Nintendo for the Game Boy.
 WMetroid: Zero Mission	Metroid: Zero Mission is a 2004 action-adventure game developed and published by Nintendo for the Game Boy Advance. It is a remake of the original Metroid (1986), with updated visuals and gameplay.
@@ -46979,6 +47009,7 @@ WNo Escape (video game)	No Escape is a video game developed by Bits Studios and 
 WNo Rules: Get Phat	No Rules: Get Phat is a 2001 action video game developed by Flying Tiger Development and published by TDK Mediactive for the Game Boy Advance.
 WNoah's Ark (video game)	Noah's Ark is a platform game for the Nintendo Entertainment System produced by British studio Source R&D and published in 1992 by Konami. It was only released in Europe.
 WNobunaga's Ambition	Nobunaga's Ambition is a series of turn-based grand strategy role-playing simulation video games developed and published by Koei (now Koei Tecmo).
+WNobunaga's Ambition (video game)	Nobunaga's Ambition is a 1986 strategy video game developed and published by Koei.
 WNoddy and the Birthday Party	Noddy and the Birthday Party is a children's video game released only in Europe for the Game Boy Color in 2000. It was developed by Tiertex Design Studios and published by BBC Multimedia.
 WNolan Ryan's Baseball	Nolan Ryan's Baseball (known in Japan as Super Stadium) is a baseball video game endorsed by then-Texas Rangers baseball player Nolan Ryan; one of the most popular baseball players of the late 20th century.
 WNontan to Issho: KuruKuru Puzzle	Nontan to Issho: KuruKuru Puzzle is a 1994 puzzle video game. It is based on an anime series Nontan to Issho. The game was developed by Game Freak.
@@ -47035,7 +47066,7 @@ WPac-Mania	Pac-Mania is a 1987 maze video game developed and published by Namco 
 WPachicom	Pachicom is a parlor video game released for multiple platforms that is themed around pachinko. It was released in 1985 exclusively to the Japanese market.
 WPacky and Marlon	Packy & Marlon is an educational platform video game developed by WaveQuest and published by Raya Systems for the Super Nintendo Entertainment System.
 WPainter Momopie	Painter Momopie is a 1990 maze video game developed and published by Sigma Enterprises for the Game Boy.
-WPaladin's Quest	Paladin's Quest, originally released as Lennus: Kodai Kikai no Kioku ( ; "Lennus: Memories of an Ancient Machine") in Japan, is a utopian/dystopian science fantasy role-playing video game developed by Copya System and published in Japan by Asmik Corporation on November 13, 1992, for the Super Nintendo Entertainment System.
+WPaladin's Quest	Paladin's Quest, originally released as Lennus: Kodai Kikai no Kioku in Japan, is a utopian/dystopian science fantasy role-playing video game developed by Copya System and published in Japan by Asmik Corporation on November 13, 1992, for the Super Nintendo Entertainment System.
 WPalamedes (video game)	Palamedes is a puzzle video game released by Taito in 1990.
 WPanel Action Bingo	Panel Action Bingo is a Game Boy action/adventure video game developed by Japanese studio Locus where the player controls a bird.
 WPanic Restaurant	Panic Restaurant, known in Japan as Wanpaku Kokkun no Gourmet World, is a 1992 platform game developed by EIM and published by Taito for the Nintendo Entertainment System.
@@ -47062,7 +47093,7 @@ WPet Club: Inu Daisuki!	Pet Club: Inu Daisuki! ( !; "Pet Club: Loves Dogs!") is 
 WPete Sampras Tennis	Pete Sampras Tennis is a sports video game published by Codemasters for the Sega Genesis and Game Gear in 1994. A Master System version was cancelled in development.
 WPeter Pan and the Pirates (video game)	Peter Pan and the Pirates is a video game for the Nintendo Entertainment System developed by American studio Equilibrium and published by THQ in 1991.
 WPhalanx (video game)	Phalanx (full title: Phalanx: The Enforce Fighter A-144) is a 1991 horizontally scrolling shooter developed by ZOOM Inc. and Kemco for the X68000, Super Nintendo Entertainment System, and Game Boy Advance.
-WPhantasy Star	Phantasy Star is a series of console role-playing video games and other supplementary media created by Sega.
+WPhantasy Star (video game)	Phantasy Star is a 1987 role-playing video game (RPG) developed and published by Sega for the Master System.
 WPhantasy Star Adventure	Phantasy Star is a series of console role-playing video games and other supplementary media created by Sega.
 WPhantasy Star Collection	Phantasy Star Collection is a compilation of Phantasy Star video games.
 WPhantasy Star II	Phantasy Star II is a science fantasy role-playing video game developed and published by Sega for the Sega Genesis. It was released in Japan in 1989 and North America and Europe in 1990.
@@ -47108,7 +47139,7 @@ WPocket Bomberman	Pocket Bomberman is a platform video game developed by Hudson 
 WPocket Bowling	Pocket Bowling is a bowling video game developed by Athena and published by Jaleco for the Game Boy Color.
 WPocket Music	Pocket Music is a 2002 video game developed by Jester Interactive and published by Rage Games for the Game Boy Color and Game Boy Advance.
 WPocky & Rocky (video game)	Pocky & Rocky is a 1992 scrolling shooter video game developed by Natsume Co., Ltd. for the Super Nintendo Entertainment System (Super NES). It is the sequel to Taito's 1986 arcade game KiKi KaiKai.
-WPocky & Rocky 2	Pocky & Rocky 2, released in Japan as Kiki Kaikai: Tsukiyo Soushi ( ; "Mysterious Ghost World: A Moonlit Night"), is a shoot 'em up video game developed and published by Natsume Co., Ltd. in Japan, published by Natsume Inc. in North America, and published in PAL regions by Ocean Software for the Super NES video game console.
+WPocky & Rocky 2	Pocky & Rocky 2, released in Japan as Kiki Kaikai: Tsukiyo Soushi, is a shoot 'em up video game developed and published by Natsume Co., Ltd. in Japan, published by Natsume Inc. in North America, and published in PAL regions by Ocean Software for the Super NES video game console.
 WPocky & Rocky with Becky	Pocky & Rocky with Becky is a shoot 'em up video game for the Game Boy Advance handheld game console where the player may control either Pocky, Rocky, or Becky, the latter originating from the spin-off KiKi KaiKai: Dotou-hen, as they attempt to defeat a ghostly hydra who escaped his seal.
 WPokémon Blue	Pokemon Red Version and Pokemon Blue Version are popular 1996 role-playing video games (RPGs) developed by Game Freak and published by Nintendo for the Game Boy.
 WPokémon Emerald	Pokemon Emerald Version is a 2004 role-playing video game developed by Game Freak and published by The Pokemon Company and Nintendo for the Game Boy Advance.
@@ -47284,6 +47315,7 @@ WRise of the Phoenix (video game)	Rise of the Phoenix is a multiplatform turn-ba
 WRise of the Robots	Rise of the Robots is a fighting game released by Time Warner Interactive in 1994.
 WRisky Woods	Risky Woods is a fantasy-themed, side-scrolling platform game developed by Dinamic Software and Zeus Software and published by Electronic Arts in 1992.
 WRistar	Ristar is a 1995 platform game developed and published by Sega for the Sega Genesis.
+WRistar (Game Gear video game)	Ristar is a platform video game released by Sega in February 1995 for the Game Gear.
 WRival Turf!	Rival Turf!, released in Japan as Rushing Beat, is a 1992 beat'em up video game developed and published by Jaleco for the Super Nintendo Entertainment System.
 WRiver City Girls Zero	Shin Nekketsu Koha: Kunio-tachi no Banka is a beat 'em up video game developed by Almanic Corporation and published by Technos Japan for the Super Famicom in 1994 exclusively in Japan.
 WRiver City Ransom	Downtown Nekketsu Monogatari, released as River City Ransom in North America and Street Gangs in PAL regions, is a 1989 action-adventure beat 'em up video game developed and published by Technos Japan for the Nintendo Entertainment System.
@@ -47538,7 +47570,8 @@ WSonic Eraser	Sonic the Hedgehog is a video game series.
 WSonic Labyrinth	Sonic Labyrinth is a 1995 action-puzzle video game developed by Minato Giken and published by Sega for the Game Gear.
 WSonic Pinball Party	Sonic Pinball Party is a video game released for the Game Boy Advance in 2003.
 WSonic Spinball	Sonic Spinball, also known as Sonic the Hedgehog Spinball, is a 1993 pinball video game developed by Sega Technical Institute and published by Sega for the Sega Genesis.
-WSonic the Hedgehog	Sonic the Hedgehog is a video game series and media franchise created by the Japanese developers Yuji Naka, Naoto Ohshima, and Hirokazu Yasuhara for Sega.
+WSonic the Hedgehog (1991 video game)	Sonic the Hedgehog is a 1991 platform game developed by Sonic Team and published by Sega for the Sega Genesis.
+WSonic the Hedgehog (8-bit video game)	Sonic the Hedgehog is a 1991 platform video game developed by Ancient and published by Sega for the 8-bit Master System and Game Gear.
 WSonic the Hedgehog 2	Sonic the Hedgehog 2 is a 1992 platform game developed by Sega Technical Institute (STI) for the Sega Genesis.
 WSonic the Hedgehog 2 (8-bit video game)	Sonic the Hedgehog 2 is a 1992 platform video game by Sega for the Master System and Game Gear.
 WSonic the Hedgehog 3	Sonic the Hedgehog 3 is a 1994 platform game developed by Sega Technical Institute and published by Sega for the Sega Genesis.
@@ -47628,7 +47661,7 @@ WStar Fox 2	Star Fox 2 is a shoot 'em up game developed by Nintendo and Argonaut
 WStar Luster	Star Luster is a 1985 space combat simulator video game developed and published by Namco for the Family Computer. It was only released in Japan. An arcade version for the Nintendo VS.
 WStar Ocean	Star Ocean is a franchise of science fantasy Action role-playing video games developed by the Japanese company tri-Ace and published by Square Enix (formerly Enix).
 WStar Ocean: Blue Sphere	Star Ocean: Blue Sphere is an action role-playing video game developed by tri-Ace and published by Enix for the Game Boy Color handheld video game console in June 2001.
-WStar Soldier	Star Soldier is a series of scrolling shooters mainly developed by Hudson Soft. Konami has owned the rights to the series since their absorption of Hudson Soft in 2012.
+WStar Soldier (video game)	Star Soldier is a 1986 vertically scrolling shooter video game developed and published by Hudson Soft for the Nintendo Entertainment System and MSX. It is the first game in the Star Soldier series.
 WStar Trek Generations: Beyond the Nexus	Star Trek Generations: Beyond the Nexus is a Star Trek video game released for the Nintendo Game Boy and Game Gear in 1994.
 WStar Trek: 25th Anniversary (Game Boy video game)	Star Trek: 25th Anniversary is a 1992 Game Boy video game developed by Visual Concepts and published by Ultra, based upon the Star Trek universe. The game chronicles a mission of James T.
 WStar Trek: 25th Anniversary (NES video game)	Star Trek: 25th Anniversary is a 1992 adventure video game developed by Interplay and published by Ultra Games for the Nintendo Entertainment System.
@@ -47690,10 +47723,10 @@ WStunt Race FX	Stunt Race FX, known in Japan as Wild Trax, is a racing video gam
 WStuntman (video game)	Stuntman is the name of two action-adventure racing video games; one was developed by Reflections Interactive for the PlayStation 2, and the other by Velez & Dubail for the Game Boy Advance, with both being published by Infogrames under the Atari brand name.
 WSub-Terrania	Sub-Terrania is a 1994 multidirectional shooter developed by Danish studio Zyrinx and published by Sega for the Mega Drive/Genesis.
 WSugoi Hebereke	Sugoi Hebereke is a 1994 fighting game developed and published by Sunsoft in Japan for the Super Famicom on March 11, 1994.
-WSummon Night Swordcraft Story 3: Stone of Beginnings	Summon Night Swordcraft Story 3: Stone of Beginnings (, Samon Naito Kurafutosodo Monogatari Hajimari no Ishi) is an action role-playing game developed by Flight-Plan for the Game Boy Advance.
+WSummon Night Swordcraft Story 3: Stone of Beginnings	Summon Night Swordcraft Story 3: Stone of Beginnings is an action role-playing game developed by Flight-Plan for the Game Boy Advance.
 WSummon Night: Swordcraft Story	Summon Night: Swordcraft Story, is a 2003 action role-playing game developed by Flight-Plan for the Game Boy Advance.
 WSummon Night: Swordcraft Story 2	Summon Night: Swordcraft Story 2 ( 2, Samon Naito Kurafutosodo Monogatari 2) is a 2004 action role-playing game developed by Flight-Plan for the Game Boy Advance.
-WSumo Fighter: Tōkaidō Basho	Sumo Fighter: Tokaido Basho ( ; "Sumo Fighter Location Tokaido") (known in North America only as Sumo Fighter) is a 2D sumo-based action game, developed by KID and published by I'Max, which was released in 1991.
+WSumo Fighter: Tōkaidō Basho	Sumo Fighter: Tokaido Basho (known in North America only as Sumo Fighter) is a 2D sumo-based action game, developed by KID and published by I'Max, which was released in 1991.
 WSunman (video game)	Sunman is an unreleased action video game developed by EIM and planned to be published by Sunsoft for the Nintendo Entertainment System in 1992.
 WSunset Riders	Sunset Riders is a 1991 run and gun video game developed and published by Konami for arcades. It was released in North America in October 1991 and Japan in November 1991.
 WSuper 8 (video game accessory)	The Super 8, also sold under the title Tri-star or Tristar, is an unlicensed video game peripheral released in 1995 for the Super Nintendo Entertainment System designed to allow the system to run games developed for the Nintendo Entertainment System.
@@ -47865,7 +47898,7 @@ WTakeshi's Challenge	Takeshi no Chosenjo, popularly known as Takeshi's Challenge
 WTaleSpin (Capcom video game)	TaleSpin is a scrolling shooter video game based on the Disney television series TaleSpin. The game was developed by Capcom for the NES in 1991. A stripped down port for the Game Boy released in 1992.
 WTaleSpin (Sega video game)	TaleSpin is a platform game for the Sega Genesis and Game Gear. It is based on the Disney animated series of the same name.
 WTales of Phantasia	Tales of Phantasia is an action role-playing video game developed by Wolf Team and published by Namco for the Super Famicom.
-WTales of Phantasia: Narikiri Dungeon	Tales of Phantasia: Narikiri Dungeon (, Teiruzu Obu Fantajia Narikiri Danjon) is a role-playing video game for the Game Boy Color released by Namco on November 10, 2000, selling 136,000 copies.
+WTales of Phantasia: Narikiri Dungeon	Tales of Phantasia: Narikiri Dungeon is a role-playing video game for the Game Boy Color released by Namco on November 10, 2000, selling 136,000 copies.
 WTales of the World: Narikiri Dungeon 2	Tales of the World: Narikiri Dungeon 2 ( 2, Teiruzu Obu za Waarudo Narikiri Danjon 2) is a spin-off from the Tales RPG series made by Namco.
 WTales of the World: Narikiri Dungeon 3	Tales of the World: Narikiri Dungeon 3 ( 3, Teiruzu Obu za Waarudo Narikiri Danjon 3) is a spin-off from the Tales RPG series made by Namco.
 WTales of the World: Summoner's Lineage	The Tales series, known in Japan as the Tales of series, is a franchise of fantasy Japanese role-playing video games published by Bandai Namco Games (formerly Namco), and developed by its subsidiary, Namco Tales Studio (formerly Wolf Team) until 2011 and presently by Bandai Namco.
@@ -47931,6 +47964,7 @@ WTesserae (video game)	Tesserae is a single-player video game developed by Nicho
 WTest Drive 2001	Test Drive 2001 is a racing video game developed by American studio Xantera and published by Infogrames exclusively for Game Boy Color.
 WTetris	Tetris (Russian: ) is a puzzle video game created by Alexey Pajitnov, a Soviet software engineer, in the mid-1980s.
 WTetris & Dr. Mario	Tetris & Dr. Mario is a 1994 puzzle video game compilation published by Nintendo for the Super Nintendo Entertainment System. It contains enhanced remakes of Tetris (1989) and Dr.
+WTetris (NES video game)	Tetris is a 1989 puzzle video game developed and published by Nintendo for the Nintendo Entertainment System (NES).
 WTetris 2 (1993 video game)	Tetris 2, known in Japan as Tetris Flash, is a 1993 puzzle video game developed by Tose and published by Nintendo for the Nintendo Entertainment System.
 WTetris 2 + BomBliss	Tetris 2 + BomBliss is a 1991 puzzle video game developed by Chunsoft and published by Bullet-Proof Software for the Family Computer. It is the final game Chunsoft developed for the Famicom.
 WTetris Attack	Tetris Attack, also known as Panel de Pon in Japan, is a 1995 puzzle video game developed by Intelligent Systems and published by Nintendo for the Super Nintendo Entertainment System.
@@ -48039,6 +48073,7 @@ WThe Legend of Kage	The Legend of Kage is a 1985 hack and slash platform game de
 WThe Legend of Spyro: A New Beginning	The Legend of Spyro: A New Beginning is a 2006 action-adventure video game in the Spyro series. It is the first installment in The Legend of Spyro trilogy.
 WThe Legend of Spyro: The Eternal Night	The Legend of Spyro: The Eternal Night is a 2007 action-adventure game developed by Krome Studios and published by Vivendi Games for the PlayStation 2 and Wii, while other games developed by different studios bearing the same title were released for the Game Boy Advance, Nintendo DS, and cellular phones.
 WThe Legend of Zelda	The Legend of Zelda is a video game series created by Japanese game designers Shigeru Miyamoto and Takashi Tezuka.
+WThe Legend of Zelda (video game)	The Legend of Zelda is a 1986 action-adventure game developed and published by Nintendo for the Family Computer Disk System. It is the first game in the Legend of Zelda series.
 WThe Legend of Zelda: A Link to the Past	The Legend of Zelda: A Link to the Past is a 1991 action-adventure game developed and published by Nintendo for the Super Nintendo Entertainment System (SNES).
 WThe Legend of Zelda: A Link to the Past and Four Swords	The Legend of Zelda: A Link to the Past and Four Swords is a 2002 action-adventure game compilation developed by Nintendo R&D2 and Flagship and published by Nintendo for the Game Boy Advance.
 WThe Legend of Zelda: Link's Awakening	The Legend of Zelda: Link's Awakening is a 1993 action-adventure game developed and published by Nintendo for the Game Boy.
@@ -48305,6 +48340,7 @@ WUltra Golf	Ultra Golf, known in Europe as Konami Golf and in Japan as Konamic G
 WUltracore	Ultracore is a run and gun video game developed by DICE.
 WUmihara Kawase	Umihara Kawase is a series of platform games starring the sushi chef Kawase Umihara, who has become lost in a world of surreal salt-water and fresh-water creatures.
 WUncharted Waters	Uncharted Waters, originally released as Daikoukai Jidai, is a Japanese business simulation/strategy/role-playing video game series produced by Koei under its "Rekoeition" brand, themed around seafaring adventures during the Age of Discovery.
+WUncharted Waters (video game)	Uncharted Waters is a 1990 video game published by Koei. It is the first game in the Uncharted Waters series and was released in Japan under the name Daikokai Jidai.
 WUncharted Waters 2: New Horizons	Uncharted Waters, originally released as Daikoukai Jidai, is a Japanese business simulation/strategy/role-playing video game series produced by Koei under its "Rekoeition" brand, themed around seafaring adventures during the Age of Discovery.
 WUndercover Cops	Undercover Cops is a 1992 beat 'em up video game developed and published by Irem for arcades.
 WUndercover Cops: Hakaishin Garumaa	Undercover Cops: Hakaishin Garumaa, sometimes referred to with or without subtitle as Undercover Cops Gaiden, is a 1993 turn-based traditional game developed and published by Irem exclusively in Japan for the Nintendo Game Boy on December 10, 1993.
@@ -48318,7 +48354,7 @@ WUrban Champion	Urban Champion is a fighting video game developed and published 
 WUrban Strike	Urban Strike (subtitled The Sequel to Jungle Strike) is a video game developed and published by Electronic Arts.
 WUrban Yeti!	Urban Yeti! is an action video game developed by Cave + Barn Studios and published by Telegames for the Game Boy Advance. It was released in North America on August 16, 2002.
 WUtopia: The Creation of a Nation	Utopia: The Creation of a Nation is a strategy video game developed by Celestial Software and published by Gremlin Graphics in 1991 for the Amiga, Atari ST and MS-DOS.
-WUtsurun Desu: Kawauso Hawaii e Iku!!!	Utsurun Desu: Kawauso Hawaii e Iku!!! ( ; Utsurun Desu - Kawauso moves to Hawaii) is a video game for the Nintendo Famicom based on the popular Japanese manga character from the 1980s "the otter man", Kawauso-kun from Sensya Yoshida's series Uturun Desu.
+WUtsurun Desu: Kawauso Hawaii e Iku!!!	Utsurun Desu: Kawauso Hawaii e Iku!!! is a video game for the Nintendo Famicom based on the popular Japanese manga character from the 1980s "the otter man", Kawauso-kun from Sensya Yoshida's series Uturun Desu.
 WUzu Keobukseon	Uzu Keobukseon (Space Turtle Ship) is a vertical scrolling shooter video game developed by Samsung in 1993 for the Sega Mega Drive, released only in Korea.
 WV'Ball	V'Ball is a 1988 volleyball video game developed and published by Technos Japan for arcades. It was released in North America by Taito.
 WV-Rally 3	V-Rally 3 is a racing video game developed by Eden Studios and published by Infogrames Europe.
@@ -48475,6 +48511,7 @@ WWorld Poker Tour (video game)	World Poker Tour is a poker video game developed 
 WWorld Series Baseball '95	World Series Baseball '95 is a 1994 baseball video game released by Sega for the Game Gear and Sega Genesis.
 WWorld Series Baseball '96	World Series Baseball '96 is a 1996 baseball video game developed by BlueSky Software and published by Sega for the Sega Genesis.
 WWorld Series Baseball '98	World Series Baseball '98 is a 1997 baseball video game published by Sega for the Sega Saturn and Sega Genesis.
+WWorld Series Baseball (1993 video game)	World Series Baseball is a 1993 baseball video game released by Sega for the Game Gear and Sega Genesis.
 WWorld Series Baseball (video game series)	World Series Baseball is a computer and video game series published by Sega from 1994 to 2003. The series would be succeeded by 2004's ESPN Major League Baseball.
 WWorld Soccer '94: Road to Glory	Striker is a soccer video game series first released by Rage Software in 1992. The game was released for the Amiga, Amiga CD32, Atari ST, PC, Mega Drive, and Super Nintendo Entertainment System.
 WWorld Soccer (video game)	The Master System is a video game console released by Sega in North America in September 1986 to compete with the Nintendo Entertainment System, which had been released in the same market in February 1986, following an earlier test launch in New York in October 1985.

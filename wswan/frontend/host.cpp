@@ -651,6 +651,13 @@ extern "C" size_t wswan_host_ahead_save(uint8_t *buf, size_t cap)
 	memcpy(buf + 4, G.state_scratch, len);
 	buf[0] = len & 0xFF; buf[1] = (len >> 8) & 0xFF; buf[2] = (len >> 16) & 0xFF; buf[3] = len >> 24;
 	memset(buf + 4 + len, 0, wswan_host_ahead_size() - 4 - len);
+	{	/* what the frame changes outside the machine: the frame count and the orientation detector's counters */
+		uint8_t *c = buf + 4 + len + 0;
+		memcpy(c, &G.frames, 8); c += 8;
+		const int iv[] = { G.detected, G.source, G.cand, G.cand_n, G.cand_src, G.last_keys, G.last_icon };
+		memcpy(c, iv, sizeof iv); c += sizeof iv;
+		memcpy(c, &G.switches, 4); memcpy(c + 4, &G.since_switch, 4);
+	}
 	return wswan_host_ahead_size();
 }
 extern "C" int wswan_host_ahead_load(const uint8_t *buf, size_t n)
@@ -660,7 +667,15 @@ extern "C" int wswan_host_ahead_load(const uint8_t *buf, size_t n)
 	if (len > n - 4 - WS_AHEAD_CARRY) return 3;
 	StateMem st;
 	st.data = (uint8_t *)buf + 4; st.loc = 0; st.len = (uint32_t)len; st.malloced = 0; st.initial_malloc = 0;
-	return MDFNSS_LoadSM(&st, 0, 0) ? 0 : 3;
+	if (!MDFNSS_LoadSM(&st, 0, 0)) return 3;
+	{
+		const uint8_t *c = buf + 4 + len;
+		memcpy(&G.frames, c, 8); c += 8;
+		int iv[7]; memcpy(iv, c, sizeof iv); c += sizeof iv;
+		G.detected = iv[0]; G.source = iv[1]; G.cand = iv[2]; G.cand_n = iv[3]; G.cand_src = iv[4]; G.last_keys = iv[5]; G.last_icon = iv[6];
+		memcpy(&G.switches, c, 4); memcpy(&G.since_switch, c + 4, 4);
+	}
+	return 0;
 }
 
 /* ---- memory ---------------------------------------------------------------------------------------------- */

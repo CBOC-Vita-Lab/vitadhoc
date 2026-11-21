@@ -9,6 +9,9 @@
 TWIN=$1; L=$2; F=${3:-400}; Q=${QEMU:-}
 [ -x "$TWIN" ] && [ -f "$L" ] || { echo "usage: $0 gbadhoc_host ROMLIST [FRAMES]"; exit 2; }
 W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+# the cartridge clocks (WonderSwan RTC, Game Boy MBC3) start from the wall clock: freeze it so the two runs start alike
+printf '#include <time.h>\n#include <sys/time.h>\ntime_t time(time_t *t){ if(t) *t=1700000000; return 1700000000; }\nint gettimeofday(struct timeval *v, void *z){ (void)z; v->tv_sec=1700000000; v->tv_usec=0; return 0; }\n' > $W/ft.c
+gcc -shared -fPIC -o $W/ft.so $W/ft.c 2>/dev/null && [ -z "$Q" ] && export LD_PRELOAD=$W/ft.so
 INPUT="120:A:3,160:B:3,200:START:3,240:A:3,280:RIGHT:40,340:A:3,380:LEFT:30,420:A:3,$((F-60)):SELECT+L:3"
 same=0; diff=0; idle=0
 while read -r rom; do

@@ -205,6 +205,16 @@ clarification and the remaining package review.
 - **Game descriptions:** English Wikipedia contributors, CC BY-SA 4.0.
   Article and history links, adaptation notes and attribution are in
   `notices/WIKIPEDIA-ATTRIBUTION.md`. Wikidata article mappings are CC0.
+  Sources, by console: Game Boy Advance, Game Boy, Game Boy Color and Super
+  NES as in 1.3; for 2.0 also the NES, WonderSwan, WonderSwan Color, Genesis /
+  Mega Drive, Master System, Game Gear, SG-1000 and Sega CD, from the same
+  Wikipedia introductions found through the same Wikidata platform sets,
+  fetched through the Wikimedia API on 21 November 2026 and matched to the
+  libretro-database (`7d716259`, 2026.11.14) No-Intro / Redump names. Nothing was
+  scraped from any other site. The text stays CC BY-SA 4.0 (it is data in
+  `assets/gamedb.txt`, not part of the program's licence); the generator is
+  `gpsp/vita/tools/make_gamedb.py` and the attribution list is rebuilt from
+  the game list by `gpsp/vita/tools/make_wiki_attribution.py`.
 - **VitaSDK import stubs and headers:** vitasdk contributors, MIT, headers
   revision `e66ebe90b73d1fa4cce005a5b2072cec27322544`.
   `licenses/VitaSDK-Headers-MIT.txt` preserves that revision's `LICENSE.md`.

@@ -37,6 +37,10 @@ void SexyFilter_Reset(void)
     * every cart load, so it doesn't need to be reset here. */
 }
 
+/* quick response: the decimator phase is not part of the save state */
+uint32_t SexyFilter_AheadGet(void) { return mrindex; }
+void SexyFilter_AheadSet(uint32_t v) { mrindex = v; }
+
 void SexyFilter2(int32_t *in, int32_t count) {
 	int64_t  coeff;
 	uint32_t rate = FSettings.SndRate ? FSettings.SndRate

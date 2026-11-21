@@ -182,7 +182,8 @@ sharing).
 - **Box art** finds a NES game by its contents or its name; a UNIF game
   (`.unf`, `.unif`) by name only, so a file with an unusual name may stay
   without a cover until you give it one (the Cover button). Game descriptions
-  are written for GBA, GB, GBC and SNES games first; a NES game may show none.
+  come from Wikipedia and cover about a third of the NES games; a game
+  Wikipedia has no article for shows none.
 - **Wide view** is measured only on the PC build. Some boards (MMC5,
   MMC2/MMC4 and a few more) show soft edges only.
 
@@ -203,8 +204,8 @@ sharing).
   `ux0:data/GBAdhoc/cheats/` or typed on the Cheats page. The ready-made list
   has a single game; use RetroArch's `.cht` files for the rest.
 - Pocket Challenge V2 (`.pc2`), WonderWitch and games with a clock are untested.
-  No descriptions for WonderSwan games yet; names and covers come from the
-  No-Intro catalogue.
+  Only a few WonderSwan games (about 24) have a description: Wikipedia has
+  articles for few of them. Names and covers come from the No-Intro catalogue.
 
 ## Games
 

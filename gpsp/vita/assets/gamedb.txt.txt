@@ -5,8 +5,9 @@ records:  C  cartridge CRC32 -> No-Intro name        (GBA, GB, GBC, SNES, NES, F
           S  GBA header game code -> No-Intro name   (2756)
           Z  GBA header game code -> cartridge size  (2756)
           N  console + loose title -> No-Intro name  (14327)
-          T  title key -> English Wikipedia article  (2451)
-          W  article -> its first sentences          (2030)
+          T  title key -> English Wikipedia article  (3995)
+          U  console + title key -> article          (102)
+          W  article -> its first sentences          (3486)
 
 sources:  the No-Intro catalogues as published in libretro-database
           (metadat/no-intro/Nintendo - Game Boy Advance / Game Boy /
@@ -38,6 +39,30 @@ sources:  the No-Intro catalogues as published in libretro-database
           CRCs are of the plain ROM (an SMD file is de-interleaved first,
           gamedb_md_crc_cancel); the others of the whole image without a 512-byte copier
           header (gamedb_sms_crc_cancel).
+
+The NES, WonderSwan, WonderSwan Color, Genesis, Master System, Game Gear,
+SG-1000 and Sega CD descriptions were added for 2.0 (nothing earlier but the
+text of 96 descriptions changed: a leftover romanisation bracket such as
+"Albert Odyssey (, Arubato Odessei)" is now left out): 1544 T, 102 U and 1456
+W records from the same Wikidata platform sets (Q172742 NES, Q1065792
+WonderSwan, Q1048035 WonderSwan Color, Q10676 Genesis, Q209868 Master System,
+Q751719 Game Gear, Q1136956 SG-1000, Q1047516 Sega CD) and the English
+Wikipedia introductions of their articles, fetched on 21 November 2026. The
+titles come from the No-Intro catalogues (Sega CD: the Redump catalogue
+metadat/redump/Sega - Mega-CD - Sega CD.dat) of libretro-database revision
+7d716259 (version 2026.11.14); no C, N, S or Z record changed. A game's
+description is found by its title key (T) as before; where two consoles'
+games of one title have different articles (the Genesis and the NES
+"Strider"), the later console's own article is filed as U<letter><title key>
+(letters as for N records, M = Sega CD) and the app tries it first
+(gamedb_blurb_sys). Rebuild (byte-identical from the same Wikimedia answers):
+
+  GAMEDB_BLURBS_ONLY=1 GAMEDB_KEEP=1 GAMEDB_SYSTEMS=EGHIJKLM GAMEDB_DATS=<dats> \
+      python3 tools/make_gamedb.py <dir with the 1.4+2.0 gamedb.txt>
+
+with <dats> holding the nine catalogues at revision 7d716259 and <dir>/cache the
+Wikimedia answers (the script downloads them when absent). The attribution
+list is rebuilt by tools/make_wiki_attribution.py.
 
 The descriptions are adapted from Wikipedia and stay under CC BY-SA 4.0;
 the app shows them with a "From Wikipedia" chip and the README credits

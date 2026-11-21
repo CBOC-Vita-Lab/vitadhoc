@@ -272,13 +272,23 @@ def tidy(text):
     Odyssey (, Arubato Odessei) is" (a bracket that starts with a comma or a
     semicolon is the romanisation or translation of a title that is not
     there).  Run on every description (idempotent)."""
-    text = re.sub(r" ?\((?:,|;)(?:[^()]|\([^()]*\))*\)", "", text)
+    text = re.sub(r" ?\(\s*(?:,|;)(?:[^()]|\([^()]*\))*\)", "", text)
     text = re.sub(r" ?\(\s*\)", "", text).replace(" ,", ",")
-    m = re.search(r" ?\((?:,|;)[^()]*$", text)     # cut off inside it
+    m = re.search(r" ?\(\s*(?:,|;)[^()]*$", text)     # cut off inside it
     if m:
         text = text[:m.start()].rstrip(" ,;")
         text += "" if text[-1:] in ".!?" else "."
     return text
+
+
+def article_rank(art):
+    """Which of several articles a title may mean is the game itself (2.0):
+    "Sonic the Hedgehog (1991 video game)" before "Sonic the Hedgehog" (the
+    series), and a series or franchise last."""
+    if re.search(r"\((?:series|franchise|media franchise|[^()]* series|"
+                 r"[^()]* franchise)\)$", art):
+        return 2
+    return 0 if re.search(r"\([^()]*\bgame\)$", art) else 1
 
 
 def clean(text):
@@ -369,7 +379,9 @@ def main():
         wd = wikidata(qid, cache) if qid else []
         index = {}
         for label, art in wd:
-            index.setdefault(title_key(label), art)
+            k = title_key(label)
+            if k not in index or article_rank(art) < article_rank(index[k]):
+                index[k] = art
         hit = 0
         family = {}             # GBA: code[:3] -> article
         loose = {}              # squash(key) -> (rank, name)

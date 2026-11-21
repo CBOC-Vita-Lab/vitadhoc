@@ -105,21 +105,60 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_WIDE) dst.wide = src.wide;
 }
 
-static const char *kConsoles[4] = { "md", "sms", "gg", "sg" };
+static const char *kConsoles[5] = { "md", "sms", "gg", "sg", "scd" };
 
 std::string MdPlayer::console_for_extension(const std::string &path)
 {
 	if (ends_with_ci(path, ".gg")) return "gg";
 	if (ends_with_ci(path, ".sms") || ends_with_ci(path, ".mark3")) return "sms";
 	if (ends_with_ci(path, ".sg") || ends_with_ci(path, ".sc") || ends_with_ci(path, ".sg1000")) return "sg";
+	if (ends_with_ci(path, ".cue") || ends_with_ci(path, ".chd") || ends_with_ci(path, ".iso")) return "scd";
 	return "md";
+}
+
+/* The Sega CD needs the console's BIOS, which is the player's own and never part of VitAdhoc. The folders: <app>/bios and the game's folder. The
+ * well known file names come last so that they win over a file that only has the right size; every candidate is checked by what is inside it (the
+ * core's structure and region test), never by its name. */
+int MdPlayer::load_cd_bios(const std::string &root, const std::string &game_path, std::string *log)
+{
+	static const char *const kNamed[] = {
+		"us_scd1_9210.bin", "us_scd2_9303.bin", "eu_mcd1_9210.bin", "eu_mcd2_9303.bin", "jp_mcd1_9111.bin", "jp_mcd1_9112.bin", "jp_mcd2_921222.bin",
+		"bios_CD_U.bin", "bios_CD_E.bin", "bios_CD_J.bin", "bios_cd_u.bin", "bios_cd_e.bin", "bios_cd_j.bin", "segacd_bios_us.bin", "megacd_bios_eu.bin", "megacd_bios_jp.bin"
+	};
+	std::vector<std::string> dirs;
+	dirs.push_back(path_join(root, "bios"));
+	size_t sl = game_path.find_last_of("/:");
+	if (sl != std::string::npos) dirs.push_back(game_path.substr(0, sl + 1));
+	md_host_cd_bios_clear();
+	int tried = 0;
+	for (size_t d = 0; d < dirs.size(); d++) {
+		std::vector<std::string> names;
+		std::vector<std::string> order;
+		if (list_dir(dirs[d], names))
+			for (size_t i = 0; i < names.size() && tried < 64; i++) {
+				const std::string &nm = names[i];
+				if (!(ends_with_ci(nm, ".bin") || ends_with_ci(nm, ".rom"))) continue;
+				uint64_t sz = 0;
+				if (!file_exists(path_join(dirs[d], nm), &sz) || sz != 0x20000) continue;
+				order.push_back(nm);
+				tried++;
+			}
+		for (size_t k = 0; k < sizeof kNamed / sizeof kNamed[0]; k++) order.push_back(kNamed[k]);
+		for (size_t i = 0; i < order.size(); i++) {
+			std::vector<uint8_t> b;
+			if (!file_read(path_join(dirs[d], order[i]), b, 0x40000) || b.size() != 0x20000) continue;
+			int reg = md_host_cd_bios_add(b.data(), b.size(), 0);
+			if (reg && log) { const char *nm = md_host_cd_bios_name(b.data(), b.size()); *log += strf("Sega CD BIOS: %s (region %d%s%s)\n", order[i].c_str(), reg, nm ? ", " : "", nm ? nm : "an unlisted dump"); }
+		}
+	}
+	return md_host_cd_bios_count();
 }
 
 std::string MdPlayer::pick_launch(const std::string &root, const std::string &arg_rom)
 {
 	std::string best;
 	int64_t best_t = -1;
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 5; i++) {
 		uint64_t sz = 0;
 		int64_t mt = 0;
 		if (!file_exists(launch_path(root, kConsoles[i]), &sz, &mt)) continue;
@@ -327,7 +366,7 @@ void MdPlayer::settings_load()
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 	pal_mode_ = pk::pal_mode_clamp(pl.get_int("pal_speed", pk::PAL_SMOOTH));
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
-	quick_ = clampi(pl.get_int("quick_response", console_ == "md" ? 0 : 1), 0, 2);    /* Auto on the 8 bit consoles, Off on the Mega Drive (md/README.md, "Quick response") */
+	quick_ = clampi(pl.get_int("quick_response", console_ == "md" || console_ == "scd" ? 0 : 1), 0, 2);    /* Auto on the 8 bit consoles, Off on the Mega Drive (md/README.md, "Quick response") */
 	flicker_ = pl.get_int("no_sprite_flicker", 1) != 0;
 	region_ = clampi(pl.get_int("region", 0), 0, 3);
 	fm_ = clampi(pl.get_int("fm", 0), 0, 2);
@@ -335,6 +374,7 @@ void MdPlayer::settings_load()
 	pad_type_ = clampi(pl.get_int("pad_type", 0), 0, 2);
 	sms_border_ = clampi(pl.get_int("sms_border", 0), 0, 2);
 	gg_lcd_ = clampi(pl.get_int("gg_lcd", 0), 0, 10);
+	ram_cart_ = clampi(pl.get_int("ram_cart", 0), 0, 6);
 	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
 	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
 	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
@@ -441,6 +481,7 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_PADTYPE, pad_type_);
 	menu_.set_value(ROW_REGION, region_);
 	menu_.set_value(ROW_FM, fm_);
+	menu_.set_value(ROW_RAMCART, ram_cart_);
 	menu_.set_value(ROW_YM2413, ym2413_);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
 	menu_.set_value(ROW_QUICK, quick_);
@@ -483,6 +524,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		for (size_t i = 0; i < req_.warnings.size(); i++) logf("launch file: %s\n", req_.warnings[i].c_str());
 	}
 	req_.console = console_;
+	scd_ = console_ == "scd";
 	system_ = console_ == "gg" ? MD_SYS_GG : console_ == "sms" ? MD_SYS_SMS : console_ == "sg" ? MD_SYS_SG : MD_SYS_MD;
 	logf("launch: %s, console=%s game=%s save=%s start=%d slot=%d patch=%s cpu=%d enter=%s\n", have_launch_ ? ("launch/" + console_ + ".ini").c_str() : "argument",
 	     console_.c_str(), req_.game_path.c_str(), req_.save_path.c_str(), (int) req_.start, req_.slot, req_.patch_path.c_str(), req_.cpu_mhz,
@@ -534,8 +576,39 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	char err[200] = "";
 	if (md_host_init()) { res.fatal1 = "The Sega core could not start."; res.fatal2 = "Not enough memory."; return res; }
 	std::vector<uint8_t> romb;
+	if (scd_) {
+		/* A Sega CD disc is streamed from the card by the core, never held in memory, and needs the player's own BIOS. What the machine is built
+		 * with (the region the BIOS is told, the RAM cartridge) is read now: the disc is loaded once. */
+		{ Ini p0; p0.load(path_join(cfg_dir(), "player.ini")); region_ = clampi(p0.get_int("region", 0), 0, 3); ram_cart_ = clampi(p0.get_int("ram_cart", 0), 0, 6); }
+		if (linked()) { region_ = 0; ram_cart_ = 0; }          /* two consoles run one machine: the system's own values */
+		md_host_set_region(region_);
+		md_host_set_option("ram_cart", ram_cart_);
+		std::string bl;
+		const int nb = load_cd_bios(root, rom_, &bl);
+		if (!bl.empty()) logf("%s", bl.c_str());
+		if (!nb) {
+			logf("no Sega CD BIOS found (looked in %s and beside the game)\n", path_join(root, "bios").c_str());
+			res.fatal1 = "This game could not be started.";
+			res.fatal2 = "Sega CD game: put your own Sega CD BIOS (for example us_scd1_9210.bin, eu_mcd1_9210.bin or jp_mcd1_9112.bin) in ux0:data/GBAdhoc/bios or next to the game";
+			SessionReport r = session_.finish(EXIT_ERROR);
+			r.notice = "A Sega CD game needs its BIOS: put it in ux0:data/GBAdhoc/bios";
+			session_write(root_, r);
+			return res;
+		}
+		if (!req_.patch_path.empty()) logf("patch ignored: a disc cannot be patched in memory\n");
+		if (md_host_load_disc(rom_.c_str(), err, sizeof err)) {
+			logf("load failed: %s\n", err);
+			res.fatal1 = "This game could not be started.";
+			res.fatal2 = std::string(err) + ". Sega CD: check the disc image (.cue with its .bin files, .chd or .iso) and that its region has a BIOS.";
+			SessionReport r = session_.finish(EXIT_ERROR);
+			r.notice = std::string("This game could not be started: ") + err;
+			session_write(root_, r);
+			return res;
+		}
+		logf("%s\n", md_host_cd_info());
+	} else
 	if (!file_read(rom_, romb, 12u << 20) || romb.empty()) { res.fatal1 = "This game could not be started."; res.fatal2 = "The game file could not be read."; return res; }
-	if (!req_.patch_path.empty()) {
+	if (!scd_ && !req_.patch_path.empty()) {
 		std::vector<uint8_t> out;
 		PatchResult pr = patch_apply_files(req_.patch_path, romb, out);
 		logf("patch %s (%s): %s\n", req_.patch_path.c_str(), patch_kind_name(pr.kind), pr.status == PS_OK ? "applied" : pr.text().c_str());
@@ -549,7 +622,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		}
 		romb.swap(out);
 	}
-	if (md_host_load_mem(romb.data(), romb.size(), rom_.c_str(), system_, err, sizeof err)) {
+	if (!scd_ && md_host_load_mem(romb.data(), romb.size(), rom_.c_str(), system_, err, sizeof err)) {
 		logf("load failed: %s\n", err);
 		res.fatal1 = "This game could not be started.";
 		res.fatal2 = err;
@@ -567,6 +640,16 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			md_host_unload();
 			return res;
 		}
+		if (scd_) {
+			/* the identity of a disc is its header sector, its length and the BIOS in use (a disc is hundreds of MB: the link never reads it all) */
+			std::vector<uint8_t> id(2048 + 8);
+			make_dirs(path_join(root, "launch"));
+			std::string lp = path_join(path_join(root, "launch"), "link_rom.bin");
+			uint32_t crc = md_host_rom_crc(), bc = md_host_cd_bios_crc();
+			md_host_cd_header(id.data(), 2048);
+			for (int i = 0; i < 4; i++) { id[2048 + i] = (uint8_t) (crc >> (8 * i)); id[2052 + i] = (uint8_t) (bc >> (8 * i)); }
+			if (atomic_write(lp, id.data(), id.size()) == W_OK) link_rom_ = lp;
+		} else
 		if (req_.patch_path.empty()) link_rom_ = rom_;
 		else {
 			make_dirs(path_join(root, "launch"));
@@ -580,6 +663,11 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			res.fatal2 = "The game file could not be read again.";
 			return res;
 		}
+	} else
+	if (scd_) {
+		/* RetroAchievements hashes a Sega CD game by the first 512 bytes of its first sector (rcheevos, console 9) */
+		uint8_t hdr[512];
+		if (md_host_cd_header(hdr, sizeof hdr) == 0) ra_begin(hdr, sizeof hdr);
 	} else
 	ra_begin(romb.data(), romb.size());       /* the file as the site knows it (the patched one for a patched game) */
 	{
@@ -620,7 +708,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 
 	MenuConfig cfg;
 	cfg.game_name = req_.game_name.empty() ? game_ : req_.game_name;
-	cfg.console_label = system_ == MD_SYS_MD ? "Mega Drive" : system_ == MD_SYS_SMS ? "Master System" : system_ == MD_SYS_GG ? "Game Gear" : "SG-1000";
+	cfg.console_label = scd_ ? "Sega CD" : system_ == MD_SYS_MD ? "Mega Drive" : system_ == MD_SYS_SMS ? "Master System" : system_ == MD_SYS_GG ? "Game Gear" : "SG-1000";
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
@@ -675,6 +763,13 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			rl.push_back("30 s"); rl.push_back("1 min");
 			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
 			                   "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
+		}
+		if (scd_) {
+			std::vector<std::string> rc;
+			rc.push_back("Off"); rc.push_back("16 KB"); rc.push_back("32 KB"); rc.push_back("64 KB"); rc.push_back("128 KB"); rc.push_back("256 KB"); rc.push_back("512 KB");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_RAMCART, "RAM cartridge",
+			                   "Extra save memory some games can use besides the console's built in 8 KB. 128 KB is the one Sega sold. Takes effect the next time the game starts. Two players use none.",
+			                   rc, ram_cart_);
 		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "Region",
 		                   "Auto follows the game. Europe runs a game at its 50 Hz speed, USA and Japan at 60 Hz; some games only work in their own region.", region, region_);
@@ -845,7 +940,7 @@ void MdPlayer::speed_start()
 
 /* ---- RetroAchievements ----------------------------------------------------------------------------------------------------- */
 
-uint32_t MdPlayer::ra_read(void *, uint32_t addr, uint8_t *out, uint32_t n) { return (uint32_t) md_host_ra_read(addr, out, n); }
+uint32_t MdPlayer::ra_read(void *, uint32_t addr, uint8_t *out, uint32_t n) { uint32_t r = (uint32_t) md_host_ra_read(addr, out, n); static int c; if (c++ % 97 == 0) fprintf(stderr, "RAREAD %x %u -> %u %02x\n", addr, n, r, r ? out[0] : 0); return r; }
 uint64_t MdPlayer::ra_now(void *ud) { return ((MdPlayer *) ud)->pf_->now_us(); }
 int MdPlayer::ra_online(void *) { return pk_ra_net_online(); }
 void MdPlayer::ra_log(void *ud, const char *line) { ((MdPlayer *) ud)->logf("ra: %s\n", line); }
@@ -1244,6 +1339,7 @@ void MdPlayer::settings_queue_save()
 	pl.set_int("pad_type", pad_type_);
 	pl.set_int("sms_border", sms_border_);
 	pl.set_int("gg_lcd", gg_lcd_);
+	pl.set_int("ram_cart", ram_cart_);
 	pl.set_int("ff_speed", ff_speed_);
 	pl.set_int("ff_sound", ff_sound_);
 	pl.set_int("ff_mode", ff_toggle_);
@@ -1282,6 +1378,7 @@ void MdPlayer::on_change(int row, int v)
 		if (md_host_fps() != before) { timing_changed_ = true; ahead_.set_frame_us((uint32_t) (1e6 / md_host_fps() + 0.5)); logf("region %d: %.4f Hz now\n", region_, md_host_fps()); }
 		break;
 	}
+	case ROW_RAMCART: ram_cart_ = clampi(v, 0, 6); notice("The RAM cartridge changes when the game starts again", NOTICE_OK); break;
 	case ROW_FM: fm_ = clampi(v, 0, 2); md_host_set_option("fm", fm_); break;
 	case ROW_YM2413: ym2413_ = clampi(v, 0, 2); md_host_set_option("ym2413", ym2413_); break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;

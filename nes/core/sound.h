@@ -87,6 +87,10 @@ void FCEUSND_Power(void);
 void FCEUSND_Reset(void);
 void FCEUSND_SaveState(void);
 void FCEUSND_LoadState(int version);
+/* quick response: what the sound save state misses (filter phase, history, latches) */
+#define FCEUSND_AHEAD_SIZE 24576u
+unsigned FCEUSND_AheadSave(uint8_t *out);
+void FCEUSND_AheadLoad(const uint8_t *in);
 
 void FASTAPASS(1) FCEU_SoundCPUHook(int);
 

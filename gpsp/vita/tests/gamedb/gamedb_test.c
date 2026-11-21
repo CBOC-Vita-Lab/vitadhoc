@@ -13,7 +13,7 @@
 
 static int fails;
 /* the file's size (assets/gamedb.txt): update with the generator's output */
-#define EXPECT_RECORDS 48253
+#define EXPECT_RECORDS 51355
 #define EXPECT_C_RECORDS 23933
 
 static void expect(int cond, const char *what)
@@ -293,6 +293,31 @@ int main(int argc, char **argv)
    expect(!strcmp(out, "The Legend of Zelda - The Minish Cap"), out);
    gamedb_base_title("Bug's Life, A (USA)", out, sizeof(out));
    expect(!strcmp(out, "A Bug's Life"), out);
+   /* 2.0: NES, WonderSwan and the Sega consoles have descriptions; a title two
+    * consoles' games share (U records) gives each its own game's article */
+   expect(gamedb_blurb_sys('E', "Strider (USA)", out, sizeof(out)) &&
+          strstr(out, "Nintendo Entertainment System"), "NES Strider");
+   expect(gamedb_blurb_sys('I', "Strider (USA)", out, sizeof(out)) &&
+          strstr(out, "arcades") && !strstr(out, "Nintendo"), "Genesis Strider is the arcade game");
+   expect(gamedb_blurb_sys('I', "Sonic the Hedgehog (USA, Europe)", out, sizeof(out)) &&
+          strstr(out, "Sega Genesis"), "Genesis Sonic");
+   expect(gamedb_blurb_sys('J', "Sonic the Hedgehog (Europe)", out, sizeof(out)) &&
+          strstr(out, "Master System"), "Master System Sonic");
+   expect(gamedb_blurb_sys('K', "Sonic the Hedgehog (USA, Europe)", out, sizeof(out)) &&
+          strstr(out, "Game Gear"), "Game Gear Sonic");
+   expect(gamedb_blurb_sys('E', "Mega Man 2 (USA)", out, sizeof(out)) &&
+          strstr(out, "Mega Man 2"), "NES Mega Man 2");
+   expect(gamedb_blurb_sys('I', "Streets of Rage 2 (USA)", out, sizeof(out)) &&
+          strstr(out, "Streets of Rage 2"), "Genesis Streets of Rage 2");
+   expect(gamedb_blurb_sys('G', "Buffers Evolution (Japan)", out, sizeof(out)) &&
+          strstr(out, "WonderSwan"), "WonderSwan Buffers Evolution");
+   expect(gamedb_blurb_sys('L', "Flicky (Japan) (Rev 1)", out, sizeof(out)) &&
+          strstr(out, "Flicky"), "SG-1000 Flicky");
+   expect(gamedb_blurb_sys('I', "Alex Kidd in Miracle World (USA, Europe)", out, sizeof(out)) ||
+          gamedb_blurb_sys('J', "Alex Kidd in Miracle World (USA, Europe)", out, sizeof(out)),
+          "a Master System title is found for its console");
+   expect(!gamedb_blurb_sys('I', "gbadhoc-test", out, sizeof(out)),
+          "no description for a title that is not in the database");
    expect(!gamedb_blurb("gbadhoc-test", out, sizeof(out)),
           "a test cartridge has none");
    /* the port's test cartridge says AGDE (Lufia's code) but is 1/8 of its

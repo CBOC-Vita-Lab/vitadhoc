@@ -48,8 +48,8 @@ time and saves stay with the file.
 On Wi-Fi, covers and title screens can be matched by name, cartridge code or
 checksum. Your own artwork takes priority. Optional hero images and short
 clips appear behind the selected game. Clips record your own play, remain on
-the Vita and can be disabled. Wikipedia-derived descriptions are bundled
-with attribution; this does not bundle the games or their cover collections.
+the Vita and can be disabled. Wikipedia-derived descriptions (every console that has an article for the
+game) are bundled with attribution; this does not bundle the games or their cover collections.
 
 Continue uses a resume state kept when leaving a game, periodically during
 play and after an in-game save. On the home screen, Cross continues and Up

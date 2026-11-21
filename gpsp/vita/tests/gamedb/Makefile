@@ -4,6 +4,7 @@ V = ../..
 test: gamedb_test keys.txt crcs.txt
 	./gamedb_test $(V)/assets/gamedb.txt keys.txt crcs.txt
 	python3 test_sega_db.py
+	python3 test_descriptions.py
 	python3 test_sega_covers.py
 gamedb_test: gamedb_test.c $(V)/gamedb.c $(V)/gamedb.h
 	$(CC) -O2 -Wall -I$(V) gamedb_test.c $(V)/gamedb.c -o $@

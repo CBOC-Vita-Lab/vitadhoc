@@ -67,6 +67,8 @@ enum { MD_PIXEL_RGB565 = 1 };
  * image that does not look like a Sega CD BIOS (the test suite's stand-in only; the player never sets it).
  * Returns the region (MD_REGION_USA / EUROPE / JAPAN_NTSC), or 0 when the data is not a Sega CD BIOS. */
 int md_host_cd_bios_add(const uint8_t *data, size_t n, int force);
+/* Test suites only (the players never call it): every later md_host_cd_bios_add behaves as if `force` were 1, so the test stand-in BIOS passes through the player's own BIOS search. */
+void md_host_cd_bios_test_force(int on);
 void md_host_cd_bios_clear(void);
 int md_host_cd_bios_count(void);           /* regions that have an image */
 /* The known dump's name for a BIOS image ("Sega CD (USA) model 1 v1.10", ...) or NULL when it is a dump this table does not know. */
@@ -79,9 +81,13 @@ int md_host_cd_probe(const char *path, char *why, size_t whylen);
  * is the only one there is (the console region is then the BIOS's). */
 int md_host_load_disc(const char *path, char *err, size_t errlen);
 int md_host_is_cd(void);                   /* 1 when the loaded game is a disc */
+uint32_t md_host_cd_bios_crc(void);        /* CRC-32 of the BIOS image in use (0 without a disc): two linked consoles must run the same one */
 /* What the loaded disc is: its title from the header, the track count, the BIOS image in use (region and name) in one line. */
 const char *md_host_cd_info(void);
 int md_host_cd_tracks(void);               /* 0 without a disc */
+/* The first n (<= 2048) bytes of the disc's first sector (its user data), whenever a disc is loaded: what RetroAchievements hashes for a Sega CD game
+ * (rcheevos: the MD5 of the first 512 bytes). Does not disturb the machine. Returns 0, else non-zero. */
+int md_host_cd_header(uint8_t *out, size_t n);
 /* Disc reader checks for the test suite (md/twin/cd_test.cpp), on the machine just loaded and before any frame has run: the table of contents, one
  * data sector's user data, and the last stereo sample of a run of CD-DA samples as the drive's audio path produces it. */
 int md_host_cd_test_toc(int track, int *start, int *end, int *type);          /* track 1..: first / last LBA, type 0 audio 1 mode 1 2 mode 2; returns the track count */

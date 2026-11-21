@@ -1445,6 +1445,35 @@ SFORMAT FCEUSND_STATEINFO[] = {
 void FCEUSND_SaveState(void) {
 }
 
+/* WaveHi keeps only the filter history after a frame ([0,soundtsoffs) and zero past it), so the look-ahead frame is undone by
+ * copying that history back and zeroing whatever the look-ahead frame's own history reached beyond it. */
+#define AH_HIST 2048u
+unsigned FCEUSND_AheadSave(uint8_t *out)
+{
+	uint32_t h = soundtsoffs > AH_HIST ? AH_HIST : soundtsoffs;
+	uint32_t mr = SexyFilter_AheadGet();
+	memcpy(out, &mr, 4);
+	memcpy(out + 4, &h, 4);
+	out[8] = sweepReload[0]; out[9] = sweepReload[1]; out[10] = DMCDMABuf; out[11] = (uint8_t)(EnvUnits[0].reloaddec | (EnvUnits[1].reloaddec << 1) | (EnvUnits[2].reloaddec << 2));
+	memcpy(out + 12, Wave, sizeof Wave);
+	memcpy(out + 12 + sizeof Wave, WaveHi, h * sizeof(int32_t));
+	return 12 + sizeof Wave + h * sizeof(int32_t);
+}
+
+void FCEUSND_AheadLoad(const uint8_t *in)
+{
+	uint32_t mr, h;
+	memcpy(&mr, in, 4);
+	memcpy(&h, in + 4, 4);
+	if (h > AH_HIST) h = AH_HIST;
+	SexyFilter_AheadSet(mr);
+	sweepReload[0] = in[8]; sweepReload[1] = in[9]; DMCDMABuf = in[10];
+	EnvUnits[0].reloaddec = in[11] & 1; EnvUnits[1].reloaddec = (in[11] >> 1) & 1; EnvUnits[2].reloaddec = (in[11] >> 2) & 1;
+	memcpy(Wave, in + 12, sizeof Wave);
+	memcpy(WaveHi, in + 12 + sizeof Wave, h * sizeof(int32_t));
+	memset(WaveHi + h, 0, (AH_HIST - h) * sizeof(int32_t));
+}
+
 void FCEUSND_LoadState(int version) {
 	int i;
 	LoadDMCPeriod(DMCFormat & 0xF);

@@ -12,7 +12,7 @@
 | mGBA-derived cheat engine | MPL-2.0; corresponding source and change markers retained |
 | `cheats.db` and cartridge catalogue | Pinned libretro-database, CC BY-SA 4.0; local conversion described in notices |
 | rcheevos (RetroAchievements runtime) | MIT; v12.5.0 subset plus five backported upstream fixes in `gpsp/vita/third_party/rcheevos/` |
-| `gamedb.txt` descriptions | Wikipedia contributors, CC BY-SA 4.0; 1,268 article/history links in the attribution file; Wikidata mappings CC0 |
+| `gamedb.txt` descriptions | Wikipedia contributors, CC BY-SA 4.0; 3,486 article/history links in the attribution file; Wikidata mappings CC0 |
 
 See [Third-Party Notices](../notices/THIRD-PARTY.md) for revisions, modifications
 and [Credits](../CREDITS.md) for contributors. These licenses do not grant rights

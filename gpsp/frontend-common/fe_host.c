@@ -8231,13 +8231,16 @@ static void run_frame(void)
        * frame, the state copy back (docs/PERFORMANCE.md "GBA: Quick response is not offered"); the sound of that second frame is not muted */
       static int probe = -1;
       static void *img;
+      static size_t isz;
       if (probe < 0)
          probe = getenv("GBADHOC_AHEAD_GBA_PROBE") ? 1 : 0;
-      if (probe && (img || (img = malloc(GBA_STATE_MEM_SIZE))))
+      if (probe && !img && (isz = retro_serialize_size()) != 0)
+         img = malloc(isz);
+      if (probe && img)
       {
-         gba_save_state(img);
+         retro_serialize(img, isz);
          retro_run();
-         gba_load_state(img);
+         retro_unserialize(img, isz);
       }
    }
 #endif

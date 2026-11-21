@@ -13,7 +13,7 @@
 
 static int fails;
 /* the file's size (assets/gamedb.txt): update with the generator's output */
-#define EXPECT_RECORDS 51355
+#define EXPECT_RECORDS 51351
 #define EXPECT_C_RECORDS 23933
 
 static void expect(int cond, const char *what)
@@ -313,9 +313,20 @@ int main(int argc, char **argv)
           strstr(out, "WonderSwan"), "WonderSwan Buffers Evolution");
    expect(gamedb_blurb_sys('L', "Flicky (Japan) (Rev 1)", out, sizeof(out)) &&
           strstr(out, "Flicky"), "SG-1000 Flicky");
-   expect(gamedb_blurb_sys('I', "Alex Kidd in Miracle World (USA, Europe)", out, sizeof(out)) ||
-          gamedb_blurb_sys('J', "Alex Kidd in Miracle World (USA, Europe)", out, sizeof(out)),
-          "a Master System title is found for its console");
+   /* a description only for the game it is about: these titles' articles are
+    * about a game of another console (or a series) and are left out */
+   expect(!gamedb_blurb_sys('H', "Final Fantasy II (Japan)", out, sizeof(out)),
+          "no Super NES Final Fantasy IV text for the WonderSwan Color game");
+   expect(!gamedb_blurb_sys('K', "Tempo Jr. (World)", out, sizeof(out)),
+          "no Sega 32X Tempo text for the Game Gear game");
+   expect(!gamedb_blurb_sys('J', "Golden Axe (USA, Europe, Brazil) (En)", out, sizeof(out)),
+          "no series text");
+   /* a Game Boy game is found for the Color too, not the other way round for
+    * a console that has no such partner */
+   expect(gamedb_blurb_sys('C', "Tetris (World) (Rev 1)", out, sizeof(out)) &&
+          strstr(out, "Game Boy"), "a Game Boy game's text on the Color");
+   expect(!gamedb_blurb_sys('I', "Alex Kidd in Miracle World (USA, Europe)", out, sizeof(out)),
+          "a Master System game has no Genesis text");
    expect(!gamedb_blurb_sys('I', "gbadhoc-test", out, sizeof(out)),
           "no description for a title that is not in the database");
    expect(!gamedb_blurb("gbadhoc-test", out, sizeof(out)),

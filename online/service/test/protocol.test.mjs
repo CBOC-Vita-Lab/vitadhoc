@@ -125,7 +125,7 @@ test('create: every field validation, the message names the field', async () => 
     assert.equal((await s.create(hostDesc(over))).status, 201, JSON.stringify(over));
   }
   // every console with Two players is accepted, and its card comes back with the console the host named
-  for (const con of ['gba', 'gb', 'gbc', 'nes', 'snes', 'ws', 'md', 'sms', 'sg']) {
+  for (const con of ['gba', 'gb', 'gbc', 'nes', 'snes', 'ws', 'md', 'sms', 'sg', 'scd']) {
     const c = await s.create(hostDesc({ console: con, kind: 5, game: 'A1B2C3D4' }));
     assert.equal(c.status, 201, con);
     const g = await s.call('GET', `/v1/rooms/${c.data.code}`);

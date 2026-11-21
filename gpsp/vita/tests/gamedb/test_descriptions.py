@@ -22,8 +22,10 @@ sys.path.insert(0, str(VITA / 'tools'))
 import make_gamedb as mg  # noqa: E402
 
 # the lowest share of a console's games (N records) with a description:
-# measured at 2.0 (NES 969 of 2985 ...), a drop means the matching broke
-MIN_GAMES = {'E': 900, 'G': 12, 'H': 8, 'I': 740, 'J': 250, 'K': 225, 'L': 38}
+# measured at 2.0 (NES 851 of 2985 ...), a drop means the matching broke
+PARTNER = {'B': 'C', 'C': 'B', 'G': 'H', 'H': 'G', 'F': 'E', 'J': 'K'}   # gamedb.c
+MIN_GAMES = {'A': 800, 'B': 340, 'C': 270, 'D': 850, 'E': 830, 'F': 30, 'G': 6, 'H': 3,
+             'I': 650, 'J': 200, 'K': 110, 'L': 25}
 
 
 def records():
@@ -42,22 +44,36 @@ class Descriptions(unittest.TestCase):
 
     def blurb(self, tag, name):
         k = mg.title_key(mg.base_title(name))
-        for pre in ('U' + tag, 'T'):
+        for t in [tag] + list(PARTNER.get(tag, '')):
             for more in ('', ' version', ' edition'):
-                if pre + k + more in self.rec:
-                    return self.rec['W' + self.rec[pre + k + more]]
+                if 'U' + t + k + more in self.rec:
+                    return self.rec['W' + self.rec['U' + t + k + more]]
         return None
 
     def test_counts(self):
         c = Counter(k[0] for k in self.rec)
-        self.assertEqual((c['T'], c['U'], c['W']), (3995, 102, 3486))
+        self.assertEqual((c['T'], c['U'], c['W']), (0, 4360, 3219))
         # the names and checksums are as they were
         self.assertEqual((c['C'], c['N'], c['S'], c['Z']), (23933, 14327, 2756, 2756))
+        per = Counter(k[1] for k in self.rec if k[0] == 'U')
+        self.assertEqual(dict(per), {'A': 847, 'B': 359, 'C': 275, 'D': 874, 'E': 864, 'G': 7,
+                                     'H': 4, 'I': 676, 'J': 205, 'K': 116, 'L': 27, 'M': 106})
 
     def test_every_title_has_its_text(self):
         for k, v in self.rec.items():
             if k[0] in 'TU':
                 self.assertIn('W' + v, self.rec, k)
+
+    def test_no_text_nobody_can_reach(self):
+        used = {v for k, v in self.rec.items() if k[0] == 'U'}
+        for k in self.rec:
+            if k[0] == 'W':
+                self.assertIn(k[1:], used, k)
+
+    def test_no_series_text(self):
+        for k, v in self.rec.items():
+            if k[0] == 'W':
+                self.assertFalse(mg.about_a_series(v), (k, v))
 
     def test_text_rules(self):
         for k, v in self.rec.items():
@@ -72,8 +88,8 @@ class Descriptions(unittest.TestCase):
     def test_u_records_name_their_console(self):
         for k, v in self.rec.items():
             if k[0] == 'U':
-                self.assertIn(k[1], 'EGHIJKLM', k)
-                self.assertNotEqual(self.rec.get('T' + k[2:]), v, k)
+                self.assertIn(k[1], 'ABCDEGHIJKLM', k)
+                self.assertIn('W' + v, self.rec, k)
 
     def test_coverage_per_console(self):
         for tag, least in MIN_GAMES.items():
@@ -102,6 +118,14 @@ class Descriptions(unittest.TestCase):
     def test_earlier_consoles_keep_their_text(self):
         self.assertIn('Game Boy Advance', self.blurb('A', 'Pokemon - Emerald Version (USA, Europe)'))
 
+    def test_a_description_is_about_the_game_of_its_console(self):
+        # the cases a title shared with another console's game used to get wrong
+        self.assertIsNone(self.blurb('H', 'Final Fantasy II (Japan)'))
+        self.assertIsNone(self.blurb('K', 'Tempo Jr. (World)'))
+        self.assertIsNone(self.blurb('J', 'Golden Axe (USA, Europe, Brazil) (En)'))
+        self.assertIsNone(self.blurb('I', 'Alex Kidd in Miracle World (USA, Europe)'))
+        self.assertIn('Game Boy', self.blurb('C', 'Tetris (World) (Rev 1)'))   # the partner console
+
     def test_attribution_list_is_complete(self):
         r = subprocess.run([sys.executable, str(VITA / 'tools' / 'make_wiki_attribution.py'), '--check'])
         self.assertEqual(r.returncode, 0, 'run tools/make_wiki_attribution.py')
@@ -112,6 +136,10 @@ class Descriptions(unittest.TestCase):
         self.assertLess(mg.article_rank('Sonic the Hedgehog'),
                         mg.article_rank('Sonic the Hedgehog (series)'))
         self.assertLess(mg.article_rank('Metroid (video game)'), mg.article_rank('Metroid'))
+        self.assertTrue(mg.about_a_series('Golden Axe is a series of side-scrolling beat em up games.'))
+        self.assertTrue(mg.about_a_series('Battletoads is a video game franchise by Rare.'))
+        self.assertFalse(mg.about_a_series('Scooby-Doo! Unmasked is a platform game based on the Scooby-Doo franchise.'))
+        self.assertFalse(mg.about_a_series('Super Mario Bros. is a 1985 platform game, the first of the series.'))
 
     def test_tidy(self):
         self.assertEqual(mg.tidy('Albert Odyssey (, Arubato Odessei) is a game.'),

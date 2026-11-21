@@ -713,9 +713,11 @@ int cdd_load(char *filename, char *header)
     /* read lines until end of file */
     while (cdStreamGets(line, 128, fd))
     {
-      /* skip any SPACE characters */
+      /* skip any SPACE characters (VitAdhoc: and a UTF-8 byte order mark at the start of the sheet, and TAB characters: sheets
+         written by some editors and tools have them, and the FILE / TRACK / INDEX lines were not recognised) */
       lptr = line;
-      while (*lptr == 0x20) lptr++;
+      if (!memcmp(lptr, "\xEF\xBB\xBF", 3)) lptr += 3;
+      while ((*lptr == 0x20) || (*lptr == 0x09)) lptr++;
 
       /* decode FILE commands */
       if (!(memcmp(lptr, "FILE", 4)))

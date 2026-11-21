@@ -34,8 +34,12 @@ and in emulators; none of it has run on a real Vita yet (see
 - **No sprite flicker** on the Master System, Game Gear and SG-1000: all the
   sprites on a line are drawn, not every other frame. The game itself runs
   exactly the same.
-- **Quick response** on the Sega consoles shows a button press one frame
-  sooner, with the game running exactly as without it.
+- **Quick response** shows a button press one frame sooner, with the game
+  running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan
+  and the Sega consoles have it (Settings, and per game); it is on Auto by
+  default where a frame is cheap enough and off in linked and online play, in
+  fast forward and in rewind. Not offered for Game Boy Advance: see Known
+  Issues.
 
 **Smoother play**
 

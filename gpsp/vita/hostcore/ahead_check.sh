@@ -4,6 +4,7 @@
 # off and a run with it forced on (GBADHOC_AHEAD=2: every frame at normal speed), same pad script; the sound (WAV), the quick save
 # (state) and the battery file must be identical, and the run must really have run ahead (the log's ahead_frames line).
 #   ahead_check.sh build/x86/gbadhoc_host ROMLIST [FRAMES]    ROMLIST: a file with one ROM path a line.  Exit 1 on a difference.
+# Set AHEAD_CONFIG='nes_wide = 1' (lines of config.ini) to run with other settings, e.g. the NES wide view on.
 # Set GBADHOC_AHEAD_SKIP=N to run both with the undrawn-frame pattern of skip_check.sh (GBADHOC_SKIP_MOD) as well.
 # Copyright CBOC-Vita. MIT licence for this script.
 TWIN=$1; L=$2; F=${3:-400}; Q=${QEMU:-}
@@ -19,6 +20,7 @@ while read -r rom; do
   name=$(basename "$rom"); ext="${name##*.}"
   for m in 0 2; do
     root=$W/$m; rm -rf $root; mkdir -p $root/roms; cp "$rom" "$root/roms/rom.$ext"; echo "rom.$ext" > $root/autoboot.txt
+    [ -n "$AHEAD_CONFIG" ] && printf '%s\n' "$AHEAD_CONFIG" > $root/config.ini
     GBADHOC_AHEAD=$m GBADHOC_SKIP_MOD=${GBADHOC_AHEAD_SKIP:-0} timeout 600 nice $Q "$TWIN" --root $root --frames $F --wav $root/a.wav --input "$INPUT" >$root/out.txt 2>&1
     echo $? > $root/rc
   done

@@ -92,6 +92,16 @@ next frame's picture, and answers a press one frame sooner (a small test cartrid
 later: 1 frame plain, 0 with run-ahead); and a state loaded at frame N then run M frames equals the run that was never interrupted (picture, sound,
 state, RAM, battery RAM of every frame; same machine, a reloaded ROM, a fresh machine; worker on and off).
 
+`app-ahead` and `app-ahead-latency` (default tier; `gpsp/vita/hostcore/ahead_check.sh`, `ahead_latency.sh`) are the same proof for the app's own Quick
+response on Game Boy, Game Boy Color, NES and WonderSwan: per ROM the app twin runs with it off and with it forced on (`GBADHOC_AHEAD=0` / `2`, every
+frame at normal speed), and the sound, the quick save and the battery file must be identical (the cartridge clocks are frozen so two runs start
+alike; with `GBADHOC_AHEAD_SKIP=N` both also run the undrawn-frame pattern). `GBADHOC_AHEAD_DIFF=1` is the survey that found what the states
+miss: it names the program's static variables a look-ahead frame leaves changed. The latency script builds one small cartridge per console
+(`tools/ahead_latency_gen.py`: RGBDS, an own 6502 assembler, nasm) that answers the pad one frame after it reads it, presses a button and counts the
+refreshes until the picture changes: it must be one less with Quick response. `ahead_cost.sh` measures the cost in host instructions (callgrind).
+Game Boy Advance has no such proof because it has no Quick response; `GBADHOC_AHEAD_GBA_PROBE=1` (twin only) makes each frame also do what a
+run-ahead frame would, to measure it.
+
 **Host app** (default): `unit-host` (about 40 C suites from
 `gpsp/tools/run_host_tests.py`, under sanitizers), `app-x86` (the whole app:
 game list, menus, states, fast forward, screenshots), `rewind-x86` and

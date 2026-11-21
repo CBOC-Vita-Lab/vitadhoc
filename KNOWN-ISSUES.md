@@ -98,12 +98,21 @@ sharing).
   not offered for the Mega Drive, which keeps its own limit.
 - **Quick response** shows what you press one frame sooner by working out the
   next frame ahead; the game runs exactly the same and states, rewind and saves
-  are unaffected. It costs about twice a plain frame, so Auto is the default on
-  the Master System, Game Gear and SG-1000 (it runs only while the game leaves
-  the room, and stops when frames run late) and Off on the Mega Drive, where
-  the heavy games do not fit (On there forces it and can drop frames). It is
-  off in linked play, in fast forward, in rewind and in Steady pacing's half
-  mode.
+  are unaffected. It costs about twice a plain frame (1.2 to 1.7 times on the
+  Game Boy, NES and WonderSwan test games, host counts), so Auto is the default
+  on Game Boy, Game Boy Color, NES, WonderSwan, Master System, Game Gear and
+  SG-1000 (it runs only while the game leaves the room, and stops when frames
+  run late) and Off on the Mega Drive, where the heavy games do not fit (On
+  there forces it and can drop frames). It is off in linked and online play,
+  in fast forward, in rewind and in Steady pacing's half mode. A game that
+  already answers a button in the same frame it reads it gains nothing from it.
+  It is not offered for Game Boy Advance: a state is 416 KB and loading one
+  throws away the translated code that ran from RAM (see docs/PERFORMANCE.md,
+  numbers measured on the PC build only), and a frame costs more than half of
+  what the Vita can do. On WonderSwan one step is one console frame, and the
+  console runs 75 Hz on a 60 Hz screen, so it gains one console frame, not
+  always one screen refresh. On NES the wide-view scout is part of the frame, so
+  a game that needs it runs closer to the limit.
 - **Save states.** A state holds a small extra block for what the core never
   saved (state version 2); a state from before still loads, and the frames
   right after it can differ from the uninterrupted game by the missing block

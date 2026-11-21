@@ -172,15 +172,22 @@ extern double md_rand_unit(void); /* [0,1) */
 
 unsigned long crc32(unsigned long crc, const unsigned char *buf, unsigned int len);
 
-/* Sega CD (2.0): the disc files are read with stdio, through one function that gives each file a read buffer (md/frontend/host.c) */
+/* Sega CD (2.0): the disc files are read with stdio, through the host's functions (md/frontend/host.c): each file gets a read buffer, a
+ * seek to where the stream already is (or a little further on) keeps that buffer, and a track whose file is missing (a NULL stream)
+ * reads nothing instead of crashing in the C library */
 #include <stdio.h>
 #define cdStream            FILE
 extern FILE *md_cd_fopen(const char *path);
+extern int md_cd_fclose(FILE *f);
+extern size_t md_cd_fread(void *p, size_t size, size_t n, FILE *f);
+extern int md_cd_fseek(FILE *f, long off, int whence);
+extern long md_cd_ftell(FILE *f);
+extern char *md_cd_fgets(char *s, int n, FILE *f);
 #define cdStreamOpen(fname) md_cd_fopen(fname)
-#define cdStreamClose       fclose
-#define cdStreamRead        fread
-#define cdStreamSeek        fseek
-#define cdStreamTell        ftell
-#define cdStreamGets        fgets
+#define cdStreamClose       md_cd_fclose
+#define cdStreamRead        md_cd_fread
+#define cdStreamSeek        md_cd_fseek
+#define cdStreamTell        md_cd_ftell
+#define cdStreamGets        md_cd_fgets
 
 #endif /* _OSD_H */

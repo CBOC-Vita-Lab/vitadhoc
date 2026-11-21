@@ -136,7 +136,8 @@ static void config_defaults(void)
 	config.cdda_volume = 100; config.pcm_volume = 100;
 	config.low_freq = 880; config.high_freq = 5000; config.lg = config.mg = config.hg = 100;
 	config.system = 0; config.master_clock = 0; config.bios = 0; config.lock_on = 0;
-	config.add_on = HW_ADDON_NONE;      /* no Mega CD / MegaSD: not part of md.bin (see PROVENANCE.md) */
+	config.add_on = HW_ADDON_NONE;      /* no Mega CD / MegaSD add-on for a cartridge (a disc is loaded with md_host_load_disc) */
+	config.cd_latency = 1;              /* the drive's access and seek times, on as upstream's default: cdd.c names the games that hang or misplay without them */
 	config.enhanced_vscroll = 0; config.enhanced_vscroll_limit = 8;
 	config.overclock = 100; config.aspect_ratio = 0; config.left_border = 0;
 	input.system[0] = SYSTEM_GAMEPAD;
@@ -597,6 +598,35 @@ FILE *md_cd_fopen(const char *path)
 	return f;
 }
 
+/* The core seeks before every sector it reads. The Vita's C library (newlib) throws the read buffer away on every fseek of a stream whose
+ * buffer size was set (and of every stream there: its fstat reports no block size), so a seek followed by a 2 KB read would fetch 32 KB from
+ * the card each time. A seek to where the stream already is, or a little further on (the 304 bytes between the user data of two raw
+ * sectors), is therefore done by reading on: the buffer stays and the card is read once per 32 KB. Anything else is a real seek. */
+int md_cd_fseek(FILE *f, long off, int whence)
+{
+	if (!f) return -1;
+	if (whence == SEEK_SET && off >= 0) {
+		long cur = ftell(f);
+		if (cur >= 0 && off >= cur && off - cur <= 4096) {
+			uint8_t skip[512];
+			long d = off - cur;
+			while (d > 0) {
+				size_t k = d > (long)sizeof skip ? sizeof skip : (size_t)d;
+				if (fread(skip, 1, k, f) != k) break;
+				d -= (long)k;
+			}
+			if (d == 0) return 0;
+		}
+	}
+	return fseek(f, off, whence);
+}
+
+/* a NULL stream (a cue sheet's track whose FILE line was not understood, a file that is gone) reads nothing */
+size_t md_cd_fread(void *p, size_t size, size_t n, FILE *f) { return f ? fread(p, size, n, f) : 0; }
+long md_cd_ftell(FILE *f) { return f ? ftell(f) : 0; }
+char *md_cd_fgets(char *s, int n, FILE *f) { return f ? fgets(s, n, f) : NULL; }
+int md_cd_fclose(FILE *f) { return f ? fclose(f) : 0; }
+
 /* the dumps of the console's BIOS that are known: what they are called (the 240p Test Suite's list, the MAME and No-Intro names) and the
  * region they are for. A dump that is not here is accepted when it has the structure of a BIOS (below). */
 static const struct { uint32_t crc; int region; const char *name; } k_bios[] = {
@@ -780,6 +810,7 @@ int md_host_cd_test_toc(int track, int *start, int *end, int *type)
 static int cd_sector(int lba, uint8_t *out2048)
 {
 	int si = cdd.index, sl = cdd.lba;
+	memset(out2048, 0, 2048);              /* (a disc without a data track, a short file: zeros, not what was on the stack) */
 	cdd.index = 0;
 	cdd.lba = lba;
 	cdd_read_data(out2048, NULL);
@@ -820,8 +851,12 @@ int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2])
 /* the identity of a disc for the link and the achievements log: the first 2 KB of its first sector as the core read them, and its length */
 static uint32_t cd_disc_crc(void)
 {
-	unsigned long c = crc32(0, cart.rom, 0x210);
-	uint8_t le[4];
+	/* read from the disc, not from cart.rom where load_rom left the header: that memory is also the RAM cartridge's (scd.cartridge.area
+	 * holds cart.rom), which cd_cart_init has cleared by now when one is fitted: the identity would not depend on the disc */
+	uint8_t s[2048], le[4];
+	unsigned long c;
+	cd_sector(0, s);
+	c = crc32(0, s, 0x210);
 	put32(le, (uint32_t)cdd.toc.end);
 	return (uint32_t)crc32(c, le, 4);
 }
@@ -863,9 +898,20 @@ int md_host_load_disc(const char *path, char *err, size_t errlen)
 		}
 		break;
 	}
-	if (r <= 0 || system_hw != SYSTEM_MCD) FAILD(4, G.cd_bios_wanted ? "no BIOS for this disc's region" : "the core could not start this disc");
+	if (r <= 0 || system_hw != SYSTEM_MCD) {
+		/* a disc the core opened and then refused (md_host_unload closes the files of a running disc only; here cdd is the core's own:
+		 * the last thing loaded into this memory was this attempt, never a cartridge's ROM) */
+		if (ext && cdd.loaded) cdd_unload();
+		FAILD(4, G.cd_bios_wanted ? "no BIOS for this disc's region" : "the core could not start this disc");
+	}
+	/* the data track has to be a file that is open (a cue sheet whose FILE line the core did not understand leaves a track without one) */
+	if (cdd.toc.tracks[0].type && !cdd.toc.tracks[0].fd) { G.cd = 1; FAILD(3, "the disc's data track file is missing"); }      /* (G.cd: md_host_unload closes the disc and forgets the BIOS the core read) */
 	G.cd = 1;
 	G.rom_src = NULL;
+	/* No RAM cartridge: the cartridge slot is empty and reads $FF everywhere, which is also what the core's own "disabled" setting answers
+	 * where the BIOS reads the RAM cartridge's size ($400001). Without this the slot holds a one byte "ROM", the first letter of the disc
+	 * header that load_rom left in cart.rom ('S', 0x53), which cd_cart_init pads with $FF: the BIOS would read a size id of $53. */
+	if (!cart_size) cart.rom[0] = 0xFF;
 	{
 		int rc = boot_common(err, errlen);
 		if (rc) return rc;
@@ -959,10 +1005,23 @@ int md_host_ahead_possible(void)
 	return G.loaded && G.state_size;
 }
 
+/* A Sega CD's backup RAM and RAM cartridge are not in the state either (and are not sram.sram): the copy taken before the look-ahead frame
+ * (back = 0), and put back after it when that frame wrote to them (back = 1, returns 1). Without this a save the look-ahead frame started
+ * was written a second time by the real frame, from memory the first pass had already changed. */
+static int cd_save_ahead(uint8_t *buf, int back)
+{
+	const size_t a = sizeof scd.bram, c = scd.cartridge.id ? (size_t)scd.cartridge.mask + 1 : 0;
+	if (!back) { memcpy(buf, scd.bram, a); if (c) memcpy(buf + a, scd.cartridge.area, c); return 0; }
+	if (!memcmp(buf, scd.bram, a) && (!c || !memcmp(buf + a, scd.cartridge.area, c))) return 0;
+	memcpy(scd.bram, buf, a);
+	if (c) memcpy(scd.cartridge.area, buf + a, c);
+	return 1;
+}
+
 static int ahead_alloc(void)
 {
 	if (!G.ahead_state) G.ahead_state = (uint8_t *)malloc(G.state_size);
-	if (!G.ahead_sram) G.ahead_sram = (uint8_t *)malloc(SRAM_BYTES);
+	if (!G.ahead_sram) G.ahead_sram = (uint8_t *)malloc(G.cd && cd_save_size() > SRAM_BYTES ? cd_save_size() : SRAM_BYTES);
 	return G.ahead_state && G.ahead_sram;
 }
 
@@ -994,7 +1053,8 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	}
 	wide_list_cut(wide_n0, wide_all0);
 	if (state_save_to(G.ahead_state, G.state_size, 0) != G.state_size) return 1;      /* cannot happen (the size was measured); the real frame stands */
-	if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);     /* (the state holds the sprite list of the next first line, the FIFO flag, the PSG's queued deltas, ...) */
+	if (G.cd) cd_save_ahead(G.ahead_sram, 0);
+	else if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);     /* (the state holds the sprite list of the next first line, the FIFO flag, the PSG's queued deltas, ...) */
 
 	/* 2. the frame after it with the same buttons: drawn, silent */
 	G.ahead_quiet = 1;
@@ -1007,7 +1067,8 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	if (state_load_from(G.ahead_state, G.state_size, 0) != 0) { G.ahead_quiet = 0; return 2; }     /* cannot happen: the state is our own */
 	G.ahead_quiet = 0;
 	wide_list_cut(wide_n1, wide_all1);
-	if (sram.on && memcmp(G.ahead_sram, sram.sram, SRAM_BYTES)) { memcpy(sram.sram, G.ahead_sram, SRAM_BYTES); G.ahead_sram_undone++; }
+	if (G.cd) { if (cd_save_ahead(G.ahead_sram, 1)) G.ahead_sram_undone++; }
+	else if (sram.on && memcmp(G.ahead_sram, sram.sram, SRAM_BYTES)) { memcpy(sram.sram, G.ahead_sram, SRAM_BYTES); G.ahead_sram_undone++; }
 	/* what md_host_video / md_host_video_info describe is the picture in the buffer, the look-ahead one */
 	G.vi = vi; G.vwidth = vwidth; G.vheight = vheight; G.vwoffset = vwoffset; G.bmdoffset = bmdoffset; G.vdar = vdar;
 	G.serial = vi.serial;

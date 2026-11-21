@@ -40,7 +40,7 @@ image); `md/frontend/host.c` supplies what upstream's libretro layer did: the BI
 never shipped: `md_host_cd_bios_add`), the disc by path (`md_host_load_disc`), the backup RAM and the optional RAM cartridge as one save, and the
 state header's system field (a disc state is never loaded into a cartridge). What the tests can and cannot show is in `md/README.md` ("Sega CD").
 
-Vendored for it (all from the pinned commit's `core/`, nothing downloaded since; all permissive licences, texts in `licenses/SegaCD-disc-readers.txt`):
+Vendored for it (all from the pinned commit, nothing downloaded since: tremor from its `core/sound/tremor`, libchdr and the libraries it needs from its `libretro/deps/` (`libchdr`, `lzma-19.00`, `zlib-1.2.11`, `zstd/lib`), which is the set upstream's libretro build compiles `cdd.c` against, not the older copy in `core/cd_hw/libchdr`; all permissive licences, texts in `licenses/SegaCD-disc-readers.txt`):
 
 | Path | What | Licence |
 |---|---|---|
@@ -80,9 +80,10 @@ Changed files
 |---|---|---|
 | `genesis.c` | `rand()` becomes `md_rand_unit()` | seeded randomness |
 | `loadrom.c` | `md_cd_wanted` (new, under `MD_SEGACD`): `cdd_load` runs only when the host asked for a disc | a cartridge named `rom.md` must never be opened as a disc |
-| `osd.h` | `cdStream*` macros over stdio, `md_cd_fopen` | the core's disc reads go through the host's open (a 32 KB buffered stream) |
+| `osd.h` | `cdStream*` macros over the host's `md_cd_fopen` / `md_cd_fread` / `md_cd_fseek` / `md_cd_ftell` / `md_cd_fgets` / `md_cd_fclose` (stdio underneath) | the core's disc reads go through the host: a 32 KB buffered stream, a seek that keeps the buffer when the drive reads on (the Vita's C library drops it on every `fseek`), and a NULL stream (a track without a file) reads nothing instead of crashing |
 | `cd_hw/cdd.h` | includes `libchdr/chd.h`, `libchdr/cdrom.h` | the vendored libchdr's layout |
 | `cd_hw/cdd.c` | `cdd_load` clears the table of contents first | a refused disc must not leave its TOC behind (the player may try another) |
+| `cd_hw/cdd.c` | the cue sheet reader skips a UTF-8 byte order mark and TAB indentation | such sheets had no recognised `FILE` / `TRACK` / `INDEX` line: the disc did not load, or a track was left without its file |
 | `cd_hw/gfx.c` | `gfx_reset` starts `tracePtr` / `mapPtr` inside Word-RAM | the state held the address of the RAM until the first graphics operation: two runs gave different states |
 | `cd_hw/libchdr/deps/lzma/src/Alloc.c` | `SzAlignedAlloc` uses the file's own aligned allocator on the Vita | the Vita C library has no `posix_memalign` |
 | `state.c` | the version register keeps bit 5 clear for a Mega CD after a load (as `io_reset` leaves it) | a loaded state told the game there was no CD unit |

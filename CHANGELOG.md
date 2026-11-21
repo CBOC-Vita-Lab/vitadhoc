@@ -26,11 +26,13 @@ and in emulators; none of it has run on a real Vita yet (see
   and a remappable pad (Genesis A / B / C on Square / Cross / Circle, X / Y / Z
   on L / Triangle / R).
 - **A few lines of history for NES, WonderSwan and Sega games**, like the
-  Game Boy and Super NES have: from Wikipedia, built in (about 970 NES, 770
-  Genesis, 260 Master System, 235 Game Gear, 40 SG-1000 and a few WonderSwan
-  games; a game Wikipedia has no article for still shows none). A game that
-  shares its title with another console's (Strider, Sonic the Hedgehog) shows
-  the article of its own console's game. Sega CD games use the same list.
+  Game Boy and Super NES have: from Wikipedia, built in (about 850 NES, 670
+  Genesis, 210 Master System, 115 Game Gear, 27 SG-1000 and a few WonderSwan
+  games). A description now appears only when the article is about that very
+  game on that console: not another console's game of the same name, not a
+  series, not a remake on another system. This also removed about 460 Game Boy,
+  Game Boy Color, Game Boy Advance and Super NES descriptions that described
+  another game; those games show none. Sega CD games use the same list.
 - **No sprite flicker** on the Master System, Game Gear and SG-1000: all the
   sprites on a line are drawn, not every other frame. The game itself runs
   exactly the same.

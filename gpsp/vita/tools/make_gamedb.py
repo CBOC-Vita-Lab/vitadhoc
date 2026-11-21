@@ -22,11 +22,11 @@ The output is one text file, sorted, one record a line, TAB-separated:
                                   (squash below; sys A-L as in SYSTEMS),
                                   for files named "Act Raiser" or
                                   "7th Saga" instead of the No-Intro name
-  T<title key>  <article>         a game by its title (title_key below)
-  U<sys><key>   <article>         2.0: a game by its title for ONE console,
-                                  where another console's game of the same
-                                  title has a different article (tried
-                                  before the T record)
+  T<title key>  <article>         (1.x only: a game by its title for all
+                                  consoles; gone in 2.0)
+  U<sys><key>   <article>         2.0: a game by its title for ONE console
+                                  (redo_blurbs): only an article Wikidata
+                                  lists for that console, about that game
   W<article>    <blurb>           an English Wikipedia article's first lines
 
 The app finds a cartridge's No-Intro name (by file name, header code or

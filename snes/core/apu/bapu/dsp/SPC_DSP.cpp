@@ -1352,9 +1352,18 @@ void SPC_DSP::copy_state( unsigned char** io, copy_func_t copy )
 		{
 			int m = v->env_mode;
 			SPC_COPY(  uint8_t, m );
-			v->env_mode = (enum env_mode_t) m;
+			v->env_mode = (enum env_mode_t) ( m & 3 ); // CBOC-Vita (H1): an enum holds 0..3
 		}
 		SPC_COPY(  uint8_t, v->t_envx_out );
+
+		// CBOC-Vita (H1): a state may come from another console. These index the voice's sample buffer and the BRR block, so
+		// each is held to the range the DSP itself keeps it in (a damaged value read past the buffer: decode_brr / interpolate).
+		if ( v->buf_pos >= brr_buf_size )
+			v->buf_pos = 0;
+		if ( v->brr_offset >= brr_block_size )
+			v->brr_offset = 1;
+		if ( v->interp_pos > 0x7FFF )
+			v->interp_pos = 0x7FFF;
 
 		copier.extra();
 	}
@@ -1382,6 +1391,7 @@ void SPC_DSP::copy_state( unsigned char** io, copy_func_t copy )
 	SPC_COPY( uint16_t, m.echo_offset );
 	SPC_COPY( uint16_t, m.echo_length );
 	SPC_COPY(  uint8_t, m.phase );
+	m.phase &= 31; // CBOC-Vita (H1): the DSP's own range
 
 	SPC_COPY(  uint8_t, m.new_kon );
 	SPC_COPY(  uint8_t, m.endx_buf );

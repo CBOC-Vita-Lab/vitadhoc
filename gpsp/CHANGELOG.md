@@ -12,6 +12,15 @@ separately and are intended for upstream.
 
 ## [4.1.1] — unreleased
 
+- Core, state loads that are not trusted (state fuzzer, `gpsp/vita/hostcore/statefuzz`): the scheduler counters of a state (video count,
+  slice length, DMA stall, timer counts) are range checked (a large one made a frame take minutes); the direct sound step is
+  recomputed from the timer instead of read; the PSG envelope's initial volume is checked (indexes a table). Found with them and
+  fixed for games as well: an instruction fetch from the I/O registers or the SRAM region read past a 1 KiB array or paged a ROM page
+  in per instruction; the BIOS read page was 16 KiB of a 32 KiB page; `load_aligned32` read the page table before the range test;
+  background tiles of 8 bit graphics in the upper character blocks read past VRAM (now empty); an invalid CPSR mode indexed past the
+  SPSR table; the ROM page eviction could go round the queue for ever when every page was sticky; the PC's region bits in the
+  cycle table lookups.
+
 - GB/GBC battery saves are written by the writer thread, once cartridge RAM has
   held still for one check (at most ~30 s while it keeps changing); exit, sleep and
   quit still write at once. Fixes a hitch every ~5 s in GBC games that use battery

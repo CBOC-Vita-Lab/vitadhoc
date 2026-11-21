@@ -139,7 +139,7 @@ static void usage(void)
 	    "                     others); --hashes then lists the rendered frames only. Emulation and audio must not change.\n"
 	    "  --render-mod N     render only every Nth frame (fast forward draws 1 in 3); emulation and audio must not change\n"
 	    "  --peek-sum         print a hash of all work RAM and battery RAM at the end\n"
-	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles transparency echo_buffer), repeatable\n"
+	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles gsu_fast transparency echo_buffer), repeatable\n"
 	    "  --audio-sim SCEN   audio pacing simulation in virtual time (S1..S7, S2+, S2-, all); ROM may be '-' for none.\n"
 	    "                     with --tone (or ROM '-') the source is a synthetic tone, else the core's audio;\n"
 	    "                     --legacy runs the first player's audio behaviour; --wav FILE writes the 48 kHz output;\n"

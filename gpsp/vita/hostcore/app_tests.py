@@ -7168,10 +7168,15 @@ def t_cheats_consoles(S):
     gbrom = os.path.join(HERE, "..", "tests", "cheats", "rom", "gbcheat.gb")
     if os.path.exists(gbrom):
         g = open(gbrom, "rb").read()
+        # the cartridge's header says "works on a Color" (0x80), which the app
+        # now plays as a Game Boy Color, where FF47 -- the byte that shows the
+        # lives -- is not read; the per-game Game Boy type (gb_override.txt)
+        # keeps this run a plain Game Boy, as the test is about
+        gbonly = {"gb_override.txt": "gb  GbCheat.gb\n"}
         plain = S.run("cheat_gb_plain", "120:shot=a.png\n+10:quit\n", autoboot="GbCheat.gb",
-                      extra={"roms/GbCheat.gb": g})
+                      extra=dict(gbonly, **{"roms/GbCheat.gb": g}))
         r = S.run("cheat_gb", "120:shot=a.png\n+10:quit\n", autoboot="GbCheat.gb",
-                  extra={"roms/GbCheat.gb": g, "cheats/GbCheat.cht": nes_cht("01E400C0", "Lives")})
+                  extra=dict(gbonly, **{"roms/GbCheat.gb": g, "cheats/GbCheat.cht": nes_cht("01E400C0", "Lives")}))
         S.clean(r)
         S.check(r.has(r"^EVT cheats_load .*n=1 enabled=1") and
                 r.shot("a.png").tobytes() != plain.shot("a.png").tobytes(),

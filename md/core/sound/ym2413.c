@@ -1859,6 +1859,79 @@ unsigned char *YM2413GetContextPtr(void)
   return (unsigned char *)&ym2413;
 }
 
+/* CBOC-Vita (H1): the context is saved and loaded as one block, so a state from another console (a joiner loads the host's) or from a
+   damaged file arrives here unchecked, and several of its fields index tables or bound loops (eg_rate_* by ar/dr/rr + ksr, eg_inc by
+   eg_sel_*, sin_tab by wavetable, lfo_am_table by lfo_am_cnt, the eg_timer loop by eg_timer_overflow). YM2413ContextKeep() is called
+   before the load and YM2413ContextCheck() after it:
+   - what the chip's own setup computed (clock, rate, tables, increments, overflow) is put back: it never belongs to the saved game;
+   - counters are held to their ranges, and rates, shifts, selects and the wave select to what the tables allow: a value the chip
+     itself can hold is never changed (checked by the load proof on every Master System test game). */
+static struct
+{
+  double clock;
+  int rate;
+  UINT32 eg_timer_add, eg_timer_overflow, lfo_am_inc, lfo_pm_inc, noise_f;
+  UINT32 fn_tab[1024];
+} ym2413_keep;
+
+void YM2413ContextKeep(void)
+{
+  ym2413_keep.clock = ym2413.clock;
+  ym2413_keep.rate = ym2413.rate;
+  ym2413_keep.eg_timer_add = ym2413.eg_timer_add;
+  ym2413_keep.eg_timer_overflow = ym2413.eg_timer_overflow;
+  ym2413_keep.lfo_am_inc = ym2413.lfo_am_inc;
+  ym2413_keep.lfo_pm_inc = ym2413.lfo_pm_inc;
+  ym2413_keep.noise_f = ym2413.noise_f;
+  memcpy(ym2413_keep.fn_tab, ym2413.fn_tab, sizeof(ym2413.fn_tab));
+}
+
+void YM2413ContextCheck(void)
+{
+  int c, s;
+
+  ym2413.clock = ym2413_keep.clock;
+  ym2413.rate = ym2413_keep.rate;
+  ym2413.eg_timer_add = ym2413_keep.eg_timer_add;
+  ym2413.eg_timer_overflow = ym2413_keep.eg_timer_overflow;
+  ym2413.lfo_am_inc = ym2413_keep.lfo_am_inc;
+  ym2413.lfo_pm_inc = ym2413_keep.lfo_pm_inc;
+  ym2413.noise_f = ym2413_keep.noise_f;
+  memcpy(ym2413.fn_tab, ym2413_keep.fn_tab, sizeof(ym2413.fn_tab));
+
+  if (ym2413.eg_timer_overflow)
+    ym2413.eg_timer %= ym2413.eg_timer_overflow;
+  ym2413.lfo_am_cnt %= (LFO_AM_TAB_ELEMENTS<<LFO_SH);
+  ym2413.noise_p &= FREQ_MASK;
+
+  for (c = 0; c < 9; c++)
+  {
+    YM2413_OPLL_CH *CH = &ym2413.P_CH[c];
+    CH->kcode &= 15;
+    for (s = 0; s < 2; s++)
+    {
+      YM2413_OPLL_SLOT *SLOT = &CH->SLOT[s];
+      if (SLOT->ar > 16+60) SLOT->ar = 0;
+      if (SLOT->dr > 16+60) SLOT->dr = 0;
+      if (SLOT->rr > 16+60) SLOT->rr = 0;
+      SLOT->KSR = (SLOT->KSR == 2) ? 2 : 0;
+      SLOT->ksl &= 31;
+      SLOT->fb_shift &= 15;
+      if (SLOT->wavetable != SIN_LEN) SLOT->wavetable = 0;
+      if (SLOT->state > EG_DMP) SLOT->state = EG_OFF;
+      SLOT->ksr &= 15;
+      /* the envelope rate shifts and selects: left as they are when they are in the range the tables allow (a freshly reset chip
+         holds zeros there, which the formulas would not give; replacing them would change the sound) */
+      SLOT->eg_sh_dp &= 15; SLOT->eg_sh_ar &= 15; SLOT->eg_sh_dr &= 15; SLOT->eg_sh_rr &= 15; SLOT->eg_sh_rs &= 15;
+      if (SLOT->eg_sel_ar > 16*RATE_STEPS) SLOT->eg_sel_ar = 0;
+      if (SLOT->eg_sel_dp > 13*RATE_STEPS) SLOT->eg_sel_dp = 0;
+      if (SLOT->eg_sel_dr > 13*RATE_STEPS) SLOT->eg_sel_dr = 0;
+      if (SLOT->eg_sel_rr > 13*RATE_STEPS) SLOT->eg_sel_rr = 0;
+      if (SLOT->eg_sel_rs > 13*RATE_STEPS) SLOT->eg_sel_rs = 0;
+    }
+  }
+}
+
 unsigned int YM2413GetContextSize(void)
 {
   return sizeof(YM2413);

@@ -1556,11 +1556,12 @@ bool main_read_savestate(const u8 *src)
 
   /* The direct sound step is derived from the timer's reload and prescale and the output rate: it is recomputed, not
    * taken from the state.  A tiny stored step (1/16M of a sample) made sound_timer loop 16 million times per timer
-   * event.  The same value the register writes compute, so an honest state loads exactly as saved. */
+   * event.  The same value the register writes compute, so an honest state loads exactly as saved; a stored 0 (the step was never
+ * computed, the timer has not been used for sound) is harmless and stays. */
   for (i = 0; i < 2; i++)
   {
     u32 timer_reload = timer[i].reload << timer[i].prescale;
-    if (timer_reload)
+    if (timer_reload && timer[i].frequency_step)
       timer[i].frequency_step = direct_sound_timer_step(timer_reload, sound_frequency);
   }
 

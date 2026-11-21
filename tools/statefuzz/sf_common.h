@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
@@ -127,5 +128,67 @@ static inline std::vector<uint8_t> sf_read_file(const char *path)
 	std::vector<uint8_t> v; FILE *f = fopen(path, "rb"); if (!f) return v;
 	uint8_t tmp[65536]; size_t n; while ((n = fread(tmp, 1, sizeof tmp, f)) > 0) v.insert(v.end(), tmp, tmp + n);
 	fclose(f); return v;
+}
+
+/* ---- regression recipes: a case is kept as a few changed bytes on the state of the machine at the warm point, not as a game state ----
+ * "--base-out FILE" writes that base state and exits; a "--case X.recipe" file holds lines "OFFSET HEXBYTES" (decimal offset, bytes in hex,
+ * '#' starts a comment; a line "SIZE N" resizes first) that are applied to the first base state before it is loaded.  tools/statefuzz/recipe.py
+ * makes one from a base and a crash case.  Checksums are bytes like any other, so a recipe carries the repaired checksum itself. */
+static const char *sf_base_out = NULL;
+static void sf_write_file(const char *path, const std::vector<uint8_t> &b) { FILE *f = fopen(path, "wb"); if (!f) return; fwrite(b.data(), 1, b.size(), f); fclose(f); }
+template <class V> static void sf_base_dump(const V &bases) { if (sf_base_out && !bases.empty()) { sf_write_file(sf_base_out, bases[0]); printf("base state written (%zu bytes)\n", bases[0].size()); exit(0); } }
+static std::vector<uint8_t> sf_read_case(const char *path, const std::vector<uint8_t> &base)
+{
+	size_t l = strlen(path);
+	if (l < 7 || strcmp(path + l - 7, ".recipe")) return sf_read_file(path);
+	std::vector<uint8_t> b = base;
+	FILE *f = fopen(path, "r"); if (!f) return std::vector<uint8_t>();
+	char line[8192];
+	while (fgets(line, sizeof line, f))
+	{
+		char *p = line; while (*p == ' ' || *p == '\t') p++;
+		if (*p == '#' || *p == '\n' || !*p) continue;
+		if (!strncmp(p, "SIZE", 4)) { b.resize((size_t)strtoul(p + 4, 0, 10)); continue; }
+		char *e; size_t off = (size_t)strtoul(p, &e, 10);
+		while (*e == ' ') e++;
+		for (; isxdigit((unsigned char)e[0]) && isxdigit((unsigned char)e[1]); e += 2)
+		{
+			char h[3] = { e[0], e[1], 0 };
+			if (off < b.size()) b[off] = (uint8_t)strtoul(h, 0, 16);
+			off++;
+		}
+	}
+	fclose(f);
+	return b;
+}
+
+/* ---- load proof: a genuine state, loaded at frame N and run M frames, must end exactly where the uninterrupted run does ---- */
+/* save() -> bytes of the machine's state, load(bytes) -> 0 when loaded, run(frames, rng) runs with a scripted pad.
+ * The state bytes after the M frames are compared (a state holds the whole machine, so a clamp that changed a legitimate value
+ * shows as a difference, and a refused state as a failure).  Returns the number of failures. */
+template <class Save, class Load, class Run>
+static int sf_proof(const char *name, Save save, Load load, Run run, uint64_t seed, int M = 60)
+{
+	static const int points[] = { 1, 97, 300, 655 };
+	int fails = 0, at = 0;
+	sf_rng rng;
+	for (int p : points)
+	{
+		sf_seed(&rng, seed + at); run(p - at, &rng); at = p;
+		std::vector<uint8_t> s = save();
+		sf_seed(&rng, 7777 + p); run(M, &rng);
+		std::vector<uint8_t> h1 = save();
+		int rc = load(s);
+		if (rc != 0) { printf("PROOF %s frame %d: the machine's own state is refused (rc %d)\n", name, p, rc); fails++; continue; }
+		sf_seed(&rng, 7777 + p); run(M, &rng);
+		std::vector<uint8_t> h2 = save();
+		size_t d = 0; while (d < h1.size() && d < h2.size() && h1[d] == h2[d]) d++;
+		if ((h1.size() != h2.size() || d < h1.size()) && getenv("STATEFUZZ_PROOF_DUMP")) { FILE *f = fopen("proof_h1.bin", "wb"); fwrite(h1.data(), 1, h1.size(), f); fclose(f); f = fopen("proof_h2.bin", "wb"); fwrite(h2.data(), 1, h2.size(), f); fclose(f); f = fopen("proof_s.bin", "wb"); fwrite(s.data(), 1, s.size(), f); fclose(f); }
+		if (h1.size() != h2.size() || d < h1.size()) { printf("PROOF %s frame %d: load at N then %d frames differs from the uninterrupted run (first byte %zu)\n", name, p, M, d); fails++; }
+		else printf("PROOF %s frame %d: load at N + %d frames == uninterrupted (%zu bytes)\n", name, p, M, h1.size());
+		// continue the uninterrupted line from where h1 left it, so the next point is a fresh frame count
+		at = p + M;
+	}
+	return fails;
 }
 #endif

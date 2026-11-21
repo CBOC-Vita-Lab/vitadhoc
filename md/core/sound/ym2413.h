@@ -18,6 +18,8 @@ extern void YM2413Update(int *buffer, int length);
 extern void YM2413Write(unsigned int a, unsigned int v);
 extern unsigned int YM2413Read(void);
 extern unsigned char *YM2413GetContextPtr(void);
+extern void YM2413ContextKeep(void);
+extern void YM2413ContextCheck(void);
 extern unsigned int YM2413GetContextSize(void);
 
 #endif /*_H_YM2413_*/

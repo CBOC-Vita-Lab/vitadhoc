@@ -308,6 +308,10 @@ extern struct FxRegs_s	GSU;
 // Access data in the current program bank
 #define PRGBANK(idx)	GSU.pvPrgBank[USEX16(idx)]
 
+#ifdef FX_LIMIT
+extern uint32 fx_limit;
+#endif
+
 #ifdef FX_FAST
 // bCacheActive folded into the range test: fx_cacheLimit is 512 while the cache is
 // active and 0 otherwise. It is set when fx_run starts and where fx_cache() makes

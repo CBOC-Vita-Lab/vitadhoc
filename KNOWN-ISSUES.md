@@ -25,13 +25,17 @@ read them before sharing).
   Cloudflare refuses to extend a relayed session past it, such a session would
   end as "link lost" after about an hour. A direct link never does. Only the
   live relay can say.
-- **Join the rooms of people you know.** When a link starts, the host's game
-  state is loaded on the guest's console (Two players on NES, SNES, Genesis,
-  Master System, SG-1000 and WonderSwan; the Game Boy cable). Sizes and
-  checksums are checked, but a state that was damaged on purpose can crash an
-  emulator core: the 2.0 security review made the Genesis core crash that way
-  on the PC test build (see `docs/ONLINE.md`, privacy). The same is true of a
-  save state file from an untrusted source and of Share game data.
+- **State loading was hardened on the PC test build, not on a Vita.** When a
+  link starts, the host's game state is loaded on the guest's console (Two
+  players on NES, SNES, Genesis, Master System, SG-1000 and WonderSwan; the
+  Game Boy cable), and the same loader reads save state files and Share game
+  data. Every core now checks the inside of a state, and each was fuzzed with
+  a memory checker without a crash, hang or report (`docs/TESTING.md`). Two
+  limits are stated plainly: the GBA fuzzing ran the interpreter build (the
+  Vita runs the dynamic recompiler, which a memory checker cannot watch; the
+  state loader is the same code), and Genesis cartridges with unusual
+  hardware (saves in EEPROM or flash, bank mappers) were fuzzed only through
+  the public test games available here. A real Vita has not run any of it.
 - **Delay and the Great / Good / Slow limits** (80 and 120 ms, delay up to 12
   frames) are first guesses to be tuned on real internet paths.
 - **A GBA cable link between two different games sends a whole cartridge once**
@@ -160,6 +164,19 @@ Testing continues on:
   the chip at full speed. Super Mario RPG and Kirby Super Star dip a frame
   now and then. The SNES player writes its speed to
   `ux0:data/GBAdhoc/snes/log.txt` (`superfx clock` lines show the chip's share).
+  The chip now runs on a block-cache interpreter (`gsu_fast`, on by default,
+  results identical to the old one; see docs/PERFORMANCE.md): by the model the
+  clock the pacing settles on is about twice as high as before for Doom and
+  Stunt Race FX, **not measured on a Vita**. Proven identical (pictures, sound,
+  saved state) on Doom, Stunt Race FX, Yoshi's Island and 58 homebrew GSU test
+  ROMs, x86 and armhf under qemu; **not tested on Star Fox, Winter Gold, Vortex
+  or Dirt Trax FX** (no ROM of them was available), which use the same chip
+  instructions but may reach code paths the three games do not. Code that runs
+  from the chip's RAM, a delay slot holding a prefix or jump the decoder does
+  not handle, and a cache base that is not a multiple of 16 run on the old
+  interpreter (same results, old speed); the emulated cache RAM is timing only
+  in this core, as before (code a program writes into it is not run from
+  there, with either interpreter).
 - The SNES player has its own pause menu (hold **Start + Select**; L + R + Start also works) with ten
   state slots and cheats. Rewind, fast forward, patches and RetroAchievements
   are in it too, as in the Sega player (see "Rewind, fast forward and

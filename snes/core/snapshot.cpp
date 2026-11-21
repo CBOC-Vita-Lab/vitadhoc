@@ -1433,8 +1433,13 @@ static void SnapshotSuperFXSanitize (const SnapFxKeep *k)
 		GSU.pvScreenBase = ramEnd - GSU.vScreenSize;
 
 	// the per column screen pointers and offsets follow from the mode, height and base: derive them again
+	uint32 prevMode = GSU.vPrevMode, dirty = GSU.vSCBRDirty, prevHeight = GSU.vPrevScreenHeight;
 	GSU.vPrevMode = ~0u;
 	fx_computeScreenPointers();
+	// the recompute is only for the safety of the pointers: leave the loaded bookkeeping as it was, so a genuine state runs on exactly as before
+	GSU.vPrevMode = prevMode;
+	GSU.vSCBRDirty = dirty;
+	GSU.vPrevScreenHeight = prevHeight;
 }
 
 int S9xUnfreezeFromStream (STREAM stream)

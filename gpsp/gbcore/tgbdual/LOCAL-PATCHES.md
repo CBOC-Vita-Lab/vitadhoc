@@ -213,3 +213,8 @@ system palettes; its sources and licences are in `notices/THIRD-PARTY.md`.
 `tgb_dmg_is_cgb`. `lcd.c`: a DMG game's palette entries go through the GBC LCD
 model (`cgb_lcd_color`) when that flag is set (a GBC palette is chosen), so
 they look as a Game Boy Color showed them; otherwise unchanged.
+
+## State loads that are not trusted (20 Nov 2026, 2.0)
+
+The GB / GBC loader (`gb_state_valid`, `state_validate.h`) already validated the state before applying it. `gpsp/gbcore/tests/statefuzz.cpp`
+(ASan + UBSan, random mutation of a real state, MBC and colour variants, frame watchdog) found nothing to change in the core.

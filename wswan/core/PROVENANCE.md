@@ -43,3 +43,16 @@
   host's clock hook (`wswan_host_set_time_source`).
 - The host defines the globals libretro.c defined for the core (`wsc`, `rom_size`, `WSButtonStatus`, `StateAction`
   glue, ...).
+
+## State loads that are not trusted (20 Nov 2026, 2.0)
+
+A state comes from a file or from the host of an online game (`tools/statefuzz`, `wswan/twin/statefuzz.cpp`; the host adds a CRC and
+a rollback). Marked `CBOC-Vita`:
+
+- `mednafen/state.c`: a section must lie inside the stream and every field inside its section (the sizes are unsigned and the seek
+  wraps: an unchecked size walked the read position backwards for ever); a state version of 0 turned the load into a save that wrote
+  into the input buffer and is refused.
+- `mednafen/sound/Blip_Buffer.c` (`Blip_Buffer_load_state`): the stored offset may use at most half of the buffer (a frame of samples and the
+  impulse width are written beyond it). `wswan/sound.c` (`WSwan_SoundFlush`): the read limit counts stereo frames, not int16 values.
+- `wswan/gfx.c`: sprite base and the mono colour map are masked as the port writes do. `wswan/v30mz.c`: the cycle counter loaded is held to
+  [-1024, 0]; the segment register field of `MOV r/m, sreg` is 2 bits (it indexed past the 4 entry table, also for a game).

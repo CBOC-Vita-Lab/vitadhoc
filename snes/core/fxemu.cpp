@@ -41,6 +41,7 @@ void S9xResetSuperFX (void)
 	s_celPrev = 0;
 
 	FxReset(&SuperFX);
+	fx_blocksReset();
 }
 
 void S9xSetSuperFX (uint8 byte, uint16 address)

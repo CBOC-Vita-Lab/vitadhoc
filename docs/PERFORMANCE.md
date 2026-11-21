@@ -174,8 +174,42 @@ and without the extra threads):
   Yoshi's Island stays at 100%. This changes the emulated GSU's speed, not
   its results; the twin and the bit-for-bit comparisons run it at 100%.
 
-A faster GSU interpreter (or the GSU on a core of its own) is what would give
-these games their full 3D frame rate.
+- **Faster Super FX interpreter (block cache, `gsu_fast`, on by default).**
+  `snes/core/fxfast.cpp` decodes the chip's instructions once into blocks (the
+  prefix instructions folded into the instruction they belong to, the source
+  and destination registers resolved, the fetch and cache-line cost of the
+  block added up in advance) and runs them with computed-goto dispatch; the
+  slice's last few instructions, code in RAM and anything unusual go to the
+  old interpreter. The result is the same to the bit: pictures, sound, saved
+  state and the chip's cycle count match the old interpreter on Doom, Stunt
+  Race FX and Yoshi's Island (3,600 frames each at 100, 73, 50 and 35 % clock),
+  on the 58 homebrew GSU test ROMs, on x86 and on armhf under qemu, and in a
+  build that runs every slice with both and compares the whole chip state
+  (3.7 million slices of the three games at 100, 60 and 35 % clock, no difference). Measured, **host x86** (callgrind,
+  instructions inside the chip's run function, 1,560 frames from the title to
+  the game): Doom 2.73 G -> 1.41 G (55.7 -> 28.9 per GSU instruction, 1.94x
+  fewer), Stunt Race FX 1.57 G -> 0.86 G (53.0 -> 28.9, 1.84x). **armhf under
+  qemu** (dynamic ARM instructions of a whole Doom frame, all threads, from a
+  saved state): 13.4 M -> 10.7 M per frame (the chip's share is about 6 M of
+  that, so about 1.8x on the chip). **Model, Vita** (the calibration above,
+  scaled by those ratios; nothing ran on a Vita): Doom's game thread at the
+  chip's full speed goes from 19.5 / 27.8 ms (IPC 1.0 / 0.7) to about 12.5 /
+  18 ms, so it fits a 16.7 ms frame at IPC 1.0 and is on the edge at IPC 0.7;
+  the pacing above should then settle near 75 % (IPC 0.7) or 100 % (IPC 1.0)
+  instead of 35 %, i.e. the 3D view animates about twice as fast as it did.
+  The wall-clock gain on the host is smaller than the instruction count
+  (Doom 3,200 frames 2.8 s -> 2.3 s: the rest of the frame is the picture
+  and the sound) and qemu's own wall time hides most of it. What is left in
+  the chip's time: the plotting (about a quarter of the instructions: four
+  16-bit read-modify-writes per 8-bit pixel), about 10 instructions a block
+  for entering it, and the instructions at the end of each line's budget that still go
+  through the old interpreter (1.2 % at 100 % clock, 3.5 % at 35 %). A pixel cache like the
+  hardware's, which would cut the plotting, and chaining blocks to their
+  successors are **not done**; the first needs care to stay exact when the
+  chip reads the pixels back.
+
+A faster interpreter still than this one, or the GSU on a core of its own, is what would give these
+games the last of their 3D frame rate.
 
 ## Pokemon Unbound 2.1.1.1 On VitAdhoc 1.2
 

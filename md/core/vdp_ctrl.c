@@ -607,6 +607,10 @@ int vdp_context_load(uint8 *state)
   load_param(&dma_type, sizeof(dma_type));
   load_param(&dma_src, sizeof(dma_src));
   load_param(&cached_write, sizeof(cached_write));
+  /* CBOC-Vita (H1): a VDP DMA belongs to Mega Drive hardware only (the frame loop runs it "Mega Drive VDP specific"). A state that
+     carries one for a Master System / Game Gear / SG-1000 machine would read the 68k bus that machine does not have. */
+  if (!(system_hw & SYSTEM_MD))
+    dma_length = 0;
 
   /* restore FIFO byte access flag */
   fifo_byte_access = ((code & 0x0F) < 0x03);

@@ -151,11 +151,18 @@ on Wi-Fi: both games save and carry on alone.
   The log file is the exception (`ux0:data/GBAdhoc/log/gbadhoc.log`, the last
   few sessions): its `online_` lines hold the room code, your friend's
   nickname and both internet addresses. Read it before you share it.
-- **Play online with people you know.** The host's console sends its game
-  state (and, for a Game Boy cable link with one cartridge, the game) to the
-  guest's console, which loads it, as it would load a save state someone gave
-  you. VitAdhoc checks sizes and checksums, but the emulator cores were not
-  written to withstand a state that was damaged on purpose.
+- **A state from the host is checked before it is used.** The host's console
+  sends its game state (and, for a Game Boy cable link with one cartridge, the
+  game) to the guest's console, which loads it, as it would load a save state
+  someone gave you. Sizes and checksums are checked, and in 2.0 every
+  emulator core also checks what is inside a state before using it (indexes,
+  bank numbers, sizes, counts, timers): a state that was made up on purpose is
+  refused or its impossible values are brought back into range, and the game
+  runs on. Each core was fuzzed on the PC test build with a memory checker,
+  using states with repaired checksums (`tools/statefuzz`, `docs/TESTING.md`).
+  A host can still send a state that makes *its own game* behave oddly, as
+  any save state can; and nothing here has run on a real Vita yet. A cartridge
+  that a host sends is a game like any other: it runs inside the emulator.
 
 ### Limits
 

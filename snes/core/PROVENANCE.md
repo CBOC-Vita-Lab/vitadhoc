@@ -47,6 +47,7 @@ the Snes9x master after 1.63 (commit ids are upstream's), **C** hooks and glue f
 | `memmap.cpp` | The ROM SHA-256 is not computed (only the cheat-database lookup read it): about 0.5 s of load time on a Vita. |
 | `cheats2.cpp`, `sa1.cpp`, `sa1.h`, `sa1cpu.cpp` | A cheat that writes into the ROM image (`S9xSetByteFree` on the cartridge) sets `S9xSA1RomPatched`, which turns the SA-1 replay off until the next load. No change for a game without such a code. |
 | `fxemu.cpp` | `S9xSuperFXClock` / `S9xSuperFXTime` wrap `S9xSuperFXExec_impl` so the frontend can measure the GSU's time. `Settings.SuperFXClockMultiplier` scales the per-line budget (in both timing modes). |
+| `fxfast.cpp` (new, 20 Nov 2026, 2.0), hooks in `fxinst.cpp`, `fxinst.h`, `fxemu.cpp`, `fxemu.h`, `cheats2.cpp` | A block-cache Super FX interpreter written for this tree (own code, same licence as the rest of the core; the hand-written assembly of other Snes9x forks was only read as a reference for how fast the job can be and nothing of it, or of any GPL emulator, was copied). It decodes a run of GSU instructions once into a block of ops (the ALT / FROM / TO / WITH prefixes folded into the op, the source and destination registers resolved) and runs the block with computed-goto dispatch. The cycle model is kept bit-exact: each block carries its fetch and cache-line cost, computed with the same rules as `fxinst.h` (`FETCHPIPE`, the 16-byte line fill, the delay slot's own fetch), and a block is only entered when the budget of the line covers it, else the last instructions of the slice are run by the reference interpreter (`fx_run_ref`, the former `fx_run`). The lazy flag fields, the pipe byte, the prefix state and the register garbage that snapshots save are produced exactly as the reference does. Anything unusual (code in RAM, a delay slot that is not simple, a cache base that is not 16-byte aligned, the flat-budget mode) runs the reference. Blocks are dropped when a cheat writes the ROM image (`cheats2.cpp`) and on reset. The cache RAM at $3100-$32ff is timing only in this core (code is always read from the program bank), so a CPU write there needs no invalidation. Switch: `gsu_fast` (host option, 1 by default). Proof: `snes/twin/gsu_check.sh`, gate step `snes-gsu-fast`, and the `FX_SHADOW` build (every slice run twice, whole GSU state, RAM and line flags compared). Results are identical to the reference interpreter (frame hashes, sound, saved state) on Doom, Stunt Race FX and Yoshi's Island, 3600 frames at four clocks, and on the 58 GSU test ROMs. |
 | `tileimpl.h` (20 Nov 2026, 2.0) | `DrawBackdrop16`: a group of eight backdrop pixels that nothing has drawn on yet, with plain add / subtract colour math and the sub screen showing through part of the group (so the group is not one colour), is made by the vector form `CalcRow8` that the tile rows already use, instead of pixel by pixel. Same colours, same depth bytes (frame hashes of the 15 owner games, 3000 frames, wide view off and on, identical to the tree before). A sky gradient with a far layer on the sub screen (Super Mario World, Yoshi's Island) is the case; it is also most of what the wide view's backdrop pass draws there. |
 
 ### B. Upstream fixes taken after 1.63 (re-implemented on this tree, one at a time)
@@ -106,3 +107,18 @@ checked against the single thread by `snes/twin/mt_compare.py`.
 The frontend that drives this core is in `../frontend` (MIT) and does not modify it. To update to a
 newer Snes9x: copy the same file list, re-apply the changes above (search for `S9XP_`, `CBOC_`),
 and run `snes/twin/conformance.py`, `exact_check.sh` and `mt_compare.py`.
+
+### D. State loads that are not trusted (20 Nov 2026, 2.0)
+
+A snapshot comes from a file or from the host of an online game, so it is treated as hostile (`tools/statefuzz`, `snes/twin/statefuzz.cpp`).
+All changes are in `snapshot.cpp` and mark themselves `CBOC-Vita`:
+
+- `SnapshotTimingSane` runs before the machine is touched: the timing block (line and event positions, counters, event numbers) must be
+  one this machine can produce, else the load is refused (`SNAPSHOT_INCONSISTENT`) and nothing has changed.
+- DMA channels: the transfer mode is 3 bits and the flags are flags (they index tables).
+- PPU registers that index tables or select a mode (brightness, BG mode, OBJ size / name base, BG bases and sizes, sprite fields, VMA
+  increment and its derived mask, screen height) are brought back inside what the register write can produce.
+- Super FX: the block stores host pointers as offsets and table selectors. The chip's memory pointers (RAM and ROM bank tables, the
+  cache, the screen pointers) are rebuilt from the machine's own values, selectors are masked, the screen pointers are derived again
+  (`SnapshotSuperFXKeep` / `SnapshotSuperFXSanitize`). A chip block in a state for a cart without that chip (Super FX, SA-1) is ignored.
+- Audio: the SPC/DSP block is copied into a buffer padded with zeros (the DSP's `extra()` length byte could read past the block).

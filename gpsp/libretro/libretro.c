@@ -787,6 +787,11 @@ void retro_init(void)
 #else
       gba_screen_pixels = (uint16_t*)malloc(GBA_SCREEN_BUFFER_SIZE);
 #endif
+   /* A game now starts on line 0x7E (cpu.cc), so the first frame has no
+    * lines 0..125: black, not whatever the heap held (a flash of old
+    * memory on screen, a different picture every run). */
+   if (gba_screen_pixels)
+      memset(gba_screen_pixels, 0, GBA_SCREEN_BUFFER_SIZE);
 
    /* gba_screen_pixels is dereferenced unconditionally by both the
     * renderer (writes from update_scanline) and the post-process /

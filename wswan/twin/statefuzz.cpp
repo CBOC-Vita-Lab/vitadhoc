@@ -44,7 +44,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 3) { fprintf(stderr, "usage: statefuzz ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--case FILE]...\n"); return 2; }
 	const char *rom = argv[1], *dir = argv[2]; double secs = 20; uint64_t seed = 1; int frames = 20, warm = 300;
-	std::vector<const char *> cases;
+	std::vector<const char *> cases; bool proof = false;
 	for (int i = 3; i < argc; i++)
 	{
 		std::string a = argv[i];
@@ -53,6 +53,8 @@ int main(int argc, char **argv)
 		else if (a == "--frames" && i + 1 < argc) frames = atoi(argv[++i]);
 		else if (a == "--warm" && i + 1 < argc) warm = atoi(argv[++i]);
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
+		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
 	if (rv.empty()) { fprintf(stderr, "cannot read %s\n", rom); return 2; }
@@ -62,6 +64,12 @@ int main(int argc, char **argv)
 	char err[256] = "";
 	if (wswan_host_load_mem(rv.data(), rv.size(), "fuzz.ws", err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 2; }
 	sf_rng rng; sf_seed(&rng, seed);
+	if (proof)
+	{
+		int f = sf_proof("ws", [&]() { std::vector<uint8_t> b(wswan_host_state_size()); wswan_host_state_save_mem(b.data(), b.size()); return b; }, [&](const std::vector<uint8_t> &b) { return wswan_host_state_load_mem(b.data(), b.size()); }, [&](int n, sf_rng *r) { run_frames(n, r); }, seed);
+		printf(f ? "STATEFUZZ proof FAILED (%d)\n" : "STATEFUZZ proof OK: every state loads and runs on exactly as the uninterrupted machine\n", f);
+		return f ? 1 : 0;
+	}
 	run_frames(warm, &rng);
 	size_t n = wswan_host_state_size();
 	std::vector<std::vector<uint8_t>> bases;
@@ -79,11 +87,12 @@ int main(int argc, char **argv)
 		if (wswan_host_state_load_mem(b.data(), b.size()) != 0) { fprintf(stderr, "STATEFUZZ FAIL: a genuine state is refused\n"); return 1; }
 		run_frames(frames, &rng);
 	}
+	sf_base_dump(bases);
 	if (!cases.empty())
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_file(c);
+			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
 			sf_arm(b.data(), b.size(), iters++);
 			int rc = wswan_host_state_load_mem(b.data(), b.size());
 			if (rc == 0) { run_frames(frames, &rng); ok++; } else refused++;

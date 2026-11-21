@@ -109,6 +109,29 @@ run when their ROM variable is set.
 byte-identical), `widekit-arm`, `widekit-vita` and `playerkit-vita` (compile for
 the Vita), and `vita-build` (`make -C gpsp/vita vpk`).
 
+## State loaders (`tools/statefuzz`)
+
+A state comes from a file, from Share game data, or from the host of an online game, so every core's loader must survive a state made up on
+purpose. `tools/statefuzz/sf_common.h` is the shared harness (MIT); each core has a harness next to its twin:
+`md/twin/statefuzz.cpp`, `snes/twin/statefuzz.cpp`, `nes/twin/statefuzz.cpp`, `wswan/twin/statefuzz.cpp`, `gpsp/gbcore/tests/statefuzz.cpp` (Game Boy
+and Color) and `gpsp/vita/hostcore/statefuzz/statefuzz_gba.cpp` (GBA). A harness runs a game, takes a genuine state, damages it the way a hostile
+peer would (random bytes, field-sized values, wrong sizes; counts and checksums are repaired so the loader's own checks see a valid-looking
+state), loads it and runs a few frames. A refused state is fine; a crash, a sanitizer report or a frame that does not end (a watchdog) is saved to
+the case directory (`crash-*.st`, `hang-*.st`) and fails the run. Cores and harness are built with AddressSanitizer + UBSan (shift, signed
+overflow and alignment reports are off: they are defined on the Vita's ARM and common in these cores). The GBA harness uses the interpreter build,
+because a memory checker cannot watch generated code: the dynamic recompiler's own state fuzzing is not covered.
+
+`--proof` is the other half: for every ROM, a state loaded at frame 1, 97, 300 and 655 and run 60 more frames must end byte for byte where the
+machine that was never interrupted ends, so no check can have changed a legitimate value. Known exceptions, all upstream bookkeeping that is not in
+the state and is blanked or documented: the NES harness blanks MMC1's last-write time (`LRST`) and the Disk System sound's envelope divider (`EDIV`);
+the GBA differs at frame 1 only (the first frame's state; the same before any of these changes).
+
+`sh tools/statefuzz/statefuzz.sh OUTDIR [SECONDS]` builds the harnesses and does both for the ROMs the gate variables name (`GATE_MD_ROMS`,
+`GATE_MD_SMS_ROMS`, `GATE_SNES_ROMS`, `GATE_NES_ROMS`, `GATE_WS_ROM`, `GATE_GBA_ROMS`, and the test cartridges under `gpsp/vita/hostcore/testrom`
+for the Game Boy); the gate step `state-fuzz` runs it with a short budget. Longer runs: `STATEFUZZ_SECONDS=300 STATEFUZZ_SEED=7`. Replay a saved case with
+`<harness> ROM DIR --case FILE`. `tools/statefuzz/regress/` holds the cases found so far as small recipes (offset and bytes on a base state of
+the harness' own `--base` option), not game states.
+
 ## Undrawn frames (fast forward, Steady half mode, catch-up)
 
 A frame the player does not draw must leave the emulation exactly as a drawn

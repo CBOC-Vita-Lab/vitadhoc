@@ -107,6 +107,7 @@ unsigned snes_host_rewind_scans(void);         /* captures that checked the part
  *   sprite_tiles N       sprite tiles per line, 34 = hardware, 128 = no flicker
  *   interp 0..4          DSP interpolation: 0 none 1 linear 2 gaussian (hardware) 3 cubic 4 sinc
  *   superfx_clock N      Super FX speed in percent (100 = hardware)
+ *   gsu_fast 0/1         Super FX block-cache interpreter (identical results, faster)
  *   transparency 0/1
  *   echo_buffer 0/1      separate echo buffer (fixes a few games, costs accuracy elsewhere) */
 int snes_host_set_option(const char *name, int value);

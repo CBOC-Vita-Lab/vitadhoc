@@ -460,6 +460,7 @@ int snes_host_set_option(const char *name, int v)
 		    : v == 3 ? DSP_INTERPOLATION_CUBIC : v == 4 ? DSP_INTERPOLATION_SINC : DSP_INTERPOLATION_GAUSSIAN;
 	else if (!strcmp(name, "superfx_clock")) Settings.SuperFXClockMultiplier = v;
 	else if (!strcmp(name, "gsu_cycles")) Settings.DisableGSUCycleMode = v ? FALSE : TRUE;	/* 0 = the 1.63 flat instruction budget; takes effect at the next ROM load */
+	else if (!strcmp(name, "gsu_fast")) fx_fast = v ? 1 : 0;	/* 0 = the reference Super FX interpreter; same results, slower */
 	else if (!strcmp(name, "transparency")) Settings.Transparency = v ? TRUE : FALSE;
 	else if (!strcmp(name, "echo_buffer")) Settings.SeparateEchoBuffer = v ? TRUE : FALSE;
 	else return 1;

@@ -27,6 +27,7 @@ dsp3.cpp \
 dsp4.cpp \
 fscompat.cpp \
 fxemu.cpp \
+fxfast.cpp \
 fxinst.cpp \
 gfx.cpp \
 globals.cpp \

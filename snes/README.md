@@ -52,6 +52,11 @@ measures the GSU's time, `snes_host_set_superfx_clock` sets the share) and still
 `gsu_cycles=0` selects the old flat budget (takes effect at the next ROM load). The game's own timing of the
 3D view follows the real chip now; whether the Vita keeps 60 is not measured here.
 
+The chip's instructions run on a block-cache interpreter (`core/fxfast.cpp`, option `gsu_fast`, 1 by default; 0 selects
+the reference interpreter `fx_run_ref`): the same results to the bit, about 1.8 to 1.9 times fewer host instructions
+in the chip's run function (docs/PERFORMANCE.md). `snes/twin/gsu_check.sh` (gate step `snes-gsu-fast`) compares the two
+on every Super FX ROM of a folder; a build with `-DFX_SHADOW` runs every slice with both and compares the whole chip state.
+
 ## Layout
 
 | Folder | What | Licence |
@@ -112,7 +117,7 @@ snes/twin/baseline.sh > table.md       # the baseline table below
 | `--cheat-decode CODE` (ROM `-`) | print a code as address=value cells, or the error, without a ROM |
 | `--peek HEX` | print the work RAM byte at that offset at the end of the run |
 | `--save-state F --state-frame N`, `--load-state F --state-frame N` | save after / load before frame N |
-| `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `gsu_cycles`, `transparency`, `echo_buffer` |
+| `--opt name=value` | core options: `block_vram`, `sprite_tiles`, `interp`, `superfx_clock`, `gsu_cycles`, `gsu_fast`, `transparency`, `echo_buffer` |
 
 Without `--timing`/`--summary` the program prints one line with the fps from the
 thread's **CPU time** (the build machine is shared, so wall time is not used).

@@ -2,6 +2,13 @@
 
 ## Version 2.0
 
+- **A state sent by the other player, or loaded from a file, can no longer crash or hang an emulator.** Starting a link loads the host's game
+  state on the guest's console, and the same loader reads save state files and Share game data. A state made up on purpose (with its sizes
+  and checksums repaired) used to be able to crash or freeze the Genesis core and others. Every core (Genesis / Master System / Game Gear /
+  SG-1000, Super NES, GBA, Game Boy and Color, NES, WonderSwan) now checks the inside of a state before using it (indexes, banks, sizes,
+  counts, timers) and refuses it, or brings impossible values back into range; and each was fuzzed on the PC build with a memory checker:
+  no crash, no hang, no report. States the consoles themselves wrote, and older versions' states, still load and the game runs on exactly as
+  if it had never been interrupted (all test games, 4 load points each). Not proven on a Vita; the GBA fuzzing ran the interpreter build.
 - **The same looks on every console.** The main app's Settings > Display now has the rows the players have, with the same names and
   0..10 strengths (0 is off): **Ambient glow**, **Scanlines**, **LCD grid** (two rows now, each on its own; they used to be one Video filter
   with one strength) and **LCD ghosting** (was on/off) on the GBA, Game Boy, Game Boy Color and WonderSwan. **LCD colours** also for

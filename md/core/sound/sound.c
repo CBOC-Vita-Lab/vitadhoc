@@ -637,13 +637,20 @@ int sound_context_load(uint8 *state)
     else
 #endif
     {
+      YM2413ContextKeep();
       load_param(YM2413GetContextPtr(),YM2413GetContextSize());
+      YM2413ContextCheck();
     }
   }
 
   bufferptr += psg_context_load(&state[bufferptr]);
 
   load_param(&fm_cycles_start,sizeof(fm_cycles_start));
+  /* CBOC-Vita (H1): fm_cycles_start is how far the FM chip ran past the end of the frame, 0..one sample step (fm_cycles_ratio) after
+     every sound_update. It sets how many samples the next fm_update asks the chip for, so a damaged or hostile value (huge or
+     negative) wrote past fm_buffer. Anything beyond two sample steps cannot come from the machine and is dropped. */
+  if (fm_cycles_start < 0 || fm_cycles_start > (2 * fm_cycles_ratio))
+    fm_cycles_start = 0;
   fm_cycles_count = fm_cycles_start;
 
   /* VitAdhoc: see sound_context_save */

@@ -19,7 +19,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 3) { fprintf(stderr, "usage: statefuzz ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--warm N] [--gbc] [--case FILE]...\n"); return 2; }
 	const char *rom = argv[1], *dir = argv[2]; double secs = 20; uint64_t seed = 1; int frames = 20, warm = 300; fe_console_t con = FE_CONSOLE_GB;
-	std::vector<const char *> cases;
+	std::vector<const char *> cases; bool proof = false;
 	for (int i = 3; i < argc; i++)
 	{
 		std::string a = argv[i];
@@ -29,6 +29,8 @@ int main(int argc, char **argv)
 		else if (a == "--warm" && i + 1 < argc) warm = atoi(argv[++i]);
 		else if (a == "--gbc") con = FE_CONSOLE_GBC;
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
+		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
 	if (rv.empty()) { fprintf(stderr, "cannot read %s\n", rom); return 2; }
@@ -38,6 +40,12 @@ int main(int argc, char **argv)
 	gbcore_callbacks_t cb; memset(&cb, 0, sizeof cb); cb.video = on_video; cb.audio_batch = on_audio; cb.serial_transfer = on_serial;
 	gbcore_t *core = gbcore_create(NULL, rv.data(), rv.size(), con, 48000, &cb);
 	if (!core) { fprintf(stderr, "gbcore_create failed\n"); return 2; }
+	if (proof)
+	{
+		int f = sf_proof("gb", [&]() { std::vector<uint8_t> b(gbcore_state_size(core)); long w = gbcore_state_save(core, b.data(), b.size()); b.resize(w > 0 ? (size_t)w : 0); return b; }, [&](const std::vector<uint8_t> &b) { return gbcore_state_load(core, b.data(), b.size()); }, [&](int n, sf_rng *r) { g_rng = r; run_frames(core, n); }, seed);
+		printf(f ? "STATEFUZZ proof FAILED (%d)\n" : "STATEFUZZ proof OK: every state loads and runs on exactly as the uninterrupted machine\n", f);
+		return f ? 1 : 0;
+	}
 	run_frames(core, warm);
 	size_t n = gbcore_state_size(core);
 	std::vector<std::vector<uint8_t>> bases;
@@ -54,11 +62,12 @@ int main(int argc, char **argv)
 		if (gbcore_state_load(core, b.data(), b.size()) != 0) { fprintf(stderr, "STATEFUZZ FAIL: a genuine state is refused\n"); return 1; }
 		run_frames(core, frames);
 	}
+	sf_base_dump(bases);
 	if (!cases.empty())
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_file(c);
+			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
 			sf_arm(b.data(), b.size(), iters++);
 			int rc = gbcore_state_load(core, b.data(), b.size());
 			if (rc == 0) { run_frames(core, frames); ok++; } else refused++;

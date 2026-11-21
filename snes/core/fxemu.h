@@ -35,5 +35,9 @@ uint8 S9xGetSuperFX (uint16);
 void fx_flushCache (void);
 void fx_computeScreenPointers (void);
 uint32 fx_run (uint32);
+// CBOC-Vita: the reference interpreter (one instruction at a time) and the block interpreter (fxfast.cpp) that fx_run uses
+uint32 fx_run_ref (uint32);
+extern int fx_fast;				// 1 = block interpreter (default), 0 = reference interpreter only (host option gsu_fast)
+void fx_blocksReset (void);		// forget every decoded block (ROM change, reset)
 
 #endif

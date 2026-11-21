@@ -25,7 +25,7 @@
 #ifdef FX_LIMIT
 // Run-loop test merged into one compare: STOP drops the limit to 0, so the loop
 // needs only "vCycles < fx_limit" instead of the G-flag test plus the budget test.
-static uint32 fx_limit;
+uint32 fx_limit;
 #endif
 
 static void fx_stop (void)
@@ -4088,7 +4088,7 @@ static struct FxProfInit { FxProfInit () { atexit(fx_prof_dump); } } fx_prof_ini
 static uint32 fx_run_impl (uint32 nInstructions);
 
 // Per-run setup of the fetch-timing shortcuts (both budget modes fetch through FETCHPIPE).
-uint32 fx_run (uint32 nInstructions)
+uint32 fx_run_ref (uint32 nInstructions)
 {
 	fx_cacheLimit = GSU.bCacheActive ? 512 : 0;
 #ifdef FX_LINEFLAGS
@@ -4108,7 +4108,7 @@ uint32 fx_run (uint32 nInstructions)
 }
 static uint32 fx_run_impl (uint32 nInstructions)
 #else
-uint32 fx_run (uint32 nInstructions)
+uint32 fx_run_ref (uint32 nInstructions)
 #endif
 {
 	if (GSU.bCycleMode)

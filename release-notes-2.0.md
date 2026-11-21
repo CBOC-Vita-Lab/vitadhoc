@@ -41,6 +41,8 @@ against the live service, so no speed or reliability is promised: see
   line, for example "Link Cable  P2  Great (relay)".
 - **More forgiving delay:** Link delay Auto may use up to 12 frames on Online
   (8 on every other connection) so a long line still plays steadily.
+- **Safe to join:** the other player's game state is checked before it is used. Every emulator core refuses
+  or repairs a state that was made up to crash it (tested on the PC builds, not on a Vita yet).
 - **Privacy:** no account, no PSN name; only your nickname is sent. A room
   (code, game name, nicknames, addresses) lives until the link forms or 10
   minutes pass, then it is deleted. See [Online Play](docs/ONLINE.md).

@@ -119,7 +119,7 @@ $(B)/wcopy/%.o: $(B)/core/%.o $(B)/wcopy.map
 # Super FX speed-ups (exact, identity-tested on the 15 ROMs): merged run-loop test, cache range
 # test, byte-per-line cache fill flags. The Vita Makefile uses the same defines for these two files.
 GSU_FAST := -DFX_LIMIT -DFX_FAST -DFX_LINEFLAGS
-$(B)/core/fxinst.o $(B)/core/fxemu.o: CXXFLAGS += $(GSU_FAST)
+$(B)/core/fxinst.o $(B)/core/fxemu.o $(B)/core/fxfast.o: CXXFLAGS += $(GSU_FAST)
 
 $(B)/core/%.o: $(CORE)/%.cpp
 	@mkdir -p $(dir $@)

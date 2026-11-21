@@ -91,3 +91,14 @@ the omissions above.
 
 The program side (`nes/frontend/host.c`, plain C) supplies what the libretro driver supplied; `nes/frontend/Makefile`
 links core + host into the single relocatable object `nescore.o` whose only global symbols are `nes_host_*`.
+
+## State loads that are not trusted (20 Nov 2026, 2.0)
+
+A state comes from a file or from the host of an online game (`tools/statefuzz`, `nes/twin/statefuzz.cpp`). Marked `CBOC-Vita`:
+
+- `state.c`: a state is walked twice. The first walk (`state_dry`) checks the chunk structure and sizes and changes nothing, so a damaged
+  state is refused before any byte of the running machine changed (it used to be applied chunk by chunk until the damage was reached,
+  leaving sound and PPU values that nothing had validated).
+- `ppu.c` (`FCEUPPU_LoadState`): the fine X scroll (indexes a table), the toggle and the two address registers are held to the range the
+  registers produce.
+- `sound.c` (`FCEUSND_LoadState`): the sound timestamps index the wave buffers, so a timestamp no frame boundary leaves is dropped.

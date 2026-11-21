@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 3) { fprintf(stderr, "usage: statefuzz ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--case FILE]...\n"); return 2; }
 	const char *rom = argv[1], *dir = argv[2]; double secs = 20; uint64_t seed = 1; int frames = 20, warm = 300;
-	std::vector<const char *> cases; const char *bios = NULL;
+	std::vector<const char *> cases; bool proof = false; const char *bios = NULL;
 	for (int i = 3; i < argc; i++)
 	{
 		std::string a = argv[i];
@@ -52,6 +52,8 @@ int main(int argc, char **argv)
 		else if (a == "--frames" && i + 1 < argc) frames = atoi(argv[++i]);
 		else if (a == "--warm" && i + 1 < argc) warm = atoi(argv[++i]);
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
+		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
 	if (rv.empty()) { fprintf(stderr, "cannot read %s\n", rom); return 2; }
@@ -66,6 +68,19 @@ int main(int argc, char **argv)
 	std::string rn = rom; size_t sl = rn.find_last_of('/'); if (sl != std::string::npos) rn = rn.substr(sl + 1);
 	if (nes_host_load_mem(rv.data(), rv.size(), rn.c_str(), err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 2; }
 	sf_rng rng; sf_seed(&rng, seed);
+	if (proof)
+	{
+		// MMC1 stores "LRST" (the time of its last write) against a timestamp base that is not itself stored: it differs after a load by
+		// design (upstream), and nothing but the two-cycle write filter reads it. The proof blanks it so every other byte is compared.
+		int f = sf_proof("nes", [&]() { std::vector<uint8_t> b(nes_host_state_size()); nes_host_state_save_mem(b.data(), b.size());
+			for (size_t i = 16; i + 16 <= b.size(); i++) if (!memcmp(&b[i], "LRST", 4) && b[i + 4] == 8 && !b[i + 5] && !b[i + 6] && !b[i + 7]) memset(&b[i + 8], 0, 8);
+			// the Disk System's sound keeps a fractional sample accumulator (fdso.count) that is not stored, so the phase of its envelope divider
+			// ("EDIV", audio only) depends on where the sample clock was when the state was loaded: also upstream, also blanked
+			for (size_t i = 16; i + 12 <= b.size(); i++) if (!memcmp(&b[i], "EDIV", 4) && b[i + 4] == 4 && !b[i + 5] && !b[i + 6] && !b[i + 7]) memset(&b[i + 8], 0, 4);
+			return b; }, [&](const std::vector<uint8_t> &b) { return nes_host_state_load_mem(b.data(), b.size()); }, [&](int n, sf_rng *r) { run_frames(n, r); }, seed);
+		printf(f ? "STATEFUZZ proof FAILED (%d)\n" : "STATEFUZZ proof OK: every state loads and runs on exactly as the uninterrupted machine\n", f);
+		return f ? 1 : 0;
+	}
 	run_frames(warm, &rng);
 	size_t n = nes_host_state_size();
 	std::vector<std::vector<uint8_t>> bases;
@@ -83,11 +98,12 @@ int main(int argc, char **argv)
 		if (nes_host_state_load_mem(b.data(), b.size()) != 0) { fprintf(stderr, "STATEFUZZ FAIL: a genuine state is refused\n"); return 1; }
 		run_frames(frames, &rng);
 	}
+	sf_base_dump(bases);
 	if (!cases.empty())
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_file(c);
+			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
 			sf_arm(b.data(), b.size(), iters++);
 			int rc = nes_host_state_load_mem(b.data(), b.size());
 			if (rc == 0) { run_frames(frames, &rng); ok++; } else refused++;

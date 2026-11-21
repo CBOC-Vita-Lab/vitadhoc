@@ -76,7 +76,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 3) { fprintf(stderr, "usage: statefuzz_gba ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--warm N] [--case FILE]...\n"); return 2; }
 	const char *rom = argv[1], *dir = argv[2]; double secs = 20; uint64_t seed = 1; int frames = 20, warm = 600;
-	std::vector<const char *> cases;
+	std::vector<const char *> cases; bool proof = false;
 	for (int i = 3; i < argc; i++)
 	{
 		std::string a = argv[i];
@@ -85,6 +85,8 @@ int main(int argc, char **argv)
 		else if (a == "--frames" && i + 1 < argc) frames = atoi(argv[++i]);
 		else if (a == "--warm" && i + 1 < argc) warm = atoi(argv[++i]);
 		else if (a == "--case" && i + 1 < argc) cases.push_back(argv[++i]);
+		else if (a == "--base-out" && i + 1 < argc) sf_base_out = argv[++i];
+		else if (a == "--proof") proof = true;
 	}
 	std::vector<uint8_t> rv = sf_read_file(rom);
 	if (rv.empty()) { fprintf(stderr, "cannot read %s\n", rom); return 2; }
@@ -96,6 +98,12 @@ int main(int argc, char **argv)
 	retro_init();
 	struct retro_game_info gi; memset(&gi, 0, sizeof gi); gi.path = rom; gi.data = rv.data(); gi.size = rv.size();
 	if (!retro_load_game(&gi)) { fprintf(stderr, "retro_load_game failed\n"); return 2; }
+	if (proof)
+	{
+		int f = sf_proof("gba", [&]() { std::vector<uint8_t> b(retro_serialize_size()); if (!retro_serialize(b.data(), b.size())) b.clear(); return b; }, [&](const std::vector<uint8_t> &b) { return retro_unserialize(b.data(), b.size()) ? 0 : 1; }, [&](int n, sf_rng *r) { g_pad_rng = r; run_frames(n); }, seed);
+		printf(f ? "STATEFUZZ proof FAILED (%d)\n" : "STATEFUZZ proof OK: every state loads and runs on exactly as the uninterrupted machine\n", f);
+		return f ? 1 : 0;
+	}
 	run_frames(warm);
 	size_t n = retro_serialize_size();
 	std::vector<std::vector<uint8_t>> bases;
@@ -112,11 +120,12 @@ int main(int argc, char **argv)
 		if (!retro_unserialize(b.data(), b.size())) { fprintf(stderr, "STATEFUZZ FAIL: a genuine state is refused\n"); return 1; }
 		run_frames(frames);
 	}
+	sf_base_dump(bases);
 	if (!cases.empty())
 	{
 		for (const char *c : cases)
 		{
-			std::vector<uint8_t> b = sf_read_file(c);
+			std::vector<uint8_t> b = sf_read_case(c, bases[0]);
 			sf_arm(b.data(), b.size(), iters++);
 			bool r = retro_unserialize(b.data(), b.size());
 			if (r) { run_frames(frames); ok++; } else refused++;

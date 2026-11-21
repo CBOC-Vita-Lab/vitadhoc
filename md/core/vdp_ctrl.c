@@ -738,6 +738,7 @@ void vdp_carry_save(void *p)
   c.sat_base_mask = sat_base_mask; c.sat_addr_mask = sat_addr_mask;
   c.border = border;
   memcpy(c.viewport, &bitmap.viewport, sizeof(bitmap.viewport));
+  c.viewport[6] &= ~9;      /* the frontend's pending-change flags: a load clears bits 0 and 3 (host.c), so a saved state holds them cleared and save, load, save is the same state */
   memcpy(p, &c, sizeof c);
 }
 

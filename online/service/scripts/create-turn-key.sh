@@ -105,7 +105,7 @@ errs() { printf '%s' "$BODY" | node -e 'let s="";process.stdin.on("data",d=>s+=d
 
 api POST "/accounts/$ACCOUNT_ID/calls/turn_keys" "{\"name\":\"$NAME\"}"
 TOK=""
-if [ "$CODE" != 200 ]; then
+if [ "$CODE" != 200 ] && [ "$CODE" != 201 ]; then
   m=$(errs | head -3 | tr '\n' ' ')
   echo "create-turn-key: HTTP $CODE, the API says: $m" >&2
   if printf '%s' "$m" | grep -qiE 'payment|billing|subscription|plan|entitle|upgrade|not available|credit card'; then
@@ -115,7 +115,7 @@ if [ "$CODE" != 200 ]; then
   RC=6 die "the key was not created (HTTP $CODE)."
 fi
 # parse: prints "OK <uid> <secret>" or "BAD <last 4 of the uid, if any>"; values are checked for shape before anything is written
-PAIR=$(printf '%s' "$BODY" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let r;try{r=JSON.parse(s).result||{}}catch{r={}};
+PAIR=$(printf '%s' "$BODY" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let r;try{const j=JSON.parse(s);r=(j&&j.result)||j||{}}catch{r={}};
   const uid=String(r.uid||""), sec=String(r.key||r.secret||"");
   if(/^[A-Za-z0-9._-]{8,64}$/.test(uid)&&/^[A-Za-z0-9._~+\/=-]{16,}$/.test(sec)) process.stdout.write("OK "+uid+" "+sec);
   else process.stdout.write("BAD "+uid.slice(-4));})') || PAIR="BAD "

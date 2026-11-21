@@ -389,22 +389,23 @@ void vdpw_wide_cache_stat(unsigned long out[3]) { out[0] = vw_wide_cache_stat[0]
 
 unsigned vdpw_spr_col(void) { return vdpw_on ? vw_spr_col : spr_col; }
 
-/* the renderers' carried state (vdp_render.c, render_carry_t) of both copies, for run-ahead: `buf` holds 2 * vdpw_carry_size() bytes */
+/* the renderer's carried state (vdp_render.c, render_carry_t) for the save state and run-ahead: the copy that draws (the worker's while it
+ * runs, the emulating thread's otherwise), so that a state is the same bytes whichever thread draws; a load puts it into both copies */
 extern int render_carry_size(void);
 extern void render_carry_save(void *p);
 extern void render_carry_load(void *p);
 extern void vw_render_carry_save(void *p);
 extern void vw_render_carry_load(void *p);
-int vdpw_carry_size(void) { return 2 * render_carry_size(); }
+int vdpw_carry_size(void) { return render_carry_size(); }
 void vdpw_carry_save(void *buf)
 {
-	render_carry_save(buf);
-	if (vdpw_on) { vdpw_q_call(vw_render_carry_save, (char *) buf + render_carry_size()); vdpw_join(); }
+	if (vdpw_on) { vdpw_q_call(vw_render_carry_save, buf); vdpw_join(); }
+	else render_carry_save(buf);
 }
 void vdpw_carry_load(void *buf)
 {
 	render_carry_load(buf);
-	if (vdpw_on) { vdpw_q_call(vw_render_carry_load, (char *) buf + render_carry_size()); vdpw_join(); }
+	if (vdpw_on) { vdpw_q_call(vw_render_carry_load, buf); vdpw_join(); }
 }
 
 void vdpw_census(vdpw_census_t *c) { if (c) { *c = W.cen; c->vdp_us = (unsigned long) __atomic_load_n(&W.vdp_busy, __ATOMIC_RELAXED); } }

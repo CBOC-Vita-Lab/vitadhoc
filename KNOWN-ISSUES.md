@@ -166,8 +166,13 @@ Testing continues on:
   game is busy, the real picture at the sides is narrowed and fades into a
   soft extension. It was checked on 15 games for 3000 frames each, not on a
   Vita; if a game looks wrong at the sides, set Wide view to Off in the menu.
-- **PAL (European) games** now keep their true 50 Hz speed; **PAL games
-  speed** in the menu returns them to the old fast 60 Hz.
+- **PAL (European) games** keep their true 50 Hz speed. **PAL games speed**
+  in the menu chooses Smooth 50 Hz (the default: one refresh in six shows a
+  mix of two frames instead of one picture twice), True 50 Hz, or the old
+  fast 60 Hz. Smooth 50 Hz is judged by arithmetic and the twin, not by
+  eye on a Vita: if the mixed refresh looks wrong in a game, True 50 Hz
+  returns the old picture. It is off in a linked game and with the wide
+  view's split capture (the picture then repeats as before).
 - **Players 3 and 4** need the Super Multitap (Auto turns it on for games
   known to use it) and extra controllers. Controllers beyond the first have
   not been tried on a real Vita yet.

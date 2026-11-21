@@ -285,7 +285,7 @@ console's setting without a launch file).
   the last load. Writes run on the writer thread; the slot shows at once. A failed write keeps the slot as it
   was and says why (red notice).
 - **Settings > Picture**: Screen size (Original, Zoom, Full screen, Pixel perfect), Pixel shape (8:7 or square),
-  Image quality (Sharp, Smooth), Scanlines, LCD grid, Side glow (Off, 1-10), Blend hi-res columns, Blend
+  Image quality (Sharp, Smooth), Scanlines, LCD grid, Ambient glow (Off, 1-10), Blend hi-res columns, Blend
   interlace lines, Apply to (All games / This game). Stored in `snes/picture.ini` and `snes/games/<game>.ini`
   when the menu closes (on the writer thread).
 - **Settings > Controls**: left and right stick (Off, D-pad, Buttons), rear touch panel, Multitap (Auto, On,
@@ -355,7 +355,7 @@ or, with "Apply to: this game", for one game (`ux0:data/GBAdhoc/snes/games/<game
 |---|---|
 | Shape | **Original shape** (default: correct 4:3, full height, about 725x544; the side areas show the glow), Zoom (blank top/bottom rows are cropped, the picture is enlarged but not stretched), Full screen (stretched), Pixel perfect (integer height scale; Pixels: 8:7 or square) |
 | Quality | **Sharp** (default: nearest-neighbour prescale by an integer factor into a render target, then bilinear: "sharp bilinear") or Smooth (plain bilinear) |
-| Side glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
+| Ambient glow | Off, 1-10 (default 5). A 64x64 and a 16x16 shrink of the game's own picture, drawn bilinear over the whole screen and darkened, refreshed every 4 frames. Replaced by a bezel when one exists |
 | CRT scanlines, LCD grid | Off, 1-10 |
 | Wide view | Auto (default), On or Off. Fills the 16:9 screen with real picture of the game beside the 4:3 frame (the game's own tiles and Mode 7 where its data proves them, soft edges elsewhere); the 256 middle columns stay the normal picture. Hi-res scenes use the normal picture. Auto is off while steady pacing thins frames. See `WIDE-INTEGRATION.md` |
 | Blend hi-res columns | Off (default) or On. For 512-wide pictures: the GPU averages each pair of columns (bilinear sample exactly between two texels, no extra pass), which smooths the dithering/transparency tricks hi-res games use. Opt-in because it softens text |

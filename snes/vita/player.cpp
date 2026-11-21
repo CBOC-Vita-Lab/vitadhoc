@@ -391,7 +391,7 @@ void SnesPlayer::settings_load()
 	pl.load(path_join(snes_dir_, "player.ini"));
 	steady_ = pl.get_int("steady_pacing", 1) != 0;
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
-	pal_fast_ = pl.get_int("pal_speed", 0) != 0;
+	pal_mode_ = pk::pal_mode_clamp(pl.get_int("pal_speed", pk::PAL_SMOOTH));
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
 	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
 	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
@@ -437,8 +437,8 @@ void SnesPlayer::apply_overrides()
 	if ((v = req_.override_int("rewind_mb", -1)) >= 0) rewind_mb_ = clampi(v, 4, 24);
 	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = v == 1 ? 1 : 0;
 	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
-	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_fast_ = v != 0;
-	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_fast_ = true; else if (w == "true" || w == "50") pal_fast_ = false; }
+	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_mode_ = pk::pal_mode_clamp(v);
+	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_mode_ = pk::PAL_FAST; else if (w == "true" || w == "50") pal_mode_ = pk::PAL_TRUE; else if (w == "smooth") pal_mode_ = pk::PAL_SMOOTH; }
 	if ((v = req_.override_int("look_mode", -1)) >= 0) look_mode_ = clampi(v, 0, 2);
 	if (req_.overrides.count("look_mode")) { std::string w = lower(req_.overrides.find("look_mode")->second); if (w == "auto") look_mode_ = 0; else if (w == "full") look_mode_ = 1; else if (w == "light") look_mode_ = 2; }
 }
@@ -459,7 +459,7 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_SCALER, ps_.scaler);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
-	menu_.set_value(ROW_PALSPEED, pal_fast_ ? 1 : 0);
+	menu_.set_value(ROW_PALSPEED, pk::pal_row_of(pal_mode_));
 	menu_.set_value(ROW_LOOK, look_mode_);
 	menu_.set_value(ROW_SPD_FF, ff_speed_);
 	menu_.set_value(ROW_SPD_SOUND, ff_sound_);
@@ -681,7 +681,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.",
 		                   onoff, 1);
 		std::vector<std::string> palv, lookv;
-		palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
+		palv.push_back("Smooth 50 Hz"); palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
 		lookv.push_back("Auto"); lookv.push_back("Full"); lookv.push_back("Light");
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_LOOK, "Image look",
 		                   "Auto keeps the best scaler and eases it only when a game cannot hold full speed. Full keeps the scaler as set, Light turns it off, both always.",
@@ -693,8 +693,8 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 			                   "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
 		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
-		                   "European games run at 50 Hz. True 50 Hz plays them at their real speed (one frame in six is shown again); Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
-		                   palv, 0);
+		                   "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
+		                   palv, pk::pal_row_of(pk::PAL_SMOOTH));
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
 		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.",
 		                   onoff, 1);
@@ -1090,7 +1090,7 @@ void SnesPlayer::settings_queue_save()
 	Ini pl;
 	pl.set_int("steady_pacing", steady_ ? 1 : 0);
 	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
-	pl.set_int("pal_speed", pal_fast_ ? 1 : 0);
+	pl.set_int("pal_speed", pal_mode_);
 	pl.set_int("look_mode", look_mode_);
 	pl.set_int("ff_speed", ff_speed_);
 	pl.set_int("ff_sound", ff_sound_);
@@ -1125,7 +1125,7 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
-	case ROW_PALSPEED: pal_fast_ = v != 0; break;
+	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
 	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;

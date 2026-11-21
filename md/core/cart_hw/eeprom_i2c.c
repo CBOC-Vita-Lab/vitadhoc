@@ -175,6 +175,14 @@ static struct
 } eeprom_i2c;
 
 
+/* VitAdhoc: the serial protocol position (lines, bit counter, address, state) is in no save state. Copies it out (load = 0) or in
+   (load = 1); returns its size. md/frontend/host.c puts it into the state files (version 2) and run-ahead needs it for EEPROM cartridges. */
+int eeprom_i2c_carry(void *p, int load)
+{
+  if (p) { if (load) memcpy(&eeprom_i2c, p, sizeof(eeprom_i2c)); else memcpy(p, &eeprom_i2c, sizeof(eeprom_i2c)); }
+  return (int)sizeof(eeprom_i2c);
+}
+
 /********************************************************************/
 /* I2C EEPROM mapper initialization                                 */
 /********************************************************************/

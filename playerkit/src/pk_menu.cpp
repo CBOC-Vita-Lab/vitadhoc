@@ -355,7 +355,7 @@ void Menu::build_rows()
 		r.kind = K_LINK; r.enabled = true;
 		r.tag = PAGE_PICTURE; r.label = "Picture";
 		r.value_text = std::string(kShapeNames[vals_[ROW_PIC_SHAPE] < 0 || vals_[ROW_PIC_SHAPE] > 4 ? 0 : vals_[ROW_PIC_SHAPE]]) + ", " + kQuality[vals_[ROW_PIC_QUALITY] ? 1 : 0];
-		r.help = "Screen size, image quality, scanlines, LCD grid and side glow.";
+		r.help = "Screen size, image quality, scanlines, LCD grid and ambient glow.";
 		rows_.push_back(r);
 		r.tag = PAGE_CONTROLS; r.label = "Controls";
 		r.value_text = (profile_ && model_ && !profile_is_default(*profile_, *model_, cfg_.enter_is_cross)) ? "Customised" : "Default";
@@ -384,7 +384,7 @@ void Menu::build_rows()
 		b.choice(ROW_PIC_QUALITY, "Image quality", kQuality, 2, CAP_QUALITY, vals_[ROW_PIC_QUALITY]);
 		b.slider(ROW_PIC_SCANLINES, "Scanlines", CAP_SCANLINES, vals_[ROW_PIC_SCANLINES]);
 		b.slider(ROW_PIC_GRID, "LCD grid", CAP_LCD_GRID, vals_[ROW_PIC_GRID]);
-		b.slider(ROW_PIC_GLOW, "Side glow", CAP_GLOW, vals_[ROW_PIC_GLOW]);
+		b.slider(ROW_PIC_GLOW, "Ambient glow", CAP_GLOW, vals_[ROW_PIC_GLOW]);
 		b.choice(ROW_PIC_APPLY, "Apply to", kApply, 2, CAP_PIC_PER_GAME, vals_[ROW_PIC_APPLY]);
 		break;
 	case PAGE_CONTROLS: {

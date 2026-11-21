@@ -30,6 +30,7 @@
 #include "picture.h"
 #include "cheats.h"
 #include "savefile.h"
+#include "pk_palsmooth.h"
 #include "pk_launch.h"
 #include "pk_menu.h"
 #include "pk_input.h"
@@ -242,7 +243,9 @@ public:
 	bool smooth_handoff() const { return handoff_; }
 	/* "PAL games speed" (Speed page, key pal_speed): false = true 50 Hz (default: 5 frames in 6 refreshes), true = Fast 60 Hz (one
 	 * frame per refresh, the game and its sound run 20 % fast). Read by the platform each pass. */
-	bool pal_fast() const { return pal_fast_; }
+	bool pal_fast() const { return pal_mode_ == 1; }
+	/* Smooth 50 Hz (the default, key pal_speed 2): the same 5 frames in 6 refreshes, the sixth's frame run one refresh early and shown mixed with the one before (pk_palsmooth.h) */
+	bool pal_smooth() const { return pal_mode_ == 2; }
 	/* "Image look" (Picture page, key look_mode): 0 Auto (the governor eases the scaler only when the game cannot hold full speed),
 	 * 1 Full (the scaler as set, never eased), 2 Light (no scaler, never eased) */
 	int look_mode() const { return look_mode_; }
@@ -362,7 +365,7 @@ private:
 	bool settings_dirty_ = false;
 	bool steady_ = true;
 	bool handoff_ = true;
-	bool pal_fast_ = false;
+	int pal_mode_ = 2;       /* pal_speed: 0 True 50 Hz, 1 Fast 60 Hz, 2 Smooth 50 Hz (default) */
 	bool look_bad_ = false;
 	int look_mode_ = 0;
 	/* Quick response (0 Off, 1 Auto, 2 On; NOT FINISHED: off, and its menu row is not added, see md/README.md) and No sprite flicker

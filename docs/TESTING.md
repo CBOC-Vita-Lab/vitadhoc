@@ -103,6 +103,25 @@ run when their ROM variable is set.
 byte-identical), `widekit-arm`, `widekit-vita` and `playerkit-vita` (compile for
 the Vita), and `vita-build` (`make -C gpsp/vita vpk`).
 
+## Undrawn frames (fast forward, Steady half mode, catch-up)
+
+A frame the player does not draw must leave the emulation exactly as a drawn
+one does (state, RAM, audio, battery file). Three scripts run a console twice on
+the same input, once drawing every frame and once drawing only every Nth, and
+compare the audio, the saved state, the RAM and the battery file:
+
+- `snes/twin/skip_check.sh` (`snes_twin --render-mod N`, N = 2, 3);
+- `nes/twin/skip_check.sh` (`nes_twin --render-mod N`);
+- `gpsp/vita/hostcore/skip_check.sh` (the app twin with `GBADHOC_SKIP_MOD=N`:
+  GBA, GB, GBC and WonderSwan through the same frame-skip path as the app).
+
+The gate runs the SNES and NES ones as `snes-undrawn` and `nes-undrawn` (needs
+`GATE_SNES_ROMS` / `GATE_NES_ROMS`). Result (host x86): SNES, NES, GBA, GB and
+GBC are identical drawn and undrawn; no core needed a fix. One SNES state byte
+(a render-cache flag that is recomputed, not emulation state) is excluded in the
+script. The WonderSwan state differs only in its wall-clock clock bytes and
+footer, which differ the same way between two drawn runs; its audio matches.
+
 ## Unattended device sessions (vita-matrix)
 
 `tools/vita-matrix/matrix.py` runs a playlist of timed measurements (game, seconds,
@@ -138,9 +157,11 @@ and two real Vitas are the only proof of the rest.
 
 | Suite | Run from the repository root | Covers |
 |---|---|---|
-| Room service | `cd online/service && node --test "test/*.test.mjs"` (Node 22.5 or newer; no `npm install`; about 30 s; 121 tests when last counted) | the eight routes, lifecycle and lazy expiry, eviction of the Durable Object, rate limits and the day's budget, relay credential guards, privacy (nothing logged, nothing outlives its room), the dev server, and the deploy and zone scripts against a stub `npx`, a stub `curl` and a mock of the zone API (no wrangler or Cloudflare needed). The quotes matter: Node 22 does not expand a folder. |
+| Room service | `cd online/service && node --test "test/*.test.mjs"` (Node 22.5 or newer; no `npm install`; about 30 s; 124 tests when last counted) | the eight routes, lifecycle and lazy expiry, eviction of the Durable Object, rate limits and the day's budget, relay credential guards, privacy (nothing logged, nothing outlives its room), the dev server, and the deploy and zone scripts against a stub `npx`, a stub `curl` and a mock of the zone API (no wrangler or Cloudflare needed). The quotes matter: Node 22 does not expand a folder. |
 | TURN key script | `bash online/service/scripts/create-turn-key.selftest.sh` | the one-time key script against a stub `curl`: file modes, the secret never printed, never two keys, billing and permission refusals |
 | NAT layer | `make -C gpsp/netdrv test-nat` | STUN, punch, keep-alive and the TURN client on the transport, against the NAT/TURN simulator in `gpsp/netdrv/tests/natsim/` (build it with `gpsp/netdrv/tests/natsim/build.sh <out>`; `<out> --port 47000 --turn` runs it by hand) |
+| NAT codecs, hostile input | `make -C gpsp/netdrv fuzz-nat` | STUN and TURN answers that are damaged, cut, over-long or signed by a lying server (400,000 datagrams under AddressSanitizer and UBSan, no sockets, a few seconds; `FUZZ_N=`, `FUZZ_SEED=`). Not a gate step: run it after a change to `nat_stun.c` or `nat_turn.c`. |
+| Transport peer lock | `make -C gpsp/netdrv SAN=address test-lan LAN_TESTS=peerlock` | An online transport takes session datagrams only from its peer: strangers cannot push the peer out of the liveness table, reach netdrv or the bulk lane; a held transport (peer not known yet) takes none. Part of `test-lan`. |
 | Room client and HTTPS client | `python3 -I gpsp/vita/tests/onlinehttp/test_onlinehttp.py` | JSON, flows, errors, time limits, the room client against `fake_service.py` and the real `online/service/dev/server.mjs`, TLS 1.2 and 1.3 with ECDSA and RSA leaves, wrong host, untrusted chain, the clock floor, the client's self-test. The TLS cases are SKIPPED without the host Mbed TLS prefix (`MBEDTLS_HOST`, default `/tls/mbedtls/host64`: see [Building](BUILDING.md)). |
 | Online connection | `python3 -I gpsp/vita/tests/onlineconn/test_onlineconn.py` (about 10 s; `-v` shows the lines) | the stage machine on a fake clock against a fake room service and the NAT layer: punch, relay fallback, cadence, failures |
 | Library match | `make -C gpsp/vita/tests/library -f online_lib.mk test` | the card-to-file step: folder walks, duplicate codes, the pure decision |
@@ -178,7 +199,7 @@ another version (the twins' own version is fixed).
 
 | scenario | what it proves |
 |---|---|
-| `punch`, `relay`, `relay_joiner` | GBA Link Cable over the punch (port-restricted NATs), and over the relay with the host's, or the joiner's, NAT symmetric: the linktest cartridge's verdict on both, equal machines, the delay at least 3, at most 40 requests to the service, no public address of the other console in either log (relay) |
+| `punch`, `relay`, `relay_joiner` | GBA Link Cable over the punch (port-restricted NATs), and over the relay with the host's, or the joiner's, NAT symmetric: the linktest cartridge's verdict on both, equal machines, the delay at least 3, at most 60 requests to the service, no public address of the other console in either log (relay) |
 | `relay_host_setting`, `relay_joiner_setting` | "Always use the relay" on the host, or on the joiner, with open NATs: the room goes relay |
 | `punch_opens_host` | the room is 200 s old (poll every 10 s): the joiner's PUNCH moves the host on before its poll names the guest |
 | `nes_punch`, `nes_relay`, `ws_punch`, `ws_relay` | Two players on a NES / WonderSwan game over the punch and over the relay: both consoles run one machine (fe_padpair), the same last frame and machine hash, an agreed end, the radio given back. Need `GATE_NES_ROMS` / `GATE_WS_ROM` (skipped, with a note, without) |

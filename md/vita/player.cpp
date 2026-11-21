@@ -325,7 +325,7 @@ void MdPlayer::settings_load()
 	pl.load(path_join(cfg_dir(), "player.ini"));
 	steady_ = pl.get_int("steady_pacing", 1) != 0;
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
-	pal_fast_ = pl.get_int("pal_speed", 0) != 0;
+	pal_mode_ = pk::pal_mode_clamp(pl.get_int("pal_speed", pk::PAL_SMOOTH));
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
 	quick_ = clampi(pl.get_int("quick_response", 0), 0, 2);
 	flicker_ = pl.get_int("no_sprite_flicker", 1) != 0;
@@ -394,8 +394,8 @@ void MdPlayer::apply_overrides()
 	if ((v = req_.override_int("rewind_mb", -1)) >= 0) rewind_mb_ = clampi(v, 4, 24);
 	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = v == 1 ? 1 : 0;
 	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
-	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_fast_ = v != 0;
-	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_fast_ = true; else if (w == "true" || w == "50") pal_fast_ = false; }
+	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_mode_ = pk::pal_mode_clamp(v);
+	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_mode_ = pk::PAL_FAST; else if (w == "true" || w == "50") pal_mode_ = pk::PAL_TRUE; else if (w == "smooth") pal_mode_ = pk::PAL_SMOOTH; }
 	if ((v = req_.override_int("look_mode", -1)) >= 0) look_mode_ = clampi(v, 0, 2);
 	if ((v = req_.override_int("quick_response", -1)) >= 0) quick_ = clampi(v, 0, 2);
 	if ((v = req_.override_int("no_sprite_flicker", -1)) >= 0) flicker_ = v != 0;
@@ -407,7 +407,7 @@ void MdPlayer::apply_core_options()
 {
 	if (linked()) {
 		/* what changes what a game can see is the same on both consoles: the system's own values (the two consoles run one machine) */
-		region_ = 0; fm_ = 0; ym2413_ = 2; pad_type_ = 0; pal_fast_ = false;
+		region_ = 0; fm_ = 0; ym2413_ = 2; pad_type_ = 0; pal_mode_ = pk::PAL_TRUE;
 		md_host_set_option("vdp_mode", 0);
 		md_host_set_option("force_dtack", 0);
 		md_host_set_option("addr_error", 1);
@@ -446,7 +446,7 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_QUICK, quick_);
 	menu_.set_value(ROW_FLICKER, flicker_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
-	menu_.set_value(ROW_PALSPEED, pal_fast_ ? 1 : 0);
+	menu_.set_value(ROW_PALSPEED, pk::pal_row_of(pal_mode_));
 	menu_.set_value(ROW_LOOK, look_mode_);
 	menu_.set_value(ROW_SPD_FF, ff_speed_);
 	menu_.set_value(ROW_SPD_SOUND, ff_sound_);
@@ -644,7 +644,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		region.push_back("Auto"); region.push_back("USA"); region.push_back("Europe (50 Hz)"); region.push_back("Japan");
 		fm.push_back("Discrete"); fm.push_back("ASIC"); fm.push_back("Enhanced");
 		ym.push_back("Off"); ym.push_back("On"); ym.push_back("Auto");
-		palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
+		palv.push_back("Smooth 50 Hz"); palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
 		lookv.push_back("Auto"); lookv.push_back("Full"); lookv.push_back("Light");
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SCALER, "Pixel art scaler",
 		                   "Redraws the picture at 2x or 3x its size with smooth diagonals before it is fitted to the screen (xBR, MMPX). Auto picks the best that holds full speed.",
@@ -687,10 +687,9 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "Steady pacing",
 		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.", onoff, 1);
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
-		                   "European games run at 50 Hz. True 50 Hz plays them at their real speed (one frame in six is shown again); Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
-		                   palv, 0);
-		/* Quick response is not finished (md/README.md, "Quick response"): the row is added only when player.ini or the launch file already asks for it */
-		if (quick_ != 0) {
+		                   "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
+		                   palv, pk::pal_row_of(pk::PAL_SMOOTH));
+		{
 			std::vector<std::string> qv;
 			qv.push_back("Off"); qv.push_back("Auto"); qv.push_back("On");
 			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "Quick response",
@@ -795,7 +794,7 @@ void MdPlayer::set_quick(int mode)
 	quick_ = clampi(mode, 0, 2);
 	ahead_.set_mode(quick_);
 	ahead_update_blocked();
-	logf("quick response: %s%s\n", quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", md_host_ahead_possible() ? "" : " (not for this cartridge: its save chip cannot be put back)");
+	logf("quick response: %s%s\n", quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", md_host_ahead_possible() ? "" : " (no machine loaded)");
 }
 
 void MdPlayer::ahead_cost(uint32_t emu_us)
@@ -1235,7 +1234,7 @@ void MdPlayer::settings_queue_save()
 	Ini pl;
 	pl.set_int("steady_pacing", steady_ ? 1 : 0);
 	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
-	pl.set_int("pal_speed", pal_fast_ ? 1 : 0);
+	pl.set_int("pal_speed", pal_mode_);
 	pl.set_int("look_mode", look_mode_);
 	pl.set_int("quick_response", quick_);
 	pl.set_int("no_sprite_flicker", flicker_ ? 1 : 0);
@@ -1287,7 +1286,7 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_YM2413: ym2413_ = clampi(v, 0, 2); md_host_set_option("ym2413", ym2413_); break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
-	case ROW_PALSPEED: pal_fast_ = v != 0; break;
+	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
 	case ROW_QUICK: set_quick(v); break;
 	case ROW_FLICKER: flicker_ = v != 0; md_host_set_option("sprite_limit", flicker_ ? 0 : 1); break;

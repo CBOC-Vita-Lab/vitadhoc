@@ -61,6 +61,9 @@ uint32_t nescore_save_ram_crc(nescore_t *core);
 /* A refresh with no NES frame (a 50 Hz game on a 60 Hz display): the last
  * picture is handed to the video callback again, no sound. */
 int nescore_repeat_frame(nescore_t *core);
+/* Smooth 50 Hz (pk_palsmooth.h): the NEXT nescore_run_frame hands its picture to the callback as the mean of the picture before it and
+ * itself; nescore_repeat_frame then shows the new picture alone.  One-shot. */
+void nescore_mix_next(nescore_t *core);
 void nescore_shutdown(nescore_t *core);
 
 unsigned nescore_sample_rate(const nescore_t *core);

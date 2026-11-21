@@ -655,14 +655,15 @@ void render_carry_save(void *p)
   render_carry_t *c = (render_carry_t *)p;
   memcpy(c->obj, obj_info, sizeof(obj_info));
   c->count[0] = object_count[0]; c->count[1] = object_count[1];
-  c->ovr = spr_ovr; c->tms_set = tms_status_set; c->col = spr_col;
+  c->ovr = spr_ovr; c->tms_set = 0; c->col = spr_col;     /* tms_set: "the worker has status bits to merge" is settled at a frame's end (and never cleared without the worker) */
 }
 
 void render_carry_load(void *p)
 {
   const render_carry_t *c = (const render_carry_t *)p;
   memcpy(obj_info, c->obj, sizeof(obj_info));
-  object_count[0] = c->count[0]; object_count[1] = c->count[1];
+  object_count[0] = c->count[0] > MAX_SPRITES_PER_LINE ? MAX_SPRITES_PER_LINE : c->count[0];     /* a state file is the user's own: stay in the array */
+  object_count[1] = c->count[1] > MAX_SPRITES_PER_LINE ? MAX_SPRITES_PER_LINE : c->count[1];
   spr_ovr = c->ovr; tms_status_set = c->tms_set; spr_col = c->col;
 }
 
@@ -4960,6 +4961,11 @@ void window_clip(unsigned int data, unsigned int sw)
 void render_init(void)
 {
   int bx, ax;
+
+  /* VitAdhoc: what a new process starts with (see gen_init in genesis.c): the sprite lists and pending flags of the last game */
+  memset(obj_info, 0, sizeof(obj_info));
+  object_count[0] = object_count[1] = 0;
+  spr_ovr = 0; spr_col = 0; tms_status_set = 0;
 
   /* Initialize layers priority pixel look-up tables */
   uint16 index;

@@ -76,6 +76,76 @@ typedef struct
 
 static T_FLASH_CFI flash;
 
+/* The cartridge ROM this chip rewrites (a bank swapped out of the battery RAM window, an erased bank): a state does not hold the ROM, so the
+ * first change of each 64KB bank keeps its original and the "carry" block of a state holds the banks as they are now. */
+#define FLASH_MUT_MAX 4
+static struct { uint32 off; uint8 *orig; } fmut[FLASH_MUT_MAX];
+static int fmut_n;
+
+static void flash_forget(void)
+{
+  while (fmut_n > 0) free(fmut[--fmut_n].orig);
+}
+
+/* before every write into a bank: base is the bank's memory (the battery RAM or the ROM) */
+static void flash_touch(uint8 *base)
+{
+  int i;
+  if (base < cart.rom || base >= cart.rom + MAXROMSIZE) return;
+  uint32 off = (uint32)(base - cart.rom) & ~0xffffu;
+  for (i = 0; i < fmut_n; i++) if (fmut[i].off == off) return;
+  if (fmut_n >= FLASH_MUT_MAX) return;
+  fmut[fmut_n].orig = (uint8 *)malloc(0x10000);
+  if (!fmut[fmut_n].orig) return;
+  memcpy(fmut[fmut_n].orig, cart.rom + off, 0x10000);
+  fmut[fmut_n].off = off;
+  fmut_n++;
+}
+
+int flash_cfi_carry_size(void)
+{
+  return 4 + 0x10000 + FLASH_MUT_MAX * (4 + 0x10000);      /* count, the save window (sram.sram: not in the core's state on these cartridges), the banks */
+}
+
+/* The banks changed so far, as they are (save) or put back as the state had them (load; banks the state does not list return to the original) */
+int flash_cfi_carry(uint8 *p, int load)
+{
+  int i, j, n = flash_cfi_carry_size();
+  if (!n || !p) return n;
+  if (!load)
+  {
+    memset(p, 0, n);
+    memcpy(p + 4, sram.sram, 0x10000);
+    for (i = 0; i < fmut_n; i++)       /* only the banks that differ from the ROM file (so equal machines give equal bytes) */
+    {
+      if (!memcmp(cart.rom + fmut[i].off, fmut[i].orig, 0x10000)) continue;
+      uint8 *q = p + 4 + 0x10000 + (int)p[0] * (4 + 0x10000);
+      q[0] = (uint8)(fmut[i].off >> 16);
+      memcpy(q + 4, cart.rom + fmut[i].off, 0x10000);
+      p[0]++;
+    }
+    return n;
+  }
+  int cnt = p[0] > FLASH_MUT_MAX ? 0 : p[0];
+  memcpy(sram.sram, p + 4, 0x10000);
+  for (j = 0; j < cnt; j++)
+  {
+    const uint8 *q = p + 4 + 0x10000 + j * (4 + 0x10000);
+    flash_touch(cart.rom + ((uint32)q[0] << 16));
+  }
+  for (i = 0; i < fmut_n; i++)
+  {
+    const uint8 *src = fmut[i].orig;
+    for (j = 0; j < cnt; j++)
+    {
+      const uint8 *q = p + 4 + 0x10000 + j * (4 + 0x10000);
+      if (((uint32)q[0] << 16) == fmut[i].off) { src = q + 4; break; }
+    }
+    memcpy(cart.rom + fmut[i].off, src, 0x10000);
+  }
+  return n;
+}
+
 /* CFI query data arrays */
 static const uint8 cfi_query[MAX_FLASH_CFI_SUPPORTED_TYPES][CFI_QUERY_TABLE_LEN] =
 {
@@ -118,6 +188,7 @@ static const uint8 flash_readmask[MAX_FLASH_CFI_SUPPORTED_TYPES] =
 void flash_cfi_init(T_FLASH_CFI_TYPE type, const uint16 *otp_data)
 {
   memset(&flash, 0x00, sizeof(flash));
+  flash_forget();
   flash.cfi_data  = cfi_query[type];
   flash.id        = flash_id[type];
   flash.readmask  = flash_readmask[type];
@@ -150,6 +221,7 @@ void flash_cfi_write(unsigned int address, unsigned int data)
              m68k.memory_map[i].base = cart.rom + (i<<16);
              
              /* copy current SRAM data to cartridge ROM (should eventually be copied back to SRAM then normally erased) */
+             flash_touch(m68k.memory_map[i].base);
              memcpy(m68k.memory_map[i].base, sram.sram, 0x10000);
              break;
           }
@@ -258,6 +330,7 @@ void flash_cfi_write(unsigned int address, unsigned int data)
               /* only unprotected sectors can be erased */
               if (m68k.memory_map[i].write16 != m68k_unused_16_w)
               {
+                flash_touch(m68k.memory_map[i].base);
                 memset(m68k.memory_map[i].base, 0xff, 0x10000);
                 break;
               }
@@ -274,6 +347,7 @@ void flash_cfi_write(unsigned int address, unsigned int data)
             if (index > 0)
             {
               /* for simplicity, erase whole 64KB bank (assume 64KB writable sectors only) */
+              flash_touch(m68k.memory_map[index].base);
               memset(m68k.memory_map[index].base, 0xff, 0x10000);
             }
  

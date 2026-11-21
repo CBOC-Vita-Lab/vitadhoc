@@ -25,7 +25,9 @@ extern void sound_update_fm_function_pointers(void);
 #define MAX_PATCHES 150          /* as Genesis Plus GX (MAX_CHEATS): one per part, for the whole game */
 #define STATE_HDR 16
 #define STATE_TRAILER 4
-#define STATE_VERSION_ID 1
+#define STATE_VERSION_ID 2      /* 2: the core's state is followed by the "carry" block (see carry_write); 1 (no block) still loads */
+#define STATE_VERSION_OLD 1
+#define CARRY_MAGIC 0x59524143u  /* "CARY" */
 #define SOUND_MAX_FRAMES 2400
 
 typedef struct patch {
@@ -61,10 +63,11 @@ static struct {
 	/* sram */
 	uint32_t sram_crc;
 	/* state */
-	size_t state_payload_cap, state_size;
+	size_t state_payload_cap, state_size, state_size_old;    /* state_size_old: what a version 1 file of this game measures (no carry block) */
+	size_t carry_len;                    /* bytes of the carry block, header included */
 	uint8_t *state_scratch;
 	/* run-ahead (md_host_run_frame_ahead) */
-	uint8_t *ahead_state, *ahead_sram, *ahead_carry;
+	uint8_t *ahead_state, *ahead_sram;
 	int ahead_debug_tail;                /* md_host_ahead_debug_tail: steps 2 and 3 only */
 	int ahead_quiet;                     /* the frame being run is the look-ahead one: its sound is dropped */
 	unsigned long ahead_frames, ahead_sram_undone;
@@ -147,6 +150,7 @@ int load_archive(char *filename, unsigned char *buffer, int maxsize, char *exten
 	if (filename != G.fname || !G.rom_src) return 0;
 	if (G.rom_n > (size_t)maxsize) return 0;
 	memcpy(buffer, G.rom_src, G.rom_n);
+	memset(buffer + G.rom_n, 0, (size_t)maxsize - G.rom_n);        /* nothing of a game that was loaded before (a flash cartridge rewrites its ROM; a bigger ROM leaves its tail) */
 	return (int)G.rom_n;
 }
 
@@ -302,7 +306,7 @@ void md_host_unload(void)
 	system_hw = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;
 	free(G.state_scratch); G.state_scratch = NULL; G.state_size = 0;
-	free(G.ahead_state); G.ahead_state = NULL; free(G.ahead_sram); G.ahead_sram = NULL; free(G.ahead_carry); G.ahead_carry = NULL; G.ahead_quiet = 0;
+	free(G.ahead_state); G.ahead_state = NULL; free(G.ahead_sram); G.ahead_sram = NULL; G.ahead_quiet = 0;
 	G.pad[0] = G.pad[1] = 0;
 }
 
@@ -404,6 +408,50 @@ static int region_of_code(unsigned rc)
 	return MD_REGION_USA;
 }
 
+/* The carry block: what the machine keeps between frames and the core's state does not hold (see the *_carry functions in md/core).
+ * [magic u32][length u32] then, each as its module writes it: the renderers' sprite lists of the next frame's first line, pending sprite
+ * overflow and collision position (both renderer copies), the VDP's FIFO byte flag / HV latch / latched scroll / FIFO slot times /
+ * table bases / picture size, the PSG's queued level changes, the pause button edge and the serial EEPROMs' protocol position.
+ * With it a state loaded at frame N runs on exactly as the machine that saved it did (md_twin --proof proves it), and run-ahead can go
+ * back to the end of the real frame. A version 1 file has none: the machine loads as the core always loaded it. */
+extern int psg_carry_size(void);
+extern int vdp_carry_size(void);
+extern void vdp_carry_save(void *p);
+extern int vdp_carry_load(const void *p);
+extern void psg_carry_save(void *p);
+extern void psg_carry_load(const void *p);
+extern int machine_carry(void *p, int load);
+
+static size_t carry_size(void)
+{
+	return 8 + (size_t)vdpw_carry_size() + (size_t)vdp_carry_size() + (size_t)psg_carry_size() + (size_t)machine_carry(NULL, 0);
+}
+
+static void put32(uint8_t *p, uint32_t v);
+static uint32_t get32(const uint8_t *p);
+
+static void carry_write(uint8_t *p)
+{
+	size_t n = 8;
+	memset(p, 0, G.carry_len);
+	put32(p, CARRY_MAGIC); put32(p + 4, (uint32_t)G.carry_len);
+	vdpw_carry_save(p + n); n += (size_t)vdpw_carry_size();
+	vdp_carry_save(p + n); n += (size_t)vdp_carry_size();
+	psg_carry_save(p + n); n += (size_t)psg_carry_size();
+	machine_carry(p + n, 0);
+}
+
+static void carry_read(const uint8_t *p, size_t avail)
+{
+	size_t n = 8;
+	if (avail < G.carry_len || get32(p) != CARRY_MAGIC || get32(p + 4) != (uint32_t)G.carry_len) return;
+	if (vdp_carry_load(p + n + (size_t)vdpw_carry_size())) return;                       /* values no machine produces: leave what the load derived */
+	vdpw_carry_load((void *)(p + n)); n += (size_t)vdpw_carry_size();
+	n += (size_t)vdp_carry_size();
+	psg_carry_load(p + n); n += (size_t)psg_carry_size();
+	machine_carry((void *)(p + n), 1);
+}
+
 static void measure_state(void)
 {
 	size_t used;
@@ -412,7 +460,9 @@ static void measure_state(void)
 	fast_savestates = 0;
 	used = (size_t)state_save(tmp);
 	free(tmp);
-	G.state_payload_cap = ((used + 512 + 1023) / 1024) * 1024;
+	G.carry_len = carry_size();
+	G.state_size_old = STATE_HDR + (((used + 512 + 1023) / 1024) * 1024) + STATE_TRAILER;
+	G.state_payload_cap = ((used + G.carry_len + 512 + 1023) / 1024) * 1024;
 	G.state_size = STATE_HDR + G.state_payload_cap + STATE_TRAILER;
 	/* zeroed: the core's state writer leaves gaps (padding it skips), and what was in them went into every state, its hash and its file */
 	G.state_scratch = (uint8_t *)calloc(1, G.state_payload_cap + 65536);
@@ -562,26 +612,19 @@ void md_host_run_frame(void)
 
 static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc);
 static int state_load_from(const uint8_t *buf, size_t n, int check_crc);
-extern int psg_carry_size(void);
-extern int vdp_carry_size(void);
-extern void vdp_carry_save(void *p);
-extern void vdp_carry_load(const void *p);
-extern void psg_carry_save(void *p);
-extern void psg_carry_load(const void *p);
 
-/* What the core's save state does not hold and a frame can change: the battery RAM (plain RAM is put back below) and the serial EEPROMs'
- * and flash chips' protocol position (no way to put those back, so such cartridges get no run-ahead). */
+/* What the state does not hold and a frame can change: the battery RAM (and the EEPROM / flash contents, which live in it): compared and put
+ * back below. The EEPROMs' protocol position and the flash chip's mode are in the state (the carry block / the core's own part). */
 int md_host_ahead_possible(void)
 {
-	return G.loaded && G.state_size && sram.type == DEFAULT_SRAM;
+	return G.loaded && G.state_size;
 }
 
 static int ahead_alloc(void)
 {
 	if (!G.ahead_state) G.ahead_state = (uint8_t *)malloc(G.state_size);
 	if (!G.ahead_sram) G.ahead_sram = (uint8_t *)malloc(SRAM_BYTES);
-	if (!G.ahead_carry) G.ahead_carry = (uint8_t *)malloc((size_t)vdpw_carry_size());
-	return G.ahead_state && G.ahead_sram && G.ahead_carry;
+	return G.ahead_state && G.ahead_sram;
 }
 
 int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
@@ -590,9 +633,7 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	md_video_info vi;
 	int vwidth, vheight, vwoffset, bmdoffset;
 	double vdar;
-	int psg_carry[16];
-	uint32 vdp_carry[32];
-	if ((size_t)psg_carry_size() > sizeof psg_carry || (size_t)vdp_carry_size() > sizeof vdp_carry || !md_host_ahead_possible() || !render || !ahead_alloc()) { md_host_run_frame(); return 1; }
+	if (!md_host_ahead_possible() || !render || !ahead_alloc()) { md_host_run_frame(); return 1; }
 
 	/* 1. the real frame: not drawn (the sprite pass still runs for the status bits), its sound goes to the ring */
 	if (!G.ahead_debug_tail) {
@@ -601,10 +642,7 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 		G.render = render;
 	}
 	if (state_save_to(G.ahead_state, G.state_size, 0) != G.state_size) return 1;      /* cannot happen (the size was measured); the real frame stands */
-	if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);
-	vdpw_carry_save(G.ahead_carry);     /* the sprite list of the next frame's first line and the pending sprite flags: in no save state */
-	vdp_carry_save(vdp_carry);          /* the VDP's own: FIFO byte flag, HV latch, latched scroll, ... */
-	psg_carry_save(psg_carry);          /* level changes the PSG has queued for its next edges: in no save state either */
+	if (sram.on) memcpy(G.ahead_sram, sram.sram, SRAM_BYTES);     /* (the state holds the sprite list of the next first line, the FIFO flag, the PSG's queued deltas, ...) */
 
 	/* 2. the frame after it with the same buttons: drawn, silent */
 	G.ahead_quiet = 1;
@@ -615,9 +653,6 @@ int md_host_run_frame_ahead(void (*shown)(void *user), void *user)
 	/* 3. back to the end of the real frame */
 	if (state_load_from(G.ahead_state, G.state_size, 0) != 0) { G.ahead_quiet = 0; return 2; }     /* cannot happen: the state is our own */
 	G.ahead_quiet = 0;
-	vdpw_carry_load(G.ahead_carry);
-	vdp_carry_load(vdp_carry);
-	psg_carry_load(psg_carry);
 	if (sram.on && memcmp(G.ahead_sram, sram.sram, SRAM_BYTES)) { memcpy(sram.sram, G.ahead_sram, SRAM_BYTES); G.ahead_sram_undone++; }
 	/* what md_host_video / md_host_video_info describe is the picture in the buffer, the look-ahead one */
 	G.vi = vi; G.vwidth = vwidth; G.vheight = vheight; G.vwoffset = vwoffset; G.bmdoffset = bmdoffset; G.vdar = vdar;
@@ -788,6 +823,7 @@ size_t md_host_sram_write(const uint8_t *data, size_t n)
 	if (!G.loaded || !sram.on) return 0;
 	if (n > SRAM_BYTES) n = SRAM_BYTES;
 	memcpy(sram.sram, data, n);
+	memset(sram.sram + n, 0xFF, SRAM_BYTES - n);          /* the file holds the bytes up to the last used one: the rest of an unwritten chip reads 0xFF */
 	G.sram_crc = (uint32_t)crc32(0, sram.sram, SRAM_BYTES);
 	return n;
 }
@@ -814,7 +850,7 @@ static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc)
 	if (!G.loaded || !G.state_size || cap < G.state_size) return 0;
 	fast_savestates = 0;
 	used = (size_t)state_save(G.state_scratch);
-	if (used > G.state_payload_cap) return 0;
+	if (used + G.carry_len > G.state_payload_cap) return 0;
 	memset(buf, 0, STATE_HDR);
 	memset(buf + STATE_HDR + used, 0, G.state_size - STATE_HDR - used);   /* the tail is zero so two states differ only where the machine did */
 	memcpy(buf, "MDST", 4);
@@ -822,6 +858,7 @@ static size_t state_save_to(uint8_t *buf, size_t cap, int with_crc)
 	put32(buf + 8, (uint32_t)G.system);
 	put32(buf + 12, (uint32_t)used);
 	memcpy(buf + STATE_HDR, G.state_scratch, used);
+	carry_write(buf + STATE_HDR + used);                  /* the sprite lists, FIFO flag, PSG deltas, EEPROM position the core's state lacks */
 	put32(buf + G.state_size - STATE_TRAILER, with_crc ? (uint32_t)crc32(0, buf, (unsigned)(G.state_size - STATE_TRAILER)) : 0u);
 	return G.state_size;
 }
@@ -831,12 +868,19 @@ size_t md_host_state_save_quick(uint8_t *buf, size_t cap) { return state_save_to
 
 static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 {
-	uint32_t used;
+	uint32_t used, ver;
+	size_t payload_cap;
 	if (!G.loaded) return 1;
-	if (!buf || n != G.state_size) return 3;
-	if (memcmp(buf, "MDST", 4) || get32(buf + 4) != STATE_VERSION_ID || get32(buf + 8) != (uint32_t)G.system) return 3;
+	if (!buf || memcmp(buf, "MDST", 4)) return 3;
+	ver = get32(buf + 4);
+	/* version 2 (this build's): the core's state and the carry block. Version 1 (a file written before the carry block existed): the
+	 * same header and core state, no block, the size of a state of this game without it. */
+	if (ver == STATE_VERSION_ID) { if (n != G.state_size) return 3; payload_cap = G.state_payload_cap; }
+	else if (ver == STATE_VERSION_OLD) { if (n != G.state_size_old) return 3; payload_cap = n - STATE_HDR - STATE_TRAILER; }
+	else return 3;
+	if (get32(buf + 8) != (uint32_t)G.system) return 3;
 	used = get32(buf + 12);
-	if (used == 0 || used > G.state_payload_cap) return 3;
+	if (used == 0 || used > payload_cap || used > G.state_payload_cap) return 3;
 	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
 	memcpy(G.state_scratch, buf + STATE_HDR, used);      /* the core wants a writable buffer */
 	/* run-ahead's own load keeps the picture just drawn, the pattern cache and the palette tables (the core then marks only the patterns
@@ -846,6 +890,9 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	fast_savestates = 0;
 	if (!G.ahead_quiet) G.ring_r = G.ring_w = G.ring_n = 0;      /* run-ahead goes back to a moment whose sound is already in the ring */
 	G.reg0_prev = reg[0];
+	/* then the machine is exactly the saved one: the picture size the VDP holds (where vertical blank starts), the sprite lists, the PSG's
+	 * queued deltas ... (before the geometry below is derived from it) */
+	if (ver == STATE_VERSION_ID) carry_read(buf + STATE_HDR + used, payload_cap - used);
 	update_viewport();                       /* the window origin is not in the state: derive it now, before the next frame draws */
 	bitmap.viewport.changed &= ~9;
 	refresh_info();

@@ -1052,6 +1052,22 @@ void plat_frame_ran(void)
        frames_ran < opt.slow_at + opt.slow_n)
       us = opt.slow_us;
    frames_ran++;
+   {
+      /* GBADHOC_SKIP_MOD=N (twin only): the next frame is emulated but not
+       * drawn unless its number is a multiple of N -- what fast forward
+       * (N=3), the half mode (N=2) and catching up do; the proof that an
+       * undrawn frame leaves the machine as it would have been is
+       * docs/TESTING.md "undrawn frames". */
+      extern void fe_host_skip_override(int skip);
+      static long skip_mod = -2;
+      if (skip_mod == -2)
+      {
+         const char *e = getenv("GBADHOC_SKIP_MOD");
+         skip_mod = e && *e ? atol(e) : 0;
+      }
+      if (skip_mod > 1)
+         fe_host_skip_override((frames_ran % (unsigned long)skip_mod) != 0);
+   }
    if (!opt.realtime)
       sim_advance(__atomic_load_n(&sim_ns, __ATOMIC_RELAXED) + (uint64_t)us * 1000u);
 }

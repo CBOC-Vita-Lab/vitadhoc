@@ -72,6 +72,13 @@ typedef struct
 
 static T_EEPROM_SPI spi_eeprom;
 
+/* VitAdhoc: the protocol position is in no save state (see eeprom_i2c_carry) */
+int eeprom_spi_carry(void *p, int load)
+{
+  if (p) { if (load) memcpy(&spi_eeprom, p, sizeof(spi_eeprom)); else memcpy(p, &spi_eeprom, sizeof(spi_eeprom)); }
+  return (int)sizeof(spi_eeprom);
+}
+
 void eeprom_spi_init(void)
 {
   /* reset eeprom state */

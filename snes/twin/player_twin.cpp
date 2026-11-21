@@ -889,6 +889,20 @@ static int run_pal_test(const char *rom)
 	} else {
 		EXPECT(frames == refreshes && max_gap == 0);   /* NTSC: untouched, one per refresh */
 	}
+	if (pal) {
+		/* Smooth 50 Hz (pk_palsmooth.h): the same frames to within one at every refresh; a
+		 * refresh that runs none is the one after an early frame (never two in a row) */
+		FramePace plain; plain.set(console_hz, vita_hz);
+		pk::PalSmooth sm; sm.set(console_hz, vita_hz);
+		int fa = 0, fb = 0, worst = 0, early = 0, two_idle = 0, idle = 0;
+		for (int r = 0; r < refreshes; r++) {
+			bool e; fa += plain.owed(1); const int k = sm.step(&e); fb += k; early += e ? 1 : 0;
+			const int d = fb > fa ? fb - fa : fa - fb; if (d > worst) worst = d;
+			if (k == 0) { if (++idle > 1) two_idle++; } else idle = 0;
+		}
+		fprintf(stderr, "pal: smooth 50 Hz runs %d frames (plain %d), at most %d apart, %d early\n", fb, fa, worst, early);
+		EXPECT(worst <= 1 && fb >= fa - 1 && fb <= fa + 1 && two_idle == 0 && early > 450 && early < 550);
+	}
 	snes_host_unload();
 	fprintf(stderr, "player_twin: pal %d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;
@@ -1002,14 +1016,14 @@ static int run_look_test(const char *rom, const std::string &work)
 			rig->pf.log_path = root + "/snes/log.txt";
 			EXPECT(pl->start(2, av, root, true).ok);
 			pl->apply_start_mode();
-			EXPECT(!pl->pal_fast() && pl->look_mode() == 0);          /* defaults: True 50 Hz, Auto */
+			EXPECT(!pl->pal_fast() && pl->pal_smooth() && pl->look_mode() == 0);          /* defaults: True 50 Hz, Auto */
 			pl->look_start(444);
 			pl->on_change(snesp::SnesPlayer::ROW_LOOK, 1);             /* Full */
 			for (int i = 0; i < 20; i++) { pk::LookSecond ls; ls.emu = 1.25f; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true; pl->look_second(ls); }
 			EXPECT(pl->picture().interlace_blend == 1 && pl->picture().hires_blend == 1);
 			pl->on_change(snesp::SnesPlayer::ROW_LOOK, 2);             /* Light */
 			EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0);
-			pl->on_change(snesp::SnesPlayer::ROW_PALSPEED, 1);
+			pl->on_change(snesp::SnesPlayer::ROW_PALSPEED, 2);                 /* the menu lists Smooth 50 Hz, True 50 Hz, Fast 60 Hz */
 			pl->finish(EXIT_NORMAL);
 		}
 		{
@@ -1020,7 +1034,7 @@ static int run_look_test(const char *rom, const std::string &work)
 			EXPECT(pl->start(2, av, root, true).ok);
 			EXPECT(pl->pal_fast() && pl->look_mode() == 2);
 			EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0);
-			EXPECT(pl->menu().value(snesp::SnesPlayer::ROW_LOOK) == 2 && pl->menu().value(snesp::SnesPlayer::ROW_PALSPEED) == 1);
+			EXPECT(pl->menu().value(snesp::SnesPlayer::ROW_LOOK) == 2 && pl->menu().value(snesp::SnesPlayer::ROW_PALSPEED) == 2);
 			pl->finish(EXIT_NORMAL);
 		}
 	}

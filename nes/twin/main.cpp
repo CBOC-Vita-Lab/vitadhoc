@@ -233,7 +233,7 @@ int main(int argc, char **argv)
 	if (argc < 2) { usage(); return 2; }
 	const char *rom = argv[1];
 	int peek_addr = -1;
-	int arate = 0, roff_a = -1, roff_b = -2;
+	int arate = 0, roff_a = -1, roff_b = -2, render_mod = 0;
 	unsigned ra_addr = 0, ra_len = 0;
 	bool ra_on = false, vindexed = false, ssizes = false, memload = false;
 	std::vector<std::string> cheats;
@@ -297,6 +297,7 @@ int main(int argc, char **argv)
 		else if (arg("--audio-rate")) arate = atoi(argv[++i]);
 		else if (arg("--peek")) { peek_addr = (int) strtol(argv[++i], 0, 16); }
 		else if (arg("--cheat")) cheats.push_back(argv[++i]);
+		else if (arg("--render-mod")) render_mod = atoi(argv[++i]);   /* render only every Nth frame (fast forward / half pacing) */
 		else if (arg("--render-off")) { if (sscanf(argv[++i], "%d-%d", &roff_a, &roff_b) != 2) { usage(); return 2; } }
 		else if (arg("--ra")) { if (sscanf(argv[++i], "%x,%u", &ra_addr, &ra_len) != 2) { usage(); return 2; } ra_on = true; }
 		else if (!strcmp(argv[i], "--state-sizes")) ssizes = true;
@@ -614,7 +615,7 @@ int main(int argc, char **argv)
 			if (fdsev[fev].what == 1) nes_host_fds_next_side(); else nes_host_fds_toggle_disk();
 			fev++;
 		}
-		nes_host_set_render(!(f >= roff_a && f <= roff_b));
+		nes_host_set_render(!(f >= roff_a && f <= roff_b) && !(render_mod > 1 && f % render_mod));
 		uint64_t c0 = cpu_ns();
 		nes_host_run_frame();
 		cpu_tot_ns += cpu_ns() - c0;

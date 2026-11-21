@@ -16,7 +16,7 @@ typedef struct {
 	int shape;     /* PIC_ORIGINAL (default), PIC_ZOOM, PIC_FULL, PIC_PIXEL */
 	int pixel_sq;  /* pixel perfect: 0 = 8:7 pixels, 1 = square pixels */
 	int quality;   /* PIC_SHARP (default) or PIC_SMOOTH */
-	int glow;      /* side glow 0 (off) .. 10 */
+	int glow;      /* ambient glow 0 (off) .. 10 */
 	int scan;      /* CRT scanlines 0 (off) .. 10 */
 	int grid;      /* LCD grid 0 (off) .. 10 */
 	int overscan;  /* PIC_OVERSCAN_AUTO: top and bottom 8 lines cropped on NTSC only; ON: always; OFF: never */

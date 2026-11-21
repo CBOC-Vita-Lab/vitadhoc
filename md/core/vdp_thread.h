@@ -54,7 +54,7 @@ void vdpw_set_stress(int on);       /* debug: a join after every drawn line */
 #define VDP_LINE_STATUS_ONLY 0x10000
 extern uint8 vdp_status_only;
 
-int vdpw_carry_size(void);
+int vdpw_carry_size(void);        /* bytes the drawing renderer's carried state takes (sprite lists, pending flags) */
 void vdpw_carry_save(void *buf);
 void vdpw_carry_load(void *buf);
 

@@ -201,6 +201,8 @@ typedef struct
    /* Settings > Display > Wide view (NES profile; CONFIG.INI nes_wide):
     * 0 Auto (default), 1 On, 2 Off (nescore.h NESCORE_WIDE_*) */
    int  nes_wide;
+   /* Settings > Display > PAL games speed (NES profile; CONFIG.INI nes_pal_smooth): 1 = Smooth 50 Hz (default), 0 = True 50 Hz */
+   int  nes_pal_smooth;
    /* Settings > Gameplay > Steady pacing (CONFIG.INI steady_pacing, 1 by
     * default): pace_steady.h */
    int  steady_pacing;

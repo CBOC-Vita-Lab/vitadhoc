@@ -65,6 +65,10 @@ void gen_init(void)
 {
   int i;
 
+  /* VitAdhoc: a machine powers on with the 68000's registers cleared, as in a new process; a game loaded after another in the same
+     process used to start with the last one's (md_host_load_mem: the first game loaded differed from the same game loaded again) */
+  memset(&m68k, 0, sizeof(m68k));
+
   /* initialize Z80 */
   z80_init(0,z80_irq_callback);
 

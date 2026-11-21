@@ -122,16 +122,24 @@ save-state slots with pictures, Cheats, Reset and Quit. Battery saves are `Game.
 
 Picture (saved for all SNES games, or for one with "Apply to: this game"):
 Original shape (4:3 at full height, the default), Zoom (blank rows cropped, not
-stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; side glow,
+stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; ambient glow,
 CRT scanlines and LCD grid, each Off or 1-10; optional blending for hi-res and
 interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
 is drawn as a bezel.
 
 New in 1.4:
 
-- **PAL games speed** (Picture menu): "True 50 Hz" (the default) runs
-  European games at their own speed, five frames in every six refreshes;
-  "Fast 60 Hz" is the old behaviour, 20 % fast.
+- **PAL games speed** (Speed menu): European games run at their own speed,
+  five frames in every six refreshes, in all three modes' first two choices.
+  "Smooth 50 Hz" (the default in 2.0) runs the sixth refresh's frame one
+  refresh early and shows that refresh as an even mix of the two pictures,
+  so the picture steps .5 .5 1 1 1 1 instead of 0 1 1 1 1 1 (the game, its
+  sound and its input are exactly as before; only that one refresh in six
+  differs, and only where something moves). "True 50 Hz" shows the last
+  picture again on the sixth refresh; "Fast 60 Hz" is the old behaviour,
+  20 % fast. The same row, with the same words, is in the Super NES and Sega
+  players; the NES (in the app, Settings > Display, NES) offers Smooth 50 Hz
+  and True 50 Hz.
 - **Wide view** (Auto, On or Off; on by default). The 4:3 picture stays
   exactly as it is in the middle of the 16:9 screen. A cost ladder narrows the
   real-picture margin where a game is busy and fades into a soft extension of
@@ -342,7 +350,7 @@ PNG screen overlays are separate: put a transparent image in
 console-wide fallback. A 960 x 544 image matches the output; other sizes up
 to 1024 x 1024 stretch to fit.
 
-**Settings > Display > Screen overlay** controls overlays. **Grid strength**
+**Settings > Display > Screen overlay** controls overlays. **Scanlines / grid strength**
 adjusts the LCD/scanline effect from 1 to 10 (default 5). Screenshots use
 **Settings > Interface > Screenshot folder**, or the default
 `ux0:data/GBAdhoc/screenshots/`. The L + R + Select chord is off until

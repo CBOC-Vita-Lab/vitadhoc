@@ -44,9 +44,9 @@ Label of every number below: **host** = measured on the Linux twin (x86), **qemu
   Select + L / R quick save / load). Master System / SG-1000: Button 1 Cross, Button 2 Circle, Start = Pause; Game Gear Start. Square and
   Triangle are the turbo buttons of the 8 bit consoles. The 6 button pad follows the ROM header, or is forced (Pad type row).
 - **Picture**: the whole parity set: screen sizes Original (the display aspect ratio the core reports), Zoom (blank rows cropped), Full, Pixel
-  perfect (the console's pixel shape or square); sharp bilinear; sharp / smooth; side glow; scanlines; LCD grid; bezel PNG
+  perfect (the console's pixel shape or square); sharp bilinear; sharp / smooth; ambient glow; scanlines; LCD grid; bezel PNG
   (`overlays/<game>.png`, else `overlays/<console>.png`); Game Gear LCD colours (a 64 K entry table: lifted blacks, softer colours).
-- **Timing**: PAL games run at true 50 Hz (5 of 6 refreshes, `pal_pace.h`) or Fast 60 Hz; the region row changes the core's frame rate and
+- **Timing**: PAL games run at true 50 Hz (5 of 6 refreshes, `pal_pace.h`), Smooth 50 Hz (the default: the sixth refresh's frame runs one refresh early and is shown mixed with the one before, `playerkit/src/pk_palsmooth.h`) or Fast 60 Hz; the region row changes the core's frame rate and
   the loop follows (mailbox frame time, speed meter, pacing); audio is made at 48 kHz by the core and paced by `audio_pace`.
 - **Threads** (playerkit `pk_cores`, profile `CP_MD`, so the fourth core is used only when the CapUnlocker probe proves it):
 

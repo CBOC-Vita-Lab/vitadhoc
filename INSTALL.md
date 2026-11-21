@@ -226,7 +226,7 @@ its own transparency: a bezel, a Game Boy shell, a dot-matrix mask.
 
 960×544 matches the Vita's screen pixel for pixel; other sizes (up to
 1024×1024) are stretched to fit. **Settings > Display > Screen overlay** turns
-them on or off, and **Grid strength** (1 to 10, 5 is the default) makes the LCD
+them on or off, and **Scanlines / grid strength** (1 to 10, 5 is the default) makes the LCD
 grid and scanline looks lighter or darker.
 
 ## ROM Hacks And Translations

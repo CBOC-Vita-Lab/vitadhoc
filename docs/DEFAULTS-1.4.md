@@ -72,7 +72,7 @@ Storage: `<root>/snes/picture.ini` (and a per-game copy when "own settings" is o
 | Picture shape | `shape` | Original (fills the height) | Original | Right |
 | Pixel shape | `pixel_square` | 8:7 | 8:7 | |
 | Quality | `quality` | Sharp (sharp bilinear) | Sharp | Already the finished filter |
-| Side glow | `glow` | 5 of 10 | 5 | On, with a 0 to 10 scale |
+| Ambient glow | `glow` | 5 of 10 | 5 | On, with a 0 to 10 scale |
 | Scanlines / LCD grid | `scanlines`, `lcd_grid` | 0 | 0 | Tastes |
 | Blend hi-res columns | `hires_blend` | Off | **On** | Removes the dither shimmer of pseudo-hi-res games; applied in this build (`snes/vita/player.cpp`) |
 | Blend interlace lines | `interlace_blend` | Off | **On** | Removes interlace flicker; applied in this build |

@@ -395,6 +395,12 @@ STEPS = [
          "NES_TESTROMS=\"$GATE_NES_ROMS\" python3 conformance.py --expect conformance_expect.txt",
          "default", {"nes"}, cwd="nes/twin", inputs=["nes/"], deps=["build-nes-twin"],
          env_req="GATE_NES_ROMS", parse="nes_conf", timeout=7200),
+    Step("snes-undrawn", "SNES: frames that are not drawn (fast forward, half mode) leave sound, state and memory as drawn ones do, every private ROM (GATE_SNES_ROMS)",
+         "bash snes/twin/skip_check.sh snes/twin/build/snes_twin \"$GATE_SNES_ROMS\" 1500", "default", {"snes"},
+         inputs=["snes/"], deps=["build-snes-twin"], env_req="GATE_SNES_ROMS", timeout=7200),
+    Step("nes-undrawn", "NES: the same for the first 60 cartridges of GATE_NES_ROMS",
+         "mkdir -p {out} && find \"$GATE_NES_ROMS\" -name '*.nes' | sort | head -60 > {out}/nes-undrawn.list && bash nes/twin/skip_check.sh nes/twin/build/nes_twin {out}/nes-undrawn.list 600",
+         "default", {"nes"}, inputs=["nes/"], deps=["build-nes-twin"], env_req="GATE_NES_ROMS", timeout=7200),
 
     # ---- online play (2.0): the room service, the NAT layer, the HTTPS room client, the
     # connection state machine, the library match, the two-player pad adapter, and the twins

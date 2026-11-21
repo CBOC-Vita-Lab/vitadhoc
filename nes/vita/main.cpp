@@ -785,7 +785,7 @@ static void picture_menu(void)
 			case R_SHAPE: snprintf(line, sizeof line, "Shape: %s", kShape[g_ps.shape]); break;
 			case R_PIXEL: snprintf(line, sizeof line, "Pixels: %s", g_ps.pixel_sq ? "square" : "8:7"); break;
 			case R_QUALITY: snprintf(line, sizeof line, "Quality: %s", g_ps.quality ? "Smooth" : "Sharp"); break;
-			case R_GLOW: level_text(v, sizeof v, g_ps.glow); snprintf(line, sizeof line, "Side glow: %s", v); break;
+			case R_GLOW: level_text(v, sizeof v, g_ps.glow); snprintf(line, sizeof line, "Ambient glow: %s", v); break;
 			case R_SCAN: level_text(v, sizeof v, g_ps.scan); snprintf(line, sizeof line, "CRT scanlines: %s", v); break;
 			case R_GRID: level_text(v, sizeof v, g_ps.grid); snprintf(line, sizeof line, "LCD grid: %s", v); break;
 			case R_OVERSCAN: snprintf(line, sizeof line, "Crop top/bottom 8 lines: %s", g_ps.overscan == PIC_OVERSCAN_AUTO ? "Auto (NTSC)" : g_ps.overscan == PIC_OVERSCAN_ON ? "On" : "Off"); break;

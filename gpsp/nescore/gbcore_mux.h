@@ -42,6 +42,9 @@ int gbmux_save_dirty(const gbcore_t *core);
 /* The rate fe_host runs the machine's frames at (one per display refresh):
  * a 50 Hz NES game then runs 5 of 6 (default 59.94). */
 void gbmux_set_display_rate(double hz);
+/* A 50 Hz NES game: 1 = Smooth 50 Hz (the sixth refresh's frame runs one refresh early and shows mixed with the one before it;
+ * pk_palsmooth.h), 0 = True 50 Hz (that refresh shows the last picture again). */
+void gbmux_set_pal_smooth(int on);
 
 gbcore_t *gbmux_create(const char *rom_path, const void *rom_data,
                        size_t rom_size, fe_console_t console,

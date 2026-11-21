@@ -1151,6 +1151,13 @@ int md_cart_context_load(uint8 *state)
     /* get offset */
     offset = state[bufferptr++];
 
+    if (m68k.memory_map[0x00].read8 == mapper_flash_r8)
+    {
+      /* flash chip cartridge: which 64KB bank sits in the save window is all that moves (the chip's own handlers stay) */
+      if (offset != 0xfe) m68k.memory_map[i].base = (offset == 0xff) ? sram.sram : (cart.rom + (offset << 16));
+      continue;
+    }
+
     if (offset == 0xff)
     {
       /* SRAM */
@@ -1701,6 +1708,13 @@ static uint32 mapper_flash_r8(uint32 address)
 static uint32 mapper_flash_r16(uint32 address)
 {
   return flash_cfi_read(address >> 1);;
+}
+
+/* the ROM banks a flash chip on this cartridge has rewritten (for the "carry" block of a state); 0 bytes on any other cartridge */
+int cart_flash_carry(uint8 *p, int load)
+{
+  if (m68k.memory_map[0x00].read8 != mapper_flash_r8) return 0;
+  return flash_cfi_carry(p, load);
 }
 
 /* 

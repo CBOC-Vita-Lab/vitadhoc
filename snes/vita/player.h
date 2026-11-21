@@ -20,6 +20,7 @@
 
 #include "host.h"
 #include "picture.h"
+#include "pk_palsmooth.h"
 #include "pk_launch.h"
 #include "pk_menu.h"
 #include "pk_input.h"
@@ -220,7 +221,9 @@ public:
 	enum { ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42 };
 	/* "PAL games speed" (Speed page, key pal_speed in player.ini): false = true 50 Hz (default: 5 frames in 6 refreshes), true = Fast 60 Hz
 	 * (one frame per refresh, the game and its sound run 20 % fast, as before 1.4). Read by the platform each pass. */
-	bool pal_fast() const { return pal_fast_; }
+	bool pal_fast() const { return pal_mode_ == 1; }
+	/* Smooth 50 Hz (the default, key pal_speed 2): the same 5 frames in 6 refreshes, the sixth's frame run one refresh early and shown mixed with the one before (pk_palsmooth.h) */
+	bool pal_smooth() const { return pal_mode_ == 2; }
 	/* "Image look" (Picture page, key look_mode): 0 Auto (the governor eases the blends only when the game cannot hold 60),
 	 * 1 Full (blends as set, never eased), 2 Light (blends off, never eased) */
 	int look_mode() const { return look_mode_; }
@@ -298,7 +301,7 @@ private:
 	bool settings_dirty_ = false;
 	bool steady_ = true;
 	bool handoff_ = true;
-	bool pal_fast_ = false;
+	int pal_mode_ = 2;       /* pal_speed: 0 True 50 Hz, 1 Fast 60 Hz, 2 Smooth 50 Hz (default) */
 	bool look_bad_ = false;               /* the last second was bad for the look governor */
 	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
 	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;

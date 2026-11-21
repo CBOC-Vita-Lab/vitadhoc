@@ -212,6 +212,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.tap_menu = (int)fe_ini_get_int(cfg_path, "tap_menu", 1) ? 1 : 0;
    g_pcfg.ws_blend = (int)fe_ini_get_int(cfg_path, "ws_blend", 1) ? 1 : 0;
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
+   g_pcfg.nes_pal_smooth = (int)fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) ? 1 : 0;
    g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
    g_pcfg.smooth_handoff = (int)fe_ini_get_int(cfg_path, "smooth_handoff", 1) ? 1 : 0;
    {
@@ -723,6 +724,8 @@ void pcfg_save(void)
    }
    if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
       fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
+   if (!g_pcfg.nes_pal_smooth || fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) == 0)
+      fe_ini_set_int(cfg_path, "nes_pal_smooth", g_pcfg.nes_pal_smooth);
    if (!g_pcfg.ws_blend)
       fe_ini_set_int(cfg_path, "ws_blend", 0);
    else if (fe_ini_get_int(cfg_path, "ws_blend", -1) == 0)

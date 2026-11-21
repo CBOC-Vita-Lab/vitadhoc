@@ -47,6 +47,13 @@
 
 T_EEPROM_93C eeprom_93c;
 
+/* VitAdhoc: the protocol position is in no save state (see eeprom_i2c_carry) */
+int eeprom_93c_carry(void *p, int load)
+{
+  if (p) { if (load) memcpy(&eeprom_93c, p, sizeof(eeprom_93c)); else memcpy(p, &eeprom_93c, sizeof(eeprom_93c)); }
+  return (int)sizeof(eeprom_93c);
+}
+
 void eeprom_93c_init(void)
 {
   /* default eeprom state */

@@ -56,6 +56,7 @@
 #include "pipe.h"
 #include "wide.h"
 #include "pal_pace.h"
+#include "pk_palsmooth.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
 #include "pk_scale.h"
@@ -83,6 +84,7 @@ static mdw::Wide *g_wide;
 static mdw::Meta g_meta[8];
 static uint16_t *g_canvas;           /* the core's picture buffer when it draws beside the mailbox: MD_WIDE_PITCH wide, the picture at column MD_WIDE_MAX */
 #define USER_WIDE 0x40000000         /* HandoffFrame.user: the picture has a Meta in g_meta[seq & 7] */
+#define USER_MIX  0x10000000         /* ... Smooth 50 Hz: show the mean of the previous picture and this one (the drawing thread then shows this one alone) */
 static std::atomic<unsigned> g_wide_compose_us(0), g_wide_composed(0), g_wide_helped(0);
 /* the wide view's cost ladder: three rungs, by the smoothed time of the emulating thread's frame against the frame time. That time is the
  * emulation and the wait for the VDP worker at the end of the frame, and the worker draws the strips and analyses the frame before: a worker
@@ -513,7 +515,7 @@ static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, i
 
 /* ---- the picture: upload, scaler ---------------------------------------------------------------------------------------------------- */
 
-struct Pic { const uint16_t *p; int w, h, pitch; unsigned serial; int margin; };       /* margin > 0: a wide view picture (w = the console's width + 2 margin) */
+struct Pic { const uint16_t *p; int w, h, pitch; unsigned serial; int margin; bool mix = false; };       /* margin > 0: a wide view picture (w = the console's width + 2 margin) */
 
 /* geometry of the pictures in flight, by serial (the emulating thread fills it before the hand-over, the drawing thread reads it after) */
 static pic_info g_geo[16];
@@ -532,12 +534,30 @@ static pk::ScalerKind scaler_kind_for(const pic_settings &ps, const pic_info &gi
 	}
 }
 
+/* Smooth 50 Hz (pk_palsmooth.h): the drawing side keeps the previous picture and, for a picture marked `mix`, shows the mean of the two */
+static std::atomic<int> g_pal_mix_on(0);           /* the loop sets it while the mode is on: the previous picture is then kept */
+static uint16_t *g_mix_prev, *g_mix_out;           /* 512 x 512 each, allocated at the first use */
+static int g_mix_w, g_mix_h, g_mix_margin, g_mix_valid;
+static pic_info g_mix_gi;
+
 /* Copies the picture into a texture the GPU is done with, and scales it when the look says so. Returns 1 when the picture changed. */
-static int video_upload(const pic_settings &ps, int frame_no, const Pic &s, const pic_info &gi)
+static int video_upload(const pic_settings &ps, int frame_no, const Pic &s0, const pic_info &gi)
 {
+	Pic s = s0;
 	int w = s.w, h = s.h;
 	if (w > 512) w = 512;
 	if (h > 512) h = 512;
+	if (g_pal_mix_on.load(std::memory_order_relaxed)) {
+		/* Smooth 50 Hz: keep this picture for the next mix; a picture marked mix is shown as the mean of the last one and itself */
+		if (!g_mix_prev) { g_mix_prev = (uint16_t *) malloc(512 * 512 * 2); g_mix_out = (uint16_t *) malloc(512 * 512 * 2); g_mix_valid = 0; }
+		if (g_mix_prev && g_mix_out) {
+			const bool same = g_mix_valid && g_mix_w == w && g_mix_h == h && g_mix_margin == s.margin;
+			if (s.mix && same) pk::mix16_half((uint8_t *) g_mix_out, w * 2, (const uint8_t *) g_mix_prev, w * 2, (const uint8_t *) s.p, s.pitch, w, h);
+			for (int y = 0; y < h; y++) memcpy(g_mix_prev + (size_t) y * w, (const uint8_t *) s.p + (size_t) y * s.pitch, (size_t) w * 2);
+			g_mix_w = w; g_mix_h = h; g_mix_margin = s.margin; g_mix_gi = gi; g_mix_valid = 1;
+			if (s.mix && same) { s.p = g_mix_out; s.pitch = w * 2; }
+		}
+	} else g_mix_valid = 0;
 	if (ps.shape == PIC_ZOOM && frame_no % 20 == 0) {
 		int mx = h / 8;
 		int t = pic_blank_rows(s.p, s.pitch, w, h, 1, mx), b = pic_blank_rows(s.p, s.pitch, w, h, 0, mx);
@@ -1033,6 +1053,15 @@ static void wide_pic(mdw::Meta &m, const uint16_t *view0, int pitch_bytes, Pic *
 	else { s->p = view0; s->w = m.vw; s->h = m.vh; s->pitch = pitch_bytes; s->margin = 0; }
 }
 
+/* The picture that was last shown mixed, as itself (it is what the mix kept): the refresh after the early frame shows it */
+static bool pal_pure_pic(Pic *s, pic_info *gi)
+{
+	if (!g_mix_prev || !g_mix_valid) return false;
+	s->p = g_mix_prev; s->w = g_mix_w; s->h = g_mix_h; s->pitch = g_mix_w * 2; s->serial = 0; s->margin = g_mix_margin; s->mix = false;
+	*gi = g_mix_gi;
+	return true;
+}
+
 static int hd_draw_thread(SceSize, void *)
 {
 	for (;;) {
@@ -1040,7 +1069,7 @@ static int hd_draw_thread(SceSize, void *)
 		if (!f) break;
 		const uint64_t t0 = sceKernelGetProcessTimeWide();
 		Pic s;
-		s.p = (const uint16_t *) (f->data + f->offset); s.w = f->w; s.h = f->h; s.pitch = f->pitch; s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.margin = 0;
+		s.p = (const uint16_t *) (f->data + f->offset); s.w = f->w; s.h = f->h; s.pitch = f->pitch; s.serial = (unsigned) (f->user & 0x0FFFFFFF); s.margin = 0; s.mix = (f->user & USER_MIX) != 0;
 		if (f->user & USER_WIDE) { mdw::Meta &m = g_meta[f->seq & 7]; wide_pic(m, s.p + m.view_off, f->pitch, &s); }
 		const pic_info gi = g_geo[s.serial & 15];
 		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
@@ -1050,7 +1079,7 @@ static int hd_draw_thread(SceSize, void *)
 			if (tries) sceDisplayWaitVblankStart();
 			drew = frame_draw(ps, 1, (int) f->seq);
 		}
-		if (drew) {
+		auto finish_pic = [&]() {
 			if (g_hd_notice_on.load()) {
 				pk::Notices n;
 				{ pk::SpinGuard g(g_hd_lk); n = g_hd_notices; }
@@ -1058,9 +1087,19 @@ static int hd_draw_thread(SceSize, void *)
 			}
 			frame_finish();
 			g_hd_drawn++;
-		} else g_hd_failed++;
-		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
+		};
+		if (drew) finish_pic(); else g_hd_failed++;
+		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;       /* the cost reported is this picture's own draw, not the repeat after it */
 		g_hd_draw_us += (unsigned) dt;
+		if (drew && s.mix && g_mix_valid) {
+			/* Smooth 50 Hz: this picture was the early frame's, shown mixed for one refresh; the next refresh shows it alone */
+				Pic pure; pic_info pgi;
+				if (pal_pure_pic(&pure, &pgi) && video_upload(ps, (int) f->seq, pure, pgi)) {
+					bool d2 = false;
+					for (int tries = 0; tries < 4 && !d2; tries++) { sceDisplayWaitVblankStart(); d2 = frame_draw(ps, 1, (int) f->seq); }
+					if (d2) finish_pic();
+				}
+		}
 		g_pipe.box().release(f, (uint32_t) (dt > 0xFFFFFFFFull ? 0xFFFFFFFFu : dt));
 	}
 	return sceKernelExitThread(0);
@@ -1466,8 +1505,9 @@ int main(int argc, char **argv)
 	double frame_hz = md_host_fps();
 	const double vita_hz = 59.94;
 	bool pal = frame_hz < 55.0;
-	FramePace pal_pace;
-	if (pal) { pal_pace.set(frame_hz, vita_hz); logf_("PAL: %.3f Hz, %s\n", frame_hz, g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
+	pk::PalSmooth pal_pace;
+	bool pal_pure_pending = false;      /* Smooth 50 Hz: the early frame was shown mixed; the refresh after it shows the picture alone */
+	if (pal) { pal_pace.set(frame_hz, vita_hz); logf_("PAL: %.3f Hz, %s\n", frame_hz, g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : g_pl->pal_smooth() ? "Smooth 50 Hz: 5 of 6 refreshes emulate a frame, the sixth's frame comes one refresh early and is mixed with the one before" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
 	hd_start(tini, frame_hz);
 
 	/* log state */
@@ -1548,8 +1588,16 @@ int main(int argc, char **argv)
 		if (hd) g_pipe.box().set_pace_mode(g_pl->pace_mode());
 		int to_run = (half || hd) ? (int) elapsed : 1;
 		if (g_link) to_run = 1;           /* lockstep: one frame per refresh, a missed refresh is not caught up */
-		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }
-		if (!g_link) to_run = g_pl->speed_plan(to_run);       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
+		bool mix_early = false;
+		if (pal && !g_pl->pal_fast()) {
+			const int refr = to_run;
+			/* Smooth 50 Hz (pk_palsmooth.h) only for a plain single refresh: not linked, not in half mode */
+			pal_pace.smooth = g_pl->pal_smooth() && !g_link && !half;
+			g_pal_mix_on.store(pal_pace.smooth ? 1 : 0, std::memory_order_relaxed);
+			to_run = refr == 1 ? pal_pace.step(&mix_early) : pal_pace.owed(refr);
+			pal_planned += (unsigned) (refr - to_run);       /* 0 on the 6th refresh (not with Smooth 50 Hz: that frame runs early) */
+		}
+		if (!g_link) { to_run = g_pl->speed_plan(to_run); if (to_run != 1) mix_early = false; }       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
 		if (hd) g_pipe.box().set_force_drop(!g_link && g_pl->speed_busy());
 		bool fresh = false, want_menu = false, link_over = false;
 		if (pal && to_run == 0 && tapped && g_pl->input(pads, true, loop0 / 1000, emu_frame)) want_menu = true;
@@ -1600,7 +1648,7 @@ int main(int argc, char **argv)
 				md_host_video_info(&vi);
 				if (vi.serial != g_geo_serial) { g_geo[vi.serial & 15] = geo_now(vi); g_geo_serial = vi.serial; }
 				if (pix && pw > 0 && ph > 0) {
-					int user = (int) (vi.serial & 0x3FFFFFFFu);
+					int user = (int) (vi.serial & 0x0FFFFFFFu) | (mix_early && render ? USER_MIX : 0);
 					const uint16_t *src = pix;
 					int sw = pw;
 					mdw::Meta *mt = NULL;
@@ -1624,7 +1672,7 @@ int main(int argc, char **argv)
 						                   : g_pipe.put(src, sw, ph, pp, user, (uint32_t) frames_run, (uint32_t) render_emu_us);
 						if (pr > 0) fresh = true;
 					} else {
-						Pic s; s.p = pix; s.w = pw; s.h = ph; s.pitch = pp; s.serial = vi.serial; s.margin = 0;
+						Pic s; s.p = pix; s.w = pw; s.h = ph; s.pitch = pp; s.serial = vi.serial; s.margin = 0; s.mix = mix_early && render;
 						if (mt) wide_pic(*mt, pix + mt->view_off, pp, &s);
 						if (video_upload(g_pl->picture(), frames_run, s, geo_now(vi))) fresh = true;
 					}
@@ -1634,6 +1682,14 @@ int main(int argc, char **argv)
 			} else if (hd) g_pipe.box().note_emulated(1);
 			g_pl->after_frame(sceKernelGetProcessTimeWide());
 		}
+		/* Smooth 50 Hz: the refresh after an early frame runs none; it shows that picture alone (the early refresh showed it mixed).
+		 * With the hand-over the drawing thread does it by itself right after the mixed picture. */
+		if (pal_pure_pending && to_run == 0 && !g_link && !hd) {
+			Pic pure; pic_info pgi;
+			if (pal_pure_pic(&pure, &pgi) && video_upload(g_pl->picture(), frames_run, pure, pgi)) fresh = true;
+			if (fresh && pal_planned) pal_planned--;     /* a new picture was shown: this refresh did not repeat one */
+		}
+		pal_pure_pending = mix_early;
 		if (hd) {
 			uint32_t hc;
 			while (g_pipe.box().poll_cost(&hc)) g_pl->drawn_cost(hc);

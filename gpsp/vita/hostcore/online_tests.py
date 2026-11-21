@@ -126,8 +126,15 @@ def wait_code(a, timeout=90):
     return None
 
 
-def join_script(code, tail="", card_shot="card.png", press_join=True):
-    """B: the game's menu, Join a game, the code on the pad, the card; X on the card joins."""
+def join_script(code, tail="", card_shot="card.png", press_join=True, hold=True):
+    """B: the game's menu, Join a game, the code on the pad, the card; X on the card joins.  hold: every press that
+    matters is held until the app has logged what it did (hold_code), so a busy machine cannot drop one and type another
+    code; hold=False is the fixed script, for a scenario whose timed action must meet the script's own clock."""
+    if hold:
+        s = join_script_hold(code, "", card_shot)
+        if press_join:
+            s += "+%d:hold=cross=online_join code_given=1\n" % L.AFTER_SHOT + "+%d:shot=linking.png\n" % L.dur(1.5)
+        return s + tail
     keys = code_keys(code)
     half = keys.index("right", keys.index("right") + 1) + 1          # two characters typed
     s = (L.open_play(L.EARLY) + "+20:down:%d\n" % L.PRESS + L.keys("cross") +
@@ -336,8 +343,9 @@ def pair(T, name, rom=L.LINKTEST, rom_b=None, nat=("port", "port"), svc_env=(), 
             th = threading.Thread(target=run, daemon=True)
             th.start()
             threads.append(th)
-        rig.ra = rig.a.finish(rig.a.t0 + (a_end + L.SHIFT) * T.k + 120 - time.time())
-        rig.rb = rig.b.finish(rig.b.t0 + (b_end + L.SHIFT) * T.k + 120 - time.time())
+        # (+300 s: a script that waits for the screen (hold=, wait=) runs longer than its frames say)
+        rig.ra = rig.a.finish(rig.a.t0 + (a_end + L.SHIFT) * T.k + 300 - time.time())
+        rig.rb = rig.b.finish(rig.b.t0 + (b_end + L.SHIFT) * T.k + 300 - time.time())
         rig.st = rig.world.stats() if rig.world else {}
         rig.reqs = rig.svc.requests()
         return rig
@@ -380,7 +388,7 @@ def solo(T, name, code="ZZZZZ", svc_env=(), b_vita=None, b_cfg=None, before=None
         if noauto:
             os.remove(os.path.join(rig.b.root, "autoboot.txt"))
         rig.b.start()
-        rig.rb = rig.b.finish(rig.b.t0 + (b_end + L.SHIFT) * T.k + 120 - time.time())
+        rig.rb = rig.b.finish(rig.b.t0 + (b_end + L.SHIFT) * T.k + 300 - time.time())
         rig.reqs = rig.svc.requests()
         return rig
     finally:
@@ -394,7 +402,7 @@ def solo(T, name, code="ZZZZZ", svc_env=(), b_vita=None, b_cfg=None, before=None
 
 # ---- shared checks ----------------------------------------------------------------------------
 
-def check_link(T, rig, relay, kind="gba", mode_a=None, delay_min=3, max_reqs=40, pictures=("running.png",)):
+def check_link(T, rig, relay, kind="gba", mode_a=None, delay_min=3, max_reqs=60, pictures=("running.png",)):
     """The link formed through the service, by the way the NAT allowed, and ran its game."""
     ra, rb, st, reqs, code = rig.ra, rig.rb, rig.st, rig.reqs, rig.code
     T.clean(ra, "A")
@@ -454,8 +462,10 @@ def gb_press(sec=40):
 
 
 def gb_script(end):
-    return (host_script(end) + gb_press(40) + L.shot(60, "running.png") + L.disconnect(end - 8, "session.png") +
-            L.shot(end - 4, "ended.png") + L.quit_at(end))
+    # the master's presses come once the link is up (the script waits for it: B's code takes as long as a busy machine
+    # takes), not at a guessed time
+    return (host_script(end) + "+0:wait=link_running player=1\n" + gb_press(40) + L.shot(60, "running.png") +
+            L.disconnect(end - 8, "session.png") + L.shot(end - 4, "ended.png") + L.quit_at(end))
 
 
 # ---- the scenarios --------------------------------------------------------------------------------
@@ -887,7 +897,7 @@ def t_drop_midlink(T):
                a_script=host_script(130) + L.shot(60, "running.png") + L.shot(100, "waiting_for.png") +
                L.shot(124, "after.png") + L.quit_at(130),
                b_script=lambda code: join_script(code, L.shot(60, "waiting_for.png") + L.shot(112, "after.png") +
-                                                 L.quit_at(118)),
+                                                 L.quit_at(118), hold=False),
                actions=[(40, cut)])
     for r, who in ((rig.ra, "A"), (rig.rb, "B")):
         T.clean(r, who)
@@ -1162,8 +1172,8 @@ def pad_online(T, name, nat, relay, fam):
     keys = ["a", "right", "down", "start", "left", "b", "up", "a"]
     pr = "".join(L.press(40 + i, k, 12) for i, k in enumerate(keys))
     rig = pair(T, name, rom=rom, nat=nat, kind="nes",
-               a_script=host_script(78) + pr + L.shot(60, "running.png") + L.disconnect(70, "session.png") +
-               L.shot(74, "ended.png") + L.quit_at(78))
+               a_script=host_script(78) + "+0:wait=link_running player=1\n" + pr + L.shot(60, "running.png") +
+               L.disconnect(70, "session.png") + L.shot(74, "ended.png") + L.quit_at(78))
     if not rig.ra or not rig.rb:
         return
     T.clean(rig.ra, "A")

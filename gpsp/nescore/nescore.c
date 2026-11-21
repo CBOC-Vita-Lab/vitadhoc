@@ -186,11 +186,56 @@ nescore_t *nescore_create(const char *rom_path, const char *srm_path,
 /* One emulated frame with the pads already set: the picture and the sound
  * of it go to the callbacks.  Shared by the single player's call and the
  * two-player link's. */
+/* Smooth 50 Hz: the picture before the frame about to run is kept, and the frame's picture is delivered as the mean of the two */
+static int g_mix_next;
+static uint16_t *g_mix_prev, *g_mix_out;
+static unsigned g_mix_cap, g_mix_pw, g_mix_ph;
+void nescore_mix_next(nescore_t *core) { if (core == &g_core) g_mix_next = 1; }
+
+static void mix_keep_prev(void)
+{
+  unsigned y;
+  g_mix_pw = g_mix_ph = 0;
+  if (!g_last_vf.pixels || g_last_vf.width * g_last_vf.height == 0) return;
+  if (g_mix_cap < g_last_vf.width * g_last_vf.height)
+  {
+    free(g_mix_prev); free(g_mix_out);
+    g_mix_cap = g_last_vf.width * g_last_vf.height;
+    g_mix_prev = (uint16_t *)malloc((size_t)g_mix_cap * 2);
+    g_mix_out = (uint16_t *)malloc((size_t)g_mix_cap * 2);
+    if (!g_mix_prev || !g_mix_out) { free(g_mix_prev); free(g_mix_out); g_mix_prev = g_mix_out = NULL; g_mix_cap = 0; return; }
+  }
+  for (y = 0; y < g_last_vf.height; y++)
+    memcpy(g_mix_prev + (size_t)y * g_last_vf.width,
+           (const uint8_t *)g_last_vf.pixels + (size_t)y * g_last_vf.pitch_bytes, (size_t)g_last_vf.width * 2);
+  g_mix_pw = g_last_vf.width; g_mix_ph = g_last_vf.height;
+}
+
+static void mix_make(const nescore_video_frame_t *vf, nescore_video_frame_t *out)
+{
+  unsigned x, y;
+  for (y = 0; y < vf->height; y++)
+  {
+    const uint16_t *b = (const uint16_t *)((const uint8_t *)vf->pixels + (size_t)y * vf->pitch_bytes);
+    const uint16_t *a = g_mix_prev + (size_t)y * vf->width;
+    uint16_t *d = g_mix_out + (size_t)y * vf->width;
+    for (x = 0; x < vf->width; x++)
+    {
+      uint32_t u = a[x], v = b[x];
+      d[x] = (uint16_t)((u & v) + (((u ^ v) & 0xF7DEu) >> 1));    /* the mean of each RGB565 channel */
+    }
+  }
+  out->pixels = g_mix_out; out->width = vf->width; out->height = vf->height; out->pitch_bytes = vf->width * 2;
+}
+
 static int run_set_pads(nescore_t *core)
 {
   nescore_video_frame_t vf;
   const uint16_t *px;
   int w, h, pitch, got;
+  int mix = g_mix_next;
+  g_mix_next = 0;
+  if (mix) mix_keep_prev();
   nes_host_run_frame();
   px = nes_host_video(&w, &h, &pitch);
   if (g_wide != NESCORE_WIDE_OFF)
@@ -217,7 +262,14 @@ static int run_set_pads(nescore_t *core)
     vf.height = core->height;
     vf.pitch_bytes = (unsigned)pitch;
     g_last_vf = vf;
-    core->cb.video(core->cb.userdata, &vf);
+    if (mix && g_mix_prev && g_mix_out && g_mix_pw == vf.width && g_mix_ph == vf.height)
+    {
+      nescore_video_frame_t mv;
+      mix_make(&vf, &mv);     /* g_last_vf stays the new picture alone: the next refresh shows it by nescore_repeat_frame */
+      core->cb.video(core->cb.userdata, &mv);
+    }
+    else
+      core->cb.video(core->cb.userdata, &vf);
   }
   while ((got = nes_host_audio_take(core->audio, AUDIO_CHUNK)) > 0)
     if (core->cb.audio_batch)

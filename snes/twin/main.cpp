@@ -137,6 +137,7 @@ static void usage(void)
 	    "  --nowait           use the non-blocking video fetch of the Vita (hash file lists new pictures: serial w h hash)\n"
 	    "  --render-half      steady pacing's half mode: only even frames are rendered (the core's render-off path for the\n"
 	    "                     others); --hashes then lists the rendered frames only. Emulation and audio must not change.\n"
+	    "  --render-mod N     render only every Nth frame (fast forward draws 1 in 3); emulation and audio must not change\n"
 	    "  --peek-sum         print a hash of all work RAM and battery RAM at the end\n"
 	    "  --opt NAME=VALUE   core option (block_vram sprite_tiles interp superfx_clock gsu_cycles transparency echo_buffer), repeatable\n"
 	    "  --audio-sim SCEN   audio pacing simulation in virtual time (S1..S7, S2+, S2-, all); ROM may be '-' for none.\n"
@@ -158,6 +159,7 @@ int main(int argc, char **argv)
 	struct Opt { std::string k; int v; };
 	std::vector<Opt> opts;
 	bool nowait = false, render_half = false, peek_sum = false;
+	int render_mod = 0;
 	const char *backup_dir = 0, *unblock = 0;
 	bool srm_async = false;
 	bool summary = false;
@@ -213,6 +215,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(argv[i], "--nowait")) nowait = true;
 		else if (!strcmp(argv[i], "--render-half")) render_half = true;
 		else if (!strcmp(argv[i], "--peek-sum")) peek_sum = true;
+		else if (arg("--render-mod")) render_mod = atoi(argv[++i]);
 		else { usage(); return 2; }
 	}
 	if (!cheat_decode.empty()) {
@@ -291,6 +294,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "load state: %d\n", r);
 		}
 		if (render_half) snes_host_set_render((f & 1) == 0);
+		if (render_mod > 1) snes_host_set_render(f % render_mod == 0);
 		uint64_t t0 = now_ns(), c0 = cpu_ns();
 		if (prof_on) { memset(g_s9xp.acc, 0, sizeof g_s9xp.acc); memset(g_s9xp.cnt, 0, sizeof g_s9xp.cnt); g_s9xp.cur = S9XP_CPU; g_s9xp.sp = 0; g_s9xp.last = s9xp_now(); }
 		snes_host_run_frame();
@@ -326,6 +330,7 @@ int main(int argc, char **argv)
 			continue;
 		}
 		if (render_half && (f & 1)) continue;
+		if (render_mod > 1 && f % render_mod) continue;
 		v = snes_host_video(&w, &h, &pitch);
 		if (hf) fprintf(hf, "%d %d %d %016llx\n", f, w, h, (unsigned long long) fnv(v, w, h, pitch));
 		if (shotset.count(f)) {

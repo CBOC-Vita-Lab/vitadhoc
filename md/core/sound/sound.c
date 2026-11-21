@@ -295,6 +295,9 @@ static unsigned int NULL_fm_read(unsigned int cycles, unsigned int address) { re
 
 void sound_init( void )
 {
+  /* VitAdhoc: the FM mixing buffer starts cleared, as in a new process (see gen_init in genesis.c) */
+  memset(fm_buffer, 0, sizeof(fm_buffer));
+
   /* Initialize FM chip */
   if ((system_hw & SYSTEM_PBC) == SYSTEM_MD)
   {

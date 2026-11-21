@@ -51,6 +51,7 @@
 #include "player.h"
 #include "pipe.h"
 #include "pal_pace.h"
+#include "pk_palsmooth.h"
 #include "pk_gfx_vita.h"
 #include "pk_cores.h"
 #include "pk_scale.h"
@@ -437,7 +438,12 @@ static unsigned scale_picture(pk::ScalerKind kind, const uint16_t *src, int w, i
 	return nf;
 }
 
-struct PicSrc { const uint16_t *p; int w, h, pitch; unsigned serial; bool is_wide; };
+struct PicSrc { const uint16_t *p; int w, h, pitch; unsigned serial; bool is_wide; bool mix; };
+/* Smooth 50 Hz (pk_palsmooth.h): the drawing side keeps the previous picture and, for a picture marked `mix`, shows the mean of the two */
+static std::atomic<int> g_pal_mix_on(0);           /* the loop sets it while the mode is on: the previous picture is then kept */
+static uint16_t *g_mix_prev, *g_mix_out;           /* 512 x 512 each, allocated at the first use */
+static int g_mix_w, g_mix_h, g_mix_wide, g_mix_valid;
+static bool g_next_mix;                            /* the inline fetch: the next picture is a mixed one */
 
 /* Where the next picture comes from (the wide view's frame or the core's own); false when there is nothing new. The three
  * "seen" values are the caller's memory of what it took last: the drawing side's globals when the picture is fetched
@@ -463,16 +469,25 @@ static bool video_source(PicSrc *s, unsigned norm_seen, unsigned wide_seen, int 
 		src = snes_host_video_nowait(&w, &h, &pitch, &serial);
 		if (!src || (serial == norm_seen && !shown_wide)) return false;
 	}
-	s->p = src; s->w = w; s->h = h; s->pitch = pitch; s->serial = serial; s->is_wide = is_wide;
+	s->p = src; s->w = w; s->h = h; s->pitch = pitch; s->serial = serial; s->is_wide = is_wide; s->mix = false;
 	return true;
 }
 
 static int video_upload(const pic_settings &ps, int frame_no, const PicSrc &ps_src);
 
+/* The picture that was last shown mixed, as itself (it is what the mix kept): the refresh after the early frame shows it */
+static bool pal_pure_src(PicSrc *s)
+{
+	if (!g_mix_prev || !g_mix_valid) return false;
+	s->p = g_mix_prev; s->w = g_mix_w; s->h = g_mix_h; s->pitch = g_mix_w * 2; s->serial = 0; s->is_wide = g_mix_wide != 0; s->mix = false;
+	return true;
+}
+
 static int video_fetch(const pic_settings &ps, int frame_no)
 {
 	PicSrc s;
 	if (!video_source(&s, g_norm_seen, g_wide_seen, g_src_wide)) return 0;
+	s.mix = g_next_mix; g_next_mix = false;
 	return video_upload(ps, frame_no, s);
 }
 
@@ -493,6 +508,17 @@ static int video_upload(const pic_settings &ps, int frame_no, const PicSrc &ps_s
 	if (is_wide) g_wide_seen = serial; else g_norm_seen = serial;
 	if (w > 512) w = 512;
 	if (h > 512) h = 512;
+	if (g_pal_mix_on.load(std::memory_order_relaxed)) {
+		/* Smooth 50 Hz: keep this picture for the next mix; a picture marked mix is shown as the mean of the last one and itself */
+		if (!g_mix_prev) { g_mix_prev = (uint16_t *) malloc(512 * 512 * 2); g_mix_out = (uint16_t *) malloc(512 * 512 * 2); g_mix_valid = 0; }
+		if (g_mix_prev && g_mix_out) {
+			const bool same = g_mix_valid && g_mix_w == w && g_mix_h == h && g_mix_wide == (is_wide ? 1 : 0);
+			if (ps_src.mix && same) { pk::mix16_half((uint8_t *) g_mix_out, w * 2, (const uint8_t *) g_mix_prev, w * 2, (const uint8_t *) src, pitch, w, h); }
+			for (int y = 0; y < h; y++) memcpy(g_mix_prev + (size_t) y * w, (const uint8_t *) src + (size_t) y * pitch, (size_t) w * 2);
+			g_mix_w = w; g_mix_h = h; g_mix_wide = is_wide ? 1 : 0; g_mix_valid = 1;
+			if (ps_src.mix && same) { src = g_mix_out; pitch = w * 2; }
+		}
+	} else g_mix_valid = 0;
 	if (ps.shape == PIC_ZOOM && frame_no % 20 == 0) {
 		int mx = h / 8;
 		int t = pic_blank_rows(src, pitch, w, h, 1, mx), b = pic_blank_rows(src, pitch, w, h, 0, mx);
@@ -997,6 +1023,7 @@ static int hd_draw_thread(SceSize, void *)
 		if (!f) break;
 		const uint64_t t0 = sceKernelGetProcessTimeWide();
 		PicSrc s;
+		s.mix = false;
 		bool have = true;
 		if (f->user & snesp::PicturePipe::SNAP_FLAG) {
 			/* wide view, capture / compose split: the frame is a captured snapshot; the compose runs here, off the emulating thread */
@@ -1012,7 +1039,7 @@ static int hd_draw_thread(SceSize, void *)
 			} else have = false;     /* stale handle (the view was switched meanwhile) or a frame with no picture: the old one stays */
 		} else {
 			s.p = (const uint16_t *) f->data; s.w = f->w; s.h = f->h; s.pitch = f->pitch;
-			s.serial = (unsigned) (f->user & 0x3FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0;
+			s.serial = (unsigned) (f->user & 0x0FFFFFFF); s.is_wide = (f->user & 0x40000000) != 0; s.mix = (f->user & 0x10000000) != 0;
 		}
 		const pic_settings ps = g_pl->picture();     /* one copy for this picture: the game thread may ease the look meanwhile */
 		if (have) video_upload(ps, (int) f->seq, s);
@@ -1021,7 +1048,7 @@ static int hd_draw_thread(SceSize, void *)
 			if (tries) sceDisplayWaitVblankStart();       /* the display queue was full: the picture is not dropped for it */
 			drew = frame_draw(ps, 1, (int) f->seq);
 		}
-		if (drew) {
+		auto finish_pic = [&]() {
 			if (g_hd_notice_on.load()) {
 				pk::Notices n;
 				{ pk::SpinGuard g(g_hd_lk); n = g_hd_notices; }
@@ -1029,9 +1056,19 @@ static int hd_draw_thread(SceSize, void *)
 			}
 			frame_finish();
 			g_hd_drawn++;
-		} else g_hd_failed++;
-		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
+		};
+		if (drew) finish_pic(); else g_hd_failed++;
+		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;       /* the cost reported is this picture's own draw, not the repeat after it */
 		g_hd_draw_us += (unsigned) dt;
+		if (drew && have && s.mix && g_mix_valid) {
+			/* Smooth 50 Hz: this picture was the early frame's, shown mixed for one refresh; the next refresh shows it alone */
+				PicSrc pure;
+				if (pal_pure_src(&pure) && video_upload(ps, (int) f->seq, pure)) {
+					bool d2 = false;
+					for (int tries = 0; tries < 4 && !d2; tries++) { sceDisplayWaitVblankStart(); d2 = frame_draw(ps, 1, (int) f->seq); }
+					if (d2) finish_pic();
+				}
+		}
 		g_pipe.box().release(f, (uint32_t) (dt > 0xFFFFFFFFull ? 0xFFFFFFFFu : dt));
 	}
 	return sceKernelExitThread(0);
@@ -1435,8 +1472,10 @@ int main(int argc, char **argv)
 	/* PAL: 5 frames in 6 refreshes (see pal_pace.h). The audio pacer measures the speed against frame_hz (50), so its base
 	 * rate follows 50 Hz on its own once the frames come at that rate. NTSC does not use it (one per refresh, as before). */
 	const bool pal = snes_host_is_pal() != 0;
-	FramePace pal_pace;
-	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: %s\n", g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
+	pk::PalSmooth pal_pace;
+	bool pal_pure_pending = false;      /* Smooth 50 Hz: the early frame was shown mixed; the refresh after it shows the picture alone */
+	unsigned pal_mixed = 0;
+	if (pal) { pal_pace.set(50.0070, vita_hz); logf_("PAL: %s\n", g_pl->pal_fast() ? "Fast 60 Hz chosen: one frame per refresh" : g_pl->pal_smooth() ? "Smooth 50 Hz: 5 of 6 refreshes emulate a frame, the sixth's frame comes one refresh early and is mixed with the one before" : "True 50 Hz: 5 of 6 refreshes emulate a frame"); }
 	hd_start(tini, frame_hz);
 	help_start(clampi_(ini_int(tini, "helpers", 2), 0, 2));
 	/* One emulated frame per display refresh: the console runs at 60.0988 Hz and the Vita shows 59.94, so
@@ -1543,9 +1582,18 @@ int main(int argc, char **argv)
 		}
 		int to_run = (half || hd) ? (int) elapsed : 1;
 		if (g_link) to_run = 1;           /* lockstep: one frame per refresh, a missed refresh is not caught up */
-		if (pal && !g_pl->pal_fast()) { const int refr = to_run; to_run = pal_pace.owed(refr); pal_planned += (unsigned) (refr - to_run); }   /* 0 on the 6th refresh: the last picture is shown again, no new produce */
+		bool mix_early = false;
+		if (pal && !g_pl->pal_fast()) {
+			const int refr = to_run;
+			/* Smooth 50 Hz (pk_palsmooth.h) only for a plain single refresh: not linked, not in half mode, not with the wide view's capture split */
+			pal_pace.smooth = g_pl->pal_smooth() && !g_link && !half && !g_wide_split;
+			g_pal_mix_on.store(pal_pace.smooth ? 1 : 0, std::memory_order_relaxed);
+			to_run = refr == 1 ? pal_pace.step(&mix_early) : pal_pace.owed(refr);
+			pal_planned += (unsigned) (refr - to_run);       /* 0 on the 6th refresh (not with Smooth 50 Hz: that frame runs early) */
+		}
 		if (!g_link) {
 			to_run = g_pl->speed_plan(to_run);       /* fast forward runs 2 or 3 frames a refresh, rewinding one landing */
+			if (to_run != 1) mix_early = false;
 			if (hd) g_pipe.box().set_force_drop(g_pl->speed_busy());
 		}
 		bool fresh = false, rendered_any = false, want_menu = false, link_over = false;
@@ -1606,18 +1654,28 @@ int main(int argc, char **argv)
 							else { snes_wide_snap_release(wsnap, wser); break; }
 						}
 					} else if (video_source(&ps_src, g_hd_norm_seen, g_hd_wide_seen, g_hd_src_wide)) {
-						const int user = (ps_src.is_wide ? 0x40000000 : 0) | (int) (ps_src.serial & 0x3FFFFFFFu);
+						const int user = (ps_src.is_wide ? 0x40000000 : 0) | (mix_early && render ? 0x10000000 : 0) | (int) (ps_src.serial & 0x0FFFFFFFu);
 						if (g_pipe.put(ps_src.p, ps_src.w, ps_src.h, ps_src.pitch, user, (uint32_t) frames_run, (uint32_t) render_emu_us) > 0) {
 							if (ps_src.is_wide) g_hd_wide_seen = ps_src.serial; else g_hd_norm_seen = ps_src.serial;
 							g_hd_src_wide = ps_src.is_wide ? 1 : 0;
 							fresh = true;
 						}
 					}
-				} else if (video_fetch(g_pl->picture(), frames_run)) fresh = true;
+				} else { g_next_mix = mix_early && render; if (video_fetch(g_pl->picture(), frames_run)) fresh = true; g_next_mix = false; }
 				fetch_us += sceKernelGetProcessTimeWide() - f0;
 			}
 			g_pl->after_frame(sceKernelGetProcessTimeWide());
 		}
+		/* Smooth 50 Hz: the refresh after an early frame runs none; it shows that picture alone (the early refresh showed it mixed).
+		 * With the hand-over the drawing thread does it by itself right after the mixed picture. */
+		if (pal_pure_pending && to_run == 0 && !g_link && !hd) {
+			PicSrc pure;
+			if (pal_pure_src(&pure) && video_upload(g_pl->picture(), frames_run, pure)) fresh = true;
+			if (fresh && pal_planned) pal_planned--;     /* a new picture was shown: this refresh did not repeat one */
+		}
+		pal_pure_pending = mix_early;
+		if (mix_early) pal_mixed++;
+		(void) pal_mixed;
 		if (hd) {
 			/* what the drawing thread measured goes to steady pacing, and its toast is the player's as of now */
 			uint32_t hc;

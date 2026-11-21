@@ -134,6 +134,14 @@ static Script g_p1, g_p2;
 
 static std::vector<u64> g_fh;   // per frame picture hash (debug: MD_TWIN_VFRAMES)
 
+// --full-hashes FILE / --proof: per frame picture, sound, state and RAM hashes (the state hash goes through md_host_state_save_mem, so it
+// holds everything the save state holds, including what run-ahead and the exact state load depend on)
+struct FullHash { u64 pic, aud, st, ram; };
+static std::vector<FullHash> g_full;
+static int g_fullon = 0;
+static std::vector<uint8_t> g_fullbuf, g_snap;
+static int g_snapf = -1;                        // MD_TWIN_SNAPFRAME=K: the state of frame K is kept (the proof prints where two runs' states differ)
+
 // wide view (--wide M): the core draws into a canvas with room for the strips; the picture hashed below is the screen only
 static std::vector<uint16_t> g_canvas;
 static int g_wide = 0;
@@ -146,6 +154,7 @@ static std::vector<int> g_shot_frames;
 static int g_cap = 1 << 20;                     // --wide-cap: the governor's real margin limit
 static std::string g_dump_prefix;                // --wide-dump PREFIX[:FROM[:STEP]]
 static int g_dump_from = 0, g_dump_step = 1;
+static int g_wide_skip = 0;                     // --wide-skip N: the first N frames are not analysed (a run-ahead run never analyses frame 0: its frame n shows plain frame n+1)
 static int g_learn = 1, g_cache = 1, g_cache_check = 0, g_check = 0;
 
 // where the view starts in the picture buffer: the Mega Drive picture is the screen, the Game Gear band has the LCD window 48 columns in
@@ -200,7 +209,7 @@ static void step_frame(int f, Acc &acc, double *dt)
 		for (int y = 0; y < h; y++) ph = hash_bytes(ph, (const char *)px + (size_t)y * pitch, (size_t)w * 2);
 		g_pic.push_back(ph);
 	}
-	if (g_wa) {
+	if (g_wa && f >= g_wide_skip) {
 		md_video_info vi; md_host_video_info(&vi);
 		mdw::Meta *meta = g_ahead_meta ? g_ahead_meta : new mdw::Meta;
 		const int m = vi.system == MD_SYS_GG ? 48 : g_wide;
@@ -251,6 +260,18 @@ static void step_frame(int f, Acc &acc, double *dt)
 	int n = md_host_audio_take(abuf, 4800);
 	acc.a = hash_bytes(acc.a, abuf, (size_t)n * 4);
 	acc.samples += (size_t)n; acc.frames++;
+	if (g_fullon) {
+		FullHash fh;
+		fh.pic = g_pic.back();
+		fh.aud = hash_bytes(FNV0, abuf, (size_t)n * 4);
+		if (g_fullbuf.size() != md_host_state_size()) g_fullbuf.resize(md_host_state_size());
+		size_t sn = md_host_state_save_mem(g_fullbuf.data(), g_fullbuf.size());
+		fh.st = sn ? hash_bytes(FNV0, g_fullbuf.data(), sn) : 0;
+		if (f == g_snapf) g_snap = g_fullbuf;
+		std::vector<uint8_t> rb(0x10000); int rn = md_host_ra_read(0, rb.data(), (unsigned)rb.size());
+		fh.ram = rn > 0 ? hash_bytes(FNV0, rb.data(), (size_t)rn) : 0;
+		g_full.push_back(fh);
+	}
 }
 
 static u64 state_hash(std::vector<uint8_t> &buf)
@@ -287,7 +308,8 @@ int main(int argc, char **argv)
 {
 	std::vector<unsigned> peeks;
 	int reset_at = -1, vdpthr = 0, vdpcheck = 0, vdpstress = 0;
-	const char *rom = NULL, *hashes = NULL, *srm = NULL, *save_st = NULL, *load_st = NULL, *cheat = NULL, *frame_hashes = NULL;
+	const char *rom = NULL, *hashes = NULL, *srm = NULL, *save_st = NULL, *load_st = NULL, *cheat = NULL, *frame_hashes = NULL, *full_hashes = NULL;
+	int proof_n = -1, proof_m = 0;
 	int frames = 1500, checkpoint = 100, region = 0, system = 0, padtype = 0, roundtrip = 0, state_frame = 300, quiet = 0, norender = 0, info = 0;
 	unsigned seed = 1, arate = 0;
 	std::vector<std::string> opts;
@@ -315,6 +337,8 @@ int main(int argc, char **argv)
 		else if (a == "--no-render") norender = 1;
 		else if (a == "--ahead") g_ahead = 1;
 		else if (a == "--frame-hashes") frame_hashes = need();
+		else if (a == "--full-hashes") { full_hashes = need(); g_fullon = 1; }
+		else if (a == "--proof") { proof_n = atoi(need()); proof_m = atoi(need()); g_fullon = 1; }
 		else if (a == "--cheat") cheat = need();
 		else if (a == "--peek") peeks.push_back((unsigned)strtoul(need(), NULL, 16));
 		else if (a == "--reset-at") reset_at = atoi(need());
@@ -333,6 +357,7 @@ int main(int argc, char **argv)
 			if (g_dump_step < 1) g_dump_step = 1;
 		}
 		else if (a == "--wide-nolearn") g_learn = 0;
+		else if (a == "--wide-skip") g_wide_skip = atoi(need());
 		else if (a == "--wide-check") g_check = 1;
 		else if (a == "--wide-nocache") g_cache = 0;
 		else if (a == "--wide-cache-check") g_cache_check = 1;
@@ -393,9 +418,85 @@ int main(int argc, char **argv)
 	std::vector<uint8_t> sbuf(md_host_state_size());
 	if (load_st) {
 		FILE *s = fopen(load_st, "rb");
-		std::vector<uint8_t> b(md_host_state_size());
-		if (!s || fread(b.data(), 1, b.size(), s) != b.size() || md_host_state_load_mem(b.data(), b.size())) { printf("LOADSTATE FAIL\n"); return 1; }
-		fclose(s);
+		std::vector<uint8_t> b;
+		if (s) { fseek(s, 0, SEEK_END); long sz = ftell(s); fseek(s, 0, SEEK_SET); b.resize(sz > 0 ? (size_t)sz : 0); if (fread(b.data(), 1, b.size(), s) != b.size()) b.clear(); fclose(s); }
+		if (b.empty() || md_host_state_load_mem(b.data(), b.size())) { printf("LOADSTATE FAIL\n"); return 1; }   // any length: a file of an older format is accepted by the host
+	}
+
+	if (proof_n >= 0) {
+		// "load at frame N, run M frames == the uninterrupted run", per frame (picture, sound, state, RAM), three ways:
+		//   1. a state loaded into the same process, the machine that saved it;
+		//   2. the same after the ROM was unloaded and loaded again (what a second game in one process sees);
+		//   3. the state of 2 loaded into the machine of 2.
+		const int N = proof_n, M = proof_m;
+		if (getenv("MD_TWIN_SNAPFRAME")) g_snapf = atoi(getenv("MD_TWIN_SNAPFRAME"));
+		Acc acc;
+		std::vector<uint8_t> gLoad1;
+		if (getenv("MD_TWIN_LOADDIFF")) gLoad1 = snap_globals();
+		auto fresh = [&]() {
+			if (md_host_load_mem(g_rom.data(), g_rom.size(), bn, system, err, sizeof err)) { printf("PROOF %s reload failed\n", bn); exit(1); }
+			if (padtype) { md_host_set_pad_type(0, padtype); md_host_set_pad_type(1, padtype); }
+			if (norender) md_host_set_render(0);
+			if (getenv("MD_TWIN_LOADDIFF")) print_globdiff(gLoad1, snap_globals(), "load");
+		};
+		std::vector<uint8_t> st0;
+		for (int fr = 0; fr < N; fr++) { step_frame(fr, acc, NULL); if (fr == 0) st0 = g_fullbuf; }
+		std::vector<FullHash> head(g_full);
+		std::vector<uint8_t> st(md_host_state_size());
+		if (!md_host_state_save_mem(st.data(), st.size())) { printf("PROOF %s save failed\n", bn); return 1; }
+		// battery RAM (and EEPROM / flash contents) is not part of a state: a load never takes a save back. Put it back by hand, as the machine had it at frame N.
+		std::vector<uint8_t> sr(0x10000); const size_t srn = md_host_sram_read(sr.data(), sr.size());
+		g_full.clear();
+		for (int fr = 0; fr < M; fr++) step_frame(N + fr, acc, NULL);
+		if (getenv("MD_TWIN_VERBOSE")) printf("  sram at N: %zu bytes, after M: %zu bytes\n", srn, md_host_sram_size());
+		const std::vector<FullHash> ref(g_full);
+		const std::vector<uint8_t> snapRef(g_snap);
+		auto cmp = [&](const char *what, int *first, int *bad) {
+			*first = -1; *bad = 0;
+			for (int i = 0; i < M && i < (int)ref.size() && i < (int)g_full.size(); i++)
+				if (ref[i].pic != g_full[i].pic || ref[i].aud != g_full[i].aud || ref[i].st != g_full[i].st || ref[i].ram != g_full[i].ram) {
+					if (*first < 0) { *first = i + 1; if (getenv("MD_TWIN_VERBOSE")) printf("  %s: first differing frame %d: pic=%d aud=%d state=%d ram=%d\n", what, i + 1, ref[i].pic != g_full[i].pic, ref[i].aud != g_full[i].aud, ref[i].st != g_full[i].st, ref[i].ram != g_full[i].ram); }
+					(*bad)++;
+				}
+			if ((int)g_full.size() < M) { *bad = M; *first = 0; }
+		};
+		int f1, b1, f2, b2, f3, b3, fh = -1, bh = 0;
+		md_host_sram_write(sr.data(), srn);
+		const int rc1 = md_host_state_load_mem(st.data(), st.size());
+		g_full.clear();
+		for (int fr = 0; fr < M; fr++) step_frame(N + fr, acc, NULL);
+		cmp("same machine", &f1, &b1);
+		if (g_snapf >= 0) {
+			size_t k = 0, shown = 0;
+			while (k < snapRef.size() && k < g_snap.size() && shown < 16) { if (snapRef[k] != g_snap[k]) { size_t e = k; while (e < snapRef.size() && snapRef[e] != g_snap[e]) e++; printf("  frame %d state byte offset %zu..%zu differs\n", g_snapf, k, e); k = e; shown++; } else k++; }
+		}
+		fresh();
+		g_full.clear();
+		for (int fr = 0; fr < N; fr++) {
+			step_frame(fr, acc, NULL);
+			if (fr == 0 && getenv("MD_TWIN_VERBOSE")) {
+				size_t k = 0, shown = 0;
+				while (k < st0.size() && k < g_fullbuf.size() && shown < 12) { if (st0[k] != g_fullbuf[k]) { size_t e = k; while (e < st0.size() && st0[e] != g_fullbuf[e]) e++; printf("  state byte offset %zu..%zu differs\n", k, e); k = e; shown++; } else k++; }
+			}
+		}
+		for (int i = 0; i < N && i < (int)head.size() && i < (int)g_full.size(); i++)
+			if (head[i].pic != g_full[i].pic || head[i].aud != g_full[i].aud || head[i].st != g_full[i].st || head[i].ram != g_full[i].ram) {
+				if (fh < 0) { fh = i + 1; if (getenv("MD_TWIN_VERBOSE")) printf("  first differing frame %d: pic=%d aud=%d state=%d ram=%d\n", i + 1, head[i].pic != g_full[i].pic, head[i].aud != g_full[i].aud, head[i].st != g_full[i].st, head[i].ram != g_full[i].ram); }
+				bh++;
+			}
+		const int rc3 = md_host_state_load_mem(st.data(), st.size());
+		g_full.clear();
+		for (int fr = 0; fr < M; fr++) step_frame(N + fr, acc, NULL);
+		cmp("reloaded machine", &f3, &b3);
+		if (g_snapf >= 0) {
+			size_t k = 0, shown = 0;
+			while (k < snapRef.size() && k < g_snap.size() && shown < 16) { if (snapRef[k] != g_snap[k]) { size_t e = k; while (e < snapRef.size() && snapRef[e] != g_snap[e]) e++; printf("  reloaded: frame %d state byte offset %zu..%zu differs\n", g_snapf, k, e); k = e; shown++; } else k++; }
+		}
+		// 2: the reloaded machine run on without a load must equal the first one (the "first game in a process" leak)
+		f2 = fh; b2 = bh;
+		printf("PROOF %s N=%d M=%d load=%d same_machine=%s(first_bad=%d bad=%d) second_load_of_rom=%s(first_bad=%d bad=%d) state_into_reloaded=%s(first_bad=%d bad=%d)\n", bn, N, M, rc1 | rc3,
+			b1 ? "DIFF" : "SAME", f1, b1, b2 ? "DIFF" : "SAME", f2, b2, b3 ? "DIFF" : "SAME", f3, b3);
+		return (b1 || b2 || b3) ? 3 : 0;
 	}
 
 	FILE *hf = hashes ? fopen(hashes, "w") : NULL;
@@ -452,6 +553,9 @@ int main(int argc, char **argv)
 	if (frame_hashes) {
 		// the run's own frames only (the round trip below adds more)
 		if (FILE *pf = fopen(frame_hashes, "w")) { for (int i = 0; i < frames && i < (int) g_pic.size(); i++) fprintf(pf, "%d %016llx\n", f0 + i, g_pic[(size_t) i]); fclose(pf); }
+	}
+	if (full_hashes) {
+		if (FILE *pf = fopen(full_hashes, "w")) { for (size_t i = 0; i < g_full.size(); i++) fprintf(pf, "%d %016llx %016llx %016llx %016llx\n", f0 + (int)i, g_full[i].pic, g_full[i].aud, g_full[i].st, g_full[i].ram); fclose(pf); }
 	}
 	if (g_ahead && !quiet) {
 		unsigned long as[2]; md_host_ahead_stat(as);

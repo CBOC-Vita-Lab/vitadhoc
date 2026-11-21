@@ -2398,6 +2398,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_OVERLAY,
        SET_WSBLEND,  /* 1.4: WonderSwan profile only (set_row_shown) */
        SET_NESWIDE,  /* 1.4: NES profile only */
+       SET_NESPAL,   /* 2.0: NES profile only: PAL games speed (Smooth 50 Hz / True 50 Hz) */
        SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_SHOTDIR,
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
@@ -2524,22 +2525,23 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Image quality" },
 #endif
    { 0, "Video filter" },
-   { 0, "Ambient bars" },
+   { 0, "Ambient glow" },
    { 0, "Game Boy colours" },
 #ifdef VITA
    /* A Game Boy's only, and greyed (stepped over) on the others, so no row
     * a harness walker counts on a GBA moves. */
    { 0, "SGB border" },
    /* After the PSP's rows of the section, so those keep their order. */
-   { 0, "Colours" },
-   { 0, "Motion blend" },
+   { 0, "LCD colours" },
+   { 0, "LCD ghosting" },
    { 0, "Wide view" },
    { 0, "Screen fill" },        /* the wide view's margins: bars / soft edges / stretch */
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
-   { 0, "Grid strength" },
+   { 0, "Scanlines / grid strength" },
    { 0, "Screen overlay" },
    { 0, "Smooth 75 Hz motion" },
    { 0, "Wide view" },
+   { 0, "PAL games speed" },
 #endif
    { 1, "INTERFACE" },
    { 0, "Theme" },
@@ -2678,7 +2680,7 @@ static int set_row_shown(int idx)
                          : ra_summary(NULL, NULL, NULL, NULL, NULL);
    if (idx == SET_WSBLEND)
       return pcfg_display_console() == FE_CONSOLE_WSWAN;
-   if (idx == SET_NESWIDE)
+   if (idx == SET_NESWIDE || idx == SET_NESPAL)
       return pcfg_display_console() == FE_CONSOLE_NES;
    if (idx >= SET_WSROT && idx <= SET_WSPAL)
       return !g_ov_browse && g_pgame.on && g_pgame.console == FE_CONSOLE_WSWAN;
@@ -3640,6 +3642,11 @@ static void settings_adjust(int id, int dir)
       app_nes_options();
       fe_evt("nes_setting wide=%d", g_pcfg.nes_wide);
       break;
+   case SET_NESPAL:
+      g_pcfg.nes_pal_smooth = !g_pcfg.nes_pal_smooth;
+      app_nes_options();
+      fe_evt("nes_setting pal_smooth=%d", g_pcfg.nes_pal_smooth);
+      break;
    case SET_WSBLEND:
       g_pcfg.ws_blend = !g_pcfg.ws_blend;
       app_ws_options();
@@ -3921,6 +3928,9 @@ static const char *set_help(int id)
                              ? "Always the 16:9 picture; unknown sides fade."
                              : "The sides filled with the game's own picture "
                                "where it is known. Never guessed.";
+   case SET_NESPAL:   return g_pcfg.nes_pal_smooth
+                             ? "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames."
+                             : "European games run at 50 Hz. True 50 Hz plays them at their real speed and shows one frame in six again.";
    case SET_WSBLEND:  return g_pcfg.ws_blend
                              ? "The WonderSwan's 75 frames a second blended "
                                "into each refresh: smooth scrolling."
@@ -4592,6 +4602,10 @@ static ui_action screen_settings(unsigned edges)
       case SET_NESWIDE:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pcfg.nes_wide == 1 ? "On" : g_pcfg.nes_wide == 2 ? "Off" : "Auto");
+         break;
+      case SET_NESPAL:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.nes_pal_smooth ? "Smooth 50 Hz" : "True 50 Hz");
          break;
       case SET_WSBLEND:
          set_item(y, g_cursor == i, 1, set_rows[i].label,

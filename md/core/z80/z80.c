@@ -3377,6 +3377,7 @@ void z80_init(const void *config, int (*irqcallback)(int))
 
   /* Initialize Z80 */
   memset(&Z80, 0, sizeof(Z80));
+  EA = 0; z80_last_fetch = 0;       /* VitAdhoc: temporaries a new process starts with (see gen_init) */
   Z80.daisy = config;
   Z80.irq_callback = irqcallback;
 #ifdef Z80_OVERCLOCK_SHIFT

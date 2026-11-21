@@ -4,8 +4,9 @@
 #      drawn one does: sound, state and RAM hashes equal, single thread and with the VDP worker;
 #   2. "Quick response" (run-ahead by one frame, md_host_run_frame_ahead) changes nothing in the machine: sound, state, RAM and
 #      battery RAM hashes equal to a plain run; the picture it shows at frame n is the plain run's picture of frame n+1 while the
-#      buttons do not change; and a button press shows one frame sooner (measured in frames on a ROM that draws the pad);
-#   3. "No sprite flicker" (option sprite_limit=0; Master System, Game Gear, SG-1000) changes pictures only.
+#      buttons do not change; and a button press shows one frame sooner (measured in frames on a small test cartridge made by tools/sms_latency_gen.py);
+#   3. "No sprite flicker" (option sprite_limit=0; Master System, Game Gear, SG-1000) changes pictures only;
+#   4. a loaded state (and a rewind landing) continues exactly as the run that was never interrupted (the "--proof" runs).
 #
 #   MD_TEST_ROMS=<dir>      a tree with the SGDK sample ROMs (rom.bin files)
 #   MD_TEST_SMS_ROMS=<dir>  a tree of Master System / Game Gear / SG-1000 homebrew ROMs
@@ -87,17 +88,33 @@ if [ $fl -gt 0 ]; then
 	[ $flbad = 0 ] && ok "no sprite flicker changes pictures only on $fl 8 bit ROMs ($flpic of them show more sprites)" || bad "no sprite flicker ($flbad of $fl change the machine)"
 else skip "no 8 bit ROM for the sprite flicker check"; fi
 
-# 4. latency in frames: a ROM that draws the pad. A press at frame K changes the picture D frames later; run-ahead must make it D-1.
-JOY=$(grep -m1 'joy-test' "$T/roms")
-if [ -n "$JOY" ]; then
+# 4. latency in frames: a small cartridge made here (sms_latency_gen.py) answers the pad one frame later, as most games do.
+#    A press at frame K changes the picture D frames later; run-ahead must make it D-1.
+LATROM="$T/latency.sms"
+if python3 "$HERE/tools/sms_latency_gen.py" "$LATROM" > /dev/null 2>&1 && [ -s "$LATROM" ]; then
 	K=300
 	lat() {   # $1 = extra option; prints the first frame whose picture differs from the run without the press, minus K
-		"$TWIN" "$JOY" --frames 400 --pad none $1 --frame-hashes "$T/q0" > /dev/null 2>&1
-		"$TWIN" "$JOY" --frames 400 --pad "$K:a" $1 --frame-hashes "$T/q1" > /dev/null 2>&1
+		"$TWIN" "$LATROM" --frames 400 --pad none $1 --frame-hashes "$T/q0" > /dev/null 2>&1
+		"$TWIN" "$LATROM" --frames 400 --pad "$K:a" $1 --frame-hashes "$T/q1" > /dev/null 2>&1
 		paste -d' ' "$T/q0" "$T/q1" | awk -v k=$K '$2 != $4 { print $1 - k; exit }'
 	}
 	lp=$(lat ""); la=$(lat "--ahead")
 	if [ -n "$lp" ] && [ -n "$la" ] && [ "$la" = $((lp - 1)) ]; then ok "a press reaches the picture $lp frames later plain and $la with run-ahead (twin, frames of the game; the display adds the same to both)"
 	else bad "latency: plain '$lp', run-ahead '$la' frames"; fi
-else skip "no joy-test ROM for the latency measurement"; fi
+else skip "no Python 3 for the latency cartridge"; fi
+
+# 5. states: "load the state saved at frame N, run M frames" equals "keep running" (video, sound, state, RAM, battery RAM of every
+#    frame), on the same machine, after a reload of the ROM (nothing of the first load is left over), and into a fresh machine;
+#    single thread and with the VDP worker. PROOF_FRAMES = "N M" (default "150 60"; the thorough run is 300 200)
+PF=${PROOF_FRAMES:-150 60}
+pr=0; prbad=0; prw=0; prwbad=0
+while IFS= read -r r; do
+	[ -f "$r" ] || continue
+	o=$("$TWIN" "$r" --proof $PF --pad auto 2>&1 | grep '^PROOF')
+	pr=$((pr + 1)); echo "$o" | grep -q 'DIFF\|failed' || [ -z "$o" ] && { prbad=$((prbad + 1)); echo "  state load differs: $r"; }
+	o=$("$TWIN" "$r" --proof $PF --pad auto --vdp-thread 2>&1 | grep '^PROOF')
+	prw=$((prw + 1)); echo "$o" | grep -q 'DIFF\|failed' || [ -z "$o" ] && { prwbad=$((prwbad + 1)); echo "  state load with the VDP worker differs: $r"; }
+done < "$T/roms"
+[ $prbad = 0 ] && ok "a loaded state continues exactly as the uninterrupted run ($PF frames, three ways) on $pr ROMs" || bad "state loads ($prbad of $pr differ)"
+[ $prwbad = 0 ] && ok "the same with the VDP worker on $prw ROMs" || bad "state loads with the VDP worker ($prwbad of $prw differ)"
 exit $fail

@@ -1198,7 +1198,8 @@ void app_nes_options(void)
                     : g_pcfg.nes_wide == 1 ? NESCORE_WIDE_ON
                     : g_pcfg.nes_wide == 2 || look_rung(5) ? NESCORE_WIDE_OFF
                     : NESCORE_WIDE_AUTO);
-   fe_evt("nes_options wide=%d", g_pcfg.nes_wide);
+   gbmux_set_pal_smooth(g_pcfg.nes_pal_smooth && !boot_guard_safe());
+   fe_evt("nes_options wide=%d pal_smooth=%d", g_pcfg.nes_wide, g_pcfg.nes_pal_smooth);
 }
 
 /* The crash-loop guard (boot_guard.h): which risky features are on for a

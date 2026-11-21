@@ -11,6 +11,16 @@
   flags are still set by the hardware's limit, so the game runs exactly the same (73 test games, PC build). Turn it off for a game that
   hides something behind the limit on purpose. The Mega Drive keeps its own limit.
 - **Sega save states no longer carry stray memory.** A few unused bytes of a state file held whatever was in memory.
+- **Frames that are not drawn leave every console's machine as it was.** Fast forward, Steady pacing's half mode and catching up run frames
+  without drawing them. Checked, state, memory and sound compared between drawn and undrawn runs (PC build, one frame in two and one in three
+  undrawn): Super NES 15 of 15 games (3000 frames; the one byte that differs is a drawing cache the next drawn frame refills), NES 263 of 263
+  test cartridges (900 frames), Game Boy and Game Boy Color, GBA and WonderSwan games in the app (see docs/TESTING.md). No core needed a change.
+- **Smooth 50 Hz for European games.** PAL games on the 60 Hz screen showed one picture twice every tenth of a second, a hitch in every scroll.
+  Settings > PAL games speed (Super NES, Sega and, in the app, NES) has a new first choice, **Smooth 50 Hz**, on by default: the game, its sound
+  and its input run exactly as before, but the frame the sixth refresh waited for is run one refresh early and that refresh shows an even mix
+  of the two pictures; the next refresh shows the new one. The picture step per refresh is .5 .5 1 1 1 1 instead of 0 1 1 1 1 1 (the squared
+  deviation from an even step falls from 0.83 to 0.33). Only that refresh differs, and only where something moves. True 50 Hz and Fast 60 Hz
+  are as before. It is not used in a linked game.
 
 - **Online Two players on a NES or WonderSwan game compares the games.** A room made from inside a NES or WonderSwan game carried an
   all-zero game number, so a joiner running another game was let in and only turned back when the link started, and the game list's

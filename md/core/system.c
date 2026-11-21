@@ -55,6 +55,25 @@ uint32 system_clock;
 int16 SVP_cycles = 800; 
 
 static uint8 pause_b;
+
+/* VitAdhoc: what the machine keeps between frames and no save state holds: the Master System pause button's edge detector and the serial
+   EEPROMs' protocol position. Copies it out (load = 0) or in (load = 1); returns its size (p may be NULL). */
+extern int eeprom_i2c_carry(void *p, int load);
+extern int eeprom_spi_carry(void *p, int load);
+extern int eeprom_93c_carry(void *p, int load);
+extern int cart_flash_carry(uint8 *p, int load);
+int machine_carry(void *p, int load)
+{
+  uint8 *b = (uint8 *)p;
+  int n = 0;
+  if (b) { if (load) pause_b = b[0] ? 1 : 0; else b[0] = pause_b; }
+  n += 1;
+  n += eeprom_i2c_carry(b ? b + n : NULL, load);
+  n += eeprom_spi_carry(b ? b + n : NULL, load);
+  n += eeprom_93c_carry(b ? b + n : NULL, load);
+  n += cart_flash_carry(b ? b + n : NULL, load);
+  return n;
+}
 static EQSTATE eq[2];
 static int16 llp,rrp;
 

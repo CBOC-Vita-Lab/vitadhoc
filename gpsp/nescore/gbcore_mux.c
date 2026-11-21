@@ -137,7 +137,9 @@ static unsigned nes_pad(uint16_t b)
  * frame time against refresh time.  An NTSC game (60.0988) runs one per call
  * as before.  The picture of a call that runs none is the last one again. */
 static double g_disp_hz = 60000.0 / 1001.0, g_nes_acc;
-void gbmux_set_display_rate(double hz) { if (hz > 1.0) g_disp_hz = hz; g_nes_acc = 0; }
+static int g_pal_smooth, g_pal_borrowed;
+void gbmux_set_display_rate(double hz) { if (hz > 1.0) g_disp_hz = hz; g_nes_acc = 0; g_pal_borrowed = 0; }
+void gbmux_set_pal_smooth(int on) { g_pal_smooth = on != 0; g_pal_borrowed = 0; }
 
 static int nes_pal_frame(gbcore_t *c, uint16_t b)
 {
@@ -152,11 +154,24 @@ static int nes_pal_frame(gbcore_t *c, uint16_t b)
   if (g_nes_acc >= 1.0)
   {
     g_nes_acc -= 1.0;
+    g_pal_borrowed = 0;
     frames++;
     rc = nescore_run_frame(g_nes, nes_pad(b));
   }
+  else if (g_pal_smooth && !g_pal_borrowed)
+  {
+    /* Smooth 50 Hz: the frame this refresh lacks runs now, and shows mixed with the one before; the next refresh shows it alone */
+    g_nes_acc -= 1.0;
+    g_pal_borrowed = 1;
+    frames++;
+    nescore_mix_next(g_nes);
+    rc = nescore_run_frame(g_nes, nes_pad(b));
+  }
   else
+  {
+    g_pal_borrowed = 0;
     rc = nescore_repeat_frame(g_nes);
+  }
   if (calls % 600 == 0)
     fe_evt("nes_pace fps=%.3f display=%.3f frames=%u calls=%u", fps, g_disp_hz, frames, calls);
   return rc;

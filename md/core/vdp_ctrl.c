@@ -43,6 +43,7 @@
 #include "hvc.h"
 
 extern int8 reset_do_not_clear_buffers;
+extern int8 fast_savestates;
 static int8 do_not_invalidate_tile_cache;
 
 static void vdp_set_all_vram(const uint8 *src);
@@ -251,6 +252,11 @@ static void (*const render_bg_modes[16])(int line) =
 
 void vdp_init(void)
 {
+  /* VitAdhoc: what a new process starts with (see gen_init): the FIFO and the VDP's clock are not cleared by a reset */
+  memset(fifo, 0, sizeof(fifo));
+  memset(fifo_cycles, 0, sizeof(fifo_cycles));
+  mcycles_vdp = 0;
+
   /* PAL/NTSC timings */
   lines_per_frame = vdp_pal ? 313: 262;
 
@@ -525,6 +531,15 @@ int vdp_context_load(uint8 *state)
   uint8 *state_vram_ptr;
   /* Save number of dirty tiles before calls to register writes */
   int bg_list_index_save = bg_list_index;
+  /* VitAdhoc: the Master System / Game Gear register restore below ends in a mode switch that flags every pattern dirty without
+     the do_not_invalidate_tile_cache guard; run-ahead's load puts the dirty flags and the list back as they were (below) */
+  static uint8 dirty_save[sizeof(bg_name_dirty)];
+  static uint16 list_save[sizeof(bg_name_list) / sizeof(uint16)];
+  if (fast_savestates)
+  {
+    memcpy(dirty_save, bg_name_dirty, sizeof(dirty_save));
+    memcpy(list_save, bg_name_list, sizeof(list_save));
+  }
   /* Prevent register write code from invalidating the tile cache */
   do_not_invalidate_tile_cache = true;
 
@@ -645,19 +660,26 @@ int vdp_context_load(uint8 *state)
     color_update_m4(0x40, *(uint16 *)&cram[(0x10 | (border & 0x0F)) << 1]);
   }
 
-  VDPW_VRAM_ALL();
   VDPW_STATUS();
 
-  /* If we have a tile cache with any clean tiles */
-  if (bg_list_index_save != bg_list_index)
+  /* If we have a tile cache with any clean tiles. VitAdhoc: only for run-ahead's own load, which goes back to a moment the cache has just
+     lived through. Any other load starts from a reset that cleared VRAM but not the pattern cache, so comparing the state's VRAM with the
+     cleared VRAM leaves stale patterns where the state holds zeros (and the Game Gear window, which draws few tiles, shows them): the whole
+     cache is invalidated instead. */
+  if (fast_savestates && bg_list_index_save != bg_list_index)
   {
-    /* Restore index value */
+    /* Restore index value (and the flags and the list the mode switch above overwrote) */
+    memcpy(bg_name_dirty, dirty_save, sizeof(dirty_save));
+    memcpy(bg_name_list, list_save, sizeof(list_save));
     bg_list_index = bg_list_index_save;
     /* Copy all VRAM and update dirty tile flags */
     vdp_set_all_vram(state_vram_ptr);
   }
   else
   {
+    /* VitAdhoc: the worker's copy and the wide view's list of written blocks learn that all of VRAM changed (run-ahead's load above tells
+       them only the blocks that differ: it goes back to a moment they have just seen, and that is no extra work every frame) */
+    VDPW_VRAM_ALL();
     /* Copy all vram */
     memcpy(vram, state_vram_ptr, sizeof(vram));
     /* invalidate the tile cache */
@@ -706,9 +728,13 @@ void vdp_carry_save(void *p)
   memcpy(c->viewport, &bitmap.viewport, sizeof(bitmap.viewport));
 }
 
-void vdp_carry_load(const void *p)
+int vdp_carry_load(const void *p)
 {
   const vdp_carry_t *c = (const vdp_carry_t *)p;
+  /* a state file is the user's own, but the picture size drives buffer writes: refuse values no machine produces (viewport: x y w h ow oh changed) */
+  if (c->viewport[2] < 0 || c->viewport[2] > 320 || c->viewport[3] < 0 || c->viewport[3] > 240 || c->viewport[4] < 0 || c->viewport[4] > 320
+      || c->viewport[5] < 0 || c->viewport[5] > 240 || c->viewport[0] < -64 || c->viewport[0] > 64 || c->viewport[1] < -64 || c->viewport[1] > 64)
+    return 1;
   memcpy(fifo_cycles, c->fifo_cycles, sizeof(fifo_cycles));
   hvc_latch = c->hvc_latch; fifo_byte_access = c->fifo_byte_access;
   v_counter = c->v_counter; vscroll = c->vscroll;
@@ -716,6 +742,7 @@ void vdp_carry_load(const void *p)
   sat_base_mask = c->sat_base_mask; sat_addr_mask = c->sat_addr_mask;
   border = c->border;
   memcpy(&bitmap.viewport, c->viewport, sizeof(bitmap.viewport));
+  return 0;
 }
 
 /*--------------------------------------------------------------------------*/
@@ -3143,7 +3170,15 @@ static void vdp_z80_data_w_sg(unsigned int data)
   pending = 0;
 
   /* VRAM write */
-  vram[index] = data;
+  /* VitAdhoc: the TMS modes read VRAM directly (no pattern cache), but the VDP worker's copy and the wide view's list of written blocks
+     learn about changes here: without it the worker kept a stale sprite table on the SG-1000 (its status bits differed from the single thread's) */
+  if (data != vram[index])
+  {
+    const int name = (index >> 5) & 0x7FF;
+    vram[index] = data;
+    if (vdpw_on) vdpw_mark_vram(name);
+    if (wide_m && !wide_vd[name]) { wide_vd[name] = 1; wide_vl[wide_vn++] = (uint16) name; }
+  }
 
   /* Update address register */
   addr++;
@@ -3421,7 +3456,6 @@ static void vdp_set_all_vram(const uint8 *src)
   /* Copies entire vram area from a savestate, and updates the dirty tile flags */
   int name = 0;
   int addr = 0;
-  wide_vall = 1;   /* VitAdhoc wide view */
 
   for (addr = 0; addr < sizeof(vram); addr += 32)
   {
@@ -3434,6 +3468,10 @@ static void vdp_set_all_vram(const uint8 *src)
       }
       bg_name_dirty[name] |= 0xFF;
       memcpy(vram + addr, src + addr, 32);
+      /* VitAdhoc: the VDP worker's copy and the wide view's list of written blocks get exactly the blocks that changed (the wide view's
+         analysis had read the look-ahead frame's VRAM and must not have to read all of it again, nor lose what it learned) */
+      if (vdpw_on) vdpw_mark_vram(name);
+      if (wide_m && !wide_vd[name]) { wide_vd[name] = 1; wide_vl[wide_vn++] = (uint16) name; }
     }
   }
 }

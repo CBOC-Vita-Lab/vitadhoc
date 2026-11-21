@@ -154,8 +154,8 @@ that off.
   `ux0:data/GBAdhoc/shaders/`); a guard measures the GPU as the game runs and gives xBRZ back
   to the CPU when a frame's GPU work takes over 10 ms twice in a row
   (`gpu_xbrz off reason=slow`).
-- **Colours** -- as the game sends them, or as a GBA's (or Game Boy Color's) own screen showed
-  them: muted, what the art was drawn for. **Motion blend** mixes each frame with the last,
+- **LCD colours** -- as the game sends them, or as a GBA's (or Game Boy Color's) own screen showed
+  them: muted, what the art was drawn for. **LCD ghosting** mixes each frame with the last,
   which is what games that flicker to fake transparency rely on.
 - **Wide view** (GBA) -- instead of black bars beside the picture, more of the game:
   - *on* (the default): in games the app has a profile for. That is **Pokémon Emerald

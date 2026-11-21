@@ -209,11 +209,11 @@ TEST(menu_set_row_note_greys_a_row)
 	f.menu.set_row_note(ROW_PIC_GLOW, "Needs the wide view");
 	f.menu.goto_page(Menu::PAGE_PICTURE);
 	for (int i = 0; i < f.menu.row_count(); i++)
-		if (f.menu.row_label(i) == "Side glow") { CHECK(!f.menu.row_enabled(i)); CHECK_STR(f.menu.row_reason(i), "Needs the wide view"); }
+		if (f.menu.row_label(i) == "Ambient glow") { CHECK(!f.menu.row_enabled(i)); CHECK_STR(f.menu.row_reason(i), "Needs the wide view"); }
 	f.menu.set_row_note(ROW_PIC_GLOW, "");
 	f.menu.goto_page(Menu::PAGE_PICTURE);
 	for (int i = 0; i < f.menu.row_count(); i++)
-		if (f.menu.row_label(i) == "Side glow") CHECK(f.menu.row_enabled(i));
+		if (f.menu.row_label(i) == "Ambient glow") CHECK(f.menu.row_enabled(i));
 }
 
 TEST(menu_save_load_states_with_overwrite_confirm)

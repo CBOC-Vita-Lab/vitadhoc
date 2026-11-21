@@ -841,6 +841,19 @@ static int run_pal_test(const char *rom)
 			EXPECT(console_hz > 59.8 && console_hz < 60.2);   /* 59.92 Hz */
 			EXPECT(frames == refreshes && max_gap == 0);
 		}
+		if (pal) {
+			/* Smooth 50 Hz (pk_palsmooth.h): the same frames to within one at every refresh; a refresh that runs none follows an early frame */
+			FramePace plain; plain.set(console_hz, vita_hz);
+			pk::PalSmooth sm; sm.set(console_hz, vita_hz);
+			int fa = 0, fb = 0, worst = 0, early = 0, two_idle = 0, idle = 0;
+			for (int r = 0; r < refreshes; r++) {
+				bool e; fa += plain.owed(1); const int k = sm.step(&e); fb += k; early += e ? 1 : 0;
+				const int d = fb > fa ? fb - fa : fa - fb; if (d > worst) worst = d;
+				if (k == 0) { if (++idle > 1) two_idle++; } else idle = 0;
+			}
+			fprintf(stderr, "pal: smooth 50 Hz runs %d frames (plain %d), at most %d apart, %d early\n", fb, fa, worst, early);
+			EXPECT(worst <= 1 && fb >= fa - 1 && fb <= fa + 1 && two_idle == 0 && early > 450 && early < 550);
+		}
 		/* the sound of the frames run: the audio the core made is the frames' share at the console's rate, so the sound pacer needs no change */
 		md_host_unload();
 	}
@@ -980,14 +993,14 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 			rig->pf.log_path = root + "/" + con + "/log.txt";
 			EXPECT(pl->start(2, av, root, true).ok);
 			pl->apply_start_mode();
-			EXPECT(!pl->pal_fast() && pl->look_mode() == 0);
+			EXPECT(!pl->pal_fast() && pl->pal_smooth() && pl->look_mode() == 0);
 			pl->look_start(444);
 			pl->on_change(mdp::MdPlayer::ROW_LOOK, 1);
 			for (int i = 0; i < 40; i++) { pk::LookSecond ls; ls.emu = 1.25f; ls.draw = 0.3f; ls.refreshes = 60; ls.parallel = true; pl->look_second(ls); }
 			EXPECT(eff(pl) != SCALER_OFF || ceiling == 2);
 			pl->on_change(mdp::MdPlayer::ROW_LOOK, 2);
 			EXPECT(pl->picture().scaler == SCALER_OFF);
-			pl->on_change(mdp::MdPlayer::ROW_PALSPEED, 1);
+			pl->on_change(mdp::MdPlayer::ROW_PALSPEED, 2);                 /* the menu lists Smooth 50 Hz, True 50 Hz, Fast 60 Hz */
 			pl->finish(EXIT_NORMAL);
 		}
 		{
@@ -998,7 +1011,7 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 			EXPECT(pl->start(2, av, root, true).ok);
 			EXPECT(pl->pal_fast() && pl->look_mode() == 2);
 			EXPECT(pl->picture().scaler == SCALER_OFF);
-			EXPECT(pl->menu().value(mdp::MdPlayer::ROW_LOOK) == 2 && pl->menu().value(mdp::MdPlayer::ROW_PALSPEED) == 1);
+			EXPECT(pl->menu().value(mdp::MdPlayer::ROW_LOOK) == 2 && pl->menu().value(mdp::MdPlayer::ROW_PALSPEED) == 2);
 			pl->finish(EXIT_NORMAL);
 		}
 	}

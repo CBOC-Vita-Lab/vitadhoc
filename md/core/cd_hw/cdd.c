@@ -204,6 +204,42 @@ static void ogg_free(int i)
 
 #endif
 
+/* VitAdhoc: what went wrong with the last disc loaded, in words for the player ("" when nothing did): a track file the sheet names that is not there,
+ * an audio file that cannot be used */
+char cdd_note[200];
+#define CD_PATH_MAX 512        /* paths of the sheet and of a track (upstream: 255) */
+#define CD_LINE_MAX 512        /* a line of a cue sheet (upstream: 127) */
+
+/* the last three characters of a name, ignoring case ("Game.Cue", "GAME.CHD") */
+static int cdd_ext_is(const char *name, const char *ext)
+{
+  size_t l = strlen(name), i;
+  if (l < 3) return 0;
+  for (i = 0; i < 3; i++)
+  {
+    char c = name[l - 3 + i];
+    if (c >= 'A' && c <= 'Z') c += 32;
+    if (c != ext[i]) return 0;
+  }
+  return 1;
+}
+
+static void cdd_note_track(const char *what, const char *name, int track)
+{
+  const char *base = name, *p;
+  for (p = name; *p; p++) if (*p == '/' || *p == '\\' || *p == ':') base = p + 1;
+  if (cdd_note[0]) return;
+  snprintf(cdd_note, sizeof cdd_note, "Track %d %s (%.80s): this track and the ones after it are not on the disc", track, what, base);
+}
+
+/* the track files are streamed: read ahead on the helper thread (cdio.c) */
+static void cdd_mark_streams(void)
+{
+  int i;
+  for (i = 0; i < cdd.toc.last; i++)
+    if (cdd.toc.tracks[i].fd) cdio_stream(cdd.toc.tracks[i].fd);
+}
+
 void cdd_init(int samplerate)
 {
   /* CD-DA is running by default at 44100 Hz */
@@ -402,8 +438,9 @@ int cdd_context_load(uint8 *state, char *version)
 
 int cdd_load(char *filename, char *header)
 {
-  char fname[256+10];
-  char line[128];
+  char fname[CD_PATH_MAX+10];
+  char line[CD_LINE_MAX];
+  char *base;
   char *ptr, *lptr;
   cdStream *fd;
   
@@ -413,6 +450,7 @@ int cdd_load(char *filename, char *header)
 
   /* first unmount any loaded disc */
   cdd_unload();
+  cdd_note[0] = 0;
 
   /* a failed attempt must not leave its table of contents behind (the player may try another disc in the same session) */
   memset(&cdd.toc, 0, sizeof(cdd.toc));
@@ -427,7 +465,7 @@ int cdd_load(char *filename, char *header)
   }
 
 #if defined(USE_LIBCHDR)
-  if (!memcmp("chd", &filename[strlen(filename) - 3], 3) || !memcmp("CHD", &filename[strlen(filename) - 3], 3))
+  if (cdd_ext_is(filename, "chd"))
   {
     int sectors = 0;
     char metadata[256];
@@ -440,9 +478,9 @@ int cdd_load(char *filename, char *header)
       "PGTYPE:%15s PGSUB:%15s POSTGAP:%d";
 
     /* open CHD file */
-    if (chd_open_file(fd, CHD_OPEN_READ, NULL, &cdd.chd.file) != CHDERR_NONE)
+    if (cdio_chd_open(fd, &cdd.chd.file) != CHDERR_NONE)
     {
-      chd_close(cdd.chd.file);
+      cdio_chd_close(cdd.chd.file);
       cdStreamClose(fd);
       return -1;
     }
@@ -463,7 +501,7 @@ int cdd_load(char *filename, char *header)
     /* detect invalid hunk size */
     if ((head->hunkbytes == 0) || (head->hunkbytes % CD_FRAME_SIZE))
     {
-      chd_close(cdd.chd.file);
+      cdio_chd_close(cdd.chd.file);
       cdStreamClose(fd);
       return -1;
     }
@@ -472,7 +510,7 @@ int cdd_load(char *filename, char *header)
     cdd.chd.hunk = (uint8 *)malloc(head->hunkbytes);
     if (!cdd.chd.hunk)
     {
-      chd_close(cdd.chd.file);
+      cdio_chd_close(cdd.chd.file);
       cdStreamClose(fd);
       return -1;
     }
@@ -589,7 +627,7 @@ int cdd_load(char *filename, char *header)
     {
       /* read first chunk of data */
       cdd.chd.hunknum = cdd.toc.tracks[0].offset / cdd.chd.hunkbytes;
-      chd_read(cdd.chd.file, cdd.chd.hunknum, cdd.chd.hunk);
+      cdio_chd_read(cdd.chd.file, cdd.chd.hunknum, cdd.chd.hunk);
 
       /* copy CD image header + security code (skip RAW sector 16-byte header) */
       memcpy(header, cdd.chd.hunk + (cdd.toc.tracks[0].offset % cdd.chd.hunkbytes) + ((cdd.sectorSize == 2048) ? 0 : 16), 0x210);
@@ -603,22 +641,24 @@ int cdd_load(char *filename, char *header)
 
       /* CD mounted */
       cdd.loaded = HW_ADDON_MEGACD;
+      cdd_mark_streams();
       return 1;
     }
 
     /* invalid CHD file */
-    chd_close(cdd.chd.file);
+    cdio_chd_close(cdd.chd.file);
+    cdd.chd.file = NULL;
     cdStreamClose(fd);
     return -1;
   }
 #endif
 
   /* save a copy of base filename (max. 255 characters) */
-  strncpy(fname, filename, 255);
-  fname[256] = 0;
+  strncpy(fname, filename, CD_PATH_MAX - 1);
+  fname[CD_PATH_MAX - 1] = 0;
 
   /* check loaded file extension */
-  if (memcmp("cue", &filename[strlen(filename) - 3], 3) && memcmp("CUE", &filename[strlen(filename) - 3], 3))
+  if (!cdd_ext_is(filename, "cue"))
   {
     int len;
 
@@ -688,7 +728,7 @@ int cdd_load(char *filename, char *header)
 
     /* automatically try to mount CD associated CUE file */
     len = strlen(fname);
-    while ((len && (fname[len] != '.')) || (len > 251)) len--;
+    while ((len && (fname[len] != '.')) || (len > CD_PATH_MAX - 5)) len--;
     strcpy(&fname[len], ".cue");
     fd = cdStreamOpen(fname);
   }
@@ -703,7 +743,7 @@ int cdd_load(char *filename, char *header)
     if (cdd.toc.last)
     {
       /* skip first track */
-      while (cdStreamGets(line, 128, fd))
+      while (cdStreamGets(line, sizeof line, fd))
       {
         if (strstr(line, "INDEX 01") && !strstr(line, "INDEX 1"))
           break;
@@ -711,7 +751,7 @@ int cdd_load(char *filename, char *header)
     }
 
     /* read lines until end of file */
-    while (cdStreamGets(line, 128, fd))
+    while (cdStreamGets(line, sizeof line, fd))
     {
       /* skip any SPACE characters (VitAdhoc: and a UTF-8 byte order mark at the start of the sheet, and TAB characters: sheets
          written by some editors and tools have them, and the FILE / TRACK / INDEX lines were not recognised) */
@@ -730,31 +770,39 @@ int cdd_load(char *filename, char *header)
         }
         else
         {
-          /* this removes all directories from the path and just leaves the filename */
+          /* this removes all directories from the path and just leaves the filename (VitAdhoc: also after a device name, "ux0:Game.cue") */
           ptr = fname + strlen(fname) - 1;
-          while ((ptr - fname) && (*ptr != '/') && (*ptr != '\\')) ptr--;
+          while ((ptr - fname) && (*ptr != '/') && (*ptr != '\\') && (*ptr != ':')) ptr--;
           if (ptr - fname) ptr++;
         }
+        base = (ptr == fname) ? NULL : ptr;       /* where the name goes; NULL: a URI, or a sheet with no directory in its name */
+        if (!base && !strstr(lptr, "://")) base = fname;
 
         /* skip "FILE" attribute */
         lptr += 4;
 
         /* skip SPACE characters */
-        while (*lptr == 0x20) lptr++;
+        while (*lptr == 0x20 || *lptr == 0x09) lptr++;
 
-        /* retrieve full filename */
+        /* retrieve full filename (VitAdhoc: a name that carries a directory, "C:\\Music\\Game (Track 02).bin", loses it: the file is beside the sheet) */
         if (*lptr == '\"')
         {
           /* skip first DOUBLE QUOTE character */
           lptr++;
-          while ((*lptr != '\"') && (lptr <= (line + 128)) && (ptr < (fname + 255)))
-            *ptr++ = *lptr++;
+          while (*lptr && (*lptr != '\"') && (lptr < (line + sizeof line - 1)) && (ptr < (fname + CD_PATH_MAX - 1)))
+          {
+            if (base && (*lptr == '/' || *lptr == '\\')) { ptr = base; lptr++; }
+            else *ptr++ = *lptr++;
+          }
         }
         else
         {
           /* no DOUBLE QUOTE used */
-          while ((*lptr != 0x20) && (lptr <= (line + 128)) && (ptr < (fname + 255)))
-            *ptr++ = *lptr++;
+          while (*lptr && (*lptr != 0x20) && (*lptr != 0x09) && (*lptr != '\r') && (*lptr != '\n') && (lptr < (line + sizeof line - 1)) && (ptr < (fname + CD_PATH_MAX - 1)))
+          {
+            if (base && (*lptr == '/' || *lptr == '\\')) { ptr = base; lptr++; }
+            else *ptr++ = *lptr++;
+          }
         }
         *ptr = 0;
 
@@ -762,9 +810,13 @@ int cdd_load(char *filename, char *header)
         cdd.toc.tracks[cdd.toc.last].fd = cdStreamOpen(fname);
         if (!cdd.toc.tracks[cdd.toc.last].fd)
         {
-          /* error opening file */
+          /* error opening file (VitAdhoc: the player is told which one) */
+          cdd_note_track("file is missing", fname, cdd.toc.last + 1);
           break;
         }
+
+        /* VitAdhoc: raw audio written as big endian samples (the sheet's FILE ... MOTOROLA) is swapped when it is read */
+        cdd.toc.tracks[cdd.toc.last].bigEndian = strstr(lptr, "MOTOROLA") != NULL;
 
         /* reset current file PREGAP length */
         pregap = 0;
@@ -802,6 +854,7 @@ int cdd_load(char *filename, char *header)
             if (!dataOffset)
             {
               /* invalid WAVE file */
+              cdd_note_track("is a WAVE file without audio data", fname, cdd.toc.last + 1);
               cdStreamClose(cdd.toc.tracks[cdd.toc.last].fd);
               cdd.toc.tracks[cdd.toc.last].fd = 0;
               break;
@@ -818,6 +871,7 @@ int cdd_load(char *filename, char *header)
             if (!info || (info->rate != 44100) || (info->channels != 2))
             {
               /* unsupported VORBIS file format (stereo @44.1kHz only) */
+              cdd_note_track("is an Ogg file that is not stereo at 44.1 kHz", fname, cdd.toc.last + 1);
               ov_clear(&cdd.toc.tracks[cdd.toc.last].vf);
               cdd.toc.tracks[cdd.toc.last].fd = 0;
               break;
@@ -827,6 +881,7 @@ int cdd_load(char *filename, char *header)
           else
           {
             /* unsupported audio file */
+            cdd_note_track("is not a usable audio file (a WAVE or Ogg file, or raw audio marked BINARY)", fname, cdd.toc.last + 1);
             cdStreamClose(cdd.toc.tracks[cdd.toc.last].fd);
             cdd.toc.tracks[cdd.toc.last].fd = 0;
             break;
@@ -937,6 +992,7 @@ int cdd_load(char *filename, char *header)
         {
           /* use common file descriptor */
           cdd.toc.tracks[cdd.toc.last].fd = cdd.toc.tracks[cdd.toc.last - 1].fd;
+          cdd.toc.tracks[cdd.toc.last].bigEndian = cdd.toc.tracks[cdd.toc.last - 1].bigEndian;
 
           /* current track start time (based on current file absolute time + PREGAP length) */
           cdd.toc.tracks[cdd.toc.last].start = bb + ss*75 + mm*60*75 + pregap;
@@ -1326,6 +1382,7 @@ int cdd_load(char *filename, char *header)
 
     /* CD mounted */
     cdd.loaded = isMSDfile ? HW_ADDON_MEGASD : HW_ADDON_MEGACD;
+    cdd_mark_streams();
 
     /* Automatically try to open associated subcode data file */
     memcpy(&fname[strlen(fname) - 4], ".sub", 4);
@@ -1346,7 +1403,7 @@ void cdd_unload(void)
     int i;
 
 #if defined(USE_LIBCHDR)
-    chd_close(cdd.chd.file);
+    cdio_chd_close(cdd.chd.file);
     if (cdd.chd.hunk)
       free(cdd.chd.hunk);
 #endif
@@ -1415,7 +1472,7 @@ void cdd_read_data(uint8 *dst, uint8 *subheader)
       /* update CHD hunk cache if necessary */
       if (hunknum != cdd.chd.hunknum)
       {
-        chd_read(cdd.chd.file, hunknum, cdd.chd.hunk);
+        cdio_chd_read(cdd.chd.file, hunknum, cdd.chd.hunk);
         cdd.chd.hunknum = hunknum;
       }
 
@@ -1590,7 +1647,7 @@ void cdd_read_audio(unsigned int samples)
         /* update CHD hunk cache if necessary */
         if (hunknum != cdd.chd.hunknum)
         {
-          chd_read(cdd.chd.file, hunknum, cdd.chd.hunk);
+          cdio_chd_read(cdd.chd.file, hunknum, cdd.chd.hunk);
           cdd.chd.hunknum = hunknum;
         }
 
@@ -1724,7 +1781,19 @@ void cdd_read_audio(unsigned int samples)
 #else
       uint8 *ptr = cdc.ram;
 #endif
-      cdStreamRead(cdc.ram, 1, samples * 4, cdd.toc.tracks[cdd.index].fd);
+      {
+        /* VitAdhoc: a file that ends early plays silence for the rest (the buffer held the last bytes read before: noise), and big endian
+           raw audio is swapped to little endian */
+        const size_t want = (size_t)samples * 4;
+        const size_t got = cdStreamRead(cdc.ram, 1, want, cdd.toc.tracks[cdd.index].fd);
+        if (got < want) memset((uint8 *)cdc.ram + got, 0, want - got);
+        if (cdd.toc.tracks[cdd.index].bigEndian)
+        {
+          uint8 *b = (uint8 *)cdc.ram;
+          size_t k;
+          for (k = 0; k + 1 < want; k += 2) { uint8 t = b[k]; b[k] = b[k + 1]; b[k + 1] = t; }
+        }
+      }
 
       /* process 16-bit (little-endian) stereo samples */
       for (i=0; i<samples; i++)

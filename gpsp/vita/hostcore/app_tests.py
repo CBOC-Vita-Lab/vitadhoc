@@ -1487,7 +1487,8 @@ def t_gb_type(S):
     S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GB code="),
             "no override: the cartridge header decides (a Game Boy)")
     # three presses: Game Boy, Game Boy Color, back to Auto
-    steps = menu_pick(4, wait=60) + set_down(20) + "+10:shot=row.png\n"
+    # (21 DOWN: the Quick response row comes before the game's own Game Boy type for a Game Boy game)
+    steps = menu_pick(4, wait=60) + set_down(21) + "+10:shot=row.png\n"
     r = S.run("gb_type_row", steps + "+6:cross\n+30:quit\n", autoboot="gbsave.gb",
               extra={"gb_override.txt": keep})
     S.clean(r)

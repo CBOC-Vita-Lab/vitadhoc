@@ -11,7 +11,7 @@ CORE_SRCS := \
 	input_hw/activator.c input_hw/gamepad.c input_hw/graphic_board.c input_hw/input.c input_hw/lightgun.c \
 	input_hw/mouse.c input_hw/paddle.c input_hw/smash.c input_hw/sportspad.c input_hw/teamplayer.c \
 	input_hw/terebi_oekaki.c input_hw/xe_1ap.c \
-	cd_hw/cd_cart.c cd_hw/cdc.c cd_hw/cdd.c cd_hw/gfx.c cd_hw/pcm.c cd_hw/scd.c
+	cd_hw/cd_cart.c cd_hw/cdc.c cd_hw/cdd.c cd_hw/cdio.c cd_hw/gfx.c cd_hw/pcm.c cd_hw/scd.c
 
 # Sega CD disc readers: libchdr (BSD-3) and what it needs (lzma public domain, zlib licence, zstd BSD-3, dr_flac public domain / MIT-0),
 # tremor (Ogg Vorbis, BSD). Compiled with the same flags as the core.

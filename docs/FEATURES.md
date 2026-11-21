@@ -207,6 +207,19 @@ over budget); fast forward, rewind and Steady pacing's half mode show the
 newest picture. Off in every link session, local two-player play and the
 bench pair. The log has a `handoff:` line every second (gate step `census`).
 
+## Quick response
+
+Settings > Gameplay > Quick response (Off / Auto / On; `config.ini` `quick_response`; per game: Settings > Quick response (this game), `games/<ROM>.ini`
+`quick_response`), for Game Boy, Game Boy Color, NES and WonderSwan, and the same row in the Sega player. A game reads the buttons and shows their
+effect a frame later; with Quick response the app works the next frame out ahead and shows that one: the real frame runs without being drawn (its sound
+goes out), the machine is saved, the next frame runs drawn but silent with the same buttons, and the machine goes back to the saved one. The game runs
+exactly as without it (sound, memory, saved state and battery file identical on every test game, PC build), so states, rewind, cheats and saves are
+unaffected; a button press shows one frame sooner (test cartridges: Game Boy 2 frames to 1, NES 1 to 0, WonderSwan 3 to 2). Auto (the default) starts it only
+while the frames are cheap enough for the second one (the projected cost is at most half a frame; it stops over 70 % or after 3 late frames in 120) and
+needs Smooth hand-over; On forces it and can drop frames in a heavy game. It is off in every link session, online, in local two-player play, in fast
+forward, in rewind, in Steady pacing's half mode and while a menu is open. The log has an `ahead:` line every second. Not offered for Game Boy Advance
+(Known Issues).
+
 ## The look governor
 
 Image quality Auto (the default) is xBRZ at the starting size of each

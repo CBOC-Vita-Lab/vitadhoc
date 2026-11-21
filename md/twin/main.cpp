@@ -327,7 +327,7 @@ static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t
 int main(int argc, char **argv)
 {
 	std::vector<unsigned> peeks;
-	int reset_at = -1, vdpthr = 0, vdpcheck = 0, vdpstress = 0;
+	int reset_at = -1, vdpthr = 0, vdpcheck = 0, vdpstress = 0, cdthr = 0, cdcheck = 0, cdstress = 0;
 	const char *rom = NULL, *hashes = NULL, *srm = NULL, *save_st = NULL, *load_st = NULL, *cheat = NULL, *frame_hashes = NULL, *full_hashes = NULL;
 	int proof_n = -1, proof_m = 0;
 	int frames = 1500, checkpoint = 100, region = 0, system = 0, padtype = 0, roundtrip = 0, state_frame = 300, quiet = 0, norender = 0, info = 0;
@@ -366,6 +366,9 @@ int main(int argc, char **argv)
 		else if (a == "--vdp-thread") vdpthr = 1;
 		else if (a == "--vdp-check") { vdpthr = 1; vdpcheck = 1; }
 		else if (a == "--vdp-stress") { vdpthr = 1; vdpstress = 1; }
+		else if (a == "--cd-thread") cdthr = 1;                                  // the Sega CD read-ahead thread (cd_hw/cdio.c)
+		else if (a == "--cd-check") { cdthr = 1; cdcheck = 1; }                 // ... and every block it serves is compared with a direct read
+		else if (a == "--cd-stress") { cdthr = 1; cdstress = 1; cdcheck = 1; }  // ... with random pauses in the helper and answers ignored at random
 		else if (a == "--quiet") quiet = 1;
 		else if (a == "--disc") g_disc = need();
 		else if (a == "--bios") g_bios = need();
@@ -405,7 +408,8 @@ int main(int argc, char **argv)
 		size_t e = opts[i].find('=');
 		if (e == std::string::npos || md_host_set_option(opts[i].substr(0, e).c_str(), atoi(opts[i].c_str() + e + 1))) { fprintf(stderr, "bad option %s\n", opts[i].c_str()); return 2; }
 	}
-	if (vdpthr) { md_host_set_threads(&g_tops, MD_THREAD_VDP | MD_THREAD_VDP_SMS); md_host_vdp_debug(vdpcheck, vdpstress); }
+	if (vdpthr || cdthr) { md_host_set_threads(&g_tops, (vdpthr ? MD_THREAD_VDP | MD_THREAD_VDP_SMS : 0u) | (cdthr ? MD_THREAD_DISC : 0u)); md_host_vdp_debug(vdpcheck, vdpstress); }
+	if (cdthr) md_host_cd_debug(cdcheck, cdstress);
 	md_host_set_seed(seed);
 	if (arate) md_host_set_audio_rate(arate);
 	if (region) md_host_set_region(region);
@@ -641,6 +645,11 @@ int main(int argc, char **argv)
 		unsigned long c[11];
 		if (md_host_vdp_census(c)) printf("VDPW %s records=%lu words=%lu status_joins=%lu joins=%lu join_wait_polls=%lu full_waits=%lu wakes=%lu vram_blocks=%lu vram_alls=%lu vdp_us=%lu join_wait_us=%lu check_errors=%lu\n", bn, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], md_host_vdp_check_errors());
 		else printf("VDPW %s worker off\n", bn);
+	}
+	if (cdthr && g_disc) {
+		unsigned long c[9];
+		md_host_cd_census(c);
+		printf("CDIO %s helper=%d reads=%lu hits=%lu misses=%lu waits=%lu miss_us=%lu helper_blocks=%lu helper_us=%lu unused=%lu check_errors=%lu\n", bn, md_host_cd_helper(), c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]);
 	}
 	md_host_shutdown();
 	return 0;

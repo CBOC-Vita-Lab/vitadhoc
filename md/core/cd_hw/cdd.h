@@ -83,6 +83,7 @@ typedef struct
   int type;
   int loopEnabled;
   int loopOffset;
+  int bigEndian;      /* VitAdhoc: a raw audio track written as big endian samples (FILE ... MOTOROLA) */
 } track_t; 
 
 /* CD TOC */

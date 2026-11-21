@@ -374,7 +374,7 @@ void MdPlayer::settings_load()
 	pad_type_ = clampi(pl.get_int("pad_type", 0), 0, 2);
 	sms_border_ = clampi(pl.get_int("sms_border", 0), 0, 2);
 	gg_lcd_ = clampi(pl.get_int("gg_lcd", 0), 0, 10);
-	ram_cart_ = clampi(pl.get_int("ram_cart", 0), 0, 6);
+	ram_cart_ = clampi(pl.get_int("ram_cart", 6), 0, 6);
 	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
 	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
 	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
@@ -579,10 +579,10 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	if (scd_) {
 		/* A Sega CD disc is streamed from the card by the core, never held in memory, and needs the player's own BIOS. What the machine is built
 		 * with (the region the BIOS is told, the RAM cartridge) is read now: the disc is loaded once. */
-		{ Ini p0; p0.load(path_join(cfg_dir(), "player.ini")); region_ = clampi(p0.get_int("region", 0), 0, 3); ram_cart_ = clampi(p0.get_int("ram_cart", 0), 0, 6); }
-		if (linked()) { region_ = 0; ram_cart_ = 0; }          /* two consoles run one machine: the system's own values */
+		{ Ini p0; p0.load(path_join(cfg_dir(), "player.ini")); region_ = clampi(p0.get_int("region", 0), 0, 3); ram_cart_ = clampi(p0.get_int("ram_cart", 6), 0, 6); }
+		if (linked()) region_ = 0;          /* two consoles run one machine: the system's own values (Auto region, the default 512 KB RAM cartridge on both) */
 		md_host_set_region(region_);
-		md_host_set_option("ram_cart", ram_cart_);
+		md_host_set_option("ram_cart", linked() ? 6 : ram_cart_);
 		std::string bl;
 		const int nb = load_cd_bios(root, rom_, &bl);
 		if (!bl.empty()) logf("%s", bl.c_str());
@@ -599,13 +599,15 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		if (md_host_load_disc(rom_.c_str(), err, sizeof err)) {
 			logf("load failed: %s\n", err);
 			res.fatal1 = "This game could not be started.";
-			res.fatal2 = std::string(err) + ". Sega CD: check the disc image (.cue with its .bin files, .chd or .iso) and that its region has a BIOS.";
+			{ char found[64]; md_host_cd_bios_regions(found, sizeof found);
+			res.fatal2 = std::string(err) + ". Sega CD: check the disc image (.cue with its .bin files, .chd or .iso). BIOS found: " + found + "."; }
 			SessionReport r = session_.finish(EXIT_ERROR);
 			r.notice = std::string("This game could not be started: ") + err;
 			session_write(root_, r);
 			return res;
 		}
 		logf("%s\n", md_host_cd_info());
+		if (md_host_cd_notice()[0]) notice(md_host_cd_notice(), NOTICE_ERROR, true);           /* the disc's region has no BIOS of its own here: say what to add */
 	} else
 	if (!file_read(rom_, romb, 12u << 20) || romb.empty()) { res.fatal1 = "This game could not be started."; res.fatal2 = "The game file could not be read."; return res; }
 	if (!scd_ && !req_.patch_path.empty()) {
@@ -673,9 +675,11 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	{
 		std::vector<uint8_t>().swap(romb);
 		std::vector<uint8_t> sv;
-		if (file_exists(srm_) && file_read(srm_, sv, 1u << 20) && !sv.empty()) {
+		if (file_exists(srm_) && file_read(srm_, sv, 2u << 20) && !sv.empty()) {
 			const size_t used = md_host_sram_write(sv.data(), sv.size());
 			logf("battery save loaded: %u bytes of %u (%s)\n", (unsigned) used, (unsigned) sv.size(), srm_.c_str());
+			if (scd_ && md_host_cd_kept_cartridges())
+				logf("the save holds %d RAM cartridge image(s) of other sizes than the one fitted: kept untouched, written back with every save\n", md_host_cd_kept_cartridges());
 		}
 	}
 
@@ -768,7 +772,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			std::vector<std::string> rc;
 			rc.push_back("Off"); rc.push_back("16 KB"); rc.push_back("32 KB"); rc.push_back("64 KB"); rc.push_back("128 KB"); rc.push_back("256 KB"); rc.push_back("512 KB");
 			menu_.add_host_row(Menu::PAGE_SPEED, ROW_RAMCART, "RAM cartridge",
-			                   "Extra save memory some games can use besides the console's built in 8 KB. 128 KB is the one Sega sold. Takes effect the next time the game starts. Two players use none.",
+			                   "Extra save memory some games can use besides the console's built in 8 KB. 512 KB is the usual setting; 128 KB is the one Sega sold; Off leaves the slot empty. A save made with another size is kept and comes back when you choose that size again. Takes effect the next time the game starts. Two players always use 512 KB.",
 			                   rc, ram_cart_);
 		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "Region",
@@ -1146,6 +1150,16 @@ void MdPlayer::srm_result(int r, const char *how, uint64_t now)
 void MdPlayer::srm_watch(uint64_t now)
 {
 	if (linked()) return;      /* the machine holds the host's game: nothing of it is this console's save (the host's is committed by the session) */
+	if (const unsigned gen = md_host_sram_generation()) {
+		/* a disc: the core counts every write to the backup RAM and the cartridge, so nothing of the (up to 520 KB) save is read or hashed
+		 * unless something wrote; the host's dirty answer is a CRC compare done only then */
+		if (gen != srm_gen_ || srm_recheck_) {
+			if (gen != srm_gen_) srm_last_change_ = now;
+			srm_gen_ = gen;
+			srm_recheck_ = false;
+			srm_dirty_ = md_host_sram_dirty() != 0;
+		}
+	} else
 	if ((++srm_pass_ & 7) == 0 || srm_recheck_) {
 		const size_t sz = md_host_sram_size();
 		const bool recheck = srm_recheck_;

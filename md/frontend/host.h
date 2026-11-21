@@ -56,8 +56,10 @@ enum { MD_PIXEL_RGB565 = 1 };
  * .bin or .iso (2048 byte cooked sectors or 2352 byte raw ones), and .chd (CD CHD, zlib / lzma / flac / zstd codecs). The machine is a Mega
  * Drive with the Mega CD add-on: md_host_system() says MD_SYS_MD (the picture, the pads and the wide view are those of the Mega Drive), and
  * md_host_is_cd() says 1. Everything else in this API works as for a cartridge, with these differences:
- *  - the save is the internal backup RAM (8 KB) followed by the RAM cartridge, when one is enabled (md_host_set_option "ram_cart"):
- *    md_host_sram_* hold that image, always at its full size (the BIOS formats it; an unformatted one is formatted at load);
+ *  - the save is the internal backup RAM (8 KB) followed by the RAM cartridge, when one is fitted (md_host_set_option "ram_cart", 512 KB by
+ *    default as in the upstream core; Off is an empty slot that reads $FF): md_host_sram_* hold that image, always at its full size (the BIOS
+ *    formats it; an unformatted one is formatted at load). Images of a cartridge of another size that a file held are kept and written back
+ *    after it (md_host_cd_kept_cartridges), so changing the size never loses a save;
  *  - the state is about 1.1 MB (two 68000s' RAM, the PCM chip's RAM, the CD controller), the file the player writes is that size;
  *  - cheats are work RAM patches only (the disc has no cartridge ROM to patch);
  *  - two consoles in one session need the same BIOS and the same disc (md_host_rom_crc is the disc's identity: the first 2 KB of the
@@ -94,7 +96,16 @@ int md_host_cd_test_toc(int track, int *start, int *end, int *type);          /*
 int md_host_cd_test_data(int lba, uint8_t *out2048);                           /* 0 ok */
 int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2]);   /* 0 ok: reads `samples` stereo samples from sector `lba` of the track */
 /* option (md_host_set_option) "ram_cart" 0..6, set before md_host_load_disc: the RAM cartridge a game can save to besides the internal 8 KB:
- * 0 off (default), 1..6 = 16 KB, 32 KB, 64 KB, 128 KB (the size Sega sold), 256 KB, 512 KB. */
+ * 0 off (an empty cartridge slot), 1..6 = 16 KB, 32 KB, 64 KB, 128 KB (the size Sega sold), 256 KB, 512 KB (default, as the upstream core). */
+/* Cartridge images of other sizes than the fitted one that the save file loaded by md_host_sram_write held: they are kept and written back
+ * with every save. Returns their number. */
+int md_host_cd_kept_cartridges(void);
+/* The region of the loaded disc from its security block (1 USA, 2 Europe, 3 Japan; 0 without a disc), a notice to show when the game starts
+ * ("" when there is nothing to say: for example that the only BIOS found is of another region, so the game may stop at the BIOS screen and
+ * what to add), and the regions a BIOS was handed over for as text ("Europe and Japan", "none"). */
+int md_host_cd_disc_region(void);
+const char *md_host_cd_notice(void);
+size_t md_host_cd_bios_regions(char *out, size_t n);
 
 /* ---- worker threads ---------------------------------------------------------------------------------------- */
 
@@ -104,6 +115,7 @@ int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2]);   /
  * idle whenever a host call returns, so every other API call stays valid from the calling thread only. Returns 0. */
 #define MD_THREAD_VDP 1u          /* the VDP line renderer on its own thread (Mega Drive) */
 #define MD_THREAD_VDP_SMS 2u      /* ... also for Master System / Game Gear / SG-1000 (with MD_THREAD_VDP) */
+#define MD_THREAD_DISC 4u         /* a Sega CD: read the disc ahead and decode CHD hunks on a helper thread (worker id MD_WORKER_DISC): the emulating thread only copies finished blocks */
 struct md_thread_ops;
 int md_host_set_threads(const struct md_thread_ops *ops, unsigned mask);
 /* Debug and census for the VDP worker (the Linux twin's --vdp-check / --vdp-stress / census line). check: compare the worker's copy of the
@@ -113,7 +125,16 @@ void md_host_vdp_debug(int check, int stress);
 unsigned long md_host_vdp_check_errors(void);
 /* census of the worker since it started: records queued, status joins, frame joins, polls spent waiting, queue full waits, wake-ups,
  * VRAM patterns / whole VRAM images sent. Returns 0 when the worker is off. */
-int md_host_vdp_census(unsigned long out[11]);   /* [9] worker busy us, [10] join wait us: 0 without now_us */
+int md_host_vdp_census(unsigned long out[11]);
+/* The disc helper's census since the disc was loaded (all 0 for a cartridge): [0] reads that touched a streamed file or the CHD, [1] served from a
+ * block the helper had finished, [2] misses (read or decoded by the emulating thread), [3] waits for a block the helper was on, [4] us the
+ * emulating thread spent in misses and waits, [5] blocks the helper finished, [6] us the helper was busy, [7] blocks read ahead and never used,
+ * [8] cache answers that differed from a direct read (debug check; always 0). */
+void md_host_cd_census(unsigned long out[9]);
+int md_host_cd_helper(void);                       /* 1 while the read-ahead thread runs */
+/* debug for the test suite: check = compare every block the cache serves with a direct read; stress = random pauses in the helper and cache answers
+ * ignored at random (more waits and misses, the same bytes). */
+void md_host_cd_debug(int check, int stress);   /* [9] worker busy us, [10] join wait us: 0 without now_us */
 
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 
@@ -283,6 +304,9 @@ void md_host_set_audio_enabled(int on);    /* 0: silence (the frames still run) 
  * and flash cartridges use the same buffer. Master System / Game Gear: the cartridge RAM (up to 32 KB). */
 size_t md_host_sram_size(void);            /* what a save would write now (0 = nothing / no battery) */
 size_t md_host_sram_capacity(void);        /* 0x10000 when the cartridge has save RAM, else 0 */
+/* a number that changes whenever the save RAM may have changed (a disc: every write to its backup RAM or cartridge; 0 for a cartridge, whose RAM
+ * has to be compared): lets a player skip reading and hashing up to 520 KB. */
+unsigned md_host_sram_generation(void);
 size_t md_host_sram_read(uint8_t *out, size_t cap);    /* copies md_host_sram_size() bytes; returns the number */
 /* Copies a saved image in (min(n, capacity) bytes; call right after load) and counts it as saved. Returns the bytes used. */
 size_t md_host_sram_write(const uint8_t *data, size_t n);

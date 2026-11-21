@@ -31,7 +31,7 @@ $(B)/md_twin: main.cpp $(B)/mdcore.o $(FE)/host.h $(FE)/wide.h $(FE)/wide.cpp $(
 
 # cd_test: the Sega CD BIOS check and the disc readers against the synthetic discs (tools/mkscd.py); run by selftest.sh
 $(B)/cd_test: cd_test.cpp $(B)/mdcore.o $(FE)/host.h
-	$(CXX) -O1 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -o $@ cd_test.cpp $(B)/mdcore.o -lm -pthread
+	$(CXX) -O1 -g -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../core -o $@ cd_test.cpp $(B)/mdcore.o -lm -pthread
 
 # state loader fuzz harness (tools/statefuzz/statefuzz.sh builds it under ASan + UBSan: CXX="g++ -fsanitize=..." with the core built the same way)
 $(B)/statefuzz: statefuzz.cpp ../../tools/statefuzz/sf_common.h $(B)/mdcore.o $(FE)/host.h

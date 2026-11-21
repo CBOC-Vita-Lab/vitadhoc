@@ -389,6 +389,38 @@ which is what the worker is for.
 Measured on the host twin: the VDP worker is bit-identical to the single thread (hashes of picture, sound, state and RAM, 96 ROMs, x86 and
 armhf under qemu). Worker busy time, host x86_64 wall clock, an SMS homebrew: about 41 microseconds a frame, joins about 23 microseconds a frame.
 
+### Quick response in the app: Game Boy, Game Boy Color, NES, WonderSwan, and why not Game Boy Advance (2.0)
+
+Nothing here has run on a Vita. host = x86_64 callgrind instructions per frame inside `fe_host_run_frame` (the real frame, the state copy, the look-ahead
+frame and the way back; the picture work of the twin is not in it; 30-frame windows from frame 150; `gpsp/vita/hostcore/ahead_cost.sh`); model = those
+instructions at 444 MHz, IPC 1.0 (2.26 ms per million) / IPC 0.7 (3.21 ms per million), no ARM factor, as in the Sega section below.
+
+| Game (test cartridges) | Plain: host, model | Run-ahead: host, model | Ratio host |
+|---|---|---|---|
+| Game Boy cpu_instrs | 1.66 M, 3.7 / 5.3 ms | 2.83 M, 6.4 / 9.1 ms | 1.71 |
+| Game Boy Color acid2 (a still picture: the CPU idles) | 0.82 M, 1.9 / 2.6 ms | 1.00 M, 2.3 / 3.2 ms | 1.21 |
+| NES nes15, wide view Auto | 5.17 M, 11.7 / 16.6 ms | 8.67 M, 19.6 / 27.8 ms | 1.68 |
+| NES nes15, wide view Off | 2.99 M, 6.8 / 9.6 ms | 5.86 M, 13.2 / 18.8 ms | 1.96 |
+| WonderSwan WSHWTest | 3.04 M, 6.9 / 9.8 ms | 3.75 M, 8.5 / 12.0 ms | 1.23 |
+| WonderSwan spritepriority | 5.93 M, 13.4 / 19.0 ms | 8.90 M, 20.1 / 28.6 ms | 1.50 |
+| Game Boy Advance, three attract screens of private games (probe) | 1.29 to 1.41 M, 2.9 to 3.2 / 4.1 to 4.5 ms | 2.87 to 2.98 M, 6.5 to 6.7 / 9.2 to 9.6 ms | 2.07 to 2.23 |
+
+A run-ahead frame costs between 1.2 and 2 times a plain one: the real frame is not drawn and the look-ahead frame makes no sound, so it is less than two
+frames. The plan's rule (half a frame, 8.3 ms) is met by the Game Boy and the lighter WonderSwan cartridge at IPC 1.0 and missed by the NES and the
+busier WonderSwan one, which is why the setting is Auto: the governor (`pk_ahead.h`) starts it only when the projected cost is at most half a frame
+and stops it when frames run late, so a game that does not fit runs plain (the Game Boy and the lighter games gain it, a heavy NES game with the wide view
+does not). The numbers are a model, not a measurement on the console. qemu (armhf twin under qemu-arm) cannot resolve the ratio here: its time is the
+twin's picture work, 125 to 130 ms a frame, and run-ahead added 0.3 to 5 ms to it (Game Boy 5.0 ms, NES 1.8 ms, WonderSwan below the noise).
+
+State sizes: Game Boy about 59 KB plus the carry block (64 bytes), NES about 23 KB plus up to 18 KB of carry (the sound filter history and buffer), WonderSwan about 71 KB; at these sizes a copy is a few
+hundredths of a millisecond (estimate, not measured on the console).
+
+Game Boy Advance is not offered. The probe (`GBADHOC_AHEAD_GBA_PROBE=1`, twin only: each frame also saves, runs a second frame and loads) shows 2.1 to 2.2 times
+a plain frame on attract screens, where a play scene costs more; the state is 416 KB and loading it throws away the translated code (the whole cache
+unless the load keeps the ROM's, as the wide view's scout does; the host numbers above do not show the cost of translating it again on the console, which is
+the reason to expect worse), and the heaviest games already use most of the Vita's frame. The machine-identical proof was not run for it. The setting is
+hidden for Game Boy Advance games, and the plan's rule says no.
+
 ### Sega: Quick response (run-ahead) and the sprite pass of frames nobody sees (2.0)
 
 Nothing here has run on a Vita. host = x86_64 callgrind instructions per frame inside `md_host_run_frame` / `md_host_run_frame_ahead` (120 frames, the

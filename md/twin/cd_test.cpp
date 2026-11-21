@@ -6,7 +6,27 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <pthread.h>
+#include <semaphore.h>
+#include <sched.h>
+#include <time.h>
 #include "host.h"
+#include "thread_ops.h"
+
+/* threads for the disc read-ahead helper (the Vita hands over sceKernel threads instead) */
+static pthread_t g_wthr[MD_WORKERS];
+struct SpawnArg { void (*fn)(void *); void *arg; };
+static SpawnArg g_sarg[MD_WORKERS];
+static void *thr_main(void *p) { SpawnArg *a = (SpawnArg *)p; a->fn(a->arg); return NULL; }
+static void *t_sem_create(void *) { sem_t *s = new sem_t; sem_init(s, 0, 0); return s; }
+static void t_sem_destroy(void *, void *s) { sem_destroy((sem_t *)s); delete (sem_t *)s; }
+static void t_sem_post(void *, void *s) { sem_post((sem_t *)s); }
+static void t_sem_wait(void *, void *s) { while (sem_wait((sem_t *)s) != 0) {} }
+static int t_spawn(void *, int id, void (*fn)(void *), void *arg) { g_sarg[id].fn = fn; g_sarg[id].arg = arg; return pthread_create(&g_wthr[id], NULL, thr_main, &g_sarg[id]); }
+static void t_wait_end(void *, int id) { pthread_join(g_wthr[id], NULL); }
+static void t_yield(void *) { sched_yield(); }
+static unsigned long long t_now(void *) { timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (unsigned long long) ts.tv_sec * 1000000ull + (unsigned long long) ts.tv_nsec / 1000; }
+static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, t_now };
 
 static int fails = 0, checks = 0;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL  %s:%d  ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -125,6 +145,24 @@ int main(int argc, char **argv)
 	disc("multi.cue", true);
 	disc("wavs.cue", true);
 	disc("disc.chd", true);
+	/* B8: a BOM and tab separators, mixed-case extensions, long lines and paths, Windows separators, a device-style name, MOTOROLA audio */
+	for (auto f : {"bomtab.cue", "Mixed.Cue", "longname.cue", "winpath.cue", "ux0:Dev.cue", "motorola.cue"}) disc(f, true);
+	/* B7: compressed CHDs (chdman: LZMA, zlib, zstd, FLAC, a mix of them, a data + two audio tracks), the codecs libchdr has */
+	for (auto f : {"UPPER.CHD", "chd_lzma.chd", "chd_zlib.chd", "chd_zstd.chd", "chd_flac.chd", "chd_mixed.chd", "chd_multi.chd"}) {
+		if (slurp(D + "/" + f).empty()) { printf("note  %s not generated (no chdman)\n", f); continue; }
+		disc(f, true);
+	}
+	/* the same discs again with the read-ahead thread, then with its stress mode: the answers are the same bytes */
+	for (int mode = 1; mode <= 2; mode++) {
+		md_host_set_threads(&g_tops, MD_THREAD_DISC);
+		md_host_cd_debug(1, mode == 2);
+		for (auto f : {"single.cue", "multi.cue", "wavs.cue", "disc.chd", "chd_lzma.chd", "chd_zlib.chd", "chd_zstd.chd", "chd_flac.chd", "chd_multi.chd"}) {
+			if (slurp(D + "/" + f).empty()) continue;
+			disc(f, true);
+		}
+		md_host_cd_debug(0, 0);
+		md_host_set_threads(NULL, 0);
+	}
 	if (!slurp(D + "/oggs.cue").empty()) disc("oggs.cue", false);
 	else printf("note  oggs.cue not generated (no ffmpeg): Ogg reader not checked\n");
 

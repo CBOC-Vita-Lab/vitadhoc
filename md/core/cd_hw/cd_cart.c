@@ -41,6 +41,10 @@
 /*--------------------------------------------------------------------------*/
 /* backup RAM cartridge (max. 512KB)                                        */
 /*--------------------------------------------------------------------------*/
+/* VitAdhoc: counts every write to the backup RAM (scd.c) and the RAM cartridge, so that the player can tell "the save may have changed" without
+ * reading and hashing up to 520 KB (md_host_sram_generation) */
+unsigned int md_cd_save_gen;
+
 static unsigned int cart_ram_read_byte(unsigned int address)
 {
   /* LSB only */
@@ -63,14 +67,24 @@ static void cart_ram_write_byte(unsigned int address, unsigned int data)
   if (address & 1)
   {
     scd.cartridge.area[(address >> 1) & scd.cartridge.mask] = data;
+    md_cd_save_gen++;
   }
 }
 
 static void cart_ram_write_word(unsigned int address, unsigned int data)
 {
   scd.cartridge.area[(address >> 1) & scd.cartridge.mask] = data & 0xff;
+  md_cd_save_gen++;
 }
 
+
+/*--------------------------------------------------------------------------*/
+/* no cartridge in the slot (VitAdhoc: RAM cartridge "Off")                  */
+/*--------------------------------------------------------------------------*/
+/* An empty cartridge port is not a ROM cartridge: the BIOS reads the RAM cartridge's size id at $400001 and an empty slot answers $FF there
+ * (as everywhere else in $400000-$7FFFFF); nothing is writable. */
+static unsigned int cart_none_read_byte(unsigned int address) { return 0xff; }
+static unsigned int cart_none_read_word(unsigned int address) { return 0xffff; }
 
 /*--------------------------------------------------------------------------*/
 /* backup RAM cartridge ID                                                  */
@@ -243,24 +257,25 @@ void cd_cart_init(void)
       zbank_memory_map[i].write  = cart_prot_write_byte;
     }
   }
-  else
+  else if (scd.cartridge.boot)
   {
     /* initialize ROM cartridge */
     md_cart_init();
-
-    /* when booting from CD, cartridge is mapped to $400000-$7FFFFF */
-    if (!scd.cartridge.boot)
+  }
+  else
+  {
+    /* VitAdhoc: booting from CD without a RAM cartridge: the slot is empty. The cartridge port ($400000-$7FFFFF) reads $FF and ignores writes; no
+       cartridge code runs (before, the first byte of the disc header was set up as a one byte ROM cartridge with cartridge SRAM) */
+    for (i=0x40; i<0x80; i++)
     {
-      for (i=0; i<0x40; i++)
-      {
-        m68k.memory_map[i+0x40].base    = m68k.memory_map[i].base;
-        m68k.memory_map[i+0x40].read8   = m68k.memory_map[i].read8;
-        m68k.memory_map[i+0x40].read16  = m68k.memory_map[i].read16;
-        m68k.memory_map[i+0x40].write8  = m68k.memory_map[i].write8;
-        m68k.memory_map[i+0x40].write16 = m68k.memory_map[i].write16;
-        zbank_memory_map[i+0x40].read   = zbank_memory_map[i].read;
-        zbank_memory_map[i+0x40].write  = zbank_memory_map[i].write;
-      }
+      m68k.memory_map[i].base    = NULL;
+      m68k.memory_map[i].read8   = cart_none_read_byte;
+      m68k.memory_map[i].read16  = cart_none_read_word;
+      m68k.memory_map[i].write8  = m68k_unused_8_w;
+      m68k.memory_map[i].write16 = m68k_unused_16_w;
+      zbank_memory_map[i].read   = cart_none_read_byte;
+      zbank_memory_map[i].write  = zbank_unused_w;
     }
+    memset(&sram, 0, sizeof (T_SRAM));
   }
 }

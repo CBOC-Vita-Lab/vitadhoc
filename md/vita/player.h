@@ -404,6 +404,7 @@ private:
 	uint64_t srm_retry_at_ = 0, srm_dirty_since_ = 0, srm_last_change_ = 0, srm_last_write_ = 0;
 	unsigned srm_backoff_s_ = 10;
 	unsigned srm_pass_ = 0;
+	unsigned srm_gen_ = 0;             /* md_host_sram_generation() at the last look (a disc) */
 	bool srm_dirty_ = false, srm_recheck_ = true;
 	uint64_t srm_hash_ = 0;
 	bool srm_hash_valid_ = false;

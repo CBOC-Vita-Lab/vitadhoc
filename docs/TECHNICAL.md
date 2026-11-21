@@ -1600,6 +1600,20 @@ Also in 2.0, from the commit record:
   worked out ahead and shown, and the machine runs exactly as without it (sound, state, memory and battery save equal on 105 test games, PC
   build; a small test cartridge shows a press 1 frame after it plain and 0 frames after it with Quick response). Auto is the default on the
   Master System, Game Gear and SG-1000 and starts only while the game leaves the room; the Mega Drive is Off by default.
+- **Quick response in the app (Game Boy, Game Boy Color, NES, WonderSwan).** The same run-ahead for the cores the app runs itself
+  (`fe_host.c` `gb_ahead_frame`, decision by `playerkit/src/pk_ahead.h` through `gpsp/vita/ahead_glue.cpp`, one frame at a time): real frame
+  undrawn, `gbcore_ahead_save` (the machine's state plus a carry block), the next frame drawn and silent, `gbcore_ahead_load`. What the
+  state formats miss is carried: Game Boy the frame counter, the clock's base and wall-time reading; NES the palette mirrors, the sound
+  filter phase and history, the envelope reload flags, the sweep reload flags, the sample latch (and a mapper restore hook that zeroes a
+  write timer, MMC1 and COOLGIRL, is told not to); WonderSwan the frame count and the orientation detector. Two state loaders were not
+  exact and are fixed (they also make quick loads and rewind landings exact): the Game Boy noise generator's position equal to the output
+  rate was folded to zero, and the NES envelope reload flags were not in the state. Proof: sound, quick save and battery file identical with
+  it forced on and off (`ahead_check.sh`: 33 Game Boy and Game Boy Color, 51 NES, 5 WonderSwan test ROMs, PC build; NES also with the wide view
+  on), the picture shown is the next frame's (`ahead_picture.sh`, middle of the screen: the ambient glow beside it blends over time), a press shows
+  one refresh sooner (`ahead_latency.sh`). One difference remains and is left as it is: the Game Boy renderer's window line counter is counted
+  only while lines are drawn, so after an undrawn real frame it holds another value until the next frame resets it; it is outside the machine's
+  own hash. Off while linked, online, in local two-player play, in fast forward, in rewind, in a menu and in Steady pacing's half mode. The cost
+  and the Game Boy Advance decision: docs/PERFORMANCE.md.
 - **Sega states and rewind come back exactly.** A loaded state, a rewind landing and a quick load now continue exactly as the game that was
   never interrupted (first line of sprites, FIFO flag, PSG changes, EEPROM position, flash save chip included): 105 test games, 4 load
   points, with and without the VDP worker. The first game started after launch no longer differs from the same game started later. Old

@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 /* worker ids */
-enum { MD_WORKER_VDP = 0, MD_WORKER_FM = 1, MD_WORKERS = 2 };
+enum { MD_WORKER_VDP = 0, MD_WORKER_FM = 1, MD_WORKER_DISC = 2, MD_WORKERS = 3 };      /* DISC: the Sega CD's read-ahead (cd_hw/cdio.c) */
 
 typedef struct md_thread_ops {
 	void *user;

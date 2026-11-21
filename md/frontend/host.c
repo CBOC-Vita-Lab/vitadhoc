@@ -18,6 +18,8 @@ char GG_ROM[256], AR_ROM[256], SK_ROM[256], SK_UPMEM[256], GG_BIOS[256], MD_BIOS
 char CD_BIOS_EU[256], CD_BIOS_US[256], CD_BIOS_JP[256], MS_BIOS_US[256], MS_BIOS_EU[256], MS_BIOS_JP[256];
 
 uint8_t cart_size;   /* the RAM cartridge's size id of the Mega CD (md_host_set_option "ram_cart") */
+extern char cdd_note[200];                /* md/core/cd_hw/cdd.c: what was wrong with the last disc loaded ("" = nothing) */
+extern unsigned int md_cd_save_gen;       /* md/core/cd_hw/cd_cart.c: bumped by every write to the backup RAM and the RAM cartridge */
 extern int md_cd_wanted;                   /* md/core/loadrom.c: a disc is being loaded */
 extern int8 fast_savestates;
 extern void sound_update_fm_function_pointers(void);
@@ -83,9 +85,10 @@ static struct {
 	int wide_req;                        /* the margin the host asked for (md_host_set_wide_margin) */
 	int opt_lcd, opt_vdp_mode, opt_region;
 	/* Sega CD */
-	int cd, opt_ram_cart, cd_bios_wanted, cd_tracks, cd_force_region;
+	int cd, opt_ram_cart, cd_bios_wanted, cd_tracks, cd_force_region, cd_disc_region;
 	uint32_t cd_crc;
-	char cd_info[160], cd_bios_used[80];
+	char cd_info[160], cd_bios_used[80], cd_notice[320];
+	unsigned cd_dirty_gen; int cd_dirty_val, cd_dirty_valid;     /* md_host_sram_dirty for a disc: the answer is kept until a write to the save RAM */
 } G;
 
 /* the BIOS images (one per region, 128 KB each) outlive md_host_init: the player hands them over once */
@@ -146,6 +149,7 @@ static void config_defaults(void)
 	G.opt_fm_preamp = 100; G.opt_psg_preamp = 150; G.opt_lowpass = 0; G.opt_mono = 0;
 	G.opt_interlace = 1; G.opt_sprite_limit = 1; G.opt_sms_border = 0; G.opt_gg_extra = 0; G.opt_overscan = 0; G.opt_gg_band = 0;
 	G.opt_force_dtack = 0; G.opt_addr_error = 1; G.opt_lcd = 0; G.opt_vdp_mode = 0; G.opt_region = 0;
+	G.opt_ram_cart = 6;                 /* the Mega CD's RAM cartridge: 512 KB as the upstream core runs a disc by default (Off is a real empty slot) */
 	G.pad_type[0] = G.pad_type[1] = MD_PAD_AUTO;
 	apply_options_to_config();
 }
@@ -282,6 +286,8 @@ static void ring_push(const int16_t *s, int n)
 	}
 }
 
+static void cd_stash_clear(void);
+
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 
 /* the worker threads (md/core/vdp_thread.c): the platform's thread functions and which workers it wants (kept across md_host_init) */
@@ -292,6 +298,7 @@ int md_host_set_threads(const md_thread_ops *ops, unsigned mask)
 {
 	if (ops) g_ops = *ops; else memset(&g_ops, 0, sizeof g_ops);
 	g_worker_mask = ops ? (mask & (MD_THREAD_VDP | MD_THREAD_VDP_SMS)) : 0;
+	cdio_set_ops(ops ? &g_ops : NULL, ops && (mask & MD_THREAD_DISC));
 	return 0;
 }
 
@@ -307,8 +314,13 @@ int md_host_vdp_census(unsigned long out[11])
 	return 1;
 }
 
+void md_host_cd_census(unsigned long out[9]) { cdio_census(out); }
+int md_host_cd_helper(void) { return cdio_helper_running(); }
+void md_host_cd_debug(int check, int stress) { cdio_debug(check, stress); }
+
 int md_host_init(void)
 {
+	cd_stash_clear();
 	memset(&G, 0, sizeof G);
 	G.inited = 1; G.seed = 1; G.render = 1; G.audio_on = 1; G.audio_rate = MD_AUDIO_RATE;
 	md_rand_seed(G.seed);
@@ -326,10 +338,11 @@ void md_host_unload(void)
 	if (G.loaded) { ggenie_shutdown(); areplay_shutdown(); }
 	vdpw_stop();
 	audio_shutdown();
-	if (G.cd) { cdd_unload(); md_cd_wanted = 0; system_bios &= ~0x10; }      /* the core keeps the boot ROM it loaded: the next disc reads it again (it may be another BIOS) */
+	if (G.cd) { cdio_end(); cdd_unload(); md_cd_wanted = 0; system_bios &= ~0x10; }      /* the core keeps the boot ROM it loaded: the next disc reads it again (it may be another BIOS) */
 	system_hw = 0;
-	G.cd = 0; G.cd_tracks = 0; G.cd_info[0] = 0; G.cd_bios_used[0] = 0;
+	G.cd = 0; G.cd_tracks = 0; G.cd_info[0] = 0; G.cd_bios_used[0] = 0; G.cd_notice[0] = 0; G.cd_disc_region = 0;
 	G.loaded = 0; G.system = 0; G.ncheat = 0; G.rom_src = NULL; G.rom_n = 0; wide_m = 0;
+	cd_stash_clear();
 	free(G.state_scratch); G.state_scratch = NULL; G.state_size = 0;
 	free(G.ahead_state); G.ahead_state = NULL; free(G.ahead_sram); G.ahead_sram = NULL; G.ahead_quiet = 0;
 	G.pad[0] = G.pad[1] = 0;
@@ -589,43 +602,8 @@ int md_host_load_mem(const uint8_t *data, size_t n, const char *name, int system
 
 /* ---- Sega CD ---------------------------------------------------------------------------------------------- */
 
-/* the disc files are read through stdio with a read buffer of their own: a data track is read sector by sector (2 KB), a CD-DA track in
- * bursts, and a multi track disc keeps one file open per track, so the buffer is a moderate 32 KB */
-FILE *md_cd_fopen(const char *path)
-{
-	FILE *f = fopen(path, "rb");
-	if (f) setvbuf(f, NULL, _IOFBF, 32768);
-	return f;
-}
-
-/* The core seeks before every sector it reads. The Vita's C library (newlib) throws the read buffer away on every fseek of a stream whose
- * buffer size was set (and of every stream there: its fstat reports no block size), so a seek followed by a 2 KB read would fetch 32 KB from
- * the card each time. A seek to where the stream already is, or a little further on (the 304 bytes between the user data of two raw
- * sectors), is therefore done by reading on: the buffer stays and the card is read once per 32 KB. Anything else is a real seek. */
-int md_cd_fseek(FILE *f, long off, int whence)
-{
-	if (!f) return -1;
-	if (whence == SEEK_SET && off >= 0) {
-		long cur = ftell(f);
-		if (cur >= 0 && off >= cur && off - cur <= 4096) {
-			uint8_t skip[512];
-			long d = off - cur;
-			while (d > 0) {
-				size_t k = d > (long)sizeof skip ? sizeof skip : (size_t)d;
-				if (fread(skip, 1, k, f) != k) break;
-				d -= (long)k;
-			}
-			if (d == 0) return 0;
-		}
-	}
-	return fseek(f, off, whence);
-}
-
-/* a NULL stream (a cue sheet's track whose FILE line was not understood, a file that is gone) reads nothing */
-size_t md_cd_fread(void *p, size_t size, size_t n, FILE *f) { return f ? fread(p, size, n, f) : 0; }
-long md_cd_ftell(FILE *f) { return f ? ftell(f) : 0; }
-char *md_cd_fgets(char *s, int n, FILE *f) { return f ? fgets(s, n, f) : NULL; }
-int md_cd_fclose(FILE *f) { return f ? fclose(f) : 0; }
+/* the disc files are read through the disc file layer (md/core/cd_hw/cdio.c): positioned reads, a block cache, read-ahead and CHD decoding on a helper
+ * thread when the platform gave one (md_host_set_threads with MD_THREAD_DISC) */
 
 /* the dumps of the console's BIOS that are known: what they are called (the 240p Test Suite's list, the MAME and No-Intro names) and the
  * region they are for. A dump that is not here is accepted when it has the structure of a BIOS (below). */
@@ -782,7 +760,40 @@ static void cd_format_bram(void)
 	if (scd.cartridge.id) cd_format_one(scd.cartridge.area, (size_t)scd.cartridge.mask + 1);
 }
 
-static size_t cd_save_size(void) { return sizeof scd.bram + (scd.cartridge.id ? (size_t)scd.cartridge.mask + 1 : 0); }
+static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
+static uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
+
+/* RAM cartridge images of other sizes than the one fitted now. The save file is the internal backup RAM, the fitted cartridge's image and, after
+ * them, the images of every other size the file held, each followed by its length and the mark "VCRT" (read back to front). A save made with a
+ * 128 KB cartridge, run with 512 KB or with none, keeps the 128 KB image untouched through every write and is the cartridge again when 128 KB is
+ * chosen again; nothing is ever formatted over it. */
+#define CD_STASH_MAX 8
+static struct { size_t n; uint8_t *p; } g_stash[CD_STASH_MAX];
+static void cd_stash_clear(void) { int i; for (i = 0; i < CD_STASH_MAX; i++) { free(g_stash[i].p); g_stash[i].p = NULL; g_stash[i].n = 0; } }
+static void cd_stash_put(const uint8_t *d, size_t n)
+{
+	int i, f = -1;
+	uint8_t *c;
+	if (!n || n > 0x80000) return;
+	for (i = 0; i < CD_STASH_MAX; i++) { if (g_stash[i].p && g_stash[i].n == n) { f = i; break; } if (!g_stash[i].p && f < 0) f = i; }
+	if (f < 0) return;
+	c = (uint8_t *)realloc(g_stash[f].p, n);
+	if (!c) return;
+	memcpy(c, d, n);
+	g_stash[f].p = c; g_stash[f].n = n;
+}
+static int cd_stash_take(size_t n, uint8_t *dst)       /* the image of that size, moved into dst */
+{
+	int i;
+	for (i = 0; i < CD_STASH_MAX; i++)
+		if (g_stash[i].p && g_stash[i].n == n) { memcpy(dst, g_stash[i].p, n); free(g_stash[i].p); g_stash[i].p = NULL; g_stash[i].n = 0; return 1; }
+	return 0;
+}
+static void cd_stash_drop(size_t n) { int i; for (i = 0; i < CD_STASH_MAX; i++) if (g_stash[i].p && g_stash[i].n == n) { free(g_stash[i].p); g_stash[i].p = NULL; g_stash[i].n = 0; } }
+static size_t cd_stash_bytes(void) { size_t t = 0; int i; for (i = 0; i < CD_STASH_MAX; i++) if (g_stash[i].p) t += g_stash[i].n + 8; return t; }
+int md_host_cd_kept_cartridges(void) { int i, n = 0; for (i = 0; i < CD_STASH_MAX; i++) if (g_stash[i].p) n++; return n; }
+
+static size_t cd_save_size(void) { return sizeof scd.bram + (scd.cartridge.id ? (size_t)scd.cartridge.mask + 1 : 0) + cd_stash_bytes(); }
 static uint32_t cd_save_crc(void)
 {
 	unsigned long c = crc32(0, scd.bram, sizeof scd.bram);
@@ -836,12 +847,12 @@ int md_host_cd_test_data(int lba, uint8_t *out)
 int md_host_cd_test_audio(int track, int lba, int samples, int16_t last[2])
 {
 	if (!G.loaded || !G.cd || track < 1 || track > cdd.toc.last || cdd.toc.tracks[track - 1].type) return 1;
-	cdd.index = track - 1;
 	cdd.lba = lba;
 	cdd.fader[0] = cdd.fader[1] = 1024;
 	cdd.audio[0] = cdd.audio[1] = 0;
 	scd.regs[0x36 >> 1].byte.h = 0;
-	cdd_seek_audio(track - 1, lba);
+	cdd_seek_audio(track - 1, lba);        /* (the drive moves on to the track after the seek: with DISABLE_MANY_OGG_OPEN_FILES the seek opens the decoder of a track that is not the current one) */
+	cdd.index = track - 1;
 	cdd_read_audio((unsigned)samples);
 	blip_clear(snd.blips[2]);
 	last[0] = cdd.audio[0]; last[1] = cdd.audio[1];
@@ -861,6 +872,29 @@ static uint32_t cd_disc_crc(void)
 	return (uint32_t)crc32(c, le, 4);
 }
 
+/* the region of a disc: the security block in its header sector ($20B: $64 Europe, $A1 Japan, anything else USA), as the core reads it */
+static int disc_region(const uint8_t *hdr) { return hdr[0x20b] == 0x64 ? 2 : hdr[0x20b] == 0xa1 ? 3 : 1; }
+int md_host_cd_disc_region(void) { return G.loaded && G.cd ? G.cd_disc_region : 0; }
+const char *md_host_cd_notice(void) { return G.loaded && G.cd ? G.cd_notice : ""; }
+/* "Europe and Japan": the regions a BIOS was handed over for */
+size_t md_host_cd_bios_regions(char *out, size_t n)
+{
+	static const char *const nm[3] = { "USA", "Europe", "Japan" };
+	const int total = md_host_cd_bios_count();
+	int i, c = 0;
+	size_t l = 0;
+	if (!out || !n) return 0;
+	out[0] = 0;
+	for (i = 0; i < 3 && l + 1 < n; i++) {
+		if (!g_cd_bios[i]) continue;
+		l += (size_t)snprintf(out + l, n - l, "%s%s", c == 0 ? "" : c + 1 == total ? " and " : ", ", nm[i]);
+		if (l >= n) { l = n - 1; break; }
+		c++;
+	}
+	if (!c) snprintf(out, n, "none");
+	return strlen(out);
+}
+
 int md_host_load_disc(const char *path, char *err, size_t errlen)
 {
 	static const int rd_of[3] = { 1, 2, 3 };       /* config.region_detect: 1 USA, 2 Europe (PAL), 3 Japan (NTSC) */
@@ -876,7 +910,7 @@ int md_host_load_disc(const char *path, char *err, size_t errlen)
 	apply_options_to_config();
 	config.system = 0;
 	config.region_detect = G.opt_region;
-	G.cd_force_region = 0;
+	G.cd_force_region = 0; G.cd_notice[0] = 0; G.cd_disc_region = 0;
 	cart_size = (uint8_t)G.opt_ram_cart;
 	for (attempt = 0; attempt < 2; attempt++) {
 		system_hw = 0;
@@ -889,12 +923,23 @@ int md_host_load_disc(const char *path, char *err, size_t errlen)
 		md_cd_wanted = 1;
 		r = load_rom((char *)path);
 		md_cd_wanted = 0;
+		if (attempt == 0) G.cd_disc_region = disc_region(cart.rom);
 		if (r > 0) break;
 		if (G.cd_bios_wanted && attempt == 0) {
-			/* the disc's region has no BIOS here: the console takes the region of one it has (the BIOS refuses a disc of another region only when it
-			 * is told the console is that region) */
+			/* The BIOS of the region the console was told (Auto: the disc's) is missing. A real BIOS compares the disc's security block with its own
+			 * region and drops to its CD player screen when they differ, so the one that matches is always used when there is one (one BIOS is kept per
+			 * region, so "the matching one of several" is simply the one of that region). When none matches the console takes the region of a BIOS it
+			 * has and starts: the game may stop at the BIOS screen, which the notice says in so many words. */
 			for (k = 0; k < 3 && !g_cd_bios[k]; k++) ;
-			if (k < 3) { config.region_detect = rd_of[k]; G.cd_force_region = rd_of[k]; continue; }
+			if (k < 3) {
+				static const char *const nm[3] = { "USA", "Europe", "Japan" }, *const ex[3] = { "us_scd1_9210.bin", "eu_mcd1_9210.bin", "jp_mcd1_9112.bin" };
+				const int dr = G.cd_disc_region >= 1 && G.cd_disc_region <= 3 ? G.cd_disc_region - 1 : 0;
+				char have[64];
+				md_host_cd_bios_regions(have, sizeof have);
+				snprintf(G.cd_notice, sizeof G.cd_notice, "This is a %s disc but the only BIOS found is %s: the BIOS may stop at its own screen instead of starting the game. Put a %s BIOS (for example %s) in the BIOS folder.",
+					nm[dr], have, nm[dr], ex[dr]);
+				config.region_detect = rd_of[k]; G.cd_force_region = rd_of[k]; continue;
+			}
 		}
 		break;
 	}
@@ -902,20 +947,27 @@ int md_host_load_disc(const char *path, char *err, size_t errlen)
 		/* a disc the core opened and then refused (md_host_unload closes the files of a running disc only; here cdd is the core's own:
 		 * the last thing loaded into this memory was this attempt, never a cartridge's ROM) */
 		if (ext && cdd.loaded) cdd_unload();
-		FAILD(4, G.cd_bios_wanted ? "no BIOS for this disc's region" : "the core could not start this disc");
+		if (cdd_note[0] && !G.cd_bios_wanted) FAILD(3, cdd_note);
+		if (G.cd_bios_wanted) {
+			static const char *const nm[3] = { "USA", "Europe", "Japan" };
+			snprintf(G.cd_notice, sizeof G.cd_notice, "No BIOS for this %s disc", nm[G.cd_disc_region >= 1 && G.cd_disc_region <= 3 ? G.cd_disc_region - 1 : 0]);
+			FAILD(4, G.cd_notice);
+		}
+		FAILD(4, "the core could not start this disc");
 	}
 	/* the data track has to be a file that is open (a cue sheet whose FILE line the core did not understand leaves a track without one) */
-	if (cdd.toc.tracks[0].type && !cdd.toc.tracks[0].fd) { G.cd = 1; FAILD(3, "the disc's data track file is missing"); }      /* (G.cd: md_host_unload closes the disc and forgets the BIOS the core read) */
+	if (cdd.toc.tracks[0].type && !cdd.toc.tracks[0].fd) { G.cd = 1; FAILD(3, cdd_note[0] ? cdd_note : "the disc's data track file is missing"); }      /* (G.cd: md_host_unload closes the disc and forgets the BIOS the core read) */
 	G.cd = 1;
 	G.rom_src = NULL;
-	/* No RAM cartridge: the cartridge slot is empty and reads $FF everywhere, which is also what the core's own "disabled" setting answers
-	 * where the BIOS reads the RAM cartridge's size ($400001). Without this the slot holds a one byte "ROM", the first letter of the disc
-	 * header that load_rom left in cart.rom ('S', 0x53), which cd_cart_init pads with $FF: the BIOS would read a size id of $53. */
-	if (!cart_size) cart.rom[0] = 0xFF;
 	{
 		int rc = boot_common(err, errlen);
 		if (rc) return rc;
 	}
+	if (cdd_note[0]) {                 /* the sheet names a file that is not there (a data track is refused above; an audio track the game plays without) */
+		size_t l = strlen(G.cd_notice);
+		snprintf(G.cd_notice + l, sizeof G.cd_notice - l, "%s%s", l ? " " : "", cdd_note);
+	}
+	cdio_begin();                      /* the read-ahead thread starts once the disc is open (a no-op without a thread from the platform) */
 	G.cd_tracks = cdd.toc.last;
 	G.rom_crc = cd_disc_crc();
 	G.rom_size = (uint32_t)cdd.toc.end * 2048u;
@@ -937,6 +989,7 @@ void md_host_reset(void)
 	if (!G.loaded) return;
 	md_rand_seed(G.seed);
 	gen_reset(0);
+	md_cd_save_gen++;
 }
 
 /* ---- pads ------------------------------------------------------------------------------------------------ */
@@ -1015,6 +1068,7 @@ static int cd_save_ahead(uint8_t *buf, int back)
 	if (!memcmp(buf, scd.bram, a) && (!c || !memcmp(buf + a, scd.cartridge.area, c))) return 0;
 	memcpy(scd.bram, buf, a);
 	if (c) memcpy(scd.cartridge.area, buf + a, c);
+	md_cd_save_gen++;
 	return 1;
 }
 
@@ -1231,10 +1285,23 @@ size_t md_host_sram_read(uint8_t *out, size_t cap)
 {
 	size_t n = md_host_sram_size();
 	if (G.loaded && G.cd) {
-		size_t a = n < sizeof scd.bram ? n : sizeof scd.bram;
+		size_t a = sizeof scd.bram, c = scd.cartridge.id ? (size_t)scd.cartridge.mask + 1 : 0, o = a + c;
+		int i;
 		if (n > cap) return 0;
 		memcpy(out, scd.bram, a);
-		if (n > a) memcpy(out + a, scd.cartridge.area, n - a);
+		if (c) memcpy(out + a, scd.cartridge.area, c);
+		{
+			/* ascending sizes: a selection pass over the few images */
+			size_t last = 0;
+			for (;;) {
+				int best = -1;
+				for (i = 0; i < CD_STASH_MAX; i++) if (g_stash[i].p && g_stash[i].n > last && (best < 0 || g_stash[i].n < g_stash[best].n)) best = i;
+				if (best < 0) break;
+				memcpy(out + o, g_stash[best].p, g_stash[best].n); o += g_stash[best].n;
+				put32(out + o, (uint32_t)g_stash[best].n); memcpy(out + o + 4, "VCRT", 4); o += 8;
+				last = g_stash[best].n;
+			}
+		}
 		return n;
 	}
 	if (n > cap) n = cap;
@@ -1245,17 +1312,31 @@ size_t md_host_sram_read(uint8_t *out, size_t cap)
 size_t md_host_sram_write(const uint8_t *data, size_t n)
 {
 	if (G.loaded && G.cd) {
-		/* the internal backup RAM, then the RAM cartridge's; an image that is not formatted is left as the BIOS finds it (formatted at load) */
-		size_t a = n < sizeof scd.bram ? n : sizeof scd.bram, used = a;
-		if (a) memcpy(scd.bram, data, a);
-		if (scd.cartridge.id && n > sizeof scd.bram) {
-			size_t c = n - sizeof scd.bram, cap = (size_t)scd.cartridge.mask + 1;
-			if (c > cap) c = cap;
-			memcpy(scd.cartridge.area, data + sizeof scd.bram, c);
-			used += c;
+		/* the internal backup RAM, then the RAM cartridge's image, then the images of other sizes (cd_stash_*); an image that is not formatted is left
+		 * as the BIOS finds it (formatted at load). A cartridge image of another size than the one fitted is kept aside, never loaded into the wrong
+		 * size (which would be formatted over) and written back with the next save. */
+		const size_t ab = sizeof scd.bram, cap = scd.cartridge.id ? (size_t)scd.cartridge.mask + 1 : 0;
+		size_t end = n, a, used, tail;
+		cd_stash_clear();
+		while (end >= 8 && !memcmp(data + end - 4, "VCRT", 4)) {
+			const size_t sz = get32(data + end - 8);
+			if (!sz || sz + 8 > end) break;
+			cd_stash_put(data + end - 8 - sz, sz);
+			end -= sz + 8;
 		}
+		a = end < ab ? end : ab; used = a;
+		if (a) memcpy(scd.bram, data, a);
+		tail = end > ab ? end - ab : 0;
+		if (tail) {
+			if (tail == cap) { memcpy(scd.cartridge.area, data + ab, tail); used += tail; cd_stash_drop(cap); }
+			else {
+				cd_stash_put(data + ab, tail);
+				if (cap) used += cd_stash_take(cap, scd.cartridge.area) ? cap : 0;
+			}
+		} else if (cap) used += cd_stash_take(cap, scd.cartridge.area) ? cap : 0;
 		cd_format_bram();
-		G.sram_crc = cd_save_crc();
+		md_cd_save_gen++;
+		G.sram_crc = cd_save_crc(); G.cd_dirty_valid = 0;
 		return used;
 	}
 	if (!G.loaded || !sram.on) return 0;
@@ -1268,18 +1349,27 @@ size_t md_host_sram_write(const uint8_t *data, size_t n)
 
 int md_host_sram_dirty(void)
 {
-	if (G.loaded && G.cd) return cd_save_crc() != G.sram_crc;
+	if (G.loaded && G.cd) {
+		/* the CRC of up to 520 KB is taken only after something wrote to the backup RAM or the cartridge (md_cd_save_gen); until then the last answer stands */
+		if (!G.cd_dirty_valid || G.cd_dirty_gen != md_cd_save_gen) {
+			G.cd_dirty_val = cd_save_crc() != G.sram_crc;
+			G.cd_dirty_gen = md_cd_save_gen; G.cd_dirty_valid = 1;
+		}
+		return G.cd_dirty_val;
+	}
 	if (!G.loaded || !sram.on) return 0;
 	return (uint32_t)crc32(0, sram.sram, SRAM_BYTES) != G.sram_crc;
 }
 
-void md_host_sram_mark_saved(void) { if (G.loaded) G.sram_crc = G.cd ? cd_save_crc() : (uint32_t)crc32(0, sram.sram, SRAM_BYTES); }
-void md_host_sram_mark_unsaved(void) { G.sram_crc = ~G.sram_crc; }
+/* a number that changes whenever the save RAM may have changed (a disc: every write to the backup RAM or the cartridge, and a load); 0 for a
+ * cartridge, whose RAM has to be compared */
+unsigned md_host_sram_generation(void) { return G.loaded && G.cd ? md_cd_save_gen + 1u : 0u; }
+
+void md_host_sram_mark_saved(void) { if (G.loaded) { G.sram_crc = G.cd ? cd_save_crc() : (uint32_t)crc32(0, sram.sram, SRAM_BYTES); G.cd_dirty_valid = 0; } }
+void md_host_sram_mark_unsaved(void) { G.sram_crc = ~G.sram_crc; G.cd_dirty_valid = 0; }
 
 /* ---- save states ----------------------------------------------------------------------------------------- */
 
-static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
-static uint32_t get32(const uint8_t *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 
 size_t md_host_state_size(void) { return G.loaded ? G.state_size : 0; }
 unsigned long md_host_carry_refused(void) { return G.carry_refused; }

@@ -212,7 +212,9 @@ long gbmux_state_save(gbcore_t *c, void *d, size_t n)
 int gbmux_state_load(gbcore_t *c, const void *s, size_t n)
 { return IS_WS(c) ? wscore_state_load(g_ws, s, n) : IS_NES(c) ? nescore_state_load(g_nes, s, n) : gbcore_state_load(c, s, n); }
 size_t gbmux_ahead_size(gbcore_t *c)
-{ return IS_WS(c) ? wscore_ahead_size(g_ws) : IS_NES(c) ? nescore_ahead_size(g_nes) : gbcore_ahead_size(c); }
+{ /* (a PAL or Dendy NES game runs 0 or 1 frames a refresh, and a refresh that runs none shows the picture before: no run-ahead for it) */
+  if (IS_NES(c)) { const double fps = nescore_fps(g_nes); return fps > 55.0 || fps < 1.0 ? nescore_ahead_size(g_nes) : 0; }
+  return IS_WS(c) ? wscore_ahead_size(g_ws) : gbcore_ahead_size(c); }
 long gbmux_ahead_save(gbcore_t *c, void *d, size_t n)
 { return IS_WS(c) ? wscore_ahead_save(g_ws, d, n) : IS_NES(c) ? nescore_ahead_save(g_nes, d, n) : gbcore_ahead_save(c, d, n); }
 int gbmux_ahead_load(gbcore_t *c, const void *s, size_t n)

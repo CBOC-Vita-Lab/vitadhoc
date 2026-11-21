@@ -2,7 +2,11 @@
 """Test fixtures for the Sega CD path of md.bin (md/twin/cd_test.cpp, selftest.sh section 12).
 
   mkscd.py standin OUT.bin     a 128 KB STAND-IN for the console's BIOS, for the test suite only
-  mkscd.py discs DIR           synthetic disc images (cooked ISO, raw BIN + CUE, multi-file CUE, WAV and Ogg tracks, a CHD)
+  mkscd.py discs DIR           synthetic disc images (cooked ISO, raw BIN + CUE, multi-file CUE, WAV and Ogg tracks, an uncompressed CHD), and the
+                               awkward ones: a sheet with a byte order mark, tabs and CRLF, mixed case extensions, a long name and a long path, a
+                               missing audio file, a Windows path and a device name ("ux0:") in the sheet, big endian (MOTOROLA) audio, INDEX 00 / PREGAP
+                               in one file, MODE2/2352, 36 tracks in 36 files (WAV, Ogg: a decoder and descriptor budget), and, when chdman is installed
+                               (apt: mame-tools), CHDs compressed with each codec libchdr reads: LZMA, zlib, zstd, FLAC and the default mix
 
 THIS IS NOT A BIOS. The Mega CD's boot ROM is Sega's; VitAdhoc never contains, ships or generates it for players. The stand-in is a few hundred
 bytes of 68000 machine code written here from scratch so that the emulated hardware (both 68000s, the PCM chip, the CD drive, the VDP) can be
@@ -209,6 +213,75 @@ def chd_v5(path, tracks, hunk_frames=8):
     body += b''.join(frames)
     w(path, bytes(body))
 
+def raw_sector_mode2(n):
+    """a raw sector flagged MODE 2 (byte 15) with the 2048 bytes of user data where a Sega CD image has them (offset 16)"""
+    return raw_sector(n)[:15] + b'\x02' + raw_sector(n)[16:]
+
+def make_extra(d, data_raw, data_cooked, a2, a3, sp, swap):
+    A2, A3 = 200, 150
+    mmss = lambda lba: '%02d:%02d:%02d' % (lba // 75 // 60, lba // 75 % 60, lba % 75)
+    single = open(d + '/single.cue', 'rb').read()
+    # sheets as editors write them: a UTF-8 byte order mark, TAB indentation, CRLF
+    sheet = b'\xef\xbb\xbf' + (b'FILE "single.bin" BINARY\r\n\tTRACK 01 MODE1/2352\r\n\t\tINDEX 01 00:00:00\r\n\tTRACK 02 AUDIO\r\n\t\tINDEX 01 ' + mmss(DATA_SECTORS).encode() +
+                                  b'\r\n\tTRACK 03 AUDIO\r\n\t\tINDEX 01 ' + mmss(DATA_SECTORS + A2).encode() + b'\r\n')
+    w(d + '/bomtab.cue', sheet)
+    # extensions in mixed case: Game.Cue + Game.bin, GAME.CHD
+    w(d + '/Mixed.Cue', single.replace(b'single.bin', b'Mixed.bin')); w(d + '/Mixed.bin', open(d + '/single.bin', 'rb').read())
+    shutil.copy(d + '/disc.chd', d + '/UPPER.CHD')
+    # a long file name (a FILE line of more than 127 characters) and a long path (the sheet's and the track's, over 255 characters)
+    long = 'A very long track name for a disc image ' * 4 + 'Game'              # 164 characters
+    w(d + '/' + long + '.bin', open(d + '/single.bin', 'rb').read())
+    w(d + '/longname.cue', single.replace(b'single.bin', (long + '.bin').encode()))
+    deep = d + '/' + '/'.join(('deep%d_' % i) + 'x' * 70 for i in range(4))
+    os.makedirs(deep, exist_ok=True)
+    w(deep + '/longpath.bin', open(d + '/single.bin', 'rb').read()); w(deep + '/longpath.cue', single.replace(b'single.bin', b'longpath.bin'))
+    # a sheet that names a file with a Windows path, and one named like a Vita path ("ux0:Game.cue", the track beside it)
+    w(d + '/winpath.cue', single.replace(b'"single.bin"', b'"C:\\Music\\Rips\\single.bin"'))
+    w(d + '/ux0:Dev.cue', single.replace(b'single.bin', b'Dev.bin')); w(d + '/ux0:Dev.bin', open(d + '/single.bin', 'rb').read())
+    # an audio file the sheet names is missing (the data file is there)
+    w(d + '/missing.cue', b'FILE "multi (Track 1).bin" BINARY\r\n  TRACK 01 MODE1/2352\r\n    INDEX 01 00:00:00\r\n'
+                          b'FILE "multi (Track 2).bin" BINARY\r\n  TRACK 02 AUDIO\r\n    INDEX 00 00:00:00\r\n    INDEX 01 00:02:00\r\n'
+                          b'FILE "gone (Track 3).bin" BINARY\r\n  TRACK 03 AUDIO\r\n    INDEX 00 00:00:00\r\n    INDEX 01 00:02:00\r\n')
+    # big endian raw audio (FILE ... MOTOROLA)
+    w(d + '/motorola.bin', b''.join(raw_sector(n) for n in range(DATA_SECTORS)) + swap(a2) + swap(a3))
+    w(d + '/motorola.cue', single.replace(b'single.bin" BINARY', b'motorola.bin" MOTOROLA'))
+    # one file with a 2 second pause before each audio track: INDEX 00 inside the file, and a PREGAP that is not in the file
+    pre2 = DATA_SECTORS + 150                                 # track 2's INDEX 01 (its INDEX 00 is at DATA_SECTORS)
+    w(d + '/pregap.bin', data_raw + bytes(150 * 2352) + a2 + a3)
+    w(d + '/pregap.cue', (('FILE "pregap.bin" BINARY\r\n  TRACK 01 MODE1/2352\r\n    INDEX 01 00:00:00\r\n  TRACK 02 AUDIO\r\n    INDEX 00 %s\r\n    INDEX 01 %s\r\n'
+                          '  TRACK 03 AUDIO\r\n    PREGAP 00:02:00\r\n    INDEX 01 %s\r\n') % (mmss(DATA_SECTORS), mmss(pre2), mmss(pre2 + A2))).encode())
+    # a MODE2/2352 data track
+    w(d + '/mode2.bin', b''.join(raw_sector_mode2(n) for n in range(DATA_SECTORS)))
+    w(d + '/mode2.cue', b'FILE "mode2.bin" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n')
+    # 36 tracks in 36 files: more than the descriptors the layer keeps open at once
+    NT, NS = 36, 30
+    cue = b'FILE "many (Track 01).bin" BINARY\r\n  TRACK 01 MODE1/2352\r\n    INDEX 01 00:00:00\r\n'
+    w(d + '/many (Track 01).bin', data_raw)
+    for t in range(2, NT + 1):
+        w(d + '/many (Track %02d).bin' % t, bytes(150 * 2352) + audio_sectors(t, NS))
+        cue += ('FILE "many (Track %02d).bin" BINARY\r\n  TRACK %02d AUDIO\r\n    INDEX 00 00:00:00\r\n    INDEX 01 00:02:00\r\n' % (t, t)).encode()
+    w(d + '/many.cue', cue)
+    ff = shutil.which('ffmpeg')
+    if ff:
+        cue = b'FILE "manyogg.bin" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n'
+        w(d + '/manyogg.bin', data_cooked)
+        ok = True
+        for t in range(2, NT + 1):
+            w(d + '/_t.wav', wav(audio_sectors(t, NS)))
+            r = subprocess.run([ff, '-v', 'error', '-y', '-i', d + '/_t.wav', '-c:a', 'libvorbis', '-q:a', '3', d + '/manyogg (Track %02d).ogg' % t], capture_output=True)
+            ok = ok and r.returncode == 0
+            cue += ('FILE "manyogg (Track %02d).ogg" WAVE\n  TRACK %02d AUDIO\n    INDEX 01 00:00:00\n' % (t, t)).encode()
+        if os.path.exists(d + '/_t.wav'): os.remove(d + '/_t.wav')
+        if ok: w(d + '/manyogg.cue', cue)
+    # compressed CHDs from the real tool, when it is installed: every codec libchdr reads (the uncompressed one above never runs a decoder)
+    cm = shutil.which('chdman')
+    if cm:
+        for name, codecs in (('chd_lzma', 'cdlz'), ('chd_zlib', 'cdzl'), ('chd_zstd', 'cdzs'), ('chd_flac', 'cdfl'), ('chd_mixed', 'cdlz,cdzl,cdfl,cdzs')):
+            r = subprocess.run([cm, 'createcd', '-f', '-i', d + '/single.cue', '-o', d + '/' + name + '.chd', '-c', codecs], capture_output=True)
+            if r.returncode != 0 and os.path.exists(d + '/' + name + '.chd'): os.remove(d + '/' + name + '.chd')
+        r = subprocess.run([cm, 'createcd', '-f', '-i', d + '/multi.cue', '-o', d + '/chd_multi.chd', '-c', 'cdlz,cdzl,cdfl'], capture_output=True)
+        if r.returncode != 0 and os.path.exists(d + '/chd_multi.chd'): os.remove(d + '/chd_multi.chd')
+
 def make_discs(d):
     os.makedirs(d, exist_ok=True)
     data_cooked = b''.join(user_data(n) for n in range(DATA_SECTORS))
@@ -252,6 +325,7 @@ def make_discs(d):
     sp = lambda b: [b[i:i + 2352] for i in range(0, len(b), 2352)]
     swap = lambda b: bytes(x for i in range(0, len(b), 2) for x in (b[i + 1], b[i]))      # chdman stores CD audio as big endian samples
     chd_v5(d + '/disc.chd', [('MODE1_RAW', sp(data_raw)), ('AUDIO', sp(swap(a2))), ('AUDIO', sp(swap(a3)))])
+    make_extra(d, data_raw, data_cooked, a2, a3, sp, swap)
     # not discs: a text file called .cue, a Genesis-like file, an empty file
     w(d + '/notacue.cue', b'this is not a cue sheet\n')
     w(d + '/empty.iso', b'')

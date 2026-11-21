@@ -17,7 +17,7 @@ include $(CORE)/sources.mk
 # writes RGB565 directly (the Vita's native format; no conversion pass). USE_DYNAMIC_ALLOC: the 10 MB cartridge area is
 # allocated at load, not in .bss. HAVE_YM3438_CORE / HAVE_OPLL_CORE: the optional "enhanced" FM chips, never the default.
 CORE_DEFS := -DLSB_FIRST -DBYTE_ORDER=LITTLE_ENDIAN -DALIGN_LONG -DALT_RENDERER -DUSE_16BPP_RENDERING \
-	-DUSE_DYNAMIC_ALLOC -DHAVE_YM3438_CORE -DHAVE_OPLL_CORE -DMAXROMSIZE=10485760 -DMD_HOST -DMD_SEGACD -DUSE_LIBCHDR -DUSE_LIBTREMOR -DNDEBUG -U_FORTIFY_SOURCE -fno-stack-protector
+	-DUSE_DYNAMIC_ALLOC -DHAVE_YM3438_CORE -DHAVE_OPLL_CORE -DMAXROMSIZE=10485760 -DMD_HOST -DMD_SEGACD -DUSE_LIBCHDR -DUSE_LIBTREMOR -DDISABLE_MANY_OGG_OPEN_FILES -DNDEBUG -U_FORTIFY_SOURCE -fno-stack-protector
 CINC := -I$(CORE) -I$(CORE)/m68k -I$(CORE)/z80 -I$(CORE)/sound -I$(CORE)/input_hw -I$(CORE)/cart_hw -I$(CORE)/cart_hw/svp \
 	-I$(CORE)/cd_hw -I$(CORE)/cd_hw/libchdr/include
 
@@ -78,6 +78,8 @@ $(B)/core/%.o: $(CORE)/%.c
 $(B)/core/cd_hw/libchdr/%.o: $(CORE)/cd_hw/libchdr/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CCORE) $(CHDINC) $(CHDDEF) $(OPT) -c -o $@ $<
+# cdio.c sees libchdr's and zlib's headers (it opens the CHD for the helper thread and warms zlib's tables)
+$(B)/core/cd_hw/cdio.o: CCORE += $(CHDINC) $(CHDDEF)
 $(B)/core/sound/tremor/%.o: $(CORE)/sound/tremor/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CCORE) -I$(CORE)/sound/tremor $(OPT) -c -o $@ $<

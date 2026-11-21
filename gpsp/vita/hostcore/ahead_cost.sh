@@ -9,6 +9,7 @@ W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
 ext="${rom##*.}"; res=""
 for m in 0 2; do
   root=$W/r$m; mkdir -p $root/roms; cp "$rom" $root/roms/rom.$ext; echo rom.$ext > $root/autoboot.txt
+  [ -n "$AHEAD_CONFIG" ] && printf '%s\n' "$AHEAD_CONFIG" > $root/config.ini   # e.g. 'nes_wide = 2'
   probe=; [ $m = 2 ] && [ "$ext" = gba ] && probe=1   # the GBA has no run-ahead: its probe does the state copies and the second frame
   env GBADHOC_AHEAD=$m ${probe:+GBADHOC_AHEAD_GBA_PROBE=1} GBADHOC_CG_FROM=${CGFROM:-150} nice valgrind --tool=callgrind --smc-check=all --instr-atstart=no --callgrind-out-file=$W/cg$m.out \
     "$TWIN" --root $root --frames $((${CGFROM:-150} + N)) --input "120:A:3,160:B:3,200:START:3" > $root/out.txt 2>&1

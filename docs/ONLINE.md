@@ -137,7 +137,9 @@ on Wi-Fi: both games save and carry on alone.
   after that. It keeps nothing for statistics and has no log of its own. One
   thing outlives a room, until the end of the day (UTC): a network that sent
   a wrong code or key is counted, under a scrambled fingerprint and never its
-  address, so that nobody can try codes all day.
+  address, so that nobody can try codes all day. The same is kept, the same
+  way and for the same day, for how many relay credentials a network asked
+  for.
   Cloudflare, like any web host, sees the requests.
 - **Your friend sees your internet address** on a direct link (that is what a
   direct link is). **Always use the relay** hides it from them: then each Vita
@@ -160,8 +162,12 @@ on Wi-Fi: both games save and carry on alone.
 The service runs on Cloudflare's free plan, shared with other services, so it
 limits itself: 300 rooms at once, one room per code, a day's request budget
 (new rooms stop being offered when about 80 % is used, which is about 200
-sessions a day), and a monthly relay allowance. A session costs about 30
-requests; once linked it costs none. Limits per person keep one Vita from
+sessions a day), and a relay allowance so that Cloudflare's free relay
+quota is never passed: 100 relay credentials a day (two per session, so about
+50 sessions a day need one), 16 per network, a few per room, and a monthly
+total. A credential is only given while both players are polling the room, and
+every one given counts against the allowance whether or not the relay is used.
+A session costs about 30 requests; once linked it costs none. Limits per person keep one Vita from
 using the day up. If you hit the day's limit, the message says "busy for
 today". If you are only asking too fast, it says to wait a minute. Same Wi-Fi
 never needs the service.

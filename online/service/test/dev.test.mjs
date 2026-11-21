@@ -39,6 +39,7 @@ test('dev server: READY <port>, one REQ line per request (method, path, status, 
     assert.equal(c.status, 201, 'private addresses are allowed by default');
     const j = await post(d.base, `/v1/rooms/${c.data.code}/join`, guestDesc({ pub: '127.0.0.1:19020', lan: '' }));
     assert.equal(j.status, 200);
+    assert.equal((await post(d.base, `/v1/rooms/${c.data.code}/poll`, { token: c.data.token })).status, 200);
     const rel = await post(d.base, `/v1/rooms/${c.data.code}/relay`, { token: j.data.token });
     assert.deepEqual(rel.data.servers[1].urls, ['turn:198.51.100.9:3478?transport=udp']);
     assert.equal((await get(d.base, '/v1/rooms/ZZZZZ?v=2.0.0')).status, 404);
@@ -46,7 +47,7 @@ test('dev server: READY <port>, one REQ line per request (method, path, status, 
     await new Promise((r) => setTimeout(r, 100));
     const reqs = d.lines.filter((l) => l.startsWith('REQ '));
     assert.deepEqual(reqs, [
-      'REQ GET /v1/info 200 -', 'REQ POST /v1/rooms 201 -', `REQ POST /v1/rooms/${c.data.code}/join 200 -`, `REQ POST /v1/rooms/${c.data.code}/relay 200 -`,
+      'REQ GET /v1/info 200 -', 'REQ POST /v1/rooms 201 -', `REQ POST /v1/rooms/${c.data.code}/join 200 -`, `REQ POST /v1/rooms/${c.data.code}/poll 200 -`, `REQ POST /v1/rooms/${c.data.code}/relay 200 -`,
       'REQ GET /v1/rooms/ZZZZZ 404 not_found', 'REQ GET /nothing 404 not_found',
     ]);
     const text = d.lines.join('\n');

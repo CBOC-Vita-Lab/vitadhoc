@@ -14,6 +14,19 @@ account or the zone is changed: the other services on psvita.dev keep their Work
          ~/.vad-turn-key-id          ~/.vad-turn-token
      (Without them the service runs and answers 503 relay_unavailable on route 6: direct links still work.)
    - The account id (32 hex characters; dashboard > any zone > Overview > right column).
+   - Cloudflare Realtime TURN is free to 1,000 GB of egress a month and billed after that ($0.05 a GB). The service counts every relay credential it mints
+     (100 a day, 500,000 MB a month at an estimated 50 MB each: README "Quota arithmetic: Cloudflare Realtime TURN"), but it cannot see bytes, and a
+     modified client can pull far more than the estimate through one credential. So, BEFORE the release, do ONE of these (cheapest first):
+       a. Keep the account without a payment method for Realtime (then the relay stops for everybody at 1,000 GB instead of costing money), or
+       b. Set a billing notification: dashboard > Manage Account > Billing > Notifications > Add > "Usage-based billing" (Cloudflare Realtime / Calls),
+          at about 600 GB and again at 900 GB (the exact menu names change; look for usage-based billing notifications). Look at dashboard > Realtime
+          > TURN > Analytics once a week for the first month.
+       c. (optional, can be added later) let the Worker read the real egress and stop at 700 GB: create an API token with ONLY "Account Analytics: Read"
+          (a different token from the TURN key's), then
+              npx wrangler secret put TURN_USAGE_API_TOKEN          (paste the token)
+          and in wrangler.toml set TURN_USAGE_ACCOUNT_ID = "<ACCOUNT_ID>" (and TURN_USAGE_BUDGET_GB if 700 is not right), redeploy. The query was written from
+          Cloudflare's documentation and has only run against a test stub: after the first deploy mint one credential (smoke test with --relay) and check
+          that GET .../v1/info still says relay true; if the read cannot work the service ignores it (the estimate guards stay), so a wrong token fails safe.
 
 1. Look at the plan (contacts nothing)
        cd online/service
@@ -43,7 +56,7 @@ account or the zone is changed: the other services on psvita.dev keep their Work
      MAINTENANCE_MESSAGE; clear it to switch back on. Route 8 (close) and /v1/info stay up.
    - Raise MIN_APP_VERSION / LATEST_APP_VERSION (wrangler.toml, then step 2 again) when an app version must no longer be allowed online.
    - Look at the day's numbers: GET https://vitadhoc.psvita.dev/v1/info says only busy true / false. The counters live in the object's `settings`
-     table (budget_day, turn_day, turn_month); the dashboard's Workers and Durable Objects pages show requests and storage.
+     table (budget_day, turn_day, turn_month = credentials minted, turn_used, turn_usage, mint_day; the tables misses and mints hold salted fingerprints for the day); the dashboard's Workers and Durable Objects pages show requests and storage.
    - Rollback of the zone rule: bash scripts/setup-vitadhoc-zone.sh --account-id <ACCOUNT_ID> --token-file ~/.cf-psvita-token --remove
      (deletes only our rule and never the shared rate limit). Removing the Worker itself: dashboard > Workers > vitadhoc-online > Settings > Delete
      (this deletes its object and every room with it); nothing else on the account is affected.

@@ -120,25 +120,194 @@ test('the daily guard reserves BEFORE the upstream call: two requests in flight 
   assert.deepEqual([x.status, y.status].sort(), [200, 503]);
 });
 
-test('the monthly guard counts credentials USED: the first relayed address of each member (route 7), not the mint; at TURN_MONTHLY_BUDGET_MB route 6 answers 503 relay_budget (86400)', async () => {
-  const s = makeServer({ TURN_EST_MB_PER_USE: '50', TURN_MONTHLY_BUDGET_MB: '100', RATE_LIMIT_SCALE: '1000' });
+test('the monthly guard counts every credential AT THE MINT (H2): posting a relayed address changes nothing about it; at the budget route 6 answers 503 relay_budget (86400)', async () => {
+  const s = makeServer({ TURN_EST_MB_PER_USE: '50', TURN_MONTHLY_BUDGET_MB: '250', RATE_LIMIT_SCALE: '1000', TURN_MAX_CREDS_PER_DAY: '1000' });
+  const month = day(T0).slice(0, 7);
   const r = await joined(s);
-  for (const t of [r.gt, r.ht, r.gt, r.ht]) assert.equal((await s.relay(r.code, t)).status, 200);
-  assert.equal(s.setting('turn_month'), undefined, 'four mints, none used: the month is still empty');
+  for (const t of [r.gt, r.ht, r.gt]) assert.equal((await s.relay(r.code, t)).status, 200);
+  assert.equal(s.setting('turn_month'), `${month}:3`, 'three mints, none posted: three counted');
+  assert.equal(s.setting('turn_used'), undefined);
   await s.endpoint(r.code, r.gt, '198.18.0.2:4000');
-  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`);
-  await s.endpoint(r.code, r.gt, '198.18.0.2:4001');
-  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`, 'the same member posting again is not a second use');
-  assert.equal((await s.relay(r.code, r.ht)).status, 200, '1 used x 50 MB < 100');
-  await s.endpoint(r.code, r.ht, '198.18.0.1:3000');
-  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:2`);
+  assert.equal(s.setting('turn_month'), `${month}:3`, 'a post neither adds to the estimate nor lowers it');
+  assert.equal(s.setting('turn_used'), `${month}:1`, '...it only feeds the information counter');
+  assert.equal((await s.relay(r.code, r.ht)).status, 200);
   const r2 = await joined(s);
-  const refused = await s.relay(r2.code, r2.gt);
+  assert.equal((await s.relay(r2.code, r2.gt)).status, 200, '4 x 50 MB < 250: the fifth is the last');
+  assert.equal(s.setting('turn_month'), `${month}:5`);
+  const refused = await s.relay(r2.code, r2.ht);
   err(refused, 503, 'relay_budget');
   assert.equal(refused.data.error.retryAfterSec, 86400);
+  assert.equal(s.setting('turn_month'), `${month}:5`, 'a refusal counts nothing');
   s.advance(sec(25 * 24 * 3600)); // into December
   const r3 = await joined(s);
   assert.equal((await s.relay(r3.code, r3.gt)).status, 200);
+  assert.equal(s.setting('turn_month'), `${day(T0 + 25 * 24 * 3600 * 1000).slice(0, 7)}:1`);
+});
+
+test('an abuser that never posts a relayed address cannot get past the monthly estimate: mint, mint, mint (rooms of its own, objects restarting)', async () => {
+  const s = makeServer({ TURN_EST_MB_PER_USE: '50', TURN_MONTHLY_BUDGET_MB: '500', RATE_LIMIT_SCALE: '1000', TURN_MAX_CREDS_PER_DAY: '1000' });
+  let ok = 0;
+  for (let i = 0; i < 30 && ok < 100; i++) {
+    const r = await joined(s, {}, {}, { host: { ip: '203.0.113.5' }, guest: { ip: '203.0.113.5' } });
+    for (const t of [r.gt, r.ht]) { const a = await s.relay(r.code, t); if (a.status === 200) ok++; else { err(a, 503, 'relay_budget'); break; } }
+    s.rebuild();
+  }
+  assert.equal(ok, 10, '500 MB / 50 MB: ten credentials, no more, whatever the object forgot');
+});
+
+test('a credential is given only while BOTH members are polling: the host must have polled after the join, both within RELAY_POLL_FRESH_SEC', async () => {
+  const s = makeServer();
+  const r = await joined(s, {}, {}, { poll: false });
+  const notYet = await s.relay(r.code, r.gt);
+  err(notYet, 403, 'relay_not_allowed');
+  assert.match(notYet.data.error.message, /polling/);
+  assert.equal(s.setting('turn_month'), undefined, 'a refusal counts nothing');
+  err(await s.relay(r.code, r.ht), 403, 'relay_not_allowed');
+  await s.poll(r.code, r.ht);
+  assert.equal((await s.relay(r.code, r.gt)).status, 200, 'the guest\'s join was its first poll');
+  s.advance(sec(31)); // both silent for more than 30 s
+  err(await s.relay(r.code, r.gt), 403, 'relay_not_allowed');
+  await s.poll(r.code, r.ht);
+  err(await s.relay(r.code, r.ht), 403, 'relay_not_allowed'); // the guest is silent
+  await s.poll(r.code, r.gt);
+  assert.equal((await s.relay(r.code, r.ht)).status, 200);
+  // the poll mark is written at most every 5 s per member
+  const before = s.rows()[0].host_poll_ms;
+  s.advance(sec(2)); await s.poll(r.code, r.ht);
+  assert.equal(s.rows()[0].host_poll_ms, before, 'two seconds later: no second write');
+  s.advance(sec(4)); await s.poll(r.code, r.ht);
+  assert.ok(s.rows()[0].host_poll_ms > before);
+  // a host poll from BEFORE the guest joined does not count
+  const s2 = makeServer();
+  const c = await s2.create();
+  await s2.poll(c.data.code, c.data.token);
+  s2.advance(sec(5));
+  const j = await s2.join(c.data.code);
+  err(await s2.relay(c.data.code, j.data.token), 403, 'relay_not_allowed');
+  // RELAY_POLL_FRESH_SEC=0 switches the gate off
+  const s3 = makeServer({ RELAY_POLL_FRESH_SEC: '0' });
+  const r3 = await joined(s3, {}, {}, { poll: false });
+  assert.equal((await s3.relay(r3.code, r3.ht)).status, 200);
+});
+
+test('the per-address mint cap is on disk: a restart does not reset it, the table holds a salted fingerprint and never the address, a new day empties it', async () => {
+  const s = makeServer({ RATE_LIMIT_SCALE: '1', MINTS_PER_ADDR_DAY: '3', MINTS_PER_MEMBER: '100', MINTS_PER_ROOM: '100', TURN_MAX_CREDS_PER_DAY: '1000' });
+  const me = { host: { ip: '203.0.113.77' }, guest: { ip: '203.0.113.77' } };
+  const r = await joined(s, {}, {}, me);
+  for (let i = 0; i < 3; i++) { assert.equal((await s.relay(r.code, r.gt, { ip: '203.0.113.77' })).status, 200); s.rebuild(); s.advance(sec(1)); }
+  const refused = await s.relay(r.code, r.gt, { ip: '203.0.113.77' });
+  err(refused, 429, 'rate_limited');
+  assert.equal(refused.data.error.reason, 'relay_limit');
+  assert.equal(s.rows('SELECT * FROM mints').length, 1);
+  assert.ok(!JSON.stringify(s.rows('SELECT * FROM mints')).includes('203.0.113'));
+  assert.ok(!JSON.stringify(s.rows('SELECT * FROM settings')).includes('203.0.113'));
+  // another address is untouched (its own room: the other member polls from anywhere)
+  assert.equal((await s.relay(r.code, r.ht, { ip: '203.0.113.78' })).status, 200);
+  // an upstream failure gives the credential back on disk too
+  s.advance(sec(24 * 3600));
+  assert.equal(s.rows('SELECT * FROM mints').length, 2, 'rows of yesterday stay until the first mint of the new day');
+  const r2 = await joined(s, {}, {}, me);
+  assert.equal((await s.relay(r2.code, r2.gt, { ip: '203.0.113.77' })).status, 200, 'a new day, a new count');
+  assert.equal(s.rows('SELECT n FROM mints').map((x) => x.n).join(), '1', 'yesterday\'s rows went with the first mint of the new day');
+});
+
+test('the per-room cap counts guests that left (old_mints) and survives a restart; the monthly and daily counters survive a restart', async () => {
+  const s = makeServer({ RATE_LIMIT_SCALE: '1', MINTS_PER_ROOM: '2', MINTS_PER_MEMBER: '2', MINTS_PER_ADDR_DAY: '100', TURN_MAX_CREDS_PER_DAY: '5' });
+  const r = await joined(s);
+  assert.equal((await s.relay(r.code, r.gt)).status, 200);
+  s.rebuild();
+  assert.equal((await s.relay(r.code, r.ht)).status, 200);
+  s.rebuild();
+  err(await s.relay(r.code, r.gt), 429, 'rate_limited');
+  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:2`);
+  // the daily guard survives restarts: 5 credentials in all
+  for (let i = 0; i < 2; i++) { const q = await joined(s); assert.equal((await s.relay(q.code, q.gt)).status, 200); s.rebuild(); }
+  const q = await joined(s);
+  assert.equal((await s.relay(q.code, q.gt)).status, 200);
+  s.rebuild();
+  err(await s.relay(q.code, q.ht), 503, 'relay_budget');
+});
+
+test('an upstream failure gives the credential back from the day AND the month counters and the address row', async () => {
+  let fail = true;
+  const turnFetch = async () => (fail ? new Response('nope', { status: 500 }) : new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: 'u', credential: 'c' }] }), { status: 200 }));
+  const s = makeServer({ TURN_PROVIDER: 'cloudflare', TURN_KEY_ID: 'keyid-123456', TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok', RATE_LIMIT_SCALE: '1' }, { deps: { turnFetch } });
+  const r = await joined(s);
+  const ip = { ip: '203.0.113.9' };
+  err(await s.relay(r.code, r.gt, ip), 502, 'turn_upstream');
+  assert.equal(s.setting('turn_day'), `${day(T0)}:0`);
+  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:0`);
+  assert.deepEqual(s.rows('SELECT n FROM mints').map((x) => x.n), [0]);
+  fail = false;
+  assert.equal((await s.relay(r.code, r.gt, ip)).status, 200);
+  assert.deepEqual(s.rows('SELECT n FROM mints').map((x) => x.n), [1]);
+});
+
+test('optional usage read: egress from the GraphQL analytics, cached TURN_USAGE_EVERY_SEC and across restarts, over TURN_USAGE_BUDGET_GB -> 503 relay_budget, a failed read fails open', async () => {
+  const calls = [];
+  let egress = 100e9;
+  let mode = 'ok';
+  const turnFetch = async (url, init) => {
+    if (String(url).startsWith('https://api.cloudflare.com/client/v4/graphql')) {
+      calls.push({ url: String(url), init });
+      if (mode === 'throw') throw new Error('network');
+      if (mode === 'http') return new Response('no', { status: 403 });
+      return new Response(JSON.stringify({ data: { viewer: { accounts: [{ callsTurnUsageAdaptiveGroups: [{ sum: { egressBytes: egress } }] }] } }, errors: null }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ iceServers: [{ urls: ['turn:t:3478?transport=udp'], username: 'u', credential: 'c' }] }), { status: 200 });
+  };
+  const env = { TURN_PROVIDER: 'cloudflare', TURN_KEY_ID: 'keyid-123456', TURN_KEY_API_TOKEN: 'tok-tok-tok-tok-tok', TURN_USAGE_ACCOUNT_ID: 'acct123', TURN_USAGE_API_TOKEN: 'analytics-token-1', TURN_USAGE_BUDGET_GB: '700', MINTS_PER_MEMBER: '100', MINTS_PER_ROOM: '100', MINTS_PER_ADDR_DAY: '1000', TURN_MAX_CREDS_PER_DAY: '1000' };
+  const s = makeServer(env, { deps: { turnFetch } });
+  const r = await joined(s);
+  assert.equal((await s.relay(r.code, r.gt)).status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].init.headers.authorization, 'Bearer analytics-token-1');
+  const q = JSON.parse(calls[0].init.body);
+  assert.equal(q.variables.a, 'acct123');
+  assert.equal(q.variables.from, `${day(T0).slice(0, 7)}-01`);
+  assert.match(q.query, /callsTurnUsageAdaptiveGroups/);
+  assert.match(q.query, /egressBytes/);
+  assert.equal((await s.relay(r.code, r.ht)).status, 200);
+  s.rebuild();
+  assert.equal((await s.relay(r.code, r.gt)).status, 200);
+  assert.equal(calls.length, 1, 'cached for five minutes, also after a restart');
+  assert.equal(s.app.status().turn.egressGbThisMonth, 100);
+  egress = 700e9;
+  s.advance(sec(301));
+  await s.poll(r.code, r.ht); await s.poll(r.code, r.gt);
+  const refused = await s.relay(r.code, r.gt);
+  err(refused, 503, 'relay_budget');
+  assert.equal(calls.length, 2);
+  assert.equal(refused.data.error.retryAfterSec, 3600);
+  // a failed read keeps the last known figure (egress only grows within a month), so the block stands
+  egress = 1;
+  mode = 'throw';
+  s.advance(sec(301));
+  await s.poll(r.code, r.ht); await s.poll(r.code, r.gt);
+  err(await s.relay(r.code, r.gt), 503, 'relay_budget');
+  assert.equal(calls.length, 3);
+  // ...and with nothing known yet it fails open: the estimate guards decide
+  const s3 = makeServer(env, { deps: { turnFetch } });
+  const r3 = await joined(s3);
+  assert.equal((await s3.relay(r3.code, r3.gt)).status, 200);
+  assert.equal(calls.length, 4);
+  assert.equal((await s3.relay(r3.code, r3.ht)).status, 200);
+  assert.equal(calls.length, 4, 'a failed read is not repeated within the interval');
+  // without the two variables nothing is read at all
+  const calls0 = calls.length;
+  const s2 = makeServer({ ...env, TURN_USAGE_API_TOKEN: '' }, { deps: { turnFetch } });
+  const r2 = await joined(s2);
+  assert.equal((await s2.relay(r2.code, r2.gt)).status, 200);
+  assert.equal(calls.length, calls0);
+});
+
+test('a database from an earlier build (no poll columns) is migrated when the object starts', async () => {
+  const s = makeServer();
+  s.store.sql.exec('ALTER TABLE rooms DROP COLUMN host_poll_ms').toArray();
+  s.store.sql.exec('ALTER TABLE rooms DROP COLUMN guest_poll_ms').toArray();
+  s.rebuild();
+  const r = await joined(s);
+  assert.equal((await s.relay(r.code, r.gt)).status, 200);
 });
 
 test('relay_unavailable when TURN is not configured; info says relay false', async () => {
@@ -156,6 +325,7 @@ test('route 6 needs a member (401), a second member (403), and does not change t
   err(await s.relay(c.data.code, c.data.token), 403, 'relay_not_allowed');
   err(await s.relay(c.data.code, 'A'.repeat(22)), 401, 'bad_token');
   const j = await s.join(c.data.code);
+  await s.poll(c.data.code, c.data.token);
   const before = JSON.stringify(s.rows().map(({ host_mints, guest_mints, ...rest }) => rest));
   assert.equal((await s.relay(c.data.code, j.data.token)).status, 200);
   assert.equal(JSON.stringify(s.rows().map(({ host_mints, guest_mints, ...rest }) => rest)), before, 'only the credential counter moved');
@@ -169,7 +339,7 @@ test('stubProvider without URLs gives random meaningless credentials', async () 
   assert.equal(t.username.split(':')[0], '3600');
 });
 
-test('a relayed address posted without a credential is not a use: join, post, cancel in a loop cannot spend the month', async () => {
+test('a relayed address posted without a credential is not a use: join, post, cancel in a loop moves neither the month nor the use counter', async () => {
   const s = makeServer({ TURN_EST_MB_PER_USE: '50', TURN_MONTHLY_BUDGET_MB: '100', RATE_LIMIT_SCALE: '1000' });
   const c = await s.create();
   for (let i = 0; i < 6; i++) {
@@ -178,17 +348,19 @@ test('a relayed address posted without a credential is not a use: join, post, ca
     assert.equal((await s.endpoint(c.data.code, j.data.token, `198.18.0.2:${4000 + i}`)).status, 200, 'the post itself is served');
     assert.equal((await s.close(c.data.code, j.data.token, 'cancel')).status, 200);
   }
-  assert.equal(s.setting('turn_month'), undefined, 'no credential was minted: nothing was used');
+  assert.equal(s.setting('turn_month'), undefined, 'no credential was minted: nothing was counted');
+  assert.equal(s.setting('turn_used'), undefined);
   // one credential minted in the room: one use, however many guests post after it
   let j = await s.join(c.data.code);
+  await s.poll(c.data.code, c.data.token);
   assert.equal((await s.relay(c.data.code, j.data.token)).status, 200);
   await s.endpoint(c.data.code, j.data.token, '198.18.0.2:5000');
-  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`);
+  assert.equal(s.setting('turn_used'), `${day(T0).slice(0, 7)}:1`);
   for (let i = 0; i < 4; i++) {
     await s.close(c.data.code, j.data.token, 'cancel');
     j = await s.join(c.data.code);
     await s.endpoint(c.data.code, j.data.token, `198.18.0.2:${5001 + i}`);
   }
-  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`, 'uses never pass the mints of the room');
-  assert.equal((await s.relay(c.data.code, j.data.token)).status, 200, 'the guard did not trip');
+  assert.equal(s.setting('turn_used'), `${day(T0).slice(0, 7)}:1`, 'uses never pass the mints of the room');
+  assert.equal(s.setting('turn_month'), `${day(T0).slice(0, 7)}:1`);
 });

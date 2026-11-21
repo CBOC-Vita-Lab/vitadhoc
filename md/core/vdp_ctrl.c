@@ -547,6 +547,9 @@ int vdp_context_load(uint8 *state)
   state_vram_ptr = &state[bufferptr];
   bufferptr += sizeof(vram);
   load_param(cram, sizeof(cram));
+  /* VitAdhoc: a CRAM word is 9 bits (every write path above stores at most 0x1FF) and indexes the 512 entry palette tables; a
+     state from outside is not trusted */
+  for (i = 0; i < 0x40; i++) ((uint16 *)cram)[i] &= 0x1FF;
   load_param(vsram, sizeof(vsram));
   load_param(temp_reg, sizeof(temp_reg));
 
@@ -716,31 +719,55 @@ typedef struct
 
 int vdp_carry_size(void) { return (int)sizeof(vdp_carry_t); }
 
+/* (the block sits at any byte offset of a state buffer: copy through a local, never cast the pointer) */
 void vdp_carry_save(void *p)
 {
-  vdp_carry_t *c = (vdp_carry_t *)p;
-  memcpy(c->fifo_cycles, fifo_cycles, sizeof(fifo_cycles));
-  c->hvc_latch = hvc_latch; c->fifo_byte_access = fifo_byte_access;
-  c->v_counter = v_counter; c->vscroll = vscroll;
-  c->ntab = ntab; c->ntbb = ntbb; c->ntwb = ntwb; c->satb = satb; c->hscb = hscb;
-  c->sat_base_mask = sat_base_mask; c->sat_addr_mask = sat_addr_mask;
-  c->border = border;
-  memcpy(c->viewport, &bitmap.viewport, sizeof(bitmap.viewport));
+  vdp_carry_t c;
+  memset(&c, 0, sizeof c);
+  memcpy(c.fifo_cycles, fifo_cycles, sizeof(fifo_cycles));
+  c.hvc_latch = hvc_latch; c.fifo_byte_access = fifo_byte_access;
+  c.v_counter = v_counter; c.vscroll = vscroll;
+  c.ntab = ntab; c.ntbb = ntbb; c.ntwb = ntwb; c.satb = satb; c.hscb = hscb;
+  c.sat_base_mask = sat_base_mask; c.sat_addr_mask = sat_addr_mask;
+  c.border = border;
+  memcpy(c.viewport, &bitmap.viewport, sizeof(bitmap.viewport));
+  memcpy(p, &c, sizeof c);
+}
+
+/* The sizes a picture can have (x y w h ow oh changed): the widths and heights the VDP modes produce, the overscan border (x) and the
+   first line (y) the configuration gives, and the changed flags. remap_line / render_line index the line buffer and the frame buffer by
+   them, so a state from outside is held to them. */
+static int vdp_viewport_sane(const int *v)
+{
+  int w = v[2], h = v[3], ow = v[4], oh = v[5];
+  if (w != 160 && w != 256 && w != 320) return 0;
+  if (ow != 160 && ow != 256 && ow != 320 && ow != 0) return 0;
+  if (h != 144 && h != 192 && h != 224 && h != 240) return 0;
+  if (oh != 144 && oh != 192 && oh != 224 && oh != 240 && oh != 0) return 0;
+  if (v[0] < -48 || v[0] > 16 || v[1] < 0 || v[1] > 48) return 0;       /* x: -48 is the Game Gear's cropped window, 14 the overscan border */
+  if (w + 2 * v[0] < 16) return 0;
+  if (v[6] < 0 || v[6] > 15) return 0;
+  return 1;
 }
 
 int vdp_carry_load(const void *p)
 {
-  const vdp_carry_t *c = (const vdp_carry_t *)p;
+  vdp_carry_t cc;
+  const vdp_carry_t *c = &cc;
+  memcpy(&cc, p, sizeof cc);
   /* a state file is the user's own, but the picture size drives buffer writes: refuse values no machine produces (viewport: x y w h ow oh changed) */
-  if (c->viewport[2] < 0 || c->viewport[2] > 320 || c->viewport[3] < 0 || c->viewport[3] > 240 || c->viewport[4] < 0 || c->viewport[4] > 320
-      || c->viewport[5] < 0 || c->viewport[5] > 240 || c->viewport[0] < -64 || c->viewport[0] > 64 || c->viewport[1] < -64 || c->viewport[1] > 64)
-    return 1;
+  if (!vdp_viewport_sane(c->viewport)) return 1;
+  /* the table addresses are what the register writes above produce (vdp_reg_w): a multiple of the register's step inside VRAM; they index
+     VRAM, the sprite table copy and the line counter indexes the frame */
+  if ((c->ntab & 0x1fff) || (c->ntbb & 0x1fff) || (c->ntwb & 0x7ff) || (c->satb & 0x1ff) || (c->hscb & 0x3ff)) return 1;
+  if ((c->sat_base_mask != 0xFE00 || c->sat_addr_mask != 0x01FF) && (c->sat_base_mask != 0xFC00 || c->sat_addr_mask != 0x03FF)) return 1;
+  if (c->v_counter >= lines_per_frame) return 1;
   memcpy(fifo_cycles, c->fifo_cycles, sizeof(fifo_cycles));
   hvc_latch = c->hvc_latch; fifo_byte_access = c->fifo_byte_access;
   v_counter = c->v_counter; vscroll = c->vscroll;
   ntab = c->ntab; ntbb = c->ntbb; ntwb = c->ntwb; satb = c->satb; hscb = c->hscb;
   sat_base_mask = c->sat_base_mask; sat_addr_mask = c->sat_addr_mask;
-  border = c->border;
+  border = c->border & 0x3f;       /* register 7 keeps six bits; it indexes CRAM */
   memcpy(&bitmap.viewport, c->viewport, sizeof(bitmap.viewport));
   return 0;
 }

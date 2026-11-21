@@ -105,7 +105,7 @@ void md_host_run_frame(void);
  * machine, so a button press shows one frame sooner; the machine itself, its sound and its save are those of md_host_run_frame() called
  * once (checked by md/twin/ahead_check.sh). `shown` is called while the machine is still the one of the drawn picture (the wide view's
  * analysis belongs there). Returns 0 when it ran ahead, 1 when it ran a plain frame instead: the render flag is off, there is no memory,
- * or the cartridge keeps protocol state the save state does not hold (a serial EEPROM, flash: md_host_ahead_possible() = 0).
+ * or there is no game (md_host_ahead_possible() = 0). Serial EEPROM and flash chips are carried with the state.
  * Costs a second frame of emulation and a state save and load per frame. Not for linked play. */
 int md_host_run_frame_ahead(void (*shown)(void *user), void *user);
 int md_host_ahead_possible(void);

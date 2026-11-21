@@ -147,7 +147,17 @@ void psg_reset(void)
    frame with these three. */
 int psg_carry_size(void) { return (int)sizeof(psg.chanDelta); }
 void psg_carry_save(void *p) { memcpy(p, psg.chanDelta, sizeof(psg.chanDelta)); }
-void psg_carry_load(const void *p) { memcpy(psg.chanDelta, p, sizeof(psg.chanDelta)); }
+void psg_carry_load(const void *p)
+{
+  int i, j;
+  memcpy(psg.chanDelta, p, sizeof(psg.chanDelta));
+  /* a pending level change is at most one channel's swing (the state may come from outside) */
+  for (i = 0; i < 4; i++) for (j = 0; j < 2; j++)
+  {
+    if (psg.chanDelta[i][j] < -0x7fff) psg.chanDelta[i][j] = -0x7fff;
+    if (psg.chanDelta[i][j] > 0x7fff) psg.chanDelta[i][j] = 0x7fff;
+  }
+}
 
 int psg_context_save(uint8 *state)
 {
@@ -201,6 +211,29 @@ int psg_context_load(uint8 *state)
   load_param(psg.freqCounter,sizeof(psg.freqCounter));
   load_param(psg.polarity,sizeof(psg.polarity));
   load_param(psg.chanOut,sizeof(psg.chanOut));
+
+  /* VitAdhoc: a state from outside is not trusted. Every loop below counts transitions between freqCounter and the frame's end in steps
+     of freqInc, and the blip buffer is written at the clock of each: an increment of zero or less never ends, a clock before the frame
+     or far after it writes outside the buffer. Each value is held to the range the chip itself produces (psg_write / psg_end_frame). */
+  psg.clocks &= 0x7fffffff;
+  if (psg.clocks > 2 * PSG_MCYCLES_RATIO) psg.clocks %= (2 * PSG_MCYCLES_RATIO);
+  psg.noiseShiftValue &= (2 << psg.noiseShiftWidth) - 1;
+  for (i=0; i<8; i++)
+  {
+    psg.regs[i] &= ((i & 1) || (i == 6)) ? ((i == 6) ? 0x07 : 0x0f) : 0x3ff;
+  }
+  for (i=0; i<4; i++)
+  {
+    if (psg.freqInc[i] < PSG_MCYCLES_RATIO) psg.freqInc[i] = PSG_MCYCLES_RATIO;
+    if (psg.freqInc[i] > 0x400 * PSG_MCYCLES_RATIO) psg.freqInc[i] = 0x400 * PSG_MCYCLES_RATIO;
+    if (psg.freqCounter[i] < -PSG_MCYCLES_RATIO) psg.freqCounter[i] = -PSG_MCYCLES_RATIO;
+    if (psg.freqCounter[i] > 0x400 * PSG_MCYCLES_RATIO) psg.freqCounter[i] = 0x400 * PSG_MCYCLES_RATIO;
+    psg.polarity[i] = (psg.polarity[i] > 0) ? 1 : -1;
+    if (psg.chanOut[i][0] < 0) psg.chanOut[i][0] = 0;
+    if (psg.chanOut[i][1] < 0) psg.chanOut[i][1] = 0;
+    if (psg.chanOut[i][0] > 0x7fff) psg.chanOut[i][0] = 0x7fff;
+    if (psg.chanOut[i][1] > 0x7fff) psg.chanOut[i][1] = 0x7fff;
+  }
 
   /* add noise channel output variation */
   if (psg.noiseShiftValue & 1)

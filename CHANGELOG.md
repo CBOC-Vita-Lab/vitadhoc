@@ -6,6 +6,14 @@
   after a long frame run frames without drawing them, and the Sega core took its sprite collision and overflow flags from the drawing:
   in 15 of 67 test games the game itself then ran differently. An undrawn frame now still runs the sprite pass of every line, and
   leaves the machine exactly as a drawn frame does (sound, state and memory equal on 105 test games, PC build).
+- **Quick response for the Sega consoles.** Speed > Quick response (Off / Auto / On) shows a button press one frame sooner: the next frame is
+  worked out ahead and shown, and the machine runs exactly as without it (sound, state, memory and battery save equal on 105 test games, PC
+  build; a small test cartridge shows a press 1 frame after it plain and 0 frames after it with Quick response). Auto is the default on the
+  Master System, Game Gear and SG-1000 and starts only while the game leaves the room; the Mega Drive is Off by default.
+- **Sega states and rewind come back exactly.** A loaded state, a rewind landing and a quick load now continue exactly as the game that was
+  never interrupted (first line of sprites, FIFO flag, PSG changes, EEPROM position, flash save chip included): 105 test games, 4 load
+  points, with and without the VDP worker. The first game started after launch no longer differs from the same game started later. Old
+  states still load.
 - **No sprite flicker (Master System, Game Gear, SG-1000).** These consoles drew 8 sprites on a line (4 on the SG-1000) and games blinked
   the rest. Picture > No sprite flicker (on by default) draws them all. Only the picture changes: the console's overflow and collision
   flags are still set by the hardware's limit, so the game runs exactly the same (73 test games, PC build). Turn it off for a game that

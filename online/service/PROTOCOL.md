@@ -78,7 +78,7 @@ Errors (status, code, when; client meaning in 1.6):
 | 400 | `bad_request` | malformed JSON / field (message names the field), empty User-Agent |
 | 400 | `bad_version` | `v` missing or malformed |
 | 401 | `bad_token` | routes 5-8: token is not a member of that room |
-| 403 | `relay_not_allowed` | route 6/7 while the room has no second member |
+| 403 | `relay_not_allowed` | route 6/7 while the room has no second member; route 6 also while either member has not polled within `RELAY_POLL_FRESH_SEC` (30 s) since the join (the guest's join counts as its poll) |
 | 404 | `not_found` | unknown, expired or malformed code; unknown path |
 | 409 | `room_full` | join: a second member is already in |
 | 409 | `version_mismatch` | join: `compat` differs from the room's (extra `hostVer`: the host's `ver`) |
@@ -90,7 +90,7 @@ Errors (status, code, when; client meaning in 1.6):
 | 503 | `rooms_full` | MAX_ROOMS live rooms |
 | 503 | `switched_off` | `KILL_SWITCH` has `all`, `rooms` or (route 6) `relay` (extra `message` = MAINTENANCE_MESSAGE) |
 | 503 | `relay_unavailable` | TURN not configured |
-| 503 | `relay_budget` | TURN daily or monthly guard (extra `retryAfterSec`) |
+| 503 | `relay_budget` | TURN daily or monthly guard, or the optional real-usage guard (extra `retryAfterSec`) |
 
 Rate limits (all in memory; every number an env var with this default; `RATE_LIMIT_SCALE` multiplies them for
 tests):
@@ -104,7 +104,7 @@ tests):
 | object, route 3 | address | burst 8, one per 5 s; 20 misses (404) per hour, then 429 `guessing` for the rest of the hour; 60 misses per UTC day, then until midnight (codes cannot be enumerated: 28.6 million codes against at most a few hundred rooms) |
 | object, route 4 | address | burst 4, one per 10 s |
 | object, route 5 | token | at most one per 800 ms (429 `slow_down`, `retryAfterSec` 1) |
-| object, route 6 | member / room / address / all | 2 per member, 4 per room, 40 per address per day, `TURN_MAX_CREDS_PER_DAY` 800 (every session fetches a pair while it punches, see 1.5) |
+| object, route 6 | member / room / address / all | 2 per member, 4 per room (its whole life), 16 per address per day (stored as a salted fingerprint), `TURN_MAX_CREDS_PER_DAY` 100 (stored); every session fetches a pair while it punches, see 1.5 |
 | object | all | `DAILY_REQUEST_BUDGET` 8000: route 2 refused from 80 % (`LIVE_RESERVE_PCT` 20), everything else except route 8 from 100 %; route 8 is never refused |
 
 ### 1.3 Room lifecycle, timeouts, cadence
@@ -123,9 +123,12 @@ CREATE TABLE IF NOT EXISTS rooms (
   guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER, guest_req TEXT,
   punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,   -- addr_key: the creator's ipKey, for "live rooms per address"
   created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER,
-  relay_uses INTEGER DEFAULT 0,                            -- relayed addresses counted as USED credentials (never more than all mints)
+  host_poll_ms INTEGER, guest_poll_ms INTEGER,             -- last poll after the join (written at most every 5 s); the guest's join sets its own
+  relay_uses INTEGER DEFAULT 0,                            -- relayed addresses counted as used credentials (information: `turn_used`)
   old_mints INTEGER DEFAULT 0);                            -- guest credentials of earlier guests (a reopen resets guest_mints to 0)
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS misses (fp TEXT PRIMARY KEY, hour INTEGER, h INTEGER, d INTEGER);  -- wrong codes per address today (salted fingerprint)
+CREATE TABLE IF NOT EXISTS mints (fp TEXT PRIMARY KEY, n INTEGER);                           -- relay credentials per address today (salted fingerprint)
 ```
 
 ```
@@ -169,28 +172,29 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 ### 1.4 Budget and counters
 
 `settings` holds three keys: `budget_day` (`<dayIndex>:<n>:<ra>:<rb>:<ob>`, Galaxy's format and Galaxy's
-`budget.js`), `turn_day` (`<yyyy-mm-dd>:<mints>`), `turn_month` (`<yyyy-mm>:<used credentials>`).
+`budget.js`), `turn_day` (`<yyyy-mm-dd>:<mints>`), `turn_month` (`<yyyy-mm>:<credentials minted>`).
 
 - `budget_day`: Galaxy's mechanism unchanged, with ONE parameter made explicit: the save step
   (`BUDGET_SAVE_EVERY`, Galaxy's constant 200) defaults to 20 here, and the first request after the object
   starts saves at once. Reason (decision D4): this object is idle most of the day and loses its memory
   between sessions; at 200 it would lose most of the day's count, and the 8000 guard would never trip.
-- TURN guards: `turn_day >= TURN_MAX_CREDS_PER_DAY` (800) -> 503 `relay_budget` (retry 3600), counted at
-  each mint (reserve before the upstream call, give back on failure, as `turn.js`). The monthly guard
-  counts credentials that were USED: each first relayed address a member posts (route 7) adds one to
-  `turn_month`, but never more per room than the credentials that room was given (`relay_uses` against
-  `host_mints + guest_mints`: a relayed address posted without a credential costs the month nothing); `turn_month * TURN_EST_MB_PER_USE (50) >= TURN_MONTHLY_BUDGET_MB (50000)` -> route 6
-  answers 503 `relay_budget` (retry 86400). No usage-report route (decision D7).
-- Per-address counters: memory only (`budget.js` maps and the route buckets), never stored, never logged.
-  They reset when the object leaves memory; the stored lookup-miss protection that matters (enumeration)
-  is bounded anyway by the Worker's per-isolate bucket and the zone rule. (If the owner wants the daily
-  miss cap to survive evictions it is one more settings row per offending address: not built.)
+- TURN guards (security review H2: every credential counts at the mint): `turn_day >= TURN_MAX_CREDS_PER_DAY` (100) -> 503 `relay_budget`
+  (retry 3600); `turn_month * TURN_EST_MB_PER_USE (50) >= TURN_MONTHLY_BUDGET_MB (500000)` -> 503 `relay_budget` (retry 86400). Both are
+  incremented in the same step, BEFORE the upstream call, and given back if it fails. A relayed address posted with route 7 no longer
+  changes the month (an abuser never posts); `turn_used` (`<yyyy-mm>:<n>`) still counts the first post of each member as information.
+  Optional `turn_usage` (`<yyyy-mm>:<egress bytes>:<read at ms>`): the real egress read from Cloudflare's GraphQL analytics when
+  `TURN_USAGE_ACCOUNT_ID` and `TURN_USAGE_API_TOKEN` are set; at `TURN_USAGE_BUDGET_GB` (700) route 6 answers 503 `relay_budget` (3600).
+  No usage-report route (decision D7). Arithmetic: README, "Quota arithmetic: Cloudflare Realtime TURN".
+- Per-address counters: memory (`budget.js` maps and the route buckets), never logged. They reset when the object leaves memory, with
+  two exceptions kept as a salted fingerprint of the address key (never the address; a salt in `settings` new every UTC day, the old rows
+  deleted with it): the wrong-code counts (`misses`) and the relay credentials minted per address (`mints`).
 
 ### 1.5 Relay credential flow
 
 1. AS SOON AS a member knows it has a peer (the joiner: its join answer; the host: the poll that shows the
    guest, or an incoming PUNCH), it POSTs route 6 while the punch runs, so a fallback costs no wait. The
-   service checks the member and the guards, mints with `cloudflareProvider.mint(TURN_TTL_SEC = 3600)`,
+   service checks the member, that BOTH members have polled within `RELAY_POLL_FRESH_SEC` (30 s) after the join (the joiner's first try
+   usually meets a host that has not polled yet: 403 `relay_not_allowed`, not fatal; the client asks again at the fallback), and the guards, mints with `cloudflareProvider.mint(TURN_TTL_SEC = 3600)`,
    filters with `udpOnly()`, answers. Route 6 does not change the room's state. A failed route 6 is not
    fatal while the punch can still win.
 2. From the FIRST server entry that has a `username` the client collects the `turn:<host>:<port>?transport=udp`
@@ -199,7 +203,7 @@ CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 3. On fallback (punch timed out, `mode` relay, or the poll says `relay`): Allocate on the link socket
    (1.8) at port 3478; no answer within 3 s -> the next port; all ports failed -> "relay unavailable"
    (`ONLINE_FAIL_UNREACHABLE`). Then POST the relayed address with route 7 (the service sets
-   `state = "relay"`, stores it, counts it for the month) and poll until `relayPeer` is non-empty (route
+   `state = "relay"`, stores it, counts it in `turn_used`: information only) and poll until `relayPeer` is non-empty (route
    7's own answer may already carry it).
 4. BOTH sides post their RELAYED address and each makes its permission and channel for the other's
    relayed address (Cloudflare refuses permissions for private or loopback peers, and this is what hides

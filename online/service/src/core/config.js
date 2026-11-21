@@ -37,7 +37,8 @@ export function loadConfig(env) {
     pollMinMs: envInt(env, 'POLL_MIN_MS', 800, 1),
     mintsPerMember: envInt(env, 'MINTS_PER_MEMBER', 2, 1),
     mintsPerRoom: envInt(env, 'MINTS_PER_ROOM', 4, 1),
-    mintsPerAddrDay: envInt(env, 'MINTS_PER_ADDR_DAY', 40, 1),
+    mintsPerAddrDay: envInt(env, 'MINTS_PER_ADDR_DAY', 16, 1),
+    relayFreshSec: envInt(env, 'RELAY_POLL_FRESH_SEC', 30, 0, 600),
     // budget (1.4)
     dailyBudget: envInt(env, 'DAILY_REQUEST_BUDGET', 8000, 0),
     liveReservePct: envInt(env, 'LIVE_RESERVE_PCT', 20, 0, 100),
@@ -50,9 +51,14 @@ export function loadConfig(env) {
       stubUrls: String(env.TURN_STUB_URLS || ''),
       stubSecret: String(env.TURN_STUB_SECRET || ''),
       ttlSec: envInt(env, 'TURN_TTL_SEC', 3600, 60, 86400),
-      maxPerDay: envInt(env, 'TURN_MAX_CREDS_PER_DAY', 800, 0),
+      maxPerDay: envInt(env, 'TURN_MAX_CREDS_PER_DAY', 100, 0),
       estMbPerUse: envInt(env, 'TURN_EST_MB_PER_USE', 50, 0),
-      monthlyBudgetMb: envInt(env, 'TURN_MONTHLY_BUDGET_MB', 50000, 0),
+      monthlyBudgetMb: envInt(env, 'TURN_MONTHLY_BUDGET_MB', 500000, 0),
+      // optional: read the real egress from Cloudflare's GraphQL analytics (needs an "Account Analytics" token; off unless both are set)
+      usageAccountId: String(env.TURN_USAGE_ACCOUNT_ID || ''),
+      usageToken: String(env.TURN_USAGE_API_TOKEN || ''),
+      usageBudgetGb: envInt(env, 'TURN_USAGE_BUDGET_GB', 700, 0),
+      usageEverySec: envInt(env, 'TURN_USAGE_EVERY_SEC', 300, 30, 86400),
     },
   };
 }

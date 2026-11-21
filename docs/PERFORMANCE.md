@@ -293,3 +293,35 @@ which is what the worker is for.
 
 Measured on the host twin: the VDP worker is bit-identical to the single thread (hashes of picture, sound, state and RAM, 96 ROMs, x86 and
 armhf under qemu). Worker busy time, host x86_64 wall clock, an SMS homebrew: about 41 microseconds a frame, joins about 23 microseconds a frame.
+
+### Sega: Quick response (run-ahead) and the sprite pass of frames nobody sees (2.0)
+
+Nothing here has run on a Vita. host = x86_64 callgrind instructions per frame inside `md_host_run_frame` / `md_host_run_frame_ahead` (120 frames, the
+twin's own picture hashing not counted); model = those instructions at 444 MHz, IPC 1.0 (2.26 ms per million) / IPC 0.7 (3.21 ms per million), no
+ARM factor; qemu = user time of the armhf twin under qemu-arm on the same PC (it includes the twin's hashing, so only the ratio means anything).
+
+| Game | Plain: host, model | Run-ahead: host, model | Ratio host / qemu |
+|---|---|---|---|
+| SMS busy homebrew (single thread) | 1.94 M, 4.4 / 6.2 ms | 3.81 M, 8.6 / 12.2 ms | 1.96 / 1.94 |
+| Game Gear test cartridge (single thread) | 1.04 M, 2.3 / 3.3 ms | 2.12 M, 4.8 / 6.8 ms | 2.04 / 1.76 |
+| heaviest of the 73 8 bit test ROMs (estimate: plain measured 2.23 M, ratio 1.96) | 2.23 M, 5.0 / 7.2 ms | about 4.4 M, 9.9 / 14.0 ms | |
+| Mega Drive xgm-player, single thread | 4.21 M, 9.5 / 13.5 ms | 7.69 M, 17.4 / 24.7 ms | 1.83 / 1.74 |
+| Mega Drive xgm-player, emulating thread with the VDP worker | 2.38 M, 5.4 / 7.6 ms | 5.47 M, 12.4 / 17.6 ms | 2.30 / |
+| Mega Drive bad-apple, single thread | 3.50 M, 7.9 / 11.2 ms | 6.27 M, 14.2 / 20.1 ms | 1.79 / 1.97 |
+| Mega Drive bad-apple, emulating thread with the worker | 2.47 M, 5.6 / 7.9 ms | 5.62 M, 12.7 / 18.0 ms | 2.27 / |
+
+Run-ahead costs about twice a plain frame (the real frame without drawing, the saved state, the drawn look-ahead frame, the way back). The 8.3 ms
+rule of the plan (half a frame) is met by the Game Gear cartridge (4.8 ms at IPC 1.0) and missed by the busy SMS ROM (8.6 ms), the heaviest 8 bit ROMs
+(9.9 ms) and every heavy Mega Drive sample, so the Mega Drive default is Off. The 8 bit default is Auto even though the rule is not met on the heaviest ROMs: the governor (`pk_ahead.h`) starts it only when the
+projected cost is at most half a frame and stops it when frames run late, so a game that does not fit runs plain. The default was set from
+these model numbers and the proofs, not from a measurement on the console; it is one number (`player.cpp`, `quick_response`) to change.
+
+The state copies are small on the 8 bit consoles (state 83 KB) and 145 KB on the Mega Drive; the load no longer marks all of VRAM as changed
+(the tile cache keeps its dirty flags with the state and the worker and the wide view hear only about blocks that really differ), so the way back
+costs no more than the copy.
+
+The sprite pass of frames that are not drawn (fast forward, half-rate pacing, the real frame behind a run-ahead picture; host, `--no-render`,
+instructions per frame spent in `render_line`, which is the sprite parse and the sprite drawing into the line buffer, with no background and no
+pixels out): xgm-player 0.82 M (19 % of a plain frame; 1.9 / 2.6 ms model), bad-apple 0.08 M (2 %; 0.18 / 0.25 ms), busy SMS 0.04 M (2 %;
+0.10 / 0.14 ms). Before 2.0 such frames drew nothing, and games whose status register told them about a sprite collision ran differently
+(15 of 67 test games). A Mega Drive scene with many sprites is the one place where this costs real time.

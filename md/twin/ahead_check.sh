@@ -33,10 +33,11 @@ skip() { echo "SKIP  $1"; }
 n=$(grep -c . "$T/roms")
 if [ "$n" = 0 ]; then skip "no ROMs (set MD_TEST_ROMS, MD_TEST_SMS_ROMS or AHEAD_ROM_LIST)"; exit 0; fi
 
+widel() { grep -a '^WIDE ' | grep -o 'analysed=[0-9]*\|real=[0-9]*%\|hindsight=[0-9/]*\|map_cells=[0-9]*\|rooms=[0-9]*\|map_px=[0-9]*\|rows=[0-9]*\|rejected=[0-9]*' | tr '\n' ' '; }
 emu() { grep '^RESULT' | grep -o 'audio=[0-9a-f]* state=[0-9a-f]* ram=[0-9a-f]*'; }
 sramh() { grep -o 'sram=[0-9a-f]*' | tail -1; }
 
-und=0; undbad=0; ah=0; ahbad=0; ahthr=0; ahthrbad=0; ahwide=0; ahwidebad=0; shift=0; shiftbad=0; refused=0; fl=0; flbad=0; flpic=0; putback=0
+und=0; undbad=0; ah=0; ahbad=0; ahthr=0; ahthrbad=0; ahwide=0; ahwidebad=0; shift=0; shiftbad=0; wl=0; wlbad=0; refused=0; fl=0; flbad=0; flpic=0; putback=0
 while IFS= read -r r; do
 	[ -f "$r" ] || continue
 	"$TWIN" "$r" --frames "$F" --pad auto --frame-hashes "$T/p.fh" > "$T/plain.txt" 2>&1
@@ -62,6 +63,12 @@ while IFS= read -r r; do
 	wa=$("$TWIN" "$r" --frames "$F" --pad auto --wide 48 --ahead 2>&1 | emu)
 	ahwide=$((ahwide + 1)); [ -n "$wa" ] && [ "$wa" = "$wb" ] || { ahwidebad=$((ahwidebad + 1)); echo "  run-ahead with the wide view differs: $r"; }
 
+	# 2a. what the wide view learns: run-ahead shows the plain run's frame n + 1 at frame n, so its analysis of frames 0..F-1 is the plain run's
+	#     analysis of frames 1..F (the plain run skips frame 0): the counts must be the same
+	wp=$("$TWIN" "$r" --frames $((F + 1)) --pad auto --wide 48 --wide-skip 1 2>&1 | widel)
+	wq=$("$TWIN" "$r" --frames "$F" --pad auto --wide 48 --ahead 2>&1 | widel)
+	wl=$((wl + 1)); [ -n "$wp" ] && [ "$wp" = "$wq" ] || { wlbad=$((wlbad + 1)); echo "  wide view learns differently with run-ahead: $r"; echo "    plain: $wp"; echo "    ahead: $wq"; }
+
 	# 2b. the picture: with no button pressed, run-ahead's frame n is the plain run's frame n+1
 	"$TWIN" "$r" --frames "$F" --pad none --frame-hashes "$T/n.fh" > /dev/null 2>&1
 	"$TWIN" "$r" --frames "$F" --pad none --ahead --frame-hashes "$T/a.fh" > /dev/null 2>&1
@@ -80,9 +87,10 @@ while IFS= read -r r; do
 done < "$T/roms"
 
 [ $undbad = 0 ] && ok "undrawn frames leave the machine as drawn ones do (sound, state, RAM) on $und ROMs" || bad "undrawn frames ($undbad of $und differ)"
-[ $ahbad = 0 ] && ok "run-ahead leaves the machine untouched (sound, state, RAM, battery RAM) on $ah ROMs, $F frames each ($refused refused: EEPROM or flash; battery RAM put back on $putback)" || bad "run-ahead ($ahbad of $ah differ)"
+[ $ahbad = 0 ] && ok "run-ahead leaves the machine untouched (sound, state, RAM, battery RAM) on $ah ROMs, $F frames each (refused on $refused; battery RAM put back on $putback)" || bad "run-ahead ($ahbad of $ah differ)"
 [ $ahthrbad = 0 ] && ok "the same with the VDP worker on $ahthr ROMs" || bad "run-ahead with the VDP worker ($ahthrbad of $ahthr differ)"
 [ $ahwidebad = 0 ] && ok "the same with the wide view on $ahwide ROMs" || bad "run-ahead with the wide view ($ahwidebad of $ahwide differ)"
+[ $wlbad = 0 ] && ok "the wide view learns what it learns without run-ahead (picture, map cells, rooms, hindsight; the one frame it sees later accounted for) on $wl ROMs" || bad "wide view learning with run-ahead ($wlbad of $wl differ)"
 [ $shiftbad = 0 ] && ok "run-ahead shows the next frame's picture (frame n = plain frame n+1, no buttons) on $shift ROMs" || bad "run-ahead picture ($shiftbad of $shift are not the next frame's)"
 if [ $fl -gt 0 ]; then
 	[ $flbad = 0 ] && ok "no sprite flicker changes pictures only on $fl 8 bit ROMs ($flpic of them show more sprites)" || bad "no sprite flicker ($flbad of $fl change the machine)"

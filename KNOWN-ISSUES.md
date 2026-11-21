@@ -101,6 +101,16 @@ Testing continues on:
 - RetroAchievements badges in the library are not shown for them.
 - **No sprite flicker** (Master System, Game Gear, SG-1000; on by default) was checked with homebrew only. A game that hides
   something behind the console's sprite limit on purpose would show it: turn the row off for that game. Not offered for the Mega Drive.
+- **Quick response (Sega)** shows what you press one frame sooner by working out the next frame ahead; the game runs exactly the same and
+  states, rewind and saves are unaffected. It costs about twice a plain frame, so the default is Auto on the Master System, Game Gear and
+  SG-1000 (it runs only while the game leaves the room, and stops when frames run late) and Off on the Mega Drive, where the heavy games
+  do not fit (On there forces it and can drop frames; the cost figures are a model and nothing has run on a Vita). It is off in linked
+  play, in fast forward, in rewind and in Steady pacing's half mode. While it runs the wide view learns from the picture one frame later;
+  what it learns is the same to within that one frame.
+- **Sega save states**: a state holds a small extra block for what the core's own state never held (version 2); a state from before still
+  loads, and the frames right after it can differ from the uninterrupted game by the missing block (a sprite flag, a half-written EEPROM
+  command). A cartridge with a flash chip (the SGDK save-manager type) has states 256 KB larger: they hold the save window and the
+  ROM banks the chip rewrote (four banks at most).
 - **Wide view (Sega).** On by default, Off in the menu gives the 4:3 picture back. Beside the picture you see real picture only where
   it can be shown truthfully, a soft continuation of the edge elsewhere:
   - The **learned picture** (what the game has already shown at that place) is kept for the play session only: it is not saved with the

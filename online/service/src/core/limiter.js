@@ -1,6 +1,7 @@
-// In-memory per-address / per-token limits of the object (PROTOCOL.md 1.2). Memory only, never logged, with ONE exception: the guess
-// counters (wrong codes and tokens) are also kept on disk as a salted fingerprint until the UTC day ends (createMissStore), because they
-// are what stands between a room code and somebody trying them all. The others reset when the object leaves memory (README: the quota
+// In-memory per-address / per-token limits of the object (PROTOCOL.md 1.2). Memory only, never logged, with TWO exceptions: the guess
+// counters (wrong codes and tokens: createMissStore) and the relay credentials minted per address (createMintStore) are also kept on disk as
+// a salted fingerprint until the UTC day ends, because they are what stands between a room code and somebody trying them all, and between
+// the TURN allowance and somebody minting all day. The others reset when the object leaves memory (README: the quota
 // arithmetic still holds because the zone rule, the Worker's bucket and the stored daily budget stand behind them). Every limit is
 // scaled by RATE_LIMIT_SCALE.
 
@@ -69,11 +70,54 @@ function createMissStore(db) {
 }
 
 /**
+ * Relay credentials minted per address today, on disk (security review H2; the same way as the guess counters above): a salted fingerprint
+ * of the address key, never the address, a new salt every UTC day, the rows of the day before deleted with it. Without it an address could
+ * mint its share, wait for the object to leave memory and mint it again. One row write per credential (and one back when the upstream
+ * call fails), bounded by TURN_MAX_CREDS_PER_DAY.
+ */
+function createMintStore(db) {
+  if (!db) return null;
+  let salt = '';
+  let saltDay = -1;
+  let noneDay = -1;
+  function roll(day, make) {
+    if (saltDay === day) return true;
+    if (noneDay !== day) {
+      const row = db.get(`SELECT value FROM settings WHERE key = 'mint_day'`);
+      const [d, s] = String((row && row.value) || '').split(':');
+      if (Number(d) === day && s) { salt = s; saltDay = day; return true; }
+      noneDay = day;
+    }
+    if (!make) return false;
+    const a = new Uint32Array(2);
+    crypto.getRandomValues(a);
+    salt = a[0].toString(16).padStart(8, '0') + a[1].toString(16).padStart(8, '0');
+    saltDay = day;
+    db.run(`DELETE FROM mints`);
+    db.run(`INSERT INTO settings (key, value) VALUES ('mint_day', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, `${day}:${salt}`);
+    return true;
+  }
+  const fp = (ipk) => fnv(0x811c9dc5, `m|${salt}|${ipk}`).toString(16).padStart(8, '0') + fnv(0x1b873593, `${ipk}|${salt}|m`).toString(16).padStart(8, '0');
+  return {
+    load(ipk, day) {
+      if (!roll(day, false)) return 0;
+      const r = db.get(`SELECT n FROM mints WHERE fp = ?`, fp(ipk));
+      return r ? Number(r.n) || 0 : 0;
+    },
+    save(ipk, day, n) {
+      roll(day, true);
+      db.run(`INSERT INTO mints (fp, n) VALUES (?, ?) ON CONFLICT(fp) DO UPDATE SET n = excluded.n`, fp(ipk), Math.max(0, n));
+    },
+  };
+}
+
+/**
  * @param {ReturnType<import('./config.js').loadConfig>} cfg
  * @param {{get: Function, run: Function}} [db] the object's storage: the guess counters are kept there too (see createMissStore)
  */
 export function createLimiter(cfg, db) {
   const missStore = createMissStore(db);
+  const mintStore = createMintStore(db);
   const scale = cfg.scale;
   const scaled = (v) => Math.max(1, Math.ceil(v * scale));
   const mk = (burst, everySec) => createEdgeBucket({ burst, perSec: 1 / everySec });
@@ -118,19 +162,23 @@ export function createLimiter(cfg, db) {
     },
     roomsPerAddrCap: () => scaled(cfg.roomsPerAddr),
     tooManyRooms: () => tooMany(60, 'too_many_rooms', 'too many open rooms from this address'),
-    /** Route 6: MINTS_PER_ADDR_DAY credentials a day per address. */
+    /** Route 6: MINTS_PER_ADDR_DAY credentials a day per address (kept on disk too: a restart does not reset it). */
     mintDayCheck(ipk, now) {
-      const e = mintsToday.get(ipk);
-      if (e && e.day === dayIdx(now) && e.n >= scaled(cfg.mintsPerAddrDay)) {
-        return tooMany(secondsTo((dayIdx(now) + 1) * 86400000, now), 'relay_limit', 'too many relay credentials from this address today');
+      const d = dayIdx(now);
+      let e = mintsToday.get(ipk);
+      if (!e && mintStore) { e = { day: d, n: mintStore.load(ipk, d) }; boundedSet(mintsToday, ipk, e); }
+      if (e && e.day === d && e.n >= scaled(cfg.mintsPerAddrDay)) {
+        return tooMany(secondsTo((d + 1) * 86400000, now), 'relay_limit', 'too many relay credentials from this address today');
       }
       return null;
     },
     mintDayCount(ipk, now, by = 1) {
       const d = dayIdx(now);
-      const e = mintsToday.get(ipk);
-      const n = Math.max(0, (e && e.day === d ? e.n : 0) + by);
+      let e = mintsToday.get(ipk);
+      const base = e && e.day === d ? e.n : (mintStore ? mintStore.load(ipk, d) : 0);
+      const n = Math.max(0, base + by);
       boundedSet(mintsToday, ipk, { day: d, n });
+      if (mintStore) mintStore.save(ipk, d, n);
     },
     mintMemberCap: () => scaled(cfg.mintsPerMember),
     mintRoomCap: () => scaled(cfg.mintsPerRoom),

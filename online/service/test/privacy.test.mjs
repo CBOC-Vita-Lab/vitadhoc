@@ -19,7 +19,7 @@ test('after close(linked) the rooms table has no row and no address is anywhere 
   const settings = JSON.stringify(s.store.sql.exec('SELECT * FROM settings').toArray());
   assert.ok(!IP.test(settings), settings);
   assert.ok(!settings.includes(r.ht) && !settings.includes(r.gt));
-  assert.deepEqual(s.store.sql.exec('SELECT key FROM settings ORDER BY key').toArray().map((x) => x.key), ['budget_day', 'turn_day', 'turn_month']);
+  assert.deepEqual(s.store.sql.exec('SELECT key FROM settings ORDER BY key').toArray().map((x) => x.key), ['budget_day', 'mint_day', 'turn_day', 'turn_month', 'turn_used']);
 });
 
 test('after expiry and one request the row holds no address, nickname or creator key; 30 s later it is gone', async () => {

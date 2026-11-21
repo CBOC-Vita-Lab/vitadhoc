@@ -20,6 +20,7 @@ char CD_BIOS_EU[256], CD_BIOS_US[256], CD_BIOS_JP[256], MS_BIOS_US[256], MS_BIOS
 uint8_t cart_size;   /* only read by the Mega CD cartridge code (compiled out of the load path) */
 extern int8 fast_savestates;
 extern void sound_update_fm_function_pointers(void);
+extern int audio_max_frames;      /* md/core/system.c: the most sample frames audio_update may write (G.sndbuf's size) */
 
 #define SRAM_BYTES 0x10000
 #define MAX_PATCHES 150          /* as Genesis Plus GX (MAX_CHEATS): one per part, for the whole game */
@@ -294,6 +295,7 @@ int md_host_init(void)
 	memset(&bitmap, 0, sizeof bitmap);
 	bitmap.width = MD_MAX_WIDTH; bitmap.height = MD_MAX_HEIGHT; bitmap.pitch = MD_MAX_WIDTH * 2;
 	bitmap.data = (uint8_t *)fb_internal;
+	audio_max_frames = SOUND_MAX_FRAMES;
 	return ring_alloc(G.audio_rate);
 }
 

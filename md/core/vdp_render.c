@@ -650,21 +650,25 @@ typedef struct
 
 int render_carry_size(void) { return (int)sizeof(render_carry_t); }
 
+/* (the block sits at any byte offset of a state buffer: copy through a local, never cast the pointer) */
 void render_carry_save(void *p)
 {
-  render_carry_t *c = (render_carry_t *)p;
-  memcpy(c->obj, obj_info, sizeof(obj_info));
-  c->count[0] = object_count[0]; c->count[1] = object_count[1];
-  c->ovr = spr_ovr; c->tms_set = 0; c->col = spr_col;     /* tms_set: "the worker has status bits to merge" is settled at a frame's end (and never cleared without the worker) */
+  render_carry_t c;
+  memset(&c, 0, sizeof c);
+  memcpy(c.obj, obj_info, sizeof(obj_info));
+  c.count[0] = object_count[0]; c.count[1] = object_count[1];
+  c.ovr = spr_ovr; c.tms_set = 0; c.col = spr_col;     /* tms_set: "the worker has status bits to merge" is settled at a frame's end (and never cleared without the worker) */
+  memcpy(p, &c, sizeof c);
 }
 
 void render_carry_load(void *p)
 {
-  const render_carry_t *c = (const render_carry_t *)p;
-  memcpy(obj_info, c->obj, sizeof(obj_info));
-  object_count[0] = c->count[0] > MAX_SPRITES_PER_LINE ? MAX_SPRITES_PER_LINE : c->count[0];     /* a state file is the user's own: stay in the array */
-  object_count[1] = c->count[1] > MAX_SPRITES_PER_LINE ? MAX_SPRITES_PER_LINE : c->count[1];
-  spr_ovr = c->ovr; tms_status_set = c->tms_set; spr_col = c->col;
+  render_carry_t c;
+  memcpy(&c, p, sizeof c);
+  memcpy(obj_info, c.obj, sizeof(obj_info));
+  object_count[0] = c.count[0] > MAX_SPRITES_PER_LINE ? MAX_SPRITES_PER_LINE : c.count[0];     /* a state file is the user's own: stay in the array */
+  object_count[1] = c.count[1] > MAX_SPRITES_PER_LINE ? MAX_SPRITES_PER_LINE : c.count[1];
+  spr_ovr = c.ovr; tms_status_set = c.tms_set; spr_col = c.col;
 }
 
 /* Function pointers */
@@ -4999,7 +5003,7 @@ void render_reset(void)
   if (!reset_do_not_clear_buffers)
   {
     /* Clear display bitmap */
-    memset(bitmap.data, 0, bitmap.pitch * bitmap.height);
+    memset(bitmap.data, 0, bitmap.pitch * (bitmap.height - 1) + bitmap.width * 2);   /* VitAdhoc: the last row only as wide as a picture (a wide canvas's buffer starts inside the allocation) */
 
     /* Clear line buffers */
     memset(linebuf, 0, sizeof(linebuf));

@@ -21,10 +21,19 @@ export const SCHEMA = [
     guest_nick TEXT, guest_pub TEXT, guest_lan TEXT, guest_sym INTEGER, guest_relay_only INTEGER,
     guest_token TEXT, guest_relayed TEXT, guest_mints INTEGER, guest_req TEXT,
     punch_key TEXT, mode TEXT, reason TEXT, addr_key TEXT,
-    created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER, relay_uses INTEGER DEFAULT 0, old_mints INTEGER DEFAULT 0)`,
+    created_ms INTEGER, joined_ms INTEGER, expires_ms INTEGER, relay_uses INTEGER DEFAULT 0, old_mints INTEGER DEFAULT 0,
+    host_poll_ms INTEGER, guest_poll_ms INTEGER)`,
   `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`,
   // wrong codes / tokens per address today: a salted fingerprint, never the address (limiter.js createMissStore); emptied every UTC day
   `CREATE TABLE IF NOT EXISTS misses (fp TEXT PRIMARY KEY, hour INTEGER, h INTEGER, d INTEGER)`,
+  // relay credentials minted per address today: a salted fingerprint, never the address (limiter.js createMintStore); emptied every UTC day
+  `CREATE TABLE IF NOT EXISTS mints (fp TEXT PRIMARY KEY, n INTEGER)`,
+];
+
+/** Columns added after the first schema: a database made by an earlier build gets them here (CREATE TABLE IF NOT EXISTS leaves it alone). */
+export const MIGRATIONS = [
+  ['host_poll_ms', 'INTEGER'],
+  ['guest_poll_ms', 'INTEGER'],
 ];
 
 const bad = (msg, field) => new ApiError(400, 'bad_request', msg, field ? { field } : {});
@@ -218,8 +227,8 @@ export function joinRoom(c, r, d) {
   const mode = modeOf({ relayOnly: r.host_relay_only, pub: r.host_pub, sym: r.host_sym }, d);
   c.db.run(
     `UPDATE rooms SET state = 'joined', guest_nick = ?, guest_pub = ?, guest_lan = ?, guest_sym = ?, guest_relay_only = ?, guest_token = ?, guest_req = ?, guest_relayed = '',
-       mode = ?, joined_ms = ?, expires_ms = ? WHERE code = ?`,
-    d.nick, d.pub, d.lan, d.sym, d.relayOnly, token, d.rid || null, mode, c.now, c.now + c.cfg.connectSec * 1000, r.code,
+       mode = ?, joined_ms = ?, guest_poll_ms = ?, expires_ms = ? WHERE code = ?`,
+    d.nick, d.pub, d.lan, d.sym, d.relayOnly, token, d.rid || null, mode, c.now, c.now, c.now + c.cfg.connectSec * 1000, r.code,
   );
   return { token, mode };
 }
@@ -272,7 +281,7 @@ export function setRelayed(c, r, role, relayed) {
 export function reopen(c, r) {
   c.db.run(
     `UPDATE rooms SET state = 'open', guest_nick = NULL, guest_pub = '', guest_lan = '', guest_sym = 0, guest_relay_only = 0, guest_token = NULL, guest_req = NULL, old_mints = COALESCE(old_mints, 0) + COALESCE(guest_mints, 0), guest_mints = 0, guest_relayed = '',
-       host_relayed = '', mode = '', joined_ms = NULL, expires_ms = ? WHERE code = ?`,
+       host_relayed = '', mode = '', joined_ms = NULL, guest_poll_ms = NULL, expires_ms = ? WHERE code = ?`,
     r.created_ms + c.cfg.roomTtlSec * 1000, r.code,
   );
 }

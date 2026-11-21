@@ -56,10 +56,15 @@ JOIN_EVERY_SEC = "10"
 POLL_MIN_MS = "800"                # one poll per token per 800 ms
 MINTS_PER_MEMBER = "2"             # relay credentials: per member, per room, per address a day, and in all a day
 MINTS_PER_ROOM = "4"
-MINTS_PER_ADDR_DAY = "40"
-TURN_MAX_CREDS_PER_DAY = "800"
+MINTS_PER_ADDR_DAY = "16"
+RELAY_POLL_FRESH_SEC = "30"        # a credential is given only while BOTH members polled the room within this many seconds (0 = off)
+TURN_MAX_CREDS_PER_DAY = "100"     # every credential minted counts, used or not (README: Quota arithmetic)
 TURN_TTL_SEC = "3600"
-TURN_EST_MB_PER_USE = "50"         # the monthly guard: each USED credential counts this many MB ...
-TURN_MONTHLY_BUDGET_MB = "50000"   # ... and the relay stops at this many (route 6 answers 503 relay_budget)
+TURN_EST_MB_PER_USE = "50"         # the monthly guard: each credential MINTED counts this many MB ...
+TURN_MONTHLY_BUDGET_MB = "500000"  # ... and the relay stops at this many (route 6 answers 503 relay_budget): half of Cloudflare's free 1,000 GB
+# Optional real usage (Cloudflare GraphQL analytics): set BOTH, the token as a secret (TURN_USAGE_API_TOKEN, "Account Analytics" read only).
+# TURN_USAGE_ACCOUNT_ID = ""
+# TURN_USAGE_BUDGET_GB = "700"     # route 6 answers 503 relay_budget once the month's egress reaches this
+# TURN_USAGE_EVERY_SEC = "300"     # one read at most this often
 # Test-only variables, NEVER set here: RATE_LIMIT_SCALE (multiplies every per-address limit), ALLOW_PRIVATE_ADDR (the dev server and the tests set it),
 # TURN_STUB_URLS / TURN_STUB_SECRET (the stub TURN provider of the dev server).

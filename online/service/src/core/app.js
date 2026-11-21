@@ -13,9 +13,12 @@ import { createBudget } from './budget.js';
 import { createLimiter } from './limiter.js';
 import { createProvider, createTurnGuards, udpOnly } from './turn.js';
 import {
-  SCHEMA, TOKEN_RE, parseDesc, strictKeys, checkAddr, loadRoom, sweep, liveRooms, liveRoomsOf, createRoom, roomOfCreate, card, joinRoom, memberOf, peerFor,
+  SCHEMA, MIGRATIONS, TOKEN_RE, parseDesc, strictKeys, checkAddr, loadRoom, sweep, liveRooms, liveRoomsOf, createRoom, roomOfCreate, card, joinRoom, memberOf, peerFor,
   punchMsFor, hostPollMs, setRelayed, reopen, closeRow, deleteRoom,
 } from './rooms.js';
+
+/** A member's last poll is written at most this often (ms). */
+const POLL_MARK_MS = 5000;
 
 const bad = (msg, field) => new ApiError(400, 'bad_request', msg, field ? { field } : {});
 
@@ -30,9 +33,13 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
     run: (q, ...b) => { sql.exec(q, ...b).toArray(); },
   };
   for (const stmt of SCHEMA) db.run(stmt);
+  { // a database made by an earlier build lacks the newer columns of `rooms`
+    const have = new Set(db.all(`SELECT name FROM pragma_table_info('rooms')`).map((x) => x.name));
+    for (const [col, type] of MIGRATIONS) if (!have.has(col)) db.run(`ALTER TABLE rooms ADD COLUMN ${col} ${type}`);
+  }
   const budget = createBudget(db, cfg, cfg.scale);
   const limiter = createLimiter(cfg, db);
-  const guards = createTurnGuards(db, cfg);
+  const guards = createTurnGuards(db, cfg, turnFetch);
   const provider = createProvider(cfg.turn, turnFetch);
   let lastSweep = -Infinity;
   let requests = 0;
@@ -128,6 +135,12 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
     if (pub !== undefined && role === 'host' && r.state === 'open' && !r.host_relay_only && pub !== r.host_pub) {
       db.run(`UPDATE rooms SET host_pub = ? WHERE code = ?`, pub, r.code);
     }
+    // the relay credential gate (H2) needs to know both members are alive: after the join, a poll leaves its time (at most one write per
+    // POLL_MARK_MS per member; an open room's polls write nothing)
+    if (r.state !== 'open') {
+      const col = role === 'host' ? 'host_poll_ms' : 'guest_poll_ms';
+      if (!r[col] || c.now - r[col] >= POLL_MARK_MS) db.run(`UPDATE rooms SET ${col} = ? WHERE code = ?`, c.now, r.code);
+    }
     const ageSec = Math.max(0, Math.floor((c.now - r.created_ms) / 1000));
     return json(200, {
       state: r.state,
@@ -148,9 +161,17 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
     if (r.state === 'open') throw new ApiError(403, 'relay_not_allowed', 'relay credentials are for rooms with two members');
     if (!provider) throw new ApiError(503, 'relay_unavailable', 'the relay is not configured');
     const col = role === 'host' ? 'host_mints' : 'guest_mints';
+    // both members must be alive: each polled (the guest's join counts as its first poll) within RELAY_POLL_FRESH_SEC and after the join.
+    // One person can still be both members from one address, so this only raises the price of an abuse; the caps below stand it.
+    if (cfg.relayFreshSec > 0) {
+      const fresh = (t) => t && t >= (r.joined_ms || 0) && c.now - t <= cfg.relayFreshSec * 1000;
+      if (!fresh(r.host_poll_ms) || !fresh(r.guest_poll_ms)) {
+        throw new ApiError(403, 'relay_not_allowed', 'both members must be polling the room before a relay credential is given');
+      }
+    }
     const addrWait = limiter.mintDayCheck(ipk, c.now);
     if (addrWait) throw addrWait;
-    if ((r[col] || 0) >= limiter.mintMemberCap() || (r.host_mints || 0) + (r.guest_mints || 0) >= limiter.mintRoomCap()) throw limiter.relayLimit();
+    if ((r[col] || 0) >= limiter.mintMemberCap() || (r.host_mints || 0) + (r.guest_mints || 0) + (r.old_mints || 0) >= limiter.mintRoomCap()) throw limiter.relayLimit();
     guards.reserve(c.now); // 503 relay_budget (monthly, then daily)
     db.run(`UPDATE rooms SET ${col} = ${col} + 1 WHERE code = ?`, r.code);
     limiter.mintDayCount(ipk, c.now);
@@ -158,6 +179,7 @@ export function createApp({ sql, tx, env = {}, now = Date.now, turnFetch = fetch
   }
 
   async function relay(c, params, body, ipk) {
+    if (provider) await guards.usageCheck(c.now); // optional: the real egress of the month (a no-op unless TURN_USAGE_* are set)
     const rsv = atomic(() => relayReserve(c, params, body, ipk));
     let minted;
     try {

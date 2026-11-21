@@ -663,8 +663,18 @@ Engineering detail behind the [What's New](../CHANGELOG.md) list.
 - **RetroAchievements** (`vita/ra_vita.c`, `vita/ra_http.c`, vendored
   rcheevos v12.5.0 plus five backported fixes, with `RC_NO_THREADS`): the rc_client runs on the game
   thread; requests go one at a time to a network thread (HTTPS through
-  SceHttp/SceSsl with the root certificates in `ra_roots.h`; plain HTTP over
-  sockets for tests). The game's hash is the MD5 of the whole file (patched
+  SceHttp/SceSsl; plain HTTP over sockets for tests). The TLS here is the
+  console's own, NOT the pinned stack of the room client: `tls_up` loads the
+  roots of `ra_roots.h` with `sceHttpsLoadCert` BESIDE the firmware's
+  certificate store (they are added, they do not replace it), and no check is
+  switched off, so the firmware's defaults decide (certificate chain, host
+  name, dates, known authority). Any authority in the console's store is
+  therefore accepted for retroachievements.org, and the protocol versions and
+  cipher suites are the firmware's. The room service is different: it uses the
+  vendored Mbed TLS with eight pinned roots, a clock floor and mandatory
+  verification (`nethttps/`, below). The RetroAchievements password is sent
+  once per sign-in over the console's connection; afterwards a token. Moving
+  `ra_http.c` onto `nethttps/` is a possible later change (not done in 2.0). The game's hash is the MD5 of the whole file (patched
   copy if patched), computed on that thread. Memory maps match rcheevos's
   console tables (`fe_host_ra_read`, `gbcore_ra_read`). Hardcore blocks every
   state load, rewind and cheats, and lifts for games with neither achievements

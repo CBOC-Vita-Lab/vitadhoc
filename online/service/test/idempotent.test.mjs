@@ -87,26 +87,27 @@ test('a join with a rid does not reveal another room: a rid of room A does nothi
   assert.notEqual(jb.data.token, ja.data.token);
 });
 
-test('reopen resets the guest\'s mints: a third guest on one code can fetch relay credentials; uses never pass the credentials ever minted', async () => {
-  const s = makeServer({ TURN_MONTHLY_BUDGET_MB: '100000' });
+test('reopen resets the guest\'s own count but not the room\'s: the room never mints more than MINTS_PER_ROOM in its life; uses never pass the credentials ever minted', async () => {
+  const s = makeServer({ TURN_MONTHLY_BUDGET_MB: '100000', RATE_LIMIT_SCALE: '1', MINTS_PER_ADDR_DAY: '1000' });
   const c = await s.create();
   const month = (T0 && new Date(T0).toISOString().slice(0, 7));
   let minted = 0;
   for (let g = 0; g < 4; g++) {
     const j = await s.join(c.data.code, guestDesc({ nick: `G${g}` }));
     assert.equal(j.status, 200, `guest ${g}: ${j.text}`);
+    await s.poll(c.data.code, c.data.token); // the host sees the guest
     for (let k = 0; k < 2; k++) {
       const r = await s.relay(c.data.code, j.data.token);
       if (r.status === 200) minted++;
-      else err(r, 429, 'rate_limited'); // the member cap: 2 per guest
+      else err(r, 429, 'rate_limited'); // the member cap (2 per guest) or the room cap (4 in the room's life, old guests included)
     }
-    assert.equal(s.rows()[0].guest_mints, 2, `guest ${g} got its own credentials`);
+    assert.equal(s.rows()[0].guest_mints, g < 2 ? 2 : 0, `guest ${g}: its own credentials while the room has some left`);
     for (let i = 0; i < 3; i++) await s.endpoint(c.data.code, j.data.token, `198.18.0.2:${4000 + g * 10 + i}`);
     await s.close(c.data.code, j.data.token, 'cancel');
     assert.equal(s.rows()[0].guest_mints, 0, 'reset on reopen');
   }
-  assert.equal(minted, 8);
-  const used = Number((s.setting('turn_month') || `${month}:0`).split(':')[1]);
+  assert.equal(minted, 4, 'MINTS_PER_ROOM counts the credentials of the guests that left too');
+  const used = Number((s.setting('turn_used') || `${month}:0`).split(':')[1]);
   assert.ok(used <= minted, `uses ${used} never exceed the credentials minted ${minted}`);
   assert.ok(used >= 1);
 });

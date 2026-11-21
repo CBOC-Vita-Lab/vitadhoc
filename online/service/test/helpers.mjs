@@ -62,6 +62,7 @@ export async function joined(srv, hostOver = {}, guestOver = {}, o = {}) {
   if (c.status !== 201) throw new Error(`create failed ${c.status} ${c.text}`);
   const j = await srv.join(c.data.code, guestDesc(guestOver), o.guest);
   if (j.status !== 200) throw new Error(`join failed ${j.status} ${j.text}`);
+  if (o.poll !== false) await srv.poll(c.data.code, c.data.token); // the host sees its guest: a relay credential needs both members polling
   return { code: c.data.code, ht: c.data.token, gt: j.data.token, created: c.data, joined: j.data };
 }
 

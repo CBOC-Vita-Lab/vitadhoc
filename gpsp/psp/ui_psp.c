@@ -3962,10 +3962,10 @@ static const char *set_help(int id)
                                "and deeper."
                              : "Colours exactly as the game sends them.";
       return "An original Game Boy's shades are its colours, above.";
-   case SET_GRID:     return "A dark line under every row of the game's "
-                             "pixels, like a TV. 0 is off, 10 is strong.";
-   case SET_LCDGRID:  return "The gaps between the dots of a handheld's "
-                             "screen. 0 is off, 10 is strong.";
+   case SET_GRID:     return "Dark lines between the rows, like a TV. 1 is "
+                             "faint, 10 is strong.";
+   case SET_LCDGRID:  return "A faint pixel grid, like a handheld's screen. "
+                             "1 is faint, 10 is strong.";
    case SET_NESWIDE:  return g_pcfg.nes_wide == 2
                              ? "The NES picture as it was: 256 columns."
                              : g_pcfg.nes_wide == 1
@@ -4024,8 +4024,8 @@ static const char *set_help(int id)
            : g_pcfg.wide_fill == 1 ? "Screens with no more to show fade "
                                      "out softly at the sides."
            : "Screens with no more to show keep black bars.";
-   case SET_AMBIENT:  return "The game's own colours glowing in the space "
-                             "beside it. 0 is off (black), 10 is bright.";
+   case SET_AMBIENT:  return "A soft glow beside the picture in place of "
+                             "black bars. 1 is faint, 10 is bright.";
    case SET_GBPAL:    return "GBC auto: the colours a Game Boy Color gave "
                              "this game.";
    case SET_THEME:    return "Dark or light menus.";

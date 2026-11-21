@@ -33,6 +33,7 @@ test('the guest\'s relayed address survives a second rebuild', async () => {
   const r = await joined(s);
   s.rebuild();
   s.advance(sec(60));
+  await s.poll(r.code, r.ht); await s.poll(r.code, r.gt); // both still polling a minute later
   assert.equal((await s.relay(r.code, r.gt)).status, 200);
   assert.equal((await s.endpoint(r.code, r.gt, '198.18.0.2:4000')).status, 200);
   s.rebuild();

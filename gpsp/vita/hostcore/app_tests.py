@@ -181,7 +181,11 @@ class Suite:
         cfg = {"last_rom": "gbadhoc-test.gba", "hints": 0, "wide_gba": 0,
                "ui_home": 0, "scale_gba": 4, "scale_gb": 4, "scale_gbc": 4,
                "stick_rewind": 1, "bind_screenshot": "L+R+SELECT",
-               "ambient_gba": 0, "ambient_gb": 0, "ambient_gbc": 0}
+               "ambient_gba": 0, "ambient_gb": 0, "ambient_gbc": 0,
+               # 2.0: a GBA game's own default is the GBA screen's colours
+               # (docs/LOOKS.md); the pictures the references hold are the
+               # raw ones, and t_look hands None to see the default
+               "color_gba": 0}
         cfg.update(config or {})
         with open(os.path.join(root, "config.ini"), "w") as f:
             for k, v in cfg.items():
@@ -740,9 +744,9 @@ def t_ff(S):
         S.summary["ff_%s.audio_crc" % name] = r.host.get("audio_crc")
 
     # Settings > Fast-forward, in game: Settings opens on Screen size
-    # (Display); Fast-forward is the first Gameplay row, nine DOWN.
+    # (Display); Fast-forward is the first Gameplay row, ten DOWN.
     # RIGHT: 3x -> 3x with sound, saved.
-    pick = menu_pick(4, wait=100) + set_down(9)
+    pick = menu_pick(4, wait=100) + set_down(10)
     r = S.run("ff_row", pick + "+10:shot=row.png\n+4:right\n"
               "+10:shot=row_sound.png\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba")
@@ -926,11 +930,11 @@ def t_sensors(S):
     S.check(near(b[2][1], (0x3A0 + 112) // 8) and near(b[2][0], 0x392 // 8),
             "top edge down half a g: Y higher (%d px)" % b[2][1])
 
-    # Settings > THIS GAME, in a tilt game: 24 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
+    # Settings > THIS GAME, in a tilt game: 25 DOWN from Screen size is Level -- X makes the way the Vita is held now level, and
     # the game's file keeps it.
     r = run("level", "gbadhoc-tilt.gba",
             "1:motion=0.0/0.0/0\n100:motion=0.3/0.6/0\n" +
-            menu_pick(4, wait=60) + set_down(24) + "+10:shot=level_row.png\n"
+            menu_pick(4, wait=60) + set_down(25) + "+10:shot=level_row.png\n"
             "+4:cross\n+20:up\n+20:shot=rows.png\n+4:circle\n+10:circle\n"
             "+120:shot=level.png\n+10:quit\n")
     S.picture(r, "rows.png")
@@ -1041,10 +1045,10 @@ def t_game_look(S):
                                        "gbadhoc-test.gba.ini")).read() \
         if os.path.exists(os.path.join(r.root, "games",
                                        "gbadhoc-test.gba.ini")) else ""
-    # Settings opens on Screen size; THIS GAME's Display settings is 20 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
+    # Settings opens on Screen size; THIS GAME's Display settings is 21 DOWN; CROSS gives the game its own look.  Then TRIANGLE (the
     # size preset) makes it stretch: the game's file, not config.ini.
     r = S.run("game_look_on", menu_pick(4, wait=60) +
-              set_down(20) + "+10:shot=row.png\n+4:cross\n"
+              set_down(21) + "+10:shot=row.png\n+4:cross\n"
               "+10:shot=row_own.png\n+4:circle\n+10:circle\n+40:triangle\n"
               "+60:shot=stretch.png\n+10:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg)
@@ -1068,7 +1072,7 @@ def t_game_look(S):
     # Next time it starts in its own look; turning it off brings the
     # console's back, and the next start is the console's.
     r = S.run("game_look_off", menu_pick(4, wait=60) +
-              set_down(20) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
+              set_down(21) + "+4:cross\n+4:circle\n+10:circle\n+30:quit\n",
               autoboot="gbadhoc-test.gba", config=cfg,
               extra={"games/gbadhoc-test.gba.ini":
                      "override = 1\nscale = 2\nquality = 1\nfilter = 4\n"})
@@ -1470,7 +1474,7 @@ def t_gb_type(S):
     S.check(r.has(r"^EVT game rom=.*gbsave\.gb size=\d+ console=GB code="),
             "no override: the cartridge header decides (a Game Boy)")
     # three presses: Game Boy, Game Boy Color, back to Auto
-    steps = menu_pick(4, wait=60) + set_down(19) + "+10:shot=row.png\n"
+    steps = menu_pick(4, wait=60) + set_down(20) + "+10:shot=row.png\n"
     r = S.run("gb_type_row", steps + "+6:cross\n+30:quit\n", autoboot="gbsave.gb",
               extra={"gb_override.txt": keep})
     S.clean(r)
@@ -2303,10 +2307,23 @@ def gba_screen(rgb, dark):
 
 
 def t_look(S):
-    """Colours and motion blend: a GBA's screen colours by the table, the
-    blend of two frames, the Settings rows, a Game Boy Color's own."""
-    base = {"scale_gba": 4, "filter_gba": 0, "scale_gbc": 4, "filter_gbc": 0}
+    """LCD colours and LCD ghosting: a GBA's screen colours by the table, the
+    mix of two frames, the Settings rows, a Game Boy Color's own."""
+    base = {"scale_gba": 4, "filter_gba": 0, "scale_gbc": 4, "filter_gbc": 0,
+            "color_gba": 0}
     shots = {}
+    # 2.0: a GBA game starts in the GBA screen's colours (docs/LOOKS.md): no
+    # colour key at all is colour 1, and the saved choice is kept as it is
+    r = S.run("look_default", "150:quit\n",
+              config={"scale_gba": 4, "color_gba": None, "ambient_gba": None},
+              autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    look = r.evt("display_look")
+    S.check(look and look[-1]["color"] == "1" and look[-1]["ghost"] == "0" and
+            look[-1]["scan"] == "0" and look[-1]["grid"] == "0" and
+            look[-1]["glow"] == "5",
+            "defaults: GBA screen colours, no ghosting, no scanlines or grid, "
+            "glow 5 (%s)" % (look[-1]["_"] if look else "-"))
     for name, color in (("raw", 0), ("gba", 1), ("dark", 2)):
         cfg = dict(base, color_gba=color)
         r = S.run("look_" + name, "150:shot=game.png\n+10:quit\n", config=cfg,
@@ -2340,7 +2357,7 @@ def t_look(S):
                                                          lum["gba"]))
 
     # ---- the rows: Settings opens on Screen size, then Image quality, Video
-    # filter, Ambient bars, Colours (4 DOWN); the next row is Motion blend
+    # filter, Ambient glow, LCD colours (4 DOWN); the next row is LCD ghosting
     script = "100:shot=before.png\n" + menu_pick(4, wait=10) + set_down(4) + \
          "+10:shot=row.png\n+4:right\n+10:shot=row_gba.png\n" \
         "+4:down\n+8:right\n+10:shot=row_blend.png\n+4:circle\n+10:circle\n" \
@@ -2349,15 +2366,15 @@ def t_look(S):
     S.clean(r)
     look = r.evt("display_look")
     S.check(len(look) >= 3 and
-            [(e["color"], e["blend"]) for e in look[-3:]] ==
+            [(e["color"], e["ghost"]) for e in look[-3:]] ==
             [("0", "0"), ("1", "0"), ("1", "1")],
-            "Settings > Colours then Motion blend: raw, GBA screen, and "
-            "blended (%s)" % [(e["color"], e["blend"]) for e in look])
+            "Settings > LCD colours then LCD ghosting: raw, GBA screen, and "
+            "ghosting 1 (%s)" % [(e["color"], e["ghost"]) for e in look])
     S.picture(r, "row_gba.png", "look_row.png")
     ini = open(os.path.join(r.root, "config.ini")).read()
     S.check(re.search(r"^color_gba = 1$", ini, re.M) and
-            re.search(r"^blend_gba = 1$", ini, re.M),
-            "config.ini keeps color_gba = 1 and blend_gba = 1")
+            re.search(r"^ghost_gba = 1$", ini, re.M),
+            "config.ini keeps color_gba = 1 and ghost_gba = 1")
     a, b = S.picture(r, "before.png"), S.picture(r, "after.png")
     if a and b and shots.get("gba"):
         # the cartridge's picture moves; its background does not
@@ -2375,7 +2392,7 @@ def t_look(S):
         got = {}
         for blend in (0, 1):
             r = S.run("look_blend%d" % blend, "200:shot=game.png\n+10:quit\n",
-                      config=dict(base, blend_gbc=blend), autoboot="rwtest.gbc",
+                      config=dict(base, ghost_gbc=5 * blend), autoboot="rwtest.gbc",
                       extra={"roms/rwtest.gbc": open(rw, "rb").read()})
             S.clean(r)
             im = S.picture(r, "game.png")
@@ -4100,9 +4117,9 @@ def t_fullspeed(S):
                 swap=max(int(w.get("swap_us", "0/0").split("/")[0])
                          for w in wins[1:]) if len(wins) > 1 else -1,
                 under=int(au[-1].get("under", 0)) if au else -1)
-    # ---- the row: Keep full speed is 13 DOWN from Screen size; CROSS turns
+    # ---- the row: Keep full speed is 14 DOWN from Screen size; CROSS turns
     # it off, and config.ini keeps that
-    script = menu_pick(4, wait=100) + set_down(13) + "+10:shot=row.png\n" \
+    script = menu_pick(4, wait=100) + set_down(14) + "+10:shot=row.png\n" \
         "+4:cross\n+10:shot=row_off.png\n+4:circle\n+10:circle\n+30:quit\n"
     r = S.run("fullspeed_row", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -5722,9 +5739,9 @@ def t_save_clock(S):
     else:
         S.note("no private Emerald copy here: that leg is skipped")
     # 5. The rows: Save type and Clock (RTC) sit at the top of THIS GAME,
-    #    18 DOWN from Screen size.  X steps a value.
+    #    19 DOWN from Screen size.  X steps a value.
     r = S.run("save_type_rows", menu_pick(4, wait=60) +
-              set_down(18) + "+10:shot=rows.png\n"
+              set_down(19) + "+10:shot=rows.png\n"
               "+4:cross\n+4:cross\n+8:down\n+4:cross\n+10:circle\n"
               "+10:circle\n+30:quit\n", autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -6110,20 +6127,25 @@ def t_state_undo_lock(S):
 
 
 def t_display_rows(S):
-    """Settings > Display > Grid strength (1-10) and Screen overlay are rows,
-    saved to vita.ini and applied at once; Grid strength 10 darkens the LCD
-    grid."""
-    # browser Settings opens on Theme: 19 DOWN to Screen size (2.0 added Join online to the browser's Link setup),
-    # 7 more to Grid strength
-    walk = "60:start\n" + "+8:down\n" * 26 + "+20:shot=grid.png\n"
-    r = S.run("display_rows", walk + "+4:right\n+10:down\n+10:shot=overlay.png\n"
+    """Settings > Display > Scanlines and LCD grid (0-10 each, independent,
+    per console) and Screen overlay are rows, applied at once; the strengths
+    darken the picture, and Ambient glow's strength brightens the bars."""
+    # browser Settings opens on Theme: 20 DOWN to Screen size (2.0 added Join online and the About row), 7 more to
+    # Scanlines (Screen fill is skipped: Wide view is off here), LCD grid is the row below
+    walk = "60:start\n" + "+8:down\n" * 27 + "+20:shot=grid.png\n"
+    r = S.run("display_rows", walk + "+4:right\n+10:down\n+4:right\n+8:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)
-    S.check(r.has(r"^EVT grid_strength level=6 saved=1"), "Grid strength 5 -> 6")
+    look = r.evt("display_look")
+    S.check(look and (look[-1]["scan"], look[-1]["grid"]) == ("1", "2"),
+            "Scanlines 0 -> 1 and LCD grid 0 -> 2, each on its own (%s)" %
+            (look[-1]["_"] if look else "-"))
     S.check(r.has(r"^EVT overlays on=0 saved=1"), "Screen overlay on -> off")
     ini = open(os.path.join(r.root, "vita.ini")).read()
-    S.check(re.search(r"^grid_strength = 6$", ini, re.M) and
-            re.search(r"^overlays = 0$", ini, re.M), "both kept in vita.ini (%r)" % ini)
+    S.check(re.search(r"^overlays = 0$", ini, re.M), "overlays kept in vita.ini (%r)" % ini)
+    cfg = open(os.path.join(r.root, "config.ini")).read()
+    S.check(re.search(r"^scan_gba = 1$", cfg, re.M) and re.search(r"^grid_gba = 2$", cfg, re.M),
+            "scan_gba = 1 and grid_gba = 2 are kept in config.ini")
     # Settings > Interface > Screenshot folder, typed on the keyboard
     shots = "/tmp/vad-shots-%d" % os.getpid()
     shutil.rmtree(shots, ignore_errors=True)
@@ -6136,17 +6158,31 @@ def t_display_rows(S):
                       open(os.path.join(r.root, "vita.ini")).read(), re.M),
             "vita.ini holds it")
     shutil.rmtree(shots, ignore_errors=True)
-    # the look itself: the grid at 1 and at 10 on the same frame
-    dark = []
-    for level in (1, 10):
-        r = S.run("grid_level_%d" % level, "150:shot=g.png\n+5:quit\n",
-                  autoboot="gbadhoc-test.gba",
-                  config={"filter_gba": 3, "quality_gba": 0, "scale_gba": 1},
-                  vita_ini={"grid_strength": level})
+    # the look itself: the grid and the scanlines at 0, 1 and 10 on the same frame, each alone
+    def darkness(tag, cfg):
+        r = S.run(tag, "150:shot=g.png\n+5:quit\n", autoboot="gbadhoc-test.gba",
+                  config=dict({"filter_gba": 2, "quality_gba": 0, "scale_gba": 1, "glow_gba": 0}, **cfg))
         S.clean(r)
-        im = r.shot("g.png").convert("L")
-        dark.append(sum(im.tobytes()))
-    S.check(dark[1] < dark[0], "a stronger grid is darker (%s)" % dark)
+        return sum(r.shot("g.png").convert("L").tobytes())
+    for what in ("grid", "scan"):
+        d = [darkness("%s_level_%d" % (what, lv), {what + "_gba": lv}) for lv in (0, 1, 10)]
+        S.check(d[0] > d[1] > d[2], "%s: 0 off, a stronger one is darker (%s)" % (what, d))
+    both = darkness("grid_and_scan", {"grid_gba": 10, "scan_gba": 10})
+    S.check(both < darkness("scan_only", {"scan_gba": 10}) and both < darkness("grid_only", {"grid_gba": 10}),
+            "grid and scanlines add up: the two together are darker than either")
+    # the same through xBRZ (Image quality Auto, the default): the looks are drawn over the upscaled picture too
+    plain = darkness("xbrz_plain", {"quality_gba": 0, "filter_gba": 2})
+    up = darkness("xbrz_grid", {"quality_gba": 0, "filter_gba": 2, "grid_gba": 10})
+    S.check(up < plain, "the grid shows over the smoothed picture (%s < %s)" % (up, plain))
+    # Ambient glow: 0 black bars; the strength brightens the bars
+    def bars(tag, glow):
+        r = S.run(tag, "150:shot=g.png\n+5:quit\n", autoboot="gbadhoc-test.gba",
+                  config={"filter_gba": 2, "scale_gba": 4, "glow_gba": glow})
+        S.clean(r)
+        im = r.shot("g.png")
+        return sum(im.crop((0, 0, 40, 544)).convert("L").tobytes())
+    g = [bars("glow_%d" % lv, lv) for lv in (0, 1, 5, 10)]
+    S.check(g[0] == 0 and g[0] < g[1] < g[2] < g[3], "Ambient glow 0 is black, and brighter with each step (%s)" % g)
 
 
 def t_cpu_speed(S):
@@ -6158,8 +6194,8 @@ def t_cpu_speed(S):
     import tempfile
     good = bytes.fromhex("50535653" "30333030" "0b000000" "f4010000"
                          "de000000" "de000000" "a6000000")
-    # the row, in game: CPU speed is 14 DOWN from Screen size
-    pick = menu_pick(4, wait=100) + set_down(14) + "+10:shot=row.png\n"
+    # the row, in game: CPU speed is 15 DOWN from Screen size
+    pick = menu_pick(4, wait=100) + set_down(15) + "+10:shot=row.png\n"
     quit_ = "+4:circle\n+10:circle\n+30:quit\n"
 
     made = []
@@ -7195,6 +7231,26 @@ def t_nes_wide(S):
             "Off: the 256-column picture only")
 
 
+def t_nes_soft_edge(S):
+    """NES, Wide view on, Ambient glow off: the side bars are black, not a
+    blurred copy of the picture's edge; with the glow on they are filled."""
+    d = os.path.join(S.outdir, "nes_scroll_roms")
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
+    subprocess.run([sys.executable, os.path.join(HERE, "..", "..", "..", "nes", "twin", "tests",
+                    "scroll_roms.py"), d], check=True, capture_output=True)
+    rom = open(os.path.join(d, "scroll_vert.nes"), "rb").read()
+
+    def bars(tag, glow):
+        r = S.run(tag, "60:right:400\n+0:shot=s.png\n+10:quit\n", autoboot="Scroll.nes",
+                  config={"glow_nes": glow, "filter_nes": 2, "scale_nes": 4},
+                  extra={"roms/Scroll.nes": rom})
+        S.clean(r)
+        return sum(r.shot("s.png").crop((0, 0, 40, 544)).convert("L").tobytes())
+    off, on = bars("nes_edge_off", 0), bars("nes_edge_on", 5)
+    S.check(off == 0 and on > 0, "NES: glow off leaves black bars, glow on fills them (%s, %s)" % (off, on))
+
+
 def t_steady(S):
     """Steady pacing (Settings > Gameplay, on by default): a stretch where
     every frame cannot be drawn in time (the twin's --slow: 20 ms frames on
@@ -7339,8 +7395,8 @@ def t_hand_set_rows(S):
     r = S.run("hand_quality_bad", "100:shot=a.png\n+10:quit\n", autoboot="gbadhoc-test.gba",
               config={"quality_gba": 9})
     S.check(r.has(r"display_quality console=GBA quality=0"), "an unknown quality falls back to Auto")
-    # Fourth core: 17 DOWN from Screen size (after Smooth hand-over)
-    script = (menu_pick(4, wait=100) + set_down(17) + "+10:shot=core4.png\n+8:right\n"
+    # Fourth core: 18 DOWN from Screen size (after Smooth hand-over)
+    script = (menu_pick(4, wait=100) + set_down(18) + "+10:shot=core4.png\n+8:right\n"
               "+10:shot=core4_off.png\n+4:circle\n+10:circle\n+30:quit\n")
     r = S.run("hand_core4", script, autoboot="gbadhoc-test.gba")
     S.clean(r)
@@ -7362,7 +7418,7 @@ def t_handoff(S):
     for the same frame, in order, through a menu (a flush) and the Settings
     row turned off and on again in the middle; (3) the census line says it
     ran; (4) off in a local link."""
-    toggle = menu_pick(4, wait=30) + set_down(16) + "+10:shot=row.png\n+10:cross\n" + \
+    toggle = menu_pick(4, wait=30) + set_down(17) + "+10:shot=row.png\n+10:cross\n" + \
         "+6:circle\n+10:circle\n"
     script = ("100:right:40\n+30:shot=a.png\n+5:a:3\n+40:shot=b.png\n" + menu_pick(0, wait=20) +
               "+60:shot=c.png\n" + toggle + "+80:shot=d.png\n+5:b:10\n" + toggle +
@@ -7451,7 +7507,7 @@ def t_export_row(S):
     rom = "gbadhoc-test"
     ra = "retroarch/savefiles/%s.srm" % rom
     mine = bytes((i * 7 + 21) & 0xFF for i in range(32768))
-    row = menu_pick(4, wait=60) + set_down(21) + "+10:shot=row.png\n"
+    row = menu_pick(4, wait=60) + set_down(22) + "+10:shot=row.png\n"
     r = S.run("export_row_ra", "30:left:2\n" + row + "+10:cross\n+20:shot=toast.png\n+6:circle\n+10:circle\n+30:quit\n",
               autoboot=rom + ".gba", extra={"roms/%s.sav" % rom: mine,
                                             "retroarch/savefiles/Other Game.srm": b"\x01" * 64},
@@ -7481,7 +7537,7 @@ def t_save_heal_nes_ws(S):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
         # Export is after Display settings (and a WonderSwan game's three rows)
-        row = menu_pick(4, wait=60) + set_down(18 if kind == "nes" else 21)
+        row = menu_pick(4, wait=60) + set_down(19 if kind == "nes" else 23)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})
@@ -8572,7 +8628,7 @@ def t_boot_guard(S):
 
 
 TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_exts", t_sega_exts), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
-         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
+         ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_soft_edge", t_nes_soft_edge), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
          ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),

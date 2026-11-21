@@ -777,6 +777,9 @@ int blip_load_raw(blip_t *m, const unsigned char *in)
 {
 	int c, i, pos = 8;
 	m->offset = (fixed_t)((unsigned long long)raw_get32(in) | ((unsigned long long)raw_get32(in + 4) << 32));
+	/* VitAdhoc: the samples waiting in a buffer are drained every frame, so a state holds a fraction of one; a state from outside is held
+	   to a small number of them (the offset decides how many samples the next frame reads and where the chips write) */
+	if (m->offset >= ((fixed_t)256 << time_bits)) m->offset = m->factor / 2;
 	for (c = 0; c < 2; c++)
 	{
 		m->integrator[c] = (int)raw_get32(in + pos); pos += 4;

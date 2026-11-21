@@ -241,13 +241,20 @@ void audio_shutdown(void)
   }
 }
 
+/* VitAdhoc: the most sample frames the caller's buffer holds (0 = no limit); set by md/frontend/host.c. A machine loaded from a state
+   that came from outside can make one frame produce any number of samples: the frame is cut to the buffer and the rest dropped. */
+int audio_max_frames = 0;
+
 int audio_update(int16 *buffer)
 {
   /* number of audio streams to mix with FM+PSG stream (none by default) */
   int mixed_blips = 0;
+  int over = 0;
 
   /* run FM & PSG sound chips until end of frame */
   int size = sound_update(mcycles_vdp);
+  if (size < 0) size = 0;
+  if (audio_max_frames > 0 && size > audio_max_frames) { size = audio_max_frames; over = 1; }
 
   /* Mega CD sound hardware enabled ? */
   if (snd.blips[1] && snd.blips[2])
@@ -290,7 +297,7 @@ int audio_update(int16 *buffer)
   }
 
   /* Audio filtering */
-  if (config.filter)
+  if (config.filter && size > 0)
   {
     int samples = size;
     int16 *out = buffer;
@@ -349,7 +356,7 @@ int audio_update(int16 *buffer)
   }
 
   /* Mono output mixing */
-  if (config.mono)
+  if (config.mono && size > 0)
   {
     int16 out;
     int samples = size;
@@ -360,6 +367,12 @@ int audio_update(int16 *buffer)
       *buffer++ = out;
     }
     while (--samples);
+  }
+
+  if (over)
+  {
+    int i;
+    for (i = 0; i < 4; i++) if (snd.blips[i]) blip_clear(snd.blips[i]);
   }
 
 #ifdef LOGSOUND

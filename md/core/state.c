@@ -165,6 +165,22 @@ int state_load(unsigned char *state)
   Z80.irq_callback = z80_irq_callback;
   Z80.daisy = NULL;
 
+  /* VitAdhoc: a state from outside is not trusted. The registers are 16 bit (the opcode fetch indexes the 64 entry memory map with
+     the program counter), the interrupt mode is 0..2, the flags are 0 / 1, and the cycle counter is within a frame of the clock. */
+  {
+    PAIR *rp[13] = { &Z80.pc, &Z80.sp, &Z80.af, &Z80.bc, &Z80.de, &Z80.hl, &Z80.ix, &Z80.iy, &Z80.wz, &Z80.af2, &Z80.bc2, &Z80.de2, &Z80.hl2 };
+    for (i=0; i<13; i++) rp[i]->d &= 0xffff;
+    if (Z80.im > 2) Z80.im = 0;
+    if (Z80.iff1 > 1) Z80.iff1 = 1;
+    if (Z80.iff2 > 1) Z80.iff2 = 1;
+    if (Z80.halt > 1) Z80.halt = 1;
+    if (Z80.nmi_pending > 1) Z80.nmi_pending = 1;
+    if (Z80.after_ei > 1) Z80.after_ei = 1;
+    if (Z80.nmi_state > HOLD_LINE) Z80.nmi_state = CLEAR_LINE;     /* the line states: CLEAR_LINE, ASSERT_LINE, HOLD_LINE */
+    if (Z80.irq_state > HOLD_LINE) Z80.irq_state = CLEAR_LINE;
+    if (Z80.cycles > 0x200000) Z80.cycles = 0;
+  }
+
   /* Extra HW */
   if (system_hw == SYSTEM_MCD)
   {

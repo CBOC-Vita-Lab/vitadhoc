@@ -232,7 +232,7 @@ another version (the twins' own version is fixed).
 WAITING FOR THE SCREEN, NOT FOR A CLOCK.  A twin's input script is timed in display frames, and a busy machine (two twins, a
 service, a NAT simulator and other jobs on two cores) can stall the app's loop for longer than a press lasts, so a fixed
 script dropped presses (a wrong code typed, a menu row missed).  plat_host.c has two more script entries for this:
-`FRAME:wait=TEXT` stops the script clock until a new line of the app's own log holds TEXT (at most 90 s), and
+`FRAME:wait=TEXT` stops the script clock until a new line of the app's own log holds TEXT (at most 240 s), and
 `FRAME:hold=BUTTONS=TEXT` does the same with BUTTONS held down all the while (at most 8 s), so the press ends once the
 app has logged what it did.  The code pad logs `online_pad_key box= sym=` for every key; `snes_online`, `sega_online`
 and the refusals of the SNES and Sega consoles type the code that way. The twin built elsewhere can be named with

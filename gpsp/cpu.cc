@@ -579,8 +579,11 @@ static const u8 gba_header_logo[156] = {
 /* Palette RAM and OAM: 1 KiB each, mirrored, with no 32 KiB read page in
  * memory_map_read -- an instruction there is read with read_memory.  The I/O
  * registers (1 KiB too) are mapped as a page, but an instruction fetch read the
- * whole 32 KiB past them: it is unpaged as well (found by the state fuzzer). */
-#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x4 || (((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7)
+ * whole 32 KiB past them: it is unpaged as well (found by the state fuzzer).  The
+ * SRAM region (0xE, 0xF) has no read page either: a fetch there paged in (and evicted)
+ * a ROM page for every instruction, so a frame took minutes. */
+#define pc_unpaged(pc) ((((pc) >> 24) & 0xF) == 0x4 || (((pc) >> 24) & 0xF) == 0x5 || (((pc) >> 24) & 0xF) == 0x7 || \
+                        (((pc) >> 24) & 0xF) >= 0xE)
 
 #define check_pc_region()                                                     \
   new_pc_region = (reg[REG_PC] >> 15) & 0x1FFF;      /* bits 28-31 unused */   \
@@ -1540,7 +1543,9 @@ cpu_alert_type flag_interrupt(irq_type irq_raised)
 // When switching modes set spsr[new_mode] to cpsr. Modifying PC as the
 // target of a data proc instruction will set cpsr to spsr[cpu_mode].
 u32 reg[64];
-u32 spsr[6];
+/* 16 entries, indexed by CPSR mode bits & 0xF: an invalid mode (6..15, which a program can write with MSR) used to index
+ * past the 6 real ones.  Only the first 6 are saved in a state. */
+u32 spsr[16];
 u32 reg_mode[7][7];
 
 u8 *memory_map_read [8 * 1024];

@@ -224,7 +224,8 @@ static void test_state_replacement(const char *path)
    reset_faults();
    rename_lie_failure_mask = 1u | 2u;
    assert(fe_host_state_save(path) == 0);
-   assert(rename_calls == 2 && saved_state_intact(path));
+   /* a slot save also moves the previous state to .bak (undo): a third rename */
+   assert(rename_calls == 3 && saved_state_intact(path));
    assert(access(old, F_OK) != 0 && access(tmp, F_OK) != 0);
    puts("misleading rename return values: filesystem effects determine result");
 

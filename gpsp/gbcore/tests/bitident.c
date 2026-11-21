@@ -119,7 +119,15 @@ static int trace(const char *name, const void *data, size_t size,
   cb.audio_batch = on_audio;
   cb.serial_transfer = on_serial;
   gbcore_set_wallclock(fixed_clock);
-  gbcore_set_palette(GBCORE_PALETTE_AUTO);
+  /* AUTO was grey for a game that is not Super Game Boy aware; the 2.0
+   * core's AUTO is the Super Game Boy's own palette 1-A for every game
+   * (the default is the Game Boy colours now).  Grey says the 3.0.0 thing
+   * on both cores; an SGB-aware game keeps AUTO, which it meant then too. */
+  {
+    int sgb = size > 0x14B && ((const uint8_t *)data)[0x146] == 0x03 &&
+              ((const uint8_t *)data)[0x14B] == 0x33;
+    gbcore_set_palette(sgb ? GBCORE_PALETTE_AUTO : GBCORE_PALETTE_GREY);
+  }
   if (gbcore_set_color_correction)
     gbcore_set_color_correction(0);
   core = gbcore_create(NULL, data, size, console, 32768, &cb);

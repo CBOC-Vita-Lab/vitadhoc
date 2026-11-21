@@ -182,6 +182,13 @@ worker, on every test ROM) and `arm_check.sh`. Edits to upstream files:
   the object lists and flags; the host clears the rest of the ROM buffer after the game (a flash cartridge rewrites it; a longer ROM
   loaded before left its tail), and `md_host_sram_write` fills the rest of the battery RAM with 0xFF.
 
+- State loads that are not trusted (`state.c`, `vdp_ctrl.c`, `sound/psg.c`): the sanity limits on a loaded state are the machine's own value
+  ranges, so a state the machine wrote loads unchanged (a count, `carry_refused`, says when the extra block was refused; the proofs require 0):
+  the Z80 interrupt line keeps the VDP's levels (0, 4, 6) and is refused only above 6; the PSG's odd registers are table volumes (up to
+  `chanVolume[0]`) and register 6 is the whole noise byte; a Game Gear colour word keeps every bit (every colour read masks it; the other
+  systems 9 bits); the viewport may be x -48..16 and y -24..48 (Game Gear window); the table bases are checked against the VDP's own maxima.
+  Proof points of the load tests: frame 1, 97, 300, 655.
+
 ### Open
 
 - None known in this part. (The Game Gear tile cache difference after a state load, recorded here before, is fixed: see "Run-ahead and exact state loads".)

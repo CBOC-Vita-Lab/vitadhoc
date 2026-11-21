@@ -35,6 +35,7 @@ const char *nescore_error(void) { return "no NES core in this test"; }
 int nescore_run_frame(nescore_t *c, unsigned b) { (void)c; (void)b; NEVER("nescore_run_frame"); return 0; }
 void nescore_set_skip_render(nescore_t *c, int s) { (void)c; (void)s; NEVER("nescore_set_skip_render"); }
 int nescore_repeat_frame(nescore_t *c) { (void)c; NEVER("nescore_repeat_frame"); return 0; }
+void nescore_mix_next(nescore_t *c) { (void)c; NEVER("nescore_mix_next"); }
 void nescore_shutdown(nescore_t *c) { (void)c; NEVER("nescore_shutdown"); }
 unsigned nescore_sample_rate(const nescore_t *c) { (void)c; NEVER("nescore_sample_rate"); return 0; }
 unsigned nescore_frame_width(const nescore_t *c) { (void)c; NEVER("nescore_frame_width"); return 0; }

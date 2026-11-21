@@ -626,7 +626,10 @@ def t_session(S):
     shots = glob.glob(os.path.join(r.root, "screenshots", "gbadhoc-test-*.png"))
     S.check(len(shots) == 1 and Image.open(shots[0]).size == (240, 160),
             "one 240x160 screenshot in screenshots/")
-    S.check(len(r.evt("state_save")) == 4,
+    # a load first keeps the state it replaces for Undo load (.undo.new): not
+    # a save the player asked for, so not counted
+    S.check(len([e for e in r.evt("state_save")
+                 if not e.get("file", "").endswith(".undo.new")]) == 4,
             "the screenshot chord did not also quick-save (state_save "
             "lines: %d)" % len(r.evt("state_save")))
 
@@ -901,6 +904,16 @@ def t_sensors(S):
     them as GBATEK's routines do and draws the values)."""
     rom = lambda name: open(os.path.join(HERE, "testrom", name), "rb").read()
     cfg = {"scale_gba": 4, "quality_gba": 1}
+    # the cartridges are build products the gate does not list: make them
+    # here, as the wide-view test makes its WonderSwan twin
+    if not all(os.path.exists(os.path.join(HERE, "testrom", n)) for n in
+               ("gbadhoc-tilt.gba", "gbadhoc-gyro.gba", "gbadhoc-solar.gba")):
+        subprocess.run(["make", "-C", os.path.join(HERE, "testrom"), "sensors"],
+                       check=False, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    if not os.path.exists(os.path.join(HERE, "testrom", "gbadhoc-tilt.gba")):
+        S.note("no testrom/gbadhoc-tilt.gba (make -C testrom sensors): skipped")
+        return
 
     def run(name, game, script, extra=None, args=()):
         ex = {"roms/" + game: rom(game)}
@@ -7536,8 +7549,8 @@ def t_save_heal_nes_ws(S):
                             ("wswan", "Heal Test.ws", ws_rom(S, "h_sram.ws"))):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
-        # Export is after Display settings (and a WonderSwan game's three rows)
-        row = menu_pick(4, wait=60) + set_down(19 if kind == "nes" else 23)
+        # Export is after Display settings (a NES game's NTSC colours row, and a WonderSwan game's three rows)
+        row = menu_pick(4, wait=60) + set_down(20 if kind == "nes" else 23)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})

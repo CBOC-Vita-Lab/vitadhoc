@@ -57,7 +57,7 @@
  *                                  and before the first, the opposite)
  *     FRAME:wait=TEXT              the script clock stops at FRAME until a
  *                                  new line of the app's log holds TEXT
- *                                  (--realtime only; 90 s at most, 8 s for a hold; the
+ *                                  (--realtime only; 240 s at most, 8 s for a hold; the
  *                                  waits come in order, at most 256)
  *     FRAME:hold=BUTTONS=TEXT      the same wait with BUTTONS held down all
  *                                  the while: a press that cannot be missed
@@ -142,7 +142,7 @@ static struct
    int         no_motion;         /* --no-motion: a PS TV, no sensor */
    unsigned    suspend_at[8], nsuspend;
    /* FRAME:wait=TEXT: the script clock stops at FRAME until the app's own
-    * log (<root>/log/gbadhoc.log) gets a new line holding TEXT (or 90 s go
+    * log (<root>/log/gbadhoc.log) gets a new line holding TEXT (or 240 s go
     * by): the test waits for the screen it needs, not for a guessed time */
    struct { unsigned frame; char text[SHOT_PATH / 4]; uint32_t buttons; } wait[256];
    unsigned    nwait;
@@ -259,7 +259,7 @@ static unsigned script_frame(void)
    if (waiting)
    {
       uint64_t t = now_ns();
-      if (t - wait_t0_ns > (opt.wait[wait_next].buttons ? 8000000000ull : 90000000000ull) ||
+      if (t - wait_t0_ns > (opt.wait[wait_next].buttons ? 8000000000ull : 240000000000ull) ||
           (t - wait_poll_ns > 40000000ull && (wait_poll_ns = t, wait_seen(opt.wait[wait_next].text))))
       {
          slept_ns += t - wait_t0_ns;

@@ -177,6 +177,14 @@ static const u16 *wide_row[4] = { NULL, NULL, NULL, NULL };
  * tile of nothing (what a profile has not seen of the game's world). */
 static u32 wide_mask[4] = { ~0u, ~0u, ~0u, ~0u };
 static const u8 wide_blank_tile[64] = { 0 };
+/* A tile of a background's character block: the 4th block's last tiles (and the tiles of 8 bit graphics in the
+ * 3rd and 4th) lie past the 96 KiB of VRAM.  They read as nothing (what was an out of bounds read). */
+static const u8 bg_blank_tiles[192] = { 0 };   /* room for the vertical flip offset (+-56) either way */
+static inline const u8 *bg_tile_addr(const u8 *tile_base, u32 tile, bool is8bpp)
+{
+  const u8 *p = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
+  return ((uintptr_t)p + 64 > (uintptr_t)vram + sizeof(vram)) ? bg_blank_tiles + 64 : p;
+}
 // The entry just fetched through map_ptr++ is a hole in the row at `base`.
 #define WIDE_HOLE(mask, ptr, base) \
   ((mask) != ~0u && !(((mask) >> (((ptr) - 1 - (base)) & 31)) & 1))
@@ -324,7 +332,7 @@ static inline void rend_part_tile_Nbpp(u32 bg_comb, u32 px_comb,
 ) {
   // Seek to the specified tile, using the tile number and size.
   // tile_base already points to the right tile-line vertical offset
-  const u8 *tile_ptr = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
+  const u8 *tile_ptr = bg_tile_addr(tile_base, tile, is8bpp);
   u16 bgcolor = paltbl[0];
 
   // On vertical flip, apply the mirror offset
@@ -397,7 +405,7 @@ static inline void render_tile_Nbpp(
   u32 bg_comb, u32 px_comb, dtype *dest_ptr, u16 tile,
   const u8 *tile_base, int vertical_pixel_flip, const u16 *paltbl
 ) {
-  const u8 *tile_ptr = &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
+  const u8 *tile_ptr = bg_tile_addr(tile_base, tile, is8bpp);
   u16 bgcolor = paltbl[0];
 
   if (tile & 0x800)
@@ -713,7 +721,7 @@ static void render_scanline_text_mosaic(u32 layer,
     // Counter-based mosaic (see render_affine_background for rationale).
     if (!mctr) {
       const u8 *tile_ptr = hole ? wide_blank_tile
-                         : &tile_base[(tile & 0x3FF) * (is8bpp ? 64 : 32)];
+                         : bg_tile_addr(tile_base, tile, is8bpp);
 
       bool hflip = (tile & 0x400);
       if (tile & 0x800)

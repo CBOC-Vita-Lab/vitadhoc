@@ -381,7 +381,9 @@ const u32 def_seq_cycles[16][2] =
 };
 
 
-u8 bios_rom[1024 * 16];
+/* 32 KiB: the memory map gives the BIOS a 32 KiB read page and an instruction fetch may land in its upper half
+ * (the BIOS is 16 KiB; the rest reads as zero instead of past the end of the array). */
+u8 bios_rom[1024 * 32];
 
 // Up to 128kb, store SRAM, flash ROM, or EEPROM here.
 u8 gamepak_backup[1024 * 128];
@@ -3070,6 +3072,9 @@ static u32 evict_gamepak_page(void)
 {
   u32 ret;
   s16 phyrom;
+  /* If every resident page is sticky the walk went round the queue for ever (a program running through more pages in
+   * a frame than are resident, or a state whose pc is in a mirror of a tiny ROM): after one full lap the oldest goes. */
+  u32 lap = 1024;
   do {
     // Return the index to the last used entry
     u32 newhead = gamepak_blk_queue[gamepak_lru_head].next_lru;
@@ -3083,7 +3088,7 @@ static u32 evict_gamepak_page(void)
     gamepak_blk_queue[gamepak_lru_tail].next_lru = ret;
     gamepak_lru_tail = ret;
     // If this page is marked as sticky, we keep going through the list
-  } while (phyrom >= 0 && gamepak_sb_test(phyrom));
+  } while (phyrom >= 0 && gamepak_sb_test(phyrom) && --lap);
 
   // We unmap the ROM page if it was mapped, ensure we do not access it
   // without triggering a "page fault"

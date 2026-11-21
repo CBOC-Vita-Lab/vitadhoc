@@ -283,7 +283,7 @@ void dynarec_release_translation_caches(void);
 #endif
 
 extern u32 reg_mode[7][7];
-extern u32 spsr[6];
+extern u32 spsr[16];
 
 extern const u32 cpu_modes[16];
 extern const u32 cpsr_masks[4][2];

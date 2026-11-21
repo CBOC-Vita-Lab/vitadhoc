@@ -51,6 +51,7 @@ static netdrv *joiner(void)
    cb.peer_disconnected = on_disconnect;
    cfg.protocol = "admission-review"; cfg.nick = "joiner";
    cfg.join_nonce = local_nonce;
+   cfg.peer_dead_us = 8000000; /* the test clock steps 7 s + 2 s; the library default is 20 s */
    pending_len = starts = stops = connections = disconnections = reason = 0;
    now = 1000000;
    nd = netdrv_create(&tp, &cb, &cfg);

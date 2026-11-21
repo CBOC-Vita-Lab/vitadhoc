@@ -1438,7 +1438,8 @@ def different_file(T, fam):
     b = _mutated(T, a, "other")
     kind = "gba" if fam == "gba" else "gb"
     rig = pair(T, "online_file_" + fam, rom=a, rom_b=b, kind=kind, a_end=78, b_end=76,
-               a_script=host_script(78) + L.shot(60, "late.png") + L.quit_at(78),
+               a_script=host_script(78) + "+0:wait=online_peer nick=\n" + "+%d:shot=late.png\n" % L.dur(40) +
+               "+%d:quit\n" % L.dur(70),                # from the guest's join, not from a guessed time
                b_script=lambda code: join_script(code, L.shot(60, "after.png") + L.quit_at(76), press_join=True))
     who = FAM_NAMES[fam]
     T.S.note("%s: another file with the host's game code: %s" % (who, "the link formed (the host's file carried over)"

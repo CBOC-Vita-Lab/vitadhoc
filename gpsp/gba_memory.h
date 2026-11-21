@@ -511,7 +511,7 @@ extern u32 gba_rewind_cnt[2];
 #define RW_MARK_ALL()         ((void)0)
 #endif
 extern u32 vram_dirty_marks;
-extern u8 bios_rom[1024 * 16];
+extern u8 bios_rom[1024 * 32];
 // Double buffer used for SMC detection
 extern u8 ewram[1024 * 256 * 2];
 extern u8 iwram[1024 * 32 * 2];

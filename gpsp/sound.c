@@ -798,6 +798,9 @@ bool sound_check_savestate(const u8 *src)
       return false;
     if (!bson_read_int32(sndchan, "env-vol", &index) || index > 15)
       return false;
+    /* the initial volume is what the envelope reloads into env-vol: it indexes the same 16 entry table */
+    if (!bson_read_int32(sndchan, "env-vol0", &index) || index > 15)
+      return false;
     if (!bson_read_int32(sndchan, "sweep-shift", &index) || index > 7)
       return false;
     /* Rate feeds 1/(2048-rate) when output frequency changes or a sweep

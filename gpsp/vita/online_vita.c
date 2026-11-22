@@ -407,6 +407,7 @@ static int map_err(int err, int op, int retry_after)
       case ONLINE_E_TOKEN:   return ONLINE_FAIL_CLOSED;
       case ONLINE_E_RELAY:   return ONLINE_FAIL_UNREACHABLE;
       case ONLINE_E_CLOCK:   return ONLINE_FAIL_CLOCK;
+      case ONLINE_E_CONSOLE: return ONLINE_FAIL_CONSOLE;
       default:               return ONLINE_FAIL_SERVICE;   /* NET, CERT, SERVER, BAD */
    }
 }
@@ -891,7 +892,7 @@ static void on_relay_reply(const online_reply *r)
             return;
          }
          if (r->err == ONLINE_E_CLOCK || r->err == ONLINE_E_UPDATE || r->err == ONLINE_E_BUSY ||
-             r->err == ONLINE_E_TOKEN)
+             r->err == ONLINE_E_TOKEN || r->err == ONLINE_E_CONSOLE)
             fail_from_reply(r);
          else
             fail(ONLINE_FAIL_UNREACHABLE, r->http);

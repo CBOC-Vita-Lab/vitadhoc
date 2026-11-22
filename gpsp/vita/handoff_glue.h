@@ -77,6 +77,11 @@ void ho_draw_stats(uint64_t *sum_us, uint32_t *n);
  * drawing load).  ho_swap_stats: the waits in total and how many pictures. */
 void ho_note_present_wait(uint32_t us);
 void ho_swap_stats(uint64_t *sum_us, uint32_t *n);
+/* What the drawing thread did since the last call (Quick response's picture-thread check): its average work for a picture (0: none drawn)
+ * and the refreshes the picture side missed (pictures dropped, waits at the gate for a free buffer).  Each call starts the next interval. */
+void ho_picture_pass(uint32_t *draw_us, uint32_t *missed);
+/* the next ho_picture_pass starts from now (a hand-over began, or the passes were not taken for a while) */
+void ho_picture_rebase(void);
 
 
 /* ---- the fourth CPU core (1.4; playerkit's pk_cores, docs/FOURTH-CORE.md) ----

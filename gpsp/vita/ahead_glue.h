@@ -23,7 +23,12 @@ int  ahead_mode(void);
 int  ahead_decide(int blocked);
 /* After a normal pass (not fast forward, not blocked): the emulating thread's time for the frame (microseconds), and whether it ran ahead */
 void ahead_cost(uint32_t emu_us, int ran_ahead);
-/* once a second: "ahead: mode=... on=.. frames=a/b plain_ms=.. ahead_ms=.. ratio=.. starts=.. stops=.." and the census restarts; 0 when off and idle */
+/* Once per pass with the hand-over: what the drawing thread did since the last call (draw_us: its average work for a picture, 0 = none;
+ * missed: refreshes the picture side missed).  Auto holds off / stops while the picture thread runs late (pk_ahead.h add_picture). */
+void ahead_picture(uint32_t draw_us, uint32_t missed);
+/* the Image quality (the picture's cost) changed: what was learned of the picture side no longer describes it */
+void ahead_picture_reset(void);
+/* once a second: "ahead: mode=... on=.. frames=a/b plain_ms=.. ahead_ms=.. ratio=.. starts=.. stops=.. pic_ms=.. pic_stops=.. pic_miss=.." and the census restarts; 0 when off and idle */
 int  ahead_census_line(char *buf, size_t n);
 int  ahead_on(void);
 

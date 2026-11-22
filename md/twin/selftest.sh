@@ -112,6 +112,14 @@ PY
 		[ -z "$SMS1" ] && :
 	else skip "cheat vectors (gpsp/vita/tests/cheats/sega_vectors.txt not present)"; fi
 	"$TWIN" "$HW" --frames 3 --cheat "FFF000:0042" --peek FFF001 --peek FFF000 | grep -q 'PEEK FFF001=42' && ok "work RAM cheat written every frame (a 00VV patch lands in the other byte of the word, as Genesis Plus GX)" || bad "RAM cheat"
+	# Where a work RAM code puts its bytes. A word code is the big-endian word (as a real Action Replay writes it); a 00VV code
+	# at an even address puts VV in the byte after it and leaves the byte at the address alone (as the hardware's word store does and as Genesis Plus GX does)
+	o=$("$TWIN" "$HW" --frames 3 --cheat "FFF010:1234" --peek FFF010 --peek FFF011 | grep PEEK | tr '\n' ' ')
+	case "$o" in *"PEEK FFF010=12"*"PEEK FFF011=34"*) ok "work RAM word cheat: the big-endian word at its address";; *) bad "RAM word cheat ($o)";; esac
+	o=$("$TWIN" "$HW" --frames 3 --cheat "FFF020:00AB" --peek FFF020 --peek FFF021 | grep PEEK | tr '\n' ' ')
+	case "$o" in *"PEEK FFF021=AB"*) ok "work RAM 00VV cheat at an even address: VV is the byte after the address (the word's low byte)";; *) bad "RAM 00VV cheat ($o)";; esac
+	o=$("$TWIN" "$HW" --frames 3 --cheat "FFF031:00CD" --peek FFF030 --peek FFF031 | grep PEEK | tr '\n' ' ')
+	case "$o" in *"PEEK FFF030=CD"*) ok "work RAM 00VV cheat at an odd address: the byte before it, as Genesis Plus GX stores a byte";; *) bad "RAM 00VV odd cheat ($o)";; esac
 else
 	skip "Mega Drive ROM tests (set MD_TEST_ROMS to a tree with the SGDK sample ROMs)"
 fi

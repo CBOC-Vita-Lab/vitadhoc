@@ -13,6 +13,7 @@
 #                      with the database of ../assets (HOST_APP_DIR, --app)
 #
 #   make ARCH=x86     -> build/x86/gbadhoc_host     x86-64, the x86 dynarec
+#   make ARCH=aarch64 -> build/aarch64/gbadhoc_host 64-bit ARM Linux, native, GBA interpreter
 #   make ARCH=armhf   -> build/armhf/gbadhoc_host   ARMv7-A hard-float, the
 #                        ARM dynarec the Vita uses; run it with
 #                        qemu-arm -L /usr/arm-linux-gnueabihf build/armhf/gbadhoc_host
@@ -85,13 +86,33 @@ CORE_ARCH_FLAGS := -marm -march=armv7-a -mfpu=neon -mfloat-abi=hard \
 # at 0x81000000 relative to its own memory, and qemu-arm needs no sysroot
 # libraries at run time.
 LDFLAGS_ARCH := -static -no-pie
+else ifeq ($(ARCH),aarch64)
+# A 64-bit ARM Linux machine (for example the Linux VM of an Apple-silicon Mac),
+# built natively: the second player of a two-player or online test.  gpsp has no
+# AArch64 dynarec here, so the GBA core is the interpreter (DYNAREC=0).
+# Natively on an aarch64 machine, or cross-built elsewhere (aarch64-linux-gnu-gcc),
+# then linked statically so the binary runs on any aarch64 Linux.
+CROSS   ?= $(if $(filter aarch64,$(shell uname -m)),,aarch64-linux-gnu-)
+CC      := $(call ccw,$(CROSS)gcc)
+CXX     := $(call ccw,$(CROSS)g++)
+AR      := $(CROSS)ar
+NM      := $(CROSS)nm
+OBJCOPY := $(CROSS)objcopy
+LD_R    := $(CROSS)ld
+CPU_ARCH :=
+override DYNAREC := 0
+CORE_ARCH_FLAGS := -fomit-frame-pointer -fno-math-errno
+LDFLAGS_ARCH := -static -no-pie
 else
-$(error ARCH must be x86 or armhf)
+$(error ARCH must be x86, armhf or aarch64)
 endif
 
 include $(V)/app.mk
 
 HAVE_DYNAREC := $(DYNAREC)
+# The version string link rooms compare.  A twin that joins a REAL Vita's room must
+# say the Vita build's CORE_VERSION: make ... HOST_VERSION=<CORE_VERSION of the vpk>.
+HOST_VERSION ?= host-$(GIT_VERSION)
 ifeq ($(VITASIM),1)
 ifneq ($(ARCH),armhf)
 $(error VITASIM=1 needs ARCH=armhf: it is the ARM emitter's branch reach that the Vita path guards)
@@ -119,8 +140,8 @@ $(B)/core/libretro/libretro-common/vfs/vfs_implementation.o: CORE_FILE_FLAGS := 
 # client its TLS (x86 only: the prefix is x86-64).  Without it the twin has
 # plain http:// only (nethttps/np_http_plain.cpp) and np_https_available() = 0.
 ifneq ($(strip $(MBEDTLS)),)
-ifneq ($(ARCH),x86)
-$(error MBEDTLS= is the x86-64 prefix: use it with ARCH=x86)
+ifeq ($(ARCH),armhf)
+$(error MBEDTLS= is a native host prefix (x86-64, or aarch64 built on that machine): not for ARCH=armhf)
 endif
 APP_DEFS    += -DNP_HAVE_MBEDTLS -I$(MBEDTLS)/include
 MBEDTLS_LIBS := -L$(MBEDTLS)/lib -lmbedtls -lmbedx509 -lmbedcrypto
@@ -130,10 +151,12 @@ APP_FLAGS := $(CORE_ARCH_FLAGS) -O2 -g -Wall -Wextra -std=gnu11 -MMD -MP \
              $(SAN_FLAGS) \
              $(APP_DEFS) -DPSPCOMPAT_PLAT \
              $(if $(filter 1,$(GBA_LINK)),-DGBA_LINK) \
-             -DGBADHOC_VERSION=\"host-$(GIT_VERSION)\" \
+             -DGBADHOC_VERSION=\"$(HOST_VERSION)\" \
              -DHOST_APP_DIR=\"$(abspath $(V)/assets)\" \
              $(APP_INC_FLAGS) $(FE_INC) $(ND_DEFS)
 APP_ALL   := $(APP_ALL_HOST)
+# No recompiler: the symbols the frontend names from cpu_threaded.c (interp_stub.c).
+APP_ALL   += $(if $(filter 0,$(DYNAREC)),$(V)/hostcore/interp_stub.c)
 ifeq ($(VITASIM),1)
 APP_FLAGS += -DVITASIM -Ivitasim
 APP_ALL   += $(V)/jit_vita.c vitasim.c

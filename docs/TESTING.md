@@ -29,6 +29,8 @@ are unchanged, so after a small change only the affected steps run.
   `/opt/rgbds/bin` or in `$GATE_RGBDS` (or `$RGBDS`).
 - `arm-none-eabi-gcc` for the bare-metal GBA cartridges.
 - `arm-linux-gnueabihf-gcc` and `qemu-arm` for armhf (`--full`).
+- `aarch64-linux-gnu-gcc` and `qemu-aarch64` (Debian / Ubuntu: `qemu-user`) for the aarch64 twin
+  (see "The aarch64 twin" below; not a gate step).
 - VitaSDK at `$VITASDK` (default `/opt/vitasdk`) for the Vita package and the
   Vita compile checks. The audio regressions use its headers.
 - Node 22.5 or newer and npm for the online room service (`online-service` and the
@@ -54,6 +56,7 @@ the folders (or, for WonderSwan, at one file):
 | `GATE_WS_ROM` | the WonderSwan acceptance section (`wswan-private`): a real game that makes sound; also the fallback for `GATE_WS_ONLINE_ROM` |
 | `GATE_WS_ONLINE_ROM` | Same Wi-Fi and Online Two players on a WonderSwan game (`ws_two`, `ws_punch`, `ws_relay`, the WonderSwan refusals): any homebrew test ROM will do (a prebuilt one is in the testroms folder of the public WonderSwan_MiSTer repository); falls back to `GATE_WS_ROM` |
 | `GATE_SG_ROM` (file), or a `.sg` file in the `GATE_MD_SMS_ROMS` folder | the SG-1000 game of `link_tests.py sega_two`, `online_tests.py sega_online / game_sg / version_sg` and `md/twin/link_test.py` (a homebrew built with SDCC and the public devkitSMS SGlib); without one they use a synthetic image |
+| `GATE_SG_ROM` and `GATE_GG_ROM` (files), or a `.sg` / `.gg` file in the `GATE_MD_SMS_ROMS` folder | the SG-1000 and Game Gear files of the Sega player's own tests (`md-player`: walk, pads, look governor, hand-over, rewind and fast forward, Quick response, RetroAchievements). Without a file the player tests make their own small cartridges (`md/twin/tools/sg_gen.py`: an SG-1000 `.sg`, and a Game Gear `.gg` with the Game Gear header, so the extension and not a forced console id picks the console); a public homebrew replaces them. No public prebuilt `.sg` or `.gg` could be found by `git clone` of the public repositories tried (devkitSMS and PSGlib hold sources only, and building them needs SDCC); a homebrew built from them works |
 
 Before and after a change to the GBA core, a private set of cartridges can be compared between two host builds (a scripted pad,
 the same N frames, a hash of every audio sample and of screenshots taken at fixed frames). The direct (skip-BIOS) boot starts on
@@ -277,3 +280,72 @@ and the refusals of the SNES and Sega consoles type the code that way. The twin 
 
 The Vita build with Mbed TLS and the heap and package-size numbers are
 checked by the build (`vita-build` in the full tier), not by the twin.
+
+## The aarch64 twin
+
+`make -C gpsp/vita/hostcore ARCH=aarch64` (see [Building](BUILDING.md)) builds the app for 64-bit
+ARM Linux with the GBA interpreter. The test scripts take it as a mode, run under `qemu-aarch64`
+(on an aarch64 machine directly; `QEMU_A64=` changes the command), and compare pictures with the
+x86 references the way the other ARM mode does:
+
+    cd gpsp/vita/hostcore
+    python3 app_tests.py aarch64 --only list,session,ff,play,cpufix
+    python3 link_tests.py aarch64                    # both twins aarch64 (Same Wi-Fi: cable, Game Boy, adapter, ad hoc ...)
+    python3 link_tests.py mixed64                    # an x86 twin and an aarch64 twin
+    python3 online_tests.py aarch64 --hz 12          # punch, relay, gb, lost_answer, library_join
+
+A twin built elsewhere is named with `GBADHOC_HOST_AARCH64=/path/to/gbadhoc_host`. The aarch64
+twin's link "backend" word is `interp` (x86 with the recompiler is `x86`, ARM with it `arm`), so
+an aarch64 twin and a console running the recompiler are never offered each other's GBA Link
+Cable rooms ("different version"); Game Boy, Wireless Adapter, NES, WonderSwan and Share rooms
+hash only the build and are open to it. `mixed64` therefore runs only those.
+
+## Second player on a Mac
+
+An Apple-silicon Mac cannot run the Vita app, but it can run the twin in a Linux VM and be the
+other player in a two-player or online session with one real Vita. The twin has no window and no
+keyboard: a scripted pad drives its menus and plays, so an automated session (or a person typing
+one command) can be the Mac's side. Nothing here has been run against a real Vita.
+
+1. A Linux VM on the Mac (UTM, Parallels, Multipass; any aarch64 Linux; a native build there is the safe
+   way to get Online rooms, see Building). For Same Wi-Fi rooms the VM's network must be
+   BRIDGED to the Wi-Fi the Vita is on (the same subnet, no NAT: the rooms are found by LAN
+   broadcast); for Online rooms the VM only needs internet. Install `python3` and
+   `python3-pil` (Pillow).
+2. Get the program: build it on the VM (recommended: `make -C gpsp/vita/hostcore ARCH=aarch64`, with
+   `HOST_VERSION=` set to the Vita build's `CORE_VERSION` and, for Online,
+   `MBEDTLS=<aarch64 prefix>`; see [Building](BUILDING.md)), or copy the cross-built
+   `gbadhoc_host` plus `gpsp/vita/hostcore/*.py` and `testrom/`. Put the same game as the Vita's
+   in a folder (the twin carries a Link Cable partner's cartridge across, but a Game Boy / NES /
+   WonderSwan session needs the file on both sides). A GBA BIOS must be the same file as on the
+   Vita if either has one (`--bios`).
+3. Run `gpsp/vita/hostcore/mac_player.py`, which writes the data root and the pad script and starts
+   the twin in real time (`--realtime`; all of its output is `ROOT/log/gbadhoc.log`, pictures in
+   `ROOT/shots/`):
+
+       # Online: the Vita hosts (Play together > Online), shows the 5 character code
+       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --join ABCDE --play 90
+
+       # Same Wi-Fi: the Vita hosts, the Mac joins the first room in the list
+       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --join-lan --ip 192.168.1.50
+
+       # the Mac hosts (prints "ROOM CODE: XXXXX" for Online), the Vita joins
+       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --host-online
+       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --host-lan --ip 192.168.1.50
+
+   `--ip` is the VM's address on the Wi-Fi (`ip addr`), told to the twin as its stand-in for the
+   console's Wi-Fi (`nethost.ini`); `--play SEC` is how long the pad plays after the link forms
+   (it presses `--pattern cross,right,cross,left` every half second), after which the twin
+   disconnects from the menu and quits. The exit status is 0 when the link formed.
+4. The pad script is the plain text of the twin's input (`--input-file`, documented at the top
+   of `gpsp/vita/hostcore/plat_host.c`): lines like `+30:cross:9` (hold Cross 9 refreshes, 30
+   after the last entry), `+0:wait=online_card state=` (stop the script clock until the app's
+   log says so), `+30:type=TEXT`. `mac_player.py` writes `ROOT/script.txt`; copy and edit it to
+   play something else (a script that plays a particular game) and start the twin by hand:
+   `gbadhoc_host --root ROOT --realtime --shot-dir ROOT/shots --input-file ROOT/script.txt`.
+
+Which sessions can include the Mac: Game Boy / Game Boy Color link, the Wireless Adapter, NES and
+WonderSwan two players, Share game data, and Online. GBA Link Cable (the cycle-exact mirror) needs
+the same CPU backend word on both sides and the Mac's is `interp`: the Vita would have to run its
+interpreter AND say the same word, which is not the case today (its word is `arm-interp`), so
+that pairing is refused until it is proven that the two interpreters agree cycle for cycle.

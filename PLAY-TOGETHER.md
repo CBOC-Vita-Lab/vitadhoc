@@ -2,8 +2,8 @@
 
 Open the in-game menu > Play together. VitAdhoc does GBA Link Cable, GBA
 Wireless Adapter and Game Boy / Game Boy Color Link Cable games, and Two
-players for NES, WonderSwan and Super NES games, between two
-Vitas on the same Wi-Fi, far apart by code (Online), or side by side (Nearby). Back up an
+players for NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD, Master
+System and SG-1000 games, between two Vitas on the same Wi-Fi, far apart by code (Online), or side by side (Nearby). Back up an
 important save before linking: two-Vita play is still being confirmed on
 hardware for version 1.0 (see [Known Issues](KNOWN-ISSUES.md)).
 
@@ -16,7 +16,7 @@ supported. Both players must have permission to use the cartridges involved.
 | --- | --- |
 | Same Wi-Fi | Join the same router or hotspot. One player chooses Host a game; the other chooses Join a game and selects the room that shows up. |
 | Online | For a friend far away. The host's screen shows a code of five characters; the friend types it. See [Online](#online) below. |
-| Nearby (ad hoc) | Use the Vita's system connection screen. No router is needed. Not offered for Super NES Two players. |
+| Nearby (ad hoc) | Use the Vita's system connection screen. No router is needed. Not offered for Super NES or Sega Two players. |
 | Direct address | Advanced, and hidden until `link_direct = 1` is in `vita.ini`: the joiner types the address the host is shown. The host needs UDP port 19019 reachable; UPnP may open it, otherwise router configuration is needed. Online does this job without any router settings. |
 
 GBA cable sessions can link two different games: Ruby with Sapphire, FireRed
@@ -45,7 +45,7 @@ example. Each Vita runs both games and the implementation exchanges cartridge
 bytes in memory for the session, not to storage. Do not use it to distribute a
 cartridge you are not allowed to share.
 
-**Two players (NES, WonderSwan, Super NES).** Two Vitas play one shared game:
+**Two players (NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD, Master System, SG-1000).** Two Vitas play one shared game:
 the host is player 1 and the joiner is player 2. Both need the very same game
 file (a patched copy does not match an unpatched one). Only the buttons cross
 the link. Save states, cheats, rewind and fast forward are off while linked.
@@ -64,6 +64,24 @@ the link. Save states, cheats, rewind and fast forward are off while linked.
   or **Online**. Joining over Same Wi-Fi shows the Two players rooms for this
   game; over Online you type the host's code. When the link is up, the game
   starts by itself.
+- **Sega: Genesis / Mega Drive, Sega CD, Master System and SG-1000.** These
+  play in the Sega player, which has no Play together page either: highlight
+  the game in the game list, press Start for Settings, and choose **Two
+  players**, then **Host a game** or **Join a game**, then **Same Wi-Fi** or
+  **Online** (there is no Nearby). Same Wi-Fi shows the rooms for this game;
+  over Online you type the host's code, and the game starts by itself when the
+  link is up. The host is player 1 and the joiner is player 2. Both machines
+  run the same game in step, so while linked there are no states, cheats,
+  rewind or fast forward, Quick response is off, the wide view stays off, and
+  nothing is counted for RetroAchievements. A Sega CD game starts from power-on
+  on both sides and uses the 512 KB RAM cartridge on both. The Game Gear has no
+  Two players (one controller).
+  - **Sega CD: both players need the same kind of image.** The id the two
+    Vitas compare is made from the disc's first sector and its length, and a
+    `.chd` of a disc does not give the id of the same disc as `.cue` + `.bin`.
+    If one of you has the `.chd` and the other the `.cue`, the link says "The
+    other Vita plays a different game.": put the same format on both Vitas. Both also need a Sega CD
+    BIOS for the disc's region.
 
 Fast link, in Settings > Link setup, batches two frames of GBA cable input.
 It is off by default and the host's setting controls the session. It does not
@@ -76,7 +94,8 @@ features. Three- and four-player links and single-cartridge multiboot are absent
 Online links two Vitas that are far apart, with a code and nothing to set up
 on your router. Version 2.0 or later on both. It works for the same games as
 Wi-Fi: GBA Link Cable, GBA Wireless Adapter, Game Boy / Game Boy Color Link
-Cable and Two players for NES, WonderSwan and Super NES. The two of you can be
+Cable and Two players for NES, WonderSwan, Super NES, Genesis / Mega Drive,
+Sega CD, Master System and SG-1000. The two of you can be
 anywhere with an internet connection.
 
 **To host:** open your game, then Play together > Connection: Online > Host a

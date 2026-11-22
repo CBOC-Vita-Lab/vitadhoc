@@ -290,7 +290,8 @@ console's setting without a launch file).
   the last load. Writes run on the writer thread; the slot shows at once. A failed write keeps the slot as it
   was and says why (red notice).
 - **Settings > Picture**: Screen size (Original, Zoom, Full screen, Pixel perfect), Pixel shape (8:7 or square),
-  Image quality (Sharp, Smooth), Scanlines, LCD grid, Ambient glow (Off, 1-10), Blend hi-res columns, Blend
+  Image quality (Auto, Original, Enhanced 2x, Enhanced 3x, MMPX 2x: the main app's row; Enhanced 4x is not offered, there is no 4x
+  scaler in a player), Video filter (sharp bilinear, bilinear), Scanlines, LCD grid, Ambient glow (Off, 1-10), Blend hi-res columns, Blend
   interlace lines, Apply to (All games / This game). Stored in `snes/picture.ini` and `snes/games/<game>.ini`
   when the menu closes (on the writer thread).
 - **Settings > Controls**: left and right stick (Off, D-pad, Buttons), rear touch panel, Multitap (Auto, On,

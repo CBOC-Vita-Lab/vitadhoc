@@ -190,9 +190,9 @@ STEPS = [
          inputs=["gpsp/"], requires=ARM_NONE + RGBASM, group=GROUP_MAKE,
          outputs=["gpsp/vita/tests/rewind/rom/rwbusy.gba"]),
     Step("build-linktest-rom", "link-cable test ROM linktest.gba (tools/linktest)",
-         "make -C gpsp/tools/linktest", "default", APP_TAGS,
+         "make -C gpsp/tools/linktest OUTDIR={out}/linktest", "default", APP_TAGS,
          inputs=["gpsp/"], requires=ARM_NONE, group=GROUP_MAKE,
-         outputs=["gpsp/tools/linktest/linktest.gba"]),
+         outputs=["tools/gate/out/linktest/linktest.gba"]),
 
     # ---- quick: unit tests, twin selftests, playerkit, widekit, save tests ----
     Step("release-unit", "download checker and release contracts (tests/, python unittest)",
@@ -317,10 +317,10 @@ STEPS = [
 
     # the Sega player's own code (md/vita/player.cpp) on the twin: launch protocol, menu walk, slots, saves, rewind, run-ahead, RetroAchievements. The
     # Sega CD part runs on synthetic discs and needs no ROM; the cartridge part needs GATE_MD_ROMS / GATE_MD_SMS_ROMS and says SKIP without
-    Step("md-player", "Sega player (md/vita/player.cpp) on the twin: walk, slots, saves, rewind, run-ahead, RetroAchievements; the Sega CD part on synthetic discs (player_selftest.sh; GATE_MD_ROMS, GATE_MD_SMS_ROMS)",
+    Step("md-player", "Sega player (md/vita/player.cpp) on the twin: walk, slots, saves, rewind, run-ahead, RetroAchievements; the Sega CD part on synthetic discs (player_selftest.sh; GATE_MD_ROMS, GATE_MD_SMS_ROMS; the SG-1000 and Game Gear files: GATE_SG_ROM, GATE_GG_ROM, else a cartridge made by md/twin/tools/sg_gen.py)",
          "MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/player_selftest.sh",
          "default", {"md"}, inputs=["md/", "playerkit/"], deps=["build-md-twin"], parse="pass_fail", net=True, timeout=3600,
-         env_opt=["GATE_MD_ROMS", "GATE_MD_SMS_ROMS"]),
+         env_opt=["GATE_MD_ROMS", "GATE_MD_SMS_ROMS", "GATE_SG_ROM", "GATE_GG_ROM"]),
 
     # state loaders (H1): every core's loader against damaged states with repaired checksums (ASan + UBSan, a watchdog for hangs) and the
     # load proof (a state loaded at N and run on equals the uninterrupted run); short budget here, longer by STATEFUZZ_SECONDS
@@ -424,10 +424,10 @@ STEPS = [
     Step("snes-gsu-fast", "SNES: the fast Super FX core (block cache) against the reference interpreter: pictures, sound, state identical at the hardware and a low clock, every private Super FX ROM (GATE_SNES_ROMS)",
          "bash snes/twin/gsu_check.sh snes/twin/build/snes_twin \"$GATE_SNES_ROMS\" 3000", "default", {"snes"},
          inputs=["snes/"], deps=["build-snes-twin"], env_req="GATE_SNES_ROMS", timeout=7200),
-    Step("app-ahead", "the app's Quick response (run-ahead) on Game Boy, NES and WonderSwan: sound, quick save and battery identical with it forced on and off over the GB test cartridges, the first 40 of GATE_NES_ROMS and GATE_WS_ROM (ahead_check.sh)",
-         "mkdir -p {out} && { ls gpsp/vita/hostcore/testrom/*.gb; find \"$GATE_NES_ROMS\" -name '*.nes' | sort | head -40; echo \"$GATE_WS_ROM\"; } > {out}/app-ahead.list && bash gpsp/vita/hostcore/ahead_check.sh gpsp/vita/hostcore/build/x86/gbadhoc_host {out}/app-ahead.list 300",
+    Step("app-ahead", "the app's Quick response (run-ahead) on Game Boy, NES and WonderSwan: sound, quick save and battery identical with it forced on and off over the GB test cartridges, the first 40 of GATE_NES_ROMS and GATE_WS_ROM (else GATE_WS_ONLINE_ROM) (ahead_check.sh)",
+         "mkdir -p {out} && { ls gpsp/vita/hostcore/testrom/*.gb; find \"$GATE_NES_ROMS\" -name '*.nes' | sort | head -40; echo \"${GATE_WS_ROM:-$GATE_WS_ONLINE_ROM}\"; } > {out}/app-ahead.list && bash gpsp/vita/hostcore/ahead_check.sh gpsp/vita/hostcore/build/x86/gbadhoc_host {out}/app-ahead.list 300",
          "default", APP_TAGS | {"app"}, inputs=["gpsp/", "nes/", "wswan/", "playerkit/src/pk_ahead.h"],
-         deps=["build-hostcore-x86", "build-testrom-gb"], env_req="GATE_NES_ROMS", env_opt=["GATE_WS_ROM"], timeout=7200),
+         deps=["build-hostcore-x86", "build-testrom-gb"], env_req="GATE_NES_ROMS", env_opt=["GATE_WS_ROM", "GATE_WS_ONLINE_ROM"], timeout=7200),
     Step("app-ahead-latency", "the app's Quick response: a button press shows one refresh sooner on test cartridges for GB, NES and WonderSwan (ahead_latency.sh; needs RGBDS and nasm)",
          "bash gpsp/vita/hostcore/ahead_latency.sh gpsp/vita/hostcore/build/x86/gbadhoc_host {out}/ahead-latency",
          "default", APP_TAGS | {"app"}, inputs=["gpsp/", "nes/", "wswan/", "playerkit/src/pk_ahead.h"],
@@ -1309,6 +1309,8 @@ def main(argv=None):
             pass
         os.environ["CCACHE_STATSLOG"] = ccache_log
 
+    # the link-cable test ROM is built into the run's out dir (build-linktest-rom): the tests find it there, the committed file stays untouched
+    os.environ["GATE_LINKTEST_DIR"] = str(out_dir / "linktest")
     started = datetime.datetime.now().isoformat(timespec="seconds")
     t0 = time.time()
     print("gate: %d steps (%s); jobs %d; out %s" % (len(order), how, JOBS[0], rel_to_repo(out_dir)),

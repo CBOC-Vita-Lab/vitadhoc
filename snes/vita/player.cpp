@@ -378,6 +378,8 @@ int SnesPlayer::migrate_old_states(const std::string &root, const std::string &g
 std::string SnesPlayer::pic_game_ini() const { return path_join(path_join(snes_dir_, "games"), game_ + ".ini"); }
 
 static int clampi(int v, int lo, int hi);
+static int imgq_of(int scaler, int look_mode);       /* below, with Image quality's other helpers */
+
 void SnesPlayer::settings_load()
 {
 	pic_defaults(&ps_);
@@ -393,7 +395,11 @@ void SnesPlayer::settings_load()
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 	pal_mode_ = pk::pal_mode_clamp(pl.get_int("pal_speed", pk::PAL_SMOOTH));
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
-	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
+	if (look_mode_ == 1) look_mode_ = 0;        /* "Full" is gone with the Image look row: a scaler as set is never eased now */
+	/* An older file that says "no scaler" (or the Light look) with the Smooth video filter drew bilinear. Original draws sharp (as in the main app,
+	 * where choosing bilinear over Original goes to Auto), so that choice is kept the way the app keeps it: the scaler goes to Auto. */
+	if (imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL && ps_.quality == PIC_SMOOTH) { ps_.scaler = SCALER_AUTO; if (look_mode_ == 2) look_mode_ = 0; g_changed |= CH_SCALER; }
+	ff_speed_ = clampi(pl.get_int("ff_speed", 0), 0, FFSPD_COUNT - 1);
 	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
 	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
 	rewind_on_ = pl.get_int("rewind", 1) != 0;
@@ -402,6 +408,33 @@ void SnesPlayer::settings_load()
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+/* "Image quality", the main app's one row (Auto, Original, Enhanced 2x/3x/4x, MMPX 2x), over this player's pixel art scaler and look:
+ * Auto = the governed scaler, Original = no scaler and sharp bilinear (the old Light look is the same), Enhanced 2x / 3x = xBR 2x / 3x, MMPX 2x =
+ * MMPX. There is no 4x scaler here: that choice is not offered. Old files keep working: the scaler and look_mode keys are unchanged. */
+/* The old Light look (look_mode 2, a global key) is Original only where the game's own picture file leaves the scaler on Auto or Original:
+ * a scaler chosen for this game wins over the global key, so the row, the picture and the governor always agree. */
+static bool light_on(int look_mode, int scaler) { return look_mode == 2 && (scaler == SCALER_AUTO || scaler == SCALER_OFF); }
+static int imgq_of(int scaler, int look_mode)
+{
+	if (light_on(look_mode, scaler)) return IMGQ_ORIGINAL;
+	switch (scaler) {
+	case SCALER_OFF: return IMGQ_ORIGINAL;
+	case SCALER_MMPX2: return IMGQ_MMPX_2X;
+	case SCALER_XBR2: return IMGQ_ENHANCED_2X;
+	case SCALER_XBR3: return IMGQ_ENHANCED_3X;
+	default: return IMGQ_AUTO;
+	}
+}
+static int scaler_of(int q)
+{
+	switch (q) {
+	case IMGQ_ORIGINAL: return SCALER_OFF;
+	case IMGQ_MMPX_2X: return SCALER_MMPX2;
+	case IMGQ_ENHANCED_2X: return SCALER_XBR2;
+	case IMGQ_ENHANCED_3X: case IMGQ_ENHANCED_4X: return SCALER_XBR3;
+	default: return SCALER_AUTO;
+	}
+}
 
 /* The launch file's choices: the shape and quality the app chose (unless this game has its own picture
  * file from the player's menu), then the app's per-game overrides ovr.<key>. */
@@ -435,7 +468,7 @@ void SnesPlayer::apply_overrides()
 	if ((v = req_.override_int("smooth_handoff", -1)) >= 0) handoff_ = v != 0;
 	if ((v = req_.override_int("rewind", -1)) >= 0) rewind_on_ = v != 0;
 	if ((v = req_.override_int("rewind_mb", -1)) >= 0) rewind_mb_ = clampi(v, 4, 24);
-	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = v == 1 ? 1 : 0;
+	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = clampi(v, 0, FFSPD_COUNT - 1);
 	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
 	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_mode_ = pk::pal_mode_clamp(v);
 	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_mode_ = pk::PAL_FAST; else if (w == "true" || w == "50") pal_mode_ = pk::PAL_TRUE; else if (w == "smooth") pal_mode_ = pk::PAL_SMOOTH; }
@@ -446,7 +479,8 @@ void SnesPlayer::apply_overrides()
 void SnesPlayer::sync_menu_values()
 {
 	menu_.set_value(ROW_PIC_SHAPE, pic_to_shape(ps_.shape));
-	menu_.set_value(ROW_PIC_QUALITY, ps_.quality == PIC_SMOOTH ? 1 : 0);
+	menu_.set_value(ROW_PIC_QUALITY, imgq_of(ps_.scaler, look_mode_));
+	menu_.set_value(ROW_FILTER, imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL ? 0 : ps_.quality == PIC_SMOOTH ? 1 : 0);
 	menu_.set_value(ROW_PIC_SCANLINES, ps_.scan);
 	menu_.set_value(ROW_PIC_GRID, ps_.grid);
 	menu_.set_value(ROW_PIC_GLOW, ps_.glow);
@@ -456,11 +490,9 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_INTERLACE, ps_.interlace_blend ? 1 : 0);
 	menu_.set_value(ROW_MULTITAP, ps_.multitap);
 	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
-	menu_.set_value(ROW_SCALER, ps_.scaler);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 	menu_.set_value(ROW_PALSPEED, pk::pal_row_of(pal_mode_));
-	menu_.set_value(ROW_LOOK, look_mode_);
 	menu_.set_value(ROW_SPD_FF, ff_speed_);
 	menu_.set_value(ROW_SPD_SOUND, ff_sound_);
 	menu_.set_value(ROW_SPD_MODE, ff_toggle_);
@@ -660,17 +692,16 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, &model_snes(), &profile_);
 	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* no "Fit": Original already fills the height */
+	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
 	{
-		std::vector<std::string> px, onoff, mt, st, sc;
+		std::vector<std::string> px, onoff, mt, st, filt;
 		px.push_back("8:7 (console)"); px.push_back("Square");
-		sc.push_back("Auto"); sc.push_back("Sharp (none)"); sc.push_back("MMPX 2x"); sc.push_back("xBR 2x"); sc.push_back("xBR 3x");
+		filt.push_back(kVideoFilterNames[0]); filt.push_back(kVideoFilterNames[1]);
 		onoff.push_back("Off"); onoff.push_back("On");
 		mt.push_back("Auto"); mt.push_back("On"); mt.push_back("Off");
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_PIXELS, "Pixel shape",
 		                   "Pixel perfect only: the console's slightly wide pixels (8:7), or square ones.", px, 0, ROW_PIC_QUALITY);
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SCALER, "Pixel art scaler",
-		                   "Redraws the picture at 2x or 3x its size with smooth diagonals before it is fitted to the screen (xBR, MMPX). Auto picks the best that holds full speed.",
-		                   sc, ps_.scaler, ROW_PIC_QUALITY);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FILTER, "Video filter", PK_VIDEO_FILTER_HELP, filt, ps_.quality == PIC_SMOOTH ? 1 : 0, ROW_PIC_SCANLINES);
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_HIRES, "Blend hi-res columns",
 		                   "Averages pairs of columns in 512-wide pictures, smoothing their dithered see-through effects. Softens text.", onoff, 0, ROW_PIC_APPLY);
 		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_INTERLACE, "Blend interlace lines",
@@ -680,17 +711,12 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "Steady pacing",
 		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.",
 		                   onoff, 1);
-		std::vector<std::string> palv, lookv;
+		std::vector<std::string> palv;
 		palv.push_back("Smooth 50 Hz"); palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
-		lookv.push_back("Auto"); lookv.push_back("Full"); lookv.push_back("Light");
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_LOOK, "Image look",
-		                   "Auto keeps the best scaler and eases it only when a game cannot hold full speed. Full keeps the scaler as set, Light turns it off, both always.",
-		                   lookv, 0, ROW_PIC_APPLY);
 		{
 			std::vector<std::string> rl;
-			rl.push_back("30 s"); rl.push_back("1 min");
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
-			                   "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
+			rl.push_back(kRewindLengthNames[0]); rl.push_back(kRewindLengthNames[1]);
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length", PK_REWIND_LENGTH_HELP, rl, rewind_len_, ROW_SPD_REWIND);
 		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
 		                   "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
@@ -772,6 +798,7 @@ bool SnesPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { size_t len = 
 bool SnesPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return snes_host_state_load_buf(buf, n) == 0; }
 void SnesPlayer::SpeedGlue::run_frame(bool render) { snes_host_set_render(render ? 1 : 0); snes_host_run_frame(); }
 void SnesPlayer::SpeedGlue::clear_pads() { for (int i = 0; i < 5; i++) snes_host_set_pad(i, 0); }
+uint64_t SnesPlayer::SpeedGlue::now_us() { return p->pf_->now_us(); }
 void SnesPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
 
 SpeedSettings SnesPlayer::speed_settings() const
@@ -780,7 +807,8 @@ SpeedSettings SnesPlayer::speed_settings() const
 	s.rewind_on = rewind_on_ != 0;
 	s.rewind_seconds = rewind_len_ ? 60 : 30;
 	s.rewind_budget = (size_t) rewind_mb_ << 20;
-	s.ff_factor = ff_speed_ ? 3 : 2;
+	s.ff_factor = ff_speed_ == FFSPD_3X ? 3 : 2;
+	s.ff_unlimited = ff_speed_ == FFSPD_UNLIMITED ? 1 : ff_speed_ == FFSPD_SMOOTH ? 2 : 0;
 	s.ff_sound = ff_sound_;
 	s.ff_toggle = ff_toggle_ != 0;
 	return s;
@@ -1063,6 +1091,7 @@ void SnesPlayer::menu_drawn()
 MenuEvent SnesPlayer::menu_update(const MenuInput &in)
 {
 	MenuEvent ev = menu_.update(in);
+	if (qsync_) { qsync_ = false; sync_menu_values(); }               /* Image quality and Video filter follow each other (never inside the row's own change) */
 	ra_pump();
 	poll_writer();
 	if (ev == MENU_RESUME || ev == MENU_RESET_DONE) {
@@ -1108,7 +1137,17 @@ void SnesPlayer::on_change(int row, int v)
 {
 	switch (row) {
 	case ROW_PIC_SHAPE: ps_.shape = shape_to_pic(v); g_changed |= CH_SHAPE; break;
-	case ROW_PIC_QUALITY: ps_.quality = v ? PIC_SMOOTH : PIC_SHARP; g_changed |= CH_QUALITY; break;
+	case ROW_PIC_QUALITY:
+		ps_.scaler = scaler_of(v); look_mode_ = 0; g_changed |= CH_SCALER; qsync_ = true;
+		/* Original is stored as sharp, so the next start does not read "no scaler + Smooth" (an old file) and move it to Auto */
+		if (v == IMGQ_ORIGINAL && ps_.quality != PIC_SHARP) { ps_.quality = PIC_SHARP; g_changed |= CH_QUALITY; }
+		break;
+	case ROW_FILTER:
+		ps_.quality = v ? PIC_SMOOTH : PIC_SHARP; g_changed |= CH_QUALITY;
+		/* as in the main app: Original draws sharp bilinear whatever is stored, so choosing bilinear there switches the quality to Auto */
+		if (v && imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL) { ps_.scaler = SCALER_AUTO; look_mode_ = 0; g_changed |= CH_SCALER; }
+		qsync_ = true;
+		break;
 	case ROW_PIC_SCANLINES: ps_.scan = clampi(v, 0, 10); g_changed |= CH_SCAN; break;
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
@@ -1122,12 +1161,12 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_INTERLACE: ps_.interlace_blend = v ? 1 : 0; g_changed |= CH_ILACE; break;
 	case ROW_MULTITAP: ps_.multitap = clampi(v, 0, 2); g_changed |= CH_MULTITAP; snes_host_set_multitap(multitap_wanted()); break;
 	case ROW_PIC_WIDE: ps_.wide = clampi(v, 0, 2); g_changed |= CH_WIDE; break;
-	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; break;
+	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; qsync_ = true; break;     /* no row any more: the launch file and the tests */
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
 	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); break;
-	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
-	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
+	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); qsync_ = true; break;       /* no row any more: the launch file and the tests */
+	case ROW_SPD_FF: ff_speed_ = clampi(v, 0, FFSPD_COUNT - 1); speed_.apply(speed_settings()); break;
 	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;
 	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	case ROW_SPD_REWIND: rewind_on_ = v != 0; speed_.apply(speed_settings()); logf("%s\n", speed_.stats_line().c_str()); break;
@@ -1135,6 +1174,7 @@ void SnesPlayer::on_change(int row, int v)
 	default: return;
 	}
 	settings_dirty_ = true;
+	if (qsync_ && !menu_.is_open()) { qsync_ = false; sync_menu_values(); }
 	look_sync_rows();
 	pf_->picture_changed();
 }
@@ -1350,6 +1390,7 @@ void SnesPlayer::look_sync_rows()
 	if (look_on_) {
 		/* a fixed look (Full / Light) is the player's choice: the governor touches nothing */
 		const bool fixed = look_mode_ != 0;
+		/* an Image quality chosen by hand is the player's (the scaler row); the blends stay the governor's, as before the Image quality row */
 		look_.set_user_row(ROW_SCALER, fixed || ps_.scaler != SCALER_AUTO);
 		look_.set_user_row(ROW_INTERLACE, fixed || ps_.interlace_blend == 0);
 		look_.set_user_row(ROW_HIRES, fixed || ps_.hires_blend == 0);
@@ -1364,8 +1405,12 @@ void SnesPlayer::look_apply(const char *why)
 	 * reads picture() (it takes a copy per picture), so eff_ is never rewritten as a whole and nothing is stored that did not change. */
 	pic_settings n = ps_;
 	n.tier_steps = 0;
-	if (look_mode_ == 2) { n.interlace_blend = 0; n.hires_blend = 0; n.scaler = SCALER_OFF; }   /* Light: scaler and blends off, fixed */
-	else if (look_on_) {
+	const bool light = light_on(look_mode_, ps_.scaler);
+	if (light) { n.interlace_blend = 0; n.hires_blend = 0; n.scaler = SCALER_OFF; }   /* Light: scaler and blends off, fixed */
+	if (n.scaler == SCALER_OFF) {
+		n.quality = PIC_SHARP;               /* Original draws sharp bilinear whatever Video filter holds (as in the main app) */
+	}
+	if (!light && look_on_) {
 		if (look_.applied(LOOK_SCALER)) n.tier_steps = 1;
 		if (look_.applied(LOOK_ILACE)) n.interlace_blend = 0;
 		if (look_.applied(LOOK_HIRES)) n.hires_blend = 0;

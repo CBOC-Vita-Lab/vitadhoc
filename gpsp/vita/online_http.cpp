@@ -453,6 +453,11 @@ void FillReply(int op, const NpHttpsResult& res, online_reply* r) {
         Str(body, "error.code", code, sizeof code);
         Str(body, "error.reason", reason, sizeof reason);
         r->err = res.error == NP_HTTPS_E_REDIRECT ? ONLINE_E_BAD : MapStatus(res.http_status, code, reason);
+        if (r->err == ONLINE_E_BAD && res.http_status == 400) {
+            char field[16] = "";
+            Str(body, "error.field", field, sizeof field);
+            if (!strcmp(field, "console") && !strcmp(code, "bad_request")) r->err = ONLINE_E_CONSOLE;     // an older service (one without a console id the app sends) says which field it refuses
+        }
         r->retry_after = online_json_int(body, "error.retryAfterSec", 0);
         if (r->err == ONLINE_E_UPDATE) {
             Str(body, "error.min", r->min_ver, sizeof r->min_ver);

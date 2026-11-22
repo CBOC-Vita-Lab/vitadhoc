@@ -324,6 +324,7 @@ static void online_fail_text(int why)
    case ONLINE_FAIL_BUSY:        ui = UI_FAIL_ONLINE_BUSY; break;
    case ONLINE_FAIL_CLOSED:      ui = UI_FAIL_ONLINE_CLOSED; break;
    case ONLINE_FAIL_CLOCK:       ui = UI_FAIL_ONLINE_CLOCK; break;
+   case ONLINE_FAIL_CONSOLE:     ui = UI_FAIL_ONLINE_CONSOLE; break;
    case ONLINE_FAIL_VERSION:     ui = UI_FAIL_ONLINE_SETUP; break;
    default:                      break;
    }

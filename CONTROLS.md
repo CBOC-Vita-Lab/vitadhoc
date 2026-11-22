@@ -32,7 +32,7 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | Cross / Circle | A / B (swapped with Circle is A) |
 | L / R, Start, Select | The same buttons |
 | Hold Start + Select, or tap the game | Open the menu |
-| Square | Fast forward (hold or toggle; 2x, 3x or Unlimited, with or without sound, in Settings > Fast-forward) |
+| Square | Fast forward (hold or toggle; 2x, 3x, Unlimited or Unlimited Smooth, with or without sound, in Settings > Fast-forward) |
 | Right stick right | Fast forward while held (the Super NES and Sega players too) |
 | Select + Square | Rewind while held (the right stick left too, if you turn on Rewind with right stick; in the Super NES and Sega players the right stick left is the way) |
 | Select + L / Select + R | Quick save / quick load |
@@ -52,9 +52,9 @@ VitAdhoc's own screenshot (L + R + Select, saved in
 `ux0:data/GBAdhoc/screenshots/`) is off. Settings > Controls > Screenshot
 button combo turns it on; Button mapping can give Screenshot any other chord.
 
-## Sega Genesis / Mega Drive, Master System, Game Gear, SG-1000
+## Sega Genesis / Mega Drive, Sega CD, Master System, Game Gear, SG-1000
 
-These play in `md.bin`. Every button can be remapped per game in its menu,
+These play in `md.bin` (Sega CD with the Genesis pad: the same buttons). Every button can be remapped per game in its menu,
 which opens with Start + Select held (or a tap on the game).
 
 | Vita | Genesis / Mega Drive | Master System, SG-1000 | Game Gear |

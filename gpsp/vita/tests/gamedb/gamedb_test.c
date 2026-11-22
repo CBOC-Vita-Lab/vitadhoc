@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "gamedb.h"
+#include "gamedb_sega.h"
 
 static int fails;
 /* the file's size (assets/gamedb.txt): update with the generator's output */
@@ -147,6 +148,19 @@ static void sega_files(void)
           gamedb_md_accept("nothing.MD") && gamedb_md_accept("nothing.smd"),
           "extensions: .md .gen .smd always (any case); nothing else");
    expect(gamedb_md_accept("raw.68k") && gamedb_md_accept("RAW.68K"), "a .68k (raw Genesis image) is listed");
+   {
+      /* the extension table (gamedb_sega.h) the library lists by: .68k is a Genesis file, .sc (SC-3000) is played as SG-1000, each in exactly one console */
+      int i, md68k = 0, sc = 0, scd68k = 0;
+      for (i = 0; i < GAMEDB_SEGA_CONSOLES; i++)
+      {
+         const char *x = gamedb_sega_consoles[i].exts;
+         int has68k = strstr(x, ".68k") != NULL, hassc = strstr(x, ".sc|") != NULL || (strlen(x) >= 3 && !strcmp(x + strlen(x) - 3, ".sc"));
+         if (has68k) { md68k++; scd68k |= gamedb_sega_consoles[i].letter == 'I'; }
+         if (hassc) sc += gamedb_sega_consoles[i].letter == 'L';
+      }
+      expect(md68k == 1 && scd68k == 1, ".68k is listed under Genesis only");
+      expect(sc == 1, ".sc is listed under SG-1000");
+   }
    {
       /* the same test on the first bytes of a file that is not on the card (a .bin in a .zip) */
       static unsigned char h[0x110];

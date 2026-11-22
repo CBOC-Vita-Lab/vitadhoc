@@ -330,6 +330,8 @@ static void pcp_handler(int sig, siginfo_t *si, void *vuc)
    pcp_buf[i].tid = (int)syscall(SYS_gettid);
 #if defined(__arm__)
    pcp_buf[i].pc = uc->uc_mcontext.arm_pc;
+#elif defined(__aarch64__)
+   pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.pc;
 #else
    pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
 #endif

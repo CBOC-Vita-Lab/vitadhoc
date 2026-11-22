@@ -93,6 +93,52 @@ ImageMagick 7 and run `make -C gpsp/vita assets`. It uses the bundled Outfit
 and Inter fonts and produces 8-bit indexed PNGs. A normal VPK build does not
 need ImageMagick. Keep the masters with the working files when moving this tree.
 
+## Host twins (Linux builds of the app)
+
+The app also builds as a Linux program, the "twin", that the tests drive with a
+scripted pad (see [Testing](TESTING.md)). Three architectures:
+
+```sh
+make -C gpsp/vita/hostcore ARCH=x86 -j2          # x86-64, with the x86 recompiler
+make -C gpsp/vita/hostcore ARCH=armhf -j2        # 32-bit ARM under qemu-arm (arm-linux-gnueabihf-gcc)
+make -C gpsp/vita/hostcore ARCH=aarch64 -j2      # 64-bit ARM Linux
+```
+
+`ARCH=aarch64` is for an Apple-silicon Mac's Linux VM (or any aarch64 Linux) as the
+second player against a real Vita. Natively on an aarch64 Linux the command above is
+all that is needed (gcc, make, libc headers). On another machine it cross-builds with
+`aarch64-linux-gnu-gcc` (Debian / Ubuntu: `apt install gcc-aarch64-linux-gnu
+g++-aarch64-linux-gnu`; `CROSS=` names another prefix). The program is linked
+statically (`build/aarch64/gbadhoc_host`), so the one file starts on any aarch64 Linux. One
+limit: a static glibc looks host names up (`getaddrinfo`: the room service, cover art) through the
+resolver libraries of the glibc it was linked with, loaded at run time, which must match the
+machine it runs on (the linker warns about exactly this). A file cross-built on a machine with a
+newer glibc than the VM's can therefore start, link on the Same Wi-Fi and still fail to resolve
+`psvita.dev` names. For Online rooms (and cover art) build natively on the VM, where the two are
+the same glibc; for Same Wi-Fi rooms the cross-built file should be enough (no name has to be resolved).
+There is no AArch64 recompiler in the GBA core, so this twin
+runs the GBA **interpreter** (`DYNAREC=0` is forced); the other cores are plain C and
+are the same as everywhere. The interpreter's speed on Apple silicon has not been measured (expected to be
+far above 60 frames a second; confirm with the first run).
+
+`DYNAREC=0` also works on x86 (`make -C gpsp/vita/hostcore ARCH=x86 DYNAREC=0`, build
+folder `build/x86-interp`): the same interpreter path, handy for testing it without
+emulation. A build without the recompiler gets `hostcore/interp_stub.c`, which gives the
+recompiler's counters and switches the value "no recompiler".
+
+Two settings for a twin that talks to a real Vita:
+
+- `HOST_VERSION=<the Vita build's CORE_VERSION>` (default `host-<revision>`): link rooms
+  compare the version string, so a twin whose string differs from the Vita's is refused
+  ("different version"). The package's own string is `CORE_VERSION` in `gpsp/vita/Makefile`
+  (`4.1.1+4.5.0fixes` at the time of writing). Build the twin with it and the Vita and the
+  twin hash the same build word.
+- `MBEDTLS=<aarch64 prefix>`: Online rooms are on an https service, so the twin needs Mbed
+  TLS for its own architecture. `python3 tools/online/build-mbedtls.py --target aarch64 --work DIR`
+  builds it (native on aarch64, `aarch64-linux-gnu-gcc` elsewhere); then
+  `make -C gpsp/vita/hostcore ARCH=aarch64 MBEDTLS=DIR/mbedtls/aarch64 HOST_VERSION=...`.
+  Same Wi-Fi rooms need no TLS.
+
 ## Fast builds
 
 Everything here is optional: without it the Makefiles build as they always did.

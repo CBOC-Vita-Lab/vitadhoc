@@ -44,7 +44,14 @@ from app_tests import menu_pick, worst_diff
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GP = os.path.normpath(os.path.join(HERE, "..", ".."))
-LINKTEST = os.path.join(GP, "tools", "linktest", "linktest.gba")
+def _linktest(name):
+    """the cartridge the gate built into its out dir (GATE_LINKTEST_DIR), else the committed one"""
+    d = os.environ.get("GATE_LINKTEST_DIR")
+    p = os.path.join(d, name) if d else ""
+    return p if p and os.path.exists(p) else os.path.join(GP, "tools", "linktest", name)
+
+
+LINKTEST = _linktest("linktest.gba")
 LT_DIR = os.path.join(GP, "tools", "linktest")
 GL_DIR = os.path.join(GP, "tools", "gbamirror")
 GBLINK = os.path.join(HERE, "testrom", "gblocal.gb")

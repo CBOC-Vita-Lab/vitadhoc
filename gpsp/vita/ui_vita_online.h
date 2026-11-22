@@ -170,6 +170,10 @@ void ui_online_fail_text(int why, const char *arg1, const char *arg2,
       s1 = "The online service could not be reached.";
       s2 = "Check this " UI_DEV "'s internet connection and try again.";
       break;
+   case UI_FAIL_ONLINE_CONSOLE:
+      s1 = "Online play is not ready for this console yet.";
+      s2 = "The online service must be updated. Use Same Wi-Fi for now.";
+      break;
    case UI_FAIL_ONLINE_CLOSED:
       s1 = "Your friend closed the room.";
       s2 = "Ask them to host again.";

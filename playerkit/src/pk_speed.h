@@ -33,13 +33,16 @@ public:
 	virtual bool load_state(const uint8_t *buf, size_t n) = 0;
 	virtual void run_frame(bool render) = 0;                   /* one emulated frame with the pads as they are */
 	virtual void clear_pads() = 0;                             /* the next frame sees no button (a rewind landing) */
+	/* a clock in microseconds, for Unlimited fast forward's count of frames per refresh (0 = none: a fixed guess is used) */
+	virtual uint64_t now_us() { return 0; }
 };
 
 struct SpeedSettings {
 	bool rewind_on = true;
-	int rewind_seconds = 60;            /* 30 or 60 in the menu */
+	int rewind_seconds = 60;            /* 30 (Short) or 60 (Medium) in the menu */
 	size_t rewind_budget = 12u << 20;
 	int ff_factor = 2;                  /* 2 or 3 */
+	int ff_unlimited = 0;               /* 0 the factor above, 1 Unlimited, 2 Unlimited Smooth (pk_ff.h) */
 	int ff_sound = 1;                   /* 0 off, 1 sped up, 2 normal pitch (FastForward::SOUND_*) */
 	bool ff_toggle = false;
 };
@@ -80,7 +83,19 @@ public:
 	bool rewinding() const { return rw_.active(); }
 	bool busy() const { return ff_.on() || rw_.active(); }
 	/* a frame of this refresh is the last one: draw it (fast forward draws one picture a refresh) */
-	bool draw_this(int index, int count) const { return !ff_.on() || index == count - 1; }
+	bool draw_this(int index, int count) const { return !ff_.latched() || (index == count - 1 && ff_.draw_last()); }
+	/* Unlimited: the frames the next refresh would run, from what frames cost (budget in microseconds of one refresh that the emulating thread may
+	 * use, drawn: whether the refresh draws its last frame). Public for the tests. */
+	static int unlimited_frames(uint32_t budget_us, uint32_t plain_cost_us, uint32_t drawn_cost_us, bool drawn);
+	enum { kUnlimitedBudgetUs = 14000, kUnlimitedMax = 30, kGuessUs = 4000, kRefreshUs = 16683, kUnlimitedMin = 2 };
+	/* The display's real refresh period in microseconds (default 16683): Unlimited budgets 84 % of it (14000 us at 60 Hz) for the emulating thread */
+	void set_refresh_us(uint32_t us) { refresh_us_ = us; }
+	/* The main thread's work in a refresh that was not emulation (the picture's scaling and upload, the audio push, the overlay): the player reports it once
+	 * per refresh while Unlimited runs, and the next refresh's budget is reduced by its average. */
+	void note_other_us(uint32_t us) { other_us_ = other_us_ ? (other_us_ * 7 + us) / 8 : us; }
+	uint32_t other_us() const { return other_us_; }
+	/* the budget Unlimited holds a refresh to, from the period and the other work (public for the tests) */
+	uint32_t unlimited_budget_us() const { const uint32_t p = refresh_us_ ? refresh_us_ : (uint32_t) kRefreshUs, b = (uint32_t) ((uint64_t) p * 21 / 25); return b > other_us_ ? b - other_us_ : 0; }
 	/* busy() went from true to false since the last call: reset the pacer and the look governor's window */
 	bool take_ended();
 	/* the chip text to show now (">> 2x", "<< REWIND 12 s"), "" when none */
@@ -110,6 +125,9 @@ private:
 	bool want_rw_ = false;
 	RewindAct act_ = RW_PLAY;
 	bool was_busy_ = false, ended_ = false;
+	uint32_t refresh_us_ = 0, other_us_ = 0;
+	uint32_t cost_plain_ = 0, cost_drawn_ = 0;      /* averages of what a frame cost (an undrawn one, a drawn one), for Unlimited */
+	int run_in_refresh_ = 0;
 	bool defer_ = false;
 	int pend_ = 0, put_off_ = 0;
 	unsigned put_off_total_ = 0;

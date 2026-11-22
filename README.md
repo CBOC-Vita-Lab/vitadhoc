@@ -1,8 +1,8 @@
 # VitAdhoc
 
-**One app, ten consoles, native on your PS Vita.** Game Boy Advance, Game Boy,
-Game Boy Color, NES, WonderSwan, Super NES, Genesis / Mega Drive, Master
-System, Game Gear and SG-1000 live together on one home screen with box art, a
+**One app, eleven consoles, native on your PS Vita.** Game Boy Advance, Game Boy,
+Game Boy Color, NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD,
+Master System, Game Gear and SG-1000 live together on one home screen with box art, a
 little history for every game and previews of your own play. Pick up where you
 left off, fill the Vita's whole width with the wide view, smooth the pixels or
 keep them crisp, rewind your mistakes, earn RetroAchievements, and play
@@ -22,11 +22,11 @@ download is required.
 
 ## New In Version 2.0
 
-The biggest update yet: four Sega consoles, online play, and a lot of polish
+The biggest update yet: five Sega consoles, online play, and a lot of polish
 for every console. Nothing in 2.0 has been tried on a real Vita yet, so these
 are what we built and aim for, not measured results.
 
-- **Four Sega consoles.** Genesis / Mega Drive, Master System, Game Gear and
+- **Four Sega cartridge consoles.** Genesis / Mega Drive, Master System, Game Gear and
   SG-1000 each get their own shelf, with box art, Continue, ten state slots,
   cheats, rewind, fast forward and RetroAchievements.
 - **Sega CD / Mega CD** as its own shelf, with box art, Continue, ten state
@@ -35,7 +35,7 @@ are what we built and aim for, not measured results.
 - **Play together, anywhere.** Host a game, share a five-character code, and
   your friend joins from any home network. No router settings, no accounts.
 - **Two players on every two-player console.** GBA and Game Boy link cables,
-  plus Two players for NES, WonderSwan, Super NES, Genesis / Mega Drive,
+  plus Two players for NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD,
   Master System and SG-1000, over Wi-Fi or online.
 - **Full-width wide view for the Sega consoles,** as on the NES and Super NES:
   the real picture in the middle, more of your level beside it.
@@ -45,6 +45,11 @@ are what we built and aim for, not measured results.
 - **Smoother motion.** Smooth 50 Hz removes the hitch in European games, no
   sprite flicker on the 8-bit Sega consoles, and a much faster exact Super FX
   core for Doom and Stunt Race FX.
+- **Quick response** shows a button press one frame sooner on Game Boy, Game
+  Boy Color, NES, WonderSwan and the Sega consoles (not on Game Boy Advance or
+  the Super NES: see [Known Issues](KNOWN-ISSUES.md)).
+- **Names in every alphabet:** Japanese, Korean, Greek, Cyrillic and accented
+  names show as written.
 - **A console picker, undo and lock for save states,** and a home screen that
   appears at once, even on a big card.
 
@@ -57,7 +62,7 @@ have measured Vita numbers for 2.0 yet; they will go here after hardware tests.
 
 | | What to expect |
 | --- | --- |
-| **Gameplay** | GBA, Game Boy, Game Boy Color and Super NES games were measured on a real Vita in earlier versions ([results](docs/PERFORMANCE.md)). NES, WonderSwan and the four Sega consoles are newer and untried on a Vita. Every console aims for a locked 60 frames a second (50 for European games), eased down by itself only when a game needs it. |
+| **Gameplay** | GBA, Game Boy, Game Boy Color and Super NES games were measured on a real Vita in earlier versions ([results](docs/PERFORMANCE.md)). NES, WonderSwan and the five Sega consoles are newer and untried on a Vita. Every console aims for a locked 60 frames a second (50 for European games), eased down by itself only when a game needs it. |
 | **Heavy scenes** | Wide view and the biggest smoothing steps cost the most; Image quality Auto and Wide view Auto step down before a frame is lost, and can be set by hand. Doom and other Super FX games are the busiest. |
 | **Online** | Verified on PC test builds against simulated routers; not yet on two real Vitas or the live service. Expect to hear what works from you. |
 | **Menus and library** | Browse by buttons or touch. The home screen aims to appear at once. Box art needs Wi-Fi. |

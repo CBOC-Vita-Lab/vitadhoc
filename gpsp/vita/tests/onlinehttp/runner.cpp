@@ -371,6 +371,8 @@ static void t_errors(const char *base)
       {"E502", ONLINE_E_RELAY, 502, 0, 0, 0},
       {"E400", ONLINE_E_BAD, 400, 0, 0, 0},
       {"E400V", ONLINE_E_BAD, 400, 0, 0, 0},
+      {"E400C", ONLINE_E_CONSOLE, 400, 0, 0, 0},
+      {"E400F", ONLINE_E_BAD, 400, 0, 0, 0},
       {"E413", ONLINE_E_BAD, 413, 0, 0, 0},
       {"E500", ONLINE_E_SERVER, 500, 0, 0, 0},
       {"E504", ONLINE_E_SERVER, 504, 0, 0, 0},

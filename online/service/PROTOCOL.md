@@ -75,7 +75,7 @@ Errors (status, code, when; client meaning in 1.6):
 
 | status | code | when |
 |---|---|---|
-| 400 | `bad_request` | malformed JSON / field (message names the field), empty User-Agent |
+| 400 | `bad_request` | malformed JSON / field (message names the field; `error.field` names it too), empty User-Agent |
 | 400 | `bad_version` | `v` missing or malformed |
 | 401 | `bad_token` | routes 5-8: token is not a member of that room |
 | 403 | `relay_not_allowed` | route 6/7 while the room has no second member; route 6 also while either member has not polled within `RELAY_POLL_FRESH_SEC` (30 s) since the join (the guest's join counts as its poll) |

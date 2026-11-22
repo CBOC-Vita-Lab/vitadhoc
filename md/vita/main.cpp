@@ -1021,6 +1021,7 @@ static double thread_cpu_ms(SceUID id)
 }
 static bool g_hd_ok;
 static std::atomic<unsigned> g_hd_drawn(0), g_hd_failed(0), g_hd_draw_us(0);
+static std::atomic<unsigned> g_hd_cum_us(0), g_hd_cum_n(0);       /* never drained: the draw time and the pictures finished in total (Quick response's picture check takes deltas) */
 static pk::SpinLock g_hd_lk;
 static pk::Notices g_hd_notices;
 static std::atomic<int> g_hd_notice_on(0);
@@ -1103,6 +1104,8 @@ static int hd_draw_thread(SceSize, void *)
 		if (drew) finish_pic(); else g_hd_failed++;
 		const uint64_t dt = sceKernelGetProcessTimeWide() - t0;       /* the cost reported is this picture's own draw, not the repeat after it */
 		g_hd_draw_us += (unsigned) dt;
+		g_hd_cum_us += (unsigned) dt;
+		g_hd_cum_n += 1;
 		if (drew && s.mix && g_mix_valid) {
 			/* Smooth 50 Hz: this picture was the early frame's, shown mixed for one refresh; the next refresh shows it alone */
 				Pic pure; pic_info pgi;
@@ -1543,6 +1546,9 @@ int main(int argc, char **argv)
 	double s_stall = 0, s_work = 0, s_agap = 0;
 	uint32_t emu_frame = 0;
 	uint64_t render_emu_us = 0;
+	/* Quick response's picture check: baselines of the drawing thread's totals, taken again after the menu and when the hand-over toggles */
+	pk::PictureTotals pp;
+	bool pp_hd = false, pp_rebase = true;
 	unsigned wide_jumps_seen = 0;
 	pk::ExitReason why = pk::EXIT_NORMAL;
 	g_pl->log_flush(false);
@@ -1562,6 +1568,7 @@ int main(int argc, char **argv)
 		if (elapsed == 0) elapsed = 1;
 		if (elapsed > 2) elapsed = 2;
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
+		const uint64_t emu_us0 = emu_us;       /* the refresh's emulation time is the difference at its end (Unlimited fast forward's budget) */
 		if (prev_loop0 && loop0 - prev_loop0 > stall_max_us) stall_max_us = loop0 - prev_loop0;
 		prev_loop0 = loop0;
 		if (g_wd_audio >= 0 || g_wd_writer >= 0) {
@@ -1709,6 +1716,20 @@ int main(int argc, char **argv)
 			while (g_pipe.box().poll_cost(&hc)) g_pl->drawn_cost(hc);
 			hd_publish_notices();
 		}
+		{
+			/* once per refresh: what the drawing thread did since the last one (average work for a picture, refreshes it missed: pictures
+			 * dropped and waits at the gate that ran out; a wait that merely queued is not a miss). Taken every refresh so the interval is
+			 * short whatever blocks Quick response, but told to it only for a plain single refresh of a game the hand-over draws. */
+			const unsigned cs = g_hd_cum_us.load(std::memory_order_relaxed), cn = g_hd_cum_n.load(std::memory_order_relaxed);
+			unsigned cm = 0;
+			if (hd) { const pk::HandoffCensus k = g_pipe.box().census(); cm = k.dropped + k.gate_timeouts; }
+			if (hd != pp_hd || pp_rebase) { pp_hd = hd; pp_rebase = false; pp.rebase(cs, cn, cm); }
+			else {
+				uint32_t du, dm;
+				pp.take(cs, cn, cm, &du, &dm);
+				if (hd && !g_link && !half && !g_pl->speed_busy() && to_run == 1) g_pl->ahead_picture(du, dm);
+			}
+		}
 		if (link_over) break;
 		if (want_menu && g_link) {
 			/* a linked game has no menu (a state, a cheat or a reset would change one console's machine): the menu button asks for the clean end */
@@ -1722,6 +1743,7 @@ int main(int argc, char **argv)
 			if (ev == pk::MENU_GAME_LIST) { why = pk::EXIT_GAME_LIST; break; }
 			if (ev == pk::MENU_EXIT) { why = pk::EXIT_NORMAL; break; }
 			hd_after_menu();
+			pp_rebase = true;
 			g_pl->look_safe_point(pk::LOOK_SAFE_MENU);
 			if (g_pl->take_timing_changed()) {
 				/* a region change: the console's frame rate changed; pacing, the mailbox's frame time and the speed meter follow */
@@ -1751,6 +1773,7 @@ int main(int argc, char **argv)
 		}
 		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
+		if (!g_link && g_pl->speed_busy()) { const uint64_t w = work_end - loop0, e = emu_us - emu_us0; g_pl->speed_other_us((uint32_t) (w > e ? (w - e > 100000 ? 100000 : w - e) : 0)); }
 		if (drew) {
 			frame_finish();
 			drawn++;

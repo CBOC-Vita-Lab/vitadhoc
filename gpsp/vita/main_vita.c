@@ -4064,6 +4064,7 @@ void ui_host_look_changed(void)
    int c = pcfg_display_console();
    /* the look governor (look_glue.h): what is set by hand is not its */
    look_set_user_rows(app_look_user_rows());
+   ahead_picture_reset();      /* another Image quality, another cost for the picture side */
    vid_set_quality(g_pcfg.quality);
    /* the cap is read once the drawing thread is idle (vid_set_quality waits
     * for it): look_quality_cap also moves the MMPX flag the drawing side reads */
@@ -6898,6 +6899,17 @@ static void game_loop(void)
                    (unsigned long long)ssum, dn);
          }
       }
+      if (ho_active() && ahead_mode() != AHEAD_MODE_OFF)
+      {
+         /* Quick response also hears the drawing thread: with xBRZ saturating it the emulating thread's cost alone looks fine
+          * (ahead_glue.h ahead_picture).  The interval is taken every pass; fast forward and rewind drop pictures on purpose. */
+         uint32_t pdraw, pmiss;
+         ho_picture_pass(&pdraw, &pmiss);
+         if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active() && !rewind_active())
+            ahead_picture(pdraw, pmiss);
+      }
+      else
+         ho_picture_rebase();     /* not taken now (Off, no hand-over): the next interval starts from here, not from the last time */
       if (!g_ff.on && !session && !local && !g_sw.link_bench && !ui_active())
       {
          int changed = 0, half = 0;

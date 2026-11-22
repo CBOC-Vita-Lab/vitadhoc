@@ -91,11 +91,24 @@ sharing).
   that is really a Game Gear game plays as a Master System game; its save and
   states stay together under Master System.
 - **Not there yet:** RetroAchievements badges in the library for these games.
-  No SG-1000 game was available to test achievements.
+  No real SG-1000 or Game Gear game was available to test achievements: the
+  tests use small cartridges made for them (`md/twin/tools/sg_gen.py`).
 - **No sprite flicker** (Master System, Game Gear, SG-1000; on by default) was
   checked with homebrew only. A game that hides something behind the console's
   sprite limit on purpose would show it: turn the row off for that game. It is
   not offered for the Mega Drive, which keeps its own limit.
+- **Fast forward in the Super NES and Sega players** has the app's choices
+  (2x, 3x, Unlimited, Unlimited Smooth). Unlimited runs as many frames as fit in
+  one refresh (up to 30) and stays tied to the display, where the app lets the
+  screen run free; it is silent and draws a picture every second refresh
+  (Unlimited) or every refresh (Unlimited Smooth). Those numbers come from a
+  budget of 84 % of the display's refresh (about 14 ms) less the time the main
+  thread spends on a refresh besides emulating (never slower than 2x), and
+  from measured frame costs, not from a Vita. Keep sound is listed for 2x and
+  3x only, as the Unlimited choices are silent. The players
+  have no Enhanced 4x in Image quality (no 4x scaler), and their Rewind length
+  is Short (about 30 s) or Medium (about a minute); the app's rewind has no
+  length row yet.
 - **Quick response** shows what you press one frame sooner by working out the
   next frame ahead; the game runs exactly the same and states, rewind and saves
   are unaffected. It costs about twice a plain frame (1.2 to 1.7 times on the
@@ -106,7 +119,14 @@ sharing).
   there forces it and can drop frames). It is off in linked and online play,
   in fast forward, in rewind and in Steady pacing's half mode. A game that
   already answers a button in the same frame it reads it gains nothing from it.
-  It is not offered for Game Boy Advance: a state is 416 KB and loading one
+  It is not in the Super NES player in 2.0 (so that player has no Quick
+  response row). It was assessed: on the PC build a Super NES state save costs
+  0.1 to 0.2 ms and a load 0.25 to 0.5 ms next to a 1.0 to 2.0 ms frame (host
+  counts), but Snes9x's state load resets the machine and makes the picture
+  thread wait and redo its whole video memory, so a look-ahead frame is expected to
+  cost too much for Auto to start (an estimate: not measured on a Vita); it needs a
+  lighter way back in the core first. It is not offered for Game Boy Advance:
+  a state is 416 KB and loading one
   throws away the translated code that ran from RAM (see docs/PERFORMANCE.md,
   numbers measured on the PC build only), and a frame costs more than half of
   what the Vita can do. On WonderSwan one step is one console frame, and the

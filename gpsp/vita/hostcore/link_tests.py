@@ -5,6 +5,9 @@ loopback network: vita/link_vita.c from the menus to the session and back.
     ./link_tests.py x86               both twins the x86 one
     ./link_tests.py armhf             both the armhf one under qemu-arm (the
                                       ARM dynarec, the Vita's): the core set
+    ./link_tests.py aarch64           both the aarch64 one (GBA interpreter) under
+                                      qemu-aarch64 (QEMU_A64 to change)
+    ./link_tests.py mixed64           an x86 twin and an aarch64 twin
     ./link_tests.py mixed             an x86 twin and an armhf twin: they
                                       must refuse to mirror, and may play a
                                       Game Boy link
@@ -46,13 +49,20 @@ import subprocess
 import sys
 import time
 
-from app_tests import HERE, QEMU, Result, Suite, worst_diff
+from app_tests import HERE, QEMU, QEMU_A64, Result, Suite, worst_diff
 
 GP = os.path.normpath(os.path.join(HERE, "..", ".."))
-LINKTEST = os.path.join(GP, "tools", "linktest", "linktest.gba")
+def _linktest(name):
+    """the cartridge the gate built into its out dir (GATE_LINKTEST_DIR), else the committed one"""
+    d = os.environ.get("GATE_LINKTEST_DIR")
+    p = os.path.join(d, name) if d else ""
+    return p if p and os.path.exists(p) else os.path.join(GP, "tools", "linktest", name)
+
+
+LINKTEST = _linktest("linktest.gba")
 GBLINK = os.path.join(HERE, "testrom", "gblink.gb")
 FAKE_IGD = os.path.join(GP, "netdrv", "tests", "fake_igd.py")
-LINKTEST_B = os.path.join(GP, "tools", "linktest", "linktest_b.gba")
+LINKTEST_B = _linktest("linktest_b.gba")
 
 # The linktest cartridge's result block (tools/linktest/linktest.h), in
 # 32-bit words from 0x02000000.
@@ -138,7 +148,8 @@ class Twin:
     def start(self):
         with open(os.path.join(self.out, "script.txt"), "w") as f:
             f.write(self.script)
-        cmd = (QEMU if self.arch.startswith("armhf") else []) + [
+        cmd = (QEMU if self.arch.startswith("armhf") else
+               QEMU_A64 if self.arch.startswith("aarch64") else []) + [
             exe_of(self.arch), "--root", self.root, "--realtime",
             "--shot-dir", self.out, "--input-file",
             os.path.join(self.out, "script.txt")]
@@ -195,8 +206,10 @@ class Tests:
         self.mode = mode
         # who is what: x86 = both x86; armhf = both armhf; mixed = A x86,
         # B armhf
-        self.arch_a = "armhf" if mode == "armhf" else "x86"
-        self.arch_b = "x86" if mode == "x86" else "armhf"
+        # aarch64 = both aarch64; mixed64 = A x86, B aarch64
+        self.arch_a = {"armhf": "armhf", "aarch64": "aarch64"}.get(mode, "x86")
+        self.arch_b = {"x86": "x86", "aarch64": "aarch64",
+                       "mixed64": "aarch64"}.get(mode, "armhf")
         self.slow = mode != "x86"
         # A twin under qemu cannot draw sixty pictures a second, let alone
         # run two GBAs at it.  Its display is told to refresh more slowly
@@ -2050,13 +2063,15 @@ RUNS = {
               "internet", "adhoc", "room_full", "host_quits", "link_lost",
               "lossy", "suspend"],
     "mixed": ["mixed_refuse", "wifi_gb", "wifi_adapter"],
+    "aarch64": ["wifi_cable", "wifi_gb", "wifi_adapter", "adhoc", "host_quits"],
+    "mixed64": ["wifi_cable", "wifi_gb", "wifi_adapter"],
 }
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", nargs="?", default="x86",
-                    choices=("x86", "armhf", "mixed"))
+                    choices=("x86", "armhf", "mixed", "aarch64", "mixed64"))
     ap.add_argument("--only")
     ap.add_argument("--hz", type=int, default=0,
                     help="the twins' display rate (60; 12 under qemu)")

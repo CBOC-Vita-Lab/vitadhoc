@@ -262,12 +262,25 @@ void Menu::ensure_visible()
 
 /* ---- the rows of each page -------------------------------------------------------- */
 
+/* the main app's help for each Image quality (gpsp/psp/ui_psp.c, SET_QUALITY): one wording on every console */
+static const char *quality_help(int v)
+{
+	switch (v) {
+	case IMGQ_ORIGINAL: return "The game's own pixels, evenly sized at any screen size.";
+	case IMGQ_ENHANCED_2X: return "Smoothed at twice the game's size, then sized to fit.";
+	case IMGQ_ENHANCED_3X: return "Smoothed at three times its size. More detail, more work.";
+	case IMGQ_ENHANCED_4X: return "Smoothed at four times its size. The most detail and work.";
+	case IMGQ_MMPX_2X: return "MMPX at twice its size: crisp pixel art, light on the Vita.";
+	default: return "Auto adapts to keep 60 fps; smoothing when it can.";
+	}
+}
+
 static const char *help_for(int id)
 {
 	switch (id) {
 	case ROW_PIC_SHAPE: return "How large the game is drawn. Original keeps the console's shape; Pixel perfect uses whole-number steps.";
 	case ROW_PIC_WIDE: return "Shows more of the world than the console did, for games with a wide view profile.";
-	case ROW_PIC_QUALITY: return "Sharp keeps pixel edges crisp. Smooth blends them for a softer picture.";
+	case ROW_PIC_QUALITY: return quality_help(IMGQ_AUTO);
 	case ROW_PIC_SCANLINES: return "Dark lines between the rows, like a TV. 1 is faint, 10 is strong.";
 	case ROW_PIC_GRID: return "A faint pixel grid, like a handheld's screen. 1 is faint, 10 is strong.";
 	case ROW_PIC_GLOW: return "A soft glow beside the picture in place of black bars.";
@@ -281,7 +294,7 @@ static const char *help_for(int id)
 	case ROW_CTL_TURBO_MODE: return "Hold: turbo runs while the button is held. Toggle: press once to start, again to stop.";
 	case ROW_CTL_APPLY: return "Keep these controls for every game, or only for this one.";
 	case ROW_CTL_RESET: return "Put every button, stick and turbo setting back to the defaults.";
-	case ROW_SPD_FF: return "How fast the game runs while fast-forward is held.";
+	case ROW_SPD_FF: return "How fast it runs. 2x and 3x can play the sound sped up, or at normal pitch. Unlimited and Unlimited Smooth are silent: as many frames as fit, one picture every second refresh (Unlimited) or every refresh (Unlimited Smooth).";
 	case ROW_SPD_SOUND: return "The sound while fast-forwarding: off, sped up with the game, or at its normal pitch.";
 	case ROW_SPD_MODE: return "Hold the fast-forward button, or press it once to switch fast-forward on and off.";
 	case ROW_SPD_REWIND: return "Hold the rewind button to run the game backwards.";
@@ -342,19 +355,19 @@ void Menu::build_rows()
 
 	static const char *const kOnOff[] = { "Off", "On" };
 	static const char *const kWide[] = { "Auto", "On", "Off" };
-	static const char *const kQuality[] = { "Sharp", "Smooth" };
+	static const char *const kQuality[IMGQ_COUNT] = { "Auto", "Original", "Enhanced 2x", "Enhanced 3x", "Enhanced 4x", "MMPX 2x" };
 	static const char *const kApply[] = { "All games", "This game" };
 	static const char *const kStick[] = { "Off", "D-pad", "Buttons" };
 	static const char *const kRate[] = { "10 a second", "15 a second", "30 a second" };
 	static const char *const kHold[] = { "Hold", "Toggle" };
-	static const char *const kFF[] = { "2x", "3x" };
+	static const char *const kFF[FFSPD_COUNT] = { "2x", "3x", "Unlimited", "Unlimited Smooth" };
 
 	switch (page_) {
 	case PAGE_SETTINGS: {
 		Row r;
 		r.kind = K_LINK; r.enabled = true;
 		r.tag = PAGE_PICTURE; r.label = "Picture";
-		r.value_text = std::string(kShapeNames[vals_[ROW_PIC_SHAPE] < 0 || vals_[ROW_PIC_SHAPE] > 4 ? 0 : vals_[ROW_PIC_SHAPE]]) + ", " + kQuality[vals_[ROW_PIC_QUALITY] ? 1 : 0];
+		r.value_text = std::string(kShapeNames[vals_[ROW_PIC_SHAPE] < 0 || vals_[ROW_PIC_SHAPE] > 4 ? 0 : vals_[ROW_PIC_SHAPE]]) + ", " + kQuality[vals_[ROW_PIC_QUALITY] < 0 || vals_[ROW_PIC_QUALITY] >= IMGQ_COUNT ? 0 : vals_[ROW_PIC_QUALITY]];
 		r.help = "Screen size, image quality, scanlines, LCD grid and ambient glow.";
 		rows_.push_back(r);
 		r.tag = PAGE_CONTROLS; r.label = "Controls";
@@ -368,7 +381,7 @@ void Menu::build_rows()
 			const HostRow *hs = 0;
 			for (size_t i = 0; i < host_rows_.size() && !hs; i++) if (host_rows_[i].page == PAGE_SPEED) hs = &host_rows_[i];
 			bool any = (cfg_.caps & (CAP_FF | CAP_REWIND)) != 0 || hs;
-			if (cfg_.caps & CAP_FF) { r.value_text = std::string("Fast-forward ") + kFF[vals_[ROW_SPD_FF] ? 1 : 0]; r.help = "Fast-forward and sound while it runs."; }
+			if (cfg_.caps & CAP_FF) { r.value_text = std::string("Fast-forward ") + kFF[vals_[ROW_SPD_FF] < 0 || vals_[ROW_SPD_FF] >= FFSPD_COUNT ? 0 : vals_[ROW_SPD_FF]]; r.help = "Fast-forward and sound while it runs."; }
 			else if (hs) {
 				int v = hs->value < 0 || hs->value >= (int) hs->choices.size() ? 0 : hs->value;
 				r.value_text = hs->label + ": " + hs->choices[(size_t) v];
@@ -381,7 +394,8 @@ void Menu::build_rows()
 	case PAGE_PICTURE:
 		b.choice(ROW_PIC_SHAPE, "Screen size", kShapeNames, 5, CAP_SHAPE, vals_[ROW_PIC_SHAPE]);
 		b.choice(ROW_PIC_WIDE, "Wide view", kWide, 3, CAP_WIDE, vals_[ROW_PIC_WIDE], "Coming");
-		b.choice(ROW_PIC_QUALITY, "Image quality", kQuality, 2, CAP_QUALITY, vals_[ROW_PIC_QUALITY]);
+		b.choice(ROW_PIC_QUALITY, "Image quality", kQuality, IMGQ_COUNT, CAP_QUALITY, vals_[ROW_PIC_QUALITY]);
+		for (size_t i = 0; i < rows_.size(); i++) if (rows_[i].id == ROW_PIC_QUALITY) rows_[i].help = quality_help(vals_[ROW_PIC_QUALITY]);
 		b.slider(ROW_PIC_SCANLINES, "Scanlines", CAP_SCANLINES, vals_[ROW_PIC_SCANLINES]);
 		b.slider(ROW_PIC_GRID, "LCD grid", CAP_LCD_GRID, vals_[ROW_PIC_GRID]);
 		b.slider(ROW_PIC_GLOW, "Ambient glow", CAP_GLOW, vals_[ROW_PIC_GLOW]);
@@ -457,12 +471,18 @@ void Menu::build_rows()
 		break;
 	}
 	case PAGE_SPEED:
-		b.choice(ROW_SPD_FF, "Fast-forward", kFF, 2, CAP_FF, vals_[ROW_SPD_FF]);
-		{
+		b.choice(ROW_SPD_FF, "Fast-forward", kFF, FFSPD_COUNT, CAP_FF, vals_[ROW_SPD_FF]);
+		/* Unlimited and Unlimited Smooth are silent (the main app folds the sound into the Fast-forward row): the sound choice only means something for 2x and 3x */
+		if (vals_[ROW_SPD_FF] < FFSPD_UNLIMITED) {
 			static const char *const kFFSound[] = { "Off", "Sped up", "Normal pitch" };
 			b.choice(ROW_SPD_SOUND, "Keep sound", kFFSound, 3, CAP_FF_SOUND, vals_[ROW_SPD_SOUND]);
 		}
-		b.choice(ROW_SPD_MODE, "Fast-forward button", kHold, 2, CAP_FF_MODE, vals_[ROW_SPD_MODE]);
+		{
+			/* the main app's label: "FF button (Square)", naming the button it is bound to */
+			std::string ffl = "FF button";
+			if (profile_ && profile_->bind[0][ACT_FF]) ffl += " (" + phys_label(profile_->bind[0][ACT_FF], cfg_.enter_is_cross) + ")";
+			b.choice(ROW_SPD_MODE, ffl.c_str(), kHold, 2, CAP_FF_MODE, vals_[ROW_SPD_MODE]);
+		}
 		b.choice(ROW_SPD_REWIND, "Rewind", kOnOff, 2, CAP_REWIND, vals_[ROW_SPD_REWIND]);
 		break;
 	case PAGE_CHEATS: {
@@ -654,7 +674,10 @@ void Menu::apply_value(Row &r, int v)
 	default: break;
 	}
 	vals_[r.id] = v;
-	if (host_) host_->on_change(r.id, v);
+	if (r.id == ROW_PIC_QUALITY) r.help = quality_help(v);
+	const int id = r.id;
+	if (host_) host_->on_change(id, v);
+	if (id == ROW_SPD_FF) build_rows();        /* Keep sound is listed for 2x and 3x only (r is not used after this) */
 }
 
 void Menu::step_row(int i, int dir)

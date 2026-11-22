@@ -244,6 +244,7 @@ enum
    UI_FAIL_ONLINE_SERVICE,
    UI_FAIL_ONLINE_CLOSED,
    UI_FAIL_ONLINE_SLOW,     /* a short 429: too many tries from this network */
+   UI_FAIL_ONLINE_CONSOLE,  /* the room service does not know this console (an older service) */
    UI_FAIL_COUNT
 };
 void ui_link_fail_text(int why, const char **l1, const char **l2);

@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <time.h>
@@ -132,7 +133,7 @@ struct Rig {
 	uint32_t frame = 0;
 	int nshot;
 	int tex_w = 0, tex_h = 0;
-	unsigned ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0, ahead_frames = 0;
+	unsigned drawn_frames = 0, ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0, ahead_frames = 0;
 	uint32_t emu_cost_us = 0;       /* what the test says a plain frame costs the emulating thread (0: Quick response's Auto is not fed) */
 	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
 	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
@@ -153,7 +154,7 @@ struct Rig {
 		for (int i = 0; i < n; i++) {
 			if (pl->input(p, tap && i == 0, pf.clock_us / 1000, frame)) return true;
 			const bool render = pl->want_render(frame) && pl->speed_draws(i, n);
-			if (pl->run_frame(render)) ran_frames++;
+			if (pl->run_frame(render)) { ran_frames++; if (render) drawn_frames++; }
 			if (pl->ahead_ran()) ahead_frames++;
 			/* as the Vita loop does: the emulating thread's time of a normal frame (here a figure the test sets) */
 			if (n == 1 && render && emu_cost_us) pl->ahead_cost(pl->ahead_ran() ? emu_cost_us * 22 / 10 + 500 : emu_cost_us);
@@ -529,8 +530,10 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 	rig.settle(2);
 	rig.snap("picture");
 	{
-		EXPECT(rig.row_of("Pixel art scaler") >= 0);
-		EXPECT(rig.row_of("Image look") >= 0);
+		/* one Image quality row, as in the main app (the old Pixel art scaler and Image look rows are folded into it) */
+		EXPECT(rig.row_of("Image quality") >= 0);
+		EXPECT(rig.row_of("Video filter") >= 0);
+		EXPECT(rig.row_of("Pixel art scaler") < 0 && rig.row_of("Image look") < 0);
 		EXPECT(rig.row_of("Screen size") >= 0);
 		EXPECT((rig.row_of("Hide masked edge") >= 0) == (con == "sms"));
 		EXPECT((rig.row_of("LCD colours") >= 0) == (con == "gg"));
@@ -556,19 +559,29 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		rig.go_row("Scanlines");
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().scan == 5);
-		/* the scaler row steps through Auto, Off, MMPX, xBR 2x, xBR 3x */
-		rig.go_row("Pixel art scaler");
-		EXPECT(pl->menu().value(mdp::MdPlayer::ROW_SCALER) == SCALER_AUTO);
+		/* Image quality steps through Auto, Original, Enhanced 2x, Enhanced 3x, MMPX 2x (the main app's names; no 4x scaler here) */
+		rig.go_row("Image quality");
+		EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO);
+		EXPECT(pl->menu().row_value_text(pl->menu().cursor()) == "Auto");
 		rig.press(PH_RIGHT);
-		EXPECT(pl->picture().scaler == SCALER_OFF);
+		EXPECT(pl->picture().scaler == SCALER_OFF && pl->menu().value(ROW_PIC_QUALITY) == IMGQ_ORIGINAL);
 		rig.press(PH_RIGHT);
-		EXPECT(pl->picture().scaler == SCALER_MMPX2);
+		EXPECT(pl->picture().scaler == SCALER_XBR2 && pl->menu().row_value_text(pl->menu().cursor()) == "Enhanced 2x");
 		rig.press(PH_RIGHT);
-		EXPECT(pl->picture().scaler == SCALER_XBR2);
-		rig.press(PH_RIGHT);
-		EXPECT(pl->picture().scaler == SCALER_XBR3);
+		EXPECT(pl->picture().scaler == SCALER_XBR3 && pl->menu().row_value_text(pl->menu().cursor()) == "Enhanced 3x");
 		rig.snap("picture_scaler_xbr3");
-		rig.press(PH_RIGHT);                                /* wraps or stops: set it back to Auto */
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().scaler == SCALER_MMPX2 && pl->menu().row_value_text(pl->menu().cursor()) == "MMPX 2x");
+		/* Video filter: bilinear while Original switches the quality to Auto (as in the app); under Original it shows sharp bilinear */
+		rig.go_row("Image quality");
+		while (pl->picture().scaler != SCALER_OFF) rig.press(PH_LEFT);
+		rig.go_row("Video filter");
+		EXPECT(pl->menu().row_value_text(pl->menu().cursor()) == "sharp bilinear");
+		rig.press(PH_RIGHT);
+		EXPECT(pl->picture().quality == PIC_SMOOTH && pl->picture().scaler == SCALER_AUTO && pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO);
+		rig.press(PH_LEFT);
+		EXPECT(pl->picture().quality == PIC_SHARP);
+		rig.go_row("Image quality");
 		while (pl->picture().scaler != SCALER_AUTO) rig.press(PH_LEFT);
 		/* Screen size never offers Fit */
 		while (pl->menu().cursor() != 0) rig.press(PH_UP);
@@ -769,7 +782,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		delete p2;
 		md_host_unload();
 	}
-	const bool s_gg_forced = con == "gg";
+	const bool s_gg_forced = con == "gg" && !(strlen(rom) > 3 && !strcasecmp(rom + strlen(rom) - 3, ".gg"));   /* a real .gg file is a Game Gear by its own extension */
 	/* ---- third start: Continue from the resume point (the patch key must match) ---- */
 	{
 		/* the second start had no launch file and so another console id for a forced gg game: continue where the walk left off */
@@ -1010,7 +1023,7 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 			p2->finish(EXIT_NORMAL);
 		}
 	}
-	/* the Image look row: Full never eases, Light is the sharp fit at once; both kept for the next start */
+	/* the old look_mode key (the launch file and the session runner still set it): Full never eases, Light is the sharp fit at once (shown as Original); both kept for the next start */
 	{
 		const std::string root = work + "/look5";
 		make_dirs(root); prep(root);
@@ -1039,9 +1052,47 @@ static int run_look_test(const std::string &con, const char *rom, const std::str
 			EXPECT(pl->start(2, av, root, true).ok);
 			EXPECT(pl->pal_fast() && pl->look_mode() == 2);
 			EXPECT(pl->picture().scaler == SCALER_OFF);
-			EXPECT(pl->menu().value(mdp::MdPlayer::ROW_LOOK) == 2 && pl->menu().value(mdp::MdPlayer::ROW_PALSPEED) == 2);
+			EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_ORIGINAL && pl->menu().value(mdp::MdPlayer::ROW_PALSPEED) == 2);     /* the Light look shows as Original */
 			pl->finish(EXIT_NORMAL);
 		}
+	}
+	/* 5. an older file that says "no scaler" with the Smooth video filter drew bilinear: Original draws sharp (as in the main app), so the choice is kept
+	 * the way the app keeps it (scaler to Auto); the old look_mode key 1 (Full) reads as Auto; Original chosen in the menu is stored sharp and stays */
+	for (int variant = 0; variant < 3; variant++) {
+		const std::string root = work + "/look6_" + std::to_string(variant);
+		make_dirs(root);
+		prep(root);
+		pic_settings old; pic_defaults(&old);
+		old.scaler = variant == 2 ? SCALER_AUTO : SCALER_OFF;
+		old.quality = PIC_SMOOTH;
+		make_dirs(root + "/" + con + "");
+		EXPECT(pic_save((root + "/" + con + "/picture.ini").c_str(), &old) == 0);
+		if (variant == 1) EXPECT(write_text(root + "/" + con + "/player.ini", "look_mode=2\n"));       /* the old Light look, global */
+		if (variant == 2) EXPECT(write_text(root + "/" + con + "/player.ini", "look_mode=1\n"));       /* the old Full look */
+		Rig *rig = new Rig(root + "/shots");
+		mdp::MdPlayer *pl = new mdp::MdPlayer(&rig->pf);
+		rig->pl = pl; rig->pf.player = pl;
+		rig->pf.log_path = root + "/" + con + "/log.txt";
+		EXPECT(pl->start(2, av, root, true).ok);
+		pl->apply_start_mode();
+		EXPECT(pl->look_mode() == 0);
+		if (variant == 2) {
+			EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO && pl->picture().quality == PIC_SMOOTH);
+		} else {
+			EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO);                       /* kept bilinear: Auto, not Original */
+			EXPECT(pl->picture().quality == PIC_SMOOTH && pl->picture().scaler != SCALER_OFF);
+		}
+		/* Original by hand: sharp, stored sharp; the next start does not move it */
+		pl->on_change(ROW_PIC_QUALITY, IMGQ_ORIGINAL);
+		EXPECT(pl->picture().scaler == SCALER_OFF && pl->picture().quality == PIC_SHARP);
+		pl->finish(EXIT_NORMAL);
+		Rig *rig2 = new Rig(root + "/shots2");
+		mdp::MdPlayer *p2 = new mdp::MdPlayer(&rig2->pf);
+		rig2->pl = p2; rig2->pf.player = p2;
+		rig2->pf.log_path = root + "/" + con + "/log.txt";
+		EXPECT(p2->start(2, av, root, true).ok);
+		EXPECT(p2->menu().value(ROW_PIC_QUALITY) == IMGQ_ORIGINAL && p2->picture().scaler == SCALER_OFF);
+		p2->finish(EXIT_NORMAL);
 	}
 	fprintf(stderr, "player_twin: look %s %d checks, %d failed\n", con.c_str(), g_checks, g_fail);
 	return g_fail ? 1 : 0;
@@ -1322,6 +1373,22 @@ static int run_ahead_test(const std::string &con, const char *rom, const std::st
 	EXPECT(ff_on == 0 && ff_auto == 0);                     /* never under fast forward */
 	EXPECT(a_auto > 400 && a_auto < a_on);                  /* Auto: after it has seen what the game costs, and again after each fast forward / rewind */
 	EXPECT(a_heavy == 0);                                   /* Auto leaves a heavy game alone */
+	/* the picture side (the hand-over's drawing thread): the player forwards it to the governor; a saturated picture side holds Auto off, a quiet one lets it start */
+	{
+		Sess s(work + "/qpic/shots");
+		EXPECT(s.start(work + "/qpic", con, rom, "ovr.quick_response=1\n"));
+		if (s.pl) {
+			Rig &rig = s.rig;
+			rig.emu_cost_us = 3000;
+			for (int i = 0; i < 300; i++) { rig.game_frame(0); s.pl->ahead_picture(17500, 0); }       /* xBRZ saturating the drawing thread */
+			EXPECT(!s.pl->ahead().on() && s.pl->ahead().picture_us() > 16000);
+			EXPECT(s.pl->ahead_line().find("pic_ms=") != std::string::npos);
+			s.pl->ahead_picture_reset();                                                              /* an Image quality change */
+			EXPECT(s.pl->ahead().picture_us() == 0);
+			for (int i = 0; i < 700; i++) { rig.game_frame(0); s.pl->ahead_picture(5000, 0); }
+			EXPECT(s.pl->ahead().on());
+		}
+	}
 	fprintf(stderr, "player_twin: ahead %s %d checks, %d failed\n", con.c_str(), g_checks, g_fail);
 	return g_fail ? 1 : 0;
 }
@@ -1429,6 +1496,38 @@ static int run_speed_test(const std::string &con, const char *rom, const std::st
 		EXPECT((rig.audio_out - ao0) > want * 0.97 && (rig.audio_out - ao0) < want * 1.03);
 		rig.game_frame(0);
 	}
+	/* Unlimited and Unlimited Smooth (the main app's choices of the same names): more frames than 3x fit in a refresh, silent, one frame's worth of
+	 * audio a refresh, a picture every second refresh / every refresh; the clock of the twin does not move inside a refresh, so the count is the
+	 * governor's first guess (3 frames) and the test is about the shape, not the speed */
+	pl->on_change(pk::ROW_SPD_SOUND, 1);
+	for (int kind = 2; kind <= 3; kind++) {
+		pl->on_change(pk::ROW_SPD_FF, kind);
+		rig.game_frame(PH_RS_RIGHT);
+		const unsigned r0 = rig.ran_frames, f0 = rig.refreshes, ai0 = rig.audio_in, ao0 = rig.audio_out, d0 = rig.drawn_frames;
+		for (int i = 0; i < 60; i++) rig.game_frame(PH_RS_RIGHT);
+		const unsigned ran = rig.ran_frames - r0, refr = rig.refreshes - f0, drawn = rig.drawn_frames - d0;
+		fprintf(stderr, "fast forward %s: %u frames in %u refreshes, %u drawn; audio in %u frames, out %u\n", kind == 2 ? "Unlimited" : "Unlimited Smooth", ran, refr, drawn, rig.audio_in - ai0, rig.audio_out - ao0);
+		EXPECT(pl->speed().ff_on());
+		EXPECT(ran >= 3 * refr && ran <= 30 * refr);
+		EXPECT(pl->speed().chip() == (kind == 3 ? ">> Unlimited Smooth" : ">> Unlimited"));
+		EXPECT(drawn == (kind == 3 ? refr : refr / 2));
+		const double per_frame = (rig.audio_in - ai0) / (double) ran;      /* silence: one frame's worth a refresh, whatever the count */
+		EXPECT((rig.audio_out - ao0) > per_frame * refr * 0.97 && (rig.audio_out - ao0) < per_frame * refr * 1.03);
+		{
+			/* the release: that refresh was planned while it ran, so it still runs its frames; but their audio is one frame's worth of silence and
+			 * only the last frame is drawn, not a dump of every frame's sound and picture */
+			const unsigned rr0 = rig.ran_frames, ao1 = rig.audio_out, dd0 = rig.drawn_frames;
+			rig.game_frame(0);
+			EXPECT(!pl->speed().ff_on());
+			EXPECT(rig.ran_frames - rr0 >= 2);
+			EXPECT((rig.audio_out - ao1) <= per_frame * 1.05);
+			EXPECT(rig.drawn_frames - dd0 <= 1);
+		}
+		const unsigned r1 = rig.ran_frames, f1 = rig.refreshes;
+		rig.run(5);
+		EXPECT(rig.ran_frames - r1 == rig.refreshes - f1);                /* back to one frame a refresh */
+	}
+	pl->on_change(pk::ROW_SPD_FF, 0);
 	/* toggle mode: one press switches it on, a second off */
 	pl->on_change(pk::ROW_SPD_SOUND, 1);
 	pl->on_change(pk::ROW_SPD_MODE, 1);
@@ -1463,8 +1562,13 @@ static int find_changing_address(const std::string &con, const char *rom, unsign
 	md_host_unload();
 	int best = -1, cnt = 0;
 	/* the Sega CD stand-in has bytes that change on every frame (the achievement test's "changed" condition does not fire on those: a rule of rcheevos'
-	 * runtime, the same on every console); take the busiest byte that is not one of them */
-	for (unsigned k = 0; k < top; k++) if (changes[k] > cnt && (console != 9 || changes[k] < 150)) { cnt = changes[k]; best = (int) k; }
+	 * runtime, the same on every console, and a small test cartridge has a frame counter that changes every frame too); take the busiest byte that is not one of them */
+	for (unsigned k = 0; k < top; k++) if (changes[k] > cnt && changes[k] < 150) { cnt = changes[k]; best = (int) k; }
+	if (best < 0 || cnt < 20) {           /* no byte that changes now and then: the busiest one (the Sega CD's stand-in has none to offer: it stays 0) */
+		int c2 = 0;
+		for (unsigned k = 0; k < top; k++) if (changes[k] > c2 && console != 9) { c2 = changes[k]; best = (int) k; }
+		if (c2) cnt = c2;
+	}
 	if (best >= 0) *addr = (unsigned) best;
 	fprintf(stderr, "ra: address %06x changes in %d of 179 frames (console id %d)\n", best < 0 ? 0 : (unsigned) best, cnt, console);
 	return cnt >= 20 ? console : 0;

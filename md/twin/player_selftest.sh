@@ -5,6 +5,9 @@
 # against a fake server on the loopback (these use a loopback port: run the twin suites ALONE).
 #   MD_TEST_ROMS=<dir>      tree with the SGDK sample ROMs (sample/**/out/release/rom.bin)
 #   MD_TEST_SMS_ROMS=<dir>  tree with Master System homebrew (.sms); a Game Gear run forces the console id gg on one of them
+#   GATE_SG_ROM=<file>      an SG-1000 game (public homebrew); else a .sg in MD_TEST_SMS_ROMS; else the cartridge tools/sg_gen.py makes (no ROM needed)
+#   GATE_GG_ROM=<file>      a Game Gear game (public homebrew); else a .gg in MD_TEST_SMS_ROMS; else the cartridge tools/sg_gen.py --gg makes: a .gg
+#                           file with the Game Gear header, so the extension, not a forced console id, picks the console
 #   MD_PLAYER_SHOTS=<dir>   where the screenshots go (default: a temporary folder)
 # No ROM is shipped with this repository. Lines start with PASS / FAIL / SKIP.
 # Copyright CBOC-Vita. MIT licence.
@@ -58,7 +61,33 @@ if [ -n "$GG" ]; then
 	run "Game Gear patch CRC, rewind 5 s, fast forward 2x / 3x" speed gg "$GG" "$T/s_gg"
 	run "Game Gear Quick response (run-ahead)" ahead gg "$GG" "$T/q_gg"
 	run "Game Gear RetroAchievements" ra gg "$GG" "$T/a_gg"
-else echo "SKIP  Game Gear player tests (MD_TEST_SMS_ROMS not set)"; fi
+else echo "SKIP  Game Gear (forced id) player tests (MD_TEST_SMS_ROMS not set)"; fi
+# SG-1000 and Game Gear as their own files (.sg, .gg): a public homebrew when given, else the cartridges made by tools/sg_gen.py
+SGF=${GATE_SG_ROM:-}; [ -z "$SGF" ] && [ -n "$MD_TEST_SMS_ROMS" ] && SGF=$(find "$MD_TEST_SMS_ROMS" -name '*.sg' | head -1)
+GGF=${GATE_GG_ROM:-}; [ -z "$GGF" ] && [ -n "$MD_TEST_SMS_ROMS" ] && GGF=$(find "$MD_TEST_SMS_ROMS" -name '*.gg' | head -1)
+SGSRC="a given ROM"; GGSRC="a given ROM"
+if command -v python3 >/dev/null; then
+	[ -z "$SGF" ] && python3 -I "$HERE/tools/sg_gen.py" "$T/gen.sg" >/dev/null 2>&1 && SGF="$T/gen.sg" && SGSRC="the generated cartridge"
+	[ -z "$GGF" ] && python3 -I "$HERE/tools/sg_gen.py" "$T/gen.gg" --gg >/dev/null 2>&1 && GGF="$T/gen.gg" && GGSRC="the generated cartridge"
+fi
+if [ -n "$SGF" ]; then
+	run "SG-1000 walk ($SGSRC)" test sg "$SGF" "$SHOTS/sg" "$T/w_sg"
+	run "SG-1000 pad model" pads sg "$SGF" "$T/p_sg"
+	run "SG-1000 look governor" look sg "$SGF" "$T/l_sg"
+	run "SG-1000 smooth hand-over on / off, bit for bit" handoff "$SGF" "$T/h_sg"
+	run "SG-1000 patch CRC, rewind 5 s, fast forward 2x / 3x" speed sg "$SGF" "$T/s_sg"
+	run "SG-1000 Quick response (run-ahead)" ahead sg "$SGF" "$T/q_sg"
+	run "SG-1000 RetroAchievements" ra sg "$SGF" "$T/a_sg"
+else echo "SKIP  SG-1000 player tests (no ROM and no python3 for the generator)"; fi
+if [ -n "$GGF" ]; then
+	run "Game Gear walk, a real .gg ($GGSRC)" test gg "$GGF" "$SHOTS/gg_file" "$T/w_ggf"
+	run "Game Gear pad model, a real .gg" pads gg "$GGF" "$T/p_ggf"
+	run "Game Gear look governor, a real .gg" look gg "$GGF" "$T/l_ggf"
+	run "Game Gear smooth hand-over, a real .gg" handoff "$GGF" "$T/h_ggf"
+	run "Game Gear patch CRC, rewind 5 s, fast forward 2x / 3x, a real .gg" speed gg "$GGF" "$T/s_ggf"
+	run "Game Gear Quick response, a real .gg" ahead gg "$GGF" "$T/q_ggf"
+	run "Game Gear RetroAchievements, a real .gg" ra gg "$GGF" "$T/a_ggf"
+else echo "SKIP  Game Gear .gg player tests (no ROM and no python3 for the generator)"; fi
 # Sega CD: the same player on a synthetic disc and the test-only stand-in BIOS (tools/mkscd.py; no ROM, no BIOS, no disc of anyone's is used), so these
 # run without MD_TEST_ROMS. The disc has no patch, no RetroArch import and no thumbnail of a cartridge: the walk expects that.
 if command -v python3 >/dev/null; then

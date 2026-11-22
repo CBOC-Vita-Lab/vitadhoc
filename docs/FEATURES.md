@@ -149,12 +149,15 @@ New in 1.4:
   the camera came from can show real picture. Never a wrong tile (checked on
   15 games for 3000 frames each). On shows the full margin; Off is the plain
   picture.
-- **Image look** (Auto, Full or Light). Auto eases the hi-res and interlace
-  blends only when a game cannot hold 60; Full and Light fix the choice.
+- **Image quality** is the main app's one row (Auto, Original, Enhanced 2x,
+  Enhanced 3x, MMPX 2x; no 4x scaler in a player, so Enhanced 4x is not
+  offered). Auto eases the scaler and the hi-res and interlace blends only
+  when a game cannot hold 60; a choice made by hand is never eased.
 - **Cheats** and ten state slots with pictures, from Snes9x's post-1.63 fixes;
   a new audio pacer keeps the sound even.
-- **Rewind** (up to 60 s, sound off), **fast forward** (2x or 3x, hold or toggle,
-  with or without sound), **ROM patches** (IPS, BPS, UPS) and **RetroAchievements**
+- **Rewind** (Short about 30 s or Medium about a minute, sound off), **fast forward**
+  (2x, 3x, Unlimited or Unlimited Smooth, hold or toggle; 2x and 3x with or without
+  sound, the Unlimited ones silent), **ROM patches** (IPS, BPS, UPS) and **RetroAchievements**
   (toasts, challenge, progress and leaderboard markers, Hardcore) also work in the
   Sega player. Rewind is off in two player games and in Hardcore; fast forward
   stays on in Hardcore.
@@ -316,7 +319,7 @@ WonderSwan (`AAAAA:VV`: a RAM address, 00000-0FFFF the console's memory,
 | Library | Game names | game title or file name |
 | This game | Export save for other emulators | a plain `.srm` or `.sav` on request |
 | This game | Rotation, Vertical play, Palette | WonderSwan |
-| SNES menu | Wide view, Image look, PAL games speed | see Super NES |
+| SNES menu | Wide view, PAL games speed | see Super NES |
 
 Settings opens on the section you most likely want (Display in a game,
 Interface on the home screen); rows that cannot apply to the console on
@@ -437,8 +440,13 @@ Indicators (Settings > Achievement indicators, on by default): a mark for an
 achievement one step from unlocking, a progress count such as 3/10 under the
 toast, and the live value of a leaderboard attempt (Hardcore). Rich presence
 is sent with the 30-second ping and logged.
-Achievement processing pauses during link play and resets progress after
-state loading, rewind or link sessions. Network retries do not establish
+Achievement processing pauses during link play (a two-player game, local or
+online, on every console) and resets progress after state loading, rewind or
+link sessions. The Super NES and Sega players do not even look the game up when
+it starts as a linked game, and Hardcore restrictions are not in force there:
+nothing can be earned and nothing is refused until the game is started on its
+own. This is a decision, not a gap: achievements are measured on one machine,
+a linked game runs two. Network retries do not establish
 that every offline unlock has been accepted by the service.
 
 For sign-in troubleshooting, see [Known Issues](../KNOWN-ISSUES.md).

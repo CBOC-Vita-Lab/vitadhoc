@@ -1536,6 +1536,7 @@ int main(int argc, char **argv)
 		if (elapsed == 0) elapsed = 1;
 		if (elapsed > 2) elapsed = 2;       /* a long stall (menu, suspend) is not caught up */
 		uint64_t loop0 = sceKernelGetProcessTimeWide();
+		const uint64_t emu_us0 = emu_us;       /* the refresh's emulation time is the difference at its end (Unlimited fast forward's budget) */
 		if (prev_loop0 && loop0 - prev_loop0 > stall_max_us) stall_max_us = loop0 - prev_loop0;
 		prev_loop0 = loop0;
 		if (g_wd_audio >= 0) {
@@ -1719,6 +1720,7 @@ int main(int argc, char **argv)
 		}
 		draw_us += sceKernelGetProcessTimeWide() - d0;
 		uint64_t work_end = sceKernelGetProcessTimeWide();
+		if (!g_link && g_pl->speed_busy()) { const uint64_t w = work_end - loop0, e = emu_us - emu_us0; g_pl->speed_other_us((uint32_t) (w > e ? (w - e > 100000 ? 100000 : w - e) : 0)); }
 		if (drew) {
 			frame_finish();
 			drawn++;

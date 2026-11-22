@@ -95,7 +95,7 @@ struct StartResult {
 class SnesPlayer : public pk::MenuHost {
 public:
 	enum { ROW_PIXELS = pk::ROW_HOST_BASE + 1, ROW_HIRES, ROW_INTERLACE, ROW_MULTITAP, ROW_STEADY, ROW_SCALER,
-	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30 };
+	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30, ROW_FILTER = pk::ROW_HOST_BASE + 31 };
 	explicit SnesPlayer(Platform *pf);
 	~SnesPlayer();
 
@@ -156,6 +156,8 @@ public:
 	size_t audio_filter(int16_t *lr, size_t frames);
 	bool speed_draws(int i, int n) const { return speed_.draw_this(i, n); }
 	bool speed_busy() const { return speed_.busy(); }
+	/* the main thread's non-emulation time of a refresh (Unlimited fast forward takes it off its budget) */
+	void speed_other_us(uint32_t us) { speed_.note_other_us(us); }
 	/* the helper thread's step (called by the writer thread when it has nothing else): packs the newest rewind state */
 	bool speed_pack() { return speed_.pack(); }
 	/* two-player or online play, Hardcore: rewind and fast forward are off (a press gives `why` as its notice) */
@@ -304,6 +306,7 @@ private:
 	int pal_mode_ = 2;       /* pal_speed: 0 True 50 Hz, 1 Fast 60 Hz, 2 Smooth 50 Hz (default) */
 	bool look_bad_ = false;               /* the last second was bad for the look governor */
 	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
+	bool qsync_ = false;       /* Image quality / Video filter rows to be brought in line after the menu's own change */
 	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;
 	struct SpeedGlue : pk::SpeedHost {
 		SnesPlayer *p;
@@ -313,6 +316,7 @@ private:
 		bool load_state(const uint8_t *buf, size_t n);
 		void run_frame(bool render);
 		void clear_pads();
+		uint64_t now_us();
 		static void wake(void *self);
 	} glue_;
 	pk::Speed speed_;

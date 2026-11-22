@@ -75,6 +75,34 @@ static uint64_t hash64(const uint8_t *p, size_t n)
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+/* "Image quality", the main app's one row (Auto, Original, Enhanced 2x/3x/4x, MMPX 2x), over this player's pixel art scaler and look:
+ * Auto = the governed scaler, Original = no scaler and sharp bilinear (the old Light look is the same), Enhanced 2x / 3x = xBR 2x / 3x, MMPX 2x =
+ * MMPX. There is no 4x scaler here: that choice is not offered. Old files keep working: the scaler and look_mode keys are unchanged. */
+/* The old Light look (look_mode 2, a global key) is Original only where the game's own picture file leaves the scaler on Auto or Original:
+ * a scaler chosen for this game wins over the global key, so the row, the picture and the governor always agree. */
+static bool light_on(int look_mode, int scaler) { return look_mode == 2 && (scaler == SCALER_AUTO || scaler == SCALER_OFF); }
+static int imgq_of(int scaler, int look_mode)
+{
+	if (light_on(look_mode, scaler)) return IMGQ_ORIGINAL;
+	switch (scaler) {
+	case SCALER_OFF: return IMGQ_ORIGINAL;
+	case SCALER_MMPX2: return IMGQ_MMPX_2X;
+	case SCALER_XBR2: return IMGQ_ENHANCED_2X;
+	case SCALER_XBR3: return IMGQ_ENHANCED_3X;
+	default: return IMGQ_AUTO;
+	}
+}
+static int scaler_of(int q)
+{
+	switch (q) {
+	case IMGQ_ORIGINAL: return SCALER_OFF;
+	case IMGQ_MMPX_2X: return SCALER_MMPX2;
+	case IMGQ_ENHANCED_2X: return SCALER_XBR2;
+	case IMGQ_ENHANCED_3X: case IMGQ_ENHANCED_4X: return SCALER_XBR3;
+	default: return SCALER_AUTO;
+	}
+}
+
 /* menu shape (Original, Fit, Zoom, Full screen, Pixel perfect) <-> the picture's shapes */
 static int shape_to_pic(int v)
 {
@@ -366,6 +394,10 @@ void MdPlayer::settings_load()
 	handoff_ = pl.get_int("smooth_handoff", 1) != 0;
 	pal_mode_ = pk::pal_mode_clamp(pl.get_int("pal_speed", pk::PAL_SMOOTH));
 	look_mode_ = clampi(pl.get_int("look_mode", 0), 0, 2);
+	if (look_mode_ == 1) look_mode_ = 0;        /* "Full" is gone with the Image look row: a scaler as set is never eased now */
+	/* An older file that says "no scaler" (or the Light look) with the Smooth video filter drew bilinear. Original draws sharp (as in the main app,
+	 * where choosing bilinear over Original goes to Auto), so that choice is kept the way the app keeps it: the scaler goes to Auto. */
+	if (imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL && ps_.quality == PIC_SMOOTH) { ps_.scaler = SCALER_AUTO; if (look_mode_ == 2) look_mode_ = 0; g_changed |= CH_SCALER; }
 	quick_ = clampi(pl.get_int("quick_response", console_ == "md" || console_ == "scd" ? 0 : 1), 0, 2);    /* Auto on the 8 bit consoles, Off on the Mega Drive (md/README.md, "Quick response") */
 	flicker_ = pl.get_int("no_sprite_flicker", 1) != 0;
 	region_ = clampi(pl.get_int("region", 0), 0, 3);
@@ -375,7 +407,7 @@ void MdPlayer::settings_load()
 	sms_border_ = clampi(pl.get_int("sms_border", 0), 0, 2);
 	gg_lcd_ = clampi(pl.get_int("gg_lcd", 0), 0, 10);
 	ram_cart_ = clampi(pl.get_int("ram_cart", 6), 0, 6);
-	ff_speed_ = pl.get_int("ff_speed", 0) == 1 ? 1 : 0;
+	ff_speed_ = clampi(pl.get_int("ff_speed", 0), 0, FFSPD_COUNT - 1);
 	ff_sound_ = pl.get_int("ff_sound", 1) < 0 ? 0 : pl.get_int("ff_sound", 1) > 2 ? 2 : pl.get_int("ff_sound", 1);
 	ff_toggle_ = pl.get_int("ff_mode", 0) == 1 ? 1 : 0;
 	rewind_on_ = pl.get_int("rewind", 1) != 0;
@@ -432,7 +464,7 @@ void MdPlayer::apply_overrides()
 	if ((v = req_.override_int("sms_border", -1)) >= 0) sms_border_ = clampi(v, 0, 2);
 	if ((v = req_.override_int("rewind", -1)) >= 0) rewind_on_ = v != 0;
 	if ((v = req_.override_int("rewind_mb", -1)) >= 0) rewind_mb_ = clampi(v, 4, 24);
-	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = v == 1 ? 1 : 0;
+	if ((v = req_.override_int("ff_speed", -1)) >= 0) ff_speed_ = clampi(v, 0, FFSPD_COUNT - 1);
 	/* for the session runner's A/B: pal_speed 0 = true 50 Hz, 1 = fast 60 Hz (or the words); look_mode 0..2 (or auto / full / light) */
 	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_mode_ = pk::pal_mode_clamp(v);
 	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_mode_ = pk::PAL_FAST; else if (w == "true" || w == "50") pal_mode_ = pk::PAL_TRUE; else if (w == "smooth") pal_mode_ = pk::PAL_SMOOTH; }
@@ -469,12 +501,12 @@ void MdPlayer::sync_menu_values()
 {
 	menu_.set_value(ROW_PIC_SHAPE, pic_to_shape(ps_.shape));
 	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
-	menu_.set_value(ROW_PIC_QUALITY, ps_.quality == PIC_SMOOTH ? 1 : 0);
+	menu_.set_value(ROW_PIC_QUALITY, imgq_of(ps_.scaler, look_mode_));
+	menu_.set_value(ROW_FILTER, imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL ? 0 : ps_.quality == PIC_SMOOTH ? 1 : 0);
 	menu_.set_value(ROW_PIC_SCANLINES, ps_.scan);
 	menu_.set_value(ROW_PIC_GRID, ps_.grid);
 	menu_.set_value(ROW_PIC_GLOW, ps_.glow);
 	menu_.set_value(ROW_PIC_APPLY, ps_.use_game ? 1 : 0);
-	menu_.set_value(ROW_SCALER, ps_.scaler);
 	menu_.set_value(ROW_SMS_BORDER, sms_border_);
 	menu_.set_value(ROW_GG_COLORS, ps_.gg_colors ? 1 : 0);
 	menu_.set_value(ROW_GG_LCD, gg_lcd_);
@@ -488,7 +520,6 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_FLICKER, flicker_ ? 1 : 0);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 	menu_.set_value(ROW_PALSPEED, pk::pal_row_of(pal_mode_));
-	menu_.set_value(ROW_LOOK, look_mode_);
 	menu_.set_value(ROW_SPD_FF, ff_speed_);
 	menu_.set_value(ROW_SPD_SOUND, ff_sound_);
 	menu_.set_value(ROW_SPD_MODE, ff_toggle_);
@@ -724,11 +755,11 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, model, &profile_);
 	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* no "Fit": Original already fills the height */
+	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
 	{
-		std::vector<std::string> px, onoff, sc, border, lcd, pad, region, fm, ym, palv, lookv;
+		std::vector<std::string> px, onoff, border, lcd, pad, region, fm, ym, palv, filt;
 		px.push_back("Console"); px.push_back("Square");
 		onoff.push_back("Off"); onoff.push_back("On");
-		sc.push_back("Auto"); sc.push_back("Sharp (none)"); sc.push_back("MMPX 2x"); sc.push_back("xBR 2x"); sc.push_back("xBR 3x");
 		border.push_back("Off"); border.push_back("Left edge"); border.push_back("Both edges");
 		lcd.push_back("Off");
 		for (int i = 1; i <= 10; i++) lcd.push_back(strf("%d", i));
@@ -737,10 +768,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		fm.push_back("Discrete"); fm.push_back("ASIC"); fm.push_back("Enhanced");
 		ym.push_back("Off"); ym.push_back("On"); ym.push_back("Auto");
 		palv.push_back("Smooth 50 Hz"); palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
-		lookv.push_back("Auto"); lookv.push_back("Full"); lookv.push_back("Light");
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SCALER, "Pixel art scaler",
-		                   "Redraws the picture at 2x or 3x its size with smooth diagonals before it is fitted to the screen (xBR, MMPX). Auto picks the best that holds full speed.",
-		                   sc, ps_.scaler, ROW_PIC_QUALITY);
+		filt.push_back(kVideoFilterNames[0]); filt.push_back(kVideoFilterNames[1]);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FILTER, "Video filter", PK_VIDEO_FILTER_HELP, filt, ps_.quality == PIC_SMOOTH ? 1 : 0, ROW_PIC_SCANLINES);
 		if (system_ == MD_SYS_SMS)
 			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SMS_BORDER, "Hide masked edge",
 			                   "Games on the Master System cover the first 8 columns with a border colour when they scroll. Hides them, so the picture is 248 wide.",
@@ -756,18 +785,15 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			                   system_ == MD_SYS_SG ? "The console drew only 4 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same."
 			                                        : "The console drew only 8 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same.",
 			                   onoff, flicker_ ? 1 : 0, ROW_PIC_APPLY);
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_LOOK, "Image look",
-		                   "Auto keeps the best scaler and eases it only when a game cannot hold full speed. Full keeps the scaler as set, Light turns it off, both always.",
-		                   lookv, look_mode_, ROW_PIC_APPLY);
 		if (system_ == MD_SYS_MD)
 			menu_.add_host_row(Menu::PAGE_CONTROLS, ROW_PADTYPE, "Pad type",
 			                   "Auto follows the game: 3 buttons or 6. A few games misread the 6 button pad; choose 3 buttons for them.", pad, pad_type_, ROW_CTL_MAPPING);
 		{
 			std::vector<std::string> rl;
-			rl.push_back("30 s"); rl.push_back("1 min");
+			rl.push_back(kRewindLengthNames[0]); rl.push_back(kRewindLengthNames[1]);
 			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
-			                   scd_ ? "How far back rewind reaches. A disc game's saved moments are large (about 1 MB each): quiet scenes keep this length, a scene that redraws the whole screen (video) keeps only a few seconds. The memory it may use is fixed."
-			                        : "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
+			                   scd_ ? "How far back rewind reaches: Short about 30 seconds, Medium about a minute. A disc game's saved moments are large (about 1 MB each): quiet scenes keep this length, a scene that redraws the whole screen (video) keeps only a few seconds. The memory it may use is fixed."
+			                        : PK_REWIND_LENGTH_HELP, rl, rewind_len_, ROW_SPD_REWIND);
 		}
 		if (scd_) {
 			std::vector<std::string> rc;
@@ -906,17 +932,27 @@ void MdPlayer::ahead_cost(uint32_t emu_us)
 		logf("quick response: %s (a frame costs %.1f ms plain, %.1f ms run ahead)\n", ahead_.on() ? "started" : "stopped", ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0);
 }
 
+void MdPlayer::ahead_picture(uint32_t draw_us, uint32_t missed)
+{
+	ahead_update_blocked();
+	const bool was = ahead_.on();
+	ahead_.add_picture(draw_us, missed);
+	if (was && !ahead_.on())
+		logf("quick response: stopped (the picture side ran late: drawing %.1f ms a picture, %u refreshes missed)\n", ahead_.picture_us() / 1000.0, missed);
+}
+
 std::string MdPlayer::ahead_line()
 {
 	unsigned long st[2];
 	md_host_ahead_stat(st);
-	std::string s = strf("ahead: mode=%s on=%d frames=%u/%u plain_ms=%.2f ahead_ms=%.2f ratio=%.2f starts=%u stops=%u sram_put_back=%lu",
+	std::string s = strf("ahead: mode=%s on=%d frames=%u/%u plain_ms=%.2f ahead_ms=%.2f ratio=%.2f starts=%u stops=%u pic_ms=%.2f pic_stops=%u pic_miss=%u sram_put_back=%lu",
 	                     quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", ahead_.want() ? 1 : 0, ahead_.frames_ahead(), ahead_.frames(),
-	                     ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0, ahead_.ratio_x100() / 100.0, ahead_.starts(), ahead_.stops(), st[1]);
+	                     ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0, ahead_.ratio_x100() / 100.0, ahead_.starts(), ahead_.stops(), ahead_.picture_us() / 1000.0, ahead_.picture_stops(), ahead_.picture_misses(), st[1]);
 	ahead_.census_reset();
 	return s;
 }
 void MdPlayer::SpeedGlue::clear_pads() { md_host_set_pad(0, 0); md_host_set_pad(1, 0); }
+uint64_t MdPlayer::SpeedGlue::now_us() { return p->pf_->now_us(); }
 void MdPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
 
 SpeedSettings MdPlayer::speed_settings() const
@@ -925,7 +961,8 @@ SpeedSettings MdPlayer::speed_settings() const
 	s.rewind_on = rewind_on_ != 0;
 	s.rewind_seconds = rewind_len_ ? 60 : 30;
 	s.rewind_budget = (size_t) rewind_mb_ << 20;
-	s.ff_factor = ff_speed_ ? 3 : 2;
+	s.ff_factor = ff_speed_ == FFSPD_3X ? 3 : 2;
+	s.ff_unlimited = ff_speed_ == FFSPD_UNLIMITED ? 1 : ff_speed_ == FFSPD_SMOOTH ? 2 : 0;
 	s.ff_sound = ff_sound_;
 	s.ff_toggle = ff_toggle_ != 0;
 	return s;
@@ -1320,6 +1357,7 @@ void MdPlayer::menu_drawn()
 MenuEvent MdPlayer::menu_update(const MenuInput &in)
 {
 	MenuEvent ev = menu_.update(in);
+	if (qsync_) { qsync_ = false; sync_menu_values(); }               /* Image quality and Video filter follow each other (never inside the row's own change) */
 	ra_pump();
 	poll_writer();
 	if (ev == MENU_RESUME || ev == MENU_RESET_DONE) {
@@ -1374,7 +1412,19 @@ void MdPlayer::on_change(int row, int v)
 	switch (row) {
 	case ROW_PIC_SHAPE: ps_.shape = shape_to_pic(v); g_changed |= CH_SHAPE; break;
 	case ROW_PIC_WIDE: ps_.wide = clampi(v, 0, 2); g_changed |= CH_WIDE; break;
-	case ROW_PIC_QUALITY: ps_.quality = v ? PIC_SMOOTH : PIC_SHARP; g_changed |= CH_QUALITY; break;
+	case ROW_PIC_QUALITY:
+		ps_.scaler = scaler_of(v); look_mode_ = 0; g_changed |= CH_SCALER; qsync_ = true;
+		ahead_.picture_reset();        /* another Image quality, another cost for the picture side */
+		/* Original is stored as sharp, so the next start does not read "no scaler + Smooth" (an old file) and move it to Auto */
+		if (v == IMGQ_ORIGINAL && ps_.quality != PIC_SHARP) { ps_.quality = PIC_SHARP; g_changed |= CH_QUALITY; }
+		break;
+	case ROW_FILTER:
+		ps_.quality = v ? PIC_SMOOTH : PIC_SHARP; g_changed |= CH_QUALITY;
+		ahead_.picture_reset();
+		/* as in the main app: Original draws sharp bilinear whatever is stored, so choosing bilinear there switches the quality to Auto */
+		if (v && imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL) { ps_.scaler = SCALER_AUTO; look_mode_ = 0; g_changed |= CH_SCALER; }
+		qsync_ = true;
+		break;
 	case ROW_PIC_SCANLINES: ps_.scan = clampi(v, 0, 10); g_changed |= CH_SCAN; break;
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
@@ -1383,7 +1433,7 @@ void MdPlayer::on_change(int row, int v)
 		/* "This game" stores every value as now shown; "All games" only what was changed here */
 		g_changed |= CH_USEGAME | (v ? 0xFFu : 0);
 		break;
-	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; break;
+	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; qsync_ = true; break;     /* no row any more: the launch file and the tests */
 	case ROW_GG_COLORS: ps_.gg_colors = v ? 1 : 0; g_changed |= CH_GGCOL; break;
 	case ROW_GG_LCD: gg_lcd_ = clampi(v, 0, 10); md_host_set_option("lcd", gg_lcd_ * 10); break;
 	case ROW_SMS_BORDER: sms_border_ = clampi(v, 0, 2); md_host_set_option("sms_border", sms_border_); break;
@@ -1401,10 +1451,10 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
 	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); break;
-	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); break;
+	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); qsync_ = true; break;       /* no row any more: the launch file and the tests */
 	case ROW_QUICK: set_quick(v); break;
 	case ROW_FLICKER: flicker_ = v != 0; md_host_set_option("sprite_limit", flicker_ ? 0 : 1); break;
-	case ROW_SPD_FF: ff_speed_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
+	case ROW_SPD_FF: ff_speed_ = clampi(v, 0, FFSPD_COUNT - 1); speed_.apply(speed_settings()); break;
 	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;
 	case ROW_SPD_MODE: ff_toggle_ = v == 1 ? 1 : 0; speed_.apply(speed_settings()); break;
 	case ROW_SPD_REWIND: rewind_on_ = v != 0; speed_.apply(speed_settings()); logf("%s\n", speed_.stats_line().c_str()); break;
@@ -1412,6 +1462,7 @@ void MdPlayer::on_change(int row, int v)
 	default: return;
 	}
 	settings_dirty_ = true;
+	if (qsync_ && !menu_.is_open()) { qsync_ = false; sync_menu_values(); }
 	look_sync_rows();
 	pf_->picture_changed();
 }
@@ -1500,8 +1551,12 @@ void MdPlayer::look_apply(const char *why)
 	 * picture() (it takes a copy per picture), so eff_ is never rewritten as a whole and nothing is stored that did not change. */
 	pic_settings n = ps_;
 	n.tier_steps = 0;
-	if (look_mode_ == 2) n.scaler = SCALER_OFF;                     /* Light: no scaler, fixed */
-	else if (look_on_ && look_mode_ == 0) n.tier_steps = look_.level();
+	if (light_on(look_mode_, ps_.scaler)) n.scaler = SCALER_OFF;    /* Light: no scaler, fixed */
+	if (n.scaler == SCALER_OFF) {
+		n.quality = PIC_SHARP;               /* Original draws sharp bilinear whatever Video filter holds (as in the main app) */
+	} else if (look_on_ && look_mode_ == 0) {
+		n.tier_steps = look_.level();
+	}
 	look_gen_ = look_.generation();
 	int *dst = (int *) &eff_;
 	const int *src = (const int *) &n;

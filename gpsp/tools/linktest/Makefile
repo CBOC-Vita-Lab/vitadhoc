@@ -25,7 +25,11 @@ ASDEF :=
 OUT   := linktest
 endif
 
-all: $(OUT).gba
+# make OUTDIR=<dir>: write the cartridge there and leave the committed linktest.gba alone (the test gate does: another compiler
+# lays the literal pool out in another order, which is a different file with the same behaviour)
+OUTDIR ?= .
+
+all: $(OUTDIR)/$(OUT).gba
 
 crt0.o: crt0.s FORCE
 	$(CC) $(ARCH) $(ASDEF) -c -o $@ $<
@@ -41,7 +45,8 @@ linktest.elf: crt0.o main.o iwram.o linktest.ld
 
 # Raw image, the header complement check filled in (GBATEK: byte BDh =
 # -(sum of A0h..BCh) - 19h), padded to a multiple of 4.
-$(OUT).gba: linktest.elf
+$(OUTDIR)/$(OUT).gba: linktest.elf
+	mkdir -p $(OUTDIR)
 	$(CROSS)objcopy -O binary $< $@
 	python3 -c "import sys; b=bytearray(open(sys.argv[1],'rb').read()); \
 	  b[0xBD]=(-(sum(b[0xA0:0xBD])+0x19))&0xFF; b+=bytes(-len(b)%4); \

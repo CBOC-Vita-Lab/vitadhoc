@@ -128,7 +128,7 @@ struct Rig {
 	Texture *game_tex;
 	std::string shots;
 	uint32_t frame = 0;
-	unsigned ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0;
+	unsigned drawn_frames = 0, ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0;
 	int nshot;
 	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
 	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
@@ -149,7 +149,7 @@ struct Rig {
 		for (int i = 0; i < n; i++) {
 			if (pl->input(p, tap && i == 0, pf.clock_us / 1000, frame)) return true;
 			const bool render = pl->want_render(frame) && pl->speed_draws(i, n);
-			if (pl->run_frame(render)) ran_frames++;
+			if (pl->run_frame(render)) { ran_frames++; if (render) drawn_frames++; }
 			int16_t ab[4096 * 2];
 			int k;
 			while ((k = snes_host_audio_take(ab, 4096)) > 0) { audio_in += (unsigned) k; audio_out += (unsigned) pl->audio_filter(ab, (size_t) k); }
@@ -463,6 +463,25 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 			if (pl->menu().row_label(i) == "Blend hi-res columns") hires = true;
 		}
 		EXPECT(!fit && pixel && hires);
+		/* one Image quality row as in the main app (Auto, Original, Enhanced 2x, Enhanced 3x, MMPX 2x: no 4x scaler here) and its Video filter; the old
+		 * Pixel art scaler and Image look rows are folded into it */
+		{
+			int iq = -1, vf = -1, old = 0;
+			for (int i = 0; i < pl->menu().row_count(); i++) {
+				const std::string l = pl->menu().row_label(i);
+				if (l == "Image quality") iq = i;
+				if (l == "Video filter") vf = i;
+				if (l == "Pixel art scaler" || l == "Image look") old++;
+			}
+			EXPECT(iq >= 0 && vf >= 0 && old == 0);
+			static const char *const want[] = { "Original", "Enhanced 2x", "Enhanced 3x", "MMPX 2x", "Auto" };
+			static const int scal[] = { SCALER_OFF, SCALER_XBR2, SCALER_XBR3, SCALER_MMPX2, SCALER_AUTO };
+			if (iq >= 0) {
+				while (pl->menu().cursor() != iq) rig.press(PH_DOWN);
+				EXPECT(pl->menu().row_value_text(iq) == "Auto" && pl->picture().scaler == SCALER_AUTO);
+				for (int k = 0; k < 5; k++) { rig.press(PH_RIGHT); EXPECT(pl->menu().row_value_text(iq) == want[k] && pl->picture().scaler == scal[k]); }
+			}
+		}
 		/* Scanlines: Right once (4 -> 5) */
 		int row = -1;
 		for (int i = 0; i < pl->menu().row_count(); i++) if (pl->menu().row_label(i) == "Scanlines") row = i;
@@ -1005,7 +1024,7 @@ static int run_look_test(const char *rom, const std::string &work)
 		}
 	}
 
-	/* 4. the menu rows: Image look Full never eases, Light has the blends off at once; both and PAL games speed are kept for the next start */
+	/* 4. the old look_mode key (launch file, session runner): Full never eases, Light has the blends off at once (shown as Original); both and PAL games speed are kept for the next start */
 	{
 		const std::string root = work + "/look5";
 		make_dirs(root);
@@ -1034,9 +1053,46 @@ static int run_look_test(const char *rom, const std::string &work)
 			EXPECT(pl->start(2, av, root, true).ok);
 			EXPECT(pl->pal_fast() && pl->look_mode() == 2);
 			EXPECT(pl->picture().interlace_blend == 0 && pl->picture().hires_blend == 0);
-			EXPECT(pl->menu().value(snesp::SnesPlayer::ROW_LOOK) == 2 && pl->menu().value(snesp::SnesPlayer::ROW_PALSPEED) == 2);
+			EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_ORIGINAL && pl->menu().value(snesp::SnesPlayer::ROW_PALSPEED) == 2);     /* the Light look shows as Original */
 			pl->finish(EXIT_NORMAL);
 		}
+	}
+	/* 5. an older file that says "no scaler" with the Smooth video filter drew bilinear: Original draws sharp (as in the main app), so the choice is kept
+	 * the way the app keeps it (scaler to Auto); the old look_mode key 1 (Full) reads as Auto; Original chosen in the menu is stored sharp and stays */
+	for (int variant = 0; variant < 3; variant++) {
+		const std::string root = work + "/look6_" + std::to_string(variant);
+		make_dirs(root);
+		pic_settings old; pic_defaults(&old);
+		old.scaler = variant == 2 ? SCALER_AUTO : SCALER_OFF;
+		old.quality = PIC_SMOOTH;
+		make_dirs(root + "/snes");
+		EXPECT(pic_save((root + "/snes/picture.ini").c_str(), &old) == 0);
+		if (variant == 1) EXPECT(write_text(root + "/snes/player.ini", "look_mode=2\n"));       /* the old Light look, global */
+		if (variant == 2) EXPECT(write_text(root + "/snes/player.ini", "look_mode=1\n"));       /* the old Full look */
+		Rig *rig = new Rig(root + "/shots");
+		snesp::SnesPlayer *pl = new snesp::SnesPlayer(&rig->pf);
+		rig->pl = pl; rig->pf.player = pl;
+		rig->pf.log_path = root + "/snes/log.txt";
+		EXPECT(pl->start(2, av, root, true).ok);
+		pl->apply_start_mode();
+		EXPECT(pl->look_mode() == 0);
+		if (variant == 2) {
+			EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO && pl->picture().quality == PIC_SMOOTH);
+		} else {
+			EXPECT(pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO);                       /* kept bilinear: Auto, not Original */
+			EXPECT(pl->picture().quality == PIC_SMOOTH && pl->picture().scaler != SCALER_OFF);
+		}
+		/* Original by hand: sharp, stored sharp; the next start does not move it */
+		pl->on_change(ROW_PIC_QUALITY, IMGQ_ORIGINAL);
+		EXPECT(pl->picture().scaler == SCALER_OFF && pl->picture().quality == PIC_SHARP);
+		pl->finish(EXIT_NORMAL);
+		Rig *rig2 = new Rig(root + "/shots2");
+		snesp::SnesPlayer *p2 = new snesp::SnesPlayer(&rig2->pf);
+		rig2->pl = p2; rig2->pf.player = p2;
+		rig2->pf.log_path = root + "/snes/log.txt";
+		EXPECT(p2->start(2, av, root, true).ok);
+		EXPECT(p2->menu().value(ROW_PIC_QUALITY) == IMGQ_ORIGINAL && p2->picture().scaler == SCALER_OFF);
+		p2->finish(EXIT_NORMAL);
 	}
 	fprintf(stderr, "player_twin: look %d checks, %d failed\n", g_checks, g_fail);
 	return g_fail ? 1 : 0;
@@ -1210,6 +1266,38 @@ static int run_speed_test(const char *rom, const std::string &work)
 		EXPECT((rig.audio_out - ao0) > want * 0.97 && (rig.audio_out - ao0) < want * 1.03);
 		rig.game_frame(0);
 	}
+	/* Unlimited and Unlimited Smooth (the main app's choices of the same names): more frames than 3x fit in a refresh, silent, one frame's worth of
+	 * audio a refresh, a picture every second refresh / every refresh; the clock of the twin does not move inside a refresh, so the count is the
+	 * governor's first guess (3 frames) and the test is about the shape, not the speed */
+	pl->on_change(pk::ROW_SPD_SOUND, 1);
+	for (int kind = 2; kind <= 3; kind++) {
+		pl->on_change(pk::ROW_SPD_FF, kind);
+		rig.game_frame(PH_RS_RIGHT);
+		const unsigned r0 = rig.ran_frames, f0 = rig.refreshes, ai0 = rig.audio_in, ao0 = rig.audio_out, d0 = rig.drawn_frames;
+		for (int i = 0; i < 60; i++) rig.game_frame(PH_RS_RIGHT);
+		const unsigned ran = rig.ran_frames - r0, refr = rig.refreshes - f0, drawn = rig.drawn_frames - d0;
+		fprintf(stderr, "fast forward %s: %u frames in %u refreshes, %u drawn; audio in %u frames, out %u\n", kind == 2 ? "Unlimited" : "Unlimited Smooth", ran, refr, drawn, rig.audio_in - ai0, rig.audio_out - ao0);
+		EXPECT(pl->speed().ff_on());
+		EXPECT(ran >= 3 * refr && ran <= 30 * refr);
+		EXPECT(pl->speed().chip() == (kind == 3 ? ">> Unlimited Smooth" : ">> Unlimited"));
+		EXPECT(drawn == (kind == 3 ? refr : refr / 2));
+		const double per_frame = (rig.audio_in - ai0) / (double) ran;      /* silence: one frame's worth a refresh, whatever the count */
+		EXPECT((rig.audio_out - ao0) > per_frame * refr * 0.97 && (rig.audio_out - ao0) < per_frame * refr * 1.03);
+		{
+			/* the release: that refresh was planned while it ran, so it still runs its frames; but their audio is one frame's worth of silence and
+			 * only the last frame is drawn, not a dump of every frame's sound and picture */
+			const unsigned rr0 = rig.ran_frames, ao1 = rig.audio_out, dd0 = rig.drawn_frames;
+			rig.game_frame(0);
+			EXPECT(!pl->speed().ff_on());
+			EXPECT(rig.ran_frames - rr0 >= 2);
+			EXPECT((rig.audio_out - ao1) <= per_frame * 1.05);
+			EXPECT(rig.drawn_frames - dd0 <= 1);
+		}
+		const unsigned r1 = rig.ran_frames, f1 = rig.refreshes;
+		rig.run(5);
+		EXPECT(rig.ran_frames - r1 == rig.refreshes - f1);                /* back to one frame a refresh */
+	}
+	pl->on_change(pk::ROW_SPD_FF, 0);
 	/* toggle mode: one press switches it on, a second off */
 	pl->on_change(pk::ROW_SPD_SOUND, 1);
 	pl->on_change(pk::ROW_SPD_MODE, 1);

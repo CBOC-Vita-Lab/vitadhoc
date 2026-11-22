@@ -3979,7 +3979,7 @@ static const char *set_help(int id)
              ? "Smoothed at four times its size. The most detail and work."
            : g_pcfg.quality == PCFG_QUALITY_MMPX
              ? "MMPX at twice its size: crisp pixel art, light on the Vita."
-             : "Auto adapts to keep 60 fps; xBRZ smoothing when it can.";
+             : "Auto adapts to keep 60 fps; smoothing when it can.";
 #endif
    case SET_COLOR:
       if (pcfg_display_console() == FE_CONSOLE_GBA)

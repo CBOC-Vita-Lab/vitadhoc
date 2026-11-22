@@ -1373,6 +1373,7 @@ static int online_ui_fail(const online_view *v, int *toast_only)
    case ONLINE_FAIL_SLOW:        return UI_FAIL_ONLINE_SLOW;   /* a short rate limit: "Too many tries from this network." */
    case ONLINE_FAIL_CLOSED:      return UI_FAIL_ONLINE_CLOSED;
    case ONLINE_FAIL_CLOCK:       return UI_FAIL_ONLINE_CLOCK;
+   case ONLINE_FAIL_CONSOLE:     return UI_FAIL_ONLINE_CONSOLE;
    case ONLINE_FAIL_EXPIRED:
       if (toast_only && L.is_host)
          *toast_only = 1;
@@ -3426,6 +3427,7 @@ static void card_from_reply(const online_reply *r)
        * (online_vita.c); only a long or unknown wait reads "busy for today". */
       case ONLINE_E_RATE:       c->fail = (r->retry_after > 0 && r->retry_after <= 120) ? UI_FAIL_ONLINE_SLOW : UI_FAIL_ONLINE_BUSY; break;
       case ONLINE_E_CLOCK:      c->fail = UI_FAIL_ONLINE_CLOCK; break;
+      case ONLINE_E_CONSOLE:    c->fail = UI_FAIL_ONLINE_CONSOLE; break;
       default:                  c->fail = UI_FAIL_ONLINE_SERVICE; break;
       }
       return;

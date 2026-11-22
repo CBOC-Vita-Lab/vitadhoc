@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch the pinned Mbed TLS source and build the TLS library of the net/ HTTPS client into a private prefix.
 
-    python3 tools/online/build-mbedtls.py [--target vita|host32|host64|both|all] [--work DIR] [--fetch-only] [--rebuild]
+    python3 tools/online/build-mbedtls.py [--target vita|host32|host64|aarch64|both|all] [--work DIR] [--fetch-only] [--rebuild]
 
 Galaxy 3.0 multiplayer: vendored from Strikers Charged 1.3 tools/build-mbedtls.py (+ the two checkout helpers of its
 tools/build-deps.py, inlined below). Pin: gpsp/vita/deps/lock.json, "network_dependencies".
@@ -12,7 +12,8 @@ build/dependencies; pass e.g. --work /tls so the Vita prefix is /tls/mbedtls/vit
                                          tools/vgx_build/build.py --mbedtls <that path> (or SMG_MBEDTLS=<that path>)
     mbedtls/<target>/build-inputs.json   immutable prefix build identity (different inputs require a NEW work root)
     mbedtls/<target>/build-receipt.json  source, tools, flags, .d/object/input and library hashes
-Nothing is installed into VitaSDK. host32 / host64 are the x86 builds host tests may link.
+Nothing is installed into VitaSDK. host32 / host64 are the x86 builds host tests may link; aarch64 is for the aarch64 Linux twin
+(hostcore ARCH=aarch64: native, or aarch64-linux-gnu-gcc).
 
 SPDX-License-Identifier: MIT
 Copyright (c) 2026 CBOC-Vita contributors. See licenses/CBOC-tools-MIT.txt."""
@@ -270,7 +271,7 @@ def build_target(source, prefix, row, target, sdk, rebuild):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--target", choices=["vita", "host32", "host64", "both", "all"], default="vita")
+    parser.add_argument("--target", choices=["vita", "host32", "host64", "aarch64", "both", "all"], default="vita")
     parser.add_argument("--work", type=Path, default=ROOT / "build/dependencies")
     parser.add_argument("--fetch-only", action="store_true", help="Prepare the source without compiling")
     parser.add_argument("--rebuild", action="store_true", help="Recompile matching prefix inputs; changed provenance requires a new --work")

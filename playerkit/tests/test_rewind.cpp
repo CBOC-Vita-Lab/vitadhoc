@@ -630,3 +630,189 @@ TEST(ff_without_sound_is_silence_and_normal_speed_is_untouched)
 	CHECK_EQ(b[0], 0);
 	CHECK_EQ(b[3], 0);
 }
+
+/* ---- Unlimited and Unlimited Smooth fast forward (the main app's choices of the same names) ---- */
+namespace {
+struct ClockHost : SpeedHost {
+	uint64_t clock = 0;
+	uint32_t plain_us = 2000, drawn_us = 3000;
+	unsigned ran = 0, drawn = 0;
+	size_t state_size() override { return 64; }
+	bool save_state(uint8_t *b, size_t) override { memset(b, 0, 64); return true; }
+	bool load_state(const uint8_t *, size_t) override { return true; }
+	void run_frame(bool render) override { ran++; if (render) drawn++; clock += render ? drawn_us : plain_us; }
+	void clear_pads() override {}
+	uint64_t now_us() override { return clock; }
+};
+}
+
+TEST(ff_unlimited_counts_frames_from_their_cost)
+{
+	CHECK_EQ(Speed::unlimited_frames(14000, 2000, 3000, true), 1 + 11000 / 2000);
+	CHECK_EQ(Speed::unlimited_frames(14000, 2000, 3000, false), 7);
+	CHECK_EQ(Speed::unlimited_frames(14000, 0, 0, true), 1 + 10000 / 4000);        /* no clock: a guess */
+	CHECK_EQ(Speed::unlimited_frames(14000, 20000, 20000, true), 1);               /* a game too heavy for it: still a frame */
+	CHECK_EQ(Speed::unlimited_frames(14000, 100, 100, true), (int) Speed::kUnlimitedMax);
+}
+
+TEST(ff_unlimited_runs_more_than_3x_draws_one_picture_and_keeps_the_pacer_fed)
+{
+	for (int kind = 1; kind <= 2; kind++) {
+		ClockHost h;
+		Speed sp;
+		sp.set_host(&h);
+		SpeedSettings set;
+		set.ff_unlimited = kind;
+		set.rewind_on = false;
+		sp.start(60.0, 2, set);
+		sp.input(FIRE_FF_HELD | FIRE_FF_PRESS);
+		CHECK(sp.ff_on());
+		unsigned refreshes = 0, drawn_refreshes = 0, audio_out = 0;
+		for (int r = 0; r < 120; r++) {
+			const int n = sp.plan(1);
+			CHECK(n >= 1);
+			if (r > 6) CHECK(n > 3);                          /* the 2 ms frame leaves room for a good deal more than 3x */
+			unsigned drawn_before = h.drawn;
+			for (int i = 0; i < n; i++) {
+				const bool render = sp.draw_this(i, n);
+				sp.run_frame(render);
+				int16_t lr[2 * 800];
+				for (int k = 0; k < 2 * 800; k++) lr[k] = 1000;
+				const size_t kept = sp.audio(lr, 800);
+				audio_out += (unsigned) kept;
+				for (size_t k = 0; k < kept * 2; k++) CHECK_EQ((int) lr[k], 0);       /* silent */
+			}
+			CHECK(h.drawn - drawn_before <= 1);               /* at most the last frame of the refresh is drawn */
+			if (h.drawn != drawn_before) drawn_refreshes++;
+			refreshes++;
+		}
+		CHECK_EQ(audio_out, 800u * refreshes);                    /* one frame's worth of silence per refresh, whatever the count */
+		if (kind == 2) CHECK_EQ(drawn_refreshes, refreshes);     /* Smooth: a picture every refresh */
+		else CHECK_EQ(drawn_refreshes, refreshes / 2);           /* Unlimited: every second one */
+		CHECK_STR(sp.chip(), kind == 2 ? ">> Unlimited Smooth" : ">> Unlimited");
+		sp.input(0);
+		CHECK(!sp.ff_on());
+		CHECK_EQ(sp.plan(1), 1);
+	}
+}
+
+TEST(ff_unlimited_follows_a_heavier_scene)
+{
+	ClockHost h;
+	Speed sp;
+	sp.set_host(&h);
+	SpeedSettings set;
+	set.ff_unlimited = 2;
+	set.rewind_on = false;
+	sp.start(60.0, 2, set);
+	sp.input(FIRE_FF_HELD | FIRE_FF_PRESS);
+	int light = 0, heavy = 0;
+	for (int r = 0; r < 80; r++) {
+		if (r == 40) { h.plain_us = 6000; h.drawn_us = 7000; }
+		const int n = sp.plan(1);
+		for (int i = 0; i < n; i++) sp.run_frame(sp.draw_this(i, n));
+		if (r == 39) light = n;
+		if (r == 79) heavy = n;
+	}
+	CHECK(light >= 5 && heavy >= 2 && heavy < light);
+}
+
+/* a release in the middle of a refresh (the player's input() runs after plan() fixed the count): that refresh finishes as it began */
+TEST(ff_unlimited_release_mid_refresh_does_not_dump_audio_or_pictures)
+{
+	for (int kind = 1; kind <= 2; kind++) {
+		ClockHost h;
+		Speed sp;
+		sp.set_host(&h);
+		SpeedSettings set;
+		set.ff_unlimited = kind;
+		set.rewind_on = false;
+		sp.start(60.0, 2, set);
+		sp.input(FIRE_FF_HELD | FIRE_FF_PRESS);
+		for (int r = 0; r < 30; r++) { const int n = sp.plan(1); for (int i = 0; i < n; i++) sp.run_frame(sp.draw_this(i, n)); }
+		const int n = sp.plan(1);
+		CHECK(n > 3);
+		const unsigned drawn0 = h.drawn;
+		unsigned kept_total = 0;
+		for (int i = 0; i < n; i++) {
+			if (i == 1) sp.input(0);                          /* released while the refresh runs: input() is per emulated frame */
+			sp.run_frame(sp.draw_this(i, n));
+			int16_t lr[2 * 800];
+			for (int k = 0; k < 2 * 800; k++) lr[k] = 1000;
+			const size_t kept = sp.audio(lr, 800);
+			kept_total += (unsigned) kept;
+			for (size_t k = 0; k < kept * 2; k++) CHECK_EQ((int) lr[k], 0);   /* still silent */
+		}
+		CHECK(!sp.ff_on());
+		CHECK_EQ(kept_total, 800u);                              /* one frame's worth, not n * 800 */
+		CHECK(h.drawn - drawn0 <= 1);                            /* not a picture for each frame */
+		CHECK_EQ(sp.plan(1), 1);                                 /* the next refresh is plain */
+		int16_t lr[2 * 800];
+		for (int k = 0; k < 2 * 800; k++) lr[k] = 1000;
+		CHECK_EQ((int) sp.audio(lr, 800), 800);
+		CHECK_EQ((int) lr[0], 1000);
+	}
+}
+
+TEST(ff_2x_release_mid_refresh_keeps_the_refresh_whole)
+{
+	ClockHost h;
+	Speed sp;
+	sp.set_host(&h);
+	SpeedSettings set;
+	set.rewind_on = false;
+	set.ff_sound = 1;
+	sp.start(60.0, 2, set);
+	sp.input(FIRE_FF_HELD | FIRE_FF_PRESS);
+	const int n = sp.plan(1);
+	CHECK_EQ(n, 2);
+	size_t kept = 0;
+	for (int i = 0; i < n; i++) {
+		if (i == 1) sp.input(0);
+		CHECK_EQ(sp.draw_this(i, n), i == n - 1);
+		sp.run_frame(sp.draw_this(i, n));
+		int16_t lr[2 * 800];
+		for (int k = 0; k < 2 * 800; k++) lr[k] = 500;
+		kept += sp.audio(lr, 800);
+	}
+	CHECK_EQ((int) kept, 800);                                   /* two frames' audio mixed to one frame's worth */
+	CHECK_EQ(sp.plan(1), 1);
+	CHECK(sp.draw_this(0, 1));
+}
+
+TEST(ff_unlimited_budget_takes_other_work_off_and_never_drops_below_2x)
+{
+	ClockHost h;
+	Speed sp;
+	sp.set_host(&h);
+	SpeedSettings set;
+	set.ff_unlimited = 2;
+	set.rewind_on = false;
+	sp.start(60.0, 2, set);
+	CHECK_EQ(sp.unlimited_budget_us(), 14013u);                  /* 84 % of the 60 Hz refresh */
+	sp.set_refresh_us(20000);
+	CHECK_EQ(sp.unlimited_budget_us(), 16800u);                  /* the real period, not a fixed 14 ms */
+	sp.set_refresh_us(0);
+	sp.input(FIRE_FF_HELD | FIRE_FF_PRESS);
+	int light = 0, loaded = 0;
+	for (int r = 0; r < 40; r++) {
+		const int n = sp.plan(1);
+		for (int i = 0; i < n; i++) sp.run_frame(sp.draw_this(i, n));
+		sp.note_other_us(r < 20 ? 0u : 6000u);                   /* the main thread's scaler and upload after the frames */
+		if (r == 19) light = n;
+		if (r == 39) loaded = n;
+	}
+	CHECK(sp.other_us() > 4000u);
+	CHECK(loaded < light);
+	/* a game too heavy for two frames (and a loaded main thread) still gets 2x, never 1x */
+	h.plain_us = 12000; h.drawn_us = 13000;
+	for (int r = 0; r < 40; r++) {
+		const int n = sp.plan(1);
+		CHECK(n >= 2);
+		for (int i = 0; i < n; i++) sp.run_frame(sp.draw_this(i, n));
+		sp.note_other_us(9000u);
+	}
+	CHECK_EQ(sp.plan(1), 2);
+	/* a PAL refresh that runs nothing stays nothing */
+	CHECK_EQ(sp.plan(0), 0);
+}

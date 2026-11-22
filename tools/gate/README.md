@@ -81,6 +81,7 @@ newer is needed for the first and the twin step.
    | `GATE_WS_ROM` (file) | `wswan-private` (the WonderSwan acceptance section): needs a real game that makes sound; also the fallback for `GATE_WS_ONLINE_ROM` |
    | `GATE_WS_ONLINE_ROM` (file) | `link-x86` and `online-x86` for WonderSwan (Same Wi-Fi and Online Two players, refusals): any homebrew test ROM will do, e.g. `testroms/spritepriority/spritepriority.ws` of `git clone https://github.com/MiSTer-devel/WonderSwan_MiSTer`; falls back to `GATE_WS_ROM` |
    | `GATE_SG_ROM` (file) or a `.sg` file under `GATE_MD_SMS_ROMS` | `link-x86` and `online-x86` play it as the SG-1000 game (e.g. a build of the SGlib of `git clone https://github.com/sverx/devkitSMS` with SDCC); without one they use a synthetic image of the right kind |
+   | `GATE_SG_ROM` and `GATE_GG_ROM` (files) or a `.sg` / `.gg` under `GATE_MD_SMS_ROMS` | `md-player` runs the SG-1000 and Game Gear files through the whole Sega player walk; without a file it makes its own small cartridges (`md/twin/tools/sg_gen.py`, a `.sg` and a `.gg` with the Game Gear header); a public homebrew replaces them |
    | `GATE_MBEDTLS_VITA` (folder) | `vita-build`: passed as `MBEDTLS=` to `make vpk` (a prefix made by `tools/online/build-mbedtls.py --target vita`); SKIP without it |
    | `GATE_MBEDTLS_HOST` (folder, optional) | `online-http`: its TLS cases run against this host64 prefix; they are SKIPPED, loudly, without it |
    | `GATE_GBA_ROMS` (folder, optional) | also `online-x86`: its determinism scenario plays the first Link Cable game of the folder |

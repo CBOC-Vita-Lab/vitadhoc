@@ -11,6 +11,7 @@ void Speed::start(double fps, int interval_min, const SpeedSettings &s)
 	imin_ = interval_min;
 	set_ = s;
 	ff_.configure(s.ff_factor, s.ff_sound, s.ff_toggle);
+	ff_.set_unlimited(s.ff_unlimited);
 	rw_.close();
 	if (s.rewind_on && host_ && host_->state_size()) {
 		RewindConfig c;
@@ -28,6 +29,7 @@ void Speed::apply(const SpeedSettings &s)
 	const bool rebuild = s.rewind_on != set_.rewind_on || s.rewind_seconds != set_.rewind_seconds || s.rewind_budget != set_.rewind_budget;
 	set_ = s;
 	ff_.configure(s.ff_factor, s.ff_sound, s.ff_toggle);
+	ff_.set_unlimited(s.ff_unlimited);
 	if (rebuild) {
 		/* the helper thread keeps its callback across this: close() waits for it to be idle */
 		start(fps_, imin_, s);
@@ -52,11 +54,30 @@ int Speed::plan(int normal)
 	std::string n = rw_.take_notice();
 	if (!n.empty()) notice_ = n;
 	if (!locked_ && ff_.on() && rw_.active()) ff_.reset();      /* rewinding wins */
+	ff_.latch();
 	const bool b = busy();
 	if (was_busy_ && !b) ended_ = true;
 	was_busy_ = b;
+	run_in_refresh_ = 0;
 	if (act_ != RW_PLAY) return 1;
+	if (ff_.on() && ff_.unlimited() && normal > 0) {
+		/* never slower than 2x: Unlimited that fits fewer than two frames in a refresh would be slower than the plain choice */
+		int n = unlimited_frames(unlimited_budget_us(), cost_plain_, cost_drawn_, ff_.next_refresh_drawn());
+		ff_.begin_refresh(n < (int) kUnlimitedMin ? (int) kUnlimitedMin : n);
+	}
 	return ff_.frames(normal);
+}
+
+int Speed::unlimited_frames(uint32_t budget_us, uint32_t plain, uint32_t drawn, bool is_drawn)
+{
+	if (!drawn) drawn = plain ? plain : (uint32_t) kGuessUs;
+	if (!plain) plain = drawn;
+	if (plain < 200) plain = 200;
+	if (drawn < plain) drawn = plain;
+	int n;
+	if (is_drawn) n = 1 + (budget_us > drawn ? (int) ((budget_us - drawn) / plain) : 0);
+	else n = (int) (budget_us / plain);
+	return n < 1 ? 1 : n > (int) kUnlimitedMax ? (int) kUnlimitedMax : n;
 }
 
 bool Speed::run_frame(bool render)
@@ -75,11 +96,24 @@ bool Speed::run_frame(bool render)
 		return true;
 	}
 	if (act_ == RW_STAND) return false;
+	const uint64_t t0 = host_->now_us();
 	host_->run_frame(render);
-	if (defer_) { pend_++; return true; }
-	if (uint8_t *b = rw_.capture_begin()) {
-		if (host_->save_state(b, rw_.cur_size())) rw_.capture_commit(rw_.cur_size());
+	if (!defer_) {
+		if (uint8_t *b = rw_.capture_begin()) {
+			if (host_->save_state(b, rw_.cur_size())) rw_.capture_commit(rw_.cur_size());
+		}
+	} else pend_++;
+	if (ff_.latched() && ff_.unlimited()) {
+		/* the whole frame's work (a rewind capture included) is what a refresh has to hold */
+		const uint64_t t1 = host_->now_us();
+		if (t1 > t0) {
+			const uint32_t us = (uint32_t) (t1 - t0 > 100000 ? 100000 : t1 - t0);
+			uint32_t &avg = render ? cost_drawn_ : cost_plain_;
+			avg = avg ? (avg * 7 + us) / 8 : us;
+		}
+		ff_.set_audio_frame(run_in_refresh_);
 	}
+	run_in_refresh_++;
 	return true;
 }
 

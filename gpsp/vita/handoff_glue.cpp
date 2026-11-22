@@ -7,6 +7,7 @@
 #include "plat.h"
 #include "../../playerkit/src/pk_handoff.cpp"
 #include "../../playerkit/src/pk_cores.cpp"
+#include "../../playerkit/src/pk_ahead.h"
 #include "fe_evt.h"
 
 #include <new>
@@ -247,6 +248,7 @@ extern "C" int ho_start(uint32_t frame_us, size_t extra_bytes, ho_draw_fn draw,
    }
 #endif
    g_running = 1;
+   ho_picture_rebase();      /* the totals of this hand-over start from here (the picture pass of the last game is not this one's) */
    return 1;
 }
 
@@ -410,6 +412,28 @@ extern "C" void ho_draw_stats(uint64_t *sum_us, uint32_t *n)
 {
    *sum_us = __atomic_load_n(&g_draw_sum, __ATOMIC_RELAXED);
    *n = __atomic_load_n(&g_draw_n, __ATOMIC_RELAXED);
+}
+
+static pk::PictureTotals g_pp;      /* the picture pass's baselines (pk_ahead.h): reset when a hand-over starts, and while nobody asks */
+
+/* misses here are pictures that never reached the screen (dropped) and waits at the gate that ran out (the drawing thread did not answer).
+ * Not the gate's every wait loop (gate_waits: a healthy game waits for a free buffer all the time) and not `repeated` (a once-a-second estimate). */
+static uint32_t ho_pp_misses(void)
+{
+   if (!g_running)
+      return 0;
+   const pk::HandoffCensus k = g_box->census();
+   return k.dropped + k.gate_timeouts;
+}
+
+extern "C" void ho_picture_rebase(void)
+{
+   g_pp.rebase((uint32_t)__atomic_load_n(&g_draw_sum, __ATOMIC_RELAXED), __atomic_load_n(&g_draw_n, __ATOMIC_RELAXED), ho_pp_misses());
+}
+
+extern "C" void ho_picture_pass(uint32_t *draw_us, uint32_t *missed)
+{
+   g_pp.take((uint32_t)__atomic_load_n(&g_draw_sum, __ATOMIC_RELAXED), __atomic_load_n(&g_draw_n, __ATOMIC_RELAXED), ho_pp_misses(), draw_us, missed);
 }
 
 /* ---- the fourth core ------------------------------------------------------ */

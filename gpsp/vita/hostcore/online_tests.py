@@ -5,6 +5,7 @@ netdrv/tests/natsim stand between them, and every step goes through the real men
 (the host shows a five character code, the joiner types it on the code pad).
 
     ./online_tests.py x86 [--hz 30]      both twins the x86 one
+    ./online_tests.py aarch64            both the aarch64 one under qemu-aarch64 (mixed64: x86 + aarch64)
     ./online_tests.py armhf              both the armhf one under qemu-arm (the cheap set)
     options:  --only NAME[,NAME]   some of the scenarios
               --list               their names
@@ -1623,12 +1624,14 @@ for _fam in CORE_FAMS + TP_FAMS:
 RUNS = {
     "x86": [n for n, _ in TESTS],
     "armhf": ["punch", "relay", "gb", "lost_answer", "library_join"],
+    "aarch64": ["punch", "relay", "gb", "lost_answer", "library_join"],
+    "mixed64": ["punch", "gb"],
 }
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", nargs="?", default="x86", choices=("x86", "armhf"))
+    ap.add_argument("mode", nargs="?", default="x86", choices=("x86", "armhf", "aarch64", "mixed64"))
     ap.add_argument("--only")
     ap.add_argument("--hz", type=int, default=0, help="the twins' display rate (60; 12 under qemu)")
     ap.add_argument("--list", action="store_true")

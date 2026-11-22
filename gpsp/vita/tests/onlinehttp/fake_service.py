@@ -45,6 +45,8 @@ SCRIPTS = {
     "E502": (502, "turn_upstream", {}),
     "E400": (400, "bad_request", {}),
     "E400V": (400, "bad_version", {}),
+    "E400C": (400, "bad_request", {"field": "console"}),       # an older service refusing the console id
+    "E400F": (400, "bad_request", {"field": "nick"}),
     "E413": (413, "too_large", {}),
     "E500": (500, "internal", {}),
     "E504": (504, "gateway", {}),

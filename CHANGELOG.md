@@ -2,7 +2,7 @@
 
 ## Version 2.0 — <date TBD at release>
 
-The everything update: ten consoles in one app, and a friend anywhere in the
+The everything update: eleven consoles in one app, and a friend anywhere in the
 world a five-character code away. Everything here was checked on PC test builds
 and in emulators; none of it has run on a real Vita yet (see
 [Known Issues](KNOWN-ISSUES.md)), so speeds are aims, not promises.
@@ -44,8 +44,8 @@ and in emulators; none of it has run on a real Vita yet (see
   running exactly as without it. Game Boy, Game Boy Color, NES, WonderSwan
   and the Sega consoles have it (Settings, and per game); it is on Auto by
   default where a frame is cheap enough and off in linked and online play, in
-  fast forward and in rewind. Not offered for Game Boy Advance: see Known
-  Issues.
+  fast forward and in rewind. Not offered for Game Boy Advance or for the
+  Super NES (its player does not have it yet): see Known Issues.
 
 **Smoother play**
 
@@ -92,7 +92,7 @@ and in emulators; none of it has run on a real Vita yet (see
 - **Undo for save states, and slot lock, on every console.** R undoes your
   last save or load; L locks a slot so nothing overwrites it.
 - **Rewind, fast forward, patches and RetroAchievements in the Super NES
-  player too.** Hold the right stick left to rewind up to 60 seconds, right to
+  player too.** Hold the right stick left to rewind up to about a minute, right to
   fast forward.
 - **RetroAchievements shows more:** a mark when an achievement is one step
   away, a progress count ("3/10") and the live value of a leaderboard run.
@@ -112,8 +112,8 @@ and in emulators; none of it has run on a real Vita yet (see
   link directly when they can and through a relay when they cannot.
 - **Every two-player console.** GBA Link Cable and Wireless Adapter, Game Boy
   and Game Boy Color Link Cable, save and state sharing, and now Two players
-  for NES, WonderSwan, Super NES, Genesis / Mega Drive, Master System and
-  SG-1000. The join finds your copy of the game for you. On a cable each of
+  for NES, WonderSwan, Super NES, Genesis / Mega Drive, Sega CD, Master
+  System and SG-1000. The join finds your copy of the game for you. On a cable each of
   you can bring your own game (Ruby with Sapphire).
 - **Safe to join.** Every emulator now checks a game state sent by the other
   player, or read from a file, before using it.
@@ -218,8 +218,9 @@ Full engineering list: [docs/TECHNICAL.md](docs/TECHNICAL.md#version-20-changes)
   extension elsewhere, and never a wrong tile. Per side, the side the camera
   came from can show real picture. Menu: Wide view Auto (adapts), On (full
   margin) or Off.
-- **Super NES picture and sound.** Menu row **Image look** (Auto, Full,
-  Light): Auto eases the blends only when a game cannot hold 60. A new audio
+- **Super NES picture and sound.** Menu row **Image quality** (Auto,
+  Original, Enhanced 2x, Enhanced 3x, MMPX 2x): Auto eases the scaler and the
+  blends only when a game cannot hold 60. A new audio
   pacer fixes crackle and uneven sound (GitHub #15). Snes9x fixes made after
   1.63 are in, plus cheats, ten state slots with pictures and a new in-game
   menu.

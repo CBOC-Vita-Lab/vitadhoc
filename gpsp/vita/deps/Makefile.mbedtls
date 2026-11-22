@@ -1,7 +1,7 @@
 # Mbed TLS for the HTTPS client of the vendored net/ stack (net/src/np_https.*; from Strikers Charged 1.3): built into a
-# PRIVATE prefix, never into the SDK. Use: python3 tools/online/build-mbedtls.py [--target vita|host32|host64] [--work DIR]
+# PRIVATE prefix, never into the SDK. Use: python3 tools/online/build-mbedtls.py [--target vita|host32|host64|aarch64] [--work DIR]
 #
-#   tools/online/build-mbedtls.py supplies SRC=<immutable checkout>, OUT=<new prefix>, TARGET=vita|host32|host64.
+#   tools/online/build-mbedtls.py supplies SRC=<immutable checkout>, OUT=<new prefix>, TARGET=vita|host32|host64|aarch64.
 #
 #   OUT/include/mbedtls, OUT/include/psa   the library's headers; mbedtls/mbedtls_config.h is the stock file plus one
 #                                           line that includes mbedtls/np_user_config.h (the client profile)
@@ -30,8 +30,14 @@ else ifeq ($(TARGET),host64)
   CC := gcc
   AR := ar
   ARCH := -m64 -fPIC
+else ifeq ($(TARGET),aarch64)
+  # the aarch64 Linux twin (hostcore ARCH=aarch64): native on an aarch64 machine, else the cross compiler
+  CROSS ?= $(if $(filter aarch64,$(shell uname -m)),,aarch64-linux-gnu-)
+  CC := $(CROSS)gcc
+  AR := $(CROSS)ar
+  ARCH := -fPIC
 else
-  $(error TARGET must be vita, host32 or host64)
+  $(error TARGET must be vita, host32, host64 or aarch64)
 endif
 CFLAGS := $(ARCH) $(ABI) -O2 -g0 -std=gnu99 -Wall -Wno-unused-function -I$(OUT)/include -I$(SRC)/library \
           -ffile-prefix-map=$(SRC)=mbedtls -ffile-prefix-map=$(OUT)=prefix

@@ -119,6 +119,7 @@ the first two-Vita sittings.
 | Online play is busy for today. | The service limits its day on purpose (below). Try tomorrow, or use Same Wi-Fi. |
 | Too many tries from this network. Wait a minute and try again. | Wait a minute, then try again. This is a short limit on how fast one network may ask for rooms. |
 | The online service could not be reached. | This Vita's internet connection, or the service is down for a while. `ux0:data/GBAdhoc/log/gbadhoc.log` has `online_` lines that say which step. |
+| Online play is not ready for this console yet. | The room service refused the console's id (a service older than this app, for example one that does not know Sega CD). The service must be updated; Same Wi-Fi works meanwhile. The same sentence on every console. |
 | Your friend closed the room. | Ask them to host again. |
 
 If the connection is lost in the middle of a game, you get the same message as

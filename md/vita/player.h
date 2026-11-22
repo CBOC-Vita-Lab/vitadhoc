@@ -106,7 +106,7 @@ class MdPlayer : public pk::MenuHost {
 public:
 	enum { ROW_SCALER = pk::ROW_HOST_BASE + 1, ROW_SMS_BORDER, ROW_GG_COLORS, ROW_GG_LCD, ROW_PADTYPE, ROW_REGION, ROW_FM, ROW_YM2413, ROW_STEADY,
 	       ROW_REWIND_LEN = pk::ROW_HOST_BASE + 30, ROW_HANDOFF = pk::ROW_HOST_BASE + 40, ROW_PALSPEED = pk::ROW_HOST_BASE + 41, ROW_LOOK = pk::ROW_HOST_BASE + 42,
-	       ROW_QUICK = pk::ROW_HOST_BASE + 43, ROW_FLICKER = pk::ROW_HOST_BASE + 44, ROW_RAMCART = pk::ROW_HOST_BASE + 45 };
+	       ROW_QUICK = pk::ROW_HOST_BASE + 43, ROW_FLICKER = pk::ROW_HOST_BASE + 44, ROW_RAMCART = pk::ROW_HOST_BASE + 45, ROW_FILTER = pk::ROW_HOST_BASE + 46 };
 	explicit MdPlayer(Platform *pf);
 	~MdPlayer();
 
@@ -152,6 +152,8 @@ public:
 	size_t audio_filter(int16_t *lr, size_t frames);
 	bool speed_draws(int i, int n) const { return speed_.draw_this(i, n); }
 	bool speed_busy() const { return speed_.busy(); }
+	/* the main thread's non-emulation time of a refresh (Unlimited fast forward takes it off its budget) */
+	void speed_other_us(uint32_t us) { speed_.note_other_us(us); }
 	/* the helper thread's step (called by the writer thread when it has nothing else): packs the newest rewind state */
 	bool speed_pack() { return speed_.pack(); }
 	/* two-player or online play, Hardcore: rewind and fast forward are off (a press gives `why` as its notice) */
@@ -163,6 +165,10 @@ public:
 	 * the one of the picture (the wide view's analysis), and reports the emulating thread's time for every frame at normal speed. */
 	void set_ahead_hook(void (*fn)(void *), void *user) { ahead_hook_ = fn; ahead_user_ = user; }
 	void ahead_cost(uint32_t emu_us);
+	/* once per refresh with the hand-over: the drawing thread's average work for the pictures it finished (0: none) and the refreshes the picture side missed;
+	 * Auto holds off and stops while it runs late (pk_ahead.h add_picture) */
+	void ahead_picture(uint32_t draw_us, uint32_t missed);
+	void ahead_picture_reset() { ahead_.picture_reset(); }
 	bool ahead_ran() const { return ahead_ran_; }           /* the last run_frame() ran ahead */
 	int quick() const { return quick_; }
 	void set_quick(int mode);                               /* 0 Off, 1 Auto, 2 On */
@@ -332,6 +338,7 @@ private:
 	int ram_cart_ = 0;             /* Sega CD: the RAM cartridge (0 none, 1..6 = 16 KB .. 512 KB); read when the disc is loaded */
 	bool scd_ = false;             /* the game is a Sega CD disc (console "scd") */
 	/* Speed page: fast forward 0 = 2x 1 = 3x, with sound, hold or toggle; rewind on, its length (0 = 30 s, 1 = 60 s) and memory (MB) */
+	bool qsync_ = false;       /* Image quality / Video filter rows to be brought in line after the menu's own change */
 	int ff_speed_ = 0, ff_sound_ = 1, ff_toggle_ = 0, rewind_on_ = 1, rewind_len_ = 1, rewind_mb_ = 12;
 	struct SpeedGlue : pk::SpeedHost {
 		MdPlayer *p;
@@ -341,6 +348,7 @@ private:
 		bool load_state(const uint8_t *buf, size_t n);
 		void run_frame(bool render);
 		void clear_pads();
+		uint64_t now_us();
 		static void wake(void *self);
 	} glue_;
 	pk::Speed speed_;

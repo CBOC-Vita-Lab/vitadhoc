@@ -173,6 +173,26 @@ TEST(menu_unwired_rows_are_hidden_and_noted_rows_are_greyed)
 	CHECK(found);
 }
 
+TEST(menu_keep_sound_is_listed_for_2x_and_3x_only)
+{
+	Fixture f;
+	auto has_sound = [&f]() { for (int i = 0; i < f.menu.row_count(); i++) if (f.menu.row_label(i) == "Keep sound") return true; return false; };
+	f.menu.goto_page(Menu::PAGE_SPEED);
+	CHECK(has_sound());                                            /* 2x */
+	CHECK_STR(f.menu.row_label(0), "Fast-forward");
+	pkh::press(f.menu, PH_RIGHT);                                  /* 3x */
+	CHECK_EQ(f.menu.value(ROW_SPD_FF), FFSPD_3X);
+	CHECK(has_sound());
+	pkh::press(f.menu, PH_RIGHT);                                  /* Unlimited: silent, the row would do nothing */
+	CHECK_EQ(f.menu.value(ROW_SPD_FF), FFSPD_UNLIMITED);
+	CHECK(!has_sound());
+	pkh::press(f.menu, PH_RIGHT);                                  /* Unlimited Smooth */
+	CHECK(!has_sound());
+	pkh::press(f.menu, PH_RIGHT);                                  /* round to 2x again */
+	CHECK_EQ(f.menu.value(ROW_SPD_FF), FFSPD_2X);
+	CHECK(has_sound());
+}
+
 TEST(menu_cards_without_a_feature_are_hidden)
 {
 	Fixture f;                                            /* no Play together on this console */

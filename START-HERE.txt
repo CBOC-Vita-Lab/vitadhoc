@@ -1,6 +1,7 @@
 VitAdhoc 2.0
 Game Boy Advance, Game Boy, Game Boy Color, NES, WonderSwan, Super NES,
-Genesis / Mega Drive, Master System, Game Gear and SG-1000 for PS Vita
+Genesis / Mega Drive, Sega CD, Master System, Game Gear and SG-1000 for
+PS Vita
 
 Thanks for trying VitAdhoc! Here's everything you need to get playing.
 
@@ -8,8 +9,10 @@ Thanks for trying VitAdhoc! Here's everything you need to get playing.
 What You Need
 - A PS Vita with HENkaku or Enso, and VitaShell
 - Your own games: .gba, .gb, .gbc, .sfc, .smc, .nes, .ws, .wsc, or Sega
-  .md, .gen, .smd, .sms, .gg, .sg (zipped is fine)
-- No BIOS needed: an open one is built in
+  .md, .gen, .smd, .sms, .gg, .sg (zipped is fine); Sega CD discs .cue,
+  .chd, .iso
+- No BIOS needed for GBA: an open one is built in. Sega CD needs your own
+  Sega CD BIOS (see INSTALL.md)
 
 
 Easy Install
@@ -24,7 +27,7 @@ Manual Install
 2. Start VitAdhoc once. It creates ux0:data/GBAdhoc/
 3. Put your games in ux0:data/GBAdhoc/roms/
    (games already in ux0:ROMS/, any folder inside it, or RetroFlow's folders
-   are found by themselves, for example ux0:ROMS/MD, SMS, GG or SG-1000)
+   are found by themselves, for example ux0:ROMS/MD, SMS, GG, SG-1000 or SegaCD)
 4. Start VitAdhoc again and pick a game. Triangle opens the console list.
 
 

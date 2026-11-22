@@ -37,7 +37,7 @@ Label of every number below: **host** = measured on the Linux twin (x86), **qemu
 - **Patches** (IPS / BPS / UPS, applied to the ROM in memory; a patch that does not fit stops the start and tells the app), **cheats** (a typed
   code through the system keyboard: Mega Drive Game Genie and Pro Action Replay / RAM `AAAAAA:VVVV`, Master System / Game Gear Game Genie
   `DDA-AAB[-RRr]`, `AAAA:VV[:CC]`; the `.cht` file of the game with each entry on or off, delete, up to 64) and the app's database entries (`cheats_db=`).
-- **Settings rows** (the playerkit host rows): Pixel art scaler, Image look, Hide masked edge (Master System), LCD colours and LCD ghosting
+- **Settings rows** (the playerkit host rows): Video filter (the main app's row), Hide masked edge (Master System), LCD colours and LCD ghosting
   (Game Gear), Pad type (Mega Drive), Region, FM sound (Mega Drive), FM sound unit (Master System), Steady pacing, PAL games speed, Smooth hand-over.
   The two-player row is hidden (no `CAP_PLAY_TOGETHER`), the wide view row is greyed with its reason.
 - **Controls**: Mega Drive A Square, B Cross, C Circle, X L, Y Triangle, Z R, Start, Mode a tap of Select (Start + Select held opens the menu;
@@ -103,10 +103,10 @@ the 16.7 ms budget on every measured frame; xBR 3x on the 256 wide picture witho
 again. `md/twin/sidebyside.{cpp,py}` makes the 960x544 comparison (xBR 2x | xBR 3x | difference x8, each fitted with the player's bilinear draw);
 over 8 Mega Drive and 7 Master System pictures the mean absolute difference is 0.05 .. 1.0 (Mega Drive) and 0.2 .. 3.8 (Master System) of 255,
 and the differences are one screen pixel wide along edges. MMPX 2x is no longer a rung: since the integer NEON xBR (`pk_scale`) xBR 2x costs less than
-MMPX 2x, so MMPX stays a look the player can pick by hand in the Pixel art scaler row, never one Auto chooses. The look governor
+MMPX 2x, so MMPX stays a look the player can pick by hand in the Image quality row (MMPX 2x), never one Auto chooses. The look governor
 (playerkit `pk_look`) owns the **Auto** scaler row: it starts at the ceiling and takes one tier off (xBR 3x -> xBR 2x -> sharp) when
 this game cannot hold full speed, remembers it per game (`look/<console>/..`), gives it back when there is room. A scaler chosen by hand in the row
-is never eased. **Image look**: Auto (the governor), Full (the scaler as set, never eased), Light (no scaler). The scaler of a picture is the picture's
+is never eased. **Image quality** is the main app's one row: Auto (the governor), Original (no scaler, sharp bilinear), Enhanced 2x / 3x (xBR 2x / 3x) and MMPX 2x; there is no 4x scaler, so Enhanced 4x is not offered. (The old Pixel art scaler and Image look rows were folded into it; the `scaler` and `look_mode` keys are unchanged and still read, a stored Full becomes Auto.) The scaler of a picture is the picture's
 own ceiling plus the governor's steps, so a game that switches H32 to H40 follows without a new ladder.
 
 **xBR result:** the port is correct (the bit-identity test against the literal shader transcription, `playerkit/tests/test_scale.cpp`) and a console

@@ -400,7 +400,7 @@ W4 of the performance design, honestly: step 4 (compose cost) is continued by 1 
 another form, 5 above: fewer passes, the depth byte as the tag; a single pass is not possible without changing the picture because compose needs
 each layer's own pixels under the layers above it (the fade of a foreground whose extent is shorter). Step 2 (merging margin batches across
 lines) is **not done**: in the measured scenes the heavy games have 1 to 9 batches a frame, so it would gain nothing there; a game with a batch
-per line (a line by line HDMA effect) still pays a call per line and pass. Step 3 (caching the strip between frames) is **not done**. Also **not
+per line (a line by line HDMA effect) still pays a call per line and pass. Step 3 (caching the strip between frames) is **done later**, see "Mode 7 pixel loop and the margin strip cache" at the end. Also **not
 done**, and the one thing that would take the margin passes off the PPU thread: a third copy of the renderer on its own thread that replays the
 same slots and draws only the margins (the slot ring would need a second reader, `rcopy.sh` a second rename map).
 
@@ -542,9 +542,9 @@ What was done:
    line `wide_lines` also says how many lines the helpers really did (`lines= by_helpers=`, from `snes_wide_line_counts`), not only how many
    line jobs a helper joined; the thread line has `wide_b=` (the margin thread's busy ms per second), its frames and the PPU thread's waits for it.
 
-**Not done, plainly.** W4 step 2 (merging the margin batches of a game that changes a register on every line) and step 3 (keeping the margin
-strips between frames): with the passes on their own thread no thread needs them by the model, and step 3 has no exactness proof yet. The
-Mode 7 pixel loop with colour math (Super Metroid's title and intro: 5.5 M of its 11.4 M) is still one pixel at a time. A coverage count
+**Not done, plainly (as of the margin thread step; the last two are done in "Mode 7 pixel loop and the margin strip cache" below).** W4 step 2 (merging the margin batches of a game that changes a register on every line; still not done, with the reason below) and step 3 (keeping the margin
+strips between frames). The
+Mode 7 pixel loop with colour math (Super Metroid's title and intro: 5.5 M of its 11.4 M) was still one pixel at a time. A coverage count
 that does not make the pixels of an ambient side at all (only the extents) is not done either.
 
 Where the margin thread runs on the Vita (`snes/vita/main.cpp`, `threads.ini`): `wide_thread=1` (default) / `0`; `wide_core=-1` (default: affinity
@@ -609,3 +609,111 @@ Proofs of this step (x86 twin unless said; the owner's 15 games, the pad script)
   hashes are compared unsplit.
 - **Still not done:** nothing ran on a Vita. Whether the Vita's scheduler moves the margin thread (two-core mask) promptly, how much of the compose the
   helpers really take (`by_helpers=`), and the real IPC are for the first console run.
+
+## Mode 7 pixel loop and the margin strip cache (22 Nov 2026, 2.0; host x86_64 callgrind, x86 and armhf under qemu for identity, nothing here ran on a Vita)
+
+Two changes that must not change one pixel, one sample of sound or one bit of state. Both have a switch (`fast_pixels`, `wide_cache`, both on by
+default, `snes/frontend/host.cpp`; the twin takes `--opt fast_pixels=0 --opt wide_cache=0`) so that every proof is a run with against a run without.
+
+**1. Mode 7 pixel loop** (`snes/core/tileimpl.h`, `DrawTileNormal`, step 1, no per pixel Z). A line is drawn in chunks of up to 128 pixels: the plane
+positions of a chunk are computed with vector arithmetic (the position is linear in the pixel index, so the first and last pixel decide whether the
+whole chunk lies inside the 1024 pixel plane; with the repeat mode on the edge, an out of plane run is left to the old scalar code), the pixels are
+gathered one by one (the gather itself cannot be vectorised on NEON or SSE2) into a small buffer, and `DrawRow8` plots them eight at a time. The
+colour math of `DrawRow8` (`CalcRow8`) now selects the sub screen or the fixed colour with a vector mask, and a row of eight pixels with three or
+more drawn lanes (tested as `m & (m - 1)` twice, not a population count, which needs no library routine or table on any target) takes a
+masked vector store; fewer lanes take the old per pixel code. The vectors are GCC vector extensions (`s9x_v4u`, `s9x_v4i`,
+`__builtin_convertvector`), the same pattern as `widekit`: SSE2 on the host, NEON on the Vita, a scalar loop elsewhere. One exception: `CalcRow8`'s widening of
+the four sub screen depth bytes to 32 bit lanes was compiled by `arm-vita-eabi-g++ -O3 -mcpu=cortex-a9 -mfpu=neon` into scalar loads, shifts and stores through the
+stack (read in the assembly), so under `__ARM_NEON` it is written with NEON intrinsics (`vmovl_u8`, `vmovl_u16`, `vtstq_u32`, `vbslq_u32`, `vmovn_u32`): the same
+arithmetic lane for lane, the host and scalar paths unchanged. `g_s9x_fastpix` is read and written with relaxed atomic operations (the menu thread writes it, the
+renderer copies on other threads read it). BG2 of Mode 7 (EXTBG, per pixel
+Z), mosaic and hi-res Mode 7 keep the old loop.
+
+**2. Margin strip cache** (`snes/core/gfx.cpp`, `S9xWideBatch` and `S9xWideRenderFrameStart`). A margin line is drawn by up to seven passes into per line
+strips. A line whose inputs are unchanged since the frame before is not drawn again: its strips are left where they are.
+- The key of a line is a 128 bit hash over everything the margin draw can read: the line record (registers; the fields of layers, Mode 7 rows and sprite
+  registers the batch cannot read are zeroed first, so that a register nobody uses cannot make a miss), the colour memory (a content hash, not a
+  counter), the sprite list as `DrawOBJSWide` and `wide_draw_sprite` read it, and, for each of the 32 blocks of 2 KB of VRAM the line's layers can
+  touch (tile maps and character data, `wide_vmax` bounds it), a write counter. The counters (`g_s9x_vblk`, bumped by `S9xWideStampVRAM`) are copied
+  into the render job when the batch is flushed, so the margin thread sees the VRAM as it was for that frame, not as the PPU thread has it now.
+  The counters are 64 bit (`g_s9x_vseq`, `g_s9x_vblk`, `S9xRenderJob::vver`): a line's key takes the largest counter among the blocks it reads, and a 32 bit
+  counter that wrapped (after hours of play: it counts every VRAM byte written) would let a block written after the wrap look older than one written before it,
+  so a changed block could leave the key as it was and a stale strip be served. 64 bit does not wrap in any lifetime.
+- All passes of a line are cached together or not at all: the composite sub screen scratch is shared between passes, so one pass cannot be served
+  from the cache while its neighbour is drawn. The depth strips are cleared lazily; rows not served in a frame are cleaned at the end of the frame in
+  `S9xWideFillView`.
+- The cache state is per renderer copy (`rcopy.sh` renames it for the PPU thread copy and the margin thread copy). It is dropped by `S9xWideSet`,
+  `S9xWideReset` and `S9xPPUMTInvalidateAll` (a state load, a rewind step, the wide view switched on). A renderer copy that is idle
+  (`S9xWideRenderFrameStart(0)`: the view is off, or that copy is not the one in use) forgets its margin, so its next frame with a margin counts as "the strips moved" and
+  starts with the cache and the depth buffers cleared; it cannot match keys from an earlier life.
+- What it gives: a scene that does not change (menus, the Yoshi's Island title, a still screen) draws the margins once. Scrolling gameplay has no hits
+  (the scroll registers change every frame) and pays the hash instead: about +0.7 % at margin 96 on three of the 15 games (Mega Man X 2, Street Fighter
+  Alpha 2, Super Mario Kart), see the table. No hit is not a loss of exactness, only of speed.
+
+**Merging the margin batches of many lines is not done, and cannot be done exactly.** The renderer is a stream: when the next batch is loaded the
+registers, tile maps and colour memory of the earlier one are gone, and drawing two lines with one call would need the state of both at once. A scheme that
+keeps the state of a block of lines (a copy of the PPU state per line) would, by judgment and not measured, cost more than the calls it saves, and the one scene with a batch per line
+(Yoshi's Island with the wide view) now spends 1.0 to 1.5 M a frame on the margin passes, which is what could be won at most.
+
+**Proofs (all with the whole picture, sound and state compared).**
+- `snes/twin/fast_compare.py --old OLD --new NEW`, 15 ROMs x 3000 frames of the owner's pad script, 14 runs each: no wide view, the cost ladder's floor, and at
+  margins 96 and 41 the old build, the new build, the new build with the worker threads, with the cache off and with the fast pixel loop off. Per frame
+  hashes of the normal picture, the audio, the state hash every 50 frames (the whole saved state) and the hash of the whole wide picture: all identical.
+- Verify mode (`wide_cache_verify=1`): every line served from the cache is also drawn fresh into a shadow buffer and compared. 15 ROMs x 3000 frames at
+  margin 96 (single thread) and 41 (worker threads), and 1000 frames each with random writes (below): 0 differing lines. The counters are in the
+  twin's `--summary` line `wcache:` (lines served, lines drawn, batches, checked, differing).
+- Fuzz (`--fuzz SEED`, `snes/twin/wide_fuzz.cpp`; test only): random writes to the PPU's registers, VRAM, colour memory and OAM through `S9xSetPPU`, as a
+  game's would, in about one frame in three (SEED < 1000) or nearly every frame (SEED >= 1000). Every key ingredient is hit; the verify mode compares.
+- Fuzz inside `fast_compare.py` (`--fuzz 3,1003`, 1000 frames, margins 96 and 41, with writes between frames and, in the twin's `--fuzz-mid`, between lines of a
+  frame): per ROM, seed and margin the reference is the new build with `wide_cache=0 fast_pixels=0`; the defaults, the worker threads, the cache off, the fast paths
+  off and `wide_cache_verify=1` (differing must be 0) must give the same wide pictures, audio and state hashes. The plain frame hashes of fuzzed runs are not
+  compared: the core never draws some rows of an overscan or interlaced picture it was not asked for, those bytes follow the process's memory layout, and two
+  identical runs of the unchanged core differ there (also with both switches off and no wide view). Fuzz now also writes `$2100`, `$2106`, `$2133` (interlace, OBJ
+  interlace, overscan, pseudo-hires, EXTBG; between frames only for interlace and overscan, which hardware applies at the next frame) and the OAM priority rotation
+  (`$2102` / `$2103` bit 7), besides Mode 7 repeat modes 2 and 3, flips, direct colour and the clip windows it always had. Mid-frame writes need the test hook of
+  `cpuexec.cpp` (`CBOC_TEST_LINE_HOOK`, compiled into `snes_wide_twin` only: `twin/Makefile` links a second `cpuexec.o` for it; no player build has it).
+- `snes/twin/wide_cache_proof.sh` (also in `selftest.sh`, and as `FUZZ=1` in `wide_tsan.sh` with the worker threads and the margin thread under TSan): scenarios
+  each against a run without the cache and the fast paths, and with every hit checked against a fresh draw: random writes between frames and lines (3, 1003), the
+  same with worker threads, the VRAM write counter started at 4294960000 so that it crosses 2^32 inside the run, a state load every 90 frames (the rewind path), a
+  console reset, the margin changed every 50 frames (the strips move), the view switched off and on and the margin thread leaving and joining the slot ring every
+  40 frames, and the cost ladder's rung changes by pressure (verify only; its timing is not repeatable). 15 ROMs x 1500 frames: all identical, 0 differing.
+- Negative control 7 (`-DWCACHE_NEGATIVE_CONTROL=7`): the first version's 32 bit counter. The wrap scenario run on that build (`NEG_TWIN=`) is caught: lines differ
+  from a fresh draw (the stale strips of the finding above), on the ROMs where the wrap lands on a block a layer reads. The 64 bit build: 0 on all 15.
+- Negative controls (build with `-DWCACHE_NEGATIVE_CONTROL=n`, default 0, a test only switch that leaves one ingredient out of the key): leaving out the
+  VRAM counters (1), the sprite list (2), the scroll registers (4), the fade (5) or the tile map base (6) is caught by the verify mode within the runs
+  above. Leaving out the colour hash (3) is not caught, because the line record already holds a sum of the colour memory: it is redundant, kept as a second
+  guard.
+- armhf under qemu (cross gcc, cortex-a9, NEON, the same source, `-O2`): Super Metroid, Super Mario Kart, F-Zero, Pilotwings, Yoshi's Island and
+  Zelda, 3000 frames at margin 96 and 600 at 41, plus 1000 frames with the fuzz and the verify mode (0 differing): picture, sound, state hashes and
+  wide hashes equal those of the x86 build, byte for byte. The vector paths of the fast loop are NEON there.
+- Gate steps `snes-selftest`, `snes-mt-compare`, `snes-undrawn`, `snes-gsu-fast`: pass, run one at a time.
+
+**Cost** (host x86_64 callgrind, millions of instructions per frame, frames 1500 to 1560 of the owner's pad script, one game each; this is the whole frame in
+the twin, not the Vita's; Vita time is a model and was not measured):
+
+| game | margin 0 before | after | margin 96 before | after |
+|---|---|---|---|---|
+| Super Metroid (Mode 7 scene) | 6.99 | 6.03 (-13.8 %) | 11.38 | 9.98 (-12.2 %) |
+| F-Zero | 5.88 | 5.77 (-1.9 %) | 10.50 | 8.56 (-18.4 %) |
+| Pilotwings | 6.80 | 6.17 (-9.3 %) | 10.96 | 9.93 (-9.4 %) |
+| Super Mario RPG | 6.85 | 6.46 (-5.7 %) | 9.78 | 9.33 (-4.6 %) |
+| Yoshi's Island (wide) | 6.48 | 6.45 (-0.5 %) | 11.34 | 10.56 (-6.9 %) |
+| Chrono Trigger | 4.81 | 4.78 (-0.7 %) | 10.88 | 10.03 (-7.7 %) |
+| Zelda | 5.72 | 5.75 (+0.6 %) | 12.38 | 11.93 (-3.7 %) |
+| Super Mario Kart | 5.02 | 5.02 (0.0 %) | 10.37 | 10.45 (+0.8 %) |
+| Mega Man X 2 | 4.81 | 4.81 (0.0 %) | 9.22 | 9.28 (+0.7 %) |
+| Street Fighter Alpha 2 | 5.21 | 5.22 (+0.2 %) | 8.76 | 8.82 (+0.7 %) |
+
+The rest (Donkey Kong Country, Doom, Kirby Super Star, Stunt Race FX, Super Mario World) are between -4.2 % and 0.0 % at margin 96 and unchanged at 0.
+In Super Metroid the Mode 7 draw functions themselves went down by about 39 %; the whole frame by less because the rest of the frame is untouched.
+The margin 96 gain beyond the Mode 7 games (Chrono Trigger, Yoshi's Island, Zelda) comes mostly from the strip cache on lines that did not change in that
+window; a scrolling scene gains nothing from it. These are 60 frame windows, not averages over a game.
+
+**Found while writing the new tests, not changed here:** Snes9x's `DrawTileMosaic` (Mode 7, a mosaic layer) writes outside the screen buffer (Valgrind) when the picture
+pitch or height changes in the middle of a frame (`$2133` interlace or overscan written between lines); a game does not do that (hardware applies those bits at
+the next frame) and the fuzz does not either, but it is unchanged upstream code and was left alone.
+
+**Not done, plainly.** Merging margin batches (above). The Mode 7 BG2 (EXTBG), mosaic and hi-res Mode 7 are not sped up. A cache that turns itself off
+after many frames without a hit (skip the key computation for a while, probe now and then), to take the +0.7 % off the scrolling games, would be exact (the hash only
+decides about hits) but was not built or measured.
+Nothing ran on a Vita: the NEON paths were run under qemu for identity only, and no time was measured there.

@@ -14,6 +14,11 @@
 #
 #   make ARCH=x86     -> build/x86/gbadhoc_host     x86-64, the x86 dynarec
 #   make ARCH=aarch64 -> build/aarch64/gbadhoc_host 64-bit ARM Linux, native, GBA interpreter
+#   make ARCH=macos  -> build/macos/gbadhoc_host   macOS (Apple silicon or
+#                        Intel), native clang, GBA interpreter: the Mac as the second
+#                        player.  Needs Homebrew llvm (llvm-objcopy, llvm-nm) and
+#                        works with the make 3.81 that macOS ships;
+#                        tools/build/macos-build.sh runs the whole build.
 #   make ARCH=armhf   -> build/armhf/gbadhoc_host   ARMv7-A hard-float, the
 #                        ARM dynarec the Vita uses; run it with
 #                        qemu-arm -L /usr/arm-linux-gnueabihf build/armhf/gbadhoc_host
@@ -40,6 +45,7 @@
 # image low so the mapped translation cache lands within the emitter's
 # 2 GiB reach (memmap.c).
 ARCH    ?= x86
+HOST_OS ?= linux
 DYNAREC ?= 1
 # VITASIM=1 (armhf only): build the core with -DVITA and run the Vita's own
 # translation-cache path -- vita/jit_vita.c, libretro.c's VITA glue,
@@ -103,8 +109,43 @@ CPU_ARCH :=
 override DYNAREC := 0
 CORE_ARCH_FLAGS := -fomit-frame-pointer -fno-math-errno
 LDFLAGS_ARCH := -static -no-pie
+else ifeq ($(ARCH),macos)
+# macOS (Mach-O), native: a Mac as the second player of a two-player or online
+# test.  Same as aarch64: the GBA core is the interpreter (DYNAREC=0).  Not
+# static (macOS has no static libc) and not -no-pie.  Mach-O has neither
+# `ld -r -T` nor GNU objcopy, so the cores' partial links become
+# tools/build/macho-group.sh (corebuild.mk, HOST_OS=macos), which needs
+# llvm-objcopy and llvm-nm: Homebrew's llvm (brew install llvm), found on
+# PATH, in LLVM_BIN, or under the Homebrew prefix.  GNU make 3.81 is enough.
+HOST_OS := macos
+CC      := $(call ccw,clang)
+CXX     := $(call ccw,clang++)
+AR      := ar
+SYM_US  := _
+LD_R    := false
+CPU_ARCH :=
+override DYNAREC := 0
+MACOS_MIN ?= 12.0
+CORE_ARCH_FLAGS := -mmacosx-version-min=$(MACOS_MIN) -fomit-frame-pointer -fno-math-errno
+LDFLAGS_ARCH :=
+mac_find = $(firstword $(shell for d in $(LLVM_BIN) $$(dirname "$$(command -v $(1) 2>/dev/null)") \
+             /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin; do \
+             [ -x "$$d/$(1)" ] && { echo "$$d/$(1)"; break; }; done))
+OBJCOPY ?= $(call mac_find,llvm-objcopy)
+NM      ?= $(call mac_find,llvm-nm)
+ifneq ($(MAKECMDGOALS),clean)
+ifeq ($(strip $(OBJCOPY))$(strip $(NM)),)
+$(error ARCH=macos needs llvm-objcopy and llvm-nm (Mach-O objects cannot be renamed with Apple's tools): brew install llvm, or set LLVM_BIN=<its bin directory>)
+endif
+ifeq ($(strip $(OBJCOPY)),)
+$(error ARCH=macos: llvm-objcopy not found: brew install llvm, or set LLVM_BIN=<its bin directory>)
+endif
+ifeq ($(strip $(NM)),)
+$(error ARCH=macos: llvm-nm not found: brew install llvm, or set LLVM_BIN=<its bin directory>)
+endif
+endif
 else
-$(error ARCH must be x86, armhf or aarch64)
+$(error ARCH must be x86, armhf, aarch64 or macos)
 endif
 
 include $(V)/app.mk
@@ -174,10 +215,19 @@ all: $(B)/gbadhoc_host
 $(foreach s,$(APP_ALL),$(eval $(call APP_RULE,$(s))))
 
 # Link with the C driver: the core's two C++ sources use no libstdc++
-# (-fno-rtti -fno-exceptions).
-$(B)/gbadhoc_host: $(APP_OBJS) $(FE_OBJS) $(GB_OBJS) $(CORE_A) $(CORE_B) $(CORE_R)
+# (-fno-rtti -fno-exceptions).  macOS: the renamed cores are archives
+# (MACHO_ARCHIVES, corebuild.mk) linked whole, as the relocatables were, and
+# the C++ runtime is libc++.
+ifeq ($(HOST_OS),macos)
+LINK_CORES := $(foreach a,$(MACHO_ARCHIVES),-Wl$(comma)-force_load$(comma)$(a)) $(CORE_A)
+LIB_CXX    := -lc++ -framework CoreFoundation   # (libretro-common's file/vfs code names the app bundle)
+else
+LINK_CORES := $(CORE_R) $(CORE_B) $(CORE_A)
+LIB_CXX    := -lstdc++
+endif
+$(B)/gbadhoc_host: $(APP_OBJS) $(FE_OBJS) $(GB_OBJS) $(CORE_A) $(CORE_B) $(CORE_R) $(MACHO_ARCHIVES)
 	$(CC) $(CORE_ARCH_FLAGS) $(LDFLAGS_ARCH) $(SAN_FLAGS) -o $@ $(APP_OBJS) $(FE_OBJS) \
-	  $(GB_OBJS) $(CORE_R) $(CORE_B) $(CORE_A) $(MBEDTLS_LIBS) -lstdc++ -lm -lpthread
+	  $(GB_OBJS) $(LINK_CORES) $(MBEDTLS_LIBS) $(LIB_CXX) -lm -lpthread
 
 # ROMS: a directory of extra test cartridges for run_tests.sh (default: the
 # ones the port builds itself).

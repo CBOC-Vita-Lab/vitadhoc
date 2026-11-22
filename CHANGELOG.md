@@ -49,6 +49,13 @@ and in emulators; none of it has run on a real Vita yet (see
 
 **Smoother play**
 
+- **Faster Super NES Mode 7 and wide view.** Games with a rotating or
+  scaling floor (Super Metroid's intro, F-Zero, Pilotwings) draw that floor
+  with fewer instructions, and a wide-view margin that did not change since
+  the last frame is not drawn again. The pictures, the sound and the game
+  state are identical to before (checked on 15 games, 3000 frames each).
+  Measured on a computer, not yet on a Vita.
+
 - **Smooth 50 Hz for European games.** PAL games on the Vita's 60 Hz screen
   no longer show one picture twice every tenth of a second. The game, its sound
   and its input run at their true speed; scrolling just looks even. On by

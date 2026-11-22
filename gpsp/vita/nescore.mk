@@ -44,10 +44,23 @@ $(B)/nescore/wk/%.o: $(NES_WK)/src/%.cpp $(FLAGS_STAMP)
 	$(CXX) -MMD -MP $(CORE_ARCH_FLAGS) $(NES_OPT) -g -std=c++11 -w -fno-exceptions -fno-rtti \
 	  -I$(NES_WK)/include -I$(NES_WK)/src -c -o $@ $<
 
+ifneq ($(HOST_OS),macos)
 $(B)/nescore/nescore_linked.o: $(NES_CORE_OBJS) $(B)/nescore/host.o $(B)/nescore/wide.o $(NES_WK_OBJS)
 	$(LD_R) -r -o $@.tmp $^
 	$(OBJCOPY) -w --keep-global-symbol='nes_host_*' $@.tmp $@
 	@rm -f $@.tmp
+NES_PRIV := $(B)/nescore/nescore_linked.o
+else
+# Mach-O: no objcopy -w; every global but nes_host_* gets a private prefix
+# (tools/build/macho-group.sh) and the archive is linked whole (-force_load).
+NES_PRIV := $(B)/nescore/nescore_priv.a
+$(NES_PRIV): $(NES_CORE_OBJS) $(B)/nescore/host.o $(B)/nescore/wide.o $(NES_WK_OBJS) $(MACHO_GROUP)
+	sh $(MACHO_GROUP) $(NM) $(OBJCOPY) '$(SYM_US)' $@.d nesp_ '^nes_host_' '' '' \
+	  $(NES_CORE_OBJS) $(B)/nescore/host.o $(B)/nescore/wide.o $(NES_WK_OBJS)
+	@rm -f $@
+	$(AR) rcs $@ $@.d/*.o
+	@rm -rf $@.d
+endif
 
 $(B)/nescore/nescore.o: $(GP)/nescore/nescore.c $(GP)/nescore/nescore.h $(NES_DIR)/frontend/host.h $(FE_STAMP)
 	@mkdir -p $(dir $@)
@@ -56,5 +69,5 @@ $(B)/nescore/gbcore_mux.o: $(GP)/nescore/gbcore_mux.c $(GP)/nescore/gbcore_mux.h
 	@mkdir -p $(dir $@)
 	$(CC) $(FE_FLAGS) $(FE_INC) -I$(GP)/gbcore -MMD -MP -c -o $@ $<
 
-NES_OBJS := $(B)/nescore/nescore_linked.o $(B)/nescore/nescore.o $(B)/nescore/gbcore_mux.o
+NES_OBJS := $(if $(filter macos,$(HOST_OS)),,$(NES_PRIV)) $(B)/nescore/nescore.o $(B)/nescore/gbcore_mux.o
 -include $(shell find $(B)/nescore -name '*.d' 2>/dev/null)

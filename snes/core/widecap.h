@@ -112,6 +112,14 @@ extern uint8  g_s9x_wide_verify;      /* S9xWideVerify: draw every pass (test) *
 extern uint8  g_s9x_wide_fco;         /* centre only (S9xWideCentreOnly), latched for the frame being emulated: no margin passes, the hook still gets the centre picture */
 extern uint8  g_s9x_wide_fm;          /* margin latched for the frame being emulated */           /* margin the next frame is drawn with (0 = wide view off) */
 extern uint16 g_s9x_vage[32768];
+/* margin strip cache (gfx.cpp): a version number per 2 KB block of VRAM (every write takes the next number of g_s9x_vseq), copied into every
+ * render job; 1 = the cache is on (default; snes_host_set_option "wide_cache"); 1 = every cache hit is checked against a fresh draw ("wide_cache_verify");
+ * counters: 0 lines served from the cache, 1 lines drawn, 2 batches, 3 verified lines, 4 lines that differed from the fresh draw (must stay 0) */
+extern uint64_t g_s9x_vseq;		/* 64 bit: a 32 bit counter wraps after hours of play and stale strips could be served */
+extern uint64_t g_s9x_vblk[32];
+extern int g_s9x_wcache, g_s9x_wcache_verify;
+extern uint64_t g_s9x_wcache_stat[8];
+void S9xWideBumpVRAM(void);                                /* every block of VRAM counts as written (wide view switched on, state loaded, reset) */
 extern uint16 g_s9x_uage[2048];
 extern SWideHook g_s9x_wide_hook;
 extern void  *g_s9x_wide_user;

@@ -7,6 +7,9 @@
 #include <string.h>
 
 #include "fe_gbadual.h"
+#ifdef __APPLE__
+#define FE_BIMAGE_HEAP_PRISTINE        /* macOS: the pristine copy is not inside B's .bss (below) */
+#endif
 #include "fe_gbadual_image.h"
 #include "fe_gblink.h"
 #include "fe_console.h"
@@ -52,6 +55,19 @@ extern uint32_t gamepak_page_loads, gbab_gamepak_page_loads;
  * (These six groups are what every GBA_LINK core has; they used to sit
  * inside the PSP block below, which is the only reason this file did not
  * compile for another platform.  Nothing changes for the PSP.) */
+#ifdef __APPLE__
+/* Mach-O (hostcore ARCH=macos) has no linker script.  Instance B is compiled
+ * with its .data in the section __DATA,__gbab_d and its zero-initialised
+ * state in __DATA,__gbab_z (vita/corebuild.mk), and the linker's own
+ * section$start$ / section$end$ symbols are the marks.  The pristine copy of
+ * .data is a heap block made by fe_gbadual_boot (no room reserved in .bss). */
+extern char gbab_bdata_start[] __asm("section$start$__DATA$__gbab_d") __attribute__((weak));
+extern char gbab_bdata_end[] __asm("section$end$__DATA$__gbab_d") __attribute__((weak));
+extern char gbab_bregion_start[] __asm("section$start$__DATA$__gbab_z") __attribute__((weak));
+extern char gbab_bregion_lend[] __asm("section$end$__DATA$__gbab_z") __attribute__((weak));
+static char *gbab_bdata_pristine;
+static char *gbab_bdata_pristine_end;
+#else
 extern char gbab_bdata_start[] __attribute__((weak));
 extern char gbab_bdata_end[] __attribute__((weak));
 extern char gbab_bdata_pristine[] __attribute__((weak));
@@ -60,6 +76,7 @@ extern char gbab_bregion_lend[] __attribute__((weak));
 /* End of the pristine copy's room (vita/gba_instance_b.ld; the PSP script
  * does not mark it). */
 extern char gbab_bdata_pristine_end[] __attribute__((weak));
+#endif
 extern uint8_t *gamepak_spare_pool2;
 extern uint32_t gamepak_spare_pool2_bytes;
 extern uint32_t gbalink_headless_audio, gbab_gbalink_headless_audio;
@@ -304,6 +321,15 @@ void fe_gbadual_boot(void)
    int rc;
    if (g_bpristine)
       return;
+#ifdef __APPLE__
+   if (gbab_bdata_start && gbab_bdata_end && !gbab_bdata_pristine)
+   {
+      size_t n = (size_t)(gbab_bdata_end - gbab_bdata_start);
+      gbab_bdata_pristine = (char *)malloc(n ? n : 1);
+      if (gbab_bdata_pristine)
+         gbab_bdata_pristine_end = gbab_bdata_pristine + n;
+   }
+#endif
    b = b_image();
    rc = fe_bimage_check(&b, &why);
    if (rc == FE_BIMAGE_ABSENT)

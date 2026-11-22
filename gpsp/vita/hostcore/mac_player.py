@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""mac_player.py -- the aarch64 (or any) twin as the SECOND PLAYER against a real Vita.
+"""mac_player.py -- the twin (the native macOS build, or the aarch64 Linux one) as the SECOND PLAYER
+against a real Vita.
 
 The twin has no screen watcher and no keyboard: it is driven by a scripted pad (see
 plat_host.c, THE SCRIPT).  This tool writes a data root and that script for one of the
 four ways a second player takes part, starts the twin in real time, and leaves a log and
-pictures behind.  Run it in the Linux VM on the Mac (see docs/TESTING.md, "Second player
-on a Mac"); it needs only python3 (and Pillow, which link_tests.py imports).
+pictures behind.  Run it on the Mac itself with the native build
+(make -C gpsp/vita/hostcore ARCH=macos, or tools/build/macos-build.sh; docs/TESTING.md,
+"Second player on a Mac") or in an aarch64 Linux VM with the aarch64 build; it needs only
+python3 and Pillow (python3 -m pip install pillow), which link_tests.py imports.
 
-    mac_player.py --exe ./gbadhoc_host-aarch64 --rom game.gba --join ABCDE
+    mac_player.py --exe gpsp/vita/hostcore/build/macos/gbadhoc_host --rom game.gba --join ABCDE
         Online: the Vita is hosting (Play together > Online) and shows the 5 character code.
     mac_player.py ... --join-lan --ip 192.168.1.50
         Same Wi-Fi: the Vita is hosting a Link Cable / Game Boy / Wireless Adapter room.
@@ -19,8 +22,9 @@ on a Mac"); it needs only python3 (and Pillow, which link_tests.py imports).
     --rom       the game; it must be the SAME game the Vita plays (Link Cable carries the
                 host's cartridge across, a Game Boy / NES / WonderSwan link needs the file)
     --root DIR  the data root (default ./mac-root): roms, saves, log/gbadhoc.log, pictures
-    --ip, --mask  the VM's LAN address for the Same Wi-Fi modes (the twin's stand-in for the
-                console's Wi-Fi; the VM's network must be BRIDGED to the Wi-Fi, same subnet)
+    --ip, --mask  this machine's LAN address for the Same Wi-Fi modes (the twin's stand-in for the
+                console's Wi-Fi; same subnet as the Vita).  On a Mac they are found by
+                themselves (en0, en1) when left out.  In a VM the network must be BRIDGED.
     --play SEC  after the link forms, press a pattern for SEC seconds (default 60), then
                 disconnect and quit.  --pattern "cross,right,cross,left" is the pad's turn.
     (The version string link rooms compare is fixed when the twin is BUILT: HOST_VERSION=.)
@@ -41,6 +45,22 @@ import link_tests as L          # noqa: E402  (the script helpers: open_play, ke
 import online_tests as O        # noqa: E402  (the code pad: join_script)
 
 PRESS, GAP = L.PRESS, L.GAP
+
+
+def lan_address():
+    """(ip, mask) of this machine's Wi-Fi or Ethernet on macOS (en0, en1, ...), or ("", "")."""
+    if sys.platform != "darwin":
+        return "", ""
+    for ifc in ("en0", "en1", "en2", "en3"):
+        try:
+            txt = subprocess.run(["ifconfig", ifc], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        m = re.search(r"inet (\d+\.\d+\.\d+\.\d+) netmask (0x[0-9a-fA-F]{8})", txt)
+        if m:
+            n = int(m.group(2), 16)
+            return m.group(1), ".".join(str((n >> sh) & 255) for sh in (24, 16, 8, 0))
+    return "", ""
 
 
 def pattern_script(names, seconds):
@@ -86,6 +106,12 @@ def main():
     ap.add_argument("--qemu", action="store_true")
     ap.add_argument("--extra", default="", help="more twin arguments")
     a = ap.parse_args()
+    if not a.ip:
+        a.ip, found_mask = lan_address()
+        if a.ip:
+            print("LAN address %s / %s (found on this Mac)" % (a.ip, found_mask), flush=True)
+            if a.mask == ap.get_default("mask"):
+                a.mask = found_mask
     if (a.join_lan or a.host_lan) and not a.ip:
         sys.exit("--ip: this machine's address on the Wi-Fi's subnet is needed for Same Wi-Fi rooms")
     root = os.path.abspath(a.root)
@@ -104,7 +130,7 @@ def main():
     with open(os.path.join(root, "config.ini"), "w") as f:
         f.write("".join("%s = %s\n" % kv for kv in cfg.items()))
     with open(os.path.join(root, "nethost.ini"), "w") as f:
-        f.write("wifi = 1\nssid = MacVM\nip = %s\nmask = %s\n" % (a.ip or "10.0.2.15", a.mask))
+        f.write("wifi = 1\nssid = Mac\nip = %s\nmask = %s\n" % (a.ip or "10.0.2.15", a.mask))
     script = os.path.join(root, "script.txt")
     open(script, "w").write(build_script(a))
     cmd = (["qemu-aarch64"] if a.qemu else []) + [os.path.abspath(a.exe), "--root", root, "--realtime",

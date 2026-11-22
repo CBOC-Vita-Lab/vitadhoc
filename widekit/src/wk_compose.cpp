@@ -23,7 +23,11 @@ template <class V> inline V vld(const void *p) { V v; memcpy(&v, p, sizeof v); r
 template <class V> inline void vst(void *p, V v) { memcpy(p, &v, sizeof v); }
 inline vu16 widen8(const uint8_t *p) { return __builtin_convertvector(vld<vu8h>(p), vu16); }
 inline vu16 splat16(unsigned v) { const uint16_t x = (uint16_t)v; return (vu16){x, x, x, x, x, x, x, x}; }
+#if defined(__clang__)
+inline vu16 rev16v(vu16 v) { return __builtin_shufflevector(v, v, 7, 6, 5, 4, 3, 2, 1, 0); }
+#else
 inline vu16 rev16v(vu16 v) { return __builtin_shuffle(v, (vu16){7, 6, 5, 4, 3, 2, 1, 0}); }
+#endif
 inline vu8 rev8v(vu8 v)
 {
     vu16 w = (vu16)v;

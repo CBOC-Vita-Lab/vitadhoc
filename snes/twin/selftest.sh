@@ -5,6 +5,7 @@
 #  3. battery RAM: loaded, saved, the previous file kept as .bak
 #  4. a ROM with a copier header loads like the headerless file
 #  5. audio pacing scenarios S1..S7 (audio_sim.sh)
+#  (and, with snes_wide_twin built, the wide view proofs, among them the margin strip cache under change: wide_cache_proof.sh)
 # Copyright CBOC-Vita. MIT licence.
 HERE=$(cd "$(dirname "$0")" && pwd)
 TWIN=${TWIN:-$HERE/build/snes_twin}
@@ -324,6 +325,11 @@ if [ -x "$WT" ]; then
 		[ -s $T/wide/mt0.wh ] && cmp -s $T/wide/mt0.wh $T/wide/mt1.wh && cmp -s $T/wide/mt0.wh $T/wide/mt2.wh && [ -s $T/wide/mt3.wh ] && cmp -s $T/wide/mt3.wh $T/wide/mt4.wh || mth="DIFF ($n)"
 	done
 	[ "$mth" = same ] && ok "wide view, margin thread: same wide picture as one thread, with and without it, and through off / on switches (against one thread) (3 cartridges, 600 frames)" || bad "wide view, margin thread: $mth"
+	# the margin strip cache under change (wide_cache_proof.sh): random writes between frames and lines, the VRAM write counter across 2^32, state load, reset,
+	# margin change, the margin thread joining and leaving, the cost ladder; each against a run without the cache and the fast pixel paths, and every hit checked
+	# against a fresh draw. Needs the hooked core of snes_wide_twin ($WT).
+	WIDE_TWIN=$WT SCEN=${WIDE_CACHE_SCEN:-"fuzz fuzzmt wrap reload reset margin toggle ladder"} sh "$HERE/wide_cache_proof.sh" $T/wide/cp 600 $T/wide/wide_scroll64.sfc $T/wide/wide_mode7.sfc >$T/wide/cp.txt 2>&1 \
+		&& ok "wide view strip cache under change: $(grep -c '^ok' $T/wide/cp.txt) scenarios identical to the run without the cache, 0 lines differing from a fresh draw (2 cartridges, 600 frames)" || { cat $T/wide/cp.txt; bad "wide view strip cache under change"; }
 	if [ -x "$PT" ]; then
 		mkdir -p $T/ptwide
 		"$PT" wide $T/wide/wide_scroll64.sfc $T/ptwide >$T/ptwide.txt 2>&1 && ok "wide view in the player: $(grep 'player_twin:' $T/ptwide.txt | tail -1 | sed 's/player_twin: //')" \

@@ -456,7 +456,16 @@ void S9xDoHEventProcessing (void)
 
 		case HC_RENDER_EVENT:
 			if (CPU.V_Counter >= FIRST_VISIBLE_LINE && CPU.V_Counter <= PPU.ScreenHeight)
+			{
 				RenderLine((uint8) (CPU.V_Counter - FIRST_VISIBLE_LINE));
+			#ifdef CBOC_TEST_LINE_HOOK
+				// test builds only (snes/twin, wide_fuzz.cpp): register / memory writes in the middle of a frame, as a game's would be (after the line's
+				// record is taken, like a write in the line's HBlank)
+				extern void (*g_s9x_test_line_hook)(int);
+				if (g_s9x_test_line_hook)
+					g_s9x_test_line_hook(CPU.V_Counter - FIRST_VISIBLE_LINE);
+			#endif
+			}
 
 			S9xReschedule();
 

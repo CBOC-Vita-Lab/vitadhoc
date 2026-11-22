@@ -36,8 +36,14 @@ else ifeq ($(TARGET),aarch64)
   CC := $(CROSS)gcc
   AR := $(CROSS)ar
   ARCH := -fPIC
+else ifeq ($(TARGET),macos)
+  # the native macOS twin (hostcore ARCH=macos): Apple clang, make 3.81 is enough
+  MACOS_MIN ?= 12.0
+  CC := clang
+  AR := ar
+  ARCH := -mmacosx-version-min=$(MACOS_MIN)
 else
-  $(error TARGET must be vita, host32, host64 or aarch64)
+  $(error TARGET must be vita, host32, host64, aarch64 or macos)
 endif
 CFLAGS := $(ARCH) $(ABI) -O2 -g0 -std=gnu99 -Wall -Wno-unused-function -I$(OUT)/include -I$(SRC)/library \
           -ffile-prefix-map=$(SRC)=mbedtls -ffile-prefix-map=$(OUT)=prefix

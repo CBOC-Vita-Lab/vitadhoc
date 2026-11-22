@@ -212,6 +212,11 @@ typedef struct nd_sem
 {
 #ifdef VITA
    SceUID id;
+#elif defined(__APPLE__)
+   /* macOS: sem_init() fails there and there is no sem_timedwait() */
+   pthread_mutex_t m;
+   pthread_cond_t  c;
+   unsigned        n;
 #else
    sem_t s;
 #endif
@@ -222,6 +227,17 @@ static inline int nd_sem_init(nd_sem *s, int max)
 #ifdef VITA
    s->id = sceKernelCreateSema("nd_sem", 0, 0, max, NULL);
    return s->id < 0 ? -1 : 0;
+#elif defined(__APPLE__)
+   (void)max;
+   s->n = 0;
+   if (pthread_mutex_init(&s->m, NULL) != 0)
+      return -1;
+   if (pthread_cond_init(&s->c, NULL) != 0)
+   {
+      pthread_mutex_destroy(&s->m);
+      return -1;
+   }
+   return 0;
 #else
    (void)max;
    return sem_init(&s->s, 0, 0) != 0 ? -1 : 0;
@@ -232,6 +248,9 @@ static inline void nd_sem_destroy(nd_sem *s)
 {
 #ifdef VITA
    sceKernelDeleteSema(s->id);
+#elif defined(__APPLE__)
+   pthread_cond_destroy(&s->c);
+   pthread_mutex_destroy(&s->m);
 #else
    sem_destroy(&s->s);
 #endif
@@ -243,6 +262,11 @@ static inline void nd_sem_post(nd_sem *s)
    /* fails harmlessly when the count is at its cap: the consumer is already
     * due to wake */
    sceKernelSignalSema(s->id, 1);
+#elif defined(__APPLE__)
+   pthread_mutex_lock(&s->m);
+   s->n++;
+   pthread_cond_signal(&s->c);
+   pthread_mutex_unlock(&s->m);
 #else
    sem_post(&s->s);
 #endif
@@ -264,7 +288,19 @@ static inline void nd_sem_wait(nd_sem *s, uint32_t timeout_us)
       ts.tv_sec++;
       ts.tv_nsec -= 1000000000L;
    }
+#ifdef __APPLE__
+   {
+      int rc = 0;
+      pthread_mutex_lock(&s->m);
+      while (s->n == 0 && rc == 0)
+         rc = pthread_cond_timedwait(&s->c, &s->m, &ts);
+      if (s->n)
+         s->n--;
+      pthread_mutex_unlock(&s->m);
+   }
+#else
    sem_timedwait(&s->s, &ts);
+#endif
 #endif
 }
 

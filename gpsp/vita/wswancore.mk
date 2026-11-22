@@ -32,10 +32,22 @@ $(B)/wswan/host.o: $(WS_DIR)/frontend/host.cpp $(WS_DIR)/frontend/host.h $(FLAGS
 	$(CXX) $(CORE_ARCH_FLAGS) $(WS_OPT) -g -std=gnu++11 -fno-strict-aliasing -fno-exceptions \
 	  -fno-rtti -fno-threadsafe-statics $(WS_INC) -MMD -MP -c -o $@ $<
 
+ifneq ($(HOST_OS),macos)
 $(B)/wswan/wswancore.o: $(WS_CORE_OBJS) $(B)/wswan/host.o
 	$(LD_R) -r -o $@.tmp $^
 	$(OBJCOPY) -w --keep-global-symbol='wswan_host_*' $@.tmp $@
 	@rm -f $@.tmp
+WS_PRIV := $(B)/wswan/wswancore.o
+else
+# Mach-O: as nescore.mk (tools/build/macho-group.sh, linked whole).
+WS_PRIV := $(B)/wswan/wswancore_priv.a
+$(WS_PRIV): $(WS_CORE_OBJS) $(B)/wswan/host.o $(MACHO_GROUP)
+	sh $(MACHO_GROUP) $(NM) $(OBJCOPY) '$(SYM_US)' $@.d wsp_ '^wswan_host_' '' '' \
+	  $(WS_CORE_OBJS) $(B)/wswan/host.o
+	@rm -f $@
+	$(AR) rcs $@ $@.d/*.o
+	@rm -rf $@.d
+endif
 
 $(B)/wswan/blend.o: $(WS_DIR)/frontend/blend.c $(WS_DIR)/frontend/blend.h $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
@@ -47,5 +59,5 @@ $(B)/wswan/wscore.o: $(GP)/wscore/wscore.c $(GP)/wscore/wscore.h $(WS_DIR)/front
 	@mkdir -p $(dir $@)
 	$(CC) $(FE_FLAGS) $(FE_INC) -MMD -MP -c -o $@ $<
 
-WS_OBJS := $(B)/wswan/wswancore.o $(B)/wswan/blend.o $(B)/wswan/layout.o $(B)/wswan/wscore.o
+WS_OBJS := $(if $(filter macos,$(HOST_OS)),,$(WS_PRIV)) $(B)/wswan/blend.o $(B)/wswan/layout.o $(B)/wswan/wscore.o
 -include $(shell find $(B)/wswan -name '*.d' 2>/dev/null)

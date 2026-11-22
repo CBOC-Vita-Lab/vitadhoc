@@ -132,6 +132,8 @@ const uint16_t *snes_host_video_nowait(int *width, int *height, int *pitch_bytes
 /* Core number (0..2, -1 = any) and Vita priority of the workers, and how many empty polls an idle
  * worker makes before it blocks on a semaphore. Call before enabling the threads. */
 void snes_host_thread_config(int apu_core, int apu_prio, int ppu_core, int ppu_prio, int spin);
+/* the wide view's margin strip cache (options "wide_cache", "wide_cache_verify"): 0 lines served from the cache, 1 lines drawn, 2 batches, 3 lines checked, 4 lines that differed (0 = exact) */
+void snes_host_wide_cache_stats(uint64_t out[8]);
 void snes_host_sync(void); /* wait until the worker threads have caught up with the emulation */
 int snes_host_threads_active(void); /* bit 0 APU thread, bit 1 PPU thread, bit 2 the wide view's margin thread (only while the wide view is on) */
 /* The wide view's margin thread (option "wide_thread", default 1; it exists only with the PPU thread and while the wide view is on): core 0..2,

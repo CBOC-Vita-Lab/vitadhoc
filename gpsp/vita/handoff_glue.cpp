@@ -20,8 +20,8 @@
 #include <psp2/kernel/processmgr.h>
 #else
 #include <pthread.h>
-#include <semaphore.h>
 #include <errno.h>
+#include "host_sem.h"
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -62,16 +62,16 @@ struct Sys : pk::HandoffSys {
    uint64_t now_us() { return plat_time_us(); }
    void *sem_create()
    {
-      sem_t *s = (sem_t *)malloc(sizeof(sem_t));
-      if (s && sem_init(s, 0, 0) != 0) { free(s); s = NULL; }
+      host_sem_t *s = (host_sem_t *)malloc(sizeof(host_sem_t));
+      if (s && host_sem_init(s, 0) != 0) { free(s); s = NULL; }
       return s;
    }
-   void sem_destroy(void *s) { ::sem_destroy((sem_t *)s); free(s); }
-   void sem_post(void *s) { ::sem_post((sem_t *)s); }
+   void sem_destroy(void *s) { host_sem_destroy((host_sem_t *)s); free(s); }
+   void sem_post(void *s) { host_sem_post((host_sem_t *)s); }
    bool sem_wait(void *s, uint32_t timeout_us)
    {
       if (timeout_us == 0xFFFFFFFFu) {
-         while (::sem_wait((sem_t *)s) != 0 && errno == EINTR) {}
+         while (host_sem_wait((host_sem_t *)s) != 0 && errno == EINTR) {}
          return true;
       }
       struct timespec ts;
@@ -80,7 +80,7 @@ struct Sys : pk::HandoffSys {
       ts.tv_sec += (time_t)(ns / 1000000000u);
       ts.tv_nsec = (long)(ns % 1000000000u);
       int r;
-      while ((r = ::sem_timedwait((sem_t *)s, &ts)) != 0 && errno == EINTR) {}
+      while ((r = host_sem_timedwait((host_sem_t *)s, &ts)) != 0 && errno == EINTR) {}
       return r == 0;
    }
 };

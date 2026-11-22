@@ -437,6 +437,11 @@ int snes_host_audio_take(int16_t *dst, int max_frames)
 	return (int) (want / 2);
 }
 
+extern int g_s9x_fastpix;	/* core/globals.cpp */
+extern int g_s9x_wcache, g_s9x_wcache_verify;	/* core/ppu_mt.cpp */
+extern uint64_t g_s9x_wcache_stat[8];
+void snes_host_wide_cache_stats(uint64_t out[8]) { for (int i = 0; i < 8; i++) out[i] = g_s9x_wcache_stat[i]; }
+
 int snes_host_set_option(const char *name, int v)
 {
 	if (!strcmp(name, "apu_thread")) {
@@ -460,6 +465,9 @@ int snes_host_set_option(const char *name, int v)
 		    : v == 3 ? DSP_INTERPOLATION_CUBIC : v == 4 ? DSP_INTERPOLATION_SINC : DSP_INTERPOLATION_GAUSSIAN;
 	else if (!strcmp(name, "superfx_clock")) Settings.SuperFXClockMultiplier = v;
 	else if (!strcmp(name, "gsu_cycles")) Settings.DisableGSUCycleMode = v ? FALSE : TRUE;	/* 0 = the 1.63 flat instruction budget; takes effect at the next ROM load */
+	else if (!strcmp(name, "wide_cache")) g_s9x_wcache = v ? 1 : 0;	/* 0 = the margin strips of every line are drawn every frame (as before the strip cache); same pictures, slower */
+	else if (!strcmp(name, "wide_cache_verify")) g_s9x_wcache_verify = v ? 1 : 0;	/* test: every line served from the strip cache is also drawn fresh and compared (counter 4 in snes_host_wide_cache_stats must stay 0) */
+	else if (!strcmp(name, "fast_pixels")) __atomic_store_n(&g_s9x_fastpix, v ? 1 : 0, __ATOMIC_RELAXED);	/* 0 = the per-pixel reference paths of the renderer (Mode 7 loop, mixed tile rows); same pictures, slower */
 	else if (!strcmp(name, "gsu_fast")) fx_fast = v ? 1 : 0;	/* 0 = the reference Super FX interpreter; same results, slower */
 	else if (!strcmp(name, "transparency")) Settings.Transparency = v ? TRUE : FALSE;
 	else if (!strcmp(name, "echo_buffer")) Settings.SeparateEchoBuffer = v ? TRUE : FALSE;

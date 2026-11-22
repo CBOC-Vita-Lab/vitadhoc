@@ -10,9 +10,13 @@
 #include "snes9x.h"
 #include "ppu.h"
 #include "tile.h"
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 extern struct SLineMatrixData	LineMatrixData[240];
 extern int g_wide_on, g_wide_dx;	// CBOC-Vita: wide view pass (gfx.cpp)
+extern int g_s9x_fastpix;			// CBOC-Vita: 1 = the exact fast pixel paths (default; host option "fast_pixels"), 0 = the per-pixel reference paths (globals.cpp: one copy shared by the renderer copies)
 
 
 namespace TileImpl {
@@ -192,20 +196,41 @@ namespace TileImpl {
 		// eight pixels at once: the same as Calc() for each (out[i] = Calc(main8[i], SubScreen[Offset+i], SubZ[Offset+i]))
 		static alwaysinline void CalcRow8(const PixCtx &c, const uint32 *main8, uint32 Offset, uint16 *out)
 		{
-			uint32 other[8];
-			for (int i = 0; i < 8; i++)
-				other[i] = (c.SubZ[Offset + i] & 0x20) ? c.SubScreen[Offset + i] : (uint32) c.FixedColour;
-			uint32 res[8];
+			// four lanes a step: other = (SubZ & 0x20) ? SubScreen : FixedColour, the same bit for bit as the scalar form
+#if defined(__ARM_NEON)
+			// the generic vector form widens the four SubZ bytes through the stack on the Vita's compiler (scalar loads and stores); the same steps in NEON
+			const uint32x4_t fixedq = vdupq_n_u32(c.FixedColour);
 			for (int h = 0; h < 8; h += 4)
 			{
-				s9x_v4u a, b, r;
-				memcpy(&a, main8 + h, 16);
-				memcpy(&b, other + h, 16);
-				r = Op::fnV(a, b);
-				memcpy(res + h, &r, 16);
+				uint32 zw;
+				memcpy(&zw, c.SubZ + Offset + h, 4);
+				const uint32x4_t zz = vmovl_u16(vget_low_u16(vmovl_u8(vreinterpret_u8_u32(vdup_n_u32(zw)))));
+				const uint32x4_t ss = vmovl_u16(vld1_u16(c.SubScreen + Offset + h));
+				const uint32x4_t sel = vtstq_u32(zz, vdupq_n_u32(0x20u));
+				const uint32x4_t other = vbslq_u32(sel, ss, fixedq);
+				const s9x_v4u r = Op::fnV((s9x_v4u) vld1q_u32(main8 + h), (s9x_v4u) other);
+				vst1_u16(out + h, vmovn_u32((uint32x4_t) r));
 			}
-			for (int i = 0; i < 8; i++)
-				out[i] = (uint16) res[i];
+#else
+			typedef uint8 v4u8 __attribute__((vector_size(4)));
+			typedef uint16 v4u16 __attribute__((vector_size(8)));
+			const s9x_v4u fixed = { c.FixedColour, c.FixedColour, c.FixedColour, c.FixedColour };
+			for (int h = 0; h < 8; h += 4)
+			{
+				v4u8 z8;
+				v4u16 s16;
+				memcpy(&z8, c.SubZ + Offset + h, 4);
+				memcpy(&s16, c.SubScreen + Offset + h, 8);
+				const s9x_v4u zz = __builtin_convertvector(z8, s9x_v4u);
+				const s9x_v4u ss = __builtin_convertvector(s16, s9x_v4u);
+				const s9x_v4u sel = (s9x_v4u) ((zz & 0x20u) != 0u);
+				const s9x_v4u other = (ss & sel) | (fixed & ~sel);
+				s9x_v4u a;
+				memcpy(&a, main8 + h, 16);
+				const v4u16 o = __builtin_convertvector(Op::fnV(a, other), v4u16);
+				memcpy(out + h, &o, 8);
+			}
+#endif
 		}
 		// the result for a pixel whose sub-screen flag (SD & 0x20) is clear: independent of the sub-screen pixel
 		static alwaysinline uint16 CalcConst(const PixCtx &c, uint16 Main) { return Op::fn(Main, c.FixedColour); }
@@ -327,6 +352,22 @@ namespace TileImpl {
 				PIXEL::math_t::CalcRow8(ctx, mc, Offset, sp);
 				const uint64 zz = (uint64) z2 * ones;
 				memcpy(ctx.DB + Offset, &zz, 8);
+			}
+			else if (PIXEL::math_t::Vec && __atomic_load_n(&g_s9x_fastpix, __ATOMIC_RELAXED) && ({ uint64 t3 = m & (m - 1); t3 &= t3 - 1; t3 != 0; }))
+			{
+				// a mixed row with plain add / subtract maths: the maths is a pure function of the pixel's colour and the
+				// sub screen at that position, so it is done for all eight lanes at once and only the drawn lanes are stored
+				uint32 mc[8];
+				uint16 res[8];
+				for (int i = 0; i < 8; i++)
+					mc[i] = ctx.ScreenColors[(pix >> (8 * i)) & 0xff];
+				PIXEL::math_t::CalcRow8(ctx, mc, Offset, res);
+				do {
+					const int i = __builtin_ctzll(m) >> 3;
+					sp[i] = res[i];
+					ctx.DB[Offset + i] = z2;
+					m &= m - 1;
+				} while (m);
 			}
 			else if (PIXEL::Fill && m == hi)
 			{
@@ -700,6 +741,9 @@ namespace TileImpl {
 	//     MASK is 0xff or 0x7f, the 'color' portion of the pixel.
 	// We define Z1/Z2 to either be constant 5 or to vary depending on the 'priority' portion of the pixel.
 
+	typedef int s9x_v4i __attribute__((vector_size(16)));
+	enum { Mode7Chunk = 128 };
+
 	#define CLIP_10_BIT_SIGNED(a)	(((a) & 0x2000) ? ((a) | ~0x3ff) : ((a) & 0x3ff))
 
 	#define DRAW_PIXEL(N, M) PIXEL::Draw(ctx, N, M, Offset, OffsetInLine, Pix, OP::Z1(D, b), OP::Z2(D, b))
@@ -708,7 +752,8 @@ namespace TileImpl {
 	{
 		enum {
 			MASK = 0xff,
-			BG   = 0
+			BG   = 0,
+			VARZ = 0		// the depth is the same for every pixel of the BG
 		};
 		static uint8 Z1(int D, uint8 b) { return D + 7; }
 		static uint8 Z2(int D, uint8 b) { return D + 7; }
@@ -718,7 +763,8 @@ namespace TileImpl {
 	{
 		enum {
 			MASK = 0x7f,
-			BG   = 1
+			BG   = 1,
+			VARZ = 1		// the depth depends on the pixel's priority bit
 		};
 		static uint8 Z1(int D, uint8 b) { return D + ((b & 0x80) ? 11 : 3); }
 		static uint8 Z2(int D, uint8 b) { return D + ((b & 0x80) ? 11 : 3); }
@@ -792,6 +838,76 @@ namespace TileImpl {
 				int	CC = l->MatrixC * startx + ((l->MatrixC * xx) & ~63);
 
 				uint8	Pix;
+
+				if (PIXEL::Step == 1 && !OP::VARZ && __atomic_load_n(&g_s9x_fastpix, __ATOMIC_RELAXED))
+				{
+					// CBOC-Vita: the line in two steps. First the pixel bytes of the line are fetched into a buffer (a pixel the
+					// loop below would skip, outside the plane with repeat off, is a 0 byte, which it skips as well), then
+					// the buffer is drawn eight pixels at a time by DrawRow8, which does what the per-pixel plotter does
+					// (same depth test, same colour maths, same stores). Same pixels, same depth, far fewer instructions.
+					const uint8 z = (uint8) (D + 7);
+					const uint8 rep = PPU.Mode7Repeat;
+					uint8 pb[Mode7Chunk + 8];	// + the up to three extra pixels of the last vector step
+					for (uint32 x0 = Left; x0 < Right; x0 += Mode7Chunk)
+					{
+						const uint32 n = (Right - x0) < Mode7Chunk ? (Right - x0) : Mode7Chunk;
+						// the plane position of a pixel is linear in its index, so when the first and the last pixel of the run are
+						// inside the plane (or the plane wraps) every pixel is: no per-pixel range test then
+						const int Xa = (AA + BB) >> 8, Ya = (CC + DD) >> 8;
+						const int Xb = (AA + (int) (n - 1) * aa + BB) >> 8, Yb = (CC + (int) (n - 1) * cc + DD) >> 8;
+						if (!rep || (((Xa | Ya | Xb | Yb) & ~0x3ff) == 0))
+						{
+							// four pixels a step: the plane coordinates and the two byte addresses are made as vectors, the two
+							// loads are scalar. A run is rounded up to four pixels: the extra ones read inside VRAM (the
+							// coordinates are masked to the plane) and are never drawn
+							const s9x_v4i lane = { 0, 1, 2, 3 };
+							s9x_v4i Av = AA + lane * aa, Cv = CC + lane * cc;
+							const s9x_v4i sa = { 4 * aa, 4 * aa, 4 * aa, 4 * aa }, sc = { 4 * cc, 4 * cc, 4 * cc, 4 * cc };
+							for (uint32 i = 0; i < n; i += 4)
+							{
+								const s9x_v4i X = ((Av + BB) >> 8) & 0x3ff;
+								const s9x_v4i Y = ((Cv + DD) >> 8) & 0x3ff;
+								const s9x_v4i a1 = ((Y & ~7) << 5) + ((X >> 2) & ~1);
+								const s9x_v4i a2 = ((Y & 7) << 4) + ((X & 7) << 1);
+								int ia[4], ib[4];
+								memcpy(ia, &a1, 16);
+								memcpy(ib, &a2, 16);
+								pb[i]     = VRAM1[(VRAM0[ia[0]] << 7) + ib[0]] & OP::MASK;
+								pb[i + 1] = VRAM1[(VRAM0[ia[1]] << 7) + ib[1]] & OP::MASK;
+								pb[i + 2] = VRAM1[(VRAM0[ia[2]] << 7) + ib[2]] & OP::MASK;
+								pb[i + 3] = VRAM1[(VRAM0[ia[3]] << 7) + ib[3]] & OP::MASK;
+								Av += sa; Cv += sc;
+							}
+						}
+						else
+						{
+							int A2 = AA, C2 = CC;
+							for (uint32 i = 0; i < n; i++, A2 += aa, C2 += cc)
+							{
+								const int X = ((A2 + BB) >> 8);
+								const int Y = ((C2 + DD) >> 8);
+								uint8 b;
+								if (((X | Y) & ~0x3ff) == 0)
+								{
+									const uint8 *TileData = VRAM1 + (VRAM0[((Y & ~7) << 5) + ((X >> 2) & ~1)] << 7);
+									b = *(TileData + ((Y & 7) << 4) + ((X & 7) << 1));
+								}
+								else if (rep == 3)
+									b = *(VRAM1 + ((Y & 7) << 4) + ((X & 7) << 1));
+								else
+									b = 0;
+								pb[i] = b & OP::MASK;
+							}
+						}
+						AA += (int) n * aa; CC += (int) n * cc;
+						uint32 i = 0;
+						for (; i + 8 <= n; i += 8)
+							DrawRow8<PIXEL, false>(ctx, pb + i, Offset + x0 + i, OffsetInLine, z, z);
+						for (; i < n; i++)
+							PIXEL::Draw(ctx, x0 + i, pb[i], Offset, OffsetInLine, pb[i], z, z);
+					}
+					continue;
+				}
 
 				if (!PPU.Mode7Repeat)
 				{

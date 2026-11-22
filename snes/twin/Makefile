@@ -85,7 +85,15 @@ $(B)/wide.o: $(FE)/wide.cpp $(FE)/wide.h $(CORE)/widecap.h $(wildcard $(WK)/incl
 $(B)/wide_twin.o: wide_twin.cpp $(FE)/host.h $(FE)/wide.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
-$(B)/snes_wide_twin: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin.o $(WK_OBJS)
+$(B)/wide_fuzz.o: wide_fuzz.cpp wide_fuzz.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+# snes_wide_twin has the test hook of cpuexec.cpp (CBOC_TEST_LINE_HOOK: wide_fuzz.cpp writes registers in the middle of a frame); no other build has it
+$(B)/hook/cpuexec.o: $(CORE)/cpuexec.cpp
+	@mkdir -p $(B)/hook
+	$(CXX) $(CXXFLAGS) -DCBOC_TEST_LINE_HOOK -c -o $@ $<
+-include $(B)/hook/cpuexec.d
+$(B)/snes_wide_twin: $(filter-out $(B)/core/cpuexec.o,$(CORE_OBJS)) $(B)/hook/cpuexec.o $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin.o $(B)/wide_fuzz.o $(WK_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread
 
 # scale_proof: the pixel art scaler (playerkit pk_scale) on the pictures of real runs, normal and wide, against its own definition
@@ -102,7 +110,7 @@ $(B)/scale_proof: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o
 $(B)/wide_twin_cg.o: wide_twin.cpp $(FE)/host.h $(FE)/wide.h
 	@mkdir -p $(B)
 	$(CXX) $(CXXFLAGS) -DWIDE_CALLGRIND -c -o $@ $<
-$(B)/snes_wide_twin_cg: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin_cg.o $(WK_OBJS)
+$(B)/snes_wide_twin_cg: $(CORE_OBJS) $(RCOPY_OBJS) $(B)/host.o $(B)/prof.o $(B)/wide.o $(B)/wide_twin_cg.o $(B)/wide_fuzz.o $(WK_OBJS)
 	$(CXX) -o $@ $^ -lm -pthread
 
 $(B)/rcopy.map: $(addprefix $(B)/core/,$(addsuffix .o,$(RCOPY_SRC))) $(CORE)/rcopy.sh

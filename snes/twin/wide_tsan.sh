@@ -31,4 +31,17 @@ for rom in "$@"; do
 	echo "$n: frames $(wc -l < $d/split.wh), single vs split hashes $h, vs split+workers $mt, tsan reports $reports"
 	[ "$h" = same ] && [ "$mt" = same ] && [ "$reports" = 0 ] || rc=1
 done
+# FUZZ=1: also random register / VRAM / OAM writes between frames and lines (wide_fuzz.cpp) with the strip cache checked against a fresh draw, with
+# the worker threads and the margin thread, once per ROM: TSan must print no report and the run must report 0 differing lines (needs the hooked core of snes_wide_twin).
+if [ "$FUZZ" = 1 ]; then
+	for rom in "$@"; do
+		n=$(basename "$rom" | tr ' ' '_'); n=${n%.*}
+		d=$OUT/$n; mkdir -p "$d"
+		TSAN_OPTIONS="log_path=$d/tsan_fuzz halt_on_error=0" "$WT" "$rom" --frames "$FR" --pad "$PAD" --wide 70 --fuzz 1003 --fuzz-mid --wide-toggle 53 --opt wide_cache_verify=1 --opt apu_thread=1 --opt ppu_thread=1 --wide-split --map-poll --summary >$d/fuzz.out 2>$d/fuzz.err
+		dif=$(grep '^wcache:' $d/fuzz.out | sed 's/.*differing=//')
+		reports=$(cat "$d"/tsan_fuzz* 2>/dev/null | grep -c "WARNING: ThreadSanitizer")
+		echo "$n: fuzz + strip cache check with threads: lines differing from a fresh draw ${dif:-none}, tsan reports $reports"
+		[ "$dif" = 0 ] && [ "$reports" = 0 ] || rc=1
+	done
+fi
 exit $rc

@@ -36,7 +36,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#ifdef __APPLE__
+/* macOS (the host twin): no <malloc.h>, no memalign(); the block is freed by free() */
+#include <stdlib.h>
+static inline void *memalign(size_t al, size_t n)
+{
+   void *p = NULL;
+   return posix_memalign(&p, al, n) == 0 ? p : NULL;
+}
+#else
 #include <malloc.h>
+#endif
 
 #include "ui_psp.h"
 #ifndef VITA

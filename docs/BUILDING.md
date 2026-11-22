@@ -102,6 +102,7 @@ scripted pad (see [Testing](TESTING.md)). Three architectures:
 make -C gpsp/vita/hostcore ARCH=x86 -j2          # x86-64, with the x86 recompiler
 make -C gpsp/vita/hostcore ARCH=armhf -j2        # 32-bit ARM under qemu-arm (arm-linux-gnueabihf-gcc)
 make -C gpsp/vita/hostcore ARCH=aarch64 -j2      # 64-bit ARM Linux
+make -C gpsp/vita/hostcore ARCH=macos -j2        # macOS, native (see "The twin on a Mac" below)
 ```
 
 `ARCH=aarch64` is for an Apple-silicon Mac's Linux VM (or any aarch64 Linux) as the
@@ -133,11 +134,54 @@ Two settings for a twin that talks to a real Vita:
   ("different version"). The package's own string is `CORE_VERSION` in `gpsp/vita/Makefile`
   (`4.1.1+4.5.0fixes` at the time of writing). Build the twin with it and the Vita and the
   twin hash the same build word.
-- `MBEDTLS=<aarch64 prefix>`: Online rooms are on an https service, so the twin needs Mbed
+- `MBEDTLS=<prefix of the twin's own architecture>` (`--target macos` for `ARCH=macos`): Online rooms are on an https service, so the twin needs Mbed
   TLS for its own architecture. `python3 tools/online/build-mbedtls.py --target aarch64 --work DIR`
   builds it (native on aarch64, `aarch64-linux-gnu-gcc` elsewhere); then
   `make -C gpsp/vita/hostcore ARCH=aarch64 MBEDTLS=DIR/mbedtls/aarch64 HOST_VERSION=...`.
   Same Wi-Fi rooms need no TLS.
+
+### The twin on a Mac (native macOS)
+
+`ARCH=macos` builds the twin as a native macOS program (Apple silicon or Intel), so the Mac
+itself is the second player against a real Vita on the Same Wi-Fi **and** Online (a Linux VM on
+the Mac may have no route to the room service; the native program uses the Mac's own network).
+It is modelled on `ARCH=aarch64`: Apple clang, the GBA **interpreter** (`DYNAREC=0` is forced),
+not static, not `-no-pie`; the other cores are plain C.
+
+What it needs (macOS 15 and its Xcode command line tools; nothing else is installed by the build):
+
+- `xcode-select --install` (clang, clang++, make 3.81, git) and `python3`;
+- Homebrew's LLVM: `brew install llvm`. Mach-O has neither GNU `ld -r -T` nor `objcopy`, which
+  the Linux build uses to make a second copy of the GBA core (instance B), to keep the NES,
+  WonderSwan and GB cores' many global names private, and to mark the data that is put back
+  before each session. On macOS those steps are done with `llvm-objcopy --redefine-syms`
+  and `llvm-nm` (`tools/build/macho-group.sh`; the instances' writable data sit in sections of
+  their own, `__gbab_*` and `__tgb*`, which the linker's `section$start$` symbols mark). The
+  Makefile finds them on `PATH`, in `LLVM_BIN=<dir>` or under Homebrew's prefix and stops with
+  a clear message when they are missing. GNU make 3.81, the version macOS ships, is enough
+  (nothing in these Makefiles needs make 4).
+
+The one-command build, which stops at the first failing step and prints the last 40 lines of its log:
+
+```sh
+sh tools/build/macos-build.sh [--host-version <the Vita build's CORE_VERSION>] [--no-tls]
+```
+
+It checks the tools, builds Mbed TLS for macOS (`python3 tools/online/build-mbedtls.py
+--target macos --work DIR`; the work folder must not be under `/tmp` or `/var`, which are symlinks
+on a Mac), builds the twin (`make -C gpsp/vita/hostcore ARCH=macos MBEDTLS=DIR/mbedtls/macos
+HOST_VERSION=...`, the program is `gpsp/vita/hostcore/build/macos/gbadhoc_host`) and starts it
+once for 20 refreshes. `--no-tls` skips Mbed TLS: Same Wi-Fi rooms work, Online does not.
+`HOST_VERSION` is explained below; the Mac's GBA link "backend" word is `interp`, as the aarch64
+twin's.
+
+Where the macOS code differs (all under `__APPLE__`, so the Linux builds are unchanged):
+`sem_init`/`sem_timedwait` (a mutex and condition variable: `vita/host_sem.h`, `netdrv/nd_thread.h`),
+`pthread_timedjoin_np`, `getrandom` (`getentropy`), `pthread_condattr_setclock`, `memalign`/`<malloc.h>`,
+`st_mtim`, `SYS_gettid` and `ucontext` (the optional profiler), `MSG_NOSIGNAL` (`SO_NOSIGPIPE` and
+`SIGPIPE` ignored), `SO_REUSEPORT` for the LAN discovery broadcast port, the LAN address (`en*`
+interfaces first), the assembler's font file (Mach-O sections and underscored symbols), and
+the linker (`-framework CoreFoundation` for libretro-common, libc++).
 
 ## Fast builds
 

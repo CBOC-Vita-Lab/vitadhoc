@@ -85,8 +85,13 @@
 #include <ctype.h>
 #include <signal.h>
 #include <sys/time.h>
+#ifdef __APPLE__
+/* macOS: no SYS_gettid (pthread_threadid_np), and <ucontext.h> is refused
+ * without _XOPEN_SOURCE: <signal.h> already has ucontext_t */
+#else
 #include <sys/syscall.h>
 #include <ucontext.h>
+#endif
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -327,8 +332,20 @@ static void pcp_handler(int sig, siginfo_t *si, void *vuc)
    i = __atomic_fetch_add(&pcp_n, 1, __ATOMIC_RELAXED);
    if (i >= PCPROF_CAP)
       return;
+#ifdef __APPLE__
+   {
+      uint64_t tid64 = 0;
+      pthread_threadid_np(NULL, &tid64);
+      pcp_buf[i].tid = (int)tid64;
+   }
+#else
    pcp_buf[i].tid = (int)syscall(SYS_gettid);
-#if defined(__arm__)
+#endif
+#if defined(__APPLE__) && defined(__aarch64__)
+   pcp_buf[i].pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+#elif defined(__APPLE__)
+   pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
+#elif defined(__arm__)
    pcp_buf[i].pc = uc->uc_mcontext.arm_pc;
 #elif defined(__aarch64__)
    pcp_buf[i].pc = (uintptr_t)uc->uc_mcontext.pc;
@@ -791,6 +808,9 @@ int plat_init(int argc, char **argv)
    int i;
    main_tid = pthread_self();
    main_tid_set = 1;
+#ifdef __APPLE__
+   signal(SIGPIPE, SIG_IGN);       /* no MSG_NOSIGNAL on macOS: a send to a closed socket is an error, not a signal */
+#endif
    pcprof_init();
    for (i = 1; i < argc; i++)
    {
@@ -1343,6 +1363,7 @@ static pthread_cond_t  wk_cv = PTHREAD_COND_INITIALIZER;
 static void          (*wk_step)(void);
 static int             wk_run, wk_kick;
 static int             wk_created;
+static volatile int    wk_done;               /* wk_main has returned (no pthread_timedjoin_np on macOS) */
 
 static void *wk_main(void *arg)
 {
@@ -1363,6 +1384,7 @@ static void *wk_main(void *arg)
    }
    pthread_mutex_unlock(&wk_mu);
    wk_step();                                 /* the last pass */
+   __atomic_store_n(&wk_done, 1, __ATOMIC_RELEASE);
    return NULL;
 }
 
@@ -1376,6 +1398,7 @@ int plat_worker_start(void (*step)(void), uint32_t period_us)
    wk_step = step;
    wk_run = 1;
    wk_kick = 0;
+   wk_done = 0;
    if (pthread_create(&wk_thread, NULL, wk_main, NULL) != 0)
    {
       wk_run = 0;
@@ -1415,7 +1438,21 @@ int plat_worker_stop_checked(void)
    pthread_mutex_unlock(&wk_mu);
    clock_gettime(CLOCK_REALTIME, &until);
    until.tv_sec += 5;
+#ifdef __linux__
    if (pthread_timedjoin_np(wk_thread, NULL, &until) != 0) return 0;
+#else
+   {
+      int waited_ms = 0;
+      while (!__atomic_load_n(&wk_done, __ATOMIC_ACQUIRE) && waited_ms < 5000)
+      {
+         usleep(1000);
+         waited_ms++;
+      }
+      if (!__atomic_load_n(&wk_done, __ATOMIC_ACQUIRE))
+         return 0;
+      pthread_join(wk_thread, NULL);
+   }
+#endif
    wk_created = 0;
    return 1;
 }

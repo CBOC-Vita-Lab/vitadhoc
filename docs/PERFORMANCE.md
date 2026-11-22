@@ -452,3 +452,26 @@ instructions per frame spent in `render_line`, which is the sprite parse and the
 pixels out): xgm-player 0.82 M (19 % of a plain frame; 1.9 / 2.6 ms model), bad-apple 0.08 M (2 %; 0.18 / 0.25 ms), busy SMS 0.04 M (2 %;
 0.10 / 0.14 ms). Before 2.0 such frames drew nothing, and games whose status register told them about a sprite collision ran differently
 (15 of 67 test games). A Mega Drive scene with many sprites is the one place where this costs real time.
+
+## Super NES: Mode 7 pixel loop and the wide view's strip cache (22 Nov 2026; host numbers, nothing here ran on a Vita)
+
+Two changes with identical output: Mode 7 pixels with colour math are drawn in vector chunks (`snes/core/tileimpl.h`), and a margin line whose inputs
+did not change since the last frame is not drawn again (`snes/core/gfx.cpp`). Proof: pictures, sound, state hashes (every 50 frames) and whole wide picture
+hashes identical to the build before, over all 15 test games, 3000 frames each, 14 runs per game (margins 96 and 41, the cost ladder's floor, worker
+threads, each switch off); the strip cache also checked line by line against a fresh draw (0 differing), with random register, VRAM, colour memory and
+OAM writes (also between lines of a frame, `$2100` / `$2106` / `$2133`, OAM priority rotation), a VRAM write counter forced across 2^32, state loads, resets, margin changes and the margin thread leaving and joining; armhf under qemu (NEON) equal to x86 byte for byte on eight games. Details and the exact commands: `snes/WIDE-INTEGRATION.md`.
+
+| Scene | Before (host, M instr / frame) | After (host, M instr / frame) | Change |
+|---|---|---|---|
+| Super Metroid, Mode 7 scene, margin 0 | 6.99 | 6.03 | -13.8 % |
+| Super Metroid, margin 96 | 11.38 | 9.98 | -12.2 % |
+| F-Zero, margin 96 | 10.50 | 8.56 | -18.4 % |
+| Pilotwings, margin 96 | 10.96 | 9.93 | -9.4 % |
+| Yoshi's Island, wide (margin 96) | 11.34 | 10.56 | -6.9 % |
+| Mega Man X 2 / Street Fighter Alpha 2 / Super Mario Kart, margin 96 | 9.22 / 8.76 / 10.37 | 9.28 / 8.82 / 10.45 | +0.7 / +0.7 / +0.8 % |
+
+Host x86_64 callgrind, instructions of the whole twin frame, frames 1500 to 1560 of the owner's pad script, one run per game. The Mode 7 draw functions
+alone went down by about 39 % on Super Metroid. The Vita time of these changes is not measured and not estimated here; instruction counts on x86 SSE2
+do not translate directly to NEON. Merging margin batches of many lines was not done (cannot be exact in a streaming renderer); the scrolling
+games pay about 0.7 % for hashing lines that never hit.
+

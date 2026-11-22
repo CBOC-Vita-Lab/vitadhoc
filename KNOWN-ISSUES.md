@@ -231,6 +231,12 @@ sharing).
   Winter Gold, Vortex or Dirt Trax FX (no ROM was available). Super Mario RPG
   and Kirby Super Star may dip a frame now and then. The player writes its
   speed to `ux0:data/GBAdhoc/snes/log.txt`.
+- **Mode 7 speed-up and the wide view's strip cache** (new in this build) give
+  the same picture, sound and state as before on all 15 test games, but were
+  only timed on a computer: the gain on a Vita is not measured. Scrolling
+  games get nothing from the strip cache and pay about 0.7 % for it. The
+  second background of Mode 7 (EXTBG), mosaic and hi-res Mode 7 are not sped
+  up.
 - **Rewind** captures a state every fourth frame at best (less often in a busy
   game) and costs an estimated 0.5 to 1.2 ms on the Vita; it is off in two
   player games and in Hardcore. Not measured.

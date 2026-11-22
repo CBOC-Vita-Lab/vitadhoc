@@ -125,6 +125,8 @@ struct S9xRenderJob
 	uint8	heighten;	// the picture became interlaced 2x in this flush: spread the lines already drawn
 	uint8	sub;		// render the sub screen too
 	uint32	widen_ppl;	// GFX.PPL as it was before this flush
+	uint8	vok;		// vver is filled in (the wide view is on)
+	uint64	vver[32];	// CBOC-Vita: version of each 2 KB block of VRAM when this flush was taken (g_s9x_vblk), for the wide view's margin strip cache
 };
 void S9xRenderBatch (const S9xRenderJob &);
 // optional PPU thread (ppu_mt.cpp)

@@ -30,6 +30,15 @@
 #                   revision does (for the includer's own objects)
 #
 # docs: GBA-LINK-MIRROR.md 1 (instance B), GB-LINK.md 1 (the GB pair).
+#
+# HOST_OS=macos (hostcore/Makefile ARCH=macos): Mach-O has no `ld -r -T`
+# script and no `objcopy -w`, so every partial link below has a twin that
+# compiles the objects of an instance with its writable data in sections of
+# its own (macho_sect.h, the section$start$ symbols mark them) and renames the
+# globals with llvm-objcopy (tools/build/macho-group.sh).  The ELF rules are
+# unchanged.  The includer sets NM and OBJCOPY to llvm-nm and llvm-objcopy,
+# SYM_US to "_", AR, and links the MACHO_ARCHIVES it gets back with
+# -Wl,-force_load (the whole archive: what the relocatables were).
 
 include $(GP)/vita/coreflags.mk
 
@@ -64,6 +73,10 @@ CORE_OBJS := $(patsubst $(GP)/%.c,$(B)/core/%.o,$(SOURCES_C)) \
 
 CORE_A := $(B)/libgpsp_a.a
 CORE_B := $(B)/gpsp_b.o
+# macOS only (see the header): the group-rename helper and the archives the
+# includer links whole.
+MACHO_GROUP := $(GP)/../tools/build/macho-group.sh
+MACHO_ARCHIVES :=
 
 # ---- flag tracking -------------------------------------------------------
 # (the stamps name the compiler WITHOUT the ccache prefix: turning ccache on or
@@ -72,11 +85,13 @@ CORE_B := $(B)/gpsp_b.o
 # flag change silently keeps the old emulator (docs: "the franken-build
 # trap", ADR-0035).  Every object depends on this stamp, which is rewritten
 # only when the flag text differs.
+# (written with printf, not $(file ...): macOS ships GNU make 3.81.)
+shq = '$(subst ','\'',$(1))'
 FLAGS_STAMP := $(B)/.flags
 FLAGS_TEXT   = $(call ccplain,$(CC)) | $(CORE_CFLAGS)
 $(shell mkdir -p $(B))
 $(FLAGS_STAMP): FORCE
-	$(file >$@.new,$(FLAGS_TEXT))
+	@printf '%s\n' $(call shq,$(FLAGS_TEXT)) > $@.new
 	@cmp -s $@.new $@ || cp $@.new $@
 	@rm -f $@.new
 # The frontend layer (frontend-common, netdrv, gbalink, gbcore) has its own
@@ -84,7 +99,7 @@ $(FLAGS_STAMP): FORCE
 # never sees, so changing it rebuilds a dozen files and not the core.
 FE_STAMP := $(B)/.feflags
 $(FE_STAMP): FORCE
-	$(file >$@.new,$(call ccplain,$(CC)) | $(FE_FLAGS) | $(FE_INC) | $(TGB_CFLAGS))
+	@printf '%s\n' $(call shq,$(call ccplain,$(CC)) | $(FE_FLAGS) | $(FE_INC) | $(TGB_CFLAGS)) > $@.new
 	@cmp -s $@.new $@ || cp $@.new $@
 	@rm -f $@.new
 # The same for the includer's own objects: APP_FLAGS (theirs to define) and
@@ -93,7 +108,7 @@ $(FE_STAMP): FORCE
 # not every core object.
 APP_STAMP := $(B)/.appflags
 $(APP_STAMP): FORCE
-	$(file >$@.new,$(call ccplain,$(CC)) | $(APP_FLAGS) | $(GIT_VERSION))
+	@printf '%s\n' $(call shq,$(call ccplain,$(CC)) | $(APP_FLAGS) | $(GIT_VERSION)) > $@.new
 	@cmp -s $@.new $@ || cp $@.new $@
 	@rm -f $@.new
 FORCE:
@@ -139,6 +154,7 @@ $(CORE_A): $(CORE_OBJS)
 # marks B's .data and .bss so fe_gbadual can put B back to a fresh boot's
 # bytes before every load (vita/gba_instance_b.ld).
 ifeq ($(GBA_LINK),1)
+ifneq ($(HOST_OS),macos)
 READELF ?= $(subst objcopy,readelf,$(OBJCOPY))
 $(CORE_B): $(CORE_A) $(GP)/vita/gba_instance_b.ld $(GP)/vita/check_instance_b.sh
 	$(LD_R) -r -d -T $(GP)/vita/gba_instance_b.ld -o $@.tmp --whole-archive $(CORE_A)
@@ -146,6 +162,42 @@ $(CORE_B): $(CORE_A) $(GP)/vita/gba_instance_b.ld $(GP)/vita/check_instance_b.sh
 	$(NM) -g --defined-only $@.tmp | awk 'NF == 3 { print $$3 " gbab_" $$3 }' > $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $@.tmp $@
 	@rm -f $@.tmp
+else
+# Mach-O: the same sources compiled again with B's .data and .bss in the
+# sections __gbab_d and __gbab_z (the markers fe_gbadual.c reads are
+# section$start$/section$end$ of those two), then every global renamed
+# gbab_*.  (No fe_gbadual_boot size check by script here: fe_gbadual_boot
+# checks the same markers at run time.)
+CORE_B   := $(B)/gpsp_b.a
+CORE_B_D := $(B)/coreb
+CORE_B_OBJS := $(patsubst $(GP)/%.c,$(CORE_B_D)/%.o,$(SOURCES_C)) \
+               $(patsubst $(GP)/%.S,$(CORE_B_D)/%.o,$(SOURCES_ASM)) \
+               $(patsubst $(GP)/%.cc,$(CORE_B_D)/%.o,$(SOURCES_CC))
+$(CORE_B_D)/sect.h: FORCE
+	@mkdir -p $(dir $@)
+	@printf '%s\n' '#pragma clang section bss="__DATA,__gbab_z,zerofill" data="__DATA,__gbab_d"' > $@.new
+	@cmp -s $@.new $@ || cp $@.new $@
+	@rm -f $@.new
+$(CORE_B_D)/libretro/libretro.o: CORE_FILE_FLAGS := -DGIT_VERSION=\"$(GIT_VERSION)\"
+$(CORE_B_D)/libretro/libretro.o: $(APP_STAMP)
+$(CORE_B_D)/%.o: $(GP)/%.c $(FLAGS_STAMP) $(CORE_B_D)/sect.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CORE_CFLAGS) $(CORE_FILE_FLAGS) -include $(CORE_B_D)/sect.h -c -o $@ $<
+$(CORE_B_D)/%.o: $(GP)/%.cc $(FLAGS_STAMP) $(CORE_B_D)/sect.h
+	@mkdir -p $(dir $@)
+	$(CXX) $(CORE_CXXFLAGS) -include $(CORE_B_D)/sect.h -c -o $@ $<
+$(CORE_B_D)/%.o: $(GP)/%.S $(FLAGS_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(CORE_ARCH_FLAGS) $(CORE_DEFS) $(INCFLAGS) -I$(GP) -c -o $@ $<
+$(CORE_B_D)/bios_data.o: $(GP)/bios/open_gba_bios.bin
+$(CORE_B): $(CORE_B_OBJS) $(MACHO_GROUP)
+	sh $(MACHO_GROUP) $(NM) $(OBJCOPY) '$(SYM_US)' $@.d gbab_ '' '' '' $(CORE_B_OBJS)
+	@rm -f $@
+	$(AR) rcs $@ $@.d/*.o
+	@rm -rf $@.d
+MACHO_ARCHIVES += $(CORE_B)
+-include $(CORE_B_OBJS:.o=.d)
+endif
 else
 CORE_B :=
 endif
@@ -155,18 +207,31 @@ endif
 # (ME_PRX_BUILD: no capture side), with its memory (vita/render_data.c);
 # every global the pair defines renamed gbar_<name>.  It leaves only libc
 # undefined.
+ifneq ($(HOST_OS),macos)
 CORE_R := $(B)/gpsp_r.o
+else
+CORE_R := $(B)/gpsp_r.a
+endif
 $(B)/render/video_r.o: $(GP)/video.cc $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CORE_CXXFLAGS) -DME_PRX_BUILD -c -o $@ $<
 $(B)/render/render_data.o: $(GP)/vita/render_data.c $(FLAGS_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(CORE_CFLAGS) -c -o $@ $<
+ifneq ($(HOST_OS),macos)
 $(CORE_R): $(B)/render/video_r.o $(B)/render/render_data.o
 	$(LD_R) -r -o $@.tmp $^
 	$(NM) -g --defined-only $@.tmp | awk 'NF == 3 { print $$3 " gbar_" $$3 }' > $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $@.tmp $@
 	@rm -f $@.tmp
+else
+$(CORE_R): $(B)/render/video_r.o $(B)/render/render_data.o $(MACHO_GROUP)
+	sh $(MACHO_GROUP) $(NM) $(OBJCOPY) '$(SYM_US)' $@.d gbar_ '' '' '' $(B)/render/video_r.o $(B)/render/render_data.o
+	@rm -f $@
+	$(AR) rcs $@ $@.d/*.o
+	@rm -rf $@.d
+MACHO_ARCHIVES += $(CORE_R)
+endif
 
 # ---- TGB Dual (GB/GBC), two instances ------------------------------------
 # Flags as psp/Makefile: GNU89 inline (non-static `inline` whose address is
@@ -183,6 +248,7 @@ GB_OBJS    := $(B)/gbcore/gbcore_dual.o $(B)/gbcore/tgbdual/tgb_shared.o \
 
 $(TGB_OBJS) $(B)/gbcore/tgbdual/tgb_shared.o: FE_EXTRA := $(TGB_CFLAGS)
 
+ifneq ($(HOST_OS),macos)
 # One relocatable whose only globals are the gbcore_* API (TGB exports ~780
 # names such as `vram` and `ram`, which the GBA core defines too).
 $(B)/gbcore/gbcore_tgbdual_linked.o: $(GB_CORE_OBJS) $(GP)/gbcore/gbcore_instance.ld
@@ -196,6 +262,39 @@ $(B)/gbcore/gbcore_tgbdual_linked_b.o: $(B)/gbcore/gbcore_tgbdual_linked.o
 	$(NM) -g --defined-only $< | awk '$$3 !~ /^gbcore_/ { bad = 1 } \
 	  { print $$3 " gbcoreb_" substr($$3, 8) } END { exit bad }' > $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $< $@
+else
+# Mach-O: each instance is compiled with its own data sections (__tgba_* and
+# __tgbb_*, which tgb_image_* of gbcore_tgbdual.c name), every global but
+# gbcore_* renamed private; B's API is then renamed gbcoreb_*.
+GB_OBJS := $(filter-out %_linked.o %_linked_b.o,$(GB_OBJS))
+define TGB_INST
+TGBI_$(1) := $$(patsubst $$(B)/gbcore/%,$$(B)/gbcore_$(1)/%,$$(GB_CORE_OBJS))
+$$(B)/gbcore_$(1)/sect.h: FORCE
+	@mkdir -p $$(dir $$@)
+	@printf '%s\n' '#pragma clang section bss="__DATA,__tgb$(1)_z,zerofill" data="__DATA,__tgb$(1)_d"' \
+	  '#define TGB_SECT_D "__tgb$(1)_d"' '#define TGB_SECT_Z "__tgb$(1)_z"' > $$@.new
+	@cmp -s $$@.new $$@ || cp $$@.new $$@
+	@rm -f $$@.new
+$$(B)/gbcore_$(1)/%.o: $$(GP)/gbcore/%.c $$(FE_STAMP) $$(B)/gbcore_$(1)/sect.h
+	@mkdir -p $$(dir $$@)
+	$$(CC) $$(FE_FLAGS) $$(FE_INC) -I$$(GP)/gbcore $$(FE_EXTRA) -include $$(B)/gbcore_$(1)/sect.h -MMD -MP -c -o $$@ $$<
+$$(patsubst $$(B)/gbcore/%,$$(B)/gbcore_$(1)/%,$$(TGB_OBJS)): FE_EXTRA := $$(TGB_CFLAGS)
+-include $$(TGBI_$(1):.o=.d)
+endef
+$(eval $(call TGB_INST,a))
+$(eval $(call TGB_INST,b))
+$(B)/gbcore_a.a: $(TGBI_a) $(MACHO_GROUP)
+	sh $(MACHO_GROUP) $(NM) $(OBJCOPY) '$(SYM_US)' $@.d tgba_ '^gbcore_' '' '' $(TGBI_a)
+	@rm -f $@
+	$(AR) rcs $@ $@.d/*.o
+	@rm -rf $@.d
+$(B)/gbcore_b.a: $(TGBI_b) $(MACHO_GROUP)
+	sh $(MACHO_GROUP) $(NM) $(OBJCOPY) '$(SYM_US)' $@.d tgbb_ '^gbcore_' gbcore_ gbcoreb_ $(TGBI_b)
+	@rm -f $@
+	$(AR) rcs $@ $@.d/*.o
+	@rm -rf $@.d
+MACHO_ARCHIVES += $(B)/gbcore_a.a $(B)/gbcore_b.a
+endif
 
 # ---- the NES core (FCEUmm), in-process like TGB Dual: nescore.mk
 include $(GP)/vita/nescore.mk
@@ -203,6 +302,9 @@ GB_OBJS += $(NES_OBJS)
 # ---- the WonderSwan core (Beetle), in-process the same way: wswancore.mk
 include $(GP)/vita/wswancore.mk
 GB_OBJS += $(WS_OBJS)
+ifeq ($(HOST_OS),macos)
+MACHO_ARCHIVES += $(NES_PRIV) $(WS_PRIV)
+endif
 
 # ---- frontend-common, netdrv core, the cable bus ----------------------------
 FE_INC  := -I$(GP)/frontend-common -I$(GP)/netdrv \
@@ -234,10 +336,10 @@ $(B)/gbcore/%.o: $(GP)/gbcore/%.c $(FE_STAMP)
 # fe_autopilot.o again, its API renamed and its three host hooks pointed at
 # the partner's (psp/Makefile fe_autopilot_b.o).
 $(B)/frontend-common/fe_autopilot_b.o: $(B)/frontend-common/fe_autopilot.o
-	$(NM) -g --defined-only $< | awk 'NF == 3 { print $$3 " gbab_" $$3 }' > $@.syms
-	printf '%s\n' 'fe_host_input_inject gbab_fe_host_input_inject' \
-	  'fe_host_mem_read gbab_fe_host_mem_read' \
-	  'fe_host_sram_crc_now gbab_fe_host_sram_crc_now' >> $@.syms
+	$(NM) -g --defined-only $< | awk -v u='$(SYM_US)' 'NF == 3 { print $$3 " " u "gbab_" substr($$3, length(u) + 1) }' > $@.syms
+	printf '%s\n' '$(SYM_US)fe_host_input_inject $(SYM_US)gbab_fe_host_input_inject' \
+	  '$(SYM_US)fe_host_mem_read $(SYM_US)gbab_fe_host_mem_read' \
+	  '$(SYM_US)fe_host_sram_crc_now $(SYM_US)gbab_fe_host_sram_crc_now' >> $@.syms
 	$(OBJCOPY) --redefine-syms=$@.syms $< $@
 
 # Every object compiled with -MMD -MP has a .d: the render thread's pair and the

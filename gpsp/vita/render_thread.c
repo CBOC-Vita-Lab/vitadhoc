@@ -173,12 +173,12 @@ void rt_shutdown(void)
 #else
 #include <errno.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <stdlib.h>
 #include <time.h>
 #include <unistd.h>
+#include "host_sem.h"
 
-static sem_t g_go, g_done;
+static host_sem_t g_go, g_done;
 static pthread_t g_th;
 static volatile int g_quit;
 static void rt_stall(void);
@@ -188,7 +188,7 @@ static void *rt_entry(void *arg)
    (void)arg;
    for (;;)
    {
-      while (sem_wait(&g_go) != 0)
+      while (host_sem_wait(&g_go) != 0)
          ;
       if (g_quit)
          break;
@@ -196,21 +196,21 @@ static void *rt_entry(void *arg)
       rt_work();
       core4_beat(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST));
       core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 0);
-      sem_post(&g_done);
+      host_sem_post(&g_done);
    }
    return NULL;
 }
 
 static int rt_start(void)
 {
-   if (sem_init(&g_go, 0, 0) != 0 || sem_init(&g_done, 0, 0) != 0)
+   if (host_sem_init(&g_go, 0) != 0 || host_sem_init(&g_done, 0) != 0)
       return -1;
    __atomic_store_n(&g_wd, core4_wd_add("render", C4_RENDER, 0), __ATOMIC_SEQ_CST);   /* (the twin's fake core) */
    core4_set_thread(C4_RENDER, 0, 0);
    return pthread_create(&g_th, NULL, rt_entry, NULL) == 0 ? 0 : -1;
 }
 
-static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); sem_post(&g_go); }
+static void rt_post(void) { core4_busy(__atomic_load_n(&g_wd, __ATOMIC_SEQ_CST), 1); host_sem_post(&g_go); }
 static int rt_wait_to(unsigned us)
 {
    struct timespec ts;
@@ -220,7 +220,7 @@ static int rt_wait_to(unsigned us)
    ts.tv_nsec %= 1000000000L;
    for (;;)
    {
-      if (sem_timedwait(&g_done, &ts) == 0)
+      if (host_sem_timedwait(&g_done, &ts) == 0)
          return 1;
       if (errno != EINTR)
          return 0;
@@ -246,7 +246,7 @@ void rt_shutdown(void)
    if (!g_ready)
       return;
    g_quit = 1;
-   sem_post(&g_go);
+   host_sem_post(&g_go);
    pthread_join(g_th, NULL);
    g_ready = 0;
 }

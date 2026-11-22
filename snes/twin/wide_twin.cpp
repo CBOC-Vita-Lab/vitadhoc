@@ -31,6 +31,8 @@
 #include "stb_image_write.h"
 #include "host.h"
 #include "wide.h"
+#include "wide_fuzz.h"
+#include "widecap.h"
 #ifdef WIDE_CALLGRIND
 #include <valgrind/callgrind.h>
 #endif
@@ -196,6 +198,10 @@ int main(int argc, char **argv)
 	const char *rom = argv[1], *hashes = 0, *whashes = 0, *wav = 0, *dumpdir = 0, *pngdir = 0, *statef = 0, *mapf = 0, *xff = 0, *prefix = "f";
 	int frames = 300, wide = 0, state_every = 0;
 	bool summary = false;
+	int fuzz = 0, fuzz_level = 1, reload_every = 0, reset_at = -1, margin_cycle = 0;
+	unsigned long long vseq0 = 0;
+	bool fuzz_mid = false;
+	std::vector<uint8_t> reload_buf;
 	std::vector<PadEv> script;
 	std::set<int> dumpset, shotset, statset;
 	int trace_every = 0, cg_a = -1, cg_b = -1;
@@ -230,6 +236,12 @@ int main(int argc, char **argv)
 		else if (arg("--state-hash") && i + 2 < argc) { state_every = atoi(argv[++i]); statef = argv[++i]; }
 		else if (!strcmp(argv[i], "--summary")) summary = true;
 		else if (!strcmp(argv[i], "--wide-split")) split_mode = true;
+		else if (arg("--fuzz")) { fuzz = atoi(argv[++i]); fuzz_level = fuzz >= 1000 ? 2 : 1; wide_fuzz_seed((unsigned) fuzz); }   /* test: random register / VRAM / CGRAM / OAM writes between frames (seed; 1000 and up: nearly every frame) */
+		else if (!strcmp(argv[i], "--fuzz-mid")) fuzz_mid = true;   /* test: the --fuzz writes also come between lines of a frame */
+		else if (arg("--reload")) reload_every = atoi(argv[++i]);   /* test: every N frames the emulation state is saved, N frames later loaded again (state load / rewind) */
+		else if (arg("--reset-at")) reset_at = atoi(argv[++i]);   /* test: console reset at this frame */
+		else if (arg("--margin-cycle")) margin_cycle = atoi(argv[++i]);   /* test: every N frames the margin changes (snes_wide_set) */
+		else if (arg("--vseq")) vseq0 = strtoull(argv[++i], 0, 0);   /* test: the strip cache's VRAM write counter starts here (2^32 - 5000: wraps a 32 bit counter within the run) */
 		else if (arg("--wide-workers")) wide_workers = atoi(argv[++i]);
 		else if (arg("--pressure")) pressure_set = parse_set(argv[++i]);   /* frames on which the frontend reports pressure (snes_wide_option "pressure") */
 		else if (arg("--save-state") && i + 2 < argc) { save_state = argv[++i]; save_at = atoi(argv[++i]); }   /* emulation state after frame N (no wide data) */
@@ -264,6 +276,8 @@ int main(int argc, char **argv)
 		if (split_mode) snes_wide_split(1);
 		if (wide_workers > 1) { if (wide_workers > SNES_WIDE_MAX_WORKERS) wide_workers = SNES_WIDE_MAX_WORKERS; pool.start(wide_workers); snes_wide_parallel(LinePool::pfor, &pool, wide_workers); }
 	}
+	if (vseq0) { g_s9x_vseq = vseq0; S9xWideBumpVRAM(); }
+	if (fuzz && fuzz_mid) wide_fuzz_mid(1);
 	if (load_state) {
 		std::vector<uint8_t> sb = read_all(load_state);
 		if (sb.empty() || snes_host_state_load_buf(sb.data(), sb.size())) { fprintf(stderr, "state load failed\n"); return 1; }
@@ -422,7 +436,21 @@ int main(int argc, char **argv)
 				snes_host_set_option("wide_thread", !wt); snes_host_set_option("wide_thread", wt);
 			}
 		}
+		if (wide && margin_cycle > 0 && f > 0 && f % margin_cycle == 0) {
+			static const int ms[] = { 0, 41, 8, 70, 16, 0 };
+			const int k = ms[(f / margin_cycle) % 6];
+			snes_wide_set(1, k ? k : wide);
+		}
+		if (reset_at >= 0 && f == reset_at) snes_host_reset();
+		if (reload_every > 0 && f > 0 && f % reload_every == 0) {
+			if ((f / reload_every) & 1) {
+				std::vector<uint8_t> sb(snes_host_state_size() + 4096);
+				size_t len = 0;
+				if (!snes_host_state_save_buf(sb.data(), sb.size(), &len)) reload_buf.assign(sb.begin(), sb.begin() + len);
+			} else if (!reload_buf.empty() && snes_host_state_load_buf(reload_buf.data(), reload_buf.size())) { fprintf(stderr, "state load failed\n"); return 1; }
+		}
 		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
+		if (fuzz) wide_fuzz_frame(fuzz_level);
 		snes_host_set_pad(0, pad);
 		snes_host_run_frame();
 		if (save_state && f == save_at) {
@@ -523,6 +551,10 @@ int main(int argc, char **argv)
 		       tot ? 100.0 * c.px_tilemap / tot : 0, tot ? 100.0 * c.px_learned / tot : 0, tot ? 100.0 * c.px_backdrop / tot : 0, tot ? 100.0 * c.px_unknown / tot : 0);
 		printf("sides: ambient left %u right %u of %u frames\n", c.frames_side_amb[0], c.frames_side_amb[1], c.frames_wide);
 		printf("cache: checks=%llu mismatches=%llu\n", (unsigned long long) c.cache_checks, (unsigned long long) c.cache_mismatches);
+		{ uint64_t st[8]; snes_host_wide_cache_stats(st);
+		  printf("wcache: lines_from_cache=%llu lines_drawn=%llu batches=%llu checked=%llu differing=%llu\n", (unsigned long long) st[0], (unsigned long long) st[1], (unsigned long long) st[2], (unsigned long long) st[3], (unsigned long long) st[4]); }
+		printf("vseq: %llu\n", (unsigned long long) g_s9x_vseq);
+		if (fuzz_mid) printf("fuzzmid: lines=%lu writes=%lu\n", wide_fuzz_mid_calls(), wide_fuzz_mid_writes());
 		printf("ladder: rung=%d chip=%d compose_us=%u rung_changes=%u pad_px=%llu\n", c.rung, c.chip, c.compose_us, c.rung_changes, (unsigned long long) c.px_pad);
 	}
 	if (wide) {

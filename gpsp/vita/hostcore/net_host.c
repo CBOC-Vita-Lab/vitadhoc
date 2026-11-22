@@ -44,6 +44,10 @@
 
 #include <arpa/inet.h>
 
+#ifdef __APPLE__
+#define st_mtim st_mtimespec          /* macOS names the struct stat time that way */
+#endif
+
 #define NET_VITA_HOST
 #include "../net_vita.c"
 

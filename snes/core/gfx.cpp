@@ -541,6 +541,11 @@ static void S9xUpdateScreen_impl (void)
 	// PPU thread from a snapshot of the state taken right after this part.
 	S9xRenderJob job;
 	memset(&job, 0, sizeof(job));
+	if (g_s9x_wide_stamp)		// the wide view's margin strip cache: the VRAM block versions this flush draws with
+	{
+		memcpy(job.vver, g_s9x_vblk, sizeof(job.vver));
+		job.vok = 1;
+	}
 
 	if (!PPU.ForcedBlanking)
 	{
@@ -2360,6 +2365,51 @@ struct WideState
 
 static WideState W;
 
+// ---------------------------------------------------------------------------------------------------------------
+// Margin strip cache. The strips of a line (all passes) that was drawn in an earlier frame under exactly the same
+// inputs are kept and not drawn again. A line's key is a 128 bit hash of every input the passes read for it: the line
+// record (registers, scroll, Mode 7 rows, palette hash), the window tables, the settings the renderer reads, the
+// colour table, the sprites that reach into the margin, and the write counters of the VRAM blocks the enabled layers
+// (and those sprites) can read. A hit leaves the strips (pixels and depth bytes) exactly as a fresh draw would make them.
+// Lines that are not drawn in a frame are cleared at the end of it, as the whole of the depth buffers used to be at its start.
+// ---------------------------------------------------------------------------------------------------------------
+struct WCache
+{
+	bool	on;				// latched at the start of the frame (g_s9x_wcache)
+	bool	was_on;
+	bool	shadow;			// drawing the check copy (wide_cache_verify)
+	uint32	fseq;			// frame number of this copy
+	uint64	key[SW_ROWS][2];
+	uint8	kvalid[SW_ROWS];
+	uint8	zd[SW_ROWS];		// bit p: the depth strips of pass p (0..6) of this row may be non-zero; bit 7: the sub screen's
+	uint32	lseq[SW_ROWS];		// frame in which the row was last served (drawn or from the cache)
+	uint16	sc[256];			// the colour table last seen and its hash
+	uint64	chash[2];
+	bool	have_sc;
+	uint16	*vscr[SW_NPASS + 1];		// the check copy
+	uint8	*vz[SW_NPASS + 1];
+	uint16	*vsub;
+	uint8	*vsubz;
+};
+static WCache C;
+
+struct WHash
+{
+	uint64 a, b;
+	WHash () : a(0x243F6A8885A308D3ull), b(0x13198A2E03707344ull) {}
+	inline void add (uint64 v)
+	{
+		a = (a ^ v) * 0x9E3779B97F4A7C15ull; a ^= a >> 29;
+		b = (b + v) * 0xC2B2AE3D27D4EB4Full; b = (b << 27) | (b >> 37);
+	}
+	inline void bytes (const void *p, size_t n)
+	{
+		const uint8 *q = (const uint8 *) p;
+		for (; n >= 8; n -= 8, q += 8) { uint64 v; memcpy(&v, q, 8); add(v); }
+		if (n) { uint64 v = 0; memcpy(&v, q, n); add(v ^ ((uint64) n << 56)); }
+	}
+};
+
 // the hash of the palette in force; a batch whose palette is the one of the batch before it (a line by line HDMA effect on
 // something else makes a batch per line) has the same hash
 static uint32 hash_cg (void)
@@ -2448,23 +2498,20 @@ static void wide_clip_prep (void)
 		}
 }
 
-static void wide_obj_dims (int S, int *w, int *h)
+// the heights of the small and the large sprite size of the current size select
+static void wide_obj_heights (int *sh, int *lh)
 {
-	*w = GFX.OBJWidths[S];
-	int sw, sh, lw, lh;
 	switch (PPU.OBJSizeSelect)
 	{
-		case 0: sw = sh = 8; lw = lh = 16; break;
-		case 1: sw = sh = 8; lw = lh = 32; break;
-		case 2: sw = sh = 8; lw = lh = 64; break;
-		case 3: sw = sh = 16; lw = lh = 32; break;
-		case 4: sw = sh = 16; lw = lh = 64; break;
-		case 6: sw = 16; sh = 32; lw = 32; lh = 64; break;
-		case 7: sw = 16; sh = 32; lw = lh = 32; break;
-		case 5: default: sw = sh = 32; lw = lh = 64; break;
+		case 0: *sh = 8;  *lh = 16; break;
+		case 1: *sh = 8;  *lh = 32; break;
+		case 2: *sh = 8;  *lh = 64; break;
+		case 3: *sh = 16; *lh = 32; break;
+		case 4: *sh = 16; *lh = 64; break;
+		case 6: *sh = 32; *lh = 64; break;
+		case 7: *sh = 32; *lh = 32; break;
+		case 5: default: *sh = 32; *lh = 64; break;
 	}
-	*h = PPU.OBJ[S].Size ? lh : sh;
-	(void) sw; (void) lw;
 }
 
 // Sprites that lie wholly in the left margin (the hardware's own list has only sprites that touch the picture),
@@ -2478,13 +2525,15 @@ static void wide_setup_obj (int y0, int y1)
 		W.mobj_n[y] = 0;
 	if (!(Memory.FillRAM[0x212c] & 0x10))
 		return;
+	int hs, hl;
+	wide_obj_heights(&hs, &hl);
 	for (int S = 0; S < 128; S++)
 	{
-		int w, h;
-		wide_obj_dims(S, &w, &h);
-		int hp = PPU.OBJ[S].HPos;
+		const int w = GFX.OBJWidths[S];
+		const int hp = PPU.OBJ[S].HPos;
 		if (hp > -w || hp <= -w - M || hp == -256)
 			continue;
+		const int h = PPU.OBJ[S].Size ? hl : hs;
 		for (int y = y0; y <= y1; y++)
 		{
 			uint8 line = (uint8) (y - (PPU.OBJ[S].VPos & 0xff));
@@ -2629,12 +2678,46 @@ static void DrawOBJSWide (int D)
 	}
 }
 
+// the depth strips of one row (the two margin strips) of every pass the row's bits in `mask` name (bit 7: the sub screen's)
+static void wide_clear_row (int y, unsigned mask)
+{
+	const int m2 = W.m;
+	for (int p = 0; p <= SW_NPASS + 1; p++)
+	{
+		if (!(mask & ((p <= SW_NPASS) ? (1u << p) : 0x80u)))
+			continue;
+		uint8 *z = (p <= SW_NPASS) ? W.z[p] : W.subz;
+		if (!z)
+			continue;
+		uint8 *r = z + (size_t) y * SW_PITCH;
+		memset(r, 0, (size_t) m2);
+		memset(r + m2 + 256, 0, (size_t) m2);
+	}
+}
+
+// everything: the depth buffers whole, and nothing in the cache is valid any more
+static void wide_cache_reset (void)
+{
+	for (int p = 0; p <= SW_NPASS + 1; p++)
+	{
+		uint8 *z = (p <= SW_NPASS) ? W.z[p] : W.subz;
+		if (z)
+			memset(z, 0, (size_t) (SW_ROWS + 2) * SW_PITCH);
+	}
+	memset(C.kvalid, 0, sizeof(C.kvalid));
+	memset(C.zd, 0, sizeof(C.zd));
+}
+
 extern "C" void S9xWideRenderFrameStart (int margin)
 {
+	static int prev_m = 0;
 	W.m = margin;
 	W.bad = false;
 	if (!margin)
 	{
+		// idle (wide view off, or this renderer copy not used): the next frame with a margin counts as "the strips moved", so that the strip
+		// cache and the depth buffers start clean and keys of an earlier life are never matched
+		prev_m = 0;
 		W.h = 0;
 		return;
 	}
@@ -2645,9 +2728,41 @@ extern "C" void S9xWideRenderFrameStart (int margin)
 	memset(W.vline, 0, sizeof(W.vline));
 	// only the Z buffers a pass drew into last frame are dirty (an unused pass costs nothing)
 	// the passes only draw (and the adapter only reads) the two margin strips [0, m) and [m + 256, 2m + 256): clear just those
-	static int prev_m = 0;
 	const bool moved = prev_m != W.m;		// the strips moved (first frame, other margin): clear everything once
 	prev_m = W.m;
+	C.fseq++;
+	const bool want = __atomic_load_n(&g_s9x_wcache, __ATOMIC_RELAXED) != 0;
+	if (want)
+	{
+		// the strip cache: the depth strips of a row are cleared when the row is drawn again or, at the end of the frame, when it was not
+		// drawn at all (S9xWideFillView), not all of them here
+		if (__atomic_load_n(&g_s9x_wcache_verify, __ATOMIC_RELAXED) && !C.vz[0])
+		{
+			size_t rows = SW_ROWS + 2;
+			for (int p = 0; p <= SW_NPASS; p++)
+			{
+				C.vscr[p] = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
+				C.vz[p]   = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
+			}
+			C.vsub  = (uint16 *) calloc(rows * SW_PITCH + 64, sizeof(uint16));
+			C.vsubz = (uint8 *)  calloc(rows * SW_PITCH + 64, 1);
+		}
+		if (moved || !C.was_on)
+			wide_cache_reset();
+		C.on = true;
+		C.was_on = true;
+		W.h = 0;
+		return;
+	}
+	if (C.was_on)
+	{
+		// the cache was on: the per row bookkeeping is dropped and everything is cleared once
+		C.on = false;
+		C.was_on = false;
+		wide_cache_reset();
+		g_wide_zdirty = ~0u;
+	}
+	C.on = false;
 	if (moved) g_wide_zdirty = ~0u;
 	const int m2 = W.m;
 	for (int p = 0; p <= SW_NPASS + 1; p++)		// the pass buffers, then the sub screen's
@@ -2686,6 +2801,9 @@ static void wide_pass (const S9xRenderJob &job, int pass, uint8 mask, bool compo
 
 	GFX.Screen = W.scr[pass];
 	g_wide_zdirty |= 1u << pass;
+	if (C.on && !C.shadow)
+		for (int y = (int) GFX.StartY; y <= (int) GFX.EndY; y++)
+			C.zd[y] |= (1u << pass) | ((composite && job.sub) ? 0x80u : 0u);
 	GFX.ZBuffer = W.z[pass];
 	GFX.SubScreen = W.sub;
 	GFX.SubZBuffer = W.subz;
@@ -2712,6 +2830,273 @@ static void wide_pass (const S9xRenderJob &job, int pass, uint8 mask, bool compo
 	g_wmask = 0xff;
 	g_wnobackdrop = false;
 	GFX.Screen = sS; GFX.SubScreen = sSub; GFX.ZBuffer = sZ; GFX.SubZBuffer = sSubZ;
+}
+
+#ifndef WCACHE_NEGATIVE_CONTROL
+#define WCACHE_NEGATIVE_CONTROL 0		// test builds only: 1..6 leave one ingredient out of the key, 7 keeps the VRAM write counter in 32 bits (ppu.h), to show that the check notices (see snes/WIDE-INTEGRATION.md)
+#endif
+static inline void g_s9x_wcache_stat_add (int i, int n)
+{
+	if (n)
+		__atomic_fetch_add(&g_s9x_wcache_stat[i], (uint64_t) n, __ATOMIC_RELAXED);
+}
+
+// the passes of lines ya..yb, as one call each (the lines have been cleared)
+static void wide_draw_run (const S9xRenderJob &job, int ya, int yb, int mode, uint8 tm, uint8 tsx, uint8 pflags)
+{
+	GFX.StartY = (uint32) ya;
+	GFX.EndY = (uint32) yb;
+	if (pflags & SWLP_BASE)
+		wide_pass(job, SWP_COMPOSITE, tsx, true);
+	else if (!(pflags & SWLP_NOCOMP))
+		wide_pass(job, SWP_COMPOSITE, 0xff, true);
+	if (W.vfy)
+		wide_pass(job, SW_NPASS, 0xff, true);		// test: the composite whole, for the adapter to compare
+	if (mode != 7)
+	{
+		if (tm & 0x10)
+			wide_pass(job, SWP_OBJ, 0x10, false);
+		const bool layers = !(pflags & SWLP_NOLAYERS);
+		int nbg = (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
+		for (int n = 0; n < nbg; n++)
+			if (tm & (1 << n))
+			{
+				if (layers)
+					wide_pass(job, SWP_BG0 + n, 1 << n, false);
+			}
+			else if (tsx & (1 << n))
+			{
+				if (layers && !(pflags & SWLP_TSXBASE))
+					wide_pass(job, SWP_BG0 + n, 1 << n, true);
+			}
+	}
+}
+
+// the largest version number among the 2 KB blocks of VRAM that bytes [start, start + len) (mod 64 KB) touch
+static inline uint64 wide_vmax (const uint64 *vv, uint32 start, uint32 len)
+{
+	const uint32 first = (start & 0xffff) >> 11;
+	uint32 nb = ((start & 0x7ff) + len + 0x7ff) >> 11;
+	if (nb > 32)
+		nb = 32;
+	uint64 m = 0;
+	for (uint32 i = 0; i < nb; i++)
+		if (vv[(first + i) & 31] > m)
+			m = vv[(first + i) & 31];
+	return m;
+}
+
+// What the sprite passes read for line y beyond the batch's own state: the hardware's sprite list of the line (only the tile counts of the sprites
+// wholly inside the picture, and every field the margin drawing reads of the ones that reach an edge) and the sprites wholly in the left margin.
+// This mirrors DrawOBJSWide and wide_draw_sprite. `touches` = the line has a sprite whose margin part is drawn (its character data matters).
+static void wide_obj_key (int y, uint8 tm, uint8 ts, WHash &h, bool &touches)
+{
+	touches = false;
+	if (!((tm | ts) & 0x10))
+	{
+		h.add(0x4f424a30);
+		return;
+	}
+	if (GFX.OBJLines[y].OBJ[0].Sprite < 0 && !W.mobj_n[y])
+	{
+		h.add(0x4f424a34ull ^ ((uint64) (uint32) (int) GFX.OBJLines[y].Tiles << 32));		// no sprite on the line (the tile count tells how the line's time over went)
+		return;
+	}
+	const int sprite_limit = (Settings.MaxSpriteTilesPerLine == 128) ? 128 : 32;
+	int I = 0;
+	int tiles = GFX.OBJLines[y].Tiles;
+	h.add(0x4f424a31ull ^ ((uint64) (uint32) tiles << 32));
+	for (int S = GFX.OBJLines[y].OBJ[I].Sprite; S >= 0 && I < sprite_limit; S = GFX.OBJLines[y].OBJ[++I].Sprite)
+	{
+		tiles += GFX.OBJVisibleTiles[S];
+		h.add(0x100 | GFX.OBJVisibleTiles[S]);
+		if (tiles <= 0)
+			continue;
+		const struct SOBJ &o = PPU.OBJ[S];
+		if (o.HPos == -256)
+			continue;
+		if (o.HPos >= 0 && o.HPos + GFX.OBJWidths[S] <= 256)
+			continue;
+		touches = true;
+#if WCACHE_NEGATIVE_CONTROL == 2
+		h.add((uint64) (uint32) S);
+#else
+		h.add((uint64) (uint32) S | ((uint64) GFX.OBJLines[y].OBJ[I].Line << 8) | ((uint64) (uint16) o.HPos << 16) | ((uint64) o.Name << 32)
+			| ((uint64) o.Palette << 48) | ((uint64) o.Priority << 52) | ((uint64) o.HFlip << 56) | ((uint64) GFX.OBJWidths[S] << 57));
+#endif
+	}
+	h.add(0x4f424a32ull ^ ((uint64) (uint32) I << 32));
+	if (GFX.OBJLines[y].Tiles >= 0 && I < sprite_limit)
+		for (int k = 0; k < W.mobj_n[y]; k++)
+		{
+			const int S = W.mobj[y][k].spr;
+			const struct SOBJ &o = PPU.OBJ[S];
+			touches = true;
+			h.add((uint64) (uint32) S | ((uint64) W.mobj[y][k].line << 8) | ((uint64) (uint16) o.HPos << 16) | ((uint64) o.Name << 32)
+				| ((uint64) o.Palette << 48) | ((uint64) o.Priority << 52) | ((uint64) o.HFlip << 56) | ((uint64) GFX.OBJWidths[S] << 57));
+		}
+	h.add(0x4f424a33);
+}
+
+// The keys of lines y0..y1 of a batch and which of them the cache can serve (hit[y]).
+static void wide_line_keys (const S9xRenderJob &job, int y0, int y1, int mode, uint8 tm, uint8 ts, uint8 pflags, uint64 (*lkey)[2], uint8 *hit)
+{
+	if (!C.have_sc || memcmp(C.sc, IPPU.ScreenColors, sizeof(C.sc)))
+	{
+		memcpy(C.sc, IPPU.ScreenColors, sizeof(C.sc));
+		C.have_sc = true;
+		WHash t;
+		t.bytes(C.sc, sizeof(C.sc));
+		C.chash[0] = t.a;
+		C.chash[1] = t.b;
+	}
+	WHash bh;
+	bh.add(0x57434b33);
+	bh.add((uint64) W.m | ((uint64) (job.sub != 0) << 16) | ((uint64) pflags << 24) | ((uint64) (W.vfy ? 1 : 0) << 32) | ((uint64) mode << 40));
+#if WCACHE_NEGATIVE_CONTROL != 3
+	bh.add(C.chash[0]);
+	bh.add(C.chash[1]);
+#endif
+	bh.add((uint64) Settings.BG_Forced | ((uint64) Settings.MaxSpriteTilesPerLine << 8) | ((uint64) (Settings.Transparency ? 1 : 0) << 40));
+	bh.add((uint64) (uint32) Settings.ForcedBackdrop);
+	bh.add((uint64) GFX.FixedColour);
+#if WCACHE_NEGATIVE_CONTROL != 4
+	for (int k = 0; k < 2; k++)
+		for (int j = 0; j < 6; j++)
+		{
+			const struct ClipData &c = IPPU.Clip[k][j];
+			bh.add(c.Count);
+			for (int i = 0; i < c.Count && i < 6; i++)
+				bh.add((uint64) c.Left[i] | ((uint64) c.Right[i] << 16) | ((uint64) c.DrawMode[i] << 32));
+		}
+#endif
+	// the VRAM the enabled layers can read: tile map (up to four 2 KB screens) and character data (1024 tiles from the base, 16, 32 or 64 bytes each)
+	const uint8 en = tm | ts;
+	if (mode == 7)
+		bh.add(wide_vmax(job.vver, 0, 0x8000));
+	else
+	{
+		const int nbg = (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
+		for (int n = 0; n < nbg; n++)
+		{
+			if (!(en & (1 << n)))
+				continue;
+			const int shift = (mode == 0) ? 4 : (mode == 1) ? (n == 2 ? 4 : 5) : (n == 0 ? 6 : 5);
+			bh.add(0x42470000ull | (uint64) n);
+#if WCACHE_NEGATIVE_CONTROL != 1
+			bh.add(wide_vmax(job.vver, (uint32) PPU.BG[n].SCBase << 1, 0x2000));
+			bh.add(wide_vmax(job.vver, (uint32) PPU.BG[n].NameBase << 1, 1024u << shift));
+#endif
+		}
+	}
+	// the sprite character data: both name tables
+	const uint64 vobj = wide_vmax(job.vver, PPU.OBJNameBase, 0x4000 + PPU.OBJNameSelect);
+	// the line record without what the passes of this batch cannot read: layers that are not drawn have no scroll, size, map or character base,
+	// the Mode 7 rows are for Mode 7 only, the sprite registers for sprites only (the adapter still gets the whole record)
+	const int nbgk = (mode == 7) ? 0 : (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
+	const SWideLine *prev = NULL;
+	WHash hl;
+	for (int y = y0; y <= y1; y++)
+	{
+		const SWideLine &L = W.line[y];
+		if (!prev || memcmp(prev, &L, offsetof(SWideLine, pass)))
+		{
+			SWideLine c;
+			memcpy(&c, &L, sizeof(c));
+			for (int n = 0; n < 4; n++)
+				if (n >= nbgk || !(en & (1 << n)))
+				{
+					c.hofs[n] = c.vofs[n] = 0;
+					c.bgsize[n] = c.scsize[n] = 0;
+					c.scbase[n] = c.name[n] = 0;
+				}
+			if (mode != 7)
+			{
+				memset(c.m7, 0, sizeof(c.m7));
+				c.m7flags = 0;
+			}
+			if (mode != 1)
+				c.bg3prio = 0;
+			if (!(en & 0x10))
+			{
+				c.obj_size = c.obj_prio_rot = 0;
+				c.obj_base = c.obj_gap = 0;
+			}
+#if WCACHE_NEGATIVE_CONTROL == 5
+			for (int n = 0; n < 4; n++)
+				c.hofs[n] = 0;
+#endif
+			hl = bh;
+			hl.bytes(&c, offsetof(SWideLine, pass));
+			prev = &L;
+		}
+		WHash h = hl;
+		bool touches;
+		wide_obj_key(y, tm, ts, h, touches);
+#if WCACHE_NEGATIVE_CONTROL != 6
+		if (touches)
+			h.add(vobj);
+#endif
+		lkey[y][0] = h.a;
+		lkey[y][1] = h.b;
+		hit[y] = C.kvalid[y] && C.key[y][0] == h.a && C.key[y][1] == h.b;
+	}
+}
+
+// wide_cache_verify: rows ya..yb were served from the cache; draw them again into the check copy and compare (depth strips whole, pixels where
+// the depth byte is set)
+static void wide_verify_swap (void)
+{
+	for (int p = 0; p <= SW_NPASS; p++)
+	{
+		uint16 *t = W.scr[p]; W.scr[p] = C.vscr[p]; C.vscr[p] = t;
+		uint8 *u = W.z[p]; W.z[p] = C.vz[p]; C.vz[p] = u;
+	}
+	uint16 *t = W.sub; W.sub = C.vsub; C.vsub = t;
+	uint8 *u = W.subz; W.subz = C.vsubz; C.vsubz = u;
+}
+
+static void wide_verify_run (const S9xRenderJob &job, int ya, int yb, int mode, uint8 tm, uint8 tsx, uint8 pflags)
+{
+	const int M = W.m;
+	const uint32 sy = GFX.StartY, ey = GFX.EndY;
+	wide_verify_swap();
+	C.shadow = true;
+	for (int r = ya; r <= yb; r++)
+		wide_clear_row(r, 0xff);
+	wide_draw_run(job, ya, yb, mode, tm, tsx, pflags);
+	C.shadow = false;
+	wide_verify_swap();		// W.* = the cached strips again, C.v* = the fresh ones
+	GFX.StartY = sy;
+	GFX.EndY = ey;
+	g_s9x_wcache_stat_add(3, yb - ya + 1);
+	for (int r = ya; r <= yb; r++)
+	{
+		bool bad = false;
+		int badp = -1, badx = -1;
+		for (int p = 0; p <= SW_NPASS && !bad; p++)
+		{
+			if (!W.z[p] || !C.vz[p])
+				continue;
+			for (int side = 0; side < 2 && !bad; side++)
+			{
+				const size_t o = (size_t) r * SW_PITCH + (side ? M + 256 : 0);
+				for (int x = 0; x < M; x++)
+				{
+					if (W.z[p][o + x] != C.vz[p][o + x] || (W.z[p][o + x] && W.scr[p][o + x] != C.vscr[p][o + x]))
+					{
+						bad = true; badp = p; badx = x + (side ? M + 256 : 0);
+						break;
+					}
+				}
+			}
+		}
+		if (bad)
+		{
+			if (__atomic_fetch_add(&g_s9x_wcache_stat[4], 1, __ATOMIC_RELAXED) < 8)
+				fprintf(stderr, "WCACHE MISMATCH row %d pass %d column %d (mode %d tm %02x ts %02x pflags %d)\n", r, badp, badx, mode, tm, W.line[r].ts, pflags);
+		}
+	}
 }
 
 static void S9xWideBatch (const S9xRenderJob &job)
@@ -2837,40 +3222,72 @@ static void S9xWideBatch (const S9xRenderJob &job)
 			pflags |= SWLP_TSXBASE;
 	}
 
+	W.vfy = (pflags & SWLP_NOCOMP) && W.scr[SW_NPASS] && __atomic_load_n(&g_s9x_wide_verify, __ATOMIC_RELAXED);
 	uint8 drawn = 1 << SWP_COMPOSITE;
-	if (pflags & SWLP_BASE)
-		wide_pass(job, SWP_COMPOSITE, tsx, true);
-	else if (!(pflags & SWLP_NOCOMP))
-		wide_pass(job, SWP_COMPOSITE, 0xff, true);
-	W.vfy = false;
-	if ((pflags & SWLP_NOCOMP) && W.scr[SW_NPASS] && __atomic_load_n(&g_s9x_wide_verify, __ATOMIC_RELAXED))
-	{
-		wide_pass(job, SW_NPASS, 0xff, true);		// test: the composite whole, for the adapter to compare
-		W.vfy = true;
-	}
 	if (mode != 7)
 	{
 		if (tm & 0x10)
-		{
-			wide_pass(job, SWP_OBJ, 0x10, false);
 			drawn |= 1 << SWP_OBJ;
-		}
-		const bool layers = !(pflags & SWLP_NOLAYERS);
-		int nbg = (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
+		const int nbg = (mode == 0) ? 4 : (mode == 1) ? 3 : 2;
 		for (int n = 0; n < nbg; n++)
-			if (tm & (1 << n))
-			{
-				if (layers)
-					wide_pass(job, SWP_BG0 + n, 1 << n, false);
+			if ((tm & (1 << n)) || (tsx & (1 << n)))
 				drawn |= 1 << (SWP_BG0 + n);
+	}
+
+	// the lines that have to be drawn: all of them, or those the strip cache cannot serve
+	uint8 hit[SW_ROWS];
+	memset(hit + y0, 0, (size_t) (y1 - y0 + 1));
+	uint64 lkey[SW_ROWS][2];
+	const bool keyed = C.on && !C.shadow && job.vok;
+	if (keyed)
+		wide_line_keys(job, y0, y1, mode, tm, ts, pflags, lkey, hit);
+	else if (C.on)
+		for (int y = y0; y <= y1; y++)
+			C.kvalid[y] = 0;		// no key for these lines (no version numbers): drawn now, never reused
+	if (C.on)
+		for (int y = y0; y <= y1; y++)
+			C.lseq[y] = C.fseq;
+
+	const uint32 sy = GFX.StartY, ey = GFX.EndY;
+	int nhit = 0;
+	for (int y = y0; y <= y1; y++)
+		nhit += hit[y];
+	g_s9x_wcache_stat_add(2, 1);
+	g_s9x_wcache_stat_add(0, nhit);
+	g_s9x_wcache_stat_add(1, (y1 - y0 + 1) - nhit);
+	for (int y = y0; y <= y1;)
+	{
+		int ya = y;
+		const bool h = hit[ya] != 0;
+		while (y <= y1 && (hit[y] != 0) == h)
+			y++;
+		const int yb = y - 1;
+		if (h)
+		{
+			if (__atomic_load_n(&g_s9x_wcache_verify, __ATOMIC_RELAXED) && C.vz[0])
+				wide_verify_run(job, ya, yb, mode, tm, tsx, pflags);
+			continue;
+		}
+		if (C.on)
+		{
+			for (int r = ya; r <= yb; r++)
+			{
+				if (C.zd[r])
+					wide_clear_row(r, C.zd[r]);
+				C.zd[r] = 0;
 			}
-			else if (tsx & (1 << n))
+		}
+		wide_draw_run(job, ya, yb, mode, tm, tsx, pflags);
+		if (keyed)
+			for (int r = ya; r <= yb; r++)
 			{
-				if (layers && !(pflags & SWLP_TSXBASE))
-					wide_pass(job, SWP_BG0 + n, 1 << n, true);
-				drawn |= 1 << (SWP_BG0 + n);
+				C.key[r][0] = lkey[r][0];
+				C.key[r][1] = lkey[r][1];
+				C.kvalid[r] = 1;
 			}
 	}
+	GFX.StartY = sy;
+	GFX.EndY = ey;
 	for (int y = y0; y <= y1; y++)
 	{
 		for (int n = 0; n < 4; n++)
@@ -2884,6 +3301,18 @@ static void S9xWideBatch (const S9xRenderJob &job)
 
 extern "C" void S9xWideFillView (struct SWideView *v)
 {
+	if (C.on)
+	{
+		// rows that were not served this frame hold the depth strips of an earlier frame: cleared, as a fresh frame would have them
+		for (int y = 0; y < SW_ROWS; y++)
+			if (C.lseq[y] != C.fseq)
+			{
+				if (C.zd[y])
+					wide_clear_row(y, C.zd[y]);
+				C.zd[y] = 0;
+				C.kvalid[y] = 0;
+			}
+	}
 	memset(v, 0, sizeof(*v));
 	v->m = W.m;
 	v->h = W.h ? W.h : PPU.ScreenHeight;

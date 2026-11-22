@@ -210,6 +210,11 @@ static inline void S9xWideStampVRAM (uint32 address)
 	uint16 c = (uint16) g_s9x_wide_clock;	// never 0 (see S9xWideFrameStartLive)
 	g_s9x_vage[(address >> 1) & 0x7fff] = c;
 	g_s9x_uage[(address >> 5) & 0x7ff] = c;
+#if defined(WCACHE_NEGATIVE_CONTROL) && WCACHE_NEGATIVE_CONTROL == 7
+	g_s9x_vblk[(address >> 11) & 31] = (uint32_t) ++g_s9x_vseq;		// test only: the 32 bit counter of the first version (it wraps; see snes/WIDE-INTEGRATION.md)
+#else
+	g_s9x_vblk[(address >> 11) & 31] = ++g_s9x_vseq;		// the margin strip cache's version of the 2 KB block (gfx.cpp)
+#endif
 }
 extern struct SPPU			PPU;
 extern struct InternalPPU	IPPU;

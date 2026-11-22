@@ -582,6 +582,7 @@ bool S9xPPUMTActive(void) { return on; }
 void S9xPPUMTInvalidateAll(void)
 {
 	g_s9x_wide_epoch++;	/* wide view: a reset or a state load makes every stamp and learned position meaningless */
+	S9xWideBumpVRAM();	/* and every margin strip drawn before */
 	if (!on) return;
 	wait_idle();
 	full_resync = true;
@@ -874,6 +875,21 @@ uint8 g_s9x_wide_fco = 0;
 uint8 g_s9x_wide_verify = 0;
 uint16 g_s9x_vage[32768];
 uint16 g_s9x_uage[2048];
+uint64_t g_s9x_vseq = 0;
+uint64_t g_s9x_vblk[32];
+int g_s9x_wcache = 1;
+int g_s9x_wcache_verify = 0;
+uint64_t g_s9x_wcache_stat[8];
+
+void S9xWideBumpVRAM(void)
+{
+	for (int i = 0; i < 32; i++)
+#if defined(WCACHE_NEGATIVE_CONTROL) && WCACHE_NEGATIVE_CONTROL == 7
+		g_s9x_vblk[i] = (uint32_t) ++g_s9x_vseq;		// test only: see ppu.h
+#else
+		g_s9x_vblk[i] = ++g_s9x_vseq;
+#endif
+}
 SWideHook g_s9x_wide_hook = NULL;
 void *g_s9x_wide_user = NULL;
 
@@ -887,6 +903,7 @@ void S9xWideSet(int margin, SWideHook hook, void *user)
 		memset(g_s9x_vage, 0, sizeof(g_s9x_vage));
 		memset(g_s9x_uage, 0, sizeof(g_s9x_uage));
 		g_s9x_wide_epoch++;
+		S9xWideBumpVRAM();		/* VRAM writes were not counted while the view was off: nothing drawn before may be reused */
 	}
 	g_s9x_wide_hook = hook;
 	g_s9x_wide_user = user;
@@ -916,6 +933,7 @@ void S9xWideCoreMargin(int m)
 void S9xWideReset(void)
 {
 	g_s9x_wide_epoch++;
+	S9xWideBumpVRAM();
 }
 
 void S9xWideFrameStartLive(void)

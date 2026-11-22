@@ -32,6 +32,9 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0   // macOS: SO_NOSIGPIPE on the socket instead (SockOpen)
+#endif
 #endif
 
 namespace nph {
@@ -306,6 +309,15 @@ void SockClose(Sock* s) {
 }
 
 static int FillRandom(unsigned char* out, size_t len) {
+#ifdef __APPLE__
+    while (len > 0) {                               // getentropy: at most 256 bytes a call
+        const size_t n = len < 256 ? len : 256;
+        if (getentropy(out, n) != 0) return -1;
+        out += n;
+        len -= n;
+    }
+    return 0;
+#endif
     while (len > 0) {
         const size_t n = len > 64 ? 64 : len;   // sceKernelGetRandomNumber: 64 bytes at most
         if (sceKernelGetRandomNumber(out, (SceSize)n) < 0) return -1;
@@ -346,11 +358,15 @@ Event* EventCreate() {
     Event* e = (Event*)calloc(1, sizeof *e);
     if (!e) return nullptr;
     pthread_mutex_init(&e->m, nullptr);
+#ifdef __APPLE__
+    pthread_cond_init(&e->c, nullptr);   // macOS: no condattr clock; EventWait uses the relative wait
+#else
     pthread_condattr_t attr;
     pthread_condattr_init(&attr);
     pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
     pthread_cond_init(&e->c, &attr);
     pthread_condattr_destroy(&attr);
+#endif
     return e;
 }
 void EventDestroy(Event* e) {
@@ -373,7 +389,17 @@ bool EventWait(Event* e, uint32_t timeout_ms) {
     if (until.tv_nsec >= 1000000000L) { until.tv_sec++; until.tv_nsec -= 1000000000L; }
     pthread_mutex_lock(&e->m);
     while (!e->set) {
+#ifdef __APPLE__
+        timespec now, rel;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        rel.tv_sec = until.tv_sec - now.tv_sec;
+        rel.tv_nsec = until.tv_nsec - now.tv_nsec;
+        if (rel.tv_nsec < 0) { rel.tv_sec--; rel.tv_nsec += 1000000000L; }
+        if (rel.tv_sec < 0) break;
+        if (pthread_cond_timedwait_relative_np(&e->c, &e->m, &rel) != 0) break;
+#else
         if (pthread_cond_timedwait(&e->c, &e->m, &until) != 0) break;
+#endif
     }
     const bool got = e->set != 0;
     e->set = 0;
@@ -503,6 +529,9 @@ int SockWait(Sock* s, bool for_write, uint32_t ms) {
 
 int SockConnect(Sock* s, uint32_t ip, uint16_t port, uint32_t timeout_ms, const volatile int* cancel, int* sys) {
     s->fd = socket(AF_INET, SOCK_STREAM, 0);
+#ifdef SO_NOSIGPIPE
+    if (s->fd >= 0) { int one = 1; setsockopt(s->fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one); }
+#endif
     if (s->fd < 0) { *sys = errno; return NET_FAIL; }
     fcntl(s->fd, F_SETFL, fcntl(s->fd, F_GETFL) | O_NONBLOCK);
     int one = 1;
@@ -552,6 +581,15 @@ void SockClose(Sock* s) {
 }
 
 static int FillRandom(unsigned char* out, size_t len) {
+#ifdef __APPLE__
+    while (len > 0) {                               // getentropy: at most 256 bytes a call
+        const size_t n = len < 256 ? len : 256;
+        if (getentropy(out, n) != 0) return -1;
+        out += n;
+        len -= n;
+    }
+    return 0;
+#else
     while (len > 0) {
         const ssize_t n = getrandom(out, len, 0);
         if (n <= 0) return -1;
@@ -559,6 +597,7 @@ static int FillRandom(unsigned char* out, size_t len) {
         len -= (size_t)n;
     }
     return 0;
+#endif
 }
 #endif
 

@@ -185,6 +185,9 @@ copier header is skipped; battery RAM loads and saves (the test cartridge counts
 1 then 2); the previous save is kept as `.bak`; no `.tmp` file is left; the save-safety failures listed under
 "Save safety"; the cheat tests (decode vectors, RAM and ROM codes, threads with codes, state load, the `.cht`
 file, a foreign file, a failed write that leaves the file byte-identical).
+With `snes_wide_twin` built, the wide view proofs run too, among them `wide_cache_proof.sh` (the margin strip cache under random writes between frames and
+lines, a VRAM counter crossing 2^32, state load, reset, margin change, the margin thread joining and leaving; each against a run without the cache, and every hit
+checked against a fresh draw).
 
 ### Screenshot conformance (`conformance.py`)
 

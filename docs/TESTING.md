@@ -302,24 +302,35 @@ hash only the build and are open to it. `mixed64` therefore runs only those.
 
 ## Second player on a Mac
 
-An Apple-silicon Mac cannot run the Vita app, but it can run the twin in a Linux VM and be the
-other player in a two-player or online session with one real Vita. The twin has no window and no
-keyboard: a scripted pad drives its menus and plays, so an automated session (or a person typing
-one command) can be the Mac's side. Nothing here has been run against a real Vita.
+A Mac cannot run the Vita app, but it can run the twin and be the other player in a two-player or
+online session with one real Vita. The twin has no window and no keyboard: a scripted pad drives
+its menus and plays, so an automated session (or a person typing one command) can be the Mac's
+side. Nothing here has been run against a real Vita.
 
-1. A Linux VM on the Mac (UTM, Parallels, Multipass; any aarch64 Linux; a native build there is the safe
-   way to get Online rooms, see Building). For Same Wi-Fi rooms the VM's network must be
-   BRIDGED to the Wi-Fi the Vita is on (the same subnet, no NAT: the rooms are found by LAN
-   broadcast); for Online rooms the VM only needs internet. Install `python3` and
-   `python3-pil` (Pillow).
-2. Get the program: build it on the VM (recommended: `make -C gpsp/vita/hostcore ARCH=aarch64`, with
-   `HOST_VERSION=` set to the Vita build's `CORE_VERSION` and, for Online,
-   `MBEDTLS=<aarch64 prefix>`; see [Building](BUILDING.md)), or copy the cross-built
-   `gbadhoc_host` plus `gpsp/vita/hostcore/*.py` and `testrom/`. Put the same game as the Vita's
-   in a folder (the twin carries a Link Cable partner's cartridge across, but a Game Boy / NES /
-   WonderSwan session needs the file on both sides). A GBA BIOS must be the same file as on the
-   Vita if either has one (`--bios`).
-3. Run `gpsp/vita/hostcore/mac_player.py`, which writes the data root and the pad script and starts
+There are two ways to get the twin on the Mac. **Use the native build:** it uses the Mac's own
+network, so Same Wi-Fi (the Vita and the Mac on one Wi-Fi) and Online both work, and a Linux VM
+(whose network may have no route to the room service) is not needed. The aarch64 Linux build in a
+VM is the fallback (see the end of this section).
+
+1. Build it on the Mac (macOS 15, Xcode command line tools, `brew install llvm`; details in
+   [Building](BUILDING.md), "The twin on a Mac"):
+
+       sh tools/build/macos-build.sh --host-version <the Vita build's CORE_VERSION>
+
+   The program is `gpsp/vita/hostcore/build/macos/gbadhoc_host`. `--host-version` must be the
+   string the Vita package reports (`CORE_VERSION` in `gpsp/vita/Makefile`), or the Vita refuses
+   the twin ("different version"). Also `python3 -m pip install pillow` (Pillow; use a virtual
+   environment if pip refuses on a Homebrew Python): `mac_player.py` imports the test helpers.
+   Put the same game as the Vita's in a folder (the twin carries a Link Cable partner's cartridge
+   across, but a Game Boy / NES / WonderSwan session needs the file on both sides). A GBA BIOS must
+   be the same file as on the Vita if either has one (`--bios`).
+2. The first time the twin opens a network socket macOS may ask "Do you want the application
+   gbadhoc_host to accept incoming network connections?": allow it (Same Wi-Fi rooms are found by
+   broadcast and need to be heard). If it was refused, System Settings > Network > Firewall.
+   macOS 15 also asks the terminal application (Terminal, iTerm...) for "Local Network" access the
+   first time a program started from it talks to the LAN: allow it, or turn it on in System Settings >
+   Privacy & Security > Local Network; without it the Vita's room is never heard.
+3. Run `gpsp/vita/hostcore/mac_player.py` (on the Mac: `python3 gpsp/vita/hostcore/mac_player.py ...`), which writes the data root and the pad script and starts
    the twin in real time (`--realtime`; all of its output is `ROOT/log/gbadhoc.log`, pictures in
    `ROOT/shots/`):
 
@@ -327,14 +338,16 @@ one command) can be the Mac's side. Nothing here has been run against a real Vit
        python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --join ABCDE --play 90
 
        # Same Wi-Fi: the Vita hosts, the Mac joins the first room in the list
-       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --join-lan --ip 192.168.1.50
+       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --join-lan
 
        # the Mac hosts (prints "ROOM CODE: XXXXX" for Online), the Vita joins
        python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --host-online
-       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --host-lan --ip 192.168.1.50
+       python3 mac_player.py --exe ./gbadhoc_host --rom game.gb --host-lan
 
-   `--ip` is the VM's address on the Wi-Fi (`ip addr`), told to the twin as its stand-in for the
-   console's Wi-Fi (`nethost.ini`); `--play SEC` is how long the pad plays after the link forms
+   `--ip` (and `--mask`) is the machine's address on the Wi-Fi, told to the twin as its stand-in for the
+   console's Wi-Fi (`nethost.ini`); on a Mac `mac_player.py` finds it itself (`en0`, `en1`...) and prints
+   it, so leave it out unless that is the wrong interface (check with `ifconfig en0`); in a VM
+   it is the VM's (`ip addr`) and the VM's network must be BRIDGED; `--play SEC` is how long the pad plays after the link forms
    (it presses `--pattern cross,right,cross,left` every half second), after which the twin
    disconnects from the menu and quits. The exit status is 0 when the link formed.
 4. The pad script is the plain text of the twin's input (`--input-file`, documented at the top
@@ -343,6 +356,11 @@ one command) can be the Mac's side. Nothing here has been run against a real Vit
    log says so), `+30:type=TEXT`. `mac_player.py` writes `ROOT/script.txt`; copy and edit it to
    play something else (a script that plays a particular game) and start the twin by hand:
    `gbadhoc_host --root ROOT --realtime --shot-dir ROOT/shots --input-file ROOT/script.txt`.
+
+The Linux VM route (UTM, Parallels, Multipass; any aarch64 Linux) still works: build there with
+`make -C gpsp/vita/hostcore ARCH=aarch64` (natively on the VM, `HOST_VERSION=` as above, and for Online
+`MBEDTLS=<aarch64 prefix>`), bridge the VM's network to the Wi-Fi the Vita is on (same subnet, no
+NAT) for Same Wi-Fi rooms, and run `mac_player.py` there with `--exe` and `--ip` of the VM.
 
 Which sessions can include the Mac: Game Boy / Game Boy Color link, the Wireless Adapter, NES and
 WonderSwan two players, Share game data, and Online. GBA Link Cable (the cycle-exact mirror) needs

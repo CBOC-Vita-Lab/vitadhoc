@@ -68,8 +68,10 @@ static inline int fe_bimage_check(const fe_bimage *b, const char **why)
       w = "bdata_end below bdata_start";
    else if (b->bss_lend < b->bss_start)
       w = "bregion_lend below bregion_start";
+#ifndef FE_BIMAGE_HEAP_PRISTINE   /* (macOS: the copy is a heap block, not inside B's .bss) */
    else if (b->pristine < b->bss_lend)
       w = "the pristine .data copy overlaps the zeroed range";
+#endif
    else if (b->pristine_end &&
             (size_t)(b->pristine_end - b->pristine) !=
             (size_t)(b->data_end - b->data_start))

@@ -392,6 +392,11 @@ static int lan_sock_bind(int fd, uint16_t port, int reuse)
    {
       int on = 1;
       setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#if defined(__APPLE__) && defined(SO_REUSEPORT)
+      /* macOS: two sockets share a broadcast port only when both set
+       * SO_REUSEPORT (SO_REUSEADDR alone does not do it, as on Linux) */
+      setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &on, sizeof(on));
+#endif
    }
    /* INADDR_ANY, not our address: a socket bound to one unicast address is
     * not handed datagrams sent to the broadcast address. */
@@ -447,13 +452,25 @@ int lan_local_ipv4(uint32_t *ip_be, uint32_t *netmask_be)
 #else
    struct ifaddrs *list = NULL, *i;
    int found = -1;
+#ifdef __APPLE__
+   int pass;
+#endif
    if (getifaddrs(&list) != 0)
       return -1;
+#ifdef __APPLE__
+   /* A Mac has bridges, tunnels and VM interfaces next to Wi-Fi/Ethernet:
+    * take an enN interface first, anything else only if there is none. */
+   for (pass = 0; pass < 2 && found < 0; pass++)
+#endif
    for (i = list; i; i = i->ifa_next)
    {
       if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET ||
           !(i->ifa_flags & IFF_UP) || (i->ifa_flags & IFF_LOOPBACK))
          continue;
+#ifdef __APPLE__
+      if (pass == 0 && strncmp(i->ifa_name, "en", 2) != 0)
+         continue;
+#endif
       if (ip_be)
          *ip_be = ((struct sockaddr_in *)i->ifa_addr)->sin_addr.s_addr;
       if (netmask_be)

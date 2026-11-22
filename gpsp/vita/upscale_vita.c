@@ -729,10 +729,10 @@ int upscale_thread_ids(int *ids, int max)
 #else /* a host twin */
 #include <pthread.h>
 #include <sched.h>
-#include <semaphore.h>
+#include "host_sem.h"
 
 static pthread_t g_th[UP_HELPERS];
-static sem_t g_go[UP_HELPERS];
+static host_sem_t g_go[UP_HELPERS];
 static int g_idx[UP_HELPERS];
 
 static void *helper_entry(void *p)
@@ -741,7 +741,7 @@ static void *helper_entry(void *p)
    t_helper = 1;
    for (;;)
    {
-      while (sem_wait(&g_go[i]) != 0)
+      while (host_sem_wait(&g_go[i]) != 0)
          ;
       if (g_pool_quit)
          break;
@@ -776,7 +776,7 @@ static void pool_start(void)
             break;               /* nothing would watch it: do not start it */
       }
       g_idx[i] = i;
-      sem_init(&g_go[i], 0, 0);
+      host_sem_init(&g_go[i], 0);
       if (pthread_create(&g_th[i], NULL, helper_entry, &g_idx[i]) != 0)
          break;
       core4_set_thread(C4_UPSCALE, i, 0);
@@ -790,7 +790,7 @@ static void pool_go(void)
 {
    int i;
    for (i = 0; i < g_pool; i++)
-      sem_post(&g_go[i]);
+      host_sem_post(&g_go[i]);
 }
 
 static int pool_stop(void)
@@ -799,9 +799,9 @@ static int pool_stop(void)
    g_pool_quit = 1;
    for (i = 0; i < g_pool; i++)
    {
-      sem_post(&g_go[i]);
+      host_sem_post(&g_go[i]);
       pthread_join(g_th[i], NULL);
-      sem_destroy(&g_go[i]);
+      host_sem_destroy(&g_go[i]);
    }
    return 1;
 }

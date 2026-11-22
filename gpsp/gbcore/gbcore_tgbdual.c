@@ -79,10 +79,23 @@ static unsigned palette_id = GBCORE_PALETTE_AUTO;
  * changed it, and the zero-initialised part (.bss) is simply cleared.  A
  * build that links the adapter without that script has no marks, and
  * gbcore_power_on fails. */
+#ifdef TGB_SECT_D
+/* Mach-O (hostcore ARCH=macos): no linker script; the instance is compiled
+ * with its .data and .bss in two sections of their own (corebuild.mk, the
+ * -include of sect.h that also defines TGB_SECT_D / TGB_SECT_Z), and the
+ * linker's section$start$ / section$end$ symbols are the marks. */
+extern char tgb_image_data_start[] __asm("section$start$__DATA$" TGB_SECT_D) __attribute__((weak));
+extern char tgb_image_data_end[] __asm("section$end$__DATA$" TGB_SECT_D) __attribute__((weak));
+extern char tgb_image_bss_start[] __asm("section$start$__DATA$" TGB_SECT_Z) __attribute__((weak));
+extern char tgb_image_bss_end[] __asm("section$end$__DATA$" TGB_SECT_Z) __attribute__((weak));
+#define TGB_KEEP_SECTION "__DATA,__tgb_keep"
+#else
 extern char tgb_image_data_start[] __attribute__((weak));
 extern char tgb_image_data_end[] __attribute__((weak));
 extern char tgb_image_bss_start[] __attribute__((weak));
 extern char tgb_image_bss_end[] __attribute__((weak));
+#define TGB_KEEP_SECTION ".bss.gbcore_keep"
+#endif
 
 /* Outside the cleared range (the script places .bss.gbcore_keep first). */
 static struct {
@@ -90,7 +103,7 @@ static struct {
   size_t size;
   int taken;
   int failed;
-} image __attribute__((section(".bss.gbcore_keep")));
+} image __attribute__((section(TGB_KEEP_SECTION)));
 
 /* Byte loops the sanitizer leaves alone: the ranges include the padding
  * AddressSanitizer puts between instrumented globals. */

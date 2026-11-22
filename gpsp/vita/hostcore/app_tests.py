@@ -1107,6 +1107,10 @@ def t_game_look(S):
             "turned off: the console's fit is back")
     S.check(re.search(r"^override = 0$", gini(r), re.M),
             "the file says so")
+    wide_rom = os.path.join(HERE, "testrom", "gbadhoc-wide.gba")
+    if not os.path.exists(wide_rom):
+        S.note("no testrom/gbadhoc-wide.gba (make -C testrom wide): the other-game part is skipped")
+        return
     r = S.run("game_look_other", "100:quit\n", autoboot="gbadhoc-wide.gba",
               config=cfg, extra={
                   "roms/gbadhoc-wide.gba": open(os.path.join(HERE, "testrom",
@@ -2905,10 +2909,10 @@ PICKER_PATH_ROWS = (336, 400)
 
 
 # The picker lists the consoles ALPHABETICALLY by the name its rows show (ui_vita_home.h hm_con_at):
-# Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES, Sega Genesis / Mega Drive,
-# SG-1000, Super Nintendo, WonderSwan.  fe_console_t of each row (GBA 0, GB 1, GBC 2, SNES 3, NES 4, WS 5,
-# MD 6, SMS 7, GG 8, SG 9):
-PICK_ORDER = [1, 0, 2, 8, 7, 4, 6, 9, 3, 5]
+# Game Boy, Game Boy Advance, Game Boy Color, Game Gear, Master System, NES,
+# Sega CD, Sega Genesis / Mega Drive, SG-1000, Super Nintendo, WonderSwan.  fe_console_t of each row (GBA 0,
+# GB 1, GBC 2, SNES 3, NES 4, WS 5, MD 6, SMS 7, GG 8, SG 9, Sega CD 10):
+PICK_ORDER = [1, 0, 2, 8, 7, 4, 10, 6, 9, 3, 5]
 
 
 def pick_row(console):
@@ -2982,9 +2986,9 @@ def t_picker(S):
     S.check(ink(b, 2) < ink(b, 5) - 60 and ink(b, 2) > 3 * 0 + 150,
             "GBC (0 games) is dimmed but readable, NES (2 games) is not (%d, %d)" % (ink(b, 2), ink(b, 5)))
     # N presses move N rows, wrapping; the library follows each
-    r = picker_run(S, "picker_steps", "90:triangle\n" + "+6:triangle\n" * 12 + "+260:shot=rest.png\n+10:quit\n")
-    S.check(picker_moves(r) == [2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3],
-            "twelve presses after opening move 2..9, 0..3 (wrap): %s" % picker_moves(r))
+    r = picker_run(S, "picker_steps", "90:triangle\n" + "+6:triangle\n" * 13 + "+260:shot=rest.png\n+10:quit\n")
+    S.check(picker_moves(r) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 0, 1, 2, 3],
+            "thirteen presses after opening move 2..10, 0..3 (wrap): %s" % picker_moves(r))
     cons = [int(d["console"]) for d in r.evt("ui_browser_console")]
     S.check(cons == [PICK_ORDER[i] for i in picker_moves(r)] and cons[:3] == [2, 8, 7],
             "the library is switched live at every step (%s)" % cons)
@@ -3035,9 +3039,9 @@ def t_picker(S):
     x, y = PICKER_PILL
     r = picker_run(S, "picker_touch", "90:touch=%d/%d\n+40:shot=t_open.png\n+4:touch=450/%d\n+40:shot=t_snes.png\n"
                    "+4:touch=%d/%d\n+40:touch=450/%d\n+40:touch=%d/%d\n+40:touch=800/528\n+40:quit\n" %
-                   (x, y, picker_row_y(6), x, y, picker_row_y(3), x, y))   # (opened on row 6 the list is scrolled two rows)
+                   (x, y, picker_row_y(7), x, y, picker_row_y(2), x, y))   # (opened on row 7 the list is scrolled three rows)
     ev = [e["_"].replace("EVT ui_picker ", "") for e in r.evt("ui_picker")]
-    S.check(ev[:3] == ["open console=0", "move row=6 console=6", "close console=6 idle=0"],
+    S.check(ev[:3] == ["open console=0", "move row=7 console=6", "close console=6 idle=0"],
             "a tap on the pill opens it; a tap on the Genesis row switches and closes (%s)" % ev)
     S.check([int(d["console"]) for d in r.evt("ui_browser_console")] == [6, 4],
             "the second tap on a row switched again (%s)" % [d["_"] for d in r.evt("ui_browser_console")])
@@ -3051,14 +3055,14 @@ def t_picker(S):
     r = picker_run(S, "picker_drag", "90:touch=%d/%d\n+120:drag=450/%d/450/%d:20\n+30:shot=t_drag.png\n"
                    "+4:touch=450/%d\n+40:quit\n" % (x, y, picker_row_y(6), picker_row_y(2), picker_row_y(7)))
     ev = [e["_"].replace("EVT ui_picker ", "") for e in r.evt("ui_picker")]
-    S.check(ev == ["open console=0", "move row=9 console=5", "close console=5 idle=0"],
+    S.check(ev == ["open console=0", "move row=10 console=5", "close console=5 idle=0"],
             "a list opened by touch stays open, a drag scrolls it without picking, a tap on the last row "
             "(WonderSwan) picks it (%s)" % ev)
     S.picture(r, "t_drag.png")
-    # ten consoles are the real list now; the host twin can repeat the table
-    # (GBADHOC_PICKER_ROWS=4: fourteen rows) to show a longer list -- it holds
+    # eleven consoles are the real list now; the host twin can repeat the table
+    # (GBADHOC_PICKER_ROWS=3: fourteen rows) to show a longer list -- it holds
     # eight rows, scrolls to keep the highlight in view, never reaches the hint line
-    ten = {"GBADHOC_PICKER_ROWS": "4"}
+    ten = {"GBADHOC_PICKER_ROWS": "3"}
     r = picker_run(S, "picker_ten", "90:triangle\n+20:shot=ten_open.png\n" + "+6:triangle\n" * 12 +
                    "+30:shot=ten_end.png\n+4:touch=450/%d\n+40:shot=ten_tap.png\n+10:quit\n" % picker_row_y(4), env=ten)
     S.check(picker_moves(r) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 10],
@@ -3157,11 +3161,11 @@ def t_find(S):
             len(r.evt("ui_text_open")) == 1 and picked(r, target),
             "Settings and explicit Refresh preserve Find and rebuild it before Starred selection")
 
-    # (ten consoles: the first press opens the picker, ten more go round to the GBA again)
-    r = run("console", "90:circle\n94:type=find-only\n150:triangle\n" + "+50:triangle\n" * 10 +
+    # (eleven consoles: the first press opens the picker, eleven more go round to the GBA again)
+    r = run("console", "90:circle\n94:type=find-only\n150:triangle\n" + "+50:triangle\n" * 11 +
             "+80:cross\n+140:shot=game.png\n+20:quit\n")
     S.check(r.has(r"^EVT browser_find active=0 ") and
-            len(r.evt("ui_browser_console")) == 10 and picked(r, "gbadhoc-test.gba"),
+            len(r.evt("ui_browser_console")) == 11 and picked(r, "gbadhoc-test.gba"),
             "a console change clears Find instead of hiding the remembered game on return")
 
     r = run("touch", "90:touch=715/37\n95:type=find-only-02\n"
@@ -3178,9 +3182,9 @@ def t_library_cache(S):
     """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
     with open(OWN_GBA, "rb") as cartridge:
         second_game = cartridge.read()
-    # ten console tabs (GBA, GB, GBC, SNES, NES, WS and the four Sega ones): two full turns
-    # (TRIANGLE opens the picker, then 20 more presses; 100 frames of rest close it)
-    script = ("60:triangle\n" + "+60:triangle\n" * 9 + "+70:triangle\n" + "+60:triangle\n" * 9 + "+70:triangle\n"
+    # eleven console tabs (GBA, GB, GBC, SNES, NES, WS, the four Sega ones and Sega CD): two full turns
+    # (TRIANGLE opens the picker, then 22 more presses; 100 frames of rest close it)
+    script = ("60:triangle\n" + "+60:triangle\n" * 10 + "+70:triangle\n" + "+60:triangle\n" * 10 + "+70:triangle\n"
               "+100:right\n+20:start\n" + "+8:down\n" * 19 +
               "+20:shot=quality_setting.png\n" + "+8:up\n" * 15 +
               "+20:shot=refresh_command.png\n+8:cross\n"
@@ -3192,8 +3196,8 @@ def t_library_cache(S):
     scans = r.evt("rom_scan_time")
     sides = r.evt("rom_scan_side")
     S.check(len(scans) == 2 and {d.get("console") for d in scans} == {"0"} and
-            len(sides) == 18 and {d.get("console") for d in sides} == {"1", "2", "3", "4", "5", "6", "7", "8", "9"},
-            "one walk lists all ten consoles; only the explicit refresh walks again "
+            len(sides) == 20 and {d.get("console") for d in sides} == {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+            "one walk lists all eleven consoles; only the explicit refresh walks again "
             "(scans %s, side lists %s)" % ([d["_"] for d in scans], [d["_"] for d in sides]))
     S.check(len(r.evt("rom_cache_hit")) >= 4, "revisited console tabs use cached lists")
     S.check(r.has(r"library_refresh_asked") and r.has(r"library_refresh_done console=0 roms=2"),
@@ -7035,14 +7039,14 @@ def t_ws_library(S):
         x, w, search = int(pl[-1]["x"]), int(pl[-1]["w"]), int(pl[-1]["search"])
         S.check(x + w <= search, "the pill is whole before the search icon (x %d w %d, search %d)" % (x, w, search))
         px, py = (x + w // 2) * 2, 37
-        # WS is the last row of ten (rows scroll), so DOWN walks to it; a tap on the pill opens it again and a tap on
-        # the first visible row (Game Boy Color once WS is selected) goes there
-        r2 = S.run("ws_touch", "90:touch=%d/%d\n" % (px, py) + "+40:down\n" * 8 + "+40:cross\n+80:shot=ws_tab.png\n"
+        # WS is the last row of eleven (rows scroll), so DOWN walks to it; a tap on the pill opens it again and a tap on
+        # the first visible row (Game Gear once WS is selected) goes there
+        r2 = S.run("ws_touch", "90:touch=%d/%d\n" % (px, py) + "+40:down\n" * 9 + "+40:cross\n+80:shot=ws_tab.png\n"
                    "+10:touch=%d/%d\n+40:touch=450/%d\n+80:shot=gba_tab.png\n+10:quit\n" % (px, py, picker_row_y(0)),
                    cwd=cwd, config={"ui_home": 1})
         S.clean(r2)
         cons = [d["console"] for d in r2.evt("ui_browser_console")]
-        S.check(cons[-2:] == ["5", "2"], "the pill and DOWN reach the WS shelf, a tap on the picker's first row goes back (%s)" % cons)
+        S.check(cons[-2:] == ["5", "8"], "the pill and DOWN reach the WS shelf, a tap on the picker's first row goes back (%s)" % cons)
         S.picture(r2, "ws_tab.png", "ws_home_bar.png")
 
 
@@ -7578,7 +7582,7 @@ def t_save_heal_nes_ws(S):
         stem = name.rsplit(".", 1)[0]
         mine = bytes((i * 5 + 3) & 0xFF for i in range(8192))
         # Export is after Display settings (a NES game's NTSC colours row, and a WonderSwan game's three rows)
-        row = menu_pick(4, wait=60) + set_down(20 if kind == "nes" else 23)
+        row = menu_pick(4, wait=60) + set_down(22 if kind == "nes" else 25)
         r = S.run("heal_" + kind, "30:left:2\n" + row + "+10:cross\n+20:circle\n+10:circle\n+30:quit\n",
                   autoboot=name, extra={"roms/" + name: rom, "roms/%s.srm" % stem: mine},
                   vita_ini={"sync_ra_saves": 0})
@@ -8201,8 +8205,8 @@ def t_nes_library(S):
                os.path.join(cwd, "ux0:ROMS/SNES ROM Collection")]
     before = {d: {n: open(os.path.join(d, n), "rb").read() for n in os.listdir(d)
                   if os.path.isfile(os.path.join(d, n))} for d in folders}
-    # classic UI: GBA -> GB -> GBC -> SNES -> NES -> WS -> MD -> SMS -> GG -> SG -> GBA, then the NES shelf again, pick
-    steps = "90:triangle\n" + "+30:triangle\n" * 9
+    # classic UI: GBA -> GB -> GBC -> SNES -> NES -> WS -> MD -> SMS -> GG -> SG -> Sega CD -> GBA, then the NES shelf again, pick
+    steps = "90:triangle\n" + "+30:triangle\n" * 10
     r = S.run("nes_library", steps + "+30:shot=gba.png\n"
               "+2:triangle\n+30:triangle\n+30:triangle\n+30:triangle\n"
               "+60:shot=nes.png\n+2:cross\n+60:quit\n", cwd=cwd)
@@ -8211,8 +8215,8 @@ def t_nes_library(S):
     order = [c for c, _ in sw if c]
     while order and order[0] == "0" and order[1:2] != ["1"]:
         order.pop(0)                       # (the first listing of the GBA shelf)
-    S.check(order[:14] == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "1", "2", "3", "4"],
-            "TRIANGLE steps GB, GBC, SNES, NES, WS, MD, SMS, GG, SG and back to GBA, then on again (%s)" % sw)
+    S.check(order[:15] == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "0", "1", "2", "3", "4"],
+            "TRIANGLE steps GB, GBC, SNES, NES, WS, MD, SMS, GG, SG, Sega CD and back to GBA, then on again (%s)" % sw)
     nes = [n for c, n in sw if c == "4"]
     snes = [n for c, n in sw if c == "3"]
     S.check(nes and nes[0] == 6,

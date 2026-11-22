@@ -52,6 +52,10 @@ int nescore_state_load(nescore_t *c, const void *s, size_t n) { (void)c; (void)s
 uint32_t nescore_ra_read(nescore_t *c, uint32_t a, uint8_t *o, uint32_t n) { (void)c; (void)a; (void)o; (void)n; NEVER("nescore_ra_read"); return 0; }
 int nescore_cheats_set(nescore_t *c, const char *s) { (void)c; (void)s; NEVER("nescore_cheats_set"); return 0; }
 int nescore_peek(nescore_t *c, unsigned a) { (void)c; (void)a; NEVER("nescore_peek"); return 0; }
+size_t nescore_ahead_size(nescore_t *c) { (void)c; NEVER("nescore_ahead_size"); return 0; }
+long nescore_ahead_save(nescore_t *c, void *d, size_t n) { (void)c; (void)d; (void)n; NEVER("nescore_ahead_save"); return 0; }
+int nescore_ahead_load(nescore_t *c, const void *s, size_t n) { (void)c; (void)s; (void)n; NEVER("nescore_ahead_load"); return 0; }
+void nescore_set_quiet(nescore_t *c, int q) { (void)c; (void)q; NEVER("nescore_set_quiet"); }
 
 /* ---- the WonderSwan, absent ---- */
 wscore_t *wscore_create(const char *rom_path, unsigned rate,
@@ -69,6 +73,10 @@ int wscore_rom_title(wscore_t *c, char *d, size_t n) { (void)c; (void)d; (void)n
 size_t wscore_save_ram_size(wscore_t *c) { (void)c; NEVER("wscore_save_ram_size"); return 0; }
 int wscore_save_ram_read(wscore_t *c, void *d, size_t n) { (void)c; (void)d; (void)n; NEVER("wscore_save_ram_read"); return 0; }
 int wscore_save_ram_write(wscore_t *c, const void *s, size_t n) { (void)c; (void)s; (void)n; NEVER("wscore_save_ram_write"); return 0; }
+size_t wscore_ahead_size(wscore_t *c) { (void)c; NEVER("wscore_ahead_size"); return 0; }
+long wscore_ahead_save(wscore_t *c, void *d, size_t n) { (void)c; (void)d; (void)n; NEVER("wscore_ahead_save"); return 0; }
+int wscore_ahead_load(wscore_t *c, const void *s, size_t n) { (void)c; (void)s; (void)n; NEVER("wscore_ahead_load"); return 0; }
+void wscore_set_quiet(wscore_t *c, int q) { (void)c; (void)q; NEVER("wscore_set_quiet"); }
 int wscore_save_ram_dirty(wscore_t *c) { (void)c; NEVER("wscore_save_ram_dirty"); return 0; }
 size_t wscore_state_size(wscore_t *c) { (void)c; NEVER("wscore_state_size"); return 0; }
 long wscore_state_save(wscore_t *c, void *d, size_t n) { (void)c; (void)d; (void)n; NEVER("wscore_state_save"); return 0; }

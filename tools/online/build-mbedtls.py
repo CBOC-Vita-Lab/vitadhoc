@@ -105,7 +105,7 @@ def sha256(path):
 def reject_symlinks(path):
     for part in (path, *path.parents):
         if part.is_symlink():
-            raise ValueError("Build inputs and outputs must not contain symlinks")
+            raise ValueError("Build inputs and outputs must not contain symlinks: " + str(part) + " (in " + str(path) + ")")
 
 
 def require_no_patches(row):
@@ -204,6 +204,9 @@ def collect_compile_inputs(source, prefix):
             raise ValueError("TLS object does not name its expected source input")
         for name in dependencies:
             path = Path(name)
+            # macOS: clang's depfiles also name the SDK's SDKSettings.json, which lives behind Xcode's own symlinks: the toolchain, not an input of ours
+            if sys.platform == "darwin" and name.startswith(("/Applications/Xcode", "/Library/Developer/CommandLineTools")):
+                continue
             reject_symlinks(path)
             for label, base in (("source", source), ("prefix", prefix)):
                 try:

@@ -127,7 +127,9 @@ CPU_ARCH :=
 override DYNAREC := 0
 MACOS_MIN ?= 12.0
 CORE_ARCH_FLAGS := -mmacosx-version-min=$(MACOS_MIN) -fomit-frame-pointer -fno-math-errno
-LDFLAGS_ARCH :=
+# The recompiler-only symbols the frontend names as weak (extern ... __attribute__((weak))) do not exist with DYNAREC=0:
+# ld64 needs to be told they may stay undefined (they bind to NULL, which the callers check).
+LDFLAGS_ARCH := -Wl,-undefined,dynamic_lookup
 mac_find = $(firstword $(shell for d in $(LLVM_BIN) $$(dirname "$$(command -v $(1) 2>/dev/null)") \
              /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin; do \
              [ -x "$$d/$(1)" ] && { echo "$$d/$(1)"; break; }; done))

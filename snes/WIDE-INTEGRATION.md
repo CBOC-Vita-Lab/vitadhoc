@@ -80,7 +80,7 @@ The normal picture is drawn by the unchanged code first.
 * Settings > Picture "Wide view: Auto / On / Off" is playerkit's own row `ROW_PIC_WIDE` (`CAP_WIDE` set), default Auto, stored in
   `picture.ini` / the game's file as `wide_view=0|1|2` (per game with "Apply to: This game"), launch override `ovr.wide_view`.
 * `SnesPlayer::wide_apply(scr_w, scr_h)` (called by the platform every frame) takes the margin from the picture shape
-  (`pic_wide_margin`: Original 41 on 960x544, Pixel perfect 81 (8:7) or the core's 96 limit (square), Zoom as Original, Full screen: none)
+  (`pic_wide_margin`: Fit 41 on 960x544, Pixel perfect 81 (8:7) or the core's 96 limit (square), Zoom as Fit, Stretch: none)
   and switches the core view on/off/to another margin. Auto is off while the steady pacer thins frames; On is always (where the
   shape has room); Off never.
 * Presentation: the wide frame (256 + 2M columns, 224 or 239 rows) is uploaded like the normal picture;

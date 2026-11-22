@@ -3889,8 +3889,24 @@ static void gbpal_swatch(int xr, int y, int id)
    }
 }
 
-static void set_item(int y, int sel, int enabled, const char *label,
-                     const char *value)
+/* One wording on every console, in the app and in the players' menus (the
+ * players capitalise their values): a value that starts with a lower case
+ * letter is shown with a capital ("fit" is Fit, "sharp bilinear" is Sharp
+ * bilinear).  Only for the words the app owns; a name, a path or a room
+ * code is shown as it is typed (set_item_raw). */
+static const char *set_cap(const char *s)
+{
+   static char buf[4][64];
+   static int n;
+   char *o = buf[n++ & 3];
+   snprintf(o, 64, "%s", s);
+   if (o[0] >= 'a' && o[0] <= 'z' && strncmp(o, "xBRZ", 4))      /* xBRZ is a name */
+      o[0] = (char)(o[0] - 'a' + 'A');
+   return o;
+}
+
+static void set_item_raw(int y, int sel, int enabled, const char *label,
+                         const char *value)
 {
    if (sel)
       ov_band(y, SET_BAND_W, SET_BAND_H);
@@ -3898,6 +3914,12 @@ static void set_item(int y, int sel, int enabled, const char *label,
    if (value)
       ov_text_right(440, y, value,
                     enabled ? (sel ? C_VALUE : C_ACCENT_DK) : C_DIM);
+}
+
+static void set_item(int y, int sel, int enabled, const char *label,
+                     const char *value)
+{
+   set_item_raw(y, sel, enabled, label, value ? set_cap(value) : NULL);
 }
 
 /* The label a behaviour wears, for the host tests (app_tests.py, settings_labels):
@@ -4021,7 +4043,7 @@ static const char *set_help(int id)
                              : "The sides filled with the game's own picture "
                                "where it is known. Never guessed.";
    case SET_NESPAL:   return g_pcfg.nes_pal_smooth
-                             ? "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames."
+                             ? "European games run at 50 Hz. Smooth 50 Hz keeps their real speed and evens out the picture: one refresh in six blends two frames."
                              : "European games run at 50 Hz. True 50 Hz plays them at their real speed and shows one frame in six again.";
    case SET_WSBLEND:  return g_pcfg.ws_blend
                              ? "The WonderSwan's 75 frames a second blended "
@@ -4127,13 +4149,13 @@ static const char *set_help(int id)
                              : "Every frame when it can be; busy moments drop "
                                "unevenly.";
    case SET_ABOUT_CORE4:
-      return "Whether the app is using the Vita's fourth CPU core.";
+      return "Whether the app is using the Vita's fourth CPU core (it needs the CapUnlocker plugin).";
    case SET_CORE4:    return g_pcfg.core4_off
                              ? "Off: the app stays on the three cores it is given."
                              : "Auto: uses the Vita's fourth core if it works. Next game.";
-   case SET_QUICK:    return "Shows what you press one frame sooner: the next frame is "
-                             "worked out ahead. The game runs the same. "
-                             "Auto uses it while the game leaves time.";
+   case SET_QUICK:    return "Shows what you press one frame sooner by working the next "
+                             "frame out ahead. The game runs the same. "
+                             "Auto uses it while there is time.";
    case SET_QUICKGAME: return "This game's own choice. Settings follows the "
                               "Gameplay row. Auto uses it while there is time.";
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
@@ -4210,6 +4232,55 @@ static const char *set_help(int id)
    case SET_CONTROLS: return "Which button does what, and the shortcuts.";
    default:           return "";
    }
+}
+
+/* The line under the list, drawn whole: a help text wider than the screen (the
+ * line ran off its right edge) goes on a second line; a third would not fit
+ * above the hints, so the end of a very long one is cut with "...". */
+static void set_help_draw(const char *h)
+{
+   enum { HELP_W = 444 };
+   char l1[160], l2[160];
+   size_t n, cut = 0, len;
+   if (!h || vid_text_w(h) <= HELP_W)
+   {
+      vid_text(22, SET_HELP_Y, h, C_DIM);
+      return;
+   }
+   len = strlen(h);
+   if (len >= sizeof(l1))
+      len = sizeof(l1) - 1;
+   for (n = 1; n <= len; n++)
+   {
+      if (h[n] != ' ' && h[n] != '\0')
+         continue;
+      memcpy(l1, h, n);
+      l1[n] = '\0';
+      if (vid_text_w(l1) > HELP_W)
+         break;
+      cut = n;
+   }
+   if (!cut)
+      cut = len;
+   memcpy(l1, h, cut);
+   l1[cut] = '\0';
+   snprintf(l2, sizeof(l2), "%s", h + cut + (h[cut] == ' ' ? 1 : 0));
+   while (l2[0] && vid_text_w(l2) > HELP_W)
+   {
+      size_t e = strlen(l2);
+      while (e > 0 && l2[e - 1] != ' ')
+         e--;
+      if (e < 2)
+         break;
+      l2[e - 1] = '\0';
+      if (vid_text_w(l2) + vid_text_w("...") <= HELP_W)
+      {
+         strcat(l2, "...");
+         break;
+      }
+   }
+   vid_text(22, SET_HELP_Y - 8, l1, C_DIM);
+   vid_text(22, SET_HELP_Y + 7, l2, C_DIM);
 }
 
 /* The finger's scroll of the list: while it is in charge the list does not
@@ -4558,7 +4629,7 @@ static ui_action screen_settings(unsigned edges)
       {
 #ifdef VITA
       case SET_NAME:
-         set_item(y, g_cursor == i, 1, set_rows[i].label, g_pcfg.nick);
+         set_item_raw(y, g_cursor == i, 1, set_rows[i].label, g_pcfg.nick);
          break;
       case SET_CONN:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
@@ -4765,8 +4836,8 @@ static ui_action screen_settings(unsigned edges)
       case SET_SHOTDIR:
       {
          const char *d = ui_host_shot_dir();
-         set_item(y, g_cursor == i, 1, set_rows[i].label,
-                  d && d[0] ? d : "screenshots/");
+         set_item_raw(y, g_cursor == i, 1, set_rows[i].label,
+                      d && d[0] ? d : "screenshots/");
          break;
       }
       case SET_WIDE:
@@ -5078,7 +5149,7 @@ static ui_action screen_settings(unsigned edges)
                 SET_VIEW_BOT - SET_VIEW_TOP,
                 set_row_bot(set_row_y(set_last_shown())) - SET_VIEW_TOP);
 #ifdef VITA
-   vid_text(22, SET_HELP_Y, set_help(g_cursor), C_DIM);
+   set_help_draw(set_help(g_cursor));
    footer(g_cursor == SET_LEVEL
           ? VID_GLYPH_X " set level now   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_EXPORT

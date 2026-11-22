@@ -103,7 +103,7 @@ static int scaler_of(int q)
 	}
 }
 
-/* menu shape (Original, Fit, Zoom, Full screen, Pixel perfect) <-> the picture's shapes */
+/* menu shape (Fit, Fit (not offered), Zoom, Stretch, Pixel perfect) <-> the picture's shapes */
 static int shape_to_pic(int v)
 {
 	switch (v) { case 2: return PIC_ZOOM; case 3: return PIC_FULL; case 4: return PIC_PIXEL; default: return PIC_ORIGINAL; }
@@ -754,7 +754,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	cfg.accent = system_ == MD_SYS_MD ? 0x2E7DFF : system_ == MD_SYS_GG ? 0xE0B020 : 0xE04A3A;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, model, &profile_);
-	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* no "Fit": Original already fills the height */
+	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* one "Fit" (index 0, the main app's word): it already fills the height */
 	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
 	{
 		std::vector<std::string> px, onoff, border, lcd, pad, region, fm, ym, palv, filt;

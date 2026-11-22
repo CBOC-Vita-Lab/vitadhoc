@@ -81,7 +81,7 @@ static std::string srm_for(const std::string &rom)
 	return rom.substr(0, d) + ".srm";
 }
 
-/* menu shape (Original, Fit, Zoom, Full screen, Pixel perfect) <-> the SNES picture's shapes */
+/* menu shape (Fit, Fit (not offered), Zoom, Stretch, Pixel perfect) <-> the SNES picture's shapes */
 static int word_scaler(const std::string &w0)
 {
 	const std::string w = lower(w0);
@@ -691,7 +691,7 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 	cfg.accent = 0x7B6CFF;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, &model_snes(), &profile_);
-	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* no "Fit": Original already fills the height */
+	menu_.set_choices_allowed(ROW_PIC_SHAPE, (1u << 0) | (1u << 2) | (1u << 3) | (1u << 4));   /* one "Fit" (index 0, the main app's word): it already fills the height */
 	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
 	{
 		std::vector<std::string> px, onoff, mt, st, filt;

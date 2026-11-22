@@ -123,8 +123,8 @@ screen of a SNES game say so): Resume, Picture, Multitap, ten
 save-state slots with pictures, Cheats, Reset and Quit. Battery saves are `Game.srm` beside the game.
 
 Picture (saved for all SNES games, or for one with "Apply to: this game"):
-Original shape (4:3 at full height, the default), Zoom (blank rows cropped, not
-stretched), Full screen or Pixel perfect; Sharp or Smooth scaling; ambient glow,
+Fit (4:3 at full height, the default), Zoom (blank rows cropped, not
+stretched), Stretch or Pixel perfect; Sharp bilinear or Bilinear scaling; ambient glow,
 CRT scanlines and LCD grid, each 0 (off) to 10; optional blending for hi-res and
 interlaced pictures. A PNG in `overlays/` named like the game (or `snes.png`)
 is drawn as a bezel.

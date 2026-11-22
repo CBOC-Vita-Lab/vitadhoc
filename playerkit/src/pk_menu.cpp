@@ -35,7 +35,8 @@ uint32_t mix_rgb(uint32_t a, uint32_t b, float t)
 	return (uint32_t) ((r << 16) | (g << 8) | bl);
 }
 
-const char *const kShapeNames[] = { "Original", "Fit", "Zoom", "Full screen", "Pixel perfect" };
+/* the main app's Screen size words (Fit, Stretch); index 1 is never offered (the players mask it: Fit is index 0 here) */
+const char *const kShapeNames[] = { "Fit", "Fit", "Zoom", "Stretch", "Pixel perfect" };
 
 }  // namespace
 

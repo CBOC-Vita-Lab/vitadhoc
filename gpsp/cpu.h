@@ -263,6 +263,14 @@ void flush_dynarec_caches(void);
 void flush_dynarec_caches_ram(void);
 extern u32 state_load_keeps_rom;
 void init_emitter(bool);
+/* Dynarec register block self-check: the stubs (x86/arm/arm64/mips *_stub.S)
+ * lay the C globals out by hand and the emitters hardcode offsets into it.
+ * Checks (char*)hi - (char*)lo == expect; on a mismatch it logs loudly and
+ * aborts (running on would corrupt the CPU state). */
+void gpsp_regblock_expect(const char *arch, const char *what, const void *hi,
+ const void *lo, long expect);
+#define GPSP_REGBLOCK_EXPECT(arch, hi, lo, expect) \
+  gpsp_regblock_expect(arch, #hi " - " #lo, (const void *)(hi), (const void *)(lo), (long)(expect))
 void init_bios_hooks(void);
 
 #if defined(RUNTIME_JIT_CACHE)

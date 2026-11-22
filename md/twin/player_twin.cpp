@@ -576,7 +576,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		rig.go_row("Image quality");
 		while (pl->picture().scaler != SCALER_OFF) rig.press(PH_LEFT);
 		rig.go_row("Video filter");
-		EXPECT(pl->menu().row_value_text(pl->menu().cursor()) == "sharp bilinear");
+		EXPECT(pl->menu().row_value_text(pl->menu().cursor()) == "Sharp bilinear");
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().quality == PIC_SMOOTH && pl->picture().scaler == SCALER_AUTO && pl->menu().value(ROW_PIC_QUALITY) == IMGQ_AUTO);
 		rig.press(PH_LEFT);

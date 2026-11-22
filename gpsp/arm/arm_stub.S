@@ -71,7 +71,7 @@ _##symbol:
 #define VRAM_OFF       -0x98000
 #define EWRAM_OFF      -0x80000
 #define SPSR_RAM_OFF      0x100
-#define STORE_TBL_OFF     0x118
+#define STORE_TBL_OFF     0x140
 #define REGMODE_RAM_OFF   0x400
 #define OAM_RAM_OFF       0x500
 #define PAL_RAM_OFF       0x900
@@ -1075,13 +1075,13 @@ defsymbl(ewram)
 defsymbl(reg)
   .space 0x100
 defsymbl(spsr)
-  .space 24
+  .space 64        @ 16 entries (cpu.h: spsr[16], indexed by mode & 0xF); STORE_TBL_OFF follows
 @ Place lookup tables here for easy access via base_reg too
 defsymbl(st_lookup_tables)
   .space 4*17*4   @ store
 defsymbl(ld_lookup_tables)
   .space 5*17*4   @ loads
-  .space 132      @ Padding for alignment
+  .space 92       @ Padding for alignment (reg_mode stays at REGMODE_RAM_OFF 0x400)
 defsymbl(reg_mode)
   .space 196
   .space 60       @ More padding!

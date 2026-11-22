@@ -489,11 +489,11 @@ static int run_test(const char *rom, const std::string &shots, const std::string
 		while (pl->menu().cursor() != row) rig.press(PH_DOWN);
 		rig.press(PH_RIGHT);
 		EXPECT(pl->picture().scan == 5);
-		/* Screen size: Zoom -> Full screen -> Pixel perfect -> Original (no Fit) */
+		/* Screen size: Zoom -> Stretch -> Pixel perfect -> Fit (one Fit: the main app's word) */
 		while (pl->menu().cursor() != 0) rig.press(PH_UP);
 		std::vector<std::string> seen;
 		for (int k = 0; k < 4; k++) { rig.press(PH_RIGHT); seen.push_back(pl->menu().row_value_text(0)); }
-		EXPECT(seen.size() == 4 && seen[0] == "Full screen" && seen[1] == "Pixel perfect" && seen[2] == "Original" && seen[3] == "Zoom");
+		EXPECT(seen.size() == 4 && seen[0] == "Stretch" && seen[1] == "Pixel perfect" && seen[2] == "Fit" && seen[3] == "Zoom");
 		EXPECT(pl->picture().shape == PIC_ZOOM);
 	}
 	rig.snap("picture_changed");

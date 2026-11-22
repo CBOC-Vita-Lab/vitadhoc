@@ -839,6 +839,14 @@ static void read_port(int port, pk::PadSample *s)
 	memset(&pad, 0, sizeof pad);
 	pad.lx = pad.ly = pad.rx = pad.ry = 128;
 	if (sceCtrlPeekBufferPositiveExt2(port, &pad, 1) < 0) return;
+	if (pad.lx == 128 && pad.ly == 128 && pad.rx == 128 && pad.ry == 128) {
+		/* Ext2 left the sticks as they were set above: some systems (the Vita3K emulator) fill only the buttons in this call.
+		 * The plain read has the same sticks on a real Vita, so take them from it when Ext2 shows both centred. */
+		SceCtrlData q;
+		memset(&q, 0, sizeof q);
+		q.lx = q.ly = q.rx = q.ry = 128;
+		if (sceCtrlPeekBufferPositive(port, &q, 1) > 0) { pad.lx = q.lx; pad.ly = q.ly; pad.rx = q.rx; pad.ry = q.ry; }
+	}
 	unsigned b = pad.buttons;
 	uint32_t m = 0;
 	if (b & SCE_CTRL_UP) m |= pk::PH_UP;
@@ -1178,8 +1186,13 @@ static void hd_stop(void)
 
 static void fatal_screen(const std::string &line1, const std::string &line2)
 {
-	for (int i = 0; i < 300; i++) {
-		vita2d_start_drawing();
+	/* About 5 s of frames. A scene can only start when the display queue has room and a pool bank is free (vita2d_try_start_drawing_advanced):
+	 * a loop that does not wait for the refresh runs out of both, and drawing with no scene open is an error (sceGxmDraw NOT_WITHIN_SCENE, then a
+	 * fault). So: draw only after a scene really started, otherwise wait for the next refresh and try again. */
+	for (int shown = 0, tries = 0; shown < 300 && tries < 3000; tries++) {
+		vita2d_pool_reset();          /* every frame, as frame_draw does: 300 frames of text outgrew the pool and the draws failed (a crash in the emulator) */
+		if (!vita2d_try_start_drawing_advanced(NULL, 0)) { sceDisplayWaitVblankStart(); continue; }
+		shown++;
 		vita2d_clear_screen();
 		g_text->draw(pk::F_SUB, 60, 180, line1.c_str(), PK_RGBA(255, 255, 255, 255));
 		g_text->wrap(pk::F_BODY, 60, 240, 840, 3, 4, line2, PK_RGBA(192, 192, 192, 255));
@@ -1331,7 +1344,8 @@ static bool link_screen(const pk::PadSample &pad, bool enter_is_cross)
 	std::string l1, l2;
 	int p1 = -1, p2 = -1;
 	g_link->status(&l1, &l2, &p1, &p2);
-	vita2d_start_drawing();
+	vita2d_pool_reset();
+	if (!vita2d_try_start_drawing_advanced(NULL, 0)) { sceDisplayWaitVblankStart(); return (pad.buttons & pk::phys_cancel(enter_is_cross)) != 0; }       /* no scene: nothing is drawn this time (see fatal_screen) */
 	vita2d_clear_screen();
 	g_text->draw(pk::F_SUB, 60, 170, "Two-player game", PK_RGBA(255, 255, 255, 255));
 	g_text->draw(pk::F_SUB, 60, 230, l1.c_str(), PK_RGBA(255, 255, 255, 255));

@@ -85,6 +85,13 @@ and in emulators; none of it has run on a real Vita yet (see
   LCD ghosting all have their own 0 to 10 strength, with the same names
   everywhere. WonderSwan gets LCD colours and the NES gets NTSC colours. GBA
   games start with GBA screen colours, which suit the Vita's screen better.
+- **Screen size and the other picture rows read the same in the app and in the
+  Super NES and Sega players**: Fit (it was called Original in the players),
+  Zoom, Stretch (was Full screen in the players), Pixel perfect; values start
+  with a capital letter everywhere (Off, On, Sharp bilinear, Bilinear, Soft
+  edges). Image quality starts at Auto and Wide view is on in every console;
+  the Super NES and Sega players call their on-by-default Wide view setting
+  Auto (On forces the full margin).
 - **Game Boy colours.** Original Game Boy games are coloured the way a Game
   Boy Color coloured them (GBC auto), with the twelve start-up palettes, the
   Super Game Boy's 32 and the plain greys to choose from.

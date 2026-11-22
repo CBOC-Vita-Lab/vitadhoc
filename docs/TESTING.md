@@ -178,6 +178,12 @@ at the end, on Ctrl-C and on any failure. Its unit tests are
 `python3 tools/vita-matrix/test_matrix.py`; the owner session is
 `tools/vita-matrix/session-1.4.txt`; see `tools/vita-matrix/README.md`.
 
+Vita3K notes for scripted runs: closing the emulator while the app is open counts as a crash to the boot guard
+(`ux0:data/GBAdhoc/guard`), and after two of those the next start shows the safe look (Image quality Original, Wide view off, in
+Settings > This game) and a game-start crash notice; clear the `guard` folder before each start. Vita3K's
+`sceCtrlPeekBufferPositiveExt2` fills the buttons but leaves the sticks at 128, so the players read the sticks from the plain call
+when Ext2 shows both centred (the right stick drives fast forward and rewind).
+
 ## Not wired
 
 These exist in the tree and are not run by the gate:

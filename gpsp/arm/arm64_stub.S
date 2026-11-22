@@ -82,11 +82,11 @@ _##symbol:
 #define EWRAM_OFF      -0x81000   // 256KB (double for shadow)
 #define MEM_TBL_OFF     -0x1000   // Some space for the tables
 #define SPSR_RAM_OFF      0x100
-#define REGMODE_RAM_OFF   0x118
-#define OAM_RAM_OFF       0x200
-#define PAL_RAM_OFF       0x600
-#define IOREG_OFF         0xA00
-#define PALCNV_RAM_OFF    0xE00
+#define REGMODE_RAM_OFF   0x140   // SPSR_RAM_OFF + 64 (spsr[16])
+#define OAM_RAM_OFF       0x240
+#define PAL_RAM_OFF       0x640
+#define IOREG_OFF         0xA40
+#define PALCNV_RAM_OFF    0xE40
 
 // Used for SWI handling
 #define MODE_SUPERVISOR       0x13
@@ -751,10 +751,10 @@ defsymbl(ldst_lookup_tables)
 defsymbl(reg)
   .space 0x100
 defsymbl(spsr)
-  .space 24
+  .space 64   // u32 spsr[16] (cpu.h), indexed by mode & 0xF
 defsymbl(reg_mode)
   .space 196
-  .space 36  // Padding
+  .space 60  // Padding
 defsymbl(oam_ram)
   .space 0x400
 defsymbl(palette_ram)

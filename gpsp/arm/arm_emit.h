@@ -105,7 +105,7 @@ void execute_swi_thumb(u32 pc);
   write32((u32)(target_pc));                                                  \
   write32((u32)(uintptr_t)(exit_branch))
 
-#define STORE_TBL_OFF     0x118
+#define STORE_TBL_OFF     0x140
 #define SPSR_RAM_OFF      0x100
 
 #define write32(value)                                                        \
@@ -2201,6 +2201,13 @@ extern u32 st_lookup_tables[4][17];
 
 void init_emitter(bool must_swap) {
   int i;
+
+  /* the .S lays spsr (u32[16]) and reg_mode (u32[7][7]) out by hand */
+  GPSP_REGBLOCK_EXPECT("arm", spsr, reg, SPSR_RAM_OFF);
+  GPSP_REGBLOCK_EXPECT("arm", st_lookup_tables, reg, STORE_TBL_OFF);
+  GPSP_REGBLOCK_EXPECT("arm", st_lookup_tables, spsr, sizeof(spsr));
+  GPSP_REGBLOCK_EXPECT("arm", reg_mode, reg, 0x400);      /* REGMODE_RAM_OFF */
+  GPSP_REGBLOCK_EXPECT("arm", oam_ram, reg, 0x500);       /* OAM_RAM_OFF */
 
   // Generate handler table
   memcpy(st_lookup_tables, st_handler_functions, sizeof(st_lookup_tables));

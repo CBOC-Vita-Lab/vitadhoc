@@ -159,7 +159,7 @@ that off.
   mixes each frame with the last, which is what games that flicker to fake transparency rely on.
   **Ambient glow**, **Scanlines** and **LCD grid** are 0..10 rows too (0 off), as in the players.
 - **Wide view** (GBA) -- instead of black bars beside the picture, more of the game:
-  - *on* (the default): in games the app has a profile for. That is **Pokémon Emerald
+  - *On* (the default): in games the app has a profile for. That is **Pokémon Emerald
     (USA/Europe)**, tested, and -- written from the same games' published symbol tables but
     not yet run, because only Emerald was at hand -- Ruby, Sapphire, FireRed and LeafGreen
     (USA/Europe, every revision). In the overworld the map is drawn 21 columns further on each
@@ -170,10 +170,10 @@ that off.
     are exactly the console's picture. A profile checks itself against the picture every
     frame; if its reading of the map does not match what the game shows (a wrong guess for one
     of the untested four), it shows nothing rather than something wrong.
-  - *on + 3D tracks*: also in any game while it shows a rotated/scaled floor ("Mode 7", the
+  - *On + 3D tracks*: also in any game while it shows a rotated/scaled floor ("Mode 7", the
     racers). Not tried with a commercial racer yet; sprites a game parks just off-screen may
     show.
-  - *on + any game* (experimental): for games without a profile. The app remembers every
+  - *On + any game* (experimental): for games without a profile. The app remembers every
     piece of background a game draws and where in the level it belongs, and shows it again
     when it lies beside the screen: the side you came from, and everywhere you have been. For
     what the game has not drawn yet it sends a **scout**: a second, invisible copy of the

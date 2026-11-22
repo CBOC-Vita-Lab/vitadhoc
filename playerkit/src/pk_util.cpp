@@ -11,6 +11,7 @@
 #ifdef __vita__
 #include <psp2/io/stat.h>
 #include <psp2/io/dirent.h>
+#include <psp2/rtc.h>
 #endif
 
 namespace pk {
@@ -166,12 +167,30 @@ static bool d_remove(const std::string &path)
 
 static bool d_stat(const std::string &path, uint64_t *size, int64_t *mtime)
 {
+#ifdef __vita__
+	/* sceIoGetstat's own stamp (UTC), shown in the console's clock: the C library's st_mtime came out in 1965 in
+	 * the emulator, and the main app reads its save times this way too (menu_files.c). */
+	SceIoStat ss;
+	if (sceIoGetstat(path.c_str(), &ss) < 0) return false;
+	if (SCE_S_ISDIR(ss.st_mode)) return false;
+	if (size) *size = (uint64_t) ss.st_size;
+	if (mtime) {
+		SceRtcTick utc, local;
+		SceDateTime d = ss.st_mtime;
+		time_t t = 0;
+		if (sceRtcGetTick(&ss.st_mtime, &utc) >= 0 && sceRtcConvertUtcToLocalTime(&utc, &local) >= 0)
+			sceRtcSetTick(&d, &local);
+		*mtime = sceRtcGetTime_t(&d, &t) >= 0 ? (int64_t) t : 0;
+	}
+	return true;
+#else
 	struct stat st;
 	if (stat(path.c_str(), &st) != 0) return false;
 	if (S_ISDIR(st.st_mode)) return false;
 	if (size) *size = (uint64_t) st.st_size;
 	if (mtime) *mtime = (int64_t) st.st_mtime;
 	return true;
+#endif
 }
 
 static bool d_mkdir(const std::string &path)
@@ -468,7 +487,18 @@ WriteResult ini_save(const std::string &path, const Ini &ini)
 /* ---- clock -------------------------------------------------------------- */
 
 static int64_t (*g_clock)() = 0;
-int64_t now_unix() { return g_clock ? g_clock() : (int64_t) time(0); }
+int64_t now_unix()
+{
+	if (g_clock) return g_clock();
+#ifdef __vita__
+	/* the console's own clock, as the main app reads it (plat_vita.c): the C library's time() gave a date in 1965 in the
+	 * emulator, which the state slots then showed. */
+	SceDateTime dt;
+	time_t t = 0;
+	if (sceRtcGetCurrentClockLocalTime(&dt) >= 0 && sceRtcGetTime_t(&dt, &t) >= 0) return (int64_t) t;
+#endif
+	return (int64_t) time(0);
+}
 void set_clock_for_tests(int64_t (*fn)()) { g_clock = fn; }
 
 }  // namespace pk

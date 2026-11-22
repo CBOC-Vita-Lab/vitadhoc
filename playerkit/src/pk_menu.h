@@ -62,7 +62,7 @@ enum RowId {
 	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
 };
 
-/* the values (RowId order): ROW_PIC_SHAPE 0..4 = Original, Fit, Zoom, Full screen, Pixel perfect; ROW_PIC_WIDE 0..2 = Auto, On, Off;
+/* the values (RowId order): ROW_PIC_SHAPE 0..4 = Fit, Fit (never offered), Zoom, Stretch, Pixel perfect; ROW_PIC_WIDE 0..2 = Auto, On, Off;
  * ROW_PIC_QUALITY 0..5 = IMGQ_* (the main app's "Image quality": Auto, Original, Enhanced 2x/3x/4x, MMPX 2x; a host hides what its
  * scalers cannot do with set_choices_allowed); scanlines/grid/glow 0..10 (0 = Off); ROW_*_APPLY 0 All games, 1 This game;
  * ROW_SPD_FF 0..3 = 2x, 3x, Unlimited, Unlimited Smooth (the app's names; pk_ff.h); ROW_SPD_SOUND 0 Off 1 Sped up 2 Normal pitch;
@@ -71,7 +71,7 @@ enum { IMGQ_AUTO = 0, IMGQ_ORIGINAL, IMGQ_ENHANCED_2X, IMGQ_ENHANCED_3X, IMGQ_EN
 enum { FFSPD_2X = 0, FFSPD_3X, FFSPD_UNLIMITED, FFSPD_SMOOTH, FFSPD_COUNT };
 /* the host rows every player shares, one wording (the main app's): "Rewind length" 0 Short, 1 Medium; "Video filter" 0 sharp bilinear, 1 bilinear */
 static const char *const kRewindLengthNames[2] = { "Short", "Medium" };
-static const char *const kVideoFilterNames[2] = { "sharp bilinear", "bilinear" };
+static const char *const kVideoFilterNames[2] = { "Sharp bilinear", "Bilinear" };
 #define PK_REWIND_LENGTH_HELP "How far back rewind reaches: Short about 30 seconds, Medium about a minute. A busy game keeps a little less: the memory it may use is fixed."
 #define PK_VIDEO_FILTER_HELP "How the picture is fitted to the screen. Sharp bilinear: exact pixels with softened edges, at any size. Bilinear: soft, every pixel blends into the next."
 /* the filter row the way the app has it: under Original it shows sharp bilinear, and choosing bilinear there switches Image quality to Auto */

@@ -954,13 +954,13 @@ int pcfg_wide_modes(int console)
 
 const char *pcfg_wide_name(int wide)
 {
-   return wide == 3 ? "on + any game" : wide == 2 ? "on + 3D tracks"
-        : wide == 1 ? "on" : "off";
+   return wide == 3 ? "On + any game" : wide == 2 ? "On + 3D tracks"
+        : wide == 1 ? "On" : "Off";
 }
 
 const char *pcfg_wide_fill_name(int fill)
 {
-   return fill == 2 ? "stretch" : fill == 1 ? "soft edges" : "bars";
+   return fill == 2 ? "Stretch" : fill == 1 ? "Soft edges" : "Bars";
 }
 
 int pcfg_color_modes(int console)

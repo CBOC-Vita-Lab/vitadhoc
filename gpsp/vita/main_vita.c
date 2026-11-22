@@ -4158,7 +4158,22 @@ const char *ui_host_look_label(void)
 /* ui_host_hooks.h: Settings > About > Extra CPU core */
 const char *ui_host_core4_status(void)
 {
-   return core4_status();
+   /* The row is "Extra CPU core" + a short value ("in use" / "not available" /
+    * "off"): core4_status() is the whole sentence (the players' About line),
+    * whose long form ran over the row's own label.  The reason is in the help
+    * line under the list. */
+   static char v[24];
+   const char *s = core4_status(), *c = strstr(s, ": "), *e;
+   size_t n;
+   if (c)
+      s = c + 2;
+   e = strstr(s, " (");
+   n = e ? (size_t)(e - s) : strlen(s);
+   if (n >= sizeof(v))
+      n = sizeof(v) - 1;
+   memcpy(v, s, n);
+   v[n] = 0;
+   return v;
 }
 
 /* ui_host_hooks.h: the Fourth core row changed; the probe and the thread

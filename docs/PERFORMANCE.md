@@ -116,7 +116,7 @@ frame's path, the copy itself is not smaller.
 
 Measured on a PS Vita (firmware 3.74, PSVshell profile at
 500 MHz; the core measured 494-496 MHz) on 7 November 2026, with the
-release's SNES player and its default picture (Original shape, ambient glow).
+release's SNES player and its default picture (Fit, ambient glow).
 Each game was started through VitAdhoc and left running its title screen,
 attract mode or demo with no input for 100-120 seconds; the first four
 seconds (start-up) are left out. "Game thread" is the time the emulated CPU

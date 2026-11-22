@@ -87,6 +87,19 @@ std::string stamp_text(int64_t t)
 	if (t <= 0) return std::string();
 	time_t tt = (time_t) t;
 	struct tm tmv;
+#ifdef __vita__
+	/* The stamp is already the console's own wall clock (now_unix, d_stat), so it is split here: the C library's
+	 * localtime_r gave a date in 1965 for it in the emulator. */
+	{
+		int64_t days = t / 86400, rem = t % 86400;
+		int64_t z = days + 719468, era = z / 146097, doe = z - era * 146097;
+		int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365, y = yoe + era * 400;
+		int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+		int64_t d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+		if (m <= 2) y++;
+		return strf("%d %s %d, %02d:%02d", (int) d, mon[m - 1], (int) y, (int) (rem / 3600), (int) (rem % 3600 / 60));
+	}
+#endif
 #ifdef _WIN32
 	localtime_s(&tmv, &tt);
 #else

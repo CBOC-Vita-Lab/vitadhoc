@@ -3769,3 +3769,16 @@ unsigned cpu_write_savestate(u8 *dst)
   bson_finish_document(dst, wbptr);
   return (unsigned int)(dst - startp);
 }
+
+void gpsp_regblock_expect(const char *arch, const char *what, const void *hi,
+ const void *lo, long expect)
+{
+  long got = (long)((const char *)hi - (const char *)lo);
+  if (got != expect) {
+    fprintf(stderr, "FATAL: %s dynarec register block mismatch: %s = %ld, "
+            "the stub/emitter expects %ld (cpu.h array sizes changed without "
+            "the *_stub.S layout?)\n", arch, what, got, expect);
+    fflush(stderr);
+    abort();
+  }
+}

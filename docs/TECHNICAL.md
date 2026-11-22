@@ -1646,9 +1646,24 @@ Also in 2.0, from the commit record:
   - **The helper's waits are bounded.** The emulating thread waits at most about 2 ms for a block the helper is on (`take_ready`); then it
     marks the slot ABANDON (compare-and-swap BUSY to ABANDON), reads the bytes itself (the file's own descriptor, or the emulating thread's CHD
     decoder) and counts a timeout (census field `[9]`, `timeouts=` in the `disc:` log line). The helper finishes its block into the slot,
-    sees the state is no longer BUSY and frees it; nobody reuses the slot meanwhile. A close waits for the helper at most about 250 ms
-    (`wait_idle`, no lock held); if the helper is still in a read the file's cache (and its helper descriptor) is left to it, a small leak
-    and never a write into freed memory. The helper no longer calls `sceIoOpen` with the cache lock held (the open is made outside the lock),
+    sees the state is no longer BUSY and frees it; nobody reuses the slot meanwhile.
+  - **A helper that stalls longer than a close waits (reviewed fixes).** A close of one file waits for the helper at most about 250 ms
+    (`wait_idle`, no lock held); `cdio_end` (the first step of `md_host_unload`, so also of every disc swap) waits the same bound for the
+    helper's `done` flag instead of an unbounded join. If the helper is still in a read: the cache is ORPHANED (unregistered, put on a list
+    under the lock, never changed again; the CHD's helper context is heap allocated so an orphan stays exactly as the helper read it at its
+    claim, and a later `cdio_chd_open` cannot touch it). The helper, the only thread that can be on it, frees the orphans (cache memory,
+    file, path, helper descriptor and its budget count, decoder and the file under it) right after the block it is on and once more as its last
+    act; a closer that comes after the helper stopped taking blocks frees its orphan itself. A `cdio_end` that gives the helper up leaves the
+    semaphores, the thread and every cache it may be on alone, switches the helper off for the session (no helper for the next discs; it is
+    back at the next `md_host_set_threads` once the stalled helper has left; the Sega player calls it once per launch, so on a Vita it stays off until the player is
+    started again) and counts it in census `[9]`; a leaked thread handle is the
+    price. The victim descriptor of the helper's budget is closed after the lock is released (a slow `sceIoClose` no longer stalls the
+    emulating thread's `register_cache`). `cdio_gets` (and any read of a file whose cache is registered) never uses the one-block path that
+    writes slot 0 with plain stores: it reads the exact bytes directly. Host test (twin, x86): `cd_test` stalls the helper's next block for
+    500 ms (`md_host_cd_stall`), closes (and, as a second case, swaps the disc) while it stalls on a raw stream and on a CHD: the close comes
+    back in under 450 ms, `[9]` counts it, the next disc loads and reads byte for byte, and a later session has its helper again; clean under
+    ASan + UBSan (leak check on) and ThreadSanitizer (only the test's own never-joined stalled thread is reported). Not run: armhf / qemu (no
+    ARM toolchain in this workspace), and nothing here has run on a Vita. The helper no longer calls `sceIoOpen` with the cache lock held (the open is made outside the lock),
     so `register_cache` on the emulating thread never waits for a slow open. On the Vita the helper is kept off the system core (core 3): when
     the plan puts the writer there the helper takes core 0's gaps below the emulating thread, so no thread of ours that nothing watches
     can be held there. Host test (twin, x86, not a Vita): `cd_test` runs the helper with a stall of several ms now and then; about 14-100

@@ -8,7 +8,13 @@
  *   slot state ERR    : the helper could not read it; the emulating thread reads the bytes itself
  *   slot state ABANDON: the emulating thread stopped waiting for a BUSY slot (BUSY -> ABANDON, compare-and-swap) and read the bytes itself; the helper
  *                       is still writing the slot, so nobody reuses it, and when the helper finishes it sees the state is no longer BUSY and frees it
- * The helper's list of caches and its descriptors are changed under one lock (a semaphore used as a mutex). */
+ * The helper's list of caches and its descriptors are changed under one lock (a semaphore used as a mutex).
+ *
+ * A cache the helper may still be working on when it is closed (the helper is stalled in a read longer than the close waits) is never freed by the closing
+ * thread and never changed: it is ORPHANED (unregistered, put on a list under the lock). The CHD's context is heap allocated for that reason (kind, decoder
+ * and block size of an orphan stay as the helper read them at the claim). The helper (one thread) frees the orphans when it is done with the block it was on,
+ * and once more when it leaves; cdio_end waits for the helper a bounded time only: when that runs out the helper is switched off for the session (the
+ * semaphores, the caches and the thread are left to it) and counted in the census. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,7 +52,7 @@ static long io_pread(int fd, void *b, size_t n, int64_t off) { return (long)prea
 enum { SLOT_FREE = 0, SLOT_REQ, SLOT_BUSY, SLOT_READY, SLOT_ERR, SLOT_ABANDON };
 #define WAIT_US 2000              /* the longest the emulating thread waits for a block the helper is on (then it reads the bytes itself) */
 #define WAIT_NAPS 4000            /* the same bound counted in naps, for a platform without a clock */
-#define IDLE_US 250000            /* the longest a close waits for the helper to leave a cache (then the cache is left to the helper: see cdio_close) */
+#define IDLE_US 250000            /* the longest a close (and cdio_end) waits for the helper (then the cache is orphaned / the helper is given up: see cdio_close, cdio_end) */
 #define IDLE_NAPS 100000
 #define NSTAT 10
 enum { K_RAW = 0, K_CHD = 1 };
@@ -74,7 +80,17 @@ typedef struct cache {
 	unsigned long hused;
 	int registered;
 	unsigned long tick;
+	int orphan;                   /* on the orphan list (the lock) */
+	struct cache *onext;
 } cache_t;
+
+typedef struct {                  /* the CHD's helper context; c is first (an orphan is freed through its cache) */
+	cache_t c;
+	struct _chd_file *m, *h;      /* the emulating thread's decoder, the helper's */
+	struct cdio_file *hf;         /* the file under h */
+	uint32_t hunkbytes;
+	int have;
+} chdctx_t;
 
 struct cdio_file {
 	char *path;
@@ -84,11 +100,13 @@ struct cdio_file {
 	int stream;                   /* read ahead */
 	int direct;                   /* no block cache: positioned reads of exactly what is asked (the file under a CHD) */
 	int pinned;                   /* the descriptor stays open (used by the helper) */
+	int detached;                 /* orphaned with its decoder: closing it touches nothing global (the helper does it) */
 	cache_t c;
 };
 
 static struct {
 	const md_thread_ops *ops;
+	md_thread_ops opsv;                     /* the copy ops points to */
 	int enabled, running;
 	void *wake, *lock;
 	int stop;
@@ -100,7 +118,12 @@ static struct {
 	int check, stress;
 	unsigned erng, hrng;
 	unsigned long st[NSTAT];
-	struct { struct _chd_file *m, *h; cache_t c; uint32_t hunkbytes; int have; } chd;
+	chdctx_t *chd;
+	cache_t *orph;                          /* orphans (the lock; read without it only to skip the lock) */
+	int leaving;                            /* the helper takes no more blocks and has freed the orphans it knew (under the lock) */
+	int done;                               /* the helper has left (atomic, its very last act: its ops, semaphores and caches are nobody's any more) */
+	int dead;                               /* the helper did not leave in time at cdio_end: off for the session (until it has left, see cdio_set_ops) */
+	unsigned long stall_us;                 /* test: the helper's next block stalls this long */
 } H;
 
 static unsigned long ld(const unsigned long *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
@@ -165,8 +188,62 @@ static void unregister_cache(cache_t *c)           /* the lock is held */
 	c->registered = 0;
 }
 
+static void detach_file(cdio_file *f)              /* out of the emulating thread's tables (its descriptor is closed by whoever owns it now) */
+{
+	int i;
+	for (i = 0; i < MAXF; i++) if (H.files[i] == f) { H.files[i] = NULL; H.nfiles--; break; }
+}
+
+/* ---- orphans: caches the helper may still be working on, freed by the helper ---------------------------------- */
+
+static void orph_put(cache_t *c)                   /* the lock is held */
+{
+	c->orphan = 1; c->onext = H.orph; H.orph = c;
+}
+
+/* the lock is held: takes the whole list. The helper's descriptors are accounted for here (the budget), closed by orph_free outside the lock */
+static cache_t *orph_take(void)
+{
+	cache_t *l = H.orph, *c;
+	H.orph = NULL;
+	for (c = l; c; c = c->onext) if (c->kind == K_RAW && c->hfd >= 0) H.help_fds--;
+	return l;
+}
+
+/* no lock; only the helper (while it is between blocks) or anybody once it has left */
+static void orph_free(cache_t *l)
+{
+	while (l) {
+		cache_t *n = l->onext;
+		if (l->kind == K_RAW) {
+			cdio_file *f = l->file;
+			if (l->hfd >= 0) io_close(l->hfd);
+			cache_free(l);
+			free(f->path); free(f);
+		} else {
+			chdctx_t *x = (chdctx_t *)l;
+			cache_free(l);
+			if (x->h) chd_close(x->h);             /* closes its (detached) file too */
+			free(x);
+		}
+		l = n;
+	}
+}
+
+static void orphan_cache(cache_t *c)               /* c is unregistered and its closer gave up waiting for the helper */
+{
+	cache_t *l = NULL;
+	lock();
+	orph_put(c);
+	if (H.leaving) l = orph_take();                /* the helper does no more work: nobody else will free it */
+	unlock();
+	orph_free(l);
+	add(&H.st[9], 1);
+}
+
 /* no slot of c is being worked on (the cache is no longer registered, so the helper claims nothing new). The lock is NOT held: the helper may need it to
- * finish. Returns 0 when the helper is still on a slot after IDLE_US: the caller then must not free the cache (the helper writes into it) */
+ * finish. Returns 0 when the helper is still on a slot after IDLE_US (at once when the helper was already given up): the caller then must not free the
+ * cache (the helper writes into it) but orphan it */
 static int wait_idle(cache_t *c)
 {
 	const unsigned long t0 = now_us();
@@ -179,6 +256,7 @@ static int wait_idle(cache_t *c)
 			if (__atomic_compare_exchange_n(&c->s[i].state, &e, SLOT_FREE, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { st = SLOT_FREE; break; }
 		}
 		while ((st = __atomic_load_n(&c->s[i].state, __ATOMIC_ACQUIRE)) == SLOT_BUSY || st == SLOT_ABANDON) {
+			if (H.dead) return 0;
 			nap();
 			if (++n > IDLE_NAPS || (t0 && now_us() - t0 > IDLE_US)) return 0;
 		}
@@ -188,27 +266,34 @@ static int wait_idle(cache_t *c)
 
 int cdio_close(cdio_file *f)
 {
-	int i;
 	if (!f) return 0;
+	if (f->detached) {                             /* the helper's file under an orphaned decoder: only its own descriptor */
+		if (f->fd >= 0) io_close(f->fd);
+		cache_free(&f->c);
+		free(f->path);
+		free(f);
+		return 0;
+	}
 	if (f->c.registered) {
-		int idle;
+		int idle, hfd = -1;
 		lock();
 		unregister_cache(&f->c);
 		unlock();
 		idle = wait_idle(&f->c);                   /* a block the helper is on finishes first */
-		if (!idle) {                               /* the helper is stuck in the read of a block of this file: the file, its cache and its helper descriptor are left to it (a leak of one
-		                                            * file's worth, never a write into freed memory); only the emulating thread's descriptor is closed */
-			if (f->fd >= 0) { io_close(f->fd); H.emu_fds--; }
-			for (i = 0; i < MAXF; i++) if (H.files[i] == f) { H.files[i] = NULL; H.nfiles--; break; }
-			add(&H.st[9], 1);
+		if (!idle) {                               /* the helper is stuck in the read of a block of this file: the file, its cache and its helper descriptor are left to it
+		                                            * (orphaned: the helper frees them when it is done with the block); only the emulating thread's descriptor is closed */
+			if (f->fd >= 0) { io_close(f->fd); f->fd = -1; H.emu_fds--; }
+			detach_file(f);
+			orphan_cache(&f->c);
 			return 0;
 		}
 		lock();
-		if (f->c.hfd >= 0) { io_close(f->c.hfd); f->c.hfd = -1; H.help_fds--; }
+		if (f->c.hfd >= 0) { hfd = f->c.hfd; f->c.hfd = -1; H.help_fds--; }
 		unlock();
+		if (hfd >= 0) io_close(hfd);                /* (outside the lock: a close can be slow) */
 	}
 	if (f->fd >= 0) { io_close(f->fd); H.emu_fds--; }
-	for (i = 0; i < MAXF; i++) if (H.files[i] == f) { H.files[i] = NULL; H.nfiles--; break; }
+	detach_file(f);
 	cache_free(&f->c);
 	free(f->path);
 	free(f);
@@ -373,6 +458,9 @@ static size_t sync_read(cdio_file *f, int64_t off, uint8_t *dst, size_t len)
 {
 	cache_t *c = &f->c;
 	size_t got = 0;
+	/* a file whose cache is registered belongs to the helper (its slots are changed by it through their state words): this path writes slot 0 with plain
+	 * stores, so it never runs on such a cache (cdio_gets on a streamed file, a read after the helper was given up at cdio_end): exactly the bytes asked for */
+	if (c->registered) return direct_read(f, off, dst, len);
 	if (!c->s && !cache_alloc(c, K_RAW, BLK, 1, (f->size + BLK - 1) / BLK)) return direct_read(f, off, dst, len);
 	if (f->stream) add(&H.st[0], 1);
 	while (got < len) {
@@ -452,77 +540,98 @@ static core_file *core_wrap(cdio_file *f, int owner)
 	return c;
 }
 
+static void chdctx_release(chdctx_t *x)			/* the helper's decoder, its file and its cache of hunks */
+{
+	int idle = 1;
+	if (x->c.registered) {
+		lock();
+		unregister_cache(&x->c);
+		unlock();
+		idle = wait_idle(&x->c);
+	}
+	if (idle) {
+		cache_free(&x->c);
+		if (x->h) chd_close(x->h);				 /* closes its descriptor too */
+		free(x);
+		return;
+	}
+	/* the helper is stuck in a hunk of it: the context stays exactly as it is (the helper reads kind, decoder and hunk size of it) and the helper frees it
+	 * when it is done. Its file leaves the emulating thread's tables now (the helper closes it with the decoder) */
+	if (x->hf) { if (x->hf->fd >= 0) H.emu_fds--; detach_file(x->hf); x->hf->detached = 1; }
+	orphan_cache(&x->c);
+}
+
 int cdio_chd_open(cdio_file *f, struct _chd_file **out)
 {
 	core_file *core;
 	chd_error e;
 	cdio_file *hf;
+	chdctx_t *x;
 	*out = NULL;
 	if (!f) return CHDERR_FILE_NOT_FOUND;
-	f->direct = 1;                                  /* libchdr reads compressed hunks at arbitrary offsets: exactly those bytes */
+	f->direct = 1;								  /* libchdr reads compressed hunks at arbitrary offsets: exactly those bytes */
 	core = core_wrap(f, 0);
 	if (!core) return CHDERR_OUT_OF_MEMORY;
 	e = chd_open_core_file(core, CHD_OPEN_READ, NULL, out);
 	if (e != CHDERR_NONE) { *out = NULL; return (int)e; }
-	/* the helper's own decoder over a second descriptor of the same file (a decoder has state: two threads never share one) */
-	memset(&H.chd, 0, sizeof H.chd);
-	H.chd.m = *out;
+	if (H.chd) { chdctx_release(H.chd); H.chd = NULL; }	   /* (a CHD that was not closed: not expected) */
+	/* the helper's own decoder over a second descriptor of the same file (a decoder has state: two threads never share one). The context is heap allocated:
+	 * an orphan of a stalled helper stays as it is whatever is opened next */
+	x = (chdctx_t *)calloc(1, sizeof *x);
+	if (!x) return 0;							   /* no helper context: reads go straight to libchdr */
+	x->m = *out;
+	x->c.hfd = -1; x->c.kind = K_CHD;
 	hf = cdio_open(f->path);
 	if (hf) {
 		core_file *hc = core_wrap(hf, 1);
 		if (hc) {
 			hf->direct = 1; hf->pinned = 1;
 			if (hf->fd < 0) emu_fd(hf);
-			if (chd_open_core_file(hc, CHD_OPEN_READ, NULL, &H.chd.h) != CHDERR_NONE) H.chd.h = NULL;
+			if (chd_open_core_file(hc, CHD_OPEN_READ, NULL, &x->h) != CHDERR_NONE) x->h = NULL;
+			else x->hf = hf;
 		} else cdio_close(hf);
 	}
 	{
 		const chd_header *hd = chd_get_header(*out);
-		H.chd.hunkbytes = hd->hunkbytes;
-		H.chd.have = H.chd.h && hd->hunkbytes && hd->hunkbytes <= (1u << 20) && hd->totalhunks;
-		if (H.chd.have) {
-			H.chd.c.hchd = H.chd.h;
-			if (!cache_alloc(&H.chd.c, K_CHD, hd->hunkbytes, CHD_SLOTS, (int64_t)hd->totalhunks)) H.chd.have = 0;
+		x->hunkbytes = hd->hunkbytes;
+		x->have = x->h && hd->hunkbytes && hd->hunkbytes <= (1u << 20) && hd->totalhunks;
+		if (x->have) {
+			x->c.hchd = x->h;
+			if (!cache_alloc(&x->c, K_CHD, hd->hunkbytes, CHD_SLOTS, (int64_t)hd->totalhunks)) x->have = 0;
 		}
 	}
+	H.chd = x;
 	return 0;
 }
 
 void cdio_chd_close(struct _chd_file *chd)
 {
 	if (!chd) return;
-	if (H.chd.m == chd) {
-		int idle = 1;
-		if (H.chd.c.registered) {
-			lock();
-			unregister_cache(&H.chd.c);
-			unlock();
-			idle = wait_idle(&H.chd.c);
-		}
-		if (idle) {
-			cache_free(&H.chd.c);
-			if (H.chd.h) chd_close(H.chd.h);              /* closes its descriptor too */
-		} else add(&H.st[9], 1);                          /* the helper is stuck in a hunk: its decoder and the cache are left to it (a leak, not a write into freed memory) */
-		memset(&H.chd, 0, sizeof H.chd);
+	if (H.chd && H.chd->m == chd) {
+		chdctx_t *x = H.chd;
+		H.chd = NULL;
+		chdctx_release(x);
 	}
 	chd_close(chd);
 }
 
 int cdio_chd_read(struct _chd_file *chd, uint32_t hunknum, uint8_t *dst)
 {
-	cache_t *c = &H.chd.c;
+	chdctx_t *x = H.chd;
+	cache_t *c;
 	int si, err;
 	unsigned long t0;
-	if (chd != H.chd.m || !H.chd.have) return (int)chd_read(chd, hunknum, dst);
-	if (!c->registered && H.running) register_cache(c);
+	if (!x || chd != x->m || !x->have || !H.running) return (int)chd_read(chd, hunknum, dst);
+	c = &x->c;
+	if (!c->registered) register_cache(c);
 	add(&H.st[0], 1);
 	if (c->registered && take_ready(c, hunknum, &si)) {
 		slot_t *s = &c->s[si];
-		memcpy(dst, s->data, H.chd.hunkbytes);
+		memcpy(dst, s->data, x->hunkbytes);
 		if (H.check) {
-			uint8_t *tmp = (uint8_t *)malloc(H.chd.hunkbytes);
+			uint8_t *tmp = (uint8_t *)malloc(x->hunkbytes);
 			if (tmp) {
-				if (chd_read(chd, hunknum, tmp) != CHDERR_NONE || memcmp(tmp, dst, H.chd.hunkbytes)) add(&H.st[8], 1);
+				if (chd_read(chd, hunknum, tmp) != CHDERR_NONE || memcmp(tmp, dst, x->hunkbytes)) add(&H.st[8], 1);
 				free(tmp);
 			}
 		}
@@ -549,17 +658,19 @@ static void stress_pause(void)
 	}
 }
 
-/* the lock is held; K_RAW. Makes room in the helper's descriptor budget and returns 1 when `c` needs its descriptor opened: the open itself (a slow call on
- * the Vita) is made by the caller with the lock released, so the emulating thread's register_cache / close never wait for it */
-static int help_fd_prepare(cache_t *c)
+/* the lock is held; K_RAW. Makes room in the helper's descriptor budget (the descriptor of the cache used least recently is handed back in *victim_fd, to be
+ * closed after the unlock) and returns 1 when `c` needs its descriptor opened: the open and the close (slow calls on the Vita) are made by the caller with the
+ * lock released, so the emulating thread's register_cache / close never wait for them */
+static int help_fd_prepare(cache_t *c, int *victim_fd)
 {
 	int need = 0;
+	*victim_fd = -1;
 	if (c->hfd < 0) {
 		if (H.help_fds >= HELP_FDS) {
 			cache_t *v = NULL;
 			int i;
 			for (i = 0; i < H.nreg; i++) { cache_t *g = H.reg[i]; if (g != c && g->kind == K_RAW && g->hfd >= 0 && (!v || g->hused < v->hused)) v = g; }
-			if (v) { io_close(v->hfd); v->hfd = -1; H.help_fds--; }
+			if (v) { *victim_fd = v->hfd; v->hfd = -1; H.help_fds--; }	  /* (closed by the caller, outside the lock) */
 		}
 		need = 1;
 	}
@@ -571,6 +682,10 @@ static void helper_work(cache_t *c, slot_t *s)
 {
 	const unsigned long t0 = now_us();
 	int ok = 0;
+	{   /* test: a stall of this block (see cdio_debug_stall) */
+		const unsigned long us = __atomic_exchange_n(&H.stall_us, 0, __ATOMIC_ACQ_REL);
+		if (us) { const unsigned long s0 = now_us(); unsigned long n = 0; while (n++ < us / 20 && (!s0 || now_us() - s0 < us)) nap(); }
+	}
 	stress_pause();
 	if (c->kind == K_RAW) {
 		if (c->hfd >= 0) {
@@ -608,7 +723,8 @@ static void helper_main(void *arg)
 			cache_t *bc = NULL;
 			slot_t *bs = NULL;
 			unsigned bseq = 0;
-			int i, j, claimed = 0, need_open = 0;
+			int i, j, claimed = 0, need_open = 0, victim_fd = -1;
+				cache_t *orph;
 			lock();
 			for (;;) {                                  /* the oldest request of all the caches */
 				bc = NULL; bs = NULL;
@@ -623,8 +739,9 @@ static void helper_main(void *arg)
 				if (!bs) break;
 				{ int e = SLOT_REQ; if (__atomic_compare_exchange_n(&bs->state, &e, SLOT_BUSY, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { claimed = 1; break; } }
 			}
-			if (claimed && bc->kind == K_RAW) need_open = help_fd_prepare(bc);       /* (the slot is BUSY: a close of the file waits for it, so bc and its path stay valid) */
+			if (claimed && bc->kind == K_RAW) need_open = help_fd_prepare(bc, &victim_fd);       /* (the slot is BUSY: a close of the file waits for it, so bc and its path stay valid) */
 			unlock();
+			if (victim_fd >= 0) io_close(victim_fd);
 			if (!claimed) break;
 			if (need_open) {
 				const int fd = io_open(bc->file->path);                          /* outside the lock */
@@ -634,8 +751,19 @@ static void helper_main(void *arg)
 				unlock();
 			}
 			helper_work(bc, bs);
+			if (__atomic_load_n(&H.orph, __ATOMIC_ACQUIRE)) {	   /* caches closed while we were on a block: nobody uses them now */
+				lock(); orph = orph_take(); unlock();
+				orph_free(orph);
+			}
 			if (__atomic_load_n(&H.stop, __ATOMIC_ACQUIRE)) break;
 		}
+	}
+	{   /* the last acts: free what is left and say that we do no more work (under the lock: a closer either sees `leaving` and frees its orphan itself, or has put
+		 * it on the list in time), then say that we are gone: after that nothing of the platform's ops, semaphores or caches is used by this thread */
+		cache_t *l;
+		lock(); l = orph_take(); H.leaving = 1; unlock();
+		orph_free(l);
+		__atomic_store_n(&H.done, 1, __ATOMIC_RELEASE);
 	}
 }
 
@@ -655,20 +783,28 @@ static void warm_zlib(void)
 
 void cdio_set_ops(const md_thread_ops *ops, int enabled)
 {
-	H.ops = ops;
+	/* a helper that lives (running, or given up and not yet gone) keeps the functions it was started with: they are copied here, and the copy is not changed under it */
+	if (H.running) return;
+	if (H.dead) {
+		if (!__atomic_load_n(&H.done, __ATOMIC_ACQUIRE)) return;
+		if (H.ops && H.ops->sem_destroy) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); }
+		H.wake = H.lock = NULL; H.dead = 0;			   /* the helper that was given up has left since: the next disc may have one again */
+	}
+	if (ops) { H.opsv = *ops; H.ops = &H.opsv; } else H.ops = NULL;
 	H.enabled = ops && enabled && ops->sem_create && ops->sem_post && ops->sem_wait && ops->spawn && ops->wait_end && ops->yield;
 }
 
 int cdio_helper_running(void) { return H.running; }
 
 void cdio_debug(int check, int stress) { H.check = check; H.stress = stress; }
+void cdio_debug_stall(unsigned ms) { __atomic_store_n(&H.stall_us, (unsigned long)ms * 1000ul, __ATOMIC_RELEASE); }
 
 void cdio_begin(void)
 {
 	int i;
 	memset(H.st, 0, sizeof H.st);
 	H.erng = 12345; H.hrng = 54321;
-	if (!H.enabled || H.running) return;
+	if (!H.enabled || H.running || H.dead) return;	   /* (dead: a helper that was given up still lives: no second one until it has left) */
 	warm_zlib();
 	/* every file starts again with caches of the helper's kind */
 	for (i = 0; i < MAXF; i++) if (H.files[i] && H.files[i]->c.s && !H.files[i]->c.registered) cache_free(&H.files[i]->c);
@@ -676,7 +812,7 @@ void cdio_begin(void)
 	H.lock = H.ops->sem_create(H.ops->user);
 	if (!H.wake || !H.lock) { if (H.ops->sem_destroy) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); } H.wake = H.lock = NULL; return; }
 	H.ops->sem_post(H.ops->user, H.lock);
-	H.stop = 0; H.nreg = 0; H.seq = 0;
+	H.stop = 0; H.nreg = 0; H.seq = 0; H.done = 0; H.leaving = 0; H.orph = NULL;
 	if (H.ops->spawn(H.ops->user, MD_WORKER_DISC, helper_main, NULL)) {
 		if (H.ops->sem_destroy) { H.ops->sem_destroy(H.ops->user, H.wake); H.ops->sem_destroy(H.ops->user, H.lock); }
 		H.wake = H.lock = NULL;
@@ -688,12 +824,27 @@ void cdio_begin(void)
 
 void cdio_end(void)
 {
-	int i;
+	int i, done;
+	const unsigned long t0 = now_us();
+	unsigned long n = 0;
 	if (!H.running) return;
 	__atomic_store_n(&H.stop, 1, __ATOMIC_RELEASE);
 	H.ops->sem_post(H.ops->user, H.wake);
-	H.ops->wait_end(H.ops->user, MD_WORKER_DISC);
+	/* wait for the helper to leave, a bounded time (it is not in a block unless the read of one is stalled; the join of the platform has no bound of its own) */
+	while (!(done = __atomic_load_n(&H.done, __ATOMIC_ACQUIRE))) {
+		nap();
+		if (++n > IDLE_NAPS || (t0 && now_us() - t0 > IDLE_US)) break;
+	}
+	if (!done) {
+		/* stuck in a read: the helper is switched off for the session. Its semaphores, the thread, and every cache it may be on are left alone (the closes that follow
+		 * orphan what the helper is on and free the rest; the helper frees the orphans when its read returns and then leaves), nothing is written to them */
+		H.running = 0; H.dead = 1;
+		add(&H.st[9], 1);
+		return;
+	}
+	H.ops->wait_end(H.ops->user, MD_WORKER_DISC);			   /* (it has set the flag as its last act: the join returns at once) */
 	H.running = 0;
+	orph_free(orph_take());									 /* (none left: the helper freed them as it left) */
 	for (i = 0; i < MAXF; i++) {
 		cdio_file *f = H.files[i];
 		if (f && f->c.registered) {
@@ -702,8 +853,11 @@ void cdio_end(void)
 			cache_free(&f->c);
 		}
 	}
-	H.chd.c.registered = 0; H.nreg = 0;
-	for (i = 0; i < H.chd.c.nslots; i++) { H.chd.c.s[i].state = SLOT_FREE; H.chd.c.s[i].blk = -1; }
+	if (H.chd) {
+		H.chd->c.registered = 0;
+		for (i = 0; i < H.chd->c.nslots; i++) { H.chd->c.s[i].state = SLOT_FREE; H.chd->c.s[i].blk = -1; }
+	}
+	H.nreg = 0;
 	if (H.ops->sem_destroy) { H.ops->sem_destroy(H.ops->user, H.wake); H.ops->sem_destroy(H.ops->user, H.lock); }
 	H.wake = H.lock = NULL;
 }

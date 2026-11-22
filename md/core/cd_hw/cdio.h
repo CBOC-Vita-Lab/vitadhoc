@@ -41,7 +41,8 @@ int cdio_chd_open(cdio_file *f, struct _chd_file **out);        /* libchdr's chd
 int cdio_chd_read(struct _chd_file *chd, uint32_t hunknum, uint8_t *dst);
 void cdio_chd_close(struct _chd_file *chd);                      /* NULL is fine */
 
-/* the helper thread: ops from md_host_set_threads (NULL = none). begin after the disc is loaded, end before it is closed */
+/* the helper thread: ops from md_host_set_threads (NULL = none). begin after the disc is loaded, end before it is closed. end waits for the helper about
+ * 250 ms at most: a helper stuck in a read is given up for the rest of the session (no helper for the next discs until it has left; census [9]) */
 void cdio_set_ops(const struct md_thread_ops *ops, int enabled);
 void cdio_begin(void);
 void cdio_end(void);
@@ -50,12 +51,15 @@ int cdio_helper_running(void);
 /* debug: check = compare every block served from the cache with a fresh read (mismatches are counted); stress = the helper sleeps for a
  * random while before and after every block, and the emulating thread sometimes ignores a finished block (more races, more waits) */
 void cdio_debug(int check, int stress);
+/* test: the next block the helper claims stalls for `ms` milliseconds (once); a close or cdio_end that comes while it stalls must neither wait for it for long
+ * nor touch what it is on (see cdio.c: orphans, and the helper given up at cdio_end) */
+void cdio_debug_stall(unsigned ms);
 
 /* census since the disc was loaded:
  * [0] reads (calls that touched a streamed file or the CHD)  [1] served from a finished block  [2] misses (read by the emulating thread)
  * [3] waits for a block the helper was reading  [4] us the emulating thread spent in misses and waits
  * [5] blocks the helper finished  [6] us the helper was busy (reading, decoding)  [7] blocks read ahead and never used  [8] check mismatches
- * [9] timeouts: waits for the helper given up after about 2 ms (the emulating thread read the bytes itself), plus closes that left a stuck helper's cache to it */
+ * [9] timeouts: waits for the helper given up after about 2 ms (the emulating thread read the bytes itself), plus closes that left a stuck helper's cache to it (orphaned: the helper frees it) and a cdio_end that gave the helper up */
 void cdio_census(unsigned long out[10]);
 
 #ifdef __cplusplus

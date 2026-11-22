@@ -317,6 +317,7 @@ int md_host_vdp_census(unsigned long out[11])
 void md_host_cd_census(unsigned long out[10]) { cdio_census(out); }
 int md_host_cd_helper(void) { return cdio_helper_running(); }
 void md_host_cd_debug(int check, int stress) { cdio_debug(check, stress); }
+void md_host_cd_stall(unsigned ms) { cdio_debug_stall(ms); }
 
 int md_host_init(void)
 {

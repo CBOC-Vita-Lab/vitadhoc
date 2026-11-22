@@ -135,6 +135,9 @@ int md_host_cd_helper(void);                       /* 1 while the read-ahead thr
 /* debug for the test suite: check = compare every block the cache serves with a direct read; stress = random pauses in the helper and cache answers
  * ignored at random (more waits and misses, the same bytes). */
 void md_host_cd_debug(int check, int stress);   /* [9] worker busy us, [10] join wait us: 0 without now_us */
+/* test: the helper's next block stalls for `ms` milliseconds (once). Census [9] also counts a disc close that gave a stalled helper up (the helper is then
+ * off until it has left: md_host_set_threads again re-enables it). */
+void md_host_cd_stall(unsigned ms);
 
 /* ---- lifetime -------------------------------------------------------------------------------------------- */
 

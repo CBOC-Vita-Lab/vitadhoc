@@ -10,6 +10,7 @@
 #include <semaphore.h>
 #include <sched.h>
 #include <time.h>
+#include <unistd.h>
 #include "host.h"
 #include "thread_ops.h"
 
@@ -199,6 +200,47 @@ int main(int argc, char **argv)
 	/* the emulating thread's wait for the helper is bounded (about 2 ms): with the helper stalled for longer now and then, some waits are given up
 	 * (the bytes are then read by the emulating thread), and the helper's late block never corrupts anything (no mismatch in the check mode) */
 	CHECK(timeouts > 0 && mism == 0, "cdio stress: %lu waits given up, %lu mismatches", timeouts, mism);
+	/* a helper stalled for LONGER than the close waits (500 ms against about 250 ms): the close of the disc (md_host_unload, also the first step of every disc
+	 * swap) must come back in about the bound, count a close timeout, never write into or free what the helper is on (ASan / UBSan builds of this test are
+	 * the check for that), and the next disc must load and read byte for byte; once the helper has left, the next session has its helper again */
+	for (int pass = 0; pass < 2; pass++) {
+		const char *first = pass == 0 ? "single.cue" : "chd_lzma.chd";     /* a raw stream, then a CHD (its decoder is the helper's) */
+		const char *other = pass == 0 ? "multi.cue" : "disc.chd";
+		for (int how = 0; how < 2; how++) {                                  /* 0: unload, 1: a swap to another disc without unloading first */
+			char e2[160] = "";
+			md_host_set_threads(&g_tops, MD_THREAD_DISC);                    /* (re-enables a helper that was given up and has left) */
+			if (slurp(D + "/" + first).empty() || slurp(D + "/" + other).empty()) continue;
+			r = md_host_load_disc((D + "/" + first).c_str(), e2, sizeof e2);
+			CHECK(r == 0, "stall: load %s: %d %s", first, r, e2);
+			if (r) continue;
+			CHECK(md_host_cd_helper() == 1, "stall: the helper runs for %s (pass %d, how %d)", first, pass, how);
+			md_host_cd_stall(500);
+			int lb[] = {0, 20, 40, 60, 80, 100, 120, 140};     /* (a CHD hunk of a few sectors is cached by the core: spread the reads over hunks) */
+			check_data(first, lb, 8);                                        /* the helper claims one of the blocks read ahead and stalls on it */
+			usleep(30000);
+			const unsigned long long t0 = t_now(NULL);
+			if (how == 0) md_host_unload();
+			else {
+				r = md_host_load_disc((D + "/" + other).c_str(), e2, sizeof e2);
+				CHECK(r == 0, "stall: swap to %s: %d %s", other, r, e2);
+			}
+			const unsigned long long ms = (t_now(NULL) - t0) / 1000;
+			CHECK(ms < 450, "stall: the close waited %llu ms (bound about 250)", ms);
+			if (how == 0) {
+				unsigned long c[10]; md_host_cd_census(c);
+				CHECK(c[9] >= 1, "stall: a close timeout is counted (%lu) (%s, ms %llu, blocks %lu)", c[9], first, ms, c[5]);
+				disc(other, true);                                           /* the next disc loads and reads correctly (no helper yet) */
+			} else if (!r) {
+				int lbas[] = {0, 1, 5, 150, DATA_SECTORS - 1};
+				check_data(other, lbas, 5);
+				md_host_unload();
+			}
+			usleep(700000);                                                   /* the stalled block ends, the helper frees what was left to it and leaves */
+		}
+	}
+	md_host_set_threads(&g_tops, MD_THREAD_DISC);
+	disc("disc.chd", true);                                                    /* and after all that a session with a helper still reads right */
+	md_host_set_threads(NULL, 0);
 	if (!slurp(D + "/oggs.cue").empty()) disc("oggs.cue", false);
 	else printf("note  oggs.cue not generated (no ffmpeg): Ogg reader not checked\n");
 

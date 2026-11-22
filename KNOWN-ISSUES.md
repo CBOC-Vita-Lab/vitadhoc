@@ -159,6 +159,14 @@ sharing).
     bytes itself, counted as `timeouts` in the log); the bound was only
     exercised on the PC twin with an artificially stalled helper, so how often
     a real Vita meets it is not known.
+    A close of the disc waits for the helper at most about a quarter of a
+    second: if the helper is stuck in a read longer than that, the disc is
+    closed anyway, the helper is left to finish and free what it was on, and
+    there is no read-ahead (direct reads, slower) for the rest of that
+    player run; the next start of the player gets it back. A
+    stuck helper leaks its thread handle. Tested on the PC twin with a helper
+    stalled for 500 ms (close, disc swap; raw and `.chd`); not on a Vita, and
+    not under qemu (no ARM toolchain was available for this check).
   - Rewind keeps a picture of the machine every 4 frames on a disc (every 2
     on a cartridge): a state is about 1 MB. The step back is coarser, and a
     quiet scene keeps the full rewind length, a busy one a few seconds less.

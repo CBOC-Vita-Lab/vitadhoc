@@ -54,8 +54,9 @@ void cdio_debug(int check, int stress);
 /* census since the disc was loaded:
  * [0] reads (calls that touched a streamed file or the CHD)  [1] served from a finished block  [2] misses (read by the emulating thread)
  * [3] waits for a block the helper was reading  [4] us the emulating thread spent in misses and waits
- * [5] blocks the helper finished  [6] us the helper was busy (reading, decoding)  [7] blocks read ahead and never used  [8] check mismatches */
-void cdio_census(unsigned long out[9]);
+ * [5] blocks the helper finished  [6] us the helper was busy (reading, decoding)  [7] blocks read ahead and never used  [8] check mismatches
+ * [9] timeouts: waits for the helper given up after about 2 ms (the emulating thread read the bytes itself), plus closes that left a stuck helper's cache to it */
+void cdio_census(unsigned long out[10]);
 
 #ifdef __cplusplus
 }

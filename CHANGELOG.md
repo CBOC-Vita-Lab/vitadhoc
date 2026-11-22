@@ -20,7 +20,11 @@ and in emulators; none of it has run on a real Vita yet (see
   needs your own Sega CD BIOS (see INSTALL), which VitAdhoc cannot include.
   Continue, ten states, rewind, fast forward, cheats, RetroAchievements, wide
   view, smoothing and Two players work as on the Genesis. Saves (internal
-  backup RAM and the optional RAM cartridge, a new setting) are kept per game.
+  backup RAM and the RAM cartridge: 512 KB by default, a setting for other
+  sizes or none) are kept per game, and the cartridges of the other sizes you
+  tried are kept in the same file. A disc whose region has no BIOS on the
+  Vita says which BIOS it uses instead of leaving a black screen. Reading
+  and unpacking the disc runs on a helper thread (tested on the PC only).
 - **Every Sega game gets the full treatment**: rewind, fast forward, the same
   picture choices as every other console, RetroAchievements (with Hardcore),
   and a remappable pad (Genesis A / B / C on Square / Cross / Circle, X / Y / Z

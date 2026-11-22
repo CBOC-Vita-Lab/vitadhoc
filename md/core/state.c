@@ -38,6 +38,7 @@
 
 #include "shared.h"
 
+int state_load_notes = 0;
 int8 fast_savestates = false;
 int8 reset_do_not_clear_buffers = false;
 
@@ -214,6 +215,21 @@ int state_load(unsigned char *state)
     /* MS cartridge hardware */
     bufferptr += sms_cart_context_load(&state[bufferptr]);
     sms_cart_switch(~io_reg[0x0E]);
+  }
+
+  /* VitAdhoc: a program counter in a page with no base address (the opcode fetch reads straight from the base) cannot come from a machine that ran:
+   * a damaged or crafted state is put back at 0 and the load is noted in state_load_notes (the frontend logs it). In this fork the main 68000's
+   * pages $80-$DF have work_ram as their base (genesis.c: for VDP DMA), so this can only happen in the pages of the MegaSD ($38-$3F), the Sega CD's
+   * cartridge area ($40-$7F) and the sub CPU's backup RAM, register and 1M-mode dot image pages. The memory maps are final here. */
+  if ((system_hw & SYSTEM_PBC) == SYSTEM_MD && !m68k.memory_map[(m68k_get_reg(M68K_REG_PC) >> 16) & 0xff].base)
+  {
+    m68k_set_reg(M68K_REG_PC, 0);
+    state_load_notes |= 1;
+  }
+  if (system_hw == SYSTEM_MCD && !s68k.memory_map[(s68k_get_reg(M68K_REG_PC) >> 16) & 0xff].base)
+  {
+    s68k_set_reg(M68K_REG_PC, 0);
+    state_load_notes |= 2;
   }
 
   return bufferptr;

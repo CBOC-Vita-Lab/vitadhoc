@@ -314,7 +314,7 @@ int md_host_vdp_census(unsigned long out[11])
 	return 1;
 }
 
-void md_host_cd_census(unsigned long out[9]) { cdio_census(out); }
+void md_host_cd_census(unsigned long out[10]) { cdio_census(out); }
 int md_host_cd_helper(void) { return cdio_helper_running(); }
 void md_host_cd_debug(int check, int stress) { cdio_debug(check, stress); }
 
@@ -1416,8 +1416,10 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	/* run-ahead's own load keeps the picture just drawn, the pattern cache and the palette tables (the core then marks only the patterns
 	 * whose VRAM differs); every other load starts from cleared buffers as before */
 	fast_savestates = G.ahead_quiet ? 1 : 0;
+	state_load_notes = 0;
 	if (!state_load(G.state_scratch)) { fast_savestates = 0; return 3; }
 	fast_savestates = 0;
+	if (state_load_notes) logf_(state_load_notes & 2 ? "state load: a program counter in a page with no memory behind it was reset to 0 (sub CPU or main CPU)" : "state load: the main CPU's program counter in a page with no memory behind it was reset to 0");
 	if (!G.ahead_quiet) G.ring_r = G.ring_w = G.ring_n = 0;      /* run-ahead goes back to a moment whose sound is already in the ring */
 	G.reg0_prev = reg[0];
 	/* then the machine is exactly the saved one: the picture size the VDP holds (where vertical blank starts), the sprite lists, the PSG's

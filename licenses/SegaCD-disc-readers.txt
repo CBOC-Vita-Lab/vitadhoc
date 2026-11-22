@@ -3,6 +3,8 @@ the MIT code it links; none is GPL. The sources are in md/core/cd_hw/libchdr and
 
 ==== libchdr (CHD disc image reader), BSD-3-Clause: md/core/cd_hw/libchdr/LICENSE.txt ====
 Copyright Romain Tisserand
+Copyright Aaron Giles (the sources src/libchdr_chd.c, libchdr_cdrom.c, libchdr_huffman.c, libchdr_bitstream.c, libchdr_flac.c and their headers carry
+"copyright-holders: Aaron Giles", the same BSD-3-Clause terms)
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without

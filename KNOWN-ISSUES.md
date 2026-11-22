@@ -147,13 +147,36 @@ sharing).
   and that ARM equals PC. Not checked: a real game, real CD loading speed on
   a Vita, Ogg audio accuracy, and a state of about 1 MB sent over a real
   link. A game that needs the real BIOS timing may misbehave.
+  - Disc reading and CHD decoding run on a helper thread that reads ahead of
+    the game (like the other consoles' helpers). It is checked on the PC
+    twin only (threads, a stress mode that delays every read, the same bytes
+    with and without it); how well it shares the Vita's cores, and whether
+    it keeps a game at full speed while a `.chd` is unpacked, is not known.
+    A `.chd` costs more CPU than a `.cue` with raw tracks (a `.chd` is
+    unpacked on the fly, with LZMA, zlib, zstd or FLAC); if a game stutters
+    from a `.chd`, a `.cue` + `.bin` of the same disc is the safe choice.
+    The game's wait for the helper is bounded (about 2 ms, then it reads the
+    bytes itself, counted as `timeouts` in the log); the bound was only
+    exercised on the PC twin with an artificially stalled helper, so how often
+    a real Vita meets it is not known.
+  - Rewind keeps a picture of the machine every 4 frames on a disc (every 2
+    on a cartridge): a state is about 1 MB. The step back is coarser, and a
+    quiet scene keeps the full rewind length, a busy one a few seconds less.
+    The cost is measured on the PC only.
+  - A game saved with a RAM cartridge of one size and then played with
+    another keeps the first size's data: the save file holds the cartridge of
+    each size you used (a few hundred KB each), and switching back finds it.
+  - The Two players id of a `.chd` game is not the id of the same disc as
+    `.cue` + `.bin`: both players must hold the same kind of image. A `.chd`
+    written without its SHA-1 gets an id from its size, header and first map
+    bytes instead (checked on synthetic headers on the PC only).
   - You need your own BIOS (INSTALL lists the names). No BIOS: a message and
     back to the library.
   - A disc with only a data track shows 99 audio tracks (the core's own
     behaviour). A lone `.bin` without `.cue` is not listed; use `.iso`. No zip.
   - Saves are not RetroArch `.brm` files; they cannot be exchanged.
   - Cheats change main work RAM only; no ROM patches for discs.
-  - In Two players the region and RAM cartridge are fixed (USA/auto, off) on both sides.
+  - In Two players the region and RAM cartridge are fixed (USA/auto, 512 KB) on both sides.
 - **Smooth 50 Hz** (PAL games speed, on by default) is judged by arithmetic and
   the twin, not by eye on a Vita. If the mixed refresh looks wrong in a game,
   choose True 50 Hz.

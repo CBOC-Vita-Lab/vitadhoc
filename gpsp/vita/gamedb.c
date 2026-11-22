@@ -752,7 +752,23 @@ int gamedb_md_accept(const char *path)
       return 1;
    if (!strcasecmp(ext, ".bin"))
    {
-      int k = gamedb_md_rom_kind(path);
+      int k;
+      /* a track file of a disc ("Game (Track 02).bin", the way Redump and most rippers name them): never a Mega Drive ROM, and a Sega CD folder
+       * holds dozens of them: not opened. (A track file named another way is opened once and refused by its content below.) */
+      const char *base = path, *q, *tr;
+      for (q = path; *q; q++)
+         if (*q == '/' || *q == ':' || *q == '\\')
+            base = q + 1;
+      tr = strstr(base, "(Track ");
+      if (tr && tr[7] >= '0' && tr[7] <= '9')
+      {
+         const char *d = tr + 7;                  /* only "(Track NN).bin" at the very end of the name */
+         while (*d >= '0' && *d <= '9')
+            d++;
+         if (d[0] == ')' && !strcasecmp(d + 1, ".bin"))
+            return 0;
+      }
+      k = gamedb_md_rom_kind(path);
       return k == GAMEDB_MD_PLAIN || k == GAMEDB_MD_SMD;
    }
    return 0;

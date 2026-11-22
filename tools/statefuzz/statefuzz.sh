@@ -52,14 +52,19 @@ firstn() { # N dir patterns...: up to N files below dir matching patterns
 }
 
 # ---- Sega ----
-if [ -n "${GATE_MD_ROMS:-}${GATE_MD_SMS_ROMS:-}" ]; then
+if true; then       # (the Sega CD disc case below needs no ROM: mkscd.py writes the disc and the test-only BIOS)
 	B=$OUT/md-build; mkdir -p "$B"
 	if (cd "$ROOT/md" && nice make -C core TARGET=host B="$B" OPT=-O1 EXTRA="$SAN" -j"$CPUN" all >"$OUT/md-build.log" 2>&1 &&
 	    cd twin && nice g++ -O1 -g -std=gnu++14 $SAN -I../frontend -o "$OUT/md-fuzz" statefuzz.cpp "$B/mdcore.o" -lm -pthread >>"$OUT/md-build.log" 2>&1); then
 		run_list 2 "${GATE_MD_ROMS:-/nonexistent}" "rom.bin" sega "$OUT/md-fuzz" "$OUT/cases-md" --system md
 		for ext in sms gg sg; do run_list 1 "${GATE_MD_SMS_ROMS:-/nonexistent}" "*.$ext" sega-$ext "$OUT/md-fuzz" "$OUT/cases-md" --system $ext; done
+		[ -n "${GATE_MD_ROMS:-}${GATE_MD_SMS_ROMS:-}" ] || skip sega "GATE_MD_ROMS / GATE_MD_SMS_ROMS not set"
+		# Sega CD: the CD hardware's state (gate array registers, graphics, CDC, CDD, PCM, RAMs), a synthetic disc and the test-only stand-in BIOS
+		if command -v python3 >/dev/null && python3 -I "$ROOT/md/twin/tools/mkscd.py" standin "$OUT/scd-standin.bin" >/dev/null 2>&1 && python3 -I "$ROOT/md/twin/tools/mkscd.py" discs "$OUT/scd-discs" >/dev/null 2>&1; then
+			run_one sega-cd "$OUT/md-fuzz" "$OUT/scd-discs/single.cue" "$OUT/cases-md-cd" --disc "$OUT/scd-discs/single.cue" --bios "$OUT/scd-standin.bin"
+		else skip sega-cd "python3 or the mkscd.py fixtures missing"; fi
 	else fail "sega build"; tail -5 "$OUT/md-build.log"; fi
-else skip sega "GATE_MD_ROMS / GATE_MD_SMS_ROMS not set"; fi
+fi
 
 # ---- SNES ----
 if [ -n "${GATE_SNES_ROMS:-}" ]; then

@@ -1,13 +1,16 @@
 # gamedb.c against assets/gamedb.txt, and its title keys against
 # tools/make_gamedb.py's (keys.txt is written from the same file by Python).
 V = ../..
-test: gamedb_test keys.txt crcs.txt
+test: gamedb_test disc_id_test keys.txt crcs.txt
+	./disc_id_test
 	./gamedb_test $(V)/assets/gamedb.txt keys.txt crcs.txt
 	python3 test_sega_db.py
 	python3 test_descriptions.py
 	python3 test_sega_covers.py
 gamedb_test: gamedb_test.c $(V)/gamedb.c $(V)/gamedb.h
 	$(CC) -O2 -Wall -I$(V) gamedb_test.c $(V)/gamedb.c -o $@
+disc_id_test: disc_id_test.c $(V)/disc_id.h
+	$(CC) -O2 -Wall -I$(V) disc_id_test.c -o $@
 keys.txt: $(V)/assets/gamedb.txt $(V)/tools/make_gamedb.py
 	python3 -c "import sys; sys.path.insert(0, '$(V)/tools'); import make_gamedb as m; \
 	t = set(); \
@@ -19,4 +22,4 @@ crcs.txt: $(V)/assets/gamedb.txt
 	python3 -c "import sys; \
 	open('crcs.txt', 'w', encoding='utf-8').writelines(l[1:] for l in open('$(V)/assets/gamedb.txt', encoding='utf-8') if l[0] == 'C')"
 clean:
-	rm -f gamedb_test keys.txt crcs.txt
+	rm -f gamedb_test disc_id_test keys.txt crcs.txt

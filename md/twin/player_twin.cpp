@@ -390,13 +390,18 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 	EXPECT(pl->cheats().size() == 1);
 	EXPECT(pl->cheats().size() == 1 && !pl->cheats().at(0).on && pl->cheats().at(0).usable);
 	/* RetroArch save brought in, the old one kept in the backups */
-	EXPECT(read_bytes(srm) == ra_srm);
-	EXPECT(read_bytes(root + "/backups/" + con + "/" + game + ".before-retroarch.srm") == old_srm);
+	if (con == "scd") {      /* a Sega CD save is the backup RAM and the RAM cartridge in one file: the player does not import a RetroArch save over it */
+		EXPECT(read_bytes(srm) == old_srm);
+		EXPECT(read_bytes(root + "/backups/" + con + "/" + game + ".before-retroarch.srm").empty());
+	} else {
+		EXPECT(read_bytes(srm) == ra_srm);
+		EXPECT(read_bytes(root + "/backups/" + con + "/" + game + ".before-retroarch.srm") == old_srm);
+	}
 	pl->apply_start_mode();
 
 	/* ---- the patch reached the game ---- */
 	rig.run(30);
-	EXPECT(md_host_peek(po) == 0x5A);
+	if (con != "scd") EXPECT(md_host_peek(po) == 0x5A);        /* (a disc is not patched) */
 	rig.snap("ingame");
 
 	/* ---- the menu: START + SELECT held, and a tap on the picture ---- */
@@ -429,7 +434,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 			EXPECT(!md_host_sram_dirty());
 			EXPECT(pl->session().current().save_changed);
 			/* RetroArch compatible: the file is the raw battery RAM, the same bytes the core gives */
-			std::vector<uint8_t> core(0x10000);
+			std::vector<uint8_t> core(con == "scd" ? 0x400000 : 0x10000);      /* a disc: backup RAM + the cartridge, and the stash of other sizes */
 			size_t k = md_host_sram_read(core.data(), core.size());
 			core.resize(k);
 			EXPECT(now == core);
@@ -741,7 +746,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		mdp::StartResult s2 = p2->start(2, av, root, true);
 		EXPECT(s2.ok && !p2->have_launch_file());
 		EXPECT(s2.enter_is_cross && s2.cpu_mhz == 0);
-		EXPECT(s2.console == (md ? "md" : "sms") || con == "gg" || con == "sg");     /* by extension: .sms is sms */
+		EXPECT(s2.console == (con == "scd" ? "scd" : md ? "md" : "sms") || con == "gg" || con == "sg");     /* by extension: .sms is sms */
 		EXPECT(p2->srm_path() == srm);
 		if (s2.console == con) EXPECT(p2->picture().scan == 5);       /* a forced console id (gg on an .sms file) has no launch file here: the extension's console, its own settings */
 		r2.pf.start_thread();
@@ -807,6 +812,7 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		md_host_unload();
 	}
 	/* ---- a patch that does not fit: the game is not started, the app is told ---- */
+	if (con != "scd")        /* (a disc is not patched) */
 	{
 		std::vector<uint8_t> bad(ips.begin(), ips.begin() + 8);
 		write_bytes(work + "/bad.ips", bad);

@@ -766,7 +766,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			std::vector<std::string> rl;
 			rl.push_back("30 s"); rl.push_back("1 min");
 			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
-			                   "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
+			                   scd_ ? "How far back rewind reaches. A disc game's saved moments are large (about 1 MB each): quiet scenes keep this length, a scene that redraws the whole screen (video) keeps only a few seconds. The memory it may use is fixed."
+			                        : "How far back rewind reaches. A busy game keeps a little less than this: the memory it may use is fixed.", rl, rewind_len_, ROW_SPD_REWIND);
 		}
 		if (scd_) {
 			std::vector<std::string> rc;
@@ -934,7 +935,9 @@ void MdPlayer::speed_start()
 {
 	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
 	if (linked()) speed_.set_locked(true, "Rewind is off while games are linked");
-	speed_.start(md_host_fps(), 2, speed_settings());
+	/* a disc's state is about 1 MB (a cartridge's 0.15 MB): a capture every 4 frames, not 2, halves what the emulating thread spends on rewind (the
+	 * state copy is a few ms on a Vita, an estimate); the ring stretches the interval further when the picture changes much (FMV) */
+	speed_.start(md_host_fps(), scd_ ? 4 : 2, speed_settings());
 	ahead_.set_frame_us((uint32_t) (1e6 / md_host_fps() + 0.5));
 	set_quick(quick_);
 	/* with a writer thread the rewind states are packed there (the game thread only copies the state); without one capture_commit packs at once */

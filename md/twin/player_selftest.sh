@@ -59,6 +59,21 @@ if [ -n "$GG" ]; then
 	run "Game Gear Quick response (run-ahead)" ahead gg "$GG" "$T/q_gg"
 	run "Game Gear RetroAchievements" ra gg "$GG" "$T/a_gg"
 else echo "SKIP  Game Gear player tests (MD_TEST_SMS_ROMS not set)"; fi
+# Sega CD: the same player on a synthetic disc and the test-only stand-in BIOS (tools/mkscd.py; no ROM, no BIOS, no disc of anyone's is used), so these
+# run without MD_TEST_ROMS. The disc has no patch, no RetroArch import and no thumbnail of a cartridge: the walk expects that.
+if command -v python3 >/dev/null; then
+	SC="$T/scd"; mkdir -p "$SC"
+	if python3 -I "$HERE/tools/mkscd.py" standin "$SC/standin.bin" >/dev/null 2>&1 && python3 -I "$HERE/tools/mkscd.py" discs "$SC" >/dev/null 2>&1; then
+		SD="$SC/single.cue"
+		run "Sega CD walk (menu, 10 slots, Continue, backup RAM and cartridge in one save, cheats, session.txt)" test scd "$SD" "$SHOTS/scd" "$T/w_scd"
+		run "Sega CD pad model" pads scd "$SD" "$T/p_scd"
+		run "Sega CD look governor" look scd "$SD" "$T/l_scd"
+		run "Sega CD rewind 5 s (bit for bit, one capture in four frames), fast forward 2x / 3x" speed scd "$SD" "$T/s_scd"
+		run "Sega CD Quick response (run-ahead)" ahead scd "$SD" "$T/q_scd"
+		run "Sega CD RetroAchievements (fake server)" ra scd "$SD" "$T/a_scd"
+		run "Sega CD costs (state size, rewind ring, capture time)" costs scd "$SD"
+	else echo "FAIL  Sega CD player tests (mkscd.py could not write the fixtures)"; fail=1; fi
+else echo "SKIP  Sega CD player tests (python3 not found)"; fi
 # the wide view through the picture pipe (direct drawing and copies, composed on a second thread) against composing at once, bit for bit
 WP=${MD_WIDE_PIPE_PROOF:-$HERE/build/x86/wide_pipe_proof}
 [ -x "$WP" ] || make -C "$HERE" -j2 ARCH=x86 build/x86/wide_pipe_proof >"$T/build2.log" 2>&1

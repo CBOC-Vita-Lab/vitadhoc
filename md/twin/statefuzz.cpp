@@ -2,6 +2,8 @@
 // A real state is damaged the way a hostile peer would (payload bytes, the CRC trailer computed again), loaded and run;
 // build with -fsanitize=address,undefined (see md/twin/Makefile target statefuzz).  MIT licence.
 //   statefuzz ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--system md|sms|gg|sg] [--case FILE]...
+//   statefuzz DISC CASEDIR --disc DISC.cue --bios STANDIN.bin [...]   a Sega CD disc (md/twin/tools/mkscd.py makes both) instead of a cartridge: the disc
+//                                                                hardware (gfx, cdc, cdd, pcm, PRG/Word RAM) is the hot part of the state
 // Without --case: mutation until the time budget is spent; exit 0 = no crash, no hang, no sanitizer report.
 // With --case: every file is loaded as it is (the saved crash / hang states, the regression set) and run.
 #include "host.h"
@@ -23,7 +25,17 @@ static void run_frames(int n, sf_rng *r)
 }
 int main(int argc, char **argv)
 {
-	if (argc < 3) { fprintf(stderr, "usage: statefuzz ROM CASEDIR [--seconds N] [--seed N] [--frames N] [--system md|sms|gg|sg] [--case FILE]...\n"); return 2; }
+	const char *disc = 0, *biosf = 0;
+	{	// --disc DISC --bios BIOS are taken out of the argument list (the ROM argument is then ignored: pass the disc again, or any name)
+		static char *av[64]; int k = 0;
+		for (int i = 0; i < argc && k < 62; i++) {
+			if (i > 0 && !strcmp(argv[i], "--disc") && i + 1 < argc) disc = argv[++i];
+			else if (i > 0 && !strcmp(argv[i], "--bios") && i + 1 < argc) biosf = argv[++i];
+			else av[k++] = argv[i];
+		}
+		argv = av; argc = k;
+	}
+	if (argc < 3) { fprintf(stderr, "usage: statefuzz ROM CASEDIR [--disc DISC --bios BIOS] [--seconds N] [--seed N] [--frames N] [--system md|sms|gg|sg] [--case FILE]...\n"); return 2; }
 	const char *rom = argv[1], *dir = argv[2]; double secs = 20; uint64_t seed = 1; int frames = 30, system = 0, warm = 300;
 	std::vector<const char *> cases; bool proof = false;
 	for (int i = 3; i < argc; i++)
@@ -39,13 +51,18 @@ int main(int argc, char **argv)
 		else if (a == "--base" && i + 1 < argc) sf_base_idx = (size_t)atoi(argv[++i]);
 		else if (a == "--proof") proof = true;
 	}
-	std::vector<uint8_t> rv = sf_read_file(rom);
-	if (rv.empty()) { fprintf(stderr, "cannot read %s\n", rom); return 2; }
+	std::vector<uint8_t> rv;
+	if (!disc) { rv = sf_read_file(rom); if (rv.empty()) { fprintf(stderr, "cannot read %s\n", rom); return 2; } }
 	char tag[64]; snprintf(tag, sizeof tag, "md%llu", (unsigned long long)seed);
 	sf_init(dir, tag, 20);
 	if (md_host_init()) return 2;
 	char err[256] = "";
-	if (md_host_load_mem(rv.data(), rv.size(), "fuzz", system, err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 2; }
+	if (disc) {
+		std::vector<uint8_t> bi = biosf ? sf_read_file(biosf) : std::vector<uint8_t>();
+		if (bi.empty() || md_host_cd_bios_add(bi.data(), bi.size(), 1) <= 0) { fprintf(stderr, "cannot use the BIOS %s\n", biosf ? biosf : "(none)"); return 2; }
+		if (md_host_load_disc(disc, err, sizeof err)) { fprintf(stderr, "load disc: %s\n", err); return 2; }
+	}
+	else if (md_host_load_mem(rv.data(), rv.size(), "fuzz", system, err, sizeof err)) { fprintf(stderr, "load: %s\n", err); return 2; }
 	md_host_set_render(1);
 	sf_rng rng; sf_seed(&rng, seed);
 	if (proof)
@@ -54,7 +71,7 @@ int main(int argc, char **argv)
 		// as the game's own save would be, and puts them back before the load. So they are compared too.
 		int f = sf_proof("md", [&]() {
 				std::vector<uint8_t> b(md_host_state_size()); md_host_state_save_mem(b.data(), b.size());
-				std::vector<uint8_t> sr(0x10000); size_t n = md_host_sram_read(sr.data(), sr.size());
+				std::vector<uint8_t> sr(disc ? 0x100000 : 0x10000); size_t n = md_host_sram_read(sr.data(), sr.size());
 				b.insert(b.end(), sr.begin(), sr.begin() + n);
 				for (int k = 0; k < 4; k++) b.push_back((uint8_t)(n >> (8 * k)));
 				return b; },
@@ -107,6 +124,12 @@ int main(int argc, char **argv)
 		hot.clear();
 		hot.push_back({ 16 + 0x12000, 0x40 });                           // Genesis: Z80 bus state, bank register, IO registers
 		hot.push_back({ 16 + 0x12020 + 0x400 + 0x10000, 0x300 });        // Genesis: CRAM, VSRAM, VDP registers and the chips after them
+		if (disc)
+		{	// the disc hardware starts at the "SCD!" tag: gate array registers, gfx, cdc, cdd, pcm (the first 0x7000 bytes), then PRG/Word RAM
+			size_t at = 0;
+			for (size_t i = 16 + 0x10000; i + 4 < 16 + (size_t)used; i++) if (!memcmp(&b[i], "SCD!", 4)) { at = i + 4; break; }
+			if (at) { hot.push_back({ at, 0x400 }); hot.push_back({ at + 0x400, 0x4600 }); hot.push_back({ at + 0x4a00, 0x800 }); hot.push_back({ at + 0x5200, 0x2000 }); }
+		}
 		hot.push_back({ 16 + used > 0x4000 ? 16 + used - 0x4000 : 16, 0x4000 });
 		hot.push_back({ 16 + used, b.size() - 4 - 16 - used });          // the carry block
 		sf_mutate(&rng, b.data(), b.size(), 16, b.size() - 4, hot);

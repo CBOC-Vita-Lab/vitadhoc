@@ -340,16 +340,39 @@ int cdd_context_load(uint8 *state, char *version)
   cdd.status = tmp8 & 0xf;
   cdd.pending = tmp8 >> 4;
 
-  /* reject invalid current track index */
-  if (index > cdd.toc.last)
+  /* VitAdhoc: what a drive can be doing: a scan step is 0 or the scan speed either way; the latency counts down from a few hundred at most */
+  if (cdd.scanOffset != CD_SCAN_SPEED && cdd.scanOffset != -CD_SCAN_SPEED)
   {
-    return 0;
+    cdd.scanOffset = 0;
+  }
+  if (cdd.latency & 0x80000000)      /* (unsigned in the struct: a negative value in a state is a huge one here) */
+  {
+    cdd.latency = 0;
+  }
+  else if (cdd.latency > 4096)
+  {
+    cdd.latency = 4096;
+  }
+
+  /* the rest of the drive's state is read first, so a rejection below leaves the state buffer where the next chip expects it (upstream returned
+     here with nothing consumed: the PCM chip then read the drive's bytes) */
+  offset = 0;
+  if (!((version[11] == 0x31) && (version[13] == 0x37) && (version[15] == 0x35)))
+  {
+    load_param(&offset, sizeof(offset));
+    load_param(&cdd.audio, sizeof(cdd.audio));
+  }
+
+  /* reject invalid current track index */
+  if (index > (unsigned int)cdd.toc.last)
+  {
+    return bufferptr;
   }
 
   /* reject invalid sector position */
   if ((lba < -150) || (lba > cdd.toc.end))
   {
-    return 0;
+    return bufferptr;
   }
 
   /* update current sector */
@@ -373,9 +396,6 @@ int cdd_context_load(uint8 *state, char *version)
   }
   else
   {
-    load_param(&offset, sizeof(offset));
-    load_param(&cdd.audio, sizeof(cdd.audio));
-
     /* current track is an audio track ? */
     if (cdd.toc.tracks[index].type == TYPE_AUDIO)
     {

@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "gamedb.h"
 
@@ -103,6 +105,24 @@ static void sega_files(void)
    expect(gamedb_md_rom_kind("md_smd_nomark.bin") == GAMEDB_MD_NONE &&
           !gamedb_md_accept("md_smd_nomark.bin"),
           ".bin of that shape without AA BB is rejected");
+   /* a track file of a disc is not opened at all: even one that would pass for a Genesis ROM by its bytes is not listed */
+   write_file("Game (Track 01).bin", junk, 3 * 16384);
+   junk[0x100] = 'S'; junk[0x101] = 'E'; junk[0x102] = 'G'; junk[0x103] = 'A';
+   write_file("Game (Track 02).bin", junk, 3 * 16384);
+   expect(!gamedb_md_accept("Game (Track 02).bin") && !gamedb_md_accept("Game (Track 01).bin"),
+          "a '(Track NN).bin' file is never a Genesis game");
+   /* the track rule is anchored to the end of the file's own name: "(Track " elsewhere in the name or in a folder name does not exclude a file (the
+    * content decides, as for any .bin); only "(Track NN).bin" does. Junk has SEGA at 0x100 here, so these are Genesis ROMs by content. */
+   mkdir("Hacks (Track 1 fix)", 0755);
+   write_file("Hacks (Track 1 fix)/Game.bin", junk, 3 * 16384);
+   write_file("Game (Track 2 demo).bin", junk, 3 * 16384);
+   expect(gamedb_md_accept("Hacks (Track 1 fix)/Game.bin"), "a folder named '(Track 1 fix)' does not exclude the ROM inside");
+   expect(gamedb_md_accept("Game (Track 2 demo).bin"), "'(Track 2 demo).bin' is a candidate (kind by content)");
+   expect(!gamedb_md_accept("Game (Track 02).bin"), "'(Track 02).bin' is still never a candidate");
+   junk[0x100] = 0;
+   write_file("Game (Track 2 demo).bin", junk, 3 * 16384);
+   expect(!gamedb_md_accept("Game (Track 2 demo).bin"), "'(Track 2 demo).bin' without SEGA is refused by its content");
+   junk[0x100] = 'S';
    /* a .bin that is no Genesis ROM: no SEGA at 0x100, no SMD header */
    for (i = 0; i < sizeof(junk); i++)
       junk[i] = next_byte();
@@ -213,6 +233,8 @@ static void sega_files(void)
    remove("md_junk.bin"); remove("md_junk512.bin"); remove("md_junk_size.bin");
    remove("md_32x.bin"); remove("sms_plain.sms"); remove("sms_headed.sms");
    remove("sg_headed.sg"); remove("sg_plain.sg"); remove("md_real_plain.md");
+   remove("Game (Track 01).bin"); remove("Game (Track 02).bin");
+   remove("Game (Track 2 demo).bin"); remove("Hacks (Track 1 fix)/Game.bin"); rmdir("Hacks (Track 1 fix)");
    remove("md_real.smd");
 }
 

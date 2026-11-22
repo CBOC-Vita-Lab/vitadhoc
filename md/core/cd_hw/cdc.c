@@ -237,6 +237,18 @@ int cdc_context_load(uint8 *state)
       break;
   }
 
+  /* VitAdhoc: cdc.cycles[0] feeds the sub CPU's counter when a transfer ends (cdc_dma_update) and so bypasses the clamp of s68k.cycles. Both are
+   * relative to the frame start; [1] is the end of the decoder's active period (the sub CPU's counter plus 267000). An idle chip's values go ever more
+   * negative, frame by frame, and are reset when a transfer starts or resumes: only a running transfer needs a value near the present. */
+  if (cdc.cycles[0] > (1 << 24) || (cdc.dma_w && cdc.cycles[0] < -(1 << 22)))
+  {
+    cdc.cycles[0] = 0;
+  }
+  if (cdc.cycles[1] > (1 << 24))
+  {
+    cdc.cycles[1] = 0;
+  }
+
   cdc.irq = ~cdc.ifstat & cdc.ifctrl & (BIT_DTEIEN | BIT_DECIEN);
 
   return bufferptr;

@@ -6,6 +6,8 @@
  *   slot state BUSY   : the helper is reading / decoding into the slot: nobody else touches the slot
  *   slot state READY  : finished (data and len are valid); the helper never touches it again, the emulating thread reads and recycles it
  *   slot state ERR    : the helper could not read it; the emulating thread reads the bytes itself
+ *   slot state ABANDON: the emulating thread stopped waiting for a BUSY slot (BUSY -> ABANDON, compare-and-swap) and read the bytes itself; the helper
+ *                       is still writing the slot, so nobody reuses it, and when the helper finishes it sees the state is no longer BUSY and frees it
  * The helper's list of caches and its descriptors are changed under one lock (a semaphore used as a mutex). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +43,12 @@ static long io_pread(int fd, void *b, size_t n, int64_t off) { return (long)prea
 #define EMU_FDS 16                /* descriptors the emulating thread keeps open at once (a 99 track disc has 99 files) */
 #define HELP_FDS 8                /* the same for the helper */
 
-enum { SLOT_FREE = 0, SLOT_REQ, SLOT_BUSY, SLOT_READY, SLOT_ERR };
+enum { SLOT_FREE = 0, SLOT_REQ, SLOT_BUSY, SLOT_READY, SLOT_ERR, SLOT_ABANDON };
+#define WAIT_US 2000              /* the longest the emulating thread waits for a block the helper is on (then it reads the bytes itself) */
+#define WAIT_NAPS 4000            /* the same bound counted in naps, for a platform without a clock */
+#define IDLE_US 250000            /* the longest a close waits for the helper to leave a cache (then the cache is left to the helper: see cdio_close) */
+#define IDLE_NAPS 100000
+#define NSTAT 10
 enum { K_RAW = 0, K_CHD = 1 };
 
 typedef struct {
@@ -92,7 +99,7 @@ static struct {
 	int emu_fds, help_fds;
 	int check, stress;
 	unsigned erng, hrng;
-	unsigned long st[9];
+	unsigned long st[NSTAT];
 	struct { struct _chd_file *m, *h; cache_t c; uint32_t hunkbytes; int have; } chd;
 } H;
 
@@ -101,6 +108,9 @@ static void add(unsigned long *p, unsigned long v) { __atomic_fetch_add(p, v, __
 static unsigned long now_us(void) { return H.ops && H.ops->now_us ? (unsigned long)H.ops->now_us(H.ops->user) : 0; }
 static void lock(void) { H.ops->sem_wait(H.ops->user, H.lock); }
 static void unlock(void) { H.ops->sem_post(H.ops->user, H.lock); }
+/* a wait for the helper (the emulating thread): the platform's short sleep when it has one, else a yield. A yield gives way to equal or higher priority
+ * threads only: with the helper below the emulating thread on the same core, a spin on yield would starve it */
+static void nap(void) { if (H.ops->nap) H.ops->nap(H.ops->user); else H.ops->yield(H.ops->user); }
 static unsigned rnd(unsigned *s) { unsigned x = *s ? *s : 2463534242u; x ^= x << 13; x ^= x >> 17; x ^= x << 5; *s = x; return x; }
 
 /* ---- files --------------------------------------------------------------------------------------------------- */
@@ -155,15 +165,25 @@ static void unregister_cache(cache_t *c)           /* the lock is held */
 	c->registered = 0;
 }
 
-static void wait_idle(cache_t *c)                  /* no slot of c is being worked on (the cache is no longer registered) */
+/* no slot of c is being worked on (the cache is no longer registered, so the helper claims nothing new). The lock is NOT held: the helper may need it to
+ * finish. Returns 0 when the helper is still on a slot after IDLE_US: the caller then must not free the cache (the helper writes into it) */
+static int wait_idle(cache_t *c)
 {
+	const unsigned long t0 = now_us();
+	unsigned long n = 0;
 	int i;
 	for (i = 0; i < c->nslots; i++) {
 		int st;
-		while ((st = __atomic_load_n(&c->s[i].state, __ATOMIC_ACQUIRE)) == SLOT_BUSY) H.ops->yield(H.ops->user);
-		if (st == SLOT_REQ) { int e = SLOT_REQ; __atomic_compare_exchange_n(&c->s[i].state, &e, SLOT_FREE, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); }
-		while (__atomic_load_n(&c->s[i].state, __ATOMIC_ACQUIRE) == SLOT_BUSY) H.ops->yield(H.ops->user);
+		while ((st = __atomic_load_n(&c->s[i].state, __ATOMIC_ACQUIRE)) == SLOT_REQ) {
+			int e = SLOT_REQ;
+			if (__atomic_compare_exchange_n(&c->s[i].state, &e, SLOT_FREE, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { st = SLOT_FREE; break; }
+		}
+		while ((st = __atomic_load_n(&c->s[i].state, __ATOMIC_ACQUIRE)) == SLOT_BUSY || st == SLOT_ABANDON) {
+			nap();
+			if (++n > IDLE_NAPS || (t0 && now_us() - t0 > IDLE_US)) return 0;
+		}
 	}
+	return 1;
 }
 
 int cdio_close(cdio_file *f)
@@ -171,9 +191,19 @@ int cdio_close(cdio_file *f)
 	int i;
 	if (!f) return 0;
 	if (f->c.registered) {
+		int idle;
 		lock();
 		unregister_cache(&f->c);
-		wait_idle(&f->c);                          /* a block the helper is on finishes first */
+		unlock();
+		idle = wait_idle(&f->c);                   /* a block the helper is on finishes first */
+		if (!idle) {                               /* the helper is stuck in the read of a block of this file: the file, its cache and its helper descriptor are left to it (a leak of one
+		                                            * file's worth, never a write into freed memory); only the emulating thread's descriptor is closed */
+			if (f->fd >= 0) { io_close(f->fd); H.emu_fds--; }
+			for (i = 0; i < MAXF; i++) if (H.files[i] == f) { H.files[i] = NULL; H.nfiles--; break; }
+			add(&H.st[9], 1);
+			return 0;
+		}
+		lock();
 		if (f->c.hfd >= 0) { io_close(f->c.hfd); f->c.hfd = -1; H.help_fds--; }
 		unlock();
 	}
@@ -271,12 +301,23 @@ static int take_ready(cache_t *c, int64_t blk, int *out_slot)
 	}
 	if (st == SLOT_BUSY) {
 		const unsigned long t0 = now_us();
+		unsigned n = 0;
 		add(&H.st[3], 1);
-		while ((st = __atomic_load_n(&c->s[si].state, __ATOMIC_ACQUIRE)) == SLOT_BUSY) H.ops->yield(H.ops->user);
+		while ((st = __atomic_load_n(&c->s[si].state, __ATOMIC_ACQUIRE)) == SLOT_BUSY) {
+			int e = SLOT_BUSY;
+			if (++n > WAIT_NAPS || (t0 && now_us() - t0 >= WAIT_US)) {        /* the helper is late (descheduled, a slow read): read it ourselves */
+				if (__atomic_compare_exchange_n(&c->s[si].state, &e, SLOT_ABANDON, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+					add(&H.st[9], 1); add(&H.st[4], now_us() - t0);
+					return 0;
+				}
+				st = e; break;                                         /* it finished at that moment */
+			}
+			nap();
+		}
 		add(&H.st[4], now_us() - t0);
 	}
 	if (st == SLOT_ERR) { __atomic_store_n(&c->s[si].state, SLOT_FREE, __ATOMIC_RELEASE); return 0; }
-	if (st != SLOT_READY) return 0;
+	if (st != SLOT_READY) return 0;                  /* (ABANDON from an earlier timeout, or anything else: not ours to use) */
 	if (H.stress && !(rnd(&H.erng) & 3)) return 0;        /* stress: pretend it was not there */
 	*out_slot = si;
 	return 1;
@@ -451,14 +492,17 @@ void cdio_chd_close(struct _chd_file *chd)
 {
 	if (!chd) return;
 	if (H.chd.m == chd) {
+		int idle = 1;
 		if (H.chd.c.registered) {
 			lock();
 			unregister_cache(&H.chd.c);
-			wait_idle(&H.chd.c);
 			unlock();
+			idle = wait_idle(&H.chd.c);
 		}
-		cache_free(&H.chd.c);
-		if (H.chd.h) chd_close(H.chd.h);              /* closes its descriptor too */
+		if (idle) {
+			cache_free(&H.chd.c);
+			if (H.chd.h) chd_close(H.chd.h);              /* closes its descriptor too */
+		} else add(&H.st[9], 1);                          /* the helper is stuck in a hunk: its decoder and the cache are left to it (a leak, not a write into freed memory) */
 		memset(&H.chd, 0, sizeof H.chd);
 	}
 	chd_close(chd);
@@ -498,11 +542,18 @@ int cdio_chd_read(struct _chd_file *chd, uint32_t hunknum, uint8_t *dst)
 
 static void stress_pause(void)
 {
-	if (H.stress) { unsigned n = rnd(&H.hrng) % 300, i; for (i = 0; i < n; i++) H.ops->yield(H.ops->user); }
+	if (H.stress) {
+		unsigned n = rnd(&H.hrng) % 300, i;
+		for (i = 0; i < n; i++) H.ops->yield(H.ops->user);
+		if (!(rnd(&H.hrng) & 15)) for (i = 0; i < 120; i++) nap();          /* now and then a long stall (several ms: past the bound of the emulating thread's wait) */
+	}
 }
 
-static void help_fd(cache_t *c)                    /* the lock is held; K_RAW */
+/* the lock is held; K_RAW. Makes room in the helper's descriptor budget and returns 1 when `c` needs its descriptor opened: the open itself (a slow call on
+ * the Vita) is made by the caller with the lock released, so the emulating thread's register_cache / close never wait for it */
+static int help_fd_prepare(cache_t *c)
 {
+	int need = 0;
 	if (c->hfd < 0) {
 		if (H.help_fds >= HELP_FDS) {
 			cache_t *v = NULL;
@@ -510,10 +561,10 @@ static void help_fd(cache_t *c)                    /* the lock is held; K_RAW */
 			for (i = 0; i < H.nreg; i++) { cache_t *g = H.reg[i]; if (g != c && g->kind == K_RAW && g->hfd >= 0 && (!v || g->hused < v->hused)) v = g; }
 			if (v) { io_close(v->hfd); v->hfd = -1; H.help_fds--; }
 		}
-		c->hfd = io_open(c->file->path);
-		if (c->hfd >= 0) H.help_fds++;
+		need = 1;
 	}
 	c->hused = ++H.hfdtick;
+	return need;
 }
 
 static void helper_work(cache_t *c, slot_t *s)
@@ -540,7 +591,11 @@ static void helper_work(cache_t *c, slot_t *s)
 	}
 	stress_pause();
 	add(&H.st[5], 1); add(&H.st[6], now_us() - t0);
-	__atomic_store_n(&s->state, ok ? SLOT_READY : SLOT_ERR, __ATOMIC_RELEASE);
+	{	/* BUSY -> READY / ERR, unless the emulating thread gave up on the block meanwhile: then the slot is simply free again */
+		int e = SLOT_BUSY;
+		if (!__atomic_compare_exchange_n(&s->state, &e, ok ? SLOT_READY : SLOT_ERR, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+			__atomic_store_n(&s->state, SLOT_FREE, __ATOMIC_RELEASE);
+	}
 }
 
 static void helper_main(void *arg)
@@ -553,7 +608,7 @@ static void helper_main(void *arg)
 			cache_t *bc = NULL;
 			slot_t *bs = NULL;
 			unsigned bseq = 0;
-			int i, j, claimed = 0;
+			int i, j, claimed = 0, need_open = 0;
 			lock();
 			for (;;) {                                  /* the oldest request of all the caches */
 				bc = NULL; bs = NULL;
@@ -566,11 +621,18 @@ static void helper_main(void *arg)
 						}
 				}
 				if (!bs) break;
-				if (bc->kind == K_RAW) help_fd(bc);
 				{ int e = SLOT_REQ; if (__atomic_compare_exchange_n(&bs->state, &e, SLOT_BUSY, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) { claimed = 1; break; } }
 			}
+			if (claimed && bc->kind == K_RAW) need_open = help_fd_prepare(bc);       /* (the slot is BUSY: a close of the file waits for it, so bc and its path stay valid) */
 			unlock();
 			if (!claimed) break;
+			if (need_open) {
+				const int fd = io_open(bc->file->path);                          /* outside the lock */
+				lock();
+				bc->hfd = fd;
+				if (fd >= 0) H.help_fds++;
+				unlock();
+			}
 			helper_work(bc, bs);
 			if (__atomic_load_n(&H.stop, __ATOMIC_ACQUIRE)) break;
 		}
@@ -646,8 +708,8 @@ void cdio_end(void)
 	H.wake = H.lock = NULL;
 }
 
-void cdio_census(unsigned long out[9])
+void cdio_census(unsigned long out[NSTAT])
 {
 	int i;
-	for (i = 0; i < 9; i++) out[i] = ld(&H.st[i]);
+	for (i = 0; i < NSTAT; i++) out[i] = ld(&H.st[i]);
 }

@@ -1623,6 +1623,50 @@ Also in 2.0, from the commit record:
   flags are still set by the hardware's limit, so the game runs exactly the same (73 test games, PC build). Turn it off for a game that
   hides something behind the limit on purpose. The Mega Drive keeps its own limit.
 - **Sega save states no longer carry stray memory.** A few unused bytes of a state file held whatever was in memory.
+- **Sega CD, second pass** (all PC twin; nothing has run on a Vita).
+  - **Saves.** The RAM cartridge defaults to 512 KB (what the games and the real RAM cartridge expect); Off is an empty slot. The save file is
+    8 KB backup RAM, the fitted cartridge, then the cartridges of the other sizes with their length and a mark, so changing the size never
+    loses a cartridge (a test writes markers into 128 KB, reloads with Off, 256 KB and 128 KB again and compares byte for byte).
+  - **Region and BIOS.** A disc of a region with no BIOS falls back to the BIOS found and says so on screen and to the app.
+  - **State loaders.** The disc hardware loaders (graphics ASIC, CD drive, CD controller, PCM, sub CPU) now check what they read: the stamp
+    map and dot masks against the registers, the line cycle count, the drive's scan offset and latency, the interrupt bits, the sub CPU's cycle
+    count (a negative one made the scheduler spin) and a program counter in an unmapped page. The ASan + UBSan state fuzz has a disc case
+    (`statefuzz --disc DISC --bios BIOS`, run by the state-fuzz gate step): host runs of 150-200 s with five seeds loaded about 2800-2900 of
+    about 3000 damaged states each without a crash or hang after the fixes (the first run found four faults: a division by zero, a hang,
+    an index out of range and a crash), and a loaded state runs on as the uninterrupted machine.
+  - **State loaders, second pass.** The counters that feed the sub CPU's cycle count and so bypassed its clamp are now checked on load:
+    `gfx.cycles`, `cdc.cycles[0..1]`, `scd.cycles`, `scd.timer` and `scd.stopwatch` (a value out of the range a running machine reaches is put
+    at 0; a finished graphics operation's or an idle chip's stale negative value is left as it is, because genuine states hold those and the next
+    start overwrites them), and a negative `cdd.latency` (an unsigned field: a negative one reads as a huge one) becomes 0. A program counter
+    in a page with no base address is still put back at 0; the comment now says what can reach it (in this fork `genesis.c` gives pages
+    $80-$DF `work_ram`, so only the MegaSD pages $38-$3F, the CD cartridge pages $40-$7F and the sub CPU's backup RAM, register and
+    1M-mode dot image pages), and `state_load_notes` makes the host log it ("state load: ..."). Host test: the load proof and
+    three 20 s ASan + UBSan fuzz runs (seeds 1-3) on the synthetic disc and stand-in BIOS, about 400 states each, about 385 loaded and
+    ran, the rest refused, no crash, no hang.
+  - **The helper's waits are bounded.** The emulating thread waits at most about 2 ms for a block the helper is on (`take_ready`); then it
+    marks the slot ABANDON (compare-and-swap BUSY to ABANDON), reads the bytes itself (the file's own descriptor, or the emulating thread's CHD
+    decoder) and counts a timeout (census field `[9]`, `timeouts=` in the `disc:` log line). The helper finishes its block into the slot,
+    sees the state is no longer BUSY and frees it; nobody reuses the slot meanwhile. A close waits for the helper at most about 250 ms
+    (`wait_idle`, no lock held); if the helper is still in a read the file's cache (and its helper descriptor) is left to it, a small leak
+    and never a write into freed memory. The helper no longer calls `sceIoOpen` with the cache lock held (the open is made outside the lock),
+    so `register_cache` on the emulating thread never waits for a slow open. On the Vita the helper is kept off the system core (core 3): when
+    the plan puts the writer there the helper takes core 0's gaps below the emulating thread, so no thread of ours that nothing watches
+    can be held there. Host test (twin, x86, not a Vita): `cd_test` runs the helper with a stall of several ms now and then; about 14-100
+    waits per CHD, 2-21 of them given up, every byte still identical (193,000 checks). How often the 2 ms bound is met on a Vita is not known.
+  - **Disc id of a CHD with no SHA-1.** A v5 CHD whose raw SHA-1 field is all zero used to give every such disc the same Two players id.
+    Now the id is the CRC-32 of the file size, the 124 byte header and the first 512 bytes of the hunk map; a file with no map there is
+    refused. Such an id is not the id the same disc would have with a SHA-1 (both players must hold the same file anyway).
+  - **Rewind.** A scd state is about 1 MB (host measure: capture 0.11 ms, pack 0.17 ms on the stand-in BIOS, which is lighter than a game), so
+    rewind captures every 4 frames on a disc (2 on a cartridge); the ring then holds about the same seconds.
+  - **Disc thread.** `md/vita/main.cpp` now passes `MD_THREAD_DISC`; the helper takes the writer slot of the core plan (its priority, 0xA0 when there is no plan, below the
+    game's 0x60) and has its own 128 KB stack. `md_thread_ops` has a new `nap` hook: `wait_idle` and `take_ready` sleep 100 us (Vita) or 50 us
+    (twin) instead of spinning on a yield that a lower priority thread cannot use. The numbers are guesses until measured on a Vita; the
+    per-second log line prints the helper's CPU time and a `disc:` census (reads, from helper, direct, waits, lost ms).
+  - **Fixtures.** `tools/mkscd.py` writes compressed CHDs itself (no chdman): LZMA, zlib, zstd (the zstandard module when present, else stored
+    blocks), FLAC (fixed predictors), a mix with stored hunks, 4 and 32 frame hunks and self references, with the real ECC and EDC so the
+    reader's ECC rebuild runs. The reader checks every hunk's CRC, so a wrong byte fails; `cd_test` reads 17 images byte for byte, each again
+    on the helper thread. The Sega CD player tests (walk, pads, look, rewind, run-ahead, RetroAchievements, costs) run on the synthetic disc in
+    the new `md-player` gate step. What a real chdman file adds (its hunk size and codec choice) is not covered.
 - **Frames that are not drawn leave every console's machine as it was.** Fast forward, Steady pacing's half mode and catching up run frames
   without drawing them. Checked, state, memory and sound compared between drawn and undrawn runs (PC build, one frame in two and one in three
   undrawn): Super NES 15 of 15 games (3000 frames; the one byte that differs is a drawing cache the next drawn frame refills), NES 263 of 263

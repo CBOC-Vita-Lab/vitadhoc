@@ -220,6 +220,7 @@ static void core4_start(const char *path)
 }
 
 static SceUID g_wthread = -1, g_hd_thread = -1, g_help_thread[3] = { -1, -1, -1 };
+static SceUID g_disc_thread = -1;            /* the Sega CD read-ahead helper (md/core/cd_hw/cdio.c), while a disc is open */
 /* A helper on core 0 (below the emulating thread's priority) only claims chunks while the emulating thread is between frames: a chunk it
  * claimed and was then preempted in would hold the drawing thread up for the rest of the emulated frame. */
 static std::atomic<int> g_emu_busy(0);
@@ -236,6 +237,7 @@ static void core4_fallback(void)
 		const pk::Slot *h = g_core_plan.find(pk::R_UPSCALE, i);
 		if (h && g_help_thread[i] >= 0) { sceKernelChangeThreadCpuAffinityMask(g_help_thread[i], h->mask); g_help_on_core0[i] = h->mask == (unsigned) SCE_KERNEL_CPU_MASK_USER_0; }
 	}
+	if (w && g_disc_thread >= 0) sceKernelChangeThreadCpuAffinityMask(g_disc_thread, w->on_core3 ? (unsigned) SCE_KERNEL_CPU_MASK_USER_0 : w->mask);       /* the disc helper shares the writer's place, but never on the system core */
 	g_wd_audio = g_wd_writer = -1;
 	char c[220];
 	g_cores->census_line(c, sizeof c);
@@ -350,7 +352,7 @@ static void bezel_load(const std::string &game, const std::string &console)
 
 /* ---- the core's worker threads (md/core/thread_ops.h): the VDP line renderer ------------------------------------------------------------ */
 struct WorkerSlot { SceUID th; void (*fn)(void *); void *arg; };
-static WorkerSlot g_wk[MD_WORKERS] = { { -1, NULL, NULL }, { -1, NULL, NULL } };
+static WorkerSlot g_wk[MD_WORKERS] = { { -1, NULL, NULL }, { -1, NULL, NULL }, { -1, NULL, NULL } };
 static int worker_entry(SceSize, void *argp)
 {
 	WorkerSlot *w = *(WorkerSlot **) argp;
@@ -363,14 +365,21 @@ static void wk_sem_post(void *, void *s) { sceKernelSignalSema((SceUID) (intptr_
 static void wk_sem_wait(void *, void *s) { sceKernelWaitSema((SceUID) (intptr_t) s, 1, NULL); }
 static int wk_spawn(void *, int id, void (*fn)(void *), void *arg)
 {
-	const pk::Slot *sl = g_core_plan.find(id == MD_WORKER_VDP ? pk::R_RENDER : pk::R_APU);
-	const int prio = sl ? sl->prio : 0x60;
-	const unsigned mask = sl ? sl->mask : (unsigned) SCE_KERNEL_CPU_MASK_USER_1;
+	/* the VDP line renderer has its own slot; the Sega CD's read-ahead (cdio.c) is light and works for the emulating thread, so it takes the
+	 * writer's place in the plan: core 2 (or the extra core) at priority 0xA0, below every thread that has frame work (the emulating thread, the
+	 * drawing thread, the sound thread) */
+	const pk::Slot *sl = g_core_plan.find(id == MD_WORKER_VDP ? pk::R_RENDER : id == MD_WORKER_DISC ? pk::R_WRITER : pk::R_APU);
+	const int prio = sl ? sl->prio : id == MD_WORKER_DISC ? 0xA0 : 0x60;
+	/* the disc helper never runs on the system core (core 3: the system can keep it for long stretches and nothing watches this thread): it takes core 0's
+	 * gaps below the emulating thread, and the emulating thread's wait for it is bounded anyway (cdio.c take_ready) */
+	unsigned mask = sl ? sl->mask : (unsigned) SCE_KERNEL_CPU_MASK_USER_1;
+	if (id == MD_WORKER_DISC && sl && sl->on_core3) mask = (unsigned) SCE_KERNEL_CPU_MASK_USER_0;
 	g_wk[id].fn = fn; g_wk[id].arg = arg;
-	g_wk[id].th = sceKernelCreateThread(id == MD_WORKER_VDP ? "md_vdp" : "md_fm", worker_entry, prio, 0x10000, 0, mask, NULL);
+	g_wk[id].th = sceKernelCreateThread(id == MD_WORKER_VDP ? "md_vdp" : id == MD_WORKER_DISC ? "md_disc" : "md_fm", worker_entry, prio, id == MD_WORKER_DISC ? 0x20000 : 0x10000, 0, mask, NULL);
 	if (g_wk[id].th < 0) return -1;
 	WorkerSlot *self = &g_wk[id];
 	if (sceKernelStartThread(g_wk[id].th, sizeof self, &self) < 0) { sceKernelDeleteThread(g_wk[id].th); g_wk[id].th = -1; return -2; }
+	if (id == MD_WORKER_DISC) g_disc_thread = g_wk[id].th;
 	logf_("worker %d on mask %x priority 0x%x\n", id, mask, prio);
 	return 0;
 }
@@ -380,10 +389,13 @@ static void wk_wait_end(void *, int id)
 	sceKernelWaitThreadEnd(g_wk[id].th, NULL, NULL);
 	sceKernelDeleteThread(g_wk[id].th);
 	g_wk[id].th = -1;
+	if (id == MD_WORKER_DISC) g_disc_thread = -1;
 }
 static void wk_yield(void *) { sceKernelDelayThread(0); }
+/* a real sleep: a thread that waits for a lower priority worker on its own core must not spin (a spin never lets that worker run) */
+static void wk_nap(void *) { sceKernelDelayThread(100); }
 static unsigned long long wk_now(void *) { return sceKernelGetProcessTimeWide(); }
-static const md_thread_ops g_wk_ops = { NULL, wk_sem_create, wk_sem_destroy, wk_sem_post, wk_sem_wait, wk_spawn, wk_wait_end, wk_yield, wk_now };
+static const md_thread_ops g_wk_ops = { NULL, wk_sem_create, wk_sem_destroy, wk_sem_post, wk_sem_wait, wk_spawn, wk_wait_end, wk_yield, wk_now, wk_nap };
 
 /* ---- the scaler's helpers ------------------------------------------------------------------------------------------------------------
  * One job at a time, cut into chunks of rows. The drawing thread publishes the job (fields first, then `next` with the job's number in
@@ -1426,7 +1438,9 @@ int main(int argc, char **argv)
 	}
 	md_host_set_log([](const char *line) { logf_("%s\n", line); });
 	if (md_host_init() != 0) { fatal_screen("The Sega core could not start.", "Not enough memory."); return_to_vitadhoc(); }
-	if (g_vdp_mode && g_core_plan.find(pk::R_RENDER)) md_host_set_threads(&g_wk_ops, MD_THREAD_VDP | (g_vdp_mode == 2 ? MD_THREAD_VDP_SMS : 0u));
+	/* the VDP line renderer (when the plan has a place for it) and, for a Sega CD game, the disc read-ahead helper: the thread starts once a disc is
+	 * loaded (cdio_begin), a cartridge never starts it */
+	md_host_set_threads(&g_wk_ops, (g_vdp_mode && g_core_plan.find(pk::R_RENDER) ? (MD_THREAD_VDP | (g_vdp_mode == 2 ? MD_THREAD_VDP_SMS : 0u)) : 0u) | MD_THREAD_DISC);
 
 	/* the game: launch file or argument, patch, saves, states, settings (player.cpp) */
 	writer_start();
@@ -1821,11 +1835,22 @@ int main(int argc, char **argv)
 			{
 				/* the per-thread CPU census: ms of CPU each thread used in this second (the kernel's run time) */
 				static SceUID s_main = sceKernelGetThreadId();
-				static double prev[6] = { 0, 0, 0, 0, 0, 0 };
-				const SceUID ids[6] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread, g_help_thread[0], g_help_thread[1] };
-				double cur[6], d[6];
-				for (int k = 0; k < 6; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
-				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f scale1=%.0f scale2=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3], d[4], d[5], g_draw_core);
+				static double prev[7] = { 0, 0, 0, 0, 0, 0, 0 };
+				const SceUID ids[7] = { s_main, g_athread, g_hd_ok ? g_hd_thread : -1, g_wthread, g_help_thread[0], g_help_thread[1], g_disc_thread };
+				double cur[7], d[7];
+				for (int k = 0; k < 7; k++) { cur[k] = thread_cpu_ms(ids[k]); d[k] = cur[k] >= 0 && prev[k] >= 0 ? cur[k] - prev[k] : -1.0; prev[k] = cur[k]; }
+				logf_("threads ms/s: main=%.0f audio=%.0f draw=%.0f writer=%.0f scale1=%.0f scale2=%.0f disc=%.0f (draw core %d)\n", d[0], d[1], d[2], d[3], d[4], d[5], d[6], g_draw_core);
+			}
+			if (md_host_is_cd()) {
+				/* the disc's file layer (cdio.c) over this second: reads, how many came out of a block the helper had read ahead, how many the emulating
+				 * thread read itself (misses), its waits for a block the helper was on, the time it lost to both, and the helper's own busy time
+				 * (reading and decoding CHD hunks) */
+				static unsigned long pc[10];
+				unsigned long c[10], dc[10];
+				md_host_cd_census(c);
+				for (int k = 0; k < 10; k++) { dc[k] = c[k] >= pc[k] ? c[k] - pc[k] : c[k]; pc[k] = c[k]; }
+				logf_("disc: helper=%d reads=%lu from_helper=%lu direct=%lu waits=%lu emu_lost_ms=%.1f helper_blocks=%lu helper_busy_ms=%.1f unused=%lu check_errors=%lu timeouts=%lu\n", md_host_cd_helper(),
+				    dc[0], dc[1], dc[2], dc[3], dc[4] / 1000.0, dc[5], dc[6] / 1000.0, dc[7], dc[8], dc[9]);
 			}
 			if (g_wide && g_pl->wide_active()) {
 				mdw::Stats ws;

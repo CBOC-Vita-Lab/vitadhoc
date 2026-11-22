@@ -53,5 +53,7 @@
 /* Function prototypes */
 extern int state_load(unsigned char *state);
 extern int state_save(unsigned char *state);
+/* VitAdhoc: what the last state_load had to repair (0 = nothing): 1 = the main 68000's program counter, 2 = the sub CPU's. Cleared by the caller */
+extern int state_load_notes;
 
 #endif

@@ -68,7 +68,7 @@ static void t_sem_wait(void *, void *s) { while (sem_wait((sem_t *) s) != 0) {} 
 static int t_spawn(void *, int id, void (*fn)(void *), void *arg) { g_sarg[id].fn = fn; g_sarg[id].arg = arg; return pthread_create(&g_wthr[id], NULL, thr_main, &g_sarg[id]); }
 static void t_wait_end(void *, int id) { pthread_join(g_wthr[id], NULL); }
 static void t_yield(void *) { sched_yield(); }
-static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, NULL };
+static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, NULL, NULL };
 static void yield_fn(void) { sched_yield(); }
 
 struct Sess {

@@ -22,12 +22,12 @@ if command -v python3 >/dev/null; then
 	make -C "$HERE" -j2 ARCH=armhf B="$T/armhf" "$T/armhf/cd_test" >"$T/c.log" 2>&1 || { tail -3 "$T/c.log"; cdiff=1; }
 	qemu-arm -cpu max "$T/armhf/cd_test" "$T/discs" "$T/standin.bin" 2>&1 | grep -q ' 0 failed' || { echo "FAIL  Sega CD reader checks on armhf"; cdiff=1; }
 	csame=0
-	for d in single.cue multi.cue wavs.cue disc.chd cooked.iso; do
+	for d in single.cue multi.cue wavs.cue disc.chd cooked.iso chd_lzma.chd chd_zlib.chd chd_zstd.chd chd_flac.chd chd_mixed.chd; do
 		"$T/x86/md_twin" --disc "$T/discs/$d" --bios "$T/standin.bin" --bios-stand-in --frames $F 2>&1 | strip >"$T/x.out"
 		qemu-arm -cpu max "$T/armhf/md_twin" --disc "$T/discs/$d" --bios "$T/standin.bin" --bios-stand-in --frames $F 2>&1 | strip >"$T/a.out"
 		if [ -s "$T/x.out" ] && cmp -s "$T/x.out" "$T/a.out"; then csame=$((csame + 1)); else cdiff=1; echo "DIFF  Sega CD disc $d"; fi
 	done
-	echo "armhf vs x86_64 Sega CD, 5 synthetic discs, $F frames each: identical $csame"
+	echo "armhf vs x86_64 Sega CD, 10 synthetic discs (six of them CHDs, five compressed), $F frames each: identical $csame"
 fi
 LIST=""
 [ -n "$MD_TEST_ROMS" ] && LIST=$(find "$MD_TEST_ROMS" -path '*/sample/*' -name rom.bin | sort)

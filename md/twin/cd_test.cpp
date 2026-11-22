@@ -25,8 +25,9 @@ static void t_sem_wait(void *, void *s) { while (sem_wait((sem_t *)s) != 0) {} }
 static int t_spawn(void *, int id, void (*fn)(void *), void *arg) { g_sarg[id].fn = fn; g_sarg[id].arg = arg; return pthread_create(&g_wthr[id], NULL, thr_main, &g_sarg[id]); }
 static void t_wait_end(void *, int id) { pthread_join(g_wthr[id], NULL); }
 static void t_yield(void *) { sched_yield(); }
+static void t_nap(void *) { struct timespec ts = { 0, 50000 }; nanosleep(&ts, NULL); }
 static unsigned long long t_now(void *) { timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (unsigned long long) ts.tv_sec * 1000000ull + (unsigned long long) ts.tv_nsec / 1000; }
-static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, t_now };
+static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, t_now, t_nap };
 
 static int fails = 0, checks = 0;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("FAIL  %s:%d  ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
@@ -132,7 +133,7 @@ int main(int argc, char **argv)
 	/* probe */
 	const char *good[] = {"single.cue", "multi.cue", "wavs.cue", "cooked.iso", "cooked.bin", "disc.chd"};
 	for (auto f : good) { char why[80] = ""; CHECK(md_host_cd_probe((D + "/" + f).c_str(), why, sizeof why) == 1, "probe %s: %s", f, why); }
-	const char *bad[] = {"notacue.cue", "empty.iso", "randomdata.bin", "missing.cue"};
+	const char *bad[] = {"notacue.cue", "empty.iso", "randomdata.bin"};
 	for (auto f : bad) { char why[80] = ""; CHECK(md_host_cd_probe((D + "/" + f).c_str(), why, sizeof why) == 0, "probe %s must refuse", f); CHECK(why[0], "probe %s gives a reason", f); }
 	r = md_host_load_disc((D + "/notacue.cue").c_str(), err, sizeof err); CHECK(r != 0 && !md_host_loaded(), "load of a bad cue refused (%d)", r);
 	r = md_host_load_disc((D + "/empty.iso").c_str(), err, sizeof err); CHECK(r != 0 && !md_host_loaded(), "load of an empty iso refused (%d)", r);
@@ -147,22 +148,57 @@ int main(int argc, char **argv)
 	disc("disc.chd", true);
 	/* B8: a BOM and tab separators, mixed-case extensions, long lines and paths, Windows separators, a device-style name, MOTOROLA audio */
 	for (auto f : {"bomtab.cue", "Mixed.Cue", "longname.cue", "winpath.cue", "ux0:Dev.cue", "motorola.cue"}) disc(f, true);
-	/* B7: compressed CHDs (chdman: LZMA, zlib, zstd, FLAC, a mix of them, a data + two audio tracks), the codecs libchdr has */
-	for (auto f : {"UPPER.CHD", "chd_lzma.chd", "chd_zlib.chd", "chd_zstd.chd", "chd_flac.chd", "chd_mixed.chd", "chd_multi.chd"}) {
-		if (slurp(D + "/" + f).empty()) { printf("note  %s not generated (no chdman)\n", f); continue; }
+	/* B7: compressed CHDs written by mkscd.py (LZMA, zlib, zstd, FLAC, a mix with stored hunks, 4 and 32 frame hunks, self references): every codec
+	   libchdr has, on a data track and two audio tracks, read byte for byte */
+	for (auto f : {"UPPER.CHD", "chd_lzma.chd", "chd_zlib.chd", "chd_zstd.chd", "chd_flac.chd", "chd_mixed.chd", "chd_multi.chd", "chd_big.chd"}) {
+		CHECK(!slurp(D + "/" + f).empty(), "fixture %s was generated", f);
 		disc(f, true);
 	}
+	/* self references: track 2 is 16 frames of silence (two identical hunks, stored once), track 3 the first 40 frames of the usual track 2 */
+	{
+		CHECK(!slurp(D + "/chd_self.chd").empty(), "fixture chd_self.chd was generated");
+		r = md_host_load_disc((D + "/chd_self.chd").c_str(), err, sizeof err);
+		CHECK(r == 0, "chd_self: load failed %d (%s)", r, err);
+		if (r == 0) {
+			int s, e, t, s2, s3, lbas[] = {0, 77, DATA_SECTORS - 1};
+			CHECK(md_host_cd_test_toc(1, &s, &e, &t) == 3, "chd_self: three tracks");
+			check_data("chd_self.chd", lbas, 3);
+			md_host_cd_test_toc(2, &s2, &e, &t);
+			md_host_cd_test_toc(3, &s3, &e, &t);
+			int16_t got[2], want[2];
+			CHECK(md_host_cd_test_audio(2, s2, 600, got) == 0 && got[0] == 0 && got[1] == 0, "chd_self: silence reads as silence (%d,%d)", got[0], got[1]);
+			expect_audio(2, 599, want);
+			CHECK(md_host_cd_test_audio(3, s3, 600, got) == 0 && got[0] == want[0] && got[1] == want[1], "chd_self: track 3 sample %d,%d expected %d,%d", got[0], got[1], want[0], want[1]);
+			md_host_unload();
+		}
+	}
 	/* the same discs again with the read-ahead thread, then with its stress mode: the answers are the same bytes */
+	unsigned long timeouts = 0, mism = 0;
 	for (int mode = 1; mode <= 2; mode++) {
 		md_host_set_threads(&g_tops, MD_THREAD_DISC);
 		md_host_cd_debug(1, mode == 2);
-		for (auto f : {"single.cue", "multi.cue", "wavs.cue", "disc.chd", "chd_lzma.chd", "chd_zlib.chd", "chd_zstd.chd", "chd_flac.chd", "chd_multi.chd"}) {
+		for (auto f : {"single.cue", "multi.cue", "wavs.cue", "disc.chd", "chd_lzma.chd", "chd_zlib.chd", "chd_zstd.chd", "chd_flac.chd", "chd_mixed.chd", "chd_multi.chd", "chd_big.chd"}) {
 			if (slurp(D + "/" + f).empty()) continue;
 			disc(f, true);
+			if (mode == 2 && std::string(f).find("chd") != std::string::npos) {      /* a long sequential read: the helper is ahead of it, and stalls now and then */
+				char err[160] = "";
+				if (md_host_load_disc((D + "/" + f).c_str(), err, sizeof err) == 0) {
+					std::vector<int> all;
+					for (int rep = 0; rep < 40; rep++) for (int l = 0; l < DATA_SECTORS; l++) all.push_back(l);
+					check_data(f, all.data(), (int)all.size());
+					unsigned long c[10]; md_host_cd_census(c); timeouts += c[9]; mism += c[8];
+					if (getenv("CDT_V")) printf("%s long census reads=%lu hits=%lu misses=%lu waits=%lu timeouts=%lu\n", f, c[0], c[1], c[2], c[3], c[9]);
+					md_host_unload();
+				}
+			}
+			if (mode == 2) { unsigned long c[10]; md_host_cd_census(c); timeouts += c[9]; mism += c[8]; if (getenv("CDT_V")) printf("%s census reads=%lu hits=%lu misses=%lu waits=%lu timeouts=%lu\n", f, c[0], c[1], c[2], c[3], c[9]); }
 		}
 		md_host_cd_debug(0, 0);
 		md_host_set_threads(NULL, 0);
 	}
+	/* the emulating thread's wait for the helper is bounded (about 2 ms): with the helper stalled for longer now and then, some waits are given up
+	 * (the bytes are then read by the emulating thread), and the helper's late block never corrupts anything (no mismatch in the check mode) */
+	CHECK(timeouts > 0 && mism == 0, "cdio stress: %lu waits given up, %lu mismatches", timeouts, mism);
 	if (!slurp(D + "/oggs.cue").empty()) disc("oggs.cue", false);
 	else printf("note  oggs.cue not generated (no ffmpeg): Ogg reader not checked\n");
 
@@ -177,9 +213,21 @@ int main(int argc, char **argv)
 		if (!r) { CHECK(strstr(md_host_cd_info(), "Europe") || strstr(md_host_cd_info(), "EU") || strstr(md_host_cd_info(), "Mega"), "info: %s", md_host_cd_info()); md_host_unload(); }
 	}
 
-	/* backup RAM: formatted at load, saved whole, dirty tracking, write back */
-	md_host_cd_bios_clear();
-	md_host_cd_bios_add(bios.data(), bios.size(), 1);
+	/* B8: a sheet whose audio file is not there: the disc starts with the tracks before it and the notice says which one is missing */
+	r = md_host_load_disc((D + "/missing.cue").c_str(), err, sizeof err);
+	CHECK(r == 0, "an audio track that is missing does not stop the data track: %d %s", r, err);
+	if (!r) {
+		CHECK(md_host_cd_tracks() == 2, "the tracks before the missing one are there: %d", md_host_cd_tracks());
+		CHECK(strstr(md_host_cd_notice(), "Track 3") != NULL, "the notice names track 3: '%s'", md_host_cd_notice());
+		md_host_unload();
+	}
+
+	/* B1: the RAM cartridge is 512 KB unless the player says otherwise ("Off" is an empty slot); backup RAM: formatted at load, saved whole,
+	 * dirty tracking, write back */
+	r = md_host_load_disc((D + "/single.cue").c_str(), err, sizeof err);
+	CHECK(r == 0, "load with the default RAM cartridge: %d %s", r, err);
+	if (!r) { CHECK(md_host_sram_size() == 8192 + 524288, "the default save is the 8 KB backup RAM and a 512 KB cartridge: %zu", md_host_sram_size()); md_host_unload(); }
+	md_host_set_option("ram_cart", 0);
 	r = md_host_load_disc((D + "/single.cue").c_str(), err, sizeof err);
 	CHECK(r == 0, "load for save test: %d %s", r, err);
 	if (!r) {
@@ -201,7 +249,59 @@ int main(int argc, char **argv)
 	md_host_set_option("ram_cart", 4);
 	r = md_host_load_disc((D + "/single.cue").c_str(), err, sizeof err);
 	CHECK(r == 0, "load with RAM cartridge: %d %s", r, err);
-	if (!r) { CHECK(md_host_sram_size() == 8192 + 131072, "save size with a 128 KB cartridge: %zu", md_host_sram_size()); md_host_unload(); }
+	std::vector<uint8_t> saved128;
+	if (!r) {
+		CHECK(md_host_sram_size() == 8192 + 131072, "save size with a 128 KB cartridge: %zu", md_host_sram_size());
+		/* B2: a game's saves in the cartridge, then the player changes the cartridge size: the data must come through every size */
+		std::vector<uint8_t> a(md_host_sram_size());
+		md_host_sram_read(a.data(), a.size());
+		for (size_t i = 0; i < 4096; i++) a[8192 + i] = (uint8_t)(0xC3 ^ i);
+		CHECK(md_host_sram_write(a.data(), a.size()) == a.size(), "128 KB cartridge image written");
+		md_host_sram_read(a.data(), a.size()); saved128 = a;
+		CHECK(a[8192] == 0xC3 && a[8193] == (uint8_t)(0xC3 ^ 1), "cartridge bytes read back");
+		md_host_unload();
+	}
+	if (!saved128.empty()) {
+		/* the file of the 128 KB run is loaded with no cartridge: the cartridge's image is kept, and goes back out with the next save */
+		md_host_set_option("ram_cart", 0);
+		r = md_host_load_disc((D + "/single.cue").c_str(), err, sizeof err);
+		CHECK(r == 0, "load with no cartridge: %d %s", r, err);
+		std::vector<uint8_t> off;
+		if (!r) {
+			CHECK(md_host_sram_write(saved128.data(), saved128.size()) > 0, "the 128 KB file is accepted with no cartridge fitted");
+			CHECK(md_host_cd_kept_cartridges() == 1, "one cartridge image kept aside: %d", md_host_cd_kept_cartridges());
+			off.resize(md_host_sram_size());
+			CHECK(off.size() == saved128.size() + 8, "the file keeps its cartridge image and its mark: %zu vs %zu", off.size(), saved128.size() + 8);
+			md_host_sram_read(off.data(), off.size());
+			CHECK(off.size() >= saved128.size() && !memcmp(off.data() + 8192, saved128.data() + 8192, 131072), "the 128 KB image comes out byte for byte");
+			md_host_unload();
+		}
+		/* ... and with a 256 KB one: that cartridge is new (formatted), the 128 KB image is still kept */
+		md_host_set_option("ram_cart", 5);
+		r = md_host_load_disc((D + "/single.cue").c_str(), err, sizeof err);
+		CHECK(r == 0, "load with a 256 KB cartridge: %d %s", r, err);
+		std::vector<uint8_t> big;
+		if (!r && !off.empty()) {
+			CHECK(md_host_sram_write(off.data(), off.size()) > 0, "the file written with no cartridge is accepted with 256 KB");
+			big.resize(md_host_sram_size());
+			CHECK(md_host_cd_kept_cartridges() == 1 && big.size() == 8192 + 262144 + 131072 + 8, "256 KB cartridge and the kept 128 KB image: %zu", big.size());
+			md_host_sram_read(big.data(), big.size());
+			CHECK(!memcmp(big.data() + 8192 + 262144, saved128.data() + 8192, 131072), "the kept 128 KB image follows the 256 KB one unchanged");
+			md_host_unload();
+		}
+		/* back to 128 KB: the cartridge is the one the game saved to */
+		md_host_set_option("ram_cart", 4);
+		r = md_host_load_disc((D + "/single.cue").c_str(), err, sizeof err);
+		CHECK(r == 0, "load with the 128 KB cartridge again: %d %s", r, err);
+		if (!r && !big.empty()) {
+			CHECK(md_host_sram_write(big.data(), big.size()) > 0, "the 256 KB file is accepted with 128 KB");
+			std::vector<uint8_t> again(md_host_sram_size());
+			md_host_sram_read(again.data(), again.size());
+			CHECK(again.size() >= saved128.size() && !memcmp(again.data() + 8192, saved128.data() + 8192, 131072), "the game's 128 KB saves are the cartridge again");
+			CHECK(again.size() == 8192 + 131072 + 262144 + 8, "and the 256 KB image is the one kept: %zu", again.size());
+			md_host_unload();
+		}
+	}
 	md_host_set_option("ram_cart", 0);
 
 	/* RetroAchievements map and cheats on the running stand-in (its main program counts frames at $FFFF00, the sub CPU's counter is copied to $FFFF02) */

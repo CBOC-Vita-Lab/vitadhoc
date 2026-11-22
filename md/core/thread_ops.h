@@ -26,6 +26,10 @@ typedef struct md_thread_ops {
 	void (*yield)(void *user);
 	/* optional (NULL = no timing in the census): microseconds from any steady clock */
 	unsigned long long (*now_us)(void *user);
+	/* optional (NULL = yield is used): sleeps for a short while, about 100 us: the wait of a thread that needs the answer of a worker that may run at a
+	 * LOWER priority on the same core. A yield only gives way to threads of the same priority or higher, a sleep lets the worker run. Used by the Sega
+	 * CD's file layer (cdio.c) when the emulating thread has to wait for a block the helper is on */
+	void (*nap)(void *user);
 } md_thread_ops;
 
 #ifdef __cplusplus

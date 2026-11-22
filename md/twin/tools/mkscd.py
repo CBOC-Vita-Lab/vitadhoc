@@ -5,8 +5,7 @@
   mkscd.py discs DIR           synthetic disc images (cooked ISO, raw BIN + CUE, multi-file CUE, WAV and Ogg tracks, an uncompressed CHD), and the
                                awkward ones: a sheet with a byte order mark, tabs and CRLF, mixed case extensions, a long name and a long path, a
                                missing audio file, a Windows path and a device name ("ux0:") in the sheet, big endian (MOTOROLA) audio, INDEX 00 / PREGAP
-                               in one file, MODE2/2352, 36 tracks in 36 files (WAV, Ogg: a decoder and descriptor budget), and, when chdman is installed
-                               (apt: mame-tools), CHDs compressed with each codec libchdr reads: LZMA, zlib, zstd, FLAC and the default mix
+                               in one file, MODE2/2352, 36 tracks in 36 files (WAV, Ogg: a decoder and descriptor budget), and CHDs compressed with each codec libchdr reads (LZMA, zlib, zstd, FLAC, a mix, 4 and 32 frame hunks, self references), written by this script without chdman
 
 THIS IS NOT A BIOS. The Mega CD's boot ROM is Sega's; VitAdhoc never contains, ships or generates it for players. The stand-in is a few hundred
 bytes of 68000 machine code written here from scratch so that the emulated hardware (both 68000s, the PCM chip, the CD drive, the VDP) can be
@@ -17,7 +16,12 @@ the app only accepts files that have the structure of a real BIOS (md_host_cd_bi
 The discs hold no game: sector n of the data track is a known pattern, the audio tracks are known waves, so a reader can be checked byte for byte.
 Copyright CBOC-Vita. MIT licence.
 """
-import os, struct, sys, zlib, subprocess, shutil
+import os, struct, sys, zlib, subprocess, shutil, lzma, functools
+try:
+    if os.environ.get('MKSCD_PYPATH'): sys.path.insert(0, os.environ['MKSCD_PYPATH'])      # (python3 -I ignores PYTHONPATH: a folder with the zstandard module can be named here)
+    import zstandard
+except ImportError:
+    zstandard = None
 
 # ---------------------------------------------------------------------------------------------------------------- the stand-in BIOS
 
@@ -162,8 +166,53 @@ def msf(lba):
     bcd = lambda x: ((x // 10) << 4) | (x % 10)
     return bytes([bcd(f // 75 // 60), bcd(f // 75 % 60), bcd(f % 75)])
 
+# a MODE 1 sector with its error detection and correction codes as a drive reads them (the layout of ECMA-130): sync, header, 2048 bytes of data,
+# EDC (CRC-32 of the first 2064 bytes), 8 zero bytes, then P parity (172 bytes) and Q parity (104 bytes). The CHD codecs of libchdr drop the sync and the
+# parity of a sector whose codes are right and rebuild them when it is read, so a fixture with the right codes is what runs that rebuild.
+def _gf():
+    low = [0] * 256; high = [0] * 256
+    for i in range(256):
+        j = (i << 1) ^ (0x11d if i & 0x80 else 0)
+        low[i] = j & 0xFF; high[i ^ (j & 0xFF)] = i
+    return low, high
+_ECC_LOW, _ECC_HIGH = _gf()
+_P_OFFS = [[(c * 43 + (b >> 1)) * 2 + (b & 1) for c in range(24)] for b in range(86)]
+_Q_OFFS = [[(((b >> 1) * 43 + i * 44) % 1118) * 2 + (b & 1) for i in range(43)] for b in range(52)]
+_EDC_TAB = []
+for _i in range(256):
+    _e = _i
+    for _k in range(8): _e = (_e >> 1) ^ (0xD8018001 if _e & 1 else 0)
+    _EDC_TAB.append(_e)
+
+def edc(b):
+    c = 0
+    for x in b: c = (c >> 8) ^ _EDC_TAB[(c ^ x) & 0xFF]
+    return c
+
+def _ecc_pair(sec, offs):
+    v1 = v2 = 0
+    for o in offs:
+        x = sec[12 + o]
+        v1 ^= x; v2 ^= x
+        v1 = _ECC_LOW[v1]
+    v1 = _ECC_HIGH[_ECC_LOW[v1] ^ v2]
+    return v1, v1 ^ v2
+
+def ecc_fill(sec):
+    """writes the P and Q parity into the bytearray sec (a raw 2352 byte sector); returns it"""
+    for b in range(86): sec[2076 + b], sec[2076 + 86 + b] = _ecc_pair(sec, _P_OFFS[b])
+    for b in range(52): sec[2248 + b], sec[2248 + 52 + b] = _ecc_pair(sec, _Q_OFFS[b])
+    return sec
+
+def ecc_ok(sec):
+    t = ecc_fill(bytearray(sec))
+    return bytes(t[2076:]) == bytes(sec[2076:])
+
+@functools.lru_cache(maxsize=None)
 def raw_sector(n):
-    return b'\x00' + b'\xff' * 10 + b'\x00' + msf(n) + b'\x01' + user_data(n) + bytes(288)
+    s = bytearray(b'\x00' + b'\xff' * 10 + b'\x00' + msf(n) + b'\x01' + user_data(n) + bytes(288))
+    s[2064:2068] = struct.pack('<I', edc(s[:2064]))
+    return bytes(ecc_fill(s))
 
 def audio_sample(track, i):
     l = ((i * 37 + track * 101) % 20000) - 10000
@@ -211,6 +260,235 @@ def chd_v5(path, tracks, hunk_frames=8):
     body = bytearray(h) + mp + metablob
     body += bytes(dataoff - len(body))
     body += b''.join(frames)
+    w(path, bytes(body))
+
+# ---------------------------------------------------------------------------------------------------------------- compressed CHD (v5)
+# A pure Python writer for the CD codecs libchdr reads, so that the decoders (LZMA, zlib, zstd, FLAC, the ECC rebuild, the Huffman coded map with its run
+# lengths, the self references and the uncompressed fallback) run on a real file without chdman. Every hunk is verified by the reader against the CRC-16
+# stored here, so a wrong byte anywhere fails the test. What it is not: chdman. The choices (which codec for which hunk) are the fixture's own.
+#   chd_v5_compressed(path, tracks, codecs, pick, hunk_frames)   codecs: up to 4 of 'cdlz' 'cdzl' 'cdzs' 'cdfl'; pick(hunk number, is_audio) -> index into
+#   codecs, or None for an uncompressed hunk
+
+@functools.lru_cache(maxsize=None)
+def _crc16_table():
+    t = []
+    for i in range(256):
+        c = i << 8
+        for _ in range(8): c = ((c << 1) ^ 0x1021) & 0xFFFF if c & 0x8000 else (c << 1) & 0xFFFF
+        t.append(c)
+    return t
+
+def crc16(data):
+    t = _crc16_table(); c = 0xFFFF
+    for x in data: c = ((c << 8) & 0xFFFF) ^ t[(c >> 8) ^ x]
+    return c
+
+class BitW:
+    def __init__(self): self.b = bytearray(); self.acc = 0; self.n = 0
+    def put(self, v, bits):
+        for i in range(bits - 1, -1, -1):
+            self.acc = (self.acc << 1) | ((v >> i) & 1); self.n += 1
+            if self.n == 8: self.b.append(self.acc); self.acc = 0; self.n = 0
+    def align(self):
+        while self.n: self.put(0, 1)
+    def data(self): self.align(); return bytes(self.b)
+
+def _crc8(data):
+    c = 0
+    for x in data:
+        c ^= x
+        for _ in range(8): c = ((c << 1) ^ 0x07) & 0xFF if c & 0x80 else (c << 1) & 0xFF
+    return c
+
+def _crc16_flac(data):
+    c = 0
+    for x in data:
+        c ^= x << 8
+        for _ in range(8): c = ((c << 1) ^ 0x8005) & 0xFFFF if c & 0x8000 else (c << 1) & 0xFFFF
+    return c
+
+def _flac_frame(chans, frame_no, order=2):
+    """one FLAC frame of two channels of 16 bit samples (lists), fixed predictors of the given order with one Rice partition per channel"""
+    n = len(chans[0])
+    hdr = bytearray(b'\xff\xf8')                                   # sync, fixed block size
+    hdr += bytes([0x70 | 0x09, 0x18])                               # block size: 16 bit field follows; 44.1 kHz; two independent channels; 16 bit samples
+    assert frame_no < 128
+    hdr.append(frame_no)
+    hdr += struct.pack('>H', n - 1)
+    hdr.append(_crc8(hdr))
+    bw = BitW()
+    for ch in chans:
+        bw.put(0, 1); bw.put(0b001000 | order, 6); bw.put(0, 1)     # subframe header: FIXED, order, no wasted bits
+        for i in range(order): bw.put(ch[i] & 0xFFFF, 16)           # warm up samples
+        res = []
+        for i in range(order, n):
+            if order == 0: p = 0
+            elif order == 1: p = ch[i - 1]
+            elif order == 2: p = 2 * ch[i - 1] - ch[i - 2]
+            else: p = 3 * ch[i - 1] - 3 * ch[i - 2] + ch[i - 3]
+            res.append(ch[i] - p)
+        u = [(r << 1) if r >= 0 else ((-r << 1) - 1) for r in res]
+        best = min(range(15), key=lambda k: sum((x >> k) + 1 + k for x in u))
+        bw.put(0, 2); bw.put(0, 4); bw.put(best, 4)                 # Rice coding, partition order 0, the parameter
+        for x in u:
+            q = x >> best
+            bw.put(0, q) if q else None
+            bw.put(1, 1); bw.put(x & ((1 << best) - 1), best) if best else None
+    body = bw.data()
+    frame = bytes(hdr) + body
+    return frame + struct.pack('>H', _crc16_flac(frame))
+
+def _flac_frames(pcm_be_pairs, block):
+    """pcm: bytes of 16 bit stereo samples (little endian numbers); returns the frames (blocks of 2352 samples) as one stream"""
+    n = len(pcm_be_pairs) // 4
+    smp = struct.unpack('<%dh' % (2 * n), pcm_be_pairs)
+    L, R = list(smp[0::2]), list(smp[1::2])
+    out = b''; k = 0
+    for at in range(0, n, block):
+        out += _flac_frame((L[at:at + block], R[at:at + block]), k); k += 1
+    return out
+
+def _zstd_frame(data):
+    """a zstd frame; the zstandard module when it is installed, else stored (raw / run length) blocks: a valid frame the decoder reads, with no
+    Huffman or FSE coded block in it"""
+    if zstandard is not None:
+        return zstandard.ZstdCompressor(level=19).compress(data)
+    n = len(data)
+    fcs = struct.pack('<H', n - 256) if n >= 256 else bytes([n])
+    out = b'\x28\xb5\x2f\xfd' + bytes([0x60 if n >= 256 else 0x20]) + fcs
+    if n and data.count(data[:1]) == n: out += struct.pack('<I', 1 | (1 << 1) | (n << 3))[:3] + data[:1]
+    else: out += struct.pack('<I', 1 | (0 << 1) | (n << 3))[:3] + data
+    return out
+
+def _lzma_dict(reduce):
+    """the dictionary size LzmaEncProps_Normalize picks for level 9 and this reduceSize (libchdr rebuilds the decoder's properties the same way)"""
+    for i in range(11, 31):
+        if reduce <= (2 << i): return 2 << i
+        if reduce <= (3 << i): return 3 << i
+    return 1 << 26
+
+def _raw_deflate(data):
+    c = zlib.compressobj(9, zlib.DEFLATED, -15)
+    return c.compress(data) + c.flush()
+
+def _cd_hunk(frames, codec, audio_swapped):
+    """frames: list of 2448 byte frames (2352 + 96 subcode). Returns the compressed hunk of the codec ('cdlz' 'cdzl' 'cdzs' 'cdfl')."""
+    nf = len(frames)
+    bitmap = bytearray((nf + 7) // 8)
+    base = bytearray(); sub = bytearray()
+    for i, f in enumerate(frames):
+        sec = bytearray(f[:2352])
+        if bytes(sec[:12]) == b'\x00' + b'\xff' * 10 + b'\x00' and sec[15] == 1 and ecc_ok(sec):
+            bitmap[i // 8] |= 1 << (i % 8)
+            sec[:12] = bytes(12); sec[2076:] = bytes(276)
+        base += sec; sub += f[2352:]
+    if codec == 'cdfl':
+        # audio only: FLAC of the samples (the frames hold them big endian), the subcode deflated after it; no ECC bitmap, no length field
+        sw = bytearray()
+        for f in frames:
+            d = f[:2352]
+            sw += bytes(x for i in range(0, 2352, 2) for x in (d[i + 1], d[i]))        # big endian -> the numbers' little endian bytes
+        blk = nf * 588
+        while blk > 2048: blk //= 2                                        # the block size libchdr's FLAC reader expects for this hunk size
+        return _flac_frames(bytes(sw), blk) + _raw_deflate(bytes(sub))
+    lenb = 2 if nf * 2448 < 65536 else 3
+    if codec == 'cdlz':
+        flt = [{'id': lzma.FILTER_LZMA1, 'dict_size': _lzma_dict(nf * 2352), 'lc': 3, 'lp': 0, 'pb': 2, 'preset': 9}]
+        cb = lzma.compress(bytes(base), format=lzma.FORMAT_RAW, filters=flt)
+        cs = _raw_deflate(bytes(sub))
+    elif codec == 'cdzl':
+        cb = _raw_deflate(bytes(base)); cs = _raw_deflate(bytes(sub))
+    elif codec == 'cdzs':
+        cb = _zstd_frame(bytes(base)); cs = _zstd_frame(bytes(sub))
+    else: raise ValueError(codec)
+    return bytes(bitmap) + len(cb).to_bytes(lenb, 'big') + cb + cs
+
+def chd_v5_compressed(path, tracks, codecs, pick, hunk_frames=8):
+    """tracks = [(type, [raw sector bytes (2352; audio already big endian, as chdman stores it)])]"""
+    CF = 2448
+    frames = []; isaudio = []; meta = []
+    for tn, (ttype, fr) in enumerate(tracks, 1):
+        meta.append(('TRACK:%d TYPE:%s SUBTYPE:NONE FRAMES:%d PREGAP:0 PGTYPE:MODE1 PGSUB:NONE POSTGAP:0' % (tn, ttype, len(fr))).encode() + b'\0')
+        for f in fr:
+            frames.append(f + bytes(96)); isaudio.append(ttype == 'AUDIO')
+        while len(frames) % 4: frames.append(bytes(CF)); isaudio.append(ttype == 'AUDIO')
+    while len(frames) % hunk_frames: frames.append(bytes(CF)); isaudio.append(isaudio[-1])
+    hunkbytes = CF * hunk_frames
+    nh = len(frames) // hunk_frames
+    # the hunks: what each is stored as
+    ents = []                      # (type symbol, length, offset or self hunk, crc, payload)
+    seen = {}
+    last_self = 0
+    out = bytearray()
+    for h in range(nh):
+        fr = frames[h * hunk_frames:(h + 1) * hunk_frames]
+        raw = b''.join(fr)
+        aud = isaudio[h * hunk_frames]
+        key = raw
+        if key in seen:
+            tgt = seen[key]
+            if tgt == last_self: ents.append((9, 0, tgt, 0, b''))            # COMPRESSION_SELF_0
+            elif tgt == last_self + 1: ents.append((10, 0, tgt, 0, b'')); last_self = tgt   # SELF_1
+            else: ents.append((5, 0, tgt, 0, b'')); last_self = tgt           # SELF
+            continue
+        seen[key] = h
+        sel = pick(h, aud)
+        if sel is None:
+            ents.append((4, hunkbytes, None, crc16(raw), raw))
+        else:
+            payload = _cd_hunk(fr, codecs[sel], aud)
+            ents.append((sel, len(payload), None, crc16(raw), payload))
+    maxlen = max([e[1] for e in ents if e[0] <= 3] + [1])
+    lengthbits = max(1, maxlen.bit_length())
+    selfbits = max(1, (nh - 1).bit_length())
+    # the metadata
+    hdr_len = 124
+    mapoff = hdr_len
+    def build(dataoff):
+        # the map's bit stream: the 16 symbol tree (every code 4 bits: valid), the types with run lengths, then the lengths and CRCs
+        bw = BitW()
+        for sym in range(16): bw.put(4, 4)
+        types = [e[0] for e in ents]
+        i = 0
+        while i < len(types):
+            t = types[i]
+            run = 1
+            while i + run < len(types) and types[i + run] == t: run += 1
+            i += run
+            bw.put(t, 4); run -= 1                                         # the type once; then the symbols that repeat it: a run of 3..18 or 19..274 hunks
+            while run >= 3:                                                # (the symbol's own hunk and the repeats that follow it)
+                n = min(run, 274)
+                if n >= 19: v = n - 19; bw.put(8, 4); bw.put(v >> 4, 4); bw.put(v & 15, 4)
+                else: bw.put(7, 4); bw.put(n - 3, 4)
+                run -= n
+            for _ in range(run): bw.put(t, 4)
+        off = dataoff
+        rawmap = bytearray()
+        for (t, ln, tgt, crc, payload) in ents:
+            if t <= 3:
+                bw.put(ln, lengthbits); bw.put(crc, 16); rawmap += bytes([t]) + ln.to_bytes(3, 'big') + off.to_bytes(6, 'big') + struct.pack('>H', crc); off += ln
+            elif t == 4:
+                bw.put(crc, 16); rawmap += bytes([4]) + ln.to_bytes(3, 'big') + off.to_bytes(6, 'big') + struct.pack('>H', crc); off += ln
+            else:
+                if t == 5: bw.put(tgt, selfbits)
+                rawmap += bytes([5]) + (0).to_bytes(3, 'big') + tgt.to_bytes(6, 'big') + b'\0\0'
+        return bw.data(), bytes(rawmap)
+    stream, rawmap = build(0)                                               # (the length of the stream does not depend on the data offset)
+    mapblob_len = 16 + len(stream)
+    metablob = bytearray(); off = mapoff + mapblob_len
+    metaoff = off
+    for i, m in enumerate(meta):
+        nxt = off + 16 + len(m) if i + 1 < len(meta) else 0
+        metablob += b'CHT2' + bytes([1]) + len(m).to_bytes(3, 'big') + struct.pack('>Q', nxt) + m
+        off = nxt
+    dataoff = metaoff + len(metablob)
+    stream, rawmap = build(dataoff)
+    mapblob = struct.pack('>I', len(stream)) + dataoff.to_bytes(6, 'big') + struct.pack('>H', crc16(rawmap)) + bytes([lengthbits, selfbits, 0, 0]) + stream
+    tags = b''.join(c.encode() for c in codecs) + bytes(4 * (4 - len(codecs)))
+    head = b'MComprHD' + struct.pack('>II', hdr_len, 5) + tags + struct.pack('>QQQ', len(frames) * CF, mapoff, metaoff) + struct.pack('>II', hunkbytes, CF) + bytes(60)
+    body = bytearray(head) + mapblob + metablob
+    assert len(body) == dataoff
+    for (t, ln, tgt, crc, payload) in ents: body += payload
     w(path, bytes(body))
 
 def raw_sector_mode2(n):
@@ -273,14 +551,20 @@ def make_extra(d, data_raw, data_cooked, a2, a3, sp, swap):
             cue += ('FILE "manyogg (Track %02d).ogg" WAVE\n  TRACK %02d AUDIO\n    INDEX 01 00:00:00\n' % (t, t)).encode()
         if os.path.exists(d + '/_t.wav'): os.remove(d + '/_t.wav')
         if ok: w(d + '/manyogg.cue', cue)
-    # compressed CHDs from the real tool, when it is installed: every codec libchdr reads (the uncompressed one above never runs a decoder)
-    cm = shutil.which('chdman')
-    if cm:
-        for name, codecs in (('chd_lzma', 'cdlz'), ('chd_zlib', 'cdzl'), ('chd_zstd', 'cdzs'), ('chd_flac', 'cdfl'), ('chd_mixed', 'cdlz,cdzl,cdfl,cdzs')):
-            r = subprocess.run([cm, 'createcd', '-f', '-i', d + '/single.cue', '-o', d + '/' + name + '.chd', '-c', codecs], capture_output=True)
-            if r.returncode != 0 and os.path.exists(d + '/' + name + '.chd'): os.remove(d + '/' + name + '.chd')
-        r = subprocess.run([cm, 'createcd', '-f', '-i', d + '/multi.cue', '-o', d + '/chd_multi.chd', '-c', 'cdlz,cdzl,cdfl'], capture_output=True)
-        if r.returncode != 0 and os.path.exists(d + '/chd_multi.chd'): os.remove(d + '/chd_multi.chd')
+    # compressed CHDs written by chd_v5_compressed above: every codec libchdr reads (the uncompressed one never runs a decoder)
+    disc = [('MODE1_RAW', sp(data_raw)), ('AUDIO', sp(swap(a2))), ('AUDIO', sp(swap(a3)))]
+    chd_v5_compressed(d + '/chd_lzma.chd', disc, ['cdlz'], lambda h, a: 0)
+    chd_v5_compressed(d + '/chd_zlib.chd', disc, ['cdzl'], lambda h, a: 0)
+    chd_v5_compressed(d + '/chd_zstd.chd', disc, ['cdzs'], lambda h, a: 0)
+    chd_v5_compressed(d + '/chd_flac.chd', disc, ['cdfl', 'cdzl'], lambda h, a: 0 if a else 1)
+    # the default mix: data hunks LZMA, audio FLAC, every ninth hunk stored uncompressed, zstd for one in seven
+    chd_v5_compressed(d + '/chd_mixed.chd', disc, ['cdlz', 'cdzl', 'cdfl', 'cdzs'],
+                      lambda h, a: None if h % 9 == 4 else (2 if a else (3 if h % 7 == 3 else 0)))
+    # a 4 frame hunk (3 byte lengths are not needed) and a 32 frame hunk (a 3 byte length field in front of the data), and a disc with repeated hunks (self references)
+    chd_v5_compressed(d + '/chd_multi.chd', disc, ['cdlz', 'cdzl', 'cdfl'], lambda h, a: 2 if a else 0, 4)
+    chd_v5_compressed(d + '/chd_big.chd', disc, ['cdlz', 'cdzl', 'cdfl'], lambda h, a: 2 if a else 1, 32)
+    sil = [('MODE1_RAW', sp(data_raw)), ('AUDIO', sp(swap(bytes(2352 * 16)))), ('AUDIO', sp(swap(a2[:2352 * 40])))]
+    chd_v5_compressed(d + '/chd_self.chd', sil, ['cdlz', 'cdzl'], lambda h, a: 0)
 
 def make_discs(d):
     os.makedirs(d, exist_ok=True)

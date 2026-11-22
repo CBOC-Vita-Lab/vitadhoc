@@ -2120,6 +2120,25 @@ int scd_context_load(uint8 *state, char *version)
   load_param(&scd.pending, sizeof(scd.pending));
   load_param(&scd.dmna, sizeof(scd.dmna));
 
+  /* VitAdhoc: interrupt levels 1 to 6 only (they index the 64 entry level table of the sub CPU: bit 0 and bit 7 are never set) */
+  scd.pending &= 0x7e;
+
+  /* VitAdhoc: the counters below are relative to the frame start like s68k.cycles (clamped at the end of this function) and are added to it (the timer
+   * and the stopwatch through the registers, scd.cycles as the end of the line): out of the range a running machine reaches (the timer: 256 steps of
+   * 1536 at most, the stopwatch: about a frame behind, scd.cycles: about a frame ahead) they are put at 0 */
+  if (scd.cycles > (1 << 22))
+  {
+    scd.cycles = 0;
+  }
+  if (scd.timer > (1 << 20) || scd.timer < -(1 << 20))
+  {
+    scd.timer = 0;
+  }
+  if (scd.stopwatch > (1 << 23) || scd.stopwatch < -(1 << 23))
+  {
+    scd.stopwatch = 0;
+  }
+
   /* GFX processor */
   bufferptr += gfx_context_load(&state[bufferptr]);
 
@@ -2355,6 +2374,13 @@ int scd_context_load(uint8 *state, char *version)
   load_param(&s68k.cycles, sizeof(s68k.cycles));
   load_param(&s68k.int_level, sizeof(s68k.int_level));
   load_param(&s68k.stopped, sizeof(s68k.stopped));
+
+  /* VitAdhoc: the sub CPU's counter is relative to the start of the next frame and never negative (s68k_run compares it as unsigned: a negative one
+   * is never reached and scd_update loops for ever); it is a little ahead, or up to a few frames when a graphics operation holds the CPU. */
+  if (s68k.cycles < 0 || s68k.cycles > (1 << 22))
+  {
+    s68k.cycles = 0;
+  }
 
   /* bootable MD cartridge hardware */
   if (scd.cartridge.boot)

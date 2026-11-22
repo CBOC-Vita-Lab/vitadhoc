@@ -227,7 +227,7 @@ if command -v python3 >/dev/null; then
 	if [ -x "$CDT" ] && [ -f "$CD/standin.bin" ]; then
 		o=$("$CDT" "$CD/discs" "$CD/standin.bin" 2>&1)
 		echo "$o" | grep -v '^cd_test:' | grep -v '^note' | sed 's/^/  /'
-		case "$o" in *" 0 failed"*) ok "Sega CD: BIOS check, no-BIOS refusal, disc probe, TOC / data / audio byte for byte on 7 images (ISO, BIN, CUE, multi-file, WAV, Ogg shape, CHD), backup RAM, RA map, cheats ($(echo "$o" | sed -n 's/^cd_test: \([0-9]*\) checks.*/\1/p') checks)";; *) bad "Sega CD reader checks";; esac
+		case "$o" in *" 0 failed"*) ok "Sega CD: BIOS check, no-BIOS refusal, disc probe, TOC / data / audio byte for byte on 17 images (ISO, BIN, CUE and its awkward spellings, multi-file, WAV, Ogg shape, CHD stored and compressed with LZMA, zlib, zstd, FLAC, mixed, 4 and 32 frame hunks, self references; each again on the read-ahead thread), backup RAM, RA map, cheats ($(echo "$o" | sed -n 's/^cd_test: \([0-9]*\) checks.*/\1/p') checks)";; *) bad "Sega CD reader checks";; esac
 		CDA="--disc $CD/discs/single.cue --bios $CD/standin.bin --bios-stand-in"
 		cdrun() { "$TWIN" $CDA "$@" 2>&1; }
 		h1=$(cdrun --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //'); h2=$(cdrun --frames 600 | grep '^RESULT' | sed 's/ samples=.*//;s/^RESULT [^ ]* //')

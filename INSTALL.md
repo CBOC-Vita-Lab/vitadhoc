@@ -183,7 +183,11 @@ so the usual names work: `us_scd1_9210.bin` (USA), `eu_mcd1_9210.bin` (Europe),
 `jp_mcd1_9112.bin` (Japan), also the `us_scd2_9303.bin`, `eu_mcd2_9303.bin`
 and `jp_mcd2_921222.bin` versions. Without one the game says so and returns
 to the library. Keep the `.cue` and its `.bin` files together in one folder
-(for example `ux0:ROMS/SegaCD/`); a lone `.bin` is not listed.
+(for example `ux0:ROMS/SegaCD/`); a lone `.bin` is not listed. A `.cue` that
+names its files with a folder (`C:\Rips\Game.bin`) still finds them next to
+the `.cue`. A `.chd` unpacks while the game runs and costs more CPU than a
+`.cue` with raw tracks. Games that use backup RAM get a 512 KB RAM cartridge
+by default (Settings can set another size or none).
 
 **Famicom Disk System games** (`.fds`) need the disk system's BIOS, which VitAdhoc
 cannot include: put your own `disksys.rom` next to the game or in

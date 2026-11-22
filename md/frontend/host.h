@@ -130,7 +130,7 @@ int md_host_vdp_census(unsigned long out[11]);
  * block the helper had finished, [2] misses (read or decoded by the emulating thread), [3] waits for a block the helper was on, [4] us the
  * emulating thread spent in misses and waits, [5] blocks the helper finished, [6] us the helper was busy, [7] blocks read ahead and never used,
  * [8] cache answers that differed from a direct read (debug check; always 0). */
-void md_host_cd_census(unsigned long out[9]);
+void md_host_cd_census(unsigned long out[10]);
 int md_host_cd_helper(void);                       /* 1 while the read-ahead thread runs */
 /* debug for the test suite: check = compare every block the cache serves with a direct read; stress = random pauses in the helper and cache answers
  * ignored at random (more waits and misses, the same bytes). */

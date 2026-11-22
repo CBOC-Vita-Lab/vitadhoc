@@ -445,18 +445,64 @@ int gfx_context_save(uint8 *state)
   return bufferptr;
 }
 
+/* VitAdhoc: what gfx_start derives from the registers, for a state that carries values no start could have produced (a damaged or crafted state:
+ * dotMask, stampShift and mapShift index the stamp map in gfx_render, cyclesPerLine divides in gfx_update). A genuine state is not touched. */
+static int gfx_triple_ok(void)
+{
+  return (gfx.dotMask == 0x07ffff && ((gfx.stampShift == 15 && gfx.mapShift == 4) || (gfx.stampShift == 16 && gfx.mapShift == 3))) ||
+         (gfx.dotMask == 0x7fffff && ((gfx.stampShift == 15 && gfx.mapShift == 8) || (gfx.stampShift == 16 && gfx.mapShift == 7)));
+}
+
+static void gfx_triple_from_regs(void)
+{
+  switch ((scd.regs[0x58>>1].byte.l >> 1) & 0x03)
+  {
+    case 0:  gfx.dotMask = 0x07ffff; gfx.stampShift = 11 + 4; gfx.mapShift = 4; break;
+    case 1:  gfx.dotMask = 0x07ffff; gfx.stampShift = 11 + 5; gfx.mapShift = 3; break;
+    case 2:  gfx.dotMask = 0x7fffff; gfx.stampShift = 11 + 4; gfx.mapShift = 8; break;
+    default: gfx.dotMask = 0x7fffff; gfx.stampShift = 11 + 5; gfx.mapShift = 7; break;
+  }
+}
+
 int gfx_context_load(uint8 *state)
 {
   uint32 tmp32;
   int bufferptr = 0;
+  const int active = scd.regs[0x58>>1].byte.h & 0x80;      /* a graphics operation is running: gfx_update uses the values below */
 
   load_param(&gfx.cycles, sizeof(gfx.cycles));
   load_param(&gfx.cyclesPerLine, sizeof(gfx.cyclesPerLine));
+  /* VitAdhoc: gfx.cycles feeds the sub CPU's counter (gfx_update below, as s68k.cycles = gfx.cycles) and so bypasses the clamp of s68k.cycles: it is
+   * relative to the frame start like that one. A finished operation leaves a stale value that goes negative (as an unsigned number: huge) frame by
+   * frame and is never read (gfx_start sets it); only a running operation needs a value near the present, and nothing is ever far ahead. */
+  if ((int32)gfx.cycles > (1 << 24) || (active && ((int32)gfx.cycles < -(1 << 22))))
+  {
+    gfx.cycles = 0;
+  }
   load_param(&gfx.dotMask, sizeof(gfx.dotMask));
   load_param(&gfx.stampShift, sizeof(gfx.stampShift));
   load_param(&gfx.mapShift, sizeof(gfx.mapShift));
   load_param(&gfx.bufferOffset, sizeof(gfx.bufferOffset));
   load_param(&gfx.bufferStart, sizeof(gfx.bufferStart));
+
+  /* (the registers are loaded before this: scd_context_load). Before the first graphics operation all of these are zero, and nothing reads them
+     until gfx_start sets them: that is left as it is */
+  if (!gfx_triple_ok() && (active || gfx.dotMask || gfx.stampShift || gfx.mapShift))
+  {
+    gfx_triple_from_regs();
+  }
+  /* image buffer column offset: ((register & 31) + 1) * 64 - 7 */
+  if ((gfx.bufferOffset < 57 || gfx.bufferOffset > 2041 || ((gfx.bufferOffset + 7) & 63)) && (active || gfx.bufferOffset))
+  {
+    gfx.bufferOffset = (((scd.regs[0x5c>>1].byte.l & 0x1f) + 1) << 6) - 7;
+  }
+  /* operation timing: 12 cycles times (4 + 2 * width + (width + offset + 3) / 4), width <= 511: a multiple of 12 from 48 to 13860 */
+  if ((gfx.cyclesPerLine < 48 || gfx.cyclesPerLine > 13860 || (gfx.cyclesPerLine % 12)) && (active || gfx.cyclesPerLine))
+  {
+    gfx.cyclesPerLine = 4 * 3 * (4 + 2 * (scd.regs[0x62>>1].w & 0x1ff) + (((scd.regs[0x62>>1].w & 0x1ff) + (scd.regs[0x60>>1].byte.l & 0x03) + 3) >> 2));
+  }
+  /* image buffer start index in dot units: a start has at most 0x7ffff + 63 and a line adds 8 (up to 511 lines); it is only used masked */
+  gfx.bufferStart &= 0xfffff;
 
   load_param(&tmp32, 4);
   tmp32 &= 0x3fff8;

@@ -321,8 +321,9 @@ static void t_sem_wait(void *, void *s) { while (sem_wait((sem_t *)s) != 0) {} }
 static int t_spawn(void *, int id, void (*fn)(void *), void *arg) { g_sarg[id].fn = fn; g_sarg[id].arg = arg; return pthread_create(&g_wthr[id], NULL, thr_main, &g_sarg[id]); }
 static void t_wait_end(void *, int id) { pthread_join(g_wthr[id], NULL); }
 static void t_yield(void *) { sched_yield(); }
+static void t_nap(void *) { struct timespec ts = { 0, 50000 }; nanosleep(&ts, NULL); }
 static unsigned long long t_now(void *) { timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (unsigned long long) ts.tv_sec * 1000000ull + (unsigned long long) ts.tv_nsec / 1000; }
-static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, t_now };
+static md_thread_ops g_tops = { NULL, t_sem_create, t_sem_destroy, t_sem_post, t_sem_wait, t_spawn, t_wait_end, t_yield, t_now, t_nap };
 
 int main(int argc, char **argv)
 {
@@ -647,9 +648,9 @@ int main(int argc, char **argv)
 		else printf("VDPW %s worker off\n", bn);
 	}
 	if (cdthr && g_disc) {
-		unsigned long c[9];
+		unsigned long c[10];
 		md_host_cd_census(c);
-		printf("CDIO %s helper=%d reads=%lu hits=%lu misses=%lu waits=%lu miss_us=%lu helper_blocks=%lu helper_us=%lu unused=%lu check_errors=%lu\n", bn, md_host_cd_helper(), c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]);
+		printf("CDIO %s helper=%d reads=%lu hits=%lu misses=%lu waits=%lu miss_us=%lu helper_blocks=%lu helper_us=%lu unused=%lu check_errors=%lu timeouts=%lu\n", bn, md_host_cd_helper(), c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9]);
 	}
 	md_host_shutdown();
 	return 0;

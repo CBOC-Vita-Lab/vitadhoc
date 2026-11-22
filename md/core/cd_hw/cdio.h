@@ -36,10 +36,10 @@ char *cdio_gets(char *s, int n, cdio_file *f);
 void cdio_stream(cdio_file *f);
 
 /* CHD: opens the CHD on the stream (which stays the track file the core closes) and a second decoder of the same file for the helper */
-struct chd_file;
-int cdio_chd_open(cdio_file *f, struct chd_file **out);        /* libchdr's chd_error, 0 = ok */
-int cdio_chd_read(struct chd_file *chd, uint32_t hunknum, uint8_t *dst);
-void cdio_chd_close(struct chd_file *chd);                      /* NULL is fine */
+struct _chd_file;
+int cdio_chd_open(cdio_file *f, struct _chd_file **out);        /* libchdr's chd_error, 0 = ok */
+int cdio_chd_read(struct _chd_file *chd, uint32_t hunknum, uint8_t *dst);
+void cdio_chd_close(struct _chd_file *chd);                      /* NULL is fine */
 
 /* the helper thread: ops from md_host_set_threads (NULL = none). begin after the disc is loaded, end before it is closed */
 void cdio_set_ops(const struct md_thread_ops *ops, int enabled);

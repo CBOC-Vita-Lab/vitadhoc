@@ -192,6 +192,7 @@ static int ahead_req;              /* fe_host_ahead_set: the next frame is to be
 static int ahead_mute_video;       /* the frame being run is the real one: no picture goes out (not even "nothing new") */
 static int ahead_quiet;            /* the frame being run is the look-ahead one: its sound is dropped */
 static unsigned ahead_frames, ahead_fails;
+static int ahead_latched_off;      /* a restore failed: the machine would stay a frame ahead, so run-ahead stays off for the session */
 
 static void gb_video_frame(void *userdata, const gbcore_video_frame_t *frame)
 {
@@ -8083,7 +8084,8 @@ static int gb_ahead_frame(uint32_t pad)
       {
          /* cannot happen: the image is our own.  The machine is one frame ahead of where it should be: say so. */
          ahead_fails++;
-         fe_evt("ahead_load FAILED frame=%u", frame_count);
+         ahead_latched_off = 1;
+         fe_evt("ahead_load FAILED frame=%u: run-ahead is off for this session", frame_count);
       }
    }
    ahead_frames++;
@@ -8092,7 +8094,7 @@ static int gb_ahead_frame(uint32_t pad)
 
 int fe_host_ahead_possible(void)
 {
-   return gb_core && !gb_dual && !gbl && !gbl_hold && !gbl_pad && gbcore_ahead_size(gb_core) != 0;
+   return gb_core && !ahead_latched_off && !gb_dual && !gbl && !gbl_hold && !gbl_pad && gbcore_ahead_size(gb_core) != 0;
 }
 
 void fe_host_ahead_set(int want)
@@ -8166,7 +8168,7 @@ static void run_frame(void)
           * dual (link) path above; a no-op with nothing switched on. */
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
-         if (ahead_req && !gb_skip_frame && !gbl_hold && !gb_local_on &&
+         if (ahead_req && !ahead_latched_off && !gb_skip_frame && !gbl_hold && !gb_local_on &&
              gb_ahead_frame(pad) == 0)
             ;
          else
@@ -8710,6 +8712,7 @@ void fe_host_shutdown(void)
    {
       if (ahead_frames || ahead_fails)
          fe_evt("ahead_frames n=%u failed=%u", ahead_frames, ahead_fails);
+      ahead_latched_off = 0;        /* the latch lasts one game */
       dbg_report();
       if (gb_dual)
          gbdual_destroy(gb_dual);

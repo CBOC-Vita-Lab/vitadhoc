@@ -62,7 +62,7 @@ typedef struct cache {
 	uint8_t *mem;
 	int64_t nblocks;
 	struct cdio_file *file;       /* K_RAW */
-	struct chd_file *hchd;        /* K_CHD: the helper's decoder */
+	struct _chd_file *hchd;        /* K_CHD: the helper's decoder */
 	int hfd;                      /* K_RAW: the helper's descriptor (changed under the lock only) */
 	unsigned long hused;
 	int registered;
@@ -93,7 +93,7 @@ static struct {
 	int check, stress;
 	unsigned erng, hrng;
 	unsigned long st[9];
-	struct { struct chd_file *m, *h; cache_t c; uint32_t hunkbytes; int have; } chd;
+	struct { struct _chd_file *m, *h; cache_t c; uint32_t hunkbytes; int have; } chd;
 } H;
 
 static unsigned long ld(const unsigned long *p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
@@ -411,7 +411,7 @@ static core_file *core_wrap(cdio_file *f, int owner)
 	return c;
 }
 
-int cdio_chd_open(cdio_file *f, struct chd_file **out)
+int cdio_chd_open(cdio_file *f, struct _chd_file **out)
 {
 	core_file *core;
 	chd_error e;
@@ -447,7 +447,7 @@ int cdio_chd_open(cdio_file *f, struct chd_file **out)
 	return 0;
 }
 
-void cdio_chd_close(struct chd_file *chd)
+void cdio_chd_close(struct _chd_file *chd)
 {
 	if (!chd) return;
 	if (H.chd.m == chd) {
@@ -464,7 +464,7 @@ void cdio_chd_close(struct chd_file *chd)
 	chd_close(chd);
 }
 
-int cdio_chd_read(struct chd_file *chd, uint32_t hunknum, uint8_t *dst)
+int cdio_chd_read(struct _chd_file *chd, uint32_t hunknum, uint8_t *dst)
 {
 	cache_t *c = &H.chd.c;
 	int si, err;
@@ -612,7 +612,7 @@ void cdio_begin(void)
 	for (i = 0; i < MAXF; i++) if (H.files[i] && H.files[i]->c.s && !H.files[i]->c.registered) cache_free(&H.files[i]->c);
 	H.wake = H.ops->sem_create(H.ops->user);
 	H.lock = H.ops->sem_create(H.ops->user);
-	if (!H.wake || !H.lock) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); H.wake = H.lock = NULL; return; }
+	if (!H.wake || !H.lock) { if (H.ops->sem_destroy) { if (H.wake) H.ops->sem_destroy(H.ops->user, H.wake); if (H.lock) H.ops->sem_destroy(H.ops->user, H.lock); } H.wake = H.lock = NULL; return; }
 	H.ops->sem_post(H.ops->user, H.lock);
 	H.stop = 0; H.nreg = 0; H.seq = 0;
 	if (H.ops->spawn(H.ops->user, MD_WORKER_DISC, helper_main, NULL)) {

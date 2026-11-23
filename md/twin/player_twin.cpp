@@ -583,11 +583,10 @@ static int run_test(const std::string &con, const char *rom, const std::string &
 		EXPECT(pl->picture().quality == PIC_SHARP);
 		rig.go_row("Image quality");
 		while (pl->picture().scaler != SCALER_AUTO) rig.press(PH_LEFT);
-		/* Screen size never offers Fit */
+		/* Screen size never offers the hidden second shape (index 1) */
 		while (pl->menu().cursor() != 0) rig.press(PH_UP);
 		std::vector<std::string> seen;
-		for (int k = 0; k < 4; k++) { rig.press(PH_RIGHT); seen.push_back(pl->menu().row_value_text(0)); }
-		for (size_t k = 0; k < seen.size(); k++) EXPECT(seen[k] != "Fit");
+		for (int k = 0; k < 4; k++) { rig.press(PH_RIGHT); seen.push_back(pl->menu().row_value_text(0)); EXPECT(pl->menu().value(ROW_PIC_SHAPE) != 1); }
 		bool had_pixel = false;
 		for (size_t k = 0; k < seen.size(); k++) if (seen[k] == "Pixel perfect") had_pixel = true;
 		EXPECT(had_pixel);

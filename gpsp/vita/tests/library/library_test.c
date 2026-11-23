@@ -252,7 +252,7 @@ static void ref_fit(int fi, char *s, float max_w)
    while (n > 0)
    {
       char keep;
-      n--;
+      n = (size_t)(pk_u8_prev(s, s + n) - s);   /* (a character at a time) */
       while (n > 0 && s[n - 1] == ' ')
          n--;
       keep = s[n];
@@ -280,7 +280,11 @@ static int ref_wrap(int fi, float max_w, int max_lines, const char *s,
       {
          size_t next = take;
          while (next < len && p[next] != ' ')
-            next++;
+         {
+            int un;
+            pk_u8_next(p + next, &un);
+            next += (size_t)un;
+         }
          if (next >= sizeof(line))
          {
             if (best > 0) break;
@@ -302,11 +306,15 @@ static int ref_wrap(int fi, float max_w, int max_lines, const char *s,
          best = len < sizeof(line) - 4 ? len : sizeof(line) - 4;
       if (best > sizeof(line) - 4)
          best = sizeof(line) - 4;
+      best = pk_u8_floor(p, best);
+      if (best == 0)
+         best = pk_u8_len(p);
       memcpy(line, p, best);
       line[best] = '\0';
       if (lines == max_lines - 1 && best < len)
       {
          size_t rest = len < sizeof(line) - 4 ? len : sizeof(line) - 4;
+         rest = pk_u8_floor(p, rest);
          memcpy(line, p, rest);
          line[rest] = '\0';
          ref_fit(fi, line, max_w);
@@ -584,7 +592,7 @@ static void test_quality_text(void)
       check(found >= 0 && text_draws[found].x + text_draws[found].w <= VS_W - HM_X,
             "each Image quality explains itself in a help line that fits the screen");
       check(find_text(pcfg_quality_name(q), 1) >= 0, "the row shows the quality's name");
-      check(find_text(q == PCFG_QUALITY_ORIGINAL ? "sharp bilinear" : "xBRZ smooth", 1) >= 0,
+      check(find_text(q == PCFG_QUALITY_ORIGINAL ? "Sharp bilinear" : "xBRZ smooth", 1) >= 0,
             "Video filter shows what is drawn: exact pixels under Original, the filter otherwise");
       vid_swap();
       g_cursor = SET_FILTER;

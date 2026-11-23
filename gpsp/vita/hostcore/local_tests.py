@@ -2029,6 +2029,8 @@ def t_handover(S):
     T = N.Tests("x86", getattr(S, "hz", 0))
     T.S = S
     T.begin("handover")
+    # (the session must outlast two hash periods of 240 frames: at the twin's
+    # pace 14 script seconds reached only frame 236 and no hash was sent)
     rom = os.path.join(HERE, "testrom", TEST)
     two = N.keys("down", "down", "cross", first=20) + \
         N.keys("cross", first=20) + N.close_menu(first=30)
@@ -2038,15 +2040,15 @@ def t_handover(S):
                N.open_play(7.5) + N.keys("down", "down", "cross", first=20) +
                N.keys("up", "up", "cross", first=20) + "+50:shot=host.png\n" +
                N.close_menu() +
-               N.shot(22, "session.png") + N.disconnect(26) +
+               N.shot(58, "session.png") + N.disconnect(62) +
                # the session over: two games again
-               N.open_play(33) + two + N.press(38, "a", 40) +
-               N.shot(38.4, "two_after.png") + N.quit_at(42))
+               N.open_play(69) + two + N.press(74, "a", 40) +
+               N.shot(74.4, "two_after.png") + N.quit_at(78))
     b = T.twin("b", "x86", rom, "Bob",
-               N.join_first(12, wait=2.5) + N.shot(22, "session.png") +
-               N.open_play(33) + two + N.press(38, "b", 40) +
-               N.shot(38.4, "two_after.png") + N.quit_at(42))
-    ra, rb = T.run([a, b], 42)
+               N.join_first(12, wait=2.5) + N.shot(58, "session.png") +
+               N.open_play(69) + two + N.press(74, "b", 40) +
+               N.shot(74.4, "two_after.png") + N.quit_at(78))
+    ra, rb = T.run([a, b], 78)
     T.clean(ra, "A")
     T.clean(rb, "B")
     i0 = ra.index(r"^EVT local_start ok")

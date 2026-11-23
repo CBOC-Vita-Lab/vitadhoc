@@ -600,12 +600,18 @@ def t_share(T):
     world = NatWorld(T, "port", "port", lan_port=port)
     va, vb = vita_for(0, world, svc), vita_for(1, world, svc)
     sav = bytes((i * 7 + 3) & 0xFF for i in range(32768))
-    down7 = L.keys(*(["down"] * 15))
+    # Settings opens on Theme: walk down by the row's own log line (settings_row), landing on SET_SHARE = row 8 (A)
+    # and SET_JOIN = row 9 (B, Join a share), so a row added to the list cannot send the walk elsewhere.
+    def to_row(n, row):
+        return "".join("+%d:hold=down=settings_row row=%s\n" % (L.GAP, row if i == n - 1 else "") for i in range(n))
+    down7 = to_row(16, 8)
+    down8 = to_row(17, 9)
     k = T.k
     try:
         a = T.twin("a", T.arch_a, L.LINKTEST, "Alice",
                    L.press(2, "start") + down7 + "+20:shot=settings.png\n" +
-                   L.keys("cross", first=L.AFTER_SHOT) + L.shot(8, "sharing.png") +
+                   # the wait flushes the twin's buffered log, so wait_code sees the room code at once (not at exit)
+                   "+%d:hold=cross=online_room code=\n" % L.AFTER_SHOT + L.shot(8, "sharing.png") +
                    L.shot(60, "shared.png") + L.press(78, "circle") + L.shot(80, "after.png") + L.quit_at(84),
                    config={"net_conn": 3}, vita=va, net=net_for(0), extra={"roms/linktest.sav": sav})
         os.remove(os.path.join(a.root, "autoboot.txt"))
@@ -616,7 +622,7 @@ def t_share(T):
         if not code:
             return
         b = T.twin("b", T.arch_b, L.LINKTEST, "Bob",
-                   L.press(3, "start") + down7 + L.keys("down") + "+20:shot=settings.png\n" +
+                   L.press(3, "start") + down8 + "+20:shot=settings.png\n" +
                    L.keys("cross", first=L.AFTER_SHOT) + "+30:shot=pad.png\n" +
                    L.keys(*code_keys(code)) + L.keys("triangle") +
                    "+%d:shot=list.png\n" % L.dur(20) + "+30:cross:%d\n" % L.PRESS +
@@ -1076,11 +1082,11 @@ def t_determinism(T):
 
 # ---- the library path ----------------------------------------------------------------------------------
 
-def settings_join_online():
+def settings_join_online(steps=18):
     """From the game list: START opens Settings, DOWN from the Theme row it opens on to "Join online" (SET_JOIN_ONLINE = row 10,
     browser Settings only).  Every step waits for the row's own log line (settings_row) and the last names the row it must
     land on, so a press a busy machine dropped or doubled, or a row added to the list, cannot send the walk elsewhere."""
-    downs = "".join("+%d:hold=down=settings_row row=%s\n" % (L.GAP, "10" if i == 17 else "") for i in range(18))
+    downs = "".join("+%d:hold=down=settings_row row=%s\n" % (L.GAP, "10" if i == steps - 1 else "") for i in range(steps))
     return L.press(2, "start") + downs + "+20:shot=settings.png\n"
 
 
@@ -1273,7 +1279,7 @@ def tp_pair(T, name, con, nat, rom, rom_b=None, host_end=85, b_end=80, join=True
 
     def sb(code):
         # lib: B takes the game list's own Settings > Join online row instead of the Two players page
-        s = ((settings_join_online() if lib else walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS)) +
+        s = ((settings_join_online(16 if con in SEGA else 18) if lib else walk + "+%d:down:%d\n" % (L.GAP, L.PRESS) + "+%d:cross:20\n" % L.GAP + "+%d:down:%d\n" % (L.GAP, L.PRESS)) +
              "+%d:hold=cross=online_pad_open\n" % L.GAP + "+30:shot=pad.png\n" + hold_code(code) +
              "+%d:hold=triangle=online_card_begin\n" % L.GAP + "+0:wait=online_card state=\n" +
              "+%d:shot=card.png\n" % L.dur(1))

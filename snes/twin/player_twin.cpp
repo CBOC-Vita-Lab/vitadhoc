@@ -129,7 +129,8 @@ struct Rig {
 	Texture *game_tex;
 	std::string shots;
 	uint32_t frame = 0;
-	unsigned drawn_frames = 0, ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0;
+	unsigned drawn_frames = 0, ran_frames = 0, refreshes = 0, audio_in = 0, audio_out = 0, ahead_frames = 0;
+	uint32_t emu_cost_us = 0;       /* what the test says a plain frame costs the emulating thread (0: Quick response's Auto is not fed) */
 	int nshot;
 	Rig(const std::string &s, int first = 0) : pl(0), gfx(), text(&gfx), game_tex(0), shots(s), nshot(first) {}
 	~Rig() { if (game_tex) gfx.tex_free(game_tex); }
@@ -151,6 +152,9 @@ struct Rig {
 			if (pl->input(p, tap && i == 0, pf.clock_us / 1000, frame)) return true;
 			const bool render = pl->want_render(frame) && pl->speed_draws(i, n);
 			if (pl->run_frame(render)) { ran_frames++; if (render) drawn_frames++; }
+			if (pl->ahead_ran()) ahead_frames++;
+			/* as the Vita loop does for a single drawn frame at normal speed: a frame run ahead costs about twice a plain one */
+			if (n == 1 && render && emu_cost_us) pl->ahead_cost(pl->ahead_ran() ? emu_cost_us * 22 / 10 + 500 : emu_cost_us);
 			int16_t ab[4096 * 2];
 			int k;
 			while ((k = snes_host_audio_take(ab, 4096)) > 0) { audio_in += (unsigned) k; audio_out += (unsigned) pl->audio_filter(ab, (size_t) k); }
@@ -1237,6 +1241,114 @@ struct Sess {
 	~Sess() { end(); }
 };
 
+/* ---- Quick response (run-ahead by one frame) through the player -------------------------------------------------------------- */
+
+/* One session with a button script (presses, a fast forward, a rewind, a quick save and load); returns the machine after every refresh
+ * (snes_host_machine_digest: a frame that is not drawn leaves one drawing flag of the saved state otherwise, skip_check.sh). */
+static std::vector<uint64_t> ahead_session(const std::string &root, const char *rom, int quick, uint32_t emu_cost, unsigned *ahead_frames,
+                                           unsigned *audio, unsigned *ff_ahead, std::string *line, std::string *ini)
+{
+	std::vector<uint64_t> H;
+	Sess s(root + "/shots");
+	EXPECT(s.start(root, "snes", rom, strf("ovr.quick_response=%d\n", quick)));
+	if (!s.pl) return H;
+	Rig &rig = s.rig;
+	rig.emu_cost_us = emu_cost;
+	EXPECT(s.pl->quick() == quick);
+	for (int f = 0; f < 900; f++) {
+		uint32_t b = 0;
+		if (f % 50 >= 20 && f % 50 < 30) b |= PH_CROSS;
+		if (f % 70 >= 35 && f % 70 < 50) b |= PH_RIGHT;
+		if (f % 110 == 60) b |= PH_START;
+		if (f >= 300 && f < 340) b = PH_RS_RIGHT;           /* fast forward */
+		if (f >= 500 && f < 560) b = PH_RS_LEFT;            /* rewind */
+		if (f == 700) b = PH_SELECT;
+		if (f == 701) b = PH_SELECT | PH_L;                 /* quick save */
+		if (f == 760) b = PH_SELECT;
+		if (f == 761) b = PH_SELECT | PH_R;                 /* quick load */
+		const unsigned a0 = rig.ahead_frames;
+		rig.game_frame(b);
+		if (f >= 302 && f < 338 && rig.ahead_frames != a0) (*ff_ahead)++;
+		if (f == 702 || f == 762) s.pl->wait_writer();
+		H.push_back(snes_host_machine_digest());
+	}
+	*ahead_frames = rig.ahead_frames;
+	*audio = rig.audio_out;
+	*line = s.pl->ahead_line();
+	s.end();
+	std::vector<uint8_t> b = read_bytes(root + "/snes/player.ini");
+	ini->assign(b.begin(), b.end());
+	return H;
+}
+
+static int run_ahead_test(const char *rom, const std::string &work)
+{
+	fprintf(stderr, "player_twin ahead: ROM %s\n", rom);
+	make_dirs(work);
+	unsigned a_off = 0, a_on = 0, a_auto = 0, a_heavy = 0, au_off = 0, au_on = 0, au_auto = 0, au_heavy = 0, ff_off = 0, ff_on = 0, ff_auto = 0, ff_heavy = 0;
+	std::string l_off, l_on, l_auto, l_heavy, i_off, i_on, i_auto, i_heavy;
+	/* Off, On, Auto on a light game (2 ms a frame) and Auto on a heavy one (9 ms): the machine after every refresh must be the same in all */
+	std::vector<uint64_t> off = ahead_session(work + "/off", rom, 0, 2000, &a_off, &au_off, &ff_off, &l_off, &i_off);
+	std::vector<uint64_t> on = ahead_session(work + "/on", rom, 2, 2000, &a_on, &au_on, &ff_on, &l_on, &i_on);
+	std::vector<uint64_t> au = ahead_session(work + "/auto", rom, 1, 2000, &a_auto, &au_auto, &ff_auto, &l_auto, &i_auto);
+	std::vector<uint64_t> hv = ahead_session(work + "/heavy", rom, 1, 9000, &a_heavy, &au_heavy, &ff_heavy, &l_heavy, &i_heavy);
+	fprintf(stderr, "off: %s\non: %s\nauto: %s\nauto, heavy: %s\n", l_off.c_str(), l_on.c_str(), l_auto.c_str(), l_heavy.c_str());
+	fprintf(stderr, "frames run ahead: off %u, on %u, auto %u, auto on a heavy game %u; sound frames out %u / %u / %u / %u\n", a_off, a_on, a_auto, a_heavy, au_off, au_on, au_auto, au_heavy);
+	EXPECT(off.size() == 900 && on.size() == 900 && au.size() == 900 && hv.size() == 900);
+	size_t d_on = 0, d_au = 0, d_hv = 0;
+	for (size_t i = 0; i < off.size() && i < on.size() && i < au.size() && i < hv.size(); i++) { if (off[i] != on[i]) d_on++; if (off[i] != au[i]) d_au++; if (off[i] != hv[i]) d_hv++; }
+	fprintf(stderr, "refreshes whose machine differs from Off: on %zu, auto %zu, auto heavy %zu\n", d_on, d_au, d_hv);
+	EXPECT(d_on == 0);                                      /* the machine is the same after every refresh, through fast forward, rewind and a state load */
+	EXPECT(d_au == 0);
+	EXPECT(d_hv == 0);
+	EXPECT(au_off == au_on && au_off == au_auto && au_off == au_heavy);      /* and so is the amount of sound */
+	EXPECT(a_off == 0);
+	EXPECT(a_on > 700);                                     /* every normal frame (not the fast forward and rewind ones) */
+	EXPECT(ff_on == 0 && ff_auto == 0);                     /* never under fast forward */
+	EXPECT(a_auto > 400 && a_auto < a_on);                  /* Auto: after it has seen what the game costs, and again after each fast forward / rewind */
+	EXPECT(a_heavy == 0);                                   /* Auto leaves a heavy game alone */
+	/* a launch's override is for the session it came with: player.ini keeps the player's own choice */
+	EXPECT(i_on.find("quick_response=2") == std::string::npos);
+	{
+		/* the row: Speed page, Off / Auto / On, Auto by default; a change is kept */
+		Sess s(work + "/row/shots");
+		EXPECT(s.start(work + "/row", "snes", rom, ""));
+		if (s.pl) {
+			EXPECT(s.pl->quick() == 1);
+			EXPECT(s.pl->menu().value(snesp::SnesPlayer::ROW_QUICK) == 1);
+			s.pl->on_change(snesp::SnesPlayer::ROW_QUICK, 0);
+			EXPECT(s.pl->quick() == 0 && !s.pl->ahead().want());
+			s.rig.run(3);
+		}
+		s.end();
+		std::vector<uint8_t> b = read_bytes(work + "/row/snes/player.ini");
+		EXPECT(std::string(b.begin(), b.end()).find("quick_response=0") != std::string::npos);
+	}
+	/* the picture side (the hand-over's drawing thread): the player forwards it to the governor; a saturated picture side holds Auto off, a quiet one lets it start */
+	{
+		Sess s(work + "/qpic/shots");
+		EXPECT(s.start(work + "/qpic", "snes", rom, "ovr.quick_response=1\n"));
+		if (s.pl) {
+			Rig &rig = s.rig;
+			rig.emu_cost_us = 3000;
+			for (int i = 0; i < 300; i++) { rig.game_frame(0); s.pl->ahead_picture(17500, 0); }       /* xBRZ saturating the drawing thread */
+			EXPECT(!s.pl->ahead().on() && s.pl->ahead().picture_us() > 16000);
+			EXPECT(s.pl->ahead_line().find("pic_ms=") != std::string::npos);
+			s.pl->ahead_picture_reset();                                                              /* an Image quality change */
+			EXPECT(s.pl->ahead().picture_us() == 0);
+			for (int i = 0; i < 700; i++) { rig.game_frame(0); s.pl->ahead_picture(5000, 0); }
+			EXPECT(s.pl->ahead().on());
+			/* the Super FX chip slowed down (main.cpp's chip pacing): Quick response holds off */
+			s.pl->set_ahead_hold(true);
+			rig.game_frame(0);
+			EXPECT(!s.pl->ahead().want());
+			s.pl->set_ahead_hold(false);
+		}
+	}
+	fprintf(stderr, "player_twin ahead: %d checks, %d failed\n", g_checks, g_fail);
+	return g_fail ? 1 : 0;
+}
+
 static int run_speed_test(const char *rom, const std::string &work)
 {
 	const std::string con = "snes";
@@ -1662,6 +1774,7 @@ int main(int argc, char **argv)
 {
 	if (argc >= 3 && !strcmp(argv[1], "costs")) return run_costs_test(argv[2]);
 	if (argc >= 4 && !strcmp(argv[1], "speed")) return run_speed_test(argv[2], argv[3]);
+	if (argc >= 4 && !strcmp(argv[1], "ahead")) return run_ahead_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "ra")) return run_ra_test(argv[2], argv[3]);
 	if (argc >= 4 && !strcmp(argv[1], "look")) return run_look_test(argv[2], argv[3]);
 	if (argc >= 3 && !strcmp(argv[1], "pal")) return run_pal_test(argv[2]);

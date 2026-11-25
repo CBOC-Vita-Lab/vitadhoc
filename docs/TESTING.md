@@ -111,6 +111,14 @@ next frame's picture, and answers a press one frame sooner (a small test cartrid
 later: 1 frame plain, 0 with run-ahead); and a state loaded at frame N then run M frames equals the run that was never interrupted (picture, sound,
 state, RAM, battery RAM of every frame; same machine, a reloaded ROM, a fresh machine; worker on and off).
 
+`snes-ahead` (default tier; `snes/twin/ahead_check.sh`, every ROM of `GATE_SNES_ROMS` when set, else its own cartridges only) is the same proof
+for the Super NES player's Quick response: per ROM a plain run and runs with every frame run ahead (single thread, APU and picture threads), and
+the sound, the work and battery RAM and the machine's digest after every frame must be the plain run's, every way back must give the machine
+saved (`--ahead-verify`), the picture shown must be the plain run's next frame (the wide view's too, against a plain run that leaves the same
+frame undrawn), and a small cartridge (`snes/twin/tests/make_latency_rom.py`) must show a press 1 frame after it plain and 0 with Quick
+response. Its own cartridges keep an SA-1 and a DSP-1 busy (`tests/make_chip_work_rom.py`): no free ROM uses them. `player_twin ahead` (in
+`snes-selftest`) runs it through the player (Off, On, Auto on a light and a heavy game through presses, fast forward, rewind, quick save and load).
+
 Game Boy Camera and Game Boy Printer: `gpsp/gbcore/tests/gbcam.c` (a hand-assembled cartridge drives the camera registers; pixels, capture time,
 banking, state, the frontend's crop and mirror, checked against answers worked out by hand) and `gbprinter.c` (packets, compression, checksum errors,
 multi-band strips, the strip pause, and the same stream through the core's serial port) run in `gpsp/gbcore/tests/run_accuracy.py` (host, sanitizers);

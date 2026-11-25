@@ -294,6 +294,9 @@ void RenderLine (uint8);
 void S9xComputeClipWindows (void);
 void S9xDisplayChar (uint16 *, uint8);
 void S9xGraphicsScreenResize (void);
+size_t S9xAheadObjSize (void);		// CBOC-Vita: run-ahead (ahead.cpp): the sprite tables, copied aside on their first rebuild
+void S9xAheadObjArm (uint8 *buf);
+bool8 S9xAheadObjRestore (uint8 *buf);
 // called automatically unless Settings.AutoDisplayMessages is false
 void S9xDisplayMessages (uint16 *, int, int, int, int);
 

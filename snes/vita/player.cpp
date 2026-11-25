@@ -406,6 +406,7 @@ void SnesPlayer::settings_load()
 	rewind_on_ = pl.get_int("rewind", 1) != 0;
 	rewind_len_ = pl.get_int("rewind_seconds", 60) <= 30 ? 0 : 1;
 	rewind_mb_ = clampi(pl.get_int("rewind_mb", 12), 4, 24);
+	quick_ = clampi(pl.get_int("quick_response", 1), 0, 2);       /* Auto: the governor starts it only while the game leaves the room (snes/README.md, "Quick response") */
 }
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -479,6 +480,7 @@ void SnesPlayer::apply_overrides()
 	if ((v = req_.override_int("pal_speed", -1)) >= 0) pal_mode_ = pk::pal_mode_clamp(v);
 	if (req_.overrides.count("pal_speed")) { std::string w = lower(req_.overrides.find("pal_speed")->second); if (w == "fast" || w == "60") pal_mode_ = pk::PAL_FAST; else if (w == "true" || w == "50") pal_mode_ = pk::PAL_TRUE; else if (w == "smooth") pal_mode_ = pk::PAL_SMOOTH; }
 	if ((v = req_.override_int("look_mode", -1)) >= 0) look_mode_ = clampi(v, 0, 2);
+	if ((v = req_.override_int("quick_response", -1)) >= 0) quick_ = clampi(v, 0, 2);
 	if (req_.overrides.count("look_mode")) { std::string w = lower(req_.overrides.find("look_mode")->second); if (w == "auto") look_mode_ = 0; else if (w == "full") look_mode_ = 1; else if (w == "light") look_mode_ = 2; }
 }
 
@@ -501,6 +503,7 @@ void SnesPlayer::sync_menu_values()
 	menu_.set_value(ROW_MULTITAP, ps_.multitap);
 	menu_.set_value(ROW_PIC_WIDE, ps_.wide);
 	menu_.set_value(ROW_STEADY, steady_ ? 1 : 0);
+	menu_.set_value(ROW_QUICK, quick_);
 	menu_.set_value(ROW_HANDOFF, handoff_ ? 1 : 0);
 	menu_.set_value(ROW_PALSPEED, pk::pal_row_of(pal_mode_));
 	menu_.set_value(ROW_SPD_FF, ff_speed_);
@@ -732,6 +735,13 @@ StartResult SnesPlayer::start(int argc, char **argv, const std::string &root, bo
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
 		                   "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
 		                   palv, pk::pal_row_of(pk::PAL_SMOOTH));
+		{
+			std::vector<std::string> qv;
+			qv.push_back("Off"); qv.push_back("Auto"); qv.push_back("On");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "Quick response",
+			                   "Shows what you press one frame sooner: the next frame is worked out ahead and shown. The game itself runs the same. Auto uses it while the game leaves time for it.",
+			                   qv, quick_);
+		}
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
 		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.",
 		                   onoff, 1);
@@ -807,7 +817,14 @@ bool SnesPlayer::input(const PadSample pads[MAX_PLAYERS], bool tapped, uint64_t 
 size_t SnesPlayer::SpeedGlue::state_size() { return snes_host_rewind_state_size(); }
 bool SnesPlayer::SpeedGlue::save_state(uint8_t *buf, size_t cap) { size_t len = 0; return snes_host_rewind_state_save_buf(buf, cap, &len) == 0 && len == cap; }
 bool SnesPlayer::SpeedGlue::load_state(const uint8_t *buf, size_t n) { p->srm_recheck_ = true; return snes_host_state_load_buf(buf, n) == 0; }
-void SnesPlayer::SpeedGlue::run_frame(bool render) { snes_host_set_render(render ? 1 : 0); snes_host_run_frame(); }
+void SnesPlayer::SpeedGlue::run_frame(bool render)
+{
+	snes_host_set_render(render ? 1 : 0);
+	/* Quick response: a drawn frame at normal speed is run ahead (the real frame undrawn, then the picture of the one after it) */
+	p->ahead_ran_ = false;
+	if (render && !p->speed_.busy() && p->ahead_.want()) { p->ahead_ran_ = snes_host_run_frame_ahead() == 0; return; }
+	snes_host_run_frame();
+}
 void SnesPlayer::SpeedGlue::clear_pads() { for (int i = 0; i < 5; i++) snes_host_set_pad(i, 0); }
 uint64_t SnesPlayer::SpeedGlue::now_us() { return p->pf_->now_us(); }
 void SnesPlayer::SpeedGlue::wake(void *self) { ((SpeedGlue *) self)->p->pf_->wake_writer(); }
@@ -832,6 +849,61 @@ void SnesPlayer::speed_start()
 	speed_.start(snes_host_is_pal() ? 50.0 : 60.0988, 4, speed_settings());
 	speed_.rewind().set_async(pf_->wake_writer(), &SpeedGlue::wake, &glue_);
 	logf("%s (state %u bytes, %d s, %d MB)\n", speed_.stats_line().c_str(), (unsigned) snes_host_state_size(), rewind_len_ ? 60 : 30, rewind_mb_);
+	ahead_.set_frame_us(snes_host_is_pal() && !pal_fast() ? 20000u : 16683u);       /* a PAL game at 50 Hz has a 50 Hz frame's time */
+	set_quick(quick_);
+}
+
+/* ---- Quick response (run-ahead) -------------------------------------------------------------------------------------------- */
+
+void SnesPlayer::ahead_update_blocked()
+{
+	/* never in a linked game (two machines in lockstep), under fast forward or rewind, while steady pacing shows every second frame,
+	 * while the Super FX chip is slowed to keep the game at full speed, or with a cartridge the light snapshot does not cover */
+	ahead_.set_blocked(linked() || speed_.busy() || pacer_.mode() == PACE_HALF || ahead_hold_ || !snes_host_ahead_possible());
+}
+
+void SnesPlayer::set_quick(int mode)
+{
+	quick_ = clampi(mode, 0, 2);
+	ahead_.set_mode(quick_);
+	ahead_update_blocked();
+	const char *why = snes_host_ahead_why();
+	logf("quick response: %s%s%s%s\n", quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", *why ? " (not for this game: " : "", why, *why ? ")" : "");
+}
+
+void SnesPlayer::ahead_cost(uint32_t emu_us)
+{
+	ahead_update_blocked();
+	const bool was = ahead_.on();
+	ahead_.add(emu_us, ahead_ran_);
+	if (ahead_.on() != was)
+		logf("quick response: %s (a frame costs %.1f ms plain, %.1f ms run ahead)\n", ahead_.on() ? "started" : "stopped", ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0);
+}
+
+void SnesPlayer::ahead_picture(uint32_t draw_us, uint32_t missed)
+{
+	ahead_update_blocked();
+	const bool was = ahead_.on();
+	ahead_.add_picture(draw_us, missed);
+	if (was && !ahead_.on())
+		logf("quick response: stopped (the picture side ran late: drawing %.1f ms a picture, %u refreshes missed)\n", ahead_.picture_us() / 1000.0, missed);
+}
+
+std::string SnesPlayer::ahead_line()
+{
+	uint64_t st[8];
+	snes_host_ahead_stat(st);
+	/* the save and the way back, per frame run ahead since the last line (the emulating thread's time) */
+	const uint64_t nf = st[0] - ahead_st0_[0];
+	const double save_ms = nf ? (st[6] - ahead_st0_[1]) / 1e6 / nf : 0.0, back_ms = nf ? (st[7] - ahead_st0_[2]) / 1e6 / nf : 0.0;
+	ahead_st0_[0] = st[0]; ahead_st0_[1] = st[6]; ahead_st0_[2] = st[7];
+	std::string s = strf("ahead: mode=%s on=%d frames=%u/%u plain_ms=%.2f ahead_ms=%.2f ratio=%.2f starts=%u stops=%u pic_ms=%.2f pic_stops=%u pic_miss=%u save_ms=%.3f back_ms=%.3f vram_back=%llu%s%s",
+	                     quick_ == 0 ? "off" : quick_ == 1 ? "auto" : "on", ahead_.want() ? 1 : 0, ahead_.frames_ahead(), ahead_.frames(),
+	                     ahead_.plain_us() / 1000.0, ahead_.ahead_us() / 1000.0, ahead_.ratio_x100() / 100.0, ahead_.starts(), ahead_.stops(), ahead_.picture_us() / 1000.0,
+	                     ahead_.picture_stops(), ahead_.picture_misses(), save_ms, back_ms, (unsigned long long) st[1],
+	                     snes_host_ahead_possible() ? "" : " not_for_this_game=", snes_host_ahead_possible() ? "" : snes_host_ahead_why());
+	ahead_.census_reset();
+	return s;
 }
 
 /* ---- RetroAchievements ----------------------------------------------------------------------------------------------------- */
@@ -1132,6 +1204,7 @@ void SnesPlayer::settings_queue_save()
 	pl.set_int("smooth_handoff", handoff_ ? 1 : 0);
 	pl.set_int("pal_speed", pal_mode_);
 	pl.set_int("look_mode", look_mode_);
+	pl.set_int("quick_response", quick_);
 	pl.set_int("ff_speed", ff_speed_);
 	pl.set_int("ff_sound", ff_sound_);
 	pl.set_int("ff_mode", ff_toggle_);
@@ -1150,11 +1223,13 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_PIC_SHAPE: ps_.shape = shape_to_pic(v); g_changed |= CH_SHAPE; break;
 	case ROW_PIC_QUALITY:
 		ps_.scaler = scaler_of(v); look_mode_ = 0; g_changed |= CH_SCALER; qsync_ = true;
+		ahead_.picture_reset();        /* another Image quality, another cost for the picture side */
 		/* Original is stored as sharp, so the next start does not read "no scaler + Smooth" (an old file) and move it to Auto */
 		if (v == IMGQ_ORIGINAL && ps_.quality != PIC_SHARP) { ps_.quality = PIC_SHARP; g_changed |= CH_QUALITY; }
 		break;
 	case ROW_FILTER:
 		ps_.quality = v ? PIC_SMOOTH : PIC_SHARP; g_changed |= CH_QUALITY;
+		ahead_.picture_reset();
 		/* as in the main app: Original draws sharp bilinear whatever is stored, so choosing bilinear there switches the quality to Auto */
 		if (v && imgq_of(ps_.scaler, look_mode_) == IMGQ_ORIGINAL) { ps_.scaler = SCALER_AUTO; look_mode_ = 0; g_changed |= CH_SCALER; }
 		qsync_ = true;
@@ -1184,7 +1259,8 @@ void SnesPlayer::on_change(int row, int v)
 	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; qsync_ = true; break;     /* no row any more: the launch file and the tests */
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
 	case ROW_HANDOFF: handoff_ = v != 0; break;
-	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); break;
+	case ROW_PALSPEED: pal_mode_ = pk::pal_mode_of(v); ahead_.set_frame_us(snes_host_is_pal() && !pal_fast() ? 20000u : 16683u); break;
+	case ROW_QUICK: set_quick(v); break;
 	case ROW_LOOK: look_mode_ = clampi(v, 0, 2); qsync_ = true; break;       /* no row any more: the launch file and the tests */
 	case ROW_SPD_FF: ff_speed_ = clampi(v, 0, FFSPD_COUNT - 1); speed_.apply(speed_settings()); break;
 	case ROW_SPD_SOUND: ff_sound_ = v < 0 ? 0 : v > 2 ? 2 : v; speed_.apply(speed_settings()); break;

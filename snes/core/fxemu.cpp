@@ -28,6 +28,13 @@ void S9xInitSuperFX (void)
 	memset((uint8 *) &GSU, 0, sizeof(struct FxRegs_s));
 }
 
+// CBOC-Vita: run-ahead (ahead.cpp) puts the cel hold back with the rest of the chip
+void S9xSuperFXAheadCopy (int32 *hold, uint8 *prev, int save)
+{
+	if (save) { *hold = s_celHold; *prev = s_celPrev; }
+	else { s_celHold = *hold; s_celPrev = *prev; }
+}
+
 void S9xResetSuperFX (void)
 {
 	// FIXME: Snes9x only runs the SuperFX at the end of every line.

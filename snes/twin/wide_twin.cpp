@@ -198,6 +198,7 @@ int main(int argc, char **argv)
 	const char *rom = argv[1], *hashes = 0, *whashes = 0, *wav = 0, *dumpdir = 0, *pngdir = 0, *statef = 0, *mapf = 0, *xff = 0, *prefix = "f";
 	int frames = 300, wide = 0, state_every = 0;
 	bool summary = false;
+	int ahead_from = -1, skip_draw = -1;
 	int fuzz = 0, fuzz_level = 1, reload_every = 0, reset_at = -1, margin_cycle = 0;
 	unsigned long long vseq0 = 0;
 	bool fuzz_mid = false;
@@ -235,6 +236,8 @@ int main(int argc, char **argv)
 		else if (arg("--map")) mapf = argv[++i];
 		else if (arg("--state-hash") && i + 2 < argc) { state_every = atoi(argv[++i]); statef = argv[++i]; }
 		else if (!strcmp(argv[i], "--summary")) summary = true;
+		else if (arg("--skip-draw")) skip_draw = atoi(argv[++i]);   /* test: this frame is not drawn (the frame before Quick response's first one is not either) */
+		else if (arg("--ahead")) ahead_from = atoi(argv[++i]);   /* test: from frame N on every frame is run ahead (Quick response): the pictures are the next frame's */
 		else if (!strcmp(argv[i], "--wide-split")) split_mode = true;
 		else if (arg("--fuzz")) { fuzz = atoi(argv[++i]); fuzz_level = fuzz >= 1000 ? 2 : 1; wide_fuzz_seed((unsigned) fuzz); }   /* test: random register / VRAM / CGRAM / OAM writes between frames (seed; 1000 and up: nearly every frame) */
 		else if (!strcmp(argv[i], "--fuzz-mid")) fuzz_mid = true;   /* test: the --fuzz writes also come between lines of a frame */
@@ -452,7 +455,9 @@ int main(int argc, char **argv)
 		for (auto &pk : pokes) snes_host_poke_wram(pk.first, pk.second);
 		if (fuzz) wide_fuzz_frame(fuzz_level);
 		snes_host_set_pad(0, pad);
-		snes_host_run_frame();
+		snes_host_set_render(f != skip_draw);
+		if (ahead_from >= 0 && f >= ahead_from) snes_host_run_frame_ahead();
+		else snes_host_run_frame();
 		if (save_state && f == save_at) {
 			std::vector<uint8_t> sb(snes_host_state_size() + 4096);
 			size_t len = 0;

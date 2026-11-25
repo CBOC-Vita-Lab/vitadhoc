@@ -1095,3 +1095,12 @@ uint8 DSP3GetByte (uint16 address)
 
 	return (uint8) DSP3.SR;
 }
+
+// CBOC-Vita: run-ahead (ahead.cpp): the command state machine is a function pointer
+void *S9xDSP3AheadState (void *set)
+{
+	void *was = (void *) SetDSP3;
+	if (set)
+		SetDSP3 = (void (*) (void)) set;
+	return was;
+}

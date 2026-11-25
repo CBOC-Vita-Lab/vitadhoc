@@ -41,6 +41,24 @@ int snes_host_multitap(void);
 
 /* Run until the next vertical blank (one frame). */
 void snes_host_run_frame(void);
+/* Run-ahead by one frame ("Quick response"): runs ONE real frame without drawing it (its sound is kept), saves the machine in
+ * memory, runs the next frame with the same buttons drawn and silent, and goes back to the saved machine, so the picture that
+ * snes_host_video / snes_host_video_nowait give is the next frame's and the game itself runs exactly as with snes_host_run_frame
+ * (checked by snes/twin/ahead_check.sh). The save is the core's light one (core/ahead.cpp): no reset, the picture thread does not
+ * wait and keeps its video memory, the tile caches lose only the tiles the look-ahead frame changed. Returns 0 when it ran ahead,
+ * 1 when it ran a plain frame instead (the render flag is off, or snes_host_ahead_possible() = 0), 2 when the way back failed
+ * (cannot happen; run-ahead then stays off for this game). Battery RAM and the chips' own memory are part of the machine. */
+int snes_host_run_frame_ahead(void);
+int snes_host_ahead_possible(void);         /* a game is loaded, its cartridge can be run ahead, no way back has failed */
+const char *snes_host_ahead_why(void);      /* why not ("" when it can) */
+int snes_host_ahead_debug_tail(void);       /* tests: only the look-ahead frame and the way back (the machine must not change) */
+void snes_host_ahead_verify(int on);        /* tests: every way back compares the machine with the one saved (snes_host_ahead_stat [4], [5]) */
+/* [0] frames run ahead, [1] blocks of 32 bytes of video RAM put back, [2] look-ahead frames that rebuilt the sprite tables, [3] bytes
+ * a save copies (without the sound side), [4] ways back verified, [5] of them that differed (must stay 0), [6] [7] ns spent saving and
+ * going back (the emulating thread's wall time; with the APU thread the sound side's copy is that thread's) */
+void snes_host_ahead_stat(uint64_t out[8]);
+/* tests: the machine as a number (Snes9x's saved state but one drawing flag, the pads' state, the sprite tables' flags) */
+uint64_t snes_host_machine_digest(void);
 void snes_host_reset(void);
 
 /* Last finished frame: RGB565, pitch in bytes. Valid until the next run_frame. */

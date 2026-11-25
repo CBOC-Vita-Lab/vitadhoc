@@ -267,14 +267,18 @@ bench pair. The log has a `handoff:` line every second (gate step `census`).
 ## Quick response
 
 Settings > Gameplay > Quick response (Off / Auto / On; `config.ini` `quick_response`; per game: Settings > Quick response (this game), `games/<ROM>.ini`
-`quick_response`), for Game Boy, Game Boy Color, NES and WonderSwan, and the same row in the Sega player. A game reads the buttons and shows their
+`quick_response`), for Game Boy, Game Boy Color, NES and WonderSwan, and the same row in the Sega and Super NES players (Speed page; `player.ini`
+`quick_response`). A game reads the buttons and shows their
 effect a frame later; with Quick response the app works the next frame out ahead and shows that one: the real frame runs without being drawn (its sound
 goes out), the machine is saved, the next frame runs drawn but silent with the same buttons, and the machine goes back to the saved one. The game runs
 exactly as without it (sound, memory, saved state and battery file identical on every test game, PC build), so states, rewind, cheats and saves are
 unaffected; a button press shows one frame sooner (test cartridges: Game Boy 2 frames to 1, NES 1 to 0, WonderSwan 3 to 2). Auto (the default) starts it only
 while the frames are cheap enough for the second one (the projected cost is at most half a frame; it stops over 70 % or after 3 late frames in 120) and
 needs Smooth hand-over; On forces it and can drop frames in a heavy game. It is off in every link session, online, in local two-player play, in fast
-forward, in rewind, in Steady pacing's half mode and while a menu is open. The log has an `ahead:` line every second. Not offered for Game Boy Advance
+forward, in rewind, in Steady pacing's half mode and while a menu is open. The log has an `ahead:` line every second. The Super NES player saves the
+machine with a light copy of its own in memory (not Snes9x's state load, which resets the machine and makes the picture thread redo its whole video
+memory): the save and the way back cost 0.02 to 0.08 ms on the PC build; Auto there holds off while a Super FX game runs its chip slowed, and SPC7110,
+S-RTC, ST011 / ST018, BS-X and Sufami Turbo cartridges run without it (snes/README.md, "Quick response"). Not offered for Game Boy Advance
 (Known Issues).
 
 ## The look governor

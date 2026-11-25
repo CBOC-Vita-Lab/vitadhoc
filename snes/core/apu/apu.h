@@ -35,6 +35,8 @@ void S9xAPUTimingSetSpeedup (int);
 void S9xAPULoadState (uint8 *);
 void S9xAPULoadBlarggState(uint8 *oldblock);
 void S9xAPUSaveState (uint8 *);
+void S9xAPUAheadSave (void);		// CBOC-Vita: run-ahead (ahead.cpp): the sound side, in the APU thread's stream when it is on
+void S9xAPUAheadRestore (void);
 void S9xDumpSPCSnapshot (void);
 bool8 S9xSPCDump (const char *);
 

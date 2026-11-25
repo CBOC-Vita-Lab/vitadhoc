@@ -237,6 +237,11 @@ if [ -x "$PT" ]; then
 		|| { grep -v '^Map_' $T/sp.txt | tail -20; bad "rewind, fast forward, patch (player_twin speed)"; }
 	"$PT" ra $T/sp.sfc $T/raw >$T/ra.txt 2>&1 && ok "RetroAchievements: $(grep 'player_twin ra:' $T/ra.txt | tail -1 | sed 's/player_twin ra: //')" \
 		|| { grep -v '^Map_' $T/ra.txt | tail -20; bad "RetroAchievements (player_twin ra)"; }
+	# Quick response through the player: Off / On / Auto light / Auto heavy give the same machine after every refresh (presses, fast
+	# forward, rewind, a quick save and load), never under fast forward, Auto leaves a heavy game alone, the row and player.ini, the picture side
+	mkdir -p $T/ahw
+	"$PT" ahead $T/sp.sfc $T/ahw >$T/ah.txt 2>&1 && ok "Quick response in the player: $(grep 'player_twin ahead:' $T/ah.txt | tail -1 | sed 's/player_twin ahead: //')" \
+		|| { grep -v '^Map_' $T/ah.txt | tail -20; bad "Quick response (player_twin ahead)"; }
 fi
 
 # frame hand-over ("Smooth hand-over", playerkit pk_handoff through snes/vita/pipe.cpp): the setting row (default on, kept), and the

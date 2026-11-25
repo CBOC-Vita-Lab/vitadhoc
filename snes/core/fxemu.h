@@ -27,6 +27,7 @@ extern struct FxInfo_s	SuperFX;
 
 void S9xInitSuperFX (void);
 void S9xResetSuperFX (void);
+void S9xSuperFXAheadCopy (int32 *hold, uint8 *prev, int save);	// CBOC-Vita: run-ahead (ahead.cpp)
 void S9xSuperFXExec (void);
 extern uint64 (*S9xSuperFXClock) (void);
 extern uint64 S9xSuperFXTime;

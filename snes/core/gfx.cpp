@@ -653,8 +653,42 @@ extern "C" void s9x_render_setup (void) { S9xInitTileRenderer(); }
 // the margin thread's copy (suffix _w): only the wide view's passes of a batch, from the same snapshot the PPU thread draws the picture from
 extern "C" void s9x_wide_batch (const S9xRenderJob *job) { S9xWideBatch(*job); }
 
+// CBOC-Vita: run-ahead (ahead.cpp). The sprite tables SetupOBJ builds give the range and time over flags a game can read, so they
+// belong to the machine; most frames do not rebuild them, so they are copied aside only when the look-ahead frame first does.
+uint8 *g_s9x_ahead_obj = NULL;		// armed: the tables go here before the first rebuild (then disarmed)
+bool8 g_s9x_ahead_obj_kept = FALSE;
+
+static void ahead_obj_copy (uint8 *b, bool save)
+{
+	struct { void *p; size_t n; } part[] = { { GFX.OBJLines, sizeof(GFX.OBJLines) }, { GFX.OBJWidths, sizeof(GFX.OBJWidths) },
+		{ GFX.OBJVisibleTiles, sizeof(GFX.OBJVisibleTiles) } };
+	for (int i = 0; i < 3; i++)
+	{
+		if (save) memcpy(b, part[i].p, part[i].n); else memcpy(part[i].p, b, part[i].n);
+		b += part[i].n;
+	}
+}
+
+size_t S9xAheadObjSize (void) { return sizeof(GFX.OBJLines) + sizeof(GFX.OBJWidths) + sizeof(GFX.OBJVisibleTiles); }
+void S9xAheadObjArm (uint8 *buf) { g_s9x_ahead_obj = buf; g_s9x_ahead_obj_kept = FALSE; }
+bool8 S9xAheadObjRestore (uint8 *buf)
+{
+	g_s9x_ahead_obj = NULL;
+	if (!g_s9x_ahead_obj_kept)
+		return FALSE;
+	g_s9x_ahead_obj_kept = FALSE;
+	ahead_obj_copy(buf, false);
+	return TRUE;
+}
+
 static void SetupOBJ (void)
 {
+	if (g_s9x_ahead_obj)
+	{
+		ahead_obj_copy(g_s9x_ahead_obj, true);
+		g_s9x_ahead_obj = NULL;
+		g_s9x_ahead_obj_kept = TRUE;
+	}
 	g_s9x_obj_ran = TRUE;
 	int	SmallWidth, SmallHeight, LargeWidth, LargeHeight;
 

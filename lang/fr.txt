@@ -1,0 +1,1628 @@
+app.a_newer_vitadhoc_is_out	Une version plus récente de VitAdhoc est disponible
+app.a_path_too_long	un chemin trop long
+app.a_save_was_found_but_could	Une sauvegarde a été trouvée mais n'a pas pu être copiée
+app.a_tap_opens_the_menu	Un toucher ouvre le menu
+app.aims_and_fires_zapper	Vise et tire (Zapper)
+app.auto_eased	Auto (%s, adouci)
+app.checking_cartridge	Vérification de la cartouche
+app.could_not_be_read	n'a pas pu être lu
+app.could_not_check_for_updates	Impossible de chercher des mises à jour
+app.end_the_network_game_first	Termine d'abord la partie en réseau.
+app.fps	%u.%u i/s (%u)
+app.it_is_damaged_or_packed_in	Il est endommagé ou compressé d'une façon que l'app ne sait pas lire.
+app.it_is_encrypted_or_packed_in	Il est chiffré ou compressé d'une façon que l'app ne sait pas lire.
+app.its_block_is_over_mb_too	Son bloc dépasse %lu Mo : trop gros à décompresser.
+app.nearby_isn_t_available_for_games	« À proximité » n'est pas disponible pour les jeux %s
+app.no_game_this_app_can_start	Aucun jeu lisible par l'app n'y a été trouvé.
+app.not_a_patch	n'est pas un patch
+app.not_enough_memory	mémoire insuffisante
+app.nothing	Rien
+app.patched_with	Patché avec %s
+app.press_any_button_for_the_game	Appuie sur un bouton pour la liste des jeux
+app.reading_rom	Lecture de la ROM
+app.save	Sauvegarde
+app.save_from_retroarch_kept_in_sync	Sauvegarde de RetroArch : synchronisée
+app.save_imported_from	Sauvegarde importée de %s
+app.stop_mystery_gift_first	Arrête d'abord Cadeau Mystère.
+app.stop_the_two_player_game_on	Arrête d'abord la partie à deux sur cette Vita.
+app.the_7z_file_could_not_be	Le fichier .7z n'a pas pu être ouvert.
+app.the_game_could_not_be_read	le jeu n'a pas pu être lu
+app.the_game_in_it_could_not	Le jeu qu'il contient n'a pas pu être décompressé.
+app.the_game_in_it_is_damaged	Le jeu qu'il contient est endommagé (somme de contrôle).
+app.the_game_in_it_is_for	Le jeu qu'il contient est pour une autre console.
+app.the_game_in_it_is_over	Le jeu qu'il contient dépasse %lu Mo : trop gros à décompresser.
+app.the_patched_game	le jeu patché
+app.the_path_is_too_long	Le chemin est trop long.
+app.the_zip_file_could_not_be	Le fichier zip n'a pas pu être ouvert.
+app.this_folder	ce dossier
+app.too_large	trop gros
+app.unpacking_game	Décompression du jeu
+app.vitadhoc_is_out_get_it_with	VitAdhoc %s est disponible : récupère-le avec CBOC Vita Installer ou sur GitHub
+app.vitadhoc_is_up_to_date	VitAdhoc est à jour
+app.was_not_found	%.180s est introuvable.
+browse.also_looked_in	Cherché aussi dans %s
+browse.also_looked_in_and_more	Cherché aussi dans %s et %d autres
+browse.copy_your_files_into_this_folder	Copie tes fichiers .%s dans ce dossier de la carte mémoire :
+browse.no_games_yet	Aucun jeu %s pour l'instant
+browse.other_game_many	{tri} affiche tes %d autres jeux
+browse.other_game_one	{tri} affiche ton autre jeu (%d)
+btntest.button_test	TEST DES BOUTONS
+btntest.buttons	BOUTONS
+btntest.chord	 (combo)
+btntest.front_touch	ÉCRAN TACTILE
+btntest.left_stick_moves_like_the_d	Stick gauche : comme la croix
+btntest.not_set	non défini
+btntest.right_left_rewind_right_fast_forward	Droite : gauche Retour arrière, droite Avance rapide
+btntest.sticks_and_touch	STICKS ET TACTILE
+cheats.6_or_8_letters_game_genie	6 ou 8 lettres (Game Genie) ou AAAA:VV (RAM). + entre les codes.
+cheats.8_digits_gameshark_or_3_3	8 chiffres (GameShark) ou 3-3-3 chiffres (Game Genie). + entre les codes.
+cheats.8_digits_space_4_digits_codebreaker	8 chiffres, espace, 4 chiffres (CodeBreaker) ou 8 chiffres (GameShark, Action Replay). + entre les lignes.
+cheats.a_built_in_cheat_cannot_be	Un code intégré ne peut pas être supprimé. Désactive-le plutôt.
+cheats.a_number	%s (un nombre)
+cheats.a_number_unless_named	un nombre, sauf si nommé
+cheats.a_number_you_type	Un nombre que tu saisis
+cheats.aaaa_vv_or_aaaa_vv_cc	AAAA:VV ou AAAA:VV:CC : une adresse, un octet et un octet de comparaison, en hexa.
+cheats.aaaaa_vv_a_ram_address_and	AAAAA:VV : une adresse RAM et un octet, en hexa. + entre les codes.
+cheats.aaaaaa_vvvv_an_address_and_a	AAAAAA:VVVV : une adresse et un mot, en hexa. + entre les codes.
+cheats.action_replay	Action Replay
+cheats.acts_while_the_cheat_button_is	Agit tant que le bouton de triche est maintenu.
+cheats.add_a_cheat	AJOUTER UN CODE
+cheats.added_and_switched_on	Ajouté et activé
+cheats.an_enable_code_not_needed_on	Un code d'activation. Inutile sur cette console ; sans effet s'il est actif.
+cheats.available	%d disponibles
+cheats.built_in_cheats_cannot_be_deleted	Les codes intégrés ne peuvent qu'être désactivés.
+cheats.changes_the_game_s_program	Modifie le programme du jeu.
+cheats.cheat	Code %d
+cheats.cheat_added_and_on	Code ajouté et activé : %s
+cheats.cheat_code	Code de triche
+cheats.cheat_name	Nom du code
+cheats.cheats	CODES DE TRICHE
+cheats.cheats_are_off_in_hardcore_mode	Les codes sont désactivés en mode Hardcore (RetroAchievements).
+cheats.cheats_are_off_while_linked_to	Les codes sont désactivés pendant la liaison avec une autre console.
+cheats.cheats_are_off_while_playing_over	Les codes sont désactivés en jeu par liaison.
+cheats.choose_a_result_to_make_it	Choisis un résultat pour en faire un code.
+cheats.codebreaker	CodeBreaker
+cheats.codes	Codes %s : %s
+cheats.compared_with_the_memory_at_the	Comparé à la mémoire de la dernière étape.
+cheats.del	Suppr.
+cheats.delete_x_delete_o_keep	Supprimer « %s » ?      {x} supprimer     {o} garder
+cheats.deleted	Supprimé
+cheats.encrypted_add_this_game_s_master	Chiffré : ajoute d'abord le code maître du jeu.
+cheats.find_a_cheat	Chercher un code
+cheats.found_at	Trouvé à %s
+cheats.found_by_the_game_s_title	Trouvés d'après le titre du jeu : ces codes sont peut-être d'une autre région.
+cheats.game_genie	Game Genie
+cheats.gameshark	GameShark
+cheats.incomplete_replace_xx_with_the_value	Incomplet : remplace ?? / XX par la valeur voulue.
+cheats.keeps_the_places_that_match_the	Garde les emplacements qui correspondent au nombre saisi.
+cheats.line	Ligne
+cheats.line_many	%s, %d lignes
+cheats.line_one	%s, %d ligne
+cheats.look_at_the_game_s_memory	Regarder la mémoire du jeu maintenant
+cheats.makes_a_cheat_that_keeps_this	Crée un code qui garde cette valeur.
+cheats.most_counters_are_1_byte_money	Les compteurs font souvent 1 octet ; argent et scores 2. « Toute adresse » regarde aussi des endroits impairs.
+cheats.most_counters_are_1_byte_money_2	Les compteurs font souvent 1 octet ; argent et scores 2.
+cheats.narrow_it_down_to_50_or	Affine jusqu'à 50 ou moins pour les voir.
+cheats.new_search	Nouvelle recherche
+cheats.no_cheat_s_name_contains	Aucun nom de code ne contient « %s ».
+cheats.no_cheats_for_this_game_yet	Pas encore de code pour ce jeu.
+cheats.no_keyboard_the_cheat_gets_a	Pas de clavier : le code reçoit un numéro pour nom.
+cheats.no_keyboard_use_the_keys	Pas de clavier : utilise les touches.
+cheats.no_name	(sans nom)
+cheats.no_results_start_a_new_search	Aucun résultat. Lance une nouvelle recherche
+cheats.no_room_for_more_cheats	Plus de place pour d'autres codes.
+cheats.no_such_cheat	Ce code n'existe pas.
+cheats.not_a_whole_code_yet	code incomplet
+cheats.nothing_matched_start_a_new_search	Rien ne correspond : lance une nouvelle recherche.
+cheats.of	« %s » : %d sur %d
+cheats.on	%d actifs
+cheats.on_in_all	%d actifs  -  %d en tout
+cheats.raw	Brut
+cheats.ready_to_save	prêt à enregistrer
+cheats.recognised_not_supported	reconnu, non pris en charge
+cheats.remember_the_memory_play_on_then	Mémorise la mémoire, joue, puis affine.
+cheats.results	Résultats
+cheats.save	Enregistrer
+cheats.search_memory	Chercher en mémoire
+cheats.search_memory_is_not_available_in	La recherche en mémoire n'est pas disponible à deux joueurs
+cheats.search_started_places_play_on_then	Recherche lancée : %d emplacements. Joue, puis affine
+cheats.select_shows_the_whole_list_again	SELECT réaffiche toute la liste.
+cheats.since_the_last_step	Depuis la dernière étape
+cheats.size_of_the_number	Taille du nombre
+cheats.space	Espace
+cheats.start_again	Recommencer
+cheats.the_cheat_could_not_be_used	Le code n'a pas pu être utilisé.
+cheats.the_cheat_file_could_not_be	Le fichier de codes n'a pas pu être enregistré.
+cheats.the_code	le code
+cheats.the_code_is_too_long	Le code est trop long.
+cheats.the_dash_belongs_to_game_boy	Le tiret est réservé aux codes Game Genie de Game Boy.
+cheats.the_keyboard_is_not_available	Le clavier n'est pas disponible.
+cheats.the_search_could_not_start_not	La recherche n'a pas pu démarrer : mémoire insuffisante
+cheats.there_is_no_memory_to_search	Aucune mémoire à fouiller dans ce jeu
+cheats.there_is_no_search_to_narrow	Aucune recherche à affiner
+cheats.this_code	ce code
+cheats.this_code_cannot_be_run_by	Ce code %s ne peut pas être exécuté par cet émulateur.
+cheats.this_is_not_a_code_for	Ce n'est pas un code pour cette console.
+cheats.this_kind_of_code_cannot_be	Ce type de code n'est pas utilisable ici.
+cheats.this_place_cannot_be_made_into	Cet emplacement ne peut pas devenir un code ici
+cheats.throw_this_code_away_x_discard	Jeter ce code ?      {x} jeter     {o} continuer
+cheats.type_a_whole_number_from_0	Saisis un entier de 0 à %u (ou 0x et hexa)
+cheats.type_the_code_first	Saisis d'abord le code.
+cheats.unknown	Inconnu
+cover.a_cover_you_pick_always_wins	Une jaquette choisie par toi prime toujours sur l'image téléchargée. Un PNG ou JPG nommé comme le jeu dans covers/ est aussi utilisé.
+cover.automatic_a_cover_is_downloaded_when	Automatique. Jaquette téléchargée si Wi-Fi.
+cover.automatic_download	Auto (téléchargée)
+cover.choose_a_picture	Choisir une image...
+cover.cover_picture	JAQUETTE
+cover.cover_set_it_shows_at_once	Jaquette définie. Visible tout de suite.
+cover.in_use	utilisée
+cover.it_is_automatic_already	C'est déjà automatique.
+cover.no_pictures_found	Aucune image trouvée.
+cover.no_preview	Pas d'aperçu
+cover.no_screenshot_of_this_game_yet	Pas encore de capture de ce jeu.
+cover.not_enough_memory_for_that_picture	Mémoire insuffisante pour cette image.
+cover.now_automatic	Maintenant : automatique
+cover.now_your_own_picture	Maintenant : ton image
+cover.of	%d sur %d
+cover.shot	%.*s%d.shot
+cover.take_a_screenshot_or_copy_a	Fais une capture, ou copie un PNG ou JPG dans ux0:data/GBAdhoc/covers/ depuis un ordinateur.
+cover.that_did_not_work	Ça n'a pas marché.
+cover.that_game_has_no_name_to	Ce jeu n'a pas de nom sous lequel garder une image.
+cover.that_game_s_name_is_too	Le nom de ce jeu est trop long.
+cover.that_is_not_a_png_or	Ce n'est pas une image PNG ou JPG.
+cover.that_picture_could_not_be_opened	Cette image n'a pas pu être ouverte.
+cover.that_picture_could_not_be_read	Cette image n'a pas pu être lue.
+cover.that_picture_is_too_big_8	Cette image est trop grande (8 mégapixels max).
+cover.the_downloaded_cover_is_back	La jaquette téléchargée est de retour.
+cover.the_old_cover_could_not_be	Ancienne jaquette non mise de côté.
+cover.the_picture_could_not_be_saved	L'image n'a pas pu être enregistrée. Vérifie que la carte a de la place.
+cover.the_picture_could_not_be_saved_2	L'image n'a pas pu être enregistrée.
+cover.use_a_screenshot_of_the_game	Utiliser une capture du jeu
+cover.use_this_as_the_cover_for	Utiliser ceci comme jaquette de %s ?
+ctl.at_most_4_buttons	4 boutons maximum
+ctl.crash_self_test	Autotest de plantage
+ctl.fast_forward	Avance rapide
+ctl.mystery_gift	Cadeau Mystère
+ctl.not_available_in_this_build	indisponible dans cette version
+ctl.pause_screen	Écran de pause
+ctl.quick_load	Chargement rapide
+ctl.quick_save	Sauvegarde rapide
+ctl.rewind	Retour arrière
+ctl.screenshot	Capture d'écran
+ctl.start_select_is_reserved_for_the	START+SELECT est réservé au menu
+ctl.that_button_cannot_be_bound	ce bouton ne peut pas être assigné
+ctl.this_one_takes_a_single_button	celui-ci prend un seul bouton
+ctl.turbo_a	Turbo A
+ctl.turbo_a_2	Turbo A (2)
+ctl.turbo_b	Turbo B
+ctl.turbo_b_2	Turbo B (2)
+ctl.video_preset	Préréglage vidéo
+hint.dpad_change_o_back	DPAD changer   {o} retour
+hint.dpad_letter_move_x_pad_sq	DPAD lettre, déplacer   {x} pavé   {sq} effacer   {tri} joindre   {o} retour
+hint.l_r_page_o_back	L/R page   {o} retour
+hint.o_back	{o} retour
+hint.o_cancel	{o} annuler
+hint.sq_save_r_undo_o_back	{sq} enreg.   R annuler   {o} retour
+hint.to_leave_hold_start_select_or	Pour quitter : maintiens Start + Select, ou un doigt sur cette ligne
+hint.tri_add_a_code_select_find	{tri} ajouter   SELECT chercher   START fouiller   {o} retour
+hint.up_down_scroll_l_r_page	HAUT/BAS défiler   L/R page   {o} retour
+hint.x_add_remove_sq_rename_tri	{x} ajouter/retirer   {sq} renommer   {tri} supprimer   {o} retour
+hint.x_back_o_back	{x} retour   {o} retour
+hint.x_change_dpad_move_change_o	{x} changer   DPAD déplacer/changer   {o} retour
+hint.x_change_o_back	{x} changer   {o} retour
+hint.x_change_tri_default_o_back	{x} changer   {tri} défaut   {o} retour
+hint.x_check_now_dpad_change_o	{x} vérifier   DPAD changer   {o} retour
+hint.x_choose_dpad_change_o_back	{x} choisir   DPAD changer   {o} retour
+hint.x_choose_l_r_page_o	{x} choisir   L/R page   {o} retour
+hint.x_choose_o_back	{x} choisir   {o} retour
+hint.x_export_dpad_move_choose_o	{x} exporter   DPAD déplacer/choisir   {o} retour
+hint.x_host_dpad_room_number_o	{x} héberger   DPAD n° de salon   {o} retour
+hint.x_host_o_back	{x} héberger   {o} retour
+hint.x_join_o_back	{x} rejoindre   {o} retour
+hint.x_load_sq_save_tri_delete	{x} charger   {sq} enreg.   {tri} suppr.   L verrou   R annuler   {o} retour
+hint.x_look_dpad_move_l_r	{x} voir   DPAD déplacer   L R page   {o} retour
+hint.x_name_it_tri_save_o	{x} nommer   {tri} enreg.   {o} retour
+hint.x_new_collection_o_back	{x} nouvelle collection   {o} retour
+hint.x_on_off_o_back	{x} oui/non     {o} retour
+hint.x_on_off_sq_all_off	{x} act./désact.     {sq} tout couper     {o} retour
+hint.x_on_off_tri_add_select	{x} act./désact.   {tri} ajouter   SELECT chercher   START fouiller   {o} retour
+hint.x_on_off_tri_add_sq	{x} act./désact.   {tri} ajouter   {sq} suppr.   SELECT chercher   START fouiller
+hint.x_open_and_join_o_back	{x} ouvrir/rejoindre   {o} retour
+hint.x_open_dpad_move_o_back	{x} ouvrir   DPAD déplacer   {o} retour
+hint.x_open_o_back_auto_fire	{x} ouvrir   {o} retour      tir auto pour A et B
+hint.x_rebind_sq_none_tri_default	{x} réassigner   {sq} aucun   {tri} défaut   {o} retour      vide = désactivé
+hint.x_reset_o_back_blank_disabled	{x} réinit.   {o} retour      vide = désactivé
+hint.x_retry_missing_dpad_move_o	{x} réessayer   DPAD déplacer   {o} retour
+hint.x_select_dpad_change_o_resume	{x} choisir   DPAD changer   {o} reprendre
+hint.x_select_dpad_move_o_back	{x} choisir   DPAD déplacer   {o} retour
+hint.x_select_o_back	{x} choisir   {o} retour
+hint.x_select_o_resume	{x} choisir     {o} reprendre
+hint.x_set_level_now_dpad_move	{x} régler   DPAD déplacer   {o} retour
+hint.x_start_o_back	{x} démarrer   {o} retour
+hint.x_stop_o_back_keeps_listening	{x} arrêter   {o} retour (reste à l'écoute)
+hint.x_the_steps_o_back	{x} les étapes   {o} retour
+hint.x_type_sq_delete_l_keyboard	{x} saisir   {sq} effacer   L clavier   SELECT nom   {tri} enreg.   {o} retour
+hint.x_type_sq_delete_tri_join	{x} saisir   {sq} effacer   {tri} joindre   {o} retour
+hint.x_use_it_o_back	{x} utiliser   {o} retour
+hint.x_which_connection_o_back	{x} quelle connexion ?   {o} retour
+home.1_game_matches_in_all_games	1 jeu correspond dans Tous les jeux
+home.a_retroarch_playlist_it_lists_games	Une liste RetroArch : elle énumère des jeux, on ne peut pas la modifier ici.
+home.all_games	Tous les jeux
+home.back	Retour
+home.battery_save	Sauvegarde
+home.cancel	Annuler
+home.checking	Vérification...
+home.checking_covers_of	Vérification des jaquettes : %d sur %d
+home.choose_another_console	Choisir une autre console
+home.clear	Effacer
+home.continue	Continuer
+home.copy_your_files_into_this_folder	Copie tes fichiers .%s dans ce dossier de la carte mémoire :
+home.cover	Jaquette
+home.delete	Supprimer
+home.delete_the_state_in_slot	Supprimer l'état de l'emplacement %d ?
+home.empty	Vide
+home.every_game_has_been_played	Tous les jeux %s ont été joués
+home.find	Chercher
+home.from_wikipedia	Source : Wikipédia
+home.games	Jeux
+home.games_match_in_all_games	%d jeux correspondent dans Tous les jeux
+home.keep	Garder
+home.lists	Listes
+home.load	Charger
+home.look_again	Revoir
+home.next	Suivant
+home.no_games_match	Aucun jeu ne correspond
+home.no_games_played_yet	Aucun jeu %s joué pour l'instant
+home.no_games_yet	Aucun jeu %s pour l'instant
+home.no_save_yet	Pas encore de sauvegarde
+home.no_starred_games_yet	Aucun jeu %s favori pour l'instant
+home.nothing_of_on	Rien de %s sur %s
+home.of	%d sur %d
+home.patched_bps	Patché (BPS)
+home.patched_ips	Patché (IPS)
+home.patched_ups	Patché (UPS)
+home.play	Jouer
+home.played	Joué %s, %s
+home.played_2	Joué %s
+home.press_select_and_square_on_a	Appuie sur select et carré sur un jeu pour l'ajouter.
+home.press_square_on_a_game_to	Appuie sur carré sur un jeu pour le favoriser.
+home.recent	Récents
+home.save_state	%d état
+home.save_states	%d états
+home.save_states_2	États
+home.save_states_of	États   %d-%d sur %d
+home.saved	Enregistré
+home.settings	Paramètres
+home.slot	Empl. %d
+home.star	Favori
+home.starred	Favoris
+home.start_over	Recommencer
+home.step	Étape
+home.the_games_you_have_not_started	Les jeux que tu n'as pas lancés apparaissent ici.
+home.the_games_you_play_show_up	Tes jeux joués apparaissent ici, le dernier en tête.
+home.the_games_you_play_show_up_2	Tes jeux joués apparaissent ici, le plus joué en tête.
+home.try_fewer_words_or_part_of	Essaie moins de mots, ou une partie de mot.
+home.views	Vues
+lib.games	Jeux
+lib.most_played	Les plus joués
+lib.not_played_yet	Pas encore joués
+lib.recent	Récents
+lib.starred	Favoris
+link.about_min	environ %u min
+link.about_s	environ %u s
+link.ad_hoc	Ad hoc
+link.another_game	un autre jeu
+link.both_games_carry_on_from_where	Les deux parties reprennent là où elles en sont.
+link.both_vitas_agree_where_to_stop	Les deux Vita s'accordent sur le point d'arrêt.
+link.checking	Vérification de %s...
+link.checking_the_game	Vérification du jeu...
+link.connecting	Connexion...
+link.connecting_through_the_relay	Connexion via le relais.
+link.connecting_to_the_other_vita	Connexion à l'autre Vita
+link.ending_the_link	Fin de la liaison...
+link.exchanging_saves	Échange des sauvegardes...
+link.finding_the_room	Recherche du salon...
+link.finding_your_friend	Recherche de ton ami...
+link.first_time_with_this_game_only	Seulement la première fois avec ce jeu. Annule pour arrêter.
+link.follow_the_vita_s_connection_screen	Suis l'écran de connexion de la Vita.
+link.game	Jeu %s
+link.good	Bon
+link.great	Excellent
+link.joining	Connexion à %s
+link.joining_by_wireless_adapter	Connexion à %s par Adaptateur sans fil
+link.kb	%u / %u Ko
+link.keeping_a_copy_of	Copie de %s en cours...
+link.left_first_time_only_cancel_to	%s restant. Seulement la première fois. Annule pour arrêter.
+link.link_cable	Câble Link
+link.link_cancelled	Liaison annulée.
+link.link_ended_game_saved	Liaison terminée. Partie sauvegardée.
+link.link_ended_your_own_game_is	Liaison terminée. Ton jeu est de retour.
+link.link_lost_the_other_vita_is	Liaison perdue : l'autre Vita a disparu. Rien n'a été sauvegardé.
+link.linking_with	Liaison avec %s
+link.mb	%u.%u / %u.%u Mo
+link.online	En ligne
+link.opening_the_room	Ouverture du salon...
+link.receiving	Réception
+link.relay	 (relais)
+link.room	Salon %d
+link.room_code	Code du salon  %s
+link.sending	Envoi
+link.sharing_where_you_are	Partage de ta position...
+link.slow	Lent
+link.starting_together	Démarrage ensemble...
+link.starting_two_players	Démarrage à deux joueurs...
+link.tell_your_friend_to_join_o	Dis à ton ami de rejoindre. O annule.
+link.the_game	le jeu
+link.the_game_could_not_be_reloaded	Le jeu n'a pas pu être rechargé après la liaison.
+link.the_game_is_kept_in_memory	Le jeu est gardé en mémoire, pas sur la carte mémoire.
+link.the_games_fell_out_of_step	Les jeux se sont désynchronisés. Liaison terminée, rien n'a été sauvegardé.
+link.the_link_could_not_start_and	La liaison n'a pas pu démarrer et le jeu a dû se fermer.
+link.the_link_did_not_start	La liaison n'a pas démarré.
+link.the_other_game	l'autre jeu
+link.the_other_vita	l'autre Vita
+link.the_other_vita_has_a_different	L'autre Vita a un jeu différent.
+link.the_room	le salon
+link.this_vita_went_to_sleep_so	Cette Vita s'est mise en veille, la liaison s'est donc terminée.
+link.two_players	Deux joueurs
+link.waiting	%s  %s  en attente
+link.waiting_for_the_other_vita	En attente de l'autre Vita...
+link.waiting_for_the_other_vita_in	En attente de l'autre Vita dans %s
+link.wireless_adapter	Adaptateur sans fil
+link.wireless_adapter_2	Adaptateur sans fil  %s%s
+link.your_game	ton jeu
+list.a_collection_needs_a_name	Une collection a besoin d'un nom
+list.added	Ajouté
+list.added_to	Ajouté à « %s »
+list.collection_name	Nom de la collection
+list.collections	COLLECTIONS
+list.collections_are_lists_of_your_own	Les collections sont tes propres listes, tous jeux confondus. Crées-en une pour y ranger ce jeu.
+list.could_not_save_the_collections	Impossible d'enregistrer les collections
+list.delete_x_delete_o_keep	Supprimer « %s » ?      {x} supprimer     {o} garder
+list.deleted	« %s » supprimée
+list.new_collection	Nouvelle collection
+list.no_room_for_another_collection	Plus de place pour une autre collection
+list.no_room_for_more_games	Plus de place pour d'autres jeux
+list.removed_from	Retiré de « %s »
+list.rename_collection	Renommer la collection
+list.renamed_to	Renommée « %s »
+list.the_collections_file_cannot_be_changed	Fichier des collections non modifiable sans risque
+list.the_keyboard_is_not_available	Le clavier n'est pas disponible
+list.there_is_one_with_that_name	Il en existe une avec ce nom
+local.a_tap_switch	un toucher : changer
+local.cannot_be_read	illisible
+local.controller_2	manette 2
+local.controller_2_sound	manette 2  (son)
+local.end_the_network_game_first	Termine d'abord la partie en réseau.
+local.pad_1	manette 1
+local.pad_2	manette 2
+local.partner_s_game	jeu du partenaire
+local.partner_s_game_playing	jeu du partenaire  (en cours)
+local.path_too_long	chemin trop long
+local.playing	< en cours
+local.playing_2	en cours >
+local.read_error	erreur de lecture
+local.right_stick_or	Stick droit ou
+local.right_stick_or_a_tap_the	Stick droit ou un toucher : l'autre jeu
+local.sound	< son
+local.sound_2	son >
+local.the_copy_did_not_read_back	la copie n'a pas été relue en entier
+local.the_partner_s_game_could_not	Le jeu du partenaire n'a pas pu être chargé.
+local.the_second_game_could_not_be	Le second jeu n'a pas pu être préparé pour ce jeu.
+local.this_console	cette console
+local.this_console_sound	cette console  (son)
+local.this_game_cannot_be_linked_on	Ce jeu ne peut pas être relié sur une seule console.
+local.touch_sound	toucher  (son)
+local.write_incomplete	écriture incomplète
+local.your_game	ton jeu
+local.your_game_playing	ton jeu  (en cours)
+menu.back_to_the_game	Retour au jeu
+menu.cheats	Codes de triche
+menu.cheats_2	Codes de triche : %s
+menu.cheats_are_off_while_linked	Les codes sont désactivés en liaison
+menu.close_vitadhoc	Fermer VitAdhoc
+menu.exit	Sortir
+menu.game_list	Liste des jeux
+menu.hosting	Hébergement
+menu.hosting_waiting_for_the_other_player	%s hébergé, en attente de l'autre joueur
+menu.leave_this_game_for_the_game	Quitter ce jeu pour la liste des jeux
+menu.link_up_over_wi_fi_ad	Relier en Wi-Fi, ad hoc ou sur cette Vita
+menu.linked	Relié
+menu.linked_to_another_console	Relié à une autre console
+menu.linked_you_are_player	Relié : tu es le joueur %d
+menu.picture_controls_and_more	Image, commandes et plus
+menu.play_together	Jouer ensemble
+menu.progress_the_game_has_not_saved	La progression non sauvegardée par le jeu sera perdue.
+menu.quit	Quitter
+menu.resume	Reprendre
+menu.save_clip	Enregistrer un clip
+menu.save_or_load_the_game_of	Sauvegarder ou charger : %d emplacements sur %d utilisés
+menu.save_states	États
+menu.save_states_are_off_while_linked	Les états sont désactivés en liaison
+menu.save_the_last_ten_seconds_as	Enregistre les dix dernières secondes en image animée
+menu.select	Choisir
+menu.settings	Paramètres
+menu.stay	Rester
+menu.this_ends_the_link_for_both	Cela termine la liaison pour les deux joueurs.
+menu.two_players_on_this	Deux joueurs sur cette Vita
+menu.two_players_over_wi_fi_ad	Deux joueurs en Wi-Fi, ad hoc ou en ligne
+mgift.connect_to_wi_fi_first	Connecte-toi d'abord au Wi-Fi
+mgift.could_not_open_the_socket	Impossible d'ouvrir le socket
+mgift.game	%s  jeu %s
+mgift.game_connected	Jeu connecté
+mgift.game_no_gift_yet	%s  jeu %s  pas encore de cadeau
+mgift.gift_ready	Cadeau prêt
+mgift.join_the_phone_s_hotspot_in	Rejoins le point d'accès du téléphone dans les Paramètres de la Vita
+mgift.leave_ad_hoc_first	Quitte d'abord l'ad hoc
+mgift.leave_the_link_session_first	Quitte d'abord la session de liaison
+mgift.mystery_gift	Cadeau Mystère
+mgift.mystery_gift_needs_firered_leafgreen_or	Cadeau Mystère requiert Rouge Feu, Vert Feuille ou Émeraude
+mgift.not_listening	Pas à l'écoute
+mgift.open_mystery_gift_in_the_game	Ouvre CADEAU MYSTÈRE dans le jeu
+mgift.this_game_has_no_wireless	Ce jeu n'a pas de sans-fil
+mgift.waiting_for_a_gift	En attente d'un cadeau
+notice.please_try_again_in_a_moment	Réessaie dans un instant.
+notice.storage_is_still_busy	Le stockage est encore occupé
+notice.the_file_may_be_damaged_or	Le fichier est peut-être endommagé ou n'est pas un jeu pour cette console.
+notice.the_game_was_closed	Le jeu a été fermé
+notice.the_launch_file_could_not_be	Le fichier de lancement n'a pas pu être écrit.
+notice.the_launcher_s_path_was_used	Le chemin du lanceur a été utilisé tel quel.
+notice.the_two_player_game_could_not	La partie à deux n'a pas pu démarrer
+notice.this_game_could_not_be_started	Ce jeu n'a pas pu être lancé
+notice.use_same_wi_fi_or_online	Utilise Même Wi-Fi ou En ligne pour jouer à deux.
+online.a_game	un jeu
+online.a_player	un joueur
+online.add_to_this_vita_to_join	Ajoute %s à cette Vita pour rejoindre.
+online.ask_them_to_host_again	Demande-lui d'héberger à nouveau.
+online.ask_them_to_update_to_then	Demande-lui de passer à %s, puis d'héberger à nouveau.
+online.ask_your_friend_to_host_again	Demande à ton ami d'héberger à nouveau.
+online.asking_for_a_code	Demande d'un code...
+online.both_run_the_same_vitadhoc_but	Vous avez la même version de VitAdhoc, mais la configuration Game Boy Advance diffère.
+online.check_this_vita_s_internet_connection	Vérifie la connexion internet de cette Vita et réessaie.
+online.checking_your_connection	Vérification de ta connexion...
+online.codes_last_10_minutes_ask_your	Les codes durent 10 minutes. Demande-en un nouveau à ton ami.
+online.connecting_through_the_relay	Connexion via le relais.
+online.couldn_t_reach_your_friend	Impossible de joindre ton ami.
+online.del	Suppr.
+online.expires_in	expire dans %d:%02d
+online.finding_the_service	Recherche du service...
+online.getting_a_code	Obtention d'un code...
+online.give_this_code_to_your_friend	Donne ce code à ton ami
+online.good	Bon
+online.great	Excellent
+online.hosted_by	%s  -  hébergé par %s
+online.install_the_latest_version_on_this	Installe la dernière version sur cette Vita, puis réessaie.
+online.join	Rejoindre
+online.join_online	REJOINDRE EN LIGNE
+online.looking_for_the_room	Recherche du salon...
+online.looking_in_your_games	Recherche dans tes jeux...
+online.of	%d sur %d
+online.online_play_is_busy_for_today	Le jeu en ligne est saturé aujourd'hui.
+online.online_play_is_not_ready_for	Le jeu en ligne n'est pas encore prêt pour cette console.
+online.open_and_join	Ouvrir %s et rejoindre
+online.patched	patché  -  %s
+online.pick_the_one_to_open	Choisis celui à ouvrir.
+online.set_the_date_and_time_in	Règle la date et l'heure dans les Paramètres, puis réessaie.
+online.slow	Lent
+online.somebody_already_joined_that_room	Quelqu'un a déjà rejoint ce salon.
+online.that_code_is_wrong_or_has	Ce code est faux ou a expiré.
+online.the_link_checks_it_when_it	La liaison le vérifie au démarrage.
+online.the_online_service_could_not_be	Le service en ligne est injoignable.
+online.the_online_service_must_be_updated	Le service en ligne doit être mis à jour. Utilise Même Wi-Fi en attendant.
+online.this_version_of_vitadhoc_is_too	Cette version de VitAdhoc est trop ancienne pour le jeu en ligne.
+online.this_vita_s_date_is_wrong	La date de cette Vita est fausse.
+online.too_many_tries_from_this_network	Trop d'essais depuis ce réseau.
+online.try_again_or_both_use_same	Réessaie, ou utilisez tous les deux Même Wi-Fi.
+online.try_again_tomorrow_or_both_use	Réessaie demain, ou utilisez tous les deux Même Wi-Fi.
+online.type_all_five_characters_like_k7m4q	Saisis les cinq caractères, comme K7M4Q.
+online.update_this_vita_to_the_same	Mets cette Vita à la même version, puis rejoins à nouveau.
+online.use_the_same_bios_file_and	Utilisez le même fichier BIOS et le même réglage CPU des deux côtés, puis réessayez.
+online.wait_a_minute_and_try_again	Attends une minute et réessaie.
+online.waiting_for_your_friend	En attente de ton ami...
+online.you_have_more_than_one_copy	Tu as plusieurs copies de %s.
+online.you_have_this_game_it_starts	Tu as ce jeu. Il démarre, puis rejoint.
+online.your_copy_of_is_a_different	Ta copie de %s est un autre fichier que celle de ton ami.
+online.your_friend	ton ami
+online.your_friend_closed_the_room	Ton ami a fermé le salon.
+online.your_friend_has_a_newer_vitadhoc	Ton ami a un VitAdhoc plus récent (%s).
+online.your_friend_has_an_older_vitadhoc	Ton ami a un VitAdhoc plus ancien (%s).
+online.your_friend_is_joining	Ton ami arrive...
+online.your_friend_is_playing_a_different	Ton ami joue à un autre jeu.
+online.your_friend_s_screen_shows_five	L'écran de ton ami affiche cinq lettres et chiffres. Il n'y a ni I, L, O, 0 ni 1.
+online.your_game_can_enter_this_room	Ton jeu peut entrer dans ce salon.
+play.a_code_for_your_friend	un code pour ton ami
+play.a_copy_or_a_second_save	une copie, ou une seconde sauvegarde
+play.a_different_game	un autre jeu
+play.a_game	un jeu
+play.a_game_boy_advance_room	un salon Game Boy Advance
+play.a_game_boy_room	un salon Game Boy
+play.a_link_session_is_running	Une session de liaison est en cours.
+play.a_nes_wonderswan_room	un salon NES / WonderSwan
+play.a_player	un joueur
+play.a_room_takes_two_players_ask	Un salon accueille deux joueurs. Demande à l'hôte d'en ouvrir un nouveau.
+play.a_vita_nearby	une Vita à proximité
+play.ad_hoc	AD HOC
+play.ad_hoc_the_two_vitas_connect	Ad hoc : les deux Vita se connectent directement, sans routeur.
+play.advanced_the_joiner_types_the_address	Avancé : celui qui rejoint saisit l'adresse affichée chez l'hôte.
+play.already_playing	déjà en jeu
+play.always_use_the_relay	Toujours utiliser le relais
+play.ask_them_to_choose_host_a	Demande-lui de choisir à nouveau Héberger une partie.
+play.asking_your_router_to_let_the	Demande à ton routeur de laisser entrer l'autre joueur...
+play.auto	Auto
+play.auto_picks_it_from_the_connection	Auto le choisit selon la connexion. Le choix de l'hôte prime.
+play.back	Retour
+play.back_to_the_game	Retour au jeu
+play.both_consoles_on_the_same_wi	Les deux consoles sont-elles sur le même Wi-Fi ? L'autre héberge-t-elle ?
+play.both_games_run_here_joined_by	Les deux jeux tournent ici, reliés par un câble Link.
+play.both_games_run_on_this_console	Les deux jeux tournent sur cette console : échange avec toi-même, sans seconde Vita.
+play.both_players_open_their_game_the	Les deux joueurs ouvrent leur jeu : le même, ou l'autre version (Rubis et Saphir, Rouge Feu et Vert Feuille).
+play.by_link_cable	par câble Link
+play.by_wireless_adapter_the_game_pairs	%s, par Adaptateur sans fil. Le jeu apparie les joueurs.
+play.cable_or_adapter	Câble ou Adaptateur
+play.cancel	Annuler
+play.connect_in_the_vita_s_settings	Connecte-toi dans Paramètres > Réseau de la Vita, puis réessaie.
+play.connect_in_the_vita_s_settings_2	Connecte-toi dans Paramètres > Réseau de la Vita. Cette page continue seule dès que c'est fait.
+play.connecting_to_wi_fi	%s : connexion au Wi-Fi...
+play.connection	Connexion
+play.connection_2	CONNEXION
+play.connection_ad_hoc_then_play_together	Connexion : Ad hoc, puis Jouer ensemble > Rejoindre une partie.
+play.continue	Continuer
+play.del	Suppr.
+play.different_version	version différente
+play.direct_address	Adresse directe
+play.disconnect	Déconnecter
+play.end_it_first_play_together_disconnect	Termine-la d'abord (Jouer ensemble > Déconnecter).
+play.end_the_current_link_first	Termine d'abord la liaison en cours.
+play.far_apart_host_shows_a_code	À distance : l'hôte affiche un code, ton ami le saisit.
+play.fewer_frames_react_faster_more_ride	Moins d'images = plus réactif ; plus d'images = meilleure tenue en connexion lente.
+play.firered_leafgreen_and_emerald_from_a	Rouge Feu, Vert Feuille et Émeraude, depuis un téléphone
+play.for_a_friend_far_away_the	Pour un ami éloigné. L'écran de l'hôte affiche un code de cinq caractères ; l'invité le saisit.
+play.found	%d TROUVÉ(S)
+play.frame	%d image
+play.frames	%d images
+play.from_a_phone	depuis un téléphone
+play.game	Jeu
+play.gb_link_cable	Câble Link GB
+play.good	Bon
+play.great	Excellent
+play.here	Ici
+play.hides_your_internet_address_from_the	Cache ton adresse internet à l'autre joueur. Un peu plus lent.
+play.host_a_game	Héberger une partie
+play.hosting_by	%s hébergé par %s
+play.how_to_play	COMMENT JOUER
+play.how_to_play_together	Comment jouer ensemble
+play.in_the_game_right_stick_sideways	Dans le jeu : stick droit sur le côté ou un toucher change le son.
+play.in_the_game_right_stick_sideways_2	Dans le jeu : stick droit sur le côté ou un toucher sur une image change.
+play.install_the_same_version_on_both	Installez la même version des deux côtés, puis relancez la liaison.
+play.is_a_game_boy_advance_room	%s est un salon Game Boy Advance.
+play.is_a_game_boy_room	%s est un salon Game Boy.
+play.is_a_link_cable_room_restart	%s est un salon Câble Link. Relance le jeu pour relier.
+play.is_a_link_cable_room_this	%s est un salon Câble Link. Ce jeu se relie par adaptateur.
+play.is_a_two_players_room_for	%s est un salon Deux joueurs pour un jeu NES ou WonderSwan.
+play.is_a_wireless_adapter_room_this	%s est un salon Adaptateur sans fil. Ce jeu se relie par câble.
+play.is_full_a_room_takes_players	%s est complet : un salon accueille %d joueurs.
+play.is_in_the_middle_of_a	%s est en pleine partie.
+play.is_not_a_two_players_room	%s n'est pas un salon Deux joueurs.
+play.is_playing_open_the_same_game	%s joue à %s. Ouvre le même jeu pour rejoindre.
+play.is_the_address_right_and_is	L'adresse est-elle bonne, et l'autre joueur héberge-t-il avec Connexion réglée sur Internet ? Son routeur doit laisser passer le port UDP 19019.
+play.is_the_other_vita_hosting_and	L'autre Vita héberge-t-elle, sur le même réseau ?
+play.it_links_the_two_vitas_directly	Elle relie directement les deux Vita, sans routeur. Suis-la pour créer la connexion ; l'autre Vita la rejoint depuis le même écran. Une fois terminé, tu retournes dans le jeu.
+play.it_links_the_two_vitas_directly_2	Elle relie directement les deux Vita, sans routeur. Suis-la pour rejoindre la connexion créée par l'autre Vita. Une fois terminé, tu retournes dans le jeu.
+play.it_looks_like_192_168_1	Par exemple 192.168.1.23 ou 203.0.113.9:19019.
+play.its_address	son adresse
+play.join	Rejoindre
+play.join_a_game	Rejoindre une partie
+play.join_a_game_2	REJOINDRE UNE PARTIE
+play.keep_playing	Continuer à jouer
+play.large_small	grand + petit
+play.layout	Disposition
+play.like_203_0_113_9_19019	comme 203.0.113.9:19019
+play.link_cable	Câble Link
+play.link_cable_game_each_vita_plays	Jeu par câble Link. Chaque Vita joue son jeu ; %s est envoyé.
+play.link_cable_game_player_2_needs	Jeu par câble Link. Le joueur 2 a besoin de %s, ou le reçoit.
+play.link_delay	Délai de liaison
+play.link_lost_the_other_vita_is	Liaison perdue : l'autre Vita a disparu.
+play.linked_by_cable_with	Relié par câble avec %s
+play.linked_with	Relié avec %s
+play.linked_with_the_other	Relié avec l'autre Vita
+play.links_by_link_cable_or_wireless	Liaison par Câble Link ou Adaptateur sans fil : l'hôte choisit.
+play.listening	À L'ÉCOUTE
+play.looking_for_a_game_at_that	Recherche d'une partie à cette adresse...
+play.looking_for_games_on_this_wi	Recherche de parties sur ce Wi-Fi...
+play.looks_right	semble correct
+play.ms_round_trip	 (%d ms aller-retour)
+play.ms_round_trip_2	%s   %s (%d ms aller-retour)
+play.mystery_gift	Cadeau Mystère
+play.mystery_gift_2	Cadeau Mystère
+play.mystery_gift_on_the_title_screen	CADEAU MYSTÈRE sur l'écran titre.
+play.mystery_gift_station_pick_a_gift	Station Cadeau Mystère : choisis un cadeau.
+play.nearby	À proximité
+play.next_the_vita_s_own_connection	Ensuite : l'écran de connexion de la Vita.
+play.nick_room	%s  -  Salon %d
+play.nick_room_ms	%s  -  Salon %d  -  %d ms
+play.no_answer_from_yet	Pas encore de réponse de %s.
+play.no_games_found_yet	Aucune partie trouvée pour l'instant.
+play.no_other_game_for_this_console	Aucun autre jeu pour cette console dans ta liste.
+play.no_router_anywhere_the_two_vitas	Pas de routeur ? Les deux Vita se connectent directement, via l'écran de connexion de la Vita.
+play.no_router_the_two_vitas_connect	Sans routeur : les deux Vita se connectent directement, côte à côte.
+play.no_second_controller_player_2_plays	Pas de seconde manette ? Le joueur 2 joue sur l'écran avant : les boutons sont dessinés sur sa moitié.
+play.no_wi_fi_connect_in_the	Pas de Wi-Fi. Connecte-toi dans Paramètres > Réseau de la Vita.
+play.nobody_answered	Personne n'a répondu.
+play.not_a_two_players_room	pas un salon Deux joueurs
+play.not_a_whole_address_yet	adresse incomplète
+play.not_a_whole_address_yet_example	Adresse incomplète. Exemple : 203.0.113.9:19019
+play.not_enough_memory_to_link_this	Mémoire insuffisante pour relier ce jeu.
+play.not_for_this_game	pas pour ce jeu
+play.not_listed_connection_internet_type	Pas dans la liste ? Connexion : Internet, saisis %s
+play.not_listening	Pas à l'écoute
+play.nothing_was_changed_choose_host_or	Rien n'a changé. Choisis Héberger ou Rejoindre pour réessayer.
+play.off	Désactivé
+play.on	Activé
+play.on_pad_in_use	activé (manette utilisée)
+play.on_the_other_vita_open	Sur l'autre Vita, ouvre %s.
+play.one_chooses_play_together_host_a	L'un choisit Jouer ensemble > Héberger une partie.
+play.one_moment	Un instant.
+play.online	En ligne
+play.opening	Ouverture de %s...
+play.partner_s_game	JEU DU PARTENAIRE
+play.partner_s_game_2	Jeu du partenaire
+play.phone	Téléphone
+play.play_together	JOUER ENSEMBLE
+play.player_2_on_the_touch_screen	Joueur 2 sur l'écran tactile
+play.player_2_plays_on_the_front	Le joueur 2 joue sur l'écran avant tant qu'aucune manette n'est associée.
+play.quit_to_the_game_list_open	Retourne à la liste des jeux, rouvre le jeu et relie d'abord.
+play.recent	RÉCENTS
+play.restart_the_game_to_link	relance le jeu pour relier
+play.rooms_on_this_wi_fi	salons sur ce Wi-Fi
+play.runs_a_different_version_of_vitadhoc	%s utilise une autre version de VitAdhoc.
+play.same_game_only	même jeu seulement
+play.same_network_or_a_phone_s	Même réseau ou point d'accès d'un téléphone. Les salons apparaissent seuls dans la liste. Le plus simple.
+play.same_wi_fi	Même Wi-Fi
+play.same_wi_fi_or_hotspot_rooms	Même Wi-Fi ou point d'accès. Les salons sont trouvés seuls.
+play.save_found	sauvegarde trouvée
+play.save_states_and_cheats_are_off	États et codes désactivés en liaison. Déconnecter termine la liaison pour les deux : chaque jeu sauvegarde et continue seul.
+play.save_states_cheats_rewind_and_fast	États, codes, retour arrière et avance rapide désactivés en liaison. Le joueur 2 joue au jeu du joueur 1 ; à la fin, le jeu du joueur 2 revient tel quel et celui du joueur 1 continue.
+play.searching	RECHERCHE
+play.settings_network_join_the_wi_fi	Paramètres > Réseau : rejoins le Wi-Fi Cadeau Mystère.
+play.side_by_side	côte à côte
+play.side_by_side_two_equal_pictures	Côte à côte : deux images égales. Grand + petit : le jeu que tu pilotes est le grand.
+play.side_by_side_two_players	côte à côte (deux joueurs)
+play.slow	Lent
+play.slow_expect_delay	lent, délai probable
+play.start_listening	Se mettre à l'écoute
+play.start_listening_or_select_down_in	Mets-toi à l'écoute, ou Select + Bas dans le jeu.
+play.start_the_partner_copies_my_save	Start : le partenaire copie ma sauvegarde
+play.start_the_partner_plays_its_game	Start : le partenaire joue à son jeu
+play.start_the_partner_uses_its_own	Start : le partenaire utilise sa sauvegarde
+play.starting_the_second_game	Démarrage du second jeu...
+play.starts_a_new_game	démarre une nouvelle partie
+play.still_trying	Nouvel essai.
+play.stop	Arrêter
+play.stop_hosting	Arrêter l'hébergement
+play.stop_it_first_to_host_or	Arrête-la d'abord pour héberger ou rejoindre une partie en réseau.
+play.stop_listening	Arrêter l'écoute
+play.swap_controlled_game	Changer de jeu piloté
+play.swap_sound_and_large_picture	Changer son et grande image
+play.tell_the_other_player_this_address	Donne cette adresse à l'autre joueur :
+play.that_game_could_not_be_chosen	Ce jeu n'a pas pu être choisi.
+play.that_is_not_an_address	Ce n'est pas une adresse.
+play.that_room_is_full	Ce salon est complet.
+play.the_buttons_drive_the_partner_s	Les boutons pilotent le jeu du partenaire.
+play.the_buttons_drive_your_game	Les boutons pilotent ton jeu.
+play.the_connection_screen_was_closed	L'écran de connexion a été fermé.
+play.the_four_steps	Les quatre étapes
+play.the_host	 (l'hôte)
+play.the_host_chooses_play_together_host	L'hôte choisit Jouer ensemble > Héberger une partie avec Connexion réglée sur Internet. Son écran affiche alors l'adresse à saisir ici.
+play.the_host_closed_the_room	L'hôte a fermé le salon.
+play.the_link_ended_and_nothing_was	La liaison s'est terminée sans rien sauvegarder. Relie à nouveau pour réessayer.
+play.the_other_chooses_play_together_join	L'autre choisit Jouer ensemble > Rejoindre une partie et sélectionne le salon dans la liste.
+play.the_other_player_s_game_did	Le jeu de l'autre joueur n'est pas arrivé.
+play.the_other_vita_runs_a_different	L'autre Vita utilise une autre version de VitAdhoc.
+play.the_port_may_be_in_use	Le port est peut-être utilisé. Réessaie dans un instant.
+play.the_radio_is_busy_with_another	La radio est occupée par une autre liaison.
+play.the_radio_is_in_ad_hoc	%s : la radio est en usage ad hoc.
+play.the_room_could_not_be_opened	Le salon n'a pas pu être ouvert sur ce réseau.
+play.the_room_did_not_open_check	Le salon ne s'est pas ouvert. Vérifie la connexion et réessaie.
+play.the_same_game_twice_or_the	Le même jeu deux fois, ou son autre version sur la seconde machine.
+play.the_search_could_not_start	La recherche n'a pas pu démarrer.
+play.the_second_game_begins_as_a	Le second jeu démarre comme une copie du tien, exactement où tu en es. S'il sauvegarde, c'est le second fichier de sauvegarde.
+play.the_second_game_starts_from_its	Le second jeu démarre depuis son propre fichier de sauvegarde, comme une seconde cartouche. Il est gardé à côté du tien.
+play.the_second_game_would_not_start	Le second jeu n'a pas voulu démarrer.
+play.the_second_machine_boots_that_game	La seconde machine lance ce jeu avec sa propre sauvegarde, celle avec laquelle tu y joues.
+play.the_second_machine_can_hold_another	La seconde machine peut accueillir un autre jeu : l'autre version, avec ta sauvegarde correspondante.
+play.the_two_games_fell_out_of	Les deux jeux se sont désynchronisés.
+play.the_vita_s_connection_screen_comes	L'écran de connexion de la Vita s'ouvre ensuite.
+play.then_play_together_join_a_game	Puis Jouer ensemble > Rejoindre une partie : choisis le salon de %s.
+play.they_choose_play_together_join_a	Il choisit Jouer ensemble > Rejoindre une partie et la saisit.
+play.this_game	Ce jeu
+play.this_game_cannot_run_twice_on	Ce jeu ne peut pas tourner deux fois sur une Vita.
+play.this_game_links_by_adapter	ce jeu se relie par adaptateur
+play.this_game_links_by_cable	ce jeu se relie par câble
+play.this_one	celui-ci
+play.this_vita	cette Vita
+play.this_vita_is_not_connected_to	Cette Vita n'est pas connectée au Wi-Fi.
+play.this_vita_is_on_still_looking	Cette Vita est sur %s (%s). Recherche en cours.
+play.through_the_relay	, via le relais
+play.to_stop_either_player_chooses_play	Pour arrêter, l'un des joueurs choisit Jouer ensemble > Déconnecter. Les deux jeux sauvegardent et continuent seuls.
+play.try_again_if_it_keeps_happening	Réessaie. Si ça continue, vérifie que la carte mémoire a de la place.
+play.trying_again_by_itself_if_this	Nouvel essai automatique. Si ça persiste, vérifie le Wi-Fi de la Vita.
+play.two_games_are_running_on_this	Deux jeux tournent sur cette Vita, reliés par câble.
+play.two_players	Deux joueurs
+play.two_players_2	DEUX JOUEURS
+play.two_players_both_vitas_need	Deux joueurs : les deux Vita doivent avoir %s ouvert.
+play.two_players_on_this	Deux joueurs sur cette Vita
+play.two_players_on_this_vita_after	Deux joueurs sur cette Vita : une fois terminé.
+play.type_the_address_the_host_s	Saisis l'adresse affichée sur l'écran de l'hôte.
+play.type_the_host_s_address	saisis l'adresse de l'hôte
+play.type_your_friend_s_code	saisis le code de ton ami
+play.waiting	EN ATTENTE
+play.waiting_for_player_2_you_can	En attente du joueur 2. Tu peux continuer à jouer en attendant.
+play.when_it_says_linked_use_the	Quand « Relié » s'affiche, utilise la fonction de liaison du jeu : centre d'échange, combat par câble, club câble.
+play.which_connection	Quelle connexion ?
+play.wi_fi_and_ad_hoc_cannot	Wi-Fi et ad hoc ne peuvent pas servir en même temps.
+play.wi_fi_is_set_aside_while	Le Wi-Fi est suspendu pendant la liaison et revient ensuite.
+play.wireless_adapter	Adaptateur sans fil
+play.wireless_adapter_game_the_game_itself	Jeu par Adaptateur sans fil : le jeu apparie lui-même les joueurs.
+play.you_are_player	Tu es le joueur %d%s, %s.
+play.you_are_player_in	Tu es le joueur %d%s dans %s, %s.
+play.your_buttons_your_game_second_controller	Tes boutons : ton jeu. Seconde manette : celui du partenaire.
+play.your_game_carries_on_alone	ton jeu continue seul
+play.your_game_carries_on_save_as	Ton jeu continue. Sauvegarde comme d'habitude.
+play.your_router_did_not_open_the	Ton routeur n'a pas ouvert l'accès tout seul. Dans ses réglages, redirige le port UDP %s vers cette Vita (%s). L'autre joueur saisit ensuite ton adresse publique%s%s.
+play.your_router_opened_the_way_in	Ton routeur a ouvert l'accès, mais n'a pas donné son adresse publique. Cherche-la (depuis un téléphone sur ce Wi-Fi : « quelle est mon IP »). L'autre joueur saisit cette adresse, puis %s.
+ra.achievements	Succès
+ra.hardcore	 - Hardcore
+ra.no_achievements_to_show	Aucun succès à afficher.
+ra.of_achievements	%u succès sur %u%s
+ra.pts	%u / %u   %u / %u pts
+ra.rank_of	Rang %u sur %u
+search.1_byte	1 octet
+search.2_bytes	2 octets
+search.2_bytes_any_address	2 octets, toute adresse
+search.4_bytes	4 octets
+search.4_bytes_any_address	4 octets, toute adresse
+search.changed	Changé
+search.decreased	Diminué
+search.equal_to	Égal à
+search.greater_than	Supérieur à
+search.increased	Augmenté
+search.less_than	Inférieur à
+search.not_equal_to	Différent de
+search.unchanged	Inchangé
+settings.a_and_b_buttons	Boutons A et B
+settings.about	À propos
+settings.account	Compte
+settings.achievement_indicators	Indicateurs de succès
+settings.achievements	Succès
+settings.ambient_glow	Lueur d'ambiance
+settings.button_mapping	Assignation boutons
+settings.button_test	Test des boutons
+settings.camera	Caméra
+settings.check_for_updates	Chercher mises à jour
+settings.clock_rtc	Horloge (RTC)
+settings.connection	Connexion
+settings.controls	COMMANDES
+settings.cover_picture	Image de jaquette
+settings.covers	Jaquettes
+settings.cpu_speed	Vitesse CPU
+settings.crt_mask	Masque CRT
+settings.direction	Direction
+settings.display	AFFICHAGE
+settings.display_settings	Réglages d'affichage
+settings.export_save_for_other_emulators	Exporter la sauvegarde
+settings.extra_cpu_core	Cœur CPU en plus
+settings.fast_forward	Avance rapide
+settings.fast_link	Liaison rapide
+settings.ff_button_square	Bouton AR (Carré)
+settings.fourth_core	Quatrième cœur
+settings.fps_counter	Compteur d'i/s
+settings.game_boy_colours	Couleurs Game Boy
+settings.game_boy_printer	Game Boy Printer
+settings.game_boy_type	Type de Game Boy
+settings.game_folders	Dossiers de jeux
+settings.game_list	Liste des jeux
+settings.game_names	Noms des jeux
+settings.game_order	Ordre des jeux
+settings.game_previews	Aperçus des jeux
+settings.gameplay	JEU
+settings.hardcore	Hardcore
+settings.help.a_faint_pixel_grid_like_a	Une grille de pixels discrète, comme un écran portable. 1 : faible, 10 : forte.
+settings.help.a_game_boy_s_picture_has	L'image d'une Game Boy n'a rien de plus à montrer.
+settings.help.a_number_that_tells_rooms_apart	Un numéro qui distingue les salons quand plusieurs joueurs hébergent.
+settings.help.a_soft_glow_beside_the_picture	Une lueur douce à côté de l'image, à la place des bandes noires. 1 : faible, 10 : vive.
+settings.help.a_tap_on_the_game_opens	Un toucher sur le jeu ouvre le menu. Start + Select le fait toujours.
+settings.help.a_vita_on_the_same_wi	Une Vita sur le même Wi-Fi peut copier tes sauvegardes et états.
+settings.help.adds_the_handheld_screen_s_grid	Ajoute la grille de points de l'écran portable.
+settings.help.advanced_the_joiner_types_the_host	Avancé : l'invité saisit l'adresse de l'hôte.
+settings.help.also_widens_rotating_3d_tracks_sprites	Élargit aussi les circuits 3D rotatifs. Des sprites peuvent entrer.
+settings.help.always_the_16_9_picture_unknown	Toujours l'image 16:9 ; les côtés inconnus s'estompent.
+settings.help.an_original_game_boy_s_shades	Les nuances d'une Game Boy d'origine sont ses couleurs, ci-dessus.
+settings.help.any_game_shows_what_it_has	Tout jeu : montre ce qu'il a dessiné hors de l'écran. Peut se tromper.
+settings.help.as_a_television_showed_them_a	Comme sur une télévision : un peu plus doux et plus profond.
+settings.help.as_on_a_game_boy_color	Comme sur l'écran d'une Game Boy Color.
+settings.help.as_on_a_wonderswan_s_screen	Comme sur l'écran d'une WonderSwan : plus doux, noirs relevés.
+settings.help.auto_adapts_to_keep_60_fps	Auto s'adapte pour tenir 60 i/s ; lissage si possible.
+settings.help.auto_follows_the_cartridge_takes_effect	Auto suit la cartouche. Effet au prochain démarrage.
+settings.help.auto_follows_the_game_some_turn	Auto suit le jeu (certains changent en cours de partie). Ce jeu seulement.
+settings.help.auto_games_that_use_the_zapper	Auto : les jeux Zapper l'ont sur l'écran tactile. Au prochain lancement.
+settings.help.auto_on_where_the_game_has	Auto : actif si le jeu en a un. Au prochain démarrage.
+settings.help.auto_suits_most_fewer_frames_react	Auto convient à presque tous. Moins d'images : réactif ; plus : fluide.
+settings.help.auto_uses_the_vita_s_fourth	Auto : utilise le quatrième cœur de la Vita s'il marche. Prochain jeu.
+settings.help.bigger_text_in_the_menus_of	Texte plus grand dans les menus de l'app et des lecteurs.
+settings.help.black_and_white_games_grey_or	Jeux noir et blanc : gris, ou teinte de l'écran d'origine. Les jeux couleur gardent la leur.
+settings.help.brighter_text_and_clearer_edges_in	Texte plus clair et contours plus nets dans les menus de l'app et des lecteurs.
+settings.help.busy_moments_show_every_second_frame	Quand ça charge : une image sur deux, régulièrement, à pleine vitesse.
+settings.help.busy_moments_skip_a_frame_game	Quand ça charge : une image sautée ; jeu et son gardent leur vitesse.
+settings.help.busy_moments_slow_the_game_and	Quand ça charge : le jeu et son son ralentissent.
+settings.help.choose_just_this_game_to_give	Choisis « ce jeu seulement » pour lui donner un look à part.
+settings.help.circle_is_a_and_confirms_in	Rond = A et valide dans les menus. Croix = B.
+settings.help.coloured_stripes_like_a_crt_tube	Bandes colorées comme un tube CRT. Assombrit un peu l'image. 1 : faible, 10 : forte.
+settings.help.colours_exactly_as_the_game_sends	Couleurs exactement comme le jeu les envoie.
+settings.help.controller_a_zapper_game_is_played	Manette : un jeu Zapper se joue à la manette. Au prochain lancement.
+settings.help.copy_saves_and_states_from_the	Copie sauvegardes et états depuis la Vita qui partage sur ton salon.
+settings.help.cross_is_a_and_confirms_in	Croix = A et valide dans les menus. Rond = B.
+settings.help.dark_lines_between_the_rows_like	Lignes sombres entre les rangées, comme une TV. 1 : faible, 10 : forte.
+settings.help.dark_or_light_menus	Menus sombres ou clairs.
+settings.help.darkens_a_thin_line_under_every	Assombrit une fine ligne sous chaque rangée de pixels.
+settings.help.display_changes_made_now_apply_to	Les changements d'affichage ne valent que pour ce jeu.
+settings.help.drawn_on_a_second_core_heavy	Dessiné sur un second cœur : les effets lourds ne ralentissent pas le jeu.
+settings.help.each_game_shows_its_file_name	Chaque jeu affiche son nom de fichier, tel que sur la carte.
+settings.help.each_game_shows_its_title_games	Chaque jeu affiche son titre ; ceux au même titre affichent aussi leur nom de fichier.
+settings.help.each_save_also_goes_where_retroarch	Chaque sauvegarde va aussi où RetroArch la cherche, gardée synchronisée.
+settings.help.european_games_run_at_50_hz	Les jeux européens tournent à 50 Hz. Le 50 Hz lissé garde leur vitesse réelle et égalise l'image : un rafraîchissement sur six mélange deux images.
+settings.help.european_games_run_at_50_hz_2	Les jeux européens tournent à 50 Hz. Le vrai 50 Hz les joue à leur vitesse réelle et répète une image sur six.
+settings.help.every_frame_when_it_can_be	Chaque image si possible ; en cas de charge, pertes irrégulières.
+settings.help.exact_pixels_sharpest_at_2x_3x	Pixels exacts. Plus net à 2x, 3x et 4x.
+settings.help.exact_pixels_with_softened_edges_at	Pixels exacts aux bords adoucis, à toute taille.
+settings.help.far_apart_the_host_shows_a	À distance : l'hôte affiche un code, ton ami le saisit.
+settings.help.faster_link_play_on_a_strong	Liaison plus rapide si la connexion est bonne. Celle de l'hôte prime.
+settings.help.follows_the_vita_s_own_enter	Suit le bouton Valider de la Vita. Appuie pour changer.
+settings.help.for_a_strong_connection_slightly_faster	Pour une bonne connexion : liaison un peu plus rapide.
+settings.help.for_rom_hacks_takes_effect_at	Pour les ROM hacks. Effet au prochain démarrage.
+settings.help.gbc_auto_the_colours_a_game	GBC auto : les couleurs que la Game Boy Color donnait à ce jeu.
+settings.help.hold_or_the_right_stick_left	Maintiens %s ou le stick droit à gauche pour reculer.
+settings.help.hold_the_button_to_fast_forward	Maintiens le bouton pour avancer vite, ou appuie pour basculer.
+settings.help.hold_the_right_stick_left_to	Maintiens le stick droit à gauche pour remonter le temps.
+settings.help.hold_the_right_stick_left_to_2	Maintiens le stick droit à gauche pour rembobiner.
+settings.help.hold_the_vita_as_level_should	Tiens la Vita bien à plat, puis appuie sur X.
+settings.help.hold_to_go_back_in_time	Maintiens %s pour remonter le temps.
+settings.help.how_fast_it_runs_2x_and	Vitesse d'exécution. 2x et 3x peuvent accélérer le son, ou le garder à hauteur normale.
+settings.help.how_its_pixels_are_drawn	Comment ses pixels sont dessinés.
+settings.help.how_large_the_game_is_drawn	Taille du jeu à l'écran. 3x est exact et le plus net.
+settings.help.how_much_sunlight_the_cartridge_s	Soleil perçu par le capteur solaire de la cartouche.
+settings.help.how_strongly_a_turn_or_a	Intensité ressentie d'une rotation ou d'une inclinaison.
+settings.help.how_this_game_links_link_cable	Comment ce jeu se relie : Câble Link ou Adaptateur sans fil.
+settings.help.mmpx_at_twice_its_size_crisp	MMPX à deux fois la taille : pixel art net, léger pour la Vita.
+settings.help.more_of_the_map_beside_the	Plus de décor à côté de l'image, dans les jeux connus.
+settings.help.muted_and_dark_as_on_the	Terne et sombre, comme l'écran non éclairé de la première GBA.
+settings.help.muted_as_on_a_gba_s	Terne, comme sur une GBA : ce pour quoi l'art a été conçu.
+settings.help.no_marks_over_the_game_unlocks	Aucune marque sur le jeu. Les déblocages s'affichent encore.
+settings.help.no_router_the_two_vitas_connect	Sans routeur : les deux Vita se connectent directement.
+settings.help.no_states_rewind_or_cheats_from	Pas d'états, de retour arrière ni de codes. Dès le prochain jeu.
+settings.help.off_games_find_no_printer	Désactivé : les jeux ne trouvent pas d'imprimante.
+settings.help.off_the_app_stays_on_the	Désactivé : l'app reste sur les trois cœurs qui lui sont donnés.
+settings.help.off_try_this_if_the_picture	Désactivé : essaie si l'image se comporte mal.
+settings.help.only_start_select_or_l_r	Seuls Start + Select (ou L + R + Start) ouvrent le menu.
+settings.help.pictures_a_game_prints_are_saved	Les images imprimées par un jeu vont dans prints/. Coupé pendant une liaison.
+settings.help.play_this_game_with_a_friend	Joue à ce jeu avec un ami : l'un héberge, l'autre rejoint. Même jeu requis.
+settings.help.put_a_png_in_ux0_data	Mets un PNG dans ux0:data/GBAdhoc/overlays/ pour encadrer le jeu.
+settings.help.redraws_curves_and_diagonals_smoothly_the	Redessine courbes et diagonales en douceur. Le plus lourd.
+settings.help.rest_on_a_game_in_the	Arrête-toi sur un jeu dans l'accueil et tes dix dernières secondes de jeu passent derrière.
+settings.help.retroarch_s_files_are_left_alone	Les fichiers de RetroArch ne sont pas touchés ; Exporter en copie un.
+settings.help.retry_missing_box_art_and_title	Réessaie les jaquettes et écrans titre manquants en Wi-Fi.
+settings.help.rounds_stair_steps_only_light_adds	Arrondit seulement les escaliers. Léger, sans nouvelles couleurs.
+settings.help.running_the_game_backwards_is_switched	Le retour arrière du jeu est désactivé.
+settings.help.same_wi_fi_or_phone_hotspot	Même Wi-Fi ou point d'accès : les salons apparaissent seuls.
+settings.help.screens_with_no_more_to_show	Les écrans sans rien de plus à montrer sont étirés jusqu'aux bords.
+settings.help.screens_with_no_more_to_show_2	Les écrans sans rien de plus à montrer s'estompent sur les côtés.
+settings.help.screens_with_no_more_to_show_3	Les écrans sans rien de plus à montrer gardent des bandes noires.
+settings.help.set_by_image_quality_choosing_one	Défini par Qualité d'image. En choisir un passe en Auto.
+settings.help.shot_with_the_buttons_set_in	Capture avec les boutons définis dans Assignation boutons.
+settings.help.shows_each_button_stick_and_touch	Montre chaque bouton, stick et zone tactile à l'appui, et sa fonction.
+settings.help.shows_the_game_s_speed_in	Affiche la vitesse du jeu dans un coin.
+settings.help.shows_what_you_press_one_frame	Montre tes appuis une image plus tôt en calculant l'image suivante d'avance. Le jeu tourne pareil. Auto l'utilise tant qu'il y a du temps.
+settings.help.small_marks_for_a_challenge_progress	Petites marques pour un défi, une progression et une tentative de classement.
+settings.help.smoothed_at_four_times_its_size	Lissé à quatre fois sa taille. Le plus de détails et de travail.
+settings.help.smoothed_at_three_times_its_size	Lissé à trois fois sa taille. Plus de détails, plus de travail.
+settings.help.smoothed_at_twice_the_game_s	Lissé à deux fois la taille du jeu, puis ajusté.
+settings.help.soft_every_pixel_blends_into_the	Doux : chaque pixel se fond dans le suivant.
+settings.help.states_rewind_and_cheats_allowed	États, retour arrière et codes autorisés.
+settings.help.super_game_boy_games_in_the	Jeux Super Game Boy dans leur bordure (couleurs Game Boy : Super Game Boy).
+settings.help.swap_it_if_turning_or_tilting	Inverse-le si tourner ou incliner semble à l'envers.
+settings.help.the_console_s_own_picture_bars	L'image de la console, bandes sur les côtés.
+settings.help.the_game_s_own_pixels_evenly	Les pixels du jeu, de taille égale à toute taille d'écran.
+settings.help.the_highlighted_game_link_cable_or	Le jeu sélectionné : Câble Link ou Adaptateur sans fil.
+settings.help.the_host_s_setting_is_used	Le réglage de l'hôte est utilisé.
+settings.help.the_language_of_the_menus_automatic	La langue des menus. Automatique suit le réglage de la Vita.
+settings.help.the_name_other_players_see_beside	Le nom que les autres joueurs voient près de ton salon.
+settings.help.the_nes_picture_as_it_was	L'image NES d'origine : 256 colonnes.
+settings.help.the_newest_frame_only_sharper_with	Seulement l'image la plus récente : plus net, avec un léger saccade au défilement.
+settings.help.the_order_of_all_games_and	L'ordre de Tous les jeux et Favoris. Récents : plus récent d'abord.
+settings.help.the_rear_panel_does_nothing	Le panneau arrière ne fait rien.
+settings.help.the_rear_panel_s_four_corners	Les quatre coins du panneau arrière peuvent être des boutons (Assignation boutons).
+settings.help.the_right_stick_does_not_rewind	Le stick droit ne rembobine pas.
+settings.help.the_right_stick_is_the_cartridge	Le stick droit est le capteur de la cartouche.
+settings.help.the_sides_filled_with_the_game	Côtés remplis par l'image du jeu quand elle est connue. Jamais devinée.
+settings.help.the_slow_lcd_left_a_trail	L'écran LCD lent laissait une traînée derrière ce qui bouge. 10 : forte.
+settings.help.the_slow_lcd_left_a_trail_2	L'écran LCD lent laissait une traînée derrière ce qui bouge. 0 : non, 5 stabilise le scintillement utilisé comme transparence.
+settings.help.the_small_link_status_in_the	Le petit état de liaison dans le coin du jeu.
+settings.help.the_vita_s_own_ps_start	PS + Start de la Vita fait des captures d'écran.
+settings.help.the_wonderswan_s_75_frames_a	Les 75 images/s de la WonderSwan fondues dans chaque rafraîchissement : défilement fluide.
+settings.help.this_game_s_achievements_and_what	Les succès de ce jeu et ce que chacun demande.
+settings.help.this_game_s_own_choice_settings	Choix propre à ce jeu. Paramètres suit la ligne Jeu. Auto l'utilise tant qu'il y a du temps.
+settings.help.this_game_s_own_choice_settings_2	Choix propre à ce jeu. Paramètres suit la ligne Commandes.
+settings.help.tiles_over_your_game_a_list	Vignettes sur ton jeu, liste avec images, ou images plein écran.
+settings.help.turn_on_rewind_with_right_stick	Active le retour arrière au stick droit, ou assigne un bouton.
+settings.help.turn_or_tilt_the_vita_the	Tourne ou incline la Vita : le capteur de la cartouche le sent.
+settings.help.turn_the_vita_left_for_vertical	Tourne la Vita à gauche pour les scènes verticales : l'image remplit l'écran.
+settings.help.type_your_friend_s_room_code	Saisis le code du salon de ton ami. Ta copie de son jeu est trouvée et lancée.
+settings.help.vertical_scenes_upright_on_a_level	Scènes verticales droites sur une Vita à plat ; la croix tourne avec elles.
+settings.help.what_fills_the_wide_view_s	Ce qui remplit les marges de la vue large (Vue large requise).
+settings.help.what_the_camera_sees_the_vita	Ce que voit la caméra : celle de dos de la Vita.
+settings.help.what_the_camera_sees_the_vita_2	Ce que voit la caméra : celle de face de la Vita.
+settings.help.whether_the_app_is_using_the	Si l'app utilise le quatrième cœur CPU de la Vita (plugin CapUnlocker requis).
+settings.help.which_button_does_what_and_the	Quel bouton fait quoi, et les raccourcis.
+settings.help.which_vita_screen_this_is_oled	Quel écran a cette Vita. OLED adoucit un peu les couleurs. Toute console.
+settings.help.x_a_copy_retroarch_can_use	X : une copie utilisable par RetroArch, là où il cherche.
+settings.help.x_a_picture_of_your_own	{x} : une image à toi comme jaquette du jeu choisi dans la liste.
+settings.help.x_add_a_folder_ux0_roms	{x} : ajoute un dossier (ux0:ROMS/GBA), ou choisis-en un pour le retirer.
+settings.help.x_check_now_off_no_check	{x} : chercher maintenant. Non : pas de recherche sauf demande.
+settings.help.x_check_now_once_a_day	{x} : chercher. Une fois par jour, vérifie sur GitHub si une nouvelle version existe.
+settings.help.x_type_a_folder_ux0_pictures	{x} : un dossier (ux0:pictures/VitAdhoc). Vide : screenshots/.
+settings.help.your_retroachievements_org_account	Ton compte retroachievements.org.
+settings.help.zapper_touch_the_screen_to_aim	Zapper : touche l'écran pour viser et tirer. Au prochain lancement.
+settings.high_contrast	Contraste élevé
+settings.image_quality	Qualité d'image
+settings.interface	INTERFACE
+settings.join_a_share	Rejoindre un partage
+settings.join_online	Rejoindre en ligne
+settings.keep_full_speed	Garder pleine vitesse
+settings.language	Langue
+settings.lcd_colours	Couleurs LCD
+settings.lcd_ghosting	Rémanence LCD
+settings.lcd_grid	Grille LCD
+settings.level	Niveau
+settings.library	Bibliothèque
+settings.link_delay	Délai de liaison
+settings.link_mode	Mode de liaison
+settings.link_setup	Réglages de liaison
+settings.motion_controls	Commandes gyro
+settings.motion_strength	Force du mouvement
+settings.pal_games_speed	Vitesse jeux PAL
+settings.palette	Palette
+settings.player_name	Nom du joueur
+settings.port_2	Port 2
+settings.quick_response	Réponse rapide
+settings.rear_touch_panel	Panneau tactile arrière
+settings.refresh_library	Actualiser la biblio.
+settings.retroachievements	RETROACHIEVEMENTS
+settings.rewind	Retour arrière
+settings.rewind_length	Durée du retour
+settings.rewind_with_right_stick	Retour au stick droit
+settings.room	Salon
+settings.rotation	Rotation
+settings.save_type	Type de sauvegarde
+settings.scanlines	Lignes de balayage
+settings.screen	Écran
+settings.screen_fill	Remplissage écran
+settings.screen_overlay	Cadre d'écran
+settings.screen_size	Taille de l'écran
+settings.screenshot_button_combo	Combo de capture
+settings.screenshot_folder	Dossier des captures
+settings.session_overlay	Infos de session
+settings.sgb_border	Bordure SGB
+settings.share_game_data	Partager les données
+settings.smooth_75_hz_motion	Mouvement 75 Hz fluide
+settings.smooth_hand_over	Transition fluide
+settings.steady_pacing	Cadence stable
+settings.sunlight	Ensoleillement
+settings.sync_retroarch_saves	Synchro sauv. RetroArch
+settings.tap_screen_for_menu	Toucher pour le menu
+settings.text_size	Taille du texte
+settings.theme	Thème
+settings.this_game	CE JEU
+settings.two_players	Deux joueurs
+settings.value.444_mhz_standard	444 MHz (standard)
+settings.value.500_mhz_fast	500 MHz (rapide)
+settings.value.all_games	tous les %s
+settings.value.as_held_at_the_start	comme au démarrage
+settings.value.as_the_vita	 (comme la Vita)
+settings.value.auto	Auto
+settings.value.automatic	Automatique
+settings.value.by_name	par nom
+settings.value.checking_of_have_covers	Vérif. %d sur %d - %d jaquettes
+settings.value.circle_is_a	Rond = A
+settings.value.classic_lcd_tint	Teinte LCD classique
+settings.value.controller	Manette
+settings.value.cross_is_a	Croix = A
+settings.value.daily	Chaque jour
+settings.value.ff_button	Bouton AR (%s)
+settings.value.file_name	Nom de fichier
+settings.value.follows_the_clock	suit l'horloge
+settings.value.for_retroarch	pour RetroArch
+settings.value.frame	%d image
+settings.value.frames	%d images
+settings.value.full_sun	 (plein sol.)
+settings.value.game_title	Titre du jeu
+settings.value.gb_gbc_only	GB / GBC seul.
+settings.value.gb_only	GB seulement
+settings.value.gba_link_cable_only	Câble GBA seul.
+settings.value.greyscale	Gris
+settings.value.host_or_join	héberger/joindre
+settings.value.host_saves_and_states_on	héberge sauv. et états sur %s
+settings.value.just_this_game	ce jeu seulement
+settings.value.large	Grand
+settings.value.last_played_first	dernier joué d'abord
+settings.value.lcd_pch_2000	LCD (PCH-2000)
+settings.value.min	%d min
+settings.value.most_played_first	plus joué d'abord
+settings.value.no_game	aucun jeu
+settings.value.none_shade	aucune (nuance)
+settings.value.normal	Normal
+settings.value.normal_pitch	, hauteur normale
+settings.value.not_checking	Pas de vérif.
+settings.value.ntsc_colours	Couleurs NTSC
+settings.value.of	%u sur %u
+settings.value.of_10	%d sur 10%s
+settings.value.of_games_have_covers	%d jeux sur %d ont une jaquette
+settings.value.off	Désactivé
+settings.value.oled_pch_1000	OLED (PCH-1000)
+settings.value.on	Activé
+settings.value.on_2	activé - %.48s
+settings.value.on_from_the_next_game	activé (prochain jeu)
+settings.value.on_l_r_select	activé (L + R + Select)
+settings.value.on_none_in_overlays	activé - aucun
+settings.value.only_roms	roms/ seul.
+settings.value.scan_now	analyser
+settings.value.settings	Paramètres
+settings.value.sign_in	se connecter
+settings.value.signing_in	connexion...
+settings.value.smooth_50_hz	50 Hz lissé
+settings.value.the_one_on	celui de %s
+settings.value.this_game	Ce jeu
+settings.value.true_50_hz	50 Hz réel
+settings.value.turn_the_vita	Tourner la Vita
+settings.value.type_a_room_code	saisir un code
+settings.value.upright	Droit
+settings.value.with_sound	 avec le son
+settings.value.your_own	le tien
+settings.value.zapper	Zapper
+settings.vertical_play	Jeu vertical
+settings.video_filter	Filtre vidéo
+settings.wide_view	Vue large
+share.a_vita_joined_and_is_browsing	Une Vita a rejoint %s et parcourt les données.
+share.about_s_left	%s  -  encore %u s environ
+share.an_unknown_date	une date inconnue
+share.and_its_preview	%s  -  et son aperçu
+share.another_version	autre version
+share.another_vita_is_already_in_that	Une autre Vita est déjà dans ce salon.
+share.ask_them_to_choose_share_game	Demande-lui de choisir à nouveau Partager les données.
+share.checking_your_connection	Vérification de ta connexion...
+share.closing_the_room	Fermeture du salon...
+share.connected_over_the_internet	Connecté par internet.
+share.connecting	Connexion...
+share.connecting_through_the_relay	Connexion via le relais.
+share.could_not_join_the_room	Impossible de rejoindre le salon.
+share.could_not_read_the_game_folder	Impossible de lire le dossier des jeux.
+share.could_not_write_it_here_is	Écriture impossible ici. La carte mémoire est-elle pleine ?
+share.counts_per_console	%s  -  %s  -  GBA %u / GB %u / GBC %u
+share.fetching_their_save_file	Récupération de sa sauvegarde
+share.fetching_their_slot_into_your_slot	Récupération de son empl. %d dans ton empl. %d
+share.finding_your_friend	Recherche de ton ami...
+share.game_data	Données de jeu
+share.getting_a_code	Obtention d'un code...
+share.got_it	reçu
+share.incoming_their_slot	Entrant   son empl. %d   %s
+share.it_is_saved_when_it_finishes	Elle est enregistrée à la fin.
+share.join_online_settings_join_a_share	Rejoindre en ligne > Paramètres > Rejoindre un partage
+share.joining	Connexion à %s...
+share.kb	%u Ko
+share.l_r_page	L/R page
+share.leaving_the_room	Départ du salon...
+share.looking_for_the_room_again	Nouvelle recherche du salon...
+share.looking_for_the_vita_sharing_on	Recherche de la Vita qui partage sur %s...
+share.lost_the_other	Autre Vita perdue
+share.move_the_vitas_closer_or_ask	Rapproche les Vita, ou demande-lui de partager à nouveau.
+share.n_saves_many	%u sauvegardes
+share.n_saves_one	%u sauvegarde
+share.n_states_many	%u états
+share.n_states_one	%u état
+share.needs_the_same_build	même version requise
+share.no_preview	Pas d'aperçu
+share.no_save_file_shared	Aucune sauvegarde partagée
+share.no_saves_or_states_on	Aucune sauvegarde ni aucun état %s sur %s
+share.not_enough_memory_to_start_the	Mémoire insuffisante pour démarrer la radio.
+share.not_fetched	Non récupéré
+share.not_for_this_build	 (pas pour cette version)
+share.nothing_here_for_your_games	Rien ici pour tes jeux %s
+share.nothing_of_yours_was_changed	Rien chez toi n'a été modifié.
+share.o_back	{o} retour
+share.o_cancel	{o} annuler
+share.o_games	{o} jeux
+share.o_keep_mine	{o} garder la mienne
+share.o_leave	{o} quitter
+share.o_stop_sharing	{o} arrêter le partage
+share.on_the_other_vita_join_as	Sur l'autre Vita : rejoins %s comme d'habitude.
+share.online	En ligne
+share.play_a_game_first_its_save	Joue d'abord à un jeu ; sa sauvegarde apparaîtra ici.
+share.please_wait	patiente
+share.preview_arriving	aperçu en cours d'arrivée
+share.put_their_slot_in	Mettre son empl. %d dans :
+share.reading_what_shares	Lecture de ce que partage %s...
+share.reading_your_saves_and_states	Lecture de tes sauvegardes et états...
+share.replace_your_save	Remplacer ta sauvegarde %s ?
+share.replaced_yours	a remplacé la tienne
+share.save_file	%s %s  -  sauvegarde  -  %s
+share.save_file_2	SAUVEGARDE
+share.save_file_3	Sauvegarde
+share.save_file_replaced_yours	La sauvegarde a remplacé la tienne
+share.save_file_saved	Sauvegarde enregistrée
+share.save_state_many	SAUVEGARDE  -  %d états%s
+share.save_state_one	SAUVEGARDE  -  %d état%s
+share.saved_to_your_slot	Enregistré dans ton empl. %d
+share.sending	Envoi
+share.sent	Envoyé
+share.share_game_data	Partager les données
+share.shared_by	Partagé par %s
+share.sharing_could_not_start	Le partage n'a pas pu démarrer.
+share.sharing_has_stopped	Le partage s'est arrêté.
+share.sharing_on_waiting_for_another_vita	Partage sur %s. En attente d'une autre Vita.
+share.slot	Empl. %d
+share.slot_2	Empl. %d   %s   %s
+share.slot_state	%s %s  -  état empl. %u  -  %s
+share.some_games_did_not_fit_in	Certains jeux n'ont pas tenu dans la liste.
+share.starting	Démarrage de %s...
+share.state_many	%d états%s
+share.state_one	%d état%s
+share.states_need_the_same_build	Les états requièrent la même version.
+share.states_only	états seulement
+share.still_no_answer_from_the_other	Toujours pas de réponse de l'autre Vita.
+share.tell_your_friend_this_code	Donne ce code à ton ami
+share.that_file_is_too_large_to	Ce fichier est trop gros pour être récupéré.
+share.that_is_not_a_state_this	Ce n'est pas un état que cette version peut charger.
+share.the_file_changed_on_the_other	Le fichier a changé sur l'autre Vita pendant l'envoi.
+share.the_game_loads_theirs_next_time	Le jeu chargera la sienne à ta prochaine partie.
+share.the_other_vita_is_not_answering	L'autre Vita ne répond pas.
+share.the_other_vita_no_longer_has	L'autre Vita n'a plus ce fichier.
+share.the_other_vita_stopped_sharing	L'autre Vita a arrêté le partage.
+share.the_other_vita_stopped_sharing_at	L'autre Vita a arrêté le partage à %d %%.
+share.the_radio_could_not_start	La radio n'a pas pu démarrer.
+share.the_radio_dropped_the_room	La radio a perdu le salon.
+share.the_room_was_not_found_is	Salon introuvable. Partage-t-il encore ?
+share.the_transfer_did_not_complete	Le transfert ne s'est pas terminé.
+share.the_transfer_stopped_at	Le transfert s'est arrêté à %d %%.
+share.the_two_vitas_run_versions_that	Les deux Vita ont des versions incompatibles pour le partage.
+share.the_vita_sharing_on_that_room	La Vita qui partage sur ce salon n'a pas répondu.
+share.their_build_yours	%s  -  sa version %.20s, la tienne %.20s
+share.their_states	Ses états
+share.theirs_you_have_none	Sien %s   tu n'en as pas
+share.theirs_yours	Sien %s   Tien %s
+share.there_are_no_saves_or_states	Aucune sauvegarde ni aucun état à partager pour l'instant.
+share.they_share_some_for_the_other	Il en partage pour les autres consoles.
+share.took_save_state_many	sauv., %d états
+share.took_save_state_one	sauv., %d état
+share.took_state_many	%d états
+share.took_state_one	%d état
+share.tri_change_console	{tri} changer de console
+share.tri_console	{tri} console
+share.try_again_when_it_has_left	Réessaie quand il sera parti.
+share.update_vitadhoc_on_both_vitas_theirs	Mets VitAdhoc à jour sur les deux Vita (la sienne : %.24s).
+share.waiting_for_your_friend	En attente de ton ami...  %d:%02d
+share.wi_fi_is_off	Le Wi-Fi est désactivé.
+share.x_get	{x} prendre
+share.x_get_save	{x} prendre la sauv.
+share.x_overwrite	{x} écraser
+share.x_put_it_here	{x} mettre ici
+share.x_replace	{x} remplacer
+share.x_their_states	{x} ses états
+share.x_try_again	{x} réessayer
+share.you_have_a_save_for_this	tu as une sauvegarde de ce jeu
+share.you_have_no_save_for_this	tu n'as pas de sauvegarde de ce jeu
+share.you_took_the	  -  tu as pris la %s
+share.your_current_save_is_kept_as	Ta sauvegarde actuelle est gardée en copie.
+share.your_old_save_is_kept_as	Ton ancienne sauvegarde est gardée en fichier .bak.
+share.your_old_slot_is_kept_as	Ton ancien empl. %d est gardé en fichier .old.
+share.your_save_was_not_changed	Ta sauvegarde n'a pas été modifiée.
+share.your_slot_changes_only_when_it	Ton emplacement ne change qu'une fois tout arrivé.
+share.your_slot_was_not_changed	Ton empl. %d n'a pas été modifié.
+share.your_slots	TES EMPLACEMENTS
+share.yours_is_from_theirs_from	La tienne date du %s, la sienne du %s.
+share.yours_is_replaced_when_it_finishes	La tienne est remplacée à la fin.
+snes.a_code_to_share	un code à partager
+snes.a_friend_s_room	le salon d'un ami
+snes.a_player	un joueur
+snes.a_room_on_this_wi_fi	un salon sur ce Wi-Fi
+snes.already_playing	déjà en jeu
+snes.connect_in_the_vita_s_settings	Connecte-toi dans Paramètres > Réseau de la Vita. Cette page continue seule dès que c'est fait.
+snes.different_version	version différente
+snes.end_it_first_play_together_disconnect	Termine-la d'abord (Jouer ensemble > Déconnecter).
+snes.found	%d TROUVÉ(S)
+snes.host_a_game	Héberger une partie
+snes.host_a_game_2	Héberger une partie
+snes.is	%s est %s.
+snes.join_a_game	Rejoindre une partie
+snes.join_a_game_2	REJOINDRE UNE PARTIE
+snes.looking_for_games_on_this_wi	Recherche de parties sur ce Wi-Fi...
+snes.no_two_players_room_for_this	Pas encore de salon Deux joueurs pour ce jeu.
+snes.online	En ligne
+snes.room	Salon %d
+snes.room_2	Salon %d  -  %s
+snes.room_ms	Salon %d  -  %d ms
+snes.rooms_on_this_wi_fi	salons sur ce Wi-Fi
+snes.runs_a_different_version_of_vitadhoc	%s utilise une autre version de VitAdhoc.
+snes.same_wi_fi	Même Wi-Fi
+snes.searching	RECHERCHE
+snes.that_player	Ce joueur
+snes.that_room	Ce salon
+snes.the_other_vita_hosts_the_same	L'autre Vita héberge le même jeu (Paramètres > Deux joueurs), sur le même Wi-Fi. Recherche en cours.
+snes.the_radio_is_busy_with_another	La radio est occupée par une autre liaison.
+snes.the_search_could_not_start	La recherche n'a pas pu démarrer.
+snes.this_vita_is_not_connected_to	Cette Vita n'est pas connectée au Wi-Fi.
+snes.trying_again_by_itself_if_this	Nouvel essai automatique. Si ça persiste, vérifie le Wi-Fi de la Vita.
+snes.two_players	DEUX JOUEURS
+snes.type_your_friend_s_code	saisis le code de ton ami
+snes.waiting	EN ATTENTE
+snes.you_start_the_room	tu ouvres le salon
+toast.a_plain_file	un fichier simple
+toast.a_player	Un joueur
+toast.a_player_left	Un joueur a quitté %s
+toast.achievement	Succès : %s
+toast.achievements_sent	Succès envoyés
+toast.achievements_unavailable	Succès indisponibles : %s
+toast.achievements_will_be_sent_when_back	Succès envoyés au retour en ligne
+toast.already_checking_for_updates	Recherche de mises à jour déjà en cours
+toast.already_linked_disconnect_first	Déjà relié. Déconnecte d'abord.
+toast.audio_output_unavailable	Sortie audio indisponible
+toast.cannot_load_a_state_during_a	Chargement d'état impossible pendant une liaison
+toast.cannot_save_a_state_during_a	Sauvegarde d'état impossible pendant une liaison
+toast.checking_for_updates	Recherche de mises à jour...
+toast.clip_saved	Clip enregistré
+toast.clock_is_used_the_next_time	L'horloge sera utilisée au prochain démarrage
+toast.completed	Terminé : %s
+toast.connected_to	Connecté à %s.
+toast.connected_to_connection	Connecté à %s. Connexion : %s
+toast.controller_2_drives_the_partner_s	La manette 2 pilote le jeu du partenaire
+toast.could_not_continue_starting_from_the	Reprise impossible : départ depuis la sauvegarde
+toast.could_not_load_state	État %d impossible à charger
+toast.could_not_sign_in_will_try	connexion impossible, nouvel essai plus tard
+toast.disconnected	Déconnecté
+toast.eight_folders_is_the_most	Huit dossiers au maximum
+toast.emulation_fault_game_was_reset	Erreur d'émulation - jeu réinitialisé
+toast.ending_the_link	Fin de la liaison...
+toast.exported_as	Exporté sous %.48s
+toast.fast_forward_is_off_during_a	Avance rapide désactivée pendant une liaison
+toast.fast_forward_is_off_while_two	Avance rapide désactivée avec deux jeux reliés
+toast.favourites_list_is_full	Liste de favoris pleine
+toast.folder_added_scanning	Dossier ajouté - analyse
+toast.folder_removed_scanning	Dossier retiré - analyse
+toast.game_boy_type_is_used_the	Le type de Game Boy sera utilisé au prochain démarrage
+toast.game_found	%d jeu trouvé
+toast.games_found	%d jeux trouvés
+toast.gift_received_from_the_phone	Cadeau reçu du téléphone
+toast.hardcore_mode_rewind_is_off	Mode Hardcore : retour arrière désactivé
+toast.hardcore_mode_starting_from_the_save	Mode Hardcore : départ depuis la sauvegarde
+toast.hardcore_mode_states_cannot_be_loaded	Mode Hardcore : états non chargeables
+toast.horizontal_circle_a_cross_b	Horizontal : Rond = A, Croix = B
+toast.joined	%s rejoint
+toast.joined_2	%s a rejoint %s
+toast.leaderboard_attempt	Tentative de classement : %s
+toast.leaderboard_attempt_failed	Tentative de classement échouée : %s
+toast.level_is_how_you_hold_the	Niveau : ta position actuelle de la Vita
+toast.link_cancelled	Liaison annulée.
+toast.link_ended_game_saved	Liaison terminée. Partie sauvegardée.
+toast.link_ended_your_own_game_is	Liaison terminée. Ton jeu est de retour.
+toast.link_error_the_connection_could_not	Erreur de liaison : la connexion n'a pas suivi
+toast.link_lost_the_other_vita_is	Liaison perdue : l'autre Vita a disparu. Ton jeu est revenu où il en était.
+toast.link_lost_the_other_vita_is_2	Liaison perdue : l'autre Vita a disparu. Ton jeu continue.
+toast.link_lost_the_other_vita_is_3	Liaison perdue : l'autre Vita a disparu. Rien sauvegardé.
+toast.link_lost_the_other_vita_is_4	Liaison perdue : l'autre Vita a disparu.
+toast.load_undone	Chargement annulé
+toast.looking_again_for_missing_covers	Nouvelle recherche des jaquettes manquantes
+toast.mastered	Maîtrisé : %s
+toast.menu_hold_start_select	Menu : maintiens START + SELECT
+toast.menu_tap_the_screen_or_start	Menu : touche l'écran, ou START + SELECT
+toast.mystery_gift_is_already_listening	Cadeau Mystère est déjà à l'écoute
+toast.mystery_gift_listening	Cadeau Mystère à l'écoute
+toast.mystery_gift_off	Cadeau Mystère désactivé
+toast.no_achievements_for_this_game_yet	Pas encore de succès pour ce jeu
+toast.no_answer	pas de réponse
+toast.no_folder_with_that_name_on	Aucun dossier de ce nom sur la carte
+toast.no_motion_reading_to_set_level	Aucun mouvement lu pour régler le niveau
+toast.no_network_to_check_with	Pas de réseau pour vérifier
+toast.no_picture_to_save_yet	Pas encore d'image à enregistrer
+toast.no_saved_state	Aucun état sauvegardé
+toast.no_saved_state_in_this_slot	Aucun état dans cet emplacement
+toast.no_state_to_load	Aucun état à charger
+toast.nothing_to_undo	Rien à annuler
+toast.one_controller_right_stick_or_tap	Une manette : stick droit ou toucher change de jeu
+toast.patch_not_applied	Patch non appliqué
+toast.patched_since_it_was_left_starting	Patché depuis : départ depuis la sauvegarde
+toast.pause_is_off_during_a_link	Pause désactivée pendant une liaison
+toast.player_2_plays_on_the_touch	Le joueur 2 joue sur l'écran tactile
+toast.press_the_same_button_again_to	Appuie à nouveau sur le même bouton pour te déconnecter de RetroAchievements
+toast.print_could_not_be_saved	Impression non enregistrée
+toast.printed_saved_to_prints	Imprimé : enregistré dans prints
+toast.retroachievements	RetroAchievements : %s
+toast.retroachievements_does_not_know_this_version	RetroAchievements ne connaît pas cette version
+toast.retroachievements_please_sign_in_again	RetroAchievements : reconnecte-toi
+toast.rom_path_is_too_long	Chemin de la ROM trop long
+toast.save_failed	Échec de la sauvegarde
+toast.save_type_is_used_the_next	Le type de sauvegarde sera utilisé au prochain démarrage
+toast.saved_your_game_only_the_second	Seul ton jeu a été sauvegardé : pas le second
+toast.scan_stopped_showing_what_was_found	Analyse arrêtée : résultats affichés
+toast.screenshot_could_not_be_saved	Capture non enregistrée
+toast.screenshot_saved	Capture enregistrée
+toast.set_completed	Série terminée : %s
+toast.sign_in_failed	Connexion échouée : %s
+toast.sign_in_is_already_under_way	Connexion déjà en cours
+toast.signed_in_but_the_account_could	Connecté, mais le compte n'a pas pu être gardé
+toast.signed_in_to_retroachievements_as	Connecté à RetroAchievements : %s
+toast.signed_out_of_retroachievements	Déconnecté de RetroAchievements
+toast.signing_in_to_retroachievements	Connexion à RetroAchievements...
+toast.slot_1_is_locked	L'emplacement 1 est verrouillé
+toast.slot_is_locked	Emplacement verrouillé
+toast.slow_connection_the_game_may_feel	Connexion lente : le jeu peut sembler en retard.
+toast.state_loaded	État chargé
+toast.state_loaded_the_second_game_is	État chargé : le second jeu est de nouveau une copie
+toast.state_loaded_your_game_only	État chargé : ton jeu seulement
+toast.state_save_failed	ÉCHEC de la sauvegarde d'état
+toast.state_saved	État sauvegardé
+toast.still_no_files_in_that_folder	Toujours aucun fichier .%s dans ce dossier
+toast.stop_mystery_gift_first	Arrête d'abord Cadeau Mystère
+toast.stop_the_two_player_game_on	Arrête d'abord la partie à deux sur cette Vita
+toast.stopped_hosting	Hébergement de %s arrêté
+toast.submitted	Envoyé : %s
+toast.that_folder_can_t_be_used	Ce dossier est inutilisable
+toast.that_state_s_second_game_is	Le second jeu de cet état est une autre cartouche
+toast.the_camera_stopped	La caméra s'est arrêtée
+toast.the_card_is_slow_showing_what	Carte lente : résultats trouvés affichés
+toast.the_clip_could_not_be_saved	Le clip n'a pas pu être enregistré
+toast.the_code_expired_host_again_for	Le code a expiré. Héberge à nouveau pour en obtenir un.
+toast.the_connection_was_lost_the_link	La connexion a été perdue. La liaison est terminée.
+toast.the_folder_list_could_not_be	Liste des dossiers non enregistrée
+toast.the_game_found_the_gift	Le jeu a trouvé le cadeau
+toast.the_games_fell_out_of_step	Les jeux se sont désynchronisés. Ton jeu est revenu où il en était.
+toast.the_games_fell_out_of_step_2	Les jeux se sont désynchronisés. Liaison terminée, rien sauvegardé.
+toast.the_host_closed_the_room	L'hôte a fermé le salon.
+toast.the_keyboard_is_not_available	Le clavier n'est pas disponible
+toast.the_link_between_the_two_games	La liaison entre les deux jeux s'est arrêtée
+toast.the_link_could_not_start	La liaison n'a pas pu démarrer
+toast.the_link_did_not_start	La liaison n'a pas démarré.
+toast.the_link_ended_when_the_vita	Liaison terminée : la Vita s'est mise en veille.
+toast.the_link_has_ended	La liaison est terminée.
+toast.the_link_mode_list_is_full	La liste des modes de liaison est pleine
+toast.the_other_vita_could_not_set	L'autre Vita n'a pas pu préparer le jeu.
+toast.the_other_vita_left_before_the	L'autre Vita est partie avant le début de la liaison.
+toast.the_patch_changed_starting_from_the	Le patch a changé : départ depuis la sauvegarde
+toast.the_room_is_closed	Le salon est fermé.
+toast.the_room_was_closed_when_the	Le salon a été fermé quand la Vita s'est mise en veille.
+toast.the_save_could_not_be_exported	La sauvegarde n'a pas pu être exportée
+toast.the_second_game_s_old_save	L'ancienne sauvegarde du second jeu n'a pas pu être copiée - non remplacée
+toast.the_second_game_s_save_could	La sauvegarde du second jeu n'a pas pu être écrite - l'ancienne est gardée
+toast.the_second_game_s_save_could_2	La sauvegarde du second jeu n'a pas pu être écrite
+toast.vertical_the_d_pad_turns_with	Vertical : la croix tourne avec l'image. L = A, R = B
+toast.vertical_turn_the_vita_left_l	Vertical : tourne la Vita à gauche. L = A, R = B
+toast.video	Vidéo : %s
+toast.waiting_for_the_other_vita	En attente de l'autre Vita...
+toast.wi_fi_was_lost	Wi-Fi perdu. %s
+toast.wi_fi_was_lost_link_ended	Wi-Fi perdu. Liaison terminée ; ton jeu continue.
+toast.wi_fi_was_lost_link_ended_2	Wi-Fi perdu. Liaison terminée, rien sauvegardé.
+toast.wi_fi_was_lost_the_link	Wi-Fi perdu. La liaison n'a pas démarré.
+ui.a_clip_could_not_be_saved	Un clip n'a pas pu être enregistré.
+ui.a_clip_is_still_being_saved	Un clip est encore en cours d'enregistrement.
+ui.a_retroarch_playlist_it_cannot_be	Une liste RetroArch : on ne peut pas la modifier ici
+ui.a_text_file_a_name_on	Un fichier texte : un nom sur une ligne, ses codes en dessous.
+ui.a_turbo_button_presses_a_or	Un bouton turbo appuie sur A (ou B) en boucle pour toi.
+ui.all_cheats_are_off	Tous les codes sont désactivés
+ui.all_off	tout désactivé
+ui.all_off_could_not_save_that	Tout désactivé (non enregistré)
+ui.apr	Avr
+ui.aug	Aoû
+ui.auto	Auto
+ui.auto_ask	Auto : demander
+ui.auto_link_cable	Auto : Câble Link
+ui.auto_wireless_adapter	Auto : Adaptateur sans fil
+ui.back	Retour
+ui.bak	%s.bak
+ui.both_vitas_need_this_game	les deux Vita ont besoin de ce jeu
+ui.button	Bouton
+ui.cancels_in_5_s	%s %s      annule dans 5 s
+ui.cancels_in_s	%s %s      annule dans %d s
+ui.changed_but_the_choice_could_not	Modifié, mais le choix n'a pas pu être enregistré
+ui.cheats	CODES DE TRICHE
+ui.cheats_2	Codes de triche
+ui.cheats_are_off_during_link_play	Codes désactivés pendant la liaison. Ils reviennent à la fin.
+ui.cheats_in_the_gbadhoc_folder	cheats/ dans le dossier GBAdhoc
+ui.choose_a_format_gs1_ar3_gs1raw	Choisis un format : GS1:, AR3:, GS1RAW: ou AR3RAW:
+ui.circle_stop_and_show_what_is	ROND : arrêter et afficher les résultats
+ui.clips_are_off_while_linked	Clips désactivés en liaison.
+ui.continue	Continuer
+ui.controls	COMMANDES
+ui.copy_them_to	Copie-les dans %s
+ui.copy_them_to_2	Copie-les dans :
+ui.counted_in_game_frames_so_fast	Compté en images de jeu : l'avance rapide l'accélère aussi.
+ui.dec	Déc
+ui.delete_slot	Supprimer l'emplacement %d ?
+ui.delete_slot_x_delete_o_keep	Supprimer l'emplacement %d ?      {x} supprimer     {o} garder
+ui.each_of_the_four_has_its	Chacun des quatre a son bouton, sa cadence et son mode.
+ui.every_control_is_back_to_its	Toutes les commandes sont revenues par défaut
+ui.exit_vitadhoc	Quitter VitAdhoc
+ui.feb	Fév
+ui.find_a_game	Chercher un jeu
+ui.finding_games_found	Recherche de jeux... %d trouvés
+ui.game_buttons	BOUTONS DE JEU
+ui.game_folder_to_add_or_remove	Dossier de jeux à ajouter ou retirer
+ui.game_genie_codes_patch_the_rom	Les codes Game Genie modifient la ROM : inutilisables
+ui.games	%d jeux
+ui.gb_gbc_gameshark_codes_e_g	GB / GBC : codes GameShark, p. ex. 010AD5C1
+ui.gba_codebreaker_codes_e_g_82025bc4	GBA : codes CodeBreaker, p. ex. 82025BC4 E0FF
+ui.hardcore_mode_states_cannot_be_loaded	Mode Hardcore : états non chargeables
+ui.hold	Maintenir
+ui.hold_1_5_s	maintenir 1,5 s
+ui.hold_fires_for_as_long_as	Maintenir : tire tant que tu tiens le bouton.
+ui.hosting	Hébergement
+ui.hosting_2	Hébergement
+ui.hosting_waiting	hébergement de %s, en attente
+ui.how_will_the_other_vita_connect	Comment l'autre Vita se connecte-t-elle ?
+ui.in_game	en jeu
+ui.in_game_home_opens_the_menu	En jeu, HOME ouvre le menu  -  maintiens START+SELECT pour quitter
+ui.in_the_game_hold_for_the	Dans le jeu, maintiens %s pour le menu
+ui.in_the_game_hold_for_the_2	Dans le jeu, maintiens %s pour le menu.
+ui.is_lost_fewer_per_console_shows	n'est perdu. Moins par console les affiche tous.
+ui.jan	Jan
+ui.jul	Jul
+ui.jun	Jun
+ui.kib	%u / %u Kio
+ui.l_r_page	L/R page
+ui.left_states	Gauche : états
+ui.let_go_to_set	%s      relâche pour valider
+ui.link_cable	Câble Link
+ui.linked	RELIÉ
+ui.linked_2	Relié
+ui.linked_player	relié, joueur %d
+ui.linking	LIAISON
+ui.lock	%s.lock
+ui.locked	  -  verrouillé
+ui.mar	Mar
+ui.may	Mai
+ui.mb	%u Mo
+ui.menu	Menu
+ui.mode	Mode
+ui.no_cheats_for_this_game_yet	Pas encore de code pour ce jeu
+ui.no_cheats_in_this_game_s	Aucun code dans le fichier de ce jeu
+ui.no_clip_yet_play_for_a	Pas encore de clip : joue d'abord quelques secondes.
+ui.no_favourites_yet	Aucun favori %s pour l'instant
+ui.no_games_in_this_view	Aucun jeu %s dans cette vue
+ui.no_games_match	Aucun jeu ne correspond
+ui.no_preview	Pas d'aperçu
+ui.no_roms_found	Aucune ROM .%s trouvée
+ui.no_save	pas de sauvegarde
+ui.none_for_this_game	aucun pour ce jeu
+ui.nothing_in_it_reads_as_a	Rien n'y ressemble à un code :
+ui.nothing_saved_here	Rien de sauvegardé ici
+ui.nothing_to_undo	Rien à annuler
+ui.nov	Nov
+ui.o_clear	{o} effacer
+ui.o_exit	{o} sortir
+ui.oct	Oct
+ui.of_on	%u sur %d actifs
+ui.of_used	%d sur %d utilisés
+ui.off_for_link_play	désactivé en liaison
+ui.off_in_hardcore	désactivé en Hardcore
+ui.off_while_linked	désactivé en liaison
+ui.old	%s.old
+ui.on	%u actifs
+ui.only_codes_that_write_the_game	Seuls les codes qui écrivent dans la RAM du jeu sont utilisables
+ui.only_gameshark_codes_that_start_01	Seuls les codes GameShark commençant par 01 sont utilisables
+ui.overwrite_slot_x_overwrite_o_keep	Écraser l'emplacement %d ?      {x} écraser     {o} garder
+ui.paused	En pause
+ui.paused_for_link_play	en pause pour la liaison
+ui.pick_a_game	choisis un jeu
+ui.play_together	Jouer ensemble
+ui.player_name	Nom du joueur
+ui.press_a_button_for	Appuie sur un bouton pour
+ui.press_a_button_or_combo_for	Appuie sur un bouton ou un combo pour
+ui.press_any_button_to_return_to	Appuie sur un bouton pour revenir au LiveArea.
+ui.press_sq_on_a_game_to	Appuie sur {sq} sur un jeu pour le mettre en favori
+ui.press_x_again_to_reset_every	Appuie encore sur {x} pour réinitialiser toutes les commandes
+ui.presses_a_second_10_15_or	Appuis par seconde : 10, 15 ou 30.
+ui.progress_the_game_has_not_saved	La progression non sauvegardée par le jeu sera perdue.
+ui.put_a_cheat_file_on_the	Mets un fichier de codes sur la carte mémoire :
+ui.quick_warn	Attention : sauvegarde ou chargement rapide est\nmaintenant sur une direction du stick seule. Une Vita\nposée sur un lit ou dans un sac peut l'actionner et\nremplacer un état. Ce message ne reviendra pas.
+ui.quit	Quitter
+ui.quit_to_game_list	Retour à la liste des jeux
+ui.rate	Cadence
+ui.reading_the_memory_card	Lecture de la carte mémoire
+ui.remembering_game	Mémorisation du jeu
+ui.reset_to_defaults	Réinitialiser
+ui.resume	Reprendre
+ui.retroachievements_password	Mot de passe RetroAchievements
+ui.retroachievements_user_name	Nom d'utilisateur RetroAchievements
+ui.returning_to_game_list	Retour à la liste des jeux...
+ui.rom_path_is_too_long	Chemin de la ROM trop long
+ui.save_clip	Enregistrer un clip
+ui.save_present	sauvegarde présente
+ui.save_states	États
+ui.save_states_2	États
+ui.save_states_are_off_while_linked	États désactivés pendant la liaison avec une autre console.
+ui.saved_by_3_1_small_preview	sauvé par 3.1 : petit aperçu seulement
+ui.saving_the_last_ten_seconds_as	Enregistrement des dix dernières secondes en clip...
+ui.screenshot_folder_empty_the_usual_one	Dossier des captures (vide : le dossier habituel)
+ui.screenshots_go_there_now	Les captures vont maintenant là
+ui.screenshots_go_to_screenshots	Les captures vont dans screenshots/
+ui.sec	%d / s
+ui.select	Choisir
+ui.select_all_games	SELECT tous les jeux
+ui.select_all_games_2	SELECT : tous les jeux
+ui.select_next_view	SELECT vue suivante
+ui.select_next_view_2	SELECT : vue suivante
+ui.select_sq_on_a_game_adds	SELECT + {sq} sur un jeu l'ajoute à une collection
+ui.sep	Sep
+ui.set	%d assigné(s)
+ui.settings	Paramètres
+ui.settings_2	Paramètres
+ui.shortcuts	RACCOURCIS
+ui.shorten_folders_or_filenames_to_browse	Raccourcis les noms de dossiers ou fichiers pour les parcourir.
+ui.shorten_the_folder_or_filename	Raccourcis le nom du dossier ou du fichier
+ui.showing_of_cheats	%u codes affichés sur %u
+ui.showing_of_games	%d jeux affichés sur %d
+ui.slot	Empl. %d
+ui.slot_could_not_be_deleted	L'emplacement %d n'a pas pu être supprimé
+ui.slot_could_not_be_loaded	L'emplacement %d n'a pas pu être chargé
+ui.slot_could_not_be_locked	L'emplacement %d n'a pas pu être verrouillé
+ui.slot_could_not_be_saved	L'emplacement %d n'a pas pu être enregistré
+ui.slot_could_not_be_undone	L'emplacement %d n'a pas pu être restauré
+ui.slot_deleted	Emplacement %d supprimé
+ui.slot_is_as_it_was_before	L'emplacement %d est revenu avant la sauvegarde
+ui.slot_is_empty_again	L'emplacement %d est de nouveau vide
+ui.slot_is_locked	L'emplacement %d est verrouillé
+ui.slot_is_locked_l_unlocks_it	L'emplacement %d est verrouillé : L le déverrouille
+ui.slot_locked	Emplacement %d verrouillé
+ui.slot_not_deleted	Emplacement %d non supprimé
+ui.slot_of	Empl. %d sur %d  -  %s%s
+ui.slot_saved	Emplacement %d enregistré
+ui.slot_unlocked	Emplacement %d déverrouillé
+ui.some_paths_were_too_long_and	Certains chemins étaient trop longs et ont été ignorés.
+ui.some_rom_folders_were_skipped	Certains dossiers de ROM ont été ignorés
+ui.sq_star	{sq} favori
+ui.sq_unstar	{sq} retirer
+ui.srm	%.*s.srm
+ui.start_select_hold_opens_the_menu	START+SELECT (maintenu) ouvre le menu  -  HOME est celui du système
+ui.start_settings	START paramètres
+ui.the_file_is_over_kb_showing	Le fichier dépasse %d Ko : les %u premiers codes sont affichés
+ui.the_game_s_wireless_mode	le mode sans fil du jeu
+ui.the_games_you_have_not_started	Les jeux que tu n'as pas lancés apparaissent ici
+ui.the_games_you_play_show_up	Les jeux auxquels tu joues apparaissent ici
+ui.the_name_storage_limit_was_reached	La limite de stockage des noms est atteinte.
+ui.the_others_are_still_on_the	Les autres sont toujours sur la carte : rien
+ui.this_build_lists_at_a_time	Cette version en liste %d à la fois.
+ui.this_code_is_not_one_gbadhoc	Ce code n'est pas lisible par GBAdhoc
+ui.this_ends_the_link_for_both	Cela termine la liaison pour les deux joueurs.
+ui.this_game	ce jeu
+ui.toggle	Basculer
+ui.toggle_press_to_start_press_again	Basculer : appuie pour démarrer, appuie encore pour arrêter.
+ui.too_many_cheats_on_at_once	Trop de codes actifs : désactive-en un d'abord
+ui.tri_change_console	{tri} changer de console
+ui.turbo_buttons	Boutons turbo
+ui.turbo_buttons_2	BOUTONS TURBO
+ui.turbo_is_off_during_link_play	Turbo désactivé pendant la liaison. Il revient à la fin.
+ui.turn_on_game_previews_in_settings	Active Aperçus des jeux dans Paramètres pour enregistrer des clips.
+ui.two_players_on_this	deux joueurs sur cette Vita
+ui.unchanged	%s inchangé : %s
+ui.unchanged_nothing_pressed	%s inchangé : rien appuyé
+ui.undo	%s.undo
+ui.undo_the_last_load_x_undo	Annuler le dernier chargement ?      {x} annuler     {o} garder
+ui.undo_the_save_in_slot_x	Annuler la sauvegarde de l'emplacement %d ?      {x} annuler     {o} garder
+ui.undo_x_the_save_in_slot	Annuler ?      {x} la sauv. de l'empl. %d     {sq} le dernier chargement     {o} garder
+ui.up_dn_slot	HAUT/BAS : empl.
+ui.up_dn_slot_sq_delete	HAUT/BAS : empl.   {sq} : supprimer
+ui.was_is_now_blank_disabled	%s était %s  -  %s est maintenant vide (désactivé)
+ui.wireless_adapter	Adaptateur sans fil
+ui.x_delete_o_keep	{x} : supprimer   {o} : garder
+ui.x_load_o_close	{x} : charger   {o} : fermer
+ui.x_look_again	{x} revoir
+ui.x_o_stay	%s     {x} %s     {o} rester
+ui.x_ok	{x} OK
+ui.x_play	{x} jouer
+ui.x_save	{x} enreg.
+ui.x_switch_all_off_o_keep	{x} désactiver les %u     {o} les garder
+ui.x_switch_it_off_o_keep	{x} le désactiver     {o} le garder

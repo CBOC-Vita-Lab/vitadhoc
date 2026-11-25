@@ -5006,11 +5006,13 @@ static void save_import(const char *rom_path, const char *save_path,
       {
          /* Game.sav is Game.gba's (or a zipped GBA game's) when that
           * cartridge is beside it */
-         char probe2[APP_PATH_CAP + 8];
+         char probe2[APP_PATH_CAP + 8], probe3[APP_PATH_CAP + 8];
          if ((path_fmt(probe, sizeof(probe), "%s%s.gba", dir, stem) != 0 ||
               file_size(probe, NULL) != 0) &&
              (path_fmt(probe2, sizeof(probe2), "%s%s.zip", dir, stem) != 0 ||
-              file_size(probe2, NULL) != 0))
+              file_size(probe2, NULL) != 0) &&
+             (path_fmt(probe3, sizeof(probe3), "%s%s.7z", dir, stem) != 0 ||
+              file_size(probe3, NULL) != 0))
          {
             TRY("this folder", "%s%s.sav", dir, stem)
          }
@@ -5420,7 +5422,7 @@ static int zip_unpack(const char *zip, fe_console_t console, char *out,
           e.name, e.method, e.usize, out);
    if (rc != 0)
    {
-      snprintf(g_arc_note, sizeof(g_arc_note), rc == -2 ? "The game in it is damaged (checksum)." : "The game in it could not be unpacked.");
+      snprintf(g_arc_note, sizeof(g_arc_note), rc == -2 ? (e.method == 7 ? "It is damaged or packed in a way this app cannot read." : "The game in it is damaged (checksum).") : "The game in it could not be unpacked.");
       fe_evt("boot_refused reason=%s path=%s",
              rc == -2 ? "zip_crc" : "zip_extract", zip);
       return -1;

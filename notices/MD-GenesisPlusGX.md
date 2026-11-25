@@ -19,6 +19,10 @@ VitAdhoc starts it with the game's path and it starts VitAdhoc again when you qu
   tracks. All permissive, so they combine with the Genesis Plus GX licence and with the MIT code `md.bin` links. Their licence texts are in
   `licenses/SegaCD-disc-readers.txt`; the sources are in `md/core/cd_hw/libchdr` and `md/core/sound/tremor`.
 - **Our code in md/:** `md/frontend` and `md/twin` are new code (Copyright CBOC-Vita), MIT licence, linked into `md.bin` only.
+  One exception: the disc tray's open and close and the disc swap in `md/frontend/host.c` (`md_host_cd_eject`, `md_host_cd_close`,
+  `cd_put_disc`, for `.m3u` games, 2.0) follow the disc control of Genesis Plus GX's libretro port (`libretro/libretro.c`,
+  `disk_set_eject_state` and `disk_set_image_index`; Copyright Eke-Eke (2007-2022) and Daniel De Matteis (2012-2016)), which is under
+  the same Genesis Plus GX licence as the core; those lines stay under that licence.
 - **Sega CD / Mega CD:** supported, with the player's own BIOS (`us_scd1_9210.bin`, `eu_mcd1_9210.bin`, `jp_mcd1_9112.bin` or another dump of
   the console's boot ROM, in `ux0:data/GBAdhoc/bios` or beside the game). The BIOS is the player's, never part of the package or the source.
 - **Not supported:** Sega 32X, Pico, Mega Drive add-on hardware beyond the cartridge and the Sega CD. No BIOS file is needed or used for any

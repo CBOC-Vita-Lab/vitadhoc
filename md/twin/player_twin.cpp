@@ -1902,6 +1902,52 @@ static int run_m3u_test(const std::string &discs, const std::string &work)
 			EXPECT(md_host_state_load_quick(bad.data(), bad.size()) != 0);
 			EXPECT(md_host_cd_disc_index() == 1);
 		}
+		/* a damaged state file of another disc does not change the disc (the check comes before the swap) */
+		{
+			std::vector<uint8_t> bad = st;
+			bad[9] = 0;
+			bad[bad.size() / 2] ^= 0x55;
+			EXPECT(md_host_state_load_mem(bad.data(), bad.size()) != 0);
+			EXPECT(md_host_cd_disc_index() == 1 && data40(now) && now == sec40b);
+		}
+		/* a moment saved while the tray was open, loaded after the change: the tray is open again and nothing is closing it. Change disc still
+		 * works from there (it does not need to open the tray), and choosing the disc that is in closes it */
+		{
+			pl->change_disc(0);
+			EXPECT(pl->disc_phase() == 1 && md_host_cd_tray_open());
+			std::vector<uint8_t> open_st(md_host_state_size());
+			const size_t ol = md_host_state_save_mem(open_st.data(), open_st.size());
+			EXPECT(ol > 0);
+			open_st.resize(ol);
+			rig.run(tick * 2 + 5);
+			EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 0 && pl->disc_phase() == 0);
+			EXPECT(md_host_state_load_mem(open_st.data(), open_st.size()) == 0);
+			EXPECT(md_host_cd_tray_open() && md_host_cd_disc_index() == 1 && pl->disc_phase() == 0);
+			rig.run(tick * 3);
+			EXPECT(md_host_cd_tray_open());
+			pl->change_disc(1);                               /* the disc that is in: the tray closes */
+			EXPECT(pl->disc_phase() == 2);
+			rig.run(tick + 5);
+			EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 1 && pl->disc_phase() == 0);
+			EXPECT(md_host_state_load_mem(open_st.data(), open_st.size()) == 0);
+			pl->change_disc(0);                               /* another disc with the tray open: swapped, then closed */
+			EXPECT(pl->disc_phase() == 1);
+			rig.run(tick * 2 + 5);
+			EXPECT(!md_host_cd_tray_open() && md_host_cd_disc_index() == 0 && pl->disc_phase() == 0);
+			EXPECT(data40(now) && now == sec40);
+			/* a state whose disc is gone from the card is refused, and the disc that was in stays in (the drive is not left empty) */
+			EXPECT(rename((g + "/Disc 2.iso").c_str(), (g + "/Disc 2.away").c_str()) == 0);
+			EXPECT(md_host_state_load_mem(st.data(), st.size()) != 0);
+			EXPECT(md_host_cd_disc_index() == 0 && md_host_cd_tracks() == 3 && data40(now) && now == sec40);
+			EXPECT(rename((g + "/Disc 2.away").c_str(), (g + "/Disc 2.iso").c_str()) == 0);
+			/* a state with the tray closed that lands in the middle of a change ends the change without a complaint */
+			pl->change_disc(1);
+			EXPECT(pl->disc_phase() == 1);
+			EXPECT(md_host_state_load_mem(st.data(), st.size()) == 0);
+			rig.run(tick + 5);
+			EXPECT(pl->disc_phase() == 0 && !md_host_cd_tray_open() && md_host_cd_disc_index() == 1);
+			EXPECT(data40(now) && now == sec40b);
+		}
 		/* the save is still the list's: written under its name */
 		{
 			std::vector<uint8_t> sv(4096, 0x3C);

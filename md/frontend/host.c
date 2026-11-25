@@ -897,6 +897,10 @@ int md_host_cd_disc_count(void) { return G.loaded && G.cd ? (g_disc_n > 0 ? g_di
 int md_host_cd_disc_index(void) { return G.loaded && G.cd ? g_disc_cur : 0; }
 int md_host_cd_tray_open(void) { return G.loaded && G.cd && cdd.status == CD_OPEN; }
 
+/* The tray's two status changes below (open: CD_OPEN and the "no audio" flag; close: a table of contents again, or no disc) and the swap by
+ * cdd_load in cd_put_disc are those of Genesis Plus GX's own disc control in its libretro port (libretro/libretro.c disk_set_eject_state and
+ * disk_set_image_index, Copyright Eke-Eke and Daniel De Matteis, under the Genesis Plus GX licence that md/core carries, md/core/LICENSE.txt):
+ * these lines are under that licence, not this file's MIT. */
 int md_host_cd_eject(void)
 {
 	if (!G.loaded || !G.cd || cdd.status == CD_OPEN) return 1;
@@ -1474,13 +1478,15 @@ static int state_load_from(const uint8_t *buf, size_t n, int check_crc)
 	else if (ver == STATE_VERSION_OLD) { if (n != G.state_size_old) return 3; payload_cap = n - STATE_HDR - STATE_TRAILER; }
 	else return 3;
 	if ((get32(buf + 8) & 0xFFu) != (uint32_t)G.system + (G.cd ? 16u : 0u)) return 3;
-	if (G.cd && (int)((get32(buf + 8) >> 8) & 0xFFu) != g_disc_cur) {      /* the state was made with another disc in the drive: it goes in first */
-		const int d = (int)((get32(buf + 8) >> 8) & 0xFFu);
-		if (d >= g_disc_n || cd_put_disc(d, NULL, 0)) return 3;
-	}
 	used = get32(buf + 12);
 	if (used == 0 || used > payload_cap || used > G.state_payload_cap) return 3;
 	if (check_crc && get32(buf + n - STATE_TRAILER) != (uint32_t)crc32(0, buf, (unsigned)(n - STATE_TRAILER))) return 3;
+	if (G.cd && (int)((get32(buf + 8) >> 8) & 0xFFu) != g_disc_cur) {      /* the state was made with another disc in the drive: it goes in first (once the state is known to be whole: a damaged file does not change the disc) */
+		const int d = (int)((get32(buf + 8) >> 8) & 0xFFu);
+		const int prev = g_disc_cur;
+		if (d >= g_disc_n) return 3;
+		if (cd_put_disc(d, NULL, 0)) { cd_put_disc(prev, NULL, 0); return 3; }      /* its disc is gone: the one that was in goes back, the drive is not left empty */
+	}
 	memcpy(G.state_scratch, buf + STATE_HDR, used);      /* the core wants a writable buffer */
 	/* run-ahead's own load keeps the picture just drawn, the pattern cache and the palette tables (the core then marks only the patterns
 	 * whose VRAM differs); every other load starts from cleared buffers as before */

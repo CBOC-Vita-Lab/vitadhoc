@@ -1085,18 +1085,21 @@ void MdPlayer::change_disc(int index)
 	if (!scd_ || discs_.size() < 2 || linked()) return;
 	if (disc_phase_) { notice("The disc is being changed already", NOTICE_INFO); sync_disc_row(); return; }
 	if (index < 0 || index >= (int) discs_.size()) { sync_disc_row(); return; }
-	if (index == md_host_cd_disc_index()) { notice(strf("Disc %d is in the drive already", index + 1), NOTICE_INFO); return; }
+	/* the tray may be open already (the game opened it, or a saved moment taken while it was open came back): the change goes on from there, and
+	 * choosing the disc that is in closes it */
+	const bool open = md_host_cd_tray_open() != 0;
+	if (index == md_host_cd_disc_index() && !open) { notice(strf("Disc %d is in the drive already", index + 1), NOTICE_INFO); return; }
 	if (!file_exists(discs_[(size_t) index], nullptr, nullptr)) {
 		notice(strf("Disc %d is missing: %s", index + 1, disc_file_name(discs_[(size_t) index]).c_str()), NOTICE_ERROR, true);
 		sync_disc_row();
 		return;
 	}
-	if (md_host_cd_eject() != 0) { sync_disc_row(); return; }
+	if (!open && md_host_cd_eject() != 0) { sync_disc_row(); return; }
 	disc_want_ = index;
-	disc_phase_ = 1;
+	disc_phase_ = index == md_host_cd_disc_index() ? 2 : 1;
 	disc_wait_ = kDiscTrayFrames;
-	logf("change disc: tray open, disc %d next\n", index + 1);
-	notice("Disc tray open", NOTICE_OK);
+	logf("change disc: tray open%s, disc %d next\n", open ? " already" : "", index + 1);
+	if (!open) notice("Disc tray open", NOTICE_OK);
 }
 
 void MdPlayer::sync_disc_row() { menu_.set_value(ROW_DISC, md_host_cd_disc_index()); }
@@ -1104,6 +1107,11 @@ void MdPlayer::sync_disc_row() { menu_.set_value(ROW_DISC, md_host_cd_disc_index
 void MdPlayer::disc_tick()
 {
 	if (!disc_phase_ || --disc_wait_ > 0) return;
+	if (!md_host_cd_tray_open()) {             /* a saved moment (a state, a rewind) came in with the tray closed: the change is over, its disc is the one in */
+		disc_phase_ = 0;
+		sync_disc_row();
+		return;
+	}
 	if (disc_phase_ == 1) {
 		char err[160];
 		if (md_host_cd_swap(disc_want_, err, sizeof err) == 0) {
@@ -1592,6 +1600,7 @@ bool MdPlayer::restore_state(const uint8_t *data, size_t n)
 	jumps_++;
 	pacer_.reset(PACE_FULL);
 	speed_.state_changed();              /* "a moment ago" is another timeline now */
+	if (r == 0 && scd_ && discs_.size() > 1 && !disc_phase_) sync_disc_row();      /* the state's disc is in the drive now */
 	return r == 0;
 }
 

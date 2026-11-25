@@ -9625,6 +9625,7 @@ static int m3u_hidden(const char *dir, const char *name)
    fl = snprintf(full, sizeof(full), "%s/%s", dir, name);
    if (fl <= 0 || fl >= (int)sizeof(full))
       return 0;
+   pk_m3u_fold(full);                 /* as the list's paths are (a doubled slash in the games folder's name) */
    h = m3u_path_hash(full);
    for (i = 0; i < g_m3u_hide_n; i++)
       if (g_m3u_hide[i] == h)

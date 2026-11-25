@@ -349,9 +349,11 @@ sharing).
 ## Games
 
 How we checked the games people reported, and what is still unchecked, is in
-[Game Compatibility](docs/COMPATIBILITY.md). Not fixed: sprites in the wrong
-order in Golden Sun, Mario Golf and The Minish Cap (OAM order), and any
-flicker or missing instruments, which we could not judge without a Vita.
+[Game Compatibility](docs/COMPATIBILITY.md). Sprite order (OAM order) follows
+the real console and was rechecked on Golden Sun and Mario Golf on the PC
+build; sprites in the "object window" mode are the one case still drawn the
+old way. Not fixed: any flicker or missing instruments, which we could not
+judge without a Vita.
 
 **Still being tested on real hardware:**
 

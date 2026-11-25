@@ -355,7 +355,7 @@ Not taken, and why:
   execution, I/O read semantics, flag-preserving I/O load stub, BX PC). Not
   taken: 70707ce (iterative exit resolution, a stack-depth bound) and the
   sound-rate and rounding commits (sound is the audio work's area).
-- lr-gpsp-amcc OAM order changes: see the report; not ported.
+- lr-gpsp-amcc OAM order changes: replaced in 1.4 by the full rule (OBJ_EXACT, below).
 
 **Tests:** `cpufix` tests 12 to 21 (`testrom/cpufix.c`): reload read after
 overflow, register-shift conformance from ROM and VRAM, Rm = PC in a shift,
@@ -925,6 +925,16 @@ ARM only), so run_tests.sh shows the cpufix picture as DIFFER between twins.
 - **Tests:** `testrom/cpufix.c` tests 24-28, `testrom/chain.c`,
   `testrom/objprio.c` (`make -C testrom cpufix chain objprio`);
   `app_tests.py --only cpufix,chain,objprio`.
+- **OBJ_EXACT, 2.0 recheck.** `testrom/objrand.c` (`app_tests.py --only
+  objrand`): 64 random sprites (8x8 and 16x16, every priority, a third affine,
+  four patterns with holes) over three BGs with holes, every one of the 38400
+  pixels compared with the rules worked out in Python, on the core and the
+  render thread; 16 pixels differ with `-DGPSP_NO_OBJ_EXACT`, none without.
+  The sprites of the OBJ window (list 4) are still outside the exact path: in
+  mGBA and NanoBoyAdvance their transparent pixels also hand a priority to the
+  sprite below. Per-line replay against mGBA's renderer and the instruction
+  count (+0.02% of a whole 200-frame run on x86 under callgrind, exact vs
+  `GPSP_NO_OBJ_EXACT`) are in the COMPATIBILITY.md section "Sprite order".
 
 - **WP0 counters** (`cpu_threaded.c`, `gpsp_jit_counters(u32 *out, u32 n)`,
   declared in `cpu.h`; each core instance exports its own copy under its prefix).

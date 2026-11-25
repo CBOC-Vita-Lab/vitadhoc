@@ -45,7 +45,7 @@ Menu::Menu()
 	  nav_player_(0), modal_(M_NONE), modal_arg_(0), scroll_(0), scroll_target_(0), age_ms_(0), map_player_(0), prev_buttons_(0),
 	  ignore_mask_(0), first_update_(true), t_down_(false), t_region_(-1), t_x0_(0), t_y0_(0), t_x_(0), t_y_(0), t_scroll0_(0),
 	  t_scrolling_(false), t_slider_(false), flash_ms_(0), have_flash_(false), shot_w_(0), shot_h_(0), shot_slot_(0), undo_avail_(false),
-	  gfx_(0), shot_tex_(0), tex_dirty_(false), bt_hold_ms_(0), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
+	  gfx_(0), shot_tex_(0), tex_dirty_(false), bt_hold_ms_(0), bt_touch_ms_(0), cap_action_(-1), cap_ms_(0), cap_window_ms_(0), cap_bits_(0), pending_(MENU_NONE)
 {
 	memset(vals_, 0, sizeof vals_);
 	memset(allowed_, 0, sizeof allowed_);
@@ -716,7 +716,7 @@ void Menu::activate_row(int i)
 	case K_ACTION:
 		if (r.id == ID_CHEAT_ADD) { if (host_ && host_->cheats_refused()) notify(host_->cheats_refused(), NOTICE_ERROR); else if (host_) host_->add_cheat(); }
 		else if (r.id == ROW_CTL_RESET) open_modal(M_CTL_RESET, 0);
-		else if (r.id == ROW_CTL_BTNTEST) { bt_hold_ms_ = 0; bt_pad_ = PadSample(); bt_touch_ = TouchPoint(); open_modal(M_BTNTEST, 0); }
+		else if (r.id == ROW_CTL_BTNTEST) { bt_hold_ms_ = bt_touch_ms_ = 0; bt_pad_ = PadSample(); bt_touch_ = TouchPoint(); open_modal(M_BTNTEST, 0); }
 		else if (page_ == PAGE_MAPPING && r.tag == TAG_MAP_RESET) {
 			if (profile_ && model_) {
 				Profile d = profile_defaults(*model_, cfg_.enter_is_cross);
@@ -925,17 +925,20 @@ void Menu::begin_capture(int action)
 	open_modal(M_CAPTURE, action);
 }
 
-/* Settings > Controls > Button test.  Every input is shown as it is read; the page leaves only by Start + Select held for half a
- * second (every other button is being tested). Nothing is sent to the game and no press reaches the menu. */
+/* Settings > Controls > Button test.  Every input is shown as it is read; the page leaves by Start + Select held for half a
+ * second (every other button is being tested) or, for a console whose Start or Select is the worn one, by a finger held on the
+ * line that says so for a second. Nothing is sent to the game and no press reaches the menu. */
 void Menu::bt_update(const MenuInput &in)
 {
 	const PadSample &ps = in.pads[nav_player_];
 	bt_pad_ = ps;
 	bt_touch_ = in.touch;
 	if ((ps.buttons & PH_MENU_CHORD) == PH_MENU_CHORD) bt_hold_ms_ += in.dt_ms; else bt_hold_ms_ = 0;
-	if (bt_hold_ms_ >= 500) {
+	if (in.touch.down && in.touch.y >= 496) bt_touch_ms_ += in.dt_ms; else bt_touch_ms_ = 0;
+	if (bt_hold_ms_ >= 500 || bt_touch_ms_ >= 1000) {
 		modal_ = M_NONE;
-		bt_hold_ms_ = 0;
+		bt_hold_ms_ = bt_touch_ms_ = 0;
+		t_down_ = in.touch.down; t_region_ = -1; t_scrolling_ = false; t_slider_ = false;   /* nor is the finger that left a tap there */
 		ignore_mask_ = ps.buttons & PH_BUTTONS;      /* the two buttons that left are not a press on the page behind */
 		prev_buttons_ = 0;
 		first_update_ = false;
@@ -1613,7 +1616,7 @@ void Menu::draw_states(Gfx *g, Text *t)
 
 void Menu::draw_btntest(Gfx *g, Text *t)
 {
-	g->fill_rect(0, 0, 960, 544, col(C_BG, 235));
+	g->fill_rect(0, 0, 960, 544, col(C_BG, 255));   /* (opaque: the page behind showed through the rows) */
 	t->draw(F_TITLE, 44, 22, "Button test", col(C_TEXT));
 	t->draw(F_CAPTION, 46, 22 + t->line_h(F_TITLE), cfg_.game_name.empty() ? cfg_.console_label.c_str() : cfg_.game_name.c_str(), col(C_TEXT2));
 	const float RH2 = 30, PITCH2 = 34, W = 424, Y0 = 108;
@@ -1638,7 +1641,7 @@ void Menu::draw_btntest(Gfx *g, Text *t)
 		bool rear = profile_ && profile_->back_touch;
 		for (int k = 0; k < 4; k++) {
 			uint32_t bit = PH_BACK_TL << k;
-			std::string a = rear ? bt_actions(bit) : std::string("Rear touch panel is Off");
+			std::string a = rear ? bt_actions(bit) : std::string("Off");
 			if (rear && a.empty()) a = "Not set";
 			right.push_back({ phys_label(bit, ec), a, (bt_pad_.back & (1u << k)) != 0 });
 		}
@@ -1651,19 +1654,19 @@ void Menu::draw_btntest(Gfx *g, Text *t)
 			g->fill_rrect(x, y, W, RH2, 15, v[i].lit ? accent(255) : col(0xFFFFFF, 26));
 			uint32_t ink = v[i].lit ? col(C_INK) : col(C_TEXT);
 			float ty = y + (RH2 - t->line_h(F_BODY)) * 0.5f;
-			std::string nm = t->fit(F_BODY, v[i].name, 200);
+			std::string nm = t->fit(F_BODY, v[i].name, 300);   /* ("Rear touch: bottom right" whole) */
 			t->draw(F_BODY, x + 14, ty, nm.c_str(), ink);
 			std::string tx = t->fit(F_BODY, v[i].text, W - 14 - 14 - t->width(F_BODY, nm.c_str()) - 12);
 			t->draw_right(F_BODY, x + W - 14, ty, tx.c_str(), v[i].lit ? col(C_INK, 200) : col(C_TEXT2));
 		}
 	}
 	/* the leaving bar and the one line that says how to leave */
-	if (bt_hold_ms_ > 0) {
-		float w = 300.0f * (float) std::min(bt_hold_ms_, 500) / 500.0f;
+	if (bt_hold_ms_ > 0 || bt_touch_ms_ > 0) {
+		float w = 300.0f * std::max((float) std::min(bt_hold_ms_, 500) / 500.0f, (float) std::min(bt_touch_ms_, 1000) / 1000.0f);
 		g->fill_rrect(330, 500, 300, 6, 3, col(0xFFFFFF, 40));
 		g->fill_rrect(330, 500, w, 6, 3, accent(255));
 	}
-	t->draw_center(F_BODY, 480, 512, "Hold Start + Select to leave", col(C_TEXT2));
+	t->draw_center(F_BODY, 480, 512, "To leave: hold Start + Select, or a finger on this line", col(C_TEXT2));
 }
 
 void Menu::draw_modal(Gfx *g, Text *t)

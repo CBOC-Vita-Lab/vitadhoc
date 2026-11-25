@@ -472,9 +472,11 @@ bound in Button mapping like any button, so it can be a game button, a shortcut
 (fast forward, rewind, quick save and load, screenshot, pause) or a turbo button;
 Settings > This game > Rear touch panel (Settings, Off, On; `rear_touch` in the
 game's `games/<ROM>.ini`) overrides the global `rear_touch` of `config.ini`.
-While a binding is being captured the panel is read even when it is Off, so a
-corner can be chosen from there. There is no hold time or grip area: the zones
-are the players'. On the WonderSwan, whose buttons are the Vita's own, a corner
+While it is Off the panel is not read at all, also not while Button mapping
+waits for a button (fingers rest on the back): turn it on first to bind a
+corner. The menus do not take a corner as a press. The panel reports y from
+108 to 889 (x 0 to 1919), so the halves meet at x = 960, y = 499, in the app
+and in the players. There is no hold time or grip area. On the WonderSwan, whose buttons are the Vita's own, a corner
 bound to a game button presses the WonderSwan button that button's own key presses.
 
 **NES Zapper** (2.0): FCEUmm's game database (the core's own, the same list the
@@ -482,9 +484,12 @@ libretro core uses) says which games have a Zapper and on which port; for them,
 or for any game with Settings > This game > Port 2 = Zapper (`nes_port2 = 1` in
 the game's ini; 0 Auto, 2 Controller), the front touch screen is the gun. A finger on
 the picture aims at the NES pixel under it (through the screen size, wide view
-and overscan crop: `zapper_map.h`) and pulls the trigger for as long as it is
-down; a finger beside the picture, or on the wide view's extra columns, aims
-off the screen. The game reads the picture the core drew, so no cross hair is
+overscan crop and the rows 4x crop leaves out: `zapper_map.h`) and pulls the
+trigger for as long as it is down; a finger beside the picture, or on the wide
+view's extra columns, aims off the screen. The aim stays for 20 frames after
+the finger lifts, because a game looks for the light some frames after the
+trigger and a tap is shorter than that. It works with the menus' touch
+switched off (`touch = 0`) too. The game reads the picture the core drew, so no cross hair is
 drawn. A tap does not open the menu in those games.
 
 **Button test** (2.0, Settings > Controls > Button test; in the Super NES and Sega
@@ -492,7 +497,8 @@ players the Controls page of their menu): the twelve buttons, both sticks with
 their numbers, the touch screen with its position and the four rear corners,
 each lit while held, with the actions the current mapping puts on it. It shows
 the input as the hardware reports it, not as the game would see it. Start +
-Select held for half a second leaves; no other button does. The WonderSwan's
+Select held for half a second leaves, or a finger held on the bottom line for a
+second; no single button does. The WonderSwan's
 names are for a game held sideways.
 
 ## Link Play And Sharing

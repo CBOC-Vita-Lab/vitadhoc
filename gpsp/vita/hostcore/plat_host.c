@@ -46,7 +46,7 @@
  *                                  (960x544) for DURATION frames (3: a tap)
  *     FRAME:drag=X0/Y0/X1/Y1:DURATION   ...moving from one point to another
  *     FRAME:rear=X/Y[:DURATION]    a finger on the REAR panel at its own
- *                                  units (1920x890) for DURATION frames (3)
+ *                                  units (x 0..1919, y 108..889) for DURATION frames (3)
  *     FRAME:type=TEXT              what the system keyboard returns the
  *                                  next time it is opened (a few frames
  *                                  after it opens); "type=" alone cancels
@@ -1610,7 +1610,7 @@ int plat_touch_points(plat_touch_pt *out, int max)
    return touch_points(out, max, 0);
 }
 
-/* The rear panel, the script's rear= fingers (1920x890 units). */
+/* The rear panel, the script's rear= fingers (the panel's own units). */
 int plat_rear_points(plat_touch_pt *out, int max)
 {
    return touch_points(out, max, 1);

@@ -431,6 +431,36 @@ TEST(button_test_shows_inputs_and_leaves_only_by_start_select_held)
 	}
 }
 
+TEST(button_test_leaves_by_a_finger_held_on_its_footer_too)
+{
+	/* a console whose Start or Select is the worn button must not be kept on the page */
+	Fixture f;
+	open_button_test(f);
+	pk::MenuInput in = pkh::idle(16);
+	in.touch.down = true; in.touch.x = 480; in.touch.y = 520;
+	for (int k = 0; k < 40; k++) f.menu.update(in);          /* 640 ms: not yet */
+	CHECK(f.menu.button_test_open());
+	f.menu.update(pkh::idle(16));                             /* lifted: the clock starts again */
+	for (int k = 0; k < 40; k++) f.menu.update(in);
+	CHECK(f.menu.button_test_open());
+	in.touch.y = 300;                                         /* held anywhere else: only shown */
+	for (int k = 0; k < 200; k++) f.menu.update(in);
+	CHECK(f.menu.button_test_open());
+	in.touch.y = 520;
+	for (int k = 0; k < 70; k++) f.menu.update(in);           /* more than a second on the line */
+	CHECK(!f.menu.button_test_open());
+	CHECK(f.menu.is_open());
+	CHECK_EQ(f.menu.page(), Menu::PAGE_CONTROLS);
+	/* the finger that left is not a tap on the page behind, held or lifted */
+	int cur = f.menu.cursor();
+	for (int k = 0; k < 10; k++) f.menu.update(in);
+	for (int k = 0; k < 10; k++) f.menu.update(pkh::idle(16));
+	CHECK(!f.menu.button_test_open());
+	CHECK(!f.menu.modal_open());
+	CHECK_EQ(f.menu.page(), Menu::PAGE_CONTROLS);
+	CHECK_EQ(f.menu.cursor(), cur);
+}
+
 TEST(button_test_names_what_each_input_does_from_the_profile)
 {
 	/* the page reads player 1's profile: a rear corner bound to Quick save shows up where the corner is */

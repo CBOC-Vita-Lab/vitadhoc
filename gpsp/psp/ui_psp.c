@@ -2375,13 +2375,17 @@ static void ov_scrollbar(int x, int y, int h, int pos, int view, int total)
 static const char *const CTL_UI_NAMES[CTL_NBUTTONS] = {
    "SELECT", "START", "L", "R", "UP", "DOWN", "LEFT", "RIGHT",
    VID_GLYPH_TRI, VID_GLYPH_O, VID_GLYPH_X, VID_GLYPH_SQ,
-   "STICK UP", "STICK DOWN", "STICK LEFT", "STICK RIGHT"
+   "STICK UP", "STICK DOWN", "STICK LEFT", "STICK RIGHT",
+   /* (short: a chord of them has to fit Button mapping's column; the Button
+    * test page spells them out) */
+   "REAR TL", "REAR TR", "REAR BL", "REAR BR"
 };
 
 static ui_action screen_controls(unsigned edges, unsigned pad);
 #ifdef VITA
 static ui_action screen_btntest(unsigned edges);   /* vita/ui_vita_btntest.h */
 static int g_bt_hold;                              /* ...Start + Select held, frames */
+static int g_bt_touch;                             /* ...a finger on its footer, frames */
 #endif
 static ui_action screen_state_slots(unsigned edges);
 #ifdef GPSP_CHEATS
@@ -2730,7 +2734,8 @@ static int set_row_shown(int idx)
       return g_ov_browse || (g_pgame.on && app_quick_supported(g_pgame.console));
    if (idx == SET_QUICKGAME)
       return !g_ov_browse && g_pgame.on && app_quick_supported(g_pgame.console);
-   if (idx == SET_BTNTEST)      /* the players have it on their own Controls page */
+   /* the players have these two on their own Controls page */
+   if (idx == SET_BTNTEST || idx == SET_REARTOUCH)
       return !ui_console_is_player(pcfg_display_console());
    if (idx == SET_REARGAME)
       return !g_ov_browse && g_pgame.on;
@@ -4537,7 +4542,7 @@ static ui_action screen_settings(unsigned edges)
 #ifdef VITA
    if ((edges & PSP_CTRL_CROSS) && g_cursor == SET_BTNTEST)
    {
-      g_bt_hold = 0;
+      g_bt_hold = g_bt_touch = 0;
       screen_to(SCR_BTNTEST);
       return screen_btntest(0);       /* draw this frame as the new page */
    }
@@ -12850,6 +12855,14 @@ static int browser_settings(void)
       sceCtrlPeekBufferPositive(&pd, 1);
       pad = ui_demo_running() ? demo_pad() : pd.Buttons;
 #ifdef VITA
+      /* Button mapping takes the rear panel's corners here as it does in a
+       * game: while Rear touch panel is on (no game's own choice out here) */
+      if (g_screen == SCR_CONTROLS && g_cap.on && g_pcfg.rear_touch && !ui_demo_running())
+      {
+         ui_btn_state bs;
+         ui_host_btn_read(&bs);
+         pad |= bs.rear & CTL_REAR_ALL;
+      }
       edges = vita_frame_begin(&pad);
 #else
       edges = pad_edges(pad);

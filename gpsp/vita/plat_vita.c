@@ -919,7 +919,7 @@ int plat_touch_points(plat_touch_pt *out, int max)
    return n;
 }
 
-/* The rear panel, every finger on it (plat.h): its own units, 1920x890. */
+/* The rear panel, every finger on it (plat.h): its own units (x 0..1919, y 108..889). */
 int plat_rear_points(plat_touch_pt *out, int max)
 {
    static int started;

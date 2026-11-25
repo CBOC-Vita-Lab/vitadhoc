@@ -1421,20 +1421,42 @@ static int zapper_active(void)
 }
 
 static int g_zap_told = -1, g_zap_trig;     /* what the log has been told (harness) */
+/* A game looks for the gun's light in the frames AFTER the trigger (the core
+ * shows it the pull for about five frames, then the game blanks the picture
+ * and draws its targets white), and a tap of the screen is shorter than that:
+ * the gun stays where the finger was for this many frames after it lifts. */
+#define ZAP_AIM_FRAMES 20
+static int g_zap_x = -1, g_zap_y = -1, g_zap_keep;
 
 static void zapper_frame(void)
 {
    pc_touch t;
    int nx = -1, ny = -1, trig = 0;
    pspcompat_touch(&t);
+   if (g_tap.wait && !t.down)          /* (touch_tap does this too, but not with */
+      g_tap.wait = 0;                  /* the menus' touch switched off)         */
    if (t.down && !g_tap.wait)          /* (not the finger that closed the menu) */
    {
       vid_rect_t r;
+      int row0 = 0, rows = (int)g_show.h;
       vid_picture_rect(g_show.w, g_show.h, &r);
+      vid_picture_rows(g_show.w, g_show.h, &row0, &rows);   /* (4x crop shows the middle rows) */
       trig = 1;
       (void)zapper_map(t.nx, t.ny, r.x, r.y, r.w, r.h, (int)g_show.w,
-                       (int)g_show.h, (int)nescore_top(), &nx, &ny);
+                       rows, (int)nescore_top() + row0, &nx, &ny);
+      g_zap_x = nx;
+      g_zap_y = ny;
+      g_zap_keep = ZAP_AIM_FRAMES;
    }
+   else if (g_zap_keep > 0 && !g_tap.wait)
+   {
+      nx = g_zap_x;
+      ny = g_zap_y;
+      if (--g_zap_keep == 0)
+         fe_evt("zapper aim_off x=%d y=%d", nx, ny);
+   }
+   else
+      g_zap_keep = 0;
    nescore_set_zapper(nx, ny, trig);
    if (trig != g_zap_trig)
    {
@@ -1448,8 +1470,9 @@ static void zapper_frame(void)
  * Settings > Controls > Rear touch panel (this game's own choice first): the
  * panel's four corners are inputs that Button mapping gives to any action.
  * They are read here, beside the pad, and only join it as CTL_REAR_* bits
- * while the setting is on -- or while a binding is being captured, so a
- * corner can be chosen even from Off.  Nothing is bound to them by default. */
+ * while the setting is on: with it off the panel is not read at all, so the
+ * fingers that rest on the back cannot get into a binding being captured.
+ * Nothing is bound to them by default. */
 static int rear_wanted(void)
 {
    if (g_pgame.on && g_pgame.rear >= 0)
@@ -1461,7 +1484,7 @@ static unsigned rear_pad(void)
 {
    plat_touch_pt pt[4];
    int x[4], y[4], i, n;
-   if (!rear_wanted() && !ui_capturing())
+   if (!rear_wanted())
       return 0;
    n = plat_rear_points(pt, 4);
    for (i = 0; i < n; i++)
@@ -5654,6 +5677,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
       pcfg_game_begin(gpath, (int)console);
       g_zap_told = -1;
       g_zap_trig = 0;
+      g_zap_keep = 0;
       /* The crash-loop guard: the marker for this start; a game that closed
        * the app twice in a row starts with the safe picture */
       if (boot_guard_game_begin(rom_path, guard_risky((int)console)) &&
@@ -6623,7 +6647,10 @@ static void game_loop(void)
       if (ui_active())
       {
          g_menu_was_open = 1;
-         menu_frame(pad);
+         /* the corners are the game's, and Button mapping's while it waits
+          * for a button: to the rest of the menu a finger on the back is not
+          * a press (its "any button" notes would close under a grip) */
+         menu_frame(ui_capturing() ? pad : pad & ~CTL_REAR_ALL);
          if (plat_quit_requested())
             g_running = 0;
          continue;

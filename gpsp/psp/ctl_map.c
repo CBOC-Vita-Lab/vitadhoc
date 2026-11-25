@@ -342,7 +342,7 @@ unsigned ctl_rear_zones(const int *x, const int *y, int n)
       return 0;
    for (i = 0; i < n && i < 4; i++)
    {
-      int left = x[i] < CTL_REAR_W / 2, top = y[i] < CTL_REAR_H / 2;
+      int left = x[i] < CTL_REAR_W / 2, top = y[i] < CTL_REAR_MID_Y;
       z |= top ? (left ? CTL_REAR_TL : CTL_REAR_TR)
                : (left ? CTL_REAR_BL : CTL_REAR_BR);
    }

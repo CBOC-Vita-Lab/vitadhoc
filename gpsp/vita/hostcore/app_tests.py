@@ -7211,7 +7211,7 @@ def t_rear_touch(S):
     S.check(got == [""] * 6, "Off by default: the rear panel does nothing (lit: %s)" % got)
     r, got = lit("rear_on", dict(cfg, rear_touch=1))
     S.check(got == ["A", "B", "A+B", "Start", "Select", "B"],
-            "On: the corners are A, B, both, Start; the halves meet at x = 960, y = 445 "
+            "On: the corners are A, B, both, Start; the halves meet at x = 960, y = 499 "
             "(lit: %s)" % got)
     r, got = lit("rear_game_on", dict(cfg), {"games/gbadhoc-test.gba.ini": "rear_touch = 1\n"})
     S.check(got == ["A", "B", "A+B", "Start", "Select", "B"],
@@ -7232,6 +7232,20 @@ def t_rear_touch(S):
     S.check(r.has(r"^EVT rear_touch_setting on=1") and re.search(r"^rear_touch = 1$", ini, re.M),
             "Settings > Controls > Rear touch panel turns it on and config.ini keeps it")
     S.picture(r, "row.png")
+    # Button mapping (here from the game list) takes a corner as it takes a button, and names it
+    r = S.run("rear_capture", "60:start\n" + "+8:up\n" * 6 + "+10:cross\n+30:cross\n+20:rear=200/200:10\n+40:shot=bound.png\n"
+              "+10:circle\n+20:quit\n", config={"rear_touch": 1, "bind_quicksave": "REAR_BR+L"})
+    S.clean(r)
+    S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x10000 err=0 .*via=capture"),
+            "Button mapping captures the top left corner for A (%s)" % [d["_"] for d in r.evt("ctl_bind")])
+    S.picture(r, "bound.png")
+    # ...and with the row Off a finger resting on the back is not part of what is captured
+    # (in a game: Settings, up to Button mapping)
+    r = S.run("rear_capture_off", menu_pick(4, wait=100) + set_up(13) + "+10:cross\n+30:cross\n+10:rear=200/200:120\n"
+              "+30:triangle\n+60:circle\n+20:quit\n", autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    S.check(r.has(r"^EVT ctl_bind key=bind_a mask=0x1000 err=0 .*via=capture"),
+            "Off: a finger on the back while a button is captured is not in the binding (%s)" % [d["_"] for d in r.evt("ctl_bind")])
     r = S.run("rear_untouched", "60:quit\n")
     S.clean(r)
     S.check("rear_touch" not in open(os.path.join(r.root, "config.ini")).read()
@@ -7260,6 +7274,25 @@ def t_button_test(S):
             "the inputs light up on the page")
     # the page's own words: it never opens the in-game menu or touches the settings by its buttons
     S.check(not r.evt("menu_open"), "no touch or button on the page opens the menu")
+    # a console whose Start or Select is the worn button is not kept on the page: a finger held on the footer's
+    # line for a second leaves too (a shorter touch there, or a long one anywhere else, does not)
+    r = S.run("button_test_touch", "60:start\n" + "+8:up\n" * 7 + "+10:cross\n+30:touch=480/272:90\n+100:touch=480/530:30\n"
+              "+40:shot=stays.png\n+10:touch=480/530:90\n+30:shot=holding.png\n+80:shot=left.png\n+30:quit\n")
+    S.clean(r)
+    scr = [d["name"] for d in r.evt("ui_screen")]
+    S.check(scr == ["settings", "button_test", "settings"],
+            "a finger held on the footer's line leaves the page, and lifting it does nothing more (screens: %s)" % scr)
+    a, b = r.shot("stays.png"), r.shot("left.png")
+    S.check(ImageChops.difference(a, b).getbbox() is not None, "...a short touch there and a long one elsewhere did not")
+    S.picture(r, "holding.png")
+    # in a game: the same page, and the chord that leaves it leaves the menu open behind it
+    r = S.run("button_test_game", menu_pick(4, wait=100) + set_up(14) + "+10:cross\n+30:shot=page.png\n"
+              "+10:start+select:50\n+40:shot=back.png\n+10:quit\n", autoboot="gbadhoc-test.gba")
+    S.clean(r)
+    scr = [d["name"] for d in r.evt("ui_screen")]
+    S.check(scr[-2:] == ["button_test", "settings"] and len(r.evt("menu_open")) == 1 and not r.evt("menu_closed"),
+            "in a game Start + Select leaves the page for Settings, the menu stays open (screens: %s)" % scr)
+    S.picture(r, "page.png")
 
 
 def t_zapper(S):
@@ -7284,6 +7317,35 @@ def t_zapper(S):
         S.check(trig[2]["x"] == "-1" and trig[2]["y"] == "-1",
                 "a touch beside the picture points off the screen (%s,%s)" % (trig[2]["x"], trig[2]["y"]))
     S.check(not r.evt("menu_open"), "a touch does not open the menu: the screen is the gun's")
+    # a tap is shorter than a game's look for the light (it comes some frames after the trigger): the gun stays
+    # where the finger was for a while after it lifts
+    r = S.run("zapper_tap", "300:touch=480/272:3\n+60:quit\n", autoboot="Gun.nes", extra={"roms/Gun.nes": gunh})
+    S.clean(r)
+    trig = [d for d in r.evt("zapper") if "trigger" in d]
+    off = [d for d in r.evt("zapper") if "aim_off" in d["_"]]
+    S.check(len(trig) == 2 and trig[1]["trigger"] == "0" and (trig[1]["x"], trig[1]["y"]) == (trig[0]["x"], trig[0]["y"])
+            and trig[0]["x"] != "-1" and len(off) == 1 and (off[0]["x"], off[0]["y"]) == (trig[0]["x"], trig[0]["y"]),
+            "after a short tap the gun still points where the finger was, then lets go (%s)" % [d["_"] for d in r.evt("zapper")])
+    # Screen size 4x crop shows the middle rows of the picture only (181 of the 224, from row 21): the top of the
+    # glass is row 8 + 21 of the NES frame, not its first row; the middle is the middle at every size
+    for scale, top in ((0, None), (1, 8), (2, 8), (3, 29), (4, None)):
+        r = S.run("zapper_scale%d" % scale, "300:touch=480/1:10\n+40:touch=480/272:10\n+40:quit\n",
+                  autoboot="Gun.nes", config={"scale_nes": scale}, extra={"roms/Gun.nes": gunh})
+        S.clean(r)
+        trig = [d for d in r.evt("zapper") if d.get("trigger") == "1"]
+        if S.check(len(trig) == 2, "Screen size %d: two touches, two shots" % scale):
+            x, y = int(trig[1]["x"]), int(trig[1]["y"])
+            S.check(abs(x - 128) <= 1 and abs(y - 120) <= 1, "Screen size %d: the middle is NES pixel %d,%d (want 128,120)" % (scale, x, y))
+            if top is None:
+                S.check(trig[0]["y"] == "-1", "Screen size %d: the top edge of the glass is above the picture (%s)" % (scale, trig[0]["y"]))
+            else:
+                S.check(abs(int(trig[0]["y"]) - top) <= 1, "Screen size %d: the top of the glass is NES row %s (want %d)" % (scale, trig[0]["y"], top))
+    # with the menus' touch switched off (config.ini touch = 0) the gun still works, also after the menu was open
+    r = S.run("zapper_touch_off", "200:start+select:20\n+40:circle\n+60:touch=480/272:10\n+40:quit\n", autoboot="Gun.nes",
+              config={"touch": 0}, extra={"roms/Gun.nes": gunh})
+    S.clean(r)
+    S.check(len(r.evt("menu_open")) == 1 and any(d.get("trigger") == "1" for d in r.evt("zapper")),
+            "touch = 0 and the menu opened once: the gun still fires (%s)" % [d["_"] for d in r.evt("zapper")])
     # 2. a game without one: a tap opens the menu as ever, and the gun is not on
     r = S.run("zapper_none", "300:touch=480/272\n+40:quit\n", autoboot="Gun.nes",
               extra={"roms/Gun.nes": gun})

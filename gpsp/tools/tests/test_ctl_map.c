@@ -945,12 +945,15 @@ static void test_rear(void)
    unsigned mask;
    const char *ini = "/tmp/t_ctl_rear.ini";
 
-   /* the zones: left/right at x = 960, top/bottom at y = 445 (the players' split) */
-   x[0] = 0;   y[0] = 0;   CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
-   x[0] = 959; y[0] = 444; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
-   x[0] = 960; y[0] = 444; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TR);
-   x[0] = 959; y[0] = 445; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BL);
-   x[0] = 960; y[0] = 445; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
+   /* the zones: left/right at x = 960, top/bottom at y = 499, the middle of
+    * the 108..889 the panel reports (the players' split) */
+   x[0] = 0;   y[0] = 108; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
+   x[0] = 959; y[0] = 498; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TL);
+   x[0] = 960; y[0] = 498; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_TR);
+   x[0] = 959; y[0] = 499; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BL);
+   x[0] = 960; y[0] = 499; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
+   /* the two halves are the same height */
+   CHECK(CTL_REAR_MID_Y - CTL_REAR_Y0 == CTL_REAR_Y1 + 1 - CTL_REAR_MID_Y);
    x[0] = 1919; y[0] = 889; CHECK(ctl_rear_zones(x, y, 1) == CTL_REAR_BR);
    CHECK(ctl_rear_zones(x, y, 0) == 0);
    CHECK(ctl_rear_zones(NULL, NULL, 2) == 0);

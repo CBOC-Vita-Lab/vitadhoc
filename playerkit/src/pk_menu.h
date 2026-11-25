@@ -333,7 +333,7 @@ private:
 	/* Button test: the pad as read now, and how long Start + Select have been held */
 	PadSample bt_pad_;
 	TouchPoint bt_touch_;
-	int bt_hold_ms_;
+	int bt_hold_ms_, bt_touch_ms_;
 	void bt_update(const MenuInput &in);
 	void draw_btntest(Gfx *g, Text *t);
 	std::string bt_actions(uint32_t bit) const;

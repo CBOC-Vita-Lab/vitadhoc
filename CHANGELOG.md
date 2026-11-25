@@ -130,7 +130,8 @@ and in emulators; none of it has run on a real Vita yet (see
 - **Button test** (Settings > Controls): shows every button, both sticks, the
   touch screen and the four corners of the rear panel as you press them, with
   what each one does for the console you are on, so you can check a worn button
-  or a mapping. Hold Start + Select to leave. The Super NES and Sega players
+  or a mapping. Hold Start + Select to leave (or a finger on the bottom line,
+  if one of the two is the worn button). The Super NES and Sega players
   have the same page in their menu's Controls.
 - **More covers found** (a few percent more of the full game lists on Game Boy
   Advance and Super NES), and a failed save now says what is really wrong

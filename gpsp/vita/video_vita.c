@@ -431,6 +431,18 @@ void vid_picture_rect(unsigned w, unsigned h, vid_rect_t *out)
    }
 }
 
+/* Which rows of the w x h picture that rectangle shows: all of them, but
+ * the middle ones at "4x crop" (dest_geo). */
+void vid_picture_rows(unsigned w, unsigned h, int *first, int *count)
+{
+   vid_geo g;
+   dest_geo(w, h, &g);
+   if (first)
+      *first = g.sy0;
+   if (count)
+      *count = g.sh;
+}
+
 static int geo_covers(const vid_geo *g)
 {
    return g->ox <= 0 && g->oy <= 0 && g->ox + g->dw >= VB_W &&

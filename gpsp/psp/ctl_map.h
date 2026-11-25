@@ -191,13 +191,17 @@ int ctl_stick_parse(const char *s, int *out);  /* 0 and *out, or -1 */
 #define CTL_STICK_OFF_AT  52
 unsigned ctl_stick_bits(int mode, int lx, int ly, unsigned *state);
 /* THE REAR PANEL.  `x`/`y` are the touch points in the panel's own units
- * (1920 x 890: sceTouchGetPanelInfo of the back panel), `n` how many.  A point
- * in the left half is "left", in the upper half "top" (the same split the
- * players use: x < 960, y < 445), so each finger lights one corner; the
- * result is the CTL_REAR_* bits of every corner touched.  Pure: the caller
- * reads the panel. */
-#define CTL_REAR_W 1920
-#define CTL_REAR_H 890
+ * (sceTouchGetPanelInfo of the back panel: x 0..1919, y 108..889 -- the
+ * panel is shorter than the screen and its reports do not start at 0), `n`
+ * how many.  A point in the left half is "left", in the upper half "top"
+ * (the same split the players use: x < 960, y < 499, the middle of what the
+ * panel reports), so each finger lights one corner; the result is the
+ * CTL_REAR_* bits of every corner touched.  Pure: the caller reads the
+ * panel. */
+#define CTL_REAR_W  1920
+#define CTL_REAR_Y0 108
+#define CTL_REAR_Y1 889
+#define CTL_REAR_MID_Y ((CTL_REAR_Y0 + CTL_REAR_Y1 + 1) / 2)
 unsigned ctl_rear_zones(const int *x, const int *y, int n);
 /* 1 if `mask` is bound to the stick alone: one or more stick directions
  * and no real button. */

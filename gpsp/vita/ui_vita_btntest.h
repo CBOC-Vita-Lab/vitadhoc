@@ -10,13 +10,17 @@
  *
  * LEAVING.  Every button is being tested, so none of them can leave: hold
  * Start + Select for half a second (the chord that opens the menu in a game).
- * The footer says so and a bar fills while the two are held.  Nothing on this
- * page is touchable: a finger on the screen is only shown.
+ * The footer says so and a bar fills while the two are held.  A console whose
+ * Start or Select is the worn button must not be kept here: a finger held on
+ * the footer's line for a second leaves too.  Nothing else on this page is
+ * touchable: a finger on the screen is only shown.
  */
 #ifndef UI_VITA_BTNTEST_H
 #define UI_VITA_BTNTEST_H
 
 #define BT_HOLD_FRAMES 30          /* Start + Select held this long: leave   */
+#define BT_TOUCH_FRAMES 60         /* ...or a finger on the footer this long */
+#define BT_TOUCH_Y     496         /* the footer's line, native rows (of 544) */
 #define BT_Y0          58
 #define BT_PITCH       15
 #define BT_COL2        248
@@ -122,12 +126,19 @@ static ui_action screen_btntest(unsigned edges)
       g_bt_hold++;
    else
       g_bt_hold = 0;
-   if (g_bt_hold >= BT_HOLD_FRAMES)
+   if (s.front_n > 0 && s.front_y >= BT_TOUCH_Y)
+      g_bt_touch++;
+   else
+      g_bt_touch = 0;
+   if (g_bt_hold >= BT_HOLD_FRAMES || g_bt_touch >= BT_TOUCH_FRAMES)
    {
-      g_bt_hold = 0;
+      g_bt_hold = g_bt_touch = 0;
       screen_to(SCR_SETTINGS);
       g_cursor = SET_BTNTEST;
       g_prev_pad = 0xFFFFFFFFu;  /* the two buttons that left are spent */
+      tch_reset();
+      g_tch.down = 1;            /* ...and the finger, until it lifts */
+      g_tch.dead = 1;
       return UI_ACT_NONE;
    }
 
@@ -180,13 +191,15 @@ static ui_action screen_btntest(unsigned edges)
    }
 
    /* the leaving bar */
-   if (g_bt_hold > 0)
+   if (g_bt_hold > 0 || g_bt_touch > 0)
    {
-      int w = g_bt_hold * 200 / BT_HOLD_FRAMES;
+      int w = g_bt_hold * 200 / BT_HOLD_FRAMES, w2 = g_bt_touch * 200 / BT_TOUCH_FRAMES;
+      if (w2 > w)
+         w = w2;
       vid_rect(140, 236, 200, 3, C_CARD, 255);
       vid_rect(140, 236, w, 3, C_ACCENT, 255);
    }
-   footer("Hold Start + Select to leave");
+   footer("To leave: hold Start + Select, or a finger on this line");
    return UI_ACT_NONE;
 }
 

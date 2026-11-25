@@ -34,7 +34,9 @@ response, No sprite flicker.
   game: use Start + Select. If a game that uses the Zapper is not in the core's
   database, set Settings > This game > Port 2 to Zapper.
 - **The rear touch panel** (main app and players) has no hold time or grip
-  area: the Vita's grips can touch it. It is Off until you turn it on, and
+  area: the Vita's grips can touch it. Where its halves meet comes from the
+  report range other Vita software uses (y 108 to 889), not from a measurement
+  on a console. It is Off until you turn it on, and
   nothing is bound to a corner until you bind it. On the WonderSwan a corner
   can press the buttons the Vita's own buttons press (it follows the game's
   turn: the d-pad is the Y buttons in an upright game), not a WonderSwan

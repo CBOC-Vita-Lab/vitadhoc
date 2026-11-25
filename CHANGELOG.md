@@ -7,6 +7,15 @@ world a five-character code away. Everything here was checked on PC test builds
 and in emulators; none of it has run on a real Vita yet (see
 [Known Issues](KNOWN-ISSUES.md)), so speeds are aims, not promises.
 
+**An Accurate Game Boy core**
+
+- **Game Boy core: Standard / Accurate** (Settings, and per game). Accurate is Gambatte (GPL-2.0), a cycle-accurate
+  Game Boy and Game Boy Color core, beside TGB Dual, which stays the default. Same battery files, palettes, colour
+  correction, cheats, achievements, rewind, fast forward and Quick response; its own save states (not loaded
+  across cores). Link play and the Camera, MBC6, MBC7 and Super Game Boy borders stay on TGB Dual, with a notice.
+  Test ROMs: 53 of 60 pass (TGB Dual 36 of 60, docs/COMPATIBILITY.md). Costs more time per frame
+  than TGB Dual; not run on a Vita (Known Issues).
+
 **Four new consoles**
 
 - **Sega Genesis / Mega Drive, Master System, Game Gear and SG-1000.** Each has

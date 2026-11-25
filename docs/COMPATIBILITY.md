@@ -68,20 +68,26 @@ reference picture). Pass counts, **host (PC x86)**, not a Vita test. Runner:
 `gpsp/gbcore/tests/run_suites.py`; the results the gate holds the core to are
 in `gpsp/gbcore/tests/suites-expected.txt`.
 
-| Suite | Before | After |
-|---|---|---|
-| blargg cpu_instrs, 11 single ROMs | 2 / 11 | 11 / 11 |
-| blargg cpu_instrs, combined ROM | 0 / 1 | 1 / 1 |
-| blargg instr_timing | 1 / 1 | 1 / 1 |
-| blargg interrupt_time | 0 / 1 | 1 / 1 |
-| blargg halt_bug | 0 / 1 | 1 / 1 |
-| blargg dmg_sound (12 singles + combined) | 7 / 13 | 8 / 13 |
-| blargg cgb_sound (12 singles + combined) | 8 / 13 | 9 / 13 |
-| blargg mem_timing and mem_timing-2 (3 singles + combined each) | 0 / 8 | 0 / 8 |
-| blargg oam_bug (8 singles + combined) | 2 / 9 | 2 / 9 |
-| dmg-acid2 | fail | pass |
-| cgb-acid2 | fail | pass |
-| Total | 20 / 60 | 36 / 60 |
+| Suite | TGB Dual before | TGB Dual after | Gambatte (Accurate) |
+|---|---|---|---|
+| blargg cpu_instrs, 11 single ROMs | 2 / 11 | 11 / 11 | 11 / 11 |
+| blargg cpu_instrs, combined ROM | 0 / 1 | 1 / 1 | 1 / 1 |
+| blargg instr_timing | 1 / 1 | 1 / 1 | 1 / 1 |
+| blargg interrupt_time | 0 / 1 | 1 / 1 | 1 / 1 |
+| blargg halt_bug | 0 / 1 | 1 / 1 | 0 / 1 |
+| blargg dmg_sound (12 singles + combined) | 7 / 13 | 8 / 13 | 13 / 13 |
+| blargg cgb_sound (12 singles + combined) | 8 / 13 | 9 / 13 | 13 / 13 |
+| blargg mem_timing and mem_timing-2 (3 singles + combined each) | 0 / 8 | 0 / 8 | 8 / 8 |
+| blargg oam_bug (8 singles + combined) | 2 / 9 | 2 / 9 | 3 / 9 |
+| dmg-acid2 | fail | pass | pass |
+| cgb-acid2 | fail | pass | pass |
+| Total | 20 / 60 | 36 / 60 | 53 / 60 |
+
+The Gambatte column is the Accurate core (`gbcore/gambatte`), run the same way (`run_suites.py --core gambatte`;
+results the gate holds it to: `gbcore/tests/suites-expected-gambatte.txt`; gate steps `gb-suites-gambatte` and
+`gb-gambatte-core`). Its blargg halt_bug fails when the ROM runs as a Game Boy Color (the ROM's header asks for
+colour) and passes when forced to a Game Boy; the oam_bug tests that need the sprite-memory corruption are not
+emulated. Gambatte's costs are in Known Issues (host instruction counts, not a Vita).
 
 Mooneye's acceptance tests were not run: they need the WLA-DX assembler,
 which could not be built here. The runner and the gate step support them

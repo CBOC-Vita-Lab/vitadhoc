@@ -21,6 +21,10 @@ original project and the clarification. Original notices remain intact.
   under `gpsp/psp/me`. The permission does not settle that code's origin.
 - The Vita build does not link either PSP component above. This is not a
   claim about every PSP build.
+- Gambatte (the Accurate Game Boy core, 2.0) is **GPL-2.0 only**, not "or later". It is linked into the main
+  program, so the main program as distributed is under GPL-2.0 for that part: the "including use under GPL-3.0"
+  line above does not extend to a build that contains it. See
+  [Game Boy: Gambatte](notices/GB-Gambatte.md).
 - CPU xBRZ, experimental GPU xBRZ, mGBA-derived files, fonts, databases and
   SDK/runtime components retain their own notices. See
   [Third-Party Notices](notices/THIRD-PARTY.md).

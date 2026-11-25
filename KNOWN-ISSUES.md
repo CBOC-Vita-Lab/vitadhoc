@@ -353,6 +353,17 @@ How we checked the games people reported, and what is still unchecked, is in
 order in Golden Sun, Mario Golf and The Minish Cap (OAM order), and any
 flicker or missing instruments, which we could not judge without a Vita.
 
+**The Accurate Game Boy core (Gambatte)** takes more time per frame than TGB Dual: on the PC build, counted in
+host instructions per emulated frame (**host x86-64, not a Vita**), 1.06 to 1.55 times TGB Dual's (blargg cpu_instrs
+1.06, a quiet game loop with sound 1.55). A model for the Vita (Cortex-A9, 444 MHz, about one instruction per cycle
+and about 1.2 ARM instructions per x86 one) puts a Game Boy frame at about 2.4 million instructions, 30 to 50 % of one
+core at 60 frames a second, so it should fit; **not measured on a Vita**. Quick response runs the frame twice and
+holds off by itself when the second one is not cheap. Differences from Standard: the Accurate core does not run
+the Camera, MBC6, MBC7, TAMA5 or MMM01 cartridges (they start on Standard), has no Super Game Boy border, ignores cheat
+codes that poke I/O registers, does not keep HuC3's clock in the battery file, plays link sessions on Standard, and its
+states and TGB Dual's are not interchangeable. blargg's halt_bug fails on it in Game Boy Color mode (it passes as a
+Game Boy), and the oam_bug sprite-memory corruption tests are not emulated (3 of 9 pass).
+
 **Still being tested on real hardware:**
 
 - **Motion games:** whether turning and tilting go the right way and feel

@@ -11,7 +11,8 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | --- | --- |
 | Platform | Native PS Vita application; title ID `GBAD00001`; 960 x 544 output |
 | GBA | gpSP core and ARM dynamic recompiler; original game image 240 x 160 |
-| GB / GBC | TGB Dual core; original game image 160 x 144; Super Game Boy border support |
+| GB / GBC | TGB Dual core (Standard); original game image 160 x 144; Super Game Boy border support |
+| GB / GBC, Accurate | Gambatte core, optional (Settings > Game Boy core, or per game); the same picture and files |
 | Super NES | Snes9x 1.63 in its own program (`snes.bin`, non-commercial licence); sound and picture drawing on their own cores; up to four players with the Super Multitap |
 | NES / Famicom | FCEUmm inside the app (GPL-2.0-or-later); NES, Famicom Disk System (your own `disksys.rom`) and UNIF games |
 | WonderSwan / Color | Beetle WonderSwan (Mednafen) inside the app (GPL-2.0-or-later); 224 x 144 at 75.47 frames a second, blended into each 59.94 Hz refresh; horizontal and vertical games |
@@ -263,6 +264,24 @@ presents. At most two pictures are in flight (fewer when the drawing stays
 over budget); fast forward, rewind and Steady pacing's half mode show the
 newest picture. Off in every link session, local two-player play and the
 bench pair. The log has a `handoff:` line every second (gate step `census`).
+
+## Game Boy core: Standard and Accurate
+
+Settings > Game Boy core (Standard / Accurate; `config.ini` `gb_core`, 0 or 1; per game: Settings > Game Boy core (this
+game), `games/<ROM>.ini` `gb_core`, Settings / Standard / Accurate) picks the core that plays Game Boy and Game Boy
+Color games. Standard is TGB Dual, the default. Accurate is Gambatte, a cycle-accurate core: it passes more of the public
+test ROMs (docs/COMPATIBILITY.md) and costs more time per frame (about 1.1 to 1.5 times TGB Dual's on the PC build,
+Known Issues). Both use the same files: the battery file `Game.gb.sav` is shared (cartridge RAM, then the 48-byte
+clock trailer of MBC3 carts; HuC3's clock is not kept by Accurate), so a save made on one core is read by the other.
+Save states are not shared: each is tagged by its core, and loading the other core's says "This state is from the other
+Game Boy core". Everything else works on both: rewind, fast forward, Quick response (identical to a run without it),
+cheats (GameShark RAM codes and Game Genie; a code that pokes an I/O register is ignored by Accurate), RetroAchievements
+and cheat search, the palettes and colour correction rows (Auto palette is the grey one on Accurate; the colour
+correction is the same model as Standard's), the Printer. TGB Dual plays what Gambatte does not: Link play (GB link
+cable, two carts on one console, online) always runs Standard, with a one-line notice, and the game goes back to
+Accurate afterwards; the Game Boy Camera, MBC6, MBC7 (tilt) and TAMA5 / MMM01 cartridges start on Standard with a
+notice; a Super Game Boy game on the Super Game Boy palette uses Standard (the border and its colours). The Game Boy
+has no wide view on either core.
 
 ## Quick response
 

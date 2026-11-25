@@ -104,6 +104,7 @@
 #include "stb_image_write.h"
 
 #include "plat.h"
+#include "pk_screen.h"          /* screen profile (playerkit/src, MIT) */
 #include "cpuclock.h"
 #include "boot_guard.h"
 #include "fe_sensor.h"
@@ -4078,6 +4079,11 @@ void ui_host_look_changed(void)
                 : VID_COLOR_RAW,
                 pcfg_ghost_modes(c) && !look_rung(3) ? g_pcfg.ghost : 0);
    vid_set_overlays(g_pcfg.scan, g_pcfg.grid);
+   vid_set_crt(g_pcfg.crt);
+   vid_set_text_look(g_pcfg.text_large, g_pcfg.contrast);
+   /* Settings > Display > Screen: Auto is a PS TV on a PS TV, else the
+    * reference; folded into the colour table (video_vita.c look_lut) */
+   vid_set_screen(pk_screen_resolve(g_pcfg.screen, plat_is_pstv()));
    vid_ambient_strength(g_pcfg.glow);
    vid_ambient_mode(app_ambient_mode());
    if (c == FE_CONSOLE_GBC)
@@ -4088,6 +4094,9 @@ void ui_host_look_changed(void)
           "wide=%d wide_fill=%d", pcfg_console_tag(c), g_pcfg.color,
           g_pcfg.ghost, g_pcfg.scan, g_pcfg.grid, g_pcfg.glow, g_pcfg.wide,
           g_pcfg.wide_fill);
+   fe_evt("display_screen console=%s crt=%d screen=%s profile=%s",
+          pcfg_console_tag(c), g_pcfg.crt, pk_screen_tag(g_pcfg.screen),
+          pk_screen_tag(vid_screen_profile()));
    fe_evt("display_quality console=%s quality=%d", pcfg_console_tag(c),
           g_pcfg.quality);
    app_wide_apply();
@@ -7100,6 +7109,8 @@ int main(int argc, char **argv)
    vid_init();
    vglyph_dir(plat_app_dir());   /* the font files of the package: names in other alphabets */
    vid_set_mode(g_pcfg.scale, g_pcfg.filter);
+   /* Text size and High contrast apply from the first menu on */
+   vid_set_text_look(g_pcfg.text_large, g_pcfg.contrast);
    fe_evt("video backend=%s", vid_backend_name());
    ui_set_thumb_buffer(g_thumbs);
    pspcompat_host_vblank_hook(modal_tick);

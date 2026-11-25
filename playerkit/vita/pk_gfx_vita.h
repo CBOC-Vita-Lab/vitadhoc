@@ -30,6 +30,7 @@ public:
 	void tex_free(Texture *t);
 	void tex_draw(Texture *t, float sx, float sy, float sw, float sh,
 	              float dx, float dy, float dw, float dh, uint32_t tint, bool smooth);
+	void tex_draw_mul(Texture *t, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
 	void clip(float x, float y, float w, float h);
 	void clip_off();
 };

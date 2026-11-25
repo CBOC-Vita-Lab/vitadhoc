@@ -92,6 +92,25 @@ and in emulators; none of it has run on a real Vita yet (see
   edges). Image quality starts at Auto and Wide view is on in every console;
   the Super NES and Sega players call their on-by-default Wide view setting
   Auto (On forces the full margin).
+- **Screen colours (Settings > Display > Screen, also in both players).**
+  Auto, OLED (PCH-1000), LCD (PCH-2000) or PS TV: a mild correction for the
+  screen you play on, the same for every console and kept in one setting. LCD
+  and PS TV leave the picture as it is. OLED takes a little saturation off
+  (92%) and a touch of contrast (curve 1.06), which are estimates, not
+  measurements. Auto picks PS TV on a PS TV and LCD otherwise (the Vita cannot
+  tell the two handhelds apart, so owners of the first model choose OLED by
+  hand). It is folded into the colour table the picture already uses, so it
+  costs no extra pass; GBA screen colours still apply first.
+- **CRT mask.** A new row next to Scanlines, 0 (off, the default) to 10: a
+  fine red, green and blue stripe pattern like an aperture grille, with
+  stripes that follow the size of the picture on screen. One extra drawn
+  rectangle per frame (a small stripe texture, multiplied in); no shaders.
+  Higher values darken the picture a little (about 30% at 10), so raise the
+  brightness if you like it strong. In the app and in both players.
+- **Text size and High contrast (Settings > Interface in the app and the
+  players).** Large makes menu text 20% bigger; High contrast pushes pale text
+  to white and dark text to black and uses a pure black or white background in
+  the app. Long lines are shortened or wrapped, not cut. Both are global.
 - **Game Boy colours.** Original Game Boy games are coloured the way a Game
   Boy Color coloured them (GBC auto), with the twelve start-up palettes, the
   Super Game Boy's 32 and the plain greys to choose from.

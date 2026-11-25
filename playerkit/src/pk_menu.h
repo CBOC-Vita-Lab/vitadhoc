@@ -48,8 +48,9 @@ enum Caps : uint32_t {
 	CAP_CHEATS = 1u << 16,
 	CAP_PLAY_TOGETHER = 1u << 17,
 	CAP_CHEAT_EDIT = 1u << 18,    /* the host can add (add_cheat) and delete (delete_cheat) codes */
+	CAP_CRT = 1u << 19,           /* the CRT mask row (the host draws it: pk_crt.h) */
 	CAP_ALL_BASIC = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
-	                CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO
+	                CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CRT
 };
 
 /* rows whose value the host owns; ids are stable */
@@ -58,6 +59,10 @@ enum RowId {
 	ROW_CTL_STICK_L, ROW_CTL_STICK_R, ROW_CTL_REAR, ROW_CTL_MAPPING, ROW_CTL_TURBO_A, ROW_CTL_TURBO_B, ROW_CTL_TURBO_MODE,
 	ROW_CTL_APPLY, ROW_CTL_RESET,
 	ROW_SPD_FF, ROW_SPD_SOUND, ROW_SPD_MODE, ROW_SPD_REWIND,
+	ROW_PIC_CRT,                  /* CRT mask 0..10 (0 = Off), CAP_CRT */
+	ROW_PIC_SCREEN,               /* Screen: 0 Auto, 1 OLED (PCH-1000), 2 LCD (PCH-2000), 3 PS TV: one setting for every console and the app (pk_screen.h) */
+	ROW_UI_TEXT,                  /* Text size: 0 Normal, 1 Large (the Interface page) */
+	ROW_UI_CONTRAST,              /* High contrast: 0 Off, 1 On */
 	ROW_COUNT,
 	ROW_HOST_BASE = 1000          /* rows the host adds itself (add_host_row) have ids from here */
 };
@@ -178,7 +183,7 @@ public:
 	Notices &notices() { return notices_; }
 
 	/* introspection, for tests */
-	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS };
+	enum PageId { PAGE_TOP = 0, PAGE_STATES, PAGE_SETTINGS, PAGE_PICTURE, PAGE_CONTROLS, PAGE_MAPPING, PAGE_SPEED, PAGE_CHEATS, PAGE_INTERFACE };
 	PageId page() const { return page_; }
 	int cursor() const { return cursor_; }
 	void goto_page(PageId p);

@@ -13,6 +13,7 @@ void pic_defaults(pic_settings *s)
 	s->glow = 5;
 	s->scan = 0;
 	s->grid = 0;
+	s->crt = 0;
 	s->hires_blend = 0;
 	s->interlace_blend = 0;
 	s->multitap = 0; /* 0 auto, 1 on, 2 off */
@@ -40,6 +41,7 @@ int pic_load(const char *path, pic_settings *s)
 		else if (!strcmp(line, "glow")) s->glow = clampi(v, 0, 10);
 		else if (!strcmp(line, "scanlines")) s->scan = clampi(v, 0, 10);
 		else if (!strcmp(line, "lcd_grid")) s->grid = clampi(v, 0, 10);
+		else if (!strcmp(line, "crt_mask")) s->crt = clampi(v, 0, 10);
 		else if (!strcmp(line, "hires_blend")) s->hires_blend = v ? 1 : 0;
 		else if (!strcmp(line, "interlace_blend")) s->interlace_blend = v ? 1 : 0;
 		else if (!strcmp(line, "multitap")) s->multitap = clampi(v, 0, 2);
@@ -57,8 +59,8 @@ int pic_save(const char *path, const pic_settings *s)
 	snprintf(tmp, sizeof tmp, "%s.tmp", path);
 	FILE *f = fopen(tmp, "wb");
 	if (!f) return 1;
-	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\nhires_blend=%d\ninterlace_blend=%d\nmultitap=%d\nwide_view=%d\nscaler=%d\nown_settings=%d\n",
-	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->hires_blend, s->interlace_blend, s->multitap, s->wide, s->scaler, s->use_game);
+	fprintf(f, "shape=%d\npixel_square=%d\nquality=%d\nglow=%d\nscanlines=%d\nlcd_grid=%d\ncrt_mask=%d\nhires_blend=%d\ninterlace_blend=%d\nmultitap=%d\nwide_view=%d\nscaler=%d\nown_settings=%d\n",
+	    s->shape, s->pixel_sq, s->quality, s->glow, s->scan, s->grid, s->crt, s->hires_blend, s->interlace_blend, s->multitap, s->wide, s->scaler, s->use_game);
 	int bad = ferror(f);
 	if (fclose(f) != 0 || bad) { remove(tmp); return 2; }
 	remove(path);

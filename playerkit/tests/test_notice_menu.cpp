@@ -113,14 +113,15 @@ TEST(menu_card_order_and_navigation)
 	pkh::press(f.menu, PH_CIRCLE);
 	CHECK_EQ(f.menu.page(), Menu::PAGE_TOP);
 	CHECK_EQ(f.menu.cursor(), 1);                                /* the cursor is where it was left */
-	/* Settings: Picture, Controls, Speed */
+	/* Settings: Picture, Controls, Speed, Interface */
 	pkh::press(f.menu, PH_RIGHT); pkh::press(f.menu, PH_RIGHT);   /* Cheats, Settings (no Play together card here) */
 	pkh::press(f.menu, PH_CROSS);
 	CHECK_EQ(f.menu.page(), Menu::PAGE_SETTINGS);
-	CHECK_EQ(f.menu.row_count(), 3);
+	CHECK_EQ(f.menu.row_count(), 4);
 	CHECK_STR(f.menu.row_label(0), "Picture");
 	CHECK_STR(f.menu.row_label(1), "Controls");
 	CHECK_STR(f.menu.row_label(2), "Speed");
+	CHECK_STR(f.menu.row_label(3), "Interface");
 }
 
 TEST(menu_pad_repeat_moves_while_held)

@@ -40,6 +40,7 @@
 #include "font_ui.h"          /* the PSP's glyph tables: advances, metrics */
 #include "vstyle.h"          /* vs_set_face_swap */
 #include "vglyph.h"          /* the characters beyond ASCII, on demand */
+#include "pk_uilook.h"        /* Text size and High contrast maths (playerkit/src, MIT) */
 
 extern const unsigned char vv_font_regular[], vv_font_regular_end[];
 extern const unsigned char vv_font_semibold[], vv_font_semibold_end[];
@@ -68,6 +69,9 @@ typedef struct
 
 static vv_face g_face[2];     /* 0 = ui, 1 = hd                            */
 static int     g_ready;
+int vv_text_pct = 100, vv_text_hc;      /* Text size, High contrast (priv.h) */
+static int g_baked_pct = 100;           /* the size the faces were baked at  */
+static int g_look_pending;
 
 /* ---- a row packer over one 8-bit working atlas -------------------------- */
 
@@ -226,6 +230,8 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
    packer pk;
    float scale, sum = 0.0f;
    int c, used_h, n = 0;
+   /* Large: the face, its advances and its vertical metrics all grow by ts */
+   const float ts = (float)vv_text_pct / 100.0f;
 
    memset(f, 0, sizeof(*f));
    if (!stbtt_InitFont(&font, ttf, stbtt_GetFontOffsetForIndex(ttf, 0)))
@@ -236,14 +242,14 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
    pk.pen_x = pk.pen_y = pk.row_h = pk.overflow = 0;
 
    /* PIL's truetype(path, 15) is "15 px to the em"; so is this. */
-   scale = stbtt_ScaleForMappingEmToPixels(&font, px_logical * VV_S);
+   scale = stbtt_ScaleForMappingEmToPixels(&font, px_logical * VV_S * ts);
 
    for (c = FU_FIRST; c < FU_FIRST + N_ASCII; c++)
    {
       vv_glyph *g = &f->g[c - FU_FIRST];
       int adv_units, lsb, x0, y0, x1, y1, ax = 0, ay = 0, w, h;
       float nat, e, shift, dev;
-      int target = VV_S * psp[c - FU_FIRST].xadv;
+      int target = (int)floorf((float)(VV_S * psp[c - FU_FIRST].xadv) * ts + 0.5f);
       unsigned char *d;
 
       stbtt_GetCodepointHMetrics(&font, c, &adv_units, &lsb);
@@ -273,15 +279,17 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
       g->ax = (unsigned short)ax; g->ay = (unsigned short)ay;
       g->w = (unsigned char)w; g->h = (unsigned char)h;
       g->ox = (signed char)((int)floorf(e) + x0);
-      g->oy = (signed char)(VV_S * asc_logical + y0);
+      g->oy = (signed char)((int)floorf((float)(VV_S * asc_logical) * ts + 0.5f) + y0);
    }
    f->mean = n ? sum / (float)n : 0.0f;
 
    for (c = 0; c < N_EXTRA; c++)
    {
       int idx = N_ASCII + c;
-      bake_extra(&pk, &f->g[idx], c, c >= 4 ? extra_star : extra_size,
-                 extra_stroke, VV_S * psp[idx].xadv, extra_mid);
+      bake_extra(&pk, &f->g[idx], c, (c >= 4 ? extra_star : extra_size) * ts,
+                 extra_stroke * ts,
+                 (int)floorf((float)(VV_S * psp[idx].xadv) * ts + 0.5f),
+                 extra_mid * ts);
    }
 
    used_h = (pk.pen_y + pk.row_h + 8) & ~7;
@@ -292,7 +300,8 @@ static int bake_face(vv_face *f, const unsigned char *ttf, float px_logical,
       vb_tex_update(f->tex, 0, 0, ATLAS_W, used_h, pk.px, ATLAS_W);
    free(pk.px);
    /* the characters beyond ASCII: nothing is read or allocated until one is drawn */
-   f->xs = vglyph_new(ttf, NULL, (int)(px_logical * VV_S), VV_S * asc_logical,
+   f->xs = vglyph_new(ttf, NULL, (int)(px_logical * VV_S * ts),
+                      (int)floorf((float)(VV_S * asc_logical) * ts + 0.5f),
                       semibold);
    return (f->tex && !pk.overflow) ? 0 : -1;
 }
@@ -311,6 +320,7 @@ int vv_text_init(void)
    rc |= bake_face(&g_face[1], vv_font_semibold, 19.0f, FU_HD_ASC, fu_hd_g,
                    27.0f, 29.0f, 3.0f, 12.0f * VV_S, 1);
    g_ready = 1;
+   g_baked_pct = vv_text_pct;
    return rc;
 }
 
@@ -391,12 +401,37 @@ static int vv_xadv(const vv_face *f, uint32_t cp)
    return w < 1 ? 1 : w;
 }
 
-/* The PSP's own measure (video_psp.c fu_measure), over the PSP's table. */
+/* The PSP's own measure (video_psp.c fu_measure), over the PSP's table.  At
+ * Normal size it is exactly that sum; at Large the sum of the advances
+ * drawn (native px) in logical px, rounded up, so a line never measures
+ * shorter than it is. */
 int vv_text_width(int hd, const char *s)
 {
    const fu_glyph *g = hd ? fu_hd_g : fu_ui_g;
    const vv_face *f = &g_face[hd ? 1 : 0];
    int w = 0;
+   if (g_baked_pct != 100 && f->tex)
+   {
+      int nat = 0;
+      while (*s)
+      {
+         uint32_t c = vv_next(&s);
+         if (c > FU_LAST)
+         {
+            int a = vv_xadv(f, c);
+            if (a >= 0)
+            {
+               nat += a * VV_S;
+               continue;
+            }
+            c = '?';
+         }
+         else if (c < FU_FIRST)
+            c = '?';
+         nat += f->g[c - FU_FIRST].adv;
+      }
+      return (nat + VV_S - 1) / VV_S;
+   }
    while (*s)
    {
       uint32_t c = vv_next(&s);
@@ -420,8 +455,8 @@ int vv_text_width(int hd, const char *s)
 void vv_text_cap(int *top, int *h)
 {
    const fu_glyph *g = &fu_ui_g['H' - FU_FIRST];
-   *top = g->yoff;
-   *h   = g->h;
+   *top = (g->yoff * g_baked_pct + 50) / 100;
+   *h   = (g->h * g_baked_pct + 50) / 100;
 }
 
 #define TEXT_BATCH 128
@@ -435,6 +470,7 @@ void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
 
    if (!f->tex || !s)
       return;
+   tint = vv_text_tint(tint);
    while (*s)
    {
       uint32_t c = vv_next(&s);
@@ -497,4 +533,42 @@ void vv_text_draw(int hd, int nx, int ny, const char *s, uint32_t tint)
       vb_tquads(f->tex, q, n, tint, VB_NEAREST);
    if (nxq)
       vb_tquads(xtex, qx, nxq, tint, VB_NEAREST);
+}
+
+/* ---- Text size and High contrast (video_vita_priv.h) ------------------- */
+
+/* HIGH CONTRAST: pk_text_tint (playerkit/src/pk_uilook.h, unit tested): a
+ * grey or pale glyph colour goes 70 % of the way to white, a dark one 70 %
+ * of the way to black (a coloured one 35 %); alpha rises by half again. */
+uint32_t vv_text_tint(uint32_t rgba)
+{
+   return vv_text_hc ? pk_text_tint(rgba) : rgba;
+}
+
+void vid_set_text_look(int large, int contrast)
+{
+   const int pct = pk_text_pct(large);
+   vv_text_hc = contrast ? 1 : 0;
+   if (pct != vv_text_pct)
+   {
+      vv_text_pct = pct;
+      g_look_pending = 1;
+   }
+}
+
+int vid_text_pct(void) { return vv_text_pct; }
+
+/* At the start of a frame: bake the faces again when the size changed (the
+ * atlases are not in use by a draw that has not been presented yet). */
+void vv_text_look_apply(void)
+{
+   if (!g_look_pending)
+      return;
+   g_look_pending = 0;
+   if (vv_text_pct == g_baked_pct && g_ready)
+      return;
+   if (g_ready)
+      vv_text_term();
+   vs_text_reset();
+   vv_text_init();
 }

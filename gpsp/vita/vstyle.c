@@ -63,6 +63,16 @@ static const struct
 
 static vs_face g_vf[VS_FACES];
 
+/* The face's size: Text size Large (video_vita_priv.h) grows the small and
+ * middle faces 20 %, the page title 10 % and the focused game's name not at
+ * all (it is already the biggest thing on its screen, and its atlas is full). */
+static float face_px(int i)
+{
+   const int pct = i == VS_HERO ? 100
+                 : i == VS_TITLE ? (100 + (vv_text_pct - 100) / 2) : vv_text_pct;
+   return FACE_SRC[i].px * (float)pct / 100.0f;
+}
+
 static int face_bake(int i)
 {
    vs_face *f = &g_vf[i];
@@ -79,7 +89,7 @@ static int face_bake(int i)
    f->tried = 1;
    if (!stbtt_InitFont(&f->font, ttf, stbtt_GetFontOffsetForIndex(ttf, 0)))
       return -1;
-   f->scale = stbtt_ScaleForMappingEmToPixels(&f->font, FACE_SRC[i].px);
+   f->scale = stbtt_ScaleForMappingEmToPixels(&f->font, face_px(i));
    stbtt_GetFontVMetrics(&f->font, &asc, &desc, &gap);
    f->ascent = (int)ceilf((float)asc * f->scale);
    f->line_h = (int)ceilf((float)(asc - desc) * f->scale);
@@ -125,7 +135,7 @@ static int face_bake(int i)
    f->ok = f->tex != NULL;
    /* (nothing is read or allocated for the characters beyond ASCII until
     * one of them is drawn) */
-   f->xs = vglyph_new(FACE_SRC[i].ttf, FACE_SRC[i].latin, (int)FACE_SRC[i].px,
+   f->xs = vglyph_new(FACE_SRC[i].ttf, FACE_SRC[i].latin, (int)face_px(i),
                       f->ascent, FACE_SRC[i].semibold);
    return f->ok ? 0 : -1;
 }
@@ -254,6 +264,7 @@ float vs_text(int fi, float x, float y, const char *s, uint32_t rgba)
 
    if (!f || !s)
       return x;
+   rgba = vv_text_tint(rgba);
    vv_frame_need();
    while (*p)
    {
@@ -1101,7 +1112,9 @@ void vs_clip_off(void)
    vb_scissor(0, 0, 0, 0, 0);
 }
 
-void vs_term(void)
+/* Forget the baked faces (Text size changed): each bakes again at the new
+ * size when it is next asked for. */
+void vs_text_reset(void)
 {
    int i;
    for (i = 0; i < VS_FACES; i++)
@@ -1111,6 +1124,12 @@ void vs_term(void)
       vglyph_free(g_vf[i].xs);
       memset(&g_vf[i], 0, sizeof(g_vf[i]));
    }
+}
+
+void vs_term(void)
+{
+   int i;
+   vs_text_reset();
    for (i = 0; i < VS_DISCS; i++)
    {
       if (g_disc[i].tex)

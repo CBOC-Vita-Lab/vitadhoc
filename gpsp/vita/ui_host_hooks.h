@@ -75,8 +75,9 @@ extern volatile int g_running;
 void osd_session_chip_refresh(void);
 
 /* A look row of Settings > Display changed (LCD colours, LCD ghosting,
- * Scanlines, LCD grid, Ambient glow: g_pcfg.color / ghost / scan / grid /
- * glow) of the console in context (pcfg_display_console()): show it.  The
+ * Scanlines, LCD grid, CRT mask, Ambient glow, and the global Screen, Text size
+ * and High contrast: g_pcfg.color / ghost / scan / grid / crt / glow / screen /
+ * text_large / contrast) of the console in context (pcfg_display_console()): show it.  The
  * renderer takes the colours, the ghosting, the scanlines and the grid and
  * the glow (vid_set_look, vid_set_overlays, vid_ambient_strength); a Game
  * Boy Color's colours are its core's.  Also what a main loop calls when a game boots.

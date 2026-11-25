@@ -138,6 +138,21 @@ int  vid_set_overlay(const char *png_path);
 void vid_set_overlays(int scan, int grid);
 int  vid_overlay_scan(void);
 int  vid_overlay_grid(void);
+/* CRT MASK 0..10 (0 off): an aperture grille multiplied over the picture,
+ * one extra quad (playerkit/src/pk_screen.h).  Over any picture, like the
+ * grid. */
+void vid_set_crt(int strength);
+int  vid_overlay_crt(void);
+/* SCREEN PROFILE: the resolved choice (PK_SCREEN_OLED / LCD / PSTV; the
+ * caller turns Auto into one with pk_screen_resolve).  Folded into the
+ * colour table every console's picture passes through. */
+void vid_set_screen(int profile);
+/* TEXT SIZE (Normal / Large) and HIGH CONTRAST (Off / On) of every menu the
+ * renderer draws, both text systems (the PSP-layout one and vstyle.h's).
+ * The faces bake again at the start of the next frame. */
+void vid_set_text_look(int large, int contrast);
+int  vid_text_pct(void);
+int  vid_screen_profile(void);
 /* AMBIENT GLOW strength 0..10: how bright the colours beside the picture are
  * (0 black bars, 5 the look the bars have always had).  vid_ambient_mode
  * says what the colours come from. */

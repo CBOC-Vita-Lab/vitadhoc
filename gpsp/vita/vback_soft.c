@@ -255,6 +255,16 @@ static inline uint32_t blend(uint32_t dst, unsigned r, unsigned g, unsigned b,
    return VB_RGBA(r, g, b, 255);
 }
 
+/* vb_tquads_mul: the texel's colour multiplies what is there (dst * texel / 255), alpha ignored */
+static int g_mul;
+
+static inline uint32_t blend_mul(uint32_t dst, unsigned r, unsigned g, unsigned b)
+{
+   unsigned dr = dst & 0xFF, dg = (dst >> 8) & 0xFF, db = (dst >> 16) & 0xFF;
+   return VB_RGBA((dr * r + 127) / 255, (dg * g + 127) / 255,
+                  (db * b + 127) / 255, 255);
+}
+
 void vb_cquads(const vb_cquad *q, int n)
 {
    int i;
@@ -375,10 +385,17 @@ void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint, int filter)
             }
             r = (r * tr + 127) / 255; g = (g * tg + 127) / 255;
             b = (b * tb + 127) / 255; a = (a * ta + 127) / 255;
-            d[x] = blend(d[x], r, g, b, a);
+            d[x] = g_mul ? blend_mul(d[x], r, g, b) : blend(d[x], r, g, b, a);
          }
       }
    }
+}
+
+void vb_tquads_mul(vb_tex *t, const vb_tquad *q, int n, int filter)
+{
+   g_mul = 1;
+   vb_tquads(t, q, n, 0xFFFFFFFFu, filter);
+   g_mul = 0;
 }
 
 int vb_readback(uint32_t *dst)

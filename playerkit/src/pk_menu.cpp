@@ -1,6 +1,7 @@
 /* See pk_menu.h. Copyright CBOC-Vita. MIT licence (see playerkit/LICENSE). */
 #include "pk_menu.h"
 #include "pk_icons.h"
+#include "pk_uilook.h"
 #include <math.h>
 #include <string.h>
 #include <algorithm>
@@ -285,6 +286,10 @@ static const char *help_for(int id)
 	case ROW_PIC_SCANLINES: return "Dark lines between the rows, like a TV. 1 is faint, 10 is strong.";
 	case ROW_PIC_GRID: return "A faint pixel grid, like a handheld's screen. 1 is faint, 10 is strong.";
 	case ROW_PIC_GLOW: return "A soft glow beside the picture in place of black bars.";
+	case ROW_PIC_CRT: return "Coloured stripes like a CRT tube. Darkens the picture a little. 1 is faint, 10 is strong.";
+	case ROW_PIC_SCREEN: return "Which Vita screen this is. OLED softens the colours a little. Every console.";
+	case ROW_UI_TEXT: return "Bigger text in the menus of the app and the players.";
+	case ROW_UI_CONTRAST: return "Brighter text and clearer edges in the menus of the app and the players.";
 	case ROW_PIC_APPLY: return "Keep these picture settings for every game, or only for this one.";
 	case ROW_CTL_STICK_L: return "What the left stick does: nothing, the D-pad, or its own buttons you can map.";
 	case ROW_CTL_STICK_R: return "What the right stick does: nothing, the D-pad, or its own buttons you can map.";
@@ -390,6 +395,11 @@ void Menu::build_rows()
 			}
 			if (any) rows_.push_back(r);     /* a page with nothing on it is not offered */
 		}
+		r.enabled = true; r.reason.clear();
+		r.tag = PAGE_INTERFACE; r.label = "Interface";
+		r.value_text = std::string(vals_[ROW_UI_TEXT] ? "Large text" : "Normal text") + (vals_[ROW_UI_CONTRAST] ? ", high contrast" : "");
+		r.help = "Text size and high contrast for the menus of the app and the players.";
+		rows_.push_back(r);
 		break;
 	}
 	case PAGE_PICTURE:
@@ -399,9 +409,21 @@ void Menu::build_rows()
 		for (size_t i = 0; i < rows_.size(); i++) if (rows_[i].id == ROW_PIC_QUALITY) rows_[i].help = quality_help(vals_[ROW_PIC_QUALITY]);
 		b.slider(ROW_PIC_SCANLINES, "Scanlines", CAP_SCANLINES, vals_[ROW_PIC_SCANLINES]);
 		b.slider(ROW_PIC_GRID, "LCD grid", CAP_LCD_GRID, vals_[ROW_PIC_GRID]);
+		b.slider(ROW_PIC_CRT, "CRT mask", CAP_CRT, vals_[ROW_PIC_CRT]);
 		b.slider(ROW_PIC_GLOW, "Ambient glow", CAP_GLOW, vals_[ROW_PIC_GLOW]);
 		b.choice(ROW_PIC_APPLY, "Apply to", kApply, 2, CAP_PIC_PER_GAME, vals_[ROW_PIC_APPLY]);
+		{
+			/* global, like the app's Settings > Display > Screen: not part of "Apply to" */
+			static const char *const kScreen[] = { "Auto", "OLED (PCH-1000)", "LCD (PCH-2000)", "PS TV" };
+			b.choice(ROW_PIC_SCREEN, "Screen", kScreen, 4, 0, vals_[ROW_PIC_SCREEN]);
+		}
 		break;
+	case PAGE_INTERFACE: {
+		static const char *const kText[] = { "Normal", "Large" };
+		b.choice(ROW_UI_TEXT, "Text size", kText, 2, 0, vals_[ROW_UI_TEXT]);
+		b.choice(ROW_UI_CONTRAST, "High contrast", kOnOff, 2, 0, vals_[ROW_UI_CONTRAST]);
+		break;
+	}
 	case PAGE_CONTROLS: {
 		const uint32_t CAP_NEVER = 1u << 31;      /* a capability no host has: the row is always greyed */
 		uint32_t cap = input_ok ? 0u : CAP_NEVER;
@@ -599,7 +621,7 @@ std::string Menu::card_help(int c) const
 	case CARD_STATES: return strf("Save or load the game: %d of %d slots used", used_slots_, (int) STATE_SLOTS);
 	case CARD_TOGETHER: return "Play with a friend";
 	case CARD_CHEATS: return "Turn cheats on and off";
-	case CARD_SETTINGS: return "Picture, controls and speed";
+	case CARD_SETTINGS: return "Picture, controls, speed and text";
 	case CARD_RESET: return "Start the game again from the beginning";
 	case CARD_LIST: return "Leave this game for the game list";
 	default: return cfg_.exit_help;
@@ -1342,9 +1364,13 @@ void Menu::draw_hints(Gfx *g, Text *t)
 
 void Menu::draw_header(Gfx *g, Text *t, const char *title, const char *sub)
 {
-	t->draw(F_TITLE, 44, 22, title, col(C_TEXT));
+	/* Large text grows the two lines; the header climbs by the extra so the subtitle stays above the panel. */
+	const int pct = t->pct();
+	const float up = pct > 100 ? (float) (t->line_h(F_TITLE) + t->line_h(F_CAPTION) - (t->line_h(F_TITLE) + t->line_h(F_CAPTION)) * 100 / pct) : 0.0f;
+	const float ty = 22 - up;
+	t->draw(F_TITLE, 44, ty, title, col(C_TEXT));
 	std::string s = t->fit(F_CAPTION, sub, 560);
-	t->draw(F_CAPTION, 46, 22 + t->line_h(F_TITLE) + 0, s.c_str(), col(C_TEXT2));
+	t->draw(F_CAPTION, 46, ty + t->line_h(F_TITLE) + 0, s.c_str(), col(C_TEXT2));
 	(void) g;
 }
 
@@ -1416,7 +1442,7 @@ void Menu::draw_top(Gfx *g, Text *t)
 void Menu::draw_rows(Gfx *g, Text *t)
 {
 	const char *title = page_ == PAGE_SETTINGS ? "Settings" : page_ == PAGE_PICTURE ? "Picture" : page_ == PAGE_CONTROLS ? "Controls" :
-	                    page_ == PAGE_MAPPING ? "Button mapping" : page_ == PAGE_SPEED ? "Speed" : "Cheats";
+	                    page_ == PAGE_MAPPING ? "Button mapping" : page_ == PAGE_SPEED ? "Speed" : page_ == PAGE_INTERFACE ? "Interface" : "Cheats";
 	std::string sub = cfg_.game_name;
 	draw_header(g, t, title, sub.c_str());
 	draw_hints(g, t);
@@ -1456,7 +1482,7 @@ void Menu::draw_rows(Gfx *g, Text *t)
 			draw_icon(g, ICON_CHEVRON_L, rx - 380 + 36, y + RH * 0.5f, 24, arrow);
 			draw_icon(g, ICON_CHEVRON_R, rx - 36, y + RH * 0.5f, 24, arrow);
 			if (r.kind == K_CHOICE) {
-				std::string v = t->fit(F_LABEL, row_value_text((int) i), 230);
+				std::string v = t->fit(F_LABEL, row_value_text((int) i), 268);
 				t->draw_center(F_LABEL, rx - 308 + 118, ly, v.c_str(), vcol);
 			} else {
 				float tx = rx - 308 + 12, tw = 160, ty = y + RH * 0.5f;
@@ -1625,6 +1651,7 @@ void Menu::draw_overlays(Gfx *g)
 void Menu::draw(Gfx *g, Text *t)
 {
 	if (!open_ || !g || !t) return;
+	t->set_look(pk_text_pct(vals_[ROW_UI_TEXT] != 0), vals_[ROW_UI_CONTRAST] != 0);      /* Interface: Text size, High contrast */
 	t->frame();      /* (the glyph atlases: a frame has passed) */
 	upload_textures(g);
 	draw_backdrop(g);

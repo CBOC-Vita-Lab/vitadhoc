@@ -115,7 +115,7 @@ static int pic_to_shape(int p)
 
 /* fields of pic_settings the player changed in the menu (only these are written back to the files, so a per-game value the app sent in
  * the launch file never leaks into picture.ini) */
-enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_SCALER = 64, CH_GGCOL = 128, CH_USEGAME = 256, CH_WIDE = 512 };
+enum { CH_SHAPE = 1, CH_PIXEL = 2, CH_QUALITY = 4, CH_GLOW = 8, CH_SCAN = 16, CH_GRID = 32, CH_SCALER = 64, CH_GGCOL = 128, CH_USEGAME = 256, CH_WIDE = 512, CH_CRT = 1024 };
 static unsigned g_changed;
 static pic_settings g_ps_file;
 
@@ -127,6 +127,7 @@ static void overlay_changed(pic_settings &dst, const pic_settings &src, unsigned
 	if (m & CH_GLOW) dst.glow = src.glow;
 	if (m & CH_SCAN) dst.scan = src.scan;
 	if (m & CH_GRID) dst.grid = src.grid;
+	if (m & CH_CRT) dst.crt = src.crt;
 	if (m & CH_SCALER) dst.scaler = src.scaler;
 	if (m & CH_GGCOL) dst.gg_colors = src.gg_colors;
 	if (m & CH_USEGAME) dst.use_game = src.use_game;
@@ -446,6 +447,11 @@ void MdPlayer::apply_overrides()
 	if ((v = req_.override_int("lcd_grid", -1)) >= 0) ps_.grid = clampi(v, 0, 10);
 	if ((v = req_.override_int("grid", -1)) >= 0) ps_.grid = clampi(v, 0, 10);
 	if ((v = req_.override_int("glow", -1)) >= 0) ps_.glow = clampi(v, 0, 10);
+	if ((v = req_.override_int("crt_mask", -1)) >= 0) ps_.crt = clampi(v, 0, 10);
+	/* the settings every console shares (for the tests and the session runner: display.ini is the real source) */
+	if (req_.overrides.count("screen")) { const std::string w = lower(req_.overrides.find("screen")->second); for (int i = 0; i < PK_SCREEN_CHOICES; i++) if (w == pk_screen_tag(i)) ui_.screen = i; }
+	if (req_.overrides.count("text_size")) ui_.text_large = lower(req_.overrides.find("text_size")->second) == "large" ? 1 : 0;
+	if (req_.overrides.count("contrast")) { const std::string w = lower(req_.overrides.find("contrast")->second); ui_.contrast = w == "on" || w == "1" ? 1 : 0; }
 	if ((v = req_.override_int("pixel_square", -1)) >= 0) ps_.pixel_sq = v ? 1 : 0;
 	if ((v = req_.override_int("wide_view", -1)) >= 0) ps_.wide = clampi(v, 0, 2);
 	if (req_.overrides.count("wide_view")) { std::string w = lower(req_.overrides.find("wide_view")->second); if (w == "auto") ps_.wide = 0; else if (w == "on") ps_.wide = 1; else if (w == "off") ps_.wide = 2; }
@@ -506,6 +512,10 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_PIC_SCANLINES, ps_.scan);
 	menu_.set_value(ROW_PIC_GRID, ps_.grid);
 	menu_.set_value(ROW_PIC_GLOW, ps_.glow);
+	menu_.set_value(ROW_PIC_CRT, ps_.crt);
+	menu_.set_value(ROW_PIC_SCREEN, ui_.screen);
+	menu_.set_value(ROW_UI_TEXT, ui_.text_large);
+	menu_.set_value(ROW_UI_CONTRAST, ui_.contrast);
 	menu_.set_value(ROW_PIC_APPLY, ps_.use_game ? 1 : 0);
 	menu_.set_value(ROW_SMS_BORDER, sms_border_);
 	menu_.set_value(ROW_GG_COLORS, ps_.gg_colors ? 1 : 0);
@@ -532,6 +542,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	StartResult res;
 	init_shared();
 	root_ = root;
+	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast: the same file as the app's Settings */
 
 	/* 1. what to run: the launch file (md, sms, gg or sg: the one that names the argument's game, else the newest), else the argument */
 	std::string arg;
@@ -746,7 +757,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	cfg.console_label = scd_ ? "Sega CD" : system_ == MD_SYS_MD ? "Mega Drive" : system_ == MD_SYS_SMS ? "Master System" : system_ == MD_SYS_GG ? "Game Gear" : "SG-1000";
 	cfg.exit_label = "Exit";
 	cfg.exit_help = "Close VitAdhoc";
-	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_GLOW |
+	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_CRT | CAP_GLOW |
 	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
@@ -1428,10 +1439,19 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_PIC_SCANLINES: ps_.scan = clampi(v, 0, 10); g_changed |= CH_SCAN; break;
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
+	case ROW_PIC_CRT: ps_.crt = clampi(v, 0, 10); g_changed |= CH_CRT; break;
+	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST:
+		/* shared by every console and the app: display.ini, written at once (a few bytes) */
+		if (row == ROW_PIC_SCREEN) ui_.screen = pk_screen_clamp(v);
+		else if (row == ROW_UI_TEXT) ui_.text_large = v ? 1 : 0;
+		else ui_.contrast = v ? 1 : 0;
+		ui_serial_++;
+		if (!pk::uiprefs_save(root_, ui_)) notice("Could not save the screen settings", NOTICE_ERROR, false);
+		return;
 	case ROW_PIC_APPLY:
 		ps_.use_game = v ? 1 : 0;
 		/* "This game" stores every value as now shown; "All games" only what was changed here */
-		g_changed |= CH_USEGAME | (v ? 0xFFu : 0);
+		g_changed |= CH_USEGAME | (v ? 0x4FFu : 0);
 		break;
 	case ROW_SCALER: ps_.scaler = clampi(v, 0, SCALER_CHOICES - 1); g_changed |= CH_SCALER; qsync_ = true; break;     /* no row any more: the launch file and the tests */
 	case ROW_GG_COLORS: ps_.gg_colors = v ? 1 : 0; g_changed |= CH_GGCOL; break;

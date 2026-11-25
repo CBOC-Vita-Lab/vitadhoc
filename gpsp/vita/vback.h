@@ -151,6 +151,13 @@ void vb_cquads(const vb_cquad *q, int n);
 void vb_tquads(vb_tex *t, const vb_tquad *q, int n, uint32_t tint,
                int filter);
 
+/* The same, multiplying what is already there instead of laying over it:
+ * out = dst * texel (per channel, the texel's alpha ignored, no tint).  One
+ * draw, no shader: on the console it is vita2d's texture program with a
+ * multiply blend state (third_party/vita2d, vita2d_set_blend_mode_mul).  The
+ * CRT mask is drawn with it. */
+void vb_tquads_mul(vb_tex *t, const vb_tquad *q, int n, int filter);
+
 /* The composed frame (what the last/next present shows), as VB_W x VB_H
  * 0xAABBGGRR words.  Closes the frame.  0 = ok. */
 int  vb_readback(uint32_t *dst);

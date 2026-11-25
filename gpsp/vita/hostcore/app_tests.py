@@ -6173,19 +6173,22 @@ def t_display_rows(S):
     # browser Settings opens on Theme: 20 DOWN to Screen size (2.0 added Join online and the About row), 7 more to
     # Scanlines (Screen fill is skipped: Wide view is off here), LCD grid is the row below
     walk = "60:start\n" + "+8:down\n" * 27 + "+20:shot=grid.png\n"
-    r = S.run("display_rows", walk + "+4:right\n+10:down\n+4:right\n+8:right\n+10:down\n+10:shot=overlay.png\n"
+    r = S.run("display_rows", walk + "+4:right\n+10:down\n+4:right\n+8:right\n+10:down\n+4:right\n+4:right\n+4:right\n+10:down\n+10:shot=overlay.png\n"
               "+4:cross\n+20:circle\n+30:quit\n")
     S.clean(r)
     look = r.evt("display_look")
     S.check(look and (look[-1]["scan"], look[-1]["grid"]) == ("1", "2"),
             "Scanlines 0 -> 1 and LCD grid 0 -> 2, each on its own (%s)" %
             (look[-1]["_"] if look else "-"))
+    scr = r.evt("display_screen")
+    S.check(scr and scr[-1]["crt"] == "3", "CRT mask 0 -> 3, the row below LCD grid (%s)" % (scr[-1]["_"] if scr else "-"))
     S.check(r.has(r"^EVT overlays on=0 saved=1"), "Screen overlay on -> off")
     ini = open(os.path.join(r.root, "vita.ini")).read()
     S.check(re.search(r"^overlays = 0$", ini, re.M), "overlays kept in vita.ini (%r)" % ini)
     cfg = open(os.path.join(r.root, "config.ini")).read()
-    S.check(re.search(r"^scan_gba = 1$", cfg, re.M) and re.search(r"^grid_gba = 2$", cfg, re.M),
-            "scan_gba = 1 and grid_gba = 2 are kept in config.ini")
+    S.check(re.search(r"^scan_gba = 1$", cfg, re.M) and re.search(r"^grid_gba = 2$", cfg, re.M) and
+            re.search(r"^crt_gba = 3$", cfg, re.M),
+            "scan_gba = 1, grid_gba = 2 and crt_gba = 3 are kept in config.ini")
     # Settings > Interface > Screenshot folder, typed on the keyboard
     shots = "/tmp/vad-shots-%d" % os.getpid()
     shutil.rmtree(shots, ignore_errors=True)
@@ -6223,6 +6226,69 @@ def t_display_rows(S):
         return sum(im.crop((0, 0, 40, 544)).convert("L").tobytes())
     g = [bars("glow_%d" % lv, lv) for lv in (0, 1, 5, 10)]
     S.check(g[0] == 0 and g[0] < g[1] < g[2] < g[3], "Ambient glow 0 is black, and brighter with each step (%s)" % g)
+
+
+def t_screen_crt_text(S):
+    """2.0 display rows: Screen (colour profile), CRT mask, Text size, High contrast.
+    The twin draws with the same colour table and one multiplied quad as the Vita."""
+    base = {"filter_gba": 2, "quality_gba": 0, "scale_gba": 1, "glow_gba": 0, "color_gba": 1}
+
+    def shot(tag, cfg=None, ini="", env=None):
+        r = S.run(tag, "150:shot=g.png\n+5:quit\n", autoboot="gbadhoc-test.gba",
+                  config=dict(base, **(cfg or {})), extra={"display.ini": ini} if ini else None, env=env)
+        S.clean(r)
+        return r, r.shot("g.png").convert("RGB")
+    _, plain = shot("scr_plain")
+    _, lcd = shot("scr_lcd", ini="screen=lcd\n")
+    _, auto = shot("scr_auto", ini="screen=auto\n")
+    r, pstv = shot("scr_pstv_auto", ini="screen=auto\n", env={"GBADHOC_FAKE_PSTV": "1"})
+    S.check(plain.tobytes() == lcd.tobytes() == auto.tobytes() == pstv.tobytes(),
+            "Screen LCD, PS TV and Auto (twin, not a PS TV) leave the picture as it was, bit for bit")
+    scr = r.evt("display_screen")
+    S.check(scr and scr[-1]["profile"] in ("pstv", "PS TV"), "Auto on a PS TV resolves to PS TV (%s)" % (scr[-1]["_"] if scr else "-"))
+    r, oled = shot("scr_oled", ini="screen=oled\n")
+    S.check(oled.tobytes() != lcd.tobytes(), "Screen OLED changes the picture")
+    # mild: the mean colour moves by a few percent, and saturation drops
+    mean = lambda im: [sum(im.split()[i].tobytes()) / (im.size[0] * im.size[1]) for i in range(3)]
+    ml, mo = mean(lcd), mean(oled)
+    S.check(all(abs(a - b) < 0.12 * max(a, 1) + 3 for a, b in zip(ml, mo)), "OLED is a mild change (%s vs %s, twin)" % (ml, mo))
+    _, raw_oled = shot("scr_raw_oled", cfg={"color_gba": 0}, ini="screen=oled\n")
+    _, raw = shot("scr_raw", cfg={"color_gba": 0})
+    S.check(raw_oled.tobytes() != raw.tobytes() and raw.tobytes() != lcd.tobytes(),
+            "the profile composes with the GBA colours: raw, GBA colours, and either with OLED are four different pictures")
+    S.check(len({raw.tobytes(), raw_oled.tobytes(), lcd.tobytes(), oled.tobytes()}) == 4, "all four combinations differ")
+    # CRT mask: darker with strength, stripes follow the picture scale
+    dk = {}
+    for lv in (0, 1, 5, 10):
+        _, im = shot("crt_%d" % lv, cfg={"crt_gba": lv})
+        dk[lv] = sum(im.convert("L").tobytes())
+    S.check(dk[0] > dk[1] > dk[5] > dk[10], "CRT mask 0 is off, each step darker (%s, twin)" % dk)
+    S.check(dk[0] == sum(plain.convert("L").tobytes()), "CRT mask 0 draws nothing")
+    ratio = dk[10] / dk[0]
+    S.check(0.55 < ratio < 0.85, "CRT mask 10 keeps about 70%% of the light (%.3f, twin; the model says 0.70 of a flat picture)" % ratio)
+    _, c10 = shot("crt_stripes", cfg={"crt_gba": 10})
+    # a row inside the picture: R, G, B columns repeat with one period
+    w, h = c10.size
+    row = [c10.getpixel((x, h // 2)) for x in range(w // 2 - 60, w // 2 + 60)]
+    reds = [p[0] for p in row]
+    S.check(max(reds) - min(reds) > 10, "the mask puts a stripe pattern across the picture (red spread %d)" % (max(reds) - min(reds)))
+    # Text size and High contrast: the menu draws wider / brighter; the files are kept
+    def menu(tag, ini):
+        r = S.run(tag, "60:start\n+30:shot=m.png\n+4:quit\n", extra={"display.ini": ini} if ini else None)
+        S.clean(r)
+        return r.shot("m.png").convert("L")
+    def ink(im, thr=140):
+        w, h = im.size
+        px = im.load()
+        xs = [x for y in range(h) for x in range(w) if px[x, y] > thr]
+        return len(xs), (min(xs), max(xs)) if xs else (0, 0)
+    n0 = menu("txt_normal", "")
+    n1 = menu("txt_large", "text_size=large\n")
+    n2 = menu("txt_hc", "contrast=on\n")
+    S.check(n0.tobytes() != n1.tobytes(), "Text size Large changes the menu")
+    S.check(n0.tobytes() != n2.tobytes(), "High contrast changes the menu")
+    a, b = ink(n0), ink(n1)
+    S.check(b[1][1] <= n1.size[0] - 4 and b[1][0] >= 0, "Large text stays inside the screen (ink x %s of %d)" % (b[1], n1.size[0]))
 
 
 def t_cpu_speed(S):
@@ -8756,7 +8822,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("switches", t_switches), ("bad", t_bad), ("worker", t_worker), ("cpufix", t_cpufix), ("biossound", t_biossound), ("chain", t_chain), ("objprio", t_objprio), ("smc", t_smc),
          ("realtime", t_realtime),
          ("save_import", t_save_import), ("save_sync", t_save_sync), ("save_heal", t_save_heal), ("save_gb_keep", t_save_gb_keep), ("save_clock", t_save_clock), ("gb_type", t_gb_type), ("launch_param", t_launch_param),
-         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
+         ("folders_config", t_folders_config), ("shot_dir", t_shot_dir), ("zip", t_zip), ("folders_ui", t_folders_ui), ("overlay", t_overlay), ("ten_slots", t_ten_slots), ("sidecars", t_sidecars), ("display_rows", t_display_rows), ("screen_crt_text", t_screen_crt_text), ("cpu_speed", t_cpu_speed), ("handoff", t_handoff), ("hand_set_rows", t_hand_set_rows), ("look_gov", t_look_gov), ("export_row", t_export_row), ("save_heal_nes_ws", t_save_heal_nes_ws), ("snes_session", t_snes_session), ("savset", t_savset),
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),

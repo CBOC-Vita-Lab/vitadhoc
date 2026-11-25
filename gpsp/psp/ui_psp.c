@@ -245,6 +245,37 @@ static const ui_theme THM_LIGHT = {
    0xFFFF, 0xAD55            /* white card body / #A8A8A8 shadow (neutral)*/
 };
 
+#ifdef VITA
+/* HIGH CONTRAST (Settings > Interface > High contrast): the same two themes
+ * with a pure black / pure white field, white / black text for every role
+ * and the secondary greys lifted to 14:1 or better (#DDDDDD on black,
+ * #202020 on white); the glyphs themselves are pushed further in
+ * video_vita_text.c vv_text_tint. */
+static const ui_theme THM_DARK_HC = {
+   0x0000, 0x0000,           /* black field                               */
+   0x2104, 0x2104,           /* #202020 header                            */
+   0xFFFF, 0xDEFB,           /* white accent / #DDDDDD dim accent         */
+   0xFFFF, 0xFFFF,           /* title / selected: white                   */
+   0xFFFF, 0xDEFB, 0xFFFF,   /* item white / dim #DDDDDD / value white    */
+   0xFFFF,                   /* warn                                      */
+   0x1082, 0x0000            /* #101010 card / black shadow               */
+};
+static const ui_theme THM_LIGHT_HC = {
+   0xFFFF, 0xFFFF,           /* white field                               */
+   0xDEFB, 0xDEFB,           /* #DDDDDD header                            */
+   0x0000, 0x2104,           /* black accent / #202020 dim accent         */
+   0x0000, 0x0000,           /* title / selected: black                   */
+   0x0000, 0x2104, 0x0000,   /* item black / dim #202020 / value black    */
+   0x0000,                   /* warn                                      */
+   0xFFFF, 0x8410            /* white card / #808080 shadow               */
+};
+#define UI_THEME() (g_pcfg.contrast \
+   ? (g_pcfg.theme == 1 ? &THM_LIGHT_HC : &THM_DARK_HC) \
+   : (g_pcfg.theme == 1 ? &THM_LIGHT : &THM_DARK))
+#else
+#define UI_THEME() (g_pcfg.theme == 1 ? &THM_LIGHT : &THM_DARK)
+#endif
+
 static const ui_theme *g_thm = &THM_DARK;
 
 #define C_BG_TOP    (g_thm->bg_top)
@@ -1136,7 +1167,7 @@ int ui_wake_menu(const uint16_t *frame, int frame_w, int frame_h,
    unsigned prev = 0;
    char title[96];
 
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
 #ifdef VITA
    tch_reset();                  /* no region of the last screen survives */
 #endif
@@ -1507,7 +1538,7 @@ static void page_header(const char *title, const char *right);
 
 static void page(const char *title, const char *right)
 {
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
    if (g_theme_black)
       /* HARNESS: plain black page — the at-a-glance differentiator from the
        * playable build. */
@@ -1520,7 +1551,7 @@ static void page(const char *title, const char *right)
 /* The header bar alone, for a page whose background is a picture. */
 static void page_header(const char *title, const char *right)
 {
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
 #ifdef VITA
    if (g_pcfg.theme != 1)
    {
@@ -1767,7 +1798,7 @@ void ui_backdrop_inject(const char *rel)
 
 static void ov_theme(void)
 {
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
 }
 
 /* The game's name from the ROM it was booted from (the state base is the
@@ -2416,12 +2447,17 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_SNES_TWO,      /* 2.0: a SNES game's Two players (browser, SNES tab only), last of its section */
        SET_HDR_VID, SET_SCALE, SET_QUALITY, SET_FILTER, SET_AMBIENT, SET_GBPAL,
        SET_SGB,
-       SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_LCDGRID, SET_OVERLAY,
+       SET_COLOR, SET_BLEND, SET_WIDE, SET_WFILL, SET_GRID, SET_LCDGRID,
+       SET_CRT,      /* 2.0: CRT mask 0..10, beside Scanlines and LCD grid */
+       SET_OVERLAY,
        SET_WSBLEND,  /* 1.4: WonderSwan profile only (set_row_shown) */
        SET_NESWIDE,  /* 1.4: NES profile only */
        SET_NESPAL,   /* 2.0: NES profile only: PAL games speed (Smooth 50 Hz / True 50 Hz) */
+       SET_SCREEN,   /* 2.0: Screen Auto / OLED / LCD / PS TV: one setting for every console (pk_screen.h) */
        SET_HDR_UI, SET_THEME, SET_SHELL, SET_PREVIEW, SET_COVERS, SET_REFRESH,
        SET_SHOTDIR,
+       SET_TEXTSIZE, /* 2.0: Text size Normal / Large, every menu (the app and both players) */
+       SET_CONTRAST, /* 2.0: High contrast Off / On */
        SET_HDR_GAME, SET_FFMULT, SET_FFMODE, SET_REWIND, SET_FPS,
        SET_SPEED,
        SET_CPU,      /* 1.3: CPU speed (cpuclock.h), after Keep full speed */
@@ -2563,10 +2599,12 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    /* 1.2: what were vita.ini keys, now rows (players asked for them) */
    { 0, "Scanlines" },          /* 0..10, like the players' */
    { 0, "LCD grid" },           /* 0..10 */
+   { 0, "CRT mask" },           /* 0..10 */
    { 0, "Screen overlay" },
    { 0, "Smooth 75 Hz motion" },
    { 0, "Wide view" },
    { 0, "PAL games speed" },
+   { 0, "Screen" },             /* every console, whatever profile is open */
 #endif
    { 1, "INTERFACE" },
    { 0, "Theme" },
@@ -2578,6 +2616,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Covers" },
    { 0, "Refresh library" },
    { 0, "Screenshot folder" },
+   { 0, "Text size" },
+   { 0, "High contrast" },
 #else
    { 0, "Menu style" },
 #endif
@@ -3716,6 +3756,24 @@ static void settings_adjust(int id, int dir)
       pcfg_display_commit();
       ui_host_look_changed();
       break;
+   case SET_CRT:
+      g_pcfg.crt = (g_pcfg.crt + 11 + (dir < 0 ? -1 : 1)) % 11;
+      pcfg_display_commit();
+      ui_host_look_changed();
+      break;
+   case SET_SCREEN:
+      /* every console: it is not a profile row (pcfg_save keeps it in display.ini) */
+      g_pcfg.screen = (g_pcfg.screen + 4 + (dir < 0 ? -1 : 1)) % 4;
+      ui_host_look_changed();
+      break;
+   case SET_TEXTSIZE:
+      g_pcfg.text_large = !g_pcfg.text_large;
+      ui_host_look_changed();   /* the renderer's text (vid_set_text_look) */
+      break;
+   case SET_CONTRAST:
+      g_pcfg.contrast = !g_pcfg.contrast;
+      ui_host_look_changed();
+      break;
    case SET_OVERLAY:
       ui_host_overlay_set(!ui_host_overlay_on());
       break;
@@ -4036,6 +4094,14 @@ static const char *set_help(int id)
                              "faint, 10 is strong.";
    case SET_LCDGRID:  return "A faint pixel grid, like a handheld's screen. "
                              "1 is faint, 10 is strong.";
+   case SET_CRT:      return "Coloured stripes like a CRT tube. Darkens the "
+                             "picture a little. 1 is faint, 10 is strong.";
+   case SET_SCREEN:   return "Which Vita screen this is. OLED softens the "
+                             "colours a little. Every console.";
+   case SET_TEXTSIZE: return "Bigger text in the menus of the app and the "
+                             "players.";
+   case SET_CONTRAST: return "Brighter text and clearer edges in the menus "
+                             "of the app and the players.";
    case SET_NESWIDE:  return g_pcfg.nes_wide == 2
                              ? "The NES picture as it was: 256 columns."
                              : g_pcfg.nes_wide == 1
@@ -4770,13 +4836,29 @@ static ui_action screen_settings(unsigned edges)
                                                            : set_rows[i].label,
                   pcfg_color_name(pcfg_display_console(), g_pcfg.color));
          break;
+      case SET_SCREEN:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.screen == 1 ? "OLED (PCH-1000)"
+                  : g_pcfg.screen == 2 ? "LCD (PCH-2000)"
+                  : g_pcfg.screen == 3 ? "PS TV" : "Auto");
+         break;
+      case SET_TEXTSIZE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.text_large ? "Large" : "Normal");
+         break;
+      case SET_CONTRAST:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.contrast ? "On" : "Off");
+         break;
       case SET_BLEND:
       case SET_GRID:
       case SET_LCDGRID:
+      case SET_CRT:
       {
          char v[8];
          const int n = i == SET_BLEND ? g_pcfg.ghost
-                     : i == SET_GRID ? g_pcfg.scan : g_pcfg.grid;
+                     : i == SET_GRID ? g_pcfg.scan
+                     : i == SET_CRT ? g_pcfg.crt : g_pcfg.grid;
          snprintf(v, sizeof(v), "%d", n);
          set_item(y, g_cursor == i, 1, set_rows[i].label, n ? v : "off");
          break;
@@ -11745,7 +11827,7 @@ void ui_loading_update(const char *stage, unsigned done, unsigned total)
    if (!changed && now - g_loading.drawn_at < 100000 && done != total)
       return;
    g_loading.drawn_at = now;
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
    s = skin_of(g_pcfg.console);
    vid_overlay_begin(1);
 #ifdef VITA
@@ -11995,7 +12077,7 @@ static void shell_shelf(const char *rom_dir, int cur, int n, int n_scan,
     * palette the last menu screen happened to leave behind.  Boot went
     * to the browser dark; opening Settings and coming back made it
     * light.  Set it where the drawing happens. */
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
 
    scroll_track(cur, n);
 
@@ -12380,7 +12462,7 @@ static void shell_marquee(const char *rom_dir, int cur, int n, int n_scan,
     * palette the last menu screen happened to leave behind.  Boot went
     * to the browser dark; opening Settings and coming back made it
     * light.  Set it where the drawing happens. */
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
 
    scroll_track(cur, n);
    /* The hero is a SEPARATE, larger decode of the same file -- the shelf
@@ -12540,7 +12622,7 @@ static void browser_empty(const char *rom_dir, int n_scan)
    uint16_t item = mix565(C_ITEM, C_BG_TOP, g_fx_fade);
    uint16_t dim = mix565(C_DIM, C_BG_TOP, g_fx_fade);
 
-   g_thm = (g_pcfg.theme == 1) ? &THM_LIGHT : &THM_DARK;
+   g_thm = UI_THEME();
 #ifdef VITA
    if (g_ui_home)
    {

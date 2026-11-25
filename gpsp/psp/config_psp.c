@@ -29,6 +29,71 @@ static int gbpal_load(int v)
 static char cfg_path[256];
 
 #ifdef VITA
+/* SCREEN, TEXT SIZE and HIGH CONTRAST: one value for every console, the app
+ * and both players, so they live in <root>/display.ini (the folder of
+ * config.ini) which snes.bin and md.bin read too (playerkit/src/
+ * pk_uiprefs.h is the same file from their side).  screen=auto|oled|lcd|pstv
+ * text_size=normal|large  contrast=off|on.  Written only when a value
+ * changed, with the safe write of fe_ini_set. */
+static const char *const ui_screen_tag[4] = { "auto", "oled", "lcd", "pstv" };
+static int g_ui_saved[3] = { -1, -1, -1 };   /* what the file holds */
+
+static void ui_path(char *out, size_t n)
+{
+   const char *slash = strrchr(cfg_path, '/');
+   const char *c2 = strrchr(cfg_path, '\\');
+   size_t len;
+   if (c2 > slash)
+      slash = c2;
+   len = slash ? (size_t)(slash - cfg_path) + 1 : 0;
+   if (len + 12 >= n)
+      len = 0;
+   memcpy(out, cfg_path, len);
+   snprintf(out + len, n - len, "display.ini");
+}
+
+static void ui_prefs_load(void)
+{
+   char path[300], v[24];
+   int i;
+   ui_path(path, sizeof(path));
+   g_pcfg.screen = 0;
+   g_pcfg.text_large = 0;
+   g_pcfg.contrast = 0;
+   if (fe_ini_get(path, "screen", v, sizeof(v)))
+      for (i = 0; i < 4; i++)
+         if (!strcmp(v, ui_screen_tag[i]))
+            g_pcfg.screen = i;
+   if (fe_ini_get(path, "text_size", v, sizeof(v)))
+      g_pcfg.text_large = !strcmp(v, "large") ? 1 : 0;
+   if (fe_ini_get(path, "contrast", v, sizeof(v)))
+      g_pcfg.contrast = !strcmp(v, "on") || !strcmp(v, "1") ? 1 : 0;
+   g_ui_saved[0] = g_pcfg.screen;
+   g_ui_saved[1] = g_pcfg.text_large;
+   g_ui_saved[2] = g_pcfg.contrast;
+}
+
+static void ui_prefs_save(void)
+{
+   char path[300];
+   if (g_pcfg.screen < 0 || g_pcfg.screen > 3)
+      g_pcfg.screen = 0;
+   g_pcfg.text_large = g_pcfg.text_large ? 1 : 0;
+   g_pcfg.contrast = g_pcfg.contrast ? 1 : 0;
+   if (g_ui_saved[0] == g_pcfg.screen && g_ui_saved[1] == g_pcfg.text_large &&
+       g_ui_saved[2] == g_pcfg.contrast)
+      return;
+   ui_path(path, sizeof(path));
+   fe_ini_set(path, "screen", ui_screen_tag[g_pcfg.screen]);
+   fe_ini_set(path, "text_size", g_pcfg.text_large ? "large" : "normal");
+   fe_ini_set(path, "contrast", g_pcfg.contrast ? "on" : "off");
+   g_ui_saved[0] = g_pcfg.screen;
+   g_ui_saved[1] = g_pcfg.text_large;
+   g_ui_saved[2] = g_pcfg.contrast;
+}
+#endif
+
+#ifdef VITA
 /* vita.ini's old grid_strength, for a filter of LCD grid / scanlines that
  * becomes a Scanlines or LCD grid strength (config_psp.h). */
 int g_pcfg_legacy_grid = 5;
@@ -202,6 +267,9 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    if (g_pcfg.ff_audio < 0 || g_pcfg.ff_audio > 2)
       g_pcfg.ff_audio = g_pcfg.ff_audio ? 1 : 0;
    g_pcfg.theme       = (int)fe_ini_get_int(cfg_path, "theme", 0) ? 1 : 0;
+#ifdef VITA
+   ui_prefs_load();
+#endif
    g_pcfg.ui_shell    = (int)fe_ini_get_int(cfg_path, "ui_shell", 0) ? 1 : 0;
 #ifdef VITA
    g_pcfg.ui_home     = (int)fe_ini_get_int(cfg_path, "ui_home", 1) ? 1 : 0;
@@ -662,6 +730,9 @@ void pcfg_save(void)
    pcfg_validate("save");
    pcfg_display_commit();
 #ifdef VITA
+   ui_prefs_save();
+#endif
+#ifdef VITA
    if (g_pgame.on)
       (void)pcfg_game_save();
 #endif
@@ -927,6 +998,8 @@ static void pdisp_clamp(pcfg_display *d)
          d->scan = PCFG_SCAN_DEF;
       if (d->grid < 0 || d->grid > 10)
          d->grid = PCFG_GRID_DEF;
+      if (d->crt < 0 || d->crt > 10)
+         d->crt = PCFG_CRT_DEF;
       if (d->glow < 0 || d->glow > 10)
          d->glow = PCFG_GLOW_DEF;
       if (d->wide < 0 || d->wide >= pcfg_wide_modes(c))
@@ -1110,6 +1183,7 @@ static void pdisp_load(void)
       /* Scanlines, LCD grid, Ambient glow 0..10; the 1.x forms migrate */
       d->scan = (int)pdisp_get("scan", c, -1);
       d->grid = (int)pdisp_get("grid", c, -1);
+      d->crt = (int)pdisp_get("crt", c, PCFG_CRT_DEF);
       pdisp_migrate_filter(d);
       d->glow = (int)pdisp_get("glow", c, -1);
       pdisp_migrate_glow(d);
@@ -1167,6 +1241,7 @@ void pcfg_display_select(int console)
    g_pcfg.ghost      = d->ghost;
    g_pcfg.scan       = d->scan;
    g_pcfg.grid       = d->grid;
+   g_pcfg.crt        = d->crt;
    g_pcfg.glow       = d->glow;
    g_pcfg.wide       = d->wide;
    g_pcfg.wide_fill  = d->wide_fill;
@@ -1187,6 +1262,7 @@ void pcfg_display_commit(void)
    d->ghost      = g_pcfg.ghost;
    d->scan       = g_pcfg.scan;
    d->grid       = g_pcfg.grid;
+   d->crt        = g_pcfg.crt;
    d->glow       = g_pcfg.glow;
    d->wide       = g_pcfg.wide;
    d->wide_fill  = g_pcfg.wide_fill;
@@ -1216,6 +1292,7 @@ static int pdisp_write(int c)
    rc |= pdisp_set("glow", c, d->glow);
    rc |= pdisp_set("scan", c, d->scan);
    rc |= pdisp_set("grid", c, d->grid);
+   rc |= pdisp_set("crt", c, d->crt);
 #else
    rc |= pdisp_set("ambient", c, d->ambient);
 #endif
@@ -1292,10 +1369,10 @@ int pcfg_display_save(void)
 #ifdef VITA
 /* ---- PER-GAME SETTINGS (config_psp.h) ------------------------------------- */
 
-#define PGAME_DISP_KEYS 13
+#define PGAME_DISP_KEYS 14
 static const char *const pgame_disp_keys[PGAME_DISP_KEYS] = {
    "scale", "filter", "ambient", "gb_palette", "quality", "color", "ghost",
-   "wide", "wide_fill", "sgb_border", "scan", "grid", "glow" };
+   "wide", "wide_fill", "sgb_border", "scan", "grid", "glow", "crt" };
 
 static int *pgame_disp_field(pcfg_display *d, int i)
 {
@@ -1313,7 +1390,8 @@ static int *pgame_disp_field(pcfg_display *d, int i)
       case 9: return &d->sgb_border;
       case 10: return &d->scan;
       case 11: return &d->grid;
-      default: return &d->glow;
+      case 12: return &d->glow;
+      default: return &d->crt;
    }
 }
 

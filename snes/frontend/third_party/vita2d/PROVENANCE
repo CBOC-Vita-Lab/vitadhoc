@@ -47,6 +47,12 @@ declares their functions; nothing here calls them.  Text is drawn by
    made it destroy a render target and free a GPU memory block it did not
    own (`gpu/native_geometry_test.c --texture-destructor`).
 
+6. `vita2d_set_blend_mode_mul()` (declared in `include/vita2d.h`): a third
+   set of the fragment programs, made from the same precompiled shaders with
+   a multiply blend state (`out = src * dst`), beside `normal` and `add`.
+   The CRT mask (playerkit/vita/pk_crt_vita.h) uses it.  Identical to the
+   change in gpsp/vita/third_party/vita2d.  Compile-checked only.
+
 To take a newer upstream: retain these local changes and the R7 actual-native
 delayed-consumption regression tests; upstream pool rotation alone is not a
 completion/ownership guarantee. R7's hardware visual/performance validation

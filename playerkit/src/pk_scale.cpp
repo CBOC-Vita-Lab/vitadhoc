@@ -1076,7 +1076,7 @@ bool rows_equal_scalar(const uint16_t *a, const uint16_t *b, int n)
 
 bool rows_equal(const uint16_t *a, const uint16_t *b, int n)
 {
-#if defined(__ARM_NEON)
+#ifdef PK_SCALE_NEON
 	int i = 0;
 	for (; i + 32 <= n; i += 32) {
 		const uint16x8_t x0 = veorq_u16(vld1q_u16(a + i), vld1q_u16(b + i)), x1 = veorq_u16(vld1q_u16(a + i + 8), vld1q_u16(b + i + 8));
@@ -1133,7 +1133,7 @@ static inline int pop64(u64 v) { return __builtin_popcountll(v); }
 /* eight pixels (one block) equal */
 static inline bool eq8(const uint16_t *a, const uint16_t *b)
 {
-#if defined(__ARM_NEON)
+#ifdef PK_SCALE_NEON
 	const uint64x2_t q = vreinterpretq_u64_u16(veorq_u16(vld1q_u16(a), vld1q_u16(b)));
 	return (vgetq_lane_u64(q, 0) | vgetq_lane_u64(q, 1)) == 0;
 #else

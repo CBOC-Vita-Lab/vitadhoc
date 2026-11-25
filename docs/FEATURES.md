@@ -33,10 +33,38 @@ See [Performance](PERFORMANCE.md) for Vita measurements and display settings.
 ## Library And Continue
 
 The home screen shows the console in use in the top bar, with a drop-down list of every console and its game count (Triangle), All/Starred/Recent views, sorting and
-play time. Find matches words in any order and ignores accents and
+play time, collections, and views by play time (below). Find matches words in any order and ignores accents and
 punctuation. Names in Japanese, Korean, Greek, Cyrillic and accented Latin
 show as written, in the menus of the app and of both players; only
 Chinese-only hanzi show as `?`.
+
+**Collections and views.** Select steps through Games, Starred, Recent, Most
+played, Not played yet, and then every collection and playlist that has a game
+on the console in use. Select + Square (or the Home's Lists button) opens the
+Collections page of the highlighted game: Cross puts it in a collection or
+takes it out, "New collection" asks for a name on the system keyboard (as Find
+does), Square renames, Triangle deletes after a question. A collection holds
+games of every console and is shown per console. Up to 24 collections and 4,096
+games in all, kept in `collections.txt` in the data folder
+(`ux0:data/GBAdhoc`): the list is written to a file of its own first and then
+swapped in, so a failed write (a full card) leaves the old file whole, and a
+file that cannot be read whole is never written over. Most played lists the
+games with play time, the longest first; Not played yet the rest. Both come
+from the play log, and appear once something has been played. There is no
+"Two players" view: nothing bundled (the game database, the descriptions, the
+RetroAchievements data) says how many players a game has, and it is not guessed.
+
+**RetroArch and Emu4Vita++ playlists.** The `.lpl` files in
+`ux0:data/retroarch/playlists` and `ux0:data/EMU4VITAPLUS/playlists` (and the
+same folders on `uma0:`) are read when the list opens and shown as read-only
+collections named after the file. An item is matched to a game by its path,
+then by its file name (a path from another machine still finds the game, and so
+does the name inside a `.zip#`), then by its checksum: the item's CRC32 is
+looked up in the bundled No-Intro table and its name compared with the game's
+file name, so no game file is read. VitAdhoc never writes to RetroArch's or
+Emu4Vita++'s files. Not read: compressed (rzip) playlists, files past 8 MB (the
+items before that are used), more than 16 playlists, 4,096 items to a playlist
+or 8,192 in all.
 
 **Settings > Library > Game names** chooses what the list calls a game: "Game
 title" (the default) cuts the bracketed tags, so `Quest (Hack v2).gba` reads

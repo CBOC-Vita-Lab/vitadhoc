@@ -3178,6 +3178,158 @@ def t_find(S):
     S.picture(r, "edited.png")
 
 
+def t_collections(S):
+    """Collections (collections.txt), the automatic views and RetroArch
+    playlists (ui_vita_library.h, ui_vita_lists.h, frontend-common/
+    fe_collect.c): SELECT + SQUARE opens the game's Collections page, SELECT
+    steps through the views, every change is written at once and a write that
+    fails leaves the file as it was."""
+    cartridge = open(OWN_GBA, "rb").read()
+    names = ("coll-01.gba", "coll-02.gba", "coll-03.gba")
+    config = {"ui_home": 1, "last_rom": "gbadhoc-test.gba", "previews": 0, "wide_gba": 1}
+
+    def run(name, script, files=None, cfg=None):
+        ex = {"roms/" + n: cartridge for n in names}
+        ex.update(files or {})
+        r = S.run("coll_" + name, script, config=cfg or config, extra=ex)
+        S.clean(r)
+        return r
+
+    def coll(r, suffix=""):
+        p = os.path.join(r.root, "collections.txt" + suffix)
+        return open(p).read() if os.path.exists(p) else None
+
+    def picked(r, name):
+        p = r.evt("ui_browser_pick")
+        return len(p) == 1 and p[0]["_"] == "EVT ui_browser_pick rom=" + name
+
+    # A new collection through the keyboard takes the highlighted game, is
+    # written at once and appears as a view after Starred.
+    r = run("new", "90:select+square:3\n+40:shot=lists_empty.png\n+4:cross\n+6:type=Road trip\n"
+            "+60:shot=lists_added.png\n+4:circle\n+50:select\n+50:select\n+60:shot=view.png\n"
+            "+4:cross\n+60:quit\n")
+    S.check(r.has(r"^EVT collections_load n=0 games=0 rc=0 lossy=0") and
+            r.has(r"^EVT ui_screen name=collections from=browser rom=gbadhoc-test.gba n=0") and
+            r.has(r'^EVT ui_collection op=create name="Road trip"') and
+            r.has(r'^EVT ui_collection op=add name="Road trip" rom=gbadhoc-test.gba rc=0') and
+            r.has(r"^EVT collections_save n=1 games=1 rc=0"),
+            "SELECT + SQUARE opens the page; a new collection takes the game and is saved")
+    S.check(coll(r) == "#collection Road trip\ngbadhoc-test.gba\n" and
+            coll(r, ".tmp") is None and coll(r, ".old") is None,
+            "collections.txt holds it, with no temp or old file left (%r)" % coll(r))
+    S.check(r.has(r'^EVT library view=starred name="Starred" shown=0') and
+            r.has(r'^EVT library view=collection name="Road trip" shown=1') and
+            r.has(r"^EVT ui_browser_view favs=1 shown=1 view=collection") and picked(r, "gbadhoc-test.gba"),
+            "SELECT steps Games, Starred, then the collection, which holds the game")
+    S.picture(r, "lists_empty.png")
+    S.picture(r, "lists_added.png")
+    S.picture(r, "view.png")
+    # (a collection is a different list from Starred: starring did not happen)
+    S.check(not r.evt("ui_browser_fav"), "no star was touched")
+
+    # Toggle, rename, delete, from a file that holds games of another console.
+    start = ("#collection Alpha\ngbadhoc-test.gba\nother-console.gb\n"
+             "#collection Beta\ncoll-02.gba\n")
+    r = run("edit", "90:select+square:3\n+40:shot=lists.png\n+4:cross\n+10:cross\n+10:down\n"
+            "+10:square\n+6:type=Gamma\n+30:up\n+10:triangle\n+10:shot=ask.png\n+4:cross\n"
+            "+20:circle\n+50:select\n+50:select\n+60:shot=view.png\n+4:right\n+4:cross\n+60:quit\n",
+            {"collections.txt": start})
+    S.check(r.has(r"^EVT collections_load n=2 games=3 rc=0 lossy=0") and
+            r.has(r'^EVT ui_collection op=remove name="Alpha" rom=gbadhoc-test.gba') and
+            r.has(r'^EVT ui_collection op=add name="Alpha" rom=gbadhoc-test.gba rc=0') and
+            r.has(r'^EVT ui_collection op=rename from="Beta" to="Gamma"') and
+            r.has(r'^EVT ui_collection op=delete name="Alpha"'),
+            "X adds or removes the game, SQUARE renames, TRIANGLE then X deletes")
+    S.check(coll(r) == "#collection Gamma\ncoll-02.gba\n",
+            "the file is what is left: Gamma with its game; the other console's entry went with Alpha (%r)" % coll(r))
+    S.check(r.has(r'^EVT library view=collection name="Gamma" shown=1') and picked(r, "coll-02.gba"),
+            "the renamed collection is a view with its game")
+    S.picture(r, "lists.png")
+    S.picture(r, "ask.png")
+
+    # A game of another console in a collection does not show on this one;
+    # two collections with a game each are two views.
+    r = run("two", "90:select\n+50:select\n+50:shot=a.png\n+4:select\n+50:shot=b.png\n+4:select\n+50:quit\n",
+            {"collections.txt": "#collection A\ncoll-01.gba\ngbsave.gb\n#collection B\ncoll-03.gba\n"
+                                "#collection Empty here\ngbsave.gb\n"})
+    S.check(r.has(r'^EVT library view=collection name="A" shown=1') and
+            r.has(r'^EVT library view=collection name="B" shown=1') and
+            not r.has(r'name="Empty here"') and
+            r.has(r'^EVT library view=all name="Games" shown=4'),
+            "one view each; a collection with nothing on this console is not stepped to; then back to Games")
+    S.picture(r, "a.png")
+
+    # A write that fails (the temp file's name is taken by a folder): the file
+    # is as it was, the page says so, and what it shows is what is on the card.
+    keep = "#collection A\nzzz.gba\n"
+    r = run("failed", "90:select+square:3\n+40:cross\n+30:shot=failed.png\n+4:circle\n+30:quit\n",
+            {"collections.txt": keep, "collections.txt.tmp/keep": "x"})
+    S.check(r.has(r"^EVT collections_save n=1 games=2 rc=-1") and coll(r) == keep,
+            "a failed write leaves the old file whole")
+    S.check(r.has(r"^EVT collections_load n=1 games=1 rc=0") and len(r.evt("collections_load")) == 2,
+            "...and the page reads the card's list again")
+    S.picture(r, "failed.png")
+
+    # A file that did not fit (a game before any collection) is never written back.
+    odd = "orphan.gba\n#collection A\nok.gba\n"
+    r = run("lossy", "90:select+square:3\n+40:cross\n+30:shot=lossy.png\n+4:circle\n+30:quit\n",
+            {"collections.txt": odd})
+    S.check(r.has(r"^EVT collections_load n=1 games=1 rc=0 lossy=1") and
+            r.has(r"^EVT collections_save n=\d+ games=\d+ rc=-2") and coll(r) == odd,
+            "a list that was not read whole is never written over the file")
+    S.picture(r, "lossy.png")
+
+    # The automatic views rest on the play log: Most played (longest first),
+    # Not played yet.  Nothing played: neither is offered.
+    rom = cartridge
+    now = 1700000000
+    plog = ("%d\t3600\t5\taa.gba\n%d\t60\t1\tmm.gba\n%d\t600\t2\tzz.gba\n"
+            % (now - 86400 * 40, now - 86400, now - 100))
+    auto = {"roms/aa.gba": rom, "roms/mm.gba": rom, "roms/zz.gba": rom, "playlog.txt": plog}
+    base = {"ui_home": 1, "last_rom": None}
+    r = S.run("coll_most", "60:select\n+50:select\n+50:select\n+50:right\n+20:shot=most.png\n+4:cross\n+30:quit\n",
+              config=base, extra=dict(auto, **{"roms/" + n: cartridge for n in names}))
+    S.clean(r)
+    S.check(r.has(r'^EVT library view=most_played name="Most played" shown=3') and picked(r, "mm.gba"),
+            "Most played: the three played games, the longest first (aa, zz, mm: the cursor stayed on zz, RIGHT is mm)")
+    S.picture(r, "most.png")
+    r = S.run("coll_unplayed", "60:select\n+50:select\n+50:select\n+50:select\n+50:shot=unplayed.png\n+4:cross\n+30:quit\n",
+              config=base, extra=dict(auto, **{"roms/" + n: cartridge for n in names}))
+    S.clean(r)
+    S.check(r.has(r'^EVT library view=not_played name="Not played yet" shown=4'),
+            "Not played yet: the four games never started")
+    S.picture(r, "unplayed.png")
+    r = S.run("coll_none_played", "60:select\n+50:select\n+50:select\n+50:quit\n", config=base,
+              extra={"roms/" + n: cartridge for n in names})
+    S.clean(r)
+    S.check(not r.has(r"view=most_played") and not r.has(r"view=not_played") and
+            r.has(r'^EVT library view=all name="Games" shown=4'),
+            "nothing played: SELECT goes Games, Starred, Games")
+
+    # RetroArch / Emu4Vita++ playlists: read-only collections, matched by
+    # path, else file name.  Never written; a malformed one is skipped.
+    pl_a = ('{"version":"1.5","items":[{"path":"/storage/roms/GBA/coll-02.gba","label":"Two",'
+            '"crc32":"DETECT","db_name":"x.lpl"},{"path":"/nowhere/not-there.gba","label":"Missing"}]}')
+    pl_b = '{"items":[{"path":"C:\\\\games\\\\COLL-03.GBA"},{"path":"/storage/roms/gbadhoc-test.gba"}]}'
+    files = {"retroarch/playlists/Test.lpl": pl_a, "EMU4VITAPLUS/playlists/Other.lpl": pl_b,
+             "retroarch/playlists/bad.lpl": "{{{ not json", "retroarch/playlists/notes.txt": "x"}
+    r = run("playlists", "90:select\n+50:select\n+60:shot=pl1.png\n+4:cross\n+60:quit\n", files)
+    S.check(r.has(r"^EVT playlist_load file=Test.lpl items=2") and
+            r.has(r"^EVT playlist_load file=bad.lpl items=-1") and
+            r.has(r"^EVT playlist_load file=Other.lpl items=2") and
+            r.has(r"^EVT playlists_read n=2 items=4"),
+            "both folders are read, the malformed file is skipped, other files ignored")
+    S.check(r.has(r'^EVT library view=playlist name="Test" shown=1') and picked(r, "coll-02.gba"),
+            "a playlist is a view, matched by file name (its path is another machine's)")
+    for rel, text in files.items():
+        S.check(open(os.path.join(r.root, rel)).read() == text, "%s is untouched" % rel)
+    S.picture(r, "pl1.png")
+    r = run("playlists2", "90:select\n+50:select\n+50:select\n+60:shot=pl2.png\n+4:cross\n+60:quit\n", files)
+    S.check(r.has(r'^EVT library view=playlist name="Other" shown=2'),
+            "the second playlist: two games, one by a Windows path in capitals")
+    S.picture(r, "pl2.png")
+
+
 def t_library_cache(S):
     """Console tabs reuse complete scans; Refresh library rescans and keeps focus."""
     with open(OWN_GBA, "rb") as cartridge:
@@ -8733,7 +8885,7 @@ def t_names_cjk(S):
 TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_exts", t_sega_exts), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_soft_edge", t_nes_soft_edge), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
-         ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("library_cache", t_library_cache),
+         ("home", t_home), ("picker", t_picker), ("old_states", t_old_states), ("find", t_find), ("collections", t_collections), ("library_cache", t_library_cache),
          ("settings_order", t_settings_order), ("quality", t_quality),
          ("quality_preset", t_quality_preset), ("art_requeue", t_art_requeue),
          ("favs_recover", t_favs_recover), ("gb_save_soon", t_gb_save_soon),

@@ -145,6 +145,11 @@ int         ui_host_zip_console(const char *path, unsigned size);
 /* 2.0: a ".bin" file is a Genesis game only when its bytes say so (SEGA at 0x100, or an SMD header: gamedb_md_accept);
  * the scan asks before it lists one.  1 = list it.  (The default lists every .bin.) */
 int         ui_host_md_bin_ok(const char *path);
+/* 2.0, collections: the No-Intro name the bundled game database holds for a
+ * whole-cartridge CRC32 (RetroArch playlists carry one per game, and the
+ * library matches them without reading any game file).  1 and the name in
+ * out, or 0.  (The default knows none.) */
+int         ui_host_name_by_crc(unsigned crc, char *out, size_t cap);
 
 /* Settings > Display: Screen overlay on/off and the overlay in use ("" when
  * none is in overlays/); Settings > Interface: Screenshot folder ("" =

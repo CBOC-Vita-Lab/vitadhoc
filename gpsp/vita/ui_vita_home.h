@@ -966,9 +966,12 @@ static void hm_home_hints(void)
    vs_icon(VS_I_BTN_O, x + 10, y + 12, 22, HC_TEXT2);
    x = hm_hint_word(x + 26, y, g_find[0] ? "Clear" : "Find");
    x = hm_cap(x, y, "SELECT");
-   x = hm_hint_word(x, y, "Tabs");
+   x = hm_hint_word(x, y, "Views");
+   x = hm_cap(x, y, "SELECT +");
+   vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
+   x = hm_hint_word(x + 26, y, "Lists");
    vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
-   x = hm_hint_word(x + 26, y, "Console");
+   x += 36;              /* the console's button: its pill carries the name */
    x = hm_cap(x, y, "START");
    hm_hint_word(x, y, "Settings");
 }
@@ -1081,6 +1084,16 @@ static float hm_topbar(float dy, int n_scan)
          UI_TCH_BTN(t == on ? 0 : BROWSER_TAB_BUTTON(t), (int)(x / 2) - 4,
                     0, (int)(vs_text_w(VS_SUB, TAB[t]) / 2) + 8, 48);
          x += vs_text_w(VS_SUB, TAB[t]) + 14;
+      }
+      /* Most played, Not played yet, a collection or a playlist: its name
+       * follows the three (SELECT steps through them all) */
+      if (on == 3)
+      {
+         char nm[64];
+         snprintf(nm, sizeof(nm), "%s", lib_view_name(g_view_kind, g_view_which));
+         vs_text_fit(VS_SUB, nm, 230);
+         vs_text(VS_SUB, x, y, nm, HC_TEXT);
+         x += vs_text_w(VS_SUB, nm) + 14;
       }
    }
 
@@ -1581,6 +1594,8 @@ static void hm_focus(const char *rom_dir, int rom, float dy, int idle)
                  PSP_CTRL_SQUARE);
    /* a picture of your own for the cover (ui_vita_cover.h) */
    x = hm_button(x, y, VS_I_CAMERA, "Cover", 0, BROWSER_COVER_BUTTON);
+   /* the game's collections (ui_vita_lists.h) */
+   x = hm_button(x, y, VS_I_FOLDER, "Lists", 0, BROWSER_LISTS_BUTTON);
    g_hm_btn_end = x;
 }
 
@@ -2256,7 +2271,8 @@ static void home_empty(const char *rom_dir, int n_scan)
          x = VS_W * 0.5f - (w1 + 14 + w2) * 0.5f;
          x = hm_button(x, y + 216, VS_I_BACK, "Clear", 0, PSP_CTRL_CIRCLE);
          hm_button(x, y + 216, VS_I_GRID, "All games", 1,
-                   g_browser_recent ? BROWSER_TAB_BUTTON(0) : PSP_CTRL_SELECT);
+                   g_browser_recent || g_view_kind > VK_STAR
+                   ? BROWSER_TAB_BUTTON(0) : PSP_CTRL_SELECT);
       }
       else
       {
@@ -2274,6 +2290,29 @@ static void home_empty(const char *rom_dir, int n_scan)
       vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
       vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
                 "The games you play show up here, the latest first.", HC_TEXT2);
+      hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
+                BROWSER_TAB_BUTTON(0));
+      return;
+   }
+   else if (g_browser_favs && g_view_kind > VK_STAR)
+   {
+      /* Most played, Not played yet, a collection, a playlist: nothing of it
+       * on this console */
+      vs_icon(g_view_kind == VK_MOST ? VS_I_REWIND : VS_I_FOLDER, VS_W * 0.5f,
+              y + 20, 56, hm_tint(con, 255));
+      if (g_view_kind == VK_COLL || g_view_kind == VK_LPL)
+         snprintf(msg, sizeof(msg), "Nothing of %s on %s", lib_view_name(g_view_kind, g_view_which), sk->id);
+      else
+         snprintf(msg, sizeof(msg), g_view_kind == VK_MOST
+                  ? "No %s games played yet" : "Every %s game has been played",
+                  sk->id);
+      vs_text_fit(VS_TITLE, msg, 800);
+      vs_text_c(VS_TITLE, VS_W * 0.5f, y + 96, msg, HC_TEXT);
+      vs_text_c(VS_BODY, VS_W * 0.5f, y + 156,
+                g_view_kind == VK_COLL ? "Press select and square on a game to add it."
+                : g_view_kind == VK_LPL ? "A RetroArch playlist: it lists games, it cannot be changed here."
+                : g_view_kind == VK_MOST ? "The games you play show up here, the longest played first."
+                : "The games you have not started show up here.", HC_TEXT2);
       hm_button(VS_W * 0.5f - 110, y + 216, VS_I_GRID, "All games", 1,
                 BROWSER_TAB_BUTTON(0));
       return;

@@ -682,6 +682,12 @@ int ui_host_md_bin_ok(const char *path)
    return gamedb_md_accept(path);
 }
 
+/* Collections: a RetroArch playlist's checksum, as the game database's name. */
+int ui_host_name_by_crc(unsigned crc, char *out, size_t cap)
+{
+   return gamedb_name_by_crc((uint32_t)crc, out, cap);
+}
+
 /* ---- SNES (1.4): the launch file and the session report ------------------
  * playerkit/FORMATS.md "Launch and session files" (the player: snes/vita/
  * player.cpp, playerkit pk_launch).  Before snes.bin starts, <root>/launch/

@@ -8406,6 +8406,8 @@ static int            g_find_n;
  * a row of the list or beside it (which one: the region the finger landed
  * on, g_tch.land_r). */
 #define BROWSER_CON_BUTTON    (1u << 30)
+/* Home: the Lists button -- the game's collections page (ui_vita_lists.h). */
+#define BROWSER_LISTS_BUTTON  (1u << 31)
 static int g_con_pick = -1;     /* the console the picker asks to be shown */
 static int   g_pick_on;         /* the list is open (it takes the pad)      */
 static int   g_pick_sel;        /* its highlighted row (hm_con_order)       */
@@ -8420,6 +8422,7 @@ static int            g_browser_recent;         /* 1 = the Recent tab     */
 static int            g_swap_to = -1;           /* a tab asked for by touch */
 static unsigned short g_order_idx[BROWSER_MAX];
 static int            g_order_n, g_order_on, g_recent_n;
+#include "ui_vita_library.h"   /* collections, playlists, the automatic views */
 #endif
 
 static int scope_rom(int i)
@@ -8467,7 +8470,8 @@ static void order_build(int n_scan)
    g_recent_n = 0;
    for (i = 0; i < n_scan; i++)
       g_recent_n += g_roms[i].play_last != 0;
-   g_order_on = g_browser_recent || g_pcfg.lib_sort != 0;
+   g_order_on = g_browser_recent || g_pcfg.lib_sort != 0 ||
+                (g_browser_favs && g_view_kind == VK_MOST);
    if (!g_order_on)
       return;
    g_order_n = 0;
@@ -8486,15 +8490,17 @@ static void order_build(int n_scan)
       else
          for (i = 0; i < n_scan; i++)
             g_order_idx[g_order_n++] = (unsigned short)i;
-      g_order_by = g_pcfg.lib_sort;
+      /* Most played is always most played first, whatever the setting */
+      g_order_by = g_browser_favs && g_view_kind == VK_MOST ? 2 : g_pcfg.lib_sort;
    }
    qsort(g_order_idx, (size_t)g_order_n, sizeof(g_order_idx[0]), order_cmp);
 }
 
-/* 0 Games, 1 Starred, 2 Recent. */
+/* 0 Games, 1 Starred, 2 Recent, 3 any other view (lib_view_name). */
 static int browser_tab(void)
 {
-   return g_browser_recent ? 2 : g_browser_favs ? 1 : 0;
+   return g_browser_recent ? 2 : g_browser_favs
+          ? (g_view_kind == VK_STAR ? 1 : 3) : 0;
 }
 #endif
 
@@ -8818,12 +8824,14 @@ static int favs_save(const char *rom_dir)
 static void favs_build_view(int n_scan)
 {
    int i;
+#ifdef VITA
+   lib_view_build(n_scan);          /* Starred, or the other view shown */
+   browser_find_build(n_scan);
+#else
    g_view_n = 0;
    for (i = 0; i < n_scan; i++)
       if (g_roms[i].is_fav)
          g_view_idx[g_view_n++] = (unsigned short)i;
-#ifdef VITA
-   browser_find_build(n_scan);
 #endif
 }
 
@@ -8846,6 +8854,9 @@ static void favs_mark(int n_scan)
       }
 #endif
    }
+#ifdef VITA
+   lib_mark(n_scan);                /* counts for the tabs; may reset the view */
+#endif
    favs_build_view(n_scan);
 }
 
@@ -9122,6 +9133,10 @@ static void browser_header(int n_scan)
    const ui_skin *s = skin_of(g_pcfg.console);
    char count[8];
    int x, pw, i;
+#ifdef VITA
+   char vname[40];                  /* the view's name, when it is not Starred */
+   int own_view = g_browser_favs && g_view_kind > VK_STAR;
+#endif
 
    x = hdr_card(s, g_fx_badge);
    x -= 4 + vid_text_w(VID_GLYPH_TRI);
@@ -9136,7 +9151,25 @@ static void browser_header(int n_scan)
 
    snprintf(count, sizeof(count), "%d", g_fav_count);
    pw = 8 + vid_text_w(VID_GLYPH_STAR) + 4 + vid_text_w(count) + 8;
+#ifdef VITA
+   if (own_view)
+   {
+      /* Most played, Not played yet, a collection, a playlist: its name in
+       * the Starred pill's place */
+      snprintf(vname, sizeof(vname), "%s", lib_view_name(g_view_kind, g_view_which));
+      clip_title(vname, 140);
+      pw = 8 + vid_text_w(vname) + 8;
+   }
+#endif
    x -= 14 + pw;
+#ifdef VITA
+   if (own_view)
+   {
+      vid_rect(x, HDR_CARD_Y, pw, HDR_CARD_H, C_CON, 60);
+      vid_text(x + 8, HDR_TEXT_Y, vname, C_SEL);
+   }
+   else
+#endif
    if (g_browser_favs)
    {
       vid_rect(x, HDR_CARD_Y, pw, HDR_CARD_H, C_CON, 60);
@@ -9267,8 +9300,15 @@ static void browser_footer(int n_view, int cur_is_fav)
 #ifdef VITA
       if (!g_find[0] || g_browser_favs)
 #endif
+#ifdef VITA
+         hint[count++] = g_browser_favs && g_view_kind > VK_STAR
+                         ? "SELECT next view"
+                         : g_browser_favs ? "SELECT all games"
+                                          : VID_GLYPH_O " exit";
+#else
          hint[count++] = g_browser_favs ? "SELECT all games"
                                         : VID_GLYPH_O " exit";
+#endif
       hint[count++] = "START settings";
    }
    else
@@ -12582,10 +12622,24 @@ static void browser_empty(const char *rom_dir, int n_scan)
    {
       vid_text_hd(240 - vid_text_hd_w(VID_GLYPH_STAR_O) / 2, 88,
                   VID_GLYPH_STAR_O, mix565(C_CON, C_BG_TOP, g_fx_fade));
+#ifdef VITA
+      if (g_view_kind > VK_STAR)
+      {
+         snprintf(msg, sizeof(msg), "No %s games in this view", s->id);
+         vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
+         vid_text_center(160, "SELECT + " VID_GLYPH_SQ " adds a game to a collection", item);
+         vid_text_center(182, "SELECT: next view", dim);
+      }
+      else
+      {
+#endif
       snprintf(msg, sizeof(msg), "No %s favourites yet", s->id);
       vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
       vid_text_center(160, "Press " VID_GLYPH_SQ " on a game to star it", item);
       vid_text_center(182, "SELECT: all games", dim);
+#ifdef VITA
+      }
+#endif
    }
    else
    {
@@ -13416,6 +13470,7 @@ static void browser_switch_apply(const char *rom_dir, int *n_scan, int *n,
 }
 
 #ifdef VITA
+#include "ui_vita_lists.h"
 #include "ui_vita_browser.h"
 #include "ui_vita_home.h"
 #include "ui_vita_cover.h"
@@ -13533,8 +13588,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 #ifdef VITA
    g_browser_recent = 0;
    g_swap_to = -1;
+   g_view_kind = VK_ALL;
+   g_view_which = 0;
 #endif
    favs_load(rom_dir);
+#ifdef VITA
+   lib_load(rom_dir);               /* collections.txt; the playlists, once */
+#endif
    favs_mark(n_scan);
 #ifdef VITA
    ui_cover_inbox_scan(n_scan);       /* covers/: pictures named like games */
@@ -13830,20 +13890,25 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
                /* SELECT: the next tab -- Games, Starred, then Recent when
                 * something has been played (the Home only); a tab touched:
                 * that one. */
-               int tab = g_swap_to >= 0 ? g_swap_to : (browser_tab() + 1) % 3;
-               if (g_swap_to < 0 && tab == 2 && (!g_ui_home || !g_recent_n))
-                  tab = 0;
+               int vk, vw = 0;
+               if (g_swap_to >= 0)
+                  vk = g_swap_to == 1 ? VK_STAR : g_swap_to == 2 ? VK_RECENT
+                                                                  : VK_ALL;
+               else
+                  lib_tab_next(n_scan, &vk, &vw);
                g_swap_to = -1;
-               g_browser_favs = tab == 1;
-               g_browser_recent = tab == 2;
-               browser_find_build(n_scan);
+               lib_view_set(vk, vw, n_scan);
 #else
                g_browser_favs = !g_browser_favs;
 #endif
 #ifdef VITA
+               lib_view_evt(view_count(n_scan));
                if (g_browser_recent)
                   fe_evt("ui_browser_view favs=0 shown=%d recent=1",
                          view_count(n_scan));
+               else if (g_view_kind > VK_STAR)
+                  fe_evt("ui_browser_view favs=1 shown=%d view=%s",
+                         view_count(n_scan), LIB_VIEW_ID[g_view_kind]);
                else
 #endif
                fe_evt("ui_browser_view favs=%d shown=%d", g_browser_favs,
@@ -13870,7 +13935,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          }
          edges &= PSP_CTRL_START;
       }
-      if (pop_step() && !g_pop.add && g_browser_favs)
+      if (pop_step() && !g_pop.add &&
+#ifdef VITA
+          LIB_STAR_VIEW()
+#else
+          g_browser_favs
+#endif
+         )
          swap_begin(1);                /* the untagged row leaves the view */
 
       rom = n > 0 ? view_rom(cur) : -1;
@@ -13901,9 +13972,69 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
 
       /* SELECT swaps the list for the favourites subset and back.  Not
        * while L+R are held: that is the screenshot chord above. */
+#ifdef VITA
+      /* SELECT steps through the views -- on its release, so that SELECT +
+       * SQUARE can be the game's Collections page instead (the Home's Lists
+       * button is the same page). */
+      {
+         static int sel_pending;
+         int lists = (edges & BROWSER_LISTS_BUTTON) != 0;
+         edges &= ~BROWSER_LISTS_BUTTON;
+         if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
+             !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
+            sel_pending = 1;
+         if (sel_pending && (pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
+            sel_pending = 0;
+         if (sel_pending && (edges & PSP_CTRL_SQUARE))
+         {
+            lists = 1;
+            edges &= ~PSP_CTRL_SQUARE;
+            sel_pending = 0;
+         }
+         if (sel_pending && !(pd.Buttons & PSP_CTRL_SELECT) &&
+             !g_browser_state_open)
+         {
+            sel_pending = 0;
+            swap_begin(0);
+         }
+         if (lists && n > 0 && !g_browser_state_open && !g_pop.active &&
+             !g_swap.active && !g_sw.active && !g_pick_on)
+         {
+            int keep = view_rom(cur), kk;
+            g_bpage.rom_dir = rom_dir;
+            g_bpage.cur = cur;
+            g_bpage.n = n;
+            g_bpage.n_scan = n_scan;
+            g_bpage.idle = idle;
+            md_pause();
+            if (g_ui_home) home_modal_enter();
+            kk = ui_lists_run(rom_dir, keep, n_scan);
+            if (g_ui_home) home_modal_leave(0);
+            md_resume();
+            if (kk)
+            {
+               /* collections changed: the counts, the view, the same game */
+               lib_mark(n_scan);
+               favs_build_view(n_scan);
+               n = view_count(n_scan);
+               cur = 0;
+               for (i = 0; i < n; i++)
+                  if (view_rom(i) == keep)
+                     cur = i;
+               browser_state_cache_free();
+               g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
+            }
+            idle = 0;
+            tch_reset();
+            tch_scroll_stop(&g_br_ts);
+            continue;
+         }
+      }
+#else
       if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
           !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
          swap_begin(0);
+#endif
 #ifdef VITA
       /* A tab touched (the Home's top bar): straight to it. */
       if ((edges & BROWSER_TAB_BUTTONS) && !g_browser_state_open &&
@@ -13932,7 +14063,11 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             rc = fe_favs_remove(&g_favs, r->name);
             r->is_fav = 0;
             g_fav_count--;
+#ifdef VITA
+            if (!LIB_STAR_VIEW())
+#else
             if (!g_browser_favs)
+#endif
                favs_build_view(n_scan);
             pop_begin(cur, 0);
          }
@@ -14240,6 +14375,13 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
             n_scan = rom_scan(rom_dir, (fe_console_t)g_pcfg.console);
             if (n_scan < 0)
                n_scan = 0;
+#ifdef VITA
+            if (manual_refresh)
+            {
+               g_lpl_read = 0;       /* playlists RetroArch wrote since */
+               lib_load(rom_dir);
+            }
+#endif
             favs_mark(n_scan);
 #ifdef VITA
             ui_cover_inbox_scan(n_scan);

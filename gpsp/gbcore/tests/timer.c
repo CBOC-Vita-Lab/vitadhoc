@@ -169,6 +169,17 @@ int main(int argc,char **argv) {
         if(ime){CHECK(c_regs_PC==0x51);CHECK(regs->SP==0xfffc);CHECK(!(cpu_read(0xff0f)&4));}
         else {CHECK(c_regs_PC==(word)(next+1));CHECK(regs->SP==0xfffe);CHECK(cpu_read(0xff0f)&4);}
       }
+      { /* the HALT bug: IME off and a request pending, so the next byte runs twice; a state taken right after the HALT goes on the same way */
+        memset(r+0x150,0,0x200);reset();cpu_write(0xffff,4);cpu_write(0xff0f,4);
+        struct cpu_regs *regs=cpu_get_c_regs();regs->AF.b.h=0;cpu_set_c_regs();
+        word at=c_regs_PC;r[at]=0x76;r[at+1]=0x3c;
+        ticks(4,mode);long n=gbcore_state_save(c,state,sizeof state);CHECK(n>0);
+        for(int again=0;again<2;again++) {
+          if(again)CHECK(gbcore_state_load(c,state,(size_t)n)==0);
+          ticks(12,mode);regs=cpu_get_c_regs();
+          CHECK(regs->AF.b.h==2);CHECK(c_regs_PC==(word)(at+3));CHECK(again||cpu_get_clock()==16);CHECK(!*cpu_get_halt());
+        }
+      }
       memset(r+0x150,0,0x200);reset();r[c_regs_PC]=0x76;cpu_write(0xffff,8);cpu_write(0xff01,0x35);cpu_write(0xff02,0x81);
       ticks(4096,mode);CHECK(cpu_read(0xff02)&0x80);ticks(4,mode);CHECK(!(cpu_read(0xff02)&0x80));CHECK(cpu_read(0xff0f)&8);
       ticks(4,mode);CHECK(!*cpu_get_halt());CHECK(c_regs_PC==0x152);CHECK(cpu_get_c_regs()->SP==0xfffe);

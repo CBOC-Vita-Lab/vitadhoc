@@ -62,8 +62,6 @@ static unsigned timer_pending, timer_reloading;
  * seri_occer expires (0xFF with no cable), set at the SC write. */
 byte seri_rx=0xFF;
 char halt,speed,speed_change,dma_executing;
-/* GBAdhoc: HALT with IME off and an interrupt already requested does not halt and reads the next byte twice (the HALT bug); set by HALT, spent by the next fetch. */
-static char halt_bug;
 char b_trace;
 int dma_src;
 int dma_dest;
@@ -720,7 +718,6 @@ void cpu_exec(unsigned short clocks)
         }
 
 		op_code=op_read();
-		if (halt_bug){ halt_bug=0; c_regs_PC--; }
 		tmp_clocks=cycles[op_code];
 
 		op_code_normal_JmpTbl[op_code]();

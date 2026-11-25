@@ -355,9 +355,23 @@ inline void op_code_normal_case0x00(void) { } //NOP : state 4
 inline void op_code_normal_case0xF3(void) { c_regs_I=0; cpu_irq_check(); } //DI : state 4
 inline void op_code_normal_case0xFB(void) { c_regs_I=1;int_disable_next=true; cpu_irq_check(); } //EI : state 4
 
+void (*op_code_normal_JmpTbl[256])(void); /* GBAdhoc: HALT runs the next instruction (below) */
 inline void op_code_normal_case0x76(void) {
     /* cpu_exec batches idle clocks through the shared timer/DIV path. */
-    if (!c_regs_I && (g_regs.IF&g_regs.IE&0x1F)) { halt_bug=1; return; } /* GBAdhoc: the HALT bug */
+    /* GBAdhoc: the HALT bug.  With IME off and an interrupt already
+     * requested HALT does not halt and the next byte is read twice.  That
+     * next instruction runs here, in one piece with the HALT, so nothing
+     * is pending between them that a state would have to hold (a frame,
+     * and so a state, rewind step or Quick response frame, can end after
+     * any instruction).  A HALT that follows is read again for ever. */
+    if (!c_regs_I && (g_regs.IF&g_regs.IE&0x1F)) {
+        byte op=op_read();REG_PC--;
+        if (op==0x76) { REG_PC--; return; }
+        rest_clock-=tmp_clocks;cpu_clock_advance((unsigned)tmp_clocks);
+        tmp_clocks=cycles[op];
+        op_code_normal_JmpTbl[op]();
+        return;
+    }
     halt=true;REG_PC--;cpu_irq_check();
 } //HALT : state 4
 

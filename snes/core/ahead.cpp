@@ -14,6 +14,7 @@
  *   - the PPU: PPU, IPPU (but the frame's own picture state, below), the sprite tables (GFX.OBJLines ..., the range and time over
  *     flags come out of them; copied aside only when the look-ahead frame rebuilds them, gfx.cpp);
  *   - the pads (controls.cpp: read positions, latch, devices);
+ *   - the cheat engine's memory of each code (the byte under it, a conditional code's condition);
  *   - the sound side (apu.cpp S9xAPUAheadSave: SPC700, DSP, ports, the samples not taken yet; in the APU thread's stream);
  *   - the chips in use: Super FX (GSU, SuperFX, the cel hold of fxemu.cpp), SA-1 (SA1, SA1Registers, its open bus, the replay
  *     engine, the memory map it changes), DSP-1/2/3/4 (structs; DSP-3's command state is a function pointer), C4 (its RAM and
@@ -51,6 +52,7 @@
 #include "obc1.h"
 #include "seta.h"
 #include "msu1.h"
+#include "cheats.h"
 #include "widecap.h"
 #include "s9x_ahead.h"
 
@@ -77,7 +79,7 @@ struct RenderCarry
 
 std::vector<Part> parts;			// plain copies, in order
 std::vector<uint8> buf;				// their bytes
-std::vector<uint8> vram, obj, ctl, sa1l, msu, vage, uage;
+std::vector<uint8> vram, obj, ctl, sa1l, msu, vage, uage, cht;
 bool built = false, saved = false;
 size_t sram_n = 0;
 bool maps = false;					// the chip changes the memory map at run time (SA-1, S-DD1)
@@ -139,6 +141,31 @@ size_t sram_reach (void)
 
 void add (void *p, size_t n) { Part q = { p, n }; parts.push_back(q); }
 
+/* the cheat engine's memory of each code (the byte the game wrote under it, whether a conditional code's condition holds): the
+ * look-ahead frame's end of frame update changes it, and a condition it saw first would not fire in the real frame */
+void cheats_copy (bool save)
+{
+	if (save)
+		cht.clear();
+	size_t k = 0;
+	for (size_t g = 0; g < Cheat.group.size(); g++)
+		for (size_t i = 0; i < Cheat.group[g].cheat.size(); i++)
+		{
+			SCheat &c = Cheat.group[g].cheat[i];
+			if (save)
+			{
+				cht.push_back(c.saved_byte);
+				cht.push_back(c.cond_true);
+			}
+			else if (k + 2 <= cht.size())
+			{
+				c.saved_byte = cht[k];
+				c.cond_true = cht[k + 1];
+				k += 2;
+			}
+		}
+}
+
 void build (void)
 {
 	parts.clear();
@@ -166,6 +193,7 @@ void build (void)
 		add(&SA1OpenBus, sizeof(SA1OpenBus));
 		add(&SA1Effects, sizeof(SA1Effects));
 		add(&SA1Rec, sizeof(SA1Rec));
+		add(&Memory.ROM[CMemory::MAX_ROM_SIZE - 0x10000], 128);	// the eight rows of a type 2 character conversion under way (sa1.cpp, $224F)
 		sa1l.resize(S9xSA1AheadCopy(NULL, 0));
 	}
 	if (Settings.DSP)
@@ -245,21 +273,6 @@ inline void put (uint8 *dst, const uint8 *src, size_t n)
 		memcpy(dst, src, n);
 }
 
-inline void tiles_dirty (uint32 address)
-{
-	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
-	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
-	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
-	IPPU.TileCached[TILE_2BIT_EVEN][address >> 4] = FALSE;
-	IPPU.TileCached[TILE_2BIT_EVEN][((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
-	IPPU.TileCached[TILE_2BIT_ODD] [address >> 4] = FALSE;
-	IPPU.TileCached[TILE_2BIT_ODD] [((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
-	IPPU.TileCached[TILE_4BIT_EVEN][address >> 5] = FALSE;
-	IPPU.TileCached[TILE_4BIT_EVEN][((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
-	IPPU.TileCached[TILE_4BIT_ODD] [address >> 5] = FALSE;
-	IPPU.TileCached[TILE_4BIT_ODD] [((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
-}
-
 /* the wide view's ageing of old stamps (ppu_mt.cpp S9xWideFrameStartLive), done again after the stamps were put back when the
  * look-ahead frame was the one that did it */
 void stamps_age (uint32 clock)
@@ -318,6 +331,7 @@ bool S9xAheadSave (void)
 	memcpy(&ippu_keep, &IPPU, sizeof(IPPU));
 	sync(&vram[0], Memory.VRAM, sizeof(Memory.VRAM));
 	S9xControlAheadCopy(&ctl[0], 1);
+	if (!NC(8)) cheats_copy(true);
 	if (Settings.SuperFX)
 		S9xSuperFXAheadCopy(&cel_hold, &cel_prev, 1);
 	if (Settings.SA1)
@@ -368,6 +382,7 @@ bool S9xAheadRestore (void)
 	IPPU.RenderThisFrame = render;
 	carry_put(now);
 	if (!NC(4)) S9xControlAheadCopy(&ctl[0], 0);
+	if (!NC(8)) cheats_copy(false);
 	if (Settings.SuperFX)
 		S9xSuperFXAheadCopy(&cel_hold, &cel_prev, 0);
 	if (Settings.SA1)
@@ -393,8 +408,8 @@ bool S9xAheadRestore (void)
 				continue;
 			d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
 			const uint32 a = blk * 32;
-			tiles_dirty(a);
-			tiles_dirty(a + 16);
+			S9xTilesDirty(a);
+			S9xTilesDirty(a + 16);
 			if (g_s9x_vram_track)
 				S9xPPUMTVRAMDirty(a);
 			if (stamps)

@@ -9,8 +9,11 @@
 #     a picture after fast forward does, and where the pad changes: the look-ahead frame has the buttons of frame n; an interlaced
 #     picture (448 or 478 lines) also the frame after, as its other field is the one of the picture shown before);
 #   - a small cartridge that shows the pad a frame after it reads it (tests/make_latency_rom.py) shows a press 1 frame after it
-#     plain and 0 with Quick response.
-# Without a ROM folder it runs on its own cartridges: the latency one, an SA-1 and a DSP-1 kept busy (tests/make_chip_work_rom.py).
+#     plain and 0 with Quick response;
+#   - a conditional cheat fires on the same frame with and without Quick response.
+# Without a ROM folder it runs on its own cartridges: the latency one, an SA-1 and a DSP-1 kept busy (tests/make_chip_work_rom.py)
+# and one that writes video RAM and a sprite only while a button is held (tests/make_ahead_pad_rom.py: the frames where the
+# look-ahead frame guessed the buttons wrong, so what it wrote is not written again by the real frame).
 #   ahead_check.sh TWIN [ROMDIR] [FRAMES]       exit 1 on a difference. ROMDIR is searched recursively for .sfc / .smc.
 # Copyright CBOC-Vita. MIT licence.
 TWIN=$1; D=$2; F=${3:-600}
@@ -21,6 +24,7 @@ O=$(mktemp -d); trap 'rm -rf "$O"' EXIT
 python3 -I "$HERE/tests/make_latency_rom.py" $O/latency.sfc || exit 2
 python3 -I "$HERE/tests/make_chip_work_rom.py" sa1 $O/sa1work.sfc || exit 2
 python3 -I "$HERE/tests/make_chip_work_rom.py" dsp1 $O/dsp1work.sfc || exit 2
+python3 -I "$HERE/tests/make_ahead_pad_rom.py" $O/padwork.sfc || exit 2
 # the pad: a press every few frames (the changes are skipped in the picture check)
 PAD=$(python3 -I -c "
 import random
@@ -32,7 +36,7 @@ CHG=$(echo "$PAD" | tr ',' '\n' | cut -d: -f1 | tr '\n' ' ')
 pass=0; fail=0
 ok()  { echo "PASS  $1"; pass=$((pass+1)); }
 bad() { echo "FAIL  $1"; fail=$((fail+1)); }
-roms=("$O/latency.sfc" "$O/sa1work.sfc" "$O/dsp1work.sfc")
+roms=("$O/latency.sfc" "$O/sa1work.sfc" "$O/dsp1work.sfc" "$O/padwork.sfc")
 if [ -n "$D" ] && [ -d "$D" ]; then
   while IFS= read -r r; do roms+=("$r"); done < <(find -L "$D" -type f \( -name '*.sfc' -o -name '*.smc' \) | sort)
 else
@@ -92,5 +96,11 @@ for b in a start; do
   p=$(lat "" $b); a=$(lat "--ahead 10" $b)
   [ "$p" = 1 ] && [ "$a" = 0 ] && ok "latency ($b): $p frame plain, $a with Quick response" || bad "latency ($b): $p frame(s) plain, $a with Quick response"
 done
+# a conditional cheat (address=condition?byte) fires on the frame its condition first holds: the look-ahead frame sees that frame
+# first, and the cheat engine's memory of the code is part of the machine saved (the latency cartridge counts frames at $12)
+chk() { "$TWIN" $O/latency.sfc --frames 100 --peek 12 --cheat '7e0012=20?80' --cheats-root $O/ch$1 $2 2>/dev/null | grep '^peek' ; }
+p=$(chk p ""); a=$(chk a "--ahead 10"); m=$(chk m "--ahead 10 --opt apu_thread=1 --opt ppu_thread=1")
+[ -n "$p" ] && [ "$p" != "$("$TWIN" $O/latency.sfc --frames 100 --peek 12 2>/dev/null | grep '^peek')" ] && [ "$a" = "$p" ] && [ "$m" = "$p" ] \
+  && ok "conditional cheat: fires as without Quick response ($p)" || bad "conditional cheat: plain [$p] ahead [$a] ahead mt [$m]"
 echo "quick response: $pass passed, $fail failed"
 [ $fail = 0 ]

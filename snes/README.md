@@ -485,9 +485,13 @@ picture, margins included, equals the plain run's next frame when that run leave
 pad a frame after it reads it shows a press 1 frame after it plain and 0 with Quick response. All 164 public PeterLemon test programs
 (`git clone https://github.com/PeterLemon/SNES`, commit 350b394: 47 PPU programs with Mode 7, HDMA and interlace, 30 CPU and SPC700
 instruction tests, 9 SPC700 music programs, 8 MSU-1 programs (six stream their video or audio from their files; the two Bad Apple ones ship them packed and run without), 58 Super FX programs) and the
-test's own cartridges (latency, an SA-1 and a DSP-1 kept busy with real work) pass, 300 frames each (the MSU-1 ones also 600). Negative controls (`ahead.cpp`
+test's own cartridges (latency, an SA-1 and a DSP-1 kept busy with real work, and one that writes video RAM and a sprite only while a
+button is held: on the frame the button is let go the look-ahead frame has written what the real frame does not write again, the one
+case where the tile cache and the picture thread's video RAM depend on the way back) pass, 300 frames each (the MSU-1 ones also 600). A
+conditional cheat (`address=condition?byte`) fires on the same frame with and without Quick response: the cheat engine's memory of each
+code is part of the machine saved. Negative controls (`ahead.cpp`
 `AHEAD_NEGATIVE_CONTROL`, built by hand): leaving out the sound side, the SA-1 registers, the video RAM compare, the sprite tables, the
-DSP-1 or the work RAM each fails the proof; leaving out the pads' state does not show on these programs (none reads the pads serially
+DSP-1, the work RAM or the cheat engine's memory (8) each fails the proof; leaving out the pads' state does not show on these programs (none reads the pads serially
 across a frame end), it is kept all the same. `player_twin ahead` (in `selftest.sh`) runs it through the player: Off, On, Auto light and
 Auto heavy give the same machine after every refresh through presses, fast forward, rewind, a quick save and a quick load; never under
 fast forward; Auto leaves a heavy game alone; the row and `player.ini`; the drawing thread holding it off. Not covered by a test program:

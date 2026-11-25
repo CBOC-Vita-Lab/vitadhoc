@@ -17,7 +17,7 @@ a.rep(0x10); a.sep(0x20)
 a.ldx("#", 0x1FFF); a.txs()
 a.lda("#", 0x80); a.sta("abs", 0x2100)        # forced blank while the palette is set
 a.stz("abs", 0x2121); a.stz("abs", 0x2122); a.stz("abs", 0x2122)
-a.stz("dp", 0x10); a.stz("dp", 0x11)
+a.stz("dp", 0x10); a.stz("dp", 0x11); a.stz("dp", 0x12)
 a.stz("abs", 0x212C)                           # no layer: the picture is the backdrop
 a.lda("#", 0x0F); a.sta("abs", 0x2100)
 a.lda("#", 0x81); a.sta("abs", 0x4200)        # NMI and the automatic pad read
@@ -27,6 +27,7 @@ a.wai(); a.bra("idle")
 a.label("nmi")
 a.sep(0x20)
 a.lda("abs", 0x4210)
+a.inc("dp", 0x12)                            # a frame counter (the conditional cheat check of ahead_check.sh)
 a.stz("abs", 0x2121)                           # colour 0 from the buttons read one frame ago
 a.lda("dp", 0x10); a.sta("abs", 0x2122)
 a.lda("dp", 0x11); a.sta("abs", 0x2122)

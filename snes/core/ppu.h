@@ -381,6 +381,23 @@ static inline void REGISTER_2104 (uint8 Byte)
 	}
 #endif
 
+// CBOC-Vita: the tile cache entries a changed VRAM byte takes out (the lines of REGISTER_2118 below), for run-ahead (ahead.cpp),
+// which puts VRAM back without going through the register
+static inline void S9xTilesDirty (uint32 address)
+{
+	IPPU.TileCached[TILE_2BIT][address >> 4] = FALSE;
+	IPPU.TileCached[TILE_4BIT][address >> 5] = FALSE;
+	IPPU.TileCached[TILE_8BIT][address >> 6] = FALSE;
+	IPPU.TileCached[TILE_2BIT_EVEN][address >> 4] = FALSE;
+	IPPU.TileCached[TILE_2BIT_EVEN][((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
+	IPPU.TileCached[TILE_2BIT_ODD] [address >> 4] = FALSE;
+	IPPU.TileCached[TILE_2BIT_ODD] [((address >> 4) - 1) & (MAX_2BIT_TILES - 1)] = FALSE;
+	IPPU.TileCached[TILE_4BIT_EVEN][address >> 5] = FALSE;
+	IPPU.TileCached[TILE_4BIT_EVEN][((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
+	IPPU.TileCached[TILE_4BIT_ODD] [address >> 5] = FALSE;
+	IPPU.TileCached[TILE_4BIT_ODD] [((address >> 5) - 1) & (MAX_4BIT_TILES - 1)] = FALSE;
+}
+
 static inline void REGISTER_2118 (uint8 Byte)
 {
 	CHECK_INBLANK();

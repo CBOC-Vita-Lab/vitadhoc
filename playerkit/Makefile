@@ -4,6 +4,9 @@
 #   make tsan        the frame hand-over mailbox and the core watchdog under ThreadSanitizer (also part of test)
 #   make model       the pacing model's tables (ARGS=standard|adaptive|all)
 #   make shots       only the menu walk; PNGs go to SHOTS (default build/shots)
+#   make scale-check    the NEON scalers against the C scalers (host: the C loops against themselves and xbr_reference_int; ASan + UBSan)
+#   make arm-check      the same under qemu-arm, with the real NEON loops (arm-linux-gnueabihf-g++); ARGS=quick for the short run
+#   make arm-count      guest instructions per frame of every scaler, C and NEON, under qemu-arm (slow: a minute a figure)
 #   make vita        compile the library for the PS Vita (arm-vita-eabi-g++), objects only
 #   make regen-font  regenerate src/pk_font_data.cpp from the OFL fonts in ../gpsp/assets/fonts
 #
@@ -48,13 +51,36 @@ $(B)/linux/tests/menu_walk.o: tests/menu_walk.cpp tests/harness.h $(wildcard src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -Isrc -Itests -c $< -o $@
 
-test: $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock link-test ra-test
+test: scale-check $(B)/unit_tests $(B)/menu_walk $(B)/vita_gxm $(B)/handoff_tsan $(B)/cores_tsan $(B)/spin_tsan stdio_lock link-test ra-test
 	TZ=UTC $(B)/unit_tests
 	TZ=UTC $(B)/menu_walk $(SHOTS)
 	$(B)/vita_gxm
 	$(B)/handoff_tsan
 	$(B)/cores_tsan
 	$(B)/spin_tsan
+
+# pk_scale: the NEON loops (ARM only) against the C loops, byte for byte. Host: no NEON, so the C loops against themselves (a check of the
+# harness) and xBR against xbr_reference_int. arm-check: armhf under qemu-arm, the real NEON code. See tests/scale_neon_check.cpp.
+ARM_CXX    ?= arm-linux-gnueabihf-g++
+ARM_QEMU   ?= qemu-arm -L /usr/arm-linux-gnueabihf
+ARM_FLAGS  ?= -std=c++11 -O3 -Wall -Wextra -mfpu=neon -mfloat-abi=hard
+$(B)/scale_neon_check: tests/scale_neon_check.cpp src/pk_scale.cpp src/pk_scale.h
+	@mkdir -p $(B)
+	$(CXX) $(CXXFLAGS) -Isrc tests/scale_neon_check.cpp src/pk_scale.cpp -o $@
+scale-check: $(B)/scale_neon_check
+	$(B)/scale_neon_check quick
+$(B)/scale_neon_check_arm: tests/scale_neon_check.cpp src/pk_scale.cpp src/pk_scale.h
+	@mkdir -p $(B)
+	$(ARM_CXX) $(ARM_FLAGS) -Isrc tests/scale_neon_check.cpp src/pk_scale.cpp -o $@
+$(B)/scale_neon_check_arm_c: tests/scale_neon_check.cpp src/pk_scale.cpp src/pk_scale.h
+	@mkdir -p $(B)
+	$(ARM_CXX) $(ARM_FLAGS) -DPK_SCALE_NO_NEON -Isrc tests/scale_neon_check.cpp src/pk_scale.cpp -o $@
+arm-check: $(B)/scale_neon_check_arm $(B)/scale_neon_check_arm_c
+	$(ARM_QEMU) $(B)/scale_neon_check_arm $(ARGS)
+	$(ARM_QEMU) $(B)/scale_neon_check_arm_c quick
+arm-count: $(B)/scale_neon_check_arm
+	@for k in 0 1 2; do for u in 0 1; do ./tools/scale_icount.sh $(B)/scale_neon_check_arm $$k 2 2 $$u 8; done; done
+.PHONY: scale-check arm-check arm-count
 
 # pk_link over the real UDP transport (loopback, the transport's own I/O threads): link_tests (ASan + UBSan, with the 12 s stall
 # and the 20 s dead peer in real time) and link_tsan (ThreadSanitizer, quick). They use loopback ports and wall-clock time:

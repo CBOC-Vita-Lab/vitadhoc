@@ -62,6 +62,12 @@ struct StateLayout {
  * next time). Returns the number of files moved; *failed gets the ones that could not be. */
 int migrate_to_bucket(const StateLayout &l, int *failed = 0);
 
+/* A game that has no state files yet takes over another's (the first disc of a game on several discs, whose .m3u list is now the game): when
+ * `to` has none of the files of a game (slots 1..10, the resume point, the undo state, with their pictures and notes) and `from` has some, they are
+ * COPIED into `to`'s bucket under its name. `from` is never changed or deleted. Returns the number of files copied; *failed gets the ones that
+ * could not be (the copy then stops being complete: the rest are still tried, the next start tries again as `to` is still without states). */
+int adopt_states(const StateLayout &from, const StateLayout &to, int *failed = 0);
+
 enum StateStatus {
 	ST_OK = 0,
 	ST_EMPTY,          /* nothing in that slot */

@@ -306,6 +306,11 @@ STEPS = [
          "--roms \"$GATE_MD_ROMS/sample\" --roms \"$GATE_MD_SMS_ROMS\" --frames 3000 --out {out}/md-link",
          "default", {"md", "link"}, inputs=["md/", "playerkit/", "gpsp/netdrv/"], requires=CXX, env_req="GATE_MD_ROMS",
          group=GROUP_HOST, timeout=7200),
+    Step("md-link-fm", "two Sega players linked with the YM2612 on its own thread (MD_TWIN_FM=check): the same sessions and the same hashes as md-link (GATE_MD_ROMS, GATE_MD_SMS_ROMS)",
+         "make -C md/twin -f Makefile.link -j{jobs} && MD_TWIN_FM=check python3 md/twin/link_test.py --twin md/twin/build/x86/link_twin "
+         "--roms \"$GATE_MD_ROMS/sample\" --roms \"$GATE_MD_SMS_ROMS\" --frames 1000 --out {out}/md-link-fm",
+         "full", {"md", "link"}, inputs=["md/", "playerkit/", "gpsp/netdrv/"], requires=CXX, env_req="GATE_MD_ROMS",
+         group=GROUP_HOST, timeout=7200),
     Step("vita-gxm", "console drawing path: pk_gfx_vita + the app's text format against a GXM-faithful vita2d fake (menu text is coverage not boxes, contrast, same as soft)",
          "make -C playerkit build/vita_gxm && cd playerkit && ./build/vita_gxm", "quick", {"playerkit", "vita"},
          inputs=["playerkit/", "gpsp/vita/vback_vita2d.c", "snes/frontend/third_party/vita2d/"],
@@ -339,6 +344,11 @@ STEPS = [
     Step("md-player", "Sega player (md/vita/player.cpp) on the twin: walk, slots, saves, rewind, run-ahead, RetroAchievements; the Sega CD part on synthetic discs (player_selftest.sh; GATE_MD_ROMS, GATE_MD_SMS_ROMS; the SG-1000 and Game Gear files: GATE_SG_ROM, GATE_GG_ROM, else a cartridge made by md/twin/tools/sg_gen.py)",
          "MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/player_selftest.sh",
          "default", {"md"}, inputs=["md/", "playerkit/"], deps=["build-md-twin"], parse="pass_fail", net=True, timeout=3600,
+         env_opt=["GATE_MD_ROMS", "GATE_MD_SMS_ROMS", "GATE_SG_ROM", "GATE_GG_ROM"]),
+
+    Step("md-player-fm", "Sega player on the twin with the YM2612 on its own thread (MD_TWIN_FM=check): the same walk, slots, saves, rewind and run-ahead (player_selftest.sh)",
+         "MD_TWIN_FM=check MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/player_selftest.sh",
+         "full", {"md"}, inputs=["md/", "playerkit/"], deps=["build-md-twin"], parse="pass_fail", net=True, timeout=3600,
          env_opt=["GATE_MD_ROMS", "GATE_MD_SMS_ROMS", "GATE_SG_ROM", "GATE_GG_ROM"]),
 
     # state loaders (H1): every core's loader against damaged states with repaired checksums (ASan + UBSan, a watchdog for hangs) and the
@@ -565,7 +575,7 @@ STEPS = [
          "make -C widekit arm-check", "full", {"widekit"}, inputs=["widekit/"],
          requires=[("exe", "arm-linux-gnueabihf-g++"), ("exe", "qemu-arm")], timeout=3600),
     Step("playerkit-scale-arm", "playerkit scalers: the NEON xBR / MMPX loops equal the C loops byte for byte under qemu (make arm-check)",
-         "make -C playerkit arm-check", "full", {"playerkit", "snes", "md"}, inputs=["playerkit/src/pk_scale.cpp", "playerkit/src/pk_scale.h", "playerkit/tests/scale_neon_check.cpp"],
+         "make -C playerkit arm-check", "full", {"playerkit", "snes", "md"}, inputs=["playerkit/Makefile", "playerkit/src/pk_scale.cpp", "playerkit/src/pk_scale.h", "playerkit/tests/scale_neon_check.cpp"],
          requires=[("exe", "arm-linux-gnueabihf-g++"), ("exe", "qemu-arm")], timeout=3600),
     Step("widekit-vita", "widekit: compiles for the Vita, warning free (compile only)",
          "make -C widekit vita", "full", {"widekit", "vita"}, inputs=["widekit/"],

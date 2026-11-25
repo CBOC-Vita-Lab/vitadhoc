@@ -543,6 +543,11 @@ void gbcore_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112)
   core->cam_set = 1;
 }
 
+unsigned gbcore_camera_requests(gbcore_t *core)
+{
+  return gbcore_has_camera(core) ? mbc_cam_starts() : 0;
+}
+
 const unsigned char *gbe_getCameraImage(void)
 {
   return active && active->cam_set ? active->cam : NULL;

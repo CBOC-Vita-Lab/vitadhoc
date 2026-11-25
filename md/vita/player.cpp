@@ -388,6 +388,34 @@ void MdPlayer::poll_writer()
 
 std::string MdPlayer::pic_game_ini() const { return path_join(path_join(cfg_dir(), "games"), game_ + ".ini"); }
 
+/* Before an .m3u hid its discs, a Sega CD game on several discs was started from "Game (Disc 1).cue" and kept its save and states under that name.
+ * The list is the game now, with a name of its own: when it has no save yet (and no states) and the first disc's exist, they are copied over, once
+ * (the first disc's files stay where they are). */
+void MdPlayer::adopt_first_disc()
+{
+	static char dl[PK_M3U_MAX_DISCS][PK_M3U_PATH];
+	const int nd = pk_m3u_load(rom_.c_str(), dl, PK_M3U_MAX_DISCS, nullptr, nullptr);
+	if (nd < 1) return;
+	const std::string disc = dl[0];
+	if (!file_exists(srm_)) {
+		const std::string dsrm = srm_for(disc);
+		std::vector<uint8_t> b;
+		if (dsrm != srm_ && file_exists(dsrm) && file_read(dsrm, b, 2u << 20) && !b.empty()) {
+			make_dirs(path_dir(srm_));
+			const bool ok = atomic_write(srm_, b.data(), b.size(), EXISTS_NO) == W_OK;
+			logf("adopted the save of the first disc (%s) for the .m3u game: %u bytes -> %s: %s\n", dsrm.c_str(), (unsigned) b.size(), srm_.c_str(), ok ? "copied, the first disc's file is kept" : "FAILED");
+		}
+	}
+	StateLayout from, to;
+	from.root = to.root = root_;
+	from.console = to.console = console_;
+	from.name = path_stem(disc);
+	to.name = game_;
+	int failed = 0;
+	const int n = adopt_states(from, to, &failed);
+	if (n || failed) logf("adopted the states of the first disc (%s) for the .m3u game: %d file(s) copied, %d failed; the first disc's files are kept\n", from.name.c_str(), n, failed);
+}
+
 void MdPlayer::settings_load()
 {
 	pic_defaults(&ps_);
@@ -597,6 +625,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 
 	/* 2. the battery save: a cut write is put back, then a newer RetroArch save is brought in */
 	recover_old(srm_);
+	if (scd_ && pk_m3u_is_list(rom_.c_str())) adopt_first_disc();
 	if (!req_.retroarch_save.empty() && !scd_) {          /* (a Sega CD save is the backup RAM and the RAM cartridge in one file: RetroArch keeps them apart) */
 		uint64_t ra_sz = 0, sv_sz = 0;
 		int64_t ra_t = 0, sv_t = 0;

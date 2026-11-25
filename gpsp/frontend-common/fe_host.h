@@ -608,6 +608,9 @@ void           fe_host_gb_print_colours(uint32_t rgb[4]);
  * greyscale, published each frame while it is. */
 unsigned fe_host_gbcam_present(void);
 void     fe_host_gbcam_frame(const uint8_t *grey_128x112);
+/* Captures the camera game has started so far (only grows): the platform
+ * keeps a real camera running only while this changes. */
+unsigned fe_host_gbcam_requests(void);
 
 /* THE SUPER GAME BOY'S BORDER (gbcore.h gbcore_sgb_border): 0 = none (no GB
  * machine, a link session, not running as a Super Game Boy, nothing sent

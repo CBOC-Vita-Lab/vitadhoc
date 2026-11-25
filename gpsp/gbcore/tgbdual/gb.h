@@ -268,6 +268,8 @@ void mbc_mmm01_write(word adr,byte dat);
 /* Game Boy Camera (gbcam.h) */
 void mbc_cam_write(word adr,byte dat);
 void mbc_cam_tick(void);
+int mbc_cam_ram_blocked(void);
+unsigned mbc_cam_starts(void);
 void mbc_cam_save(byte *out);
 void mbc_cam_load(const byte *in);
 

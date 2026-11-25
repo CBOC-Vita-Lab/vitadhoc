@@ -64,8 +64,10 @@ response, No sprite flicker.
   made for the purpose (the PC test twin), never with the real Camera cartridge
   or a real Vita camera: the sensor's exposure scale and the printer's margin
   length are estimates, a real camera's pictures will differ in detail, and the
-  Vita's camera code (the CDRAM buffer, the non-waiting read) has only been
-  compiled. A rewound or loaded state keeps the live camera picture. A game
+  Vita's camera code (the CDRAM buffer, the non-waiting read, opening it on
+  the first capture and closing it after about two seconds without one, the
+  one-second stopped-camera check) has only been compiled; how long a real
+  camera takes to deliver its first picture is not known. A rewound or loaded state keeps the live camera picture. A game
   that prints more than one sheet is saved once. The printer does not answer
   during a link, and a state loaded in the middle of a print leaves the game
   and the printer out of step until the next initialise.
@@ -415,8 +417,8 @@ flicker or missing instruments, which we could not judge without a Vita.
 - **Zipped games:** the first game in the zip with a known extension is the one
   played. Patches, and two-player play with a different game for each player,
   need the game unzipped. Encrypted and ZIP64 archives are not read.
-- **`.7z` games:** read with the LZMA SDK (LZMA, LZMA2, BCJ, Delta; no
-  passwords, PPMd or BCJ2). The archive's block that holds the game is
+- **`.7z` games:** read with the LZMA SDK (LZMA, LZMA2, BCJ, BCJ2, Delta; no
+  passwords or PPMd). The archive's block that holds the game is
   unpacked in memory at once, so a game over 32 MB or a solid block over 64 MB
   is refused (the notice says which); pack big games without "solid" or on
   their own. A Genesis `.bin` in a `.7z` is unpacked once to check its header

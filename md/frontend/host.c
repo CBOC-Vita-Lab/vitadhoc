@@ -1,10 +1,26 @@
 /*
  * Sega host: see host.h. Replaces the libretro layer of Genesis Plus GX (libretro/libretro.c) with a memory based API.
- * The option names, the default values and the video geometry follow that file (the code paths are ported, not invented),
- * with the changes listed in md/core/PROVENANCE.md.
  *
- * Copyright CBOC-Vita. MIT licence. Links against Genesis Plus GX (md/core, non-commercial licence): a program containing
- * mdcore.o is not to be sold and ships its full source when modified.
+ * LICENCES IN THIS FILE.  Two kinds of code sit here, and they are not under the same licence:
+ *
+ *   Derived from the libretro frontend of Genesis Plus GX (libretro/libretro.c, pinned commit in md/core/PROVENANCE.md), so under the Genesis Plus
+ *   GX licence (non-commercial: md/core/LICENSE.txt, licenses/GenesisPlusGX-LICENSE.txt). These parts follow that file, ported to this API
+ *   rather than copied line by line:
+ *     - the globals and settings the core expects its host to define, the option names and their default values, and the region choice for the
+ *       systems without a BIOS (libretro.c check_variables), in "what the core expects the host to define", "config" and "console state and
+ *       options";
+ *     - the video geometry and aspect ratio (libretro.c update_viewport, calculate_display_aspect_ratio): "geometry";
+ *     - the format of an empty backup RAM (the header the Sega CD BIOS expects) and the disc tray handling of a change of disc (libretro.c
+ *       disk_set_eject_state), in "Sega CD" and "more than one disc";
+ *     - the memory map handed out for achievements follows what the core's libretro build exposes ("memory for achievements").
+ *
+ *   Written for VitAdhoc (Copyright CBOC-Vita, MIT licence): the memory based API itself, the audio ring, input, the lifetime of a game, battery RAM
+ *   files and their safe writes, save states (the state format and its checks), run-ahead, the wide view, the cheat list and its codes, the disc
+ *   stash and everything else not named above.
+ *
+ * The file is one unit and is linked with Genesis Plus GX (md/core, non-commercial licence): a program containing mdcore.o is not to be sold, and
+ * ships its full source when modified, whichever lines of it are MIT. The MIT parts may be used on their own only after taking out the derived parts
+ * above; this file as it stands is not MIT as a whole.
  */
 #include "shared.h"
 #include "eq.h"
@@ -297,6 +313,8 @@ static unsigned g_worker_mask;
 
 int md_host_set_threads(const md_thread_ops *ops, unsigned mask)
 {
+	/* a running FM worker uses g_ops: stop it (the queue is drained first) before the functions go away or change */
+	if (fmw_on && (!ops || !(mask & MD_THREAD_FM))) fmw_stop();
 	if (ops) g_ops = *ops; else memset(&g_ops, 0, sizeof g_ops);
 	g_worker_mask = ops ? (mask & (MD_THREAD_VDP | MD_THREAD_VDP_SMS)) : 0;
 	fmw_set_ops(ops ? &g_ops : NULL, ops && (mask & MD_THREAD_FM));      /* started by sound_init for the Mega Drive's YM2612 */

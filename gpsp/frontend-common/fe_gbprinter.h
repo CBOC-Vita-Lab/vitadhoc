@@ -38,7 +38,7 @@
 #define GBPRN_BUF        0x2000          /* the printer's RAM */
 #define GBPRN_MAX_ROWS   4096            /* a strip longer than this is closed */
 #define GBPRN_MARGIN_PX  8
-#define GBPRN_PACKET_IDLE 8              /* frames mid-packet before it is dropped */
+#define GBPRN_PACKET_IDLE 30             /* frames mid-packet before it is dropped */
 #define GBPRN_STRIP_IDLE 120             /* frames before an open strip is closed */
 
 enum

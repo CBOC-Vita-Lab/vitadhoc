@@ -2065,6 +2065,46 @@ static int run_m3u_test(const std::string &discs, const std::string &work)
 		delete pl;
 	}
 
+	/* ---- an .m3u that replaces a first disc started on its own before: the list takes over that disc's save and states, once, and the disc keeps them ---- */
+	{
+		const std::string gm = work + "/g2";
+		make_dirs(gm);
+		EXPECT(write_bytes(gm + "/single.bin", single_bin) && write_bytes(gm + "/single.cue", read_bytes(discs + "/single.cue")));
+		EXPECT(write_bytes(gm + "/Disc 2.iso", disc2) && write_bytes(gm + "/standin.bin", read_bytes(discs + "/standin.bin")));
+		EXPECT(write_text(gm + "/Old Game.m3u", "single.cue\nDisc 2.iso\n"));
+		const std::string old_srm = gm + "/single.srm";
+		const std::vector<uint8_t> save(4096, 0x5C), st1(777, 0x21);
+		EXPECT(write_bytes(old_srm, save));
+		pk::StateLayout dl;
+		dl.root = root; dl.console = "scd"; dl.name = "single";
+		make_dirs(dl.states_dir());
+		EXPECT(write_bytes(dl.slot_path(2), st1));
+		Rig rig(shots);
+		mdp::StartResult sr;
+		EXPECT(md_host_init() == 0);
+		mdp::MdPlayer *pl = m3u_start(rig, root, gm + "/Old Game.m3u", &sr);
+		EXPECT(sr.ok);
+		if (sr.ok) {
+			EXPECT(pl->game_name() == "Old Game");
+			EXPECT(exists(gm + "/Old Game.srm") && read_bytes(gm + "/Old Game.srm") == save);
+			EXPECT(read_bytes(old_srm) == save);                       /* the first disc's file is still there */
+			pk::StateLayout gl = dl;
+			gl.name = "Old Game";
+			EXPECT(exists(gl.slot_path(2)) && read_bytes(gl.slot_path(2)) == st1);
+			EXPECT(exists(dl.slot_path(2)));
+			pl->log_flush(true);
+			{
+				const std::vector<uint8_t> lg = read_bytes(root + "/scd/log.txt");
+				const std::string text(lg.begin(), lg.end());
+				EXPECT(text.find("adopted the save of the first disc") != std::string::npos);
+				EXPECT(text.find("adopted the states of the first disc") != std::string::npos);
+			}
+			pl->finish(EXIT_NORMAL);
+		}
+		md_host_unload();
+		delete pl;
+	}
+
 	/* ---- a disc that is missing: the game starts with the first one that is there, the row refuses the missing one ---- */
 	{
 		Rig rig(shots);

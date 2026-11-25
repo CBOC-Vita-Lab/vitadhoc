@@ -285,6 +285,8 @@ static int g_have_picture;
 static unsigned g_fence_skips;
 static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0), g_scale_blocks(0), g_scale_blocks_done(0), g_scale_blocks_moved(0);   /* the drawing thread's scaler, per second */
 static std::atomic<int> g_scale_last(0);     /* the scaler of the last picture (pk::ScalerKind), for the log */
+/* PS TV or handheld: asked once (the answer cannot change while the player runs), not on every picture */
+static bool console_is_tv() { static int v = -1; if (v < 0) v = sceKernelIsPSVitaTV() ? 1 : 0; return v == 1; }
 static const unsigned short *g_lcd;          /* the Game Gear's LCD colour table, built once before any thread */
 static bool g_is_gg;
 
@@ -604,7 +606,7 @@ static int video_upload(const pic_settings &ps, int frame_no, const Pic &s0, con
 	 * texture below both read the corrected copy (after the Game Gear's LCD table, which it composes with); neutral: nothing */
 	{
 		int sp = scaler_pitch_px * 2;
-		scaler_src = g_screen_lut.frame(pk_screen_resolve(g_pl->ui().screen, sceKernelIsPSVitaTV()), scaler_src, w, h, &sp);
+		scaler_src = g_screen_lut.frame(pk_screen_resolve(g_pl->ui().screen, console_is_tv()), scaler_src, w, h, &sp);
 		scaler_pitch_px = sp / 2;
 	}
 
@@ -1944,7 +1946,7 @@ int main(int argc, char **argv)
 			logf_(" | main split ms/fr: emu=%.2f copy=%.2f gpu_submit=%.2f | drawn=%u skipped=%u not_rendered=%u new_pic=%u fence_skip=%u rt_reuse=%u",
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr, drawn, skipped, not_rendered, pic_fresh, g_fence_skips, g_rt_reused);
 			const unsigned sc_blocks = g_scale_blocks.exchange(0), sc_bdone = g_scale_blocks_done.exchange(0), sc_bmoved = g_scale_blocks_moved.exchange(0);
-			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
+			logf_(" | scaler=%s neon=%d pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()), pk::scale_neon_built() ? 1 : 0,
 			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
 			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
 			logf_(" | per s: finish=%.1f ms vwait=%.1f ms | %s\n", finish_us / 1000.0, vwait_us / 1000.0, g_pl->pace_line().c_str());

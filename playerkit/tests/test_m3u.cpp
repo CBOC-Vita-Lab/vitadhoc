@@ -103,3 +103,24 @@ TEST(m3u_load_reports_missing_discs)
 	}
 	CHECK_EQ(pk_m3u_load((t.path + "/Big.m3u").c_str(), l, PK_M3U_MAX_DISCS, &missing, &skipped), -1);
 }
+
+TEST(m3u_names_discs_only_for_a_disc_list)
+{
+	pkh::TempDir t;
+	auto put = [&](const char *name, const char *text) {
+		FILE *f = fopen((t.path + "/" + name).c_str(), "wb"); fputs(text, f); fclose(f);
+	};
+	put("Game.m3u", "Disc 1.cue\nDisc 2.cue\n");
+	put("Missing.m3u", "Gone.chd\n");                          /* the disc need not be there: the player says so */
+	put("Music.m3u", "#EXTM3U\n#EXTINF:1,x\nsong.mp3\nother/track.flac\n");
+	put("Other.m3u", "game.pbp\nrom.bin\nhack.gba\n");
+	put("Empty.m3u", "");
+	put("Comments.m3u", "# nothing here\n\n");
+	CHECK(pk_m3u_names_discs((t.path + "/Game.m3u").c_str()));
+	CHECK(pk_m3u_names_discs((t.path + "/Missing.m3u").c_str()));
+	CHECK(!pk_m3u_names_discs((t.path + "/Music.m3u").c_str()));
+	CHECK(!pk_m3u_names_discs((t.path + "/Other.m3u").c_str()));
+	CHECK(!pk_m3u_names_discs((t.path + "/Empty.m3u").c_str()));
+	CHECK(!pk_m3u_names_discs((t.path + "/Comments.m3u").c_str()));
+	CHECK(!pk_m3u_names_discs((t.path + "/nothing.m3u").c_str()));
+}

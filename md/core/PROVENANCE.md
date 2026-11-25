@@ -12,7 +12,7 @@
 - **Licence:** `LICENSE.txt` here is the project's licence file, verbatim. It is a non-commercial licence: the code may not be
   sold or used in a commercial product or activity, and a modified redistribution must include the complete source of
   everything a binary is built from. This directory, with the changes listed below, is that source. The same text is in
-  `licenses/GenesisPlusGX-LICENSE.txt`. The file also carries the notices for Nuked OPN2 (LGPL-2.1, `sound/ym3438.c`) and for the
+  `licenses/GenesisPlusGX-LICENSE.txt`, which has a list of the other copyright holders named in the source headers (Musashi, the Z80 core, the FM chips and others) added at its end; the text above that list is verbatim. The file also carries the notices for Nuked OPN2 (LGPL-2.1, `sound/ym3438.c`) and for the
   parts that are NOT vendored here (tremor, minimp3).
 - Because of that licence the Genesis player is a program of its own (`md.bin`), not part of the GPL main program, and it links
   none of the GBAdhoc-derived GPL files (`gpsp/netdrv/netdrv.c`, `fe_gblink.c`, `fe_evt.c`, `fe_util.c`).
@@ -154,7 +154,7 @@ Edits to upstream files:
 ### FM worker thread (performance edit, on by default in md.bin, off in the core)
 
 The YM2612 (MAME core) can make its samples on its own thread. Files added: `fm_thread.h/.c` (a single producer, single consumer ring of 32 bit
-words holding `YM2612Write`, `YM2612Update` and `YM2612ResetChip` calls in the order the emulating thread made them; the worker; the bounded join
+words holding `YM2612Write`, `YM2612Update` and `YM2612ResetChip` calls in the order the emulating thread made them; the worker; the join with its 5 ms wait
 and the take-over of the queue by the emulating thread). Edits to upstream files:
 
 - `sound/ym2612.c/.h`: `YM2612Shadow*`, a copy of the timer part of the chip (address latch, registers 0x24-0x27, the two counters, the status flags)

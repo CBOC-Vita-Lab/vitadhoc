@@ -1500,6 +1500,11 @@ void fe_host_gbcam_frame(const uint8_t *grey_128x112)
       gbcore_set_camera_image(gb_core, grey_128x112);
 }
 
+unsigned fe_host_gbcam_requests(void)
+{
+   return fe_host_gbcam_present() ? gbcore_camera_requests(gb_core) : 0;
+}
+
 static int16_t input_state(unsigned port, unsigned device, unsigned index,
                            unsigned id)
 {

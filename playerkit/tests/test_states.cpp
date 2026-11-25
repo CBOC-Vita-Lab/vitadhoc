@@ -80,6 +80,51 @@ TEST(states_bucket_migration)
 	CHECK(s2.present);
 }
 
+/* A game on several discs gets an .m3u: the list is the game now, with a name of its own, and takes over the first disc's states once.
+ * Copies only: the first disc keeps its files; a game that has states of its own is left alone; a second call does nothing. */
+TEST(states_adopt_from_first_disc)
+{
+	pkh::TempDir td;
+	StateLayout disc = layout(td.path), game = layout(td.path);
+	disc.name = "Game (Disc 1)";
+	game.name = "Game";
+	std::vector<uint16_t> px; pkh::make_game_frame(4, px);
+	Frame f(&px[0], 256, 224, 512);
+	std::vector<uint8_t> d1 = blob(1), d2 = blob(2), back;
+	{
+		States st(disc);
+		CHECK_EQ(st.save(1, &d1[0], d1.size(), f, 10).status, ST_OK);
+		CHECK_EQ(st.save(3, &d2[0], d2.size(), f, 20).status, ST_OK);
+	}
+	int failed = -1;
+	const int n = adopt_states(disc, game, &failed);
+	CHECK(n >= 6);                                                          /* two slots, each with its picture, shot and notes */
+	CHECK_EQ(failed, 0);
+	CHECK(file_exists(disc.slot_path(1)) && file_exists(disc.slot_path(3)));     /* never moved */
+	States st(game);
+	CHECK_EQ(st.load(1, back), ST_OK);
+	CHECK(back == d1);
+	CHECK_EQ(st.load(3, back), ST_OK);
+	CHECK(back == d2);
+	CHECK(st.info(1).has_thumb);
+	CHECK_EQ(adopt_states(disc, game, &failed), 0);                         /* it has states now: nothing more is taken */
+	/* a game with a state of its own is left alone */
+	StateLayout other = layout(td.path);
+	other.name = "Other";
+	{
+		States so(other);
+		CHECK_EQ(so.save(2, &d2[0], d2.size(), f, 5).status, ST_OK);
+	}
+	CHECK_EQ(adopt_states(disc, other, &failed), 0);
+	CHECK(!file_exists(other.slot_path(1)));
+	/* nothing to take */
+	StateLayout none = layout(td.path), fresh = layout(td.path);
+	none.name = "Nothing (Disc 1)";
+	fresh.name = "Nothing";
+	CHECK_EQ(adopt_states(none, fresh, &failed), 0);
+	CHECK_EQ(failed, 0);
+}
+
 TEST(states_thumb_format_bytes)
 {
 	std::vector<uint16_t> px; pkh::make_game_frame(0, px);

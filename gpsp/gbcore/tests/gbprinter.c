@@ -277,11 +277,14 @@ int main(void)
   if (got.n != 1 || got.h != 16) return fail("closed after two seconds");
   puts("an open strip is closed after a pause");
 
-  /* 8. A packet that stops half way is dropped; the next starts clean. */
+  /* 8. A packet that stops half way is dropped (after 30 frames); the next starts clean. */
   gbprn_init(p, on_done, NULL);
   gbprn_byte(p, 0x88); gbprn_byte(p, 0x33); gbprn_byte(p, 0x04);
   for (x = 0; x < 20; x++) gbprn_frame(p);
-  if (expect(p, 0x0F, 0, NULL, 0, 0, 0x00, "after drop")) return fail("a stalled packet is dropped");
+  if (p->state == 0) return fail("a slow packet (20 frames between bytes) is kept");
+  for (x = 0; x < GBPRN_PACKET_IDLE; x++) gbprn_frame(p);
+  if (p->state != 0) return fail("a stalled packet is dropped after 30 frames");
+  if (expect(p, 0x0F, 0, NULL, 0, 0, 0x00, "after drop")) return fail("the next packet starts clean");
 
   /* 9. Through the core: the cartridge sends a camera-style stream byte by
    * byte over the serial port and gets the printer's answers. */

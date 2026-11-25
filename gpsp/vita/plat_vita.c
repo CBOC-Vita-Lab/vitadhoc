@@ -1046,6 +1046,7 @@ static int      g_cam_dev = -1;
 static SceUID   g_cam_blk = -1;
 static void    *g_cam_buf;
 static int      g_cam_miss;
+static int      g_cam_got;       /* a picture has arrived since it opened */
 
 void plat_camera_close(void)
 {
@@ -1098,6 +1099,7 @@ int plat_camera_open(int back)
       return -1;
    }
    g_cam_miss = 0;
+   g_cam_got = 0;
    fe_evt("camera open back=%d", back ? 1 : 0);
    return 0;
 }
@@ -1116,10 +1118,13 @@ int plat_camera_read(uint8_t *out, int mirror)
    rc = sceCameraRead(g_cam_dev, &rd);
    if (rc < 0)
    {
-      /* no new frame yet (or a hiccup): the last picture stands */
-      return ++g_cam_miss > 300 ? -1 : 1;
+      /* no new frame yet (or a hiccup): the last picture stands.  A camera
+       * that has been giving pictures and stops is called dead after about
+       * one second of frames; a fresh one gets a few more to warm up. */
+      return ++g_cam_miss > (g_cam_got ? 60 : 180) ? -1 : 1;
    }
    g_cam_miss = 0;
+   g_cam_got = 1;
    /* bytes R, G, B, A in memory */
    for (i = 0; i < CAM_W * CAM_H; i++, p += 4)
       y[i] = (uint8_t)((p[0] * 77 + p[1] * 150 + p[2] * 29) >> 8);

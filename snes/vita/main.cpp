@@ -209,6 +209,8 @@ static GTex g_scaled[3];         /* the scaler's picture */
 static int g_sc_i = -1, g_sc_f = 0;       /* newest scaled texture and its factor (0: the picture is shown unscaled) */
 static std::atomic<unsigned> g_scale_us(0), g_scale_pics(0), g_scale_nonflat(0), g_scale_helped(0), g_scale_waits(0), g_scale_blocks(0), g_scale_blocks_done(0), g_scale_blocks_moved(0);   /* the scaler, per second */
 static std::atomic<int> g_scale_last(0);     /* the scaler of the last picture (pk::ScalerKind), for the log */
+/* PS TV or handheld: asked once (the answer cannot change while the player runs), not on every picture */
+static bool console_is_tv() { static int v = -1; if (v < 0) v = sceKernelIsPSVitaTV() ? 1 : 0; return v == 1; }
 static GTex g_rt, g_glowA, g_glowB, g_blend;   /* g_blend: 512x512, made when a blend option is first used */
 static unsigned g_blend_serial;
 static std::atomic<bool> g_pic_dirty(false);     /* the picture settings changed: frame_draw resets its caches (set by any thread) */
@@ -534,7 +536,7 @@ static int video_upload(const pic_settings &ps, int frame_no, const PicSrc &ps_s
 	}
 	/* Screen (display.ini): a profile that changes colours takes the picture through its table once, here, so the
 	 * scaler and the texture below both read the corrected copy; a neutral profile leaves src as it is */
-	src = g_screen_lut.frame(pk_screen_resolve(g_pl->ui().screen, sceKernelIsPSVitaTV()), src, w, h, &pitch);
+	src = g_screen_lut.frame(pk_screen_resolve(g_pl->ui().screen, console_is_tv()), src, w, h, &pitch);
 	vita2d_texture *tx = g_src[idx].t;
 	uint8_t *dst = (uint8_t *) vita2d_texture_get_datap(tx);
 	unsigned dpitch = vita2d_texture_get_stride(tx);
@@ -1886,7 +1888,7 @@ int main(int argc, char **argv)
 			    emu_us / 1000.0 / fr, fetch_us / 1000.0 / fr, draw_us / 1000.0 / fr,
 			    drawn, skipped, not_rendered, pic_fresh, g_fence_skips, g_rt_reused);
 			const unsigned sc_blocks = g_scale_blocks.exchange(0), sc_bdone = g_scale_blocks_done.exchange(0), sc_bmoved = g_scale_blocks_moved.exchange(0);
-			logf_(" | scaler=%s pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()),
+			logf_(" | scaler=%s neon=%d pics=%u ms/pic=%.2f nonflat/pic=%u helper_chunks=%u waits=%u computed=%u%% moved=%u%%", pk::scaler_name((pk::ScalerKind) g_scale_last.load()), pk::scale_neon_built() ? 1 : 0,
 			    sc_pics, sc_pics ? sc_us / 1000.0 / sc_pics : 0.0, sc_pics ? sc_nonflat / sc_pics : 0, sc_help, sc_waits,
 			    sc_blocks ? sc_bdone * 100 / sc_blocks : 0, sc_blocks ? sc_bmoved * 100 / sc_blocks : 0);
 			{

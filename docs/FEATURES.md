@@ -19,7 +19,7 @@ start with [Install](../INSTALL.md), [Controls](../CONTROLS.md) or
 | Rendering | GXM/libvita2d; GBA render worker and CPU upscaling workers |
 | Input | Buttons, sticks, front touch, rear touch (four corners as mappable inputs), NES Zapper on the touch screen, motion sensors; mappings, turbo settings and a Button test page |
 | Sega CD / Mega CD | The same Sega player (`md.bin`) with Genesis Plus GX's disc code, libchdr and tremor; your own Sega CD BIOS is needed (not included); `.cue`+`.bin`, `.iso`, `.chd`, and `.m3u` lists for games on several discs (the list is the game in the library, its discs are hidden, and the in-game menu's Change disc opens the tray, swaps the disc and closes it; saves and saved moments belong to the list's name); all Genesis features, two players, RetroAchievements; saves are `Game.srm` (backup RAM + RAM cartridge, 512 KB by default, or none with Off; the cartridges of the other sizes you tried are kept in the same file); disc reading and CHD decoding (LZMA, zlib, zstd, FLAC) run on a read-ahead thread; a disc whose region has no BIOS shows a notice, not a silent fallback |
-| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso`, `.m3u` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries and `.7z` archives (LZMA, LZMA2, BCJ, Delta) with a game up to 32 MiB |
+| Game files | `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.fds`, `.unf`, `.unif`, `.ws`, `.wsc`, `.pc2`, `.md`, `.gen`, `.smd`, `.sms`, `.gg`, `.sg`, `.cue`, `.chd`, `.iso`, `.m3u` (and `.bin` when it is a Genesis image); supported stored/deflated `.zip` entries and `.7z` archives (LZMA, LZMA2, BCJ, BCJ2, Delta) with a game up to 32 MiB |
 | Library | Up to 2,048 games per console; folders scanned two levels deep |
 | Extra folders | Up to 24; Settings writes a list capped at 480 characters |
 | State slots | Ten per game (`.st0` to `.st9`); sharing protocol exposes the first five |
@@ -141,8 +141,9 @@ unzipped games.
 A `.7z` is read the same way (Igor Pavlov's LZMA SDK decoder, public domain, in
 `gpsp/vita/third_party/lzma/`): the first file with a supported extension is
 the game, its CRC-32 is checked, it is unpacked once into `unzipped/`, and
-saves and states keep the archive's name. LZMA, LZMA2, BCJ and Delta are
-read; encrypted archives, PPMd and BCJ2 are not. A solid archive is unpacked a
+saves and states keep the archive's name. LZMA, LZMA2, BCJ, BCJ2 (the
+four-coder layout 7-Zip itself writes) and Delta are read; encrypted
+archives and PPMd are not. A solid archive is unpacked a
 block at a time, so an archive whose block holding the game is over 64 MiB, or
 whose game is over 32 MiB, is refused with a notice that says so. `.7z`
 works for every console that takes a `.zip` (not for Sega CD discs).
@@ -153,7 +154,14 @@ The list is the game: the library shows it once and hides the discs it names,
 saves and saved moments are named after it, and a saved moment remembers which
 disc was in the drive. In the game, Settings > Speed > Change disc runs the
 drive's own tray handling (open, swap, close, about a second each) so the
-game's "insert disc 2" check sees what it would on a console.
+game's "insert disc 2" check sees what it would on a console. Only a list
+with at least one disc line is a game (a music playlist, or a list of another
+system's files, is not listed), and the room finder hides listed discs the
+same way the library does, in the list's folder and the folders below it. A
+game that was played from "Game (Disc 1).cue" before its `.m3u` existed has no
+save or saved moments under the list's name: on its first start the list
+copies the first disc's save and saved moments over (the first disc's files
+stay), and the player's log says so.
 
 Launchers can pass a raw cartridge path through
 `psgm:play?titleid=GBAD00001&param=...`. The path is not URL-decoded. It is read
@@ -610,14 +618,25 @@ gets a test picture and a toast says so. The picture is an input, like the
 buttons: a rewound or loaded state keeps the live one. The sensor's noise and
 infrared response are not modelled, and the exposure scale is an estimate, so a
 real camera's pictures differ in detail; the game's own auto-exposure follows
-the picture either way.
+the picture either way. While a capture runs, the cartridge's RAM reads 0 and
+ignores writes, as the hardware does; the gain steps follow a smooth curve of
+my own (each step about 1.5 dB, from half to under seven times the picture),
+not the sensor's decibel table, which clips almost any scene.
+
+The Vita's camera is on only while the game takes pictures: it starts with the
+game's first capture, and is switched off after about two seconds without one
+(a Camera game waiting in its menus uses no camera battery). The first picture
+after it starts again may be the last one seen. A camera that stops giving
+pictures is noticed after about a second.
 
 **Game Boy Printer**: with no link partner the serial port has a printer on
 it. It answers the game's packets (initialise, data with or without
 compression, print, break, status; bad checksums are flagged and dropped) and
 sets the status bytes games wait on. A print becomes a 160-pixel-wide PNG in
 `prints/` as `<game>-<date>-<n>.png`, in the game's colours (Settings > Game Boy
-colours; grey by default), and a toast says "Printed: saved to prints". A
+colours; grey by default), written while the game keeps running, and a toast
+says "Printed: saved to prints". A packet that stops half way is dropped after
+half a second (30 frames). A
 print whose bottom margin is not zero tears the strip off; a long picture
 printed in bands stays one strip until its last band, or two seconds of quiet.
 **Settings > This game > Game Boy Printer** (On by default; Game Boy and Game

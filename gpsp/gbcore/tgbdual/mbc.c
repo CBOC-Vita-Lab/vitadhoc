@@ -748,6 +748,18 @@ void mbc_cam_tick(void)
 		gbcam_render(gbe_getCameraImage(),gbcam_latch,get_sram()+GBCAM_IMG_OFF);
 }
 
+/* Camera cartridge: RAM is closed while a capture runs; how many captures
+ * the game has started (the frontend opens the Vita's camera for them). */
+int mbc_cam_ram_blocked(void)
+{
+	return gbcam_ram_blocked();
+}
+
+unsigned mbc_cam_starts(void)
+{
+	return gbcam_starts;
+}
+
 void mbc_cam_save(byte *out)
 {
 	if (rom_get_loaded()&&rom_get_info()->cart_type==0xFC)

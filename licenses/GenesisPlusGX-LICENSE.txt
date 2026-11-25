@@ -1257,3 +1257,35 @@ the following license:
  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  POSSIBILITY OF SUCH DAMAGE.
+
+----------------------------------------------------------------------------------------
+
+Copyright holders named in the headers of the source files of the Genesis Plus GX
+core (md/core), added by VitAdhoc to the licence text above, which is unchanged.
+The text above names only Charles MacDonald, Eke-Eke and the MAME team; the files
+below carry these notices, which the terms of their authors ask to be kept and
+credited. All of it is in the program md.bin.
+
+* Motorola 68000 core (m68k/): MUSASHI, Copyright Karl Stenerud. "This code may be
+  freely used for non-commercial purposes as long as this copyright notice remains
+  unaltered in the source code and any binary files containing this code in compiled
+  form." Modified by Eke-Eke for Genesis Plus GX.
+* Z80 core (z80/z80.c): Copyright Juergen Buchmueller, all rights reserved; released
+  as freeware for non-commercial purposes, to be used with the author listed in the
+  credits.
+* YM2612 (sound/ym2612.c, MAME core): Copyright (C) 2001, 2002, 2003 Jarek Burczynski
+  and Copyright (C) 1998 Tatsuyuki Satoh, MultiArcadeMachineEmulator development.
+* YM2413 (sound/ym2413.c): Copyright (C) 2002 Jarek Burczynski.
+* Nuked OPN2 YM3438 (sound/ym3438.c) and Nuked OPLL (sound/opll.h): Copyright
+  (C) 2017-2022 Alexey Khokholov (Nuke.YKT), Copyright (C) 2019 Nuke.YKT (licence text
+  above).
+* Band-limited sound buffer (sound/blip_buf.c): Copyright (C) 2003-2009 Shay Green
+  (LGPL-2.1, text above).
+* Enhanced vertical scroll rendering (vdp_render.c): Copyright (C) 2022 AlexKiri.
+* osd.h (a local copy of the libretro port's header): Copyright Eke-Eke (2007-2022)
+  and Daniel De Matteis (2012-2016).
+* Disc image reading (cd_hw/libchdr): Copyright Aaron Giles and Romain Tisserand
+  (licence text above), with the other libraries named above.
+* The core as a whole: Copyright (C) 1998-2003 Charles MacDonald (original code) and
+  Copyright (C) 2007-2026 Eke-Eke (Genesis Plus GX); the file headers give each
+  file's own years.

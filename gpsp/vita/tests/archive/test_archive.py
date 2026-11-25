@@ -94,6 +94,17 @@ class Archive7z(unittest.TestCase):
             rc, data = self.extract(p)
             self.assertEqual((rc, data == game), (0, True), tag)
 
+    def test_bcj2_four_coder_layout(self):
+        """7-Zip's BCJ2 (x86 call filter, three LZMA streams) is read: the docs say so"""
+        rnd = random.Random(3)
+        game = b"".join(bytes([0xE8, rnd.randrange(256), rnd.randrange(256), 0, 0, rnd.randrange(256)]) for _ in range(20000))
+        p = self.mk("g_bcj2.7z", {"Game (USA).gba": game}, "-m0=bcj2", "-m1=lzma", "-m2=lzma", "-m3=lzma",
+                    "-mb0:1", "-mb0s1:2", "-mb0s2:3")
+        rc, con, name, us, _ = self.peek(p)
+        self.assertEqual((rc, con, name, us), (0, 0, "Game (USA).gba", len(game)))
+        rc, data = self.extract(p)
+        self.assertEqual((rc, data == game), (0, True))
+
     def test_first_supported_file_wins_solid(self):
         a, b, c = blob(70000, 2), blob(90000, 3), blob(50000, 4)
         p = self.mk("multi.7z", {"readme.txt": b"hi", "Hack.sfc": b, "Other.gba": a, "x.nes": c}, "-ms=on")

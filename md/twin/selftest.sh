@@ -58,6 +58,11 @@ if [ "$nrom" -gt 0 ]; then
 	s3=$("$TWIN" "$SND" --frames 400 --reset-at 200 --seed 2 | grep -o 'state=[0-9a-f]*')
 	[ -n "$s1" ] && [ "$s1" = "$s2" ] && [ "$s1" != "$s3" ] && ok "soft reset: same seed gives the same machine, another seed another power-on phase" || bad "seed / soft reset ($s1 $s2 $s3)"
 
+	# 4b. the YM2612 on its own thread (checked against the chip at every join) gives the same picture, sound and machine as the single thread
+	f0=$("$TWIN" "$SND" --frames 400 --pad auto 2>&1 | grep '^RESULT' | sed 's/ samples=.*//; s/^RESULT [^ ]* //')
+	f1=$("$TWIN" "$SND" --frames 400 --pad auto --fm-check 2>&1 | grep '^RESULT' | sed 's/ samples=.*//; s/^RESULT [^ ]* //')
+	[ -n "$f0" ] && [ "$f0" = "$f1" ] && ok "FM worker (--fm-check): same picture, sound, state and RAM as the single thread" || bad "FM worker ($f0 / $f1)"
+
 	# 5. battery RAM
 	rm -f "$T/fs.srm"
 	"$TWIN" "$FS" --frames 900 --pad "60:a,90:none,120:b,150:none,180:start,200:none" --srm "$T/fs.srm" >/dev/null

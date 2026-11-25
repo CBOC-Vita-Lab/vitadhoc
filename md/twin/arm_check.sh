@@ -43,6 +43,16 @@ for r in $LIST; do
 	if [ -s "$T/x.out" ] && cmp -s "$T/x.out" "$T/a.out"; then same=$((same + 1)); else diff=$((diff + 1)); echo "DIFF  $r"; fi
 done
 echo "armhf vs x86_64 over $((same + diff)) ROMs, $F frames each: identical $same, different $diff"
+# the YM2612 on its own thread (--fm-check: the timer shadow compared with the chip at every join) on the first four Mega Drive ROMs: the hashes must
+# equal the single thread's on each machine, and the armhf build's must equal the x86_64's
+fsame=0; fdiff=0
+for r in $(echo "$LIST" | grep '/sample/' | head -4); do
+	"$T/x86/md_twin" "$r" --frames $F --pad auto --fm-check 2>&1 | strip >"$T/x.out"
+	qemu-arm -cpu max "$T/armhf/md_twin" "$r" --frames $F --pad auto --fm-check 2>&1 | strip >"$T/a.out"
+	"$T/x86/md_twin" "$r" --frames $F --pad auto 2>&1 | strip >"$T/x0.out"
+	if [ -s "$T/x.out" ] && cmp -s "$T/x.out" "$T/a.out" && cmp -s "$T/x.out" "$T/x0.out"; then fsame=$((fsame + 1)); else fdiff=$((fdiff + 1)); echo "DIFF (FM worker)  $r"; fi
+done
+echo "armhf vs x86_64 with the FM worker on (check mode), over $((fsame + fdiff)) Mega Drive ROMs, $F frames each, also equal to the single thread: identical $fsame, different $fdiff"
 # the same with the wide view on: the picture inside the window, the sound and the RAM as above, and what the wide view decided (how much of the
 # margin was real picture, how many lines had only the soft extension, how many scene changes it saw) must not depend on the machine either
 wsame=0; wdiff=0
@@ -53,4 +63,4 @@ for r in $LIST; do
 	if [ -s "$T/x.out" ] && cmp -s "$T/x.out" "$T/a.out"; then wsame=$((wsame + 1)); else wdiff=$((wdiff + 1)); echo "DIFF (wide view)  $r"; fi
 done
 echo "armhf vs x86_64 with the wide view on, over $((wsame + wdiff)) ROMs, $F frames each: identical $wsame, different $wdiff"
-[ $diff = 0 ] && [ $wdiff = 0 ] && [ $cdiff = 0 ]
+[ $diff = 0 ] && [ $wdiff = 0 ] && [ $fdiff = 0 ] && [ $cdiff = 0 ]

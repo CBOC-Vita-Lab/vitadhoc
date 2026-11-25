@@ -83,6 +83,10 @@ typedef struct fe_host_config
     * default, = through the Game Boy Color LCD model
     * (gbcore_set_color_correction; docs/GB-PALETTE-FIXES.md). */
    int gbc_raw_colors;
+   /* GB/GBC: 1 = the Accurate core (Gambatte) for this game, 0, the default, = Standard (TGB Dual).  A cartridge
+    * Accurate cannot run, a Super Game Boy game under the Super Game Boy palette and every cable session use
+    * Standard regardless (gbcore_mux.h). */
+   int gb_accurate;
    /* GB/GBC, harness measurement only (GPSP_PERF_RIG's `gb_dual_rom`): also
     * run this second cartridge headless beside the player's, interleaved
     * one scanline at a time with the cable wired -- the machine pair of a
@@ -458,6 +462,13 @@ const char *fe_host_gb_palette_name(int id);
 /* The twelve colours (BG, OBJ0, OBJ1; RGB565) the picture shows with
  * palette `id` (gbcore_palette_preview): the Settings row's live preview. */
 int         fe_host_gb_palette_preview(int id, uint16_t rgb565[12]);
+/* The Game Boy core.  fe_host_gb_accurate_running: the running game is on the Accurate core.  fe_host_gb_core_notice_take:
+ * 0, or once a reason the player is told: 1 = the game asked for Accurate and runs on Standard (a cartridge or colour
+ * mode Accurate does not do), 2 = a cable session took the game over on Standard.  fe_host_state_other_core_take: 1,
+ * once, after a state load that met the other core's image (states are not shared between the two). */
+int         fe_host_gb_accurate_running(void);
+int         fe_host_gb_core_notice_take(void);
+int         fe_host_state_other_core_take(void);
 
 /* CRC-compare the 128 KiB SRAM buffer and write the .sav if dirty.
  * force_write=1 writes even when clean (used by round-trip tests) AND

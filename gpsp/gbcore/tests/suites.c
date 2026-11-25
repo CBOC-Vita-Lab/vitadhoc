@@ -26,7 +26,13 @@ static void on_video(void *u, const gbcore_video_frame_t *f)
   (void)u;
   pix = f->pixels; pw = f->width; ph = f->height; ppitch = f->pitch_bytes;
 }
-static void on_audio(void *u, const int16_t *p, size_t n) { (void)u; (void)p; (void)n; }
+static long g_apeak; static double g_asum; static unsigned long g_acount;
+static void on_audio(void *u, const int16_t *p, size_t n)
+{
+  (void)u;
+  for (size_t i = 0; i < n * 2; i++) { long v = p[i] < 0 ? -(long)p[i] : p[i]; if (v > g_apeak) g_apeak = v; g_asum += (double)p[i] * p[i]; }
+  g_acount += n * 2;
+}
 static int on_serial(void *u, uint8_t out, int internal, uint8_t *in)
 {
   (void)u; (void)internal;
@@ -127,6 +133,7 @@ int main(int argc, char **argv)
     printf("SCREEN %s\n", scr);
   }
   printf("FRAMES %u\n", f);
+  printf("AUDIO %ld %.1f\n", g_apeak, g_acount ? __builtin_sqrt(g_asum / (double)g_acount) : 0.0);
   if (ppm && pix) {
     FILE *o = fopen(ppm, "wb");
     if (o) {

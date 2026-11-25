@@ -241,6 +241,7 @@ static void gb_audio_batch(void *userdata, const int16_t *samples, size_t frames
 /* The machine pair's buttons: the player's for slot 0, the same or none for
  * the headless partner (harness measurement; no network behind it). */
 static int gb_local_on;                    /* fe_host_gb_local_start */
+static int gb_core_notice;                 /* fe_host_gb_core_notice_take */
 static uint32_t (*gb_local_pad)(void);
 static uint16_t gb_buttons_from_retro(uint32_t pad);
 
@@ -4586,11 +4587,17 @@ int fe_host_gblink_start(int is_host, unsigned input_delay, int64_t rtc_seed)
          return -1;
       }
    }
-   /* A live link: the running game, as it stands at this frame boundary. */
+   /* A live link: the running game, as it stands at this frame boundary.  (Not from the Accurate core: its state is
+    * not the Standard core's, which runs the session; the game starts from its save and the player is told.) */
    free(gbl_prelink_state);
    gbl_prelink_state = NULL;
    gbl_prelink_state_n = 0;
-   if (host.gblink_live)
+   if (gbmux_is_gambatte(gb_core))
+   {
+      gb_core_notice = 2;
+      fe_evt("gb_core link=standard");
+   }
+   else if (host.gblink_live)
    {
       size_t sn = gbcore_state_size(gb_core);
       gbl_prelink_state = sn ? (uint8_t *)malloc(sn) : NULL;
@@ -4803,6 +4810,13 @@ int fe_host_gblink_close(void)
       if (host.gb_bulk_enable)
          host.gb_bulk_enable(0);
       rc = gb_single_boot();
+      if (rc == 0 && state && gbmux_is_gambatte(gb_core))
+      {
+         /* the session's machine was TGB Dual's: the Accurate core goes on from the battery image (its states are another format) */
+         free(state);
+         state = NULL;
+         how = "from_save";
+      }
       if (rc == 0 && state)
       {
          rc = gbcore_state_load(gb_core, state, sn);
@@ -4900,6 +4914,8 @@ int fe_host_boot(const fe_host_config *cfg)
       const int other = host.console == FE_CONSOLE_NES || host.console == FE_CONSOLE_WSWAN;
       unsigned rate = other ? 48000 : 32768;
       gbcore_set_color_correction(!host.gbc_raw_colors);
+      gbmux_set_gb_accurate(host.gb_accurate && !host.gb_dual_rom && !host.gb_bench_headless);
+      gb_core_notice = 0;
       if (host.boot_status)
          host.boot_status(host.console == FE_CONSOLE_NES ? "Preparing NES emulator"
                           : host.console == FE_CONSOLE_WSWAN ? "Preparing WonderSwan emulator"
@@ -4970,7 +4986,7 @@ int fe_host_boot(const fe_host_config *cfg)
          gbcore_set_palette((unsigned)host.gb_palette);
          gb_core = gbcore_create(host.rom_path, NULL, 0, host.console, rate,
                                  &callbacks);
-         if (gb_core && host.gb_bench_headless)
+         if (gb_core && host.gb_bench_headless && !gbmux_is_gambatte(gb_core))
          {
             /* Milestone-1 bench: the one machine as a link session's
              * partner machine runs -- no picture, no synthesis -- to
@@ -4979,6 +4995,12 @@ int fe_host_boot(const fe_host_config *cfg)
             fe_evt("gb_bench headless=1");
          }
       }
+      if (gb_core && gbmux_gb_fallback_take())
+      {
+         gb_core_notice = 1;
+         fe_evt("gb_core fallback=standard");
+      }
+      fe_evt("gb_core running=%s", gbmux_is_gambatte(gb_core) ? "accurate" : "standard");
       if (!gb_core)
       {
          fe_log("gbcore_create FAILED for %s console=%d%s%s", host.rom_path,
@@ -5221,6 +5243,23 @@ void fe_host_gb_palette_set(int id)
              gbcore_palette_name((unsigned)id),
              gbcore_palette_preview((unsigned)id, pv));
    }
+}
+
+int fe_host_gb_accurate_running(void)
+{
+   return gb_core && gbmux_is_gambatte(gb_core);
+}
+
+int fe_host_gb_core_notice_take(void)
+{
+   int n = gb_core_notice;
+   gb_core_notice = 0;
+   return n;
+}
+
+int fe_host_state_other_core_take(void)
+{
+   return gbmux_state_other_take();
 }
 
 int fe_host_gb_palette_count(void)
@@ -8568,7 +8607,8 @@ static int gbloc_single(const uint8_t *st, size_t stn)
       fe_evt("gb_local: the game could not be started again");
       return -1;
    }
-   if (st && gbcore_state_load(gb_core, st, stn) != 0)
+   /* (a pair's state is Standard's: on the Accurate core the game restarts from its save) */
+   if (st && !gbmux_is_gambatte(gb_core) && gbcore_state_load(gb_core, st, stn) != 0)
       fe_evt("gb_local: state refused, the game restarts from its save");
    return 0;
 }
@@ -8604,8 +8644,16 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
       free(sv);
       return -1;
    }
-   st = gbloc_state_take(0, gb_core, &stn);
-   if (!st)
+   if (gbmux_is_gambatte(gb_core))
+   {
+      /* the pair is Standard (TGB Dual): the game starts from its save, not from the Accurate core's state */
+      st = NULL;
+      gb_core_notice = 2;
+      fe_evt("gb_core local=standard");
+   }
+   else
+      st = gbloc_state_take(0, gb_core, &stn);
+   if (!st && !gbmux_is_gambatte(gb_core))
    {
       free(sv);
       return -1;
@@ -8642,9 +8690,9 @@ int fe_host_gb_local_start(const fe_host_gb_local *cfg)
    if (gb_dual)
    {
       gb_core = gbdual_core(gb_dual, 0);
-      if (gbcore_state_load(gb_core, st, stn) != 0)
+      if (st && gbdual_api(0)->state_load(gb_core, st, stn) != 0)
          rc = -1;                /* cannot happen: its own state */
-      else if (cfg->clone &&
+      else if (st && cfg->clone &&
                gbdual_api(1)->state_load(gbdual_core(gb_dual, 1), st, stn) != 0)
          rc = -3;
    }

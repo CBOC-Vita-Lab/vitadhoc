@@ -58,6 +58,11 @@ clarification and the remaining package review.
   asks for: **"NEC V30MZ emulator (c) Bryan McPhail"**. Linked as one relocatable object (`wswancore.o`) that exports only
   `wswan_host_*`. Commit and the one local edit: `wswan/core/PROVENANCE.md`. Our WonderSwan host (`wswan/frontend`,
   `wswan/twin`) is MIT. See [WonderSwan: Beetle](WSWAN-Beetle.md).
+- **Gambatte (Accurate Game Boy core):** Sindre Aamas and the Gambatte and libretro contributors,
+  <https://github.com/libretro/gambatte-libretro>, **GPL-2.0 only** (`licenses/Gambatte-GPL-2.0.txt`). Linked as one
+  relocatable object (`gambattecore.o`) that exports only `gambatte_host_*`. Commit and the local patches:
+  `gpsp/gbcore/gambatte/PROVENANCE.md`. Our host (`gpsp/gbcore/gambatte_host.*`) is GPL-2.0-or-later. See
+  [Game Boy: Gambatte](GB-Gambatte.md).
 - **mGBA cheat engine:** Copyright (c) 2013-2016 Jeffrey Pfau. MPL-2.0;
   `licenses/MPL-2.0.txt`. Source and marked modifications are in
   `gpsp/cheat_engine.c`, `gpsp/cheat_engine_tables.h` and related files.

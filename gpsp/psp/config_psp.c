@@ -314,6 +314,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.quick_response = (int)fe_ini_get_int(cfg_path, "quick_response", -1);
    if (g_pcfg.quick_response < -1 || g_pcfg.quick_response > 2)
       g_pcfg.quick_response = -1;
+   g_pcfg.gb_core = (int)fe_ini_get_int(cfg_path, "gb_core", 0) == 1 ? 1 : 0;
    if (g_pcfg.nes_wide < 0 || g_pcfg.nes_wide > 2)
       g_pcfg.nes_wide = 0;
 #endif
@@ -829,6 +830,8 @@ void pcfg_save(void)
    /* only once chosen: "the console's default" stays no key */
    if (g_pcfg.quick_response >= 0)
       fe_ini_set_int(cfg_path, "quick_response", g_pcfg.quick_response);
+   if (g_pcfg.gb_core || fe_ini_get_int(cfg_path, "gb_core", 0))
+      fe_ini_set_int(cfg_path, "gb_core", g_pcfg.gb_core);
    if (g_pcfg.nes_wide || fe_ini_get_int(cfg_path, "nes_wide", 0))
       fe_ini_set_int(cfg_path, "nes_wide", g_pcfg.nes_wide);
    if (!g_pcfg.nes_pal_smooth || fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) == 0)
@@ -1456,6 +1459,7 @@ const char *pcfg_camera_name(int m)
 static void pgame_defaults(void)
 {
    g_pgame.quick = -1;
+   g_pgame.gb_core = -1;
    g_pgame.camera = PCFG_CAM_FRONT;
    g_pgame.rear = -1;
    g_pgame.nes_port2 = PCFG_PORT2_AUTO;
@@ -1493,6 +1497,8 @@ static void pgame_render(char *out, size_t cap)
                 g_pgame.level_down);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " q%d", g_pgame.quick);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " g%d", g_pgame.gb_core);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " c%d", g_pgame.camera);
    if (n > 0 && (size_t)n < cap)
@@ -1575,6 +1581,7 @@ void pcfg_game_begin(const char *path, int console)
       g_pgame.ws_palette = fe_ini_doc_get_int(&doc, "ws_palette", 0) == 1;
       g_pgame.quick = pgame_clampi(fe_ini_doc_get_int(&doc, "quick_response", -1),
                                    0, 2, -1);
+      g_pgame.gb_core = pgame_clampi(fe_ini_doc_get_int(&doc, "gb_core", -1), 0, 1, -1);
       g_pgame.camera = pgame_clampi(fe_ini_doc_get_int(&doc, "camera", 0),
                                     0, PCFG_CAM_MODES - 1, PCFG_CAM_FRONT);
       g_pgame.rear = pgame_clampi(fe_ini_doc_get_int(&doc, "rear_touch", -1),
@@ -1638,6 +1645,8 @@ int pcfg_game_save(void)
       rc |= fe_ini_doc_set_int(&doc, "camera", g_pgame.camera);
    if (g_pgame.quick >= 0 || fe_ini_doc_get_int(&doc, "quick_response", -1) >= 0)
       rc |= fe_ini_doc_set_int(&doc, "quick_response", g_pgame.quick);
+   if (g_pgame.gb_core >= 0 || fe_ini_doc_get_int(&doc, "gb_core", -1) >= 0)
+      rc |= fe_ini_doc_set_int(&doc, "gb_core", g_pgame.gb_core);
    if (g_pgame.rear >= 0 || fe_ini_doc_get_int(&doc, "rear_touch", -1) >= 0)
       rc |= fe_ini_doc_set_int(&doc, "rear_touch", g_pgame.rear);
    if (g_pgame.nes_port2 != PCFG_PORT2_AUTO ||
@@ -1712,6 +1721,7 @@ void pcfg_revert_risky(void)
    g_pcfg.steady_pacing = 0;
    g_pcfg.core4_off = 1;
    g_pcfg.quick_response = 0;
+   g_pcfg.gb_core = 0;
    g_pcfg.nes_wide = 2;
    for (c = 0; c < FE_CONSOLE_COUNT; c++)
    {

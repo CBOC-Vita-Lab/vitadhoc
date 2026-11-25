@@ -4704,7 +4704,7 @@ void ui_host_look_changed(void)
    vid_ambient_strength(g_pcfg.glow);
    vid_ambient_mode(app_ambient_mode());
    if (c == FE_CONSOLE_GBC)
-      gbcore_set_color_correction(g_pcfg.color ? 1 : 0);
+      gbmux_set_color_correction(g_pcfg.color ? 1 : 0);
    if (c == FE_CONSOLE_NES)
       app_nes_options();             /* the wide view's soft edges follow the glow */
    fe_evt("display_look console=%s color=%d ghost=%d scan=%d grid=%d glow=%d "
@@ -6321,6 +6321,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    cfg.wallclock      = plat_wallclock;
    cfg.gb_palette     = g_pcfg.gb_palette;
    cfg.gbc_raw_colors = !g_pcfg.gbc_color_correction;
+   /* the Game Boy core: this game's own choice, else Settings > Gameplay > Game Boy core */
+   cfg.gb_accurate    = g_pgame.on && g_pgame.gb_core >= 0 ? g_pgame.gb_core : g_pcfg.gb_core;
    cfg.boot_status    = loading_stage;
 
    if (console == FE_CONSOLE_GBA)
@@ -6441,6 +6443,8 @@ static int game_boot(const char *rom_path, fe_console_t console)
    }
    ui_loading_finish(1);
    g_game_loaded = 1;
+   if (fe_host_gb_core_notice_take() == 1)
+      osd_toast("Accurate core can't run this cartridge: using Standard");
    g_faults_seen = fe_host_guest_faults();   /* the count is the process's */
    fe_evt("gba_cable_ready=%d", fe_host_gba_cable_ready());
    plat_memory_report();        /* now the core has taken its memory */
@@ -6607,7 +6611,9 @@ static void menu_action(ui_action act)
       if (!ui_state_load_done(rc))
          osd_toast(rc == 0 ? "State loaded"
                    : rc == -2 ? "Hardcore mode: states cannot be loaded"
-                              : "No state to load");
+                   : fe_host_state_other_core_take()
+                       ? "This state is from the other Game Boy core"
+                       : "No state to load");
       break;
    }
 
@@ -7333,8 +7339,13 @@ static void game_loop(void)
             toast_now("Hardcore mode: states cannot be loaded");
          }
          else
-            toast_now(state_load_slot(1, "chord") == 0 ? "State loaded"
-                                                        : "No saved state");
+         {
+            int lrc = state_load_slot(1, "chord");
+            toast_now(lrc == 0 ? "State loaded"
+                      : fe_host_state_other_core_take()
+                          ? "This state is from the other Game Boy core"
+                          : "No saved state");
+         }
       }
       /* A state picked on the game list's shelf: once, as soon as the core
        * has run a frame. */
@@ -7384,10 +7395,17 @@ static void game_loop(void)
             else if (state_load_path(sidecar_read_path(g_res.path,
                         g_game.legacy_state_path, g_game.state_path, pt,
                         sizeof(pt)), "continue") != 0)
-               toast_now("Could not continue: starting from the save");
+               toast_now(fe_host_state_other_core_take()
+                         ? "That state is from the other Game Boy core: starting from the save"
+                         : "Could not continue: starting from the save");
          }
          else if (state_load_slot((unsigned)slot, "shelf") != 0)
-            toast_now("Could not load state %d", slot);
+         {
+            if (fe_host_state_other_core_take())
+               toast_now("This state is from the other Game Boy core");
+            else
+               toast_now("Could not load state %d", slot);
+         }
       }
       /* Not on the press that asked for the pause screen: with the default
        * bindings (TRIANGLE, and SELECT+TRIANGLE) that press is both, and a

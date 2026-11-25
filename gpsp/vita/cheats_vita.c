@@ -424,7 +424,7 @@ static int core_gb_set(const cheat_gb_code *codes, unsigned n)
    }
    /* NULL: this instance's running machine (none during a link session's
     * setup: then there is nothing to cheat on, and -1 says so). */
-   return gbcore_cheats_set(NULL, out, n);
+   return gbmux_cheats_set(NULL, out, n);
 }
 static void core_button(int down)
 {

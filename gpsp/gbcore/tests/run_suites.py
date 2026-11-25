@@ -33,6 +33,30 @@ def build(t):
                     "-o", str(exe), str(HERE / "suites.c"), str(ROOT / "gbcore/gbcore_tgbdual.c"), *objs, "-lm"], check=True, cwd=ROOT)
     return exe
 
+GAM_SRC = ["bootloader", "cpu", "gambatte", "initstate", "interrupter", "interruptrequester", "gambatte-memory", "sound",
+           "statesaver", "tima", "video", "video_libretro", "mem/cartridge", "mem/cartridge_libretro", "mem/huc3",
+           "mem/memptrs", "mem/rtc", "sound/channel1", "sound/channel2", "sound/channel3", "sound/channel4",
+           "sound/duty_unit", "sound/envelope_unit", "sound/length_counter", "video/ly_counter", "video/lyc_irq",
+           "video/next_m0_time", "video/ppu", "video/sprite_mapper"]
+
+def build_gambatte(t, main_src="suites_gambatte.cpp"):
+    """The same suites against Gambatte (gbcore/gambatte/): suites_gambatte.cpp has suites.c's command line and output."""
+    from concurrent.futures import ThreadPoolExecutor
+    gd = ROOT / "gbcore/gambatte"
+    cxx = ["g++", "-std=gnu++11", "-O2", "-w", "-fno-exceptions", "-fno-rtti", "-fno-strict-aliasing", "-DHAVE_NETWORK",
+           "-DVIDEO_RGB565", "-D__LIBRETRO__", "-DHAVE_STDINT_H", "-DNDEBUG", "-I" + str(gd / "libgambatte/src"),
+           "-I" + str(gd / "libgambatte/include"), "-I" + str(gd / "common"), "-I" + str(gd / "compat")]
+    jobs = [(gd / "libgambatte/src" / (n + ".cpp"), t / (n.replace("/", "_") + ".o")) for n in GAM_SRC]
+    jobs.append((ROOT / "gbcore/gambatte_host.cpp", t / "host.o"))
+    jobs.append((HERE / main_src, t / "main_test.o"))
+    def cc(j): subprocess.run(cxx + ["-c", str(j[0]), "-o", str(j[1])], check=True)
+    with ThreadPoolExecutor(max_workers=os.cpu_count() or 2) as ex: list(ex.map(cc, jobs))
+    sh = t / "tgb_shared.o"
+    subprocess.run(["gcc", "-std=gnu11", "-O2", "-w", *g.CORE_FLAGS, "-c", str(ROOT / "gbcore/tgbdual" / g.SHARED), "-o", str(sh)], check=True)
+    exe = t / "suites"
+    subprocess.run(["g++", "-o", str(exe), *[str(j[1]) for j in jobs], str(sh), "-lm"], check=True)
+    return exe
+
 def run(exe, rom, args=(), timeout=300):
     try:
         p = subprocess.run([str(exe), str(rom), *args], capture_output=True, text=True, timeout=timeout)
@@ -94,11 +118,12 @@ def main():
     ap.add_argument("--mooneye", default=os.environ.get("GATE_GB_MOONEYE", ""))
     ap.add_argument("--acid", default=os.environ.get("GATE_GB_ACID2", ""))
     ap.add_argument("--expect"); ap.add_argument("--write")
+    ap.add_argument("--core", choices=("tgb", "gambatte"), default="tgb")
     a = ap.parse_args()
     res = {}
     with tempfile.TemporaryDirectory(prefix="gb-suites-") as td:
         t = Path(td)
-        exe = build(t)
+        exe = build_gambatte(t) if a.core == "gambatte" else build(t)
         if os.environ.get("GB_SUITES_KEEP"):
             import shutil; shutil.copy(exe, os.environ["GB_SUITES_KEEP"])
         roms = Path(a.roms)
@@ -140,4 +165,5 @@ def main():
         return 1 if bad else 0
     return 0
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())

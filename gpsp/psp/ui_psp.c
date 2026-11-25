@@ -2523,6 +2523,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_HANDOFF,  /* 1.4: Smooth hand-over (handoff_glue.h) */
        SET_CORE4,    /* 1.4: Fourth core Auto / Off (docs/FOURTH-CORE.md) */
        SET_QUICK,    /* 2.0: Quick response Off / Auto / On (vita/ahead_glue.h) */
+       SET_GBCORE,   /* 2.0: Game Boy core Standard / Accurate (gbcore/gambatte_host.h) */
        /* Between GAMEPLAY and CONTROLS: every row a harness walker crosses
         * keeps its place, and Button mapping stays last.  LIBRARY is the
         * browser's only, THIS GAME a running game's only (set_row_shown). */
@@ -2540,6 +2541,7 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_GBTYPE,
        /* 2.0: this game's own Quick response (Settings / Off / Auto / On) */
        SET_QUICKGAME,
+       SET_GBCOREGAME,   /* 2.0: this game's own Game Boy core (Settings / Standard / Accurate) */
        /* 2.0: a Game Boy Camera game's picture source, and the Game Boy
         * Printer on the serial port (a Game Boy game's) */
        SET_CAMERA, SET_PRINTER,
@@ -2709,6 +2711,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Smooth hand-over" },
    { 0, "Fourth core" },
    { 0, "Quick response" },
+   { 0, "Game Boy core" },
    { 1, "RETROACHIEVEMENTS" },
    { 0, "Account" },
    { 0, "Hardcore" },
@@ -2752,6 +2755,7 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Palette" },
    { 0, "Game Boy type" },
    { 0, "Quick response" },
+   { 0, "Game Boy core" },
    { 0, "Camera" },
    { 0, "Game Boy Printer" },
    { 0, "Rear touch panel" },
@@ -2830,6 +2834,9 @@ static int set_row_shown(int idx)
       return g_ov_browse || (g_pgame.on && app_quick_supported(g_pgame.console));
    if (idx == SET_QUICKGAME)
       return !g_ov_browse && g_pgame.on && app_quick_supported(g_pgame.console);
+   if (idx == SET_GBCORE || idx == SET_GBCOREGAME)   /* the game list: the setting for every Game Boy game; a running game: its own */
+      return idx == SET_GBCORE ? g_ov_browse || (g_pgame.on && (g_pgame.console == FE_CONSOLE_GB || g_pgame.console == FE_CONSOLE_GBC))
+                               : !g_ov_browse && g_pgame.on && (g_pgame.console == FE_CONSOLE_GB || g_pgame.console == FE_CONSOLE_GBC);
    /* the players have these two on their own Controls page */
    if (idx == SET_BTNTEST || idx == SET_REARTOUCH)
       return !ui_console_is_player(pcfg_display_console());
@@ -3624,6 +3631,16 @@ static void settings_adjust(int id, int dir)
       fe_evt("quick_setting mode=%d", g_pcfg.quick_response);
       break;
    }
+   case SET_GBCORE:
+      g_pcfg.gb_core = !g_pcfg.gb_core;
+      fe_evt("gb_core_setting core=%d", g_pcfg.gb_core);
+      break;
+   case SET_GBCOREGAME:
+      /* Follows Settings (-1) / Standard / Accurate, kept in the game's own file; read when the game starts */
+      g_pgame.gb_core = (g_pgame.gb_core + 1 + 3 + (dir < 0 ? -1 : 1)) % 3 - 1;
+      (void)pcfg_game_save();
+      fe_evt("gb_core_setting game=%d", g_pgame.gb_core);
+      break;
    case SET_QUICKGAME:
    {
       /* Follows Settings (-1) / Off / Auto / On, kept in the game's own file */
@@ -4382,6 +4399,10 @@ static const char *set_help(int id)
    case SET_QUICK:    return "Shows what you press one frame sooner by working the next "
                              "frame out ahead. The game runs the same. "
                              "Auto uses it while there is time.";
+   case SET_GBCORE:   return g_pcfg.gb_core
+                             ? "Accurate: Gambatte, closer to a real Game Boy, heavier. No link play, Camera or border. Next game."
+                             : "Standard: the usual core, fast, with link play, Camera and Super Game Boy borders. Next game.";
+   case SET_GBCOREGAME: return "This game's own choice. Settings follows the Gameplay row. Next start of the game.";
    case SET_QUICKGAME: return "This game's own choice. Settings follows the "
                               "Gameplay row. Auto uses it while there is time.";
    case SET_HANDOFF:  return g_pcfg.smooth_handoff
@@ -5288,6 +5309,14 @@ static ui_action screen_settings_page(unsigned edges)
          break;
       case SET_BTNTEST:
          set_item(y, g_cursor == i, 1, set_rows[i].label, "");
+         break;
+      case SET_GBCORE:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.gb_core ? "Accurate" : "Standard");
+         break;
+      case SET_GBCOREGAME:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pgame.gb_core < 0 ? "Settings" : g_pgame.gb_core ? "Accurate" : "Standard");
          break;
       case SET_QUICKGAME:
          set_item(y, g_cursor == i, 1, set_rows[i].label,

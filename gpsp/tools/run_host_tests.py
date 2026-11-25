@@ -259,6 +259,12 @@ def suites(env: Env, baseline: Path | None):
          "-fsanitize=address,undefined -Ifrontend-common "
          "-o /tmp/t_link_mode tools/test_link_mode.c && "
          "ASAN_OPTIONS=detect_leaks=0 /tmp/t_link_mode && "
+         # ...and the player's collections (collections.txt) with RetroArch
+         # playlists read as read-only ones (frontend-common/fe_collect.c).
+         "gcc -std=gnu99 -O1 -g -Wall -Wextra -Werror "
+         "-fsanitize=address,undefined -Ifrontend-common "
+         "-o /tmp/t_fe_collect tools/tests/test_fe_collect.c && "
+         "ASAN_OPTIONS=detect_leaks=0 /tmp/t_fe_collect && "
          # ...and the rewind core (frontend-common/fe_rewind.c, a REWIND=1
          # prototype) against a fake machine: any pattern of taps on the
          # control, every frame checked against a run that never rewound,

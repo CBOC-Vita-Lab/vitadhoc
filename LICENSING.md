@@ -25,6 +25,13 @@ original project and the clarification. Original notices remain intact.
   program, so the main program as distributed is under GPL-2.0 for that part: the "including use under GPL-3.0"
   line above does not extend to a build that contains it. See
   [Game Boy: Gambatte](notices/GB-Gambatte.md).
+- **Open conflict (2.0, not resolved):** a GPL-2.0-only part and a GPL-3.0 part cannot be in one program. The
+  experimental GPU xBRZ shader text (`gpsp/vita/shaders/xbrz_*.inc`, compiled into the main program as strings) is
+  adapted from a shader that carries Zenju's GPL-3.0 notice (`licenses/GPU-xBRZ-notices.txt`). Before Gambatte every
+  other part allowed "or later", so the program could be taken as a whole under GPL-3.0; with Gambatte linked in it
+  cannot. One of the two has to leave the main program (or the shader has to be rewritten from the MIT xBR source)
+  before a build with both is distributed. The CPU xBRZ copy (`gpsp/vita/third_party/xbrz`) names no GPL version and
+  is used under version 2; its author's later releases name version 3, so that reading is a second, smaller risk.
 - CPU xBRZ, experimental GPU xBRZ, mGBA-derived files, fonts, databases and
   SDK/runtime components retain their own notices. See
   [Third-Party Notices](notices/THIRD-PARTY.md).
@@ -124,6 +131,8 @@ and `vita/plat.h` (threads, time).
 Version 1.0's VPK is built from the source in this repository, which sits
 beside it. Still open: the experimental GPU xBRZ shader's exact historical
 upstream revision is unrecorded, and its combined-binary compatibility is
-under review (the feature is off by default; its strings are in the binary).
+under review (the feature is off by default; its strings are in the binary);
+with the GPL-2.0-only Gambatte core in the same program this is a conflict,
+not only a review item (Separate Components above).
 Neither the root license nor individual source headers have been replaced with
 a blanket GPL-3.0 declaration.

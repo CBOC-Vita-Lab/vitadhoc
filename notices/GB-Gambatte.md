@@ -12,4 +12,6 @@ functions of `gpsp/gbcore/gambatte_host.h`.
   GPL-2.0-or-later (Copyright CBOC-Vita); `gpsp/gbcore/tests/suites_gambatte.cpp` and `gambatte_core.cpp` are
   test code.
 - **Effect on the licence of the program:** the main program links this core, so the combined program is
-  distributed under GPL-2.0 (a version-2-only part is in it); see [Licensing Status](../LICENSING.md).
+  distributed under GPL-2.0 (a version-2-only part is in it); see [Licensing Status](../LICENSING.md). That is not
+  compatible with the GPL-3.0 notice of the experimental GPU xBRZ shader text in the same program: an open conflict,
+  recorded there.

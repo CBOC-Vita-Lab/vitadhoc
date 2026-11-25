@@ -315,6 +315,10 @@ STEPS = [
          "AHEAD_FRAMES=300 PROOF_FRAMES=\"97 60\" MD_TEST_ROMS=\"$GATE_MD_ROMS\" MD_TEST_SMS_ROMS=\"$GATE_MD_SMS_ROMS\" sh md/twin/ahead_check.sh",
          "default", {"md"}, inputs=["md/", "playerkit/src/pk_ahead.h"], deps=["build-md-twin"], parse="pass_fail", env_req="GATE_MD_ROMS", timeout=7200),
 
+    Step("md-fm", "Sega YM2612 on its own thread: sound, picture, state and RAM bit-identical to the single thread (timer shadow checked against the chip, fallback and queue-full paths, states, run-ahead, chip options, Sega CD with FM + PCM + CD audio; fm_check.sh; GATE_MD_ROMS)",
+         "FMC_FRAMES=400 MD_TEST_ROMS=\"$GATE_MD_ROMS\" sh md/twin/fm_check.sh",
+         "default", {"md"}, inputs=["md/"], deps=["build-md-twin"], parse="pass_fail", timeout=7200),
+
     # the Sega player's own code (md/vita/player.cpp) on the twin: launch protocol, menu walk, slots, saves, rewind, run-ahead, RetroAchievements. The
     # Sega CD part runs on synthetic discs and needs no ROM; the cartridge part needs GATE_MD_ROMS / GATE_MD_SMS_ROMS and says SKIP without
     Step("md-player", "Sega player (md/vita/player.cpp) on the twin: walk, slots, saves, rewind, run-ahead, RetroAchievements; the Sega CD part on synthetic discs (player_selftest.sh; GATE_MD_ROMS, GATE_MD_SMS_ROMS; the SG-1000 and Game Gear files: GATE_SG_ROM, GATE_GG_ROM, else a cartridge made by md/twin/tools/sg_gen.py)",

@@ -1,7 +1,7 @@
 # Genesis Plus GX translation units that md.bin builds (paths relative to md/core). The libretro layer, the NTSC filters
 # and minimp3 are not vendored; the Sega CD readers (libchdr with lzma, zlib, zstd, dr_flac; tremor) are (see PROVENANCE.md). Copyright CBOC-Vita. MIT licence for this file.
 CORE_SRCS := \
-	crc32.c rng.c genesis.c io_ctrl.c loadrom.c mem68k.c membnk.c memz80.c state.c system.c vdp_ctrl.c vdp_render.c vdp_render_w.c vdp_thread.c \
+	crc32.c rng.c genesis.c io_ctrl.c loadrom.c mem68k.c membnk.c memz80.c state.c system.c vdp_ctrl.c vdp_render.c vdp_render_w.c vdp_thread.c fm_thread.c \
 	m68k/m68kcpu.c m68k/s68kcpu.c \
 	z80/z80.c \
 	sound/blip_buf.c sound/eq.c sound/opll.c sound/psg.c sound/sound.c sound/ym2413.c sound/ym2612.c sound/ym3438.c \

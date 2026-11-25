@@ -19,9 +19,9 @@ $(B)/pk/pk_link_net.o: $(PK)/src/pk_link_net.cpp $(wildcard $(PK)/src/*.h)
 $(B)/pl/netplay.o: ../vita/netplay.cpp ../vita/netplay.h $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
 	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I$(PK)/src $(NETPLAY_INC) $(NETPLAY_ND_DEFS) -c -o $@ $<
-$(B)/pl/link_twin.o: link_twin.cpp ../vita/player.h ../vita/netplay.h
+$(B)/pl/link_twin.o: link_twin.cpp twin_threads.h ../vita/player.h ../vita/netplay.h
 	@mkdir -p $(B)/pl
-	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../vita -I$(PK)/src $(NETPLAY_INC) -c -o $@ $<
+	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../core -I../vita -I$(PK)/src $(NETPLAY_INC) -c -o $@ $<
 LT_OBJS := $(addprefix $(B)/pl/,$(addsuffix .o,$(PL_FE))) $(B)/pl/player.o $(B)/pl/pipe.o $(B)/pl/netplay.o $(B)/pl/link_twin.o
 $(B)/link_twin: $(LT_OBJS) $(NP_OBJS) $(PK_OBJS) $(B)/mdcore.o
 	$(CXX) $(CPUF) -o $@ $^ -lm -pthread

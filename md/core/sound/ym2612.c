@@ -2167,6 +2167,175 @@ void YM2612Update(int *buffer, int length)
   INTERNAL_TIMER_B(length);
 }
 
+/* ---- VitAdhoc: the timer shadow (the FM worker, md/core/fm_thread.c) -------------------------------------------------------------------
+ * With the FM synthesis on its own thread the chip above lives on the worker, but the 68000 and the Z80 read the status register (timer A / B
+ * overflow flags) and games time their music and logic by it. The emulating thread therefore keeps this small copy of everything the status
+ * depends on: the address latch, the timer registers 0x24-0x27 and the two counters. It sees the same writes and the same sample counts, in the
+ * same order, as the chip, and runs the same arithmetic as set_timers / INTERNAL_TIMER_A / INTERNAL_TIMER_B, so the flags are the chip's
+ * (YM2612ShadowCompare checks it against the chip; the twin runs that check over whole games). */
+typedef struct
+{
+  UINT16 address;
+  UINT8  status;
+  UINT32 mode;
+  INT32  TA, TAL, TAC, TB, TBL, TBC;
+} FM_SHADOW;
+static FM_SHADOW ys;
+
+void YM2612ShadowInit(void)
+{
+  memset(&ys, 0, sizeof(ys));
+}
+
+void YM2612ShadowReset(void)
+{
+  /* what YM2612ResetChip does to the timers (it leaves the address latch alone) */
+  ys.TAC = 0;
+  ys.TBC = 0;
+  ys.status &= 0xFC;      /* set_timers(0x30): flags cleared, nothing loaded */
+  ys.mode = 0x30;
+  ys.TB = 0;
+  ys.TBL = 256 << 4;
+  ys.TA = 0;
+  ys.TAL = 1024;
+}
+
+void YM2612ShadowWrite(unsigned int a, unsigned int v)
+{
+  v &= 0xff;
+  switch (a)
+  {
+    case 0:
+      ys.address = v;
+      break;
+    case 2:
+      ys.address = v | 0x100;
+      break;
+    default:
+    {
+      switch (ys.address)
+      {
+        case 0x24:
+          ys.TA = (ys.TA & 0x03) | (((int)v) << 2);
+          ys.TAL = 1024 - ys.TA;
+          break;
+        case 0x25:
+          ys.TA = (ys.TA & 0x3fc) | (v & 3);
+          ys.TAL = 1024 - ys.TA;
+          break;
+        case 0x26:
+          ys.TB = v;
+          ys.TBL = (256 - v) << 4;
+          break;
+        case 0x27:
+          if ((v & 1) && !(ys.mode & 1)) ys.TAC = ys.TAL;
+          if ((v & 2) && !(ys.mode & 2)) ys.TBC = ys.TBL;
+          ys.status &= (~v >> 4);
+          ys.mode = v;
+          break;
+        default:
+          break;
+      }
+      break;
+    }
+  }
+}
+
+unsigned int YM2612ShadowRead(void)
+{
+  return ys.status;
+}
+
+/* length samples: timer A counts once per sample, timer B by the whole length (as YM2612Update does) */
+void YM2612ShadowRun(int length)
+{
+  if (ys.mode & 0x01)
+  {
+    int n = length;
+    int first = (ys.TAC > 1) ? ys.TAC : 1;     /* samples until the first overflow */
+    if (n < first)
+    {
+      ys.TAC -= n;
+    }
+    else
+    {
+      int per = (ys.TAL > 1) ? ys.TAL : 1;     /* samples between two overflows after a reload */
+      n -= first;
+      if (ys.mode & 0x04) ys.status |= 0x01;
+      ys.TAC = ys.TAL - (n % per);
+    }
+  }
+  if (ys.mode & 0x02)
+  {
+    ys.TBC -= length;
+    if (ys.TBC <= 0)
+    {
+      if (ys.mode & 0x08) ys.status |= 0x02;
+      do
+      {
+        ys.TBC += ys.TBL;
+      }
+      while (ys.TBC <= 0);
+    }
+  }
+}
+
+/* 0 when the shadow equals the chip's timers (the chip must be idle) */
+int YM2612ShadowCompare(void)
+{
+  const FM_ST *s = &ym2612.OPN.ST;
+  return !(ys.address == s->address && ys.status == s->status && ys.mode == s->mode && ys.TA == s->TA && ys.TAL == s->TAL &&
+           ys.TAC == s->TAC && ys.TB == s->TB && ys.TBL == s->TBL && ys.TBC == s->TBC) ? 1 : 0;
+}
+
+/* the chip was loaded from a state: the shadow takes its timers */
+void YM2612ShadowLoad(void)
+{
+  const FM_ST *s = &ym2612.OPN.ST;
+  ys.address = s->address; ys.status = s->status; ys.mode = s->mode;
+  ys.TA = s->TA; ys.TAL = s->TAL; ys.TAC = s->TAC; ys.TB = s->TB; ys.TBL = s->TBL; ys.TBC = s->TBC;
+}
+
+/* self test: random writes and runs through the chip and the shadow, the timers must agree after each run (returns the number of differences) */
+int YM2612ShadowSelfTest(unsigned seed, int steps)
+{
+  static int buf[2 * 4096];
+  int i, bad = 0;
+  unsigned r = seed ? seed : 1;
+#define RND() (r = r * 1664525u + 1013904223u, r >> 8)
+  YM2612Init();
+  YM2612Config(0);
+  YM2612ResetChip();
+  YM2612ShadowInit();
+  YM2612ShadowReset();
+  for (i = 0; i < steps; i++)
+  {
+    unsigned k = RND() % 8;
+    if (k < 5)
+    {
+      static const unsigned regs[] = { 0x24, 0x25, 0x26, 0x27, 0x27, 0x27, 0x2a, 0x30, 0x28, 0x22, 0x124, 0x127 };
+      unsigned reg = regs[RND() % (sizeof regs / sizeof regs[0])];
+      unsigned v = RND() & 0xff;
+      if (reg == 0x27 && (RND() & 1)) v &= 0x3f;
+      if (reg == 0x24 && (RND() & 3)) v = (RND() & 3) ? 0xff : v;
+      YM2612Write(reg & 0x100 ? 2 : 0, reg & 0xff); YM2612ShadowWrite(reg & 0x100 ? 2 : 0, reg & 0xff);
+      YM2612Write(reg & 0x100 ? 3 : 1, v); YM2612ShadowWrite(reg & 0x100 ? 3 : 1, v);
+    }
+    else if (k == 5 && !(RND() & 15))
+    {
+      YM2612ResetChip(); YM2612ShadowReset();
+    }
+    else
+    {
+      int n = 1 + (int)(RND() % ((RND() & 7) ? 40 : 1500));
+      YM2612Update(buf, n); YM2612ShadowRun(n);
+      if (YM2612ShadowCompare()) bad++;
+    }
+  }
+#undef RND
+  return bad;
+}
+
 void YM2612Config(int type)
 {
   /* YM2612 chip type */

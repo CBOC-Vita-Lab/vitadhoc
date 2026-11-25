@@ -2,6 +2,8 @@
 """Test fixtures for the Sega CD path of md.bin (md/twin/cd_test.cpp, selftest.sh section 12).
 
   mkscd.py standin OUT.bin     a 128 KB STAND-IN for the console's BIOS, for the test suite only
+  mkscd.py standin-fm OUT.bin  the same, and the main CPU also plays the YM2612 (two channels, LFO, CSM mode on timer A, timer B, key on / off and a pitch
+                               change every frame) and reads its status every frame into work RAM $FFFF04: the Sega CD's FM + PCM + CD audio mix (fm_check.sh)
   mkscd.py discs DIR           synthetic disc images (cooked ISO, raw BIN + CUE, multi-file CUE, WAV and Ogg tracks, an uncompressed CHD), and the
                                awkward ones: a sheet with a byte order mark, tabs and CRLF, mixed case extensions, a long name and a long path, a
                                missing audio file, a Windows path and a device name ("ux0:") in the sheet, big endian (MOTOROLA) audio, INDEX 00 / PREGAP
@@ -99,10 +101,45 @@ def sub_program():
     struct.pack_into('>II', img, 0, 0x0007F000, 0x00000100)
     return bytes(img)
 
-def main_code(sub):
+FM_INIT, FM_FRAME = 0x800, 0xE00      # the stand-in's FM routines (standin-fm): called with jsr, d1 = the frame count
+
+def fm_routines():
+    """YM2612 programming from the main CPU ($A04000 address / $A04001 data of part 1, $A04002 / $A04003 part 2)"""
+    def wr(a, reg, val, part=0):
+        a.w(0x13FC, reg); a.l(0x00A04000 + 2 * part)           # move.b #reg,$A04000
+        a.w(0x13FC, val); a.l(0x00A04001 + 2 * part)           # move.b #val,$A04001
+    ini = Asm(FM_INIT)
+    ini.w(0x33FC, 0x0100); ini.l(0x00A11200)                   # move.w #$100,$A11200  (the Z80 out of reset)
+    ini.w(0x33FC, 0x0100); ini.l(0x00A11100)                   # move.w #$100,$A11100  (the bus requested: the YM2612 is reachable from the 68000)
+    wr(ini, 0x22, 0x0B)                                        # LFO on, 3.98 Hz .. (frequency 3)
+    wr(ini, 0x2B, 0x00)                                        # DAC off
+    for ch in (0, 2):                                          # two channels: algorithm 4 (two carriers)
+        for i, (dt_mul, tl, ar, d1r, d2r, sl_rr) in enumerate(((0x01, 0x23, 0x1F, 0x08, 0x02, 0x26), (0x02, 0x10, 0x1A, 0x06, 0x03, 0x45), (0x03, 0x18, 0x1F, 0x05, 0x01, 0x37), (0x01, 0x05, 0x18, 0x09, 0x04, 0x4A))):
+            off = ch + (0, 8, 4, 12)[i]
+            wr(ini, 0x30 + off, dt_mul); wr(ini, 0x40 + off, tl); wr(ini, 0x50 + off, ar); wr(ini, 0x60 + off, d1r | 0x80)
+            wr(ini, 0x70 + off, d2r); wr(ini, 0x80 + off, sl_rr)
+        wr(ini, 0xB0 + ch, 0x2C); wr(ini, 0xB4 + ch, 0xE3)      # feedback 5, algorithm 4; both speakers, AMS 2, PMS 3
+        wr(ini, 0xA4 + ch, 0x22 + 2 * ch); wr(ini, 0xA0 + ch, 0x40 + 9 * ch)
+    wr(ini, 0x24, 0x40); wr(ini, 0x25, 0x01); wr(ini, 0x26, 0xC0)   # timer A and B reload values
+    wr(ini, 0x27, 0xBF)                                        # CSM mode, load and enable both timers, flags reset
+    wr(ini, 0x28, 0xF0); wr(ini, 0x28, 0xF2)                   # key on channels 1 and 3
+    ini.w(0x4E75)
+    frm = Asm(FM_FRAME)
+    frm.w(0x13FC, 0xA0); frm.l(0x00A04000)                     # move.b #$A0,$A04000
+    frm.w(0x13C1); frm.l(0x00A04001)                           # move.b d1,$A04001  (pitch low byte follows the frame count)
+    frm.w(0x13FC, 0x28); frm.l(0x00A04000)                     # move.b #$28,$A04000
+    frm.w(0x13C1); frm.l(0x00A04001)                           # move.b d1,$A04001  (key on / off pattern from the frame count)
+    frm.w(0x1039); frm.l(0x00A04000)                           # move.b $A04000,d0   (the status: timer flags and busy)
+    frm.w(0x13C0); frm.l(0x00FFFF04)                           # move.b d0,$FFFF04
+    wr(frm, 0x27, 0xBF)                                        # reset the flags
+    frm.w(0x4E75)
+    return ini.done(), frm.done()
+
+def main_code(sub, fm=False):
     """the boot ROM's code at $000200: VDP set-up, copy the sub program to PRG-RAM, release the sub CPU, then per frame a backdrop colour"""
     a = Asm(0x200)
     a.w(0x46FC, 0x2700)                        # move #$2700,sr
+    if fm: a.w(0x4EB9); a.l(FM_INIT)           # jsr FM_INIT
     a.w(0x41F9); a.l(0x00C00004)               # lea $C00004,a0
     for r in (0x8004, 0x8144, 0x8230, 0x8328, 0x8407, 0x8578, 0x8700, 0x8A00, 0x8B00, 0x8C00, 0x8D3F, 0x8F02, 0x9001, 0x9100, 0x9200):
         a.w(0x30BC, r)                         # move.w #reg,(a0)
@@ -124,10 +161,11 @@ def main_code(sub):
     a.w(0x33C1); a.l(0x00FFFF00)               # move.w d1,$FFFF00  (frame count to work RAM)
     a.w(0x3839); a.l(0x00A12020)               # move.w $A12020,d4  (the sub CPU's count)
     a.w(0x33C4); a.l(0x00FFFF02)               # move.w d4,$FFFF02
+    if fm: a.w(0x4EB9); a.l(FM_FRAME)          # jsr FM_FRAME
     a.bra(0x60, 'frame')
     return a.done()
 
-def standin_bios():
+def standin_bios(fm=False):
     sub = sub_program()
     img = bytearray(0x20000)
     struct.pack_into('>II', img, 0, 0x00FFF000, 0x00000200)
@@ -137,10 +175,16 @@ def standin_bios():
     hdr = b'SEGA MEGA DRIVE ' + b'(C)VITADHOC 2026 ' + (b'TEST STAND-IN, NOT A BIOS'.ljust(48)) + (b'TEST STAND-IN, NOT A BIOS'.ljust(48)) + b'BR 00000000-00'.ljust(14)
     img[0x100:0x100 + len(hdr)] = hdr
     img[0x1F0:0x200] = b'U'.ljust(16)         # the header's region field
-    code = main_code(sub)
+    code = main_code(sub, fm)
     assert len(code) < 0x200
     img[0x200:0x200 + len(code)] = code
     img[0x400:0x400 + len(sub)] = sub
+    if fm:
+        assert len(sub) <= 0x400
+        ini, frm = fm_routines()
+        assert FM_INIT + len(ini) <= FM_FRAME and FM_FRAME + len(frm) < 0x1000
+        img[FM_INIT:FM_INIT + len(ini)] = ini
+        img[FM_FRAME:FM_FRAME + len(frm)] = frm
     return bytes(img)
 
 # ---------------------------------------------------------------------------------------------------------------- discs
@@ -617,5 +661,6 @@ def make_discs(d):
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == 'standin': w(sys.argv[2], standin_bios())
+    elif len(sys.argv) == 3 and sys.argv[1] == 'standin-fm': w(sys.argv[2], standin_bios(True))
     elif len(sys.argv) == 3 and sys.argv[1] == 'discs': make_discs(sys.argv[2])
     else: sys.exit(__doc__)

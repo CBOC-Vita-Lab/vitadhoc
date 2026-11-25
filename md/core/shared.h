@@ -42,5 +42,8 @@
 #include "vdp_thread.h"
 #endif
 
+/* VitAdhoc: the FM worker (md/core/fm_thread.h) */
+#include "fm_thread.h"
+
 #endif /* _SHARED_H_ */
 

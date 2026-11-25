@@ -31,4 +31,14 @@ extern unsigned int YM2612Read(void);
 extern int YM2612LoadContext(unsigned char *state);
 extern int YM2612SaveContext(unsigned char *state);
 
+/* VitAdhoc: the timer shadow for the FM worker (see ym2612.c) */
+extern void YM2612ShadowInit(void);
+extern void YM2612ShadowReset(void);
+extern void YM2612ShadowWrite(unsigned int a, unsigned int v);
+extern unsigned int YM2612ShadowRead(void);
+extern void YM2612ShadowRun(int length);
+extern int YM2612ShadowCompare(void);
+extern void YM2612ShadowLoad(void);
+extern int YM2612ShadowSelfTest(unsigned seed, int steps);
+
 #endif /* _YM2612_ */

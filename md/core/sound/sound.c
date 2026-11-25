@@ -91,7 +91,16 @@ INLINE void fm_update(int cycles)
     int samples = (cycles - fm_cycles_count + fm_cycles_ratio - 1) / fm_cycles_ratio;
 
     /* run FM chip to sample buffer */
-    YM_Update(fm_ptr, samples);
+    if (fmw_on)
+    {
+      /* VitAdhoc: the FM worker makes the samples; the timers of the status register advance here (see md/core/fm_thread.h) */
+      YM2612ShadowRun(samples);
+      fmw_q_run(samples, (int)(fm_ptr - fm_buffer));
+    }
+    else
+    {
+      YM_Update(fm_ptr, samples);
+    }
 
     /* update FM buffer pointer */
     fm_ptr += (samples * 2);
@@ -107,7 +116,15 @@ static void YM2612_Reset(unsigned int cycles)
   fm_update(cycles);
 
   /* reset FM chip */
-  YM2612ResetChip();
+  if (fmw_on)
+  {
+    YM2612ShadowReset();
+    fmw_q_reset();
+  }
+  else
+  {
+    YM2612ResetChip();
+  }
   fm_cycles_busy = 0;
 }
 
@@ -127,7 +144,15 @@ static void YM2612_Write(unsigned int cycles, unsigned int a, unsigned int v)
   }
 
   /* write FM register */
-  YM2612Write(a, v);
+  if (fmw_on)
+  {
+    YM2612ShadowWrite(a, v);
+    fmw_q_write(a, v);
+  }
+  else
+  {
+    YM2612Write(a, v);
+  }
 }
 
 static unsigned int YM2612_Read(unsigned int cycles, unsigned int a)
@@ -142,12 +167,12 @@ static unsigned int YM2612_Read(unsigned int cycles, unsigned int a)
     if (cycles >= fm_cycles_busy)
     {
       /* BUSY flag cleared */
-      return YM2612Read();
+      return fmw_on ? YM2612ShadowRead() : YM2612Read();
     }
     else
     {
       /* BUSY flag set */
-      return YM2612Read() | 0x80;
+      return (fmw_on ? YM2612ShadowRead() : YM2612Read()) | 0x80;
     }
   }
 
@@ -295,6 +320,9 @@ static unsigned int NULL_fm_read(unsigned int cycles, unsigned int address) { re
 
 void sound_init( void )
 {
+  /* VitAdhoc: the FM worker is idle and the chip is rebuilt below */
+  fmw_join();
+
   /* VitAdhoc: the FM mixing buffer starts cleared, as in a new process (see gen_init in genesis.c) */
   memset(fm_buffer, 0, sizeof(fm_buffer));
 
@@ -323,6 +351,7 @@ void sound_init( void )
       /* MAME OPN2 */
       YM2612Init();
       YM2612Config(config.ym2612);
+      YM2612ShadowInit();
       YM_Update = YM2612Update;
       fm_reset = YM2612_Reset;
       fm_write = YM2612_Write;
@@ -363,6 +392,16 @@ void sound_init( void )
       /* chip is running at ZCLK / 72 = MCLK / 15 / 72 */
       fm_cycles_ratio = 72 * 15;
     }
+  }
+
+  /* VitAdhoc: the FM synthesis on its own thread: for the MAME YM2612 of the Mega Drive / Sega CD, when the platform asked for it */
+  {
+    int want = fmw_wanted() && (system_hw & SYSTEM_PBC) == SYSTEM_MD;
+#ifdef HAVE_YM3438_CORE
+    if (config.ym3438) want = 0;
+#endif
+    if (!want && fmw_on) fmw_stop();
+    else if (want && !fmw_on && fmw_start(fm_buffer)) fmw_set_ops(NULL, 0);     /* the worker could not start: one thread */
   }
 
   /* Initialize PSG chip */
@@ -458,6 +497,9 @@ int sound_update(unsigned int cycles)
     /* Run FM chip until end of frame */
     fm_update(cycles);
 
+    /* VitAdhoc: every sample of the frame is in the buffer before it is read */
+    fmw_join();
+
     /* FM output pre-amplification */
     preamp = config.fm_preamp;
 
@@ -541,6 +583,8 @@ int sound_update(unsigned int cycles)
 int sound_context_save(uint8 *state)
 {
   int bufferptr = 0;
+
+  fmw_join();      /* VitAdhoc: the chip is the worker's until every queued call is done */
   
   if ((system_hw & SYSTEM_PBC) == SYSTEM_MD)
   {
@@ -597,6 +641,8 @@ int sound_context_load(uint8 *state)
 {
   int bufferptr = 0;
 
+  fmw_join();
+
   if ((system_hw & SYSTEM_PBC) == SYSTEM_MD)
   {
 #ifdef HAVE_YM3438_CORE
@@ -615,8 +661,10 @@ int sound_context_load(uint8 *state)
     {
       bufferptr += YM2612LoadContext(state + sizeof(config_ym3438));
     }
+    if (fmw_on) YM2612ShadowLoad();
 #else
     bufferptr = YM2612LoadContext(state);
+    if (fmw_on) YM2612ShadowLoad();
 #endif
   }
   else

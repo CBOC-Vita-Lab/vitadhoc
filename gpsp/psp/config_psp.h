@@ -194,6 +194,10 @@ typedef struct
     * buttons do (Start + Select, L + R + Start), so a ghost tap cannot.
     * Passed to the Super NES and Sega players in the launch file. */
    int  tap_menu;
+   /* Settings > About > Check for updates (CONFIG.INI update_check): 1 =
+    * Daily, the default: at most one request a day to GitHub for the latest
+    * release, while the home screen idles (vita/update_check.h); 0 = Off. */
+   int  update_check;
    /* Settings > Display > WonderSwan smoothing (CONFIG.INI ws_blend): 1 =
     * the 75 Hz console's frames blended into each 60 Hz refresh (smooth
     * scrolling, the default); 0 = the newest frame only. */

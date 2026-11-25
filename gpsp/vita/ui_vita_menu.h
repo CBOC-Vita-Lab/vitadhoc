@@ -14,7 +14,7 @@
 
 #include "ui_vita_style.h"
 
-#define CC_CARD_W   120
+#define CC_CARD_W   104
 #define CC_CARD_H   124
 #define CC_GAP      8
 #define CC_SHEET_H  262
@@ -25,6 +25,7 @@ static const struct { int icon; const char *label; } CC_CARD[M_COUNT] = {
    { VS_I_PEOPLE, "Play together" },
    { VS_I_SPARK,  "Cheats" },
    { VS_I_GEAR,   "Settings" },
+   { VS_I_CAMERA, "Save clip" },
    { VS_I_GRID,   "Game list" },
    { VS_I_POWER,  "Exit" },
 };
@@ -71,6 +72,9 @@ static void cc_says(int i, int session_active, char *out, size_t cap)
       break;
    case M_SETTINGS:
       snprintf(out, cap, "Picture, controls and more");
+      break;
+   case M_CLIP:
+      snprintf(out, cap, "Save the last ten seconds as an animated picture");
       break;
    case M_GAMELIST:
       snprintf(out, cap, "Leave this game for the game list");

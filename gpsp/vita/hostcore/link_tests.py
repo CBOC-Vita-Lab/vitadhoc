@@ -1612,7 +1612,7 @@ def t_host_quits(T):
     T.begin("host_quits")
     a = T.twin("a", T.arch_a, LINKTEST, "Alice",
                host(EARLY) + "%d:start+select:24\n" % at(16) +
-               keys("down", "down", "down", "down", "down", "cross", "cross") +
+               keys("down", "down", "down", "down", "down", "down", "cross", "cross") +
                shot(21, "list.png") + quit_at(30))
     b = T.twin("b", T.arch_b, LINKTEST, "Bob",
                join_first(EARLY, wait=2.5) + shot(14, "running.png") +

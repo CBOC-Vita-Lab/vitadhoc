@@ -809,7 +809,7 @@ def t_save(S):
 +20:a:10
 +20:a:10
 +90:shot=saved.png
-""" % (at + 120) + menu_pick(6)
+""" % (at + 120) + menu_pick(7)
     r = S.run("save1", script, autoboot=TEST,
               vita_ini={"local_auto": 2, "local_auto_frame": 100},
               config={"local_partner": 1})
@@ -858,7 +858,7 @@ def t_save(S):
 %d:shot=reload.png
 +2:p2.a:10
 +90:shot=third.png
-""" % (at + 160) + menu_pick(6)
+""" % (at + 160) + menu_pick(7)
     r = S.run("save1", script, prepared=True)
     S.clean(r)
     st = r.evt("local_start")
@@ -886,7 +886,7 @@ def t_save(S):
 +20:p2.a:10
 +20:p2.a:10
 +90:shot=copy.png
-""" % (at + 160) + menu_pick(6)
+""" % (at + 160) + menu_pick(7)
     with open(os.path.join(r.root, "vita.ini"), "w") as f:
         f.write("local_auto = 1\nlocal_auto_frame = 100\n")
     r = S.run("save1", script, prepared=True)
@@ -908,7 +908,7 @@ def t_save(S):
 +20:a:10
 +20:a:10
 +90:shot=w.png
-""" % (at + 140) + menu_pick(6)
+""" % (at + 140) + menu_pick(7)
     r = S.run("save_worker", script, autoboot=TEST, args=("--worker",),
               vita_ini={"local_auto": 2, "local_auto_frame": 100})
     S.clean(r)
@@ -1295,7 +1295,7 @@ def t_states(S):
 +100:select+r:1
 +3:shot=loaded.png
 +60:shot=later.png
-""" % (at + 200) + menu_pick(6)
+""" % (at + 200) + menu_pick(7)
     r = S.run("states_own", script, autoboot=TEST,
               vita_ini={"local_auto": 2, "local_auto_frame": 100})
     S.clean(r)
@@ -1560,7 +1560,7 @@ def t_other(S):
     # ---- the partner's game keeps its OWN save file ---------------------------
     at = S.boot_refresh("cheatrom.gba", extra)
     script = "%d:p2.a:10\n+20:p2.a:10\n+90:shot=saved.png\n" % (at + 140) + \
-        menu_pick(6)
+        menu_pick(7)
     r = S.run("other_save", script, autoboot="cheatrom.gba",
               extra=dict(extra, **{"local.ini": partner_ini("cheatrom.gba",
                                                             TEST)}),
@@ -1665,7 +1665,7 @@ def t_gb(S):
 +10:right:60
 +0:shot=partner.png
 +40:shot=late.png
-""" % (at + 90, at + 400) + menu_pick(6)
+""" % (at + 90, at + 400) + menu_pick(7)
     r = S.run("gb_copy", script, autoboot="gblocal.gb", extra=extra,
               vita_ini={"local_auto": 1, "local_auto_frame": 30,
                         "local_peek": "0xC000:16"})
@@ -1702,7 +1702,7 @@ def t_gb(S):
             b[:6].hex())
 
     # ---- its own save, twice on one card: the file is read back --------------
-    script = "%d:a:5\n%d:shot=own.png\n" % (at + 90, at + 300) + menu_pick(6)
+    script = "%d:a:5\n%d:shot=own.png\n" % (at + 90, at + 300) + menu_pick(7)
     r = S.run("gb_own", script, autoboot="gblocal.gb", extra=extra,
               vita_ini={"local_auto": 2, "local_auto_frame": 30,
                         "local_peek": "0xC000:16"},
@@ -1737,7 +1737,7 @@ def t_gb(S):
     gb_verdict(S, r, "GBC", 80)
     S.picture(r, "gbc.png")
     r = S.run("gb_other", "%d:a:5\n%d:shot=other.png\n" %
-              (at + 90, at + 300) + menu_pick(6), autoboot="gblocal.gb",
+              (at + 90, at + 300) + menu_pick(7), autoboot="gblocal.gb",
               extra=dict(extra, **{"local.ini": partner_ini(
                   "gblocal.gb", "gblocal-blue.gb")}),
               vita_ini={"local_auto": 2, "local_auto_frame": 30,
@@ -1874,7 +1874,7 @@ def t_gb_mixed(S):
         ex = dict(extra, **{"local.ini": partner_ini(game, partner)})
         r = S.run("gb_mixed%d" % i,
                   "%d:a:5\n%d:shot=mixed.png\n" % (at + 90, at + 400) +
-                  menu_pick(6), autoboot=game, extra=ex,
+                  menu_pick(7), autoboot=game, extra=ex,
                   vita_ini={"local_auto": 2, "local_auto_frame": 30,
                             "local_peek": "0xC000:16"})
         S.clean(r)

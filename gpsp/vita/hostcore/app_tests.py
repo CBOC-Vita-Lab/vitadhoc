@@ -347,16 +347,16 @@ def only_beside(folder, stem, allowed):
 def menu_pick(row, wait=40):
     """Open the in-game menu (START+SELECT held) and choose its row:
     0 Resume, 1 Save states, 2 Play together, 3 Cheats, 4 Settings,
-    5 Quit to game list, 6 Exit VitAdhoc (the last two ask first, and this
-    answers yes).  The menu is the Vita's control centre, its cards in a
-    row; DOWN steps along them as RIGHT does."""
+    5 Save clip, 6 Quit to game list, 7 Exit VitAdhoc (the last two ask
+    first, and this answers yes).  The menu is the Vita's control centre,
+    its cards in a row; DOWN steps along them as RIGHT does."""
     s = "+%d:start+select:20\n" % wait
     gap = 14
     for _ in range(row):
         s += "+%d:down\n" % gap
         gap = 8
     s += "+%d:cross\n" % gap
-    if row >= 5:
+    if row >= 6:
         s += "+8:cross\n"          # leaving asks first: X again answers it
     return s
 
@@ -373,8 +373,8 @@ def set_up(n):
     return "+20:up\n" + "+8:up\n" * (n - 1)
 
 
-QUIT_TO_LIST = menu_pick(5)
-EXIT_APP = menu_pick(6)
+QUIT_TO_LIST = menu_pick(6)
+EXIT_APP = menu_pick(7)
 
 
 def decode_shot(path):
@@ -830,7 +830,7 @@ def t_bad(S):
 def t_worker(S):
     """The I/O worker thread (the log and the GBA save off the frame's
     thread, as on the console) leaves the same save as the synchronous path."""
-    script = "100:a:10\n+200:a:10\n" + menu_pick(6, wait=200)
+    script = "100:a:10\n+200:a:10\n" + menu_pick(7, wait=200)
     saves = []
     for name, args in (("worker_off", ()), ("worker_on", ("--worker",))):
         r = S.run(name, script, autoboot="gbadhoc-test.gba", args=args)
@@ -843,7 +843,7 @@ def t_worker(S):
             "the same battery save with and without the worker thread")
     if os.path.exists(OWN_GB):
         r = S.run("worker_gb", "100:a:10\n+200:a:10\n" +
-                  menu_pick(6, wait=200), autoboot="gbsave.gb",
+                  menu_pick(7, wait=200), autoboot="gbsave.gb",
                   args=("--worker",))
         S.clean(r)
         p = os.path.join(r.root, "roms", "gbsave.gb.sav")
@@ -852,7 +852,7 @@ def t_worker(S):
         # 1.4 (lessons-audit 1e): a GB game's battery write goes to the
         # worker too, and the file is the one the game thread would write
         S.check(r.has(r"^EVT io_worker on=1 sram_async=1"), "the GB save is written by the worker")
-        r2 = S.run("worker_gb_sync", "100:a:10\n+200:a:10\n" + menu_pick(6, wait=200),
+        r2 = S.run("worker_gb_sync", "100:a:10\n+200:a:10\n" + menu_pick(7, wait=200),
                    autoboot="gbsave.gb")
         S.clean(r2)
         p2 = os.path.join(r2.root, "roms", "gbsave.gb.sav")
@@ -1131,7 +1131,7 @@ def t_recent(S):
     # Ten seconds in the game, a menu that stays open for five, the list.
     r = S.run("recent_play", "60:cross\n+600:start+select:20\n+300:circle\n"
               "+60:start+select:20\n+14:down\n+8:down\n+8:down\n+8:down\n"
-              "+8:down\n+8:cross\n+8:cross\n+150:shot=home.png\n"
+              "+8:down\n+8:down\n+8:cross\n+8:cross\n+150:shot=home.png\n"
               "+10:select\n+40:select\n+60:shot=recent.png\n+10:quit\n",
               config=home)
     S.clean(r)
@@ -1586,7 +1586,7 @@ def t_cpufix(S):
              "serial port with no cable reads as unplugged",
              "direct boot starts on scanline 126"]
     extra = {"roms/gbadhoc-cpufix.gba": open(rom, "rb").read()}
-    r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(6, wait=20),
+    r = S.run("cpufix", "120:shot=cpufix.png\n" + menu_pick(7, wait=20),
               autoboot="gbadhoc-cpufix.gba", extra=extra)
     S.clean(r)
     p = os.path.join(r.root, "roms", "gbadhoc-cpufix.sav")
@@ -1655,7 +1655,7 @@ def t_chain(S):
     old = resource.getrlimit(resource.RLIMIT_STACK)
     try:
         resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, old[1]))
-        r = S.run("chain", "120:shot=chain.png\n" + menu_pick(6, wait=20),
+        r = S.run("chain", "120:shot=chain.png\n" + menu_pick(7, wait=20),
                   autoboot="gbadhoc-chain.gba", extra=extra)
     finally:
         resource.setrlimit(resource.RLIMIT_STACK, old)
@@ -1705,7 +1705,7 @@ def t_smc(S):
         env = {"GPSP_SMC_PARTIAL": mode, "GPSP_SMC_TRACE": trace}
         if mode == "1":
             env["GPSP_SMC_VERIFY"] = "1"
-        r = S.run("smc%s" % mode, "120:shot=smc.png\n" + menu_pick(6, wait=20),
+        r = S.run("smc%s" % mode, "120:shot=smc.png\n" + menu_pick(7, wait=20),
                   autoboot="gbadhoc-smc.gba", extra=extra, env=env)
         S.clean(r)
         p = os.path.join(r.root, "roms", "gbadhoc-smc.sav")
@@ -3511,6 +3511,334 @@ def t_preview(S):
                                             "gbadhoc-scroll.clip")) and
             not r.evt("home_clip"),
             "previews off: nothing recorded, nothing played")
+
+
+# ---- the update check and "Save clip" (2.0) -------------------------------------
+
+class UpdateServer:
+    """A fake of GitHub's releases API on the loopback (never the real one).
+    Each path answers one way; every request is recorded (path, headers)."""
+
+    BODIES = {
+        "newer": b'{"url":"u","author":{"login":"x","tag_name":"v9.9"},"tag_name":"v2.1",'
+                 b'"name":"VitAdhoc 2.1","draft":false,"prerelease":false,'
+                 b'"assets":[{"name":"VitAdhoc.vpk"}],"body":"notes } ]"}',
+        "same": b'{"tag_name":"v2.0.0","draft":false,"prerelease":false}',
+        "same2": b'{"tag_name":"2.0","draft":false,"prerelease":false}',
+        "older": b'{"tag_name":"v1.4","draft":false,"prerelease":false}',
+        "garbage": b"<html><body>Sign in to the Wi-Fi</body></html>",
+        "prerelease": b'{"tag_name":"v9.0","draft":false,"prerelease":true}',
+        "draft": b'{"tag_name":"v9.0","draft":true,"prerelease":false}',
+        "notag": b'{"message":"Not Found","status":"404"}',
+        "weird": b'{"tag_name":"nightly","draft":false,"prerelease":false}',
+    }
+
+    def __init__(self):
+        import http.server
+        import threading
+        outer = self
+        self.requests = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, fmt, *args):
+                pass
+
+            def do_GET(self):
+                outer.requests.append((self.path, dict(self.headers)))
+                what = self.path.strip("/").split("/")[0]
+                if what == "slow":                  # never in time
+                    time.sleep(4)
+                    what = "newer"
+                if what == "refused404":
+                    self.send_response(404)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                body = outer.BODIES.get(what, outer.BODIES["garbage"])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.th = threading.Thread(target=self.srv.serve_forever, daemon=True)
+        self.th.start()
+
+    def url(self, what):
+        return "http://127.0.0.1:%d/%s" % (self.srv.server_port, what)
+
+    def close(self):
+        self.srv.shutdown()
+
+
+# the console's clock for the update tests, and a day
+NOW = 1800000000
+UPD_HOME = {"ui_home": 1, "last_rom": "gbadhoc-test.gba"}
+# the home screen idle for ~2 s starts the check; then enough frames for the
+# answer (the request runs on a thread of its own, in real time)
+UPD_WAIT = "60:shot=home.png\n+260:shot=later.png\n+10:quit\n"
+
+
+def upd_run(S, name, srv, what, config=None, files=None, script=UPD_WAIT,
+            timeout=0):
+    ini = {"update_url": srv.url(what)}
+    if timeout:
+        ini["update_timeout"] = timeout
+    cfg = dict(UPD_HOME)
+    cfg.update(config or {})
+    return S.run(name, script, config=cfg, vita_ini=ini, extra=files,
+                 env={"VITADHOC_FAKE_TIME": str(NOW)})
+
+
+def t_update_check(S):
+    """Settings > About > Check for updates: a daily GET of GitHub's latest release
+    (here a fake on the loopback), the answer compared with this version, one
+    small notice on the home screen for a newer one, nothing for the rest."""
+    srv = UpdateServer()
+    try:
+        # a newer release: asked once, the notice said once, remembered
+        r = upd_run(S, "update_newer", srv, "newer")
+        S.clean(r)
+        S.check(len(srv.requests) == 1 and srv.requests[0][0] == "/newer",
+                "the home screen idle: one request (%s)" % [q[0] for q in srv.requests])
+        h = {k.lower(): v for k, v in srv.requests[0][1].items()} if srv.requests else {}
+        S.check(h.get("user-agent") == "VitAdhoc/2.0.0",
+                "the User-Agent is VitAdhoc/<version> and nothing says who the player is "
+                "(%s)" % h.get("user-agent"))
+        S.check(not ({"cookie", "authorization", "x-device-id"} & set(h)) and
+                set(h) <= {"host", "user-agent", "accept", "accept-encoding", "connection"},
+                "no cookie, account or id: only the client's standard headers (%s)" % sorted(h))
+        S.check(r.has(r"^EVT update_check newer latest=2\.1 mine=2\.0\.0$"),
+                "2.1 is newer than 2.0.0")
+        toast = r.evt("update_toast")
+        S.check(len(toast) == 1 and toast[0]["by_hand"] == "0" and
+                toast[0]["text"] == '"VitAdhoc 2.1 is out: get it with the CBOC Vita Installer '
+                                    'or from GitHub"',
+                "the notice names the version and the two ways to get it (%s)" %
+                [t["_"] for t in toast])
+        st = open(os.path.join(r.root, "update.txt")).read()
+        m = re.fullmatch(r"checked=(\d+)\nlatest=2\.1\n", st)
+        S.check(m is not None and NOW <= int(m.group(1)) <= NOW + 60,
+                "update.txt keeps the time of the try and the newer version (%r)" % st)
+        S.check(r.shot("later.png").getbbox() is not None, "the home screen is there")
+        # the same day again: no second request, the notice from memory
+        n0 = len(srv.requests)
+        r = upd_run(S, "update_again", srv, "newer", files={"update.txt": st},
+                    config=None)
+        S.clean(r)
+        S.check(len(srv.requests) == n0 and not r.evt("update_check")[1:2] and
+                not r.has(r"update_check start"),
+                "not twice in a day (requests %d -> %d)" % (n0, len(srv.requests)))
+        S.check(len(r.evt("update_toast")) == 1,
+                "...but a newer version known from before is still said, once")
+        # a day on: asked again
+        old = "checked=%d\nlatest=\n" % (NOW - 86400 - 5)
+        r = upd_run(S, "update_dayafter", srv, "same", files={"update.txt": old})
+        S.clean(r)
+        S.check(len(srv.requests) == n0 + 1 and
+                r.has(r"^EVT update_check current latest=2\.0\.0 mine=2\.0\.0$") and
+                not r.evt("update_toast"),
+                "a day later it asks again; the same version says nothing")
+        n1 = len(srv.requests)
+        # an hour on: not yet
+        r = upd_run(S, "update_hour", srv, "newer",
+                    files={"update.txt": "checked=%d\nlatest=\n" % (NOW - 3600)})
+        S.clean(r)
+        S.check(len(srv.requests) == n1, "an hour after the last try: no request")
+        # the clock went back before the last try: asks (and does not wait for ever)
+        r = upd_run(S, "update_clockback", srv, "same",
+                    files={"update.txt": "checked=%d\nlatest=\n" % (NOW + 5 * 86400)})
+        S.clean(r)
+        S.check(len(srv.requests) == n1 + 1, "a clock set back does not stop the check")
+        n2 = len(srv.requests)
+
+        # each kind of answer
+        for what, expect in (("same", "current"), ("same2", "current"),
+                             ("older", "current")):
+            r = upd_run(S, "update_" + what, srv, what)
+            S.clean(r)
+            S.check(r.has(r"^EVT update_check %s " % expect) and not r.evt("update_toast"),
+                    "%s: not an update, nothing said (%s)" %
+                    (what, [e["_"] for e in r.evt("update_check")]))
+        for what in ("garbage", "prerelease", "draft", "notag", "weird", "refused404"):
+            r = upd_run(S, "update_" + what, srv, what)
+            S.clean(r)
+            S.check(r.has(r"^EVT update_check (unusable_answer|failed )") and
+                    not r.evt("update_toast") and not r.has(r"update_check newer"),
+                    "%s: no update, nothing said, only the log (%s)" %
+                    (what, [e["_"] for e in r.evt("update_check")][-1:]))
+            S.check(not r.bad_lines(), "%s: the log is clean" % what)
+        # an answer that takes too long: given up, silent
+        r = upd_run(S, "update_slow", srv, "slow", timeout=500,
+                    script="60:shot=home.png\n+400:shot=later.png\n+10:quit\n")
+        S.clean(r)
+        S.check(r.has(r"^EVT update_check failed err=TIMEOUT") and not r.evt("update_toast"),
+                "an answer that does not come: a timeout, logged, silent (%s)" %
+                [e["_"] for e in r.evt("update_check")])
+        # nobody listening
+        dead = UpdateServer()
+        deadurl = dead.url("newer")
+        dead.close()
+        r = S.run("update_down", UPD_WAIT, config=UPD_HOME,
+                  vita_ini={"update_url": deadurl, "update_timeout": 500},
+                  env={"VITADHOC_FAKE_TIME": str(NOW)})
+        S.clean(r)
+        S.check(r.has(r"^EVT update_check failed err=(CONNECT|TIMEOUT) ") and not r.evt("update_toast"),
+                "a server that is not there: logged, silent")
+
+        # Off: no request at all
+        n3 = len(srv.requests)
+        r = upd_run(S, "update_off", srv, "newer", config={"update_check": 0})
+        S.clean(r)
+        S.check(len(srv.requests) == n3 and not r.has(r"update_check start") and
+                not r.evt("update_toast"), "Off: nothing is asked and nothing is said")
+        S.check(re.search(r"^update_check = 0$", open(os.path.join(r.root, "config.ini")).read(), re.M),
+                "...and the choice is in config.ini")
+        # the default is Daily (no key in config.ini), the key is not written for it
+        r = upd_run(S, "update_default", srv, "same", config={"update_check": None})
+        S.clean(r)
+        S.check(r.has(r"^EVT update_check begin daily=1") and
+                "update_check" not in open(os.path.join(r.root, "config.ini")).read(),
+                "first run: Daily, and config.ini is not touched for it")
+
+        # Settings > About > Check for updates: the row, Left/Right, X
+        row = ("60:start\n+30:down\n" + "+8:down\n" * 18 + "+10:shot=row.png\n+4:left\n+10:shot=off.png\n"
+               "+4:right\n+10:shot=daily.png\n+4:cross\n+100:shot=asked.png\n+10:circle\n+30:quit\n")
+        n4 = len(srv.requests)
+        r = upd_run(S, "update_row", srv, "same", script=row,
+                    config={"update_check": 1}, files={"update.txt": "checked=%d\nlatest=\n" % NOW})
+        S.clean(r)
+        flips = r.evt("update_check_setting")
+        S.check([f["on"] for f in flips] == ["0", "1"],
+                "Left switches the row Off, Right back to Daily (%s)" % [f["_"] for f in flips])
+        toasts = [t["text"] for t in r.evt("update_toast")]
+        S.check('"VitAdhoc is up to date"' in toasts and len(srv.requests) == n4 + 1,
+                "X on the row asks now, and says the answer: up to date (%s)" % toasts)
+        S.picture(r, "row.png")
+        S.picture(r, "off.png")
+        S.picture(r, "asked.png")
+        # ...and X with a newer one out says which
+        r = upd_run(S, "update_row_newer", srv, "newer", script=row,
+                    config={"update_check": 0}, files={"update.txt": "checked=%d\nlatest=\n" % NOW})
+        S.clean(r)
+        toasts = [t["text"] for t in r.evt("update_toast")]
+        S.check(any("VitAdhoc 2.1 is out" in t for t in toasts),
+                "X says VitAdhoc 2.1 is out even with the daily check off (%s)" % toasts)
+    finally:
+        srv.close()
+
+
+def t_update_no_network(S):
+    """The update check asks nobody without a server of its own on the twin, and
+    never reaches the real GitHub."""
+    r = S.run("update_none", UPD_WAIT, config=UPD_HOME,
+              env={"VITADHOC_FAKE_TIME": str(NOW)})
+    S.clean(r)
+    S.check(r.has(r"^EVT update_check begin daily=1 url=github$") and
+            not r.has(r"update_check start") and not os.path.exists(os.path.join(r.root, "update.txt")),
+            "no update_url: the twin makes no request at all")
+
+
+def pil_apng(path):
+    """An animated PNG -> (size, [(RGB bytes, duration ms)]); PIL composes the
+    sub-rectangles of the frames."""
+    im = Image.open(path)
+    out = []
+    for i in range(getattr(im, "n_frames", 1)):
+        im.seek(i)
+        out.append((im.convert("RGB").tobytes(), im.info.get("duration")))
+    return im.size, out, getattr(im, "is_animated", False)
+
+
+def rgb565_bytes(px):
+    out = bytearray()
+    for v in px:
+        r, g, b = v >> 11, (v >> 5) & 63, v & 31
+        out += bytes(((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)))
+    return bytes(out)
+
+
+def t_clip_export(S):
+    """Save clip (in-game menu): the last ten seconds of the game as an
+    animated PNG in clips/, at the game's size, the frames those the previews keep."""
+    rom = os.path.join(HERE, "testrom", "gbadhoc-scroll.gba")
+    if not os.path.exists(rom):
+        S.note("no testrom/gbadhoc-scroll.gba (make -C testrom scroll): skipped")
+        return
+    extra = {"roms/gbadhoc-scroll.gba": open(rom, "rb").read()}
+    cfg = {"ui_home": 1, "last_rom": "gbadhoc-scroll.gba"}
+    # walk right, back left, stand a second, then the menu: Save clip, wait
+    # for the toast, and leave the game (which writes the preview clip: the
+    # same ten seconds, the other way to get at them)
+    script = ("100:right:180\n+20:left:120\n+60:shot=game.png\n" +
+              menu_pick(5, wait=30) + "+300:shot=saved.png\n" +
+              "+10:down\n+8:cross\n+8:cross\n+60:quit\n")
+    r = S.run("clip_export", script, config=cfg, autoboot="gbadhoc-scroll.gba",
+              extra=extra, env={"VITADHOC_FAKE_TIME": str(NOW)})
+    S.clean(r)
+    st = r.evt("clip_export")
+    S.check(st and st[0].get("rc") == "0" and "start" in st[0]["_"],
+            "Save clip starts (log: %s)" % [e["_"] for e in st])
+    done = [e for e in st if "done" in e["_"]]
+    S.check(done and done[0].get("ok") == "1", "...and ends well (%s)" % [e["_"] for e in done])
+    clips = sorted(glob.glob(os.path.join(r.root, "clips", "gbadhoc-scroll-*.png")))
+    S.check(len(clips) == 1 and not glob.glob(os.path.join(r.root, "clips", "*.tmp")),
+            "clips/ has gbadhoc-scroll-<date>.png and no half file (%s)" %
+            [os.path.basename(c) for c in clips])
+    S.check(re.fullmatch(r"gbadhoc-scroll-2027\d{4}-\d{6}\.png",
+                         os.path.basename(clips[0]) if clips else ""),
+            "the name has the date and time")
+    S.check(r.shot("saved.png").getbbox() is not None, "the menu is still up after it")
+    if not clips:
+        return
+    size, frames, animated = pil_apng(clips[0])
+    S.check(size == (240, 160) and animated and len(frames) > 60,
+            "an animated PNG at the game's own 240 x 160, %d frames" % len(frames))
+    # the preview clip written when the game was left holds the same frames
+    c = read_clip(os.path.join(r.root, "clips", "gbadhoc-scroll.clip"))
+    S.check(c is not None, "the game's preview clip was written too")
+    if c:
+        w, h, us, fr = c
+        pix, info = decode_clip(w, h, fr)
+        S.check(len(pix) == len(frames),
+                "the same frames as the preview's clip (%d and %d)" % (len(frames), len(pix)))
+        same = len(pix) == len(frames) and all(
+            rgb565_bytes(p) == f[0] for p, f in zip(pix, frames))
+        S.check(same, "every frame is exactly the pixels the previews keep")
+        if len(pix) == len(frames):
+            # a frame shows for the NEXT frame's ticks; times in whole ms from the sum
+            want, t = [], 0
+            for k in range(len(info)):
+                nxt = info[k + 1][1] if k + 1 < len(info) else info[k][1]
+                a = t
+                t += nxt * us
+                want.append((t + 500) // 1000 - (a + 500) // 1000)
+            got = [f[1] for f in frames]
+            S.check(got == want and all(g > 0 for g in got),
+                    "each frame lasts what it was on screen (%s...)" % got[:6])
+            total = sum(got)
+            S.check(2500 <= total <= 10200, "about as long as it was played, 3 to 10 s (%d ms)" % total)
+        S.check(frames[0][0] != frames[len(frames) // 3][0], "it moves")
+    S.picture(r, "saved.png")
+
+    # previews off: nothing is recorded, so there is no clip to save
+    r = S.run("clip_export_off", script, config=dict(cfg, previews=0),
+              autoboot="gbadhoc-scroll.gba", extra=extra)
+    S.clean(r)
+    st = r.evt("clip_export")
+    S.check(st and st[0].get("rc") == "1" and not glob.glob(os.path.join(r.root, "clips", "*.png")),
+            "previews off: Save clip says there is nothing yet, writes nothing (%s)" %
+            [e["_"] for e in st])
+    # a game just started: too little to save
+    r = S.run("clip_export_short", "60:shot=game.png\n" + menu_pick(5, wait=20) +
+              "+60:shot=saved.png\n+10:quit\n", config=cfg, autoboot="gbadhoc-scroll.gba", extra=extra)
+    S.clean(r)
+    st = r.evt("clip_export")
+    S.check(st and st[0].get("rc") == "1" and not glob.glob(os.path.join(r.root, "clips", "*.png")),
+            "a game of a second: no clip, no file (%s)" % [e["_"] for e in st])
+    S.picture(r, "saved.png")
+
 
 
 def t_gameinfo(S):
@@ -5360,7 +5688,7 @@ def _t_ra(S, srv):
     del srv.calls[:]
     r = S.run("ra_play", "60:cross\n+400:shot=loaded.png\n+10:cross:10\n"
               "+40:shot=earned.png\n+160:shot=after.png\n" + menu_pick(4) +
-              set_up(10) + "+10:cross\n+20:shot=list.png\n"
+              set_up(11) + "+10:cross\n+20:shot=list.png\n"
               "+10:circle\n+10:circle\n+10:circle\n+60:quit\n",
               vita_ini=ini, extra=keep)
     S.clean(r)
@@ -5437,7 +5765,7 @@ def t_ra_indicators(S):
         S.picture(r, "ping.png")
 
         r = S.run("ra_ind_off", "60:cross\n+400:shot=before.png\n" + menu_pick(4) +
-                  set_up(9) + "+10:cross\n+20:shot=row_off.png\n+10:circle\n+10:circle\n"
+                  set_up(10) + "+10:cross\n+20:shot=row_off.png\n+10:circle\n+10:circle\n"
                   "+10:circle\n+30:cross:10\n+60:shot=off.png\n+10:quit\n",
                   vita_ini=ini, extra=keep)
         S.clean(r)
@@ -8741,7 +9069,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("ambient_bars", t_ambient_bars), ("sensors", t_sensors),
          ("game_look", t_game_look), ("recent", t_recent), ("resume", t_resume),
          ("patch", t_patch), ("sgb", t_sgb), ("ra", t_ra),
-         ("preview", t_preview),
+         ("preview", t_preview), ("update_check", t_update_check), ("update_no_network", t_update_no_network), ("clip_export", t_clip_export),
          ("gameinfo", t_gameinfo), ("art_progress", t_art_progress), ("art_settings", t_art_settings),
          ("title_bg", t_title_bg), ("cover_menu", t_cover_menu),
          ("cover_inbox", t_cover_inbox), ("fullspeed", t_fullspeed), ("smooth_gov", t_smooth_gov),

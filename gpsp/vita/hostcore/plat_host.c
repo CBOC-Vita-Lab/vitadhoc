@@ -1324,6 +1324,50 @@ int plat_net_join(uint32_t timeout_us)
    return 1;
 }
 
+static pthread_t job_thread;
+static int job_on;
+static void (*job_fn)(void *);
+static void *job_arg;
+static volatile int job_ended;
+
+static void *job_main_thread(void *p)
+{
+   (void)p;
+   job_fn(job_arg);
+   job_ended = 1;
+   return NULL;
+}
+
+int plat_job_start(void (*fn)(void *), void *arg)
+{
+   if (job_on && !plat_job_join(1000))
+      return -1;
+   job_fn = fn;
+   job_arg = arg;
+   job_ended = 0;
+   if (pthread_create(&job_thread, NULL, job_main_thread, NULL) != 0)
+      return -1;
+   job_on = 1;
+   return 0;
+}
+
+int plat_job_join(uint32_t timeout_us)
+{
+   uint32_t waited = 0;
+   if (!job_on)
+      return 1;
+   while (!job_ended && waited < timeout_us)
+   {
+      usleep(10000);
+      waited += 10000;
+   }
+   if (!job_ended)
+      return 0;                          /* still running: left as it is */
+   pthread_join(job_thread, NULL);
+   job_on = 0;
+   return 1;
+}
+
 void plat_thread_sleep_us(uint32_t us)
 {
    usleep(us);

@@ -17,8 +17,9 @@ given.
 
 ## The Trusted Roots
 
-Only these eight roots are compiled in (`np_https_roots.h`), the ones a
-Cloudflare-hosted service can chain to:
+Only these twelve roots are compiled in (`np_https_roots.h`): the first eight are
+the ones a Cloudflare-hosted service can chain to, the last four are the update
+check's (GitHub):
 
 | Root | Who serves chains to it |
 |---|---|
@@ -26,6 +27,26 @@ Cloudflare-hosted service can chain to:
 | ISRG Root X1, ISRG Root X2 | Let's Encrypt (RSA, ECDSA) |
 | SSL.com TLS ECC / RSA Root CA 2022 | SSL.com, behind Cloudflare's "TLS Issuing" CAs |
 | SSL.com Root Certification Authority ECC / RSA | SSL.com's 2016 roots (Transit CA R2) |
+| USERTrust ECC / RSA Certification Authority | Sectigo: what its newer roots are cross-signed by |
+| Sectigo Public Server Authentication Root E46 / R46 | Sectigo's own roots for the "DV E36 / R36" intermediates |
+
+The last four are for `api.github.com` (the update check, `update_check.h`): its
+certificates are "Sectigo Public Server Authentication CA DV E36" (ECDSA) and
+"DV R36" (RSA), as the public certificate-transparency records of
+`*.github.com` showed in November 2026. A server may send the chain ending in
+the cross-signed Sectigo root (which the USERTrust roots anchor) or in the
+Sectigo root itself, so both are trusted. The DER files are the ones of Ubuntu
+24.04's `ca-certificates` package 20260816ubuntu0.24.04.2 (Mozilla's root
+store), and the generator was run with `--pin` for each of these SHA-256
+values (they are the ones in common circulation; they were not checked against
+the CAs' own pages from here, which is a step for the release): USERTrust ECC
+`4ff460d5 4b9c86da bfbcfc57 12e0400d 2bed3fbc 4d4fbdaa 86e06adc d2a9ad7a`,
+USERTrust RSA `e793c9b0 2fd8aa13 e21c3122 8accb081 19643b74 9c898964 b1746d46 c3d4cbd2`,
+Sectigo E46 `c90f26f0 fb1b4018 b2222751 9b5ca2b5 3e2ca5b3 be5cf18e fe1bef47 380c5383`,
+Sectigo R46 `7bb647a6 2aeeac88 bf257aa5 22d01ffe a395e0ab 45c73f93 f65654ec 38f25a06`.
+The first eight are unchanged byte for byte (the header regenerates with the same
+day, 2026-11-15, and the same bytes before the new entries). Not tested against
+GitHub itself from here: only a public record of its chain, no connection.
 
 Each root is embedded as DER with its SHA-256. The client checks every hash
 again at start-up, so a damaged header fails closed (no connection) rather than

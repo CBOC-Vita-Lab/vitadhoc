@@ -683,6 +683,53 @@ int plat_net_join(uint32_t timeout_us)
    return 1;
 }
 
+static SceUID g_job_thid = -1;
+static void (*g_job_fn)(void *);
+static void *g_job_arg;
+
+static int job_entry(SceSize args, void *argp)
+{
+   (void)args; (void)argp;
+   g_job_fn(g_job_arg);
+   return 0;
+}
+
+int plat_job_start(void (*fn)(void *), void *arg)
+{
+   if (g_job_thid >= 0)
+   {
+      /* a finished one may still be there to be collected */
+      if (!plat_job_join(1000))
+         return -1;
+   }
+   g_job_fn = fn;
+   g_job_arg = arg;
+   /* 128 KiB: the deflate's tables are on the heap, its frames are small */
+   g_job_thid = sceKernelCreateThread("gbadhoc_job", job_entry, PRIO_BG,
+                                      0x20000, 0, 0, NULL);
+   if (g_job_thid < 0 || sceKernelStartThread(g_job_thid, 0, NULL) < 0)
+   {
+      if (g_job_thid >= 0)
+         sceKernelDeleteThread(g_job_thid);
+      g_job_thid = -1;
+      return -1;
+   }
+   plat_thread_watch("job", g_job_thid);
+   return 0;
+}
+
+int plat_job_join(uint32_t timeout_us)
+{
+   SceUInt tmo = timeout_us;
+   if (g_job_thid < 0)
+      return 1;
+   if (sceKernelWaitThreadEnd(g_job_thid, NULL, &tmo) < 0)
+      return 0;
+   sceKernelDeleteThread(g_job_thid);
+   g_job_thid = -1;
+   return 1;
+}
+
 void plat_thread_sleep_us(uint32_t us)
 {
    sceKernelDelayThread(us);

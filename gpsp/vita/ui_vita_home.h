@@ -1845,6 +1845,7 @@ static void hm_art_arrived(const char *base, int n)
 static void hm_art_poll(const char *rom_dir, int n, int idle)
 {
    char name[256], line[200];
+   ui_host_home_idle(idle);          /* the update check (update_check.h) */
    hm_art_hand_over(rom_dir, n);
    /* Keep visible textures until navigation settles. The worker's bounded
     * completion queue coalesces overflow and never waits for the UI. */

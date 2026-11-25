@@ -671,7 +671,8 @@ Engineering detail behind the [What's New](../CHANGELOG.md) list.
   name, dates, known authority). Any authority in the console's store is
   therefore accepted for retroachievements.org, and the protocol versions and
   cipher suites are the firmware's. The room service is different: it uses the
-  vendored Mbed TLS with eight pinned roots, a clock floor and mandatory
+  vendored Mbed TLS with twelve pinned roots (eight for the room service, four
+  Sectigo ones for the update check), a clock floor and mandatory
   verification (`nethttps/`, below). The RetroAchievements password is sent
   once per sign-in over the console's connection; afterwards a token. Moving
   `ra_http.c` onto `nethttps/` is a possible later change (not done in 2.0). The game's hash is the MD5 of the whole file (patched
@@ -1367,8 +1368,8 @@ host-scoped WAF rule blocks every other path on the host.
 certificates are ECDSA and `sceSsl` gives no control over the TLS version or
 the ciphers. The project's own client (vendored from Galaxy and Strikers) uses
 Mbed TLS 3.6.8 (TLS 1.2 and 1.3, certificate verification always on, no switch to
-turn it off), eight compiled-in roots (Google Trust Services R1 and R4, ISRG X1
-and X2, four SSL.com), its own worker thread, per-stage time limits and
+turn it off), twelve compiled-in roots (Google Trust Services R1 and R4, ISRG X1
+and X2, four SSL.com, and for the update check USERTrust ECC and RSA and Sectigo E46 and R46), its own worker thread, per-stage time limits and
 answers of at most 64 KiB. A console clock earlier than the build's floor is
 reported as "date is wrong" and not as a certificate fault (a reset Vita reads
 2011). It sends the app's own User-Agent and no custom headers; `?v=<version>`

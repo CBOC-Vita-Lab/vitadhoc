@@ -51,6 +51,10 @@ APP_SRCS      += local_vita.c
 APP_SRCS      += rewind_vita.c
 # the game list's previews: the last ten seconds played (clip_vita.h)
 APP_SRCS      += clip_vita.c
+# "Save clip": the last ten seconds as an animated PNG (clip_export.h)
+APP_SRCS      += clip_export.c apng_write.c
+# the update check (update_check.h): asks GitHub's releases API (the HTTPS client is link.mk's)
+APP_SRCS      += update_check.c update_ver.c
 APP_SRCS      += preview_vita.c
 APP_SRCS      += menu_diag.c
 APP_SRCS      += menu_load.c menu_files.c

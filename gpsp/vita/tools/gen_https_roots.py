@@ -11,11 +11,12 @@ has it), --new-isrg-roots (also ISRG Root YE / YR, from files ISRG_Root_YE.pem /
 CERT_DIRs after checking their fingerprints: docs/ONLINE-TLS.md, "Adding ISRG Root YE / YR"), and --pin STEM=SHA256 (refuse to write
 the header unless that root's DER has that SHA-256).
 
-The roots are the ones a Cloudflare-hosted service can chain to today (documented in docs/ONLINE-TLS.md):
+The roots are the ones a Cloudflare-hosted service can chain to today, and Sectigo's for GitHub (documented in docs/ONLINE-TLS.md):
   Google Trust Services (WR*/WE* intermediates):  GTS Root R1 (RSA), GTS Root R4 (ECDSA P-384)
   Let's Encrypt:                                  ISRG Root X1 (RSA), ISRG Root X2 (ECDSA P-384)
   SSL.com, behind "Cloudflare TLS Issuing" CAs:   SSL.com TLS ECC / RSA Root CA 2022, SSL.com Root Certification Authority ECC / RSA
-Nothing else: no DigiCert / Baltimore (Cloudflare-managed certificates do not use them), no system store.
+  Sectigo (api.github.com, the update check):    USERTrust ECC / RSA, Sectigo Public Server Authentication Root E46 / R46
+Nothing else: no DigiCert / Baltimore (neither Cloudflare nor GitHub's current certificates use them), no system store.
 They are read from a PEM directory (default /etc/ssl/certs, the ca-certificates package) and embedded as DER with their
 SHA-256, which the client checks again at start-up (a corrupted header fails closed). The header also records the day it was
 generated: the client treats a console clock earlier than that day as "set your clock", not as a certificate fault.
@@ -39,6 +40,13 @@ ROOTS = [
     ("SSL.com_TLS_RSA_Root_CA_2022", "SSL.com via Cloudflare TLS Issuing RSA CA"),
     ("SSL.com_Root_Certification_Authority_ECC", "SSL.com, 2016 ECC root (Transit ECC CA R2)"),
     ("SSL.com_Root_Certification_Authority_RSA", "SSL.com, 2016 RSA root (Transit RSA CA R2)"),
+    # The update check (gpsp/vita/update_check.c) asks api.github.com, whose certificates are Sectigo's: "Sectigo Public Server
+    # Authentication CA DV E36 / R36" (ECDSA / RSA), under the Sectigo roots E46 / R46, which are also served cross-signed by the
+    # USERTrust roots.  All four, so that either chain a server may send ends in a root listed here.
+    ("USERTrust_ECC_Certification_Authority", "Sectigo, via USERTrust (cross-signed Sectigo E46); api.github.com"),
+    ("USERTrust_RSA_Certification_Authority", "Sectigo, via USERTrust (cross-signed Sectigo R46); api.github.com"),
+    ("Sectigo_Public_Server_Authentication_Root_E46", "Sectigo, ECDSA chains (DV E36); api.github.com"),
+    ("Sectigo_Public_Server_Authentication_Root_R46", "Sectigo, RSA chains (DV R36); api.github.com"),
 ]
 # Let's Encrypt's new roots (2026), cross-signed by ISRG Root X2 / X1 while those cross-signs are served. Not in the header until a
 # person provides the PEMs and their fingerprints are checked (docs/ONLINE-TLS.md); never typed in by hand.

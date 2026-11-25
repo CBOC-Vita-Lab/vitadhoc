@@ -116,6 +116,19 @@ void        app_steady_options(void); /* Steady pacing on/off (main_vita.c) */
 void        app_handoff_options(void); /* Smooth hand-over on/off (main_vita.c) */
 const char *ui_host_core4_status(void);   /* "in use" / "not available" / "off" (main_vita.c: core4_status(), handoff_glue.h) */
 void        app_core4_options(void);   /* Fourth core Auto/Off changed (main_vita.c; g_pcfg.core4_off) */
+/* Settings > About > Check for updates (update_check.h): the row changed
+ * (g_pcfg.update_check, 1 = Daily, 0 = Off); X on it checks now and the
+ * answer is a toast (main_vita.c). */
+void        app_update_options(void);
+void        ui_host_update_now(void);
+/* The home screen, once a frame, with the frames it has been idle for: the
+ * day's check starts here (main_vita.c). */
+void        ui_host_home_idle(int idle);
+/* The in-game menu's Save clip (clip_export.h): the last ten seconds of the
+ * game as an animated PNG.  Returns what clip_export_start does (0 started,
+ * 1 nothing recorded yet, 2 one is already being saved, -1 it could not);
+ * the end is a toast from main_vita.c. */
+int         ui_host_clip_save(void);
 void        app_quick_options(void);   /* Quick response changed (main_vita.c; g_pcfg.quick_response, g_pgame.quick) */
 int         app_quick_supported(int console);   /* the console runs ahead (GB, GBC, NES, WonderSwan) */
 /* "Auto (xBRZ 3x, eased)" while the look governor eased the game, else NULL */

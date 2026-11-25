@@ -117,9 +117,19 @@ std::string SaveReport::text(bool en) const
 	return state_status_text(status, en);
 }
 
-std::string stamp_text(int64_t t)
+/* "3 Oct 2026": the order is the language's own (states.date_order: dmy, mdy or ymd) */
+static std::string date_text(int y, int m, int d)
 {
 	static const char *const mon[12] = { "states.jan", "states.feb", "states.mar", "states.apr", "states.may", "states.jun", "states.jul", "states.aug", "states.sep", "states.oct", "states.nov", "states.dec" };
+	const char *o = tr("states.date_order");
+	const char *mn = tr(mon[m - 1]);
+	if (!strcmp(o, "mdy")) return strf("%s %d, %d", mn, d, y);
+	if (!strcmp(o, "ymd")) return strf("%d %s %d", y, mn, d);
+	return strf("%d %s %d", d, mn, y);
+}
+
+std::string stamp_text(int64_t t)
+{
 	if (t <= 0) return std::string();
 	time_t tt = (time_t) t;
 	struct tm tmv;
@@ -133,7 +143,7 @@ std::string stamp_text(int64_t t)
 		int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
 		int64_t d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
 		if (m <= 2) y++;
-		return strf("%d %s %d, %02d:%02d", (int) d, tr(mon[m - 1]), (int) y, (int) (rem / 3600), (int) (rem % 3600 / 60));
+		return strf("%s, %02d:%02d", date_text((int) y, (int) m, (int) d).c_str(), (int) (rem / 3600), (int) (rem % 3600 / 60));
 	}
 #endif
 #ifdef _WIN32
@@ -142,7 +152,7 @@ std::string stamp_text(int64_t t)
 	if (!localtime_r(&tt, &tmv)) return std::string();
 #endif
 	if (tmv.tm_mon < 0 || tmv.tm_mon > 11) return std::string();
-	return strf("%d %s %d, %02d:%02d", tmv.tm_mday, tr(mon[tmv.tm_mon]), tmv.tm_year + 1900, tmv.tm_hour, tmv.tm_min);
+	return strf("%s, %02d:%02d", date_text(tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday).c_str(), tmv.tm_hour, tmv.tm_min);
 }
 
 /* ---- pictures ----------------------------------------------------------- */

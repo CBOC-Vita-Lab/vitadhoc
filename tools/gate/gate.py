@@ -785,6 +785,10 @@ class Inputs:
         except OSError:
             self.run_memo[rel] = "missing"
             return "missing"
+        if path.is_dir():
+            # a tracked link to a folder (assets/lang): its files are listed on their own
+            self.run_memo[rel] = "dir"
+            return "dir"
         ent = self.memo.get(rel)
         if ent and ent[0] == st.st_size and ent[1] == st.st_mtime_ns:
             d = ent[2]

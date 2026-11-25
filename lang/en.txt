@@ -832,6 +832,10 @@ local.write_incomplete	write incomplete
 local.your_game	your game
 # context: local_vita.c, link_local_present
 local.your_game_playing	your game  (playing)
+# context: on-screen text
+look.auto	Auto (%s)
+# context: on-screen text
+look.auto_eased	Auto (%s, eased)
 # context: snprintf in ui_vita_menu.h, cc_says
 menu.back_to_the_game	Back to the game
 # context: ui_vita_menu.h
@@ -1552,6 +1556,32 @@ ra.of_achievements	%u of %u achievements%s
 ra.pts	%u / %u   %u / %u pts
 # context: snprintf in ra_vita.c, on_event
 ra.rank_of	Rank %u of %u
+# context: on-screen text
+search.1_byte	1 byte
+# context: on-screen text
+search.2_bytes	2 bytes
+# context: on-screen text
+search.2_bytes_any_address	2 bytes, any address
+# context: on-screen text
+search.4_bytes	4 bytes
+# context: on-screen text
+search.4_bytes_any_address	4 bytes, any address
+# context: on-screen text
+search.changed	Changed
+# context: on-screen text
+search.decreased	Decreased
+# context: on-screen text
+search.equal_to	Equal to
+# context: on-screen text
+search.greater_than	Greater than
+# context: on-screen text
+search.increased	Increased
+# context: on-screen text
+search.less_than	Less than
+# context: on-screen text
+search.not_equal_to	Not equal to
+# context: on-screen text
+search.unchanged	Unchanged
 # context: ui_psp.c, ff_step_now
 settings.a_and_b_buttons	A and B buttons
 # context: ui_psp.c, ff_step_now
@@ -2856,6 +2886,8 @@ ui.copy_them_to	Copy them to %s
 ui.copy_them_to_2	Copy them to:
 # context: ui_psp.c, ctl_fixed_row
 ui.counted_in_game_frames_so_fast	Counted in game frames, so fast-forward speeds it up too.
+# context: the order of a date such as "3 Oct 2026" (ui.jan..ui.dec are the month names). Exactly one of: dmy (day month year), mdy (month day, year: "Oct 3, 2026"), ymd (year month day: "2026 10 3"). Not shown; do not write anything else.
+ui.date_order	dmy
 # context: ui_psp.c, ov_stamp
 ui.dec	Dec
 # context: snprintf in ui_psp.c, browser_state_panel

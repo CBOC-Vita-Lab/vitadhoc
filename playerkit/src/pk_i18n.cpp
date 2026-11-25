@@ -66,7 +66,7 @@ static int conv_sig(const char *s, char *out, size_t n)
 	for (; *s; s++) {
 		if (*s != '%') continue;
 		s++;
-		if (*s == '%') continue;
+		if (*s == '%' || *s == ' ') continue;      /* "%%"; "20 % fast" is a percent sign and a space, not the space flag */
 		for (; *s && strchr("-+ #0123456789.*hlLzjtq", *s); s++) {
 			if (*s == '*' && k + 1 < n) out[k++] = '*';
 			else if (strchr("hlLzjtq", *s) && k + 1 < n) out[k++] = *s;

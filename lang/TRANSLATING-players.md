@@ -36,6 +36,13 @@ shows in English) but do not leave one empty.
   and the English shows.
 - A line is at most 4096 characters, a file at most 1 MiB.
 
+### Dates
+
+A state's date is day, month name, year (`3 Oct 2026`). The month names are `states.jan` to `states.dec`.
+`states.date_order` is not shown: set it to `dmy`, `mdy` (Oct 3, 2026) or `ymd` (2026 Oct 3) to match the
+language, and nothing else. A literal percent sign is written `%%`; a lone `20 % fast` (a percent sign
+followed by a space) is read as text, not as a conversion.
+
 ### Length
 
 The screen is small and a text is never shrunk to fit: a long one is wrapped or ends in an ellipsis. Keep

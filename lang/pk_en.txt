@@ -1048,6 +1048,8 @@ states.apr	Apr
 states.aug	Aug
 # context: on-screen text
 states.could_not_save_the_state	Could not save the state: %s
+# context: the order of a date such as "3 Oct 2026" (states.jan..states.dec are the month names). Exactly one of: dmy (day month year), mdy (month day, year: "Oct 3, 2026"), ymd (year month day: "2026 10 3"). Not shown; do not write anything else.
+states.date_order	dmy
 # context: on-screen text
 states.dec	Dec
 # context: on-screen text

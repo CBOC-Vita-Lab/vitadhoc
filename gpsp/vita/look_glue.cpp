@@ -19,6 +19,21 @@
 
 template class std::basic_string<char>;
 
+/* pk_look's one text (look_auto_label) through the app's own catalogue (i18n.h) instead of the players' loader. */
+#include "i18n.h"
+#include <stdarg.h>
+namespace pk {
+std::string trf(const char *key, ...)
+{
+	char b[160];
+	va_list ap;
+	va_start(ap, key);
+	vsnprintf(b, sizeof b, ::tr(key), ap);
+	va_end(ap);
+	return b;
+}
+}  // namespace pk
+
 namespace std {
 void __throw_bad_alloc() { abort(); }
 void __throw_logic_error(const char *) { abort(); }

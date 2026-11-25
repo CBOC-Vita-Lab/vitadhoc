@@ -29,7 +29,7 @@ Traditional Chinese readers get the simplified text for now.
 - Keep every `%s` and `%d` (and `%u`, `%c`, `%.1f`, ...) exactly as in English, in the same
   order. There are no positional forms (`%1$s`), so reword the sentence around them rather
   than swapping them. A line whose conversions differ from English is dropped at load time.
-  Write a literal percent sign as `%%`.
+  Write a literal percent sign as `%%` (a percent sign followed by a space, as in `20 % fast`, is read as text).
 - Button glyphs are written `{x}` `{o}` `{tri}` `{sq}` `{star}` `{staro}`. Keep them as they are;
   the app draws the console symbol. Put them where the English has them.
 - `START`, `SELECT`, `L`, `R`, `DPAD` in hint lines are button names printed on the console.
@@ -82,6 +82,14 @@ that is fine.
 
 Counts come as a pair: `key_one` (exactly 1) and `key_many` (any other number, 0 included).
 Translate both. Languages with one form use the same text twice.
+
+## Dates
+
+Dates (state slots, the file lists) are written as day, month name, year: `3 Oct 2026`.
+The month names are the keys `ui.jan` to `ui.dec`. The key `ui.date_order` is not shown: set it
+to `dmy` (3 Oct 2026), `mdy` (Oct 3, 2026) or `ymd` (2026 Oct 3) to match the language.
+Nothing else is allowed in it. Add a "month" or "day" word to the month names if the
+language needs one (for example `10月`).
 
 ## Fragments
 

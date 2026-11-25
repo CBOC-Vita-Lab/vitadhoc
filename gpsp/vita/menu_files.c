@@ -4,6 +4,7 @@
 #include "menu_load.h"
 #include "menu_files_private.h"
 #include "gamedb.h"
+#include "i18n.h"
 #include "plat.h"
 #include "../psp/state_slots.h"
 #include "../psp/sidecar.h"
@@ -218,12 +219,12 @@ static int mf_missing(void) { return errno == ENOENT ? ML_ABSENT : ML_ERROR; }
 
 static void mf_stamp(char out[24], int year, int mon, int day, int hr, int min)
 {
-   static const char *months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+   char date[40];
    out[0] = '\0';
    if (year < 1 || year > 9999 || mon < 1 || mon > 12 || day < 1 ||
        day > 31 || hr < 0 || hr > 23 || min < 0 || min > 59) return;
-   snprintf(out, 24, "%d %s %d, %02d:%02d", day, months[mon - 1], year, hr, min);
+   i18n_date(date, sizeof(date), year, mon, day);
+   snprintf(out, 24, "%s, %02d:%02d", date, hr, min);
 }
 static int mf_stat(const char *path, char *stamp)
 {

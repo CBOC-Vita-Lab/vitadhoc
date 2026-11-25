@@ -192,6 +192,7 @@ static void audio_init(bool legacy, int prio)
 }
 
 static int g_vdp_mode;      /* threads.ini vdp_thread: 0 off, 1 Mega Drive (default), 2 all systems */
+static int g_fm_mode;       /* threads.ini fm_thread: 0 off, 1 the YM2612's FM synthesis on its own core (default; md/core/fm_thread.h) */
 
 /* the roles of the Sega player (pk_cores.h, CP_MD): the emulating thread, the drawing thread, the sound thread, the writer, and the scaler helpers */
 static pk::Request core4_request(void)
@@ -200,6 +201,7 @@ static pk::Request core4_request(void)
 	rq.with(pk::R_EMU_MAIN).with(pk::R_DRAW).with(pk::R_AUDIO_OUT).with(pk::R_WRITER).with(pk::R_UPSCALE);
 	rq.upscale_n = 3;     /* the plan gives two helpers on three cores (core 2, and core 0 below the emulating thread), three on four */
 	if (g_vdp_mode) rq.with(pk::R_RENDER);      /* the VDP line renderer thread (md/core/vdp_thread.c) */
+	if (g_fm_mode) rq.with(pk::R_APU);          /* the FM synthesis thread (md/core/fm_thread.c) */
 	return rq;
 }
 
@@ -1465,6 +1467,7 @@ int main(int argc, char **argv)
 	/* the plan of the threads (threads.ini: core4=auto|off, audio_prio, main_prio, draw_prio, helpers=0..3, audio_legacy) */
 	const char *tini = APP_ROOT "/md/threads.ini";
 	g_vdp_mode = clampi_(ini_int(tini, "vdp_thread", 1), 0, 2);
+	g_fm_mode = clampi_(ini_int(tini, "fm_thread", 1), 0, 1);
 	core4_start(tini);
 	const int audio_prio = prio_ok(ini_int(tini, "audio_prio", PRIO_AUDIO_DEFAULT), PRIO_AUDIO_DEFAULT);
 	const pk::Slot *mslot = g_core_plan.find(pk::R_EMU_MAIN);
@@ -1482,7 +1485,7 @@ int main(int argc, char **argv)
 	if (md_host_init() != 0) { fatal_screen("The Sega core could not start.", "Not enough memory."); return_to_vitadhoc(); }
 	/* the VDP line renderer (when the plan has a place for it) and, for a Sega CD game, the disc read-ahead helper: the thread starts once a disc is
 	 * loaded (cdio_begin), a cartridge never starts it */
-	md_host_set_threads(&g_wk_ops, (g_vdp_mode && g_core_plan.find(pk::R_RENDER) ? (MD_THREAD_VDP | (g_vdp_mode == 2 ? MD_THREAD_VDP_SMS : 0u)) : 0u) | MD_THREAD_DISC);
+	md_host_set_threads(&g_wk_ops, (g_vdp_mode && g_core_plan.find(pk::R_RENDER) ? (MD_THREAD_VDP | (g_vdp_mode == 2 ? MD_THREAD_VDP_SMS : 0u)) : 0u) | (g_fm_mode && g_core_plan.find(pk::R_APU) ? MD_THREAD_FM : 0u) | MD_THREAD_DISC);
 
 	/* the game: launch file or argument, patch, saves, states, settings (player.cpp) */
 	writer_start();
@@ -1863,6 +1866,14 @@ int main(int argc, char **argv)
 				if (md_host_vdp_census(vc)) {
 					logf_("core_split vdp_us=%lu status_joins=%lu join_wait_us=%lu records=%lu full_waits=%lu\n", vc[9] - vc0[9], vc[2] - vc0[2], vc[10] - vc0[10], vc[0] - vc0[0], vc[5] - vc0[5]);
 					memcpy(vc0, vc, sizeof vc0);
+				}
+			}
+			{	/* census: the FM worker (md/core/fm_thread.c): its busy time, the wait at the frame's end, queue calls the emulating thread had to finish itself */
+				static unsigned long fc0[11];
+				unsigned long fc[11];
+				if (md_host_fm_census(fc)) {
+					logf_("core_split fm_us=%lu join_wait_us=%lu runs=%lu writes=%lu takeovers=%lu full_waits=%lu\n", fc[9] - fc0[9], fc[10] - fc0[10], fc[2] - fc0[2], fc[1] - fc0[1], fc[6] - fc0[6], fc[7] - fc0[7]);
+					memcpy(fc0, fc, sizeof fc0);
 				}
 			}
 			if (g_hd_ok) { drawn += g_hd_drawn.exchange(0); skipped += g_hd_failed.exchange(0); }

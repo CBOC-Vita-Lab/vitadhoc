@@ -136,6 +136,7 @@ int md_host_cd_close(void);
  * idle whenever a host call returns, so every other API call stays valid from the calling thread only. Returns 0. */
 #define MD_THREAD_VDP 1u          /* the VDP line renderer on its own thread (Mega Drive) */
 #define MD_THREAD_VDP_SMS 2u      /* ... also for Master System / Game Gear / SG-1000 (with MD_THREAD_VDP) */
+#define MD_THREAD_FM 8u           /* the YM2612's FM synthesis on its own thread (worker id MD_WORKER_FM; md/core/fm_thread.h): bit identical sound and state; not with the Nuked chips */
 #define MD_THREAD_DISC 4u         /* a Sega CD: read the disc ahead and decode CHD hunks on a helper thread (worker id MD_WORKER_DISC): the emulating thread only copies finished blocks */
 struct md_thread_ops;
 int md_host_set_threads(const struct md_thread_ops *ops, unsigned mask);
@@ -144,6 +145,13 @@ int md_host_set_threads(const struct md_thread_ops *ops, unsigned mask);
  * game that reads the status register every line). Both only matter while the worker runs. */
 void md_host_vdp_debug(int check, int stress);
 unsigned long md_host_vdp_check_errors(void);
+/* The FM worker: debug flags (md/core/fm_thread.h: 1 compare the timer shadow with the chip at every join, 2 join after every run, 4 always take the queue
+ * over at a join, 8 a tiny queue), the number of differences found, a census (records, writes, runs, samples, joins, polls, takeovers, queue full waits,
+ * wake-ups, worker busy us, join wait us; returns 0 when the worker is off) and a self test of the timer shadow against the chip (differences found). */
+void md_host_fm_debug(int flags);
+unsigned long md_host_fm_check_errors(void);
+int md_host_fm_census(unsigned long out[11]);
+int md_host_fm_selftest(unsigned seed, int steps);
 /* census of the worker since it started: records queued, status joins, frame joins, polls spent waiting, queue full waits, wake-ups,
  * VRAM patterns / whole VRAM images sent. Returns 0 when the worker is off. */
 int md_host_vdp_census(unsigned long out[11]);

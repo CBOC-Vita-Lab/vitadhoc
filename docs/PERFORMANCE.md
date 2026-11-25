@@ -426,6 +426,31 @@ which is what the worker is for.
 Measured on the host twin: the VDP worker is bit-identical to the single thread (hashes of picture, sound, state and RAM, 96 ROMs, x86 and
 armhf under qemu). Worker busy time, host x86_64 wall clock, an SMS homebrew: about 41 microseconds a frame, joins about 23 microseconds a frame.
 
+### Sega: the FM chip on its own core (2.0)
+
+Nothing here has run on a Vita. host = x86_64 callgrind instructions per frame of the emulating thread inside `md_host_run_frame` (240 frames of
+the twin, the twin's picture hashing not counted, `--separate-threads`, profile build); model = those instructions at 444 MHz, IPC 1.0 (2.26 ms per
+million) / IPC 0.7 (3.21 ms per million), no ARM factor. The YM2612's synthesis (`YM2612Update`) moves to a worker behind a write log
+(`core/fm_thread.c`); the emulating thread keeps the status register's timer flags (a small copy of the chip's timers), the BUSY flag, the FM clock
+and the mix into the blip buffer. The PSG stays where it is (it is about 0.1 M a frame and writes the same blip buffer the mixer owns).
+
+| Game | Single thread | Emulating thread, VDP worker (the default before) | Emulating thread, VDP + FM workers | FM worker |
+|---|---|---|---|---|
+| xgm-player | 4.69 M, 10.6 / 15.1 ms | 2.54 M, 5.7 / 8.2 ms | 1.88 M, 4.3 / 6.0 ms | 0.69 M, 1.6 / 2.2 ms |
+| bad-apple | 3.61 M, 8.2 / 11.6 ms | 2.53 M, 5.7 / 8.1 ms | 1.94 M, 4.4 / 6.2 ms | 0.58 M, 1.3 / 1.9 ms |
+| sonic (DAC drums, about 700 chip writes a frame) | 3.89 M, 8.8 / 12.5 ms | 2.73 M, 6.2 / 8.8 ms | 2.05 M, 4.6 / 6.6 ms | 0.76 M, 1.7 / 2.4 ms |
+
+What the emulating thread still pays for the chip: the write log and the timer copy, about 19 thousand instructions a frame (0.02 M), and
+the join at the end of the frame (200 thousand over 240 frames). The wait for the worker is not in these numbers: callgrind runs the threads one
+after the other, so the wait cannot be measured there. On the twin (wall clock, two pthreads, a busy shared PC) the join waited about 13 microseconds a
+frame on average (xgm-player, sonic 11) and the worker was busy 45 ms of 600 frames of xgm-player (a lightly loaded moment; the PC was shared). On the Vita the worker is placed on core 2
+beside the sound thread (0x60, below the sound thread's 0x40). The wait is bounded (5 ms); then the emulating thread finishes the queue itself.
+
+Bit identical: picture, sound, state and RAM hashes of the 30 SGDK samples with the worker, with the timer copy checked against the chip at
+every join, with a join after every run of samples, with the queue always finished by the emulating thread, with a 24 word queue and with the VDP worker
+as well; the saved state is the same bytes; a state saved by one path loads in the other; Quick response; chip types; PAL; a reset; the Sega CD
+stand-in playing FM with PCM and CD audio (`md/twin/fm_check.sh`, gate step `md-fm`). Nuked chip options run inline.
+
 ### Quick response in the app: Game Boy, Game Boy Color, NES, WonderSwan, and why not Game Boy Advance (2.0)
 
 Nothing here has run on a Vita. host = x86_64 callgrind instructions per frame inside `fe_host_run_frame` (the real frame, the state copy, the look-ahead

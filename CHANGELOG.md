@@ -83,6 +83,15 @@ and in emulators; none of it has run on a real Vita yet (see
 
 **Smoother play**
 
+- **Sega sound on its own core.** The Genesis / Mega Drive's FM chip (the
+  YM2612) makes its sound on a separate core in the Sega player, as the Super
+  NES sound chip does, so the main core has less to do in music-heavy games.
+  The sound, the picture and the saved game are exactly the same as before
+  (checked bit for bit over 30 sample games, with saves, rewind, Quick response
+  and the Sega CD). If the helper falls behind, the main core finishes the work
+  itself, so the sound never drops. On by default (`fm_thread=0` in
+  `md/threads.ini` turns it off). Measured on a computer, not yet on a Vita.
+
 - **Faster Super NES Mode 7 and wide view.** Games with a rotating or
   scaling floor (Super Metroid's intro, F-Zero, Pilotwings) draw that floor
   with fewer instructions, and a wide-view margin that did not change since

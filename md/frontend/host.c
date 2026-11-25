@@ -299,9 +299,23 @@ int md_host_set_threads(const md_thread_ops *ops, unsigned mask)
 {
 	if (ops) g_ops = *ops; else memset(&g_ops, 0, sizeof g_ops);
 	g_worker_mask = ops ? (mask & (MD_THREAD_VDP | MD_THREAD_VDP_SMS)) : 0;
+	fmw_set_ops(ops ? &g_ops : NULL, ops && (mask & MD_THREAD_FM));      /* started by sound_init for the Mega Drive's YM2612 */
 	cdio_set_ops(ops ? &g_ops : NULL, ops && (mask & MD_THREAD_DISC));
 	return 0;
 }
+
+void md_host_fm_debug(int flags) { fmw_set_debug(flags); }
+unsigned long md_host_fm_check_errors(void) { return fmw_check_errors(); }
+int md_host_fm_census(unsigned long out[11])
+{
+	fmw_census_t c;
+	if (!fmw_on) return 0;
+	fmw_census(&c);
+	out[0] = c.records; out[1] = c.writes; out[2] = c.runs; out[3] = c.samples; out[4] = c.joins; out[5] = c.join_wait_polls; out[6] = c.takeovers;
+	out[7] = c.full_waits; out[8] = c.wakes; out[9] = c.fm_us; out[10] = c.join_wait_us;
+	return 1;
+}
+int md_host_fm_selftest(unsigned seed, int steps) { return YM2612ShadowSelfTest(seed, steps); }
 
 void md_host_vdp_debug(int check, int stress) { vdpw_set_check(check); vdpw_set_stress(stress); }
 unsigned long md_host_vdp_check_errors(void) { return vdpw_check_errors(); }
@@ -339,6 +353,7 @@ void md_host_unload(void)
 	if (!G.inited) return;
 	if (G.loaded) { ggenie_shutdown(); areplay_shutdown(); }
 	vdpw_stop();
+	fmw_stop();
 	audio_shutdown();
 	if (G.cd) { cdio_end(); cdd_unload(); md_cd_wanted = 0; system_bios &= ~0x10; }      /* the core keeps the boot ROM it loaded: the next disc reads it again (it may be another BIOS) */
 	system_hw = 0;
@@ -531,6 +546,7 @@ static int boot_common(char *err, size_t errlen)
 	G.system = core_system();
 	wide_apply();
 	if (config.ym3438) OPN2_SetChipType(config.ym3438 == 1 ? ym3438_mode_ym2612 : ym3438_mode_readmode);
+	fmw_join();                        /* the FM worker may still be inside the reset's queued call: the chip is only configured while it is idle */
 	YM2612Config(config.ym2612);
 	{
 		unsigned rc = region_code;
@@ -1775,6 +1791,7 @@ int md_host_set_option(const char *name, int value)
 	size_t i;
 	int old_nuked = config.ym3438, old_opll = config.opll;
 	vdpw_join();                       /* the workers only ever run inside a frame; this is for a caller that changes options mid-frame */
+	fmw_join();
 	for (i = 0; i < sizeof defs / sizeof defs[0]; i++) {
 		if (strcmp(defs[i].name, name)) continue;
 		if (value < defs[i].min) value = defs[i].min;

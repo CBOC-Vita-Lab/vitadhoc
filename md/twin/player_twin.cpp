@@ -40,6 +40,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <functional>
+#include "twin_threads.h"
 
 using namespace pk;
 #undef W_OK
@@ -2102,6 +2103,7 @@ static int run_m3u_test(const std::string &discs, const std::string &work)
 
 int main(int argc, char **argv)
 {
+	twinthr::fm_from_env();      // MD_TWIN_FM: the YM2612 on its own thread for every proof below (twin_threads.h)
 	/* Sega CD ("scd"): the disc is a synthetic one (tools/mkscd.py) and the BIOS is its stand-in, found by the player's own search (in the disc's folder); */
 	/* the core is told to accept it (it is not a Sega BIOS). */
 	if (argc >= 3 && !strcmp(argv[2], "scd")) md_host_cd_bios_test_force(1);

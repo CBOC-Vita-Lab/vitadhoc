@@ -74,9 +74,9 @@ $(B)/pl/%.o: $(FE)/%.cpp $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 $(B)/pl/%.o: ../vita/%.cpp $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
 	$(CXX) -O2 -std=gnu++14 -Wall -Wextra $(CPUF) -I$(FE) -I../vita -I$(PK)/src -c -o $@ $<
-$(B)/pl/%.o: %.cpp $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
+$(B)/pl/%.o: %.cpp twin_threads.h $(wildcard ../vita/*.h) $(wildcard $(FE)/*.h) $(wildcard $(PK)/src/*.h)
 	@mkdir -p $(B)/pl
-	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../vita -I$(PK)/src -I$(PK)/tests -c -o $@ $<
+	$(CXX) -O2 -std=gnu++14 -Wall $(CPUF) -I$(FE) -I../core -I../vita -I$(PK)/src -I$(PK)/tests -c -o $@ $<
 $(B)/player_twin: $(PL_OBJS) $(PK_OBJS) $(B)/mdcore.o
 	$(CXX) $(CPUF) -o $@ $^ -lm -pthread
 player_twin: $(B)/player_twin

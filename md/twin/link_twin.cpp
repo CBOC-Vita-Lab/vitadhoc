@@ -35,6 +35,7 @@ extern "C" {
 #include "transport_lan.h"
 }
 #include <vector>
+#include "twin_threads.h"
 
 
 using namespace pk;
@@ -151,6 +152,7 @@ static int form_relay(const pk::LinkRequest &in, pk::LinkRequest &out, const std
 
 int main(int argc, char **argv)
 {
+	twinthr::fm_from_env();      // MD_TWIN_FM: the YM2612 on its own thread for every proof below (twin_threads.h)
 	if (argc < 2) { fprintf(stderr, "usage: link_twin ROOT [--frames N] ... (see the top of link_twin.cpp)\n"); return 2; }
 	std::string root = argv[1];
 	int frames = 1200, max_s = 120, threads = 0, fast = 0, stall_ms = 0, stall_at = 0;

@@ -151,6 +151,25 @@ Edits to upstream files:
   all 96 test ROMs with the worker on and off, on x86 and armhf (qemu), also with a join after every drawn line and with a per frame
   comparison of the raw VDP memory (`md_twin --vdp-thread | --vdp-check | --vdp-stress`).
 
+### FM worker thread (performance edit, on by default in md.bin, off in the core)
+
+The YM2612 (MAME core) can make its samples on its own thread. Files added: `fm_thread.h/.c` (a single producer, single consumer ring of 32 bit
+words holding `YM2612Write`, `YM2612Update` and `YM2612ResetChip` calls in the order the emulating thread made them; the worker; the bounded join
+and the take-over of the queue by the emulating thread). Edits to upstream files:
+
+- `sound/ym2612.c/.h`: `YM2612Shadow*`, a copy of the timer part of the chip (address latch, registers 0x24-0x27, the two counters, the status flags)
+  that the emulating thread advances with the same writes and the same sample counts, so the status register is read exactly as the chip's; a
+  closed form for timer A's per-sample count; a self test against the chip (`md_twin --fm-selftest`); the chip itself is untouched.
+- `sound/sound.c`: with the worker on, `fm_update` advances the shadow and queues the run instead of calling `YM2612Update`; `YM2612_Write` and
+  `YM2612_Reset` update the shadow and queue the call; `YM2612_Read` takes the flags from the shadow; `sound_update` joins before it reads the sample
+  buffer; `sound_context_save/load` join first and a load also loads the shadow from the chip; `sound_init` starts or stops the worker (not for the
+  Nuked chips, not for the YM2413). BUSY (`fm_cycles_busy`), the FM clock and the mixing into the blip buffers are unchanged and stay on the
+  emulating thread.
+- `shared.h`: includes `fm_thread.h`.
+- Proof: `md/twin/fm_check.sh` (gate step `md-fm`): picture, sound, state and RAM hashes of 30 SGDK samples with the worker, with the timer check,
+  with a join after every run, with the queue always taken over, with a 24 word queue, and with the VDP worker too; the state file bytes; a state
+  saved by one path loaded by the other; run-ahead; chip options; the Sega CD stand-in playing FM with PCM and CD audio.
+
 ### Wide view (2.0): strips beside the picture, drawn by the same renderer
 
 The player can ask the Mega Drive renderer for a narrow strip of picture beyond each side of every line (`md/INTEGRATION.md`, "Wide view";

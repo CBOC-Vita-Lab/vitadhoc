@@ -99,6 +99,12 @@ does the same on the Cheats page of the app's GBA cartridge and checks the
 pad mapping, audio pacing, and each core's own picture and blend tests. Each
 needs its twin, built by a shared prerequisite step.
 
+`md-fm` (default tier; `md/twin/fm_check.sh`, `GATE_MD_ROMS` for the cartridge part) is the proof that the YM2612 on its own thread changes nothing:
+the timer copy against the chip on random writes, then picture, sound, state and RAM hashes of every sample ROM with the worker (plain, timer check, a join after every
+run, the fallback path, a tiny queue, with the VDP worker), state file bytes, cross loaded states, Quick response, chip options, and the Sega CD stand-in
+with the main CPU playing FM (`mkscd.py standin-fm`). `MD_TWIN_FM=1` (or `check`, `stress`, `inline`, `tiny`) turns the worker on in `player_twin` and `link_twin`
+so their rewind, slot and linked-session proofs can be run with it.
+
 `md-ahead` (default tier, needs `GATE_MD_ROMS`; `md/twin/ahead_check.sh`) is the Sega proof of frames nobody sees: undrawn frames leave the
 machine as drawn ones do; Quick response (run-ahead) changes nothing in the machine, with and without the VDP worker and the wide view, shows the
 next frame's picture, and answers a press one frame sooner (a small test cartridge, `md/twin/tools/sms_latency_gen.py`, answers the pad a frame

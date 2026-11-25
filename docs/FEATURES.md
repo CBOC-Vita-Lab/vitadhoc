@@ -40,7 +40,8 @@ Chinese-only hanzi show as `?`.
 
 **Collections and views.** Select steps through Games, Starred, Recent, Most
 played, Not played yet, and then every collection and playlist that has a game
-on the console in use. Select + Square (or the Home's Lists button) opens the
+on the console in use, the moment Select is pressed. Select + Square (or the
+Home's Lists button) takes that step back and opens the
 Collections page of the highlighted game: Cross puts it in a collection or
 takes it out, "New collection" asks for a name on the system keyboard (as Find
 does), Square renames, Triangle deletes after a question. A collection holds
@@ -359,7 +360,12 @@ RetroArch and mGBA find a cheat for lives, money or health. The words and the
 steps are the same everywhere:
 
 1. **Size of the number**: 1, 2 or 4 bytes (unsigned). Most counters are 1
-   byte; money and scores are often 2.
+   byte; money and scores are often 2. On the Game Boy, NES, WonderSwan, Super
+   NES and Master System family there are also **2 bytes, any address** and
+   **4 bytes, any address**, which look at odd addresses too (those games keep
+   a 16 bit number wherever it falls); the search has twice the candidates
+   and finds more places to narrow down. The Game Boy Advance and the Mega
+   Drive keep their words on even addresses and do not have them.
 2. **New search** remembers the game's work RAM as it is now (the game is
    paused while the menu is open, so a step never costs a frame).
 3. Narrow it down, as often as you like, with **Equal to**, **Not equal to**,
@@ -387,7 +393,9 @@ RAM; Super NES $7E0000-$7FFFFF; Genesis $FF0000-$FFFFFF; the 8 bit Sega
 consoles $C000-$DFFF), through the same memory maps RetroAchievements uses;
 cartridge (save) RAM and banked Game Boy Color RAM are not searched. It is off
 while linked and in RetroAchievements Hardcore, with the same messages as the
-Cheats page. Memory: the snapshot is one byte per searched byte plus one bit
+Cheats page, and it says so on the Game Boy's one-console two-player mode,
+where the game's memory cannot be read. A suspended Cheats page no longer
+offers START search. Memory: the snapshot is one byte per searched byte plus one bit
 per address, held only while a search exists (GBA: about 324 KB).
 
 ## Settings added or changed in 1.4
@@ -481,9 +489,10 @@ players; one global setting each, stored in `display.ini` beside `config.ini`):
   | Where | Large |
   |---|---|
   | Super NES and Sega players: every menu page | Yes (each page is checked for text off the screen or over other text) |
-  | App: home screen, console list, in-game menu, empty-library messages, pop-up messages | Yes |
+  | App: home screen, console list, in-game menu, empty-library messages, pop-up messages | Yes (the in-game menu's two-word cards go on two lines) |
   | App: Settings | Yes. A value too long for its row ends in "..."; a help text too long for two large lines stays at the normal size |
-  | App: Save states, Cheats, Button mapping, Cover picture, Play together, the plain list view | Not yet: these keep the normal size, apart from the page title (their rows are built for it) |
+  | App: Save states, Cheats (with Add a code and Search memory), the Play together page | Yes. A hint line or pop-up message too wide for the screen at the larger size stays at the normal size |
+  | App: Button mapping, Button test, Cover picture, the pages Play together opens, the plain list view | Not yet: these keep the normal size, apart from the page title (their rows are built for it) |
 
 **Settings > Display > Screen overlay** controls overlays. **Scanlines** and **LCD grid**
 are separate rows, each 0 (off, the default) to 10. Screenshots use
@@ -523,10 +532,13 @@ up (not the ad hoc radio, not in a link session), VitAdhoc asks GitHub's public
 API, at most once a day, for the latest release of the project
 (`https://api.github.com/repos/CBOC-Vita-Lab/vitadhoc/releases/latest`). If its
 version number is higher than the app's (numbers, not text: 2.10 is newer than
-2.9; drafts and pre-releases never count), a notice appears once on the home
-screen: "VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
-GitHub". It never downloads or installs anything. **X** on the row checks now
-(also with the setting Off) and says what it found.
+2.9; drafts and pre-releases never count), a notice appears on the home
+screen once for each new version (not on every start: the version it has said
+is kept in `update.txt`): "VitAdhoc X.Y is out: get it with the CBOC Vita
+Installer or from GitHub". It never downloads or installs anything. **X** on
+the row checks now (also with the setting Off) and says what it found; the
+footer says "X check now", and the Left and Right buttons change Daily or Off. With
+Wi-Fi off the check looks again every few seconds, not on every frame.
 
 What is sent is one request with the app's User-Agent (`VitAdhoc/<version>
 (PlayStation Vita)`, the same on every console) and the client's standard
@@ -534,7 +546,7 @@ headers: no account, no console or device id, nothing about
 your games. A failure (no network, a certificate, a timeout, an answer that is
 not a release) is only logged, and the next try is tomorrow's. A request still
 under way when a game starts is dropped and asked again another time. The day of the
-last try and the newest version seen are in `update.txt`. The request uses the
+last try, the newest version seen and the one announced are in `update.txt`. The request uses the
 app's own HTTPS client (Mbed TLS, the same as online play), not the Vita's
 system library, with four root certificates that are trusted for
 `api.github.com` and for nothing else.

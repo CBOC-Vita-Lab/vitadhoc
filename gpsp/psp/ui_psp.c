@@ -5488,6 +5488,8 @@ static ui_action screen_settings_page(unsigned edges)
           ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERPIC
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
+          : g_cursor == SET_ABOUT_UPDATE
+          ? VID_GLYPH_X " check now   DPAD change   " VID_GLYPH_O " back"
           : VID_GLYPH_X " change   DPAD move/change   " VID_GLYPH_O " back");
 #else
    if (g_cursor == SET_FASTLINK)

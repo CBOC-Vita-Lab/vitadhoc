@@ -3856,14 +3856,14 @@ UPD_WAIT = "60:shot=home.png\n+260:shot=later.png\n+10:quit\n"
 
 
 def upd_run(S, name, srv, what, config=None, files=None, script=UPD_WAIT,
-            timeout=0):
+            timeout=0, env_extra=None):
     ini = {"update_url": srv.url(what)}
     if timeout:
         ini["update_timeout"] = timeout
     cfg = dict(UPD_HOME)
     cfg.update(config or {})
     return S.run(name, script, config=cfg, vita_ini=ini, extra=files,
-                 env={"VITADHOC_FAKE_TIME": str(NOW)})
+                 env=dict({"VITADHOC_FAKE_TIME": str(NOW)}, **(env_extra or {})))
 
 
 def t_update_check(S):
@@ -3894,9 +3894,9 @@ def t_update_check(S):
                 "the notice names the version and the two ways to get it (%s)" %
                 [t["_"] for t in toast])
         st = open(os.path.join(r.root, "update.txt")).read()
-        m = re.fullmatch(r"checked=(\d+)\nlatest=2\.1\n", st)
+        m = re.fullmatch(r"checked=(\d+)\nlatest=2\.1\nannounced=2\.1\n", st)
         S.check(m is not None and NOW <= int(m.group(1)) <= NOW + 60,
-                "update.txt keeps the time of the try and the newer version (%r)" % st)
+                "update.txt keeps the time of the try, the newer version and the one the notice said (%r)" % st)
         S.check(r.shot("later.png").getbbox() is not None, "the home screen is there")
         # the same day again: no second request, the notice from memory
         n0 = len(srv.requests)
@@ -3906,8 +3906,26 @@ def t_update_check(S):
         S.check(len(srv.requests) == n0 and not r.evt("update_check")[1:2] and
                 not r.has(r"update_check start"),
                 "not twice in a day (requests %d -> %d)" % (n0, len(srv.requests)))
-        S.check(len(r.evt("update_toast")) == 1,
-                "...but a newer version known from before is still said, once")
+        S.check(not r.evt("update_toast"),
+                "...and a version already announced is not said again on the next run")
+        # a version known from before but never announced is said (once); a newer one than the announced one too
+        r = upd_run(S, "update_known", srv, "newer", files={"update.txt": "checked=%d\nlatest=2.1\n" % NOW})
+        S.clean(r)
+        st2 = open(os.path.join(r.root, "update.txt")).read()
+        S.check(len(r.evt("update_toast")) == 1 and "announced=2.1\n" in st2,
+                "a newer version known from before and not announced yet is said, once (%r)" % st2)
+        r = upd_run(S, "update_newer_still", srv, "newer",
+                    files={"update.txt": "checked=%d\nlatest=2.2\nannounced=2.1\n" % NOW})
+        S.clean(r)
+        S.check(len(r.evt("update_toast")) == 1 and "2.2 is out" in r.evt("update_toast")[0]["text"],
+                "a version newer than the announced one is announced")
+        # Wi-Fi off while the check is due: the system is asked every few seconds, not every idle frame
+        r = upd_run(S, "update_offline", srv, "newer", files={"update.txt": "checked=0\nlatest=\n"},
+                    env_extra={"GBADHOC_UPDATE_OFFLINE": "1"})
+        S.clean(r)
+        asked = len(r.evt("update_online"))
+        S.check(1 <= asked <= 3 and not r.has(r"update_check start") and not r.evt("update_toast"),
+                "Wi-Fi off and the check due: the network state is asked %d times in 260 idle frames, no request" % asked)
         # a day on: asked again
         old = "checked=%d\nlatest=\n" % (NOW - 86400 - 5)
         r = upd_run(S, "update_dayafter", srv, "same", files={"update.txt": old})

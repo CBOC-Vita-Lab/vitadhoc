@@ -44,11 +44,16 @@ response, No sprite flicker.
 - **The Button test** shows the WonderSwan's buttons for a game held
   sideways only.
 - **Text size Large does not reach every page of the app yet.** It applies to
-  the home screen, the console list, the in-game menu and Settings, and to
-  every menu page of the Super NES and Sega players. Save states, Cheats,
-  Button mapping, Cover picture, Play together and the plain list view keep
-  the normal size, apart from their title and pop-up messages: their rows are
-  built for it. High contrast applies everywhere.
+  the home screen, the console list, the in-game menu (its two-word card
+  names go on two lines), Settings, Save states, Cheats (with Add a code and
+  Search memory), the Play together page, and every menu page of the Super NES
+  and Sega players. A hint line or pop-up message too wide for the screen at
+  the larger size keeps the normal size. Button mapping, Button test, Cover
+  picture, the pages Play together opens (Two players, Connection, Mystery
+  gift, Join, How to play) and the plain list view keep the normal size,
+  apart from their title and pop-up messages: their rows are built for it
+  (larger letters ran over each other or off the bottom edge there). High
+  contrast applies everywhere.
 - **CRT mask** is drawn with a blend the app did not use before (the picture
   multiplied by a stripe texture). It was checked on the PC test twin and
   compiled for the Vita, not run on one. If it misbehaves, set it to 0 (Off,
@@ -404,8 +409,13 @@ flicker or missing instruments, which we could not judge without a Vita.
   types are marked unsupported. Cheats switch off while linked and in Hardcore.
 - Search memory looks at work RAM only (not cartridge save RAM or banked Game
   Boy Color RAM), at unsigned whole numbers of 1, 2 or 4 bytes on aligned
-  addresses; a value kept in two places or stored as a decimal-coded number
-  needs more than one search. Tested on the PC only.
+  addresses (the Game Boy, NES, WonderSwan, Super NES and Master System
+  family also have "2 bytes, any address" and "4 bytes, any address"; the
+  Game Boy Advance and the Mega Drive do not, their words are always aligned);
+  a value kept in two places or stored as a decimal-coded number needs more
+  than one search. It is not available in the Game Boy's one-console
+  two-player mode (the second game's memory is not readable then). Tested on
+  the PC only.
 - Three- and four-player links and single-cartridge multiboot are not
   supported.
 - Two games with the same file name share box art, cheats and previews. Give

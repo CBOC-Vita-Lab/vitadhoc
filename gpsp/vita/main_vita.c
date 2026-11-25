@@ -3411,6 +3411,17 @@ static int update_online(void)
 {
    return ra_online();
 }
+#else
+/* The twin is always online, unless the test says Wi-Fi is off
+ * (GBADHOC_UPDATE_OFFLINE): every time the check asks is logged, so the test
+ * can count that it does not ask every frame. */
+static int update_online(void)
+{
+   if (!getenv("GBADHOC_UPDATE_OFFLINE"))
+      return 1;
+   fe_evt("update_online asked online=0");
+   return 0;
+}
 #endif
 
 static void update_begin(void)
@@ -3421,11 +3432,7 @@ static void update_begin(void)
    const char *url = g_sw.update_url[0] ? g_sw.update_url : NULL;
 #endif
    upd_start(g_app_root, url, ONLINE_APP_VERSION,
-#ifdef __vita__
              update_online,
-#else
-             NULL,
-#endif
              (unsigned)(g_sw.update_timeout > 0 ? g_sw.update_timeout : 0),
 #ifdef __vita__
              g_pcfg.update_check

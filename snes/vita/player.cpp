@@ -1095,7 +1095,7 @@ bool SnesPlayer::srm_post()
 void SnesPlayer::srm_result(int r, const char *how, uint64_t now)
 {
 	if (!r) {
-		if (save_failing_) { logf("sram save recovered (%s)\n", how); notice("The game is saved again", NOTICE_OK); }
+		if (save_failing_) { logf("sram save recovered (%s)\n", how); notice(tr("player.the_game_is_saved_again"), NOTICE_OK); }
 		else if (srm_writes_ <= 3 || srm_writes_ % 50 == 0) logf("sram save rc=0 (%s, write %d)\n", how, srm_writes_);
 		save_failing_ = false;
 		save_msg_.clear();

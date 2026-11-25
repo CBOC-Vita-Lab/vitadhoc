@@ -260,6 +260,18 @@ void MdPlayer::log_flush(bool now)
 	post(j);
 }
 
+/* the "Change disc" row: its choices are numbered ("Disc 2"), so they are built again when the language changes */
+void MdPlayer::add_disc_row()
+{
+	if (!(scd_ && discs_.size() > 1 && !linked())) return;
+	std::vector<std::string> dc;
+	for (size_t i = 0; i < discs_.size(); i++) dc.push_back(strf(tr("md.disc"), (int) i + 1));
+	menu_.add_host_row(Menu::PAGE_SPEED, ROW_DISC, "md.change_disc", "md.for_a_game_on_several_discs",
+	                   dc, md_host_cd_disc_index(), ROW_REGION);
+}
+
+void MdPlayer::on_language_changed() { add_disc_row(); }
+
 void MdPlayer::notice(const std::string &t, NoticeKind k, bool report)
 {
 	menu_.notices().push(t, k);
@@ -703,7 +715,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 				return res;
 			}
 			disc_path = discs_[(size_t) disc_first];
-			if (!gone.empty()) notice(strf("The list names a disc that is missing: %s", gone.c_str()), NOTICE_ERROR, true);
+			if (!gone.empty()) notice(trf("md.the_list_names_a_disc_that_is_missing", gone.c_str()), NOTICE_ERROR, true);
 		}
 		if (md_host_load_disc(disc_path.c_str(), err, sizeof err)) {
 			logf("load failed: %s\n", err);
@@ -885,13 +897,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			                   "md.extra_save_memory_some_games_can",
 			                   rc, ram_cart_);
 		}
-		if (scd_ && discs_.size() > 1 && !linked()) {
-			std::vector<std::string> dc;
-			for (size_t i = 0; i < discs_.size(); i++) dc.push_back(strf(tr("md.disc"), (int) i + 1));
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_DISC, "md.change_disc",
-			                   "md.for_a_game_on_several_discs",
-			                   dc, md_host_cd_disc_index(), ROW_REGION);
-		}
+		add_disc_row();
 		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "md.region",
 		                   "md.auto_follows_the_game_europe_runs", region, region_);
 		if (system_ == MD_SYS_MD)
@@ -1312,7 +1318,7 @@ bool MdPlayer::srm_post()
 void MdPlayer::srm_result(int r, const char *how, uint64_t now)
 {
 	if (!r) {
-		if (save_failing_) { logf("sram save recovered (%s)\n", how); notice("The game is saved again", NOTICE_OK); }
+		if (save_failing_) { logf("sram save recovered (%s)\n", how); notice(tr("player.the_game_is_saved_again"), NOTICE_OK); }
 		else if (srm_writes_ <= 3 || srm_writes_ % 50 == 0) logf("sram save rc=0 (%s, write %d)\n", how, srm_writes_);
 		save_failing_ = false;
 		save_msg_.clear();
@@ -1631,7 +1637,7 @@ void MdPlayer::on_change(int row, int v)
 		break;
 	}
 	case ROW_DISC: change_disc(v); break;
-	case ROW_RAMCART: ram_cart_ = clampi(v, 0, 6); notice("The RAM cartridge changes when the game starts again", NOTICE_OK); break;
+	case ROW_RAMCART: ram_cart_ = clampi(v, 0, 6); notice(tr("md.the_ram_cartridge_changes_when_the_game"), NOTICE_OK); break;
 	case ROW_FM: fm_ = clampi(v, 0, 2); md_host_set_option("fm", fm_); break;
 	case ROW_YM2413: ym2413_ = clampi(v, 0, 2); md_host_set_option("ym2413", ym2413_); break;
 	case ROW_STEADY: steady_ = v != 0; pacer_.set_enabled(steady_); break;
@@ -1754,7 +1760,7 @@ void MdPlayer::look_apply(const char *why)
 	pf_->picture_changed();
 	if (why) {
 		logf("look: %s -> mask=%u (scaler steps %d, row %d)\n", why, look_.mask(), eff_.tier_steps, eff_.scaler);
-		if (strcmp(why, "start") != 0 && look_.level() > 0 && look_mode_ == 0) notice("Look eased to keep full speed", NOTICE_INFO);
+		if (strcmp(why, "start") != 0 && look_.level() > 0 && look_mode_ == 0) notice(tr("md.look_eased_to_keep_full_speed"), NOTICE_INFO);
 	}
 }
 
@@ -1892,3 +1898,4 @@ void MdPlayer::wide_apply(int scr_w, int scr_h)
 }
 
 }  // namespace mdp
+

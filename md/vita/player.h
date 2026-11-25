@@ -298,6 +298,8 @@ public:
 	const char *state_load_refused();
 	const char *cheats_refused();
 	void on_change(int row_id, int value);
+	void on_language_changed() override;
+	void add_disc_row();
 	void on_reset();
 	bool capture_state(std::vector<uint8_t> &out);
 	bool restore_state(const uint8_t *data, size_t n);

@@ -1,6 +1,5 @@
 # Players' interface texts (playerkit, snes.bin, md.bin). English source and fallback.
 # key<TAB>text ; \n = new line ; keep every % conversion (same type and order) ; sorted by key.
-# The '# context:' line above a key says where the text shows (for the translator).
 # context: on-screen text
 input.a_game_button_takes_one_button	A game button takes one button
 # context: on-screen text
@@ -223,6 +222,8 @@ md.lcd_colours	LCD colours
 md.lcd_ghosting	LCD ghosting
 # context: on-screen text
 md.left_edge	Left edge
+# context: toast notice
+md.look_eased_to_keep_full_speed	Look eased to keep full speed
 # context: error screen: keep the file extensions
 md.m3u_empty	The .m3u list has no disc (.cue, .chd or .iso) in it.
 # context: error screen; %s is the list of missing disc files
@@ -261,8 +262,12 @@ md.the_console_drew_only_8_sprites	The console drew only 8 sprites on a line, so
 md.the_disc_is_being_changed_already	The disc is being changed already
 # context: on-screen text
 md.the_game_gear_s_screen_showed	The Game Gear's screen showed softer colours and never a true black. On draws them that way.
+# context: toast notice
+md.the_list_names_a_disc_that_is_missing	The list names a disc that is missing: %s
 # context: on-screen text
 md.the_master_system_s_fm_add	The Master System's FM add-on, which some games use. Auto turns it on for games that ask for it.
+# context: toast notice
+md.the_ram_cartridge_changes_when_the_game	The RAM cartridge changes when the game starts again
 # context: on-screen text
 md.the_sega_core_could_not_start	The Sega core could not start.
 # context: on-screen text
@@ -889,6 +894,8 @@ player.the_connection_could_not_be_opened	The connection could not be opened.
 player.the_game_file_could_not_be	The game file could not be read.
 # context: on-screen text
 player.the_game_file_could_not_be_2	The game file could not be read again.
+# context: toast notice
+player.the_game_is_saved_again	The game is saved again
 # context: toast notice
 player.the_game_was_reset	The game was reset
 # context: on-screen text

@@ -667,6 +667,10 @@ void cpu_irq_process()
 
 	cpu_irq_check();
 
+	/* GBAdhoc: dispatching an interrupt takes 20 clocks (5 machine cycles). */
+	rest_clock-=20;
+	cpu_clock_advance(20);
+
 	//割り込みがかかったのでステートを足す
 	//13stateは暫定値。GBでどうなってるかは知らない。
 	//よくわからんのでsys_clockは足してないが入れてもいいかも - LCK

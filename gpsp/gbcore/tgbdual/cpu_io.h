@@ -84,7 +84,7 @@ static byte cpu_io_read_0B( word adr ){ return 0; }
 static byte cpu_io_read_0C( word adr ){ return 0; }
 static byte cpu_io_read_0D( word adr ){ return 0; }
 static byte cpu_io_read_0E( word adr ){ return 0; }
-static byte cpu_io_read_0F( word adr ){ return g_regs.IF ; }
+static byte cpu_io_read_0F( word adr ){ return g_regs.IF|0xE0 ; } /* GBAdhoc: the top three bits read 1 */
 
 static byte cpu_io_read_10_3F( word adr ){ return apu_read(adr) ; }
 /*

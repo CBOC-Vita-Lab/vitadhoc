@@ -59,6 +59,41 @@ two fixed ones (and small timing differences in a game's random choices).
   frame. Sprite priority is exact in 1.4; the OAM-order note below was
   written for 1.3 and has not been rechecked.
 
+## Game Boy test suites
+
+The Game Boy and Game Boy Color core (TGB Dual) was run headless, on the PC
+build, against public test ROMs: blargg's suites (serial text, screen text or
+the cartridge-RAM report), dmg-acid2 and cgb-acid2 (the screen against the
+reference picture). Pass counts, **host (PC x86)**, not a Vita test. Runner:
+`gpsp/gbcore/tests/run_suites.py`; the results the gate holds the core to are
+in `gpsp/gbcore/tests/suites-expected.txt`.
+
+| Suite | Before | After |
+|---|---|---|
+| blargg cpu_instrs, 11 single ROMs | 2 / 11 | 11 / 11 |
+| blargg cpu_instrs, combined ROM | 0 / 1 | 1 / 1 |
+| blargg instr_timing | 1 / 1 | 1 / 1 |
+| blargg interrupt_time | 0 / 1 | 1 / 1 |
+| blargg halt_bug | 0 / 1 | 1 / 1 |
+| blargg dmg_sound (12 singles + combined) | 7 / 13 | 8 / 13 |
+| blargg cgb_sound (12 singles + combined) | 8 / 13 | 9 / 13 |
+| blargg mem_timing and mem_timing-2 (3 singles + combined each) | 0 / 8 | 0 / 8 |
+| blargg oam_bug (8 singles + combined) | 2 / 9 | 2 / 9 |
+| dmg-acid2 | fail | pass |
+| cgb-acid2 | fail | pass |
+| Total | 20 / 60 | 36 / 60 |
+
+Mooneye's acceptance tests were not run: they need the WLA-DX assembler,
+which could not be built here. The runner and the gate step support them
+(`GATE_GB_MOONEYE`).
+
+Still failing: mem_timing (the core runs a whole instruction and then
+advances the clock, so a read or write lands on the wrong cycle inside it),
+oam_bug (the corruption a 16-bit increment does to sprite memory is not
+emulated; its timing tests also depend on cycle-exact reads), and the sound
+tests for sweep details and for wave RAM read, trigger and write while the
+channel plays. Games that depend on those are rare.
+
 ## Not fixed, and not checked
 
 - **OAM order** (Golden Sun 1 and 2, Mario Golf, The Minish Cap): sprites

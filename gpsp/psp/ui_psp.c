@@ -2446,6 +2446,9 @@ enum { SET_HDR_WL, SET_NAME, SET_CONN, SET_ROOM, SET_LINKMODE, SET_DELAY,
        SET_GBTYPE,
        /* 2.0: this game's own Quick response (Settings / Off / Auto / On) */
        SET_QUICKGAME,
+       /* 2.0: a Game Boy Camera game's picture source, and the Game Boy
+        * Printer on the serial port (a Game Boy game's) */
+       SET_CAMERA, SET_PRINTER,
        /* 1.4: the running game's save as a plain file for other emulators
         * (docs/SAVES.md; ui_host_export_save) */
        SET_EXPORT,
@@ -2646,6 +2649,8 @@ static const struct { unsigned char header; const char *label; } set_rows[SET_CO
    { 0, "Palette" },
    { 0, "Game Boy type" },
    { 0, "Quick response" },
+   { 0, "Camera" },
+   { 0, "Game Boy Printer" },
    { 0, "Export save for other emulators" },
    { 1, "ABOUT" },
    { 0, "Extra CPU core" },
@@ -2717,9 +2722,11 @@ static int set_row_shown(int idx)
       return g_ov_browse || (g_pgame.on && app_quick_supported(g_pgame.console));
    if (idx == SET_QUICKGAME)
       return !g_ov_browse && g_pgame.on && app_quick_supported(g_pgame.console);
-   if (idx == SET_GBTYPE)
+   if (idx == SET_GBTYPE || idx == SET_PRINTER)
       return !g_ov_browse && g_pgame.on &&
              (g_pgame.console == FE_CONSOLE_GB || g_pgame.console == FE_CONSOLE_GBC);
+   if (idx == SET_CAMERA)
+      return !g_ov_browse && g_pgame.on && fe_host_gbcam_present();
    if (idx == SET_EXPORT)
       return !g_ov_browse && g_pgame.on;
    if (idx >= SET_HDR_THIS && idx <= SET_SUN)
@@ -3753,6 +3760,15 @@ static void settings_adjust(int id, int dir)
       app_ws_options();
       fe_evt("ws_setting palette=%d", g_pgame.ws_palette);
       break;
+   case SET_CAMERA:
+      g_pgame.camera = (g_pgame.camera + PCFG_CAM_MODES + (dir < 0 ? -1 : 1)) % PCFG_CAM_MODES;
+      (void)pcfg_game_save();
+      fe_evt("camera_setting mode=%d", g_pgame.camera);
+      break;
+   case SET_PRINTER:
+      g_pcfg.gb_printer = !g_pcfg.gb_printer;
+      fe_evt("printer_setting on=%d", g_pcfg.gb_printer);
+      break;
    case SET_GBTYPE:
    {
       int k = (gbtype_now() + 3 + (dir < 0 ? -1 : 1)) % 3;
@@ -4061,6 +4077,14 @@ static const char *set_help(int id)
                              ? "X: a plain .sav beside the game (mGBA, "
                                "SameBoy...)."
                              : "X: a copy RetroArch can use, where it looks.";
+   case SET_CAMERA:   return g_pgame.camera == PCFG_CAM_FILE
+                             ? "What the camera sees: camera.png from the data folder."
+                             : g_pgame.camera == PCFG_CAM_BACK
+                             ? "What the camera sees: the Vita's back camera."
+                             : "What the camera sees: the Vita's front camera.";
+   case SET_PRINTER:  return g_pcfg.gb_printer
+                             ? "Pictures a game prints are saved in prints/. Off during a link."
+                             : "Off: games find no printer.";
    case SET_GBTYPE:   return "Auto follows the cartridge. Takes effect at "
                              "the next start.";
    case SET_WSPAL:    return "Black-and-white games: grey, or the original "
@@ -4804,6 +4828,14 @@ static ui_action screen_settings(unsigned edges)
       case SET_WSPAL:
          set_item(y, g_cursor == i, 1, set_rows[i].label,
                   g_pgame.ws_palette ? "Classic LCD tint" : "Greyscale");
+         break;
+      case SET_CAMERA:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  pcfg_camera_name(g_pgame.camera));
+         break;
+      case SET_PRINTER:
+         set_item(y, g_cursor == i, 1, set_rows[i].label,
+                  g_pcfg.gb_printer ? "On" : "Off");
          break;
       case SET_GBTYPE:
       {

@@ -592,6 +592,23 @@ void fe_host_input_inject(uint32_t joypad_mask);
 unsigned fe_host_sensor_kinds(void);
 void fe_host_sensor_set(uint32_t reading);
 
+/* GAME BOY PRINTER (fe_gbprinter.h).  With no link partner the serial port
+ * has a printer on it while the setting is on (fe_host_gb_printer_set; on at
+ * the start of the process).  A finished strip waits for the platform:
+ * fe_host_gb_print_take returns it once (160 wide, one byte a pixel, 0 =
+ * paper .. 3 = darkest; valid until the next call) or NULL, and
+ * fe_host_gb_print_colours the four colours to print it in, lightest first
+ * (the game's palette, else grey). */
+void           fe_host_gb_printer_set(int on);
+const uint8_t *fe_host_gb_print_take(int *w, int *h);
+void           fe_host_gb_print_colours(uint32_t rgb[4]);
+
+/* GAME BOY CAMERA (gbcore.h gbcore_set_camera_image): whether the running
+ * game is a Game Boy Camera, and the platform's picture for it -- 128x112
+ * greyscale, published each frame while it is. */
+unsigned fe_host_gbcam_present(void);
+void     fe_host_gbcam_frame(const uint8_t *grey_128x112);
+
 /* THE SUPER GAME BOY'S BORDER (gbcore.h gbcore_sgb_border): 0 = none (no GB
  * machine, a link session, not running as a Super Game Boy, nothing sent
  * yet), else a number that changes when it is drawn again, with *pixels the

@@ -6,6 +6,7 @@
  * mirrored registers, ROM and RAM banking and the state are checked. */
 #include "../gbcore.h"
 #include "../tgbdual/gbcam.h"
+#include "fe_gbcam_fit.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -310,7 +311,38 @@ int main(void)
 
   gbcore_shutdown(c);
 
-  /* 9. A cartridge that is not a camera has none. */
+  /* 9. The frontend's fit: an 8:7 centre of a 320x240 picture, shrunk to
+   * 128x112 by averaging, optionally mirrored. */
+  {
+    static uint8_t big[320 * 240], fit[128 * 112], mir[128 * 112];
+    int bx, by, sum;
+    for (by = 0; by < 240; by++)
+      for (bx = 0; bx < 320; bx++)
+        big[by * 320 + bx] = (uint8_t)(bx < 160 ? 40 : 200);   /* a step in the middle */
+    fe_gbcam_fit(big, 320, 240, 320, 0, fit);
+    fe_gbcam_fit(big, 320, 240, 320, 1, mir);
+    /* the centre 274x240 (x 23..296) is cut in two at x = 160: output
+     * column 64 starts at source 23 + 64 * 274 / 128 = 160 */
+    if (fit[0] != 40 || fit[63] != 40 || fit[64] != 200 || fit[127] != 200)
+      return fail("fit: the step lands at column 64");
+    if (mir[0] != 200 || mir[127] != 40 || mir[63] != 200 || mir[64] != 40)
+      return fail("fit: mirrored");
+    for (sum = 0, by = 0; by < 128 * 112; by++) sum += fit[by];
+    if (sum != 64 * 112 * 40 + 64 * 112 * 200) return fail("fit: every row alike");
+    /* a picture already 128x112 passes through */
+    for (by = 0; by < 128 * 112; by++) big[by] = (uint8_t)(by * 7);
+    fe_gbcam_fit(big, 128, 112, 128, 0, fit);
+    if (memcmp(fit, big, sizeof(fit))) return fail("fit: 128x112 unchanged");
+    /* a tall picture (240x320) is trimmed top and bottom */
+    for (by = 0; by < 320; by++)
+      for (bx = 0; bx < 240; bx++)
+        big[by * 240 + bx] = (uint8_t)(by < 160 ? 10 : 250);
+    fe_gbcam_fit(big, 240, 320, 240, 0, fit);
+    if (fit[0] != 10 || fit[127 + 128 * 111] != 250) return fail("fit: tall picture");
+    puts("fit: centre crop, average, mirror, tall and exact sizes");
+  }
+
+  /* 10. A cartridge that is not a camera has none. */
   make_rom(rom, sizeof(rom));
   rom[0x147] = 0x00;
   {

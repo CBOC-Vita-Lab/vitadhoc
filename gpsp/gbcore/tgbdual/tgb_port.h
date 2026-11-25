@@ -73,6 +73,9 @@ void gbe_reset(void);
 byte gbe_getTime(int type);
 void gbe_setTime(int type, byte dat);
 word gbe_getSensor(char x_y);
+/* Game Boy Camera: the frontend's 128x112 greyscale picture, NULL when it
+ * has published none (gbcore_set_camera_image; gbcam.h). */
+const unsigned char *gbe_getCameraImage(void);
 void gbe_setBibrate(char bibrate);
 /* Chooses DMG / SGB / CGB behaviour for the loaded cartridge (gb_reset). */
 void set_gb_type(void);

@@ -265,6 +265,11 @@ void mbc_huc1_write(word adr,byte dat);
 void mbc_huc3_write(word adr,byte dat);
 void mbc_tama5_write(word adr,byte dat);
 void mbc_mmm01_write(word adr,byte dat);
+/* Game Boy Camera (gbcam.h) */
+void mbc_cam_write(word adr,byte dat);
+void mbc_cam_tick(void);
+void mbc_cam_save(byte *out);
+void mbc_cam_load(const byte *in);
 
 // cpu.c
 extern byte vram[];

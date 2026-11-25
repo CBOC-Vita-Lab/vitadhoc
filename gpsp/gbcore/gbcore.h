@@ -128,6 +128,14 @@ size_t gbcore_sgb_border_save(gbcore_t *core, void *buf, size_t cap);
 int gbcore_sgb_border_load(gbcore_t *core, const void *buf, size_t n);
 void gbcore_set_tilt(gbcore_t *core, uint32_t x_y);
 
+/* GAME BOY CAMERA (cartridge 0xFC; tgbdual/gbcam.h): whether the loaded game
+ * is one, and the picture its sensor looks at -- 128x112 bytes of grey (0
+ * black .. 255 white), row by row, taken when the game starts a capture.
+ * Until the first call the game sees a test pattern.  The picture is an
+ * input like the buttons: it is not part of a state. */
+int gbcore_has_camera(gbcore_t *core);
+void gbcore_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112);
+
 /* Execute one emulated video frame with the current frontend button mask. */
 int gbcore_run_frame(gbcore_t *core, uint16_t buttons);
 /* Skip (1) or resume (0) drawing.  A skipped frame is fully emulated and

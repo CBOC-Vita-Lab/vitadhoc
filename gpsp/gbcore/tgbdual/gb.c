@@ -219,6 +219,7 @@ size_t gb_save_state(byte *buf)
 		byte resurved[256];
 		apu_save_timing(resurved);
 		cpu_save_timer_timing(resurved+80); /* GBAdhoc: use the existing reserved block. */
+		mbc_cam_save(resurved+192); /* GBAdhoc: Game Boy Camera registers (gbcam.h) */
 		write_state(fd, resurved,256);//将来のために確保
 
 		// RIN拡張
@@ -306,6 +307,7 @@ size_t gb_save_state(byte *buf)
 		byte resurved[256],reload=1;
 		apu_save_timing(resurved);
 		cpu_save_timer_timing(resurved+80); /* GBAdhoc: use the existing reserved block. */
+		mbc_cam_save(resurved+192); /* GBAdhoc: Game Boy Camera registers (gbcam.h) */
 //		resurved[0]=1;
 		write_state(fd, &reload,1);
 		write_state(fd, resurved,256);//将来のために確保
@@ -387,6 +389,7 @@ int gb_restore_state(const byte *buf, size_t size)
 		byte resurved[256];
 		read_state(fd, resurved, 256);
 		apu_load_timing(resurved);
+		mbc_cam_load(resurved+192);
 		cpu_load_timer_timing(resurved+80);//将来のために確保
 
 		// RIN拡張
@@ -499,6 +502,7 @@ int gb_restore_state(const byte *buf, size_t size)
 		read_state(fd, &reload, 1);
 		read_state(fd, resurved,256);
 		apu_load_timing(resurved);
+		mbc_cam_load(resurved+192);
 		cpu_load_timer_timing(resurved+80);//将来のために確保
 	}
 
@@ -679,6 +683,7 @@ int gb_run()
 int gb_run()
 {
 	int cmd = 0;
+	mbc_cam_tick(); /* GBAdhoc: Game Boy Camera capture timing (gbcam.h) */
 	if (rom_get_loaded()){
 		if (g_regs.LCDC&0x80){ // LCDC 起動時
 			g_regs.LY=(g_regs.LY+1)%154;

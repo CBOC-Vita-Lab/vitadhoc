@@ -65,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix="gb-accuracy-") as directory:
         objects=compile_core(b,ROOT,extra)
         run([link(b,"accuracy",objects,extra)])
         if psp or "--focused" in sys.argv: continue
-        for name in ("smoke","rtc","serial","sgb_state"):
+        for name in ("smoke","rtc","serial","sgb_state","gbcam"):
             run([link(b,name,objects)])
         a,bb=g.build_instances(b,objects[:-1])
         dual=b/"dual"

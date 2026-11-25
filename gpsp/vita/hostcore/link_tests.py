@@ -995,7 +995,7 @@ def t_snes_two(T):
                snes_two_walk() + keys("cross", "cross") + shot(12, "hosting.png") + quit_at(26),
                config={"ui_home": 0, "hints": 0})
     b = T.twin("b", T.arch_b, rom, "Bob",
-               snes_two_walk() + keys("down", "cross", "cross") + "+%d:shot=rooms.png\n" % dur(5) +
+               snes_two_walk() + keys("down", "cross", "cross") + "+30:hold=cross=snes_two_join\n" + "+%d:shot=rooms.png\n" % dur(5) +
                "+%d:shot=after.png\n" % dur(8) + quit_at(26),     # no further press: it would start the game again, over the link file
                config={"ui_home": 0, "hints": 0})
     for t in (a, b):

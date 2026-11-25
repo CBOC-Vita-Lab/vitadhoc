@@ -3,6 +3,7 @@
 #include "pk_patch.h"
 #include "pk_ra_plat.h"
 #include "pk_util.h"
+#include "pk_i18n.h"
 #include "pk_m3u.h"
 
 #include <stdarg.h>
@@ -350,17 +351,17 @@ void MdPlayer::poll_writer()
 		case WriterJob::STATE:
 			if (j->quick) {
 				if (j->rep.status != ST_OK) notice(j->rep.text(), NOTICE_ERROR, true);
-				else { session_.note_state_touched(j->state.slot); notice(strf("State saved to slot %d", j->state.slot), NOTICE_OK); }
+				else { session_.note_state_touched(j->state.slot); notice(strf(tr("menu.state_saved_to_slot"), j->state.slot), NOTICE_OK); }
 				if (menu_.is_open()) menu_.refresh();
 			} else {
 				menu_.state_write_done(j->state.slot, j->rep);
 				if (j->rep.status != ST_OK) session_.note_notice(j->rep.text());
 			}
-			logf("state slot %d written: %s\n", j->state.slot, j->rep.status == ST_OK ? "ok" : j->rep.text().c_str());
+			logf("state slot %d written: %s\n", j->state.slot, j->rep.status == ST_OK ? "ok" : j->rep.text(true).c_str());
 			break;
 		case WriterJob::RESUME:
 			resume_busy_ = false;
-			if (j->rep.status != ST_OK) logf("resume point NOT written: %s\n", j->rep.text().c_str());
+			if (j->rep.status != ST_OK) logf("resume point NOT written: %s\n", j->rep.text(true).c_str());
 			session_.set_resume_present(states_->resume_present());
 			break;
 		case WriterJob::SETTINGS:
@@ -376,7 +377,7 @@ void MdPlayer::poll_writer()
 			break;
 		case WriterJob::CHEATS:
 			cheats_busy_ = false;
-			if (j->result) { notice("Cheat list not saved: " + j->path2 + ". The old file was kept.", NOTICE_ERROR); cheats_.save(cht_file_); }
+			if (j->result) { notice(trf("md.cheat_list_not_saved", j->path2.c_str()), NOTICE_ERROR); cheats_.save(cht_file_); }
 			logf("cheat list written rc=%d\n", j->result);
 			break;
 		}
@@ -486,6 +487,7 @@ void MdPlayer::apply_overrides()
 	/* the settings every console shares (for the tests and the session runner: display.ini is the real source) */
 	if (req_.overrides.count("screen")) { const std::string w = lower(req_.overrides.find("screen")->second); for (int i = 0; i < PK_SCREEN_CHOICES; i++) if (w == pk_screen_tag(i)) ui_.screen = i; }
 	if (req_.overrides.count("text_size")) ui_.text_large = lower(req_.overrides.find("text_size")->second) == "large" ? 1 : 0;
+	if (req_.overrides.count("language")) { const int l = pk::lang_index(req_.overrides.find("language")->second.c_str()); ui_.language = l >= pk::LANG_CHOICES ? pk::LANG_AUTO : l; pk::i18n_use(l, system_lang_); }
 	if (req_.overrides.count("contrast")) { const std::string w = lower(req_.overrides.find("contrast")->second); ui_.contrast = w == "on" || w == "1" ? 1 : 0; }
 	if ((v = req_.override_int("pixel_square", -1)) >= 0) ps_.pixel_sq = v ? 1 : 0;
 	if ((v = req_.override_int("wide_view", -1)) >= 0) ps_.wide = clampi(v, 0, 2);
@@ -551,6 +553,7 @@ void MdPlayer::sync_menu_values()
 	menu_.set_value(ROW_PIC_SCREEN, ui_.screen);
 	menu_.set_value(ROW_UI_TEXT, ui_.text_large);
 	menu_.set_value(ROW_UI_CONTRAST, ui_.contrast);
+	menu_.set_value(ROW_UI_LANGUAGE, ui_.language);
 	menu_.set_value(ROW_PIC_APPLY, ps_.use_game ? 1 : 0);
 	menu_.set_value(ROW_SMS_BORDER, sms_border_);
 	menu_.set_value(ROW_GG_COLORS, ps_.gg_colors ? 1 : 0);
@@ -577,7 +580,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	StartResult res;
 	init_shared();
 	root_ = root;
-	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast: the same file as the app's Settings */
+	ui_ = pk::uiprefs_load(root_);          /* Screen, Text size, High contrast, Language: the same file as the app's Settings */
+	pk::i18n_use(ui_.language, system_lang_);      /* the texts of everything below (fatal screens too) */
 
 	/* 1. what to run: the launch file (md, sms, gg or sg: the one that names the argument's game, else the newest), else the argument */
 	std::string arg;
@@ -612,8 +616,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	make_dirs(path_join(cfg_dir(), "games"));
 	make_dirs(path_join(path_join(root, "backups"), console_));
 	if (req_.game_path.empty()) {
-		res.fatal1 = "No game was given.";
-		res.fatal2 = "Start Sega games from VitAdhoc.";
+		res.fatal1 = tr("player.no_game_was_given");
+		res.fatal2 = tr("md.start_sega_games_from_vitadhoc");
 		return res;
 	}
 	rom_ = req_.game_path;
@@ -643,8 +647,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 					}
 				}
 				if (ok) ok = atomic_write(srm_, b.data(), b.size(), have ? EXISTS_YES : EXISTS_NO) == W_OK;
-				if (ok) notice("Brought in the newer RetroArch save", NOTICE_OK, true);
-				else notice("Could not bring in the RetroArch save: the old save was kept", NOTICE_ERROR, true);
+				if (ok) notice(tr("player.brought_in_the_newer_retroarch_save"), NOTICE_OK, true);
+				else notice(tr("player.could_not_bring_in_the_retroarch"), NOTICE_ERROR, true);
 				logf("retroarch save %s -> %s: %s\n", req_.retroarch_save.c_str(), srm_.c_str(), ok ? "imported" : "FAILED");
 			}
 		}
@@ -652,7 +656,7 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 
 	/* 3. the game, patched in memory when the app asked for it (never half-patched) */
 	char err[200] = "";
-	if (md_host_init()) { res.fatal1 = "The Sega core could not start."; res.fatal2 = "Not enough memory."; return res; }
+	if (md_host_init()) { res.fatal1 = tr("md.the_sega_core_could_not_start"); res.fatal2 = tr("player.not_enough_memory"); return res; }
 	std::vector<uint8_t> romb;
 	if (scd_) {
 		/* A Sega CD disc is streamed from the card by the core, never held in memory, and needs the player's own BIOS. What the machine is built
@@ -666,10 +670,10 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		if (!bl.empty()) logf("%s", bl.c_str());
 		if (!nb) {
 			logf("no Sega CD BIOS found (looked in %s and beside the game)\n", path_join(root, "bios").c_str());
-			res.fatal1 = "This game could not be started.";
-			res.fatal2 = "Sega CD game: put your own Sega CD BIOS (for example us_scd1_9210.bin, eu_mcd1_9210.bin or jp_mcd1_9112.bin) in ux0:data/GBAdhoc/bios or next to the game";
+			res.fatal1 = tr("player.this_game_could_not_be_started");
+			res.fatal2 = tr("md.sega_cd_bios_missing");
 			SessionReport r = session_.finish(EXIT_ERROR);
-			r.notice = "A Sega CD game needs its BIOS: put it in ux0:data/GBAdhoc/bios";
+			r.notice = tr("md.sega_cd_bios_missing_notice");
 			session_write(root_, r);
 			return res;
 		}
@@ -691,10 +695,10 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 			disc_first = -1;
 			for (int i = 0; i < nd && disc_first < 0; i++) if (file_exists(dl[i], nullptr, nullptr)) disc_first = i;
 			if (nd <= 0 || disc_first < 0) {
-				res.fatal1 = "This game could not be started.";
-				res.fatal2 = nd < 0 ? "The .m3u list could not be read." : nd == 0 ? "The .m3u list has no disc (.cue, .chd or .iso) in it." : "None of the discs in the .m3u list could be found: " + gone;
+				res.fatal1 = tr("player.this_game_could_not_be_started");
+				res.fatal2 = nd < 0 ? std::string(tr("md.m3u_unreadable")) : nd == 0 ? std::string(tr("md.m3u_empty")) : trf("md.m3u_none_found", gone.c_str());
 				SessionReport r = session_.finish(EXIT_ERROR);
-				r.notice = "This game could not be started: " + res.fatal2;
+				r.notice = trf("player.game_not_started_err", res.fatal2.c_str());
 				session_write(root_, r);
 				return res;
 			}
@@ -703,11 +707,11 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		}
 		if (md_host_load_disc(disc_path.c_str(), err, sizeof err)) {
 			logf("load failed: %s\n", err);
-			res.fatal1 = "This game could not be started.";
+			res.fatal1 = tr("player.this_game_could_not_be_started");
 			{ char found[64]; md_host_cd_bios_regions(found, sizeof found);
-			res.fatal2 = std::string(err) + ". Sega CD: check the disc image (.cue with its .bin files, .chd or .iso). BIOS found: " + found + "."; }
+			res.fatal2 = trf("md.sega_cd_load_failed", err, found); }
 			SessionReport r = session_.finish(EXIT_ERROR);
-			r.notice = std::string("This game could not be started: ") + err;
+			r.notice = trf("player.game_not_started_err", err);
 			session_write(root_, r);
 			return res;
 		}
@@ -720,16 +724,16 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		logf("%s\n", md_host_cd_info());
 		if (md_host_cd_notice()[0]) notice(md_host_cd_notice(), NOTICE_ERROR, true);           /* the disc's region has no BIOS of its own here: say what to add */
 	} else
-	if (!file_read(rom_, romb, 12u << 20) || romb.empty()) { res.fatal1 = "This game could not be started."; res.fatal2 = "The game file could not be read."; return res; }
+	if (!file_read(rom_, romb, 12u << 20) || romb.empty()) { res.fatal1 = tr("player.this_game_could_not_be_started"); res.fatal2 = tr("player.the_game_file_could_not_be"); return res; }
 	if (!scd_ && !req_.patch_path.empty()) {
 		std::vector<uint8_t> out;
 		PatchResult pr = patch_apply_files(req_.patch_path, romb, out);
-		logf("patch %s (%s): %s\n", req_.patch_path.c_str(), patch_kind_name(pr.kind), pr.status == PS_OK ? "applied" : pr.text().c_str());
+		logf("patch %s (%s): %s\n", req_.patch_path.c_str(), patch_kind_name(pr.kind), pr.status == PS_OK ? "applied" : pr.text(true).c_str());
 		if (pr.status != PS_OK) {
-			res.fatal1 = "The patch could not be applied, so the game was not started.";
+			res.fatal1 = tr("player.the_patch_could_not_be_applied");
 			res.fatal2 = pr.text();
 			SessionReport r = session_.finish(EXIT_ERROR);
-			r.notice = "The patch could not be applied: " + pr.text();
+			r.notice = trf("player.patch_failed_notice", pr.text().c_str());
 			session_write(root_, r);
 			return res;
 		}
@@ -737,10 +741,10 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	}
 	if (!scd_ && md_host_load_mem(romb.data(), romb.size(), rom_.c_str(), system_, err, sizeof err)) {
 		logf("load failed: %s\n", err);
-		res.fatal1 = "This game could not be started.";
+		res.fatal1 = tr("player.this_game_could_not_be_started");
 		res.fatal2 = err;
 		SessionReport r = session_.finish(EXIT_ERROR);
-		r.notice = std::string("This game could not be started: ") + err;
+		r.notice = trf("player.game_not_started_err", err);
 		session_write(root_, r);
 		return res;
 	}
@@ -748,8 +752,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		/* the session's identity of the game: the bytes the core was given. The file itself, or a copy when it was patched
 		 * (two consoles with the same game must agree on the bytes) */
 		if (system_ == MD_SYS_GG) {
-			res.fatal1 = "The two-player link could not start.";
-			res.fatal2 = "A Game Gear game has one controller.";
+			res.fatal1 = tr("player.the_two_player_link_could_not");
+			res.fatal2 = tr("md.a_game_gear_game_has_one");
 			md_host_unload();
 			return res;
 		}
@@ -772,8 +776,8 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 		logf("link: role=%s mode=%s identity file %s (%s)\n", req_.link.role.c_str(), req_.link.mode.c_str(), link_rom_.c_str(),
 		     link_rom_ == rom_ ? "the game file" : "a copy of the image the core runs");
 		if (link_rom_.empty()) {
-			res.fatal1 = "The two-player link could not start.";
-			res.fatal2 = "The game file could not be read again.";
+			res.fatal1 = tr("player.the_two_player_link_could_not");
+			res.fatal2 = tr("player.the_game_file_could_not_be_2");
 			return res;
 		}
 	} else
@@ -824,13 +828,12 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	MenuConfig cfg;
 	cfg.game_name = req_.game_name.empty() ? game_ : req_.game_name;
 	cfg.console_label = scd_ ? "Sega CD" : system_ == MD_SYS_MD ? "Mega Drive" : system_ == MD_SYS_SMS ? "Master System" : system_ == MD_SYS_GG ? "Game Gear" : "SG-1000";
-	cfg.exit_label = "Exit";
-	cfg.exit_help = "Close VitAdhoc";
 	cfg.caps = CAP_STATES | CAP_UNDO | CAP_RESET | CAP_WIDE | CAP_SHAPE | CAP_QUALITY | CAP_SCANLINES | CAP_LCD_GRID | CAP_CRT | CAP_GLOW |
 	           CAP_PIC_PER_GAME | CAP_CONTROLS | CAP_TURBO | CAP_CHEATS | CAP_CHEAT_EDIT | CAP_CHEAT_SEARCH | CAP_FF | CAP_FF_SOUND | CAP_FF_MODE | CAP_REWIND | extra_caps_;
 	cfg.enter_is_cross = req_.enter_is_cross;
 	cfg.players = model->players;
-	cfg.play_together_reason = system_ == MD_SYS_GG ? "A Game Gear game has one controller" : "Start it from the game list: Settings > Two players";
+	cfg.system_lang = system_lang_;
+	cfg.play_together_reason = system_ == MD_SYS_GG ? "md.a_game_gear_game_has_one_2" : "player.start_it_from_the_game_list";
 	cfg.accent = system_ == MD_SYS_MD ? 0x2E7DFF : system_ == MD_SYS_GG ? 0xE0B020 : 0xE04A3A;
 	menu_.configure(cfg, this, states_);
 	menu_.attach_input(&mapper_, store_, model, &profile_);
@@ -838,79 +841,79 @@ StartResult MdPlayer::start(int argc, char **argv, const std::string &root, bool
 	menu_.set_choices_allowed(ROW_PIC_QUALITY, ((1u << IMGQ_COUNT) - 1) & ~(1u << IMGQ_ENHANCED_4X));   /* no 4x scaler in a player */
 	{
 		std::vector<std::string> px, onoff, border, lcd, pad, region, fm, ym, palv, filt;
-		px.push_back("Console"); px.push_back("Square");
-		onoff.push_back("Off"); onoff.push_back("On");
-		border.push_back("Off"); border.push_back("Left edge"); border.push_back("Both edges");
-		lcd.push_back("Off");
+		px.push_back("md.console"); px.push_back("input.square");
+		onoff.push_back("menu.off"); onoff.push_back("menu.on");
+		border.push_back("menu.off"); border.push_back("md.left_edge"); border.push_back("md.both_edges");
+		lcd.push_back("menu.off");
 		for (int i = 1; i <= 10; i++) lcd.push_back(strf("%d", i));
-		pad.push_back("Auto"); pad.push_back("3 buttons"); pad.push_back("6 buttons");
-		region.push_back("Auto"); region.push_back("USA"); region.push_back("Europe (50 Hz)"); region.push_back("Japan");
-		fm.push_back("Discrete"); fm.push_back("ASIC"); fm.push_back("Enhanced");
-		ym.push_back("Off"); ym.push_back("On"); ym.push_back("Auto");
-		palv.push_back("Smooth 50 Hz"); palv.push_back("True 50 Hz"); palv.push_back("Fast 60 Hz");
+		pad.push_back("menu.auto"); pad.push_back("md.3_buttons"); pad.push_back("md.6_buttons");
+		region.push_back("menu.auto"); region.push_back("md.usa"); region.push_back("md.europe_50_hz"); region.push_back("md.japan");
+		fm.push_back("md.discrete"); fm.push_back("md.asic"); fm.push_back("md.enhanced");
+		ym.push_back("menu.off"); ym.push_back("menu.on"); ym.push_back("menu.auto");
+		palv.push_back("player.smooth_50_hz"); palv.push_back("player.true_50_hz"); palv.push_back("player.fast_60_hz");
 		filt.push_back(kVideoFilterNames[0]); filt.push_back(kVideoFilterNames[1]);
-		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FILTER, "Video filter", PK_VIDEO_FILTER_HELP, filt, ps_.quality == PIC_SMOOTH ? 1 : 0, ROW_PIC_SCANLINES);
+		menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FILTER, "player.video_filter", PK_VIDEO_FILTER_HELP, filt, ps_.quality == PIC_SMOOTH ? 1 : 0, ROW_PIC_SCANLINES);
 		if (system_ == MD_SYS_SMS)
-			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SMS_BORDER, "Hide masked edge",
-			                   "Games on the Master System cover the first 8 columns with a border colour when they scroll. Hides them, so the picture is 248 wide.",
+			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_SMS_BORDER, "md.hide_masked_edge",
+			                   "md.games_on_the_master_system_cover",
 			                   border, sms_border_, ROW_PIC_APPLY);
 		if (system_ == MD_SYS_GG) {
-			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_GG_COLORS, "LCD colours",
-			                   "The Game Gear's screen showed softer colours and never a true black. On draws them that way.", onoff, ps_.gg_colors ? 1 : 0, ROW_PIC_APPLY);
-			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_GG_LCD, "LCD ghosting",
-			                   "The slow Game Gear screen left a trail behind moving things. 0 is off, 10 is strong.", lcd, gg_lcd_, ROW_PIC_APPLY);
+			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_GG_COLORS, "md.lcd_colours",
+			                   "md.the_game_gear_s_screen_showed", onoff, ps_.gg_colors ? 1 : 0, ROW_PIC_APPLY);
+			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_GG_LCD, "md.lcd_ghosting",
+			                   "md.the_slow_game_gear_screen_left", lcd, gg_lcd_, ROW_PIC_APPLY);
 		}
 		if (system_ != MD_SYS_MD)
-			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FLICKER, "No sprite flicker",
-			                   system_ == MD_SYS_SG ? "The console drew only 4 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same."
-			                                        : "The console drew only 8 sprites on a line, so games blinked the rest. On draws them all; the game itself runs exactly the same.",
+			menu_.add_host_row(Menu::PAGE_PICTURE, ROW_FLICKER, "md.no_sprite_flicker",
+			                   system_ == MD_SYS_SG ? "md.the_console_drew_only_4_sprites"
+			                                        : "md.the_console_drew_only_8_sprites",
 			                   onoff, flicker_ ? 1 : 0, ROW_PIC_APPLY);
 		if (system_ == MD_SYS_MD)
-			menu_.add_host_row(Menu::PAGE_CONTROLS, ROW_PADTYPE, "Pad type",
-			                   "Auto follows the game: 3 buttons or 6. A few games misread the 6 button pad; choose 3 buttons for them.", pad, pad_type_, ROW_CTL_MAPPING);
+			menu_.add_host_row(Menu::PAGE_CONTROLS, ROW_PADTYPE, "md.pad_type",
+			                   "md.auto_follows_the_game_3_buttons", pad, pad_type_, ROW_CTL_MAPPING);
 		{
 			std::vector<std::string> rl;
 			rl.push_back(kRewindLengthNames[0]); rl.push_back(kRewindLengthNames[1]);
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "Rewind length",
-			                   scd_ ? "How far back rewind reaches: Short about 30 seconds, Medium about a minute. A disc game's saved moments are large (about 1 MB each): quiet scenes keep this length, a scene that redraws the whole screen (video) keeps only a few seconds. The memory it may use is fixed."
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_REWIND_LEN, "player.rewind_length",
+			                   scd_ ? "md.how_far_back_rewind_reaches_short"
 			                        : PK_REWIND_LENGTH_HELP, rl, rewind_len_, ROW_SPD_REWIND);
 		}
 		if (scd_) {
 			std::vector<std::string> rc;
-			rc.push_back("Off"); rc.push_back("16 KB"); rc.push_back("32 KB"); rc.push_back("64 KB"); rc.push_back("128 KB"); rc.push_back("256 KB"); rc.push_back("512 KB");
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_RAMCART, "RAM cartridge",
-			                   "Extra save memory some games can use besides the console's built in 8 KB. 512 KB is the usual setting; 128 KB is the one Sega sold; Off leaves the slot empty. A save made with another size is kept and comes back when you choose that size again. Takes effect the next time the game starts. Two players always use 512 KB.",
+			rc.push_back("menu.off"); rc.push_back("md.16_kb"); rc.push_back("md.32_kb"); rc.push_back("md.64_kb"); rc.push_back("md.128_kb"); rc.push_back("md.256_kb"); rc.push_back("md.512_kb");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_RAMCART, "md.ram_cartridge",
+			                   "md.extra_save_memory_some_games_can",
 			                   rc, ram_cart_);
 		}
 		if (scd_ && discs_.size() > 1 && !linked()) {
 			std::vector<std::string> dc;
-			for (size_t i = 0; i < discs_.size(); i++) dc.push_back(strf("Disc %d", (int) i + 1));
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_DISC, "Change disc",
-			                   "For a game on several discs: opens the disc tray, takes the disc out, puts the one you choose in and closes the tray, as you would by hand. Do it when the game asks for another disc. Saves and saved moments stay with the game.",
+			for (size_t i = 0; i < discs_.size(); i++) dc.push_back(strf(tr("md.disc"), (int) i + 1));
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_DISC, "md.change_disc",
+			                   "md.for_a_game_on_several_discs",
 			                   dc, md_host_cd_disc_index(), ROW_REGION);
 		}
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "Region",
-		                   "Auto follows the game. Europe runs a game at its 50 Hz speed, USA and Japan at 60 Hz; some games only work in their own region.", region, region_);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_REGION, "md.region",
+		                   "md.auto_follows_the_game_europe_runs", region, region_);
 		if (system_ == MD_SYS_MD)
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_FM, "FM sound",
-			                   "The sound chip: Discrete is the original YM2612, ASIC the later YM3438, Enhanced adds the missing high notes.", fm, fm_);
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_FM, "md.fm_sound",
+			                   "md.the_sound_chip_discrete_is_the", fm, fm_);
 		if (system_ == MD_SYS_SMS)
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_YM2413, "FM sound unit",
-			                   "The Master System's FM add-on, which some games use. Auto turns it on for games that ask for it.", ym, ym2413_);
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "Steady pacing",
-		                   "When a scene is too heavy for every frame, every second frame is shown, evenly. The game itself keeps full speed.", onoff, 1);
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "PAL games speed",
-		                   "European games run at 50 Hz. Smooth 50 Hz plays them at their real speed and evens out the picture: one refresh in six shows a mix of two frames. True 50 Hz shows one frame in six again; Fast 60 Hz runs them 20 % fast, as on a 60 Hz screen.",
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_YM2413, "md.fm_sound_unit",
+			                   "md.the_master_system_s_fm_add", ym, ym2413_);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_STEADY, "player.steady_pacing",
+		                   "player.when_a_scene_is_too_heavy", onoff, 1);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_PALSPEED, "player.pal_games_speed",
+		                   "player.european_games_run_at_50_hz",
 		                   palv, pk::pal_row_of(pk::PAL_SMOOTH));
 		{
 			std::vector<std::string> qv;
-			qv.push_back("Off"); qv.push_back("Auto"); qv.push_back("On");
-			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "Quick response",
-			                   "Shows what you press one frame sooner: the next frame is worked out ahead and shown. The game itself runs the same. Auto uses it while the game leaves time for it.",
+			qv.push_back("menu.off"); qv.push_back("menu.auto"); qv.push_back("menu.on");
+			menu_.add_host_row(Menu::PAGE_SPEED, ROW_QUICK, "player.quick_response",
+			                   "player.shows_what_you_press_one_frame",
 			                   qv, quick_);
 		}
-		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "Smooth hand-over",
-		                   "Draws each picture on its own thread, so heavy picture options do not slow the game down. Turn it off if the picture ever misbehaves.", onoff, 1);
+		menu_.add_host_row(Menu::PAGE_SPEED, ROW_HANDOFF, "player.smooth_hand_over",
+		                   "player.draws_each_picture_on_its_own", onoff, 1);
 	}
 	sync_menu_values();
 
@@ -932,27 +935,27 @@ void MdPlayer::apply_start_mode()
 	if (linked()) return;      /* a linked game starts from power-on and from the host's game, never from a resume point or slot */
 	std::vector<uint8_t> d;
 	if ((req_.start == START_CONTINUE || req_.start == START_SLOT) && ra_.hardcore_blocks()) {
-		notice("Hardcore mode: the game starts from the beginning", NOTICE_INFO);
+		notice(tr("player.hardcore_mode_the_game_starts_from"), NOTICE_INFO);
 		logf("hardcore: the start from a saved state is refused\n");
 		return;
 	}
 	if (req_.start == START_CONTINUE) {
-		if (!states_->resume_present()) { notice("No point to continue from: the game starts from the beginning", NOTICE_INFO); return; }
+		if (!states_->resume_present()) { notice(tr("player.no_point_to_continue_from_the"), NOTICE_INFO); return; }
 		States::PatchMatch pm = states_->resume_patch(req_.patch_key);
 		if (pm == States::PATCH_DIFFERENT || (pm == States::PATCH_UNKNOWN && !req_.patch_key.empty())) {
-			notice("The resume point was made with another patch: the game starts from the beginning", NOTICE_INFO);
+			notice(tr("player.the_resume_point_was_made_with"), NOTICE_INFO);
 			return;
 		}
 		StateStatus st = states_->load_resume(d);
-		if (st != ST_OK) { notice(std::string("Could not continue: ") + state_status_text(st), NOTICE_ERROR); return; }
-		if (!restore_state(d.data(), d.size())) { notice("Could not continue: the resume point does not fit this game", NOTICE_ERROR); return; }
+		if (st != ST_OK) { notice(trf("player.could_not_continue", state_status_text(st)), NOTICE_ERROR); return; }
+		if (!restore_state(d.data(), d.size())) { notice(tr("player.could_not_continue_the_resume_point"), NOTICE_ERROR); return; }
 		logf("continued from the resume point\n");
 	} else if (req_.start == START_SLOT) {
 		StateStatus st = states_->load(req_.slot, d);
-		if (st != ST_OK) { notice(strf("Slot %d: %s", req_.slot, state_status_text(st)), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
-		if (!restore_state(d.data(), d.size())) { notice(strf("Slot %d could not be loaded: this game cannot read it", req_.slot), NOTICE_ERROR); return; }
+		if (st != ST_OK) { notice(strf(tr("player.slot"), req_.slot, state_status_text(st)), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
+		if (!restore_state(d.data(), d.size())) { notice(strf(tr("player.slot_could_not_be_loaded_this"), req_.slot), NOTICE_ERROR); return; }
 		session_.note_state_touched(req_.slot);
-		notice(strf("State loaded from slot %d", req_.slot), NOTICE_OK);
+		notice(strf(tr("menu.state_loaded_from_slot"), req_.slot), NOTICE_OK);
 	}
 }
 
@@ -1058,7 +1061,7 @@ SpeedSettings MdPlayer::speed_settings() const
 void MdPlayer::speed_start()
 {
 	/* a linked game steps both machines in lockstep: neither rewind nor fast forward */
-	if (linked()) speed_.set_locked(true, "Rewind is off while games are linked");
+	if (linked()) speed_.set_locked(true, "rewind.rewind_is_off_while_games_are");
 	/* a disc's state is about 1 MB (a cartridge's 0.15 MB): a capture every 4 frames, not 2, halves what the emulating thread spends on rewind (the
 	 * state copy is a few ms on a Vita, an estimate); the ring stretches the interval further when the picture changes much (FMV) */
 	speed_.start(md_host_fps(), scd_ ? 4 : 2, speed_settings());
@@ -1123,14 +1126,14 @@ int MdPlayer::speed_plan(int normal)
 void MdPlayer::change_disc(int index)
 {
 	if (!scd_ || discs_.size() < 2 || linked()) return;
-	if (disc_phase_) { notice("The disc is being changed already", NOTICE_INFO); sync_disc_row(); return; }
+	if (disc_phase_) { notice(tr("md.the_disc_is_being_changed_already"), NOTICE_INFO); sync_disc_row(); return; }
 	if (index < 0 || index >= (int) discs_.size()) { sync_disc_row(); return; }
 	/* the tray may be open already (the game opened it, or a saved moment taken while it was open came back): the change goes on from there, and
 	 * choosing the disc that is in closes it */
 	const bool open = md_host_cd_tray_open() != 0;
-	if (index == md_host_cd_disc_index() && !open) { notice(strf("Disc %d is in the drive already", index + 1), NOTICE_INFO); return; }
+	if (index == md_host_cd_disc_index() && !open) { notice(strf(tr("md.disc_is_in_the_drive_already"), index + 1), NOTICE_INFO); return; }
 	if (!file_exists(discs_[(size_t) index], nullptr, nullptr)) {
-		notice(strf("Disc %d is missing: %s", index + 1, disc_file_name(discs_[(size_t) index]).c_str()), NOTICE_ERROR, true);
+		notice(strf(tr("md.disc_is_missing"), index + 1, disc_file_name(discs_[(size_t) index]).c_str()), NOTICE_ERROR, true);
 		sync_disc_row();
 		return;
 	}
@@ -1139,7 +1142,7 @@ void MdPlayer::change_disc(int index)
 	disc_phase_ = index == md_host_cd_disc_index() ? 2 : 1;
 	disc_wait_ = kDiscTrayFrames;
 	logf("change disc: tray open%s, disc %d next\n", open ? " already" : "", index + 1);
-	if (!open) notice("Disc tray open", NOTICE_OK);
+	if (!open) notice(tr("md.disc_tray_open"), NOTICE_OK);
 }
 
 void MdPlayer::sync_disc_row() { menu_.set_value(ROW_DISC, md_host_cd_disc_index()); }
@@ -1158,7 +1161,7 @@ void MdPlayer::disc_tick()
 			logf("change disc: disc %d in the drive\n", disc_want_ + 1);
 		} else {
 			logf("change disc: disc %d could not be read: %s\n", disc_want_ + 1, err);
-			notice(strf("Disc %d could not be read: %s", disc_want_ + 1, err), NOTICE_ERROR, true);
+			notice(strf(tr("md.disc_could_not_be_read"), disc_want_ + 1, err), NOTICE_ERROR, true);
 		}
 		disc_phase_ = 2;
 		disc_wait_ = kDiscTrayFrames;
@@ -1166,7 +1169,7 @@ void MdPlayer::disc_tick()
 	}
 	md_host_cd_close();
 	disc_phase_ = 0;
-	notice(strf("Disc %d inserted", md_host_cd_disc_index() + 1), NOTICE_OK);
+	notice(strf(tr("md.disc_inserted"), md_host_cd_disc_index() + 1), NOTICE_OK);
 	sync_disc_row();
 	logf("change disc: tray closed\n");
 }
@@ -1212,7 +1215,7 @@ std::string MdPlayer::pace_line()
 void MdPlayer::quick_save()
 {
 	std::vector<uint8_t> d;
-	if (!capture_state(d)) { notice("Could not save the state: the game could not be captured", NOTICE_ERROR); return; }
+	if (!capture_state(d)) { notice(tr("menu.could_not_save_the_state_the"), NOTICE_ERROR); return; }
 	Frame f;
 	current_frame(&f);
 	WriterJob *j = new WriterJob;
@@ -1228,11 +1231,11 @@ void MdPlayer::quick_load()
 	wait_writer();
 	std::vector<uint8_t> d, now;
 	StateStatus st = states_->load(1, d);
-	if (st != ST_OK) { notice(st == ST_EMPTY ? std::string("Slot 1 is empty") : state_status_text(st), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
+	if (st != ST_OK) { notice(st == ST_EMPTY ? std::string(tr("player.slot_1_is_empty")) : state_status_text(st), st == ST_EMPTY ? NOTICE_INFO : NOTICE_ERROR); return; }
 	if (capture_state(now)) states_->undo_store(now.data(), now.size());
-	if (!restore_state(d.data(), d.size())) { notice("The state could not be loaded: this game or version cannot read it", NOTICE_ERROR); return; }
+	if (!restore_state(d.data(), d.size())) { notice(tr("menu.the_state_could_not_be_loaded"), NOTICE_ERROR); return; }
 	session_.note_state_touched(1);
-	notice("State loaded from slot 1", NOTICE_OK);
+	notice(tr("player.state_loaded_from_slot_1"), NOTICE_OK);
 }
 
 void MdPlayer::resume_post(bool sync)
@@ -1319,7 +1322,7 @@ void MdPlayer::srm_result(int r, const char *how, uint64_t now)
 		resume_after_srm_at_ = now + 1000000;
 		return;
 	}
-	save_msg_ = strf("Could not save the game: %s. The old save was kept; trying again.", srm_err_.empty() ? "unknown error" : srm_err_.c_str());
+	save_msg_ = strf(tr("player.save_failed_retry"), srm_err_.empty() ? tr("player.unknown_error") : srm_err_.c_str());
 	logf("sram save FAILED rc=%d (%s): %s - the file on the card was not touched; retry in %u s\n", r, how, srm_err_.c_str(), srm_backoff_s_);
 	if (!save_failing_) notice(save_msg_, NOTICE_ERROR);
 	session_.note_save_error(save_msg_);
@@ -1435,11 +1438,11 @@ void MdPlayer::list_cheats(std::vector<CheatItem> &out)
 
 void MdPlayer::set_cheat(int index, bool on)
 {
-	if (index < 0 || index >= cheats_.size() || !cheats_.at(index).usable) { notice("This cheat cannot be switched on here", NOTICE_ERROR); return; }
+	if (index < 0 || index >= cheats_.size() || !cheats_.at(index).usable) { notice(tr("player.this_cheat_cannot_be_switched_on"), NOTICE_ERROR); return; }
 	cheats_.set_on(index, on);
 	cheats_apply();
 	cheats_queue_save();
-	notice(std::string(on ? "Cheat on: " : "Cheat off: ") + cheats_.at(index).label, on ? NOTICE_OK : NOTICE_INFO);
+	notice(trf(on ? "player.cheat_on" : "player.cheat_off", cheats_.at(index).label.c_str()), on ? NOTICE_OK : NOTICE_INFO);
 }
 
 void MdPlayer::add_cheat() { pf_->ask_cheat_text(); }
@@ -1462,7 +1465,7 @@ bool MdPlayer::search_setup(pk_cs *cs)
 
 const char *MdPlayer::search_refused()
 {
-	return linked() ? "Cheats are off while linked to another console." : cheats_refused();
+	return linked() ? tr("player.cheats_are_off_while_linked_to") : cheats_refused();
 }
 
 void MdPlayer::add_cheat_code(const std::string &code, const std::string &name) { cheat_entered(true, code, name); }
@@ -1482,18 +1485,18 @@ void MdPlayer::cheat_entered(bool ok, const std::string &code_in, const std::str
 	const int r = cheats_.add(code, trim(name));
 	if (r < 0) {
 		const bool md = system_ == MD_SYS_MD;
-		const char *t = r == CHEAT_E_FORMAT ? (md ? "That is not a cheat code. Use XXXX-XXXX (Game Genie) or AAAAAA:VVVV (Pro Action Replay)"
-		                                          : "That is not a cheat code. Use XXX-XXX (Game Genie), 00AA-AAVV (Pro Action Replay) or AAAA:VV")
-		              : r == CHEAT_E_FULL ? "The cheat list is full"
-		              : r == CHEAT_E_TOO_LONG ? "That code is too long (16 parts at most)"
-		              : r == CHEAT_E_RANGE ? "That code points at an address this game does not have"
-		              : r == CHEAT_E_EXISTS ? "That code is already in the list"
-		              : "The cheat could not be added";
+		const char *t = r == CHEAT_E_FORMAT ? (md ? tr("md.that_is_not_a_cheat_code")
+		                                          : tr("md.that_is_not_a_cheat_code_2"))
+		              : r == CHEAT_E_FULL ? tr("player.the_cheat_list_is_full")
+		              : r == CHEAT_E_TOO_LONG ? tr("player.that_code_is_too_long_16")
+		              : r == CHEAT_E_RANGE ? tr("md.that_code_points_at_an_address")
+		              : r == CHEAT_E_EXISTS ? tr("md.that_code_is_already_in_the")
+		              : tr("player.the_cheat_could_not_be_added");
 		notice(t, NOTICE_ERROR);
 	} else {
 		cheats_apply();
 		cheats_queue_save();
-		notice("Cheat added and on: " + cheats_.at(r).label, NOTICE_OK);
+		notice(trf("player.cheat_added", cheats_.at(r).label.c_str()), NOTICE_OK);
 	}
 	logf("cheat add '%s' -> %d\n", code.c_str(), r);
 	menu_.refresh();
@@ -1539,7 +1542,7 @@ MenuEvent MdPlayer::menu_update(const MenuInput &in)
 		pacer_.reset(PACE_FULL);
 		look_.reset_window();
 		look_safe_point(LOOK_SAFE_MENU);
-		if (ev == MENU_RESET_DONE) notice("The game was reset", NOTICE_INFO);
+		if (ev == MENU_RESET_DONE) notice(tr("player.the_game_was_reset"), NOTICE_INFO);
 	}
 	return ev;
 }
@@ -1601,13 +1604,14 @@ void MdPlayer::on_change(int row, int v)
 	case ROW_PIC_GRID: ps_.grid = clampi(v, 0, 10); g_changed |= CH_GRID; break;
 	case ROW_PIC_GLOW: ps_.glow = clampi(v, 0, 10); g_changed |= CH_GLOW; break;
 	case ROW_PIC_CRT: ps_.crt = clampi(v, 0, 10); g_changed |= CH_CRT; break;
-	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST:
+	case ROW_PIC_SCREEN: case ROW_UI_TEXT: case ROW_UI_CONTRAST: case ROW_UI_LANGUAGE:
 		/* shared by every console and the app: display.ini, written at once (a few bytes) */
 		if (row == ROW_PIC_SCREEN) ui_.screen = pk_screen_clamp(v);
+		else if (row == ROW_UI_LANGUAGE) ui_.language = clampi(v, 0, pk::LANG_CHOICES - 1);      /* the menu switched the texts already */
 		else if (row == ROW_UI_TEXT) ui_.text_large = v ? 1 : 0;
 		else ui_.contrast = v ? 1 : 0;
 		ui_serial_++;
-		if (!pk::uiprefs_save(root_, ui_)) notice("Could not save the screen settings", NOTICE_ERROR, false);
+		if (!pk::uiprefs_save(root_, ui_)) notice(tr("player.could_not_save_the_screen_settings"), NOTICE_ERROR, false);
 		return;
 	case ROW_PIC_APPLY:
 		ps_.use_game = v ? 1 : 0;
@@ -1692,7 +1696,7 @@ void MdPlayer::on_state_touched(int slot) { session_.note_state_touched(slot); }
 
 void MdPlayer::on_controls_changed(WriteResult rc)
 {
-	if (rc != W_OK) { logf("controls NOT saved: %s\n", write_result_text(rc)); session_.note_notice(std::string("Could not save the controls: ") + write_result_text(rc)); }
+	if (rc != W_OK) { logf("controls NOT saved: %s\n", write_result_text(rc, true)); session_.note_notice(trf("menu.controls_save_failed", write_result_text(rc))); }
 }
 
 bool MdPlayer::queue_state_write(StateJob &job)
@@ -1863,7 +1867,7 @@ void MdPlayer::finish(ExitReason why)
 	WriteResult w = session_write(root_, rep);
 	logf("session: %lld s played, save_changed=%d save_error=%d states=%d resume=%d exit=%d -> launch/session.txt %s\n",
 	     (long long) rep.seconds_played, rep.save_changed ? 1 : 0, rep.save_error ? 1 : 0, (int) rep.states_touched.size(),
-	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w));
+	     rep.resume_present ? 1 : 0, (int) why, w == W_OK ? "written" : write_result_text(w, true));
 	ra_.shutdown();                  /* an unlock earned a moment ago gets up to three seconds to reach the server */
 	log_flush(true);
 }

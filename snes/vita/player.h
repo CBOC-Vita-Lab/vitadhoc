@@ -227,6 +227,8 @@ public:
 	const pic_settings &picture() const { return eff_; }   /* ps_ with the look governor applied */
 	/* Screen, Text size, High contrast: the settings every console shares (display.ini, pk_uiprefs.h); ui_serial() counts changes */
 	const pk::UiPrefs &ui() const { return ui_; }
+	/* the Vita's system language (SCE_SYSTEM_PARAM_ID_LANG) for Language: Automatic; set before start() */
+	void set_system_lang(int v) { system_lang_ = v; }
 	unsigned ui_serial() const { return ui_serial_; }
 	const pk::LaunchRequest &request() const { return req_; }
 	bool have_launch_file() const { return have_launch_; }
@@ -314,6 +316,7 @@ private:
 	pk::LaunchRequest req_;
 	bool have_launch_ = false;
 	std::string root_, snes_dir_, game_, rom_, srm_;
+	int system_lang_ = 1;
 	pk::UiPrefs ui_;               /* display.ini: Screen, Text size, High contrast */
 	unsigned ui_serial_ = 0;
 	pic_settings ps_;              /* what the player chose (and what the files hold) */

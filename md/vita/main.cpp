@@ -48,6 +48,8 @@
 #include "picture.h"
 #include "audio_pace.h"
 #include "player.h"
+#include "pk_i18n.h"
+#include "pk_utf8.h"
 #include "netplay.h"
 #include <psp2/kernel/rng.h>
 #include <psp2/net/net.h>
@@ -1216,20 +1218,31 @@ static void fatal_screen(const std::string &line1, const std::string &line2)
 		if (!vita2d_try_start_drawing_advanced(NULL, 0)) { sceDisplayWaitVblankStart(); continue; }
 		shown++;
 		vita2d_clear_screen();
-		g_text->draw(pk::F_SUB, 60, 180, line1.c_str(), PK_RGBA(255, 255, 255, 255));
+		if (g_text->width(pk::F_SUB, line1.c_str()) <= 840) g_text->draw(pk::F_SUB, 60, 180, line1.c_str(), PK_RGBA(255, 255, 255, 255));
+		else g_text->wrap(pk::F_SUB, 60, 140, 840, 2, 4, line1, PK_RGBA(255, 255, 255, 255));      /* a long translation wraps, never runs off the screen */
 		g_text->wrap(pk::F_BODY, 60, 240, 840, 3, 4, line2, PK_RGBA(192, 192, 192, 255));
-		g_text->draw(pk::F_BODY, 60, 360, "Returning to VitAdhoc...", PK_RGBA(192, 192, 192, 255));
+		g_text->draw(pk::F_BODY, 60, 360, pk::tr("player.returning_to_vitadhoc"), PK_RGBA(192, 192, 192, 255));
 		vita2d_end_drawing();
 		vita2d_swap_buffers();
 	}
 }
 
-/* The system keyboard (an IME common dialog), drawn over the frozen game and the menu. ASCII only. */
+/* The system keyboard (an IME common dialog), drawn over the frozen game and the menu. The typed text is ASCII only; the title may be any text (UTF-8). */
 static bool ime_ask(const char *title, const char *initial, std::string &out)
 {
 	static SceWChar16 title16[64], init16[96], buf16[96];
 	memset(title16, 0, sizeof title16); memset(init16, 0, sizeof init16); memset(buf16, 0, sizeof buf16);
-	for (int i = 0; title[i] && i < 63; i++) title16[i] = (unsigned char) title[i];
+	{      /* the title is UTF-8 (a translation): UTF-16 for the dialog, at most 63 units */
+		int n = 0;
+		for (const char *t = title; *t && n < 62;) {
+			int len = 1;
+			uint32_t cp = pk_u8_next(t, &len);
+			if (cp >= PK_U8_RAW) cp -= PK_U8_RAW;      /* a stray byte */
+			t += len > 0 ? len : 1;
+			if (cp >= 0x10000) { title16[n++] = (SceWChar16) (0xD800 + ((cp - 0x10000) >> 10)); title16[n++] = (SceWChar16) (0xDC00 + ((cp - 0x10000) & 0x3FF)); }
+			else title16[n++] = (SceWChar16) cp;
+		}
+	}
 	for (int i = 0; initial[i] && i < 95; i++) init16[i] = (unsigned char) initial[i];
 	SceImeDialogParam p;
 	sceImeDialogParamInit(&p);
@@ -1369,15 +1382,15 @@ static bool link_screen(const pk::PadSample &pad, bool enter_is_cross)
 	vita2d_pool_reset();
 	if (!vita2d_try_start_drawing_advanced(NULL, 0)) { sceDisplayWaitVblankStart(); return (pad.buttons & pk::phys_cancel(enter_is_cross)) != 0; }       /* no scene: nothing is drawn this time (see fatal_screen) */
 	vita2d_clear_screen();
-	g_text->draw(pk::F_SUB, 60, 170, "Two-player game", PK_RGBA(255, 255, 255, 255));
-	g_text->draw(pk::F_SUB, 60, 230, l1.c_str(), PK_RGBA(255, 255, 255, 255));
-	if (!l2.empty()) g_text->draw(pk::F_BODY, 60, 280, l2.c_str(), PK_RGBA(192, 192, 192, 255));
+	g_text->draw(pk::F_SUB, 60, 170, pk::tr("player.two_player_game"), PK_RGBA(255, 255, 255, 255));
+	g_text->draw(pk::F_SUB, 60, 230, g_text->fit(pk::F_SUB, l1, 840).c_str(), PK_RGBA(255, 255, 255, 255));
+	if (!l2.empty()) g_text->draw(pk::F_BODY, 60, 280, g_text->fit(pk::F_BODY, l2, 840).c_str(), PK_RGBA(192, 192, 192, 255));
 	const int bar = p1 >= 0 ? p1 : p2;
 	if (bar >= 0) {
 		vita2d_draw_rectangle(60, 330, 840, 12, RGBA8(60, 60, 60, 255));
 		vita2d_draw_rectangle(60, 330, (float) (840 * bar / 1000), 12, RGBA8(123, 108, 255, 255));
 	}
-	g_text->draw(pk::F_BODY, 60, 470, enter_is_cross ? "Circle: cancel" : "Cross: cancel", PK_RGBA(160, 160, 160, 255));
+	g_text->draw(pk::F_BODY, 60, 470, pk::trf("player.cancel_hint", pk::tr(enter_is_cross ? "input.circle" : "input.cross")).c_str(), PK_RGBA(160, 160, 160, 255));
 	vita2d_end_drawing();
 	vita2d_swap_buffers();
 	return (pad.buttons & pk::phys_cancel(enter_is_cross)) != 0;
@@ -1416,8 +1429,8 @@ static pk::MenuEvent menu_loop(int player)
 				bool sok = ime_ask(stitle.c_str(), "", code);
 				g_pl->search_value_entered(sok, code);
 			} else {
-			bool ok = ime_ask("Cheat code (Game Genie, Pro Action Replay or address:value)", "", code);
-			if (ok && !code.empty()) ime_ask("A name for it (you can leave it empty)", "", name);
+			bool ok = ime_ask(pk::tr("md.cheat_code_game_genie_pro_action"), "", code);
+			if (ok && !code.empty()) ime_ask(pk::tr("player.a_name_for_it_you_can"), "", name);
 			g_pl->cheat_entered(ok, code, name);
 			}
 		}
@@ -1451,6 +1464,10 @@ int main(int argc, char **argv)
 	SceCommonDialogConfigParam cdc;
 	sceCommonDialogConfigParamInit(&cdc);
 	sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, (int *) &cdc.language);
+	int sys_lang = 1;      /* SCE_SYSTEM_PARAM_LANG_ENGLISH_US: for Language: Automatic (pk_i18n.h) */
+	sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_LANG, &sys_lang);
+	pk::i18n_dir("app0:");      /* app0:lang/pk_<code>.txt */
+	g_pl->set_system_lang(sys_lang);
 	sceAppUtilSystemParamGetInt(SCE_SYSTEM_PARAM_ID_ENTER_BUTTON, (int *) &cdc.enterButtonAssign);
 	sceCommonDialogSetConfigParam(&cdc);
 	int enter = SCE_SYSTEM_PARAM_ENTER_BUTTON_CROSS;
@@ -1484,7 +1501,7 @@ int main(int argc, char **argv)
 		logf_("main thread priority 0x%x rc=%08x now 0x%x\n", main_prio, rc, sceKernelGetThreadCurrentPriority());
 	}
 	md_host_set_log([](const char *line) { logf_("%s\n", line); });
-	if (md_host_init() != 0) { fatal_screen("The Sega core could not start.", "Not enough memory."); return_to_vitadhoc(); }
+	if (md_host_init() != 0) { fatal_screen(pk::tr("md.the_sega_core_could_not_start"), pk::tr("player.not_enough_memory")); return_to_vitadhoc(); }
 	/* the VDP line renderer (when the plan has a place for it) and, for a Sega CD game, the disc read-ahead helper: the thread starts once a disc is
 	 * loaded (cdio_begin), a cartridge never starts it */
 	md_host_set_threads(&g_wk_ops, (g_vdp_mode && g_core_plan.find(pk::R_RENDER) ? (MD_THREAD_VDP | (g_vdp_mode == 2 ? MD_THREAD_VDP_SMS : 0u)) : 0u) | (g_fm_mode && g_core_plan.find(pk::R_APU) ? MD_THREAD_FM : 0u) | MD_THREAD_DISC);
@@ -1523,7 +1540,7 @@ int main(int argc, char **argv)
 			g_pl->set_link_result("never", (int) f, "", 0);
 			g_pl->finish(pk::EXIT_GAME_LIST);
 			writer_stop();
-			fatal_screen("The two-player game could not start.", "The connection could not be opened.");
+			fatal_screen(pk::tr("player.the_two_player_game_could_not"), pk::tr("player.the_connection_could_not_be_opened"));
 			link_net_down();
 			return_to_vitadhoc();
 		}

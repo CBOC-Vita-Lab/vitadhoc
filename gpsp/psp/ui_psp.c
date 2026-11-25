@@ -1581,6 +1581,15 @@ static void page_header(const char *title, const char *right)
 static void footer(const char *hint)
 {
 #ifdef VITA
+   /* Text size Large: a hint line wider than the screen keeps the Normal size
+    * rather than run off its sides */
+   if (vid_text_scope_large() && vid_text_w(hint) > VID_SCR_W - 16)
+   {
+      vid_text_scope(0);
+      footer(hint);
+      vid_text_scope(1);
+      return;
+   }
    if (g_pcfg.theme != 1)
    {
       /* no bar: the hints sit on a ramp out of the bottom edge */
@@ -2287,6 +2296,14 @@ static void ov_text_right(int xr, int y, const char *s, uint16_t c)
 static void ov_plate(const char *msg)
 {
 #ifdef VITA
+   /* Text size Large: a message wider than the screen keeps the Normal size */
+   if (vid_text_scope_large() && vid_text_w(msg) > VID_SCR_W - 60)
+   {
+      vid_text_scope(0);
+      ov_plate(msg);
+      vid_text_scope(1);
+      return;
+   }
    if (g_pcfg.theme != 1)
    {
       /* 24 px above the footer's own line: the plate used to start at the
@@ -2419,6 +2436,26 @@ static const char *const CTL_UI_NAMES[CTL_NBUTTONS] = {
    "REAR TL", "REAR TR", "REAR BL", "REAR BR"
 };
 
+#ifdef VITA
+/* A page whose rows hold Text size Large draws inside the scope and gives
+ * back the one it was called in (video_vita.h: vid_text_scope; the page
+ * wrappers below).  The others keep the Normal faces. */
+static int large_enter(void)
+{
+   int was = vid_text_scope_large();
+   vid_text_scope(1);
+   return was;
+}
+#define LARGE_WRAP(ret, name, params, args) \
+   static ret name##_page params; \
+   static ret name params \
+   { \
+      int was_ = large_enter(); \
+      ret r_ = name##_page args; \
+      vid_text_scope(was_); \
+      return r_; \
+   }
+#endif
 static ui_action screen_controls(unsigned edges, unsigned pad);
 #ifdef VITA
 static ui_action screen_btntest(unsigned edges);   /* vita/ui_vita_btntest.h */
@@ -5451,6 +5488,8 @@ static ui_action screen_settings_page(unsigned edges)
           ? VID_GLYPH_X " retry missing   DPAD move   " VID_GLYPH_O " back"
           : g_cursor == SET_COVERPIC
           ? VID_GLYPH_X " open   DPAD move   " VID_GLYPH_O " back"
+          : g_cursor == SET_ABOUT_UPDATE
+          ? VID_GLYPH_X " check now   DPAD change   " VID_GLYPH_O " back"
           : VID_GLYPH_X " change   DPAD move/change   " VID_GLYPH_O " back");
 #else
    if (g_cursor == SET_FASTLINK)
@@ -8139,7 +8178,12 @@ static void ss_padlock(int x, int y, uint16_t c)
    vid_rect(x + 4, y + 7, 1, 2, C_SHADOW, 255);   /* keyhole              */
 }
 
+#ifdef VITA
+LARGE_WRAP(ui_action, screen_state_slots, (unsigned edges), (edges))
+static ui_action screen_state_slots_page(unsigned edges)
+#else
 static ui_action screen_state_slots(unsigned edges)
+#endif
 {
    ui_action act = UI_ACT_NONE;
    int i, cur;
@@ -8373,11 +8417,15 @@ static ui_action screen_state_slots(unsigned edges)
       vid_text(64, y, lbl, sel ? C_SEL : C_ITEM);
       if (g_ov_lock[i])
          ss_padlock(192, y + 10, sel ? C_SEL : C_DIM);
-      if (g_ov_slot[i])
-         vid_text(64, y + 14, g_ov_stamp[i][0] ? g_ov_stamp[i] : "saved",
-                  sel ? C_VALUE : C_DIM);
-      else
-         vid_text(64, y + 14, "empty", C_DIM);
+      {
+         /* Text size Large: the second line sits two rows lower */
+         const int y2 = y + (vid_text_scope_large() ? 16 : 14);
+         if (g_ov_slot[i])
+            vid_text(64, y2, g_ov_stamp[i][0] ? g_ov_stamp[i] : "saved",
+                     sel ? C_VALUE : C_DIM);
+         else
+            vid_text(64, y2, "empty", C_DIM);
+      }
       UI_TCH_ROW(i, 0, by - 1, 212, 34);
    }
    ss_panel(cur);
@@ -8387,6 +8435,7 @@ static ui_action screen_state_slots(unsigned edges)
                PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? "empty"
                : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved",
                g_ov_lock[cur] ? "  -  locked" : "");
+      clip_title(cap, VID_SCR_W - SS_PX - 10);   /* Text size Large: the date is long */
       vid_text(SS_PX, 228, cap, C_DIM);
    }
    if (g_slot_ask)
@@ -13031,7 +13080,13 @@ static void browser_empty(const char *rom_dir, int n_scan)
       {
          snprintf(msg, sizeof(msg), "No %s games in this view", s->id);
          vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
-         vid_text_center(160, "SELECT + " VID_GLYPH_SQ " adds a game to a collection", item);
+         vid_text_center(160, g_view_kind == VK_COLL
+                         ? "SELECT + " VID_GLYPH_SQ " on a game adds it to a collection"
+                         : g_view_kind == VK_LPL
+                         ? "A RetroArch playlist: it cannot be changed here"
+                         : g_view_kind == VK_MOST
+                         ? "The games you play show up here"
+                         : "The games you have not started show up here", item);
          vid_text_center(182, "SELECT: next view", dim);
       }
       else
@@ -14009,7 +14064,7 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
    g_swap_to = -1;
    g_view_kind = VK_ALL;
    g_view_which = 0;
-   g_sel_pending = 0;
+   g_sel_stepped = g_sel_lists = 0;
 #endif
    favs_load(rom_dir);
 #ifdef VITA
@@ -14296,6 +14351,50 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
          idle = 0;
          edges &= PSP_CTRL_START;
       }
+#ifdef VITA
+      /* SELECT stepped the view when it went down.  SQUARE (the Lists page)
+       * or any other button while it is still held takes that step back: the
+       * animation is cancelled before the list changed, or the previous view
+       * is set again.  Seen here, before the animation drops the buttons. */
+      if (g_sel_stepped)
+      {
+         if (!(pd.Buttons & PSP_CTRL_SELECT))
+            g_sel_stepped = 0;
+         else if ((edges & PSP_CTRL_SQUARE) ||
+                  (pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER |
+                                 PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
+                                 PSP_CTRL_TRIANGLE | PSP_CTRL_START)) ||
+                  g_browser_state_open || find_owns_input)
+         {
+            g_sel_stepped = 0;
+            if (edges & PSP_CTRL_SQUARE)
+            {
+               g_sel_lists = 1;
+               edges &= ~PSP_CTRL_SQUARE;
+            }
+            if (g_swap.active && !g_swap.rebuild && g_swap.f < SWAP_FRAMES / 2)
+            {
+               g_swap.active = 0;       /* the list had not changed yet */
+               fx_reset();
+            }
+            else
+            {
+               int keep_rom = n > 0 ? view_rom(cur) : -1;
+               lib_view_set(g_sel_prev_kind, g_sel_prev_which, n_scan);
+               lib_view_evt(view_count(n_scan));
+               n = view_count(n_scan);
+               cur = 0;
+               for (i = 0; i < n; i++)
+                  if (view_rom(i) == keep_rom)
+                     cur = i;
+               g_swap.active = 0;
+               fx_reset();
+               browser_state_cache_free();
+               g_scroll_cur = g_art_fade_idx = g_marq_idx = -1;
+            }
+         }
+      }
+#endif
       if (g_swap.active)
       {
          if (swap_step())
@@ -14393,35 +14492,31 @@ int ui_browser(const char *rom_dir, char *out, size_t out_sz,
       /* SELECT swaps the list for the favourites subset and back.  Not
        * while L+R are held: that is the screenshot chord above. */
 #ifdef VITA
-      /* SELECT steps through the views -- on its release, so that SELECT +
-       * SQUARE can be the game's Collections page instead (the Home's Lists
-       * button is the same page). */
+      /* SELECT steps through the views when it goes down.  If SQUARE comes
+       * while it is held the step is taken back above and the game's
+       * Collections page opens instead (the Home's Lists button is the same
+       * page). */
       {
-         int lists = (edges & BROWSER_LISTS_BUTTON) != 0;
+         int lists = (edges & BROWSER_LISTS_BUTTON) != 0 || g_sel_lists;
          edges &= ~BROWSER_LISTS_BUTTON;
+         g_sel_lists = 0;
          if ((edges & PSP_CTRL_SELECT) && !g_browser_state_open &&
              !(pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER)))
-            g_sel_pending = 1;
-         /* SELECT held and another button pressed is not a step: the game
-          * started, Settings, the console list, Find or the save states took
-          * the press, and the view must not change behind them or later */
-         if (g_sel_pending &&
-             ((pd.Buttons & (PSP_CTRL_LTRIGGER | PSP_CTRL_RTRIGGER |
-                             PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
-                             PSP_CTRL_TRIANGLE | PSP_CTRL_START)) ||
-              g_browser_state_open || find_owns_input))
-            g_sel_pending = 0;
-         if (g_sel_pending && (edges & PSP_CTRL_SQUARE))
          {
-            lists = 1;
-            edges &= ~PSP_CTRL_SQUARE;
-            g_sel_pending = 0;
-         }
-         if (g_sel_pending && !(pd.Buttons & PSP_CTRL_SELECT))
-         {
-            g_sel_pending = 0;
-            if (!g_swap.active && !g_sw.active)
+            if (edges & PSP_CTRL_SQUARE)
+            {
+               lists = 1;               /* both at once: no step at all */
+               edges &= ~PSP_CTRL_SQUARE;
+            }
+            else if (!find_owns_input && !g_swap.active && !g_sw.active &&
+                     !(pd.Buttons & (PSP_CTRL_CROSS | PSP_CTRL_CIRCLE |
+                                     PSP_CTRL_TRIANGLE | PSP_CTRL_START)))
+            {
+               g_sel_prev_kind = g_view_kind;
+               g_sel_prev_which = g_view_which;
+               g_sel_stepped = 1;
                swap_begin(0);
+            }
          }
          if (lists && n > 0 && !g_browser_state_open && !g_pop.active &&
              !g_swap.active && !g_sw.active && !g_pick_on)

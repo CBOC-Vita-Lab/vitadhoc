@@ -49,6 +49,7 @@ extern "C" {
    "https://api.github.com/repos/CBOC-Vita-Lab/vitadhoc/releases/latest"
 #define UPD_DAY_S      86400
 #define UPD_IDLE_FRAMES 120      /* the home screen untouched for ~2 s       */
+#define UPD_RETRY_S    5         /* a check that is due but Wi-Fi is off: look again after this */
 
 /* Once, at start-up.  `root` is the data folder (update.txt is in it);
  * `url` NULL = GitHub's; `version` this app's ("2.0.0"); `online` says
@@ -83,9 +84,10 @@ const char *upd_latest(void);
  * background) has just come: say it.  Once each.  *kind: UPD_*; the
  * UI thread only. */
 int  upd_take_result(int *kind, int *by_hand);
-/* 1 once per run when a newer version is known and the home screen has not
- * said so yet: *text is the notice.  Not with the setting Off.  `by_hand`: the
- * answer to X on the row, which is always told (and counts as said). */
+/* 1 once per NEW version (not once a run: the version said is kept in
+ * update.txt) when a newer one is known and the home screen has not said so
+ * yet: *text is the notice.  Not with the setting Off.  `by_hand`: the answer
+ * to X on the row, which is always told (and counts as said). */
 int  upd_take_notice(char *text, size_t cap, int by_hand);
 
 /* The words of the notice for version `shown`. */

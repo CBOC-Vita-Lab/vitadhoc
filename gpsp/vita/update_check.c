@@ -27,6 +27,8 @@ static struct
    time_t last;                         /* the last request's day (0 = never) */
    time_t last_before;                  /* ...and what it was before the one in flight */
    char latest[24];                     /* the newest newer version known    */
+   char announced[24];                  /* the one the home screen has said (update.txt) */
+   time_t retry_at;                     /* not online: do not ask the network before */
    NpHttpsHandle h;
    int plain, by_hand;                  /* the request in flight             */
    int state;
@@ -35,7 +37,7 @@ static struct
    int said_busy;
 } U;
 
-/* ---- update.txt: checked=<seconds>, latest=<version> --------------------- */
+/* ---- update.txt: checked=<seconds>, latest=<version>, announced=<version> -- */
 
 static void load(void)
 {
@@ -43,6 +45,7 @@ static void load(void)
    char line[80];
    U.last = 0;
    U.latest[0] = '\0';
+   U.announced[0] = '\0';
    f = fopen(U.path, "r");
    if (!f)
       return;
@@ -55,6 +58,8 @@ static void load(void)
          U.last = (time_t)atoll(line + 8);
       else if (!strncmp(line, "latest=", 7))
          snprintf(U.latest, sizeof(U.latest), "%.23s", line + 7);
+      else if (!strncmp(line, "announced=", 10))
+         snprintf(U.announced, sizeof(U.announced), "%.23s", line + 10);
    }
    fclose(f);
    /* what is remembered counts only while it is newer than this app (the
@@ -74,6 +79,8 @@ static void save(void)
    if (!f)
       return;
    fprintf(f, "checked=%lld\nlatest=%s\n", (long long)U.last, U.latest);
+   if (U.announced[0])
+      fprintf(f, "announced=%s\n", U.announced);
    if (fclose(f) != 0 || rename(tmp, U.path) != 0)
       remove(tmp);
 }
@@ -112,9 +119,15 @@ int upd_take_notice(char *text, size_t cap, int by_hand)
 {
    if (!U.started || !U.latest[0] || U.h)
       return 0;
-   if (!by_hand && (U.noticed || !U.daily))
+   if (!by_hand && (U.noticed || !U.daily || !strcmp(U.announced, U.latest)))
       return 0;
    U.noticed = 1;
+   /* once per new version, not once a run: the version said is kept */
+   if (strcmp(U.announced, U.latest) != 0)
+   {
+      snprintf(U.announced, sizeof(U.announced), "%s", U.latest);
+      save();
+   }
    upd_notice_text(U.latest, text, cap);
    return 1;
 }
@@ -270,6 +283,15 @@ void upd_poll(int idle, time_t now)
    /* due: never asked, or a day ago -- or the clock went back */
    if (U.last && now >= U.last && now - U.last < UPD_DAY_S)
       return;
+   /* Wi-Fi off: ask the system again in a few seconds, not every idle frame */
+   if (U.retry_at && now < U.retry_at && now + UPD_RETRY_S >= U.retry_at)
+      return;
+   if (U.online && !U.online())
+   {
+      U.retry_at = now + UPD_RETRY_S;
+      return;
+   }
+   U.retry_at = 0;
    (void)begin(now, 0);
 }
 

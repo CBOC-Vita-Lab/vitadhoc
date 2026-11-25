@@ -3356,6 +3356,25 @@ def t_collections(S):
     S.check(not r.evt("library") and picked(r, "gbadhoc-test.gba"),
             "SELECT + START opens Settings and steps no view, then or afterwards")
 
+    # SELECT steps when it goes down; SQUARE while it is held takes the step
+    # back and opens Lists.  Soon after: the animation is cancelled before the
+    # list changed (no view event at all); later: the previous view is set again.
+    r = run("sel_square_soon", "90:select:30\n93:square:3\n+40:circle\n+60:select\n+60:quit\n")
+    S.check(r.has(r"^EVT ui_screen name=collections from=browser") and
+            r.evt("library") and
+            r.evt("library")[0]["_"].startswith("EVT library view=starred") and len(r.evt("library")) == 1,
+            "SQUARE 3 frames after SELECT: the step is cancelled before the list changed, Lists opens")
+    r = run("sel_square_late", "90:select:40\n104:square:3\n+40:circle\n+60:select\n+60:quit\n")
+    lib = [e["_"] for e in r.evt("library")]
+    S.check(r.has(r"^EVT ui_screen name=collections from=browser") and
+            len(lib) >= 3 and lib[0].startswith("EVT library view=starred") and
+            lib[1].startswith("EVT library view=all") and lib[2].startswith("EVT library view=starred"),
+            "SQUARE after the step showed: the view goes back to Games, Lists opens, then SELECT steps once (%s)" % lib)
+    r = run("sel_start_late", "90:select:40\n104:start:3\n+40:circle\n+60:quit\n")
+    lib = [e["_"] for e in r.evt("library")]
+    S.check(len(lib) == 2 and lib[1].startswith("EVT library view=all"),
+            "START with SELECT held takes the step back too (%s)" % lib)
+
     keep = "#collection A\nzzz.gba\n"
     r = run("failed", "90:select+square:3\n+40:cross\n+30:shot=failed.png\n+4:circle\n+30:quit\n",
             {"collections.txt": keep, "collections.txt.tmp/keep": "x"})
@@ -3373,6 +3392,14 @@ def t_collections(S):
             r.has(r"^EVT collections_save n=\d+ games=\d+ rc=-2") and coll(r) == odd,
             "a list that was not read whole is never written over the file")
     S.picture(r, "lossy.png")
+
+    # A text editor's UTF-8 byte order mark at the head of the file is not part of the first name.
+    r = run("bom", "90:quit\n", {"collections.txt": b"\xef\xbb\xbf#collection A\ncoll-01.gba\n"})
+    S.check(r.has(r"^EVT collections_load n=1 games=1 rc=0 lossy=0"),
+            "a collections.txt that starts with a byte order mark is read whole")
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui_vita_lists.h")).read()
+    S.check("cannot be changed safely" in src and "too big to change" not in src,
+            "a list that was read lossy says it cannot be changed safely, not that it is too big")
 
     # The automatic views rest on the play log: Most played (longest first),
     # Not played yet.  Nothing played: neither is offered.
@@ -3829,14 +3856,14 @@ UPD_WAIT = "60:shot=home.png\n+260:shot=later.png\n+10:quit\n"
 
 
 def upd_run(S, name, srv, what, config=None, files=None, script=UPD_WAIT,
-            timeout=0):
+            timeout=0, env_extra=None):
     ini = {"update_url": srv.url(what)}
     if timeout:
         ini["update_timeout"] = timeout
     cfg = dict(UPD_HOME)
     cfg.update(config or {})
     return S.run(name, script, config=cfg, vita_ini=ini, extra=files,
-                 env={"VITADHOC_FAKE_TIME": str(NOW)})
+                 env=dict({"VITADHOC_FAKE_TIME": str(NOW)}, **(env_extra or {})))
 
 
 def t_update_check(S):
@@ -3867,9 +3894,9 @@ def t_update_check(S):
                 "the notice names the version and the two ways to get it (%s)" %
                 [t["_"] for t in toast])
         st = open(os.path.join(r.root, "update.txt")).read()
-        m = re.fullmatch(r"checked=(\d+)\nlatest=2\.1\n", st)
+        m = re.fullmatch(r"checked=(\d+)\nlatest=2\.1\nannounced=2\.1\n", st)
         S.check(m is not None and NOW <= int(m.group(1)) <= NOW + 60,
-                "update.txt keeps the time of the try and the newer version (%r)" % st)
+                "update.txt keeps the time of the try, the newer version and the one the notice said (%r)" % st)
         S.check(r.shot("later.png").getbbox() is not None, "the home screen is there")
         # the same day again: no second request, the notice from memory
         n0 = len(srv.requests)
@@ -3879,8 +3906,26 @@ def t_update_check(S):
         S.check(len(srv.requests) == n0 and not r.evt("update_check")[1:2] and
                 not r.has(r"update_check start"),
                 "not twice in a day (requests %d -> %d)" % (n0, len(srv.requests)))
-        S.check(len(r.evt("update_toast")) == 1,
-                "...but a newer version known from before is still said, once")
+        S.check(not r.evt("update_toast"),
+                "...and a version already announced is not said again on the next run")
+        # a version known from before but never announced is said (once); a newer one than the announced one too
+        r = upd_run(S, "update_known", srv, "newer", files={"update.txt": "checked=%d\nlatest=2.1\n" % NOW})
+        S.clean(r)
+        st2 = open(os.path.join(r.root, "update.txt")).read()
+        S.check(len(r.evt("update_toast")) == 1 and "announced=2.1\n" in st2,
+                "a newer version known from before and not announced yet is said, once (%r)" % st2)
+        r = upd_run(S, "update_newer_still", srv, "newer",
+                    files={"update.txt": "checked=%d\nlatest=2.2\nannounced=2.1\n" % NOW})
+        S.clean(r)
+        S.check(len(r.evt("update_toast")) == 1 and "2.2 is out" in r.evt("update_toast")[0]["text"],
+                "a version newer than the announced one is announced")
+        # Wi-Fi off while the check is due: the system is asked every few seconds, not every idle frame
+        r = upd_run(S, "update_offline", srv, "newer", files={"update.txt": "checked=0\nlatest=\n"},
+                    env_extra={"GBADHOC_UPDATE_OFFLINE": "1"})
+        S.clean(r)
+        asked = len(r.evt("update_online"))
+        S.check(1 <= asked <= 3 and not r.has(r"update_check start") and not r.evt("update_toast"),
+                "Wi-Fi off and the check due: the network state is asked %d times in 260 idle frames, no request" % asked)
         # a day on: asked again
         old = "checked=%d\nlatest=\n" % (NOW - 86400 - 5)
         r = upd_run(S, "update_dayafter", srv, "same", files={"update.txt": old})
@@ -7091,13 +7136,18 @@ def text_misfits(boxes):
 
 
 def t_text_large(S):
-    """Text size Large in the app: Settings holds the larger lines, the other old-layout pages keep Normal.
-    Every row of Settings is visited at Large: no string leaves the screen and none is drawn over another."""
+    """Text size Large in the app: Settings, Save states, Cheats (with Add a code and Search memory) and the Play
+    together page hold the larger lines; Button mapping, Button test, Cover picture, the other Play together pages
+    and the plain list view keep Normal (KNOWN-ISSUES).  Every row of Settings is visited at Large: no string leaves
+    the screen and none is drawn over another."""
     def walk(tag, ini, script, **kw):
         bx = os.path.join(S.outdir, tag + ".boxes")
         if os.path.exists(bx):
             os.remove(bx)
-        r = S.run(tag, script, extra={"display.ini": ini} if ini else None, env={"GBADHOC_TEXT_BOXES": bx}, **kw)
+        extra = dict(kw.pop("extra", None) or {})
+        if ini:
+            extra["display.ini"] = ini
+        r = S.run(tag, script, extra=extra or None, env={"GBADHOC_TEXT_BOXES": bx}, **kw)
         S.clean(r)
         return r, text_boxes(bx)
     rows = 60          # more than the list has: once round, back past Theme
@@ -7124,15 +7174,40 @@ def t_text_large(S):
     # the footer's hints are whole: the last line's cell ends on the screen
     foot = max([b["box"][3] for b in large.get("r000.png", [])] or [0])
     S.check(foot <= 546, "the hint line at the bottom is on the screen at Large (its cell ends at %.0f of 544)" % foot)
-    # a page of the same text outside Settings (Save states, in a game) keeps the Normal faces: its lines are
-    # exactly as tall as with Text size Normal, and nothing of it is off the screen either
-    states = "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=states.png\n+10:circle\n+10:circle\n+30:quit\n"
-    _, sn = walk("text_states_normal", "", states, autoboot="gbadhoc-test.gba")
-    _, sl = walk("text_states_large", "text_size=large\n", states, autoboot="gbadhoc-test.gba")
-    off, over = text_misfits(sl.get("states.png", []))
-    offn, overn = text_misfits(sn.get("states.png", []))
-    S.check(sl.get("states.png") and len(off) <= len(offn) and len(over) <= len(overn),
-            "Save states at Large: nothing more off the screen or overlapping than at Normal (%s %s)" % (off[:2], over[:2]))
+    # The in-game pages that were laid out for Large (2.0 finishing round): Save states, Cheats with Add a code and
+    # Search memory, the Play together page, and the in-game menu's eight cards.  Each is walked at Large and at
+    # Normal: nothing off the screen or over other text beyond what Normal has, and the lines really are larger.
+    def page(tag, script, shots, tall_shot, **kw):
+        _, pn = walk("text_%s_normal" % tag, "", script, **kw)
+        _, pl = walk("text_%s_large" % tag, "text_size=large\n", script, **kw)
+        bad = {}
+        for shot in shots:
+            off, over = text_misfits(pl.get(shot, []))
+            offn, overn = text_misfits(pn.get(shot, []))
+            if not pl.get(shot) or len(off) > len(offn) or len(over) > len(overn):
+                bad[shot] = (off[:2], over[:2])
+        S.check(not bad, "%s at Large: nothing more off the screen or overlapping than at Normal (%s)" % (tag, bad or "all fit"))
+        med = lambda shots: sorted(b["box"][3] - b["box"][1] for b in shots.get(tall_shot, [{"box": (0, 0, 0, 0)}]))[len(shots.get(tall_shot, [0])) // 2]
+        S.check(med(pl) >= med(pn) * 1.1,
+                "%s: the lines are larger at Large (the middle one %.0f px against %.0f)" % (tag, med(pl), med(pn)))
+    cart = open(CHEAT_GBA, "rb").read() if os.path.exists(CHEAT_GBA) else None
+    cht = ('cheats = 3\ncheat0_desc = "Infinite lives"\ncheat0_code = "02000008 0000"\ncheat0_enable = true\n'
+           'cheat1_desc = "Max money"\ncheat1_code = "02000020:0000FFFF"\ncheat1_enable = false\n'
+           'cheat2_desc = "Always on top"\ncheat2_code = "02000030 0001"\ncheat2_enable = false\n')
+    cx = {"roms/cheatrom.gba": cart, "cheats/cheatrom.cht": cht}
+    shots = lambda n: "".join("+8:down\n+14:shot=%s%d.png\n" % (n, i) for i in range(1, 5))
+    states = "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=s0.png\n" + shots("s") + "+8:up\n+8:up\n+8:up\n+8:up\n+4:square\n+30:shot=sx.png\n+10:circle\n+10:circle\n+30:quit\n"
+    page("Save states", states, ["s0.png", "s1.png", "s2.png", "s3.png", "s4.png", "sx.png"], "s0.png", autoboot="gbadhoc-test.gba")
+    if cart:
+        cheats = ("100:shot=game.png\n" + menu_pick(3, wait=20) + "+30:shot=c0.png\n+8:down\n+14:shot=c1.png\n+8:triangle\n+14:shot=c2.png\n"
+                  "+10:circle\n+20:start\n+14:shot=c3.png\n+8:down\n+4:cross\n+14:shot=c4.png\n+10:quit\n")
+        page("Cheats and Search memory", cheats, ["c0.png", "c1.png", "c2.png", "c3.png", "c4.png"], "c0.png",
+             autoboot="cheatrom.gba", extra=cx)
+    play = "100:shot=game.png\n" + menu_pick(2, wait=20) + "+30:shot=p0.png\n" + shots("p") + "+10:quit\n"
+    page("Play together", play, ["p0.png", "p1.png", "p2.png", "p3.png", "p4.png"], "p0.png", autoboot="gbadhoc-test.gba")
+    # the in-game menu: single-word card labels (Resume, Cheats, Settings, Exit) stay whole, two-word ones go on two lines
+    menu = "100:shot=game.png\n+20:start+select:20\n+30:shot=m0.png\n" + "".join("+8:right\n+10:shot=m%d.png\n" % i for i in range(1, 8)) + "+10:quit\n"
+    page("in-game menu", menu, ["m%d.png" % i for i in range(8)], "m0.png", autoboot="gbadhoc-test.gba")
     # the home screen's own faces follow Text size, and fit
     home = "90:shot=home.png\n+10:quit\n"
     _, hn = walk("text_home_normal", "", home, config={"ui_home": 1})

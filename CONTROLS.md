@@ -18,7 +18,7 @@ and is A, and Cross is back and B. Settings > Controls > A and B buttons
 | Up | **Start over** from the battery save |
 | Down | Show the game's save states; pick one and press Cross |
 | Square | Star or unstar the game |
-| Select | Step through the views: All games, Starred, Recent, Most played, Not played yet, then each collection and RetroArch playlist that has a game on this console (it steps when you let go of Select) |
+| Select | Step through the views: All games, Starred, Recent, Most played, Not played yet, then each collection and RetroArch playlist that has a game on this console (it steps as you press Select; Select + Square takes that step back and opens Collections) |
 | Select + Square | The game's **Collections** page (also the Lists button): Cross adds the game to the collection or takes it out, or makes a new one on "New collection"; Square renames; Triangle deletes, after a question; Circle goes back |
 | Triangle | Open the console list under the top bar, with the console in use highlighted; each further Triangle or Down moves on, Up goes back; it closes by itself after a moment, or on any other button (or tap the console name, then a row) |
 | Circle | Find a game by name |

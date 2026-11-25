@@ -554,12 +554,14 @@ void Menu::build_rows()
 		break;
 	}
 	case PAGE_CHEAT_SEARCH: {
-		static const char *const kSizes[] = { "1 byte", "2 bytes", "4 bytes" };
 		const bool active = pk_cs_active(&cs_);
 		Row r;
 		r.id = ID_CS_SIZE; r.kind = K_CHOICE; r.label = "Size of the number";
-		r.choices.assign(kSizes, kSizes + 3); r.vmin = 0; r.vmax = 2; r.value = cs_size_; r.enabled = true;
-		r.help = "Most counters are 1 byte. Try 2 bytes for money and scores, 4 bytes for big numbers. Used by the next New search.";
+		const int nsz = pk_cs_size_count(&cs_);
+		for (int i = 0; i < nsz; i++) r.choices.push_back(pk_cs_size_choice(i));
+		r.vmin = 0; r.vmax = nsz - 1; r.value = cs_size_ < nsz ? cs_size_ : 0; r.enabled = true;
+		r.help = nsz > 3 ? "Most counters are 1 byte. Try 2 bytes for money and scores. Any address also looks at odd places. Used by the next New search."
+		                 : "Most counters are 1 byte. Try 2 bytes for money and scores, 4 bytes for big numbers. Used by the next New search.";
 		rows_.push_back(r);
 		Row n;
 		n.id = ID_CS_NEW; n.kind = K_ACTION; n.label = "New search"; n.enabled = true;
@@ -844,7 +846,7 @@ void Menu::search_new()
 {
 	cs_op_ = -1;
 	cs_n_ = 0;
-	int32_t n = pk_cs_start(&cs_, cs_size_ == 0 ? 1 : cs_size_ == 1 ? 2 : 4);
+	int32_t n = pk_cs_start_ex(&cs_, pk_cs_size_width(cs_size_), pk_cs_size_any(cs_size_) && pk_cs_can_any(&cs_));
 	if (n < 0) notify("The search could not start: not enough memory", NOTICE_ERROR);
 	else notify(strf("Search started: %d places. Play on, then narrow it down", (int) n), NOTICE_OK);
 	build_rows();

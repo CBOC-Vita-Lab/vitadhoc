@@ -59,7 +59,12 @@ and in emulators; none of it has run on a real Vita yet (see
   Genesis, Sega CD, Master System, Game Gear and SG-1000, in the app and in
   both players, with the same words. It searches work RAM, only while the menu
   is open, and is off while linked and in Hardcore like the other cheats.
-  Tested on the PC only.
+  Tested on the PC only. On the Game Boy, NES, WonderSwan, Super NES and
+  Master System family the Size row also offers "2 bytes, any address" and "4
+  bytes, any address" for numbers kept at odd addresses. The Game Boy's
+  one-console two-player mode says Search memory is not available there (the
+  game's memory cannot be read); a suspended Cheats page no longer offers
+  START search; the note after a step no longer covers the help line.
 
 **A library you can organise**
 
@@ -68,7 +73,10 @@ and in emulators; none of it has run on a real Vita yet (see
   add it to a collection, take it out, make a new one with the on-screen
   keyboard, rename one or delete one. A collection holds games of every console;
   each console's list shows the ones it has. Select steps through them after
-  Games, Starred and Recent. They are kept in `collections.txt` beside
+  Games, Starred and Recent, as soon as it is pressed; Select + Square takes
+  that step back and opens the page. A `collections.txt` saved with a byte
+  order mark is read; one that was not read whole says it cannot be changed
+  safely, rather than that it is too big. They are kept in `collections.txt` beside
   `config.ini`, written whole at every change: a write that fails leaves the
   old file as it was and says so.
 - **Most played** (the longest first) and **Not played yet** appear once
@@ -162,13 +170,15 @@ and in emulators; none of it has run on a real Vita yet (see
   High contrast pushes pale text to white and dark text to black and gives
   the app a pure black or white page. Large makes text 20% bigger where the
   page has been laid out for it: every page of the players' menus; in the
-  app, the home screen, the console list, the in-game menu and Settings
-  (there a value too long for its row ends in "..." and a help text too
-  long for two large lines stays at the normal size). The app's other pages
-  (Save states, Cheats, Button mapping, Cover picture, Play together and
-  the plain list view) keep the normal size for now, apart from their title
-  and pop-up messages: their rows are built for it, and larger letters ran
-  over each other and off the bottom edge there (see KNOWN-ISSUES).
+  app, the home screen, the console list, the in-game menu, Settings (there
+  a value too long for its row ends in "..." and a help text too long for
+  two large lines stays at the normal size), Save states, Cheats (with Add a
+  code and Search memory) and the Play together page (a hint line too wide at
+  the larger size stays at the normal size). The app's other pages (Button
+  mapping, Button test, Cover picture, the pages Play together opens and the
+  plain list view) keep the normal size for now, apart from their title and
+  pop-up messages: larger letters ran over each other and off the bottom edge
+  there (see KNOWN-ISSUES).
 - **Game Boy colours.** Original Game Boy games are coloured the way a Game
   Boy Color coloured them (GBC auto), with the twelve start-up palettes, the
   Super Game Boy's 32 and the plain greys to choose from.
@@ -191,7 +201,9 @@ and in emulators; none of it has run on a real Vita yet (see
   for the latest release and, if it is newer, says so once on the home screen
   ("VitAdhoc X.Y is out: get it with the CBOC Vita Installer or from
   GitHub"). Nothing is downloaded or installed, nothing about you is sent, and
-  a failure is silent. X on the row checks now. The HTTPS client gained four
+  a failure is silent. X on the row checks now (the footer says so). The
+  notice is said once for each new version, not on every start, and with
+  Wi-Fi off the check looks again every few seconds, not every frame. The HTTPS client gained four
   Sectigo root certificates (the ones GitHub's certificates chain to), trusted
   for `api.github.com` only: online play's connections accept what they did.
 

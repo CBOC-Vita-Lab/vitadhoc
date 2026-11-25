@@ -231,6 +231,7 @@ int gbmux_sgb_border_load(gbcore_t *c, const void *b, size_t n)
 void gbmux_set_tilt(gbcore_t *c, uint32_t v) { if (!IS_NES(c) && !IS_WS(c)) gbcore_set_tilt(c, v); }
 int gbmux_has_camera(gbcore_t *c) { return IS_NES(c) || IS_WS(c) ? 0 : gbcore_has_camera(c); }
 void gbmux_set_camera_image(gbcore_t *c, const uint8_t *p) { if (!IS_NES(c) && !IS_WS(c)) gbcore_set_camera_image(c, p); }
+unsigned gbmux_camera_requests(gbcore_t *c) { return IS_NES(c) || IS_WS(c) ? 0 : gbcore_camera_requests(c); }
 uint32_t gbmux_ra_read(gbcore_t *c, uint32_t a, uint8_t *o, uint32_t n)
 { return IS_WS(c) ? wscore_ra_read(g_ws, a, o, n) : IS_NES(c) ? nescore_ra_read(g_nes, a, o, n) : gbcore_ra_read(c, a, o, n); }
 

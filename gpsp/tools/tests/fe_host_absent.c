@@ -94,3 +94,6 @@ const char *gpsp_backup_name(void) { return "none"; }
 uint32_t gpsp_sensor_kinds(void) { return 0; }
 void gpsp_sensor_set(uint32_t reading) { (void)reading; }
 uint32_t gpsp_sensor_get(void) { return 0; }
+
+/* ---- the netplay session (netpacket_host.c), none ---- */
+int fe_np_session_active(void) { return 0; }

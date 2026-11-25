@@ -17,8 +17,8 @@
  *     reads 0.
  *   - A capture takes 32446 + (N bit clear: 512) + 16 * exposure machine
  *     cycles; the picture then appears at cartridge RAM bank 0, 0x0100: 14
- *     rows of 16 tiles, 128x112 pixels, 2 bits each.  RAM keeps the previous
- *     picture until then.
+ *     rows of 16 tiles, 128x112 pixels, 2 bits each.  Until then RAM is
+ *     unreadable (reads 0, writes are lost) and keeps the previous picture.
  *
  * What is modelled and what is not
  *   The picture is the frontend's 128x112 greyscale (gbcore_set_camera_image;
@@ -27,9 +27,11 @@
  *   documentation.  The sensor's analogue behaviour (reference voltage,
  *   zero-point calibration, infrared response, noise) is not modelled, so a
  *   real camera's picture differs in detail; the exposure scale is an
- *   estimate (the 20 dB gain at exposure 0x1000 passes the source through).
- *   RAM reads during a capture are not blanked.  A capture lasts the same
- *   number of scanlines in double speed. */
+ *   estimate (gain step 4 at exposure 0x1000 passes the source through; the
+ *   gain steps are a smooth empirical curve, see gbcam_gain_q8).  While a
+ *   capture runs, cartridge RAM reads 0 and ignores writes, as the hardware
+ *   does (gbcam_ram_blocked).  A capture lasts the same number of scanlines
+ *   in double speed. */
 #ifndef GBCAM_HDR
 #define GBCAM_HDR
 
@@ -44,11 +46,15 @@
 #define GBCAM_LINE_CYC 114            /* machine cycles per scanline */
 #define GBCAM_STATE_SIZE 64
 
-/* Gain steps of register A001 bits 0..3 in dB (G4 adds 6 dB), as Q8 factors
- * relative to 20 dB. */
+/* Gain steps of register A001 bits 0..3 as Q8 factors (256 = the source
+ * unchanged at exposure 0x1000; G4 doubles it).  An empirical curve, not the
+ * sensor's table in dB: each step is the fourth root of two (about 1.5 dB),
+ * so the 16 steps span x0.5 .. x6.7 and the picture changes smoothly from
+ * step to step, where the datasheet's decibel steps run up to about x37 and
+ * clip almost any scene. */
 static const uint16_t gbcam_gain_q8[16] = {
    128, 152, 181, 215, 256, 304, 362, 430,
-   511, 722, 1019, 1440, 2033, 2872, 4822, 9621
+   512, 608, 724, 861, 1024, 1217, 1448, 1722
 };
 /* Register A004 bits 4..6: edge enhancement ratio x 256. */
 static const uint16_t gbcam_edge_q8[8] = {
@@ -172,6 +178,14 @@ static inline unsigned gbcam_capture_cycles(const uint8_t *reg)
 static uint8_t  gbcam_reg[GBCAM_REGS];
 static uint8_t  gbcam_latch[GBCAM_REGS];   /* the registers at the start */
 static int      gbcam_busy;                /* scanlines left, 0 = idle */
+static unsigned gbcam_starts;              /* captures started (an input to the
+                                              frontend, not part of a state) */
+
+/* Cartridge RAM is closed to the CPU while a capture runs. */
+static inline int gbcam_ram_blocked(void)
+{
+   return gbcam_busy != 0;
+}
 
 static inline void gbcam_reset(void)
 {
@@ -200,6 +214,7 @@ static inline void gbcam_write(unsigned adr, uint8_t dat)
             unsigned cyc = gbcam_capture_cycles(gbcam_reg);
             memcpy(gbcam_latch, gbcam_reg, sizeof(gbcam_latch));
             gbcam_busy = (int)((cyc + GBCAM_LINE_CYC - 1) / GBCAM_LINE_CYC);
+            gbcam_starts++;
          }
       }
       else

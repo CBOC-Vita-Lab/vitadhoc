@@ -187,6 +187,44 @@ int main(void)
   if (bad) return fail("half exposure");
   puts("exposure 0x0800: half the level, exact");
 
+  /* 2b. The gain steps rise smoothly: each at most about 1.25 times the one
+   * before (the old decibel table jumped by 1.8 at the top), 20 dB (step 4)
+   * stays at 1.0, and the top is under x8. */
+  {
+    int g;
+    if (gbcam_gain_q8[4] != 256) return fail("gain step 4 passes the picture through");
+    for (g = 1; g < 16; g++)
+    {
+      if (gbcam_gain_q8[g] <= gbcam_gain_q8[g - 1]) return fail("gain steps rise");
+      if (gbcam_gain_q8[g] * 100 > gbcam_gain_q8[g - 1] * 125) return fail("gain steps are smooth");
+    }
+    if (gbcam_gain_q8[15] > 8 * 256) return fail("the top gain is under x8");
+    puts("gain curve: rising, smooth, step 4 is x1, top under x8");
+  }
+
+  /* 2c. Cartridge RAM is closed while a capture runs and open before and
+   * after; each started capture is counted (a start while one runs is not). */
+  {
+    unsigned char r[0x36];
+    const unsigned before = gbcam_starts;
+    gbcam_reset();
+    if (gbcam_ram_blocked()) return fail("RAM open when idle");
+    default_regs(r, 0x0100);
+    gbcam_write(0xA001, r[1]);
+    gbcam_write(0xA000, 0x03);
+    if (!gbcam_ram_blocked()) return fail("RAM closed during a capture");
+    gbcam_write(0xA000, 0x03);
+    if (gbcam_starts != before + 1) return fail("one start counted");
+    while (!gbcam_line()) { }
+    if (gbcam_ram_blocked()) return fail("RAM open again after the capture");
+    gbcam_write(0xA000, 0x03);
+    if (gbcam_starts != before + 2) return fail("the next start counted");
+    gbcam_write(0xA000, 0x00);
+    if (gbcam_ram_blocked()) return fail("writing 0 ends the capture and opens RAM");
+    gbcam_reset();
+    puts("RAM is blocked during a capture; starts are counted");
+  }
+
   /* 3. The N bit (A001 bit 7) drops the 512-cycle read lead; the busy
    * time follows the formula. */
   {

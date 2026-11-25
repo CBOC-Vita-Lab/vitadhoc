@@ -9960,6 +9960,16 @@ def t_gbcam(S):
         S.check(not bad, "the front camera's ramp arrives mirrored, in four bands (%d columns off)" % len(bad))
         S.check(all(sh[y] == sh[40] for y in (0, 30, 80, 111)), "every row alike (the ramp is vertical)")
         S.check(sh[40][0] == 0 and sh[40][127] == 3, "white at the left edge, black at the right: mirrored")
+    S.check(not r.has(r"^EVT camera_idle"), "a game that keeps capturing keeps the camera open")
+    # 1b. A game that takes one picture and then waits: the camera is let go
+    # after about two seconds without a capture, and the picture stays
+    once = _CAM_PROG[:-3] + bytes([0x18, 0xFE])
+    r, sav = go("gbcam_idle", "1:camera=ramp\n400:quit\n", extra={"roms/cam.gb": _gb_rom(once, 0xFC, 0, 4)})
+    S.check(r.has(r"^EVT camera_idle") and not r.has(r"^EVT camera_stopped"),
+            "no capture for two seconds: the camera is closed, not reported as stopped")
+    if sav:
+        sh = _cam_shades(sav)
+        S.check(sh[40][0] == 0 and sh[40][127] == 3, "the one picture it took is the camera's (mirrored ramp)")
     # 2. Back camera: the way it is
     r, sav = go("gbcam_back", "1:camera=ramp\n240:quit\n", ini="camera = 1\n")
     S.check(r.has(r"^EVT camera_source mode=1 device=1"), "the game's file chooses the back camera")

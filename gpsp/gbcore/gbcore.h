@@ -135,6 +135,10 @@ void gbcore_set_tilt(gbcore_t *core, uint32_t x_y);
  * input like the buttons: it is not part of a state. */
 int gbcore_has_camera(gbcore_t *core);
 void gbcore_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112);
+/* How many captures the game has started since the core began (a counter
+ * that only grows; 0 for any other game): the frontend runs a real camera
+ * only while this keeps changing. */
+unsigned gbcore_camera_requests(gbcore_t *core);
 
 /* Execute one emulated video frame with the current frontend button mask. */
 int gbcore_run_frame(gbcore_t *core, uint16_t buttons);

@@ -264,7 +264,7 @@ byte cpu_read_direct_ord(word adr)
 		return vram_bank[adr&0x1FFF];//8KBVRAM
 	case 5:
 		if (mbc_is_ext_ram())
-			return mbc_get_sram()[adr&0x1FFF];//カートリッジRAM
+			return mbc_cam_ram_blocked()?0:mbc_get_sram()[adr&0x1FFF];//カートリッジRAM
 		else
 			return mbc_ext_read(adr);
 	case 6:
@@ -374,9 +374,10 @@ void cpu_write_direct_ord(word adr,byte dat)
 		vram_bank[adr&0x1FFF]=dat;
 		break;
 	case 5:
-		if (mbc_is_ext_ram())
-			mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
-		else
+		if (mbc_is_ext_ram()){
+			if (!mbc_cam_ram_blocked())
+				mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
+		}else
 			mbc_ext_write(adr,dat);
 		break;
 	case 6:
@@ -411,9 +412,10 @@ inline void cpu_write_direct(word adr,byte dat)
 		else
 			ram[adr&0x0fff]=dat;
 	} else if ((adr&0xe000)==0xa000) {
-		if (mbc_is_ext_ram())
-			mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
-		else
+		if (mbc_is_ext_ram()){
+			if (!mbc_cam_ram_blocked())
+				mbc_get_sram()[adr&0x1FFF]=dat;//カートリッジRAM
+		}else
 			mbc_ext_write(adr,dat);
 	} else {
 		cpu_write_direct_ord(adr,dat);

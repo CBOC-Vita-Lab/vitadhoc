@@ -231,7 +231,9 @@ int  plat_motion_read(plat_motion *m);
  * Vita's front (back = 0) or back (back = 1) camera as the cartridge's
  * 128x112 greyscale picture (frontend-common/fe_gbcam_fit.h), mirrored
  * left to right when `mirror` is set.  The twin has no camera unless its
- * script gives one (camera=ramp, step, dark, bright). */
+ * script gives one (camera=ramp, step, dark, bright).  The app opens it
+ * only while the game takes pictures and closes it after about 2 s without
+ * one (main_vita.c gbcam_frame). */
 /* Start the camera.  0 = running; -1 = this console has none or it could not
  * be started (a PS TV, another app using it). */
 int  plat_camera_open(int back);

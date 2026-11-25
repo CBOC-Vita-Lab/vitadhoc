@@ -1773,18 +1773,30 @@ static int gbcam_load_file(void)
    return 0;
 }
 
+/* The Vita's camera runs only while the game is taking pictures: it opens on
+ * the first capture the game starts, and is let go after CAM_IDLE_FRAMES
+ * without another (a camera game sitting in its menus draws nothing from
+ * the battery).  A capture that finds it closed uses the last picture. */
+#define CAM_IDLE_FRAMES 120          /* about 2 s */
+static int      g_cam_lazy;          /* the source is the Vita's camera, open or not */
+static int      g_cam_want;          /* a capture was started since it closed */
+static unsigned g_cam_req;           /* fe_host_gbcam_requests() last seen */
+static unsigned g_cam_last;          /* frame of the last capture start */
+
 static void gbcam_game_end(void)
 {
    if (g_cam_dev)
       plat_camera_close();
    g_cam_dev = 0;
+   g_cam_lazy = 0;
+   g_cam_want = 0;
    g_cam_game = 0;
    g_cam_have = 0;
    g_cam_mode = -1;
 }
 
 /* The console slept: the camera does not come back by itself.  Let go of it
- * and let the next frame start the chosen source again (gbcam_frame). */
+ * and let the next capture start the chosen source again (gbcam_frame). */
 static void gbcam_resume(void)
 {
    if (!g_cam_game)
@@ -1800,6 +1812,7 @@ static void gbcam_game_begin(void)
 {
    gbcam_game_end();
    g_cam_game = fe_host_gbcam_present() ? 1 : 0;
+   g_cam_req = fe_host_gbcam_requests();
    if (g_cam_game)
       fe_evt("camera_game mode=%d", g_pgame.camera);
 }
@@ -1807,31 +1820,50 @@ static void gbcam_game_begin(void)
 static void gbcam_frame(void)
 {
    int fresh = 0;
+   const unsigned now = fe_host_frame_count();
+   const unsigned req = g_cam_game ? fe_host_gbcam_requests() : 0;
    if (!g_cam_game)
       return;
+   if (req != g_cam_req)
+   {
+      g_cam_req = req;
+      g_cam_last = now;
+      g_cam_want = 1;
+   }
    if (g_pgame.camera != g_cam_mode)
    {
-      /* a new source: stop the old one, start the new, or fall back */
+      /* a new source: stop the old one; a camera starts at the next capture,
+       * a file or nothing is read now */
       const int mode = g_pgame.camera;
       if (g_cam_dev)
          plat_camera_close();
       g_cam_dev = 0;
       g_cam_mode = mode;
       g_cam_have = 0;
-      if (mode != PCFG_CAM_FILE)
-      {
-         g_cam_dev = plat_camera_open(mode == PCFG_CAM_BACK) == 0;
-         if (!g_cam_dev)
-            toast_now("No camera: using camera.png or a test picture");
-      }
-      if (!g_cam_dev)
+      g_cam_lazy = mode != PCFG_CAM_FILE;
+      if (!g_cam_lazy)
       {
          g_cam_have = gbcam_load_file() == 0;
          fresh = 1;
-         if (mode == PCFG_CAM_FILE && !g_cam_have)
+         if (!g_cam_have)
             toast_now("camera.png not found: using a test picture");
       }
-      fe_evt("camera_source mode=%d device=%d file=%d", mode, g_cam_dev, g_cam_have);
+      fe_evt("camera_source mode=%d device=%d file=%d", mode, g_cam_lazy, g_cam_have);
+   }
+   if (g_cam_lazy && !g_cam_dev && g_cam_want)
+   {
+      g_cam_dev = plat_camera_open(g_cam_mode == PCFG_CAM_BACK) == 0;
+      if (!g_cam_dev)
+      {
+         /* none here, or it would not start: camera.png or a test picture */
+         g_cam_lazy = 0;
+         toast_now("No camera: using camera.png or a test picture");
+         g_cam_have = gbcam_load_file() == 0;
+         fresh = 1;
+         fe_evt("camera_source mode=%d device=0 file=%d", g_cam_mode, g_cam_have);
+      }
+      else
+         g_cam_last = now;
    }
    if (g_cam_dev)
    {
@@ -1845,57 +1877,85 @@ static void gbcam_frame(void)
       {
          plat_camera_close();
          g_cam_dev = 0;
+         g_cam_lazy = 0;
          toast_now("The camera stopped");
          fe_evt("camera_stopped");
+      }
+      if (g_cam_dev && now - g_cam_last >= CAM_IDLE_FRAMES)
+      {
+         plat_camera_close();
+         g_cam_dev = 0;
+         g_cam_want = 0;
+         fe_evt("camera_idle");
       }
    }
    if (fresh && g_cam_have)
       fe_host_gbcam_frame(g_cam_pic);
 }
 
-static void gbprint_save(const uint8_t *shades, int w, int h)
+/* A finished strip is copied and written to its PNG by the worker the clip
+ * export uses (plat_job_*), so the game does not stop for it; the frame loop
+ * collects the result and shows the toast.  While the clip export holds the
+ * worker the strip waits (copied) and is started when it is free. */
+static struct
 {
-   char stem[80], dir[APP_PATH_CAP], path[APP_PATH_CAP];
+   uint8_t *shades;                /* the strip, w*h bytes (0 paper .. 3) */
+   int      w, h;
    uint32_t colour[4];
+   char     stem[80];
+   int      year, mon, day;
+   int      state;                 /* 0 none, 1 waiting, 2 running, 3 finished */
+   int      ok;
+   char     path[APP_PATH_CAP];
+} g_pr;
+
+static void gbprint_job(void *arg)
+{
+   char dir[APP_PATH_CAP], path[APP_PATH_CAP];
    uint8_t *rgb;
-   time_t now = plat_wallclock();
-   struct tm tm;
-   char *dot;
    unsigned n;
    int ok = 0;
-   rgb = (uint8_t *)malloc((size_t)w * (size_t)h * 3);
-   if (!rgb)
-      return;
-   fe_host_gb_print_colours(colour);
-   for (n = 0; n < (unsigned)(w * h); n++)
+   (void)arg;
+   g_pr.path[0] = '\0';
+   rgb = (uint8_t *)malloc((size_t)g_pr.w * (size_t)g_pr.h * 3);
+   if (rgb)
    {
-      const uint32_t c = colour[shades[n] & 3];
-      rgb[n * 3 + 0] = (uint8_t)(c >> 16);
-      rgb[n * 3 + 1] = (uint8_t)(c >> 8);
-      rgb[n * 3 + 2] = (uint8_t)c;
-   }
-   snprintf(stem, sizeof(stem), "%s", base_name(g_game.rom_path));
-   dot = strrchr(stem, '.');
-   if (dot && dot != stem)
-      *dot = '\0';
-   memset(&tm, 0, sizeof(tm));
-   gmtime_r(&now, &tm);            /* plat_wallclock is local time already */
-   if (path_fmt(dir, sizeof(dir), "%s/prints", g_app_root) == 0)
-      mkdir(dir, 0777);
-   for (n = 1; n < 1000 && dir[0]; n++)
-   {
-      if (path_fmt(path, sizeof(path), "%s/%s-%04d%02d%02d-%u.png", dir, stem,
-                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, n) != 0)
-         break;
-      if (file_size(path, NULL) != 0)
+      for (n = 0; n < (unsigned)(g_pr.w * g_pr.h); n++)
       {
-         ok = stbi_write_png(path, w, h, 3, rgb, w * 3);
-         break;
+         const uint32_t c = g_pr.colour[g_pr.shades[n] & 3];
+         rgb[n * 3 + 0] = (uint8_t)(c >> 16);
+         rgb[n * 3 + 1] = (uint8_t)(c >> 8);
+         rgb[n * 3 + 2] = (uint8_t)c;
       }
+      if (path_fmt(dir, sizeof(dir), "%s/prints", g_app_root) == 0)
+         mkdir(dir, 0777);
+      for (n = 1; n < 1000 && dir[0]; n++)
+      {
+         if (path_fmt(path, sizeof(path), "%s/%s-%04d%02d%02d-%u.png", dir,
+                      g_pr.stem, g_pr.year, g_pr.mon, g_pr.day, n) != 0)
+            break;
+         if (file_size(path, NULL) != 0)
+         {
+            ok = stbi_write_png(path, g_pr.w, g_pr.h, 3, rgb, g_pr.w * 3);
+            if (ok)
+               snprintf(g_pr.path, sizeof(g_pr.path), "%s", path);
+            break;
+         }
+      }
+      free(rgb);
    }
-   free(rgb);
-   fe_evt("gb_print_saved ok=%d file=%s w=%d h=%d", ok, ok ? path : "", w, h);
-   toast_now(ok ? "Printed: saved to prints" : "Print could not be saved");
+   g_pr.ok = ok;
+   __atomic_store_n(&g_pr.state, 3, __ATOMIC_RELEASE);
+}
+
+static void gbprint_done(void)
+{
+   fe_evt("gb_print_saved ok=%d file=%s w=%d h=%d", g_pr.ok,
+          g_pr.ok ? g_pr.path : "", g_pr.w, g_pr.h);
+   toast_now(g_pr.ok ? "Printed: saved to prints" : "Print could not be saved");
+   free(g_pr.shades);
+   g_pr.shades = NULL;
+   g_pr.state = 0;
 }
 
 static void gbprint_frame(void)
@@ -1903,9 +1963,70 @@ static void gbprint_frame(void)
    int w = 0, h = 0;
    const uint8_t *strip;
    fe_host_gb_printer_set(g_pcfg.gb_printer);
-   strip = fe_host_gb_print_take(&w, &h);
-   if (strip)
-      gbprint_save(strip, w, h);
+   if (__atomic_load_n(&g_pr.state, __ATOMIC_ACQUIRE) == 3)
+   {
+      (void)plat_job_join(1000000);       /* it has finished: collect it */
+      gbprint_done();
+   }
+   if (g_pr.state == 0)
+   {
+      strip = fe_host_gb_print_take(&w, &h);
+      if (strip && w > 0 && h > 0)
+      {
+         time_t now = plat_wallclock();
+         struct tm tm;
+         char *dot;
+         g_pr.shades = (uint8_t *)malloc((size_t)w * (size_t)h);
+         if (!g_pr.shades)
+         {
+            fe_evt("gb_print_saved ok=0 file= w=%d h=%d", w, h);
+            toast_now("Print could not be saved");
+            return;
+         }
+         memcpy(g_pr.shades, strip, (size_t)w * (size_t)h);
+         g_pr.w = w;
+         g_pr.h = h;
+         fe_host_gb_print_colours(g_pr.colour);
+         snprintf(g_pr.stem, sizeof(g_pr.stem), "%s", base_name(g_game.rom_path));
+         dot = strrchr(g_pr.stem, '.');
+         if (dot && dot != g_pr.stem)
+            *dot = '\0';
+         memset(&tm, 0, sizeof(tm));
+         gmtime_r(&now, &tm);         /* plat_wallclock is local time already */
+         g_pr.year = tm.tm_year + 1900;
+         g_pr.mon = tm.tm_mon + 1;
+         g_pr.day = tm.tm_mday;
+         g_pr.state = 1;
+      }
+   }
+   if (g_pr.state == 1)
+   {
+      g_pr.state = 2;
+      if (plat_job_start(gbprint_job, NULL) != 0)
+      {
+         g_pr.state = 1;
+         if (!clip_export_busy())
+         {
+            /* no worker to be had: write it here */
+            g_pr.state = 2;
+            gbprint_job(NULL);
+         }
+      }
+   }
+}
+
+/* The end of the program: let a print in flight finish. */
+static void gbprint_stop(void)
+{
+   if (g_pr.state == 2 || g_pr.state == 3)
+   {
+      (void)plat_job_join(3000000);
+      if (__atomic_load_n(&g_pr.state, __ATOMIC_ACQUIRE) == 3)
+         gbprint_done();
+   }
+   free(g_pr.shades);
+   g_pr.shades = NULL;
+   g_pr.state = 0;
 }
 
 /* ---- PLAY TIME (play_log.h) ---------------------------------------------------
@@ -8084,6 +8205,7 @@ int main(int argc, char **argv)
    artfetch_stop();
    upd_stop();
    clip_export_stop(3000000);
+   gbprint_stop();
    ra_shutdown();
    link_shutdown();
    pcfg_save();

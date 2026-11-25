@@ -165,7 +165,7 @@ int main(int argc,char **argv) {
         memset(r+0x150,0,0x200);reset();cpu_write(0xff07,6);cpu_write(0xff05,0xff);cpu_write(0xff06,0x55);ticks(64,mode);
         cpu_write(0xffff,4);struct cpu_regs *regs=cpu_get_c_regs();regs->I=(byte)ime;cpu_set_c_regs();
         word next=(word)(c_regs_PC+1);r[c_regs_PC]=0x76;ticks(4,mode);CHECK(cpu_read(0xff0f)&4);ticks(4,mode);
-        regs=cpu_get_c_regs();CHECK(!*cpu_get_halt());CHECK(cpu_get_clock()==72);
+        regs=cpu_get_c_regs();CHECK(!*cpu_get_halt());CHECK(cpu_get_clock()==(ime?92:72)); /* an interrupt dispatch takes 20 clocks */
         if(ime){CHECK(c_regs_PC==0x51);CHECK(regs->SP==0xfffc);CHECK(!(cpu_read(0xff0f)&4));}
         else {CHECK(c_regs_PC==(word)(next+1));CHECK(regs->SP==0xfffe);CHECK(cpu_read(0xff0f)&4);}
       }

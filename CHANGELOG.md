@@ -133,6 +133,19 @@ and in emulators; none of it has run on a real Vita yet (see
   player, or read from a file, before using it.
 - Both Vitas need VitAdhoc 2.0.
 
+**Game Boy accuracy**
+
+- **Game Boy and Game Boy Color games follow the real console more closely.**
+  The Game Boy core was measured against the public test ROMs (blargg's
+  suites, dmg-acid2 and cgb-acid2) and the failures that games can notice were
+  fixed: the flags after PUSH AF, DAA, ADD SP and LD HL,SP+n; the ten sprites
+  per line limit and which sprite is on top where they overlap; the HALT bug;
+  the 20 clocks an interrupt takes; and sound registers reading back their
+  unused bits as 1. The CPU test ROM (cpu_instrs) went from 2 of 11 passing to
+  all 11, and dmg-acid2 and cgb-acid2 now draw the reference picture. Some
+  games draw a line differently when more than ten sprites share it, as on a
+  real Game Boy. Host results; see docs/COMPATIBILITY.md.
+
 **Names in every alphabet**
 
 - Japanese (kana and kanji), Korean, fullwidth forms, accented Latin, Greek and

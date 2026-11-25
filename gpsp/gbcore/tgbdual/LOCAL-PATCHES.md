@@ -221,3 +221,23 @@ The GB / GBC loader (`gb_state_valid`, `state_validate.h`) already validated the
 damaged states (cartridge types MBC1, MBC3 with timer, MBC5 with rumble, MBC7 and an unknown type, made by changing the header byte of the test
 cartridges, plus the GBC test cartridges), 0 crashes, 0 hangs, 0 reports; and the load proof (frames 1, 97, 300, 655, then 60 frames) is equal on
 every test cartridge. The cartridges are small test programs, so a real game's ROM and RAM sizes were not exercised.
+
+## Accuracy against the public test ROMs (24 Nov 2026, 2.0)
+
+Measured with `gbcore/tests/run_suites.py` (blargg, dmg-acid2, cgb-acid2; the
+table is in `docs/COMPATIBILITY.md`, "Game Boy test suites"). In order of what
+a game can notice:
+
+| File | Change |
+|---|---|
+| `op_normal.h` | PUSH AF stored `F | 0x0E`: the low four bits of F are always 0 (the "unused bits are 1" comment came from a game hack). This alone failed nine of the eleven cpu_instrs tests, since the tests checksum AF through the stack. |
+| `op_normal.h` | DAA rewritten as the plain rule (several flag and value combinations were wrong). ADD SP,n and LD HL,SP+n set no flags; now H and C come from the low byte, Z and N are cleared. |
+| `lcd.c` | `lcd_sprite_select`: a line shows the first ten sprites (OAM order) whose rows cover it, whatever their X; on the DMG the lower X is drawn on top (ties: lower OAM index), on the Game Boy Color the lower OAM index. Before, all forty were drawn, so an eleventh sprite showed and a later sprite at a lower X was covered. The picture differs for games that put more than ten sprites on a line (as hardware does). dmg-acid2 and cgb-acid2 now match. The compiled-out ColorIt copy is unchanged. |
+| `cpu.c`, `op_normal.h` | HALT with IME off and an interrupt already requested does not halt, and the next byte is read twice (`halt_bug`, one instruction long and not part of the state). |
+| `cpu.c` | Dispatching an interrupt takes 20 clocks (it took none). `gbcore/tests/timer.c` expects the 20 in its HALT test. blargg interrupt_time passes. |
+| `apu.c` | `apu_read` returns unused and write-only bits as 1 (NR10 0x80, NR11/NR21 0x3F, NR14/NR24/NR34/NR44 0xBF, NR30 0x7F, NR32 0x9F, unused 0xFF; NR12.. none). Reads only; the state is unchanged. |
+| `cpu_io.h` | A read of IF returns the top three bits as 1. |
+
+None of these touch the state layout; old states load. Not changed:
+mem_timing (the core advances the clock after each whole instruction),
+oam_bug, the sound sweep details and wave RAM access while the channel plays.

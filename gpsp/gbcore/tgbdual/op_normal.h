@@ -40,12 +40,12 @@ inline void op_code_normal_case0x32(void) { cpu_write(REG_HL,REG_A);REG_HL--;} /
 inline void op_code_normal_case0xD9(void) { /*Log("Return Interrupts.\n");*/c_regs_I=1;REG_PC=readw(REG_SP);REG_SP+=2;int_disable_next=true;/*;g_regs.IF=0*/;/*res->system_reg.IF&=~Int_hist[(Int_depth>0)?--Int_depth:Int_depth]*//*Int_depth=((Int_depth>0)?--Int_depth:Int_depth);*//*res->system_reg.IF=0;*//*Log("RETI %d\n",Int_depth);*/ cpu_irq_check(); }//RETI state 16
 inline void op_code_normal_case0xE0(void) { cpu_write(0xFF00+op_read(),REG_A);}//LDH (n),A
 inline void op_code_normal_case0xE2(void) { cpu_write(0xFF00+REG_C,REG_A);}//LDH (C),A
-inline void op_code_normal_case0xE8(void) { REG_SP+=(signed char)op_read();}//ADD SP,n
+inline void op_code_normal_case0xE8(void) { signed char n=(signed char)op_read();/* GBAdhoc: H and C from the low byte, Z and N clear */ REG_F=((((REG_SP&0x0F)+((byte)n&0x0F))>0x0F)?H_FLAG:0)|((((REG_SP&0xFF)+((byte)n&0xFF))>0xFF)?C_FLAG:0);REG_SP+=n;}//ADD SP,n
 inline void op_code_normal_case0xEA(void) { cpu_write(op_readw(),REG_A);}//LD (mn),A
 
 inline void op_code_normal_case0xF0(void) { REG_A=cpu_read(0xFF00+op_read());}//LDH A,(n)
 inline void op_code_normal_case0xF2(void) { REG_A=cpu_read(0xFF00+REG_C);}//LDH A,(c)
-inline void op_code_normal_case0xF8(void) { REG_HL=REG_SP+(signed char)op_read();}//LD HL,SP+n
+inline void op_code_normal_case0xF8(void) { signed char n=(signed char)op_read();/* GBAdhoc: as ADD SP,n */ REG_F=((((REG_SP&0x0F)+((byte)n&0x0F))>0x0F)?H_FLAG:0)|((((REG_SP&0xFF)+((byte)n&0xFF))>0xFF)?C_FLAG:0);REG_HL=REG_SP+n;}//LD HL,SP+n
 inline void op_code_normal_case0xFA(void) { REG_A=cpu_read(op_readw());}//LD A,(mn);
 
 // 8bit load op_code
@@ -160,7 +160,7 @@ inline void op_code_normal_case0xF9(void) { REG_SP=REG_HL;} //LD SP,HL : 11 111 
 inline void op_code_normal_case0xC5(void) { REG_SP-=2;writew(REG_SP,REG_BC);} //PUSH BC
 inline void op_code_normal_case0xD5(void) { REG_SP-=2;writew(REG_SP,REG_DE);} //PUSH DE
 inline void op_code_normal_case0xE5(void) { REG_SP-=2;writew(REG_SP,REG_HL);} //PUSH HL
-inline void op_code_normal_case0xF5(void) { cpu_write(REG_SP-2,z802gb[REG_F]|0xe);cpu_write(REG_SP-1,REG_A);REG_SP-=2;} //PUSH AF // 未使用ビットは1になるみたい(メタルギアより)
+inline void op_code_normal_case0xF5(void) { cpu_write(REG_SP-2,z802gb[REG_F]);cpu_write(REG_SP-1,REG_A);REG_SP-=2;} //PUSH AF // 未使用ビットは1になるみたい(メタルギアより)
 
 //POP rq : 11 rq0 001 : state 10 (12?)
 inline void op_code_normal_case0xC1(void) { REG_B=cpu_read(REG_SP+1);REG_C=cpu_read(REG_SP);REG_SP+=2;} //POP BC
@@ -322,32 +322,18 @@ inline void op_code_normal_case0x3B(void) { REG_SP--;} //DEC SP
 	break;
 */
 inline void op_code_normal_case0x27(void) {//DAA :state 4
-  union pare_reg tmp;
-  tmp.b.h=REG_A&0x0F;
-  tmp.w=(REG_F&N_FLAG)?
-  (
-    (REG_F&C_FLAG)?
-      (((REG_F&H_FLAG)? 0x9A00:0xA000)+C_FLAG):
-      ((REG_F&H_FLAG)? 0xFA00:0x0000)
-  )
-  :
-  (
-    (REG_F&C_FLAG)?
-      (((REG_F&H_FLAG)? 0x6600:((tmp.b.h<0x0A)? 0x6000:0x6600))+C_FLAG):
-      (
-        (REG_F&H_FLAG)?
-          ((REG_A<0xA0)? 0x0600:(0x6600+C_FLAG)):
-          (
-            (tmp.b.h<0x0A)?
-              ((REG_A<0xA0)? 0x0000:(0x6000+C_FLAG)):
-	      ((REG_A<0x90)? 0x0600:(0x6600+C_FLAG))
-          )
-      )
-  );
-  REG_A+=tmp.b.h;
-//  REG_F=ZTable[REG_A]|(tmp.b.l|(REG_F&N_FLAG));
-  REG_F=GenZF(REG_A)|(tmp.b.l|(REG_F&N_FLAG));
-//  FLAGS(REG_A,tmp.b.l|(REG_F&N_FLAG));
+  /* GBAdhoc: the table-style original was wrong for several flag/value
+   * combinations (blargg cpu_instrs 01-special); this is the plain rule. */
+  unsigned a=REG_A,f=REG_F,c=f&C_FLAG;
+  if(!(f&N_FLAG)) {
+    if((f&C_FLAG)||a>0x99) {a+=0x60;c=C_FLAG;}
+    if((f&H_FLAG)||(REG_A&0x0F)>9) a+=6;
+  } else {
+    if(f&C_FLAG) a-=0x60;
+    if(f&H_FLAG) a-=6;
+  }
+  REG_A=(byte)a;
+  REG_F=GenZF(REG_A)|c|(f&N_FLAG);
 }
 
 inline void op_code_normal_case0x2F(void) { //CPL(1の補数) :state4
@@ -371,6 +357,7 @@ inline void op_code_normal_case0xFB(void) { c_regs_I=1;int_disable_next=true; cp
 
 inline void op_code_normal_case0x76(void) {
     /* cpu_exec batches idle clocks through the shared timer/DIV path. */
+    if (!c_regs_I && (g_regs.IF&g_regs.IE&0x1F)) { halt_bug=1; return; } /* GBAdhoc: the HALT bug */
     halt=true;REG_PC--;cpu_irq_check();
 } //HALT : state 4
 

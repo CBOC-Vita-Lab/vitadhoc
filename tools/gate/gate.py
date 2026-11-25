@@ -244,6 +244,10 @@ STEPS = [
          "mkdir -p {out}/bin && gcc -Wall -Wextra -Werror vita/tests/gbkind/test_gbkind.c "
          "-o {out}/bin/gb-kind && {out}/bin/gb-kind",
          "quick", {"gpsp", "library"}, inputs=["gpsp/"], cwd="gpsp", requires=CC),
+    Step("gb-suites", "Game Boy test suites on the host: blargg, dmg-acid2 / cgb-acid2, mooneye when built, against gbcore/tests/suites-expected.txt (GATE_GB_TEST_ROMS, GATE_GB_ACID2, GATE_GB_MOONEYE)",
+         "python3 gbcore/tests/run_suites.py --expect gbcore/tests/suites-expected.txt",
+         "default", {"gpsp", "gb"}, inputs=["gpsp/gbcore/", "gpsp/tools/run_gb_tests.py"], cwd="gpsp", requires=CC,
+         env_req="GATE_GB_TEST_ROMS", env_opt=["GATE_GB_ACID2", "GATE_GB_MOONEYE"], timeout=1800),
     Step("cover-alt", "cover names: other-release fallbacks (artalt.h); real-list rates when AF_NOINTRO_DIR is set",
          "python3 gpsp/vita/tests/artfetch/test_artalt.py",
          "quick", {"gpsp", "cover"}, inputs=["gpsp/"], requires=CC),

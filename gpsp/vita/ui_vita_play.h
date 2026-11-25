@@ -550,8 +550,10 @@ static ui_action play_session(unsigned edges, const char *session_info)
    return UI_ACT_NONE;
 }
 
-static ui_action screen_play(unsigned edges, int session_active,
-                             const char *session_info)
+LARGE_WRAP(ui_action, screen_play, (unsigned edges, int session_active, const char *session_info),
+           (edges, session_active, session_info))
+static ui_action screen_play_page(unsigned edges, int session_active,
+                                  const char *session_info)
 {
    int ids[PL_COUNT], n = play_rows(ids), i, id, y0;
    const ui_net_status *net;

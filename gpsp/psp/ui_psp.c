@@ -1581,6 +1581,15 @@ static void page_header(const char *title, const char *right)
 static void footer(const char *hint)
 {
 #ifdef VITA
+   /* Text size Large: a hint line wider than the screen keeps the Normal size
+    * rather than run off its sides */
+   if (vid_text_scope_large() && vid_text_w(hint) > VID_SCR_W - 16)
+   {
+      vid_text_scope(0);
+      footer(hint);
+      vid_text_scope(1);
+      return;
+   }
    if (g_pcfg.theme != 1)
    {
       /* no bar: the hints sit on a ramp out of the bottom edge */
@@ -2287,6 +2296,14 @@ static void ov_text_right(int xr, int y, const char *s, uint16_t c)
 static void ov_plate(const char *msg)
 {
 #ifdef VITA
+   /* Text size Large: a message wider than the screen keeps the Normal size */
+   if (vid_text_scope_large() && vid_text_w(msg) > VID_SCR_W - 60)
+   {
+      vid_text_scope(0);
+      ov_plate(msg);
+      vid_text_scope(1);
+      return;
+   }
    if (g_pcfg.theme != 1)
    {
       /* 24 px above the footer's own line: the plate used to start at the
@@ -2419,6 +2436,26 @@ static const char *const CTL_UI_NAMES[CTL_NBUTTONS] = {
    "REAR TL", "REAR TR", "REAR BL", "REAR BR"
 };
 
+#ifdef VITA
+/* A page whose rows hold Text size Large draws inside the scope and gives
+ * back the one it was called in (video_vita.h: vid_text_scope; the page
+ * wrappers below).  The others keep the Normal faces. */
+static int large_enter(void)
+{
+   int was = vid_text_scope_large();
+   vid_text_scope(1);
+   return was;
+}
+#define LARGE_WRAP(ret, name, params, args) \
+   static ret name##_page params; \
+   static ret name params \
+   { \
+      int was_ = large_enter(); \
+      ret r_ = name##_page args; \
+      vid_text_scope(was_); \
+      return r_; \
+   }
+#endif
 static ui_action screen_controls(unsigned edges, unsigned pad);
 #ifdef VITA
 static ui_action screen_btntest(unsigned edges);   /* vita/ui_vita_btntest.h */
@@ -8139,7 +8176,12 @@ static void ss_padlock(int x, int y, uint16_t c)
    vid_rect(x + 4, y + 7, 1, 2, C_SHADOW, 255);   /* keyhole              */
 }
 
+#ifdef VITA
+LARGE_WRAP(ui_action, screen_state_slots, (unsigned edges), (edges))
+static ui_action screen_state_slots_page(unsigned edges)
+#else
 static ui_action screen_state_slots(unsigned edges)
+#endif
 {
    ui_action act = UI_ACT_NONE;
    int i, cur;
@@ -8373,11 +8415,15 @@ static ui_action screen_state_slots(unsigned edges)
       vid_text(64, y, lbl, sel ? C_SEL : C_ITEM);
       if (g_ov_lock[i])
          ss_padlock(192, y + 10, sel ? C_SEL : C_DIM);
-      if (g_ov_slot[i])
-         vid_text(64, y + 14, g_ov_stamp[i][0] ? g_ov_stamp[i] : "saved",
-                  sel ? C_VALUE : C_DIM);
-      else
-         vid_text(64, y + 14, "empty", C_DIM);
+      {
+         /* Text size Large: the second line sits two rows lower */
+         const int y2 = y + (vid_text_scope_large() ? 16 : 14);
+         if (g_ov_slot[i])
+            vid_text(64, y2, g_ov_stamp[i][0] ? g_ov_stamp[i] : "saved",
+                     sel ? C_VALUE : C_DIM);
+         else
+            vid_text(64, y2, "empty", C_DIM);
+      }
       UI_TCH_ROW(i, 0, by - 1, 212, 34);
    }
    ss_panel(cur);
@@ -8387,6 +8433,7 @@ static ui_action screen_state_slots(unsigned edges)
                PSP_STATE_SLOT_COUNT, !g_ov_slot[cur] ? "empty"
                : g_ov_stamp[cur][0] ? g_ov_stamp[cur] : "saved",
                g_ov_lock[cur] ? "  -  locked" : "");
+      clip_title(cap, VID_SCR_W - SS_PX - 10);   /* Text size Large: the date is long */
       vid_text(SS_PX, 228, cap, C_DIM);
    }
    if (g_slot_ask)

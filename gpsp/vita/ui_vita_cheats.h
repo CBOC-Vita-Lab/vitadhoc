@@ -160,7 +160,8 @@ static ui_action screen_cheat_add(unsigned edges);
 static void cs_open(void);
 static ui_action screen_cheat_search(unsigned edges, unsigned pad);
 
-static ui_action screen_cheats(unsigned edges, unsigned pad)
+LARGE_WRAP(ui_action, screen_cheats, (unsigned edges, unsigned pad), (edges, pad))
+static ui_action screen_cheats_page(unsigned edges, unsigned pad)
 {
    const cheat_entry *sel = NULL;
    const char *typed;
@@ -592,7 +593,8 @@ static void ca_mono(int x, int y, const char *s, int n, uint16_t col)
    }
 }
 
-static ui_action screen_cheat_add(unsigned edges)
+LARGE_WRAP(ui_action, screen_cheat_add, (unsigned edges), (edges))
+static ui_action screen_cheat_add_page(unsigned edges)
 {
    static const kp_pad pad = { g_ca_keys, CA_NKEYS, 20, 68 };
    int gb = g_pcfg.console != FE_CONSOLE_GBA;
@@ -793,7 +795,7 @@ static ui_action screen_cheat_add(unsigned edges)
       if (g_ca.name[0])
          vid_text(x, 84, vw_clip(nm, sizeof(nm), g_ca.name, 172), C_VALUE);
       else
-         vid_text(x, 84, "a number, unless named", C_DIM);
+         vid_text(x, 84, vw_clip(nm, sizeof(nm), "a number, unless named", 172), C_DIM);
       tch_row(CA_NAME_ROW, bx - 2, 64, bw + 2, 40);
       vw_box(bx, by, bw, bh, g_cursor != CA_NAME_ROW);
       line[0] = p;
@@ -1023,7 +1025,8 @@ static void cs_add(int i)
       cs_note("%s", cheats_error_text(rc));
 }
 
-static ui_action screen_cheat_search(unsigned edges, unsigned pad)
+LARGE_WRAP(ui_action, screen_cheat_search, (unsigned edges, unsigned pad), (edges, pad))
+static ui_action screen_cheat_search_page(unsigned edges, unsigned pad)
 {
    int kind[2 + 1 + PK_CS_OPS + PK_CS_LIST_MAX], arg[2 + 1 + PK_CS_OPS + PK_CS_LIST_MAX];
    int n, max, i, r;

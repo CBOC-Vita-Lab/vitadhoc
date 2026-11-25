@@ -7115,13 +7115,18 @@ def text_misfits(boxes):
 
 
 def t_text_large(S):
-    """Text size Large in the app: Settings holds the larger lines, the other old-layout pages keep Normal.
-    Every row of Settings is visited at Large: no string leaves the screen and none is drawn over another."""
+    """Text size Large in the app: Settings, Save states, Cheats (with Add a code and Search memory) and the Play
+    together page hold the larger lines; Button mapping, Button test, Cover picture, the other Play together pages
+    and the plain list view keep Normal (KNOWN-ISSUES).  Every row of Settings is visited at Large: no string leaves
+    the screen and none is drawn over another."""
     def walk(tag, ini, script, **kw):
         bx = os.path.join(S.outdir, tag + ".boxes")
         if os.path.exists(bx):
             os.remove(bx)
-        r = S.run(tag, script, extra={"display.ini": ini} if ini else None, env={"GBADHOC_TEXT_BOXES": bx}, **kw)
+        extra = dict(kw.pop("extra", None) or {})
+        if ini:
+            extra["display.ini"] = ini
+        r = S.run(tag, script, extra=extra or None, env={"GBADHOC_TEXT_BOXES": bx}, **kw)
         S.clean(r)
         return r, text_boxes(bx)
     rows = 60          # more than the list has: once round, back past Theme
@@ -7148,15 +7153,40 @@ def t_text_large(S):
     # the footer's hints are whole: the last line's cell ends on the screen
     foot = max([b["box"][3] for b in large.get("r000.png", [])] or [0])
     S.check(foot <= 546, "the hint line at the bottom is on the screen at Large (its cell ends at %.0f of 544)" % foot)
-    # a page of the same text outside Settings (Save states, in a game) keeps the Normal faces: its lines are
-    # exactly as tall as with Text size Normal, and nothing of it is off the screen either
-    states = "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=states.png\n+10:circle\n+10:circle\n+30:quit\n"
-    _, sn = walk("text_states_normal", "", states, autoboot="gbadhoc-test.gba")
-    _, sl = walk("text_states_large", "text_size=large\n", states, autoboot="gbadhoc-test.gba")
-    off, over = text_misfits(sl.get("states.png", []))
-    offn, overn = text_misfits(sn.get("states.png", []))
-    S.check(sl.get("states.png") and len(off) <= len(offn) and len(over) <= len(overn),
-            "Save states at Large: nothing more off the screen or overlapping than at Normal (%s %s)" % (off[:2], over[:2]))
+    # The in-game pages that were laid out for Large (2.0 finishing round): Save states, Cheats with Add a code and
+    # Search memory, the Play together page, and the in-game menu's eight cards.  Each is walked at Large and at
+    # Normal: nothing off the screen or over other text beyond what Normal has, and the lines really are larger.
+    def page(tag, script, shots, tall_shot, **kw):
+        _, pn = walk("text_%s_normal" % tag, "", script, **kw)
+        _, pl = walk("text_%s_large" % tag, "text_size=large\n", script, **kw)
+        bad = {}
+        for shot in shots:
+            off, over = text_misfits(pl.get(shot, []))
+            offn, overn = text_misfits(pn.get(shot, []))
+            if not pl.get(shot) or len(off) > len(offn) or len(over) > len(overn):
+                bad[shot] = (off[:2], over[:2])
+        S.check(not bad, "%s at Large: nothing more off the screen or overlapping than at Normal (%s)" % (tag, bad or "all fit"))
+        med = lambda shots: sorted(b["box"][3] - b["box"][1] for b in shots.get(tall_shot, [{"box": (0, 0, 0, 0)}]))[len(shots.get(tall_shot, [0])) // 2]
+        S.check(med(pl) >= med(pn) * 1.1,
+                "%s: the lines are larger at Large (the middle one %.0f px against %.0f)" % (tag, med(pl), med(pn)))
+    cart = open(CHEAT_GBA, "rb").read() if os.path.exists(CHEAT_GBA) else None
+    cht = ('cheats = 3\ncheat0_desc = "Infinite lives"\ncheat0_code = "02000008 0000"\ncheat0_enable = true\n'
+           'cheat1_desc = "Max money"\ncheat1_code = "02000020:0000FFFF"\ncheat1_enable = false\n'
+           'cheat2_desc = "Always on top"\ncheat2_code = "02000030 0001"\ncheat2_enable = false\n')
+    cx = {"roms/cheatrom.gba": cart, "cheats/cheatrom.cht": cht}
+    shots = lambda n: "".join("+8:down\n+14:shot=%s%d.png\n" % (n, i) for i in range(1, 5))
+    states = "100:shot=game.png\n" + menu_pick(1, wait=20) + "+40:shot=s0.png\n" + shots("s") + "+8:up\n+8:up\n+8:up\n+8:up\n+4:square\n+30:shot=sx.png\n+10:circle\n+10:circle\n+30:quit\n"
+    page("Save states", states, ["s0.png", "s1.png", "s2.png", "s3.png", "s4.png", "sx.png"], "s0.png", autoboot="gbadhoc-test.gba")
+    if cart:
+        cheats = ("100:shot=game.png\n" + menu_pick(3, wait=20) + "+30:shot=c0.png\n+8:down\n+14:shot=c1.png\n+8:triangle\n+14:shot=c2.png\n"
+                  "+10:circle\n+20:start\n+14:shot=c3.png\n+8:down\n+4:cross\n+14:shot=c4.png\n+10:quit\n")
+        page("Cheats and Search memory", cheats, ["c0.png", "c1.png", "c2.png", "c3.png", "c4.png"], "c0.png",
+             autoboot="cheatrom.gba", extra=cx)
+    play = "100:shot=game.png\n" + menu_pick(2, wait=20) + "+30:shot=p0.png\n" + shots("p") + "+10:quit\n"
+    page("Play together", play, ["p0.png", "p1.png", "p2.png", "p3.png", "p4.png"], "p0.png", autoboot="gbadhoc-test.gba")
+    # the in-game menu: single-word card labels (Resume, Cheats, Settings, Exit) stay whole, two-word ones go on two lines
+    menu = "100:shot=game.png\n+20:start+select:20\n+30:shot=m0.png\n" + "".join("+8:right\n+10:shot=m%d.png\n" % i for i in range(1, 8)) + "+10:quit\n"
+    page("in-game menu", menu, ["m%d.png" % i for i in range(8)], "m0.png", autoboot="gbadhoc-test.gba")
     # the home screen's own faces follow Text size, and fit
     home = "90:shot=home.png\n+10:quit\n"
     _, hn = walk("text_home_normal", "", home, config={"ui_home": 1})

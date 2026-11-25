@@ -152,6 +152,20 @@ and in emulators; none of it has run on a real Vita yet (see
 - **GBA fixes** for Top Gun: Combat Zones, Polarium Advance, Rock 'N Roll
   Racing, Activision Anthology and X-Men: Reign of Apocalypse.
 
+- **Game Boy Camera.** The Pocket Camera cartridge boots, takes pictures and
+  keeps its 128 KB of photos. The picture comes from the Vita's front camera
+  (mirrored, like a mirror), its back camera, or a `camera.png` you put in the
+  data folder (Settings > This game > Camera: Front / Back / Picture file); a
+  Vita without a camera, or one that cannot start it, uses the file or a test
+  picture. Exposure, gain, edge enhancement and the dither pattern the game
+  sets are followed; a real camera's sensor noise and infrared glow are not.
+- **Game Boy Printer.** Games that print (Game Boy Camera, Pokemon's Pokedex,
+  Zelda DX's photos, ...) find a printer on the cable when nobody is linked.
+  A print is saved as a PNG in `prints/` (`<game>-<date>-<n>.png`) in the
+  game's colours, grey by default, and a toast says "Printed: saved to prints".
+  Long pictures printed in bands are one file. Settings > This game > Game Boy
+  Printer turns it Off; it never answers during a link.
+
 **Online and multiplayer**
 
 - **Online play by room code.** One of you hosts and gets a code of five

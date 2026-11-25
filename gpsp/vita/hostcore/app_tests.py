@@ -8934,6 +8934,258 @@ def t_names_cjk(S):
     S.check(r.has(r"^EVT rom_loaded code=AGDE"), "the game with a Japanese name boots")
 
 
+def _gb_rom(prog, rom_type, banks_code=0, ram_code=0, data=None, title=b"GBCAMTEST"):
+    """A tiny Game Boy cartridge: `prog` at 0x150 (the boot jump goes there),
+    `data` (a dict of offset -> bytes), a valid header."""
+    size = 0x8000 << banks_code
+    rom = bytearray(size)
+    rom[0x100:0x103] = bytes([0xC3, 0x50, 0x01])
+    logo = bytes.fromhex("CEED6666CC0D000B03730083000C000D0008111F8889000EDCCC6EE6DDDDD999BBBB67636E0EECCCDDDC999FBBB9333E")
+    rom[0x104:0x104 + 48] = logo
+    rom[0x134:0x134 + len(title)] = title
+    rom[0x147], rom[0x148], rom[0x149] = rom_type, banks_code, ram_code
+    rom[0x150:0x150 + len(prog)] = prog
+    for off, b in (data or {}).items():
+        rom[off:off + len(b)] = b
+    x = 0
+    for i in range(0x134, 0x14D):
+        x = (x - rom[i] - 1) & 0xFF
+    rom[0x14D] = x
+    t = sum(rom) - rom[0x14E] - rom[0x14F]
+    rom[0x14E], rom[0x14F] = (t >> 8) & 0xFF, t & 0xFF
+    return bytes(rom)
+
+
+def _png_write(path_or_none, w, h, rows):
+    """A greyscale PNG (8 bit) of `rows` (lists of bytes), as bytes."""
+    import zlib, struct
+    raw = b"".join(b"\x00" + bytes(r) for r in rows)
+    def chunk(t, d):
+        c = struct.pack(">I", len(d)) + t + d
+        return c + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 0, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def _png_read(path):
+    """(w, h, channels, rows of bytes) of an 8-bit grey/RGB/RGBA PNG."""
+    import zlib, struct
+    d = open(path, "rb").read()
+    assert d[:8] == b"\x89PNG\r\n\x1a\n"
+    pos, idat, w = 8, b"", None
+    while pos < len(d):
+        n, t = struct.unpack(">I4s", d[pos:pos + 8])
+        body = d[pos + 8:pos + 8 + n]
+        if t == b"IHDR":
+            w, h, depth, ctype = struct.unpack(">IIBB", body[:10])
+        elif t == b"IDAT":
+            idat += body
+        pos += 12 + n
+    ch = {0: 1, 2: 3, 6: 4}[ctype]
+    raw = zlib.decompress(idat)
+    stride = w * ch
+    rows, prev = [], bytearray(stride)
+    for y in range(h):
+        f = raw[y * (stride + 1)]
+        cur = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = cur[i - ch] if i >= ch else 0
+            b = prev[i]
+            c = prev[i - ch] if i >= ch else 0
+            if f == 1: cur[i] = (cur[i] + a) & 255
+            elif f == 2: cur[i] = (cur[i] + b) & 255
+            elif f == 3: cur[i] = (cur[i] + (a + b) // 2) & 255
+            elif f == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                pr = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                cur[i] = (cur[i] + pr) & 255
+        rows.append(bytes(cur))
+        prev = cur
+    return w, h, ch, rows
+
+
+# The camera cartridge's program: thresholds 40/80/C0 in every dither cell,
+# 20 dB gain, exposure 0x1000, capture, wait, again (see gbcore/tests/gbcam.c).
+_CAM_PROG = bytes([
+    0x31, 0xFE, 0xFF, 0x3E, 0x0A, 0xEA, 0x00, 0x00,
+    0x3E, 0x10, 0xEA, 0x00, 0x40,                    # 0158: registers on
+    0x21, 0x06, 0xA0, 0x06, 0x10,
+    0x3E, 0x40, 0x22, 0x3E, 0x80, 0x22, 0x3E, 0xC0, 0x22, 0x05, 0x20, 0xF4,
+    0x3E, 0x04, 0xEA, 0x01, 0xA0,
+    0x3E, 0x10, 0xEA, 0x02, 0xA0,
+    0x3E, 0x00, 0xEA, 0x03, 0xA0,
+    0x3E, 0x03, 0xEA, 0x00, 0xA0,                    # start
+    0xFA, 0x00, 0xA0, 0xE6, 0x01, 0x20, 0xF9,        # wait
+    0x3E, 0x00, 0xEA, 0x00, 0x40,                    # RAM bank 0
+    0xC3, 0x58, 0x01])
+
+
+def _cam_shades(sav):
+    """The 128x112 shades (0 white .. 3 black) of the picture in a camera save."""
+    img = sav[0x100:0x100 + 0xE00]
+    out = []
+    for y in range(112):
+        row = []
+        for x in range(128):
+            t = ((y >> 3) * 16 + (x >> 3)) * 16 + (y & 7) * 2
+            bit = 7 - (x & 7)
+            row.append(((img[t] >> bit) & 1) | (((img[t + 1] >> bit) & 1) << 1))
+        out.append(row)
+    return out
+
+
+def t_gbcam(S):
+    """Game Boy Camera: the picture from the Vita's camera (front mirrored, back), from camera.png, and the test picture; saves hold it"""
+    rom = _gb_rom(_CAM_PROG, 0xFC, 0, 4)
+    def go(name, script, ini=None, extra=None):
+        ex = {"roms/cam.gb": rom}
+        ex.update(extra or {})
+        if ini:
+            ex["games/cam.gb.ini"] = ini
+        r = S.run(name, script, autoboot="cam.gb", extra=ex)
+        S.clean(r)
+        sp = os.path.join(r.root, "roms", "cam.gb.sav")
+        return r, (open(sp, "rb").read() if os.path.exists(sp) else b"")
+    def band(v):                     # the shade of a source level with 40/80/C0
+        return 3 - (0 if v < 0x40 else 1 if v < 0x80 else 2 if v < 0xC0 else 3)
+    # the twin's 320x240 ramp, cut to 8:7 and shrunk the way the app does
+    ramp = [x * 255 // 319 for x in range(320)]
+    def fit_ramp(x):                 # output column x: the mean of its source columns
+        a, b = 23 + x * 274 // 128, 23 + (x + 1) * 274 // 128
+        b = max(b, a + 1)
+        return sum(ramp[a:b]) // (b - a)
+    # 1. Front camera: mirrored
+    r, sav = go("gbcam_front", "1:camera=ramp\n240:quit\n")
+    S.check(r.has(r"^EVT camera_game mode=0") and r.has(r"^EVT camera_source mode=0 device=1"),
+            "a camera game starts on the front camera")
+    S.check(len(sav) >= 0x20000, "the cartridge's 128 KiB RAM is saved (%d bytes)" % len(sav))
+    if len(sav) >= 0x20000:
+        sh = _cam_shades(sav)
+        bad = [x for x in range(128) if abs(sh[40][x] - band(fit_ramp(127 - x))) > 0 and
+               abs(fit_ramp(127 - x) - 0x40) > 3 and abs(fit_ramp(127 - x) - 0x80) > 3 and
+               abs(fit_ramp(127 - x) - 0xC0) > 3]
+        S.check(not bad, "the front camera's ramp arrives mirrored, in four bands (%d columns off)" % len(bad))
+        S.check(all(sh[y] == sh[40] for y in (0, 30, 80, 111)), "every row alike (the ramp is vertical)")
+        S.check(sh[40][0] == 0 and sh[40][127] == 3, "white at the left edge, black at the right: mirrored")
+    # 2. Back camera: the way it is
+    r, sav = go("gbcam_back", "1:camera=ramp\n240:quit\n", ini="camera = 1\n")
+    S.check(r.has(r"^EVT camera_source mode=1 device=1"), "the game's file chooses the back camera")
+    if len(sav) >= 0x20000:
+        sh = _cam_shades(sav)
+        S.check(sh[40][0] == 3 and sh[40][127] == 0, "the back camera is not mirrored")
+    # 2b. After a sleep the camera is started again
+    r, sav = go("gbcam_sleep", "1:camera=ramp\n60:suspend\n+60:cross\n+120:quit\n")
+    S.check(r.has(r"^EVT camera_resume") and len(r.evt("camera_source")) == 2 and
+            all(e["device"] == "1" for e in r.evt("camera_source")),
+            "the console slept: the camera is let go and started again (%s)" %
+            [e["device"] for e in r.evt("camera_source")])
+    # 3. Picture file
+    step = _png_write(None, 320, 240, [[40] * 160 + [200] * 160 for _ in range(240)])
+    r, sav = go("gbcam_file", "240:quit\n", ini="camera = 2\n", extra={"camera.png": step})
+    S.check(r.has(r"^EVT camera_source mode=2 device=0 file=1"), "Picture file reads camera.png")
+    if len(sav) >= 0x20000:
+        sh = _cam_shades(sav)
+        S.check(sh[10][10] == band(40) and sh[10][120] == band(200) and sh[100][63] == band(40) and
+                sh[100][64] == band(200), "camera.png: its left half dark, right half light, the step at column 64")
+    # 4. No camera and no file: the test picture, and a note
+    r, sav = go("gbcam_none", "240:quit\n")
+    S.check(r.has(r"^EVT camera_source mode=0 device=0 file=0"), "no camera, no camera.png: the test picture")
+    if len(sav) >= 0x20000:
+        sh = _cam_shades(sav)
+        S.check(len({v for row in sh for v in row}) == 4, "the test picture uses all four shades")
+    # 5. A game that is not a camera does not ask for one
+    plain = _gb_rom(bytes([0x18, 0xFE]), 0x00, 0, 0)
+    r = S.run("gbcam_plain", "30:quit\n", autoboot="plain.gb", extra={"roms/plain.gb": plain})
+    S.clean(r)
+    S.check(not r.has(r"^EVT camera_game"), "an ordinary cartridge starts no camera")
+    # 6. Settings > THIS GAME > Camera (18 rows up from Screen size, in a Camera game): Front, Back,
+    # Picture file in turn, the game's file keeps it, and the picture follows at once
+    script = "1:camera=ramp\n" + menu_pick(4, wait=60) + set_up(18) + "+10:cross\n+10:cross\n+30:quit\n"
+    r = S.run("gbcam_row", script, autoboot="cam.gb", extra={"roms/cam.gb": rom})
+    S.clean(r)
+    S.check([e["mode"] for e in r.evt("camera_setting")] == ["1", "2"],
+            "the Camera row goes Front, Back, Picture file (%s)" % [e["mode"] for e in r.evt("camera_setting")])
+    S.check(re.search(r"^camera = 2$", open(os.path.join(r.root, "games", "cam.gb.ini")).read(), re.M) is not None,
+            "the game's file keeps Picture file")
+    S.check(r.has(r"^EVT camera_source mode=2 "), "and the game follows at once")
+
+
+def t_gbprinter(S):
+    """Game Boy Printer: a game's print packets become a PNG in prints/ in the game's colours; Off leaves the port alone"""
+    import struct
+    def packet(cmd, comp, data=b""):
+        body = bytes([cmd, comp, len(data) & 255, len(data) >> 8]) + bytes(data)
+        s = sum(body)
+        return b"\x88\x33" + body + struct.pack("<H", s & 0xFFFF) + b"\x00\x00"
+    tiles = bytearray(0x280)
+    for t in range(40):
+        for y in range(8):
+            lo = hi = 0
+            for x in range(8):
+                c = (x + y + t) & 3
+                lo |= (c & 1) << (7 - x)
+                hi |= ((c >> 1) & 1) << (7 - x)
+            tiles[t * 16 + y * 2], tiles[t * 16 + y * 2 + 1] = lo, hi
+    stream = (packet(0x0F, 0) + packet(1, 0) + packet(4, 0, tiles) + packet(4, 0) +
+              packet(2, 0, bytes([1, 0x13, 0xE4, 0x40])) + packet(0x0F, 0))
+    n = len(stream)
+    prog = bytes([0x31, 0xFE, 0xFF, 0x21, 0x00, 0x40, 0x11, 0x00, 0xC0,
+                  0x01, n & 255, n >> 8,
+                  0x2A, 0xE0, 0x01, 0x3E, 0x81, 0xE0, 0x02,
+                  0xF0, 0x02, 0xCB, 0x7F, 0x20, 0xFA,
+                  0xF0, 0x01, 0x12, 0x13, 0x0B, 0x78, 0xB1, 0x20, 0xEA,
+                  0x18, 0xFE])
+    rom = _gb_rom(prog, 0x00, 1, 0, {0x4000: stream}, title=b"PRINTTEST")
+    def go(name, ini=None, config=None, rom=rom):
+        r = S.run(name, "400:quit\n", autoboot="prn.gb", extra={"roms/prn.gb": rom},
+                  vita_ini=ini, config=config)
+        S.clean(r)
+        files = sorted(glob.glob(os.path.join(r.root, "prints", "*.png")))
+        return r, files
+    r, files = go("gbprinter_on")
+    S.check(r.has(r"^EVT gb_printer strip=1 w=160 h=48") and r.has(r"^EVT gb_print_saved ok=1 "),
+            "one strip, 160x48 (1 + 2 tile rows + 3 margin steps of 8)")
+    S.check(len(files) == 1 and re.search(r"prn-\d{8}-1\.png$", files[0] or ""),
+            "saved as prints/<game>-<date>-<n>.png (%s)" % [os.path.basename(f) for f in files])
+    if files:
+        w, h, ch, rows = _png_read(files[0])
+        S.check((w, h) == (160, 48), "the PNG is 160x48 (%dx%d)" % (w, h))
+        # the four colours, lightest first: the palette E4 maps tile colour c to shade c
+        px = lambda x, y: rows[y][x * ch:x * ch + 3]
+        lum = lambda c: c[0] * 299 + c[1] * 587 + c[2] * 114
+        pal = sorted({px(x, y) for y in range(48) for x in range(160)}, key=lum, reverse=True)
+        S.check(len(pal) == 4, "four colours in the picture (%d)" % len(pal))
+        bad = 0
+        for y in range(48):
+            for x in range(160):
+                want = 0
+                if 8 <= y < 24:
+                    py = y - 8
+                    want = ((x % 8) + (py % 8) + (py // 8) * 20 + x // 8) & 3
+                if len(pal) == 4 and px(x, y) != pal[want]:
+                    bad += 1
+        S.check(bad == 0, "every pixel has the shade the tiles and the palette E4 give (%d off)" % bad)
+        S.check(all(px(x, 0) == pal[0] for x in range(160)) and all(px(x, 47) == pal[0] for x in range(160)),
+                "the margins are paper")
+    # Quick response On (a look-ahead frame every frame): the printer hears each byte once and its
+    # clock still runs -- a strip left open (no bottom margin) is closed after the pause
+    open_stream = (packet(0x0F, 0) + packet(1, 0) + packet(4, 0, tiles) + packet(4, 0) +
+                   packet(2, 0, bytes([1, 0x10, 0xE4, 0x40])) + packet(0x0F, 0))
+    r, files = go("gbprinter_quick", ini={"quick_response": 2},
+                  rom=_gb_rom(prog, 0x00, 1, 0, {0x4000: open_stream}, title=b"PRINTTEST"))
+    S.check(r.has(r"^EVT quick_response mode=on") and r.has(r"^EVT gb_printer strip=1 w=160 h=24") and
+            len(files) == 1, "Quick response On: the open strip (160x24) is closed and saved (%d files)" % len(files))
+    r = S.run("gbprinter_row", menu_pick(4, wait=60) + set_up(17) + "+10:cross\n+30:quit\n",
+              autoboot="prn.gb", extra={"roms/prn.gb": rom})
+    S.clean(r)
+    S.check([e["on"] for e in r.evt("printer_setting")] == ["0"] and
+            re.search(r"^gb_printer = 0$", open(os.path.join(r.root, "config.ini")).read(), re.M) is not None,
+            "the Game Boy Printer row turns Off and config.ini keeps it")
+    # Off: the game finds no printer, nothing is saved
+    r, files = go("gbprinter_off", config={"gb_printer": 0})
+    S.check(not files and not r.has(r"^EVT gb_printer "), "Game Boy Printer Off: nothing printed")
+
+
 TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicators", t_ra_indicators), ("snes_library", t_snes_library), ("snes_two", t_snes_two), ("sega_two", t_sega_two), ("sega_library", t_sega_library), ("sega_exts", t_sega_exts), ("sega_session", t_sega_session), ("nes_library", t_nes_library),
          ("nes_boot", t_nes_boot), ("nes_pal", t_nes_pal), ("nes_wide", t_nes_wide), ("nes_soft_edge", t_nes_soft_edge), ("nes_rewind", t_nes_rewind), ("ws_boot", t_ws_boot), ("tap_menu", t_tap_menu), ("census", t_census), ("steady_input", t_steady_input), ("state_buckets", t_state_buckets), ("steady", t_steady), ("cheats_consoles", t_cheats_consoles), ("ws_more", t_ws_more), ("ws_library", t_ws_library), ("ws_private", t_ws_private), ("nes_states", t_nes_states), ("nes_continue", t_nes_continue), ("nes_more", t_nes_more), ("nes_direct", t_nes_direct), ("nes_cover", t_nes_cover),
          ("settings_labels", t_settings_labels), ("extra_roms", t_extra_roms),
@@ -8964,7 +9216,7 @@ TESTS = [("list", t_list), ("state_undo_lock", t_state_undo_lock), ("ra_indicato
          ("controls_defaults", t_controls_defaults),
          ("names_cjk", t_names_cjk),
          ("names_filename", t_names_filename), ("names_duplicate_subtitle", t_names_duplicate_subtitle),
-         ("gb_colours", t_gb_colours), ("boot_guard", t_boot_guard), ("old_config", t_old_config)]
+         ("gbcam", t_gbcam), ("gbprinter", t_gbprinter), ("gb_colours", t_gb_colours), ("boot_guard", t_boot_guard), ("old_config", t_old_config)]
 
 
 def main():

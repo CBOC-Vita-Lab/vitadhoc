@@ -64,6 +64,8 @@ struct gbcore {
   size_t rom_bytes;            /* the cartridge image's size (cheats) */
   int tilt_set;                /* gbcore_set_tilt has published a sample */
   uint32_t tilt;               /* MBC7 accelerometer: x | y << 16 */
+  int cam_set;                 /* gbcore_set_camera_image has published a picture */
+  uint8_t cam[128 * 112];      /* Game Boy Camera: the picture it looks at */
 };
 
 static gbcore_t *active;
@@ -522,6 +524,28 @@ int gbcore_has_tilt(gbcore_t *core)
 {
   return core && core == active && rom_get_loaded() &&
          rom_get_info()->cart_type == 0x22;
+}
+
+/* Game Boy Camera (cartridge 0xFC, tgbdual/gbcam.h): whether the loaded game
+ * is one, and the 128x112 greyscale picture its sensor looks at.  Without
+ * one the core shows a test pattern. */
+int gbcore_has_camera(gbcore_t *core)
+{
+  return core && core == active && rom_get_loaded() &&
+         rom_get_info()->cart_type == 0xFC;
+}
+
+void gbcore_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112)
+{
+  if (!core || !grey_128x112)
+    return;
+  memcpy(core->cam, grey_128x112, sizeof(core->cam));
+  core->cam_set = 1;
+}
+
+const unsigned char *gbe_getCameraImage(void)
+{
+  return active && active->cam_set ? active->cam : NULL;
 }
 
 void gbe_setBibrate(char bibrate)

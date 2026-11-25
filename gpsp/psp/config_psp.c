@@ -220,6 +220,7 @@ void pcfg_load_doc(const char *ini_path, fe_ini_doc *doc)
    g_pcfg.nes_wide = (int)fe_ini_get_int(cfg_path, "nes_wide", 0);
    g_pcfg.nes_pal_smooth = (int)fe_ini_get_int(cfg_path, "nes_pal_smooth", 1) ? 1 : 0;
    g_pcfg.steady_pacing = (int)fe_ini_get_int(cfg_path, "steady_pacing", 1) ? 1 : 0;
+   g_pcfg.gb_printer = (int)fe_ini_get_int(cfg_path, "gb_printer", 1) ? 1 : 0;
    g_pcfg.smooth_handoff = (int)fe_ini_get_int(cfg_path, "smooth_handoff", 1) ? 1 : 0;
    {
       char c4[16];
@@ -718,6 +719,8 @@ void pcfg_save(void)
    fe_ini_set_int(cfg_path, "stick_rewind", g_pcfg.stick_rewind);
    if (!g_pcfg.tap_menu || fe_ini_get_int(cfg_path, "tap_menu", 1) == 0)
       fe_ini_set_int(cfg_path, "tap_menu", g_pcfg.tap_menu);
+   if (!g_pcfg.gb_printer || fe_ini_get_int(cfg_path, "gb_printer", 1) == 0)
+      fe_ini_set_int(cfg_path, "gb_printer", g_pcfg.gb_printer);
    if (!g_pcfg.steady_pacing || fe_ini_get_int(cfg_path, "steady_pacing", 1) == 0)
       fe_ini_set_int(cfg_path, "steady_pacing", g_pcfg.steady_pacing);
    if (!g_pcfg.smooth_handoff || fe_ini_get_int(cfg_path, "smooth_handoff", 1) == 0)
@@ -1346,9 +1349,15 @@ const char *pcfg_ws_rotation_name(int m)
         : m == PCFG_WS_ROT_VERTICAL ? "Vertical" : "Auto";
 }
 
+const char *pcfg_camera_name(int m)
+{
+   return m == PCFG_CAM_BACK ? "Back" : m == PCFG_CAM_FILE ? "Picture file" : "Front";
+}
+
 static void pgame_defaults(void)
 {
    g_pgame.quick = -1;
+   g_pgame.camera = PCFG_CAM_FRONT;
    g_pgame.ws_rotation = PCFG_WS_ROT_AUTO;
    g_pgame.ws_vplay = 0;
    g_pgame.ws_palette = 0;
@@ -1383,6 +1392,8 @@ static void pgame_render(char *out, size_t cap)
                 g_pgame.level_down);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " q%d", g_pgame.quick);
+   if (n > 0 && (size_t)n < cap)
+      n += snprintf(out + n, cap - (size_t)n, " c%d", g_pgame.camera);
    if (n > 0 && (size_t)n < cap)
       n += snprintf(out + n, cap - (size_t)n, " ws%d/%d/%d", g_pgame.ws_rotation,
                     g_pgame.ws_vplay, g_pgame.ws_palette);
@@ -1460,6 +1471,8 @@ void pcfg_game_begin(const char *path, int console)
       g_pgame.ws_palette = fe_ini_doc_get_int(&doc, "ws_palette", 0) == 1;
       g_pgame.quick = pgame_clampi(fe_ini_doc_get_int(&doc, "quick_response", -1),
                                    0, 2, -1);
+      g_pgame.camera = pgame_clampi(fe_ini_doc_get_int(&doc, "camera", 0),
+                                    0, PCFG_CAM_MODES - 1, PCFG_CAM_FRONT);
    }
    g_pgame.on = 1;
    pgame_render(pgame_written, sizeof(pgame_written));
@@ -1513,6 +1526,8 @@ int pcfg_game_save(void)
    rc |= fe_ini_doc_set_int(&doc, "level_set", g_pgame.level_set);
    rc |= fe_ini_doc_set_int(&doc, "level_right", g_pgame.level_right);
    rc |= fe_ini_doc_set_int(&doc, "level_down", g_pgame.level_down);
+   if (g_pgame.camera != PCFG_CAM_FRONT || fe_ini_doc_get_int(&doc, "camera", 0) != 0)
+      rc |= fe_ini_doc_set_int(&doc, "camera", g_pgame.camera);
    if (g_pgame.quick >= 0 || fe_ini_doc_get_int(&doc, "quick_response", -1) >= 0)
       rc |= fe_ini_doc_set_int(&doc, "quick_response", g_pgame.quick);
    if (g_pgame.console == FE_CONSOLE_WSWAN)

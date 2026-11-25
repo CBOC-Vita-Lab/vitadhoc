@@ -11,6 +11,7 @@
 #include "pad_port_pick.h"
 #include "jit_vita.h"
 #include "fe_evt.h"
+#include "fe_gbcam_fit.h"
 
 #include <malloc.h>
 #include <stdarg.h>
@@ -18,6 +19,7 @@
 #include <string.h>
 
 #include <psp2/appmgr.h>
+#include <psp2/camera.h>
 #include <psp2/audioout.h>
 #include <psp2/ctrl.h>
 #include <psp2/display.h>
@@ -955,6 +957,97 @@ int plat_motion_read(plat_motion *m)
    m->right_g = -st.acceleration.x;
    m->down_g  = st.acceleration.y;
    m->rate_z  = st.angularVelocity.z;
+   return 0;
+}
+
+/* ---- the camera (plat.h) --------------------------------------------------
+ * Opened the way the VitaSDK camera sample does: ABGR into a CDRAM block
+ * (256 KB, the unit the allocator hands out), read without waiting for the
+ * next frame.  176x144 is plenty for a 128x112 picture. */
+#define CAM_W 176
+#define CAM_H 144
+static int      g_cam_dev = -1;
+static SceUID   g_cam_blk = -1;
+static void    *g_cam_buf;
+static int      g_cam_miss;
+
+void plat_camera_close(void)
+{
+   if (g_cam_dev >= 0)
+   {
+      sceCameraStop(g_cam_dev);
+      sceCameraClose(g_cam_dev);
+   }
+   if (g_cam_blk >= 0)
+      sceKernelFreeMemBlock(g_cam_blk);
+   g_cam_dev = -1;
+   g_cam_blk = -1;
+   g_cam_buf = NULL;
+}
+
+int plat_camera_open(int back)
+{
+   SceCameraInfo info;
+   int rc;
+   plat_camera_close();
+   g_cam_blk = sceKernelAllocMemBlock("gbcamera", SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW,
+                                      256 * 1024, NULL);
+   if (g_cam_blk < 0 || sceKernelGetMemBlockBase(g_cam_blk, &g_cam_buf) < 0)
+   {
+      fe_evt("camera open failed step=memblock");
+      plat_camera_close();
+      return -1;
+   }
+   memset(&info, 0, sizeof(info));
+   info.size = sizeof(info);
+   info.format = SCE_CAMERA_FORMAT_ABGR;
+   info.resolution = SCE_CAMERA_RESOLUTION_176_144;
+   info.framerate = SCE_CAMERA_FRAMERATE_30_FPS;
+   info.sizeIBase = CAM_W * CAM_H * 4;
+   info.pitch = 0;
+   info.pIBase = g_cam_buf;
+   rc = sceCameraOpen(back ? SCE_CAMERA_DEVICE_BACK : SCE_CAMERA_DEVICE_FRONT, &info);
+   if (rc < 0)
+   {
+      fe_evt("camera open failed rc=%08x", (unsigned)rc);
+      plat_camera_close();
+      return -1;
+   }
+   g_cam_dev = back ? SCE_CAMERA_DEVICE_BACK : SCE_CAMERA_DEVICE_FRONT;
+   rc = sceCameraStart(g_cam_dev);
+   if (rc < 0)
+   {
+      fe_evt("camera start failed rc=%08x", (unsigned)rc);
+      plat_camera_close();
+      return -1;
+   }
+   g_cam_miss = 0;
+   fe_evt("camera open back=%d", back ? 1 : 0);
+   return 0;
+}
+
+int plat_camera_read(uint8_t *out, int mirror)
+{
+   static uint8_t y[CAM_W * CAM_H];
+   SceCameraRead rd;
+   const uint8_t *p = (const uint8_t *)g_cam_buf;
+   int i, rc;
+   if (g_cam_dev < 0 || !p)
+      return -1;
+   memset(&rd, 0, sizeof(rd));
+   rd.size = sizeof(rd);
+   rd.mode = 1;
+   rc = sceCameraRead(g_cam_dev, &rd);
+   if (rc < 0)
+   {
+      /* no new frame yet (or a hiccup): the last picture stands */
+      return ++g_cam_miss > 300 ? -1 : 1;
+   }
+   g_cam_miss = 0;
+   /* bytes R, G, B, A in memory */
+   for (i = 0; i < CAM_W * CAM_H; i++, p += 4)
+      y[i] = (uint8_t)((p[0] * 77 + p[1] * 150 + p[2] * 29) >> 8);
+   fe_gbcam_fit(y, CAM_W, CAM_H, CAM_W, mirror, out);
    return 0;
 }
 

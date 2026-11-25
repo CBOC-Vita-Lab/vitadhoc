@@ -107,6 +107,8 @@
 #include "cpuclock.h"
 #include "boot_guard.h"
 #include "fe_sensor.h"
+#include "fe_gbcam_fit.h"
+#include "stb_image.h"
 #include "play_log.h"
 #include "save_sync.h"
 #include "rom_patch.h"
@@ -1574,6 +1576,205 @@ static void sensor_frame(const plat_pad *pp)
                 (unsigned)reading, sensor_owns_stick());
       }
    }
+}
+
+/* ---- GAME BOY CAMERA and GAME BOY PRINTER ------------------------------------
+ *
+ * The Camera cartridge looks at a 128x112 grey picture (gbcore.h
+ * gbcore_set_camera_image), published each time there is a new one: the front
+ * or back camera (plat_camera_*), or camera.png from the data folder (also
+ * what a console with no camera, or the twin, falls back to); with neither,
+ * the core shows its own test picture.  Settings > THIS GAME > Camera
+ * chooses; the game's file keeps it.
+ *
+ * The Printer's finished strips (fe_host_gb_print_take) are written to
+ * prints/<game>-<date>-<n>.png in the game's colours, and a toast says so. */
+static int      g_cam_game;          /* the running game is a Game Boy Camera */
+static int      g_cam_mode = -1;     /* PCFG_CAM_* the picture comes from now  */
+static int      g_cam_dev;           /* the Vita's camera is running           */
+static int      g_cam_have;          /* g_cam_pic holds a picture              */
+static uint8_t  g_cam_pic[FE_GBCAM_W * FE_GBCAM_H];
+
+static int gbcam_load_file(void)
+{
+   char path[APP_PATH_CAP];
+   FILE *f;
+   long n = 0;
+   unsigned char *buf, *px;
+   int w = 0, h = 0, c = 0, i;
+   static unsigned char *grey;
+   if (path_fmt(path, sizeof(path), "%s/camera.png", g_app_root) != 0 ||
+       file_size(path, &n) != 0 || n <= 0 || n > 8 * 1024 * 1024)
+      return -1;
+   buf = (unsigned char *)malloc((size_t)n);
+   if (!buf)
+      return -1;
+   f = fopen(path, "rb");
+   if (!f || fread(buf, 1, (size_t)n, f) != (size_t)n)
+   {
+      if (f)
+         fclose(f);
+      free(buf);
+      return -1;
+   }
+   fclose(f);
+   px = stbi_load_from_memory(buf, (int)n, &w, &h, &c, 4);
+   free(buf);
+   if (!px || w < 1 || h < 1 || w > 4096 || h > 4096)
+   {
+      if (px)
+         stbi_image_free(px);
+      return -1;
+   }
+   grey = (unsigned char *)realloc(grey, (size_t)w * (size_t)h);
+   if (!grey)
+   {
+      stbi_image_free(px);
+      return -1;
+   }
+   for (i = 0; i < w * h; i++)
+      grey[i] = (unsigned char)((px[i * 4] * 77 + px[i * 4 + 1] * 150 +
+                                 px[i * 4 + 2] * 29) >> 8);
+   stbi_image_free(px);
+   fe_gbcam_fit(grey, w, h, w, 0, g_cam_pic);
+   free(grey);
+   grey = NULL;
+   return 0;
+}
+
+static void gbcam_game_end(void)
+{
+   if (g_cam_dev)
+      plat_camera_close();
+   g_cam_dev = 0;
+   g_cam_game = 0;
+   g_cam_have = 0;
+   g_cam_mode = -1;
+}
+
+/* The console slept: the camera does not come back by itself.  Let go of it
+ * and let the next frame start the chosen source again (gbcam_frame). */
+static void gbcam_resume(void)
+{
+   if (!g_cam_game)
+      return;
+   if (g_cam_dev)
+      plat_camera_close();
+   g_cam_dev = 0;
+   g_cam_mode = -1;
+   fe_evt("camera_resume");
+}
+
+static void gbcam_game_begin(void)
+{
+   gbcam_game_end();
+   g_cam_game = fe_host_gbcam_present() ? 1 : 0;
+   if (g_cam_game)
+      fe_evt("camera_game mode=%d", g_pgame.camera);
+}
+
+static void gbcam_frame(void)
+{
+   int fresh = 0;
+   if (!g_cam_game)
+      return;
+   if (g_pgame.camera != g_cam_mode)
+   {
+      /* a new source: stop the old one, start the new, or fall back */
+      const int mode = g_pgame.camera;
+      if (g_cam_dev)
+         plat_camera_close();
+      g_cam_dev = 0;
+      g_cam_mode = mode;
+      g_cam_have = 0;
+      if (mode != PCFG_CAM_FILE)
+      {
+         g_cam_dev = plat_camera_open(mode == PCFG_CAM_BACK) == 0;
+         if (!g_cam_dev)
+            toast_now("No camera: using camera.png or a test picture");
+      }
+      if (!g_cam_dev)
+      {
+         g_cam_have = gbcam_load_file() == 0;
+         fresh = 1;
+         if (mode == PCFG_CAM_FILE && !g_cam_have)
+            toast_now("camera.png not found: using a test picture");
+      }
+      fe_evt("camera_source mode=%d device=%d file=%d", mode, g_cam_dev, g_cam_have);
+   }
+   if (g_cam_dev)
+   {
+      const int rc = plat_camera_read(g_cam_pic, g_cam_mode == PCFG_CAM_FRONT);
+      if (rc == 0)
+      {
+         g_cam_have = 1;
+         fresh = 1;
+      }
+      else if (rc < 0)
+      {
+         plat_camera_close();
+         g_cam_dev = 0;
+         toast_now("The camera stopped");
+         fe_evt("camera_stopped");
+      }
+   }
+   if (fresh && g_cam_have)
+      fe_host_gbcam_frame(g_cam_pic);
+}
+
+static void gbprint_save(const uint8_t *shades, int w, int h)
+{
+   char stem[80], dir[APP_PATH_CAP], path[APP_PATH_CAP];
+   uint32_t colour[4];
+   uint8_t *rgb;
+   time_t now = plat_wallclock();
+   struct tm tm;
+   char *dot;
+   unsigned n;
+   int ok = 0;
+   rgb = (uint8_t *)malloc((size_t)w * (size_t)h * 3);
+   if (!rgb)
+      return;
+   fe_host_gb_print_colours(colour);
+   for (n = 0; n < (unsigned)(w * h); n++)
+   {
+      const uint32_t c = colour[shades[n] & 3];
+      rgb[n * 3 + 0] = (uint8_t)(c >> 16);
+      rgb[n * 3 + 1] = (uint8_t)(c >> 8);
+      rgb[n * 3 + 2] = (uint8_t)c;
+   }
+   snprintf(stem, sizeof(stem), "%s", base_name(g_game.rom_path));
+   dot = strrchr(stem, '.');
+   if (dot && dot != stem)
+      *dot = '\0';
+   memset(&tm, 0, sizeof(tm));
+   gmtime_r(&now, &tm);            /* plat_wallclock is local time already */
+   if (path_fmt(dir, sizeof(dir), "%s/prints", g_app_root) == 0)
+      mkdir(dir, 0777);
+   for (n = 1; n < 1000 && dir[0]; n++)
+   {
+      if (path_fmt(path, sizeof(path), "%s/%s-%04d%02d%02d-%u.png", dir, stem,
+                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, n) != 0)
+         break;
+      if (file_size(path, NULL) != 0)
+      {
+         ok = stbi_write_png(path, w, h, 3, rgb, w * 3);
+         break;
+      }
+   }
+   free(rgb);
+   fe_evt("gb_print_saved ok=%d file=%s w=%d h=%d", ok, ok ? path : "", w, h);
+   toast_now(ok ? "Printed: saved to prints" : "Print could not be saved");
+}
+
+static void gbprint_frame(void)
+{
+   int w = 0, h = 0;
+   const uint8_t *strip;
+   fe_host_gb_printer_set(g_pcfg.gb_printer);
+   strip = fe_host_gb_print_take(&w, &h);
+   if (strip)
+      gbprint_save(strip, w, h);
 }
 
 /* ---- PLAY TIME (play_log.h) ---------------------------------------------------
@@ -3975,6 +4176,7 @@ static void power_service(void)
       link_local_power(1);
       if (g_game_loaded)
       {
+         gbcam_resume();
          audio_flush();
          app_pace_reset();
          /* Back into the frozen frame with a plate over it, not straight
@@ -5834,6 +6036,7 @@ static int game_boot(const char *rom_path, fe_console_t console)
    osd_session_chip_refresh();
    sgb_border_begin();
    sensor_game_begin();         /* before the rewind sizes its log */
+   gbcam_game_begin();
    rewind_configure(g_pcfg.rewind, g_pcfg.rewind_mb);
    rewind_game_begin();
    resume_game_begin();
@@ -5860,6 +6063,7 @@ static void game_unload(int hold)
    boot_guard_game_end();       /* a clean leave: the start worked */
    pcfg_game_end();             /* its own settings written, the console's back */
    sensor_game_end();
+   gbcam_game_end();
 
    if (hold)
    {
@@ -6385,6 +6589,8 @@ static void game_loop(void)
          }
       }
       sensor_frame(&pp);
+      gbcam_frame();
+      gbprint_frame();
       if (sensor_owns_stick())
          pp.rx = pp.ry = 128;   /* the stick is the sensor's: no gestures */
       rs_side = pp.rx < 128 - RSTICK_PUSH || pp.rx > 128 + RSTICK_PUSH;

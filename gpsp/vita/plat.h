@@ -216,6 +216,21 @@ int  plat_motion_enable(int on);
 /* This moment's reading.  0 = read; -1 = none (not sampling, or no sensor). */
 int  plat_motion_read(plat_motion *m);
 
+/* ---- the camera (SceCamera) -----------------------------------------------
+ *
+ * For the Game Boy Camera cartridge (gbcore.h gbcore_set_camera_image): the
+ * Vita's front (back = 0) or back (back = 1) camera as the cartridge's
+ * 128x112 greyscale picture (frontend-common/fe_gbcam_fit.h), mirrored
+ * left to right when `mirror` is set.  The twin has no camera unless its
+ * script gives one (camera=ramp, step, dark, bright). */
+/* Start the camera.  0 = running; -1 = this console has none or it could not
+ * be started (a PS TV, another app using it). */
+int  plat_camera_open(int back);
+void plat_camera_close(void);
+/* The newest picture into out[128 * 112].  0 = a picture; 1 = none new yet;
+ * -1 = the camera has stopped working. */
+int  plat_camera_read(uint8_t *out, int mirror);
+
 /* ---- the pad ------------------------------------------------------------- */
 
 /* Button bits: the Vita's own (SCE_CTRL_*), so plat_vita.c copies the word. */

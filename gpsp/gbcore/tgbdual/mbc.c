@@ -21,6 +21,7 @@
 // MBC エミュレーション部 (MBC1/2/3/5/7,HuC-1,MMM01,Rumble,RTC,Motion-Sensor,etc...)
 
 #include "gb.h"
+#include "gbcam.h"
 
 byte *rom_page;
 byte *sram_page;
@@ -95,6 +96,8 @@ void mbc_reset(void)
 
 	huc1_16_8=true;
 	huc1_dat=0;
+
+	gbcam_reset();
 
 	if (!rom_get_loaded())
 		return;
@@ -189,6 +192,9 @@ void mbc_set_write()
 	case 0x22:
 		mbc_write = mbc_mbc7_write;
 		break;
+	case 0xFC:
+		mbc_write = mbc_cam_write;
+		break;
 	case 0xFD:
 		mbc_write = mbc_tama5_write;
 		break;
@@ -263,6 +269,8 @@ byte mbc_ext_read(word adr)
 			return mbc7_ret;
 		}
 		return 0xff;
+	case 0xFC:
+		return gbcam_read(adr);
 	case 0xFD:
 //		extern FILE *file;
 //		fprintf(file,"%04X : TAMA5 ext_read %04X \n",ref_gb->get_cpu()->get_regs()->PC,adr);
@@ -307,6 +315,9 @@ void mbc_ext_write(word adr,byte dat)
 	case 0xFE: //HuC-3
 //		extern FILE *file;
 //		fprintf(file,"%04X : HuC-3 ext_write %04X <= %02X\n",ref_gb->get_cpu()->get_regs()->PC,adr,dat);
+		break;
+	case 0xFC: /* GBAdhoc: Game Boy Camera registers */
+		gbcam_write(adr,dat);
 		break;
 	case 0xFD: //TAMA5
 //		extern FILE *file;
@@ -704,6 +715,49 @@ void mbc_mbc5_write(word adr,byte dat)
 			sram_page=get_sram()+0x2000*(dat&0x0f&(ram_size_tbl[rom_get_info()->ram_size]-1));
 		break;
 	}
+}
+
+/* GBAdhoc: Game Boy Camera (gbcam.h).  Banking as an MBC3 with 64 ROM banks
+ * (0 included) and 16 RAM banks; a RAM bank number with bit 4 set maps the
+ * camera registers at A000. */
+void mbc_cam_write(word adr,byte dat)
+{
+	int ramn=ram_size_tbl[rom_get_info()->ram_size];
+	switch(adr>>13){
+	case 0: // RAM enable: reads are always on, and the core has no write protect
+		break;
+	case 1:
+		rom_page=get_rom()+0x4000*((dat&0x3F)&(rom_size_tbl[rom_get_info()->rom_size]-1))-0x4000;
+		break;
+	case 2:
+		if (dat&0x10)
+			ext_is_ram=false;
+		else{
+			sram_page=get_sram()+0x2000*(dat&0x0F&(ramn?ramn-1:0));
+			ext_is_ram=true;
+		}
+		break;
+	}
+}
+
+/* One scanline of an unfinished capture; on its last line the picture is
+ * written to cartridge RAM bank 0 (the registers as the capture began). */
+void mbc_cam_tick(void)
+{
+	if (gbcam_busy&&gbcam_line()&&rom_get_loaded()&&rom_get_info()->cart_type==0xFC)
+		gbcam_render(gbe_getCameraImage(),gbcam_latch,get_sram()+GBCAM_IMG_OFF);
+}
+
+void mbc_cam_save(byte *out)
+{
+	if (rom_get_loaded()&&rom_get_info()->cart_type==0xFC)
+		gbcam_save(out);
+}
+
+void mbc_cam_load(const byte *in)
+{
+	if (rom_get_loaded()&&rom_get_info()->cart_type==0xFC)
+		gbcam_load(in);
 }
 
 void mbc_mbc7_write(word adr,byte dat)

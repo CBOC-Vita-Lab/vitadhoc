@@ -31,6 +31,16 @@ response, No sprite flicker.
   folders yet; copy those games with VitaShell (for example `ux0:ROMS/NES`,
   `ux0:ROMS/MD`).
 
+- **Game Boy Camera and Game Boy Printer** were checked with test cartridges
+  made for the purpose (the PC test twin), never with the real Camera cartridge
+  or a real Vita camera: the sensor's exposure scale and the printer's margin
+  length are estimates, a real camera's pictures will differ in detail, and the
+  Vita's camera code (the CDRAM buffer, the non-waiting read) has only been
+  compiled. A rewound or loaded state keeps the live camera picture. A game
+  that prints more than one sheet is saved once. The printer does not answer
+  during a link, and a state loaded in the middle of a print leaves the game
+  and the printer out of step until the next initialise.
+
 ## Online Play
 
 Online play was verified on PC test builds against simulated home routers

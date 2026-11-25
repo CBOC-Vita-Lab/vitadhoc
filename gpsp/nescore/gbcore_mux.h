@@ -73,6 +73,8 @@ unsigned gbmux_sgb_border(gbcore_t *core, const uint16_t **pixels);
 size_t gbmux_sgb_border_save(gbcore_t *core, void *buf, size_t cap);
 int gbmux_sgb_border_load(gbcore_t *core, const void *buf, size_t n);
 void gbmux_set_tilt(gbcore_t *core, uint32_t x_y);
+int gbmux_has_camera(gbcore_t *core);
+void gbmux_set_camera_image(gbcore_t *core, const uint8_t *grey_128x112);
 uint32_t gbmux_ra_read(gbcore_t *core, uint32_t addr, uint8_t *out, uint32_t len);
 int gbmux_peek(gbcore_t *core, uint16_t addr, void *out, unsigned len);
 int gbmux_poke(gbcore_t *core, uint16_t addr, const void *data, unsigned len);
@@ -116,6 +118,8 @@ int gbmux_pad_game_id(const gbcore_t *core, char out[9]);
 #define gbcore_sgb_border_save gbmux_sgb_border_save
 #define gbcore_sgb_border_load gbmux_sgb_border_load
 #define gbcore_set_tilt gbmux_set_tilt
+#define gbcore_has_camera gbmux_has_camera
+#define gbcore_set_camera_image gbmux_set_camera_image
 #define gbcore_ra_read gbmux_ra_read
 #define gbcore_peek gbmux_peek
 #define gbcore_poke gbmux_poke

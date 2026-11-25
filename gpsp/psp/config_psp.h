@@ -206,6 +206,10 @@ typedef struct
    /* Settings > Gameplay > Steady pacing (CONFIG.INI steady_pacing, 1 by
     * default): pace_steady.h */
    int  steady_pacing;
+   /* Settings > Game Boy Printer (CONFIG.INI gb_printer, 1 by default):
+    * the serial port has a printer on it while no link partner is there
+    * (frontend-common/fe_gbprinter.h) */
+   int  gb_printer;
    /* Settings > Gameplay > Smooth hand-over (CONFIG.INI smooth_handoff, 1
     * by default): vita/handoff_glue.h */
    int  smooth_handoff;
@@ -793,7 +797,12 @@ typedef struct
    int ws_rotation, ws_vplay, ws_palette;
    /* Quick response for this game (games/<ROM>.ini quick_response): -1 follows Settings, else 0 Off, 1 Auto, 2 On */
    int quick;
+   /* Game Boy Camera (games/<ROM>.ini camera): what the sensor looks at,
+    * PCFG_CAM_* */
+   int camera;
 } pcfg_game;
+enum { PCFG_CAM_FRONT, PCFG_CAM_BACK, PCFG_CAM_FILE, PCFG_CAM_MODES };
+const char *pcfg_camera_name(int m);
 enum { PCFG_WS_ROT_AUTO, PCFG_WS_ROT_HORIZONTAL, PCFG_WS_ROT_VERTICAL, PCFG_WS_ROT_MODES };
 const char *pcfg_ws_rotation_name(int m);
 extern pcfg_game g_pgame;

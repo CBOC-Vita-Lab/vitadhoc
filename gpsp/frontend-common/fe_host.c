@@ -15,6 +15,7 @@
 #define GBADHOC_GBMUX 1   /* the NES machine answers the gb_core calls */
 #include "../nescore/gbcore_mux.h"
 #include "fe_gblink.h"
+#include "fe_gbprinter.h"
 #include "fe_padpair.h"
 #include "fe_linkprof.h"
 #include "../netdrv/gb_link.h"
@@ -936,6 +937,7 @@ static void gb_link_peer_event(void *userdata, uint8_t peer_id, int connected)
  * this endpoint at a byte boundary, never in the middle of a bit;
  * fe_np_pump() drains PSP ad-hoc RX on this emulation thread until the
  * paired byte arrives or the bounded wait expires. */
+static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received);
 static int gb_serial_transfer(void *userdata, uint8_t outgoing,
                               int internal_clock, uint8_t *received)
 {
@@ -943,8 +945,9 @@ static int gb_serial_transfer(void *userdata, uint8_t outgoing,
    uint64_t start_us;
    uint16_t transfer_id;
    (void)userdata;
-   if (!received || !fe_np_gb_peer_ready(&peer_id) ||
-       fe_np_gb_local_id(&local_id) == 0 || !gb_link_initialized ||
+   if (received && !fe_np_gb_peer_ready(&peer_id))
+      return gb_prn_serial(outgoing, internal_clock, received);  /* no partner: the printer */
+   if (!received || fe_np_gb_local_id(&local_id) == 0 || !gb_link_initialized ||
        gb_link.peer_id != peer_id || gb_link.local_id != local_id)
       return 0;
 
@@ -1387,6 +1390,115 @@ static int host_sensor_on;
 extern uint32_t gpsp_sensor_kinds(void);
 extern void     gpsp_sensor_set(uint32_t reading);
 extern uint32_t gpsp_sensor_get(void);
+
+/* GAME BOY PRINTER and GAME BOY CAMERA (fe_host.h).  The printer answers the
+ * game's serial bytes when no link partner does; a strip it finishes waits
+ * here for the platform to take it. */
+static gbprn *gb_prn;                 /* made with the first byte */
+static int gb_prn_on = 1;
+static uint8_t *gb_prn_strip;         /* a finished strip, 1 byte a pixel */
+static int gb_prn_w, gb_prn_h;
+static unsigned gb_prn_count;         /* strips finished, for the log */
+
+static void gb_prn_done(void *user, const uint8_t *shades, int w, int h)
+{
+   uint8_t *c = (uint8_t *)malloc((size_t)w * (size_t)h);
+   (void)user;
+   if (!c)
+      return;
+   memcpy(c, shades, (size_t)w * (size_t)h);
+   free(gb_prn_strip);
+   gb_prn_strip = c;
+   gb_prn_w = w;
+   gb_prn_h = h;
+   gb_prn_count++;
+   fe_evt("gb_printer strip=%u w=%d h=%d", gb_prn_count, w, h);
+}
+
+static int gb_prn_serial(uint8_t outgoing, int internal_clock, uint8_t *received)
+{
+   /* (a link session whose partner is away for a moment stays a link) */
+   if (!gb_prn_on || !internal_clock || ahead_quiet || fe_np_session_active() ||
+       (host.console != FE_CONSOLE_GB && host.console != FE_CONSOLE_GBC))
+      return 0;
+   /* A game probing for a link partner sends something other than a packet
+    * header: it hears what an empty port gives (0xFF), as before. */
+   if ((!gb_prn || gb_prn->state == 0) && outgoing != 0x88)
+      return 0;
+   if (!gb_prn)
+   {
+      gb_prn = (gbprn *)calloc(1, sizeof(*gb_prn));
+      if (!gb_prn)
+         return 0;
+      gbprn_init(gb_prn, gb_prn_done, NULL);
+   }
+   *received = gbprn_byte(gb_prn, outgoing);
+   return 1;
+}
+
+static void gb_prn_frame(void)
+{
+   if (gb_prn)
+      gbprn_frame(gb_prn);
+}
+
+static void gb_prn_end(void)
+{
+   if (gb_prn)
+   {
+      gbprn_flush(gb_prn);          /* a strip still open is finished */
+      gbprn_free(gb_prn);
+      free(gb_prn);
+      gb_prn = NULL;
+   }
+}
+
+void fe_host_gb_printer_set(int on)
+{
+   gb_prn_on = on ? 1 : 0;
+}
+
+const uint8_t *fe_host_gb_print_take(int *w, int *h)
+{
+   static uint8_t *held;
+   if (!gb_prn_strip)
+      return NULL;
+   free(held);
+   held = gb_prn_strip;
+   gb_prn_strip = NULL;
+   *w = gb_prn_w;
+   *h = gb_prn_h;
+   return held;
+}
+
+/* The four colours a print uses, lightest first: the game's own palette (a
+ * Game Boy game's colours as chosen in Settings), else grey. */
+void fe_host_gb_print_colours(uint32_t rgb[4])
+{
+   uint16_t pv[12];
+   int i;
+   static const uint32_t grey[4] = { 0xFFFFFF, 0xAAAAAA, 0x555555, 0x000000 };
+   for (i = 0; i < 4; i++)
+      rgb[i] = grey[i];
+   if (gb_core && gbcore_palette_preview((unsigned)host.gb_palette, pv) >= 0)
+      for (i = 0; i < 4; i++)
+      {
+         unsigned v = pv[i], r = v >> 11, g = (v >> 5) & 0x3F, b = v & 0x1F;
+         rgb[i] = (((r << 3) | (r >> 2)) << 16) | (((g << 2) | (g >> 4)) << 8) |
+                  ((b << 3) | (b >> 2));
+      }
+}
+
+unsigned fe_host_gbcam_present(void)
+{
+   return gb_family && gb_core && !gb_dual && !gbl && gbcore_has_camera(gb_core);
+}
+
+void fe_host_gbcam_frame(const uint8_t *grey_128x112)
+{
+   if (fe_host_gbcam_present() && grey_128x112)
+      gbcore_set_camera_image(gb_core, grey_128x112);
+}
 
 static int16_t input_state(unsigned port, unsigned device, unsigned index,
                            unsigned id)
@@ -8168,6 +8280,7 @@ static void run_frame(void)
           * dual (link) path above; a no-op with nothing switched on. */
          fe_cheats_gb_frame(gb_cheat_poke, gb_core);
 #endif
+         gb_prn_frame();              /* once a real frame, run-ahead or not */
          if (ahead_req && !ahead_latched_off && !gb_skip_frame && !gbl_hold && !gb_local_on &&
              gb_ahead_frame(pad) == 0)
             ;
@@ -8714,6 +8827,7 @@ void fe_host_shutdown(void)
          fe_evt("ahead_frames n=%u failed=%u", ahead_frames, ahead_fails);
       ahead_latched_off = 0;        /* the latch lasts one game */
       dbg_report();
+      gb_prn_end();
       if (gb_dual)
          gbdual_destroy(gb_dual);
       else

@@ -106,6 +106,25 @@ instead of the `$81D0` a level cartridge gives).  The adapter's
 `gbe_getSensor` returns what the frontend published with `gbcore_set_tilt`
 (level `$81D0` before that).  Test: `gbcore/tests/mbc7.c`.
 
+### The Game Boy Camera (2026-11-25)
+
+New `tgbdual/gbcam.h`, included by `mbc.c` only (no new object): cartridge
+type `$FC` banks like an MBC3 (64 ROM banks, bank 0 allowed; 16 RAM banks;
+RAM bank number with bit 4 set puts the camera registers at `$A000`, mirrored
+every `$80`).  `$A000` bit 0 starts a capture and reads 1 while it runs (32446
++ 512 if the N bit is clear + 16 x exposure machine cycles, counted in
+scanlines by `mbc_cam_tick`, called first in `gb_run`); on its last line the
+M64282FP model (`gbcam_render`: exposure x gain, invert, 2-D / horizontal /
+vertical edge enhancement, the 1-D filter, the 4x4 dither matrix) writes the
+14x16-tile picture to cartridge RAM bank 0 `$0100`.  The source picture is
+`gbe_getCameraImage()` (adapter, `gbcore_set_camera_image`), else a test
+pattern.  State: 64 bytes of the reserved block at offset 192 (`CAM1`, busy
+count, 54 registers), written and read only for a `$FC` cartridge, so every
+other cartridge's state is byte for byte what it was; `gb.c` gets one call in
+each of the four save / load sites and one in `gb_run`.  Not modelled: the
+sensor's analogue side, RAM blanking during a capture, double-speed timing
+(the same number of scanlines).  Test: `gbcore/tests/gbcam.c`.
+
 ## Two machines in one program (GB link sessions)
 
 A link session runs both players' Game Boys on each console

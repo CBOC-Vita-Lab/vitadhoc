@@ -80,6 +80,7 @@
 #include "../plat.h"
 #include "../video_vita.h"
 #include "fe_evt.h"
+#include "fe_gbcam_fit.h"
 #include "fe_util.h"
 
 #include <ctype.h>
@@ -144,6 +145,10 @@ static struct
    /* motion=R/D/Z: the motion sensor from that frame on (plat.h) */
    struct { unsigned frame; float right_g, down_g, rate_z; } motion[MAX_TYPE];
    unsigned    nmotion;
+   /* camera=ramp|step|dark|bright: the camera shows that picture from that
+    * frame on (plat.h plat_camera_open; without any it has none) */
+   struct { unsigned frame; int kind; } camera[MAX_TYPE];
+   unsigned    ncamera;
    int         no_motion;         /* --no-motion: a PS TV, no sensor */
    unsigned    suspend_at[8], nsuspend;
    /* FRAME:wait=TEXT: the script clock stops at FRAME until the app's own
@@ -658,6 +663,21 @@ static void parse_input(const char *script, unsigned *cursor)
          opt.type[opt.ntype].text[n - 5] = '\0';
          opt.type[opt.ntype].cancel = n == 5;
          opt.ntype++;
+      }
+      else if (n > 7 && !strncasecmp(p, "camera=", 7))
+      {
+         static const char *const kinds[] = { "ramp", "step", "dark", "bright" };
+         int k;
+         if (opt.ncamera >= MAX_TYPE)
+            break;
+         for (k = 0; k < 4; k++)
+            if (n - 7 == strlen(kinds[k]) && !strncasecmp(p + 7, kinds[k], n - 7))
+               break;
+         if (k == 4)
+            break;
+         opt.camera[opt.ncamera].frame = frame;
+         opt.camera[opt.ncamera].kind = k;
+         opt.ncamera++;
       }
       else if (n > 7 && !strncasecmp(p, "motion=", 7))
       {
@@ -1549,6 +1569,43 @@ int plat_pad_read2(plat_pad *pad)
    pad_at(pad, 1);
    face_swap_pad(pad);
    return 1;
+}
+
+/* ---- the camera (plat.h): the script's camera= entries ------------------- */
+
+static int camera_on;
+
+int plat_camera_open(int back)
+{
+   (void)back;
+   camera_on = opt.ncamera > 0;
+   return camera_on ? 0 : -1;
+}
+
+void plat_camera_close(void)
+{
+   camera_on = 0;
+}
+
+int plat_camera_read(uint8_t *out, int mirror)
+{
+   static uint8_t big[320 * 240];
+   unsigned i, f = script_frame();
+   int kind = -1, x, y;
+   if (!camera_on)
+      return -1;
+   for (i = 0; i < opt.ncamera; i++)
+      if (f >= opt.camera[i].frame)
+         kind = opt.camera[i].kind;
+   if (kind < 0)
+      return 1;
+   for (y = 0; y < 240; y++)
+      for (x = 0; x < 320; x++)
+         big[y * 320 + x] = (uint8_t)(kind == 0 ? x * 255 / 319 :
+                                      kind == 1 ? (x < 160 ? 40 : 200) :
+                                      kind == 2 ? 30 : 220);
+   fe_gbcam_fit(big, 320, 240, 320, mirror, out);
+   return 0;
 }
 
 /* ---- the motion sensor (plat.h): the script's motion= entries ------------- */

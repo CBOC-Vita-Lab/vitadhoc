@@ -1,0 +1,1615 @@
+app.a_newer_vitadhoc_is_out	新しいVitAdhocがあります
+app.a_path_too_long	パスが長すぎます
+app.a_save_was_found_but_could	セーブデータは見つかりましたが、コピーできませんでした
+app.a_tap_opens_the_menu	タップでメニューを開く
+app.aims_and_fires_zapper	狙って撃つ (Zapper)
+app.auto_eased	自動 (%s、ゆるめ)
+app.checking_cartridge	カートリッジを確認中
+app.could_not_be_read	読み込めませんでした
+app.could_not_check_for_updates	更新を確認できませんでした
+app.end_the_network_game_first	先にネットワークゲームを終了してください。
+app.fps	%u.%u fps (%u)
+app.it_is_damaged_or_packed_in	破損しているか、このアプリで読めない形式で圧縮されています。
+app.it_is_encrypted_or_packed_in	暗号化されているか、このアプリで読めない形式で圧縮されています。
+app.its_block_is_over_mb_too	ブロックが%lu MBを超えており、展開できません。
+app.nearby_isn_t_available_for_games	%sのゲームでは近くの通信を使えません
+app.no_game_this_app_can_start	このアプリで起動できるゲームが見つかりませんでした。
+app.not_a_patch	パッチではありません
+app.not_enough_memory	メモリ不足
+app.nothing	なし
+app.patched_with	%sでパッチ済み
+app.press_any_button_for_the_game	いずれかのボタンでゲーム一覧へ
+app.reading_rom	ROMを読み込み中
+app.save	セーブ
+app.save_from_retroarch_kept_in_sync	RetroArchのセーブデータ - 同期中
+app.save_imported_from	%sからセーブデータを取り込みました
+app.stop_mystery_gift_first	先にミステリーギフトを止めてください。
+app.stop_the_two_player_game_on	先にこのVitaの2人プレイを止めてください。
+app.the_7z_file_could_not_be	7zファイルを開けませんでした。
+app.the_game_could_not_be_read	ゲームを読み込めませんでした
+app.the_game_in_it_could_not	中のゲームを展開できませんでした。
+app.the_game_in_it_is_damaged	中のゲームが破損しています (チェックサム)。
+app.the_game_in_it_is_for	中のゲームは別の機種用です。
+app.the_game_in_it_is_over	中のゲームが%lu MBを超えており、展開できません。
+app.the_patched_game	パッチ済みのゲーム
+app.the_path_is_too_long	パスが長すぎます。
+app.the_zip_file_could_not_be	zipファイルを開けませんでした。
+app.this_folder	このフォルダー
+app.too_large	大きすぎます
+app.unpacking_game	ゲームを展開中
+app.vitadhoc_is_out_get_it_with	VitAdhoc %sが公開されました。CBOC Vita InstallerまたはGitHubで入手できます
+app.vitadhoc_is_up_to_date	VitAdhocは最新です
+app.was_not_found	%.180sが見つかりませんでした。
+browse.also_looked_in	%sも探しました
+browse.also_looked_in_and_more	%sほか%d件も探しました
+browse.copy_your_files_into_this_folder	.%sファイルをメモリーカードのこのフォルダーにコピーしてください:
+browse.no_games_yet	%sのゲームはまだありません
+browse.other_game_many	{tri}で他の%d個のゲームを表示
+browse.other_game_one	{tri}で他の%d個のゲームを表示
+btntest.button_test	ボタンテスト
+btntest.buttons	ボタン
+btntest.chord	 (同時押し)
+btntest.front_touch	前面タッチ
+btntest.left_stick_moves_like_the_d	左スティック: 方向キーと同じ動き
+btntest.not_set	未設定
+btntest.right_left_rewind_right_fast_forward	右: 左で巻き戻し、右で早送り
+btntest.sticks_and_touch	スティックとタッチ
+cheats.6_or_8_letters_game_genie	6または8文字 (Game Genie) かAAAA:VV (RAM)。コードは+でつなぎます。
+cheats.8_digits_gameshark_or_3_3	8桁 (GameShark) か3-3-3桁 (Game Genie)。コードは+でつなぎます。
+cheats.8_digits_space_4_digits_codebreaker	8桁、スペース、4桁 (CodeBreaker) か8桁 (GameShark、Action Replay)。行は+でつなぎます。
+cheats.a_built_in_cheat_cannot_be	内蔵チートは削除できません。代わりにオフにしてください。
+cheats.a_number	%s (数値)
+cheats.a_number_unless_named	名前がなければ番号
+cheats.a_number_you_type	入力した数値
+cheats.aaaa_vv_or_aaaa_vv_cc	AAAA:VVかAAAA:VV:CC。アドレス、バイト、比較バイトを16進で。
+cheats.aaaaa_vv_a_ram_address_and	AAAAA:VV。RAMアドレスとバイトを16進で。コードは+でつなぎます。
+cheats.aaaaaa_vvvv_an_address_and_a	AAAAAA:VVVV。アドレスとワードを16進で。コードは+でつなぎます。
+cheats.action_replay	Action Replay
+cheats.acts_while_the_cheat_button_is	チートボタンを押している間だけ働きます。
+cheats.add_a_cheat	チートを追加
+cheats.added_and_switched_on	追加してオンにしました
+cheats.an_enable_code_not_needed_on	有効化コードです。この機種では不要ですが、オンでも問題ありません。
+cheats.available	%d件
+cheats.built_in_cheats_cannot_be_deleted	内蔵チートは削除できません。オフにしておけます。
+cheats.changes_the_game_s_program	ゲームのプログラムを書き換えます。
+cheats.cheat	チート%d
+cheats.cheat_added_and_on	チートを追加してオンにしました: %s
+cheats.cheat_code	チートコード
+cheats.cheat_name	チート名
+cheats.cheats	チート
+cheats.cheats_are_off_in_hardcore_mode	ハードコアモード (RetroAchievements) ではチートは使えません。
+cheats.cheats_are_off_while_linked_to	他の本体と接続中はチートは使えません。
+cheats.cheats_are_off_while_playing_over	通信プレイ中はチートは使えません。
+cheats.choose_a_result_to_make_it	結果を選ぶとチートにできます。
+cheats.codebreaker	CodeBreaker
+cheats.codes	%sコード: %s
+cheats.compared_with_the_memory_at_the	前回のステップのメモリーと比べます。
+cheats.del	削除
+cheats.delete_x_delete_o_keep	「%s」を削除しますか?      {x} 削除     {o} 残す
+cheats.deleted	削除しました
+cheats.encrypted_add_this_game_s_master	暗号化されています。先にこのゲームのマスターコードを追加してください。
+cheats.find_a_cheat	チートを検索
+cheats.found_at	%sで見つかりました
+cheats.found_by_the_game_s_title	ゲームのタイトルで見つけました。別の地域のコードかもしれません。
+cheats.game_genie	Game Genie
+cheats.gameshark	GameShark
+cheats.incomplete_replace_xx_with_the_value	未完成です。??やXXを使いたい値に置き換えてください。
+cheats.keeps_the_places_that_match_the	入力した数値に合う場所だけを残します。
+cheats.line	行
+cheats.line_many	%s、%d行
+cheats.line_one	%s、%d行
+cheats.look_at_the_game_s_memory	ゲームのメモリーを今すぐ調べる
+cheats.makes_a_cheat_that_keeps_this	この値を保つチートを作ります。
+cheats.most_counters_are_1_byte_money	カウンターの多くは1バイト、お金やスコアは2バイトが多めです。「すべてのアドレス」は奇数アドレスも調べます。
+cheats.most_counters_are_1_byte_money_2	カウンターの多くは1バイト、お金やスコアは2バイトが多めです。
+cheats.narrow_it_down_to_50_or	50件以下に絞ると表示されます。
+cheats.new_search	新しい検索
+cheats.no_cheat_s_name_contains	「%s」を含む名前のチートはありません。
+cheats.no_cheats_for_this_game_yet	このゲームのチートはまだありません。
+cheats.no_keyboard_the_cheat_gets_a	キーボードなし: チートには名前の代わりに番号が付きます。
+cheats.no_keyboard_use_the_keys	キーボードなし: キーを使ってください。
+cheats.no_name	(名前なし)
+cheats.no_results_start_a_new_search	結果なし。新しい検索を始めてください
+cheats.no_room_for_more_cheats	これ以上チートを追加できません。
+cheats.no_such_cheat	そのチートはありません。
+cheats.not_a_whole_code_yet	コードが未完成です
+cheats.nothing_matched_start_a_new_search	一致なし。新しい検索を始めてください。
+cheats.of	「%s」: %d / %d
+cheats.on	%d件オン
+cheats.on_in_all	%d件オン  -  全%d件
+cheats.raw	生コード
+cheats.ready_to_save	保存できます
+cheats.recognised_not_supported	認識しましたが未対応です
+cheats.remember_the_memory_play_on_then	メモリーを記憶し、プレイを続けてから絞り込みます。
+cheats.results	結果
+cheats.save	保存
+cheats.search_memory	メモリー検索
+cheats.search_memory_is_not_available_in	2人プレイ中はメモリー検索を使えません
+cheats.search_started_places_play_on_then	検索開始: %d か所。プレイを続けてから絞り込みます
+cheats.select_shows_the_whole_list_again	SELECTで全件表示に戻ります。
+cheats.since_the_last_step	前回のステップから
+cheats.size_of_the_number	数値のサイズ
+cheats.space	スペース
+cheats.start_again	最初から
+cheats.the_cheat_could_not_be_used	このチートは使えませんでした。
+cheats.the_cheat_file_could_not_be	チートファイルを保存できませんでした。
+cheats.the_code	コード
+cheats.the_code_is_too_long	コードが長すぎます。
+cheats.the_dash_belongs_to_game_boy	ダッシュ (-) はGame BoyのGame Genieコード用です。
+cheats.the_keyboard_is_not_available	キーボードを使えません。
+cheats.the_search_could_not_start_not	検索を開始できませんでした: メモリ不足
+cheats.there_is_no_memory_to_search	このゲームには検索できるメモリーがありません
+cheats.there_is_no_search_to_narrow	絞り込む検索がありません
+cheats.this_code	このコード
+cheats.this_code_cannot_be_run_by	この%sコードはこのエミュレーターでは実行できません。
+cheats.this_is_not_a_code_for	この機種用のコードではありません。
+cheats.this_kind_of_code_cannot_be	この種類のコードはここでは使えません。
+cheats.this_place_cannot_be_made_into	ここではこの場所をチートにできません
+cheats.throw_this_code_away_x_discard	このコードを破棄しますか?      {x} 破棄     {o} 入力を続ける
+cheats.type_a_whole_number_from_0	0から%uまでの整数を入力 (0xで16進も可)
+cheats.type_the_code_first	先にコードを入力してください。
+cheats.unknown	不明
+cover.a_cover_you_pick_always_wins	自分で選んだカバーは、ダウンロードした画像より優先されます。covers/にゲーム名と同じ名前のPNGかJPGを置いても使えます。
+cover.automatic_a_cover_is_downloaded_when	自動。Wi-Fiにつながるとカバーをダウンロードします。
+cover.automatic_download	自動 (ダウンロード)
+cover.choose_a_picture	画像を選ぶ...
+cover.cover_picture	カバー画像
+cover.cover_set_it_shows_at_once	カバーを設定しました。すぐに表示されます。
+cover.in_use	使用中
+cover.it_is_automatic_already	すでに自動です。
+cover.no_pictures_found	画像が見つかりません。
+cover.no_preview	プレビューなし
+cover.no_screenshot_of_this_game_yet	このゲームのスクリーンショットはまだありません。
+cover.not_enough_memory_for_that_picture	その画像にはメモリが足りません。
+cover.now_automatic	現在: 自動
+cover.now_your_own_picture	現在: 自分の画像
+cover.of	%d / %d
+cover.shot	%.*s%d.shot
+cover.take_a_screenshot_or_copy_a	スクリーンショットを撮るか、パソコンからPNGやJPGをux0:data/GBAdhoc/covers/にコピーしてください。
+cover.that_did_not_work	うまくいきませんでした。
+cover.that_game_has_no_name_to	そのゲームには画像を保存するための名前がありません。
+cover.that_game_s_name_is_too	そのゲームの名前が長すぎます。
+cover.that_is_not_a_png_or	PNGでもJPGでもない画像です。
+cover.that_picture_could_not_be_opened	その画像を開けませんでした。
+cover.that_picture_could_not_be_read	その画像を読み込めませんでした。
+cover.that_picture_is_too_big_8	その画像は大きすぎます (最大800万画素)。
+cover.the_downloaded_cover_is_back	ダウンロードしたカバーに戻しました。
+cover.the_old_cover_could_not_be	古いカバーを退避できませんでした。
+cover.the_picture_could_not_be_saved	画像を保存できませんでした。カードの空き容量を確認してください。
+cover.the_picture_could_not_be_saved_2	画像を保存できませんでした。
+cover.use_a_screenshot_of_the_game	ゲームのスクリーンショットを使う
+cover.use_this_as_the_cover_for	これを%sのカバーにしますか?
+ctl.at_most_4_buttons	最大4ボタン
+ctl.crash_self_test	クラッシュ自己診断
+ctl.fast_forward	早送り
+ctl.mystery_gift	ミステリーギフト
+ctl.not_available_in_this_build	このビルドでは使えません
+ctl.pause_screen	一時停止画面
+ctl.quick_load	クイックロード
+ctl.quick_save	クイックセーブ
+ctl.rewind	巻き戻し
+ctl.screenshot	スクリーンショット
+ctl.start_select_is_reserved_for_the	START+SELECTはメニュー用です
+ctl.that_button_cannot_be_bound	そのボタンは割り当てできません
+ctl.this_one_takes_a_single_button	これは1ボタンのみです
+ctl.turbo_a	連射A
+ctl.turbo_a_2	連射A (2)
+ctl.turbo_b	連射B
+ctl.turbo_b_2	連射B (2)
+ctl.video_preset	映像プリセット
+hint.dpad_change_o_back	DPAD 変更   {o} 戻る
+hint.dpad_letter_move_x_pad_sq	DPAD 文字、移動   {x} 入力   {sq} 削除   {tri} 参加   {o} 戻る
+hint.l_r_page_o_back	L/R ページ   {o} 戻る
+hint.o_back	{o} 戻る
+hint.o_cancel	{o} キャンセル
+hint.sq_save_r_undo_o_back	{sq} セーブ   R 元に戻す   {o} 戻る
+hint.to_leave_hold_start_select_or	終了: START + SELECTを長押し、またはこの行に指を置く
+hint.tri_add_a_code_select_find	{tri} コード追加   SELECT 検索   START メモリー検索   {o} 戻る
+hint.up_down_scroll_l_r_page	UP/DOWN スクロール   L/R ページ   {o} 戻る
+hint.x_add_remove_sq_rename_tri	{x} 追加/削除   {sq} 名前変更   {tri} 削除   {o} 戻る
+hint.x_back_o_back	{x} 戻る   {o} 戻る
+hint.x_change_dpad_move_change_o	{x} 変更   DPAD 移動/変更   {o} 戻る
+hint.x_change_o_back	{x} 変更   {o} 戻る
+hint.x_change_tri_default_o_back	{x} 変更   {tri} 初期値   {o} 戻る
+hint.x_check_now_dpad_change_o	{x} 今すぐ確認   DPAD 変更   {o} 戻る
+hint.x_choose_dpad_change_o_back	{x} 選ぶ   DPAD 変更   {o} 戻る
+hint.x_choose_l_r_page_o	{x} 選ぶ   L/R ページ   {o} 戻る
+hint.x_choose_o_back	{x} 選ぶ   {o} 戻る
+hint.x_export_dpad_move_choose_o	{x} 書き出し   DPAD 移動/選択   {o} 戻る
+hint.x_host_dpad_room_number_o	{x} ホスト   DPAD ルーム番号   {o} 戻る
+hint.x_host_o_back	{x} ホスト   {o} 戻る
+hint.x_join_o_back	{x} 参加   {o} 戻る
+hint.x_load_sq_save_tri_delete	{x} ロード   {sq} セーブ   {tri} 削除   L ロック   R 元に戻す   {o} 戻る
+hint.x_look_dpad_move_l_r	{x} 見る   DPAD 移動   L R ページ   {o} 戻る
+hint.x_name_it_tri_save_o	{x} 名前入力   {tri} 保存   {o} 戻る
+hint.x_new_collection_o_back	{x} 新規コレクション   {o} 戻る
+hint.x_on_off_o_back	{x} オン/オフ     {o} 戻る
+hint.x_on_off_sq_all_off	{x} オン/オフ     {sq} すべてオフ     {o} 戻る
+hint.x_on_off_tri_add_select	{x} オン/オフ   {tri} 追加   SELECT 検索   START メモリー検索   {o} 戻る
+hint.x_on_off_tri_add_sq	{x} オン/オフ   {tri} 追加   {sq} 削除   SELECT 検索   START メモリー検索
+hint.x_open_and_join_o_back	{x} 開いて参加   {o} 戻る
+hint.x_open_dpad_move_o_back	{x} 開く   DPAD 移動   {o} 戻る
+hint.x_open_o_back_auto_fire	{x} 開く   {o} 戻る      AとBの連射
+hint.x_rebind_sq_none_tri_default	{x} 割り当て   {sq} なし   {tri} 初期値   {o} 戻る      空欄 = 無効
+hint.x_reset_o_back_blank_disabled	{x} リセット   {o} 戻る      空欄 = 無効
+hint.x_retry_missing_dpad_move_o	{x} 未取得を再試行   DPAD 移動   {o} 戻る
+hint.x_select_dpad_change_o_resume	{x} 決定   DPAD 変更   {o} 再開
+hint.x_select_dpad_move_o_back	{x} 決定   DPAD 移動   {o} 戻る
+hint.x_select_o_back	{x} 決定   {o} 戻る
+hint.x_select_o_resume	{x} 決定     {o} 再開
+hint.x_set_level_now_dpad_move	{x} 今すぐ設定   DPAD 移動   {o} 戻る
+hint.x_start_o_back	{x} 開始   {o} 戻る
+hint.x_stop_o_back_keeps_listening	{x} 停止   {o} 戻る (待ち受け継続)
+hint.x_the_steps_o_back	{x} 手順   {o} 戻る
+hint.x_type_sq_delete_l_keyboard	{x} 入力   {sq} 削除   L キーボード   SELECT 名前   {tri} 保存   {o} 戻る
+hint.x_type_sq_delete_tri_join	{x} 入力   {sq} 削除   {tri} 参加   {o} 戻る
+hint.x_use_it_o_back	{x} 使う   {o} 戻る
+hint.x_which_connection_o_back	{x} どの接続?   {o} 戻る
+home.1_game_matches_in_all_games	すべてのゲームで1件一致
+home.a_retroarch_playlist_it_lists_games	RetroArchのプレイリストです。ゲームの一覧のみで、ここでは変更できません。
+home.all_games	すべてのゲーム
+home.back	戻る
+home.battery_save	バッテリーセーブ
+home.cancel	キャンセル
+home.checking	確認中...
+home.checking_covers_of	カバーを確認中: %d / %d
+home.choose_another_console	別の機種を選ぶ
+home.clear	クリア
+home.continue	続ける
+home.copy_your_files_into_this_folder	.%sファイルをメモリーカードのこのフォルダーにコピーしてください:
+home.cover	カバー
+home.delete	削除
+home.delete_the_state_in_slot	スロット%dのステートを削除しますか?
+home.empty	空
+home.every_game_has_been_played	%sのゲームはすべてプレイ済みです
+home.find	検索
+home.from_wikipedia	Wikipediaより
+home.games	ゲーム
+home.games_match_in_all_games	すべてのゲームで%d件一致
+home.keep	残す
+home.lists	リスト
+home.load	ロード
+home.look_again	再検索
+home.next	次へ
+home.no_games_match	一致するゲームなし
+home.no_games_played_yet	%sのゲームはまだプレイしていません
+home.no_games_yet	%sのゲームはまだありません
+home.no_save_yet	セーブなし
+home.no_starred_games_yet	お気に入りの%sゲームはまだありません
+home.nothing_of_on	%sの%sはありません
+home.of	%d / %d
+home.patched_bps	パッチ済み (BPS)
+home.patched_ips	パッチ済み (IPS)
+home.patched_ups	パッチ済み (UPS)
+home.play	プレイ
+home.played	%s、%sプレイ
+home.played_2	%sプレイ
+home.press_select_and_square_on_a	ゲームでSELECTと{sq}を押すと追加できます。
+home.press_square_on_a_game_to	ゲームで{sq}を押すとお気に入りに入ります。
+home.recent	最近
+home.save_state	ステート%d件
+home.save_states	ステート%d件
+home.save_states_2	ステート
+home.save_states_of	ステート   %d-%d / %d
+home.saved	保存済み
+home.settings	設定
+home.slot	スロット%d
+home.star	お気に入り
+home.starred	お気に入り
+home.start_over	最初から
+home.step	コマ送り
+home.the_games_you_have_not_started	まだ始めていないゲームがここに出ます。
+home.the_games_you_play_show_up	遊んだゲームが新しい順にここに出ます。
+home.the_games_you_play_show_up_2	遊んだゲームがプレイ時間の長い順にここに出ます。
+home.try_fewer_words_or_part_of	語数を減らすか、語の一部で試してください。
+home.views	表示
+lib.games	ゲーム
+lib.most_played	よく遊ぶ
+lib.not_played_yet	未プレイ
+lib.recent	最近
+lib.starred	お気に入り
+link.about_min	約%u分
+link.about_s	約%u秒
+link.ad_hoc	アドホック
+link.another_game	別のゲーム
+link.both_games_carry_on_from_where	両方のゲームは今の場所から続きます。
+link.both_vitas_agree_where_to_stop	2台のVitaが終了位置をそろえます。
+link.checking	%sを確認中...
+link.checking_the_game	ゲームを確認中...
+link.connecting	接続中...
+link.connecting_through_the_relay	中継経由で接続中。
+link.connecting_to_the_other_vita	相手のVitaに接続中
+link.ending_the_link	通信を終了中...
+link.exchanging_saves	セーブデータを交換中...
+link.finding_the_room	ルームを探しています...
+link.finding_your_friend	フレンドを探しています...
+link.first_time_with_this_game_only	このゲームでは初回のみです。キャンセルで中止。
+link.follow_the_vita_s_connection_screen	Vitaの接続画面に従ってください。
+link.game	%sのゲーム
+link.good	良好
+link.great	最良
+link.joining	%sに参加中
+link.joining_by_wireless_adapter	%sにワイヤレスアダプターで参加中
+link.kb	%u / %u KB
+link.keeping_a_copy_of	%sのコピーを保存中...
+link.left_first_time_only_cancel_to	残り%s。初回のみです。キャンセルで中止。
+link.link_cable	通信ケーブル
+link.link_cancelled	通信をキャンセルしました。
+link.link_ended_game_saved	通信を終了しました。ゲームをセーブしました。
+link.link_ended_your_own_game_is	通信を終了しました。自分のゲームに戻りました。
+link.link_lost_the_other_vita_is	通信が切れました: 相手のVitaがいません。何も保存されていません。
+link.linking_with	%sと通信中
+link.mb	%u.%u / %u.%u MB
+link.online	オンライン
+link.opening_the_room	ルームを開いています...
+link.receiving	受信中
+link.relay	 (中継)
+link.room	ルーム%d
+link.room_code	ルームコード  %s
+link.sending	送信中
+link.sharing_where_you_are	現在地を共有中...
+link.slow	遅い
+link.starting_together	いっしょに開始中...
+link.starting_two_players	2人プレイを開始中...
+link.tell_your_friend_to_join_o	フレンドに参加してもらってください。{o}でキャンセル。
+link.the_game	ゲーム
+link.the_game_could_not_be_reloaded	通信後にゲームを再読み込みできませんでした。
+link.the_game_is_kept_in_memory	ゲームはメモリーカードではなくメモリー上にあります。
+link.the_games_fell_out_of_step	ゲームの同期がずれました。通信を終了しました。何も保存されていません。
+link.the_link_could_not_start_and	通信を開始できず、ゲームを閉じる必要がありました。
+link.the_link_did_not_start	通信を開始できませんでした。
+link.the_other_game	相手のゲーム
+link.the_other_vita	相手のVita
+link.the_other_vita_has_a_different	相手のVitaは別のゲームです。
+link.the_room	ルーム
+link.this_vita_went_to_sleep_so	このVitaがスリープしたため、通信を終了しました。
+link.two_players	2人プレイ
+link.waiting	%s  %s  待機中
+link.waiting_for_the_other_vita	相手のVitaを待っています...
+link.waiting_for_the_other_vita_in	%sの相手のVitaを待っています
+link.wireless_adapter	ワイヤレスアダプター
+link.wireless_adapter_2	ワイヤレスアダプター  %s%s
+link.your_game	自分のゲーム
+list.a_collection_needs_a_name	コレクションには名前が必要です
+list.added	追加しました
+list.added_to	「%s」に追加しました
+list.collection_name	コレクション名
+list.collections	コレクション
+list.collections_are_lists_of_your_own	コレクションは、機種を問わず作れる自分用のリストです。作ってこのゲームを入れましょう。
+list.could_not_save_the_collections	コレクションを保存できませんでした
+list.delete_x_delete_o_keep	「%s」を削除しますか?      {x} 削除     {o} 残す
+list.deleted	「%s」を削除しました
+list.new_collection	新規コレクション
+list.no_room_for_another_collection	これ以上コレクションを作れません
+list.no_room_for_more_games	これ以上ゲームを追加できません
+list.removed_from	「%s」から外しました
+list.rename_collection	コレクション名を変更
+list.renamed_to	「%s」に名前を変更しました
+list.the_collections_file_cannot_be_changed	コレクションファイルを安全に変更できません
+list.the_keyboard_is_not_available	キーボードを使えません
+list.there_is_one_with_that_name	同じ名前のものがあります
+local.a_tap_switch	タップで切替
+local.cannot_be_read	読み込めません
+local.controller_2	コントローラー2
+local.controller_2_sound	コントローラー2  (音声)
+local.end_the_network_game_first	先にネットワークゲームを終了してください。
+local.pad_1	パッド1
+local.pad_2	パッド2
+local.partner_s_game	相手のゲーム
+local.partner_s_game_playing	相手のゲーム  (操作中)
+local.path_too_long	パスが長すぎます
+local.playing	< 操作中
+local.playing_2	操作中 >
+local.read_error	読み込みエラー
+local.right_stick_or	右スティックまたは
+local.right_stick_or_a_tap_the	右スティックかタップ: もう一方のゲーム
+local.sound	< 音声
+local.sound_2	音声 >
+local.the_copy_did_not_read_back	コピーを最後まで読み戻せませんでした
+local.the_partner_s_game_could_not	相手のゲームを読み込めませんでした。
+local.the_second_game_could_not_be	2つ目のゲームをこのゲーム用に準備できませんでした。
+local.this_console	この本体
+local.this_console_sound	この本体  (音声)
+local.this_game_cannot_be_linked_on	このゲームは1台で通信できません。
+local.touch_sound	タッチ  (音声)
+local.write_incomplete	書き込みが不完全です
+local.your_game	自分のゲーム
+local.your_game_playing	自分のゲーム  (操作中)
+menu.back_to_the_game	ゲームに戻る
+menu.cheats	チート
+menu.cheats_2	チート: %s
+menu.cheats_are_off_while_linked	通信中はチートは使えません
+menu.close_vitadhoc	VitAdhocを閉じる
+menu.exit	終了
+menu.game_list	ゲーム一覧
+menu.hosting	ホスト中
+menu.hosting_waiting_for_the_other_player	%sをホスト中、相手を待っています
+menu.leave_this_game_for_the_game	このゲームを終えてゲーム一覧へ
+menu.link_up_over_wi_fi_ad	Wi-Fi、アドホック、またはこのVitaで通信
+menu.linked	通信中
+menu.linked_to_another_console	他の本体と通信中
+menu.linked_you_are_player	通信中: あなたはプレイヤー%dです
+menu.picture_controls_and_more	画面、操作など
+menu.play_together	一緒に遊ぶ
+menu.progress_the_game_has_not_saved	ゲームでセーブしていない進行状況は失われます。
+menu.quit	終了
+menu.resume	再開
+menu.save_clip	クリップを保存
+menu.save_or_load_the_game_of	ゲームのセーブ/ロード: %d / %dスロット使用中
+menu.save_states	ステート
+menu.save_states_are_off_while_linked	通信中はステートは使えません
+menu.save_the_last_ten_seconds_as	直前の10秒をアニメ画像として保存
+menu.select	選ぶ
+menu.settings	設定
+menu.stay	残る
+menu.this_ends_the_link_for_both	2人とも通信が終了します。
+menu.two_players_on_this	このVitaで2人プレイ
+menu.two_players_over_wi_fi_ad	Wi-Fi、アドホック、オンラインで2人プレイ
+mgift.connect_to_wi_fi_first	先にWi-Fiに接続してください
+mgift.could_not_open_the_socket	ソケットを開けませんでした
+mgift.game	%s  ゲーム%s
+mgift.game_connected	ゲームに接続しました
+mgift.game_no_gift_yet	%s  ゲーム%s  おくりものなし
+mgift.gift_ready	おくりもの準備完了
+mgift.join_the_phone_s_hotspot_in	Vitaの設定でスマートフォンのホットスポットに接続してください
+mgift.leave_ad_hoc_first	先にアドホックを終了してください
+mgift.leave_the_link_session_first	先に通信セッションを終了してください
+mgift.mystery_gift	ミステリーギフト
+mgift.mystery_gift_needs_firered_leafgreen_or	ミステリーギフトにはFireRed、LeafGreen、Emeraldが必要です
+mgift.not_listening	待ち受けしていません
+mgift.open_mystery_gift_in_the_game	ゲーム内でMYSTERY GIFTを開いてください
+mgift.this_game_has_no_wireless	このゲームにはワイヤレス機能がありません
+mgift.waiting_for_a_gift	おくりものを待っています
+notice.please_try_again_in_a_moment	しばらくしてからもう一度お試しください。
+notice.storage_is_still_busy	ストレージが使用中です
+notice.the_file_may_be_damaged_or	ファイルが破損しているか、この機種用のゲームではない可能性があります。
+notice.the_game_was_closed	ゲームを閉じました
+notice.the_launch_file_could_not_be	起動ファイルを書き込めませんでした。
+notice.the_launcher_s_path_was_used	ランチャーのパスを書かれたとおりに使用しました。
+notice.the_two_player_game_could_not	2人プレイを開始できませんでした
+notice.this_game_could_not_be_started	このゲームを起動できませんでした
+notice.use_same_wi_fi_or_online	2人プレイには「同じWi-Fi」か「オンライン」を使ってください。
+online.a_game	ゲーム
+online.a_player	プレイヤー
+online.add_to_this_vita_to_join	参加するには%sをこのVitaに追加してください。
+online.ask_them_to_host_again	もう一度ホストしてもらってください。
+online.ask_them_to_update_to_then	%sに更新してから、もう一度ホストしてもらってください。
+online.ask_your_friend_to_host_again	フレンドにもう一度ホストしてもらってください。
+online.asking_for_a_code	コードを取得中...
+online.both_run_the_same_vitadhoc_but	VitAdhocは同じですが、Game Boy Advanceの設定が異なります。
+online.check_this_vita_s_internet_connection	このVitaのインターネット接続を確認して、もう一度お試しください。
+online.checking_your_connection	接続を確認中...
+online.codes_last_10_minutes_ask_your	コードの有効期限は10分です。フレンドに新しいコードをもらってください。
+online.connecting_through_the_relay	中継経由で接続中。
+online.couldn_t_reach_your_friend	フレンドにつながりませんでした。
+online.del	削除
+online.expires_in	残り%d:%02d
+online.finding_the_service	サービスを探しています...
+online.getting_a_code	コードを取得中...
+online.give_this_code_to_your_friend	このコードをフレンドに伝えてください
+online.good	良好
+online.great	最良
+online.hosted_by	%s  -  ホスト: %s
+online.install_the_latest_version_on_this	このVitaに最新版をインストールして、もう一度お試しください。
+online.join	参加
+online.join_online	オンラインで参加
+online.looking_for_the_room	ルームを探しています...
+online.looking_in_your_games	ゲームを探しています...
+online.of	%d / %d
+online.online_play_is_busy_for_today	本日はオンラインプレイが混み合っています。
+online.online_play_is_not_ready_for	この機種ではまだオンラインプレイを使えません。
+online.open_and_join	%sを開いて参加
+online.patched	パッチ済み  -  %s
+online.pick_the_one_to_open	開くものを選んでください。
+online.set_the_date_and_time_in	設定で日付と時刻を合わせてから、もう一度お試しください。
+online.slow	遅い
+online.somebody_already_joined_that_room	すでに誰かがそのルームに参加しています。
+online.that_code_is_wrong_or_has	コードが間違っているか、期限切れです。
+online.the_link_checks_it_when_it	通信の開始時に確認されます。
+online.the_online_service_could_not_be	オンラインサービスに接続できませんでした。
+online.the_online_service_must_be_updated	オンラインサービスの更新が必要です。今は「同じWi-Fi」を使ってください。
+online.this_version_of_vitadhoc_is_too	このバージョンのVitAdhocはオンラインプレイには古すぎます。
+online.this_vita_s_date_is_wrong	このVitaの日付が正しくありません。
+online.too_many_tries_from_this_network	このネットワークからの試行回数が多すぎます。
+online.try_again_or_both_use_same	もう一度試すか、2人とも「同じWi-Fi」を使ってください。
+online.try_again_tomorrow_or_both_use	明日もう一度試すか、2人とも「同じWi-Fi」を使ってください。
+online.type_all_five_characters_like_k7m4q	K7M4Qのように、5文字すべてを入力してください。
+online.update_this_vita_to_the_same	このVitaを同じバージョンに更新してから、もう一度参加してください。
+online.use_the_same_bios_file_and	2台とも同じBIOSファイルとCPU設定にしてから、もう一度お試しください。
+online.wait_a_minute_and_try_again	しばらく待ってからもう一度お試しください。
+online.waiting_for_your_friend	フレンドを待っています...
+online.you_have_more_than_one_copy	%sのコピーが複数あります。
+online.you_have_this_game_it_starts	このゲームを持っています。起動してから参加します。
+online.your_copy_of_is_a_different	お持ちの%sはフレンドのものと別のファイルです。
+online.your_friend	フレンド
+online.your_friend_closed_the_room	フレンドがルームを閉じました。
+online.your_friend_has_a_newer_vitadhoc	フレンドのVitAdhocの方が新しいです (%s)。
+online.your_friend_has_an_older_vitadhoc	フレンドのVitAdhocの方が古いです (%s)。
+online.your_friend_is_joining	フレンドが参加中です...
+online.your_friend_is_playing_a_different	フレンドは別のゲームを遊んでいます。
+online.your_friend_s_screen_shows_five	フレンドの画面に英数字5文字が出ます。I、L、O、0、1は使われません。
+online.your_game_can_enter_this_room	このルームに入れます。
+play.a_code_for_your_friend	フレンドに伝えるコード
+play.a_copy_or_a_second_save	コピー、または2つ目のセーブデータ
+play.a_different_game	別のゲーム
+play.a_game	ゲーム
+play.a_game_boy_advance_room	Game Boy Advanceのルーム
+play.a_game_boy_room	Game Boyのルーム
+play.a_link_session_is_running	通信セッションが動いています。
+play.a_nes_wonderswan_room	NES / WonderSwanのルーム
+play.a_player	プレイヤー
+play.a_room_takes_two_players_ask	ルームは2人用です。ホストに新しいルームを開いてもらってください。
+play.a_vita_nearby	近くのVita
+play.ad_hoc	アドホック
+play.ad_hoc_the_two_vitas_connect	アドホック: 2台のVitaがルーターなしで直接つながります。
+play.advanced_the_joiner_types_the_address	上級: 参加側がホストに表示されたアドレスを入力します。
+play.already_playing	すでにプレイ中
+play.always_use_the_relay	常に中継を使う
+play.ask_them_to_choose_host_a	もう一度「ゲームをホスト」を選んでもらってください。
+play.asking_your_router_to_let_the	相手が入れるようルーターに依頼中...
+play.auto	自動
+play.auto_picks_it_from_the_connection	接続から自動で選びます。ホストの選択が優先されます。
+play.back	戻る
+play.back_to_the_game	ゲームに戻る
+play.both_consoles_on_the_same_wi	2台とも同じWi-Fiですか? 相手はホスト中ですか?
+play.both_games_run_here_joined_by	両方のゲームをここで動かし、通信ケーブルでつなぎます。
+play.both_games_run_on_this_console	両方のゲームをこの本体で動かします。2台目のVitaなしで自分同士で交換できます。
+play.both_players_open_their_game_the	2人とも同じゲーム、または対のバージョン (RubyとSapphire、FireRedとLeafGreen) を開きます。
+play.by_link_cable	通信ケーブル
+play.by_wireless_adapter_the_game_pairs	%s、ワイヤレスアダプター。ゲームが2人を組み合わせます。
+play.cable_or_adapter	ケーブルかアダプター
+play.cancel	キャンセル
+play.connect_in_the_vita_s_settings	Vitaの設定 > ネットワークで接続してから、もう一度お試しください。
+play.connect_in_the_vita_s_settings_2	Vitaの設定 > ネットワークで接続してください。接続されると、このページは自動で進みます。
+play.connecting_to_wi_fi	%s: Wi-Fiに接続中...
+play.connection	接続
+play.connection_2	接続
+play.connection_ad_hoc_then_play_together	接続: アドホック、次に「一緒に遊ぶ」>「ゲームに参加」。
+play.continue	続ける
+play.del	削除
+play.different_version	バージョンが違います
+play.direct_address	直接アドレス
+play.disconnect	切断
+play.end_it_first_play_together_disconnect	先に終了してください (一緒に遊ぶ > 切断)。
+play.end_the_current_link_first	先に今の通信を終了してください。
+play.far_apart_host_shows_a_code	離れている場合: ホストがコードを表示し、フレンドが入力します。
+play.fewer_frames_react_faster_more_ride	少ないほど反応が速く、多いほど遅い回線に耐えます。
+play.firered_leafgreen_and_emerald_from_a	FireRed、LeafGreen、Emerald (スマートフォンから)
+play.for_a_friend_far_away_the	遠くのフレンドと遊ぶ場合です。ホストの画面に5文字のコードが出るので、参加側が入力します。
+play.found	%d件見つかりました
+play.frame	%dフレーム
+play.frames	%dフレーム
+play.from_a_phone	スマートフォンから
+play.game	ゲーム
+play.gb_link_cable	GB通信ケーブル
+play.good	良好
+play.great	最良
+play.here	ここ
+play.hides_your_internet_address_from_the	相手にインターネットのアドレスを知られません。少し遅くなります。
+play.host_a_game	ゲームをホスト
+play.hosting_by	%sをホスト中 (%s)
+play.how_to_play	遊び方
+play.how_to_play_together	一緒に遊ぶ方法
+play.in_the_game_right_stick_sideways	ゲーム中: 右スティックを横に倒すかタップで音声を切り替えます。
+play.in_the_game_right_stick_sideways_2	ゲーム中: 右スティックを横に倒すか画面をタップで切り替えます。
+play.install_the_same_version_on_both	2台とも同じバージョンをインストールしてから、もう一度通信してください。
+play.is_a_game_boy_advance_room	%sはGame Boy Advanceのルームです。
+play.is_a_game_boy_room	%sはGame Boyのルームです。
+play.is_a_link_cable_room_restart	%sは通信ケーブルのルームです。ゲームを再起動して通信してください。
+play.is_a_link_cable_room_this	%sは通信ケーブルのルームです。このゲームはアダプターで通信します。
+play.is_a_two_players_room_for	%sはNESまたはWonderSwanゲームの2人プレイのルームです。
+play.is_a_wireless_adapter_room_this	%sはワイヤレスアダプターのルームです。このゲームはケーブルで通信します。
+play.is_full_a_room_takes_players	%sは満員です。ルームは%d人用です。
+play.is_in_the_middle_of_a	%sはゲームの途中です。
+play.is_not_a_two_players_room	%sは2人プレイのルームではありません。
+play.is_playing_open_the_same_game	%sは%sをプレイ中です。参加するには同じゲームを開いてください。
+play.is_the_address_right_and_is	アドレスは合っていますか? 相手は接続を「インターネット」にしてホスト中ですか? ルーターでUDPポート19019を通す必要があります。
+play.is_the_other_vita_hosting_and	相手のVitaはホスト中で、同じネットワークにいますか?
+play.it_links_the_two_vitas_directly	2台のVitaをルーターなしで直接つなぎます。画面に従って接続を作成すると、相手のVitaが同じ画面から参加します。終わるとゲームに戻ります。
+play.it_links_the_two_vitas_directly_2	2台のVitaをルーターなしで直接つなぎます。画面に従って、相手のVitaが作成した接続に参加します。終わるとゲームに戻ります。
+play.it_looks_like_192_168_1	192.168.1.23や203.0.113.9:19019のような形です。
+play.its_address	そのアドレス
+play.join	参加
+play.join_a_game	ゲームに参加
+play.join_a_game_2	ゲームに参加
+play.keep_playing	プレイを続ける
+play.large_small	大 + 小
+play.layout	レイアウト
+play.like_203_0_113_9_19019	例: 203.0.113.9:19019
+play.link_cable	通信ケーブル
+play.link_cable_game_each_vita_plays	通信ケーブルのゲーム。各Vitaが自分のゲームを遊び、%sが送られます。
+play.link_cable_game_player_2_needs	通信ケーブルのゲーム。プレイヤー2には%sが必要です (または送られます)。
+play.link_delay	通信の遅延
+play.link_lost_the_other_vita_is	通信が切れました: 相手のVitaがいません。
+play.linked_by_cable_with	%sとケーブルで通信中
+play.linked_with	%sと通信中
+play.linked_with_the_other	相手のVitaと通信中
+play.links_by_link_cable_or_wireless	通信ケーブルかワイヤレスアダプターで通信します。ホストが選びます。
+play.listening	待ち受け中
+play.looking_for_a_game_at_that	そのアドレスのゲームを探しています...
+play.looking_for_games_on_this_wi	このWi-Fiのゲームを探しています...
+play.looks_right	正しそうです
+play.ms_round_trip	 (往復%d ms)
+play.ms_round_trip_2	%s   %s (往復%d ms)
+play.mystery_gift	ミステリーギフト
+play.mystery_gift_2	ミステリーギフト
+play.mystery_gift_on_the_title_screen	タイトル画面のMYSTERY GIFT。
+play.mystery_gift_station_pick_a_gift	ミステリーギフト受付: おくりものを選んでください。
+play.nearby	近く
+play.next_the_vita_s_own_connection	次: Vita本体の接続画面。
+play.nick_room	%s  -  ルーム%d
+play.nick_room_ms	%s  -  ルーム%d  -  %d ms
+play.no_answer_from_yet	%sからまだ応答がありません。
+play.no_games_found_yet	ゲームはまだ見つかっていません。
+play.no_other_game_for_this_console	ゲーム一覧にこの機種の他のゲームがありません。
+play.no_router_anywhere_the_two_vitas	ルーターがない場合: 2台のVitaがVita本体の接続画面で直接つながります。
+play.no_router_the_two_vitas_connect	ルーターなし: 2台のVitaを並べて直接つなぎます。
+play.no_second_controller_player_2_plays	2つ目のコントローラーがない場合は、プレイヤー2が前面画面で遊びます。その半分にボタンが表示されます。
+play.no_wi_fi_connect_in_the	Wi-Fiがありません。Vitaの設定 > ネットワークで接続してください。
+play.nobody_answered	応答はありませんでした。
+play.not_a_two_players_room	2人プレイのルームではありません
+play.not_a_whole_address_yet	アドレスが未完成です
+play.not_a_whole_address_yet_example	アドレスが未完成です。例: 203.0.113.9:19019
+play.not_enough_memory_to_link_this	このゲームを通信するにはメモリが足りません。
+play.not_for_this_game	このゲーム用ではありません
+play.not_listed_connection_internet_type	見つからない場合は、接続を「インターネット」にして%sを入力
+play.not_listening	待ち受けしていません
+play.nothing_was_changed_choose_host_or	変更はありません。「ホスト」か「参加」を選んでもう一度お試しください。
+play.off	オフ
+play.on	オン
+play.on_pad_in_use	オン (パッド使用中)
+play.on_the_other_vita_open	相手のVitaで%sを開きます。
+play.one_chooses_play_together_host_a	1人が「一緒に遊ぶ」>「ゲームをホスト」を選びます。
+play.one_moment	少々お待ちください。
+play.online	オンライン
+play.opening	%sを開いています...
+play.partner_s_game	相手のゲーム
+play.partner_s_game_2	相手のゲーム
+play.phone	スマートフォン
+play.play_together	一緒に遊ぶ
+play.player_2_on_the_touch_screen	プレイヤー2はタッチスクリーン
+play.player_2_plays_on_the_front	コントローラーがつながっていない間は、プレイヤー2が前面画面で遊びます。
+play.quit_to_the_game_list_open	ゲーム一覧に戻り、ゲームを開き直して先に通信してください。
+play.recent	最近
+play.restart_the_game_to_link	ゲームを再起動して通信
+play.rooms_on_this_wi_fi	このWi-Fiのルーム
+play.runs_a_different_version_of_vitadhoc	%sは別のバージョンのVitAdhocです。
+play.same_game_only	同じゲームのみ
+play.same_network_or_a_phone_s	同じネットワークかスマートフォンのホットスポット。ルームは自動で一覧に出ます。いちばん簡単です。
+play.same_wi_fi	同じWi-Fi
+play.same_wi_fi_or_hotspot_rooms	同じWi-Fiかホットスポット。ルームは自動で見つかります。
+play.save_found	セーブデータあり
+play.save_states_and_cheats_are_off	通信中はステートとチートは使えません。切断すると2人とも通信が終わり、各ゲームはセーブして単独で続きます。
+play.save_states_cheats_rewind_and_fast	通信中はステート、チート、巻き戻し、早送りは使えません。プレイヤー2はプレイヤー1のゲームを遊びます。通信が終わると、プレイヤー2のゲームは元の状態で戻り、プレイヤー1は続きます。
+play.searching	検索中
+play.settings_network_join_the_wi_fi	設定 > ネットワーク: Wi-Fiに接続してミステリーギフトへ。
+play.side_by_side	左右に並べる
+play.side_by_side_two_equal_pictures	左右に並べる: 同じ大きさの画面2つ。大 + 小: 操作中のゲームが大きく表示されます。
+play.side_by_side_two_players	左右に並べる (2人プレイ)
+play.slow	遅い
+play.slow_expect_delay	遅い (遅延あり)
+play.start_listening	待ち受けを開始
+play.start_listening_or_select_down_in	待ち受けを開始、またはゲーム中にSELECT + 下。
+play.start_the_partner_copies_my_save	開始: 相手が自分のセーブデータをコピー
+play.start_the_partner_plays_its_game	開始: 相手が自分のゲームを遊ぶ
+play.start_the_partner_uses_its_own	開始: 相手が自分のセーブデータを使う
+play.starting_the_second_game	2つ目のゲームを開始中...
+play.starts_a_new_game	最初から始めます
+play.still_trying	再試行中です。
+play.stop	停止
+play.stop_hosting	ホストを停止
+play.stop_it_first_to_host_or	ネットワークでホストや参加をするには、先に停止してください。
+play.stop_listening	待ち受けを停止
+play.swap_controlled_game	操作するゲームを切り替え
+play.swap_sound_and_large_picture	音声と大画面を切り替え
+play.tell_the_other_player_this_address	このアドレスを相手に伝えてください:
+play.that_game_could_not_be_chosen	そのゲームは選べませんでした。
+play.that_is_not_an_address	アドレスではありません。
+play.that_room_is_full	そのルームは満員です。
+play.the_buttons_drive_the_partner_s	ボタンで相手のゲームを操作します。
+play.the_buttons_drive_your_game	ボタンで自分のゲームを操作します。
+play.the_connection_screen_was_closed	接続画面が閉じられました。
+play.the_four_steps	4つの手順
+play.the_host	 (ホスト)
+play.the_host_chooses_play_together_host	ホストが接続を「インターネット」にして「一緒に遊ぶ」>「ゲームをホスト」を選びます。画面に出たアドレスをここに入力します。
+play.the_host_closed_the_room	ホストがルームを閉じました。
+play.the_link_ended_and_nothing_was	通信が終了し、何も保存されませんでした。もう一度通信してください。
+play.the_other_chooses_play_together_join	もう1人が「一緒に遊ぶ」>「ゲームに参加」を選び、一覧からルームを選びます。
+play.the_other_player_s_game_did	相手のゲームが届きませんでした。
+play.the_other_vita_runs_a_different	相手のVitaは別のバージョンのVitAdhocです。
+play.the_port_may_be_in_use	ポートが使用中かもしれません。しばらくしてからもう一度お試しください。
+play.the_radio_is_busy_with_another	無線が別の通信で使われています。
+play.the_radio_is_in_ad_hoc	%s: 無線がアドホックで使われています。
+play.the_room_could_not_be_opened	このネットワークでルームを開けませんでした。
+play.the_room_did_not_open_check	ルームを開けませんでした。接続を確認してもう一度お試しください。
+play.the_same_game_twice_or_the	同じゲームを2つ、または2台目で対のバージョンを動かします。
+play.the_search_could_not_start	検索を開始できませんでした。
+play.the_second_game_begins_as_a	2つ目のゲームは、今いる場所からそのままのコピーとして始まります。セーブすると、それが2つ目のセーブデータになります。
+play.the_second_game_starts_from_its	2つ目のゲームは2つ目のカートリッジのように、専用のセーブデータから始まります。自分のものの隣に保存されます。
+play.the_second_game_would_not_start	2つ目のゲームを開始できませんでした。
+play.the_second_machine_boots_that_game	2台目はそのゲームを、普段遊んでいるセーブデータで起動します。
+play.the_second_machine_can_hold_another	2台目には別のゲーム (対のバージョン) を、そのセーブデータ付きで入れられます。
+play.the_two_games_fell_out_of	2つのゲームの同期がずれました。
+play.the_vita_s_connection_screen_comes	次にVita本体の接続画面が出ます。
+play.then_play_together_join_a_game	次に「一緒に遊ぶ」>「ゲームに参加」で%sのルームを選びます。
+play.they_choose_play_together_join_a	相手は「一緒に遊ぶ」>「ゲームに参加」を選んで入力します。
+play.this_game	このゲーム
+play.this_game_cannot_run_twice_on	このゲームは1台のVitaで2つ同時に動かせません。
+play.this_game_links_by_adapter	このゲームはアダプターで通信します
+play.this_game_links_by_cable	このゲームはケーブルで通信します
+play.this_one	これ
+play.this_vita	このVita
+play.this_vita_is_not_connected_to	このVitaはWi-Fiにつながっていません。
+play.this_vita_is_on_still_looking	このVitaは%s (%s) に接続中です。探しています。
+play.through_the_relay	、中継経由
+play.to_stop_either_player_chooses_play	止めるには、どちらかが「一緒に遊ぶ」>「切断」を選びます。両方のゲームがセーブして単独で続きます。
+play.try_again_if_it_keeps_happening	もう一度お試しください。何度も起きる場合は、メモリーカードの空き容量を確認してください。
+play.trying_again_by_itself_if_this	自動で再試行中です。続く場合はVitaのWi-Fiを確認してください。
+play.two_games_are_running_on_this	このVitaで2つのゲームが動いています (ケーブルで通信中)。
+play.two_players	2人プレイ
+play.two_players_2	2人プレイ
+play.two_players_both_vitas_need	2人プレイ: 2台とも%sを開く必要があります。
+play.two_players_on_this	このVitaで2人プレイ
+play.two_players_on_this_vita_after	このVitaで2人プレイ: 終了後。
+play.type_the_address_the_host_s	ホストの画面に出ているアドレスを入力してください。
+play.type_the_host_s_address	ホストのアドレスを入力
+play.type_your_friend_s_code	フレンドのコードを入力
+play.waiting	待機中
+play.waiting_for_player_2_you_can	プレイヤー2を待っています。その間もプレイを続けられます。
+play.when_it_says_linked_use_the	「通信中」と出たら、ゲーム自身の通信機能 (交換所、通信対戦、ケーブルクラブなど) を使います。
+play.which_connection	どの接続?
+play.wi_fi_and_ad_hoc_cannot	Wi-Fiとアドホックは同時に使えません。
+play.wi_fi_is_set_aside_while	通信中はWi-Fiが一時的に切れ、終わると元に戻ります。
+play.wireless_adapter	ワイヤレスアダプター
+play.wireless_adapter_game_the_game_itself	ワイヤレスアダプターのゲーム: ゲーム自身が2人を組み合わせます。
+play.you_are_player	あなたはプレイヤー%d%s、%sです。
+play.you_are_player_in	あなたはプレイヤー%d%s (%s、%s)。
+play.your_buttons_your_game_second_controller	自分のボタン: 自分のゲーム。2つ目のコントローラー: 相手のゲーム。
+play.your_game_carries_on_alone	自分のゲームは単独で続きます
+play.your_game_carries_on_save_as	ゲームは続きます。いつもどおりセーブしてください。
+play.your_router_did_not_open_the	ルーターが自動で入口を開けませんでした。ルーターの設定でUDPポート%sをこのVita (%s) に転送してください。相手は公開アドレス%s%sを入力します。
+play.your_router_opened_the_way_in	ルーターが入口を開けましたが、公開アドレスは通知されませんでした。調べてください (同じWi-Fiのスマートフォンで「what is my IP」を検索)。相手はそのアドレスを入力し、続けて%sを入力します。
+ra.achievements	実績
+ra.hardcore	 - ハードコア
+ra.no_achievements_to_show	表示できる実績がありません。
+ra.of_achievements	実績 %u / %u%s
+ra.pts	%u / %u   %u / %u pts
+ra.rank_of	%u位 / %u人
+settings.a_and_b_buttons	AボタンとBボタン
+settings.about	情報
+settings.account	アカウント
+settings.achievement_indicators	実績インジケーター
+settings.achievements	実績
+settings.ambient_glow	アンビエントグロー
+settings.button_mapping	ボタン割り当て
+settings.button_test	ボタンテスト
+settings.camera	カメラ
+settings.check_for_updates	更新の確認
+settings.clock_rtc	時計 (RTC)
+settings.connection	接続
+settings.controls	操作
+settings.cover_picture	カバー画像
+settings.covers	カバー
+settings.cpu_speed	CPU速度
+settings.crt_mask	CRTマスク
+settings.direction	向き
+settings.display	表示
+settings.display_settings	表示設定
+settings.export_save_for_other_emulators	他のエミュレーター用に書き出し
+settings.extra_cpu_core	追加CPUコア
+settings.fast_forward	早送り
+settings.fast_link	高速通信
+settings.ff_button_square	早送りボタン ({sq})
+settings.fourth_core	4つ目のコア
+settings.fps_counter	FPS表示
+settings.game_boy_colours	Game Boyの色
+settings.game_boy_printer	Game Boyプリンター
+settings.game_boy_type	Game Boyの種類
+settings.game_folders	ゲームフォルダー
+settings.game_list	ゲーム一覧
+settings.game_names	ゲーム名
+settings.game_order	ゲームの順序
+settings.game_previews	ゲームプレビュー
+settings.gameplay	ゲームプレイ
+settings.hardcore	ハードコア
+settings.help.a_faint_pixel_grid_like_a	携帯機の画面のような薄い画素の格子。1が薄く、10が濃くなります。
+settings.help.a_game_boy_s_picture_has	Game Boyの映像にはこれ以上表示するものがありません。
+settings.help.a_number_that_tells_rooms_apart	複数の人がホストしているときにルームを区別する番号。
+settings.help.a_soft_glow_beside_the_picture	黒帯の代わりに映像の横にやわらかい光を表示。1が薄く、10が明るくなります。
+settings.help.a_tap_on_the_game_opens	ゲームをタップするとメニューが開きます。START + SELECTでも常に開けます。
+settings.help.a_vita_on_the_same_wi	同じWi-FiのVitaがセーブデータとステートをコピーできます。
+settings.help.adds_the_handheld_screen_s_grid	携帯機の画面のドットの格子を加えます。
+settings.help.advanced_the_joiner_types_the_host	上級: 参加側がホストのアドレスを入力します。
+settings.help.also_widens_rotating_3d_tracks_sprites	回転する3Dコースも広げます。スプライトが入り込むことがあります。
+settings.help.always_the_16_9_picture_unknown	常に16:9の映像。不明な両端はフェードします。
+settings.help.an_original_game_boy_s_shades	初代Game Boyの濃淡は、上の色設定が色になります。
+settings.help.any_game_shows_what_it_has	すべてのゲーム: 描画済みの内容を画面の横に表示。誤ることがあります。
+settings.help.as_a_television_showed_them_a	テレビで見たときのように、少しやわらかく深い色合い。
+settings.help.as_on_a_game_boy_color	Game Boy Colorの画面のように。
+settings.help.as_on_a_wonderswan_s_screen	WonderSwanの画面のように。やわらかく、黒がやや浮きます。
+settings.help.auto_adapts_to_keep_60_fps	自動で60 fpsを保つよう調整。可能ならなめらかにします。
+settings.help.auto_follows_the_cartridge_takes_effect	自動はカートリッジに従います。次回の起動で反映されます。
+settings.help.auto_follows_the_game_some_turn	自動はゲームに従います (途中でオンになるものも)。このゲームのみ。
+settings.help.auto_games_that_use_the_zapper	自動: Zapperを使うゲームではタッチスクリーンで使えます。次回の起動から。
+settings.help.auto_on_where_the_game_has	自動: ゲームに搭載されていればオン。次回の起動から。
+settings.help.auto_suits_most_fewer_frames_react	自動が多くの場合に合います。少ないほど反応が速く、多いほどなめらかです。
+settings.help.auto_uses_the_vita_s_fourth	自動: 使えるならVitaの4つ目のコアを使います。次のゲームから。
+settings.help.bigger_text_in_the_menus_of	アプリとプレーヤーのメニューの文字を大きくします。
+settings.help.black_and_white_games_grey_or	白黒ゲーム: グレー、または元のLCDの色合い。カラーゲームは元の色のまま。
+settings.help.brighter_text_and_clearer_edges_in	アプリとプレーヤーのメニューの文字を明るく、輪郭をはっきりさせます。
+settings.help.busy_moments_show_every_second_frame	負荷が高いときは1フレームおきに均等に表示し、速度は保ちます。
+settings.help.busy_moments_skip_a_frame_game	負荷が高いときはフレームを飛ばします。ゲームと音の速度は保ちます。
+settings.help.busy_moments_slow_the_game_and	負荷が高いときはゲームと音が遅くなります。
+settings.help.choose_just_this_game_to_give	「このゲームのみ」を選ぶと、このゲーム専用の見た目にできます。
+settings.help.circle_is_a_and_confirms_in	{o}がAで、メニューでは決定になります。{x}がBです。
+settings.help.coloured_stripes_like_a_crt_tube	CRTブラウン管のような色の縞。映像が少し暗くなります。1が薄く、10が濃くなります。
+settings.help.colours_exactly_as_the_game_sends	ゲームが出力したままの色。
+settings.help.controller_a_zapper_game_is_played	コントローラー: Zapperのゲームをパッドで遊びます。次回の起動から。
+settings.help.copy_saves_and_states_from_the	ルームで共有しているVitaからセーブデータとステートをコピーします。
+settings.help.cross_is_a_and_confirms_in	{x}がAで、メニューでは決定になります。{o}がBです。
+settings.help.dark_lines_between_the_rows_like	テレビのように、行の間に暗い線を入れます。1が薄く、10が濃くなります。
+settings.help.dark_or_light_menus	メニューを暗くするか明るくするか。
+settings.help.darkens_a_thin_line_under_every	画素の各行の下に細い暗線を入れます。
+settings.help.display_changes_made_now_apply_to	今行う表示の変更はこのゲームにのみ適用されます。
+settings.help.drawn_on_a_second_core_heavy	2つ目のコアで描画: 重い見た目でもゲームは遅くなりません。
+settings.help.each_game_shows_its_file_name	各ゲームをメモリーカード上のファイル名で表示します。
+settings.help.each_game_shows_its_title_games	各ゲームをタイトルで表示します。同じタイトルのゲームにはファイル名も表示。
+settings.help.each_save_also_goes_where_retroarch	セーブデータをRetroArchが探す場所にも保存し、同期します。
+settings.help.european_games_run_at_50_hz	欧州のゲームは50 Hzで動きます。なめらか50 Hzは本来の速度を保ち映像を整えます: 6回に1回、2フレームを混ぜます。
+settings.help.european_games_run_at_50_hz_2	欧州のゲームは50 Hzで動きます。本来の50 Hzは本来の速度で遊べ、6フレームに1回同じフレームを再表示します。
+settings.help.every_frame_when_it_can_be	可能なら全フレーム表示。負荷が高いときは不均等に落ちます。
+settings.help.exact_pixels_sharpest_at_2x_3x	正確な画素。2倍、3倍、4倍で最もくっきりします。
+settings.help.exact_pixels_with_softened_edges_at	正確な画素で輪郭をやわらげます。どの大きさでも使えます。
+settings.help.far_apart_the_host_shows_a	離れている場合: ホストがコードを表示し、フレンドが入力します。
+settings.help.faster_link_play_on_a_strong	回線が強ければ通信プレイを高速化。ホストの設定が使われます。
+settings.help.follows_the_vita_s_own_enter	Vita本体の決定ボタンに従います。押して変更します。
+settings.help.for_a_strong_connection_slightly_faster	回線が強い場合に、通信プレイを少し高速化。
+settings.help.for_rom_hacks_takes_effect_at	ROMハック用。次回の起動で反映されます。
+settings.help.gbc_auto_the_colours_a_game	GBC自動: Game Boy Colorがこのゲームに付けた色。
+settings.help.hold_or_the_right_stick_left	%sを押し続けるか右スティックを左に倒すと戻ります。
+settings.help.hold_the_button_to_fast_forward	ボタンを押し続けると早送り、押すと切り替えます。
+settings.help.hold_the_right_stick_left_to	右スティックを左に倒し続けると時間を戻せます。
+settings.help.hold_the_right_stick_left_to_2	右スティックを左に倒し続けると巻き戻します。
+settings.help.hold_the_vita_as_level_should	水平にしたい向きでVitaを持ち、{x}を押してください。
+settings.help.hold_to_go_back_in_time	%sを押し続けると時間を戻せます。
+settings.help.how_fast_it_runs_2x_and	動作の速さ。2倍と3倍は、音を速くするか通常の音程で再生できます。
+settings.help.how_its_pixels_are_drawn	画素の描き方。
+settings.help.how_large_the_game_is_drawn	ゲームを描く大きさ。3倍が正確で最もくっきりします。
+settings.help.how_much_sunlight_the_cartridge_s	カートリッジの太陽センサーが受ける日光の量。
+settings.help.how_strongly_a_turn_or_a	回転や傾きの感じ方の強さ。
+settings.help.how_this_game_links_link_cable	このゲームの通信方法: 通信ケーブルかワイヤレスアダプター。
+settings.help.mmpx_at_twice_its_size_crisp	MMPXで2倍に拡大。くっきりしたドット絵で、Vitaへの負荷は軽め。
+settings.help.more_of_the_map_beside_the	対応ゲームで、映像の横にマップをさらに表示。
+settings.help.muted_and_dark_as_on_the	初代GBAのバックライトなしの画面のように、くすんで暗く。
+settings.help.muted_as_on_a_gba_s	GBAの画面のようにくすんだ色。ドット絵が想定した色合いです。
+settings.help.no_marks_over_the_game_unlocks	ゲーム上に印を出しません。解除の通知は表示されます。
+settings.help.no_router_the_two_vitas_connect	ルーターなし: 2台のVitaが直接つながります。
+settings.help.no_states_rewind_or_cheats_from	ステート、巻き戻し、チートは使えません。次のゲームから。
+settings.help.off_games_find_no_printer	オフ: ゲームはプリンターを見つけられません。
+settings.help.off_the_app_stays_on_the	オフ: アプリは割り当てられた3つのコアのまま動きます。
+settings.help.off_try_this_if_the_picture	オフ: 映像に不具合が出たときに試してください。
+settings.help.only_start_select_or_l_r	START + SELECT (またはL + R + START) のみでメニューが開きます。
+settings.help.pictures_a_game_prints_are_saved	ゲームが印刷した画像はprints/に保存されます。通信中はオフ。
+settings.help.play_this_game_with_a_friend	このゲームをフレンドと遊びます。1人がホスト、もう1人が参加。同じゲームが必要です。
+settings.help.put_a_png_in_ux0_data	ux0:data/GBAdhoc/overlays/にPNGを置くとゲームに枠を付けられます。
+settings.help.redraws_curves_and_diagonals_smoothly_the	曲線と斜線をなめらかに描き直します。最も負荷が高いです。
+settings.help.rest_on_a_game_in_the	ホーム画面でゲームに合わせたままにすると、最後の10秒のプレイが背景で流れます。
+settings.help.retroarch_s_files_are_left_alone	RetroArchのファイルには触れません。書き出しでコピーを作ります。
+settings.help.retry_missing_box_art_and_title	見つからないパッケージ画像とタイトル画面をWi-Fiで再取得します。
+settings.help.rounds_stair_steps_only_light_adds	階段状のギザギザだけを丸めます。軽く、色は増えません。
+settings.help.running_the_game_backwards_is_switched	ゲームの逆再生をオフにします。
+settings.help.same_wi_fi_or_phone_hotspot	同じWi-Fiかスマートフォンのホットスポット: ルームは自動で出ます。
+settings.help.screens_with_no_more_to_show	表示するものがない画面は端まで引き伸ばします。
+settings.help.screens_with_no_more_to_show_2	表示するものがない画面は左右でやわらかくフェードアウトします。
+settings.help.screens_with_no_more_to_show_3	表示するものがない画面は黒帯のままにします。
+settings.help.set_by_image_quality_choosing_one	画質で決まります。ここで選ぶと自動に切り替わります。
+settings.help.shot_with_the_buttons_set_in	ボタン割り当てで設定したボタンで撮影します。
+settings.help.shows_each_button_stick_and_touch	ボタン、スティック、タッチパネルの押された状態と役割を表示します。
+settings.help.shows_the_game_s_speed_in	ゲームの速度を隅に表示します。
+settings.help.shows_what_you_press_one_frame	次のフレームを先に計算して、押したものを1フレーム早く表示します。ゲームの動作は同じです。自動は余裕があるときに使います。
+settings.help.small_marks_for_a_challenge_progress	チャレンジ、進捗、リーダーボード挑戦中の小さな印。
+settings.help.smoothed_at_four_times_its_size	4倍に拡大してなめらかに。最も精細で負荷も最大です。
+settings.help.smoothed_at_three_times_its_size	3倍に拡大してなめらかに。より精細ですが負荷も増えます。
+settings.help.smoothed_at_twice_the_game_s	ゲームの2倍に拡大してなめらかにし、画面に合わせます。
+settings.help.soft_every_pixel_blends_into_the	ソフト: 画素が隣の画素となじみます。
+settings.help.states_rewind_and_cheats_allowed	ステート、巻き戻し、チートを使えます。
+settings.help.super_game_boy_games_in_the	Super Game Boy対応ゲームを付属の枠で表示 (Game Boyの色: Super Game Boy)。
+settings.help.swap_it_if_turning_or_tilting	回転や傾きが逆に感じるときは切り替えてください。
+settings.help.the_console_s_own_picture_bars	本体そのままの映像で、横に帯が出ます。
+settings.help.the_game_s_own_pixels_evenly	ゲームの画素をそのまま、どの画面サイズでも均等な大きさで。
+settings.help.the_highlighted_game_link_cable_or	選択中のゲーム: 通信ケーブルかワイヤレスアダプター。
+settings.help.the_host_s_setting_is_used	ホストの設定が使われます。
+settings.help.the_language_of_the_menus_automatic	メニューの言語。自動はVita本体の設定に従います。
+settings.help.the_name_other_players_see_beside	ルームの横に他のプレイヤーへ表示される名前。
+settings.help.the_nes_picture_as_it_was	NESの映像をそのまま: 256列。
+settings.help.the_newest_frame_only_sharper_with	最新のフレームのみ。くっきりしますが、スクロール時に少しカクつきます。
+settings.help.the_order_of_all_games_and	「すべてのゲーム」と「お気に入り」の順序。「最近」は新しい順です。
+settings.help.the_rear_panel_does_nothing	背面パネルは何もしません。
+settings.help.the_rear_panel_s_four_corners	背面パネルの四隅をボタンにできます。ボタン割り当てで設定します。
+settings.help.the_right_stick_does_not_rewind	右スティックでは巻き戻しません。
+settings.help.the_right_stick_is_the_cartridge	右スティックがカートリッジのセンサーになります。
+settings.help.the_sides_filled_with_the_game	わかる場合は、左右をゲーム自身の映像で埋めます。推測はしません。
+settings.help.the_slow_lcd_left_a_trail	反応の遅いLCDは動くものに残像が出ました。10が強め。
+settings.help.the_slow_lcd_left_a_trail_2	反応の遅いLCDは動くものに残像が出ました。0でオフ、5で透明表現のちらつきを安定させます。
+settings.help.the_small_link_status_in_the	ゲームの隅に出る小さな通信状態表示。
+settings.help.the_vita_s_own_ps_start	Vita本体のPS + STARTでスクリーンショットを撮れます。
+settings.help.the_wonderswan_s_75_frames_a	WonderSwanの毎秒75フレームを各リフレッシュに混ぜます: なめらかなスクロール。
+settings.help.this_game_s_achievements_and_what	このゲームの実績と、それぞれの条件。
+settings.help.this_game_s_own_choice_settings	このゲーム専用の設定。「設定」はゲームプレイの行に従います。自動は余裕があるときに使います。
+settings.help.this_game_s_own_choice_settings_2	このゲーム専用の設定。「設定」は操作の行に従います。
+settings.help.tiles_over_your_game_a_list	ゲームの上にタイル、画像付きの一覧、または画像を全画面で。
+settings.help.turn_on_rewind_with_right_stick	右スティックで巻き戻しをオンにするか、ボタンを割り当てます。
+settings.help.turn_or_tilt_the_vita_the	Vitaを回すか傾けると、カートリッジのセンサーが感じ取ります。
+settings.help.turn_the_vita_left_for_vertical	縦画面のシーンではVitaを左に回すと、映像が画面いっぱいになります。
+settings.help.type_your_friend_s_room_code	フレンドのルームコードを入力します。相手のゲームを見つけて起動します。
+settings.help.vertical_scenes_upright_on_a_level	縦画面のシーンは水平なVitaで正立し、方向キーも一緒に回ります。
+settings.help.what_fills_the_wide_view_s	ワイドビューの余白を埋めるもの (ワイドビューがオンのとき)。
+settings.help.what_the_camera_sees_the_vita	カメラが映すもの: Vitaの背面カメラ。
+settings.help.what_the_camera_sees_the_vita_2	カメラが映すもの: Vitaの前面カメラ。
+settings.help.whether_the_app_is_using_the	アプリがVitaの4つ目のCPUコアを使っているか (CapUnlockerプラグインが必要)。
+settings.help.which_button_does_what_and_the	どのボタンが何をするか、およびショートカット。
+settings.help.which_vita_screen_this_is_oled	Vitaの画面の種類。OLEDは色を少しやわらげます。全機種共通。
+settings.help.x_a_copy_retroarch_can_use	{x}: RetroArchが探す場所に、使えるコピーを作ります。
+settings.help.x_a_picture_of_your_own	{x}: 一覧で選んだゲームのカバーに、自分の画像を設定します。
+settings.help.x_add_a_folder_ux0_roms	{x}: フォルダー (ux0:ROMS/GBA) を追加、または選んで削除。
+settings.help.x_check_now_off_no_check	{x}: 今すぐ確認。オフ: 頼まない限り確認しません。
+settings.help.x_check_now_once_a_day	{x}: 今すぐ確認。1日1回、GitHubで新しいVitAdhocがあるか確認します。
+settings.help.x_type_a_folder_ux0_pictures	{x}: フォルダー (ux0:pictures/VitAdhoc) を入力。空欄: screenshots/。
+settings.help.your_retroachievements_org_account	retroachievements.orgのアカウント。
+settings.help.zapper_touch_the_screen_to_aim	Zapper: 画面をタッチして狙い、撃ちます。次回の起動から。
+settings.high_contrast	ハイコントラスト
+settings.image_quality	画質
+settings.interface	インターフェース
+settings.join_a_share	共有に参加
+settings.join_online	オンラインで参加
+settings.keep_full_speed	フル速度を維持
+settings.language	言語
+settings.lcd_colours	LCDの色
+settings.lcd_ghosting	LCDの残像
+settings.lcd_grid	LCDの格子
+settings.level	水平
+settings.library	ライブラリ
+settings.link_delay	通信の遅延
+settings.link_mode	通信モード
+settings.link_setup	通信設定
+settings.motion_controls	モーション操作
+settings.motion_strength	モーションの強さ
+settings.pal_games_speed	PALゲームの速度
+settings.palette	パレット
+settings.player_name	プレイヤー名
+settings.port_2	ポート2
+settings.quick_response	クイックレスポンス
+settings.rear_touch_panel	背面タッチパネル
+settings.refresh_library	ライブラリを更新
+settings.retroachievements	RETROACHIEVEMENTS
+settings.rewind	巻き戻し
+settings.rewind_length	巻き戻しの長さ
+settings.rewind_with_right_stick	右スティックで巻き戻し
+settings.room	ルーム
+settings.rotation	回転
+settings.save_type	セーブタイプ
+settings.scanlines	スキャンライン
+settings.screen	画面
+settings.screen_fill	画面の埋め方
+settings.screen_overlay	画面オーバーレイ
+settings.screen_size	画面サイズ
+settings.screenshot_button_combo	スクリーンショットのボタン
+settings.screenshot_folder	スクリーンショットの保存先
+settings.session_overlay	通信中の表示
+settings.sgb_border	SGBの枠
+settings.share_game_data	ゲームデータを共有
+settings.smooth_75_hz_motion	なめらか75 Hz
+settings.smooth_hand_over	なめらか引き継ぎ
+settings.steady_pacing	安定ペース
+settings.sunlight	日光
+settings.sync_retroarch_saves	RetroArchセーブ同期
+settings.tap_screen_for_menu	タップでメニュー
+settings.text_size	文字サイズ
+settings.theme	テーマ
+settings.this_game	このゲーム
+settings.two_players	2人プレイ
+settings.value.444_mhz_standard	444 MHz (標準)
+settings.value.500_mhz_fast	500 MHz (高速)
+settings.value.all_games	%sのすべて
+settings.value.as_held_at_the_start	開始時の向き
+settings.value.as_the_vita	 (Vita準拠)
+settings.value.auto	自動
+settings.value.automatic	自動
+settings.value.by_name	名前順
+settings.value.checking_of_have_covers	確認中 %d / %d - カバーあり%d
+settings.value.circle_is_a	{o}がA
+settings.value.classic_lcd_tint	昔のLCDの色合い
+settings.value.controller	コントローラー
+settings.value.cross_is_a	{x}がA
+settings.value.daily	毎日
+settings.value.ff_button	早送りボタン (%s)
+settings.value.file_name	ファイル名
+settings.value.follows_the_clock	時計に従う
+settings.value.for_retroarch	RetroArch用
+settings.value.frame	%dフレーム
+settings.value.frames	%dフレーム
+settings.value.full_sun	 (快晴)
+settings.value.game_title	ゲームタイトル
+settings.value.gb_gbc_only	GB / GBCのみ
+settings.value.gb_only	GBのみ
+settings.value.gba_link_cable_only	GBA通信ケーブルのみ
+settings.value.greyscale	グレースケール
+settings.value.host_or_join	ホストか参加
+settings.value.host_saves_and_states_on	%sでセーブデータとステートをホスト
+settings.value.just_this_game	このゲームのみ
+settings.value.large	大
+settings.value.last_played_first	最近遊んだ順
+settings.value.lcd_pch_2000	LCD (PCH-2000)
+settings.value.min	%d分
+settings.value.most_played_first	よく遊ぶ順
+settings.value.no_game	ゲームなし
+settings.value.none_shade	なし (濃淡)
+settings.value.normal	標準
+settings.value.normal_pitch	、通常の音程
+settings.value.not_checking	確認しない
+settings.value.ntsc_colours	NTSCの色
+settings.value.of	%u / %u
+settings.value.of_10	%d / 10%s
+settings.value.of_games_have_covers	%d / %dのゲームにカバーあり
+settings.value.off	オフ
+settings.value.oled_pch_1000	OLED (PCH-1000)
+settings.value.on	オン
+settings.value.on_2	オン - %.48s
+settings.value.on_from_the_next_game	オン (次のゲームから)
+settings.value.on_l_r_select	オン (L + R + SELECT)
+settings.value.on_none_in_overlays	オン - overlays/に何もありません
+settings.value.only_roms	roms/のみ
+settings.value.scan_now	今すぐスキャン
+settings.value.settings	設定
+settings.value.sign_in	サインイン
+settings.value.signing_in	サインイン中...
+settings.value.smooth_50_hz	なめらか50 Hz
+settings.value.the_one_on	%sのもの
+settings.value.this_game	このゲーム
+settings.value.true_50_hz	本来の50 Hz
+settings.value.turn_the_vita	Vitaを回す
+settings.value.type_a_room_code	ルームコードを入力
+settings.value.upright	正立
+settings.value.with_sound	 音声あり
+settings.value.your_own	自分用
+settings.value.zapper	Zapper
+settings.vertical_play	縦画面プレイ
+settings.video_filter	映像フィルター
+settings.wide_view	ワイドビュー
+share.a_vita_joined_and_is_browsing	Vitaが%sに参加して閲覧中です。
+share.about_s_left	%s  -  残り約%u秒
+share.an_unknown_date	日付不明
+share.and_its_preview	%s  -  とそのプレビュー
+share.another_version	別のバージョン
+share.another_vita_is_already_in_that	別のVitaがすでにそのルームにいます。
+share.ask_them_to_choose_share_game	もう一度「ゲームデータを共有」を選んでもらってください。
+share.checking_your_connection	接続を確認中...
+share.closing_the_room	ルームを閉じています...
+share.connected_over_the_internet	インターネットで接続しました。
+share.connecting	接続中...
+share.connecting_through_the_relay	中継経由で接続中。
+share.could_not_join_the_room	ルームに参加できませんでした。
+share.could_not_read_the_game_folder	ゲームフォルダーを読み込めませんでした。
+share.could_not_write_it_here_is	ここに書き込めませんでした。メモリーカードがいっぱいではありませんか?
+share.counts_per_console	%s  -  %s  -  GBA %u / GB %u / GBC %u
+share.fetching_their_save_file	相手のセーブデータを取得中
+share.fetching_their_slot_into_your_slot	相手のスロット%dを自分のスロット%dへ取得中
+share.finding_your_friend	フレンドを探しています...
+share.game_data	ゲームデータ
+share.getting_a_code	コードを取得中...
+share.got_it	取得済み
+share.incoming_their_slot	受信   相手のスロット%d   %s
+share.it_is_saved_when_it_finishes	完了すると保存されます。
+share.join_online_settings_join_a_share	オンラインで参加 > 設定 > 共有に参加
+share.joining	%sに参加中...
+share.kb	%u KB
+share.l_r_page	L/R ページ
+share.leaving_the_room	ルームを出ています...
+share.looking_for_the_room_again	ルームをもう一度探しています...
+share.looking_for_the_vita_sharing_on	%sで共有しているVitaを探しています...
+share.lost_the_other	相手のVitaとの接続が切れました
+share.move_the_vitas_closer_or_ask	Vitaを近づけるか、もう一度共有してもらってください。
+share.n_saves_many	セーブデータ%u件
+share.n_saves_one	セーブデータ%u件
+share.n_states_many	ステート%u件
+share.n_states_one	ステート%u件
+share.needs_the_same_build	同じビルドが必要です
+share.no_preview	プレビューなし
+share.no_save_file_shared	共有されたセーブデータなし
+share.no_saves_or_states_on	%sの%sセーブデータとステートはありません
+share.not_enough_memory_to_start_the	無線を開始するメモリが足りません。
+share.not_fetched	未取得
+share.not_for_this_build	 (このビルド用ではありません)
+share.nothing_here_for_your_games	お持ちの%sのゲーム用のものはありません
+share.nothing_of_yours_was_changed	自分のデータは変更されていません。
+share.o_back	{o} 戻る
+share.o_cancel	{o} キャンセル
+share.o_games	{o} ゲーム
+share.o_keep_mine	{o} 自分のを残す
+share.o_leave	{o} 退出
+share.o_stop_sharing	{o} 共有を停止
+share.on_the_other_vita_join_as	相手のVitaで: いつもどおり%sに参加してください。
+share.online	オンライン
+share.play_a_game_first_its_save	先にゲームを遊んでください。そのセーブデータがここに出ます。
+share.please_wait	お待ちください
+share.preview_arriving	プレビュー受信中
+share.put_their_slot_in	相手のスロット%dを入れる先:
+share.reading_what_shares	%sが共有しているものを読み込み中...
+share.reading_your_saves_and_states	セーブデータとステートを読み込み中...
+share.replace_your_save	%sの自分のセーブデータを置き換えますか?
+share.replaced_yours	置き換えました
+share.save_file	%s %s  -  セーブデータ  -  %s
+share.save_file_2	セーブデータ
+share.save_file_3	セーブデータ
+share.save_file_replaced_yours	セーブデータを置き換えました
+share.save_file_saved	セーブデータを保存しました
+share.save_state_many	セーブ  -  ステート%d件%s
+share.save_state_one	セーブ  -  ステート%d件%s
+share.saved_to_your_slot	自分のスロット%dに保存しました
+share.sending	送信中
+share.sent	送信済み
+share.share_game_data	ゲームデータを共有
+share.shared_by	共有元: %s
+share.sharing_could_not_start	共有を開始できませんでした。
+share.sharing_has_stopped	共有を停止しました。
+share.sharing_on_waiting_for_another_vita	%sで共有中。別のVitaを待っています。
+share.slot	スロット%d
+share.slot_2	スロット%d   %s   %s
+share.slot_state	%s %s  -  スロット%uのステート  -  %s
+share.some_games_did_not_fit_in	一覧に入りきらなかったゲームがあります。
+share.starting	%sを開始中...
+share.state_many	ステート%d件%s
+share.state_one	ステート%d件%s
+share.states_need_the_same_build	ステートには同じビルドが必要です。
+share.states_only	ステートのみ
+share.still_no_answer_from_the_other	相手のVitaからまだ応答がありません。
+share.tell_your_friend_this_code	このコードをフレンドに伝えてください
+share.that_file_is_too_large_to	そのファイルは大きすぎて取得できません。
+share.that_is_not_a_state_this	このバージョンで読み込めるステートではありません。
+share.the_file_changed_on_the_other	送信中に相手のVitaでファイルが変更されました。
+share.the_game_loads_theirs_next_time	次にプレイするとき、ゲームは相手のものを読み込みます。
+share.the_other_vita_is_not_answering	相手のVitaが応答しません。
+share.the_other_vita_no_longer_has	相手のVitaにそのファイルはもうありません。
+share.the_other_vita_stopped_sharing	相手のVitaが共有を止めました。
+share.the_other_vita_stopped_sharing_at	相手のVitaが%d%%で共有を止めました。
+share.the_radio_could_not_start	無線を開始できませんでした。
+share.the_radio_dropped_the_room	無線がルームを切断しました。
+share.the_room_was_not_found_is	ルームが見つかりません。まだ共有中ですか?
+share.the_transfer_did_not_complete	転送が完了しませんでした。
+share.the_transfer_stopped_at	転送が%d%%で止まりました。
+share.the_two_vitas_run_versions_that	2台のVitaのバージョンでは共有できません。
+share.the_vita_sharing_on_that_room	そのルームで共有しているVitaが応答しませんでした。
+share.their_build_yours	%s  -  相手のビルド%.20s、自分のビルド%.20s
+share.their_states	相手のステート
+share.theirs_you_have_none	相手 %s   自分は未所持
+share.theirs_yours	相手 %s   自分 %s
+share.there_are_no_saves_or_states	共有できるセーブデータやステートがまだありません。
+share.they_share_some_for_the_other	他の機種のものが共有されています。
+share.took_save_state_many	セーブデータとステート%d件
+share.took_save_state_one	セーブデータとステート%d件
+share.took_state_many	ステート%d件
+share.took_state_one	ステート%d件
+share.tri_change_console	{tri} 機種を変更
+share.tri_console	{tri} 機種
+share.try_again_when_it_has_left	退出後にもう一度お試しください。
+share.update_vitadhoc_on_both_vitas_theirs	2台ともVitAdhocを更新してください (相手: %.24s)。
+share.waiting_for_your_friend	フレンドを待っています...  %d:%02d
+share.wi_fi_is_off	Wi-Fiがオフです。
+share.x_get	{x} 取得
+share.x_get_save	{x} セーブデータを取得
+share.x_overwrite	{x} 上書き
+share.x_put_it_here	{x} ここに入れる
+share.x_replace	{x} 置き換え
+share.x_their_states	{x} 相手のステート
+share.x_try_again	{x} 再試行
+share.you_have_a_save_for_this	このゲームのセーブデータがあります
+share.you_have_no_save_for_this	このゲームのセーブデータがありません
+share.you_took_the	  -  %sを受け取りました
+share.your_current_save_is_kept_as	今のセーブデータはバックアップとして残ります。
+share.your_old_save_is_kept_as	元のセーブデータは.bakファイルとして残ります。
+share.your_old_slot_is_kept_as	元のスロット%dは.oldファイルとして残ります。
+share.your_save_was_not_changed	セーブデータは変更されていません。
+share.your_slot_changes_only_when_it	すべて届いたときだけスロットが変わります。
+share.your_slot_was_not_changed	スロット%dは変更されていません。
+share.your_slots	自分のスロット
+share.yours_is_from_theirs_from	自分のは%s、相手のは%sのものです。
+share.yours_is_replaced_when_it_finishes	完了すると自分のものは置き換えられます。
+snes.a_code_to_share	共有するコード
+snes.a_friend_s_room	フレンドのルーム
+snes.a_player	プレイヤー
+snes.a_room_on_this_wi_fi	このWi-Fiのルーム
+snes.already_playing	すでにプレイ中
+snes.connect_in_the_vita_s_settings	Vitaの設定 > ネットワークで接続してください。接続されると、このページは自動で進みます。
+snes.different_version	バージョンが違います
+snes.end_it_first_play_together_disconnect	先に終了してください (一緒に遊ぶ > 切断)。
+snes.found	%d件見つかりました
+snes.host_a_game	ゲームをホスト
+snes.host_a_game_2	ゲームをホスト
+snes.is	%sは%sです。
+snes.join_a_game	ゲームに参加
+snes.join_a_game_2	ゲームに参加
+snes.looking_for_games_on_this_wi	このWi-Fiのゲームを探しています...
+snes.no_two_players_room_for_this	このゲームの2人プレイのルームはまだありません。
+snes.online	オンライン
+snes.room	ルーム%d
+snes.room_2	ルーム%d  -  %s
+snes.room_ms	ルーム%d  -  %d ms
+snes.rooms_on_this_wi_fi	このWi-Fiのルーム
+snes.runs_a_different_version_of_vitadhoc	%sは別のバージョンのVitAdhocです。
+snes.same_wi_fi	同じWi-Fi
+snes.searching	検索中
+snes.that_player	そのプレイヤー
+snes.that_room	そのルーム
+snes.the_other_vita_hosts_the_same	相手のVitaが同じゲームを同じWi-Fiでホストしてください (設定 > 2人プレイ)。探し続けます。
+snes.the_radio_is_busy_with_another	無線が別の通信で使われています。
+snes.the_search_could_not_start	検索を開始できませんでした。
+snes.this_vita_is_not_connected_to	このVitaはWi-Fiにつながっていません。
+snes.trying_again_by_itself_if_this	自動で再試行中です。続く場合はVitaのWi-Fiを確認してください。
+snes.two_players	2人プレイ
+snes.type_your_friend_s_code	フレンドのコードを入力
+snes.waiting	待機中
+snes.you_start_the_room	自分がルームを開始
+toast.a_plain_file	通常のファイル
+toast.a_player	プレイヤー
+toast.a_player_left	プレイヤーが%sを退出しました
+toast.achievement	実績: %s
+toast.achievements_sent	実績を送信しました
+toast.achievements_unavailable	実績を利用できません: %s
+toast.achievements_will_be_sent_when_back	オンラインに戻ると実績を送信します
+toast.already_checking_for_updates	すでに更新を確認中です
+toast.already_linked_disconnect_first	すでに通信中です。先に切断してください。
+toast.audio_output_unavailable	音声出力を利用できません
+toast.cannot_load_a_state_during_a	通信中はステートをロードできません
+toast.cannot_save_a_state_during_a	通信中はステートをセーブできません
+toast.checking_for_updates	更新を確認中...
+toast.clip_saved	クリップを保存しました
+toast.clock_is_used_the_next_time	時計は次回のゲーム起動から使われます
+toast.completed	達成: %s
+toast.connected_to	%sに接続しました。
+toast.connected_to_connection	%sに接続しました。接続: %s
+toast.controller_2_drives_the_partner_s	コントローラー2が相手のゲームを操作します
+toast.could_not_continue_starting_from_the	続けられません: セーブデータから開始します
+toast.could_not_load_state	ステート%dをロードできませんでした
+toast.could_not_sign_in_will_try	サインインできません。再試行します
+toast.disconnected	切断しました
+toast.eight_folders_is_the_most	フォルダーは8個までです
+toast.emulation_fault_game_was_reset	エミュレーションエラー - ゲームをリセットしました
+toast.ending_the_link	通信を終了中...
+toast.exported_as	%.48sとして書き出しました
+toast.fast_forward_is_off_during_a	通信中は早送りは使えません
+toast.fast_forward_is_off_while_two	2つのゲームの通信中は早送りは使えません
+toast.favourites_list_is_full	お気に入りがいっぱいです
+toast.folder_added_scanning	フォルダーを追加 - スキャン中
+toast.folder_removed_scanning	フォルダーを削除 - スキャン中
+toast.game_boy_type_is_used_the	Game Boyの種類は次回のゲーム起動から使われます
+toast.game_found	ゲームが%d個見つかりました
+toast.games_found	ゲームが%d個見つかりました
+toast.gift_received_from_the_phone	スマートフォンからおくりものを受け取りました
+toast.hardcore_mode_rewind_is_off	ハードコアモード: 巻き戻しは使えません
+toast.hardcore_mode_starting_from_the_save	ハードコアモード: セーブデータから開始します
+toast.hardcore_mode_states_cannot_be_loaded	ハードコアモード: ステートはロードできません
+toast.horizontal_circle_a_cross_b	横持ち: {o} = A、{x} = B
+toast.joined	%sに参加しました
+toast.joined_2	%sが%sに参加しました
+toast.leaderboard_attempt	リーダーボード挑戦: %s
+toast.leaderboard_attempt_failed	リーダーボード挑戦失敗: %s
+toast.level_is_how_you_hold_the	水平は今のVitaの持ち方になります
+toast.link_cancelled	通信をキャンセルしました。
+toast.link_ended_game_saved	通信を終了しました。ゲームをセーブしました。
+toast.link_ended_your_own_game_is	通信を終了しました。自分のゲームに戻りました。
+toast.link_error_the_connection_could_not	通信エラー: 回線が追いつきませんでした。
+toast.link_lost_the_other_vita_is	通信が切れました: 相手のVitaがいません。ゲームは元の状態に戻ります。
+toast.link_lost_the_other_vita_is_2	通信が切れました: 相手のVitaがいません。ゲームは続きます。
+toast.link_lost_the_other_vita_is_3	通信が切れました: 相手のVitaがいません。何も保存されていません。
+toast.link_lost_the_other_vita_is_4	通信が切れました: 相手のVitaがいません。
+toast.load_undone	ロードを取り消しました
+toast.looking_again_for_missing_covers	未取得のカバーを再検索中
+toast.mastered	マスター: %s
+toast.menu_hold_start_select	メニュー: START + SELECTを長押し
+toast.menu_tap_the_screen_or_start	メニュー: 画面をタップ、またはSTART + SELECT
+toast.mystery_gift_is_already_listening	ミステリーギフトはすでに待ち受け中です
+toast.mystery_gift_listening	ミステリーギフト待ち受け中
+toast.mystery_gift_off	ミステリーギフトをオフにしました
+toast.no_achievements_for_this_game_yet	このゲームの実績はまだありません
+toast.no_answer	応答なし
+toast.no_folder_with_that_name_on	その名前のフォルダーはカードにありません
+toast.no_motion_reading_to_set_level	水平を設定するモーション値がありません
+toast.no_network_to_check_with	確認に使えるネットワークがありません
+toast.no_picture_to_save_yet	保存できる画像がまだありません
+toast.no_saved_state	保存されたステートなし
+toast.no_saved_state_in_this_slot	このスロットにステートはありません
+toast.no_state_to_load	ロードできるステートなし
+toast.nothing_to_undo	元に戻すものがありません
+toast.one_controller_right_stick_or_tap	コントローラー1台: 右スティックかタップでゲーム切替
+toast.patch_not_applied	パッチを適用していません
+toast.patched_since_it_was_left_starting	前回の終了後にパッチ済み: セーブデータから開始します
+toast.pause_is_off_during_a_link	通信中は一時停止は使えません
+toast.player_2_plays_on_the_touch	プレイヤー2はタッチスクリーンで遊びます
+toast.press_the_same_button_again_to	同じボタンをもう一度押すとRetroAchievementsからサインアウト
+toast.print_could_not_be_saved	印刷を保存できませんでした
+toast.printed_saved_to_prints	印刷: prints/に保存しました
+toast.retroachievements	RetroAchievements: %s
+toast.retroachievements_does_not_know_this_version	RetroAchievementsはこのバージョンを認識しません
+toast.retroachievements_please_sign_in_again	RetroAchievements: もう一度サインインしてください
+toast.rom_path_is_too_long	ROMのパスが長すぎます
+toast.save_failed	セーブに失敗しました
+toast.save_type_is_used_the_next	セーブタイプは次回のゲーム起動から使われます
+toast.saved_your_game_only_the_second	自分のゲームのみセーブ: 2つ目のゲームはセーブされていません
+toast.scan_stopped_showing_what_was_found	スキャンを中止: 見つかったものを表示します
+toast.screenshot_could_not_be_saved	スクリーンショットを保存できませんでした
+toast.screenshot_saved	スクリーンショットを保存しました
+toast.set_completed	セット達成: %s
+toast.sign_in_failed	サインイン失敗: %s
+toast.sign_in_is_already_under_way	すでにサインイン中です
+toast.signed_in_but_the_account_could	サインインしましたが、アカウントを保持できませんでした
+toast.signed_in_to_retroachievements_as	RetroAchievementsに%sとしてサインインしました
+toast.signed_out_of_retroachievements	RetroAchievementsからサインアウトしました
+toast.signing_in_to_retroachievements	RetroAchievementsにサインイン中...
+toast.slot_1_is_locked	スロット1はロックされています
+toast.slot_is_locked	スロットはロックされています
+toast.slow_connection_the_game_may_feel	回線が遅いため、ゲームに遅延を感じることがあります。
+toast.state_loaded	ステートをロードしました
+toast.state_loaded_the_second_game_is	ステートをロードしました: 2つ目のゲームは再びコピーです
+toast.state_loaded_your_game_only	ステートをロードしました: 自分のゲームのみ
+toast.state_save_failed	ステートのセーブに失敗しました
+toast.state_saved	ステートをセーブしました
+toast.still_no_files_in_that_folder	そのフォルダーにはまだ.%sファイルがありません
+toast.stop_mystery_gift_first	先にミステリーギフトを止めてください
+toast.stop_the_two_player_game_on	先にこのVitaの2人プレイを止めてください
+toast.stopped_hosting	%sのホストを停止しました
+toast.submitted	送信しました: %s
+toast.that_folder_can_t_be_used	そのフォルダーは使えません
+toast.that_state_s_second_game_is	そのステートの2つ目のゲームは別のカートリッジです
+toast.the_camera_stopped	カメラが停止しました
+toast.the_card_is_slow_showing_what	カードが遅いため、見つかったものを表示します
+toast.the_clip_could_not_be_saved	クリップを保存できませんでした
+toast.the_code_expired_host_again_for	コードの期限が切れました。もう一度ホストして新しいコードを取得してください。
+toast.the_connection_was_lost_the_link	接続が切れました。通信を終了しました。
+toast.the_folder_list_could_not_be	フォルダー一覧を保存できませんでした
+toast.the_game_found_the_gift	ゲームがおくりものを見つけました
+toast.the_games_fell_out_of_step	ゲームの同期がずれました。ゲームは元の状態に戻ります。
+toast.the_games_fell_out_of_step_2	ゲームの同期がずれました。通信を終了しました。何も保存されていません。
+toast.the_host_closed_the_room	ホストがルームを閉じました。
+toast.the_keyboard_is_not_available	キーボードを使えません
+toast.the_link_between_the_two_games	2つのゲームの通信が止まりました
+toast.the_link_could_not_start	通信を開始できませんでした
+toast.the_link_did_not_start	通信を開始できませんでした。
+toast.the_link_ended_when_the_vita	Vitaがスリープしたため、通信を終了しました。
+toast.the_link_has_ended	通信を終了しました。
+toast.the_link_mode_list_is_full	通信モードの一覧がいっぱいです
+toast.the_other_vita_could_not_set	相手のVitaがゲームを準備できませんでした。
+toast.the_other_vita_left_before_the	通信の開始前に相手のVitaが退出しました。
+toast.the_patch_changed_starting_from_the	パッチが変更されました: セーブデータから開始します
+toast.the_room_is_closed	ルームは閉じられました。
+toast.the_room_was_closed_when_the	Vitaがスリープしたため、ルームを閉じました。
+toast.the_save_could_not_be_exported	セーブデータを書き出せませんでした
+toast.the_second_game_s_old_save	2つ目のゲームの元のセーブデータをバックアップできず、置き換えていません
+toast.the_second_game_s_save_could	2つ目のゲームのセーブデータを書き込めず、元のものを残しました
+toast.the_second_game_s_save_could_2	2つ目のゲームのセーブデータを書き込めませんでした
+toast.vertical_the_d_pad_turns_with	縦持ち: 方向キーも映像と一緒に回ります。L = A、R = B
+toast.vertical_turn_the_vita_left_l	縦持ち: Vitaを左に回します。L = A、R = B
+toast.video	映像: %s
+toast.waiting_for_the_other_vita	相手のVitaを待っています...
+toast.wi_fi_was_lost	Wi-Fiが切れました。%s
+toast.wi_fi_was_lost_link_ended	Wi-Fiが切れました。通信を終了し、ゲームは続きます。
+toast.wi_fi_was_lost_link_ended_2	Wi-Fiが切れました。通信を終了しました。何も保存されていません。
+toast.wi_fi_was_lost_the_link	Wi-Fiが切れました。通信を開始できませんでした。
+ui.a_clip_could_not_be_saved	クリップを保存できませんでした。
+ui.a_clip_is_still_being_saved	クリップを保存中です。
+ui.a_retroarch_playlist_it_cannot_be	RetroArchのプレイリスト: ここでは変更できません
+ui.a_text_file_a_name_on	テキストファイル: 1行目に名前、その下にコード。
+ui.a_turbo_button_presses_a_or	連射ボタンは、AやBを自動で連打します。
+ui.all_cheats_are_off	すべてのチートがオフです
+ui.all_off	すべてオフ
+ui.all_off_could_not_save_that	すべてオフ (保存できませんでした)
+ui.apr	4月
+ui.aug	8月
+ui.auto	自動
+ui.auto_ask	自動: 確認する
+ui.auto_link_cable	自動: 通信ケーブル
+ui.auto_wireless_adapter	自動: ワイヤレスアダプター
+ui.back	戻る
+ui.bak	%s.bak
+ui.both_vitas_need_this_game	2台ともこのゲームが必要です
+ui.button	ボタン
+ui.cancels_in_5_s	%s %s      5秒でキャンセル
+ui.cancels_in_s	%s %s      %d秒でキャンセル
+ui.changed_but_the_choice_could_not	変更しましたが、選択を保存できませんでした
+ui.cheats	チート
+ui.cheats_2	チート
+ui.cheats_are_off_during_link_play	通信プレイ中はチートは使えません。終了すると戻ります。
+ui.cheats_in_the_gbadhoc_folder	GBAdhocフォルダーのcheats/
+ui.choose_a_format_gs1_ar3_gs1raw	形式を選んでください: GS1:、AR3:、GS1RAW:、AR3RAW:
+ui.circle_stop_and_show_what_is	{o}: 停止して見つかったものを表示
+ui.clips_are_off_while_linked	通信中はクリップは使えません。
+ui.continue	続ける
+ui.controls	操作
+ui.copy_them_to	%sにコピーしてください
+ui.copy_them_to_2	コピー先:
+ui.counted_in_game_frames_so_fast	ゲームのフレームで数えるため、早送りでも速くなります。
+ui.dec	12月
+ui.delete_slot	スロット%dを削除しますか?
+ui.delete_slot_x_delete_o_keep	スロット%dを削除しますか?      {x} 削除     {o} 残す
+ui.each_of_the_four_has_its	4つそれぞれに専用のボタン、速度、モードがあります。
+ui.every_control_is_back_to_its	すべての操作を初期値に戻しました
+ui.exit_vitadhoc	VitAdhocを終了
+ui.feb	2月
+ui.find_a_game	ゲームを検索
+ui.finding_games_found	ゲームを検索中... %d個見つかりました
+ui.game_buttons	ゲームボタン
+ui.game_folder_to_add_or_remove	追加または削除するゲームフォルダー
+ui.game_genie_codes_patch_the_rom	Game GenieコードはROMを書き換えるため使えません
+ui.games	%d個のゲーム
+ui.gb_gbc_gameshark_codes_e_g	GB / GBC: GameSharkコード (例: 010AD5C1)
+ui.gba_codebreaker_codes_e_g_82025bc4	GBA: CodeBreakerコード (例: 82025BC4 E0FF)
+ui.hardcore_mode_states_cannot_be_loaded	ハードコアモード: ステートはロードできません
+ui.hold	長押し
+ui.hold_1_5_s	1.5秒長押し
+ui.hold_fires_for_as_long_as	長押し: ボタンを押している間ずっと連打します。
+ui.hosting	ホスト中
+ui.hosting_2	ホスト中
+ui.hosting_waiting	%sをホスト中、待機中
+ui.how_will_the_other_vita_connect	相手のVitaはどう接続しますか?
+ui.in_game	ゲーム中
+ui.in_game_home_opens_the_menu	ゲーム中にHOMEでメニュー  -  START+SELECT長押しで終了
+ui.in_the_game_hold_for_the	ゲーム中は%sを長押しでメニュー
+ui.in_the_game_hold_for_the_2	ゲーム中は%sを長押しでメニュー。
+ui.is_lost_fewer_per_console_shows	失われるものはありません。機種ごとの数を減らせばすべて表示されます。
+ui.jan	1月
+ui.jul	7月
+ui.jun	6月
+ui.kib	%u / %u KiB
+ui.l_r_page	L/R ページ
+ui.left_states	左: ステート
+ui.let_go_to_set	%s      離すと設定
+ui.link_cable	通信ケーブル
+ui.linked	通信中
+ui.linked_2	通信中
+ui.linked_player	通信中、プレイヤー%d
+ui.linking	通信中
+ui.lock	%s.lock
+ui.locked	  -  ロック中
+ui.mar	3月
+ui.may	5月
+ui.mb	%u MB
+ui.menu	メニュー
+ui.mode	モード
+ui.no_cheats_for_this_game_yet	このゲームのチートはまだありません
+ui.no_cheats_in_this_game_s	このゲームのファイルにチートがありません
+ui.no_clip_yet_play_for_a	クリップはまだありません。先に数秒プレイしてください。
+ui.no_favourites_yet	%sのお気に入りはまだありません
+ui.no_games_in_this_view	この表示に%sのゲームはありません
+ui.no_games_match	一致するゲームなし
+ui.no_preview	プレビューなし
+ui.no_roms_found	.%s ROMが見つかりません
+ui.no_save	セーブなし
+ui.none_for_this_game	このゲームにはありません
+ui.nothing_in_it_reads_as_a	チートとして読めるものがありません:
+ui.nothing_saved_here	ここには何も保存されていません
+ui.nothing_to_undo	元に戻すものがありません
+ui.nov	11月
+ui.o_clear	{o} クリア
+ui.o_exit	{o} 終了
+ui.oct	10月
+ui.of_on	%u / %dオン
+ui.of_used	%d / %d使用中
+ui.off_for_link_play	通信プレイ中はオフ
+ui.off_in_hardcore	ハードコアではオフ
+ui.off_while_linked	通信中はオフ
+ui.old	%s.old
+ui.on	%uオン
+ui.only_codes_that_write_the_game	ゲームのRAMに書き込むコードのみ使えます
+ui.only_gameshark_codes_that_start_01	01で始まるGameSharkコードのみ使えます
+ui.overwrite_slot_x_overwrite_o_keep	スロット%dを上書きしますか?      {x} 上書き     {o} 残す
+ui.paused	一時停止中
+ui.paused_for_link_play	通信プレイのため一時停止中
+ui.pick_a_game	ゲームを選択
+ui.play_together	一緒に遊ぶ
+ui.player_name	プレイヤー名
+ui.press_a_button_for	押すボタン:
+ui.press_a_button_or_combo_for	押すボタンまたは組み合わせ:
+ui.press_any_button_to_return_to	いずれかのボタンでLiveAreaに戻ります。
+ui.press_sq_on_a_game_to	ゲームで{sq}を押すとお気に入りに入ります
+ui.press_x_again_to_reset_every	もう一度{x}を押すとすべての操作をリセット
+ui.presses_a_second_10_15_or	1秒あたりの連打数: 10、15、30。
+ui.progress_the_game_has_not_saved	ゲームでセーブしていない進行状況は失われます。
+ui.put_a_cheat_file_on_the	チートファイルをメモリーカードに置いてください:
+ui.quick_warn	注意: クイックセーブ/ロードが、スティックの方向だけで\n動作します。ベッドやカバンの中でVitaが押されると、\nステートを上書きするおそれがあります。\nこの表示は二度と出ません。
+ui.quit	終了
+ui.quit_to_game_list	ゲーム一覧へ戻る
+ui.rate	速度
+ui.reading_the_memory_card	メモリーカードを読み込み中
+ui.remembering_game	ゲームを記憶中
+ui.reset_to_defaults	初期値に戻す
+ui.resume	再開
+ui.retroachievements_password	RetroAchievementsのパスワード
+ui.retroachievements_user_name	RetroAchievementsのユーザー名
+ui.returning_to_game_list	ゲーム一覧に戻っています...
+ui.rom_path_is_too_long	ROMのパスが長すぎます
+ui.save_clip	クリップを保存
+ui.save_present	セーブあり
+ui.save_states	ステート
+ui.save_states_2	ステート
+ui.save_states_are_off_while_linked	他の本体と通信中はステートは使えません。
+ui.saved_by_3_1_small_preview	3.1で保存: 小さなプレビューのみ
+ui.saving_the_last_ten_seconds_as	直前の10秒をクリップとして保存中...
+ui.screenshot_folder_empty_the_usual_one	スクリーンショットの保存先 (空欄: 通常の場所)
+ui.screenshots_go_there_now	スクリーンショットは今後そこに保存されます
+ui.screenshots_go_to_screenshots	スクリーンショットはscreenshots/に保存されます
+ui.sec	%d / 秒
+ui.select	選ぶ
+ui.select_all_games	SELECT すべてのゲーム
+ui.select_all_games_2	SELECT: すべてのゲーム
+ui.select_next_view	SELECT 次の表示
+ui.select_next_view_2	SELECT: 次の表示
+ui.select_sq_on_a_game_adds	ゲームでSELECT + {sq}を押すとコレクションに追加
+ui.sep	9月
+ui.set	%d個設定
+ui.settings	設定
+ui.settings_2	設定
+ui.shortcuts	ショートカット
+ui.shorten_folders_or_filenames_to_browse	フォルダー名かファイル名を短くすると表示できます。
+ui.shorten_the_folder_or_filename	フォルダー名かファイル名を短くしてください
+ui.showing_of_cheats	%u / %u件のチートを表示
+ui.showing_of_games	%d / %d個のゲームを表示
+ui.slot	スロット%d
+ui.slot_could_not_be_deleted	スロット%dを削除できませんでした
+ui.slot_could_not_be_loaded	スロット%dをロードできませんでした
+ui.slot_could_not_be_locked	スロット%dをロックできませんでした
+ui.slot_could_not_be_saved	スロット%dをセーブできませんでした
+ui.slot_could_not_be_undone	スロット%dを元に戻せませんでした
+ui.slot_deleted	スロット%dを削除しました
+ui.slot_is_as_it_was_before	スロット%dはセーブ前の状態です
+ui.slot_is_empty_again	スロット%dは再び空です
+ui.slot_is_locked	スロット%dはロックされています
+ui.slot_is_locked_l_unlocks_it	スロット%dはロック中: Lで解除
+ui.slot_locked	スロット%dをロックしました
+ui.slot_not_deleted	スロット%dは削除されていません
+ui.slot_of	スロット%d / %d  -  %s%s
+ui.slot_saved	スロット%dにセーブしました
+ui.slot_unlocked	スロット%dのロックを解除しました
+ui.some_paths_were_too_long_and	長すぎるパスがあり、スキップしました。
+ui.some_rom_folders_were_skipped	一部のROMフォルダーをスキップしました
+ui.sq_star	{sq} お気に入りに追加
+ui.sq_unstar	{sq} お気に入りから外す
+ui.srm	%.*s.srm
+ui.start_select_hold_opens_the_menu	START+SELECT (長押し) でメニュー  -  HOMEはシステム用
+ui.start_settings	START 設定
+ui.the_file_is_over_kb_showing	ファイルが%d KBを超えています: 最初の%u件のチートを表示
+ui.the_game_s_wireless_mode	ゲームのワイヤレスモード
+ui.the_games_you_have_not_started	まだ始めていないゲームがここに出ます
+ui.the_games_you_play_show_up	遊んだゲームがここに出ます
+ui.the_name_storage_limit_was_reached	名前の保存上限に達しました。
+ui.the_others_are_still_on_the	残りはカードにそのまま残っています:
+ui.this_build_lists_at_a_time	一度に%d件まで表示
+ui.this_code_is_not_one_gbadhoc	GBAdhocが読めないコードです
+ui.this_ends_the_link_for_both	2人とも通信が終了します。
+ui.this_game	このゲーム
+ui.toggle	切替
+ui.toggle_press_to_start_press_again	切替: 押すと開始、もう一度押すと停止。
+ui.too_many_cheats_on_at_once	同時にオンにできるチートが多すぎます。先にどれかをオフにしてください
+ui.tri_change_console	{tri} 機種を変更
+ui.turbo_buttons	連射ボタン
+ui.turbo_buttons_2	連射ボタン
+ui.turbo_is_off_during_link_play	通信プレイ中は連射は使えません。終了すると戻ります。
+ui.turn_on_game_previews_in_settings	クリップを保存するには、設定でゲームプレビューをオンにしてください。
+ui.two_players_on_this	このVitaで2人プレイ
+ui.unchanged	%sは変更なし: %s
+ui.unchanged_nothing_pressed	%sは変更なし: 何も押されていません
+ui.undo	%s.undo
+ui.undo_the_last_load_x_undo	最後のロードを元に戻しますか?      {x} 元に戻す     {o} 残す
+ui.undo_the_save_in_slot_x	スロット%dのセーブを元に戻しますか?      {x} 元に戻す     {o} 残す
+ui.undo_x_the_save_in_slot	元に戻しますか?      {x} スロット%dのセーブ     {sq} 最後のロード     {o} 残す
+ui.up_dn_slot	UP/DN: スロット
+ui.up_dn_slot_sq_delete	UP/DN: スロット   {sq}: 削除
+ui.was_is_now_blank_disabled	%sは%sでした  -  %sは空欄になりました (無効)
+ui.wireless_adapter	ワイヤレスアダプター
+ui.x_delete_o_keep	{x}: 削除   {o}: 残す
+ui.x_load_o_close	{x}: ロード   {o}: 閉じる
+ui.x_look_again	{x} 再検索
+ui.x_o_stay	%s     {x} %s     {o} 残る
+ui.x_ok	{x} OK
+ui.x_play	{x} プレイ
+ui.x_save	{x} セーブ
+ui.x_switch_all_off_o_keep	{x} %u件すべてオフにする     {o} オンのままにする
+ui.x_switch_it_off_o_keep	{x} オフにする     {o} オンのままにする

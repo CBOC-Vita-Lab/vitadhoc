@@ -971,7 +971,7 @@ static void hm_home_hints(void)
    vs_icon(VS_I_BTN_SQ, x + 10, y + 12, 22, HC_TEXT2);
    x = hm_hint_word(x + 26, y, "Lists");
    vs_icon(VS_I_BTN_TRI, x + 10, y + 12, 22, HC_TEXT2);
-   x += 36;              /* the console's button: its pill carries the name */
+   x = hm_hint_word(x + 26, y, "Console");
    x = hm_cap(x, y, "START");
    hm_hint_word(x, y, "Settings");
 }

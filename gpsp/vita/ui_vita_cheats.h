@@ -493,7 +493,7 @@ static ui_action screen_cheats(unsigned edges, unsigned pad)
    else if (g_ch.note[0])
       vw_plate(g_ch.note);
    else if (suspended)
-      footer("L/R page   START search   " VID_GLYPH_O " back");
+      footer("L/R page   " VID_GLYPH_O " back");   /* START search is refused */
    else if (sel && !sel->builtin)
       footer(VID_GLYPH_X " on/off   " VID_GLYPH_TRI " add   " VID_GLYPH_SQ
              " delete   SELECT find   START search");
@@ -873,7 +873,7 @@ static struct
 {
    pk_cs cs;
    int  ready;                   /* the machine was set up for this game    */
-   int  size;                    /* 0, 1, 2 = 1, 2, 4 bytes                 */
+   int  size;                    /* pk_cs_size_choice: 1, 2, 4 bytes, then 2 and 4 at any address */
    int  cur, scroll;
    tch_scroll_t ts;
    int  free_scroll;
@@ -934,7 +934,7 @@ void ui_cheat_search_free(void)
    g_cs.op = -1;
 }
 
-static int cs_width(void) { return g_cs.size == 0 ? 1 : g_cs.size == 1 ? 2 : 4; }
+static int cs_width(void) { return pk_cs_size_width(g_cs.size); }
 
 static void cs_note(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void cs_note(const char *fmt, ...)
@@ -949,9 +949,17 @@ static void cs_open(void)
 {
    screen_to(SCR_CHEAT_SEARCH);
    g_cs.cur = g_cs.scroll = g_cs.free_scroll = 0;
-   g_cs.op = g_cs.op == -2 ? -1 : g_cs.op;
+   g_cs.op = -1;
    g_cs.note[0] = '\0';
-   if (!g_cs.ready && !cs_setup())
+   if (fe_host_gb_local_active())
+   {
+      /* one console, two players: the memory of the player's game cannot be
+       * read while the pair runs (the read answers nothing) */
+      pk_cs_free(&g_cs.cs);
+      g_cs.ready = 0;
+      cs_note("Search memory is not available in two-player mode");
+   }
+   else if (!g_cs.ready && !cs_setup())
       cs_note("There is no memory to search in this game");
 }
 
@@ -1063,6 +1071,10 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
       ch_open();
       return screen_cheats(0, 0);
    }
+   if (!g_cs.ready && (edges & PSP_CTRL_CROSS))
+      cs_note(fe_host_gb_local_active()
+              ? "Search memory is not available in two-player mode"
+              : "There is no memory to search in this game");
    if (g_cs.ready && (edges & (PSP_CTRL_CROSS | PSP_CTRL_LEFT |
                                PSP_CTRL_RIGHT)))
    {
@@ -1073,14 +1085,19 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
                  ? "Cheats are off in Hardcore mode (RetroAchievements)."
                  : "Cheats are off while linked to another console.");
       else if (k == CSR_SIZE)
-         g_cs.size = (g_cs.size + ((edges & PSP_CTRL_LEFT) ? 2 : 1)) % 3;
+         g_cs.size = (g_cs.size + ((edges & PSP_CTRL_LEFT)
+                      ? pk_cs_size_count(&g_cs.cs) - 1 : 1)) %
+                     pk_cs_size_count(&g_cs.cs);
       else if (!(edges & PSP_CTRL_CROSS))
          ;
       else if (k == CSR_NEW)
       {
-         int32_t c = pk_cs_start(&g_cs.cs, cs_width());
+         int32_t c = pk_cs_start_ex(&g_cs.cs, cs_width(),
+                                    pk_cs_size_any(g_cs.size) &&
+                                    pk_cs_can_any(&g_cs.cs));
          g_cs.nres = 0;
-         fe_evt("cheat_search new size=%d results=%d", cs_width(), (int)c);
+         fe_evt("cheat_search new size=%d results=%d any=%d", cs_width(),
+                (int)c, g_cs.cs.any);
          if (c < 0)
             cs_note("The search could not start: not enough memory");
          else
@@ -1160,7 +1177,7 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
       {
       case CSR_SIZE:
          snprintf(label, sizeof(label), "Size of the number");
-         snprintf(value, sizeof(value), "%s", pk_cs_size_name(cs_width()));
+         snprintf(value, sizeof(value), "%s", pk_cs_size_choice(g_cs.size));
          break;
       case CSR_NEW:
          snprintf(label, sizeof(label), "New search");
@@ -1193,7 +1210,9 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
       const char *h = "";
       switch (kind[g_cs.cur])
       {
-      case CSR_SIZE: h = "Most counters are 1 byte; money and scores often 2."; break;
+      case CSR_SIZE: h = pk_cs_size_count(&g_cs.cs) > 3
+                         ? "Most counters are 1 byte; money and scores often 2. Any address looks at odd places too."
+                         : "Most counters are 1 byte; money and scores often 2."; break;
       case CSR_NEW: h = "Remember the memory, play on, then narrow it down."; break;
       case CSR_RESULTS:
          h = g_cs.cs.count == 0 ? "Nothing matched: start a new search."
@@ -1205,8 +1224,12 @@ static ui_action screen_cheat_search(unsigned edges, unsigned pad)
                        : "Compared with the memory at the last step."; break;
       default: h = "Makes a cheat that keeps this value."; break;
       }
-      vid_rect(20, CS_VIEW_TOP + CS_VIEW_H + 3, 440, 1, C_ACCENT_DK, 120);
-      vw_line(22, CS_VIEW_TOP + CS_VIEW_H + 8, 436, h, C_DIM);
+      /* the note's plate sits where this line is: one or the other */
+      if (!g_cs.note[0])
+      {
+         vid_rect(20, CS_VIEW_TOP + CS_VIEW_H + 3, 440, 1, C_ACCENT_DK, 120);
+         vw_line(22, CS_VIEW_TOP + CS_VIEW_H + 8, 436, h, C_DIM);
+      }
    }
    if (g_cs.note[0])
       vw_plate(g_cs.note);

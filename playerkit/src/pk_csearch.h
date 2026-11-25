@@ -8,7 +8,9 @@
  * address space (fe_host_ra_read, gbcore_ra_read, snes_host_ra_read, md_host_ra_read ...) and a short list of
  * regions of it to search (the work RAM: what a typed RAM code can reach). Reads have no side effects.
  *
- * A SEARCH.  pk_cs_start(width 1, 2 or 4) snapshots the regions and makes every aligned address a candidate.
+ * A SEARCH.  pk_cs_start(width 1, 2 or 4) snapshots the regions and makes every aligned address a candidate;
+ * pk_cs_start_ex(..., any = 1) makes every address one (a 2 or 4 byte number that sits at an odd address, as the
+ * 8 bit consoles' games keep them; pk_cs_can_any says which consoles take it).
  * Each pk_cs_step() compares the candidates' current value with a typed number (Equal to, Not equal to, Greater
  * than, Less than) or with the snapshot of the previous step (Changed, Unchanged, Increased, Decreased), keeps
  * the ones that match and takes a new snapshot. Values are unsigned. Memory: one byte of snapshot per searched
@@ -56,6 +58,7 @@ typedef struct pk_cs
 	uint8_t *snap;               /* total bytes: the values at the last step */
 	uint8_t *bits;               /* (total + 7) / 8: bit i = the address at byte offset i is a candidate */
 	int width;                   /* 1, 2 or 4; 0 = no search */
+	int any;                     /* 1 = every address is a candidate, not only the aligned ones */
 	uint32_t count;
 	int steps;                   /* steps since pk_cs_start */
 } pk_cs;
@@ -86,6 +89,7 @@ static inline void pk_cs_free(pk_cs *cs)
 	cs->snap = 0;
 	cs->bits = 0;
 	cs->width = 0;
+	cs->any = 0;
 	cs->count = 0;
 	cs->steps = 0;
 }
@@ -144,11 +148,13 @@ static inline uint32_t pk_cs_fetch(const pk_cs *cs, uint32_t off, uint8_t *out, 
 }
 
 /* One pass over every region in chunks of 4 KB (each chunk starts at a multiple of the width inside its region, so no
- * value straddles two). `op` < 0 is the first pass (start); otherwise a step. */
+ * value straddles two; with `any` a value may straddle two chunks, so a chunk is read `width - 1` bytes further, still
+ * inside its region, and the snapshot of the next chunk stays the old one until that chunk's own turn). `op` < 0 is the
+ * first pass (start); otherwise a step. */
 static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 {
-	uint8_t buf[PK_CS_CHUNK];
-	const uint32_t w = (uint32_t)cs->width;
+	uint8_t buf[PK_CS_CHUNK + 4];
+	const uint32_t w = (uint32_t)cs->width, stride = cs->any ? 1u : w;
 	uint32_t base = 0, n = 0;
 	int r;
 	for (r = 0; r < cs->nreg; r++)
@@ -156,7 +162,7 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 		uint32_t size = cs->reg[r].size, in;
 		for (in = 0; in < size; in += PK_CS_CHUNK)
 		{
-			uint32_t want = size - in < PK_CS_CHUNK ? size - in : PK_CS_CHUNK, got, i;
+			uint32_t want = size - in < PK_CS_CHUNK ? size - in : PK_CS_CHUNK, got, i, rd;
 			if (op >= 0)
 			{
 				int any = 0;
@@ -165,10 +171,16 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 				if (!any)
 					continue;
 			}
-			got = cs->read ? cs->read(cs->ud, cs->reg[r].base + in, buf, want) : 0;
-			if (got > want)
-				got = want;
-			for (i = 0; i + w <= want; i += w)
+			rd = want;
+			if (cs->any)
+			{
+				const uint32_t more = size - in - want;
+				rd += more < w - 1 ? more : w - 1;
+			}
+			got = cs->read ? cs->read(cs->ud, cs->reg[r].base + in, buf, rd) : 0;
+			if (got > rd)
+				got = rd;
+			for (i = 0; i < want && i + w <= rd; i += stride)
 			{
 				const uint32_t o = base + in + i;
 				if (op < 0)
@@ -203,7 +215,7 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 						pk_cs_clear(cs, o);
 				}
 			}
-			memcpy(cs->snap + base + in, buf, got);
+			memcpy(cs->snap + base + in, buf, got < want ? got : want);
 		}
 		base += size;
 	}
@@ -212,7 +224,7 @@ static inline void pk_cs_pass(pk_cs *cs, int op, uint32_t value)
 
 /* Begin a new search over `width` byte unsigned values: every aligned address the machine answers for is a candidate.
  * Returns the number of candidates, or -1 (no memory, a width other than 1, 2, 4). */
-static inline int32_t pk_cs_start(pk_cs *cs, int width)
+static inline int32_t pk_cs_start_ex(pk_cs *cs, int width, int any)
 {
 	pk_cs_free(cs);
 	if ((width != 1 && width != 2 && width != 4) || cs->total < (uint32_t)width)
@@ -225,8 +237,19 @@ static inline int32_t pk_cs_start(pk_cs *cs, int width)
 		return -1;
 	}
 	cs->width = width;
+	cs->any = any && width > 1 ? 1 : 0;
 	pk_cs_pass(cs, -1, 0);
 	return (int32_t)cs->count;
+}
+static inline int32_t pk_cs_start(pk_cs *cs, int width) { return pk_cs_start_ex(cs, width, 0); }
+
+/* Which consoles can look at every address: the ones whose typed code pokes a byte at a time (the Game Boy, NES,
+ * WonderSwan, Super NES, the Master System's Z80). Not the GBA (its words sit on even addresses and its code writes a
+ * whole word) nor the Mega Drive (a 68000 word is always even). */
+static inline int pk_cs_can_any(const pk_cs *cs)
+{
+	return cs->kind == PK_CS_GB || cs->kind == PK_CS_NES || cs->kind == PK_CS_WS || cs->kind == PK_CS_SNES ||
+	       cs->kind == PK_CS_Z80;
 }
 
 /* One refinement. `value` is used by EQ/NE/GT/LT (the caller has checked it fits: pk_cs_parse). Returns the number of
@@ -389,6 +412,16 @@ static inline void pk_cs_addr_text(const pk_cs *cs, uint32_t addr, char *out, si
 /* ---- the words, the same on every console ----------------------------------------------------------------------- */
 
 static inline const char *pk_cs_size_name(int width) { return width == 1 ? "1 byte" : width == 2 ? "2 bytes" : "4 bytes"; }
+/* The Size row's choices: 0..2 are 1, 2, 4 bytes; 3 and 4 (only where pk_cs_can_any) are 2 and 4 bytes at any address.
+ * pk_cs_size_width / pk_cs_size_any say what a choice means. */
+static inline const char *pk_cs_size_choice(int i)
+{
+	static const char *const n[5] = { "1 byte", "2 bytes", "4 bytes", "2 bytes, any address", "4 bytes, any address" };
+	return i >= 0 && i < 5 ? n[i] : "";
+}
+static inline int pk_cs_size_width(int i) { return i == 0 ? 1 : (i == 1 || i == 3) ? 2 : 4; }
+static inline int pk_cs_size_any(int i) { return i >= 3; }
+static inline int pk_cs_size_count(const pk_cs *cs) { return pk_cs_can_any(cs) ? 5 : 3; }
 static inline const char *pk_cs_op_name(int op)
 {
 	static const char *const n[PK_CS_OPS] = { "Equal to", "Not equal to", "Greater than", "Less than",

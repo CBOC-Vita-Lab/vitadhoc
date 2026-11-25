@@ -13023,7 +13023,13 @@ static void browser_empty(const char *rom_dir, int n_scan)
       {
          snprintf(msg, sizeof(msg), "No %s games in this view", s->id);
          vid_text_hd((480 - vid_text_hd_w(msg)) / 2, 126, msg, sel);
-         vid_text_center(160, "SELECT + " VID_GLYPH_SQ " adds a game to a collection", item);
+         vid_text_center(160, g_view_kind == VK_COLL
+                         ? "SELECT + " VID_GLYPH_SQ " on a game adds it to a collection"
+                         : g_view_kind == VK_LPL
+                         ? "A RetroArch playlist: it cannot be changed here"
+                         : g_view_kind == VK_MOST
+                         ? "The games you play show up here"
+                         : "The games you have not started show up here", item);
          vid_text_center(182, "SELECT: next view", dim);
       }
       else

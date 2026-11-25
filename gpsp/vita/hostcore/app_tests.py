@@ -3393,6 +3393,14 @@ def t_collections(S):
             "a list that was not read whole is never written over the file")
     S.picture(r, "lossy.png")
 
+    # A text editor's UTF-8 byte order mark at the head of the file is not part of the first name.
+    r = run("bom", "90:quit\n", {"collections.txt": b"\xef\xbb\xbf#collection A\ncoll-01.gba\n"})
+    S.check(r.has(r"^EVT collections_load n=1 games=1 rc=0 lossy=0"),
+            "a collections.txt that starts with a byte order mark is read whole")
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ui_vita_lists.h")).read()
+    S.check("cannot be changed safely" in src and "too big to change" not in src,
+            "a list that was read lossy says it cannot be changed safely, not that it is too big")
+
     # The automatic views rest on the play log: Most played (longest first),
     # Not played yet.  Nothing played: neither is offered.
     rom = cartridge

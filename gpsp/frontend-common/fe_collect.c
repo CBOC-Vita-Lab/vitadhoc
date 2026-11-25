@@ -219,6 +219,13 @@ static void line_done(fe_coll *c)
       c->lossy = 1;                 /* a path too long to keep: not lost */
       return;
    }
+   /* a UTF-8 byte order mark that a text editor put at the head of a line */
+   if (n >= 3 && (unsigned char)l[0] == 0xEF && (unsigned char)l[1] == 0xBB &&
+       (unsigned char)l[2] == 0xBF)
+   {
+      l += 3;
+      n -= 3;
+   }
    while (n && (l[n - 1] == '\r' || l[n - 1] == ' ' || l[n - 1] == '\t'))
       n--;
    while (a < n && (l[a] == ' ' || l[a] == '\t'))

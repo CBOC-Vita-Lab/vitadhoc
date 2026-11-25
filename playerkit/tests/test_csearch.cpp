@@ -96,6 +96,56 @@ TEST(csearch_wide_values_are_aligned_and_ordered)
 	pk_cs_free(&md);
 }
 
+TEST(csearch_any_address_finds_odd_places_and_values_across_a_chunk)
+{
+	pk_cs cs; Mem m; setup(cs, m, PK_CS_SNES);
+	CHECK(pk_cs_can_any(&cs));
+	m.a[0x203] = 0x34; m.a[0x204] = 0x12;      /* 0x1234 at an odd address */
+	m.a[0xFFF] = 0x34; m.a[0x1000] = 0x12;     /* ... straddling the first 4 KB chunk */
+	CHECK_EQ(pk_cs_start_ex(&cs, 2, 1), 0x3000 + 0x81 - 2);   /* every address but each window's last byte */
+	CHECK_EQ(pk_cs_step(&cs, PK_CS_EQ, 0x1234), 2);
+	uint32_t ad[4], v[4];
+	CHECK_EQ(pk_cs_list(&cs, 4, ad, v), 2);
+	CHECK_EQ(ad[0], 0x203); CHECK_EQ(ad[1], 0xFFF);
+	CHECK_EQ(v[0], 0x1234); CHECK_EQ(v[1], 0x1234);
+	/* the one that straddled the chunk changes: the snapshot across the chunk edge is the old one */
+	m.a[0x1000] = 0x13;
+	CHECK_EQ(pk_cs_step(&cs, PK_CS_CHANGED, 0), 1);
+	CHECK_EQ(pk_cs_list(&cs, 4, ad, v), 1);
+	CHECK_EQ(ad[0], 0xFFF);
+	CHECK_EQ(v[0], 0x1334);
+	char c[64];
+	CHECK(pk_cs_code(&cs, 0xFFF, 0x1334, c, sizeof c) > 0); CHECK_STR(c, "7E0FFF:34+7E1000:13");
+	/* a 4 byte value in the first window's last bytes stays inside it */
+	pk_cs_start_ex(&cs, 4, 1);
+	CHECK_EQ(cs.count, 0x3000 + 0x81 - 6);
+	/* aligned search is what it was, and any is ignored for a byte */
+	CHECK_EQ(pk_cs_start_ex(&cs, 1, 1), 0x3000 + 0x81);
+	CHECK_EQ(cs.any, 0);
+	pk_cs_start(&cs, 2);
+	CHECK_EQ(cs.any, 0);
+	pk_cs_free(&cs);
+	pk_cs gba; Mem g; setup(gba, g, PK_CS_GBA);
+	CHECK(!pk_cs_can_any(&gba));
+	pk_cs md; Mem d; setup(md, d, PK_CS_MDW, PK_CS_MD);
+	CHECK(!pk_cs_can_any(&md));
+	CHECK_EQ(pk_cs_size_count(&gba), 3); CHECK_EQ(pk_cs_size_count(&cs), 5);
+	CHECK_STR(pk_cs_size_choice(3), "2 bytes, any address");
+	CHECK(pk_cs_size_width(4) == 4 && pk_cs_size_any(4) && !pk_cs_size_any(2));
+}
+
+TEST(csearch_code_at_address_zero_is_made_on_every_console)
+{
+	pk_cs cs; Mem m; setup(cs, m, PK_CS_SNES);
+	char c[64];
+	cs.width = 1;
+	CHECK(pk_cs_code(&cs, 0, 0x56, c, sizeof c) > 0); CHECK_STR(c, "7E0000:56");
+	cs.kind = PK_CS_GBA; CHECK(pk_cs_code(&cs, 0, 0x56, c, sizeof c) > 0); CHECK_STR(c, "03000000 56");
+	cs.kind = PK_CS_NES; CHECK(pk_cs_code(&cs, 0, 0x56, c, sizeof c) > 0); CHECK_STR(c, "0000:56");
+	cs.kind = PK_CS_WS; CHECK(pk_cs_code(&cs, 0, 0x56, c, sizeof c) > 0); CHECK_STR(c, "00000:56");
+	pk_cs_free(&cs);
+}
+
 TEST(csearch_unreadable_memory_is_never_a_candidate)
 {
 	pk_cs cs; Mem m; setup(cs, m);
@@ -317,6 +367,31 @@ TEST(csearch_menu_size_row_sets_the_width_of_the_next_search)
 	pkh::press(f.menu, PH_CROSS);
 	CHECK_EQ(f.host.added.size(), 1);
 	CHECK_STR(f.host.added[0].first, "7E0010:34+7E0011:12");
+}
+
+TEST(csearch_menu_any_address_choice_on_a_byte_console)
+{
+	SFix f;
+	f.host.mem[0x11] = 0x34; f.host.mem[0x12] = 0x12;       /* 0x1234 at an odd address */
+	f.open_search();
+	CHECK(f.to_row("Size of the number"));
+	pkh::press(f.menu, PH_RIGHT); pkh::press(f.menu, PH_RIGHT); pkh::press(f.menu, PH_RIGHT);
+	CHECK_STR(f.menu.row_value_text(f.menu.cursor()), "2 bytes, any address");
+	pkh::press(f.menu, PH_RIGHT); pkh::press(f.menu, PH_RIGHT);
+	CHECK_STR(f.menu.row_value_text(f.menu.cursor()), "1 byte");          /* five choices, then round */
+	pkh::press(f.menu, PH_LEFT);
+	CHECK_STR(f.menu.row_value_text(f.menu.cursor()), "4 bytes, any address");
+	pkh::press(f.menu, PH_LEFT);
+	CHECK(f.to_row("New search"));
+	pkh::press(f.menu, PH_CROSS);
+	CHECK_EQ(f.menu.search_count(), 0x1000 - 1);
+	CHECK(f.to_row("Equal to"));
+	pkh::press(f.menu, PH_CROSS);
+	f.menu.search_value_entered(true, "0x1234");
+	CHECK_EQ(f.menu.search_count(), 1);
+	CHECK(f.to_row("7E0011"));
+	pkh::press(f.menu, PH_CROSS);
+	CHECK_STR(f.host.added[0].first, "7E0011:34+7E0012:12");
 }
 
 TEST(csearch_menu_is_refused_like_cheats)

@@ -42,7 +42,7 @@ static int ls_save(void)
    {
       lib_load_collections();
       snprintf(g_ls.note, sizeof(g_ls.note), rc == -2
-               ? "The collections file is too big to change"
+               ? "The collections file cannot be changed safely"
                : "Could not save the collections");
       if (g_ls.cur > (int)g_coll.ncoll)
          g_ls.cur = (int)g_coll.ncoll;
